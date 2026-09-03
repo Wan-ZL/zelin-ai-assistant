@@ -37,6 +37,10 @@ per_mutant_timeout_seconds = 60
 # §67 skill 商店：状态判定 / 自定义永不被碰 / 决策优先于默认——一个存活体 = 商店覆盖了 owner 的副本。
 "act/lib/skills.py" = ["tests/test_skills_store.py"]
 "act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]
+# §70 每日自我改进循环（P5）——它替 owner 动卡（合成 / 进回收站）并铸提案，宪法第 1/2/10/11 条都在这里执法。
+"act/lib/maintenance.py" = ["tests/test_daily_loop_dedup_merge.py", "tests/test_daily_loop_stale_rules.py"]
+"act/lib/daily_loop.py" = ["tests/test_daily_loop_run.py", "tests/test_daily_loop_proposals.py"]
+"act/lib/loop_inputs.py" = ["tests/test_daily_loop_inputs.py"]
 
 # P3a（refactor/p3a-radars）：雷达 / digest / analyze 七模块的 CRAP≤6 清账在
 # 变异网先行之下完成——首轮 1,506 体（原代码）：radar 62% 杀伤，其余 36–42%；
@@ -61,3 +65,16 @@ per_mutant_timeout_seconds = 60
 "skills/test-code/scripts/detect.py" = ["tests/test_skill_test_code_detect.py"]
 "skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py"]
 "skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
+
+# test-ui skill（skills/test-ui；vnext2-plan R2.8，test-code 的姐妹）——同样每晚第 4 档。
+# 2026-09-03 首轮（ad-hoc map，见 tests/test_skill_test_ui_mutation_kills.py 的 docstring）之后进夜间靶区。
+"skills/test-ui/scripts/testui_common.py" = ["tests/test_skill_test_ui_common.py", "tests/test_skill_test_ui_visual.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/parity.py" = ["tests/test_skill_test_ui_pair.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/visual.py" = ["tests/test_skill_test_ui_visual.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/tokens.py" = ["tests/test_skill_test_ui_tokens.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/inventory_a11y.py" = ["tests/test_skill_test_ui_inventory_source.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/reference.py" = ["tests/test_skill_test_ui_reference.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/detect_ui.py" = ["tests/test_skill_test_ui_detect.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/checks_ui.py" = ["tests/test_skill_test_ui_checks.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/run_ui.py" = ["tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/sensors.py" = ["tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py"]

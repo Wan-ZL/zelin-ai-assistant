@@ -1,4 +1,10 @@
-"""Telemetry sync — default-ON batched upload of analytics events to Supabase.
+"""Telemetry upload — default-ON batched upload of analytics events to Supabase.
+
+CONTRACT §15（telemetry 开关 + consent 门）/ §16（features.analytics 隐私 gate，
+上传端同过）/ §19（密钥文件优先）。Entry point: ``python -m act.analytics_sync
+--once``（act/analytics_sync.py 只是 argparse 壳；本模块 P3a 前叫
+act/lib/analytics_sync.py，与入口同名——防腐 #9 禁同 basename 跨目录，故按
+object 改名 telemetry_upload）。
 
 The local JSONL log (``state/analytics/events.jsonl``, see act/lib/analytics.py)
 stays the source of truth and is NEVER modified or deleted here. This module
@@ -78,7 +84,7 @@ Transport = Callable[[List[dict]], None]
 # --------------------------------------------------------------------------- #
 # Device id — stable per-install uuid4, generated once into state/device_id.
 # --------------------------------------------------------------------------- #
-def _device_id() -> str:
+def device_id() -> str:
     try:
         val = DEVICE_ID_PATH.read_text(encoding="utf-8").strip()
         if val:
@@ -207,35 +213,135 @@ def _make_transport(supabase_url: str, key: str) -> Transport:
 # --------------------------------------------------------------------------- #
 # Consent gate — never upload before ANY consent surface existed.
 # --------------------------------------------------------------------------- #
+def _config_has_telemetry_block() -> bool:
+    """config.yaml has a top-level ``telemetry:`` key = a line starting at
+    column 0 (block or inline form); only the REAL config.yaml counts, never
+    config.example.yaml."""
+    try:
+        lines = config.CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    return any(line.startswith("telemetry:") for line in lines)
+
+
+def _overrides_have_telemetry_key() -> bool:
+    """settings_overrides.json carries ``telemetry`` or any ``telemetry.*`` key
+    (an explicit choice made in the UI)."""
+    try:
+        data = json.loads(
+            config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and any(
+        k == "telemetry" or k.startswith("telemetry.") for k in data)
+
+
 def consent_surfaced() -> bool:
     """True once at least one consent surface existed: the app wrote the
     shown-marker, the user's config.yaml explicitly has a ``telemetry:``
     block (explicit config = informed consent), or settings_overrides.json
     carries a telemetry key (an explicit choice made in the UI)."""
-    if CONSENT_MARKER_PATH.exists():
-        return True
-    try:
-        # top-level YAML key = a line starting at column 0 (block or inline
-        # form); only the REAL config.yaml counts, never config.example.yaml
-        for line in config.CONFIG_PATH.read_text(encoding="utf-8").splitlines():
-            if line.startswith("telemetry:"):
-                return True
-    except OSError:
-        pass
-    try:
-        data = json.loads(
-            config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and any(
-                k == "telemetry" or k.startswith("telemetry.") for k in data):
-            return True
-    except (OSError, ValueError):
-        pass
-    return False
+    return (CONSENT_MARKER_PATH.exists()
+            or _config_has_telemetry_block()
+            or _overrides_have_telemetry_key())
 
 
 # --------------------------------------------------------------------------- #
 # One sync pass
 # --------------------------------------------------------------------------- #
+class _Skip(Exception):
+    """本轮静默 no-op 的原因（stats["skipped"] 的值）——不是错误，不记事件。"""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _require_consent() -> None:
+    if not consent_surfaced():
+        # cron output is redirected to state/analytics_sync.log
+        print("telemetry sync: waiting for first-run consent surface — "
+              "nothing uploaded")
+        raise _Skip("consent_pending")
+
+
+def _supabase_url(cfg: config.Config) -> str:
+    url = str(cfg.telemetry_supabase_url or "").strip()
+    if not (cfg.telemetry_enabled and url):
+        raise _Skip("disabled")
+    return url
+
+
+def _endpoint(cfg: config.Config) -> Tuple[str, str]:
+    """(url, key) once every gate says upload; raises _Skip otherwise."""
+    if not analytics.feature_gate(cfg):
+        # features.analytics off（§16 隐私 gate）：本地写者已停，关闭前
+        # 积压在 events.jsonl 里的事件也不上传——关 = 彻底不出本机。
+        raise _Skip("analytics_off")
+    url = _supabase_url(cfg)
+    key = resolve_key(cfg)
+    if not key:
+        raise _Skip("no_key")
+    return url, key
+
+
+def _flush(send: Transport, batch: List[dict], stats: dict) -> None:
+    """Send one batch. TOCTOU（§16 追记）：run 开始后用户可能已关 flag——每个
+    batch 送出前重查**新鲜单快照** gate（feature_gate_fresh）：不吃 GATE_TTL
+    进程内缓存（那缓存是给高频 emit 省 parse 的，隐私重查吃它就成了盲窗）、
+    不复用本次 run 冻结的 cfg（冻结值看不见中途翻动），且每份配置源只读
+    一次——flag 值与损坏判定出自同一份 bytes，「load 到旧值 + intact 确认新
+    文件」的两次读取混用窗口不存在。每 500 行付一次 parse，代价可忽略。
+    关了立即停，余下积压留在本机；已送 batch 的游标已保存，不回滚——送出
+    的收不回来，只能不再送。"""
+    if not analytics.feature_gate_fresh():
+        raise _Skip("analytics_off")
+    send(batch)
+    stats["uploaded"] += len(batch)
+    stats["batches"] += 1
+
+
+def _stream(send: Transport, file_name: str, offset: int, dev: str, stats: dict) -> None:
+    """Upload every new complete line past ``offset`` in BATCH_SIZE batches,
+    saving the cursor after each uploaded batch (and past a malformed-only
+    tail)."""
+    batch: List[dict] = []
+    batch_end = offset
+    for raw, end in _complete_lines(analytics.EVENTS_PATH, offset):
+        batch_end = end
+        row = _to_row(raw, dev)
+        if row is None:
+            stats["malformed"] += 1
+            continue
+        batch.append(row)
+        if len(batch) >= BATCH_SIZE:
+            _flush(send, batch, stats)
+            _save_cursor(file_name, batch_end)
+            batch = []
+    _finish_stream(send, batch, file_name, batch_end, offset, stats)
+
+
+def _finish_stream(send: Transport, batch: List[dict], file_name: str,
+                   batch_end: int, offset: int, stats: dict) -> None:
+    """Tail batch (re-gated like every other) + cursor past whatever was read."""
+    if batch:
+        _flush(send, batch, stats)    # 尾批送出前同样重查（新鲜单快照）
+    if batch_end > offset:  # also past a malformed-only tail
+        _save_cursor(file_name, batch_end)
+
+
+def _report(stats: dict) -> None:
+    """Logged AFTER the cursor writes: this event is picked up by the NEXT
+    run, never re-entered in this one. Only the exception CLASS and a §25
+    failure id ride along (issue #37) — str(exc) can carry the upload URL
+    or a filesystem path and never leaves the machine."""
+    analytics.log_event("telemetry_sync", ok=stats["ok"],
+                        uploaded=stats["uploaded"],
+                        malformed=stats["malformed"] or None,
+                        error_type=stats.get("error_type"),
+                        failure_id=failures.classify(stats["error"]))
+
+
 def sync_once(cfg: Optional[config.Config] = None,
               transport: Optional[Transport] = None) -> dict:
     """Upload all new complete events in batches. Never raises.
@@ -247,81 +353,19 @@ def sync_once(cfg: Optional[config.Config] = None,
     stats: dict = {"ok": True, "uploaded": 0, "batches": 0,
                    "malformed": 0, "error": None}
     try:
-        if not consent_surfaced():
-            # cron output is redirected to state/analytics_sync.log
-            print("telemetry sync: waiting for first-run consent surface — "
-                  "nothing uploaded")
-            stats["skipped"] = "consent_pending"
-            return stats
+        _require_consent()
         cfg = cfg or config.load_config()
-        if not analytics.feature_gate(cfg):
-            # features.analytics off（§16 隐私 gate）：本地写者已停，关闭前
-            # 积压在 events.jsonl 里的事件也不上传——关 = 彻底不出本机。
-            stats["skipped"] = "analytics_off"
-            return stats
-        url = str(cfg.telemetry_supabase_url or "").strip()
-        if not (cfg.telemetry_enabled and url):
-            stats["skipped"] = "disabled"
-            return stats
-        key = _resolve_key(cfg)
-        if not key:
-            stats["skipped"] = "no_key"
-            return stats
-
+        url, key = _endpoint(cfg)
         send = transport or _make_transport(url, key)
-        device_id = _device_id()
+        dev = device_id()
         file_name = analytics.EVENTS_PATH.name
-        offset = _cursor_offset(file_name)
-
-        batch: List[dict] = []
-        batch_end = offset
-        for raw, end in _complete_lines(analytics.EVENTS_PATH, offset):
-            row = _to_row(raw, device_id)
-            if row is None:
-                stats["malformed"] += 1
-            else:
-                batch.append(row)
-            batch_end = end
-            if len(batch) >= BATCH_SIZE:
-                # TOCTOU（§16 追记）：run 开始后用户可能已关 flag——每个
-                # batch 送出前重查**新鲜单快照** gate（feature_gate_fresh）：
-                # 不吃 GATE_TTL 进程内缓存（那缓存是给高频 emit 省 parse
-                # 的，隐私重查吃它就成了盲窗）、不复用本次 run 冻结的 cfg
-                # （冻结值看不见中途翻动），且每份配置源只读一次——flag 值
-                # 与损坏判定出自同一份 bytes，「load 到旧值 + intact 确认新
-                # 文件」的两次读取混用窗口不存在。每 500 行付一次 parse，
-                # 代价可忽略。关了立即停，余下积压留在本机；已送 batch 的
-                # 游标已保存，不回滚——送出的收不回来，只能不再送。
-                if not analytics.feature_gate_fresh():
-                    stats["skipped"] = "analytics_off"
-                    return stats
-                send(batch)
-                _save_cursor(file_name, batch_end)
-                stats["uploaded"] += len(batch)
-                stats["batches"] += 1
-                batch = []
-        if batch:
-            # 同上：尾批送出前重查（同样走新鲜单快照，不吃缓存）
-            if not analytics.feature_gate_fresh():
-                stats["skipped"] = "analytics_off"
-                return stats
-            send(batch)
-            stats["uploaded"] += len(batch)
-            stats["batches"] += 1
-        if batch_end > offset:  # also past a malformed-only tail
-            _save_cursor(file_name, batch_end)
+        _stream(send, file_name, _cursor_offset(file_name), dev, stats)
+    except _Skip as skip:
+        stats["skipped"] = skip.reason
+        return stats
     except Exception as exc:  # noqa: BLE001 - telemetry must never break anything
         stats["ok"] = False
         stats["error"] = str(exc)[:120]          # local stats only (CLI / tests)
         stats["error_type"] = type(exc).__name__
-
-    # Logged AFTER the cursor writes: this event is picked up by the NEXT run,
-    # never re-entered in this one. Only the exception CLASS and a §25
-    # failure id ride along (issue #37) — str(exc) can carry the upload URL
-    # or a filesystem path and never leaves the machine.
-    analytics.log_event("telemetry_sync", ok=stats["ok"],
-                        uploaded=stats["uploaded"],
-                        malformed=stats["malformed"] or None,
-                        error_type=stats.get("error_type"),
-                        failure_id=failures.classify(stats["error"]))
+    _report(stats)
     return stats

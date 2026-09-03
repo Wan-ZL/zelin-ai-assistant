@@ -6,6 +6,10 @@ web/src/styles/tokens.css（truth），可读镜像表 web/src/styles/typeScale.
 （typeScale.test.ts）钉 CSS ↔ 表；本文件钉 表 ↔ Swift——被引用的那一行必须真的写着
 `.font(.system(size: N[, weight: .W][, design: .monospaced]))`，否则表在说谎。
 web 侧不许 import node:*（@types/node 不在 dev 白名单），所以读 Swift 的这一半在这里。
+token 值的固定写法（§54.1 第 12 项，显示偏好）：
+``var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh> var(--font-<sans|mono>)``——
+字重经 --w-* 吃 --weight-shift、字号乘 --text-scale；原生 px 与 SF 字重名仍逐字可读，本文件
+钉的就是那两个字面量。
 P8 删 mac/ 时把本文件改成 tombstone（§6）。
 """
 import re
@@ -27,7 +31,8 @@ _ENTRY = re.compile(
     r'(?P<mono>,\s*mono:\s*true)?\s*\}',
     re.S,
 )
-_FONT = re.compile(r"^(\d{3}) (\d+)px/[\d.]+(?:px)? var\(--font-(sans|mono)\)$")
+_FONT = re.compile(r"^var\(--w-(regular|medium|semibold|bold)\) calc\((\d+)px \* var\(--text-scale\)\)"
+    r"/(?:[\d.]+|calc\(\d+px \* var\(--text-scale\)\)) var\(--font-(sans|mono)\)$")
 
 
 def _entries():
@@ -73,7 +78,8 @@ class TypeScaleMirrorTestCase(unittest.TestCase):
                 m = _FONT.match(e["font"])
                 self.assertIsNotNone(m, "font 简写格式不对：%s" % e["font"])
                 weight, size, family = m.groups()
-                self.assertEqual(int(weight), WEIGHT_OF[e["weight"]])
+                self.assertEqual(weight, e["weight"])
+                self.assertIn(weight, WEIGHT_OF)
                 self.assertEqual(int(size), int(e["size"]))
                 self.assertEqual(family, "mono" if e["mono"] else "sans")
 

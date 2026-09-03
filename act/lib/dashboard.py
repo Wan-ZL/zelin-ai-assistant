@@ -19,11 +19,13 @@ import datetime as _dt
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import (card_summary, config, deploy_state, failures, health, policy,
-                     recap_store, risk, self_improve, sources, steer, titles, transcripts)
+from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
+                     policy, radar_health, recap_store, risk, self_improve, sources, steer,
+                     titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -98,8 +100,8 @@ def _transcript_info_cached(sid: str) -> Optional[tuple]:
 # --------------------------------------------------------------------------- #
 # claude agents --json --all
 # --------------------------------------------------------------------------- #
-def _run_claude_agents() -> list[dict]:
-    """Return the raw list of live agents. Defensive: never raises."""
+def _claude_agents_stdout() -> Optional[str]:
+    """Raw stdout of ``claude agents --json --all``; None on any failure."""
     try:
         proc = subprocess.run(
             ["claude", "agents", "--json", "--all"],
@@ -108,22 +110,35 @@ def _run_claude_agents() -> list[dict]:
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     if proc.returncode != 0 or not proc.stdout.strip():
-        return []
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return []
-    if isinstance(data, dict):
-        # tolerate {"agents": [...]} or {"sessions": [...]}
-        for k in ("agents", "sessions", "items", "data"):
-            if isinstance(data.get(k), list):
-                return data[k]
-        return []
+        return None
+    return proc.stdout
+
+
+def _agent_list(data: Any) -> list[dict]:
+    """Roster payload -> list. Tolerates ``{"agents": [...]}`` /
+    ``{"sessions": [...]}`` / ``{"items"|"data": [...]}`` wrappers."""
     if isinstance(data, list):
         return data
+    if not isinstance(data, dict):
+        return []
+    for k in ("agents", "sessions", "items", "data"):
+        if isinstance(data.get(k), list):
+            return data[k]
     return []
+
+
+def _run_claude_agents() -> list[dict]:
+    """Return the raw list of live agents. Defensive: never raises."""
+    stdout = _claude_agents_stdout()
+    if stdout is None:
+        return []
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return []
+    return _agent_list(data)
 
 
 def _norm_agent(a: dict) -> dict:
@@ -278,27 +293,52 @@ def _as_list(plan: Any) -> list:
     return lines
 
 
+def _quote(s: dict) -> str:
+    return s.get("quote") or s.get("ref") or ""
+
+
+def _source_row(s: dict, cfg: config.Config) -> dict:
+    # Swift 端 Source 四个字段都是非可选 String（合成 Decodable）：任何一个
+    # null 会让所在数组整体解码失败（如 debt 整列被 `?? []` 清空）——所以这里
+    # 把 None 一律归一成空串（契约 B 的 {who,channel,date,quote} 同形不变）。
+    d = s.get("date")
+    return {
+        "who": s.get("who") or cfg.requester_display(),
+        "channel": s.get("channel") or "",
+        "date": str(d) if d is not None else "",
+        "quote": _quote(s),
+        # §10 add-only（issue #7）：出生 capture 的 inbox stem；Swift
+        # Source 合成 Decodable 忽略多余键，web 可选读
+        **_opt("capture_id", s.get("capture_id")),
+    }
+
+
 def _source_view(req: Requirement, cfg: config.Config) -> list[dict]:
-    out = []
-    for s in req.sources or []:
-        if not isinstance(s, dict):
-            continue
-        # Swift 端 Source 四个字段都是非可选 String（合成 Decodable）：任何一个
-        # null 会让所在数组整体解码失败（如 debt 整列被 `?? []` 清空）——所以这里
-        # 把 None 一律归一成空串（契约 B 的 {who,channel,date,quote} 同形不变）。
-        d = s.get("date")
-        out.append(
-            {
-                "who": s.get("who") or cfg.requester_display(),
-                "channel": s.get("channel") or "",
-                "date": str(d) if d is not None else "",
-                "quote": s.get("quote") or s.get("ref") or "",
-                # §10 add-only（issue #7）：出生 capture 的 inbox stem；Swift
-                # Source 合成 Decodable 忽略多余键，web 可选读
-                **_opt("capture_id", s.get("capture_id")),
-            }
-        )
-    return out
+    return [_source_row(s, cfg) for s in (req.sources or []) if isinstance(s, dict)]
+
+
+def _summary(req: Requirement) -> str:
+    """Card summary, falling back to the title (lane rows never show blank)."""
+    return req.summary or _s(req.title)
+
+
+def _name(req: Requirement) -> str:
+    """Session-lane display name: title, else the id."""
+    return _s(req.title or req.id)
+
+
+def _trash_kind(req: Requirement) -> str:
+    return "debt" if req.prev_status == State.DETECTED.value else "suggestion"
+
+
+def _dod(req: Requirement) -> list:
+    return list(req.definition_of_done or [])
+
+
+def _execution(req: Requirement) -> dict:
+    """``execution`` as a dict — 手改 YAML 把它写成字符串时按"无 execution"
+    降级，不炸整卡。"""
+    return req.execution if isinstance(req.execution, dict) else {}
 
 
 def _archived_view(req: Requirement) -> dict:
@@ -308,9 +348,9 @@ def _archived_view(req: Requirement) -> dict:
     return {
         "id": _s(req.id),
         "title": _s(req.title),
-        "summary": req.summary or _s(req.title),
+        "summary": _summary(req),
         **_title_fields(req),
-        "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
+        "kind": _trash_kind(req),
         "archived_at": req.archived_at,
         "archive_reason": req.archive_reason,
         "prev_status": req.prev_status,
@@ -367,35 +407,15 @@ def _iso_now() -> str:
 
 
 def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
-    """ISO hard-delete deadline for a trash row (§40): trashed_at + retention.
+    """ISO hard-delete deadline for a trash row (§40.5): trashed_at + retention.
 
     None (key emitted as null) when the row is pinned, retention is disabled
     (``trash_retention_days <= 0``), or ``trashed_at`` doesn't parse — EXACTLY
     the conditions under which actd.purge_trash skips the row, so the countdown
-    never promises a purge that isn't coming. The parse below mirrors
-    actd._parse_iso byte-for-byte (NOT the laxer _epoch, which accepts bare
-    numerics purge_trash rejects — a numeric trashed_at used to show a red
-    countdown for a purge that would never happen)."""
-    days = int(cfg.trash_retention_days or 0)
-    if days <= 0 or req.permanent:
-        return None
-    ts = req.trashed_at
-    if not ts:
-        return None
-    s = str(ts).strip().replace("Z", "+00:00")
-    try:
-        trashed = _dt.datetime.fromisoformat(s)
-    except (TypeError, ValueError):
-        try:
-            trashed = _dt.datetime.strptime(str(ts).strip(),
-                                            "%Y-%m-%dT%H:%M:%SZ")
-            trashed = trashed.replace(tzinfo=_dt.timezone.utc)
-        except (TypeError, ValueError):
-            return None
-    if trashed.tzinfo is None:
-        trashed = trashed.replace(tzinfo=_dt.timezone.utc)
-    dt = trashed.astimezone(_dt.timezone.utc) + _dt.timedelta(days=days)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    never promises a purge that isn't coming. §70: one judge for both sides
+    (maintenance.purge_at / purge_due) — loop-trashed rows (stale:* /
+    daily-merge:*) carry their own, longer retention."""
+    return maintenance.purge_at(req, cfg)
 
 
 def _epoch(ts: Any) -> Optional[int]:
@@ -486,9 +506,8 @@ def _capture_id(req: Requirement) -> Optional[str]:
 
 
 def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
-    """The add-only tail of a needs_approval (card_sent) row — kept out of
-    ``build_dashboard._project`` so the projection body stays under the
-    §58 function-length ledger. Every key here is optional/add-only:
+    """The add-only tail of a needs_approval (card_sent) row. Every key here is
+    optional/add-only:
 
     - ``reraised`` / ``reraised_note`` (v0.20.0 §5 「回锅」marker: this
       proposal is a re-raise of a card the user already accepted — amber
@@ -548,6 +567,11 @@ def _notes_text(req: Requirement):
     return notes
 
 
+def _former_titles(req: Requirement) -> list:
+    return [str(x) for x in (getattr(req, "former_titles", None) or [])
+            if str(x).strip()]
+
+
 def _title_fields(req: Requirement) -> dict:
     """The §37 add-only row fields shared by every lane projection. Empty
     optionals are omitted (not null) so the payload only grows where there is
@@ -566,8 +590,7 @@ def _title_fields(req: Requirement) -> dict:
     }
     if getattr(req, "user_titled", False):
         out["user_titled"] = True
-    former = [str(x) for x in (getattr(req, "former_titles", None) or [])
-              if str(x).strip()]
+    former = _former_titles(req)
     if former:
         out["former_titles"] = former
     notes = _notes_text(req)   # §38: tail-aligned clip (fold handles survive)
@@ -579,6 +602,68 @@ def _title_fields(req: Requirement) -> dict:
 # --------------------------------------------------------------------------- #
 # merge_suggestions partition (merge-review 契约 六)
 # --------------------------------------------------------------------------- #
+def _job_str(data: dict, key: str) -> Optional[str]:
+    v = data.get(key)
+    return str(v) if v not in (None, "") else None
+
+
+def _str_list(v: Any) -> list:
+    return [str(i) for i in v] if isinstance(v, list) else []
+
+
+def _merge_group(g: dict) -> dict:
+    reason = g.get("reason")
+    return {
+        "primary": str(g.get("primary") or ""),
+        "ids": _str_list(g.get("ids")),
+        "reason": str(reason) if reason not in (None, "") else None,
+    }
+
+
+def _merge_groups(groups: Any) -> Optional[list]:
+    """partition（§21 多对多分组）的分组方案 — add-only key：只在作业带着
+    合法形状时外发（老作业/其余 verdict 连键都没有，Swift decodeIfPresent
+    向后兼容）；坏形条目逐个跳过，同本分区"损坏跳过"的既有约定。"""
+    if not isinstance(groups, list):
+        return None
+    g_out = [_merge_group(g) for g in groups if isinstance(g, dict)]
+    return g_out or None
+
+
+def _merge_row(path: Path, data: dict, status: str) -> dict:
+    item = {
+        "id": str(data.get("id") or path.stem),
+        "ids": _str_list(data.get("ids")),
+        "status": status,
+        "verdict": _job_str(data, "verdict"),
+        "primary": _job_str(data, "primary"),
+        "rationale": _job_str(data, "rationale"),
+        "action_plan": _str_list(data.get("action_plan")),
+        "confidence": _job_str(data, "confidence"),
+        "error": _job_str(data, "error"),
+        "requested_at": _epoch(data.get("requested_at")),
+    }
+    groups = _merge_groups(data.get("groups"))
+    if groups:
+        item["groups"] = groups
+    return item
+
+
+def _merge_item(path: Path) -> Optional[dict]:
+    """One job file -> its partition row; None = skipped (corrupt / non-dict /
+    dismissed / unknown status)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None  # 损坏文件跳过，绝不拖垮整个 dashboard pass
+    if not isinstance(data, dict):
+        return None
+    status = str(data.get("status") or "").strip().lower()
+    if status not in _MERGE_EMIT_STATUSES:
+        return None  # dismissed / 未知状态不发（契约 六）
+    return _merge_row(path, data, status)
+
+
 def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
     """Project ``state/merge/*.json`` into the merge_suggestions partition.
 
@@ -589,63 +674,11 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
     is deliberately NOT forwarded. Newest request first.
     """
     d = Path(merge_dir) if merge_dir is not None else MERGE_DIR
-    out: list[dict] = []
     try:
         files = sorted(d.glob("*.json"))
     except OSError:
-        return out
-    for path in files:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue  # 损坏文件跳过，绝不拖垮整个 dashboard pass
-        if not isinstance(data, dict):
-            continue
-        status = str(data.get("status") or "").strip().lower()
-        if status not in _MERGE_EMIT_STATUSES:
-            continue  # dismissed / 未知状态不发（契约 六）
-
-        def _opt_str(key: str) -> Optional[str]:
-            v = data.get(key)
-            return str(v) if v not in (None, "") else None
-
-        ids = data.get("ids")
-        action_plan = data.get("action_plan")
-        item = {
-            "id": str(data.get("id") or path.stem),
-            "ids": [str(i) for i in ids] if isinstance(ids, list) else [],
-            "status": status,
-            "verdict": _opt_str("verdict"),
-            "primary": _opt_str("primary"),
-            "rationale": _opt_str("rationale"),
-            "action_plan": (
-                [str(s) for s in action_plan]
-                if isinstance(action_plan, list) else []
-            ),
-            "confidence": _opt_str("confidence"),
-            "error": _opt_str("error"),
-            "requested_at": _epoch(data.get("requested_at")),
-        }
-        # partition（§21 多对多分组）的分组方案 — add-only key：只在作业带着
-        # 合法形状时外发（老作业/其余 verdict 连键都没有，Swift decodeIfPresent
-        # 向后兼容）；坏形条目逐个跳过，同本分区"损坏跳过"的既有约定。
-        groups = data.get("groups")
-        if isinstance(groups, list):
-            g_out = []
-            for g in groups:
-                if not isinstance(g, dict):
-                    continue
-                gids = g.get("ids")
-                reason = g.get("reason")
-                g_out.append({
-                    "primary": str(g.get("primary") or ""),
-                    "ids": ([str(i) for i in gids]
-                            if isinstance(gids, list) else []),
-                    "reason": str(reason) if reason not in (None, "") else None,
-                })
-            if g_out:
-                item["groups"] = g_out
-        out.append(item)
+        return []
+    out = [item for item in map(_merge_item, files) if item is not None]
     # newest request first (stable: filename order breaks ties)
     out.sort(key=lambda s: s.get("requested_at") or 0, reverse=True)
     return out
@@ -654,6 +687,11 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # v-next 投影辅助（amendments §51/§M6/M8.3 C-2·C-3·C-4，全部 add-only optional）
 # --------------------------------------------------------------------------- #
+def _first_blocking(state: dict) -> Any:
+    blocking = state.get("blocked_by")
+    return blocking[0] if isinstance(blocking, list) and blocking else None
+
+
 def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
     """M1.c token → 结构化 wire 形（M8.3 C-2 终裁为 canonical）：
     dependency → {kind: waiting_card, blocking_id}｜concurrency → {kind:
@@ -662,8 +700,7 @@ def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
     kind 值永不复用。"""
     token = policy.queued_reason(req, state)
     if token == "dependency":
-        blocking = state.get("blocked_by")
-        first = blocking[0] if isinstance(blocking, list) and blocking else None
+        first = _first_blocking(state)
         out = {"kind": "waiting_card"}
         if first:
             # 主键（lineage 口径）。§60 追记：blocked_by 至今无生产者（T-26
@@ -734,6 +771,55 @@ def _device_label() -> Optional[str]:
     return label or None
 
 
+def _live_config(cfg: config.Config) -> config.Config:
+    """配置**现读**——actd 启动时冻结的 cfg 在 App 翻开关后失真，投影必须
+    跟着磁盘上的真值走（load_config 失败才回退传入的 cfg）。"""
+    try:
+        return config.load_config()
+    except Exception:  # noqa: BLE001 - 坏 config 回退调用方快照，不崩投影
+        return cfg
+
+
+def _radar_health_data() -> dict:
+    try:
+        data = radar_health.load_radar_health()
+    except Exception:  # noqa: BLE001 - 健康文件坏了不许崩 dashboard
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _source_enabled(cfg: config.Config, src: str) -> bool:
+    try:
+        return sources.enabled(cfg, src)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _opt_text(v: Any) -> Optional[str]:
+    return v if isinstance(v, str) and v else None
+
+
+def _source_health(src: str, on: bool, data: dict, now: _dt.datetime) -> dict:
+    # 关掉的源不带健康摘要：清理僵尸条目发生在 liveness 巡检（同 pass 的
+    # dashboard 构建在它之前）——不在这里屏蔽的话，关源后的第一个 pass
+    # 会把旧 last_ok/skip_reason 投影出去（关着 = null 的契约被破一拍）。
+    entry = data.get(src) if on else None
+    entry = entry if isinstance(entry, dict) else {}
+    return {
+        "enabled": on,
+        "last_ok": _opt_text(entry.get("last_ok")),
+        # §48.4 出机清洗：skip_reason 只放行闭集词表码（词表外折叠 "error"，
+        # mcp_failed:<detail> 去尾）——dashboard 随 syncd 出机，radar 写进
+        # health 的自由文本（错误摘录/本机路径）不许跟着出去。
+        "skip_reason": _opt_text(radar_health.public_skip_reason(entry.get("skip_reason"))),
+        # stale **不吃** actd 的睡醒/冷启动宽限（§48.4）：投影是无状态的
+        # 磁盘真值函数（`python -m act.lib.dashboard` 一次性进程也在跑，
+        # 进程级宽限状态会让 CLI 构建永远压掉 stale）；告警宽限是通知侧
+        # 的关切。睡醒后的一轮假 stale 随雷达补跑自愈，消费者自行防抖。
+        "stale": bool(on and sources.is_stale(src, entry, now)),
+    }
+
+
 def _radar_sources(cfg: config.Config) -> dict:
     """§48 add-only 投影 ``radar_sources``：源开关 intent + 健康摘要一处出。
 
@@ -745,48 +831,597 @@ def _radar_sources(cfg: config.Config) -> dict:
     ``enabled`` 来自真源 sources.enabled()（App 侧的 intent 判断自此读这里，
     不再猜「凭证文件非空」）；``last_ok``/``skip_reason`` 摘自 radar_health
     条目（关掉的源条目已被清除 → null）；``stale`` = 开着且超 liveness 阈值
-    没有成功信号（告警的看板投影，恢复后自动变回 false）。配置**现读**——
-    actd 启动时冻结的 cfg 在 App 翻开关后失真，投影必须跟着磁盘上的真值走
-    （load_config 失败才回退传入的 cfg）。Never raises。
+    没有成功信号（告警的看板投影，恢复后自动变回 false）。Never raises。
     """
-    try:
-        cfg = config.load_config()
-    except Exception:  # noqa: BLE001 - 坏 config 回退调用方快照，不崩投影
-        pass
-    out: dict = {}
-    try:
-        data = health.load_radar_health()
-    except Exception:  # noqa: BLE001 - 健康文件坏了不许崩 dashboard
-        data = {}
+    cfg = _live_config(cfg)
+    data = _radar_health_data()
     now = _dt.datetime.now(_dt.timezone.utc)
-    for src in sources.SOURCES:
+    return {src: _source_health(src, _source_enabled(cfg, src), data, now)
+            for src in sources.SOURCES}
+
+
+# --------------------------------------------------------------------------- #
+# lane rows — one builder per row shape; key ORDER is wire contract (golden:
+# tests/test_dashboard_golden_projection.py pins every builder byte-for-byte)
+# --------------------------------------------------------------------------- #
+@dataclass
+class _Ctx:
+    """Per-build inputs every lane builder may need."""
+    cfg: config.Config
+    agent_idx: dict
+    # v-next queued_reason 快照（§51）：并发口径与 actd.dispatch_approved 一致
+    # （EXECUTING 且带 session 的卡数）。预算口径 retired v0.48.7（D9）。
+    snap: dict
+
+
+def _repeated(req: Requirement) -> int:
+    return _int_or(req.repeated_mentions, 1) or 1
+
+
+def _silent_merged(req: Requirement) -> int:
+    return _int_or(getattr(req, "silent_merge_count", 0), 0) or 0
+
+
+def _card_sent_row(req: Requirement, ctx: _Ctx) -> dict:
+    cfg = ctx.cfg
+    cost, show_cost, cost_state = _cost_view(req, cfg)
+    target_repo, target_name, target_kind = _target_view(req, cfg)
+    ex = _execution(req)
+    return {
+        "id": _s(req.id),
+        "title": _s(req.title),
+        "summary": _summary(req),
+        **_title_fields(req),
+        "target_repo": target_repo,
+        "target_name": target_name,
+        "target_kind": target_kind,
+        "tier": _s(req.tier),
+        "tier_hint": TIER_HINTS.get(_s(req.tier), ""),
+        # W17 add-only：生效档位（外部来源强制 T2；否则同声明 tier）。
+        # v0.48.1（§50）：外部出身 = 显式 origin_trust=external 章
+        # **或** sources 现算为 external——缺章卡也从 sources 现算，
+        # 不再恒等于 tier。审批语义仍由 effective_tier 决定，
+        # 客户端 decodeIfPresent 兼容（缺字段回落 tier）。
+        "effective_tier": risk.effective_tier(req).tier,
+        "hardness": req.hardness,
+        "deadline": req.deadline,
+        "days_left": days_left(req.deadline),
+        "repeated": _repeated(req),
+        # §44 add-only: silent fold-in events (0 = never)
+        "silent_merged": _silent_merged(req),
+        "cost_usd": cost,
+        "show_cost": show_cost,
+        # §40 add-only: "estimated"|"unknown" — the app renders
+        # 成本未知 for unknown instead of an implied $0.
+        "cost_state": cost_state,
+        "green_sign": bool(req.green_sign_required),
+        "disagreement": req.disagreement,
+        "improvement_of": req.improvement_of,
+        "sources": _source_view(req, cfg),
+        "plan": _as_list(req.plan),
+        "outputs": list(req.outputs or []),
+        "dod": _dod(req),
+        "processing": False,
+        "delivery_mode": _delivery_mode(req),
+        **_proposal_extras(req, ex, cfg),
+    }
+
+
+def _raising_row(req: Requirement, ctx: _Ctx) -> dict:
+    # AI is expanding this debt into a proposal — show it in 待审批 as a
+    # greyed spinner placeholder so the click gives immediate feedback.
+    return {
+        "id": _s(req.id),
+        "title": _s(req.title),
+        "summary": _summary(req),
+        **_title_fields(req),
+        "tier": _s(req.tier),
+        "effective_tier": risk.effective_tier(req).tier,  # W17 add-only
+        "tier_hint": "AI 研究中",
+        "processing": True,
+        "sources": [],
+        "plan": [],
+        "dod": [],
+        "show_cost": False,
+        "delivery_mode": _delivery_mode(req),
+        # v-next add-only（§50）；§10 capture_id（issue #7）——占位
+        # 行就带，客户端对账「我刚输入的那条」不用等扩写完成
+        **_opt("origin_trust", getattr(req, "origin_trust", None)),
+        **_opt("capture_id", _capture_id(req)),
+    }
+
+
+def _detected_row(req: Requirement, ctx: _Ctx) -> dict:
+    return {
+        "id": _s(req.id),
+        "title": _s(req.title),
+        "summary": _summary(req),
+        **_title_fields(req),
+        "hardness": req.hardness,
+        "type": req.type,
+        "sources": _source_view(req, ctx.cfg),
+    }
+
+
+def _trash_row(req: Requirement, ctx: _Ctx) -> dict:
+    return {
+        "id": _s(req.id),
+        "title": _s(req.title),
+        "summary": _summary(req),
+        **_title_fields(req),
+        "kind": _trash_kind(req),
+        "trashed_at": req.trashed_at,
+        "trash_reason": req.trash_reason,
+        "permanent": bool(req.permanent),
+        # §40 add-only: when actd WILL hard-delete this row (null =
+        # pinned / retention off / unparsable trashed_at = never).
+        "purge_at": _purge_at(req, ctx.cfg),
+        "type": req.type,
+        "hardness": req.hardness,
+    }
+
+
+def _halted_question(ex: dict) -> tuple[str, Optional[str]]:
+    """(question, last_error_id) for a §4 dispatch-halted row. question 是
+    固定文案：这里没有 agent 在提问，说的是事实和唯一出口（停止 → 退回
+    提案 → 重批）。"""
+    fid = failures.classify(ex.get("last_error"))
+    hint = failures.user_message(fid) or _s(ex.get("last_error")) or ""
+    n = int(ex.get("dispatch_class_streak") or ex.get("dispatch_attempts") or 0)
+    question = failures.pick(
+        f"派发连续失败 {n} 次，已停止自动重试：{hint}。修好原因后点"
+        "「停止」选「退回提案」，再重新批准即恢复派发",
+        f"Launch failed {n} times in a row; auto-retry stopped: {hint}. "
+        "Fix the cause, then press \"Stop\" → \"Discard & re-propose\" "
+        "and approve again to resume")
+    return question, fid
+
+
+def _halted_row(req: Requirement, ctx: _Ctx) -> dict:
+    # §4 派发风暴刹车已触发：卡仍 approved，但 actd 不再重试——投影进
+    # 「需输入」列（blocked 行形），而不是在 运行中 列顶着「排队中」
+    # 装忙（宪法 3：诚实的健康报告）。
+    ex = _execution(req)
+    question, fid = _halted_question(ex)
+    return {
+        "id": _s(req.id),
+        "name": _name(req),
+        **_title_fields(req),
+        "session_id": None,
+        "short_id": None,
+        "copy_cmd": None,
+        "agent_name": None,
+        "state": "blocked",
+        "waiting_for": None,
+        "question": question,
+        "last_error": ex.get("last_error"),
+        "last_error_id": fid,
+        # add-only（decodeIfPresent）：告诉客户端这是刹车行，不是 agent
+        # 在等回答——web 据此隐藏「回答…」、显示派发次数 chip。
+        "dispatch_halted": True,
+        "dispatch_attempts": int(ex.get("dispatch_attempts") or 0),
+        **_opt("origin_trust", getattr(req, "origin_trust", None)),
+    }
+
+
+def _queued_row(req: Requirement, ctx: _Ctx) -> dict:
+    # §2 queued 项：已批准但还没（成功）派发 —— 混入 running 分区，✅ 一点
+    # 下去立刻有回显。没有会话可 attach，所以无 session_id/copy_cmd；
+    # dispatch_error = 上次派发失败原因（重试成功后消失）。
+    ex = _execution(req)
+    # v-next §51：排队原因 chip（结构化 wire 形，C-2）。快照口径与
+    # actd.dispatch_approved 的闸完全一致；blocked_by 依赖字段未立法
+    # （T-26），现行只有 concurrency 一因（budget retired v0.48.7，D9）。
+    # 与 dispatch_error 并存不混写。
+    qr = _queued_reason_view(req, ctx.snap)
+    return {
+        "id": _s(req.id),
+        "name": _name(req),
+        **_title_fields(req),
+        "state": "queued",
+        "summary": req.summary or None,
+        "plan": _as_list(req.plan),
+        "dod": _dod(req),
+        "delivery_mode": _delivery_mode(req),
+        "dispatch_error": ex.get("last_error") or None,
+        # §25: classification id alongside the raw text (None when
+        # unknown — Swift falls back to the raw string + AI fix).
+        "dispatch_error_id": failures.classify(ex.get("last_error")),
+        **_opt("queued_reason", qr),
+        **_opt("origin_trust", getattr(req, "origin_trust", None)),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# session lanes (executing / review / delivered) — shared roster join
+# --------------------------------------------------------------------------- #
+@dataclass
+class _Session:
+    """The roster join for one card: what every session-lane row emits."""
+    name: str
+    cwd: str
+    state: str
+    resume_sid: Any
+    short_id: Any
+    copy_cmd: Optional[str]
+    agent_name: Any
+    agent: dict   # roster record or {} (agent not found yet)
+
+
+def _resume_cmd(sid_for_resume: str) -> Optional[str]:
+    """``--resume`` is DIRECTORY-scoped (transcripts key to the session cwd,
+    usually the agent's worktree) -> prefix with cd so the copied command
+    works from any terminal. No session id at all — emit NO command rather
+    than guess (an empty sid used to glob-bind an unrelated transcript)."""
+    tinfo = _transcript_info_cached(sid_for_resume) if sid_for_resume else None
+    if tinfo:
+        # full UUID + the transcript's LAST cwd (the agent's worktree) —
+        # both required for --resume; the roster shows the launch dir,
+        # which is the wrong place to resume from.
+        return f"cd '{tinfo[1]}' && claude --resume {tinfo[0]}"
+    if sid_for_resume:
+        return f"claude --resume {sid_for_resume}"
+    return None
+
+
+def _copy_cmd(agent: dict, short_id: Any, resume_sid: Any) -> Optional[str]:
+    """Correct command by PROCESS liveness, not task state: even a task whose
+    work is "done" keeps its bg process alive (idle) for ~1h and ``--resume``
+    errors with "currently running as a background agent". ``pid`` is present
+    in claude agents --json ONLY while the process is alive -> attach (roster-
+    global, no cd); once it exits (pid gone) -> --resume."""
+    if agent.get("pid"):
+        return f"claude attach {short_id}"
+    return _resume_cmd(str(resume_sid or short_id or ""))
+
+
+def _roster_agent(ex: dict, ctx: _Ctx) -> dict:
+    """The joined roster record for the card's session, {} when none."""
+    sid = ex.get("session_id")
+    agent = ctx.agent_idx.get(str(sid)) if sid else None
+    return agent or {}
+
+
+def _session_name(req: Requirement, a: dict) -> str:
+    """prefer the requirement title: claude uses the (huge) injected prompt
+    as the agent "name", which is useless to display."""
+    return _s(req.title or a.get("name") or req.id)
+
+
+def _session_cwd(req: Requirement, a: dict, cfg: config.Config) -> str:
+    return a.get("cwd") or req.target_repo or str(cfg.target_repo_path)
+
+
+def _session_for(req: Requirement, ex: dict, ctx: _Ctx) -> _Session:
+    sid = ex.get("session_id")
+    a = _roster_agent(ex, ctx)
+    # emit the FULL sessionId for the `claude --resume` copy: dispatch
+    # stored the SHORT id, but the resume picker matches the full UUID.
+    resume_sid = a.get("session_id") or sid
+    short_id = a.get("short_id") or sid
+    return _Session(
+        name=_session_name(req, a),
+        cwd=_session_cwd(req, a, ctx.cfg),
+        state=a.get("state") or "unknown",
+        resume_sid=resume_sid,
+        short_id=short_id,
+        copy_cmd=_copy_cmd(a, short_id, resume_sid),
+        agent_name=a.get("name"),
+        agent=a,
+    )
+
+
+def _delivered_row(req: Requirement, ex: dict, sx: _Session) -> dict:
+    # §11 已验收 — archive row
+    return {
+        "id": _s(req.id),
+        "name": sx.name,
+        **_title_fields(req),
+        "session_id": sx.resume_sid,
+        "short_id": sx.short_id,
+        "copy_cmd": sx.copy_cmd,
+        "agent_name": sx.agent_name,
+        "state": "delivered",
+        "cwd": sx.cwd,
+        "summary": req.summary or None,
+        "delivered_summary": ex.get("delivered_summary"),
+        "accepted_at": _epoch(ex.get("accepted_at")),
+        "dod": _dod(req),
+        **_assessment_view(req),   # §64 摘要一句（评于待验收期）
+    }
+
+
+def _from_review_row(req: Requirement, ex: dict, sx: _Session) -> dict:
+    # §30 fix: a delivered 待验收 card whose session is actively WORKING again
+    # (user `claude attach` + real work — e.g. a follow-up deep-research)
+    # shows in 运行中 while it runs, instead of sitting stranded in 待验收
+    # with only a badge while the 运行中 lane reads 0. Registry status stays
+    # review (NO state-machine flip) — so the ✓验收/↩︎打回 verdict and the
+    # delivered draft are preserved; when the session settles it falls
+    # straight back into the review branch, refreshed by
+    # _reconcile_review_attach's re-harvest. `from_review` lets the app label
+    # it, and the stop button routes via stop_to_review / abort_execution
+    # which now accept review status (§10).
+    return {
+        "id": _s(req.id),
+        "name": sx.name,
+        **_title_fields(req),
+        "session_id": sx.resume_sid,
+        "short_id": sx.short_id,
+        "copy_cmd": sx.copy_cmd,
+        "agent_name": sx.agent_name,
+        "cwd": sx.cwd,
+        "state": "working",
+        # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字符串必须归一，
+        # 否则 Swift 端 started_at: Int? 的合成 decode 一个 typeMismatch 会把
+        # 整个 running 列清空。
+        "started_at": _epoch(sx.agent.get("started_at")),
+        "summary": req.summary or None,
+        "plan": _as_list(req.plan),
+        "dod": _dod(req),
+        "log": ex.get("log"),
+        "dispatched_at": _epoch(ex.get("dispatched_at")),
+        "delivery_mode": _delivery_mode(req),
+        "last_error": None,
+        "last_error_id": None,
+        # carried so nothing is lost while it re-runs; the app
+        # can hint "已交付过·再运行" off from_review.
+        "from_review": True,
+        "delivered_summary": ex.get("delivered_summary"),
+        "final_draft": _clip_draft(ex.get("final_draft")),
+    }
+
+
+def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) -> dict:
+    # §11 待验收 — draft ready, awaiting Zelin's ✓/↩︎ (agent-done-while-still-
+    # executing lands here too, covering the gap between dashboard passes and
+    # actd's promotion.) §30 session_active: a live WORKING agent on a review
+    # card can only be user attach / organic session activity — a genuine 打回
+    # verdict (executor.rework) flips review->executing in the same call, so
+    # it never presents as review+working. The card stays in this lane (calm
+    # 「会话有新活动」badge in the app); actd's reconcile keeps re-harvesting
+    # deliverables when it settles.
+    return {
+        "id": _s(req.id),
+        "name": sx.name,
+        "summary": req.summary or None,
+        **_title_fields(req),
+        "dod": _dod(req),
+        "session_id": sx.resume_sid,
+        "short_id": sx.short_id,
+        "copy_cmd": sx.copy_cmd,
+        "agent_name": sx.agent_name,
+        "state": "review",
+        "cwd": sx.cwd,
+        "delivered_summary": ex.get("delivered_summary"),
+        "final_draft": _clip_draft(ex.get("final_draft")),
+        "plan": _as_list(req.plan),
+        "sources": _source_view(req, cfg),
+        "log": ex.get("log"),
+        "dispatched_at": _epoch(ex.get("dispatched_at")),
+        "review_at": _epoch(ex.get("review_at")),
+        "delivery_mode": _delivery_mode(req),
+        "session_active": sx.state in _RUNNING_STATES,
+        # #119 add-only：这行是「中断收割」而非正常交付（受阻/放弃救活被收进
+        # 待验收）——detect_transitions 据此不发「AI 已交付草稿」，客户端
+        # decodeIfPresent 可标注。
+        **_opt("interrupted", bool(ex.get("interrupted_reason"))),
+        **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
+        # §65.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
+        **_opt("delivery", _delivery_view(ex)),
+    }
+
+
+def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
+    # running, or agent not found yet -> still consider it running.
+    # #119（v0.48.8）：受阻/放弃救活的会话不再投影「需输入」——reconcile 会在
+    # 下一个 pass 把它们收割进待验收；投影间隙里它们留在 运行中 列（state
+    # 原样，诚实呈现），不再有「回答…」入口。needs_input[] 只剩 §4 派发刹车行。
+    return {
+        "id": _s(req.id),
+        "name": sx.name,
+        **_title_fields(req),
+        "session_id": sx.resume_sid,
+        "short_id": sx.short_id,
+        "copy_cmd": sx.copy_cmd,
+        "agent_name": sx.agent_name,
+        "cwd": sx.cwd,
+        "state": "working" if sx.state in _RUNNING_STATES else sx.state,
+        # epoch 归一，理由同 §30 from_review 分支（Swift Int?）。
+        "started_at": _epoch(sx.agent.get("started_at")),
+        "summary": req.summary or None,
+        "plan": _as_list(req.plan),
+        "dod": _dod(req),
+        "log": ex.get("log"),
+        "dispatched_at": _epoch(ex.get("dispatched_at")),
+        "delivery_mode": _delivery_mode(req),
+        "last_error": ex.get("last_error"),
+        "last_error_id": failures.classify(ex.get("last_error")),
+        # v-next §M6.1：steer 三态诚实回执（queued/delivered；
+        # dropped 不投影，notes 痕承担可见性——C-3）
+        **_opt("steers", _steers_view(req)),
+        **_opt("origin_trust", getattr(req, "origin_trust", None)),
+    }
+
+
+def _session_lane(status: str, state: str) -> str:
+    """Which lane a card in a session state lands in (§2 / §11 / §30)."""
+    if status == State.DELIVERED.value:
+        return "completed"
+    if status == State.REVIEW.value:
+        return "running_from_review" if state in _RUNNING_STATES else "review"
+    return "review" if state in _DONE_STATES else "running"
+
+
+def _session_row(req: Requirement, ctx: _Ctx) -> tuple[str, dict]:
+    """(lane, row) for executing / review / delivered cards."""
+    ex = _execution(req)
+    sx = _session_for(req, ex, ctx)
+    lane = _session_lane(req.status, sx.state)
+    if lane == "completed":
+        return lane, _delivered_row(req, ex, sx)
+    if lane == "running_from_review":
+        return "running", _from_review_row(req, ex, sx)
+    if lane == "review":
+        return lane, _review_row(req, ex, sx, ctx.cfg)
+    return lane, _running_row(req, ex, sx)
+
+
+# --------------------------------------------------------------------------- #
+# build
+# --------------------------------------------------------------------------- #
+# status -> (lane, builder) for the single-shape lanes; approved and the
+# session states branch on more than status (see _lane_row).
+_SIMPLE_LANES = {
+    State.CARD_SENT.value: ("needs_approval", _card_sent_row),
+    State.RAISING.value: ("needs_approval", _raising_row),
+    State.DETECTED.value: ("debt", _detected_row),
+    State.TRASHED.value: ("trash", _trash_row),
+}
+_SESSION_STATES = (State.EXECUTING.value, State.REVIEW.value, State.DELIVERED.value)
+_INVISIBLE_STATES = (State.REJECTED.value, State.MERGED.value, State.ARCHIVED.value)
+_LANES = ("needs_approval", "running", "needs_input", "review", "completed",
+          "debt", "trash")
+
+
+def _invisible(req: Requirement) -> bool:
+    """merged (契约 四 终态) is invisible everywhere, like the legacy
+    merged_into:<id> statuses — its content lives on in the primary card.
+    ARCHIVED goes in the belt-and-suspenders list too: sealed cards are meant
+    to live in archive/ (out of ``reqs``), but if one lingers in the active
+    dir it must still stay out of every kanban lane (§5)."""
+    return req.is_merged or req.status in _INVISIBLE_STATES
+
+
+def _approved_row(req: Requirement, ctx: _Ctx) -> tuple[str, dict]:
+    """approved surfaces as a "queued" item inside running (§2) — unless the
+    §4 dispatch brake fired, which is a 需输入 row."""
+    if _execution(req).get("dispatch_halted"):
+        return "needs_input", _halted_row(req, ctx)
+    return "running", _queued_row(req, ctx)
+
+
+def _lane_row(req: Requirement, ctx: _Ctx) -> Optional[tuple[str, dict]]:
+    """(lane, row) for one card, or None when it enters no column."""
+    if _invisible(req):
+        return None
+    simple = _SIMPLE_LANES.get(req.status)
+    if simple is not None:
+        return simple[0], simple[1](req, ctx)
+    if req.status == State.APPROVED.value:
+        return _approved_row(req, ctx)
+    if req.status in _SESSION_STATES:
+        return _session_row(req, ctx)
+    return None
+
+
+def _archived_leftover(req: Requirement, archived_ids: set) -> bool:
+    """crash-mid-move 残件——archive/ 里已有权威副本（见 build_dashboard）。"""
+    return bool(_s(req.id)) and _s(req.id) in archived_ids
+
+
+def _project_all(reqs: list, archived_ids: set, ctx: _Ctx) -> dict:
+    """Every active card into its lane list. 单卡隔离：手改 YAML 把某个字段改坏
+    （execution 变字符串、dod 变 int……）时跳过这一张卡 + log，其余卡照常
+    投影——绝不让一张坏卡冻结整个 dashboard pass（同 merge_suggestions 分区
+    "损坏文件跳过"的既有约定）。"""
+    lanes: dict = {name: [] for name in _LANES}
+    for req in reqs:
+        if _archived_leftover(req, archived_ids):
+            continue
         try:
-            on = sources.enabled(cfg, src)
-        except Exception:  # noqa: BLE001
-            on = False
-        entry = data.get(src) if isinstance(data, dict) else None
-        entry = entry if isinstance(entry, dict) else {}
-        # 关掉的源不带健康摘要：清理僵尸条目发生在 liveness 巡检（同 pass 的
-        # dashboard 构建在它之前）——不在这里屏蔽的话，关源后的第一个 pass
-        # 会把旧 last_ok/skip_reason 投影出去（关着 = null 的契约被破一拍）。
-        if not on:
-            entry = {}
-        last_ok = entry.get("last_ok")
-        # §48.4 出机清洗：skip_reason 只放行闭集词表码（词表外折叠 "error"，
-        # mcp_failed:<detail> 去尾）——dashboard 随 syncd 出机，radar 写进
-        # health 的自由文本（错误摘录/本机路径）不许跟着出去。
-        skip = health.public_skip_reason(entry.get("skip_reason"))
-        out[src] = {
-            "enabled": on,
-            "last_ok": last_ok if isinstance(last_ok, str) and last_ok else None,
-            "skip_reason": skip if isinstance(skip, str) and skip else None,
-            # stale **不吃** actd 的睡醒/冷启动宽限（§48.4）：投影是无状态的
-            # 磁盘真值函数（`python -m act.lib.dashboard` 一次性进程也在跑，
-            # 进程级宽限状态会让 CLI 构建永远压掉 stale）；告警宽限是通知侧
-            # 的关切。睡醒后的一轮假 stale 随雷达补跑自愈，消费者自行防抖。
-            "stale": bool(on and sources.is_stale(src, entry, now)),
-        }
-    return out
+            placed = _lane_row(req, ctx)
+        except Exception as e:  # noqa: BLE001 - 单卡隔离，见 docstring
+            print(f"dashboard: skip corrupt card {getattr(req, 'id', '?')!r}: "
+                  f"{type(e).__name__}: {e}", file=sys.stderr)
+            continue
+        if placed is not None:
+            lanes[placed[0]].append(placed[1])
+    return lanes
+
+
+def _live_session_count(reqs: list) -> int:
+    """EXECUTING 且带 session 的卡数（actd.dispatch_approved 的并发口径）。"""
+    return sum(1 for r in reqs if _has_live_session(r))
+
+
+def _has_live_session(r: Requirement) -> bool:
+    return (r.status == State.EXECUTING.value
+            and isinstance(r.execution, dict)
+            and bool(r.execution.get("session_id")))
+
+
+def _cap_completed(completed: list) -> tuple[list, int]:
+    """§2 completed cap: newest first (missing/unparsable accepted_at sinks to
+    the end), truncated to COMPLETED_CAP; the count keeps the real total."""
+    total = len(completed)
+    completed.sort(key=lambda c: c.get("accepted_at") or 0, reverse=True)
+    del completed[COMPLETED_CAP:]
+    return completed, total
+
+
+def _archived_rows(archived: list) -> tuple[list, int]:
+    """§5 v0.20.0 archived[] partition — mirrors the trash row (+ archive
+    fields) so the app's archive browse decodes it the same way; newest
+    archived_at first, capped, with counts.archived carrying the TRUE total."""
+    rows = []
+    for r in archived:
+        try:
+            rows.append(_archived_view(r))
+        except Exception as e:  # noqa: BLE001 - 单卡隔离，同 _project_all
+            print(f"dashboard: skip corrupt archived card "
+                  f"{getattr(r, 'id', '?')!r}: {type(e).__name__}: {e}",
+                  file=sys.stderr)
+    total = len(rows)
+    rows.sort(key=lambda a: str(a.get("archived_at") or ""), reverse=True)
+    del rows[ARCHIVED_CAP:]
+    return rows, total
+
+
+def _assemble(lanes: dict, completed_total: int, archived_rows: list,
+              archived_total: int, merge_dir: Optional[Path], cfg: config.Config) -> dict:
+    dash = {
+        "generated_at": _iso_now(),
+        "counts": {
+            "needs_approval": len(lanes["needs_approval"]),
+            "running": len(lanes["running"]),
+            "needs_input": len(lanes["needs_input"]),
+            "review": len(lanes["review"]),
+            "completed": completed_total,
+            "debt": len(lanes["debt"]),
+            "trash": len(lanes["trash"]),
+            "archived": archived_total,
+        },
+        "needs_approval": lanes["needs_approval"],
+        "running": lanes["running"],
+        "needs_input": lanes["needs_input"],
+        "review": lanes["review"],
+        "completed": lanes["completed"],
+        "debt": lanes["debt"],
+        "trash": lanes["trash"],
+        "archived": archived_rows,
+        # merge-review 契约 六 — new partition; Swift reads decodeIfPresent so
+        # older apps simply ignore it.
+        "merge_suggestions": _merge_suggestions(merge_dir),
+        # §44.6 静默并入回执 — add-only 顶层键（decodeIfPresent 向后兼容）：
+        # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
+        # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
+        "fold_receipts": _fold_receipts(),
+        # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
+        # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
+        "radar_sources": _radar_sources(cfg),
+        "self_improve": _self_improve_view(cfg),   # §65 add-only 顶层键：通道开关 + 暂停状态
+    }
+    # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
+    # paired phone adopt a Mac rename from the board payload without re-scanning
+    # the QR. Omitted (not null) when unpaired / unlabeled.
+    label = _device_label()
+    if label:
+        dash["device_label"] = label
+    # §56 / §70 add-only 顶层键 deploy_state / maintenance（同 device_label 的加法约定：文件缺失或读不了 = 整键不存在）
+    deploy_state.attach(dash)
+    daily_loop.attach(dash, cfg)
+    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
 
 
 def build_dashboard(
@@ -809,468 +1444,21 @@ def build_dashboard(
         agents = _run_claude_agents()
     if archived is None:
         archived = load_archived()
-    agent_idx = _index_agents(agents)
-
-    # v-next queued_reason 快照（§51）：并发口径与 actd.dispatch_approved 一致
-    # （EXECUTING 且带 session 的卡数）。预算口径 retired v0.48.7（D9）。
-    ad_cfg = policy.autodispatch_config(cfg)
-    live_sessions = sum(
-        1 for r in reqs
-        if r.status == State.EXECUTING.value
-        and isinstance(r.execution, dict) and r.execution.get("session_id"))
-
-    needs_approval: list[dict] = []
-    running: list[dict] = []
-    needs_input: list[dict] = []
-    review: list[dict] = []
-    completed: list[dict] = []
-    debt: list[dict] = []
-    trash: list[dict] = []
-
+    ctx = _Ctx(
+        cfg=cfg,
+        agent_idx=_index_agents(agents),
+        snap={"running": _live_session_count(reqs),
+              "max_concurrent": policy.autodispatch_config(cfg)["max_concurrent"]},
+    )
     # archive() crash-mid-move 残件去重：archive/ 副本已落盘、active 目录里的
     # 同 id 原件还没删掉时，视 active 残件为"已迁移"跳过——否则同一张卡同时
     # 出现在 completed 和 archived 两个分区、各计一次。
-    archived_ids = {_s(r.id) for r in (archived or [])}
-
-    def _project(req: Requirement) -> None:
-        # merged (契约 四 终态) is invisible everywhere, like the legacy
-        # merged_into:<id> statuses — its content lives on in the primary card.
-        # ARCHIVED goes in the belt-and-suspenders list too: sealed cards are
-        # meant to live in archive/ (out of ``reqs``), but if one lingers in the
-        # active dir it must still stay out of every kanban lane (§5).
-        if req.is_merged or req.status in (State.REJECTED.value,
-                                           State.MERGED.value,
-                                           State.ARCHIVED.value):
-            return
-
-        if req.status == State.CARD_SENT.value:
-            cost, show_cost, cost_state = _cost_view(req, cfg)
-            target_repo, target_name, target_kind = _target_view(req, cfg)
-            # 手改 YAML 把 execution 写成字符串时按"无 execution"降级（同
-            # executing 分支的 isinstance 守卫）——不炸整卡。
-            ex = req.execution if isinstance(req.execution, dict) else {}
-            needs_approval.append(
-                {
-                    "id": _s(req.id),
-                    "title": _s(req.title),
-                    "summary": req.summary or _s(req.title),
-                    **_title_fields(req),
-                    "target_repo": target_repo,
-                    "target_name": target_name,
-                    "target_kind": target_kind,
-                    "tier": _s(req.tier),
-                    "tier_hint": TIER_HINTS.get(_s(req.tier), ""),
-                    # W17 add-only：生效档位（外部来源强制 T2；否则同声明 tier）。
-                    # v0.48.1（§50）：外部出身 = 显式 origin_trust=external 章
-                    # **或** sources 现算为 external——缺章卡也从 sources 现算，
-                    # 不再恒等于 tier。审批语义仍由 effective_tier 决定，
-                    # 客户端 decodeIfPresent 兼容（缺字段回落 tier）。
-                    "effective_tier": risk.effective_tier(req).tier,
-                    "hardness": req.hardness,
-                    "deadline": req.deadline,
-                    "days_left": days_left(req.deadline),
-                    "repeated": _int_or(req.repeated_mentions, 1) or 1,
-                    # §44 add-only: silent fold-in events (0 = never)
-                    "silent_merged": _int_or(
-                        getattr(req, "silent_merge_count", 0), 0) or 0,
-                    "cost_usd": cost,
-                    "show_cost": show_cost,
-                    # §40 add-only: "estimated"|"unknown" — the app renders
-                    # 成本未知 for unknown instead of an implied $0.
-                    "cost_state": cost_state,
-                    "green_sign": bool(req.green_sign_required),
-                    "disagreement": req.disagreement,
-                    "improvement_of": req.improvement_of,
-                    "sources": _source_view(req, cfg),
-                    "plan": _as_list(req.plan),
-                    "outputs": list(req.outputs or []),
-                    "dod": list(req.definition_of_done or []),
-                    "processing": False,
-                    "delivery_mode": _delivery_mode(req),
-                    **_proposal_extras(req, ex, cfg),
-                }
-            )
-
-        elif req.status == State.RAISING.value:
-            # AI is expanding this debt into a proposal — show it in 待审批 as a
-            # greyed spinner placeholder so the click gives immediate feedback.
-            needs_approval.append(
-                {
-                    "id": _s(req.id),
-                    "title": _s(req.title),
-                    "summary": req.summary or _s(req.title),
-                    **_title_fields(req),
-                    "tier": _s(req.tier),
-                    "effective_tier": risk.effective_tier(req).tier,  # W17 add-only
-                    "tier_hint": "AI 研究中",
-                    "processing": True,
-                    "sources": [],
-                    "plan": [],
-                    "dod": [],
-                    "show_cost": False,
-                    "delivery_mode": _delivery_mode(req),
-                    # v-next add-only（§50）；§10 capture_id（issue #7）——占位
-                    # 行就带，客户端对账「我刚输入的那条」不用等扩写完成
-                    **_opt("origin_trust", getattr(req, "origin_trust", None)),
-                    **_opt("capture_id", _capture_id(req)),
-                }
-            )
-
-        elif req.status == State.DETECTED.value:
-            debt.append(
-                {
-                    "id": _s(req.id),
-                    "title": _s(req.title),
-                    "summary": req.summary or _s(req.title),
-                    **_title_fields(req),
-                    "hardness": req.hardness,
-                    "type": req.type,
-                    "sources": _source_view(req, cfg),
-                }
-            )
-
-        elif req.status == State.TRASHED.value:
-            trash.append(
-                {
-                    "id": _s(req.id),
-                    "title": _s(req.title),
-                    "summary": req.summary or _s(req.title),
-                    **_title_fields(req),
-                    "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
-                    "trashed_at": req.trashed_at,
-                    "trash_reason": req.trash_reason,
-                    "permanent": bool(req.permanent),
-                    # §40 add-only: when actd WILL hard-delete this row (null =
-                    # pinned / retention off / unparsable trashed_at = never).
-                    "purge_at": _purge_at(req, cfg),
-                    "type": req.type,
-                    "hardness": req.hardness,
-                }
-            )
-
-        elif req.status == State.APPROVED.value and (
-                isinstance(req.execution, dict)
-                and req.execution.get("dispatch_halted")):
-            # §4 派发风暴刹车已触发：卡仍 approved，但 actd 不再重试——投影进
-            # 「需输入」列（blocked 行形），而不是在 运行中 列顶着「排队中」
-            # 装忙（宪法 3：诚实的健康报告）。question 是固定文案：这里没有
-            # agent 在提问，说的是事实和唯一出口（停止 → 退回提案 → 重批）。
-            ex = req.execution
-            fid = failures.classify(ex.get("last_error"))
-            hint = failures.user_message(fid) or _s(ex.get("last_error")) or ""
-            n = int(ex.get("dispatch_class_streak") or ex.get("dispatch_attempts") or 0)
-            row = {
-                "id": _s(req.id),
-                "name": _s(req.title or req.id),
-                **_title_fields(req),
-                "session_id": None,
-                "short_id": None,
-                "copy_cmd": None,
-                "agent_name": None,
-                "state": "blocked",
-                "waiting_for": None,
-                "question": failures.pick(
-                    f"派发连续失败 {n} 次，已停止自动重试：{hint}。修好原因后点"
-                    "「停止」选「退回提案」，再重新批准即恢复派发",
-                    f"Launch failed {n} times in a row; auto-retry stopped: {hint}. "
-                    "Fix the cause, then press \"Stop\" → \"Discard & re-propose\" "
-                    "and approve again to resume"),
-                "last_error": ex.get("last_error"),
-                "last_error_id": fid,
-                # add-only（decodeIfPresent）：告诉客户端这是刹车行，不是 agent
-                # 在等回答——web 据此隐藏「回答…」、显示派发次数 chip。
-                "dispatch_halted": True,
-                "dispatch_attempts": int(ex.get("dispatch_attempts") or 0),
-                **_opt("origin_trust", getattr(req, "origin_trust", None)),
-            }
-            needs_input.append(row)
-
-        elif req.status == State.APPROVED.value:
-            # §2 queued 项：已批准但还没（成功）派发 —— 混入 running 分区，✅ 一点
-            # 下去立刻有回显。没有会话可 attach，所以无 session_id/copy_cmd；
-            # dispatch_error = 上次派发失败原因（重试成功后消失）。
-            ex = req.execution if isinstance(req.execution, dict) else {}
-            # v-next §51：排队原因 chip（结构化 wire 形，C-2）。快照口径与
-            # actd.dispatch_approved 的闸完全一致；blocked_by 依赖字段未立法
-            # （T-26），现行只有 concurrency 一因（budget retired v0.48.7，D9）。
-            # 与 dispatch_error 并存不混写。
-            snap: dict = {"running": live_sessions,
-                          "max_concurrent": ad_cfg["max_concurrent"]}
-            qr = _queued_reason_view(req, snap)
-            running.append(
-                {
-                    "id": _s(req.id),
-                    "name": _s(req.title or req.id),
-                    **_title_fields(req),
-                    "state": "queued",
-                    "summary": req.summary or None,
-                    "plan": _as_list(req.plan),
-                    "dod": list(req.definition_of_done or []),
-                    "delivery_mode": _delivery_mode(req),
-                    "dispatch_error": ex.get("last_error") or None,
-                    # §25: classification id alongside the raw text (None when
-                    # unknown — Swift falls back to the raw string + AI fix).
-                    "dispatch_error_id": failures.classify(ex.get("last_error")),
-                    **_opt("queued_reason", qr),
-                    **_opt("origin_trust", getattr(req, "origin_trust", None)),
-                }
-            )
-
-        elif req.status in (State.EXECUTING.value, State.REVIEW.value,
-                            State.DELIVERED.value):
-            ex = req.execution if isinstance(req.execution, dict) else {}
-            sid = ex.get("session_id")
-            agent = agent_idx.get(str(sid)) if sid else None
-            # prefer the requirement title: claude uses the (huge) injected prompt
-            # as the agent "name", which is useless to display.
-            name = _s(req.title or (agent or {}).get("name") or req.id)
-            cwd = (agent or {}).get("cwd") or (req.target_repo or str(cfg.target_repo_path))
-            state = (agent or {}).get("state") or "unknown"
-            # emit the FULL sessionId for the `claude --resume` copy: dispatch
-            # stored the SHORT id, but the resume picker matches the full UUID.
-            resume_sid = (agent or {}).get("session_id") or sid
-            short_id = (agent or {}).get("short_id") or sid
-            # correct command by PROCESS liveness, not task state: even a task
-            # whose work is "done" keeps its bg process alive (idle) for ~1h and
-            # `--resume` errors with "currently running as a background agent".
-            # `pid` is present in claude agents --json ONLY while the process is
-            # alive -> attach; once it exits (pid gone) -> --resume.
-            # NOTE: --resume is DIRECTORY-scoped (transcripts key to the session
-            # cwd, usually the agent's worktree) -> prefix with cd so the copied
-            # command works from any terminal. attach is roster-global, no cd.
-            if agent is not None and agent.get("pid"):
-                copy_cmd = f"claude attach {short_id}"
-            else:
-                # full UUID + the transcript's LAST cwd (the agent's worktree) —
-                # both required for --resume; the roster shows the launch dir,
-                # which is the wrong place to resume from.
-                sid_for_resume = str(resume_sid or short_id or "")
-                tinfo = (_transcript_info_cached(sid_for_resume)
-                         if sid_for_resume else None)
-                if tinfo:
-                    copy_cmd = f"cd '{tinfo[1]}' && claude --resume {tinfo[0]}"
-                elif sid_for_resume:
-                    copy_cmd = f"claude --resume {sid_for_resume}"
-                else:
-                    # No session id at all — emit NO command rather than guess
-                    # (an empty sid used to glob-bind an unrelated transcript).
-                    copy_cmd = None
-            agent_name = (agent or {}).get("name")
-
-            if req.status == State.DELIVERED.value:
-                # §11 已验收 — archive row
-                completed.append(
-                    {
-                        "id": _s(req.id),
-                        "name": name,
-                        **_title_fields(req),
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "state": "delivered",
-                        "cwd": cwd,
-                        "summary": req.summary or None,
-                        "delivered_summary": ex.get("delivered_summary"),
-                        "accepted_at": _epoch(ex.get("accepted_at")),
-                        "dod": list(req.definition_of_done or []),
-                        **_assessment_view(req),   # §64 摘要一句（评于待验收期）
-                    }
-                )
-            elif req.status == State.REVIEW.value and state in _RUNNING_STATES:
-                # §30 fix: a delivered 待验收 card whose session is actively
-                # WORKING again (user `claude attach` + real work — e.g. a
-                # follow-up deep-research) shows in 运行中 while it runs, instead
-                # of sitting stranded in 待验收 with only a badge while the
-                # 运行中 lane reads 0. Registry status stays review (NO
-                # state-machine flip) — so the ✓验收/↩︎打回 verdict and the
-                # delivered draft are preserved; when the session settles it
-                # falls straight back into the review branch below, refreshed by
-                # _reconcile_review_attach's re-harvest. `from_review` lets the
-                # app label it, and the stop button routes via stop_to_review /
-                # abort_execution which now accept review status (§10).
-                running.append(
-                    {
-                        "id": _s(req.id),
-                        "name": name,
-                        **_title_fields(req),
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "cwd": cwd,
-                        "state": "working",
-                        # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字符串必须归一，
-                        # 否则 Swift 端 started_at: Int? 的合成 decode 一个 typeMismatch 会把整个 running 列清空。
-                        "started_at": _epoch((agent or {}).get("started_at")),
-                        "summary": req.summary or None,
-                        "plan": _as_list(req.plan),
-                        "dod": list(req.definition_of_done or []),
-                        "log": ex.get("log"),
-                        "dispatched_at": _epoch(ex.get("dispatched_at")),
-                        "delivery_mode": _delivery_mode(req),
-                        "last_error": None,
-                        "last_error_id": None,
-                        # carried so nothing is lost while it re-runs; the app
-                        # can hint "已交付过·再运行" off from_review.
-                        "from_review": True,
-                        "delivered_summary": ex.get("delivered_summary"),
-                        "final_draft": _clip_draft(ex.get("final_draft")),
-                    }
-                )
-            elif req.status == State.REVIEW.value or state in _DONE_STATES:
-                # §11 待验收 — draft ready, awaiting Zelin's ✓/↩︎
-                # (agent-done-while-still-executing lands here too, covering the
-                # gap between dashboard passes and actd's promotion.)
-                # §30 session_active: a live WORKING agent on a review card can
-                # only be user attach / organic session activity — a genuine 打回
-                # verdict (executor.rework) flips review->executing in the same
-                # call, so it never presents as review+working. The card stays
-                # in this lane (calm「会话有新活动」badge in the app); actd's
-                # reconcile keeps re-harvesting deliverables when it settles.
-                review.append(
-                    {
-                        "id": _s(req.id),
-                        "name": name,
-                        "summary": req.summary or None,
-                        **_title_fields(req),
-                        "dod": list(req.definition_of_done or []),
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "state": "review",
-                        "cwd": cwd,
-                        "delivered_summary": ex.get("delivered_summary"),
-                        "final_draft": _clip_draft(ex.get("final_draft")),
-                        "plan": _as_list(req.plan),
-                        "sources": _source_view(req, cfg),
-                        "log": ex.get("log"),
-                        "dispatched_at": _epoch(ex.get("dispatched_at")),
-                        "review_at": _epoch(ex.get("review_at")),
-                        "delivery_mode": _delivery_mode(req),
-                        "session_active": state in _RUNNING_STATES,
-                        # #119 add-only：这行是「中断收割」而非正常交付（受阻/
-                        # 放弃救活被收进待验收）——detect_transitions 据此不发
-                        # 「AI 已交付草稿」，客户端 decodeIfPresent 可标注。
-                        **_opt("interrupted", bool(ex.get("interrupted_reason"))),
-                        **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
-                        # §65.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
-                        **_opt("delivery", _delivery_view(ex)),
-                    }
-                )
-            # #119（v0.48.8）：受阻/放弃救活的会话不再投影「需输入」——
-            # reconcile 会在下一个 pass 把它们收割进待验收；投影间隙里它们
-            # 留在 运行中 列（state 原样，诚实呈现），不再有「回答…」入口。
-            # needs_input[] 只剩 §4 派发刹车行（上方 dispatch_halted 分支）。
-            else:
-                # running, or agent not found yet -> still consider it running
-                steers = _steers_view(req)
-                running.append(
-                    {
-                        "id": _s(req.id),
-                        "name": name,
-                        **_title_fields(req),
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "cwd": cwd,
-                        "state": "working" if state in _RUNNING_STATES else state,
-                        # epoch 归一，理由同 §30 from_review 分支（Swift Int?）。
-                        "started_at": _epoch((agent or {}).get("started_at")),
-                        "summary": req.summary or None,
-                        "plan": _as_list(req.plan),
-                        "dod": list(req.definition_of_done or []),
-                        "log": ex.get("log"),
-                        "dispatched_at": _epoch(ex.get("dispatched_at")),
-                        "delivery_mode": _delivery_mode(req),
-                        "last_error": ex.get("last_error"),
-                        "last_error_id": failures.classify(ex.get("last_error")),
-                        # v-next §M6.1：steer 三态诚实回执（queued/delivered；
-                        # dropped 不投影，notes 痕承担可见性——C-3）
-                        **_opt("steers", steers),
-                        **_opt("origin_trust", getattr(req, "origin_trust", None)),
-                    }
-                )
-        # approved surfaces as a "queued" item inside running (branch above, §2)
-
-    for req in reqs:
-        if _s(req.id) and _s(req.id) in archived_ids:
-            continue  # crash-mid-move 残件——archive/ 里已有权威副本（上方注释）
-        try:
-            _project(req)
-        except Exception as e:  # noqa: BLE001 - 单卡隔离，见下
-            # 手改 YAML 把某个字段改坏（execution 变字符串、dod 变 int……）时：
-            # 跳过这一张卡 + log，其余卡照常投影——绝不让一张坏卡冻结整个
-            # dashboard pass（同 merge_suggestions 分区"损坏文件跳过"的既有约定）。
-            print(f"dashboard: skip corrupt card {getattr(req, 'id', '?')!r}: "
-                  f"{type(e).__name__}: {e}", file=sys.stderr)
-
-    # §2 completed cap: newest first (missing/unparsable accepted_at sinks to
-    # the end), truncated to COMPLETED_CAP; the count keeps the real total.
-    completed_total = len(completed)
-    completed.sort(key=lambda c: c.get("accepted_at") or 0, reverse=True)
-    del completed[COMPLETED_CAP:]
-
-    # §5 v0.20.0 archived[] partition — mirrors the trash row (+ archive fields)
-    # so the app's archive browse decodes it the same way; newest archived_at
-    # first, capped, with counts.archived carrying the TRUE total.
-    archived_rows = []
-    for r in (archived or []):
-        try:
-            archived_rows.append(_archived_view(r))
-        except Exception as e:  # noqa: BLE001 - 单卡隔离，同上
-            print(f"dashboard: skip corrupt archived card "
-                  f"{getattr(r, 'id', '?')!r}: {type(e).__name__}: {e}",
-                  file=sys.stderr)
-    archived_total = len(archived_rows)
-    archived_rows.sort(key=lambda a: str(a.get("archived_at") or ""), reverse=True)
-    del archived_rows[ARCHIVED_CAP:]
-
-    dash = {
-        "generated_at": _iso_now(),
-        "counts": {
-            "needs_approval": len(needs_approval),
-            "running": len(running),
-            "needs_input": len(needs_input),
-            "review": len(review),
-            "completed": completed_total,
-            "debt": len(debt),
-            "trash": len(trash),
-            "archived": archived_total,
-        },
-        "needs_approval": needs_approval,
-        "running": running,
-        "needs_input": needs_input,
-        "review": review,
-        "completed": completed,
-        "debt": debt,
-        "trash": trash,
-        "archived": archived_rows,
-        # merge-review 契约 六 — new partition; Swift reads decodeIfPresent so
-        # older apps simply ignore it.
-        "merge_suggestions": _merge_suggestions(merge_dir),
-        # §44.6 静默并入回执 — add-only 顶层键（decodeIfPresent 向后兼容）：
-        # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
-        # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
-        "fold_receipts": _fold_receipts(),
-        # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
-        # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
-        "radar_sources": _radar_sources(cfg),
-        "self_improve": _self_improve_view(cfg),   # §65 add-only 顶层键：通道开关 + 暂停状态
-    }
-    # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
-    # paired phone adopt a Mac rename from the board payload without re-scanning
-    # the QR. Omitted (not null) when unpaired / unlabeled.
-    label = _device_label()
-    if label:
-        dash["device_label"] = label
-    # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的
-    # 加法约定）：scripts/auto-deploy.sh 写的最近一次自动部署结果；文件缺失或
-    # 读不了 = 整键不存在，web 顶栏据此显示「v0.48.x · deployed 12m ago」。
-    deploy_state.attach(dash)
-    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
+    archived_ids = {_s(r.id) for r in archived}
+    lanes = _project_all(reqs, archived_ids, ctx)
+    lanes["completed"], completed_total = _cap_completed(lanes["completed"])
+    archived_rows, archived_total = _archived_rows(archived)
+    return _assemble(lanes, completed_total, archived_rows, archived_total,
+                     merge_dir, cfg)
 
 
 def _json_default(o):

@@ -212,12 +212,12 @@ class PairingKeyStorageTestCase(unittest.TestCase):
             e2e.save_pairing("../../etc/passwd", 1, e2e.new_pairing_key())
 
     def test_sync_device_id_distinct_from_telemetry_id(self):
-        from act.lib import analytics_sync
+        from act.lib import telemetry_upload
 
         sync_id = e2e.sync_device_id()
-        telemetry_id = analytics_sync._device_id()
+        telemetry_id = telemetry_upload.device_id()
         # different files ...
-        self.assertNotEqual(e2e.SYNC_DEVICE_ID_PATH, analytics_sync.DEVICE_ID_PATH)
+        self.assertNotEqual(e2e.SYNC_DEVICE_ID_PATH, telemetry_upload.DEVICE_ID_PATH)
         self.assertEqual(e2e.SYNC_DEVICE_ID_PATH, config.STATE_DIR / "sync_device_id")
         # ... and different values (both fresh uuid4)
         self.assertNotEqual(sync_id, telemetry_id)

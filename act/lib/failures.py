@@ -288,6 +288,36 @@ FAILURES: dict = {
 }
 
 # --------------------------------------------------------------------------- #
+# row class — WHO fixes it (§25; consumed by the §56.3 deploy verdict)
+#
+# `owner_action`: the only remedy is a manual grant or acceptance by the
+# owner — a TCC toggle in System Settings, a one-time disclaimer in a
+# terminal. No code change, re-install or rollback can clear such a row, so
+# it says nothing about whether the code that just landed works: the deploy
+# verdict must never read it as "the new version broke X". 2026-09-03 live:
+# v1.0.7 was rolled back to v1.0.3 because `stable claude` FAILed under
+# launchd for exactly the Full Disk Access grant install.sh had asked for
+# 30 s earlier. Rows keep rendering as FAIL in doctor output; the deploy
+# summary lists them as "needs owner: …". Derived from failure_id, so a row
+# can only be owner_action by carrying one of these ids.
+# --------------------------------------------------------------------------- #
+OWNER_ACTION = "owner_action"
+OWNER_ACTION_IDS: frozenset = frozenset({
+    "claude_blind",             # FDA for the claude binary launchd runs
+    "deploy_blind_tcc",         # FDA for the autodeploy interpreter
+    "cron_fda_blocked",         # FDA for /usr/sbin/cron
+    "cron_tcc_blocked",         # FDA for the daemon python (crontab write)
+    "ui_build_tcc_blocked",     # FDA for the node binary
+    "claude_bypass_disclaimer",  # accept the bypass disclaimer once, in a terminal
+    "screen_tcc_lost",          # re-grant Screen Recording
+})
+
+
+def row_class(failure_id: Optional[str]) -> str:
+    """``owner_action`` for ids whose fix is the owner's manual grant; "" otherwise."""
+    return OWNER_ACTION if failure_id in OWNER_ACTION_IDS else ""
+
+# --------------------------------------------------------------------------- #
 # raw-text classifier — for claude CLI stdout/stderr, dispatch errors, log
 # tails. Order matters: first match wins. Patterns are deliberately narrow
 # (high precision); unknown text -> None -> the UI keeps the raw string.

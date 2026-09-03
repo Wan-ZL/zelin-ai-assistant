@@ -1,5 +1,8 @@
 """Local pre-send redaction — mask terms BEFORE anything goes to the Claude API.
 
+CONTRACT §15（redaction 双开关 + 内容字段密钥掩码）/ §19（密钥不出 Mac）；
+围栏 ``fence_untrusted`` 是 §0 宪法「不可信文本进围栏」的落点。
+
 A deterministic, offline scrub applied at every prompt boundary (executor,
 analyze, radar, radar_slack, radar_gmail, quick_capture). It rewrites only the
 OUTBOUND prompt copy; the registry / notes / vault keep the original text
@@ -9,7 +12,9 @@ Two independent switches:
   - built-in secret patterns (config.redaction_mask_secrets, default True) —
     API keys / tokens / private keys are masked in every outbound prompt,
     REGARDLESS of redaction_enabled. This is the "密钥不出 Mac"
-    belt-and-suspenders and stays on unless explicitly disabled.
+    belt-and-suspenders and stays on unless explicitly disabled. The pattern
+    list itself lives in act/lib/secret_patterns.py (shared with
+    analytics.clip_content — one layer down so neither side imports the other).
   - user terms (config.redaction_enabled, default False) — opt-in list from
     config.redaction_terms_file (one per line; `#` comment; `re:<pattern>` =
     regex; everything else = case-insensitive literal). Opt-in because masking
@@ -22,20 +27,26 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Optional
 
-MASK = "[脱敏]"
-
-# Built-in secret patterns — safe, high-precision (low false-positive) shapes.
-_SECRET_PATTERNS = [
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),                 # Anthropic keys
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),                       # OpenAI-style
-    re.compile(r"xox[bpasr]-[A-Za-z0-9\-]{8,}"),              # Slack tokens
-    re.compile(r"AKIA[0-9A-Z]{16}"),                          # AWS access key id
-    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),                # GitHub tokens
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
-]
+# MASK is re-exported on purpose: executor / registry / tests read sanitize.MASK.
+from act.lib.secret_patterns import MASK, SECRET_PATTERNS
 
 _terms_cache: dict = {}
+
+
+def _parse_term(raw: str) -> Optional[tuple]:
+    """One terms-file line -> ("re", compiled) | ("lit", text) | None (blank,
+    comment, or a regex that does not compile)."""
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        return None
+    if not line.startswith("re:"):
+        return ("lit", line)
+    try:
+        return ("re", re.compile(line[3:], re.IGNORECASE))
+    except re.error:
+        return None
 
 
 def _load_terms(path: Path) -> list:
@@ -47,64 +58,83 @@ def _load_terms(path: Path) -> list:
     key = str(path)
     if _terms_cache.get(key, (None,))[0] == mtime:
         return _terms_cache[key][1]
-    rules = []
     try:
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("re:"):
-                try:
-                    rules.append(("re", re.compile(line[3:], re.IGNORECASE)))
-                except re.error:
-                    pass
-            else:
-                rules.append(("lit", line))
+        lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
+    rules = [rule for rule in map(_parse_term, lines) if rule]
     _terms_cache[key] = (mtime, rules)
     return rules
+
+
+def _load_cfg(cfg):
+    """Caller's cfg, else the on-disk config; None when that fails (the
+    getattr defaults downstream still mask secrets — fail safe)."""
+    if cfg is not None:
+        return cfg
+    try:
+        from act.lib import config
+        return config.load_config()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _apply_term(out: str, kind: str, pat) -> tuple[str, int]:
+    """One user term over the text -> (text, masks)."""
+    if kind != "lit":
+        return pat.subn(MASK, out)
+    if pat.lower() in out.lower():
+        return re.subn(re.escape(pat), MASK, out, flags=re.IGNORECASE)
+    return out, 0
+
+
+def _apply_terms(out: str, cfg) -> tuple[str, int]:
+    """1) user literal + regex terms — opt-in behind redaction_enabled."""
+    if not getattr(cfg, "redaction_enabled", False):
+        return out, 0
+    terms_file = getattr(cfg, "redaction_terms_file", None)
+    if not terms_file:
+        return out, 0
+    count = 0
+    for kind, pat in _load_terms(Path(terms_file).expanduser()):
+        out, n = _apply_term(out, kind, pat)
+        count += n
+    return out, count
+
+
+def _apply_secrets(out: str, cfg) -> tuple[str, int]:
+    """2) built-in secrets — default-on, independent of redaction_enabled."""
+    if not getattr(cfg, "redaction_mask_secrets", True):
+        return out, 0
+    count = 0
+    for pat in SECRET_PATTERNS:
+        out, n = pat.subn(MASK, out)
+        count += n
+    return out, count
+
+
+def _note_redaction(count: int) -> None:
+    """Count only, never content. analytics is imported lazily so this module
+    stays a leaf for everything but the event sink (analytics itself reads
+    the patterns from secret_patterns, not from here — no cycle)."""
+    if not count:
+        return
+    try:
+        from act.lib import analytics
+        analytics.log_event("redaction", masks=count)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def scrub(text: str, cfg=None) -> tuple[str, int]:
     """Return (possibly-masked text, number of masks applied). Never raises."""
     if not text:
         return text, 0
-    if cfg is None:
-        try:
-            from act.lib import config
-            cfg = config.load_config()
-        except Exception:  # noqa: BLE001
-            cfg = None  # fail safe: getattr defaults below still mask secrets
-
-    count = 0
-    out = text
-
-    # 1) user literal + regex terms — opt-in behind redaction_enabled
-    if getattr(cfg, "redaction_enabled", False):
-        terms_file = getattr(cfg, "redaction_terms_file", None)
-        if terms_file:
-            for kind, pat in _load_terms(Path(terms_file).expanduser()):
-                if kind == "lit":
-                    if pat.lower() in out.lower():
-                        out, n = re.subn(re.escape(pat), MASK, out, flags=re.IGNORECASE)
-                        count += n
-                else:
-                    out, n = pat.subn(MASK, out)
-                    count += n
-
-    # 2) built-in secrets — default-on, independent of redaction_enabled
-    if getattr(cfg, "redaction_mask_secrets", True):
-        for pat in _SECRET_PATTERNS:
-            out, n = pat.subn(MASK, out)
-            count += n
-
-    if count:
-        try:
-            from act.lib import analytics
-            analytics.log_event("redaction", masks=count)   # count only, never content
-        except Exception:  # noqa: BLE001
-            pass
+    cfg = _load_cfg(cfg)
+    out, terms = _apply_terms(text, cfg)
+    out, secrets = _apply_secrets(out, cfg)
+    count = terms + secrets
+    _note_redaction(count)
     return out, count
 
 

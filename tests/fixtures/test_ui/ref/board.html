@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Board</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="board.css">
+</head>
+<body>
+  <nav class="rail" aria-label="Rail" data-side="left">
+    <a href="board.html">Workbench</a>
+    <a href="settings.html">Settings</a>
+    <a href="trash.html">Trash</a>
+  </nav>
+  <header>
+    <h1>Zelin's AI Assistant</h1>
+    <button aria-label="Toggle dark mode"><svg width="16" height="16"></svg></button>
+  </header>
+  <main>
+    <section class="lanes" aria-label="Board">
+      <ul class="lane" aria-label="Proposals">
+        <li>Card one
+          <button>批准</button>
+          <button>Later</button>
+          <button aria-label="Close" class="close"><svg width="16" height="16"></svg></button>
+        </li>
+      </ul>
+      <ul class="lane" aria-label="Running">
+        <li>Card two <button>Steer</button></li>
+      </ul>
+      <ul class="lane" aria-label="Review">
+        <li>Card three <button>Accept</button> <button>Rework</button></li>
+      </ul>
+    </section>
+    <p>3 cards on the board</p>
+  </main>
+</body>
+</html>

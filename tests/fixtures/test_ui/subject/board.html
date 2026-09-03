@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Board</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="board.css">
+</head>
+<body>
+  <header>
+    <h1>Zelin's AI Assistant</h1>
+    <nav class="rail" aria-label="Rail" data-side="top">
+      <a href="board.html">Workbench</a>
+      <a href="settings.html">Setting</a>
+      <a href="trash.html">Trash</a>
+    </nav>
+    <button aria-label="Toggle dark mode"><svg width="16" height="16"></svg></button>
+  </header>
+  <main>
+    <section class="lanes" aria-label="Board">
+      <ul class="lane" aria-label="Proposals">
+        <li>Card one
+          <button>Later</button>
+          <button class="close"><svg width="16" height="16"></svg></button>
+        </li>
+      </ul>
+      <ul class="lane" aria-label="Running">
+        <li>Card two <button style="display:none">Steer</button></li>
+      </ul>
+      <ul class="lane" aria-label="Review">
+        <li>Card three <button>Accept</button> <span data-parity-id="control:board:button:rework">Rework</span></li>
+      </ul>
+    </section>
+    <p>3 cards on the board</p>
+  </main>
+</body>
+</html>

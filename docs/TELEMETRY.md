@@ -294,7 +294,7 @@ updates:
 
 ## 实现要点
 
-- 上传器 `act/lib/analytics_sync.py`：stdlib urllib，POST
+- 上传器 `act/lib/telemetry_upload.py`（入口 `python -m act.analytics_sync --once`）：stdlib urllib，POST
   `{supabase_url}/rest/v1/analytics_events`，批 ≤500 条。
 - key 解析顺序：`config/secrets/supabase-service-key.txt` → `telemetry.key_path`
   指向的文件 →（都没有时）内置 publishable key。

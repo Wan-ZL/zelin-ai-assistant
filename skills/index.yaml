@@ -30,6 +30,12 @@ skills:
     upstream_version: robust-code SKILL.md snapshot 2026-08-18
     default_enabled: true
     description: test code 测试代码 — five-tier (档 1 静态门 … 档 5 通宵/通几天), trigger-aware, core/extended-circle testing ladder for any repo; detect → ask tier + multi-select once → run → report.md + report.json with fix-first ranking (R2.8, D14).
+  - name: test-ui
+    version: 0.1.0
+    upstream: test-code (this repo, skills/test-code) — doctrine, ASK, report contract, ledger semantics; anti-gaming lineage robust-code ← AmazingAng/old-coder (MIT) — attribution in NOTICE
+    upstream_version: test-code 0.2.1
+    default_enabled: false
+    description: test ui 测 UI — three-sensor UI measurement ladder (STRUCTURE a11y-tree inventory · TOKENS design language · VISUAL demo-data screenshots) against a pluggable REFERENCE (--against native|git:ref|dir:path|url:…|design-system); five tiers, ask once, PRESENT / MISSING / CHANGED / WAIVED with the shrink-only ledgers in ui/parity/; wraps scripts/ui/* when present; only MEASURES (R2.8, D14; CONTRACT §66).
   - name: write-better
     version: 1.0.0
     upstream: Munindar P. Singh's public editorial advice pages (grammar / editing), quoted with attribution; argument-structure exemplars from his AAAI-22 / JAIR-25 / CACM-25 papers

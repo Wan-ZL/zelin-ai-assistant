@@ -1,0 +1,12 @@
+{
+  "$description": "test-ui rule table (data, not code): WCAG 2.2 AA subset the stdlib rules engine can measure. Project overrides win via ui/parity/config.json [rules]; thresholds come from qa/gates.toml [ui] → config.thresholds → skill defaults (DEFAULT_THRESHOLDS in parity.py). severity ∈ critical | serious | moderate | minor — only critical/serious make the verdict red; the rest are listed.",
+  "rules": {
+    "wcag.name.interactive": {"sc": "4.1.2 Name, Role, Value", "severity": "serious", "measure": "every visible interactive item has a non-empty accessible name", "modes": ["source", "runtime", "frozen"]},
+    "wcag.contrast.text": {"sc": "1.4.3 Contrast (Minimum)", "severity": "serious", "measure": "text/background contrast ratio ≥ contrast_text (4.5) or ≥ contrast_large (3.0) for large text; runtime uses computed colors composited over the effective background, source uses config.tokens.contrast_pairs", "modes": ["source", "runtime"]},
+    "wcag.target.size": {"sc": "2.5.8 Target Size (Minimum)", "severity": "moderate", "measure": "interactive bbox min(w, h) ≥ target_min_px (24)", "modes": ["runtime"]},
+    "wcag.keyboard": {"sc": "2.1.1 Keyboard", "severity": "serious", "measure": "every visible interactive item appears in the Tab walk", "modes": ["runtime"]},
+    "wcag.lang": {"sc": "3.1.1 Language of Page", "severity": "serious", "measure": "html[lang] present and non-empty", "modes": ["source", "runtime"]},
+    "wcag.heading.order": {"sc": "1.3.1 Info and Relationships (advisory)", "severity": "minor", "measure": "heading levels do not skip within a screen", "modes": ["source", "runtime"]}
+  },
+  "not_measured": ["1.1.1 non-text alternatives beyond img[alt]", "1.4.1 use of color", "1.4.10 reflow (only overflow is measured, see reflow check)", "2.4.7 focus visible (needs pixel evidence — table-only)", "4.1.3 status messages"]
+}

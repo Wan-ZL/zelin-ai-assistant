@@ -1,5 +1,5 @@
 """merge_review — AI analysis for multi-selected "merge these cards?" requests
-(merge-review 契约 二/三/五).
+(merge-review 契约 二/三/五; CONTRACT §21 多对多分组 / §44 保守偏置的判官前身).
 
 Flow: the app writes ``{"action":"merge_review","ids":[...]}`` to the inbox;
 actd validates the ids, creates the job file ``state/merge/<MS-xxxxxxxx>.json``
@@ -143,6 +143,54 @@ def dismiss_job(job_or_id, applied: bool = False) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # material gathering — per card: registry yaml / delivery / transcript / git
 # --------------------------------------------------------------------------- #
+def _text_blocks(content: list) -> str:
+    """Concatenated ``text`` blocks of a structured message body."""
+    return "\n".join(
+        b.get("text") or ""
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+
+
+def _text_of_content(content) -> Optional[str]:
+    """Message body -> plain text; None for shapes we do not read (tool blocks)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return _text_blocks(content)
+    return None
+
+
+def _message_record(d) -> Optional[tuple]:
+    """(role, content) of a top-level assistant/user transcript line, else None
+    (sidechain/subagent lines, other roles, malformed message dicts)."""
+    if not isinstance(d, dict) or d.get("isSidechain"):
+        return None
+    role = d.get("type")
+    if role not in ("assistant", "user"):
+        return None
+    msg = d.get("message")
+    if not isinstance(msg, dict):
+        return None
+    return role, msg.get("content")
+
+
+def _line_message(line: str) -> Optional[str]:
+    """One JSONL line -> ``[role] text`` (capped) or None when unusable."""
+    try:
+        d = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    rec = _message_record(d)
+    if rec is None:
+        return None
+    text = _text_of_content(rec[1])
+    if text is None:
+        return None
+    text = text.strip()
+    return f"[{rec[0]}] {text[:_MSG_CAP]}" if text else None
+
+
 def _tail_messages(path: Path, limit: int) -> list:
     """Last ``limit`` non-empty assistant/user TEXT messages of a transcript
     (same line-tolerant JSONL parsing as executor._assistant_texts;
@@ -150,33 +198,22 @@ def _tail_messages(path: Path, limit: int) -> list:
     msgs: list = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(d, dict) or d.get("isSidechain"):
-                continue
-            role = d.get("type")
-            if role not in ("assistant", "user"):
-                continue
-            msg = d.get("message")
-            if not isinstance(msg, dict):
-                continue
-            content = msg.get("content")
-            if isinstance(content, str):
-                text = content
-            elif isinstance(content, list):
-                text = "\n".join(
-                    b.get("text") or ""
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                )
-            else:
-                continue
-            text = text.strip()
-            if text:
-                msgs.append(f"[{role}] {text[:_MSG_CAP]}")
+            msg = _line_message(line)
+            if msg:
+                msgs.append(msg)
     return msgs[-limit:]
+
+
+def _first_tail(files, limit: int) -> Optional[str]:
+    """First transcript in ``files`` with any usable messages, joined."""
+    for f in files:
+        try:
+            msgs = _tail_messages(f, limit)
+        except OSError:
+            continue
+        if msgs:
+            return "\n".join(msgs)
+    return None
 
 
 def _transcript_tail_text(session_id: str, limit: int = TRANSCRIPT_TAIL) -> Optional[str]:
@@ -188,36 +225,41 @@ def _transcript_tail_text(session_id: str, limit: int = TRANSCRIPT_TAIL) -> Opti
         if not short:
             return None
         proj_root = Path("~/.claude/projects").expanduser()
-        for f in sorted(proj_root.glob(f"*/{short}*.jsonl")):
-            try:
-                msgs = _tail_messages(f, limit)
-            except OSError:
-                continue
-            if msgs:
-                return "\n".join(msgs)
+        return _first_tail(sorted(proj_root.glob(f"*/{short}*.jsonl")), limit)
     except Exception:  # noqa: BLE001 - material gathering is best-effort
         return None
+
+
+def _worktree_dir(cwd) -> Optional[Path]:
+    """``cwd`` as an existing directory, else None (git section skipped)."""
+    p = Path(cwd) if cwd else None
+    if p is None or not p.is_dir():
+        return None
+    return p
+
+
+def _git_section(header: str, proc: subprocess.CompletedProcess) -> Optional[str]:
+    """``$ <header>`` + trimmed stdout when the command succeeded with output."""
+    if proc.returncode == 0 and proc.stdout.strip():
+        return f"$ {header}\n" + proc.stdout.strip()
     return None
 
 
 def _worktree_git_text(cwd) -> Optional[str]:
     """``git log --oneline -5`` + ``git diff --stat`` in ``cwd``; None (skip)
     on any failure — 契约 五「失败跳过」."""
+    p = _worktree_dir(cwd)
+    if p is None:
+        return None
     try:
-        p = Path(cwd) if cwd else None
-        if p is None or not p.is_dir():
-            return None
         log = subprocess.run(["git", "log", "--oneline", "-5"], cwd=str(p),
                              capture_output=True, text=True, timeout=15)
         diff = subprocess.run(["git", "diff", "--stat"], cwd=str(p),
                               capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return None
-    parts: list = []
-    if log.returncode == 0 and log.stdout.strip():
-        parts.append("$ git log --oneline -5\n" + log.stdout.strip())
-    if diff.returncode == 0 and diff.stdout.strip():
-        parts.append("$ git diff --stat\n" + diff.stdout.strip())
+    parts = [sec for sec in (_git_section("git log --oneline -5", log),
+                             _git_section("git diff --stat", diff)) if sec]
     return "\n".join(parts) or None
 
 
@@ -236,36 +278,55 @@ def _infer_cwd(req: Requirement, session_id: Optional[str]):
     return None
 
 
+def _yaml_section(req: Requirement) -> str:
+    try:
+        return ("### registry YAML\n"
+                + yaml.safe_dump(req.to_dict(), allow_unicode=True,
+                                 sort_keys=False, width=100).strip())
+    except yaml.YAMLError:
+        return f"### registry YAML\n(dump failed) title={req.title!r}"
+
+
+def _delivery_sections(ex: dict) -> list:
+    """delivered_summary + (capped) final_draft sections, each only if present."""
+    out: list = []
+    if ex.get("delivered_summary"):
+        out.append("### 交付摘要 delivered_summary\n" + str(ex["delivered_summary"]))
+    if ex.get("final_draft"):
+        out.append("### 交付成稿 final_draft（截断）\n"
+                   + str(ex["final_draft"])[:_DRAFT_CAP])
+    return out
+
+
+def _transcript_section(sid) -> Optional[str]:
+    if not sid:
+        return None
+    tail = _transcript_tail_text(str(sid))
+    if not tail:
+        return None
+    return (f"### session transcript 尾部（最近 ≤{TRANSCRIPT_TAIL} 条 "
+            "assistant/user 文本）\n" + tail)
+
+
+def _worktree_section(req: Requirement, sid) -> Optional[str]:
+    cwd = _infer_cwd(req, str(sid) if sid else None)
+    git_text = _worktree_git_text(cwd)
+    if not git_text:
+        return None
+    return f"### worktree {cwd}\n" + git_text
+
+
 def _material_for(req_id: str) -> str:
     """All the evidence we have about one card, as prompt-ready sections."""
     req = load(req_id)
     if req is None:
         return f"## 卡片 {req_id}\n(registry 中不存在——材料缺失)"
-    sections: list = [f"## 卡片 {req_id}（status={req.status}）"]
-    try:
-        sections.append("### registry YAML\n"
-                        + yaml.safe_dump(req.to_dict(), allow_unicode=True,
-                                         sort_keys=False, width=100).strip())
-    except yaml.YAMLError:
-        sections.append(f"### registry YAML\n(dump failed) title={req.title!r}")
     ex = dict(req.execution or {})
-    if ex.get("delivered_summary"):
-        sections.append("### 交付摘要 delivered_summary\n"
-                        + str(ex["delivered_summary"]))
-    if ex.get("final_draft"):
-        sections.append("### 交付成稿 final_draft（截断）\n"
-                        + str(ex["final_draft"])[:_DRAFT_CAP])
     sid = ex.get("session_id") or ex.get("aborted_session_id")
-    if sid:
-        tail = _transcript_tail_text(str(sid))
-        if tail:
-            sections.append(
-                f"### session transcript 尾部（最近 ≤{TRANSCRIPT_TAIL} 条 "
-                "assistant/user 文本）\n" + tail)
-    cwd = _infer_cwd(req, str(sid) if sid else None)
-    git_text = _worktree_git_text(cwd)
-    if git_text:
-        sections.append(f"### worktree {cwd}\n" + git_text)
+    sections = [f"## 卡片 {req_id}（status={req.status}）", _yaml_section(req)]
+    sections += _delivery_sections(ex)
+    sections += [sec for sec in (_transcript_section(sid),
+                                 _worktree_section(req, sid)) if sec]
     return "\n\n".join(sections)
 
 
@@ -338,6 +399,60 @@ def _default_runner(prompt: str) -> subprocess.CompletedProcess:
     )
 
 
+def _verdict_shaped(chunk: str) -> Optional[dict]:
+    """``chunk`` parsed as JSON when it is a dict carrying ``"verdict"``."""
+    try:
+        obj = json.loads(chunk)
+    except ValueError:
+        return None
+    return obj if isinstance(obj, dict) and "verdict" in obj else None
+
+
+def _string_step(c: str, esc: bool) -> tuple:
+    """Inside a JSON string: -> (still_in_string, escape_pending)."""
+    if esc:
+        return True, False
+    if c == "\\":
+        return True, True
+    return c != '"', False
+
+
+def _balanced_end(text: str, start: int) -> int:
+    """Index of the ``}`` closing the object opened at ``start`` (string- and
+    escape-aware, so braces inside quoted card material do not count); -1
+    when this start never balances."""
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            in_str, esc = _string_step(c, esc)
+            continue
+        if c == '"':
+            in_str = True
+            continue
+        depth += {"{": 1, "}": -1}.get(c, 0)
+        if depth == 0 and c == "}":
+            return i
+    return -1
+
+
+def _last_verdict_object(text: str) -> Optional[dict]:
+    """The LAST balanced ``{...}`` carrying a verdict key. Advances one brace
+    at a time: a qualifying object may sit NESTED inside a larger
+    non-qualifying (or unparseable) one; a start that never balances (e.g. a
+    lone ``{`` inside quoted card material) is skipped, not fatal — giving up
+    there would hand the win to an earlier forged object via the caller's
+    tolerant fallback (review finding)."""
+    best = None
+    start = text.find("{")
+    while start != -1:
+        end = _balanced_end(text, start)
+        if end != -1:
+            best = _verdict_shaped(text[start:end + 1]) or best
+        start = text.find("{", start + 1)
+    return best
+
+
 def _extract_verdict_json(text: str) -> Optional[dict]:
     """Hijack-resistant verdict extraction (silent_merge._parse_verdict
     precedent): prefer the whole output as JSON (the stated contract), else
@@ -349,51 +464,65 @@ def _extract_verdict_json(text: str) -> Optional[dict]:
     text = (text or "").strip()
     if not text:
         return None
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict) and "verdict" in obj:
-            return obj
-    except ValueError:
-        pass
-    best = None
-    start = text.find("{")
-    while start != -1:
-        depth, in_str, esc, end = 0, False, False, -1
-        for i in range(start, len(text)):
-            c = text[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif c == "\\":
-                    esc = True
-                elif c == '"':
-                    in_str = False
-            elif c == '"':
-                in_str = True
-            elif c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end == -1:
-            # this start never balances (e.g. a lone "{" inside quoted card
-            # material): skip THIS start and keep scanning — giving up here
-            # would hand the win to an earlier forged object via the caller's
-            # tolerant fallback (review finding)
-            start = text.find("{", start + 1)
-            continue
-        try:
-            obj = json.loads(text[start:end + 1])
-            if isinstance(obj, dict) and "verdict" in obj:
-                best = obj  # keep scanning — the LAST qualifying object wins
-        except ValueError:
-            pass
-        # advance one brace at a time: a qualifying object may sit NESTED
-        # inside a larger non-qualifying (or unparseable) one
-        start = text.find("{", start + 1)
-    return best
+    whole = _verdict_shaped(text)
+    if whole is not None:
+        return whole
+    return _last_verdict_object(text)
+
+
+def _group_member_ids(primary: str, gids: list) -> Optional[list]:
+    """primary first, then the listed ids deduped; None on an empty id."""
+    members: list = [primary]   # primary 是本组成员——模型可列可不列
+    for g in gids:
+        s = str(g or "").strip()
+        if not s:
+            return None
+        if s not in members:    # 重复列出去重即可，不算坏形
+            members.append(s)
+    return members
+
+
+def _group_members(item: dict, idset: set) -> Optional[tuple]:
+    """(primary, members) of one raw group, or None when the shape is not
+    safely executable (primary outside the job, ids not a list, empty id)."""
+    primary = str(item.get("primary") or "").strip()
+    gids = item.get("ids")
+    if primary not in idset or not isinstance(gids, list):
+        return None
+    members = _group_member_ids(primary, gids)
+    return None if members is None else (primary, members)
+
+
+def _claim(members: list, idset: set, claimed: set) -> bool:
+    """Every member inside the job and not yet claimed by another group."""
+    if any(m not in idset or m in claimed for m in members):
+        return False
+    claimed.update(members)
+    return True
+
+
+def _norm_group(item, idset: set, claimed: set) -> Optional[dict]:
+    if not isinstance(item, dict):
+        return None
+    parsed = _group_members(item, idset)
+    if parsed is None:
+        return None
+    primary, members = parsed
+    if not _claim(members, idset, claimed):
+        return None
+    return {"primary": primary, "ids": members,
+            "reason": str(item.get("reason") or "").strip()}
+
+
+def _norm_groups(raw: list, idset: set) -> Optional[list]:
+    claimed: set = set()
+    norm: list = []
+    for item in raw:
+        group = _norm_group(item, idset, claimed)
+        if group is None:
+            return None
+        norm.append(group)
+    return norm
 
 
 def _validate_groups(raw, ids: list) -> Optional[list]:
@@ -406,41 +535,61 @@ def _validate_groups(raw, ids: list) -> Optional[list]:
     execute (silent_merge 的保守偏置：拿不准就什么都不动)."""
     if not isinstance(raw, list) or not raw:
         return None
-    idset = {str(i) for i in ids}
-    claimed: set = set()
-    norm: list = []
-    for item in raw:
-        if not isinstance(item, dict):
-            return None
-        primary = str(item.get("primary") or "").strip()
-        gids = item.get("ids")
-        if primary not in idset or not isinstance(gids, list):
-            return None
-        members: list = [primary]   # primary 是本组成员——模型可列可不列
-        for g in gids:
-            s = str(g or "").strip()
-            if not s:
-                return None
-            if s in members:
-                continue            # 重复列出去重即可，不算坏形
-            members.append(s)
-        for m in members:
-            if m not in idset or m in claimed:
-                return None
-        claimed.update(members)
-        norm.append({"primary": primary, "ids": members,
-                     "reason": str(item.get("reason") or "").strip()})
+    norm = _norm_groups(raw, {str(i) for i in ids})
+    if norm is None:
+        return None
     if not any(len(g["ids"]) >= 2 for g in norm):
         return None                 # 全是单张组 = 等价 keep_separate
     return norm
 
 
 def _coerce_action_plan(v) -> list:
-    if isinstance(v, list):
-        return [str(s).strip() for s in v if str(s).strip()]
-    if isinstance(v, str) and v.strip():
-        return [ln.strip() for ln in v.splitlines() if ln.strip()]
-    return []
+    """list -> stripped non-empty strings; str -> its non-empty lines; else []."""
+    if isinstance(v, str):
+        v = v.splitlines()
+    if not isinstance(v, list):
+        return []
+    return [str(s).strip() for s in v if str(s).strip()]
+
+
+def _resolve_verdict(data: dict, ids: list) -> tuple:
+    """(verdict, groups): illegal verdict raises; a partition whose plan does
+    not validate degrades to keep_separate（保守什么都不做）."""
+    verdict = str(data.get("verdict") or "").strip().lower()
+    if verdict not in VERDICTS:
+        raise ValueError(f"illegal verdict {verdict!r}")
+    groups = None
+    if verdict == "partition":
+        groups = _validate_groups(data.get("groups"), ids)
+        if groups is None:
+            verdict = "keep_separate"
+    return verdict, groups
+
+
+def _fallback_primary(verdict: str, ids: list, groups) -> str:
+    """Display-only primary when the model's is outside ``ids``: keep_separate
+    needs none, partition pins to the first group's primary (顶层 primary 对
+    partition 无执行语义，各组自带，绝不因缺席判 failed)."""
+    if verdict == "keep_separate":
+        return ids[0] if ids else ""
+    return groups[0]["primary"]
+
+
+def _resolve_primary(verdict: str, data: dict, ids: list, groups) -> str:
+    """The model's primary when it is one of the CARDS; otherwise a verdict
+    that acts on a primary (merge/link_improvement/close_secondary) is
+    ill-defined -> raise, the display-only verdicts fall back."""
+    primary = str(data.get("primary") or "").strip()
+    if primary in ids:
+        return primary
+    if verdict not in ("keep_separate", "partition"):
+        raise ValueError(f"primary {primary!r} not in ids {ids}")
+    return _fallback_primary(verdict, ids, groups)
+
+
+def _confidence(data: dict) -> str:
+    confidence = str(data.get("confidence") or "").strip().lower()
+    return confidence if confidence in CONFIDENCES else "medium"
 
 
 def _validate_result(data: dict, ids: list) -> dict:
@@ -450,34 +599,13 @@ def _validate_result(data: dict, ids: list) -> dict:
     ill-defined). keep_separate needs no primary (display-only there).
     partition additionally carries ``groups``; a malformed/unexecutable plan
     degrades to keep_separate（保守什么都不做）instead of failing the job."""
-    verdict = str(data.get("verdict") or "").strip().lower()
-    if verdict not in VERDICTS:
-        raise ValueError(f"illegal verdict {verdict!r}")
-    groups = None
-    if verdict == "partition":
-        groups = _validate_groups(data.get("groups"), ids)
-        if groups is None:
-            verdict = "keep_separate"
-    primary = str(data.get("primary") or "").strip()
-    if verdict == "keep_separate":
-        if primary not in ids:
-            primary = ids[0] if ids else ""
-    elif verdict == "partition":
-        # 顶层 primary 对 partition 无执行语义（各组自带 primary）——仅作
-        # 显示兜底，钉到第一组的主卡上，绝不因缺席判 failed。
-        if primary not in ids:
-            primary = groups[0]["primary"]
-    elif primary not in ids:
-        raise ValueError(f"primary {primary!r} not in ids {ids}")
-    confidence = str(data.get("confidence") or "").strip().lower()
-    if confidence not in CONFIDENCES:
-        confidence = "medium"
+    verdict, groups = _resolve_verdict(data, ids)
     result = {
         "verdict": verdict,
-        "primary": primary,
+        "primary": _resolve_primary(verdict, data, ids, groups),
         "rationale": str(data.get("rationale") or "").strip(),
         "action_plan": _coerce_action_plan(data.get("action_plan")),
-        "confidence": confidence,
+        "confidence": _confidence(data),
     }
     if groups is not None:
         result["groups"] = groups
@@ -487,6 +615,49 @@ def _validate_result(data: dict, ids: list) -> dict:
 # --------------------------------------------------------------------------- #
 # public: run one analysis end-to-end
 # --------------------------------------------------------------------------- #
+def _runner_stdout(proc) -> str:
+    """stdout of a runner result; a non-zero exit is the failure text."""
+    rc = getattr(proc, "returncode", 1)
+    if rc != 0:
+        stderr = (getattr(proc, "stderr", "") or "").strip()
+        raise RuntimeError(f"claude -p exited {rc}: {stderr[:120]}")
+    return getattr(proc, "stdout", "") or ""
+
+
+def _verdict_payload(stdout: str) -> dict:
+    """LAST verdict-carrying object wins (hijack resistance); fall back to
+    the tolerant first-object scan — validation stays authoritative."""
+    data = _extract_verdict_json(stdout) or _extract_json(stdout)
+    if data is None:
+        raise ValueError("no JSON object found in claude output")
+    return data
+
+
+def _run_analysis(job: dict, runner) -> dict:
+    """prompt -> runner -> validated done-job fields (raises on any failure)."""
+    ids = [str(i) for i in job.get("ids") or []]
+    if len(ids) < 2:
+        raise ValueError(f"job has {len(ids)} ids; need >=2")
+    stdout = _runner_stdout(runner(build_analysis_prompt(job)))
+    return _validate_result(_verdict_payload(stdout), ids)
+
+
+def _land_done(suggestion_id: str, job: dict, result: dict) -> dict:
+    """Final rewrite. Re-read first: a dismissed job stays dismissed; a job
+    actd already timed out to failed is upgraded — the real result arrived."""
+    current = load_job(suggestion_id) or job
+    if str(current.get("status") or "") == "dismissed":
+        return current
+    current.update(result)
+    current["status"] = "done"
+    current.pop("error", None)
+    current["expires_at"] = _iso_in(TTL_HOURS)
+    write_job(current)
+    analytics.log_event("merge_suggestion_done", suggestion=str(current["id"]),
+                        verdict=result["verdict"], confidence=result["confidence"])
+    return current
+
+
 def analyze_suggestion(
     suggestion_id: str,
     runner: Optional[Callable[[str], subprocess.CompletedProcess]] = None,
@@ -505,38 +676,10 @@ def analyze_suggestion(
     if runner is None:
         runner = _default_runner
     try:
-        ids = [str(i) for i in job.get("ids") or []]
-        if len(ids) < 2:
-            raise ValueError(f"job has {len(ids)} ids; need >=2")
-        prompt = build_analysis_prompt(job)
-        proc = runner(prompt)
-        rc = getattr(proc, "returncode", 1)
-        stdout = getattr(proc, "stdout", "") or ""
-        if rc != 0:
-            stderr = (getattr(proc, "stderr", "") or "").strip()
-            raise RuntimeError(f"claude -p exited {rc}: {stderr[:120]}")
-        # LAST verdict-carrying object wins (hijack resistance); fall back to
-        # the tolerant first-object scan — validation below stays authoritative.
-        data = _extract_verdict_json(stdout) or _extract_json(stdout)
-        if data is None:
-            raise ValueError("no JSON object found in claude output")
-        result = _validate_result(data, ids)
+        result = _run_analysis(job, runner)
     except Exception as e:  # noqa: BLE001 - 绝不留 analyzing 悬挂（契约 五）
         return mark_failed(suggestion_id, str(e))
-
-    # re-read before the final rewrite: a dismissed job stays dismissed; a job
-    # actd already timed out to failed is upgraded — the real result arrived.
-    current = load_job(suggestion_id) or job
-    if str(current.get("status") or "") == "dismissed":
-        return current
-    current.update(result)
-    current["status"] = "done"
-    current.pop("error", None)
-    current["expires_at"] = _iso_in(TTL_HOURS)
-    write_job(current)
-    analytics.log_event("merge_suggestion_done", suggestion=str(current["id"]),
-                        verdict=result["verdict"], confidence=result["confidence"])
-    return current
+    return _land_done(suggestion_id, job, result)
 
 
 # --------------------------------------------------------------------------- #

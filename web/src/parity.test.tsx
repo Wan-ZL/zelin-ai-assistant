@@ -361,10 +361,11 @@ async function renderSurface(language: Language, page: Surface) {
  *  空态文案（无匹配卡片 / 回收站为空）与横幅动词（一键修复 / 启动后台服务 / 再试一次 / 手动命令） */
 async function renderEmptyBoardVariants(language: Language) {
   const { postRepairActd } = await import("./api");
+  // 这两遍里一键修复永远失败（横幅的失败态动词才渲染）；遍完恢复成功态
+  vi.mocked(postRepairActd).mockRejectedValue(new Error("launchctl kickstart failed (exit 113)"));
   for (const health2 of [stalledHealth, { ...stalledHealth, verdict: "stale", heartbeat: null }]) {
     vi.mocked(fetchBoard).mockResolvedValueOnce(emptyBoard);
     vi.mocked(fetchHealth).mockResolvedValueOnce(health2);
-    vi.mocked(postRepairActd).mockRejectedValueOnce(new Error("launchctl kickstart failed (exit 113)"));
     await refreshBoard();
     await refreshHealth();
     setFilters({ search: "zzz" });
@@ -380,11 +381,13 @@ async function renderEmptyBoardVariants(language: Language) {
       collectLabels(document.body, pool);
       clickEverything(view.container, pool, true);
       await settle(pool);
+      await settle(pool); // 一键修复的 reject → 失败态文案再晚一拍也收得到
       collectLabels(document.body, pool);
       cleanup();
     }
     setFilters({ search: "" });
   }
+  vi.mocked(postRepairActd).mockResolvedValue({ ok: true, label: "com.zelin.aiassistant.actd", action: "kickstart" });
 }
 
 beforeAll(async () => {

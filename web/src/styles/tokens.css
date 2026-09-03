@@ -27,7 +27,9 @@
   font-family: var(--font-sans); /* 字体栈单源在下方 type-scale 块 */
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+  /* 字体平滑走平台默认（auto）——AppKit 同款渲染；grayscale 强制项会把 SF 的笔画削薄
+   * （owner 2026-09-02 4K 屏「字太细」的根因之一），displayPrefs.test.ts 钉住不许再加 */
+  -webkit-font-smoothing: auto;
   --bg: var(--native-color-window-background-light); /* macOS windowBackgroundColor（light 解析值） */
   --header-bg: var(--native-color-window-background-light);
   --sidebar-bg: rgba(0, 0, 0, var(--native-overlay-primary-03)); /* 原生 sidebar：Color.primary.opacity(0.03) */
@@ -46,7 +48,6 @@
   --text-quaternary: #b1b6c1;
   --border: #e0e3e9;
   --border-strong: #d2d6df;
-  --border-hairline: 0.5px;
   --accent: #12758c;
   --accent-hover: #10677b;
   --accent-active: #0e596a;
@@ -161,53 +162,98 @@
 }
 
 /*
+ * —— 显示偏好三把旋钮（CONTRACT §54.1 第 12 项；设置页「显示」，server `ui.display`）——
+ * 全站只有这三个变量是旋钮：--text-scale（字号倍率）、--weight-shift（字重平移）、
+ * --stroke-w（描边宽）。JS（displayPrefs.ts）只往 <html> 写 data-text-size / data-text-weight /
+ * data-stroke 三个属性，值 → 变量的映射全在本块（index.html 首帧从 localStorage zai.display
+ * 预写同一组属性，避免字号跳变）。默认值 = 视觉 golden 的采集条件（§64）。
+ * 描边：owner 2026-09-02 4K 屏「按钮/chip 的框细得像发丝」——此前 0.5px（2x 屏 = 1 设备像素）；
+ * 默认改 1.5px，thin 1px / thick 2px；系统「增强对比度」（prefers-contrast: more）各升一档。
+ * 字重：四档 SF 字重各加同一个平移量（regular 0 / medium +100 / bold +200），保持梯内相对关系；
+ * 组件里的字重只许 var(--w-…)，禁止字面 400/500/600/700。
+ * 字号：所有字号写成 calc(<原生 px> * var(--text-scale))，s .9 / m 1 / l 1.1 / xl 1.25 一个变量全站缩放。
+ */
+:root {
+  --text-scale: 1;
+  --weight-shift: 0;
+  --stroke-w: 1.5px;
+  --w-regular: calc(400 + var(--weight-shift));
+  --w-medium: calc(500 + var(--weight-shift));
+  --w-semibold: calc(600 + var(--weight-shift));
+  --w-bold: calc(700 + var(--weight-shift));
+}
+
+:root[data-text-size="s"] { --text-scale: 0.9; }
+:root[data-text-size="l"] { --text-scale: 1.1; }
+:root[data-text-size="xl"] { --text-scale: 1.25; }
+
+:root[data-text-weight="medium"] { --weight-shift: 100; }
+:root[data-text-weight="bold"] { --weight-shift: 200; }
+
+:root[data-stroke="thin"] { --stroke-w: 1px; }
+:root[data-stroke="thick"] { --stroke-w: 2px; }
+
+/* 系统「增强对比度」：描边各升一档（thin → normal → thick → 2.5px），字号字重不动 */
+@media (prefers-contrast: more) {
+  :root[data-stroke="thin"] { --stroke-w: 1.5px; }
+  :root:not([data-stroke]),
+  :root[data-stroke="normal"] { --stroke-w: 2px; }
+  :root[data-stroke="thick"] { --stroke-w: 2.5px; }
+}
+
+/*
  * —— 字号/字重梯（type scale）：逐字镜像原生看板（本 repo 自写，非 fork）——
  * 原生 mac/Sources（D3 冻结的只读规格）全部走 .font(.system(size:weight:))，SF Pro 的
  * regular/medium/semibold/bold = 400/500/600/700，1pt = 1px。每个 token 是一个原生角色的
- * `font` 简写（weight size/line-height family）；组件 CSS 只许 `font: var(--type-…)`，
- * 禁止在组件里写字面 font-size / font-weight。行高统一 1.4（中英混排时 PingFang 撑到的
- * 原生实际行高），胶囊/按钮用定值行高保住盒高。
+ * `font` 简写（weight size/line-height family），写法固定为
+ *   var(--w-<weight>) calc(<size>px * var(--text-scale))/<line-height> var(--font-…)
+ * ——字重经上方 --w-* 吃 --weight-shift，字号经 --text-scale 缩放，原生 px 值仍可肉眼读出；
+ * 组件 CSS 只许 `font: var(--type-…)`，禁止在组件里写字面 font-size / font-weight。
+ * 行高统一 1.4（中英混排时 PingFang 撑到的原生实际行高），胶囊/按钮用定值行高保住盒高
+ * （定值行高同样乘 --text-scale，盒高随字号走）。
  * 与 Swift 行号的对照表（角色 → file:line → token）= web/src/styles/typeScale.ts；
  * typeScale.test.ts 钉 CSS 值 ↔ 表，tests/test_web_type_scale_mirror.py 钉 表 ↔ Swift 源行；
  * CONTRACT §54.1 第 10 项指向本块。
+ * 字体栈：-apple-system 在 macOS 解析到 San Francisco，"SF Pro Text" 显式列出是给非 WebKit
+ * 引擎；中文回落 PingFang SC（macOS）→ Hiragino → 微软雅黑（Windows），Segoe UI 只在 Windows 命中。
  * 颜色映射（不新造色值）：原生 .primary → --text-primary；.secondary → --text-secondary；
  * .secondary.opacity(0.85) → --text-tertiary；.secondary.opacity(0.7/0.55) → --text-quaternary。
  */
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   /* 卡面 */
-  --type-card-title-lg: 600 15px/1.4 var(--font-sans);
-  --type-card-title: 500 12px/1.4 var(--font-sans);
-  --type-card-placeholder: 400 13px/1.4 var(--font-sans);
-  --type-card-line: 500 11px/1.4 var(--font-sans);
-  --type-card-body: 400 11px/1.4 var(--font-sans);
-  --type-card-body-strong: 600 11px/1.4 var(--font-sans);
-  --type-card-meta: 400 10px/1.4 var(--font-sans);
-  --type-card-meta-strong: 500 10px/1.4 var(--font-sans);
-  --type-card-fine: 400 9px/1.4 var(--font-sans);
-  --type-card-fine-mono: 400 9px/1.4 var(--font-mono);
-  --type-card-error-mono: 400 10px/1.5 var(--font-mono);
-  --type-chip: 600 10px/16px var(--font-sans);
-  --type-button: 400 11px/18px var(--font-sans);
-  --type-details-toggle: 400 11px/18px var(--font-sans);
+  --type-card-title-lg: var(--w-semibold) calc(15px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-title: var(--w-medium) calc(12px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-placeholder: var(--w-regular) calc(13px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-line: var(--w-medium) calc(11px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-body: var(--w-regular) calc(11px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-body-strong: var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-meta: var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-meta-strong: var(--w-medium) calc(10px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-fine: var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-sans);
+  --type-card-fine-mono: var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono);
+  --type-card-error-mono: var(--w-regular) calc(10px * var(--text-scale))/1.5 var(--font-mono);
+  --type-chip: var(--w-semibold) calc(10px * var(--text-scale))/calc(16px * var(--text-scale)) var(--font-sans);
+  --type-button: var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans);
+  --type-details-toggle: var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans);
   /* 展开详情 */
-  --type-detail-title: 500 12px/1.4 var(--font-sans);
-  --type-detail-heading: 600 11px/1.4 var(--font-sans);
-  --type-detail-subheading: 600 10px/1.4 var(--font-sans);
+  --type-detail-title: var(--w-medium) calc(12px * var(--text-scale))/1.4 var(--font-sans);
+  --type-detail-heading: var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans);
+  --type-detail-subheading: var(--w-semibold) calc(10px * var(--text-scale))/1.4 var(--font-sans);
   /* 列 */
-  --type-lane-title: 600 12px/1.4 var(--font-sans);
-  --type-lane-count: 700 11px/16px var(--font-sans);
-  --type-lane-help: 400 12px/1.55 var(--font-sans);
-  --type-lane-empty: 400 11px/1.4 var(--font-sans);
+  --type-lane-title: var(--w-semibold) calc(12px * var(--text-scale))/1.4 var(--font-sans);
+  --type-lane-count: var(--w-bold) calc(11px * var(--text-scale))/calc(16px * var(--text-scale)) var(--font-sans);
+  --type-lane-help: var(--w-regular) calc(12px * var(--text-scale))/1.55 var(--font-sans);
+  --type-lane-empty: var(--w-regular) calc(11px * var(--text-scale))/1.4 var(--font-sans);
   /* 列顶输入框 */
-  --type-composer: 400 12px/1.4 var(--font-sans);
-  --type-composer-hint: 400 10px/1.4 var(--font-sans);
+  --type-composer: var(--w-regular) calc(12px * var(--text-scale))/1.4 var(--font-sans);
+  --type-composer-hint: var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans);
   /* 侧栏 / 顶栏 */
-  --type-header-title: 600 14px/1.4 var(--font-sans);
-  --type-rail-item: 400 13px/1.4 var(--font-sans);
-  --type-header-control: 400 12px/1.4 var(--font-sans);
-  --type-header-meta: 400 10px/1.4 var(--font-sans);
+  --type-header-title: var(--w-semibold) calc(14px * var(--text-scale))/1.4 var(--font-sans);
+  --type-rail-item: var(--w-regular) calc(13px * var(--text-scale))/1.4 var(--font-sans);
+  --type-header-control: var(--w-regular) calc(12px * var(--text-scale))/1.4 var(--font-sans);
+  --type-header-meta: var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans);
 }
 
 /* —— 以下为本 repo 自写的基础重置（非 fork）—— */

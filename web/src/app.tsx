@@ -8,7 +8,7 @@ import { getI18n, LanguageContext } from "./i18n";
 import { buildAppUrl, navigate, readPage, type AppPage } from "./route";
 import { createBoardRealtime } from "./realtime";
 import { onShellCommand, pushBadge } from "./shellBridge";
-import { refreshBoard, refreshHealth, refreshLanes, refreshSetup, setConnection, useAppState } from "./store";
+import { refreshBoard, refreshDisplaySettings, refreshHealth, refreshLanes, refreshSetup, setConnection, useAppState } from "./store";
 import { AppShell } from "./components/shell/AppShell";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
@@ -69,6 +69,7 @@ export function App() {
     void refreshBoard();
     void refreshHealth();
     void refreshLanes(); // 列头「?」说明文案（server-owned 目录，§54；静态，拉一次）
+    void refreshDisplaySettings(); // 字号 / 字重 / 描边（§54.1 第 12 项）：到达即落 <html> data-*，首帧由 index.html 的缓存顶住
     void refreshSetup(); // §68.5 首次运行判定（config.yaml / 凭证 / 完成标记）
     const realtime = createBoardRealtime({
       onRefetch: () => void refreshBoard(),

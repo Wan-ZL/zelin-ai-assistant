@@ -1,0 +1,42 @@
+/* test-ui fixture pair — REFERENCE board tokens (light default, dark scope, one narrow breakpoint). */
+:root {
+  color-scheme: dark;
+  --bg: #fafbfc;
+  --surface: #ffffff;
+  --text-primary: #1a1c22;
+  --text-secondary: #5a5f6b;
+  --text-tertiary: #8a8f99;
+  --accent: #12758c;
+  --on-accent: #ffffff;
+  --radius-card: 8px;
+  --space-2: 8px;
+  --type-title: 600 15px/1.4 var(--font-sans);
+  --font-sans: -apple-system, sans-serif;
+  --native-layout-lane-width: 400px;
+  --native-layout-rail-default-width: 200px;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1d23;
+  --surface: #23262e;
+  --text-primary: #e6e8ee;
+  --text-secondary: #a3a8b5;
+  --text-tertiary: #8a8f99;
+  --accent: #6ac4dc;
+  --on-accent: #0e1116;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1b1d23;
+    --surface: #23262e;
+    --text-primary: #e6e8ee;
+    --text-secondary: #a3a8b5;
+    --text-tertiary: #8a8f99;
+    --accent: #6ac4dc;
+    --on-accent: #0e1116;
+  }
+}
+@media (max-width: 960px) {
+  .lanes { flex-wrap: wrap; }
+}

@@ -111,11 +111,15 @@ class CheckResult:
     # app maps action_id to a one-click repair, falling back to the raw fix.
     failure_id: str = ""
     action_id: str = ""
+    # §25 row class, derived from failure_id: "owner_action" when the remedy is
+    # the owner's manual grant — the §56.3 deploy verdict skips such rows.
+    row_class: str = ""
 
     def with_failure(self, failure_id: str) -> "CheckResult":
-        """Attach a catalog id (and its action) to a non-ok result."""
+        """Attach a catalog id (and its action + class) to a non-ok result."""
         self.failure_id = failure_id
         self.action_id = failures.action_id(failure_id) or ""
+        self.row_class = failures.row_class(failure_id)
         return self
 
 

@@ -1,0 +1,3 @@
+# fixture waivers — the second line has no reason (reasonless_waiver)
+control:board:button:later  kept as plain button on purpose  #fixture
+control:board:button:steer

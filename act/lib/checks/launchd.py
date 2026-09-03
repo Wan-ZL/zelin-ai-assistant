@@ -58,10 +58,6 @@ INTERPRETER_BLIND_FIX = (
     " that can actually read the repo; if it still fails, grant Full Disk"
     " Access to that interpreter binary in System Settings > Privacy & Security")
 
-_CLAUDE_BLIND_RE = re.compile(
-    r"possibly due to low max file descriptors|operation not permitted|\bEPERM\b",
-    re.IGNORECASE)
-
 # The payload is /bin/sh (an Apple platform binary — it can cd anywhere the
 # way python's pre-exec chdir did on 2026-08-31); only the exec'd claude is
 # what TCC judges, exactly as in a real dispatch. Stages let the reader tell
@@ -646,7 +642,7 @@ def _first_line(res: dict) -> "tuple[str, str]":
 
 def _claude_failed_row(res: dict, claude_bin: str, cwd: Path, text: str,
                        first: str, fda_fix: str) -> CheckResult:
-    if _CLAUDE_BLIND_RE.search(text):
+    if claude_bin_lib.looks_blind(text):
         return CheckResult(
             "launchd claude", FAIL,
             "launchd-spawned %s cannot read %s (rc=%s: %s) - macOS grants Full Disk "

@@ -31,7 +31,7 @@
    可恢复，静默并入的 fold note 可拆出，绝无不可恢复的自动删除。（§21/§38.2/§44.4）
 3. **诚实的健康报告**：状态行/健康文件只报真实探测结果，绝不虚报 ok；失败要分类
    （auth/network/command…），「坏掉的通道」与「没有新数据」严格区分。
-   （§25 失败分类层；§14bis 命令通道词表；act/lib/health.py 的 skip_reason 语义）
+   （§25 失败分类层；§14bis 命令通道词表；act/lib/radar_health.py 的 skip_reason 语义）
 4. **记录 ≠ 立案**：进档案（笔记/wiki）不等于成任务。屏幕 OCR 上的内容永不发起
    卡片（回声环的一刀，2026-07-25）；AI/assistant 的话在任何来源下都到不了直发
    提案；出生资格由 §45 决策表统一裁决。（act/lib/provenance.py；tests/test_provenance.py）
@@ -102,6 +102,8 @@ YAML 载体：一条需求一个文件。状态机：
 
 **§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
 
+**§70 追记（add-only optional 字段）**：`merged_from`（list[str]，每日整理合成卡上的来源卡主键列表——`merged_into` 的反向指针；lineage 只指主键；非合成卡整键省略。词表同步：`registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py）。
+
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
 ## 2. `state/dashboard.json`（actd 写，Mac app 只读，原子写：先写 .tmp 再 rename）
@@ -125,6 +127,7 @@ YAML 载体：一条需求一个文件。状态机：
 }
 ```
 - `show_cost` = cost_usd 是否 ≥ config.show_cost_above_usd（<$5 时 false，app 不显示成本）
+- **投影 golden（P3a）**：`tests/test_dashboard_golden_projection.py` 以 `tests/fixtures/dashboard_golden.json` 逐字节钉住 `build_dashboard` 对一组走遍全部 lane 分支的 fixture 的输出（含每行的键序——Swift/web 解码器按它写成）。任何 wire 变化（新键、改序、改值形）必须同 PR 用 `REGEN_DASHBOARD_GOLDEN=1` 重铸 golden 并在本节落字；golden 变了而本节没动 = 审查 blocker。
 - running/needs_input/completed 由 actd 把注册表中 status=executing 的项与 `claude agents --json` 按 session_id join 得到（**§46.3 追记**：needs_input 另收 auto-resume 已放弃且会话已死的 executing 降级卡，行带 add-only `resume_exhausted: true`。**v0.48.8 修订（#119，需输入退役）**：以上两条会话来源全部退役——受阻（roster blocked 且无待注入 briefing/steer）与放弃救活的 executing 卡由 reconcile 按 stop_to_review 收割路径直接落 review（§46.3 v0.48.8 块）；`needs_input[]` 键 add-only 恒在，唯一住户 = §4 派发刹车行（下方 v0.48.4 块）。）
 - debt = status=detected 的项
 
@@ -154,6 +157,8 @@ YAML 载体：一条需求一个文件。状态机：
 **v0.48.15 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
 
 **§64 新增（issue #128 AI 摘要 + 完成度评语的投影面，add-only optional）**：`review[]` 与 `completed[]` 行加 `assessment: {summary(str|null), verdict(str|null), verdict_reason(str|null), at(epoch int|null)}`——**只在卡上有摘要或评语、且其 `source_hash` 与卡当前内容指纹一致时整键出现**（失败标记 / 未评 / 内容已变而判官未归 = 整键不存在，客户端不得拿空壳或旧话去猜）；`verdict` 词表 = `建议验收`｜`需继续做`｜`需要拍板`（`act/lib/card_summary.VERDICTS` 单源，web `VerdictChip.VERDICTS` 逐字镜像；词表外的值 server 端归 null，客户端对未知值按原文中性渲染——开放枚举）。`source_hash` / `error` **不上 wire**。客户端只渲染：评语章点看理由、摘要一句上卡面；验收 / 打回按钮语义零变化（§64.6）。
+
+**§70 新增顶层 optional 字段 `maintenance`（每日自我改进循环的投影面；§2 兄弟字段，同 `deploy_state` 的加法约定）**：`act/lib/daily_loop.attach` 由 `build_dashboard` 调用，读 `state/daily_loop.json`；文件不存在（循环从未跑过）= **整键不存在**。形状（时间全是 **epoch int 或 null**，§2 惯例）：`{"phase": "idle|dedup|stale_sweep|proposals", "started_at", "last_run_at", "next_run_at", "last_result": {"merged", "trashed", "proposals", "summaries", "errors"}}`——`phase` 开放枚举（客户端对未知值按「在跑」显示）；`last_result` 五个计数恒在（缺失按 0）。web `MaintenanceBanner` 据此显示「正在整理看板…」（phase ≠ idle 且 started_at 在 2 h 内）或「今日整理：合并 N、清理 M（可撤销）、提案 K」（last_run_at 落在本地今天且三数非全零）；**不弹系统通知**（D10 设计判断）。syncd 变更闸门**不**把它视为易变键：它一天只变三次。
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
@@ -302,6 +307,7 @@ debt item 新增 `summary`（同上，大白话）。
 - dashboard 新增区 `trash`（+ `counts.trash`）：每项 `{id, title, summary, kind:"suggestion"|"debt", trashed_at, trash_reason, permanent, type, hardness}`。
 - app 回收站区（默认折叠）：带**搜索框**（客户端过滤 title/summary）；每行按钮 **「恢复」**(→inbox `{action:"restore"}` 回到 prev_status) 和 **「永久保存」**(→inbox `{action:"pin"}` 设 permanent=true)。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
+- **§70 追记（add-only；`trash_reason` 词表扩展 + 分级保留期）**：每日整理循环（actd 内运行，system actor）写两族新 reason——`daily-merge: 并入 <new id>`（同题多卡合成一张新卡后，旧卡进回收站；新卡主键在 reason 里，新卡 `merged_from[]` 反向列出旧卡）与 `stale:<rule>`（rule ∈ `deadline_passed` / `diagnostic_expired` / `superseded` / `idle`，词表见 §70.2）。两族卡 **`prev_status` 完整、restore 语义不变**；保留期改由 `maintenance.retention_days(req, cfg)` 按卡判决：这两族 = `daily_loop.trash_retention_days`（默认 **90**——owner 没亲眼看过它们进回收站，比手动 trash 的 60 天更长），其余 = `trash.retention_days`；`trash.retention_days <= 0` 仍是总开关（关掉后循环卡也不清）。`actd.purge_trash` 与 §40.5 `purge_at` 投影经**同一个**判决（`maintenance.purge_due` / `maintenance.purge_at`），倒计时永不许诺一次不会发生的删除。存量的 ~40 张 owner 手动 trash 的卡不受本条影响（它们按 owner 自己设的 60 天走）；想留作参考请在回收站页对每张按「永久保存」（pin），或临时抬高 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
 `approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
@@ -396,7 +402,7 @@ mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test
 2) **录制与 ingest**：启动/退出 Screenpipe（open -a / osascript quit）、"立即导出"（跑 ingest/screenpipe-export.sh）、"立即 ingest"（跑 process 脚本）、显示最近一次导出/ingest 时间（读 log mtime）。
 3) **设置**：写 `state/settings_overrides.json`（app 只写这个文件；config.load_config() 最后合并 overrides，优先级最高）。字段：obsidian_raw、slack_token_path、gmail address/密码路径、成本双阈值、trash 保留天数、界面语言(zh/en，先存值)、feature flags 开关。
    - **v0.13 追加（add-only）**：`telemetry.enabled`（bool）——首启权限页「匿名使用统计」复选框取消勾选时写嵌套形式 `{"telemetry": {"enabled": false}}`；重新勾选**删除**该 override 键（回落产品默认）。Python 侧 `_apply_settings_overrides` 同时接受嵌套与扁平 `"telemetry.enabled"` 两种形式，且**只认 enabled / level 两个子键**（level 见下方「Telemetry 覆写」补充）——`telemetry.supabase_url` / `telemetry.key_path` 仅 config.yaml 可设，overrides 里出现一律忽略。
-   - **v0.13 追加（add-only，consent 门标记）**：「权限体检」页首次**展示**「匿名使用统计」块时，App 写标记文件 `state/telemetry_consent_shown`（内容 = 首次展示的 UTC 时间戳；含义仅是「披露界面出现过」，与勾选结果无关——开关语义仍由上行 `telemetry.enabled` 承担）。`act/lib/analytics_sync` 上传前要求 该标记 / config.yaml `telemetry:` 块 / overrides 的 telemetry 键 至少存在其一，否则整轮 no-op（堵住 install.sh 先装 cron、consent 界面尚未出现过的上传窗口；docs/TELEMETRY.md「上传何时发生」）。
+   - **v0.13 追加（add-only，consent 门标记）**：「权限体检」页首次**展示**「匿名使用统计」块时，App 写标记文件 `state/telemetry_consent_shown`（内容 = 首次展示的 UTC 时间戳；含义仅是「披露界面出现过」，与勾选结果无关——开关语义仍由上行 `telemetry.enabled` 承担）。`act/lib/telemetry_upload` 上传前要求 该标记 / config.yaml `telemetry:` 块 / overrides 的 telemetry 键 至少存在其一，否则整轮 no-op（堵住 install.sh 先装 cron、consent 界面尚未出现过的上传窗口；docs/TELEMETRY.md「上传何时发生」）。**墓碑（P3a，防腐 #9）**：上传器此前叫 `act/lib/analytics_sync.py`，与入口 `act/analytics_sync.py` 同 basename——库侧按 object 改名 `telemetry_upload`；入口模块、cron 行 `python -m act.analytics_sync --once`、`state/analytics_sync.json` 游标与 `.log` 文件名**不变**（slug `analytics_sync` 归入口）。
    - **v0.14 追加（add-only，execution 三键 + 保存语义）**：overrides 允许列表（`act/lib/config.py` `_OVERRIDE_FIELDS`）新增三个扁平键，语义与 config.yaml `execution:` 块同名键逐字一致：`default_target_repo`（str，批准卡片的默认执行目录）、`skip_permissions`（bool，claude --bg 是否带 `--dangerously-skip-permissions`）、`create_github_repo`（bool，是否允许自动创建 GitHub 仓库）。**保存语义（app 写入方约束，读取方不变）**：设置页自 v0.14 起改动即持久化（无全局保存按钮），且对每个键 **diff-write**——新值与「不含该 override 的 effective 值」（config.yaml → 内置默认）相同时**删除**该键，不同才写入；app 永不整节镜像写入未被用户改动的键。读取方（`_apply_settings_overrides`）语义不变：键在则覆盖，键缺省则回落 config.yaml/默认。另：v0.14 起「待审批」列的**显示名**改为「提案 / Proposals」（W8）——纯 L() 文案改动，`needs_approval` / `card_sent` 等内部键与本契约各节原文不变。
 4) **关于**：版本、repo 路径、`python -m act.report` 提示。
 
@@ -412,7 +418,7 @@ mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test
 - **Telemetry 覆写（add-only 补充，docs/TELEMETRY.md）**：设置页「产品改进计划」区写嵌套形式 `{"telemetry": {"enabled": …, "level": …}}`（与首启权限页同一 override 键；扁平 `"telemetry.enabled"` / `"telemetry.level"` 两个点号键 Python 侧同样接受），`config.load_config()` 最后合并（优先级最高，覆盖 config.yaml `telemetry:` 块）：
   - `enabled`（Bool）——匿名使用统计上传总开关。**默认 true（默认开 + 明确可关）**。
   - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。**v0.18 修订（见下条 capture_input 追加）**：detailed 单独不再附带任何内容字段——内容一律再要求 capture_input，本行仅作历史语义记录。
-  - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `sanitize._SECRET_PATTERNS` 掩码，独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。**（v0.48 修订见下条：capture_input 默认已翻转为 false/opt-in、v2 标记不再单独作为内容同意来源——本条中与此冲突的默认值与文案要求表述仅作历史语义记录。）**
+  - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `secret_patterns.SECRET_PATTERNS` 掩码（P3a 起模式表单独住 `act/lib/secret_patterns.py`——analytics 与 sanitize 此前互相 import 这张表构成环，共享件下沉一层后两边都只向下依赖），独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。**（v0.48 修订见下条：capture_input 默认已翻转为 false/opt-in、v2 标记不再单独作为内容同意来源——本条中与此冲突的默认值与文案要求表述仅作历史语义记录。）**
   - **v0.48 修订（capture_input 默认翻转为 opt-in）**：`capture_input` 的内置默认由 true 改为 **false**——**输入文本上传自此严格 opt-in**（键形状、允许列表、双开关语义、字段表、红线与密钥掩码均不变；`telemetry.enabled` / `level` 的默认与语义不动）。开启的三个等效入口（全部落**显式**键，即 `Config.telemetry_capture_input_explicit`）：①首启「权限体检 / 设置向导」披露块（TelemetryBlockView）新增**默认未勾选**的复选框「分享输入文本以帮助改进产品 / Share typed text to improve the product」，勾选即写嵌套 override `{"telemetry": {"capture_input": true}}`（取消勾选写 false——切动过即为知情选择，同设置页 captureTouched 语义）；②设置页「上传我输入的文本」开关（原语义不变）；③config.yaml `telemetry.capture_input: true`。**consent 语义收紧**：内容收集的同意来源自此**只认显式 capture_input 键**——v0.18 的 v2 标记 `state/telemetry_consent_shown_v2` 继续在披露块渲染时写入（仅作「披露展示过」的记录），但其单独存在**不再**打开内容门（看到披露 ≠ 同意；`analytics.content_gate` / Swift `Telemetry.contentCaptureActive` 同步收紧，测试锁死）。从 v0.18–v0.47 升级且从未显式落键的安装：行为遥测照旧，内容上传自动停止，直到用户勾选/开启一次。首启披露文案同步修订为诚实的 opt-in 表述（行为统计默认开、仅元数据；输入文本默认不传），v0.18 的「因默认收集输入文本，文案必须明说包含」要求随默认翻转失效，替换为「文案不得声称输入文本默认上传」（tests/test_telemetry_level.py honesty drift-guard 同步改判）。v1 标记 `telemetry_consent_shown` 与 analytics_sync 的上传 consent 门（本节 v0.13 条）语义完全不变。
   - **issue #37 追记（add-only，两条收紧）**：①**consent 标记只在披露块实际可见时写**——v1 `telemetry_consent_shown` 与 v2 `telemetry_consent_shown_v2` 的写入时机从「披露块插入视图树（`.onAppear`）」收紧为「披露块**进入视口**」：权限体检页与设置向导第 3 步都是 ScrollView 里的非 lazy VStack，480 pt 最小窗高下披露块可能在折线之下就被 `.onAppear` 记成「已展示」。原生宿主 `TelemetryBlockView` 经 `ConsentVisibilityProbe`（背景里一枚 AppKit 探针：`NSView.visibleRect` 对 clip view 感知，块的 ≥50% 进入滚动视口才写；窗口挂接 / layout / 每次滚动都复核，只触发一次；**macOS 14+ 同一条路径，无插入即写的回落**——#158 审查指出 macOS 15 API 的回落分支仍会在折线下写）落地；**任何后继宿主（web 设置页的 telemetry 节，P4）沿用同一条：披露文案可见（IntersectionObserver）才请求 server 落标记，永不在挂载时写**。标记语义（「披露界面出现过」、v2 不作内容同意）不变。②**失败类事件只上传分类 id**：`dispatch_failed` / `rework_failed` / `stop_failed` / `telemetry_sync` 的 `error` 自由文本字段退役（永不以同义复活），改为 §25 `failure_id`（`failures.classify`，无法分类整键缺席）；`telemetry_sync` / `radar_message_failed` 另带异常**类名** `error_type`；`capture_receipt_failed` 的 Slack 枚举码改名 `slack_error` 且只收 `^[a-z0-9_]+$` 形状。原文一律只进本机台账。执法 = `tests/test_telemetry_no_raw_error.py`（行为判例 + AST privacy lint：`act/` `server/` 下 `log_event`/`log_first` 带 `error=` 即红）；字段表见 docs/TELEMETRY.md。
 
@@ -436,7 +442,7 @@ mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test
 - **写入面**：只写既有的 §15.3 overrides 键（`language`、`obsidian_raw`——均在 `_OVERRIDE_FIELDS` 允许列表内，且仅在与当前生效值不同时 diff-write）与 §19 的 `config/secrets/anthropic-api-key.txt`（粘贴 key 经 api.anthropic.com/v1/models 免费探针验证通过后才落盘，0600）。笔记库步骤会在所选根目录下创建 4 个标准管线子目录（与 config.py `_derive_obsidian_dirs` 同名，幂等 mkdir）。
 - **App 侧附带职责（同 v0.13 iMessage 区先例，不新增契约字段）**：健康检查页的「启动后台服务」按钮按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.actd.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`；「立即生成一次」经 runtime python（§19 指针）跑 `python -m act.lib.dashboard` 补种 dashboard.json。
 
-**v0.19.0 补充（板级诊断卡 + obsidian 雷达健康，add-only）**：`state/radar_health.json`（契约 E）新增来源键 `obsidian`（同 gmail/slack 形），由 `act/radar.py` 写入，且**仅在 cron ingest chain**（`AIASSISTANT_CRON=1`，install.sh 的 `*/30` 链）语境下写——`radar._owns_health()` 门控，保证退役/被 TCC 挡住的 launchd 语境或手动 `python -m act.radar` 永不能用假的空 vault 覆盖 cron 的好健康。每条 entry 另可携带**可选** `last_cards: int`（add-only；仅 obsidian 在 `ok` pass 写，= 上次成功抓到的卡数；旧 reader 忽略，Swift 侧 `as? Int` 解）。obsidian 的 `skip_reason` 词表：`disabled` / `vault_missing`（目录未配或不存在）/ `vault_empty`（目录在但零 `.md`）/ `no_api_key`（提取失败且无可解析 Anthropic key）/ `extract_failed`（`claude -p` 对 ≥1 note 失败）；扫过但没有比 marker 更新的 note = `ok=True, last_cards=0`，**不是** skip。radar_slack 健康 `skip_reason` 词表增补 `mcp_not_configured`（fallback 开、无 token、claude CLI 无 Slack MCP；`claude mcp list` 预检，缓存 `state/slack_mcp_present.marker` 30 min），语义区别于 transient 的 `mcp_failed:`。App 侧据此在任务台/popover 合成 `DiagnosticsStrip` 诊断卡（`mac/Sources/Diagnostics.swift`，Swift 侧合成，**不新增 dashboard.json partition**）：每张卡一句大白话问题 + 一个直达修复的主按钮，只显示用户已配置却在静默失败的路径，可 dismiss，修好即消失。canonical entry shape 见 `act/lib/health.py` docstring。
+**v0.19.0 补充（板级诊断卡 + obsidian 雷达健康，add-only）**：`state/radar_health.json`（契约 E）新增来源键 `obsidian`（同 gmail/slack 形），由 `act/radar.py` 写入，且**仅在 cron ingest chain**（`AIASSISTANT_CRON=1`，install.sh 的 `*/30` 链）语境下写——`radar._owns_health()` 门控，保证退役/被 TCC 挡住的 launchd 语境或手动 `python -m act.radar` 永不能用假的空 vault 覆盖 cron 的好健康。每条 entry 另可携带**可选** `last_cards: int`（add-only；仅 obsidian 在 `ok` pass 写，= 上次成功抓到的卡数；旧 reader 忽略，Swift 侧 `as? Int` 解）。obsidian 的 `skip_reason` 词表：`disabled` / `vault_missing`（目录未配或不存在）/ `vault_empty`（目录在但零 `.md`）/ `no_api_key`（提取失败且无可解析 Anthropic key）/ `extract_failed`（`claude -p` 对 ≥1 note 失败）；扫过但没有比 marker 更新的 note = `ok=True, last_cards=0`，**不是** skip。radar_slack 健康 `skip_reason` 词表增补 `mcp_not_configured`（fallback 开、无 token、claude CLI 无 Slack MCP；`claude mcp list` 预检，缓存 `state/slack_mcp_present.marker` 30 min），语义区别于 transient 的 `mcp_failed:`。App 侧据此在任务台/popover 合成 `DiagnosticsStrip` 诊断卡（`mac/Sources/Diagnostics.swift`，Swift 侧合成，**不新增 dashboard.json partition**）：每张卡一句大白话问题 + 一个直达修复的主按钮，只显示用户已配置却在静默失败的路径，可 dismiss，修好即消失。canonical entry shape 见 `act/lib/radar_health.py` docstring。**墓碑（P3a，防腐 #9）**：该模块此前叫 `act/lib/health.py`，与 `server/health.py`（§47.4 `/api/health`）同 basename 跨目录——按 object 改名 `radar_health`（与 `state/radar_health.json` / `load_radar_health()` 同一 slug），行为零变化。
 
 **v0.19 追加（add-only，生命周期里程碑遥测,docs/TELEMETRY.md）**:新增 5 个**每装机至多一条**的里程碑事件,喂 `scripts/insights_report.py` 的激活漏斗。产出统一走**去重一次**写法——App 侧 `Analytics.firstReach(feature)`(UserDefaults 标记,`mac/Sources/Utils.swift`,事件 `feature_first_reach{feature}`)、daemon 侧 `analytics.log_first(event, **fields)`(标记文件 `state/analytics/first/<event>`,emit-then-mark、never raises)。App 端:`feature_first_reach{feature:"app_launch"}`(首启)、`feature_first_reach{feature:"ingest_configured"}`(首个 ingest 源可用)。daemon 端:`milestone_first_card{req}`(`registry.save()` 单一 choke,首张进 card_sent lane)、`milestone_first_approval{req}`(actd approve 分支)、`milestone_first_delivery{req}`(executor dispatch 成功)。全部**仅行为字段**(`req`=需求 id / 计数),绝不含卡片标题/链接/摘要等内容,沿用既有 `analytics.content_gate` 隐私边界,无 schema 迁移(走既有 `event`/`props` 列)。报告侧另派生 retention(按 `client_ts`)与 abandonment 两视图,**不新增事件**,只输出聚合计数/比例,device id 永不外泄;跨所有装机的匿名 device 合并计,per-tenant 区分标记暂缓。
 
@@ -474,6 +480,8 @@ diff-write 逐字同款**（等于「不含该 override 的 effective 值」= �
 本条起 §15.3 的写者是两个：server（web 设置页）与冻结中的 Mac app；退役后只剩 server。
 「菜单栏」区（`showMenuBarIcon` / `showRecordingIcon`）随 D3 Dock-only 决策**删除**，
 无 web 落点；这两个 UserDefaults 键成为无读者的历史键。
+
+**§15 §70 追记（add-only，每日循环旋钮）**：overrides 允许列表新增五个扁平键 `daily_loop_enabled`（bool）/ `daily_loop_time`（本地 `HH:MM`，`3:30` 归一为 `03:30`）/ `daily_loop_max_proposals_per_day` / `daily_loop_stale_days` / `daily_loop_trash_retention_days`（非负 int；负数/bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `daily_loop.*` 逐字一致（yaml 路径宽容：坏值回默认、负数按 0）。写入方 = web 设置页「每日整理」经 `PUT /api/settings/daily-loop`（server/settings.py，diff-write 同 §59 模型旋钮）。actd **每 pass 现读**这五个字段到启动冻结的 cfg 上（`_refresh_model_knobs`——§59 两把模型旋钮的同一刷新点，`daily_loop.LIVE_KNOBS`），保存后下一个 pass 生效、无需重启。
 
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
@@ -518,7 +526,7 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
   对同一份文件必须给出同一个 gate 答案，Python `_apply_settings_overrides`
   与 Swift 同序）——两个写者共用同一份
   `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
-  `act.analytics_sync.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
+  `act.lib.telemetry_upload.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
   gate**（skipped="analytics_off"；防 TOCTOU——run 中途关掉 flag，余下积压
   立即停送，已送 batch 的游标保留不回滚。重查走
   `analytics.feature_gate_fresh()`：不吃 GATE_TTL 进程内缓存——那缓存是给
@@ -836,6 +844,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - **v0.48.x 追记（add-only，§67 `skills` 步）**：新 step `skills` = install.sh 步 3b `install_skills`（跑 `scripts/skills_sync.sh`，把 `default_enabled` 的商店 skill 链进 `~/.claude/skills`、重指陈旧链接、尊重 `state/skills.json` 的决策），`ok | skipped | warn | fail`——`ok` 的 detail 是商店的一行摘要（`enabled 2 (board-agent, test-code) · actions: …`）；`skipped` = 无守护解释器 / 脚本缺席；**`fail` 只对 exit 3（`skills/index.yaml` 坏——仓库坏了，进 `failed_deploy_steps`）**；其余非零 = `warn:exit N — <stderr 尾行>`，不进退出码（环境问题回滚治不了，§56.5）。判例 `tests/test_install_skills_step.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
+- **§69 追记（add-only；`install.sh --no-launchd`，CI 验收与 bootstrap 干跑用）**：`launchd` step 记 `skipped`，detail **以字面 `--no-launchd` 开头**（`--no-launchd: no agent loaded; one actd pass run instead`）——这个字面是 doctor `--fresh-install`（`act/lib/fresh_install.report_says_no_launchd`）判定「调度器是按要求没接、不是坏了」的唯一依据，改文案先改读者；`cron` step 同样 `skipped`（`--no-launchd: crontab not touched`，crontab 一字不读不写）；新 step **`actd_once`** = 用守护解释器跑一次 `python3 -m act.actd --once`（cwd = repo、`AIASSISTANT_HOME` = repo，首 pass 的 store2 激活 / dashboard / heartbeat 全部真写），`ok:one pass in <n>s with <解释器>` / `fail:… exit <rc>; see ~/Library/Logs/zelin-ai-assistant/actd-once.log` / `skipped:no daemon interpreter`；**`actd_once=fail` 进 `failed_deploy_steps` 的退出码**——一个在这台机器上跑不完一个 pass 的 daemon 到了 launchd 下就是 crash-loop，是真失败步。任何模式都可叠加该 flag；未知 flag = 用法错误 exit 2（在任何副作用之前）。判例 `tests/test_install_no_launchd.py`。
 
 ---
 
@@ -927,6 +936,33 @@ option" 可能来自任务自身文本，绝不匹配。action_id 词表追加 `
   两份安装的比对，`--bg` 探测照跑）；新行 **`stable claude`**（darwin）报副本缺失
   WARN / 跑不了 FAIL / 落后登录 shell 的 Claude Code 一版 WARN / 同版 OK，无新
   failure id。
+
+2026-09-03 追加（add-only；live 事故：v1.0.7 因 `stable claude` 的「新增 FAIL」被自动回滚到
+v1.0.3，而那个 FAIL 只是 owner 还没点的一次授权）：**行的类别 `row_class`**——
+`CheckResult.row_class`（`--json` 同名键，add-only；未分类行为空串），由 failure_id 派生
+（`failures.row_class(id)`，`with_failure` 顺手盖上）：**`owner_action`** = 唯一修法是 owner
+亲手授权或接受（系统设置里的 TCC / 完全磁盘访问开关、终端里一次性接受免责声明），代码改动、
+重装、回滚都治不了它，因此它对「刚合进来的代码好不好」一个字都不说。集合
+`failures.OWNER_ACTION_IDS`（add-only）= `claude_blind · deploy_blind_tcc · cron_fda_blocked ·
+cron_tcc_blocked · ui_build_tcc_blocked · claude_bypass_disclaimer · screen_tcc_lost`；判例钉住
+每个 id 都在目录里、且其 action_id 不是任何一键代码修复（reload / restart / repair / fix_config…）。
+**唯一消费方**是 §56.3 第 10 步的部署判决：这类 FAIL 永不算「新增 FAIL」，doctor 输出里照常是
+FAIL，部署摘要里以「needs owner: <行名>」列出。与 §69 的关系：`fresh_install.HUMAN_FAILURE_IDS`（「要人来办」= 授权 + 凭证 + 装工具）**由
+`OWNER_ACTION_IDS` 派生**（真超集，判例钉住）——新部署后凭证或工具突然丢了是回归，仍进判决。配套（同为 add-only）：**`stable claude` 行的
+FAIL 一分为二**——副本存在、`--version` 失败且输出带 TCC 签名（`claude_bin.looks_blind`：Bun 的
+「possibly due to low max file descriptors」/ `operation not permitted` / `EPERM`，与 `launchd
+claude` 行共用同一条正则 `claude_bin.BLIND_RE`）→ FAIL **`claude_blind`**（owner_action；detail
+说清「副本本身没坏、本会话的 cwd 在受限路径而副本还没拿到授权」，修法「完全磁盘访问加入 <稳定路径>，
+一次即可」）；其它原因（dyld / exec format / 被 Gatekeeper 杀）→ 无 id 的 FAIL（文件真坏了，`bash
+install.sh` 重拷），detail 带失败输出首行作证据。`--version` 失败先隔 `claude_bin.VERSION_RETRY_PAUSE_S`
+（1 s）**重问一次**再判——auto-deploy 在 install.sh 结束数秒后就跑 doctor，install.sh 可能正在 `mv`
+刷新副本；成功的不重问。事故机理：auto-deploy 以 `cd $REPO_ROOT` 在 launchd 会话里跑 doctor，
+`<副本> --version` 的 cwd 落在外置卷上，副本是 install.sh 30 s 前刚 `created` 的（它自己在
+cwd=$HOME 跑的 `--version` 是绿的），FDA 还没授 → 基线 WARN（缺失）变 FAIL（跑不了）→ 三次采样都在
+→ 回滚；几分钟后 owner 在终端里跑同一探针是绿的（终端借出自己的授权）。判例
+`tests/test_failures.py::RowClassTestCase`、`tests/test_doctor.py` `stable claude` 组的 TCC /
+raw EPERM / 重试一次 / 成功不重试 / 坏文件五例 + `launchd claude` 行 row_class 例、
+`tests/integration/test_auto_deploy_script.py` 3c 组。
 
 2026-07-13 追加（add-only）：failure id `engine_ffmpeg_missing`——「屏幕+音频」
 （screen_audio）模式的引擎启动**强制依赖 ffmpeg**，缺失时 screenpipe 自带的
@@ -1040,7 +1076,7 @@ WARN；其他厂商前缀永不算）。**v0.48.11 追加（§59）**：`claude 
 
 **doctor 机器输出**：`python3 -m act.doctor --json [--fast]` →
 `{"home": str, "checks": [{name, status(ok|warn|fail), detail, fix,
-failure_id, action_id}]}`；exit code 仍 = FAIL 数。app 诊断区渲染 non-ok 行：
+failure_id, action_id}]}`；exit code 仍 = FAIL 数。 **§69 追记（add-only）**：第三种形态 `python3 -m act.doctor --fresh-install [--json]`（= `bash install.sh --check --fresh-install`）——同一批行按「wired / human / unwired / broken / notes」五桶分类 + 带本机路径的 `manual_steps[]`，**exit code = broken 桶的行数**（TCC 授权与凭证永不计入）；隐含 `--fast`。分桶目录（failure_id 与行名两张表）住 `act/lib/fresh_install.py`，行名或 failure_id 改名必须同步那两张表。app 诊断区渲染 non-ok 行：
 人话句子（FailureCatalog）+ 对症按钮；raw detail/fix 收进 tooltip 与「完整报告」。
 app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录制模式下死亡）时
 **每次会话自动跑一次** `--fast` 版（零成本，不打真实 claude 调用）。
@@ -1349,7 +1385,7 @@ stale 600 s / burst 5 / `review_notify` 三档 / 消费即删 / 坏文件 log+�
   `uploaded_at`）、`false` = 已放弃（附 `upload_error` 前 200 字）。
 
 **上传（best-effort）**：复用 telemetry 的 **anon INSERT 通道**（docs/TELEMETRY.md
-/ `act/lib/analytics_sync.py` 约定）：PostgREST `POST {supabase_url}/rest/v1/
+/ `act/lib/telemetry_upload.py` 约定）：PostgREST `POST {supabase_url}/rest/v1/
 analytics_events`，key 解析同序（§19 key 文件 → `telemetry.key_path` → 内置
 publishable key，RLS 仅 INSERT）。**不建新表**——anon 的 INSERT policy 只覆盖
 `analytics_events`，feedback 作为**独立事件类型**落同表：`event="feedback"`、
@@ -2477,6 +2513,8 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
   「已永久保留」；`purge_at` 缺失/null 时不显示倒计时。iOS/webui 没有回收站
   列表面（只有「删除」动作），无处可显示——本节不涉及。
 
+- **§70 追记**：`purge_at` 的天数不再恒等于 `trash.retention_days`——循环自动扔进回收站的卡（`trash_reason` 以 `stale:` / `daily-merge:` 开头）按 `daily_loop.trash_retention_days`（默认 90）算；单点 `act/lib/maintenance.purge_at`，与 `actd.purge_trash` 的 `purge_due` 同源（§9 §70 追记）。
+
 ### 40.6 通知合批（fresh proposals）
 
 - `detect_transitions`：一个 pass 内**新增（非回锅）提案 > 2 张**时合并为一条
@@ -3439,6 +3477,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   不可解析如实报 `parseable:false` 不 500）、`POST /api/claude-code/default-model
   {model}`（四闸；只改 `model` 键、先备份 `settings.json.bak-<UTC ts>`、其余键
   与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §59.4。
+- **§70 追加（每日循环设置面，add-only）**：`GET /api/settings/daily-loop`（五把旋钮的 effective 值 + 每字段 `source` ∈ override|config|default；token-light）、`PUT /api/settings/daily-loop {enabled?, time?, max_proposals_per_day?, stale_days?, trash_retention_days?}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状坏 400 `INVALID_FIELD` 整句人话、diff-write `state/settings_overrides.json` 的 `daily_loop_*` 扁平键；文件不可解析 409 `CONFLICT`）。PUT 路由自此表驱动（`_PUT_JSON_ROUTES`，与 GET/POST 同款）。形状见 §70.5。
 - **v0.48.x 追加（§54 web 看板 parity，add-only）**：`GET /api/lanes`（列说明
   文案的 **server-owned 目录**：`{"lanes":[{slug, help:{zh,en}}…]}`，slug =
   dashboard 分区名，顺序 = 看板从左到右；文案单源 `server/lanes.py`，来源
@@ -3495,6 +3534,13 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   新增端点 = 加一行（`server/app.py _lookup`）。
   所有一次性 `python -m act.*` 子进程走 `server/subproc.py`（`sys.executable`、
   cwd = repo 根、env `AIASSISTANT_HOME`、超时 + 输出上限、`runner` 注入缝）。
+- **追加（§54.1 第 12 项 显示偏好，add-only）**：`GET /api/settings/display`（三把旋钮
+  `text_size` / `text_weight` / `stroke` 的 effective 值 + 词表 `text_sizes` / `text_weights` /
+  `strokes` + `source`；token-light）、`PUT /api/settings/display {text_size?, text_weight?,
+  stroke?}`（四闸；扁平 override 键 `ui_display_text_size` / `ui_display_text_weight` /
+  `ui_display_stroke` 的 diff-write，语义与 `/api/settings/models` 逐字同款；词表外 400
+  `INVALID_FIELD`；不可解析 409 `CONFLICT`）。这三个键只有 server 读写（daemon 按 §15 忽略）。
+  判例：tests/test_server_display_settings.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -3548,8 +3594,9 @@ quick capture / Slack self-DM——sources channel = `quick`/`quick_capture`）�
 `proposed`（AI 自提：digest 建议 `analytics`、会话挖掘 `claude_code`、诊断
 降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`，以及 §50
 落款派生的 `agent_capture`/`remote_capture`；**2026-09-02 加行 `self_improve`**
-——§65 自动草稿 PR 通道的唯一铸卡渠道，producer 硬编码写入，出身仍是
-proposed，**免批资格由 §51 的第二条 lane 另裁、出身分类不变**）｜`meeting`
+——§65 自动草稿 PR 通道的唯一铸卡渠道（§70 每日循环的提案卡 / PR 跟进卡），
+producer 硬编码写入、无 LLM 经手 = write-locked，出身仍是 proposed，**免批
+资格由 §51 的第二条 lane 另裁（只认它 + 物理 repo 路径）、出身分类不变**）｜`meeting`
 （会议音频/笔记出生：`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。
 信任序 hand > proposed > meeting > external。
 
@@ -4125,6 +4172,38 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
     状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
     （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
     `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
+12. **显示偏好 = token（owner 2026-09-02，4K 屏）**：owner 对照退役中的原生 app：「按钮 /
+    chip 的框细得像发丝、字的笔画比原生细」，要「像 Apple 的 Dynamic Type / Bold Text 那样在
+    设置里调字号、字重、线条粗细」。两处根因先修：(a) `-webkit-font-smoothing: antialiased`
+    强制 grayscale 抗锯齿把 SF 笔画削薄——改回平台默认 `auto`（AppKit 同款），字体栈
+    `-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", …`；(b) 描边此前
+    `--border-hairline: 0.5px`（2x 屏 = 1 设备像素）——**退役**，全站描边只许
+    `var(--stroke-w)`，默认 **1.5px**。三把旋钮 = **`web/src/styles/tokens.css` 里仅有的三个
+    变量**：`--text-scale`（字号倍率 s .9 / m 1 / l 1.1 / xl 1.25）、`--weight-shift`（字重
+    平移 regular 0 / medium +100 / bold +200，四档 SF 字重 `--w-regular/medium/semibold/bold`
+    = 原生数值 + 平移）、`--stroke-w`（thin 1px / normal 1.5px / thick 2px）。第 10 项的
+    `--type-*` token 因此改写为固定形 `var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh>
+    var(--font-…)`——原生 px 与 SF 字重名仍逐字可读，第 10 项的两份判例改钉这两个字面量；
+    组件 CSS 的字号 / 字重 / 描边只许 `calc(… * var(--text-scale))` / `var(--w-…)` /
+    `var(--stroke-w)`，字面 px / 数值字重 / 0.5–1.5px 描边一律判例红（`displayPrefs.test.ts`
+    lint 全部 web/src CSS+TSX）。系统「增强对比度」（`prefers-contrast: more`）描边各升一档
+    （2.5px 上限），字号字重不动。**值 → 变量的映射只住 tokens.css**：JS
+    （`web/src/displayPrefs.ts`）只往 `<html>` 写 `data-text-size` / `data-text-weight` /
+    `data-stroke`，index.html 首帧从 `localStorage zai.display` 预写同一组属性（与主题同一
+    机制），server 快照到达即覆盖。**server 面** `GET/PUT /api/settings/display`（§49；
+    `server/display.py`）：`{text_size: s|m|l|xl, text_weight: regular|medium|bold, stroke:
+    thin|normal|thick}` 默认 m / regular / normal，词表 `text_sizes` / `text_weights` /
+    `strokes` 随 GET 下发（segmented control 从 server 词表渲染，防腐 #10）；优先级 overrides
+    扁平键 `ui_display_text_size` / `ui_display_text_weight` / `ui_display_stroke` → config.yaml
+    `ui.display` 块 → 默认，PUT diff-write 同 §59.4；这三个键**没有 daemon 读者**（§15 未知键
+    静默忽略，判例钉 `config._OVERRIDE_FIELDS` 不含它们、overlay 不改任何 Config 字段）。
+    **web 设置页 section「显示」**（首个 section）：三个 segmented control（`<fieldset>` +
+    `<legend>` + radio，可访问名 = 组名「文字大小 / 文字粗细 / 线条粗细」+ 档名「小 / 默认 /
+    大 / 特大」「常规 / 中等 / 粗体」「细 / 默认 / 粗」）+ 预览行（看板真实类名 task-card /
+    chip / btn 渲染，不另设作用域）；**无保存键**——点一档 = 先落 `<html>`（即时）再 PUT 那
+    一键，server 拒绝回滚到最近快照 + `role=alert` toast。**视觉 golden（`feat/ui-parity-contract` 正在立法的 UI parity 节）在默认档采集**
+    （scale 1 / shift 0 / 1.5px）。判例 `web/src/displayPrefs.test.ts`、
+    `web/src/components/settings/DisplaySection.test.tsx`、`tests/test_server_display_settings.py`。
 
 11. **v0.48.x 追记（§68 P4 余量，s4 Tier-1 全部落地）**：合并建议卡（§21，提案列顶，
     紫 accent；analyzing / done / failed 三态、`merge_apply` / `merge_dismiss`、
@@ -4141,6 +4220,16 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。
+
+11. **首启入口与 bootstrap 的接力（§69 / §68.5）**：`scripts/bootstrap.sh` 装完
+    `open` 看板 bundle（按 `CFBundleIdentifier` 认壳，不按文件夹名）；看板按
+    `GET /api/setup` 的 `needed`（§68.5：config.yaml 缺席或三把主凭证一把都没有，
+    且未写完成标记）自动跳到 `?page=setup` 首次运行向导——空白机器上 bootstrap
+    第 4 步已建好 config.yaml，所以向导从「后台进程的磁盘授权」一步开始，权限体检页
+    （`GET /api/permissions`）的 claude 一条**优先给出 §55 第五幕的稳定副本**
+    （`server/permissions.py` 镜像 `config.stable_claude_bin()`，含
+    `AIASSISTANT_STABLE_CLAUDE` 覆写；判例 `tests/test_server_permissions_setup.py`）。
+    命令行侧的同一份清单 = `python3 -m act.doctor --fresh-install`（§69.3）。
 
 ### 54.2 server 生命周期：launchd 托管，壳只连接（v0.48.18；live 事故 2026-09-02）
 
@@ -4457,7 +4546,10 @@ team `Q6L2SF6YDW` 稳定不变，授权却不跟签名走）。自本幕起（�
   `act/doctor.py` 已顶在防腐 #1 的 2,000 行帽上，新知识不再进它）：新行
   **`stable claude`**（darwin，有 claude 可复制时才出行）——副本缺失
   → WARN（修法 `bash install.sh`，之后对该路径授一次 FDA）；副本跑不了 `--version`
-  → FAIL（派发起的就是这个文件）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
+  → FAIL（派发起的就是这个文件；**2026-09-03 追记**：先隔 1 s 重问一次，仍失败按输出
+  分两类——TCC 签名 → FAIL `claude_blind`、`row_class=owner_action`（副本没坏，是本会话
+  cwd 受限且授权未点，§56.3 判决不计）；其它 → 无 id 的 FAIL（文件真坏了）；细则与判例
+  见 §25 2026-09-03 追加）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
   （仍是能干活的 claude，只落后一版；下次 `bash install.sh` / 自动部署原地刷新，
   路径不变、授权不变）；同版本 → OK。`daemon claude` 行在副本存在时**以副本为
   对象**（跳过「两份安装版本不同」的 FAIL——落后一版是上一行的 WARN，不是两份安装），
@@ -4523,6 +4615,14 @@ label，孤儿结构性不可见。自本节起：
 
 # v0.48.x additions（v-next-2 round：合并即上岗）
 
+- **§69 追记（fresh machine 入口）**：`scripts/bootstrap.sh` 在 clone 之前就按本节
+  的物理路径规则判 checkout 目录是否在 `$HOME` 之外，是则在第 2 步打出 per-binary
+  TCC 警告（守护解释器与 claude 各自需要完全磁盘访问）；`python3 -m act.doctor
+  --fresh-install` 的 `manual_steps` 永远列出三条完全磁盘访问路径（runtime.json
+  的解释器 / daemons 的 claude——第五幕的**稳定副本**优先，其次 `claude_bin` / `/usr/sbin/cron`），repo 在 `$HOME` 之外时标
+  **REQUIRED**，之内时标「仅当 repo 或任务仓库在受保护位置时需要」——本节的
+  事故史就是这几行文案的来源。
+
 ## 56. 合并即上岗：自动发版与自动部署（decision D17）
 
 owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`.github/workflows/ci.yml` + `.github/workflows/ci-nightly.yml` + `.github/workflows/pr-review-claude.yml` / `pr-review-codex.yml`（56.8）、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
@@ -4563,15 +4663,17 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 **一次运行 = 有序十步**（`scripts/auto-deploy.sh`；全部函数化、末尾 `main "$@"`，bash 先整份解析——第 5 步的 ff-merge 会替换脚本自己；git 按 rename 写文件、函数体驻内存、main 的每条路径都 `exit`，所以合并进来的新脚本在本轮**一行都不会执行**。推论（v0.48.14 review P1，成法）：**一次部署自始至终跑的是合并前的旧脚本；第 N 版引入的闸门保护 N→N+1 起的升级，永远保护不了「升到 N」这一轮**——合并前取的任何快照都是旧脚本，copy-then-exec 改变不了这一点；想让新闸门管住当轮需要 mid-deploy re-exec 新脚本 + 断点续步，那是显式修 §56 的设计题、不是 bug。判例 `test_script_replaced_by_the_merge_still_completes`（booby-trap 全量替换）。）：
 
 1. 取锁 `~/Library/Application Support/ZelinAIAssistant/auto-deploy.lock/`（**v0.48.20 起住 `$HOME`、不再住 `state/`**——TCC 永不拦 `$HOME`，取锁不可能是失败的那一步，EXIT trap 的 `rm` 也不会像 2026-09-02 那样在卷上留下删不掉的尸体让下一轮按陈旧锁回收；`mkdir` 原子；`pid` 文件；持锁 PID 已死 = 陈旧锁可回收，活着 = 本轮跳过；**尚无 `pid` 文件的新鲜锁目录（< 2 min）= 对方刚 mkdir 还没写 pid，视为活锁跳过**——否则 launchd 与手动运行并发时两个实例会同时 merge/install/reset；无 pid 且 > 2 min 才算 mkdir 与写 pid 之间崩了的陈旧锁）；**升级窗口兼容（留一个版本）**：取 `$HOME` 锁之前先看旧址 `state/auto-deploy.lock/`——v0.48.19 的运行正持着它 ff 到本版并跑 install.sh 时，手动起的新脚本不得并行部署（#140 review P1）：旧锁持有者活着 / 新鲜无 pid → 本轮跳过，死了 → 尽力删除后继续；v0.48.19 的 checkout 绝迹后可删（判例 `test_live_legacy_state_lock_is_honoured_and_a_stale_one_is_cleared`）；日志 `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 超 1 MB 自截一半（防腐 #4）。**卷访问探针（v0.48.20；live 事故 2026-09-02，D20 follow-up）——在第一次 git 调用之前**：以 `$PY` 对 repo 做 stat + 列目录 + 读 `act/__init__.py` / `install.sh` / `scripts/auto-deploy.sh` 首字节 + 在 `state/` 里 mkstemp 并删除。macOS 按 **responsible executable** 给外置卷授权，launchd 任务收不到弹窗；而 owner 终端里跑的每一次都把终端的授权借给全部子进程——所以「我手跑是绿的」**不证明**无人值守那一轮能跑（事故里终端 kickstart 的每一次都成功，timer 触发的那一次把 HEAD 推到 v0.48.11 后 `bash install.sh` 拿到 EPERM exit 126、回滚被拒、write_state / notify / 删锁全部 EPERM）。`PermissionError`（真 TCC = errno 1）→ 状态 **`blocked_tcc`**：日志一行 `volume_access=denied (errno N) — launchd job lacks access to <卷>; grant Full Disk Access to <plist ProgramArguments[0]>`（解释器路径取自已安装 plist，兜底 `AIASSISTANT_PYTHON` 即启动器的 sys.executable），写进 HOME 镜像（56.4）+ 尽力写 repo 投影——**投影里的 `detail` 不带任何本机路径**（它随 dashboard 进云端加密快照，宪法第 9 条；#140 review P0）：卷 / 解释器 / 被拒路径只住镜像专有键 `volume` / `interpreter` / `denied_path`，由 doctor 行渲染，通知**每 UTC 日最多一次**（`tcc_notified_day` 私账；通知本身走 `state/notify_queue`——同一个被拦的卷，多半也失败并记行，日志 + 镜像 + doctor 行才是活下来的通道），`exit 0`，**HEAD 不动、什么都不改**。其它 OSError（卷没挂）→ `failed` + detail `volume probe error <errno>`，下轮再试。判例 `test_unreadable_repo_file_is_blocked_tcc_and_moves_nothing` / `test_unwritable_state_dir_still_records_blocked_tcc_in_the_home_mirror`。
-2. **HEAD 必须在 `main`**（否则 `refused_branch`）；`git fetch --tags --force origin main`（`GIT_TERMINAL_PROMPT=0`、ssh `BatchMode=yes`——永不提示；失败 = `fetch_failed`，下个 interval 再试，不通知）。**`--tags` 是 56.1 的一部分**：release-on-merge 在 push 后约一分钟才铸 tag，而对一个已经抓取过的 commit，不带 `--tags` 的 fetch **不会**自动跟随后来才出现的 tag（实测；判例 `test_tag_created_after_the_first_fetch_is_still_seen`）——没有它 stamp 会写成 `<上一版>+N`。**`--force` 同样是**：本机残留的一个与 origin 同名不同指的旧 tag 会让 `fetch --tags` 每一轮都以 rc 1 拒绝（"would clobber existing tag"）——没有它 = 永久 `fetch_failed`、再不部署（owner Mac 的 checkout 上实测有这样的 tag）；origin 的 tag 是真源，本地对齐它；refspec 没有目的端，`--force` 只碰 tag（判例 `test_local_tag_diverged_from_origin_is_realigned_not_a_fetch_failure`）。**HEAD == origin/main → 「deployed means running」（v0.48.20）**：`up_to_date` 的定义是 **checkout HEAD == origin/main 且 `state/install_report.json` 的 `version` == checkout 版本 且 `state/actd.heartbeat` 的 `version` == checkout 版本 且该心跳新鲜（`ts` 距今 ≤ `AUTODEPLOY_HEARTBEAT_FRESH`，默认 600 s = 一个 interval；**只是过期、版本都对的心跳先给 `AUTODEPLOY_HEARTBEAT_GRACE`（默认 90 s = §47.4 的 STALE_FLOOR）等它再跳一次**——Mac 刚唤醒时 launchd 立刻补发错过的那一轮而 actd 还在睡它睡到一半的 sleep、手动 install.sh 正在重启、一个 pass 可能超 30 s；版本不对 / 没报告不是时间问题，不给 grace）**——HEAD 到位只是必要条件（事故第二幕：01:08Z 那轮看到 HEAD == origin/main 就写了 `up_to_date` + `version=0.48.11`，而 install.sh 从未跑完、actd 内存里还是 0.48.8）。任一不符 → 状态 **`install_incomplete`**，`reason` 记机器 token（`install_report_version_mismatch` / `heartbeat_version_mismatch` / `heartbeat_missing` / `heartbeat_stale`，空格分隔），`detail` 逐条说明（哪个文件说 v 几、checkout 是 v 几），并**先确认再动手**：第一眼只记账（`incomplete_seen=<HEAD>`，detail 注明 first sighting；不重跑、不问 CI、不通知），**下一轮仍不一致才重跑一次** `install.sh --non-interactive`（这是修补不是部署：没有 PREV 可退、checkout 已在该在的位置，不走 doctor 回滚判据，只等 §56.3 第 9 步的新心跳）——10 分钟的 interval 跨得过的每一种瞬态（owner 自己的 `bash install.sh` 跑到一半、唤醒后 actd 还没第一次心跳、报告正在改写）都在第二眼之前自愈；`--force` 不等（owner 在看着）。**重跑之前过与第 3 步同一道 CI 闸门**（56.5「不部署没被测过的 sha」对已 checkout 的 HEAD同样成立：owner 可能手动 `git pull` 到了 CI 还在跑或已红的 main，#140 review P1）：green → 重跑；还没 run / in_progress / API 不可达 → `install_incomplete` + `reason` 追加 `ci_pending`，不重跑、不计数、下轮再问；红 → `install_incomplete` + `reason` 追加 `ci_failed`、**`incomplete_sha=<HEAD>` 中毒 + 一条通知**（`notified_sha`），不在红 sha 上重跑；非 github 远端且未设 `AUTODEPLOY_CI_REPO` → `reason` 追加 `ci_unverifiable`，不重跑；`--force` 跳过（判例 `test_repair_waits_for_ci_and_never_reinstalls_a_red_head` / `test_repair_without_a_github_remote_and_no_ci_repo_does_not_reinstall`）；重跑后 install.sh **退出 0 且**三件事一致 → `deployed`（`last_deployed` 更新，detail「install completed on re-run (was: …)」，通知一次）；install.sh 非零（退出码 = 失败步数，安装报告照样写新版本、actd 也可能已在新版本上心跳）→ 仍是 `install_incomplete`，`reason` 前置 `install_failed`（#140 review P1）；三件事仍不一致 → `install_incomplete`。**重跑预算按 sha 计、成功也计**：`incomplete_runs` 在每次 install.sh 重跑**之前**加一（`incomplete_runs_sha` 不等于 HEAD 时从零起——main 前进或回滚被拒留在新 sha 都不继承旧 sha 的次数，#140 review P2；一个把本进程一起带走的 install.sh 也算用过一次），重跑成功记 `deployed` 但**不清计数**；预算（`AUTODEPLOY_INCOMPLETE_LIMIT`，默认 3）用完——无论是第 N 次重跑没修好、还是修好后 daemon 又躺下——→ **`incomplete_sha=<HEAD>` 中毒 + 每 sha 一条通知**（`incomplete_notified_sha`），此后每轮只写 `last_run` 不再重装，直到 main 前进（真 `deployed` 清全部 incomplete 账）、`--force`（同）、或 owner 手动 `bash install.sh` 把三件事对齐（对齐即 `up_to_date`：清中毒与第一眼记账，**不清预算**——再躺下就当场中毒、不再重装也不再通知）。只数「连续失败」会让一个起来跑一个 pass 就死的 daemon 每个 interval 被重装一次、通知一次、永远如此（#140 二审）。中毒用**自己的账本** `incomplete_sha` 而非 `failed_sha`：回滚被拒（store2 前进 / owner 改动）会让 HEAD 留在新 sha 且 `failed_sha` 已设，而**把那次安装做完正是对的修补**——`failed_sha` 是对回滚的判决，不拦它。判例 `test_up_to_date_head_with_an_older_running_version_reinstalls_and_deploys` / `test_stale_heartbeat_with_the_right_version_is_not_up_to_date` / `test_missing_heartbeat_and_report_are_spelled_out` / `test_persistently_incomplete_install_poisons_after_n_runs_and_force_rearms` / `test_force_rearms_a_poisoned_incomplete_install` / `test_refused_rollback_leaves_head_on_the_new_sha_and_the_next_run_finishes_the_install` / `test_stale_heartbeat_gets_a_grace_to_beat_again` / `test_install_rerun_budget_is_per_sha_even_when_each_repair_succeeds`。origin/main == 记账的 `failed_sha`（且 HEAD ≠ origin/main）→ 只写一行日志 + `last_run` 退出（**不重试、不重装、不再通知、不再问 CI**，直到 main 前进或 `--force`）。
-3. **CI 闸门（v0.48.6 审查 B1）**：向 GitHub check-runs API 问**origin/main 那个 sha**（`GET /repos/<owner>/<repo>/commits/<sha>/check-runs`，匿名、公开 repo、每小时 ≤6 次 ≪ 60 次限额；`owner/repo` 从 `origin` 的 URL 派生，非 github.com 远端且未设 `AUTODEPLOY_CI_REPO` = `failed` + 通知一次、**不猜不放行**），要求 `AUTODEPLOY_CI_CHECKS`（默认 `ci`——macOS job：compileall + 全套 unittest + 版本占位门 + app/iOS 构建；逗号分隔可加）里每个名字的**最新一次** run 都 `completed` 且 `success`。为什么必须问：ruleset `protect-main` 是 **non-strict**（`strict_required_status_checks_policy=false`），PR head 绿了就能合，合出来的 merge commit 的树**从未被测过**——同一轮并行的多个 PR 各只为版本号 rebase，正是产出语义坏合并的形状；main 上的 `ci` 跑 ~8 min，本 job 在 +10 min 开火。判定：全绿 → 继续；任一 required run 结束但非 `success` → `ci_failed`（`failed_sha=<sha>` 记账 + **一条**通知「main 的 CI 红了，未部署」，此后按第 2 步静默直到 main 前进）；还没 run / `in_progress` / API 不可达或非 JSON → `ci_pending`（不动 HEAD、不通知，下个 interval 再问）。**`--force` 跳过闸门**（owner 亲手要这个 sha）。这道闸门顺带给每次合并一个天然隔离期。判例 `test_ci_still_running_defers_without_touching_the_checkout` / `test_red_ci_on_main_poisons_the_sha_notifies_once_and_never_merges` / `test_force_skips_the_ci_gate` / `test_only_the_configured_checks_gate` / `test_non_github_origin_without_ci_repo_refuses_and_notifies_once`。
+2. **HEAD 必须在 `main`**（否则 `refused_branch`）；`git fetch --tags --force origin main`（`GIT_TERMINAL_PROMPT=0`、ssh `BatchMode=yes`——永不提示；失败 = `fetch_failed`，下个 interval 再试，不通知）。**`--tags` 是 56.1 的一部分**：release-on-merge 在 push 后约一分钟才铸 tag，而对一个已经抓取过的 commit，不带 `--tags` 的 fetch **不会**自动跟随后来才出现的 tag（实测；判例 `test_tag_created_after_the_first_fetch_is_still_seen`）——没有它 stamp 会写成 `<上一版>+N`。**`--force` 同样是**：本机残留的一个与 origin 同名不同指的旧 tag 会让 `fetch --tags` 每一轮都以 rc 1 拒绝（"would clobber existing tag"）——没有它 = 永久 `fetch_failed`、再不部署（owner Mac 的 checkout 上实测有这样的 tag）；origin 的 tag 是真源，本地对齐它；refspec 没有目的端，`--force` 只碰 tag（判例 `test_local_tag_diverged_from_origin_is_realigned_not_a_fetch_failure`）。**HEAD == origin/main → 「deployed means running」（v0.48.20）**：`up_to_date` 的定义是 **checkout HEAD == origin/main 且 `state/install_report.json` 的 `version` == checkout 版本 且 `state/actd.heartbeat` 的 `version` == checkout 版本 且该心跳新鲜（`ts` 距今 ≤ `AUTODEPLOY_HEARTBEAT_FRESH`，默认 600 s = 一个 interval；**只是过期、版本都对的心跳先给 `AUTODEPLOY_HEARTBEAT_GRACE`（默认 90 s = §47.4 的 STALE_FLOOR）等它再跳一次**——Mac 刚唤醒时 launchd 立刻补发错过的那一轮而 actd 还在睡它睡到一半的 sleep、手动 install.sh 正在重启、一个 pass 可能超 30 s；版本不对 / 没报告不是时间问题，不给 grace）**——HEAD 到位只是必要条件（事故第二幕：01:08Z 那轮看到 HEAD == origin/main 就写了 `up_to_date` + `version=0.48.11`，而 install.sh 从未跑完、actd 内存里还是 0.48.8）。任一不符 → 状态 **`install_incomplete`**，`reason` 记机器 token（`install_report_version_mismatch` / `heartbeat_version_mismatch` / `heartbeat_missing` / `heartbeat_stale`，空格分隔），`detail` 逐条说明（哪个文件说 v 几、checkout 是 v 几），并**先确认再动手**：第一眼只记账（`incomplete_seen=<HEAD>`，detail 注明 first sighting；不重跑、不问 CI、不通知），**下一轮仍不一致才重跑一次** `install.sh --non-interactive`（这是修补不是部署：没有 PREV 可退、checkout 已在该在的位置，不走 doctor 回滚判据，只等 §56.3 第 9 步的新心跳）——10 分钟的 interval 跨得过的每一种瞬态（owner 自己的 `bash install.sh` 跑到一半、唤醒后 actd 还没第一次心跳、报告正在改写）都在第二眼之前自愈；`--force` 不等（owner 在看着）。**重跑之前过与第 3 步同一道 CI 闸门**（56.5「不部署没被测过的 sha」对已 checkout 的 HEAD同样成立：owner 可能手动 `git pull` 到了 CI 还在跑或已红的 main，#140 review P1）：green → 重跑；还没 run / in_progress / API 不可达 → `install_incomplete` + `reason` 追加 `ci_pending`，不重跑、不计数、下轮再问；红 → `install_incomplete` + `reason` 追加 `ci_failed`、**`incomplete_sha=<HEAD>` 中毒 + 一条通知**（`notified_sha`），不在红 sha 上重跑；非 github 远端且未设 `AUTODEPLOY_CI_REPO` → `reason` 追加 `ci_unverifiable`，不重跑；`--force` 跳过（判例 `test_repair_waits_for_ci_and_never_reinstalls_a_red_head` / `test_repair_without_a_github_remote_and_no_ci_repo_does_not_reinstall`）；重跑后 install.sh **退出 0 且**三件事一致 → `deployed`（`last_deployed` 更新，detail「install completed on re-run (was: …)」，通知一次）；install.sh 非零（退出码 = 失败步数，安装报告照样写新版本、actd 也可能已在新版本上心跳）→ 仍是 `install_incomplete`，`reason` 前置 `install_failed`（#140 review P1）；三件事仍不一致 → `install_incomplete`。**重跑预算按 sha 计、成功也计**：`incomplete_runs` 在每次 install.sh 重跑**之前**加一（`incomplete_runs_sha` 不等于 HEAD 时从零起——main 前进或回滚被拒留在新 sha 都不继承旧 sha 的次数，#140 review P2；一个把本进程一起带走的 install.sh 也算用过一次），重跑成功记 `deployed` 但**不清计数**；预算（`AUTODEPLOY_INCOMPLETE_LIMIT`，默认 3）用完——无论是第 N 次重跑没修好、还是修好后 daemon 又躺下——→ **`incomplete_sha=<HEAD>` 中毒 + 每 sha 一条通知**（`incomplete_notified_sha`），此后每轮只写 `last_run` 不再重装，直到 main 前进（真 `deployed` 清全部 incomplete 账）、`--force`（同）、或 owner 手动 `bash install.sh` 把三件事对齐（对齐即 `up_to_date`：清中毒与第一眼记账，**不清预算**——再躺下就当场中毒、不再重装也不再通知）。只数「连续失败」会让一个起来跑一个 pass 就死的 daemon 每个 interval 被重装一次、通知一次、永远如此（#140 二审）。中毒用**自己的账本** `incomplete_sha` 而非 `failed_sha`：回滚被拒（store2 前进 / owner 改动）会让 HEAD 留在新 sha 且 `failed_sha` 已设，而**把那次安装做完正是对的修补**——`failed_sha` 是对回滚的判决，不拦它。判例 `test_up_to_date_head_with_an_older_running_version_reinstalls_and_deploys` / `test_stale_heartbeat_with_the_right_version_is_not_up_to_date` / `test_missing_heartbeat_and_report_are_spelled_out` / `test_persistently_incomplete_install_poisons_after_n_runs_and_force_rearms` / `test_force_rearms_a_poisoned_incomplete_install` / `test_refused_rollback_leaves_head_on_the_new_sha_and_the_next_run_finishes_the_install` / `test_stale_heartbeat_gets_a_grace_to_beat_again` / `test_install_rerun_budget_is_per_sha_even_when_each_repair_succeeds`。origin/main == 记账的 `failed_sha`（且 HEAD ≠ origin/main）→ 只写一行日志 + `last_run` 退出（**不重试、不重装、不再通知、不再问 CI**，直到 main 前进或 `--force`）——**2026-09-03 追记**：「不问 CI」只对 head 本身成立；PREV 与 head 之间的 commit 仍按第 3 步「合并风暴下的部署目标」找最新的绿并部署（head 的判决不该拦住它后面本来就绿的提交），中毒的判定改看集合 `failed_shas`（`failed_sha` 仍认）。
+3. **CI 闸门（v0.48.6 审查 B1）**：向 GitHub check-runs API 问**origin/main 那个 sha**（`GET /repos/<owner>/<repo>/commits/<sha>/check-runs`，匿名、公开 repo；只问 head 时每小时 ≤6 次，含下段回走后的预算见「合并风暴下的部署目标」，仍 ≪ 60 次限额；`owner/repo` 从 `origin` 的 URL 派生，非 github.com 远端且未设 `AUTODEPLOY_CI_REPO` = `failed` + 通知一次、**不猜不放行**），要求 `AUTODEPLOY_CI_CHECKS`（默认 `ci`——macOS job：compileall + 全套 unittest + 版本占位门 + app/iOS 构建；逗号分隔可加）里每个名字的**最新一次** run 都 `completed` 且 `success`。为什么必须问：ruleset `protect-main` 是 **non-strict**（`strict_required_status_checks_policy=false`），PR head 绿了就能合，合出来的 merge commit 的树**从未被测过**——同一轮并行的多个 PR 各只为版本号 rebase，正是产出语义坏合并的形状；main 上的 `ci` 跑 ~8 min，本 job 在 +10 min 开火。判定：全绿 → 继续；任一 required run 结束但非 `success` → `ci_failed`（`failed_sha=<sha>` 记账 + **一条**通知「main 的 CI 红了，未部署」，此后按第 2 步静默直到 main 前进）；还没 run / `in_progress` / API 不可达或非 JSON → `ci_pending`（不动 HEAD、不通知，下个 interval 再问）。**`--force` 跳过闸门**（owner 亲手要这个 sha）。这道闸门顺带给每次合并一个天然隔离期。判例 `test_ci_still_running_defers_without_touching_the_checkout` / `test_red_ci_on_main_poisons_the_sha_notifies_once_and_never_merges` / `test_force_skips_the_ci_gate` / `test_only_the_configured_checks_gate` / `test_non_github_origin_without_ci_repo_refuses_and_notifies_once`。
+
+   **合并风暴下的部署目标（2026-09-03 live，add-only）**：head 不绿 ≠ 没东西可部署。事故 2026-09-03T00:38Z→01:18Z：每 10–20 min 一次合并、`ci` 在 Actions 队列下要 20+ min，五轮连续「CI not green yet on <越来越新的 sha>」，v1.0.4–1.0.6 各自绿着躺在 head 后面几小时没上机——只看 head 的闸门在**合并密度高于 CI 时长**时必然饿死。法条：origin/main head 的判定为 pending / 红 / 已中毒时，脚本沿 **first-parent** 从 head 往回走（`git rev-list --first-parent --skip=1 --max-count=$AUTODEPLOY_CI_WALK PREV..head`，默认 30；每个候选再以 `merge-base --is-ancestor PREV <候选>` 复核），部署**最新的一个 required check 已 `completed` + `success` 的 commit**（脚本 `latest_green_ancestor`）——候选都是曾经的 main head、origin/main 的祖先、PREV 的后代，所以第 5 步的 `merge --ff-only <sha>` 仍是 fast-forward，下一轮从新落点继续向更新的绿走。逐 commit 的判定与本步原样相同：绿 → 就是它（停）；红 → **当场中毒 + 一条通知**（与红 head 同款「main 的 CI 红了」——它曾是 main head，旧闸门若那一轮撞上也会通知），以后不再问；pending（**含没有任何 `ci` run**——path filter 跳过的 workflow 不产出 run，「没有 run」是 pending 不是绿）→ 跳过、下轮再问；已中毒 → 跳过不问。走完没有绿 → 按 head 的判定落状态：pending → `ci_pending`（detail 追加走过的每个 sha 与其判定）、红 → `ci_failed`（同）、已中毒 → 只写 `last_run`。部署了祖先 → `deployed`，`head=<祖先>`，detail 追加「(newest green ancestor of origin/main <head> — <why>)」，并写 add-only 投影字段 **`behind_main`**（被跳过的 head）/ **`behind_main_why`**（`head CI not green yet (…)` / `head CI failed (…)` / `head already failed (deploy rolled back, or CI red)`）；两键只被**部署到 head** 或 `up_to_date` 清掉（回滚不碰——它们描述的是上一次**成功**部署），doctor `auto-deploy` 行 OK 时追加「origin/main <sha> not deployed: <why>」。**中毒账本改为集合**：`failed_sha` 仍是最近一个（投影，读方不变），新增镜像私账 **`failed_shas`**（空格分隔、最新在后、上限 `AUTODEPLOY_CI_WALK` 条）——单槽在本条下会成环：红 head H 中毒 → 部署祖先 G → G 回滚（槽 := G）→ 下轮 H「不在槽里」再问再通知、G「不在槽里」再部署再回滚，每 10 分钟一次。两键同进同出（`up_to_date` / 部署到 head / `--force` 一起清；部署了祖先**不清**——head 的判决仍成立），`sha_is_poisoned` 两键都认（升级第一轮的镜像只有 `failed_sha`）。**API 预算**：无认证 60/h；旧闸门 6/h；本条下每轮 = head 一次 + 每个**仍 pending** 的祖先一次（红的中毒后不再问、绿的当场部署），实战形状（CI 时长 ÷ 合并间隔 ≈ 2–3 个 pending）≈ 20/h；`AUTODEPLOY_CI_WALK` 是硬上限，撞限 → curl 4xx →「API unreachable」= pending，下轮再试，降级安全。**`--force` 不走本条**：owner 亲手要的是 head。判例 `test_newest_red_and_older_green_deploys_the_older_and_keeps_the_head_poisoned` / `test_all_red_deploys_nothing_and_poisons_every_red_sha_once` / `test_green_head_deploys_the_head_without_walking` / `test_pending_head_deploys_the_green_ancestor_then_waits_then_catches_up` / `test_rolled_back_ancestor_is_not_redeployed_while_the_head_stays_red` / `test_walk_is_bounded`；读方 `tests/test_deploy_state.py::test_behind_main_is_projected_and_failed_shas_is_not` / `test_deployed_behind_main_is_still_ok_but_says_so`。
 4. **脏树拒绝**：`git status --porcelain --untracked-files=no` 非空 → `refused_dirty` + 点名文件；**同一个待部署 sha 只通知一次**（`notified_sha`）；untracked 文件不算脏（state/、config/ 本就被 ignore）。
 5. 树干净则 `PREV=HEAD`，`git merge --ff-only origin/main`——**不可 ff（本地 main 分叉）= `failed` + 通知一次，永不 reset 分叉的本地提交**。
 6. **自检（v0.48.6 审查 B3）**：`bash -n scripts/auto-deploy.sh` + `python -c 'import act.auto_deploy'`（新代码）。部署 agent 必须还能跑它自己的下一版——合进来一个语法错误否则会**静默终结所有后续部署**（launchd 的 status 列是唯一见证，没人看）。任一失败 = 不装、回滚。判例 `test_merge_that_breaks_the_deploy_script_rolls_back_before_installing` / `test_merge_that_breaks_the_launchd_shim_rolls_back_before_installing`。
 7. **doctor 基线**：用**新代码**的 `act.doctor --fast --json` 取 FAIL 项名集合（装之前）。输出解析不出 JSON（doctor 自己 import 崩、解释器丢了 yaml、打印垃圾）记为名字 `doctor:unparseable`，而它在**任一次**运行里出现都是**致命**的——基线阶段出现 = 不装、直接回滚（v0.48.6 审查 H1：两次都用新代码，若把它当 pre-existing，唯一的安全闸门就对「让 doctor 跑不起来的提交」这一类它最该拦的东西失明）。判例 `test_unparseable_doctor_on_the_new_code_rolls_back_before_installing`。同时记下装之前的 `state/actd.heartbeat`（version / pid / phase）作第 9 步的对照。
 8. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装旧 Mac app**（56.5），**但构建并安装看板 UI**（web/dist + shell app，56.5 `ui` 步，v0.48.18）——部署的是守护进程、board server agent、cron、config、launchd 渲染，加上产品的脸。
 9. **就绪等待（v0.48.6 审查 B2；取代原「静置 30 s + 一次采样」）**：轮询 `state/actd.heartbeat`（§47.4，写者已盖 `version` / `pid` / `phase`），直到它**同时**满足：`version` == 新代码的版本（脚本 `repo_version()` = `scripts/version_stamp.py` 对合并后 checkout 算出的值——与 install.sh 刚写进 `act/_version.py`、新 actd 读到的是同一个数；checkout 里没有 stamper（切换前的回滚目标）时回落到 sed 读 `act/__init__.py` 的字面行，判例 `test_rollback_onto_a_pre_cutover_checkout_reads_the_literal_version_line`）、`pid` ≠ 装之前那条的 pid（**新进程**——同版本号的合并否则会被旧 daemon 的 idle 心跳放行）、`phase == idle`（新代码上**完整跑完一个 pass**：inbox / dispatch / reconcile / housekeeping / dashboard 全部 import 并执行过）。`phase == failed`（pass 抛了）只在装之前的 daemon **也**在 `failed` 时算就绪——pre-existing，不归咎新版本。超过 `AUTODEPLOY_HEARTBEAT_DEADLINE`（默认 180 s：一个 pass 可能含 `claude agents --json`，负载高时 >30 s）= FAIL `actd:no_heartbeat_from_new_version` → 回滚，detail 带装前/装后两条心跳。为什么不再静置采样：import 即死的 KeepAlive actd 在每个 ~10 s 节流周期里亮 ~0.5 s 的 pid，一次 `launchctl list` 有 ~5% 概率撞上「在跑」；而 `dashboard` / `actd heartbeat` 两行读的是**旧** daemon 留下的文件，90 s 内都算新鲜——三行齐绿、卡片冻结、记 `deployed`，二十次坏提交漏一次；反过来第一个 pass 慢于 90 s 时旧 dashboard 过期又会**误**回滚。判例 `test_new_actd_that_never_completes_a_pass_rolls_back` / `test_the_old_daemons_heartbeat_does_not_count_even_with_the_same_version` / `test_no_heartbeat_file_at_all_before_and_after_rolls_back` / `test_new_actd_whose_pass_throws_rolls_back_when_the_old_one_was_fine` / `test_pre_existing_failing_pass_is_not_blamed_on_the_new_version`。**2026-09-02 追记（第二次首次实战，add-only）**：「新代码的版本」= **install.sh `version` step 真盖进 `act/_version.py` 的号**（install_report.json `steps` 里 `version=ok:<v>`；脚本 `stamped_identity`），不再是 checkout 的预测——两者通常相等，不等时以 stamp 为准（daemons 读的就是它）。stamp 步**失败**（`version=warn:…`）→ 身份**不可验证**：10:14Z 那一轮 stamper 被 TCC 拒（§56.1 追记），09:46Z 手写的 0.48.21 stamp 留在 v0.48.22 的 checkout 上，新 actd（新 pid、idle）如实报 0.48.21，脚本按预测 0.48.22 等到超时、把一次好部署回滚成 `no_heartbeat_from_new_version`。此后：stamp 失败时只看 **新 pid + idle**（`failed` 规则不变），日志一行 WARN 带 stamp 步的 detail，`deployed` 的 detail 追加「act/_version.py not stamped (daemons report vX; version identity unverified)」，`running_version` 照实记旧号；doctor `version` 行 WARN；下一轮 `running_mismatch` 看到旧号 → `install_incomplete`（第一眼记账）→ 再一眼重跑 install.sh 重盖章 → 自愈为 `deployed`（预算与中毒规则同第 2 步）。没有报告 / 没有 `version` step（切换前的 install.sh）→ 仍用 checkout 的预测。判例 `test_failed_stamp_step_does_not_roll_back_a_good_deploy_and_the_next_runs_re_stamp` / `test_readiness_is_keyed_on_the_stamp_install_sh_wrote_not_the_prediction`；解析不依赖进程 cwd（`git -C <包根>`；daemon cwd=$HOME）的判例 `tests/integration/test_version_git_fixture.py::test_resolution_never_depends_on_the_process_cwd`。
-10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。
+10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。**2026-09-03 修订（live 事故：v1.0.7 → 回滚到 v1.0.3）——owner 动作类的行永不进判决**：判决集合（基线与装后每次采样）只含 `row_class != owner_action` 的 FAIL 行（§25 2026-09-03 追加：`claude_blind` / `deploy_blind_tcc` / `cron_fda_blocked` / `cron_tcc_blocked` / `ui_build_tcc_blocked` 等——修法是一次 TCC / 完全磁盘访问授权，只有 owner 能点；代码回滚治不了它，它也对新代码好不好一个字都不说）。事故形状：install.sh 刚 `created` claude 稳定副本（§55 第五幕）并打印一次性授权指引，30 s 后 doctor 在 launchd 会话里、cwd 在外置卷上跑 `<副本> --version`，副本还没拿到授权 → `stable claude` 从基线 WARN（缺失）变 FAIL（跑不了）→ 三次采样都在 → 回滚，回滚重装再撞同一堵墙也「成功」（旧版没有这一行）；几分钟后 owner 在终端里跑同一探针是绿的。脚本 `doctor_sample` 一次 doctor 运行产出两份名单：`DOCTOR_FAILS`（判决用）与 `DOCTOR_OWNER`（owner_action 的 FAIL 名，**不论新旧**）；后者在日志里记 `doctor FAIL needs owner (not a rollback trigger): <名>`（基线阶段同样记一行），并进 `deployed` 的 `detail` 与通知正文：`; needs owner: <名>`（只有行名、不带路径——detail 随 dashboard 进云端快照，宪法第 9 条；精确路径住 doctor 行本身）；`pre-existing FAIL` 一段只列判决类的行。同名行**换类**（基线是 owner_action、装后成了无 id 的 FAIL）对判决而言就是新名字——照常回滚。没有 `row_class` 键的 doctor（回滚目标上的旧版本）全部按判决类处理。判例 `tests/integration/test_auto_deploy_script.py` 3c 组：`test_new_owner_action_fail_never_rolls_back_and_is_reported_as_needs_owner` / `test_owner_action_fail_does_not_shield_a_real_new_fail` / `test_pre_existing_owner_action_fail_is_needs_owner_not_pre_existing` / `test_owner_action_row_that_turns_into_a_code_fail_is_a_new_fail`。
 
 **回滚** = `git reset --hard PREV`——**reset 前重验**：HEAD 仍在 `main` **且** 无 tracked **内容**改动（`-c core.fileMode=false` 看 status：install.sh 自己对 ingest 脚本的 `+x` 翻转不算，reset 顺手复原即可）。第 5 步到这里隔着 install + 就绪等待 + doctor，owner 在这几分钟里改了文件或切了分支，`reset --hard` 就是一次不可恢复的自动删除（宪法第 2 条）——因此**拒绝回滚**：不 reset、不重装，记 `rollback_failed`（detail `rollback refused (…)` 点名文件/分支）+ 通知「回滚被拒」，新版本留在原地由 owner 手动处理（判例 `test_rollback_refuses_to_destroy_edits_made_during_the_deploy` / `test_rollback_ignores_install_sh_own_mode_flips`）——**留在 `main` 分支上**而不是 `git checkout PREV`（detached HEAD 会让后续每一轮都撞上第 2 步的「不在 main」）——再 `install.sh --non-interactive` 一次，记 `rolled_back` + `failed_sha=<那个 origin/main sha>`，通知「auto-deploy rolled back to <PREV 短 sha>」并附原因与 `--force` 出口；回滚自身失败（reset 失败或重装非 0）= `rollback_failed`，同样通知。回滚的每条出路都写 `last_run`（56.4：它描述本轮，回滚也是一轮）。成功部署也通知一次（版本 + 前后 sha）。
 
@@ -4595,10 +4697,12 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
  "failed_sha": "<40 hex，仅 rolled_back / rollback_failed / ci_failed 时存在>",
  "running_version": "0.48.6", "install_report_version": "0.48.6",
  "reason": "<非 healthy 时的机器 token，空格分隔；v0.48.20 add-only>",
- "last_incident": "<last_run> <rolled_back|rollback_failed>: <detail>——仅回滚判决尚未被下一次 deployed 清掉时存在；v0.48.20 add-only"}
+ "last_incident": "<last_run> <rolled_back|rollback_failed>: <detail>——仅回滚判决尚未被下一次 deployed 清掉时存在；v0.48.20 add-only",
+ "behind_main": "<40 hex，仅上一次部署停在 origin/main head 之前的最新绿 commit 时存在；2026-09-03 add-only>",
+ "behind_main_why": "head CI not green yet (ci is in_progress) | head CI failed (…) | head already failed (…)——同上；2026-09-03 add-only"}
 ```
 
-**两个文件、一个真源（v0.48.20；live 事故 2026-09-02）**：脚本每次 `write_state` 先合并写 **HOME 镜像** `~/Library/Application Support/ZelinAIAssistant/deploy_state.json`（与 §19 home 指针同目录；`$HOME` 永不被 TCC 拦，所以一次连 `/Volumes` 都碰不到的运行照样留下记录——事故里 `state/deploy_state.json.tmp` 的 `PermissionError [Errno 1]` 让那一轮在仪表上完全不存在），再把**同一个 dict** 尽力写进 repo 的 `state/deploy_state.json`（投影：dashboard / doctor `auto-deploy` 行 / web 顶栏都只读它；写失败记一行 `mirror written, repo copy failed (non-fatal): <异常>`，不影响判决）。脚本自己的 `read_state` 只读镜像；镜像尚不存在（升级到 v0.48.20 的第一轮）时用 repo 投影播种，`failed_sha` 等私账因此不丢（判例 `test_mirror_seeds_itself_from_the_repo_copy_on_first_run`）。镜像**多出**的键（`act/lib/deploy_state.py MIRROR_FIELDS`，永不进 dashboard）：`trigger`（`terminal` | `launchd` | `$AUTODEPLOY_TRIGGER`）、`interpreter`（已装 plist 的 `ProgramArguments[0]`）、`volume`（repo 所在挂载点）、`repo`（物理路径）、`denied_path`（探针被拒的那个路径），以及 **`unattended_status` / `unattended_last_run` / `unattended_detail`**——只有 `trigger != terminal` 的运行才改写这三键。**trigger 启发式（诚实边界）**：进程有 tty、或 `TERM_PROGRAM` / `SSH_TTY` 有值 = `terminal`（owner 或从终端起的编排器跑的，**继承终端的 TCC 授权**）；都没有 = `launchd`——StartInterval 触发与 `launchctl kickstart` 从进程内**分不出来**（同一环境、同一 label）；知道更多的包装器可设 `AUTODEPLOY_TRIGGER`。**结论成法：从终端起的运行——`bash scripts/auto-deploy.sh`、`python3 -m act.auto_deploy`、乃至在终端里敲的 `launchctl kickstart`——绿了，对 timer 触发的运行什么都不证明**：2026-09-02 的观察正是终端 kickstart 的每一次都成功、timer 那一次被拒（终端把自己的授权借给了它起的一切）。推论：一次终端 kickstart 会以 `launchd` 身份改写 `unattended_*`，让 doctor 行在下一次 timer 触发前（≤ 10 min）短暂 OK——验收只认 **timer 自己跑出来的那一轮**；排障文档据此说「等 10 分钟再看」而不是「kickstart 再看」。私账 `notified_sha` / `incomplete_runs` / `incomplete_runs_sha` / `incomplete_seen` / `incomplete_sha` / `incomplete_notified_sha` / `tcc_notified_day` 住镜像，不投影。**读方偏向镜像**：`deploy_state.read()`（dashboard 与 doctor `auto-deploy` 行都经它）在镜像存在**且其 `repo` 物理路径 == 本 checkout** 时读镜像（只取 `FIELDS`，路径类键与 unattended 三元组照旧不进 dashboard），否则读投影——`blocked_tcc` 正是任务写不进投影的那种情形，投影里停着的上一个 `up_to_date` 不得压过镜像的判决（#140 二审）；没有 `repo` 的镜像（别的 clone、旧形状）不信。判例 `test_read_prefers_the_mirror_when_it_describes_this_checkout`。判例 `test_terminal_runs_do_not_overwrite_the_unattended_verdict` / `test_without_a_plist_the_interpreter_named_is_the_launchers_own`。
+**两个文件、一个真源（v0.48.20；live 事故 2026-09-02）**：脚本每次 `write_state` 先合并写 **HOME 镜像** `~/Library/Application Support/ZelinAIAssistant/deploy_state.json`（与 §19 home 指针同目录；`$HOME` 永不被 TCC 拦，所以一次连 `/Volumes` 都碰不到的运行照样留下记录——事故里 `state/deploy_state.json.tmp` 的 `PermissionError [Errno 1]` 让那一轮在仪表上完全不存在），再把**同一个 dict** 尽力写进 repo 的 `state/deploy_state.json`（投影：dashboard / doctor `auto-deploy` 行 / web 顶栏都只读它；写失败记一行 `mirror written, repo copy failed (non-fatal): <异常>`，不影响判决）。脚本自己的 `read_state` 只读镜像；镜像尚不存在（升级到 v0.48.20 的第一轮）时用 repo 投影播种，`failed_sha` 等私账因此不丢（判例 `test_mirror_seeds_itself_from_the_repo_copy_on_first_run`）。镜像**多出**的键（`act/lib/deploy_state.py MIRROR_FIELDS`，永不进 dashboard）：`trigger`（`terminal` | `launchd` | `$AUTODEPLOY_TRIGGER`）、`interpreter`（已装 plist 的 `ProgramArguments[0]`）、`volume`（repo 所在挂载点）、`repo`（物理路径）、`denied_path`（探针被拒的那个路径），以及 **`unattended_status` / `unattended_last_run` / `unattended_detail`**——只有 `trigger != terminal` 的运行才改写这三键。**trigger 启发式（诚实边界）**：进程有 tty、或 `TERM_PROGRAM` / `SSH_TTY` 有值 = `terminal`（owner 或从终端起的编排器跑的，**继承终端的 TCC 授权**）；都没有 = `launchd`——StartInterval 触发与 `launchctl kickstart` 从进程内**分不出来**（同一环境、同一 label）；知道更多的包装器可设 `AUTODEPLOY_TRIGGER`。**结论成法：从终端起的运行——`bash scripts/auto-deploy.sh`、`python3 -m act.auto_deploy`、乃至在终端里敲的 `launchctl kickstart`——绿了，对 timer 触发的运行什么都不证明**：2026-09-02 的观察正是终端 kickstart 的每一次都成功、timer 那一次被拒（终端把自己的授权借给了它起的一切）。推论：一次终端 kickstart 会以 `launchd` 身份改写 `unattended_*`，让 doctor 行在下一次 timer 触发前（≤ 10 min）短暂 OK——验收只认 **timer 自己跑出来的那一轮**；排障文档据此说「等 10 分钟再看」而不是「kickstart 再看」。私账 `notified_sha` / `failed_shas`（2026-09-03，中毒集合，56.3 第 3 步）/ `incomplete_runs` / `incomplete_runs_sha` / `incomplete_seen` / `incomplete_sha` / `incomplete_notified_sha` / `tcc_notified_day` 住镜像，不投影。**读方偏向镜像**：`deploy_state.read()`（dashboard 与 doctor `auto-deploy` 行都经它）在镜像存在**且其 `repo` 物理路径 == 本 checkout** 时读镜像（只取 `FIELDS`，路径类键与 unattended 三元组照旧不进 dashboard），否则读投影——`blocked_tcc` 正是任务写不进投影的那种情形，投影里停着的上一个 `up_to_date` 不得压过镜像的判决（#140 二审）；没有 `repo` 的镜像（别的 clone、旧形状）不信。判例 `test_read_prefers_the_mirror_when_it_describes_this_checkout`。判例 `test_terminal_runs_do_not_overwrite_the_unattended_verdict` / `test_without_a_plist_the_interpreter_named_is_the_launchers_own`。
 
 - `status` 开放词表：`deployed | up_to_date | rolled_back | rollback_failed | refused_dirty | refused_branch | fetch_failed | ci_pending | ci_failed | failed | install_incomplete | blocked_tcc`（后两个 v0.48.20，见 56.3 第 1/2 步）；读方对未知值按「需要人看」处理（WARN / 警告色）。`ci_pending`（等 main 上那个 sha 的 CI）**也是** WARN / 警告色而非 healthy：合并后的十分钟里顶栏写着「等 main 的 CI」是信息不是噪音，而卡住几小时的 `ci_pending`（Actions 故障、push 没触发 CI）必须有人看得见——静默的等待态是 L2/L3 那类事故的形状。`status` / `last_run` 描述**本轮**——**每一轮都写 `last_run`**，包括回滚各出路与「failed_sha 命中、什么都不做」的跳过轮（那一轮 `status` 原样带过：verdict 仍是上次的回滚 / CI 红）；`last_deployed` / `prev` 描述**最近一次成功部署**，无动作的轮次原样带过（`up_to_date` 同时清掉 `failed_sha` / `notified_sha`）。
 - 写：每轮一次原子 tmp+rename（`write_state key=value…`，空值 = 删键；先镜像后投影）。读：`act/lib/deploy_state.py read()`（投影，`FIELDS`）/ `read_mirror()`（镜像，`MIRROR_FIELDS` 超集）逐字段只收非空 string、丢未知键，撕裂/非对象文件 → None（宪法第 11 条：绝不崩 dashboard pass）。`running_version` = `state/actd.heartbeat` 的 `version`（内存里跑的是谁），`install_report_version` = `state/install_report.json` 的 `version`（install.sh 最后一次跑完的是谁）——`deployed` / `up_to_date` / `install_incomplete` 都写它们。
@@ -4619,7 +4723,13 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
   - **relaunch 规则**：`--non-interactive` 且本次真的装了新 bundle 且 app 正在跑（`pgrep -x ZelinAIBoard`）→ **在步 5 launchd agents 全部重新加载之后**（server agent 已回到 launchd）`pkill -TERM -x ZelinAIBoard` → 等 ≤5 s → `open -g <bundle>`（不抢焦点）。壳 spawn 不了任何东西（server 归 launchd），所以 relaunch 掐不断录制或字幕——这正是它与旧 app 的区别。交互模式**不**动正在跑的 app（只提示 owner 自己重开）。
   - **旧 app 一根手指不碰**（D3）：`ui` 步的每条路径都只认 `Zelin AI Board.app`；判例把 `Zelin's AI Assistant.app` 放在旁边、断言字节与 mtime 不变。
   - **2026-09-02 追记（§54 名字互换，改写上两条的名字）**：壳的 bundle 文件夹改为 **`Zelin's AI Assistant.app`**（staged 名 `.Zelin's AI Assistant.app.staged`），旧 app 的家改为 **`Zelin's AI Assistant (old).app`**。「一根手指不碰」精确化为「**只搬不改**」：产品路径上的 bundle 若 id 是 `com.zelin.ai-engineer`，装壳前同目录 `mv` 到 `(old).app`（`(old)` 已在 → 保留 `(old)`、多出来的那份 rename 停到 `(old <ts>).app` 再尽力 rm；mv 失败 → shell 半 `fail`，绝不 rm、绝不盖）；bundle 内容永不编辑（签名封条）；判例断言搬过去的文件字节与 mtime 不变。新 bundle 装好后删掉 id 为 `com.zelin.ai-board` 的老壳 `Zelin AI Board.app`。detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（只在本轮真搬了时）。细则见 §54 追记。
-- 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
+- 一个 origin/main sha 最多**一次**部署尝试（`failed_sha` + 集合 `failed_shas`，回滚与 CI 红同一本账；2026-09-03 起是集合——56.3 第 3 步的回走让红 head 与回滚过的祖先并存）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
+
+- **`--no-launchd` 永不出现在自动部署路径（§69）**：`scripts/auto-deploy.sh` 只跑
+  `install.sh --non-interactive`；`--no-launchd` 是 CI 验收 job
+  （`.github/workflows/fresh-install.yml`）与 bootstrap 干跑的形态——它证明的是
+  「这台机器能装、daemon 能跑完一个 pass」，不是「在跑」。判例
+  `tests/test_install_no_launchd.py` 钉 `scripts/auto-deploy.sh` 的 install.sh 调用不含它。
 
 ### 56.6 PR 分支自动跟随 main（auto-update-branch；2026-09-02，owner：「一旦一个 main 弄了，其他的就直接自动 rebase」）
 
@@ -4659,7 +4769,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 | `Contract reminder`（soft） | 跑 | — | — | — |
 | `Tests on windows ×2`、`qlty check`（informational，`continue-on-error`） | **不跑** | 不跑 | `ci-nightly.yml` 每日 10:43 UTC | `gh workflow run ci-nightly.yml` |
 | `Claude PR Review` / `Codex PR Review`（advisory，付费 API） | **只在贴上 `review:ai` 标签时**（`types: [labeled]`） | — | — | `gh workflow run pr-review-claude.yml -f pr=<n>`（Codex 同） |
-| 干净机器安装验收（macOS；**预留**，随 `feat/fresh-machine-bootstrap` 落地时挂上） | 不跑 | push to main | 夜间 | dispatch |
+| `Fresh install (macOS)`（干净机器安装验收，`fresh-install.yml`，§69.4；informational） | **不跑** | push to main（dev 不跟） | 每日 11:17 UTC | `gh workflow run fresh-install.yml` |
 
 **法条**：
 
@@ -4669,7 +4779,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
 - **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
-- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底），与 dev 无关。
+- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` / `fresh-install.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底、验收 main 上的一条命令安装），与 dev 无关。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -4763,8 +4873,8 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **账本**：`qa/complexity_baseline.txt`、`qa/crap_baseline.txt`、`qa/deps_baseline.txt`、`qa/hygiene_baseline.txt`（行形 `<key> <登记分>`；注释 = 行首的 `#` 或空白后的 `#`——键内的 `#` 属于键，因为同名重定义键形如 `qualname#2`，判例 `tests/test_qa_ledger_shrink.py::DuplicateDefinitionKeyTestCase`）。键 = `路径::qualname`（尺一/二）或 `规则:路径->目标`（尺四），**不含行号**（无关编辑不移账）。登记分与 `qa/coverage_floor.txt` 的地板**必须是有限数**：`nan`/`inf` 在解析层 fail-loud 拒收（`qa_common._parse_score`，与 gates.toml 解析同哲学）——nan 与任何数比较都是 False，一个 token 就能让 worse/stale 判决、地板检查与下面的 base 差分同时 fail-open（判例 `tests/test_qa_ledger_shrink.py::NonFiniteScoreRejectedTestCase`）。
 - **判决三态（任一即门红）**：`new`——超阈值且不在账上（新代码必须干净）；`worse`——账上条目劣于登记分（存量只许持平或变好；coverage 派生的尺二有 `[crap].tolerance` 缓冲）；`stale`——已达标/已消失仍挂账（**修好了必须同 PR 划账**——这就是棘轮，账本永不回涨）。另有两个不判死的提示：`limbo`（尺二专用：落在阈值下方 tolerance 带内，建议观察后删账）与 `better`（仍超标但比登记分好，建议把登记分拧低）。
 - **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。**对账只能是缩**（划掉 stale、把登记分拧低）——想给新债记账没有合法路径，见下一条。
-- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。**追记（2026-09-02，§65.2）**：同一差分门顺带看管 `ui/parity/pending.txt` 与 `ui/parity/waivers.txt`（按 id 集合比，备注列不是分数）——加 id 即 FAIL。
-- **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
+- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。**追记（2026-09-02，§66.2）**：同一差分门顺带看管 `ui/parity/pending.txt` 与 `ui/parity/waivers.txt`（按 id 集合比，备注列不是分数）——加 id 即 FAIL。
+- **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。首批（P3a，`refactor/p3a-dashboard`）：`act/lib/dashboard.py`、`act/lib/silent_merge.py`、`act/merge_review.py`、`act/lib/analytics.py`、`act/lib/sanitize.py`、`act/lib/telemetry_upload.py` 全部函数 CC ≤ 6、CRAP ≤ 6，四本账本只划不加；手法 = 先补判例网（`tests/fixtures/dashboard_golden.json` 逐字节 golden + 各模块的 characterization 判例）再纯抽取，零行为变化。
 - **P3 每批的固定顺序（2026-09-02 P3a 追记，add-only；R2.3.2 的执行口径）**：① 先把该批模块映射进 `qa/mutation_targets.toml`（§57）并跑一轮变异，幸存体逐个判定——等价变异（常数 ±1、日志文案）放过，逻辑幸存体（未测的分类分支 / CLI / 网络与 IMAP 包装 / 解析状态机…）**先补判例杀死**；② 再做纯抽取式重构（每函数 CC ≤ 6，新 helper 出生即干净），**零行为变化**——判据是既有全套件 + 补上的判例 + 同一轮变异重跑，不许借重构改语义；③ 该批模块的 complexity / crap / hygiene 账本行在**同一 PR** 划掉（`stale` 三态本身会逼着做）；④ 模块留在夜间靶区，测试网持续咬人。模块 docstring 必须写明管它的 §§（防腐 #5，hygiene 门执法）。首批 P3a = 雷达三源 + claude_sessions + digest / weekly_digest / analyze（分支 `refactor/p3a-radars`；账本现状 truth = `qa/complexity_baseline.txt` / `qa/crap_baseline.txt`）。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
@@ -5321,3 +5431,145 @@ Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`�
 - **1.13 终端**：走 `.command` + `open`，不是 Apple Events 到 Ghostty / iTerm2（无 `NSAppleEventsUsageDescription`，无终端 app 偏好）——Terminal.app 一种；owner 终端偏好留作 P5 提案输入。
 - **1.15 会话索引搜索**（`state/search_index.json` 合进 ⌘F）与 **1.16 看板动画**：未做（s4 自评 defer；搜索索引另 PR）。
 - **Tier 2 同步 / 配对**（iPhone 联动 QR）：随 §31 syncd 面另议，不在设置页。
+
+
+## 69. 一条命令装到能用：fresh-machine bootstrap + macOS CI 验收（owner 2026-09-02 验收标准）
+
+owner 的最终验收标准原话：「我能够在另一台电脑上起一个空白环境，或者在其他电脑上
+更新这个软件，就能够直接使用。」本节把它做成一条命令、一个机器可读的判决、一个
+CI job。执法：`scripts/bootstrap.sh`、`install.sh --no-launchd`、
+`act/lib/fresh_install.py` + `act.doctor --fresh-install`、
+`.github/workflows/fresh-install.yml`；看板侧的首启入口是 §68.5 的向导（本节不另造
+第二套，§54.1 第 11 项记接力方式）；判例 `tests/integration/test_bootstrap_script.py`
+（假工具 + 真 git 两组）、`tests/test_install_no_launchd.py`、
+`tests/test_fresh_install_summary.py`。
+
+### 69.1 `scripts/bootstrap.sh` —— 同一条命令既是安装也是更新
+
+```
+curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
+curl -fsSL …/scripts/bootstrap.sh | bash -s -- ~/Code/zelin-ai-assistant     # 自选目录
+bash scripts/bootstrap.sh [--dir PATH] [--ref BRANCH] [--no-open] [--no-launchd] [PATH]
+```
+
+- **顺序固定**：① preflight（只支持 macOS，其它 OS 指向 `install-linux.sh` /
+  `install.ps1` 退出 2；`xcode-select -p` 判 CLT——**永不**用会弹安装对话框的探法，
+  缺则打出 `xcode-select --install` 退出 3；git 4；python3 5；claude 缺席只 warn）
+  → ② checkout 目录（默认 `~/Projects/zelin-ai-assistant`；位置参数 / `--dir` /
+  `ZAI_BOOTSTRAP_DIR` / 字面 `~/` 皆可；物理路径在 `$HOME` 之外 → §55 警告）→
+  ③ clone 或更新 → ④ `config.yaml` 缺则从 `config.example.yaml` 复制、**存在永不
+  覆盖** → ⑤ `bash install.sh --non-interactive [--no-launchd]`，stdin 接
+  `/dev/null` → ⑥ `python3 -m act.doctor --fresh-install`（用 install.sh 刚 pin 的
+  解释器）→ ⑦ `open` 看板 bundle（`--no-open` / `ZAI_BOOTSTRAP_NO_OPEN=1` 跳过；
+  没 bundle 就指向 `http://127.0.0.1:<port>/`）。
+- **更新即再跑一遍**：目录已是本 repo 的 checkout（origin 含 `zelin-ai-assistant`
+  或等于 `ZAI_BOOTSTRAP_REPO_URL`）→ `fetch --tags --force` → `checkout <ref>` →
+  `merge --ff-only origin/<ref>`；**本地改动 = 不动代码只装现状**（`local-edits`）；
+  fetch 失败 = 装现状（`offline`）；分叉 = 拒绝（9）。目录存在但**不是 git
+  checkout 且非空**、或是**别的 repo** 的 checkout → 拒绝（7），一个字节不碰——本
+  脚本永不销毁它没创建的东西。
+- **stdin 纪律**：脚本本体经 `curl | bash` 从 stdin 到达，任何读 stdin 的子进程都
+  会吃掉脚本正文——所以整个脚本包在 `main()` 里、每个 git / install.sh / doctor 调用
+  都 `</dev/null`；判例用 `bash -s --` 喂脚本正文复现这条管道。
+- **退出码**：preflight 2–6 / 目录拒绝 7 / clone 或 checkout 失败 8 / 分叉 9 /
+  install.sh 缺失 10；否则 = install.sh 的失败步数；再否则 = doctor `--fresh-install`
+  的 broken 行数；0 = 装好了、没坏的——TCC 授权与凭证可能仍待办，但那是人的事，
+  已逐条列出。
+- **测试缝**：一切外部工具经 PATH（假 git / xcode-select / uname / sw_vers /
+  open / python3 可前置）；`ZAI_BOOTSTRAP_REPO_URL` 把 clone 指向任意地址（CI 用
+  本地 bare repo）；`AIASSISTANT_UI_APPS_DIR` 与 install.sh 同一把 seam。
+
+### 69.2 `install.sh` 对「真空环境」的承诺
+
+没有 config.yaml、没有 secrets、没有 state/、没有 claude、没有 node、没有 PyYAML
+的机器是每种模式的合法输入：config 来自模板；PyYAML 缺则 `pip install --user`
+（PEP 668 回退）；claude / node / gh 缺席 = warn + 修法一句（`--non-interactive`
+下**永不**停下来问）；雷达在凭证到位前静默待机；UI 步在 node / swiftc 缺席时
+`skipped` 不算失败（§56.5）。`--no-launchd`（§23 追记）把步 5/6 换成一次
+`actd --once` 的证明。flag 可叠加、未知 flag exit 2。收尾横幅改为「剩下的是你的」
+清单，机器版 = `bash install.sh --check --fresh-install`。
+
+### 69.3 `act.doctor --fresh-install` —— 机器可读的「还差什么」
+
+`act/lib/fresh_install.py`（stdlib + act.lib，纯函数）把 §25 的 doctor 行分五桶：
+**wired**（OK 行）→ **unwired**（仅当 §23 `launchd` step 带 `--no-launchd` 字面：
+`agent_unloaded` / `cron_missing` / `dashboard_stale` / `actd_stalled` /
+`board_server_down` 与 launchd·cron·dashboard·heartbeat·board server 行名族——按
+要求没接，不是坏）→ **human**（failure id 目录：`claude_cli_missing` /
+`claude_cli_outdated` / `claude_auth_failed` / `claude_blind` / `interpreter_blind`
+/ `deploy_blind_tcc` / `cron_tcc_blocked` / `cron_fda_blocked` /
+`ui_build_tcc_blocked` / `node_missing` / `engine_dead`；行名目录：anthropic key /
+claude CLI / daemon claude / claude auth / obsidian vault / screenpipe db /
+node/npx / gh CLI / launchd claude / launchd volume access / cron disk access /
+cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN）。
+`manual_steps[]` 按序：打开看板（bundle → 浏览器 → 「先 brew install node」三选一）
+/ 装 Claude Code（claude 行非 OK 时）/ API key 文件命令（key 行非 OK 时）/ 三条
+完全磁盘访问路径（§55 追记；claude 一条 = 第五幕的稳定副本 `config.stable_claude_bin()`，§23
+`stable_claude` ok 或副本已在场即用它，否则退到 `claude_bin`）/ 接线守护（--no-launchd 时）。**exit = len(broken)**
+（≤ 99）。两张目录表是法条的一部分：新增 doctor 行或 failure id 时先问「这是人的
+事还是代码的事」，答案写进表。
+
+### 69.4 CI job「Fresh install (macOS)」—— 验收标准的机器版
+
+`.github/workflows/fresh-install.yml`（push main + 夜间 schedule 11:17 UTC + dispatch，
+**不跑 pull_request**——§56.8 矩阵：free plan 的 5 个 macOS 槽是几十个并行 agent PR
+排队的资源，这个 job 占一个槽最多 40 min，判的是安装路径整体而不是某个 PR 的 diff；
+落地当天曾短暂带 pull_request 触发，同日改掉；macos-latest；40 min 顶；**informational**，
+永不进 required 集合——没有 PR 上下文可挂；红了 = 一条命令安装坏了，是 bug、在落地后一天内
+被发现，而不是拦住落地它的 PR）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
+一并推入让 §56.1 盖章为真）→ `bash scripts/bootstrap.sh --no-launchd --dir …`
+（用**本 checkout 的脚本**，不是 main 上的）→ 断言 §23 报告：`config=ok`（bootstrap 第 4 步已从模板建好，install.sh 记 kept）/ `runtime_python=ok` / `version=ok` / `ui=ok`（web + shell 两半都建）/
+`launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped`，且
+`store2_truth.json` + `actd.heartbeat` + `web/dist/index.html` 在 → 用 pin 的解释器
+起 `python3 -m server`：`/api/health` 200、`/api/board` 200 JSON 带 `generated_at`、
+`/api/setup`（§68.5）`needed=true` / `done=false` / `config_exists=true` 且无凭证、
+`/api/permissions` 的 FDA 清单含存在的 `daemon_python` 与一条 `claude`、`/` 200 →
+`doctor --fresh-install --json` **exit 0** →
+第二次 bootstrap = `updated`、config.yaml 字节不变、仍在 main → 证据（两份
+bootstrap 日志 / server 日志 / setup.json / permissions.json / doctor 五桶 / install_report /
+`~/Library/Logs/zelin-ai-assistant/*.log`）上传 artifact `fresh-install-evidence`。
+这个 job 绿 = 「另一台电脑、空白环境、一条命令、直接能用（剩 TCC 与 key 两件人
+手的事）」成立。
+
+## 70. 每日自我改进循环：先维护再提案（P5；owner 决策 D10 / D12 / D18；R2.4）
+
+owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在设置里面允许别人修改，但默认是 5 条。」「Running 就不要去重，毕竟它在跑，但是像潜在任务和提案这里面的都是没有处理的。去重啊，包括过时了的卡片去掉。」「如果合并卡片的话直接合并……把这三四张全部去掉，直接提供一张新的卡片。去掉的老卡片直接丢进回收站。」「可以在 UI 上显示一下……至于最后要不要提醒一声，你作为设计师来判断吧。」→ 设计判断：不弹通知，看板顶部留一行。执法：`act/lib/daily_loop.py`（编排 + 投影 + 计划报告 CLI）、`act/lib/maintenance.py`（去重合成 / 过时规则 / 分级保留期）、`act/lib/loop_inputs.py`（输入读取器）；挂点 `act/actd.py run_once`（`daily_loop.tick`，在 `archive_stale` 之后）；判例 `tests/test_daily_loop_{dedup_merge,stale_rules,inputs,proposals,run}.py`、`tests/test_server_settings_daily_loop.py`、web `MaintenanceBanner.test.tsx` / `DailyLoopSection.test.tsx`。
+
+### 70.1 运行位置、节奏与安全边界
+
+- **只在 actd 的 pass 里跑**：每 pass 一次 `daily_loop.tick(cfg, interval)`——`due()` = 开关开 ∧ 本地时间 ≥ `daily_loop.time`（默认 03:30）∧ 今天（本地日）还没跑（标记 `state/daily_loop.json.last_run_day`）；不到点 = 一次 stat 级开销。**状态转移单写者不变**（§0 第 1 条）：trash / 合成新卡 / 铸提案全部发生在 actd 进程内、system actor（store2 白名单里 `detected|card_sent|raising → trashed` 的 system 行早已存在，本节不改 schema）。`python3 -m act.lib.daily_loop --plan` 只出**计划报告**（会做什么），`--status` 只读投影；CLI **零写入**——想手动触发一轮 = 把 `daily_loop.time` 改到当前时刻之前等下一 pass。进程级总闸 `AIASSISTANT_DAILY_LOOP=0`（同 §55 `AIASSISTANT_LAUNCHD_PROBE` 的 belt-and-braces）：测试套件默认设它——任何走真 `run_once` 的判例都不会在沙箱里跑起整轮循环；循环自己的判例全部注入假 `gh` / 假 doctor runner（tests/__init__ 的出网名单收编 `gh` 待 doctor 的 `gh auth status` 探针可注入后再做）。
+- **不调 LLM**（Uncle Bob 原则 R2.9：价值靠确定性工具不靠提示词）：合并只认确定性同题信号；过时只认确定性规则；提案是确定性模板。理解素材 URL、修 CI、补测试的智力活留给被派工的 agent（它有工具与全上下文）。§34bis 判例（LLM 只许出报告不许动卡）因此在本节不构成例外。
+- **失败不外溢**（§0 第 11 条）：三个阶段（dedup → stale_sweep → proposals）各自隔离，任一阶段抛异常只记进 `last_result.errors` 与审计行，后续阶段照跑，`tick` 自身永不 raise；阶段边界各写一次心跳 `daily_loop:<phase>`（§47.4，gh 每次调用前再 beat 一次——一轮可能跑到一两分钟，不许被 `/api/health` 误判 stalled）。
+- **顺序**：先维护再提案（R2.4.1）——提案的去重要对着整理过的板。
+
+### 70.2 维护半边（`act/lib/maintenance.py`）
+
+- **范围**：只碰 `detected`（潜在任务）与 `card_sent`（提案）两列；`raising` / `approved` / `executing` / `review` / `delivered` / `merged` / `archived` / `trashed` 永不入簇、永不判过时；`preset` 卡（§34bis）不入簇不判过时。
+- **去重合成（dedup_lanes）**：两列内按**同题**做 union-find 成簇（同题 = 归一标题相等且 ≥ 6 字，或 §38.3 `auto_merge.is_near_dupe` 的 **`high`** 信号——`contact` 信号只够触发 LLM 复核、不够直接合并，本节没有判官，宁可留重复卡不可错并；血缘相连的卡（`improvement_of` / `split_from` / 同 thread 根——thread 缺省按自根 / `merged_from`）永不同簇）。每簇 ≥ 2 → **一张新卡**（`registry.next_id()` 主键 `P-`）：`merged_from[]` = 旧卡主键（升序）；`title` / `display_title` / `user_titled` / `summary` / `plan` / `definition_of_done` / `target_repo` / `delivery_mode` 取**主稿**（用户改过名 > 提及最多 > 最新）；`sources` = `registry.dedupe_sources` 并集；`repeated_mentions` = 累加；`hardness` = 有 hard 则 hard；`deadline` = 最早；`green_sign_required` = 任一；`thread_id` = 最老旧卡的 thread 根；`thread_key` = 全部相同才继承否则 None（永不模糊）；`former_titles` = 旧名并集（去重保序，cap `registry.FORMER_TITLES_CAP`——超出的旧名仍逐字活在 fold note 里，§37「旧名仍可搜索」）；`origin_trust` 由 `policy.classify_origin` 按并集重算（最小信任者定卡，§50）；`status` = 簇内有 card_sent 则 card_sent 否则 detected（**永不** approved/executing，§44.4 轻状态铁律同款）；每张旧卡一行 §38.2 冻结文法的 fold note `[radar] 每日整理并入 <old id>「<旧名>」：<旧 summary 或旧名> [@ts]`（自带拆出句柄，`split_note` 照常可用）。落盘次序：**新卡先写**（crash 只会多一张、绝不丢），再逐张 `registry.trash(old, "daily-merge: 并入 <new id>")`（`prev_status` 完整保留），每对 `auto_merge.record_pair_final(new, old)`（恢复旧卡后 §38.3 不再建议并回；`auto_merge.linked` 自此认 `merged_from`），最后一条 §44.6 回执（channel `daily_loop`，内容只进散列）。**绝不使用 §21 的 `merged` 终态**。撤销 = 回收站恢复旧卡（+ 手动 trash 新卡）；不新增 inbox 动词。
+- **过时清理（sweep_stale）**：`stale_verdict(req, all, today, stale_days)` 全函数、确定性、guards 先于规则、**任何字段解析不了 = 不动**：
+  - guards（永不判过时）：不在两列；`preset`；`user_titled`（owner 亲手改过名）；未来 `deadline`；同簇（thread 根 / `improvement_of` 双向）有 approved/executing/review 兄弟；`last_activity` 解析不了。
+  - `last_activity` = max(sources[].date（ISO / 裸日期 / RFC-2822——gmail 来源）, card.sent_at, execution.{approved,dispatched,review,reraised,accepted}_at, fold note `[@ts]` 句柄)。
+  - 规则（首个命中即 reason token）：`deadline_passed`（deadline 已过 ≥ 7 天 **且** 此后 ≥ 7 天无活动——提及多也不救一个已经作废的 deadline）→ `diagnostic_expired`（sources 全部是 `radar-diagnostic` / `radar-parse-degraded` 且 ≥ 14 天无活动，§40.3 give-up 卡）→ `superseded`（同名（≥ 6 字归一相等）卡已 delivered / merged / archived，且不是本卡的 `improvement_of` 血缘——事情在别处做完了）→ `idle`（无活动 > `daily_loop.stale_days`（默认 45）且 `repeated_mentions` < 3；`stale_days` = 0 只关这一条）。
+  - 命中 → `registry.trash(req, "stale:<rule>")`，可恢复；本节是 §0 第 10 条「拿不准的落备选静默过期」的第一份实现。
+- **分级保留期**：见 §9 / §40.5 追记（`maintenance.retention_days` / `purge_due` / `purge_at` 单源；循环卡默认 90 天）。
+
+### 70.3 提案半边（`act/lib/loop_inputs.py` + `daily_loop._propose`）
+
+- **输入 → Signal**（每个读取器独立、坏了只丢自己、`inputs.<name>` 记 `unavailable: <Exc>`）：① 卡片 `execution` 块（approved 且 `dispatch_attempts ≥ 3` 或 `dispatch_halted` → `stuck_dispatch:<failure_id|hash>`；`last_error` 未被 `failures.classify` 命中 → `unclassified_failure:<hash>`）；② `state/analytics/events.jsonl` 近 8 天按日计数，今天 ≥ 50 且 > 5× 前七日中位数 → `event_anomaly:<event>`；③ `state/radar_failed.json` 的 `gave_up` 按报错类别聚合 → `radar_give_up:<hash>`（key 里的文件名**不进卡**，s2 H7）；④ `state/registry_writes.jsonl` 24 h 内同文件 > 100 写 → `write_storm:<file>`；⑤ `state/actd.log` 末 2000 行去时间戳后同形报错 ≥ 50 → `log_loop:<hash>`；⑥ `state/install_report.json` 的 fail 步骤 → `install_step_fail:<step>`；⑦ `~/Library/Logs/zelin-ai-assistant/*.log` 各尾 200 行命中已知环境故障正则（no module act / yaml、TCC EPERM、Xcode license、fd limit）→ `launchd_fault:<name>`（测试经 `ZAI_LAUNCHD_LOG_DIR` 指进沙箱）；⑧ `python3 -m act.doctor --fast --json` 的 FAIL 行 → `doctor_fail:<name>`（WARN 不铸卡）；⑨ §57 pinned issue「Nightly mutation report」的模块表：存活最多且 ≥ 5 的一个模块 → `mutation:<module>`；⑩ GitHub 开放 issue（`gh issue list`）：**owner 作者（`Wan-ZL` / `zelinPostman`）→ `issue:<n>`**；**他人作者 → 只出摘要行 `Summary`（D18），不铸卡不开 PR**，除非 owner 在该 issue 评论里写了「do it」（每轮最多查 10 张）；机器人报告 issue（夜间变异 / `[bot]` 作者）不是待办；⑪ GitHub 开放 PR（最多 20 张 `gh pr view --json comments,reviews,statusCheckRollup`）：必需检查有 FAILURE/TIMED_OUT/CANCELLED → `pr_red:<n>`；**owner 本人**近 7 天的评论 → `pr_comment:<n>:<hash(id)>`（D12：「Where is the test?」= 下一轮任务）——带 🤖 / `Generated with Claude` / `Co-Authored-By: Claude` 落款的评论是 agent 借 owner 账号（D8）写的，不算 owner 指令；⑫ 素材库（§62 台账，`materials.list_items` 取 `new` 与 `picked_up`——上一轮读过但没排上额度的重试）→ `material:<id>`：标题与证据经 `materials.fetch(url)`（永不抛，注入缝）+ `materials.prompt_block`（owner 备注与抓取内容各自围栏），提案 = 「消化这份素材」，真正的理解与实现交给被派工的 agent；**台账回写**（`loop_inputs.mark_materials`，本循环是 §62 预留的第二写者）：本轮读过的条目 → `picked_up`，铸了卡的 → `proposal_created` + `links.proposal_id = <P- 主键>`（状态机顺序 new → picked_up → proposal_created 逐级走），卡片侧反向链接 `sources[].ref = self_improve:material:<id>`；逐条隔离，被 owner 同时放弃的条目只丢那一条。**不读**：`state/logs/R-*.log`、legacy `state/*.launchd.log`、`dashboard.json` 正文、`search_index.json`（s2 §3 parse spec）。外来文本（issue 正文、PR 评论、素材备注）进 `quote` 前一律 `sanitize.fence_untrusted`（§0 第 5 条）。`gh` 缺席 / 未登录 / 超时（25 s）= GitHub 输入不可用，循环照跑。
+- **挑选（`select_signals`）**：按 `priority` 升序（红 CI 5 < owner PR 评论 8 < 派发卡死 10 < 安装失败 12 < doctor 14 < 事件风暴 15 < launchd 18 < 未分类报错 20 < 写风暴 25 < 雷达放弃 30 < 日志刷屏 35 < 变异 40 < 素材 42 < issue 45）逐条 offer，跳过原因逐类计数进审计行：`dedup`（指纹已在 registry 任何状态（含回收站——owner 扔掉 = 拒绝记忆，R2.6.6）的 `sources[].ref = self_improve:<fp>` 里，或在 90 天指纹台账 `state/daily_loop.json.fingerprints` 里）→ `kind_taken`（**每 class 每天一条**，s2：一场风暴 = 一条提案不是 954 条）→ `gh_title`（非 GitHub 来源的信号标题与某开放 issue/PR 标题互相包含 ≥ 12 字 = 已在 GitHub 上）→ `cap`（今日额度 = `daily_loop.max_proposals_per_day`（默认 5，0 = 只维护不提案）− 今天已铸的循环卡数（registry 现算，任何状态；重启不丢账））。
+- **铸卡（`build_card` → `registry.merge_or_new_with_kind`）**：`title` = `🤖 ` + 信号标题（≤ 120）；`type` = `self-improvement`；`tier` T1；`status` = **card_sent**（进提案列走正常三选一闸门——owner 批准才派工；P6 通道另立法）；`hardness` soft；`summary` / `plan[]` / `definition_of_done[]` / `cost_estimate_usd` 全部非空（R2.4.3）；`target_repo` = `config.HOME`（本仓库物理路径）；`delivery_mode` repo；`sources = [{channel: "self_improve", date: <今天>, ref: "self_improve:<fingerprint>", quote: <证据 ≤ 500，外来文本已 fence>, who: "daily_loop"}]`——**channel 是代码字面量，不经任何 LLM**（write-locked），`policy.CHANNEL_CLASS["self_improve"] = proposed`（§50）→ §51 不免批。同题（`merge_or_new` 的标题匹配）折进既有卡而不重复（outcome `folded`）。
+- **审计行**（`state/daily_loop.jsonl`，`logcap` 1 MB，防腐 #4）：`{ts, day, duration_s, merges[{new, from[], title}], trashed[{id, rule, display_id}], proposals[{id|error, fingerprint, kind, outcome, title}], skipped{dedup, kind_taken, gh_title, cap}, summaries[{kind, text, ref}], inputs{<reader>: n | "unavailable: …"}, errors[]}`。D18 的摘要行只活在这里与 `last_result.summaries` 计数里。
+
+### 70.4 配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）
+
+`daily_loop.enabled`（默认 true）/ `daily_loop.time`（本地 `HH:MM`，默认 `03:30`，`coerce_clock_time` 归一，坏值回默认）/ `daily_loop.max_proposals_per_day`（默认 5）/ `daily_loop.stale_days`（默认 45）/ `daily_loop.trash_retention_days`（默认 90）；三个整数 yaml 路径负数按 0。overrides 扁平键与 web 写入面见 §15 追记；actd 每 pass 现读（`daily_loop.LIVE_KNOBS`）。
+
+### 70.5 面（投影 / web / server）
+
+- 投影：§2 `maintenance` 顶层键（`daily_loop.projection`）。
+- web：`MaintenanceBanner`（`shell-banner is-info`，`role=status`）——「正在整理看板…（去重合并 / 清理过时卡 / 生成提案）」或「今日整理：合并 N、清理 M（可撤销）、提案 K」+「回收站可恢复」链接；全零 / 昨天的运行 / 陈旧 running（started_at > 2 h）/ server 连不上 都不渲染。设置页 section「每日整理」（`DailyLoopSection`）：开关 / 时刻 / 三个数字；保存 = 一次 PUT 只带改动键，数字原样交 server 校验；400 整句 toast。
+- server：`GET/PUT /api/settings/daily-loop`（§49）；wire 形 `{enabled, time, max_proposals_per_day, stale_days, trash_retention_days, source{<field>: override|config|default}}`（web `DailyLoopSettings` 逐字镜像）；`server/settings.py` **手抄** 默认值 / 键名 / `CLOCK_TIME_RE` / 三个 coercer（server 不 import act，§49），`tests/test_server_paths_mirror.py::DailyLoopSettingsMirrorTestCase` 钉漂移（含 coerce 真值表）。
+
+### 70.6 边界（明确不做）
+
+不弹系统通知；不给他人的 issue 铸卡（D18）；不自动派工（§51 不变——P6 立法）；不用 LLM 判同题或过时；不理解 URL 内容（`materials.fetch` 只借标题与正文作证据，读懂与实现是被派工 agent 的活）；不新增 inbox 动词（撤销 = 回收站恢复）；素材库台账只经 `materials.transition` 走 §62 状态机（不越级、不 dismiss）；CLI 不写 registry。

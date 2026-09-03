@@ -144,7 +144,7 @@ class GmailConnectExTestCase(unittest.TestCase):
                                return_value=fake), \
              mock.patch.object(radar_gmail, "get_app_password",
                                return_value="pw"), \
-             mock.patch.object(radar_gmail.health, "update_radar_health",
+             mock.patch.object(radar_gmail.radar_health, "update_radar_health",
                                side_effect=fake_note):
             created = radar_gmail.scan(cfg)
         self.assertEqual(created, 0)

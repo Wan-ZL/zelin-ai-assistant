@@ -59,6 +59,14 @@ def _same_lineage(a, b) -> bool:
             or getattr(b, "split_from", None) == a.id)
 
 
+def _merge_lineage(a, b) -> bool:
+    """§70 daily-merge lineage: a card the owner RESTORED out of a daily merge
+    is deliberately separate from the synthesized card it came from — never
+    suggest folding it back (same doctrine as split_from)."""
+    return (b.id in (getattr(a, "merged_from", None) or [])
+            or a.id in (getattr(b, "merged_from", None) or []))
+
+
 def _same_key(x, y) -> bool:
     """Both present and equal (an absent key on either side never links)."""
     return bool(x and y and x == y)
@@ -71,11 +79,11 @@ def _same_thread(a, b) -> bool:
 
 
 def linked(a, b) -> bool:
-    """Deliberately-related cards (lineage/thread/split) are never duplicate
-    noise. Split lineage is CRITICAL: a just-split card's text ≈ its origin
-    note by construction — suggesting the merge back would undo the undo
+    """Deliberately-related cards (lineage/thread/split/daily-merge) are never
+    duplicate noise. Split lineage is CRITICAL: a just-split card's text ≈ its
+    origin note by construction — suggesting the merge back would undo the undo
     (review blocker 7)."""
-    if _same_lineage(a, b):
+    if _same_lineage(a, b) or _merge_lineage(a, b):
         return True
     return _same_thread(a, b)
 

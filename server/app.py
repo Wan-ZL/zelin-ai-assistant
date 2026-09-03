@@ -36,10 +36,15 @@
   开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
+- 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
+  diff-write 语义），server/settings.py。
+- 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
+  三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
-§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）。
+§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）、
+§70（每日整理设置面）。
 """
 from __future__ import annotations
 
@@ -56,9 +61,9 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
-                    diagnostics, doctor_run, files, health, inbox_writer, lanes,
-                    maintainer_launch, materials, mcp_servers, paths, permissions,
-                    recaps, repair,
+                    diagnostics, display, doctor_run, files, health, inbox_writer,
+                    lanes, maintainer_launch, materials, mcp_servers, paths,
+                    permissions, recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
                     settings_catalog, setup, slack_setup, terminal_launch,
                     uninstall_launch)
@@ -487,6 +492,8 @@ _GET_JSON_ROUTES = {
     "/api/health": lambda ctx, query: health.snapshot(ctx.home),
     # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
+    # §70 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
+    "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
@@ -519,6 +526,8 @@ _GET_JSON_ROUTES = {
     "/api/ask/history": lambda ctx, query: ask.history(ctx.home),
     # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
     "/api/slack/manifest": lambda ctx, query: slack_setup.manifest(ctx.home),
+    # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
+    "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -574,6 +583,10 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+    # §70 每日自我改进循环的五把旋钮（同一 diff-write 语义）
+    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
+    # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义；server 是这三个键的唯一读写者）
+    "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
 }
 
 _PUT_PREFIX_ROUTES = {

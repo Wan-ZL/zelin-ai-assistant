@@ -2,7 +2,7 @@
 // 分区与顺序逐字镜像原生 Settings.swift 的 SettingsSectionDescriptor 注册表（ui/parity/native-inventory.json
 // screen:settings.*；§66.2）：通用 · 录制 · 实时字幕 · 笔记库 · 凭证 · Slack 接入 · Gmail 接入 · 导入 Claude Code 工作 ·
 // Skills · MCP servers · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话；
-// web 自有区（模型 §59、通知 §28、素材库 §62、会议纪要 §63）插在语义最近的位置。已退役：菜单栏（D3）；
+// web 自有区（显示 §54.1 第 12 项、模型 §59、通知 §28、素材库 §62、会议纪要 §63、每日整理 §70）插在语义最近的位置。已退役：菜单栏（D3）；
 // 同步 / 配对随 §31 syncd 面另议（§68.14），不在本页；「关于」是 sidebar 页（?page=about），不再重复。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
 import { useEffect, useState } from "react";
@@ -12,6 +12,8 @@ import { CaptionsSection } from "../components/settings/CaptionsSection";
 import { CatalogSection } from "../components/settings/CatalogSection";
 import { ClaudeImportSection } from "../components/settings/ClaudeImportSection";
 import { CredentialsSection } from "../components/settings/CredentialsSection";
+import { DailyLoopSection } from "../components/settings/DailyLoopSection";
+import { DisplaySection } from "../components/settings/DisplaySection";
 import { GeneralExtras } from "../components/settings/GeneralExtras";
 import { GmailSection } from "../components/settings/GmailSection";
 import { ModelsSection } from "../components/settings/ModelsSection";
@@ -30,6 +32,7 @@ import { useAppState } from "../store";
 /** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序 = 原生注册表顺序，web 自有区就近插入）。
  *  标题 zh / en 逐字镜像原生 SettingsSectionDescriptor（screen:settings.* 探针读这里）。 */
 export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
+  { id: "display", zh: "显示", en: "Display" },
   { id: "models", zh: "模型", en: "Models" },
   { id: "general", zh: "通用", en: "General" },
   { id: "notifications", zh: "通知", en: "Notifications" },
@@ -51,6 +54,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "maintainer", zh: "开发者 · 开发会话", en: "Developer session" },
   { id: "materials", zh: "素材库", en: "Materials" },
   { id: "recap", zh: "会议纪要", en: "Recaps" },
+  { id: "daily_loop", zh: "每日整理", en: "Daily tidy-up" },
 ];
 
 /** 原生 SettingsWeeklyDigest 的状态字：开关旁一句「已开启 / 已关闭」（读目录 effective） */
@@ -133,6 +137,8 @@ export function SettingsPage() {
           <a key={entry.id} href={`#settings-${entry.id}`}>{language === "zh" ? entry.zh : entry.en}</a>
         ))}
       </nav>
+      {/* §54.1 第 12 项 显示：字号 / 字重 / 描边三把旋钮，点选即生效（owner 4K 屏「框细字细」） */}
+      <div id="settings-display"><DisplaySection /></div>
       <div id="settings-models"><ModelsSection /></div>
       <CatalogSection sectionId="general"><GeneralExtras /></CatalogSection>
       <CatalogSection sectionId="notifications" />
@@ -155,6 +161,8 @@ export function SettingsPage() {
       <div id="settings-materials"><MaterialsSection /></div>
       {/* §63 会议纪要：会后自动出稿 / 默认语言 / Slack 草稿开关（默认关） */}
       <div id="settings-recap"><RecapSection /></div>
+      {/* §70 每日整理：开关 / 时刻 / 每天最多几张提案 / 过时天数 / 回收站保留天数 */}
+      <div id="settings-daily_loop"><DailyLoopSection /></div>
     </main>
   );
 }
