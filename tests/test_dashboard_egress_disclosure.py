@@ -85,6 +85,29 @@ class EgressDisclosureTestCase(unittest.TestCase):
         self.assertEqual(_row(dash, "P-3")["delivery_mode"], "chat")
         self.assertEqual(_row(dash, "P-3")["egress"], [])
 
+    def test_no_target_repo_uses_the_default_dir_like_the_executor(self):
+        # Codex review of #158 (P0): _target_view reports the default target as
+        # "existing" without looking at the disk, but executor.dispatch hands
+        # cfg.target_repo_path to ensure_repo whenever it is missing/empty →
+        # gh repo create would run with egress=[] on the card. Mirror the executor.
+        cfg = config.Config()
+        cfg.create_github_repo = True
+        cfg.default_target_repo = str(self.new_dir)          # missing → bootstrap
+        req = Requirement(id="P-4", title="t", status=State.CARD_SENT.value)
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=cfg, archived=[])
+        row = _row(dash, "P-4")
+        self.assertIsNone(req.target_repo)
+        self.assertEqual(row["egress"], [{"kind": "github_repo_create",
+                                          "target": "brand-new-repo", "visibility": "private"}])
+        cfg.default_target_repo = str(self.existing)         # non-empty → no bootstrap
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=cfg, archived=[])
+        self.assertEqual(_row(dash, "P-4")["egress"], [])
+
+    def test_stored_target_kind_new_discloses_even_if_dir_now_exists(self):
+        # executor: `req.target_kind == "new" or compute_target_kind(target) == "new"`
+        dash = _build([self._card("P-5", self.existing, target_kind="new")], create_github_repo=True)
+        self.assertEqual(_row(dash, "P-5")["egress"][0]["target"], "existing-repo")
+
     def test_key_always_present_on_proposals_absent_on_raising_placeholder(self):
         raising = Requirement(id="P-9", title="t", status=State.RAISING.value)
         dash = _build([self._card("P-1", self.existing), raising], create_github_repo=True)

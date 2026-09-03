@@ -394,24 +394,43 @@ def _delivery_mode(req: Requirement) -> str:
 EGRESS_GITHUB_REPO_CREATE = "github_repo_create"
 
 
-def _egress_view(req: Requirement, cfg: config.Config, target_kind: str,
-                 target_name: str) -> list[dict]:
+def _will_bootstrap_repo(req: Requirement, cfg: config.Config) -> Optional[Path]:
+    """The directory ``executor.dispatch`` would hand to ``ensure_repo`` for
+    this card, or None when no repo bootstrap happens. Same predicate as the
+    executor, re-derived here (act/lib may not import act/executor): repo
+    delivery only (chat never touches a repo, §20); target = explicit
+    ``target_repo`` else the configured default repo — **not** §7's
+    ``_target_view`` shortcut, which reports the default as "existing" without
+    looking at the disk (Codex review of #158: an empty/missing default dir
+    projected ``egress=[]`` while dispatch still ran ``gh repo create``);
+    bootstrap when the stored ``target_kind`` says new OR the dir is
+    missing/empty right now (``compute_target_kind``)."""
+    if _delivery_mode(req) != "repo":
+        return None
+    target = Path(req.target_repo).expanduser() if req.target_repo else cfg.target_repo_path
+    if req.target_kind == "new" or not _dir_is_nonempty(target):
+        return target
+    return None
+
+
+def _egress_view(req: Requirement, cfg: config.Config) -> list[dict]:
     """§7 add-only ``egress[]``: the out-of-machine consequences approving this
     card will trigger, disclosed on the approval card itself (the security
     boundary of the product, issue #11 / PRIVACY.md egress row 8).
 
-    Mirrors the executor's ``ensure_repo`` gate byte-for-byte: repo delivery
-    (chat never touches a repo) + ``target_kind == "new"`` + config
-    ``execution.create_github_repo`` on → the dispatch runs
+    Mirrors the executor's ``ensure_repo`` gate (:func:`_will_bootstrap_repo`)
+    + config ``execution.create_github_repo`` on → the dispatch runs
     ``gh repo create <name> --private`` and pushes screen/meeting/mail-derived
     content to GitHub. Flag off (the default) → always ``[]`` — nothing
     changes for existing installs. ``gh`` missing at dispatch time keeps the
     repo local (PRIVACY.md); the card still discloses the intent, because the
     approval decision must not depend on a binary the user cannot see."""
-    if not (cfg.create_github_repo and target_kind == "new"
-            and _delivery_mode(req) == "repo"):
+    if not cfg.create_github_repo:
         return []
-    return [{"kind": EGRESS_GITHUB_REPO_CREATE, "target": target_name,
+    target = _will_bootstrap_repo(req, cfg)
+    if target is None:
+        return []
+    return [{"kind": EGRESS_GITHUB_REPO_CREATE, "target": target.name,
              "visibility": "private"}]
 
 
@@ -426,8 +445,7 @@ def _capture_id(req: Requirement) -> Optional[str]:
     return None
 
 
-def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config,
-                     target_kind: str, target_name: str) -> dict:
+def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
     """The add-only tail of a needs_approval (card_sent) row — kept out of
     ``build_dashboard._project`` so the projection body stays under the
     §58 function-length ledger. Every key here is optional/add-only:
@@ -447,7 +465,7 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config,
         "reraised_note": str(ex.get("reraised_note") or ""),
         **_opt("origin_trust", getattr(req, "origin_trust", None)),
         **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
-        "egress": _egress_view(req, cfg, target_kind, target_name),
+        "egress": _egress_view(req, cfg),
         **_opt("capture_id", _capture_id(req)),
     }
 
@@ -829,7 +847,7 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "processing": False,
                     "delivery_mode": _delivery_mode(req),
-                    **_proposal_extras(req, ex, cfg, target_kind, target_name),
+                    **_proposal_extras(req, ex, cfg),
                 }
             )
 

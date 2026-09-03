@@ -248,8 +248,11 @@ debt item 新增 `summary`（同上，大白话）。
 **issue #11 追记（add-only）——`egress[]`：批准即出机的后果披露**。每条 needs_approval 卡（raising 占位项除外）
 恒带 `egress: [{kind, target?, visibility?}]`，空 list = 批了什么也不出机。`kind` 开放枚举，今日唯一值
 `github_repo_create`（`act/lib/dashboard.EGRESS_GITHUB_REPO_CREATE`）：`{"kind":"github_repo_create","target":"<目录名>","visibility":"private"}`，
-仅当 config `execution.create_github_repo` 为真 **且** `target_kind == "new"` **且** 交付方式为 repo（chat 永不碰仓库，§20）——
-与 `act/executor.py ensure_repo` 的闸门逐字同源；开关关（默认）时恒 `[]`，存量安装卡面零变化。dispatch 时 `gh` 缺席
+仅当 config `execution.create_github_repo` 为真 **且** 交付方式为 repo（chat 永不碰仓库，§20）**且** 派发会 bootstrap 仓库——
+目标目录 = 显式 `target_repo`，否则**默认工作 repo**（`cfg.target_repo_path`）；该目录缺失/为空（`compute_target_kind` 现算）
+**或**存量 `target_kind` 已记为 new 即视为会 bootstrap（`dashboard._will_bootstrap_repo`，与 `act/executor.py dispatch → ensure_repo`
+的判定逐字同源；**不**复用本节 `_target_view` 把默认目录一律报 existing 的捷径——Codex 审 #158 抓到的漏报：默认目录为空时
+卡面 `[]` 而派发仍建 repo）；开关关（默认）时恒 `[]`，存量安装卡面零变化。dispatch 时 `gh` 缺席
 只会让仓库留在本地，卡面**仍**披露意图（审批决定不得依赖用户看不见的二进制）。web `ProposalCard.EgressLines` 以
 红色后果句渲染（「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」），未知 kind 按原文降级显示、永不吞掉；
 客户端 decodeIfPresent / `?? []`。docs/PRIVACY.md 出机清单第 8 行反向引用本条。判例 `tests/test_dashboard_egress_disclosure.py`。
