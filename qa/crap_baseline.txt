@@ -102,7 +102,6 @@ act/executor.py::dispatch 48.2
 act/executor.py::ensure_repo 22.5
 act/executor.py::harvest_delivery 19.2
 act/executor.py::resume 15.6
-act/executor.py::resume.runner 12
 act/executor.py::rework 24.8
 act/executor.py::stop_session_confirmed 14.2
 act/executor.py::transcript_plain_text 8.8
@@ -250,7 +249,6 @@ act/lib/store2/store.py::Store.update_card_fields 19.8
 act/lib/titles.py::_url_title 12.8
 act/lib/titles.py::is_unreadable_title 8
 act/lib/titles.py::sanitize_title 8
-act/lib/update_check.py::_default_fetch 16.6
 act/lib/update_check.py::_release_view 12
 act/lib/update_check.py::check 14
 act/lib/update_check.py::cli_status 10
