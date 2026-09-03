@@ -76,6 +76,28 @@ class PermissionsTestCase(_ServerCase):
         # files_folders = 笔记库（Documents）授权被拒后的第二次机会（原生 requestVaultAccess 深链；§68.13）
         self.assertEqual(set(obj["panes"]), {"full_disk", "screen", "microphone", "notifications", "files_folders"})
 
+    def test_vault_status_is_passive_and_root_follows_obsidian_raw(self):
+        # 原生 PermissionsModel 的被动探针：只认 state/vault_sync_mode == mirror，永不读 ~/Documents
+        self.patch_runner()
+        _s, obj = get_json(self.port, "/api/permissions")
+        self.assertEqual(obj["vault"]["status"], "unknown")
+        self.assertTrue(obj["vault"]["root"].endswith(os.path.join("Documents", "Obsidian Vault")))
+        write_text(self.home / "state" / "vault_sync_mode", "mirror\n")
+        write_text(self.home / "state" / "settings_overrides.json",
+                   json.dumps({"obsidian_raw": str(self.user_home / "Notes" / "2 - raw")}))
+        _s, obj = get_json(self.port, "/api/permissions")
+        self.assertEqual(obj["vault"]["status"], "granted")
+        self.assertEqual(obj["vault"]["root"], str(self.user_home / "Notes"))
+
+    def test_cron_disk_access_row_is_forwarded(self):
+        # 向导末步「定时任务磁盘权限」读这一行（OK / WARN 无探针 / FAIL cron_fda_blocked 全要）
+        rows = json.loads(DOCTOR_JSON)
+        rows["checks"].append({"name": "cron disk access", "status": "OK", "detail": "cron read ok", "fix": "",
+                               "failure_id": "", "action_id": ""})
+        self.patch_runner(out=json.dumps(rows))
+        _s, obj = get_json(self.port, "/api/permissions")
+        self.assertIn("cron disk access", [r["name"] for r in obj["doctor"]])
+
     def test_only_tcc_shaped_doctor_rows_are_forwarded(self):
         self.patch_runner()
         _s, obj = get_json(self.port, "/api/permissions")
@@ -171,11 +193,96 @@ class SetupTestCase(_ServerCase):
         self.assertTrue(obj["setup"]["needed"])
 
     def test_unknown_fields_are_400(self):
-        for path in ("/api/setup/complete", "/api/setup/reset", "/api/setup/config-from-example"):
+        for path in ("/api/setup/complete", "/api/setup/reset", "/api/setup/config-from-example",
+                     "/api/setup/seed-dashboard"):
             with self.subTest(path=path):
                 status, obj = post_json(self.port, path, {"x": 1})
                 self.assertEqual(status, 400)
                 assert_envelope(self, obj, "UNKNOWN_FIELD")
+
+    def test_seed_dashboard_runs_the_dashboard_module_once(self):
+        self.patch_runner(out="{}\n")
+        status, obj = post_json(self.port, "/api/setup/seed-dashboard", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj, {"ok": True, "rc": 0})
+        self.assertEqual(self.calls[0][1:], ["-m", "act.lib.dashboard"])
+
+    def test_seed_dashboard_failure_is_honest_not_500(self):
+        self.patch_runner(rc=1, out="", err="Traceback: boom")
+        status, obj = post_json(self.port, "/api/setup/seed-dashboard", {})
+        self.assertEqual(status, 200)
+        self.assertFalse(obj["ok"])
+        self.assertEqual(obj["rc"], 1)
+        self.assertIn("boom", obj["error"])
+
+
+class EngineDetectTestCase(_ServerCase):
+    """``GET /api/setup/engine``（原生 EngineDetector 的 server 半边）：CLI + 认证梯子，零 subprocess。"""
+
+    def _engine(self, calls_ok=(), platform="darwin", env=None):
+        from server import setup as setup_mod
+        seen = []
+
+        def runner(argv, timeout_s):
+            seen.append(argv)
+            if argv[-1] == "--version":
+                return 0, "1.0.99 (Claude Code)\nextra line\n"
+            return (0, "") if any(k in " ".join(argv) for k in calls_ok) else (44, "not found")
+        snap = setup_mod.engine_snapshot(self.home, runner=runner, platform=platform, env=env or {})
+        return snap, seen
+
+    def test_nothing_installed(self):
+        with mock.patch("server.permissions.shutil.which", return_value=None):
+            snap, seen = self._engine()
+        self.assertEqual(snap["cli_path"], None)
+        self.assertIsNone(snap["version"])
+        self.assertIsNone(snap["auth"])
+        self.assertFalse(snap["ready"])
+        self.assertEqual(set(snap["auth_sources"]), {"oauth", "env_key", "secrets_file", "legacy_file"})
+        self.assertFalse(any(argv[-1] == "--version" for argv in seen))
+
+    def test_cli_with_keychain_login_is_ready_via_oauth(self):
+        cli = self.home / "bin" / "claude"
+        write_text(cli, "#!/bin/sh\n")
+        write_text(self.home / "config.yaml", "execution:\n  claude_bin: %s\n" % cli)
+        snap, seen = self._engine(calls_ok=("find-generic-password",))
+        self.assertEqual(snap["cli_path"], str(cli))
+        self.assertEqual(snap["version"], "1.0.99 (Claude Code)")
+        self.assertEqual(snap["auth"], "oauth")
+        self.assertTrue(snap["ready"])
+        # 钥匙串探针只问存在：永不带 -w
+        for argv in seen:
+            self.assertNotIn("-w", argv)
+
+    def test_auth_ladder_order_and_sources(self):
+        cli = self.home / "bin" / "claude"
+        write_text(cli, "#!/bin/sh\n")
+        write_text(self.home / "config.yaml", "execution:\n  claude_bin: %s\n" % cli)
+        write_text(self.home / "config" / "secrets" / "anthropic-api-key.txt", "sk-ant-1\n")
+        write_text(self.user_home / ".config" / "anthropic-key.txt", "sk-legacy\n")
+        snap, _seen = self._engine(platform="linux", env={"ANTHROPIC_API_KEY": "sk-env"})
+        self.assertEqual(snap["auth_sources"],
+                         {"oauth": False, "env_key": True, "secrets_file": True, "legacy_file": True})
+        self.assertEqual(snap["auth"], "env_key")   # 梯子顺序：oauth → env_key → secrets_file → legacy_file
+        snap, _seen = self._engine(platform="linux", env={})
+        self.assertEqual(snap["auth"], "secrets_file")
+        (self.home / "config" / "secrets" / "anthropic-api-key.txt").unlink()
+        snap, _seen = self._engine(platform="linux", env={})
+        self.assertEqual(snap["auth"], "legacy_file")
+
+    def test_credentials_json_counts_as_oauth_without_keychain(self):
+        write_text(self.user_home / ".claude" / ".credentials.json", '{"claudeAiOauth": {}}')
+        with mock.patch("server.permissions.shutil.which", return_value=None):
+            snap, _seen = self._engine(platform="linux")
+        self.assertTrue(snap["auth_sources"]["oauth"])
+        self.assertFalse(snap["ready"])   # 有登录没 CLI 仍不算就绪
+
+    def test_route_serves_the_snapshot(self):
+        with mock.patch("server.setup.engine_snapshot", return_value={"cli_path": None, "version": None, "auth": None,
+                                                                     "auth_sources": {}, "ready": False}):
+            status, obj = get_json(self.port, "/api/setup/engine")
+        self.assertEqual(status, 200)
+        self.assertFalse(obj["ready"])
 
 
 class AboutTestCase(_ServerCase):

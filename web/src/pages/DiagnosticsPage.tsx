@@ -3,11 +3,14 @@
 //   doctor 表（--fast；「完整体检」= fast=0 含活探针，会花 token）· 管线活性（心跳 / 看板新鲜度 /
 //   连崩）· 自动部署状态（§56 deploy_state 全字段）· 安装回执（§23）· 源健康（§48）· 日志尾巴
 //   （只读、server size-cap；选一个文件看最后 N 行）。让 AI 修在卡片上（§54.1 第 5 项），这里不重复。
+//   doctor 行带 §25 failure_id 时给原生 FailureCatalog 的对症一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，
+//   components/settings/failureAction）。
 import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../api";
 import { RelativeTime } from "../components/board/cardChrome";
+import { FailureActionButton } from "../components/settings/failureAction";
 import { errorMessage } from "../components/settings/useToast";
 import { useI18n } from "../i18n";
 import { buildAppUrl } from "../route";
@@ -29,16 +32,17 @@ function DoctorTable({ rows }: { rows: DoctorRow[] }) {
   const { text } = useI18n();
   return (
     <table className="diag-table">
-      <thead><tr><th>{text("状态", "Status")}</th><th>{text("检查", "Check")}</th><th>{text("说明 / 修法", "Detail / fix")}</th></tr></thead>
+      <thead><tr><th>{text("状态", "Status")}</th><th>{text("检查", "Check")}</th><th>{text("说明 / 修法", "Detail / fix")}</th><th>{text("动作", "Action")}</th></tr></thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={row.name} data-status={row.status}>
+          <tr key={row.name} data-status={row.status} data-failure={row.failure_id || undefined}>
             <td><span className={`chip chip-${row.status === "FAIL" ? "danger" : row.status === "WARN" ? "warning" : "success"}`}>{row.status}</span></td>
             <td>{row.name}</td>
             <td>
               <div>{row.detail}</div>
               {row.fix && row.status !== "OK" && <div className="settings-helper">{text("修法：", "Fix: ")}{row.fix}</div>}
             </td>
+            <td>{row.status !== "OK" && <FailureActionButton failureId={row.failure_id} compact />}</td>
           </tr>
         ))}
       </tbody>
@@ -128,7 +132,7 @@ export function DiagnosticsPage() {
         <h2 className="settings-page-title">{text("依赖检查", "Dependencies")}</h2>
         <button type="button" className="btn" disabled={busy || rechecking} onClick={() => void recheck()}>{rechecking ? text("检查中…", "Checking…") : text("重新检查", "Re-check")}</button>
         <button type="button" className="btn" disabled={busy} onClick={() => void runFull()}>{busy ? text("诊断中…", "Running…") : text("运行诊断", "Run diagnostics")}</button>
-        <a className="settings-link" href={buildAppUrl(window.location.href, "permissions", null).toString()}>{text("权限体检", "Permissions checkup")}</a>
+        <a className="settings-link" href={buildAppUrl(window.location.href, "permissions", null).toString()}>{text("权限体检", "Permissions Checkup")}</a>
       </div>
       {pageErrors.diagnostics && <p className="settings-error" role="alert">{pageErrors.diagnostics}</p>}
 

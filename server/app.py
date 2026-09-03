@@ -27,7 +27,7 @@
   GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
   （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
   GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
-  POST /api/setup/{config-from-example,complete,reset}、GET /api/about +
+  GET /api/setup/engine + POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
 - 问问助手（§27 / §54.4 左侧导航栏页）：GET /api/ask/history（只读 state/ask_history.json）、
@@ -441,9 +441,15 @@ def _post_actions(ctx, payload: dict) -> dict:
 
 
 def _post_reveal(ctx, payload: dict) -> dict:
-    unknown = set(payload) - {"card_id"}
+    unknown = set(payload) - {"card_id", "target"}
     if unknown:
         raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    if "target" in payload and "card_id" not in payload:
+        # §68.4 doctor 行「显示文件」（config_invalid）：词表项，不是路径
+        target = payload.get("target")
+        if not isinstance(target, str):
+            raise InvalidFieldError("target must be a string")
+        return files.reveal_target(ctx.home, target)
     card_id = payload.get("card_id")
     if not isinstance(card_id, str):
         raise InvalidFieldError("card_id must be a string")
@@ -484,9 +490,9 @@ def _post_secret_verify(ctx, rest: str, payload: dict) -> dict:
     # /api/secrets/<name>/verify —— 尾段 "<name>/verify"；body 必须是 {}（零容忍）
     if not rest.endswith("/verify"):
         raise NotFoundError("not found", {"path": "/api/secrets/" + rest})
-    if payload:
-        raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
-    return secrets_store.verify(ctx.home, rest[:-len("/verify")])
+    # body 空 = 探已保存的；{value} = 粘贴即验证（不落盘，§68.3）
+    return secrets_store.verify(ctx.home, rest[:-len("/verify")],
+                                value=secrets_store.verify_payload_value(payload))
 
 
 # GET 表 handler 形状：(ctx, query) → dict；query = URL query 的扁平 dict（_query）。
@@ -521,8 +527,9 @@ _GET_JSON_ROUTES = {
     # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单）
     "/api/diagnostics": lambda ctx, query: diagnostics.snapshot(ctx.home, refresh=_flag(query, "refresh")),
     "/api/doctor": _get_doctor,
-    # §68.5 首次运行向导
+    # §68.5 首次运行向导（engine = 原生 EngineDetector：claude CLI + 认证梯子）
     "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
+    "/api/setup/engine": lambda ctx, query: setup.engine_snapshot(ctx.home),
     # §68.6 关于 + 更新
     "/api/about": lambda ctx, query: about.snapshot(ctx.home),
     # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）
@@ -572,6 +579,8 @@ _POST_JSON_ROUTES = {
     "/api/setup/config-from-example": lambda ctx, payload: setup.config_from_example(ctx.home, payload),
     "/api/setup/complete": lambda ctx, payload: setup.complete(ctx.home, payload),
     "/api/setup/reset": lambda ctx, payload: setup.reset(ctx.home, payload),
+    # §68.5 末步「首次数据 · 立即生成一次」= python -m act.lib.dashboard 一次
+    "/api/setup/seed-dashboard": lambda ctx, payload: setup.seed_dashboard(ctx.home, payload),
     # §26 手动「立即检查」
     "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
     # §27 问问助手：一问一答（子进程 act.ask，≤75 s）
