@@ -311,6 +311,12 @@
   "review": [
     {
       "agent_name": "eval cache layer",
+      "assessment": {
+        "at": 1788348900,
+        "summary": "给评测加了缓存，重跑快十倍，等你看 PR",
+        "verdict": "建议验收",
+        "verdict_reason": "清单三条都有对应交付：缓存命中、失效单测 6 个、CI 全绿"
+      },
       "copy_cmd": "cd '~/Projects/example-bench' && claude --resume e5a1c7d9-4f62-4b8e-9a35-7d0c2b8f4e61",
       "cwd": "~/Projects/example-bench",
       "delivered_summary": "已在 example-bench 开 draft PR #87：runner 加 content-hash 缓存层，重复 run 从 ~12min 降到 ~70s；失效逻辑带 6 个单测，CI 全绿。",
@@ -349,6 +355,12 @@
     },
     {
       "agent_name": "weekly report draft",
+      "assessment": {
+        "at": 1788349500,
+        "summary": "周报草稿写好了，缺一页内的篇幅确认",
+        "verdict": "需要拍板",
+        "verdict_reason": "清单第 3 条「不超过一页」要你按目标读者定：现在双语版约一页半"
+      },
       "copy_cmd": "cd '~/Projects/workbench' && claude --resume f2d6b8a3-9c14-4d57-8e60-3b7a5f1c9d42",
       "cwd": "~/Projects/workbench",
       "delivered_summary": "周报初稿完成：两个 project 各一段进展 + 下周计划，中英双语。",

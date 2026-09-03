@@ -1,4 +1,4 @@
-"""§64.2 UI 对齐门（scripts/ui/parity_check.py）的判例。
+"""§65.2 UI 对齐门（scripts/ui/parity_check.py）的判例。
 
 迷你仓库根（web/src 源、index.html、server/lanes.py、server/settings.py）+ 迷你清单 +
 注入的假 vitest runner（永不真起 node）钉住：每类静态探针的在/不在、control 走 vitest

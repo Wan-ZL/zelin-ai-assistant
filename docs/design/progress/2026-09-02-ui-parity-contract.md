@@ -1,6 +1,6 @@
 pr: `feat/ui-parity-contract`（PR-A UI 对齐契约；无版本 bump，版本由 tag 派生）
 phase: P4 前置（D3 的执法面；R2.2.2 验收表机器化）
-law: **§64（新增）** / §58.4 追记（ledger_diff 看管 ui/parity/*.txt）
+law: **§65（新增）** / §58.4 追记（ledger_diff 看管 ui/parity/*.txt）
 
 owner 09-02 原话「你不能依靠一个个去看，而是要通过一些硬指标、硬代码、硬文档来进行保证」+ 当天点名四条差距（左侧图标栏被挪到顶栏 / 默认主题该是浅色 / 四列该铺满 / 设置页大量 section 缺席）。
 

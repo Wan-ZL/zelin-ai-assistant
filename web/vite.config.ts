@@ -18,7 +18,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     strictPort: true,
-    // UI 对齐判例（src/parity.test.tsx，CONTRACT §64）要 import 仓库根下 ui/parity/ 的清单、
+    // UI 对齐判例（src/parity.test.tsx，CONTRACT §65）要 import 仓库根下 ui/parity/ 的清单、
     // 账本（?raw）与 fixture——vite 默认只放行 web/ 内的文件，这里把上一级（仓库根）加进白名单。
     fs: { allow: [".."] },
     proxy: {

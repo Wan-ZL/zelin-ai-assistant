@@ -4921,7 +4921,7 @@ wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictCh
 
 ## 65. UI 对齐契约：原生清单 = 终版规格，机器判卷（2026-09-02；owner 决策 D3 的执法面，P4 前置）
 
-> §65 由同日并行的 `feat/material-box`（#157，素材库）立法，本节取下一个空号 §65——§ 号永不复用。
+> §62 / §63 / §64 由同日并行的 `feat/material-box`（#157）、`feat/meeting-recap`（#159）、`feat/card-summary-verdict`（#160）立法，本节取下一个空号 §65——§ 号永不复用。
 
 owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通过一些硬指标、硬代码、硬文档来进行保证」。当天点名的四条差距：(a) 原生主窗口**左侧竖排图标栏**（任务台 / 问问助手 / 依赖检查 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于）被 web 挪到了顶栏，要回到左侧；(b) 原生默认**浅色**，web 默认成了深色；(c) 原生四列各 400pt 铺满一屏，web 列更窄；(d) 原生设置页的 section / 字段 web 大量缺席。本节把「web 看板必须补齐原生 app 的全部用户功能」（R2.2.2）从验收表变成硬门：**审阅者不再看截图判对齐，机器判**。执法：`scripts/ui/`（ui_common / extract_native_inventory / extract_native_tokens / parity_fixture / parity_check）、`web/src/parity.test.tsx`、`web/e2e/visual.spec.ts`、`scripts/qa/run_gates.sh [ui-parity]`、`scripts/qa/ledger_diff.py`（两本 UI 账本）；判例 `tests/test_ui_swift_scan.py`、`tests/test_ui_inventory_extractor.py`、`tests/test_ui_native_inventory_fresh.py`、`tests/test_ui_native_tokens.py`、`tests/test_ui_parity_check.py`、`tests/test_qa_ledger_diff.py::ParityLedgerTestCase`。
 

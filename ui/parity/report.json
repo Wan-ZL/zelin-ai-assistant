@@ -4,7 +4,7 @@
     "PRESENT": 104,
     "WAIVED": 4
   },
-  "inventory_sha256": "0890d4f13efaed5a71b212e08139ec5e8e71228815cf326b05cbf83dbb199050",
+  "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
   "items": {
     "control:about:alert-button:cancel": "PRESENT",
     "control:about:alert-button:ok": "PENDING",

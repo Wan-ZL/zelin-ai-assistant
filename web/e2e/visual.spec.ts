@@ -1,4 +1,4 @@
-// 视觉基线（CONTRACT §64.4）：每个 web 页面 × light / dark 各一张 1440×900 截图，与
+// 视觉基线（CONTRACT §65.4）：每个 web 页面 × light / dark 各一张 1440×900 截图，与
 // web/e2e/__screenshots__/visual.spec.ts/*.png 的 golden 比对（2% 像素差以内算同一张）。
 // 数据 = scripts/demo_seed.py 的 initial 场景（全虚构），server 起在随机端口（demoServer.ts）。
 // 改 UI 的 PR 必须显式更新 golden（npm run visual:update）并在 PR 里说明——CI job
