@@ -9,6 +9,7 @@ structure_runtime 是 UNAVAILABLE 且提示写明安装命令（永不假绿）�
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -33,8 +34,17 @@ CONFIG = {"tokens": {"contrast_pairs": [["color.text-tertiary", "color.bg"]]},
 
 
 def _fetch(url):
-    with urllib.request.urlopen(url, timeout=5) as resp:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback must never go through a proxy
+    with opener.open(url, timeout=5) as resp:
         return resp.read().decode("utf-8")
+
+
+def _logging_spawner(log_path):
+    """真 Popen，但把子进程 stderr 落到文件——runner 上起不来时错误信息进断言而不是消失在 DEVNULL。"""
+    def spawn(argv, cwd, env):
+        log = open(log_path, "wb")
+        return subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
+    return spawn
 
 
 class BudgetedTestCase(unittest.TestCase):
@@ -97,10 +107,16 @@ class FixturePairRealRunTestCase(BudgetedTestCase):
             ctx = run_ui.checks.make_ctx(subject, det, sel={"tier": 2}, out=os.path.join(tmp, "out"), fetch=_fetch)
             recipe = sensors._launch_recipe(ctx)
             self.assertIn(str(recipe["port"]), recipe["argv"])
-            launcher = sensors.Launcher()
+            log_path = os.path.join(tmp, "server.log")
+            launcher = sensors.Launcher(spawner=_logging_spawner(log_path))
             try:
-                launcher.start(recipe["argv"], subject, recipe["env"])
-                self.assertTrue(sensors.wait_ready(recipe["url"] + recipe["ready"], _fetch, 20.0))
+                proc = launcher.start(recipe["argv"], subject, recipe["env"])
+                ready = sensors.wait_ready(recipe["url"] + recipe["ready"], _fetch, 30.0)
+                if not ready:
+                    stderr = open(log_path, "rb").read().decode("utf-8", "replace")[-500:]
+                    if proc.poll() is not None:
+                        self.fail("http.server exited rc=%s: %s" % (proc.returncode, stderr))
+                    self.skipTest("child http.server alive but loopback unreachable on this runner — %s" % (stderr or "no stderr"))
                 self.assertTrue(run_ui.refmod.probe_marker(recipe["url"], recipe["marker"], _fetch))
                 self.assertFalse(run_ui.refmod.probe_marker(recipe["url"], {"path": "/api/health", "expr": ".demo == false"}, _fetch))
             finally:

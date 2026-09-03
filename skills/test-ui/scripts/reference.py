@@ -271,6 +271,8 @@ def probe_marker(base_url, marker, fetch=None):
 
 
 def _fetch_loopback(url):
+    """回环 GET：绕过一切代理设置（macOS 系统代理 / http_proxy 会把 127.0.0.1 也送去代理）。"""
     import urllib.request
-    with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 — loopback only, checked above
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(url, timeout=10) as resp:  # noqa: S310 — loopback only, checked above
         return resp.read().decode("utf-8", "replace")
