@@ -31,8 +31,13 @@ function makeState(overrides: {
     captions: {
       available: true, on: false, engine: "auto", paused: false, engine_dead: false,
       status_text: "", status_is_error: false,
+      source: "both", translate: false, translate_direction: "auto", apple_locale: "zh",
+      ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7,
       ...overrides.captions,
     },
+    permissions: { screen: "granted", microphone: "unknown", notifications: "unknown" },
+    launch_at_login: false,
+    hotkey: "⌃⌥Space",
     language: "en",
   };
 }

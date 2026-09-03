@@ -83,6 +83,7 @@ The retired Mac app under `mac/Sources` is the terminal UI spec; `ui/parity/nati
 2. **launchd 已加载但端口没答话**：`launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server` 后 1 秒内 `open` 壳 → 壳等 ≤10 s 后照常加载（log 里一行 `… is loaded in launchd — waiting, not spawning`），期间 `pgrep -fl "python3 -m server"` 只有 launchd 那一个进程。
 3. **失败弹窗**：`launchctl bootout gui/$UID/com.zelin.aiassistant.server` 再把 `defaults write com.zelin.ai-board serverRepo /nonexistent` → `open` 壳 → 弹窗第一条是 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`，注明 label 未加载 → `bash install.sh`。完事 `defaults delete com.zelin.ai-board serverRepo && bash install.sh`。
 4. **名字**（§54 名字互换）：Dock、窗口标题、app 菜单都读 "Zelin's AI Assistant"；`osascript -e 'id of app "Zelin's AI Assistant"'` 是 `com.zelin.ai-board`（旧菜单栏 app 是 "Zelin's AI Assistant (old)" / `com.zelin.ai-engineer`）。
+5. **原生残留（CONTRACT §68.13，改 `ShellSystem.swift` / `NotifyRelay.swift` 时）**：`python3 -c "from act.lib import notify; notify.notify('测试', '通知中继')"` → 5 s 内壳弹出横幅，点它前置看板窗口；`⌃⌥Space` 在任何 app 里按下 → 壳前置且提案列输入框获得焦点；看板 `?page=permissions` 三行状态与 系统设置 一致，点「授权」弹系统提示；设置 → 关于「登录时启动」翻开关后 `sfltool dumpbtm | grep -i zelin` 有 / 无记录；Dock 徽章 = 提案 + 需输入 + 待验收数。
 
 ## Project rules
 

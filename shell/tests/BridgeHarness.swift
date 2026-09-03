@@ -46,6 +46,19 @@ func run() {
     check((rec["on"] as? Bool) == (mode != "off"), "recording.on ⇔ mode != off")
     check(rec["diagnosis"] is NSNull || rec["diagnosis"] is String,
           "diagnosis is null or failure id")
+    // §68.2 / §68.13 add-only keys: caption prefs, permissions block, launch_at_login, hotkey
+    for key in ["source", "translate", "translate_direction", "apple_locale", "ark_model",
+                "font_size", "opacity"] {
+        check(cap[key] != nil, "captions.\(key) present (caption prefs)")
+    }
+    let perm = snap["permissions"] as? [String: Any] ?? [:]
+    for key in ["screen", "microphone", "notifications"] {
+        let value = perm[key] as? String ?? "?"
+        check(["granted", "denied", "unknown"].contains(value),
+              "permissions.\(key) ∈ granted|denied|unknown", "got \(value)")
+    }
+    check(snap["launch_at_login"] is Bool, "launch_at_login is bool")
+    check((snap["hotkey"] as? String)?.isEmpty == false, "hotkey label present")
 
     // ---- 2. JSON is a valid JS expression for the event push ----
     print("[2] stateJSON round-trips:")
@@ -84,6 +97,44 @@ func run() {
           "setCaptions without on rejected")
     check(rejection(["method": "setLanguage", "lang": "fr"]).hasPrefix("INVALID_ARGS"),
           "setLanguage outside zh|en rejected")
+    // §68.13 new methods: type-strict rejections (valid calls touch TCC / SMAppService /
+    // Dock / UserDefaults — out of the harness's bounds, see header)
+    check(rejection(["method": "requestPermission", "kind": "camera"]).hasPrefix("INVALID_ARGS"),
+          "requestPermission outside screen|microphone|notifications rejected")
+    check(rejection(["method": "requestPermission"]).hasPrefix("INVALID_ARGS"),
+          "requestPermission without kind rejected")
+    check(rejection(["method": "openPane", "pane": "bluetooth"]).hasPrefix("INVALID_ARGS"),
+          "openPane outside the pane vocabulary rejected")
+    check(rejection(["method": "setLaunchAtLogin", "on": "yes"]).hasPrefix("INVALID_ARGS"),
+          "setLaunchAtLogin with string on rejected")
+    check(rejection(["method": "setBadge", "count": -1]).hasPrefix("INVALID_ARGS"),
+          "setBadge negative rejected")
+    check(rejection(["method": "setBadge", "count": "3"]).hasPrefix("INVALID_ARGS"),
+          "setBadge string rejected (type-strict)")
+    check(rejection(["method": "setCaptionPrefs"]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs with no prefs rejected")
+    check(rejection(["method": "setCaptionPrefs", "engine": "whisper"]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs engine outside auto|doubao|apple rejected")
+    check(rejection(["method": "setCaptionPrefs", "font_size": 99]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs font_size outside 14...40 rejected")
+    check(rejection(["method": "setCaptionPrefs", "opacity": 0.05]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs opacity outside 0.2...1 rejected")
+    check(rejection(["method": "setCaptionPrefs", "translate": "on"]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs translate must be bool")
+    check(rejection(["method": "setCaptionPrefs", "ark_model": ""]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs empty ark_model rejected")
+    // a bad key alongside a good one rejects the WHOLE request (zero writes)
+    check(rejection(["method": "setCaptionPrefs", "source": "mic", "engine": "bogus"]).hasPrefix("INVALID_ARGS"),
+          "setCaptionPrefs is all-or-nothing")
+    if let state = try? bridge.handle(["method": "getPermissions"]) {
+        check((state["permissions"] as? [String: Any])?["screen"] != nil,
+              "getPermissions refreshes and returns the permissions block")
+    } else {
+        check(false, "getPermissions must not throw")
+    }
+    check(PermissionsProbe.kinds == ["screen", "microphone", "notifications"], "permission kinds vocabulary frozen")
+    check(Set(PermissionsProbe.panes.keys) == Set(["full_disk", "screen", "microphone", "notifications"]),
+          "pane vocabulary frozen")
 
     // ---- 4. setLanguage flips the L() mirror (no persistence) ----
     print("[4] setLanguage:")
