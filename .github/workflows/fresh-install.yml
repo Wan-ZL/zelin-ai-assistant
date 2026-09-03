@@ -1,0 +1,189 @@
+# Fresh install (macOS) — the machine-readable version of the owner's
+# acceptance criterion (CONTRACT §69; vnext2-plan 2026-09-02: 「我能够在另一台
+# 电脑上起一个空白环境……就能够直接使用」).
+#
+# A clean macOS runner plays the "other computer": an EMPTY temp $HOME (no
+# config, no secrets, no state, no claude, no PyYAML), a local bare repo that
+# stands in for GitHub (main = the commit under test, tags included so the
+# version stamp is real), and then exactly what the owner would type:
+#
+#     curl … scripts/bootstrap.sh | bash
+#
+# except the script comes from THIS checkout (the PR's version, not main's).
+# `--no-launchd` because a CI session owns no login launchd domain worth
+# wiring: install.sh proves the daemon with one real `actd --once` pass
+# instead (§23 step `actd_once`). Assertions, in order:
+#
+#   1. bootstrap.sh exits 0 (install.sh: zero failed steps; doctor
+#      --fresh-install: zero BROKEN rows — TCC grants / credentials are the
+#      human's and never count);
+#   2. the §23 install report says what a fresh machine must say: config ok
+#      (bootstrap created it from the example first; install.sh kept it),
+#      runtime_python ok, version ok, ui ok (web + shell both built on this
+#      runner), launchd skipped (--no-launchd), actd_once ok;
+#   3. the board server answers /api/board (200, JSON), /api/health,
+#      /api/setup (§68.5 wizard: needed=true — no credentials yet — and
+#      config_exists=true) and /api/permissions (the Full Disk Access list
+#      names the daemon interpreter and a claude path);
+#   4. a second bootstrap run is an UPDATE: exit 0, config.yaml byte-identical,
+#      the checkout still on main;
+#   5. `python3 -m act.doctor --fresh-install --json` exit 0 once more, after
+#      the server ran.
+#
+# Informational at birth (not in the required-checks list); promoted once it
+# has been green for a while — same path the QA gates took (§58).
+name: Fresh install (macOS)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fresh-install-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  fresh-install:
+    name: Fresh install (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # tags: the version stamp (§56.1) must resolve on the clone below
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Paths for the rest of the job
+        # The `runner` context is not available in job-level env, so the three
+        # paths every later step shares are exported once here ($GITHUB_ENV).
+        run: |
+          {
+            echo "FRESH_HOME=$RUNNER_TEMP/fresh-home"
+            echo "ORIGIN=$RUNNER_TEMP/origin.git"
+            echo "CHECKOUT=$RUNNER_TEMP/fresh-home/Projects/zelin-ai-assistant"
+          } >> "$GITHUB_ENV"
+
+      - name: Select newest Xcode
+        # shell/build.sh targets a recent toolchain (same rule as ci.yml)
+        run: |
+          XCODE="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -V | tail -n1)"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          swiftc --version
+          node --version && npm --version
+
+      - name: Stage a local origin that stands in for GitHub (main = this commit)
+        run: |
+          git init -q --bare "$ORIGIN"
+          git push -q "$ORIGIN" HEAD:refs/heads/main
+          git push -q "$ORIGIN" --tags || true
+          git -C "$ORIGIN" symbolic-ref HEAD refs/heads/main
+          echo "origin main = $(git -C "$ORIGIN" rev-parse --short main)"
+          mkdir -p "$FRESH_HOME"
+
+      - name: Bootstrap into an empty HOME (first run = clone + install)
+        # HOME is the empty temp dir for the whole step: pip --user, the home
+        # pointer, ~/Library/Logs, the web build cache all land there. PATH
+        # keeps the runner's node so the web half of the ui step is exercised;
+        # claude is absent by construction (a fresh machine).
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+          ZAI_BOOTSTRAP_REPO_URL: ${{ env.ORIGIN }}
+          ZAI_BOOTSTRAP_NO_OPEN: "1"
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --no-launchd --dir "$CHECKOUT" 2>&1 | tee "$RUNNER_TEMP/bootstrap-1.log"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Assert the install report says what a fresh machine must say
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+        run: |
+          python3 - "$CHECKOUT/state/install_report.json" <<'PY'
+          import json, sys
+          doc = json.load(open(sys.argv[1]))
+          steps = {s["name"]: s for s in doc["steps"]}
+          print(json.dumps(steps, indent=1, ensure_ascii=False))
+          want = {"config": "ok", "runtime_python": "ok", "version": "ok", "state_dirs": "ok",
+                  "ui": "ok", "launchd": "skipped", "actd_once": "ok", "cron": "skipped"}
+          bad = {k: steps.get(k, {}).get("status") for k, v in want.items()
+                 if steps.get(k, {}).get("status") != v}
+          assert not bad, "unexpected step statuses: %r" % bad
+          assert "--no-launchd" in (steps["launchd"].get("detail") or "")
+          # bootstrap step 4 created config.yaml from the example BEFORE install.sh ran,
+          # so install.sh's own config step must report the file as kept, never rewritten
+          assert "kept" in (steps["config"].get("detail") or ""), steps["config"]
+          assert doc["mode"] == "non-interactive"
+          ui = steps["ui"].get("detail") or ""
+          assert "web ok" in ui and "shell ok" in ui, ui
+          PY
+          grep -q "config.yaml created from config.example.yaml" "$RUNNER_TEMP/bootstrap-1.log"
+          test -f "$CHECKOUT/config.yaml"
+          test -f "$CHECKOUT/config/runtime.json"
+          test -f "$CHECKOUT/web/dist/index.html"
+          test -f "$CHECKOUT/state/store2_truth.json"
+          test -f "$CHECKOUT/state/actd.heartbeat"
+          for app in "/Applications/Zelin's AI Assistant.app" "$HOME/Applications/Zelin's AI Assistant.app"; do
+            [ -d "$app" ] && echo "shell bundle: $app"
+          done
+          test -d "/Applications/Zelin's AI Assistant.app" || test -d "$HOME/Applications/Zelin's AI Assistant.app"
+
+      - name: Board server answers /api/board, /api/health, /api/setup, /api/permissions
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+        run: |
+          PY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "$CHECKOUT/config/runtime.json")"
+          echo "daemon python: $PY"
+          (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" ZAI_PORT=47820 "$PY" -m server > "$RUNNER_TEMP/server.log" 2>&1 &)
+          for _ in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:47820/api/health >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:47820/api/health | python3 -m json.tool
+          curl -fsS -o "$RUNNER_TEMP/board.json" -w 'board: %{http_code}\n' http://127.0.0.1:47820/api/board
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, dict) and "generated_at" in d, d.keys(); print("board keys:", sorted(d)[:12])' "$RUNNER_TEMP/board.json"
+          curl -fsS http://127.0.0.1:47820/api/setup | tee "$RUNNER_TEMP/setup.json" | python3 -m json.tool
+          # §68.5: a fresh machine lands in the wizard — config exists (bootstrap step 4), no credential yet, no completion marker
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print({k: d[k] for k in ("needed","done","config_exists")}); assert d["needed"] is True; assert d["done"] is False; assert d["config_exists"] is True; assert not any(d["secrets"].values())' "$RUNNER_TEMP/setup.json"
+          curl -fsS http://127.0.0.1:47820/api/permissions | tee "$RUNNER_TEMP/permissions.json" | python3 -m json.tool | head -n 40
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); roles={e["role"]: e for e in d["fda"]["executables"]}; print({r: e["path"] for r, e in roles.items()}); assert roles["daemon_python"]["exists"], roles["daemon_python"]; assert "claude" in roles' "$RUNNER_TEMP/permissions.json"
+          curl -fsS -o /dev/null -w 'index: %{http_code}\n' http://127.0.0.1:47820/
+          # doctor once more, with the server up (board server row ok, everything else as before)
+          (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -m act.doctor --fresh-install --json > "$RUNNER_TEMP/doctor-fresh.json"); rc=$?
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("broken:", [r["name"] for r in d["buckets"]["broken"]]); print("human:", [r["name"] for r in d["buckets"]["human"]]); print("unwired:", [r["name"] for r in d["buckets"]["unwired"]])' "$RUNNER_TEMP/doctor-fresh.json"
+          test "$rc" -eq 0
+          pkill -f "python3 -m server" || pkill -f "\-m server" || true
+
+      - name: Second bootstrap run is an update (idempotent, config untouched)
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+          ZAI_BOOTSTRAP_REPO_URL: ${{ env.ORIGIN }}
+          ZAI_BOOTSTRAP_NO_OPEN: "1"
+        run: |
+          echo "# local edit that must survive an update" >> "$CHECKOUT/config.yaml"
+          before="$(shasum -a 256 "$CHECKOUT/config.yaml")"
+          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --no-launchd --dir "$CHECKOUT" 2>&1 | tee "$RUNNER_TEMP/bootstrap-2.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q "bootstrap done (updated)" "$RUNNER_TEMP/bootstrap-2.log"
+          test "$before" = "$(shasum -a 256 "$CHECKOUT/config.yaml")"
+          test "$(git -C "$CHECKOUT" rev-parse --abbrev-ref HEAD)" = "main"
+
+      - name: Upload evidence (logs, install report, doctor buckets)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fresh-install-evidence
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/bootstrap-1.log
+            ${{ runner.temp }}/bootstrap-2.log
+            ${{ runner.temp }}/server.log
+            ${{ runner.temp }}/setup.json
+            ${{ runner.temp }}/permissions.json
+            ${{ runner.temp }}/doctor-fresh.json
+            ${{ runner.temp }}/fresh-home/Projects/zelin-ai-assistant/state/install_report.json
+            ${{ runner.temp }}/fresh-home/Library/Logs/zelin-ai-assistant/*.log
