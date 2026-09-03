@@ -603,6 +603,33 @@
 
 .settings-update-line.is-ok { color: var(--success); }
 .settings-update-line.is-warning { color: var(--warning); font-weight: var(--w-semibold); }
+.settings-update { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.settings-update .settings-actions { margin: 0; }
+
+/* ----- §15.1 依赖检查快速行 / 雷达健康（原生 DepsView：✅/⚠️ + 名字 + 探针说明 + 一颗对症按钮） ----- */
+.dep-row-head { display: flex; align-items: center; gap: 8px; }
+.dep-row-mark { width: 1.4em; text-align: center; flex: none; }
+.dep-row-action { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.dep-row-detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(10.5px * var(--text-scale)); overflow-wrap: anywhere; }
+.dep-row-detail code { font: inherit; }
+.diag-verdict { display: inline-flex; gap: 2px; align-items: baseline; font-weight: var(--w-medium); }
+.diag-verdict.is-ok { color: var(--success); }
+.diag-verdict.is-warning { color: var(--danger); }
+.diag-full-report summary { cursor: pointer; font-size: calc(11px * var(--text-scale)); color: var(--text-secondary); }
+.radar-row { flex-direction: row; align-items: baseline; gap: 10px; }
+.radar-detail { display: inline-flex; gap: 0; color: var(--text-secondary); font-size: calc(12px * var(--text-scale)); }
+.radar-row.is-success .radar-detail { color: var(--success); }
+.radar-row.is-warning .radar-detail { color: var(--warning); }
+.radar-row.is-danger .radar-detail { color: var(--danger); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: var(--text-quaternary); }
+.status-dot-success { background: var(--success); }
+.status-dot-warning { background: var(--warning); }
+.status-dot-danger { background: var(--danger); }
+.engine-status { align-items: center; }
+.ingest-db-stamp { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ingest-trigger { align-items: baseline; }
+.engine-diagnosis { align-items: center; flex-wrap: wrap; }
+.tcc-lost { border-left: 3px solid var(--warning); padding-left: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 
 .btn.btn-quiet { opacity: 0.8; }
 

@@ -66,12 +66,12 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (about, ai_fix_launch, ask_assistant, board_source, claude_sessions,
-                    diagnostics, display, doctor_run, files, folders, health,
-                    inbox_writer, lanes, maintainer_launch, material_box, mcp_servers,
-                    notify_catalog, paths, permissions, radars, recaps, repair,
-                    secrets_store, security, self_improve_lane, settings,
-                    settings_catalog, setup, slack_manifest, terminal_launch,
-                    uninstall_launch)
+                    diagnostics, display, doctor_run, failure_catalog, files,
+                    folders, health, inbox_writer, ingest_run, lanes,
+                    maintainer_launch, material_box, mcp_servers, notify_catalog,
+                    paths, permissions, radars, recaps, repair, secrets_store,
+                    security, self_improve_lane, settings, settings_catalog,
+                    setup, slack_manifest, terminal_launch, uninstall_launch)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -544,6 +544,8 @@ _GET_JSON_ROUTES = {
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
     # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）
     "/api/radars": lambda ctx, query: radars.snapshot(ctx.home),
+    # §25 / §68.4 失败目录（原生 FailureCatalog.message 的 server-owned 投影；防腐 #10）
+    "/api/failures": lambda ctx, query: failure_catalog.catalog(),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -554,6 +556,8 @@ _GET_PREFIX_ROUTES = {
     "/api/settings/": lambda ctx, rest, query: settings_catalog.section_snapshot(ctx.home, rest),
     # §68.4 日志尾巴（白名单 + size-cap）
     "/api/logs/": lambda ctx, rest, query: diagnostics.tail(ctx.home, rest, query.get("lines")),
+    # §15.2 手动触发的 job 轮询（POST 立刻回 job id，脚本在后台线程跑）
+    "/api/ingest/jobs/": lambda ctx, rest, query: ingest_run.job_status(rest),
 }
 
 _POST_JSON_ROUTES = {
@@ -594,6 +598,11 @@ _POST_JSON_ROUTES = {
     # §68.1 目录字段「打开」/「创建」：路径 = 已保存的 effective 值，客户端只传 key
     "/api/folders/open": lambda ctx, payload: folders.open_folder(ctx.home, payload),
     "/api/folders/create": lambda ctx, payload: folders.create_folder(ctx.home, payload),
+    # §15.2 录制页「手动触发」：同一条 ingest/ 脚本、同一套退出码（server 只起子进程；回 job id，GET /api/ingest/jobs/ 轮询）
+    "/api/ingest/export": lambda ctx, payload: ingest_run.export_now(ctx.home, payload),
+    "/api/ingest/run": lambda ctx, payload: ingest_run.ingest_now(ctx.home, payload),
+    # §68.6 关于页「一键更新」：提前 kickstart §56 自动部署 agent（未加载 409 → 页面退回 release 页）
+    "/api/update/install": lambda ctx, payload: about.install_now(payload),
 }
 
 _POST_PREFIX_ROUTES = {

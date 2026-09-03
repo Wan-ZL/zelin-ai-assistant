@@ -49,6 +49,15 @@ def run_module(home: Path, module: str, args: list, *, timeout_s: int,
     return (runner or default_runner)(argv, module_env(home, extra_env), paths.repo_root(), timeout_s)
 
 
+def run_script(home: Path, script_rel: str, *, timeout_s: int,
+               runner: Optional[Runner] = None,
+               extra_env: Optional[dict] = None) -> "tuple[int, str, str]":
+    """``/bin/bash <repo>/<script_rel>``（ingest/ 下的 shell 链，§15.2 手动触发），返回 (rc, stdout, stderr)。
+    同一注入缝、同一 env（``AIASSISTANT_HOME`` + 调用方的 extra）、同一 cwd = repo 根。"""
+    argv = ["/bin/bash", str(paths.repo_root() / script_rel)]
+    return (runner or default_runner)(argv, module_env(home, extra_env), paths.repo_root(), timeout_s)
+
+
 def _json_dict(text: str) -> Optional[dict]:
     try:
         doc = json.loads(text)

@@ -1,15 +1,16 @@
-// 依赖检查页（原生 Pages.swift DepsView：依赖检查 + 雷达健康 + 诊断 三段 → §68.4；?page=deps，左侧导航栏第三项；
+// 依赖检查页（原生 Pages.swift DepsView：依赖 快速行 + 雷达健康 + 诊断 三段 → §15.1 / §68.4；?page=deps，左侧导航栏第三项；
 // ?page=diagnostics 是同一页的旧深链，横幅 / 关于区的链接仍指它）：
-//   doctor 表（--fast；「完整体检」= fast=0 含活探针，会花 token）· 管线活性（心跳 / 看板新鲜度 /
-//   连崩）· 自动部署状态（§56 deploy_state 全字段）· 安装回执（§23）· 源健康（§48）· 日志尾巴
-//   （只读、server size-cap；选一个文件看最后 N 行）。让 AI 修在卡片上（§54.1 第 5 项），这里不重复。
-//   doctor 行带 §25 failure_id 时给原生 FailureCatalog 的对症一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，
-//   components/settings/failureAction）。
+//   依赖快速行（components/settings/DepRows：doctor 行 + 壳 + 凭证 + cron 探针，每行一颗对症按钮）· 雷达健康（原生
+//   radarDetail：最近成功 … / 从未成功：<原因> / 暂无数据）· doctor 表（--fast；「运行诊断」= fast=0 含活探针，会花 token；
+//   零失败「全部通过 ✓」、「完整报告」折叠成文本）· web 自有的 管线活性（心跳 / 看板新鲜度 / 连崩）· 自动部署状态（§56
+//   deploy_state 全字段）· 安装回执（§23）· 日志尾巴（只读、server size-cap；?log=<name> 深链直接翻开）。
+//   让 AI 修在卡片上（§54.1 第 5 项），这里只在 doctor 有未通过项时出现。doctor 行带 §25 failure_id 时给原生 FailureCatalog
+//   的对症一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，components/settings/failureAction）。
 import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../api";
-import { RelativeTime } from "../components/board/cardChrome";
+import { DepRows, RadarHealthRows } from "../components/settings/DepRows";
 import { FailureActionButton } from "../components/settings/failureAction";
 import { errorMessage } from "../components/settings/useToast";
 import { useI18n } from "../i18n";
@@ -19,13 +20,23 @@ import type { DoctorReport, DoctorRow, LogTail } from "../types";
 
 type Text = (zh: string, en: string) => string;
 
-export function doctorSummary(report: DoctorReport, text: Text): string {
+/** 原生 DepsView：零失败说「全部通过 ✓」，否则「N 项未通过——每条都有对应按钮」；计数（正常 / 警告）是 web 加的第二个节点 */
+export function doctorSummary(report: DoctorReport, text: Text): { verdict: string; counts: string } {
   const fail = report.checks.filter((c) => c.status === "FAIL").length;
   const warn = report.checks.filter((c) => c.status === "WARN").length;
   const ok = report.checks.length - fail - warn;
-  // 原生 DepsView：零失败说「全部通过 ✓」，否则数出未通过项（WARN 另计）
-  if (fail === 0) return text(`全部通过 ✓（${ok} 正常 / ${warn} 警告）`, `All checks passed ✓ (${ok} ok / ${warn} warn)`);
-  return text(`${fail} 项未通过（${ok} 正常 / ${warn} 警告）`, `${fail} failed (${ok} ok / ${warn} warn)`);
+  const verdict = fail === 0
+    ? text("全部通过 ✓", "All checks passed ✓")
+    : text(`${fail} 项未通过——每条都有对应按钮`, `${fail} check(s) failed — each has its own button`);
+  return { verdict, counts: text(`（${ok} 正常 / ${warn} 警告）`, `(${ok} ok / ${warn} warn)`) };
+}
+
+/** 原生「完整报告」的文本形：[status] name: detail（+ fix 缩进一行） */
+export function fullReportText(report: DoctorReport): string {
+  return report.checks.map((row) => {
+    const line = `[${String(row.status).toLowerCase()}] ${row.name}: ${row.detail}`;
+    return row.fix && row.status !== "OK" ? `${line}\n    fix: ${row.fix}` : line;
+  }).join("\n");
 }
 
 function DoctorTable({ rows }: { rows: DoctorRow[] }) {
@@ -124,6 +135,8 @@ export function DiagnosticsPage() {
   }
 
   const report = full ?? diagnostics?.doctor ?? null;
+  const summary = report ? doctorSummary(report, text) : null;
+  const noRows = !rechecking && !busy && (report ? report.checks.length === 0 : Boolean(pageErrors.diagnostics));
 
   return (
     <main className="settings-page diag-page">
@@ -131,29 +144,49 @@ export function DiagnosticsPage() {
       <div className="settings-page-head">
         <h2 className="settings-page-title">{text("依赖检查", "Dependencies")}</h2>
         <button type="button" className="btn" disabled={busy || rechecking} onClick={() => void recheck()}>{rechecking ? text("检查中…", "Checking…") : text("重新检查", "Re-check")}</button>
-        <button type="button" className="btn" disabled={busy} onClick={() => void runFull()}>{busy ? text("诊断中…", "Running…") : text("运行诊断", "Run diagnostics")}</button>
         <a className="settings-link" href={buildAppUrl(window.location.href, "permissions", null).toString()}>{text("权限体检", "Permissions Checkup")}</a>
       </div>
+      <p className="settings-helper">{text("车跑之前轮子都得在。", "All wheels must be on before the car runs.")}</p>
       {pageErrors.diagnostics && <p className="settings-error" role="alert">{pageErrors.diagnostics}</p>}
+      {rechecking && <p className="settings-helper">{text("检查中…", "Checking…")}</p>}
+      {noRows && <p className="settings-helper">{text("点「重新检查」开始", "Click \"Re-check\" to start")}</p>}
+      <DepRows report={report} probe={diagnostics?.cron_probe} />
+
+      <section className="settings-section" aria-labelledby="diag-sources-title">
+        <h3 id="diag-sources-title" className="settings-section-title">{text("雷达健康", "Radar Health")}</h3>
+        <RadarHealthRows sources={diagnostics ? diagnostics.radar_sources : undefined} />
+      </section>
 
       <section className="settings-section" aria-labelledby="diag-doctor-title">
-        <h3 id="diag-doctor-title" className="settings-section-title">
-          {text("诊断", "Diagnostics")}<span className="settings-helper"> · python -m act.doctor</span>
-          {rechecking
-            ? <span className="settings-helper"> · {text("检查中…", "Checking…")}</span>
-            : report && <span className="settings-helper"> · {doctorSummary(report, text)}{report.fast ? text(" · 快速模式", " · fast mode") : ""}{report.ran_at ? ` · ${report.ran_at}` : ""}</span>}
-        </h3>
+        <h3 id="diag-doctor-title" className="settings-section-title">{text("诊断", "Diagnostics")}<span className="settings-helper"> · python -m act.doctor</span></h3>
+        <div className="settings-actions">
+          <button type="button" className="btn" disabled={busy} onClick={() => void runFull()}>{busy ? text("诊断中…", "Running…") : text("运行诊断", "Run diagnostics")}</button>
+          {busy
+            ? <span className="settings-helper">{text("最长约 1-2 分钟（含一次真实 claude 调用）", "up to ~1-2 min (includes one live claude call)")}</span>
+            : summary && report?.ok && (
+              <span className={`settings-helper diag-verdict${report.checks.some((c) => c.status === "FAIL") ? " is-warning" : " is-ok"}`}>
+                <span>{summary.verdict}</span><span>{summary.counts}</span>
+                <span>{report.fast ? text(" · 快速模式", " · fast mode") : ""}{report.ran_at ? ` · ${report.ran_at}` : ""}</span>
+              </span>
+            )}
+          {report && report.ok && report.checks.some((c) => c.status === "FAIL") && (
+            <>
+              <button type="button" className="btn" disabled={aiFix === "busy"} onClick={() => void fixWithAi()}>
+                {aiFix === "busy" ? text("正在准备诊断包…", "Preparing the diagnostic bundle…") : text("让 AI 修", "Fix with AI")}
+              </button>
+              {aiFix !== "idle" && aiFix !== "busy" && <span className="settings-warning" role="alert">{aiFix}</span>}
+            </>
+          )}
+        </div>
+        <p className="settings-helper">{text("发现异常时会自动运行一次快速诊断；这个按钮跑完整版（含一次真实 claude 调用）。让 AI 修会在终端开一个带诊断包的 claude 修复会话。", "A quick diagnostic auto-runs when something looks broken; this button runs the full version (one live claude call). Fix with AI opens a claude repair session in Terminal with the diagnostic bundle attached.")}</p>
         {report && !report.ok && <p className="settings-warning" role="alert">{text("doctor 没跑成：", "doctor did not run: ")}{report.error}</p>}
-        {report && report.ok && report.checks.some((c) => c.status === "FAIL") && (
-          <div className="settings-actions">
-            <button type="button" className="btn" disabled={aiFix === "busy"} onClick={() => void fixWithAi()}>
-              {aiFix === "busy" ? text("正在准备诊断包…", "Preparing the diagnostic bundle…") : text("让 AI 修", "Fix with AI")}
-            </button>
-            <span className="settings-helper">{text("在终端开一个带诊断包的 claude 修复会话（含一次真实 claude 调用）。", "Opens a claude repair session in Terminal with the diagnostic bundle attached (one real claude call).")}</span>
-            {aiFix !== "idle" && aiFix !== "busy" && <span className="settings-warning" role="alert">{aiFix}</span>}
-          </div>
-        )}
         {report && report.checks.length > 0 && <DoctorTable rows={report.checks} />}
+        {report && report.checks.length > 0 && (
+          <details className="diag-full-report">
+            <summary>{text("完整报告", "Full report")}</summary>
+            <pre className="diag-log">{fullReportText(report)}</pre>
+          </details>
+        )}
         {!report && !pageErrors.diagnostics && <p className="settings-helper">{text("检查中…", "Checking…")}</p>}
       </section>
 
@@ -191,20 +224,6 @@ export function DiagnosticsPage() {
             ) : <p className="settings-helper">{text("没有 install_report.json（还没跑过 install.sh）。", "No install_report.json (install.sh has not run yet).")}</p>}
           </section>
 
-          <section className="settings-section" aria-labelledby="diag-sources-title">
-            <h3 id="diag-sources-title" className="settings-section-title">{text("雷达健康", "Radar Health")}</h3>
-            {diagnostics.radar_sources ? (
-              <ul className="settings-list">
-                {Object.entries(diagnostics.radar_sources).map(([src, h]) => (
-                  <li key={src} className="settings-list-row">
-                    <span className="settings-list-title"><span className={`chip chip-${!h.enabled ? "quiet" : h.skip_reason ? "warning" : h.stale ? "danger" : "success"}`}>{!h.enabled ? text("关", "off") : h.skip_reason ?? (h.stale ? text("久未成功", "stale") : "ok")}</span> {src}</span>
-                    {h.last_ok && <span className="settings-list-meta"><RelativeTime iso={h.last_ok} prefix={text("上次成功 ", "last ok ")} /></span>}
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="settings-helper">{text("看板里没有 radar_sources 投影。", "No radar_sources projection in the board.")}</p>}
-          </section>
-
           <section className="settings-section" aria-labelledby="diag-logs-title">
             <h3 id="diag-logs-title" className="settings-section-title">{text("日志（只读，最后 300 行）", "Logs (read-only, last 300 lines)")}</h3>
             <div className="settings-knob-controls">
@@ -220,7 +239,7 @@ export function DiagnosticsPage() {
             {log && (
               <>
                 <p className="settings-list-dim">{log.path} · {Math.round(log.size / 1024)} KB{log.truncated ? text(" · 只显示尾巴", " · tail only") : ""}</p>
-                <pre className="diag-log">{log.lines.join("\n")}</pre>
+                <pre className="diag-log diag-log-tail">{log.lines.join("\n")}</pre>
               </>
             )}
           </section>

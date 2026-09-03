@@ -478,6 +478,42 @@ diff-write 逐字同款**（等于「不含该 override 的 effective 值」= �
 三子键 ∪ features 块（判例 tests/test_server_settings_catalog.py 钉住每个键在管线
 真读的名单里、默认值与 Config 数据类逐字一致）。壳（shell/）**仍不写 overrides**；
 录制模式与字幕偏好是壳 UserDefaults，经 §61 桥改（`setRecording` / `setCaptionPrefs`）。
+
+**§15 2026-09-03 追记（add-only，`fix/parity-r2-deps-ingest-about`；主窗口四区之 1) 2) 4) 的 web 落点补齐，§66.2 清账）**：
+1) **依赖检查**（`?page=deps`）自此按原生 DepsModel 的十二行长出「依赖」快速行（`web/src/components/settings/DepRows.tsx`），
+每行 ✅/⚠️ + 名字 + 探针说明 + 一颗对症按钮，**数据来源按行诚实**：Node / npx · claude CLI · gh CLI · PyYAML（= doctor
+`daemon python` 行）· Obsidian vault 读 doctor 同名行的 detail 原句；录制引擎 · 屏幕录制权限 · 麦克风权限读壳（§61 快照；
+浏览器里如实说只在看板 app 里可探）；Slack token · Gmail 应用密码 · Anthropic API key 读 `GET /api/secrets`（（App 内管理）/
+（App 内管理；未设置）——旧路径回退在新架构里已退役）；定时任务磁盘权限读 `GET /api/diagnostics` add-only `cron_probe`
+（`state/cron_probe.json` 公开子集），四态与原生 cronFDARow 逐字（没探针 / 探针 >2 h / 「定时任务能读取 <path>」/ 被挡）。
+按钮：下载页 = 外链；去录制页 = `?page=ingest`；去授权 = 壳 `openPane`（浏览器退成权限体检页）；显示 = `POST /api/folders/open
+{key:"obsidian_raw"}`（§68.1，路径 server 读）；去设置 = 凭证区深链。雷达健康三行按原生 radarDetail（最近成功 <相对时间> /
+从未成功：<原生 humanSkipReason 词> / 暂无数据；投影 `enabled:false` 且从未成功 = 原生 `disabled`）。诊断区零失败说「全部通过 ✓」
+（计数另一节点），「完整报告」折叠成 `[status] name: detail` 文本；doctor 没有一行时「点「重新检查」开始」。
+**一条诚实不搬**：原生 gh 行的说明「which gh（登录 shell）」——server 侧 doctor 用 `shutil.which` 在守护进程的 PATH 里找，
+不是登录 shell，这句照抄就是谎话；web 行显示 doctor 的 detail 原句，该 id 留在 `pending.txt`。
+2) **录制与数据接入**（`?page=ingest`）补齐「手动触发」：立即导出 = `POST /api/ingest/export {}`、立即 ingest =
+`POST /api/ingest/run {}`（`server/ingest_run.py`：起 repo 的 `ingest/screenpipe-export.sh` / `SCREENPIPE_NO_WAIT=1
+ingest/process-screenpipe.sh`——**与 cron 那轮同一条脚本、同一套退出码**，server 只起子进程、不改脚本、不碰 registry；
+**异步 + 轮询**：POST 立刻回 `{ok, job, state:"running", script, reused}` 并在后台线程跑（ingest 含一次 headless claude 可能十几分钟，
+壳里的 WKWebView 对一个 fetch 只等 60 s——同步等会把成功的一轮报成超时），页面每 2 s `GET /api/ingest/jobs/{id}` 直到
+`state:"done"` 拿回执 `{ok, rc, skipped, tail, seconds}`；同脚本已有一轮在跑 → 复用那个 job（原生 `guard !exportRunning`）；
+job 表进程内最多 20 条、running 永不淘汰；超时 5 / 15 min（rc 124）；脚本缺席 404、未知 job 404），页面按 rc 判词与原生一致：
+0 完成 ✓（2.5 s 淡出）、ingest 的 3 「已有 ingest 在运行，本次跳过」、其它 「失败 (exit N) 」+ 尾巴 + 查看日志。引擎死因行 = 原生 EngineDiagnosisRow
+（句子来自 **`GET /api/failures`**——`server/failure_catalog.py`，§25 `FAILURES` 的 plain_zh / plain_en 投影，web 不抄第二份；
+ffmpeg 缺失 = 安装 ffmpeg + 「装好了，重启引擎」；崩了 / 死了 = 「查看引擎日志」= 依赖检查页 `?log=engine.log`，`~/.screenpipe/`
+自此是 §68.4 日志清单的第三个目录）；TCC 被收回的横幅 + 去授权（`screen_tcc_lost` 的对症键）。「最近写入 HH:mm」/ 无数据、
+「vault「1 - unprocessed」最新文件：」/ 无文件、「state/actd.log 更新于：」/ 无日志 读 `GET /api/diagnostics` add-only `activity`
+（三个 mtime；unprocessed 在 mirror 模式读 `state/vault-mirror`，直连模式只在目录不住 TCC 保护位置时列——**server 永不读
+~/Documents**（§68.3），读不到如实 `readable:false`，页面说「看板服务读不到这个目录」）。
+4) **关于**（`?page=about`）更新行按原生 updateSection / updateStatus 逐态：有新版 → 「新版本 v<latest> 可用 — 一键更新」=
+`POST /api/update/install {}`（§68.6 追记：提前 kickstart §56 自动部署 agent；409 → 原生非 Sparkle 兜底：打开 release 页）+
+「上次检查：<rel>」；没新版 → 「已是最新」/「最新发布：v<latest>」+「（上次检查：<rel>）」（`RelativeTime` add-only `suffix`
+让整句是一个节点）；正在检查… / 检查失败两句 / 自动检查已关闭 / 上次检查没有取得结果 / 尚未检查过。按钮「立即检查」=
+原生非 Sparkle 分支（`#else`）的标签，tooltip 为 Sparkle 分支的「检查更新」（web 没有 Sparkle，§68.14）。卸载失败两个弹窗
+（找不到卸载脚本 / 无法打开 Terminal）都印 server 给的手动命令（`POST /api/uninstall/terminal` 的 404 / 500 details add-only
+`command`）+「好」。判例 `tests/test_server_deps_ingest_about.py`、web `DepsIngestAbout.test.tsx`、`parity.test.tsx`
+（deps / ingest / about 各按几套快照与壳状态再渲染几遍）。
 凭证行（§19 三把 + 字幕两把）经 `PUT /api/secrets/{name}`（0600，值 write-only）。
 本条起 §15.3 的写者是两个：server（web 设置页）与冻结中的 Mac app；退役后只剩 server。
 「菜单栏」区（`showMenuBarIcon` / `showRecordingIcon`）随 D3 Dock-only 决策**删除**，
@@ -3582,9 +3618,13 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   **2026-09-03 追加（add-only，§68.3 / §68.4 / §68.5 追记）**：`GET /api/setup/engine`、
   `POST /api/setup/seed-dashboard {}`、`POST /api/secrets/{name}/verify {value?}`（带 value = 只探不落盘）、
   `POST /api/reveal {target:"config"}`（与 `{card_id}` 二选一）。
+  **2026-09-03 追加（add-only，§15 追记 / §68.4 / §68.6）**：`GET /api/failures`（§25 失败目录双语句）、
+  `POST /api/ingest/export {}`、`POST /api/ingest/run {}`（同一条 ingest/ 脚本；回 job id）+ 前缀表 `GET /api/ingest/jobs/{id}`
+  （轮询）、`POST /api/update/install {}`
+  （kickstart 自动部署 agent；未加载 409）；`GET /api/diagnostics` 加 `cron_probe` / `activity` 两键。
   GET 面接受 query（`Handler._query`），仍 token-light；POST/PUT 一律 JSON body 四闸。
   路由表驱动：精确表 + **前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
-  `/api/secrets/`；精确命中先于前缀——`/api/settings/models` / `recap` 走各自模块），
+  `/api/secrets/`、`/api/ingest/jobs/`；精确命中先于前缀——`/api/settings/models` / `recap` 走各自模块），
   新增端点 = 加一行（`server/app.py _lookup`）。
   所有一次性 `python -m act.*` 子进程走 `server/subproc.py`（`sys.executable`、
   cwd = repo 根、env `AIASSISTANT_HOME`、超时 + 输出上限、`runner` 注入缝）。
@@ -4390,6 +4430,7 @@ owner 原话（2026-09-02，§66 开篇）：原生主窗口**左侧竖排图标
 - **2026-09-03 追记（`fix/parity-surfaces-wizard-permissions-doctor`；渲染面 7 → 9）**：`parity.test.tsx` 登记 **初始设置向导**（`setup_wizard` → `?page=setup`，按 `?step=` 一屏一步逐步渲染，末步先来一遍——store 还空着时「检测中…」才在）与 **权限体检**（`permissions` → `?page=permissions`）两个面；`doctor`（Doctor.swift `FailureCatalog` 的对症动词）映射到依赖检查面——它们在 web 的落点是 doctor 行右侧那颗按钮。向导与权限体检另按几套**假壳状态**（录制 关 × 两种恢复模式 / 开着没在录 / 录制中(仅屏幕) / TCC 被收回；授权 granted / denied / unknown）与 **server 快照**（引擎 就绪 / 没装 / 没登录；后台服务 在跑 / 没跑；首份数据 有 / 无 / 无 age；cron 探针 ok / 被挡 / 停跑 / 无；server 拒绝那一遍收 启动失败: / 生成失败: / 保存失败: / key 有效,但保存失败: 四个失败前缀）各渲染几遍；看板另按诊断条的每种 skip_reason 渲染几遍（Gmail 三类 / Slack 两类 / 录制链 引擎死 · TCC 收回 · 其它 · 没 API key · 提取失败 · 没指定目录）。向导 / 权限体检面**每点一颗按钮收一遍**（「启动中…」「验证中…」只活到下一颗按钮把这一步换掉之前）、页脚 上一步 / 下一步 / 完成 不点（按文本判）。首帧同步收一遍（拉取前的瞬态词）；health / board 的假值一律 `mockResolvedValue` 不用 `Once`（一键修复成功后 3 s 的真定时器会把一次性假值吃掉——曾让横幅那两条在整套 vitest 里偶发红）。**账本**：本 PR 判为在场 118 条（其中「选择… / 选择」两条与同日 #188 重合；truth = 该文件行数）：setup_wizard / permissions / doctor / board.diagnostics 四面 111 条，另 7 条因同一机制顺带在场（deps 的四个 doctor 动词、header.recording 的「未在录制」×2、settings.claudeImport 的「扫描最近 7 天」首帧词）。四面仍挂账的 6 条各有结构性原因：`failed-to-write-dest` ×2 / `launchctl-load-failed`（原生 app 自己渲 plist + `launchctl load`；web 的修复是 `POST /api/repair/actd` kickstart，server 不重造 §55 占位符替换，§68.8）、`reinstall-the-scheduler` / `the-last-reinstall-failed`（独立雷达 launchd agent 已退役，雷达住 actd 主循环 §48）、`setup_wizard:label:failed-to-write-dest` 同前。**看板诊断条**（原生 Diagnostics.swift `DiagnosticsStrip`）自此在 web：`components/shell/DiagnosticsStrip.tsx`，数据 = `board.radar_sources`（§48.4，`enabled` 即 intent；新 add-only 键 `last_attempt` 供「上次尝试 …」）+ 壳录制状态；每 path 一卡一颗主按钮（重启录制引擎 = 桥 `restartRecording` / 去授权屏幕录制 = 桥 `openPane screen` / 检查 Gmail 设置 · 检查 Slack 设置 · 连接 Slack · 填入 Anthropic API Key · 指定 Obsidian 目录 = 设置页 anchor 深链 / 打开依赖检查）；dismiss 记 localStorage `dismissedDiagnostics`（签名 `<path>:<reason>`，7 天重现，修好过一次再坏立刻重现），`vault_empty` 预热 35 min（`diagnosticsFirstSeen`）；只在看板页渲染；关着的源不上板。判例 `web/src/components/shell/DiagnosticsStrip.test.tsx`。
 - 判例：`NavRail.test.tsx`（八项同序同名、深链、选中态、折叠持久化、⌘1…⌘8、宽度钳制）、`tokens.test.ts`（无 prefers-color-scheme 块、index.html light 兜底、窗口底与状态色点走原生 token、布局定点齐全）、`FilterBar.test.tsx`（⎋ 两段）、`tests/test_server_ask.py`（ask / slack manifest / uninstall / maintainer 四组路由）、`tests/test_server_ai_fix_launch.py`（doctor 上下文）、`tests/test_server_settings_catalog.py`（list 字段、section 一拆三）、`tests/test_ui_parity_fixture.py`（词表行 / 设置与凭证快照）。
 
+- **2026-09-03 追记（`fix/parity-r2-deps-ingest-about`；账本 197 → 139，truth = 该文件行数）**：deps / ingest / about 三面清账（细则 §15 2026-09-03 追记、§68.4 / §68.6 追记）：依赖检查页长出原生十二行快速行 + 雷达健康三态词 + 「全部通过 ✓」/「完整报告」/「点「重新检查」开始」；录制页长出「手动触发」（`POST /api/ingest/{export,run}`）、引擎诊断行（`GET /api/failures`）、TCC 横幅、三个时间戳（`activity`）；关于页更新行逐态（「一键更新」= `POST /api/update/install`）+ 卸载失败两弹窗。判卷侧 `parity.test.tsx` 三面各按几套快照再渲染几遍（deps：雷达 skip_reason 词表 × doctor 全绿 / 没回 × cron 四态；ingest：壳 引擎没在录 / TCC 收回 / ffmpeg 缺失 / 崩了 × 手动触发 成功 / 失败 / 持锁跳过 × 时间戳缺席；about：没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开），录制页与关于页每点一颗收一遍（运行中… / 正在检查…）。**仍挂账 1 条**：`deps:label:which-gh-login-shell`——server 侧 doctor 不走登录 shell，照抄即谎话（未进 waivers；理由见 §15 追记）。
 - **2026-09-03 追记（add-only）——web 侧原生偏好键的落点（第三批）**（§66.2 `setting:prefs:*`，localStorage 同名）：`captureHistory`（composer ↑/↓ 历史；旧键 `zai.captureHistory` 首次读到即一次性搬过来）、`mainSection`（原生 `MainNav.section` didSet：每到一个 rail 页记 slug；冷启动 = 本窗口会话第一次整页加载、URL 没带 `?page=` / `?card=` → 回到上次的页，看板是缺省不导航；同一窗口会话内「← 返回看板」这类整页导航不再回跳——sessionStorage `zai.launched` 判「冷启动」）、`cardSortOrder` / `boardAnimations` / `sidebarCollapsed` / `sidebarWidth`（既有）。
 
 ## 55. launchd 模板路径纪律（v0.48.x；live 事故 2026-08-31）
@@ -5453,6 +5494,13 @@ server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语
 
 - **2026-09-03 追记（doctor 行的对症一键；`fix/parity-surfaces-wizard-permissions-doctor`）**：依赖检查页 doctor 表加第四列「动作」——行带 §25 `failure_id` 时给原生 `FailureCatalog.actionLabel` 的那颗按钮（`web/src/components/settings/failureAction.tsx`，标签逐字：安装页 / 去诊断 / 去设置 / 去录制页 / 看进度 / 重启引擎 / 安装 ffmpeg / 去授权… / 一键修复 / 查看修法 / 显示文件），动作落到 web 已有机制：外链（Claude Code / Node.js / ffmpeg 安装页）、页面深链（依赖检查 / 设置凭证区 / 录制页 / 权限体检）、桥（重启录制引擎 = `restartRecording`；去授权 = `openPane screen|full_disk`，浏览器里退成权限体检页深链）、server（一键修复 = `POST /api/repair/actd`；**显示文件** = `POST /api/reveal {target:"config"}`——`_post_reveal` 的 add-only 分支：`target` 是 server 词表 `files.REVEAL_TARGETS = ("config",)` 里的词、不是路径，定位 `config.yaml`（缺席则 `config.example.yaml`；都缺 404；非 darwin 501）；`card_id` 老形不变）。未知 id 不装按钮、原文照旧。判例 `tests/test_server_files.py`（target 词表 / 拒路径 / 两级回退）、`ParityPages.test.tsx`。
 
+- **2026-09-03 追记（add-only；`fix/parity-r2-deps-ingest-about`）**：`GET /api/diagnostics` 加两键——`cron_probe`
+  （`state/cron_probe.json` 的 ts / read_ok / protected_path；缺席 / 坏 JSON = null）与 `activity`（`screenpipe_db` /
+  `actd_log` / `unprocessed` 三个 `{path, mtime}`，unprocessed 另带 `readable`——mirror 模式读 `state/vault-mirror`，直连模式
+  只在不住 TCC 保护位置时列目录，server 永不读 ~/Documents）；日志清单第三个目录 `~/.screenpipe/`（`engine.log`）。
+  `GET /api/failures` = `server/failure_catalog.py`：§25 `FAILURES` 每个 id 的 `{zh, en, action_id}`（原生 FailureCatalog.message
+  的 server-owned 单源）。依赖检查页因此长出原生的十二行「依赖」快速行与雷达健康三行——细则见 §15 2026-09-03 追记。
+
 ### 68.5 首次运行向导（`?page=setup`；原生 SetupWizard 的 web 版）
 
 `GET /api/setup` → `{needed, done, config_exists, config_example_exists, secrets:{name: present}, home, protected_location}`；`needed` = 未写完成标记 ∧（config.yaml 缺席 ∨ §19 三把主凭证一把都没有）。app.tsx 在看板页且 `needed` 时整页换到向导（一次性 replace）。四步：配置文件（`POST /api/setup/config-from-example {}`：复制 `config.example.yaml` → `config.yaml`，**已存在 409 绝不覆盖**——install.sh 步 2 同一纪律；模板也缺 404）→ 后台进程磁盘授权（§68.3 FDA 清单）→ 可选凭证（§68.3 凭证行）→ 完成（`POST /api/setup/complete {}` 写 `state/setup_done.json {completed_at}`；`POST /api/setup/reset {}` 删标记 = 设置 → 关于「重新运行初始设置」）。完成标记住在 home 下（替代原生 UserDefaults `setupWizardCompleted`：换壳 / 换浏览器不重问）。幂等：每步预填真值、不清数据；中途关掉下次还回来。
@@ -5462,6 +5510,14 @@ server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语
 ### 68.6 关于 / 更新
 
 `GET /api/about` → `{version, home, repo, update_available, update_check}`（§26 追记）；`POST /api/update/check {}`（§26 `--force`）。设置页「关于 / 看板 app」区另有：诊断 / 权限体检链接、「重新运行初始设置」、壳在场时的「登录时启动」（桥 `setLaunchAtLogin {on}` = `SMAppService.mainApp` register / unregister，失败整句 `INVALID_ARGS` 转出；快照 `launch_at_login`）、全局快捷键提示（快照 `hotkey`）、通知权限状态。
+
+**2026-09-03 追记（add-only；原生「新版本 v… 可用 — 一键更新」的落点）**：`POST /api/update/install {}` → 不是 Sparkle
+（§68.14 0.8），是把 §56 自动部署 agent `com.zelin.aiassistant.autodeploy` 提前 `launchctl kickstart` 一轮（**不带 `-k`**：
+正在部署的那轮不许被打断）——fetch → 只装 CI 绿的 sha → install.sh → doctor 闸门 → 红了自动回滚，与每 10 分钟那一轮同一条路，
+server 不重造部署逻辑；agent 未加载（.pkg 装法 / `features.auto_deploy` 关 / 不是 git checkout）→ 409 `CONFLICT`，页面退回
+原生非 Sparkle 的兜底：打开 release 页手动装；非 darwin 501。label 常量 `about.AUTODEPLOY_LABEL` 与 `act/lib/checks/launchd`
+逐字（判例）。卸载 `POST /api/uninstall/terminal` 的 404（脚本缺席）与 500（open 失败）details 加 `command`（手动命令原句），
+两个弹窗（找不到卸载脚本 / 无法打开 Terminal）照印。更新行的逐态文案见 §15 2026-09-03 追记 4)。
 
 ### 68.7 在终端接管会话（`POST /api/terminal {card_id}`）
 

@@ -10,17 +10,26 @@
   那一行 JSON 原样透出；子进程失败 → ``{"ok": false, "error": ...}``。
   自动部署（§56，D17）让 owner 机器不再需要 Sparkle——合并即上岗；这里只负责
   「有没有新版」的诚实告知与 release 页链接（原生关于页同款：绝不自动下载执行）。
+- ``POST /api/update/install {}``（2026-09-03，add-only）→ 原生「新版本 v… 可用 — 一键更新」
+  在新架构里的诚实落点：**不是 Sparkle**，是把 §56 自动部署 agent
+  ``com.zelin.aiassistant.autodeploy`` 提前 ``launchctl kickstart`` 一轮（它会 fetch → 只装
+  CI 绿的 sha → install.sh → doctor 闸门 → 红了自动回滚——与每 10 分钟的那一轮**同一条路**，
+  server 不重造部署逻辑）。不带 ``-k``：正在部署的那轮不许被打断。agent 未加载（.pkg 装法 /
+  features.auto_deploy 关着 / 不是 git checkout）→ 409，页面退回原生非 Sparkle 的兜底：打开
+  release 页手动装；非 darwin 501。``runner`` 注入缝。
 """
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Optional
 
-from server import paths, subproc
-from server.errors import UnknownFieldError
+from server import paths, repair, subproc
+from server.errors import ApiError, ConflictError, NotImplementedError501, UnknownFieldError
 
 _UPDATE_TIMEOUT_S = 40
+AUTODEPLOY_LABEL = "com.zelin.aiassistant.autodeploy"   # mirrors act/lib/checks/launchd.AUTODEPLOY_LABEL
 
 
 def version() -> str:
@@ -69,3 +78,31 @@ def check_now(home: Path, payload: dict, runner=None) -> dict:
     if doc is None:
         return {"ok": False, "error": subproc.tail(err or out) or ("update_check exited %d" % rc)}
     return doc
+
+
+def _install_gate(payload: dict, platform: Optional[str]) -> None:
+    if payload:
+        raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
+    if (platform or sys.platform) != "darwin":
+        raise NotImplementedError501("auto-deploy is macOS launchd only")
+
+
+def _require_autodeploy_loaded(run: repair.Runner) -> None:
+    if not repair.loaded(AUTODEPLOY_LABEL, run):
+        raise ConflictError(
+            "%s is not loaded in launchd - this install is not auto-deployed; install the release "
+            "by hand from the release page" % AUTODEPLOY_LABEL,
+            {"label": AUTODEPLOY_LABEL, "fix": "bash install.sh (git checkout with features.auto_deploy on)"})
+
+
+def install_now(payload: dict, runner: Optional[repair.Runner] = None,
+                platform: Optional[str] = None) -> dict:
+    """``POST /api/update/install {}``：kickstart 自动部署 agent（D17）；未加载 409、非 darwin 501。"""
+    _install_gate(payload, platform)
+    run = runner or repair.default_runner
+    _require_autodeploy_loaded(run)
+    rc, out = run(["/bin/launchctl", "kickstart", "%s/%s" % (repair.domain(), AUTODEPLOY_LABEL)])
+    if rc != 0:
+        raise ApiError("launchctl kickstart exited %d: %s" % (rc, out.strip()[-300:]),
+                       {"label": AUTODEPLOY_LABEL, "rc": rc})
+    return {"ok": True, "label": AUTODEPLOY_LABEL, "action": "kickstart"}

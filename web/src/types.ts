@@ -770,6 +770,23 @@ export interface InstallReport {
   [key: string]: unknown;
 }
 
+/** state/cron_probe.json 公开子集（§25；原生 CronProbe.read——「定时任务磁盘权限」行四态由页面判；add-only） */
+export interface CronProbe {
+  ts: string | null;
+  read_ok: boolean | null;
+  protected_path: string | null;
+  [key: string]: unknown;
+}
+
+/** 录制页「最近活动」三个时间戳（原生 IngestModel.refreshLabels；epoch 秒，缺席 null；add-only） */
+export interface IngestActivity {
+  screenpipe_db: { path: string; mtime: number | null; [key: string]: unknown };
+  actd_log: { path: string; mtime: number | null; [key: string]: unknown };
+  /** readable:false = 目录住 TCC 保护位置且不在 mirror 模式——server 永不读 ~/Documents（§68.3） */
+  unprocessed: { path: string; mtime: number | null; readable: boolean; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
 export interface DiagnosticsSnapshot {
   doctor: DoctorReport;
   health: HealthSnapshot;
@@ -778,6 +795,38 @@ export interface DiagnosticsSnapshot {
   install_report: InstallReport | null;
   registry_backend: string;
   logs: LogEntry[];
+  cron_probe?: CronProbe | null;
+  activity?: IngestActivity | null;
+  [key: string]: unknown;
+}
+
+/** POST /api/ingest/{export,run} 回执：脚本在 server 后台线程跑，页面拿 job id 轮询（同脚本在跑 → reused） */
+export interface IngestJobStart {
+  ok: boolean;
+  job: string;
+  state: "running" | string;
+  script: string;
+  reused?: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /api/ingest/jobs/{id}：running 只有前四键；done 多出脚本回执（同一条 ingest/ 脚本、同一套退出码；skipped = ingest 的 exit 3 持锁） */
+export interface IngestJob {
+  id: string;
+  script: string;
+  state: "running" | "done" | string;
+  started_at: string;
+  ok?: boolean;
+  rc?: number;
+  skipped?: boolean;
+  tail?: string;
+  seconds?: number;
+  [key: string]: unknown;
+}
+
+/** GET /api/failures：§25 FailureCatalog 的 server-owned 投影（原生 FailureCatalog.message） */
+export interface FailureCatalog {
+  failures: Record<string, { zh: string; en: string; action_id?: string | null; [key: string]: unknown }>;
   [key: string]: unknown;
 }
 

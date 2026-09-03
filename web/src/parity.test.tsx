@@ -4,8 +4,10 @@
 //     依赖检查 / 录制与数据接入 / 初始设置向导（七步逐步）/ 权限体检 九个面（zh 与 en 各一遍；看板另渲染
 //     「空板 + 搜索中 + 后台服务卡住」与「诊断条：Gmail / Slack / 录制链各种 skip_reason」几遍；向导与权限体检
 //     另按几套假壳状态（录制开 / 关、引擎在 / 不在、授权 granted / denied / unknown）与 server 快照（引擎就绪 /
-//     没装 / 没登录；后台服务在跑 / 没跑；cron 探针 ok / 被挡 / 停跑）各渲染几遍收全部状态词）+ 把每颗按钮点一遍
-//     收集弹窗文案，按 accessible name / 自身文本精确匹配；
+//     没装 / 没登录；后台服务在跑 / 没跑；cron 探针 ok / 被挡 / 停跑）各渲染几遍收全部状态词；依赖检查另按
+//     雷达 skip_reason 词表 × doctor 全绿 / 没回 渲染几遍；录制页另按 引擎没在录 / TCC 收回 / ffmpeg 缺失 / 崩了 与
+//     手动触发 成功 / 失败 / 持锁跳过 渲染几遍；关于页另按 没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开
+//     渲染几遍）+ 把每颗按钮点一遍收集弹窗文案，按 accessible name / 自身文本精确匹配；
 //     时钟冻结在 fixture 的 FIXED_NOW（相对时间词表才确定）；装一个假 zaiShell 桥（壳里才渲染的
 //     录制 / 字幕 / 登录时启动 开关也要判）；server 目录（设置 / 凭证）用 fixture 快照（文案 server-owned）。
 //   · 在 ui/parity/pending.txt 上 → it 标题带 ` [pending]`，断言「不在」——补齐后不划账即红
@@ -23,7 +25,9 @@ import {
   fetchClaudeCodeDefault,
   fetchClaudeSessions,
   fetchDiagnostics,
+  fetchFailures,
   fetchHealth,
+  fetchIngestJob,
   fetchLanes,
   fetchMcp,
   fetchModelsSettings,
@@ -48,7 +52,9 @@ import { SetupPage, STEPS as SETUP_STEPS } from "./pages/SetupPage";
 import { TrashPage } from "./pages/TrashPage";
 import { applyShellState, resetShellBridgeForTests, type ShellState } from "./shellBridge";
 import {
+  refreshAbout,
   refreshBoard,
+  refreshDiagnostics,
   refreshHealth,
   refreshLanes,
   refreshPermissions,
@@ -64,7 +70,9 @@ import type {
   ClaudeCodeDefault,
   DiagnosticsSnapshot,
   DoctorRow,
+  FailureCatalog,
   HealthSnapshot,
+  IngestJob,
   LaneCatalog,
   ModelsSettings,
   PermissionsSnapshot,
@@ -121,6 +129,7 @@ vi.mock("./api", async (importOriginal) => {
     fetchMcp: vi.fn(),
     fetchClaudeSessions: vi.fn(),
     fetchAskHistory: vi.fn(),
+    fetchFailures: vi.fn(),
     fetchDoctor: vi.fn().mockResolvedValue({ ok: true, checks: [], home: "/h", rc: 0, fast: false, ran_at: "2026-09-02T11:59:00Z" }),
     fetchLogTail: vi.fn().mockResolvedValue({ name: "actd.log", path: "/h/state/logs/actd.log", size: 12, lines: ["ok"], truncated: false }),
     fetchSlackManifest: vi.fn().mockResolvedValue({ manifest: "{}", path: "config/slack-app-manifest.json" }),
@@ -139,6 +148,12 @@ vi.mock("./api", async (importOriginal) => {
     postAsk: vi.fn().mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 }),
     postTerminal: vi.fn().mockResolvedValue({ ok: true }),
     postUninstallTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && bash uninstall.sh", command_file: "/tmp/u.command" }),
+    postUpdateInstall: vi.fn().mockResolvedValue({ ok: true, label: "com.zelin.aiassistant.autodeploy", action: "kickstart" }),
+    // §15.2 手动触发：POST 回 job id，GET 轮询回 done；默认两条脚本都 exit 0（「完成 ✓」）；失败 / 持锁跳过那几遍在
+    // renderIngestVariants 里换 fetchIngestJob 的假值（job id 就是脚本名——同一遍里两条脚本的回执各自对号）
+    postIngestExport: vi.fn().mockResolvedValue({ ok: true, job: "export", state: "running", script: "ingest/screenpipe-export.sh" }),
+    postIngestRun: vi.fn().mockResolvedValue({ ok: true, job: "ingest", state: "running", script: "ingest/process-screenpipe.sh" }),
+    fetchIngestJob: vi.fn(),
     postMaintainerTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && claude", command_file: "/tmp/m.command", cwd: "/r" }),
     postRepairActd: vi.fn().mockResolvedValue({ ok: true }),
     postSelfImproveResume: vi.fn().mockResolvedValue({ ok: true, paused: false, was_paused: true }),
@@ -311,11 +326,26 @@ const FAILURE_ROWS: DoctorRow[] = [
   "engine_crashed", "engine_ffmpeg_missing", "screen_tcc_lost", "agent_unloaded", "cron_missing", "interpreter_blind",
   "cron_fda_blocked", "config_invalid",
 ].map((id) => ({ name: `_vocab_${id}`, status: "FAIL", detail: id, fix: "see docs", failure_id: id, action_id: "" }));
+/** 原生 DepsModel 十二行里走 doctor 的那几行（node/npx · claude CLI · gh CLI · daemon python · obsidian vault） */
+const DEP_ROWS: DoctorRow[] = [
+  { name: "node/npx", status: "OK", detail: "/opt/homebrew/bin/npx", fix: "" },
+  { name: "claude CLI", status: "OK", detail: "/Users/demo/.local/bin/claude 1.0.99", fix: "" },
+  { name: "gh CLI", status: "WARN", detail: "missing - repo-mode cards deliver as local branches only (optional)", fix: "brew install gh" },
+  { name: "daemon python", status: "OK", detail: "/usr/bin/python3 (Python 3.9, PyYAML importable)", fix: "" },
+  { name: "obsidian vault", status: "OK", detail: "/Users/demo/Documents/Obsidian Vault/2 - raw (+ ingest inbox)", fix: "" },
+];
 const diagnostics: DiagnosticsSnapshot = {
-  doctor: { ok: true, checks: [{ name: "python", status: "OK", detail: "3.9", fix: null }, { name: "claude", status: "FAIL", detail: "missing", fix: "install" }, ...FAILURE_ROWS], home: "/h", rc: 0, fast: true, ran_at: "2026-09-02T11:59:00Z" },
+  doctor: { ok: true, checks: [{ name: "python", status: "OK", detail: "3.9", fix: null }, { name: "claude", status: "FAIL", detail: "missing", fix: "install" }, ...DEP_ROWS, ...FAILURE_ROWS], home: "/h", rc: 0, fast: true, ran_at: "2026-09-02T11:59:00Z" },
   health, deploy_state: null, radar_sources: demoBoard.radar_sources ?? null, install_report: null, registry_backend: "yaml",
   logs: [{ name: "actd.log", path: "/h/state/logs/actd.log", size: 2048, mtime: 1788350000 }],
+  // 定时任务磁盘权限：探针新鲜且能读（「定时任务能读取 <path>」）；录制页三个时间戳都在
+  cron_probe: { ts: "2026-09-02T11:30:00Z", read_ok: true, protected_path: "/Users/demo/Documents/Obsidian Vault/1 - unprocessed" },
+  activity: { screenpipe_db: { path: "/Users/demo/.screenpipe/db.sqlite", mtime: 1788350100 }, actd_log: { path: "/h/state/actd.log", mtime: 1788350000 },
+    unprocessed: { path: "/Users/demo/Documents/Obsidian Vault/1 - unprocessed", mtime: 1788349000, readable: true } },
 } as unknown as DiagnosticsSnapshot;
+/** §25 失败目录（server-owned 句子；探针只判短标签，这里的句子给引擎诊断行 / 屏幕录制权限行渲染） */
+const failureCatalog: FailureCatalog = { failures: Object.fromEntries(
+  ["engine_dead", "engine_npm_download", "engine_crashed", "engine_ffmpeg_missing", "screen_tcc_lost"].map((id) => [id, { zh: `【${id}】一句人话`, en: `[${id}] plain sentence`, action_id: null }])) };
 
 /** 权限体检 / 向导的 server 半边：FDA 清单 + TCC 相关 doctor 行（cron disk access 三态各一份）+ 笔记库被动探针 */
 function permissionsFixture(cron: "ok" | "blocked" | "stale" | "none"): PermissionsSnapshot {
@@ -368,6 +398,9 @@ const SHELL_VARIANTS: Record<string, ShellState> = {
     permissions: { screen: "denied", microphone: "unknown", notifications: "unknown", vault: "unknown" } },
   on_screen: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen", engine_running: true, resume_mode: "screen" } },
   tcc_lost: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen", engine_running: true, tcc_lost: true, screen_permission: false, resume_mode: "screen" } },
+  // 录制页引擎诊断行：ffmpeg 缺失（安装 ffmpeg + 装好了，重启引擎）/ 引擎崩了（查看引擎日志）——屏幕录制授权在，只是引擎没起来
+  ffmpeg: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen_audio", engine_running: false, diagnosis: "engine_ffmpeg_missing", resume_mode: "screen_audio" } },
+  crashed: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen", engine_running: false, diagnosis: "engine_crashed", resume_mode: "screen" } },
 };
 let currentShell: ShellState = shellState;
 function installFakeShell() {
@@ -497,7 +530,7 @@ async function renderSurface(language: Language, page: Surface) {
   if (page === "settings") await refreshSettings();
   await settle(pool);
   collectLabels(document.body, pool);
-  clickEverything(view.container, pool, page !== "board");
+  clickEverything(view.container, pool, page !== "board", page === "ingest");
   await settle(pool);
   if (page === "board") {
     // 详情抽屉：选中 hero 卡、再选一张待验收卡（抽屉里的字段标题 / 动作 / 所属列章）
@@ -642,6 +675,108 @@ async function renderDiagnosticsVariants(language: Language) {
   await refreshBoard();
 }
 
+/** 依赖检查页的其余状态（原生 DepsView radarDetail / cronFDARow / 诊断摘要）：雷达 skip_reason 词表逐个渲染到
+ *  （凭证无效 / 网络错误 / 连接失败 / 没指定 Obsidian 目录 / 已禁用 / 从未成功 / 暂无数据）、doctor 全绿（全部通过 ✓）、
+ *  doctor 没回一行（点「重新检查」开始）、cron 探针 没数据 / 过期 / 被挡 三态。 */
+async function renderDepsVariants(language: Language) {
+  const on = (skip_reason: string | null, last_ok: string | null = null, enabled = true): RadarSourceHealth => ({ enabled, last_ok, skip_reason, stale: false });
+  const okReport = { ...diagnostics.doctor, checks: diagnostics.doctor.checks.filter((c) => c.status === "OK") };
+  const variants: Array<Partial<DiagnosticsSnapshot>> = [
+    { radar_sources: { gmail: on("auth_failed"), slack: on("connect_failed"), obsidian: on("vault_missing") }, doctor: okReport,
+      cron_probe: null },
+    { radar_sources: { gmail: on("network_error"), slack: on("disabled"), obsidian: on(null, null, false) },
+      doctor: { ...diagnostics.doctor, checks: [] }, cron_probe: { ts: "2026-09-02T06:00:00Z", read_ok: true, protected_path: "/v" } },
+    { radar_sources: null, cron_probe: { ts: "2026-09-02T11:50:00Z", read_ok: false, protected_path: "/Users/demo/Documents/Obsidian Vault" } },
+    { radar_sources: { gmail: on(null) }, activity: null },
+  ];
+  for (const v of variants) {
+    vi.mocked(fetchDiagnostics).mockResolvedValue({ ...diagnostics, ...v } as DiagnosticsSnapshot);
+    await refreshDiagnostics(true);   // 页面挂载时也会再拉一次；先落一份让首帧就是这一遍的快照
+    const pool = found[language].deps;
+    mount(language, "deps");
+    await settle(pool);
+    collectLabels(document.body, pool);
+    cleanup();
+  }
+  vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics);
+  await refreshDiagnostics(true);
+}
+
+/** 录制与数据接入页的其余状态（原生 IngestView）：引擎没在录且没授权（未在录制 + 原因句 + 去授权）、TCC 被收回（横幅 +
+ *  去授权）、ffmpeg 缺失（安装 ffmpeg + 装好了，重启引擎）、崩了（查看引擎日志）；手动触发 失败 (exit N) / 已有 ingest 在运行；
+ *  三个时间戳都缺席（无数据 / 无文件 / 无日志）。 */
+/** fetchIngestJob 的假值：按 job id（= 脚本名）回 done 回执；rc 由这一遍决定 */
+function ingestJobs(exportRc: number, ingestRc: number) {
+  return async (id: string): Promise<IngestJob> => {
+    const rc = id === "export" ? exportRc : ingestRc;
+    return { id, script: id, state: "done", started_at: "2026-09-02T11:59:00Z", ok: rc === 0, rc, skipped: id === "ingest" && rc === 3,
+      tail: rc === 0 ? "" : id === "export" ? "export.sh: line 12: rsync: command not found" : "claude: rate limited", seconds: 0.9 };
+  };
+}
+
+async function renderIngestVariants(language: Language) {
+  type Variant = { shell: keyof typeof SHELL_VARIANTS; activity?: null; export?: number; ingest?: number };
+  const variants: Variant[] = [
+    { shell: "on_dead", export: 1, ingest: 3 },
+    { shell: "tcc_lost", activity: null, export: 3, ingest: 2 },
+    { shell: "ffmpeg" },
+    { shell: "crashed" },
+  ];
+  for (const v of variants) {
+    useShellVariant(v.shell);
+    vi.mocked(fetchDiagnostics).mockResolvedValue({ ...diagnostics, ...(v.activity === null ? { activity: null, logs: [] } : {}) } as DiagnosticsSnapshot);
+    vi.mocked(fetchIngestJob).mockImplementation(ingestJobs(v.export ?? 0, v.ingest ?? 0));
+    await refreshDiagnostics(true);   // 录制页只在没有快照时才拉——这里显式换成这一遍的
+    const pool = found[language].ingest;
+    const view = mount(language, "ingest");
+    await settle(pool);
+    collectLabels(document.body, pool);
+    clickEverything(view.container, pool, true, true);
+    await settle(pool);
+    collectLabels(document.body, pool);
+    cleanup();
+  }
+  useShellVariant("default");
+  vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics);
+  vi.mocked(fetchIngestJob).mockImplementation(ingestJobs(0, 0));
+  await refreshDiagnostics(true);
+}
+
+/** 关于页的其余状态（原生 AboutView updateStatus / confirmUninstall）：没新版且最新 = 本版（已是最新（上次检查：…））、
+ *  最新 ≠ 本版（最新发布：v…）、卸载脚本缺席（找不到卸载脚本 + 手动命令 + 好）、Terminal 打不开（无法打开 Terminal）。 */
+async function renderAboutVariants(language: Language) {
+  const { ApiError, postUninstallTerminal } = await import("./api");
+  const notFound = new ApiError(404, { error: { code: "NOT_FOUND", message: "uninstall script not found", details: { path: "/r/uninstall.sh", command: "cd /r && bash uninstall.sh" } } });
+  const noTerminal = new ApiError(500, { error: { code: "INTERNAL_ERROR", message: "could not open Terminal: no Terminal", details: { command_file: "/tmp/u.command", command: "cd /r && bash uninstall.sh" } } });
+  const variants: Array<{ about: AboutInfo; uninstall: Error }> = [
+    { about: { ...about, update_available: null, update_check: { checked_at: "2026-09-02T11:00:00Z", latest: about.version } } as AboutInfo, uninstall: notFound },
+    { about: { ...about, update_available: null, update_check: { checked_at: "2026-09-02T11:00:00Z", latest: "0.48.31" } } as AboutInfo, uninstall: noTerminal },
+  ];
+  for (const v of variants) {
+    vi.mocked(fetchAbout).mockResolvedValue(v.about);
+    vi.mocked(postUninstallTerminal).mockRejectedValue(v.uninstall);
+    await refreshAbout();   // 关于区只在没有快照时才拉——显式换成这一遍的
+    const pool = found[language].about;
+    const view = mount(language, "about");
+    await settle(pool);
+    collectLabels(document.body, pool);
+    clickEverything(view.container, pool, true, true);   // 「立即检查」→ 正在检查…（每点一颗收一遍）
+    await settle(pool);
+    // 卸载… → 在 Terminal 中卸载… → server 拒绝 → 弹窗（标题 + 手动命令 + 好）
+    const open = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) => /卸载…|Uninstall…/.test(b.textContent ?? ""));
+    if (open) fireEvent.click(open);
+    await settle(pool);
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) => /在 Terminal 中卸载…|Uninstall in Terminal…/.test(b.textContent ?? ""));
+    if (confirm) fireEvent.click(confirm);
+    await settle(pool);
+    collectLabels(document.body, pool);
+    cleanup();
+  }
+  vi.mocked(fetchAbout).mockResolvedValue(about);
+  vi.mocked(postUninstallTerminal).mockResolvedValue({ ok: true, command: "cd /r && bash uninstall.sh", command_file: "/tmp/u.command" } as never);
+  await refreshAbout();
+}
+
 beforeAll(async () => {
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
@@ -668,6 +803,8 @@ beforeAll(async () => {
   vi.mocked(fetchPermissions).mockResolvedValue(permissionsFixture("ok"));
   vi.mocked(fetchAbout).mockResolvedValue(about);
   vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics);
+  vi.mocked(fetchFailures).mockResolvedValue(failureCatalog);
+  vi.mocked(fetchIngestJob).mockImplementation(ingestJobs(0, 0));
   vi.mocked(fetchMcp).mockResolvedValue({ scopes: [{ scope: "user", path: "/Users/demo/.claude.json", exists: true, parseable: true, servers: [{ name: "slack", transport: "stdio", command: "npx", args: ["slack-mcp"], env_count: 1, incomplete: false }, { name: "broken", transport: "stdio", command: "", args: [], env_count: 0, incomplete: true }] }, { scope: "project", path: "/h/.mcp.json", exists: false, parseable: true, servers: [] }] } as never);
   vi.mocked(fetchClaudeSessions).mockResolvedValue({ ok: true, window: 7, root: "/Users/demo/.claude/projects", candidates: [{ session_id: "abc12345-0000-4000-8000-000000000001", project: "example-bench", title: "修 flaky 测试", last_activity: "2026-09-01T10:00:00Z", ended_waiting_on_user: true, answered: false, session_mismatch: false }, { session_id: "abc12345-0000-4000-8000-000000000002", project: "inkweld", title: "问答", last_activity: "2026-08-30T10:00:00Z", ended_waiting_on_user: false, answered: true, session_mismatch: false }] } as never);
   vi.mocked(fetchAskHistory).mockResolvedValue({ items: [{ q: "为什么没有新卡片？", a: "雷达每 3 分钟扫一次。", citation: "docs/TROUBLESHOOTING.md", ts: "2026-09-02T11:30:00Z", elapsed_s: 4.2 }] });
@@ -685,6 +822,9 @@ beforeAll(async () => {
     await renderEmptyBoardVariants(language);
     await renderPermissionVariants(language);
     await renderDiagnosticsVariants(language);
+    await renderDepsVariants(language);
+    await renderIngestVariants(language);
+    await renderAboutVariants(language);
   }
   // 九个面 × 两种语言 × 若干状态变体：几十次整页渲染（单机 ~12 s），远超 vitest 默认 10 s 的 hook 预算
 }, 120_000);

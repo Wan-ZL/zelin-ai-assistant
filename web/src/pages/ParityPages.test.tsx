@@ -17,7 +17,7 @@ import { ArchivePage } from "./ArchivePage";
 import { consentPending } from "../components/permissions/RecordingConsentSection";
 import { cronVerdict, daemonRunning } from "../components/setup/FinaleStep";
 import { failureActionLabel } from "../components/settings/failureAction";
-import { DiagnosticsPage, doctorSummary } from "./DiagnosticsPage";
+import { DiagnosticsPage, doctorSummary, fullReportText } from "./DiagnosticsPage";
 import { PermissionsPage, statusLabel } from "./PermissionsPage";
 import { firstOpenStep, SetupPage, stepFromSearch } from "./SetupPage";
 
@@ -174,13 +174,14 @@ describe("DiagnosticsPage", () => {
     vi.mocked(fetchLogTail).mockResolvedValue({ name: "actd.launchd.log", path: "/l/actd.launchd.log", size: 2048, lines: ["a", "b"], truncated: true });
     renderEn(<DiagnosticsPage />);
     await screen.findByText("actd heartbeat");
-    expect(screen.getByText(/1 failed \(1 ok \/ 0 warn\)/)).toBeTruthy();
+    expect(screen.getByText("1 check(s) failed — each has its own button")).toBeTruthy();
+    expect(screen.getByText("(1 ok / 0 warn)")).toBeTruthy();
     expect(screen.getByText("deployed")).toBeTruthy();
     expect(screen.getByText("skipped_tcc")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Pick a log"), { target: { value: "actd.launchd.log" } });
     await waitFor(() => expect(fetchLogTail).toHaveBeenCalledWith("actd.launchd.log", 300));
     await screen.findByText(/tail only/);
-    expect(document.querySelector(".diag-log")?.textContent).toBe("a\nb");
+    expect(document.querySelector(".diag-log-tail")?.textContent).toBe("a\nb");
   });
 
   it("full checkup calls fetchDoctor(fast=false, refresh=true)", async () => {
@@ -209,10 +210,11 @@ describe("DiagnosticsPage", () => {
     expect(failureActionLabel("nope", en)).toBeNull();
   });
 
-  it("doctorSummary counts statuses（原生 DepsView：零失败说全部通过 ✓）", () => {
-    expect(doctorSummary(diagnostics().doctor, en)).toBe("1 failed (1 ok / 0 warn)");
+  it("doctorSummary counts statuses（原生 DepsView：零失败说全部通过 ✓，判词与计数两个节点）", () => {
+    expect(doctorSummary(diagnostics().doctor, en)).toEqual({ verdict: "1 check(s) failed — each has its own button", counts: "(1 ok / 0 warn)" });
     const clean = { ...diagnostics().doctor, checks: diagnostics().doctor.checks.filter((c) => c.status !== "FAIL") };
-    expect(doctorSummary(clean, en)).toBe("All checks passed ✓ (1 ok / 0 warn)");
+    expect(doctorSummary(clean, en)).toEqual({ verdict: "All checks passed ✓", counts: "(1 ok / 0 warn)" });
+    expect(fullReportText(diagnostics().doctor)).toBe("[ok] claude CLI: found\n[fail] actd heartbeat: stalled\n    fix: kickstart it");
   });
 });
 
