@@ -702,3 +702,110 @@ a.chip:hover { text-decoration: underline; }
   gap: 8px;
   margin-top: 14px;
 }
+
+/* ----- §21 多选（selectionMode）：卡头勾选框 + 底部操作条 ------------------------------ */
+.card-select {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.selection-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  margin: 0 -8px -8px;
+  background: var(--surface-raised);
+  border-top: var(--border-hairline) solid var(--border-strong);
+  box-shadow: var(--dialog-shadow);
+  grid-column: 1 / -1;
+}
+
+.selection-count {
+  font: var(--type-lane-count);
+}
+
+.selection-note {
+  color: var(--text-secondary);
+  font: var(--type-card-line);
+}
+
+.dialog-radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.dialog-radio {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font: var(--type-card-title);
+}
+
+.dialog-radio-id {
+  font: var(--type-card-fine-mono);
+}
+
+.dialog-radio-title {
+  color: var(--text-secondary);
+}
+
+/* ----- §21 合并建议卡（紫 accent，提案列顶） ------------------------------------------- */
+.merge-card {
+  border-left: 3px solid var(--purple);
+}
+
+.merge-card.is-failed {
+  border-left-color: var(--warning);
+}
+
+.card-dot.is-merge {
+  background: var(--purple);
+}
+
+.merge-groups {
+  margin: 0;
+  padding-left: 16px;
+  font: var(--type-card-body);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-detail-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font: var(--type-card-body);
+}
+
+/* ----- §34bis 清理积压（提案列 composer 下一行） --------------------------------------- */
+.lane-triage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 6px;
+}
+
+.lane-triage-button {
+  font: var(--type-composer-hint);
+  padding: 2px 8px;
+}
+
+/* ----- §29 提建议弹窗的勾选行 ------------------------------------------------------------- */
+.zai-dialog .dialog-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font: var(--type-card-body);
+  color: var(--text-secondary);
+}

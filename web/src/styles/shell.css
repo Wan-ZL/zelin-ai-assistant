@@ -472,3 +472,22 @@
     gap: 10px;
   }
 }
+
+/* ----- §68.8 横幅一键修复 ---------------------------------------------------------------- */
+.shell-banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.shell-banner-link {
+  color: inherit;
+  font-size: 11px;
+}
+
+.shell-banner-note {
+  font-size: 11px;
+  opacity: 0.85;
+}

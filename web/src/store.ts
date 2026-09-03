@@ -7,14 +7,22 @@
 import { useSyncExternalStore } from "react";
 import {
   ApiError,
+  fetchAbout,
   fetchBoard,
   fetchCard,
   fetchClaudeCodeDefault,
+  fetchClaudeSessions,
+  fetchDiagnostics,
   fetchHealth,
   fetchLanes,
   fetchMaterials,
+  fetchMcp,
   fetchModelsSettings,
   fetchRecapSettings,
+  fetchPermissions,
+  fetchSecrets,
+  fetchSettingsCatalog,
+  fetchSetup,
   fetchSkills,
   postClaudeCodeDefault,
   postMaterialAdd,
@@ -23,6 +31,7 @@ import {
   postSkill,
   putModelsSettings,
   putRecapSettings,
+  putSettingsSection,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { resolveLanguage, type Language } from "./i18n";
@@ -33,16 +42,25 @@ import {
   type CardFilters,
 } from "./taskFilters";
 import type {
+  AboutInfo,
   Board,
   CardDetail,
   ClaudeCodeDefault,
+  ClaudeSessionsScan,
+  DiagnosticsSnapshot,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
   MaterialsList,
+  McpList,
   ModelsSettings,
   RecapSettings,
   SkillsSnapshot,
+  PermissionsSnapshot,
+  SecretsStatus,
+  SettingsCatalog,
+  SettingsSection,
+  SetupSnapshot,
 } from "./types";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -70,6 +88,20 @@ export interface AppState {
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
   skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§67 设置页「Skills」）
   skillsError: string | null;     // 设置页 Skills 读失败的用户可读文案（成功后清空；切换失败由页面 toast）
+
+  // ----- §68 P4 parity 页的 server 快照（每页自己 refresh；读失败落 pageErrors[key]） -----
+  settingsCatalog: SettingsCatalog | null; // GET /api/settings（通用 section 目录）
+  secrets: SecretsStatus | null;           // GET /api/secrets（只有状态）
+  permissions: PermissionsSnapshot | null; // GET /api/permissions
+  diagnostics: DiagnosticsSnapshot | null; // GET /api/diagnostics
+  setup: SetupSnapshot | null;             // GET /api/setup（首次运行向导判定）
+  about: AboutInfo | null;                 // GET /api/about
+  mcp: McpList | null;                     // GET /api/mcp
+  claudeSessions: ClaudeSessionsScan | null; // GET /api/claude-sessions
+  pageErrors: Record<string, string | null>; // 上述各面最近一次读失败的文案（成功后清空）
+  // ----- §21 多选（原生 Kanban「选择」态）：选中主键集合 + 是否在多选态 -----
+  selectionMode: boolean;
+  selectedIds: ReadonlySet<string>;
 }
 
 /** §63 本地标记（server marks.json 的镜像片段） */
@@ -117,6 +149,17 @@ const initialState: AppState = {
   recapMarks: {},
   skills: null,
   skillsError: null,
+  settingsCatalog: null,
+  secrets: null,
+  permissions: null,
+  diagnostics: null,
+  setup: null,
+  about: null,
+  mcp: null,
+  claudeSessions: null,
+  pageErrors: {},
+  selectionMode: false,
+  selectedIds: new Set<string>(),
 };
 
 let state: AppState = initialState;
@@ -350,8 +393,81 @@ export async function toggleSkill(name: string, action: "enable" | "disable"): P
   return skills;
 }
 
+// ----- §68 parity 页快照（一个通用 loader：成功落字段、失败落 pageErrors[key]） -------- #
+
+type PageKey = "settingsCatalog" | "secrets" | "permissions" | "diagnostics" | "setup" | "about"
+  | "mcp" | "claudeSessions";
+
+const pageRequests = new Map<PageKey, Promise<void>>(); // 同一面并发 refresh 合并成一个在途请求（十个通用区同时挂载）
+
+function loadPage<K extends PageKey>(key: K, fetcher: () => Promise<AppState[K]>): Promise<void> {
+  const inflight = pageRequests.get(key);
+  if (inflight) return inflight;
+  const request = (async () => {
+    try {
+      const data = await fetcher();
+      setState({ [key]: data, pageErrors: { ...state.pageErrors, [key]: null } } as Partial<AppState>);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : String(error);
+      setState({ pageErrors: { ...state.pageErrors, [key]: message } });
+    } finally {
+      pageRequests.delete(key);
+    }
+  })();
+  pageRequests.set(key, request);
+  return request;
+}
+
+export const refreshSettingsCatalog = () => loadPage("settingsCatalog", fetchSettingsCatalog);
+export const refreshSecrets = () => loadPage("secrets", fetchSecrets);
+export const refreshPermissions = (refresh = false) => loadPage("permissions", () => fetchPermissions(refresh));
+export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh));
+export const refreshSetup = () => loadPage("setup", fetchSetup);
+export const refreshAbout = () => loadPage("about", fetchAbout);
+export const refreshMcp = () => loadPage("mcp", fetchMcp);
+export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", () => fetchClaudeSessions(window));
+
+/** 保存一个通用 section（PUT，server 校验 + diff-write）；成功以回执替换目录里的该 section，失败原样抛给页面 toast */
+export async function saveSettingsSection(sectionId: string, patch: Record<string, unknown>): Promise<SettingsSection> {
+  const section = await putSettingsSection(sectionId, patch);
+  const catalog = state.settingsCatalog;
+  if (catalog) {
+    setState({ settingsCatalog: { ...catalog, sections: catalog.sections.map((s) => (s.id === section.id ? section : s)) } });
+  }
+  return section;
+}
+
+/** 外部（向导 / 凭证保存）改了 setup 判定后直接落新快照 */
+export function setSetup(setup: SetupSnapshot) {
+  setState({ setup });
+}
+
+// ----- §21 多选态（原生 Kanban「选择」）：进入/退出 + 勾选 -------------------------------- #
+
+export function setSelectionMode(on: boolean) {
+  setState({ selectionMode: on, selectedIds: on ? state.selectedIds : new Set<string>() });
+}
+
+export function toggleSelected(cardId: string) {
+  const next = new Set(state.selectedIds);
+  if (next.has(cardId)) next.delete(cardId);
+  else next.add(cardId);
+  setState({ selectedIds: next });
+}
+
+export function clearSelection() {
+  setState({ selectedIds: new Set<string>() });
+}
+
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */
 export function resetStoreForTests() {
-  state = { ...initialState, sortOrder: readSortOrder(), expandedCardIds: new Set<string>() };
+  state = {
+    ...initialState,
+    sortOrder: readSortOrder(),
+    expandedCardIds: new Set<string>(),
+    selectedIds: new Set<string>(),
+    pageErrors: {},
+  };
   boardRequest = null;
+  pageRequests.clear();
 }

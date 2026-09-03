@@ -1,0 +1,129 @@
+"""server/permissions.py — 「权限体检」页的 server 半边（§15 v0.13 / §55 / §68.3）。
+
+macOS TCC 按**可执行文件**记账（§55 三幕 + D20）：launchd 会话里的守护 python、
+claude CLI、构建 UI 的 node 各自都要一次「完全磁盘访问」才能读外置卷上的 repo；
+壳（GUI）另有屏幕录制 / 麦克风 / 通知三项。原生 Permissions.swift 只探 GUI 那三项
+（那部分留在壳里，经 §61 桥回报）；这里补上 D20 家族缺的一半：
+
+``GET /api/permissions`` →
+    {"home", "on_external_volume",
+     "fda": {"needed": bool, "pane": "<x-apple.systempreferences URL>",
+             "executables": [{"role", "path", "realpath", "exists", "note": {zh,en}}]},
+     "panes": {"screen", "microphone", "notifications", "full_disk"},
+     "doctor": [<doctor rows whose failure_id / name is TCC-shaped>],
+     "doctor_ran_at": iso|null}
+
+路径全部是**可复制的绝对路径**（系统设置里点 + → ⌘⇧G → 粘贴）。doctor 行来自
+server/doctor_run（``--fast``；缓存 15 s），只挑 TCC 相关的：``launchd claude`` /
+``launchd volume access`` / ``cron write access`` / ``cron ingest chain`` /
+``board ui build`` / ``launchd paths``（以及任何 failure_id 属 TCC 词表的行）。
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+from pathlib import Path
+from typing import Optional
+
+from server import doctor_run, paths, settings_catalog
+
+SHELL_APP_PATH = "/Applications/Zelin's AI Assistant.app"   # §54 名字互换后的产品路径（act.lib.version.BOARD_APP_NAME）
+_SYS_PREFS = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
+PANES = {
+    "full_disk": _SYS_PREFS + "AllFiles",
+    "screen": _SYS_PREFS + "ScreenCapture",
+    "microphone": _SYS_PREFS + "Microphone",
+    "notifications": "x-apple.systempreferences:com.apple.preference.notifications",
+}
+
+# §25 里凡是「TCC 挡住了」的失败 id
+TCC_FAILURE_IDS = frozenset({
+    "claude_blind", "deploy_blind_tcc", "cron_tcc_blocked", "cron_fda_blocked",
+    "ui_build_tcc_blocked", "interpreter_blind", "screen_tcc_lost",
+})
+TCC_ROW_NAMES = frozenset({
+    "launchd claude", "launchd volume access", "cron write access",
+    "cron ingest chain", "board ui build", "launchd paths",
+})
+
+
+def _daemon_python(home: Path) -> Optional[str]:
+    try:
+        doc = json.loads(paths.runtime_json_path(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    py = doc.get("python") if isinstance(doc, dict) else None
+    return py if isinstance(py, str) and py.startswith("/") else None
+
+
+def _claude_bin(home: Path) -> Optional[str]:
+    execution = settings_catalog.load_config_doc(home).get("execution")
+    pinned = execution.get("claude_bin") if isinstance(execution, dict) else None
+    if isinstance(pinned, str) and pinned.strip():
+        return os.path.expanduser(pinned.strip())
+    local = Path.home() / ".local" / "bin" / "claude"
+    if local.exists():
+        return str(local)
+    return shutil.which("claude")
+
+
+def _entry(role: str, path: Optional[str], zh: str, en: str) -> dict:
+    exists = bool(path) and os.path.exists(path)
+    real = os.path.realpath(path) if path and exists else path
+    return {"role": role, "path": path, "realpath": real, "exists": exists,
+            "note": {"zh": zh, "en": en}}
+
+
+def executables(home: Path) -> list:
+    """需要「完全磁盘访问」的可执行文件清单（路径可复制；不存在的如实标 exists:false）。"""
+    return [
+        _entry("daemon_python", _daemon_python(home),
+               "守护进程解释器（actd / 雷达 / server / 自动部署都用它；launchd 会话里没有终端的授权可借）",
+               "Daemon interpreter (actd / radars / server / auto-deploy all run on it; a launchd session borrows no terminal grant)"),
+        _entry("claude", _claude_bin(home),
+               "claude CLI（派工 agent 与管线判断；每次 claude 更新换路径后要重做一次）",
+               "claude CLI (dispatch agents + pipeline judgment; redo after every claude update that moves the binary)"),
+        _entry("node", shutil.which("node"),
+               "node（自动部署构建看板 UI；缺授权时 install.sh 的 ui 步记 skipped_tcc）",
+               "node (auto-deploy builds the board UI; without the grant install.sh records ui=skipped_tcc)"),
+        _entry("shell_app", SHELL_APP_PATH,
+               "看板 app（屏幕录制 / 麦克风 / 通知三项按它的 bundle id 记账，用下方三个按钮授权）",
+               "Board app (Screen Recording / Microphone / Notifications key on its bundle id — grant via the three buttons below)"),
+    ]
+
+
+def _is_tcc_row(row: dict) -> bool:
+    return (str(row.get("failure_id") or "") in TCC_FAILURE_IDS
+            or str(row.get("name") or "") in TCC_ROW_NAMES)
+
+
+def tcc_rows(report: dict) -> list:
+    return [r for r in report.get("checks", []) if isinstance(r, dict) and _is_tcc_row(r)]
+
+
+def protected_location(home: Path) -> bool:
+    """repo 是否住在 TCC 保护的位置：可移动卷（§55 三幕的真因）或
+    ~/Documents / ~/Desktop / ~/Downloads（macOS 对这三处同样按进程记账）。"""
+    text = str(home)
+    if text.startswith("/Volumes/"):
+        return True
+    user = str(Path.home())
+    return any(text.startswith(user + "/" + d + "/") or text == user + "/" + d
+               for d in ("Documents", "Desktop", "Downloads"))
+
+
+def snapshot(home: Path, *, refresh: bool = False, runner=None) -> dict:
+    """``GET /api/permissions``。"""
+    report = doctor_run.report(home, fast=True, refresh=refresh, runner=runner)
+    external = str(home).startswith("/Volumes/")
+    return {
+        "home": str(home),
+        "on_external_volume": external,
+        "fda": {"needed": protected_location(home), "pane": PANES["full_disk"],
+                "executables": executables(home)},
+        "panes": dict(PANES),
+        "doctor": tcc_rows(report),
+        "doctor_ran_at": report.get("ran_at"),
+        "doctor_ok": bool(report.get("ok")),
+    }

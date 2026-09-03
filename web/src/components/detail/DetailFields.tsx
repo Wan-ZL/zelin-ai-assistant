@@ -1,10 +1,13 @@
 // 详情 tab：GET /api/cards/{id} 增补详情的全字段渲染。
 // 已知语义字段给专属版式；未知字段落「其他字段」兜底区（wire add-only，
-// 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）。
+// 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）；唯一例外 =
+// 并入记录每行的「拆回独立卡片」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
+// 在这里有归属（note_ts 就是这一行）。
 import { useState, type ReactNode } from "react";
 import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
 import type { CardDetail, CardSource } from "../../types";
+import { useSubmit } from "../board/boardActions";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
 
@@ -57,6 +60,22 @@ function CopyChip({ value, label }: { value: string; label: string }) {
     >
       {copied ? text("已复制", "Copied") : label}
     </button>
+  );
+}
+
+/** §38.2 拆回独立卡片：{action:"split_note", id, note_ts}（legacy 无 ts 的 fold 行不可拆，原生同） */
+function SplitNoteButton({ cardId, noteTs }: { cardId: string; noteTs: string }) {
+  const { text } = useI18n();
+  const { pending, error, submit } = useSubmit();
+  return (
+    <>
+      <button type="button" className="zai-detail-copy" disabled={pending}
+        title={text("把这条并入记录拆回一张独立卡片（原卡留一行「已拆出 …」）", "Split this fold note back into its own card (the original keeps a \"split into …\" line)")}
+        onClick={() => void submit({ action: "split_note", id: cardId, note_ts: noteTs })}>
+        {pending ? text("拆分中…", "Splitting…") : text("拆回独立卡片", "Split out")}
+      </button>
+      {error && <span className="zai-detail-callout zai-detail-callout--danger">{error}</span>}
+    </>
   );
 }
 
@@ -236,6 +255,7 @@ export function DetailFields({ detail }: DetailFieldsProps) {
                 <span className="zai-chip">{fold.kind}</span> {fold.text}
                 {fold.ts && <span className="zai-detail-dim"> @{fold.ts}</span>}
                 {fold.splitInto && <span className="zai-detail-dim"> {text("已拆出", "split into")} {fold.splitInto}</span>}
+                {fold.ts && !fold.splitInto && <> <SplitNoteButton cardId={detail.id} noteTs={fold.ts} /></>}
               </li>
             ))}
             {rest.map((line, index) => <li key={`rest-${index}`}>{line}</li>)}

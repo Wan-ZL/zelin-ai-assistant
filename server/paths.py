@@ -68,6 +68,51 @@ def self_improve_lane_path(home: Path) -> Path:
     return home / "state" / "self_improve" / "lane.json"
 
 
+def settings_overrides_path(home: Path) -> Path:
+    # §15.3：act/lib/config.SETTINGS_OVERRIDES_PATH（STATE_DIR / settings_overrides.json）
+    return home / "state" / "settings_overrides.json"
+
+
+def secrets_dir(home: Path) -> Path:
+    # §19：act/lib/secrets.SECRETS_DIR（HOME / config / secrets；dir 0700 / file 0600）
+    return home / "config" / "secrets"
+
+
+def runtime_json_path(home: Path) -> Path:
+    # §19 / §55：install.sh 钉住的守护解释器指针 config/runtime.json {"python": "<abs>"}
+    return home / "config" / "runtime.json"
+
+
+def radar_health_path(home: Path) -> Path:
+    # §48：act/lib/health.HEALTH_PATH（radar 写、看板/诊断读）
+    return home / "state" / "radar_health.json"
+
+
+def install_report_path(home: Path) -> Path:
+    # §23：install.sh 每步回执 state/install_report.json
+    return home / "state" / "install_report.json"
+
+
+def setup_done_path(home: Path) -> Path:
+    # §68：首次运行向导完成标记（web 版替代原生 UserDefaults setupWizardCompleted）
+    return home / "state" / "setup_done.json"
+
+
+def update_check_path(home: Path) -> Path:
+    # §26：act/lib/update_check 独占读写的缓存
+    return home / "state" / "update_check.json"
+
+
+def user_log_dir() -> Path:
+    # §55：launchd 模板的 StandardOut/ErrorPath 目录（server/actd/radars 的 *.launchd.log）
+    return Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
+
+
+def repo_root() -> Path:
+    """server/ 所在的 repo 根（``python -m act.*`` 子进程的 cwd；不随进程 cwd 变）。"""
+    return Path(__file__).resolve().parent.parent
+
+
 def web_dist_dir() -> Path:
     """web/dist 静态资源根（相对 repo 根，不随 cwd 变）。"""
-    return Path(__file__).resolve().parent.parent / "web" / "dist"
+    return repo_root() / "web" / "dist"

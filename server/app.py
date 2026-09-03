@@ -21,10 +21,20 @@
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+- 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
+  GET /api/settings（目录）+ GET/PUT /api/settings/{section}（server/settings_catalog.py）、
+  GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
+  （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
+  GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
+  POST /api/setup/{config-from-example,complete,reset}、GET /api/about +
+  POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
+  POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
+  精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
+  `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
-§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）。
+§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）。
 """
 from __future__ import annotations
 
@@ -40,9 +50,11 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (ai_fix_launch, board_source, files, health, inbox_writer,
-                    lanes, materials, paths, recaps, security, self_improve_lane,
-                    settings)
+from server import (about, ai_fix_launch, board_source, claude_sessions,
+                    diagnostics, doctor_run, files, health, inbox_writer, lanes,
+                    materials, mcp_servers, paths, permissions, recaps, repair,
+                    secrets_store, security, self_improve_lane, settings,
+                    settings_catalog, setup, terminal_launch)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -203,16 +215,14 @@ class Handler(BaseHTTPRequestHandler):
             body = board_source.board_bytes(ctx.home)
             self._send_bytes(200, body, "application/json; charset=utf-8",
                              {"Cache-Control": "no-store"})
-        elif path.startswith("/api/cards/"):
-            card_id = path[len("/api/cards/"):]
-            self._send_json(200, board_source.card_detail(ctx.home, card_id))
-        elif path in _GET_JSON_ROUTES:
-            # 纯 JSON 读面（health / 设置面 / 列目录 / 素材库）——表驱动，见 _GET_JSON_ROUTES
-            self._send_json(200, _GET_JSON_ROUTES[path](ctx, self._query()))
         elif path == "/api/events":
             self._serve_events(ctx.hub)
         else:
-            raise NotFoundError("not found", {"path": path})
+            # 纯 JSON 读面（health / 设置面 / 目录 / 诊断…）——表驱动：精确表先，前缀表后
+            handler = _lookup(_GET_JSON_ROUTES, _GET_PREFIX_ROUTES, path)
+            if handler is None:
+                raise NotFoundError("not found", {"path": path})
+            self._send_json(200, handler(ctx, self._query()))
 
     def _send_deliverable(self, ctx, path: str) -> None:
         rest = path[len("/files/deliverables/"):].split("/")
@@ -227,7 +237,7 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     def _route_post(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
-        handler = _POST_JSON_ROUTES.get(path)
+        handler = _lookup(_POST_JSON_ROUTES, _POST_PREFIX_ROUTES, path)
         if handler is None:
             raise NotFoundError("not found", {"path": path})
         # body 只在路由命中后才读（未知路径 404 不消费 body）
@@ -238,7 +248,7 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     def _route_put(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
-        handler = _PUT_JSON_ROUTES.get(path)
+        handler = _lookup(_PUT_JSON_ROUTES, _PUT_PREFIX_ROUTES, path)
         if handler is None:
             raise NotFoundError("not found", {"path": path})
         # 字段白名单 + 形状校验 + diff-write 都在各 handler 的模块里（单一职责）
@@ -431,6 +441,37 @@ def _post_claude_code_default(ctx, payload: dict) -> dict:
     return settings.set_claude_code_default(payload.get("model"))
 
 
+def _lookup(exact: dict, prefixes: dict, path: str):
+    """精确表命中优先；否则前缀表（``/api/logs/<name>`` 命中 ``/api/logs/``，尾段非空才算），
+    前缀 handler 形状 (ctx, rest, arg) 在此归一成精确表的 (ctx, arg)。"""
+    handler = exact.get(path)
+    if handler is not None:
+        return handler
+    for prefix, fn in prefixes.items():
+        if path.startswith(prefix) and len(path) > len(prefix):
+            rest = path[len(prefix):]
+            return lambda ctx, arg, fn=fn, rest=rest: fn(ctx, rest, arg)
+    return None
+
+
+def _flag(query: dict, key: str) -> bool:
+    return str(query.get(key, "")).lower() in ("1", "true", "yes")
+
+
+def _get_doctor(ctx, query: dict) -> dict:
+    fast = query.get("fast", "1") not in ("0", "false", "no")
+    return doctor_run.report(ctx.home, fast=fast, refresh=_flag(query, "refresh"))
+
+
+def _post_secret_verify(ctx, rest: str, payload: dict) -> dict:
+    # /api/secrets/<name>/verify —— 尾段 "<name>/verify"；body 必须是 {}（零容忍）
+    if not rest.endswith("/verify"):
+        raise NotFoundError("not found", {"path": "/api/secrets/" + rest})
+    if payload:
+        raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
+    return secrets_store.verify(ctx.home, rest[:-len("/verify")])
+
+
 # GET 表 handler 形状：(ctx, query) → dict；query = URL query 的扁平 dict（_query）。
 _GET_JSON_ROUTES = {
     # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳年龄 +
@@ -450,6 +491,33 @@ _GET_JSON_ROUTES = {
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
     # custom / foreign）；token-light GET，写面在 POST /api/skills
     "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
+    # §68 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
+    "/api/settings": lambda ctx, query: settings_catalog.snapshot(ctx.home),
+    # §68 凭证状态（present / verifiable；值永不回显）
+    "/api/secrets": lambda ctx, query: secrets_store.snapshot(ctx.home),
+    # §68.3 权限体检（FDA 清单 + TCC 相关 doctor 行）
+    "/api/permissions": lambda ctx, query: permissions.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单）
+    "/api/diagnostics": lambda ctx, query: diagnostics.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    "/api/doctor": _get_doctor,
+    # §68.5 首次运行向导
+    "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
+    # §68.6 关于 + 更新
+    "/api/about": lambda ctx, query: about.snapshot(ctx.home),
+    # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）
+    "/api/mcp": lambda ctx, query: mcp_servers.mcp(ctx.home),
+    # §68.10 导入 Claude Code 工作：扫描预览
+    "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
+}
+
+# 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
+_GET_PREFIX_ROUTES = {
+    # 投影 + registry 详情增补（§49；主键或工作编号 §60.3）
+    "/api/cards/": lambda ctx, rest, query: board_source.card_detail(ctx.home, rest),
+    # §68.1 单 section（/api/settings/models、/recap 走上面的精确表）
+    "/api/settings/": lambda ctx, rest, query: settings_catalog.section_snapshot(ctx.home, rest),
+    # §68.4 日志尾巴（白名单 + size-cap）
+    "/api/logs/": lambda ctx, rest, query: diagnostics.tail(ctx.home, rest, query.get("lines")),
 }
 
 _POST_JSON_ROUTES = {
@@ -467,6 +535,21 @@ _POST_JSON_ROUTES = {
     "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
     # §67 启用/停用一个 skill（= ~/.claude/skills 软链接的建/删；自定义副本拒改 409）
     "/api/skills": lambda ctx, payload: settings.update_skill(ctx.home, payload),
+    # §68.7 在终端接管会话（命令由 server 从投影推导）
+    "/api/terminal": lambda ctx, payload: terminal_launch.launch(ctx.home, payload),
+    # §68.8 横幅一键修复：actd 已加载 → kickstart；未加载 → 409 指向 install.sh
+    "/api/repair/actd": lambda ctx, payload: repair.kickstart_actd(payload),
+    # §68.5 向导三步
+    "/api/setup/config-from-example": lambda ctx, payload: setup.config_from_example(ctx.home, payload),
+    "/api/setup/complete": lambda ctx, payload: setup.complete(ctx.home, payload),
+    "/api/setup/reset": lambda ctx, payload: setup.reset(ctx.home, payload),
+    # §26 手动「立即检查」
+    "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
+}
+
+_POST_PREFIX_ROUTES = {
+    # §68.3 POST /api/secrets/<name>/verify
+    "/api/secrets/": _post_secret_verify,
 }
 
 _PUT_JSON_ROUTES = {
@@ -474,6 +557,13 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+}
+
+_PUT_PREFIX_ROUTES = {
+    # §68.1 通用 section 的 diff-write（models / recap 走精确表）
+    "/api/settings/": lambda ctx, rest, payload: settings_catalog.update_section(ctx.home, rest, payload),
+    # §68.3 凭证写入（0600；空值 = 删）
+    "/api/secrets/": lambda ctx, rest, payload: secrets_store.write_value(ctx.home, rest, payload),
 }
 
 
