@@ -29,17 +29,18 @@ from act.lib.registry import Requirement, State, load, save
 # --------------------------------------------------------------------------- #
 # prompt
 # --------------------------------------------------------------------------- #
+def _source_line(s: dict) -> str:
+    """One grounding line: ``[channel date] quote-or-ref``."""
+    chan = s.get("channel", "?")
+    date = s.get("date", "?")
+    quote = s.get("quote") or s.get("ref") or ""
+    return f"  - [{chan} {date}] {quote}"
+
+
 def _sources_text(sources) -> str:
     if not sources:
         return "(no sources)"
-    out = []
-    for s in sources:
-        if not isinstance(s, dict):
-            continue
-        chan = s.get("channel", "?")
-        date = s.get("date", "?")
-        quote = s.get("quote") or s.get("ref") or ""
-        out.append(f"  - [{chan} {date}] {quote}")
+    out = [_source_line(s) for s in sources if isinstance(s, dict)]
     return "\n".join(out) or "(no sources)"
 
 
@@ -132,50 +133,75 @@ def build_expand_prompt(req: Requirement, cfg=None) -> str:
 # --------------------------------------------------------------------------- #
 # tolerant JSON extraction
 # --------------------------------------------------------------------------- #
+def _loads_dict(text: str) -> Optional[dict]:
+    """``json.loads`` that only accepts a dict — None on any failure."""
+    try:
+        obj = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _step_string(c: str, esc: bool) -> tuple[bool, bool]:
+    """Brace scanner, inside a JSON string literal: consume one char →
+    ``(still_in_string, escape_pending)``."""
+    if esc:
+        return True, False
+    if c == "\\":
+        return True, True
+    return c != '"', False
+
+
+_BRACE_DELTA = {"{": 1, "}": -1}
+
+
+def _balanced_end(text: str, start: int) -> int:
+    """Index of the ``}`` closing the ``{`` at ``start`` (string-aware brace
+    depth), or -1 when the braces never balance."""
+    depth = 0
+    in_str = esc = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            in_str, esc = _step_string(c, esc)
+            continue
+        if c == '"':
+            in_str = True
+            continue
+        depth += _BRACE_DELTA.get(c, 0)
+        if c == "}" and depth == 0:
+            return i
+    return -1
+
+
+def _object_at(text: str, start: int) -> Optional[dict]:
+    """The balanced ``{...}`` chunk starting at ``start`` parsed as a dict,
+    or None (unbalanced / not valid JSON → the caller tries the next '{')."""
+    end = _balanced_end(text, start)
+    return _loads_dict(text[start:end + 1]) if end != -1 else None
+
+
+def _scan_objects(text: str) -> Optional[dict]:
+    """First balanced brace block in ``text`` that parses as a dict."""
+    start = text.find("{")
+    while start != -1:
+        obj = _object_at(text, start)
+        if obj is not None:
+            return obj
+        start = text.find("{", start + 1)
+    return None
+
+
 def _extract_json(text: str) -> Optional[dict]:
     """Find and parse the first balanced ``{...}`` object in ``text``."""
     if not text:
         return None
     # fast path: whole thing is JSON
-    stripped = text.strip()
-    try:
-        obj = json.loads(stripped)
-        if isinstance(obj, dict):
-            return obj
-    except (ValueError, TypeError):
-        pass
+    obj = _loads_dict(text.strip())
+    if obj is not None:
+        return obj
     # scan for the first balanced brace block
-    start = text.find("{")
-    while start != -1:
-        depth = 0
-        in_str = False
-        esc = False
-        for i in range(start, len(text)):
-            c = text[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif c == "\\":
-                    esc = True
-                elif c == '"':
-                    in_str = False
-            else:
-                if c == '"':
-                    in_str = True
-                elif c == "{":
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-                    if depth == 0:
-                        chunk = text[start:i + 1]
-                        try:
-                            obj = json.loads(chunk)
-                            if isinstance(obj, dict):
-                                return obj
-                        except (ValueError, TypeError):
-                            break  # try the next '{'
-        start = text.find("{", start + 1)
-    return None
+    return _scan_objects(text)
 
 
 # --------------------------------------------------------------------------- #
@@ -210,11 +236,17 @@ def _default_runner(prompt: str) -> subprocess.CompletedProcess:
 # --------------------------------------------------------------------------- #
 # apply helpers
 # --------------------------------------------------------------------------- #
+def _plan_lines(plan: str) -> list:
+    """A non-blank plan string → its non-blank lines (the whole string when
+    it has none, e.g. a single line of spaces around text)."""
+    return [ln.strip() for ln in plan.splitlines() if ln.strip()] or [plan.strip()]
+
+
 def _coerce_plan(plan) -> list:
     if isinstance(plan, list):
         return [str(p) for p in plan if str(p).strip()]
     if isinstance(plan, str) and plan.strip():
-        return [ln.strip() for ln in plan.splitlines() if ln.strip()] or [plan.strip()]
+        return _plan_lines(plan)
     return []
 
 
@@ -227,29 +259,24 @@ def _coerce_cost(v):
         return None
 
 
-def _apply_expansion(req: Requirement, data: dict) -> None:
+def _apply_summary(req: Requirement, data: dict) -> None:
     summary = str(data.get("summary") or "").strip()
     if summary:
         req.summary = summary
     elif not req.summary:
         req.summary = req.title
 
-    # §37 display_title: optional key — absent/malformed degrades silently
-    # (projection falls back to sanitize(title)); a user-pinned title is
-    # never overwritten (set_display_title honors user_titled).
-    from act.lib.registry import set_display_title
-    set_display_title(req, data.get("display_title"))
 
+def _apply_plan(req: Requirement, data: dict) -> None:
     plan = _coerce_plan(data.get("plan"))
     if plan:
         req.plan = plan
     elif not req.plan:
         req.plan = [req.title]
 
-    cost = _coerce_cost(data.get("cost_estimate_usd"))
-    if cost is not None:
-        req.cost_estimate_usd = cost
 
+def _apply_target(req: Requirement, data: dict) -> None:
+    """target_repo (any non-blank string) + target_kind (new|existing only)."""
     tr = data.get("target_repo")
     if isinstance(tr, str) and tr.strip():
         req.target_repo = tr.strip()
@@ -258,6 +285,8 @@ def _apply_expansion(req: Requirement, data: dict) -> None:
     if isinstance(tk, str) and tk.strip().lower() in ("new", "existing"):
         req.target_kind = tk.strip().lower()
 
+
+def _apply_delivery_mode(req: Requirement, data: dict) -> None:
     # delivery_mode: "chat" | "repo" — anything illegal falls back to "repo"
     # (v0.10 contract; attribute-set so this works even before the registry
     # field lands in the Wire pass).
@@ -265,11 +294,33 @@ def _apply_expansion(req: Requirement, data: dict) -> None:
     dm = dm.strip().lower() if isinstance(dm, str) else ""
     req.delivery_mode = dm if dm in ("chat", "repo") else "repo"
 
+
+def _apply_dod(req: Requirement, data: dict) -> None:
     dod = data.get("definition_of_done")
     if isinstance(dod, list):
         items = [str(x).strip() for x in dod if str(x).strip()]
         if items:
             req.definition_of_done = items[:3]
+
+
+def _apply_expansion(req: Requirement, data: dict) -> None:
+    _apply_summary(req, data)
+
+    # §37 display_title: optional key — absent/malformed degrades silently
+    # (projection falls back to sanitize(title)); a user-pinned title is
+    # never overwritten (set_display_title honors user_titled).
+    from act.lib.registry import set_display_title
+    set_display_title(req, data.get("display_title"))
+
+    _apply_plan(req, data)
+
+    cost = _coerce_cost(data.get("cost_estimate_usd"))
+    if cost is not None:
+        req.cost_estimate_usd = cost
+
+    _apply_target(req, data)
+    _apply_delivery_mode(req, data)
+    _apply_dod(req, data)
 
 
 def _apply_fallback(req: Requirement) -> None:
@@ -279,6 +330,15 @@ def _apply_fallback(req: Requirement) -> None:
         req.plan = [req.title]
     tag = "(auto-expand failed, needs manual)"
     req.notes = (req.notes + " " + tag).strip() if req.notes else tag
+
+
+def _expansion_data(runner, prompt: str) -> Optional[dict]:
+    """One runner call → the parsed proposal dict, or None (non-zero exit /
+    no JSON object in stdout). Exceptions propagate to expand_debt's guard."""
+    proc = runner(prompt)
+    stdout = getattr(proc, "stdout", "") or ""
+    rc = getattr(proc, "returncode", 0)
+    return _extract_json(stdout) if rc == 0 else None
 
 
 # --------------------------------------------------------------------------- #
@@ -301,10 +361,7 @@ def expand_debt(
 
     prompt = build_expand_prompt(req, cfg)
     try:
-        proc = runner(prompt)
-        stdout = getattr(proc, "stdout", "") or ""
-        rc = getattr(proc, "returncode", 0)
-        data = _extract_json(stdout) if rc == 0 else None
+        data = _expansion_data(runner, prompt)
         if data is None:
             _apply_fallback(req)
         else:

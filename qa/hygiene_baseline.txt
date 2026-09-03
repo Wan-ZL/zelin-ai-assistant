@@ -15,7 +15,6 @@ docstring:act/lib/repos.py 1
 docstring:act/lib/sanitize.py 1
 docstring:act/lib/taskscheduler.py 1
 docstring:act/merge_review.py 1
-docstring:act/radar.py 1
 docstring:act/report.py 1
 file-lines:act/actd.py 3660
 func-lines:act/actd.py::_apply_decision 457
