@@ -32,8 +32,10 @@
 #   4. `python3 -m act.doctor --fresh-install --json` with the server up: exit
 #      0, broken bucket EMPTY, and the --no-launchd classes explicit — actd +
 #      cron ingest chain are `unwired`, claude CLI is `human`, board server is
-#      `wired`, the manual steps list the board / claude / key / three FDA
-#      grants / wire-the-daemons items;
+#      `unwired` with a `reachable` detail (it answers, but it is the step's
+#      hand-started server, not the launchd job — §54.2 says that is a warn),
+#      the manual steps list the board / claude / key / three FDA grants /
+#      wire-the-daemons items;
 #   5. a second bootstrap run is an UPDATE: exit 0, config.yaml byte-identical,
 #      the checkout still on main.
 #
@@ -180,7 +182,7 @@ jobs:
           curl -fsS http://127.0.0.1:47820/api/permissions | tee "$RUNNER_TEMP/permissions.json" | python3 -m json.tool | head -n 40
           python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); roles={e["role"]: e for e in d["fda"]["executables"]}; print({r: e["path"] for r, e in roles.items()}); assert roles["daemon_python"]["exists"], roles["daemon_python"]; assert "claude" in roles' "$RUNNER_TEMP/permissions.json"
           curl -fsS -o /dev/null -w 'index: %{http_code}\n' http://127.0.0.1:47820/
-          # doctor once more, with the server up (board server row ok, everything else as before)
+          # doctor once more, with the server up (board server row: reachable, not launchd-hosted)
           rc=0
           (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -m act.doctor --fresh-install --json > "$RUNNER_TEMP/doctor-fresh.json") || rc=$?
           echo "doctor --fresh-install exit: $rc"
@@ -192,14 +194,17 @@ jobs:
               print("%s: %s" % (k, names[k]))
           # --no-launchd acceptance classes (§69.3): nothing broken; the scheduler rows are
           # "not wired in this run", the claude CLI is the human's — none of them is a FAIL
-          # of the install path. The board server itself is up right now → wired.
+          # of the install path. The board server answers right now but is hand-started
+          # (no launchd job under --no-launchd) → §54.2 warn → unwired, detail says reachable.
           assert d["no_launchd"] is True
           assert names["broken"] == [], "broken rows on a fresh machine: %r" % names["broken"]
           assert d["exit_code"] == 0
           for name in ("actd", "cron ingest chain"):
               assert name in names["unwired"], "%s should be unwired under --no-launchd: %r" % (name, names)
           assert "claude CLI" in names["human"], names
-          assert "board server" in names["wired"], names
+          server_row = next((r for r in d["buckets"]["unwired"] if r["name"] == "board server"), None)
+          assert server_row is not None, "board server should be unwired (reachable, not launchd-hosted): %r" % names
+          assert "reachable" in server_row["detail"], server_row
           ids = [s["id"] for s in d["manual_steps"]]
           for step in ("open_board", "install_claude", "api_key", "fda_python", "fda_claude", "fda_cron", "wire_scheduler"):
               assert step in ids, (step, ids)
