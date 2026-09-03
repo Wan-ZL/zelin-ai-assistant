@@ -3284,13 +3284,17 @@ dashboard `stale` 兜底（无状态、不吃宽限，一次性构建照报）�
 ```json
 "radar_sources": {
   "gmail":    {"enabled": true,  "last_ok": "2026-08-01T00:00:00Z",
-               "skip_reason": "auth_failed", "stale": true},
-  "slack":    {"enabled": true,  "last_ok": "...", "skip_reason": null, "stale": false},
-  "obsidian": {"enabled": false, "last_ok": null,  "skip_reason": null, "stale": false}
+               "skip_reason": "auth_failed", "stale": true,
+               "last_attempt": "2026-08-01T00:05:00Z", "test_round": null},
+  "slack":    {"enabled": true,  "last_ok": "...", "skip_reason": null, "stale": false,
+               "last_attempt": "...", "test_round": {"requested_at": "...", "state": "done", "note": null}},
+  "obsidian": {"enabled": false, "last_ok": null,  "skip_reason": null, "stale": false,
+               "last_attempt": null, "test_round": null}
 }
 ```
 
-每个 SOURCES 成员一条、键恒在。`enabled` = 真源判据（App 侧的 intent 判断自此
+每个 SOURCES 成员一条、键恒在。**2026-09-03 add-only（§48.7）**：`last_attempt`（health 条目的最近一轮尝试，
+原生「最近一轮 <相对时间>」；关着 = null）与 `test_round`（「立即测试一轮」回执，见 48.7；无请求 / 关着 = null）。`enabled` = 真源判据（App 侧的 intent 判断自此
 读这里，Diagnostics 不再猜「凭证文件非空」；投影缺失的旧 payload 回退老判据）；
 投影的配置与 48.3 同款**现读**（`load_config()` 失败才回退调用方传入的 cfg
 快照）。`last_ok` / `skip_reason` 摘自 health 条目（**关着 = null 且当 pass
@@ -3357,6 +3361,39 @@ install 的结果（总开关翻 on / 面板「重新安装」）同样必须落
 statusNote（内存态）的话，App 重启即失忆，而 plist 已写成 → 修复卡不出、
 health 已被 48.2 清空 → liveness 无基线——与卡上重装完全同款的静默死路，
 回执纪律对所有 install 旁路一视同仁。
+
+**48.7 web 设置页的「后台雷达」行（2026-09-03；§54.4 账本里点名的 Slack / Gmail 三件：已安装 / 重新安装 /
+立即测试一轮；§66.2 `control:settings.{gmail,slack}:*`）**。原生 SettingsGmail / SettingsSlack 的 agentRow +
+healthRow 在 web 的诚实版（雷达仍是各自的 launchd agent，install.sh 步 5 渲染 + 加载，48.5 闸门照旧）：
+
+- **状态 = 问 launchd 本人**：`GET /api/radars`（server/radars.py）→ 每源 `{label, interval_s, loaded, plist_installed}`；
+  `loaded` = `launchctl print gui/<uid>/<label>` 退出 0（server/repair.py 同一探针；非 darwin → null → web「状态未知」），
+  `interval_s` 读 `act/launchd/<label>.plist` 的 `StartInterval`（truth = 模板；web「已安装，每 N 分钟自动运行」的 N =
+  interval_s / 60，判例钉 gmail 300 / slack 180）。web 行：色点 + 「后台雷达」+ 已安装，每 N 分钟自动运行 / 未安装 /
+  检查中… / 状态未知 + 「重新安装」（任何状态都可点——重渲 + 重载对已加载的 agent 也是合法修复）。
+- **重新安装 = install.sh 自己的渲染器**：`POST /api/radars/reinstall {source}`（四闸写面）= 子进程
+  `bash install.sh --reinstall-agent <label>`——新模式，只跑 `launchd_unload → cap_launchd_log → render_launchd_plist →
+  launchd_load → verify_launchd_agent`（与步 5 同一组函数；占位符替换只有一处实现，§55 路径纪律），解释器取
+  `config/runtime.json` 的 pinned 值（**不**重跑 §55 探针：按钮不该触发一次性 launchd job；未 pin = 从没装过 → 退出 4），
+  雷达源开关关着 → 退出 3（48.5：装了也会被下次 install.sh 退役——不撒这个谎）；退出 0 / 1 / 2（用法或无模板）。
+  server 映射：0 → `{ok, source, label, loaded}`（装完再问一次 launchd）、3 / 4 → 409 CONFLICT（分别指向「先开开关」/
+  `bash install.sh`）、其余 → 500 带输出尾巴、非 darwin 501。**server 绝不自己写 plist**。web：忙态「正在重新安装后台雷达…」→
+  「已重新安装 ✓」（面板信回执里的 loaded）/ 错误原文。
+- **立即测试一轮 = inbox 特形动作**：`radar_test_round {source ∈ gmail|slack}`（docs/design/inbox-actions.md §3.12，
+  golden `radar_test_round`；obsidian 走 cron ingest 链、原生也没有这颗按钮）。actd `_DETACHED_ACTIONS` →
+  `act/lib/radar_rounds.request`：源开着（48.1 现读）才 `detached.launch(["act.radar_<src>", "--once"])`（雷达自己把这一轮
+  写进 radar_health.json——那就是结果）；关着 → 不起子进程（48.2 真静默下起了也永远不会落笔）、记 `noop:disabled`；
+  台账 `state/radar_test_rounds.json`（**actd 单写者**，每源一条、有界）`{"requested_at", "launch": running|noop,
+  "note": null|disabled|launch_failed}`；子进程 stdout/err 追加 `state/radar_test_round.log`（出生带 logcap 帽，防腐 #4）。
+  投影 `radar_sources.<src>.test_round = {requested_at, state, note}`（纯磁盘真值函数，dashboard 一次性构建同样算得出）：
+  `done` ⇔ health `last_attempt` ≥ `requested_at`（雷达跑完落笔了）；`running` = 起了还没落笔；`lost` = 超过
+  `LOST_AFTER_S`（10 分钟）仍无落笔（崩在 import / 被杀——诚实说丢了，不永远「运行中」）；`noop` = 没起。web：按钮
+  「测试中…」直到看板回执的 `requested_at` 变了且不再 running（或 90 s 兜底）；noop / lost 各一句人话；结果本身由
+  运行状态行体现（运行正常 ✓ 最近成功 … / <死因>（最近一轮 …）/ 最近一轮 … / 状态未知）。源关着按钮禁用。
+- 判例：tests/test_radar_test_round.py（request / projection / inbox 入站面 / dashboard add-only）、
+  tests/test_server_radars_folders.py（GET / POST 路由、退出码映射、label ↔ 模板）、tests/test_install_reinstall_agent.py
+  （`reinstall_agent_mode` 五条分支 + 顶层解析）、web `RadarAgentPanel.test.tsx`；golden `tests/fixtures/dashboard_golden.json`
+  随 add-only 键重铸。
 
 **判例**：tests/test_sources.py（真值表含 slack/obsidian enabled + 扁平
 override 压过 yaml / 关闭真静默含 obsidian 锁前早退 / liveness+anti-nag+
@@ -3522,7 +3559,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   写 **server 独占**的 `state/recap/marks.json`——「复制」/「标记已发送」的本地标记，
   **没有任何控制流读它**，只进投影；key 形状 / 词表外 400）。`PUT` 路由自此表驱动
   （`_PUT_JSON_ROUTES`，与 GET/POST 同款）。inbox 特形动作 `recap_generate` /
-  `recap_slack_draft` 见 §63.5。判例：tests/test_server_recaps.py。
+  `recap_slack_draft` 见 §63.5；`radar_test_round {source}` 见 §48.7。判例：tests/test_server_recaps.py。
 - **v0.48.x 追加（§67 skill 商店，add-only）**：`GET /api/skills`（清单 + 本机每个
   skill 的状态：enabled / disabled / copy / custom / foreign，token-light）、`POST
   /api/skills {name, action: enable|disable}`（四闸；= `~/.claude/skills/<name>` 软链接
@@ -3539,7 +3576,9 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   `GET /api/setup`、`POST /api/setup/config-from-example {}`、`POST /api/setup/complete {}`、
   `POST /api/setup/reset {}`；关于 `GET /api/about`、`POST /api/update/check {}`；
   只读列表 `GET /api/mcp`、`GET /api/claude-sessions[?window=N]`（Skills 商店 = §67 的
-  `/api/skills`）；看板工具 `POST /api/terminal {card_id}`、`POST /api/repair/actd {}`。
+  `/api/skills`）；看板工具 `POST /api/terminal {card_id}`、`POST /api/repair/actd {}`；
+  **2026-09-03 追加**：后台雷达行 `GET /api/radars`、`POST /api/radars/reinstall {source}`（§48.7），
+  目录字段 `POST /api/folders/open {key}`、`POST /api/folders/create {key}`（§68.1）。
   GET 面接受 query（`Handler._query`），仍 token-light；POST/PUT 一律 JSON body 四闸。
   路由表驱动：精确表 + **前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`；精确命中先于前缀——`/api/settings/models` / `recap` 走各自模块），
@@ -4344,7 +4383,7 @@ owner 原话（2026-09-02，§66 开篇）：原生主窗口**左侧竖排图标
 - **列宽铺满**：`board.css` 的列距 / 看板内边距 / 列宽 / 列圆角 / 卡圆角、`chrome.css` 的书立条宽、`shell.css` 的侧栏宽全部消费 `var(--native-layout-…)`（探针 `layout:*`）：列 = `flex: 1 1 400px; min-width: 400px`——原生四列各 400pt 铺满一屏，web 在更宽的窗口里让列等比长开填满视口，窄于四列之和时与原生一样横向滚动；书立条收起 44px、展开与列同规；列底 primary 1.8% 圆角 10、卡圆角 8。列名与空列文案逐字镜像原生（`潜在任务 · backlog` / `提案 · proposals` / `运行中 · running` / `待验收 · review` / `阶段性完成 · done for now` / `🗄 永久性完成 · done for good`；过滤生效时空列说「无匹配卡片」）。
 - **设置页按原生分区**：`SettingsPage.SETTINGS_TOC` 的分区与顺序 = 原生 `SettingsSectionDescriptor` 注册表（通用 · 录制 · 实时字幕 · 笔记库 · 凭证 · Slack 接入 · Gmail 接入 · 导入 Claude Code 工作 · Skills · MCP servers · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话），web 自有区（模型 §59、通知 §28、素材库 §62、会议纪要 §63）就近插入；同步 / 配对仍随 §31 另议（§68.14），菜单栏已退役（D3）。`server/settings_catalog.py` 的 section 词表随之改为 `general` / `notifications` / `obsidian` / `slack` / `gmail` / `telemetry` / `digest` / `approval` / `flags` / `voice` / `redaction` / `maintainer`（原 `sources` 一拆三；§68.1 的词表以本条为准），field **标签逐字镜像原生**（清单 `control:settings.*`），新增 `kind: "list"`（Slack 频道 / 关注的人：web 逗号分隔、server 拆表、空 = 清键）、`gmail_fetch_command` / `owner_slack_user_id` / `slack_channels` / `watch_people` 四把键、add-only 字段 `placeholder{zh,en}`。原生非 override 的旋钮各有落点：看板动画（localStorage `boardAnimations` + `<html data-board-animations="off">`）、初始设置向导 / 权限体检（通用区行）、Slack 三步引导（复制 App Manifest = `GET /api/slack/manifest`，repo `config/slack-app-manifest.json` 原文）、开发会话（`POST /api/maintainer/terminal`：`cd <effective repo_path> && claude [--resume <id>]`，参数全由 server 读设置）、设置搜索（⌘F、无匹配设置、清除）、数字框校验句、每周摘要 已开启 / 已关闭。凭证行（`SecretRow`）文案与状态机逐字镜像原生 CredentialRowView：未设置 / 已保存（未验证）/ 已保存（App 内管理）/ 已验证 ✓ / 验证失败，**保存即验证**。
 - **卡面与弹窗的词逐字**（§54.1 的延伸，同源规格 `Cards.swift` / `AppDelegate.swift` / `Store.swift`）：tier 章「T1 · 一键可批」两节点（T0 自动执行 / T2 需文字确认 / 未分级）、截止「截止 <日期> · 已逾期 N 天 / 今天截止 / 还剩 N 天」、难度 较难 / 常规、类型闭集 代码 / 沟通 / 文书 / 调研 / 评审 / 训练 / 其他、↳ 改进 #R-xx、⚠︎ 分歧: 、↩︎ 回锅 · Returned + 新增：、T2 收起态只给「T2 需先展开看明细」不给批准、💰 预计费用: $N（ASCII 冒号）；前缀与值分两个节点（耗时 / 已等待验收 / 验收于 / 原来在：/ 日志：/ 指令：/ 会话 ID：/ 等待: / 错误：/ 派发失败：）；等看板回流期间卡面的一句按动作词取原生 Store notice 文案（启动中… / 打回处理中… / 验收确认中… / 暂缓中… / 停止中，卡片将去待验收 / 退回中，卡片将回到待验收 / 修改意见合并中… / 已办完 / 已记录建议，感谢）——**不是乐观更新**，卡不换列；拒绝弹窗标题「这张卡不需要执行？」、修改「💬 修改方向 / 改哪里…」、打回「↩︎ 打回 · 追加要求」、提建议「💡 提建议（对整体）/（N 张卡）· 建议内容… · ↩ 发送 · ⇧↩ 换行」、强制合并「强制合并 N 张卡片 · 主卡 · 保留 / 副卡 · 并入主卡 · 强制合并」、合并建议卡的 verdict / 置信度 / 分组行；⎋ 两段（有搜索词先清词，再退出多选）。健康横幅动词 = 原生 Freshness.swift：卡住 / 连崩「一键修复」、没在跑「启动后台服务」，失败后「自动修复没成功：/ 启动没成功：」+「再试一次」+「手动命令：」，链接「依赖检查 / 打开依赖检查」「查看日志」（`?page=deps&log=actd.log`）。
-- **parity 判卷的渲染面**（§66.2 补充）：`web/src/parity.test.tsx` 自此渲染七个面（看板 / 回收站 / 设置 / 关于 / 问问助手 / 依赖检查 / 录制与数据接入）× zh / en，看板与回收站另各渲染两遍「空板 + 搜索中 + 后台服务卡住 / 没在跑且一键修复失败」收空态与横幅动词；时钟冻结在 fixture 的 `FIXED_NOW`；装假 `zaiShell` 桥（壳里才渲染的录制 / 字幕 / 登录时启动开关也判）；server 目录用 fixture 快照（`ui/parity/fixtures/settings.json` / `secrets.json`，`parity_fixture.py` 从空 home 落成）；点击三轮（展开详情 → 开弹窗的动词 → 其余提交类），每一拍 microtask 都收一遍（保存 → 验证中 → 通过 的中间态）。fixture 追加词表行（`_vocab_*`：状态词 / tier 提示 / 截止 / 分歧 / 合并建议六态 / kind=debt 的回收站与封存行 / 三源健康），只为让探针判得到、不改 demo 场景。**账本**：`pending.txt` 从出生的 698 缩到本 PR 的数字（truth = 该文件行数）；仍挂账的主要是 setup_wizard / permissions / doctor / board.diagnostics（各有自己的 web 页、探针尚未把这些面登记进渲染面）、Slack / Gmail 的「后台雷达 已安装 / 重新安装 / 立即测试一轮」（独立 cron 的事，雷达现住 actd 主循环 §48）、文件对话框类按钮（选择… / 打开 / 创建）、壳产出的系统通知句。
+- **parity 判卷的渲染面**（§66.2 补充）：`web/src/parity.test.tsx` 自此渲染七个面（看板 / 回收站 / 设置 / 关于 / 问问助手 / 依赖检查 / 录制与数据接入）× zh / en，看板与回收站另各渲染两遍「空板 + 搜索中 + 后台服务卡住 / 没在跑且一键修复失败」收空态与横幅动词；时钟冻结在 fixture 的 `FIXED_NOW`；装假 `zaiShell` 桥（壳里才渲染的录制 / 字幕 / 登录时启动开关也判）；server 目录用 fixture 快照（`ui/parity/fixtures/settings.json` / `secrets.json`，`parity_fixture.py` 从空 home 落成）；点击三轮（展开详情 → 开弹窗的动词 → 其余提交类），每一拍 microtask 都收一遍（保存 → 验证中 → 通过 的中间态）。fixture 追加词表行（`_vocab_*`：状态词 / tier 提示 / 截止 / 分歧 / 合并建议六态 / kind=debt 的回收站与封存行 / 三源健康），只为让探针判得到、不改 demo 场景。**账本**：`pending.txt` 从出生的 698 缩到本 PR 的数字（truth = 该文件行数）；仍挂账的主要是 setup_wizard / permissions / doctor / board.diagnostics（各有自己的 web 页、探针尚未把这些面登记进渲染面）、壳产出的系统通知句。**追记（2026-09-03）**：Slack / Gmail 的「后台雷达 已安装 / 重新安装 / 立即测试一轮」已按 §48.7 落地（雷达是 launchd agent 不是 cron，状态问 launchd、重装走 install.sh 的渲染器、测试一轮走 inbox），文件对话框类按钮（选择… / 打开 / 创建）按 §68.1 目录字段 + §61.1 `chooseFolder` 落地；同标签的 `settings.general:button:open` 与 `setup_wizard` 的两条「选择」随之在账本上翻绿（探针按面匹配标签，账本只许缩——如实划掉）。
 - 判例：`NavRail.test.tsx`（八项同序同名、深链、选中态、折叠持久化、⌘1…⌘8、宽度钳制）、`tokens.test.ts`（无 prefers-color-scheme 块、index.html light 兜底、窗口底与状态色点走原生 token、布局定点齐全）、`FilterBar.test.tsx`（⎋ 两段）、`tests/test_server_ask.py`（ask / slack manifest / uninstall / maintainer 四组路由）、`tests/test_server_ai_fix_launch.py`（doctor 上下文）、`tests/test_server_settings_catalog.py`（list 字段、section 一拆三）、`tests/test_ui_parity_fixture.py`（词表行 / 设置与凭证快照）。
 
 - **2026-09-03 追记（add-only）——web 侧原生偏好键的落点（第三批）**（§66.2 `setting:prefs:*`，localStorage 同名）：`captureHistory`（composer ↑/↓ 历史；旧键 `zai.captureHistory` 首次读到即一次性搬过来）、`mainSection`（原生 `MainNav.section` didSet：每到一个 rail 页记 slug；冷启动 = 本窗口会话第一次整页加载、URL 没带 `?page=` / `?card=` → 回到上次的页，看板是缺省不导航；同一窗口会话内「← 返回看板」这类整页导航不再回跳——sessionStorage `zai.launched` 判「冷启动」）、`cardSortOrder` / `boardAnimations` / `sidebarCollapsed` / `sidebarWidth`（既有）。
@@ -5017,6 +5056,7 @@ owner 原话（D3，2026-09-01）：「起码在视觉上我希望把它去掉�
   - `openScreenRecordingSettings`（系统设置 → 屏幕录制 深链）。
   - `setCaptions {on: bool}`（= `LiveCaptionsController.setEnabled`，同步翻转）。
   - `setLanguage {lang: "zh"|"en"}`：页面把 `zai.lang` 同步给壳，悬浮窗/通知的 L() 文案跟随；壳启动时先读 overrides `language` → 系统 locale（与原生 LanguageStore 同读侧），**壳不写 overrides**。
+  - `chooseFolder {current?: string, prompt?: string}`（2026-09-03，§68.1 目录字段「选择…」）：`NSOpenPanel`（只选目录、可新建；`prompt` = 原生「选择」；`current` 存在时作起始目录），**回执 = 快照 + add-only `dialog: {path: string|null}`**（`$HOME` 缩回 `~`，同原生 abbreviateHome；取消 = null）。对话框类方法是回执形状的唯一例外；非对话框方法不带 `dialog`。`current` / `prompt` 类型不对 → `INVALID_ARGS`。壳侧执行体 `FolderDialog.runner` 是注入缝（harness 绝不弹真面板）。页面：`shellBridge.chooseFolder()`；无桥 / 老壳（`NO_BRIDGE` / `UNKNOWN_METHOD`）→ 退化成路径文本框 + 「选择」确认（`isBridgeUnavailable`）。
   - 未知 method → reject `UNKNOWN_METHOD: <m>`；坏参数 → reject `INVALID_ARGS: <why>`；其它 → `INTERNAL: …`。冒号前是稳定 code，冒号后是人话、可改。
 - **快照 `state`**（`ShellBridge.stateSnapshot()`；回执与事件同一形状）：
 
@@ -5388,6 +5428,7 @@ server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语
 - **2026-09-03 追记（add-only）**：`general` 区新增 `terminal_app`（enum `auto | ghostty | terminal | iterm2`，默认 `auto`，override-only；标签逐字镜像原生「终端应用 / Terminal app」）= 原生 UserDefaults `terminalApp` 的 server 侧落点（§66.2 `setting:prefs:terminalApp`，probe server_source）——执行者是 server（§68.7 `open -a`），所以偏好住 overrides 不住浏览器。`act/lib/config.py` 收进 `_OVERRIDE_FIELDS`（`_coerce_terminal_app`：未知值回 `auto`）与 `Config.terminal_app`（`review_notify` 同款「唯一读者在管线之外」）；词表单源 `config.TERMINAL_APPS`。其它 server 模块读一把旋钮用 `settings_catalog.effective_value(home, section, key)`。
 - PUT：body 为 `{key: value}` 子集；未知键 400 `UNKNOWN_FIELD`；空 body / 类型错 / 越界（enum 外、负数、非整数 int、多行或 >1024 字符串）400 `INVALID_FIELD`；bool **只认 JSON 布尔**；string 空 = 清键；全部键先校验再一次落盘；overrides 不可解析 409 `CONFLICT` 不覆盖。diff-write 与 nested 规则见 §15 v0.48.x 追记。`set_flat_override` 是其它 server 模块的窄写口（Slack auth.test 自动填 `owner_slack_user_id`）。
 - web 之外的其它 section（模型 §59、录制 / 字幕 = 壳 UserDefaults 经 §61 桥、Skills / MCP / 导入 = 只读列表 + inbox 动作、素材库 = P5 占位、关于 = §68.6）在设置页有固定落点（`SettingsPage.SETTINGS_TOC` 是目录，`?anchor=<id>` 深链）。
+- **目录字段（2026-09-03；原生 obsidianGroup 的 选择… / 打开 / 创建、approvalGroup 的 选择… / 创建文件夹，§66.2 `control:settings.{obsidian,approval}:*`）**：`_f(..., path="dir")` 标记的 string 字段（`obsidian_raw` / `default_target_repo` / `maintainer_repo_path`）投影 add-only `path: "dir"` + `path_exists`（effective 值展开 `~` 后 `is_dir()`；空值 null = 无从判断）。web `FieldControl` 据此长出：「选择…」（壳 → §61.1 `chooseFolder`，浏览器 / 老壳 → 路径文本框 + 「选择」确认；选中只写草稿，仍按「保存」落盘）、`path_exists == false` 时的原生警告句（笔记库「⚠︎ 笔记库目录还不存在——点「选择…」挑一个，或一键创建。」/ 工作目录「⚠︎ 目录不存在——第一张批准的卡会派发失败。」/ 开发者「路径不存在」）+ 「创建」/「创建文件夹」、笔记库的「打开」。**打开 / 创建 作用于已保存的 effective 值**：`POST /api/folders/open {key}` / `POST /api/folders/create {key}`（server/folders.py，四闸写面）——路径由 server 从设置目录读，**客户端只传 key**（reveal / ai-fix / terminal 同一纪律），草稿未保存时按钮禁用并提示先保存；key ∉ `FOLDER_FIELDS` 400、空值 400、open 不是目录 404、非 darwin 501（open）；create = `mkdir -p`（已在 = `created:false` 幂等），`default_target_repo` 另 `git init -q`（原生 createTargetRepoDir 同款，best-effort 回执 `git_init: done|skipped|failed`），mkdir 失败 500 `could not create the folder: <why>`（web 前缀原生句「创建目录失败：」，前缀独立节点）。判例 tests/test_server_radars_folders.py、web `FolderControls.test.tsx`。
 
 ### 68.2 字幕偏好（桥 add-only）
 

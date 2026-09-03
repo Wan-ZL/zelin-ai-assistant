@@ -174,11 +174,16 @@ def build_board(now=FIXED_NOW):
     for lane in ("needs_approval", "running", "trash", "debt", "archived"):
         board["counts"][lane] = len(board[lane])
     board["device_label"] = "demo-mac"
-    # §48 三源健康投影：一个正常、一个静默失败、一个关着（接入区「运行状态」三种句子都渲染到）
+    # §48 三源健康投影：一个正常、一个静默失败、一个关着（接入区「运行状态」三种句子都渲染到）；
+    # §48.7 add-only：slack 带 last_attempt（「最近一轮 N分钟前」）与一轮已完成的 test_round 回执
     board["radar_sources"] = {
-        "gmail": {"enabled": True, "last_ok": demo_seed._iso(now - dt.timedelta(minutes=5)), "skip_reason": None, "stale": False},
-        "slack": {"enabled": True, "last_ok": None, "skip_reason": "no_credentials", "stale": False},
-        "obsidian": {"enabled": False, "last_ok": None, "skip_reason": None, "stale": False},
+        "gmail": {"enabled": True, "last_ok": demo_seed._iso(now - dt.timedelta(minutes=5)), "skip_reason": None, "stale": False,
+                  "last_attempt": demo_seed._iso(now - dt.timedelta(minutes=5)), "test_round": None},
+        "slack": {"enabled": True, "last_ok": None, "skip_reason": "no_credentials", "stale": False,
+                  "last_attempt": demo_seed._iso(now - dt.timedelta(minutes=3)),
+                  "test_round": {"requested_at": demo_seed._iso(now - dt.timedelta(minutes=3, seconds=20)), "state": "done", "note": None}},
+        "obsidian": {"enabled": False, "last_ok": None, "skip_reason": None, "stale": False,
+                     "last_attempt": None, "test_round": None},
     }
     return board
 
@@ -187,10 +192,26 @@ def build_lanes():
     return server_lanes.catalog()
 
 
+# 目录字段（§68.1 `path: "dir"`）在 fixture 里一律「目录不存在」：笔记库区 / 审批区的
+# 「⚠︎ 目录不存在」警告与 创建 / 创建文件夹 按钮才渲染得到；真实存在性依赖生成机器的磁盘，
+# 抹成固定值保证零 diff。
+_FIXTURE_PATH_EXISTS = False
+
+
 def build_settings():
-    """GET /api/settings 在空 home 下的快照（全默认；文案 server-owned）。"""
+    """GET /api/settings 的快照（文案 server-owned）：home 里只有一条 override
+    `obsidian_raw`（默认空值下笔记库的目录按钮无从渲染），其余全默认；目录字段的
+    `path_exists` 抹成固定值（见 _FIXTURE_PATH_EXISTS）。"""
     with tempfile.TemporaryDirectory() as tmp:
-        return settings_catalog.snapshot(Path(tmp))
+        overrides = paths.settings_overrides_path(Path(tmp))
+        overrides.parent.mkdir(parents=True, exist_ok=True)
+        overrides.write_text('{"obsidian_raw": "~/Documents/Obsidian Vault/2 - raw"}\n', encoding="utf-8")
+        snap = settings_catalog.snapshot(Path(tmp))
+    for section in snap["sections"]:
+        for field in section["fields"]:
+            if field.get("path") and field.get("effective"):
+                field["path_exists"] = _FIXTURE_PATH_EXISTS
+    return snap
 
 
 def build_secrets():

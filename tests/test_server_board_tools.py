@@ -195,7 +195,7 @@ class RepairTestCase(_ServerCase):
     def test_route_uses_default_runner_and_label_mirrors_doctor(self):
         self.assertEqual(repair.ACTD_LABEL, act_doctor.ACTD_LABEL)
         run, calls = self._runner()
-        with mock.patch.object(repair, "_default_runner", run), \
+        with mock.patch.object(repair, "default_runner", run), \
                 mock.patch.object(repair.sys, "platform", "darwin"):
             status, obj = post_json(self.port, "/api/repair/actd", {})
         self.assertEqual(status, 200)

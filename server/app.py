@@ -41,6 +41,10 @@
   diff-write 语义），server/settings.py。
 - 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
   三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
+- 后台雷达行（§48.7）：GET /api/radars（launchd 已加载 / 模板间隔）、POST
+  /api/radars/reinstall {source}（= bash install.sh --reinstall-agent <label>），
+  server/radars.py；目录字段的 POST /api/folders/{open,create} {key}（路径由
+  server 从设置目录读，§68.1），server/folders.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
@@ -62,9 +66,9 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
-                    diagnostics, display, doctor_run, files, health, inbox_writer,
-                    lanes, maintainer_launch, materials, mcp_servers, notify_catalog,
-                    paths, permissions, recaps, repair,
+                    diagnostics, display, doctor_run, files, folders, health,
+                    inbox_writer, lanes, maintainer_launch, materials, mcp_servers,
+                    notify_catalog, paths, permissions, radars, recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
                     settings_catalog, setup, slack_setup, terminal_launch,
                     uninstall_launch)
@@ -531,6 +535,8 @@ _GET_JSON_ROUTES = {
     "/api/slack/manifest": lambda ctx, query: slack_setup.manifest(ctx.home),
     # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
+    # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）
+    "/api/radars": lambda ctx, query: radars.snapshot(ctx.home),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -574,6 +580,11 @@ _POST_JSON_ROUTES = {
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
     "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
+    # §48.7 「重新安装」后台雷达：install.sh 自己的渲染器 + launchctl（server 不写 plist）
+    "/api/radars/reinstall": lambda ctx, payload: radars.reinstall(ctx.home, payload),
+    # §68.1 目录字段「打开」/「创建」：路径 = 已保存的 effective 值，客户端只传 key
+    "/api/folders/open": lambda ctx, payload: folders.open_folder(ctx.home, payload),
+    "/api/folders/create": lambda ctx, payload: folders.create_folder(ctx.home, payload),
 }
 
 _POST_PREFIX_ROUTES = {

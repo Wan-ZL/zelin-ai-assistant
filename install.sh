@@ -48,6 +48,15 @@
 # --check: run the post-install doctor (python -m act.doctor) and exit with
 #   the number of failing checks. Installs/changes nothing.
 #
+# --reinstall-agent <label> (CONTRACT §48.7): re-render + reload ONE launchd
+#   agent (a template under act/launchd/) with this file's own renderer and
+#   nothing else — no dependency checks, no build, no crontab, no report. The
+#   board server's "重新安装" button for the Slack / Gmail radars runs exactly
+#   this, so the plist placeholder substitution keeps a single implementation.
+#   Exit: 0 loaded+verified · 1 load/verify failed · 2 usage / no template ·
+#   3 the radar's source is switched off (§48.5 — not installed, would be
+#   retired again) · 4 no pinned daemon interpreter (run install.sh first).
+#
 # --non-interactive: the mode scripts/auto-deploy.sh runs (CONTRACT §56). Same
 #   steps as the interactive run, but it can never stop to ask: a missing
 #   claude only warns, the doctor step is left to the caller (it gates the
@@ -281,6 +290,20 @@ if [ "${1:-}" = "--check" ]; then
     AIASSISTANT_HOME="$REPO_ROOT" exec "$DOCTOR_PY" -m act.doctor "$@"
 fi
 
+# --reinstall-agent <label> (CONTRACT §48.7): parsed here, RUN later — the
+# helpers it reuses (render_launchd_plist, launchd_load, verify_launchd_agent …)
+# are defined further down; reinstall_agent_mode is invoked right before step 1
+# and exits, so none of the numbered steps run in this mode.
+REINSTALL_AGENT_LABEL=""
+if [ "${1:-}" = "--reinstall-agent" ]; then
+    if [ "$#" -ne 2 ] || [ -z "${2:-}" ]; then
+        echo "usage: bash install.sh --reinstall-agent <launchd label>" >&2
+        exit 2
+    fi
+    REINSTALL_AGENT_LABEL="$2"
+    shift 2
+fi
+
 # Flags combine (`--non-interactive --no-launchd` is what the CI acceptance run
 # and scripts/bootstrap.sh pass); an unknown flag is a usage error, never a
 # silent no-op — a typo in an unattended caller must not run the wrong mode.
@@ -299,7 +322,7 @@ for _arg in "$@"; do
         --no-launchd) NO_LAUNCHD=1 ;;
         *)
             echo "install.sh: unknown flag '$_arg'" >&2
-            echo "usage: bash install.sh [--non-interactive] [--no-launchd] [--pkg-postinstall] | --check [doctor flags]" >&2
+            echo "usage: bash install.sh [--non-interactive] [--no-launchd] [--pkg-postinstall] | --check [doctor flags] | --reinstall-agent <label>" >&2
             exit 2 ;;
     esac
 done
@@ -951,6 +974,23 @@ launchd_orphans() { # prints one label per line
     done
 }
 
+# v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
+# ONLY when its source is enabled per the single source of truth
+# (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
+# A disabled source gets the RETIRED treatment (unload + rm) instead,
+# so a re-run of install.sh can no longer resurrect a switched-off radar.
+# "off" is ONLY the dedicated exit code 3 + the literal stdout "off" — every
+# other outcome (exit 1 python crash / ModuleNotFoundError / no PyYAML / exit
+# 2 bad invocation) fails OPEN and installs as before. The probe runs from
+# $REPO_ROOT like every other `-m act.*` call in this file: a pkg postinstall
+# cwd is an Installer temp dir where `-m act.lib.sources` can't import at all.
+radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
+    rc=0
+    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
+        "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
+    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
+}
+
 # escape a value for use on the replacement side of sed s|…|…| (delimiter |)
 _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
@@ -1197,6 +1237,77 @@ launchd_failure_hint() { # $1 = short agent name (actd, radar, …)
     esac
 }
 
+# claude for the DAEMONS — the login shell's resolution (rationale at the call
+# site in step 2). Sets CLAUDE_LOGIN_BIN ("" when nothing resolves); shared by
+# step 2 and --reinstall-agent so a re-rendered plist gets the same PATH head.
+CLAUDE_LOGIN_BIN=""
+resolve_claude_login_bin() {
+    CLAUDE_LOGIN_BIN=""
+    _c="$("${SHELL:-/bin/zsh}" -lc 'command -v claude' 2>/dev/null | tail -n 1 || true)"
+    case "$_c" in
+        /*) [ -x "$_c" ] && CLAUDE_LOGIN_BIN="$_c" ;;
+    esac
+    if [ -z "$CLAUDE_LOGIN_BIN" ]; then
+        CLAUDE_LOGIN_BIN="$(command -v claude 2>/dev/null || true)"
+    fi
+    if [ -z "$CLAUDE_LOGIN_BIN" ]; then
+        for _c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
+            [ -x "$_c" ] && { CLAUDE_LOGIN_BIN="$_c"; break; }
+        done
+    fi
+}
+
+# --reinstall-agent <label> (CONTRACT §48.7; header): render + load ONE
+# template with the SAME helpers step 5 uses, then exit with the verdict. The
+# daemon interpreter is the one the last full install pinned (config/
+# runtime.json) — never re-probed here: a button press must not re-run the
+# §55 launchd viability probe, and an unpinned repo has never been installed.
+# A radar whose source is switched off is refused (exit 3): step 5 would
+# retire the plist again on the next run (§48.5), so installing it now would
+# only be a lie that lasts until the next deploy.
+reinstall_agent_mode() { # $1 = label
+    _label="$1"
+    _src="$REPO_ROOT/act/launchd/$_label.plist"
+    if [ ! -f "$_src" ]; then
+        echo "install.sh: no launchd template for '$_label' under act/launchd/" >&2
+        exit 2
+    fi
+    case "$_label" in
+        *.gmailradar) _plist_source="gmail" ;;
+        *.slackradar) _plist_source="slack" ;;
+        *) _plist_source="" ;;
+    esac
+    RUNTIME_PY="$(pinned_python)"
+    if ! py_imports_yaml "$RUNTIME_PY"; then
+        echo "install.sh: no pinned daemon interpreter (config/runtime.json) — run: bash $REPO_ROOT/install.sh" >&2
+        exit 4
+    fi
+    if [ -n "$_plist_source" ] && ! radar_source_enabled "$_plist_source"; then
+        echo "install.sh: the $_plist_source source is switched off — a switched-off radar is not installed (CONTRACT §48.5); enable it first" >&2
+        exit 3
+    fi
+    resolve_claude_login_bin
+    SERVER_PORT="$(server_port)"
+    mkdir -p "$LA_DIR"
+    _dest="$LA_DIR/$_label.plist"
+    launchd_unload "$_dest" "$_label"
+    cap_launchd_log "$_label"
+    render_launchd_plist "$_src" "$_dest"
+    if ! launchd_load "$_dest"; then
+        echo "  [ERR ] failed to load $_label (may need TCC/Full Disk Access approval)" >&2
+        launchd_failure_hint "${_label##*.}"
+        exit 1
+    fi
+    sleep 2
+    verify_launchd_agent "$_label" || exit 1
+    ok "reinstalled $_label (python=$RUNTIME_PY)"
+    exit 0
+}
+
+if [ -n "$REINSTALL_AGENT_LABEL" ]; then
+    reinstall_agent_mode "$REINSTALL_AGENT_LABEL"
+fi
+
 echo "=============================================="
 echo " Zelin's AI Assistant — installer"
 echo " repo: $REPO_ROOT"
@@ -1363,19 +1474,7 @@ fi
 # /opt/homebrew/bin/claude 2.1.16 (no --bg) shadowed ~/.local/bin 2.1.206 in
 # the rendered plists — every dispatch died on "unknown option '--bg'" and
 # retried forever. Its directory goes FIRST in every rendered PATH below.
-CLAUDE_LOGIN_BIN=""
-_c="$("${SHELL:-/bin/zsh}" -lc 'command -v claude' 2>/dev/null | tail -n 1 || true)"
-case "$_c" in
-    /*) [ -x "$_c" ] && CLAUDE_LOGIN_BIN="$_c" ;;
-esac
-if [ -z "$CLAUDE_LOGIN_BIN" ]; then
-    CLAUDE_LOGIN_BIN="$(command -v claude 2>/dev/null || true)"
-fi
-if [ -z "$CLAUDE_LOGIN_BIN" ]; then
-    for _c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
-        [ -x "$_c" ] && { CLAUDE_LOGIN_BIN="$_c"; break; }
-    done
-fi
+resolve_claude_login_bin
 if [ -n "$CLAUDE_LOGIN_BIN" ]; then
     ok "daemon claude: $CLAUDE_LOGIN_BIN (login-shell resolution)"
     report_step "claude_bin" "ok" "$CLAUDE_LOGIN_BIN"
@@ -1496,22 +1595,8 @@ retire_legacy_launchd_agents() {
         report_step "launchd_orphans" "ok"
     fi
 }
-# v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
-# ONLY when its source is enabled per the single source of truth
-# (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
-# A disabled source gets the RETIRED treatment above (unload + rm) instead,
-# so a re-run of install.sh can no longer resurrect a switched-off radar.
-# "off" is ONLY the dedicated exit code 3 + the literal stdout "off" — every
-# other outcome (exit 1 python crash / ModuleNotFoundError / no PyYAML / exit
-# 2 bad invocation) fails OPEN and installs as before. The probe runs from
-# $REPO_ROOT like every other `-m act.*` call in this file: a pkg postinstall
-# cwd is an Installer temp dir where `-m act.lib.sources` can't import at all.
-radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
-    rc=0
-    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
-        "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
-    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
-}
+# radar_source_enabled (the §48.5 per-source gate) is defined above, next to
+# the launchd helpers, so --reinstall-agent can reuse it.
 # CONTRACT §56: the self-updating deploy agent is installed ONLY for a git
 # checkout (a .pkg copy has no .git — nothing to fast-forward) whose
 # features.auto_deploy is on (default on). Same fail-open shape as the radar

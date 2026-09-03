@@ -785,3 +785,67 @@
 .settings-display-preview .task-card {
   max-width: 340px;
 }
+
+/* §48.7 后台雷达行 / 运行状态行（原生 agentRow + healthRow：色点 + 标题 + 状态词 + 右侧按钮） */
+.settings-radar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.settings-radar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-radar-row > p {
+  margin: 0;
+}
+
+.settings-radar-title {
+  font-size: calc(12px * var(--text-scale));
+  font-weight: var(--w-medium);
+}
+
+.settings-radar-spacer {
+  flex: 1 1 auto;
+}
+
+.settings-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  opacity: 0.4;
+  flex: 0 0 auto;
+}
+
+.settings-dot.is-ok { background: var(--success); opacity: 1; }
+.settings-dot.is-warning { background: var(--warning); opacity: 1; }
+
+/* §68.1 目录字段：选择… 与 打开 / 创建 行 + 浏览器退化的路径框 */
+.settings-field.is-folder .settings-knob-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-folder-fallback {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}

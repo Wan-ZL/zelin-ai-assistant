@@ -42,7 +42,12 @@ class FixtureShapeTestCase(unittest.TestCase):
         self.assertEqual([s["id"] for s in settings["sections"]], [s["id"] for s in pf.settings_catalog.SECTIONS])
         for section in settings["sections"]:
             for field in section["fields"]:
-                self.assertEqual(field["source"], "default", field["key"])
+                # 唯一的 override 是笔记库目录（§68.1 目录字段的 打开 / 创建 词表行要一个非空路径才渲染）
+                expected = "override" if field["key"] == "obsidian_raw" else "default"
+                self.assertEqual(field["source"], expected, field["key"])
+                if field.get("path"):
+                    # 目录字段的存在性抹成常量（真实存在性依赖生成机器的磁盘）；空值仍是 null
+                    self.assertEqual(field["path_exists"], pf._FIXTURE_PATH_EXISTS if field["effective"] else None, field["key"])
         secrets = pf.build_secrets()
         self.assertEqual(len(secrets["secrets"]), 5)
         self.assertEqual([s["name"] for s in secrets["secrets"] if s["present"]], ["anthropic-api-key.txt"])

@@ -1,16 +1,16 @@
 // Slack 接入区（§15.3 v0.14 / §48 / §68；原生 SettingsSlack.swift 的 web 版，标签逐字镜像）：
 // 「启用 Slack 雷达」开关（目录 section slack）→ 三步引导 ① 建 Slack app（复制 App Manifest = GET /api/slack/manifest
 // 写剪贴板 + 打开 api.slack.com/apps）② 安装授权 ③ 粘贴 token（SecretRow，保存即验证、身份自动填好 = server
-// auth.test 回填 owner_slack_user_id）→ 「监控范围」（频道 / 关注的人，list 字段）→ 「运行状态（真实轮询结果）」
-// （§48 radar_sources 投影）。原生的「后台雷达 已安装 / 重新安装 / 立即测试一轮」是独立 cron 的事，雷达现在
-// 住在 actd 主循环里（§48），这里不装那组按钮。
+// auth.test 回填 owner_slack_user_id）→ 「监控范围」（频道 / 关注的人，list 字段）→ 「后台雷达」行（launchd agent
+// 状态 / 重新安装）+「运行状态（真实轮询结果）」+ 立即测试一轮（RadarAgentPanel，§48.7）+ 健康摘要（§48 投影）。
 import { useEffect, useState } from "react";
 import { fetchSlackManifest } from "../../api";
 import { useI18n } from "../../i18n";
 import { refreshSecrets, useAppState } from "../../store";
 import { CatalogSection } from "./CatalogSection";
+import { RadarAgentPanel } from "./RadarAgentPanel";
 import { SecretRow } from "./SecretRow";
-import { HealthLine, RunStatusLine } from "./sourceHealth";
+import { HealthLine } from "./sourceHealth";
 import { errorMessage } from "./useToast";
 
 export function SlackSection() {
@@ -71,8 +71,7 @@ export function SlackSection() {
 
   return (
     <CatalogSection sectionId="slack" between={{ slack_enabled: <>{steps}{watch}</> }}>
-      <div className="settings-subhead">{text("运行状态（真实轮询结果）", "Run status (real poll results)")}</div>
-      <RunStatusLine health={health} />
+      <RadarAgentPanel source="slack" />
       {health && <ul className="settings-health"><HealthLine source="slack" health={health} /></ul>}
     </CatalogSection>
   );

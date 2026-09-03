@@ -1,7 +1,8 @@
 // 来源健康一行（§48 / §68）：board.radar_sources 的投影（enabled / last_ok / skip_reason / stale——
 // 「生效 = flag × 开关」，原生 DiagnosticsRules.effectiveSourceEnabled 读的同一份）。
 // 三个接入区（SlackSection / GmailSection / ObsidianSection）与「录制与数据接入」页共用。
-// 原生 SettingsSlack / SettingsGmail 的「运行状态（真实轮询结果）」一句也从这里算（runStatusLine）。
+// 原生 SettingsSlack / SettingsGmail 的「运行状态（真实轮询结果）」一句也从这里算（RunStatusLine；
+// 后台雷达行与 立即测试一轮 在 RadarAgentPanel，§48.7）。
 import { useI18n } from "../../i18n";
 import { RelativeTime } from "../board/cardChrome";
 import type { RadarSourceHealth } from "../../types";
@@ -47,7 +48,8 @@ export function HealthLine({ source, health }: { source: string; health: RadarSo
   );
 }
 
-/** 原生「运行状态（真实轮询结果）」：运行正常 ✓ 最近成功 <相对时间> / 具体死因 / 状态未知 */
+/** 原生「运行状态（真实轮询结果）」（healthSummary）：运行正常 ✓ 最近成功 <相对时间> / 具体死因（最近一轮 X）/
+ *  最近一轮 X / 状态未知；`last_attempt` 是 §48.7 add-only 投影（老 server 缺席 → 与从前同句）。 */
 export function RunStatusLine({ health }: { health: RadarSourceHealth | undefined }) {
   const { text } = useI18n();
   if (!health) return <p className="settings-helper">{text("状态未知", "unknown")}</p>;
@@ -58,6 +60,15 @@ export function RunStatusLine({ health }: { health: RadarSourceHealth | undefine
       </p>
     );
   }
-  if (health.skip_reason) return <p className="settings-warning">{skipReasonLabel(health.skip_reason, text)}</p>;
-  return <p className="settings-helper">{health.enabled ? text("状态未知", "unknown") : text("已关（flag × 开关 合取为关）", "Off (flag × switch = off)")}</p>;
+  const attempt = health.last_attempt ? <RelativeTime iso={health.last_attempt} prefix={text("最近一轮 ", "last round ")} /> : null;
+  if (health.skip_reason) {
+    return (
+      <p className="settings-warning">
+        {skipReasonLabel(health.skip_reason, text)}
+        {attempt && <>{text("（", " (")}{attempt}{text("）", ")")}</>}
+      </p>
+    );
+  }
+  if (!health.enabled) return <p className="settings-helper">{text("已关（flag × 开关 合取为关）", "Off (flag × switch = off)")}</p>;
+  return <p className="settings-helper is-warning">{attempt ?? text("状态未知", "unknown")}</p>;
 }

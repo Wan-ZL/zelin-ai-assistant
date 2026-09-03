@@ -99,8 +99,9 @@ def _route(d: Daemon, path: Path, decision: dict) -> tuple:
     if special is not None:
         return special(d, path.stem, decision), 1
     # detached special forms (no req id): weekly digest on demand (§24,
-    # Settings「现在生成一份」) and the §63 recap buttons — each spawns
-    # a subprocess so a minutes-long claude call never blocks the pass.
+    # Settings「现在生成一份」), the §63 recap buttons and the §48.7 radar
+    # 「立即测试一轮」— each spawns a subprocess so a minutes-long claude /
+    # network call never blocks the pass.
     if action in d.detached_actions:
         return d.detached_actions[action](decision), 1
     return _route_card_verb(d, path, decision, action)

@@ -142,7 +142,8 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
             out = dashboard._radar_sources(cfg)
         self.assertEqual(set(out), set(sources.SOURCES))
         for entry in out.values():
-            self.assertEqual(set(entry), {"enabled", "last_ok", "skip_reason", "stale"})
+            self.assertEqual(set(entry), {"enabled", "last_ok", "skip_reason", "stale",
+                                          "last_attempt", "test_round"})   # §48.7 add-only
 
     def test_bad_health_file_and_enabled_probe_never_raise(self):
         cfg = config.Config()
@@ -153,7 +154,8 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
             out = dashboard._radar_sources(cfg)
         for entry in out.values():
             self.assertEqual(entry, {"enabled": False, "last_ok": None,
-                                     "skip_reason": None, "stale": False})
+                                     "skip_reason": None, "stale": False,
+                                     "last_attempt": None, "test_round": None})
 
     def test_non_dict_health_payload_is_ignored(self):
         cfg = config.Config()

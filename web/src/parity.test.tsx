@@ -130,6 +130,17 @@ vi.mock("./api", async (importOriginal) => {
     postAction: vi.fn().mockResolvedValue({ ok: true }),
     postReveal: vi.fn().mockResolvedValue({ ok: true }),
     postAiFix: vi.fn().mockResolvedValue({ ok: true, command_file: "/tmp/x.command" }),
+    // §48.7 后台雷达行：launchd 说两个 agent 都「未安装」；点「重新安装」后回执说已加载（面板信回执）→
+    // 「已安装，每 3 / 5 分钟自动运行」与「未安装」都渲染到
+    fetchRadarAgents: vi.fn().mockResolvedValue({ radars: {
+      gmail: { label: "com.zelin.aiassistant.gmailradar", interval_s: 300, loaded: false, plist_installed: false },
+      slack: { label: "com.zelin.aiassistant.slackradar", interval_s: 180, loaded: false, plist_installed: false },
+    } }),
+    // 隔一个 macrotask 再回（同 verifySecret）：同一轮点击里「刷新」的重拉先落地，回执的 loaded 才是最后一笔
+    postRadarReinstall: vi.fn((source: string) => new Promise((resolve) => setTimeout(() => resolve({ ok: true, source, label: `com.zelin.aiassistant.${source}radar`, loaded: true }), 0))),
+    // §68.1 目录字段：创建失败一次（「创建目录失败：」这句才收得到），打开永远成功
+    postFolderOpen: vi.fn().mockResolvedValue({ ok: true, key: "obsidian_raw", path: "/Users/demo/Documents/Obsidian Vault/2 - raw" }),
+    postFolderCreate: vi.fn().mockRejectedValue(new Error("could not create the folder: [Errno 13] Permission denied")),
   };
 });
 
@@ -288,8 +299,16 @@ const shellState: ShellState = {
   hotkey: "⌃⌥Space",
   language: "en",
 };
+/** 假壳只认 §61.1 的既有方法词表；`chooseFolder`（文件对话框）按老壳的样子 reject UNKNOWN_METHOD ——
+ *  目录字段因此退化成路径文本框，原生 NSOpenPanel 的确认词「选择」在 DOM 里才收得到 */
+const FAKE_SHELL_METHODS = new Set(["getState", "setRecording", "restartRecording", "openScreenRecordingSettings",
+  "setCaptions", "setLanguage", "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin", "setCaptionPrefs", "setBadge"]);
 function installFakeShell() {
-  window.webkit = { messageHandlers: { zaiShell: { postMessage: async () => shellState } } };
+  window.webkit = { messageHandlers: { zaiShell: { postMessage: async (body: unknown) => {
+    const method = (body as { method?: string } | null)?.method ?? "";
+    if (!FAKE_SHELL_METHODS.has(method)) throw new Error(`UNKNOWN_METHOD: ${method}`);
+    return shellState;
+  } } } };
 }
 
 function clickAll(buttons: Iterable<HTMLButtonElement>) {

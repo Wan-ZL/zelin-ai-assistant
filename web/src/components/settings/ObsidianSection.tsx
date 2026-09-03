@@ -1,6 +1,6 @@
 // 笔记库区（§48 / §68；原生 Settings.swift obsidianGroup 的 web 版）：「启用 Obsidian 雷达」+「Obsidian Vault 位置」
-// （目录 section obsidian）+ 来源健康一行。原生的 选择… / 打开 / 创建 三颗按钮是 NSOpenPanel / Finder 的事，
-// 浏览器里没有文件对话框——路径手填，健康行会告诉你目录在不在（vault_missing）。
+// （目录 section obsidian；目录字段 → FieldControl 长出 选择… / 打开 / 创建：壳里 NSOpenPanel 经 §61.1 桥，
+// 浏览器退化成路径框，§68.1）+ 来源健康一行（vault_missing 由雷达自己报）。
 import { useI18n } from "../../i18n";
 import { useAppState } from "../../store";
 import { CatalogSection } from "./CatalogSection";

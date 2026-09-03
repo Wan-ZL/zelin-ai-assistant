@@ -590,12 +590,59 @@ export interface MergeSuggestion {
   [key: string]: unknown;
 }
 
-/** §48 radar_sources 投影（dashboard 顶层键）：每源 enabled / last_ok / skip_reason / stale */
+/** §48.7「立即测试一轮」回执（radar_sources.<src>.test_round；actd 台账 × health 的纯投影）：
+ *  running = 子进程起了、雷达还没落笔；done = 请求之后 health 有新一轮；noop = 没起（note: disabled /
+ *  launch_failed）；lost = 超时仍无落笔 */
+export interface RadarTestRound {
+  requested_at: string;
+  state: "running" | "done" | "noop" | "lost" | string;
+  note: string | null;
+  [key: string]: unknown;
+}
+
+/** §48 radar_sources 投影（dashboard 顶层键）：每源 enabled / last_ok / skip_reason / stale
+ *  + §48.7 add-only last_attempt（原生「最近一轮 <相对时间>」）/ test_round */
 export interface RadarSourceHealth {
   enabled: boolean;
   last_ok?: string | null;
   skip_reason?: string | null;
   stale?: boolean;
+  last_attempt?: string | null;
+  test_round?: RadarTestRound | null;
+  [key: string]: unknown;
+}
+
+/** GET /api/radars（§48.7）：每源的 launchd agent 状态——loaded 问 launchd 本人（非 darwin 为 null），
+ *  interval_s 读模板 StartInterval（原生「已安装，每 N 分钟自动运行」的 N） */
+export interface RadarAgentStatus {
+  label: string;
+  interval_s: number | null;
+  loaded: boolean | null;
+  plist_installed: boolean;
+  [key: string]: unknown;
+}
+
+export interface RadarAgentsSnapshot {
+  radars: Record<string, RadarAgentStatus>;
+  [key: string]: unknown;
+}
+
+/** POST /api/radars/reinstall 回执（§48.7）：install.sh --reinstall-agent 跑完后再问一次 launchd */
+export interface RadarReinstallReceipt {
+  ok: boolean;
+  source: string;
+  label: string;
+  loaded: boolean;
+  [key: string]: unknown;
+}
+
+/** POST /api/folders/{open,create} 回执（§68.1 目录字段） */
+export interface FolderReceipt {
+  ok: boolean;
+  key: string;
+  path: string;
+  created?: boolean;
+  git_init?: "done" | "skipped" | "failed" | null | string;
   [key: string]: unknown;
 }
 
@@ -617,6 +664,10 @@ export interface SettingsField {
   source: "override" | "config" | "default" | string;
   /** add-only（§68.1）：输入框示例文案（原生 TextField prompt，如「例：you@gmail.com」，zh/en 两键）；老 server 缺席 */
   placeholder?: BilingualText;
+  /** add-only（§68.1 目录字段）：`"dir"` = 目录路径字段（渲染 选择… 与 打开 / 创建）；老 server 缺席 */
+  path?: "dir" | string;
+  /** add-only：effective 值展开 ~ 后是不是目录；空值 null（无从判断）；老 server 缺席 */
+  path_exists?: boolean | null;
   [key: string]: unknown;
 }
 
