@@ -4717,6 +4717,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **crontab 被 TCC 拒写同样不进判据（v0.48.16；首次 timer 实战 2026-09-02）**：v0.48.12 的自动部署在 install.sh 第 6 步撞上 `crontab: tmp/tmp.<pid>: Operation not permitted`（launchd 会话缺 Full Disk Access——此前两次成功部署都发生在 owner 交互会话拉起的环境里，没暴露），step 记 `fail` → install 退出 1 → 回滚 → 回滚重装撞同一堵墙 → `rollback_failed` + `failed_sha` 中毒，**所有后续部署停摆**（`--force` 也救不了：重装还是会撞墙）。自本版起该失败记 `cron=skipped_tcc`（§23）而非 `fail`——代码回滚治不了 TCC，部署照常完成；缺行/旧行由 doctor `cron write access`（WARN `cron_tcc_blocked`）+ 既有 `cron ingest chain` 行负责可见性，修复入口在 owner（给守护 python 开 FDA，终端跑通不算数）。其余 crontab 失败照旧是部署失败步。判例 `tests/test_install_cron_tcc.py`（EPERM → skipped_tcc + 退出码 0；语法错 → fail + 退出码 1）与 `tests/integration/test_auto_deploy_script.py::test_install_reporting_skipped_tcc_cron_still_deploys`。
 - **看板 UI 随部署上机（v0.48.18 `ui` 步；live 事故 2026-09-02：UI 从未被部署过——install.sh 没有任何步骤构建 web/dist 或 shell，owner 机器跑着 v0.48.12 的守护进程、/Applications 里是 v0.48.0 的旧 app、壳 app 根本不存在）**。`install.sh` 步 4b `install_ui`（两种模式都跑，`.pkg` 跳过）：
   - **web 半**：node+npm 在 → **在 repo 之外构建**：`rsync -a --checksum --delete`（防腐 #8；`--checksum` = 镜像跟内容走而非 size+整秒 mtime 的快检——下文 `npm ci` 闸门 hash 的是镜像里的 lock，同尺寸同秒的改动也必须落地；无 rsync 时 rm+cp）把 `web/`（除 node_modules / dist）镜像到 `~/Library/Caches/zelin-ai-assistant/web-build/`（Linux `$XDG_CACHE_HOME/zelin-ai-assistant/web-build`；seam `AIASSISTANT_UI_BUILD_DIR`）→ 在那里 `npm ci --no-audit --no-fund`（**只在**该目录 `node_modules` 缺席或 `package-lock.json` 的 cksum 与上次成功 ci 的 stamp `node_modules/.zai-package-lock.cksum` 不同）→ `npm run build` → 必须产出 `dist/index.html` → `cp -R` 回 `web/dist.tmp` 再 rm+mv 成 `web/dist`。**为什么不在 repo 里构建**：2026-09-02 一次性 launchd job 实测（同 §55 第二/三幕的方法）：homebrew `node` 在 launchd 会话里对外置卷上的 repo **EPERM**（`scandir` / `uv_cwd` 都拒），哪怕它是有 FDA 的守护 python 的子进程——TCC 按每个非平台 binary 单独记账；而 bash / cp / rsync / swiftc（Apple 平台 binary）读得好好的。node 只碰 `$HOME` 下的路径就绕开了整道墙（顺带 `npm ci` 不再往 checkout 里写 node_modules）。缺 node/npm → `skipped` + warn。npm 日志尾部带 `EPERM` / `operation not permitted` → 该半 **`skipped_tcc`**（§23 add-only 值，同 #137 的 `cron=skipped_tcc` 同理：代码回滚治不了缺失的 FDA），warn 点名给 node 二进制开完全磁盘访问或在终端跑一次 `bash install.sh`；doctor **`board ui build`** 行（WARN `ui_build_tcc_blocked`，§25 新 id，Swift 镜像同步）读 install_report 的 `ui` step 让它可见，`ui=fail`（只可能来自手动 install.sh）同行 WARN 指向 `ui-build.log`。
+  - **web 半追记（2026-09-03，首次 fresh-install 验收 run 33714777638 的死因；add-only）**：「在 repo 之外构建」意味着**镜像里没有仓库根**——`npm run build` 的 `tsc --noEmit` 当时连测试文件一起查，而 `web/src/parity.test.tsx` 静态 import 了 `../../ui/parity/*.json`，镜像里解析不到（TS2307 ×3）→ `web fail (npm run build exit 1)` → `ui=fail` → 装机报 1 个失败步（本机 auto-deploy 走同一路径，同样会红）。法条两条：(a) **构建的类型检查范围 = 产物真正打包的源码**——`npm run build` = `tsc --noEmit -p tsconfig.build.json && vite build`，`web/tsconfig.build.json` extends `tsconfig.json`、排除 `src/**/*.test.ts(x)` 与 `e2e`；全量检查（含测试）= `npm run typecheck`（`tsconfig.json`），CI「Web tests」job 两个都跑（build 瘦了，测试文件的类型覆盖不许因此丢）；(b) **`web/src` 下任何文件（测试也算）都不许有逃出 `web/` 的静态 import**——仓库根的 fixture 只许经 `import.meta.glob`（vite 转换期解析、tsc 不看文件系统）读，找不到时判例自己抛错而不是静默空转。判例 `tests/test_web_build_self_contained.py`（形状：build 脚本 / tsconfig.build.json / CI step / 逃逸 import 扫描 / 镜像排除集不变）+ `tests/integration/test_web_build_outside_repo.py`（真 `npm run build` 与 `npm run typecheck` 在 web/ 的仓外拷贝里跑、node_modules 软链、零网络；qa-gates job 有 node_modules 所以每个 PR 都跑）。
   - **shell 半**（仅 macOS）：swiftc 在且过 `shell/build.sh --check-toolchain` → `ZAI_PORT=<server.port> bash shell/build.sh` → stage-then-swap（`ditto` 到 `.Zelin AI Board.app.staged`，`rm -rf` 旧 bundle，`mv`——**不**在旧 bundle 上合并，ad-hoc 签名的封条不许留陈旧文件）进 `/Applications`（不可写则 `~/Applications`），bundle 文件夹 / id 保持 `Zelin AI Board.app` / `com.zelin.ai-board`（§54.2）；缺工具链 → `skipped` + warn。
   - **合并判决**：任一半 `fail` → `ui=fail`；否则任一半 `ok` → `ui=ok`；否则 web 半 `skipped_tcc` → `ui=skipped_tcc`；否则 `ui=skipped`。**只有 `fail` 是部署失败**（进 `failed_deploy_steps` → 回滚），`skipped` / `skipped_tcc` 是成功——一台没装 node 的机器照常升级守护进程。判例 `tests/test_install_ui_step.py`（假 npm / node / swiftc / shell/build.sh，真 bash）、`tests/integration/test_auto_deploy_script.py::test_ui_step_skipped_is_a_successful_deploy` / `test_ui_step_fail_rolls_back`（假 install.sh 跑**真** `failed_deploy_steps`）。
   - **预算**：每条构建命令受 `AIASSISTANT_UI_BUDGET`（默认 600 s）看门狗——超时 = 该半 `fail (exit 124)`，绝不吃掉自动部署的 1800 s 总看门狗；各半耗时写进 `ui` 步 detail 与 install 输出（`ui step: ok in 52s`）。构建输出进 `~/Library/Logs/zelin-ai-assistant/ui-build.log`（1 MB 帽，失败时 tail 回显）。
@@ -5292,6 +5293,7 @@ owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通�
 ### 66.2 门 `[ui-parity]`（scripts/ui/parity_check.py；shrink-only 两本账）
 
 - **探针**（每条 gated id 一个，真/假二值）：`control:*` → `web/src/parity.test.tsx`：由清单驱动生成 it()（不手写列表），用 demo fixture（`ui/parity/fixtures/`，`scripts/ui/parity_fixture.py` 从 `scripts/demo_seed.py` + `server/lanes.py` 落成，判例钉新鲜）渲染看板 / 回收站 / 设置三面 × zh / en，把每颗按钮点一遍收弹窗文案，按 accessible name / 自身文本**精确**匹配（插值 `{expr}` 放宽为正则）；原生 screen 按前缀映射到渲染面（`settings.*` → 设置页、`trash` → 回收站、其余看板相关 → 看板；web 尚无的页面在全部面的并集里找，新开页面时在该文件登记）。`screen:*` → zh + en 标题字面量都在 web/src 源码（剥注释、排除 `*.test.*`）；`rail:<slug>` → 双语标题 + `data-rail-item="<slug>"`，`rail:order` → 属性出现顺序 = 原生顺序且容器带 `data-rail="left"`；`lane:*` → 双语列名在 web/src 或 `server/lanes.py`，`lanes:order` → `LANES` 的 slug 顺序 = 原生顺序，`lanes:rail-left/right` → `BoardLanes.tsx` 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 之后；`setting:overrides:<k>` → `server/settings*.py` 出现 `"<k>"`（server 是 overrides 的 web 侧写者，§59.5）；`setting:prefs:<k>` → web/src 出现 `"<k>"`；`shortcut:*` → 字形（`⌘F`…）出现在 web/src；`theme:default` → `web/index.html` 首帧脚本写着 `dataset.theme = "light"` 兜底（无存储偏好时不跟随系统深色——owner (b)）；`layout:*` → 某个 web/src CSS `var(--native-layout-…)` 消费该 token（owner (c) 的列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）。
+- **fixture 的读法（2026-09-03 追记，add-only）**：`parity.test.tsx` 读仓库根 `ui/parity/`（清单、两本账本、`fixtures/*.json`）**只经 `import.meta.glob`**（`eager` + `import: "default"`，账本带 `query: "?raw"`），不用静态 `import … from "../../ui/parity/…"`——静态 import 会让 `tsc` 去解析仓库根的文件，而 install.sh 的 ui 步在 web/ 的仓外镜像里编（§56.5 追记：首次 fresh-install 验收的死因）。glob 找不到 = 判例抛错（不静默空转）；`tests/test_web_build_self_contained.py` 钉 web/src 零逃逸 import。
 - **判决 = §58.4 同一三态**（`qa_common.compare_with_ledger`，阈值 0）：缺席且不在 `ui/parity/pending.txt`、也不在 `ui/parity/waivers.txt` → **NEW → FAIL**（补实现，不许记账）；在 pending 上但已在场 → **STALE → FAIL**（同 PR 划掉那行）。vitest 侧同一语义：普通 it 断言「在」，`[pending]` it 断言「不在」，`[waived]` skip——Web tests job 与 qa-gates job 读同两本账本，判决一致。vitest 跑不起来（没 node / 没 `npm ci`）= 门红，**不软化**。
 - **两本账本只许缩**（`ledger_diff.py` 对 base 差分，按 id 集合，备注列不是分数）：`pending.txt` = 尚未搬到 web 的原生条目（出生 = 本节立法当天的全量缺项，truth = 该文件行数，本节不复述；**每个加 UI 的 PR 必须让它缩**）；`waivers.txt` = 有意不搬（种子 = #119 需输入退役的回答对话框四条；行形 `<id>  <理由>  <issue/决策引用>`）。新的「不搬」判断**不走 waivers**——走归属表把 screen 标成 `retired` / `shell` 并带决策引用（代码可审、判例可钉）。
 - **报告**：`ui/parity/report.json` + `report.md`（PRESENT / PENDING / MISSING / STALE / WAIVED 按类计数 + NEW / STALE 清单 + 不判条目按 owner 计数），门每次运行重写；CI 的 `qa-report` artifact 带一份判决文本。`[ui-parity]` 是 `run_gates.sh` 的第六道门、住在 `qa-gates` job（job 名不变，required check 按名字挂），该 job 因此装 node 并在 web/ 做 `npm ci`。
@@ -5507,7 +5509,11 @@ cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN�
 完全磁盘访问路径（§55 追记；claude 一条 = 第五幕的稳定副本 `config.stable_claude_bin()`，§23
 `stable_claude` ok 或副本已在场即用它，否则退到 `claude_bin`）/ 接线守护（--no-launchd 时）。**exit = len(broken)**
 （≤ 99）。两张目录表是法条的一部分：新增 doctor 行或 failure id 时先问「这是人的
-事还是代码的事」，答案写进表。
+事还是代码的事」，答案写进表。**徽章跟桶走，不跟原始 status 走（2026-09-03 追记，
+add-only）**：文本渲染里 unwired 行印 `[ n/a]`、human 行印 `[ you]`，只有 broken / notes
+两桶照原 status 印 `[FAIL]` / `[warn]`（`fresh_install.row_badge`）——首次 CI 验收 exit 0
+却满屏 `[FAIL]`，「按要求没接」与「等人来办」不是这台机器的失败，徽章必须说出类别；
+JSON 里每行保留原始 `status`，桶名即类别。
 
 ### 69.4 CI job「Fresh install (macOS)」—— 验收标准的机器版
 
@@ -5519,17 +5525,27 @@ cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN�
 被发现，而不是拦住落地它的 PR）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
 一并推入让 §56.1 盖章为真）→ `bash scripts/bootstrap.sh --no-launchd --dir …`
 （用**本 checkout 的脚本**，不是 main 上的）→ 断言 §23 报告：`config=ok`（bootstrap 第 4 步已从模板建好，install.sh 记 kept）/ `runtime_python=ok` / `version=ok` / `ui=ok`（web + shell 两半都建）/
-`launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped`，且
+`launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped` /
+`stable_claude=skipped`（detail 带 `no claude`——空白机没有 claude，副本步必须**干净地**跳过，
+永不 warn/fail）/ `claude_bin=missing`，且**没有任何 step 是 `fail`**，且
 `store2_truth.json` + `actd.heartbeat` + `web/dist/index.html` 在 → 用 pin 的解释器
 起 `python3 -m server`：`/api/health` 200、`/api/board` 200 JSON 带 `generated_at`、
 `/api/setup`（§68.5）`needed=true` / `done=false` / `config_exists=true` 且无凭证、
 `/api/permissions` 的 FDA 清单含存在的 `daemon_python` 与一条 `claude`、`/` 200 →
-`doctor --fresh-install --json` **exit 0** →
+`doctor --fresh-install --json` **exit 0**，且 `--no-launchd` 的分类**显式断言**（2026-09-03
+追记）：`broken` 桶为空、`actd` 与 `cron ingest chain` 在 `unwired`、`claude CLI` 在
+`human`、`board server` 在 `wired`（server 此刻在跑）、`manual_steps` 含 open_board /
+install_claude / api_key / fda_python / fda_claude / fda_cron / wire_scheduler 七项 →
 第二次 bootstrap = `updated`、config.yaml 字节不变、仍在 main → 证据（两份
 bootstrap 日志 / server 日志 / setup.json / permissions.json / doctor 五桶 / install_report /
-`~/Library/Logs/zelin-ai-assistant/*.log`）上传 artifact `fresh-install-evidence`。
+`~/Library/Logs/zelin-ai-assistant/*.log`）上传 artifact `fresh-install-evidence`；job
+summary（`$GITHUB_STEP_SUMMARY`，`if: always()`）贴 doctor 的人读版「一台真 Mac 还差 owner
+什么」（claude 安装 / key / 三条 FDA）——判决关于安装路径，待办清单给人读；bootstrap 没走到
+server 步时贴 bootstrap-1.log 里的 warn / ERR / failed step 行。
 这个 job 绿 = 「另一台电脑、空白环境、一条命令、直接能用（剩 TCC 与 key 两件人
-手的事）」成立。
+手的事）」成立。**首次真跑（2026-09-03，run 33714777638，main b67aa7e）红在 ui 步**——web 半
+在仓外镜像里 `tsc` 解析不到 `ui/parity/*.json`（§56.5 追记）；bootstrap 其余六步、doctor
+exit 0、`actd --once` 全部通过。
 
 ## 70. 每日自我改进循环：先维护再提案（P5；owner 决策 D10 / D12 / D18；R2.4）
 

@@ -3,7 +3,6 @@
 // （原生 UserDefaults 同名）、收起态只剩图标 + tooltip、⌘1…⌘8 换页、宽度钳制 160–320。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import inventory from "../../../../ui/parity/native-inventory.json";
 import { LanguageContext } from "../../i18n";
 import { navigate } from "../../route";
 import { activeRailSlug, clampSidebarWidth, NavRail } from "./NavRail";
@@ -22,7 +21,13 @@ function renderRail(language: "zh" | "en" = "en", search = "") {
   );
 }
 
-const nativeRail = inventory.rail.items as Array<{ slug: string; zh: string; en: string }>;
+// 原生清单经 import.meta.glob 读（不许静态 import 仓库根——install.sh 在 web/ 的仓外镜像里编，
+// CONTRACT §56.5；tests/test_web_build_self_contained.py 钉），找不到即抛错。
+const inventoryGlob = import.meta.glob("../../../../ui/parity/native-inventory.json", { eager: true, import: "default" });
+const inventory = inventoryGlob["../../../../ui/parity/native-inventory.json"] as
+  { rail: { items: Array<{ slug: string; zh: string; en: string }> } } | undefined;
+if (!inventory) throw new Error("ui/parity/native-inventory.json not found — this suite runs from the repo's web/ dir");
+const nativeRail = inventory.rail.items;
 
 beforeEach(() => {
   window.localStorage.clear();
