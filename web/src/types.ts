@@ -257,7 +257,9 @@ export interface TrashRow {
  * install_incomplete | blocked_tcc —— 未知值按"需要人看"处理。v0.48.20 add-only：
  * running_version（actd 心跳里的版本）/ install_report_version / reason /
  * last_incident（上一次回滚判决「<ts> <status>: <detail>」，healthy 状态下仍在 =
- * 回滚被拒后没人看过，直到下一次 deployed 才清）。
+ * 回滚被拒后没人看过，直到下一次 deployed 才清）。2026-09-03 add-only：
+ * behind_main / behind_main_why（上一次部署停在 origin/main head 之前的最新绿 commit，
+ * head 的 CI 还没绿 / 红了 / 已中毒；部署到 head 或 up_to_date 时清掉）。
  */
 export interface DeployState {
   status?: string;
@@ -272,6 +274,8 @@ export interface DeployState {
   install_report_version?: string;
   reason?: string;
   last_incident?: string;
+  behind_main?: string;
+  behind_main_why?: string;
   [key: string]: unknown;
 }
 
