@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
-import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
+import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
 import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, RepoChip, TerminalButton } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
 import { TextDialog } from "./TextDialog";
@@ -44,7 +44,7 @@ export function DeliveryChip({ delivery }: { delivery?: Delivery }) {
 
 export function ReviewCard({ card }: ReviewCardProps) {
   const { text } = useI18n();
-  const { pending, error, submit } = useSubmit();
+  const { pending, pendingAction, error, submit } = useSubmit();
   const [showRework, setShowRework] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -99,7 +99,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
         <MetaLine label={text("claude agents 列表名：", "claude agents list name: ")} value={card.agent_name} />
       </CardDetails>
       {pending ? (
-        <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
+        <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (
         <div className="card-actions">
           {/* 三动词色相 = Mac tint 一比一：绿验收 · 橙打回 · 青复制成稿 */}
@@ -126,12 +126,12 @@ export function ReviewCard({ card }: ReviewCardProps) {
 
       {showRework && (
         <TextDialog
-          title={text(`打回 ${displayId(card)}`, `Send back ${displayId(card)}`)}
+          title={text("↩︎ 打回 · 追加要求", "↩︎ Send Back · Add Requirements")}
           body={text(
             "反馈会送回原会话继续改。留空 = 让 AI 按验收标准自查改进。",
             "Feedback goes back to the session. Leave empty = AI self-reviews against the DoD.",
           )}
-          placeholder={text("哪里不对？想怎么改？", "What's wrong? What should change?")}
+          placeholder={text("改哪里…", "What to change…")}
           submitLabel={text("打回", "Send Back")}
           allowEmpty
           onSubmit={(t) => {

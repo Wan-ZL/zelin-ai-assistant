@@ -1,12 +1,10 @@
-// tokens.css 的暗色双写 drift-pin。
-// 暗色 token 必须写两遍：显式 `[data-theme="dark"]`（用户选过）与
-// `prefers-color-scheme: dark` + 未显式选 light（系统偏好兜底）。CSS 没有
-// "别名一组声明"的写法，所以那 60 对值逐字抄了两份，此前只有一句"改一处必改
-// 两处"的注释守着——drift 只在暗色主题下静默发作（改了显式块、没改兜底块 =
-// 只有跟随系统的人看到旧色，没人会报 bug）。这里把两块钉成必须逐字相等。
-//
-// 只做相等断言，不重构 CSS：颜色值本身是 owner 验收过的（见 tokens.css 头注
-// 的语义色阶梯规则），本测试不对取值有任何意见。
+// tokens.css 的主题纪律 drift-pin（CONTRACT §54.4 / §66.2 theme:default / §66.3）。
+// owner 2026-09-02 (b)：原生默认浅色，web 不得默认深色。落法 = index.html 首帧脚本在没有存储偏好时
+// 显式写 dataset.theme = "light"，tokens.css 因此只有 :root（light）与 :root[data-theme="dark"] 两块，
+// **没有** prefers-color-scheme 兜底块（此前那块要与显式块逐字双写，现在整块退役）。
+// 另钉：两个主题的窗口底与状态色点经 var(--native-…) 取 @generated 块的原生数值（§66.3 单源），
+// 布局定点 token 也在生成块里齐全（layout:* 探针消费它们）。
+import indexHtml from "../../index.html?raw";
 import tokensCss from "./tokens.css?raw";
 import { describe, expect, it } from "vitest";
 
@@ -33,24 +31,49 @@ function declarations(body: string): Array<[string, string]> {
     });
 }
 
-const explicit = declarations(blockBody(tokensCss, ':root[data-theme="dark"]'));
-const systemFallback = declarations(
-  blockBody(tokensCss, ':root:not([data-theme="light"])'),
-);
+// 头注里也会提到选择器名——先剥注释再找块，免得 indexOf 命中注释
+const stripped = tokensCss.replace(/\/\*[\s\S]*?\*\//g, "");
+const light = declarations(blockBody(stripped, ":root {"));
+const dark = declarations(blockBody(stripped, ':root[data-theme="dark"]'));
+const lookup = (block: Array<[string, string]>, name: string) => block.find(([k]) => k === name)?.[1];
 
-describe("暗色 token 的两份声明", () => {
-  it("解析出的声明数量是真实的（防正则空转让断言变废话）", () => {
-    expect(explicit.length).toBeGreaterThan(50);
-    expect(systemFallback.length).toBeGreaterThan(50);
+describe("主题默认浅色（theme:default）", () => {
+  it("tokens.css 没有 prefers-color-scheme 兜底块——主题只由 data-theme 决定", () => {
+    expect(stripped).not.toContain("prefers-color-scheme");
+    expect(stripped).not.toContain(':root:not([data-theme="light"])');
   });
 
-  it("显式 dark 块与 prefers-color-scheme 兜底块逐字相等", () => {
-    expect(systemFallback).toEqual(explicit);
+  it("light 块是 :root 默认（color-scheme: light 开头），dark 块只在显式 data-theme=dark 下", () => {
+    expect(light[0]).toEqual(["color-scheme", "light"]);
+    expect(dark[0]).toEqual(["color-scheme", "dark"]);
+    expect(dark.length).toBeGreaterThan(50);
   });
 
-  it("两块都以 color-scheme: dark 开头（缺它表单控件仍是亮色）", () => {
-    for (const block of [explicit, systemFallback]) {
-      expect(block[0]).toEqual(["color-scheme", "dark"]);
+  it("index.html 首帧脚本：无存储偏好时显式写 dataset.theme = \"light\"（不跟随系统深色）", () => {
+    expect(indexHtml).toContain('dataset.theme = "light"');
+    expect(indexHtml).not.toContain("prefers-color-scheme");
+  });
+});
+
+describe("原生数值单源（§66.3 @generated 块 → 语义 token）", () => {
+  it("两个主题的窗口底取原生 windowBackgroundColor 解析值", () => {
+    expect(lookup(light, "--bg")).toBe("var(--native-color-window-background-light)");
+    expect(lookup(dark, "--bg")).toBe("var(--native-color-window-background-dark)");
+  });
+
+  it("状态色点（--status-*）逐色取原生系统色", () => {
+    for (const [name, hue] of [["progress", "orange"], ["review", "green"], ["done", "purple"], ["backlog", "gray"]] as const) {
+      expect(lookup(light, `--status-${name}`)).toBe(`var(--native-color-${hue}-light)`);
+      expect(lookup(dark, `--status-${name}`)).toBe(`var(--native-color-${hue}-dark)`);
+    }
+  });
+
+  it("布局定点 token 在生成块里齐全（列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）", () => {
+    for (const [token, value] of [
+      ["--native-layout-lane-width", "400px"], ["--native-layout-strip-width", "44px"], ["--native-layout-lane-gap", "12px"],
+      ["--native-layout-board-padding", "16px"], ["--native-layout-rail-collapsed-width", "48px"], ["--native-default-theme", "light"],
+    ]) {
+      expect(stripped).toContain(`${token}: ${value};`);
     }
   });
 });

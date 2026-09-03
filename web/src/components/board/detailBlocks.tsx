@@ -88,7 +88,36 @@ export function CopyPathLine({ label, path }: { label: string; path: unknown }) 
         }}
       >
         <span aria-hidden="true">{copied ? "✓ " : "⧉ "}</span>
-        {label}{path}
+        <span className="card-detail-label">{label}</span><span>{path}</span>
+      </button>
+      <CopiedAnnouncer copied={copied} />
+    </>
+  );
+}
+
+/** 「复制」/「已复制」小按钮（原生 Cards.swift:759：错误全文右侧的 copy button，1.5 s 回弹） */
+export function CopyButton({ value }: { value: string }) {
+  const { text } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+  return (
+    <>
+      <button
+        type="button"
+        className="btn btn-quiet card-copy-button"
+        onClick={() => {
+          void copyText(value).then((ok) => {
+            if (!ok) return;
+            setCopied(true);
+            if (timer.current) clearTimeout(timer.current);
+            timer.current = setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+      >
+        {copied ? text("已复制", "Copied") : text("复制", "Copy")}
       </button>
       <CopiedAnnouncer copied={copied} />
     </>
@@ -98,7 +127,7 @@ export function CopyPathLine({ label, path }: { label: string; path: unknown }) 
 /** 等宽小字元信息行（会话 ID / claude agents 列表名） */
 export function MetaLine({ label, value }: { label: string; value: unknown }) {
   if (typeof value !== "string" || !value) return null;
-  return <p className="card-detail-mono">{label}{value}</p>;
+  return <p className="card-detail-mono"><span className="card-detail-label">{label}</span><span>{value}</span></p>;
 }
 
 /** 正文段（summary / delivered_summary）——空不渲染 */

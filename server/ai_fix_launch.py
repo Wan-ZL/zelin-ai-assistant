@@ -1,4 +1,4 @@
-"""「让 AI 修」的 web 侧入口：``POST /api/ai-fix {card_id, lang?}``。
+"""「让 AI 修」的 web 侧入口：``POST /api/ai-fix {card_id, lang?}`` 或 ``{source: "doctor", lang?}``。
 
 原生看板的 让 AI 修（mac/Sources/Doctor.swift ``AIFix.launch``）不是 inbox
 动作——它在本机起 ``python3 -m act.ai_fix --open --context-file <f>``：生成
@@ -6,8 +6,9 @@
 会话。本模块是同一条命令的 server 落点，web 卡片上的按钮打到这里。
 
 安全纪律（对齐 ``server/files.py reveal``）：
-- 客户端只给 ``card_id``（SAFE_ID 白名单）；**上下文文本由 server 从投影行
-  推导**（该卡的 ``last_error`` / ``dispatch_error``），绝不接受客户端原始文本
+- 客户端只给 ``card_id``（SAFE_ID 白名单）或 ``source: "doctor"``（§54.4 依赖检查页的
+  「让 AI 修」= 原生 DepsView 同名按钮）；**上下文文本由 server 推导**（该卡的 ``last_error`` /
+  ``dispatch_error``，或 doctor ``--fast`` 报告里的 FAIL / WARN 行），绝不接受客户端原始文本
   进修复 prompt；
 - 子进程 = ``sys.executable -m act.ai_fix``（server 不 import ``act.ai_fix``
   ——它是 entrypoint，不在 server 允许的 act.lib 层；依赖方向门 §58.4）；
@@ -35,7 +36,8 @@ from server.errors import (ApiError, InvalidFieldError, NotFoundError,
 
 Runner = Callable[[list, dict, Path], "tuple[int, str]"]
 
-_ALLOWED_FIELDS = frozenset({"card_id", "lang"})
+_ALLOWED_FIELDS = frozenset({"card_id", "lang", "source"})
+_SOURCES = frozenset({"doctor"})
 _LANGS = frozenset({"zh", "en"})
 _TIMEOUT_S = 120        # doctor --fast + 写文件 + open；原生无超时，这里兜底
 _OUTPUT_TAIL = 300      # 原生 AIFix.launch 的 String(out.suffix(300))
@@ -58,17 +60,34 @@ def _valid_id(value) -> bool:
     return isinstance(value, str) and bool(SAFE_ID_RE.match(value))
 
 
-def _validate(payload: dict) -> "tuple[str, Optional[str]]":
-    unknown = set(payload) - _ALLOWED_FIELDS
-    if unknown:
-        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+def _validate_target(payload: dict) -> Optional[str]:
+    """``card_id``（SAFE_ID）或 ``source: "doctor"`` 二选一；返回 card_id（doctor 时 None）。"""
+    source = payload.get("source")
     card_id = payload.get("card_id")
-    if not _valid_id(card_id):
-        raise InvalidFieldError("card_id must be a card id", {"id": card_id})
+    if source is None:
+        if not _valid_id(card_id):
+            raise InvalidFieldError("card_id must be a card id", {"id": card_id})
+        return card_id
+    if source not in _SOURCES:
+        raise InvalidFieldError("source must be doctor", {"source": source})
+    if card_id is not None:
+        raise InvalidFieldError("give either card_id or source, not both", {"id": card_id})
+    return None
+
+
+def _validate_lang(payload: dict) -> Optional[str]:
     lang = payload.get("lang")
     if lang is not None and lang not in _LANGS:
         raise InvalidFieldError("lang must be zh or en", {"lang": lang})
-    return card_id, lang
+    return lang
+
+
+def _validate(payload: dict) -> "tuple[Optional[str], Optional[str]]":
+    """返回 (card_id, lang)；``source: "doctor"`` 时 card_id 为 None（上下文来自 doctor 报告）。"""
+    unknown = set(payload) - _ALLOWED_FIELDS
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    return _validate_target(payload), _validate_lang(payload)
 
 
 def _first_text(row: dict, keys: tuple) -> Optional[str]:
@@ -92,6 +111,17 @@ def context_for(home: Path, card_id: str) -> str:
     if not error:
         return head
     return head + "\nerror: %s" % error
+
+
+def context_for_doctor(home: Path, doctor_runner=None) -> str:
+    """依赖检查页的上下文 = doctor --fast 报告里没过的行（name / detail / fix），server 自己跑的。"""
+    from server import doctor_run  # 局部 import：避免与 board_source 同层的循环
+    report = doctor_run.report(home, fast=True, runner=doctor_runner)
+    bad = [row for row in report.get("checks", []) if row.get("status") in ("FAIL", "WARN")]
+    head = "doctor --fast: %d check(s) not OK" % len(bad)
+    lines = ["%s %s: %s%s" % (row.get("status"), row.get("name"), row.get("detail") or "",
+                              (" (fix: %s)" % row["fix"]) if row.get("fix") else "") for row in bad]
+    return "\n".join([head] + lines)
 
 
 def _run(home: Path, context: str, lang: Optional[str], run: Runner) -> "tuple[int, str]":
@@ -138,6 +168,6 @@ def launch(home: Path, payload: dict, runner: Optional[Runner] = None) -> dict:
     card_id, lang = _validate(payload)
     if sys.platform != "darwin":
         raise NotImplementedError501("Fix with AI opens Terminal.app — macOS only")
-    context = context_for(home, card_id)
+    context = context_for(home, card_id) if card_id else context_for_doctor(home)
     rc, out = _run(home, context, lang, runner or _default_runner)
     return _translate(rc, out)

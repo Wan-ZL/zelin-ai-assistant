@@ -195,13 +195,13 @@ export function RecordingControl({ state }: RecordingControlProps) {
         onClick={() => setOpen((v) => !v)}
       >
         <ModeIcon mode={shownMode} isRunning={runningForColor} />
-        <span className="shell-rec-label">{text("录制：", "Rec: ") + stateWord}</span>
+        <span className="shell-rec-label"><span>{text("录制：", "Rec: ")}</span><span>{stateWord}</span></span>
         {isRestarting && <span className="shell-rec-restarting">{text("重启中…", "restarting…")}</span>}
       </button>
       {isOpen && (
         <div className="shell-menu" role="menu" aria-label={text("录制控制", "Recording controls")}>
           <div className="shell-menu-note">
-            {isDead ? recordingDeadReason(state, text) : text("录制：", "Recording: ") + stateWord}
+            {isDead ? recordingDeadReason(state, text) : <><span>{text("录制：", "Recording: ")}</span><span>{stateWord}</span></>}
           </div>
           {state.note && <div className="shell-menu-note is-warn">{state.note}</div>}
           {error && <div className="shell-menu-note is-warn">{error}</div>}

@@ -1,5 +1,6 @@
 // 一个目录 field 的控件（§68 通用设置区）：bool → 开关（checkbox role=switch）、enum → <select>、
-// string → 文本框、number/int → 数字框。纯受控：值与回调都来自 CatalogSection 的草稿。
+// string → 文本框、number/int → 数字框、list → 逗号分隔文本框（草稿存字串，server 拆表）。纯受控：值与回调都来自 CatalogSection 的草稿。
+// 选项文案逐字镜像原生 Settings.swift 的 Picker 标签（§66.2 control:settings.*）。
 // 文案（label / help）是 server-owned 双语键，按 UI 语言取；来源章（override / config / default）
 // 让用户知道当前值是谁定的——原生 Settings 没有这一章，web 加它是为了「等于 config 即删键」
 // 的 diff-write 语义可见（否则改回 config 值后开关看着没变、文件却少了一行）。
@@ -35,15 +36,17 @@ export function choiceLabel(key: string, choice: string, text: (zh: string, en: 
   const table: Record<string, [string, string]> = {
     "review_notify:off": ["关", "Off"],
     "review_notify:banner": ["横幅", "Banner"],
-    "review_notify:sound": ["横幅 + 提示音", "Banner + sound"],
+    "review_notify:sound": ["横幅+声音", "Banner + sound"],
     "digest_frequency:off": ["关", "Off"],
     "digest_frequency:daily": ["每天", "Daily"],
     "digest_frequency:every2days": ["每两天", "Every 2 days"],
     "digest_frequency:weekly": ["每周", "Weekly"],
-    "language:zh": ["中文", "Chinese"],
-    "language:en": ["English", "English"],
+    "language:zh": ["中文 (zh)", "中文 (zh)"],
+    "language:en": ["English (en)", "English (en)"],
+    "default_output_format:markdown": ["Markdown", "Markdown"],
+    "default_output_format:html": ["HTML", "HTML"],
     "telemetry.level:basic": ["基础", "Basic"],
-    "telemetry.level:detailed": ["详细", "Detailed"],
+    "telemetry.level:detailed": ["详细（默认）", "Detailed (default)"],
   };
   const hit = table[`${key}:${choice}`];
   return hit ? text(hit[0], hit[1]) : choice;
@@ -84,19 +87,28 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
       </select>
     );
   } else if (field.kind === "number" || field.kind === "int") {
+    const invalid = typeof value !== "number" || !Number.isFinite(value) || value < 0;
+    const example = typeof field.default === "number" ? String(field.default) : "5";
     control = (
-      <input
-        id={id}
-        type="number"
-        className="settings-input is-number"
-        step={field.kind === "int" ? 1 : "any"}
-        min={0}
-        value={typeof value === "number" ? value : ""}
-        disabled={isBusy}
-        onChange={(event) => onChange(field.key, event.target.value === "" ? null : Number(event.target.value))}
-      />
+      <>
+        <input
+          id={id}
+          type="number"
+          className="settings-input is-number"
+          step={field.kind === "int" ? 1 : "any"}
+          min={0}
+          value={typeof value === "number" ? value : ""}
+          disabled={isBusy}
+          aria-invalid={invalid || undefined}
+          onChange={(event) => onChange(field.key, event.target.value === "" ? null : Number(event.target.value))}
+        />
+        {/* 原生数字框的校验提示（Settings.swift:1703 / 1715）：请输入不小于 0 的数字，如 5 */}
+        {invalid && <span className="settings-warning">{text(`请输入不小于 0 的数字，如 ${example}`, `Enter a number ≥ 0, e.g. ${example}`)}</span>}
+      </>
     );
   } else {
+    // string 与 list 同一个文本框：list 的草稿是逗号分隔字串（CatalogSection.draftOf 拼、server 拆）
+    const fallback = typeof field.default === "string" && field.default ? field.default : text("（未设置）", "(unset)");
     control = (
       <input
         id={id}
@@ -105,7 +117,7 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
         value={typeof value === "string" ? value : ""}
         disabled={isBusy}
         spellCheck={false}
-        placeholder={typeof field.default === "string" && field.default ? field.default : text("（未设置）", "(unset)")}
+        placeholder={pickText(field.placeholder, language) || fallback}
         onChange={(event) => onChange(field.key, event.target.value)}
       />
     );

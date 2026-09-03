@@ -37,12 +37,50 @@ export function costLine(
   card: Record<string, unknown>,
   text: (zh: string, en: string) => string,
 ): string {
+  const money = moneyOf(card);
+  if (money) return text(`预计费用：${money}`, `Estimated cost: ${money}`);
+  return text("成本未知", "Cost unknown");
+}
+
+/** 金额字串（原生 Self.money：整数不带小数）；成本未知 / 无数字 → null */
+export function moneyOf(card: Record<string, unknown>): string | null {
   const cost = card["cost_usd"];
   if (typeof cost === "number" && card["cost_state"] !== "unknown") {
-    const money = Number.isInteger(cost) ? `$${cost}` : `$${cost.toFixed(2)}`;
-    return text(`预计费用：${money}`, `Estimated cost: ${money}`);
+    return Number.isInteger(cost) ? `$${cost}` : `$${cost.toFixed(2)}`;
   }
-  return text("成本未知", "Cost unknown");
+  return null;
+}
+
+/** 展开详情里的金额行（原生 ApprovalCardView.costText：「💰 预计费用: $N」/「💰 成本未知」，ASCII 冒号） */
+export function costText(card: Record<string, unknown>, text: (zh: string, en: string) => string): string {
+  const money = moneyOf(card);
+  return money ? text(`💰 预计费用: ${money}`, `💰 Estimated cost: ${money}`) : text("💰 成本未知", "💰 Cost unknown");
+}
+
+/** tier 章的大白话（原生 tierLine 的词表；管线的 tier_hint 只有中文且与本表 zh 逐字相同，
+ *  所以按 tier 取本地双语表；未知 / 缺席 tier 读 未分级——原生同样「never T?」） */
+export function tierHint(card: Record<string, unknown>, text: (zh: string, en: string) => string): string {
+  switch (card["tier"]) {
+    case "T0": return text("自动执行", "runs automatically");
+    case "T1": return text("一键可批", "one-click approve");
+    case "T2": return text("需文字确认", "needs written confirmation");
+  }
+  return text("未分级", "Untiered");
+}
+
+/** 截止倒数短语（原生 deadline phrase）：已逾期 N 天 / 今天截止 / 还剩 N 天；days_left 缺席 → null */
+export function deadlinePhrase(daysLeft: unknown, text: (zh: string, en: string) => string): string | null {
+  if (typeof daysLeft !== "number" || !Number.isFinite(daysLeft)) return null;
+  if (daysLeft < 0) return text(`已逾期 ${-daysLeft} 天`, `${-daysLeft} d overdue`);
+  if (daysLeft === 0) return text("今天截止", "due today");
+  return text(`还剩 ${daysLeft} 天`, `${daysLeft} d left`);
+}
+
+/** 难度章（原生 hardnessLabel：hard → 较难 / soft → 常规；其它原样） */
+export function hardnessLabel(value: unknown, text: (zh: string, en: string) => string): string | null {
+  if (value === "hard") return text("较难", "Hard");
+  if (value === "soft") return text("常规", "Routine");
+  return typeof value === "string" && value ? value : null;
 }
 
 /** 打开/关闭详情抽屉 + 同步 ?card= 深链（CONVENTIONS：深链只经 route.ts） */
@@ -59,6 +97,8 @@ export interface SubmitState {
   /** 最近一次提交被 server 标注为 steer（executing 卡上的 comment，响应键 steer:true）——
    *  pending 期间的「方向修正排队中」回执 chip 用；看板回流后以投影 steers[] 为准 */
   steerQueued: boolean;
+  /** in-flight 的动作词（body.action）：卡面的等待句按它选原生文案（pendingNote） */
+  pendingAction: string | null;
   submit: (body: Record<string, unknown>) => Promise<boolean>;
   clearError: () => void;
 }
@@ -77,6 +117,7 @@ export function useSubmit(): SubmitState {
   const { text } = useI18n();
   const generatedAt = board?.generated_at ?? null;
   const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [steerQueued, setSteerQueued] = useState(false);
   const sentAt = useRef<string | null>(null);
@@ -104,6 +145,7 @@ export function useSubmit(): SubmitState {
 
   const submit = async (body: Record<string, unknown>): Promise<boolean> => {
     setPending(true);
+    setPendingAction(typeof body.action === "string" ? body.action : null);
     setError(null);
     setSteerQueued(false);
     sentAt.current = generatedAt;
@@ -119,7 +161,24 @@ export function useSubmit(): SubmitState {
     }
   };
 
-  return { pending, error, steerQueued, submit, clearError: () => setError(null) };
+  return { pending, pendingAction, error, steerQueued, submit, clearError: () => setError(null) };
+}
+
+/** 等看板回流期间卡面的一句（原生 Store 的乐观 notice 文案，Store.swift:708–792 / Cards.swift:1117）：
+ *  不是乐观更新——卡不换列、按钮只是禁用；回流后整句退场。未知动作词退到「已提交…」。 */
+export function pendingNote(action: string | null, text: (zh: string, en: string) => string): string {
+  switch (action) {
+    case "approve": return text("启动中…", "Starting…");
+    case "rework": return text("打回处理中…", "Sending back…");
+    case "accept": return text("验收确认中…", "Accepting…");
+    case "defer": return text("暂缓中…", "Moving to backlog…");
+    case "abort_execution": case "stop_to_review": return text("停止中，卡片将去待验收", "Stopping — card moves to Review");
+    case "revert_review": return text("退回中，卡片将回到待验收", "Reverting to review");
+    case "done_external": return text("已办完", "done outside");
+    case "comment": return text("修改意见合并中…", "Merging your feedback…");
+    case "feedback": return text("已记录建议，感谢", "Feedback recorded");
+    default: return text("已提交…", "Submitted…");
+  }
 }
 
 /** 动作失败的用户可读文案；501 = G1 inbox_writer 尚未接线（F1 约定的过渡语义） */

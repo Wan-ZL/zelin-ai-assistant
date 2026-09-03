@@ -1,0 +1,28 @@
+"""server/slack_setup.py — Slack 接入区的「复制 App Manifest」（§15.3 v0.14 / §54.4）：``GET /api/slack/manifest``。
+
+原生 SettingsSlack.swift 的 copyManifest 读 repo 的 ``config/slack-app-manifest.json``
+（真源 = act/lib/slack_setup.manifest_json，drift-guard 钉住两者一致）写进剪贴板；web 没有
+读 repo 文件的能力，server 把同一份文件原文交给页面，页面再写剪贴板。文件缺席 = 404
+（repo 不完整），不 500。
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from server import paths
+from server.errors import NotFoundError
+
+MANIFEST_REL = Path("config") / "slack-app-manifest.json"
+
+
+def manifest_path() -> Path:
+    return paths.repo_root() / MANIFEST_REL
+
+
+def manifest(_home: Path) -> dict:
+    """``{"manifest": <json 原文>, "path": <repo 相对路径>}``。"""
+    try:
+        text = manifest_path().read_text(encoding="utf-8")
+    except OSError:
+        raise NotFoundError("slack app manifest not found", {"path": str(MANIFEST_REL)})
+    return {"manifest": text, "path": str(MANIFEST_REL)}

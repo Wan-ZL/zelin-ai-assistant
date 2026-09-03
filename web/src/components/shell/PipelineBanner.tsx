@@ -68,29 +68,44 @@ export function describeHealth(
  * 一键修复（原生 PipelineRepair 的 web 落点，§68.8）：POST /api/repair/actd → server 对已加载的
  * actd agent kickstart；未加载（409）时 server 的整句原文指向 bash install.sh。成功后 3s 重拉 health。
  */
-export function RepairButton() {
+export function RepairButton({ verdict }: { verdict?: string }) {
   const { text } = useI18n();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  // 原生 Freshness.swift：卡住 / 连崩 = 「一键修复」（kickstart）；没在跑（stale）= 「启动后台服务」（同一 kickstart，
+  // 未加载时 server 409 指向 bash install.sh）；失败一次后按钮换成「再试一次」+ 手动命令
+  const isStart = verdict === "stale";
   const run = async () => {
     setBusy(true);
     setNote(null);
+    setFailed(null);
     try {
       await postRepairActd();
-      setNote(text("已重启后台服务，等心跳回来…", "Background service restarted; waiting for the heartbeat…"));
+      setNote(isStart ? text("正在启动并等待首份数据…", "Starting and waiting for the first data…") : text("正在重启后台服务并等待数据更新（最多 15 秒）…", "Restarting the background service and waiting for data (up to 15 s)…"));
       window.setTimeout(() => void refreshHealth(), 3000);
     } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      setFailed(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
+  const depsHref = buildAppUrl(window.location.href, "deps", null).toString();
   return (
     <span className="shell-banner-actions">
-      <button type="button" className="shell-button" disabled={busy} onClick={() => void run()}>
-        {busy ? text("修复中…", "Repairing…") : text("一键修复", "Repair")}
-      </button>
-      <a className="shell-banner-link" href={buildAppUrl(window.location.href, "diagnostics", null).toString()}>{text("诊断", "Diagnostics")}</a>
+      {failed ? (
+        <>
+          <span className="shell-banner-note"><span>{isStart ? text("启动没成功：", "Start didn't work: ") : text("自动修复没成功：", "Auto-repair didn't work: ")}</span><span>{failed}</span></span>
+          <button type="button" className="shell-button" disabled={busy} onClick={() => void run()}>{text("再试一次", "Try again")}</button>
+          <span className="shell-banner-note"><span>{text("手动命令：", "Manual command: ")}</span><code>{RESTART_CMD}</code></span>
+        </>
+      ) : (
+        <button type="button" className="shell-button" disabled={busy} onClick={() => void run()}>
+          {busy ? text("修复中…", "Repairing…") : isStart ? text("启动后台服务", "Start service") : text("一键修复", "Fix now")}
+        </button>
+      )}
+      <a className="shell-banner-link" href={depsHref}>{isStart ? text("打开依赖检查", "Open dependency check") : text("依赖检查", "Dependency check")}</a>
+      <a className="shell-banner-link" href={depsHref + "&log=actd.log"}>{text("查看日志", "View log")}</a>
       {note && <span className="shell-banner-note">{note}</span>}
     </span>
   );
@@ -115,7 +130,7 @@ export function PipelineBanner() {
       </svg>
       <strong className="shell-banner-title">{described.title}</strong>
       <span className="shell-banner-detail">{described.detail}</span>
-      <RepairButton />
+      <RepairButton verdict={health.verdict} />
     </div>
   );
 }

@@ -8,7 +8,7 @@ import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
-import { cardAction, useSubmit } from "./boardActions";
+import { cardAction, useSubmit, pendingNote } from "./boardActions";
 import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
@@ -21,7 +21,7 @@ interface DoneCardProps {
 
 export function DoneCard({ row }: DoneCardProps) {
   const { text } = useI18n();
-  const { pending, error, submit } = useSubmit();
+  const { pending, pendingAction, error, submit } = useSubmit();
   const [confirmArchive, setConfirmArchive] = useState(false);
 
   const title = typeof row.display_title === "string" && row.display_title ? row.display_title : row.name;
@@ -49,7 +49,7 @@ export function DoneCard({ row }: DoneCardProps) {
         <MetaLine label={text("会话 ID：", "Session ID: ")} value={row.short_id ?? row.session_id} />
       </CardDetails>
       {pending ? (
-        <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
+        <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (
         <div className="card-actions">
           {/* 色相 = Mac tint：青退回待验收 · 灰永久完成 */}

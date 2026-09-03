@@ -1,6 +1,7 @@
 // 顶栏行为测试（G7）：新鲜度阈值（镜像 Freshness.swift 的 90s 语义）、
 // 主题切换（dataset + localStorage）、语言切换（store.setLanguage + zai.lang 持久化）、
 // §56 部署状态小字（deploy_state 缺失自隐藏 / healthy 次级色 / 回滚警告色）。
+// 页面入口（回收站 / 设置 …）已搬到左侧导航栏——判例在 NavRail.test.tsx（§54.4）。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard } from "../../api";
@@ -61,21 +62,21 @@ describe("HeaderBar", () => {
   it("新鲜数据（≤90s）：显示相对时间，无 actd 警告", async () => {
     await seedBoard(30);
     renderHeader();
-    expect(screen.getByText("Data generated just now")).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && el.textContent === "Data generated just now")).toBeTruthy();
     expect(screen.queryByText(/actd may be down/)).toBeNull();
   });
 
   it("过期数据（>90s）：显示分钟数 + actd 可能未运行警告", async () => {
     await seedBoard(5 * 60);
     renderHeader();
-    expect(screen.getByText("Data generated 5 min ago — actd may be down")).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && el.textContent === "Data generated 5 min ago — actd may be down")).toBeTruthy();
   });
 
   it("15s tick 自驱变陈旧：80s 时新鲜，跨过 90s 阈值后变警告", async () => {
     vi.useFakeTimers();
     await seedBoard(80);
     renderHeader();
-    expect(screen.getByText(/Data generated 1m ago/)).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && /Data generated 1m ago/.test(el.textContent ?? ""))).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(15_000); // 80s + 15s = 95s > 90s
     });
@@ -91,24 +92,6 @@ describe("HeaderBar", () => {
     fireEvent.click(toggle);
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(window.localStorage.getItem("zai.theme")).toBe("light");
-  });
-
-  it("回收站入口：链接指向 ?page=trash 深链（双语文案）", () => {
-    renderHeader();
-    const link = screen.getByRole("link", { name: "Trash" }) as HTMLAnchorElement;
-    expect(new URL(link.href).searchParams.get("page")).toBe("trash");
-    cleanup();
-    renderHeader("zh");
-    expect(screen.getByRole("link", { name: "回收站" })).toBeTruthy();
-  });
-
-  it("设置入口（§59）：齿轮链接指向 ?page=settings 深链（双语可访问名）", () => {
-    renderHeader();
-    const link = screen.getByRole("link", { name: "Settings" }) as HTMLAnchorElement;
-    expect(new URL(link.href).searchParams.get("page")).toBe("settings");
-    cleanup();
-    renderHeader("zh");
-    expect(screen.getByRole("link", { name: "设置" })).toBeTruthy();
   });
 
   it("§56 部署状态：无 deploy_state 时顶栏不渲染部署小字", async () => {

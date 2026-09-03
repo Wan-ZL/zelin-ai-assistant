@@ -45,10 +45,18 @@ export function useI18n(): I18n {
 // 铁律：未知枚举值原样展示（wire add-only，前端绝不因新值崩渲染）——一律经 domainLabel 取。
 export type LabelTable = Record<Language, Record<string, string>>;
 
-/** 卡片 type（debt/trash 行；radar 提取的开放枚举，常见值预置双语） */
+/** 卡片 type（debt/trash 行；radar 提取的开放枚举，常见值预置双语）。
+ *  原生 Cards.swift typeLabel 的闭集（quick_capture 提取 schema：code / comms / paperwork / research / review /
+ *  training / other + suggestion）逐字镜像；radar 侧的 engineering / process / writing / digest 是 web 已有词。 */
 export const TYPE_LABELS: LabelTable = {
-  zh: { engineering: "工程", process: "流程", research: "研究", writing: "写作", digest: "回顾" },
-  en: { engineering: "Engineering", process: "Process", research: "Research", writing: "Writing", digest: "Digest" },
+  zh: {
+    code: "代码", comms: "沟通", paperwork: "文书", research: "调研", review: "评审", training: "训练", other: "其他", suggestion: "建议",
+    engineering: "工程", process: "流程", writing: "写作", digest: "回顾",
+  },
+  en: {
+    code: "Code", comms: "Comms", paperwork: "Paperwork", research: "Research", review: "Review", training: "Training", other: "Other", suggestion: "Suggestion",
+    engineering: "Engineering", process: "Process", writing: "Writing", digest: "Digest",
+  },
 };
 
 /** 来源渠道（sources[].channel；开放枚举） */

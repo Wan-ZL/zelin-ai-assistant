@@ -139,7 +139,12 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-header-title", font: "var(--w-semibold) calc(14px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "MainWindow.swift", line: 266, size: 14, weight: "semibold" },
-    zh: "顶栏 app 标题（MainWindow 侧栏标题）", en: "Header app title (MainWindow sidebar title)",
+    zh: "侧栏 app 标题（MainWindow sidebar 标题行）", en: "Sidebar app title (MainWindow sidebar title row)",
+  },
+  {
+    token: "--type-rail-item", font: "var(--w-regular) calc(13px * var(--text-scale))/1.4 var(--font-sans)",
+    swift: { file: "MainWindow.swift", line: 308, size: 13, weight: "regular" },
+    zh: "左侧导航栏条目文字（MainWindow sectionRow）", en: "Sidebar item label (MainWindow sectionRow)",
   },
   {
     token: "--type-header-control", font: "var(--w-regular) calc(12px * var(--text-scale))/1.4 var(--font-sans)",

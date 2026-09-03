@@ -68,10 +68,10 @@ export function SelectionBar() {
       <span className="selection-count">{text(`已选 ${ids.length}`, `${ids.length} selected`)}</span>
       <button type="button" className="btn btn-primary" disabled={busy || ids.length < 2}
         onClick={() => void run([{ action: "merge_review", ids }], text("已请求合并建议，AI 分析中（提案列顶会出现建议卡）", "Merge review requested; the suggestion card appears atop Proposals"))}>
-        {text(`请求合并建议 (${ids.length})`, `Request merge review (${ids.length})`)}
+        {text(`请求合并建议 (${ids.length})`, `Suggest merge (${ids.length})`)}
       </button>
       <button type="button" className="btn btn-danger" disabled={busy || ids.length < 2} onClick={() => setConfirm("force")}>
-        {text(`强制合并 (${ids.length})`, `Force merge (${ids.length})`)}
+        {text(`强制合并 (${ids.length})`, `Force-merge (${ids.length})`)}
       </button>
       <button type="button" className="btn btn-success" disabled={busy || approve.ok.length === 0} onClick={() => setConfirm("approve")}
         title={approve.skippedT2.length ? text(`T2 卡需单独输入确认：${approve.skippedT2.join(", ")}`, `T2 cards need their own typed confirm: ${approve.skippedT2.join(", ")}`) : undefined}>
@@ -82,10 +82,10 @@ export function SelectionBar() {
       </button>
       {/* §29 targeted 提建议（原生多选条同位）：ids = 选中卡 */}
       <button type="button" className="btn" disabled={busy || ids.length === 0} onClick={() => setConfirm("feedback")}>
-        {text(`提建议 (${ids.length})`, `Feedback (${ids.length})`)}
+        {text(`提建议 (${ids.length})`, `Send feedback (${ids.length})`)}
       </button>
       <button type="button" className="btn" disabled={busy || ids.length === 0} onClick={() => clearSelection()}>{text("清空", "Clear")}</button>
-      <button type="button" className="btn" disabled={busy} onClick={() => setSelectionMode(false)}>{text("退出选择", "Done")}</button>
+      <button type="button" className="btn" disabled={busy} onClick={() => setSelectionMode(false)} title="⎋">{text("退出选择", "Done")}</button>
       {note && <span className="selection-note">{note}</span>}
 
       {confirm === "feedback" && (

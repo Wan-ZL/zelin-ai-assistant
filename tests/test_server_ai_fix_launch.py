@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -173,6 +174,33 @@ class RouteTestCase(_Home):
                 status, obj = post_json(self.port, "/api/ai-fix", payload)
                 self.assertEqual(status, 400)
                 assert_envelope(self, obj, "INVALID_FIELD")
+
+    def test_doctor_source_derives_context_from_the_doctor_report(self):
+        """§54.4 依赖检查页「让 AI 修」：{source: "doctor"} → 上下文 = doctor --fast 没过的行（server 自己跑，
+        客户端零文本）；与 card_id 二选一；source 词表外 400。"""
+        from server import doctor_run
+        doctor_run.reset_cache_for_tests()
+        report = {"ok": True, "checks": [{"name": "python", "status": "OK", "detail": "3.9"},
+                                         {"name": "claude", "status": "FAIL", "detail": "not found", "fix": "install claude"},
+                                         {"name": "cron", "status": "WARN", "detail": "stale"}]}
+        run = _fake_runner()
+
+        def doctor_runner(argv, env, cwd, timeout_s):
+            return 0, json.dumps(report), ""
+        with mock.patch.object(ai_fix_launch.sys, "platform", "darwin"), \
+                mock.patch.object(ai_fix_launch, "_default_runner", run), \
+                mock.patch.object(doctor_run.subproc, "default_runner", doctor_runner):
+            status, obj = post_json(self.port, "/api/ai-fix", {"source": "doctor", "lang": "zh"})
+        self.assertEqual(status, 200)
+        self.assertTrue(obj["ok"])
+        self.assertIn("doctor --fast: 2 check(s) not OK", run.calls["context"])
+        self.assertIn("FAIL claude: not found (fix: install claude)", run.calls["context"])
+        self.assertIn("WARN cron: stale", run.calls["context"])
+        self.assertNotIn("python", run.calls["context"].split("\n", 1)[1])
+        for payload in ({"source": "cards"}, {"source": "doctor", "card_id": "R-501"}):
+            status, obj = post_json(self.port, "/api/ai-fix", payload)
+            self.assertEqual(status, 400, payload)
+            assert_envelope(self, obj, "INVALID_FIELD")
 
     def test_unknown_card_404(self):
         with mock.patch.object(ai_fix_launch.sys, "platform", "darwin"):

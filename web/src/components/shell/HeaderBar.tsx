@@ -1,10 +1,9 @@
-// 顶栏（G7 shell，自写非 fork）：左=标识+标题+设备标签+新鲜度+部署状态（§56）；中=搜索槽位；
-// 右=壳内原生开关（录制 / 实时字幕，仅壳里出现，§61）+会议纪要（§63）+回收站+设置+连接状态点+语言切换+主题切换。
-// 搜索本体归 A8（filters/⌘F）——这里只留 searchSlot 槽位，A8 把搜索组件经 app.tsx 传进来即可，
-// 不传则槽位为空但布局稳定。
+// 顶栏（G7 shell，自写非 fork；§54.4 布局跟原生 Kanban.header）：左=标识+标题+设备标签+新鲜度+部署状态（§56）；
+// 中=搜索/过滤/排序槽位；右=壳内原生开关（录制 / 实时字幕，仅壳里出现，§61）+连接状态点+语言切换+主题切换。
+// 页面入口（任务台 / 回收站 / 永久性完成 / 设置 / 关于 / 会议纪要…）不在这里——它们在左侧导航栏（NavRail），
+// 与原生 MainWindow 的 sidebar 同位。搜索本体归 A8（filters/⌘F）——这里只留 searchSlot 槽位。
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
-import { buildAppUrl } from "../../route";
 import { useAppState, type ConnectionState } from "../../store";
 import { DeployLabel } from "./DeployLabel";
 import { FreshnessLabel } from "./FreshnessLabel";
@@ -55,33 +54,6 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
       <div className="shell-header-right">
         {/* §61：录制 / 实时字幕 开关——只在 shell/ 壳（"Zelin's AI Assistant"）里渲染（普通浏览器无桥 → null） */}
         <ShellControls />
-        {/* 会议纪要入口（§63）：?page=recaps 整页导航（同 trash 链接约定） */}
-        <a
-          className="shell-trash-link"
-          href={buildAppUrl(window.location.href, "recaps", null).toString()}
-        >
-          {text("会议纪要", "Recaps")}
-        </a>
-        {/* 回收站入口：TrashPage 只有 ?page=trash 深链——壳层导航走整页 <a>（同 trash-back-link 约定） */}
-        <a
-          className="shell-trash-link"
-          href={buildAppUrl(window.location.href, "trash", null).toString()}
-        >
-          {text("回收站", "Trash")}
-        </a>
-        {/* 设置入口（§59）：齿轮 → ?page=settings 整页导航（同 trash 链接约定） */}
-        <a
-          className="shell-settings-link"
-          href={buildAppUrl(window.location.href, "settings", null).toString()}
-          aria-label={text("设置", "Settings")}
-          title={text("设置", "Settings")}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none"
-            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
-          </svg>
-        </a>
         <span
           className={`shell-connection is-${connection}`}
           title={connectionLabel(connection, text)}

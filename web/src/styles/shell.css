@@ -4,13 +4,21 @@
  * 组件样式（卡片/列/抽屉）归 A6/A7/A9，别往这里加。
  */
 
-/* —— 布局骨架 —— */
-/* min-width：看板是桌面工具，顶栏窄于 640px 会塌；更窄时交给横向滚动而不是挤压 */
+/* —— 布局骨架（§54.4：跟原生 MainWindow——左侧 sidebar 通高，右侧顶栏 + 内容）—— */
+/* min-width：看板是桌面工具，窄于原生窗口下限 720（--native-layout-window-min-width）时交给横向滚动而不是挤压 */
 .shell {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   min-height: 100vh;
-  min-width: 640px;
+  min-width: var(--native-layout-window-min-width);
+}
+
+.shell-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .shell-main {
@@ -18,6 +26,134 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* —— 左侧导航栏（NavRail；原生 sidebar 逐字镜像：底 primary 3%、行 hover primary 6%、选中 accent 18%、
+   圆角 6、行内 padding 6/8、图标 16、文字 13 regular、标题 14 semibold；收起 = 48pt 图标条，展开默认 200pt）—— */
+.rail {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  flex: 0 0 auto;
+  width: var(--native-layout-rail-default-width);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  box-sizing: border-box;
+  background: var(--sidebar-bg);
+  border-right: var(--border-hairline) solid var(--border);
+  overflow: hidden auto;
+}
+
+.rail.is-collapsed {
+  width: var(--native-layout-rail-collapsed-width);
+  padding: 12px 6px;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 10px;
+  min-height: 28px;
+}
+
+.rail.is-collapsed .rail-head {
+  justify-content: center;
+}
+
+.rail-title {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-header-title);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.rail-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  text-decoration: none;
+  font: var(--type-rail-item);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.rail.is-collapsed .rail-item {
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.rail-item:hover {
+  background: var(--rail-hover-bg);
+}
+
+.rail-item.is-active {
+  background: var(--rail-active-bg);
+}
+
+.rail-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  justify-content: center;
+}
+
+.rail-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-divider {
+  height: var(--border-hairline);
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+.rail-toggle:focus-visible,
+.rail-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 原生 dragHandle：分隔线内侧 8pt 的隐形抓取带（rail 是 sticky 定位，absolute 子元素以它为容器） */
+.rail-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.rail-resize-handle:hover {
+  background: var(--accent-soft-quiet);
 }
 
 /* 整页空态/加载态的居中容器 */
@@ -111,44 +247,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-/* 回收站入口：低调文本链接，与连接状态/切换钮同排 */
-.shell-trash-link {
-  font: var(--type-header-control);
-  color: var(--text-secondary);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.shell-trash-link:hover {
-  color: var(--text-primary);
-  text-decoration: underline;
-}
-
-.shell-trash-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  border-radius: 3px;
-}
-
-/* 设置入口（§59）：齿轮图标链接，与回收站链接同排同色 */
-.shell-settings-link {
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-secondary);
-  padding: 2px;
-  border-radius: 5px;
-}
-
-.shell-settings-link:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-.shell-settings-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 /* 连接状态：小圆点 + 文本（live 只留点省空间，异常态才展开文字） */

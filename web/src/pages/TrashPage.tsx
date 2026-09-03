@@ -133,7 +133,7 @@ export function TrashPage() {
         {text("← 返回看板", "← Back to board")}
       </a>
       <div className="trash-page-head">
-        <h2 className="trash-page-title">{text("🗑 回收站", "🗑 Trash")}</h2>
+        <h2 className="trash-page-title">{text("🗑 回收站 · trash", "🗑 Trash")}</h2>
         <span className="trash-page-count">{board?.counts?.trash ?? items.length}</span>
       </div>
 
