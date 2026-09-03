@@ -164,10 +164,38 @@ export interface TaskRow {
   [key: string]: unknown;
 }
 
+/** §65.3 self_improve 卡的 gh 物理核验结果（review 行 `delivery`，wire key 逐字镜像 execution.delivery） */
+export interface Delivery {
+  verified: boolean;
+  reason?: string | null;
+  branch?: string;
+  pr_number?: number | null;
+  pr_url?: string | null;
+  pr_draft?: boolean | null;
+  pr_state?: string | null;
+  changed_files?: number;
+  sensitive_paths?: string[];
+  [key: string]: unknown;
+}
+
+/** §65 顶层 `self_improve`：自动草稿 PR 通道的开关 + 暂停状态（敏感路径护栏） */
+export interface SelfImproveState {
+  enabled: boolean;
+  paused: boolean;
+  paused_reason?: string | null;
+  paused_pr?: number | null;
+  paused_pr_url?: string | null;
+  paused_paths?: string[];
+  paused_at?: string | null;
+  [key: string]: unknown;
+}
+
 /** 待验收卡（review 分区项） */
 export interface ReviewCard {
   id: string;
   name: string;
+  /** §65.3 self_improve 卡才有：草稿 PR 核验结果 */
+  delivery?: Delivery;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
   work_id?: string | null;
   /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
@@ -293,6 +321,8 @@ export interface Board {
   deploy_state?: DeployState;
   /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
   recaps?: RecapRow[];
+  /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
+  self_improve?: SelfImproveState;
   [key: string]: unknown;
 }
 

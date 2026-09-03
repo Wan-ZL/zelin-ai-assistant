@@ -310,6 +310,11 @@ OPTIONAL_ORDER = [
     # {summary, verdict, verdict_reason, at, source_hash | error}，只由
     # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
     "assessment",
+    # §65 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
+    # 只会让卡**更不自主**——self_improve lane 见到即拒（self_improve:needs_mcp，
+    # 只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开。
+    # 默认 False 整键省略。
+    "needs_mcp",
 ]
 
 
@@ -389,6 +394,9 @@ class Requirement:
 
     # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
     assessment: Optional[dict] = None
+
+    # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
+    needs_mcp: bool = False
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)

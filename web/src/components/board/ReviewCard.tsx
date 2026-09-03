@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
-import type { ReviewCard as ReviewCardRow } from "../../types";
+import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
 import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, RepoChip } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
@@ -19,6 +19,27 @@ import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
 
 interface ReviewCardProps {
   card: ReviewCardRow;
+}
+
+/** §65.3 交付核验章：verified → 「PR #n · draft」链接（绿）；否则「PR 未核验：<reason>」（红）；无 delivery 不渲染 */
+export function DeliveryChip({ delivery }: { delivery?: Delivery }) {
+  const { text } = useI18n();
+  if (!delivery) return null;
+  if (delivery.verified) {
+    const label = `PR #${delivery.pr_number ?? "?"}${delivery.pr_draft ? " · draft" : ""}`;
+    return delivery.pr_url ? (
+      <a className="chip chip-success" href={delivery.pr_url} target="_blank" rel="noreferrer" data-delivery="verified">
+        {label}
+      </a>
+    ) : (
+      <span className="chip chip-success" data-delivery="verified">{label}</span>
+    );
+  }
+  return (
+    <span className="chip chip-danger" data-delivery="unverified" title={delivery.reason ?? undefined}>
+      {text(`PR 未核验：${delivery.reason ?? "?"}`, `PR unverified: ${delivery.reason ?? "?"}`)}
+    </span>
+  );
 }
 
 export function ReviewCard({ card }: ReviewCardProps) {
@@ -50,6 +71,8 @@ export function ReviewCard({ card }: ReviewCardProps) {
         {/* §30 会话再活跃：只是平静地标注，不是打回轮（原生 teal 章） */}
         {card.session_active && <span className="chip chip-accent">{text("会话有新活动", "Session active")}</span>}
         {card.interrupted === true && <span className="chip chip-warning">{text("中断收割", "Interrupted")}</span>}
+        {/* §65.3 self_improve 卡：gh 物理核验结果——通过 = PR 章（可点开）；未通过 = 原因 token（红） */}
+        <DeliveryChip delivery={card.delivery} />
         <RepoChip path={card.cwd} />
         <DurationText from={card.dispatched_at} to={card.review_at} prefix={text("耗时 ", "took ")} />
         <DurationText from={card.review_at} prefix={text("已等待验收 ", "in review ")} />

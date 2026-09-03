@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import llm
-from act.lib import analytics, config, failures, notify, sanitize
+from act.lib import analytics, config, failures, notify, sanitize, self_improve
 from act.lib.registry import Requirement, State, display_id, load, save
 
 MEMORY_HEAD_LINES = 60
@@ -398,6 +398,9 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     blocks.append("\n## " + _quality_gate_block(cfg, remote=remote,
                                                 delivery_mode=delivery_mode,
                                                 target=target))
+    # §65 self_improve lane：确定性交付契约段（分支名 / 只准草稿 PR / 受保护
+    # 路径 / 无 MCP）——非 self_improve 卡给 []，prompt 逐字节不变。
+    blocks.extend(self_improve.prompt_blocks(req, cfg, target))
 
     if (req.type or "").lower() == "training":
         blocks.append("\n## " + _training_block())
@@ -572,21 +575,27 @@ def _claude_bin(cfg: Optional[config.Config] = None) -> str:
     return llm.claude_bin(cfg)
 
 
-def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
+def _bg_base_cmd(cfg: Optional[config.Config] = None,
+                 req: Optional[Requirement] = None) -> list:
     """Base ``claude --bg`` argv shared by all launch sites (dispatch / resume /
     rework / brief) — built by the §59 single LLM boundary (act/llm.py):
     ``--dangerously-skip-permissions`` only while ``execution.skip_permissions``
     is on (default; P0-10 — off means the agent runs under claude's normal
     permission model; a blocked agent is harvested to review by actd's
     reconcile (#119) instead of acting unattended), then ``--model <id>``
-    when the dispatch knob is explicit (nothing when it follows)."""
-    return llm.dispatch_argv(cfg)
+    when the dispatch knob is explicit (nothing when it follows). ``req``
+    (§65, add-only): a self_improve card without ``needs_mcp`` gets
+    ``llm.NO_MCP_ARGV`` appended — the session sees no Slack/Gmail MCP; every
+    launch site passes its card so a resume/rework/brief can never re-open the
+    MCP surface the dispatch closed. ``req=None`` = byte-identical to before."""
+    return llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))
 
 
 def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
-                    cfg: Optional[config.Config] = None) -> subprocess.CompletedProcess:
+                    cfg: Optional[config.Config] = None,
+                    req: Optional[Requirement] = None) -> subprocess.CompletedProcess:
     prompt, _ = sanitize.scrub(prompt)
-    cmd = _bg_base_cmd(cfg)
+    cmd = _bg_base_cmd(cfg, req)
     if name:
         cmd += ["--name", name]
     cmd.append(prompt)
@@ -754,7 +763,7 @@ def dispatch(
     if runner is None:
         _name = session_name(req)
         def runner(p: str, c: Path) -> subprocess.CompletedProcess:  # noqa: E306
-            return _default_runner(p, c, _name, cfg)
+            return _default_runner(p, c, _name, cfg, req)
 
     config.ensure_state_dirs()
 
@@ -907,6 +916,9 @@ def dispatch(
         # 文件跨 pass 重放，重放闸靠这个键认出"这单已经建过卡"——整体重建
         # execution 抹掉它 = 每 pass 铸一张新卡、起一个新 agent（无上界）。
         req.execution["inbox_stem"] = ex["inbox_stem"]
+    # §65：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
+    # self_improve 卡给 {}，execution 形状不变。
+    req.execution.update(self_improve.dispatch_record(req, cfg))
     req.set_status(State.EXECUTING)
     save(req)
     # capture_input gating (docs/TELEMETRY.md): the instruction summary is
@@ -964,8 +976,8 @@ def resume(
 
     if runner is None:
         def runner() -> subprocess.CompletedProcess:
-            cmd = _bg_base_cmd(cfg) + ["--name", session_name(req),
-                                       "--resume", str(sid)]
+            cmd = _bg_base_cmd(cfg, req) + ["--name", session_name(req),
+                                            "--resume", str(sid)]
             if prompt and str(prompt).strip():
                 cmd.append(sanitize.scrub(str(prompt))[0])
             return subprocess.run(
@@ -1635,8 +1647,8 @@ def rework(
             # (extracted helper; same behaviour as the old inline block).
             stop_session(sid, info=info)
             return subprocess.run(
-                _bg_base_cmd(cfg) + ["--name", session_name(req),
-                                     "--resume", str(sid), sanitize.scrub(p)[0]],
+                _bg_base_cmd(cfg, req) + ["--name", session_name(req),
+                                          "--resume", str(sid), sanitize.scrub(p)[0]],
                 cwd=str(target),
                 capture_output=True,
                 text=True,
@@ -1774,8 +1786,8 @@ def brief(
         def runner(p: str) -> subprocess.CompletedProcess:
             stop_session(sid, info=info)
             return subprocess.run(
-                _bg_base_cmd(cfg) + ["--name", session_name(req),
-                                     "--resume", str(sid), sanitize.scrub(p)[0]],
+                _bg_base_cmd(cfg, req) + ["--name", session_name(req),
+                                          "--resume", str(sid), sanitize.scrub(p)[0]],
                 cwd=str(target),
                 capture_output=True,
                 text=True,

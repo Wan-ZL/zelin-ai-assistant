@@ -68,6 +68,21 @@ autodispatch:
   max_concurrent: 3                    # 自动派发并发上限；超出的卡留在「运行中」列 queued 子状态（原因 chip：concurrency）
   notify: true                         # 观察模式：每次自动派发都发一条通知；false = 只有看板留痕
 
+# 自动草稿 PR 通道（CONTRACT §65；owner 决策 D7/D8/D9/D12）——第二条免批 lane，
+# **只给本仓库**：sources 全部是写死的 `self_improve` 渠道（每日循环提案 / PR 跟进卡）
+# 且 target_repo 的 realpath 就是 repo_path 的卡免批派发；交付只能是草稿 PR，做完后
+# 守护进程用 gh 物理核验（存在 / draft / base main / diff 非空），PR 触碰受保护路径
+# （act/lib/policy.py、act/lib/self_improve.py、act/llm.py、.github/workflows/、install.sh、
+# scripts/auto-deploy.sh）→ 打 needs-owner-eyes 标签并暂停通道直到 owner 处理。
+# 通道会话跑在 `--strict-mcp-config --mcp-config {}` 下（无 Slack/Gmail MCP）。
+# 用 owner 自己的 gh 身份（D8）、无预算（D9）。全部键可省略（缺省如下）。
+self_improve:
+  enabled: true                        # 通道总开关；false = self_improve 卡照旧人工审批（核验/封锁仍生效）
+  repo_path: ""                        # 唯一放行的仓库；"" = 安装根（AIASSISTANT_HOME），比对用 realpath
+  tick_minutes: 60                     # PR 巡检间隔：owner 合并=验收 / 关闭=拒绝 / 评论·红 CI → 跟进卡
+  owner_logins: []                     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
+  github_repo: ""                      # 通道仓库的 owner/repo；"" = 首次使用时 gh repo view 取并缓存进 lane.json，此后所有 gh pr 调用带 -R
+
 execution:
   dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控
   memory_inject: true                  # 注入 auto-memory program maps + 约束
