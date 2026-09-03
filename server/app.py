@@ -21,11 +21,25 @@
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+- 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
+  GET /api/settings（目录）+ GET/PUT /api/settings/{section}（server/settings_catalog.py）、
+  GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
+  （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
+  GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
+  POST /api/setup/{config-from-example,complete,reset}、GET /api/about +
+  POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
+  POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
+  精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
+  `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
+- 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
+  diff-write 语义），server/settings.py。
 - 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
   三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）。
+localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
+§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）、
+§70（每日整理设置面）。
 """
 from __future__ import annotations
 
@@ -41,9 +55,11 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (ai_fix_launch, board_source, display, files, health,
-                    inbox_writer, lanes, materials, paths, recaps, security,
-                    settings)
+from server import (about, ai_fix_launch, board_source, claude_sessions,
+                    diagnostics, display, doctor_run, files, health, inbox_writer,
+                    lanes, materials, mcp_servers, paths, permissions, recaps, repair,
+                    secrets_store, security, self_improve_lane, settings,
+                    settings_catalog, setup, terminal_launch)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -126,16 +142,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str) -> None:
         try:
-            path = unquote(urlsplit(self.path).path)
-            if "\x00" in path:
-                raise InvalidFieldError("NUL in path")
-            self._check_auth(method)
-            if method == "GET":
-                self._route_get(path)
-            elif method == "PUT":
-                self._route_put(path)
-            else:
-                self._route_post(path)
+            self._handle(method)
         except ApiError as err:
             self._send_api_error(err)
         except NotImplementedError:
@@ -148,71 +155,94 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc(file=sys.stderr)
             self._send_api_error(ApiError("internal error"))
 
+    def _handle(self, method: str) -> None:
+        """一次请求的主线：路径解码 → 鉴权 → 按动词路由（异常交 _dispatch 兜）。"""
+        path = unquote(urlsplit(self.path).path)
+        if "\x00" in path:
+            raise InvalidFieldError("NUL in path")
+        self._check_auth(method)
+        if method == "GET":
+            self._route_get(path)
+        elif method == "PUT":
+            self._route_put(path)
+        else:
+            self._route_post(path)
+
     # ------------------------------------------------------------------ #
     # 鉴权四闸（§49 auth model；机制与 webui 差异注在 server/security.py）
     # ------------------------------------------------------------------ #
+    def _reject(self, err: ApiError) -> None:
+        """闸门拒绝：body 未读，残字节会污染 keep-alive——连接必须关。"""
+        self.close_connection = True
+        raise err
+
     def _check_auth(self, method: str) -> None:
-        ctx = self.server.ctx  # type: ignore[attr-defined]
         # Host 闸：每个请求（页面加载也算）——DNS-rebinding 防线。
-        # 拒绝路径 body 未读，残字节会污染 keep-alive——连接必须关。
         if not security.host_ok(self.headers.get("Host")):
-            self.close_connection = True
-            raise ForbiddenError("bad host")
-        if method not in ("POST", "PUT"):
-            return  # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
+            self._reject(ForbiddenError("bad host"))
+        if method in ("POST", "PUT"):
+            self._check_write_auth()
+        # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
+
+    def _check_write_auth(self) -> None:
+        """写请求的后三闸：Origin（present 才查）→ Content-Type → instance token。"""
+        ctx = self.server.ctx  # type: ignore[attr-defined]
         origin = self.headers.get("Origin")
         if origin is not None and not security.origin_ok(
                 origin, ctx.allowed_origins):
-            self.close_connection = True
-            raise ForbiddenError("bad origin")
+            self._reject(ForbiddenError("bad origin"))
         if not security.content_type_is_json(
                 self.headers.get("Content-Type")):
             # 415 复用 INVALID_FIELD（§49 的 413 先例：status 已表意，
             # 不为 loopback 面扩词表）
-            self.close_connection = True
-            raise InvalidFieldError("Content-Type must be application/json",
-                                    status=415)
+            self._reject(InvalidFieldError(
+                "Content-Type must be application/json", status=415))
         if not security.token_ok(self.headers.get(security.TOKEN_HEADER),
                                  ctx.token):
-            self.close_connection = True
-            raise UnauthorizedError("missing or bad token")
+            self._reject(UnauthorizedError("missing or bad token"))
 
     # ------------------------------------------------------------------ #
     # GET 路由
     # ------------------------------------------------------------------ #
     def _route_get(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
+        if path.startswith("/api/"):
+            self._route_api_get(ctx, path)
+        elif path.startswith("/files/deliverables/"):
+            self._send_deliverable(ctx, path)
+        elif path.startswith("/files/"):
+            raise NotFoundError("not found", {"path": path})
+        else:
+            self._serve_static(ctx.static_dir, path)
+
+    def _route_api_get(self, ctx, path: str) -> None:
         if path == "/api/board":
             body = board_source.board_bytes(ctx.home)
             self._send_bytes(200, body, "application/json; charset=utf-8",
                              {"Cache-Control": "no-store"})
-        elif path.startswith("/api/cards/"):
-            card_id = path[len("/api/cards/"):]
-            self._send_json(200, board_source.card_detail(ctx.home, card_id))
-        elif path in _GET_JSON_ROUTES:
-            # 纯 JSON 读面（health / 设置面 / 列目录 / 素材库）——表驱动，见 _GET_JSON_ROUTES
-            self._send_json(200, _GET_JSON_ROUTES[path](ctx, self._query()))
         elif path == "/api/events":
             self._serve_events(ctx.hub)
-        elif path.startswith("/files/deliverables/"):
-            rest = path[len("/files/deliverables/"):].split("/")
-            if len(rest) != 2:
-                raise NotFoundError("not found", {"path": path})
-            body, ctype, extra = files.serve_deliverable(ctx.home, rest[0],
-                                                         rest[1])
-            extra["Cache-Control"] = "no-store"
-            self._send_bytes(200, body, ctype, extra, frameable=True)
-        elif path.startswith("/api/") or path.startswith("/files/"):
-            raise NotFoundError("not found", {"path": path})
         else:
-            self._serve_static(ctx.static_dir, path)
+            # 纯 JSON 读面（health / 设置面 / 目录 / 诊断…）——表驱动：精确表先，前缀表后
+            handler = _lookup(_GET_JSON_ROUTES, _GET_PREFIX_ROUTES, path)
+            if handler is None:
+                raise NotFoundError("not found", {"path": path})
+            self._send_json(200, handler(ctx, self._query()))
+
+    def _send_deliverable(self, ctx, path: str) -> None:
+        rest = path[len("/files/deliverables/"):].split("/")
+        if len(rest) != 2:
+            raise NotFoundError("not found", {"path": path})
+        body, ctype, extra = files.serve_deliverable(ctx.home, rest[0], rest[1])
+        extra["Cache-Control"] = "no-store"
+        self._send_bytes(200, body, ctype, extra, frameable=True)
 
     # ------------------------------------------------------------------ #
     # POST 路由
     # ------------------------------------------------------------------ #
     def _route_post(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
-        handler = _POST_JSON_ROUTES.get(path)
+        handler = _lookup(_POST_JSON_ROUTES, _POST_PREFIX_ROUTES, path)
         if handler is None:
             raise NotFoundError("not found", {"path": path})
         # body 只在路由命中后才读（未知路径 404 不消费 body）
@@ -223,7 +253,7 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     def _route_put(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
-        handler = _PUT_JSON_ROUTES.get(path)
+        handler = _lookup(_PUT_JSON_ROUTES, _PUT_PREFIX_ROUTES, path)
         if handler is None:
             raise NotFoundError("not found", {"path": path})
         # 字段白名单 + 形状校验 + diff-write 都在各 handler 的模块里（单一职责）
@@ -234,20 +264,7 @@ class Handler(BaseHTTPRequestHandler):
         return dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
 
     def _read_json_body(self) -> dict:
-        length_raw = self.headers.get("Content-Length")
-        if length_raw is None:
-            raise InvalidFieldError("Content-Length required")
-        try:
-            length = int(length_raw)
-        except ValueError:
-            raise InvalidFieldError("bad Content-Length")
-        if length < 0:
-            raise InvalidFieldError("bad Content-Length")
-        if length > MAX_BODY_BYTES:
-            # CONTRACT §49（v0.48 追认）：413 复用 INVALID_FIELD——status 已
-            # 表意，不为 loopback 面扩词表
-            raise InvalidFieldError("body too large",
-                                    {"limit": MAX_BODY_BYTES}, status=413)
+        length = _content_length(self.headers.get("Content-Length"))
         raw = self.rfile.read(length)
         try:
             doc = json.loads(raw.decode("utf-8"))
@@ -269,23 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         # refetch + 重连，无 last-event-id 契约）
         self.close_connection = True
         try:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache, no-transform")
-            self.send_header("X-Accel-Buffering", "no")
-            # M4：SSE 流也过同一套安全头（nosniff/Referrer-Policy/X-Frame/CSP）
-            # ——此前手写头漏发，事件流成了唯一无 nosniff 的响应面。
-            self._emit_security_headers()
-            self.end_headers()
-            self.wfile.write(CONNECTED_FRAME)
-            self.wfile.flush()
-            while True:
-                try:
-                    frame = q.get(timeout=HEARTBEAT_SECONDS)
-                except queue.Empty:
-                    frame = HEARTBEAT_FRAME  # 25s 注释行心跳
-                self.wfile.write(frame)
-                self.wfile.flush()
+            self._stream_events(q)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # 客户端断开——正常退出
         except Exception:
@@ -295,48 +296,112 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             hub.unsubscribe(q)
 
+    def _stream_events(self, q: "queue.Queue") -> None:
+        """头 + connected 帧，然后阻塞转发订阅队列（空等 25s 发心跳注释行）。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        # M4：SSE 流也过同一套安全头（nosniff/Referrer-Policy/X-Frame/CSP）
+        # ——此前手写头漏发，事件流成了唯一无 nosniff 的响应面。
+        self._emit_security_headers()
+        self.end_headers()
+        self.wfile.write(CONNECTED_FRAME)
+        self.wfile.flush()
+        while True:
+            try:
+                frame = q.get(timeout=HEARTBEAT_SECONDS)
+            except queue.Empty:
+                frame = HEARTBEAT_FRAME  # 25s 注释行心跳
+            self.wfile.write(frame)
+            self.wfile.flush()
+
     # ------------------------------------------------------------------ #
     # 静态资源（web/dist）
     # ------------------------------------------------------------------ #
     def _serve_static(self, dist: Path, path: str) -> None:
-        rel = path.lstrip("/") or "index.html"
-        try:
-            real_dist = dist.resolve(strict=True)
-            target = (dist / rel).resolve()
-        except OSError:
+        target = _static_target(dist, path)
+        if target is None:
             # dist 尚未 build：根路径给占位页，其余 404
             if path == "/":
                 self._send_bytes(200, _PLACEHOLDER_HTML,
                                  "text/html; charset=utf-8")
                 return
             raise NotFoundError("not found", {"path": path})
-        # 包含性检查挡住 ../ 穿越；目录请求回落 index.html
-        if not str(target).startswith(str(real_dist) + os.sep) \
-                and target != real_dist:
-            raise NotFoundError("not found", {"path": path})
-        if target.is_dir():
-            target = target / "index.html"
-        if not target.is_file():
-            # SPA 深链（无扩展名路径）回落 index.html；带扩展名的按缺失处理
-            index = real_dist / "index.html"
-            if "." not in Path(rel).name and index.is_file():
-                target = index
-            else:
-                raise NotFoundError("not found", {"path": path})
-        ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        cache = ("public, max-age=31536000, immutable"
-                 if "/assets/" in str(target) else "no-cache")
         body = target.read_bytes()
         if target.name == "index.html":
             # instance token server 端注入（security.inject_token 的同源
             # 纪律）：只有本面服务的页面拿得到，跨源端点永不外发
             body = security.inject_token(
                 body, self.server.ctx.token)  # type: ignore[attr-defined]
-        self._send_bytes(200, body, ctype, {"Cache-Control": cache})
+        self._send_bytes(200, body, _static_ctype(target),
+                         {"Cache-Control": _static_cache(target)})
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         # 保留一行式访问日志到 stderr；SSE 心跳不经此处，噪音可控
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+
+# --------------------------------------------------------------------------- #
+# 请求体 / 静态资源的纯函数小件（Handler 方法只做发送）
+# --------------------------------------------------------------------------- #
+def _content_length(raw: Optional[str]) -> int:
+    """Content-Length 头 → 字节数；缺失/非数/负数 400，超上限 413。"""
+    if raw is None:
+        raise InvalidFieldError("Content-Length required")
+    try:
+        length = int(raw)
+    except ValueError:
+        raise InvalidFieldError("bad Content-Length")
+    if length < 0:
+        raise InvalidFieldError("bad Content-Length")
+    if length > MAX_BODY_BYTES:
+        # CONTRACT §49（v0.48 追认）：413 复用 INVALID_FIELD——status 已
+        # 表意，不为 loopback 面扩词表
+        raise InvalidFieldError("body too large",
+                                {"limit": MAX_BODY_BYTES}, status=413)
+    return length
+
+
+def _inside(target: Path, real_dist: Path) -> bool:
+    """包含性检查：target 在 dist 之内（或就是 dist）——挡住 ../ 穿越。"""
+    return str(target).startswith(str(real_dist) + os.sep) or target == real_dist
+
+
+def _pick_file(target: Path, real_dist: Path, rel: str, path: str) -> Path:
+    """目录请求回落 index.html；SPA 深链（无扩展名路径）回落 index.html；
+    带扩展名的缺失按 404。"""
+    if target.is_dir():
+        target = target / "index.html"
+    if target.is_file():
+        return target
+    index = real_dist / "index.html"
+    if "." not in Path(rel).name and index.is_file():
+        return index
+    raise NotFoundError("not found", {"path": path})
+
+
+def _static_target(dist: Path, path: str) -> Optional[Path]:
+    """web/dist 里要发的文件；None = dist 尚未 build（调用方决定占位页/404）。"""
+    rel = path.lstrip("/") or "index.html"
+    try:
+        real_dist = dist.resolve(strict=True)
+        target = (dist / rel).resolve()
+    except OSError:
+        return None
+    if not _inside(target, real_dist):
+        raise NotFoundError("not found", {"path": path})
+    return _pick_file(target, real_dist, rel, path)
+
+
+def _static_ctype(target: Path) -> str:
+    return mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+
+
+def _static_cache(target: Path) -> str:
+    # vite 的 hashed assets 可长缓存；其余（index.html 等）每次回源
+    return ("public, max-age=31536000, immutable"
+            if "/assets/" in str(target) else "no-cache")
 
 
 # --------------------------------------------------------------------------- #
@@ -381,6 +446,37 @@ def _post_claude_code_default(ctx, payload: dict) -> dict:
     return settings.set_claude_code_default(payload.get("model"))
 
 
+def _lookup(exact: dict, prefixes: dict, path: str):
+    """精确表命中优先；否则前缀表（``/api/logs/<name>`` 命中 ``/api/logs/``，尾段非空才算），
+    前缀 handler 形状 (ctx, rest, arg) 在此归一成精确表的 (ctx, arg)。"""
+    handler = exact.get(path)
+    if handler is not None:
+        return handler
+    for prefix, fn in prefixes.items():
+        if path.startswith(prefix) and len(path) > len(prefix):
+            rest = path[len(prefix):]
+            return lambda ctx, arg, fn=fn, rest=rest: fn(ctx, rest, arg)
+    return None
+
+
+def _flag(query: dict, key: str) -> bool:
+    return str(query.get(key, "")).lower() in ("1", "true", "yes")
+
+
+def _get_doctor(ctx, query: dict) -> dict:
+    fast = query.get("fast", "1") not in ("0", "false", "no")
+    return doctor_run.report(ctx.home, fast=fast, refresh=_flag(query, "refresh"))
+
+
+def _post_secret_verify(ctx, rest: str, payload: dict) -> dict:
+    # /api/secrets/<name>/verify —— 尾段 "<name>/verify"；body 必须是 {}（零容忍）
+    if not rest.endswith("/verify"):
+        raise NotFoundError("not found", {"path": "/api/secrets/" + rest})
+    if payload:
+        raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
+    return secrets_store.verify(ctx.home, rest[:-len("/verify")])
+
+
 # GET 表 handler 形状：(ctx, query) → dict；query = URL query 的扁平 dict（_query）。
 _GET_JSON_ROUTES = {
     # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳年龄 +
@@ -389,6 +485,8 @@ _GET_JSON_ROUTES = {
     "/api/health": lambda ctx, query: health.snapshot(ctx.home),
     # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
+    # §70 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
+    "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
@@ -397,8 +495,38 @@ _GET_JSON_ROUTES = {
     "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+    # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
+    # custom / foreign）；token-light GET，写面在 POST /api/skills
+    "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
+    # §68 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
+    "/api/settings": lambda ctx, query: settings_catalog.snapshot(ctx.home),
+    # §68 凭证状态（present / verifiable；值永不回显）
+    "/api/secrets": lambda ctx, query: secrets_store.snapshot(ctx.home),
+    # §68.3 权限体检（FDA 清单 + TCC 相关 doctor 行）
+    "/api/permissions": lambda ctx, query: permissions.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单）
+    "/api/diagnostics": lambda ctx, query: diagnostics.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    "/api/doctor": _get_doctor,
+    # §68.5 首次运行向导
+    "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
+    # §68.6 关于 + 更新
+    "/api/about": lambda ctx, query: about.snapshot(ctx.home),
+    # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）
+    "/api/mcp": lambda ctx, query: mcp_servers.mcp(ctx.home),
+    # §68.10 导入 Claude Code 工作：扫描预览
+    "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
     # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
+}
+
+# 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
+_GET_PREFIX_ROUTES = {
+    # 投影 + registry 详情增补（§49；主键或工作编号 §60.3）
+    "/api/cards/": lambda ctx, rest, query: board_source.card_detail(ctx.home, rest),
+    # §68.1 单 section（/api/settings/models、/recap 走上面的精确表）
+    "/api/settings/": lambda ctx, rest, query: settings_catalog.section_snapshot(ctx.home, rest),
+    # §68.4 日志尾巴（白名单 + size-cap）
+    "/api/logs/": lambda ctx, rest, query: diagnostics.tail(ctx.home, rest, query.get("lines")),
 }
 
 _POST_JSON_ROUTES = {
@@ -412,6 +540,25 @@ _POST_JSON_ROUTES = {
     "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
     # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
+    # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
+    "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
+    # §67 启用/停用一个 skill（= ~/.claude/skills 软链接的建/删；自定义副本拒改 409）
+    "/api/skills": lambda ctx, payload: settings.update_skill(ctx.home, payload),
+    # §68.7 在终端接管会话（命令由 server 从投影推导）
+    "/api/terminal": lambda ctx, payload: terminal_launch.launch(ctx.home, payload),
+    # §68.8 横幅一键修复：actd 已加载 → kickstart；未加载 → 409 指向 install.sh
+    "/api/repair/actd": lambda ctx, payload: repair.kickstart_actd(payload),
+    # §68.5 向导三步
+    "/api/setup/config-from-example": lambda ctx, payload: setup.config_from_example(ctx.home, payload),
+    "/api/setup/complete": lambda ctx, payload: setup.complete(ctx.home, payload),
+    "/api/setup/reset": lambda ctx, payload: setup.reset(ctx.home, payload),
+    # §26 手动「立即检查」
+    "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
+}
+
+_POST_PREFIX_ROUTES = {
+    # §68.3 POST /api/secrets/<name>/verify
+    "/api/secrets/": _post_secret_verify,
 }
 
 _PUT_JSON_ROUTES = {
@@ -419,8 +566,17 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+    # §70 每日自我改进循环的五把旋钮（同一 diff-write 语义）
+    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
     # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义；server 是这三个键的唯一读写者）
     "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
+}
+
+_PUT_PREFIX_ROUTES = {
+    # §68.1 通用 section 的 diff-write（models / recap 走精确表）
+    "/api/settings/": lambda ctx, rest, payload: settings_catalog.update_section(ctx.home, rest, payload),
+    # §68.3 凭证写入（0600；空值 = 删）
+    "/api/secrets/": lambda ctx, rest, payload: secrets_store.write_value(ctx.home, rest, payload),
 }
 
 
@@ -468,21 +624,15 @@ def make_server(port: Optional[int] = None,
 EX_PORT_BUSY = 75  # EX_TEMPFAIL
 
 
-def main() -> int:
-    try:
-        httpd = make_server()
-    except OSError as exc:
-        if exc.errno != errno.EADDRINUSE:
-            raise
-        port = os.environ.get("ZAI_PORT", DEFAULT_PORT)
-        print(f"zai server: 127.0.0.1:{port} is busy — another server is already "
-              f"listening (the shell's spawn fallback or a manual `python3 -m "
-              f"server`); exiting {EX_PORT_BUSY} without a traceback", flush=True)
-        return EX_PORT_BUSY
-    host, port = httpd.server_address[:2]
-    print(f"zai server: http://{host}:{port}  "
-          f"(AIASSISTANT_HOME={httpd.ctx.home})",  # type: ignore[attr-defined]
-          flush=True)
+def _port_busy_line() -> str:
+    port = os.environ.get("ZAI_PORT", DEFAULT_PORT)
+    return (f"zai server: 127.0.0.1:{port} is busy — another server is already "
+            f"listening (the shell's spawn fallback or a manual `python3 -m "
+            f"server`); exiting {EX_PORT_BUSY} without a traceback")
+
+
+def _serve(httpd: ThreadingHTTPServer) -> None:
+    """serve_forever 直到 Ctrl-C；无论如何停 watcher、关 socket。"""
     try:
         httpd.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
@@ -491,4 +641,19 @@ def main() -> int:
         if httpd.watcher is not None:  # type: ignore[attr-defined]
             httpd.watcher.stop()  # type: ignore[attr-defined]
         httpd.server_close()
+
+
+def main() -> int:
+    try:
+        httpd = make_server()
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        print(_port_busy_line(), flush=True)
+        return EX_PORT_BUSY
+    host, port = httpd.server_address[:2]
+    print(f"zai server: http://{host}:{port}  "
+          f"(AIASSISTANT_HOME={httpd.ctx.home})",  # type: ignore[attr-defined]
+          flush=True)
+    _serve(httpd)
     return 0

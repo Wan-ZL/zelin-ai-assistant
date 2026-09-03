@@ -53,11 +53,16 @@ def _deliverable_headers(name: str) -> dict:
     return headers
 
 
+# 文件名里永不放行的字节：NUL 与两种路径分隔符（穿越的原料）
+_FORBIDDEN_NAME_CHARS = ("\x00", "/", "\\")
+
+
 def _validate_name(name: str) -> None:
     """交付物文件名 = 纯 basename。拒绝：空 / 超长 / NUL / 任何路径分隔符 /
     ``.``、``..`` 与一切点号开头（dotfile 永不外发）。"""
-    if (not name or len(name) > _NAME_MAX or "\x00" in name
-            or "/" in name or "\\" in name or name.startswith(".")):
+    if not name or len(name) > _NAME_MAX or name.startswith("."):
+        raise InvalidFieldError("invalid deliverable name", {"name": name})
+    if any(ch in name for ch in _FORBIDDEN_NAME_CHARS):
         raise InvalidFieldError("invalid deliverable name", {"name": name})
 
 
@@ -82,20 +87,37 @@ def serve_deliverable(home: Path, card_id: str,
     （不泄露目录结构）。"""
     _validate_card_id(card_id)
     _validate_name(name)
-    base = deliverables_dir(home, card_id)
-    try:
-        real_base = base.resolve(strict=True)
-        target = (base / name).resolve(strict=True)
-    except OSError:
-        raise NotFoundError("deliverable not found", {"id": card_id, "name": name})
-    # realpath 包含性双保险：symlink 把文件指出 deliverables/ 也照拒
-    if target.parent != real_base or not target.is_file():
-        raise NotFoundError("deliverable not found", {"id": card_id, "name": name})
+    not_found = NotFoundError("deliverable not found", {"id": card_id, "name": name})
+    target = _resolve_inside(deliverables_dir(home, card_id), name, not_found)
     ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
     try:
         return target.read_bytes(), ctype, _deliverable_headers(name)
     except OSError:
-        raise NotFoundError("deliverable not found", {"id": card_id, "name": name})
+        raise not_found
+
+
+def _resolve_inside(base: Path, name: str, not_found: NotFoundError) -> Path:
+    """``base/name`` 的 realpath，且必须是 ``base`` 直系子文件——symlink 把
+    文件指出 deliverables/ 也照拒（realpath 包含性双保险）。"""
+    try:
+        real_base = base.resolve(strict=True)
+        target = (base / name).resolve(strict=True)
+    except OSError:
+        raise not_found
+    if target.parent != real_base or not target.is_file():
+        raise not_found
+    return target
+
+
+def _contained_file(p: Path, real_base: Path) -> bool:
+    """非 dotfile、realpath 仍在 base 直系之下、且是普通文件。"""
+    if p.name.startswith("."):
+        return False
+    try:
+        real = p.resolve(strict=True)
+    except OSError:
+        return False
+    return real.parent == real_base and real.is_file()
 
 
 def _newest_deliverable(base: Path) -> Optional[Path]:
@@ -103,17 +125,7 @@ def _newest_deliverable(base: Path) -> Optional[Path]:
     指出 deliverables/ 的一律跳过（reveal 绝不定位到目录外）。"""
     try:
         real_base = base.resolve(strict=True)
-        files = []
-        for p in base.iterdir():
-            if p.name.startswith("."):
-                continue
-            try:
-                real = p.resolve(strict=True)
-            except OSError:
-                continue
-            if real.parent != real_base or not real.is_file():
-                continue
-            files.append(p)
+        files = [p for p in base.iterdir() if _contained_file(p, real_base)]
     except OSError:
         return None
     if not files:

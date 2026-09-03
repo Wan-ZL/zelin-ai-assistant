@@ -7,7 +7,7 @@ the inbox; actd validates and calls :func:`record_feedback` here. Each report:
    ts, ids, a per-id type+title snapshot (so the report stays readable after
    the cards themselves change or get purged), the user's text, app version;
 2. is then uploaded best-effort to Supabase over the SAME anon INSERT channel
-   as telemetry (act/lib/analytics_sync.py conventions: PostgREST POST to
+   as telemetry (act/lib/telemetry_upload.py conventions: PostgREST POST to
    ``/rest/v1/analytics_events``, key file wins over the built-in publishable
    key) — but as its own event type ``event="feedback"`` with the full record
    in ``props``. No new table: the anon RLS policy only covers
@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import __version__
-from act.lib import analytics, analytics_sync, config
+from act.lib import analytics, config, telemetry_upload
 from act.lib import registry
 
 try:  # merge_review pulls executor/analyze — must never break this module
@@ -164,7 +164,7 @@ def _write_record(record: dict) -> None:
 # --------------------------------------------------------------------------- #
 def _to_row(record: dict) -> dict:
     """Map a local record to an analytics_events row (same column shape as
-    analytics_sync._to_row; props = the report content, no upload bookkeeping).
+    telemetry_upload._to_row; props = the report content, no upload bookkeeping).
     贴图 (建议 #4): the images themselves never upload — the maintainer IS the
     machine owner, so the local paths in the record suffice; the row carries
     only ``image_count``.
@@ -174,7 +174,7 @@ def _to_row(record: dict) -> dict:
     props["image_count"] = len(record.get("images") or [])
     ts = record.get("ts")
     return {
-        "device_id": analytics_sync._device_id(),
+        "device_id": telemetry_upload.device_id(),
         "app_version": record.get("app_version"),
         "source": "feedback",
         "event": "feedback",
@@ -213,7 +213,7 @@ def _default_transport(cfg: config.Config) -> Optional[Transport]:
     url = str(cfg.telemetry_supabase_url or "").strip()
     if not url:
         return None
-    key = analytics_sync._resolve_key(cfg)
+    key = telemetry_upload.resolve_key(cfg)
     if not key:
         return None
     return _make_transport(url, key)

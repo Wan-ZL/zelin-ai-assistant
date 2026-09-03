@@ -100,6 +100,10 @@ OUTPUT_FORMATS: tuple = ("markdown", "html")
 # from the state/digest.json marker, not pinned to a weekday.
 DIGEST_FREQUENCIES: tuple = ("off", "daily", "every2days", "weekly")
 DEFAULT_DIGEST_FREQUENCY: str = "off"
+# §70 每日自我改进循环解锁时刻（本地 HH:MM；owner 机器夜里 03:30 无人用板）。
+# 形状由 coerce_clock_time 归一；坏值回落默认，绝不让循环因 typo 永不解锁。
+DEFAULT_DAILY_LOOP_TIME: str = "03:30"
+CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 # §53 数据层后端（D2）：auto = 激活标记在则 SQLite 为真源（默认，首跑自动迁移）；
 # yaml / sqlite = 强制指定（yaml 是回滚开关，保留一个版本）。真解析在
 # registry.backend()——这里只是配置词表。
@@ -286,6 +290,18 @@ class Config:
     # vnext 把默认改为 30（0 = 关闭，恢复永不自动归档）。见
     # docs/design/vnext-amendments.md §W1.c。
     archive_after_days: int = 30
+
+    # §70 每日自我改进循环（owner 决策 D10）：actd pass 内每天一次「先维护再
+    # 提案」。time = 本地 HH:MM 解锁时刻；max_proposals_per_day 默认 5（设置里
+    # 可改）；stale_days = 提案/潜在任务列无活动多少天判过时（Q4：45 + 保护罩）；
+    # trash_retention_days = 循环自动扔进回收站的卡（`stale:*` / `daily-merge:*`）
+    # 保留多少天再硬删——owner 没亲眼看过这些卡进回收站，比手动 trash 的 60 天
+    # 更长（Q4：90）；trash.retention_days 为 0 时整体关闭，本值随之无效。
+    daily_loop_enabled: bool = True
+    daily_loop_time: str = DEFAULT_DAILY_LOOP_TIME
+    daily_loop_max_proposals_per_day: int = 5
+    daily_loop_stale_days: int = 45
+    daily_loop_trash_retention_days: int = 90
 
     # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
     # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
@@ -505,6 +521,44 @@ def _apply_recap_block(cfg: "Config", data: dict) -> None:
     draft = _dict_or(blk.get("slack_draft"))
     cfg.recap_slack_draft_enabled = _bool_or(
         draft.get("enabled", cfg.recap_slack_draft_enabled), cfg.recap_slack_draft_enabled)
+def coerce_clock_time(value) -> str:
+    """§70 `daily_loop.time`：本地 HH:MM（"3:30" 归一为 "03:30"）；其余形状
+    ValueError——yaml 路径经 _clock_or 回落默认，overrides 路径 per-entry 跳过。
+    server/settings.py 镜像同一正则（tests/test_server_paths_mirror.py 钉）。"""
+    if not isinstance(value, str):
+        raise ValueError(f"not a HH:MM time: {value!r}")
+    m = CLOCK_TIME_RE.match(value.strip())
+    if m is None:
+        raise ValueError(f"not a HH:MM time: {value!r}")
+    return "%02d:%s" % (int(m.group(1)), m.group(2))
+
+
+def _clock_or(value, default: str) -> str:
+    try:
+        return coerce_clock_time(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _nonneg_int(value) -> int:
+    """overrides 路径的严格非负整数（bool 不算数；负数/垃圾 → ValueError → 跳过）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"not a count: {value!r}")
+    n = int(value)
+    if n < 0:
+        raise ValueError(f"negative count: {value!r}")
+    return n
+
+
+def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
+    """§70 config.yaml `daily_loop:` 块 → cfg（坏值保留默认；负数按 0 = 关）。
+    独立函数：load_config 的圈复杂度账本已在上限之外，这里一条调用零分支。"""
+    blk = _dict_or(data.get("daily_loop"))
+    cfg.daily_loop_enabled = _bool_or(blk.get("enabled"), cfg.daily_loop_enabled)
+    cfg.daily_loop_time = _clock_or(blk.get("time"), cfg.daily_loop_time)
+    for key in ("max_proposals_per_day", "stale_days", "trash_retention_days"):
+        attr = f"daily_loop_{key}"
+        setattr(cfg, attr, max(0, _int_or(blk.get(key), getattr(cfg, attr))))
 
 
 def _server_port_from(data: dict) -> int:
@@ -705,6 +759,7 @@ def load_config() -> Config:
         archive.get("after_days", cfg.archive_after_days),
         cfg.archive_after_days,
     )
+    _apply_daily_loop_block(cfg, data)   # §70（无分支：load_config 账本在上限之外）
 
     # §17 (D19) digest cadence. The legacy `digest.weekly: monday` key that
     # config.example.yaml carried for years was never read by any code —
@@ -1047,6 +1102,14 @@ _OVERRIDE_FIELDS: dict = {
     "recap_slack_draft_enabled": _coerce_bool,
     # §64 (#128): 待验收卡 AI 摘要 + 完成度评语开关（diff-write 同款；默认 true）。
     "card_summary_enabled": _coerce_bool,
+    # §70 (D10): the daily self-improvement loop's knobs — web Settings「每日
+    # 整理」writes these flat keys via server/settings.py (diff-write, same
+    # semantics as the model knobs). Bad shapes raise → per-entry skip.
+    "daily_loop_enabled": _coerce_bool,
+    "daily_loop_time": coerce_clock_time,
+    "daily_loop_max_proposals_per_day": _nonneg_int,
+    "daily_loop_stale_days": _nonneg_int,
+    "daily_loop_trash_retention_days": _nonneg_int,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }

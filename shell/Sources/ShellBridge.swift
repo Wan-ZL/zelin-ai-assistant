@@ -22,6 +22,7 @@ import WebKit
 final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let handlerName = "zaiShell"
     static let eventName = "zai-shell-state"
+    static let commandEventName = "zai-shell-command"
 
     private weak var webView: WKWebView?
     private var cancellables = Set<AnyCancellable>()
@@ -48,6 +49,18 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         LanguageStore.shared.objectWillChange
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
+        PermissionsProbe.shared.objectWillChange
+            .sink { [weak self] _ in self?.schedulePush() }
+            .store(in: &cancellables)
+    }
+
+    /// 壳 → 页面 的命令事件（§61.6）：全局快捷键等原生入口向页面发一个动作。
+    func pushCommand(_ command: String) {
+        guard let webView,
+              let data = try? JSONSerialization.data(withJSONObject: ["command": command]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let js = "window.dispatchEvent(new CustomEvent('\(Self.commandEventName)', {detail: \(json)}));"
+        webView.evaluateJavaScript(js) { _, _ in }
     }
 
     private func schedulePush() {
@@ -93,10 +106,27 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             "engine_dead": cap.engineDead,
             "status_text": cap.statusText,
             "status_is_error": cap.statusIsError,
+            // §68.2 字幕偏好八键（web 设置页「实时字幕」镜像；写侧 = setCaptionPrefs）
+            "source": cap.source,
+            "translate": cap.translateEnabled,
+            "translate_direction": cap.translateDirection,
+            "apple_locale": cap.appleLocale,
+            "ark_model": cap.arkModel,
+            "font_size": cap.fontSize,
+            "opacity": cap.opacity,
+        ]
+        let perm = PermissionsProbe.shared
+        let permissions: [String: Any] = [
+            "screen": perm.screen,
+            "microphone": perm.microphone,
+            "notifications": perm.notifications,
         ]
         return [
             "recording": recording,
             "captions": captions,
+            "permissions": permissions,
+            "launch_at_login": LaunchAtLogin.isEnabled,
+            "hotkey": QuickCaptureHotkey.label,
             "language": LanguageStore.shared.lang,
         ]
     }
@@ -112,6 +142,12 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     static let recordingModes = ["screen", "screen_audio"]
     static let languages = ["zh", "en"]
+    static let captionEngines = ["auto", "doubao", "apple"]
+    static let captionSources = ["both", "mic", "system"]
+    static let captionDirections = ["auto", "zh2en", "en2zh"]
+    static let captionLocales = ["zh", "en"]
+    static let fontSizeRange = 14.0...40.0
+    static let opacityRange = 0.2...1.0
 
     /// Pure request dispatcher (no WebKit types) so a swiftc harness can pin
     /// the vocabulary: returns the snapshot, or throws a `BridgeError` whose
@@ -153,10 +189,81 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
                 throw BridgeError.invalidArgs("lang must be zh|en")
             }
             if LanguageStore.shared.lang != lang { LanguageStore.shared.lang = lang }
+        case "getPermissions":
+            PermissionsProbe.shared.refresh()
+        case "requestPermission":
+            guard let kind = dict["kind"] as? String, PermissionsProbe.kinds.contains(kind) else {
+                throw BridgeError.invalidArgs("kind must be one of \(PermissionsProbe.kinds.joined(separator: "|"))")
+            }
+            PermissionsProbe.shared.request(kind)
+        case "openPane":
+            guard let pane = dict["pane"] as? String, PermissionsProbe.panes[pane] != nil else {
+                throw BridgeError.invalidArgs("pane must be one of \(PermissionsProbe.panes.keys.sorted().joined(separator: "|"))")
+            }
+            PermissionsProbe.openPane(pane)
+        case "setLaunchAtLogin":
+            guard let on = dict["on"] as? Bool else {
+                throw BridgeError.invalidArgs("setLaunchAtLogin needs on: bool")
+            }
+            if let why = LaunchAtLogin.set(on) { throw BridgeError.invalidArgs("launch at login: \(why)") }
+        case "setCaptionPrefs":
+            try Self.applyCaptionPrefs(dict)
+        case "setBadge":
+            guard let count = dict["count"] as? Int, count >= 0 else {
+                throw BridgeError.invalidArgs("setBadge needs count: non-negative int")
+            }
+            DockBadge.set(count)
         default:
             throw BridgeError.unknownMethod(method)
         }
         return Self.stateSnapshot()
+    }
+
+    /// §68.2 字幕偏好：全部可选键；每键先校验再写（任一坏值整个请求拒绝、零写入）。
+    static func applyCaptionPrefs(_ dict: [String: Any]) throws {
+        let cap = LiveCaptionsController.shared
+        var writes: [() -> Void] = []
+        func pick(_ key: String, _ allowed: [String], _ write: @escaping (String) -> Void) throws {
+            guard let raw = dict[key] else { return }
+            guard let v = raw as? String, allowed.contains(v) else {
+                throw BridgeError.invalidArgs("\(key) must be one of \(allowed.joined(separator: "|"))")
+            }
+            writes.append { write(v) }
+        }
+        try pick("engine", captionEngines) { cap.engineChoice = $0 }
+        try pick("source", captionSources) { cap.source = $0 }
+        try pick("translate_direction", captionDirections) { cap.translateDirection = $0 }
+        try pick("apple_locale", captionLocales) { cap.appleLocale = $0 }
+        if let raw = dict["translate"] {
+            guard let v = raw as? Bool else { throw BridgeError.invalidArgs("translate must be bool") }
+            writes.append { cap.translateEnabled = v }
+        }
+        if let raw = dict["ark_model"] {
+            guard let v = (raw as? String)?.trimmingCharacters(in: .whitespaces), !v.isEmpty, v.count <= 64 else {
+                throw BridgeError.invalidArgs("ark_model must be a non-empty string (<=64)")
+            }
+            writes.append { cap.arkModel = v }
+        }
+        if let raw = dict["font_size"] {
+            guard let v = Self.number(raw), fontSizeRange.contains(v) else {
+                throw BridgeError.invalidArgs("font_size must be 14...40")
+            }
+            writes.append { cap.fontSize = v }
+        }
+        if let raw = dict["opacity"] {
+            guard let v = Self.number(raw), opacityRange.contains(v) else {
+                throw BridgeError.invalidArgs("opacity must be 0.2...1")
+            }
+            writes.append { cap.opacity = v }
+        }
+        guard !writes.isEmpty else { throw BridgeError.invalidArgs("setCaptionPrefs needs at least one pref") }
+        writes.forEach { $0() }
+    }
+
+    private static func number(_ raw: Any) -> Double? {
+        if let d = raw as? Double { return d }
+        if let i = raw as? Int { return Double(i) }
+        return nil
     }
 
     // WKScriptMessageHandlerWithReply（WebKit 在主线程投递；SDK 已标 @MainActor）

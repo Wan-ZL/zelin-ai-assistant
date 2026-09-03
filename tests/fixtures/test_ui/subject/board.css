@@ -1,0 +1,4 @@
+/* component css — the lane no longer consumes the layout token: literal 320px while --native-layout-lane-width still says 400px */
+.rail { width: var(--native-layout-rail-default-width); }
+.lane { width: 320px; border-radius: 6px; }
+.card { background: var(--surface); color: #1a1c22; }

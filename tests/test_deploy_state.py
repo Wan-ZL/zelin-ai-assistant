@@ -88,6 +88,19 @@ class DeployStateReaderTestCase(unittest.TestCase):
                          "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2)")
         self.assertIn("last_incident", deploy_state.FIELDS)
 
+    def test_behind_main_is_projected_and_failed_shas_is_not(self):
+        # 2026-09-03 add-only（§56.3 第 3 步「合并风暴下的部署目标」）：上一次部署停在
+        # head 之前的最新绿 commit → behind_main / behind_main_why 投影；中毒账本
+        # failed_shas 是脚本私账，不进 dashboard
+        self._write({"status": "deployed", "version": "1.0.5", "behind_main": "a" * 40,
+                     "behind_main_why": "head CI not green yet (ci is in_progress)",
+                     "failed_sha": "b" * 40, "failed_shas": "b" * 40 + " " + "c" * 40})
+        st = deploy_state.read()
+        self.assertEqual(st["behind_main"], "a" * 40)
+        self.assertEqual(st["behind_main_why"], "head CI not green yet (ci is in_progress)")
+        self.assertNotIn("failed_shas", st)
+        self.assertNotIn("failed_shas", deploy_state.MIRROR_FIELDS)
+
     def test_read_prefers_the_mirror_when_it_describes_this_checkout(self):
         # blocked_tcc is exactly the case where the job cannot rewrite the
         # projection: a stale `up_to_date` there must not outrank the mirror
@@ -205,6 +218,18 @@ class DoctorRowTestCase(unittest.TestCase):
                              encoding="utf-8")
         (row,) = self._row()
         self.assertEqual(row.status, doctor.OK)
+
+    def test_deployed_behind_main_is_still_ok_but_says_so(self):
+        # the newest GREEN ancestor went live while the head's CI was still
+        # running (§56.3 第 3 步): healthy — the machine runs the newest tested
+        # code — but the row must not pretend main is not ahead
+        self.path.write_text(json.dumps({"status": "deployed", "version": "1.0.5",
+                                         "behind_main": "abcdef0123456789" * 2 + "abcdef01",
+                                         "behind_main_why": "head CI not green yet (ci is in_progress)"}),
+                             encoding="utf-8")
+        (row,) = self._row()
+        self.assertEqual(row.status, doctor.OK)
+        self.assertIn("origin/main abcdef0 not deployed: head CI not green yet (ci is in_progress)", row.detail)
 
     def test_rolled_back_warns_with_the_force_fix(self):
         self.path.write_text(json.dumps({

@@ -58,7 +58,7 @@ UP (phone → Supabase → this daemon):
     ``result_status`` — so the phone's "did my approve land?" is a durable
     truth, never a false-negative inferred from a deleted inbox file.
 
-Transport reuses the ``analytics_sync`` posture: stdlib ``urllib`` only, atomic
+Transport reuses the ``telemetry_upload`` posture: stdlib ``urllib`` only, atomic
 cursor writes, and EVERY network call is best-effort — nothing here ever raises
 into the daemon loop.
 """
@@ -242,7 +242,7 @@ def _load_json(path: Path) -> dict:
 
 def _complete_lines(path: Path, offset: int) -> Iterator[Tuple[bytes, int]]:
     """Yield (raw_line, end_offset) for each COMPLETE line past ``offset``
-    (mirrors analytics_sync: a trailing chunk without a newline is left)."""
+    (mirrors telemetry_upload: a trailing chunk without a newline is left)."""
     try:
         size = path.stat().st_size
     except OSError:
@@ -270,22 +270,34 @@ def _ensure_sync_dir() -> None:
         pass
 
 
-def _load_or_create_channel_id() -> str:
-    try:
-        val = CHANNEL_ID_PATH.read_text(encoding="utf-8").strip()
-        if val:
-            return str(uuid.UUID(val))
-    except (OSError, ValueError):
-        pass
-    val = str(uuid.uuid4())
+def _persist_secret(path: Path, val: str) -> None:
+    """Atomically write one secret line under state/sync/ and pin it 0600
+    (chmod failure tolerated — NTFS has no mode bits)."""
     _ensure_sync_dir()
-    tmp = CHANNEL_ID_PATH.with_suffix(".tmp")
+    tmp = path.with_suffix(".tmp")
     tmp.write_text(val + "\n", encoding="utf-8")
-    os.replace(tmp, CHANNEL_ID_PATH)
+    os.replace(tmp, path)
     try:
-        os.chmod(CHANNEL_ID_PATH, 0o600)
+        os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+def _existing_channel_id() -> Optional[str]:
+    """The persisted channel UUID (canonical form), or None when absent/corrupt."""
+    try:
+        val = CHANNEL_ID_PATH.read_text(encoding="utf-8").strip()
+        return str(uuid.UUID(val)) if val else None
+    except (OSError, ValueError):
+        return None
+
+
+def _load_or_create_channel_id() -> str:
+    existing = _existing_channel_id()
+    if existing:
+        return existing
+    val = str(uuid.uuid4())
+    _persist_secret(CHANNEL_ID_PATH, val)
     return val
 
 
@@ -314,23 +326,21 @@ def _load_or_create_write_secret() -> str:
     if _valid_write_secret(val):
         return val
     if val or WRITE_SECRET_PATH.exists():
-        # present but corrupt/unreadable — same brick either way
-        _log("write_secret corrupt — rotating channel_id so this re-pair "
-             "mints a fresh, server-consistent channel")
-        try:
-            CHANNEL_ID_PATH.unlink()
-        except OSError:
-            pass
+        _rotate_channel_for_corrupt_secret()
     val = _b64url_encode(os.urandom(e2e.WRITE_SECRET_LEN))
-    _ensure_sync_dir()
-    tmp = WRITE_SECRET_PATH.with_suffix(".tmp")
-    tmp.write_text(val + "\n", encoding="utf-8")
-    os.replace(tmp, WRITE_SECRET_PATH)
+    _persist_secret(WRITE_SECRET_PATH, val)
+    return val
+
+
+def _rotate_channel_for_corrupt_secret() -> None:
+    """A present-but-corrupt/unreadable secret is the same brick either way:
+    drop channel_id so init_channel mints a fresh, server-consistent channel."""
+    _log("write_secret corrupt — rotating channel_id so this re-pair "
+         "mints a fresh, server-consistent channel")
     try:
-        os.chmod(WRITE_SECRET_PATH, 0o600)
+        CHANNEL_ID_PATH.unlink()
     except OSError:
         pass
-    return val
 
 
 def _load_write_secret_text() -> Optional[str]:
@@ -364,7 +374,7 @@ class Transport:
 
 class HttpTransport(Transport):
     """Stdlib-only PostgREST transport (no third-party deps, like
-    analytics_sync). Every method raises on a non-2xx response; the Syncd caller
+    telemetry_upload). Every method raises on a non-2xx response; the Syncd caller
     swallows those (best-effort)."""
 
     def __init__(self, supabase_url: str, apikey: str, channel_id: str):
@@ -439,8 +449,8 @@ def _resolve_anon_key() -> str:
     public by design, RLS makes it safe (anon has INSERT-only on channels and
     no SELECT there, so write_secret_hash never leaves the server)."""
     try:
-        from act.lib import analytics_sync
-        return analytics_sync._resolve_key(config.load_config())
+        from act.lib import telemetry_upload
+        return telemetry_upload.resolve_key(config.load_config())
     except Exception:  # noqa: BLE001 - never fail to a missing key
         return config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY
 
@@ -474,16 +484,76 @@ def _inbox_shape_error(action: dict) -> Optional[str]:
     client build) can relay validly-encrypted junk. ``None``-valued fields
     count as absent (actd coerces them). Returns a reason string to log, or
     None when the shape is usable."""
+    bad = _non_string_field(action)
+    if bad:
+        return f"field '{bad}' is not a string"
+    ids = action.get("ids")
+    if ids is not None and not _is_str_list(ids):
+        return "field 'ids' is not a list of strings"
+    return None
+
+
+def _non_string_field(action: dict) -> Optional[str]:
+    """First scalar field that is present but not a str; None = all fine."""
     for key in _INBOX_STR_FIELDS:
         v = action.get(key)
         if v is not None and not isinstance(v, str):
-            return f"field '{key}' is not a string"
-    ids = action.get("ids")
-    if ids is not None and (
-            not isinstance(ids, list)
-            or any(not isinstance(x, str) for x in ids)):
-        return "field 'ids' is not a list of strings"
+            return key
     return None
+
+
+def _is_str_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) for x in value)
+
+
+def _ledger_action_id(line: str) -> Optional[str]:
+    """``action_id`` of one delivered.jsonl line; blank / junk / id-less → None."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    aid = rec.get("action_id")
+    return str(aid) if aid else None
+
+
+def _ack_record(raw: bytes) -> Optional[tuple]:
+    """One applied.jsonl line → (action_id, result_status); unreadable → None."""
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return rec.get("action_id"), rec.get("result_status")
+
+
+def _row_action_id(row: dict) -> str:
+    """The row's ``action_id`` as text; "" when absent/null (skipped upstream)."""
+    return str(row.get("action_id") or "")
+
+
+def _inbox_record(action_id: str, action, board_seq) -> Optional[dict]:
+    """The decrypted payload → the inbox record to materialise, or None (logged
+    reason) when it is not a usable action. Guarantees ``ts``, force-stamps
+    ``via:"remote"`` and stamps the server's ``board_seq`` when carried."""
+    if not isinstance(action, dict) or not action.get("action"):
+        _log(f"UP: {action_id} decrypted payload has no action — skipped")
+        return None
+    shape_err = _inbox_shape_error(action)
+    if shape_err:
+        _log(f"UP: {action_id} decrypted payload rejected ({shape_err}) — skipped")
+        return None
+    record = dict(action)
+    record.setdefault("ts", _iso_now())
+    # T-28/W18 ingress 落款：syncd UP 落盘属网络 ingress，恒盖 via:"remote"
+    # ——**覆写**而非 setdefault（payload 自带 via:"web"/缺省即冒充 owner，
+    # AEAD 只认字节不认身份）。降级本身由 actd 侧硬后盾执行（actd.py
+    # _apply_capture：非 owner ingress 的 mode:"run" 一律降级为普通提案）。
+    record["via"] = "remote"
+    if board_seq is not None and "board_seq" not in record:
+        record["board_seq"] = board_seq
+    return record
 
 
 # --------------------------------------------------------------------------- #
@@ -656,18 +726,20 @@ class Syncd:
         best-effort; on failure we seed from local only."""
         if self._seeded:
             return
-        server_seq = 0
+        local_seq = int(self._last_pushed_seq or 0)
+        self._next_seq = max(self._server_seq(), local_seq) + 1
+        self._seeded = True
+
+    def _server_seq(self) -> int:
+        """The server row's seq (0 when absent or unreadable — best-effort)."""
         try:
             rows = self.transport.select(
                 "board_snapshots",
                 {"channel_id": f"eq.{self.channel_id}", "select": "seq"})
-            if rows:
-                server_seq = int(rows[0].get("seq") or 0)
+            return int(rows[0].get("seq") or 0) if rows else 0
         except Exception as e:  # noqa: BLE001 - best-effort seed
             _log(f"DOWN: server seq read failed (seeding from local): {e}")
-        local_seq = int(self._last_pushed_seq or 0)
-        self._next_seq = max(server_seq, local_seq) + 1
-        self._seeded = True
+            return 0
 
     def push_down_if_changed(self) -> bool:
         """Change-gated full-snapshot UPSERT. Returns True iff a push happened."""
@@ -716,16 +788,9 @@ class Syncd:
         try:
             with DELIVERED_LEDGER.open("r", encoding="utf-8") as fh:
                 for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        continue
-                    aid = rec.get("action_id")
+                    aid = _ledger_action_id(line)
                     if aid:
-                        seen.add(str(aid))
+                        seen.add(aid)
         except OSError:
             pass
         return seen
@@ -763,22 +828,9 @@ class Syncd:
         while a failed stage write (disk full / permissions) leaves the action
         un-ledgered — it stays 'pending' and is retried next pass instead of
         being marked delivered with no inbox file ever written."""
-        if not isinstance(action, dict) or not action.get("action"):
-            _log(f"UP: {action_id} decrypted payload has no action — skipped")
+        record = _inbox_record(action_id, action, board_seq)
+        if record is None:
             return False
-        shape_err = _inbox_shape_error(action)
-        if shape_err:
-            _log(f"UP: {action_id} decrypted payload rejected ({shape_err}) — skipped")
-            return False
-        record = dict(action)
-        record.setdefault("ts", _iso_now())
-        # T-28/W18 ingress 落款：syncd UP 落盘属网络 ingress，恒盖 via:"remote"
-        # ——**覆写**而非 setdefault（payload 自带 via:"web"/缺省即冒充 owner，
-        # AEAD 只认字节不认身份）。降级本身由 actd 侧硬后盾执行（actd.py
-        # _apply_capture：非 owner ingress 的 mode:"run" 一律降级为普通提案）。
-        record["via"] = "remote"
-        if board_seq is not None and "board_seq" not in record:
-            record["board_seq"] = board_seq
         path = config.INBOX_DIR / f"{action_id}.json"
         tmp = path.with_suffix(".json.tmp")
         try:
@@ -816,42 +868,56 @@ class Syncd:
         except Exception as e:  # noqa: BLE001 - best-effort pull
             _log(f"UP: pull failed (will retry): {e}")
             return 0
-        delivered = self._delivered_set()
+        written = self._materialise_rows(rows, self._delivered_set())
+        if written:
+            _log(f"UP: materialised {written} action(s) to the inbox")
+        return written
+
+    def _materialise_rows(self, rows: List[dict], delivered: set) -> int:
         written = 0
         for row in rows:
-            aid = str(row.get("action_id") or "")
+            aid = _row_action_id(row)
             if not aid:
                 continue
             if aid in delivered:
                 # L3 dedup: already materialised — one inbox file per action_id.
                 # Re-attempt the delivered PATCH in case a prior one was lost.
                 self._patch_delivered(aid)
-                continue
-            board_seq = row.get("board_seq")
-            try:
-                blob = _from_bytea(row.get("payload_enc"))
-                plaintext = e2e.decrypt_action(
-                    self._k_i, self._epoch, self.channel_id, aid, board_seq, blob)
-            except Exception as e:  # noqa: BLE001 - bad/forged blob → skip, never crash
-                _log(f"UP: decrypt {aid} failed (skipped): {e}")
-                continue
-            try:
-                action = json.loads(plaintext)
-            except ValueError:
-                _log(f"UP: {aid} decrypted payload is not JSON — skipped")
-                continue
-            # M4 ordering lives inside _write_inbox_file (stage → ledger →
-            # atomic replace): a stage-write failure keeps the action pending
-            # for retry next pass (never falsely 'delivered'), while a crash
-            # mid-materialise can never double-apply a consumed action.
-            if not self._write_inbox_file(aid, action, board_seq):
-                continue
-            delivered.add(aid)
-            self._patch_delivered(aid)
-            written += 1
-        if written:
-            _log(f"UP: materialised {written} action(s) to the inbox")
+            elif self._materialise_row(aid, row):
+                delivered.add(aid)
+                written += 1
         return written
+
+    def _decrypt_row(self, aid: str, row: dict):
+        """AEAD-open one pending row → the action dict, or None (logged) when
+        the blob is bad/forged or the plaintext is not JSON."""
+        try:
+            blob = _from_bytea(row.get("payload_enc"))
+            plaintext = e2e.decrypt_action(
+                self._k_i, self._epoch, self.channel_id, aid, row.get("board_seq"), blob)
+        except Exception as e:  # noqa: BLE001 - bad/forged blob → skip, never crash
+            _log(f"UP: decrypt {aid} failed (skipped): {e}")
+            return None
+        try:
+            return json.loads(plaintext)
+        except ValueError:
+            _log(f"UP: {aid} decrypted payload is not JSON — skipped")
+            return None
+
+    def _materialise_row(self, aid: str, row: dict) -> bool:
+        """Decrypt + materialise + PATCH delivered; True iff a NEW inbox file
+        was written."""
+        action = self._decrypt_row(aid, row)
+        if action is None:
+            return False
+        # M4 ordering lives inside _write_inbox_file (stage → ledger →
+        # atomic replace): a stage-write failure keeps the action pending
+        # for retry next pass (never falsely 'delivered'), while a crash
+        # mid-materialise can never double-apply a consumed action.
+        if not self._write_inbox_file(aid, action, row.get("board_seq")):
+            return False
+        self._patch_delivered(aid)
+        return True
 
     # -- ack-tail ------------------------------------------------------------ #
     def ack_tail(self) -> int:
@@ -863,25 +929,32 @@ class Syncd:
         cursor = int(_load_json(APPLIED_CURSOR_PATH).get("offset") or 0)
         applied = 0
         for raw, end in _complete_lines(APPLIED_LEDGER, cursor):
-            try:
-                rec = json.loads(raw.decode("utf-8"))
-                aid = rec.get("action_id")
-                result_status = rec.get("result_status")
-            except (UnicodeDecodeError, ValueError):
-                self._save_cursor(end)   # skip an unreadable line
-                continue
-            if aid:
-                try:
-                    self.transport.patch(
-                        "inbox_actions", {"action_id": f"eq.{aid}"},
-                        {"status": "applied", "result_status": result_status,
-                         "applied_at": _iso_now()}, self._write_secret)
-                except Exception as e:  # noqa: BLE001 - stop, retry this line later
-                    _log(f"ack-tail: patch {aid} failed (will retry): {e}")
-                    break
+            outcome = self._ack_line(raw)
+            if outcome is False:
+                break   # PATCH failed: retry this line next cycle
+            if outcome:
                 applied += 1
-            self._save_cursor(end)
+            self._save_cursor(end)   # unreadable / id-less lines are skipped
         return applied
+
+    def _ack_line(self, raw: bytes) -> Optional[bool]:
+        """None = nothing to PATCH (unreadable / no action_id); True = PATCHed;
+        False = PATCH failed (the caller stops the tail)."""
+        rec = _ack_record(raw)
+        if rec is None or not rec[0]:
+            return None
+        return self._patch_applied(rec[0], rec[1])
+
+    def _patch_applied(self, aid: str, result_status) -> bool:
+        try:
+            self.transport.patch(
+                "inbox_actions", {"action_id": f"eq.{aid}"},
+                {"status": "applied", "result_status": result_status,
+                 "applied_at": _iso_now()}, self._write_secret)
+            return True
+        except Exception as e:  # noqa: BLE001 - stop, retry this line later
+            _log(f"ack-tail: patch {aid} failed (will retry): {e}")
+            return False
 
     @staticmethod
     def _save_cursor(offset: int) -> None:
@@ -1001,7 +1074,7 @@ def _open_file(path: str) -> None:
 # --------------------------------------------------------------------------- #
 # entrypoint
 # --------------------------------------------------------------------------- #
-def main(argv: Optional[list] = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="syncd", description="cloud sync daemon")
     parser.add_argument("--once", action="store_true", help="one pass then exit")
     parser.add_argument("--interval", type=int, default=None, help="poll seconds")
@@ -1021,78 +1094,94 @@ def main(argv: Optional[list] = None) -> int:
                         help="optional project URL override (defaults to built-in)")
     parser.add_argument("--platform", default="macos",
                         choices=("macos", "ios", "linux"))
-    args = parser.parse_args(argv)
+    return parser
 
+
+def _pair_label(explicit: Optional[str]) -> str:
+    """Resolve the label: explicit arg → existing state/sync.json label →
+    default. The Settings page re-runs a bare --pair on every open, so the old
+    hardcoded default clobbered any custom label back to 这台 Mac."""
+    label = (explicit or "").strip()
+    if label:
+        return label
+    prior = read_sync_config() or {}
+    return str(prior.get("label") or "").strip() or "这台 Mac"
+
+
+def _print_pair_human(result: dict) -> None:
+    """Terminal form of --pair: QR art (or the raw blob), PNG path, channel id."""
+    print("用手机 App 扫描下面的二维码即可配对这台 Mac:\n")
+    try:
+        from act.lib import qr
+        print(qr.qr_terminal(result["qr_blob"]))
+    except Exception as e:  # noqa: BLE001 - fall back to the raw blob
+        print(f"(二维码渲染失败: {e})")
+    print("\n配对 blob(扫码失败时可手动输入):")
+    print(result["qr_blob"])
+    if result.get("qr_png_path"):
+        print(f"\n二维码图片: {result['qr_png_path']}")
+        _open_file(result["qr_png_path"])
+    print(f"channel_id: {result['channel_id']}")
+    if not result.get("registered"):
+        print("注意: 频道注册请求未成功(重复配对时属正常;否则请检查网络后重试 --pair)。")
+
+
+def _cmd_pair(args) -> int:
+    label = _pair_label(args.label)
+    result = init_channel(label, supabase_url=args.supabase_url,
+                          platform=args.platform)
+    if args.json:
+        # Machine-readable: EXACTLY one JSON object on stdout, nothing else
+        # (init_channel's diagnostics already go to the syncd logfile, not
+        # stdout). The Mac app consumes this to render the QR itself.
+        print(json.dumps({
+            "channel_id": result["channel_id"],
+            "qr_blob": result["qr_blob"],
+            "qr_png_path": result.get("qr_png_path"),
+            "registered": bool(result.get("registered")),
+            "label": label,
+        }, ensure_ascii=False))
+        return 0
+    _print_pair_human(result)
+    return 0
+
+
+def _safe_pass(daemon: "Syncd", what: str) -> None:
+    """One run_once that can never take the process down."""
+    try:
+        daemon.run_once()
+    except Exception as e:  # noqa: BLE001 - a bad pass must never crash the daemon
+        _log(f"{what} FAILED: {e}")
+
+
+def _run_daemon(args, sync_cfg: dict) -> int:
+    daemon = Syncd(sync_cfg, _default_transport(sync_cfg))
+    if args.once:
+        _safe_pass(daemon, "run_once")
+        return 0
+    interval = args.interval or DASHBOARD_POLL_SECONDS
+    _log(f"syncd starting (interval={interval}s, channel={sync_cfg['channel_id']})")
+    while True:
+        _safe_pass(daemon, "loop pass")
+        time.sleep(interval)
+
+
+def main(argv: Optional[list] = None) -> int:
+    args = _build_parser().parse_args(argv)
     if args.consent_text:
         print(CONSENT_DISCLOSURE_ZH)
         return 0
-
     if args.disable:
         disable()
         print("云同步已关闭。")
         return 0
-
     if args.pair:
-        # Resolve the label: explicit arg → existing state/sync.json label →
-        # default. The Settings page re-runs a bare --pair on every open, so
-        # the old hardcoded default clobbered any custom label back to 这台 Mac.
-        label = (args.label or "").strip()
-        if not label:
-            prior = read_sync_config() or {}
-            label = str(prior.get("label") or "").strip() or "这台 Mac"
-        result = init_channel(label, supabase_url=args.supabase_url,
-                              platform=args.platform)
-        if args.json:
-            # Machine-readable: EXACTLY one JSON object on stdout, nothing else
-            # (init_channel's diagnostics already go to the syncd logfile, not
-            # stdout). The Mac app consumes this to render the QR itself.
-            print(json.dumps({
-                "channel_id": result["channel_id"],
-                "qr_blob": result["qr_blob"],
-                "qr_png_path": result.get("qr_png_path"),
-                "registered": bool(result.get("registered")),
-                "label": label,
-            }, ensure_ascii=False))
-            return 0
-        print("用手机 App 扫描下面的二维码即可配对这台 Mac:\n")
-        try:
-            from act.lib import qr
-            print(qr.qr_terminal(result["qr_blob"]))
-        except Exception as e:  # noqa: BLE001 - fall back to the raw blob
-            print(f"(二维码渲染失败: {e})")
-        print("\n配对 blob(扫码失败时可手动输入):")
-        print(result["qr_blob"])
-        if result.get("qr_png_path"):
-            print(f"\n二维码图片: {result['qr_png_path']}")
-            _open_file(result["qr_png_path"])
-        print(f"channel_id: {result['channel_id']}")
-        if not result.get("registered"):
-            print("注意: 频道注册请求未成功(重复配对时属正常;否则请检查网络后重试 --pair)。")
-        return 0
-
+        return _cmd_pair(args)
     # STARTUP GATE — exit 0 immediately (zero further fs/network) when not opted in.
     sync_cfg = startup_gate()
     if sync_cfg is None:
         return 0
-
-    transport = _default_transport(sync_cfg)
-    daemon = Syncd(sync_cfg, transport)
-
-    if args.once:
-        try:
-            daemon.run_once()
-        except Exception as e:  # noqa: BLE001 - a single pass must never crash
-            _log(f"run_once FAILED: {e}")
-        return 0
-
-    interval = args.interval or DASHBOARD_POLL_SECONDS
-    _log(f"syncd starting (interval={interval}s, channel={sync_cfg['channel_id']})")
-    while True:
-        try:
-            daemon.run_once()
-        except Exception as e:  # noqa: BLE001 - one bad pass must not kill the loop
-            _log(f"loop pass FAILED: {e}")
-        time.sleep(interval)
+    return _run_daemon(args, sync_cfg)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 // 客户端合成码：READ_FAILED（读失败，UI 静默重试）/ SERVICE_UNAVAILABLE（写失败，UI 明确报错）。
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
 import type {
+  AboutInfo,
   AiFixReceipt,
   Board,
   CardDetail,
@@ -12,13 +13,32 @@ import type {
   ClaudeCodeDefaultWrite,
   DisplaySettings,
   DisplaySettingsPatch,
+  ClaudeSessionsScan,
+  DiagnosticsSnapshot,
+  DoctorReport,
+  DailyLoopPatch,
+  DailyLoopSettings,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
   MaterialsList,
+  LogTail,
+  McpList,
   ModelsSettings,
   RecapMarkReceipt,
   RecapSettings,
+  SkillsSnapshot,
+  PermissionsSnapshot,
+  RepairReceipt,
+  SecretStatus,
+  SecretVerifyResult,
+  SecretsStatus,
+  SettingsCatalog,
+  SettingsSection,
+  SetupReceipt,
+  SetupSnapshot,
+  TerminalReceipt,
+  UpdateCheckResult,
 } from "./types";
 
 interface ApiErrorBody {
@@ -155,6 +175,11 @@ export function postReveal(cardId: string): Promise<unknown> {
   });
 }
 
+/** POST /api/self-improve/resume（CONTRACT §65.4）：owner 清掉敏感路径护栏挂起的自动草稿 PR 通道；空 body */
+export function postSelfImproveResume(): Promise<{ ok: boolean; paused: boolean; was_paused: boolean }> {
+  return request("/api/self-improve/resume", { method: "POST", body: "{}" });
+}
+
 /** GET /api/lanes — 列说明文案目录（server-owned，§54；静态内容，进程内拉一次即可） */
 export function fetchLanes(signal?: AbortSignal): Promise<LaneCatalog> {
   return request<LaneCatalog>("/api/lanes", { signal });
@@ -188,6 +213,16 @@ export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSetting
  */
 export function putModelsSettings(body: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/settings/daily-loop — 每日自我改进循环的五把旋钮 effective 值（CONTRACT §70） */
+export function fetchDailyLoopSettings(signal?: AbortSignal): Promise<DailyLoopSettings> {
+  return request<DailyLoopSettings>("/api/settings/daily-loop", { signal });
+}
+
+/** PUT /api/settings/daily-loop — 保存旋钮子集（写请求：四闸同 POST；server 校验 + diff-write） */
+export function putDailyLoopSettings(body: DailyLoopPatch): Promise<DailyLoopSettings> {
+  return request<DailyLoopSettings>("/api/settings/daily-loop", { method: "PUT", body: JSON.stringify(body) });
 }
 
 /** GET /api/claude-code/default-model — follow 模式继承的 Claude Code 全局默认 */
@@ -246,4 +281,122 @@ export function postRecapMark(key: string, mark: "copied" | "sent", on = true): 
     method: "POST",
     body: JSON.stringify({ key, mark, on }),
   });
+}
+
+/** GET /api/skills — skill 商店 manifest + 本机每个 skill 的状态（CONTRACT §67） */
+export function fetchSkills(signal?: AbortSignal): Promise<SkillsSnapshot> {
+  return request<SkillsSnapshot>("/api/skills", { signal });
+}
+
+/**
+ * POST /api/skills — 启用/停用一个 skill（写请求：四闸同 POST，api.ts 自动带 token）。
+ * body 只许 name / action 两键；自定义副本（state=custom）server 拒改 409 CONFLICT，整句原文由页面 toast。
+ */
+export function postSkill(name: string, action: "enable" | "disable"): Promise<SkillsSnapshot> {
+  return request<SkillsSnapshot>("/api/skills", { method: "POST", body: JSON.stringify({ name, action }) });
+}
+
+// ----- §68 legacy-app parity 面（设置全套 / 凭证 / 权限 / 诊断 / 向导 / 关于 / 工具） ----- #
+
+/** GET /api/settings — 通用设置目录全集（section → fields，effective + source；文案 server-owned） */
+export function fetchSettingsCatalog(signal?: AbortSignal): Promise<SettingsCatalog> {
+  return request<SettingsCatalog>("/api/settings", { signal });
+}
+
+/** GET /api/settings/{section} — 单 section 快照 */
+export function fetchSettingsSection(section: string, signal?: AbortSignal): Promise<SettingsSection> {
+  return request<SettingsSection>(`/api/settings/${encodeURIComponent(section)}`, { signal });
+}
+
+/** PUT /api/settings/{section} — body = {key: value} 子集（server 字段白名单 + 类型校验 + diff-write） */
+export function putSettingsSection(section: string, body: Record<string, unknown>): Promise<SettingsSection> {
+  return request<SettingsSection>(`/api/settings/${encodeURIComponent(section)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+/** GET /api/secrets — 凭证状态（present / verifiable），值永不回显 */
+export function fetchSecrets(signal?: AbortSignal): Promise<SecretsStatus> {
+  return request<SecretsStatus>("/api/secrets", { signal });
+}
+
+/** PUT /api/secrets/{name} — 写凭证（空值 = 删）；回执只有状态 */
+export function putSecret(name: string, value: string): Promise<SecretStatus> {
+  return request<SecretStatus>(`/api/secrets/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: JSON.stringify({ value }),
+  });
+}
+
+/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id） */
+export function verifySecret(name: string): Promise<SecretVerifyResult> {
+  return request<SecretVerifyResult>(`/api/secrets/${encodeURIComponent(name)}/verify`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+/** GET /api/permissions — 权限体检的 server 半边（FDA 清单 + TCC 相关 doctor 行） */
+export function fetchPermissions(refresh = false, signal?: AbortSignal): Promise<PermissionsSnapshot> {
+  return request<PermissionsSnapshot>(`/api/permissions${refresh ? "?refresh=1" : ""}`, { signal });
+}
+
+/** GET /api/diagnostics — doctor + health + deploy_state + install_report + 日志清单 */
+export function fetchDiagnostics(refresh = false, signal?: AbortSignal): Promise<DiagnosticsSnapshot> {
+  return request<DiagnosticsSnapshot>(`/api/diagnostics${refresh ? "?refresh=1" : ""}`, { signal });
+}
+
+/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token） */
+export function fetchDoctor(fast = true, refresh = false, signal?: AbortSignal): Promise<DoctorReport> {
+  const params = new URLSearchParams();
+  if (!fast) params.set("fast", "0");
+  if (refresh) params.set("refresh", "1");
+  const query = params.toString();
+  return request<DoctorReport>(`/api/doctor${query ? `?${query}` : ""}`, { signal });
+}
+
+/** GET /api/logs/{name}?lines=N — 日志尾巴（只读、size-cap） */
+export function fetchLogTail(name: string, lines = 200, signal?: AbortSignal): Promise<LogTail> {
+  return request<LogTail>(`/api/logs/${encodeURIComponent(name)}?lines=${lines}`, { signal });
+}
+
+/** GET /api/setup — 首次运行向导状态 */
+export function fetchSetup(signal?: AbortSignal): Promise<SetupSnapshot> {
+  return request<SetupSnapshot>("/api/setup", { signal });
+}
+
+/** POST /api/setup/{config-from-example | complete | reset} */
+export function postSetupStep(step: "config-from-example" | "complete" | "reset"): Promise<SetupReceipt> {
+  return request<SetupReceipt>(`/api/setup/${step}`, { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/about — 版本 / 路径 / 更新状态 */
+export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
+  return request<AboutInfo>("/api/about", { signal });
+}
+
+/** POST /api/update/check — §26 手动「立即检查」 */
+export function postUpdateCheck(): Promise<UpdateCheckResult> {
+  return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/mcp — MCP servers 两作用域（只读、已掩码） */
+export function fetchMcp(signal?: AbortSignal): Promise<McpList> {
+  return request<McpList>("/api/mcp", { signal });
+}
+
+/** GET /api/claude-sessions?window=N — 导入预览扫描 */
+export function fetchClaudeSessions(window = 7, signal?: AbortSignal): Promise<ClaudeSessionsScan> {
+  return request<ClaudeSessionsScan>(`/api/claude-sessions?window=${window}`, { signal });
+}
+
+/** POST /api/terminal — 在终端接管会话（命令由 server 从投影推导；客户端只传 card_id） */
+export function postTerminal(cardId: string): Promise<TerminalReceipt> {
+  return request<TerminalReceipt>("/api/terminal", { method: "POST", body: JSON.stringify({ card_id: cardId }) });
+}
+
+/** POST /api/repair/actd — 横幅一键修复（launchctl kickstart；未加载 → 409） */
+export function postRepairActd(): Promise<RepairReceipt> {
+  return request<RepairReceipt>("/api/repair/actd", { method: "POST", body: JSON.stringify({}) });
 }

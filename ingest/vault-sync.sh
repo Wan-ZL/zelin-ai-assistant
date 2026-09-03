@@ -53,10 +53,14 @@ vault_sync_processing_live() {
 # The helper ships inside the LEGACY menu-bar app (bundle id com.zelin.ai-engineer
 # — the identity that holds the Documents grant; CONTRACT §12/§54). Since the §54
 # name swap that bundle lives at "Zelin's AI Assistant (old).app"; the product
-# name now belongs to the board shell, which carries no helper (so the `-x` test
-# on that path is a natural id check). Resolution: the fixed homes first (no
-# Spotlight dependency in the common case), then by bundle id via mdfind for a
-# legacy bundle that moved anywhere else under the app dirs.
+# name belongs to the board shell, which since P4 (§68.13) ALSO carries a helper
+# copy at Contents/MacOS/vault-sync-helper (compiled by shell/build.sh from
+# shell/Helpers/). Order: the legacy app first while it is installed (its grant
+# already works), then the shell (a fresh machine without the legacy app — the
+# Documents grant then keys on the shell's id, see the board's 权限体检 page).
+# Resolution: the fixed homes first (no Spotlight dependency in the common
+# case), then by bundle id via mdfind for a legacy bundle that moved anywhere
+# else under the app dirs.
 VAULT_SYNC_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam (same as install.sh)
 VAULT_SYNC_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"
 

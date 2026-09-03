@@ -14,7 +14,7 @@ import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
 import { cardAction, useSubmit } from "./boardActions";
-import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip } from "./cardChrome";
+import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
@@ -90,6 +90,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         card={row}
         title={title}
         isMuted={isQueued}
+        selectable={!isQueued}
         leading={<span className={`card-dot ${isBlocked ? "is-blocked" : isQueued ? "is-queued" : "is-running"}`} aria-hidden="true" />}
       />
       {isBlocked ? (
@@ -198,6 +199,8 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           <button type="button" className="btn btn-warning" onClick={() => setDialog("stop")}>
             {text("停止", "Stop")}
           </button>
+          {/* §68.7 在终端接管（原生双击指令行 → 终端）：有会话指令的执行卡才给 */}
+          {!isBlocked && !isQueued && cmd && <TerminalButton cardId={row.id} />}
           <DetailsToggle cardId={row.id} />
         </div>
       )}

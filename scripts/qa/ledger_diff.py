@@ -9,6 +9,8 @@
   - qa/coverage_floor.txt 下调 / 删除 = FAIL（地板只许升）
   - qa/gates.toml 阈值放宽 / 删键 = FAIL（方向表 _LOOSEN_UP 认「涨 = 放宽」；
     不在方向表的键一律 fail-closed——新旋钮必须先在这里declare方向）
+  - ui/parity/pending.txt / waivers.txt（§66.2 UI 对齐账本）加 id = FAIL（只看键集：
+    行形 `<id>  <备注…>`，备注不是分数）
 base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。
 判例：tests/test_qa_ledger_diff.py。
 
@@ -27,6 +29,8 @@ import qa_common  # noqa: E402
 
 FLOOR_REL = "qa/coverage_floor.txt"
 GATES_REL = "qa/gates.toml"
+# §66.2 UI 对齐账本：只许缩（pending = 待补的原生条目；waivers = 有意不搬）。
+PARITY_LEDGERS = ("ui/parity/pending.txt", "ui/parity/waivers.txt")
 
 # qa/gates.toml 的方向表：这些键「数值变大 = 门变松」。新增旋钮必须同 PR
 # 在此声明方向（判例 tests/test_qa_ledger_diff.py 钉死：表外数字键改动即 FAIL）。
@@ -63,6 +67,26 @@ def diff_baseline(name, base_text, head_text):
                     qa_common.format_score(head[key]))
                  for key in sorted(head) if key in base and head[key] > base[key]]
     return findings
+
+
+def _parity_ids(text):
+    """UI 账本行 → id 集合（首 token；# 注释与空行忽略）。"""
+    ids = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            ids.add(stripped.split()[0])
+    return ids
+
+
+def diff_parity_ledger(name, base_text, head_text):
+    """UI 对齐账本 vs base：加 id / 删文件 = FAIL（备注列不比——它不是分数）。"""
+    if base_text is None:
+        return []
+    if head_text is None:
+        return ["GROW: %s deleted (retiring a ledger is an owner decision)" % name]
+    added = _parity_ids(head_text) - _parity_ids(base_text)
+    return ["GROW: %s added %s" % (name, item_id) for item_id in sorted(added)]
 
 
 def diff_floor(base_text, head_text):
@@ -121,6 +145,8 @@ def collect_findings(read_base, read_head, baseline_names):
         findings += diff_baseline(name, read_base(name), read_head(name))
     findings += diff_floor(read_base(FLOOR_REL), read_head(FLOOR_REL))
     findings += diff_gates(read_base(GATES_REL), read_head(GATES_REL))
+    for name in PARITY_LEDGERS:
+        findings += diff_parity_ledger(name, read_base(name), read_head(name))
     return findings
 
 
@@ -184,7 +210,8 @@ def main(argv=None):
         print("[ledger-diff] the qa/ ledgers only shrink (§58.4): fix new debt"
               " in the code, never enroll it; loosening a threshold or lowering"
               " the floor is an owner decision — amend docs/CONTRACT.md §58 in"
-              " the same PR")
+              " the same PR; ui/parity/*.txt likewise (§66.2): implement the"
+              " native item, never enroll it")
     if args.report:
         qa_common.write_report(args.report, "ledger_diff_verdict.txt", text + "\n")
     return 1 if findings else 0

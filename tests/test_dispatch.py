@@ -22,6 +22,7 @@ Contract covered:
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -396,8 +397,10 @@ class ClaudeBinResolutionTestCase(unittest.TestCase):
         self._stable()
         cfg = config.Config()
         cfg.claude_bin = "/opt/pinned/claude"
-        self.assertEqual(config.resolve_claude_bin(cfg), "/opt/pinned/claude")
+        # str(Path(...)) — the pin is spelled back in the platform's separators
+        self.assertEqual(config.resolve_claude_bin(cfg), str(Path("/opt/pinned/claude")))
 
+    @unittest.skipIf(sys.platform.startswith("win"), "no executable bit on Windows")
     def test_non_executable_stable_copy_is_ignored(self):
         stable = self._stable()
         stable.chmod(0o644)

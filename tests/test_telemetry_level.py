@@ -403,12 +403,12 @@ class InboxCaptureGateTestCase(unittest.TestCase):
         # consent marker, written when the copy said "no personal text" —
         # default-on content must NOT flow until the new disclosure renders
         # (behavior fields like chars keep flowing on the old marker).
-        from act.lib import analytics_sync
-        analytics_sync.CONSENT_MARKER_PATH.parent.mkdir(
+        from act.lib import telemetry_upload
+        telemetry_upload.CONSENT_MARKER_PATH.parent.mkdir(
             parents=True, exist_ok=True)
-        analytics_sync.CONSENT_MARKER_PATH.write_text(
+        telemetry_upload.CONSENT_MARKER_PATH.write_text(
             "2026-07-01T00:00:00Z\n", encoding="utf-8")
-        self.addCleanup(lambda: analytics_sync.CONSENT_MARKER_PATH.unlink(
+        self.addCleanup(lambda: telemetry_upload.CONSENT_MARKER_PATH.unlink(
             missing_ok=True))
         ev = self._capture("升级用户打的字")
         self.assertIsNotNone(ev)
@@ -724,11 +724,11 @@ class DisclosureCopyHonestyTestCase(unittest.TestCase):
 
     def test_swift_secret_patterns_mirror_python(self):
         # FIX 3 drift-guard: the Swift Analytics.clip masker must carry every
-        # pattern sanitize._SECRET_PATTERNS has (source-literal comparison —
+        # pattern secret_patterns.SECRET_PATTERNS has (source-literal comparison —
         # a pattern added in python without the Swift port fails here)
-        from act.lib import sanitize
+        from act.lib import secret_patterns
         src = self.UTILS.read_text(encoding="utf-8")
-        for pat in sanitize._SECRET_PATTERNS:
+        for pat in secret_patterns.SECRET_PATTERNS:
             literal = pat.pattern.replace("\\", "\\\\")
             self.assertIn(literal, src,
                           f"Utils.swift missing secret pattern {pat.pattern!r}")

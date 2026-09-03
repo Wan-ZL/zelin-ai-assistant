@@ -42,6 +42,19 @@
 #      job fires at +10 — not done yet / API unreachable = `ci_pending`, retry
 #      next interval; red = `ci_failed`, sha poisoned, one notification.
 #      `--force` skips the gate (the owner asked for THIS sha).
+#      HEAD NOT GREEN ≠ NOTHING TO DEPLOY (2026-09-03T00:38Z→01:18Z: a merge
+#      every 10–20 min while CI took 20+ min under queue load — five runs in a
+#      row said "CI not green yet on <an ever-newer sha>" while v1.0.4–1.0.6
+#      sat green behind it, and nothing deployed for hours): when the head is
+#      pending / red / already poisoned, walk the first-parent chain back from
+#      it (at most AUTODEPLOY_CI_WALK commits, never past the deployed HEAD)
+#      and deploy the NEWEST commit whose required checks concluded success
+#      (latest_green_ancestor) — every candidate is a former main head and a
+#      descendant of PREV, so the ff-merge below is still a fast-forward, and
+#      the next run keeps walking toward newer greens. Red ancestors are
+#      poisoned on sight (one notification each, never asked again); a
+#      commit with no `ci` run yet is pending, never assumed green. The
+#      state file records `behind_main` = the head that was skipped and why.
 #   4. refuse when the tracked tree is dirty (the owner's work in progress —
 #      never touched; one notification per pending commit, then silence)
 #   5. PREV=HEAD; `git merge --ff-only origin/main` (diverged local main =
@@ -83,7 +96,12 @@
 #      → rollback (`doctor:unparseable` is never in the baseline — fatal
 #      there — so a transient one retries the same way). Pre-existing red is
 #      reported, not blamed on the new version (otherwise a machine with one
-#      stale finding could never update — including to the fix).
+#      stale finding could never update — including to the fix). FAIL rows
+#      of §25 class `owner_action` (a TCC grant only the owner can click:
+#      `launchd claude`, `launchd volume access`, `stable claude` when the
+#      copy is fine but ungranted, cron write access) are never a new FAIL —
+#      2026-09-03 v1.0.7 was rolled back on exactly that; they reach the
+#      summary as "needs owner: …".
 #  11. rollback = `git reset --hard PREV` (re-verified right before: still on
 #      main, no tracked content edits since step 5 — otherwise the rollback
 #      is REFUSED and notified rather than destroying the owner's work; a git
@@ -100,8 +118,11 @@
 #      to a version whose runtime cannot read the ledger the new actd just
 #      advanced; stays
 #      on main so the next run can still fast-forward) + install.sh again +
-#      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
-#      remembered as failed and skipped until main moves (or --force).
+#      notify "auto-deploy rolled back to PREV"; the sha that failed is then
+#      remembered (`failed_sha` = the newest, `failed_shas` = every poisoned
+#      sha since the last clear — a rolled-back ancestor AND a red head must
+#      both stay poisoned, or the walk in step 3 would redeploy the ancestor
+#      every interval) and skipped until main moves past it (or --force).
 #  12. every outcome lands in TWO places: the HOME mirror
 #      ~/Library/Application Support/ZelinAIAssistant/deploy_state.json (the
 #      script's own truth + private bookkeeping; TCC never gates $HOME, so a
@@ -127,7 +148,7 @@
 # AUTODEPLOY_HOME_DIR, AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE,
 # AUTODEPLOY_HEARTBEAT_FRESH, AUTODEPLOY_HEARTBEAT_GRACE,
 # AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
-# AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS,
+# AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS, AUTODEPLOY_CI_WALK,
 # AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE, AUTODEPLOY_TRIGGER,
 # AUTODEPLOY_PLIST.
 set -uo pipefail
@@ -177,6 +198,9 @@ CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that m
                                                         # deployed sha (comma-separated); `ci` is the
                                                         # macOS job: compileall + full unittest +
                                                         # version placeholder gate + app/iOS builds
+CI_WALK="${AUTODEPLOY_CI_WALK:-30}"                     # first-parent commits examined behind a
+                                                        # non-green origin/main head (step 3); also
+                                                        # the cap on the failed_shas ledger
 FORCE=0
 PY=""
 TRIGGER=""      # terminal | launchd | $AUTODEPLOY_TRIGGER (detect_trigger)
@@ -335,23 +359,44 @@ if not notify.notify(sys.argv[1], sys.argv[2]):
         || log "notify failed (non-fatal): $1 — $(printf '%s' "$_nerr" | tail -n 1)"
 }
 
-# Sorted FAIL check names from `act.doctor --fast --json`, one per line. The
-# doctor's exit code alone cannot separate "the new version broke X" from "X
-# was already red"; names can. Unparseable output (doctor crashed on import,
-# printed garbage, interpreter lost yaml…) is itself a named failure — and
-# main() treats it as fatal on EITHER run: both runs use the new code, so an
-# unparseable baseline would be "pre-existing" and blind the one safety gate
-# to exactly the class of commit it exists to catch.
+# One `act.doctor --fast --json` run → two sorted FAIL name lists (one name
+# per line) in globals:
+#   DOCTOR_FAILS  the rows the verdict judges (every FAIL not of class owner_action)
+#   DOCTOR_OWNER  FAIL rows of §25 class `owner_action` — their only remedy is a
+#                 grant the owner clicks (TCC / Full Disk Access), so they say
+#                 nothing about whether the new code works and never count as a
+#                 "new FAIL" (2026-09-03: v1.0.7 rolled back to v1.0.3 because
+#                 `stable claude` FAILed under launchd for exactly the grant
+#                 install.sh had asked for 30 s earlier). They still print as
+#                 FAIL in doctor output and reach the summary as "needs owner: …".
+# The doctor's exit code alone cannot separate "the new version broke X" from
+# "X was already red"; names can. Unparseable output (doctor crashed on import,
+# printed garbage, interpreter lost yaml…) is itself a named failure in
+# DOCTOR_FAILS — and main() treats it as fatal on EITHER run: both runs use the
+# new code, so an unparseable baseline would be "pre-existing" and blind the
+# one safety gate to exactly the class of commit it exists to catch. A doctor
+# too old to emit `row_class` (rollback target) reads as all-verdict.
 UNPARSEABLE="doctor:unparseable"
-doctor_fail_names() {
-    (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
-        "$PY" -m act.doctor --fast --json 2>/dev/null) | "$PY" -c 'import json, sys
+DOCTOR_FAILS=""
+DOCTOR_OWNER=""
+doctor_sample() {
+    _raw="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
+        "$PY" -m act.doctor --fast --json 2>/dev/null)"
+    DOCTOR_FAILS="$(printf '%s' "$_raw" | doctor_names verdict)"
+    DOCTOR_OWNER="$(printf '%s' "$_raw" | doctor_names owner)"
+}
+
+doctor_names() { # stdin=doctor JSON, $1=verdict|owner
+    "$PY" -c 'import json, sys
+mode, unparseable = sys.argv[1], sys.argv[2]
 try:
     rows = json.load(sys.stdin).get("checks", [])
-    names = sorted({str(r.get("name")) for r in rows if r.get("status") == "fail"})
+    fails = [r for r in rows if r.get("status") == "fail"]
+    owner = sorted({str(r.get("name")) for r in fails if r.get("row_class") == "owner_action"})
+    verdict = sorted({str(r.get("name")) for r in fails if r.get("row_class") != "owner_action"})
 except Exception:
-    names = [sys.argv[1]]
-sys.stdout.write("\n".join(names))' "$UNPARSEABLE"
+    owner, verdict = [], [unparseable]
+sys.stdout.write("\n".join(owner if mode == "owner" else verdict))' "$1" "$UNPARSEABLE"
 }
 
 has_line() { # $1=newline-separated list, $2=exact line
@@ -410,7 +455,8 @@ github_repo() {
 }
 
 # CI verdict for one commit from the GitHub check-runs API — unauthenticated
-# (public repo; ≤6 calls/h against the 60/h limit), `-f` so any HTTP error is
+# (public repo; 60/h limit — one call for the head plus one per still-pending
+# ancestor in latest_green_ancestor, ≈20/h in a merge burst), `-f` so any HTTP error is
 # "unreachable". `filter=latest` (the API default) already collapses re-runs to
 # the newest run per check; the highest id wins if several still come back.
 # One line on stdout:
@@ -452,6 +498,89 @@ def verdict():
     return "success"
 
 sys.stdout.write(verdict())' "$CI_CHECKS"
+}
+
+# The poison ledger, two keys written together: `failed_sha` = the sha that
+# failed most recently (projected — dashboard / web / doctor read it, §56.4)
+# and `failed_shas` = EVERY sha poisoned since the last clear (mirror-private,
+# space-separated, newest last, capped at CI_WALK entries). One slot is not
+# enough once the walk in step 3 exists: a red head H and a rolled-back
+# ancestor G must both stay remembered, or each run would re-ask H (red →
+# notify again), find G "not poisoned" any more (the slot now says H) and
+# redeploy it → rollback → … every interval. Cleared together wherever
+# `failed_sha` was cleared before (up_to_date, a deploy of the head, --force).
+POISON=()
+poison_pairs() { # $1=sha → POISON=("failed_sha=…" "failed_shas=…") for the caller's write_state
+    _set="$(read_state failed_shas)"
+    case " $_set " in *" $1 "*) ;; *) _set="${_set:+$_set }$1" ;; esac
+    _set="$(printf '%s' "$_set" | tr ' ' '\n' | tail -n "$CI_WALK" | tr '\n' ' ')"
+    POISON=("failed_sha=$1" "failed_shas=${_set% }")
+}
+sha_is_poisoned() { # $1=sha → 0 when $1 is in the ledger (either key: a pre-ledger mirror has only failed_sha)
+    [ "$(read_state failed_sha)" = "$1" ] && return 0
+    case " $(read_state failed_shas) " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# "main CI red" — one per red sha, whether it was found as the head or during
+# the walk below (it was a main head once either way, and the owner would
+# have been told about it under the head-only gate had a run caught it).
+notify_ci_red() { # $1=sha $2="<check> <conclusion>"
+    notify "main 的 CI 红了，未部署 / auto-deploy: main CI red" \
+           "origin/$BRANCH $(short "$1") 的 $2；未部署，等下一个绿的提交（或 bash scripts/auto-deploy.sh --force）"
+}
+
+# The deploy target when origin/main's head is NOT green (§56.3 step 3
+# 「合并风暴下的部署目标」): the newest commit on the first-parent chain strictly
+# between the deployed HEAD ($2) and the head ($3) whose required check-runs
+# concluded success. Every candidate was a main head once, is an ancestor of
+# $3 and a descendant of $2 (`merge-base --is-ancestor` re-checks the latter:
+# `merge --ff-only` onto it must stay a fast-forward), so the next run keeps
+# walking toward newer greens from wherever this one lands. Bounded: at most
+# CI_WALK commits, and one API call per still-undecided candidate only — a
+# poisoned sha is skipped without asking, a red one is poisoned + notified on
+# sight (never asked again), a green one is the answer. So the recurring cost
+# is one call per PENDING ancestor per run, on top of the head's own call
+# (unauthenticated budget: 60/h; the head-only gate used 6/h).
+# Globals, not stdout: GREEN_ANCESTOR (the pick, "" = none) + WALK_SUMMARY
+# (what every candidate said, for the state file's detail). Returns 0 when a
+# pick exists.
+GREEN_ANCESTOR=""
+WALK_SUMMARY=""
+latest_green_ancestor() { # $1=owner/repo $2=deployed HEAD (PREV) $3=origin/main head
+    GREEN_ANCESTOR=""; WALK_SUMMARY=""
+    _seen=0
+    # shellcheck disable=SC2046  # one sha per word, nothing to quote
+    for _c in $(git_q rev-list --first-parent --skip=1 --max-count="$CI_WALK" "$2..$3" 2>>"$LOG"); do
+        git_q merge-base --is-ancestor "$2" "$_c" 2>/dev/null || continue
+        _seen=$((_seen + 1))
+        if sha_is_poisoned "$_c"; then
+            WALK_SUMMARY="${WALK_SUMMARY:+$WALK_SUMMARY, }$(short "$_c") failed earlier"
+            continue
+        fi
+        _v="$(ci_verdict "$1" "$_c")"
+        case "$_v" in
+            success)
+                log "CI green on ancestor $(short "$_c") ($CI_CHECKS)"
+                GREEN_ANCESTOR="$_c"
+                return 0 ;;
+            failure*)
+                log "CI RED on main commit $(short "$_c"): ${_v#failure } — poisoned, never deployed"
+                poison_pairs "$_c"
+                write_state "${POISON[@]}"
+                notify_ci_red "$_c" "${_v#failure }"
+                WALK_SUMMARY="${WALK_SUMMARY:+$WALK_SUMMARY, }$(short "$_c") ${_v#failure }" ;;
+            *)
+                log "CI not green yet on ancestor $(short "$_c"): ${_v#pending }"
+                WALK_SUMMARY="${WALK_SUMMARY:+$WALK_SUMMARY, }$(short "$_c") ${_v#pending }" ;;
+        esac
+    done
+    if [ "$_seen" -eq 0 ]; then
+        WALK_SUMMARY="no other commit between the deployed $(short "$2") and it"
+    else
+        WALK_SUMMARY="no green commit between the deployed $(short "$2") and it ($_seen examined: $WALK_SUMMARY)"
+    fi
+    return 1
 }
 
 # The deploy agent must still be able to run its own successor: a merge that
@@ -871,10 +1000,11 @@ write_rollback_state() { # $1=status $2=detail, rest = extra key=value pairs
                 "last_incident=$_now $_rb_status: $_rb_detail" "$@"
 }
 
-rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / itself failed
+rollback() { # $1=PREV $2=reason $3=the sha that failed  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
     # Freeze the ledger before deciding anything (TOCTOU above).
     stop_actd
+    poison_pairs "$3"     # every exit below remembers $3 (failed_sha + failed_shas)
     # store2 guard (§53 / §56 rollback): the new actd migrating the ledger
     # during THIS deploy — the truth marker appearing (YAML→SQLite, v0.48.8),
     # PRAGMA user_version increasing (schema bump on an already-active
@@ -895,7 +1025,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
         log "rollback REFUSED — $_s2why; a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
         write_rollback_state "rollback_failed" \
                              "rollback refused ($_s2why — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2" \
-                             "failed_sha=$3"
+                             "${POISON[@]}"
         # ${_s2why} braced: bash 3.2 would swallow the first byte of the
         # following fullwidth paren into the variable name (set -u abort).
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
@@ -926,7 +1056,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if [ -n "$_why" ]; then
         log "rollback REFUSED — $_why; checkout left at ${_head_now:-unknown}"
-        write_rollback_state "rollback_failed" "rollback refused ($_why): $2" "failed_sha=$3"
+        write_rollback_state "rollback_failed" "rollback refused ($_why): $2" "${POISON[@]}"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
                "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
         restart_actd
@@ -934,7 +1064,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if ! git_q reset --hard --quiet "$1"; then
         log "git reset --hard $1 FAILED — checkout left at ${_head_now:-unknown}"
-        write_rollback_state "rollback_failed" "git reset --hard failed: $2" "failed_sha=$3"
+        write_rollback_state "rollback_failed" "git reset --hard failed: $2" "${POISON[@]}"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)"
         restart_actd
@@ -945,14 +1075,14 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     if [ "$_rc" -ne 0 ]; then
         log "install.sh at $(short "$1") exited $_rc after the rollback"
         write_rollback_state "rollback_failed" "rolled back to $(short "$1") but install.sh exited $_rc: $2" \
-                             "failed_sha=$3" "head=$1" "version=$(repo_version)"
+                             "${POISON[@]}" "head=$1" "version=$(repo_version)"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "已退回 $(short "$1") 但 install.sh 退出码 ${_rc}；请手动 bash install.sh ($2)"
         return 1
     fi
-    write_rollback_state "rolled_back" "$2" "failed_sha=$3" "head=$1" "prev=$1" "version=$(repo_version)"
+    write_rollback_state "rolled_back" "$2" "${POISON[@]}" "head=$1" "prev=$1" "version=$(repo_version)"
     notify "自动部署已回滚 / auto-deploy rolled back to $(short "$1")" \
-           "$2 —— 已重装旧版；origin/main $(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交"
+           "$2 —— 已重装旧版；$(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交"
     return 0
 }
 
@@ -987,9 +1117,11 @@ verify_running() { # $1=sha (HEAD == origin/main)
     if running_mismatch "$_version"; then
         # up_to_date never touches `last_incident` (a refused rollback's verdict
         # stays on the dashboard until a real deploy) nor the per-sha budget.
+        # HEAD == origin/main: nothing is behind main, every poison is moot.
         write_state "status=up_to_date" "last_run=$_now" "head=$1" "version=$_version" \
                     "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
-                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "notified_sha=" "detail="
+                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "failed_shas=" \
+                    "notified_sha=" "behind_main=" "behind_main_why=" "detail="
         return 0
     fi
     _reason="$MISMATCH_REASON"
@@ -1073,7 +1205,8 @@ verify_running() { # $1=sha (HEAD == origin/main)
         _detail="install completed on re-run at $(short "$1") (was: $_why)"
         write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" "head=$1" "version=$_version" \
                     "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
-                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "notified_sha=" "last_incident=" "detail=$_detail"
+                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "failed_shas=" "notified_sha=" \
+                    "behind_main=" "behind_main_why=" "last_incident=" "detail=$_detail"
         log "DEPLOYED v${_version:-?}: $_detail"
         notify "已自动部署 v${_version:-?} / auto-deployed (install re-run)" "$_detail"
         return 0
@@ -1180,7 +1313,7 @@ main() {
 
     if [ "$FORCE" -eq 1 ]; then
         log "--force: forgetting failed/notified/incomplete shas"
-        write_state "failed_sha=" "notified_sha=" "incomplete_sha=" "incomplete_seen=" \
+        write_state "failed_sha=" "failed_shas=" "notified_sha=" "incomplete_sha=" "incomplete_seen=" \
                     "incomplete_runs=" "incomplete_runs_sha=" "incomplete_notified_sha="
     fi
 
@@ -1236,17 +1369,19 @@ main() {
         exit 0
     fi
 
-    if [ "$(read_state failed_sha)" = "$TARGET" ]; then
-        log "origin/$BRANCH $(short "$TARGET") already failed (deploy rolled back, or CI red) — waiting for a new commit (or --force)"
-        write_state "last_run=$_now"
-        exit 0
-    fi
-
-    # CI gate (§56.3 step 3): green on THIS sha, not on the PR head that
-    # produced it. Runs before the dirty-tree check so a red main is reported
-    # (and poisoned) whatever this machine's tree looks like.
+    # CI gate (§56.3 step 3) → DEPLOY = the commit this run installs: the head
+    # when its own `ci` is green (not the PR head that produced it), otherwise
+    # the newest green first-parent ancestor strictly ahead of PREV
+    # (latest_green_ancestor) — a merge burst must not starve this machine
+    # behind a head that is never green at poll time. Runs before the
+    # dirty-tree check so a red main is reported (and poisoned) whatever this
+    # machine's tree looks like. `--force` = the owner asked for THIS sha:
+    # head, no gate, no walk. HEAD_WHY = why the head was not it (state file).
+    DEPLOY=""
+    HEAD_WHY=""
     if [ "$FORCE" -eq 1 ]; then
         log "--force: CI gate skipped for $(short "$TARGET")"
+        DEPLOY="$TARGET"
     else
         _repo="$(github_repo)"
         if [ -z "$_repo" ]; then
@@ -1261,49 +1396,78 @@ main() {
             fi
             exit 0
         fi
-        _ci="$(ci_verdict "$_repo" "$TARGET")"
-        case "$_ci" in
-            success)
-                log "CI green on $(short "$TARGET") ($CI_CHECKS)" ;;
-            failure*)
-                log "CI RED on origin/$BRANCH $(short "$TARGET"): ${_ci#failure } — not deploying; waiting for a new commit (or --force)"
-                write_state "status=ci_failed" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
-                            "failed_sha=$TARGET" \
-                            "detail=origin/$BRANCH $(short "$TARGET") failed CI (${_ci#failure }); not deployed"
-                notify "main 的 CI 红了，未部署 / auto-deploy: main CI red" \
-                       "origin/$BRANCH $(short "$TARGET") 的 ${_ci#failure }；未部署，等下一个绿的提交（或 bash scripts/auto-deploy.sh --force）"
-                exit 0 ;;
-            *)
-                log "CI not green yet on $(short "$TARGET"): ${_ci#pending } — will retry next interval"
-                write_state "status=ci_pending" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
-                            "detail=waiting for CI on origin/$BRANCH $(short "$TARGET"): ${_ci#pending }"
-                exit 0 ;;
-        esac
+        _head_kind=""       # poisoned | red | pending — what to write when nothing older is green either
+        _ci=""
+        if sha_is_poisoned "$TARGET"; then
+            # Not asked again, not notified again (one verdict per sha) — but
+            # the commits between PREV and it may have turned green since.
+            log "origin/$BRANCH $(short "$TARGET") already failed (deploy rolled back, or CI red) — not retried until main moves (or --force)"
+            _head_kind=poisoned
+            HEAD_WHY="head already failed (deploy rolled back, or CI red)"
+        else
+            _ci="$(ci_verdict "$_repo" "$TARGET")"
+            case "$_ci" in
+                success)
+                    log "CI green on $(short "$TARGET") ($CI_CHECKS)"
+                    DEPLOY="$TARGET" ;;
+                failure*)
+                    log "CI RED on origin/$BRANCH $(short "$TARGET"): ${_ci#failure } — never deployed; waiting for a new commit (or --force)"
+                    poison_pairs "$TARGET"
+                    write_state "status=ci_failed" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
+                                "${POISON[@]}" \
+                                "detail=origin/$BRANCH $(short "$TARGET") failed CI (${_ci#failure }); not deployed"
+                    notify_ci_red "$TARGET" "${_ci#failure }"
+                    _head_kind=red
+                    HEAD_WHY="head CI failed (${_ci#failure })" ;;
+                *)
+                    log "CI not green yet on $(short "$TARGET"): ${_ci#pending }"
+                    _head_kind=pending
+                    HEAD_WHY="head CI not green yet (${_ci#pending })" ;;
+            esac
+        fi
+        if [ -z "$DEPLOY" ]; then
+            if latest_green_ancestor "$_repo" "$PREV" "$TARGET"; then
+                DEPLOY="$GREEN_ANCESTOR"
+                log "origin/$BRANCH $(short "$TARGET") is not deployable ($HEAD_WHY) — deploying its newest green ancestor $(short "$DEPLOY") instead"
+            else
+                log "nothing to deploy: $WALK_SUMMARY — will retry next interval"
+                case "$_head_kind" in
+                    pending)
+                        write_state "status=ci_pending" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
+                                    "detail=waiting for CI on origin/$BRANCH $(short "$TARGET") (${_ci#pending }); $WALK_SUMMARY" ;;
+                    red)
+                        write_state "detail=origin/$BRANCH $(short "$TARGET") failed CI (${_ci#failure }); not deployed; $WALK_SUMMARY" ;;
+                    *)  # poisoned: the status on file is still the verdict (rolled back / CI red / deployed behind it)
+                        write_state "last_run=$_now" ;;
+                esac
+                exit 0
+            fi
+        fi
     fi
 
     _dirty="$(git_q status --porcelain --untracked-files=no)"
     if [ -n "$_dirty" ]; then
         _files="$(printf '%s' "$_dirty" | awk '{print $2}' | head -n 5 | tr '\n' ' ')"
-        log "working tree has tracked changes ($_files) — refusing to deploy $(short "$TARGET")"
+        log "working tree has tracked changes ($_files) — refusing to deploy $(short "$DEPLOY")"
         write_state "status=refused_dirty" "last_run=$_now" "head=$PREV" \
                     "version=$(repo_version)" "detail=dirty tracked files: $_files"
-        if [ "$(read_state notified_sha)" != "$TARGET" ]; then
+        if [ "$(read_state notified_sha)" != "$DEPLOY" ]; then
             notify "自动部署暂停：工作树有改动 / auto-deploy refused: dirty tree" \
-                   "origin/$BRANCH $(short "$TARGET") 待部署，但 $REPO_ROOT 有未提交改动：${_files}—— commit/stash 后自动继续"
-            write_state "notified_sha=$TARGET"
+                   "$(short "$DEPLOY") 待部署，但 $REPO_ROOT 有未提交改动：${_files}—— commit/stash 后自动继续"
+            write_state "notified_sha=$DEPLOY"
         fi
         exit 0
     fi
 
-    log "deploying $(short "$PREV") -> $(short "$TARGET")"
-    if ! git_q merge --ff-only --quiet "$TARGET" 2>>"$LOG"; then
-        log "fast-forward to $(short "$TARGET") impossible (local $BRANCH diverged?) — refusing"
+    log "deploying $(short "$PREV") -> $(short "$DEPLOY")"
+    if ! git_q merge --ff-only --quiet "$DEPLOY" 2>>"$LOG"; then
+        log "fast-forward to $(short "$DEPLOY") impossible (local $BRANCH diverged?) — refusing"
         write_state "status=failed" "last_run=$_now" "head=$PREV" \
-                    "version=$(repo_version)" "detail=git merge --ff-only $(short "$TARGET") failed"
-        if [ "$(read_state notified_sha)" != "$TARGET" ]; then
+                    "version=$(repo_version)" "detail=git merge --ff-only $(short "$DEPLOY") failed"
+        if [ "$(read_state notified_sha)" != "$DEPLOY" ]; then
             notify "自动部署失败：无法 fast-forward / auto-deploy: cannot fast-forward" \
                    "本地 $BRANCH 与 origin/$BRANCH 分叉；请在 $REPO_ROOT 手动处理"
-            write_state "notified_sha=$TARGET"
+            write_state "notified_sha=$DEPLOY"
         fi
         exit 0
     fi
@@ -1313,14 +1477,16 @@ main() {
 
     _self="$(self_check)"
     if [ -n "$_self" ]; then
-        rollback "$PREV" "self-check on v${VERSION:-?} ($(short "$NEW")): $_self — the deploy agent could not run again" "$TARGET"
+        rollback "$PREV" "self-check on v${VERSION:-?} ($(short "$NEW")): $_self — the deploy agent could not run again" "$DEPLOY"
         exit 0
     fi
 
-    _baseline="$(doctor_fail_names)"
+    doctor_sample
+    _baseline="$DOCTOR_FAILS"
     [ -n "$_baseline" ] && log "doctor baseline (pre-install) FAIL: $(printf '%s' "$_baseline" | tr '\n' ' ')"
+    [ -n "$DOCTOR_OWNER" ] && log "doctor baseline (pre-install) FAIL needs owner (never a rollback trigger): $(printf '%s' "$DOCTOR_OWNER" | tr '\n' ' ')"
     if has_line "$_baseline" "$UNPARSEABLE"; then
-        rollback "$PREV" "doctor unparseable on v${VERSION:-?} ($(short "$NEW")) — new code cannot even run its own diagnostics" "$TARGET"
+        rollback "$PREV" "doctor unparseable on v${VERSION:-?} ($(short "$NEW")) — new code cannot even run its own diagnostics" "$DEPLOY"
         exit 0
     fi
 
@@ -1329,7 +1495,7 @@ main() {
     run_install
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
-        rollback "$PREV" "install.sh exited $_rc on v${VERSION:-?} ($(short "$NEW"))" "$TARGET"
+        rollback "$PREV" "install.sh exited $_rc on v${VERSION:-?} ($(short "$NEW"))" "$DEPLOY"
         exit 0
     fi
 
@@ -1343,7 +1509,7 @@ main() {
         log "install.sh stamped v$EXPECTED_IDENTITY while the checkout computes v${VERSION:-?} — readiness keyed on the stamp (what the daemons read)"
     fi
     if ! wait_for_new_actd "$EXPECTED_IDENTITY" "$_hb_before"; then
-        rollback "$PREV" "actd:no_heartbeat_from_new_version — actd on v${VERSION:-?} ($(short "$NEW")) completed no pass within ${HEARTBEAT_DEADLINE}s (heartbeat now: $(heartbeat_fields); before install: $_hb_before) — crash loop or stall" "$TARGET"
+        rollback "$PREV" "actd:no_heartbeat_from_new_version — actd on v${VERSION:-?} ($(short "$NEW")) completed no pass within ${HEARTBEAT_DEADLINE}s (heartbeat now: $(heartbeat_fields); before install: $_hb_before) — crash loop or stall" "$DEPLOY"
         exit 0
     fi
     log "actd v${VERSION:-?} completed a pass (heartbeat: $(heartbeat_fields))"
@@ -1353,14 +1519,18 @@ main() {
     # inside a transient EPERM window: 6 false "new FAIL"s, one spurious
     # rollback. Only new FAILs that survive to the FINAL attempt are real.
     # `doctor:unparseable` is never in the baseline (fatal there, above), so
-    # new_names carries a transient one through the same retries.
+    # new_names carries a transient one through the same retries. Rows of
+    # class owner_action are not in either list (doctor_sample) — a grant the
+    # owner has yet to click is not something a rollback can fix.
     _attempt=1
     while :; do
-        _after="$(doctor_fail_names)"
+        doctor_sample
+        _after="$DOCTOR_FAILS"
+        _owner="$DOCTOR_OWNER"
         _new="$(new_names "$_baseline" "$_after")"
         [ -z "$_new" ] && break
         if [ "$_attempt" -ge "$DOCTOR_RETRIES" ]; then
-            rollback "$PREV" "doctor new FAIL after v${VERSION:-?} (persisted through $_attempt runs ${DOCTOR_SETTLE}s apart): $(printf '%s' "$_new" | tr '\n' ' ')" "$TARGET"
+            rollback "$PREV" "doctor new FAIL after v${VERSION:-?} (persisted through $_attempt runs ${DOCTOR_SETTLE}s apart): $(printf '%s' "$_new" | tr '\n' ' ')" "$DEPLOY"
             exit 0
         fi
         log "doctor new FAIL (attempt $_attempt/$DOCTOR_RETRIES): $(printf '%s' "$_new" | tr '\n' ' ') — daemons may still be settling; doctor again in ${DOCTOR_SETTLE}s"
@@ -1372,15 +1542,32 @@ main() {
     if [ -n "$_after" ]; then
         _detail="$_detail; doctor pre-existing FAIL: $(printf '%s' "$_after" | tr '\n' ' ')"
     fi
+    if [ -n "$_owner" ]; then
+        # names only — the detail rides into the dashboard (宪法第 9 条); the
+        # exact paths to grant live in the doctor rows themselves
+        log "doctor FAIL needs owner (not a rollback trigger): $(printf '%s' "$_owner" | tr '\n' ' ') — the fix is a grant only the owner can click; see the doctor rows"
+        _detail="$_detail; needs owner: $(printf '%s' "$_owner" | tr '\n' ' ')"
+    fi
     _hb_now="$(heartbeat_fields)"
     if [ -n "$STAMP_WARN" ]; then
         _detail="$_detail; act/_version.py not stamped (daemons report v${_hb_now%% *}; version identity unverified)"
+    fi
+    # A deploy of the head clears the poison ledger (main moved past every
+    # failure) and any `behind_main` note. A deploy of a green ANCESTOR keeps
+    # the ledger — the head's own verdict (red / rolled back) still stands and
+    # must not be re-asked or re-announced next interval — and records which
+    # head it stopped short of, and why (§56.4 `behind_main`).
+    if [ "$DEPLOY" = "$TARGET" ]; then
+        _target_pairs=("failed_sha=" "failed_shas=" "behind_main=" "behind_main_why=")
+    else
+        _detail="$_detail (newest green ancestor of origin/$BRANCH $(short "$TARGET") — $HEAD_WHY)"
+        _target_pairs=("behind_main=$TARGET" "behind_main_why=$HEAD_WHY")
     fi
     write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" \
                 "head=$NEW" "prev=$PREV" "version=$VERSION" \
                 "running_version=${_hb_now%% *}" "install_report_version=$(install_report_version)" \
                 "reason=" "incomplete_seen=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" \
-                "incomplete_notified_sha=" "failed_sha=" "notified_sha=" "last_incident=" "detail=$_detail"
+                "incomplete_notified_sha=" "notified_sha=" "last_incident=" "${_target_pairs[@]}" "detail=$_detail"
     log "DEPLOYED v${VERSION:-?}: $_detail"
     notify "已自动部署 v${VERSION:-?} / auto-deployed" "$_detail"
     exit 0

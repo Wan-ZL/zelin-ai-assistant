@@ -3,11 +3,14 @@
 //   - 草稿保留：仅在 server 确认成功后清空输入框，失败时草稿原样留着；
 //   - payload 由调用方经 buildBody(text) 构造（propose = {action:"capture",text}，
 //     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）。
+//   - 历史 ↑/↓（最近 20 条，localStorage）与斜杠命令 /rec /lang /open（composerCommands.ts，
+//     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执。
 import { useState } from "react";
 import type { KeyboardEvent } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { describeActionError } from "./boardActions";
+import { pushHistory, readHistory, runSlashCommand } from "./composerCommands";
 
 interface LaneComposerProps {
   placeholder: string;
@@ -23,6 +26,8 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [historyIndex, setHistoryIndex] = useState(-1); // -1 = 不在翻历史
 
   const submit = async () => {
     const trimmed = draft.trim();
@@ -30,8 +35,17 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
     setBusy(true);
     setError(null);
     setSent(false);
+    setNote(null);
     try {
+      const command = await runSlashCommand(trimmed, text);
+      if (command.handled) {
+        setDraft("");
+        setNote(command.note);
+        return;
+      }
       await postAction(buildBody(trimmed));
+      pushHistory(trimmed);
+      setHistoryIndex(-1);
       setDraft(""); // 仅确认成功后清空（§41 草稿保留）
       setSent(true);
     } catch (e) {
@@ -41,11 +55,25 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
     }
   };
 
+  const recall = (direction: 1 | -1) => {
+    const history = readHistory();
+    if (history.length === 0) return;
+    const next = Math.min(history.length - 1, Math.max(-1, historyIndex + direction));
+    setHistoryIndex(next);
+    setDraft(next < 0 ? "" : history[next]);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     // IME 守卫：组合输入中的 Enter 是「上屏」不是「提交」
     if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void submit();
+    } else if (e.key === "ArrowUp" && (draft === "" || historyIndex >= 0)) {
+      e.preventDefault();
+      recall(1);
+    } else if (e.key === "ArrowDown" && historyIndex >= 0) {
+      e.preventDefault();
+      recall(-1);
     }
   };
 
@@ -74,6 +102,7 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
       </div>
       {error && <p className="composer-error">{error}</p>}
       {sent && !error && <p className="column-help">{successNote}</p>}
+      {note && !error && <p className="column-help">{note}</p>}
     </>
   );
 }

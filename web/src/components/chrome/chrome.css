@@ -423,3 +423,31 @@
   padding: 8px 12px;
   font-size: calc(12.5px * var(--text-scale));
 }
+
+/* ----- §21 多选入口（FilterBar） ---------------------------------------------------------- */
+.chrome-select-toggle {
+  border: var(--border-hairline) solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chrome-select-toggle.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ----- §68.11 永久性完成整页 ------------------------------------------------------------- */
+.archive-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chrome-feedback-note {
+  color: var(--text-secondary);
+  font: var(--type-header-meta);
+}

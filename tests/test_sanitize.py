@@ -1,6 +1,6 @@
 """act/lib/sanitize.py — built-in secrets masking is default-on (P0-7).
 
-Built-in _SECRET_PATTERNS masking (redaction_mask_secrets, default True) applies
+Built-in secret_patterns.SECRET_PATTERNS masking (redaction_mask_secrets, default True) applies
 regardless of redaction_enabled; user term-list masking stays opt-in behind
 redaction_enabled. config.yaml lives in the sandbox AIASSISTANT_HOME set in
 tests/__init__.py and is removed in tearDown.

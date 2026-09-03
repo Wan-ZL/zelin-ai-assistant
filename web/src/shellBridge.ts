@@ -15,6 +15,8 @@ import { useSyncExternalStore } from "react";
 
 export const SHELL_STATE_EVENT = "zai-shell-state";
 export const SHELL_HANDLER_NAME = "zaiShell";
+/** 壳 → 页面的命令事件（§61.6）：detail = {command}; 今日词表 quick_capture（全局快捷键 ⌃⌥Space） */
+export const SHELL_COMMAND_EVENT = "zai-shell-command";
 
 /** 录制引擎快照（壳侧 RecordingController 的投影） */
 export interface ShellRecordingState {
@@ -29,7 +31,7 @@ export interface ShellRecordingState {
   resume_mode: string;         // on:true 不带 mode 时壳会恢复到的模式
 }
 
-/** 实时字幕快照（壳侧 LiveCaptionsController 的投影） */
+/** 实时字幕快照（壳侧 LiveCaptionsController 的投影 + §68.2 偏好八键） */
 export interface ShellCaptionsState {
   available: boolean;
   on: boolean;
@@ -38,11 +40,30 @@ export interface ShellCaptionsState {
   engine_dead: boolean;
   status_text: string;
   status_is_error: boolean;
+  source: string;              // "both" | "mic" | "system"
+  translate: boolean;
+  translate_direction: string; // "auto" | "zh2en" | "en2zh"
+  apple_locale: string;        // "zh" | "en"
+  ark_model: string;
+  font_size: number;           // 14–40
+  opacity: number;             // 0.2–1
+}
+
+/** TCC 三项（壳侧 PermissionsProbe；§68.3）："granted" | "denied" | "unknown" */
+export type PermissionStatus = "granted" | "denied" | "unknown" | string;
+
+export interface ShellPermissionsState {
+  screen: PermissionStatus;
+  microphone: PermissionStatus;
+  notifications: PermissionStatus;
 }
 
 export interface ShellState {
   recording: ShellRecordingState;
   captions: ShellCaptionsState;
+  permissions: ShellPermissionsState;
+  launch_at_login: boolean;
+  hotkey: string;              // 全局快速捕获快捷键的人话（如 "⌃⌥Space"）
   language?: string;
 }
 
@@ -53,7 +74,16 @@ export type ShellMethod =
   | "restartRecording"
   | "openScreenRecordingSettings"
   | "setCaptions"
-  | "setLanguage";
+  | "setLanguage"
+  | "getPermissions"
+  | "requestPermission"
+  | "openPane"
+  | "setLaunchAtLogin"
+  | "setCaptionPrefs"
+  | "setBadge";
+
+export const PERMISSION_KINDS = ["screen", "microphone", "notifications"] as const;
+export const PANE_IDS = ["full_disk", "screen", "microphone", "notifications"] as const;
 
 interface ZaiShellHandler {
   postMessage(body: unknown): Promise<unknown>;
@@ -84,12 +114,15 @@ export function hasShellBridge(): boolean {
 
 const asBool = (v: unknown, fallback = false): boolean => (typeof v === "boolean" ? v : fallback);
 const asString = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+const asNumber = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+const asStatus = (v: unknown): PermissionStatus => (typeof v === "string" && v ? v : "unknown");
 
 /** 壳快照 → 类型化状态；缺失字段取默认值（壳 add-only，页面永不因新/缺字段崩） */
 export function normalizeShellState(raw: unknown): ShellState {
   const obj = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const rec = (obj.recording && typeof obj.recording === "object" ? obj.recording : {}) as Record<string, unknown>;
   const cap = (obj.captions && typeof obj.captions === "object" ? obj.captions : {}) as Record<string, unknown>;
+  const perm = (obj.permissions && typeof obj.permissions === "object" ? obj.permissions : {}) as Record<string, unknown>;
   const mode = asString(rec.mode, "off");
   return {
     recording: {
@@ -111,7 +144,21 @@ export function normalizeShellState(raw: unknown): ShellState {
       engine_dead: asBool(cap.engine_dead),
       status_text: asString(cap.status_text),
       status_is_error: asBool(cap.status_is_error),
+      source: asString(cap.source, "both"),
+      translate: asBool(cap.translate),
+      translate_direction: asString(cap.translate_direction, "auto"),
+      apple_locale: asString(cap.apple_locale, "zh"),
+      ark_model: asString(cap.ark_model, "doubao-seed-1-6-flash"),
+      font_size: asNumber(cap.font_size, 24),
+      opacity: asNumber(cap.opacity, 0.7),
     },
+    permissions: {
+      screen: asStatus(perm.screen),
+      microphone: asStatus(perm.microphone),
+      notifications: asStatus(perm.notifications),
+    },
+    launch_at_login: asBool(obj.launch_at_login),
+    hotkey: asString(obj.hotkey, "⌃⌥Space"),
     ...(typeof obj.language === "string" ? { language: obj.language } : {}),
   };
 }
@@ -179,6 +226,28 @@ export function startShellBridge(): () => void {
   return () => {
     window.removeEventListener(SHELL_STATE_EVENT, onState);
   };
+}
+
+/**
+ * 监听壳发来的命令（全局快捷键 → quick_capture）。返回 stop；壳不在场 = no-op。
+ * 页面侧处理：聚焦提案列 composer（app.tsx 接线）。
+ */
+export function onShellCommand(handler: (command: string) => void): () => void {
+  if (!hasShellBridge()) return () => {};
+  const listener = (event: Event) => {
+    const detail = (event as CustomEvent).detail as { command?: unknown } | undefined;
+    if (detail && typeof detail.command === "string") handler(detail.command);
+  };
+  window.addEventListener(SHELL_COMMAND_EVENT, listener);
+  return () => window.removeEventListener(SHELL_COMMAND_EVENT, listener);
+}
+
+/** Dock 徽章 = 等你动作的卡数（提案 + 需输入 + 待验收，原生 §15 v0.46 ②）；壳不在场 no-op */
+export function pushBadge(count: number): void {
+  if (!hasShellBridge()) return;
+  void callShell("setBadge", { count: Math.max(0, Math.floor(count)) }).catch(() => {
+    /* 老壳不认识 setBadge：徽章留空，不影响其它 */
+  });
 }
 
 /** 测试用：清空快照与订阅者 */

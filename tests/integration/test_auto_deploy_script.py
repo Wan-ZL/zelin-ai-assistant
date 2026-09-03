@@ -36,6 +36,15 @@ version_stamp.py 算期望版本，假 install.sh 用同一把尺盖章 + 写心
     不动 HEAD 下轮再试；红 → ci_failed + failed_sha 记账 + 一条通知；只有
     CI_CHECKS 里的名字算数；--force 跳过闸门；origin 不是 github.com 且没设
     AUTODEPLOY_CI_REPO → failed + 通知一次，不猜；
+  - **合并风暴下的部署目标**（2026-09-03 live：head 每 10–20 min 换一个、CI 排队
+    20+ min，五轮「CI not green yet on <越来越新的 sha>」而绿的 v1.0.4–1.0.6 几小时
+    没上机）：head 不绿（pending / 红 / 已中毒）→ 沿 first-parent 从 head 往回走到
+    PREV 之前（最多 AUTODEPLOY_CI_WALK 个）最新的绿 commit 并部署它（仍是 ff）；
+    红的 ancestor 当场中毒 + 一条通知、以后不再问；没有 `ci` run 的 commit 是
+    pending 不是绿；`behind_main` / `behind_main_why` 记下被跳过的 head 与原因，部署到
+    head 或 up_to_date 时清掉；中毒账本 `failed_shas`（镜像私账）装得下红 head + 回滚
+    过的 ancestor 两者——单槽 `failed_sha` 会让两者互相覆盖、每轮重部署再回滚；
+    --force 仍只认 head；
   - origin/main 前进 + 树干净 → ff、自检、install --non-interactive、等新 actd
     心跳、doctor 基线/复查、deployed（state 文件 + 一条通知）；
   - **自检**（B3）：合进来的 scripts/auto-deploy.sh 不能 `bash -n` 或
@@ -259,7 +268,9 @@ exit 0
 
 FAKE_SHIM = '"""fake act.auto_deploy: only has to import (the script self-checks it after the merge)."""\n'
 
-FAKE_DOCTOR = r'''"""fake act.doctor: FAIL names per call from FAKE_DOCTOR_PLAN (one line per call, consumed)."""
+FAKE_DOCTOR = r'''"""fake act.doctor: FAIL names per call from FAKE_DOCTOR_PLAN (one line per call, consumed).
+A name written `<row>@owner_action` FAILs with that §25 row_class; plain names omit the key
+(the shape of a doctor from before the key existed — a rollback target)."""
 import json, os, sys
 from act import __version__
 plan = os.environ.get("FAKE_DOCTOR_PLAN")
@@ -280,7 +291,13 @@ if "GARBAGE" in names:
     # the doctor itself is broken on this commit: no JSON at all
     print("Traceback (most recent call last): ModuleNotFoundError: No module named 'yaml'")
     sys.exit(1)
-checks = [{"name": n, "status": "fail", "detail": "", "fix": ""} for n in names]
+checks = []
+for n in names:
+    name, _, row_class = n.partition("@")
+    row = {"name": name, "status": "fail", "detail": "", "fix": ""}
+    if row_class:
+        row["row_class"] = row_class
+    checks.append(row)
 checks.append({"name": "home", "status": "ok", "detail": "", "fix": ""})
 print(json.dumps({"home": os.getcwd(), "checks": checks}))
 sys.exit(len(names))
@@ -504,6 +521,10 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def ci_queries(self):
         return self.curl_log.read_text(encoding="utf-8").splitlines() if self.curl_log.exists() else []
+
+    def queried_shas(self):
+        """The commits the check-runs API was asked about, in call order."""
+        return [q.split("/commits/", 1)[1].split("/", 1)[0] for q in self.ci_queries()]
 
     def launchctl_calls(self):
         return self.launchctl_log.read_text(encoding="utf-8").splitlines() if self.launchctl_log.exists() else []
@@ -834,6 +855,161 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # naming the repo unblocks it
         self.run_script(doctor_plan=["-", "-"])
         self.assertEqual(self.head(), target)
+
+    # -- 2b'. merge burst: the newest GREEN ancestor, not the ever-moving head - #
+    # 2026-09-03T00:38Z→01:18Z live：每 10–20 min 一次合并、CI 排队 20+ min，五轮连续
+    # 「CI not green yet on <越来越新的 sha>」，v1.0.4–1.0.6 绿着躺在后面几小时没上机。
+    # head 不绿 → 沿 first-parent 往回走到 PREV 之前最新的绿 commit 部署它（仍是 ff）；
+    # 红的每个 sha 中毒一次（failed_shas 账本），--force 照旧只认 head。
+
+    def test_newest_red_and_older_green_deploys_the_older_and_keeps_the_head_poisoned(self):
+        older = self.push("0.48.4")
+        head = self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["failure", "success"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.queried_shas(), [head, older], "head first, then its first parent")
+        self.assertEqual(self.head(), older, "the newest green commit is deployed, not the red head")
+        st = self.state()
+        self.assertEqual((st["status"], st["head"], st["prev"], st["version"]),
+                         ("deployed", older, self.base_sha, "0.48.4"))
+        self.assertEqual(st["failed_sha"], head, "the red head stays poisoned")
+        self.assertEqual(self.mirror()["failed_shas"], head)
+        self.assertEqual(st["behind_main"], head)
+        self.assertIn("head CI failed", st["behind_main_why"])
+        self.assertIn("newest green ancestor of origin/main %s" % head[:7], st["detail"])
+        self.assertIn("head=%s" % older, self.installs()[0])
+        notes = self.notifications()
+        self.assertEqual(len(notes), 2, notes)
+        self.assertIn("CI red", notes[0])
+        self.assertIn("v0.48.4", notes[1])
+        self.assertIn("deploying its newest green ancestor %s" % older[:7], self.log_text())
+        # next interval: the head is remembered as red — not asked again, not
+        # announced again, nothing newer than the deployed sha exists
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.queried_shas()), 2, "the poisoned head is never re-asked")
+        self.assertEqual(len(self.installs()), 1)
+        self.assertEqual(len(self.notifications()), 2)
+        self.assertEqual(self.state()["status"], "deployed", "the verdict on file stands")
+        self.assertIn("already failed", self.log_text())
+
+    def test_all_red_deploys_nothing_and_poisons_every_red_sha_once(self):
+        older = self.push("0.48.4")
+        head = self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["failure", "failure"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "nothing green → nothing deployed")
+        self.assertEqual(self.installs(), [])
+        self.assertEqual(self.queried_shas(), [head, older])
+        st = self.state()
+        self.assertEqual(st["status"], "ci_failed")
+        self.assertIn("no green commit between the deployed", st["detail"])
+        self.assertEqual(set(self.mirror()["failed_shas"].split()), {head, older})
+        self.assertEqual(len(self.notifications()), 2, "one 'main CI red' per red sha")
+        # next interval: both poisoned → zero API calls, zero notifications
+        self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(len(self.queried_shas()), 2)
+        self.assertEqual(len(self.notifications()), 2)
+        self.assertEqual(self.installs(), [])
+        self.assertEqual(self.state()["status"], "ci_failed")
+        # a green commit on top clears the whole ledger
+        fixed = self.push("0.48.6")
+        self.run_script(doctor_plan=["-", "-"], ci=["success"])
+        self.assertEqual(self.head(), fixed)
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertNotIn("failed_sha", st)
+        self.assertNotIn("failed_shas", self.mirror())
+        self.assertNotIn("behind_main", st)
+
+    def test_green_head_deploys_the_head_without_walking(self):
+        self.push("0.48.4")
+        head = self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["success"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), head)
+        self.assertEqual(self.queried_shas(), [head], "a green head is the answer; no ancestor is asked")
+        st = self.state()
+        self.assertEqual((st["status"], st["version"]), ("deployed", "0.48.5"))
+        self.assertNotIn("behind_main", st)
+
+    def test_pending_head_deploys_the_green_ancestor_then_waits_then_catches_up(self):
+        older = self.push("0.48.4")
+        head = self.push("0.48.5")
+        # `missing` = no `ci` check-run on the head at all: pending, NEVER green
+        # (a path-filtered run that does not exist is not a passed run)
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["missing", "success"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), older)
+        st = self.state()
+        self.assertEqual((st["status"], st["version"]), ("deployed", "0.48.4"))
+        self.assertEqual(st["behind_main"], head)
+        self.assertIn("no ci check-run yet", st["behind_main_why"])
+        self.assertNotIn("failed_sha", st, "pending is not a verdict — never poisons")
+        # next interval, head still pending: the deployed sha is the walk's
+        # floor — nothing to ask about, nothing to install; an honest ci_pending
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["pending"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.queried_shas()[2:], [head], "only the head is asked; the deployed ancestor is the floor")
+        self.assertEqual(len(self.installs()), 1)
+        st = self.state()
+        self.assertEqual((st["status"], st["head"]), ("ci_pending", older))
+        self.assertIn("no other commit between the deployed %s" % older[:7], st["detail"])
+        self.assertEqual(st["behind_main"], head, "carried: the last deploy did stop short of it")
+        # the head turns green → deployed, and the machine is no longer behind
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["success"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), head)
+        st = self.state()
+        self.assertEqual((st["status"], st["version"], st["prev"]), ("deployed", "0.48.5", older))
+        self.assertNotIn("behind_main", st)
+        self.assertNotIn("behind_main_why", st)
+
+    def test_rolled_back_ancestor_is_not_redeployed_while_the_head_stays_red(self):
+        # the one-slot failed_sha would loop here: run N poisons the head, deploys
+        # the ancestor, rolls it back (slot := ancestor); run N+1 re-asks the head
+        # (slot says ancestor) → red → notify → the ancestor "is not poisoned" →
+        # redeploy → rollback → … every interval. The ledger holds both.
+        older = self.push("0.48.4")
+        head = self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["failure", "success"], install_rc=[1, 0])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "rolled back to PREV")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], older)
+        self.assertEqual(set(self.mirror()["failed_shas"].split()), {head, older})
+        self.assertEqual(len(self.installs()), 2, "install at the ancestor, rollback install at PREV")
+        self.assertEqual(len(self.notifications()), 2, "CI red on the head + the rollback")
+        for _ in range(2):
+            proc = self.run_script(doctor_plan=["-", "-"])
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(self.head(), self.base_sha)
+            self.assertEqual(len(self.queried_shas()), 2, "neither sha is asked again")
+            self.assertEqual(len(self.installs()), 2, "no deploy→rollback storm")
+            self.assertEqual(len(self.notifications()), 2)
+            self.assertEqual(self.state()["status"], "rolled_back", "the verdict stands")
+        # --force still means THIS head, gate and walk skipped
+        proc = self.run_script("--force", doctor_plan=["-", "-"])
+        self.assertEqual(self.head(), head)
+        self.assertEqual(len(self.queried_shas()), 2, "the forced run did not ask")
+        self.assertNotIn("failed_shas", self.mirror())
+
+    def test_walk_is_bounded(self):
+        oldest = self.push("0.48.4")
+        mid1 = self.push("0.48.5")
+        mid2 = self.push("0.48.6")
+        head = self.push("0.48.7")
+        # AUTODEPLOY_CI_WALK=2: the head plus the two commits behind it are
+        # examined; the (green) oldest lies beyond the bound and is not asked
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["pending", "pending", "pending", "success"],
+                               env={"AUTODEPLOY_CI_WALK": "2"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.queried_shas(), [head, mid2, mid1])
+        self.assertEqual(self.head(), self.base_sha)
+        self.assertEqual(self.state()["status"], "ci_pending")
+        self.assertNotIn(oldest, self.queried_shas(), "beyond the bound: not asked, not deployed")
+        self.assertIn("2 examined", self.state()["detail"])
 
     # -- 2c. self-check of the deploy agent (B3) ----------------------------- #
 
@@ -1247,6 +1423,75 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("dashboard", st["detail"])
         self.assertNotIn("store2", st["detail"], "a transient first-attempt name is not the verdict")
         self.assertEqual(len(self.doctor_runs()), 4, "baseline + 3 attempts")
+
+    # -- 3c. owner-action rows never trigger a rollback（2026-09-03 v1.0.7 事故，§56.3 step 10） -- #
+    # 实录：install.sh 刚建好 claude 稳定副本并打印「一次性授权指引」，30 s 后 doctor 在
+    # launchd 会话里、cwd 在外置卷上跑 `<副本> --version`——副本还没拿到完全磁盘访问，
+    # `stable claude` 从基线的 WARN（缺失）变成 FAIL（跑不了）→ 三次采样都在 → 回滚到
+    # v1.0.3；几分钟后 owner 在终端里跑同一探针是绿的（终端借出自己的授权）。授权只有
+    # owner 能点，代码回滚治不了它，因此 §25 `row_class=owner_action` 的 FAIL 永不进判决。
+
+    def test_new_owner_action_fail_never_rolls_back_and_is_reported_as_needs_owner(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "stable claude@owner_action"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "a grant the owner has yet to click is not a broken deploy")
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertNotIn("failed_sha", st)
+        self.assertIn("needs owner: stable claude", st["detail"])
+        self.assertNotIn("pre-existing", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        self.assertEqual(len(self.doctor_runs()), 2, "baseline + one sample: nothing to settle")
+        log = self.log_text()
+        self.assertIn("needs owner (not a rollback trigger): stable claude", log)
+        self.assertNotIn("daemons may still be settling", log)
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("v0.48.4", notes[0])
+        self.assertIn("needs owner: stable claude", notes[0], "the owner is told what to click")
+
+    def test_owner_action_fail_does_not_shield_a_real_new_fail(self):
+        target = self.push("0.48.4")
+        both = "stable claude@owner_action,dashboard"
+        proc = self.run_script(doctor_plan=["-", both, both, both])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "the code-class new FAIL still rolls back")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("dashboard", st["detail"])
+        self.assertNotIn("stable claude", st["detail"], "the owner-action row is not the verdict")
+
+    def test_pre_existing_owner_action_fail_is_needs_owner_not_pre_existing(self):
+        # the live shape before the fix landed: `launchd claude` red (claude_blind)
+        # on every baseline since 2026-09-02 — it was already excluded as
+        # pre-existing; now it is reported for what it is
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["launchd claude@owner_action", "launchd claude@owner_action"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertIn("needs owner: launchd claude", st["detail"])
+        self.assertNotIn("pre-existing", st["detail"])
+        log = self.log_text()
+        self.assertIn("baseline (pre-install) FAIL needs owner", log)
+        self.assertNotIn("doctor baseline (pre-install) FAIL: launchd claude", log)
+
+    def test_owner_action_row_that_turns_into_a_code_fail_is_a_new_fail(self):
+        # same row name, different failure: `launchd claude` was the grant
+        # (owner_action) before the install and an unclassified FAIL after —
+        # the class changed, so the name IS new to the verdict
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["launchd claude@owner_action",
+                                            "launchd claude", "launchd claude", "launchd claude"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("launchd claude", st["detail"])
 
     def test_git_failure_during_rollback_is_reported_as_git_not_detached(self):
         target = self.push("0.48.4")

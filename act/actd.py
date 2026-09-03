@@ -9,7 +9,7 @@ Each pass:
                     入队等安全窗口 flush 进 live session，状态机零改动）
         merge_review / merge_apply / merge_dismiss -> merge-review 契约 一/四/五
       delete the decision file after reading it.
-  (a') auto-dispatch（§51）：hand 出身的 card_sent 卡过天花板即免批 approved。
+  (a') auto-dispatch（§51 hand lane + §65 self_improve lane）：card_sent 卡过天花板即免批 approved。
   (b) dispatch every status=approved requirement that has no execution yet
       （并发上限内；超出留在合并运行列的 queued 子状态）。
   (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
@@ -43,31 +43,24 @@ from act.lib import (
     analytics,
     card_summary,
     config,
+    daily_loop,
     detached,
     failures,
-    health,
     heartbeat,
     logcap,
+    maintenance,
     notify,
     policy,
+    radar_health,
     recap_store,
     registry,
     risk,
+    self_improve,
     sources,
     steer,
 )
-from act.lib.agent_states import (
-    _BLOCKED_STATES,
-    _DONE_STATES,
-    _LIVE_STATES,
-    _RUNNING_STATES,
-)
-from act.lib.dashboard import (
-    build_dashboard,
-    write_dashboard,
-    _run_claude_agents,
-    _index_agents,
-)
+from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _LIVE_STATES, _RUNNING_STATES
+from act.lib.dashboard import build_dashboard, write_dashboard, _run_claude_agents, _index_agents
 from act.lib.registry import Requirement, State, load, load_all, save
 
 try:
@@ -1402,7 +1395,7 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             continue
         sec_ex = dict(sec.execution or {})
         # 主卡吸收
-        merged_sources, _ = registry._dedupe_sources(
+        merged_sources, _ = registry.dedupe_sources(
             primary.sources or [], sec.sources or [])
         primary.sources = merged_sources
         primary.repeated_mentions = (int(primary.repeated_mentions or 1)
@@ -1959,10 +1952,10 @@ def _apply_decision(req: Requirement, action: Optional[str],
             # §46 确认式停止：失败落台账，绝不阻塞状态落 review
             _stop_session_tracked(req, ex, sid, "stop_to_review")
             _update_search_index(req.id, sid)          # §37 session-content layer
-        # §34bis 机械护栏终点：手动「去待验收」也是一次收割提升 —— preset
-        # 清理卡同样比对起止快照。少了这一刀，用户手动停出的卡永不检查、
-        # 快照侧文件也永不消费（无 ref 时是 no-op，普通卡零开销）。
+        # §34bis 机械护栏终点：手动「去待验收」也是一次收割提升 —— preset 清理卡同样比对
+        # 起止快照（少了这一刀，手动停出的卡永不检查、快照侧文件永不消费；无 ref 零开销）。
         _check_triage_registry_guard(req, ex)
+        self_improve.harvest_hook(req, ex, log=_log)   # §65.3 self_improve 卡：gh 核验
         # mirror the natural executing->review transition's review fields
         # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
         # renders (dashboard reads execution.review_at) and a later purge is
@@ -2093,22 +2086,23 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
     原因 token 上卡（``execution.auto_dispatch_block``，C-6 定名；origin:*/
     disabled 两类常态原因不上卡不留痕）。并发上限不在资格闸里——那是排队问题，
     归 dispatch_approved / queued_reason（M1.b）。预算不存在（D9）：一天派多少
-    张、累计多少钱都不拦。"""
+    张、累计多少钱都不拦。§65 self_improve lane 同样免批（token ``ok:self_improve``）。"""
     ad = policy.autodispatch_config(cfg)
     approved = 0
+    paused = self_improve.lane_paused()
     # §60 跨命名空间 FIFO（legacy R < P，同空间按数值）——字典序会让 P 卡全体插队
     for req in sorted(load_all(), key=lambda r: registry.id_sort_key(r.id)):
         if req.status != State.CARD_SENT.value:
             continue
         try:
-            ok, reason = policy.may_auto_dispatch(req, cfg)
+            ok, reason = policy.may_auto_dispatch(req, cfg, lane_paused=paused)
             # W17 belt-and-braces：显式 external 章可能比 sources 现算更严
             # （手改 YAML 等）——forced_expand 的卡绝不自动派发。
             if ok and risk.effective_tier(req).forced_expand:
                 ok, reason = False, "origin:external"
             ex = dict(req.execution or {})
             if not ok:
-                routine = reason == "disabled" or reason.startswith("origin:")
+                routine = policy.is_routine_reason(reason)
                 if routine:
                     if "auto_dispatch_block" in ex:
                         ex.pop("auto_dispatch_block", None)   # 过期 token 清掉
@@ -2131,19 +2125,17 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
             # 不清的话，刹车停下 → 退回提案 → 本 pass 免批再推进 approved 的
             # 卡会带着 dispatch_halted 直接停回「需输入」，无 UI 出口。
             req.execution = _rearm_dispatch(ex)
-            tag = (f"[{_dt.date.today().isoformat()} auto-dispatch] "
-                   f"hand 出身免批自动派发（est ${cost:g}）")
+            tag = policy.auto_dispatch_note(reason, cost, _dt.date.today().isoformat())
             req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
             req.set_status(State.APPROVED)
             save(req)
             approved += 1
-            _log(f"autodispatch: {req.id} card_sent -> approved (est ${cost:g})")
-            analytics.log_event("auto_dispatch", req=req.id, cost=cost)
+            _log(f"autodispatch: {req.id} card_sent -> approved ({reason}, est ${cost:g})")
+            analytics.log_event("auto_dispatch", req=req.id, cost=cost, lane=reason)
             if ad["notify"]:
                 # 观察模式：每次免批派发都出一条通知，owner 随时可关
                 # （autodispatch.notify=false）或全关（enabled=false）。
-                notify.notify("观察模式：手打卡已自动派发（免批）",
-                              req.title or req.id, req=req.id)
+                notify.notify(*notify.msg_auto_dispatched(reason, req.title or req.id), req=req.id)
         except Exception as e:  # noqa: BLE001 - one bad card must not kill the pass
             _log(f"autodispatch: {getattr(req, 'id', '?')} FAILED: {e}")
     return approved
@@ -2288,31 +2280,27 @@ def _parse_iso(ts: Optional[str]) -> Optional[_dt.datetime]:
 
 
 def purge_trash(cfg: config.Config) -> int:
-    """Hard-delete trashed items older than the retention window.
-
-    Skips items with ``permanent`` set. ``retention_days <= 0`` disables the
-    auto-purge entirely. A single bad item never aborts the pass.
-    """
-    days = int(cfg.trash_retention_days or 0)
-    if days <= 0:
+    """Hard-delete trashed items past their retention window (§9; skips
+    ``permanent``; ``retention_days <= 0`` disables). §70: loop-trashed rows
+    get a longer window — maintenance.purge_due is the one judge shared with
+    the §40.5 countdown. A single bad item never aborts the pass."""
+    if not maintenance.purge_enabled(cfg):
         return 0
-    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    now = _dt.datetime.now(_dt.timezone.utc)
     purged = 0
     for req in load_all():
         try:
-            if req.status != State.TRASHED.value:
-                continue
-            if req.permanent:
-                continue
-            trashed = _parse_iso(req.trashed_at)
-            if trashed is None or trashed >= cutoff:
-                continue
-            if registry.delete(req):
-                purged += 1
-                _log(f"trash: purged {req.id} (trashed_at={req.trashed_at})")
+            purged += _purge_one(req, cfg, now)
         except Exception as e:  # noqa: BLE001 - one bad item must not abort the pass
             _log(f"trash: purge failed for {getattr(req, 'id', '?')}: {e}")
     return purged
+
+
+def _purge_one(req: Requirement, cfg: config.Config, now: _dt.datetime) -> int:
+    if not maintenance.purge_due(req, cfg, now) or not registry.delete(req):
+        return 0
+    _log(f"trash: purged {req.id} (trashed_at={req.trashed_at})")
+    return 1
 
 
 # --------------------------------------------------------------------------- #
@@ -2688,7 +2676,7 @@ def _check_radar_liveness(notified: set[str],
         if now is None:
             now = _dt.datetime.now(_dt.timezone.utc)
         graced = _wake_grace(cfg, now.timestamp(), interval, mono)
-        data = health.load_radar_health()
+        data = radar_health.load_radar_health()
         for src in sources.SOURCES:
             if not sources.enabled(cfg, src):
                 # 关着：清残留条目（条目不存在时 no-op、不写文件），出账。
@@ -2696,7 +2684,7 @@ def _check_radar_liveness(notified: set[str],
                 # 防的是手动/launchd 语境误删 cron 的**真实健康**；源 disabled
                 # 时 cron 写者自己也已静默（§48.2 入口 gate），条目只剩僵尸
                 # ——actd 作为清理仲裁者收尾不与单写者门冲突。
-                health.remove_radar_health(src)
+                radar_health.remove_radar_health(src)
                 notified.discard(src)
                 missing_since.pop(src, None)
                 continue
@@ -2843,6 +2831,7 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     _apply_harvest_title(req, harvested)   # §37, round boundary
     # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
     _check_triage_registry_guard(req, ex)
+    self_improve.harvest_hook(req, ex, log=_log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex
     req.set_status(registry.State.REVIEW)
     registry.save(req)
@@ -2891,6 +2880,7 @@ def _harvest_to_review(req: Requirement, ex: dict, sid, note_tag: str,
     ex["review_at"] = _iso_now()
     if interrupted_reason:
         ex["interrupted_reason"] = interrupted_reason
+    self_improve.harvest_hook(req, ex, log=_log)   # §65.3 核验（失败原因覆盖上面的中断原因）
     req.execution = ex
     req.notes = (req.notes + "\n" + note_tag).strip() if req.notes else note_tag
     req.set_status(registry.State.REVIEW)
@@ -3092,6 +3082,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                     _log(f"reconcile: harvest_delivery {req.id} failed: {e}")
                 # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
                 _check_triage_registry_guard(req, ex)
+                self_improve.harvest_hook(req, ex, log=_log)   # §65.3 self_improve 卡：gh 核验
                 req.execution = ex
                 # §44.3-S 诚实丢弃（窗口③）：会话已收工，未送达的转向指令再
                 # 无处送——留痕 + 通知（notes `[追加指令未送达]`），绝不静默
@@ -3492,19 +3483,18 @@ def _store2_tick() -> None:
 # one pass + loop
 # --------------------------------------------------------------------------- #
 def _refresh_model_knobs(cfg: config.Config) -> None:
-    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次。
-
-    dispatch / resume / rework / brief 都拿 run_once 手里这个冻结 cfg 去
-    ``llm.dispatch_argv(cfg)``；不刷新的话 web 设置页保存后要等重启守护进程
-    才生效（雷达/ask/判官/digest 是独立进程，本来就每次现读）。做法同
-    ``auto_resume`` 的现读判定（§16 追记）：只刷这两个字段，其余
-    startup-frozen 语义不动；load_config 自身防崩，这里再兜一层。"""
+    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次，
+    web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立进程，
+    本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这几个
+    字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮同一刷新点。"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
         return
     cfg.models_dispatch = fresh.models_dispatch
     cfg.models_pipeline = fresh.models_pipeline
+    for knob in daily_loop.LIVE_KNOBS:
+        setattr(cfg, knob, getattr(fresh, knob))
 
 
 def run_once(
@@ -3541,7 +3531,9 @@ def run_once(
     purge_trash(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
     archive_stale(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
+    daily_loop.tick(cfg, interval=interval)   # §70: 到点跑一次「先维护再提案」，自吞异常
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
+    self_improve.tick_hook(cfg, log=_log)   # §65.5 lane PR 巡检（自身节流）
     try:
         # §44: execute same-thing verdicts in THIS thread (the daemon is the single merge
         # writer — the detached judge is registry-read-only), then fail stuck checks + purge expired jobs.
