@@ -1,5 +1,5 @@
 pr: `feat/skill-store`（PR #156；P7 后半，无版本 bump，版本由 tag 派生）
 phase: P7（D13；R2.7.1–R2.7.4）+ 吸收 PR #102
-law: **§62（新增）**；§23 / §49 / §52.5 追记
+law: **§65（新增）**；§23 / §49 / §52.5 追记
 
 **skill 商店落地**：`skills/index.yaml` 清单（version / upstream_version / default_enabled）+ `act/lib/skills.py` 唯一写者（enable = `~/.claude/skills/<name>` 软链接、copy 回退记 hash；五态 enabled / disabled / copy / **custom**（本地改过 = 自定义，永不覆盖、开关锁定、显示落后/领先 N 版）/ foreign；`sync` 只在无决策时应用默认，owner 关掉的每次部署后仍关）；`scripts/skills_sync.sh [--pull]`（另一台机器一条命令）由 install.sh 步 3b `install_skills` 调（§23 step `skills`，fail 只对清单坏）；server `GET/POST /api/skills` + web 设置页「Skills」section；**agent 可见性**走 git 追踪的相对软链接 `.claude/skills/<name>` → `../../skills/<name>`（Claude Code 文档：项目 `.claude/skills` 沿父目录到仓库根加载、跟随软链接、个人覆盖项目）——每个 checkout / worktree 自带 `board-agent` + `test-code`，executor argv 零改动（不加 `--add-dir`：会把默认关的 skill 推给所有 agent）；write-better（#102）进商店 v1.0.0 默认关，其 62 case 自测进 CI；`.claude/*` 忽略、只追踪 `.claude/skills/`。owner 09-02 目标「另一台电脑起空白环境直接用」的 skill 半边：`bash install.sh` 一次即链好默认 skill。**未到**：R2.8.2 agent 收工前自动跑 test-code（改 executor prompt，另 PR）。
