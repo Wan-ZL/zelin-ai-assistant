@@ -919,6 +919,11 @@ def _transcript_cwd(sid: str) -> Optional[Path]:
     return info[1] if info else None
 
 
+# Public name (P3b, 防腐 #2 rule 4): act.lib.actd.merge infers a merged
+# secondary's worktree through it; ``_transcript_cwd`` stays bound for tests.
+transcript_cwd = _transcript_cwd
+
+
 _FINAL_DRAFT_MARKER = "FINAL DRAFT:"
 
 
@@ -1623,6 +1628,12 @@ def _briefing_window_open(sid) -> bool:
         return not _agent_is_working(agent)
     except Exception:  # noqa: BLE001
         return True
+
+
+# Public name (P3b, 防腐 #2 rule 4): act.lib.actd.reconcile's steer flush
+# probes the window through it; ``_briefing_window_open`` stays bound —
+# tests patch that spelling.
+briefing_window_open = _briefing_window_open
 
 
 def _main(argv: list[str]) -> int:

@@ -543,6 +543,11 @@ def _validate_groups(raw, ids: list) -> Optional[list]:
     return norm
 
 
+# Public name (P3b, 防腐 #2 rule 4): act.lib.actd.merge applies partition
+# plans through it; ``_validate_groups`` stays bound for the existing tests.
+validate_groups = _validate_groups
+
+
 def _coerce_action_plan(v) -> list:
     """list -> stripped non-empty strings; str -> its non-empty lines; else []."""
     if isinstance(v, str):

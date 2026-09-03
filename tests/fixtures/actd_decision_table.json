@@ -1,0 +1,7454 @@
+{
+ "verb=abort_execution|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at",
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "dispatch_attempts",
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at",
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "dispatch_attempts",
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=abort_execution|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=abort_execution|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=abort_execution|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=abort_execution|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=abort_execution|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=abort_execution|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=abort_execution|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=abort_execution|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at",
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "dispatch_attempts",
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at",
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "dispatch_attempts",
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=abort_execution|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=abort_execution|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=abort_execution|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=abort_execution|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=abort_execution|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=abort_execution|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at",
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "dispatch_attempts",
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at",
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "dispatch_attempts",
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=abort_execution|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=abort_execution|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=approved+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=accept|status=archived|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=accept|status=card_sent|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=accept|status=delivered+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=detected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=accept|status=executing+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=accept|status=executing+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=accept|status=executing+sid|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=accept|status=executing|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=accept|status=executing|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=merged|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=accept|status=raising|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=accept|status=rejected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=accept|status=review+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=accept|status=review+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=accept|status=review+sid|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=accept|status=review|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=accept|status=review|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=accept|status=trashed|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=accept|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=approve|status=approved+sid|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved+sid|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=archived|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=approve|status=archived|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=approve|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=approve|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=approve|status=card_sent|sources=external|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[W17] 外部来源强制展开：批准已转为先扩写、复批后才执行",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=card_sent|sources=external|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[W17] 外部来源强制展开：批准已转为先扩写、复批后才执行",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "approved_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "approved_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=delivered+sid|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered+sid|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=approve|status=detected|sources=external|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[W17] 外部来源强制展开：批准已转为先扩写、复批后才执行",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=detected|sources=external|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[W17] 外部来源强制展开：批准已转为先扩写、复批后才执行",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "approved_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "approved_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=approve|status=executing+sid|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing+sid|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=approve|status=merged|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=approve|status=merged|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=approve|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=approve|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=approve|status=raising|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=raising|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=approve|status=rejected|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=approve|status=rejected|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=approve|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=approve|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=approve|status=review+sid|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review+sid|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=approve|status=trashed|sources=external|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=approve|status=trashed|sources=external|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=approve|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=approve|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=archive|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=archive|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=archive|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=archive|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=archive|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=archive|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=archive|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=delivered|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=delivered|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=archive|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=archive|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=archive|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=archive|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=archive|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=archive|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=archive|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=archive|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=archive|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=archive|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=archive|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=archive|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=archive|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=archive|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=archive|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=archive|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=bogus|status=approved+sid|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=bogus|status=approved+sid|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=bogus|status=approved|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=bogus|status=approved|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=bogus|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=bogus|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=bogus|status=card_sent|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=bogus|status=card_sent|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=bogus|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=bogus|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=bogus|status=delivered|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=bogus|status=delivered|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=bogus|status=detected|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=bogus|status=detected|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=bogus|status=executing+sid|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=bogus|status=executing+sid|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=bogus|status=executing|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=bogus|status=executing|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=bogus|status=merged|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=bogus|status=merged|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=bogus|status=raising|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=bogus|status=raising|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=bogus|status=rejected|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=bogus|status=rejected|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=bogus|status=review+sid|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=bogus|status=review+sid|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=bogus|status=review|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=bogus|status=review|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=bogus|status=trashed|sources=hand|comment=none": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=bogus|status=trashed|sources=hand|comment=text": {
+  "ack": "unknown",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=approved+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=comment|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "approved"
+ },
+ "verb=comment|status=archived|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=comment|status=card_sent|expected=card_sent|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=delivered+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=comment|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "delivered"
+ },
+ "verb=comment|status=detected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=comment|status=detected|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=comment|status=detected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=comment|status=detected|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=comment|status=detected|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=detected|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=comment|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=executing+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "pending_steers",
+   "steer_queued"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[<date> 追加指令] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "pending_steers",
+   "steer_queued"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[<date> 追加指令] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [
+   "pending_steers",
+   "steer_queued"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[<date> 追加指令] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "pending_steers",
+   "steer_queued"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[<date> 追加指令] 改一下方向",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=comment|status=merged|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=comment|status=raising|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=comment|status=raising|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=comment|status=raising|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=comment|status=raising|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=comment|status=raising|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=raising|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=comment|status=raising|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=comment|status=raising|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "card_sent"
+ },
+ "verb=comment|status=rejected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=comment|status=review+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "review"
+ },
+ "verb=comment|status=review|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "review"
+ },
+ "verb=comment|status=review|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "review"
+ },
+ "verb=comment|status=review|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=comment|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> 修改方向] 改一下方向",
+  "plan_changed": true,
+  "status": "review"
+ },
+ "verb=comment|status=trashed|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[<date> agent 备注] 改一下方向",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=comment|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=defer|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=defer|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=defer|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=defer|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=defer|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=defer|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=defer|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[deferred] 暂缓，入库",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=defer|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "[deferred] 暂缓，入库",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=defer|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=defer|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=defer|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=defer|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=defer|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=defer|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=defer|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=defer|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=defer|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=defer|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=defer|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=defer|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=defer|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=defer|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=defer|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=defer|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=defer|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=defer|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=defer|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=defer|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=defer|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=defer|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=done_external|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=done_external|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=done_external|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=done_external|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=done_external|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at",
+   "delivered_summary",
+   "final_draft"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at",
+   "delivered_summary",
+   "final_draft"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=done_external|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=done_external|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=done_external|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=done_external|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=done_external|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=done_external|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[done outside] Zelin 在系统外完成",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=done_external|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=done_external|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=pin|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=pin|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=pin|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=pin|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=pin|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=pin|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=pin|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=pin|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=pin|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=pin|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=pin|status=delivered|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=pin|status=delivered|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=pin|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=pin|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=pin|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=pin|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=pin|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=pin|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=pin|status=merged|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=pin|status=merged|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=pin|status=raising|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=pin|status=raising|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=pin|status=rejected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=pin|status=rejected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=pin|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=pin|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=pin|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=pin|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=pin|status=trashed|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=pin|status=trashed|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=approved+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=raise|status=archived|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=raise|status=card_sent|expected=card_sent|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=card_sent|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=card_sent|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=raise|status=card_sent|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=raise|status=card_sent|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=card_sent|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=delivered+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=raise|status=detected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=raise|status=detected|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=raise|status=detected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=raise|status=detected|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=raise|status=detected|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=detected|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=executing+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=raise|status=merged|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=raise|status=raising|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=raise|status=rejected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=raise|status=review+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=raise|status=trashed|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=raise|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=reject|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=reject|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=delivered|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=delivered|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=merged|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=merged|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=raising|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=raising|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=rejected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=rejected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=trashed|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=reject|status=trashed|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=restore|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=restore|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=restore|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=restore|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=restore|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=restore|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=restore|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=restore|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=restore|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=restore|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=restore|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=restore|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=restore|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=restore|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=restore|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=restore|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=restore|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=restore|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=restore|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=restore|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=restore|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=restore|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=restore|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=restore|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=restore|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=restore|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=restore|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=restore|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=restore|status=trashed|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=restore|status=trashed|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=revert_review|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=revert_review|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=revert_review|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=revert_review|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=revert_review|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=revert_review|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=revert_review|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=revert_review|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=revert_review|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "reverted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "reverted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=delivered|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "reverted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=delivered|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "reverted_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=revert_review|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=revert_review|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=revert_review|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=revert_review|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=revert_review|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=revert_review|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=revert_review|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=revert_review|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=revert_review|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=revert_review|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=revert_review|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=revert_review|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=revert_review|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=revert_review|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=approved+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=rework|status=archived|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|expected=same|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|expected=same|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=rework|status=card_sent|expected=card_sent|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|expected=card_sent|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=rework|status=delivered+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=delivered|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=rework|status=detected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=rework|status=executing+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=rework|status=merged|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=merged|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=rework|status=raising|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=raising|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=rework|status=rejected|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=rejected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=rework|status=review+sid|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|expected=review|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|expected=review|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=rework|status=trashed|expected=card_sent|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|expected=card_sent|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|expected=review|via=None": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|expected=review|via=agent": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|expected=same|via=None": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|expected=same|via=agent": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=rework|status=trashed|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=stop_to_review|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "delivered_summary",
+   "done",
+   "final_draft",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "delivered_summary",
+   "done",
+   "final_draft",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "done",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "done",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=stop_to_review|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=stop_to_review|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=stop_to_review|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=stop_to_review|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=stop_to_review|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=stop_to_review|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=stop_to_review|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=stop_to_review|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=stop_to_review|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=stop_to_review|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "delivered_summary",
+   "done",
+   "final_draft",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "delivered_summary",
+   "done",
+   "final_draft",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "done",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "done",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=stop_to_review|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=stop_to_review|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=stop_to_review|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=stop_to_review|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=stop_to_review|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=stop_to_review|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "delivered_summary",
+   "done",
+   "final_draft",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "delivered_summary",
+   "done",
+   "final_draft",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "done",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "done",
+   "review_at"
+  ],
+  "ex_removed": [],
+  "notes_tail": "[stopped by user] 手动停止，已收下成果待验收",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=stop_to_review|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=stop_to_review|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=approved+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=approved+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=approved|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=approved|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=archived|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=trash|status=archived|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "archived"
+ },
+ "verb=trash|status=card_sent|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=card_sent|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=delivered|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=delivered|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=detected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=detected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=executing+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=executing+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=executing|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=executing|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=merged|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=merged|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=raising|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=raising|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=rejected|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=rejected|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=review+sid|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=review+sid|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [
+   "aborted_session_id"
+  ],
+  "ex_removed": [
+   "session_id"
+  ],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=review|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=review|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=trashed|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=trash|status=trashed|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=unarchive|status=approved+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=unarchive|status=approved+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=unarchive|status=approved|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=unarchive|status=approved|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "approved"
+ },
+ "verb=unarchive|status=archived|sources=hand|comment=none": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=unarchive|status=archived|sources=hand|comment=text": {
+  "ack": "running",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=unarchive|status=card_sent|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=unarchive|status=card_sent|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "card_sent"
+ },
+ "verb=unarchive|status=delivered+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=unarchive|status=delivered+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=unarchive|status=delivered|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=unarchive|status=delivered|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "delivered"
+ },
+ "verb=unarchive|status=detected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=unarchive|status=detected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "detected"
+ },
+ "verb=unarchive|status=executing+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=unarchive|status=executing+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=unarchive|status=executing|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=unarchive|status=executing|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "executing"
+ },
+ "verb=unarchive|status=merged|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=unarchive|status=merged|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "merged"
+ },
+ "verb=unarchive|status=raising|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=unarchive|status=raising|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "raising"
+ },
+ "verb=unarchive|status=rejected|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=unarchive|status=rejected|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "rejected"
+ },
+ "verb=unarchive|status=review+sid|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=unarchive|status=review+sid|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=unarchive|status=review|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=unarchive|status=review|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "review"
+ },
+ "verb=unarchive|status=trashed|sources=hand|comment=none": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ },
+ "verb=unarchive|status=trashed|sources=hand|comment=text": {
+  "ack": "noop",
+  "ex_added": [],
+  "ex_removed": [],
+  "notes_tail": "",
+  "plan_changed": false,
+  "status": "trashed"
+ }
+}

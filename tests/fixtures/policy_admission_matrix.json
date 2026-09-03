@@ -1,0 +1,248 @@
+{
+ "cases": 583200,
+ "digest": "9491375ac7d0f17985701522a81238ca7cf7e9db19fd9b2f15bc16b017b4cdda",
+ "histogram": {
+  "cost:unknown": 1152,
+  "disabled": 97200,
+  "ok": 1632,
+  "ok:self_improve": 112,
+  "origin:external": 144000,
+  "origin:meeting": 36000,
+  "origin:proposed": 216000,
+  "outbound": 8808,
+  "repo:missing": 1152,
+  "repo:new": 2936,
+  "repo:none": 1824,
+  "self_improve:disabled": 7200,
+  "self_improve:needs_mcp": 7200,
+  "self_improve:paused": 14400,
+  "self_improve:repo_mismatch": 6120,
+  "t2_confirm": 37464
+ },
+ "samples": {
+  "cost:unknown": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=garbage|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=none|green=no|cost=none|type=other",
+    "ok": false
+   }
+  ],
+  "disabled": [
+   {
+    "case": "sources=chan:quick|cfg=auto-off|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=auto-off|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=auto-off|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "ok": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": true
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=three|type=other",
+    "ok": true
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=fifty|type=other",
+    "ok": true
+   }
+  ],
+  "ok:self_improve": [
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": true
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": true
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=three|type=other",
+    "ok": true
+   }
+  ],
+  "origin:external": [
+   {
+    "case": "sources=chan:slack|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:slack|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:slack|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "origin:meeting": [
+   {
+    "case": "sources=chan:meeting|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:meeting|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:meeting|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "origin:proposed": [
+   {
+    "case": "sources=chan:agent_capture|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:agent_capture|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:agent_capture|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "outbound": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=three|type=comms",
+    "ok": false
+   }
+  ],
+  "repo:missing": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=missing|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=missing|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=missing|kind=existing|mcp=no|tier=T1|green=no|cost=three|type=other",
+    "ok": false
+   }
+  ],
+  "repo:new": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=new|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=new|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=new|mcp=no|tier=T1|green=no|cost=three|type=other",
+    "ok": false
+   }
+  ],
+  "repo:none": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=blank|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=blank|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=blank|kind=existing|mcp=no|tier=T1|green=no|cost=three|type=other",
+    "ok": false
+   }
+  ],
+  "self_improve:disabled": [
+   {
+    "case": "sources=chan:self_improve|cfg=si-off|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=si-off|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=si-off|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "self_improve:needs_mcp": [
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=self|kind=existing|mcp=yes|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=self|kind=existing|mcp=yes|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=self|kind=existing|mcp=yes|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "self_improve:paused": [
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=paused|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=paused|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=paused|repo=self|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "self_improve:repo_mismatch": [
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=exists|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=exists|kind=existing|mcp=no|tier=T1|green=no|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:self_improve|cfg=default|lane=open|repo=exists|kind=existing|mcp=no|tier=T1|green=no|cost=two|type=other",
+    "ok": false
+   }
+  ],
+  "t2_confirm": [
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=yes|cost=none|type=other",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=yes|cost=none|type=comms",
+    "ok": false
+   },
+   {
+    "case": "sources=chan:quick|cfg=default|lane=open|repo=self|kind=existing|mcp=no|tier=T1|green=yes|cost=two|type=other",
+    "ok": false
+   }
+  ]
+ }
+}

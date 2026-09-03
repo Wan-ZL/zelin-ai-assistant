@@ -17,7 +17,7 @@ per_mutant_timeout_seconds = 60
 
 [targets]
 "act/lib/sanitize.py" = ["tests/test_sanitize.py", "tests/test_prompt_fencing.py"]
-"act/lib/policy.py" = ["tests/test_policy.py", "tests/test_policy_ceilings.py", "tests/test_policy_trust_matrix.py"]
+"act/lib/policy.py" = ["tests/test_policy.py", "tests/test_policy_ceilings.py", "tests/test_policy_trust_matrix.py", "tests/test_policy_self_improve_lane.py", "tests/test_policy_admission_matrix.py", "tests/test_policy_mutation_kills.py"]
 "act/lib/risk.py" = ["tests/test_risk.py"]
 "act/lib/silent_merge.py" = ["tests/test_silent_merge.py"]
 "act/lib/auto_merge.py" = ["tests/test_auto_merge.py", "tests/test_auto_merge_scan_edges.py"]
@@ -55,6 +55,23 @@ per_mutant_timeout_seconds = 60
 "act/digest.py" = ["tests/test_audit_digest.py", "tests/test_digest_frequency.py", "tests/test_digest_notify.py", "tests/test_digest_stuck_detection.py", "tests/test_digest_suggestion_heuristics.py", "tests/test_radar_never_raise_belts.py"]
 "act/weekly_digest.py" = ["tests/test_weekly_digest.py", "tests/test_weekly_digest_parsing.py"]
 "act/analyze.py" = ["tests/test_audit_analyze_expand.py", "tests/test_display_title.py", "tests/test_analyze_json_extraction.py", "tests/test_analyze_field_coercion.py", "tests/test_analyze_cli.py"]
+
+# P3b（refactor/p3b-actd-policy）：守护主循环拆进 act/lib/actd/ 后进靶区。首轮（原
+# 3,653 行 actd.py，1,025 体，60 文件子集）逻辑幸存体已在 test_actd_decision_table
+# （900 例 verb × status 判决表）、test_actd_inbox_drain_accounting、test_actd_merge_edges、
+# test_actd_triage_guard_edges、test_actd_card_payload_boundaries 逐个钉死；policy 124 体
+# 只剩 4 个等价体（trust rank 保序 ±1 / cfg 形状探针 / 已拒出身上未读的 lane 标志）。
+# 映射 = 各模块的直接判例（每个都 < 5 s），夜间续跑。
+"act/actd.py" = ["tests/test_actd_wire.py", "tests/test_actd_facade_delegation.py", "tests/test_actd_alerts_phase.py", "tests/test_actd_heartbeat.py", "tests/test_actd_loop_health.py", "tests/test_actd_loop_and_phase_edges.py", "tests/test_actd_sync.py", "tests/test_audit_ack_honesty.py", "tests/test_actd_inbox_drain_accounting.py", "tests/test_weekly_digest.py", "tests/test_recap_store.py"]
+"act/lib/actd/inbox.py" = ["tests/test_actd_mutation_kills.py", "tests/test_actd_inbox_drain_accounting.py", "tests/test_capture.py", "tests/test_capture_id.py", "tests/test_capture_images.py", "tests/test_audit_inbox_poison.py", "tests/test_audit_ack_honesty.py", "tests/test_split_note.py", "tests/test_set_title_action.py", "tests/test_feedback.py", "tests/test_actd_card_payload_boundaries.py", "tests/test_two_stage_card_ids.py", "tests/test_store2_agent_wall_live.py", "tests/test_fold_receipts.py", "tests/test_honest_receipts.py", "tests/test_proposals_triage.py"]
+"act/lib/actd/decisions.py" = ["tests/test_actd_mutation_kills.py", "tests/test_actd_decision_table.py", "tests/test_actd_never_raise_paths.py", "tests/test_inbox_guards.py", "tests/test_inverse_actions.py", "tests/test_audit_action_preconditions.py", "tests/test_defer_action.py", "tests/test_actd_sync.py", "tests/test_steer_relay.py", "tests/test_card_lifecycle.py", "tests/test_dispatch_storm_brake.py"]
+"act/lib/actd/merge.py" = ["tests/test_actd_mutation_kills.py", "tests/test_actd_merge_edges.py", "tests/test_actd_never_raise_paths.py", "tests/test_merge_apply.py", "tests/test_merge_force.py", "tests/test_merge_partition.py", "tests/test_merge_review.py", "tests/test_audit_merge_cleanup.py", "tests/test_audit_merge_liveness.py", "tests/test_split_note.py"]
+"act/lib/actd/dispatch.py" = ["tests/test_actd_mutation_kills.py", "tests/test_dispatch.py", "tests/test_actd_never_raise_paths.py", "tests/test_dispatch_storm_brake.py", "tests/test_policy_ceilings.py", "tests/test_policy_trust_matrix.py", "tests/test_self_improve_actd_wire.py", "tests/test_self_improve_sensitive_pause.py", "tests/test_proposals_triage.py", "tests/test_audit_analyze_expand.py", "tests/test_reraise_dispatch.py", "tests/test_actd_loop_and_phase_edges.py"]
+"act/lib/actd/reconcile.py" = ["tests/test_actd_mutation_kills.py", "tests/test_reconcile.py", "tests/test_actd_never_raise_paths.py", "tests/test_resume_storm.py", "tests/test_audit_resume_bookkeeping.py", "tests/test_steer_relay.py", "tests/test_proposals_triage.py", "tests/test_self_improve_actd_wire.py", "tests/test_display_title.py", "tests/test_audit_harvest.py"]
+"act/lib/actd/session.py" = ["tests/test_actd_mutation_kills.py", "tests/test_stop_confirmed.py", "tests/test_inverse_actions.py", "tests/test_actd_merge_edges.py", "tests/test_actd_card_payload_boundaries.py", "tests/test_actd_loop_and_phase_edges.py", "tests/test_harvest_card_title.py", "tests/test_reconcile.py"]
+"act/lib/actd/triage_guard.py" = ["tests/test_proposals_triage.py", "tests/test_actd_never_raise_paths.py", "tests/test_actd_triage_guard_edges.py", "tests/test_actd_loop_and_phase_edges.py"]
+"act/lib/actd/housekeeping.py" = ["tests/test_actd_mutation_kills.py", "tests/test_audit_trash_purge.py", "tests/test_actd_never_raise_paths.py", "tests/test_card_lifecycle.py", "tests/test_attachments_gc.py", "tests/test_actd_wire.py"]
+"act/lib/actd/alerts.py" = ["tests/test_actd_mutation_kills.py", "tests/test_transitions.py", "tests/test_actd_alerts_phase.py", "tests/test_sources.py", "tests/test_actd_wire.py"]
 
 # test-code skill（skills/test-code；vnext2-plan R2.8）——skill 自己也接受每晚第 4 档考验。
 # 2026-09-02 首轮：1,581 变异体 62% 杀伤，存活体 75% 是 CATALOG 数据表里的时间估计常数（±1），
