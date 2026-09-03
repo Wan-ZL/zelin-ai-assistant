@@ -13,7 +13,9 @@ a callable (``run`` = doctor Probes.run, ``which``, ``login_shell_claude``).
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import time
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
@@ -23,15 +25,36 @@ Run = Callable[..., Tuple[int, str]]
 
 STABLE_ROW = "stable claude"
 
+# The TCC death shapes of a claude that cannot read its cwd (§55 第三幕): Bun's
+# unmapped-errno guess, or the raw EPERM spelling a node-installed claude
+# prints. Shared by the `launchd claude` and `stable claude` rows.
+BLIND_RE = re.compile(
+    r"possibly due to low max file descriptors|operation not permitted|\bEPERM\b",
+    re.IGNORECASE)
+
+# A `--version` that fails once is asked again after this pause: install.sh
+# may be `mv`-ing a refreshed copy into place at that very moment (§55 第五幕),
+# and the doctor runs seconds after the install under auto-deploy (§56.3).
+VERSION_RETRY_PAUSE_S = 1.0
+
 
 def _row(status: str, detail: str, fix: str = "", failure_id: str = "") -> dict:
     return {"status": status, "detail": detail, "fix": fix, "failure_id": failure_id}
 
 
+def looks_blind(text: str) -> bool:
+    """Does this claude output carry a TCC-denied signature (§55 第三幕)?"""
+    return bool(BLIND_RE.search(text or ""))
+
+
+def _first_line(text: str, limit: int = 60) -> str:
+    return text.strip().splitlines()[0][:limit] if text.strip() else ""
+
+
 def version_of(run: Run, claude_path: str) -> str:
     """First line of ``<claude_path> --version``, "" when it fails."""
     rc, out = run([claude_path, "--version"], timeout=15)
-    return out.strip().splitlines()[0][:60] if rc == 0 and out.strip() else ""
+    return _first_line(out) if rc == 0 else ""
 
 
 def login_shell_version(run: Run, login_shell_claude: Callable[[], Optional[str]],
@@ -54,8 +77,18 @@ def stable_claude_row(run: Run, login_shell_claude: Callable[[], Optional[str]],
     - missing → WARN: daemons are running the per-version path Full Disk
       Access cannot follow across updates (the 2026-09-02 2.1.258 → 2.1.259
       regression); `bash install.sh` creates it.
-    - present but `--version` fails → FAIL: every dispatch launches exactly
-      this file (resolution order in config.resolve_claude_bin).
+    - present but `--version` fails (asked twice, VERSION_RETRY_PAUSE_S
+      apart — install.sh may be replacing the file right now) → FAIL: every
+      dispatch launches exactly this file (resolution order in
+      config.resolve_claude_bin). Two FAILs, told apart by the output:
+        - a TCC signature (looks_blind) → failure_id `claude_blind`, class
+          owner_action: the copy is fine, this session's cwd is a gated path
+          (auto-deploy runs the doctor from the repo on the external volume,
+          under launchd) and the copy has no Full Disk Access grant yet —
+          the 2026-09-03 v1.0.7 false rollback. Only the owner can fix it;
+          the §56.3 verdict must not count it.
+        - anything else (exec format, dyld, killed by Gatekeeper) →
+          unclassified FAIL: the file itself is broken, re-copy it.
     - present, older than the login shell's Claude Code → WARN: still a
       working claude, just one version behind; the next `bash install.sh` /
       auto-deploy refreshes it in place (same path, grant kept).
@@ -75,16 +108,45 @@ def stable_claude_row(run: Run, login_shell_claude: Callable[[], Optional[str]],
     return _stable_present_row(run, login_shell_claude, which, installer, stable)
 
 
+def stable_version(run: Run, stable: Path) -> Tuple[str, str]:
+    """(version, failure output) of the copy's ``--version`` — one retry."""
+    rc, out = run([str(stable), "--version"], timeout=15)
+    if rc != 0 or not out.strip():
+        time.sleep(VERSION_RETRY_PAUSE_S)
+        rc, out = run([str(stable), "--version"], timeout=15)
+    if rc == 0 and out.strip():
+        return _first_line(out), ""
+    return "", out.strip()
+
+
+def _stable_cannot_run_row(stable: Path, err: str, installer: str) -> dict:
+    first = _first_line(err, 200) or "no output"
+    if looks_blind(err):
+        return _row("fail", failures.pick(
+            "稳定副本 %s 在本会话里跑不了 `--version`（%s）——macOS 按可执行文件路径授完全磁盘"
+            "访问，这份副本还没有；后台派发进外置卷 / Documents 下的任务目录会死在同一处",
+            "the stable daemon copy %s cannot run `--version` from this session (%s) - macOS "
+            "grants Full Disk Access per executable path and this copy has none yet; every "
+            "dispatch into a task folder on an external volume / under Documents dies the same "
+            "way") % (stable, first),
+            failures.pick(
+            "系统设置 → 隐私与安全性 → 完全磁盘访问：加入 %s（一次即可——install.sh 保持这条路径不变）",
+            "System Settings > Privacy & Security > Full Disk Access: enable %s once - install.sh "
+            "keeps this path stable across claude updates") % stable,
+            "claude_blind")
+    return _row("fail", failures.pick(
+        "稳定副本 %s 跑不了 `--version`（%s）——后台派发起的就是这个文件",
+        "the stable daemon copy %s cannot run `--version` (%s) - every dispatch launches exactly "
+        "this file") % (stable, first),
+        failures.pick("bash %s（重新从登录 shell 的 claude 复制一份）",
+                      "bash %s (re-copies it from your login shell's claude)") % installer)
+
+
 def _stable_present_row(run: Run, login_shell_claude: Callable[[], Optional[str]],
                         which: Callable[[str], Optional[str]], installer: str, stable: Path) -> dict:
-    stable_ver = version_of(run, str(stable))
+    stable_ver, err = stable_version(run, stable)
     if not stable_ver:
-        return _row("fail", failures.pick(
-            "稳定副本 %s 跑不了 `--version`——后台派发起的就是这个文件",
-            "the stable daemon copy %s cannot run `--version` - every dispatch launches exactly "
-            "this file") % stable,
-            failures.pick("bash %s（重新从登录 shell 的 claude 复制一份）",
-                          "bash %s (re-copies it from your login shell's claude)") % installer)
+        return _stable_cannot_run_row(stable, err, installer)
     shell_claude, shell_ver = login_shell_version(run, login_shell_claude, which)
     if shell_ver and shell_ver != stable_ver:
         return _row("warn", failures.pick(

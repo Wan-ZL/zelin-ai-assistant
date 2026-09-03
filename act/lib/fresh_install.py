@@ -33,7 +33,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from act.lib import config, install_report, version as version_lib
+from act.lib import config, failures, install_report, version as version_lib
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 
@@ -45,11 +45,13 @@ NO_LAUNCHD_MARKER = "--no-launchd"
 
 # §25 failure ids whose fix is a person's act: a TCC grant (macOS asks the
 # human per binary, no script can click it), a credential, a tool install.
-HUMAN_FAILURE_IDS = frozenset({
+# The grants are §25's own `owner_action` class (the set the §56.3 deploy
+# verdict skips) — a strict subset of "human": a missing tool or credential is
+# still the person's to fix on a fresh machine, but a deploy that newly loses
+# one is a real regression, so those ids stay out of OWNER_ACTION_IDS.
+HUMAN_FAILURE_IDS = failures.OWNER_ACTION_IDS | frozenset({
     "claude_cli_missing", "claude_cli_outdated", "claude_auth_failed",
-    "claude_blind", "interpreter_blind", "deploy_blind_tcc",
-    "cron_tcc_blocked", "cron_fda_blocked", "ui_build_tcc_blocked",
-    "node_missing", "engine_dead",
+    "interpreter_blind", "node_missing", "engine_dead",
 })
 # Rows without a failure id (or WARN-only rows) that still belong to the human.
 HUMAN_ROW_NAMES = frozenset({

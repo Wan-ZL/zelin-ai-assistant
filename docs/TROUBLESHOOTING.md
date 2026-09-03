@@ -96,6 +96,8 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 2. 每次 `bash install.sh`(含每次自动部署跑的 `install.sh --non-interactive`)会把副本刷到当前版本;安装报告里是 `stable_claude=ok:refreshed: …`。两次部署之间副本可能落后一版——doctor `stable claude` 行会 WARN 说明,**这不是故障**:旧一版的 claude 照样派工。
 3. 想立刻刷新就手跑一次 `bash install.sh`;确认用 `python3 -m act.doctor`——`stable claude` 行 OK(或 WARN 落后一版)、`daemon claude` 行写着副本的路径、`launchd claude` 行 OK。
 
+**自动部署的通知里写着 `needs owner: stable claude`**(CONTRACT §56.3 第 10 步、§25 `row_class`,2026-09-03 起):部署本身是成功的——新版本已上机,只是副本还没拿到上面那条一次性授权;在 launchd 会话里 doctor 的 `stable claude` 行是 FAIL `claude_blind`(detail 写着副本没坏、是授权没点),而这类「只有 owner 能点」的行**永不**触发回滚(2026-09-03 v1.0.7 正是因它被误回滚一次)。照第 1 条授一次权,下一次 doctor 就绿了;在终端里跑 `python3 -m act.doctor` 看到该行 OK 不算数——终端借出自己的授权,等 timer 触发的下一轮部署或 `launchd claude` 行说话。若该行 FAIL 却**没有** `claude_blind` id,那是副本文件真坏了(detail 带失败输出首行),`bash install.sh` 重拷。
+
 **如果 `launchd claude` 行在刷新副本之后又红了**:那说明 TCC 把这次替换当成了新东西(理论上不会——副本仍满足授权时记下的 code requirement——但 macOS 版本行为可能变)。看列表里稳定路径那一项是否还开着;关掉再开一次;还不行就在本 repo 开 issue,附 doctor 输出。**不要**再回去给 `versions/<v>` 授权——那条路每次更新都断。
 
 **附带的资源上限**:launchd 给后台任务的默认是 soft `ulimit -n` 256 / hard unlimited。模板自 v0.48.4 起只抬 soft 到 8192(余量);**不要**再手加 `HardResourceLimits`——它把 unlimited 压成 8192,doctor `launchd fd limit` 行会 WARN,重跑 `bash install.sh` 即去掉。

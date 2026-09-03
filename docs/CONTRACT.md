@@ -936,6 +936,33 @@ option" 可能来自任务自身文本，绝不匹配。action_id 词表追加 `
   WARN / 跑不了 FAIL / 落后登录 shell 的 Claude Code 一版 WARN / 同版 OK，无新
   failure id。
 
+2026-09-03 追加（add-only；live 事故：v1.0.7 因 `stable claude` 的「新增 FAIL」被自动回滚到
+v1.0.3，而那个 FAIL 只是 owner 还没点的一次授权）：**行的类别 `row_class`**——
+`CheckResult.row_class`（`--json` 同名键，add-only；未分类行为空串），由 failure_id 派生
+（`failures.row_class(id)`，`with_failure` 顺手盖上）：**`owner_action`** = 唯一修法是 owner
+亲手授权或接受（系统设置里的 TCC / 完全磁盘访问开关、终端里一次性接受免责声明），代码改动、
+重装、回滚都治不了它，因此它对「刚合进来的代码好不好」一个字都不说。集合
+`failures.OWNER_ACTION_IDS`（add-only）= `claude_blind · deploy_blind_tcc · cron_fda_blocked ·
+cron_tcc_blocked · ui_build_tcc_blocked · claude_bypass_disclaimer · screen_tcc_lost`；判例钉住
+每个 id 都在目录里、且其 action_id 不是任何一键代码修复（reload / restart / repair / fix_config…）。
+**唯一消费方**是 §56.3 第 10 步的部署判决：这类 FAIL 永不算「新增 FAIL」，doctor 输出里照常是
+FAIL，部署摘要里以「needs owner: <行名>」列出。与 §69 的关系：`fresh_install.HUMAN_FAILURE_IDS`（「要人来办」= 授权 + 凭证 + 装工具）**由
+`OWNER_ACTION_IDS` 派生**（真超集，判例钉住）——新部署后凭证或工具突然丢了是回归，仍进判决。配套（同为 add-only）：**`stable claude` 行的
+FAIL 一分为二**——副本存在、`--version` 失败且输出带 TCC 签名（`claude_bin.looks_blind`：Bun 的
+「possibly due to low max file descriptors」/ `operation not permitted` / `EPERM`，与 `launchd
+claude` 行共用同一条正则 `claude_bin.BLIND_RE`）→ FAIL **`claude_blind`**（owner_action；detail
+说清「副本本身没坏、本会话的 cwd 在受限路径而副本还没拿到授权」，修法「完全磁盘访问加入 <稳定路径>，
+一次即可」）；其它原因（dyld / exec format / 被 Gatekeeper 杀）→ 无 id 的 FAIL（文件真坏了，`bash
+install.sh` 重拷），detail 带失败输出首行作证据。`--version` 失败先隔 `claude_bin.VERSION_RETRY_PAUSE_S`
+（1 s）**重问一次**再判——auto-deploy 在 install.sh 结束数秒后就跑 doctor，install.sh 可能正在 `mv`
+刷新副本；成功的不重问。事故机理：auto-deploy 以 `cd $REPO_ROOT` 在 launchd 会话里跑 doctor，
+`<副本> --version` 的 cwd 落在外置卷上，副本是 install.sh 30 s 前刚 `created` 的（它自己在
+cwd=$HOME 跑的 `--version` 是绿的），FDA 还没授 → 基线 WARN（缺失）变 FAIL（跑不了）→ 三次采样都在
+→ 回滚；几分钟后 owner 在终端里跑同一探针是绿的（终端借出自己的授权）。判例
+`tests/test_failures.py::RowClassTestCase`、`tests/test_doctor.py` `stable claude` 组的 TCC /
+raw EPERM / 重试一次 / 成功不重试 / 坏文件五例 + `launchd claude` 行 row_class 例、
+`tests/integration/test_auto_deploy_script.py` 3c 组。
+
 2026-07-13 追加（add-only）：failure id `engine_ffmpeg_missing`——「屏幕+音频」
 （screen_audio）模式的引擎启动**强制依赖 ffmpeg**，缺失时 screenpipe 自带的
 自动安装器不可靠（当日事故：安装器写出了二进制却仍每次报 `os error 2` 后秒退，
@@ -4467,7 +4494,10 @@ team `Q6L2SF6YDW` 稳定不变，授权却不跟签名走）。自本幕起（�
   `act/doctor.py` 已顶在防腐 #1 的 2,000 行帽上，新知识不再进它）：新行
   **`stable claude`**（darwin，有 claude 可复制时才出行）——副本缺失
   → WARN（修法 `bash install.sh`，之后对该路径授一次 FDA）；副本跑不了 `--version`
-  → FAIL（派发起的就是这个文件）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
+  → FAIL（派发起的就是这个文件；**2026-09-03 追记**：先隔 1 s 重问一次，仍失败按输出
+  分两类——TCC 签名 → FAIL `claude_blind`、`row_class=owner_action`（副本没坏，是本会话
+  cwd 受限且授权未点，§56.3 判决不计）；其它 → 无 id 的 FAIL（文件真坏了）；细则与判例
+  见 §25 2026-09-03 追加）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
   （仍是能干活的 claude，只落后一版；下次 `bash install.sh` / 自动部署原地刷新，
   路径不变、授权不变）；同版本 → OK。`daemon claude` 行在副本存在时**以副本为
   对象**（跳过「两份安装版本不同」的 FAIL——落后一版是上一行的 WARN，不是两份安装），
@@ -4591,7 +4621,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 7. **doctor 基线**：用**新代码**的 `act.doctor --fast --json` 取 FAIL 项名集合（装之前）。输出解析不出 JSON（doctor 自己 import 崩、解释器丢了 yaml、打印垃圾）记为名字 `doctor:unparseable`，而它在**任一次**运行里出现都是**致命**的——基线阶段出现 = 不装、直接回滚（v0.48.6 审查 H1：两次都用新代码，若把它当 pre-existing，唯一的安全闸门就对「让 doctor 跑不起来的提交」这一类它最该拦的东西失明）。判例 `test_unparseable_doctor_on_the_new_code_rolls_back_before_installing`。同时记下装之前的 `state/actd.heartbeat`（version / pid / phase）作第 9 步的对照。
 8. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装旧 Mac app**（56.5），**但构建并安装看板 UI**（web/dist + shell app，56.5 `ui` 步，v0.48.18）——部署的是守护进程、board server agent、cron、config、launchd 渲染，加上产品的脸。
 9. **就绪等待（v0.48.6 审查 B2；取代原「静置 30 s + 一次采样」）**：轮询 `state/actd.heartbeat`（§47.4，写者已盖 `version` / `pid` / `phase`），直到它**同时**满足：`version` == 新代码的版本（脚本 `repo_version()` = `scripts/version_stamp.py` 对合并后 checkout 算出的值——与 install.sh 刚写进 `act/_version.py`、新 actd 读到的是同一个数；checkout 里没有 stamper（切换前的回滚目标）时回落到 sed 读 `act/__init__.py` 的字面行，判例 `test_rollback_onto_a_pre_cutover_checkout_reads_the_literal_version_line`）、`pid` ≠ 装之前那条的 pid（**新进程**——同版本号的合并否则会被旧 daemon 的 idle 心跳放行）、`phase == idle`（新代码上**完整跑完一个 pass**：inbox / dispatch / reconcile / housekeeping / dashboard 全部 import 并执行过）。`phase == failed`（pass 抛了）只在装之前的 daemon **也**在 `failed` 时算就绪——pre-existing，不归咎新版本。超过 `AUTODEPLOY_HEARTBEAT_DEADLINE`（默认 180 s：一个 pass 可能含 `claude agents --json`，负载高时 >30 s）= FAIL `actd:no_heartbeat_from_new_version` → 回滚，detail 带装前/装后两条心跳。为什么不再静置采样：import 即死的 KeepAlive actd 在每个 ~10 s 节流周期里亮 ~0.5 s 的 pid，一次 `launchctl list` 有 ~5% 概率撞上「在跑」；而 `dashboard` / `actd heartbeat` 两行读的是**旧** daemon 留下的文件，90 s 内都算新鲜——三行齐绿、卡片冻结、记 `deployed`，二十次坏提交漏一次；反过来第一个 pass 慢于 90 s 时旧 dashboard 过期又会**误**回滚。判例 `test_new_actd_that_never_completes_a_pass_rolls_back` / `test_the_old_daemons_heartbeat_does_not_count_even_with_the_same_version` / `test_no_heartbeat_file_at_all_before_and_after_rolls_back` / `test_new_actd_whose_pass_throws_rolls_back_when_the_old_one_was_fine` / `test_pre_existing_failing_pass_is_not_blamed_on_the_new_version`。**2026-09-02 追记（第二次首次实战，add-only）**：「新代码的版本」= **install.sh `version` step 真盖进 `act/_version.py` 的号**（install_report.json `steps` 里 `version=ok:<v>`；脚本 `stamped_identity`），不再是 checkout 的预测——两者通常相等，不等时以 stamp 为准（daemons 读的就是它）。stamp 步**失败**（`version=warn:…`）→ 身份**不可验证**：10:14Z 那一轮 stamper 被 TCC 拒（§56.1 追记），09:46Z 手写的 0.48.21 stamp 留在 v0.48.22 的 checkout 上，新 actd（新 pid、idle）如实报 0.48.21，脚本按预测 0.48.22 等到超时、把一次好部署回滚成 `no_heartbeat_from_new_version`。此后：stamp 失败时只看 **新 pid + idle**（`failed` 规则不变），日志一行 WARN 带 stamp 步的 detail，`deployed` 的 detail 追加「act/_version.py not stamped (daemons report vX; version identity unverified)」，`running_version` 照实记旧号；doctor `version` 行 WARN；下一轮 `running_mismatch` 看到旧号 → `install_incomplete`（第一眼记账）→ 再一眼重跑 install.sh 重盖章 → 自愈为 `deployed`（预算与中毒规则同第 2 步）。没有报告 / 没有 `version` step（切换前的 install.sh）→ 仍用 checkout 的预测。判例 `test_failed_stamp_step_does_not_roll_back_a_good_deploy_and_the_next_runs_re_stamp` / `test_readiness_is_keyed_on_the_stamp_install_sh_wrote_not_the_prediction`；解析不依赖进程 cwd（`git -C <包根>`；daemon cwd=$HOME）的判例 `tests/integration/test_version_git_fixture.py::test_resolution_never_depends_on_the_process_cwd`。
-10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。
+10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。**2026-09-03 修订（live 事故：v1.0.7 → 回滚到 v1.0.3）——owner 动作类的行永不进判决**：判决集合（基线与装后每次采样）只含 `row_class != owner_action` 的 FAIL 行（§25 2026-09-03 追加：`claude_blind` / `deploy_blind_tcc` / `cron_fda_blocked` / `cron_tcc_blocked` / `ui_build_tcc_blocked` 等——修法是一次 TCC / 完全磁盘访问授权，只有 owner 能点；代码回滚治不了它，它也对新代码好不好一个字都不说）。事故形状：install.sh 刚 `created` claude 稳定副本（§55 第五幕）并打印一次性授权指引，30 s 后 doctor 在 launchd 会话里、cwd 在外置卷上跑 `<副本> --version`，副本还没拿到授权 → `stable claude` 从基线 WARN（缺失）变 FAIL（跑不了）→ 三次采样都在 → 回滚，回滚重装再撞同一堵墙也「成功」（旧版没有这一行）；几分钟后 owner 在终端里跑同一探针是绿的。脚本 `doctor_sample` 一次 doctor 运行产出两份名单：`DOCTOR_FAILS`（判决用）与 `DOCTOR_OWNER`（owner_action 的 FAIL 名，**不论新旧**）；后者在日志里记 `doctor FAIL needs owner (not a rollback trigger): <名>`（基线阶段同样记一行），并进 `deployed` 的 `detail` 与通知正文：`; needs owner: <名>`（只有行名、不带路径——detail 随 dashboard 进云端快照，宪法第 9 条；精确路径住 doctor 行本身）；`pre-existing FAIL` 一段只列判决类的行。同名行**换类**（基线是 owner_action、装后成了无 id 的 FAIL）对判决而言就是新名字——照常回滚。没有 `row_class` 键的 doctor（回滚目标上的旧版本）全部按判决类处理。判例 `tests/integration/test_auto_deploy_script.py` 3c 组：`test_new_owner_action_fail_never_rolls_back_and_is_reported_as_needs_owner` / `test_owner_action_fail_does_not_shield_a_real_new_fail` / `test_pre_existing_owner_action_fail_is_needs_owner_not_pre_existing` / `test_owner_action_row_that_turns_into_a_code_fail_is_a_new_fail`。
 
 **回滚** = `git reset --hard PREV`——**reset 前重验**：HEAD 仍在 `main` **且** 无 tracked **内容**改动（`-c core.fileMode=false` 看 status：install.sh 自己对 ingest 脚本的 `+x` 翻转不算，reset 顺手复原即可）。第 5 步到这里隔着 install + 就绪等待 + doctor，owner 在这几分钟里改了文件或切了分支，`reset --hard` 就是一次不可恢复的自动删除（宪法第 2 条）——因此**拒绝回滚**：不 reset、不重装，记 `rollback_failed`（detail `rollback refused (…)` 点名文件/分支）+ 通知「回滚被拒」，新版本留在原地由 owner 手动处理（判例 `test_rollback_refuses_to_destroy_edits_made_during_the_deploy` / `test_rollback_ignores_install_sh_own_mode_flips`）——**留在 `main` 分支上**而不是 `git checkout PREV`（detached HEAD 会让后续每一轮都撞上第 2 步的「不在 main」）——再 `install.sh --non-interactive` 一次，记 `rolled_back` + `failed_sha=<那个 origin/main sha>`，通知「auto-deploy rolled back to <PREV 短 sha>」并附原因与 `--force` 出口；回滚自身失败（reset 失败或重装非 0）= `rollback_failed`，同样通知。回滚的每条出路都写 `last_run`（56.4：它描述本轮，回滚也是一轮）。成功部署也通知一次（版本 + 前后 sha）。
 
@@ -4687,7 +4717,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 | `Contract reminder`（soft） | 跑 | — | — | — |
 | `Tests on windows ×2`、`qlty check`（informational，`continue-on-error`） | **不跑** | 不跑 | `ci-nightly.yml` 每日 10:43 UTC | `gh workflow run ci-nightly.yml` |
 | `Claude PR Review` / `Codex PR Review`（advisory，付费 API） | **只在贴上 `review:ai` 标签时**（`types: [labeled]`） | — | — | `gh workflow run pr-review-claude.yml -f pr=<n>`（Codex 同） |
-| 干净机器安装验收（macOS；**预留**，随 `feat/fresh-machine-bootstrap` 落地时挂上） | 不跑 | push to main | 夜间 | dispatch |
+| `Fresh install (macOS)`（干净机器安装验收，`fresh-install.yml`，§69.4；informational） | **不跑** | push to main（dev 不跟） | 每日 11:17 UTC | `gh workflow run fresh-install.yml` |
 
 **法条**：
 
@@ -4697,7 +4727,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
 - **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
-- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底），与 dev 无关。
+- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` / `fresh-install.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底、验收 main 上的一条命令安装），与 dev 无关。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -5429,9 +5459,12 @@ cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN�
 
 ### 69.4 CI job「Fresh install (macOS)」—— 验收标准的机器版
 
-`.github/workflows/fresh-install.yml`（pull_request + push main + dispatch；
-macos-latest；40 min 顶；**出生 informational**，绿稳后升 required——与 §58 qa-gates
-同一条路）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
+`.github/workflows/fresh-install.yml`（push main + 夜间 schedule 11:17 UTC + dispatch，
+**不跑 pull_request**——§56.8 矩阵：free plan 的 5 个 macOS 槽是几十个并行 agent PR
+排队的资源，这个 job 占一个槽最多 40 min，判的是安装路径整体而不是某个 PR 的 diff；
+落地当天曾短暂带 pull_request 触发，同日改掉；macos-latest；40 min 顶；**informational**，
+永不进 required 集合——没有 PR 上下文可挂；红了 = 一条命令安装坏了，是 bug、在落地后一天内
+被发现，而不是拦住落地它的 PR）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
 一并推入让 §56.1 盖章为真）→ `bash scripts/bootstrap.sh --no-launchd --dir …`
 （用**本 checkout 的脚本**，不是 main 上的）→ 断言 §23 报告：`config=ok`（bootstrap 第 4 步已从模板建好，install.sh 记 kept）/ `runtime_python=ok` / `version=ok` / `ui=ok`（web + shell 两半都建）/
 `launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped`，且

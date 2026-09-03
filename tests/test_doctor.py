@@ -20,7 +20,7 @@ from unittest import mock
 from tests import TMP_HOME
 
 from act import doctor
-from act.lib import config, secrets
+from act.lib import claude_bin, config, secrets
 
 NOW = 1_700_000_000.0
 
@@ -889,13 +889,109 @@ class DoctorTestCase(unittest.TestCase):
         self.assertIn("stable", d.detail)
 
     def test_stable_claude_that_cannot_run_is_fail(self):
+        # a genuinely broken file (dyld / exec format) — the code-class FAIL the
+        # §56.3 verdict DOES count: re-copy it
         stable = self._stable_copy()
-        results = self._stable_row(self._versions({str(stable): "", "/fake/bin/claude": "2.1.259"}),
-                                   shell_claude="/fake/bin/claude")
+        with mock.patch.object(claude_bin, "VERSION_RETRY_PAUSE_S", 0):
+            results = self._stable_row(self._versions({str(stable): "", "/fake/bin/claude": "2.1.259"}),
+                                       shell_claude="/fake/bin/claude")
         r = by_name(results, "stable claude")
         self.assertEqual(r.status, doctor.FAIL)
         self.assertIn("--version", r.detail)
+        self.assertIn("dyld: broken", r.detail, "the evidence rides along")
         self.assertIn("install.sh", r.fix)
+        self.assertEqual(r.failure_id, "")
+        self.assertEqual(r.row_class, "", "a broken copy is the new code's problem, not the owner's")
+
+    def _stable_failing_with(self, stable, text, rc=1, passes_on_attempt=None):
+        """A run whose `<stable> --version` fails with ``text`` (rc ``rc``) —
+        until attempt ``passes_on_attempt`` (1-based), when it answers 2.1.259."""
+        base = FakeRun()
+        calls = {"n": 0}
+
+        def run(cmd, env=None, timeout=None):
+            if cmd[0] == str(stable) and "--version" in cmd:
+                calls["n"] += 1
+                if passes_on_attempt and calls["n"] >= passes_on_attempt:
+                    return 0, "2.1.259 (Claude Code)"
+                return rc, text
+            if "--version" in cmd:
+                return 0, "2.1.259 (Claude Code)"
+            return base(cmd, env=env, timeout=timeout)
+        return run, calls
+
+    def test_stable_claude_denied_by_tcc_is_an_owner_action_fail(self):
+        # 2026-09-03 live (v1.0.7 → rolled back to v1.0.3): auto-deploy runs
+        # the doctor under launchd with cwd = the repo on the external volume;
+        # the copy install.sh had just created (its own cwd=$HOME `--version`
+        # passed) had no Full Disk Access yet, so `--version` died with Bun's
+        # guess → a NEW FAIL for 3 samples → rollback. The copy was fine; the
+        # missing grant is the owner's — class it so §56.3 never counts it.
+        stable = self._stable_copy()
+        run, calls = self._stable_failing_with(stable, self._BUN_GUESS)
+        with mock.patch.object(claude_bin, "VERSION_RETRY_PAUSE_S", 0):
+            results = self._stable_row(run, shell_claude="/fake/bin/claude")
+        r = by_name(results, "stable claude")
+        self.assertEqual(r.status, doctor.FAIL, "dispatch from that session WOULD die: still a FAIL")
+        self.assertEqual(r.failure_id, "claude_blind")
+        self.assertEqual(r.row_class, "owner_action")
+        self.assertIn("Full Disk Access", r.detail)
+        self.assertIn(str(stable), r.fix)
+        self.assertIn("once", r.fix)
+        self.assertNotIn("re-copies", r.fix, "re-copying cannot grant anything")
+
+    def test_stable_claude_raw_eperm_is_the_same_owner_action_fail(self):
+        stable = self._stable_copy()
+        run, _ = self._stable_failing_with(
+            stable, "Error: EPERM: operation not permitted, uv_cwd", rc=1)
+        with mock.patch.object(claude_bin, "VERSION_RETRY_PAUSE_S", 0):
+            results = self._stable_row(run, shell_claude="/fake/bin/claude")
+        r = by_name(results, "stable claude")
+        self.assertEqual((r.status, r.failure_id, r.row_class),
+                         (doctor.FAIL, "claude_blind", "owner_action"))
+
+    def _stable_row_direct(self, run):
+        """The pure row builder alone — the `daemon claude` row also asks the
+        copy for its version, so attempt counts are taken here."""
+        return claude_bin.stable_claude_row(run, lambda: "/fake/bin/claude",
+                                            lambda _n: "/fake/bin/claude", "install.sh")
+
+    def test_stable_claude_version_that_fails_once_then_answers_is_ok(self):
+        # the race the retry exists for: install.sh `mv`-ing the refreshed copy
+        # into place at the instant the doctor asks
+        stable = self._stable_copy()
+        run, calls = self._stable_failing_with(stable, "", rc=126, passes_on_attempt=2)
+        with mock.patch.object(claude_bin, "VERSION_RETRY_PAUSE_S", 0):
+            row = self._stable_row_direct(run)
+        self.assertEqual(row["status"], doctor.OK, row["detail"])
+        self.assertIn("2.1.259", row["detail"])
+        self.assertEqual(calls["n"], 2, "one retry, then the verdict")
+
+    def test_stable_claude_that_answers_first_time_is_asked_once(self):
+        stable = self._stable_copy()
+        run, calls = self._stable_failing_with(stable, "", passes_on_attempt=1)
+        self.assertEqual(self._stable_row_direct(run)["status"], doctor.OK)
+        self.assertEqual(calls["n"], 1, "no retry on success")
+
+    def test_stable_claude_that_keeps_failing_is_asked_exactly_twice(self):
+        stable = self._stable_copy()
+        run, calls = self._stable_failing_with(stable, self._BUN_GUESS)
+        with mock.patch.object(claude_bin, "VERSION_RETRY_PAUSE_S", 0):
+            row = self._stable_row_direct(run)
+        self.assertEqual(row["failure_id"], "claude_blind")
+        self.assertEqual(calls["n"], 2, "asked twice before judging, never more")
+
+    def test_stable_claude_retry_waits_between_attempts(self):
+        stable = self._stable_copy()
+        run, _ = self._stable_failing_with(stable, "dyld: broken")
+        with mock.patch.object(claude_bin.time, "sleep") as slept:
+            self._stable_row_direct(run)
+        slept.assert_called_once_with(claude_bin.VERSION_RETRY_PAUSE_S)
+
+    def test_launchd_claude_blind_row_is_owner_action_class(self):
+        r = self._claude_row({"state": "failed", "rc": 1, "text": self._BUN_GUESS})
+        self.assertEqual(r.failure_id, "claude_blind")
+        self.assertEqual(r.row_class, "owner_action")
 
     def test_stable_claude_row_absent_without_any_claude(self):
         results = self._stable_row(FakeRun(), which_claude=None)

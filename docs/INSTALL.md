@@ -171,9 +171,9 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材；**新装机器请�
 - 什么数据会离开你的机器：`docs/PRIVACY.md`。
 - **Skills**（仓库内 skill 商店，CONTRACT §67）：`install.sh` 已把默认开的 skill（`board-agent`、`test-code`）链进 `~/.claude/skills`；其余在看板设置页 → Skills 启用/停用，或 `python3 -m act.lib.skills enable <name>`。另一台机器更新后跑 `bash scripts/skills_sync.sh --pull` 即同步；本地改过的副本标为「自定义」，商店永不覆盖（`skills/README.md`）。
 
-## 这条路线在 CI 上每次都走一遍
+## 这条路线在 CI 上每天都走一遍
 
-`.github/workflows/fresh-install.yml`（"Fresh install (macOS)"）在每个 PR 上用一台干净的 macOS runner 复现本页：空 `$HOME`、本地 origin、`bash scripts/bootstrap.sh --no-launchd` → 断言安装报告、起看板 server 断言 `/api/board` `/api/health` `/api/setup`、`doctor --fresh-install` 退出 0、第二次运行是更新且 `config.yaml` 字节不变。绿 = 「另一台电脑、空白环境、一条命令、直接能用」成立（CONTRACT §69.4）。
+`.github/workflows/fresh-install.yml`（"Fresh install (macOS)"）在每次 push 到 main、每晚一次以及手动触发时用一台干净的 macOS runner 复现本页（不按 PR 跑——macOS runner 稀缺，CONTRACT §56.8）：空 `$HOME`、本地 origin、`bash scripts/bootstrap.sh --no-launchd` → 断言安装报告、起看板 server 断言 `/api/board` `/api/health` `/api/setup`、`doctor --fresh-install` 退出 0、第二次运行是更新且 `config.yaml` 字节不变。绿 = 「另一台电脑、空白环境、一条命令、直接能用」成立（CONTRACT §69.4）。
 
 ## 卸载（clean uninstall）
 
