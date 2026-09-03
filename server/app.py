@@ -71,7 +71,8 @@ from server import (about, ai_fix_launch, ask_assistant, board_source, claude_se
                     maintainer_launch, material_box, mcp_servers, notify_catalog,
                     paths, permissions, radars, recaps, repair, secrets_store,
                     security, self_improve_lane, settings, settings_catalog,
-                    setup, slack_manifest, terminal_launch, uninstall_launch)
+                    setup, slack_directory, slack_manifest, sync_pairing,
+                    terminal_launch, uninstall_launch, voice_profile)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -441,15 +442,15 @@ def _post_actions(ctx, payload: dict) -> dict:
 
 
 def _post_reveal(ctx, payload: dict) -> dict:
-    unknown = set(payload) - {"card_id", "target"}
+    unknown = set(payload) - {"card_id", "target", "name"}
     if unknown:
         raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
     if "target" in payload and "card_id" not in payload:
-        # §68.4 doctor 行「显示文件」（config_invalid）：词表项，不是路径
+        # §68.4 doctor 行「显示文件」（config_invalid）/ §67.5 Skills「在 Finder 显示」：词表项（+ skill 名），不是路径
         target = payload.get("target")
         if not isinstance(target, str):
             raise InvalidFieldError("target must be a string")
-        return files.reveal_target(ctx.home, target)
+        return files.reveal_target(ctx.home, target, payload.get("name"))
     card_id = payload.get("card_id")
     if not isinstance(card_id, str):
         raise InvalidFieldError("card_id must be a string")
@@ -518,6 +519,10 @@ _GET_JSON_ROUTES = {
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
     # custom / foreign）；token-light GET，写面在 POST /api/skills
     "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
+    # 语气档案「当前生效」状态行（docs/VOICE.md；§68.1 追记）
+    "/api/voice": lambda ctx, query: voice_profile.snapshot(ctx.home),
+    # 同步 / 配对（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码
+    "/api/sync": lambda ctx, query: sync_pairing.snapshot(ctx.home),
     # §68 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
     "/api/settings": lambda ctx, query: settings_catalog.snapshot(ctx.home),
     # §68 凭证状态（present / verifiable；值永不回显）
@@ -540,6 +545,8 @@ _GET_JSON_ROUTES = {
     "/api/ask/history": lambda ctx, query: ask_assistant.history(ctx.home),
     # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
     "/api/slack/manifest": lambda ctx, query: slack_manifest.manifest(ctx.home),
+    # §68.1 追记：Slack 频道 / 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；?refresh=1 绕过）
+    "/api/slack/directory": lambda ctx, query: slack_directory.directory(ctx.home, refresh=_flag(query, "refresh")),
     # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
     # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）
@@ -603,6 +610,9 @@ _POST_JSON_ROUTES = {
     "/api/ingest/run": lambda ctx, payload: ingest_run.ingest_now(ctx.home, payload),
     # §68.6 关于页「一键更新」：提前 kickstart §56 自动部署 agent（未加载 409 → 页面退回 release 页）
     "/api/update/install": lambda ctx, payload: about.install_now(payload),
+    # §68.15 同步 / 配对：起 act.syncd --pair --json / --disable（syncd 是 state/sync 的唯一写者）
+    "/api/sync/pair": lambda ctx, payload: sync_pairing.pair(ctx.home, payload),
+    "/api/sync/disable": lambda ctx, payload: sync_pairing.disable(ctx.home, payload),
 }
 
 _POST_PREFIX_ROUTES = {

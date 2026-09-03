@@ -15,10 +15,11 @@ import { ForkDialog } from "../board/ForkDialog";
 import { ModalDialog } from "../board/ModalDialog";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, navigate } from "../../route";
-import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
+import { hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshAbout, setSetup, useAppState } from "../../store";
 import type { AboutInfo, UpdateCheckResult } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
+import { LaunchAtLoginRow } from "./LaunchAtLoginRow";
 import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;
@@ -98,7 +99,7 @@ export function AboutSection() {
   const shell = useShellState();
   const present = hasShellBridge();
   const [last, setLast] = useState<UpdateCheckResult | null>(null);
-  const [busy, setBusy] = useState<"check" | "install" | "setup" | "login" | "uninstall" | null>(null);
+  const [busy, setBusy] = useState<"check" | "install" | "setup" | "uninstall" | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [uninstall, setUninstall] = useState<"none" | "confirm" | { title: string; command: string; extra: string | null }>("none");
 
@@ -147,18 +148,6 @@ export function AboutSection() {
       navigate(buildAppUrl(window.location.href, "setup", null));
     } catch (err) {
       setNote(errorMessage(err));
-      setBusy(null);
-    }
-  }
-
-  async function toggleLogin(on: boolean) {
-    setBusy("login");
-    setNote(null);
-    try {
-      await callShell("setLaunchAtLogin", { on });
-    } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err));
-    } finally {
       setBusy(null);
     }
   }
@@ -238,15 +227,7 @@ export function AboutSection() {
       {present && shell && (
         <>
           <div className="settings-subhead">{text("看板 app（壳）", "Board app (shell)")}</div>
-          <div className="settings-field is-bool">
-            <div className="settings-field-head">
-              <label className="settings-knob-label" htmlFor="launch-at-login">{text("登录时启动", "Launch at login")}</label>
-            </div>
-            <div className="settings-knob-controls">
-              <input id="launch-at-login" type="checkbox" role="switch" className="settings-switch" checked={shell.launch_at_login} disabled={busy !== null} onChange={(e) => void toggleLogin(e.target.checked)} />
-              <span className="settings-helper">{text("没有它，开机后不会有系统通知、字幕与录制也不会自启。", "Without it there are no system notifications after a reboot, and captions / recording do not auto-start.")}</span>
-            </div>
-          </div>
+          <LaunchAtLoginRow id="launch-at-login-about" helper={text("没有它，开机后不会有系统通知、字幕与录制也不会自启。", "Without it there are no system notifications after a reboot, and captions / recording do not auto-start.")} />
           <p className="settings-helper">
             {text(`全局快速捕获：${shell.hotkey} 随时唤起看板并聚焦提案输入框。`, `Global quick capture: ${shell.hotkey} brings the board up and focuses the proposal composer.`)}
             {" "}

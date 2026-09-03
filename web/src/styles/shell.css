@@ -377,6 +377,8 @@
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
+  text-decoration: none; /* 外链菜单项（安装 ffmpeg…）与按钮同貌 */
+  box-sizing: border-box;
 }
 
 .shell-menu-item:hover:not(:disabled) {

@@ -2,7 +2,9 @@
 
 原生 Settings 的「凭证」行（CredentialRowView / KeyProbe）落到 server：
 
-- ``GET /api/secrets`` → 每个已知凭证的**状态**（present / verifiable / mtime），
+- ``GET /api/secrets`` → 每个已知凭证的**状态**（present / verifiable / mtime + add-only
+  ``legacy``：secrets 文件缺席但 §19 第二 / 三层——config.yaml 显式路径或旧默认路径——的文件
+  非空，原生 CredentialRowView 的「使用旧路径」态；只判在不在，永不读内容出去），
   **绝不回显值**——值是 write-only：写进去之后 web 只能看见「已保存」。
 - ``PUT /api/secrets/{name}`` body ``{"value": "<token>"}`` → 写
   ``<home>/config/secrets/<name>``（dir 0700 / file 0600；多行粘贴只留首个非空行，
@@ -49,6 +51,15 @@ SECRETS: tuple = (
 )
 _BY_NAME = {s["name"]: s for s in SECRETS}
 
+# §19 后两层的**位置**（不是内容）：(config.yaml 显式路径的键路径 | None, 旧默认路径)。与
+# act/lib 各读者一致（act/llm.py / act/ask.py / act/radar_gmail.DEFAULT_APP_PASSWORD_PATH /
+# config.slack_token_path）、与原生 Pages.swift legacy* / Settings.swift legacyPath 同表。
+_LEGACY_PATHS: dict = {
+    "anthropic-api-key.txt": (None, "~/.config/anthropic-key.txt"),
+    "slack-user-token.txt": (("sources", "slack_token_path"), "~/Desktop/Keys/slack-user-token.txt"),
+    "gmail-app-password.txt": (("sources", "gmail", "app_password_path"), "~/Desktop/Keys/gmail-app-password.txt"),
+}
+
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 VALUE_MAX = 4096
@@ -81,7 +92,26 @@ def read_value(home: Path, name: str) -> Optional[str]:
     return _first_token_line(raw) or None
 
 
-def _status(home: Path, entry: dict) -> dict:
+def _nonempty_file(raw: str) -> bool:
+    try:
+        return bool(_first_token_line(Path(raw).expanduser().read_text(encoding="utf-8")))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+
+
+def legacy_present(home: Path, name: str, config_doc: Optional[dict] = None) -> bool:
+    """§19 第二 / 三层有非空文件（config.yaml 显式路径优先，再旧默认路径）？无旧路径的凭证恒 False。"""
+    spec = _LEGACY_PATHS.get(name)
+    if spec is None:
+        return False
+    key_path, default = spec
+    explicit = settings_catalog.walk_config(config_doc if config_doc is not None else settings_catalog.load_config_doc(home),
+                                            key_path) if key_path else None
+    raw = explicit if isinstance(explicit, str) and explicit.strip() else default
+    return _nonempty_file(raw)
+
+
+def _status(home: Path, entry: dict, config_doc: Optional[dict] = None) -> dict:
     p = paths.secrets_dir(home) / entry["name"]
     present = read_value(home, entry["name"]) is not None
     mtime = None
@@ -91,12 +121,14 @@ def _status(home: Path, entry: dict) -> dict:
         except OSError:
             mtime = None
     return {"name": entry["name"], "label": dict(entry["label"]), "present": present,
-            "verifiable": entry["probe"] is not None, "mtime": mtime}
+            "verifiable": entry["probe"] is not None, "mtime": mtime,
+            "legacy": (not present) and legacy_present(home, entry["name"], config_doc)}
 
 
 def snapshot(home: Path) -> dict:
-    """``GET /api/secrets``：``{"secrets": [{name, label, present, verifiable, mtime}]}``。"""
-    return {"secrets": [_status(home, e) for e in SECRETS]}
+    """``GET /api/secrets``：``{"secrets": [{name, label, present, verifiable, mtime, legacy}]}``。"""
+    config_doc = settings_catalog.load_config_doc(home)
+    return {"secrets": [_status(home, e, config_doc) for e in SECRETS]}
 
 
 def write_value(home: Path, name: str, payload: dict) -> dict:

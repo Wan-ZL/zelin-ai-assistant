@@ -876,3 +876,71 @@
   flex-wrap: wrap;
   margin-top: 4px;
 }
+
+/* Slack 监控范围勾选器（原生 SettingsSlack pickers：标题行 + 加载/刷新、每张清单 标题 + 筛选… + 勾选表，最高 140pt 滚动） */
+.settings-subhead-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-subhead-row .settings-subhead {
+  flex: 1;
+}
+
+.slack-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.settings-input.is-filter {
+  flex: 0 0 160px;
+  font-size: calc(11px * var(--text-scale));
+}
+
+.slack-picker-list {
+  max-height: 140px;
+  margin: 0;
+  padding: 4px 6px;
+  overflow-y: auto;
+  list-style: none;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  font-size: calc(11px * var(--text-scale));
+}
+
+.slack-picker-list li {
+  padding: 1px 0;
+}
+
+.skill-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 同步 / 配对的 qrCard（原生：220pt 二维码白底圆角 + 设备名 + 警句 + 重新生成 / channel id） */
+.sync-qr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+}
+
+.sync-qr {
+  align-self: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.sync-qr-hint {
+  text-align: center;
+}

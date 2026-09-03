@@ -50,7 +50,10 @@ class FixtureShapeTestCase(unittest.TestCase):
                     self.assertEqual(field["path_exists"], pf._FIXTURE_PATH_EXISTS if field["effective"] else None, field["key"])
         secrets = pf.build_secrets()
         self.assertEqual(len(secrets["secrets"]), 5)
-        self.assertEqual([s["name"] for s in secrets["secrets"] if s["present"]], ["anthropic-api-key.txt"])
+        # 五种状态章各一行（§66.2 control:settings.credentials:*）：三把已保存、Slack 走旧路径（抹成常量）、Ark 未设置
+        self.assertEqual([s["name"] for s in secrets["secrets"] if s["present"]],
+                         ["anthropic-api-key.txt", "gmail-app-password.txt", "volcano-speech-key.txt"])
+        self.assertEqual([s["name"] for s in secrets["secrets"] if s["legacy"]], ["slack-user-token.txt"])
         self.assertEqual(pf.build_secrets(), secrets)
 
     def test_lanes_catalog_mirrors_server_order(self):

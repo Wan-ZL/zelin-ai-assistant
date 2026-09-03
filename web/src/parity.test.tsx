@@ -147,9 +147,21 @@ vi.mock("./api", async (importOriginal) => {
     fetchDoctor: vi.fn().mockResolvedValue({ ok: true, checks: [], home: "/h", rc: 0, fast: false, ran_at: "2026-09-02T11:59:00Z" }),
     fetchLogTail: vi.fn().mockResolvedValue({ name: "actd.log", path: "/h/state/logs/actd.log", size: 12, lines: ["ok"], truncated: false }),
     fetchSlackManifest: vi.fn().mockResolvedValue({ manifest: "{}", path: "config/slack-app-manifest.json" }),
-    fetchSkills: vi.fn().mockResolvedValue({ skills: [], skills_dir: "/h/.claude/skills", repo_skills_dir: "/r/skills", state_path: "/h/state/skills.json" }),
+    // §67 商店两行：一条已启用的仓库 skill（用户级 + 项目级章 + 描述）、一条停用且没写描述的（「无描述」）
+    fetchSkills: vi.fn().mockResolvedValue({ skills: [
+      { name: "board-agent", version: "1.0.0", upstream: null, upstream_version: null, default_enabled: true, description: "看板 agent 通道礼仪", path: "/h/.claude/skills/board-agent", target: "/r/skills/board-agent", link: "symlink", state: "enabled", stale_target: false, installed_version: "1.0.0", relation: "same", distance: 0, decision: "enabled", project_visible: true, toggle: "disable" },
+      { name: "write-better", version: "1.0.0", upstream: "singh", upstream_version: "1", default_enabled: false, description: "", path: "/h/.claude/skills/write-better", target: "/r/skills/write-better", link: "missing", state: "disabled", stale_target: false, installed_version: null, relation: "same", distance: 0, decision: null, project_visible: false, toggle: "enable" },
+    ], skills_dir: "/h/.claude/skills", repo_skills_dir: "/r/skills", state_path: "/h/state/skills.json" }),
+    // §68.1 追记 Slack 目录：默认一条频道 + 两个人（勾选表与「筛选…」才渲染）；变体遍里换成 ok:false
+    fetchSlackDirectory: vi.fn().mockResolvedValue({ ok: true, fetched_at: "2026-09-02T11:00:00Z", channels: [{ id: "C1", name: "eng" }], users: [{ id: "U1", name: "sam.rivera", real_name: "Sam Rivera" }, { id: "U2", name: "lee", real_name: "" }] }),
     fetchMaterials: vi.fn().mockResolvedValue({ items: [], status: "open", counts: { open: 0, total: 0 } }),
     fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, languages: ["auto", "zh", "en"], source: {} }),
+    // §68.15 同步 / 配对：开着、有码（1×1 PNG 占位）；pair / disable 隔一个 macrotask 再回（忙态句先落 DOM）
+    fetchSync: vi.fn().mockResolvedValue({ enabled: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: "demo-mac", default_label: "demo-mac", qr_png_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" }),
+    postSyncPair: vi.fn((label?: string) => new Promise((resolve) => setTimeout(() => resolve({ ok: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: label ?? "demo-mac", registered: true, qr_png_base64: null }), 0))),
+    postSyncDisable: vi.fn(() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, enabled: false, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: "demo-mac", default_label: "demo-mac", qr_png_base64: null }), 0))),
+    // 语气档案「当前生效」：默认私有档案在场；变体遍换成 出厂默认 / 无档案 / 已停用
+    fetchVoiceProfile: vi.fn().mockResolvedValue({ enabled: true, private_path: "/Users/demo/zai/state/voice-profile.md", private_exists: true, default_path: "/Users/demo/zai/config/voice-profile.default.md", default_exists: true, effective_path: "/Users/demo/zai/state/voice-profile.md" }),
     putModelsSettings: vi.fn().mockResolvedValue({}),
     putSettingsSection: vi.fn().mockResolvedValue({}),
     putSecret: vi.fn().mockResolvedValue({}),
@@ -401,7 +413,10 @@ const shellState: ShellState = {
 /** 假壳只认 §61.1 的既有方法词表；`chooseFolder`（文件对话框）按老壳的样子 reject UNKNOWN_METHOD ——
  *  目录字段因此退化成路径文本框，原生 NSOpenPanel 的确认词「选择」在 DOM 里才收得到 */
 const FAKE_SHELL_METHODS = new Set(["getState", "setRecording", "restartRecording", "openScreenRecordingSettings",
-  "setCaptions", "setLanguage", "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin", "setCaptionPrefs", "setBadge"]);
+  "setCaptions", "setLanguage", "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin", "setCaptionPrefs", "setBadge",
+  "probeCaptionKey"]);
+/** 某些方法在变体遍里要被壳拒绝（登录时启动开不了：not an app bundle / SMAppService 报错）：method → reject 原文 */
+let shellRejects: Record<string, string> = {};
 /** 权限体检 / 向导要收全的壳状态词：录制 关（两种恢复模式）/ 开但引擎没在录 / 录制中(仅屏幕)；授权 denied / unknown */
 const SHELL_VARIANTS: Record<string, ShellState> = {
   default: shellState,
@@ -416,12 +431,24 @@ const SHELL_VARIANTS: Record<string, ShellState> = {
   // 录制页引擎诊断行：ffmpeg 缺失（安装 ffmpeg + 装好了，重启引擎）/ 引擎崩了（查看引擎日志）——屏幕录制授权在，只是引擎没起来
   ffmpeg: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen_audio", engine_running: false, diagnosis: "engine_ffmpeg_missing", resume_mode: "screen_audio" } },
   crashed: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen", engine_running: false, diagnosis: "engine_crashed", resume_mode: "screen" } },
+  // header 录制菜单的其余死因 / 修法：引擎首次下载中（npx 还在拉）/ 缺 ffmpeg（安装 ffmpeg…）/ 字幕引擎致命出错（出错，见悬浮窗）
+  npm_download: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen", engine_running: false, diagnosis: "engine_npm_download", resume_mode: "screen" } },
+  ffmpeg_missing: { ...shellState, recording: { ...shellState.recording, on: true, mode: "screen", engine_running: true, diagnosis: "engine_ffmpeg_missing", note: "「屏幕 + 音频」没能开启——缺 ffmpeg（brew install ffmpeg 装好后再切一次）；已退回「仅屏幕」继续录制" } },
+  captions_dead: { ...shellState, captions: { ...shellState.captions, paused: false, engine_dead: true, status_text: "doubao: 401", status_is_error: true } },
+  // 登录时启动关着：设置页把它拨开 → 壳拒绝 → 「无法开启登录时启动」/「开启登录时启动失败」
+  login_off: { ...shellState, launch_at_login: false },
 };
 let currentShell: ShellState = shellState;
 function installFakeShell() {
   window.webkit = { messageHandlers: { zaiShell: { postMessage: async (body: unknown) => {
-    const method = (body as { method?: string } | null)?.method ?? "";
+    const req = (body as { method?: string; name?: string } | null) ?? {};
+    const method = req.method ?? "";
     if (!FAKE_SHELL_METHODS.has(method)) throw new Error(`UNKNOWN_METHOD: ${method}`);
+    if (shellRejects[method]) throw new Error(shellRejects[method]);
+    if (method === "probeCaptionKey") {
+      // §68.2 追记：壳的 CaptionKeyProbe 同步给判决（真壳是 running → 随后 done 两拍；页面两拍都要认）
+      currentShell = { ...currentShell, captions: { ...currentShell.captions, key_probe: { name: req.name ?? "", state: "done", verdict: "ok", detail: "", code: "", message: "" } } };
+    }
     return currentShell;
   } } } };
 }
@@ -542,9 +569,9 @@ function fillInputs(root: ParentNode, searches: boolean) {
   });
 }
 
-function clickEverything(root: ParentNode, pool: Set<string>, searches = false, perClick = false) {
+function clickEverything(root: ParentNode, pool: Set<string>, searches = false, perClick = false, fill = true) {
   const all = () => Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
-  fillInputs(root, searches);
+  if (fill) fillInputs(root, searches);
   clickAll(all().filter((b) => b.classList.contains("card-details-toggle")));
   collectLabels(document.body, pool);
   selectAllCards(root); // 看板：进多选态 + 勾上每张卡（操作条按钮解禁）；别的面没有勾选框，空转
@@ -561,7 +588,7 @@ function clickEverything(root: ParentNode, pool: Set<string>, searches = false, 
   clickAll(rest.filter((b) => b.closest(".zai-drawer-body") !== null), pool);
   clickAll(rest.filter((b) => b.closest(".zai-drawer-body") === null), perClick ? pool : undefined);
   collectLabels(document.body, pool); // 点击后立刻收：in-flight 的忙态文案（保存中… / 正在准备诊断包…）
-  fillInputs(root, searches); // 点开后才出现的输入框（书立条里的搜索框）
+  if (fill) fillInputs(root, searches); // 点开后才出现的输入框（书立条里的搜索框）
   collectLabels(document.body, pool);
 }
 
@@ -949,6 +976,111 @@ async function renderAskVariants(language: Language) {
   vi.mocked(postAsk).mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 } as never);
 }
 
+/** header 录制 / 字幕控件（原生 RecordingMenuButton）在几套壳状态下：打开菜单收状态行 + 修法项
+ *  （打开系统设置 → 屏幕录制 / 安装 ffmpeg… / 引擎首次下载中…），再点「重启录制引擎」收 3 s 的「重启中…」 */
+async function renderHeaderVariants(language: Language) {
+  const pool = found[language].board;
+  for (const name of ["default", "on_dead", "npm_download", "ffmpeg_missing", "captions_dead"] as const) {
+    useShellVariant(name);
+    mount(language, "board");
+    await settle(pool);
+    const trigger = document.querySelector<HTMLButtonElement>(".shell-rec-button");
+    if (trigger) fireEvent.click(trigger);          // 菜单开着：状态行 / 三态 / 修法项
+    collectLabels(document.body, pool);
+    const restart = Array.from(document.querySelectorAll<HTMLButtonElement>(".shell-menu-item[role='menuitem']"))
+      .find((b) => !b.disabled && /重启录制引擎|Restart recording engine/.test(b.textContent ?? ""));
+    if (restart) fireEvent.click(restart);          // 「重启中…」在按钮旁闪 3 s
+    collectLabels(document.body, pool);
+    await settle(pool);
+    cleanup();
+  }
+  useShellVariant("default");
+}
+
+/** 设置页在几套 server / 壳回执下再渲染三遍——凭证行、Slack 目录、目录区保存、登录时启动的**失败 / 空态**词都收全：
+ *  A（填字再点）：Anthropic 保存后自动验证失败（已保存，但验证失败：+ 章「验证失败」）、Ark 保存失败（保存失败: ）、
+ *     Gmail 已保存但地址为空（已保存，但还没填 Gmail 地址——）、gmail 区 PUT 被拒（保存设置失败: ）、
+ *     登录时启动开不了（无法开启登录时启动 + 好）、抓取方式切到 B（自定义抓取命令的占位文案）；
+ *  B（不填字、只点）：Anthropic 验证失败：、Slack 没 token（先粘贴并保存 token 再验证）、Gmail 没地址（还没填 Gmail 地址——）、
+ *     Slack 目录起不来（找不到可用的 python（）、两源都没有健康记录（状态未知）、登录时启动 SMAppService 报错（开启登录时启动失败）；
+ *  C（不填字）：Anthropic 验证通过 ✓。 */
+async function renderSettingsVariants(language: Language) {
+  const { fetchSlackDirectory, fetchVoiceProfile, putSecret, putSettingsSection, verifySecret } = await import("./api");
+  const pool = found[language].settings;
+  const voice = (privateExists: boolean, defaultExists: boolean) => ({
+    enabled: true, private_path: "/Users/demo/zai/state/voice-profile.md", private_exists: privateExists,
+    default_path: "/Users/demo/zai/config/voice-profile.default.md", default_exists: defaultExists,
+    effective_path: privateExists ? "/Users/demo/zai/state/voice-profile.md" : defaultExists ? "/Users/demo/zai/config/voice-profile.default.md" : null,
+  });
+  // 语气注入关掉的目录快照（voice_enabled effective=false → 状态词「已停用」）
+  const voiceOff: SettingsCatalog = { ...demoSettings, sections: demoSettings.sections.map((sec) => (sec.id !== "voice" ? sec
+    : { ...sec, fields: sec.fields.map((f) => (f.key === "voice_enabled" ? { ...f, effective: false, source: "override" } : f)) })) };
+  const verify = (anthropicOk: boolean) => (name: string) => new Promise((resolve) => setTimeout(() => resolve(
+    name === "anthropic-api-key.txt" && !anthropicOk
+      ? { ok: false, network: false, detail: "api.anthropic.com answered HTTP 401", extra: {} }
+      : { ok: true, network: false, detail: "ok", extra: {} }), 0));
+  type Pass = { fill: boolean; anthropicOk: boolean; reject: string; directory: "ok" | "no_python"; sources: boolean; voice: [boolean, boolean]; voiceOff?: boolean };
+  const passes: Pass[] = [
+    { fill: true, anthropicOk: false, reject: "INVALID_ARGS: launch at login: not an app bundle", directory: "ok", sources: true, voice: [false, true] },
+    { fill: false, anthropicOk: false, reject: "INVALID_ARGS: launch at login: SMAppService: Operation not permitted", directory: "no_python", sources: false, voice: [false, false] },
+    { fill: false, anthropicOk: true, reject: "", directory: "ok", sources: true, voice: [true, true], voiceOff: true },
+  ];
+  for (const pass of passes) {
+    useShellVariant(pass.reject ? "login_off" : "default");
+    vi.mocked(fetchVoiceProfile).mockResolvedValue(voice(...pass.voice));
+    vi.mocked(fetchSettingsCatalog).mockResolvedValue(pass.voiceOff ? voiceOff : demoSettings);
+    vi.mocked(verifySecret).mockImplementation(verify(pass.anthropicOk) as never);
+    vi.mocked(putSecret).mockImplementation(((name: string) => (name === "volcano-ark-key.txt"
+      ? Promise.reject(new Error("EACCES: config/secrets not writable"))
+      : Promise.resolve({} as never))) as never);
+    vi.mocked(putSettingsSection).mockImplementation(((section: string) => (section === "gmail"
+      ? Promise.reject(new Error("state/settings_overrides.json is not writable"))
+      : Promise.resolve({} as never))) as never);
+    vi.mocked(fetchSlackDirectory).mockResolvedValue(pass.directory === "ok"
+      ? { ok: true, fetched_at: "2026-09-02T11:00:00Z", channels: [{ id: "C1", name: "eng" }], users: [{ id: "U1", name: "sam.rivera", real_name: "Sam Rivera" }] }
+      : { ok: false, error: "no_python", message: "[Errno 2] No such file or directory: 'python3'", channels: [], users: [] });
+    shellRejects = pass.reject ? { setLaunchAtLogin: pass.reject } : {};
+    vi.mocked(fetchBoard).mockResolvedValue((pass.sources ? demoBoard : { ...demoBoard, radar_sources: {} }) as unknown as Board);
+    await refreshBoard();
+    const view = mount(language, "settings");
+    await refreshSettings();
+    await settle(pool);
+    // 抓取方式 → B · 自定义抓取命令：命令字段（占位「例：/Users/you/bin/gmail-fetch.sh」）才渲染；只在 A 遍切
+    // （B 路径下应用密码行不渲染，其余两遍要点它的「验证」收「还没填 Gmail 地址——」）
+    const pathB = pass.fill ? view.container.querySelector<HTMLInputElement>('input[name="gmail-fetch-path"][value="command"]') : null;
+    if (pathB) fireEvent.click(pathB);
+    collectLabels(document.body, pool);
+    clickEverything(view.container, pool, true, false, pass.fill);
+    await settle(pool);
+    await settle(pool); // 保存 → 验证 → 判决 再晚一拍
+    collectLabels(document.body, pool);
+    // 通用区「登录时启动」开关（checkbox，不在按钮遍里）：壳拒绝 → 原生同款 alert（标题三选一 + 「好」）
+    const login = view.container.querySelector<HTMLInputElement>("#launch-at-login");
+    if (login && pass.reject) {
+      fireEvent.click(login);
+      await settle(pool);
+      collectLabels(document.body, pool);
+    }
+    // 同步 / 配对开关拨关：「正在关闭同步…」在回执前那一拍
+    const sync = view.container.querySelector<HTMLInputElement>("#sync-enabled");
+    if (sync && sync.checked) {
+      fireEvent.click(sync);
+      collectLabels(document.body, pool);
+      await settle(pool);
+      collectLabels(document.body, pool);
+    }
+    cleanup();
+  }
+  shellRejects = {};
+  useShellVariant("default");
+  vi.mocked(fetchBoard).mockResolvedValue(demoBoard as unknown as Board);
+  vi.mocked(fetchSettingsCatalog).mockResolvedValue(demoSettings);
+  await refreshBoard();
+  vi.mocked(putSecret).mockResolvedValue({} as never);
+  vi.mocked(putSettingsSection).mockResolvedValue({} as never);
+  vi.mocked(verifySecret).mockImplementation((() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, network: false, detail: "ok", extra: {} }), 0))) as never);
+}
+
 beforeAll(async () => {
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
@@ -1005,6 +1137,8 @@ beforeAll(async () => {
     await renderIngestVariants(language);
     await renderAboutVariants(language);
     await renderAskVariants(language);
+    await renderHeaderVariants(language);
+    await renderSettingsVariants(language);
   }
   // 九个面 × 两种语言 × 若干状态变体：几十次整页渲染（单机 ~12 s），远超 vitest 默认 10 s 的 hook 预算
 }, 120_000);

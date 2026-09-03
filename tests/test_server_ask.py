@@ -16,6 +16,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import assert_envelope, get_json, post_json, start_server
 
 from server import ask_assistant as ask, maintainer_launch, subproc, uninstall_launch
+from server import slack_directory
 from server import slack_manifest as slack_setup
 from tests.test_server_common import write_text
 
@@ -101,6 +102,39 @@ class SlackManifestTestCase(_ServerCase):
             status, obj = get_json(self.port, "/api/slack/manifest")
         self.assertEqual(status, 404)
         assert_envelope(self, obj, "NOT_FOUND")
+
+
+class SlackDirectoryTestCase(_ServerCase):
+    """GET /api/slack/directory：子进程 ``act.lib.slack_setup --directory [--refresh]`` 的 JSON 透传（§68.1 追记）；
+    起不来 → error no_python；没 JSON → directory_failed；都不 500。"""
+
+    def test_directory_passes_the_cli_json_through_and_forwards_refresh(self):
+        payload = {"ok": True, "fetched_at": "2026-09-03T10:00:00Z",
+                   "channels": [{"id": "C1", "name": "eng"}], "users": [{"id": "U1", "name": "sam", "real_name": "Sam R"}]}
+        calls = self._patch(json.dumps(payload))
+        status, obj = get_json(self.port, "/api/slack/directory")
+        self.assertEqual(status, 200)
+        self.assertEqual(obj, payload)
+        self.assertEqual(calls[0][0][1:], ["-m", "act.lib.slack_setup", "--directory"])
+        self.assertEqual(calls[0][1], slack_directory.DIRECTORY_TIMEOUT_S)
+        get_json(self.port, "/api/slack/directory?refresh=1")
+        self.assertEqual(calls[1][0][1:], ["-m", "act.lib.slack_setup", "--directory", "--refresh"])
+
+    def test_cli_failure_json_is_passed_through_with_its_bilingual_message(self):
+        self._patch(json.dumps({"ok": False, "error": "no_token", "message": "先粘贴并保存 token"}), rc=1)
+        status, obj = get_json(self.port, "/api/slack/directory")
+        self.assertEqual(status, 200)
+        self.assertEqual((obj["ok"], obj["error"], obj["message"]), (False, "no_token", "先粘贴并保存 token"))
+        self.assertEqual((obj["channels"], obj["users"]), ([], []))
+
+    def test_no_interpreter_and_no_json_are_honest_not_500(self):
+        self._patch("", rc=127, err="[Errno 2] No such file or directory: 'python3'")
+        _s, obj = get_json(self.port, "/api/slack/directory")
+        self.assertEqual((obj["ok"], obj["error"]), (False, "no_python"))
+        self.assertIn("Errno 2", obj["message"])
+        self._patch("garbage", rc=1)
+        _s, obj = get_json(self.port, "/api/slack/directory")
+        self.assertEqual((obj["ok"], obj["error"], obj["message"]), (False, "directory_failed", "garbage"))
 
 
 class UninstallLaunchTestCase(_ServerCase):

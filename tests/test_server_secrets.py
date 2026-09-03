@@ -65,6 +65,28 @@ class SecretsStatusTestCase(_ServerCase):
         anth = next(s for s in obj["secrets"] if s["name"] == "anthropic-api-key.txt")
         self.assertFalse(anth["present"])
 
+    def test_legacy_flag_reports_the_older_tiers_without_reading_them_out(self):
+        """add-only ``legacy``（原生「使用旧路径」）：secrets 缺席 + §19 第二 / 三层文件非空 → True；
+        secrets 在 → False（第一层赢）；火山两把无旧路径恒 False；值仍不回显。"""
+        fake_home = Path(self.tmp.name) / "user"
+        write_text(fake_home / ".config" / "anthropic-key.txt", "sk-ant-LEGACYVALUE\n")
+        write_text(fake_home / "Desktop" / "Keys" / "gmail-app-password.txt", "   \n")   # 空白 = 缺席
+        write_text(fake_home / "vault" / "slack.txt", "xoxp-EXPLICIT\n")
+        write_text(self.home / "config.yaml", "sources:\n  slack_token_path: %s\n" % (fake_home / "vault" / "slack.txt"))
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            _s, obj = get_json(self.port, "/api/secrets")
+            by_name = {s["name"]: s for s in obj["secrets"]}
+            self.assertEqual({n: s["legacy"] for n, s in by_name.items()},
+                             {"anthropic-api-key.txt": True, "slack-user-token.txt": True,
+                              "gmail-app-password.txt": False, "volcano-speech-key.txt": False,
+                              "volcano-ark-key.txt": False})
+            self.assertNotIn("LEGACYVALUE", json.dumps(obj))
+            self.assertNotIn("EXPLICIT", json.dumps(obj))
+            write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-new\n")
+            _s, obj = get_json(self.port, "/api/secrets")
+            anth = next(s for s in obj["secrets"] if s["name"] == "anthropic-api-key.txt")
+            self.assertEqual((anth["present"], anth["legacy"]), (True, False))
+
 
 class SecretsPutTestCase(_ServerCase):
     def test_put_writes_first_line_with_0600(self):

@@ -286,3 +286,88 @@ enum FolderDialog {
         return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 }
+
+// MARK: - caption key test（原生 Settings 凭证行「检测」按钮的壳侧落点；CONTRACT §61.1 `probeCaptionKey` / §68.2 追记）
+//
+// 火山两把 key（豆包语音 / Ark 翻译）没有 server 探针（server/secrets_store 对它们 verify → 400）：
+// 唯一真连一次服务器的检测是搬进壳的 CaptionKeyProbe（LiveCaptions.swift 逐字节副本，判例钉住不改）。
+// 桥 `probeCaptionKey {name, value?}` 起一次探测（value 非空 = 粘贴即检测、不落盘；否则探已保存的），
+// 结果落在这里的 @Published，经快照 `captions.key_probe` 推回页面——页面按 verdict 组原生
+// applyCaptionVerdict 的六句；这里零文案。
+
+@MainActor
+final class CaptionKeyCheck: ObservableObject {
+    static let shared = CaptionKeyCheck()
+    static let names = [SecretsIO.volcanoSpeechFile, SecretsIO.volcanoArkFile]
+    /// 最近一次检测：{name, state: running|done, verdict, detail, code, message}；nil = 从未检测
+    @Published private(set) var last: [String: Any]? = nil
+    private var token = 0
+
+    /// 探针执行体（注入缝：桥 harness 换成假实现，绝不真连网络）。
+    var speechProbe: (VolcanoSpeechCredential, @escaping @MainActor (CaptionKeyVerdict) -> Void) -> Void = {
+        CaptionKeyProbe.speech(credential: $0, done: $1)
+    }
+    var arkProbe: (String, String, @escaping @MainActor (CaptionKeyVerdict) -> Void) -> Void = {
+        CaptionKeyProbe.ark(key: $0, model: $1, done: $2)
+    }
+
+    func snapshotValue() -> Any { last ?? NSNull() }
+
+    /// value 非空 → 探它（原生 verify() 的「框里有字」分支）；否则探 config/secrets 里已保存的；
+    /// 两者都没有 → INVALID_ARGS（页面提示「先粘贴（或保存）一个凭证再验证」）。
+    func start(name: String, value: String?) throws {
+        guard Self.names.contains(name) else {
+            throw BridgeError.invalidArgs("name must be one of \(Self.names.joined(separator: "|"))")
+        }
+        let pasted = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let secret = pasted.isEmpty ? SecretsIO.read(name) : pasted else {
+            throw BridgeError.invalidArgs("nothing to test: paste or save the credential first")
+        }
+        token += 1
+        let mine = token
+        last = ["name": name, "state": "running"]
+        let done: @MainActor (CaptionKeyVerdict) -> Void = { [weak self] verdict in
+            guard let self, self.token == mine else { return }   // 旧检测的回执不覆盖新一轮
+            self.last = Self.describe(name: name, verdict: verdict)
+            Analytics.log("mw_key_validate", fields: ["name": name, "result": Self.result(verdict)])
+        }
+        if name == SecretsIO.volcanoSpeechFile {
+            // 粘贴的是旧版 App ID + Access Token 对 → parse 归一；文件里的是存储格式 → decode；都不是 → 裸 key
+            let credential = (pasted.isEmpty ? nil : VolcanoSpeechCredential.parse(secret))
+                ?? VolcanoSpeechCredential.decode(secret) ?? .apiKey(secret)
+            speechProbe(credential, done)
+        } else {
+            arkProbe(secret, LiveCaptionsController.shared.arkModel, done)
+        }
+    }
+
+    /// verdict → wire（页面组句用的原料；code / message / detail 缺席即空串）
+    static func describe(name: String, verdict: CaptionKeyVerdict) -> [String: Any] {
+        var out: [String: Any] = ["name": name, "state": "done", "detail": "", "code": "", "message": ""]
+        switch verdict {
+        case .ok:
+            out["verdict"] = "ok"
+        case .badKey(let detail):
+            out["verdict"] = "bad_key"; out["detail"] = detail
+        case .resourceNotEnabled(let code, let message):
+            out["verdict"] = "resource_not_enabled"; out["code"] = code; out["message"] = message
+        case .modelNotFound(let detail):
+            out["verdict"] = "model_not_found"; out["detail"] = detail
+        case .serviceError(let code, let message):
+            out["verdict"] = "service_error"; out["code"] = code; out["message"] = message
+        case .network(let detail):
+            out["verdict"] = "network"; out["detail"] = detail
+        }
+        return out
+    }
+
+    /// 原生 applyCaptionVerdict 的 analytics result 词表（不变）
+    static func result(_ verdict: CaptionKeyVerdict) -> String {
+        switch verdict {
+        case .ok: return "ok"
+        case .badKey, .resourceNotEnabled: return "unauthorized"
+        case .modelNotFound: return "model_not_found"
+        case .serviceError, .network: return "error"
+        }
+    }
+}

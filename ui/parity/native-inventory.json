@@ -13,6 +13,30 @@
         "owner": "retired",
         "reason": "AIFix.launch(context:) 的 prompt 上下文字串，从不渲染；web 的「让 AI 修」上下文由 server 从 doctor 报告推导（§68.4 / §54.4）"
       },
+      "control:settings.skills:button:hide-form": {
+        "owner": "retired",
+        "reason": "同 new-skill：新建表单不存在（§67.5）"
+      },
+      "control:settings.skills:button:new-skill": {
+        "owner": "retired",
+        "reason": "仓库 = skill 商店，skills/ 只有 git 写；新 skill 走 PR，设置页不做编辑器（§67.1 / §67.5）"
+      },
+      "control:settings.skills:label:write-failed": {
+        "owner": "retired",
+        "reason": "同 new-skill：web 不写 SKILL.md，无写入失败态（§67.5）"
+      },
+      "control:settings.skills:textfield:name-kebab-case-e-g-my-skill": {
+        "owner": "retired",
+        "reason": "同 new-skill：新建表单不存在（§67.5）"
+      },
+      "control:settings.skills:textfield:one-line-description-claude-uses-it-to-decide-wh": {
+        "owner": "retired",
+        "reason": "同 new-skill：新建表单不存在（§67.5）"
+      },
+      "control:settings:label:no-usable-python": {
+        "owner": "retired",
+        "reason": "Gmail IMAP 探针在 server 进程内执行，无 runtime python 子进程可失败（§68.3）"
+      },
       "control:setup_wizard:label:failed-to-write-dest": {
         "owner": "retired",
         "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist"
@@ -62,7 +86,10 @@
       "AppDelegate.showHelloBubble": "onboarding",
       "AppDelegate.showStatusMenu": "menu.status",
       "AppDelegate.submitAnswer": "board.dialogs",
-      "AppDelegate.updateStatusTitle": "menu.status"
+      "AppDelegate.updateStatusTitle": "menu.status",
+      "RecordingController.cause": "notifications",
+      "RecordingController.label": "notifications",
+      "RecordingController.rollbackNote": "notifications"
     },
     "pref_owner": {
       "hasCompletedFirstRun": {
@@ -6678,83 +6705,6 @@
       "zh": "屏幕+音频"
     },
     {
-      "en": "Off",
-      "gated": true,
-      "id": "control:header.recording:label:off#3",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:158",
-      "via": "m",
-      "zh": "关"
-    },
-    {
-      "en": "Screen + Audio",
-      "gated": true,
-      "id": "control:header.recording:label:screen-audio#3",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:159",
-      "via": "m",
-      "zh": "屏幕 + 音频"
-    },
-    {
-      "en": "Screen Only",
-      "gated": true,
-      "id": "control:header.recording:label:screen-only#3",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:160",
-      "via": "m",
-      "zh": "仅屏幕"
-    },
-    {
-      "en": "ffmpeg is missing (brew install ffmpeg, then switch again)",
-      "gated": false,
-      "id": "control:header.recording:copy:ffmpeg-is-missing-brew-install-ffmpeg-then-switc",
-      "owner": "web",
-      "role": "copy",
-      "screen": "header.recording",
-      "source": "Recording.swift:345",
-      "via": "failureId",
-      "zh": "缺 ffmpeg（brew install ffmpeg 装好后再切一次）"
-    },
-    {
-      "en": "Node.js is missing",
-      "gated": true,
-      "id": "control:header.recording:label:node-js-is-missing",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:348",
-      "via": "failureId",
-      "zh": "缺 Node.js"
-    },
-    {
-      "en": "its engine failed to start",
-      "gated": true,
-      "id": "control:header.recording:label:its-engine-failed-to-start",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:350",
-      "via": "failureId",
-      "zh": "引擎没能启动"
-    },
-    {
-      "en": "{label(forMode: failed)} could not start — {cause}; reverted to {label(forMode: kept)} and recording continues",
-      "gated": false,
-      "id": "control:header.recording:copy:label-formode-failed-could-not-start-cause-rever",
-      "owner": "web",
-      "role": "copy",
-      "screen": "header.recording",
-      "source": "Recording.swift:352",
-      "via": "String",
-      "zh": "「{label(forMode: failed)}」没能开启——{cause}；已退回「{label(forMode: kept)}」继续录制"
-    },
-    {
       "en": "Screen Recording is now granted — the engine restarted automatically",
       "gated": false,
       "id": "control:header.recording:copy:screen-recording-is-now-granted-the-engine-resta",
@@ -7615,6 +7565,42 @@
       "zh": "打开 App 查看看板"
     },
     {
+      "en": "Off",
+      "gated": true,
+      "id": "control:notifications:label:off",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:158",
+      "via": "m",
+      "zh": "关"
+    },
+    {
+      "en": "Screen + Audio",
+      "gated": true,
+      "id": "control:notifications:label:screen-audio",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:159",
+      "via": "m",
+      "zh": "屏幕 + 音频"
+    },
+    {
+      "en": "Screen Only",
+      "gated": true,
+      "id": "control:notifications:label:screen-only",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:160",
+      "via": "m",
+      "zh": "仅屏幕"
+    },
+    {
       "en": "Screen + Audio is not ready",
       "gated": true,
       "id": "control:notifications:label:screen-audio-is-not-ready",
@@ -7636,6 +7622,52 @@
       "source": "Recording.swift:324",
       "via": "Self.postSystemNotice",
       "zh": "已退回原来的录制模式"
+    },
+    {
+      "en": "ffmpeg is missing (brew install ffmpeg, then switch again)",
+      "gated": false,
+      "id": "control:notifications:copy:ffmpeg-is-missing-brew-install-ffmpeg-then-switc",
+      "owner": "shell",
+      "role": "copy",
+      "screen": "notifications",
+      "source": "Recording.swift:345",
+      "via": "failureId",
+      "zh": "缺 ffmpeg（brew install ffmpeg 装好后再切一次）"
+    },
+    {
+      "en": "Node.js is missing",
+      "gated": true,
+      "id": "control:notifications:label:node-js-is-missing",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:348",
+      "via": "failureId",
+      "zh": "缺 Node.js"
+    },
+    {
+      "en": "its engine failed to start",
+      "gated": true,
+      "id": "control:notifications:label:its-engine-failed-to-start",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:350",
+      "via": "failureId",
+      "zh": "引擎没能启动"
+    },
+    {
+      "en": "{label(forMode: failed)} could not start — {cause}; reverted to {label(forMode: kept)} and recording continues",
+      "gated": false,
+      "id": "control:notifications:copy:label-formode-failed-could-not-start-cause-rever",
+      "owner": "shell",
+      "role": "copy",
+      "screen": "notifications",
+      "source": "Recording.swift:352",
+      "via": "String",
+      "zh": "「{label(forMode: failed)}」没能开启——{cause}；已退回「{label(forMode: kept)}」继续录制"
     },
     {
       "en": "Screen Recording permission lost",
@@ -8499,9 +8531,10 @@
     },
     {
       "en": "No usable python (",
-      "gated": true,
+      "gated": false,
       "id": "control:settings:label:no-usable-python",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "Gmail IMAP 探针在 server 进程内执行，无 runtime python 子进程可失败（§68.3）",
       "role": "label",
       "screen": "settings",
       "source": "Settings.swift:2390",
@@ -11403,9 +11436,10 @@
     },
     {
       "en": "Write failed: ",
-      "gated": true,
+      "gated": false,
       "id": "control:settings.skills:label:write-failed",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "同 new-skill：web 不写 SKILL.md，无写入失败态（§67.5）",
       "role": "label",
       "screen": "settings.skills",
       "source": "SettingsSkills.swift:176",
@@ -11469,9 +11503,10 @@
     },
     {
       "en": "Hide form",
-      "gated": true,
+      "gated": false,
       "id": "control:settings.skills:button:hide-form",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "同 new-skill：新建表单不存在（§67.5）",
       "role": "button",
       "screen": "settings.skills",
       "source": "SettingsSkills.swift:238",
@@ -11480,9 +11515,10 @@
     },
     {
       "en": "New skill",
-      "gated": true,
+      "gated": false,
       "id": "control:settings.skills:button:new-skill",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "仓库 = skill 商店，skills/ 只有 git 写；新 skill 走 PR，设置页不做编辑器（§67.1 / §67.5）",
       "role": "button",
       "screen": "settings.skills",
       "source": "SettingsSkills.swift:238",
@@ -11557,9 +11593,10 @@
     },
     {
       "en": "Name (kebab-case, e.g. my-skill)",
-      "gated": true,
+      "gated": false,
       "id": "control:settings.skills:textfield:name-kebab-case-e-g-my-skill",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "同 new-skill：新建表单不存在（§67.5）",
       "role": "textfield",
       "screen": "settings.skills",
       "source": "SettingsSkills.swift:322",
@@ -11568,9 +11605,10 @@
     },
     {
       "en": "One-line description (Claude uses it to decide when to activate the skill)",
-      "gated": true,
+      "gated": false,
       "id": "control:settings.skills:textfield:one-line-description-claude-uses-it-to-decide-wh",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "同 new-skill：新建表单不存在（§67.5）",
       "role": "textfield",
       "screen": "settings.skills",
       "source": "SettingsSkills.swift:332",

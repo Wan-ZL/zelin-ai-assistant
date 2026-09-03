@@ -336,6 +336,11 @@ def _walk(doc: dict, path: tuple):
     return cur
 
 
+def walk_config(doc: dict, path: tuple):
+    """config.yaml 文档按键路径取值（缺席 None）——其它 server 模块读一条非目录键时用（防腐 #2：不引 _私名）。"""
+    return _walk(doc, path)
+
+
 def _split_override(spelling: str) -> "tuple[Optional[str], str]":
     """``"telemetry.enabled"`` → ("telemetry", "enabled")；扁平键 → (None, key)。"""
     if "." in spelling:

@@ -125,6 +125,14 @@ MEMBER_SCREEN = {
     ("AppDelegate", "pastedImagesAccessory"): "board.dialogs",
     ("AppDelegate", "copyCommand"): "board.card",
     ("AppDelegate", "applicationShouldTerminate"): "app",
+    # 录制模式回滚句（RecordingController.rollbackNote + 它的 label(forMode:) 词表）：壳 Recording.swift
+    # 组句、经 postSystemNotice 直发 + 经桥 `recording.note` 原文推给页面——web 只显示不组句，
+    # 归 notifications（owner shell、探针 notify_catalog：server/notify_catalog.py 的 slots 词表 + 壳 L()）。
+    ("RecordingController", "rollbackNote"): "notifications",
+    ("RecordingController", "label"): "notifications",
+    # rollbackNote 体内的 `let cause: String` + switch 被成员扫描器认成最内层成员（mac/ 冻结 → 稳定），
+    # 三句 cause 片段由它归属
+    ("RecordingController", "cause"): "notifications",
 }
 
 # (文件, 顶层自由函数) → screen（第六张归属表）：Cards.swift 的 fileprivate 词表函数默认
@@ -154,6 +162,30 @@ CONTROL_OWNER = {
     "control:setup_wizard:label:failed-to-write-dest": {
         "owner": "retired",
         "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist",
+    },
+    # fix/parity-r2-settings-header（settings 面）：原生 Gmail IMAP 探针是壳起 runtime python 子进程；web 的探针在
+    # server 进程内跑（§68.3 secrets_store._probe_gmail），没有「找不到解释器」这一失败态。
+    "control:settings:label:no-usable-python": {
+        "owner": "retired",
+        "reason": "Gmail IMAP 探针在 server 进程内执行，无 runtime python 子进程可失败（§68.3）",
+    },
+    # 原生「新建 skill」表单往 ~/.claude/skills/<name>/SKILL.md 写文件；§67 立法后仓库 = 商店、`skills/` 只有 git 写
+    # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的 PR（§65 草稿 PR 通道），不是设置页表单。
+    "control:settings.skills:button:new-skill": {
+        "owner": "retired",
+        "reason": "仓库 = skill 商店，skills/ 只有 git 写；新 skill 走 PR，设置页不做编辑器（§67.1 / §67.5）",
+    },
+    "control:settings.skills:button:hide-form": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:textfield:name-kebab-case-e-g-my-skill": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:textfield:one-line-description-claude-uses-it-to-decide-wh": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:label:write-failed": {
+        "owner": "retired", "reason": "同 new-skill：web 不写 SKILL.md，无写入失败态（§67.5）",
     },
 }
 
@@ -202,6 +234,7 @@ PREF_OWNER = {
     "recordingConsentShown": {"owner": "retired",
                               "reason": "并入 recordingMode（壳无存值 = 未同意 = off，P0-11）+ setup_done.json；不再有第二把标记"},
 }
+
 
 # 调用链里算「控件」的标识 → role
 CONTROL_ROLES = {

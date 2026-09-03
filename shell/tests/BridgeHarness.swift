@@ -156,6 +156,48 @@ func run() {
     check(rejection(["method": "chooseFolder", "prompt": true]).hasPrefix("INVALID_ARGS"),
           "chooseFolder prompt must be a string")
     check((try? bridge.handle(["method": "getState"]))?["dialog"] == nil, "non-dialog methods carry no dialog block")
+    // §68.2 追记 probeCaptionKey：词表 / 类型严格 / 沙箱里没保存 key → INVALID_ARGS；注入假探针（绝不连网）
+    check(cap["key_probe"] is NSNull, "captions.key_probe is null before any test")
+    check(rejection(["method": "probeCaptionKey"]).hasPrefix("INVALID_ARGS"), "probeCaptionKey without name rejected")
+    check(rejection(["method": "probeCaptionKey", "name": "anthropic-api-key.txt"]).hasPrefix("INVALID_ARGS"),
+          "probeCaptionKey outside the two volcano files rejected")
+    check(rejection(["method": "probeCaptionKey", "name": "volcano-ark-key.txt", "value": 3]).hasPrefix("INVALID_ARGS"),
+          "probeCaptionKey value must be a string")
+    check(rejection(["method": "probeCaptionKey", "name": "volcano-ark-key.txt"]).hasPrefix("INVALID_ARGS: nothing to test"),
+          "probeCaptionKey with nothing saved and no value rejected", rejection(["method": "probeCaptionKey", "name": "volcano-ark-key.txt"]))
+    var probed: (String, String)? = nil
+    CaptionKeyCheck.shared.arkProbe = { key, model, done in
+        probed = (key, model)
+        done(.modelNotFound(detail: "harness"))
+    }
+    CaptionKeyCheck.shared.speechProbe = { credential, done in
+        probed = (credential.fileRepresentation, "speech")
+        done(.ok)
+    }
+    if let reply = try? bridge.handle(["method": "probeCaptionKey", "name": "volcano-ark-key.txt", "value": " ark-KEY "]) {
+        let probe = (reply["captions"] as? [String: Any])?["key_probe"] as? [String: Any]
+        check(probed?.0 == "ark-KEY", "probeCaptionKey trims the pasted value and probes it (not the file)")
+        check(probed?.1 == LiveCaptionsController.shared.arkModel, "ark probe uses the configured Ark model")
+        check(probe?["name"] as? String == "volcano-ark-key.txt", "key_probe names the credential")
+        check(probe?["state"] as? String == "done" && probe?["verdict"] as? String == "model_not_found"
+              && probe?["detail"] as? String == "harness", "synchronous fake verdict lands in the snapshot",
+              String(describing: probe))
+        check(probe?["code"] as? String == "" && probe?["message"] as? String == "", "unused verdict fields are empty strings")
+    } else {
+        check(false, "probeCaptionKey with a pasted value must not throw")
+    }
+    if let reply = try? bridge.handle(["method": "probeCaptionKey", "name": "volcano-speech-key.txt", "value": "1234567890:token-abc"]) {
+        let probe = (reply["captions"] as? [String: Any])?["key_probe"] as? [String: Any]
+        check(probed?.1 == "speech" && probed?.0.contains("token-abc") == true, "speech probe gets the parsed credential")
+        check(probe?["verdict"] as? String == "ok", "ok verdict lands", String(describing: probe))
+    } else {
+        check(false, "probeCaptionKey speech with a pasted value must not throw")
+    }
+    let describe = CaptionKeyCheck.describe(name: "volcano-speech-key.txt", verdict: .resourceNotEnabled(code: "45000030", message: "not activated"))
+    check(describe["verdict"] as? String == "resource_not_enabled" && describe["code"] as? String == "45000030"
+          && describe["message"] as? String == "not activated", "describe carries code + message for resource verdicts")
+    check(CaptionKeyCheck.result(.badKey(detail: "x")) == "unauthorized" && CaptionKeyCheck.result(.network(detail: "x")) == "error",
+          "analytics result vocabulary mirrors the native applyCaptionVerdict")
     check(FolderDialog.abbreviateHome(NSHomeDirectory() + "/Notes") == "~/Notes", "abbreviateHome folds $HOME to ~")
     check(FolderDialog.abbreviateHome("/Volumes/X") == "/Volumes/X", "abbreviateHome leaves other paths alone")
     check(PermissionsProbe.kinds == ["screen", "microphone", "notifications", "vault"], "permission kinds vocabulary frozen")

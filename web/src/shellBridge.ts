@@ -31,6 +31,16 @@ export interface ShellRecordingState {
   resume_mode: string;         // on:true 不带 mode 时壳会恢复到的模式
 }
 
+/** 最近一次 BYO key「检测」（壳 CaptionKeyCheck；§68.2 追记）：running → done + verdict */
+export interface ShellKeyProbe {
+  name: string;                // "volcano-speech-key.txt" | "volcano-ark-key.txt"
+  state: string;               // "running" | "done"
+  verdict: string;             // done 时："ok" | "bad_key" | "resource_not_enabled" | "model_not_found" | "service_error" | "network"
+  detail: string;              // bad_key / model_not_found / network 的原文
+  code: string;                // resource_not_enabled / service_error 的服务端错误码
+  message: string;             // 同上的服务端消息
+}
+
 /** 实时字幕快照（壳侧 LiveCaptionsController 的投影 + §68.2 偏好八键） */
 export interface ShellCaptionsState {
   available: boolean;
@@ -47,6 +57,7 @@ export interface ShellCaptionsState {
   ark_model: string;
   font_size: number;           // 14–40
   opacity: number;             // 0.2–1
+  key_probe?: ShellKeyProbe | null;  // 最近一次 BYO key 检测（add-only）；老壳 / 从未检测 = null
 }
 
 /** TCC 三项（壳侧 PermissionsProbe；§68.3）："granted" | "denied" | "unknown" */
@@ -82,7 +93,8 @@ export type ShellMethod =
   | "setLaunchAtLogin"
   | "setCaptionPrefs"
   | "setBadge"
-  | "chooseFolder";
+  | "chooseFolder"
+  | "probeCaptionKey";
 
 export const PERMISSION_KINDS = ["screen", "microphone", "notifications", "vault"] as const;
 export const PANE_IDS = ["full_disk", "screen", "microphone", "notifications", "files_folders"] as const;
@@ -119,6 +131,21 @@ const asString = (v: unknown, fallback = ""): string => (typeof v === "string" ?
 const asNumber = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 const asStatus = (v: unknown): PermissionStatus => (typeof v === "string" && v ? v : "unknown");
 
+function normalizeKeyProbe(raw: unknown): ShellKeyProbe | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const name = asString(obj.name);
+  if (!name) return null;
+  return {
+    name,
+    state: asString(obj.state, "done"),
+    verdict: asString(obj.verdict),
+    detail: asString(obj.detail),
+    code: asString(obj.code),
+    message: asString(obj.message),
+  };
+}
+
 /** 壳快照 → 类型化状态；缺失字段取默认值（壳 add-only，页面永不因新/缺字段崩） */
 export function normalizeShellState(raw: unknown): ShellState {
   const obj = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -153,6 +180,7 @@ export function normalizeShellState(raw: unknown): ShellState {
       ark_model: asString(cap.ark_model, "doubao-seed-1-6-flash"),
       font_size: asNumber(cap.font_size, 24),
       opacity: asNumber(cap.opacity, 0.7),
+      key_probe: normalizeKeyProbe(cap.key_probe),
     },
     permissions: {
       screen: asStatus(perm.screen),

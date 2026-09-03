@@ -7,6 +7,8 @@
 //   request  = window.webkit.messageHandlers.zaiShell.postMessage({method, ...args})
 //              → Promise<state>；未知 method / 坏参数 → reject(String)
 //              对话框类方法（chooseFolder）的回执 = 快照 + add-only `dialog: {path: string|null}`
+//              异步类方法（probeCaptionKey）的回执 = 起跑后的快照（`captions.key_probe.state = running`），
+//              结果由随后的 `zai-shell-state` 事件带回（state = done + verdict）
 //   event    = window.dispatchEvent(new CustomEvent("zai-shell-state", {detail: state}))
 //   state    = ShellBridge.stateSnapshot()（键名 snake_case，前端逐字镜像——防腐 #10）
 // 页面只在 `window.webkit?.messageHandlers?.zaiShell` 存在时渲染这两个开关
@@ -51,6 +53,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
         PermissionsProbe.shared.objectWillChange
+            .sink { [weak self] _ in self?.schedulePush() }
+            .store(in: &cancellables)
+        CaptionKeyCheck.shared.objectWillChange
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
     }
@@ -115,6 +120,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             "ark_model": cap.arkModel,
             "font_size": cap.fontSize,
             "opacity": cap.opacity,
+            // §68.2 追记 add-only：最近一次 BYO key「检测」（probeCaptionKey）；null = 从未检测
+            "key_probe": CaptionKeyCheck.shared.snapshotValue(),
         ]
         let perm = PermissionsProbe.shared
         let permissions: [String: Any] = [
@@ -218,6 +225,15 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
                 throw BridgeError.invalidArgs("setBadge needs count: non-negative int")
             }
             DockBadge.set(count)
+        case "probeCaptionKey":
+            // §68.2 追记：火山 key「检测」——name 必填且在词表内；value 可选但类型严格（非空 = 探这个值、不落盘）
+            guard let name = dict["name"] as? String else {
+                throw BridgeError.invalidArgs("probeCaptionKey needs name: string")
+            }
+            if let raw = dict["value"], !(raw is String) {
+                throw BridgeError.invalidArgs("probeCaptionKey value must be a string")
+            }
+            try CaptionKeyCheck.shared.start(name: name, value: dict["value"] as? String)
         case "chooseFolder":
             // §68.1 目录字段「选择…」：NSOpenPanel 只选目录、可新建；current / prompt 都可选但类型严格
             if let raw = dict["current"], !(raw is String) {

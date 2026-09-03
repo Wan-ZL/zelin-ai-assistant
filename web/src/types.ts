@@ -711,6 +711,64 @@ export interface SecretsStatus {
   [key: string]: unknown;
 }
 
+/** GET /api/sync（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码（PNG base64；开着才带回） */
+export interface SyncStatus {
+  enabled: boolean;
+  channel_id: string;
+  label: string;           // state/sync.json 里的设备名（从未命名 = ""）
+  default_label: string;   // 这台 Mac 的主机名（预填）
+  qr_png_base64: string | null;
+  [key: string]: unknown;
+}
+
+/** POST /api/sync/pair 回执：ok:true 带 channel / label / registered / 二维码；ok:false 带 error（no_python | pair_failed）+ message */
+export interface SyncPairReceipt {
+  ok: boolean;
+  channel_id?: string;
+  label?: string;
+  registered?: boolean;
+  qr_png_base64?: string | null;
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/sync/disable 回执 = ok + 快照（失败带 error / message） */
+export interface SyncDisableReceipt extends SyncStatus {
+  ok: boolean;
+  error?: string;
+  message?: string;
+}
+
+/** GET /api/voice（§68.1 追记）：语气档案两级候选的在场性 + 开关 */
+export interface VoiceProfileStatus {
+  enabled: boolean;
+  private_path: string;
+  private_exists: boolean;
+  default_path: string;
+  default_exists: boolean;
+  effective_path: string | null;
+  [key: string]: unknown;
+}
+
+/** GET /api/slack/directory（§68.1 追记）：act/lib/slack_setup.directory 的 JSON 行原样 */
+export interface SlackDirEntry {
+  id: string;
+  name: string;
+  real_name?: string;
+  [key: string]: unknown;
+}
+
+export interface SlackDirectory {
+  ok: boolean;
+  fetched_at?: string;
+  channels: SlackDirEntry[];
+  users: SlackDirEntry[];
+  error?: string;      // ok:false 时：no_token / no_python / directory_failed / …（act 侧词表）
+  message?: string;    // ok:false 时的人话（act 侧按界面语言生成；no_python / directory_failed 是尾巴原文）
+  [key: string]: unknown;
+}
+
 /** POST /api/secrets/{name}/verify 回执 */
 export interface SecretVerifyResult {
   ok: boolean;
