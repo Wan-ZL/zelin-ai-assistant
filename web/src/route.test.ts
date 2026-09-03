@@ -25,6 +25,11 @@ describe("route", () => {
     expect(url.searchParams.get("card")).toBeNull();
   });
 
+  it("recognizes the recaps page (§63)", () => {
+    expect(readPage("?page=recaps")).toBe("recaps");
+    expect(buildAppUrl("http://127.0.0.1:47820/", "recaps", null).searchParams.get("page")).toBe("recaps");
+  });
+
   it("round-trips page + card through buildAppUrl", () => {
     const url = buildAppUrl("http://127.0.0.1:47820/?page=trash", "board", "r-101");
     expect(url.searchParams.get("page")).toBeNull(); // board 是缺省，不落 query

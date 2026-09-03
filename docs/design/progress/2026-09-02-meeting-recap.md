@@ -1,0 +1,7 @@
+pr: `feat/meeting-recap`（P5b，#129；无版本 bump，版本由 tag 派生）
+phase: P5b（owner 拍板 2026-09-01；不依赖任何阶段，排在 P2 之后新代码出生即受 QA 仪表约束）
+law: **§63（新增）** / §49 路由表追加 / §58.3 修订（act.llm 边界层）
+
+**会议 recap 全量落地**：`act/recap.py --once` 挂 30 分钟 screenpipe cron 链（PID lock 之前，`|| true`，无新 daemon）；`act/lib/recap_sessions.py` 确定性判定（会议应用表 ∪ 音频转写、id-range cursor、每分钟桶、gap>5 切、≥3 帧 ∧ ≥10 min、CLOSED = 安静 ≥5 ∧ 无 pending、120 min 强制、4 h 切段、`meeting:<PT 起始分钟>-<app>`、晚到切片 version+1、首跑 marker = now）；`act/lib/recap_text.py` 5 行模板中英同产 + 确定性 validator（重试一次 → 需复核仍可复制）；`act/lib/recap_store.py` `state/recap/`（不是卡：无 recipient/channel/id/tier）+ dashboard add-only `recaps[]`；no-egress argv `--tools "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'` 由 `tests/test_recap_no_egress.py` 钉死。
+
+`act/lib/recap_slack_draft.py`：Settings 开关默认关、Slack MCP 建草稿白名单（`tests/test_recap_slack_draft_allowlist.py`：无 send/schedule/reaction、无 skip-permissions）、目标不猜、`draft_already_exists` 不覆盖。web `?page=recaps` 会议纪要页（按日分组、badge、segmented 中英、复制 / 标记已发送 / 重新生成 / 现在生成 / 投到 Slack 草稿）+ Settings「会议纪要」section；server `GET/PUT /api/settings/recap`、`POST /api/recaps/mark`，inbox 特形 `recap_generate` / `recap_slack_draft`（golden ×4，actd 经新 `act/lib/detached.py` 分离启动——actd 净零行守住 3660 上限）。**§58.3 修订**：`act.llm` 立法为 entrypoint 的法定边界层（防腐 #3 与 entry-pair 规则的矛盾在第一个新 entrypoint 上爆出），deps 账本 −11。完成判据：fixture DB 上「一场会恰好一份 recap」判例 + 两份 argv 钉；新代码 CC ≤ 5、CRAP ≤ 6、qa 账本零新增。

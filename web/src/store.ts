@@ -14,10 +14,13 @@ import {
   fetchLanes,
   fetchMaterials,
   fetchModelsSettings,
+  fetchRecapSettings,
   postClaudeCodeDefault,
   postMaterialAdd,
   postMaterialDismiss,
+  postRecapMark,
   putModelsSettings,
+  putRecapSettings,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { resolveLanguage, type Language } from "./i18n";
@@ -36,6 +39,7 @@ import type {
   MaterialItem,
   MaterialsList,
   ModelsSettings,
+  RecapSettings,
 } from "./types";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -59,6 +63,14 @@ export interface AppState {
   sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
   expandedCardIds: ReadonlySet<string>; // 展开详情的卡 id（会话内记忆，不持久化——原生 @State 同义）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
+  recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
+  recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
+}
+
+/** §63 本地标记（server marks.json 的镜像片段） */
+export interface RecapMark {
+  copied_at?: string | null;
+  sent_at?: string | null;
 }
 
 const LANGUAGE_STORAGE_KEY = "zai.lang";
@@ -96,6 +108,8 @@ const initialState: AppState = {
   sortOrder: readSortOrder(),
   expandedCardIds: new Set<string>(),
   lanes: null,
+  recapSettings: null,
+  recapMarks: {},
 };
 
 let state: AppState = initialState;
@@ -279,6 +293,34 @@ export async function dismissMaterial(id: string): Promise<MaterialItem> {
   const item = await postMaterialDismiss(id);
   await refreshMaterials();
   return item;
+}
+
+// ----- 会议纪要（§63） ------------------------------------------------------- #
+
+/** 拉 recap 三把旋钮（页面与设置 section 共用）；读失败落 settingsError */
+export async function refreshRecapSettings(): Promise<void> {
+  try {
+    const recapSettings = await fetchRecapSettings();
+    setState({ recapSettings, settingsError: null });
+  } catch (error) {
+    const message = error instanceof ApiError ? error.message : String(error);
+    setState({ settingsError: message });
+  }
+}
+
+/** 保存 recap 旋钮（PUT，server diff-write）；成功以 server 回执替换快照 */
+export async function saveRecapSettings(
+  patch: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
+): Promise<RecapSettings> {
+  const recapSettings = await putRecapSettings(patch);
+  setState({ recapSettings });
+  return recapSettings;
+}
+
+/** 「复制」/「标记已发送」：POST 本地标记并乐观记住回执（board 回流时以 server 投影为准） */
+export async function markRecap(key: string, mark: "copied" | "sent", on = true): Promise<void> {
+  const receipt = await postRecapMark(key, mark, on);
+  setState({ recapMarks: { ...state.recapMarks, [key]: { copied_at: receipt.copied_at, sent_at: receipt.sent_at } } });
 }
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */

@@ -73,6 +73,19 @@ class DirectionRuleTestCase(unittest.TestCase):
                            "def go():\n    import act.analyze\n    return act.analyze\n"})
         self.assertEqual(keys, {"entry-pair:act/actd.py->act.analyze"})
 
+    def test_entrypoints_may_import_the_llm_boundary(self):
+        """§58.3 规则 2 的法定例外（§59 / 防腐 #3）：act.llm 是所有带 prompt 的
+        claude 调用必经的边界——entrypoint 层 import 它不是互引；lib 层仍不许。"""
+        self.assertEqual(depgraph.BOUNDARY_MODULES, frozenset({"act.llm"}))
+        keys = self._scan({"act/llm.py": "from act.lib import other\n",
+                           "act/recap.py": "from act import llm\nimport act.llm\n",
+                           "act/lib/bad.py": "from act import llm\n"})
+        self.assertEqual(keys, {"lib-import:act/lib/bad.py->act.llm"})
+
+    def test_the_llm_boundary_itself_may_not_import_other_entrypoints(self):
+        keys = self._scan({"act/llm.py": "import act.executor\n"})
+        self.assertEqual(keys, {"entry-pair:act/llm.py->act.executor"})
+
     def test_server_may_import_lib_and_itself_but_not_entrypoints(self):
         keys = self._scan({
             "server/paths.py": "",

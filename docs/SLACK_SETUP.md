@@ -90,3 +90,24 @@ headless claude 挂上你**用户级的 Slack MCP**（只读工具）扫一遍�
   - `slack_mcp_interval_minutes: 30` — 扫描间隔。
 - **局限**：手机 self-DM 快速捕获（下载附件 / 建卡）要等 token 批下来才可用——
   兜底路径是只读的，不做这些**写**动作。
+
+## 会议 recap 的 Slack 草稿投递：靴子在 MCP 那边，不在 xoxp token（CONTRACT §63.4，默认关）
+
+看板「会议纪要」页（§63）出的 5 行 recap 默认没有任何发送路径——你复制粘贴。Settings 里
+有一个**默认关**的开关「把纪要放进 Slack 草稿箱」：开了以后，一场会议 CLOSED 出稿时，
+recap 会以**草稿**形式出现在你自己 Slack 的「Drafts & Sent」、附着到对应会话，按发送键的
+仍然是你。
+
+- **走的是用户级 Slack MCP，不是本文上面配的 xoxp token**：Slack 公开 Web API 没有 drafts
+  端点，token 做不到「放草稿」；唯一通路是 Slack MCP 的 `slack_send_message_draft`。所以这个
+  开关的前提是你本机已装用户级 Slack MCP（`claude mcp list` 能看到 `slack`），与第 2 步的
+  token 审批无关、也不受 `slack_mcp_fallback` 影响。
+- **护栏是白名单**：那一次 headless claude 调用只带 `--allowedTools
+  mcp__slack__slack_send_message_draft,mcp__slack__slack_search_users`、不带
+  `--dangerously-skip-permissions`；`slack_send_message`（真发送）、定时消息、reaction 都不在
+  名单里，模型伸手也被 CLI 拒。判例 `tests/test_recap_slack_draft_allowlist.py`。
+- **目标会话你来定**：`config.yaml` 的 `recap.slack_draft.targets`（按会议应用配会话 id，例
+  `zoom: C0123456789`），或在详情页点「投到 Slack 草稿…」手填会话 id。两者都没有就不投，行上
+  标「未投草稿：无目标会话」——从不猜收件人。
+- **Slack 的限制**：一个会话只能有一个附着草稿。已有草稿时标「Slack 已有草稿」，不覆盖、不重试；
+  recap 重新生成后也不自动重投，等你处理完旧草稿再手动投。

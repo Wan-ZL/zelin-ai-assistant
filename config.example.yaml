@@ -137,6 +137,32 @@ digest:                                # 状态摘要卡（CONTRACT §17）：�
                                        # 自行闸门（滚动间隔，从上次生成起算，不钉周一）；off = 永不自动生成，几天不看也不会攒卡。
                                        # App 设置也能改（settings_overrides 扁平键 digest_frequency）。`python -m act.digest --now` 手动立即生成
 
+recap:                                 # 会议 recap（CONTRACT §63，issue #129）：挂在 30 分钟 screenpipe cron 链上，只读 ~/.screenpipe/db.sqlite，
+                                       # 确定性判会议 session，CLOSED 后出 5 行 copy-only 纪要（中英同产）到 state/recap/。不是卡，无发送路径。
+  enabled: true                        # 关 = 整条静默（Settings「会议纪要」同一开关；overrides 扁平键 recap_enabled）
+  default_language: auto               # auto | zh | en——详情页先显示哪一版（overrides 键 recap_default_language）
+  # ---- 确定性 session 判定（数字 = 分钟；坏值回默认） ----
+  # gap_minutes: 5                      # 静默超过即切 session（与 ingest SKILL 一致）
+  # quiet_minutes: 5                    # 距最后事件 ≥ 此值且区间内无 pending 转写 → CLOSED
+  # min_span_minutes: 10                # 资格：session 跨度下限
+  # min_presence_frames: 3              # 资格：会议窗口帧数下限
+  # force_close_minutes: 120            # 引擎死亡兜底：最后事件太久以前 → 无视 pending 强制 CLOSED
+  # max_session_minutes: 240            # 超长 session 切段
+  # audio_only_sessions: false          # 无会议窗口的纯音频（面谈）是否算 session（#129 未解项，默认关）
+  # timezone: America/Los_Angeles       # dedup key `meeting:<本地起始分钟>-<app>` 的时区
+  # meeting_windows:                    # 追加会议应用规则（默认表：Zoom / Microsoft Teams / Webex / FaceTime / meet.google.com / Slack+Huddle）
+  #   - {slug: gather, app: Gather}     #   每条 slug + ≥1 个大小写不敏感的子串匹配器（app / window / url）
+  # ---- 出稿 ----
+  # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
+  # max_per_day: 8                      # 每个本地日上限
+  # retention_days: 90                  # recaps/<key>.json 保留天数
+  # db_path: ~/.screenpipe/db.sqlite    # 引擎 DB 位置（默认即此）
+  slack_draft:                         # §63.4 可选：把 recap 放进你自己 Slack 的「Drafts & Sent」（草稿，不发送）
+    enabled: false                     # 【默认关】走用户级 Slack MCP 白名单 slack_send_message_draft；发送键仍在你手里（overrides 键 recap_slack_draft_enabled）
+    # targets:                         # 按会议应用配目标会话 id（C…/D…/G…）；没配又没在页面手选 = 不投
+    #   zoom: C0123456789
+    #   teams: C0987654321
+
 # 执行落点：req 未指定 target_repo 时的兜底（paperwork/调研的家；绝不默认进你的代码 repo，如 your-bench-repo）
 # raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。
 # execution.default_target_repo: "~/Projects/your-workbench"

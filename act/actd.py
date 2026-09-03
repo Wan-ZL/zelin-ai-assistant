@@ -42,12 +42,14 @@ import yaml
 from act.lib import (
     analytics,
     config,
+    detached,
     failures,
     health,
     heartbeat,
     logcap,
     notify,
     policy,
+    recap_store,
     registry,
     risk,
     sources,
@@ -288,11 +290,11 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
-            # weekly digest on demand (CONTRACT §24): no req id — the Settings
-            # 「现在生成一份」button. Runs detached so the 420s claude call never
-            # blocks the 10s daemon pass.
-            if action == "weekly_digest_now":
-                result = _spawn_weekly_digest()
+            # detached special forms (no req id): weekly digest on demand (§24,
+            # Settings「现在生成一份」) and the §63 recap buttons — each spawns
+            # a subprocess so a minutes-long claude call never blocks the pass.
+            if action in _DETACHED_ACTIONS:
+                result = _DETACHED_ACTIONS[action](decision)
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -453,32 +455,30 @@ def _precondition_ok(req: Requirement, expected_status: Optional[str],
     return False
 
 
-def _spawn_weekly_digest() -> str:
-    """Launch ``python -m act.weekly_digest --now`` detached (CONTRACT §24).
-
-    Same detachment pattern as the merge-review analysis subprocess: never
-    waited on, stdout/err appended to ``state/weekly_digest.log``. A failed
-    launch only logs — the button press must never take the daemon down.
-    Returns the §5.4 result_status ("running" started | "noop" launch failed).
-    """
-    config.ensure_state_dirs()
-    log_path = config.STATE_DIR / "weekly_digest.log"
-    try:
-        with open(log_path, "ab") as fh:
-            subprocess.Popen(
-                [sys.executable, "-m", "act.weekly_digest", "--now"],
-                cwd=str(config.HOME),
-                stdin=subprocess.DEVNULL,
-                stdout=fh,
-                stderr=fh,
-                start_new_session=True,  # detached: outlives the pass
-            )
-        _log("inbox: weekly_digest_now — generation subprocess started")
+def _spawn_weekly_digest(_decision: Optional[dict] = None) -> str:
+    """§24 Settings「现在生成一份」→ ``act.weekly_digest --now`` detached (§5.4 ack)."""
+    result = detached.launch(["act.weekly_digest", "--now"], "weekly_digest.log",
+                             "weekly_digest_now", _log)
+    if result == detached.RUNNING:
         analytics.log_event("weekly_digest_requested")
-        return "running"
-    except Exception as e:  # noqa: BLE001 — never let the button kill the pass
-        _log(f"inbox: weekly_digest_now launch FAILED: {e}")
-        return "noop"
+    return result
+
+
+def _spawn_recap(decision: dict) -> str:
+    """§63 ``recap_generate`` / ``recap_slack_draft`` → ``act.recap <argv>`` detached;
+    malformed (bad key / note / channel id) = honest noop — the store validates."""
+    argv = recap_store.inbox_argv(decision)
+    if argv is None:
+        _log(f"inbox: {decision.get('action')} malformed — dropped")
+        return detached.NOOP
+    return detached.launch(["act.recap"] + argv, "recap.log", str(decision.get("action")), _log)
+
+
+_DETACHED_ACTIONS = {  # late-bound lambdas: tests patch the module attribute
+    "weekly_digest_now": lambda decision: _spawn_weekly_digest(),
+    "recap_generate": lambda decision: _spawn_recap(decision),
+    "recap_slack_draft": lambda decision: _spawn_recap(decision),
+}
 
 
 def _clean_image_paths(images) -> list:

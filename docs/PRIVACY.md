@@ -57,6 +57,8 @@
 | 14 | 建议上报（feedback） | **你点「提建议」发送时** | 维护者的 Supabase（同 telemetry 通道/表；**不受** telemetry 开关限制） | — | 不发送即不触发；fork 设 `telemetry.supabase_url: ""` 硬关 |
 | 15 | 实时字幕（Live Captions） | 你开启菜单栏「实时字幕」期间（流式） | 火山引擎（**你自己 key** 对应的账户端点） | **关**（BYO-key，App 不内置 key） | 字幕开关即断流；不存 key 则「豆包」引擎不可选 |
 | 16 | 建议公开跟踪表 | **你在「提建议」勾选「同时公开」并发送时**；actd 后台建 issue | GitHub 公开 issue（`feedback_sync.repo`，**任何人可见**） | **关**（逐条 opt-in，出厂不预勾） | 不勾选即不触发；`features.feedback_sync: false` / 不配 token 文件整体停用 |
+| 17 | 会议 recap（§63） | 同一 30 分钟 cron 链；只在一场 ≥10 分钟的会议 CLOSED 后 | Anthropic（`--tools ""`、零 MCP——只出文字，进不了任何工具） | **开** | Settings「会议纪要」关 / `recap.enabled: false`；只在 screen_audio 录制模式下才有转写 |
+| 18 | 会议 recap → Slack 草稿箱（§63.4） | 第 17 行出稿后、且你在 Settings 开了 Slack 草稿开关 | 你自己 Slack 的「Drafts & Sent」（经用户级 Slack MCP `slack_send_message_draft`，白名单只允许建草稿） | **关** | 默认即关；`recap.slack_draft.enabled: false` / 不配 `targets` 且不手选会话 |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -278,6 +280,36 @@
   文件（`feedback_sync.token_path`）则整个同步器静默停用（已勾选的记录
   留在本地不外发）。
 
+### 17. 会议 recap → Anthropic（**默认开**；CONTRACT §63）
+
+- **触发**：挂在第 1 行同一条 30 分钟 cron 链上（不加 daemon）。`act/recap.py` 只读
+  `~/.screenpipe/db.sqlite` 做**确定性** session 判定（不调模型）；只有一场 ≥10 分钟、
+  ≥3 帧会议窗口（Zoom / Teams / Meet / Webex / FaceTime / Slack Huddle）安静 5 分钟且
+  转写全部落地（CLOSED）后，才发**一次**模型调用（validator 不过再重试一次）。
+- **Payload**：该会议区间的**音频转写**（含他人发言——只在 `screen_audio` 录制模式下
+  才存在；仅屏幕模式没有转写，recap 记为「无音频」、零调用）+ 14 天内最多 3 条往期
+  recap + 语气档（docs/VOICE.md）+ 你在页面上手写的纠正备注。全部过 `fence_untrusted`。
+  argv 固定 `claude -p … --tools "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'`
+  ——模型拿不到任何工具或 MCP，**只能出文字**（tests/test_recap_no_egress.py 钉死）。
+- **产物**：`state/recap/recaps/<key>.json`（5 行中英纯文本 + 元数据；**不是卡**，没有
+  收件人字段），唯一出口 = 你在看板「会议纪要」页点复制。正文**不进** analytics，事件
+  `recap_generated` 只有 app / 时长 / 字数 / 质量档这些元数据。
+- **关闭**：Settings「会议纪要」→ 关「会后自动生成纪要」，或 `recap.enabled: false`；
+  录制模式不含音频时自然没有转写可出稿。
+
+### 18. 会议 recap → 你自己的 Slack 草稿箱（**默认关**；CONTRACT §63.4）
+
+- **触发**：只在你打开 Settings「把纪要放进 Slack 草稿箱」之后，一份 recap CLOSED 出稿时
+  多做一步（或你在详情页手选会话点「投到草稿」）。
+- **Payload**：5 行正文（按默认语言一版）经用户级 Slack MCP 的 `slack_send_message_draft`
+  写成**草稿**，出现在你自己 Slack 的「Drafts & Sent」、附着到目标会话——**不发送**，
+  按发送键的仍然是你。argv 是工具白名单（`--allowedTools mcp__slack__slack_send_message_draft,
+  mcp__slack__slack_search_users`，无 `--dangerously-skip-permissions`），`slack_send_message`
+  / schedule / reaction 都不在名单里（tests/test_recap_slack_draft_allowlist.py）。
+- **目标会话**：只来自 `recap.slack_draft.targets`（按会议应用配 channel_id）或你手选；两者都
+  没有就不投——从不猜收件人。Slack 一个会话只保留一个附着草稿：已有草稿时不覆盖、不重试。
+- **关闭**：默认即关；`recap.slack_draft.enabled: false`（Settings 同一开关）。
+
 ## 什么永不离开你的 Mac
 
 - **凭证**：`config/secrets/` 下的所有 token/key 文件。凭证内容永不打印、永不入日志
@@ -300,6 +332,7 @@
 | Slack 附件下载 | `state/media/<ts>/` | 不自动清理 |
 | 回收站卡片 | 注册表 trashed 状态 | `trash.retention_days`（默认 60 天）后硬删 |
 | 事件埋点 | `state/analytics/events.jsonl` | 永久,append-only,本地 |
+| 会议 recap | `state/recap/recaps/<key>.json`（5 行正文 + 元数据，转写本身**不**落这里） | `recap.retention_days`（默认 90 天）后删除；整目录可随时删 |
 
 ## 你有哪些控制
 

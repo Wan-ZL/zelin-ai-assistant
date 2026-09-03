@@ -2,11 +2,12 @@
 // 单页两个维度：?page=trash（回收站单独页，缺省 board）+ ?card=R-101（详情抽屉深链）。
 // ?page=styleguide = 活体样式指南（开发者页，仅 URL 直达——看板头部不放入口）。
 // ?page=settings = 设置页（§59 首个 section「模型」；顶栏齿轮入口）。
+// ?page=recaps = 会议纪要页（§63；顶栏入口）——recap 不是卡，不走 ?card= 抽屉。
 // 约定：路由只存"哪一页 + 哪张卡"，过滤器序列化由 A8 仿 dashi taskFilters.ts 在独立模块追加。
 const CARD_QUERY_PARAM = "card";
 const PAGE_QUERY_PARAM = "page";
 
-export type AppPage = "board" | "trash" | "styleguide" | "settings";
+export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps";
 
 export function readCardId(search: string): string | null {
   // 保留大小写：id 由 SAFE_ID_RE 界定（允许小写），匹配按原样精确比对——不做 case 折叠
@@ -16,7 +17,7 @@ export function readCardId(search: string): string | null {
 
 export function readPage(search: string): AppPage {
   const page = new URLSearchParams(search).get(PAGE_QUERY_PARAM);
-  if (page === "trash" || page === "styleguide" || page === "settings") return page;
+  if (page === "trash" || page === "styleguide" || page === "settings" || page === "recaps") return page;
   return "board";
 }
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -60,6 +61,10 @@ _SPECIAL_FIELDS = {
     "capture": ({"text"}, {"mode", "images", "preset"}),
     "weekly_digest_now": (set(), set()),
     "import_claude_sessions": ({"session_ids"}, set()),
+    # §63 会议 recap：无卡片级 id，meeting_key 是 recap 键；两者都不带 recipient
+    # ——recap_slack_draft 的 channel_id 是 owner 自己草稿箱的会话，不是发送目标
+    "recap_generate": ({"meeting_key"}, {"note", "partial"}),
+    "recap_slack_draft": ({"meeting_key", "channel_id"}, set()),
 }
 
 ALLOWED_ACTIONS = CARD_VERBS | frozenset(_SPECIAL_FIELDS)
@@ -271,6 +276,45 @@ def _build_import_sessions(payload: dict) -> dict:
     return {"action": "import_claude_sessions", "session_ids": ids}
 
 
+# §63 recap 键 / Slack 会话 id 的形状（镜像 act/lib/recap_store.KEY_RE /
+# CHANNEL_ID_RE；tests/test_server_paths_mirror.py 钉漂移）
+_RECAP_KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
+_SLACK_CHANNEL_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
+_RECAP_NOTE_MAX = 500
+
+
+def _require_recap_key(payload: dict) -> str:
+    key = payload.get("meeting_key")
+    if not (isinstance(key, str) and _RECAP_KEY_RE.match(key)):
+        raise InvalidFieldError("meeting_key must be a recap key", {"field": "meeting_key"})
+    return key
+
+
+def _build_recap_generate(payload: dict) -> dict:
+    # §63「重新生成」（note = ≤500 字纠正备注）/「现在生成」（partial:true，OPEN 行）
+    rec = {"action": "recap_generate", "meeting_key": _require_recap_key(payload)}
+    if "note" in payload:
+        note = _require_str(payload.get("note"), "note")
+        if len(note) > _RECAP_NOTE_MAX:
+            raise InvalidFieldError(f"note allows at most {_RECAP_NOTE_MAX} chars")
+        rec["note"] = note
+    if "partial" in payload:
+        if payload["partial"] is not True:
+            raise InvalidFieldError("partial is only true", {"field": "partial"})
+        rec["partial"] = True
+    return rec
+
+
+def _build_recap_slack_draft(payload: dict) -> dict:
+    # §63.4「投到 Slack 草稿」：会话 id 形状闸（只投草稿，永不发送）
+    channel = payload.get("channel_id")
+    if not (isinstance(channel, str) and _SLACK_CHANNEL_RE.match(channel)):
+        raise InvalidFieldError("channel_id must be a Slack conversation id",
+                                {"field": "channel_id"})
+    return {"action": "recap_slack_draft", "meeting_key": _require_recap_key(payload),
+            "channel_id": channel}
+
+
 _SPECIAL_BUILDERS = {
     "split_note": _build_split_note,
     "set_title": _build_set_title,
@@ -280,6 +324,8 @@ _SPECIAL_BUILDERS = {
     "capture": _build_capture,
     "weekly_digest_now": lambda payload: {"action": "weekly_digest_now"},
     "import_claude_sessions": _build_import_sessions,
+    "recap_generate": _build_recap_generate,
+    "recap_slack_draft": _build_recap_slack_draft,
 }
 
 

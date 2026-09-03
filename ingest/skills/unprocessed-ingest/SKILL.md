@@ -176,8 +176,12 @@ API key 如需引用，链接到本地 secrets 存放位置（如 `config/secret
 
 - 按 session 拆分：时间 gap > 5 min = 分成多个 raw 文件
 - 保存到 `2 - raw/YYYY-MM-DD-screenpipe-{slug}.md`
+- frontmatter 里**恒**写一行稳定的 `window: YYYY-MM-DDTHH:MM–HH:MM PT`（本地时区的起止；一个 session 一行，不要再用 window_pt / period_pt 等变体，也不许省略——9/01 五篇里出现了四种写法，下游没法按它对齐）。会议 recap 不建在 raw note 上（它直接读引擎 DB，CONTRACT §63），但人回查时靠这一行定位
 
 ```markdown
+---
+window: YYYY-MM-DDTHH:MM–HH:MM PT
+---
 # Screenpipe Session — YYYY-MM-DD (Topic/Meeting Name)
 
 ## Meeting Transcript

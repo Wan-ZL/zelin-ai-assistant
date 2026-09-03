@@ -4,7 +4,9 @@
 法典：docs/CONTRACT.md §58.3（防腐十条 #2 的机械化）。分层规则：
   1. act/lib/**   只准 import stdlib + yaml + act(.lib)——lib 永不向上。
   2. act/*.py     （entrypoint 层：actd/executor/radar*/digest/doctor/webui/
-                   boardctl…）准 import act.lib，互相之间不准 import。
+                   boardctl…）准 import act.lib，互相之间不准 import——唯一例外
+                   是边界层 act.llm（§59 / 防腐 #3：所有带 prompt 的 claude 调用
+                   必须经它构造 argv，禁它等于禁守法；v0.48.x §63 立法）。
   3. server/**    只准 import stdlib/第三方 + act.lib + server。
   4. 任何模块不准跨模块引用 `_私名`（from X import _y / X._y 属性链）。
 第三方白名单检查（规则 1 的 stdlib 判定）用 sys.stdlib_module_names（3.10+）；
@@ -33,6 +35,10 @@ STDLIB = frozenset(getattr(sys, "stdlib_module_names", ()))
 # 的第三方 import 出现在 act/lib 即 lib-thirdparty 违例。
 _EXTERNAL_OK = frozenset({"yaml", "cryptography"})
 _FIRST_PARTY_TOPS = ("act", "server", "scripts")
+# §58.3 规则 2 的法定例外：entrypoint 层准 import 的同层模块（LLM 边界，§59）。
+# act.llm 自己仍按 entry 受审——它只准向下到 act.lib。lib 层不在此列（lib
+# 经注入缝拿 runner，绝不向上 import）。
+BOUNDARY_MODULES = frozenset({"act.llm"})
 
 
 # --------------------------------------------------------------------------- #
@@ -115,6 +121,8 @@ def _server_violation(target):
 
 
 def _entry_violation(importer, target):
+    if target in BOUNDARY_MODULES:
+        return None
     if classify(target) == "entry" and target != importer:
         return "entry-pair"
     return None

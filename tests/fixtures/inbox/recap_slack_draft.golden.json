@@ -1,0 +1,6 @@
+{
+  "action" : "recap_slack_draft",
+  "channel_id" : "C0123456789",
+  "meeting_key" : "meeting:2026-08-31T1256-zoom",
+  "ts" : "2026-08-30T12:00:00Z"
+}

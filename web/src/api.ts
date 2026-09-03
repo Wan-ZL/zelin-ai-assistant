@@ -15,6 +15,8 @@ import type {
   MaterialItem,
   MaterialsList,
   ModelsSettings,
+  RecapMarkReceipt,
+  RecapSettings,
 } from "./types";
 
 interface ApiErrorBody {
@@ -212,4 +214,24 @@ export function postMaterialAdd(body: { url: string; note: string }): Promise<Ma
 /** POST /api/materials/dismiss — 放弃一条（状态机 → dismissed；台账保留记录，API 侧可恢复） */
 export function postMaterialDismiss(id: string): Promise<MaterialItem> {
   return request<MaterialItem>("/api/materials/dismiss", { method: "POST", body: JSON.stringify({ id }) });
+}
+
+/** GET /api/settings/recap — 会议 recap 三把旋钮的 effective 值（CONTRACT §63） */
+export function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
+  return request<RecapSettings>("/api/settings/recap", { signal });
+}
+
+/** PUT /api/settings/recap — 只许 enabled / default_language / slack_draft_enabled 三键（server 零容忍） */
+export function putRecapSettings(
+  body: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
+): Promise<RecapSettings> {
+  return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** POST /api/recaps/mark — 「复制」/「标记已发送」本地标记（server 独写 marks.json；无控制流读它） */
+export function postRecapMark(key: string, mark: "copied" | "sent", on = true): Promise<RecapMarkReceipt> {
+  return request<RecapMarkReceipt>("/api/recaps/mark", {
+    method: "POST",
+    body: JSON.stringify({ key, mark, on }),
+  });
 }

@@ -1,5 +1,5 @@
 // 顶栏（G7 shell，自写非 fork）：左=标识+标题+设备标签+新鲜度+部署状态（§56）；中=搜索槽位；
-// 右=壳内原生开关（录制 / 实时字幕，仅壳里出现，§61）+回收站+设置+连接状态点+语言切换+主题切换。
+// 右=壳内原生开关（录制 / 实时字幕，仅壳里出现，§61）+会议纪要（§63）+回收站+设置+连接状态点+语言切换+主题切换。
 // 搜索本体归 A8（filters/⌘F）——这里只留 searchSlot 槽位，A8 把搜索组件经 app.tsx 传进来即可，
 // 不传则槽位为空但布局稳定。
 import type { ReactNode } from "react";
@@ -55,6 +55,13 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
       <div className="shell-header-right">
         {/* §61：录制 / 实时字幕 开关——只在 shell/ 壳（"Zelin's AI Assistant"）里渲染（普通浏览器无桥 → null） */}
         <ShellControls />
+        {/* 会议纪要入口（§63）：?page=recaps 整页导航（同 trash 链接约定） */}
+        <a
+          className="shell-trash-link"
+          href={buildAppUrl(window.location.href, "recaps", null).toString()}
+        >
+          {text("会议纪要", "Recaps")}
+        </a>
         {/* 回收站入口：TrashPage 只有 ?page=trash 深链——壳层导航走整页 <a>（同 trash-back-link 约定） */}
         <a
           className="shell-trash-link"

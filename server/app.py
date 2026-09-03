@@ -19,9 +19,11 @@
   Terminal 修复会话，server/ai_fix_launch.py）。
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
+- 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
+  /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）、§62（素材库）。
+localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）。
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (ai_fix_launch, board_source, files, health, inbox_writer,
-                    lanes, materials, paths, security, settings)
+                    lanes, materials, paths, recaps, security, settings)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -218,12 +220,11 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     def _route_put(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
-        if path == "/api/settings/models":
-            # 字段白名单 + 形状校验 + diff-write 都在 server/settings.py（单一职责）
-            payload = self._read_json_body()
-            self._send_json(200, settings.update_models(ctx.home, payload))
-        else:
+        handler = _PUT_JSON_ROUTES.get(path)
+        if handler is None:
             raise NotFoundError("not found", {"path": path})
+        # 字段白名单 + 形状校验 + diff-write 都在各 handler 的模块里（单一职责）
+        self._send_json(200, handler(ctx, self._read_json_body()))
 
     def _query(self) -> dict:
         """URL query → 扁平 dict（同名键后者胜；空值保留）——GET 表路由的第二个实参。"""
@@ -391,6 +392,8 @@ _GET_JSON_ROUTES = {
     "/api/lanes": lambda ctx, query: lanes.catalog(),
     # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
     "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
+    # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
+    "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
 }
 
 _POST_JSON_ROUTES = {
@@ -402,6 +405,15 @@ _POST_JSON_ROUTES = {
     # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/materials.py
     "/api/materials/add": lambda ctx, payload: materials.add(ctx.home, payload),
     "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
+    # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
+    "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
+}
+
+_PUT_JSON_ROUTES = {
+    # §59 两把模型旋钮（diff-write overrides）
+    "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
+    # §63 会议 recap 旋钮（同一 diff-write 语义）
+    "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
 }
 
 

@@ -63,6 +63,21 @@ else
     VAULT_SYNC_MODE="direct"
 fi
 
+# 会议 recap（CONTRACT §63, issue #129）— hangs off THIS 30-min chain, no new
+# daemon: `python -m act.recap --once` reads ~/.screenpipe/db.sqlite read-only,
+# judges meeting sessions deterministically and, for a CLOSED meeting, writes a
+# 5-line copy-only recap under state/recap/. It carries its own flock, typically
+# runs 2–9 s, and its failure must NEVER break the ingest chain (|| true). Runs
+# before the PID lock so a long ingest never delays a recap by a full round.
+run_recap_once() {
+    local py
+    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
+    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    [ -n "$py" ] || return 0
+    (cd "$REPO_ROOT" 2>/dev/null && "$py" -m act.recap --once >> "$LOGFILE" 2>&1) || true
+}
+run_recap_once
+
 # Prevent concurrent runs — PID lock.
 # (Was an mtime lock with a 30-min staleness cutoff, but real runs take
 # 26-33 min: a slow run's lock could be declared stale and a second run
