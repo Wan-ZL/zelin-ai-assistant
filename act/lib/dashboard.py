@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import (card_summary, config, deploy_state, failures, health, policy,
-                     recap_store, risk, self_improve, sources, steer, titles)
+                     recap_store, risk, self_improve, sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -46,7 +46,7 @@ _MERGE_EMIT_STATUSES = ("analyzing", "done", "failed")
 # --------------------------------------------------------------------------- #
 # transcript-info memoization (hot path)
 # --------------------------------------------------------------------------- #
-# executor._transcript_info reads + json-parses the FULL transcript of a
+# transcripts.transcript_info reads + json-parses the FULL transcript of a
 # session. The dashboard needs it for every executing/review/delivered card
 # without a live pid — and the delivered set grows forever (never auto-
 # archived) — so calling it uncached on every ~10s pass is unbounded IO that
@@ -60,11 +60,11 @@ _TINFO_CACHE_MAX = 512  # tiny entries; bound it so a long-lived actd can't grow
 
 def _transcript_sig(sid: str) -> Optional[tuple]:
     """Freshness signature: (path, mtime_ns, size) of each transcript file
-    ``executor._transcript_info(sid)`` would consider — the glob pattern must
-    stay in sync with executor's. None = can't sign (short sid / OSError):
+    ``transcripts.transcript_info(sid)`` would consider — the glob pattern must
+    stay in sync with that module's. None = can't sign (short sid / OSError):
     the caller falls through to an uncached lookup, never a stale answer."""
     short = str(sid or "").split("-")[0]
-    if len(short) < 8:  # executor's guard: anything shorter globs everything
+    if len(short) < 8:  # transcripts' guard: anything shorter globs everything
         return None
     root = Path("~/.claude/projects").expanduser()
     try:
@@ -78,14 +78,13 @@ def _transcript_sig(sid: str) -> Optional[tuple]:
 
 
 def _transcript_info_cached(sid: str) -> Optional[tuple]:
-    from act.executor import _transcript_info  # lazy: keep dashboard import-light
     sig = _transcript_sig(sid)
     if sig is None:
-        return _transcript_info(sid)
+        return transcripts.transcript_info(sid)
     hit = _TINFO_CACHE.get(sid)
     if hit is not None and hit[0] == sig:
         return hit[1]
-    info = _transcript_info(sid)
+    info = transcripts.transcript_info(sid)
     if len(_TINFO_CACHE) >= _TINFO_CACHE_MAX:
         _TINFO_CACHE.clear()
     _TINFO_CACHE[sid] = (sig, info)
