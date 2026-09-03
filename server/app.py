@@ -31,10 +31,13 @@
   POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
+- 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
+  diff-write 语义），server/settings.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
-§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）。
+§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）、
+§70（每日整理设置面）。
 """
 from __future__ import annotations
 
@@ -480,6 +483,8 @@ _GET_JSON_ROUTES = {
     "/api/health": lambda ctx, query: health.snapshot(ctx.home),
     # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
+    # §70 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
+    "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
@@ -557,6 +562,8 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+    # §70 每日自我改进循环的五把旋钮（同一 diff-write 语义）
+    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
 }
 
 _PUT_PREFIX_ROUTES = {

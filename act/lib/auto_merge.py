@@ -43,6 +43,7 @@ from act.lib.near_dupe import (  # noqa: F401 - re-exported API (callers + tests
     HIGH_SCORE,
     OPEN_STATES,
     is_near_dupe,
+    linked,
 )
 
 STATE_PATH = config.STATE_DIR / "auto_merge_seen.json"

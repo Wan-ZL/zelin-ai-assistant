@@ -401,6 +401,28 @@
   color: var(--accent);
 }
 
+/* 每日整理横幅（MaintenanceBanner，§70）的 info 变体：不是报警，是「服务在干活」
+   的一行回执——accent 软底、accent 标题，与两条红/橙横幅一眼分得开 */
+.shell-banner.is-info {
+  background: var(--accent-soft);
+}
+
+.shell-banner.is-info .shell-banner-icon,
+.shell-banner.is-info .shell-banner-title {
+  color: var(--accent);
+}
+
+.shell-banner-icon-dot {
+  font-size: 9px;
+}
+
+.shell-banner-link {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;

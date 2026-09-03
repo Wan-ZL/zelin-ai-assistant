@@ -422,7 +422,7 @@ def _converge_half_fold(primary: registry.Requirement,
         # sources 去重合并幂等，补上，别把窗口增量跟着副卡埋进回收站（review
         # finding，2026-08-18）；只为窗口内的**新增**来源计 mentions
         # （_fold_hit 同款 added 语义，重放时 added=0 天然幂等）。
-        merged, added = registry._dedupe_sources(
+        merged, added = registry.dedupe_sources(
             primary.sources or [], secondary.sources or [])
         primary.sources = merged
         if added:
@@ -488,7 +488,7 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
     if brief and brief != "无新增信息":
         note += f"：{brief}"
     registry.append_fold_note(primary, note, "radar")
-    merged, added = registry._dedupe_sources(
+    merged, added = registry.dedupe_sources(
         primary.sources or [], secondary.sources or [])
     primary.sources = merged
     primary.repeated_mentions = (int(primary.repeated_mentions or 1)

@@ -3,7 +3,7 @@
 //   模型（§59，ModelsSection）· 来源开关 + 凭证（sources）· 录制（桥）· 实时字幕（桥 + 凭证）·
 //   通知 · 产品改进计划 · 摘要与回顾 · 通用 · 审批 / 成本 · Feature flags · 脱敏 · 语气档案 ·
 //   开发者会话（以上通用区由 server 目录驱动，CatalogSection）· 导入 Claude Code 工作 · MCP servers · Skills（D13，§67，SkillsSection）·
-//   素材库（D11，§62，MaterialsSection）· 会议纪要（§63，RecapSection）· 关于 / 看板 app。
+//   素材库（D11，§62，MaterialsSection）· 会议纪要（§63，RecapSection）· 每日整理（D10，§70，DailyLoopSection）· 关于 / 看板 app。
 //   已删（Dock-only 决策 D3）：菜单栏图标开关；同步 / 配对（iPhone 联动）随 §31 syncd 面另议。
 // 页面级只做骨架：返回链接 + 标题 + 目录 + section 列表；每个 section 自己拉自己的数据（经 store action）。
 import { useEffect } from "react";
@@ -13,6 +13,7 @@ import { AboutSection } from "../components/settings/AboutSection";
 import { CaptionsSection } from "../components/settings/CaptionsSection";
 import { CatalogSection } from "../components/settings/CatalogSection";
 import { ClaudeImportSection } from "../components/settings/ClaudeImportSection";
+import { DailyLoopSection } from "../components/settings/DailyLoopSection";
 import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
 import { SkillsSection } from "../components/settings/SkillsSection";
@@ -43,6 +44,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "mcp", zh: "MCP servers", en: "MCP servers" },
   { id: "materials", zh: "素材库", en: "Materials" },
   { id: "recap", zh: "会议纪要", en: "Recaps" },
+  { id: "daily_loop", zh: "每日整理", en: "Daily tidy-up" },
   { id: "about", zh: "关于 / 看板 app", en: "About / Board app" },
 ];
 
@@ -93,6 +95,8 @@ export function SettingsPage() {
       <div id="settings-materials"><MaterialsSection /></div>
       {/* §63 会议纪要：会后自动出稿 / 默认语言 / Slack 草稿开关（默认关） */}
       <div id="settings-recap"><RecapSection /></div>
+      {/* §70 每日整理：开关 / 时刻 / 每天最多几张提案 / 过时天数 / 回收站保留天数 */}
+      <div id="settings-daily_loop"><DailyLoopSection /></div>
       <div id="settings-skills"><SkillsSection /></div>
       <AboutSection />
     </main>

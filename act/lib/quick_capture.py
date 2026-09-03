@@ -446,7 +446,7 @@ def _fold_into(target: "registry.Requirement", child: Optional["registry.Require
     # failed-note retry queue re-folds the same hit on every retry, and an
     # identical note must not accumulate ("retry is harmless" invariant).
     registry.append_fold_note(target, note, "radar")
-    merged, added = registry._dedupe_sources(
+    merged, added = registry.dedupe_sources(
         target.sources or [], (child.sources if child is not None else None) or [])
     target.sources = merged
     if added:

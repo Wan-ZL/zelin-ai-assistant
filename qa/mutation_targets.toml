@@ -37,6 +37,10 @@ per_mutant_timeout_seconds = 60
 # §67 skill 商店：状态判定 / 自定义永不被碰 / 决策优先于默认——一个存活体 = 商店覆盖了 owner 的副本。
 "act/lib/skills.py" = ["tests/test_skills_store.py"]
 "act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]
+# §70 每日自我改进循环（P5）——它替 owner 动卡（合成 / 进回收站）并铸提案，宪法第 1/2/10/11 条都在这里执法。
+"act/lib/maintenance.py" = ["tests/test_daily_loop_dedup_merge.py", "tests/test_daily_loop_stale_rules.py"]
+"act/lib/daily_loop.py" = ["tests/test_daily_loop_run.py", "tests/test_daily_loop_proposals.py"]
+"act/lib/loop_inputs.py" = ["tests/test_daily_loop_inputs.py"]
 
 # P3a（refactor/p3a-radars）：雷达 / digest / analyze 七模块的 CRAP≤6 清账在
 # 变异网先行之下完成——首轮 1,506 体（原代码）：radar 62% 杀伤，其余 36–42%；

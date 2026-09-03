@@ -50,13 +50,18 @@ MIRROR_PATH: Path = (Path.home() / "Library" / "Application Support"
 # status), `last_incident` ("<ts> <status>: <detail>" of the last rollback
 # verdict — kept through every routine write until the next `deployed`, so a
 # refused rollback stays visible after the following interval's up_to_date;
-# #135 review). The script also keeps private bookkeeping (`notified_sha`,
-# `incomplete_runs` / `incomplete_runs_sha` / `incomplete_seen` /
-# `incomplete_sha` / `incomplete_notified_sha`, `tcc_notified_day`); not
-# projected.
+# #135 review). 2026-09-03 add-only: `behind_main` / `behind_main_why` — the
+# last deploy stopped short of origin/main's head (it chose the newest GREEN
+# ancestor because the head's CI was pending / red / already poisoned, §56.3
+# step 3); present only while that is so, cleared by a deploy of the head or
+# an up_to_date. The script also keeps private bookkeeping (`notified_sha`,
+# `failed_shas` — every poisoned sha since the last clear, `failed_sha` being
+# only the newest —, `incomplete_runs` / `incomplete_runs_sha` /
+# `incomplete_seen` / `incomplete_sha` / `incomplete_notified_sha`,
+# `tcc_notified_day`); not projected.
 FIELDS = ("status", "version", "head", "prev", "last_deployed", "last_run",
           "detail", "failed_sha", "running_version", "install_report_version",
-          "reason", "last_incident")
+          "reason", "last_incident", "behind_main", "behind_main_why")
 
 # Mirror-only keys (never in the dashboard: local paths and the unattended
 # triple are diagnostics for the doctor, not board content).
@@ -350,10 +355,21 @@ def _auto_deploy_warn_detail(state: dict) -> str:
     return "".join(parts)
 
 
+def _behind_main_note(state: dict) -> str:
+    """「; origin/main <sha> not deployed: <why>」while the last deploy deliberately
+    stopped short of the head (§56.3 step 3: the newest green ancestor went live
+    instead; still OK — the machine runs the newest tested code — but the reader
+    should see main is ahead). "" otherwise."""
+    behind = state.get("behind_main", "")
+    if not behind:
+        return ""
+    return "; origin/main %s not deployed: %s" % (behind[:7], state.get("behind_main_why") or "?")
+
+
 def _auto_deploy_ok_detail(state: dict) -> str:
     when = state.get("last_deployed") or state.get("last_run") or ""
-    return "%s (v%s%s)" % (state.get("status", ""), state.get("version") or "?",
-                           (" at " + when) if when else "")
+    return "%s (v%s%s)%s" % (state.get("status", ""), state.get("version") or "?",
+                             (" at " + when) if when else "", _behind_main_note(state))
 
 
 def auto_deploy_row(state: dict) -> dict:

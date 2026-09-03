@@ -34,7 +34,6 @@ act/actd.py::detect_transitions 17
 act/actd.py::dispatch_approved 34
 act/actd.py::main 8
 act/actd.py::process_inbox 28
-act/actd.py::purge_trash 10
 act/actd.py::reconcile_executing 65
 act/actd.py::run_once 17
 act/ask.py::_split_sections 7
@@ -59,7 +58,6 @@ act/lib/config.py::_coerce_bool 7
 act/lib/config.py::load_config 58
 act/lib/config.py::recording_exclusion_sql 7
 act/lib/dashboard.py::_merge_suggestions 19
-act/lib/dashboard.py::_purge_at 8
 act/lib/dashboard.py::_radar_sources 13
 act/lib/dashboard.py::_run_claude_agents 9
 act/lib/dashboard.py::_source_view 9

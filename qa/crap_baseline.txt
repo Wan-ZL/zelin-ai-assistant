@@ -38,7 +38,6 @@ act/actd.py::dispatch_approved 35
 act/actd.py::main 15.3
 act/actd.py::process_inbox 28
 act/actd.py::process_raising 6.1
-act/actd.py::purge_trash 10.1
 act/actd.py::reconcile_executing 65.6
 act/actd.py::run_once 21.7
 act/ai_fix.py::main 13.1
@@ -69,7 +68,6 @@ act/lib/config.py::load_config 58.2
 act/lib/config.py::main 25.6
 act/lib/config.py::recording_exclusion_sql 7
 act/lib/dashboard.py::_merge_suggestions 19.2
-act/lib/dashboard.py::_purge_at 8.1
 act/lib/dashboard.py::_queued_reason_view 10.5
 act/lib/dashboard.py::_radar_sources 15.6
 act/lib/dashboard.py::_run_claude_agents 77.9

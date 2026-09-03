@@ -72,9 +72,12 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 #   meeting / audio — obsidian radar 的会议音频与笔记通道
 #   slack / gmail — 第三方消息（radar_slack 非 self-DM 路径、radar_gmail）
 #   screen — §45 防御行：屏幕永不铸卡，真出现即异常，按最不信任处理
-#   self_improve — §65 自动草稿 PR 通道的**唯一**铸卡渠道（每日循环提案 /
-#       PR 跟进卡，producer 硬编码写入）：出身仍是 proposed（AI 自提），免批
-#       资格由 may_auto_dispatch 的第二条 lane 另裁——见模块 docstring。
+#   self_improve — §65 自动草稿 PR 通道的**唯一**铸卡渠道（§70 每日循环的 🤖
+#       提案卡 / PR 跟进卡，producer 硬编码写入——act/lib/daily_loop.py
+#       SOURCE_CHANNEL 逐字同款，无 LLM 参与 = write-locked）：出身仍是
+#       proposed（AI 自提），免批资格由 may_auto_dispatch 的第二条 lane 另裁
+#       （只认这个 channel + 物理 repo 路径，永不认 type/target_repo 这类 LLM
+#       可写字段）——见模块 docstring。
 SELF_IMPROVE_CHANNEL = "self_improve"
 CHANNEL_CLASS: dict = {
     "quick": HAND,
