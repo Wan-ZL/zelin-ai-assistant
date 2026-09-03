@@ -21,8 +21,11 @@
 
 输出确定性：键排序 + 条目按 (screen, source) 排序 + 同 id 递增 #n 后缀——
 重跑零 diff 由 tests/test_ui_native_inventory_fresh.py 钉死。唯一手写的部分是
-`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` 三张归属表与 `SCREEN_OWNER`
-（谁负责补齐：web / shell / os / retired）——表本身也进 JSON（`attribution`）。
+`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` 四张归属表、
+`SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）与 prefs 键的 `PREF_OWNER`
+（shell / server / retired + 理由）——表本身也进 JSON（`attribution`）。owner=shell 的
+条目原则上只列不判；例外是带 `probe` 的条目（通知句 / kind → notify_catalog，
+壳持有的偏好键 → shell_source，搬到 server 的偏好键 → server_source），§66.2 追记。
 
 用法：
     python3 scripts/ui/extract_native_inventory.py --write    # 重铸 JSON
@@ -125,7 +128,8 @@ MEMBER_SCREEN = {
 
 # screen 前缀 → 负责补齐的一方。web = 看板必须补（进门）；shell = 原生残留
 # （R2.2.3：字幕悬浮窗、系统通知、TCC 引导）；os = macOS 应用菜单惯例；
-# retired = 计划明文退役（D3 菜单栏图标）。非 web 的条目只列不判。
+# retired = 计划明文退役（D3 菜单栏图标）。非 web 的条目只列不判——例外是
+# PROBED_SHELL_SCREENS：壳直发的系统通知句按 server-owned 目录判（§66.2 追记）。
 SCREEN_OWNER = {
     "captions": "shell",
     "notifications": "shell",
@@ -134,6 +138,38 @@ SCREEN_OWNER = {
     "app": "shell",
     "settings.menuBar": "retired",
     "onboarding.hello_bubble": "retired",
+}
+
+# 调用者标识 → screen（第四张归属表）：`Self.postSystemNotice(title: L(...))` 是壳
+# （RecordingController，Recording.swift 逐字节搬进 shell/）直发的系统通知，不是
+# header.recording 的界面文案——归 notifications（owner shell），与 NotifyRelay 的
+# 汇总句同一探针（server/notify_catalog.py + shell/Sources 的 L() 对）。
+VIA_SCREEN = {
+    "Self.postSystemNotice": "notifications",
+}
+
+# owner=shell 却要判的 screen：探针 = notify_catalog（§66.2 追记）。
+PROBED_SHELL_SCREENS = frozenset({"notifications"})
+
+# UserDefaults 纯界面偏好键 → 归属（第五张归属表；表外的键按前缀规则：字幕 / 录制
+# 引擎的键随逐字节搬入的引擎文件归 shell，其余归 web）。
+#   shell   —— 壳自己持有同名 UserDefaults 键（探针：shell/Sources 出现 "<key>"）
+#   server  —— 概念搬到了 server 侧（launcher / 首启标记都归 server）：探针 = `landing`
+#              字面量出现在 server/*.py
+#   retired —— 新架构里没有对应概念（D3 退役 / 并入别的键），只列不判，reason 进 JSON
+PREF_OWNER = {
+    "screenPermissionRequested": {"owner": "shell",
+                                  "reason": "TCC 引导归壳（R2.2.3）：ShellSystem.swift PermissionsProbe.request 同名键"},
+    "vaultAccessGranted": {"owner": "shell",
+                           "reason": "Documents 授权按壳的 bundle id 记账（§68.13）：PermissionsProbe vault 探针同名键"},
+    "terminalApp": {"owner": "server", "landing": '"terminal_app"',
+                    "reason": "「在终端打开」的执行者是 server（open -a，§68.7）——偏好落 settings_overrides terminal_app"},
+    "hasCompletedFirstRun": {"owner": "server", "landing": "setup_done.json",
+                             "reason": "首启标记 = server 侧 state/setup_done.json（§68.5）：换壳 / 换浏览器不重问"},
+    "showMenuBarIcon": {"owner": "retired",
+                        "reason": "D3：壳 Dock-only、菜单栏状态项退役（settings.menuBar 同判）"},
+    "recordingConsentShown": {"owner": "retired",
+                              "reason": "并入 recordingMode（壳无存值 = 未同意 = off，P0-11）+ setup_done.json；不再有第二把标记"},
 }
 
 # 调用链里算「控件」的标识 → role
@@ -396,13 +432,17 @@ def _controls_of(f, attribution):
 
 
 def _control(f, offset, zh, en, role, via, attribution):
-    screen = attribution.screen_for(f, offset)
-    return {
+    screen = VIA_SCREEN.get(via) or attribution.screen_for(f, offset)
+    owner = owner_of(screen)
+    item = {
         "screen": screen, "role": role, "zh": zh, "en": en, "via": via,
-        "source": f.source(offset), "owner": owner_of(screen),
-        "gated": role not in INFORMATIONAL_ROLES and owner_of(screen) == "web",
+        "source": f.source(offset), "owner": owner,
+        "gated": role not in INFORMATIONAL_ROLES and (owner == "web" or screen in PROBED_SHELL_SCREENS),
         "_offset": offset, "_file": f.name,
     }
+    if item["gated"] and owner != "web":
+        item["probe"] = "notify_catalog"   # 非 vitest 探针的名字（parity_check 按它分派）
+    return item
 
 
 def collect_controls(files, attribution):
@@ -535,11 +575,30 @@ def settings_keys(files):
     return [_setting_item(store, key, sources) for (store, key), sources in sorted(found.items())]
 
 
+_ENGINE_PREF_PREFIXES = ("captions", "recordingMode", "lastActiveRecordingMode", "liveCaptionsEnabled")
+_PREF_PROBES = {"shell": "shell_source", "server": "server_source"}
+
+
+def _pref_owner(store, key):
+    """prefs 键的归属：PREF_OWNER 表 > 引擎前缀（shell）> web。overrides 键一律 web。"""
+    if store != "prefs":
+        return {"owner": "web"}
+    if key in PREF_OWNER:
+        return PREF_OWNER[key]
+    return {"owner": "shell" if key.startswith(_ENGINE_PREF_PREFIXES) else "web"}
+
+
 def _setting_item(store, key, sources):
-    owner = "shell" if key.startswith(("captions", "recordingMode", "lastActiveRecordingMode",
-                                       "liveCaptionsEnabled")) else "web"
-    return {"id": "setting:%s:%s" % (store, key), "key": key, "store": store,
-            "sources": sorted(set(sources)), "owner": owner, "gated": owner == "web"}
+    attribution = _pref_owner(store, key)
+    owner = attribution["owner"]
+    item = {"id": "setting:%s:%s" % (store, key), "key": key, "store": store,
+            "sources": sorted(set(sources)), "owner": owner, "gated": owner in ("web", "shell", "server")}
+    if owner in _PREF_PROBES:
+        item["probe"] = _PREF_PROBES[owner]
+    for extra in ("landing", "reason"):
+        if extra in attribution:
+            item[extra] = attribution[extra]
+    return item
 
 
 # --------------------------------------------------------------------------- #
@@ -613,15 +672,16 @@ _KIND = re.compile(r'\.kind\s*==\s*"(\w+)"')
 
 
 def notification_kinds(files):
-    """通知 kind 词表：NotifyRelay.swift 按 kind 过滤/加声的分支（其余 kind 为 None）。"""
+    """通知 kind 词表：NotifyRelay.swift 按 kind 过滤/加声的分支（其余 kind 为 None）。
+    owner shell、探针 notify_catalog：kind 必须登记在 server/notify_catalog.py（§66.2 追记）。"""
     kinds = {}
     f = _by_name(files, "NotifyRelay.swift")
     for m in _KIND.finditer(f.stripped if f else ""):
         kinds.setdefault(m.group(1), f.source(m.start()))
-    items = [{"id": "notification:" + k, "kind": k, "source": src, "owner": "shell", "gated": False}
-             for k, src in sorted(kinds.items())]
+    items = [{"id": "notification:" + k, "kind": k, "source": src, "owner": "shell", "gated": True,
+              "probe": "notify_catalog"} for k, src in sorted(kinds.items())]
     items.append({"id": "notification:general", "kind": None, "source": "act/lib/notify.py",
-                  "owner": "shell", "gated": False})
+                  "owner": "shell", "gated": True, "probe": "notify_catalog"})
     return items
 
 
@@ -712,7 +772,9 @@ def build_inventory(root=uc.MAC_SOURCES):
     return {
         "attribution": {"file_screen": FILE_SCREEN, "type_screen": TYPE_SCREEN,
                         "member_screen": {"%s.%s" % k: v for k, v in MEMBER_SCREEN.items()},
-                        "screen_owner": SCREEN_OWNER},
+                        "screen_owner": SCREEN_OWNER, "via_screen": VIA_SCREEN,
+                        "probed_shell_screens": sorted(PROBED_SHELL_SCREENS),
+                        "pref_owner": PREF_OWNER},
         "controls": controls,
         "lanes": {"order": [lane["slug"] for lane in lanes], "items": lanes,
                   "card_affordances": card_affordances(controls)},

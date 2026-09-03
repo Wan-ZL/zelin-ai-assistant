@@ -73,7 +73,8 @@ class PermissionsTestCase(_ServerCase):
         self.assertFalse(roles["claude"]["exists"])
         self.assertEqual(roles["shell_app"]["path"], permissions.SHELL_APP_PATH)
         self.assertIn("Privacy_AllFiles", obj["fda"]["pane"])
-        self.assertEqual(set(obj["panes"]), {"full_disk", "screen", "microphone", "notifications"})
+        # files_folders = 笔记库（Documents）授权被拒后的第二次机会（原生 requestVaultAccess 深链；§68.13）
+        self.assertEqual(set(obj["panes"]), {"full_disk", "screen", "microphone", "notifications", "files_folders"})
 
     def test_only_tcc_shaped_doctor_rows_are_forwarded(self):
         self.patch_runner()

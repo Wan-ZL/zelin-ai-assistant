@@ -137,11 +137,8 @@ control:header.recording:label:its-engine-failed-to-start
 control:header.recording:label:node-js-is-missing
 control:header.recording:label:not-recording
 control:header.recording:label:not-recording#2
-control:header.recording:label:recording-is-live
 control:header.recording:label:screen-audio#3
-control:header.recording:label:screen-audio-is-not-ready
 control:header.recording:label:screen-only#3
-control:header.recording:label:screen-recording-permission-lost
 control:header.recording:menu:restarting
 control:ingest:button:export-now
 control:ingest:button:grant
@@ -212,7 +209,6 @@ control:settings.credentials:label:verification-failed
 control:settings.credentials:label:verification-failed#2
 control:settings.credentials:label:verified#2
 control:settings.general:button:open
-control:settings.general:label:terminal-app
 control:settings.general:toggle:launch-at-login-recommended-keep-the-menu-bar-as
 control:settings.gmail:button:reinstall
 control:settings.gmail:button:test-one-round-now
@@ -346,11 +342,3 @@ control:setup_wizard:option:中文
 control:setup_wizard:textfield:sk-ant-verifies-on-paste
 screen:settings.sync
 setting:overrides:feedback_publish_default
-setting:prefs:captureHistory
-setting:prefs:hasCompletedFirstRun
-setting:prefs:mainSection
-setting:prefs:recordingConsentShown
-setting:prefs:screenPermissionRequested
-setting:prefs:showMenuBarIcon
-setting:prefs:terminalApp
-setting:prefs:vaultAccessGranted

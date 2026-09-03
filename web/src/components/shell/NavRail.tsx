@@ -2,13 +2,14 @@
 // 八页同序同名同图标（任务台 / 问问助手 / 依赖检查 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于），
 // 顶部 app 名 + 折叠钮（sidebar.leading），选中页 accent 18% 底，hover 6% 底，收起 = 48px 图标条
 // （tooltip 双语标题），展开 = 200px 默认、160–320 可拖（原生 dragHandle）。三把偏好键逐字镜像原生
-// UserDefaults：`sidebarCollapsed` / `sidebarWidth`（localStorage 同名；`mainSection` 由 URL ?page= 承担，
-// 不另存）。⌘1…⌘8 = 原生 keyboardShortcut（浏览器保留 ⌘1-8 时由浏览器胜出，壳里可用）。
+// UserDefaults：`sidebarCollapsed` / `sidebarWidth` / `mainSection`（localStorage 同名；页面本身仍由 URL ?page=
+// 承担，`mainSection` 只记「上次在哪一页」——冷启动（本窗口会话第一次加载、URL 没指定页）回到那一页，
+// 原生 MainNav.init 的行为）。⌘1…⌘8 = 原生 keyboardShortcut（浏览器保留 ⌘1-8 时由浏览器胜出，壳里可用）。
 // 每个条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
 // 原生八页之外的 web 自有页（会议纪要 §63）放分隔线下方，不带 data-rail-item。
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, navigate, readPage, type AppPage } from "../../route";
+import { buildAppUrl, hasExplicitRoute, navigate, readPage, type AppPage } from "../../route";
 import {
   ArchiveBoxIcon, ChecklistIcon, GearIcon, InfoCircleIcon, QuestionBubbleIcon, RecapIcon,
   RecordCircleIcon, SidebarLeadingIcon, TrashIcon, TrayFullIcon,
@@ -16,6 +17,9 @@ import {
 
 const COLLAPSED_KEY = "sidebarCollapsed";
 const WIDTH_KEY = "sidebarWidth";
+const SECTION_KEY = "mainSection";
+/** sessionStorage：本窗口会话已经冷启动过（同一窗口里「← 返回看板」这类整页导航不再回上次的页） */
+const LAUNCHED_KEY = "zai.launched";
 const WIDTH_DEFAULT = 200;
 const WIDTH_MIN = 160;
 const WIDTH_MAX = 320;
@@ -60,6 +64,32 @@ function persist(key: string, value: string) {
   } catch {
     /* localStorage 不可写：本次会话仍生效，仅不持久化 */
   }
+}
+
+/** 原生 MainNav.section didSet：每到一个 rail 页就记住它的 slug（非 rail 页——permissions / setup——不记） */
+export function rememberMainSection(page: AppPage): void {
+  const slug = activeRailSlug(page);
+  if (slug) persist(SECTION_KEY, slug);
+}
+
+/** 原生 MainNav.init（`mainSection` 兜底 dashboard）：只在冷启动且 URL 没指定去处时给出要回去的页；
+ *  看板（dashboard）本来就是缺省，返回 null 不导航。sessionStorage 不可用时视为已启动过（宁不跳）。 */
+export function restoreMainSection(search: string): AppPage | null {
+  try {
+    if (window.sessionStorage.getItem(LAUNCHED_KEY)) return null;
+    window.sessionStorage.setItem(LAUNCHED_KEY, "1");
+  } catch {
+    return null;
+  }
+  if (hasExplicitRoute(search)) return null;
+  let slug: string | null = null;
+  try {
+    slug = window.localStorage.getItem(SECTION_KEY);
+  } catch {
+    return null;
+  }
+  const page = slug ? RAIL_PAGE[slug] : undefined;
+  return page && page !== "board" ? page : null;
 }
 
 interface RailLinkProps {

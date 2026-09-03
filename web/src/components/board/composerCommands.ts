@@ -1,5 +1,6 @@
 // 捕获输入框的历史与斜杠命令（原生 Store.swift 捕获历史 ↑/↓ 20 条 + Composer.swift `/rec /open /lang`，
-// s4 1.8）。历史 = localStorage `zai.captureHistory`（最近 20 条，去重、最新在前）；斜杠命令不发 inbox：
+// s4 1.8）。历史 = localStorage `captureHistory`（键名逐字镜像原生 UserDefaults，§66.2 setting:prefs:*；
+// 最近 20 条，去重、最新在前；旧键 `zai.captureHistory` 首次读到即搬过来）；斜杠命令不发 inbox：
 //   /rec off|screen|screen_audio   → 壳桥 setRecording（无桥时如实说只在 app 里可用）
 //   /lang zh|en                    → setLanguage
 //   /open board|trash|archive|settings|permissions|diagnostics|setup → 整页导航
@@ -9,13 +10,30 @@ import { buildAppUrl, navigate, type AppPage } from "../../route";
 import { callShell, hasShellBridge } from "../../shellBridge";
 import { setLanguage } from "../../store";
 
-export const HISTORY_KEY = "zai.captureHistory";
+export const HISTORY_KEY = "captureHistory";
+/** v1.0 之前的键名；读到即搬到同名键并删掉（一次性迁移，不留第二份） */
+export const LEGACY_HISTORY_KEY = "zai.captureHistory";
 export const HISTORY_MAX = 20;
+
+function parseHistory(raw: string | null): string[] {
+  try {
+    const parsed = JSON.parse(raw ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string").slice(0, HISTORY_MAX) : [];
+  } catch {
+    return [];
+  }
+}
 
 export function readHistory(): string[] {
   try {
-    const raw = JSON.parse(window.localStorage.getItem(HISTORY_KEY) ?? "[]");
-    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string").slice(0, HISTORY_MAX) : [];
+    const current = window.localStorage.getItem(HISTORY_KEY);
+    if (current !== null) return parseHistory(current);
+    const legacy = window.localStorage.getItem(LEGACY_HISTORY_KEY);
+    if (legacy === null) return [];
+    const migrated = parseHistory(legacy);
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(migrated));
+    window.localStorage.removeItem(LEGACY_HISTORY_KEY);
+    return migrated;
   } catch {
     return [];
   }

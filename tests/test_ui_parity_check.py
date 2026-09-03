@@ -33,6 +33,16 @@ INVENTORY = {
          "screen": "board", "owner": "web", "gated": False},
         {"id": "control:menu.main:menu-item:quit", "zh": "退出", "en": "Quit", "role": "menu-item",
          "screen": "menu.main", "owner": "shell", "gated": False},
+        # 壳直发的系统通知句（§66.2 追记）：目录 + 壳源码都有 → 在；只有目录没有壳句 → 不在；都没有 → 不在
+        {"id": "control:notifications:label:recording-is-live", "zh": "录制已就绪", "en": "Recording is live",
+         "role": "label", "screen": "notifications", "owner": "shell", "gated": True, "probe": "notify_catalog"},
+        {"id": "control:notifications:label:overflow-count-more-notifications", "zh": "还有 {overflow.count} 条通知",
+         "en": "+{overflow.count} more notifications", "role": "label", "screen": "notifications", "owner": "shell",
+         "gated": True, "probe": "notify_catalog"},
+        {"id": "control:notifications:label:only-in-catalog", "zh": "只在目录", "en": "Catalog only",
+         "role": "label", "screen": "notifications", "owner": "shell", "gated": True, "probe": "notify_catalog"},
+        {"id": "control:notifications:label:nowhere", "zh": "哪都没有", "en": "Nowhere",
+         "role": "label", "screen": "notifications", "owner": "shell", "gated": True, "probe": "notify_catalog"},
     ],
     "rail": {"side": "left", "items": [
         {"id": "rail:dashboard", "slug": "dashboard", "zh": "任务台", "en": "Workbench", "gated": True, "owner": "web"},
@@ -51,13 +61,26 @@ INVENTORY = {
         {"id": "setting:overrides:language", "key": "language", "store": "overrides", "gated": True, "owner": "web"},
         {"id": "setting:overrides:voice_enabled", "key": "voice_enabled", "store": "overrides", "gated": True, "owner": "web"},
         {"id": "setting:prefs:cardSortOrder", "key": "cardSortOrder", "store": "prefs", "gated": True, "owner": "web"},
-        {"id": "setting:prefs:captionsEngine", "key": "captionsEngine", "store": "prefs", "gated": False, "owner": "shell"},
+        {"id": "setting:prefs:captionsEngine", "key": "captionsEngine", "store": "prefs", "gated": True, "owner": "shell",
+         "probe": "shell_source"},
+        {"id": "setting:prefs:captionsGhost", "key": "captionsGhost", "store": "prefs", "gated": True, "owner": "shell",
+         "probe": "shell_source"},
+        {"id": "setting:prefs:terminalApp", "key": "terminalApp", "store": "prefs", "gated": True, "owner": "server",
+         "probe": "server_source", "landing": '"terminal_app"'},
+        {"id": "setting:prefs:hasCompletedFirstRun", "key": "hasCompletedFirstRun", "store": "prefs", "gated": True,
+         "owner": "server", "probe": "server_source", "landing": "setup_done.json"},
+        {"id": "setting:prefs:showMenuBarIcon", "key": "showMenuBarIcon", "store": "prefs", "gated": False,
+         "owner": "retired", "reason": "D3"},
     ],
     "shortcuts": [
         {"id": "shortcut:board:cmd-f", "key": "⌘F", "gated": True, "owner": "web"},
         {"id": "shortcut:board:cmd-l", "key": "⌘L", "gated": True, "owner": "web"},
     ],
-    "notifications": [{"id": "notification:general", "gated": False, "owner": "shell"}],
+    "notifications": [
+        {"id": "notification:review_ready", "kind": "review_ready", "gated": True, "owner": "shell", "probe": "notify_catalog"},
+        {"id": "notification:general", "kind": None, "gated": True, "owner": "shell", "probe": "notify_catalog"},
+        {"id": "notification:unlisted", "kind": "unlisted", "gated": True, "owner": "shell", "probe": "notify_catalog"},
+    ],
     "theme_layout": [
         {"id": "theme:default", "value": "light", "gated": True, "owner": "web"},
         {"id": "layout:lane-width", "token": "layout.lane.width", "gated": True, "owner": "web"},
@@ -91,7 +114,30 @@ BOARD_CSS = ".board-column { width: var(--native-layout-lane-width); }\n"
 INDEX_HTML = '<script>if (!theme) document.documentElement.dataset.theme = "light";</script>'
 LANES_PY = 'LANES = ({"slug": "debt", "help": {"zh": "潜在任务", "en": "Backlog"}},\n' \
            ' {"slug": "needs_approval", "help": {}}, {"slug": "archived", "help": {"zh": "永久性完成", "en": "Done for good"}})\n'
-SETTINGS_PY = 'OVERRIDE_KEYS = ("language",)\n'
+SETTINGS_PY = 'OVERRIDE_KEYS = ("language", "terminal_app")\n'
+SHELL_SWIFT = '''
+enum PermissionsProbe {
+    static let key = "captionsEngine"
+    static func post() {
+        Self.postSystemNotice(title: L("录制已就绪", "Recording is live"), body: note)
+        content.title = L("还有 \\(overflow.count) 条通知", "+\\(overflow.count) more notifications")
+    }
+}
+'''
+# 迷你 server/notify_catalog.py：与真目录同一接口（kind_names / has_sentence / same_template），不 import act
+NOTIFY_CATALOG_PY = '''
+import re
+_PH = re.compile(r"\\{[^{}]*\\}")
+SENTENCES = [("录制已就绪", "Recording is live"), ("还有 {n} 条通知", "+{n} more notifications"), ("只在目录", "Catalog only")]
+def kind_names():
+    return ["review_ready", "general"]
+def fragments(t):
+    return [p for p in _PH.split(t) if p]
+def same_template(a, b):
+    return fragments(a) == fragments(b)
+def has_sentence(zh, en):
+    return any(same_template(zh, a) and same_template(en, b) for a, b in SENTENCES)
+'''
 
 
 def _write(root, rel, text):
@@ -110,6 +156,8 @@ def _make_repo(root):
     _write(root, "web/index.html", INDEX_HTML)
     _write(root, "server/lanes.py", LANES_PY)
     _write(root, "server/settings.py", SETTINGS_PY)
+    _write(root, "server/notify_catalog.py", NOTIFY_CATALOG_PY)
+    _write(root, "shell/Sources/ShellSystem.swift", SHELL_SWIFT)
     _write(root, "ui/parity/native-inventory.json", uc.dump_json(INVENTORY))
 
 
@@ -154,10 +202,29 @@ class StaticProbesTestCase(_RepoCase):
             "screen:trash": True, "screen:about": False,          # 只在注释/测试里出现 ≠ 在
             "setting:overrides:language": True, "setting:overrides:voice_enabled": False,
             "setting:prefs:cardSortOrder": True,
+            # §66.2 追记：壳持有的键探 shell/Sources；搬到 server 的键探 landing 字面量（setup_done.json 不在迷你 server 里）
+            "setting:prefs:captionsEngine": True, "setting:prefs:captionsGhost": False,
+            "setting:prefs:terminalApp": True, "setting:prefs:hasCompletedFirstRun": False,
+            "notification:review_ready": True, "notification:general": True, "notification:unlisted": False,
+            "control:notifications:label:recording-is-live": True,
+            "control:notifications:label:overflow-count-more-notifications": True,   # 占位名不同也算同一句
+            "control:notifications:label:only-in-catalog": False,                    # 壳没在发
+            "control:notifications:label:nowhere": False,
             "shortcut:board:cmd-f": True, "shortcut:board:cmd-l": False,
             "theme:default": True, "layout:lane-width": True, "layout:strip-width": False,  # tokens.css 自身不算消费
             "rail:order": True, "lanes:order": True, "lanes:rail-left": True, "lanes:rail-right": True,
         })
+
+    def test_notify_probes_are_absent_without_the_server_catalog(self):
+        os.remove(os.path.join(self.root, "server", "notify_catalog.py"))
+        snap = pc.WebSnapshot(self.root)
+        self.assertIsNone(snap.notify)
+        items = {i["id"]: i for i in INVENTORY["controls"] + INVENTORY["notifications"]}
+        self.assertFalse(pc.probe_notification(snap, items["notification:review_ready"]))
+        self.assertFalse(pc.probe_notice_control(snap, items["control:notifications:label:recording-is-live"]))
+        # 壳源码本身照常读到（没有目录时退到逐字相等）
+        self.assertTrue(snap.shell_posts("录制已就绪", "Recording is live"))
+        self.assertFalse(snap.shell_posts("还有 {n} 条通知", "+{n} more notifications"))
 
     def test_rail_order_and_strips_detect_misplacement(self):
         _write(self.root, "web/src/components/shell/Rail.tsx", WEB_TSX.replace('data-rail="left"', 'data-rail="top"'))
@@ -203,6 +270,12 @@ class VitestProbeTestCase(_RepoCase):
             os.environ["PATH"] = old
 
 
+# §66.2 追记的 shell / server 探针在迷你仓库里判「不在」的五条（账本测试把它们当存量挂账）
+EXTRA_MISSING = ["control:notifications:label:nowhere", "control:notifications:label:only-in-catalog",
+                 "notification:unlisted", "setting:prefs:captionsGhost", "setting:prefs:hasCompletedFirstRun"]
+EXTRA_PENDING_TEXT = "".join(i + "\n" for i in EXTRA_MISSING)
+
+
 class JudgementTestCase(_RepoCase):
     RESULTS = {"control:board:button:approve": "passed", "control:board:button:later": "failed",
                "control:board:label:gone": "failed"}
@@ -220,12 +293,13 @@ class JudgementTestCase(_RepoCase):
                  "control:board:label:gone [pending]": "passed"}))
         self.assertEqual(rc, 0)
         pending = uc.load_ledger(os.path.join(self.root, "ui/parity/pending.txt"))
-        self.assertEqual(sorted(pending), ["control:board:button:later", "control:board:label:gone",
-                                           "layout:strip-width", "screen:about",
-                                           "setting:overrides:voice_enabled", "shortcut:board:cmd-l"])
+        self.assertEqual(sorted(pending), sorted(["control:board:button:later", "control:board:label:gone",
+                                                  "layout:strip-width", "screen:about",
+                                                  "setting:overrides:voice_enabled", "shortcut:board:cmd-l"]
+                                                 + EXTRA_MISSING))
 
     def test_stale_pending_fails_and_waivers_are_excluded(self):
-        _write(self.root, "ui/parity/pending.txt", "screen:trash\nscreen:about\n")
+        _write(self.root, "ui/parity/pending.txt", "screen:trash\nscreen:about\n" + EXTRA_PENDING_TEXT)
         _write(self.root, "ui/parity/waivers.txt",
                "control:board:label:gone  retired with #119  #119\nlayout:strip-width  x  D3\n"
                "setting:overrides:voice_enabled x\nshortcut:board:cmd-l x\ncontrol:board:button:later x\n")
@@ -240,7 +314,11 @@ class JudgementTestCase(_RepoCase):
         self.assertEqual(report["items"]["screen:about"], "PENDING")
         self.assertEqual(report["items"]["control:board:label:gone"], "WAIVED")
         self.assertEqual(report["counts"]["WAIVED"], 5)
-        self.assertEqual(report["not_gated"], {"informational": 1, "shell": 3})
+        # 只列不判的：copy 文案（web）、菜单项（shell）、退役的偏好键（retired）；通知 / 壳偏好键现在都判
+        self.assertEqual(report["not_gated"], {"informational": 1, "shell": 1, "retired": 1})
+        self.assertEqual(report["items"]["notification:review_ready"], "PRESENT")
+        self.assertEqual(report["items"]["setting:prefs:terminalApp"], "PRESENT")
+        self.assertEqual(report["items"]["control:notifications:label:only-in-catalog"], "PENDING")
         md = uc.read_text(os.path.join(self.root, "ui/parity/report.md"))
         self.assertIn("| STALE | 1 |", md)
         self.assertIn("- `screen:trash`", md)
@@ -249,7 +327,7 @@ class JudgementTestCase(_RepoCase):
     def test_all_green_when_ledgers_match_reality_and_report_dir_gets_a_copy(self):
         _write(self.root, "ui/parity/pending.txt",
                "control:board:button:later\ncontrol:board:label:gone\nscreen:about\n"
-               "setting:overrides:voice_enabled\nshortcut:board:cmd-l\nlayout:strip-width\n")
+               "setting:overrides:voice_enabled\nshortcut:board:cmd-l\nlayout:strip-width\n" + EXTRA_PENDING_TEXT)
         report_dir = os.path.join(self.root, "qa-report")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -260,13 +338,13 @@ class JudgementTestCase(_RepoCase):
         self.assertIn("[ui-parity] OK", out.getvalue())
         self.assertTrue(os.path.exists(os.path.join(report_dir, "ui_parity_verdict.txt")))
         report = uc.load_json(os.path.join(self.root, "ui/parity/report.json"))
-        self.assertEqual(report["counts"], {"PRESENT": 16, "PENDING": 6})
+        self.assertEqual(report["counts"], {"PRESENT": 22, "PENDING": 11})
         self.assertTrue(report["ok"])
 
     def test_vitest_failure_to_run_makes_the_gate_red_even_with_clean_ledgers(self):
         _write(self.root, "ui/parity/pending.txt",
                "control:board:button:approve\ncontrol:board:button:later\ncontrol:board:label:gone\nscreen:about\n"
-               "setting:overrides:voice_enabled\nshortcut:board:cmd-l\nlayout:strip-width\n")
+               "setting:overrides:voice_enabled\nshortcut:board:cmd-l\nlayout:strip-width\n" + EXTRA_PENDING_TEXT)
         out = io.StringIO()
         with redirect_stdout(out):
             rc = pc.main(self._args(), runner=lambda web_dir, out_path: 1)

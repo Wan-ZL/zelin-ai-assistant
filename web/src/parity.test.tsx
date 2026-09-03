@@ -283,7 +283,7 @@ const diagnostics: DiagnosticsSnapshot = {
 const shellState: ShellState = {
   recording: { available: true, on: true, mode: "screen_audio", engine_running: true, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen" },
   captions: { available: true, on: true, engine: "doubao", paused: true, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: true, translate_direction: "auto", apple_locale: "zh", ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7 },
-  permissions: { screen: "granted", microphone: "unknown", notifications: "granted" },
+  permissions: { screen: "granted", microphone: "unknown", notifications: "granted", vault: "unknown" },
   launch_at_login: true,
   hotkey: "⌃⌥Space",
   language: "en",
@@ -459,7 +459,8 @@ beforeAll(async () => {
     }
     await renderEmptyBoardVariants(language);
   }
-});
+  // 七个面 × 两种语言 × 点遍每颗按钮：单机空载 ~8 s，与其它测试文件并行时会撞 vitest 默认的 10 s hook 上限
+}, 120_000);
 
 afterAll(() => {
   cleanup();

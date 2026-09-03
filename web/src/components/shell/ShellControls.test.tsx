@@ -35,7 +35,7 @@ function makeState(overrides: {
       ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7,
       ...overrides.captions,
     },
-    permissions: { screen: "granted", microphone: "unknown", notifications: "unknown" },
+    permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
     launch_at_login: false,
     hotkey: "⌃⌥Space",
     language: "en",

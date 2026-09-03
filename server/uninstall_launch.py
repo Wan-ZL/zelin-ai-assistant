@@ -39,7 +39,7 @@ def _script_text() -> str:
 
 
 def launch(payload: dict, opener: Optional[Opener] = None, out_dir: Optional[Path] = None,
-           platform: Optional[str] = None) -> dict:
+           platform: Optional[str] = None, home: Optional[Path] = None) -> dict:
     """``{}`` → 写 .command → open → ``{"ok": true, "command": <手动命令>, "command_file": path}``。"""
     if payload:
         raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
@@ -48,5 +48,5 @@ def launch(payload: dict, opener: Optional[Opener] = None, out_dir: Optional[Pat
     if not script_path().is_file():
         raise NotFoundError("uninstall script not found", {"path": str(script_path())})
     path = write_command_file(_script_text(), out_dir)
-    open_command_file(path, opener)
+    open_command_file(path, opener, home)
     return {"ok": True, "command": shell_command(), "command_file": str(path)}

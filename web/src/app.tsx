@@ -10,6 +10,7 @@ import { createBoardRealtime } from "./realtime";
 import { onShellCommand, pushBadge } from "./shellBridge";
 import { refreshBoard, refreshDisplaySettings, refreshHealth, refreshLanes, refreshSetup, setConnection, useAppState } from "./store";
 import { AppShell } from "./components/shell/AppShell";
+import { rememberMainSection, restoreMainSection } from "./components/shell/NavRail";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
 import { AboutPage } from "./pages/AboutPage";
@@ -101,6 +102,13 @@ export function App() {
   useEffect(() => {
     pushBadge(badgeCount(board));
   }, [board]);
+
+  // 原生 MainNav 的 `mainSection`：冷启动回到上次的 rail 页（URL 没指定去处时），否则记住当前页
+  useEffect(() => {
+    const target = restoreMainSection(window.location.search);
+    if (target) navigate(buildAppUrl(window.location.href, target, null), true);
+    else rememberMainSection(page);
+  }, [page]);
 
   // 首次运行向导：空环境（无 config / 无凭证、且没走完向导）时看板开在向导页
   useEffect(() => {

@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
 import { navigate } from "../../route";
-import { activeRailSlug, clampSidebarWidth, NavRail } from "./NavRail";
+import { activeRailSlug, clampSidebarWidth, NavRail, rememberMainSection, restoreMainSection } from "./NavRail";
 
 vi.mock("../../route", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../route")>();
@@ -31,6 +31,7 @@ const nativeRail = inventory.rail.items;
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 afterEach(cleanup);
@@ -100,5 +101,33 @@ describe("NavRail — 原生 sidebar 的 web 落点", () => {
     expect(clampSidebarWidth(100)).toBe(160);
     expect(clampSidebarWidth(200)).toBe(200);
     expect(clampSidebarWidth(900)).toBe(320);
+  });
+
+  it("mainSection：记住上次的 rail 页（原生 UserDefaults 同名），冷启动且 URL 没指定去处时回到它", () => {
+    rememberMainSection("settings");
+    expect(window.localStorage.getItem("mainSection")).toBe("settings");
+    rememberMainSection("diagnostics"); // diagnostics 归依赖检查（deps）
+    expect(window.localStorage.getItem("mainSection")).toBe("deps");
+    rememberMainSection("permissions"); // 非 rail 页不记
+    expect(window.localStorage.getItem("mainSection")).toBe("deps");
+    // 冷启动：无 ?page= / ?card= → 回上次的页
+    expect(restoreMainSection("")).toBe("deps");
+    // 同一窗口会话里再整页加载（← 返回看板）不再跳
+    expect(restoreMainSection("")).toBeNull();
+    window.sessionStorage.clear();
+    // URL 指定了去处 → 尊重 URL
+    expect(restoreMainSection("?page=trash")).toBeNull();
+    window.sessionStorage.clear();
+    expect(restoreMainSection("?card=R-1")).toBeNull();
+    window.sessionStorage.clear();
+    // 上次在看板（dashboard 是缺省）→ 不导航；没记过 → 不导航；坏值 → 不导航
+    rememberMainSection("board");
+    expect(restoreMainSection("")).toBeNull();
+    window.sessionStorage.clear();
+    window.localStorage.setItem("mainSection", "nowhere");
+    expect(restoreMainSection("")).toBeNull();
+    window.sessionStorage.clear();
+    window.localStorage.removeItem("mainSection");
+    expect(restoreMainSection("")).toBeNull();
   });
 });

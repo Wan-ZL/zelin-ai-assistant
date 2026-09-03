@@ -29,6 +29,12 @@ export function readPage(search: string): AppPage {
   return page && (PAGES as readonly string[]).includes(page) ? (page as AppPage) : "board";
 }
 
+/** URL 有没有明确指定去处（?page= 或 ?card=）——没有 = 「就打开 app」，冷启动可回上次的页（NavRail restoreMainSection） */
+export function hasExplicitRoute(search: string): boolean {
+  const params = new URLSearchParams(search);
+  return params.has(PAGE_QUERY_PARAM) || params.has(CARD_QUERY_PARAM);
+}
+
 /** ?anchor=<id>（设置页 section 深链）；只认 [a-z0-9_-]，其余当没有 */
 export function readAnchor(search: string): string | null {
   const anchor = new URLSearchParams(search).get(ANCHOR_QUERY_PARAM)?.trim() ?? "";

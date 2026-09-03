@@ -15,8 +15,9 @@
 - 设置面（§59）：GET/PUT /api/settings/models、GET/POST
   /api/claude-code/default-model，校验与落盘在 server/settings.py。
 - 看板 parity 面（§54）：GET /api/lanes（列说明文案的 server-owned 目录，
-  server/lanes.py）、POST /api/ai-fix（「让 AI 修」= 起 act.ai_fix 的
-  Terminal 修复会话，server/ai_fix_launch.py）。
+  server/lanes.py）、GET /api/notifications（系统通知目录：壳直发的通知句 +
+  §28 kind 词表，server/notify_catalog.py）、POST /api/ai-fix（「让 AI 修」=
+  起 act.ai_fix 的 Terminal 修复会话，server/ai_fix_launch.py）。
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
@@ -62,8 +63,8 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
                     diagnostics, display, doctor_run, files, health, inbox_writer,
-                    lanes, maintainer_launch, materials, mcp_servers, paths,
-                    permissions, recaps, repair,
+                    lanes, maintainer_launch, materials, mcp_servers, notify_catalog,
+                    paths, permissions, recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
                     settings_catalog, setup, slack_setup, terminal_launch,
                     uninstall_launch)
@@ -498,6 +499,8 @@ _GET_JSON_ROUTES = {
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
     "/api/lanes": lambda ctx, query: lanes.catalog(),
+    # §28 / §66.2 系统通知目录：壳直发的通知句（双语）+ 队列 kind 词表（server-owned）
+    "/api/notifications": lambda ctx, query: notify_catalog.catalog(),
     # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
     "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
@@ -568,7 +571,7 @@ _POST_JSON_ROUTES = {
     # §27 问问助手：一问一答（子进程 act.ask，≤75 s）
     "/api/ask": lambda ctx, payload: ask.ask(ctx.home, payload),
     # §68.6 关于页「在 Terminal 中卸载…」：.command + open，server 自己不删任何东西
-    "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload),
+    "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
     "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
 }

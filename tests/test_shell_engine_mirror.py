@@ -175,7 +175,8 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
                      # §68.2 字幕偏好八键
                      "source", "translate", "translate_direction", "apple_locale",
                      "ark_model", "font_size", "opacity"]
-    PERMISSION_KEYS = ["screen", "microphone", "notifications"]
+    PERMISSION_KEYS = ["screen", "microphone", "notifications",
+                       "vault"]   # §68.13 笔记库（Documents）授权（原生 PermissionsModel.vault）
     TOP_KEYS = ["launch_at_login", "hotkey"]
     METHODS = ["getState", "setRecording", "restartRecording",
                "openScreenRecordingSettings", "setCaptions", "setLanguage",
@@ -211,8 +212,9 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
 
     def test_permission_and_pane_vocabularies_match(self):
         system = _read(SHELL / "ShellSystem.swift")
-        self.assertIn('static let kinds = ["screen", "microphone", "notifications"]', system)
-        for pane in ("full_disk", "screen", "microphone", "notifications"):
+        self.assertIn('static let kinds = ["screen", "microphone", "notifications", "vault"]', system)
+        self.assertIn('static let vaultGrantedKey = "vaultAccessGranted"', system)   # 原生 UserDefaults 同名（§66.2）
+        for pane in ("full_disk", "screen", "microphone", "notifications", "files_folders"):
             self.assertIn('"%s":' % pane, system)
             self.assertIn('"%s"' % pane, self.ts)
         # server 侧 panes 深链与壳侧同一张表（权限体检页两半共用词表）

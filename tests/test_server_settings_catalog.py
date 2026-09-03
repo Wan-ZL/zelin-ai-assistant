@@ -272,6 +272,8 @@ class ConfigMirrorTestCase(unittest.TestCase):
         by_key = {f["key"]: f for f in self._fields()}
         self.assertEqual(tuple(by_key["digest_frequency"]["choices"]), act_config.DIGEST_FREQUENCIES)
         self.assertEqual(tuple(by_key["telemetry.level"]["choices"]), tuple(act_config.TELEMETRY_LEVELS))
+        self.assertEqual(tuple(by_key["terminal_app"]["choices"]), act_config.TERMINAL_APPS)
+        self.assertEqual(by_key["terminal_app"]["label"], {"zh": "终端应用", "en": "Terminal app"})  # 原生 Settings.swift 逐字
 
 
 if __name__ == "__main__":

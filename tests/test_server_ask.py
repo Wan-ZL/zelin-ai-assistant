@@ -130,7 +130,7 @@ class UninstallLaunchTestCase(_ServerCase):
     def test_route_open_failure_is_500_with_manual_command(self):
         from server import terminal_launch
 
-        def boom(_path):
+        def boom(_path, _app=None):
             raise OSError("no Terminal")
         with mock.patch.object(terminal_launch, "_default_opener", boom), \
                 mock.patch.object(uninstall_launch.sys, "platform", "darwin"):

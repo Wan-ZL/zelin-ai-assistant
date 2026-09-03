@@ -98,6 +98,12 @@ SECTIONS: tuple = (
                config=("updates", "check_enabled"),
                help_zh="至多每 24h 向 GitHub 查一次最新版本号（只暴露 IP + 当前版本号）。",
                help_en="At most one GitHub version check per 24h (exposes only your IP + current version)."),
+            # 原生 UserDefaults terminalApp 的 server 侧落点（§66.2 setting:prefs:terminalApp；标签逐字镜像
+            # Settings.swift「终端应用」）：执行者是 server（open -a），所以偏好住 overrides 而非浏览器。
+            _f("terminal_app", "enum", "终端应用", "Terminal app", default="auto",
+               choices=("auto", "ghostty", "terminal", "iterm2"),
+               help_zh="「在终端打开」（接管会话）/ 开发会话 / 卸载 都在这个终端里新开窗口运行。自动 = 装了 Ghostty 就用 Ghostty，否则 Terminal；选了没装的会回落到系统默认终端。",
+               help_en="\"Open in terminal\" (take over a session) / development session / uninstall open a new window in this terminal. Auto = Ghostty when installed, else Terminal; a choice that is not installed falls back to the system default terminal."),
         ],
     ),
     _section(
@@ -461,6 +467,13 @@ def lookup(section_id: str) -> dict:
     if section is None:
         raise NotFoundError("unknown settings section", {"section": section_id})
     return section
+
+
+def effective_value(home: Path, section_id: str, key: str):
+    """其它 server 模块读一把旋钮的 effective 值（override → config.yaml → default）。"""
+    field = field_index(lookup(section_id))[key]
+    value, _src = effective(field, read_overrides(home), load_config_doc(home))
+    return value
 
 
 def section_snapshot(home: Path, section_id: str) -> dict:
