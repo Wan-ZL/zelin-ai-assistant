@@ -1,4 +1,4 @@
-"""server/ask.py — 问问助手的 server 落点（CONTRACT §27 / §54.4）：
+"""server/ask_assistant.py — 问问助手的 server 落点（CONTRACT §27 / §54.4）：
 
 - GET /api/ask/history：只读 state/ask_history.json（缺席 / 坏 JSON → 空表；cap 20；非 dict 行丢弃）；
 - POST /api/ask {question}：子进程 ``python -m act.ask <question>``（runner 注入，绝不真起）——
@@ -15,7 +15,8 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import assert_envelope, get_json, post_json, start_server
 
-from server import ask, maintainer_launch, slack_setup, subproc, uninstall_launch
+from server import ask_assistant as ask, maintainer_launch, subproc, uninstall_launch
+from server import slack_manifest as slack_setup
 from tests.test_server_common import write_text
 
 

@@ -257,14 +257,26 @@ def read_claude_code_default_model(path: Optional[Path] = None) -> dict:
     except OSError:
         return out
     out["exists"] = True
+    doc = _json_object(text)
+    if doc is None:
+        return out
+    out["parseable"] = True
+    out["model"] = _model_key(doc)
+    return out
+
+
+def _json_object(text: str) -> Optional[dict]:
+    """JSON text → dict; anything else (bad JSON, non-object) → None."""
     try:
         doc = json.loads(text)
     except ValueError:
-        return out
-    if not isinstance(doc, dict):
-        return out
-    out["parseable"] = True
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _model_key(doc: dict) -> Optional[str]:
+    """The ``model`` key when it is a non-blank string (stripped), else None."""
     model = doc.get("model")
     if isinstance(model, str) and model.strip():
-        out["model"] = model.strip()
-    return out
+        return model.strip()
+    return None

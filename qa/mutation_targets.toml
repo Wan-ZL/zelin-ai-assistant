@@ -26,7 +26,11 @@ per_mutant_timeout_seconds = 60
 "act/lib/notify.py" = ["tests/test_notify_relay.py", "tests/test_audit_notify_auth.py", "tests/test_notify_queue_sweep_edges.py", "tests/test_notify_message_builders.py"]
 "act/lib/heartbeat.py" = ["tests/test_actd_heartbeat.py"]
 "act/lib/provenance.py" = ["tests/test_provenance.py"]
-"act/lib/registry.py" = ["tests/test_registry_merge.py", "tests/test_registry_backend_parity.py", "tests/test_registry_example_skip.py", "tests/test_audit_registry_fail_closed.py", "tests/test_audit_registry_listfile.py", "tests/test_card_lifecycle.py"]
+# P3b (refactor/p3b-rest)：registry 门面的映射从 6 个文件放宽到钉住每条法条的判例——首轮 551 体只有
+# 6 文件子集时 48% 杀伤，多数存活体是 §37/§38/§60/§4 的行为（display title / fold note / work_id /
+# archive）根本不在子集里；两个新判例文件（write_paths / reraise_matrix）逐分支钉住拆出的 helper。
+"act/lib/registry.py" = ["tests/test_registry_merge.py", "tests/test_registry_backend_parity.py", "tests/test_registry_example_skip.py", "tests/test_audit_registry_fail_closed.py", "tests/test_audit_registry_listfile.py", "tests/test_card_lifecycle.py", "tests/test_registry_write_paths.py", "tests/test_registry_reraise_matrix.py", "tests/test_registry_mutation_kills.py", "tests/test_card_model_shapes.py", "tests/test_two_stage_card_ids.py", "tests/test_display_title.py", "tests/test_split_note.py", "tests/test_audit_trash_purge.py", "tests/test_reraise_dispatch.py", "tests/test_radar_threadkey.py", "tests/test_inverse_actions.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_parity.py", "tests/test_capture.py"]
+"act/lib/card_model.py" = ["tests/test_card_model_shapes.py", "tests/test_registry_mutation_kills.py", "tests/test_store2_field_parity.py", "tests/test_registry_backend_parity.py", "tests/test_card_lifecycle.py", "tests/test_delivery_mode.py"]
 # §64 待验收卡 AI 摘要 + 评语：输出消毒 / 指纹闸门 / 「永不改 status」——一个存活体 = 建议变成了判决。
 "act/lib/card_summary.py" = ["tests/test_card_summary_verdict.py"]
 # P3a (executor CRAP ≤ 6 轮)：执行器及其拆出的 lib 模块进靶区，映射 = 直接钉住它们的判例
@@ -95,3 +99,38 @@ per_mutant_timeout_seconds = 60
 "skills/test-ui/scripts/checks_ui.py" = ["tests/test_skill_test_ui_checks.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_catalog_docs.py"]
 "skills/test-ui/scripts/run_ui.py" = ["tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_reference_regen.py"]
 "skills/test-ui/scripts/sensors.py" = ["tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_reference_regen.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_checks.py", "tests/test_skill_test_ui_runtime_verdicts.py"]
+
+# P3b（refactor/p3b-rest）：registry / store2 / config / quick_capture 之外的清账模块进靶区——
+# 每个映射 = 本轮为它写的判例文件 + 既有的行为判例；映射子集都 < 3 s。
+"act/lib/store2/hot.py" = ["tests/test_store2_hot_derive.py", "tests/test_store2_parity.py", "tests/test_store2_migration.py"]
+"act/lib/store2/export_yaml.py" = ["tests/test_store2_migrate_helpers.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_activation.py"]
+"act/lib/store2/migrate_yaml.py" = ["tests/test_store2_migrate_helpers.py", "tests/test_store2_migration.py", "tests/test_store2_activation.py", "tests/test_two_stage_card_ids.py"]
+"act/lib/store2/activate.py" = ["tests/test_store2_activate_helpers.py", "tests/test_store2_activation.py", "tests/test_store2_rollback.py"]
+"act/lib/config.py" = ["tests/test_config_load_blocks.py", "tests/test_config_overrides_dispatch.py", "tests/test_config_defaults.py", "tests/test_config_models.py", "tests/test_config_obsidian.py", "tests/test_settings_overrides_telemetry.py", "tests/test_settings_overrides_execution.py", "tests/test_settings_overrides_voice.py", "tests/test_channels_settings.py", "tests/test_analytics_feature_gate.py", "tests/test_capture_exclusion.py", "tests/test_digest_frequency.py"]
+"act/lib/quick_capture.py" = ["tests/test_quick_capture_helpers.py", "tests/test_capture.py", "tests/test_capture_images.py", "tests/test_capture_id.py", "tests/test_radar_triage.py", "tests/test_audit_quick_capture.py", "tests/test_inventory_quota.py", "tests/test_radar_echo_gate.py", "tests/test_honest_receipts.py", "tests/test_fold_receipts.py"]
+"act/lib/titles.py" = ["tests/test_titles_shapes.py", "tests/test_display_title.py", "tests/test_prompt_card_title_enforcement.py"]
+"act/lib/repos.py" = ["tests/test_repos_inventory.py"]
+"act/lib/sources.py" = ["tests/test_sources_liveness_signal.py", "tests/test_sources.py"]
+"act/lib/secrets.py" = ["tests/test_secrets_token_line.py", "tests/test_secrets.py", "tests/test_server_secrets.py"]
+"act/lib/platform.py" = ["tests/test_platform_argv_builders.py", "tests/test_platform.py", "tests/test_platform_seam.py"]
+"act/lib/search_index.py" = ["tests/test_search_index_edges.py", "tests/test_search_index.py"]
+"act/lib/steer.py" = ["tests/test_steer_ledger_helpers.py", "tests/test_steer.py", "tests/test_steer_relay.py"]
+"act/lib/slack_setup.py" = ["tests/test_slack_setup_rows_and_cli.py", "tests/test_slack_setup.py"]
+"act/lib/update_check.py" = ["tests/test_update_check_helpers.py", "tests/test_update_check.py"]
+"act/lib/match_corpus.py" = ["tests/test_match_corpus_helpers.py", "tests/test_match_corpus.py", "tests/test_auto_merge_scan_edges.py"]
+"act/lib/qr.py" = ["tests/test_qr_golden.py", "tests/test_qr_penalty_and_masks.py", "tests/test_qr.py"]
+"act/lib/fold_receipts.py" = ["tests/test_fold_receipts_file_edges.py", "tests/test_fold_receipts.py"]
+"act/lib/feedback.py" = ["tests/test_feedback_snapshot_and_retry_gate.py", "tests/test_feedback.py", "tests/test_feedback_sync.py"]
+"act/lib/feedback_sync.py" = ["tests/test_feedback_sync_helpers.py", "tests/test_feedback_sync.py"]
+"act/lib/e2e.py" = ["tests/test_e2e_header_parsing.py", "tests/test_e2e.py", "tests/test_audit_pairing_recovery.py"]
+"act/lib/install_report.py" = ["tests/test_install_report_cli_inprocess.py", "tests/test_install_report.py"]
+"act/ask.py" = ["tests/test_ask_helpers.py", "tests/test_ask.py"]
+"act/golden_eval.py" = ["tests/test_golden_eval_helpers.py", "tests/test_golden_eval.py"]
+"act/llm.py" = ["tests/test_llm_default_model_reader.py", "tests/test_llm_boundary.py"]
+"act/oneonone.py" = ["tests/test_oneonone_prep.py", "tests/test_audit_digest.py", "tests/test_digest_notify.py"]
+"act/report.py" = ["tests/test_report_golden.py"]
+"act/voice_gen.py" = ["tests/test_voice_gen_stages.py", "tests/test_voice_gen.py"]
+"act/webui.py" = ["tests/test_webui_inbox_rules.py", "tests/test_webui.py", "tests/test_audit_webui.py", "tests/test_webui_remote_gate.py"]
+"act/ai_fix.py" = ["tests/test_ai_fix_cli.py", "tests/test_failures.py", "tests/test_server_ai_fix_launch.py"]
+"scripts/demo_seed.py" = ["tests/test_demo_seed_golden.py", "tests/test_demo_seed.py"]
+"scripts/insights_report.py" = ["tests/test_insights_report_golden.py", "tests/test_insights_report.py"]

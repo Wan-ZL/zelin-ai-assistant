@@ -92,14 +92,19 @@ _CJK_CHAR_RE = re.compile(r"^[぀-ヿ㐀-䶿一-鿿]+$")
 _NOTE_TAG_RE = re.compile(r" \[@[^\]\s]+\]| \[已拆出 [^\]\s]+\]")
 
 
+def _as_text(text) -> str:
+    """str passthrough; None → ""; anything else → str()."""
+    if not isinstance(text, str):
+        return "" if text is None else str(text)
+    return text
+
+
 def normalize(text) -> str:
     """Python twin of ``SearchMatch.normalize`` (§37): lowercase + strip
     ``-``/``_``/``.``/whitespace so latin/digit runs compare separator-free;
     CJK and everything else passes through."""
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
     return "".join(
-        ch for ch in text.lower()
+        ch for ch in _as_text(text).lower()
         if ch not in _SEPARATORS and not ch.isspace())
 
 
@@ -124,25 +129,47 @@ def _keep(t: str) -> bool:
     return True
 
 
+def _latin_tokens(run: str) -> set[str]:
+    """Tokens of one latin/digit run: the normalized whole run plus its
+    separator-split sub-tokens ("www.youtube.com" must intersect a plain
+    "youtube" mention; both sides emit the same parts)."""
+    out: set[str] = set()
+    t = normalize(run)
+    if _keep(t):
+        out.add(t)
+    for part in re.split(r"[._-]+", run):
+        p = part.lower()
+        if p != t and _keep(p):
+            out.add(p)
+    return out
+
+
 def tokens(text) -> set[str]:
     """Deterministic normalized token set of a text blob (see module doc)."""
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
+    text = _as_text(text)
     out: set[str] = set()
     for m in _LATIN_RUN_RE.finditer(text):
-        run = m.group(0)
-        t = normalize(run)
-        if _keep(t):
-            out.add(t)
-        # separator-split sub-tokens too ("www.youtube.com" must intersect a
-        # plain "youtube" mention; both sides emit the same parts).
-        for part in re.split(r"[._-]+", run):
-            p = part.lower()
-            if p != t and _keep(p):
-                out.add(p)
+        out.update(_latin_tokens(m.group(0)))
     for m in _CJK_RUN_RE.finditer(text):
         out.update(_cjk_grams(m.group(0)))
     return out
+
+
+def _attr_text(req, name: str) -> str:
+    return str(getattr(req, name, "") or "")
+
+
+def _source_parts(s: dict) -> list:
+    return [str(s.get("quote") or ""), str(s.get("ref") or "")]
+
+
+def _source_texts(sources) -> list:
+    """quote + ref of every dict-shaped source row (junk rows skipped)."""
+    parts: list = []
+    for s in (sources or []):
+        if isinstance(s, dict):
+            parts.extend(_source_parts(s))
+    return parts
 
 
 def corpus_text(req) -> str:
@@ -150,15 +177,12 @@ def corpus_text(req) -> str:
     quotes/refs + notes. ``getattr`` throughout — works on plain objects and
     stays compatible before/after §37's display_title lands."""
     parts = [
-        str(getattr(req, "title", "") or ""),
-        str(getattr(req, "display_title", "") or ""),
-        str(getattr(req, "summary", "") or ""),
-        _NOTE_TAG_RE.sub("", str(getattr(req, "notes", "") or "")),
+        _attr_text(req, "title"),
+        _attr_text(req, "display_title"),
+        _attr_text(req, "summary"),
+        _NOTE_TAG_RE.sub("", _attr_text(req, "notes")),
     ]
-    for s in (getattr(req, "sources", None) or []):
-        if isinstance(s, dict):
-            parts.append(str(s.get("quote") or ""))
-            parts.append(str(s.get("ref") or ""))
+    parts += _source_texts(getattr(req, "sources", None))
     return "\n".join(p for p in parts if p)
 
 
@@ -203,7 +227,7 @@ def derive_aliases(req, doc_freq: Optional[dict] = None,
     are skipped — the title is already on the inventory line; aliases exist
     to add what it can't say.
     """
-    title_norm = normalize(str(getattr(req, "title", "") or ""))
+    title_norm = normalize(_attr_text(req, "title"))
     cand = set(display_tokens(tokens(sanitize.scrub(alias_text(req), cfg)[0])))
     freq = doc_freq or {}
 
@@ -212,14 +236,20 @@ def derive_aliases(req, doc_freq: Optional[dict] = None,
 
     out: list[str] = []
     for t in sorted(cand, key=_key):
-        if t and t in title_norm:
-            continue
-        if len(t) > 32:   # a base64/hash-ish segment would bloat the line
+        if not _alias_ok(t, title_norm):
             continue
         out.append(t)
         if len(out) >= limit:
             break
     return out
+
+
+def _alias_ok(t: str, title_norm: str) -> bool:
+    """Not already inside the card's own normalized title, and not a
+    base64/hash-ish segment (> 32 chars) that would bloat the line."""
+    if t and t in title_norm:
+        return False
+    return len(t) <= 32
 
 
 def doc_frequencies(token_sets: Iterable[set]) -> dict:

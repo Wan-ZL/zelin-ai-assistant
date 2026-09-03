@@ -895,51 +895,46 @@ def _localize(obj, lang: str):
 def build(scene: str, now: dt.datetime | None = None, lang: str = "zh") -> dict:
     if now is None:
         now = dt.datetime.now(dt.timezone.utc)
-    needs_approval = _needs_approval(now)
-    running = _running(now)
-    needs_input = _needs_input(now)
-    review = _review(now)
-    completed = _completed(now)
-
-    if scene != "initial":
-        needs_approval = [c for c in needs_approval if c["id"] != HERO_ID]
-    if scene == "captured":
-        needs_approval = [_hero_captured(now)] + needs_approval
-    elif scene == "approved":
-        running = [_hero_queued(now)] + running
-    elif scene == "running":
-        running = [_hero_running(now)] + running
-    elif scene == "steer":
-        running = [_hero_steer(now)] + running
-    elif scene == "review":
-        review = [_hero_review(now)] + review
-    elif scene == "done":
-        completed = [_hero_done(now)] + completed
-
     lanes = {
-        "needs_approval": needs_approval,
-        "running": running,
-        "needs_input": needs_input,
-        "review": review,
-        "completed": completed,
+        "needs_approval": _needs_approval(now),
+        "running": _running(now),
+        "needs_input": _needs_input(now),
+        "review": _review(now),
+        "completed": _completed(now),
         "debt": _debt(now),
         "trash": _trash(now),
     }
+    _place_hero(lanes, scene, now)
     _stamp_lane_ids(lanes)
     dash = {
         "generated_at": _iso(now),
-        "counts": {
-            "needs_approval": len(needs_approval),
-            "running": len(running),
-            "needs_input": len(needs_input),
-            "review": len(review),
-            "completed": len(completed),
-            "debt": len(lanes["debt"]),
-            "trash": len(lanes["trash"]),
-        },
+        "counts": {name: len(rows) for name, rows in lanes.items()},
         **lanes,
     }
     return _localize(dash, lang)
+
+
+# scene → (lane the hero card is prepended to, its builder); "initial" keeps
+# the hero where _needs_approval seeds it.
+_HERO_SCENES = {
+    "captured": ("needs_approval", _hero_captured),
+    "approved": ("running", _hero_queued),
+    "running": ("running", _hero_running),
+    "steer": ("running", _hero_steer),
+    "review": ("review", _hero_review),
+    "done": ("completed", _hero_done),
+}
+
+
+def _place_hero(lanes: dict, scene: str, now: dt.datetime) -> None:
+    """Move the hero card to the lane the requested pipeline moment shows."""
+    if scene == "initial":
+        return
+    lanes["needs_approval"] = [c for c in lanes["needs_approval"] if c["id"] != HERO_ID]
+    placement = _HERO_SCENES.get(scene)
+    if placement is not None:
+        lane, hero = placement
+        lanes[lane] = [hero(now)] + lanes[lane]
 
 
 # 批准过的 lane：每行带工作编号（§60）；提案/备选/回收站只有 P- 主键
@@ -1045,6 +1040,10 @@ def _check_queued_reason(problems: list, where: str, item: dict) -> None:
         return
     if item.get("state") != "queued":
         problems.append(f"{where}.queued_reason: only queued items may carry it")
+    _check_queued_reason_value(problems, where, qr)
+
+
+def _check_queued_reason_value(problems: list, where: str, qr) -> None:
     if isinstance(qr, str):
         # 过渡期纯字符串形（web/src/steer.ts 双兼容）——非空即可
         if not qr.strip():
@@ -1055,12 +1054,20 @@ def _check_queued_reason(problems: list, where: str, item: dict) -> None:
         problems.append(f"{where}.queued_reason: must be an object "
                         f"{{kind, detail?, blocking_id?}} or a string")
         return
+    _check_queued_reason_object(problems, where, qr)
+
+
+def _check_queued_reason_object(problems: list, where: str, qr: dict) -> None:
     if qr.get("kind") not in QUEUED_REASON_KINDS:
         problems.append(f"{where}.queued_reason.kind: must be one of "
                         f"{QUEUED_REASON_KINDS} (closed list — UI 由 kind 渲染)")
     for k in ("detail", "blocking_id"):
         if qr.get(k) is not None and not isinstance(qr[k], str):
             problems.append(f"{where}.queued_reason.{k}: string or null")
+    _check_waiting_card(problems, where, qr)
+
+
+def _check_waiting_card(problems: list, where: str, qr: dict) -> None:
     if qr.get("kind") == "waiting_card" and not (
             isinstance(qr.get("blocking_id"), str) and qr["blocking_id"]):
         problems.append(f"{where}.queued_reason.blocking_id: waiting_card "
@@ -1079,33 +1086,62 @@ def _check_steers(problems: list, where: str, item: dict) -> None:
         if not isinstance(n, dict):
             problems.append(f"{nw}: not a dict")
             continue
-        if not isinstance(n.get("text"), str) or not n["text"]:
-            problems.append(f"{nw}.text: required non-empty string")
-        if not isinstance(n.get("ts"), str) or not n["ts"]:
-            problems.append(f"{nw}.ts: required ISO string — the "
-                            f"timestamp-bearing dedup key (verbatim repeats "
-                            f"are legitimate steers; web parser drops rows "
-                            f"without a string ts)")
-        status = n.get("status")
-        if status not in STEER_STATUSES:
-            problems.append(f"{nw}.status: must be one of {STEER_STATUSES}")
-        elif status == "delivered":
-            if not isinstance(n.get("delivered_at"), str) or not n["delivered_at"]:
-                problems.append(f"{nw}.delivered_at: delivered notes must "
-                                f"carry an ISO string (honest status)")
-        elif n.get("delivered_at") is not None:
-            problems.append(f"{nw}.delivered_at: must be null unless "
-                            f"status=delivered (honest status)")
+        _check_steer_note(problems, nw, n)
+
+
+def _check_steer_note(problems: list, nw: str, n: dict) -> None:
+    if not isinstance(n.get("text"), str) or not n["text"]:
+        problems.append(f"{nw}.text: required non-empty string")
+    if not isinstance(n.get("ts"), str) or not n["ts"]:
+        problems.append(f"{nw}.ts: required ISO string — the "
+                        f"timestamp-bearing dedup key (verbatim repeats "
+                        f"are legitimate steers; web parser drops rows "
+                        f"without a string ts)")
+    _check_steer_status(problems, nw, n)
+
+
+def _check_steer_status(problems: list, nw: str, n: dict) -> None:
+    status = n.get("status")
+    if status not in STEER_STATUSES:
+        problems.append(f"{nw}.status: must be one of {STEER_STATUSES}")
+        return
+    _check_delivered_at(problems, nw, n, status)
+
+
+def _check_delivered_at(problems: list, nw: str, n: dict, status: str) -> None:
+    """delivered notes carry an ISO string; every other status keeps it null."""
+    if status == "delivered":
+        if not isinstance(n.get("delivered_at"), str) or not n["delivered_at"]:
+            problems.append(f"{nw}.delivered_at: delivered notes must "
+                            f"carry an ISO string (honest status)")
+    elif n.get("delivered_at") is not None:
+        problems.append(f"{nw}.delivered_at: must be null unless "
+                        f"status=delivered (honest status)")
 
 
 def validate(dash: dict) -> list[str]:
     problems: list[str] = []
     if not isinstance(dash, dict):
         return ["top level is not a JSON object"]
-
     if not isinstance(dash.get("generated_at"), str):
         problems.append("generated_at: required ISO string")
+    _check_counts(problems, dash)
+    for sec, check in _SECTION_CHECKS.items():
+        for i, item in enumerate(_rows(dash, sec)):
+            check(problems, f"{sec}[{i}]", item)
+    return problems
 
+
+def _rows(dash: dict, sec: str) -> list:
+    return dash.get(sec) or []
+
+
+def _check_debt(problems: list, w: str, d: dict) -> None:
+    _check_str(problems, w, d, "id", "title")
+    _check_sources(problems, w, d.get("sources") or [])
+
+
+def _check_counts(problems: list, dash: dict) -> None:
     counts = dash.get("counts")
     if not isinstance(counts, dict):
         problems.append("counts: required object")
@@ -1119,70 +1155,86 @@ def validate(dash: dict) -> list[str]:
             problems.append(f"counts.{sec}={counts.get(sec)} but "
                             f"len({sec})={len(items)}")
 
-    for i, c in enumerate(dash.get("needs_approval") or []):
-        w = f"needs_approval[{i}]"
-        _check_str(problems, w, c, "id", "title", "tier")
-        for k, t in (("show_cost", bool), ("processing", bool)):
-            if not isinstance(c.get(k), t):
-                problems.append(f"{w}.{k}: required {t.__name__}")
-        for k in ("sources", "plan", "dod"):
-            if not isinstance(c.get(k), list):
-                problems.append(f"{w}.{k}: required list")
-        _check_sources(problems, w, c.get("sources") or [])
-        _check_origin_trust(problems, w, c)
-        _check_effective_tier(problems, w, c)
-        _check_ids(problems, w, c)
-        if c.get("cost_usd") is not None and not isinstance(c["cost_usd"], (int, float)):
-            problems.append(f"{w}.cost_usd: number or null")
 
-    for sec in ("running", "needs_input", "completed"):
-        for i, t in enumerate(dash.get(sec) or []):
-            w = f"{sec}[{i}]"
-            _check_str(problems, w, t, "id", "name", "state")
-            _check_epoch(problems, w, t, "started_at", "dispatched_at", "accepted_at")
-            _check_origin_trust(problems, w, t)
-            _check_queued_reason(problems, w, t)
-            _check_steers(problems, w, t)
-            _check_ids(problems, w, t)
-            if t.get("state") == "queued":
-                for k in ("session_id", "copy_cmd", "short_id"):
-                    if k in t:
-                        problems.append(f"{w}: queued items must not carry {k} "
-                                        f"(dashboard.py omits it — no session yet)")
-                if "dispatch_error" not in t:
-                    problems.append(f"{w}: queued items carry dispatch_error "
-                                    f"(null while pending)")
-            else:
-                _check_str(problems, w, t, "session_id")
+def _check_proposal_fields(problems: list, w: str, c: dict) -> None:
+    _check_str(problems, w, c, "id", "title", "tier")
+    for k, t in (("show_cost", bool), ("processing", bool)):
+        if not isinstance(c.get(k), t):
+            problems.append(f"{w}.{k}: required {t.__name__}")
+    for k in ("sources", "plan", "dod"):
+        if not isinstance(c.get(k), list):
+            problems.append(f"{w}.{k}: required list")
 
-    for i, r in enumerate(dash.get("review") or []):
-        w = f"review[{i}]"
-        _check_str(problems, w, r, "id", "name")
-        if not isinstance(r.get("dod"), list):
-            problems.append(f"{w}.dod: required list")
-        _check_sources(problems, w, r.get("sources") or [])
-        _check_origin_trust(problems, w, r)
-        _check_ids(problems, w, r)
-        _check_epoch(problems, w, r, "dispatched_at", "review_at")
-        if r.get("delivery_mode") not in ("chat", "repo"):
-            problems.append(f"{w}.delivery_mode: must be 'chat' or 'repo'")
-        if r.get("final_draft") is not None and not isinstance(r["final_draft"], str):
-            problems.append(f"{w}.final_draft: string or null")
 
-    for i, d in enumerate(dash.get("debt") or []):
-        w = f"debt[{i}]"
-        _check_str(problems, w, d, "id", "title")
-        _check_sources(problems, w, d.get("sources") or [])
+def _check_proposal(problems: list, w: str, c: dict) -> None:
+    _check_proposal_fields(problems, w, c)
+    _check_sources(problems, w, c.get("sources") or [])
+    _check_origin_trust(problems, w, c)
+    _check_effective_tier(problems, w, c)
+    _check_ids(problems, w, c)
+    if c.get("cost_usd") is not None and not isinstance(c["cost_usd"], (int, float)):
+        problems.append(f"{w}.cost_usd: number or null")
 
-    for i, t in enumerate(dash.get("trash") or []):
-        w = f"trash[{i}]"
-        _check_str(problems, w, t, "id", "title")
-        if not isinstance(t.get("permanent"), bool):
-            problems.append(f"{w}.permanent: required bool")
-        if not isinstance(t.get("trashed_at"), str):
-            problems.append(f"{w}.trashed_at: required ISO string")
 
-    return problems
+def _check_task(problems: list, w: str, t: dict) -> None:
+    _check_str(problems, w, t, "id", "name", "state")
+    _check_epoch(problems, w, t, "started_at", "dispatched_at", "accepted_at")
+    _check_origin_trust(problems, w, t)
+    _check_queued_reason(problems, w, t)
+    _check_steers(problems, w, t)
+    _check_ids(problems, w, t)
+    if t.get("state") == "queued":
+        _check_queued_task(problems, w, t)
+    else:
+        _check_str(problems, w, t, "session_id")
+
+
+def _check_queued_task(problems: list, w: str, t: dict) -> None:
+    for k in ("session_id", "copy_cmd", "short_id"):
+        if k in t:
+            problems.append(f"{w}: queued items must not carry {k} "
+                            f"(dashboard.py omits it — no session yet)")
+    if "dispatch_error" not in t:
+        problems.append(f"{w}: queued items carry dispatch_error "
+                        f"(null while pending)")
+
+
+def _check_review(problems: list, w: str, r: dict) -> None:
+    _check_str(problems, w, r, "id", "name")
+    if not isinstance(r.get("dod"), list):
+        problems.append(f"{w}.dod: required list")
+    _check_sources(problems, w, r.get("sources") or [])
+    _check_origin_trust(problems, w, r)
+    _check_ids(problems, w, r)
+    _check_epoch(problems, w, r, "dispatched_at", "review_at")
+    _check_review_delivery(problems, w, r)
+
+
+def _check_review_delivery(problems: list, w: str, r: dict) -> None:
+    if r.get("delivery_mode") not in ("chat", "repo"):
+        problems.append(f"{w}.delivery_mode: must be 'chat' or 'repo'")
+    if r.get("final_draft") is not None and not isinstance(r["final_draft"], str):
+        problems.append(f"{w}.final_draft: string or null")
+
+
+def _check_trash(problems: list, w: str, t: dict) -> None:
+    _check_str(problems, w, t, "id", "title")
+    if not isinstance(t.get("permanent"), bool):
+        problems.append(f"{w}.permanent: required bool")
+    if not isinstance(t.get("trashed_at"), str):
+        problems.append(f"{w}.trashed_at: required ISO string")
+
+
+# validate() walks the sections in this order (the problem list is ordered)
+_SECTION_CHECKS = {
+    "needs_approval": _check_proposal,
+    "running": _check_task,
+    "needs_input": _check_task,
+    "completed": _check_task,
+    "review": _check_review,
+    "debt": _check_debt,
+    "trash": _check_trash,
+}
 
 
 def _summary_line(dash: dict) -> str:
@@ -1209,28 +1261,16 @@ def main(argv: list[str] | None = None) -> int:
 
     target = Path(args.target).expanduser()
     path = target if target.suffix == ".json" else target / "state" / "dashboard.json"
-
     if args.check:
-        if not path.exists():
-            print(f"MISSING: {path}", file=sys.stderr)
-            return 1
-        try:
-            dash = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"UNREADABLE: {path}: {exc}", file=sys.stderr)
-            return 1
+        dash = _read_existing(path)
     else:
-        dash = build(args.scene, lang=args.lang)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # atomic write, same as act/lib/dashboard.py (.tmp then rename)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(dash, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        tmp.replace(path)
-        # validate what actually landed on disk
-        dash = json.loads(path.read_text(encoding="utf-8"))
-        print(f"wrote {path} (scene={args.scene}, lang={args.lang})")
+        dash = _seed(path, args.scene, args.lang)
+    if dash is None:
+        return 1
+    return _report(dash)
 
+
+def _report(dash: dict) -> int:
     problems = validate(dash)
     if problems:
         for p in problems:
@@ -1238,6 +1278,31 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"OK: {_summary_line(dash)}")
     return 0
+
+
+def _read_existing(path: Path):
+    """--check: the dashboard on disk, or None (missing / unreadable, reported)."""
+    if not path.exists():
+        print(f"MISSING: {path}", file=sys.stderr)
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"UNREADABLE: {path}: {exc}", file=sys.stderr)
+        return None
+
+
+def _seed(path: Path, scene: str, lang: str) -> dict:
+    """Write the demo dashboard atomically (.tmp then rename, same as
+    act/lib/dashboard.py) and return what actually landed on disk."""
+    dash = build(scene, lang=lang)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(dash, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    dash = json.loads(path.read_text(encoding="utf-8"))
+    print(f"wrote {path} (scene={scene}, lang={lang})")
+    return dash
 
 
 if __name__ == "__main__":

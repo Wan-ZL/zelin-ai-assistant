@@ -6,3 +6,9 @@ tests/fixtures/inbox/*.golden.json -text
 
 # Golden prompt fixtures（tests/test_executor_prompt_golden.py 逐字节对照）同理。
 tests/fixtures/prompt/*.golden.txt -text
+
+# QR golden matrices（tests/test_qr_golden.py 逐模块对照）同理。
+tests/fixtures/qr/*.golden.json -text
+tests/fixtures/report/*.golden.txt -text
+tests/fixtures/demo_seed/*.golden.json -text
+tests/fixtures/insights/*.golden.* -text

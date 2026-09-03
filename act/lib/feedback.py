@@ -107,6 +107,41 @@ def clean_images(raw) -> list:
     return out[:4]
 
 
+def _nonempty(value) -> Optional[str]:
+    """str(value) or None when it stringifies to empty (snapshot field shape)."""
+    return str(value or "") or None
+
+
+def _merge_snapshot(rid: str) -> Optional[dict]:
+    """Snapshot of a merge-suggestion job (``MS-`` id); None when the id is not
+    one or the job is missing/unreadable."""
+    if merge_review is None or not rid.startswith("MS-"):
+        return None
+    job = merge_review.load_job(rid)
+    if not isinstance(job, dict):
+        return None
+    members = [str(i) for i in job.get("ids") or []]
+    return {
+        "id": rid,
+        "kind": "merge_suggestion",
+        "type": "merge_suggestion",
+        # merge jobs carry no title of their own — synthesize one
+        # from the member cards so the report stays readable
+        "title": "merge suggestion: " + " + ".join(members),
+        "status": _nonempty(job.get("status")),
+    }
+
+
+def _req_snapshot(rid: str, req) -> dict:
+    return {
+        "id": rid,
+        "kind": "requirement",
+        "type": _nonempty(req.type),
+        "title": _nonempty(req.title),
+        "status": _nonempty(req.status),
+    }
+
+
 def _snapshot(rid: str) -> dict:
     """Best-effort {id, kind, type, title, status} for one R-/MS- id.
 
@@ -116,28 +151,12 @@ def _snapshot(rid: str) -> dict:
     snap = {"id": rid, "kind": "unknown", "type": None,
             "title": None, "status": None}
     try:
-        if merge_review is not None and rid.startswith("MS-"):
-            job = merge_review.load_job(rid)
-            if isinstance(job, dict):
-                members = [str(i) for i in job.get("ids") or []]
-                return {
-                    "id": rid,
-                    "kind": "merge_suggestion",
-                    "type": "merge_suggestion",
-                    # merge jobs carry no title of their own — synthesize one
-                    # from the member cards so the report stays readable
-                    "title": "merge suggestion: " + " + ".join(members),
-                    "status": str(job.get("status") or "") or None,
-                }
+        merged = _merge_snapshot(rid)
+        if merged is not None:
+            return merged
         req = registry.load(rid)
         if req is not None:
-            return {
-                "id": rid,
-                "kind": "requirement",
-                "type": str(req.type or "") or None,
-                "title": str(req.title or "") or None,
-                "status": str(req.status or "") or None,
-            }
+            return _req_snapshot(rid, req)
     except Exception:  # noqa: BLE001 - a bad card must not lose the report
         pass
     return snap
@@ -150,13 +169,18 @@ def _record_path(record_id: str) -> Path:
     return FEEDBACK_DIR / f"{record_id}.json"
 
 
-def _write_record(record: dict) -> None:
+def write_record(record: dict) -> None:
+    """Atomic tmp+replace of one record (PUBLIC: feedback_sync rewrites
+    records through it — 防腐 #2, no cross-module private names)."""
     FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
     path = _record_path(str(record["id"]))
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
                    encoding="utf-8")
     os.replace(tmp, path)
+
+
+_write_record = write_record   # 本模块内部沿用的旧名
 
 
 # --------------------------------------------------------------------------- #
@@ -269,11 +293,11 @@ def record_feedback(ids, text, cfg: Optional[config.Config] = None,
     neither text nor an image, or the local write itself failed. Never raises.
     """
     try:
-        body = str(text or "").strip()
+        body = _clean_text(text)
         image_list = clean_images(images)
         if not body and not image_list:
             return None
-        cfg = cfg or config.load_config()
+        cfg = _cfg_or_load(cfg)
         id_list = clean_ids(ids)
         record = {
             "id": uuid.uuid4().hex,
@@ -312,18 +336,46 @@ def retry_pending(cfg: Optional[config.Config] = None,
     attempted = 0
     now = _dt.datetime.now(_dt.timezone.utc)
     for path in files:
+        record = _due_record(path, now)
+        if record is None:
+            continue
         try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(record, dict) or not record.get("id"):
-                continue
-            if record.get("uploaded") is not None:
-                continue  # terminal: already uploaded or given up
-            ts = analytics.parse_ts(str(record.get("ts") or ""))
-            if ts is not None and (now - ts).total_seconds() < MIN_RETRY_AGE_SECONDS:
-                continue  # created this pass — retry on a later pass (§29)
-            cfg = cfg or config.load_config()
+            cfg = _cfg_or_load(cfg)
             _attempt_upload(record, cfg, transport, final=True)
             attempted += 1
         except Exception:  # noqa: BLE001 - one bad record must not stop the sweep
             continue
     return attempted
+
+
+def _clean_text(text) -> str:
+    return str(text or "").strip()
+
+
+def _cfg_or_load(cfg: Optional[config.Config]) -> config.Config:
+    return cfg or config.load_config()
+
+
+def _is_pending_record(record) -> bool:
+    """A well-formed record whose upload is still undecided (uploaded=null)."""
+    return bool(isinstance(record, dict) and record.get("id")
+                and record.get("uploaded") is None)
+
+
+def _too_young(record: dict, now: _dt.datetime) -> bool:
+    """Created inside MIN_RETRY_AGE_SECONDS — the inline first attempt happened
+    in THIS pass; the final retry belongs to a genuinely later pass (§29)."""
+    ts = analytics.parse_ts(str(record.get("ts") or ""))
+    return ts is not None and (now - ts).total_seconds() < MIN_RETRY_AGE_SECONDS
+
+
+def _due_record(path: Path, now: _dt.datetime) -> Optional[dict]:
+    """The record at ``path`` when it is pending and old enough to retry;
+    None for terminal / too-young / unreadable files."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - one bad record must not stop the sweep
+        return None
+    if not _is_pending_record(record) or _too_young(record, now):
+        return None
+    return record
