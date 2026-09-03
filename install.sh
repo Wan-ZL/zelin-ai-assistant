@@ -6,7 +6,11 @@
 #      the recording engine; obsidian/gh optional)
 #   2. config.example.yaml -> config.yaml (if absent), the version stamp
 #      (act/_version.py from the git tag — CONTRACT §56.1; written before any
-#      `import act`), runtime/home pointers
+#      `import act`), runtime/home pointers, and (macOS) the STABLE daemon
+#      copy of the claude binary (CONTRACT §55 第五幕: a fixed $HOME path the
+#      owner grants Full Disk Access ONCE; refreshed in place when Claude Code
+#      updates, so the grant survives — the versioned path under
+#      ~/.local/share/claude/versions/ changed under every update)
 #   3. create state/ and state/inbox/
 #   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
 #   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
@@ -949,6 +953,98 @@ except Exception:
     raise SystemExit(1)' "$1" >/dev/null 2>&1)
 }
 
+# CONTRACT §55 第五幕 — the STABLE daemon copy of the claude binary.
+#
+# macOS keys Full Disk Access for bare executables by PATH (TCC.db `client` =
+# the path, checked against the binary's code requirement). `~/.local/bin/claude`
+# is a symlink Claude Code re-points to a new ~/.local/share/claude/versions/<v>
+# on every update, so the owner's grant on the versioned path died with every
+# update: live 2026-09-02, 2.1.258 → 2.1.259 turned doctor's `launchd claude`
+# red again and every dispatch into the external-volume repo was refused. The
+# fix is structural: keep a copy at ONE path in $HOME (never TCC-gated, so a
+# launchd job can always read it) and refresh it in place. The path is the
+# grant's subject; the refreshed copy still satisfies the grant's code
+# requirement (Developer ID identifier com.anthropic.claude-code), so one grant
+# lasts. Same variable as act/lib/config.py `stable_claude_bin` — both sides
+# honour AIASSISTANT_STABLE_CLAUDE (tests point it into a sandbox).
+#
+# refresh_stable_claude <source>: byte-identical copy already there → unchanged;
+# otherwise the source must carry a valid Apple-anchored signature (an npm-
+# installed claude is a node script — no signature, nothing to gain from
+# copying it, refuse), the copy is made to a temp file beside the target
+# (`cp -c` = APFS clone, zero extra disk; falls back to a plain copy), verified
+# again, must run `--version` (from $HOME: under launchd a cwd on the external
+# volume is exactly the failure this copy exists to fix, §55 第三幕), then
+# `mv`'d over the target — atomic, and a running agent keeps its old inode.
+# Every refusal keeps whatever copy was already there and is a warn, never a
+# fail: an environment problem must not roll a deploy back (§56.5, the
+# cron=skipped_tcc precedent). Writes §23 step `stable_claude`.
+STABLE_CLAUDE_BIN="${AIASSISTANT_STABLE_CLAUDE:-$HOME/Library/Application Support/ZelinAIAssistant/bin/claude}"
+refresh_stable_claude() { # $1 = the claude to copy (login-shell resolution)
+    _src="${1:-}"
+    if [ -z "$_src" ] || [ ! -x "$_src" ]; then
+        warn "no claude to copy — the stable daemon copy $STABLE_CLAUDE_BIN was not created"
+        report_step "stable_claude" "skipped" "no claude to copy"
+        return 0
+    fi
+    # the real file behind the ~/.local/bin symlink (for the report; cp/cmp
+    # follow symlinks anyway). readlink -f: macOS 12.3+ / GNU; else keep as is.
+    _real="$(readlink -f "$_src" 2>/dev/null || printf '%s' "$_src")"
+    _ver="$( (cd "$HOME" && DISABLE_AUTOUPDATER=1 "$_real" --version 2>/dev/null | head -n 1) || true)"
+    if [ -x "$STABLE_CLAUDE_BIN" ] && cmp -s "$_real" "$STABLE_CLAUDE_BIN"; then
+        ok "stable daemon claude: $STABLE_CLAUDE_BIN unchanged (${_ver:-$_real})"
+        report_step "stable_claude" "ok" "unchanged: $STABLE_CLAUDE_BIN (${_ver:-$_real})"
+        return 0
+    fi
+    _kept=""
+    [ -x "$STABLE_CLAUDE_BIN" ] && _kept="; the previous copy stays in place"
+    if ! codesign --verify --strict -R='anchor apple generic' "$_real" >/dev/null 2>&1; then
+        warn "claude at $_real carries no valid Apple-anchored signature (npm install? tampered?) — not copied$_kept"
+        report_step "stable_claude" "warn" "refused: $_real is not a validly signed binary$_kept"
+        return 0
+    fi
+    _dir="$(dirname "$STABLE_CLAUDE_BIN")"
+    _tmp="$_dir/.claude.tmp.$$"
+    if ! mkdir -p "$_dir"; then
+        warn "cannot create $_dir — stable daemon claude not written$_kept"
+        report_step "stable_claude" "warn" "mkdir $_dir failed$_kept"
+        return 0
+    fi
+    rm -f "$_tmp"
+    if ! { cp -cp "$_real" "$_tmp" 2>/dev/null || cp -p "$_real" "$_tmp"; }; then
+        rm -f "$_tmp"
+        warn "copying $_real to $_tmp failed — stable daemon claude not refreshed$_kept"
+        report_step "stable_claude" "warn" "copy failed$_kept"
+        return 0
+    fi
+    if ! codesign --verify --strict -R='anchor apple generic' "$_tmp" >/dev/null 2>&1; then
+        rm -f "$_tmp"
+        warn "the copy at $_tmp failed signature verification — discarded$_kept"
+        report_step "stable_claude" "warn" "copy failed signature verification$_kept"
+        return 0
+    fi
+    if ! (cd "$HOME" && DISABLE_AUTOUPDATER=1 "$_tmp" --version >/dev/null 2>&1); then
+        rm -f "$_tmp"
+        warn "the copy at $_tmp does not run \`--version\` — discarded$_kept"
+        report_step "stable_claude" "warn" "copy does not run --version$_kept"
+        return 0
+    fi
+    _what="created"
+    [ -n "$_kept" ] && _what="refreshed"
+    if ! mv -f "$_tmp" "$STABLE_CLAUDE_BIN"; then
+        rm -f "$_tmp"
+        warn "mv $_tmp -> $STABLE_CLAUDE_BIN failed$_kept"
+        report_step "stable_claude" "warn" "mv into place failed$_kept"
+        return 0
+    fi
+    ok "stable daemon claude: $_what $STABLE_CLAUDE_BIN (${_ver:-$_real})"
+    report_step "stable_claude" "ok" "$_what: $STABLE_CLAUDE_BIN (${_ver:-$_real})"
+    if [ "$_what" = "created" ]; then
+        info "one-time: System Settings > Privacy & Security > Full Disk Access > + > $STABLE_CLAUDE_BIN"
+        info "  (only needed when the task repo is outside \$HOME, e.g. on an external volume; the path never changes, so this survives claude updates)"
+    fi
+}
+
 # Cap an agent's launchd-managed log in the unload→load window — the only
 # moment launchd holds no fd on it (§32.4: in-process replace is off-limits
 # for *.launchd.log; §55). Keep the newest half past 1 MB (防腐 #4; same
@@ -1203,6 +1299,15 @@ if [ -n "$CLAUDE_LOGIN_BIN" ]; then
 else
     warn "claude not resolvable from the login shell — daemon PATH falls back to ~/.local/bin first"
     report_step "claude_bin" "missing"
+fi
+
+# §55 第五幕 — the stable daemon copy (macOS only: it exists for TCC, which
+# Linux has none of; config.resolve_claude_bin prefers it whenever present).
+# Before step 5 on purpose: the agents (re)loaded there pick up the fresh copy.
+if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+    refresh_stable_claude "$CLAUDE_LOGIN_BIN"
+else
+    report_step "stable_claude" "skipped" "not macOS (no per-binary TCC to outlive)"
 fi
 
 # verify PyYAML against the DAEMON interpreter — RUNTIME_PY is what launchd
@@ -1564,7 +1669,7 @@ if [ "$NON_INTERACTIVE" -eq 1 ]; then
     exit "$N_FAILED"
 fi
 
-cat <<'EOF'
+cat <<EOF
 
 ==============================================
  Install complete. Next steps:
@@ -1575,10 +1680,16 @@ cat <<'EOF'
     旧路径 ~/.config/anthropic-key.txt 仍兜底可用（launchd 的 daemon session
     读不了 Keychain OAuth，所以必须有文件形式的 key）。
  3. Grant TCC / privacy permissions:
-      - actd (launchd) only touches the repo's state/ + calls claude,
-        so it needs NO Full Disk Access.
+      - actd (launchd) touches the repo's state/ and launches claude. A repo
+        under \$HOME on the boot volume needs NO Full Disk Access. A repo on an
+        external volume (or in Documents/Desktop/Downloads) needs ONE grant,
+        done once: System Settings > Privacy & Security > Full Disk Access > +
+          ${STABLE_CLAUDE_BIN}
+        (the stable daemon copy of claude; install.sh refreshes it in place,
+        so the grant survives claude updates — CONTRACT §55). Confirm with
+        the doctor's \`launchd claude\` row.
       - RADAR reads "~/Documents/Obsidian Vault". It runs from the step-6
-        crontab ingest chain installed above (`python3 -m act.radar --once`,
+        crontab ingest chain installed above (\`python3 -m act.radar --once\`,
         every 30 min) — crontab HAS Full Disk Access once Terminal/cron is
         granted it in System Settings > Privacy > Full Disk Access. There is no
         launchd radar agent to manage: just grant that access and the ingest

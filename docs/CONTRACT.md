@@ -789,6 +789,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。**v0.48.16 追记（add-only）**：`cron` step 新增值 `skipped_tcc` = crontab 改写被 TCC 拒（stderr 带 `Operation not permitted`，launchd 会话缺 Full Disk Access）——不是 `fail`，所以天然不进 `failed_deploy_steps` 的退出码（§56.5：环境问题回滚治不了，2026-09-02 v0.48.12 实战里它把部署打回滚、把 sha 毒成停摆）；其余 crontab 失败（语法错、命令缺失）仍记 `fail`。写者 = install.sh `apply_crontab`（判类只看 crontab 的 stderr 原文，直接抓进变量、不落临时文件——报错里的 `tmp/tmp.<pid>` 是 crontab 自己的 spool 相对路径：它先 chdir 到 `/usr/lib/cron` → `/var/at` 再写 `tmp/tmp.<pid>`，与 TMPDIR 无关）；doctor `cron write access` 行（WARN `cron_tcc_blocked`，§25）负责让它可见。判例 `tests/test_install_cron_tcc.py`。
 - **v0.48.18 追记（add-only，§56.5 `ui` 步）**：新 step `ui` = 看板 UI 的构建与安装（web/dist + shell app），`ok | skipped | skipped_tcc | fail`——`skipped` = 工具链缺席（node+npm / swiftc）或 `.pkg` 模式，`skipped_tcc` = node 在 launchd 会话里被 TCC 拒（EPERM）、web 半没重建（doctor `board ui build` 行负责可见性），`fail` = 构建/安装真的坏了；`detail` 形如 `web ok (npm ci 12s, build 31s); shell ok (9s → /Applications/Zelin AI Board.app); 52s total`（两半独立、各带耗时）。**`ui=fail` 进 `failed_deploy_steps` 的退出码（回滚判据），`ui=skipped` / `ui=skipped_tcc` 不进**——与 `app` 例外不同：UI 是产品本体，构建坏了就是坏版本；TCC 拒绝则是环境，回滚治不了。另一新 step `board_server_port`（只在 warn 时出现）= 加载 `com.zelin.aiassistant.server` 之前端口上已有非 launchd 的 server 在答话（§54.2 端口互斥）。判例 `tests/test_install_ui_step.py`。
 - **2026-09-02 追记（§54 名字互换）**：`ui` 步 detail 里壳的路径改为 `/Applications/Zelin's AI Assistant.app`；本轮把旧 app 搬去 `(old)` 时 shell 半 detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（add-only，只在真搬了时出现）。
+- **2026-09-02 追记（add-only，§55 第五幕）**：新 step `stable_claude` = claude 稳定副本（`~/Library/Application Support/ZelinAIAssistant/bin/claude`，完全磁盘访问的授权对象）的维护结果：`ok:created|refreshed|unchanged: <path> (<version>)`；`warn:<原因>`（来源无有效 Apple 签名 / 复制失败 / 副本跑不了 `--version`——一律保留原有副本）；`skipped:<原因>`（非 macOS、没有 claude 可复制）。**永不 `fail`**：与 `cron=skipped_tcc` 同理，环境问题不进 `failed_deploy_steps`。判例 `tests/test_install_stable_claude.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
 
@@ -872,10 +873,16 @@ option" 可能来自任务自身文本，绝不匹配。action_id 词表追加 `
 - config **execution.claude_bin**（仅 config.yaml 可设，无 override 键）：显式
   钉死 claude 路径。运行时统一解析 = pin → PATH → `~/.local/bin/claude`
   （`config.resolve_claude_bin`；executor 全部 launch/roster/stop 调用点、
-  radar/ask/merge_review/weekly_digest 都走它）。
+  radar/ask/merge_review/weekly_digest 都走它）。**2026-09-02 追记（§55 第五幕）**：
+  次序改为 pin → **稳定副本**（`config.stable_claude_bin()`，存在且可执行时）→ PATH
+  → `~/.local/bin/claude`。
 - doctor 新检查 `daemon claude`：读**已安装** actd plist 的 PATH 解析 claude，
   与登录 shell 的比对——路径不同且版本不同，或 `--bg` 探测不被支持 → FAIL
   （failure_id=claude_cli_outdated）；plist 未安装 → WARN（诚实跳过）。
+  **2026-09-02 追记（§55 第五幕，add-only）**：稳定副本存在时本行以副本为对象（跳过
+  两份安装的比对，`--bg` 探测照跑）；新行 **`stable claude`**（darwin）报副本缺失
+  WARN / 跑不了 FAIL / 落后登录 shell 的 Claude Code 一版 WARN / 同版 OK，无新
+  failure id。
 
 2026-07-13 追加（add-only）：failure id `engine_ffmpeg_missing`——「屏幕+音频」
 （screen_audio）模式的引擎启动**强制依赖 ffmpeg**，缺失时 screenpipe 自带的
@@ -4247,6 +4254,69 @@ Soft+Hard 上限——**live 证伪**：hotfix 生效 9 小时后同一张卡再
   镜像、`unattended_*` 三元组与 doctor `launchd volume access` 行立法在 §56.3
   第 1 步 / §56.4，排障在 `docs/TROUBLESHOOTING.md`「外置盘 + launchd 权限」。
 
+**第五幕：稳定副本 = 完全磁盘访问的授权对象（live 事故 2026-09-02T23:37Z）**：owner
+按第三幕出路 (a) 给 `~/.local/share/claude/versions/2.1.258` 点了完全磁盘访问、
+`launchd claude` 行转绿；当天 Claude Code 自动更新到 2.1.259，`~/.local/bin/claude`
+指向新目录，授权留在旧路径上，行再次转红、对外置卷 repo 的派发再次全数被拒。
+「每次更新后重做」不是修法，是把事故排成周期。macOS 对裸可执行文件的 FDA 按
+**路径**记账（`TCC.db` 的 `client` 是路径，另存一条 code requirement 在授权时校
+验——binary 明明是 Developer ID 签名、identifier `com.anthropic.claude-code` /
+team `Q6L2SF6YDW` 稳定不变，授权却不跟签名走）。自本幕起（判例
+`tests/test_install_stable_claude.py`、`tests/test_dispatch.py`
+`ClaudeBinResolutionTestCase`、`tests/test_doctor.py` 的 `stable claude` 组、
+`tests/test_llm_boundary.py` `RunnerEnvTestCase`）：
+
+- **install.sh 维护一份稳定副本**（`refresh_stable_claude`，第 2 步、在第 5 步加载
+  agent 之前；仅 macOS——Linux 无 per-binary TCC，记 `stable_claude=skipped`）：
+  路径 = **`~/Library/Application Support/ZelinAIAssistant/bin/claude`**（与 §19
+  home 指针、§56.4 部署镜像同目录——`$HOME` 永不被 TCC 拦，launchd job 总读得到；
+  `AIASSISTANT_STABLE_CLAUDE` 可改址，install.sh 与 `act/lib/config.py
+  stable_claude_bin()` 读同一个变量，测试套件把它指进沙箱）。来源 = 登录 shell
+  解析出的 claude（`CLAUDE_LOGIN_BIN`，`readlink -f` 到 `versions/<v>` 实体）。
+  **刷新规则**：与副本逐字节相同 → `unchanged`、不动；不同 → 来源必须过
+  `codesign --verify --strict -R='anchor apple generic'`（npm 装的 claude 是 node
+  脚本、无签名——复制它毫无意义且不该给一个来历不明的可执行文件要 FDA，**拒绝**），
+  复制到同目录临时文件（`cp -c` APFS clone，零额外磁盘；回落 `cp -p`），对副本再验
+  一次签名、在 **cwd=$HOME** 跑一次 `--version`（launchd 下 cwd 在外置卷正是本节
+  第三幕的死法——安装器自己不许踩），然后 `mv` 到位（原子；正在跑的 agent 保有旧
+  inode）。**任何拒绝都保留原有副本、记 `warn` 永不 `fail`**（环境问题不许把部署
+  回滚，§56.5 `cron=skipped_tcc` 判例）。§23 新 step **`stable_claude`**：
+  `ok:created|refreshed|unchanged: <path> (<version>)` / `warn:<原因>` /
+  `skipped:<原因>`。首次 `created` 时安装器打印一次性授权指引；结尾横幅第 3 条改为
+  点名这条路径（「repo 在 `$HOME` 内无需 FDA；在外置卷上给这条路径授一次」）。
+- **解析次序（`config.resolve_claude_bin`）= `execution.claude_bin` pin → 稳定副本
+  （存在且可执行时）→ PATH → `~/.local/bin/claude`**。副本排在 PATH 之上是因为它
+  是授权挂着的那条路径；pin 仍最高（显式逃生口）。所有调用点仍只经 `act/llm.py
+  claude_bin()`（§59，防腐 #3）——本幕零新调用点。
+- **`llm.runner_env()` 固定注入 `DISABLE_AUTOUPDATER=1`**（每个 headless / `--bg`
+  子进程；总是覆盖、不是 setdefault）：副本何时变由 install.sh 决定，不由 Claude
+  Code 自己的更新器决定；后台 worker 自更新要么改写授权对象、要么白下载一份进
+  `versions/`。
+- **doctor**（行文案与判决住 **`act/lib/claude_bin.py`**——`stable_claude_row` /
+  `daemon_claude_row` / `grant_text`，纯函数、dict 行，doctor 只包 `_row_from`；
+  `act/doctor.py` 已顶在防腐 #1 的 2,000 行帽上，新知识不再进它）：新行
+  **`stable claude`**（darwin，有 claude 可复制时才出行）——副本缺失
+  → WARN（修法 `bash install.sh`，之后对该路径授一次 FDA）；副本跑不了 `--version`
+  → FAIL（派发起的就是这个文件）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
+  （仍是能干活的 claude，只落后一版；下次 `bash install.sh` / 自动部署原地刷新，
+  路径不变、授权不变）；同版本 → OK。`daemon claude` 行在副本存在时**以副本为
+  对象**（跳过「两份安装版本不同」的 FAIL——落后一版是上一行的 WARN，不是两份安装），
+  `--bg` 探测照跑。`launchd claude` 行的探针本就跑 `resolve_claude_bin()`，因此自动
+  换成副本；**修法文案点名它刚起的那个文件**：副本 → 「enable <稳定路径> once」，还
+  没副本 → 「enable <versions/<v>>（每次更新后重做；`bash install.sh` 建副本即可一次
+  授权）」。§56.4 `launchd volume access` 行的第 ② 条授权同步改指稳定副本。
+  `failures.claude_blind` 句子改指「doctor `launchd claude` 行点名的那条路径」（Swift
+  镜像同步）。
+- **不做**：不把副本目录塞进 plist PATH（目录名带空格，cron 链的 `export PATH=` 行
+  会碎；Python 侧解析已覆盖全部 launchd 调用点，cron 链本身继承 cron 的授权）；不改
+  Claude Code 自己的安装（`~/.local/bin/claude` 与 `versions/` 一字不动）；`up_to_date`
+  的自动部署轮不跑 install.sh，副本可能落后到下一次合并为止——`stable claude` 行让
+  这段落后可见。第三幕出路 (b)「搬 repo 回 `$HOME`」与 D20 Q7「shell app 托管 actd」
+  仍是有效替代，但 P6 不再以其中任何一条为前提。
+- **验收**：live 机器上 `stable_claude=ok:created`、owner 对稳定路径授一次 FDA、
+  `launchd claude` 行 OK，然后**下一次 Claude Code 更新 + 下一次部署之后**该行仍 OK
+  且一张重批的卡到 executing——这才是本幕要证的命题；截至合并时只能证前半。
+
 **资源上限（同一修订）**：launchd gui domain 给 job 的默认是 soft **256** /
 hard **unlimited**（`launchctl limit maxfiles` = `256 unlimited`）。实测
 （一次性 job 读 `getrlimit`）：只设 `SoftResourceLimits.NumberOfFiles` → soft
@@ -4372,7 +4442,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 - `status` 开放词表：`deployed | up_to_date | rolled_back | rollback_failed | refused_dirty | refused_branch | fetch_failed | ci_pending | ci_failed | failed | install_incomplete | blocked_tcc`（后两个 v0.48.20，见 56.3 第 1/2 步）；读方对未知值按「需要人看」处理（WARN / 警告色）。`ci_pending`（等 main 上那个 sha 的 CI）**也是** WARN / 警告色而非 healthy：合并后的十分钟里顶栏写着「等 main 的 CI」是信息不是噪音，而卡住几小时的 `ci_pending`（Actions 故障、push 没触发 CI）必须有人看得见——静默的等待态是 L2/L3 那类事故的形状。`status` / `last_run` 描述**本轮**——**每一轮都写 `last_run`**，包括回滚各出路与「failed_sha 命中、什么都不做」的跳过轮（那一轮 `status` 原样带过：verdict 仍是上次的回滚 / CI 红）；`last_deployed` / `prev` 描述**最近一次成功部署**，无动作的轮次原样带过（`up_to_date` 同时清掉 `failed_sha` / `notified_sha`）。
 - 写：每轮一次原子 tmp+rename（`write_state key=value…`，空值 = 删键；先镜像后投影）。读：`act/lib/deploy_state.py read()`（投影，`FIELDS`）/ `read_mirror()`（镜像，`MIRROR_FIELDS` 超集）逐字段只收非空 string、丢未知键，撕裂/非对象文件 → None（宪法第 11 条：绝不崩 dashboard pass）。`running_version` = `state/actd.heartbeat` 的 `version`（内存里跑的是谁），`install_report_version` = `state/install_report.json` 的 `version`（install.sh 最后一次跑完的是谁）——`deployed` / `up_to_date` / `install_incomplete` 都写它们。
-- 消费方：`build_dashboard` → 顶层 `deploy_state`（§2 兄弟字段）；`act.doctor _check_auto_deploy` → 行 `auto-deploy`（`deployed`/`up_to_date` OK，其余 WARN；`blocked_tcc` 的 fix 指向授权与 `launchd volume access` 行而**不是** `--force`，`install_incomplete` 的 fix 说明下轮自动重装并给手动出口，其余 fix 指向日志与 `--force`；`running_version` 与 `version` 不同时 detail 追加「(running vX)」；healthy 但 `last_incident` 在案 → WARN（见 56.3 回滚判决段）；文案与修法住 `act/lib/deploy_state.py auto_deploy_row`；**两个文件都不存在 = 不出行**）；**`act.doctor _check_launchd_volume_access` → 行 `launchd volume access`（v0.48.20，darwin，紧随 `launchd claude`）**：只在已装 autodeploy plist 且其 `AIASSISTANT_HOME` 是本 checkout 时出行；读**镜像**的 `unattended_*`——`unattended_status == blocked_tcc` → FAIL `deploy_blind_tcc`（§25 新 id，Swift 镜像句同版），detail 带那一轮的时间、卷与原话，fix 是精确修法、**两条授权都点名**「系统设置 → 隐私与安全性 → 完全磁盘访问 → + 加入 ① 后台任务的解释器 `<plist ProgramArguments[0]>`（事故机器上是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`）② `$HOME/.local/bin/claude` 的绝对路径（→ `~/.local/share/claude/versions/<v>`，claude 每次更新后重做）；然后等 timer 自己触发一轮（≤ 10 min）再看本行；从终端起的运行（含终端里敲的 kickstart）继承终端授权，绿了对 timer 触发的运行什么都不证明」；镜像没说、但 `autodeploy.launchd.log`（launchd 的 stderr，**没有时间戳**，「最近 24h」只能按文件 mtime）尾部含 `PermissionError: [Errno 1]` / `Operation not permitted` / `EPERM` / `No module named 'act'` 且 mtime 在 24h 内、且镜像里没有更晚的一轮无人值守成功 → 同样 FAIL（启动器 `python3 -m act.auto_deploy` 连 act 都 import 不到时死在脚本之前，镜像里什么都不会有，这份日志是唯一见证）——EPERM 拼法优先取证；**只有** `No module named 'act'` 时按 §55 诚实标为两可（TCC 或 plist 路径渲错），fix 先指 `launchd paths` 行（不 OK → `bash install.sh` 重渲）再谈授权（#140 review P2）；有无人值守记录 → OK 报最近一轮；都没有 → OK「no unattended run recorded yet」。判例 `tests/test_doctor_launchd_volume_access.py`。web `HeaderBar` 的 `DeployLabel`：`v<version> · <相对时间>部署`，非 healthy 状态追加状态名并切警告色（`ci_pending` →「等 main 的 CI / waiting for CI on main」，`ci_failed` →「main 的 CI 红了，未部署 / main CI red, not deployed」，`install_incomplete` →「安装未完成 / install incomplete」，`blocked_tcc` →「后台任务读不到外置盘（需授权）/ job blocked from the volume (grant access)」），`title` 挂 `detail`；无 `deploy_state` / 无 `version` 整个隐藏。**永不进** `install_report.json` 或 registry。
+- 消费方：`build_dashboard` → 顶层 `deploy_state`（§2 兄弟字段）；`act.doctor _check_auto_deploy` → 行 `auto-deploy`（`deployed`/`up_to_date` OK，其余 WARN；`blocked_tcc` 的 fix 指向授权与 `launchd volume access` 行而**不是** `--force`，`install_incomplete` 的 fix 说明下轮自动重装并给手动出口，其余 fix 指向日志与 `--force`；`running_version` 与 `version` 不同时 detail 追加「(running vX)」；healthy 但 `last_incident` 在案 → WARN（见 56.3 回滚判决段）；文案与修法住 `act/lib/deploy_state.py auto_deploy_row`；**两个文件都不存在 = 不出行**）；**`act.doctor _check_launchd_volume_access` → 行 `launchd volume access`（v0.48.20，darwin，紧随 `launchd claude`）**：只在已装 autodeploy plist 且其 `AIASSISTANT_HOME` 是本 checkout 时出行；读**镜像**的 `unattended_*`——`unattended_status == blocked_tcc` → FAIL `deploy_blind_tcc`（§25 新 id，Swift 镜像句同版），detail 带那一轮的时间、卷与原话，fix 是精确修法、**两条授权都点名**「系统设置 → 隐私与安全性 → 完全磁盘访问 → + 加入 ① 后台任务的解释器 `<plist ProgramArguments[0]>`（事故机器上是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`）② claude 的**稳定副本** `~/Library/Application Support/ZelinAIAssistant/bin/claude`（§55 第五幕，install.sh 维护、路径固定、授一次即跨 claude 更新有效；**2026-09-02 第五幕前**此处写的是 `$HOME/.local/bin/claude` 的绝对路径 → `~/.local/share/claude/versions/<v>`、每次更新后重做——当天就被一次自动更新证伪）；然后等 timer 自己触发一轮（≤ 10 min）再看本行；从终端起的运行（含终端里敲的 kickstart）继承终端授权，绿了对 timer 触发的运行什么都不证明」；镜像没说、但 `autodeploy.launchd.log`（launchd 的 stderr，**没有时间戳**，「最近 24h」只能按文件 mtime）尾部含 `PermissionError: [Errno 1]` / `Operation not permitted` / `EPERM` / `No module named 'act'` 且 mtime 在 24h 内、且镜像里没有更晚的一轮无人值守成功 → 同样 FAIL（启动器 `python3 -m act.auto_deploy` 连 act 都 import 不到时死在脚本之前，镜像里什么都不会有，这份日志是唯一见证）——EPERM 拼法优先取证；**只有** `No module named 'act'` 时按 §55 诚实标为两可（TCC 或 plist 路径渲错），fix 先指 `launchd paths` 行（不 OK → `bash install.sh` 重渲）再谈授权（#140 review P2）；有无人值守记录 → OK 报最近一轮；都没有 → OK「no unattended run recorded yet」。判例 `tests/test_doctor_launchd_volume_access.py`。web `HeaderBar` 的 `DeployLabel`：`v<version> · <相对时间>部署`，非 healthy 状态追加状态名并切警告色（`ci_pending` →「等 main 的 CI / waiting for CI on main」，`ci_failed` →「main 的 CI 红了，未部署 / main CI red, not deployed」，`install_incomplete` →「安装未完成 / install incomplete」，`blocked_tcc` →「后台任务读不到外置盘（需授权）/ job blocked from the volume (grant access)」），`title` 挂 `detail`；无 `deploy_state` / 无 `version` 整个隐藏。**永不进** `install_report.json` 或 registry。
 
 ### 56.5 边界（明确不做）
 
@@ -4529,7 +4599,7 @@ CLAUDE.md 第 3 条点名的 `act/llm.py` 自本版起**真实存在**。凡带 
 - `build_argv(...)` 形状：`[<claude>, "-p", <prompt>, "--output-format", <fmt>, ("--model", <id>)?, *extra_argv]`。`prompt_via`：`arg`（默认，prompt 紧跟 `-p`——`--allowedTools` 是 variadic，会吞掉尾随的 positional，2026-07-07 实证）/ `arg_last`（radar / weekly_digest / quick_capture 的历史顺序，`tests/test_radar_scrub.py` 钉 argv[-1]）/ `stdin`（radar_slack / radar_gmail / golden_eval 三个 extractor 走管道）。**`--model` 只在这一个函数里拼**，位置恒在 `--output-format <fmt>` 之后、`extra_argv` 之前。
 - `dispatch_argv(cfg)`——executor 全部发射点（dispatch / resume / rework / brief）的底座：`[<claude>, "--bg", ("--dangerously-skip-permissions")?, ("--model", <id>)?]`，调用方再接 `--name` / `--resume` / prompt。`executor._bg_base_cmd` 自此只是它的别名。
 - `probe_argv(model, cfg)`——doctor 的最小活探针 `[<claude>, "-p", "ok", "--model", <id>, "--output-format", "text", "--max-turns", "1"]`。
-- `claude_bin(cfg)`（= `config.resolve_claude_bin`：`execution.claude_bin` pin → PATH → `~/.local/bin`）与 `runner_env()`（§19 凭证解析，原 `executor._runner_env` 搬入——`_私名`跨模块引用清零，防腐 #2）。
+- `claude_bin(cfg)`（= `config.resolve_claude_bin`：`execution.claude_bin` pin → 稳定副本（§55 第五幕，2026-09-02 追记）→ PATH → `~/.local/bin`）与 `runner_env()`（§19 凭证解析 + 恒定 `DISABLE_AUTOUPDATER=1`（§55 第五幕），原 `executor._runner_env` 搬入——`_私名`跨模块引用清零，防腐 #2）。
 - `model_for(mode, cfg=None)`：`cfg` 给则用它，None 则**现读** `load_config()`。
 
 **不变量（判例钉死）**：两把旋钮都 `follow` 时，每个 call site 交给 `subprocess.run` 的 argv 与 kwargs（timeout / env / 中性 cwd / stdin 管道）与 v0.48.10 **逐字节相同**；显式旋钮时每个 site 只多出 `--model <id>` 两个 token，其它零变化。唯一有意的偏差：analyze / radar_gmail / radar_slack extractor / golden_eval / quick_capture 五处此前 argv[0] 是裸 `"claude"`（信任 daemon PATH），现统一经 `claude_bin()`——PATH 上有 claude 时解析到同一个二进制，cron/launchd PATH 缺 `~/.local/bin` 时从 FileNotFoundError 变为能跑（2026-07-08 事故的最后几处漏网），`execution.claude_bin` pin 自此对所有 site 生效（它的 docstring 本就这样承诺）。

@@ -800,6 +800,112 @@ class DoctorTestCase(unittest.TestCase):
             res = doctor._launchd_claude_probe("/fake/claude", "/tmp")
         self.assertEqual(res["state"], "unavailable")
 
+    # -- §55 第五幕: the stable daemon copy is the FDA grant's subject ------------ #
+    def _stable_copy(self):
+        p = config.stable_claude_bin()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        p.chmod(0o755)
+        self._created.append(p)
+        return p
+
+    def test_launchd_claude_probes_the_stable_copy_and_names_it_as_the_one_time_grant(self):
+        stable = self._stable_copy()
+        seen = {}
+
+        def probe(claude_bin, cwd):
+            seen["bin"] = claude_bin
+            return {"state": "failed", "rc": 1, "text": self._BUN_GUESS}
+        with mock.patch.object(doctor.config, "load_config") as lc:
+            cfg = doctor.config.Config()
+            cfg.default_target_repo = str(self.target_repo)
+            lc.return_value = cfg
+            probes = self.make_probes(installed_plists=self._ACTD_PLIST)
+            probes.launchd_claude_probe = probe
+            results = doctor.run_checks(probes, fast=True)
+        r = by_name(results, "launchd claude")
+        self.assertEqual(seen["bin"], str(stable), "the probe launches what dispatch launches")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertEqual(r.failure_id, "claude_blind")
+        self.assertIn(str(stable), r.fix)
+        self.assertIn("once", r.fix)
+        self.assertNotIn("again after every claude update", r.fix)
+
+    def test_launchd_claude_without_a_stable_copy_says_the_grant_dies_per_update(self):
+        r = self._claude_row({"state": "failed", "rc": 1, "text": self._BUN_GUESS})
+        self.assertIn("again after every claude update", r.fix)
+        self.assertIn(str(config.stable_claude_bin()), r.fix,
+                      "…and points at the structural fix: install.sh creates the stable copy")
+
+    def _stable_row(self, run, which_claude="/fake/bin/claude", shell_claude=None):
+        probes = self.make_probes(run=run, which_map={"claude": which_claude,
+                                                      "npx": "/fake/bin/npx",
+                                                      "gh": "/fake/bin/gh"})
+        probes.login_shell_claude = lambda: shell_claude
+        return doctor.run_checks(probes, fast=True)
+
+    @staticmethod
+    def _versions(table):
+        def run(cmd, env=None, timeout=None):
+            if "--version" in cmd and cmd[0] in table:
+                return (0, table[cmd[0]] + " (Claude Code)") if table[cmd[0]] else (1, "dyld: broken")
+            return FakeRun()(cmd, env=env, timeout=timeout)
+        return run
+
+    def test_stable_claude_missing_is_warn_pointing_at_install_sh(self):
+        results = self._stable_row(FakeRun())
+        r = by_name(results, "stable claude")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn(str(config.stable_claude_bin()), r.detail)
+        self.assertIn("install.sh", r.fix)
+        self.assertIn("Full Disk Access", r.fix)
+
+    def test_stable_claude_same_version_as_shell_is_ok(self):
+        stable = self._stable_copy()
+        results = self._stable_row(self._versions({str(stable): "2.1.259", "/fake/bin/claude": "2.1.259"}),
+                                   shell_claude="/fake/bin/claude")
+        r = by_name(results, "stable claude")
+        self.assertEqual(r.status, doctor.OK)
+        self.assertIn("2.1.259", r.detail)
+        self.assertIn("same version", r.detail)
+
+    def test_stable_claude_older_than_installed_claude_code_is_warn_not_fail(self):
+        # the live 2026-09-02 shape: Claude Code auto-updated 2.1.258 -> 2.1.259;
+        # the copy still dispatches fine, install.sh refreshes it next deploy
+        stable = self._stable_copy()
+        results = self._stable_row(self._versions({str(stable): "2.1.258", "/fake/bin/claude": "2.1.259"}),
+                                   shell_claude="/fake/bin/claude")
+        r = by_name(results, "stable claude")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "")
+        self.assertIn("2.1.258", r.detail)
+        self.assertIn("2.1.259", r.detail)
+        self.assertIn("install.sh", r.fix)
+        self.assertIn("same path", r.fix)
+        # …and the daemon claude row is about the copy, never the two-installs FAIL
+        d = by_name(results, "daemon claude")
+        self.assertEqual(d.status, doctor.OK)
+        self.assertIn(str(stable), d.detail)
+        self.assertIn("stable", d.detail)
+
+    def test_stable_claude_that_cannot_run_is_fail(self):
+        stable = self._stable_copy()
+        results = self._stable_row(self._versions({str(stable): "", "/fake/bin/claude": "2.1.259"}),
+                                   shell_claude="/fake/bin/claude")
+        r = by_name(results, "stable claude")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("--version", r.detail)
+        self.assertIn("install.sh", r.fix)
+
+    def test_stable_claude_row_absent_without_any_claude(self):
+        results = self._stable_row(FakeRun(), which_claude=None)
+        self.assertNotIn("stable claude", [r.name for r in results])
+
+    def test_stable_claude_row_is_darwin_only(self):
+        with mock.patch("sys.platform", "linux"):
+            results = doctor.run_checks(self.make_probes(), fast=True)
+        self.assertNotIn("stable claude", [r.name for r in results])
+
     # -- §55 orphan agents ------------------------------------------------------- #
     def test_no_orphans_is_ok(self):
         results = doctor.run_checks(self.make_probes(), fast=True)
@@ -994,6 +1100,42 @@ class DaemonClaudeCheckTestCase(unittest.TestCase):
         res = doctor._check_daemon_claude(self._probes(empty, None))
         self.assertEqual(res.status, doctor.FAIL)
         self.assertEqual(res.failure_id, "claude_cli_missing")
+
+    # -- §55 第五幕: with the stable copy present, that file is what runs -------- #
+    def _stable_shim(self, version, help_text, bg_supported):
+        p = config.stable_claude_bin()
+        shim = self._shim("stable-src", version, help_text, bg_supported)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(shim.read_bytes())
+        p.chmod(0o755)
+        self.addCleanup(lambda: p.unlink() if p.exists() else None)
+        return p
+
+    def test_stable_copy_is_the_daemon_claude_even_when_the_path_lookup_is_outdated(self):
+        # the 2026-07-08 shape on the daemon PATH, but resolution never reaches
+        # PATH once the copy exists (config.resolve_claude_bin), so no FAIL here
+        stable = self._stable_shim("2.1.258 (Claude Code)", self.NEW_HELP, True)
+        old = self._shim("old", "2.1.16 (Claude Code)", self.OLD_HELP, False)
+        new = self._shim("new", "2.1.259 (Claude Code)", self.NEW_HELP, True)
+        res = doctor._check_daemon_claude(self._probes(old.parent, new))
+        self.assertEqual(res.status, doctor.OK)
+        self.assertIn(str(stable), res.detail)
+        self.assertIn("2.1.258", res.detail)
+        self.assertIn("stable claude", res.detail, "points at the row that tracks the copy's age")
+
+    def test_stable_copy_without_bg_support_still_fails_outdated(self):
+        self._stable_shim("2.1.16 (Claude Code)", self.OLD_HELP, False)
+        new = self._shim("new", "2.1.259 (Claude Code)", self.NEW_HELP, True)
+        res = doctor._check_daemon_claude(self._probes(new.parent, new))
+        self.assertEqual(res.status, doctor.FAIL)
+        self.assertEqual(res.failure_id, "claude_cli_outdated")
+        self.assertIn(str(config.stable_claude_bin()), res.detail)
+
+    def test_stable_copy_needs_no_plist_to_be_reported(self):
+        stable = self._stable_shim("2.1.258 (Claude Code)", self.NEW_HELP, True)
+        res = doctor._check_daemon_claude(self._probes(None, None))
+        self.assertEqual(res.status, doctor.OK)
+        self.assertIn(str(stable), res.detail)
 
 
 SYSTEMD_UNITS = [

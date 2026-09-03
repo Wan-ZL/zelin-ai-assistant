@@ -14,6 +14,7 @@ else moves. The dispatch knob rides ``executor._bg_base_cmd`` the same way.
 tests/__init__.py guard would refuse anyway). Sandbox AIASSISTANT_HOME.
 """
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -339,6 +340,28 @@ class ClaudeCodeDefaultReaderTestCase(unittest.TestCase):
     def test_path_lives_under_home(self):
         self.assertEqual(llm.claude_code_settings_path(),
                          Path.home() / ".claude" / "settings.json")
+
+
+# --------------------------------------------------------------------------- #
+# runner_env — the one env every claude subprocess inherits (§19 + §55 第五幕)
+# --------------------------------------------------------------------------- #
+class RunnerEnvTestCase(unittest.TestCase):
+    def test_headless_claude_never_self_updates(self):
+        # daemons run the stable daemon copy; install.sh — not Claude Code's own
+        # updater — decides when that file changes (§55 第五幕). Pinned even over
+        # an inherited opt-in, and on a COPY of the environment.
+        with mock.patch.dict(os.environ, {"DISABLE_AUTOUPDATER": "0"}):
+            env = llm.runner_env()
+            self.assertEqual(os.environ["DISABLE_AUTOUPDATER"], "0", "our own environ is untouched")
+        self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
+
+    def test_run_hands_it_to_the_runner(self):
+        # llm.run and the executor's --bg sites all take env=runner_env(); pin
+        # the seam they share rather than each site
+        rec = _Recorder()
+        with mock.patch("act.lib.config.resolve_claude_bin", return_value="claude"):
+            llm.run("hi", runner=rec, timeout=1)
+        self.assertEqual(rec.calls[0][1]["env"].get("DISABLE_AUTOUPDATER"), "1")
 
 
 if __name__ == "__main__":

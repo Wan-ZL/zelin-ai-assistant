@@ -10,7 +10,6 @@ launchd 起的自动部署任务读不到外置卷上的 repo（TCC 按 responsi
 import os
 import sys
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from act import doctor
@@ -101,12 +100,14 @@ class LaunchdVolumeAccessRowTestCase(unittest.TestCase):
         self.assertIn("errno 1", row.detail)
         self.assertNotIn("launchd paths", row.fix, "EPERM is unambiguous: straight to the grant")
         # the remediation names BOTH grants verbatim - the plist's ProgramArguments[0]
-        # and the absolute path of the claude link - and says plainly that a run
-        # started from a terminal (even a kickstart typed there) proves nothing
-        # about timer-fired runs
+        # and the stable daemon copy of claude (§55 第五幕: a fixed path, never the
+        # per-version ~/.local/share/claude/versions/<v> that dies with every
+        # update) - and says plainly that a run started from a terminal (even a
+        # kickstart typed there) proves nothing about timer-fired runs
         self.assertIn(INTERP, row.fix)
-        self.assertIn(str(Path.home() / ".local" / "bin" / "claude"), row.fix)
-        self.assertIn("~/.local/share/claude/versions/<v>", row.fix)
+        self.assertIn(str(config.stable_claude_bin()), row.fix)
+        self.assertNotIn("versions/<v>", row.fix)
+        self.assertIn("survives claude updates", row.fix)
         self.assertIn("Full Disk Access", row.fix)
         self.assertIn("kickstart", row.fix)
         self.assertIn("terminal", row.fix)

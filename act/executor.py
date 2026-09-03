@@ -567,7 +567,8 @@ def _claude_bin(cfg: Optional[config.Config] = None) -> str:
     A bare "claude" argv trusts the daemon's PATH — under launchd that once
     resolved a second, outdated install and every dispatch died on
     "unknown option '--bg'" (2026-07-08). config.resolve_claude_bin prefers
-    the execution.claude_bin pin, then PATH, then ~/.local/bin/claude."""
+    the execution.claude_bin pin, then the stable daemon copy (§55 第五幕),
+    then PATH, then ~/.local/bin/claude."""
     return llm.claude_bin(cfg)
 
 

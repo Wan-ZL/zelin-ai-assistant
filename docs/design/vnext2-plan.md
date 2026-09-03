@@ -39,6 +39,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + numbered sections; truth f
 | D23 | **个人账户 repo 装不上 Merge Queue → PR 分支跟随 main 的 workflow 以 report-only 运行，PAT 暂缓** | （事实 + owner 拍板，非 owner 原话）ruleset API 对个人账户 repo 拒绝 `merge_queue`（§56.6 实测）；替代协议 `update-pr-branches.yml` 需要 fine-grained PAT（`PR_AUTOUPDATE_TOKEN`）才能真的更新分支并触发 `pull_request` 检查，owner 决定**暂不**创建 PAT——secret 缺席时 workflow 只打 `needs-rebase` 标签 + 幂等评论、不碰分支；在飞 PR 落后 main 时由各自的 writer 手动 rebase（`--force-with-lease`），auto-merge 照旧 `gh pr merge --auto --merge`。PAT 何时建、是否建，等 owner。 | 09-02 |
 | D24 | **现在就发 1.0.0：web 看板 + 壳 + SQLite + merge=release=deploy 这套架构就是 1.0 基线，剩余阶段全是加法** | （owner 拍板 2026-09-02）0.48.x 已把真源（YAML → SQLite，P1）、客户端（菜单栏 app → web 看板 + Dock 壳，P4 Tier-0）、发版机制（手 bump → tag，§56）三样换完，骨架不再变；P5–P8 在此基线上只做加法、不再迁移数据、不再换客户端。发版走既有机制：PR 贴 `release: major` 标签，合并时 `release-on-merge.yml` 铸 `v1.0.0`；CHANGELOG 只写 `[Unreleased]`（首行「1.0.0 — 新架构基线 / architecture baseline」+ 大白话摘要），版本 pin 一字不动。 | 09-02 |
 | D25 | **终态验收 = 一台空白 macOS 从 GitHub 一条命令装完、看板能用；P8 旧 app 删除仍等 owner 下令** | 「一路推进到完成。最终状态:我能够在另一台电脑上起一个空白环境,或者在其他电脑上更新这个软件,就能够直接使用。」→ 两条验收路径写进 §9「终态验收清单」：(a) 空白机 `git clone … && bash install.sh`（或 Releases 的 `.pkg`）→ install_report 无 fail、doctor 零 FAIL、Dock 里的看板 app 能用；(b) 已装机器合并后在下一个 timer 间隔内自动部署到新 tag、心跳版本 == tag。P8（卸载旧 app、删 `mac/`、换名）**不在**验收范围内，只等 owner 一句话（D3 原话不变）。 | 09-02 |
+| D26 | **claude 的完全磁盘访问授权对象 = install.sh 维护的稳定副本，不再是 `~/.local/share/claude/versions/<v>`**（D20 出路 (a) 的结构性替代；PR `fix/stable-claude-path`） | （设计判断，非 owner 原话）2026-09-02T23:37Z live：owner 前一天按 D20 出路 (a) 给 2.1.258 点了完全磁盘访问、`launchd claude` 转绿；Claude Code 自动更新到 2.1.259 后行再次转红、对外置卷 repo 的派发再次全数被拒——macOS 对裸可执行文件的 FDA 按**路径**记账，签名（Developer ID `com.anthropic.claude-code` / `Q6L2SF6YDW`）稳定却不被用来找人，「每次更新后重做」把事故排成了周期。决定：install.sh 在 `~/Library/Application Support/ZelinAIAssistant/bin/claude` 维护一份稳定副本（来源必须过 `codesign --verify --strict -R='anchor apple generic'`；逐字节相同不动，不同则临时文件 + `mv` 原地替换；任何拒绝保留旧副本、记 warn 永不 fail），`config.resolve_claude_bin` 次序改 pin → 稳定副本 → PATH，`llm.runner_env()` 恒带 `DISABLE_AUTOUPDATER=1`；doctor 新行 `stable claude`（缺失 WARN / 跑不了 FAIL / 落后一版 WARN / 同版 OK），`launchd claude` 修法点名它刚探过的那条路径。owner 只需对稳定路径授**一次**。Q7「shell app 托管 actd」仍是有效替代但不再是 P6 前提。CONTRACT §55 第五幕。 | 09-02 |
 
 ## 2. 目标状态(抽象功能需求;每条是"必须为真"的陈述)
 
@@ -179,7 +180,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + numbered sections; truth f
 
 ### 5.4 Open decisions(审计留的 6 问,默认值)
 
-Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC 重授权;Q2 screenpipe 进程归属 → **shell 原生子进程**;Q3 weekly_digest automation ideas → **停铸**(D19);Q4 stale 阈值 → **45 d + guards**,`stale:*` retention 90 d,先 pin 那 40 张;Q5 loop cap → **config 5、首月跑 2**,前两周走人工审批 lane;Q6 DRAFT PR token → **owner fine-grained PAT**(无 workflow scope);**Q7(PR-A 审查新增)** launchd 会话里的 claude 读不到外置卷 repo(D20)→ 默认建议 **shell app 托管 actd**(一次授权全继承,与 R2.2.3「shell 内最小原生残留」同车),过渡期 owner 手动给 claude 当前版本开完全磁盘访问、每次更新后重做;P6 开通前必须已解。
+Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC 重授权;Q2 screenpipe 进程归属 → **shell 原生子进程**;Q3 weekly_digest automation ideas → **停铸**(D19);Q4 stale 阈值 → **45 d + guards**,`stale:*` retention 90 d,先 pin 那 40 张;Q5 loop cap → **config 5、首月跑 2**,前两周走人工审批 lane;Q6 DRAFT PR token → **owner fine-grained PAT**(无 workflow scope);**Q7(PR-A 审查新增)** launchd 会话里的 claude 读不到外置卷 repo(D20)→ 默认建议 **shell app 托管 actd**(一次授权全继承,与 R2.2.3「shell 内最小原生残留」同车),过渡期 owner 手动给 claude 当前版本开完全磁盘访问、每次更新后重做;P6 开通前必须已解。**2026-09-02 更新（D26）**：「每次更新后重做」当天就被一次自动更新证伪；现行答案 = install.sh 维护的 claude 稳定副本（`~/Library/Application Support/ZelinAIAssistant/bin/claude`，CONTRACT §55 第五幕），owner 对该路径授一次 FDA 即跨版本有效——P6 不再等 Q7；shell 托管 actd 保留为可选的进一步收敛（把守护 python 的那条授权也一起吃掉），不再是前提。
 
 ### 5.5 GitHub 处置 2026-09-01(§5.1 的执行记录;每条 issue 上都有引用证据的评论)
 
@@ -302,7 +303,7 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 ### 9.1 前提（机器上要有的东西；缺一项 install.sh 会在依赖检查处如实停下）
 - Xcode Command Line Tools（`swiftc`，壳与旧 app 都靠它）；系统 `/usr/bin/python3` 可用且装了 PyYAML（运行时白名单 = stdlib + PyYAML，`CONTRIBUTING.md`）；Node.js LTS（构建 `web/` 与 `npx screenpipe`）。
 - Claude Code CLI 已登录（`claude --version` 能答）；Anthropic API key 可以装完再贴（贴前雷达安全待机、doctor `anthropic key` 行是 warn 不是 FAIL）。
-- 外置卷上 clone 的机器另需 D20 家族的一次性授权（完全磁盘访问给守护解释器与 `~/.local/bin/claude`）；clone 在启动盘 `$HOME` 下则无此步。**验收机器默认 clone 在 `~/Projects/`**——TCC 项不进 9.3 的必真集。
+- 外置卷上 clone 的机器另需 D20 家族的一次性授权（完全磁盘访问给守护解释器与 claude 的稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`——D26 / §55 第五幕，授一次即跨 claude 更新有效；`~/.local/bin/claude` 那条路每次更新都断，已废）；clone 在启动盘 `$HOME` 下则无此步。**验收机器默认 clone 在 `~/Projects/`**——TCC 项不进 9.3 的必真集。
 
 ### 9.2 一条命令（就是 README「Quickstart」那一行；不再要求先手抄 config）
 - 源码路线：`git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant && cd ~/Projects/zelin-ai-assistant && bash install.sh`（`config.yaml` 缺席时 install.sh 自动从 `config.example.yaml` 建，§23 step `config`；全程无交互提问）。

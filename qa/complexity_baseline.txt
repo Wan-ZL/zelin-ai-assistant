@@ -58,7 +58,6 @@ act/doctor.py::_actd_alive 7
 act/doctor.py::_check_claude_auth 8
 act/doctor.py::_check_claude_code_model 10
 act/doctor.py::_check_cron_probe 9
-act/doctor.py::_check_daemon_claude 19
 act/doctor.py::_check_heartbeat 9
 act/doctor.py::_check_launchd 17
 act/doctor.py::_check_launchd_claude 13

@@ -260,10 +260,11 @@ class Config:
     # claude --bg with --dangerously-skip-permissions (default, unattended);
     # False = claude's normal permission model, blocked agents -> needs_input
     skip_permissions: bool = True
-    # explicit claude CLI pin (execution.claude_bin) — None = resolve via PATH
-    # then ~/.local/bin/claude (see resolve_claude_bin below). The pin is the
-    # runtime escape hatch for machines with multiple claude installs where
-    # the daemon PATH keeps picking the wrong one (2026-07-08 incident).
+    # explicit claude CLI pin (execution.claude_bin) — None = resolve via the
+    # stable daemon copy, then PATH, then ~/.local/bin/claude (see
+    # resolve_claude_bin below). The pin is the runtime escape hatch for
+    # machines with multiple claude installs where the daemon PATH keeps
+    # picking the wrong one (2026-07-08 incident).
     claude_bin: Optional[str] = None
     # dispatch-storm brake (§4 / §51): after this many CONSECUTIVE launch
     # failures of the same failure class the card stops auto-retrying and
@@ -838,21 +839,62 @@ def load_config() -> Config:
     return cfg
 
 
+# §55 第五幕：the STABLE daemon copy of the claude binary. install.sh keeps a
+# copy of the login shell's claude at this fixed path (refreshed in place when
+# Claude Code updates). macOS keys Full Disk Access for bare executables by
+# PATH, and `~/.local/bin/claude` re-points to a new
+# `~/.local/share/claude/versions/<v>` on every update — so the owner's grant
+# on the versioned path died with every update (live 2026-09-02: 2.1.258 →
+# 2.1.259 turned doctor's `launchd claude` red again). A grant on THIS path
+# survives, because the path never changes and the refreshed copy still
+# satisfies the grant's code requirement (same Developer ID identifier).
+# Lives beside the §19 home pointer / §56.4 deploy mirror — $HOME is never
+# TCC-gated, so a launchd job can always read it. `AIASSISTANT_STABLE_CLAUDE`
+# relocates it (the test suite points it into the sandbox; install.sh honours
+# the same variable so both sides agree).
+STABLE_CLAUDE_BIN: Path = (Path.home() / "Library" / "Application Support"
+                           / "ZelinAIAssistant" / "bin" / "claude")
+
+
+def stable_claude_bin() -> Path:
+    """Where the stable daemon copy lives (env override, then the default)."""
+    override = os.environ.get("AIASSISTANT_STABLE_CLAUDE", "").strip()
+    return Path(override).expanduser() if override else STABLE_CLAUDE_BIN
+
+
+def stable_claude_present(path: Optional[Path] = None) -> bool:
+    """True when the stable copy exists and is executable — the only test
+    resolution applies; validity (signature, runs) is install.sh's job at
+    copy time and doctor's at check time."""
+    p = path or stable_claude_bin()
+    try:
+        return p.is_file() and os.access(str(p), os.X_OK)
+    except OSError:
+        return False
+
+
 def resolve_claude_bin(cfg: Optional[Config] = None) -> str:
     """The claude CLI every subprocess site launches (executor/radar/ask/...).
 
-    Order: execution.claude_bin (explicit pin) -> PATH -> ~/.local/bin/claude.
+    Order: execution.claude_bin (explicit pin) -> the stable daemon copy
+    (:func:`stable_claude_bin`, when present) -> PATH -> ~/.local/bin/claude.
     Daemon PATHs are hostile: cron's misses ~/.local/bin entirely (2026-07-08:
     radar zero output), and a second, OUTDATED claude install ranked first on
     launchd's PATH once broke every dispatch with "unknown option '--bg'"
     (2026-07-08). install.sh now renders the login shell's claude dir first
     into every plist; the pin covers machines where that still picks wrong.
+    The stable copy ranks above PATH because it is the one path the owner's
+    Full Disk Access grant is attached to (§55 第五幕) — PATH's claude is a
+    symlink into a per-version directory that changes under every update.
     """
     if cfg is None:
         cfg = load_config()
     pinned = str(getattr(cfg, "claude_bin", "") or "").strip()
     if pinned:
         return str(Path(pinned).expanduser())
+    stable = stable_claude_bin()
+    if stable_claude_present(stable):
+        return str(stable)
     return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
 
 

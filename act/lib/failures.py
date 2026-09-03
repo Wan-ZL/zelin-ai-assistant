@@ -64,25 +64,26 @@ FAILURES: dict = {
     # the fd ceiling to 8192 changed nothing (11 more failures, "Current
     # limit: 8192"). macOS keys Full Disk Access per executable PATH, so the
     # grant Terminal/python3 hold does not cover ~/.local/share/claude/
-    # versions/<v> — and every claude update is a new path. No one-click
-    # repair: it is the owner's TCC toggle (or moving the folder).
+    # versions/<v> — and every claude update is a new path. §55 第五幕 makes
+    # the subject of that grant a STABLE copy install.sh maintains (same path
+    # forever; doctor's `launchd claude` row names it). No one-click repair:
+    # it is the owner's TCC toggle (or moving the folder).
     "claude_blind": {
         "plain_zh": "后台服务里的 claude 读不到任务目录（macOS 按可执行文件授磁盘权限，launchd 起的"
                     " claude 没有「完全磁盘访问」，任务目录又在外置卷或 Documents/Desktop/Downloads"
                     " 里；claude 自己报的「low max file descriptors」是猜错的）——系统设置 → 隐私与"
-                    "安全性 → 完全磁盘访问，打开 claude 当前版本那一项（~/.local/share/claude/"
-                    "versions/<版本>，claude 每次更新后要再打开一次），或把任务目录搬到启动盘的"
-                    "家目录下；然后把卡「停止 → 退回提案」再批准。doctor 的 `launchd claude` 行"
-                    "能确认",
+                    "安全性 → 完全磁盘访问，加入 doctor `launchd claude` 行点名的那个 claude 路径"
+                    "（install.sh 维护的稳定副本，授一次即跨 claude 更新有效），或把任务目录搬到"
+                    "启动盘的家目录下；然后把卡「停止 → 退回提案」再批准",
         "plain_en": "The claude binary the background service launches cannot read the task "
                     "folder (macOS grants disk access per executable; launchd-spawned claude "
                     "has no Full Disk Access and the folder sits on an external volume or in "
                     "Documents/Desktop/Downloads — claude's own \"low max file descriptors\" "
                     "guess is wrong) — System Settings → Privacy & Security → Full Disk "
-                    "Access: enable the current claude version (~/.local/share/claude/"
-                    "versions/<v>; repeat after each claude update), or move the task folder "
-                    "under your home on the boot volume; then Stop → Discard & re-propose → "
-                    "approve the card again. Doctor's `launchd claude` row confirms it",
+                    "Access: add the claude path named by doctor's `launchd claude` row (the "
+                    "stable copy install.sh maintains; one grant survives claude updates), or "
+                    "move the task folder under your home on the boot volume; then Stop → "
+                    "Discard & re-propose → approve the card again",
         "action_id": "open_deps",
     },
     # genuine fd exhaustion: EMFILE/ENFILE spellings, Bun's own
