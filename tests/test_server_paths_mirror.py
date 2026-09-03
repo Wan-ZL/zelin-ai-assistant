@@ -15,8 +15,11 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
 from act import actd, doctor, llm
 from act.lib import config, heartbeat, registry
+from act.lib import recap_store
 from server import health as server_health
+from server import inbox_writer as server_inbox
 from server import paths
+from server import recaps as server_recaps
 from server import settings as server_settings
 
 HOME = Path("/tmp/zai-paths-pin")
@@ -110,6 +113,44 @@ class ModelSettingsMirrorTestCase(unittest.TestCase):
                 try:
                     b = ("ok", server_settings.coerce_model(value))
                 except ValueError:
+                    b = ("err", None)
+                self.assertEqual(a, b)
+
+
+class RecapMirrorTestCase(unittest.TestCase):
+    """§63：server/recaps.py 与 server/inbox_writer.py 手抄的 recap 键形、语言词表、
+    override 键名、marks 路径与 bool 归一必须与 act 侧逐字一致。"""
+
+    def test_key_and_channel_shapes(self):
+        self.assertEqual(server_recaps.KEY_RE.pattern, recap_store.KEY_RE.pattern)
+        self.assertEqual(server_inbox._RECAP_KEY_RE.pattern, recap_store.KEY_RE.pattern)
+        self.assertEqual(server_inbox._SLACK_CHANNEL_RE.pattern, recap_store.CHANNEL_ID_RE.pattern)
+        self.assertEqual(server_inbox._RECAP_NOTE_MAX, 500)
+
+    def test_languages_defaults_and_override_keys(self):
+        self.assertEqual(server_recaps.LANGUAGES, config.RECAP_LANGUAGES)
+        cfg = config.Config()
+        self.assertEqual(server_recaps.DEFAULTS, {
+            "enabled": cfg.recap_enabled, "default_language": cfg.recap_default_language,
+            "slack_draft_enabled": cfg.recap_slack_draft_enabled})
+        for key in server_recaps.OVERRIDE_KEYS.values():
+            self.assertIn(key, config._OVERRIDE_FIELDS)
+
+    def test_marks_path_mirror(self):
+        with mock.patch.object(config, "STATE_DIR", HOME / "state"):
+            self.assertEqual(server_recaps.marks_path(HOME), recap_store.marks_path())
+
+    def test_coerce_bool_agrees_on_a_table(self):
+        table = (True, False, 0, 1, "true", "FALSE", " on ", "off", "yes", "no", 2, 1.0, "maybe", None, [])
+        for value in table:
+            with self.subTest(value=value):
+                try:
+                    a = ("ok", config._coerce_bool(value))
+                except (TypeError, ValueError):
+                    a = ("err", None)
+                try:
+                    b = ("ok", server_recaps.coerce_bool(value))
+                except (TypeError, ValueError):
                     b = ("err", None)
                 self.assertEqual(a, b)
 

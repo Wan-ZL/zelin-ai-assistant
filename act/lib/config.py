@@ -337,6 +337,15 @@ class Config:
     # `python3 -m act.ask` (exit 2) and the app's Ask page input.
     ask_enabled: bool = True
 
+    # 会议 recap（§63，issue #129）：三把 Settings 可改的旋钮（config.yaml `recap:`
+    # 块 + overrides 扁平键 recap_enabled / recap_default_language /
+    # recap_slack_draft_enabled）。slack_draft **默认关**——开了也只投草稿，
+    # 发送键在人手里；其余调参（gap/quiet/上限/应用表）留在 cfg.raw["recap"]，
+    # 由 act/lib/recap_store.settings 读取。
+    recap_enabled: bool = True
+    recap_default_language: str = "auto"   # auto | zh | en（auto 跟随 language）
+    recap_slack_draft_enabled: bool = False
+
     # 设置「开发者 · 维护会话」— the one-click claude session over THIS
     # software's own repo (App 设置区 diff-write; None = the app falls back
     # to its resolved repo root / a fresh session). The Python pipeline never
@@ -471,6 +480,26 @@ def _coerce_digest_frequency(value) -> str:
 def _coerce_registry_backend(value) -> str:
     v = str(value or "").strip().lower()
     return v if v in REGISTRY_BACKENDS else DEFAULT_REGISTRY_BACKEND
+
+
+# §63 recap.default_language：auto | zh | en；其余回 auto（跟随 UI 语言）。
+RECAP_LANGUAGES: tuple = ("auto", "zh", "en")
+
+
+def _coerce_recap_language(value) -> str:
+    v = str(value or "").strip().lower()
+    return v if v in RECAP_LANGUAGES else "auto"
+
+
+def _apply_recap_block(cfg: "Config", data: dict) -> None:
+    """§63 config.yaml `recap:` 块的三把旋钮（坏值保留默认；调参留在 cfg.raw）。"""
+    blk = _dict_or(data.get("recap"))
+    cfg.recap_enabled = _bool_or(blk.get("enabled", cfg.recap_enabled), cfg.recap_enabled)
+    cfg.recap_default_language = _coerce_recap_language(
+        blk.get("default_language", cfg.recap_default_language))
+    draft = _dict_or(blk.get("slack_draft"))
+    cfg.recap_slack_draft_enabled = _bool_or(
+        draft.get("enabled", cfg.recap_slack_draft_enabled), cfg.recap_slack_draft_enabled)
 
 
 def _server_port_from(data: dict) -> int:
@@ -761,6 +790,9 @@ def load_config() -> Config:
             ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
         )
 
+    # §63 会议 recap 的三把旋钮（无分支：load_config 的复杂度账本已超线）
+    _apply_recap_block(cfg, data)
+
     # 设置「开发者 · 维护会话」— optional config.yaml block; blank/absent
     # values keep the defaults (app repo root / fresh session).
     maint_block = data.get("maintainer", {}) or {}
@@ -954,6 +986,11 @@ _OVERRIDE_FIELDS: dict = {
     # → per-entry skip, the effective value stays.
     "models_dispatch": coerce_model,
     "models_pipeline": coerce_model,
+    # §63 会议 recap：web Settings「会议纪要」经 server/recaps.py diff-write 这三个
+    # 扁平键；slack_draft 出厂 false（草稿投递是 opt-in，发送永远是人）。
+    "recap_enabled": _coerce_bool,
+    "recap_default_language": _coerce_recap_language,
+    "recap_slack_draft_enabled": _coerce_bool,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }

@@ -277,6 +277,63 @@ export interface Board {
   update_available?: unknown;
   device_label?: string;
   deploy_state?: DeployState;
+  /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
+  recaps?: RecapRow[];
+  [key: string]: unknown;
+}
+
+/**
+ * §63 会议 recap 行（dashboard.json 顶层 recaps[] 的元素 = act/lib/recap_store 投影，
+ * wire key 逐字镜像）。status open = 进行中（无正文）；en/zh = 5 行纯文本（null =
+ * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at = server
+ * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执。
+ */
+export interface RecapRow {
+  key: string;
+  app: string;
+  start: string;
+  end: string;
+  duration_min: number;
+  status: "open" | "closed" | string;
+  version: number;
+  generated_at?: string | null;
+  partial?: boolean;
+  en?: string[] | null;
+  zh?: string[] | null;
+  /** ok | needs_review | thin_transcript | no_audio | generation_failed | null */
+  quality?: string | null;
+  transcript_words?: number;
+  frames?: number;
+  audio_rows?: number;
+  note?: string | null;
+  history_count?: number;
+  copied_at?: string | null;
+  sent_at?: string | null;
+  slack_draft?: {
+    status: string;
+    channel_link?: string | null;
+    at?: string | null;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
+/** GET/PUT /api/settings/recap（§63）：server/recaps.py snapshot 的 wire 形逐字镜像 */
+export interface RecapSettings {
+  enabled: boolean;
+  default_language: "auto" | "zh" | "en" | string;
+  slack_draft_enabled: boolean;
+  languages: string[];
+  source: { [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** POST /api/recaps/mark 回执 */
+export interface RecapMarkReceipt {
+  ok: boolean;
+  key: string;
+  copied_at: string | null;
+  sent_at: string | null;
   [key: string]: unknown;
 }
 

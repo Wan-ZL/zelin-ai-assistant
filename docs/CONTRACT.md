@@ -3375,6 +3375,16 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   未知 id 404；台账满 / 状态机拒绝 409 `CONFLICT {"reason"}`）。形状与
   状态机见 §62.2–§62.4；GET 表路由 handler 自此为 `(ctx, query)` 两实参。
   判例：tests/test_server_materials.py。
+- **v0.48.x 追加（§63 会议 recap，add-only）**：`GET /api/settings/recap`（三把旋钮
+  `enabled` / `default_language` / `slack_draft_enabled` 的 effective 值 + `languages`
+  词表 + `source`；token-light）、`PUT /api/settings/recap {enabled?, default_language?,
+  slack_draft_enabled?}`（四闸；扁平 override 键 `recap_enabled` / `recap_default_language`
+  / `recap_slack_draft_enabled` 的 diff-write，语义与 `/api/settings/models` 逐字同款；
+  不可解析 409 `CONFLICT`）、`POST /api/recaps/mark {key, mark: copied|sent, on?}`（四闸；
+  写 **server 独占**的 `state/recap/marks.json`——「复制」/「标记已发送」的本地标记，
+  **没有任何控制流读它**，只进投影；key 形状 / 词表外 400）。`PUT` 路由自此表驱动
+  （`_PUT_JSON_ROUTES`，与 GET/POST 同款）。inbox 特形动作 `recap_generate` /
+  `recap_slack_draft` 见 §63.5。判例：tests/test_server_recaps.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -4486,7 +4496,7 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 分层模型正式入典（防腐 #2 从文字变机器；含函数体内的 lazy import 与 `TYPE_CHECKING`）：
 
 - `act/lib/**` 只准 import stdlib + `yaml` + `act(.lib)`——lib 永不向上（`lib-import` / `lib-thirdparty`；`cryptography` 是 `act/lib/e2e.py` 的法定 lazy 依赖，在白名单）。
-- `act/*.py`（entrypoint 层：actd、executor、radar*、digest、doctor、webui、boardctl……）准 import `act.lib`，**互相之间不准 import**（`entry-pair`）。今天账上的 ~25 条互引边（actd→analyze/executor/…）是 P3 的重构清单：该层里事实上的共享核心要么下沉 `act.lib`、要么显式立法为新层——届时修本节。
+- `act/*.py`（entrypoint 层：actd、executor、radar*、digest、doctor、webui、boardctl……）准 import `act.lib`，**互相之间不准 import**（`entry-pair`）。今天账上的 ~25 条互引边（actd→analyze/executor/…）是 P3 的重构清单：该层里事实上的共享核心要么下沉 `act.lib`、要么显式立法为新层——届时修本节。**修订（v0.48.x，§63 落地时）——边界层**：`act.llm` 是本条的**法定例外**（`depgraph.BOUNDARY_MODULES`）：§59 / 防腐 #3 规定所有带 prompt 的 claude 调用只准经它构造 argv，禁 entrypoint import 它等于禁守法（新 entrypoint `act/recap.py` 是第一个撞上这条矛盾的模块）。entrypoint → `act.llm` 不再记 `entry-pair`，账本上 11 条 `->act.llm` 边同 PR 划掉（shrink）；`act.llm` 自己仍按 entry 受审（只准向下到 `act.lib`）；lib 层**照旧不许**向上 import 它——lib 经注入缝（`runner=`）拿模型调用。判例：tests/test_qa_depgraph_rules.py。
 - `server/**` 只准 import stdlib/第三方 + `act.lib` + `server`（`server-import`）。
 - **任何模块不准跨模块引用 `_私名`**（`from X import _y` 与 `X._y` 属性链两形，dunder 除外；`private:`）——防腐 #2 的「当场升 public 或抽进共享模块」。
 - **hygiene**（防腐 #1/#5 的可机械化半边）：`.py` 文件/函数/class 行数上限与 `shell/` 的 `.swift` 文件行数上限（数字 truth = qa/gates.toml；`mac/` 豁免见 58.1）；`act/**`、`server/**` 的模块 docstring 必须含 `§<数字>`（`__init__.py` 豁免）。挂账文件**不许再长**（登记值就是它的天花板）。
@@ -4728,3 +4738,57 @@ new ──→ picked_up ──→ proposal_created ──→ pr_opened ──→
 - `fetch` 不做 JS 渲染、不跟 robots、不做 PDF；YouTube 之外的视频站不特判（当网页处理，拿到什么算什么）。
 
 判例：`tests/test_materials_ledger.py`（台账 / 状态机 / 压缩 / 锁）、`tests/test_materials_fetch.py`（分类 / html→text / VTT / 双上限 / yt-dlp 与 oEmbed 退路 / 永不抛 / 围栏）、`tests/test_server_materials.py`（三端点 + 四闸 + 错误映射 + 501）、`web/src/components/settings/MaterialsSection.test.tsx`。
+
+## 63. 会议 recap：确定性 session 判定 + 5 行 copy-only 纪要（v0.48.x；owner 拍板 2026-09-01，issue #129；vnext2-plan P5b）
+
+owner 原话：「会议结束后自动出一份 5 行的 recap，我只做一件事：复制粘贴。触发挂在已有的 30 分钟 screenpipe cron 后面，不加新 daemon，不用我手动触发。recap 不是 card，不进 registry，不进 dispatch，默认没有任何发送路径。额外做一个 Settings 开关（默认关）：开了以后把 recap 作为草稿放进 Slack 对应会话的「Drafts & Sent」，按发送键的仍然是我。主展示面是 web 看板的会议纪要页。」本节把这段话逐条变成机器执法。宪法对照：第 4 条（记录 ≠ 立案——recap 是档案不是卡，永不铸卡，§45 屏幕不发起卡片的一刀不受影响）、第 5 条（转写 / 往期 recap / 语气档全部过 `fence_untrusted`）、第 9 条（正文不进 analytics，只有元数据）、第 11 条（单场会议的失败只属于它自己）。
+
+### 63.1 挂点与运行（`act/recap.py`；`ingest/process-screenpipe.sh`）
+
+- **无新 daemon**：`ingest/process-screenpipe.sh` 在自己的 PID lock **之前**跑 `python -m act.recap --once || true`（解释器解析同 `resolve_config_path`：`config/runtime.json` 的 python → PATH python3；失败绝不拖垮 ingest 链）。crontab 不改、launchd 不加 label（tests/test_recap_cron_hook.py 钉住三点：hook 在 lock 之前、`|| true`、install 脚本零 `act.recap`）。
+- **首次运行 marker = now，不回填**：`state/recap/sessions.json` 不存在的那一轮只记下引擎 DB 的 frames / audio_transcriptions 高水位 id 就退出（manager pack 2026-07-08 backfill 风暴的教训，§17）。此后**按 id 范围读**（cursor），不按时间窗——Mac 睡过一轮不丢；单轮每表最多 `READ_LIMIT` 行，余量下一轮续。
+- **所有写者串行**：`--once`（cron）、`--generate`、`--slack-draft`（actd 派出的 detached 子进程）都过 `state/recap/.lock` 的 flock；cron 轮拿不到锁立刻让路（exit 0），按钮轮最多等 `LOCK_WAIT_S`。
+- **只读引擎 DB**：`~/.screenpipe/db.sqlite` 以 `mode=ro` URI 打开（config `recap.db_path` 可指向别处）；DB 不存在 = `skipped: no_db`，静默。
+
+### 63.2 确定性 session 判定（`act/lib/recap_sessions.py`；不调 LLM）
+
+- **事件流** = `frames` 里 app_name / window_name / browser_url 命中会议应用表的行 ∪ `audio_transcriptions` 非空转写行。默认表（`DEFAULT_MEETING_RULES`，`recap.meeting_windows` 追加同形规则）：Zoom、Microsoft Teams、Webex、FaceTime、`meet.google.com`（按 URL）、Slack **且** window_name 含 Huddle；window_name 允许空串（8/26 两小时会议有 46 帧空标题）。事件压成**每分钟桶** `[minute_ts, kind, app, n]`——转写文本永不落 state，出稿时再从 DB 读。
+- **聚类**：gap > `gap_minutes`（5）切 session；frames 与 audio 互相桥接（取并集）。超 `max_session_minutes`（240）切段。
+- **资格**：presence frames ≥ `min_presence_frames`（3）且 span ≥ `min_span_minutes`（10）。无窗口的纯音频 session 只在 `recap.audio_only_sessions: true` 时有资格（默认关，#129 未解项之一）。
+- **CLOSED / OPEN**（T = 本轮 wall clock）：`T − last_event ≥ quiet_minutes`（5）**且** session 区间 `[start − gap, end]` 内没有 `audio_chunks.transcription_status = 'pending'` 的行 → CLOSED；否则 OPEN（写进 sessions.json `open[]`，页面显「进行中」，不调 LLM，下一轮再判）。legacy pending（2026-05-27 之前的 333 条）落在任何 session 区间之外，天然不算。**强制关闭**：`T − last_event ≥ force_close_minutes`（120，引擎死亡）无视 pending。
+- **dedup key** = `meeting:<本地起始分钟>-<app>`，例 `meeting:2026-08-31T1256-zoom`（时区 = `recap.timezone`，默认 `America/Los_Angeles`；tz 库缺席回落本机时区）。13:00 那轮（OPEN）和 13:30 那轮（CLOSED）算出同一个 key——**一场会一份 recap**（P5b 完成判据，tests/test_recap_runner.py）。两场会间隔 < 5 min 会合成一个 key（#129 未解项，照原样记录）。
+- **晚到切片**：已 CLOSED 的 recap 若后续轮次出现落在其区间（±gap）内的新 audio 行（8/31 12:48–12:55 的音频落到 13:30 的 dump），重新生成：`version + 1`，旧文本进 `history[]`（cap `HISTORY_CAP`），页面标「已更新」。晚到帧不算（帧按写入顺序，不会晚到）。
+- **被 CLOSED 但没资格的簇**（安静了、太短或太稀）直接出缓冲——不是会议，不能永远挂着；OPEN 的簇连事件一起留在 `events[]` 等下一轮。
+
+### 63.3 出稿（`act/lib/recap_text.py`；唯一 LLM 边界 `act/llm.py`）
+
+- **模板**（EN / 中文同一次调用产出，模型返回严格 JSON `{"en": [5], "zh": [5]}`）：`Decided:` / `Split:` / `Deadline:` / `Changed since last plan:` / `Open:` ⇄ `定了：` / `分工：` / `截止：` / `较上次变化：` / `待定：`。规则：陈述句，无问候 / 形容词 / 比喻；EN 每行 ≤ 140 字符、中文 ≤ 60 字；禁时间戳、引号、原话、@、链接、emoji、markdown / mrkdwn；禁 said / mentioned / 说 / 提到；人名只作为 Split 的 owner 出现（screenpipe 分不出说话人）。
+- **确定性 validator**（`recap_text.validate`）校标签顺序、长度与禁词；失败**重试一次**（把违反的规则原文喂回去）；再失败 → `quality: needs_review`，文本**仍可复制**；两次都解析不出 JSON → `generation_failed`（记录仍落，页面可重试）。转写 `< MIN_TRANSCRIPT_WORDS`（300；中文按字数/2 折算）不调用：`thin_transcript`；零转写：`no_audio`。模型调用抛错按轮重试，`MAX_GENERATION_FAILURES`（3）次后以 `generation_failed` 落账（失败不能让簇永驻缓冲）。
+- **输入**：`transcript_between(start, end)` 的转写（fenced）、14 天内最多 3 条往期 recap（fenced，给「较上次变化」定锚）、语气档（`state/voice-profile.md` → `config/voice-profile.default.md`，fenced，docs/VOICE.md 同一两级回落——entrypoint 互不 import，此处镜像 `executor.resolve_voice_profile`）、可选 owner 纠正备注（≤ 500 字）、OPEN 行的「现在生成」带 `partial: true`（prompt 标 IN PROGRESS；CLOSED 后正式稿覆盖，阶段稿进 history）。
+- **无发送路径——五层，缺一不可**：(1) recap 只存 `state/recap/recaps/<key>.json`，**不是 registry card**——没有 id / tier / status 机、没有 approve / dispatch，executor 拿不到它；(2) 生成 argv 固定为 `claude -p <prompt> --output-format text --tools "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'`（`recap_text.NO_EGRESS_ARGV`；`--model` 仍只在 `act/llm.py` 拼一处、在 `--output-format` 之后）——**tests/test_recap_no_egress.py 钉 argv**；「与 ask.py 同形」不算 wall；(3) 全仓仍无 `chat.postMessage`；(4) recap JSON **没有 recipient / channel 字段**（判例递归扫键），inbox 只加 `recap_generate {meeting_key, note?, partial?}` 与 `recap_slack_draft {meeting_key, channel_id}` 两个特形动作，前者不带任何会话字段；(5) 唯一出口是剪贴板。
+- **每轮上限**：`max_per_run`（2）× `max_per_day`（8，按本地日）；超限的 CLOSED 会议**留在缓冲**下一轮再出，永不丢。
+- **通知**：有正文的 recap 落地 → `notify.notify(kind="recap_ready")`（§28 中继；正文不进通知）；analytics `recap_generated{app, duration_min, words, quality, version, partial}` **只有元数据**（宪法第 9 条）。点击跳转到该 recap 是通知中继（壳，P4 Tier-0 0.1）的活，`kind` 已 add-only 到位。
+- **保留**：`recap.retention_days`（90）之外的 recap 每轮 prune（防腐 #4：新文件族出生即带帽）；`sessions.json` 的缓冲只装未关闭簇；`state/recap.log` 走 `logcap`。`state/recap/` 整目录可删（回滚 = 摘掉 cron 挂点 + 删目录）。
+
+### 63.4 Slack 草稿投递（`act/lib/recap_slack_draft.py`；Settings 开关**默认关**）
+
+- `recap.slack_draft.enabled: false` 出厂。开着时 CLOSED recap 出稿后多做一步：把 5 行正文作为**草稿**放进 Slack 对应会话（出现在 owner 自己的「Drafts & Sent」，附着到该会话，**不发送**）。通路 = 用户级 Slack MCP 的 `slack_send_message_draft`（Slack 公开 Web API 没有 drafts 端点，xoxp token 做不到；参照 `radar_slack.py` 的 `--allowedTools` 先例）。
+- **护栏是白名单不是 prompt**：argv 固定为 `claude -p <prompt> --output-format text --allowedTools mcp__slack__slack_send_message_draft,mcp__slack__slack_search_users`，**不带** `--dangerously-skip-permissions`——headless 下模型伸手任何别的工具都被 CLI 拒绝。`slack_send_message`（真发送）、schedule、reaction、post 类工具**不在白名单**；tests/test_recap_slack_draft_allowlist.py 钉 argv 并断言 `allowlist_is_sealed`。
+- **目标会话不猜**：`recap.slack_draft.targets {app-slug: channel_id}`（config.yaml）或页面「投到 Slack 草稿」手选（inbox `recap_slack_draft`）；两者都没有 → `slack_draft.status = no_target`（行上「未投草稿：无目标会话」）。channel_id 形状 `^[CDG][A-Z0-9]{6,20}$` 三处同形（recap_store / inbox_writer / server）。
+- Slack 一个会话只能有一个附着草稿：模型回报 `draft_already_exists` → 记「Slack 已有草稿」，**不覆盖、不重试**；recap 重新生成（晚到切片 / 纠正）**不**自动重投——等旧草稿处理完再手动投。投成 → `posted` + Slack 回的 `channel_link`（只收 `https://*.slack.com/…`），页面可点跳会话。回执全部 fail-closed：回报解析不出 / 词表外 = `failed`（永不伪装 posted）。
+- **开关关着时这段代码不会被调用**：`_auto_draft` 与 `slack_draft_for` 都先看开关（关 = `disabled` 回执、零模型调用）；argv 里不出现任何 Slack 工具名（no-egress 判例断言 `mcp__slack` 不在 argv）。正文语言按 `recap.default_language`（auto 跟随 `language`）。
+
+### 63.5 面：web 会议纪要页、Settings、inbox 特形、dashboard 投影
+
+- **主展示面 = web 看板 `?page=recaps`**（D3：Mac app 不加功能）。左列表按日分组，行 = `12:56–13:16 · Zoom · 20 min` + badge（进行中 / 新 / 已复制 / 已发送 / 已更新 / 阶段稿 / 转写不全 / 需复核 / 无音频 / 生成失败）；右详情 segmented 中文 | English（两版同产、切换即时；默认语言 `recap.default_language: auto|zh|en`，auto 跟随 UI 语言），按钮：**复制**（剪贴板 + `POST /api/recaps/mark copied`）、**标记已发送**（本地 flag，不进 inbox，无控制流读它）、**重新生成**（≤ 500 字纠正备注 → inbox `recap_generate`）、OPEN 行**现在生成**（`partial: true`）、开关开着时**投到 Slack 草稿**（选会话 → inbox `recap_slack_draft`）。非 Slack 对手方：正文 5 行纯文本，粘到 email / Teams / 微信 / Confluence 一致。
+- **Settings section「会议纪要」**：`enabled`（默认开）、`default_language`、`slack_draft_enabled`（默认关，文案写明发送键仍在人手里）；三把旋钮 = config.yaml `recap:` 块 + overrides 扁平键（`config._OVERRIDE_FIELDS`：`recap_enabled` / `recap_default_language` / `recap_slack_draft_enabled`），server 面 `GET/PUT /api/settings/recap`（§49，`server/recaps.py`），diff-write 语义同 §59。其余调参（gap / quiet / 上限 / 应用表 / targets / retention / db_path）只在 config.yaml `recap:` 块（`config.example.yaml` 有注释全集）。
+- **inbox 特形动作**（docs/design/inbox-actions.md §3.10 / §3.11；golden `recap_generate[-note|-partial]` / `recap_slack_draft`）：`recap_generate {meeting_key, note?, partial?}`（note ≤ 500，partial 只认字面 true）与 `recap_slack_draft {meeting_key, channel_id}`；无卡片级 id。actd 侧走 detached 特形表 `_DETACHED_ACTIONS`（与 `weekly_digest_now` 同款，`act/lib/detached.py` 抽出的 `python -m …` 分离启动）→ `python -m act.recap --generate <key> [--note …] [--partial]` / `--slack-draft <key> --channel-id <C…>`；畸形（key / note / channel 形状）= 诚实 `noop`（`recap_store.inbox_argv`），actd 永不猜。
+- **dashboard.json 顶层 `recaps[]`（add-only）**：`recap_store.attach(dash)`——OPEN 会话 + 已出稿 recap 的投影（同 key 以文件为准），newest first、cap `PROJECTION_CAP`（60）、`history` 剥掉只留 `history_count`、server-owned marks 并入 `copied_at` / `sent_at`。任何失败 = 键缺席，看板不为 recap 文件而死。Swift decodeIfPresent 忽略它（D3 不加功能）。
+
+### 63.6 存储与写者（`act/lib/recap_store.py`）
+
+`state/recap/`：`sessions.json`（schema 1：cursor、first_run_at、events 缓冲、open[]、day 计数、failures）、`recaps/<key>.json`（字段：key / app / start / end / duration_min / frames / audio_rows / status open|closed / version / partial / generated_at / en / zh / quality ok|needs_review|thin_transcript|no_audio|generation_failed / transcript_words / note / history[] / slack_draft{status, channel_link, at}——**add-only**；**永不**出现 recipient / channel / id / tier）、`marks.json`（server 独写）。写者：`act/recap.py` 拥有 sessions.json 与 recaps/，`server/recaps.py` 拥有 marks.json，actd **只读**（宪法第 1 条的旁路进程语义：recap 不是卡，不经 registry）。判例：tests/test_recap_sessions.py、test_recap_validate.py、test_recap_runner.py、test_recap_no_egress.py、test_recap_slack_draft_allowlist.py、test_recap_store.py、test_server_recaps.py、test_recap_cron_hook.py、test_server_paths_mirror.py::RecapMirrorTestCase。
+
+### 63.7 未解（照 #129 原样登记，不在本节裁决）
+
+两场会间隔 < 5 min 合成一个 key；`audio_only_sessions` 默认关；public build 是否默认 `recap.enabled: true`（本版：**开**——确定性判定零成本，模型调用只在真会议 CLOSED 后发生，PRIVACY.md 有开关行）；Parakeet 引擎 silent 状态由 reconciliation 收尾（约 10 分钟地板），quiet 5 分钟可能多等一轮；同室第三人声与 System Audio 回声仍可能污染 Decided 行（页面脚注提醒粘贴前必读）；executor 派发会话带用户级 Slack MCP、「不对外发」只是 prompt——与本节无关，另开 issue；Slack MCP 在 headless cron 下是否稳定可达要实测（`draft failed` 回执可见）。

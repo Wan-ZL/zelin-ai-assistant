@@ -366,6 +366,5 @@ server/inbox_writer.py::_require_id_list 9.6
 server/inbox_writer.py::write_action 14
 server/security.py::_read_token_hardened 12.6
 server/settings.py::_config_models 8.5
-server/settings.py::_read_overrides 6.3
 server/settings.py::set_claude_code_default 10
 server/settings.py::update_models 8

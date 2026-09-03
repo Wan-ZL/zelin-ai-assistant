@@ -282,3 +282,17 @@
 .materials-dismiss {
   flex: 0 0 auto;
 }
+
+/* ----- 勾选行（§63 会议纪要 section） ------------------------------------------ */
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: var(--type-header-control);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.settings-check input {
+  accent-color: var(--accent);
+}

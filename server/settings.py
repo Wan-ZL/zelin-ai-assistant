@@ -112,7 +112,7 @@ def noncanonical_warning(mode: str, value: str) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 # layered read: overrides → config.yaml → default
 # --------------------------------------------------------------------------- #
-def _read_overrides(home: Path) -> dict:
+def read_overrides(home: Path) -> dict:
     """The overrides document, {} when absent. An unparsable file (or a non-
     object) raises ConflictError — the pipeline ignores such a file, but
     overwriting it from here would destroy whatever the owner had in it."""
@@ -170,7 +170,7 @@ def models_snapshot(home: Path) -> dict:
          "source": {"dispatch": "override|config|default", ...},
          "warnings": ["...plain sentence per non-canonical knob..."]}
     """
-    overrides = _read_overrides(home)
+    overrides = read_overrides(home)
     base, present = _config_models(home)
     out: dict = {"follow": MODEL_FOLLOW, "canonical": list(CANONICAL_MODELS),
                  "source": {}, "warnings": []}
@@ -193,7 +193,7 @@ def models_snapshot(home: Path) -> dict:
 # --------------------------------------------------------------------------- #
 # write: PUT /api/settings/models
 # --------------------------------------------------------------------------- #
-def _atomic_write_json(p: Path, doc: dict) -> None:
+def atomic_write_json(p: Path, doc: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
@@ -219,7 +219,7 @@ def update_models(home: Path, payload: dict) -> dict:
             wanted[mode] = coerce_model(payload[mode])
         except ValueError as exc:
             raise InvalidFieldError(str(exc), {"field": mode})
-    overrides = _read_overrides(home)
+    overrides = read_overrides(home)
     base, _present = _config_models(home)
     for mode, value in wanted.items():
         key = OVERRIDE_KEY % mode
@@ -227,7 +227,7 @@ def update_models(home: Path, payload: dict) -> dict:
             overrides.pop(key, None)      # diff-write: same as effective → no key
         else:
             overrides[key] = value
-    _atomic_write_json(settings_overrides_path(home), overrides)
+    atomic_write_json(settings_overrides_path(home), overrides)
     return models_snapshot(home)
 
 

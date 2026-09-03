@@ -22,7 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config, deploy_state, failures, health, policy, risk, sources, steer, titles
+from act.lib import (config, deploy_state, failures, health, policy, recap_store, risk,
+                     sources, steer, titles)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -1227,7 +1228,7 @@ def build_dashboard(
     # 加法约定）：scripts/auto-deploy.sh 写的最近一次自动部署结果；文件缺失或
     # 读不了 = 整键不存在，web 顶栏据此显示「v0.48.x · deployed 12m ago」。
     deploy_state.attach(dash)
-    return dash
+    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
 
 
 def _json_default(o):

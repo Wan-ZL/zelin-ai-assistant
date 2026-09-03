@@ -1,0 +1,197 @@
+/*
+ * 会议纪要页样式（CONTRACT §63）。只引用 tokens.css 已有变量，不造新色值；字号/字重
+ * 走 --type-* token（web/CONVENTIONS.md §主题 + §54.1 第 10 项）。骨架对齐回收站/设置页。
+ */
+
+.recaps-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recaps-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .recaps-layout { grid-template-columns: 1fr; }
+}
+
+/* ----- 左列表 ---------------------------------------------------------------- */
+.recap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recap-day-title {
+  margin: 0 0 4px;
+  font: var(--type-lane-title);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-day-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recap-row {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.recap-row:hover { background: var(--surface-hover); }
+.recap-row.is-selected { border-color: var(--accent); background: var(--accent-soft-quiet); }
+.recap-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.recap-row-label {
+  font: var(--type-card-title);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ----- 右详情 ---------------------------------------------------------------- */
+.recap-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 14px 16px 16px;
+}
+
+.recap-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.recap-detail-title {
+  margin: 0;
+  font: var(--type-card-title-lg);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-segmented {
+  display: inline-flex;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.recap-segment {
+  appearance: none;
+  border: 0;
+  padding: 3px 10px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-button);
+  cursor: pointer;
+}
+
+.recap-segment.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.recap-body {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  font: var(--type-card-body);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: all;
+}
+
+.recap-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font: var(--type-lane-help);
+}
+
+.recap-actions,
+.recap-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.recap-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: var(--border-hairline) dashed var(--border-strong);
+  border-radius: 8px;
+}
+
+.recap-panel-label,
+.recap-hint {
+  color: var(--text-tertiary);
+  font: var(--type-composer-hint);
+}
+
+.recap-textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: var(--type-composer);
+}
+
+.recap-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font: var(--type-card-meta);
+}
+
+.recap-meta a { color: var(--accent); }
+
+.recap-flash {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: var(--type-card-meta-strong);
+}
