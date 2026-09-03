@@ -355,6 +355,13 @@ def _review(now: dt.datetime) -> list[dict]:
             "dispatched_at": e - 9000,
             "review_at": e - 1800,
             "delivery_mode": "repo",
+            # §64 AI 摘要 + 完成度评语（只是建议；评于待验收期）
+            "assessment": {
+                "summary": "给评测加了缓存，重跑快十倍，等你看 PR",
+                "verdict": "建议验收",
+                "verdict_reason": "清单三条都有对应交付：缓存命中、失效单测 6 个、CI 全绿",
+                "at": e - 1500,
+            },
         },
         {
             "id": "P-110",
@@ -369,6 +376,12 @@ def _review(now: dt.datetime) -> list[dict]:
             "state": "review",
             "cwd": "~/Projects/workbench",
             "delivered_summary": "周报初稿完成：两个 project 各一段进展 + 下周计划，中英双语。",
+            "assessment": {
+                "summary": "周报草稿写好了，缺一页内的篇幅确认",
+                "verdict": "需要拍板",
+                "verdict_reason": "清单第 3 条「不超过一页」要你按目标读者定：现在双语版约一页半",
+                "at": e - 900,
+            },
             "final_draft": (
                 "**Weekly Report | 周报**\n"
                 "\n"
@@ -749,6 +762,16 @@ _EN: dict = {
         "example-bench: eval cache layer (repeat runs 10x faster)",
     "给 runner 加 content-hash 缓存，重复评测直接读缓存。":
         "Add a content-hash cache to the runner so repeat evaluations read from cache.",
+    # §64 AI 摘要 + 评语（prose only — the three verdict tokens are server wire vocabulary,
+    # rendered per language by web VerdictChip, so they are deliberately NOT in this table）
+    "给评测加了缓存，重跑快十倍，等你看 PR":
+        "Added an eval cache; repeat runs are ~10x faster — the PR is ready for you",
+    "清单三条都有对应交付：缓存命中、失效单测 6 个、CI 全绿":
+        "All three checklist items delivered: cache hits, 6 invalidation unit tests, CI all green",
+    "周报草稿写好了，缺一页内的篇幅确认":
+        "Weekly report draft is written; needs your call on the one-page limit",
+    "清单第 3 条「不超过一页」要你按目标读者定：现在双语版约一页半":
+        "Checklist item 3 “no longer than one page” is your call given the audience: the bilingual version runs ~1.5 pages",
     "已在 example-bench 开 draft PR #87：runner 加 content-hash 缓存层，重复 run 从 ~12min 降到 ~70s；失效逻辑带 6 个单测，CI 全绿。":
         "Draft PR #87 opened on example-bench: content-hash cache layer in the runner, repeat runs "
         "down from ~12 min to ~70 s; invalidation logic has 6 unit tests, CI all green.",

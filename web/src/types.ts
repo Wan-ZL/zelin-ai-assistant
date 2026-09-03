@@ -107,6 +107,16 @@ export interface SteerNote {
   [key: string]: unknown;
 }
 
+/** §64（issue #128）AI 一句话摘要 + 完成度评语——server 只在有摘要或评语时才发整键；
+ *  只是建议：客户端只渲染，验收/打回仍是人按的按钮。verdict 是开放枚举，三个已知值见 VERDICTS */
+export interface CardAssessment {
+  summary?: string | null;
+  verdict?: string | null;
+  verdict_reason?: string | null;
+  /** 评语生成时刻（epoch 秒） */
+  at?: number | null;
+}
+
 /** 运行中/需输入/已完成 分区项（running 混入 state="queued" 的排队项，无 session_id） */
 export interface TaskRow {
   id: string;
@@ -149,6 +159,8 @@ export interface TaskRow {
   question?: string | null;
   display_title?: string;
   former_titles?: string[];
+  /** §64 AI 摘要 + 评语（阶段性完成卡只用 summary 一句） */
+  assessment?: CardAssessment | null;
   [key: string]: unknown;
 }
 
@@ -178,6 +190,8 @@ export interface ReviewCard {
   summary?: string | null;
   agent_name?: string | null;
   display_title?: string;
+  /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
+  assessment?: CardAssessment | null;
   [key: string]: unknown;
 }
 

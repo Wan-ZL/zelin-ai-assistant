@@ -3,8 +3,10 @@
 //   Mac 同款自查指令字面量，见 boardActions.REWORK_EMPTY_FALLBACK）·
 //   复制成稿（final_draft 非空时，剪贴板 + 1.5s「已复制 ✓」回执，纯客户端）。
 // 卡面（原生 ReviewRow 收起态的 meta 行）：会话有新活动（青）· repo 章 · 耗时 <dispatched→review> ·
-//   已等待验收 <review→now，自驱走表> · 单击复制指令 行；「展开详情 ▸」后：交付了什么 /
+//   已等待验收 <review→now，自驱走表> · §64 AI 评语章（建议验收/需继续做/需要拍板，点看理由）·
+//   §64 AI 一句白话摘要行 · 单击复制指令 行；「展开详情 ▸」后：交付了什么（执行器原话，原样）/
 //   摘要 / ☐ 验收清单（§11：永远渲染，空给兜底句）/ 📋 要做什么 / 💬 需求来自 / 日志 / 指令。
+//   评语只是建议：验收 / 打回仍只有下面两个按钮能按。
 import { useEffect, useRef, useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
@@ -13,6 +15,7 @@ import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
 import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, RepoChip } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
 import { TextDialog } from "./TextDialog";
+import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
 
 interface ReviewCardProps {
   card: ReviewCardRow;
@@ -50,7 +53,9 @@ export function ReviewCard({ card }: ReviewCardProps) {
         <RepoChip path={card.cwd} />
         <DurationText from={card.dispatched_at} to={card.review_at} prefix={text("耗时 ", "took ")} />
         <DurationText from={card.review_at} prefix={text("已等待验收 ", "in review ")} />
+        <VerdictChip assessment={card.assessment} />
       </div>
+      <AssessmentSummaryLine assessment={card.assessment} />
       <CopyCommandLine cmd={card.copy_cmd} />
       <CardDetails cardId={card.id}>
         {card.delivered_summary ? (

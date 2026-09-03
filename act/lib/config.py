@@ -239,6 +239,10 @@ class Config:
     models_dispatch: str = MODEL_FOLLOW
     models_pipeline: str = MODEL_FOLLOW
 
+    # §64 待验收卡 AI 摘要 + 完成度评语（config.yaml `card_summary.enabled`，
+    # overrides 扁平键 `card_summary_enabled`）。默认开；关 = 只停派新判官。
+    card_summary_enabled: bool = True
+
     # approval / cost
     poll_interval_seconds: int = 10
     show_cost_above_usd: float = 5.0
@@ -509,6 +513,12 @@ def _server_port_from(data: dict) -> int:
     return port if 0 < port < 65536 else DEFAULT_SERVER_PORT
 
 
+def _card_summary_enabled_from(data: dict, default: bool) -> bool:
+    """§64 `card_summary.enabled`：缺失/坏值回 default（_bool_or 语义）。
+    独立 helper 而非 load_config 里的分支——load_config 的复杂度账本已在上限之外。"""
+    return _bool_or(_dict_or(data.get("card_summary")).get("enabled", default), default)
+
+
 def coerce_model(value) -> str:
     """§59 模型旋钮归一：None/空白/"follow"（大小写不敏感）→ "follow"；形状
     合法的 id 原样（大小写保留——模型 id 由 CLI 判，这里不猜）；其余（含控制
@@ -709,6 +719,8 @@ def load_config() -> Config:
 
     # §54 看板 server 端口（无分支：load_config 的圈复杂度账本已在上限之外）
     cfg.server_port = _server_port_from(data)
+    # §64 待验收卡 AI 摘要 + 评语开关（同上，helper 内判定）
+    cfg.card_summary_enabled = _card_summary_enabled_from(data, cfg.card_summary_enabled)
 
     # §59（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
     # 保留 follow（不是保留"上一个值"——yaml 里没有上一个值）。
@@ -991,6 +1003,8 @@ _OVERRIDE_FIELDS: dict = {
     "recap_enabled": _coerce_bool,
     "recap_default_language": _coerce_recap_language,
     "recap_slack_draft_enabled": _coerce_bool,
+    # §64 (#128): 待验收卡 AI 摘要 + 完成度评语开关（diff-write 同款；默认 true）。
+    "card_summary_enabled": _coerce_bool,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }
