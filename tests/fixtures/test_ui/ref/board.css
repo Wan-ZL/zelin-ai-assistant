@@ -1,0 +1,4 @@
+/* component css — consumes the layout token (geometry source substitute looks for var(--native-layout-lane-width)) */
+.rail { width: var(--native-layout-rail-default-width); }
+.lane { width: var(--native-layout-lane-width); border-radius: var(--radius-card); }
+.card { background: var(--surface); color: var(--text-primary); }
