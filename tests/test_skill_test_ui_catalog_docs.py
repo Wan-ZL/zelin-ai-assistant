@@ -52,7 +52,7 @@ class TierTableTestCase(unittest.TestCase):
             self.assertEqual(checks_ui.BY_ID[cid]["tier"], tier, cid)
 
     def test_skill_md_tier_table_matches_catalog(self):
-        rows = [l for l in _read(SKILL_MD).splitlines() if l.startswith("| **") and "档" not in l]
+        rows = [line for line in _read(SKILL_MD).splitlines() if line.startswith("| **") and "档" not in line]
         self.assertEqual(len(rows), 5)
         for line in rows:
             tier = int(line.split("**")[1].split()[0])
