@@ -117,6 +117,18 @@ v0.48.20 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(�
 
 **别做**:不要用 `--force` 去「修」`blocked_tcc`——它只是从终端借了一次授权,下一轮 timer 照样被拒;也不要手动删 `~/Library/Application Support/ZelinAIAssistant/deploy_state.json`——那是脚本的记账(failed_sha / notified_sha / incomplete_sha 都在里面),删了它会忘掉哪个 sha 已经失败过。
 
+## 合并很密的时候自动部署几小时不动:日志里每轮都是「CI not green yet on <越来越新的 sha>」
+
+**症状**:`~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 连续几轮 `CI not green yet on <sha>: ci is in_progress`,而每轮的 sha 都不一样;顶栏 / doctor `auto-deploy` 行停在 `ci_pending`;GitHub 上 main 的好几个更早的 commit 早就绿了(release 也铸了 tag),机器却还跑着更旧的版本。2026-09-03T00:38Z→01:18Z 实录:每 10–20 分钟合一个 PR、`ci` 在 Actions 队列下要 20+ 分钟,五轮下来 v1.0.4–1.0.6 全绿却没有一个上机。
+
+**原因**:部署 job 每 10 分钟只看 origin/main **当时的 head**,head 的 `ci` 没跑完就等下一轮;合并密度一旦高于 CI 时长,head 在每个轮次都是「刚合进来、还没绿」的那个,永远等不到——旧闸门的结构性饿死(CONTRACT §56.3 第 3 步)。
+
+**2026-09-03 起脚本自己会绕过去**:head 不绿(还在跑 / 红了 / 已经失败过)就沿 first-parent 往回走(最多 `AUTODEPLOY_CI_WALK`,默认 30 个,不越过本机已部署的 HEAD),部署**最新的一个 CI 已绿的 commit**——它是 origin/main 的祖先,`merge --ff-only` 仍然是 fast-forward;下一轮再从那里往更新的绿走,head 绿了就到 head。日志里会看到 `deploying its newest green ancestor <sha> instead`,状态 `deployed` 的 detail 带 `(newest green ancestor of origin/main <head> — head CI not green yet (…))`,doctor `auto-deploy` 行 OK 但追加 `origin/main <sha> not deployed: <why>`;`deploy_state.json` 里多两键 `behind_main`(被跳过的 head)/ `behind_main_why`,部署到 head 或 `up_to_date` 时清掉。
+
+**确认**:`cat "$HOME/Library/Application Support/ZelinAIAssistant/deploy_state.json"` 看 `head` 是不是已经在 head 后面最新的绿 commit 上、`behind_main` 指着谁;`tail -n 30 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 里每轮会列出走过的每个 sha 与它的 CI 判定(`CI green on ancestor …` / `CI RED on main commit …` / `CI not green yet on ancestor …`)。
+
+**它还是不部署的三种情形**:① head 与它后面到本机 HEAD 之间**全红**(或全在跑)——detail 写 `no green commit between the deployed <sha> and it (N examined: …)`,红的每个 sha 会各通知一次「main 的 CI 红了」并中毒(镜像私账 `failed_shas`,`--force` 或 main 越过它们时清),修好 CI、合一个绿的提交即可;② 某个 commit **没有任何 `ci` run**(path filter 跳过、workflow 没触发)——它算 pending 不算绿,永远不会被当成「测过」;想让它上机就 re-run 那个 workflow,或合一个会触发 CI 的提交;③ 一轮里回走的 commit 太多(全部 pending)撞上 GitHub 匿名 API 的 60 次/小时——日志写 `check-runs API unreachable`,同样是 pending,下轮自愈。`--force` 永远只部署 head 本身、跳过闸门与回走,别用它「催」一个还没绿的 head。
+
 ## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
 
 **症状**:看板顶部横幅「后台服务卡住了」/ doctor `actd heartbeat` 行 FAIL `actd_stalled`;`state/dashboard.json` 与 `actd.log` 的 mtime 几小时不动,`launchctl list | grep actd` 却给出 pid,没有子进程。2026-08-31 22:31 这台机器就这样静默了 2.5 小时。
