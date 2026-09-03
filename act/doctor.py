@@ -466,9 +466,11 @@ def render(results: List[CheckResult]) -> str:
 
 
 def rows_of(results: List[CheckResult]) -> List[dict]:
-    """§25 wire rows (one dict per check) — shared by --json and --fresh-install."""
+    """§25 wire rows (one dict per check) — shared by --json and --fresh-install;
+    `row_class` is what the §56.3 deploy verdict reads to skip owner-action FAILs."""
     return [{"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix,
-             "failure_id": r.failure_id, "action_id": r.action_id}
+             "failure_id": r.failure_id, "action_id": r.action_id,
+             "row_class": r.row_class}
             for r in results]
 
 

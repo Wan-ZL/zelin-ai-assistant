@@ -83,7 +83,12 @@
 #      → rollback (`doctor:unparseable` is never in the baseline — fatal
 #      there — so a transient one retries the same way). Pre-existing red is
 #      reported, not blamed on the new version (otherwise a machine with one
-#      stale finding could never update — including to the fix).
+#      stale finding could never update — including to the fix). FAIL rows
+#      of §25 class `owner_action` (a TCC grant only the owner can click:
+#      `launchd claude`, `launchd volume access`, `stable claude` when the
+#      copy is fine but ungranted, cron write access) are never a new FAIL —
+#      2026-09-03 v1.0.7 was rolled back on exactly that; they reach the
+#      summary as "needs owner: …".
 #  11. rollback = `git reset --hard PREV` (re-verified right before: still on
 #      main, no tracked content edits since step 5 — otherwise the rollback
 #      is REFUSED and notified rather than destroying the owner's work; a git
@@ -335,23 +340,44 @@ if not notify.notify(sys.argv[1], sys.argv[2]):
         || log "notify failed (non-fatal): $1 — $(printf '%s' "$_nerr" | tail -n 1)"
 }
 
-# Sorted FAIL check names from `act.doctor --fast --json`, one per line. The
-# doctor's exit code alone cannot separate "the new version broke X" from "X
-# was already red"; names can. Unparseable output (doctor crashed on import,
-# printed garbage, interpreter lost yaml…) is itself a named failure — and
-# main() treats it as fatal on EITHER run: both runs use the new code, so an
-# unparseable baseline would be "pre-existing" and blind the one safety gate
-# to exactly the class of commit it exists to catch.
+# One `act.doctor --fast --json` run → two sorted FAIL name lists (one name
+# per line) in globals:
+#   DOCTOR_FAILS  the rows the verdict judges (every FAIL not of class owner_action)
+#   DOCTOR_OWNER  FAIL rows of §25 class `owner_action` — their only remedy is a
+#                 grant the owner clicks (TCC / Full Disk Access), so they say
+#                 nothing about whether the new code works and never count as a
+#                 "new FAIL" (2026-09-03: v1.0.7 rolled back to v1.0.3 because
+#                 `stable claude` FAILed under launchd for exactly the grant
+#                 install.sh had asked for 30 s earlier). They still print as
+#                 FAIL in doctor output and reach the summary as "needs owner: …".
+# The doctor's exit code alone cannot separate "the new version broke X" from
+# "X was already red"; names can. Unparseable output (doctor crashed on import,
+# printed garbage, interpreter lost yaml…) is itself a named failure in
+# DOCTOR_FAILS — and main() treats it as fatal on EITHER run: both runs use the
+# new code, so an unparseable baseline would be "pre-existing" and blind the
+# one safety gate to exactly the class of commit it exists to catch. A doctor
+# too old to emit `row_class` (rollback target) reads as all-verdict.
 UNPARSEABLE="doctor:unparseable"
-doctor_fail_names() {
-    (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
-        "$PY" -m act.doctor --fast --json 2>/dev/null) | "$PY" -c 'import json, sys
+DOCTOR_FAILS=""
+DOCTOR_OWNER=""
+doctor_sample() {
+    _raw="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
+        "$PY" -m act.doctor --fast --json 2>/dev/null)"
+    DOCTOR_FAILS="$(printf '%s' "$_raw" | doctor_names verdict)"
+    DOCTOR_OWNER="$(printf '%s' "$_raw" | doctor_names owner)"
+}
+
+doctor_names() { # stdin=doctor JSON, $1=verdict|owner
+    "$PY" -c 'import json, sys
+mode, unparseable = sys.argv[1], sys.argv[2]
 try:
     rows = json.load(sys.stdin).get("checks", [])
-    names = sorted({str(r.get("name")) for r in rows if r.get("status") == "fail"})
+    fails = [r for r in rows if r.get("status") == "fail"]
+    owner = sorted({str(r.get("name")) for r in fails if r.get("row_class") == "owner_action"})
+    verdict = sorted({str(r.get("name")) for r in fails if r.get("row_class") != "owner_action"})
 except Exception:
-    names = [sys.argv[1]]
-sys.stdout.write("\n".join(names))' "$UNPARSEABLE"
+    owner, verdict = [], [unparseable]
+sys.stdout.write("\n".join(owner if mode == "owner" else verdict))' "$1" "$UNPARSEABLE"
 }
 
 has_line() { # $1=newline-separated list, $2=exact line
@@ -1317,8 +1343,10 @@ main() {
         exit 0
     fi
 
-    _baseline="$(doctor_fail_names)"
+    doctor_sample
+    _baseline="$DOCTOR_FAILS"
     [ -n "$_baseline" ] && log "doctor baseline (pre-install) FAIL: $(printf '%s' "$_baseline" | tr '\n' ' ')"
+    [ -n "$DOCTOR_OWNER" ] && log "doctor baseline (pre-install) FAIL needs owner (never a rollback trigger): $(printf '%s' "$DOCTOR_OWNER" | tr '\n' ' ')"
     if has_line "$_baseline" "$UNPARSEABLE"; then
         rollback "$PREV" "doctor unparseable on v${VERSION:-?} ($(short "$NEW")) — new code cannot even run its own diagnostics" "$TARGET"
         exit 0
@@ -1353,10 +1381,14 @@ main() {
     # inside a transient EPERM window: 6 false "new FAIL"s, one spurious
     # rollback. Only new FAILs that survive to the FINAL attempt are real.
     # `doctor:unparseable` is never in the baseline (fatal there, above), so
-    # new_names carries a transient one through the same retries.
+    # new_names carries a transient one through the same retries. Rows of
+    # class owner_action are not in either list (doctor_sample) — a grant the
+    # owner has yet to click is not something a rollback can fix.
     _attempt=1
     while :; do
-        _after="$(doctor_fail_names)"
+        doctor_sample
+        _after="$DOCTOR_FAILS"
+        _owner="$DOCTOR_OWNER"
         _new="$(new_names "$_baseline" "$_after")"
         [ -z "$_new" ] && break
         if [ "$_attempt" -ge "$DOCTOR_RETRIES" ]; then
@@ -1371,6 +1403,12 @@ main() {
     _detail="deployed $(short "$PREV") -> $(short "$NEW")"
     if [ -n "$_after" ]; then
         _detail="$_detail; doctor pre-existing FAIL: $(printf '%s' "$_after" | tr '\n' ' ')"
+    fi
+    if [ -n "$_owner" ]; then
+        # names only — the detail rides into the dashboard (宪法第 9 条); the
+        # exact paths to grant live in the doctor rows themselves
+        log "doctor FAIL needs owner (not a rollback trigger): $(printf '%s' "$_owner" | tr '\n' ' ') — the fix is a grant only the owner can click; see the doctor rows"
+        _detail="$_detail; needs owner: $(printf '%s' "$_owner" | tr '\n' ' ')"
     fi
     _hb_now="$(heartbeat_fields)"
     if [ -n "$STAMP_WARN" ]; then
