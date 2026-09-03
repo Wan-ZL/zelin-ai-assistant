@@ -298,7 +298,7 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 
 ## 9. 终态验收清单（D25；「空白环境直接能用」的机器可见判据）
 
-**验收事件**：在一台**从未装过本软件**的 macOS 14+ 机器上，按 9.1 前提 + 9.2 命令执行一次，9.3 每一条为真 → D25 通过；任何一条不为真 = 一个 P-卡（修的是产品或安装器，不是验收清单）。已装机器的更新路径按 9.4 验。**截至本节写入（2026-09-02）这份清单尚未在真正的空白机器上执行过**——它是标尺，不是成绩；自动化落点 = `skills/test-code` 第 5 档「干净 VM 安装」层（§2.8）与每个 PR 都跑的 CI job「Fresh install (macOS)」（CONTRACT §69.4：干净 runner、空 `$HOME`、`scripts/bootstrap.sh --no-launchd`——覆盖 9.3 中不依赖登录 launchd 会话与 TCC 的部分）。数字与文件名一律指向 truth 文件，不在此手写。
+**验收事件**：在一台**从未装过本软件**的 macOS 14+ 机器上，按 9.1 前提 + 9.2 命令执行一次，9.3 每一条为真 → D25 通过；任何一条不为真 = 一个 P-卡（修的是产品或安装器，不是验收清单）。已装机器的更新路径按 9.4 验。**截至本节写入（2026-09-02）这份清单尚未在真正的空白机器上执行过**——它是标尺，不是成绩；自动化落点 = `skills/test-code` 第 5 档「干净 VM 安装」层（§2.8）与 push to main + 每晚跑的 CI job「Fresh install (macOS)」（CONTRACT §69.4；不按 PR 跑，macOS 槽稀缺——§56.8 矩阵：干净 runner、空 `$HOME`、`scripts/bootstrap.sh --no-launchd`——覆盖 9.3 中不依赖登录 launchd 会话与 TCC 的部分）。数字与文件名一律指向 truth 文件，不在此手写。
 
 ### 9.1 前提（机器上要有的东西；缺一项 install.sh 会在依赖检查处如实停下）
 - Xcode Command Line Tools（`swiftc`，壳与旧 app 都靠它）；系统 `/usr/bin/python3` 可用且装了 PyYAML（运行时白名单 = stdlib + PyYAML，`CONTRIBUTING.md`）；Node.js LTS（构建 `web/` 与 `npx screenpipe`）。

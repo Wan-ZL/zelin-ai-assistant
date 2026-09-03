@@ -9,7 +9,8 @@
 #
 #     curl … scripts/bootstrap.sh | bash
 #
-# except the script comes from THIS checkout (the PR's version, not main's).
+# except the script comes from THIS checkout (the commit under test, not
+# whatever main's raw URL serves at that moment).
 # `--no-launchd` because a CI session owns no login launchd domain worth
 # wiring: install.sh proves the daemon with one real `actd --once` pass
 # instead (§23 step `actd_once`). Assertions, in order:
@@ -30,22 +31,31 @@
 #   5. `python3 -m act.doctor --fresh-install --json` exit 0 once more, after
 #      the server ran.
 #
-# Informational at birth (not in the required-checks list); promoted once it
-# has been green for a while — same path the QA gates took (§58).
+# WHEN IT RUNS (CONTRACT §56.8 matrix): push to main, nightly, and on demand
+# — NOT per pull request. The owner is on the free plan, where macOS runner
+# concurrency (5 slots) is the resource dozens of parallel agent PRs queue
+# on; this job holds one slot for up to 40 minutes and its verdict is about
+# the install path as a whole, not about any single PR's diff. A red run
+# here is a bug in the one-command install (CONTRIBUTING), found within a
+# day of landing rather than blocking the PR that landed it. Informational
+# (never in the required-checks list — it has no PR context to attach to).
 name: Fresh install (macOS)
 
 on:
-  pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 11 * * *" # daily at 11:17 UTC (04:17 US Pacific) — last of the nightlies (mutation 09:03, insights 09:23, ci-nightly 10:43) so they never compete for slots
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Never cancels a running acceptance pass: every main push and every nightly
+# leaves its own verdict (the artifact below is the evidence trail).
 concurrency:
   group: fresh-install-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   fresh-install:

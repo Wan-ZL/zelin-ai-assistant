@@ -4672,7 +4672,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 | `Contract reminder`（soft） | 跑 | — | — | — |
 | `Tests on windows ×2`、`qlty check`（informational，`continue-on-error`） | **不跑** | 不跑 | `ci-nightly.yml` 每日 10:43 UTC | `gh workflow run ci-nightly.yml` |
 | `Claude PR Review` / `Codex PR Review`（advisory，付费 API） | **只在贴上 `review:ai` 标签时**（`types: [labeled]`） | — | — | `gh workflow run pr-review-claude.yml -f pr=<n>`（Codex 同） |
-| 干净机器安装验收（macOS；**预留**，随 `feat/fresh-machine-bootstrap` 落地时挂上） | 不跑 | push to main | 夜间 | dispatch |
+| `Fresh install (macOS)`（干净机器安装验收，`fresh-install.yml`，§69.4；informational） | **不跑** | push to main（dev 不跟） | 每日 11:17 UTC | `gh workflow run fresh-install.yml` |
 
 **法条**：
 
@@ -4682,7 +4682,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
 - **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
-- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底），与 dev 无关。
+- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` / `fresh-install.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底、验收 main 上的一条命令安装），与 dev 无关。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -5414,9 +5414,12 @@ cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN�
 
 ### 69.4 CI job「Fresh install (macOS)」—— 验收标准的机器版
 
-`.github/workflows/fresh-install.yml`（pull_request + push main + dispatch；
-macos-latest；40 min 顶；**出生 informational**，绿稳后升 required——与 §58 qa-gates
-同一条路）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
+`.github/workflows/fresh-install.yml`（push main + 夜间 schedule 11:17 UTC + dispatch，
+**不跑 pull_request**——§56.8 矩阵：free plan 的 5 个 macOS 槽是几十个并行 agent PR
+排队的资源，这个 job 占一个槽最多 40 min，判的是安装路径整体而不是某个 PR 的 diff；
+落地当天曾短暂带 pull_request 触发，同日改掉；macos-latest；40 min 顶；**informational**，
+永不进 required 集合——没有 PR 上下文可挂；红了 = 一条命令安装坏了，是 bug、在落地后一天内
+被发现，而不是拦住落地它的 PR）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
 一并推入让 §56.1 盖章为真）→ `bash scripts/bootstrap.sh --no-launchd --dir …`
 （用**本 checkout 的脚本**，不是 main 上的）→ 断言 §23 报告：`config=ok`（bootstrap 第 4 步已从模板建好，install.sh 记 kept）/ `runtime_python=ok` / `version=ok` / `ui=ok`（web + shell 两半都建）/
 `launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped`，且
