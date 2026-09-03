@@ -93,6 +93,28 @@ class PermissionsTestCase(_ServerCase):
         self.assertIsNone(roles["claude"]["path"])
         self.assertIsNone(roles["node"]["path"])
 
+    def test_stable_daemon_copy_wins_over_the_versioned_claude(self):
+        # §55 第五幕: the FDA subject is install.sh's stable copy when it exists;
+        # the note stops telling the owner to redo the grant after every update
+        self.patch_runner()
+        stable = self.home / "stable-bin" / "claude"
+        write_text(stable, "#!/bin/sh\n")
+        with mock.patch.dict(os.environ, {"AIASSISTANT_STABLE_CLAUDE": str(stable)}):
+            _s, obj = get_json(self.port, "/api/permissions")
+        roles = {e["role"]: e for e in obj["fda"]["executables"]}
+        self.assertEqual(roles["claude"]["path"], str(stable))
+        self.assertTrue(roles["claude"]["exists"])
+        self.assertIn("survives", roles["claude"]["note"]["en"])
+        self.assertNotIn("redo after every", roles["claude"]["note"]["en"])
+
+    def test_stable_claude_path_mirrors_the_pipeline(self):
+        # server never imports act (§49): the §55 第五幕 path is hand-mirrored and pinned here
+        from act.lib import config as act_config
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AIASSISTANT_STABLE_CLAUDE", None)
+            self.assertEqual(permissions.stable_claude_bin().relative_to(Path.home()),
+                             act_config.STABLE_CLAUDE_BIN.relative_to(act_config.STABLE_CLAUDE_BIN.parents[4]))
+
     @unittest.skipIf(_WIN, "POSIX path prefixes")
     def test_protected_location_rules(self):
         self.assertTrue(permissions.protected_location(Path("/Volumes/Storage/x")))

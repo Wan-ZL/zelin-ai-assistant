@@ -298,7 +298,7 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 
 ## 9. 终态验收清单（D25；「空白环境直接能用」的机器可见判据）
 
-**验收事件**：在一台**从未装过本软件**的 macOS 14+ 机器上，按 9.1 前提 + 9.2 命令执行一次，9.3 每一条为真 → D25 通过；任何一条不为真 = 一个 P-卡（修的是产品或安装器，不是验收清单）。已装机器的更新路径按 9.4 验。**截至本节写入（2026-09-02）这份清单尚未在真正的空白机器上执行过**——它是标尺，不是成绩；自动化落点 = `skills/test-code` 第 5 档「干净 VM 安装」层（§2.8）。数字与文件名一律指向 truth 文件，不在此手写。
+**验收事件**：在一台**从未装过本软件**的 macOS 14+ 机器上，按 9.1 前提 + 9.2 命令执行一次，9.3 每一条为真 → D25 通过；任何一条不为真 = 一个 P-卡（修的是产品或安装器，不是验收清单）。已装机器的更新路径按 9.4 验。**截至本节写入（2026-09-02）这份清单尚未在真正的空白机器上执行过**——它是标尺，不是成绩；自动化落点 = `skills/test-code` 第 5 档「干净 VM 安装」层（§2.8）与每个 PR 都跑的 CI job「Fresh install (macOS)」（CONTRACT §69.4：干净 runner、空 `$HOME`、`scripts/bootstrap.sh --no-launchd`——覆盖 9.3 中不依赖登录 launchd 会话与 TCC 的部分）。数字与文件名一律指向 truth 文件，不在此手写。
 
 ### 9.1 前提（机器上要有的东西；缺一项 install.sh 会在依赖检查处如实停下）
 - Xcode Command Line Tools（`swiftc`，壳与旧 app 都靠它）；系统 `/usr/bin/python3` 可用且装了 PyYAML（运行时白名单 = stdlib + PyYAML，`CONTRIBUTING.md`）；Node.js LTS（构建 `web/` 与 `npx screenpipe`）。
@@ -306,7 +306,8 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 - 外置卷上 clone 的机器另需 D20 家族的一次性授权（完全磁盘访问给守护解释器与 claude 的稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`——D26 / §55 第五幕，授一次即跨 claude 更新有效；`~/.local/bin/claude` 那条路每次更新都断，已废）；clone 在启动盘 `$HOME` 下则无此步。**验收机器默认 clone 在 `~/Projects/`**——TCC 项不进 9.3 的必真集。
 
 ### 9.2 一条命令（就是 README「Quickstart」那一行；不再要求先手抄 config）
-- 源码路线：`git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant && cd ~/Projects/zelin-ai-assistant && bash install.sh`（`config.yaml` 缺席时 install.sh 自动从 `config.example.yaml` 建，§23 step `config`；全程无交互提问）。
+- **bootstrap 路线（README Quickstart，CONTRACT §69.1）**：`curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash`——preflight → clone 到 `~/Projects/zelin-ai-assistant` → `config.yaml` 从模板 → `install.sh --non-interactive` → `python3 -m act.doctor --fresh-install`（9.3 的机器版：exit = 坏行数，TCC / key 归人不计）→ 打开看板（首启清单 `GET /api/setup` 列剩下要人做的）。**再跑一遍 = 更新**（9.4 的手动兜底）。
+- 源码路线（bootstrap 内部走的就是它）：`git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant && cd ~/Projects/zelin-ai-assistant && bash install.sh`（`config.yaml` 缺席时 install.sh 自动从 `config.example.yaml` 建，§23 step `config`；全程无交互提问）。
 - 安装包路线：Releases 页最新 tag 的 `ZelinAIAssistant-<tag>.pkg`（未签名，右键打开一次），postinstall 跑同一套步骤。
 - 两条路线的产物必须一致（同一 install_report 形状、同一批 launchd label、同一个壳 bundle）。
 

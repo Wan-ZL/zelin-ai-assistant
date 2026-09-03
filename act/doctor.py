@@ -11,6 +11,7 @@ for that.
     python3 -m act.doctor          # full run (ends with one cheap live claude call)
     python3 -m act.doctor --fast   # skip the live auth probe (spends no tokens)
     bash install.sh --check        # same as the full run
+    python3 -m act.doctor --fresh-install   # §69: wired / needs-you / unwired / broken
 
 One line per check — symptom first, then the one-line fix:
 
@@ -43,7 +44,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from act import llm
-from act.lib import board_server, config, deploy_state, heartbeat, platform
+from act.lib import board_server, config, deploy_state, fresh_install, heartbeat, platform
 from act.lib import version as version_lib
 from act.lib.checks import core, cron, environment, launchd, pipeline, services
 from act.lib.checks.core import FAIL, OK, WARN, CheckResult
@@ -464,13 +465,36 @@ def render(results: List[CheckResult]) -> str:
     return "\n".join(lines)
 
 
-def render_json(results: List[CheckResult]) -> str:
-    """§25 machine output: one row per check for the app's diagnostics page."""
-    rows = [{"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix,
+def rows_of(results: List[CheckResult]) -> List[dict]:
+    """§25 wire rows (one dict per check) — shared by --json and --fresh-install."""
+    return [{"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix,
              "failure_id": r.failure_id, "action_id": r.action_id}
             for r in results]
-    return json.dumps({"home": str(config.HOME), "checks": rows},
+
+
+def render_json(results: List[CheckResult]) -> str:
+    """§25 machine output: one row per check for the app's diagnostics page."""
+    return json.dumps({"home": str(config.HOME), "checks": rows_of(results)},
                       ensure_ascii=False, indent=1)
+
+
+def _print_fresh_install(results: List[CheckResult], as_json: bool) -> int:
+    """§69 summary over the same rows; exit code = broken rows (never TCC / credentials)."""
+    summary = fresh_install.summarize(rows_of(results), fresh_install.read_report(), config.HOME)
+    print(fresh_install.render_json(summary) if as_json else fresh_install.render(summary))
+    return int(summary["exit_code"])
+
+
+def _emit(results: List[CheckResult], args) -> int:
+    """Print in the requested shape; return the exit code (FAIL count, or §69 broken count)."""
+    if args.fresh:
+        return _print_fresh_install(results, args.as_json)
+    if args.as_json:
+        print(render_json(results))
+    else:
+        print("act.doctor - home: %s" % config.HOME)
+        print(render(results))
+    return min(sum(r.status == FAIL for r in results), 99)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -481,6 +505,9 @@ def _parser() -> argparse.ArgumentParser:
                         help="skip the live claude auth probe (spends no tokens)")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="machine-readable output (one row per check, §25)")
+    parser.add_argument("--fresh-install", action="store_true", dest="fresh",
+                        help="§69 summary: wired / waiting on you / unwired / broken; "
+                             "implies --fast; exit code = broken rows")
     return parser
 
 
@@ -488,13 +515,8 @@ def main(argv: Optional[List[str]] = None, probes: Optional[Probes] = None) -> i
     """Run all checks, print the report, return the number of FAILs (max 99)."""
     try:
         args = _parser().parse_args(argv)
-        results = run_checks(probes=probes, fast=args.fast)
-        if args.as_json:
-            print(render_json(results))
-        else:
-            print("act.doctor - home: %s" % config.HOME)
-            print(render(results))
-        return min(sum(r.status == FAIL for r in results), 99)
+        results = run_checks(probes=probes, fast=args.fast or args.fresh)
+        return _emit(results, args)
     except SystemExit:
         raise  # argparse --help / bad flag
     except Exception as exc:  # noqa: BLE001 - the doctor itself must never crash

@@ -836,6 +836,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - **v0.48.x 追记（add-only，§67 `skills` 步）**：新 step `skills` = install.sh 步 3b `install_skills`（跑 `scripts/skills_sync.sh`，把 `default_enabled` 的商店 skill 链进 `~/.claude/skills`、重指陈旧链接、尊重 `state/skills.json` 的决策），`ok | skipped | warn | fail`——`ok` 的 detail 是商店的一行摘要（`enabled 2 (board-agent, test-code) · actions: …`）；`skipped` = 无守护解释器 / 脚本缺席；**`fail` 只对 exit 3（`skills/index.yaml` 坏——仓库坏了，进 `failed_deploy_steps`）**；其余非零 = `warn:exit N — <stderr 尾行>`，不进退出码（环境问题回滚治不了，§56.5）。判例 `tests/test_install_skills_step.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
+- **§69 追记（add-only；`install.sh --no-launchd`，CI 验收与 bootstrap 干跑用）**：`launchd` step 记 `skipped`，detail **以字面 `--no-launchd` 开头**（`--no-launchd: no agent loaded; one actd pass run instead`）——这个字面是 doctor `--fresh-install`（`act/lib/fresh_install.report_says_no_launchd`）判定「调度器是按要求没接、不是坏了」的唯一依据，改文案先改读者；`cron` step 同样 `skipped`（`--no-launchd: crontab not touched`，crontab 一字不读不写）；新 step **`actd_once`** = 用守护解释器跑一次 `python3 -m act.actd --once`（cwd = repo、`AIASSISTANT_HOME` = repo，首 pass 的 store2 激活 / dashboard / heartbeat 全部真写），`ok:one pass in <n>s with <解释器>` / `fail:… exit <rc>; see ~/Library/Logs/zelin-ai-assistant/actd-once.log` / `skipped:no daemon interpreter`；**`actd_once=fail` 进 `failed_deploy_steps` 的退出码**——一个在这台机器上跑不完一个 pass 的 daemon 到了 launchd 下就是 crash-loop，是真失败步。任何模式都可叠加该 flag；未知 flag = 用法错误 exit 2（在任何副作用之前）。判例 `tests/test_install_no_launchd.py`。
 
 ---
 
@@ -1040,7 +1041,7 @@ WARN；其他厂商前缀永不算）。**v0.48.11 追加（§59）**：`claude 
 
 **doctor 机器输出**：`python3 -m act.doctor --json [--fast]` →
 `{"home": str, "checks": [{name, status(ok|warn|fail), detail, fix,
-failure_id, action_id}]}`；exit code 仍 = FAIL 数。app 诊断区渲染 non-ok 行：
+failure_id, action_id}]}`；exit code 仍 = FAIL 数。 **§69 追记（add-only）**：第三种形态 `python3 -m act.doctor --fresh-install [--json]`（= `bash install.sh --check --fresh-install`）——同一批行按「wired / human / unwired / broken / notes」五桶分类 + 带本机路径的 `manual_steps[]`，**exit code = broken 桶的行数**（TCC 授权与凭证永不计入）；隐含 `--fast`。分桶目录（failure_id 与行名两张表）住 `act/lib/fresh_install.py`，行名或 failure_id 改名必须同步那两张表。app 诊断区渲染 non-ok 行：
 人话句子（FailureCatalog）+ 对症按钮；raw detail/fix 收进 tooltip 与「完整报告」。
 app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录制模式下死亡）时
 **每次会话自动跑一次** `--fast` 版（零成本，不打真实 claude 调用）。
@@ -4142,6 +4143,16 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。
 
+11. **首启入口与 bootstrap 的接力（§69 / §68.5）**：`scripts/bootstrap.sh` 装完
+    `open` 看板 bundle（按 `CFBundleIdentifier` 认壳，不按文件夹名）；看板按
+    `GET /api/setup` 的 `needed`（§68.5：config.yaml 缺席或三把主凭证一把都没有，
+    且未写完成标记）自动跳到 `?page=setup` 首次运行向导——空白机器上 bootstrap
+    第 4 步已建好 config.yaml，所以向导从「后台进程的磁盘授权」一步开始，权限体检页
+    （`GET /api/permissions`）的 claude 一条**优先给出 §55 第五幕的稳定副本**
+    （`server/permissions.py` 镜像 `config.stable_claude_bin()`，含
+    `AIASSISTANT_STABLE_CLAUDE` 覆写；判例 `tests/test_server_permissions_setup.py`）。
+    命令行侧的同一份清单 = `python3 -m act.doctor --fresh-install`（§69.3）。
+
 ### 54.2 server 生命周期：launchd 托管，壳只连接（v0.48.18；live 事故 2026-09-02）
 
 事故：owner 机器上守护进程跑在 v0.48.12，而看板 UI **从未被 install.sh 构建或
@@ -4511,6 +4522,14 @@ label，孤儿结构性不可见。自本节起：
 
 # v0.48.x additions（v-next-2 round：合并即上岗）
 
+- **§69 追记（fresh machine 入口）**：`scripts/bootstrap.sh` 在 clone 之前就按本节
+  的物理路径规则判 checkout 目录是否在 `$HOME` 之外，是则在第 2 步打出 per-binary
+  TCC 警告（守护解释器与 claude 各自需要完全磁盘访问）；`python3 -m act.doctor
+  --fresh-install` 的 `manual_steps` 永远列出三条完全磁盘访问路径（runtime.json
+  的解释器 / daemons 的 claude——第五幕的**稳定副本**优先，其次 `claude_bin` / `/usr/sbin/cron`），repo 在 `$HOME` 之外时标
+  **REQUIRED**，之内时标「仅当 repo 或任务仓库在受保护位置时需要」——本节的
+  事故史就是这几行文案的来源。
+
 ## 56. 合并即上岗：自动发版与自动部署（decision D17）
 
 owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`.github/workflows/ci.yml` + `.github/workflows/ci-nightly.yml` + `.github/workflows/pr-review-claude.yml` / `pr-review-codex.yml`（56.8）、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
@@ -4608,6 +4627,12 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
   - **旧 app 一根手指不碰**（D3）：`ui` 步的每条路径都只认 `Zelin AI Board.app`；判例把 `Zelin's AI Assistant.app` 放在旁边、断言字节与 mtime 不变。
   - **2026-09-02 追记（§54 名字互换，改写上两条的名字）**：壳的 bundle 文件夹改为 **`Zelin's AI Assistant.app`**（staged 名 `.Zelin's AI Assistant.app.staged`），旧 app 的家改为 **`Zelin's AI Assistant (old).app`**。「一根手指不碰」精确化为「**只搬不改**」：产品路径上的 bundle 若 id 是 `com.zelin.ai-engineer`，装壳前同目录 `mv` 到 `(old).app`（`(old)` 已在 → 保留 `(old)`、多出来的那份 rename 停到 `(old <ts>).app` 再尽力 rm；mv 失败 → shell 半 `fail`，绝不 rm、绝不盖）；bundle 内容永不编辑（签名封条）；判例断言搬过去的文件字节与 mtime 不变。新 bundle 装好后删掉 id 为 `com.zelin.ai-board` 的老壳 `Zelin AI Board.app`。detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（只在本轮真搬了时）。细则见 §54 追记。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
+
+- **`--no-launchd` 永不出现在自动部署路径（§69）**：`scripts/auto-deploy.sh` 只跑
+  `install.sh --non-interactive`；`--no-launchd` 是 CI 验收 job
+  （`.github/workflows/fresh-install.yml`）与 bootstrap 干跑的形态——它证明的是
+  「这台机器能装、daemon 能跑完一个 pass」，不是「在跑」。判例
+  `tests/test_install_no_launchd.py` 钉 `scripts/auto-deploy.sh` 的 install.sh 调用不含它。
 
 ### 56.6 PR 分支自动跟随 main（auto-update-branch；2026-09-02，owner：「一旦一个 main 弄了，其他的就直接自动 rebase」）
 
@@ -5309,3 +5334,100 @@ Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`�
 - **1.13 终端**：走 `.command` + `open`，不是 Apple Events 到 Ghostty / iTerm2（无 `NSAppleEventsUsageDescription`，无终端 app 偏好）——Terminal.app 一种；owner 终端偏好留作 P5 提案输入。
 - **1.15 会话索引搜索**（`state/search_index.json` 合进 ⌘F）与 **1.16 看板动画**：未做（s4 自评 defer；搜索索引另 PR）。
 - **Tier 2 同步 / 配对**（iPhone 联动 QR）：随 §31 syncd 面另议，不在设置页。
+
+
+## 69. 一条命令装到能用：fresh-machine bootstrap + macOS CI 验收（owner 2026-09-02 验收标准）
+
+owner 的最终验收标准原话：「我能够在另一台电脑上起一个空白环境，或者在其他电脑上
+更新这个软件，就能够直接使用。」本节把它做成一条命令、一个机器可读的判决、一个
+CI job。执法：`scripts/bootstrap.sh`、`install.sh --no-launchd`、
+`act/lib/fresh_install.py` + `act.doctor --fresh-install`、
+`.github/workflows/fresh-install.yml`；看板侧的首启入口是 §68.5 的向导（本节不另造
+第二套，§54.1 第 11 项记接力方式）；判例 `tests/integration/test_bootstrap_script.py`
+（假工具 + 真 git 两组）、`tests/test_install_no_launchd.py`、
+`tests/test_fresh_install_summary.py`。
+
+### 69.1 `scripts/bootstrap.sh` —— 同一条命令既是安装也是更新
+
+```
+curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
+curl -fsSL …/scripts/bootstrap.sh | bash -s -- ~/Code/zelin-ai-assistant     # 自选目录
+bash scripts/bootstrap.sh [--dir PATH] [--ref BRANCH] [--no-open] [--no-launchd] [PATH]
+```
+
+- **顺序固定**：① preflight（只支持 macOS，其它 OS 指向 `install-linux.sh` /
+  `install.ps1` 退出 2；`xcode-select -p` 判 CLT——**永不**用会弹安装对话框的探法，
+  缺则打出 `xcode-select --install` 退出 3；git 4；python3 5；claude 缺席只 warn）
+  → ② checkout 目录（默认 `~/Projects/zelin-ai-assistant`；位置参数 / `--dir` /
+  `ZAI_BOOTSTRAP_DIR` / 字面 `~/` 皆可；物理路径在 `$HOME` 之外 → §55 警告）→
+  ③ clone 或更新 → ④ `config.yaml` 缺则从 `config.example.yaml` 复制、**存在永不
+  覆盖** → ⑤ `bash install.sh --non-interactive [--no-launchd]`，stdin 接
+  `/dev/null` → ⑥ `python3 -m act.doctor --fresh-install`（用 install.sh 刚 pin 的
+  解释器）→ ⑦ `open` 看板 bundle（`--no-open` / `ZAI_BOOTSTRAP_NO_OPEN=1` 跳过；
+  没 bundle 就指向 `http://127.0.0.1:<port>/`）。
+- **更新即再跑一遍**：目录已是本 repo 的 checkout（origin 含 `zelin-ai-assistant`
+  或等于 `ZAI_BOOTSTRAP_REPO_URL`）→ `fetch --tags --force` → `checkout <ref>` →
+  `merge --ff-only origin/<ref>`；**本地改动 = 不动代码只装现状**（`local-edits`）；
+  fetch 失败 = 装现状（`offline`）；分叉 = 拒绝（9）。目录存在但**不是 git
+  checkout 且非空**、或是**别的 repo** 的 checkout → 拒绝（7），一个字节不碰——本
+  脚本永不销毁它没创建的东西。
+- **stdin 纪律**：脚本本体经 `curl | bash` 从 stdin 到达，任何读 stdin 的子进程都
+  会吃掉脚本正文——所以整个脚本包在 `main()` 里、每个 git / install.sh / doctor 调用
+  都 `</dev/null`；判例用 `bash -s --` 喂脚本正文复现这条管道。
+- **退出码**：preflight 2–6 / 目录拒绝 7 / clone 或 checkout 失败 8 / 分叉 9 /
+  install.sh 缺失 10；否则 = install.sh 的失败步数；再否则 = doctor `--fresh-install`
+  的 broken 行数；0 = 装好了、没坏的——TCC 授权与凭证可能仍待办，但那是人的事，
+  已逐条列出。
+- **测试缝**：一切外部工具经 PATH（假 git / xcode-select / uname / sw_vers /
+  open / python3 可前置）；`ZAI_BOOTSTRAP_REPO_URL` 把 clone 指向任意地址（CI 用
+  本地 bare repo）；`AIASSISTANT_UI_APPS_DIR` 与 install.sh 同一把 seam。
+
+### 69.2 `install.sh` 对「真空环境」的承诺
+
+没有 config.yaml、没有 secrets、没有 state/、没有 claude、没有 node、没有 PyYAML
+的机器是每种模式的合法输入：config 来自模板；PyYAML 缺则 `pip install --user`
+（PEP 668 回退）；claude / node / gh 缺席 = warn + 修法一句（`--non-interactive`
+下**永不**停下来问）；雷达在凭证到位前静默待机；UI 步在 node / swiftc 缺席时
+`skipped` 不算失败（§56.5）。`--no-launchd`（§23 追记）把步 5/6 换成一次
+`actd --once` 的证明。flag 可叠加、未知 flag exit 2。收尾横幅改为「剩下的是你的」
+清单，机器版 = `bash install.sh --check --fresh-install`。
+
+### 69.3 `act.doctor --fresh-install` —— 机器可读的「还差什么」
+
+`act/lib/fresh_install.py`（stdlib + act.lib，纯函数）把 §25 的 doctor 行分五桶：
+**wired**（OK 行）→ **unwired**（仅当 §23 `launchd` step 带 `--no-launchd` 字面：
+`agent_unloaded` / `cron_missing` / `dashboard_stale` / `actd_stalled` /
+`board_server_down` 与 launchd·cron·dashboard·heartbeat·board server 行名族——按
+要求没接，不是坏）→ **human**（failure id 目录：`claude_cli_missing` /
+`claude_cli_outdated` / `claude_auth_failed` / `claude_blind` / `interpreter_blind`
+/ `deploy_blind_tcc` / `cron_tcc_blocked` / `cron_fda_blocked` /
+`ui_build_tcc_blocked` / `node_missing` / `engine_dead`；行名目录：anthropic key /
+claude CLI / daemon claude / claude auth / obsidian vault / screenpipe db /
+node/npx / gh CLI / launchd claude / launchd volume access / cron disk access /
+cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN）。
+`manual_steps[]` 按序：打开看板（bundle → 浏览器 → 「先 brew install node」三选一）
+/ 装 Claude Code（claude 行非 OK 时）/ API key 文件命令（key 行非 OK 时）/ 三条
+完全磁盘访问路径（§55 追记；claude 一条 = 第五幕的稳定副本 `config.stable_claude_bin()`，§23
+`stable_claude` ok 或副本已在场即用它，否则退到 `claude_bin`）/ 接线守护（--no-launchd 时）。**exit = len(broken)**
+（≤ 99）。两张目录表是法条的一部分：新增 doctor 行或 failure id 时先问「这是人的
+事还是代码的事」，答案写进表。
+
+### 69.4 CI job「Fresh install (macOS)」—— 验收标准的机器版
+
+`.github/workflows/fresh-install.yml`（pull_request + push main + dispatch；
+macos-latest；40 min 顶；**出生 informational**，绿稳后升 required——与 §58 qa-gates
+同一条路）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
+一并推入让 §56.1 盖章为真）→ `bash scripts/bootstrap.sh --no-launchd --dir …`
+（用**本 checkout 的脚本**，不是 main 上的）→ 断言 §23 报告：`config=ok`（bootstrap 第 4 步已从模板建好，install.sh 记 kept）/ `runtime_python=ok` / `version=ok` / `ui=ok`（web + shell 两半都建）/
+`launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped`，且
+`store2_truth.json` + `actd.heartbeat` + `web/dist/index.html` 在 → 用 pin 的解释器
+起 `python3 -m server`：`/api/health` 200、`/api/board` 200 JSON 带 `generated_at`、
+`/api/setup`（§68.5）`needed=true` / `done=false` / `config_exists=true` 且无凭证、
+`/api/permissions` 的 FDA 清单含存在的 `daemon_python` 与一条 `claude`、`/` 200 →
+`doctor --fresh-install --json` **exit 0** →
+第二次 bootstrap = `updated`、config.yaml 字节不变、仍在 main → 证据（两份
+bootstrap 日志 / server 日志 / setup.json / permissions.json / doctor 五桶 / install_report /
+`~/Library/Logs/zelin-ai-assistant/*.log`）上传 artifact `fresh-install-evidence`。
+这个 job 绿 = 「另一台电脑、空白环境、一条命令、直接能用（剩 TCC 与 key 两件人
+手的事）」成立。
+

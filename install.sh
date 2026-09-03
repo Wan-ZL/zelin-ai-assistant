@@ -64,6 +64,22 @@
 #   because nothing built it) — the shell spawns nothing (the server is a
 #   launchd agent), so relaunching it costs nobody a recording. The §23 report
 #   records mode "non-interactive".
+#
+# --no-launchd (CONTRACT §69; combines with the modes above): wire NO scheduler
+#   — step 5 loads no launchd agent (`launchd=skipped`), step 6 writes no
+#   crontab (`cron=skipped`) — and instead run ONE `python3 -m act.actd --once`
+#   pass with the daemon interpreter (§23 step `actd_once`: ok | fail). This is
+#   what the CI acceptance job (.github/workflows/fresh-install.yml) and a
+#   scripts/bootstrap.sh dry run use: everything the installer can prove
+#   without owning a login session — config, interpreter gates, version stamp,
+#   state dirs, UI build, one real daemon pass — is proven; nothing is left
+#   running. A product install never passes it.
+#
+# A truly EMPTY environment (no config.yaml, no secrets, no state/, no claude,
+# no node) is a supported input in every mode: config comes from
+# config.example.yaml, the missing tools are warns with the fix spelled out,
+# the radars idle until credentials exist, and `python3 -m act.doctor
+# --fresh-install` lists what still needs the human (§69).
 set -uo pipefail
 
 # Physical path of a directory — every symlink resolved (CONTRACT §55).
@@ -250,23 +266,43 @@ pinned_python() {
         "$REPO_ROOT/config/runtime.json"
 }
 
-# --check: delegate to act/doctor.py — re-validates every runtime assumption
-# (deps, key resolution, launchd agents alive, cron lines, dashboard freshness)
-# symptom-first, one fix line per finding. Exit code = number of FAILs.
+# --check [doctor flags…]: delegate to act/doctor.py — re-validates every
+# runtime assumption (deps, key resolution, launchd agents alive, cron lines,
+# dashboard freshness) symptom-first, one fix line per finding. Exit code =
+# number of FAILs. Anything after --check goes to the doctor verbatim
+# (`bash install.sh --check --fresh-install` = the §69 what-is-left summary).
 if [ "${1:-}" = "--check" ]; then
     # prefer the pinned daemon interpreter — it is what launchd/cron run
     DOCTOR_PY="$(command -v python3 || echo /usr/bin/python3)"
     RJ_PY="$(pick_python "$(pinned_python)" "$DOCTOR_PY" /usr/bin/python3 || true)"
     [ -n "$RJ_PY" ] && DOCTOR_PY="$RJ_PY"
     cd "$REPO_ROOT" || exit 1
-    AIASSISTANT_HOME="$REPO_ROOT" exec "$DOCTOR_PY" -m act.doctor
+    shift
+    AIASSISTANT_HOME="$REPO_ROOT" exec "$DOCTOR_PY" -m act.doctor "$@"
 fi
 
+# Flags combine (`--non-interactive --no-launchd` is what the CI acceptance run
+# and scripts/bootstrap.sh pass); an unknown flag is a usage error, never a
+# silent no-op — a typo in an unattended caller must not run the wrong mode.
 PKG_POSTINSTALL=0
-[ "${1:-}" = "--pkg-postinstall" ] && PKG_POSTINSTALL=1
 # CONTRACT §56 — never-prompting mode for scripts/auto-deploy.sh (see header).
 NON_INTERACTIVE=0
-[ "${1:-}" = "--non-interactive" ] && NON_INTERACTIVE=1
+# CONTRACT §69 — no scheduler wiring: step 5 loads no launchd agent and step 6
+# writes no crontab; instead one `python3 -m act.actd --once` pass proves the
+# daemon runs in this environment (§23 step `actd_once`). For CI runners,
+# containers and "just show me it works" runs — a product install wants launchd.
+NO_LAUNCHD=0
+for _arg in "$@"; do
+    case "$_arg" in
+        --pkg-postinstall) PKG_POSTINSTALL=1 ;;
+        --non-interactive) NON_INTERACTIVE=1 ;;
+        --no-launchd) NO_LAUNCHD=1 ;;
+        *)
+            echo "install.sh: unknown flag '$_arg'" >&2
+            echo "usage: bash install.sh [--non-interactive] [--no-launchd] [--pkg-postinstall] | --check [doctor flags]" >&2
+            exit 2 ;;
+    esac
+done
 
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
@@ -718,7 +754,7 @@ install_shell_app() {
     [ "$UI_LEGACY_MOVED" -eq 1 ] && UI_SHELL_DETAIL="$UI_SHELL_DETAIL; legacy app moved to \"$UI_LEGACY_APP_NAME.app\""
     ok "ui: board shell built + installed to $UI_APP_PATH (${_shell_s}s)"
     if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
-        if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        if [ "$NON_INTERACTIVE" -eq 1 ] && [ "${NO_LAUNCHD:-0}" -eq 0 ]; then
             info "ui: the shell app is running — relaunched after the server agent reloads (step 5)"
         else
             info "ui: the shell app is running — quit + reopen it to pick up this build: open \"$UI_APP_PATH\""
@@ -1427,39 +1463,39 @@ install_ui
 # radars are safe to load before credentials exist — they no-op and record a
 # skip_reason until configured.
 echo ""
-echo "==> 5. launchd agents"
 LAUNCHD_FAILED=0
-mkdir -p "$LA_DIR"
-info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT server_port=$SERVER_PORT"
 # v0.18.1: the Obsidian radar now runs ONLY through the cron ingest chain
 # (step 6). Its old launchd agent was TCC-blocked from ~/Documents and only
 # ever saw an empty vault — retire any previously-installed copy so an upgrade
 # doesn't leave a redundant agent that logs empty passes forever.
 RETIRED_RADAR_LABEL="com.zelin.aiassistant.radar"
-launchd_retire "$RETIRED_RADAR_LABEL"
 # v0.21.0: the iMessage transport was removed (Slack's phone-approval role too;
 # the Mac app is now the sole approval surface). Its launchd agent is no longer
 # shipped — retire any previously-installed copy so an upgrade unloads the
 # already-loaded agent instead of leaving it polling chat.db forever.
 RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
-launchd_retire "$RETIRED_IMESSAGE_LABEL"
-# §55 retire assertion + orphan report (2026-08-31 audit L3): a retired label
-# that survived bootout is a FAIL step; any other prefixed label with no
-# template is reported (not touched) so it stops being structurally invisible.
-if [ -n "$RETIRED_STILL_LOADED" ]; then
-    report_step "launchd_retired" "fail" "still loaded:$RETIRED_STILL_LOADED"
-else
-    report_step "launchd_retired" "ok"
-fi
-ORPHAN_LABELS="$(launchd_orphans | tr '\n' ' ' | sed 's/ *$//')"
-if [ -n "$ORPHAN_LABELS" ]; then
-    warn "launchd agent(s) with our prefix but no template in act/launchd: $ORPHAN_LABELS"
-    info "  each keeps running/logging until unloaded — launchctl bootout gui/$UID_NUM/<label>;"
-    info "  rm ~/Library/LaunchAgents/<label>.plist   (python3 -m act.doctor lists them too)"
-    report_step "launchd_orphans" "warn" "$ORPHAN_LABELS"
-else
-    report_step "launchd_orphans" "ok"
-fi
+# Retire the two legacy labels, then the §55 retire assertion + orphan report
+# (2026-08-31 audit L3): a retired label that survived bootout is a FAIL step;
+# any other prefixed label with no template is reported (not touched) so it
+# stops being structurally invisible.
+retire_legacy_launchd_agents() {
+    launchd_retire "$RETIRED_RADAR_LABEL"
+    launchd_retire "$RETIRED_IMESSAGE_LABEL"
+    if [ -n "$RETIRED_STILL_LOADED" ]; then
+        report_step "launchd_retired" "fail" "still loaded:$RETIRED_STILL_LOADED"
+    else
+        report_step "launchd_retired" "ok"
+    fi
+    ORPHAN_LABELS="$(launchd_orphans | tr '\n' ' ' | sed 's/ *$//')"
+    if [ -n "$ORPHAN_LABELS" ]; then
+        warn "launchd agent(s) with our prefix but no template in act/launchd: $ORPHAN_LABELS"
+        info "  each keeps running/logging until unloaded — launchctl bootout gui/$UID_NUM/<label>;"
+        info "  rm ~/Library/LaunchAgents/<label>.plist   (python3 -m act.doctor lists them too)"
+        report_step "launchd_orphans" "warn" "$ORPHAN_LABELS"
+    else
+        report_step "launchd_orphans" "ok"
+    fi
+}
 # v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
 # ONLY when its source is enabled per the single source of truth
 # (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
@@ -1500,81 +1536,133 @@ print("on" if on else "off")
 raise SystemExit(0 if on else 3)') 2>/dev/null )" || rc=$?
     ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
 }
-for plist in "$REPO_ROOT"/act/launchd/*.plist; do
-    [ -e "$plist" ] || continue
-    base="$(basename "$plist")"
-    label="${base%.plist}"
-    dest="$LA_DIR/$base"
-    case "$label" in
-        *.gmailradar) plist_source="gmail" ;;
-        *.slackradar) plist_source="slack" ;;
-        *) plist_source="" ;;
-    esac
-    if [ -n "$plist_source" ] && ! radar_source_enabled "$plist_source"; then
-        info "$plist_source source is switched off — not installing $label"
-        launchd_unload "$dest" "$label"
-        rm -f "$dest"
-        continue
-    fi
-    if [ "$label" = "$AUTODEPLOY_LABEL" ]; then
-        if ! autodeploy_wanted; then
-            info "auto-deploy is off (not a git checkout, or features.auto_deploy: false) — not installing $label"
+# Step 5 proper (a function so --no-launchd can take the one-pass path below
+# instead): render + load every template that its gate allows, verify each
+# really spawned, record the §23 `launchd` step, then the §56.5 relaunch.
+install_launchd_agents() {
+    echo "==> 5. launchd agents"
+    mkdir -p "$LA_DIR"
+    info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT server_port=$SERVER_PORT"
+    retire_legacy_launchd_agents
+    for plist in "$REPO_ROOT"/act/launchd/*.plist; do
+        [ -e "$plist" ] || continue
+        base="$(basename "$plist")"
+        label="${base%.plist}"
+        dest="$LA_DIR/$base"
+        case "$label" in
+            *.gmailradar) plist_source="gmail" ;;
+            *.slackradar) plist_source="slack" ;;
+            *) plist_source="" ;;
+        esac
+        if [ -n "$plist_source" ] && ! radar_source_enabled "$plist_source"; then
+            info "$plist_source source is switched off — not installing $label"
             launchd_unload "$dest" "$label"
             rm -f "$dest"
             continue
         fi
-        if [ "${AIASSISTANT_AUTODEPLOY_ACTIVE:-0}" = "1" ]; then
-            # We ARE that agent's process tree right now: bootout would kill
-            # the deploy mid-flight. Re-render only; a changed template takes
-            # effect on the next manual `bash install.sh`.
-            render_launchd_plist "$plist" "$dest"
-            info "$label re-rendered; reload deferred (this install.sh runs inside it)"
-            continue
+        if [ "$label" = "$AUTODEPLOY_LABEL" ]; then
+            if ! autodeploy_wanted; then
+                info "auto-deploy is off (not a git checkout, or features.auto_deploy: false) — not installing $label"
+                launchd_unload "$dest" "$label"
+                rm -f "$dest"
+                continue
+            fi
+            if [ "${AIASSISTANT_AUTODEPLOY_ACTIVE:-0}" = "1" ]; then
+                # We ARE that agent's process tree right now: bootout would kill
+                # the deploy mid-flight. Re-render only; a changed template takes
+                # effect on the next manual `bash install.sh`.
+                render_launchd_plist "$plist" "$dest"
+                info "$label re-rendered; reload deferred (this install.sh runs inside it)"
+                continue
+            fi
         fi
-    fi
-    if [ "$label" = "$SERVER_LABEL" ] && ! launchd_label_loaded "$label" \
-        && board_server_answering "$SERVER_PORT"; then
-        # §54: something not under launchd already answers on the port (the
-        # shell's spawn fallback from before this version, or a hand-run
-        # `python3 -m server`). The agent is loaded anyway — it takes the port
-        # over as soon as that process exits — but say so: until then the
-        # job exits 75 every throttle cycle and doctor's `board server` row
-        # stays red.
-        warn "a board server not managed by launchd answers on 127.0.0.1:$SERVER_PORT — quit the old shell app / hand-started 'python3 -m server' so $label can take the port"
-        SERVER_PORT_BUSY=1
-    fi
-    # unload any previous version first (idempotent upgrades); cap the agent's
-    # launchd log while launchd holds no fd on it (§55)
-    launchd_unload "$dest" "$label"
-    cap_launchd_log "$label"
-    render_launchd_plist "$plist" "$dest"
-    if launchd_load "$dest"; then
-        ok "loaded $label"
-        LOADED_LABELS="$LOADED_LABELS $label"
-    else
-        warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
-        LAUNCHD_FAILED=$((LAUNCHD_FAILED + 1))
-    fi
-done
-# give launchd a moment to spawn the jobs, then verify they really run
-if [ -n "$LOADED_LABELS" ]; then
-    sleep 2
-    for label in $LOADED_LABELS; do
-        verify_launchd_agent "$label"
+        if [ "$label" = "$SERVER_LABEL" ] && ! launchd_label_loaded "$label" \
+            && board_server_answering "$SERVER_PORT"; then
+            # §54: something not under launchd already answers on the port (the
+            # shell's spawn fallback from before this version, or a hand-run
+            # `python3 -m server`). The agent is loaded anyway — it takes the port
+            # over as soon as that process exits — but say so: until then the
+            # job exits 75 every throttle cycle and doctor's `board server` row
+            # stays red.
+            warn "a board server not managed by launchd answers on 127.0.0.1:$SERVER_PORT — quit the old shell app / hand-started 'python3 -m server' so $label can take the port"
+            SERVER_PORT_BUSY=1
+        fi
+        # unload any previous version first (idempotent upgrades); cap the agent's
+        # launchd log while launchd holds no fd on it (§55)
+        launchd_unload "$dest" "$label"
+        cap_launchd_log "$label"
+        render_launchd_plist "$plist" "$dest"
+        if launchd_load "$dest"; then
+            ok "loaded $label"
+            LOADED_LABELS="$LOADED_LABELS $label"
+        else
+            warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
+            LAUNCHD_FAILED=$((LAUNCHD_FAILED + 1))
+        fi
     done
-fi
-if [ "$LAUNCHD_FAILED" -gt 0 ]; then
-    report_step "launchd" "fail" "$LAUNCHD_FAILED agent(s) failed to load"
-elif [ -n "$LOADED_LABELS" ]; then
-    report_step "launchd" "ok" "$(echo "$LOADED_LABELS" | wc -w | tr -d ' ') agents loaded"
+    # give launchd a moment to spawn the jobs, then verify they really run
+    if [ -n "$LOADED_LABELS" ]; then
+        sleep 2
+        for label in $LOADED_LABELS; do
+            verify_launchd_agent "$label"
+        done
+    fi
+    if [ "$LAUNCHD_FAILED" -gt 0 ]; then
+        report_step "launchd" "fail" "$LAUNCHD_FAILED agent(s) failed to load"
+    elif [ -n "$LOADED_LABELS" ]; then
+        report_step "launchd" "ok" "$(echo "$LOADED_LABELS" | wc -w | tr -d ' ') agents loaded"
+    else
+        report_step "launchd" "skipped" "no agents to load"
+    fi
+    if [ "$SERVER_PORT_BUSY" -eq 1 ]; then
+        report_step "board_server_port" "warn" "127.0.0.1:$SERVER_PORT answered before $SERVER_LABEL loaded - quit the old shell app / hand-run server so launchd can take the port"
+    fi
+    # §56.5 relaunch rule — only now, with the server agent back under launchd
+    relaunch_shell_app
+}
+
+# --no-launchd (CONTRACT §69): the one-pass proof that stands in for step 5's
+# resident agents. Runs the daemon exactly as launchd would (same interpreter,
+# same AIASSISTANT_HOME, cwd = repo) for a single pass — first-pass store2
+# activation, dashboard + heartbeat writes included — under the UI wall-clock
+# budget; stdout/stderr go to ~/Library/Logs/zelin-ai-assistant/actd-once.log
+# (capped, 防腐 #4). §23 step `actd_once`: ok | fail (a daemon that cannot
+# finish one pass here would crash-loop under launchd — a real failed step) |
+# skipped (no daemon interpreter — runtime_python already reported that fail).
+ACTD_ONCE_LOG="$HOME/Library/Logs/zelin-ai-assistant/actd-once.log"
+run_actd_once() {
+    echo "==> 5. launchd agents — skipped (--no-launchd); running one actd pass instead"
+    report_step "launchd" "skipped" "--no-launchd: no agent loaded; one actd pass run instead"
+    _py="${RUNTIME_PY:-}"
+    if [ -z "$_py" ] || [ ! -x "$_py" ]; then
+        warn "actd --once skipped: no usable daemon interpreter"
+        report_step "actd_once" "skipped" "no daemon interpreter"
+        return 0
+    fi
+    mkdir -p "$(dirname "$ACTD_ONCE_LOG")"
+    if [ -f "$ACTD_ONCE_LOG" ] && [ "$(wc -c < "$ACTD_ONCE_LOG" | tr -d ' ')" -gt "$UI_LOG_CAP_BYTES" ]; then
+        tail -c "$((UI_LOG_CAP_BYTES / 2))" "$ACTD_ONCE_LOG" > "$ACTD_ONCE_LOG.tmp" && mv "$ACTD_ONCE_LOG.tmp" "$ACTD_ONCE_LOG"
+    fi
+    printf '\n==== install.sh actd --once %s ====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$ACTD_ONCE_LOG"
+    _t0="$(ui_now)"
+    (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" ui_run_with_timeout "$UI_BUDGET_S" "$_py" -m act.actd --once >> "$ACTD_ONCE_LOG" 2>&1)
+    _rc=$?
+    _s=$(( $(ui_now) - _t0 ))
+    if [ "$_rc" -eq 0 ]; then
+        ok "actd --once: one full pass in ${_s}s ($_py)"
+        report_step "actd_once" "ok" "one pass in ${_s}s with $_py"
+    else
+        warn "actd --once failed (exit $_rc) — see $ACTD_ONCE_LOG"
+        tail -n 15 "$ACTD_ONCE_LOG" 2>/dev/null | sed 's/^/         /'
+        report_step "actd_once" "fail" "python3 -m act.actd --once exit $_rc; see $ACTD_ONCE_LOG"
+    fi
+}
+
+if [ "$NO_LAUNCHD" -eq 1 ]; then
+    run_actd_once
 else
-    report_step "launchd" "skipped" "no agents to load"
+    install_launchd_agents
 fi
-if [ "$SERVER_PORT_BUSY" -eq 1 ]; then
-    report_step "board_server_port" "warn" "127.0.0.1:$SERVER_PORT answered before $SERVER_LABEL loaded - quit the old shell app / hand-run server so launchd can take the port"
-fi
-# §56.5 relaunch rule — only now, with the server agent back under launchd
-relaunch_shell_app
 
 # --------------------------------------------------------------------------
 echo ""
@@ -1651,40 +1739,52 @@ apply_crontab() {
     return 0
 }
 
-CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
-NEW_CRON="$CURRENT_CRON"
+# Compose the target crontab from the current one (idempotent merges), then
+# apply_crontab writes it — or, under --no-launchd (§69), nothing is read or
+# written: a scheduler-less run leaves the user's crontab exactly as found.
+install_cron_lines() {
+    CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
+    NEW_CRON="$CURRENT_CRON"
 
-# idempotent: replace any legacy screenpipe-export line with the unified chain
-if printf '%s\n' "$NEW_CRON" | grep -Fq "$INGEST_CHAIN"; then
-    ok "ingest cron chain already installed"
+    # idempotent: replace any legacy screenpipe-export line with the unified chain
+    if printf '%s\n' "$NEW_CRON" | grep -Fq "$INGEST_CHAIN"; then
+        ok "ingest cron chain already installed"
+    else
+        NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'screenpipe-export\.sh' || true)"
+        NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$INGEST_CHAIN")"
+        ok "ingest cron chain installed (legacy screenpipe-export lines replaced)"
+    fi
+
+    # idempotent: exact line present -> keep; otherwise replace any older
+    # act.digest line (the pre-D19 Monday-only `--now` form would keep forcing a
+    # weekly card past an `off` knob) with the daily self-gating one.
+    if printf '%s\n' "$NEW_CRON" | grep -Fq "$DIGEST_LINE"; then
+        ok "digest cron already installed"
+    else
+        NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'act\.digest' || true)"
+        NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$DIGEST_LINE")"
+        ok "digest cron installed (daily 09:07; cadence = digest.frequency, default off)"
+    fi
+
+    # idempotent: append the hourly telemetry sync if absent (default-on anonymous
+    # usage stats, docs/TELEMETRY.md — the sync is a silent no-op when the user
+    # opts out, so the line is harmless to keep)
+    if printf '%s\n' "$NEW_CRON" | grep -q 'act\.analytics_sync'; then
+        ok "telemetry sync cron already installed"
+    else
+        NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$TELEMETRY_LINE")"
+        ok "telemetry sync cron installed (hourly; opt out in app Settings or telemetry.enabled: false)"
+    fi
+
+    apply_crontab
+}
+
+if [ "$NO_LAUNCHD" -eq 1 ]; then
+    info "crontab left untouched (--no-launchd): the ingest chain, digest and telemetry lines are not installed"
+    report_step "cron" "skipped" "--no-launchd: crontab not touched"
 else
-    NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'screenpipe-export\.sh' || true)"
-    NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$INGEST_CHAIN")"
-    ok "ingest cron chain installed (legacy screenpipe-export lines replaced)"
+    install_cron_lines
 fi
-
-# idempotent: exact line present -> keep; otherwise replace any older
-# act.digest line (the pre-D19 Monday-only `--now` form would keep forcing a
-# weekly card past an `off` knob) with the daily self-gating one.
-if printf '%s\n' "$NEW_CRON" | grep -Fq "$DIGEST_LINE"; then
-    ok "digest cron already installed"
-else
-    NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'act\.digest' || true)"
-    NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$DIGEST_LINE")"
-    ok "digest cron installed (daily 09:07; cadence = digest.frequency, default off)"
-fi
-
-# idempotent: append the hourly telemetry sync if absent (default-on anonymous
-# usage stats, docs/TELEMETRY.md — the sync is a silent no-op when the user
-# opts out, so the line is harmless to keep)
-if printf '%s\n' "$NEW_CRON" | grep -q 'act\.analytics_sync'; then
-    ok "telemetry sync cron already installed"
-else
-    NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$TELEMETRY_LINE")"
-    ok "telemetry sync cron installed (hourly; opt out in app Settings or telemetry.enabled: false)"
-fi
-
-apply_crontab
 
 # --------------------------------------------------------------------------
 echo ""
@@ -1721,43 +1821,45 @@ if [ "$NON_INTERACTIVE" -eq 1 ]; then
     exit "$N_FAILED"
 fi
 
+# The interactive closing banner. The machine-checked version of this list is
+# `bash install.sh --check --fresh-install` (§69) — it prints the SAME items
+# with this machine's real paths and drops the ones already done; the banner
+# below is the fixed narrative for readers who want the why. Unquoted heredoc:
+# ${STABLE_CLAUDE_BIN} (§55 第五幕) is the one path the Full Disk Access grant
+# has to name; everything else is literal (backticks and $ escaped).
 cat <<EOF
 
 ==============================================
- Install complete. Next steps:
+ Install complete. What is left is yours (the machine cannot do it):
+   bash install.sh --check --fresh-install   # the live, path-exact version of this list
 ==============================================
- 1. Edit config.yaml (Slack IDs, watched people, source paths).
- 2. Anthropic API key：推荐打开 App 的设置窗口，把 key 粘贴保存（自动写入
-    config/secrets/anthropic-api-key.txt，目录 0700/文件 0600）。
-    旧路径 ~/.config/anthropic-key.txt 仍兜底可用（launchd 的 daemon session
-    读不了 Keychain OAuth，所以必须有文件形式的 key）。
- 3. Grant TCC / privacy permissions:
-      - actd (launchd) touches the repo's state/ and launches claude. A repo
-        under \$HOME on the boot volume needs NO Full Disk Access. A repo on an
-        external volume (or in Documents/Desktop/Downloads) needs ONE grant,
-        done once: System Settings > Privacy & Security > Full Disk Access > +
-          ${STABLE_CLAUDE_BIN}
-        (the stable daemon copy of claude; install.sh refreshes it in place,
-        so the grant survives claude updates — CONTRACT §55). Confirm with
-        the doctor's \`launchd claude\` row.
-      - RADAR reads "~/Documents/Obsidian Vault". It runs from the step-6
-        crontab ingest chain installed above (\`python3 -m act.radar --once\`,
-        every 30 min) — crontab HAS Full Disk Access once Terminal/cron is
-        granted it in System Settings > Privacy > Full Disk Access. There is no
-        launchd radar agent to manage: just grant that access and the ingest
-        chain picks up the vault.
- 4. The app "Zelin's AI Assistant" (bundle: Zelin's AI Assistant.app, the board
-    shell) is in /Applications (or ~/Applications); the board server runs as
-    launchd agent com.zelin.aiassistant.server on
-    http://127.0.0.1:<server.port, default 47820>/.
-    The legacy menu-bar app now lives at "Zelin's AI Assistant (old).app" (D3;
-    same bundle id, so its permissions carried over).
- 5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」。
-    menu-bar icon → quick capture → approve ✅ → a reviewable draft arrives minutes later
+ 1. Open the board: "Zelin's AI Assistant" (bundle Zelin's AI Assistant.app, the board
+    shell) in /Applications (or ~/Applications) — or http://127.0.0.1:<server.port, default 47820>/
+    in a browser. The board server runs as launchd agent com.zelin.aiassistant.server.
+    Its first-run wizard (?page=setup) walks config → disk access → credentials (steps 2-4).
+ 2. Anthropic API key (headless claude under launchd/cron cannot read Keychain OAuth):
+      mkdir -p config/secrets && chmod 700 config/secrets
+      printf '%s\n' 'sk-ant-…' > config/secrets/anthropic-api-key.txt && chmod 600 config/secrets/anthropic-api-key.txt
+    (~/.config/anthropic-key.txt is still honored as the legacy fallback.)
+ 3. Full Disk Access (System Settings > Privacy & Security > Full Disk Access, "+", ⌘⇧G, paste the path)
+    — macOS grants it PER BINARY and launchd jobs never inherit your terminal's grant:
+      - the daemon interpreter from config/runtime.json ("python")  — actd / radars / server
+      - ${STABLE_CLAUDE_BIN}
+        (the stable daemon copy of claude — install.sh refreshes it in place, so this grant
+        survives claude updates, CONTRACT §55; confirm with the doctor's \`launchd claude\` row)
+      - /usr/sbin/cron  — the ingest chain reads the Obsidian vault under ~/Documents
+    Required when this repo or your task repos live under ~/Documents, ~/Desktop, ~/Downloads
+    or an external volume; harmless otherwise.
+ 4. Edit config.yaml (or the board's Settings) when you connect sources: Obsidian vault path,
+    watched people, Slack IDs, Gmail. Everything idles safely until then.
+ 5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」— type a task into the
+    board's capture box → approve ✅ → a reviewable draft arrives minutes later
     (needs only claude + API key — no screenpipe/Obsidian material required).
- 6. Anything off later? Re-run diagnostics anytime: bash install.sh --check
- 7. Upgrading an existing install? One-command post-deploy smoke check:
-    bash scripts/smoke-deploy.sh
-    （版本匹配 / 二进制本版特征 / actd 活性 / doctor —— 任一不对就非零退出）
+ 6. Anything off later? bash install.sh --check   (full diagnostics; exit code = FAILs)
+ 7. Updating this machine later: re-run the same command that installed it —
+    curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
+    (or: git pull && bash install.sh); merges to main also auto-deploy (CONTRACT §56).
+    The legacy menu-bar app now lives at "Zelin's AI Assistant (old).app" (D3; same bundle
+    id as before, so its permissions carried over) and is never rebuilt by this mode.
 ==============================================
 EOF
