@@ -209,7 +209,7 @@ final class PermissionsModel: ObservableObject {
 /// the SAME override key shape ({"telemetry": {…}}, CONTRACT §15). What
 /// remains here is the consent-surface marker.
 enum TelemetryConsent {
-    /// Marker the Python uploader gates on (act/lib/analytics_sync, CONTRACT
+    /// Marker the Python uploader gates on (act/lib/telemetry_upload, CONTRACT
     /// §15): its existence means "the consent surface was DISPLAYED at least
     /// once" — independent of any choice (telemetry.enabled in Settings
     /// controls on/off). Without it, and without an explicit telemetry

@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import radar
-from act.lib import analytics, config, health, registry, sanitize, secrets, sources
+from act.lib import analytics, config, radar_health, registry, sanitize, secrets, sources
 
 IMAP_HOST = "imap.gmail.com"
 DEFAULT_APP_PASSWORD_PATH = "~/Desktop/Keys/gmail-app-password.txt"  # nosec B105 - file PATH, not a secret
@@ -548,7 +548,7 @@ def _note_skip(reason: str) -> None:
     turn into a crashed pass, so swallow everything anyway."""
     try:
         analytics.log_event("radar_skip", source="gmail", reason=reason)
-        health.update_radar_health("gmail", ok=False, skip_reason=reason)
+        radar_health.update_radar_health("gmail", ok=False, skip_reason=reason)
     except Exception:  # noqa: BLE001
         pass
 
@@ -563,7 +563,7 @@ def scan(cfg: Optional[config.Config] = None,
         # §48 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着，写
         # `disabled` 条目会让 App 把关掉的源当成还活着的管线信号——踩 §0
         # 第 3 条）；顺手清掉历史条目，僵尸 last_attempt 不再冒充存活。
-        health.remove_radar_health("gmail")
+        radar_health.remove_radar_health("gmail")
         return 0
     fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
     password = get_app_password(cfg)
@@ -670,7 +670,7 @@ def scan(cfg: Optional[config.Config] = None,
         _save_last_uid(newest_uid)
     if not voided:   # void pass 的 health 已由 _note_skip 记 not-ok，不许覆盖
         try:
-            health.update_radar_health("gmail", ok=True)
+            radar_health.update_radar_health("gmail", ok=True)
         except Exception:  # noqa: BLE001 - health must never break the pass
             pass
     analytics.log_event("radar_scan", source="gmail", messages=len(messages),

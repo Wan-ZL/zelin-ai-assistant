@@ -215,7 +215,8 @@ class LogFirstAndClipTestCase(unittest.TestCase):
         self.assertTrue((analytics.FIRST_DIR / "weird_name").exists())
 
     def test_clip_content_fail_closed(self):
-        with mock.patch.object(analytics, "_secret_positions", side_effect=RuntimeError("x")):
+        with mock.patch.object(analytics.secret_patterns, "secret_positions",
+                               side_effect=RuntimeError("x")):
             self.assertIsNone(analytics.clip_content("hello"))
         self.assertIsNone(analytics.clip_content("   "))
         self.assertEqual(analytics.clip_content(f"a {SECRET}"), f"a {sanitize.MASK}")

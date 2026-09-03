@@ -38,12 +38,9 @@ private:act/executor.py->act.lib.agent_states._BLOCKED_STATES 1
 private:act/executor.py->act.lib.dashboard._index_agents 1
 private:act/executor.py->act.lib.dashboard._run_claude_agents 1
 private:act/lib/analytics.py->act.lib.config._coerce_bool 1
-private:act/lib/analytics.py->act.lib.sanitize._SECRET_PATTERNS 1
 private:act/lib/dashboard.py->act.executor._transcript_info 1
 private:act/lib/dashboard.py->act.lib.agent_states._DONE_STATES 1
 private:act/lib/dashboard.py->act.lib.agent_states._RUNNING_STATES 1
-private:act/lib/feedback.py->act.lib.analytics_sync._device_id 1
-private:act/lib/feedback.py->act.lib.analytics_sync._resolve_key 1
 private:act/lib/feedback_sync.py->act.lib.feedback._write_record 1
 private:act/lib/feedback_sync.py->act.lib.secrets._read_path 1
 private:act/lib/quick_capture.py->act.analyze._coerce_cost 1
@@ -63,5 +60,4 @@ private:act/radar_gmail.py->act.radar._record_failure 1
 private:act/radar_gmail.py->act.radar._save_failed_queue 1
 private:act/radar_gmail.py->act.radar._set_thread_key 1
 private:act/radar_slack.py->act.radar._set_thread_key 1
-private:act/syncd.py->act.lib.analytics_sync._resolve_key 1
 private:act/voice_gen.py->act.radar_slack._MCP_ALLOWED_TOOLS 1

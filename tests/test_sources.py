@@ -26,7 +26,7 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd, radar_gmail, radar_slack
-from act.lib import analytics, config, dashboard, health, sources
+from act.lib import analytics, config, dashboard, radar_health, sources
 
 
 def _iso(delta_s: float = 0.0) -> str:
@@ -45,7 +45,7 @@ def _cfg(**kw) -> config.Config:
 
 
 def _clean_state():
-    for p in (health.HEALTH_PATH, analytics.EVENTS_PATH, config.CONFIG_PATH):
+    for p in (radar_health.HEALTH_PATH, analytics.EVENTS_PATH, config.CONFIG_PATH):
         if p.exists():
             p.unlink()
 
@@ -140,20 +140,20 @@ class DisabledSilenceTestCase(unittest.TestCase):
 
     def test_gmail_off_no_health_no_analytics(self):
         # 预埋一条历史条目：关源后必须被清除（僵尸 last_attempt 不再冒充活）
-        health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
+        radar_health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
         cfg = _cfg(gmail_enabled=False)
         created = radar_gmail.scan(cfg, fetcher=self._fail_fetch)
         self.assertEqual(created, 0)
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertNotIn("gmail", data)                      # entry removed
         self.assertEqual(_events(), [])                      # no radar_skip beacon
 
     def test_slack_off_no_health_no_analytics(self):
-        health.update_radar_health("slack", ok=True)
+        radar_health.update_radar_health("slack", ok=True)
         cfg = _cfg(features={"slack_radar": False})
         created = radar_slack.scan(cfg, fetcher=self._fail_fetch)
         self.assertEqual(created, 0)
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertNotIn("slack", data)
         self.assertEqual(_events(), [])
 
@@ -161,7 +161,7 @@ class DisabledSilenceTestCase(unittest.TestCase):
         # 条目本就不存在时连文件都不写（mtime 语义：只有真实雷达活动才动文件）
         cfg = _cfg(gmail_enabled=False)
         radar_gmail.scan(cfg, fetcher=self._fail_fetch)
-        self.assertFalse(health.HEALTH_PATH.exists())
+        self.assertFalse(radar_health.HEALTH_PATH.exists())
 
     def test_obsidian_off_skips_before_lock_analytics(self):
         # disabled 早退必须先于锁竞争的 radar_skip 信标——锁被别的 pass 占着
@@ -176,7 +176,7 @@ class DisabledSilenceTestCase(unittest.TestCase):
         self.assertIn("source obsidian is off (act.lib.sources)",
                       summary["skipped"])
         self.assertEqual(_events(), [])                  # 无 lock_held 信标
-        self.assertFalse(health.HEALTH_PATH.exists())
+        self.assertFalse(radar_health.HEALTH_PATH.exists())
 
 
 # --------------------------------------------------------------------------- #
@@ -203,11 +203,11 @@ class LivenessAlertTestCase(unittest.TestCase):
     @staticmethod
     def _seed(source: str, last_ok: str, last_attempt: str = None):
         data = {}
-        if health.HEALTH_PATH.exists():
-            data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        if radar_health.HEALTH_PATH.exists():
+            data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         data[source] = {"last_attempt": last_attempt or last_ok,
                         "last_ok": last_ok, "skip_reason": None}
-        health.HEALTH_PATH.write_text(json.dumps(data), encoding="utf-8")
+        radar_health.HEALTH_PATH.write_text(json.dumps(data), encoding="utf-8")
 
     def test_stale_source_alerts_once(self):
         self._seed("gmail", _iso(7 * 3600))           # 7h > 6h threshold
@@ -240,7 +240,7 @@ class LivenessAlertTestCase(unittest.TestCase):
         notified = {"gmail"}
         self.assertEqual(actd._check_radar_liveness(notified), [])
         self.assertNotIn("gmail", notified)           # 出账
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertNotIn("gmail", data)               # 残留条目被清（防僵尸）
 
     def test_alert_recheck_silences_just_disabled_source(self):
@@ -281,14 +281,14 @@ class LivenessAlertTestCase(unittest.TestCase):
         config.CONFIG_PATH.unlink()                                      # 再打开
         self._seed("gmail", _iso(60))
         self.assertEqual(actd._check_radar_liveness(notified), [])
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertIn("gmail", data)                  # 活雷达的 health 没被误清
 
     def test_no_baseline_no_alert(self):
         # 从未跑过（无条目/无时间戳）首个阈值窗内不能宣布死亡 —— 静默
         # （持续无基线超窗的告警见 test_no_baseline_overdue_alarms）
         self.assertEqual(actd._check_radar_liveness(set()), [])
-        health.HEALTH_PATH.write_text(
+        radar_health.HEALTH_PATH.write_text(
             json.dumps({"gmail": {"last_attempt": None, "last_ok": None,
                                   "skip_reason": None}}), encoding="utf-8")
         self.assertEqual(actd._check_radar_liveness(set()), [])
@@ -330,7 +330,7 @@ class LivenessAlertTestCase(unittest.TestCase):
 
     def test_never_ok_falls_back_to_last_attempt(self):
         # 配好后一直失败到停摆（last_attempt 也超期、没 last_ok）算死亡基线
-        health.HEALTH_PATH.write_text(
+        radar_health.HEALTH_PATH.write_text(
             json.dumps({"gmail": {"last_attempt": _iso(7 * 3600),
                                   "last_ok": None,
                                   "skip_reason": "auth_failed"}}),
@@ -506,7 +506,7 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
     def test_skip_reason_projection_is_vocabulary_gated(self):
         # §48.4 词表投影纪律：radar 写进 health 的自由文本（错误摘录/本机
         # 路径）不许随 dashboard 出机——mcp_failed:<detail> 去尾留裸码
-        health.update_radar_health(
+        radar_health.update_radar_health(
             "slack", ok=False,
             skip_reason="mcp_failed: OSError: /Users/zelin/secret/token.txt")
         dash = self._build(_cfg())
@@ -514,7 +514,7 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
                          "mcp_failed")
         self.assertNotIn("zelin", json.dumps(dash))       # 路径没跟着出去
         # 词表外的任意奇串一律折叠为 "error"
-        health.update_radar_health(
+        radar_health.update_radar_health(
             "slack", ok=False, skip_reason="weird /private/tmp fragment")
         dash = self._build(_cfg())
         self.assertEqual(dash["radar_sources"]["slack"]["skip_reason"], "error")
@@ -523,7 +523,7 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
     def test_disabled_source_hides_stale_health_same_pass(self):
         # 关源后的第一个 pass：liveness 清理还没跑（它在 dashboard 构建之
         # 后），投影就必须已经不带健康摘要——「关着 = null」当 pass 生效
-        health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
+        radar_health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
         config.CONFIG_PATH.write_text(
             "sources:\n  gmail:\n    enabled: false\n", encoding="utf-8")
         gm = self._build(_cfg())["radar_sources"]["gmail"]
@@ -547,7 +547,7 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
             self._build(_cfg())["radar_sources"]["gmail"]["stale"])  # 投影照报
 
     def test_health_entry_fields_flow_through(self):
-        health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
+        radar_health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
         gm = self._build(_cfg())["radar_sources"]["gmail"]
         self.assertTrue(gm["enabled"])
         self.assertEqual(gm["skip_reason"], "auth_failed")
@@ -560,22 +560,22 @@ class PublicSkipReasonTestCase(unittest.TestCase):
     def test_vocabulary_codes_pass_through(self):
         for code in ("auth_failed", "no_credentials", "vault_empty",
                      "command_bad_output", "mcp_not_configured"):
-            self.assertEqual(health.public_skip_reason(code), code)
+            self.assertEqual(radar_health.public_skip_reason(code), code)
 
     def test_mcp_failed_detail_is_stripped(self):
         self.assertEqual(
-            health.public_skip_reason("mcp_failed: exit 1: /Users/x/y"),
+            radar_health.public_skip_reason("mcp_failed: exit 1: /Users/x/y"),
             "mcp_failed")
-        self.assertEqual(health.public_skip_reason("mcp_failed"), "mcp_failed")
+        self.assertEqual(radar_health.public_skip_reason("mcp_failed"), "mcp_failed")
 
     def test_out_of_vocab_folds_to_error(self):
-        self.assertEqual(health.public_skip_reason("OSError: boom"), "error")
-        self.assertEqual(health.public_skip_reason("/Users/zelin/p"), "error")
+        self.assertEqual(radar_health.public_skip_reason("OSError: boom"), "error")
+        self.assertEqual(radar_health.public_skip_reason("/Users/zelin/p"), "error")
 
     def test_empty_and_non_string_are_none(self):
-        self.assertIsNone(health.public_skip_reason(None))
-        self.assertIsNone(health.public_skip_reason(""))
-        self.assertIsNone(health.public_skip_reason(42))
+        self.assertIsNone(radar_health.public_skip_reason(None))
+        self.assertIsNone(radar_health.public_skip_reason(""))
+        self.assertIsNone(radar_health.public_skip_reason(42))
 
 
 # --------------------------------------------------------------------------- #

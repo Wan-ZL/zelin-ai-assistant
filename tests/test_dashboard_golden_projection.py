@@ -1,4 +1,4 @@
-"""dashboard.json projection golden (CONTRACT §2 / §5 / §21 / §44.6 / §48).
+"""dashboard.json projection golden (CONTRACT §2 / §5 / §21 / §44.6 / §48 / §63 / §64).
 
 Pins the FULL serialized output of ``dashboard.build_dashboard`` for a fixture
 set that walks every lane branch of the projection — card_sent (with and
@@ -9,8 +9,11 @@ with an ISO started_at, review (idle / working / interrupted), delivered
 (over COMPLETED_CAP ordering), merged / rejected / archived-in-active (all
 invisible), a corrupt card (skipped, others survive), archived[] rows,
 merge_suggestions job files (analyzing / done with groups / failed /
-dismissed / corrupt / non-dict / bad groups) and radar_sources with a stale
-enabled source. Byte-for-byte: key ORDER inside every row is part of the wire
+dismissed / corrupt / non-dict / bad groups), radar_sources with a stale
+enabled source, §7 egress[] (repo-delivery card bootstrapping a missing dir
+vs chat delivery), §10 capture_id (birth source row + proposal key), the §63 ``recaps[]``
+top-level key (empty store) and the §64 ``assessment`` block (fresh on a
+review card, stale-hash on a delivered card → omitted). Byte-for-byte: key ORDER inside every row is part of the wire
 contract the Swift/web decoders were written against, so ``json.dumps`` with
 ``sort_keys=False`` is compared as text, not as a re-parsed dict.
 
@@ -29,7 +32,8 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from act.lib import config, dashboard, deploy_state, fold_receipts, health, registry
+from act.lib import (card_summary, config, dashboard, deploy_state, fold_receipts,
+                     radar_health, registry)
 from act.lib.registry import Requirement
 
 GOLDEN = Path(__file__).parent / "fixtures" / "dashboard_golden.json"
@@ -48,8 +52,8 @@ def _active_cards() -> list:
              deadline="2026-09-10", repeated_mentions=3, silent_merge_count=2,
              cost_estimate_usd=4.5, green_sign_required=True,
              disagreement="有人想用 CSV", improvement_of="R-7",
-             sources=[{"who": "alice", "channel": "slack", "date": "2026-09-01",
-                       "quote": "能导出吗"},
+             sources=[{"who": "alice", "channel": "quick", "date": "2026-09-01",
+                       "quote": "能导出吗", "capture_id": "capture-0001"},
                       {"who": None, "channel": None, "date": None, "ref": "邮件引用"},
                       "not-a-dict"],
              plan="第一步\n第二步\n", outputs=["report.md"],
@@ -135,6 +139,15 @@ def _active_cards() -> list:
     bad = _req(id="R-260", title="坏卡", status="card_sent")
     bad.definition_of_done = 42          # list(42) -> TypeError -> skipped
     cards.append(bad)
+    by_id = {c.id: c for c in cards}
+    # §64 assessment: fresh on the idle review card (projected), stale hash on
+    # a delivered card (omitted — content moved on since the judge spoke)
+    fresh = by_id["R-230"]
+    fresh.assessment = {"summary": "交付了导出按钮", "verdict": "建议验收",
+                        "verdict_reason": "DoD 两条都有证据", "at": "2026-09-02T10:00:00Z",
+                        "source_hash": card_summary.source_hash(fresh)}
+    by_id["R-232"].assessment = {"summary": "旧话", "verdict": "需继续做",
+                                 "at": "2026-09-01T00:00:00Z", "source_hash": "stale"}
     return cards
 
 
@@ -227,6 +240,7 @@ def build_fixture_dashboard(merge_dir: Path, state_dir: Path) -> dict:
     cfg.show_cost_above_usd = 1.0
     cfg.trash_retention_days = 30
     cfg.default_target_repo = "/golden/workbench"   # no $HOME leak into the golden
+    cfg.create_github_repo = True                   # §7 egress[] disclosure path
     _write_merge_jobs(merge_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "sync.json").write_text(json.dumps({"label": " Zelin 的 Mac "}),
@@ -237,7 +251,7 @@ def build_fixture_dashboard(merge_dir: Path, state_dir: Path) -> dict:
             mock.patch.object(dashboard, "_today", return_value=FIXED_TODAY), \
             mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
             mock.patch.object(dashboard.config, "STATE_DIR", state_dir), \
-            mock.patch.object(health, "load_radar_health",
+            mock.patch.object(radar_health, "load_radar_health",
                               return_value=_radar_health()), \
             mock.patch.object(fold_receipts, "load_recent",
                               side_effect=_receipts), \
@@ -299,6 +313,16 @@ class DashboardGoldenTestCase(unittest.TestCase):
         self.assertEqual([r["title"] for r in dash["fold_receipts"]], ["显示名 R-220", ""])
         self.assertEqual(dash["device_label"], "Zelin 的 Mac")
         self.assertEqual(dash["deploy_state"]["version"], "0.48.99")
+        self.assertEqual(dash["recaps"], [])
+        review = {r["id"]: r for r in dash["review"]}
+        self.assertEqual(review["R-230"]["assessment"]["verdict"], "建议验收")
+        self.assertTrue(all("assessment" not in r for r in dash["completed"]))
+        by_id = {r["id"]: r for r in dash["needs_approval"]}
+        self.assertEqual(by_id["P-201"]["egress"], [])                 # chat delivery
+        self.assertEqual(by_id["P-202"]["egress"][0]["kind"], "github_repo_create")
+        self.assertEqual(by_id["P-201"]["capture_id"], "capture-0001")
+        self.assertEqual(by_id["P-201"]["sources"][0]["capture_id"], "capture-0001")
+        self.assertNotIn("capture_id", by_id["P-202"])
 
 
 if __name__ == "__main__":

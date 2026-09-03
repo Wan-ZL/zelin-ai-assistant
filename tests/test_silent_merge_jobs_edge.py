@@ -235,6 +235,9 @@ class CliEarlyExitsTestCase(_JobDirMixin, unittest.TestCase):
 
     def test_parse_verdict_partial_shapes(self):
         self.assertIsNone(silent_merge._parse_verdict('{"same_thing": true} {bad'))
+        self.assertIsNone(silent_merge._parse_verdict('{not json} {"brief": "x"}'))
+        self.assertEqual(silent_merge._parse_verdict(
+            '{oops} {"same_thing": true, "brief": "k"}')["brief"], "k")
         self.assertIsNone(silent_merge._parse_verdict('{"brief": "only"}'))
         self.assertEqual(silent_merge._parse_verdict(
             'pre {"a": {"b": 1}} {"same_thing": false, "brief": "k"} }')["brief"], "k")

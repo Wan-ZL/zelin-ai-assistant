@@ -45,9 +45,10 @@
       "sources": [
         {
           "who": "alice",
-          "channel": "slack",
+          "channel": "quick",
           "date": "2026-09-01",
-          "quote": "能导出吗"
+          "quote": "能导出吗",
+          "capture_id": "capture-0001"
         },
         {
           "who": "Zelin",
@@ -72,7 +73,9 @@
       "reraised": true,
       "reraised_note": "再来一次",
       "origin_trust": "external",
-      "auto_dispatch_block": "risk:T2"
+      "auto_dispatch_block": "risk:T2",
+      "egress": [],
+      "capture_id": "capture-0001"
     },
     {
       "id": "P-202",
@@ -108,7 +111,14 @@
       "processing": false,
       "delivery_mode": "repo",
       "reraised": false,
-      "reraised_note": ""
+      "reraised_note": "",
+      "egress": [
+        {
+          "kind": "github_repo_create",
+          "target": "here",
+          "visibility": "private"
+        }
+      ]
     },
     {
       "id": "P-203",
@@ -361,7 +371,13 @@
       "review_at": 1788224523,
       "delivery_mode": "repo",
       "session_active": false,
-      "interrupted": true
+      "interrupted": true,
+      "assessment": {
+        "summary": "交付了导出按钮",
+        "verdict": "建议验收",
+        "verdict_reason": "DoD 两条都有证据",
+        "at": 1788343200
+      }
     }
   ],
   "completed": [
@@ -628,5 +644,6 @@
   "deploy_state": {
     "version": "0.48.99",
     "status": "deployed"
-  }
+  },
+  "recaps": []
 }

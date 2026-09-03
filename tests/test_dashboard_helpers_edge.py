@@ -19,7 +19,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from act.lib import config, dashboard, health, sources
+from act.lib import config, dashboard, radar_health, sources
 from act.lib.registry import Requirement
 
 
@@ -138,7 +138,7 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
         cfg = config.Config()
         with mock.patch.object(dashboard.config, "load_config",
                                side_effect=RuntimeError("bad yaml")), \
-                mock.patch.object(health, "load_radar_health", return_value={}):
+                mock.patch.object(radar_health, "load_radar_health", return_value={}):
             out = dashboard._radar_sources(cfg)
         self.assertEqual(set(out), set(sources.SOURCES))
         for entry in out.values():
@@ -147,7 +147,7 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
     def test_bad_health_file_and_enabled_probe_never_raise(self):
         cfg = config.Config()
         with mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
-                mock.patch.object(health, "load_radar_health",
+                mock.patch.object(radar_health, "load_radar_health",
                                   side_effect=ValueError("corrupt")), \
                 mock.patch.object(sources, "enabled", side_effect=KeyError("x")):
             out = dashboard._radar_sources(cfg)
@@ -158,7 +158,7 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
     def test_non_dict_health_payload_is_ignored(self):
         cfg = config.Config()
         with mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
-                mock.patch.object(health, "load_radar_health", return_value=["x"]):
+                mock.patch.object(radar_health, "load_radar_health", return_value=["x"]):
             out = dashboard._radar_sources(cfg)
         self.assertEqual(out["gmail"]["last_ok"], None)
 

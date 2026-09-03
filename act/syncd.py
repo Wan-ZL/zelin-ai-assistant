@@ -58,7 +58,7 @@ UP (phone → Supabase → this daemon):
     ``result_status`` — so the phone's "did my approve land?" is a durable
     truth, never a false-negative inferred from a deleted inbox file.
 
-Transport reuses the ``analytics_sync`` posture: stdlib ``urllib`` only, atomic
+Transport reuses the ``telemetry_upload`` posture: stdlib ``urllib`` only, atomic
 cursor writes, and EVERY network call is best-effort — nothing here ever raises
 into the daemon loop.
 """
@@ -242,7 +242,7 @@ def _load_json(path: Path) -> dict:
 
 def _complete_lines(path: Path, offset: int) -> Iterator[Tuple[bytes, int]]:
     """Yield (raw_line, end_offset) for each COMPLETE line past ``offset``
-    (mirrors analytics_sync: a trailing chunk without a newline is left)."""
+    (mirrors telemetry_upload: a trailing chunk without a newline is left)."""
     try:
         size = path.stat().st_size
     except OSError:
@@ -364,7 +364,7 @@ class Transport:
 
 class HttpTransport(Transport):
     """Stdlib-only PostgREST transport (no third-party deps, like
-    analytics_sync). Every method raises on a non-2xx response; the Syncd caller
+    telemetry_upload). Every method raises on a non-2xx response; the Syncd caller
     swallows those (best-effort)."""
 
     def __init__(self, supabase_url: str, apikey: str, channel_id: str):
@@ -439,8 +439,8 @@ def _resolve_anon_key() -> str:
     public by design, RLS makes it safe (anon has INSERT-only on channels and
     no SELECT there, so write_secret_hash never leaves the server)."""
     try:
-        from act.lib import analytics_sync
-        return analytics_sync._resolve_key(config.load_config())
+        from act.lib import telemetry_upload
+        return telemetry_upload.resolve_key(config.load_config())
     except Exception:  # noqa: BLE001 - never fail to a missing key
         return config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY
 

@@ -75,7 +75,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import radar
-from act.lib import analytics, config, health, registry, sanitize, secrets, sources
+from act.lib import analytics, config, radar_health, registry, sanitize, secrets, sources
 
 SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
@@ -606,7 +606,7 @@ def mcp_scan(cfg: config.Config,
     analytics.log_event("radar_scan", source="slack", mode="mcp",
                         new_cards=created)
     try:
-        health.update_radar_health("slack", ok=True)
+        radar_health.update_radar_health("slack", ok=True)
     except Exception:  # noqa: BLE001 - health must never break the pass
         pass
     return created
@@ -790,7 +790,7 @@ def _note_skip(reason: str) -> None:
     turn into a crashed pass, so swallow everything anyway."""
     try:
         analytics.log_event("radar_skip", source="slack", reason=reason)
-        health.update_radar_health("slack", ok=False, skip_reason=reason)
+        radar_health.update_radar_health("slack", ok=False, skip_reason=reason)
     except Exception:  # noqa: BLE001
         pass
 
@@ -810,7 +810,7 @@ def scan(cfg: Optional[config.Config] = None,
         # §48 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着——写
         # `disabled` 条目会撑起假的管线存活信号，踩 §0 第 3 条）；顺手清掉
         # 历史条目。判据统一走 act.lib.sources（源开关真源）。
-        health.remove_radar_health("slack")
+        radar_health.remove_radar_health("slack")
         return 0
     token = get_token(cfg)
     if not token:
@@ -899,7 +899,7 @@ def scan(cfg: Optional[config.Config] = None,
 
     _save_markers(markers)
     try:
-        health.update_radar_health("slack", ok=True)
+        radar_health.update_radar_health("slack", ok=True)
     except Exception:  # noqa: BLE001 - health must never break the pass
         pass
     analytics.log_event("radar_scan", source="slack", messages=len(messages),

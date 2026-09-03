@@ -1,5 +1,5 @@
 -- analytics_events — landing table for the opt-in telemetry sync
--- (act/lib/analytics_sync.py, docs/TELEMETRY.md). One row per JSONL event;
+-- (act/lib/telemetry_upload.py, docs/TELEMETRY.md). One row per JSONL event;
 -- props keeps the full original record.
 
 create table analytics_events (

@@ -27,7 +27,7 @@ from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act impor
 
 from act import executor
 from act.lib import analytics, config, registry, secrets
-from act.lib import analytics_sync as sync
+from act.lib import telemetry_upload as sync
 from act.lib.registry import Requirement, State
 
 REPO = Path(__file__).resolve().parents[1]

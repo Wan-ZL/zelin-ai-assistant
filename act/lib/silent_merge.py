@@ -161,45 +161,69 @@ def _finish(job_id: str, status: str, **extra) -> None:
         pass
 
 
+def _unlink_quiet(p: Path) -> int:
+    """Best-effort unlink -> 1 when the file went away, 0 otherwise."""
+    try:
+        p.unlink()
+        return 1
+    except OSError:
+        return 0
+
+
+def _job_age_min(job: dict, now) -> Optional[float]:
+    """Minutes since the job finished (or was requested); None when undated."""
+    ts = _parse_iso(job.get("finished_at") or job.get("requested_at"))
+    if ts is None:
+        return None
+    return (now - ts).total_seconds() / 60.0
+
+
+def _stuck(job: dict, age_min: float) -> bool:
+    return job.get("status") == "pending" and age_min > PENDING_TIMEOUT_MIN
+
+
+def _expired(job: dict, age_min: float) -> bool:
+    return job.get("status") in ("done", "failed") and age_min > TTL_HOURS * 60
+
+
+def _purge_job(p: Path) -> int:
+    """Drop an expired job file + its twin per-job judge log (which would
+    otherwise accumulate forever). Counts only the job file."""
+    removed = _unlink_quiet(p)
+    _unlink_quiet(config.LOG_DIR / f"{p.stem}.log")
+    return removed
+
+
+def _job_id(job: dict, p: Path) -> str:
+    """Job id from the record, falling back to the file stem."""
+    return str(job.get("id") or p.stem)
+
+
+def _sweep_one(p: Path, now) -> int:
+    """One job file under the sweep -> files removed (0/1)."""
+    try:
+        job = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _unlink_quiet(p)
+    age_min = _job_age_min(job, now)
+    if age_min is None:
+        return 0
+    if _stuck(job, age_min):
+        _finish(_job_id(job, p), "failed", error="judge timed out")
+    elif _expired(job, age_min):
+        return _purge_job(p)
+    return 0
+
+
 def sweep(now=None) -> int:
     """actd every pass: fail stuck pending jobs, purge expired ones."""
     import datetime as _dt
     now = now or _dt.datetime.now(_dt.timezone.utc)
-    removed = 0
     try:
         paths = list(SILENT_DIR.glob("SM-*.json"))
     except OSError:
         return 0
-    for p in paths:
-        try:
-            job = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            try:
-                p.unlink()
-                removed += 1
-            except OSError:
-                pass
-            continue
-        ts = _parse_iso(job.get("finished_at") or job.get("requested_at"))
-        if ts is None:
-            continue
-        age_min = (now - ts).total_seconds() / 60.0
-        if job.get("status") == "pending" and age_min > PENDING_TIMEOUT_MIN:
-            _finish(str(job.get("id") or p.stem), "failed",
-                    error="judge timed out")
-        elif job.get("status") in ("done", "failed") \
-                and age_min > TTL_HOURS * 60:
-            try:
-                p.unlink()
-                removed += 1
-            except OSError:
-                pass
-            # the twin per-job judge log would otherwise accumulate forever
-            try:
-                (config.LOG_DIR / f"{p.stem}.log").unlink()
-            except OSError:
-                pass
-    return removed
+    return sum(_sweep_one(p, now) for p in paths)
 
 
 def _iso_now() -> str:
@@ -221,7 +245,7 @@ def _parse_iso(ts):
 # --------------------------------------------------------------------------- #
 # the two-card judge (tool-less claude -p, merge_review pipeline)
 # --------------------------------------------------------------------------- #
-def _card_material(req: registry.Requirement) -> str:
+def _head_lines(req: registry.Requirement) -> list:
     lines = [
         f"id: {req.id}",
         f"status: {req.status}",
@@ -233,12 +257,19 @@ def _card_material(req: registry.Requirement) -> str:
         lines.append(f"summary: {req.summary}")
     if req.notes:
         lines.append(f"notes: {str(req.notes)[:1200]}")
-    for s in (req.sources or [])[:6]:
-        if isinstance(s, dict):
-            bits = " · ".join(str(s.get(k) or "") for k in
-                              ("who", "channel", "date") if s.get(k))
-            quote = str(s.get("quote") or "")[:300]
-            lines.append(f"source: {bits}" + (f" — {quote}" if quote else ""))
+    return lines
+
+
+def _source_line(s: dict) -> str:
+    bits = " · ".join(str(s.get(k) or "") for k in
+                      ("who", "channel", "date") if s.get(k))
+    quote = str(s.get("quote") or "")[:300]
+    return f"source: {bits}" + (f" — {quote}" if quote else "")
+
+
+def _card_material(req: registry.Requirement) -> str:
+    lines = _head_lines(req)
+    lines += [_source_line(s) for s in (req.sources or [])[:6] if isinstance(s, dict)]
     return "\n".join(lines)
 
 
@@ -267,25 +298,43 @@ def build_judge_prompt(primary: registry.Requirement,
     )
 
 
+def _resolve_runner(runner):
+    """Explicit runner > module seam > merge_review's default; None = no judge."""
+    if runner is not None:
+        return runner
+    if JUDGE_RUNNER is not None:
+        return JUDGE_RUNNER
+    return _mr._default_runner if _mr else None
+
+
+def _runner_output(proc) -> Optional[str]:
+    """stdout of a runner result (a bare string counts as stdout); None when
+    the process reports a non-zero exit."""
+    if hasattr(proc, "returncode") and proc.returncode != 0:
+        return None
+    return (proc.stdout or "") if hasattr(proc, "stdout") else str(proc)
+
+
+def _verdict_from(out: str) -> Optional[dict]:
+    obj = _parse_verdict(out)
+    if obj is None:
+        return None
+    return {"same_thing": _strict_true(obj.get("same_thing")),
+            "brief": str(obj.get("brief") or "").strip()}
+
+
 def judge(primary: registry.Requirement, secondary: registry.Requirement,
           runner=None) -> Optional[dict]:
     """Run the two-card check. Returns {"same_thing": bool, "brief": str}
     or None on any failure (caller treats None as NOT-same, conservatively).
     """
-    run = runner or JUDGE_RUNNER or (_mr._default_runner if _mr else None)
+    run = _resolve_runner(runner)
     if run is None:
         return None
     prompt = build_judge_prompt(primary, secondary)
     try:
-        proc = run(prompt)
-        out = (proc.stdout or "") if hasattr(proc, "stdout") else str(proc)
-        if hasattr(proc, "returncode") and proc.returncode != 0:
-            return None
-        obj = _parse_verdict(out)
-        if obj is None:
-            return None
-        return {"same_thing": _strict_true(obj.get("same_thing")),
-                "brief": str(obj.get("brief") or "").strip()}
+        out = _runner_output(run(prompt))
+        return None if out is None else _verdict_from(out)
     except Exception:  # noqa: BLE001 - judge failure = conservative no-merge
         return None
 
@@ -298,35 +347,51 @@ def _strict_true(v) -> bool:
     return v is True or (isinstance(v, str) and v.strip().lower() == "true")
 
 
+def _whole_verdict(text: str) -> Optional[dict]:
+    """The entire output as the verdict object (the stated contract)."""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return None
+    return obj if isinstance(obj, dict) and "same_thing" in obj else None
+
+
+def _balanced_objects(text: str):
+    """Yield every top-level balanced ``{...}`` span, in order (a stray ``}``
+    with nothing open is ignored)."""
+    opens: list = []
+    for i, ch in enumerate(text):
+        if ch == "{":
+            opens.append(i)
+        elif ch == "}" and opens:
+            start = opens.pop()
+            if not opens:
+                yield text[start:i + 1]
+
+
+def _verdict_candidate(chunk: str) -> Optional[dict]:
+    """A balanced chunk that parses to a dict carrying BOTH verdict keys."""
+    try:
+        obj = json.loads(chunk)
+    except ValueError:
+        return None
+    if isinstance(obj, dict) and "same_thing" in obj and "brief" in obj:
+        return obj
+    return None
+
+
 def _parse_verdict(out: str) -> Optional[dict]:
     """Extract the judge's JSON, hijack-resistant: prefer the whole output
     as JSON (the stated contract), else the LAST balanced object carrying
     BOTH verdict keys — card material echoed by a chatty model earlier in
     the output can never be mistaken for the verdict (review finding)."""
     text = (out or "").strip()
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict) and "same_thing" in obj:
-            return obj
-    except ValueError:
-        pass
+    whole = _whole_verdict(text)
+    if whole is not None:
+        return whole
     best = None
-    depth, start = 0, -1
-    for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}" and depth:
-            depth -= 1
-            if depth == 0 and start >= 0:
-                try:
-                    obj = json.loads(text[start:i + 1])
-                except ValueError:
-                    continue
-                if isinstance(obj, dict) and "same_thing" in obj \
-                        and "brief" in obj:
-                    best = obj      # keep scanning — LAST qualifying wins
+    for chunk in _balanced_objects(text):
+        best = _verdict_candidate(chunk) or best   # LAST qualifying wins
     return best
 
 
@@ -337,16 +402,22 @@ def queue_briefing(req: registry.Requirement, text: str) -> None:
     """Stash a session briefing on the card; actd delivers it later through
     the §39.2 safe window (working sessions are never interrupted)."""
     ex = dict(req.execution or {})
-    pend = list(ex.get("pending_briefings") or [])
-    # 已投递台账（executor.brief 落账）也算重复——crash-retry 重放时第一跑
-    # 排队的同文本可能已被 reconcile_executing（先于 consume_judged 跑）
-    # flush 并清队，只查 pending 会二次入队、会话收到两遍同一段背景信息
-    # （review finding，2026-08-18 第二轮）。
-    delivered = [str(t) for t in (ex.get("delivered_briefings") or [])]
+    pend, delivered = _briefing_ledgers(ex)
     if text and text not in pend and text not in delivered:
         pend.append(text)
         ex["pending_briefings"] = pend
         req.execution = ex
+
+
+def _briefing_ledgers(ex: dict) -> tuple:
+    """(pending, delivered) briefing texts. 已投递台账（executor.brief 落账）
+    也算重复——crash-retry 重放时第一跑排队的同文本可能已被
+    reconcile_executing（先于 consume_judged 跑）flush 并清队，只查 pending
+    会二次入队、会话收到两遍同一段背景信息（review finding，2026-08-18
+    第二轮）。"""
+    pend = list(ex.get("pending_briefings") or [])
+    delivered = [str(t) for t in (ex.get("delivered_briefings") or [])]
+    return pend, delivered
 
 
 def _applied_merge_note(primary: registry.Requirement,
@@ -375,14 +446,102 @@ def _merge_event_logged(primary_id: str, secondary_id: str) -> bool:
     import datetime as _dt
     since = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=48)
     try:
-        for e in analytics.read_events(since=since):
-            if e.get("event") == "silent_merge" \
-                    and e.get("primary") == primary_id \
-                    and e.get("secondary") == secondary_id \
-                    and e.get("outcome") in ("ok", "ok_retry"):
-                return True
+        return any(_is_ok_merge_event(e, primary_id, secondary_id)
+                   for e in analytics.read_events(since=since))
     except Exception:  # noqa: BLE001 - observability probe must not raise
-        pass
+        return False
+
+
+def _is_ok_merge_event(e: dict, primary_id: str, secondary_id: str) -> bool:
+    return (e.get("event") == "silent_merge"
+            and e.get("primary") == primary_id
+            and e.get("secondary") == secondary_id
+            and e.get("outcome") in ("ok", "ok_retry"))
+
+
+def _dedupe_into(primary: registry.Requirement,
+                 secondary: registry.Requirement) -> int:
+    """Dedup-merge the secondary's sources into the primary -> newly added count."""
+    merged, added = registry._dedupe_sources(
+        primary.sources or [], secondary.sources or [])
+    primary.sources = merged
+    return added
+
+
+def _trashed_by_this_merge(secondary: registry.Requirement, my_reason: str) -> bool:
+    return (secondary.status == registry.State.TRASHED.value
+            and str(secondary.trash_reason or "") == my_reason)
+
+
+def _record_receipt(primary_id: str, applied: str) -> None:
+    """§44.6 看板回执（record 自带 TTL 同键去重，重放无害）。"""
+    from act.lib import fold_receipts
+    fold_receipts.record(primary_id, "radar", applied)
+
+
+def _converge_trashed(primary: registry.Requirement,
+                      secondary: registry.Requirement, applied: str) -> bool:
+    """情形 1：第一跑死在 trash 落盘之后、log_event/回执之前（review
+    finding，2026-08-18 第二轮）——旧序在 LIGHT 复检处 False，本次合并从
+    digest 计数与 §44.6 回执里整个消失，还留一条说谎的 state_moved。事件
+    先查后补（更晚的 crash 点已落过 ok 就不再记，防 digest 双计）；回执
+    record 自带 TTL 同键去重，直接重放。"""
+    if not _merge_event_logged(primary.id, secondary.id):
+        analytics.log_event("silent_merge", primary=primary.id,
+                            secondary=secondary.id, outcome="ok_retry")
+    _record_receipt(primary.id, applied)
+    return True
+
+
+def _converge_complete(primary: registry.Requirement,
+                       secondary: registry.Requirement,
+                       applied: str, my_reason: str) -> bool:
+    """情形 2：fold 半程已落盘——计数增量（silent_merge_count、副卡整体的
+    repeated_mentions 累加）绝不能二次施加。但 crash 窗口内副卡可能又吸了
+    新 capture（§44.2 pre-filing fold 跑在 consume_judged 之前）——sources
+    去重合并幂等，补上，别把窗口增量跟着副卡埋进回收站（review finding，
+    2026-08-18）；只为窗口内的**新增**来源计 mentions（_fold_hit 同款 added
+    语义，重放时 added=0 天然幂等）。"""
+    added = _dedupe_into(primary, secondary)
+    if added:
+        primary.repeated_mentions = (int(primary.repeated_mentions or 1)
+                                     + added)
+    if primary.status == registry.State.EXECUTING.value:
+        # 主卡可能在 crash 窗口被批准并于本 pass 早段派发（dispatch_approved
+        # 先于 consume_judged）——§44.3 briefing 与成功路径对称；
+        # queue_briefing 按 pending+已投递台账去重，重放无害（review
+        # finding，2026-08-18）。
+        queue_briefing(primary, f"{applied}（原卡已进回收站，可恢复）")
+    registry.save(primary)      # 与成功路径同序：主卡先落盘
+    registry.trash(secondary, my_reason)
+    analytics.log_event("silent_merge", primary=primary.id,
+                        secondary=secondary.id, outcome="ok_retry")
+    # §44.6 回执：补完路径的合并同样发生了——不留回执用户就看不到这次
+    # 并入。回执用第一跑落盘的原 note 文本 → 内容键与成功路径同键，
+    # TTL 内去重保证只一条（标题漂移时新拼的 note 会另开内容键，不能用）。
+    _record_receipt(primary.id, applied)
+    return True
+
+
+def _converge_abort(primary: registry.Requirement,
+                    secondary: registry.Requirement, entry: dict) -> bool:
+    """情形 3：合并中止（review finding，2026-08-18 第二轮：旧序先做状态复检，
+    这里会静默 return False → job 标 done，主卡带着半程合并记账、副卡却
+    活着执行——永久半 fold）。收敛 = 把半程 fold note 打上 [已拆出 →副卡]
+    （副卡本人就是活着的那张卡，正是拆出语义；mark_note_split 已拆过返回
+    False，天然幂等）+ 审计 note 留痕。计数不回滚：与 §38.2 用户 split_note
+    判例一致，「已并入×N」chip 是累计账，拆出不减账。"""
+    changed = False
+    if entry.get("ts") and not entry.get("split_into"):
+        changed = registry.mark_note_split(primary, entry["ts"], secondary.id)
+    audit = (f"并入中止：卡对状态已变（主卡 {primary.status} / "
+             f"副卡 {secondary.status}），{secondary.id} 保留为独立卡")
+    if registry.append_fold_note(primary, audit, "radar"):
+        changed = True
+    if changed:
+        registry.save(primary)
+    analytics.log_event("silent_merge", primary=primary.id,
+                        secondary=secondary.id, outcome="retry_aborted")
     return False
 
 
@@ -404,66 +563,38 @@ def _converge_half_fold(primary: registry.Requirement,
     """
     applied = str(entry.get("text") or "")
     my_reason = f"silent-merge: 已并入 {primary.id}"
-    if secondary.status == registry.State.TRASHED.value \
-            and str(secondary.trash_reason or "") == my_reason:
-        # 情形 1：第一跑死在 trash 落盘之后、log_event/回执之前（review
-        # finding，2026-08-18 第二轮）——旧序在 LIGHT 复检处 False，本次
-        # 合并从 digest 计数与 §44.6 回执里整个消失，还留一条说谎的
-        # state_moved。事件先查后补（更晚的 crash 点已落过 ok 就不再记，
-        # 防 digest 双计）；回执 record 自带 TTL 同键去重，直接重放。
-        if not _merge_event_logged(primary.id, secondary.id):
-            analytics.log_event("silent_merge", primary=primary.id,
-                                secondary=secondary.id, outcome="ok_retry")
-        from act.lib import fold_receipts
-        fold_receipts.record(primary.id, "radar", applied)
-        return True
+    if _trashed_by_this_merge(secondary, my_reason):
+        return _converge_trashed(primary, secondary, applied)
     if secondary.status in LIGHT_STATES and primary.status in _OPEN_STATES:
-        # 情形 2：fold 半程已落盘——计数增量（silent_merge_count、副卡整体的
-        # repeated_mentions 累加）绝不能二次施加。但 crash 窗口内副卡可能又
-        # 吸了新 capture（§44.2 pre-filing fold 跑在 consume_judged 之前）——
-        # sources 去重合并幂等，补上，别把窗口增量跟着副卡埋进回收站（review
-        # finding，2026-08-18）；只为窗口内的**新增**来源计 mentions
-        # （_fold_hit 同款 added 语义，重放时 added=0 天然幂等）。
-        merged, added = registry._dedupe_sources(
-            primary.sources or [], secondary.sources or [])
-        primary.sources = merged
-        if added:
-            primary.repeated_mentions = (int(primary.repeated_mentions or 1)
-                                         + added)
-        if primary.status == registry.State.EXECUTING.value:
-            # 主卡可能在 crash 窗口被批准并于本 pass 早段派发（dispatch_approved
-            # 先于 consume_judged）——§44.3 briefing 与成功路径对称；
-            # queue_briefing 按 pending+已投递台账去重，重放无害（review
-            # finding，2026-08-18）。
-            queue_briefing(primary, f"{applied}（原卡已进回收站，可恢复）")
-        registry.save(primary)      # 与成功路径同序：主卡先落盘
-        registry.trash(secondary, my_reason)
-        analytics.log_event("silent_merge", primary=primary.id,
-                            secondary=secondary.id, outcome="ok_retry")
-        # §44.6 回执：补完路径的合并同样发生了——不留回执用户就看不到这次
-        # 并入。回执用第一跑落盘的原 note 文本 → 内容键与成功路径同键，
-        # TTL 内去重保证只一条（标题漂移时新拼的 note 会另开内容键，不能用）。
-        from act.lib import fold_receipts
-        fold_receipts.record(primary.id, "radar", applied)
-        return True
-    # 情形 3：合并中止（review finding，2026-08-18 第二轮：旧序先做状态复检，
-    # 这里会静默 return False → job 标 done，主卡带着半程合并记账、副卡却
-    # 活着执行——永久半 fold）。收敛 = 把半程 fold note 打上 [已拆出 →副卡]
-    # （副卡本人就是活着的那张卡，正是拆出语义；mark_note_split 已拆过返回
-    # False，天然幂等）+ 审计 note 留痕。计数不回滚：与 §38.2 用户 split_note
-    # 判例一致，「已并入×N」chip 是累计账，拆出不减账。
-    changed = False
-    if entry.get("ts") and not entry.get("split_into"):
-        changed = registry.mark_note_split(primary, entry["ts"], secondary.id)
-    audit = (f"并入中止：卡对状态已变（主卡 {primary.status} / "
-             f"副卡 {secondary.status}），{secondary.id} 保留为独立卡")
-    if registry.append_fold_note(primary, audit, "radar"):
-        changed = True
-    if changed:
-        registry.save(primary)
-    analytics.log_event("silent_merge", primary=primary.id,
-                        secondary=secondary.id, outcome="retry_aborted")
-    return False
+        return _converge_complete(primary, secondary, applied, my_reason)
+    return _converge_abort(primary, secondary, entry)
+
+
+def _merge_note(secondary: registry.Requirement, brief: str) -> str:
+    """§44.4 冻结行文法：「静默并入 {id}「{title}」[：brief]」。"""
+    note = f"静默并入 {secondary.id}「{secondary.display_title or secondary.title}」"
+    if brief and brief != "无新增信息":
+        note += f"：{brief}"
+    return note
+
+
+def _bump_counters(primary: registry.Requirement,
+                   secondary: registry.Requirement) -> None:
+    """mentions accumulate (the secondary's whole count), fold-ins +1."""
+    primary.repeated_mentions = (int(primary.repeated_mentions or 1)
+                                 + int(secondary.repeated_mentions or 1))
+    primary.silent_merge_count = int(
+        getattr(primary, "silent_merge_count", 0) or 0) + 1
+
+
+def _apply_fold(primary: registry.Requirement,
+                secondary: registry.Requirement, note: str) -> None:
+    """The in-memory half of a fold: note + sources + counters (+ briefing)."""
+    registry.append_fold_note(primary, note, "radar")
+    _dedupe_into(primary, secondary)
+    _bump_counters(primary, secondary)
+    if primary.status == registry.State.EXECUTING.value:
+        queue_briefing(primary, f"{note}（原卡已进回收站，可恢复）")
 
 
 def execute(primary: registry.Requirement, secondary: registry.Requirement,
@@ -486,33 +617,50 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
         analytics.log_event("silent_merge", primary=primary.id,
                             secondary=secondary.id, outcome="state_moved")
         return False
-    note = f"静默并入 {secondary.id}「{secondary.display_title or secondary.title}」"
-    if brief and brief != "无新增信息":
-        note += f"：{brief}"
-    registry.append_fold_note(primary, note, "radar")
-    merged, added = registry._dedupe_sources(
-        primary.sources or [], secondary.sources or [])
-    primary.sources = merged
-    primary.repeated_mentions = (int(primary.repeated_mentions or 1)
-                                 + int(secondary.repeated_mentions or 1))
-    primary.silent_merge_count = int(
-        getattr(primary, "silent_merge_count", 0) or 0) + 1
-    if primary.status == registry.State.EXECUTING.value:
-        queue_briefing(primary, f"{note}（原卡已进回收站，可恢复）")
+    note = _merge_note(secondary, brief)
+    _apply_fold(primary, secondary, note)
     registry.save(primary)          # primary lands first (crash-ordering)
     registry.trash(secondary, f"silent-merge: 已并入 {primary.id}")
     analytics.log_event("silent_merge", primary=primary.id,
                         secondary=secondary.id, outcome="ok")
     # §44.6 看板回执：§44.1 的跨卡静默并入同样要在看板留一行可消失的痕
     # （§44.5 的「已并入×N」chip 是累计数，回执补"刚刚发生了什么"）。
-    from act.lib import fold_receipts
-    fold_receipts.record(primary.id, "radar", note)
+    _record_receipt(primary.id, note)
     return True
 
 
 # --------------------------------------------------------------------------- #
 # triage-time check (radar slow path — inline, §44.2)
 # --------------------------------------------------------------------------- #
+def _open_others(req: registry.Requirement) -> list:
+    """Every OTHER open card (the fold-target candidate pool)."""
+    from act.lib import auto_merge
+    return [r for r in registry.load_all()
+            if r.status in auto_merge.OPEN_STATES and r.id != req.id]
+
+
+def _first_rule_hit(req: registry.Requirement) -> Optional[registry.Requirement]:
+    """The rule's best shot: first open, unlinked card the deterministic
+    near-dupe rule pairs with ``req`` (auto_merge.is_near_dupe — cheap)."""
+    from act.lib import auto_merge
+    for other in _open_others(req):
+        if auto_merge._linked(req, other):
+            continue
+        dupe, _matched, _reason = auto_merge.is_near_dupe(req, other)
+        if dupe:
+            return other
+    return None
+
+
+def _same_thing_brief(other: registry.Requirement, req: registry.Requirement,
+                      runner) -> Optional[str]:
+    """The judge's brief when it calls the pair the same thing, else None."""
+    verdict = judge(other, req, runner=runner)
+    if verdict and verdict.get("same_thing"):
+        return verdict.get("brief") or ""
+    return None
+
+
 def find_fold_target(req: registry.Requirement,
                      runner=None) -> Optional[registry.Requirement]:
     """Before filing a new proposal: does an open card already cover this?
@@ -522,24 +670,17 @@ def find_fold_target(req: registry.Requirement,
     None (file normally). Never raises.
     """
     try:
-        from act.lib import auto_merge
-        reqs = [r for r in registry.load_all()
-                if r.status in auto_merge.OPEN_STATES and r.id != req.id]
-        for other in reqs:
-            if auto_merge._linked(req, other):
-                continue
-            dupe, _matched, _reason = auto_merge.is_near_dupe(req, other)
-            if not dupe:
-                continue
-            verdict = judge(other, req, runner=runner)
-            if verdict and verdict.get("same_thing"):
-                req._silent_brief = verdict.get("brief") or ""  # type: ignore
-                return other
-            # rule's best shot judged different — file normally, and let the
-            # caller ledger the pair post-filing (one-shot per pair EVER;
-            # without it actd's scan would re-judge the identical pair).
-            req._silent_separate_from = other.id  # type: ignore
+        other = _first_rule_hit(req)
+        if other is None:
             return None
+        brief = _same_thing_brief(other, req, runner)
+        if brief is not None:
+            req._silent_brief = brief  # type: ignore
+            return other
+        # rule's best shot judged different — file normally, and let the
+        # caller ledger the pair post-filing (one-shot per pair EVER;
+        # without it actd's scan would re-judge the identical pair).
+        req._silent_separate_from = other.id  # type: ignore
         return None
     except Exception:  # noqa: BLE001 - never break the radar over this
         return None
@@ -548,6 +689,27 @@ def find_fold_target(req: registry.Requirement,
 # --------------------------------------------------------------------------- #
 # CLI: python -m act.lib.silent_merge SM-xxxxxxxx  (the detached judge)
 # --------------------------------------------------------------------------- #
+def _load_pair(job: dict) -> tuple:
+    """(primary, secondary) fresh from the registry; either may be None."""
+    return (registry.load(str(job.get("primary") or "")),
+            registry.load(str(job.get("secondary") or "")))
+
+
+def _record_judgement(job_id: str, primary: registry.Requirement,
+                      secondary: registry.Requirement, verdict: Optional[dict]) -> None:
+    """Judge outcome -> job file (+ analytics for the two terminal shapes)."""
+    if verdict is None:
+        _finish(job_id, "failed", error="judge failed")
+        analytics.log_event("silent_merge", primary=primary.id,
+                            secondary=secondary.id, outcome="judge_failed")
+    elif not verdict["same_thing"]:
+        _finish(job_id, "done", verdict="separate", brief=verdict["brief"])
+        analytics.log_event("silent_merge", primary=primary.id,
+                            secondary=secondary.id, outcome="separate")
+    else:
+        _finish(job_id, "judged", brief=verdict["brief"])
+
+
 def _main(job_id: str) -> int:
     """The detached judge: READ-ONLY on the registry. It writes its verdict
     back to the job file and exits — execution (the registry writes) happens
@@ -558,59 +720,60 @@ def _main(job_id: str) -> int:
     job = _load_job(job_id)
     if not job or job.get("status") != "pending":
         return 0
-    primary = registry.load(str(job.get("primary") or ""))
-    secondary = registry.load(str(job.get("secondary") or ""))
+    primary, secondary = _load_pair(job)
     if primary is None or secondary is None:
         _finish(job_id, "failed", error="card vanished")
         return 0
-    verdict = judge(primary, secondary)
-    if verdict is None:
-        _finish(job_id, "failed", error="judge failed")
-        analytics.log_event("silent_merge", primary=primary.id,
-                            secondary=secondary.id, outcome="judge_failed")
-        return 0
-    if not verdict["same_thing"]:
-        _finish(job_id, "done", verdict="separate", brief=verdict["brief"])
-        analytics.log_event("silent_merge", primary=primary.id,
-                            secondary=secondary.id, outcome="separate")
-        return 0
-    _finish(job_id, "judged", brief=verdict["brief"])
+    _record_judgement(job_id, primary, secondary, judge(primary, secondary))
     return 0
+
+
+def _judged_job(p: Path) -> Optional[dict]:
+    """The job dict when ``p`` holds a well-formed job in status ``judged``."""
+    try:
+        job = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(job, dict) or job.get("status") != "judged":
+        return None
+    return job
+
+
+def _consume_one(job_id: str, job: dict) -> bool:
+    """Execute one judged job inside the writer thread -> merged?"""
+    primary, secondary = _load_pair(job)
+    if primary is None or secondary is None:
+        _finish(job_id, "failed", error="card vanished before execute")
+        return False
+    try:
+        ok = execute(primary, secondary, str(job.get("brief") or ""))
+    except Exception as e:  # noqa: BLE001 - a half-merge must be visible
+        _finish(job_id, "failed", error=f"execute failed: {e}")
+        analytics.log_event("silent_merge", primary=primary.id,
+                            secondary=secondary.id, outcome="execute_failed")
+        return False
+    # analytics outcome（state_moved/retry_aborted/ok*）由 execute 自记
+    # ——它才分得清「普通状态挪动」和「半程合并被中止」；这里只管 job 台账。
+    _finish_executed(job_id, ok)
+    return ok
+
+
+def _finish_executed(job_id: str, ok: bool) -> None:
+    _finish(job_id, "done", verdict="merged" if ok else "skipped")
 
 
 def consume_judged() -> int:
     """actd every pass: execute same-thing verdicts inside the daemon's own
     writer thread (fresh loads; execute() re-checks both states). Never
     raises. Returns merges performed."""
-    merged = 0
     try:
         paths = list(SILENT_DIR.glob("SM-*.json"))
     except OSError:
         return 0
+    merged = 0
     for p in paths:
-        try:
-            job = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(job, dict) or job.get("status") != "judged":
-            continue
-        job_id = str(job.get("id") or p.stem)
-        primary = registry.load(str(job.get("primary") or ""))
-        secondary = registry.load(str(job.get("secondary") or ""))
-        if primary is None or secondary is None:
-            _finish(job_id, "failed", error="card vanished before execute")
-            continue
-        try:
-            ok = execute(primary, secondary, str(job.get("brief") or ""))
-        except Exception as e:  # noqa: BLE001 - a half-merge must be visible
-            _finish(job_id, "failed", error=f"execute failed: {e}")
-            analytics.log_event("silent_merge", primary=primary.id,
-                                secondary=secondary.id, outcome="execute_failed")
-            continue
-        # analytics outcome（state_moved/retry_aborted/ok*）由 execute 自记
-        # ——它才分得清「普通状态挪动」和「半程合并被中止」；这里只管 job 台账。
-        _finish(job_id, "done", verdict="merged" if ok else "skipped")
-        if ok:
+        job = _judged_job(p)
+        if job is not None and _consume_one(_job_id(job, p), job):
             merged += 1
     return merged
 
