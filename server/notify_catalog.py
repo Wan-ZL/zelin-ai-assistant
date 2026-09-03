@@ -8,7 +8,9 @@
   与通知中继的「还有 N 条通知」汇总句（NotifyRelay.swift）。原生 app 是文案规格（D3 冻结），
   这里是它们的 server 侧落点：每条 title / body 与 shell/Sources 的 ``L("zh","en")`` 逐字
   一致（判例 tests/test_server_notify_catalog.py 钉住；正文来自 §25 FailureCatalog 的按
-  ``body_failure_id`` 引用，不复制第二份）。占位以 ``{name}`` 写（Swift 侧是 ``\\(expr)``）。
+  ``body_failure_id`` 引用，不复制第二份）。占位以 ``{name}`` 写（Swift 侧是 ``\\(expr)``）；
+  带插值的句子另给 ``slots``（每个占位的取值词表，同样与壳 L() 逐字——回滚句的模式名 / 死因，
+  2026-09-03 add-only）。
 - ``kinds`` —— §28 队列条目的 ``kind`` 词表：``review_ready``（完成提醒，受 ``review_notify``
   三档控制）、``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
   新卡待审批 / 任务停下 / 派发失败 / 雷达停摆 / 需重新登录……文案住 act/lib/notify.py 的
@@ -29,10 +31,24 @@ _PLACEHOLDER = re.compile(r"\{[^{}]*\}")
 
 
 def _notice(nid: str, title_zh: str, title_en: str, *, source: str,
-            body_zh: str = "", body_en: str = "", body_failure_id: Optional[str] = None) -> dict:
+            body_zh: str = "", body_en: str = "", body_failure_id: Optional[str] = None,
+            slots: Optional[dict] = None) -> dict:
     return {"id": nid, "title": {"zh": title_zh, "en": title_en},
             "body": {"zh": body_zh, "en": body_en}, "body_failure_id": body_failure_id,
+            "slots": {k: [{"zh": zh, "en": en} for zh, en in v] for k, v in (slots or {}).items()},
             "source": source}
+
+
+# 录制模式回滚句的插值词表（`{failed}` / `{kept}` = RecordingController.label(forMode:)，
+# `{cause}` = rollbackNote 的三种死因）：壳 Recording.swift 组句，页面经桥 `recording.note` 原文
+# 显示——短标签在 §66 清单里 gated（control:notifications:label:*），所以在这里登记为 slots
+# （add-only 键；`sentences()` 把每个 slot 值也算一句）。
+_MODE_LABELS = (("关", "Off"), ("屏幕 + 音频", "Screen + Audio"), ("仅屏幕", "Screen Only"))
+_ROLLBACK_CAUSES = (
+    ("缺 ffmpeg（brew install ffmpeg 装好后再切一次）", "ffmpeg is missing (brew install ffmpeg, then switch again)"),
+    ("缺 Node.js", "Node.js is missing"),
+    ("引擎没能启动", "its engine failed to start"),
+)
 
 
 # 壳直发的系统通知（title 是 §66 清单里 gated 的 control:notifications:label:*；body 只列不判）。
@@ -50,6 +66,7 @@ SHELL_NOTICES: tuple = (
     _notice("recording_mode_reverted", "已退回原来的录制模式", "Reverted to the previous recording mode",
             body_zh="「{failed}」没能开启——{cause}；已退回「{kept}」继续录制",
             body_en="{failed} could not start — {cause}; reverted to {kept} and recording continues",
+            slots={"failed": _MODE_LABELS, "kept": _MODE_LABELS, "cause": _ROLLBACK_CAUSES},
             source="shell/Sources/Recording.swift rollbackNote (engine died right after a mode switch)"),
     _notice("relay_overflow", "还有 {n} 条通知", "+{n} more notifications",
             body_zh="打开 App 查看看板", body_en="Open the app to see the board",
@@ -99,18 +116,23 @@ def _body(notice: dict) -> dict:
 
 
 def resolve_notice(notice: dict) -> dict:
-    """对外投影：body 按 body_failure_id 从 §25 FailureCatalog 取（单源），其余原样。"""
+    """对外投影：body 按 body_failure_id 从 §25 FailureCatalog 取（单源），其余原样；
+    ``slots`` = 插值词表（add-only；无插值的句子是空 dict）。"""
     return {"id": notice["id"], "title": dict(notice["title"]), "body": _body(notice),
+            "slots": {k: [dict(v) for v in vs] for k, vs in notice.get("slots", {}).items()},
             "source": notice["source"]}
 
 
 def sentences() -> list:
-    """目录里每一句（title 与 body 各算一句）的 (zh, en) 对——§66.2 探针的比对面。"""
+    """目录里每一句（title 与 body 各算一句，插值 slot 的每个取值也算一句）的 (zh, en) 对——
+    §66.2 探针的比对面。"""
     out = []
     for notice in SHELL_NOTICES:
         resolved = resolve_notice(notice)
         out.append((resolved["title"]["zh"], resolved["title"]["en"]))
         out.append((resolved["body"]["zh"], resolved["body"]["en"]))
+        for values in resolved["slots"].values():
+            out.extend((v["zh"], v["en"]) for v in values)
     return out
 
 

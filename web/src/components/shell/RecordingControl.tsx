@@ -2,7 +2,8 @@
 // DashboardView.swift RecordingMenuButton 的标签/颜色/状态——按钮文案 `录制：` +
 // 状态词（关 / 未在录制 / 仅屏幕 / 屏幕+音频），颜色 关=次级、引擎在录=红、开了
 // 没录上=橙；菜单 = 状态行（引擎死了时说真实原因）+ 拒绝/回滚说明 + 三态单选 +
-// 重启录制引擎 + 缺权限时的系统设置深链。
+// 重启录制引擎 + 缺权限时的系统设置深链 + 缺 ffmpeg 时的「安装 ffmpeg…」（诊断 = engine_ffmpeg_missing
+// 或拒绝说明点名 ffmpeg；原生 FailureCatalog.perform 开 ffmpeg 下载页，web 同一外链）。
 //
 // 乐观 UI：点选即显示目标模式；壳 reject → 回滚并把 reject 原文挂在按钮 title；
 // 壳的真相（call 回执 / zai-shell-state 推送）一到就替换乐观值——`屏幕+音频` 要先过
@@ -19,6 +20,13 @@ export interface RecordingControlProps {
 const MODES = ["off", "screen", "screen_audio"] as const;
 const OPTIMISTIC_TIMEOUT_MS = 15_000;
 const RESTARTING_FLASH_MS = 3_000;
+/** 原生 FailureCatalog.perform("engine_ffmpeg_missing") 打开的下载页（failureAction.tsx EXTERNAL 同址） */
+export const FFMPEG_INSTALL_URL = "https://ffmpeg.org/download.html";
+
+/** 原生 RecordingMenuButton：诊断是缺 ffmpeg、或 15 s 的拒绝说明点名了 ffmpeg（两种语言都含这个词）→ 给修法 */
+export function offersFfmpegInstall(s: ShellRecordingState): boolean {
+  return s.diagnosis === "engine_ffmpeg_missing" || (s.note ?? "").includes("ffmpeg");
+}
 
 type Text = (zh: string, en: string) => string;
 
@@ -237,6 +245,15 @@ export function RecordingControl({ state }: RecordingControlProps) {
                 <span className="shell-menu-check" aria-hidden="true" />
                 {text("打开系统设置 → 屏幕录制", "Open System Settings → Screen Recording")}
               </button>
+            </>
+          )}
+          {offersFfmpegInstall(state) && (
+            <>
+              <div className="shell-menu-divider" role="separator" />
+              <a role="menuitem" className="shell-menu-item" href={FFMPEG_INSTALL_URL} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
+                <span className="shell-menu-check" aria-hidden="true" />
+                {text("安装 ffmpeg…", "Install ffmpeg…")}
+              </a>
             </>
           )}
         </div>

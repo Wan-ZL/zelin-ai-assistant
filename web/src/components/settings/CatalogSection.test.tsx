@@ -75,7 +75,8 @@ describe("CatalogSection", () => {
     fireEvent.click(save);
     await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
     expect(vi.mocked(putSettingsSection).mock.calls[0]).toEqual(["general", { updates_check_enabled: false }]);
-    await screen.findByText("Saved.");
+    await screen.findByRole("status");
+    expect(screen.getByRole("status").textContent).toMatch(/^Saved \d\d:\d\d:\d\d$/);   // 原生 noteSaved：「Saved HH:mm:ss」
     expect(screen.getByText("set here")).toBeTruthy();
   });
 
@@ -87,7 +88,7 @@ describe("CatalogSection", () => {
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "en" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
-    expect(screen.getByRole("alert").textContent).toContain("language must be one of zh, en");
+    expect(screen.getByRole("alert").textContent).toBe("Failed to save settings: language must be one of zh, en");
   });
 
   it("is honest when the server catalog lacks the section", async () => {

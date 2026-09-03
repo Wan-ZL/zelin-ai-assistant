@@ -11,7 +11,7 @@ vitest 跑在 jsdom 里，拿不到 python 与 server，所以把 scripts/demo_s
                                           §44.6 并入回执——都渲染出来，探针才判得到；探针只认渲染出的字）
   ui/parity/fixtures/lanes.json        —— GET /api/lanes 响应体（server.lanes.catalog()）
   ui/parity/fixtures/settings.json     —— GET /api/settings（空 home = 全默认；文案 server-owned）
-  ui/parity/fixtures/secrets.json      —— GET /api/secrets（Anthropic 已保存、其余未设置）
+  ui/parity/fixtures/secrets.json      —— GET /api/secrets（Anthropic / Gmail / 豆包语音 已保存、Slack 走旧路径、Ark 未设置）
 全部虚构数据（demo_seed 的人名/仓库均为虚构）。tests/test_ui_parity_fixture.py 钉
 「重跑零 diff」。
 
@@ -286,17 +286,26 @@ def build_settings():
     return snap
 
 
+# 凭证行的五种状态章都要渲染到（§66.2 control:settings.credentials:*）：Anthropic / Gmail 已保存且可验证
+# （「已保存（未验证）」；Gmail 的探针要地址，fixture 目录里地址为空 → 「还没填 Gmail 地址——」）、豆包语音已保存
+# 且无探针（「已保存（App 内管理）」）、Slack 缺 secrets 文件但 §19 旧路径有（「使用旧路径」——旧路径在生成机器
+# 的 $HOME 下，抹成固定值）、Ark 未设置（「未设置」）。
+_FIXTURE_LEGACY = {"slack-user-token.txt": True}
+
+
 def build_secrets():
-    """GET /api/secrets 的快照：Anthropic key 已保存（「已保存（未验证）」+ 可验证），其余四把「未设置」。
-    值是占位符，只决定 present；mtime 抹成固定值保证零 diff。"""
+    """GET /api/secrets 的快照：三把已保存（Anthropic / Gmail / 豆包语音）、Slack 走旧路径、Ark 未设置。
+    值是占位符，只决定 present；mtime 与 legacy 抹成固定值保证零 diff。"""
     with tempfile.TemporaryDirectory() as tmp:
         secrets_dir = paths.secrets_dir(Path(tmp))
         secrets_dir.mkdir(parents=True)
-        (secrets_dir / "anthropic-api-key.txt").write_text("sk-ant-demo-placeholder\n", encoding="utf-8")
+        for name in ("anthropic-api-key.txt", "gmail-app-password.txt", "volcano-speech-key.txt"):
+            (secrets_dir / name).write_text("demo-placeholder\n", encoding="utf-8")
         snap = secrets_store.snapshot(Path(tmp))
     for row in snap["secrets"]:
         if row.get("mtime"):
             row["mtime"] = int(FIXED_NOW.timestamp())
+        row["legacy"] = _FIXTURE_LEGACY.get(row["name"], False)
     return snap
 
 

@@ -40,6 +40,11 @@ import type {
   RepairReceipt,
   SecretStatus,
   SecretVerifyResult,
+  SlackDirectory,
+  SyncDisableReceipt,
+  SyncPairReceipt,
+  SyncStatus,
+  VoiceProfileStatus,
   SecretsStatus,
   SeedDashboardReceipt,
   SettingsCatalog,
@@ -400,9 +405,10 @@ export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
   return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
 }
 
-/** POST /api/reveal {target} — 访达定位 server 词表里的文件（config = config.yaml / 模板；§68.4「显示文件」） */
-export function postRevealTarget(target: "config"): Promise<unknown> {
-  return request("/api/reveal", { method: "POST", body: JSON.stringify({ target }) });
+/** POST /api/reveal {target[, name]} — 访达定位 server 词表里的文件（config = config.yaml / 模板，§68.4「显示文件」；
+ *  skill + name = 该 skill 的 SKILL.md，§67.5「在 Finder 显示」——客户端只传词与名，路径 server 推导） */
+export function postRevealTarget(target: "config" | "skill" | "voice_profile", name?: string): Promise<unknown> {
+  return request("/api/reveal", { method: "POST", body: JSON.stringify(name === undefined ? { target } : { target, name }) });
 }
 
 /** GET /api/about — 版本 / 路径 / 更新状态 */
@@ -473,6 +479,31 @@ export function postAsk(question: string, signal?: AbortSignal): Promise<AskAnsw
 /** GET /api/slack/manifest — repo 的 Slack App Manifest 原文（Slack 接入区「复制 App Manifest」） */
 export function fetchSlackManifest(signal?: AbortSignal): Promise<{ manifest: string; path: string }> {
   return request<{ manifest: string; path: string }>("/api/slack/manifest", { signal });
+}
+
+/** GET /api/sync — 同步 / 配对状态（开关 + 设备名 + 配对二维码 PNG） */
+export function fetchSync(signal?: AbortSignal): Promise<SyncStatus> {
+  return request<SyncStatus>("/api/sync", { signal });
+}
+
+/** POST /api/sync/pair {label?} — 起 act.syncd --pair --json（开启 / 重新生成 / 改名；幂等，同一 channel 同一码） */
+export function postSyncPair(label?: string): Promise<SyncPairReceipt> {
+  return request<SyncPairReceipt>("/api/sync/pair", { method: "POST", body: JSON.stringify(label ? { label } : {}) });
+}
+
+/** POST /api/sync/disable {} — act.syncd --disable（mode=off，密钥保留） */
+export function postSyncDisable(): Promise<SyncDisableReceipt> {
+  return request<SyncDisableReceipt>("/api/sync/disable", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/voice — 语气档案「当前生效」状态行（私有 / 出厂 / 无；开关） */
+export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileStatus> {
+  return request<VoiceProfileStatus>("/api/voice", { signal });
+}
+
+/** GET /api/slack/directory[?refresh=1] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记） */
+export function fetchSlackDirectory(refresh = false, signal?: AbortSignal): Promise<SlackDirectory> {
+  return request<SlackDirectory>(`/api/slack/directory${refresh ? "?refresh=1" : ""}`, { signal });
 }
 
 /** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 写 .command（cd repo && bash uninstall.sh）并 open（§68.6） */
