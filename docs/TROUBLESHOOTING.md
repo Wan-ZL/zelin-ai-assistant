@@ -30,6 +30,7 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 2. 麦克风:系统提示直接点允许;拒绝了就到 系统设置 → 隐私与安全性 → 麦克风 打开 **Zelin's AI Assistant**(同上,认新出现的那条),再把「实时字幕」关一次开一次。
 3. 壳目前仍是 ad-hoc 签名(P4 过渡期):每次重新 `bash shell/build.sh` 装机后屏幕录制授权会像上一节一样失效——`tccutil reset ScreenCapture com.zelin.ai-board` 后重新打开开关即可。稳定证书随 Mac-retire 清单一起落地后不再需要。
 4. 两个 app 同时在跑时(旧 app 已改名 "Zelin's AI Assistant (old)" 备用,§54),谁最后切换模式谁持有 screenpipe 子进程——不必同时开着;只保留壳在跑即可。
+5. **通知与 Documents(P4 起,CONTRACT §68.13)**:系统通知改由壳投递(§28 中继消费者搬进壳)——第一次会弹「通知」授权提示;拒绝了就到 系统设置 → 通知 → **Zelin's AI Assistant** 打开。壳 bundle 现在也带一份 vault-sync-helper(`Zelin's AI Assistant.app/Contents/MacOS/vault-sync-helper`);`ingest/vault-sync.sh` 仍**先找旧 app "(old)"**(它已持有 Documents 授权),旧 app 不在(新机器)才用壳的那份——那时 ~/Documents 的授权按壳的身份记一次:cron 的下一轮 ingest 会照旧回落 direct 模式直到授权到位——在看板 **设置 → 权限体检**(`?page=permissions`)按步骤给壳授权,或在 Finder 里把 `Zelin's AI Assistant.app` 拖进 系统设置 → 隐私与安全性 → 文件与文件夹 / 完全磁盘访问。这一页同时列出后台 python / claude / node 需要的「完全磁盘访问」真实路径(可复制),D20 家族的授权都在那里一次做完。
 
 **旧 app 的名字与位置(§54 名字互换,2026-09-02)**:`bash install.sh`(含 auto-deploy)第一次装新壳时,把原来的 `/Applications/Zelin's AI Assistant.app`(bundle id `com.zelin.ai-engineer`)**同目录改名**为 `/Applications/Zelin's AI Assistant (old).app`——只改文件夹名,bundle 内容一个字节不动(它在签名封条之内,改了 TCC 授权就名存实亡),所以旧 app 的授权与偏好全部原地保留。**它在系统设置里显示的名字要等下一次重新构建**(`mac/build.sh --install`、.pkg 或 Sparkle 更新——名字盖在 `mac/Info.plist` 里)才变成 "(old)";在那之前隐私列表里会有两条 "Zelin's AI Assistant"。用 .pkg 装过的旧 bundle 是 root 属主:install.sh 搬得动(rename 只要 /Applications 的写权限)但删不了、也不该 `sudo plutil` 去改名(同样破封条);想立刻看到 "(old)" 名字:先 `sudo rm -rf "/Applications/Zelin's AI Assistant (old).app"`(root 属主,用户级脚本删不掉;授权与偏好都不在 bundle 里,删了不丢),再在终端跑 `bash install.sh`——交互模式的第 4 步用同一 bundle id + 同一签名证书把旧 app 重建到 `(old).app`,名字随之到位、授权照旧。
 
@@ -94,6 +95,8 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 1. 只需**一次**:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → 粘贴上面那条路径。之后 Claude Code 随便更新,路径不变、授权不变。
 2. 每次 `bash install.sh`(含每次自动部署跑的 `install.sh --non-interactive`)会把副本刷到当前版本;安装报告里是 `stable_claude=ok:refreshed: …`。两次部署之间副本可能落后一版——doctor `stable claude` 行会 WARN 说明,**这不是故障**:旧一版的 claude 照样派工。
 3. 想立刻刷新就手跑一次 `bash install.sh`;确认用 `python3 -m act.doctor`——`stable claude` 行 OK(或 WARN 落后一版)、`daemon claude` 行写着副本的路径、`launchd claude` 行 OK。
+
+**自动部署的通知里写着 `needs owner: stable claude`**(CONTRACT §56.3 第 10 步、§25 `row_class`,2026-09-03 起):部署本身是成功的——新版本已上机,只是副本还没拿到上面那条一次性授权;在 launchd 会话里 doctor 的 `stable claude` 行是 FAIL `claude_blind`(detail 写着副本没坏、是授权没点),而这类「只有 owner 能点」的行**永不**触发回滚(2026-09-03 v1.0.7 正是因它被误回滚一次)。照第 1 条授一次权,下一次 doctor 就绿了;在终端里跑 `python3 -m act.doctor` 看到该行 OK 不算数——终端借出自己的授权,等 timer 触发的下一轮部署或 `launchd claude` 行说话。若该行 FAIL 却**没有** `claude_blind` id,那是副本文件真坏了(detail 带失败输出首行),`bash install.sh` 重拷。
 
 **如果 `launchd claude` 行在刷新副本之后又红了**:那说明 TCC 把这次替换当成了新东西(理论上不会——副本仍满足授权时记下的 code requirement——但 macOS 版本行为可能变)。看列表里稳定路径那一项是否还开着;关掉再开一次;还不行就在本 repo 开 issue,附 doctor 输出。**不要**再回去给 `versions/<v>` 授权——那条路每次更新都断。
 

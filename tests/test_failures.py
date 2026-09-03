@@ -197,6 +197,16 @@ class EngineLogClassifyTestCase(unittest.TestCase):
                 "thread 'main' panicked at src/core.rs:42", engine_alive=False),
             "engine_crashed")
 
+    def test_engine_is_presumed_dead_unless_told_otherwise(self):
+        # the defaults are the fail-closed shape: npx present, engine NOT
+        # alive — a caller that forgets engine_alive gets a diagnosis, never
+        # a silent "healthy".
+        self.assertEqual(
+            failures.classify_engine_log("thread 'main' panicked at src/core.rs:42"),
+            "engine_crashed")
+        self.assertEqual(failures.classify_engine_log(self.DOWNLOAD), "engine_crashed")
+        self.assertEqual(failures.classify_engine_log(""), "engine_dead")
+
     def test_dead_on_ffmpeg_is_the_specific_fix_not_generic_crash(self):
         # 2026-07-13: screen_audio dying on the missing ffmpeg must name the
         # dependency, not read as a generic crash (let alone "permissions").
@@ -315,16 +325,69 @@ class DashboardClassificationTestCase(unittest.TestCase):
                          "claude_cli_outdated")
 
 
+class RowClassTestCase(unittest.TestCase):
+    """§25 row class `owner_action` — the §56.3 deploy verdict skips these rows
+    (2026-09-03: v1.0.7 rolled back on `stable claude` FAILing for a Full Disk
+    Access grant the owner had yet to click)."""
+
+    # the in-app one-click repairs: a row whose remedy is one of these is NOT
+    # an owner action — code (a reload, a re-render, a restart) fixes it
+    _CODE_REPAIRS = {"install_claude", "install_node", "install_ffmpeg", "restart_engine",
+                     "reload_agent", "repair_cron", "restart_actd", "fix_config", "retry",
+                     "show_engine_log", "open_settings_key"}
+
+    def test_tcc_grant_ids_are_owner_action(self):
+        for fid in ("claude_blind", "deploy_blind_tcc", "cron_fda_blocked",
+                    "cron_tcc_blocked", "ui_build_tcc_blocked"):
+            self.assertEqual(failures.row_class(fid), failures.OWNER_ACTION, fid)
+
+    def test_code_fixable_ids_and_unknown_ids_have_no_class(self):
+        for fid in ("dashboard_stale", "agent_unloaded", "claude_cli_missing",
+                    "claude_cli_outdated", "interpreter_blind", "config_invalid",
+                    "no_such_id", "", None):
+            self.assertEqual(failures.row_class(fid), "", repr(fid))
+
+    def test_every_owner_action_id_is_in_the_catalog_with_a_manual_remedy(self):
+        for fid in failures.OWNER_ACTION_IDS:
+            self.assertIn(fid, failures.FAILURES, fid)
+            self.assertNotIn(failures.FAILURES[fid]["action_id"], self._CODE_REPAIRS,
+                             "%s is owner_action yet maps to an in-app code repair" % fid)
+
+    def test_owner_action_is_a_strict_subset_of_the_fresh_install_human_bucket(self):
+        # §69's "human" bucket = grants + credentials + tool installs; the deploy
+        # verdict skips only the grants — a deploy that newly loses a tool or a
+        # credential is a regression, so those must stay out of OWNER_ACTION_IDS
+        from act.lib import fresh_install
+        self.assertTrue(failures.OWNER_ACTION_IDS < fresh_install.HUMAN_FAILURE_IDS)
+        for fid in ("claude_cli_missing", "claude_auth_failed", "node_missing", "engine_dead"):
+            self.assertIn(fid, fresh_install.HUMAN_FAILURE_IDS)
+            self.assertEqual(failures.row_class(fid), "", fid)
+
+    def test_with_failure_stamps_the_class_on_the_row(self):
+        owner = doctor.CheckResult("launchd claude", doctor.FAIL, "blind", "grant").with_failure("claude_blind")
+        code = doctor.CheckResult("dashboard", doctor.FAIL, "stale", "restart").with_failure("dashboard_stale")
+        plain = doctor.CheckResult("dashboard", doctor.FAIL, "stale", "restart")
+        self.assertEqual(owner.row_class, "owner_action")
+        self.assertEqual(code.row_class, "")
+        self.assertEqual(plain.row_class, "")
+
+
 class DoctorJSONTestCase(unittest.TestCase):
     def test_render_json_carries_classification(self):
         rows = [doctor.CheckResult("claude CLI", doctor.FAIL, "not on PATH",
                                    "install it").with_failure("claude_cli_missing"),
-                doctor.CheckResult("state dirs", doctor.OK, "writable")]
+                doctor.CheckResult("state dirs", doctor.OK, "writable"),
+                doctor.CheckResult("launchd claude", doctor.FAIL, "blind",
+                                   "grant").with_failure("claude_blind")]
         data = json.loads(doctor.render_json(rows))
         self.assertEqual(data["checks"][0]["failure_id"], "claude_cli_missing")
         self.assertEqual(data["checks"][0]["action_id"], "install_claude")
+        self.assertEqual(data["checks"][0]["row_class"], "")
         self.assertEqual(data["checks"][1]["failure_id"], "")
-        for key in ("name", "status", "detail", "fix"):
+        self.assertEqual(data["checks"][1]["row_class"], "")
+        self.assertEqual(data["checks"][2]["row_class"], "owner_action",
+                         "auto-deploy.sh reads this key to skip owner-action FAILs (§56.3)")
+        for key in ("name", "status", "detail", "fix", "row_class"):
             self.assertIn(key, data["checks"][0])
 
     def test_json_flag_prints_parseable_output(self):

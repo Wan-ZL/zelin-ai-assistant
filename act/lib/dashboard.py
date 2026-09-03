@@ -23,8 +23,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import (card_summary, config, deploy_state, failures, policy, radar_health,
-                     recap_store, risk, sources, steer, titles)
+from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
+                     policy, radar_health, recap_store, risk, self_improve, sources, steer,
+                     titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -47,7 +48,7 @@ _MERGE_EMIT_STATUSES = ("analyzing", "done", "failed")
 # --------------------------------------------------------------------------- #
 # transcript-info memoization (hot path)
 # --------------------------------------------------------------------------- #
-# executor._transcript_info reads + json-parses the FULL transcript of a
+# transcripts.transcript_info reads + json-parses the FULL transcript of a
 # session. The dashboard needs it for every executing/review/delivered card
 # without a live pid — and the delivered set grows forever (never auto-
 # archived) — so calling it uncached on every ~10s pass is unbounded IO that
@@ -61,11 +62,11 @@ _TINFO_CACHE_MAX = 512  # tiny entries; bound it so a long-lived actd can't grow
 
 def _transcript_sig(sid: str) -> Optional[tuple]:
     """Freshness signature: (path, mtime_ns, size) of each transcript file
-    ``executor._transcript_info(sid)`` would consider — the glob pattern must
-    stay in sync with executor's. None = can't sign (short sid / OSError):
+    ``transcripts.transcript_info(sid)`` would consider — the glob pattern must
+    stay in sync with that module's. None = can't sign (short sid / OSError):
     the caller falls through to an uncached lookup, never a stale answer."""
     short = str(sid or "").split("-")[0]
-    if len(short) < 8:  # executor's guard: anything shorter globs everything
+    if len(short) < 8:  # transcripts' guard: anything shorter globs everything
         return None
     root = Path("~/.claude/projects").expanduser()
     try:
@@ -79,14 +80,13 @@ def _transcript_sig(sid: str) -> Optional[tuple]:
 
 
 def _transcript_info_cached(sid: str) -> Optional[tuple]:
-    from act.executor import _transcript_info  # lazy: keep dashboard import-light
     sig = _transcript_sig(sid)
     if sig is None:
-        return _transcript_info(sid)
+        return transcripts.transcript_info(sid)
     hit = _TINFO_CACHE.get(sid)
     if hit is not None and hit[0] == sig:
         return hit[1]
-    info = _transcript_info(sid)
+    info = transcripts.transcript_info(sid)
     if len(_TINFO_CACHE) >= _TINFO_CACHE_MAX:
         _TINFO_CACHE.clear()
     _TINFO_CACHE[sid] = (sig, info)
@@ -214,6 +214,22 @@ def _s(v: Any) -> str:
     Decodable），一个 int（如手写 YAML 的 ``id: 300``）就能让整列解码成 []
     而 counts 徽章还显示真实数（§2）。None -> ""（字段本身非可选）。"""
     return "" if v is None else str(v)
+
+
+def _delivery_view(ex: dict) -> Optional[dict]:
+    """§65.3 review 行 `delivery`：execution.delivery 的 wire 形（缺失 = None →
+    整键省略）。字段逐字镜像 self_improve.verify_delivery 的结果，不翻译。"""
+    delivery = self_improve.delivery_of({"execution": ex})
+    return dict(delivery) if delivery else None
+
+
+def _self_improve_view(cfg: config.Config) -> dict:
+    """§65 顶层 `self_improve`：读不到状态文件也给一个完整形状（宪法第 11 条）。"""
+    try:
+        return self_improve.board_view(cfg)
+    except Exception as e:  # noqa: BLE001 - 投影绝不因通道状态文件崩
+        print(f"dashboard: self_improve view failed: {e}", file=sys.stderr)
+        return {"enabled": False, "paused": False, "error": str(e)[:200]}
 
 
 def _opt(key: str, value: Any) -> dict:
@@ -390,46 +406,16 @@ def _iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _parse_trashed_at(ts: Any) -> Optional[_dt.datetime]:
-    """actd._parse_iso byte-for-byte: fromisoformat (Z -> +00:00) with a
-    strptime fallback; naive -> UTC; None when neither parses."""
-    s = str(ts).strip().replace("Z", "+00:00")
-    try:
-        trashed = _dt.datetime.fromisoformat(s)
-    except (TypeError, ValueError):
-        try:
-            trashed = _dt.datetime.strptime(str(ts).strip(),
-                                            "%Y-%m-%dT%H:%M:%SZ")
-            trashed = trashed.replace(tzinfo=_dt.timezone.utc)
-        except (TypeError, ValueError):
-            return None
-    if trashed.tzinfo is None:
-        trashed = trashed.replace(tzinfo=_dt.timezone.utc)
-    return trashed
-
-
-def _retention_days(cfg: config.Config) -> int:
-    return int(cfg.trash_retention_days or 0)
-
-
 def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
-    """ISO hard-delete deadline for a trash row (§40): trashed_at + retention.
+    """ISO hard-delete deadline for a trash row (§40.5): trashed_at + retention.
 
     None (key emitted as null) when the row is pinned, retention is disabled
     (``trash_retention_days <= 0``), or ``trashed_at`` doesn't parse — EXACTLY
     the conditions under which actd.purge_trash skips the row, so the countdown
-    never promises a purge that isn't coming. The parse mirrors
-    actd._parse_iso byte-for-byte (NOT the laxer _epoch, which accepts bare
-    numerics purge_trash rejects — a numeric trashed_at used to show a red
-    countdown for a purge that would never happen)."""
-    days = _retention_days(cfg)
-    if days <= 0 or req.permanent or not req.trashed_at:
-        return None
-    trashed = _parse_trashed_at(req.trashed_at)
-    if trashed is None:
-        return None
-    dt = trashed.astimezone(_dt.timezone.utc) + _dt.timedelta(days=days)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    never promises a purge that isn't coming. §70: one judge for both sides
+    (maintenance.purge_at / purge_due) — loop-trashed rows (stale:* /
+    daily-merge:*) carry their own, longer retention."""
+    return maintenance.purge_at(req, cfg)
 
 
 def _epoch(ts: Any) -> Optional[int]:
@@ -1221,6 +1207,8 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         # decodeIfPresent 可标注。
         **_opt("interrupted", bool(ex.get("interrupted_reason"))),
         **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
+        # §65.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
+        **_opt("delivery", _delivery_view(ex)),
     }
 
 
@@ -1422,6 +1410,7 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
         # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
         # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
         "radar_sources": _radar_sources(cfg),
+        "self_improve": _self_improve_view(cfg),   # §65 add-only 顶层键：通道开关 + 暂停状态
     }
     # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
     # paired phone adopt a Mac rename from the board payload without re-scanning
@@ -1429,10 +1418,9 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
     label = _device_label()
     if label:
         dash["device_label"] = label
-    # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的
-    # 加法约定）：scripts/auto-deploy.sh 写的最近一次自动部署结果；文件缺失或
-    # 读不了 = 整键不存在，web 顶栏据此显示「v0.48.x · deployed 12m ago」。
+    # §56 / §70 add-only 顶层键 deploy_state / maintenance（同 device_label 的加法约定：文件缺失或读不了 = 整键不存在）
     deploy_state.attach(dash)
+    daily_loop.attach(dash, cfg)
     return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
 
 

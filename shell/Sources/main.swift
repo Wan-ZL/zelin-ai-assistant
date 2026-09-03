@@ -9,7 +9,9 @@
 // web/dist，由 server/ 静态托管；壳里没有看板业务逻辑。壳**必须**原生承载的
 // 最小残留（R2.2.3 / CONTRACT §61）：录制引擎的进程归属（screenpipe 是壳的直接
 // 子进程——TCC 屏幕录制授权按 GUI 父进程归属）、实时字幕引擎 + 悬浮窗；两者经
-// ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。Dock-only（D3）：无菜单栏
+// ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。v0.48.x P4 余量（§68.13）：
+// §28 通知中继消费（NotifyRelay，5 s tick）、TCC 探针 + 系统设置深链、登录时启动、
+// Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
 // 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口；⌘Q 正常退出。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
@@ -270,10 +272,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         ShellNavigation.openSettings = { [weak self] anchor in
             self?.openSettingsPage(anchor: anchor)
         }
+        ShellWindow.show = { [weak self] in self?.showWindow() }
         buildMenu()
         buildWindow()
         connectOrSpawn()
         startEngines()
+        startNativeResidue()
+    }
+
+    /// §65.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
+    /// 全局快速捕获快捷键（⌃⌥Space → 前置窗口 + 向页面推 quick_capture）。
+    private func startNativeResidue() {
+        NotifyRelayDelegate.install()
+        PermissionsProbe.shared.refresh()
+        QuickCaptureHotkey.shared.onFire = { [weak self] in
+            guard let self else { return }
+            self.showWindow()
+            if self.webView.url?.host == "127.0.0.1" {
+                self.bridge.pushCommand("quick_capture")
+            } else {
+                self.loadBoard()
+            }
+        }
+        QuickCaptureHotkey.shared.register()
     }
 
     /// §54 生命周期：先探活——有人在班就直接 attach；没有则看 launchd 有没有
@@ -312,6 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 MainActor.assumeIsolated {
                     RecordingController.shared.pollScreenPermission()
                     RecordingController.shared.refreshEngineState()
+                    NotifyRelay.drain()   // §28：5 s 节拍消费 state/notify_queue（原生 refresh tick 同款）
                 }
             }
         }
@@ -321,6 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func applicationWillTerminate(_ note: Notification) {
         engineTick?.invalidate()
+        QuickCaptureHotkey.shared.unregister()
         server.stopIfSpawned()
     }
 

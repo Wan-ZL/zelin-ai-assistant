@@ -12,6 +12,9 @@ mac/Sources 在 D3 下是冻结的行为规范（只读参考），引擎文件�
 - shell/Info.plist 带 NSMicrophoneUsageDescription（字幕 requestAccess 缺它即被
   macOS 杀进程）；shell/build.sh 链接引擎需要的框架并只借 shared I18n.swift。
 - ShellBridge.swift 的 wire 词表与 web/src/shellBridge.ts 的类型逐字互镜（防腐 #10）。
+- §68.13（P4 余量）：NotifyRelay.swift 壳副本只许两处差异（文件头、点击目标
+  MainWindowController → ShellWindow.show）；vault-sync-helper / framegrab 的源
+  （shell/Helpers/）与 mac/ 冻结版逐字节相同；ingest / radar_slack 找 helper 时壳先于原生 app。
 """
 import difflib
 import re
@@ -25,6 +28,8 @@ MAC = REPO_ROOT / "mac" / "Sources"
 SHELL = REPO_ROOT / "shell" / "Sources"
 
 VERBATIM = ["Recording.swift", "CaptionCore.swift", "LiveCaptions.swift"]
+# §68.13：两个 helper CLI 的源从 mac/ 顶层逐字节搬进 shell/Helpers/（build.sh 编进壳 bundle）
+VERBATIM_HELPERS = [("VaultSyncHelper.swift", "VaultSyncHelper.swift"), ("framegrab.swift", "framegrab.swift")]
 
 # FailureCatalog ids the shell needs (Recording.swift flashNote / postSystemNotice
 # + the bridge's diagnosis vocabulary). Everything else stays in Doctor.swift.
@@ -47,6 +52,34 @@ class VerbatimCopyTestCase(unittest.TestCase):
                     "shell/Sources/%s drifted from mac/Sources/%s — the engines move "
                     "AS-IS (§61.3); fix the shell copy, never the frozen mac/ reference"
                     % (name, name))
+
+    def test_helper_sources_are_byte_identical_to_the_frozen_native_reference(self):
+        for shell_name, mac_name in VERBATIM_HELPERS:
+            with self.subTest(file=shell_name):
+                self.assertEqual(
+                    (REPO_ROOT / "shell" / "Helpers" / shell_name).read_bytes(),
+                    (REPO_ROOT / "mac" / mac_name).read_bytes(),
+                    "shell/Helpers/%s drifted from mac/%s (§68.13 verbatim move)" % (shell_name, mac_name))
+
+    def test_notify_relay_differs_only_in_header_and_click_target(self):
+        mac_lines = _read(MAC / "NotifyRelay.swift").splitlines()
+        shell_lines = _read(SHELL / "NotifyRelay.swift").splitlines()
+        allowed = re.compile(r"^\s*$|^\s*//|MainWindowController|ShellWindow")
+        offending = []
+        for line in difflib.unified_diff(mac_lines, shell_lines, n=0, lineterm=""):
+            if line.startswith(("---", "+++", "@@")):
+                continue
+            if not allowed.search(line[1:]):
+                offending.append(line)
+        self.assertEqual(offending, [],
+                         "NotifyRelay.swift shell copy changed logic beyond the documented "
+                         "click-target rewire (§28 / §68.13):\n" + "\n".join(offending))
+        shell_text = "\n".join(shell_lines)
+        self.assertNotIn("MainWindowController.shared", shell_text)
+        self.assertIn("ShellWindow.show?()", shell_text)
+        # §28 constants travel verbatim
+        self.assertIn("static let staleAfter: TimeInterval = 600", shell_text)
+        self.assertIn("static let burstCap = 5", shell_text)
 
     def test_caption_overlay_differs_only_in_header_and_gear_action(self):
         mac_lines = _read(MAC / "CaptionOverlay.swift").splitlines()
@@ -104,10 +137,26 @@ class BundleAndBuildTestCase(unittest.TestCase):
         build = _read(REPO_ROOT / "shell" / "build.sh")
         self.assertIn('"$SRC_DIR"/*.swift', build)
         self.assertIn("shared/Sources/I18n.swift", build)
-        for fw in ["AVFoundation", "ScreenCaptureKit", "UserNotifications", "WebKit", "SwiftUI"]:
+        for fw in ["AVFoundation", "ScreenCaptureKit", "UserNotifications", "WebKit", "SwiftUI",
+                   "ServiceManagement", "Carbon"]:
             self.assertIn("-framework %s" % fw, build)
         # ad-hoc signing stays (task constraint) — no stable identity yet
         self.assertIn("codesign --force --deep -s -", build)
+        # §68.13 helper CLIs ride in the shell bundle (vault-sync-helper / framegrab)
+        self.assertIn('VAULTSYNC_SRC="$HELPERS_DIR/VaultSyncHelper.swift"', build)
+        self.assertIn('FRAMEGRAB_SRC="$HELPERS_DIR/framegrab.swift"', build)
+        self.assertIn('for helper in vault-sync-helper framegrab', build)
+
+    def test_helper_lookups_know_both_homes(self):
+        # ingest/vault-sync.sh（§54 名字互换 + §68.13）：旧 app "(old)" 先（已有 Documents 授权），
+        # 产品路径上的壳其次（新机器）；顺序与 helper 存在性判例在 tests/test_vault_sync_helper_resolution.py
+        sh = _read(REPO_ROOT / "ingest" / "vault-sync.sh")
+        old = sh.index('"Zelin\'s AI Assistant (old).app"')
+        product = sh.index('"Zelin\'s AI Assistant.app"')
+        self.assertLess(old, product)
+        from act import radar_slack
+        self.assertEqual([p.parts[-3] for p in radar_slack.FRAMEGRAB_CANDIDATES], ["shell", "mac"])
+        self.assertIn(radar_slack.FRAMEGRAB, radar_slack.FRAMEGRAB_CANDIDATES)
 
     def test_shell_swift_files_respect_the_file_cap(self):
         # 防腐 #1（hygiene gate enforces this too; this is the readable twin）
@@ -122,16 +171,24 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
     RECORDING_KEYS = ["available", "on", "mode", "engine_running", "diagnosis", "note",
                       "tcc_lost", "screen_permission", "resume_mode"]
     CAPTIONS_KEYS = ["available", "on", "engine", "paused", "engine_dead",
-                     "status_text", "status_is_error"]
+                     "status_text", "status_is_error",
+                     # §68.2 字幕偏好八键
+                     "source", "translate", "translate_direction", "apple_locale",
+                     "ark_model", "font_size", "opacity"]
+    PERMISSION_KEYS = ["screen", "microphone", "notifications"]
+    TOP_KEYS = ["launch_at_login", "hotkey"]
     METHODS = ["getState", "setRecording", "restartRecording",
-               "openScreenRecordingSettings", "setCaptions", "setLanguage"]
+               "openScreenRecordingSettings", "setCaptions", "setLanguage",
+               # §68.13
+               "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin",
+               "setCaptionPrefs", "setBadge"]
 
     def setUp(self):
         self.swift = _read(SHELL / "ShellBridge.swift")
         self.ts = _read(REPO_ROOT / "web" / "src" / "shellBridge.ts")
 
     def test_snapshot_keys_exist_on_both_sides(self):
-        for key in self.RECORDING_KEYS + self.CAPTIONS_KEYS:
+        for key in self.RECORDING_KEYS + self.CAPTIONS_KEYS + self.PERMISSION_KEYS + self.TOP_KEYS:
             with self.subTest(key=key):
                 self.assertIn('"%s"' % key, self.swift)
                 self.assertIsNotNone(
@@ -147,8 +204,21 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
     def test_handler_and_event_names_match(self):
         self.assertIn('static let handlerName = "zaiShell"', self.swift)
         self.assertIn('static let eventName = "zai-shell-state"', self.swift)
+        self.assertIn('static let commandEventName = "zai-shell-command"', self.swift)
         self.assertIn('export const SHELL_STATE_EVENT = "zai-shell-state"', self.ts)
         self.assertIn('export const SHELL_HANDLER_NAME = "zaiShell"', self.ts)
+        self.assertIn('export const SHELL_COMMAND_EVENT = "zai-shell-command"', self.ts)
+
+    def test_permission_and_pane_vocabularies_match(self):
+        system = _read(SHELL / "ShellSystem.swift")
+        self.assertIn('static let kinds = ["screen", "microphone", "notifications"]', system)
+        for pane in ("full_disk", "screen", "microphone", "notifications"):
+            self.assertIn('"%s":' % pane, system)
+            self.assertIn('"%s"' % pane, self.ts)
+        # server 侧 panes 深链与壳侧同一张表（权限体检页两半共用词表）
+        from server import permissions as server_permissions
+        for pane, url in server_permissions.PANES.items():
+            self.assertIn('"%s": "%s"' % (pane, url), system)
 
 
 if __name__ == "__main__":

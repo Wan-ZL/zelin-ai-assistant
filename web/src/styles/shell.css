@@ -385,6 +385,44 @@
   color: var(--warning);
 }
 
+/* §65.4 自我改进通道横幅：详情里的 PR 链接 + 右侧「恢复通道」按钮（紧凑版 shell-button） */
+.shell-banner .shell-button {
+  margin-left: auto;
+  align-self: center;
+  padding: 3px 10px;
+}
+
+.shell-banner .shell-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.shell-banner-detail a {
+  color: var(--accent);
+}
+
+/* 每日整理横幅（MaintenanceBanner，§70）的 info 变体：不是报警，是「服务在干活」
+   的一行回执——accent 软底、accent 标题，与两条红/橙横幅一眼分得开 */
+.shell-banner.is-info {
+  background: var(--accent-soft);
+}
+
+.shell-banner.is-info .shell-banner-icon,
+.shell-banner.is-info .shell-banner-title {
+  color: var(--accent);
+}
+
+.shell-banner-icon-dot {
+  font-size: 9px;
+}
+
+.shell-banner-link {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;
@@ -455,4 +493,23 @@
   .shell-header {
     gap: 10px;
   }
+}
+
+/* ----- §68.8 横幅一键修复 ---------------------------------------------------------------- */
+.shell-banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.shell-banner-link {
+  color: inherit;
+  font-size: 11px;
+}
+
+.shell-banner-note {
+  font-size: 11px;
+  opacity: 0.85;
 }

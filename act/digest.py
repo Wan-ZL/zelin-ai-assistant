@@ -137,6 +137,14 @@ def _fmt(req: Requirement, today: _dt.date, extra: str = "") -> str:
             f"（{lane_name(req.status)}{age_s}）{extra_s}")
 
 
+def _overdue_hours(ex: dict, now: _dt.datetime) -> Optional[int]:
+    """Whole hours since ``dispatched_at`` when past STUCK_AFTER_HOURS, else None."""
+    dispatched = _parse_iso(ex.get("dispatched_at"))
+    if dispatched and (now - dispatched).total_seconds() > STUCK_AFTER_HOURS * 3600:
+        return int((now - dispatched).total_seconds() // 3600)
+    return None
+
+
 def _is_stuck(req: Requirement, now: _dt.datetime) -> Optional[str]:
     """Reason string if an executing item looks stuck, else None."""
     ex = req.execution or {}
@@ -144,9 +152,8 @@ def _is_stuck(req: Requirement, now: _dt.datetime) -> Optional[str]:
         return "自动恢复已放弃，需人工"
     if ex.get("last_resume_ok") is False:
         return "上次自动恢复失败"
-    dispatched = _parse_iso(ex.get("dispatched_at"))
-    if dispatched and (now - dispatched).total_seconds() > STUCK_AFTER_HOURS * 3600:
-        hours = int((now - dispatched).total_seconds() // 3600)
+    hours = _overdue_hours(ex, now)
+    if hours is not None:
         return f"已执行 {hours}h 未交付"
     return None
 
@@ -154,23 +161,33 @@ def _is_stuck(req: Requirement, now: _dt.datetime) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 # 进化建议 (§16) — analytics-driven, each suggestion becomes a detected card
 # --------------------------------------------------------------------------- #
+# feature -> the analytics source whose events (or ``<source>*`` event names)
+# prove the radar is alive.
+_RADAR_FEATURE_SOURCE = {"slack_radar": "slack", "gmail_radar": "gmail"}
+# feature -> exact event names that prove it is in use. Features absent from
+# both tables (``analytics`` — any event at all means it is earning its keep —
+# and anything unknown) are ALWAYS related: never suggest closing them.
+_FEATURE_EVENTS = {
+    # write_digest emits both: the 1:1 prep page is generated alongside
+    "digest": ("digest_generated", "oneonone_prep"),
+    "auto_resume": ("auto_resume", "resume_launch", "auto_resume_exhausted"),
+}
+
+
 def _feature_related(feature: str, event: dict) -> bool:
     ev = str(event.get("event", ""))
     src = str(event.get("source", ""))
-    if feature == "slack_radar":
-        return src == "slack" or ev.startswith("slack")
-    if feature == "gmail_radar":
-        return src == "gmail" or ev.startswith("gmail")
+    radar_src = _RADAR_FEATURE_SOURCE.get(feature)
+    if radar_src is not None:
+        return src == radar_src or ev.startswith(radar_src)
     if feature == "obsidian_radar":
         return ev == "radar_scan" and src == "obsidian"
-    if feature == "digest":
-        # write_digest emits both: the 1:1 prep page is generated alongside
-        return ev in ("digest_generated", "oneonone_prep")
-    if feature == "auto_resume":
-        return ev in ("auto_resume", "resume_launch", "auto_resume_exhausted")
-    if feature == "analytics":
-        return True  # any event at all means analytics is earning its keep
-    return True  # unknown feature -> never suggest closing it
+    return _exact_event_related(feature, ev)
+
+
+def _exact_event_related(feature: str, ev: str) -> bool:
+    events = _FEATURE_EVENTS.get(feature)
+    return True if events is None else ev in events
 
 
 def build_suggestions(cfg: config.Config,
@@ -187,10 +204,24 @@ def build_suggestions(cfg: config.Config,
         events = list(analytics.read_events(since=since))
     suggestions: list[tuple[str, str]] = []
 
-    # DATA-SUFFICIENCY GUARD: never suggest closing a feature on a fresh install.
-    # "zero events" on day 1 means no history, NOT an unused feature. Require the
-    # analytics log to span >=14 days AND have a real volume of events before the
-    # unused-feature heuristic is trusted (else every feature looks unused).
+    # a) enabled features with zero related events in 30 days -> 建议关闭
+    #    (only once there's enough history to trust "zero" == "unused")
+    if _enough_history():
+        suggestions.extend(_unused_features(cfg, events))
+
+    # b) auto-resume failure storm; c) high reject ratio
+    for hint in (_resume_storm(events), _reject_ratio(events)):
+        if hint is not None:
+            suggestions.append(hint)
+    return suggestions
+
+
+def _enough_history() -> bool:
+    """DATA-SUFFICIENCY GUARD: never suggest closing a feature on a fresh
+    install. "Zero events" on day 1 means no history, NOT an unused feature.
+    Require the analytics log to span >=14 days AND have a real volume of
+    events before the unused-feature heuristic is trusted (else every
+    feature looks unused)."""
     all_events = list(analytics.read_events())
     span_days = 0.0
     if len(all_events) >= 2:
@@ -198,39 +229,59 @@ def build_suggestions(cfg: config.Config,
         ts1 = analytics.parse_ts(all_events[-1].get("ts", ""))
         if ts0 and ts1:
             span_days = (ts1 - ts0).total_seconds() / 86400
-    enough_history = span_days >= 14 and len(all_events) >= 30
+    return span_days >= 14 and len(all_events) >= 30
 
-    # a) enabled features with zero related events in 30 days -> 建议关闭
-    #    (only once there's enough history to trust "zero" == "unused")
-    if enough_history:
-        for name in config.DEFAULT_FEATURES:
-            if not cfg.feature(name):
-                continue  # already off
-            if not any(_feature_related(name, e) for e in events):
-                suggestions.append(
-                    (f"建议关闭功能 {name}（近 30 天零相关事件，白耗资源）", ""))
 
-    # b) auto-resume failure storm
+def _unused_features(cfg: config.Config, events: list) -> list[tuple[str, str]]:
+    """Enabled features with zero related events in the window."""
+    out: list[tuple[str, str]] = []
+    for name in config.DEFAULT_FEATURES:
+        if not cfg.feature(name):
+            continue  # already off
+        if not any(_feature_related(name, e) for e in events):
+            out.append((f"建议关闭功能 {name}（近 30 天零相关事件，白耗资源）", ""))
+    return out
+
+
+def _resume_storm(events: list) -> Optional[tuple[str, str]]:
     resume_fails = sum(
         1 for e in events
         if e.get("event") in ("auto_resume", "resume_launch")
         and e.get("ok") is False
     )
     if resume_fails > 10:
-        suggestions.append((
-            "建议修自动恢复（近 30 天失败频繁）",
-            f"近 30 天失败 {resume_fails} 次（无效重复的头号来源）",
-        ))
+        return ("建议修自动恢复（近 30 天失败频繁）",
+                f"近 30 天失败 {resume_fails} 次（无效重复的头号来源）")
+    return None
 
-    # c) high reject ratio
+
+def _reject_ratio(events: list) -> Optional[tuple[str, str]]:
     n_rej = sum(1 for e in events if e.get("event") == "inbox_reject")
     n_appr = sum(1 for e in events if e.get("event") == "inbox_approve")
     if (n_rej + n_appr) > 0 and n_rej / (n_rej + n_appr) > 0.5:
-        suggestions.append((
-            "建议改进提案质量（拒绝率超过 50%）",
-            f"拒绝率 {n_rej}/{n_rej + n_appr}（先看卡片 summary 是否说人话）",
-        ))
-    return suggestions
+        return ("建议改进提案质量（拒绝率超过 50%）",
+                f"拒绝率 {n_rej}/{n_rej + n_appr}（先看卡片 summary 是否说人话）")
+    return None
+
+
+def _suggestion_card(title: str, detail: str, today: _dt.date) -> Requirement:
+    return Requirement(
+        id="",  # merge_or_new assigns
+        title=title,
+        type="self-improvement",
+        tier="T1",
+        status=State.DETECTED.value,
+        hardness="soft",
+        summary=f"建议：{title}" + (f" — {detail}" if detail else ""),
+        target_repo=ASSISTANT_REPO,
+        sources=[{
+            "channel": "analytics",
+            "date": today.isoformat(),
+            "ref": "act.digest 进化建议",
+            "quote": detail or title,
+            "who": "digest",
+        }],
+    )
 
 
 def file_suggestion_cards(suggestions: list[tuple[str, str]],
@@ -245,23 +296,7 @@ def file_suggestion_cards(suggestions: list[tuple[str, str]],
     today = today or _dt.date.today()
     filed: list[Requirement] = []
     for title, detail in suggestions:
-        req = Requirement(
-            id="",  # merge_or_new assigns
-            title=title,
-            type="self-improvement",
-            tier="T1",
-            status=State.DETECTED.value,
-            hardness="soft",
-            summary=f"建议：{title}" + (f" — {detail}" if detail else ""),
-            target_repo=ASSISTANT_REPO,
-            sources=[{
-                "channel": "analytics",
-                "date": today.isoformat(),
-                "ref": "act.digest 进化建议",
-                "quote": detail or title,
-                "who": "digest",
-            }],
-        )
+        req = _suggestion_card(title, detail, today)
         try:
             filed.append(merge_or_new(req, high_confidence=False))
         except Exception:  # noqa: BLE001 — a bad card must not kill the digest
@@ -272,6 +307,65 @@ def file_suggestion_cards(suggestions: list[tuple[str, str]],
 # --------------------------------------------------------------------------- #
 # digest assembly
 # --------------------------------------------------------------------------- #
+def _open_cards() -> list[Requirement]:
+    """Every card the digest reports on: not merged, not trashed/rejected."""
+    return [
+        r for r in load_all()
+        if not r.is_merged
+        and r.status not in (State.TRASHED.value, State.REJECTED.value)
+    ]
+
+
+def _by_status(reqs: list[Requirement], status: str) -> list[Requirement]:
+    return [r for r in reqs if r.status == status]
+
+
+def _stuck_items(executing: list[Requirement],
+                 now: _dt.datetime) -> list[tuple[Requirement, str]]:
+    stuck = [(r, _is_stuck(r, now)) for r in executing]
+    return [(r, why) for r, why in stuck if why]
+
+
+def _folded_last_week(now: _dt.datetime) -> int:
+    """§44: silent fold-ins over a fixed 7-day lookback (whatever the cadence)
+    — the ONLY place they are surfaced besides the card chip; metadata
+    events, never content."""
+    try:
+        week_ago = now - _dt.timedelta(days=7)
+        return sum(1 for e in analytics.read_events(since=week_ago)
+                   if e.get("event") == "silent_merge"
+                   and str(e.get("outcome") or "")
+                   in ("ok", "ok_retry", "pre_filing_fold"))
+    except Exception:  # noqa: BLE001 - a digest must never die over a count
+        return 0
+
+
+def _section(header: str, lines: list[str], empty: str = "- （无）") -> list[str]:
+    return [header] + (lines if lines else [empty]) + [""]
+
+
+def _overview_line(card_sent: int, review: int, stuck: int, detected: int,
+                   folded: int) -> str:
+    """One-line overview right under the title — doubles as the review-lane
+    card's summary (_file_digest_card picks the first non-header line)."""
+    folded_zh = f" · 静默并入 {folded}" if folded else ""
+    folded_en = f" · {folded} silently folded" if folded else ""
+    return failures.pick(
+        f"待审批 {card_sent} · 待验收 {review} · 卡住 {stuck}"
+        f" · 潜在任务 {detected}{folded_zh}",
+        f"{card_sent} awaiting approval · {review} in review ·"
+        f" {stuck} stuck · {detected} in backlog{folded_en}")
+
+
+def _report_block() -> list[str]:
+    try:
+        report = build_report(days=7)
+    except Exception:  # noqa: BLE001 — report failure must not kill the digest
+        report = "(analytics 报告生成失败)"
+    return ["<details>", "<summary>📊 analytics 摘要（近 7 天）</summary>", "",
+            "```", report, "```", "", "</details>", ""]
+
+
 def build_digest(today: Optional[_dt.date] = None,
                  oneonone_path: Optional[Path] = None) -> str:
     today = today or _dt.date.today()
@@ -282,69 +376,35 @@ def build_digest(today: Optional[_dt.date] = None,
     suggestions = build_suggestions(cfg)
     file_suggestion_cards(suggestions, today)
 
-    reqs = [
-        r for r in load_all()
-        if not r.is_merged
-        and r.status not in (State.TRASHED.value, State.REJECTED.value)
-    ]
-    card_sent = [r for r in reqs if r.status == State.CARD_SENT.value]
-    review = [r for r in reqs if r.status == State.REVIEW.value]
-    executing = [r for r in reqs if r.status == State.EXECUTING.value]
-    detected = [r for r in reqs if r.status == State.DETECTED.value]
-    stuck = [(r, _is_stuck(r, now)) for r in executing]
-    stuck = [(r, why) for r, why in stuck if why]
-
-    def section(header: str, lines: list[str], empty: str = "- （无）") -> list[str]:
-        return [header] + (lines if lines else [empty]) + [""]
-
-    # §44: silent fold-ins over a fixed 7-day lookback (whatever the cadence)
-    # — the ONLY place they are surfaced besides the card chip; metadata
-    # events, never content.
-    try:
-        week_ago = now - _dt.timedelta(days=7)
-        folded = sum(1 for e in analytics.read_events(since=week_ago)
-                     if e.get("event") == "silent_merge"
-                     and str(e.get("outcome") or "")
-                     in ("ok", "ok_retry", "pre_filing_fold"))
-    except Exception:  # noqa: BLE001 - a digest must never die over a count
-        folded = 0
+    reqs = _open_cards()
+    card_sent = _by_status(reqs, State.CARD_SENT.value)
+    review = _by_status(reqs, State.REVIEW.value)
+    detected = _by_status(reqs, State.DETECTED.value)
+    stuck = _stuck_items(_by_status(reqs, State.EXECUTING.value), now)
+    folded = _folded_last_week(now)
 
     # cadence-neutral heading (D19): the card may be daily, so no weekday in
     # the name — §40.7 页面诚实
     out: list[str] = [f"# 状态摘要 · {today.isoformat()}", ""]
-    # one-line overview right under the title — doubles as the review-lane
-    # card's summary (_file_digest_card picks the first non-header line).
-    folded_zh = f" · 静默并入 {folded}" if folded else ""
-    folded_en = f" · {folded} silently folded" if folded else ""
-    out += [failures.pick(
-        f"待审批 {len(card_sent)} · 待验收 {len(review)} · 卡住 {len(stuck)}"
-        f" · 潜在任务 {len(detected)}{folded_zh}",
-        f"{len(card_sent)} awaiting approval · {len(review)} in review ·"
-        f" {len(stuck)} stuck · {len(detected)} in backlog{folded_en}"), ""]
-    out += section(f"## 📨 待审批积压（{len(card_sent)}）",
-                   [_fmt(r, today) for r in card_sent])
-    out += section(f"## 🔍 待验收（{len(review)}）",
-                   [_fmt(r, today) for r in review])
-    out += section(f"## 🧱 卡住（{len(stuck)}）",
-                   [_fmt(r, today, extra=why) for r, why in stuck])
-    out += section(f"## 📡 潜在任务（{len(detected)}）",
-                   [_fmt(r, today) for r in detected])
-    out += section(ledger_header(cfg), promises_owed(reqs), empty=ledger_empty())
+    out += [_overview_line(len(card_sent), len(review), len(stuck),
+                           len(detected), folded), ""]
+    out += _section(f"## 📨 待审批积压（{len(card_sent)}）",
+                    [_fmt(r, today) for r in card_sent])
+    out += _section(f"## 🔍 待验收（{len(review)}）",
+                    [_fmt(r, today) for r in review])
+    out += _section(f"## 🧱 卡住（{len(stuck)}）",
+                    [_fmt(r, today, extra=why) for r, why in stuck])
+    out += _section(f"## 📡 潜在任务（{len(detected)}）",
+                    [_fmt(r, today) for r in detected])
+    out += _section(ledger_header(cfg), promises_owed(reqs), empty=ledger_empty())
 
     if oneonone_path is not None:
         out += ["## 🗓 1:1 准备页", f"- [{oneonone_path.name}]({oneonone_path})", ""]
 
-    out += section("## 💡 进化建议（已作为 self-improvement 卡片进入潜在任务）",
-                   [f"- {t} — {d}" if d else f"- {t}" for t, d in suggestions],
-                   empty="- （无 —— 各功能都在被用，健康）")
-
-    try:
-        report = build_report(days=7)
-    except Exception:  # noqa: BLE001 — report failure must not kill the digest
-        report = "(analytics 报告生成失败)"
-    out += ["<details>", "<summary>📊 analytics 摘要（近 7 天）</summary>", "",
-            "```", report, "```", "", "</details>", ""]
-
+    out += _section("## 💡 进化建议（已作为 self-improvement 卡片进入潜在任务）",
+                    [f"- {t} — {d}" if d else f"- {t}" for t, d in suggestions],
+                    empty="- （无 —— 各功能都在被用，健康）")
+    out += _report_block()
     return "\n".join(out)
 
 
@@ -417,6 +477,18 @@ def publish_digest(today: Optional[_dt.date] = None) -> Requirement:
     return card
 
 
+def _skip_reason(cfg: config.Config, force: bool,
+                 today: _dt.date) -> Optional[str]:
+    """Gate order (§17 D19): ``features.digest`` (master kill switch, wins
+    even over ``--now``) → cadence (``digest.frequency`` + marker; ``force``
+    bypasses). None = run."""
+    if not cfg.feature("digest"):
+        return "disabled"
+    if not force and not due(cfg, _read_marker(), today):
+        return "off" if cfg.digest_frequency == "off" else "not_due"
+    return None
+
+
 def run(force: bool = False, today: Optional[_dt.date] = None) -> dict:
     """One scheduled pass (§17 D19). Returns ``{skipped: None|reason, id?}``.
 
@@ -436,10 +508,9 @@ def run(force: bool = False, today: Optional[_dt.date] = None) -> dict:
     """
     cfg = config.load_config()
     today = today or _dt.date.today()
-    if not cfg.feature("digest"):
-        return {"skipped": "disabled"}
-    if not force and not due(cfg, _read_marker(), today):
-        return {"skipped": "off" if cfg.digest_frequency == "off" else "not_due"}
+    skipped = _skip_reason(cfg, force, today)
+    if skipped is not None:
+        return {"skipped": skipped}
     card = publish_digest(today)
     summary: dict = {"skipped": None, "id": card.id}
     try:

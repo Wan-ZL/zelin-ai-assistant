@@ -1,6 +1,9 @@
 ---
 name: board-agent
 description: Read Zelin's AI-assistant board and file captures or progress comments with boardctl. Use for card IDs (R-xx/MS-xx), progress notes on executing work, or proposing follow-up candidates — never for approving, accepting, or moving cards.
+version: 1.0.0
+upstream: dashi-taskboard skills/manage-taskboard (Apache-2.0) — attribution in NOTICE
+upstream_version: dashi-taskboard manage-taskboard as adapted 2026-08 (CONTRACT §52.5)
 ---
 
 <!-- Adapted from dashi-taskboard skills/manage-taskboard (Apache-2.0) — see NOTICE. Structure (short SKILL.md + on-demand references/cli.md) kept; domain rewritten for this repo's card board and scoped agent channel. -->

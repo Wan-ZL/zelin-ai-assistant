@@ -10,12 +10,12 @@
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { postAiFix } from "../../api";
+import { postAiFix, postTerminal } from "../../api";
 import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
 import { openCardDetail } from "./boardActions";
-import { toggleCardExpanded, useAppState } from "../../store";
+import { toggleCardExpanded, toggleSelected, useAppState } from "../../store";
 import { copyText } from "../detail/copyText";
 
 /** id 标签读的投影键（§60 两段式编号：卡面展示 display_id，动作回传仍送主键 id） */
@@ -79,14 +79,34 @@ interface CardHeadProps {
    * "lg" = 提案卡摘要 15 semibold（ApprovalCardView）；"placeholder" = AI 研究中占位 13 regular 次级
    */
   variant?: "lg" | "placeholder";
+  /** §21 多选：可选卡（提案 / 运行中 / 待验收）在 selectionMode 下标题前长出勾选框 */
+  selectable?: boolean;
 }
 
-export function CardHead({ card, title, leading, isMuted = false, variant }: CardHeadProps) {
+/** §21 多选勾选框（原生 Kanban「选择」态的每卡 checkbox）；只在 store.selectionMode 下渲染 */
+export function SelectCheckbox({ cardId }: { cardId: string }) {
+  const { text } = useI18n();
+  const { selectionMode, selectedIds } = useAppState();
+  if (!selectionMode) return null;
+  return (
+    <input
+      type="checkbox"
+      className="card-select"
+      aria-label={text(`选择 ${cardId}`, `Select ${cardId}`)}
+      checked={selectedIds.has(cardId)}
+      onChange={() => toggleSelected(cardId)}
+      onDoubleClick={(event) => event.stopPropagation()}
+    />
+  );
+}
+
+export function CardHead({ card, title, leading, isMuted = false, variant, selectable = false }: CardHeadProps) {
   const cls = ["card-title", variant === "lg" ? "is-lg" : "", variant === "placeholder" ? "is-placeholder" : "", isMuted ? "is-muted" : ""]
     .filter(Boolean)
     .join(" ");
   return (
     <div className="card-head">
+      {selectable && <SelectCheckbox cardId={card.id} />}
       {leading}
       <div className={cls}>{title}</div>
       <CardIdTag card={card} />
@@ -189,6 +209,46 @@ export function CopyCommandLine({ cmd }: { cmd: unknown }) {
           : text("单击复制指令 · 粘贴到终端即可接管会话", "Click to copy the command · paste it in a terminal to take over the session")}
       </button>
       <CopiedAnnouncer copied={copied} />
+    </>
+  );
+}
+
+/**
+ * 「在终端接管」（原生 双击指令行 → TerminalLauncher 的 web 落点，§68.7）：POST /api/terminal →
+ * server 从投影行推导命令、写 .command 并 open（Terminal.app 执行）。客户端只传 card_id。
+ * 非 darwin / 无会话时 server 报 501 / 400，原文显示。
+ */
+export function TerminalButton({ cardId }: { cardId: string }) {
+  const { text } = useI18n();
+  const [status, setStatus] = useState<{ msg: string; failed: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  const open = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      await postTerminal(cardId);
+      setStatus({ msg: text("已在 Terminal 打开", "Opened in Terminal"), failed: false });
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setStatus(null), 3000);
+    } catch (e) {
+      setStatus({ msg: e instanceof Error ? e.message : String(e), failed: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button type="button" className="btn" disabled={busy} onClick={() => void open()} title={text("在 Terminal 里接管这个会话（server 推导命令）", "Take over this session in Terminal (command derived by the server)")}>
+        {text("在终端接管", "Open in Terminal")}
+      </button>
+      {status && <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>{status.msg}</span>}
     </>
   );
 }

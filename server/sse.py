@@ -2,6 +2,7 @@
 
 事件词表仅 ``board.updated`` ``{generated_at}``；25s heartbeat 注释行；
 无重连契约——客户端断线后全量 refetch（dashi 实证的务实分层）。
+契约：docs/CONTRACT.md §49（``GET /api/events`` SSE 面）。
 
 线程模型：ThreadingHTTPServer 下每个 SSE 连接占一个 handler 线程，
 handler 阻塞在自己的 Queue 上；publish 方 put_nowait，队列满就丢

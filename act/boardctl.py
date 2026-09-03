@@ -156,6 +156,30 @@ def _usage(message: str) -> CtlError:
 # 参数解析（taskctl 式手写小解析器——argparse 的 stderr 纯文本/exit 2 形状
 # 不满足本契约的 error-JSON 要求，自己写才能全权控制输出）
 # --------------------------------------------------------------------------- #
+def _option_value(name: str, argv: list, i: int) -> str:
+    """``--name`` 后面那个值（argv[i+1]）；缺 → usage 错。"""
+    if i + 1 >= len(argv):
+        raise _usage(f"--{name} requires a value")
+    return argv[i + 1]
+
+
+def _take_option(name: str, argv: list, i: int, options: dict) -> int:
+    """消费 argv[i] 处的 ``--name``（含其值），返回已消费到的下标。"""
+    if not name:
+        raise _usage("empty option name")
+    if name in BOOL_OPTIONS:
+        options[name] = True
+        return i
+    value = _option_value(name, argv, i)
+    if name in REPEATABLE_OPTIONS:
+        options.setdefault(name, []).append(value)
+    elif name in options:
+        raise _usage(f"--{name} given more than once")
+    else:
+        options[name] = value
+    return i + 1
+
+
 def parse_args(argv: list) -> dict:
     positionals: list = []
     options: dict = {}
@@ -163,23 +187,7 @@ def parse_args(argv: list) -> dict:
     while i < len(argv):
         token = argv[i]
         if isinstance(token, str) and token.startswith("--"):
-            name = token[2:]
-            if not name:
-                raise _usage("empty option name")
-            if name in BOOL_OPTIONS:
-                options[name] = True
-            elif name in REPEATABLE_OPTIONS:
-                i += 1
-                if i >= len(argv):
-                    raise _usage(f"--{name} requires a value")
-                options.setdefault(name, []).append(argv[i])
-            else:
-                i += 1
-                if i >= len(argv):
-                    raise _usage(f"--{name} requires a value")
-                if name in options:
-                    raise _usage(f"--{name} given more than once")
-                options[name] = argv[i]
+            i = _take_option(token[2:], argv, i, options)
         else:
             positionals.append(token)
         i += 1
@@ -240,30 +248,34 @@ def _instance_token(environ) -> "str | None":
     return tok or None
 
 
+def _error_envelope(raw: bytes) -> dict:
+    """server 错误 body 里的 ``error`` 对象；不是 JSON / 形状不对 → {}。"""
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    err = doc.get("error") if isinstance(doc, dict) else None
+    return err if isinstance(err, dict) else {}
+
+
+def _str_field(err: dict, key: str, default: str) -> str:
+    value = err.get(key)
+    return value if isinstance(value, str) else default
+
+
 def _api_error(status: int, raw: bytes) -> CtlError:
     """HTTP 非 2xx → CtlError：透传 server envelope 的 code/message/details，
     解析不了就退化为 HTTP_<status>（taskctl extractApiError 同款分层）。"""
-    code = f"HTTP_{status}"
-    message = f"server returned HTTP {status}"
-    details = None
-    try:
-        doc = json.loads(raw.decode("utf-8"))
-        err = doc.get("error") if isinstance(doc, dict) else None
-        if isinstance(err, dict):
-            if isinstance(err.get("code"), str):
-                code = err["code"]
-            if isinstance(err.get("message"), str):
-                message = err["message"]
-            if isinstance(err.get("details"), dict) and err["details"]:
-                details = err["details"]
-    except (ValueError, UnicodeDecodeError):
-        pass
-    return CtlError(message, code=code, details=details,
+    err = _error_envelope(raw)
+    details = err.get("details") if isinstance(err.get("details"), dict) else None
+    return CtlError(_str_field(err, "message", f"server returned HTTP {status}"),
+                    code=_str_field(err, "code", f"HTTP_{status}"),
+                    details=details or None,   # 空 dict 与缺席同义
                     exit_code=EXIT_CONFLICT if status == 409 else EXIT_API)
 
 
-def _http(base_url: str, method: str, path: str, body=None,
-          token: "str | None" = None) -> dict:
+def _request(base_url: str, method: str, path: str, body,
+             token: "str | None") -> urllib.request.Request:
     # X-ZAI-Client 是未来 server 侧 actor 墙的辨识挂点（PR-current server
     # 忽略请求头）——不动 JSON wire，见 docs/design/vnext-amendments.md M5。
     headers = {"Accept": "application/json", "X-ZAI-Client": "boardctl"}
@@ -273,8 +285,25 @@ def _http(base_url: str, method: str, path: str, body=None,
         headers["Content-Type"] = "application/json"
         if token:
             headers[TOKEN_HEADER] = token  # §49：写动作回带 instance token
-    req = urllib.request.Request(base_url + path, data=data,
-                                 headers=headers, method=method)
+    return urllib.request.Request(base_url + path, data=data,
+                                  headers=headers, method=method)
+
+
+def _decode_response(raw: bytes) -> dict:
+    """成功响应必须是一个 JSON object；否则 INVALID_RESPONSE（exit 4）。"""
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        doc = None
+    if not isinstance(doc, dict):
+        raise CtlError("server returned an invalid JSON response",
+                       code="INVALID_RESPONSE", exit_code=EXIT_API)
+    return doc
+
+
+def _http(base_url: str, method: str, path: str, body=None,
+          token: "str | None" = None) -> dict:
+    req = _request(base_url, method, path, body, token)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
             raw = resp.read()
@@ -287,14 +316,7 @@ def _http(base_url: str, method: str, path: str, body=None,
                        "is it running?", code="SERVICE_UNAVAILABLE",
                        exit_code=EXIT_UNAVAILABLE,
                        details={"cause": str(reason)})
-    try:
-        doc = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        doc = None
-    if not isinstance(doc, dict):
-        raise CtlError("server returned an invalid JSON response",
-                       code="INVALID_RESPONSE", exit_code=EXIT_API)
-    return doc
+    return _decode_response(raw)
 
 
 # --------------------------------------------------------------------------- #
@@ -356,14 +378,20 @@ def cmd_capture(operands: list, options: dict, base_url: str,
     payload = {"action": "capture", "text": text, "actor": "agent"}
     images = options.get("image") or []
     if images:
-        if len(images) > CAPTURE_IMAGES_MAX:
-            raise _usage(f"--image allows at most {CAPTURE_IMAGES_MAX} paths")
-        if len(set(images)) != len(images):
-            raise _usage("--image paths must not repeat")
-        if not all(p.startswith("/") for p in images):
-            raise _usage("--image paths must be absolute")
-        payload["images"] = list(images)
+        payload["images"] = _validated_images(images)
     return _http(base_url, "POST", "/api/actions", payload, token=token)
+
+
+def _validated_images(images: list) -> list:
+    """--image 路径集：≤ 上限、不重复、全绝对路径（server 端 §10bis 同款闸门，
+    客户端先 fail-closed 省一次注定 400 的往返）。"""
+    if len(images) > CAPTURE_IMAGES_MAX:
+        raise _usage(f"--image allows at most {CAPTURE_IMAGES_MAX} paths")
+    if len(set(images)) != len(images):
+        raise _usage("--image paths must not repeat")
+    if not all(p.startswith("/") for p in images):
+        raise _usage("--image paths must be absolute")
+    return list(images)
 
 
 def cmd_comment(operands: list, options: dict, base_url: str,
@@ -392,53 +420,73 @@ HANDLERS = {
 # --------------------------------------------------------------------------- #
 # 入口（stdout/stderr/environ 是测试注入缝——taskctl main(overrides) 同款）
 # --------------------------------------------------------------------------- #
-def main(argv=None, *, stdout=None, stderr=None, environ=None) -> int:
-    argv = list(sys.argv[1:]) if argv is None else list(argv)
-    out = stdout if stdout is not None else sys.stdout
-    err_out = stderr if stderr is not None else sys.stderr
-    env = environ if environ is not None else os.environ
-    try:
-        parsed = parse_args(argv)
-        command, operands, options = (parsed["command"], parsed["operands"],
-                                      parsed["options"])
-        if options.get("help"):
-            scope = command or ""
-            # taskctl 纪律：help 必须独占（无 operand、无其它 option）
-            if scope not in HELP_TEXT or operands \
-                    or options != {"help": True}:
-                raise _usage("help is available for boardctl and its "
-                             "subcommands: board, card, capture, comment")
-            out.write(HELP_TEXT[scope] + "\n")
-            return EXIT_OK
-        if command not in HANDLERS:
-            # 决策动词（approve/accept/...）也落到这里——permission wall 的
-            # CLI 面：不存在的子命令连 usage 提示都不承认它
-            raise _usage("expected one of: board, card, capture, comment "
-                         "(this CLI has no card-state verbs by design; "
-                         "approvals belong to the owner)")
-        unknown = set(options) - COMMAND_OPTIONS[command]
-        if unknown:
-            raise _usage(f"unknown option(s) for {command}: "
-                         + ", ".join("--" + n for n in sorted(unknown)))
-        result = HANDLERS[command](operands, options, _base_url(env),
-                                   _instance_token(env))
-        result["schemaVersion"] = SCHEMA_VERSION
-        out.write(json.dumps(result, ensure_ascii=False) + "\n")
+def _help_text(command, operands: list, options: dict) -> str:
+    """--help 的文本；taskctl 纪律：help 必须独占（无 operand、无其它 option）。"""
+    scope = command or ""
+    if scope not in HELP_TEXT or operands or options != {"help": True}:
+        raise _usage("help is available for boardctl and its "
+                     "subcommands: board, card, capture, comment")
+    return HELP_TEXT[scope]
+
+
+def _dispatch(command, operands: list, options: dict, env) -> dict:
+    """子命令分派：未知动词 / 动词外 option 一律 usage 错。"""
+    if command not in HANDLERS:
+        # 决策动词（approve/accept/...）也落到这里——permission wall 的
+        # CLI 面：不存在的子命令连 usage 提示都不承认它
+        raise _usage("expected one of: board, card, capture, comment "
+                     "(this CLI has no card-state verbs by design; "
+                     "approvals belong to the owner)")
+    unknown = set(options) - COMMAND_OPTIONS[command]
+    if unknown:
+        raise _usage(f"unknown option(s) for {command}: "
+                     + ", ".join("--" + n for n in sorted(unknown)))
+    return HANDLERS[command](operands, options, _base_url(env),
+                             _instance_token(env))
+
+
+def _run(argv: list, env, out) -> int:
+    """解析 → help 或分派 → stdout 单个 JSON object（CtlError 交 main 渲染）。"""
+    parsed = parse_args(argv)
+    command, operands, options = (parsed["command"], parsed["operands"],
+                                  parsed["options"])
+    if options.get("help"):
+        out.write(_help_text(command, operands, options) + "\n")
         return EXIT_OK
+    result = _dispatch(command, operands, options, env)
+    result["schemaVersion"] = SCHEMA_VERSION
+    out.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return EXIT_OK
+
+
+def _write_error(err_out, code: str, message: str, details=None) -> None:
+    """stderr 单个 JSON object ``{"schemaVersion","error":{code,message[,details]}}``。"""
+    payload = {"schemaVersion": SCHEMA_VERSION,
+               "error": {"code": code, "message": message}}
+    if details is not None:
+        payload["error"]["details"] = details
+    err_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _resolve_io(argv, stdout, stderr, environ) -> tuple:
+    """注入缝缺省回落到进程真实 argv/stdout/stderr/environ。"""
+    return (list(sys.argv[1:]) if argv is None else list(argv),
+            stdout if stdout is not None else sys.stdout,
+            stderr if stderr is not None else sys.stderr,
+            environ if environ is not None else os.environ)
+
+
+def main(argv=None, *, stdout=None, stderr=None, environ=None) -> int:
+    argv, out, err_out, env = _resolve_io(argv, stdout, stderr, environ)
+    try:
+        return _run(argv, env, out)
     except CtlError as err:
-        payload = {"schemaVersion": SCHEMA_VERSION,
-                   "error": {"code": err.code, "message": err.message}}
-        if err.details is not None:
-            payload["error"]["details"] = err.details
-        err_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        _write_error(err_out, err.code, err.message, err.details)
         return err.exit_code
     except Exception as exc:  # 兜底：不泄栈（taskctl normalizeError 同款）
         # exit 1 = §52.4 词表的「未预期内部崩溃」档：一切已分类错误必须走
         # 2-5（CtlError），落到这里 = boardctl 自身的 bug 线索。
-        payload = {"schemaVersion": SCHEMA_VERSION,
-                   "error": {"code": "INTERNAL_ERROR",
-                             "message": str(exc) or type(exc).__name__}}
-        err_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        _write_error(err_out, "INTERNAL_ERROR", str(exc) or type(exc).__name__)
         return 1
 
 

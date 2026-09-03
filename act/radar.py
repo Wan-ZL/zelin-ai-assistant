@@ -1,5 +1,11 @@
 """Requirement radar (Obsidian source) — scan incremental notes, extract requirements.
 
+CONTRACT: §18 (the cron ingest chain that runs this pass), §17 (whole-pass
+lock ``state/radar.lock``), §40 (give-up diagnostic card), §45 (provenance
+birth gate — 屏幕不发起卡片), §47 (transient retry / parse-failure degrade
+card / retry ledger), §48 (source switch + 关闭真静默), §15 (obsidian
+radar_health, cron-only writer).
+
 This module covers the Obsidian raw source. For each ``.md`` file newer than
 the last marker (STATE/radar.marker) — plus the notes queued for retry in
 STATE/radar_failed.json (水位语义 v2, see ``scan``) — run headless
@@ -243,42 +249,55 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
     """
     try:
         ref = str(note)
-        for r in registry.load_all(include_archived=True):
-            if any(isinstance(s, dict) and s.get("channel") == GIVE_UP_CHANNEL
-                   and s.get("ref") == ref for s in (r.sources or [])):
-                return None  # already filed for this note — never re-file
-        attempts = int(entry.get("attempts") or 0)
-        error = str(entry.get("last_error") or "")
-        req = Requirement(
-            id=registry.next_id(),
-            title=failures.pick(f"有一篇笔记我处理不了：{note.name}",
-                                f"A note I couldn't process: {note.name}")[:80],
-            type="diagnostic",
-            tier="T0",
-            status=registry.State.DETECTED.value,
-            hardness="soft",
-            summary=failures.pick(
-                f"原文还在 {ref}，你可以手动处理或删掉它。",
-                f"The original file is still at {ref} — handle it by hand "
-                "or delete it."),
-            notes=(failures.pick(
-                f"[radar-give-up] 连续提取失败 {attempts} 次后放弃",
-                f"[radar-give-up] gave up after {attempts} failed "
-                "extraction attempts")
-                + f"\nlast error: {error}\nfile: {ref}"),
-            sources=[{
-                "who": "assistant",
-                "channel": GIVE_UP_CHANNEL,
-                "date": datetime.now().date().isoformat(),
-                "quote": error[:200] or None,
-                "ref": ref,
-            }],
-        )
-        saved = registry.upsert(req)
+        if _has_source_ref(GIVE_UP_CHANNEL, ref):
+            return None  # already filed for this note — never re-file
+        saved = registry.upsert(_give_up_requirement(note, entry, ref))
         analytics.log_event("radar_give_up_card", note=note.name, req=saved.id)
         return saved
     except Exception:  # noqa: BLE001 - visibility must never break the pass
         return None
+
+
+def _owns_ref(r: Requirement, channel: str, ref: str) -> bool:
+    """A card whose sources carry the (channel, ref) dedup identity."""
+    return any(isinstance(s, dict) and s.get("channel") == channel
+               and s.get("ref") == ref for s in (r.sources or []))
+
+
+def _has_source_ref(channel: str, ref: str) -> bool:
+    """Any card at all (incl. trashed/archived) already owns this identity."""
+    return any(_owns_ref(r, channel, ref)
+               for r in registry.load_all(include_archived=True))
+
+
+def _give_up_requirement(note: Path, entry: dict, ref: str) -> Requirement:
+    attempts = int(entry.get("attempts") or 0)
+    error = str(entry.get("last_error") or "")
+    return Requirement(
+        id=registry.next_id(),
+        title=failures.pick(f"有一篇笔记我处理不了：{note.name}",
+                            f"A note I couldn't process: {note.name}")[:80],
+        type="diagnostic",
+        tier="T0",
+        status=registry.State.DETECTED.value,
+        hardness="soft",
+        summary=failures.pick(
+            f"原文还在 {ref}，你可以手动处理或删掉它。",
+            f"The original file is still at {ref} — handle it by hand "
+            "or delete it."),
+        notes=(failures.pick(
+            f"[radar-give-up] 连续提取失败 {attempts} 次后放弃",
+            f"[radar-give-up] gave up after {attempts} failed "
+            "extraction attempts")
+            + f"\nlast error: {error}\nfile: {ref}"),
+        sources=[{
+            "who": "assistant",
+            "channel": GIVE_UP_CHANNEL,
+            "date": datetime.now().date().isoformat(),
+            "quote": error[:200] or None,
+            "ref": ref,
+        }],
+    )
 
 
 # §47.2 解析失败降级卡 — dedup marker in sources[0]["channel"]（同 §40 形态）
@@ -311,15 +330,18 @@ def _open_degrade_card(ref: str) -> Optional[Requirement]:
     """按 note 路径找**未完结**的降级卡（delivered/merged/rejected/trashed
     不算）。§47.2 的落卡 dedup 与提取前省钱检查共用这一个判据。"""
     for r in registry.load_all(include_archived=True):
-        if not any(isinstance(s, dict)
-                   and s.get("channel") == PARSE_DEGRADE_CHANNEL
-                   and s.get("ref") == ref for s in (r.sources or [])):
+        if not _owns_ref(r, PARSE_DEGRADE_CHANNEL, ref):
             continue
-        if registry.is_resolved(r) or str(r.status) in (
-                registry.State.REJECTED.value, registry.State.TRASHED.value):
+        if _is_closed(r):
             continue  # 已完结的旧降级卡不吞新失败
         return r
     return None
+
+
+def _is_closed(r: Requirement) -> bool:
+    """delivered/merged (resolved) or rejected/trashed — no longer an open card."""
+    return registry.is_resolved(r) or str(r.status) in (
+        registry.State.REJECTED.value, registry.State.TRASHED.value)
 
 
 def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement]:
@@ -358,41 +380,10 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
     existing = _open_degrade_card(ref)
     if existing is not None:
         return existing  # open degrade card already owns this note — accounted
-    screen = _is_screen_note(note, note_text)
-    if screen:
-        summary_txt = failures.pick(
-            "LLM 提取输出两次都解析不出来。这篇笔记来自屏幕录制（§45：屏幕"
-            "内容不进卡面），原文留在原笔记里，路径见卡片来源。",
-            "The LLM extraction output was unparseable twice. This note is a "
-            "screen recording capture (§45: screen content never rides a "
-            "card); the raw text stays in the note, path in the card's "
-            "sources.")
-        body = failures.pick(
-            "§45：screenpipe 屏幕来源——OCR 原文不随卡携带（留在原笔记）",
-            "§45: screenpipe screen source — OCR text withheld from the card "
-            "(kept in the note)")
-        quote = failures.pick(
-            "（解析失败降级卡——§45 屏幕来源，原文留在原笔记）",
-            "(parse-failure degrade card — §45 screen source, raw text stays "
-            "in the note)")
+    if _is_screen_note(note, note_text):
+        summary_txt, body, quote = _screen_degrade_copy()
     else:
-        summary_txt = failures.pick(
-            "LLM 提取输出两次都解析不出来，原文已原样保留在这张卡里"
-            "（原始笔记路径见卡片来源）。",
-            "The LLM extraction output was unparseable twice; the raw note "
-            "text is preserved on this card (source path in the card's "
-            "sources).")
-        raw_txt = (note_text or "")[:_PARSE_DEGRADE_RAW_CAP]
-        truncated = len(note_text or "") > _PARSE_DEGRADE_RAW_CAP
-        body = sanitize.fence_untrusted(
-            raw_txt + ("\n…(truncated)" if truncated else ""))
-        quote = failures.pick("（解析失败降级卡——原文见本卡 notes）",
-                              "(parse-failure degrade card — raw text in "
-                              "card notes)")
-    try:
-        note_mtime = note.stat().st_mtime
-    except OSError:
-        note_mtime = None
+        summary_txt, body, quote = _raw_degrade_copy(note_text)
     req = Requirement(
         id=registry.next_id(),
         title=failures.pick(f"一篇笔记提取解析失败，原文待处理：{note.name}",
@@ -418,7 +409,7 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
             "ref": ref,
             # add-only：铸卡时的 note mtime——_process_note 的提取前省钱检查
             # 靠它区分「没改过（跳提取）」与「改过（照常提取，恢复路径）」。
-            "note_mtime": note_mtime,
+            "note_mtime": _safe_mtime(note),
         }],
     )
     saved = registry.upsert(req)
@@ -427,6 +418,53 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
     # summary.skipped / radar_debug/。
     analytics.log_event("radar_parse_degraded", source="obsidian", req=saved.id)
     return saved
+
+
+def _safe_mtime(note: Path) -> Optional[float]:
+    try:
+        return note.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _screen_degrade_copy() -> tuple[str, str, str]:
+    """(summary, notes body, source quote) for a §45 screen-source note: the
+    OCR text is withheld, only the path points back."""
+    summary_txt = failures.pick(
+        "LLM 提取输出两次都解析不出来。这篇笔记来自屏幕录制（§45：屏幕"
+        "内容不进卡面），原文留在原笔记里，路径见卡片来源。",
+        "The LLM extraction output was unparseable twice. This note is a "
+        "screen recording capture (§45: screen content never rides a "
+        "card); the raw text stays in the note, path in the card's "
+        "sources.")
+    body = failures.pick(
+        "§45：screenpipe 屏幕来源——OCR 原文不随卡携带（留在原笔记）",
+        "§45: screenpipe screen source — OCR text withheld from the card "
+        "(kept in the note)")
+    quote = failures.pick(
+        "（解析失败降级卡——§45 屏幕来源，原文留在原笔记）",
+        "(parse-failure degrade card — §45 screen source, raw text stays "
+        "in the note)")
+    return summary_txt, body, quote
+
+
+def _raw_degrade_copy(note_text: str) -> tuple[str, str, str]:
+    """(summary, notes body, source quote) for an ordinary note: the raw text
+    rides the card, fenced as untrusted and capped."""
+    summary_txt = failures.pick(
+        "LLM 提取输出两次都解析不出来，原文已原样保留在这张卡里"
+        "（原始笔记路径见卡片来源）。",
+        "The LLM extraction output was unparseable twice; the raw note "
+        "text is preserved on this card (source path in the card's "
+        "sources).")
+    raw_txt = (note_text or "")[:_PARSE_DEGRADE_RAW_CAP]
+    truncated = len(note_text or "") > _PARSE_DEGRADE_RAW_CAP
+    body = sanitize.fence_untrusted(
+        raw_txt + ("\n…(truncated)" if truncated else ""))
+    quote = failures.pick("（解析失败降级卡——原文见本卡 notes）",
+                          "(parse-failure degrade card — raw text in "
+                          "card notes)")
+    return summary_txt, body, quote
 
 
 # --------------------------------------------------------------------------- #
@@ -458,10 +496,16 @@ def _run_extract(note_text: str, runner=None) -> str:
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"claude exit {proc.returncode}: {(proc.stderr or proc.stdout or '')[-160:]}"
-        )
+        raise _exit_error(proc)
     return proc.stdout or ""
+
+
+def _exit_error(proc) -> RuntimeError:
+    """Non-zero ``claude -p`` exit → the error the caller records (stderr
+    tail, stdout tail as the fallback)."""
+    return RuntimeError(
+        f"claude exit {proc.returncode}: {(proc.stderr or proc.stdout or '')[-160:]}"
+    )
 
 
 def _extract_with_retry(note_text: str, runner=None) -> str:
@@ -497,20 +541,29 @@ def _find_json_array(text: str) -> Optional[list]:
     """
     decoder = json.JSONDecoder()
     fallback = None
-    for i, ch in enumerate(text):
-        if ch != "[":
-            continue
-        try:
-            data, _end = decoder.raw_decode(text, i)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(data, list):
+    for i in _bracket_positions(text):
+        data = _array_at(decoder, text, i)
+        if data is None:
             continue
         if any(isinstance(d, dict) for d in data):
             return data
         if fallback is None:
             fallback = data
     return fallback
+
+
+def _bracket_positions(text: str):
+    return (i for i, ch in enumerate(text) if ch == "[")
+
+
+def _array_at(decoder: json.JSONDecoder, text: str, i: int) -> Optional[list]:
+    """The JSON list starting at ``text[i]``, None when nothing parseable or
+    the value is not a list."""
+    try:
+        data, _end = decoder.raw_decode(text, i)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, list) else None
 
 
 DEBUG_DIR_NAME = "radar_debug"
@@ -544,24 +597,38 @@ def _salvage_truncated_array(text: str) -> list[dict]:
     start = (text or "").find("[")
     if start < 0:
         return []
-    decoder = json.JSONDecoder()
     out: list[dict] = []
-    i, n = start + 1, len(text)
+    _walk_objects(json.JSONDecoder(), text, start + 1, out)
+    return out
+
+
+def _walk_objects(decoder: json.JSONDecoder, text: str, i: int, out: list) -> None:
+    """Object-by-object walk from ``i`` to the closing ``]`` (or the broken
+    tail), appending whole dicts to ``out``."""
+    n = len(text)
     while i < n:
         ch = text[i]
-        if ch == "{":
-            try:
-                obj, end = decoder.raw_decode(text, i)
-            except (json.JSONDecodeError, ValueError):
-                break
-            if isinstance(obj, dict):
-                out.append(obj)
-            i = end
-        elif ch == "]":
+        if ch == "]":
             break
-        else:
+        if ch != "{":
             i += 1
-    return out
+            continue
+        i = _salvage_object(decoder, text, i, out)
+        if i < 0:
+            break
+
+
+def _salvage_object(decoder: json.JSONDecoder, text: str, i: int,
+                    out: list) -> int:
+    """Decode the object at ``text[i]`` into ``out`` (dicts only); returns the
+    index after it, or -1 when the object is broken (the truncated tail)."""
+    try:
+        obj, end = decoder.raw_decode(text, i)
+    except (json.JSONDecodeError, ValueError):
+        return -1
+    if isinstance(obj, dict):
+        out.append(obj)
+    return end
 
 
 def _parse_extraction(raw: str) -> Optional[list[dict]]:
@@ -573,15 +640,25 @@ def _parse_extraction(raw: str) -> Optional[list[dict]]:
     """
     if not raw or not raw.strip():
         return None
-    text = raw.strip()
-    # strip a ```json ... ``` fence if the model added one
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text).strip()
+    text = _strip_fence(raw.strip())
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         data = _find_json_array(text)
+    return _dict_items(data)
+
+
+def _strip_fence(text: str) -> str:
+    """Drop a ```json ... ``` fence if the model added one."""
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    return text
+
+
+def _dict_items(data) -> Optional[list[dict]]:
+    """The dict items of a parsed array; None = malformed (not a list, or a
+    non-empty list with no dict at all)."""
     if not isinstance(data, list):
         return None
     dicts = [d for d in data if isinstance(d, dict)]
@@ -634,17 +711,6 @@ def _to_requirement(item: dict, note: Path) -> Requirement:
     type_ = item.get("type")
     tier = item.get("tier")
     hardness = item.get("hardness")
-    quote = item.get("quote")
-    cost = item.get("cost_estimate_usd")
-    source = {
-        "channel": "meeting",
-        "date": _note_date(note),
-        "ref": str(note),
-        "quote": quote if isinstance(quote, str) else None,
-        # v0.42: who = the note the ask came from — the radar cannot know the
-        # asker and must not fabricate one (was hardcoded "manager").
-        "who": note.stem,
-    }
     return Requirement(
         id="",  # merge_or_new assigns
         title=title,
@@ -654,10 +720,27 @@ def _to_requirement(item: dict, note: Path) -> Requirement:
         hardness=hardness if hardness in ("hard", "soft") else "soft",
         deadline=_clean_deadline(item.get("deadline")),
         repeated_mentions=1,
-        cost_estimate_usd=cost if isinstance(cost, (int, float))
-        and not isinstance(cost, bool) else None,
-        sources=[source],
+        cost_estimate_usd=_clean_cost(item.get("cost_estimate_usd")),
+        sources=[_note_source(item, note)],
     )
+
+
+def _clean_cost(cost) -> Optional[float]:
+    """A real number only — ``True`` is an int to Python, not a cost."""
+    return cost if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
+
+
+def _note_source(item: dict, note: Path) -> dict:
+    quote = item.get("quote")
+    return {
+        "channel": "meeting",
+        "date": _note_date(note),
+        "ref": str(note),
+        "quote": quote if isinstance(quote, str) else None,
+        # v0.42: who = the note the ask came from — the radar cannot know the
+        # asker and must not fabricate one (was hardcoded "manager").
+        "who": note.stem,
+    }
 
 
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -814,38 +897,70 @@ def scan(runner=None, triager=None) -> dict:
 
 
 def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dict:
+    """The locked pass body (see ``scan`` for the 水位语义 v2 contract): vault
+    check → per-note extraction/filing with the retry ledger → systemic
+    void → give-up cards → ledger + marker → health."""
     scan_started = time.monotonic()
     # mirror-aware (claude TCC isolation): reads the repo-local vault mirror
     # when the ingest chain maintains one, the real vault otherwise.
     root = config.effective_obsidian_raw(cfg)
-    if root is None:
-        summary["skipped"].append("no sources.obsidian_raw configured")
-        _note_health(False, "vault_missing")
-        return summary
-    if not root.exists():
-        summary["skipped"].append(f"obsidian_raw not found: {root}")
+    problem = _vault_problem(root)
+    if problem is not None:
+        summary["skipped"].append(problem)
         _note_health(False, "vault_missing")
         return summary
 
-    # v0.17 统一口径: every extracted item passes the shared three-way triage
-    # gate (act/lib/quick_capture.triage) before merge_or_new — informational
-    # items never card; hits on delivered/merged cards become improvement_of
-    # follow-ups (deduped against an open follow-up); the hard+deadline split
-    # for genuinely-new items is PRESERVED via high_confidence (_process_note).
+    triager = _triager_for(runner, triager)
+    marker = _read_marker()
+    failed = _load_failed_queue()
+    md_files = _collect_md_files(root, summary)
+    _reconcile_failed(failed, md_files)
+    book = _PassBook(marker, failed)
+
+    for note, mtime in md_files:
+        if not _is_due(failed.get(str(note)), mtime, marker):
+            continue
+        summary["files_scanned"] += 1
+        _scan_note(note, mtime, cfg, summary, runner, triager, book)
+        # 水位语义 v2：成功与失败都推进 marker——失败 note 的重试由台账负责，
+        # 它既不再钉死后续 note（无限重烧），也不会被同 mtime 的成功者越过而丢失。
+        book.newest_done = max(book.newest_done, mtime)
+
+    if _systemic(book, summary):
+        _void_pass(book, summary)
+    _finish_pass(book, summary, md_files, scan_started)
+    return summary
+
+
+def _vault_problem(root: Optional[Path]) -> Optional[str]:
+    """The skipped-line reason when the vault cannot be scanned (both are
+    ``vault_missing`` to health), or None."""
+    if root is None:
+        return "no sources.obsidian_raw configured"
+    if not root.exists():
+        return f"obsidian_raw not found: {root}"
+    return None
+
+
+def _triager_for(runner, triager):
+    """v0.17 统一口径: every extracted item passes the shared three-way triage
+    gate (act/lib/quick_capture.triage) before merge_or_new — informational
+    items never card; hits on delivered/merged cards become improvement_of
+    follow-ups (deduped against an open follow-up); the hard+deadline split
+    for genuinely-new items is PRESERVED via high_confidence (_file_item).
+    When only ``runner`` is injected, triage is routed through it too."""
     if triager is None and runner is not None:
         def triager(prompt, _r=runner):  # route triage through the injected runner
             return subprocess.CompletedProcess(
                 args=["runner"], returncode=0, stdout=_r(prompt))
+    return triager
 
-    marker = _read_marker()
-    newest_done = marker
-    any_failed = False  # ≥1 note 本轮提取失败（进了重试台账）-> health not ok
-    pass_errors: list[str] = []  # error strings this pass (systemic triage)
-    failed = _load_failed_queue()
 
-    # 文件级容错：glob 会捡到叫 *.md 的目录、悬空软链；stat 也可能撞上
-    # rsync/vault-mirror 的 mid-pass 删除竞态。任何一个坏路径都只跳过自己
-    # （skipped 留痕），绝不崩整个 pass（旧代码在 sorted 的 key 里裸 stat）。
+def _collect_md_files(root: Path, summary: dict) -> list[tuple[Path, float]]:
+    """(note, mtime) ascending by mtime. 文件级容错：glob 会捡到叫 *.md 的
+    目录、悬空软链；stat 也可能撞上 rsync/vault-mirror 的 mid-pass 删除竞态。
+    任何一个坏路径都只跳过自己（skipped 留痕），绝不崩整个 pass（旧代码在
+    sorted 的 key 里裸 stat）。"""
     md_files: list[tuple[Path, float]] = []
     for p in root.glob("*.md"):
         try:
@@ -855,97 +970,132 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
         except OSError as e:
             summary["skipped"].append(f"unstattable path {p.name}: {e}")
     md_files.sort(key=lambda t: t[1])
+    return md_files
 
-    # 重试台账对账：note 已删除 -> 销案（没有内容可丢了）。本轮列表缺席
-    # 不足为凭——mid-pass 的 stat 竞态/瞬时不可见会把台账里的活案误销，
-    # 显式 exists() 复核后才销（audit review 2026-07-14）。
-    # 例外：``gmail:uid:*`` 是 radar_gmail 的毒邮件案底，不是 obsidian note
-    # 路径——按「note 已删除」对账会立刻误销别人的留痕；它的清理归
-    # radar_gmail 自理（_record_poison_message 自带条数上限）。
+
+def _reconcile_failed(failed: dict, md_files: list[tuple[Path, float]]) -> None:
+    """重试台账对账：note 已删除 -> 销案（没有内容可丢了）。本轮列表缺席
+    不足为凭——mid-pass 的 stat 竞态/瞬时不可见会把台账里的活案误销，
+    显式 exists() 复核后才销（audit review 2026-07-14）。
+    例外：``gmail:uid:*`` 是 radar_gmail 的毒邮件案底，不是 obsidian note
+    路径——按「note 已删除」对账会立刻误销别人的留痕；它的清理归
+    radar_gmail 自理（_record_poison_message 自带条数上限）。"""
     existing = {str(p) for p, _ in md_files}
     for key in list(failed):
         if key.startswith("gmail:uid:"):
             continue
         if key not in existing and not Path(key).exists():
             failed.pop(key)
-    # systemic-failure snapshot：本轮开始时的台账。若这轮"全军覆没"（所有
-    # 尝试的 note 都提取失败——claude 二进制坏 / key 失效 / 断网的形态，
-    # 2026-07-08 与 07-09 两次真实事故都属此类），说明挂的是提取通道而不是
-    # note：不 charge 任何 note 的重试额度、也不推 marker（回到旧的
-    # pin-the-marker 语义），故障修复后整个积压自然重扫。只有部分失败
-    # （真·毒 note）才走 v2 台账。单一毒 note 独自扫描时会被误判 systemic
-    # 而暂时钉住 marker——代价是它被重烧几轮，等下一篇新 note 加入（部分
-    # 失败成立）就会归队进台账；比误判系统故障丢掉整个积压便宜得多。
-    failed_before = json.loads(json.dumps(failed))
-    succeeded_this_pass = 0
-    gave_up_this_pass: list[tuple[Path, dict]] = []
 
-    for note, mtime in md_files:
-        entry = failed.get(str(note))
-        # mtime <= marker 的 note 只有在台账里、且还没放弃（或文件已被改过，
-        # mtime 与案底不符 -> 重置重试额度）时才重扫。
-        is_retry = (entry is not None and mtime <= marker
-                    and not (entry.get("gave_up") and entry.get("mtime") == mtime))
-        if mtime <= marker and not is_retry:
-            continue
-        summary["files_scanned"] += 1
-        degraded_before = summary.get("parse_degraded", 0)
-        error = _process_note(note, cfg, summary, runner, triager)
-        if error is None:
-            # §47.2：降级 accounted 不算「真正成功」——降级只证明 claude 跑了
-            # （exit 0），不证明提取通道健康；一轮全是降级/失败照样够格判
-            # systemic（回滚条件在循环后）。
-            if summary.get("parse_degraded", 0) == degraded_before:
-                succeeded_this_pass += 1
-            failed.pop(str(note), None)
-        else:
-            summary["skipped"].append(error)
-            entry = _record_failure(failed, note, mtime, error)
-            any_failed = True
-            pass_errors.append(error)
-            if entry["gave_up"]:
-                summary["skipped"].append(
-                    f"giving up on {note.name} after {entry['attempts']} attempts "
-                    f"(case kept in state/{FAILED_QUEUE_NAME})")
-                analytics.log_event("radar_give_up", source="obsidian",
-                                    note=note.name, attempts=entry["attempts"])
-                # §40: queue the visible diagnostic card — filed AFTER the
-                # systemic-failure check below (a voided pass files nothing).
-                gave_up_this_pass.append((note, entry))
-        # 水位语义 v2：成功与失败都推进 marker——失败 note 的重试由台账负责，
-        # 它既不再钉死后续 note（无限重烧），也不会被同 mtime 的成功者越过而丢失。
-        newest_done = max(newest_done, mtime)
 
-    if (any_failed and succeeded_this_pass == 0 and summary["files_scanned"] > 0
-            and any(not _is_note_level_error(e) for e in pass_errors)):
-        # 全军覆没且含通道级错误（API/网络/key）= systemic：本轮的账全部
-        # 作废——marker 不动、attempts 不扣，下一轮从同一起点重来。
-        # 纯 note 级错误（超时/截断/不可读）即使全军覆没也照常扣账——夜间
-        # note 流稀疏时单篇 note 独自成 pass 是常态，把它的超时当系统故障
-        # 会让 5 次上限永不生效、每 30min 白烧一轮（2026-07-22 review）。
-        summary["skipped"].append(
-            "systemic extraction failure (every attempted note failed) — "
-            "marker pinned, no retry budget charged")
-        failed = failed_before
-        newest_done = marker
-        gave_up_this_pass = []  # this pass's accounting is void — no cards
-    for note, entry in gave_up_this_pass:
+class _PassBook:
+    """本轮 pass 的账（_scan_locked 的循环状态）：marker 水位、重试台账、
+    systemic 判定所需的计数与待铸的 §40 give-up 卡。
+
+    ``failed_before`` = systemic-failure snapshot：本轮开始时的台账。若这轮
+    "全军覆没"（所有尝试的 note 都提取失败——claude 二进制坏 / key 失效 /
+    断网的形态，2026-07-08 与 07-09 两次真实事故都属此类），说明挂的是提取
+    通道而不是 note：不 charge 任何 note 的重试额度、也不推 marker（回到旧的
+    pin-the-marker 语义），故障修复后整个积压自然重扫。只有部分失败（真·毒
+    note）才走 v2 台账。单一毒 note 独自扫描时会被误判 systemic 而暂时钉住
+    marker——代价是它被重烧几轮，等下一篇新 note 加入（部分失败成立）就会
+    归队进台账；比误判系统故障丢掉整个积压便宜得多。"""
+
+    def __init__(self, marker: float, failed: dict):
+        self.marker = marker
+        self.newest_done = marker
+        self.failed = failed
+        self.failed_before = json.loads(json.dumps(failed))
+        self.any_failed = False  # ≥1 note 本轮提取失败（进了重试台账）-> health not ok
+        self.errors: list[str] = []  # error strings this pass (systemic triage)
+        self.succeeded = 0
+        self.gave_up: list[tuple[Path, dict]] = []
+
+
+def _is_due(entry: Optional[dict], mtime: float, marker: float) -> bool:
+    """mtime <= marker 的 note 只有在台账里、且还没放弃（或文件已被改过，
+    mtime 与案底不符 -> 重置重试额度）时才重扫。"""
+    is_retry = (entry is not None and mtime <= marker
+                and not (entry.get("gave_up") and entry.get("mtime") == mtime))
+    return not (mtime <= marker and not is_retry)
+
+
+def _scan_note(note: Path, mtime: float, cfg: config.Config, summary: dict,
+               runner, triager, book: _PassBook) -> None:
+    """One note through _process_note, its outcome booked: success clears its
+    ledger entry; failure records it (and queues the §40 give-up card)."""
+    degraded_before = summary.get("parse_degraded", 0)
+    error = _process_note(note, cfg, summary, runner, triager)
+    if error is None:
+        # §47.2：降级 accounted 不算「真正成功」——降级只证明 claude 跑了
+        # （exit 0），不证明提取通道健康；一轮全是降级/失败照样够格判
+        # systemic（回滚条件在循环后）。
+        if summary.get("parse_degraded", 0) == degraded_before:
+            book.succeeded += 1
+        book.failed.pop(str(note), None)
+        return
+    summary["skipped"].append(error)
+    entry = _record_failure(book.failed, note, mtime, error)
+    book.any_failed = True
+    book.errors.append(error)
+    if entry["gave_up"]:
+        _note_gave_up(note, entry, summary, book)
+
+
+def _note_gave_up(note: Path, entry: dict, summary: dict, book: _PassBook) -> None:
+    summary["skipped"].append(
+        f"giving up on {note.name} after {entry['attempts']} attempts "
+        f"(case kept in state/{FAILED_QUEUE_NAME})")
+    analytics.log_event("radar_give_up", source="obsidian",
+                        note=note.name, attempts=entry["attempts"])
+    # §40: queue the visible diagnostic card — filed AFTER the
+    # systemic-failure check (a voided pass files nothing).
+    book.gave_up.append((note, entry))
+
+
+def _systemic(book: _PassBook, summary: dict) -> bool:
+    """全军覆没且含通道级错误（API/网络/key）= systemic。纯 note 级错误
+    （超时/截断/不可读）即使全军覆没也照常扣账——夜间 note 流稀疏时单篇 note
+    独自成 pass 是常态，把它的超时当系统故障会让 5 次上限永不生效、每 30min
+    白烧一轮（2026-07-22 review）。"""
+    return (book.any_failed and book.succeeded == 0
+            and summary["files_scanned"] > 0
+            and any(not _is_note_level_error(e) for e in book.errors))
+
+
+def _void_pass(book: _PassBook, summary: dict) -> None:
+    """本轮的账全部作废——marker 不动、attempts 不扣，下一轮从同一起点重来。"""
+    summary["skipped"].append(
+        "systemic extraction failure (every attempted note failed) — "
+        "marker pinned, no retry budget charged")
+    book.failed = book.failed_before
+    book.newest_done = book.marker
+    book.gave_up = []  # this pass's accounting is void — no cards
+
+
+def _finish_pass(book: _PassBook, summary: dict,
+                 md_files: list[tuple[Path, float]], scan_started: float) -> None:
+    for note, entry in book.gave_up:
         # §40: give-up becomes visible — a diagnostic card in 备选 (deduped by
         # note path inside file_give_up_card, so it never re-files).
         file_give_up_card(note, entry)
     # 台账先于 marker 落盘（audit review 2026-07-14）：反过来时，两次写之间
     # 的崩溃/ENOSPC 会留下"marker 已越过、台账没记上"的失败 note = 静默永久
     # 丢失；这个顺序下崩溃顶多让失败 note 多重试一轮。
-    _save_failed_queue(failed)
-    if newest_done > marker:
-        _write_marker(newest_done)
+    _save_failed_queue(book.failed)
+    if book.newest_done > book.marker:
+        _write_marker(book.newest_done)
     analytics.log_event("radar_scan", source="obsidian",
                         files=summary.get("files_scanned"),
                         new_cards=summary.get("cards"),
                         secs=round(time.monotonic() - scan_started, 1))
-    # v0.19.0 obsidian health (cron-only): a healthy scan (even one that found
-    # nothing newer than the marker) is ok+last_cards; the silent-failure modes
-    # the app turns into a diagnostic card are distinct skip codes.
+    _pass_health(md_files, book.any_failed, summary)
+
+
+def _pass_health(md_files: list, any_failed: bool, summary: dict) -> None:
+    """v0.19.0 obsidian health (cron-only): a healthy scan (even one that found
+    nothing newer than the marker) is ok+last_cards; the silent-failure modes
+    the app turns into a diagnostic card are distinct skip codes."""
     if not md_files:
         _note_health(False, "vault_empty")           # dir there, zero .md
     elif any_failed:
@@ -953,8 +1103,6 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
                      else "extract_failed")
     else:
         _note_health(True, cards=summary["cards"])    # 扫了 = ok, cards≥0
-    return summary
-
 
 
 # actd._OPEN_STATES 的本地拷贝语义（同 auto_merge.OPEN_STATES 的理由：import
@@ -974,13 +1122,20 @@ def _fold_onto_open(decision: dict) -> bool:
     if (decision or {}).get("action") != "relates_to":
         return False
     try:
-        target = registry.load(str(decision.get("req") or "").strip())
-        if target is None:
-            return False
-        target = registry.canonical(target)
-        return str(target.status) in _FOLD_OPEN_STATES
+        return _target_open(str(decision.get("req") or "").strip())
     except Exception:  # noqa: BLE001 - 预判失败不许炸 pass，按拦截处理
         return False
+
+
+def _target_open(ref: str) -> bool:
+    """The referenced card exists and its canonical (merge-followed) card is
+    still open."""
+    target = registry.load(ref)
+    if target is None:
+        return False
+    return str(registry.canonical(target).status) in _FOLD_OPEN_STATES
+
+
 
 
 def _process_note(note: Path, cfg: config.Config, summary: dict,
@@ -995,65 +1150,206 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
         # UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的
         # note 曾让整个 pass 崩掉、marker/health 全部停摆。
         return f"unreadable note {note.name}: {e}"
-    # §47.2 提取前省钱检查：未完结降级卡已按**当前 mtime** 兜住这篇 note
-    # （systemic 回滚钉住 marker 后的重扫是常客）→ 不再烧 2 次提取，直接
-    # accounted。note 被改过（mtime 变 / 旧卡无 note_mtime）照常提取——内容
-    # 修好后正常铸卡的恢复路径不能被旧卡挡死。计入 parse_degraded：它既占
-    # cap 名额（同一批系统性故障不再翻倍降级），也不算「真正解析成功」。
-    try:
-        cur_mtime = note.stat().st_mtime
-    except OSError:
-        cur_mtime = None
-    if cur_mtime is not None:
-        owner = _open_degrade_card(str(note))
-        if owner is not None and any(
-                isinstance(s, dict) and s.get("note_mtime") == cur_mtime
-                for s in (owner.sources or [])):
-            summary["parse_degraded"] = summary.get("parse_degraded", 0) + 1
-            summary["skipped"].append(
-                f"unparseable extraction on {note.name} — already degraded to "
-                f"card {owner.id} (note unchanged), extraction skipped")
-            return None
+    if _already_degraded(note, summary):
+        return None
+    return _extract_and_file(quick_capture, note, text, cfg, summary, runner, triager)
+
+
+def _owns_mtime(owner: Requirement, cur_mtime: float) -> bool:
+    return any(isinstance(s, dict) and s.get("note_mtime") == cur_mtime
+               for s in (owner.sources or []))
+
+
+def _already_degraded(note: Path, summary: dict) -> bool:
+    """§47.2 提取前省钱检查：未完结降级卡已按**当前 mtime** 兜住这篇 note
+    （systemic 回滚钉住 marker 后的重扫是常客）→ 不再烧 2 次提取，直接
+    accounted。note 被改过（mtime 变 / 旧卡无 note_mtime）照常提取——内容
+    修好后正常铸卡的恢复路径不能被旧卡挡死。计入 parse_degraded：它既占
+    cap 名额（同一批系统性故障不再翻倍降级），也不算「真正解析成功」。"""
+    cur_mtime = _safe_mtime(note)
+    if cur_mtime is None:
+        return False
+    owner = _open_degrade_card(str(note))
+    if owner is None or not _owns_mtime(owner, cur_mtime):
+        return False
+    summary["parse_degraded"] = summary.get("parse_degraded", 0) + 1
+    summary["skipped"].append(
+        f"unparseable extraction on {note.name} — already degraded to "
+        f"card {owner.id} (note unchanged), extraction skipped")
+    return True
+
+
+def _extract_and_file(quick_capture, note: Path, text: str, cfg: config.Config,
+                      summary: dict, runner, triager) -> Optional[str]:
+    """Extraction → items (or the §47.2 degrade path) → per-item filing →
+    the degraded card. Returns the note's error string, or None."""
     try:
         raw = _extract_with_retry(text, runner=runner)
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:
         return f"claude -p failed on {note.name}: {type(e).__name__}: {str(e)[:160]}"
-    items = _parse_extraction(raw)
-    degraded = False
-    if items is None:
-        # §47.2 解析失败兜底：先同 pass 重新提取一次（LLM 非确定性，第二次
-        # 常常就是合法 JSON）；重试仍解析失败 → 不再交给跨 pass 重试队列空
-        # 转，而是【降级】——先做截断抢救（2026-07-22 review：exit 0 的流可
-        # 能停在对象中间，完整的前缀对象是真提取，照常落库），再把整篇原文
-        # 落成一张低置信降级卡（file_parse_degraded_card，按路径去重）。
-        # 降级卡兜住了内容，note 就算 accounted（返回 None），不进台账。
-        if summary.get("parse_degraded", 0) >= PARSE_DEGRADE_PASS_CAP:
-            # §47.2 阻尼：本 pass 降级已达上限 = 疑似系统性提取故障（claude
-            # exit-0 却每篇都吐错误文案），不再烧重试提取、不再铸卡。错误
-            # 文案刻意不用 "unparseable extraction" 前缀——channel 级分类让
-            # 全军覆没（无真正解析成功）的 pass 触发既有 systemic 回滚
-            # （marker 钉住、重试额度不扣），部分失败则照常进跨 pass 台账。
-            return (f"parse degrade cap ({PARSE_DEGRADE_PASS_CAP}/pass) hit — "
-                    f"systemic parse failure suspected on {note.name}: "
-                    f"{(raw or '')[:80]!r}")
-        _dump_debug_raw(note, raw or "")
-        retry_raw: Optional[str] = None
-        try:
-            retry_raw = _extract_with_retry(text, runner=runner)
-        except (OSError, subprocess.SubprocessError, RuntimeError):
-            retry_raw = None  # 重试提取本身失败 → 按解析仍失败走降级
-        items = _parse_extraction(retry_raw) if retry_raw is not None else None
-        if items is None:
-            if retry_raw is not None:
-                _dump_debug_raw(note, retry_raw)
-            # 两份输出各自抢救取更优（平手取重试那份）：重试返回非空 prose
-            # 时，首跑里已经完整的前缀对象不能跟着陪葬。
-            items = max(_salvage_truncated_array(retry_raw or ""),
-                        _salvage_truncated_array(raw or ""), key=len)
-            degraded = True
-        else:
-            analytics.log_event("radar_parse_retry_ok", source="obsidian")
+    items, degraded, error = _items_or_degrade(note, text, raw, summary, runner)
+    if error is not None:
+        return error
     summary["extracted"] += len(items)
+    item_error = _file_items(quick_capture, items, note, cfg, summary, triager)
+    if degraded:
+        error = _account_degraded(note, text, raw, items, summary)
+        if error is not None:
+            return error
+    # 有 item 落库失败 -> 整篇 note 进重试台账重跑（merge_or_new 会去重已成功
+    # 落库的兄弟项），比只丢这一条更诚实。
+    return item_error
+
+
+def _cap_error(note: Path, raw: Optional[str]) -> str:
+    """§47.2 阻尼：本 pass 降级已达上限 = 疑似系统性提取故障（claude exit-0
+    却每篇都吐错误文案），不再烧重试提取、不再铸卡。错误文案刻意不用
+    "unparseable extraction" 前缀——channel 级分类让全军覆没（无真正解析成功）
+    的 pass 触发既有 systemic 回滚（marker 钉住、重试额度不扣），部分失败则
+    照常进跨 pass 台账。"""
+    return (f"parse degrade cap ({PARSE_DEGRADE_PASS_CAP}/pass) hit — "
+            f"systemic parse failure suspected on {note.name}: "
+            f"{(raw or '')[:80]!r}")
+
+
+def _items_or_degrade(note: Path, text: str, raw: str, summary: dict,
+                      runner) -> tuple[list[dict], bool, Optional[str]]:
+    """(items, degraded, error). §47.2 解析失败兜底：先同 pass 重新提取一次
+    （LLM 非确定性，第二次常常就是合法 JSON）；重试仍解析失败 → 不再交给跨
+    pass 重试队列空转，而是【降级】——先做截断抢救（2026-07-22 review：exit 0
+    的流可能停在对象中间，完整的前缀对象是真提取，照常落库），再把整篇原文
+    落成一张低置信降级卡（_account_degraded，按路径去重）。"""
+    items = _parse_extraction(raw)
+    if items is not None:
+        return items, False, None
+    if summary.get("parse_degraded", 0) >= PARSE_DEGRADE_PASS_CAP:
+        return [], False, _cap_error(note, raw)
+    _dump_debug_raw(note, raw or "")
+    return _retry_or_salvage(note, text, raw, runner)
+
+
+def _retry_extract(text: str, runner) -> Optional[str]:
+    """The §47.2 second extraction; None when it fails (→ treated as still
+    unparseable, the degrade path runs)."""
+    try:
+        return _extract_with_retry(text, runner=runner)
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        return None
+
+
+def _best_salvage(retry_raw: Optional[str], raw: Optional[str]) -> list[dict]:
+    """两份输出各自抢救取更优（平手取重试那份）：重试返回非空 prose 时，
+    首跑里已经完整的前缀对象不能跟着陪葬。"""
+    return max(_salvage_truncated_array(retry_raw or ""),
+               _salvage_truncated_array(raw or ""), key=len)
+
+
+def _retry_or_salvage(note: Path, text: str, raw: str,
+                      runner) -> tuple[list[dict], bool, Optional[str]]:
+    retry_raw = _retry_extract(text, runner)
+    items = _parse_extraction(retry_raw) if retry_raw is not None else None
+    if items is not None:
+        analytics.log_event("radar_parse_retry_ok", source="obsidian")
+        return items, False, None
+    if retry_raw is not None:
+        _dump_debug_raw(note, retry_raw)
+    return _best_salvage(retry_raw, raw), True, None
+
+
+def _item_desc(quick_capture, item: dict, req: Requirement, note: Path) -> str:
+    quote = item.get("quote")
+    # who = the source note (v0.42) — same honesty as _to_requirement.
+    return quick_capture.candidate_desc(
+        req.title, quote=quote if isinstance(quote, str) else None,
+        who=note.stem, channel="meeting", date=_note_date(note))
+
+
+def _echo_blocked(gate: str, decision: dict) -> bool:
+    """§45：屏幕来源不发起卡片。唯一放行的形态是「补进一张还开着的卡」
+    （佐证是屏幕的正职）；其余一律拦——包括 triage 失败时宁可打扰的
+    new_proposal 回退，以及 relates_to 命中已完结卡的 re-raise/follow-up 路径
+    （那也会产出新卡，而完结事项在屏幕上再现几乎必是助手在汇报自己的完成——
+    回声的标准形态）。triage 判 ignore 的项不进这里：它本来就不会成卡，计进
+    echo_blocked 会虚高拦截率的审计口径——放行给 apply_triage 走常规 ignore
+    留痕（radar_triage{action=ignore}）。"""
+    return (gate == provenance.CORROBORATE
+            and str(decision.get("action") or "") != "ignore"
+            and not _fold_onto_open(decision))
+
+
+def _note_echo_blocked(summary: dict, item: dict, gate: str, decision: dict) -> None:
+    """echo_blocked 只计「本会成卡/会提升但被闸拦下」的项。计数 + analytics
+    留痕，绝不静默蒸发。事件只带元数据——title 是 LLM 从屏幕 OCR 提出来的
+    文本，进 telemetry 就违反宪法第 9 条 / docs/TELEMETRY.md 红线；本地排查
+    去 registry/notes 看。"""
+    summary["echo_blocked"] += 1
+    analytics.log_event(
+        "radar_echo_blocked", source="obsidian", stage="birth",
+        gate=gate,
+        provenance=provenance.normalize(
+            item.get("provenance"), provenance.PROVENANCES),
+        speaker=provenance.normalize(
+            item.get("speaker"), provenance.SPEAKERS),
+        action=str(decision.get("action") or ""))
+
+
+def _file_item(quick_capture, item: dict, note: Path, cfg: config.Config,
+               summary: dict, triager) -> Optional[tuple]:
+    """One item: §45 birth gate → triage → apply_triage. Returns
+    ``(kind, saved, hc)``, or None when the echo gate blocked it."""
+    req = _to_requirement(item, note)
+    # §45 来源角色决策表：出生资格在 triage 之前定档。screen 一刀砍
+    # （CORROBORATE：只许 fold，不许发起）；unknown 最高备选；audio
+    # 真人照旧 FULL——回声环断在这里，档案与佐证价值不受影响。
+    gate = provenance.verdict(item.get("provenance"), item.get("speaker"))
+    # extraction-level urgency joins the hard+deadline split: an item
+    # the extractor marked non-urgent parks in 备选 (detected) even
+    # when it carries a hard deadline — 现在需要行动才进提案列.
+    # 非 FULL 来源一并压平 act-now：屏幕/不明来源既不发提案，也不借
+    # relates_to 的 fold 路径把既有备选卡提升进提案列。
+    hc = (gate == provenance.FULL
+          and _is_high_confidence(req) and _extractor_urgent(item))
+    if hc:
+        # act-now 信号随 req.status 传给 apply_triage：relates_to 命中
+        # DETECTED 卡的 fold 路径靠 status==card_sent 提升目标卡进提案
+        # 列（否则硬 deadline 的紧急诉求折进备选卡后不可见）；低置信
+        # 降级时 apply_triage 会把它重置回 detected。
+        req.set_status(registry.State.CARD_SENT)
+    desc = _item_desc(quick_capture, item, req, note)
+    decision = quick_capture.triage(desc, cfg, extractor=triager)
+    if _echo_blocked(gate, decision):
+        _note_echo_blocked(summary, item, gate, decision)
+        return None
+    kind, saved = quick_capture.apply_triage(
+        decision, req, cfg, high_confidence=hc, gate=gate)
+    return kind, saved, hc
+
+
+def _is_proposal_card(kind: str, saved: Optional[Requirement], hc: bool) -> bool:
+    """hard+deadline 分流保留：new_proposal 只有真落到提案列才计卡——triage
+    低置信降级（apply_triage 内部改 status）时不能再拿本地 hc 虚报。
+    follow-up/re-raise 同一把尺：§45 非 FULL 来源的天花板会把它们压到
+    detected/备选，那不是一张提案卡，不许虚报。"""
+    return (saved is not None and saved.status == registry.State.CARD_SENT.value
+            and (kind in ("follow_up", "reraised")
+                 or (hc and kind == "proposed")))
+
+
+def _count_outcome(summary: dict, outcome: Optional[tuple]) -> None:
+    if outcome is None:
+        return  # echo-blocked: counted by _note_echo_blocked
+    kind, saved, hc = outcome
+    if kind == "ignored":
+        return
+    summary["reconciled"] += 1
+    if _is_proposal_card(kind, saved, hc):
+        summary["cards"] += 1
+
+
+def _file_items(quick_capture, items: list[dict], note: Path, cfg: config.Config,
+                summary: dict, triager) -> Optional[str]:
+    """Every extracted item through _file_item; returns the LAST filing error
+    (the whole note then re-enters the retry ledger), or None."""
     item_error: Optional[str] = None
     for item in items:
         title = item.get("title")
@@ -1062,94 +1358,33 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
         if not isinstance(title, str) or not title.strip():
             continue
         try:
-            req = _to_requirement(item, note)
-            # §45 来源角色决策表：出生资格在 triage 之前定档。screen 一刀砍
-            # （CORROBORATE：只许 fold，不许发起）；unknown 最高备选；audio
-            # 真人照旧 FULL——回声环断在这里，档案与佐证价值不受影响。
-            gate = provenance.verdict(item.get("provenance"), item.get("speaker"))
-            # extraction-level urgency joins the hard+deadline split: an item
-            # the extractor marked non-urgent parks in 备选 (detected) even
-            # when it carries a hard deadline — 现在需要行动才进提案列.
-            # 非 FULL 来源一并压平 act-now：屏幕/不明来源既不发提案，也不借
-            # relates_to 的 fold 路径把既有备选卡提升进提案列。
-            hc = (gate == provenance.FULL
-                  and _is_high_confidence(req) and _extractor_urgent(item))
-            if hc:
-                # act-now 信号随 req.status 传给 apply_triage：relates_to 命中
-                # DETECTED 卡的 fold 路径靠 status==card_sent 提升目标卡进提案
-                # 列（否则硬 deadline 的紧急诉求折进备选卡后不可见）；低置信
-                # 降级时 apply_triage 会把它重置回 detected。
-                req.set_status(registry.State.CARD_SENT)
-            quote = item.get("quote")
-            # who = the source note (v0.42) — same honesty as _to_requirement.
-            desc = quick_capture.candidate_desc(
-                req.title, quote=quote if isinstance(quote, str) else None,
-                who=note.stem, channel="meeting", date=_note_date(note))
-            decision = quick_capture.triage(desc, cfg, extractor=triager)
-            # triage 判 ignore 的项走原有 ignore 路径与留痕（radar_triage
-            # action=ignore）——它本来就不会成卡，混进 echo_blocked 会抬高
-            # 政策审计口径：echo_blocked 只计「会成卡/会提升但被 §45 拦下」。
-            if (gate == provenance.CORROBORATE
-                    and str(decision.get("action") or "") != "ignore"
-                    and not _fold_onto_open(decision)):
-                # §45：屏幕来源不发起卡片。唯一放行的形态是「补进一张还开着
-                # 的卡」（佐证是屏幕的正职）；其余一律拦——包括 triage 失败时
-                # 宁可打扰的 new_proposal 回退，以及 relates_to 命中已完结卡
-                # 的 re-raise/follow-up 路径（那也会产出新卡，而完结事项在屏
-                # 幕上再现几乎必是助手在汇报自己的完成——回声的标准形态）。
-                # triage 判 ignore 的项不进这里：它本来就不会成卡，计进
-                # echo_blocked 会虚高拦截率的审计口径——放行给 apply_triage
-                # 走常规 ignore 留痕（radar_triage{action=ignore}）。
-                # echo_blocked 只计「本会成卡/会提升但被闸拦下」的项。
-                # 计数 + analytics 留痕，绝不静默蒸发。事件只带元数据——title
-                # 是 LLM 从屏幕 OCR 提出来的文本，进 telemetry 就违反宪法第 9
-                # 条 / docs/TELEMETRY.md 红线；本地排查去 registry/notes 看。
-                summary["echo_blocked"] += 1
-                analytics.log_event(
-                    "radar_echo_blocked", source="obsidian", stage="birth",
-                    gate=gate,
-                    provenance=provenance.normalize(
-                        item.get("provenance"), provenance.PROVENANCES),
-                    speaker=provenance.normalize(
-                        item.get("speaker"), provenance.SPEAKERS),
-                    action=str(decision.get("action") or ""))
-                continue
-            kind, saved = quick_capture.apply_triage(
-                decision, req, cfg, high_confidence=hc, gate=gate)
+            outcome = _file_item(quick_capture, item, note, cfg, summary, triager)
         except Exception as e:  # noqa: BLE001 - 单条候选落库失败不许炸全 pass
             item_error = (f"filing failed on {note.name}: "
                           f"{type(e).__name__}: {str(e)[:120]}")
             continue
-        if kind == "ignored":
-            continue
-        summary["reconciled"] += 1
-        # hard+deadline 分流保留：new_proposal 只有真落到提案列才计卡——triage
-        # 低置信降级（apply_triage 内部改 status）时不能再拿本地 hc 虚报。
-        # follow-up/re-raise 同一把尺：§45 非 FULL 来源的天花板会把它们压到
-        # detected/备选，那不是一张提案卡，不许虚报。
-        if saved is not None and saved.status == registry.State.CARD_SENT.value \
-                and (kind in ("follow_up", "reraised")
-                     or (hc and kind == "proposed")):
-            summary["cards"] += 1
-    if degraded:
-        # §47.2：降级卡成功落库（或按路径 dedup 命中既有未完结卡）→ 内容有
-        # 兜底，note 记为 accounted（skipped 里留痕但不进重试台账）；降级卡
-        # 本身落库失败 → 退回老路：unparseable 进跨 pass 重试台账（兜底的兜底）。
-        salvage_note = f" (salvaged {len(items)} complete item(s))" if items else ""
-        try:
-            card = file_parse_degraded_card(note, text)
-        except Exception:  # noqa: BLE001 - 降级失败不许炸 pass，退回台账
-            card = None
-        if card is None:
-            return (f"unparseable extraction on {note.name}: "
-                    f"{(raw or '')[:80]!r}")
-        summary["parse_degraded"] = summary.get("parse_degraded", 0) + 1
-        summary["skipped"].append(
-            f"unparseable extraction on {note.name} — degraded to "
-            f"low-confidence card {card.id}{salvage_note}")
-    # 有 item 落库失败 -> 整篇 note 进重试台账重跑（merge_or_new 会去重已成功
-    # 落库的兄弟项），比只丢这一条更诚实。
+        _count_outcome(summary, outcome)
     return item_error
+
+
+def _account_degraded(note: Path, text: str, raw: str, items: list[dict],
+                      summary: dict) -> Optional[str]:
+    """§47.2：降级卡成功落库（或按路径 dedup 命中既有未完结卡）→ 内容有
+    兜底，note 记为 accounted（skipped 里留痕但不进重试台账）；降级卡
+    本身落库失败 → 退回老路：unparseable 进跨 pass 重试台账（兜底的兜底）。"""
+    salvage_note = f" (salvaged {len(items)} complete item(s))" if items else ""
+    try:
+        card = file_parse_degraded_card(note, text)
+    except Exception:  # noqa: BLE001 - 降级失败不许炸 pass，退回台账
+        card = None
+    if card is None:
+        return (f"unparseable extraction on {note.name}: "
+                f"{(raw or '')[:80]!r}")
+    summary["parse_degraded"] = summary.get("parse_degraded", 0) + 1
+    summary["skipped"].append(
+        f"unparseable extraction on {note.name} — degraded to "
+        f"low-confidence card {card.id}{salvage_note}")
+    return None
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -1165,7 +1400,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         summary = scan()
         print(json.dumps(summary, ensure_ascii=False))
         return 0
+    _loop_forever(interval)
 
+
+def _loop_forever(interval: int) -> None:
+    """Loop mode (the launchd fallback plist runs ``act.radar`` with no
+    ``--once``): scan, print, sleep — a failed scan is one line, never a crash."""
     while True:
         try:
             summary = scan()

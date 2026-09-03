@@ -1,6 +1,6 @@
 """Audit regression — dashboard transcript-info memoization (finding 56).
 
-The dashboard used to call executor._transcript_info — a full read + per-line
+The dashboard used to call transcripts.transcript_info — a full read + per-line
 json parse of the session transcript — for EVERY executing/review/delivered
 card without a live pid, on EVERY ~10s pass. Delivered cards are never
 auto-archived, so that set grows forever: unbounded IO per pass, ending in a
@@ -20,8 +20,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import executor
-from act.lib import config, dashboard
+from act.lib import config, dashboard, transcripts
 from act.lib.registry import Requirement
 
 SID = "deadbeef-cafe-4000-8000-feedfacebeef"
@@ -32,7 +31,7 @@ class TinfoCacheUnitTestCase(unittest.TestCase):
         dashboard._TINFO_CACHE.clear()
         self.calls = []
         patcher = mock.patch.object(
-            executor, "_transcript_info",
+            transcripts, "transcript_info",
             side_effect=lambda sid: (self.calls.append(sid) or ("full-" + sid,
                                                                 "/tmp/cwd")))
         patcher.start()
@@ -66,7 +65,7 @@ class TinfoCacheUnitTestCase(unittest.TestCase):
 
     def test_negative_result_is_cached_too(self):
         # a missing transcript (info=None) is as expensive to recompute
-        with mock.patch.object(executor, "_transcript_info",
+        with mock.patch.object(transcripts, "transcript_info",
                                side_effect=lambda sid: (self.calls.append(sid)
                                                         or None)), \
                 mock.patch.object(dashboard, "_transcript_sig",
@@ -129,7 +128,7 @@ class BuildDashboardUsesCacheTestCase(unittest.TestCase):
                           "accepted_at": "2026-07-01T00:00:00Z"},
         })
         cfg = config.Config()
-        with mock.patch.object(executor, "_transcript_info",
+        with mock.patch.object(transcripts, "transcript_info",
                                return_value=None) as ti:
             dashboard.build_dashboard(reqs=[req], agents=[], cfg=cfg,
                                       archived=[])

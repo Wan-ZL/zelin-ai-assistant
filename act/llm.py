@@ -166,18 +166,30 @@ def build_argv(prompt: Optional[str], *, mode: str = MODE_PIPELINE,
     return argv
 
 
-def dispatch_argv(cfg: Optional[config.Config] = None) -> list:
+# §65 出网封锁（self_improve lane 会话的 MCP 面归零）：``--strict-mcp-config``
+# 让 claude 只认 ``--mcp-config`` 给的服务器集合，而这个集合是空的——用户级
+# Slack/Gmail MCP 对该会话不存在。三个 token 顺序固定，紧跟模型旗标、在
+# ``--name`` 之前（``--mcp-config`` 是变参，后面必须是一个选项而不是裸 prompt）。
+NO_MCP_ARGV: tuple = ("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}')
+
+
+def dispatch_argv(cfg: Optional[config.Config] = None, *,
+                  no_mcp: bool = False) -> list:
     """Base ``claude --bg`` argv shared by the executor's launch sites
     (dispatch / resume / rework / brief). ``--dangerously-skip-permissions``
     is included only while ``execution.skip_permissions`` is on (default;
     P0-10) — off means the agent runs under claude's normal permission
-    model. The dispatch model knob rides right behind it; the caller appends
-    ``--name`` / ``--resume`` / the prompt.
+    model. The dispatch model knob rides right behind it; ``no_mcp`` (§65,
+    add-only kwarg, default off = byte-identical argv) appends
+    :data:`NO_MCP_ARGV`; the caller appends ``--name`` / ``--resume`` / the
+    prompt.
     """
     cmd = [claude_bin(cfg), "--bg"]
     if cfg is None or getattr(cfg, "skip_permissions", True):
         cmd.append("--dangerously-skip-permissions")
     cmd += _model_flags(MODE_DISPATCH, cfg)
+    if no_mcp:
+        cmd += list(NO_MCP_ARGV)
     return cmd
 
 

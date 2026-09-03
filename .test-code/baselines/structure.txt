@@ -1,5 +1,4 @@
 # structure baseline
 # shrink-only: NEW / WORSE fail, STALE is advisory — strike fixed lines.
 crowded-dir:mac/Sources 43
-cycle:act.executor>act.lib.auto_merge>act.lib.dashboard>act.lib.silent_merge>act.merge_review 5
 cycle:act.lib.registry>act.lib.store2.export_yaml 2

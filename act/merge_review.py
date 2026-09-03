@@ -33,8 +33,7 @@ import yaml
 
 from act.analyze import _extract_json
 from act import llm
-from act.executor import _transcript_cwd
-from act.lib import analytics, config, sanitize
+from act.lib import analytics, config, sanitize, transcripts
 from act.lib.registry import Requirement, load
 # cron/launchd PATH 兜底（radar.py 事故注）— single claude-bin resolution path.
 
@@ -269,7 +268,7 @@ def _infer_cwd(req: Requirement, session_id: Optional[str]):
     worktree), else the requirement's target_repo. None -> git section skipped."""
     if session_id:
         try:
-            cwd = _transcript_cwd(str(session_id))
+            cwd = transcripts.transcript_cwd(str(session_id))
             if cwd is not None:
                 return cwd
         except Exception:  # noqa: BLE001 - inference is best-effort

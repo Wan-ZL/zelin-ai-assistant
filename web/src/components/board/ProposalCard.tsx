@@ -106,7 +106,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
   return (
     <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${displayTitle}`}>
       {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题） */}
-      <CardHead card={card} title={displayTitle} variant="lg" />
+      <CardHead card={card} title={displayTitle} variant="lg" selectable />
       <TargetLine card={card} />
       <EgressLines card={card} />
       <div className="card-badges">

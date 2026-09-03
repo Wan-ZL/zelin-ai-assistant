@@ -110,14 +110,40 @@ echo "    version: $VERSION"
 # --- compile ---
 # AVFoundation + ScreenCaptureKit: 实时字幕 in-process audio capture
 # (LiveCaptions.swift); Speech (macOS 26 SpeechAnalyzer) auto-links on import;
-# UserNotifications: Recording.swift 的 self-heal / TCC-loss 一次性通知。
+# UserNotifications: Recording.swift 的 self-heal / TCC-loss 一次性通知 + §28 通知中继
+# （NotifyRelay.swift）；ServiceManagement: 登录时启动（SMAppService）；Carbon: 全局
+# 快速捕获快捷键（RegisterEventHotKey，ShellSystem.swift）。
 echo "==> Compiling $SRC_DIR/*.swift + $SHARED_I18N"
 mkdir -p "$BUILD_DIR"
 swiftc -O "$SRC_DIR"/*.swift "$SHARED_I18N" -o "$BIN" \
     -framework AppKit -framework WebKit -framework SwiftUI -framework Foundation \
     -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications \
+    -framework ServiceManagement -framework Carbon \
     || build_failed "shell compile (swiftc) exited non-zero — errors above"
 echo "    built binary: $BIN"
+
+# --- helper binaries（s4 Tier-0 0.2 / 0.3；CONTRACT §68.13）---
+# vault-sync-helper：vault ⇄ 镜像的唯一 courier（~/Documents 的 TCC 授权按 bundle 记账，
+# 装进壳 bundle 后与看板 app 同一身份；ingest/vault-sync.sh find_vault_sync_helper
+# 先找本壳）。framegrab：Slack 自发视频抽帧（ffmpeg 缺席时的 AVFoundation 替身；
+# act/radar_slack.py 先找 shell/build/ 再回落 mac/build/）。源文件是 mac/ 冻结版的
+# 逐字节副本（tests/test_shell_engine_mirror.py 钉住）。编译错误 = 构建失败（同 mac/build.sh）。
+HELPERS_DIR="$SCRIPT_DIR/Helpers"
+VAULTSYNC_SRC="$HELPERS_DIR/VaultSyncHelper.swift"
+if [ -f "$VAULTSYNC_SRC" ]; then
+    echo "==> Compiling vault-sync-helper"
+    swiftc -O "$VAULTSYNC_SRC" -o "$BUILD_DIR/vault-sync-helper" -framework Foundation \
+        || build_failed "vault-sync-helper compile (swiftc) exited non-zero — errors above"
+    echo "    built binary: $BUILD_DIR/vault-sync-helper"
+fi
+FRAMEGRAB_SRC="$HELPERS_DIR/framegrab.swift"
+if [ -f "$FRAMEGRAB_SRC" ]; then
+    echo "==> Compiling framegrab"
+    swiftc -O "$FRAMEGRAB_SRC" -o "$BUILD_DIR/framegrab" \
+        -framework AVFoundation -framework CoreImage -framework Foundation \
+        || build_failed "framegrab compile (swiftc) exited non-zero — errors above"
+    echo "    built binary: $BUILD_DIR/framegrab"
+fi
 
 # --- assemble .app bundle ---
 echo "==> Assembling bundle: $APP_DIR"
@@ -126,6 +152,12 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN" "$APP_DIR/Contents/MacOS/$EXEC_NAME"
 cp "$PLIST" "$APP_DIR/Contents/Info.plist"
+for helper in vault-sync-helper framegrab; do
+    if [ -x "$BUILD_DIR/$helper" ]; then
+        cp "$BUILD_DIR/$helper" "$APP_DIR/Contents/MacOS/$helper"
+        echo "    bundled $helper"
+    fi
+done
 
 # version（§56.1）：上面 compile 前已算出 VERSION。Stamp the STAGED plist only —
 # 源 Info.plist 保留占位值。

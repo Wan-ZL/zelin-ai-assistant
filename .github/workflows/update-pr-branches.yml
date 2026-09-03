@@ -19,9 +19,10 @@
 #   - the update itself uses a fine-grained PAT stored as the repository
 #     secret PR_AUTOUPDATE_TOKEN (this repo only; Contents: read+write,
 #     Pull requests: read+write). Its pushes are ordinary user pushes and DO
-#     trigger CI, the advisory PR reviews (pr-review-*.yml rerun on every
-#     update — that is the price of fresh reviews on a fresh base) and the
-#     `Version pins untouched` gate.
+#     trigger CI and the `Version pins untouched` gate. (The advisory PR
+#     reviews no longer rerun here: since §56.8 they fire on the `review:ai`
+#     label / workflow_dispatch only, so an update-branch push costs no API
+#     spend.)
 #   - without the secret the workflow degrades to REPORT-ONLY: it still
 #     labels conflicting PRs `needs-rebase` (labels and comments need no push
 #     and are fine with GITHUB_TOKEN) and lists what it would have updated,
