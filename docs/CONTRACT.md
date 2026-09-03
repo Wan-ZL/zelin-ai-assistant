@@ -4557,7 +4557,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 **矩阵**（truth = `.github/workflows/ci.yml` 与 `ci-nightly.yml`；本表只说形状）：
 
-| lane | pull_request | merge_group / push to main | schedule（夜间）+ workflow_dispatch | 按需 |
+| lane | pull_request | merge_group / push to main 或 dev | schedule（夜间）+ workflow_dispatch | 按需 |
 |---|---|---|---|---|
 | `Lint` / `Tests on ubuntu ×2` / `QA gates` / `Version pins untouched` | 全跑 | 全跑（pins 门只在 PR / 队列） | — | — |
 | `Changed paths (per-PR filter)`（新，非 required） | 列 PR 文件 → `swift` / `web` 两个布尔输出 | 恒 `true` | — | — |
@@ -4576,6 +4576,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
 - **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
+- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底），与 dev 无关。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 

@@ -3,7 +3,9 @@
 # resource — everything Apple-flavored lives in it: mac app build WITH
 # Sparkle, shared-contract Swift tests, the Swift↔Python crypto interop gate,
 # and the iOS simulator build) — on every pull request, on every merge-queue
-# group, and on push to main.
+# group, and on push to main or dev (dev = the integration train PRs are
+# merged into before it is promoted to main; every advance of it gets the
+# full suite so a red dev head is caught before promotion, not after).
 #
 # PER-PR DIET (CONTRACT §56.8): the repo is public (runner minutes are free)
 # but the owner is on the free plan, whose CONCURRENCY cap (~20 jobs, 5 macOS)
@@ -14,8 +16,8 @@
 #     "no Swift changes — Swift gates not needed" and ends green.
 #   - `Web tests` runs npm only when web/ changed; otherwise the same shape.
 # Both jobs KEEP their names and report on every PR — the required-check
-# contract is untouched. merge_group and push-to-main always run everything
-# (the filter is forced to 'true'), and a failed filter step also runs
+# contract is untouched. merge_group and push (main or dev) always run
+# everything (the filter is forced to 'true'), and a failed filter step also runs
 # everything: a broken filter must never become a skipped gate. The
 # informational Windows legs and qlty moved to ci-nightly.yml (schedule +
 # workflow_dispatch); the AI review bots run on demand (pr-review-*.yml,
@@ -43,7 +45,7 @@ on:
   merge_group:
     types: [checks_requested]
   push:
-    branches: [main]
+    branches: [main, dev]
 
 # Every job only reads the repo — no job creates releases, comments, or pushes.
 # (`changes` adds pull-requests: read at job level to list the PR's files.)
@@ -61,8 +63,8 @@ jobs:
     name: Changed paths (per-PR filter)
     # §56.8: decides whether the macOS Swift gates (`ci`) and the web gates
     # need to run for THIS pull request. Only pull_request is filtered —
-    # merge_group and push to main always run everything (outputs forced to
-    # 'true' below). dorny/paths-filter lists the PR's files through the API
+    # merge_group and push (main or dev) always run everything (outputs
+    # forced to 'true' below). dorny/paths-filter lists the PR's files through the API
     # (no checkout needed on pull_request); if that step fails (API hiccup,
     # rate limit) the gate step still answers 'true' for both — the filter
     # can only ever REMOVE work it has positively proven unnecessary.
