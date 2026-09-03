@@ -465,9 +465,11 @@ def render(results: List[CheckResult]) -> str:
 
 
 def render_json(results: List[CheckResult]) -> str:
-    """§25 machine output: one row per check for the app's diagnostics page."""
+    """§25 machine output: one row per check for the app's diagnostics page
+    and the §56.3 deploy verdict (`row_class` tells it which FAILs to skip)."""
     rows = [{"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix,
-             "failure_id": r.failure_id, "action_id": r.action_id}
+             "failure_id": r.failure_id, "action_id": r.action_id,
+             "row_class": r.row_class}
             for r in results]
     return json.dumps({"home": str(config.HOME), "checks": rows},
                       ensure_ascii=False, indent=1)
