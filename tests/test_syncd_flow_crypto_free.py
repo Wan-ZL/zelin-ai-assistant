@@ -247,7 +247,7 @@ class AckTailTestCase(_CryptoFree):
         d = syncd.Syncd(_sync_cfg(), ft)
         d._ensure_ready()
         self.assertEqual(d.ack_tail(), 1)
-        first_line_end = len(syncd.APPLIED_LEDGER.read_text(encoding="utf-8").splitlines()[0]) + 1
+        first_line_end = syncd.APPLIED_LEDGER.read_bytes().index(b"\n") + 1
         cursor = json.loads(syncd.APPLIED_CURSOR_PATH.read_text(encoding="utf-8"))
         self.assertEqual(cursor["offset"], first_line_end)
         # retried next pass

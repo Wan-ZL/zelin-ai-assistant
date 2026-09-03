@@ -20,6 +20,10 @@ from tests import TMP_HOME  # noqa: F401
 
 from act.lib.checks import launchd
 
+# the probe builds gui/<uid> domains and POSIX paths — a launchd construct; the
+# Windows leg exercises only the platform gate (ProbeGatesTestCase.test_not_darwin)
+_POSIX = os.name == "posix"
+
 
 class _FakeLaunchd:
     """subprocess.run stand-in: records argv; on bootstrap, plays the job."""
@@ -55,6 +59,7 @@ class _FakeLaunchd:
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
 
+@unittest.skipUnless(_POSIX, "launchd probe is a POSIX/darwin construct")
 class ClaudeProbeTestCase(unittest.TestCase):
     def _probe(self, fake: _FakeLaunchd, budget_s: float = 0.6) -> dict:
         with mock.patch.dict(os.environ, {"AIASSISTANT_LAUNCHD_PROBE": "1"}), \
@@ -153,6 +158,7 @@ class ProbeHelpersTestCase(unittest.TestCase):
     def test_read_optional_missing(self):
         self.assertEqual(launchd._read_optional(Path("/nonexistent/zai/out")), "")
 
+    @unittest.skipUnless(_POSIX, "POSIX path shapes")
     def test_probe_plist_shape(self):
         d = launchd._probe_plist("lbl", "/cwd", "/claude", Path("/v"))
         self.assertEqual(d["Label"], "lbl")

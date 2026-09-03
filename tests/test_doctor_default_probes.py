@@ -22,6 +22,8 @@ from tests import TMP_HOME  # noqa: F401
 from act.lib import config, platform
 from act.lib.checks import core, environment, launchd, pipeline, services
 
+_POSIX = os.name == "posix"
+
 
 class RunnerTestCase(unittest.TestCase):
     def test_success_concatenates_streams(self):
@@ -141,9 +143,11 @@ class LoginShellClaudeTestCase(unittest.TestCase):
 
 
 class PidAliveTestCase(unittest.TestCase):
+    @unittest.skipUnless(_POSIX, "os.kill(pid, 0) liveness is POSIX")
     def test_own_pid_is_alive(self):
         self.assertTrue(pipeline.pid_alive(os.getpid()))
 
+    @unittest.skipUnless(_POSIX, "os.kill(pid, 0) liveness is POSIX")
     def test_kill_outcomes(self):
         with mock.patch.object(os, "kill", side_effect=ProcessLookupError()):
             self.assertFalse(pipeline.pid_alive(4242))
@@ -250,6 +254,7 @@ class MiscHelpersTestCase(unittest.TestCase):
         self.assertFalse(environment._too_old("3.9"))
         self.assertFalse(environment._too_old(""))
 
+    @unittest.skipUnless(_POSIX, "POSIX path shapes")
     def test_symlink_shaped(self):
         self.assertFalse(launchd.symlink_shaped(None))
         self.assertFalse(launchd.symlink_shaped("relative"))
@@ -265,6 +270,7 @@ class MiscHelpersTestCase(unittest.TestCase):
         self.assertTrue(launchd.symlink_shaped(str(link) + "/"))
         self.assertFalse(launchd.symlink_shaped(str(real.resolve())))
 
+    @unittest.skipUnless(_POSIX, "uses /bin/sh as the executable interpreter")
     def test_interpreter_ok_requires_absolute_executable(self):
         probes = mock.Mock()
         probes.run.return_value = (0, "")

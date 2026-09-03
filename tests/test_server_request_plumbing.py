@@ -12,6 +12,7 @@ from __future__ import annotations
 import errno
 import io
 import json
+import os
 import tempfile
 import unittest
 from email.message import Message
@@ -26,6 +27,8 @@ from tests.test_server_common import (assert_envelope, http_request,
 from server import app as app_mod
 from server import security
 from server.errors import InvalidFieldError
+
+_POSIX = os.name == "posix"
 
 
 def _bare_handler(path: str = "/api/health", command: str = "GET",
@@ -158,6 +161,7 @@ class StaticServingTestCase(unittest.TestCase):
         self.addCleanup(httpd.shutdown)
         self.port = httpd.server_address[1]
 
+    @unittest.skipUnless(_POSIX, "the /assets/ cache rule keys on POSIX separators")
     def test_hashed_asset_is_immutable_cached_and_not_injected(self):
         status, headers, body = http_request(self.port, "GET", "/assets/app-abc123.js")
         self.assertEqual(status, 200)
@@ -224,6 +228,7 @@ class StaticHelpersTestCase(unittest.TestCase):
         self.assertIn(app_mod._static_ctype(Path("a.js")),
                       ("text/javascript", "application/javascript"))
 
+    @unittest.skipUnless(_POSIX, "the /assets/ cache rule keys on POSIX separators")
     def test_cache_policy_by_location(self):
         self.assertIn("immutable", app_mod._static_cache(Path("/d/assets/a-1.js")))
         self.assertEqual(app_mod._static_cache(Path("/d/index.html")), "no-cache")
