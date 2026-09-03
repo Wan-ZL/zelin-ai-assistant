@@ -12,7 +12,7 @@ import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, RepoChip, TerminalButton } from "./cardChrome";
+import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, MergeStateChip, RepoChip, TerminalButton } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
 import { TextDialog } from "./TextDialog";
 import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
@@ -68,6 +68,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
     <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`}>
       <CardHead card={card} title={title} selectable leading={<span className="card-dot is-review" aria-hidden="true" />} />
       <div className="card-badges">
+        <MergeStateChip cardId={card.id} />
         {/* §30 会话再活跃：只是平静地标注，不是打回轮（原生 teal 章） */}
         {card.session_active && <span className="chip chip-accent">{text("会话有新活动", "Session active")}</span>}
         {card.interrupted === true && <span className="chip chip-warning">{text("中断收割", "Interrupted")}</span>}

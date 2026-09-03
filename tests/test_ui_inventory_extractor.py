@@ -18,6 +18,7 @@ if _UI_DIR not in sys.path:
     sys.path.insert(0, _UI_DIR)
 
 import extract_native_inventory as inv  # noqa: E402
+import ui_common as uc  # noqa: E402
 
 MAIN_WINDOW = '''
 enum MainSection: String, CaseIterable, Identifiable {
@@ -145,6 +146,12 @@ struct SettingsFormView: View {
             set: { v in UserDefaults.standard.set(v, forKey: "showMenuBarIcon") }))
     }
 
+    private func probe() -> Outcome {
+        do { try p.run() } catch {
+            return .failed(L("找不到可用的 python（", "No usable python (") + error.localizedDescription + ")")
+        }
+    }
+
     private func load() {
         let ov = SettingsIO.readOverrides()
         let feats = ov["features"] as? [String: Any] ?? [:]
@@ -223,8 +230,19 @@ struct TaskRow: View {
             Button(L("停止", "Stop")) { }
         } label: { Text(L("更多", "More")) }
         Button(L("让 AI 修", "Fix with AI")) { }
+        Text(L("💰 预计费用: \\(Self.money(cost))", "💰 Estimated cost: \\(Self.money(cost))"))
     }
 }
+
+/// trash_reason 词表——只被 TrashRow 调用，FUNCTION_SCREEN 把它点名到 trash
+fileprivate func trashReasonLabel(_ r: String) -> String {
+    switch r {
+    case "rejected": return L("你拒绝的", "You rejected it")
+    default: return r
+    }
+}
+
+fileprivate func hardnessLabel(_ h: String) -> String { L("较难", "Hard") }
 '''
 
 NOTIFY = '''
@@ -245,10 +263,37 @@ final class RecordingController {
         UserDefaults.standard.set(true, forKey: "recordingConsentShown")
         UserDefaults.standard.set("screen", forKey: "recordingMode")
     }
+
+    nonisolated static func label(forMode m: String) -> String {
+        switch m {
+        case "off": return L("关", "Off")
+        default: return L("仅屏幕", "Screen Only")
+        }
+    }
+
+    nonisolated static func rollbackNote(failed: String, kept: String) -> String {
+        let cause: String
+        switch diag?.failureId {
+        case "node_missing":
+            cause = L("缺 Node.js", "Node.js is missing")
+        default:
+            cause = L("引擎没能启动", "its engine failed to start")
+        }
+        return L("「\\(label(forMode: failed))」没能开启——\\(cause)", "\\(label(forMode: failed)) could not start — \\(cause)")
+    }
+}
+'''
+
+DOCTOR = '''
+enum LaunchAgents {
+    static func install(_ label: String) -> (Bool, String) {
+        return (false, L("写入 \\(dest) 失败: ", "Failed to write \\(dest): ") + error.localizedDescription)
+    }
 }
 '''
 
 FILES = {
+    "Doctor.swift": DOCTOR,
     "MainWindow.swift": MAIN_WINDOW,
     "AppDelegate.swift": APP_DELEGATE,
     "Settings.swift": SETTINGS,
@@ -328,6 +373,29 @@ class ControlClassificationTestCase(_FixtureCase):
     def test_interpolation_becomes_placeholder(self):
         c = self.controls["control:board.needs_approval:label:request-merge-suggestions-activecount"]
         self.assertEqual(c["en"], "Request merge suggestions ({activeCount})")
+        # 插值里嵌套括号按配对吞：\(Self.money(cost)) 是一个占位，不是 {Self.money(cost} + 尾巴 )
+        cost = self.controls["control:board.running:label:estimated-cost-self-money-cost"]
+        self.assertEqual(cost["en"], "💰 Estimated cost: {Self.money(cost)}")
+        self.assertEqual(cost["zh"], "💰 预计费用: {Self.money(cost)}")
+
+    def test_free_function_table_and_per_control_owner(self):
+        # FUNCTION_SCREEN：(Cards.swift, trashReasonLabel) → trash；表外的自由函数仍走文件默认（board.card）
+        rejected = self.controls["control:trash:label:you-rejected-it"]
+        self.assertEqual((rejected["screen"], rejected["owner"], rejected["gated"]), ("trash", "web", True))
+        self.assertNotIn("control:board.card:label:you-rejected-it", self.controls)
+        self.assertEqual(self.controls["control:board.card:label:hard"]["screen"], "board.card")
+        attribution = self.inventory["attribution"]
+        self.assertEqual(attribution["function_screen"], {"Cards.swift:trashReasonLabel": "trash"})
+        # CONTROL_OWNER：单条点名 retired 的 id 只列不判，理由随行进 JSON
+        self.assertIn("control:doctor:label:failed-to-write-dest", attribution["control_owner"])
+        for cid, entry in inv.CONTROL_OWNER.items():
+            self.assertEqual(entry["owner"], "retired")
+            self.assertTrue(entry["reason"])
+        plist = self.controls["control:doctor:label:failed-to-write-dest"]
+        self.assertEqual((plist["owner"], plist["gated"]), ("retired", False))
+        self.assertIn("server 永不写 plist", plist["reason"])
+        self.assertEqual({c["id"] for c in self.controls.values() if c.get("reason")},
+                         {"control:doctor:label:failed-to-write-dest", "control:settings:label:no-usable-python"})
 
     def test_duplicate_ids_get_dense_suffixes_in_source_order(self):
         first = self.controls["control:settings.general:button:open"]
@@ -365,6 +433,30 @@ class ControlClassificationTestCase(_FixtureCase):
         self.assertEqual(attribution["via_screen"], {"Self.postSystemNotice": "notifications"})
         self.assertEqual(attribution["probed_shell_screens"], ["notifications"])
         self.assertIn("terminalApp", attribution["pref_owner"])
+
+    def test_rollback_note_fragments_are_notifications_probed_by_catalog(self):
+        # MEMBER_SCREEN：RecordingController.rollbackNote / label(forMode:) / 体内 let cause 的 L() 是壳组的
+        # 回滚句词表（经桥 recording.note 原文显示）→ notifications（owner shell、探针 notify_catalog）
+        for cid in ("control:notifications:label:node-js-is-missing", "control:notifications:label:its-engine-failed-to-start",
+                    "control:notifications:label:screen-only", "control:notifications:label:off"):
+            item = self.controls[cid]
+            self.assertEqual((item["owner"], item["gated"], item["probe"]), ("shell", True, "notify_catalog"), cid)
+        self.assertNotIn("control:header.recording:label:node-js-is-missing", self.controls)
+        self.assertEqual(self.controls["control:notifications:label:label-formode-failed-could-not-start-cause"]["via"], "String")
+
+    def test_control_owner_retires_settings_controls_with_a_law_reference(self):
+        # CONTROL_OWNER（settings 面的六条）：整面搬了、只有这颗控件没有对应机制 → retired、不判、理由带 §引用进 JSON
+        item = self.controls["control:settings:label:no-usable-python"]
+        self.assertEqual((item["owner"], item["gated"]), ("retired", False))
+        self.assertNotIn("probe", item)
+        self.assertIn("§68.3", item["reason"])
+        self.assertEqual(self.inventory["attribution"]["control_owner"], inv.CONTROL_OWNER)
+        for cid, entry in inv.CONTROL_OWNER.items():
+            self.assertTrue(cid.startswith("control:"), cid)
+            self.assertEqual(set(entry), {"owner", "reason"}, cid)
+            self.assertRegex(entry["reason"], r"§\d+", cid)   # 每条理由都带决策引用
+        real = {c["id"] for c in uc.load_json(uc.INVENTORY_PATH)["controls"]}
+        self.assertTrue(set(inv.CONTROL_OWNER) <= real, "CONTROL_OWNER names ids that are not in the inventory")
 
     def test_card_affordances_group_verbs_by_lane(self):
         aff = self.inventory["lanes"]["card_affordances"]

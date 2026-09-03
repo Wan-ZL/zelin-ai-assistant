@@ -79,21 +79,29 @@ def record(req_id: str, channel: str, note: str = "",
         if target.exists():
             # 内容键去重：清扫后还在 = TTL 内同键已回执过（radar 重试重放）。
             return target
-        entry = {
-            "id": rid,
-            "req": str(req_id or ""),
-            "channel": str(channel or ""),
-            "at": int(now if now is not None else time.time()),
-        }
-        tmp = qdir / (rid + ".json.tmp")
-        try:
-            tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, target)
-        finally:
-            tmp.unlink(missing_ok=True)   # 同 notify：rename 失败不留尸体
+        _write_entry(qdir, rid, _entry(rid, req_id, channel, now))
         return target
     except Exception:  # noqa: BLE001 - 回执绝不打断 fold 本身（宪法 11）
         return None
+
+
+def _entry(rid: str, req_id, channel, now: Optional[float]) -> dict:
+    return {
+        "id": rid,
+        "req": str(req_id or ""),
+        "channel": str(channel or ""),
+        "at": int(now if now is not None else time.time()),
+    }
+
+
+def _write_entry(qdir: Path, rid: str, entry: dict) -> None:
+    """原子写 .tmp→rename；rename 失败不留尸体（同 notify）。"""
+    tmp = qdir / (rid + ".json.tmp")
+    try:
+        tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, qdir / (rid + ".json"))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def load_recent(now: Optional[float] = None) -> list[dict]:
@@ -103,33 +111,62 @@ def load_recent(now: Optional[float] = None) -> list[dict]:
     文件多出的 ``title``/``text`` 字段一律忽略（向后兼容 + 隐私红线：原文
     即便躺在旧盘面上也不再进投影）。
     """
-    out: list[dict] = []
     cutoff = (now if now is not None else time.time()) - TTL_S
     try:
         paths = list(_dir().glob("*.json"))
     except OSError:
-        return out
-    for p in paths:
-        try:
-            entry = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(entry, dict):
-            continue
-        try:
-            at = int(entry.get("at") or 0)
-        except (TypeError, ValueError):
-            continue
-        if at < cutoff or not str(entry.get("req") or ""):
-            continue
-        out.append({
-            "id": str(entry.get("id") or p.stem),
-            "req": str(entry.get("req")),
-            "channel": str(entry.get("channel") or ""),
-            "at": at,
-        })
+        return []
+    out = [row for row in (_recent_row(p, cutoff) for p in paths) if row is not None]
     out.sort(key=lambda e: e["at"], reverse=True)
     return out[:PROJECTION_CAP]
+
+
+def _read_entry(p: Path) -> Optional[dict]:
+    """文件 → dict；读不了 / 不是 JSON / 不是 dict → None。"""
+    try:
+        entry = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return entry if isinstance(entry, dict) else None
+
+
+def _entry_at(entry: Optional[dict]) -> Optional[int]:
+    """``at`` 字段 → int；缺条目 / 非数 → None。"""
+    if entry is None:
+        return None
+    try:
+        return int(entry.get("at") or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _projected(p: Path, entry: dict, at: int) -> dict:
+    return {
+        "id": str(entry.get("id") or p.stem),
+        "req": str(entry.get("req")),
+        "channel": str(entry.get("channel") or ""),
+        "at": at,
+    }
+
+
+def _recent_row(p: Path, cutoff: float) -> Optional[dict]:
+    """一个回执文件 → 投影行；坏文件 / 过期 / 无目标卡 → None。"""
+    entry = _read_entry(p)
+    at = _entry_at(entry)
+    if at is None or at < cutoff or not str(entry.get("req") or ""):
+        return None
+    return _projected(p, entry, at)
+
+
+def _unlink_if_stale(f: Path, cutoff: float) -> int:
+    """mtime 超 TTL 即删；stat/unlink 失败按没删（best-effort）。"""
+    try:
+        if f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+            return 1
+    except OSError:
+        pass
+    return 0
 
 
 def _sweep_stale(qdir: Path, now: Optional[float] = None) -> int:
@@ -138,12 +175,7 @@ def _sweep_stale(qdir: Path, now: Optional[float] = None) -> int:
     cutoff = (now if now is not None else time.time()) - TTL_S
     try:
         for f in qdir.iterdir():
-            try:
-                if f.stat().st_mtime < cutoff:
-                    f.unlink(missing_ok=True)
-                    removed += 1
-            except OSError:
-                continue
+            removed += _unlink_if_stale(f, cutoff)
     except OSError:
         pass
     return removed

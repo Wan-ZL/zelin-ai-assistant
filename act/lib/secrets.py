@@ -49,18 +49,25 @@ def _first_token_line(text: str, origin) -> Optional[str]:
     lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
     if not lines:
         return None
-    if len(lines) > 1 and str(origin) not in _warned_multiline:
-        _warned_multiline.add(str(origin))
-        try:
-            print(
-                f"[secrets] WARNING: {origin} has {len(lines)} non-empty lines"
-                " — expected a single-line token (CONTRACT §19);"
-                " using the first line only",
-                file=sys.stderr,
-            )
-        except Exception:  # noqa: BLE001 - warning must never break resolution
-            pass
+    if len(lines) > 1:
+        _warn_multiline_once(origin, len(lines))
     return lines[0]
+
+
+def _warn_multiline_once(origin, count: int) -> None:
+    """一次性（每个来源）的畸形提示——只报来源与行数，绝不带凭证值。"""
+    if str(origin) in _warned_multiline:
+        return
+    _warned_multiline.add(str(origin))
+    try:
+        print(
+            f"[secrets] WARNING: {origin} has {count} non-empty lines"
+            " — expected a single-line token (CONTRACT §19);"
+            " using the first line only",
+            file=sys.stderr,
+        )
+    except Exception:  # noqa: BLE001 - warning must never break resolution
+        pass
 
 
 def read_secret(name: str) -> Optional[str]:

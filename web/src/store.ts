@@ -15,6 +15,7 @@ import {
   fetchClaudeSessions,
   fetchDiagnostics,
   fetchDailyLoopSettings,
+  fetchFailures,
   fetchHealth,
   fetchLanes,
   fetchMaterials,
@@ -57,6 +58,7 @@ import type {
   DiagnosticsSnapshot,
   DailyLoopPatch,
   DailyLoopSettings,
+  FailureCatalog,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
@@ -108,12 +110,16 @@ export interface AppState {
   diagnostics: DiagnosticsSnapshot | null; // GET /api/diagnostics
   setup: SetupSnapshot | null;             // GET /api/setup（首次运行向导判定）
   about: AboutInfo | null;                 // GET /api/about
+  failures: FailureCatalog | null;         // GET /api/failures（§25 失败目录双语句；引擎诊断行 / 依赖行按 id 取）
   mcp: McpList | null;                     // GET /api/mcp
   claudeSessions: ClaudeSessionsScan | null; // GET /api/claude-sessions
   pageErrors: Record<string, string | null>; // 上述各面最近一次读失败的文案（成功后清空）
   // ----- §21 多选（原生 Kanban「选择」态）：选中主键集合 + 是否在多选态 -----
   selectionMode: boolean;
   selectedIds: ReadonlySet<string>;
+  /** §21bis 强制合并已提交、等下一版 dashboard 落地的卡（原生 mergeForcingBadge「合并中…」）；
+   *  会话内瞬态：看板 generated_at 一变即清（回流就是回执，不做乐观换列） */
+  forceMergingIds: ReadonlySet<string>;
 }
 
 /** §63 本地标记（server marks.json 的镜像片段） */
@@ -170,11 +176,13 @@ const initialState: AppState = {
   diagnostics: null,
   setup: null,
   about: null,
+  failures: null,
   mcp: null,
   claudeSessions: null,
   pageErrors: {},
   selectionMode: false,
   selectedIds: new Set<string>(),
+  forceMergingIds: new Set<string>(),
 };
 
 let state: AppState = initialState;
@@ -209,7 +217,9 @@ export function refreshBoard(): Promise<void> {
   boardRequest = (async () => {
     try {
       const board = await fetchBoard();
-      setState({ board, boardError: null, boardLoading: false });
+      // 新一版快照落地 = 强制合并的回执到了（或过期了）：「合并中…」章随之退场（原生 Store 同一时机）
+      const forceMergingIds = board.generated_at !== state.board?.generated_at ? new Set<string>() : state.forceMergingIds;
+      setState({ board, boardError: null, boardLoading: false, forceMergingIds });
     } catch (error) {
       const message = error instanceof ApiError ? error.message : String(error);
       setState({ boardError: message, boardLoading: false });
@@ -460,7 +470,7 @@ export async function toggleSkill(name: string, action: "enable" | "disable"): P
 // ----- §68 parity 页快照（一个通用 loader：成功落字段、失败落 pageErrors[key]） -------- #
 
 type PageKey = "settingsCatalog" | "secrets" | "permissions" | "diagnostics" | "setup" | "about"
-  | "mcp" | "claudeSessions";
+  | "failures" | "mcp" | "claudeSessions";
 
 const pageRequests = new Map<PageKey, Promise<void>>(); // 同一面并发 refresh 合并成一个在途请求（十个通用区同时挂载）
 
@@ -488,6 +498,7 @@ export const refreshPermissions = (refresh = false) => loadPage("permissions", (
 export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh));
 export const refreshSetup = () => loadPage("setup", fetchSetup);
 export const refreshAbout = () => loadPage("about", fetchAbout);
+export const refreshFailures = () => loadPage("failures", fetchFailures);
 export const refreshMcp = () => loadPage("mcp", fetchMcp);
 export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", () => fetchClaudeSessions(window));
 
@@ -521,6 +532,11 @@ export function toggleSelected(cardId: string) {
 
 export function clearSelection() {
   setState({ selectedIds: new Set<string>() });
+}
+
+/** §21bis 强制合并已提交：这些卡挂「合并中…」章直到下一版看板落地（refreshBoard 清） */
+export function markForceMerging(ids: Iterable<string>) {
+  setState({ forceMergingIds: new Set([...state.forceMergingIds, ...ids]) });
 }
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */

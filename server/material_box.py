@@ -1,5 +1,9 @@
 """素材库 HTTP 面（CONTRACT §62.4；路由登记在 §49 路由表）。
 
+模块名 ``material_box``：存储层是 ``act/lib/materials.py``，同名会撞防腐 #9
+「同一 basename 禁止出现在两个目录层级」——HTTP 面按 §62 的对象名「素材库
+(material box)」命名，路由 ``/api/materials/*`` 不变。
+
 薄层：字段白名单（UNKNOWN_FIELD 零容忍）+ 类型闸 + 错误映射；存储、归一与
 状态机全在 ``act/lib/materials.py``（server 只准 import act.lib，§58.3 规则 3，
 与 board_source 的 store2 只读面同款守卫 import）。三个端点：

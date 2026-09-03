@@ -377,6 +377,8 @@
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
+  text-decoration: none; /* 外链菜单项（安装 ffmpeg…）与按钮同貌 */
+  box-sizing: border-box;
 }
 
 .shell-menu-item:hover:not(:disabled) {
@@ -611,3 +613,8 @@
   font-size: calc(11px * var(--text-scale));
   opacity: 0.85;
 }
+
+/* §48 板级诊断条（原生 DiagnosticsStrip：橙色卡叠在管线横幅之下，每张一颗主按钮 + 右上 ×） */
+.diag-strip { display: flex; flex-direction: column; gap: 6px; }
+.diag-card { position: relative; }
+.diag-dismiss { margin-left: auto; }

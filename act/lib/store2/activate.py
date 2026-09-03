@@ -139,14 +139,18 @@ def parity_diff(backup_dir: Path, export_dir: Path) -> list:
     for rid in sorted(set(b) - set(a)):
         diffs.append(f"{rid}: present in export, missing from backup")
     for rid in sorted(set(a) & set(b)):
-        if a[rid] == b[rid]:
-            continue
-        keys = sorted(k for k in set(a[rid]) | set(b[rid])
-                      if a[rid].get(k) != b[rid].get(k))
-        for k in keys:
-            diffs.append(f"{rid}.{k}: backup={_short(a[rid].get(k))} "
-                         f"export={_short(b[rid].get(k))}")
+        diffs += _field_diffs(rid, a[rid], b[rid])
     return diffs
+
+
+def _field_diffs(rid: str, backup: dict, export: dict) -> list:
+    """一张卡两侧的字段级差异行（相等 = 空）。"""
+    if backup == export:
+        return []
+    keys = sorted(k for k in set(backup) | set(export)
+                  if backup.get(k) != export.get(k))
+    return [f"{rid}.{k}: backup={_short(backup.get(k))} export={_short(export.get(k))}"
+            for k in keys]
 
 
 def _short(v, n: int = 60) -> str:
@@ -215,67 +219,107 @@ def first_run(now: Optional[_dt.datetime] = None) -> dict:
     ``state/store2_activation.json``。调用方负责日志。
     """
     now = now or _now()
-    db = registry.store2_db_path()
-    registry.reset_store_cache()
-    if db.exists():
-        # 无标记的 DB = 上次未完成/被拒的派生物，YAML 仍是真源——丢弃重来
-        _dispose_db(db)
+    db = _fresh_db_path()
 
     # 全新安装（没有任何 YAML 卡）也走同一条路：空备份 → 空库 → 零差异 → 激活
     backup_dir, man = backup_registry(now)
+    plans, notes, refusal = _plan_from_backup(now, backup_dir)
+    if refusal is not None:
+        return refusal
+    refusal = _migrate_plans(now, db, plans, backup_dir)
+    if refusal is not None:
+        return refusal
+    refusal = _verify_and_mark(now, db, backup_dir, man)
+    if refusal is not None:
+        return refusal
+    return _activate(now, backup_dir, len(plans), notes)
 
-    # —— 迁移（读备份，保证备份 ↔ DB 一致）——
+
+def _fresh_db_path() -> Path:
+    """无标记的 DB = 上次未完成/被拒的派生物，YAML 仍是真源——丢弃重来。"""
+    db = registry.store2_db_path()
+    registry.reset_store_cache()
+    if db.exists():
+        _dispose_db(db)
+    return db
+
+
+def _plan_from_backup(now: _dt.datetime, backup_dir: Path) -> tuple:
+    """—— 迁移计划（读备份，保证备份 ↔ DB 一致）——
+    → (plans, notes, None) 或 (None, notes, refusal dict)。"""
     by_id, notes = migrate_yaml.scan_registry(backup_dir) if backup_dir.is_dir() \
         else ({}, [])
     lossy = [" ".join(n.split()) for n in notes if n.startswith(_LOSSY_NOTE_PREFIXES)]
     if lossy:
-        return _refuse(now, "registry has files the migration would drop: "
-                       + "; ".join(lossy), diff=lossy, backup_dir=backup_dir,
-                       retry_after_s=RETRY_AFTER_REFUSED_S)
+        return None, notes, _refuse(
+            now, "registry has files the migration would drop: " + "; ".join(lossy),
+            diff=lossy, backup_dir=backup_dir, retry_after_s=RETRY_AFTER_REFUSED_S)
+    plans, errors = _plan_cards(by_id)
+    if errors:
+        return None, notes, _refuse(
+            now, f"{len(errors)} card(s) cannot be represented in store2",
+            diff=errors, backup_dir=backup_dir, retry_after_s=RETRY_AFTER_REFUSED_S)
+    return plans, notes, None
+
+
+def _plan_one(rid: str, entry: dict) -> tuple:
+    """(plan, []) 或 (None, [错误…])。计划级兜底：任何卡让 plan_card 抛类型/值
+    错误 = 无法忠实入库，走同一条拒绝路（6h 退避 + activation 台账）。曾经这类
+    异常逃出 first_run：无台账、无退避、每个 pass 重铸一份全量备份（B1）。"""
+    try:
+        p = migrate_yaml.plan_card(rid, entry, allow_unknown=False, coerce_cost=False)
+    except (TypeError, ValueError) as e:
+        return None, [f"{rid}: plan_card failed ({e.__class__.__name__}: {e})"]
+    if p["errors"]:
+        return None, [f"{rid}: {e}" for e in p["errors"]]
+    return p, []
+
+
+def _plan_cards(by_id: dict) -> tuple:
     plans, errors = [], []
     for rid in sorted(by_id):
-        try:
-            p = migrate_yaml.plan_card(rid, by_id[rid], allow_unknown=False,
-                                       coerce_cost=False)
-        except (TypeError, ValueError) as e:
-            # 计划级兜底：任何卡让 plan_card 抛类型/值错误 = 无法忠实入库，
-            # 走同一条拒绝路（6h 退避 + activation 台账）。曾经这类异常逃出
-            # first_run：无台账、无退避、每个 pass 重铸一份全量备份（B1）。
-            errors.append(f"{rid}: plan_card failed "
-                          f"({e.__class__.__name__}: {e})")
-            continue
-        if p["errors"]:
-            errors += [f"{rid}: {e}" for e in p["errors"]]
-        else:
+        p, errs = _plan_one(rid, by_id[rid])
+        errors += errs
+        if p is not None:
             plans.append(p)
-    if errors:
-        return _refuse(now, f"{len(errors)} card(s) cannot be represented in store2",
-                       diff=errors, backup_dir=backup_dir,
-                       retry_after_s=RETRY_AFTER_REFUSED_S)
+    return plans, errors
+
+
+def _run_migration(db: Path, plans: list, run_ts: str) -> None:
+    """schema → 单事务 INSERT + 回读；失败 ROLLBACK 并抛给调用方处置。"""
+    con = sqlite3.connect(str(db))
     try:
-        plans = migrate_yaml._topo_order(plans)
+        con.isolation_level = None
+        con.execute("PRAGMA foreign_keys = ON")
+        migrate_yaml.apply_schema(con)
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            migrate_yaml.run_migration(con, plans, run_ts)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+    finally:
+        con.close()
+
+
+def _migrate_plans(now: _dt.datetime, db: Path, plans: list, backup_dir: Path) -> Optional[dict]:
+    """→ None（迁移成功）或 refusal dict（库已丢弃）。"""
+    try:
+        ordered = migrate_yaml.topo_order(plans)
         migrate_yaml.check_target(db)
         db.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(str(db))
-        try:
-            con.isolation_level = None
-            con.execute("PRAGMA foreign_keys = ON")
-            migrate_yaml._apply_schema(con)
-            con.execute("BEGIN IMMEDIATE")
-            try:
-                migrate_yaml.run_migration(con, plans, _iso(now))
-                con.execute("COMMIT")
-            except BaseException:
-                con.execute("ROLLBACK")
-                raise
-        finally:
-            con.close()
+        _run_migration(db, ordered, _iso(now))
     except (migrate_yaml.MigrateError, sqlite3.Error) as e:
         _dispose_db(db)
         return _refuse(now, f"migration failed: {e}", backup_dir=backup_dir,
                        retry_after_s=RETRY_AFTER_REFUSED_S)
+    return None
 
-    # —— 导出 + 逐字段比对 ——
+
+def _verify_and_mark(now: _dt.datetime, db: Path, backup_dir: Path, man: dict) -> Optional[dict]:
+    """—— 导出 + 逐字段比对；live 目录在此期间没被别的进程写过 ——
+    → None（可以激活）或 refusal dict（库已丢弃）。"""
     export_dir = registry.registry_export_dir()
     export_yaml.export_db(db, export_dir, prune=True)
     diff = parity_diff(backup_dir, export_dir)
@@ -284,19 +328,20 @@ def first_run(now: Optional[_dt.datetime] = None) -> dict:
         return _refuse(now, f"export differs from backup in {len(diff)} field(s)"
                        " — YAML stays the truth", diff=diff, backup_dir=backup_dir,
                        retry_after_s=RETRY_AFTER_REFUSED_S)
-
-    # —— live 目录在此期间没被别的进程写过 ——
     if manifest(config.REGISTRY_DIR) != man:
         _dispose_db(db)
         return _refuse(now, "registry changed while migrating (another writer);"
                        " will retry", backup_dir=backup_dir,
                        retry_after_s=RETRY_AFTER_RACE_S)
+    return None
 
-    # —— 标记：从这一刻起 store2 是真源 ——
+
+def _activate(now: _dt.datetime, backup_dir: Path, cards: int, notes: list) -> dict:
+    """—— 标记：从这一刻起 store2 是真源 ——"""
     from act import __version__ as app_version
     marker = {
         "activated_at": _iso(now), "backup_dir": str(backup_dir),
-        "cards": len(plans), "schema_version": SCHEMA_VERSION,
+        "cards": cards, "schema_version": SCHEMA_VERSION,
         "app_version": app_version,
     }
     _atomic_json(registry.store2_truth_path(), marker)
@@ -304,7 +349,7 @@ def first_run(now: Optional[_dt.datetime] = None) -> dict:
                  {"last_run": now.astimezone().date().isoformat(),
                   "last_run_at": _iso(now)})
     registry.reset_store_cache()
-    result = {"result": "activated", "at": _iso(now), "cards": len(plans),
+    result = {"result": "activated", "at": _iso(now), "cards": cards,
               "backup_dir": str(backup_dir), "truth": registry.BACKEND_SQLITE,
               "notes": notes}
     _atomic_json(registry.store2_activation_path(), result)
@@ -326,40 +371,61 @@ def status(now: Optional[_dt.datetime] = None) -> dict:
            "config_backend": config.registry_backend_setting(),
            "marker": marker or None, "activation": act or None,
            "db_exists": db.exists(), "db_path": str(db)}
-    if forced == registry.BACKEND_YAML:
-        out["state"] = "yaml_forced"
-        out["marker_present"] = bool(marker)
-    elif marker and not db.exists():
-        out["state"] = "db_missing"
-    elif marker:
-        out["state"] = "active"
-        # 激活后仍有人往 registry 目录写 YAML（切换前已在跑的雷达进程）= 那张卡
-        # 不在真源里——doctor WARN，运维手动导入（§53.6）
-        late = []
-        try:
-            t0 = _dt.datetime.strptime(marker.get("activated_at", ""), TS_FMT)
-            t0 = t0.replace(tzinfo=_dt.timezone.utc).timestamp()
-            for p in registry.registry_yaml_files(include_archived=True):
-                try:
-                    if p.stat().st_mtime > t0 + 1:
-                        late.append(p.name)
-                except OSError:
-                    continue
-        except ValueError:
-            pass
-        out["late_yaml_writes"] = sorted(late)
-        exp = _read_json(export_marker_path())
-        out["export_last_run"] = exp.get("last_run")
-    elif act.get("result") == "refused":
-        try:
-            retry = _dt.datetime.strptime(act.get("retry_after", ""), TS_FMT)
-            retry = retry.replace(tzinfo=_dt.timezone.utc)
-        except ValueError:
-            retry = now
-        out["state"] = "cooldown" if retry > now else "refused"
-    else:
-        out["state"] = "pending"
+    out.update(_state_fields(marker, act, forced, db, now))
     return out
+
+
+def _state_fields(marker: dict, act: dict, forced: Optional[str], db: Path,
+                  now: _dt.datetime) -> dict:
+    """``state`` (+ its side fields) from the four inputs."""
+    if forced == registry.BACKEND_YAML:
+        return {"state": "yaml_forced", "marker_present": bool(marker)}
+    if marker and not db.exists():
+        return {"state": "db_missing"}
+    if marker:
+        return _active_fields(marker)
+    return {"state": _inactive_state(act, now)}
+
+
+def _activated_ts(marker: dict) -> Optional[float]:
+    try:
+        t0 = _dt.datetime.strptime(marker.get("activated_at", ""), TS_FMT)
+    except ValueError:
+        return None
+    return t0.replace(tzinfo=_dt.timezone.utc).timestamp()
+
+
+def _late_yaml_writes(t0: float) -> list:
+    """激活后仍有人往 registry 目录写 YAML（切换前已在跑的雷达进程）= 那张卡
+    不在真源里——doctor WARN，运维手动导入（§53.6）。"""
+    late = []
+    for p in registry.registry_yaml_files(include_archived=True):
+        try:
+            if p.stat().st_mtime > t0 + 1:
+                late.append(p.name)
+        except OSError:
+            continue
+    return sorted(late)
+
+
+def _active_fields(marker: dict) -> dict:
+    t0 = _activated_ts(marker)
+    late = _late_yaml_writes(t0) if t0 is not None else []
+    exp = _read_json(export_marker_path())
+    return {"state": "active", "late_yaml_writes": late,
+            "export_last_run": exp.get("last_run")}
+
+
+def _inactive_state(act: dict, now: _dt.datetime) -> str:
+    """无标记：上次被拒 → 退避窗内 cooldown / 过期 refused；否则 pending。"""
+    if act.get("result") != "refused":
+        return "pending"
+    try:
+        retry = _dt.datetime.strptime(act.get("retry_after", ""), TS_FMT)
+        retry = retry.replace(tzinfo=_dt.timezone.utc)
+    except ValueError:
+        retry = now
+    return "cooldown" if retry > now else "refused"
 
 
 def ensure(now: Optional[_dt.datetime] = None) -> dict:
@@ -386,30 +452,38 @@ def tick(now: Optional[_dt.datetime] = None) -> list:
     st = ensure(now)
     attempt = st.get("attempt")
     if attempt:
-        if attempt["result"] == "activated":
-            lines.append(f"ACTIVATED — SQLite is now the registry truth "
-                         f"({attempt['cards']} cards; YAML backup at "
-                         f"{attempt['backup_dir']}; export at "
-                         f"{registry.registry_export_dir()})")
-        else:
-            lines.append("ACTIVATION REFUSED — YAML stays the truth: "
-                         f"{attempt['reason']}")
-            for d in attempt.get("diff", [])[:10]:
-                lines.append(f"  diff: {d}")
-            if attempt.get("diff_total", 0) > 10:
-                lines.append(f"  … {attempt['diff_total'] - 10} more (see "
-                             f"{registry.store2_activation_path()})")
-            lines.append(f"  backup kept at {attempt.get('backup_dir')}; "
-                         f"retry after {attempt.get('retry_after')}; "
-                         "run `python3 -m act.doctor` for the summary")
+        lines += _attempt_lines(attempt)
     if st["state"] == "db_missing":
         lines.append(f"FAIL — {registry.STORE2_TRUTH_NAME} present but "
                      f"{registry.store2_db_path()} is missing; see "
                      "docs/TROUBLESHOOTING.md (store2 回滚)")
-    if registry.backend() == registry.BACKEND_SQLITE and st["state"] == "active":
-        line = daily_export(now)
-        if line:
-            lines.append(line)
+    lines += _daily_export_lines(st, now)
+    return lines
+
+
+def _daily_export_lines(st: dict, now: _dt.datetime) -> list:
+    """每日导出只在 store2 已是真源且状态 active 时跑。"""
+    if registry.backend() != registry.BACKEND_SQLITE or st["state"] != "active":
+        return []
+    line = daily_export(now)
+    return [line] if line else []
+
+
+def _attempt_lines(attempt: dict) -> list:
+    if attempt["result"] == "activated":
+        return [f"ACTIVATED — SQLite is now the registry truth "
+                f"({attempt['cards']} cards; YAML backup at "
+                f"{attempt['backup_dir']}; export at "
+                f"{registry.registry_export_dir()})"]
+    lines = ["ACTIVATION REFUSED — YAML stays the truth: " f"{attempt['reason']}"]
+    for d in attempt.get("diff", [])[:10]:
+        lines.append(f"  diff: {d}")
+    if attempt.get("diff_total", 0) > 10:
+        lines.append(f"  … {attempt['diff_total'] - 10} more (see "
+                     f"{registry.store2_activation_path()})")
+    lines.append(f"  backup kept at {attempt.get('backup_dir')}; "
+                 f"retry after {attempt.get('retry_after')}; "
+                 "run `python3 -m act.doctor` for the summary")
     return lines
 
 
@@ -429,18 +503,25 @@ def main(argv=None, log: Callable[[str], None] = None) -> int:
         print(json.dumps(status(), ensure_ascii=False, indent=1, default=str))
         return 0
     if args.export_now:
-        if registry.backend() != registry.BACKEND_SQLITE:
-            say("export-now: store2 is not the active backend", err=True)
-            return 2
-        out = refresh_export()
-        say(f"export refreshed -> {out}")
-        return 0
-    lines = tick()
-    for line in lines:
+        return _export_now()
+    return _run_tick(log)
+
+
+def _run_tick(log: Callable[[str], None]) -> int:
+    for line in tick():
         log(line)
     st = status()
     say(f"store2: state={st['state']} backend={st['backend']}")
     return 0 if st["state"] in ("active", "yaml_forced") else 2
+
+
+def _export_now() -> int:
+    if registry.backend() != registry.BACKEND_SQLITE:
+        say("export-now: store2 is not the active backend", err=True)
+        return 2
+    out = refresh_export()
+    say(f"export refreshed -> {out}")
+    return 0
 
 
 if __name__ == "__main__":

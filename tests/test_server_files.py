@@ -221,6 +221,35 @@ class RevealTestCase(_DeliverablesHome):
         self.assertEqual(obj.get("revealed"), str(self.dlv))
         self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.dlv)])
 
+    def test_reveal_target_config_opens_config_yaml_or_the_template(self):
+        # §68.4 doctor 行「显示文件」（config_invalid）：词表项，路径由 server 推导
+        with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                mock.patch.object(files_mod.subprocess, "run") as run:
+            status, obj = post_json(self.port, "/api/reveal", {"target": "config"})
+        self.assertEqual(status, 404)   # 沙箱 home 里两个文件都不在
+        (self.home / "config.example.yaml").write_text("owner: {}\n", encoding="utf-8")
+        with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                mock.patch.object(files_mod.subprocess, "run") as run:
+            status, obj = post_json(self.port, "/api/reveal", {"target": "config"})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj["revealed"], str(self.home / "config.example.yaml"))
+        (self.home / "config.yaml").write_text("owner: {}\n", encoding="utf-8")
+        with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                mock.patch.object(files_mod.subprocess, "run") as run:
+            status, obj = post_json(self.port, "/api/reveal", {"target": "config"})
+        self.assertEqual(obj["revealed"], str(self.home / "config.yaml"))
+        self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.home / "config.yaml")])
+
+    def test_reveal_target_rejects_unknown_words_and_paths(self):
+        for payload in ({"target": "/etc/passwd"}, {"target": "deliverables"}, {"target": 3}):
+            with self.subTest(payload=payload):
+                with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                        mock.patch.object(files_mod.subprocess, "run") as run:
+                    status, obj = post_json(self.port, "/api/reveal", payload)
+                self.assertEqual(status, 400)
+                self.assertEqual(obj["error"]["code"], "INVALID_FIELD")
+                run.assert_not_called()
+
     def test_missing_deliverables_dir_404(self):
         import shutil
         shutil.rmtree(self.dlv)

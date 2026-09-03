@@ -353,6 +353,18 @@ export interface Board {
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
   radar_sources?: Record<string, RadarSourceHealth>;
+  /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——提案列顶一行 info 通知 */
+  fold_receipts?: FoldReceipt[];
+  [key: string]: unknown;
+}
+
+/** §44.6 并入回执行（dashboard._fold_receipts 的 wire 形逐字镜像）：只有目标卡 id + 展示名，永不带被并入原文 */
+export interface FoldReceipt {
+  id: string;
+  req: string;
+  title: string;
+  channel: string;
+  at: number;
   [key: string]: unknown;
 }
 
@@ -699,6 +711,64 @@ export interface SecretsStatus {
   [key: string]: unknown;
 }
 
+/** GET /api/sync（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码（PNG base64；开着才带回） */
+export interface SyncStatus {
+  enabled: boolean;
+  channel_id: string;
+  label: string;           // state/sync.json 里的设备名（从未命名 = ""）
+  default_label: string;   // 这台 Mac 的主机名（预填）
+  qr_png_base64: string | null;
+  [key: string]: unknown;
+}
+
+/** POST /api/sync/pair 回执：ok:true 带 channel / label / registered / 二维码；ok:false 带 error（no_python | pair_failed）+ message */
+export interface SyncPairReceipt {
+  ok: boolean;
+  channel_id?: string;
+  label?: string;
+  registered?: boolean;
+  qr_png_base64?: string | null;
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/sync/disable 回执 = ok + 快照（失败带 error / message） */
+export interface SyncDisableReceipt extends SyncStatus {
+  ok: boolean;
+  error?: string;
+  message?: string;
+}
+
+/** GET /api/voice（§68.1 追记）：语气档案两级候选的在场性 + 开关 */
+export interface VoiceProfileStatus {
+  enabled: boolean;
+  private_path: string;
+  private_exists: boolean;
+  default_path: string;
+  default_exists: boolean;
+  effective_path: string | null;
+  [key: string]: unknown;
+}
+
+/** GET /api/slack/directory（§68.1 追记）：act/lib/slack_setup.directory 的 JSON 行原样 */
+export interface SlackDirEntry {
+  id: string;
+  name: string;
+  real_name?: string;
+  [key: string]: unknown;
+}
+
+export interface SlackDirectory {
+  ok: boolean;
+  fetched_at?: string;
+  channels: SlackDirEntry[];
+  users: SlackDirEntry[];
+  error?: string;      // ok:false 时：no_token / no_python / directory_failed / …（act 侧词表）
+  message?: string;    // ok:false 时的人话（act 侧按界面语言生成；no_python / directory_failed 是尾巴原文）
+  [key: string]: unknown;
+}
+
 /** POST /api/secrets/{name}/verify 回执 */
 export interface SecretVerifyResult {
   ok: boolean;
@@ -744,10 +814,12 @@ export interface PermissionsSnapshot {
   home: string;
   on_external_volume: boolean;
   fda: { needed: boolean; pane: string; executables: FdaExecutable[]; [key: string]: unknown };
-  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; [key: string]: unknown };
+  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; files_folders?: string; [key: string]: unknown };
   doctor: DoctorRow[];
   doctor_ran_at: string | null;
   doctor_ok: boolean;
+  /** 笔记库（Documents）被动探针：state/vault_sync_mode=mirror → granted；root = 生效 obsidian_raw 的父目录（add-only） */
+  vault?: { status: "granted" | "unknown" | string; root: string; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -768,6 +840,23 @@ export interface InstallReport {
   [key: string]: unknown;
 }
 
+/** state/cron_probe.json 公开子集（§25；原生 CronProbe.read——「定时任务磁盘权限」行四态由页面判；add-only） */
+export interface CronProbe {
+  ts: string | null;
+  read_ok: boolean | null;
+  protected_path: string | null;
+  [key: string]: unknown;
+}
+
+/** 录制页「最近活动」三个时间戳（原生 IngestModel.refreshLabels；epoch 秒，缺席 null；add-only） */
+export interface IngestActivity {
+  screenpipe_db: { path: string; mtime: number | null; [key: string]: unknown };
+  actd_log: { path: string; mtime: number | null; [key: string]: unknown };
+  /** readable:false = 目录住 TCC 保护位置且不在 mirror 模式——server 永不读 ~/Documents（§68.3） */
+  unprocessed: { path: string; mtime: number | null; readable: boolean; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
 export interface DiagnosticsSnapshot {
   doctor: DoctorReport;
   health: HealthSnapshot;
@@ -776,6 +865,38 @@ export interface DiagnosticsSnapshot {
   install_report: InstallReport | null;
   registry_backend: string;
   logs: LogEntry[];
+  cron_probe?: CronProbe | null;
+  activity?: IngestActivity | null;
+  [key: string]: unknown;
+}
+
+/** POST /api/ingest/{export,run} 回执：脚本在 server 后台线程跑，页面拿 job id 轮询（同脚本在跑 → reused） */
+export interface IngestJobStart {
+  ok: boolean;
+  job: string;
+  state: "running" | string;
+  script: string;
+  reused?: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /api/ingest/jobs/{id}：running 只有前四键；done 多出脚本回执（同一条 ingest/ 脚本、同一套退出码；skipped = ingest 的 exit 3 持锁） */
+export interface IngestJob {
+  id: string;
+  script: string;
+  state: "running" | "done" | string;
+  started_at: string;
+  ok?: boolean;
+  rc?: number;
+  skipped?: boolean;
+  tail?: string;
+  seconds?: number;
+  [key: string]: unknown;
+}
+
+/** GET /api/failures：§25 FailureCatalog 的 server-owned 投影（原生 FailureCatalog.message） */
+export interface FailureCatalog {
+  failures: Record<string, { zh: string; en: string; action_id?: string | null; [key: string]: unknown }>;
   [key: string]: unknown;
 }
 
@@ -804,6 +925,25 @@ export interface SetupReceipt {
   ok: boolean;
   setup: SetupSnapshot;
   path?: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/setup/engine（§68.5；原生 EngineDetector）：CLI 路径 / 版本 / 认证梯子（顺序 = server AUTH_LADDER） */
+export type EngineAuth = "oauth" | "env_key" | "secrets_file" | "legacy_file";
+export interface SetupEngine {
+  cli_path: string | null;
+  version: string | null;
+  auth: EngineAuth | string | null;
+  auth_sources: Record<string, boolean>;
+  ready: boolean;
+  [key: string]: unknown;
+}
+
+/** POST /api/setup/seed-dashboard：ok:false 带 error 尾巴（不 500） */
+export interface SeedDashboardReceipt {
+  ok: boolean;
+  rc: number;
+  error?: string;
   [key: string]: unknown;
 }
 

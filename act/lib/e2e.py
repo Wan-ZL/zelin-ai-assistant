@@ -170,7 +170,14 @@ def _open(k_i: bytes, epoch: int, info: bytes, aad_for, blob: bytes) -> bytes:
     """
     _check_key(k_i)
     epoch = _check_epoch(epoch)
-    blob = bytes(blob)
+    salt, nonce, ct_and_tag = _parse_header(bytes(blob), epoch)
+    chacha, hkdf, hashes = _crypto()
+    content_key = hkdf(algorithm=hashes.SHA256(), length=KEY_LEN, salt=salt, info=info).derive(bytes(k_i))
+    return chacha(content_key).decrypt(nonce, ct_and_tag, aad_for(epoch))
+
+
+def _check_blob_shape(blob: bytes) -> None:
+    """Length / magic / version / alg — the crypto-free part of the header."""
     if len(blob) < _HEADER_LEN + _TAG_LEN:
         raise ValueError("blob too short")
     if blob[0:4] != MAGIC:
@@ -181,22 +188,28 @@ def _open(k_i: bytes, epoch: int, info: bytes, aad_for, blob: bytes) -> bytes:
         raise ValueError(f"unsupported blob version {ver}")
     if alg != ALG_CHACHA20POLY1305_IETF:
         raise ValueError(f"unsupported alg {alg}")
+
+
+def _check_blob_epoch(blob: bytes, epoch: int) -> None:
+    """Anti-rollback: the caller's expected epoch (from devices.key_epoch,
+    plaintext) must match the blob. A stale-epoch blob is rejected before
+    any key work — and the epoch is also bound into the AAD."""
     (blob_epoch,) = struct.unpack(">I", blob[6:10])
     if blob_epoch != epoch:
-        # Anti-rollback: the caller's expected epoch (from devices.key_epoch,
-        # plaintext) must match the blob. A stale-epoch blob is rejected before
-        # any key work — and the epoch is also bound into the AAD below.
         raise ValueError(f"epoch mismatch: blob={blob_epoch} expected={epoch}")
+
+
+def _parse_header(blob: bytes, epoch: int) -> "tuple[bytes, bytes, bytes]":
+    """Verify the header and split the blob into (salt, nonce, ct_and_tag).
+    Pure bytes work — no cryptography import — so it is testable everywhere."""
+    _check_blob_shape(blob)
+    _check_blob_epoch(blob, epoch)
     off = 10
     salt = blob[off:off + _SALT_LEN]
     off += _SALT_LEN
     nonce = blob[off:off + _NONCE_LEN]
     off += _NONCE_LEN
-    ct_and_tag = blob[off:]
-    chacha, hkdf, hashes = _crypto()
-    content_key = hkdf(algorithm=hashes.SHA256(), length=KEY_LEN, salt=salt, info=info).derive(bytes(k_i))
-    aad = aad_for(blob_epoch)
-    return chacha(content_key).decrypt(nonce, ct_and_tag, aad)
+    return salt, nonce, blob[off:]
 
 
 # --------------------------------------------------------------------------- #

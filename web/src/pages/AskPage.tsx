@@ -2,11 +2,12 @@
 // 输入框 + 「提问」→ POST /api/ask（server 子进程 act.ask，一次 tool-less claude -p，≤60 s）；
 // 思考态显示已耗秒数（可取消 = 丢弃回执，子进程照常结束）；答案 + 引用来源；失败 = 原文 + 「重试」；
 // 「最近的问答」= GET /api/ask/history（act.ask 追加的 state/ask_history.json，最新在前）。
-// AI 引擎未接入（server 回执 failure_id 指向 claude 缺席）时给「去接入（初始设置向导）」+「重新检测」。
+// AI 引擎未接入时给「去接入（初始设置向导）」+「重新检测」：进页先问一次 GET /api/setup/engine（原生 Ask.swift 的
+// EngineDetector 同位，§68.5 ②），没就绪就先出引擎卡不等你问；问过之后 server 回执 failure_id 指向 claude 缺席也一样。
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
-import { fetchAskHistory, postAsk } from "../api";
+import { fetchAskHistory, fetchSetupEngine, postAsk } from "../api";
 import { RelativeTime } from "../components/board/cardChrome";
 import { errorMessage } from "../components/settings/useToast";
 import { useI18n } from "../i18n";
@@ -21,6 +22,13 @@ export function isEngineMissing(answer: AskAnswer | null): boolean {
   return Boolean(answer && !answer.ok && answer.failure_id && ENGINE_MISSING.has(answer.failure_id));
 }
 
+/** 「去接入」深链 = 向导的引擎步（§68.5 ②：?page=setup&step=engine） */
+function engineSetupHref(): string {
+  const url = buildAppUrl(window.location.href, "setup", null);
+  url.searchParams.set("step", "engine");
+  return url.toString();
+}
+
 export function AskPage() {
   const { text } = useI18n();
   const [question, setQuestion] = useState("");
@@ -29,7 +37,21 @@ export function AskPage() {
   const [history, setHistory] = useState<AskHistoryItem[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(false);
+  // 引擎探测（原生 EngineDetector）：null = 还没问 / 问不到（不挡提问，失败时再按回执判）；false = 明确没就绪
+  const [engineReady, setEngineReady] = useState<boolean | null>(null);
+  const [detecting, setDetecting] = useState(false);
   const inflight = useRef<AbortController | null>(null);
+
+  async function detectEngine() {
+    setDetecting(true);
+    try {
+      setEngineReady((await fetchSetupEngine()).ready === true);
+    } catch {
+      setEngineReady(null);   // 老 server 没这条路：不装懂，照旧按提问回执判
+    } finally {
+      setDetecting(false);
+    }
+  }
 
   async function loadHistory() {
     try {
@@ -41,6 +63,7 @@ export function AskPage() {
 
   useEffect(() => {
     void loadHistory();
+    void detectEngine();
   }, []);
 
   useEffect(() => {
@@ -122,15 +145,27 @@ export function AskPage() {
           {answer.citation && <p className="settings-helper">{text("出处：", "Source: ")}{answer.citation}</p>}
         </section>
       )}
+      {engineReady === false && !(answer && !answer.ok) && (
+        // 原生 engineMissingCard：探测说没就绪 → 先出卡（去接入 = 向导引擎步；重新检测 = 再问一次）
+        <div className="settings-warning ask-failure" role="alert">
+          <p>{text("AI 引擎未连接——先接入 AI 引擎才能提问。", "The AI engine is not connected — connect it first to ask questions.")}</p>
+          <div className="settings-actions">
+            <a className="btn" href={engineSetupHref()}>{text("去接入（初始设置向导）", "Connect (setup wizard)")}</a>
+            <button type="button" className="btn" disabled={detecting} onClick={() => void detectEngine()}>{text("重新检测", "Re-detect")}</button>
+            {detecting && <span className="shell-spinner ask-spinner" aria-hidden="true" />}
+          </div>
+        </div>
+      )}
       {answer && !answer.ok && (
+        // 原生 failureRow：人话句（§25 分类）或原文 + 重试；引擎缺席一族另给 去接入 / 重新检测
         <div className="settings-warning ask-failure" role="alert">
           <p>{isEngineMissing(answer) ? text("AI 引擎未连接——先接入 AI 引擎才能提问。", "The AI engine is not connected — connect it first to ask questions.") : (answer.error ?? text("失败", "Failed"))}</p>
           <div className="settings-actions">
             <button type="button" className="btn" onClick={() => void submit(asked)}>{text("重试", "Retry")}</button>
             {isEngineMissing(answer) && (
               <>
-                <a className="btn" href={buildAppUrl(window.location.href, "setup", null).toString()}>{text("去接入（初始设置向导）", "Connect (setup wizard)")}</a>
-                <button type="button" className="btn" onClick={() => void submit(asked)}>{text("重新检测", "Re-detect")}</button>
+                <a className="btn" href={engineSetupHref()}>{text("去接入（初始设置向导）", "Connect (setup wizard)")}</a>
+                <button type="button" className="btn" disabled={detecting} onClick={() => void detectEngine()}>{text("重新检测", "Re-detect")}</button>
               </>
             )}
           </div>

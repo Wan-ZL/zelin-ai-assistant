@@ -1,9 +1,10 @@
 // 设置页（CONTRACT §59 + §68 + §54.4；?page=settings 深链，左侧导航栏「设置」；?anchor=<id> 滚到某区）。
 // 分区与顺序逐字镜像原生 Settings.swift 的 SettingsSectionDescriptor 注册表（ui/parity/native-inventory.json
 // screen:settings.*；§66.2）：通用 · 录制 · 实时字幕 · 笔记库 · 凭证 · Slack 接入 · Gmail 接入 · 导入 Claude Code 工作 ·
-// Skills · MCP servers · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话；
+// Skills · MCP servers · 同步 / 配对 · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话；
 // web 自有区（显示 §54.1 第 12 项、模型 §59、通知 §28、素材库 §62、会议纪要 §63、每日整理 §70）插在语义最近的位置。已退役：菜单栏（D3）；
-// 同步 / 配对随 §31 syncd 面另议（§68.14），不在本页；「关于」是 sidebar 页（?page=about），不再重复。
+// 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
+// （?page=about），不再重复。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
 import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
@@ -25,6 +26,8 @@ import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
 import { ObsidianSection } from "../components/settings/ObsidianSection";
 import { SlackSection } from "../components/settings/SlackSection";
+import { SyncSection } from "../components/settings/SyncSection";
+import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
 import { buildAppUrl, readAnchor } from "../route";
 import { useAppState } from "../store";
@@ -45,6 +48,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "claude_import", zh: "导入 Claude Code 工作", en: "Import Claude Code work" },
   { id: "skills", zh: "Skills（Claude Code 技能）", en: "Skills (Claude Code)" },
   { id: "mcp", zh: "MCP servers（Claude Code 外接工具）", en: "MCP servers (Claude Code external tools)" },
+  { id: "sync", zh: "同步 / 配对", en: "Sync / Pairing" },
   { id: "approval", zh: "审批 / 成本", en: "Approval / Cost" },
   { id: "flags", zh: "Feature flags（§16，默认全开）", en: "Feature flags (§16, all on by default)" },
   { id: "digest", zh: "每周摘要", en: "Weekly digest" },
@@ -151,10 +155,12 @@ export function SettingsPage() {
       <ClaudeImportSection />
       <div id="settings-skills"><SkillsSection /></div>
       <McpSection />
+      <SyncSection />
       <CatalogSection sectionId="approval" />
       <CatalogSection sectionId="flags" />
       <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <DigestStatus /> }} />
-      <CatalogSection sectionId="voice" />
+      {/* 语气档案：原生 voiceGroup 的「当前生效」状态行 + 打开档案 在开关之前 */}
+      <CatalogSection sectionId="voice" lead={<VoiceStatus />} />
       <CatalogSection sectionId="redaction" />
       <CatalogSection sectionId="telemetry" />
       <CatalogSection sectionId="maintainer"><MaintainerExtras /></CatalogSection>

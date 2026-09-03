@@ -2,7 +2,9 @@
 
 原生 Settings 的「凭证」行（CredentialRowView / KeyProbe）落到 server：
 
-- ``GET /api/secrets`` → 每个已知凭证的**状态**（present / verifiable / mtime），
+- ``GET /api/secrets`` → 每个已知凭证的**状态**（present / verifiable / mtime + add-only
+  ``legacy``：secrets 文件缺席但 §19 第二 / 三层——config.yaml 显式路径或旧默认路径——的文件
+  非空，原生 CredentialRowView 的「使用旧路径」态；只判在不在，永不读内容出去），
   **绝不回显值**——值是 write-only：写进去之后 web 只能看见「已保存」。
 - ``PUT /api/secrets/{name}`` body ``{"value": "<token>"}`` → 写
   ``<home>/config/secrets/<name>``（dir 0700 / file 0600；多行粘贴只留首个非空行，
@@ -12,7 +14,9 @@
   （Anthropic ``GET /v1/models``、Slack ``auth.test``——成功顺手把 ``user_id``
   写进 override ``owner_slack_user_id``（§15.3 v0.14 身份零手填）、Gmail IMAP
   LOGIN）。探针经 ``prober`` 注入缝——测试绝不碰网络。火山（字幕）两把 key 没有
-  免费探针，``verifiable: false``，verify → 400。
+  免费探针，``verifiable: false``，verify → 400。body 可带 add-only 的
+  ``{"value": "<token>"}`` = **粘贴即验证**（原生 SetupWizard 的 verify-on-paste：
+  先验后存、无效的 key 永不落盘）——只探这个值、**不写文件**；没有 value 照旧探已保存的。
 
 文件名是 §19 的固定词表（server 不 import act.lib.secrets：它 import 期就把
 SECRETS_DIR 钉在进程 env 的 HOME 上，测试注入 home 会失真——判例
@@ -47,6 +51,15 @@ SECRETS: tuple = (
 )
 _BY_NAME = {s["name"]: s for s in SECRETS}
 
+# §19 后两层的**位置**（不是内容）：(config.yaml 显式路径的键路径 | None, 旧默认路径)。与
+# act/lib 各读者一致（act/llm.py / act/ask.py / act/radar_gmail.DEFAULT_APP_PASSWORD_PATH /
+# config.slack_token_path）、与原生 Pages.swift legacy* / Settings.swift legacyPath 同表。
+_LEGACY_PATHS: dict = {
+    "anthropic-api-key.txt": (None, "~/.config/anthropic-key.txt"),
+    "slack-user-token.txt": (("sources", "slack_token_path"), "~/Desktop/Keys/slack-user-token.txt"),
+    "gmail-app-password.txt": (("sources", "gmail", "app_password_path"), "~/Desktop/Keys/gmail-app-password.txt"),
+}
+
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 VALUE_MAX = 4096
@@ -79,7 +92,26 @@ def read_value(home: Path, name: str) -> Optional[str]:
     return _first_token_line(raw) or None
 
 
-def _status(home: Path, entry: dict) -> dict:
+def _nonempty_file(raw: str) -> bool:
+    try:
+        return bool(_first_token_line(Path(raw).expanduser().read_text(encoding="utf-8")))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+
+
+def legacy_present(home: Path, name: str, config_doc: Optional[dict] = None) -> bool:
+    """§19 第二 / 三层有非空文件（config.yaml 显式路径优先，再旧默认路径）？无旧路径的凭证恒 False。"""
+    spec = _LEGACY_PATHS.get(name)
+    if spec is None:
+        return False
+    key_path, default = spec
+    explicit = settings_catalog.walk_config(config_doc if config_doc is not None else settings_catalog.load_config_doc(home),
+                                            key_path) if key_path else None
+    raw = explicit if isinstance(explicit, str) and explicit.strip() else default
+    return _nonempty_file(raw)
+
+
+def _status(home: Path, entry: dict, config_doc: Optional[dict] = None) -> dict:
     p = paths.secrets_dir(home) / entry["name"]
     present = read_value(home, entry["name"]) is not None
     mtime = None
@@ -89,12 +121,14 @@ def _status(home: Path, entry: dict) -> dict:
         except OSError:
             mtime = None
     return {"name": entry["name"], "label": dict(entry["label"]), "present": present,
-            "verifiable": entry["probe"] is not None, "mtime": mtime}
+            "verifiable": entry["probe"] is not None, "mtime": mtime,
+            "legacy": (not present) and legacy_present(home, entry["name"], config_doc)}
 
 
 def snapshot(home: Path) -> dict:
-    """``GET /api/secrets``：``{"secrets": [{name, label, present, verifiable, mtime}]}``。"""
-    return {"secrets": [_status(home, e) for e in SECRETS]}
+    """``GET /api/secrets``：``{"secrets": [{name, label, present, verifiable, mtime, legacy}]}``。"""
+    config_doc = settings_catalog.load_config_doc(home)
+    return {"secrets": [_status(home, e, config_doc) for e in SECRETS]}
 
 
 def write_value(home: Path, name: str, payload: dict) -> dict:
@@ -230,15 +264,35 @@ def _gmail_context(home: Path) -> dict:
     return {"address": value or ""}
 
 
-def _probe_target(home: Path, name: str) -> "tuple[str, str]":
-    """(probe kind, token)；无探针 / 尚未保存 → 400。"""
+def _probe_target(home: Path, name: str, value: Optional[str] = None) -> "tuple[str, str]":
+    """(probe kind, token)；无探针 / 尚未保存 → 400。``value`` 给了就探它（不落盘）。"""
     kind = _lookup(name)["probe"]
     if kind is None:
         raise InvalidFieldError("this credential has no verification probe", {"name": name})
+    if value is not None:
+        token = _first_token_line(value)
+        if not token:
+            raise InvalidFieldError("value is empty", {"field": "value"})
+        return kind, token
     token = read_value(home, name)
     if token is None:
         raise InvalidFieldError("nothing saved yet - save the credential first", {"name": name})
     return kind, token
+
+
+def verify_payload_value(payload: dict) -> Optional[str]:
+    """``POST …/verify`` 的 body：空 = 探已保存的；``{"value": str}`` = 粘贴即验证；其余 400。"""
+    unknown = set(payload) - {"value"}
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    if "value" not in payload:
+        return None
+    value = payload.get("value")
+    if not isinstance(value, str):
+        raise InvalidFieldError("value must be a string", {"field": "value"})
+    if len(value) > VALUE_MAX:
+        raise InvalidFieldError("value is too long", {"field": "value", "max": VALUE_MAX})
+    return value
 
 
 def _autofill_slack_owner(home: Path, kind: str, ok: bool, extra: dict) -> None:
@@ -247,16 +301,18 @@ def _autofill_slack_owner(home: Path, kind: str, ok: bool, extra: dict) -> None:
         settings_catalog.set_flat_override(home, "owner_slack_user_id", extra["user_id"])
 
 
-def verify(home: Path, name: str, prober: Optional[Prober] = None) -> dict:
+def verify(home: Path, name: str, prober: Optional[Prober] = None,
+           value: Optional[str] = None) -> dict:
     """``POST /api/secrets/{name}/verify`` → ``{"ok": bool, "detail": str, "extra": {}}``。
     网络失败 ``ok:false`` + ``network:true``（不是凭证的错）。Slack 成功自动填
-    ``owner_slack_user_id``。"""
-    kind, token = _probe_target(home, name)
+    ``owner_slack_user_id``（只在探已保存的值时——粘贴即验证还没落盘，不动 override）。"""
+    kind, token = _probe_target(home, name, value)
     ctx = _gmail_context(home) if kind == "gmail" else {}
     try:
         ok, detail, extra = (prober or default_prober)(kind, token, ctx)
     except ProbeNetworkError as exc:
         return {"ok": False, "network": True, "detail": "network error: %s" % _clip(str(exc)),
                 "extra": {}}
-    _autofill_slack_owner(home, kind, ok, extra)
+    if value is None:
+        _autofill_slack_owner(home, kind, ok, extra)
     return {"ok": ok, "network": False, "detail": detail, "extra": extra}

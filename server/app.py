@@ -19,7 +19,7 @@
   §28 kind 词表，server/notify_catalog.py）、POST /api/ai-fix（「让 AI 修」=
   起 act.ai_fix 的 Terminal 修复会话，server/ai_fix_launch.py）。
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
-  POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
+  POST /api/materials/dismiss（server/material_box.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
 - 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
@@ -27,12 +27,12 @@
   GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
   （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
   GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
-  POST /api/setup/{config-from-example,complete,reset}、GET /api/about +
+  GET /api/setup/engine + POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
 - 问问助手（§27 / §54.4 左侧导航栏页）：GET /api/ask/history（只读 state/ask_history.json）、
-  POST /api/ask {question}（子进程 ``python -m act.ask``，server/ask.py）；
-  Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_setup.py）；
+  POST /api/ask {question}（子进程 ``python -m act.ask``，server/ask_assistant.py）；
+  Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
   关于页 POST /api/uninstall/terminal（在 Terminal 跑 uninstall.sh 的 .command，server/uninstall_launch.py）；
   开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
@@ -65,13 +65,14 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
-                    diagnostics, display, doctor_run, files, folders, health,
-                    inbox_writer, lanes, maintainer_launch, materials, mcp_servers,
-                    notify_catalog, paths, permissions, radars, recaps, repair,
-                    secrets_store, security, self_improve_lane, settings,
-                    settings_catalog, setup, slack_setup, terminal_launch,
-                    uninstall_launch)
+from server import (about, ai_fix_launch, ask_assistant, board_source, claude_sessions,
+                    diagnostics, display, doctor_run, failure_catalog, files,
+                    folders, health, inbox_writer, ingest_run, lanes,
+                    maintainer_launch, material_box, mcp_servers, notify_catalog,
+                    paths, permissions, radars, recaps, repair, secrets_store,
+                    security, self_improve_lane, settings, settings_catalog,
+                    setup, slack_directory, slack_manifest, sync_pairing,
+                    terminal_launch, uninstall_launch, voice_profile)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -441,9 +442,15 @@ def _post_actions(ctx, payload: dict) -> dict:
 
 
 def _post_reveal(ctx, payload: dict) -> dict:
-    unknown = set(payload) - {"card_id"}
+    unknown = set(payload) - {"card_id", "target", "name"}
     if unknown:
         raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    if "target" in payload and "card_id" not in payload:
+        # §68.4 doctor 行「显示文件」（config_invalid）/ §67.5 Skills「在 Finder 显示」：词表项（+ skill 名），不是路径
+        target = payload.get("target")
+        if not isinstance(target, str):
+            raise InvalidFieldError("target must be a string")
+        return files.reveal_target(ctx.home, target, payload.get("name"))
     card_id = payload.get("card_id")
     if not isinstance(card_id, str):
         raise InvalidFieldError("card_id must be a string")
@@ -484,9 +491,9 @@ def _post_secret_verify(ctx, rest: str, payload: dict) -> dict:
     # /api/secrets/<name>/verify —— 尾段 "<name>/verify"；body 必须是 {}（零容忍）
     if not rest.endswith("/verify"):
         raise NotFoundError("not found", {"path": "/api/secrets/" + rest})
-    if payload:
-        raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
-    return secrets_store.verify(ctx.home, rest[:-len("/verify")])
+    # body 空 = 探已保存的；{value} = 粘贴即验证（不落盘，§68.3）
+    return secrets_store.verify(ctx.home, rest[:-len("/verify")],
+                                value=secrets_store.verify_payload_value(payload))
 
 
 # GET 表 handler 形状：(ctx, query) → dict；query = URL query 的扁平 dict（_query）。
@@ -506,12 +513,16 @@ _GET_JSON_ROUTES = {
     # §28 / §66.2 系统通知目录：壳直发的通知句（双语）+ 队列 kind 词表（server-owned）
     "/api/notifications": lambda ctx, query: notify_catalog.catalog(),
     # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
-    "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
+    "/api/materials/list": lambda ctx, query: material_box.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
     # custom / foreign）；token-light GET，写面在 POST /api/skills
     "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
+    # 语气档案「当前生效」状态行（docs/VOICE.md；§68.1 追记）
+    "/api/voice": lambda ctx, query: voice_profile.snapshot(ctx.home),
+    # 同步 / 配对（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码
+    "/api/sync": lambda ctx, query: sync_pairing.snapshot(ctx.home),
     # §68 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
     "/api/settings": lambda ctx, query: settings_catalog.snapshot(ctx.home),
     # §68 凭证状态（present / verifiable；值永不回显）
@@ -521,8 +532,9 @@ _GET_JSON_ROUTES = {
     # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单）
     "/api/diagnostics": lambda ctx, query: diagnostics.snapshot(ctx.home, refresh=_flag(query, "refresh")),
     "/api/doctor": _get_doctor,
-    # §68.5 首次运行向导
+    # §68.5 首次运行向导（engine = 原生 EngineDetector：claude CLI + 认证梯子）
     "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
+    "/api/setup/engine": lambda ctx, query: setup.engine_snapshot(ctx.home),
     # §68.6 关于 + 更新
     "/api/about": lambda ctx, query: about.snapshot(ctx.home),
     # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）
@@ -530,13 +542,17 @@ _GET_JSON_ROUTES = {
     # §68.10 导入 Claude Code 工作：扫描预览
     "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
     # §27 问问助手：最近的问答（只读；写者是 act.ask）
-    "/api/ask/history": lambda ctx, query: ask.history(ctx.home),
+    "/api/ask/history": lambda ctx, query: ask_assistant.history(ctx.home),
     # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
-    "/api/slack/manifest": lambda ctx, query: slack_setup.manifest(ctx.home),
+    "/api/slack/manifest": lambda ctx, query: slack_manifest.manifest(ctx.home),
+    # §68.1 追记：Slack 频道 / 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；?refresh=1 绕过）
+    "/api/slack/directory": lambda ctx, query: slack_directory.directory(ctx.home, refresh=_flag(query, "refresh")),
     # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
     # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）
     "/api/radars": lambda ctx, query: radars.snapshot(ctx.home),
+    # §25 / §68.4 失败目录（原生 FailureCatalog.message 的 server-owned 投影；防腐 #10）
+    "/api/failures": lambda ctx, query: failure_catalog.catalog(),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -547,6 +563,8 @@ _GET_PREFIX_ROUTES = {
     "/api/settings/": lambda ctx, rest, query: settings_catalog.section_snapshot(ctx.home, rest),
     # §68.4 日志尾巴（白名单 + size-cap）
     "/api/logs/": lambda ctx, rest, query: diagnostics.tail(ctx.home, rest, query.get("lines")),
+    # §15.2 手动触发的 job 轮询（POST 立刻回 job id，脚本在后台线程跑）
+    "/api/ingest/jobs/": lambda ctx, rest, query: ingest_run.job_status(rest),
 }
 
 _POST_JSON_ROUTES = {
@@ -555,9 +573,9 @@ _POST_JSON_ROUTES = {
     "/api/claude-code/default-model": _post_claude_code_default,
     # §54 让 AI 修：字段白名单 + 上下文推导 + 子进程都在 ai_fix_launch
     "/api/ai-fix": lambda ctx, payload: ai_fix_launch.launch(ctx.home, payload),
-    # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/materials.py
-    "/api/materials/add": lambda ctx, payload: materials.add(ctx.home, payload),
-    "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
+    # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/material_box.py
+    "/api/materials/add": lambda ctx, payload: material_box.add(ctx.home, payload),
+    "/api/materials/dismiss": lambda ctx, payload: material_box.dismiss(ctx.home, payload),
     # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
     # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
@@ -572,10 +590,12 @@ _POST_JSON_ROUTES = {
     "/api/setup/config-from-example": lambda ctx, payload: setup.config_from_example(ctx.home, payload),
     "/api/setup/complete": lambda ctx, payload: setup.complete(ctx.home, payload),
     "/api/setup/reset": lambda ctx, payload: setup.reset(ctx.home, payload),
+    # §68.5 末步「首次数据 · 立即生成一次」= python -m act.lib.dashboard 一次
+    "/api/setup/seed-dashboard": lambda ctx, payload: setup.seed_dashboard(ctx.home, payload),
     # §26 手动「立即检查」
     "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
     # §27 问问助手：一问一答（子进程 act.ask，≤75 s）
-    "/api/ask": lambda ctx, payload: ask.ask(ctx.home, payload),
+    "/api/ask": lambda ctx, payload: ask_assistant.ask(ctx.home, payload),
     # §68.6 关于页「在 Terminal 中卸载…」：.command + open，server 自己不删任何东西
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
@@ -585,6 +605,14 @@ _POST_JSON_ROUTES = {
     # §68.1 目录字段「打开」/「创建」：路径 = 已保存的 effective 值，客户端只传 key
     "/api/folders/open": lambda ctx, payload: folders.open_folder(ctx.home, payload),
     "/api/folders/create": lambda ctx, payload: folders.create_folder(ctx.home, payload),
+    # §15.2 录制页「手动触发」：同一条 ingest/ 脚本、同一套退出码（server 只起子进程；回 job id，GET /api/ingest/jobs/ 轮询）
+    "/api/ingest/export": lambda ctx, payload: ingest_run.export_now(ctx.home, payload),
+    "/api/ingest/run": lambda ctx, payload: ingest_run.ingest_now(ctx.home, payload),
+    # §68.6 关于页「一键更新」：提前 kickstart §56 自动部署 agent（未加载 409 → 页面退回 release 页）
+    "/api/update/install": lambda ctx, payload: about.install_now(payload),
+    # §68.15 同步 / 配对：起 act.syncd --pair --json / --disable（syncd 是 state/sync 的唯一写者）
+    "/api/sync/pair": lambda ctx, payload: sync_pairing.pair(ctx.home, payload),
+    "/api/sync/disable": lambda ctx, payload: sync_pairing.disable(ctx.home, payload),
 }
 
 _POST_PREFIX_ROUTES = {

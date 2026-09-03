@@ -21,9 +21,10 @@
 
 输出确定性：键排序 + 条目按 (screen, source) 排序 + 同 id 递增 #n 后缀——
 重跑零 diff 由 tests/test_ui_native_inventory_fresh.py 钉死。唯一手写的部分是
-`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` 四张归属表、
-`SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）与 prefs 键的 `PREF_OWNER`
-（shell / server / retired + 理由）——表本身也进 JSON（`attribution`）。owner=shell 的
+`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` / `FUNCTION_SCREEN` 五张归属表、
+`SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）、prefs 键的 `PREF_OWNER`
+（shell / server / retired + 理由）与单条 control 的 `CONTROL_OWNER`（retired + 理由：
+非界面文案 / 新架构无落点的句子）——表本身也进 JSON（`attribution`）。owner=shell 的
 条目原则上只列不判；例外是带 `probe` 的条目（通知句 / kind → notify_catalog，
 壳持有的偏好键 → shell_source，搬到 server 的偏好键 → server_source），§66.2 追记。
 
@@ -124,6 +125,68 @@ MEMBER_SCREEN = {
     ("AppDelegate", "pastedImagesAccessory"): "board.dialogs",
     ("AppDelegate", "copyCommand"): "board.card",
     ("AppDelegate", "applicationShouldTerminate"): "app",
+    # 录制模式回滚句（RecordingController.rollbackNote + 它的 label(forMode:) 词表）：壳 Recording.swift
+    # 组句、经 postSystemNotice 直发 + 经桥 `recording.note` 原文推给页面——web 只显示不组句，
+    # 归 notifications（owner shell、探针 notify_catalog：server/notify_catalog.py 的 slots 词表 + 壳 L()）。
+    ("RecordingController", "rollbackNote"): "notifications",
+    ("RecordingController", "label"): "notifications",
+    # rollbackNote 体内的 `let cause: String` + switch 被成员扫描器认成最内层成员（mac/ 冻结 → 稳定），
+    # 三句 cause 片段由它归属
+    ("RecordingController", "cause"): "notifications",
+}
+
+# (文件, 顶层自由函数) → screen（第六张归属表）：Cards.swift 的 fileprivate 词表函数默认
+# 归文件 screen board.card，但 trashReasonLabel（你拒绝的 / 你删除的）只被 TrashRow 调用——
+# 它是回收站页的词，web 也只在回收站页渲染它（§68.11 / TrashPage）。
+FUNCTION_SCREEN = {
+    ("Cards.swift", "trashReasonLabel"): "trash",
+}
+
+# 单条 control id → 归属（第七张归属表；改表 = 改规格，PR 可见）。同一 screen 里个别 L()
+# 不是界面文案、或其机制在新架构里没有落点时，在这里点名 retired 并写一行理由（进 JSON
+# attribution.control_owner；只列不判）。§66.2 末句「新的不搬判断走归属表」的单条版——
+# 不进 waivers.txt（那本账只许缩）。
+CONTROL_OWNER = {
+    "control:header.freshness:button:board-health-banner-background-service-down-one": {
+        "owner": "retired",
+        "reason": "AIFix.launch(context:) 的 prompt 上下文字串，从不渲染；web 的「让 AI 修」上下文由 server 从 doctor 报告推导（§68.4 / §54.4）",
+    },
+    "control:doctor:label:failed-to-write-dest": {
+        "owner": "retired",
+        "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）",
+    },
+    "control:doctor:label:launchctl-load-failed": {
+        "owner": "retired",
+        "reason": "原生 app 自己 launchctl load 的失败句；server 永不 load plist（§68.8 同上，install.sh --reinstall-agent 是唯一装载路径 §48.7）",
+    },
+    "control:setup_wizard:label:failed-to-write-dest": {
+        "owner": "retired",
+        "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist",
+    },
+    # fix/parity-r2-settings-header（settings 面）：原生 Gmail IMAP 探针是壳起 runtime python 子进程；web 的探针在
+    # server 进程内跑（§68.3 secrets_store._probe_gmail），没有「找不到解释器」这一失败态。
+    "control:settings:label:no-usable-python": {
+        "owner": "retired",
+        "reason": "Gmail IMAP 探针在 server 进程内执行，无 runtime python 子进程可失败（§68.3）",
+    },
+    # 原生「新建 skill」表单往 ~/.claude/skills/<name>/SKILL.md 写文件；§67 立法后仓库 = 商店、`skills/` 只有 git 写
+    # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的 PR（§65 草稿 PR 通道），不是设置页表单。
+    "control:settings.skills:button:new-skill": {
+        "owner": "retired",
+        "reason": "仓库 = skill 商店，skills/ 只有 git 写；新 skill 走 PR，设置页不做编辑器（§67.1 / §67.5）",
+    },
+    "control:settings.skills:button:hide-form": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:textfield:name-kebab-case-e-g-my-skill": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:textfield:one-line-description-claude-uses-it-to-decide-wh": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:label:write-failed": {
+        "owner": "retired", "reason": "同 new-skill：web 不写 SKILL.md，无写入失败态（§67.5）",
+    },
 }
 
 # screen 前缀 → 负责补齐的一方。web = 看板必须补（进门）；shell = 原生残留
@@ -171,6 +234,7 @@ PREF_OWNER = {
     "recordingConsentShown": {"owner": "retired",
                               "reason": "并入 recordingMode（壳无存值 = 未同意 = off，P0-11）+ setup_done.json；不再有第二把标记"},
 }
+
 
 # 调用链里算「控件」的标识 → role
 CONTROL_ROLES = {
@@ -229,6 +293,7 @@ class SwiftFile(object):
         self.lines = uc.LineIndex(self.raw)
         self.types = uc.top_level_spans(self.masked)
         self.members = {t[1]: uc.member_spans(self.masked, t[2], t[3]) for t in self.types}
+        self.funcs = uc.top_level_funcs(self.masked)
 
     def line(self, offset):
         return self.lines.line_of(offset)
@@ -243,6 +308,11 @@ class SwiftFile(object):
     def owner_member(self, offset):
         type_name = self.owner_type(offset)
         span = uc.innermost(self.members.get(type_name, []), offset)
+        return span[1] if span else ""
+
+    def owner_func(self, offset):
+        """offset 所在的顶层自由函数名（不在任何类型体内时才有意义）；没有 → ''。"""
+        span = uc.innermost(self.funcs, offset)
         return span[1] if span else ""
 
     def type_span(self, name):
@@ -305,7 +375,7 @@ def _settings_maps(registry):
 
 class Attribution(object):
     """L() 所在位置 → screen：注册表类型 > SettingsFormView 的 group 成员 >
-    (类型, 成员) 表 > 类型表 > 注册表类型所在文件的默认 > 文件表 > misc。"""
+    (类型, 成员) 表 > 类型表 > (文件, 顶层自由函数) 表 > 注册表类型所在文件的默认 > 文件表 > misc。"""
 
     def __init__(self, registry, files):
         self.section_members, self.section_types = _settings_maps(registry)
@@ -335,7 +405,15 @@ class Attribution(object):
         if section:
             return section
         return (MEMBER_SCREEN.get((type_name, member)) or TYPE_SCREEN.get(type_name)
+                or _function_screen(f, offset, type_name)
                 or self.file_defaults.get(f.name) or FILE_SCREEN.get(f.name, "misc"))
+
+
+def _function_screen(f, offset, type_name):
+    """不在任何类型体内的 L() → 所在顶层自由函数是否被 FUNCTION_SCREEN 点名；否则 None。"""
+    if type_name:
+        return None
+    return FUNCTION_SCREEN.get((f.name, f.owner_func(offset)))
 
 
 def owner_of(screen):
@@ -749,9 +827,21 @@ def assign_ids(controls):
         base = "control:%s:%s:%s" % (c["screen"], c["role"], uc.slugify(c["en"] or c["zh"]))
         seen[base] = seen.get(base, 0) + 1
         c["id"] = base if seen[base] == 1 else "%s#%d" % (base, seen[base])
+        _apply_control_owner(c)
     for c in controls:
         del c["_file"], c["_offset"]
     return sorted(controls, key=lambda c: (c["screen"], _source_key(c["source"]), c["id"]))
+
+
+def _apply_control_owner(control):
+    """CONTROL_OWNER 点名的单条：owner 改成表值、不再判（gated False）、理由随行。id 已铸好才查表。"""
+    entry = CONTROL_OWNER.get(control["id"])
+    if not entry:
+        return
+    control["owner"] = entry["owner"]
+    control["gated"] = False
+    control["reason"] = entry["reason"]
+    control.pop("probe", None)
 
 
 def _digest(files):
@@ -772,9 +862,10 @@ def build_inventory(root=uc.MAC_SOURCES):
     return {
         "attribution": {"file_screen": FILE_SCREEN, "type_screen": TYPE_SCREEN,
                         "member_screen": {"%s.%s" % k: v for k, v in MEMBER_SCREEN.items()},
+                        "function_screen": {"%s:%s" % k: v for k, v in FUNCTION_SCREEN.items()},
                         "screen_owner": SCREEN_OWNER, "via_screen": VIA_SCREEN,
                         "probed_shell_screens": sorted(PROBED_SHELL_SCREENS),
-                        "pref_owner": PREF_OWNER},
+                        "pref_owner": PREF_OWNER, "control_owner": CONTROL_OWNER},
         "controls": controls,
         "lanes": {"order": [lane["slug"] for lane in lanes], "items": lanes,
                   "card_affordances": card_affordances(controls)},

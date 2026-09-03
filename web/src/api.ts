@@ -18,6 +18,9 @@ import type {
   ClaudeSessionsScan,
   DiagnosticsSnapshot,
   DoctorReport,
+  FailureCatalog,
+  IngestJob,
+  IngestJobStart,
   DailyLoopPatch,
   DailyLoopSettings,
   FolderReceipt,
@@ -37,9 +40,16 @@ import type {
   RepairReceipt,
   SecretStatus,
   SecretVerifyResult,
+  SlackDirectory,
+  SyncDisableReceipt,
+  SyncPairReceipt,
+  SyncStatus,
+  VoiceProfileStatus,
   SecretsStatus,
+  SeedDashboardReceipt,
   SettingsCatalog,
   SettingsSection,
+  SetupEngine,
   SetupReceipt,
   SetupSnapshot,
   TerminalReceipt,
@@ -342,11 +352,12 @@ export function putSecret(name: string, value: string): Promise<SecretStatus> {
   });
 }
 
-/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id） */
-export function verifySecret(name: string): Promise<SecretVerifyResult> {
+/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id）。
+ *  带 value = 粘贴即验证（§68.3；只探这个值、不落盘——向导「先验后存」用） */
+export function verifySecret(name: string, value?: string): Promise<SecretVerifyResult> {
   return request<SecretVerifyResult>(`/api/secrets/${encodeURIComponent(name)}/verify`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(value === undefined ? {} : { value }),
   });
 }
 
@@ -384,6 +395,22 @@ export function postSetupStep(step: "config-from-example" | "complete" | "reset"
   return request<SetupReceipt>(`/api/setup/${step}`, { method: "POST", body: JSON.stringify({}) });
 }
 
+/** GET /api/setup/engine — AI 引擎检测（claude CLI + 认证梯子；原生 EngineDetector） */
+export function fetchSetupEngine(signal?: AbortSignal): Promise<SetupEngine> {
+  return request<SetupEngine>("/api/setup/engine", { signal });
+}
+
+/** POST /api/setup/seed-dashboard — 首次数据「立即生成一次」（python -m act.lib.dashboard） */
+export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
+  return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/reveal {target[, name]} — 访达定位 server 词表里的文件（config = config.yaml / 模板，§68.4「显示文件」；
+ *  skill + name = 该 skill 的 SKILL.md，§67.5「在 Finder 显示」——客户端只传词与名，路径 server 推导） */
+export function postRevealTarget(target: "config" | "skill" | "voice_profile", name?: string): Promise<unknown> {
+  return request("/api/reveal", { method: "POST", body: JSON.stringify(name === undefined ? { target } : { target, name }) });
+}
+
 /** GET /api/about — 版本 / 路径 / 更新状态 */
 export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
   return request<AboutInfo>("/api/about", { signal });
@@ -392,6 +419,31 @@ export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
 /** POST /api/update/check — §26 手动「立即检查」 */
 export function postUpdateCheck(): Promise<UpdateCheckResult> {
   return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/update/install — 关于页「新版本 v… 可用 — 一键更新」：提前 kickstart §56 自动部署 agent（未加载 → 409） */
+export function postUpdateInstall(): Promise<RepairReceipt> {
+  return request<RepairReceipt>("/api/update/install", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/ingest/export — 录制页「立即导出」= bash ingest/screenpipe-export.sh（后台跑，回 job id） */
+export function postIngestExport(): Promise<IngestJobStart> {
+  return request<IngestJobStart>("/api/ingest/export", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/ingest/run — 录制页「立即 ingest」= SCREENPIPE_NO_WAIT=1 bash ingest/process-screenpipe.sh（exit 3 = 持锁跳过） */
+export function postIngestRun(): Promise<IngestJobStart> {
+  return request<IngestJobStart>("/api/ingest/run", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/ingest/jobs/{id} — 手动触发的进度：running → done（回执五键） */
+export function fetchIngestJob(id: string, signal?: AbortSignal): Promise<IngestJob> {
+  return request<IngestJob>(`/api/ingest/jobs/${encodeURIComponent(id)}`, { signal });
+}
+
+/** GET /api/failures — §25 失败目录（原生 FailureCatalog.message 的 server-owned 双语句） */
+export function fetchFailures(signal?: AbortSignal): Promise<FailureCatalog> {
+  return request<FailureCatalog>("/api/failures", { signal });
 }
 
 /** GET /api/mcp — MCP servers 两作用域（只读、已掩码） */
@@ -427,6 +479,31 @@ export function postAsk(question: string, signal?: AbortSignal): Promise<AskAnsw
 /** GET /api/slack/manifest — repo 的 Slack App Manifest 原文（Slack 接入区「复制 App Manifest」） */
 export function fetchSlackManifest(signal?: AbortSignal): Promise<{ manifest: string; path: string }> {
   return request<{ manifest: string; path: string }>("/api/slack/manifest", { signal });
+}
+
+/** GET /api/sync — 同步 / 配对状态（开关 + 设备名 + 配对二维码 PNG） */
+export function fetchSync(signal?: AbortSignal): Promise<SyncStatus> {
+  return request<SyncStatus>("/api/sync", { signal });
+}
+
+/** POST /api/sync/pair {label?} — 起 act.syncd --pair --json（开启 / 重新生成 / 改名；幂等，同一 channel 同一码） */
+export function postSyncPair(label?: string): Promise<SyncPairReceipt> {
+  return request<SyncPairReceipt>("/api/sync/pair", { method: "POST", body: JSON.stringify(label ? { label } : {}) });
+}
+
+/** POST /api/sync/disable {} — act.syncd --disable（mode=off，密钥保留） */
+export function postSyncDisable(): Promise<SyncDisableReceipt> {
+  return request<SyncDisableReceipt>("/api/sync/disable", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/voice — 语气档案「当前生效」状态行（私有 / 出厂 / 无；开关） */
+export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileStatus> {
+  return request<VoiceProfileStatus>("/api/voice", { signal });
+}
+
+/** GET /api/slack/directory[?refresh=1] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记） */
+export function fetchSlackDirectory(refresh = false, signal?: AbortSignal): Promise<SlackDirectory> {
+  return request<SlackDirectory>(`/api/slack/directory${refresh ? "?refresh=1" : ""}`, { signal });
 }
 
 /** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 写 .command（cd repo && bash uninstall.sh）并 open（§68.6） */

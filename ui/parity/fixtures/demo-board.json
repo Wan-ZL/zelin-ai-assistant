@@ -92,11 +92,11 @@
   "counts": {
     "archived": 4,
     "completed": 2,
-    "debt": 4,
-    "needs_approval": 8,
-    "needs_input": 1,
-    "review": 2,
-    "running": 7,
+    "debt": 7,
+    "needs_approval": 9,
+    "needs_input": 2,
+    "review": 4,
+    "running": 10,
     "trash": 3
   },
   "debt": [
@@ -167,9 +167,69 @@
       "summary": "type=other 的词表行。",
       "title": "其他类型的潜在任务",
       "type": "other"
+    },
+    {
+      "display_id": "P-162",
+      "hardness": "soft",
+      "id": "P-162",
+      "id_kind": "proposal",
+      "sources": [
+        {
+          "channel": "manual",
+          "date": "2026-09-01",
+          "quote": "先记下",
+          "who": "me"
+        }
+      ],
+      "summary": "type=research 的词表行。",
+      "title": "调研新的向量数据库选型",
+      "type": "research"
+    },
+    {
+      "display_id": "P-163",
+      "hardness": "soft",
+      "id": "P-163",
+      "id_kind": "proposal",
+      "sources": [
+        {
+          "channel": "manual",
+          "date": "2026-09-01",
+          "quote": "先记下",
+          "who": "me"
+        }
+      ],
+      "summary": "type=review 的词表行。",
+      "title": "评审队友的 RFC 草稿",
+      "type": "review"
+    },
+    {
+      "display_id": "P-164",
+      "hardness": "hard",
+      "id": "P-164",
+      "id_kind": "proposal",
+      "sources": [
+        {
+          "channel": "manual",
+          "date": "2026-09-01",
+          "quote": "先记下",
+          "who": "me"
+        }
+      ],
+      "summary": "type=training 的词表行。",
+      "title": "训练一个小分类模型",
+      "type": "training"
     }
   ],
   "device_label": "demo-mac",
+  "fold_receipts": [
+    {
+      "at": 1788350370,
+      "channel": "quick_capture",
+      "id": "a3f1c2d4e5b6a7c8d9e0f1a2b3c4d5e6",
+      "req": "R-105",
+      "title": "example-bench: 修 flaky 的 e2e 测试（retry 逻辑）"
+    }
+  ],
   "generated_at": "2026-09-02T12:00:00Z",
   "merge_suggestions": [
     {
@@ -184,7 +244,8 @@
     {
       "action_plan": [
         "P-132 并入 P-101",
-        "P-133 保持独立"
+        "P-133 保持独立",
+        "P-102 / P-103 不动"
       ],
       "confidence": "medium",
       "groups": [
@@ -208,9 +269,11 @@
       "ids": [
         "P-101",
         "P-132",
-        "P-133"
+        "P-133",
+        "P-102",
+        "P-103"
       ],
-      "rationale": "两张讲导出报告，一张讲入职文书。",
+      "rationale": "两张讲导出报告，一张讲入职文书，另两张各自独立。",
       "requested_at": 1788349200,
       "status": "done",
       "verdict": "partition"
@@ -556,6 +619,46 @@
       "tier_hint": "一键可批",
       "title": "评审新的 API 设计稿",
       "type": "review"
+    },
+    {
+      "cost_state": "unknown",
+      "cost_usd": null,
+      "delivery_mode": "doc",
+      "display_id": "P-135",
+      "display_title": "周报模板迁移",
+      "dod": [
+        "新系统里能打开每一版"
+      ],
+      "former_titles": [
+        "周报模板搬家",
+        "迁移周报模板"
+      ],
+      "hardness": "soft",
+      "id": "P-135",
+      "id_kind": "proposal",
+      "plan": [
+        "导出",
+        "导入",
+        "校对"
+      ],
+      "processing": false,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "把周报模板从旧 wiki 搬到新的文档系统，保留历史版本。",
+      "target_kind": "existing",
+      "target_name": "your-workbench",
+      "target_repo": "~/Projects/your-workbench",
+      "tier": "T2",
+      "tier_hint": "需文字确认",
+      "title": "把周报模板迁到新的文档系统",
+      "type": "paperwork"
     }
   ],
   "needs_input": [
@@ -571,6 +674,32 @@
       "state": "blocked",
       "waiting_for": "permission",
       "work_id": "R-108"
+    },
+    {
+      "copy_cmd": "claude attach f8f8f8f8",
+      "cwd": "~/Projects/inkweld",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788348900,
+      "display_id": "R-148",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-148",
+      "id_kind": "work",
+      "last_error": "session paused: waiting for user input",
+      "name": "等你回答的会话",
+      "plan": [
+        "步骤一"
+      ],
+      "question": "要不要顺手把旧的 migration 也删掉？",
+      "resume_exhausted": true,
+      "session_id": "f8f8f8f8-0000-4000-8000-000000000148",
+      "short_id": "f8f8f8f8",
+      "started_at": 1788348900,
+      "state": "blocked",
+      "summary": "词表行：受阻会话。",
+      "waiting_for": "你的回答",
+      "work_id": "R-148"
     }
   ],
   "radar_sources": {
@@ -691,6 +820,54 @@
       "state": "review",
       "summary": "会话内交付：本周周报初稿，验收后自己粘贴发送。",
       "work_id": "R-110"
+    },
+    {
+      "copy_cmd": "claude attach a1a1a1a1",
+      "cwd": "~/Projects/example-bench",
+      "delivered_summary": "改完了，PR 已开。",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788159600,
+      "display_id": "R-171",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-171",
+      "id_kind": "work",
+      "name": "跑了一天多才交付的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "review_at": 1788256800,
+      "session_active": true,
+      "session_id": "a1a1a1a1-0000-4000-8000-000000000171",
+      "short_id": "a1a1a1a1",
+      "sources": [],
+      "summary": "词表行。",
+      "work_id": "R-171"
+    },
+    {
+      "copy_cmd": "claude attach a2a2a2a2",
+      "cwd": "~/Projects/example-bench",
+      "delivered_summary": "一行 typo 修好了。",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788339600,
+      "display_id": "R-172",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-172",
+      "id_kind": "work",
+      "name": "45 秒就交付的小卡",
+      "plan": [
+        "步骤一"
+      ],
+      "review_at": 1788339645,
+      "session_active": false,
+      "session_id": "a2a2a2a2-0000-4000-8000-000000000172",
+      "short_id": "a2a2a2a2",
+      "sources": [],
+      "summary": "词表行。",
+      "work_id": "R-172"
     }
   ],
   "running": [
@@ -798,6 +975,8 @@
     {
       "cwd": "~/Projects/example-bench",
       "delivery_mode": "repo",
+      "dispatch_error": "claude not found (Errno 2)",
+      "dispatch_error_id": "claude_cli_missing",
       "dispatched_at": null,
       "display_id": "R-142",
       "dod": [
@@ -861,6 +1040,75 @@
       "state": "unknown",
       "summary": "词表行。",
       "work_id": "R-144"
+    },
+    {
+      "agent_name": "blocked sample",
+      "copy_cmd": "claude attach f5f5f5f5",
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788348000,
+      "display_id": "R-145",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-145",
+      "id_kind": "work",
+      "name": "会话等输入的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "session_id": "f5f5f5f5-0000-4000-8000-000000000145",
+      "short_id": "f5f5f5f5",
+      "started_at": 1788348000,
+      "state": "blocked",
+      "summary": "词表行。",
+      "work_id": "R-145"
+    },
+    {
+      "agent_name": "done sample",
+      "copy_cmd": "claude attach f6f6f6f6",
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788343200,
+      "display_id": "R-146",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-146",
+      "id_kind": "work",
+      "name": "会话已退出待收割的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "session_id": "f6f6f6f6-0000-4000-8000-000000000146",
+      "short_id": "f6f6f6f6",
+      "started_at": 1788343200,
+      "state": "done",
+      "summary": "词表行。",
+      "work_id": "R-146"
+    },
+    {
+      "agent_name": "review-active sample",
+      "copy_cmd": "claude attach f7f7f7f7",
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788321600,
+      "display_id": "R-147",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-147",
+      "id_kind": "work",
+      "name": "待验收会话又活跃起来的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "session_id": "f7f7f7f7-0000-4000-8000-000000000147",
+      "short_id": "f7f7f7f7",
+      "started_at": 1788321600,
+      "state": "review-active",
+      "summary": "词表行。",
+      "work_id": "R-147"
     }
   ],
   "trash": [

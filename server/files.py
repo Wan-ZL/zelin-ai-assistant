@@ -133,6 +133,14 @@ def _newest_deliverable(base: Path) -> Optional[Path]:
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
+def _open_reveal(target: Path, ident: dict) -> dict:
+    try:
+        subprocess.run(["open", "-R", str(target)], check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise NotFoundError("could not reveal", dict(ident, reason=str(exc)))
+    return {"ok": True, "revealed": str(target)}
+
+
 def reveal(home: Path, card_id: str) -> dict:
     """POST /api/reveal {card_id} → ``open -R``（访达定位，分享=拖拽起点）。
     定位目标 = 最新交付物文件；目录空则定位目录本身。非 darwin → 501。"""
@@ -145,9 +153,66 @@ def reveal(home: Path, card_id: str) -> dict:
         if not base.is_dir():
             raise NotFoundError("no deliverables for this card", {"id": card_id})
         target = base
-    try:
-        subprocess.run(["open", "-R", str(target)], check=False, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise NotFoundError("could not reveal deliverable",
-                            {"id": card_id, "reason": str(exc)})
-    return {"ok": True, "revealed": str(target)}
+    return _open_reveal(target, {"id": card_id})
+
+
+# 客户端只能点名一个词表项，路径仍由 server 推导（同一条「绝不接受客户端路径」红线）。
+# ``skill`` 另带 add-only ``name``（清单里的 skill 名，仍不是路径）——§67.5 Skills 区「在 Finder 显示」；
+# ``voice_profile`` = 语气档案区「打开档案」：此刻生效（或重开后会生效）的档案文件（server/voice_profile）。
+REVEAL_TARGETS = ("config", "skill", "voice_profile")
+
+
+def reveal_target(home: Path, target: str, name: Optional[str] = None) -> dict:
+    """POST /api/reveal {target:"config"} → 访达定位 ``config.yaml``（缺席则模板
+    ``config.example.yaml``）——原生 FailureCatalog ``config_invalid`` 的「显示文件」。
+    {target:"skill", name} → 定位该 skill 的 ``SKILL.md``（原生 SettingsSkills.reveal：选中要编辑的
+    那个文件）：本机已链 / 已拷的副本优先，否则仓库里的商店原件；清单里没有这个名字 → 404。
+    {target:"voice_profile"} → 此刻生效（或重开后会生效）的语气档案（server/voice_profile）；都不在 → 404。"""
+    if target not in REVEAL_TARGETS:
+        raise InvalidFieldError("unknown reveal target", {"field": "target", "choices": list(REVEAL_TARGETS)})
+    if sys.platform != "darwin":
+        raise NotImplementedError501("reveal is only available on macOS")
+    ident = {"target": target} if target != "skill" else {"target": target, "name": name}
+    return _open_reveal(_REVEAL_PATHS[target](home, name), ident)
+
+
+def _config_file(home: Path, _name: Optional[str]) -> Path:
+    path = home / "config.yaml"
+    if not path.is_file():
+        path = home / "config.example.yaml"
+    if not path.is_file():
+        raise NotFoundError("neither config.yaml nor config.example.yaml exists", {"target": "config"})
+    return path
+
+
+def _voice_profile_file(home: Path, _name: Optional[str]) -> Path:
+    from server import voice_profile
+    path = voice_profile.effective_path(home)
+    if path is None:
+        raise NotFoundError("no voice profile exists yet (state/voice-profile.md or config/voice-profile.default.md)",
+                            {"target": "voice_profile"})
+    return path
+
+
+def _skill_row(home: Path, name: Optional[str]) -> dict:
+    """skill 名 → 清单行（名字不是非空字串 400、清单里没有 404）。"""
+    if not isinstance(name, str) or not name.strip():
+        raise InvalidFieldError("name must be a non-empty string", {"field": "name"})
+    from server import settings  # 惰性：settings 不 import files，避免环
+    rows = {row["name"]: row for row in settings.skills_snapshot(home)["skills"]}
+    row = rows.get(name.strip())
+    if row is None:
+        raise NotFoundError("no such skill", {"name": name.strip()[:100]})
+    return row
+
+
+def _skill_file(home: Path, name: Optional[str]) -> Path:
+    """要在访达里选中的 SKILL.md：副本 ``row.path`` 优先，再商店原件 ``row.target``；都缺 404。"""
+    row = _skill_row(home, name)
+    for base in (row.get("path"), row.get("target")):
+        if base and (Path(base) / "SKILL.md").is_file():
+            return Path(base) / "SKILL.md"
+    raise NotFoundError("SKILL.md not found for this skill", {"name": str(name).strip()})
+
+
+_REVEAL_PATHS = {"config": _config_file, "skill": _skill_file, "voice_profile": _voice_profile_file}

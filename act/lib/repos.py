@@ -1,5 +1,8 @@
 """Repo inventory — lets the LLM pick the right target_repo for a task.
 
+契约：CONTRACT §4（派发目标 = 显式 `target_repo` 否则默认工作 repo）+ §7
+（卡片 `target_repo` / `target_kind` 字段——ROUTING RULES 的候选清单由本模块产出）。
+
 Scans ~/Projects (top level) for git repos and returns {name, path, hint} where
 hint = the first README heading/line. Fed into analyze/radar prompts so target
 selection is a JUDGMENT, not a hard-coded default.
@@ -21,18 +24,36 @@ PROJECTS_ROOT = Path("~/Projects").expanduser()
 _SKIP = {"data", "zelin-ai-assistant"}  # data corpus + the assistant itself
 
 
-def _readme_hint(repo: Path) -> str:
-    for name in ("README.md", "README.rst", "README.txt", "README"):
-        p = repo / name
-        if p.exists():
-            try:
-                for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    line = line.strip().lstrip("#").strip()
-                    if line:
-                        return line[:90]
-            except OSError:
-                pass
+_README_NAMES = ("README.md", "README.rst", "README.txt", "README")
+
+
+def _first_line(p: Path) -> str:
+    """First non-empty line of ``p`` (markdown ``#`` stripped, clipped to 90);
+    "" when the file is absent, unreadable or blank."""
+    if not p.exists():
+        return ""
+    try:
+        for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip().lstrip("#").strip()
+            if line:
+                return line[:90]
+    except OSError:
+        pass
     return ""
+
+
+def _readme_hint(repo: Path) -> str:
+    for name in _README_NAMES:
+        hint = _first_line(repo / name)
+        if hint:
+            return hint
+    return ""
+
+
+def _is_candidate_repo(p: Path) -> bool:
+    """Visible top-level directory with a .git, outside the skip list."""
+    return (p.is_dir() and not p.name.startswith(".") and p.name not in _SKIP
+            and (p / ".git").exists())
 
 
 def inventory(root: Path = PROJECTS_ROOT, limit: int = 40) -> list[dict]:
@@ -45,9 +66,7 @@ def inventory(root: Path = PROJECTS_ROOT, limit: int = 40) -> list[dict]:
     for p in entries:
         if len(out) >= limit:
             break
-        if not p.is_dir() or p.name.startswith(".") or p.name in _SKIP:
-            continue
-        if not (p / ".git").exists():
+        if not _is_candidate_repo(p):
             continue
         out.append({"name": p.name, "path": str(p), "hint": _readme_hint(p)})
     return out

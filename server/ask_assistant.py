@@ -1,4 +1,7 @@
-"""server/ask.py — 问问助手的 server 落点：``GET /api/ask/history`` + ``POST /api/ask``（§27 / §54.4）。
+"""server/ask_assistant.py — 问问助手的 server 落点：``GET /api/ask/history`` + ``POST /api/ask``（§27 / §54.4）。
+
+模块名按对象「问问助手」取 ``ask_assistant``——``ask.py`` 与入口 ``act/ask.py`` 同名会撞
+防腐 #9「同一 basename 禁止出现在两个目录层级」；路由 ``/api/ask*`` 不变。
 
 原生 Ask.swift = 输入框 → ``python3 -m act.ask "<question>"``（一次 tool-less ``claude -p``，
 ≤60 s）→ stdout 一行 JSON → 追加 ``state/ask_history.json``（最新在前、cap 20）。web 版

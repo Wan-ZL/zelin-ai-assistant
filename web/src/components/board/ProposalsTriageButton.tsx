@@ -46,7 +46,8 @@ export function ProposalsTriageButton({ backlogCount }: { backlogCount: number }
           ? text("启动一个临时 Claude 会话审阅本列全部积压提案：逐张判断仍值得做/过时/重复，和你对话确认后交付一份保留/丢弃/合并建议清单（会话出现在运行中列，可随时打开参与；它不会直接改动任何卡片）", "Launch a temporary Claude session to review this lane's backlog: it judges each proposal (keep / stale / duplicate), confirms with you in conversation, and delivers a keep/drop/merge recommendation list. The session appears in Running — join anytime; it never modifies cards directly.")
           : text("提案列没有积压——有卡片堆起来时再用", "No backlog in Proposals — come back when cards pile up")}
       >
-        ✦ {text("清理积压", "Clean up")}
+        {/* 原生 Image(sparkles) + Text：图标与动词各一节点 */}
+        <span aria-hidden="true">✦ </span><span>{text("清理积压", "Clean up")}</span>
       </button>
       {note && <span className="card-meta-text">{note}</span>}
     </div>

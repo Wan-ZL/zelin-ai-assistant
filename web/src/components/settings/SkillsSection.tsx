@@ -6,11 +6,15 @@
 //   custom   = 本地改过的副本——商店永不覆盖/删除，开关锁定，显示「自定义 · 落后/领先 N 版」
 //   foreign  = 不是商店放的东西（别处的软链接 / 普通文件），开关锁定
 // 切换 = 一次 POST {name, action}；server 拒绝（409 CONFLICT 等）的整句原文以 toast 显示。
+// 原生 SettingsSkills 的两颗按钮也在：「刷新」（忙态「扫描中…」= 重拉快照）与每行的「在 Finder 显示」
+// （POST /api/reveal {target:"skill", name}——server 选中该 skill 的 SKILL.md：本机副本优先、否则商店原件）。
+// 原生「新建 skill」表单不搬：仓库 = 商店、skills/ 只有 git 写（§67.1 / §67.5 不做编辑器）。
 import { useEffect, useState } from "react";
-import { ApiError } from "../../api";
+import { ApiError, postRevealTarget } from "../../api";
 import { useI18n } from "../../i18n";
 import { refreshSkills, toggleSkill, useAppState } from "../../store";
 import type { SkillRow } from "../../types";
+import { errorMessage } from "./useToast";
 
 const TOAST_MS = 6000;
 
@@ -23,11 +27,30 @@ export function SkillsSection() {
   const { text } = useI18n();
   const { skills, skillsError } = useAppState();
   const [busyName, setBusyName] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
     void refreshSkills();
   }, []);
+
+  async function scan() {
+    setScanning(true);
+    try {
+      await refreshSkills();
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function reveal(row: SkillRow) {
+    setToast(null);
+    try {
+      await postRevealTarget("skill", row.name);
+    } catch (error) {
+      setToast({ kind: "error", message: errorMessage(error) });
+    }
+  }
 
   useEffect(() => {
     if (!toast) return;
@@ -67,15 +90,20 @@ export function SkillsSection() {
       {skillsError && !skills && <p className="settings-error" role="alert">{skillsError}</p>}
       {!skills && !skillsError && <p className="settings-helper">{text("读取中…", "Loading…")}</p>}
 
-      {skills && (
-        // 原生 SettingsSkills 的计数行：共 N 个（用户级 = 已链进 ~/.claude/skills · 项目级 = 仓库内可见）
-        <p className="settings-helper">
-          {text(
-            `共 ${skills.skills.length} 个（用户级 ${skills.skills.filter((r) => r.toggle === "disable").length} · 项目级 ${skills.skills.filter((r) => r.project_visible).length}）`,
-            `${skills.skills.length} total (user ${skills.skills.filter((r) => r.toggle === "disable").length} · project ${skills.skills.filter((r) => r.project_visible).length})`,
-          )}
-        </p>
-      )}
+      <div className="settings-actions">
+        <button type="button" className="btn" disabled={scanning} onClick={() => void scan()}>
+          {scanning ? text("扫描中…", "Scanning…") : text("刷新", "Refresh")}
+        </button>
+        {skills && (
+          // 原生 SettingsSkills 的计数行：共 N 个（用户级 = 已链进 ~/.claude/skills · 项目级 = 仓库内可见）
+          <span className="settings-helper">
+            {text(
+              `共 ${skills.skills.length} 个（用户级 ${skills.skills.filter((r) => r.toggle === "disable").length} · 项目级 ${skills.skills.filter((r) => r.project_visible).length}）`,
+              `${skills.skills.length} total (user ${skills.skills.filter((r) => r.toggle === "disable").length} · project ${skills.skills.filter((r) => r.project_visible).length})`,
+            )}
+          </span>
+        )}
+      </div>
       {skills && (
         <ul className="skills-list">
           {skills.skills.map((row) => (
@@ -84,6 +112,7 @@ export function SkillsSection() {
               row={row}
               isBusy={busyName === row.name}
               onToggle={() => void flip(row)}
+              onReveal={() => void reveal(row)}
             />
           ))}
         </ul>
@@ -108,9 +137,10 @@ interface SkillRowViewProps {
   row: SkillRow;
   isBusy: boolean;
   onToggle: () => void;
+  onReveal: () => void;
 }
 
-function SkillRowView({ row, isBusy, onToggle }: SkillRowViewProps) {
+function SkillRowView({ row, isBusy, onToggle, onReveal }: SkillRowViewProps) {
   const { text } = useI18n();
   const isLocked = row.toggle === "locked";
   const isOn = row.toggle === "disable";
@@ -140,16 +170,19 @@ function SkillRowView({ row, isBusy, onToggle }: SkillRowViewProps) {
           <p className="settings-warning">{lockedHint(row, text)}</p>
         )}
       </div>
-      <button
-        type="button"
-        className={`btn ${isOn ? "" : "btn-primary"}`.trim()}
-        disabled={isLocked || isBusy}
-        aria-label={text(`${isOn ? "停用" : "启用"} ${row.name}`, `${isOn ? "Disable" : "Enable"} ${row.name}`)}
-        title={isLocked ? lockedHint(row, text) : undefined}
-        onClick={onToggle}
-      >
-        {isBusy ? "…" : isOn ? text("停用", "Disable") : text("启用", "Enable")}
-      </button>
+      <div className="skill-row-actions">
+        <button type="button" className="btn btn-quiet" onClick={onReveal}>{text("在 Finder 显示", "Reveal in Finder")}</button>
+        <button
+          type="button"
+          className={`btn ${isOn ? "" : "btn-primary"}`.trim()}
+          disabled={isLocked || isBusy}
+          aria-label={text(`${isOn ? "停用" : "启用"} ${row.name}`, `${isOn ? "Disable" : "Enable"} ${row.name}`)}
+          title={isLocked ? lockedHint(row, text) : undefined}
+          onClick={onToggle}
+        >
+          {isBusy ? "…" : isOn ? text("停用", "Disable") : text("启用", "Enable")}
+        </button>
+      </div>
     </li>
   );
 }

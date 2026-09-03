@@ -65,6 +65,28 @@ class SecretsStatusTestCase(_ServerCase):
         anth = next(s for s in obj["secrets"] if s["name"] == "anthropic-api-key.txt")
         self.assertFalse(anth["present"])
 
+    def test_legacy_flag_reports_the_older_tiers_without_reading_them_out(self):
+        """add-only ``legacy``（原生「使用旧路径」）：secrets 缺席 + §19 第二 / 三层文件非空 → True；
+        secrets 在 → False（第一层赢）；火山两把无旧路径恒 False；值仍不回显。"""
+        fake_home = Path(self.tmp.name) / "user"
+        write_text(fake_home / ".config" / "anthropic-key.txt", "sk-ant-LEGACYVALUE\n")
+        write_text(fake_home / "Desktop" / "Keys" / "gmail-app-password.txt", "   \n")   # 空白 = 缺席
+        write_text(fake_home / "vault" / "slack.txt", "xoxp-EXPLICIT\n")
+        write_text(self.home / "config.yaml", "sources:\n  slack_token_path: %s\n" % (fake_home / "vault" / "slack.txt"))
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            _s, obj = get_json(self.port, "/api/secrets")
+            by_name = {s["name"]: s for s in obj["secrets"]}
+            self.assertEqual({n: s["legacy"] for n, s in by_name.items()},
+                             {"anthropic-api-key.txt": True, "slack-user-token.txt": True,
+                              "gmail-app-password.txt": False, "volcano-speech-key.txt": False,
+                              "volcano-ark-key.txt": False})
+            self.assertNotIn("LEGACYVALUE", json.dumps(obj))
+            self.assertNotIn("EXPLICIT", json.dumps(obj))
+            write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-new\n")
+            _s, obj = get_json(self.port, "/api/secrets")
+            anth = next(s for s in obj["secrets"] if s["name"] == "anthropic-api-key.txt")
+            self.assertEqual((anth["present"], anth["legacy"]), (True, False))
+
 
 class SecretsPutTestCase(_ServerCase):
     def test_put_writes_first_line_with_0600(self):
@@ -177,6 +199,36 @@ class SecretsVerifyTestCase(_ServerCase):
         status, obj = post_json(self.port, "/api/secrets/anthropic-api-key.txt/verify", {"x": 1})
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "UNKNOWN_FIELD")
+
+    def test_verify_by_value_probes_the_pasted_token_without_saving(self):
+        # §68.3 粘贴即验证（原生 SetupWizard verify-on-paste）：只探 body 里的值、不落盘
+        seen = {}
+
+        def prober(kind, token, ctx):
+            seen.update(kind=kind, token=token)
+            return True, "key accepted", {}
+        self._patch_prober(prober)
+        status, obj = post_json(self.port, "/api/secrets/anthropic-api-key.txt/verify",
+                                {"value": "  sk-ant-pasted\n"})
+        self.assertEqual(status, 200)
+        self.assertTrue(obj["ok"])
+        self.assertEqual(seen, {"kind": "anthropic", "token": "sk-ant-pasted"})
+        self.assertFalse(self.secret_path("anthropic-api-key.txt").exists())
+
+    def test_verify_by_value_never_autofills_slack_owner(self):
+        # 还没落盘的 token 探成功也不动 override（落盘后再验才写 owner_slack_user_id）
+        self._patch_prober(lambda kind, token, ctx: (True, "auth.test ok", {"user_id": "U0PASTE"}))
+        status, obj = post_json(self.port, "/api/secrets/slack-user-token.txt/verify", {"value": "xoxp-2"})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj["extra"]["user_id"], "U0PASTE")
+        self.assertFalse((self.home / "state" / "settings_overrides.json").exists())
+
+    def test_verify_by_value_rejects_bad_shapes(self):
+        for payload in ({"value": 1}, {"value": ""}, {"value": "   \n"}, {"value": "x" * 5000}):
+            with self.subTest(payload=str(payload)[:30]):
+                status, obj = post_json(self.port, "/api/secrets/anthropic-api-key.txt/verify", payload)
+                self.assertEqual(status, 400)
+                assert_envelope(self, obj, "INVALID_FIELD")
 
     def test_secrets_prefix_without_verify_is_404(self):
         status, obj = post_json(self.port, "/api/secrets/anthropic-api-key.txt", {})

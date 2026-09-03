@@ -384,7 +384,7 @@ class AtMostOnceTestCase(_SweepBase):
         # — an issue created now could never be remembered, so NOTHING may
         # be sent, or every later pass would mint another public duplicate.
         _mk_record(publish=True)
-        with mock.patch.object(feedback, "_write_record",
+        with mock.patch.object(feedback, "write_record",
                                side_effect=OSError("read-only fs")):
             self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                                  transport=self.github), 0)

@@ -17,6 +17,7 @@ import { ArchiveStrip } from "../chrome/ArchiveStrip";
 import { BacklogStrip } from "../chrome/BacklogStrip";
 import { DebtCardItem } from "./DebtCardItem";
 import { DoneCard } from "./DoneCard";
+import { FoldReceiptNotices } from "./FoldReceiptNotices";
 import { Lane } from "./Lane";
 import { LaneComposer } from "./LaneComposer";
 import { MergeSuggestionCard } from "./MergeSuggestionCard";
@@ -77,6 +78,8 @@ export function BoardLanes() {
             />
             {/* §34bis 清理积压：后端提案卡数（含 processing 占位）为积压口径 */}
             <ProposalsTriageButton backlogCount={board.needs_approval.length} />
+            {/* §44.6 并入回执：原生 LocalNotice lane .approval——提案列 composer 之下、卡之上 */}
+            <FoldReceiptNotices />
           </>
         }
         isEmpty={proposals.length === 0 && suggestions.length === 0}

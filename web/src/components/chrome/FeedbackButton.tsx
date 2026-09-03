@@ -15,7 +15,7 @@ export function FeedbackButton() {
     setOpen(false);
     try {
       await postAction(body);
-      setNote(text("建议已记下，谢谢", "Feedback recorded — thank you"));
+      setNote(text("已记录建议，感谢", "Feedback recorded"));   // 原生 Store.swift LocalNotice 同句
     } catch (e) {
       setNote(describeActionError(e, text));
     }

@@ -101,9 +101,11 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
     for (const key of dirty) patch[key] = draft[key];
     try {
       await saveSettingsSection(visible.id, patch);
-      setToast({ kind: "ok", message: text("已保存。", "Saved.") });
+      // 原生 noteSaved：「已保存 HH:mm:ss」（时刻单独节点）
+      setToast({ kind: "ok", prefix: text("已保存 ", "Saved "), message: savedClock() });
     } catch (err) {
-      setToast({ kind: "error", message: errorMessage(err) });
+      // 原生 SettingsGmail / SettingsSlack / SettingsMaintainer 的 catch：「保存设置失败: 」+ 原句
+      setToast({ kind: "error", prefix: text("保存设置失败: ", "Failed to save settings: "), message: errorMessage(err) });
     } finally {
       setSaving(false);
     }
@@ -137,9 +139,15 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
       {children}
       {toast && (
         <div className={`settings-toast is-${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"}>
-          {toast.message}
+          {toast.prefix ? <span>{toast.prefix}</span> : null}<span>{toast.message}</span>
         </div>
       )}
     </section>
   );
+}
+
+/** 原生 noteSaved 的 HH:mm:ss（本地时刻） */
+function savedClock(): string {
+  const now = new Date();
+  return [now.getHours(), now.getMinutes(), now.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
 }

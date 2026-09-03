@@ -1,7 +1,7 @@
 // 详情 tab：GET /api/cards/{id} 增补详情的全字段渲染。
 // 已知语义字段给专属版式；未知字段落「其他字段」兜底区（wire add-only，
 // 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）；唯一例外 =
-// 并入记录每行的「拆回独立卡片」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
+// 「📎 折叠进来的信息」每行的「拆成新卡」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
 // 在这里有归属（note_ts 就是这一行）。
 import { useState, type ReactNode } from "react";
 import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
@@ -63,17 +63,22 @@ function CopyChip({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** §38.2 拆回独立卡片：{action:"split_note", id, note_ts}（legacy 无 ts 的 fold 行不可拆，原生同） */
+/** §38.2 拆成新卡：{action:"split_note", id, note_ts}（legacy 无 ts 的 fold 行不可拆，原生同）。
+ *  动词 / 忙态词逐字镜像原生 FoldNotesView（拆成新卡 / 拆分中…，§54.4）。 */
 function SplitNoteButton({ cardId, noteTs }: { cardId: string; noteTs: string }) {
   const { text } = useI18n();
   const { pending, error, submit } = useSubmit();
   return (
     <>
-      <button type="button" className="zai-detail-copy" disabled={pending}
-        title={text("把这条并入记录拆回一张独立卡片（原卡留一行「已拆出 …」）", "Split this fold note back into its own card (the original keeps a \"split into …\" line)")}
-        onClick={() => void submit({ action: "split_note", id: cardId, note_ts: noteTs })}>
-        {pending ? text("拆分中…", "Splitting…") : text("拆回独立卡片", "Split out")}
-      </button>
+      {pending ? (
+        <span className="zai-detail-dim">{text("拆分中…", "Splitting…")}</span>
+      ) : (
+        <button type="button" className="zai-detail-copy"
+          title={text("这条信息不该折在这张卡里？拆出去单独成卡（原记录保留）", "Folded into the wrong card? Split it out (the origin line is kept)")}
+          onClick={() => void submit({ action: "split_note", id: cardId, note_ts: noteTs })}>
+          {text("拆成新卡", "Split into card")}
+        </button>
+      )}
       {error && <span className="zai-detail-callout zai-detail-callout--danger">{error}</span>}
     </>
   );
@@ -247,17 +252,25 @@ export function DetailFields({ detail }: DetailFieldsProps) {
         </Section>
       )}
 
-      {(folds.length > 0 || rest.length > 0) && (
-        <Section title={text("并入记录 / 备注", "Fold notes")}>
+      {folds.length > 0 && (
+        // 原生 FoldNotesView（§38）：标题「📎 折叠进来的信息」，每行 💬（quick）/ 📡（radar）+ 正文 +
+        // 尾部「已拆出 R-yyy」章 / 拆分中… / 「拆成新卡」——词逐字镜像（§54.4）
+        <Section title={text("📎 折叠进来的信息", "📎 Folded-in updates")}>
           <ul className="zai-detail-folds">
             {folds.map((fold, index) => (
               <li key={`fold-${index}`}>
-                <span className="zai-chip">{fold.kind}</span> {fold.text}
+                <span aria-hidden="true">{fold.kind === "quick" ? "💬" : "📡"}</span> {fold.text}
                 {fold.ts && <span className="zai-detail-dim"> @{fold.ts}</span>}
-                {fold.splitInto && <span className="zai-detail-dim"> {text("已拆出", "split into")} {fold.splitInto}</span>}
+                {fold.splitInto && <> <span className="zai-chip">{text(`已拆出 ${fold.splitInto}`, `Split → ${fold.splitInto}`)}</span></>}
                 {fold.ts && !fold.splitInto && <> <SplitNoteButton cardId={detail.id} noteTs={fold.ts} /></>}
               </li>
             ))}
+          </ul>
+        </Section>
+      )}
+      {rest.length > 0 && (
+        <Section title={text("备注", "Notes")}>
+          <ul className="zai-detail-folds">
             {rest.map((line, index) => <li key={`rest-${index}`}>{line}</li>)}
           </ul>
         </Section>

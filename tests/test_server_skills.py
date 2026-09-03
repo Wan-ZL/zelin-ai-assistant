@@ -112,6 +112,29 @@ class SkillsApiTestCase(unittest.TestCase):
             self.assertIn(str(self.link_dir / "alpha"), doc["error"]["message"])
         self.assertIn("mine", (self.link_dir / "alpha" / "SKILL.md").read_text(encoding="utf-8"))
 
+    def test_reveal_skill_selects_its_skill_md_copy_first_then_the_store_original(self):
+        """POST /api/reveal {target:"skill", name}（§67.5「在 Finder 显示」）：客户端只传清单里的名字，路径 server 推导——
+        本机副本 / 链接下的 SKILL.md 优先，否则仓库商店原件；未知名 404；名字不是非空字串 400。"""
+        from server import files as files_mod
+        with mock.patch.object(files_mod.sys, "platform", "darwin"), mock.patch.object(files_mod.subprocess, "run") as run:
+            status, doc = post_json(self.port, "/api/reveal", {"target": "skill", "name": "alpha"})
+            self.assertEqual(status, 200)
+            self.assertEqual(doc["revealed"], str(self.home / "skills" / "alpha" / "SKILL.md"))
+            self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.home / "skills" / "alpha" / "SKILL.md")])
+            post_json(self.port, "/api/skills", {"name": "alpha", "action": "enable"})
+            status, doc = post_json(self.port, "/api/reveal", {"target": "skill", "name": "alpha"})
+            self.assertEqual(status, 200)
+            self.assertEqual(doc["revealed"], str(self.link_dir / "alpha" / "SKILL.md"))   # 已链：选中 ~/.claude/skills 下的那份
+            status, doc = post_json(self.port, "/api/reveal", {"target": "skill", "name": "nope"})
+            self.assertEqual(status, 404)
+            for name in ("", "  ", 3, None):
+                status, doc = post_json(self.port, "/api/reveal", {"target": "skill", "name": name})
+                self.assertEqual(status, 400, name)
+                assert_envelope(self, doc, "INVALID_FIELD")
+            status, doc = post_json(self.port, "/api/reveal", {"target": "skill", "name": "alpha", "path": "/etc"})
+            self.assertEqual(status, 400)
+            assert_envelope(self, doc, "UNKNOWN_FIELD")
+
     def test_broken_manifest_is_409_not_500(self):
         (self.home / "skills" / "index.yaml").write_text("schema: 1\nskills: []\n", encoding="utf-8")
         status, doc = get_json(self.port, "/api/skills")

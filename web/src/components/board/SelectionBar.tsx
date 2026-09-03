@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
-import { clearSelection, setSelectionMode, useAppState } from "../../store";
+import { clearSelection, markForceMerging, setSelectionMode, useAppState } from "../../store";
 import type { ApprovalCard } from "../../types";
 import { cardAction, describeActionError, effectiveTier } from "./boardActions";
 import { FeedbackDialog } from "./FeedbackDialog";
@@ -89,10 +89,13 @@ export function SelectionBar() {
       {note && <span className="selection-note">{note}</span>}
 
       {confirm === "feedback" && (
-        <FeedbackDialog ids={ids} onSubmit={(body) => void run([body], text("建议已记下", "Feedback recorded"))} onCancel={() => setConfirm("none")} />
+        <FeedbackDialog ids={ids} onSubmit={(body) => void run([body], text("已记录建议，感谢", "Feedback recorded"))} onCancel={() => setConfirm("none")} />
       )}
       {confirm === "force" && (
-        <ForceMergeDialog ids={ids} titles={titles} onConfirm={(primary) => void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted"))} onCancel={() => setConfirm("none")} />
+        // 提交即给涉及的卡挂「合并中…」章（原生 mergeForcingBadge），下一版看板落地才退场
+        <ForceMergeDialog ids={ids} titles={titles}
+          onConfirm={(primary) => { markForceMerging(ids); void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted")); }}
+          onCancel={() => setConfirm("none")} />
       )}
       {(confirm === "approve" || confirm === "reject") && (
         <ModalDialog

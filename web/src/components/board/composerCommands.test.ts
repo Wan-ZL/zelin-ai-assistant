@@ -45,6 +45,12 @@ describe("capture history", () => {
   });
 });
 
+/** 原生 Composer.swift 的「未识别或参数错误：」分支：error.kind=unrecognized，输入原文随行（保留不清空） */
+function unrecognized(r: Awaited<ReturnType<typeof runSlashCommand>>) {
+  if (!r.handled || !("error" in r) || r.error.kind !== "unrecognized") return null;
+  return { input: r.error.input, usage: r.error.usage };
+}
+
 describe("slash commands", () => {
   it("plain text is not a command", async () => {
     expect(await runSlashCommand("hello", en)).toEqual({ handled: false });
@@ -54,20 +60,20 @@ describe("slash commands", () => {
     expect((await runSlashCommand("/lang en", en)).handled).toBe(true);
     expect(getState().language).toBe("en");
     const bad = await runSlashCommand("/lang fr", en);
-    expect(bad.handled && bad.note).toMatch(/Usage/);
+    expect(unrecognized(bad)).toEqual({ input: "/lang fr", usage: expect.stringMatching(/Usage/) });
   });
 
   it("/open navigates to a known page only", async () => {
     await runSlashCommand("/open diagnostics", en);
     expect(String(vi.mocked(navigate).mock.calls[0][0])).toContain("page=diagnostics");
     const bad = await runSlashCommand("/open nowhere", en);
-    expect(bad.handled && bad.note).toMatch(/Usage/);
+    expect(unrecognized(bad)).toEqual({ input: "/open nowhere", usage: expect.stringMatching(/Usage/) });
     expect(navigate).toHaveBeenCalledTimes(1);
   });
 
   it("/rec needs the shell bridge and a valid mode", async () => {
     const noBridge = await runSlashCommand("/rec screen", en);
-    expect(noBridge.handled && noBridge.note).toMatch(/only works inside the board app/);
+    expect(noBridge.handled && "note" in noBridge && noBridge.note).toMatch(/only works inside the board app/);
     const postMessage = vi.fn().mockResolvedValue({ recording: { available: true, on: true, mode: "screen" }, captions: {} });
     window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
     await runSlashCommand("/rec screen", en);
@@ -75,11 +81,11 @@ describe("slash commands", () => {
     await runSlashCommand("/rec off", en);
     expect(postMessage).toHaveBeenLastCalledWith({ method: "setRecording", on: false });
     const bad = await runSlashCommand("/rec video", en);
-    expect(bad.handled && bad.note).toMatch(/Usage/);
+    expect(unrecognized(bad)).toEqual({ input: "/rec video", usage: expect.stringMatching(/Usage/) });
   });
 
-  it("unknown command lists the vocabulary", async () => {
+  it("unknown command is 未识别 (input kept) and lists the vocabulary", async () => {
     const r = await runSlashCommand("/wat", en);
-    expect(r.handled && r.note).toMatch(/\/rec \/lang \/open/);
+    expect(unrecognized(r)).toEqual({ input: "/wat", usage: expect.stringMatching(/\/rec \/lang \/open/) });
   });
 });
