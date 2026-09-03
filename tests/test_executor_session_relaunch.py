@@ -104,15 +104,44 @@ class ResumeDefaultRunnerTestCase(_Base):
         argv, kw = self.calls[-1]
         self._assert_resume_argv(argv, kw, FULL_SID, [])
 
+    def test_passed_config_is_honoured(self):
+        # cfg given → used as-is (skip_permissions off drops the flag); the
+        # sandbox default would have kept it
+        self.cfg.skip_permissions = False
+        req = self._req(State.EXECUTING.value, {"session_id": "feedc0de"})
+        with self._tinfo({"feedc0de": (FULL_SID, self.wt)}):
+            self.assertIs(executor.resume(req, self.cfg), True)
+        self.assertNotIn("--dangerously-skip-permissions", self.calls[-1][0])
+
+    def test_nested_missing_cwd_is_recreated(self):
+        deep = self.wt / "a" / "b"
+        req = self._req(State.EXECUTING.value, {"session_id": "feedc0de"})
+        with self._tinfo({"feedc0de": (FULL_SID, deep)}):
+            self.assertIs(executor.resume(req, self.cfg), True)
+        self.assertTrue(deep.is_dir())
+        self.assertEqual(self.calls[-1][1]["cwd"], str(deep))
+
+    def test_runner_without_a_returncode_is_a_failed_launch(self):
+        req = self._req(State.EXECUTING.value, {"session_id": "feedc0de"})
+        with self._tinfo({"feedc0de": (FULL_SID, self.wt)}):
+            self.assertIs(executor.resume(req, self.cfg, runner=lambda: object()), False)
+        ex = registry.load("R-777").execution
+        self.assertEqual(ex["resume_attempts"], 1)
+        self.assertIs(ex["last_resume_ok"], False)
+
     def test_cfg_none_loads_config_and_unrecreatable_cwd_is_false(self):
         req = self._req(State.EXECUTING.value, {"session_id": "feedc0de"})
         blocker = self.wt.parent / "blocker"
         blocker.parent.mkdir(parents=True, exist_ok=True)
         blocker.write_text("x", encoding="utf-8")
         with self._tinfo({"feedc0de": (FULL_SID, blocker / "child")}):
-            self.assertFalse(executor.resume(req))
+            self.assertIs(executor.resume(req), False)
         self.assertEqual(self.calls, [])
         self.assertNotIn("resume_attempts", registry.load("R-777").execution)
+        self.assertIs(executor.resume(self._req(State.EXECUTING.value, {})), False)
+        with self._tinfo({}):
+            self.assertIs(executor.resume(self._req(State.EXECUTING.value,
+                                                    {"session_id": "feedc0de"})), False)
 
 
 class ReworkDefaultRunnerTestCase(_Base):
@@ -129,6 +158,20 @@ class ReworkDefaultRunnerTestCase(_Base):
         saved = registry.load("R-777")
         self.assertEqual(saved.status, State.EXECUTING.value)
         self.assertEqual(saved.execution["session_id"], "0a0a0a0a")
+
+    def test_passed_config_is_honoured_and_failure_text_kept(self):
+        self.cfg.skip_permissions = False
+        req = self._req(State.REVIEW.value, {"session_id": "feedc0de"})
+        with self._tinfo({"feedc0de": (FULL_SID, self.wt)}), \
+                mock.patch.object(executor, "stop_session", return_value=False):
+            self.assertIs(executor.rework(req, "反馈", self.cfg), True)
+        self.assertNotIn("--dangerously-skip-permissions", self.calls[-1][0])
+        failing = mock.Mock(return_value=_proc(1, stderr="boom"))
+        with self._tinfo({"0a0a0a0a": (FULL_SID, self.wt)}):   # the id the relaunch minted
+            self.assertIs(executor.rework(registry.load("R-777"), "反馈", self.cfg, runner=failing), False)
+        self.assertEqual(registry.load("R-777").execution["last_error"], "boom")
+        self.assertIs(executor.rework(registry.load("R-777"), "   ", self.cfg), False)
+        self.assertIs(executor.rework(self._req(State.REVIEW.value, {}), "反馈", self.cfg), False)
 
     def test_root_session_fallback(self):
         req = self._req(State.REVIEW.value,
@@ -186,6 +229,27 @@ class BriefDefaultRunnerTestCase(_Base):
         self.assertEqual(ex["session_id"], "0a0a0a0a")        # fresh id adopted
         self.assertEqual(ex["root_session_id"], FULL_SID)
         self.assertEqual(ex["resume_attempts"], 0)
+
+    def test_passed_config_is_honoured(self):
+        self.cfg.skip_permissions = False
+        req = self._executing({"session_id": "feedc0de"})
+        with self._tinfo({"feedc0de": (FULL_SID, self.wt)}), \
+                mock.patch.object(executor, "stop_session", return_value=False):
+            self.assertIs(executor.brief(req, self.cfg), True)
+        self.assertNotIn("--dangerously-skip-permissions", self.calls[-1][0])
+        self.assertIs(executor.brief(self._req(State.EXECUTING.value, {"session_id": "x"}), self.cfg), False)
+
+    def test_delivered_ledger_keeps_the_last_twenty(self):
+        req = self._executing({"session_id": "feedc0de",
+                               "delivered_briefings": [f"old-{i}" for i in range(25)],
+                               "pending_briefings": ["新的一条"]})
+        with self._tinfo({"feedc0de": (FULL_SID, self.wt)}), \
+                mock.patch.object(executor, "stop_session", return_value=False):
+            self.assertIs(executor.brief(req, self.cfg), True)
+        delivered = registry.load("R-777").execution["delivered_briefings"]
+        self.assertEqual(len(delivered), 20)
+        self.assertEqual(delivered[-1], "新的一条")
+        self.assertEqual(delivered[0], "old-6")
 
     def test_root_session_fallback(self):
         req = self._executing({"session_id": "aaaa1111", "root_session_id": ROOT_SID})

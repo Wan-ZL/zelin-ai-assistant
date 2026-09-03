@@ -145,6 +145,41 @@ class HarvestEdgeTestCase(_Home):
         ])
         self.assertEqual(executor.harvest_delivery(SID)["delivered_summary"], "真正的总结")
 
+    def test_marker_after_a_closed_fence_is_still_found(self):
+        # a code block earlier in the message must not end the marker scan
+        self._write([
+            _line("user", "开始"),
+            _line("assistant", "总结\n```\nFINAL DRAFT: quoted\n```\n收尾\nFINAL DRAFT:\n真稿"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["final_draft"], "真稿")
+        self.assertEqual(out["delivered_summary"], "总结\n```\nFINAL DRAFT: quoted\n```\n收尾")
+
+    def test_two_markers_split_at_the_last_one(self):
+        self._write([
+            _line("user", "开始"),
+            _line("assistant", "sum\nFINAL DRAFT: a\nmid\nFINAL DRAFT: b\ndraft"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["delivered_summary"], "sum\nFINAL DRAFT: a\nmid")
+        self.assertEqual(out["final_draft"], "b\ndraft")
+
+    def test_summary_and_draft_caps(self):
+        self._write([_line("user", "开始"), _line("assistant", "s" * 700)])
+        self.assertEqual(len(executor.harvest_delivery(SID)["delivered_summary"]), 500)
+        self._write([_line("user", "开始"),
+                     _line("assistant", "b" * 700 + "\nFINAL DRAFT:\n" + "d" * 30_000)])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(len(out["delivered_summary"]), 500)
+        self.assertEqual(len(out["final_draft"]), 20_000)
+
+    def test_delivery_texts_helper_answers_lists(self):
+        self.assertEqual(executor._delivery_texts(""), [])
+        self.projects.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(executor._delivery_texts("abcd1234"), [])
+        self._write([_line("user", "p"), _line("assistant", "x")])
+        self.assertEqual(executor._delivery_texts("abcd1234"), ["x"])
+
     def test_image_only_user_turn_resets_the_delivery_window(self):
         self._write([
             _line("user", "开始"),

@@ -62,6 +62,35 @@ class DeadlineEdgeTestCase(unittest.TestCase):
         self.assertIn("pid 4242", detail)
         self.assertIn("after 2 stop attempts", detail)
 
+    def test_clock_exactly_at_the_deadline_is_over_budget(self):
+        (stopped, issued, detail), stopper = self._run(
+            [0.0, 60.0], prober=mock.Mock(return_value={"pid": 42}))
+        self.assertEqual((stopped, issued), (False, False))
+        self.assertIn("budget", detail)
+        stopper.assert_not_called()
+        (stopped, issued, detail), stopper = self._run(
+            [0.0, 1.0, 60.0], prober=mock.Mock(return_value={"pid": 42}))
+        self.assertEqual((stopped, issued), (False, False))
+        stopper.assert_not_called()
+
+    def test_default_retries_mean_three_attempts(self):
+        prober = mock.Mock(return_value={"pid": 42})
+        stopper = mock.Mock(return_value=True)
+        stopped, issued, detail = executor.stop_session_confirmed(
+            SID, prober=prober, stopper=stopper, sleeper=mock.Mock())
+        self.assertEqual((stopped, issued), (False, True))
+        self.assertEqual(stopper.call_count, 3)
+        self.assertEqual(executor.STOP_CONFIRM_RETRIES, 2)
+        self.assertIn("after 3 stop attempts", detail)
+
+    def test_stopper_that_always_fails_never_counts_as_issued(self):
+        prober = mock.Mock(return_value={"pid": 42})
+        stopper = mock.Mock(side_effect=OSError("claude missing"))
+        stopped, issued, _ = executor.stop_session_confirmed(
+            SID, retries=1, prober=prober, stopper=stopper, sleeper=mock.Mock())
+        self.assertEqual((stopped, issued), (False, False))
+        self.assertEqual(stopper.call_count, 2)
+
     def test_default_seams_are_the_strict_probe_and_stop_session(self):
         # no prober/stopper given → roster via _agent_info_strict, stop via stop_session
         with mock.patch.object(executor, "_agent_info_strict", return_value={}) as probe, \
@@ -86,6 +115,7 @@ class StopSessionTestCase(unittest.TestCase):
                 mock.patch.object(executor.llm, "claude_bin", return_value="/opt/claude"):
             self.assertTrue(executor.stop_session(SID, info={"pid": 42}))
         self.assertEqual(run.call_args.args[0], ["/opt/claude", "stop", "abcd1234"])
+        self.assertEqual(run.call_args.kwargs, {"capture_output": True, "text": True, "timeout": 30})
         slept.assert_called_once_with(2)
 
     def test_stop_spawn_failure_propagates_to_the_caller(self):
