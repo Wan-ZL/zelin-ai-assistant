@@ -1,4 +1,4 @@
-"""loop_inputs — 每日自我改进循环的输入读取器（CONTRACT §65；R2.4.2）。
+"""loop_inputs — 每日自我改进循环的输入读取器（CONTRACT §70；R2.4.2）。
 
 原则（brainstorm s2 §3 的 parse spec）：**读台账与事件流，不读 traceback**。
 每个读取器把一种输入源解析成 :class:`Signal` 列表——一个 Signal = 一条候选

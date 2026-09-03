@@ -156,7 +156,7 @@ class RecapMirrorTestCase(unittest.TestCase):
 
 
 class DailyLoopSettingsMirrorTestCase(unittest.TestCase):
-    """§65：server/settings.py 手抄的每日循环旋钮常量与 act/lib/config.py 逐字一致。"""
+    """§70：server/settings.py 手抄的每日循环旋钮常量与 act/lib/config.py 逐字一致。"""
 
     def test_defaults_and_keys_mirror_config(self):
         cfg = config.Config()

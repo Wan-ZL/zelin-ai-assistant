@@ -1,4 +1,4 @@
-"""server/ settings face for the daily loop knobs (CONTRACT §65, D10; §49 routes).
+"""server/ settings face for the daily loop knobs (CONTRACT §70, D10; §49 routes).
 
 - GET /api/settings/daily-loop: effective five knobs + per-field source.
 - PUT /api/settings/daily-loop: four write gates (same as POST), field whitelist,

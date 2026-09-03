@@ -7,7 +7,7 @@
 /* ----- popover（fork 类名，token 化实现） ---------------------------------- */
 .composer-popover {
   background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 10px;
   box-shadow: var(--dialog-shadow);
   padding: 4px;
@@ -32,7 +32,7 @@
   background: none;
   color: var(--text-primary);
   font: inherit;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -71,11 +71,11 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   line-height: 1;
   padding: 5px 10px;
   border-radius: 999px;
@@ -95,8 +95,8 @@
 }
 
 .chrome-chip-count {
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: calc(10.5px * var(--text-scale));
+  font-weight: var(--w-semibold);
 }
 
 .chrome-chip-clear {
@@ -104,7 +104,7 @@
   background: none;
   color: var(--text-tertiary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 5px 6px;
   cursor: pointer;
   border-radius: 6px;
@@ -116,7 +116,7 @@
 }
 
 .chrome-search {
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
   font: var(--type-header-control);
@@ -179,7 +179,7 @@
 .backlog-strip.is-collapsed .backlog-strip-toggle {
   writing-mode: vertical-rl;
   padding: 12px 6px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   background: var(--surface-muted);
 }
@@ -215,7 +215,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-left: 3px solid var(--status-backlog);
   background: var(--surface);
   border-radius: 8px;
@@ -245,17 +245,17 @@
   align-items: center;
   gap: 5px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   white-space: nowrap;
 }
 
 .chrome-sort-select {
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 4px 8px;
   cursor: pointer;
 }
@@ -299,21 +299,21 @@
 }
 
 .trash-page-title {
-  font-size: 17px;
-  font-weight: 700;
+  font-size: calc(17px * var(--text-scale));
+  font-weight: var(--w-bold);
   margin: 0;
 }
 
 .trash-page-count {
   color: var(--text-tertiary);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
   font-variant-numeric: tabular-nums;
 }
 
 .trash-back-link {
   color: var(--accent);
   text-decoration: none;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
 }
 
 .trash-back-link:hover {
@@ -328,7 +328,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface);
   border-radius: 10px;
   box-shadow: var(--card-shadow);
@@ -381,7 +381,7 @@
 }
 
 .trash-button {
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
   font: var(--type-button);
@@ -421,5 +421,33 @@
   background: var(--danger-soft);
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
+}
+
+/* ----- §21 多选入口（FilterBar） ---------------------------------------------------------- */
+.chrome-select-toggle {
+  border: var(--border-hairline) solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: calc(11px * var(--text-scale));
+  cursor: pointer;
+}
+
+.chrome-select-toggle.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ----- §68.11 永久性完成整页 ------------------------------------------------------------- */
+.archive-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chrome-feedback-note {
+  color: var(--text-secondary);
+  font: var(--type-header-meta);
 }

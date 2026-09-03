@@ -1,7 +1,7 @@
 /* MarkdownDocument 版式——只引用 tokens.css 已有变量（CONVENTIONS §样式红线） */
 .zai-markdown {
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   line-height: 1.65;
   overflow-wrap: break-word;
 }
@@ -27,7 +27,7 @@
 
 .zai-markdown code {
   background: var(--surface-muted);
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -36,7 +36,7 @@
 
 .zai-markdown pre {
   background: var(--surface-muted);
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
   overflow-x: auto;
@@ -65,7 +65,7 @@
 
 .zai-markdown hr {
   border: none;
-  border-top: var(--border-hairline) solid var(--border-strong);
+  border-top: var(--stroke-w) solid var(--border-strong);
   margin: 1.2em 0;
 }
 
@@ -79,7 +79,7 @@
 
 .zai-markdown th,
 .zai-markdown td {
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   padding: 5px 10px;
   text-align: left;
 }
@@ -97,7 +97,7 @@
 
 .zai-mermaid-fallback details {
   background: var(--surface-muted);
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   padding: 8px 12px;
 }

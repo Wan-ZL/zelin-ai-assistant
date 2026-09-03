@@ -21,7 +21,7 @@ import unittest
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
 from act import radar_slack
-from act.lib import config, health, registry
+from act.lib import config, radar_health, registry
 
 
 def _proc(stdout: str = "", returncode: int = 0,
@@ -65,7 +65,7 @@ def _write_marker(delta: _dt.timedelta) -> _dt.datetime:
 
 class SlackMcpFallbackTestCase(unittest.TestCase):
     def setUp(self):
-        for p in (radar_slack._mcp_marker_path(), health.HEALTH_PATH):
+        for p in (radar_slack._mcp_marker_path(), radar_health.HEALTH_PATH):
             if p.exists():
                 p.unlink()
         if config.REGISTRY_DIR.exists():
@@ -79,7 +79,7 @@ class SlackMcpFallbackTestCase(unittest.TestCase):
         self.assertEqual(radar_slack.mcp_scan(self.cfg, runner=runner), 0)
         self.assertEqual(runner.calls, [])         # claude never spawned
         self.assertEqual(registry.load_all(), [])  # and no cards
-        self.assertFalse(health.HEALTH_PATH.exists())  # silent: no beacon
+        self.assertFalse(radar_health.HEALTH_PATH.exists())  # silent: no beacon
 
     def test_due_when_marker_older_than_interval(self):
         _write_marker(_dt.timedelta(minutes=31))
@@ -106,7 +106,7 @@ class SlackMcpFallbackTestCase(unittest.TestCase):
         self.assertIsNotNone(marker)
         self.assertGreater(marker, old)                # advanced past the old one
         # health: successful pass recorded
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertIsNone(data["slack"]["skip_reason"])
         self.assertIsNotNone(data["slack"]["last_ok"])
 
@@ -137,7 +137,7 @@ class SlackMcpFallbackTestCase(unittest.TestCase):
     def _assert_failed(self, runner: _FakeRunner, old_marker: _dt.datetime):
         self.assertEqual(radar_slack.mcp_scan(self.cfg, runner=runner), 0)
         self.assertEqual(radar_slack._read_mcp_marker(), old_marker)  # untouched
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertTrue(str(data["slack"]["skip_reason"]).startswith("mcp_failed:"))
         self.assertEqual(registry.load_all(), [])
 
@@ -172,7 +172,7 @@ class SlackMcpFallbackTestCase(unittest.TestCase):
         self.assertEqual(created, 0)
         self.assertEqual(registry.load_all(), [])
         self.assertGreater(radar_slack._read_mcp_marker(), old)  # still advances
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertIsNone(data["slack"]["skip_reason"])
 
     # -- scan() routing -------------------------------------------------------- #
@@ -195,7 +195,7 @@ class SlackMcpFallbackTestCase(unittest.TestCase):
             runner = _FakeRunner(_proc("[]"))
             self.assertEqual(radar_slack.scan(self.cfg, mcp_runner=runner), 0)
             self.assertEqual(runner.calls, [])
-            data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+            data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
             self.assertEqual(data["slack"]["skip_reason"], "no_credentials")
         finally:
             radar_slack.get_token = orig

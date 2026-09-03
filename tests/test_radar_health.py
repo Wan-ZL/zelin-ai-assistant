@@ -28,13 +28,13 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import radar, radar_slack
-from act.lib import config, health, registry
+from act.lib import config, radar_health, registry
 
 BASE = 1_760_000_000.0  # fixed epoch — deterministic mtimes
 
 
 def _read_obsidian() -> dict:
-    return json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))["obsidian"]
+    return json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))["obsidian"]
 
 
 def _item(title, hardness="soft", deadline=None, quote="do the thing"):
@@ -66,7 +66,7 @@ class ObsidianHealthBase(unittest.TestCase):
 
     @staticmethod
     def _cleanup():
-        for p in (config.CONFIG_PATH, health.HEALTH_PATH,
+        for p in (config.CONFIG_PATH, radar_health.HEALTH_PATH,
                   config.STATE_DIR / radar.MARKER_PATH_NAME,
                   config.STATE_DIR / radar.FAILED_QUEUE_NAME):
             if p.exists():
@@ -86,12 +86,12 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         # §48 改判（原判例：off → skip_reason="disabled"）：关掉的源不产出
         # health 条目——写 `disabled` 会让 App 把「关着」误读成管线存活信号
         # （§0 第 3 条）。既有条目还要被清除（僵尸 last_attempt 不再冒充活）。
-        health.update_radar_health("obsidian", ok=False, skip_reason="vault_empty")
+        radar_health.update_radar_health("obsidian", ok=False, skip_reason="vault_empty")
         config.CONFIG_PATH.write_text(
             f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n'
             "features:\n  obsidian_radar: false\n", encoding="utf-8")
         radar.scan(runner=lambda t: self.fail("scanned while off"))
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertNotIn("obsidian", data)
 
     def test_unconfigured_vault_is_vault_missing(self):
@@ -162,7 +162,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         # with a false vault_empty (it can't see ~/Documents without FDA).
         os.environ.pop("AIASSISTANT_CRON", None)
         radar.scan(runner=lambda t: self.fail("scanned an empty vault"))
-        self.assertFalse(health.HEALTH_PATH.exists())
+        self.assertFalse(radar_health.HEALTH_PATH.exists())
 
 
 # --------------------------------------------------------------------------- #
@@ -185,7 +185,7 @@ class _FakeRunner:
 class SlackMcpNotConfiguredTestCase(unittest.TestCase):
     def setUp(self):
         for p in (radar_slack._mcp_marker_path(),
-                  radar_slack._mcp_present_marker_path(), health.HEALTH_PATH):
+                  radar_slack._mcp_present_marker_path(), radar_health.HEALTH_PATH):
             if p.exists():
                 p.unlink()
         if config.REGISTRY_DIR.exists():
@@ -199,7 +199,7 @@ class SlackMcpNotConfiguredTestCase(unittest.TestCase):
         self.assertEqual(created, 0)
         self.assertEqual(runner.calls, [])              # never spent a claude -p
         self.assertEqual(registry.load_all(), [])
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertEqual(data["slack"]["skip_reason"], "mcp_not_configured")
         # success marker untouched — this is a config skip, not a scan
         self.assertIsNone(radar_slack._read_mcp_marker())
@@ -208,13 +208,13 @@ class SlackMcpNotConfiguredTestCase(unittest.TestCase):
         runner = _FakeRunner()
         radar_slack.mcp_scan(self.cfg, runner=runner, mcp_present=lambda: True)
         self.assertEqual(len(runner.calls), 1)          # preflight let it run
-        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        data = json.loads(radar_health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertIsNone(data["slack"]["skip_reason"])  # healthy empty pass
 
     def test_mcp_not_configured_is_distinct_from_mcp_failed(self):
         radar_slack.mcp_scan(self.cfg, mcp_present=lambda: False)
         reason = json.loads(
-            health.HEALTH_PATH.read_text(encoding="utf-8"))["slack"]["skip_reason"]
+            radar_health.HEALTH_PATH.read_text(encoding="utf-8"))["slack"]["skip_reason"]
         self.assertEqual(reason, "mcp_not_configured")
         self.assertFalse(reason.startswith("mcp_failed:"))
 
@@ -224,7 +224,7 @@ class SlackMcpNotConfiguredTestCase(unittest.TestCase):
         radar_slack._mcp_present_marker_path().write_text("0", encoding="utf-8")
         created = radar_slack.mcp_scan(self.cfg)   # real _slack_mcp_present, cache hit
         self.assertEqual(created, 0)
-        self.assertFalse(health.HEALTH_PATH.exists())  # silent on a cache hit
+        self.assertFalse(radar_health.HEALTH_PATH.exists())  # silent on a cache hit
 
 
 if __name__ == "__main__":

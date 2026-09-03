@@ -1,4 +1,4 @@
-"""§65 循环运行：一天一次、先维护再提案、阶段失败隔离、审计行 + 投影键 maintenance。
+"""§70 循环运行：一天一次、先维护再提案、阶段失败隔离、审计行 + 投影键 maintenance。
 
 假时钟 + 假 gh + 假 doctor + fixture registry；actd.run_once 的挂点用 mock 钉住。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py)。

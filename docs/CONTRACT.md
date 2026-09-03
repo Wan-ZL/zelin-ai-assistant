@@ -31,7 +31,7 @@
    可恢复，静默并入的 fold note 可拆出，绝无不可恢复的自动删除。（§21/§38.2/§44.4）
 3. **诚实的健康报告**：状态行/健康文件只报真实探测结果，绝不虚报 ok；失败要分类
    （auth/network/command…），「坏掉的通道」与「没有新数据」严格区分。
-   （§25 失败分类层；§14bis 命令通道词表；act/lib/health.py 的 skip_reason 语义）
+   （§25 失败分类层；§14bis 命令通道词表；act/lib/radar_health.py 的 skip_reason 语义）
 4. **记录 ≠ 立案**：进档案（笔记/wiki）不等于成任务。屏幕 OCR 上的内容永不发起
    卡片（回声环的一刀，2026-07-25）；AI/assistant 的话在任何来源下都到不了直发
    提案；出生资格由 §45 决策表统一裁决。（act/lib/provenance.py；tests/test_provenance.py）
@@ -62,6 +62,22 @@
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
     pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账；§47 瞬时重试/
     解析降级卡/loop_health）
+12. **审批边界**（**修宪，2026-09-02，P6 / owner 决策 D7·D8·D9·D12**）：人对每张卡
+    的审批位置默认在**起点**（批准才派发；hand lane 的免批见 §51）。**唯一例外**
+    是 §65 自我改进通道，且只对「sources 全部是写死的 `self_improve` 渠道 ∧
+    `target_repo` 的 realpath 就是本仓库」的卡：人从起点审批移到**终点验收**——
+    合并 PR = 验收、关闭 PR = 拒绝。代价由**确定性后盾**而非 prompt 承担：①交付
+    只能是草稿 PR，做完后 actd 用 `gh` 物理核验（存在 / OPEN / head≠main /
+    base=main / draft / diff 非空），不过即带原因停在待验收；②会话零 MCP 出网
+    （`--strict-mcp-config --mcp-config {"mcpServers":{}}`，声明 `needs_mcp`
+    的卡只能走 owner 亲批）；③**受保护路径墙**——PR 触碰 `act/lib/policy.py`、
+    `act/lib/self_improve.py`、`act/llm.py`、`.github/workflows/`、`install.sh`、
+    `scripts/auto-deploy.sh` 任一即打 `needs-owner-eyes` 标签并暂停整条通道，直到
+    owner 处理该 PR 或亲手恢复；④守护进程跑的是 main 的 checkout，main 受 ruleset
+    保护（PR-only + required checks，§56），分支上改走自己的墙没有运行时效果。
+    其它一切 lane、其它一切仓库的审批位置不变；「验收 = 用户专属」的权限墙不动
+    ——GitHub 上的合并就是 owner 的点击，actd 只是 relay。（§51 第二条 lane；
+    §65；tests/test_policy_self_improve_lane.py、test_self_improve_*.py）
 
 ## 1. 注册表（卡片账本）— 真源与字段
 
@@ -80,11 +96,13 @@ YAML 载体：一条需求一个文件。状态机：
 
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
 
+**2026-09-02 追记（§65，add-only optional 字段 `needs_mcp`，bool，默认 false 整键省略）**：卡显式声明本次执行需要 MCP（Slack/Gmail 等外部工具）。它只会让卡**更不自主**——`self_improve` lane 见到即拒（`self_improve:needs_mcp`，只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开；对其它出身的卡无任何效果。producer / owner 写，LLM 不写。
+
 **v0.48.15 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.15 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
 
 **§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
 
-**§65 追记（add-only optional 字段）**：`merged_from`（list[str]，每日整理合成卡上的来源卡主键列表——`merged_into` 的反向指针；lineage 只指主键；非合成卡整键省略。词表同步：`registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py）。
+**§70 追记（add-only optional 字段）**：`merged_from`（list[str]，每日整理合成卡上的来源卡主键列表——`merged_into` 的反向指针；lineage 只指主键；非合成卡整键省略。词表同步：`registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py）。
 
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
@@ -109,6 +127,7 @@ YAML 载体：一条需求一个文件。状态机：
 }
 ```
 - `show_cost` = cost_usd 是否 ≥ config.show_cost_above_usd（<$5 时 false，app 不显示成本）
+- **投影 golden（P3a）**：`tests/test_dashboard_golden_projection.py` 以 `tests/fixtures/dashboard_golden.json` 逐字节钉住 `build_dashboard` 对一组走遍全部 lane 分支的 fixture 的输出（含每行的键序——Swift/web 解码器按它写成）。任何 wire 变化（新键、改序、改值形）必须同 PR 用 `REGEN_DASHBOARD_GOLDEN=1` 重铸 golden 并在本节落字；golden 变了而本节没动 = 审查 blocker。
 - running/needs_input/completed 由 actd 把注册表中 status=executing 的项与 `claude agents --json` 按 session_id join 得到（**§46.3 追记**：needs_input 另收 auto-resume 已放弃且会话已死的 executing 降级卡，行带 add-only `resume_exhausted: true`。**v0.48.8 修订（#119，需输入退役）**：以上两条会话来源全部退役——受阻（roster blocked 且无待注入 briefing/steer）与放弃救活的 executing 卡由 reconcile 按 stop_to_review 收割路径直接落 review（§46.3 v0.48.8 块）；`needs_input[]` 键 add-only 恒在，唯一住户 = §4 派发刹车行（下方 v0.48.4 块）。）
 - debt = status=detected 的项
 
@@ -139,9 +158,13 @@ YAML 载体：一条需求一个文件。状态机：
 
 **§64 新增（issue #128 AI 摘要 + 完成度评语的投影面，add-only optional）**：`review[]` 与 `completed[]` 行加 `assessment: {summary(str|null), verdict(str|null), verdict_reason(str|null), at(epoch int|null)}`——**只在卡上有摘要或评语、且其 `source_hash` 与卡当前内容指纹一致时整键出现**（失败标记 / 未评 / 内容已变而判官未归 = 整键不存在，客户端不得拿空壳或旧话去猜）；`verdict` 词表 = `建议验收`｜`需继续做`｜`需要拍板`（`act/lib/card_summary.VERDICTS` 单源，web `VerdictChip.VERDICTS` 逐字镜像；词表外的值 server 端归 null，客户端对未知值按原文中性渲染——开放枚举）。`source_hash` / `error` **不上 wire**。客户端只渲染：评语章点看理由、摘要一句上卡面；验收 / 打回按钮语义零变化（§64.6）。
 
-**§65 新增顶层 optional 字段 `maintenance`（每日自我改进循环的投影面；§2 兄弟字段，同 `deploy_state` 的加法约定）**：`act/lib/daily_loop.attach` 由 `build_dashboard` 调用，读 `state/daily_loop.json`；文件不存在（循环从未跑过）= **整键不存在**。形状（时间全是 **epoch int 或 null**，§2 惯例）：`{"phase": "idle|dedup|stale_sweep|proposals", "started_at", "last_run_at", "next_run_at", "last_result": {"merged", "trashed", "proposals", "summaries", "errors"}}`——`phase` 开放枚举（客户端对未知值按「在跑」显示）；`last_result` 五个计数恒在（缺失按 0）。web `MaintenanceBanner` 据此显示「正在整理看板…」（phase ≠ idle 且 started_at 在 2 h 内）或「今日整理：合并 N、清理 M（可撤销）、提案 K」（last_run_at 落在本地今天且三数非全零）；**不弹系统通知**（D10 设计判断）。syncd 变更闸门**不**把它视为易变键：它一天只变三次。
+**§70 新增顶层 optional 字段 `maintenance`（每日自我改进循环的投影面；§2 兄弟字段，同 `deploy_state` 的加法约定）**：`act/lib/daily_loop.attach` 由 `build_dashboard` 调用，读 `state/daily_loop.json`；文件不存在（循环从未跑过）= **整键不存在**。形状（时间全是 **epoch int 或 null**，§2 惯例）：`{"phase": "idle|dedup|stale_sweep|proposals", "started_at", "last_run_at", "next_run_at", "last_result": {"merged", "trashed", "proposals", "summaries", "errors"}}`——`phase` 开放枚举（客户端对未知值按「在跑」显示）；`last_result` 五个计数恒在（缺失按 0）。web `MaintenanceBanner` 据此显示「正在整理看板…」（phase ≠ idle 且 started_at 在 2 h 内）或「今日整理：合并 N、清理 M（可撤销）、提案 K」（last_run_at 落在本地今天且三数非全零）；**不弹系统通知**（D10 设计判断）。syncd 变更闸门**不**把它视为易变键：它一天只变三次。
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
+
+**2026-09-02 新增（§65 自动草稿 PR 通道的投影面，全部 add-only optional）**：
+- `review[]` 行加 `delivery`（object，仅 self_improve 卡携带 = `execution.delivery` 原样：`verified`(bool) / `reason`(str|null，词表见 §65.3) / `branch` / `pr_number` / `pr_url` / `pr_draft` / `pr_state` / `base` / `head_sha` / `changed_files`(int) / `sensitive_paths`([str]) / `checked_at` / `label`?）；核验未过的行同时带既有的 `interrupted: true`（`interrupted_reason` 词表加值 `delivery_unverified`），detect_transitions 因此不发「AI 已交付草稿」（`on_harvest` 已发 `msg_self_improve_unverified`）。web 渲染 PR 章（通过 = 绿章链接 `PR #n · draft`；未过 = 红章 `PR 未核验：<reason>`）。
+- 顶层 `self_improve`（object，**恒在**，§2 兄弟字段同 `deploy_state` 的加法约定）：`{enabled, paused, paused_reason, paused_pr, paused_pr_url, paused_paths[], paused_at}`——通道开关 + 敏感路径护栏的暂停状态（`state/self_improve/lane.json` 的低频子集；巡检时间戳一类高频值**不**进看板，免触发 syncd 板快照上传）。web 顶部横幅 `SelfImproveBanner` 在 `paused` 时说话并给「恢复通道」（`POST /api/self-improve/resume`）。
 
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
@@ -162,6 +185,8 @@ approved 的需求：
 3. 记录 `execution.session_id`（从派发输出或 `claude agents --json` 最新匹配 cwd 取）+ dispatched_at + log 路径；status → executing。
 
 **v0.48.15 追记（§60.4）**：prompt 头 `# Requirement <编号>: <title>`、bg 会话名（`executor.session_name`，claude 用它派生 worktree/分支名）、派发日志文件名 `state/logs/<编号>.log` 与首行 `# dispatch <编号> (<主键>) @ …` 中的「编号」= `registry.display_id(req)`（工作编号；派发必在 approved 之后所以恒有，存量 legacy 卡回落主键）。日志路径持久化在 `execution.log`，读方不依赖文件名口径。analytics 事件的 `req=` 仍记主键（稳定键）。
+
+**2026-09-02 追记（§65.2 出网封锁）**：sources 全为 `self_improve` 且未声明 `needs_mcp` 的卡，**四个发射点**（dispatch / resume / rework / brief，共用 `executor._bg_base_cmd(cfg, req)`）的 argv 在模型旗标之后、`--name` 之前追加 `llm.NO_MCP_ARGV` = `--strict-mcp-config --mcp-config {"mcpServers":{}}`——用户级 Slack/Gmail MCP 对该会话不存在（resume/rework 同样带，派发关掉的面永不被复活）；其它卡 argv 逐字节不变（`llm.dispatch_argv(cfg, no_mcp=False)` 默认）。prompt 多一段 `## SELF-IMPROVE LANE`（分支名 / 只准草稿 PR / 受保护路径清单 / 无 MCP / 不发 PR 评论），`execution.self_improve = {branch, egress: "none"|"mcp", lane: bool}` 随成功派发落账。判例 tests/test_self_improve_argv.py。
 
 ### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
 
@@ -282,7 +307,7 @@ debt item 新增 `summary`（同上，大白话）。
 - dashboard 新增区 `trash`（+ `counts.trash`）：每项 `{id, title, summary, kind:"suggestion"|"debt", trashed_at, trash_reason, permanent, type, hardness}`。
 - app 回收站区（默认折叠）：带**搜索框**（客户端过滤 title/summary）；每行按钮 **「恢复」**(→inbox `{action:"restore"}` 回到 prev_status) 和 **「永久保存」**(→inbox `{action:"pin"}` 设 permanent=true)。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
-- **§65 追记（add-only；`trash_reason` 词表扩展 + 分级保留期）**：每日整理循环（actd 内运行，system actor）写两族新 reason——`daily-merge: 并入 <new id>`（同题多卡合成一张新卡后，旧卡进回收站；新卡主键在 reason 里，新卡 `merged_from[]` 反向列出旧卡）与 `stale:<rule>`（rule ∈ `deadline_passed` / `diagnostic_expired` / `superseded` / `idle`，词表见 §65.2）。两族卡 **`prev_status` 完整、restore 语义不变**；保留期改由 `maintenance.retention_days(req, cfg)` 按卡判决：这两族 = `daily_loop.trash_retention_days`（默认 **90**——owner 没亲眼看过它们进回收站，比手动 trash 的 60 天更长），其余 = `trash.retention_days`；`trash.retention_days <= 0` 仍是总开关（关掉后循环卡也不清）。`actd.purge_trash` 与 §40.5 `purge_at` 投影经**同一个**判决（`maintenance.purge_due` / `maintenance.purge_at`），倒计时永不许诺一次不会发生的删除。存量的 ~40 张 owner 手动 trash 的卡不受本条影响（它们按 owner 自己设的 60 天走）；想留作参考请在回收站页对每张按「永久保存」（pin），或临时抬高 `trash.retention_days`。
+- **§70 追记（add-only；`trash_reason` 词表扩展 + 分级保留期）**：每日整理循环（actd 内运行，system actor）写两族新 reason——`daily-merge: 并入 <new id>`（同题多卡合成一张新卡后，旧卡进回收站；新卡主键在 reason 里，新卡 `merged_from[]` 反向列出旧卡）与 `stale:<rule>`（rule ∈ `deadline_passed` / `diagnostic_expired` / `superseded` / `idle`，词表见 §70.2）。两族卡 **`prev_status` 完整、restore 语义不变**；保留期改由 `maintenance.retention_days(req, cfg)` 按卡判决：这两族 = `daily_loop.trash_retention_days`（默认 **90**——owner 没亲眼看过它们进回收站，比手动 trash 的 60 天更长），其余 = `trash.retention_days`；`trash.retention_days <= 0` 仍是总开关（关掉后循环卡也不清）。`actd.purge_trash` 与 §40.5 `purge_at` 投影经**同一个**判决（`maintenance.purge_due` / `maintenance.purge_at`），倒计时永不许诺一次不会发生的删除。存量的 ~40 张 owner 手动 trash 的卡不受本条影响（它们按 owner 自己设的 60 天走）；想留作参考请在回收站页对每张按「永久保存」（pin），或临时抬高 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
 `approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
@@ -377,7 +402,7 @@ mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test
 2) **录制与 ingest**：启动/退出 Screenpipe（open -a / osascript quit）、"立即导出"（跑 ingest/screenpipe-export.sh）、"立即 ingest"（跑 process 脚本）、显示最近一次导出/ingest 时间（读 log mtime）。
 3) **设置**：写 `state/settings_overrides.json`（app 只写这个文件；config.load_config() 最后合并 overrides，优先级最高）。字段：obsidian_raw、slack_token_path、gmail address/密码路径、成本双阈值、trash 保留天数、界面语言(zh/en，先存值)、feature flags 开关。
    - **v0.13 追加（add-only）**：`telemetry.enabled`（bool）——首启权限页「匿名使用统计」复选框取消勾选时写嵌套形式 `{"telemetry": {"enabled": false}}`；重新勾选**删除**该 override 键（回落产品默认）。Python 侧 `_apply_settings_overrides` 同时接受嵌套与扁平 `"telemetry.enabled"` 两种形式，且**只认 enabled / level 两个子键**（level 见下方「Telemetry 覆写」补充）——`telemetry.supabase_url` / `telemetry.key_path` 仅 config.yaml 可设，overrides 里出现一律忽略。
-   - **v0.13 追加（add-only，consent 门标记）**：「权限体检」页首次**展示**「匿名使用统计」块时，App 写标记文件 `state/telemetry_consent_shown`（内容 = 首次展示的 UTC 时间戳；含义仅是「披露界面出现过」，与勾选结果无关——开关语义仍由上行 `telemetry.enabled` 承担）。`act/lib/analytics_sync` 上传前要求 该标记 / config.yaml `telemetry:` 块 / overrides 的 telemetry 键 至少存在其一，否则整轮 no-op（堵住 install.sh 先装 cron、consent 界面尚未出现过的上传窗口；docs/TELEMETRY.md「上传何时发生」）。
+   - **v0.13 追加（add-only，consent 门标记）**：「权限体检」页首次**展示**「匿名使用统计」块时，App 写标记文件 `state/telemetry_consent_shown`（内容 = 首次展示的 UTC 时间戳；含义仅是「披露界面出现过」，与勾选结果无关——开关语义仍由上行 `telemetry.enabled` 承担）。`act/lib/telemetry_upload` 上传前要求 该标记 / config.yaml `telemetry:` 块 / overrides 的 telemetry 键 至少存在其一，否则整轮 no-op（堵住 install.sh 先装 cron、consent 界面尚未出现过的上传窗口；docs/TELEMETRY.md「上传何时发生」）。**墓碑（P3a，防腐 #9）**：上传器此前叫 `act/lib/analytics_sync.py`，与入口 `act/analytics_sync.py` 同 basename——库侧按 object 改名 `telemetry_upload`；入口模块、cron 行 `python -m act.analytics_sync --once`、`state/analytics_sync.json` 游标与 `.log` 文件名**不变**（slug `analytics_sync` 归入口）。
    - **v0.14 追加（add-only，execution 三键 + 保存语义）**：overrides 允许列表（`act/lib/config.py` `_OVERRIDE_FIELDS`）新增三个扁平键，语义与 config.yaml `execution:` 块同名键逐字一致：`default_target_repo`（str，批准卡片的默认执行目录）、`skip_permissions`（bool，claude --bg 是否带 `--dangerously-skip-permissions`）、`create_github_repo`（bool，是否允许自动创建 GitHub 仓库）。**保存语义（app 写入方约束，读取方不变）**：设置页自 v0.14 起改动即持久化（无全局保存按钮），且对每个键 **diff-write**——新值与「不含该 override 的 effective 值」（config.yaml → 内置默认）相同时**删除**该键，不同才写入；app 永不整节镜像写入未被用户改动的键。读取方（`_apply_settings_overrides`）语义不变：键在则覆盖，键缺省则回落 config.yaml/默认。另：v0.14 起「待审批」列的**显示名**改为「提案 / Proposals」（W8）——纯 L() 文案改动，`needs_approval` / `card_sent` 等内部键与本契约各节原文不变。
 4) **关于**：版本、repo 路径、`python -m act.report` 提示。
 
@@ -393,7 +418,7 @@ mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test
 - **Telemetry 覆写（add-only 补充，docs/TELEMETRY.md）**：设置页「产品改进计划」区写嵌套形式 `{"telemetry": {"enabled": …, "level": …}}`（与首启权限页同一 override 键；扁平 `"telemetry.enabled"` / `"telemetry.level"` 两个点号键 Python 侧同样接受），`config.load_config()` 最后合并（优先级最高，覆盖 config.yaml `telemetry:` 块）：
   - `enabled`（Bool）——匿名使用统计上传总开关。**默认 true（默认开 + 明确可关）**。
   - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。**v0.18 修订（见下条 capture_input 追加）**：detailed 单独不再附带任何内容字段——内容一律再要求 capture_input，本行仅作历史语义记录。
-  - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `sanitize._SECRET_PATTERNS` 掩码，独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。**（v0.48 修订见下条：capture_input 默认已翻转为 false/opt-in、v2 标记不再单独作为内容同意来源——本条中与此冲突的默认值与文案要求表述仅作历史语义记录。）**
+  - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `secret_patterns.SECRET_PATTERNS` 掩码（P3a 起模式表单独住 `act/lib/secret_patterns.py`——analytics 与 sanitize 此前互相 import 这张表构成环，共享件下沉一层后两边都只向下依赖），独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。**（v0.48 修订见下条：capture_input 默认已翻转为 false/opt-in、v2 标记不再单独作为内容同意来源——本条中与此冲突的默认值与文案要求表述仅作历史语义记录。）**
   - **v0.48 修订（capture_input 默认翻转为 opt-in）**：`capture_input` 的内置默认由 true 改为 **false**——**输入文本上传自此严格 opt-in**（键形状、允许列表、双开关语义、字段表、红线与密钥掩码均不变；`telemetry.enabled` / `level` 的默认与语义不动）。开启的三个等效入口（全部落**显式**键，即 `Config.telemetry_capture_input_explicit`）：①首启「权限体检 / 设置向导」披露块（TelemetryBlockView）新增**默认未勾选**的复选框「分享输入文本以帮助改进产品 / Share typed text to improve the product」，勾选即写嵌套 override `{"telemetry": {"capture_input": true}}`（取消勾选写 false——切动过即为知情选择，同设置页 captureTouched 语义）；②设置页「上传我输入的文本」开关（原语义不变）；③config.yaml `telemetry.capture_input: true`。**consent 语义收紧**：内容收集的同意来源自此**只认显式 capture_input 键**——v0.18 的 v2 标记 `state/telemetry_consent_shown_v2` 继续在披露块渲染时写入（仅作「披露展示过」的记录），但其单独存在**不再**打开内容门（看到披露 ≠ 同意；`analytics.content_gate` / Swift `Telemetry.contentCaptureActive` 同步收紧，测试锁死）。从 v0.18–v0.47 升级且从未显式落键的安装：行为遥测照旧，内容上传自动停止，直到用户勾选/开启一次。首启披露文案同步修订为诚实的 opt-in 表述（行为统计默认开、仅元数据；输入文本默认不传），v0.18 的「因默认收集输入文本，文案必须明说包含」要求随默认翻转失效，替换为「文案不得声称输入文本默认上传」（tests/test_telemetry_level.py honesty drift-guard 同步改判）。v1 标记 `telemetry_consent_shown` 与 analytics_sync 的上传 consent 门（本节 v0.13 条）语义完全不变。
   - **issue #37 追记（add-only，两条收紧）**：①**consent 标记只在披露块实际可见时写**——v1 `telemetry_consent_shown` 与 v2 `telemetry_consent_shown_v2` 的写入时机从「披露块插入视图树（`.onAppear`）」收紧为「披露块**进入视口**」：权限体检页与设置向导第 3 步都是 ScrollView 里的非 lazy VStack，480 pt 最小窗高下披露块可能在折线之下就被 `.onAppear` 记成「已展示」。原生宿主 `TelemetryBlockView` 经 `ConsentVisibilityProbe`（背景里一枚 AppKit 探针：`NSView.visibleRect` 对 clip view 感知，块的 ≥50% 进入滚动视口才写；窗口挂接 / layout / 每次滚动都复核，只触发一次；**macOS 14+ 同一条路径，无插入即写的回落**——#158 审查指出 macOS 15 API 的回落分支仍会在折线下写）落地；**任何后继宿主（web 设置页的 telemetry 节，P4）沿用同一条：披露文案可见（IntersectionObserver）才请求 server 落标记，永不在挂载时写**。标记语义（「披露界面出现过」、v2 不作内容同意）不变。②**失败类事件只上传分类 id**：`dispatch_failed` / `rework_failed` / `stop_failed` / `telemetry_sync` 的 `error` 自由文本字段退役（永不以同义复活），改为 §25 `failure_id`（`failures.classify`，无法分类整键缺席）；`telemetry_sync` / `radar_message_failed` 另带异常**类名** `error_type`；`capture_receipt_failed` 的 Slack 枚举码改名 `slack_error` 且只收 `^[a-z0-9_]+$` 形状。原文一律只进本机台账。执法 = `tests/test_telemetry_no_raw_error.py`（行为判例 + AST privacy lint：`act/` `server/` 下 `log_event`/`log_first` 带 `error=` 即红）；字段表见 docs/TELEMETRY.md。
 
@@ -417,7 +442,7 @@ mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test
 - **写入面**：只写既有的 §15.3 overrides 键（`language`、`obsidian_raw`——均在 `_OVERRIDE_FIELDS` 允许列表内，且仅在与当前生效值不同时 diff-write）与 §19 的 `config/secrets/anthropic-api-key.txt`（粘贴 key 经 api.anthropic.com/v1/models 免费探针验证通过后才落盘，0600）。笔记库步骤会在所选根目录下创建 4 个标准管线子目录（与 config.py `_derive_obsidian_dirs` 同名，幂等 mkdir）。
 - **App 侧附带职责（同 v0.13 iMessage 区先例，不新增契约字段）**：健康检查页的「启动后台服务」按钮按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.actd.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`；「立即生成一次」经 runtime python（§19 指针）跑 `python -m act.lib.dashboard` 补种 dashboard.json。
 
-**v0.19.0 补充（板级诊断卡 + obsidian 雷达健康，add-only）**：`state/radar_health.json`（契约 E）新增来源键 `obsidian`（同 gmail/slack 形），由 `act/radar.py` 写入，且**仅在 cron ingest chain**（`AIASSISTANT_CRON=1`，install.sh 的 `*/30` 链）语境下写——`radar._owns_health()` 门控，保证退役/被 TCC 挡住的 launchd 语境或手动 `python -m act.radar` 永不能用假的空 vault 覆盖 cron 的好健康。每条 entry 另可携带**可选** `last_cards: int`（add-only；仅 obsidian 在 `ok` pass 写，= 上次成功抓到的卡数；旧 reader 忽略，Swift 侧 `as? Int` 解）。obsidian 的 `skip_reason` 词表：`disabled` / `vault_missing`（目录未配或不存在）/ `vault_empty`（目录在但零 `.md`）/ `no_api_key`（提取失败且无可解析 Anthropic key）/ `extract_failed`（`claude -p` 对 ≥1 note 失败）；扫过但没有比 marker 更新的 note = `ok=True, last_cards=0`，**不是** skip。radar_slack 健康 `skip_reason` 词表增补 `mcp_not_configured`（fallback 开、无 token、claude CLI 无 Slack MCP；`claude mcp list` 预检，缓存 `state/slack_mcp_present.marker` 30 min），语义区别于 transient 的 `mcp_failed:`。App 侧据此在任务台/popover 合成 `DiagnosticsStrip` 诊断卡（`mac/Sources/Diagnostics.swift`，Swift 侧合成，**不新增 dashboard.json partition**）：每张卡一句大白话问题 + 一个直达修复的主按钮，只显示用户已配置却在静默失败的路径，可 dismiss，修好即消失。canonical entry shape 见 `act/lib/health.py` docstring。
+**v0.19.0 补充（板级诊断卡 + obsidian 雷达健康，add-only）**：`state/radar_health.json`（契约 E）新增来源键 `obsidian`（同 gmail/slack 形），由 `act/radar.py` 写入，且**仅在 cron ingest chain**（`AIASSISTANT_CRON=1`，install.sh 的 `*/30` 链）语境下写——`radar._owns_health()` 门控，保证退役/被 TCC 挡住的 launchd 语境或手动 `python -m act.radar` 永不能用假的空 vault 覆盖 cron 的好健康。每条 entry 另可携带**可选** `last_cards: int`（add-only；仅 obsidian 在 `ok` pass 写，= 上次成功抓到的卡数；旧 reader 忽略，Swift 侧 `as? Int` 解）。obsidian 的 `skip_reason` 词表：`disabled` / `vault_missing`（目录未配或不存在）/ `vault_empty`（目录在但零 `.md`）/ `no_api_key`（提取失败且无可解析 Anthropic key）/ `extract_failed`（`claude -p` 对 ≥1 note 失败）；扫过但没有比 marker 更新的 note = `ok=True, last_cards=0`，**不是** skip。radar_slack 健康 `skip_reason` 词表增补 `mcp_not_configured`（fallback 开、无 token、claude CLI 无 Slack MCP；`claude mcp list` 预检，缓存 `state/slack_mcp_present.marker` 30 min），语义区别于 transient 的 `mcp_failed:`。App 侧据此在任务台/popover 合成 `DiagnosticsStrip` 诊断卡（`mac/Sources/Diagnostics.swift`，Swift 侧合成，**不新增 dashboard.json partition**）：每张卡一句大白话问题 + 一个直达修复的主按钮，只显示用户已配置却在静默失败的路径，可 dismiss，修好即消失。canonical entry shape 见 `act/lib/radar_health.py` docstring。**墓碑（P3a，防腐 #9）**：该模块此前叫 `act/lib/health.py`，与 `server/health.py`（§47.4 `/api/health`）同 basename 跨目录——按 object 改名 `radar_health`（与 `state/radar_health.json` / `load_radar_health()` 同一 slug），行为零变化。
 
 **v0.19 追加（add-only，生命周期里程碑遥测,docs/TELEMETRY.md）**:新增 5 个**每装机至多一条**的里程碑事件,喂 `scripts/insights_report.py` 的激活漏斗。产出统一走**去重一次**写法——App 侧 `Analytics.firstReach(feature)`(UserDefaults 标记,`mac/Sources/Utils.swift`,事件 `feature_first_reach{feature}`)、daemon 侧 `analytics.log_first(event, **fields)`(标记文件 `state/analytics/first/<event>`,emit-then-mark、never raises)。App 端:`feature_first_reach{feature:"app_launch"}`(首启)、`feature_first_reach{feature:"ingest_configured"}`(首个 ingest 源可用)。daemon 端:`milestone_first_card{req}`(`registry.save()` 单一 choke,首张进 card_sent lane)、`milestone_first_approval{req}`(actd approve 分支)、`milestone_first_delivery{req}`(executor dispatch 成功)。全部**仅行为字段**(`req`=需求 id / 计数),绝不含卡片标题/链接/摘要等内容,沿用既有 `analytics.content_gate` 隐私边界,无 schema 迁移(走既有 `event`/`props` 列)。报告侧另派生 retention(按 `client_ts`)与 abandonment 两视图,**不新增事件**,只输出聚合计数/比例,device id 永不外泄;跨所有装机的匿名 device 合并计,per-tenant 区分标记暂缓。
 
@@ -441,7 +466,22 @@ silently ignored」跳过）。**写入方自此多一个**：web 设置页经 `
 ——与 Mac app 写其它键的方式同款；两个写者写不同的键，互不覆盖（server 读改写
 整份文件时保留其余键原样）。
 
-**§15 §65 追记（add-only，每日循环旋钮）**：overrides 允许列表新增五个扁平键 `daily_loop_enabled`（bool）/ `daily_loop_time`（本地 `HH:MM`，`3:30` 归一为 `03:30`）/ `daily_loop_max_proposals_per_day` / `daily_loop_stale_days` / `daily_loop_trash_retention_days`（非负 int；负数/bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `daily_loop.*` 逐字一致（yaml 路径宽容：坏值回默认、负数按 0）。写入方 = web 设置页「每日整理」经 `PUT /api/settings/daily-loop`（server/settings.py，diff-write 同 §59 模型旋钮）。actd **每 pass 现读**这五个字段到启动冻结的 cfg 上（`_refresh_model_knobs`——§59 两把模型旋钮的同一刷新点，`daily_loop.LIVE_KNOBS`），保存后下一个 pass 生效、无需重启。
+**§15 v0.48.x 追记（add-only，§68：设置页整体搬到 web，server 是 overrides 的 web 侧写者）**：
+原生 Settings.swift 的 20 个区在 web 设置页（`?page=settings`）的落点见 §68.1；凡是
+「一把旋钮 = overrides 一个键」的区由 **server-owned 目录** `server/settings_catalog.py`
+驱动（`GET /api/settings`），写入经 `PUT /api/settings/{section}`，**保存语义与 v0.14
+diff-write 逐字同款**（等于「不含该 override 的 effective 值」= 删键；nested 拼法
+`telemetry` / `features` 写嵌套形并清掉同义扁平点号键；`telemetry.capture_input`
+按 v0.18 ④ 「切动过即知情选择」始终落键）。允许列表 = `_OVERRIDE_FIELDS` ∪ telemetry
+三子键 ∪ features 块（判例 tests/test_server_settings_catalog.py 钉住每个键在管线
+真读的名单里、默认值与 Config 数据类逐字一致）。壳（shell/）**仍不写 overrides**；
+录制模式与字幕偏好是壳 UserDefaults，经 §61 桥改（`setRecording` / `setCaptionPrefs`）。
+凭证行（§19 三把 + 字幕两把）经 `PUT /api/secrets/{name}`（0600，值 write-only）。
+本条起 §15.3 的写者是两个：server（web 设置页）与冻结中的 Mac app；退役后只剩 server。
+「菜单栏」区（`showMenuBarIcon` / `showRecordingIcon`）随 D3 Dock-only 决策**删除**，
+无 web 落点；这两个 UserDefaults 键成为无读者的历史键。
+
+**§15 §70 追记（add-only，每日循环旋钮）**：overrides 允许列表新增五个扁平键 `daily_loop_enabled`（bool）/ `daily_loop_time`（本地 `HH:MM`，`3:30` 归一为 `03:30`）/ `daily_loop_max_proposals_per_day` / `daily_loop_stale_days` / `daily_loop_trash_retention_days`（非负 int；负数/bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `daily_loop.*` 逐字一致（yaml 路径宽容：坏值回默认、负数按 0）。写入方 = web 设置页「每日整理」经 `PUT /api/settings/daily-loop`（server/settings.py，diff-write 同 §59 模型旋钮）。actd **每 pass 现读**这五个字段到启动冻结的 cfg 上（`_refresh_model_knobs`——§59 两把模型旋钮的同一刷新点，`daily_loop.LIVE_KNOBS`），保存后下一个 pass 生效、无需重启。
 
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
@@ -486,7 +526,7 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
   对同一份文件必须给出同一个 gate 答案，Python `_apply_settings_overrides`
   与 Swift 同序）——两个写者共用同一份
   `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
-  `act.analytics_sync.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
+  `act.lib.telemetry_upload.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
   gate**（skipped="analytics_off"；防 TOCTOU——run 中途关掉 flag，余下积压
   立即停送，已送 batch 的游标保留不回滚。重查走
   `analytics.feature_gate_fresh()`：不吃 GATE_TTL 进程内缓存——那缓存是给
@@ -801,8 +841,10 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - **v0.48.18 追记（add-only，§56.5 `ui` 步）**：新 step `ui` = 看板 UI 的构建与安装（web/dist + shell app），`ok | skipped | skipped_tcc | fail`——`skipped` = 工具链缺席（node+npm / swiftc）或 `.pkg` 模式，`skipped_tcc` = node 在 launchd 会话里被 TCC 拒（EPERM）、web 半没重建（doctor `board ui build` 行负责可见性），`fail` = 构建/安装真的坏了；`detail` 形如 `web ok (npm ci 12s, build 31s); shell ok (9s → /Applications/Zelin AI Board.app); 52s total`（两半独立、各带耗时）。**`ui=fail` 进 `failed_deploy_steps` 的退出码（回滚判据），`ui=skipped` / `ui=skipped_tcc` 不进**——与 `app` 例外不同：UI 是产品本体，构建坏了就是坏版本；TCC 拒绝则是环境，回滚治不了。另一新 step `board_server_port`（只在 warn 时出现）= 加载 `com.zelin.aiassistant.server` 之前端口上已有非 launchd 的 server 在答话（§54.2 端口互斥）。判例 `tests/test_install_ui_step.py`。
 - **2026-09-02 追记（§54 名字互换）**：`ui` 步 detail 里壳的路径改为 `/Applications/Zelin's AI Assistant.app`；本轮把旧 app 搬去 `(old)` 时 shell 半 detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（add-only，只在真搬了时出现）。
 - **2026-09-02 追记（add-only，§55 第五幕）**：新 step `stable_claude` = claude 稳定副本（`~/Library/Application Support/ZelinAIAssistant/bin/claude`，完全磁盘访问的授权对象）的维护结果：`ok:created|refreshed|unchanged: <path> (<version>)`；`warn:<原因>`（来源无有效 Apple 签名 / 复制失败 / 副本跑不了 `--version`——一律保留原有副本）；`skipped:<原因>`（非 macOS、没有 claude 可复制）。**永不 `fail`**：与 `cron=skipped_tcc` 同理，环境问题不进 `failed_deploy_steps`。判例 `tests/test_install_stable_claude.py`。
+- **v0.48.x 追记（add-only，§67 `skills` 步）**：新 step `skills` = install.sh 步 3b `install_skills`（跑 `scripts/skills_sync.sh`，把 `default_enabled` 的商店 skill 链进 `~/.claude/skills`、重指陈旧链接、尊重 `state/skills.json` 的决策），`ok | skipped | warn | fail`——`ok` 的 detail 是商店的一行摘要（`enabled 2 (board-agent, test-code) · actions: …`）；`skipped` = 无守护解释器 / 脚本缺席；**`fail` 只对 exit 3（`skills/index.yaml` 坏——仓库坏了，进 `failed_deploy_steps`）**；其余非零 = `warn:exit N — <stderr 尾行>`，不进退出码（环境问题回滚治不了，§56.5）。判例 `tests/test_install_skills_step.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
+- **§69 追记（add-only；`install.sh --no-launchd`，CI 验收与 bootstrap 干跑用）**：`launchd` step 记 `skipped`，detail **以字面 `--no-launchd` 开头**（`--no-launchd: no agent loaded; one actd pass run instead`）——这个字面是 doctor `--fresh-install`（`act/lib/fresh_install.report_says_no_launchd`）判定「调度器是按要求没接、不是坏了」的唯一依据，改文案先改读者；`cron` step 同样 `skipped`（`--no-launchd: crontab not touched`，crontab 一字不读不写）；新 step **`actd_once`** = 用守护解释器跑一次 `python3 -m act.actd --once`（cwd = repo、`AIASSISTANT_HOME` = repo，首 pass 的 store2 激活 / dashboard / heartbeat 全部真写），`ok:one pass in <n>s with <解释器>` / `fail:… exit <rc>; see ~/Library/Logs/zelin-ai-assistant/actd-once.log` / `skipped:no daemon interpreter`；**`actd_once=fail` 进 `failed_deploy_steps` 的退出码**——一个在这台机器上跑不完一个 pass 的 daemon 到了 launchd 下就是 crash-loop，是真失败步。任何模式都可叠加该 flag；未知 flag = 用法错误 exit 2（在任何副作用之前）。判例 `tests/test_install_no_launchd.py`。
 
 ---
 
@@ -894,6 +936,33 @@ option" 可能来自任务自身文本，绝不匹配。action_id 词表追加 `
   两份安装的比对，`--bg` 探测照跑）；新行 **`stable claude`**（darwin）报副本缺失
   WARN / 跑不了 FAIL / 落后登录 shell 的 Claude Code 一版 WARN / 同版 OK，无新
   failure id。
+
+2026-09-03 追加（add-only；live 事故：v1.0.7 因 `stable claude` 的「新增 FAIL」被自动回滚到
+v1.0.3，而那个 FAIL 只是 owner 还没点的一次授权）：**行的类别 `row_class`**——
+`CheckResult.row_class`（`--json` 同名键，add-only；未分类行为空串），由 failure_id 派生
+（`failures.row_class(id)`，`with_failure` 顺手盖上）：**`owner_action`** = 唯一修法是 owner
+亲手授权或接受（系统设置里的 TCC / 完全磁盘访问开关、终端里一次性接受免责声明），代码改动、
+重装、回滚都治不了它，因此它对「刚合进来的代码好不好」一个字都不说。集合
+`failures.OWNER_ACTION_IDS`（add-only）= `claude_blind · deploy_blind_tcc · cron_fda_blocked ·
+cron_tcc_blocked · ui_build_tcc_blocked · claude_bypass_disclaimer · screen_tcc_lost`；判例钉住
+每个 id 都在目录里、且其 action_id 不是任何一键代码修复（reload / restart / repair / fix_config…）。
+**唯一消费方**是 §56.3 第 10 步的部署判决：这类 FAIL 永不算「新增 FAIL」，doctor 输出里照常是
+FAIL，部署摘要里以「needs owner: <行名>」列出。与 §69 的关系：`fresh_install.HUMAN_FAILURE_IDS`（「要人来办」= 授权 + 凭证 + 装工具）**由
+`OWNER_ACTION_IDS` 派生**（真超集，判例钉住）——新部署后凭证或工具突然丢了是回归，仍进判决。配套（同为 add-only）：**`stable claude` 行的
+FAIL 一分为二**——副本存在、`--version` 失败且输出带 TCC 签名（`claude_bin.looks_blind`：Bun 的
+「possibly due to low max file descriptors」/ `operation not permitted` / `EPERM`，与 `launchd
+claude` 行共用同一条正则 `claude_bin.BLIND_RE`）→ FAIL **`claude_blind`**（owner_action；detail
+说清「副本本身没坏、本会话的 cwd 在受限路径而副本还没拿到授权」，修法「完全磁盘访问加入 <稳定路径>，
+一次即可」）；其它原因（dyld / exec format / 被 Gatekeeper 杀）→ 无 id 的 FAIL（文件真坏了，`bash
+install.sh` 重拷），detail 带失败输出首行作证据。`--version` 失败先隔 `claude_bin.VERSION_RETRY_PAUSE_S`
+（1 s）**重问一次**再判——auto-deploy 在 install.sh 结束数秒后就跑 doctor，install.sh 可能正在 `mv`
+刷新副本；成功的不重问。事故机理：auto-deploy 以 `cd $REPO_ROOT` 在 launchd 会话里跑 doctor，
+`<副本> --version` 的 cwd 落在外置卷上，副本是 install.sh 30 s 前刚 `created` 的（它自己在
+cwd=$HOME 跑的 `--version` 是绿的），FDA 还没授 → 基线 WARN（缺失）变 FAIL（跑不了）→ 三次采样都在
+→ 回滚；几分钟后 owner 在终端里跑同一探针是绿的（终端借出自己的授权）。判例
+`tests/test_failures.py::RowClassTestCase`、`tests/test_doctor.py` `stable claude` 组的 TCC /
+raw EPERM / 重试一次 / 成功不重试 / 坏文件五例 + `launchd claude` 行 row_class 例、
+`tests/integration/test_auto_deploy_script.py` 3c 组。
 
 2026-07-13 追加（add-only）：failure id `engine_ffmpeg_missing`——「屏幕+音频」
 （screen_audio）模式的引擎启动**强制依赖 ffmpeg**，缺失时 screenpipe 自带的
@@ -1007,10 +1076,26 @@ WARN；其他厂商前缀永不算）。**v0.48.11 追加（§59）**：`claude 
 
 **doctor 机器输出**：`python3 -m act.doctor --json [--fast]` →
 `{"home": str, "checks": [{name, status(ok|warn|fail), detail, fix,
-failure_id, action_id}]}`；exit code 仍 = FAIL 数。app 诊断区渲染 non-ok 行：
+failure_id, action_id}]}`；exit code 仍 = FAIL 数。 **§69 追记（add-only）**：第三种形态 `python3 -m act.doctor --fresh-install [--json]`（= `bash install.sh --check --fresh-install`）——同一批行按「wired / human / unwired / broken / notes」五桶分类 + 带本机路径的 `manual_steps[]`，**exit code = broken 桶的行数**（TCC 授权与凭证永不计入）；隐含 `--fast`。分桶目录（failure_id 与行名两张表）住 `act/lib/fresh_install.py`，行名或 failure_id 改名必须同步那两张表。app 诊断区渲染 non-ok 行：
 人话句子（FailureCatalog）+ 对症按钮；raw detail/fix 收进 tooltip 与「完整报告」。
 app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录制模式下死亡）时
 **每次会话自动跑一次** `--fast` 版（零成本，不打真实 claude 调用）。
+
+**doctor 模块布局（P3a 追记，行为零变化；§58 清账）**：探针按家族住
+`act/lib/checks/`（`core` 共享件 / `environment` 工具链·配置·凭证·目录 /
+`launchd` §55 路径纪律与 TCC 三幕 / `services` systemd·Task Scheduler 镜像 /
+`cron` §18 链 + FDA 探针 / `pipeline` store2·dashboard·心跳·看板 server·部署），
+每家族公开 `check_*(probes)`，接收 `act.doctor.Probes`（注入缝，duck-typed——
+lib 永不 import doctor，§58.3）。`act/doctor.py` = `Probes`（缺省探针实现）+
+§59 两行模型旋钮（唯一经 `act/llm.py` 的行，lib 层不可达）+ 逐行 `_check_*`
+同名包装（`diagnostic crashed` 行名与判例都从它派生）+ 按 OS 组合 + 渲染 +
+`main`；公开面 `run_checks(probes=None, fast=False)` / `render` / `render_json`
+/ `main` 不变，行名、文案、failure_id 逐字不变（判例 tests/test_doctor*.py 零改动通过）。
+本节及 §54/§55 里对 `act/doctor.py _check_<x>` 的指针仍成立（包装存在），实现读
+`act/lib/checks/<家族>.py`。配套公开名（防腐 #2「跨模块不引 `_私名`」）：
+`act.lib.secrets.read_path`（§19 legacy 路径的无警告读取，doctor 的 key 探针用）、
+`act.lib.analytics_sync.resolve_key`（syncd / feedback 复用的上传 key 解析）——旧
+私名保留为模块内别名。
 
 **state/cron_probe.json**（cron FDA 探针 —— cron 链写，doctor/app 读）：
 
@@ -1128,6 +1213,15 @@ overrides 允许列表（`act/lib/config.py` `_OVERRIDE_FIELDS`）新增扁平�
   由 App **只读** `state/update_check.json` 取得——写入方仍然只有
   update_check.py。state 文件字段与 dashboard 投影**均无新增**。
 
+**§26 v0.48.x 追记（add-only，§68.6：关于页搬到 web）**：web 设置页「关于 / 看板 app」
+区同一行四态 + 「立即检查更新」= `POST /api/update/check {}` → server 起
+`python -m act.lib.update_check --force`（stdout 那一行 JSON 原样透出，子进程失败
+`ok:false` + error）；`GET /api/about` 给 `version`（`act.__version__`，§56.1）、
+`update_available`（dashboard 顶层键透传）、`update_check`（缓存的公开子集：
+checked_at / latest / url / pkg_asset_url，**ETag 不外发**）。语义不变：只告知 + 给
+release 页链接，**绝不自动下载执行**；owner 机器上 §56 合并即自动部署，Sparkle 在
+壳里**不落地**（D17 让它对 owner 机器失去意义；非 owner 安装照旧 release 页手动装）。
+
 ---
 
 # v0.14 additions（问问助手：in-app Q&A）
@@ -1237,6 +1331,17 @@ App 设置·通用「任务完成提醒」写入，diff-write：sound=删键）�
 kind==review_ready 的条目**消费即删、不弹**（上文「剩余按 created_at 升序弹出」
 的显式例外），`sound` 档为其附加系统提示音；其余 kind 不受该偏好影响。
 
+**§28 v0.48.x 追记（add-only，§68.13：消费方 = 壳）**：`shell/Sources/NotifyRelay.swift`
+是 `mac/Sources/NotifyRelay.swift` 的搬入副本——**只许两处差异**（文件头、点击目标
+`MainWindowController.shared.show()` → `ShellWindow.show?()` 前置看板窗口），
+stale 600 s / burst 5 / `review_notify` 三档 / 消费即删 / 坏文件 log+删 全部逐字
+不变（判例 tests/test_shell_engine_mirror.py）；壳在 5 s 引擎巡检 tick 里 `drain()`，
+`NotifyRelayDelegate.install()` 于启动时装上。「native 通知需要 App 在跑」的前提自此
+指壳：壳登录自启（`SMAppService`，web 关于区开关，§68.13）在跑即常态。原生 app 与壳
+**同时在跑**的过渡期两个消费者抢同一目录——消费即删让每条只弹一次（谁先扫到谁弹，
+身份 = 先扫到的 app）；`review_notify` 偏好两侧读同一 overrides 键。**手机镜像 §13
+不变。**
+
 
 ## 29. feedback（建议上报）— inbox 动作 + `state/feedback/<uuid>.json` + 上传
 
@@ -1280,7 +1385,7 @@ kind==review_ready 的条目**消费即删、不弹**（上文「剩余按 creat
   `uploaded_at`）、`false` = 已放弃（附 `upload_error` 前 200 字）。
 
 **上传（best-effort）**：复用 telemetry 的 **anon INSERT 通道**（docs/TELEMETRY.md
-/ `act/lib/analytics_sync.py` 约定）：PostgREST `POST {supabase_url}/rest/v1/
+/ `act/lib/telemetry_upload.py` 约定）：PostgREST `POST {supabase_url}/rest/v1/
 analytics_events`，key 解析同序（§19 key 文件 → `telemetry.key_path` → 内置
 publishable key，RLS 仅 INSERT）。**不建新表**——anon 的 INSERT policy 只覆盖
 `analytics_events`，feedback 作为**独立事件类型**落同表：`event="feedback"`、
@@ -2408,7 +2513,7 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
   「已永久保留」；`purge_at` 缺失/null 时不显示倒计时。iOS/webui 没有回收站
   列表面（只有「删除」动作），无处可显示——本节不涉及。
 
-- **§65 追记**：`purge_at` 的天数不再恒等于 `trash.retention_days`——循环自动扔进回收站的卡（`trash_reason` 以 `stale:` / `daily-merge:` 开头）按 `daily_loop.trash_retention_days`（默认 90）算；单点 `act/lib/maintenance.purge_at`，与 `actd.purge_trash` 的 `purge_due` 同源（§9 §65 追记）。
+- **§70 追记**：`purge_at` 的天数不再恒等于 `trash.retention_days`——循环自动扔进回收站的卡（`trash_reason` 以 `stale:` / `daily-merge:` 开头）按 `daily_loop.trash_retention_days`（默认 90）算；单点 `act/lib/maintenance.purge_at`，与 `actd.purge_trash` 的 `purge_due` 同源（§9 §70 追记）。
 
 ### 40.6 通知合批（fresh proposals）
 
@@ -3372,7 +3477,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   不可解析如实报 `parseable:false` 不 500）、`POST /api/claude-code/default-model
   {model}`（四闸；只改 `model` 键、先备份 `settings.json.bak-<UTC ts>`、其余键
   与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §59.4。
-- **§65 追加（每日循环设置面，add-only）**：`GET /api/settings/daily-loop`（五把旋钮的 effective 值 + 每字段 `source` ∈ override|config|default；token-light）、`PUT /api/settings/daily-loop {enabled?, time?, max_proposals_per_day?, stale_days?, trash_retention_days?}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状坏 400 `INVALID_FIELD` 整句人话、diff-write `state/settings_overrides.json` 的 `daily_loop_*` 扁平键；文件不可解析 409 `CONFLICT`）。PUT 路由自此表驱动（`_PUT_JSON_ROUTES`，与 GET/POST 同款）。形状见 §65.5。
+- **§70 追加（每日循环设置面，add-only）**：`GET /api/settings/daily-loop`（五把旋钮的 effective 值 + 每字段 `source` ∈ override|config|default；token-light）、`PUT /api/settings/daily-loop {enabled?, time?, max_proposals_per_day?, stale_days?, trash_retention_days?}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状坏 400 `INVALID_FIELD` 整句人话、diff-write `state/settings_overrides.json` 的 `daily_loop_*` 扁平键；文件不可解析 409 `CONFLICT`）。PUT 路由自此表驱动（`_PUT_JSON_ROUTES`，与 GET/POST 同款）。形状见 §70.5。
 - **v0.48.x 追加（§54 web 看板 parity，add-only）**：`GET /api/lanes`（列说明
   文案的 **server-owned 目录**：`{"lanes":[{slug, help:{zh,en}}…]}`，slug =
   dashboard 分区名，顺序 = 看板从左到右；文案单源 `server/lanes.py`，来源
@@ -3406,6 +3511,36 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   **没有任何控制流读它**，只进投影；key 形状 / 词表外 400）。`PUT` 路由自此表驱动
   （`_PUT_JSON_ROUTES`，与 GET/POST 同款）。inbox 特形动作 `recap_generate` /
   `recap_slack_draft` 见 §63.5。判例：tests/test_server_recaps.py。
+- **v0.48.x 追加（§67 skill 商店，add-only）**：`GET /api/skills`（清单 + 本机每个
+  skill 的状态：enabled / disabled / copy / custom / foreign，token-light）、`POST
+  /api/skills {name, action: enable|disable}`（四闸；= `~/.claude/skills/<name>` 软链接
+  的建/删，写者是 `act/lib/skills.py`；字段白名单 400 `UNKNOWN_FIELD`、形状 400
+  `INVALID_FIELD`、未知 skill 404、自定义/非商店副本 409 `CONFLICT`（`details.code` =
+  `SKILL_CUSTOM_KEEP` / `SKILL_FOREIGN_LINK`）、清单坏 409）。形状见 §67.5。判例：
+  tests/test_server_skills.py。
+- **v0.48.x 追加（§68 legacy-app parity 面，add-only；每条的形状与判例见 §68）**：
+  设置目录 `GET /api/settings`、`GET /api/settings/{section}`、`PUT /api/settings/{section}`
+  （`{key: value}` 子集；四闸）；凭证 `GET /api/secrets`（只报状态）、`PUT
+  /api/secrets/{name} {value}`、`POST /api/secrets/{name}/verify {}`；权限体检
+  `GET /api/permissions[?refresh=1]`；诊断 `GET /api/diagnostics[?refresh=1]`、
+  `GET /api/doctor[?fast=0][&refresh=1]`、`GET /api/logs/{name}[?lines=N]`；首次运行
+  `GET /api/setup`、`POST /api/setup/config-from-example {}`、`POST /api/setup/complete {}`、
+  `POST /api/setup/reset {}`；关于 `GET /api/about`、`POST /api/update/check {}`；
+  只读列表 `GET /api/mcp`、`GET /api/claude-sessions[?window=N]`（Skills 商店 = §67 的
+  `/api/skills`）；看板工具 `POST /api/terminal {card_id}`、`POST /api/repair/actd {}`。
+  GET 面接受 query（`Handler._query`），仍 token-light；POST/PUT 一律 JSON body 四闸。
+  路由表驱动：精确表 + **前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
+  `/api/secrets/`；精确命中先于前缀——`/api/settings/models` / `recap` 走各自模块），
+  新增端点 = 加一行（`server/app.py _lookup`）。
+  所有一次性 `python -m act.*` 子进程走 `server/subproc.py`（`sys.executable`、
+  cwd = repo 根、env `AIASSISTANT_HOME`、超时 + 输出上限、`runner` 注入缝）。
+- **追加（§54.1 第 12 项 显示偏好，add-only）**：`GET /api/settings/display`（三把旋钮
+  `text_size` / `text_weight` / `stroke` 的 effective 值 + 词表 `text_sizes` / `text_weights` /
+  `strokes` + `source`；token-light）、`PUT /api/settings/display {text_size?, text_weight?,
+  stroke?}`（四闸；扁平 override 键 `ui_display_text_size` / `ui_display_text_weight` /
+  `ui_display_stroke` 的 diff-write，语义与 `/api/settings/models` 逐字同款；词表外 400
+  `INVALID_FIELD`；不可解析 409 `CONFLICT`）。这三个键只有 server 读写（daemon 按 §15 忽略）。
+  判例：tests/test_server_display_settings.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -3457,12 +3592,13 @@ test_server_auth.py）。
 **四类出身（locked，M8.3 C-1 终裁四值为 canonical）**：`hand`（用户手打：
 quick capture / Slack self-DM——sources channel = `quick`/`quick_capture`）｜
 `proposed`（AI 自提：digest 建议 `analytics`、会话挖掘 `claude_code`、诊断
-降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`、**§65 每日
-循环的 `self_improve`**（代码硬编码、无 LLM 经手 = write-locked；P6 通道的
-准入只认它 + 物理 repo 路径），以及 §50
-落款派生的 `agent_capture`/`remote_capture`）｜`meeting`（会议音频/笔记出生：
-`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。信任序 hand >
-proposed > meeting > external。
+降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`，以及 §50
+落款派生的 `agent_capture`/`remote_capture`；**2026-09-02 加行 `self_improve`**
+——§65 自动草稿 PR 通道的唯一铸卡渠道（§70 每日循环的提案卡 / PR 跟进卡），
+producer 硬编码写入、无 LLM 经手 = write-locked，出身仍是 proposed，**免批
+资格由 §51 的第二条 lane 另裁（只认它 + 物理 repo 路径）、出身分类不变**）｜`meeting`
+（会议音频/笔记出生：`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。
+信任序 hand > proposed > meeting > external。
 
 **分类规则**（`act/lib/policy.py::classify_origin(card_sources,
 capture_channel)`，全函数永不 raise）：① 逐条 sources 的 `channel` 查
@@ -3558,6 +3694,27 @@ token 词表（机读稳定，UI 侧映射文案）：`disabled` /
 `cost:over_ceiling` / `budget:unknown` / `budget:exhausted` retired v0.48.7
 （见下方 tombstone；token 永不复用，旧卡上残留的值由 actd 按「解除即清」在
 下一 pass 清掉并放行）。
+
+**第二条 lane（2026-09-02，§65 / §0 第 12 条修宪；owner 决策 D7·D9）**：出身
+`proposed` 的卡里，**sources 非空且每一条 channel 都是 `self_improve`** 的卡进入
+lane 专属天花板（顺序即 token 优先级）：`self_improve.enabled=false` →
+`self_improve:disabled`（常态，不上卡）；通道暂停（§65.4，`lane_paused` 由
+actd 每 pass 从 `state/self_improve/lane.json` 现读传入）→ `self_improve:paused`
+（上卡）；卡声明 `needs_mcp` → `self_improve:needs_mcp`（上卡）；`target_repo`
+（**不**回落默认 workbench）的 `os.path.realpath` ≠ `self_improve.repo_path`
+（默认安装根 `config.HOME`）的 realpath → `self_improve:repo_mismatch`（上卡）。
+全过 → 继续下面 ③④⑤ 的共用天花板；⑥ 成本对 lane 卡不拦（D9 无预算、无审批
+步骤），放行 token = `ok:self_improve`（actd 据此换 notes 痕与通知文案）。
+**判据锚点只有 channel + realpath**——`type=self-improvement`、`target_repo`
+单独、任何 LLM 可写字段的组合都开不了 lane（§50 M1.d）；sources 混入任何别的
+渠道（hand 卡被 fold、slack 来源并入……）即失格，按最小信任回 `origin:<class>`。
+词表 add-only：`ok:self_improve` / `self_improve:disabled` /
+`self_improve:paused` / `self_improve:needs_mcp` / `self_improve:repo_mismatch`；
+`policy.is_routine_reason` 是 C-6 常态判定的唯一读取点。config 块
+`self_improve:`（`enabled`(true) / `repo_path`("" = 安装根) / `tick_minutes`(60) /
+`owner_logins`([]) / `github_repo`("" = 首次使用时 `gh repo view` 取并缓存)，
+`policy.self_improve_config` 唯一读取点，脏值逐键回退）。
+判例 tests/test_policy_self_improve_lane.py。
 
 **天花板明细（locked + 保守解释）**：① `autodispatch.enabled=false` 全关；
 ② 出身非 hand 不批——出身**从 sources 现算**（不依赖可能缺失/过期的章，
@@ -3662,7 +3819,7 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
    的动词面/信任裁决——`actor:"agent"` 落款与决策动词禁区照旧。
 5. **skill 落位**：`skills/board-agent/SKILL.md` + `references/cli.md`
    （structure adapted from dashi-taskboard `manage-taskboard`，Apache-2.0，
-   NOTICE 第 7 条登记）。
+   NOTICE 第 7 条登记）。**§67 追记**：该 skill 是商店清单 `skills/index.yaml` 的一项（`default_enabled: true`），经 `.claude/skills/board-agent` 追踪软链接对本 repo 的每个 checkout / worktree 项目可见，经 install.sh 步 `skills` 链进 `~/.claude/skills`——agent 自此**运行时**可发现它，不再只是文档级。
 
 **判例**：tests/test_boardctl.py（动词面收窄 / actor 恒发 / 输出契约 / exit
 codes / token 墙：无 token 写 → 401 透传零落盘，读 token-light）。
@@ -3935,6 +4092,15 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
 `tests/test_version_resolution.py`（doctor 行认 id）、`tests/test_vault_sync_helper_resolution.py`、
 `tests/test_uninstall.py`。台账：`docs/design/vnext2-plan.md` D3 / §8。
 
+**§54 v0.48.x 追记（§68；P4 余量）**：web 面自此有七页（route.ts `?page=`）：`board` /
+`trash` / `settings` / `archive` / `permissions` / `diagnostics` / `setup`（+ 开发者页
+`styleguide`）；`?anchor=<section>` 让设置页滚到某区（字幕悬浮窗齿轮 → `live_captions`）。
+壳承载的原生残留扩为：录制 / 字幕引擎（§61）+ **通知中继（§28）+ TCC 探针与系统设置
+深链 + 登录时启动 + Dock 徽章 + 全局快速捕获快捷键 + vault-sync-helper / framegrab 两个
+helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.md`）Tier-0 / Tier-1
+自此全部 EXISTS**（例外与理由写在 §68.14）；owner 一周日用无需打开旧 app 是 P4 的完成判据
+（vnext2-plan §4）。
+
 ### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
 
 产品 = web 看板 + shell（D3）；原生看板（`mac/Sources/Kanban.swift` /
@@ -4006,9 +4172,64 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
     状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
     （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
     `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
+12. **显示偏好 = token（owner 2026-09-02，4K 屏）**：owner 对照退役中的原生 app：「按钮 /
+    chip 的框细得像发丝、字的笔画比原生细」，要「像 Apple 的 Dynamic Type / Bold Text 那样在
+    设置里调字号、字重、线条粗细」。两处根因先修：(a) `-webkit-font-smoothing: antialiased`
+    强制 grayscale 抗锯齿把 SF 笔画削薄——改回平台默认 `auto`（AppKit 同款），字体栈
+    `-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", …`；(b) 描边此前
+    `--border-hairline: 0.5px`（2x 屏 = 1 设备像素）——**退役**，全站描边只许
+    `var(--stroke-w)`，默认 **1.5px**。三把旋钮 = **`web/src/styles/tokens.css` 里仅有的三个
+    变量**：`--text-scale`（字号倍率 s .9 / m 1 / l 1.1 / xl 1.25）、`--weight-shift`（字重
+    平移 regular 0 / medium +100 / bold +200，四档 SF 字重 `--w-regular/medium/semibold/bold`
+    = 原生数值 + 平移）、`--stroke-w`（thin 1px / normal 1.5px / thick 2px）。第 10 项的
+    `--type-*` token 因此改写为固定形 `var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh>
+    var(--font-…)`——原生 px 与 SF 字重名仍逐字可读，第 10 项的两份判例改钉这两个字面量；
+    组件 CSS 的字号 / 字重 / 描边只许 `calc(… * var(--text-scale))` / `var(--w-…)` /
+    `var(--stroke-w)`，字面 px / 数值字重 / 0.5–1.5px 描边一律判例红（`displayPrefs.test.ts`
+    lint 全部 web/src CSS+TSX）。系统「增强对比度」（`prefers-contrast: more`）描边各升一档
+    （2.5px 上限），字号字重不动。**值 → 变量的映射只住 tokens.css**：JS
+    （`web/src/displayPrefs.ts`）只往 `<html>` 写 `data-text-size` / `data-text-weight` /
+    `data-stroke`，index.html 首帧从 `localStorage zai.display` 预写同一组属性（与主题同一
+    机制），server 快照到达即覆盖。**server 面** `GET/PUT /api/settings/display`（§49；
+    `server/display.py`）：`{text_size: s|m|l|xl, text_weight: regular|medium|bold, stroke:
+    thin|normal|thick}` 默认 m / regular / normal，词表 `text_sizes` / `text_weights` /
+    `strokes` 随 GET 下发（segmented control 从 server 词表渲染，防腐 #10）；优先级 overrides
+    扁平键 `ui_display_text_size` / `ui_display_text_weight` / `ui_display_stroke` → config.yaml
+    `ui.display` 块 → 默认，PUT diff-write 同 §59.4；这三个键**没有 daemon 读者**（§15 未知键
+    静默忽略，判例钉 `config._OVERRIDE_FIELDS` 不含它们、overlay 不改任何 Config 字段）。
+    **web 设置页 section「显示」**（首个 section）：三个 segmented control（`<fieldset>` +
+    `<legend>` + radio，可访问名 = 组名「文字大小 / 文字粗细 / 线条粗细」+ 档名「小 / 默认 /
+    大 / 特大」「常规 / 中等 / 粗体」「细 / 默认 / 粗」）+ 预览行（看板真实类名 task-card /
+    chip / btn 渲染，不另设作用域）；**无保存键**——点一档 = 先落 `<html>`（即时）再 PUT 那
+    一键，server 拒绝回滚到最近快照 + `role=alert` toast。**视觉 golden（`feat/ui-parity-contract` 正在立法的 UI parity 节）在默认档采集**
+    （scale 1 / shift 0 / 1.5px）。判例 `web/src/displayPrefs.test.ts`、
+    `web/src/components/settings/DisplaySection.test.tsx`、`tests/test_server_display_settings.py`。
+
+11. **v0.48.x 追记（§68 P4 余量，s4 Tier-1 全部落地）**：合并建议卡（§21，提案列顶，
+    紫 accent；analyzing / done / failed 三态、`merge_apply` / `merge_dismiss`、
+    verdict ≠ merge 或 failed 时「仍然合并…」= §21bis `merge_force` 主卡弹窗 + 顺手
+    dismiss、partition 分组清单）；**多选**（FilterBar「选择」→ 提案 / 运行中 / 待验收卡
+    标题前勾选框 → 底部操作条：请求合并建议 ≥2 / 强制合并 / 批量批准（**T2 与 W17 生效
+    T2 跳过**——typed-confirm 不能批量绕过，§0.8 / §50）/ 批量拒绝 / 清空 / 退出；每个批量
+    动作 = 逐卡一条 §3 四键形 inbox 动作）；提案列头「清理积压」（§34bis preset capture，
+    积压 0 禁用，2 s 防连点）；活标题改名（§37 `set_title`，详情抽屉抬头铅笔 → 输入框 →
+    ⏎；客户端同款归一 1..64 code points）；并入记录行「拆回独立卡片」（§38.2 `split_note`，
+    legacy 无 ts 行不可拆）；「在终端接管」（`POST /api/terminal`，§68.7）；横幅「一键修复」
+    （`POST /api/repair/actd`，§68.8）；永久性完成**整页** `?page=archive`（书立条同一行
+    组件 + 搜索）。判例 MergeSuggestionCard.test.tsx / ParityPages.test.tsx。
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。
+
+11. **首启入口与 bootstrap 的接力（§69 / §68.5）**：`scripts/bootstrap.sh` 装完
+    `open` 看板 bundle（按 `CFBundleIdentifier` 认壳，不按文件夹名）；看板按
+    `GET /api/setup` 的 `needed`（§68.5：config.yaml 缺席或三把主凭证一把都没有，
+    且未写完成标记）自动跳到 `?page=setup` 首次运行向导——空白机器上 bootstrap
+    第 4 步已建好 config.yaml，所以向导从「后台进程的磁盘授权」一步开始，权限体检页
+    （`GET /api/permissions`）的 claude 一条**优先给出 §55 第五幕的稳定副本**
+    （`server/permissions.py` 镜像 `config.stable_claude_bin()`，含
+    `AIASSISTANT_STABLE_CLAUDE` 覆写；判例 `tests/test_server_permissions_setup.py`）。
+    命令行侧的同一份清单 = `python3 -m act.doctor --fresh-install`（§69.3）。
 
 ### 54.2 server 生命周期：launchd 托管，壳只连接（v0.48.18；live 事故 2026-09-02）
 
@@ -4313,7 +4534,10 @@ team `Q6L2SF6YDW` 稳定不变，授权却不跟签名走）。自本幕起（�
   `act/doctor.py` 已顶在防腐 #1 的 2,000 行帽上，新知识不再进它）：新行
   **`stable claude`**（darwin，有 claude 可复制时才出行）——副本缺失
   → WARN（修法 `bash install.sh`，之后对该路径授一次 FDA）；副本跑不了 `--version`
-  → FAIL（派发起的就是这个文件）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
+  → FAIL（派发起的就是这个文件；**2026-09-03 追记**：先隔 1 s 重问一次，仍失败按输出
+  分两类——TCC 签名 → FAIL `claude_blind`、`row_class=owner_action`（副本没坏，是本会话
+  cwd 受限且授权未点，§56.3 判决不计）；其它 → 无 id 的 FAIL（文件真坏了）；细则与判例
+  见 §25 2026-09-03 追加）；副本版本 ≠ 登录 shell 的 Claude Code → **WARN**
   （仍是能干活的 claude，只落后一版；下次 `bash install.sh` / 自动部署原地刷新，
   路径不变、授权不变）；同版本 → OK。`daemon claude` 行在副本存在时**以副本为
   对象**（跳过「两份安装版本不同」的 FAIL——落后一版是上一行的 WARN，不是两份安装），
@@ -4379,9 +4603,17 @@ label，孤儿结构性不可见。自本节起：
 
 # v0.48.x additions（v-next-2 round：合并即上岗）
 
+- **§69 追记（fresh machine 入口）**：`scripts/bootstrap.sh` 在 clone 之前就按本节
+  的物理路径规则判 checkout 目录是否在 `$HOME` 之外，是则在第 2 步打出 per-binary
+  TCC 警告（守护解释器与 claude 各自需要完全磁盘访问）；`python3 -m act.doctor
+  --fresh-install` 的 `manual_steps` 永远列出三条完全磁盘访问路径（runtime.json
+  的解释器 / daemons 的 claude——第五幕的**稳定副本**优先，其次 `claude_bin` / `/usr/sbin/cron`），repo 在 `$HOME` 之外时标
+  **REQUIRED**，之内时标「仅当 repo 或任务仓库在受保护位置时需要」——本节的
+  事故史就是这几行文案的来源。
+
 ## 56. 合并即上岗：自动发版与自动部署（decision D17）
 
-owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
+owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`.github/workflows/ci.yml` + `.github/workflows/ci-nightly.yml` + `.github/workflows/pr-review-claude.yml` / `pr-review-codex.yml`（56.8）、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
 
 ### 56.1 版本真源 = git tag；没有任何文件承载版本（2026-09-02 改写；宪法第 8 条同日修宪）
 
@@ -4408,7 +4640,7 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 串行：`concurrency: release-on-merge`（`cancel-in-progress: false`）——连续合并依次取号；GitHub 每组最多留**一个** pending run，第三次快速 push 会取消排队中的第二个——被取消的那次合并**不单独发版**，但下一次 run 给最新 main 的 tag 已含它的 commit，合进 main 的东西永不失落。手工 `git tag v… && git push --tags` 仍走 `on: push: tags`，两个入口不冲突（release.yml 从 tag 名盖章，不再读任何文件里的版本）。Release 正文：`## 变更 / Changes` = `changelog.d/` fragments ∪ CHANGELOG legacy `[Unreleased]` 相对 `release_tags.py previous <tag>` 那棵树的增量（56.1 / 56.7；上一版的 fragments 用 `git archive <prev> changelog.d` 取），其后是安装说明块与 `--generate-notes` 的 PR 清单。
 
-**merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。
+**merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。**追记二（2026-09-02，§56.8）**：Windows 套件与 qlty 已从 pull_request 搬到 `ci-nightly.yml`（schedule + dispatch），bot review 改为 `review:ai` 标签按需触发；pull_request 上只剩 contract reminder 一个非 required job，`ci` 与 `Web tests` 在 PR 上按路径 filter 决定做多少事（merge_group / push 恒全量）——required 集合与 job 名一字不改。
 
 ### 56.3 部署 job：owner Mac 每 10 分钟跟随 origin/main
 
@@ -4429,7 +4661,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 7. **doctor 基线**：用**新代码**的 `act.doctor --fast --json` 取 FAIL 项名集合（装之前）。输出解析不出 JSON（doctor 自己 import 崩、解释器丢了 yaml、打印垃圾）记为名字 `doctor:unparseable`，而它在**任一次**运行里出现都是**致命**的——基线阶段出现 = 不装、直接回滚（v0.48.6 审查 H1：两次都用新代码，若把它当 pre-existing，唯一的安全闸门就对「让 doctor 跑不起来的提交」这一类它最该拦的东西失明）。判例 `test_unparseable_doctor_on_the_new_code_rolls_back_before_installing`。同时记下装之前的 `state/actd.heartbeat`（version / pid / phase）作第 9 步的对照。
 8. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装旧 Mac app**（56.5），**但构建并安装看板 UI**（web/dist + shell app，56.5 `ui` 步，v0.48.18）——部署的是守护进程、board server agent、cron、config、launchd 渲染，加上产品的脸。
 9. **就绪等待（v0.48.6 审查 B2；取代原「静置 30 s + 一次采样」）**：轮询 `state/actd.heartbeat`（§47.4，写者已盖 `version` / `pid` / `phase`），直到它**同时**满足：`version` == 新代码的版本（脚本 `repo_version()` = `scripts/version_stamp.py` 对合并后 checkout 算出的值——与 install.sh 刚写进 `act/_version.py`、新 actd 读到的是同一个数；checkout 里没有 stamper（切换前的回滚目标）时回落到 sed 读 `act/__init__.py` 的字面行，判例 `test_rollback_onto_a_pre_cutover_checkout_reads_the_literal_version_line`）、`pid` ≠ 装之前那条的 pid（**新进程**——同版本号的合并否则会被旧 daemon 的 idle 心跳放行）、`phase == idle`（新代码上**完整跑完一个 pass**：inbox / dispatch / reconcile / housekeeping / dashboard 全部 import 并执行过）。`phase == failed`（pass 抛了）只在装之前的 daemon **也**在 `failed` 时算就绪——pre-existing，不归咎新版本。超过 `AUTODEPLOY_HEARTBEAT_DEADLINE`（默认 180 s：一个 pass 可能含 `claude agents --json`，负载高时 >30 s）= FAIL `actd:no_heartbeat_from_new_version` → 回滚，detail 带装前/装后两条心跳。为什么不再静置采样：import 即死的 KeepAlive actd 在每个 ~10 s 节流周期里亮 ~0.5 s 的 pid，一次 `launchctl list` 有 ~5% 概率撞上「在跑」；而 `dashboard` / `actd heartbeat` 两行读的是**旧** daemon 留下的文件，90 s 内都算新鲜——三行齐绿、卡片冻结、记 `deployed`，二十次坏提交漏一次；反过来第一个 pass 慢于 90 s 时旧 dashboard 过期又会**误**回滚。判例 `test_new_actd_that_never_completes_a_pass_rolls_back` / `test_the_old_daemons_heartbeat_does_not_count_even_with_the_same_version` / `test_no_heartbeat_file_at_all_before_and_after_rolls_back` / `test_new_actd_whose_pass_throws_rolls_back_when_the_old_one_was_fine` / `test_pre_existing_failing_pass_is_not_blamed_on_the_new_version`。**2026-09-02 追记（第二次首次实战，add-only）**：「新代码的版本」= **install.sh `version` step 真盖进 `act/_version.py` 的号**（install_report.json `steps` 里 `version=ok:<v>`；脚本 `stamped_identity`），不再是 checkout 的预测——两者通常相等，不等时以 stamp 为准（daemons 读的就是它）。stamp 步**失败**（`version=warn:…`）→ 身份**不可验证**：10:14Z 那一轮 stamper 被 TCC 拒（§56.1 追记），09:46Z 手写的 0.48.21 stamp 留在 v0.48.22 的 checkout 上，新 actd（新 pid、idle）如实报 0.48.21，脚本按预测 0.48.22 等到超时、把一次好部署回滚成 `no_heartbeat_from_new_version`。此后：stamp 失败时只看 **新 pid + idle**（`failed` 规则不变），日志一行 WARN 带 stamp 步的 detail，`deployed` 的 detail 追加「act/_version.py not stamped (daemons report vX; version identity unverified)」，`running_version` 照实记旧号；doctor `version` 行 WARN；下一轮 `running_mismatch` 看到旧号 → `install_incomplete`（第一眼记账）→ 再一眼重跑 install.sh 重盖章 → 自愈为 `deployed`（预算与中毒规则同第 2 步）。没有报告 / 没有 `version` step（切换前的 install.sh）→ 仍用 checkout 的预测。判例 `test_failed_stamp_step_does_not_roll_back_a_good_deploy_and_the_next_runs_re_stamp` / `test_readiness_is_keyed_on_the_stamp_install_sh_wrote_not_the_prediction`；解析不依赖进程 cwd（`git -C <包根>`；daemon cwd=$HOME）的判例 `tests/integration/test_version_git_fixture.py::test_resolution_never_depends_on_the_process_cwd`。
-10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。
+10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。**2026-09-03 修订（live 事故：v1.0.7 → 回滚到 v1.0.3）——owner 动作类的行永不进判决**：判决集合（基线与装后每次采样）只含 `row_class != owner_action` 的 FAIL 行（§25 2026-09-03 追加：`claude_blind` / `deploy_blind_tcc` / `cron_fda_blocked` / `cron_tcc_blocked` / `ui_build_tcc_blocked` 等——修法是一次 TCC / 完全磁盘访问授权，只有 owner 能点；代码回滚治不了它，它也对新代码好不好一个字都不说）。事故形状：install.sh 刚 `created` claude 稳定副本（§55 第五幕）并打印一次性授权指引，30 s 后 doctor 在 launchd 会话里、cwd 在外置卷上跑 `<副本> --version`，副本还没拿到授权 → `stable claude` 从基线 WARN（缺失）变 FAIL（跑不了）→ 三次采样都在 → 回滚，回滚重装再撞同一堵墙也「成功」（旧版没有这一行）；几分钟后 owner 在终端里跑同一探针是绿的。脚本 `doctor_sample` 一次 doctor 运行产出两份名单：`DOCTOR_FAILS`（判决用）与 `DOCTOR_OWNER`（owner_action 的 FAIL 名，**不论新旧**）；后者在日志里记 `doctor FAIL needs owner (not a rollback trigger): <名>`（基线阶段同样记一行），并进 `deployed` 的 `detail` 与通知正文：`; needs owner: <名>`（只有行名、不带路径——detail 随 dashboard 进云端快照，宪法第 9 条；精确路径住 doctor 行本身）；`pre-existing FAIL` 一段只列判决类的行。同名行**换类**（基线是 owner_action、装后成了无 id 的 FAIL）对判决而言就是新名字——照常回滚。没有 `row_class` 键的 doctor（回滚目标上的旧版本）全部按判决类处理。判例 `tests/integration/test_auto_deploy_script.py` 3c 组：`test_new_owner_action_fail_never_rolls_back_and_is_reported_as_needs_owner` / `test_owner_action_fail_does_not_shield_a_real_new_fail` / `test_pre_existing_owner_action_fail_is_needs_owner_not_pre_existing` / `test_owner_action_row_that_turns_into_a_code_fail_is_a_new_fail`。
 
 **回滚** = `git reset --hard PREV`——**reset 前重验**：HEAD 仍在 `main` **且** 无 tracked **内容**改动（`-c core.fileMode=false` 看 status：install.sh 自己对 ingest 脚本的 `+x` 翻转不算，reset 顺手复原即可）。第 5 步到这里隔着 install + 就绪等待 + doctor，owner 在这几分钟里改了文件或切了分支，`reset --hard` 就是一次不可恢复的自动删除（宪法第 2 条）——因此**拒绝回滚**：不 reset、不重装，记 `rollback_failed`（detail `rollback refused (…)` 点名文件/分支）+ 通知「回滚被拒」，新版本留在原地由 owner 手动处理（判例 `test_rollback_refuses_to_destroy_edits_made_during_the_deploy` / `test_rollback_ignores_install_sh_own_mode_flips`）——**留在 `main` 分支上**而不是 `git checkout PREV`（detached HEAD 会让后续每一轮都撞上第 2 步的「不在 main」）——再 `install.sh --non-interactive` 一次，记 `rolled_back` + `failed_sha=<那个 origin/main sha>`，通知「auto-deploy rolled back to <PREV 短 sha>」并附原因与 `--force` 出口；回滚自身失败（reset 失败或重装非 0）= `rollback_failed`，同样通知。回滚的每条出路都写 `last_run`（56.4：它描述本轮，回滚也是一轮）。成功部署也通知一次（版本 + 前后 sha）。
 
@@ -4481,11 +4713,17 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
   - **2026-09-02 追记（§54 名字互换，改写上两条的名字）**：壳的 bundle 文件夹改为 **`Zelin's AI Assistant.app`**（staged 名 `.Zelin's AI Assistant.app.staged`），旧 app 的家改为 **`Zelin's AI Assistant (old).app`**。「一根手指不碰」精确化为「**只搬不改**」：产品路径上的 bundle 若 id 是 `com.zelin.ai-engineer`，装壳前同目录 `mv` 到 `(old).app`（`(old)` 已在 → 保留 `(old)`、多出来的那份 rename 停到 `(old <ts>).app` 再尽力 rm；mv 失败 → shell 半 `fail`，绝不 rm、绝不盖）；bundle 内容永不编辑（签名封条）；判例断言搬过去的文件字节与 mtime 不变。新 bundle 装好后删掉 id 为 `com.zelin.ai-board` 的老壳 `Zelin AI Board.app`。detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（只在本轮真搬了时）。细则见 §54 追记。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha` + 集合 `failed_shas`，回滚与 CI 红同一本账；2026-09-03 起是集合——56.3 第 3 步的回走让红 head 与回滚过的祖先并存）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
+- **`--no-launchd` 永不出现在自动部署路径（§69）**：`scripts/auto-deploy.sh` 只跑
+  `install.sh --non-interactive`；`--no-launchd` 是 CI 验收 job
+  （`.github/workflows/fresh-install.yml`）与 bootstrap 干跑的形态——它证明的是
+  「这台机器能装、daemon 能跑完一个 pass」，不是「在跑」。判例
+  `tests/test_install_no_launchd.py` 钉 `scripts/auto-deploy.sh` 的 install.sh 调用不含它。
+
 ### 56.6 PR 分支自动跟随 main（auto-update-branch；2026-09-02，owner：「一旦一个 main 弄了，其他的就直接自动 rebase」）
 
 **为什么不是 merge queue**：GitHub Merge Queue 是 ruleset 的 `merge_queue` 规则，而 ruleset API 对**个人账户 repo** 拒绝它（2026-09-02 实测）；repo 搬进 organization 之前装不上，56.2 的 `merge_group` 接线原样保留等那一天。替代协议 = **main 每前进一步，把新 main 合进每个在飞 PR 的分支**，让 PR 的 head 永远建在最新 main 上、required check 永远是对「合并后形状」的判决，再由 GitHub 的 auto-merge（repo 设置 `allow_auto_merge` + `allow_update_branch` 已开）在七个 required check 绿的那一刻合并。执法：`.github/workflows/update-pr-branches.yml`（`on: push: branches: [main]` + `workflow_dispatch`，可选 `dry_run`；`concurrency: update-pr-branches`，不取消在跑的；顶层 `permissions: {}`，job 级 `contents: read` + `pull-requests: write` + `issues: write`；**不 checkout**——repo 里的任何代码都不在这个 job 里执行，PAT 永不与 PR 代码同处一个进程）。
 
-**token 真相（决定了这个 workflow 的形状）**：`GITHUB_TOKEN` 造成的事件不触发别的 workflow（`workflow_dispatch` / `repository_dispatch` 除外）——56.2 为 tag 引用过的同一条规则，对 `PUT /repos/{o}/{r}/pulls/{n}/update-branch` **同样成立**（GitHub 文档「Triggering a workflow」+ community discussion #26520「Update branch triggered through API does not run checks」）：用 `GITHUB_TOKEN` 更新分支 = PR head 挪到一个**永远没有 CI** 的 commit，七个 required check 停在 "Expected — waiting for status"，auto-merge 永不触发，PR 比不更新**更糟**。所以：(a) 真正的 update-branch 调用用 **fine-grained PAT**（repo secret `PR_AUTOUPDATE_TOKEN`；只授本 repo；Contents read+write + Pull requests read+write；owner 创建、到期续），它的 push 是普通用户 push，**会**触发 CI、`Version pins untouched` 与两个 advisory review（pr-review-*.yml 每次更新都重跑——新基底上的新审查，是这条协议的成本）；(b) **secret 缺席 = report-only 模式**：workflow 仍给冲突的 PR 打 `needs-rebase`（打标签、留评论不需要 push，`GITHUB_TOKEN` 足够）并在 step summary 列出「本该更新」的 PR，但**一根分支都不碰**，绝不退回 `GITHUB_TOKEN` 更新。
+**token 真相（决定了这个 workflow 的形状）**：`GITHUB_TOKEN` 造成的事件不触发别的 workflow（`workflow_dispatch` / `repository_dispatch` 除外）——56.2 为 tag 引用过的同一条规则，对 `PUT /repos/{o}/{r}/pulls/{n}/update-branch` **同样成立**（GitHub 文档「Triggering a workflow」+ community discussion #26520「Update branch triggered through API does not run checks」）：用 `GITHUB_TOKEN` 更新分支 = PR head 挪到一个**永远没有 CI** 的 commit，七个 required check 停在 "Expected — waiting for status"，auto-merge 永不触发，PR 比不更新**更糟**。所以：(a) 真正的 update-branch 调用用 **fine-grained PAT**（repo secret `PR_AUTOUPDATE_TOKEN`；只授本 repo；Contents read+write + Pull requests read+write；owner 创建、到期续），它的 push 是普通用户 push，**会**触发 CI、`Version pins untouched` 与两个 advisory review（pr-review-*.yml 每次更新都重跑——新基底上的新审查，是这条协议的成本；**§56.8 追记（2026-09-02）：作废**——bot review 改为 `review:ai` 标签 / dispatch 按需触发，auto-update 的 push 不再重跑它们、不再花 API 钱）；(b) **secret 缺席 = report-only 模式**：workflow 仍给冲突的 PR 打 `needs-rebase`（打标签、留评论不需要 push，`GITHUB_TOKEN` 足够）并在 step summary 列出「本该更新」的 PR，但**一根分支都不碰**，绝不退回 `GITHUB_TOKEN` 更新。
 
 **每个 PR 的判决**（按序）：草稿 / fork（API 推不进别人的 repo）/ 贴了 **`no-autoupdate`** 标签 → 跳过并列在 summary 里；`GET /compare/main...<head>` 的 `behind_by == 0`（已含 main）→ 如有 `needs-rebase` 摘掉；GitHub 说 `mergeable == false`（`null` 时最多等三次 5 s，GitHub 懒算合并性）**或** update-branch 回 422 "merge conflict" → **`needs-rebase`**：加标签 + **一条**评论（正文带 HTML marker `<!-- zai:update-pr-branches needs-rebase -->`，PR 最新一条评论已是 marker 评论时不再发——幂等）；否则 `PUT update-branch`，带 `expected_head_sha`（读与写之间作者又 push 了 → API 拒绝而非合到没见过的 head 上，下次 main push 重来）；202 → 更新成功、摘 `needs-rebase`；其它失败只打 `::warning` 不失败整个 run。**`needs-rebase` 的语义**：标签是信息不是闸门——它不阻塞任何东西，只告诉作者 / agent「main 动了、你的分支合不进去、请 rebase 后 push」；分支干净合入后由**下一次 run**（下次 main push 或手动 dispatch）自动摘掉。两枚标签是 repo fixture（`needs-rebase` / `no-autoupdate`，2026-09-02 建）。
 
@@ -4503,6 +4741,33 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **清理由下一个 PR 做，CI 永不往 main 写 commit**（56.2「不写分支」不因本条松动）：`scripts/ci/changelog_prune.py` 以最新 `vX.Y.Z` tag（`--tag` 可指定）的树为「已发版」基线，`git ls-tree -r <tag> -- changelog.d` 给出每个 fragment 的 blob id，本地文件的 blob id（`changelog_fragments.blob_sha` = `git hash-object` 同款 sha1，**不 spawn git**）相同 → 删；不同 = 发版后被改过 → **保留并点名**（改过的条目会在下一版正文再出现一次，这是「改已发版的 fragment」的代价——正确做法是加新 fragment）；tag 里没有 = 未发版 → 保留。`--dry-run` 只列；`--notice` = dry-run + 有可清的就打一条 GitHub `::notice::`，rc 永远 0——56.1 的 pins job 每个 PR 跑一次，提示「下一个动 changelog.d 的 PR 顺手清」。git 只在 CLI 壳里 spawn（`git` 注入缝），纯函数 `released_blobs` / `prune_plan`；判例 `tests/test_changelog_prune.py`。
 - **进度日志 fragment**（`docs/design/vnext2-plan.md` §8）：既有表格行冻结为历史；新行 = `docs/design/progress/<YYYY-MM-DD>-<kebab-slug>.md`（日期 = 开 PR 当天，取自文件名；`README.md` 免检）。头部 = 首个空行之前的 `key: value` 行，必有 `pr:`（分支 + PR 号）/ `phase:`（阶段 / 决议）/ `law:`（触及的 §§，纯文档写 `—`），顺序不限、未知键 = 形状错误；空行之后是正文（做了什么），多段允许。`scripts/ci/progress_log.py check` 校验；`render [--plan PATH]` 把 plan §8 里的历史行（`## 8.` 到下一个 `## ` 之间以 `|` 开头的行，含表头）+ 全部 fragments（按日期、同日按文件名）渲染成完整表打到 **stdout**——按需读、**永不写回 plan**（生成文件进 git 就是同一种冲突的复活）；正文进单元格时空白压成一个空格、`|` 转义为 `\|`。PR 直接往 plan 新增 `| YYYY-MM-DD |` 行 = pins 门 FAIL。判例 `tests/test_progress_log.py`。
 - **文档指针**：`changelog.d/README.md`、`docs/design/progress/README.md` 各说自己的形状与生命周期；CHANGELOG.md 头部「Releasing」、CONTRIBUTING「Versioning」/「PR lifecycle」、PR 模板 checklist 全部指向 fragments；`docs/design/vnext2-plan.md` §8 表前一行说明「本表冻结、新行在 progress/」。
+
+### 56.8 CI 矩阵：per-PR 瘦身、main 全量、夜间 informational、bot review 按需（2026-09-02）
+
+**病灶**：repo 是 public（runner 分钟免费），但 owner 在 free plan——真正的瓶颈是**并发上限**（约 20 个 job、其中 macOS 5 个）：几十个并行 agent PR 各带 11 个 job + 2 个 bot review，全部在同一条队列里等 macOS 槽；两条 Windows 腿与 qlty 是 informational、几乎每次都红、没人按 PR 读它们，却每个 PR 吃三个槽；两个 AI review workflow 每次 push（含 56.6 的 auto-update push）都调**付费** API，多数以 infra 错误收场。**改法的边界**：七个 required check（`ci` / `Lint (shellcheck + ruff)` / `Tests on ubuntu (Python 3.9)` / `(Python 3.x)` / `Web tests (build + vitest)` / `QA gates (…)` / `Version pins untouched`）**逐字不改名、每个 PR 与每个 merge_group 都报到**——ruleset `protect-main` 的清单一个字不动；瘦的是它们在 PR 上**做多少事、在哪台机器上做**。
+
+**矩阵**（truth = `.github/workflows/ci.yml` 与 `ci-nightly.yml`；本表只说形状）：
+
+| lane | pull_request | merge_group / push to main 或 dev | schedule（夜间）+ workflow_dispatch | 按需 |
+|---|---|---|---|---|
+| `Lint` / `Tests on ubuntu ×2` / `QA gates` / `Version pins untouched` | 全跑 | 全跑（pins 门只在 PR / 队列） | — | — |
+| `Changed paths (per-PR filter)`（新，非 required） | 列 PR 文件 → `swift` / `web` 两个布尔输出 | 恒 `true` | — | — |
+| `ci`（macOS Apple 套件） | **filter 命中 → macos-latest 全套**；否则 **ubuntu-latest 一行 summary「no Swift changes — Swift gates not needed」即绿** | 全套（macOS） | — | — |
+| `Web tests (build + vitest)` | `web/` 动了 → npm 全套；否则一行 summary 即绿 | 全套 | — | — |
+| `Contract reminder`（soft） | 跑 | — | — | — |
+| `Tests on windows ×2`、`qlty check`（informational，`continue-on-error`） | **不跑** | 不跑 | `ci-nightly.yml` 每日 10:43 UTC | `gh workflow run ci-nightly.yml` |
+| `Claude PR Review` / `Codex PR Review`（advisory，付费 API） | **只在贴上 `review:ai` 标签时**（`types: [labeled]`） | — | — | `gh workflow run pr-review-claude.yml -f pr=<n>`（Codex 同） |
+| `Fresh install (macOS)`（干净机器安装验收，`fresh-install.yml`，§69.4；informational） | **不跑** | push to main（dev 不跟） | 每日 11:17 UTC | `gh workflow run fresh-install.yml` |
+
+**法条**：
+
+- **filter 的定义单源在 `ci.yml` 的 `changes` job**（`dorny/paths-filter`，按 commit SHA 钉；pull_request 下走 API 列文件、不 checkout；job 级 `pull-requests: read`）。`swift` = macOS 腿独有而 ubuntu 腿没有的一切：`mac/**`、`shell/**`、`ios/**`、`shared/**`、任意 `*.swift`、`.github/xcode-version`、`scripts/ci/select_xcode.sh`、构建调用的 stamper（`scripts/version_stamp.py`、`scripts/build_version.sh`、`act/lib/version.py`）、Swift↔Python interop 的 Python 半（`act/lib/e2e.py`）、`ci.yml` 自己；`web` = `web/**` + `ci.yml`。**新增会被 macOS 独占执行的东西 = 同 PR 加进 filter**——忘了加，push to main 的全量跑会红、56.3 第 3 步的 CI 闸门会拦住部署，但那是事后网，filter 是事前门。
+- **fail-closed 三条**：(a) 非 pull_request 事件（merge_group / push）filter 输出恒 `true`；(b) filter step 失败（API 抽风、限流）时 gate step 仍答 `true`——filter 只能**移除它正面证明不需要的**工作；(c) 下游 step 条件写 `!= 'false'` 而非 `== 'true'`，job 带 `if: !cancelled()`——`changes` 自己挂了，`ci` 与 `Web tests` 照样跑全套而不是被连坐 skip（GitHub 把 skipped 的 required check 当通过，所以「跳过」在这里等于「放行」，绝不允许由故障触发）。
+- **`ci` 的 runner 随 filter 走**：`runs-on: ${{ swift == 'false' && 'ubuntu-latest' || 'macos-latest' }}`——不命中时**一个 macOS 槽都不占**；job 名不变、结论 success、summary 一行说明为什么不需要。**被跳掉的不只是 Swift 构建**：macOS 腿上那次 Python 全量 unittest 也一起跳（darwin-only 判例只有 4 个文件，且多数测试经 PATH 的 bash = runner 上的 Homebrew bash 5，与 ubuntu 无异）——main 上每次 push 仍全量跑，这是接受的取舍。
+- **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
+- **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
+- **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
+- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` / `fresh-install.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底、验收 main 上的一条命令安装），与 dev 无关。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -4596,8 +4861,9 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **账本**：`qa/complexity_baseline.txt`、`qa/crap_baseline.txt`、`qa/deps_baseline.txt`、`qa/hygiene_baseline.txt`（行形 `<key> <登记分>`；注释 = 行首的 `#` 或空白后的 `#`——键内的 `#` 属于键，因为同名重定义键形如 `qualname#2`，判例 `tests/test_qa_ledger_shrink.py::DuplicateDefinitionKeyTestCase`）。键 = `路径::qualname`（尺一/二）或 `规则:路径->目标`（尺四），**不含行号**（无关编辑不移账）。登记分与 `qa/coverage_floor.txt` 的地板**必须是有限数**：`nan`/`inf` 在解析层 fail-loud 拒收（`qa_common._parse_score`，与 gates.toml 解析同哲学）——nan 与任何数比较都是 False，一个 token 就能让 worse/stale 判决、地板检查与下面的 base 差分同时 fail-open（判例 `tests/test_qa_ledger_shrink.py::NonFiniteScoreRejectedTestCase`）。
 - **判决三态（任一即门红）**：`new`——超阈值且不在账上（新代码必须干净）；`worse`——账上条目劣于登记分（存量只许持平或变好；coverage 派生的尺二有 `[crap].tolerance` 缓冲）；`stale`——已达标/已消失仍挂账（**修好了必须同 PR 划账**——这就是棘轮，账本永不回涨）。另有两个不判死的提示：`limbo`（尺二专用：落在阈值下方 tolerance 带内，建议观察后删账）与 `better`（仍超标但比登记分好，建议把登记分拧低）。
 - **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。**对账只能是缩**（划掉 stale、把登记分拧低）——想给新债记账没有合法路径，见下一条。
-- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。
-- **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
+- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。**追记（2026-09-02，§66.2）**：同一差分门顺带看管 `ui/parity/pending.txt` 与 `ui/parity/waivers.txt`（按 id 集合比，备注列不是分数）——加 id 即 FAIL。
+- **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。首批（P3a，`refactor/p3a-dashboard`）：`act/lib/dashboard.py`、`act/lib/silent_merge.py`、`act/merge_review.py`、`act/lib/analytics.py`、`act/lib/sanitize.py`、`act/lib/telemetry_upload.py` 全部函数 CC ≤ 6、CRAP ≤ 6，四本账本只划不加；手法 = 先补判例网（`tests/fixtures/dashboard_golden.json` 逐字节 golden + 各模块的 characterization 判例）再纯抽取，零行为变化。
+- **P3 每批的固定顺序（2026-09-02 P3a 追记，add-only；R2.3.2 的执行口径）**：① 先把该批模块映射进 `qa/mutation_targets.toml`（§57）并跑一轮变异，幸存体逐个判定——等价变异（常数 ±1、日志文案）放过，逻辑幸存体（未测的分类分支 / CLI / 网络与 IMAP 包装 / 解析状态机…）**先补判例杀死**；② 再做纯抽取式重构（每函数 CC ≤ 6，新 helper 出生即干净），**零行为变化**——判据是既有全套件 + 补上的判例 + 同一轮变异重跑，不许借重构改语义；③ 该批模块的 complexity / crap / hygiene 账本行在**同一 PR** 划掉（`stale` 三态本身会逼着做）；④ 模块留在夜间靶区，测试网持续咬人。模块 docstring 必须写明管它的 §§（防腐 #5，hygiene 门执法）。首批 P3a = 雷达三源 + claude_sessions + digest / weekly_digest / analyze（分支 `refactor/p3a-radars`；账本现状 truth = `qa/complexity_baseline.txt` / `qa/crap_baseline.txt`）。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
 
@@ -4934,18 +5200,337 @@ wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictCh
 - 不在 web 提供「按 AI 建议一键验收」——那会把建议变成默认，正是 issue 里 interview scorecard 的教训。
 - 配置：`card_summary.enabled`（config.yaml 块 / overrides 扁平键 `card_summary_enabled`，默认 true）关掉 = 不派新判官，在飞的仍收回；不设第二把模型旋钮（跟 `models.pipeline`）。
 
-## 65. 每日自我改进循环：先维护再提案（P5；owner 决策 D10 / D12 / D18；R2.4）
+## 65. 自动草稿 PR 通道（self_improve lane；P6；owner 决策 D7·D8·D9·D12；§0 第 12 条修宪）
+
+owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……先只给泽林 AI assistant 这一个软件弄车道吧。」「Agent 使用的身份是我自己的 GitHub 个人账户。」「自动派工作，要不先不要搞预算。」「如果我留了一个 comment 'Where is the test?'，AI 就知道这个东西需要做 test 了。」「臣子把东西做出来了，皇上能挑你的那就是你的大幸。」本节把「人从起点审批移到终点验收」这条例外的**全部机械后盾**立法。执法代码：`act/lib/policy.py`（资格闸，§51 第二条 lane）、`act/lib/self_improve.py`（核验 / 护栏 / 巡检 / 拒绝记忆 / 状态）、`act/llm.py`（`NO_MCP_ARGV`）、`act/executor.py`（prompt 段 + argv + 派发记录）、`act/actd.py`（`_lane_delivery_check` 四条收割路径 + `_self_improve_tick`）、`act/lib/dashboard.py`（§2 投影）、`server/self_improve_lane.py`（恢复端点）、`web/src/components/shell/SelfImproveBanner.tsx` + `ReviewCard.DeliveryChip`。判例：`tests/test_policy_self_improve_lane.py` / `test_self_improve_verify.py` / `test_self_improve_sensitive_pause.py` / `test_self_improve_followups.py` / `test_self_improve_argv.py` / `test_self_improve_actd_wire.py`、web `SelfImproveBanner.test.tsx` / `ReviewCard.delivery.test.tsx`。
+
+### 65.1 准入（谁进通道）
+
+- **唯一铸卡渠道** = sources channel `self_improve`（§50 加行，出身 proposed）。producer 只有两个：每日循环的提案（P5，另 PR——它把 channel 写成 `policy.SELF_IMPROVE_CHANNEL` 即进通道）与本节 65.5 的 PR 跟进卡。二者都**硬编码** channel / target_repo / delivery_mode / type，LLM 只填 title / summary / plan / DoD（跟进卡连这些都是骨架）。
+- **免批资格**由 §51 第二条 lane 裁决：channel 全为 `self_improve` ∧ `realpath(target_repo) == realpath(self_improve.repo_path)`（默认安装根）∧ 通道开着 ∧ 未暂停 ∧ 未声明 `needs_mcp` ∧ 共用天花板（T2 / green_sign / comms / `target_kind=new` / repo 不存在）全过。放行 token `ok:self_improve`；actd 的 notes 痕 `[<date> auto-dispatch] self_improve 通道免批自动派发（交付只能是草稿 PR，§65）`，观察通知 `msg_self_improve_dispatched`（`autodispatch.notify` 同一开关）。
+- **只给本仓库**（D7）：其它 repo 的 self_improve 卡报 `self_improve:repo_mismatch` 上卡，照旧人工审批。`self_improve.repo_path` 可配，默认 `config.HOME`；比对必 realpath（`~/Projects/zelin-ai-assistant` 是外置卷 symlink，v0.48.2 事故）。
+- **身份**（D8）：agent 用机器上既有的 `gh auth` 身份 = owner 本人；没有第二个账号、没有 PAT。推论：owner login 下的 PR 评论一律视为 owner 的话（65.5），所以 prompt 明令 lane 会话**不发 PR 评论**。
+- **无预算**（D9）：lane 卡不看 `cost_estimate_usd`（`cost:unknown` 不适用）；`max_concurrent` 照常排队。
+
+### 65.2 会话边界（派发时刻）
+
+- argv：`executor._bg_base_cmd(cfg, req)` → `llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))`；`egress_locked` = channel 全为 self_improve ∧ 未声明 `needs_mcp`。四个发射点同款（dispatch / resume / rework / brief），位置见 §4 追记。**只看写死的 channel，不看 lane 开关 / 仓库是否匹配**——封锁比准入更严。
+- prompt：`## SELF-IMPROVE LANE` 段（`self_improve.prompt_blocks`）：仓库路径、分支名（65.3）、只准 `gh pr create --draft --base main`、永不 push main / merge / mark ready / 开别处 PR / 发 PR 评论、受保护路径清单、无 MCP、收工前跑本地门、结尾 `PR: <url>` + `BRANCH: <name>`。非 self_improve 卡 prompt 逐字节不变。
+- 派发记录：`execution.self_improve = {branch, egress, lane}`（add-only；dispatch 成功路径重建 execution 后合入）。
+- `needs_mcp`（§1 新字段）：声明它 = 放弃免批（`self_improve:needs_mcp`），owner 亲批后派发才带 MCP。LLM 不写此字段。
+
+### 65.3 交付核验（收割时刻；宪法第 3 条「诚实」在通道上的形态）
+
+- 钩子 `actd._lane_delivery_check(req, ex)` 挂在**全部四条**进待验收的路径上：reconcile done 分支、`_promote_if_delivered`（FINAL DRAFT 探针）、`_harvest_to_review`（受阻 / 放弃救活收割）、`stop_to_review`。非 self_improve 卡零开销；任何异常只记日志，绝不挡收割（宪法第 11 条）。
+- 分支名 `self_improve.expected_branch(card)`：新提案 = `ai/self-improve/<display_id>`（§60 工作编号）；跟进卡 = 来源条目里 PR 的 `head`。
+- **仓库身份 pin**（Codex review P1）：gh **不许**从 cwd 的 remote 推断仓库（会话能把 `origin` 改到别的仓库再开 PR）。`self_improve.repo_slug` = config `self_improve.github_repo` > lane.json 缓存 `repo_slug` > 首次 `gh repo view --json nameWithOwner`（首次 = 首张 lane 卡**派发那一刻**，任何 lane 会话跑起来之前，`dispatch_record` 顺手钉；缓存后 remote 怎么改都不影响）。此后**每个** `gh pr …` 调用带 `-R <slug>`，`gh api` 路径写死 `repos/<slug>/…`，PR 的 `url` 必须以 `https://github.com/<slug>/pull/` 开头（否则 `pr_repo_mismatch`）；身份拿不到 = `repo_unknown`（fail-closed，一个 pr 调用都不发）。`execution.delivery.repo` / `execution.self_improve.repo` 记 slug。
+- 查找：新提案 `gh pr list --head <branch> --state all -R <slug>`（OPEN 优先，其次编号最大）→ `gh pr view <n> --json number,url,state,isDraft,baseRefName,headRefName,headRefOid,files,mergedAt,closedAt,mergedBy -R <slug>`；跟进卡直接按 `sources[].pr_number` view。cwd = 通道 repo。
+- 裁决顺序与 token（`execution.delivery.reason`，add-only 词表）：`gh_unavailable`（gh 未装 / 起不来——与「PR 不存在」严格区分）→ `repo_unknown` → `pr_missing` → MERGED 直接通过（owner 已验收）→ `pr_closed` → `pr_repo_mismatch` → `pr_head_main`（head 是 main/master）→ `pr_base_not_main` → `pr_branch_mismatch` → `pr_diff_empty` → 新提案 `pr_not_draft` ／ 跟进卡 `pr_no_push`（`headRefOid` 仍等于铸卡时记的 `head_sha`）。跟进卡**不**要求 draft——owner 可能已把 PR 标成 ready，agent 不许也不需要把它撤回。
+- 结果落 `execution.delivery`（形状见 §2 追记）。未通过 → `execution.interrupted_reason = "delivery_unverified"`（review 行 `interrupted: true`）+ 通知 `msg_self_improve_unverified(title, reason)`；卡停在待验收，owner 用「打回 + 一句话」让同一会话补上，或丢弃。通过 → 常规 `msg_review_ready` 由 detect_transitions 发，review 行带 `delivery` 章。
+- 约束：核验只读 GitHub，不改 PR（不 `pr ready --undo`、不关 PR）；不核对本地 worktree（agent 的 worktree 归 claude 管）。
+
+### 65.4 敏感路径护栏（通道不许扩自己的权）
+
+- 写死的受保护路径 `self_improve.SENSITIVE_PATHS` = `act/lib/policy.py`（资格闸）/ `act/lib/self_improve.py`（本通道）/ `act/llm.py`（argv 边界）/ `.github/workflows/`（前缀：CI / 发版 / 部署）/ `install.sh` / `scripts/auto-deploy.sh`。改这张表本身就在表里。
+- PR `files` 命中任一（无论核验是否通过）→ `gh label create needs-owner-eyes --force` + `gh pr edit <n> --add-label needs-owner-eyes`（标签失败不阻塞——暂停是本地真源，`delivery.label` 记 null）→ `state/self_improve/lane.json` 写 `{paused: true, paused_at, paused_reason: "sensitive_paths", paused_pr, paused_pr_url, paused_paths, paused_card}` → 通知 `msg_self_improve_paused`。
+- 暂停的效果：下一 pass 起所有 lane 卡报 `self_improve:paused` 留在待审批（token 上卡）；hand lane、人工审批、已派发的会话都不受影响；核验与封锁照常。
+- 三条恢复出口（都写进横幅文案）：① owner 处理被标记的 PR（合并或关闭）→ 巡检（65.5）看到它不再 OPEN 即 `clear_pause("pr_merged"|"pr_closed")`；② 看板顶部横幅「恢复通道」→ `POST /api/self-improve/resume`（空 body；`server/self_improve_lane.py` 只翻 `paused` + `resumed_at/resumed_by:"owner"`，清掉 `paused_*` 五键，其余键原样——server 不 import act，路径由 `server/paths.self_improve_lane_path` 镜像，键集与 `self_improve.clear_pause` 逐字一致由判例钉）；③ 终端 `python3 -m act.lib.self_improve --resume`。恢复不改任何卡。
+- 这堵墙防的不是恶意而是漂移：守护进程跑 main，分支上改 policy.py 没有运行时效果（§56 ruleset：PR-only + required checks），墙的价值是**让 owner 一定看见**这类 diff。
+
+### 65.5 巡检：PR 评论 = 下一轮任务，合并 = 验收，关闭 = 拒绝（D12）
+
+- `actd._self_improve_tick(cfg)` 每 pass 调 `self_improve.tick`，自身按 `self_improve.tick_minutes`（默认 60）节流；零 lane 卡零 gh 调用；gh 不可用整轮跳过但推进 `last_tick_at`（不每 pass 重试）；绝不崩 pass。
+- 追踪对象 = 待验收（REVIEW）的 self_improve 卡且 `execution.delivery.pr_number` 已核验出（65.3）。零追踪对象且未暂停 = 零 gh 调用；仓库身份拿不到（`repo_unknown`）= 本轮不动任何卡。每张查一次 `gh pr view`：
+  - **只认 owner 本人的动作**（Codex review P1）：MERGED 看 `mergedBy.login`，CLOSED 看 `gh api repos/<slug>/issues/<n>/events` 最后一条 `closed` 事件的 `actor.login`，都必须 ∈ owner login 集合；协作者 / 机器人 / 未知 actor 的合并·关闭只记一行日志，卡与拒绝记忆都不动（暂停自动清同规则）。
+  - **MERGED by owner** → 卡 `review → delivered`，`execution.accepted_at` + `accepted_via: "pr_merged"`，notes `[<date> PR merged] owner 合并了 <url> = 验收`。以 **`user` actor** 落账（`registry.acting_as("user")`）：合并是 owner 在 GitHub 上的点击，actd 是 relay——与 inbox 决策同一语义；store2 白名单 `review→delivered` 仍是 user 独占，权限墙不动。
+  - **CLOSED by owner**（未合并）→ `registry.trash(req, "pr_closed")`（回收站，可恢复，宪法第 2 条）+ **拒绝记忆** `state/self_improve/rejected.jsonl` 追加 `{fingerprint, title, card, pr, pr_url, closed_at}`（`fingerprint` = 标题空白折叠小写后 sha1 前 16 位；文件 256 KiB `logcap.cap` 自压缩）。`self_improve.is_rejected(fp)` 是每日循环（P5）去重的读取点：被 owner 关掉的提案不再重提。
+  - **OPEN** → 跟进判定：owner login 集合 = `gh api user` 的 login（缓存进 lane.json `owner_login`）∪ `self_improve.owner_logins`；收 issue 评论 + review 正文 + 行内 review 评论（`gh pr view --json comments,reviews` + `gh api repos/{owner}/{repo}/pulls/<n>/comments`），只留 owner login、时间晚于该 PR 上次 `covered_until` 的；红 required check = `gh pr checks <n> --required --json name,bucket,link` 里 `bucket == "fail"`（该命令有失败时自身退出 1，读侧接受 rc 0/1/8）。有评论或有红 → **铸一张跟进卡**（65.6），一 PR 一天一张（lane.json `followups[<n>] = {date, card, parent, covered_until}`），且该 PR 已有未完结（card_sent/raising/approved/executing）的跟进卡时不再铸。
+- 暂停中的 PR 若已被处理（不再 OPEN）→ 自动清暂停（65.4 出口①）。
+
+### 65.6 跟进卡（producer 硬编码的形状）
+
+`Requirement(id=next_id(), title="跟进 PR #<n>：<k> 条 owner 评论 / <m> 项红检查", type="self-improvement", tier="T1", status=card_sent, hardness="soft", sources=[{who: <owner login>|"ci", channel: "self_improve", date, ref: "pr:<n>", quote: <评论原文时间序拼接 + "red required checks: …"，1500 字封顶>, pr_number, pr_url, head, head_sha}], summary, plan=[checkout PR 分支 / 逐条用改动回应评论 / 让 required check 变绿 / 本地门跑过再 push 同一分支], definition_of_done=[…], target_repo=repo_path, target_kind="existing", delivery_mode="repo")`，`origin_trust` 按 sources 盖章（proposed）。**owner 评论原文只进 `quote`**——build_prompt 把 sources 整块过 `sanitize.fence_untrusted`（宪法第 5 条），标题 / plan / DoD 全是不含评论文字的骨架；`pr_number / head / head_sha` 是 65.3 核验跟进交付的坐标。铸出即 card_sent，下一 pass 经 §51 lane 免批派发；通知 `msg_self_improve_followup(n, k, m)`。
+
+### 65.7 状态与文件（防腐 #4：出生即带帽）
+
+- `state/self_improve/lane.json`（atomic 写）：`paused` 家族（65.4）、`resumed_at/resumed_by`、`owner_login`、`repo_slug`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——**读-改-写全部在 `lane.json.lock` 的 `flock` 内、且只动自己的键**（`self_improve._update_state` / server `_locked`；巡检末尾只提交 `TICK_KEYS`）：server 清暂停与 actd 同一时刻写的暂停互不覆盖（Codex review P1；Windows 无 flock 退化为无锁）。
+- `state/self_improve/rejected.jsonl`：append-only，256 KiB 自压缩保尾。
+- 都不进 repo（`state/` gitignore）；dashboard 只投影 65.4 的低频子集（§2）。
+
+### 65.8 不做 / 边界
+
+- 不为 lane 卡开第五类出身；不把 `type` / `target_repo` 当判据；不给别的仓库开通道（D7）；不设预算（D9）；不用第二个 GitHub 身份（D8）。
+- 不关 PR、不删远端分支、不 `pr ready --undo`——GitHub 侧动作只有打标签。
+- 跟进只盯 lane 自己的 PR（有 `delivery.pr_number` 的待验收 self_improve 卡）；owner 在其它 PR 上的评论不铸卡。
+- 通道配置（`self_improve:` 块）随 actd 启动冻结（同 `autodispatch:`）；设置页开关随 P4 设置页另案。每日循环的提案 producer、`is_rejected` 的消费、proposal 的 fingerprint 去重范围随 P5 主体立法。
+- `docs/PRIVACY.md`「审批是安全边界」一句改写为两条 lane 各自的边界声明（本 PR 同车）；`SECURITY.md` 指针随动。
+
+## 66. UI 对齐契约：原生清单 = 终版规格，机器判卷（2026-09-02；owner 决策 D3 的执法面，P4 前置）
+
+> §62 / §63 / §64 由同日并行的 `feat/material-box`（#157）、`feat/meeting-recap`（#159）、`feat/card-summary-verdict`（#160）立法，本节取下一个空号 §66（§66 = 同日并行的 `feat/self-improve-lane`，#167）——§ 号永不复用。
+
+owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通过一些硬指标、硬代码、硬文档来进行保证」。当天点名的四条差距：(a) 原生主窗口**左侧竖排图标栏**（任务台 / 问问助手 / 依赖检查 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于）被 web 挪到了顶栏，要回到左侧；(b) 原生默认**浅色**，web 默认成了深色；(c) 原生四列各 400pt 铺满一屏，web 列更窄；(d) 原生设置页的 section / 字段 web 大量缺席。本节把「web 看板必须补齐原生 app 的全部用户功能」（R2.2.2）从验收表变成硬门：**审阅者不再看截图判对齐，机器判**。执法：`scripts/ui/`（ui_common / extract_native_inventory / extract_native_tokens / parity_fixture / parity_check）、`web/src/parity.test.tsx`、`web/e2e/visual.spec.ts`、`scripts/qa/run_gates.sh [ui-parity]`、`scripts/qa/ledger_diff.py`（两本 UI 账本）；判例 `tests/test_ui_swift_scan.py`、`tests/test_ui_inventory_extractor.py`、`tests/test_ui_native_inventory_fresh.py`、`tests/test_ui_native_tokens.py`、`tests/test_ui_parity_check.py`、`tests/test_qa_ledger_diff.py::ParityLedgerTestCase`。
+
+### 66.1 清单（ui/parity/native-inventory.json）= 退役中 app 的终版规格
+
+- **来源与冻结**：`scripts/ui/extract_native_inventory.py` 只读 `mac/Sources/*.swift`（D3 冻结、永不再改），机器提取全部用户可见面：左侧栏（`MainSection` 顺序 / 双语标题 / SF 图标 / ⌘1..8）、页面与面板（rail 页、`SettingsSectionDescriptor` 注册表的每个 section、权限体检 / 初始设置向导 / 诊断条 / 强制合并 sheet 等窗口）、每个 `L("zh","en")` 双语字面量按**调用链**归类（toggle / button / menu / link / textfield / picker / option / menu-item / alert-button / dialog / label；长句 = copy、tooltip = help）并附 screen 与 `File.swift:line`、settings 键（`settings_overrides.json` 扁平键与 `features.*` / `telemetry.*` 嵌套键；UserDefaults 纯界面偏好键）、看板列（顺序 / 双语列名 / 左右两根可折叠书立条 / 每列卡面动词）、快捷键（`.keyboardShortcut` + `NSMenuItem keyEquivalent`）、通知 kind、以及主题 / 布局常量的指针（数值住 §66.3）。mac/ 冻结 ⇒ 清单是**终版**；重跑零 diff 由判例钉死，P8 删 mac/ 时 JSON 留在仓里作规格、提取器与判例改 tombstone（防腐 #6）。
+- **id 稳定**：`control:<screen>:<role>:<slug-en>[#n]`（同 id 按源码顺序 #2/#3 稠密编号）、`rail:<slug>`、`lane:<slug>`、`screen:<screen>`、`setting:<overrides|prefs>:<key>`、`shortcut:<screen>:<key-slug>`、`notification:<kind>`、`theme:default`、`layout:<token>`。账本、报告、vitest 的 it 标题全部用这些 id 说话。
+- **唯一手写部分 = 归属表**（`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN`：文件 / 类型 / 成员 → screen；`SCREEN_OWNER`：screen → **谁负责补齐**：`web`（进门）/ `shell`（R2.2.3 原生残留：实时字幕悬浮窗、系统通知、macOS 应用菜单）/ `os`（⌘Q/⌘W/⌘H/⌘M/编辑菜单等系统惯例）/ `retired`（计划明文退役：D3 菜单栏状态项菜单、「显示菜单栏图标」、首启气泡「我在这里 👆」））。表本身进 JSON 的 `attribution` 节——改表 = 改规格，PR 可见、判例可钉。非 web 的条目**只列不判**；说明性文案（copy / help）同样只列不判——web 有自己的句子，但短标签、按钮、选项、字段名必须**逐字**（zh 与 en 都要）。
+
+### 66.2 门 `[ui-parity]`（scripts/ui/parity_check.py；shrink-only 两本账）
+
+- **探针**（每条 gated id 一个，真/假二值）：`control:*` → `web/src/parity.test.tsx`：由清单驱动生成 it()（不手写列表），用 demo fixture（`ui/parity/fixtures/`，`scripts/ui/parity_fixture.py` 从 `scripts/demo_seed.py` + `server/lanes.py` 落成，判例钉新鲜）渲染看板 / 回收站 / 设置三面 × zh / en，把每颗按钮点一遍收弹窗文案，按 accessible name / 自身文本**精确**匹配（插值 `{expr}` 放宽为正则）；原生 screen 按前缀映射到渲染面（`settings.*` → 设置页、`trash` → 回收站、其余看板相关 → 看板；web 尚无的页面在全部面的并集里找，新开页面时在该文件登记）。`screen:*` → zh + en 标题字面量都在 web/src 源码（剥注释、排除 `*.test.*`）；`rail:<slug>` → 双语标题 + `data-rail-item="<slug>"`，`rail:order` → 属性出现顺序 = 原生顺序且容器带 `data-rail="left"`；`lane:*` → 双语列名在 web/src 或 `server/lanes.py`，`lanes:order` → `LANES` 的 slug 顺序 = 原生顺序，`lanes:rail-left/right` → `BoardLanes.tsx` 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 之后；`setting:overrides:<k>` → `server/settings*.py` 出现 `"<k>"`（server 是 overrides 的 web 侧写者，§59.5）；`setting:prefs:<k>` → web/src 出现 `"<k>"`；`shortcut:*` → 字形（`⌘F`…）出现在 web/src；`theme:default` → `web/index.html` 首帧脚本写着 `dataset.theme = "light"` 兜底（无存储偏好时不跟随系统深色——owner (b)）；`layout:*` → 某个 web/src CSS `var(--native-layout-…)` 消费该 token（owner (c) 的列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）。
+- **判决 = §58.4 同一三态**（`qa_common.compare_with_ledger`，阈值 0）：缺席且不在 `ui/parity/pending.txt`、也不在 `ui/parity/waivers.txt` → **NEW → FAIL**（补实现，不许记账）；在 pending 上但已在场 → **STALE → FAIL**（同 PR 划掉那行）。vitest 侧同一语义：普通 it 断言「在」，`[pending]` it 断言「不在」，`[waived]` skip——Web tests job 与 qa-gates job 读同两本账本，判决一致。vitest 跑不起来（没 node / 没 `npm ci`）= 门红，**不软化**。
+- **两本账本只许缩**（`ledger_diff.py` 对 base 差分，按 id 集合，备注列不是分数）：`pending.txt` = 尚未搬到 web 的原生条目（出生 = 本节立法当天的全量缺项，truth = 该文件行数，本节不复述；**每个加 UI 的 PR 必须让它缩**）；`waivers.txt` = 有意不搬（种子 = #119 需输入退役的回答对话框四条；行形 `<id>  <理由>  <issue/决策引用>`）。新的「不搬」判断**不走 waivers**——走归属表把 screen 标成 `retired` / `shell` 并带决策引用（代码可审、判例可钉）。
+- **报告**：`ui/parity/report.json` + `report.md`（PRESENT / PENDING / MISSING / STALE / WAIVED 按类计数 + NEW / STALE 清单 + 不判条目按 owner 计数），门每次运行重写；CI 的 `qa-report` artifact 带一份判决文本。`[ui-parity]` 是 `run_gates.sh` 的第六道门、住在 `qa-gates` job（job 名不变，required check 按名字挂），该 job 因此装 node 并在 web/ 做 `npm ci`。
+
+### 66.3 设计 token 单源（ui/tokens/native-tokens.json → tokens.css 生成块）
+
+- `scripts/ui/extract_native_tokens.py` 从 mac/Sources 提取：语义色用量 → macOS 解析值（Apple HIG system colors，light / dark 两套；web tokens.css 头注早已采用的暗色家族与之逐值一致）、`Color.primary/secondary/accentColor.opacity(x)` 叠层比例、`.font(.system(size:weight:))` 字号梯（角色级映射仍由 §54.1 第 10 项的 `typeScale.ts` 承担）、`.padding` / `spacing:` / `cornerRadius:` 取值集、**layout 定点**（列宽 400 / 书立条 44 / 列距 12 / 看板内边距 16 / 列圆角 10 / 卡圆角 8 / 侧栏 48·200·160–320 / 窗口 900×640·min 720×480；任一定点找不到即 fail-loud）、`theme.default = light`（owner 拍板；原生 app 本身跟随 macOS 外观，无强制）。JSON 形照 W3C Design Tokens 草案（`$type` / `$value` / `$extensions.zai`）。
+- `web/src/styles/tokens.css` 末尾的 `@generated-begin native-tokens … @generated-end` 块由同一脚本生成：只放 `--native-*` 数据变量（`--native-default-theme`、`--native-layout-*`、`--native-color-<x>-light/dark`、`--native-overlay-*`），**不做主题切换逻辑**；手改无效（判例钉「重跑零 diff」）。把它们接进语义 token（`--danger` / `--status-*` / 列宽）并翻默认主题是 **PR-B** 的活；本节只钉数值。组件消费方式 = `var(--native-layout-…)`（`layout:*` 探针即以此判「已消费」）。
+
+### 66.4 视觉基线（web/e2e/visual.spec.ts；CI job「Web visual (playwright)」）
+
+- `@playwright/test` 为 web dev 依赖；`web/e2e/demoServer.ts` 把 `scripts/demo_seed.py` 的 initial 场景种进临时 `AIASSISTANT_HOME`（绝不碰生产 state/），随机空闲端口起 `python3 -m server`；spec 对 看板 / 回收站 / 设置 × light / dark 各截 1440×900 一张，与 `web/e2e/__screenshots__/visual.spec.ts/*.png` 的 golden 比对（`maxDiffPixelRatio` 2%；新鲜度 / 部署标签遮罩）。golden 路径不带平台后缀，在 macOS 生成，CI 也跑 macos-latest（ubuntu 字体会让每张都「回归」）。
+- **改 UI 的 PR 必须显式更新 golden**（`cd web && npm run visual:update`，提交 png，PR 描述写明哪几张为何变）——golden 漂移不是噪音是决策。job 出生 informational（`continue-on-error`，红了上传 diff artifact `web-visual`），稳定后再议升门。
+
+### 66.5 与其它法条的关系
+
+§54.1 是 web 看板 parity 的判断清单（人写），本节是它的机器化上层：§54.1 的每一项都应对应清单里若干 id 的 PRESENT。§58 的账本哲学（出生即绿、只许缩、对 base 差分）在此复用不重造；§58.4 的 `ledger_diff` 顺带看管 `ui/parity/*.txt`。§61.2 header 两开关的「逐字镜像」正是本节探针对 control 的要求。P8 删 mac/ 后：清单 JSON 与 token JSON 继续作规格，提取器、`tests/test_ui_native_inventory_fresh.py` 与 §66.3 判例一起改 tombstone。
+
+## 67. skill 商店：仓库内 `skills/` + 清单 + 软链接启用 + 漂移检测 + 跨机同步（owner 决策 D13；R2.7）
+
+> §62 素材库（#157）、§63 会议 recap（#159）、§64 卡片摘要与评语（#160）、§65 自动草稿 PR 通道（#167）、§66 UI 对齐契约（#162）各自立法在前，本节（原稿写作 §62）取下一个空号 §67——§ 号永不复用。
+
+owner 原话（2026-09-01）：「skill 商店 塞进本仓库」。此前四个地点四个 owner 零清单（repo `skills/board-agent` 不可被运行时发现、`ingest/skills/unprocessed-ingest`、vault `.claude/skills`、`~/.claude/skills/*` 真目录），`write-better` 已在 owner 机器上漂离 PR #102 的版本 122 行——「默认 vs 自定义」在第二台机器上无从判定（审计 I4）。本节把 **仓库 = 商店** 立法：skill 的真源是 `skills/<name>/`，清单是 `skills/index.yaml`，Claude Code 与派工 agent 真正读取的位置（`~/.claude/skills/<name>`）只放一个指回仓库的软链接。执法：`act/lib/skills.py`（唯一写者）、`server/settings.py`（`GET/POST /api/skills`）、`web/src/components/settings/SkillsSection.tsx`、`scripts/skills_sync.sh`、`install.sh install_skills`；判例 `tests/test_skills_store.py`、`tests/test_skills_manifest_repo.py`、`tests/test_server_skills.py`、`tests/test_install_skills_step.py`、`tests/integration/test_skills_agent_visibility.py`、`tests/integration/test_skill_write_better_style_check.py`、`web/src/components/settings/SkillsSection.test.tsx`。
+
+### 67.1 商店格式（R2.7.1）
+
+- 一个 skill = `skills/<name>/SKILL.md`（frontmatter：`name` = 目录名、`description`、**`version`**（点分整数，可放顶层或 `metadata.version`——Agent Skills 规范位）、`upstream` + `upstream_version`（改编来源；NOTICE 同记））+ 可选 `references/*.md` + 可选 `scripts/*.py`（stdlib、py3.9 floor）。skill **永不** import `act/`（要能从裸 checkout 和软链接两侧工作）、永不外发任何东西。
+- **清单 `skills/index.yaml`**（`schema: 1`；`skills[]` 每项 `name` / `version` / `upstream` / `upstream_version` / `default_enabled`（bool）/ `description`）。**三条一致性**由 `skills.validate_repo` 判例钉死：每个 `skills/*/SKILL.md` 在清单里且反之；frontmatter `version` == 清单 `version`；`.claude/skills/` 的集合 == `default_enabled: true` 的集合（67.4）。清单坏 = `ManifestError`（CLI exit 3、API 409 `CONFLICT`、install.sh `skills=fail`——仓库坏了与构建坏了同类）。
+- 出生名单：`board-agent`（1.0.0，默认开；§52）、`test-code`（0.2.1，默认开；R2.8）、`write-better`（1.0.0，**默认关**；PR #102 内容原样吸收，加 `version` 与 upstream 字段，唯一文本改动是把硬编码的 `/Users/zelin/...` voice-profile 路径改为「本 skill 所在 checkout 的 `state/voice-profile.md`」）。
+- **默认策略**：改变助手声音/行为的 skill `default_enabled: false`——没有人该因为 `git pull` 换一副嗓音（PR #102 的原则）；产品自身依赖的基建 skill（agent 通道礼仪、测试梯子）`default_enabled: true`。
+
+### 67.2 启用 / 停用 = `~/.claude/skills/<name>` 软链接（R2.7.2）
+
+- **enable**：`~/.claude/skills/<name>` → `<repo>/skills/<name>`（绝对路径软链接，目标 = 本 checkout）；文件系统拒绝 symlink（OSError）→ **copy 回退** `copytree`，并把 `{version, hash}` 记进 `state/skills.json.copies`，使之日后仍能被认出是「商店的副本」而非自定义。**disable**：解链 / 删商店拷贝。两者都写 `state/skills.json.decisions[name] = enabled|disabled`。
+- **状态词表（wire `state`，add-only）**：`disabled`（不存在）· `enabled`（软链接解析到本 checkout 的 `skills/<name>`；指向**别的** checkout 的 `…/skills/<name>` 或断链但形状是我们的 → 仍 `enabled` 且 `stale_target: true`）· `copy`（真目录，内容 hash == 仓库当前版 或 == 记录的拷贝 hash；后者 `stale_target: true`）· `custom`（真目录，内容与商店知道的任何版本都不同 = owner 自己的改动，R2.7.3）· `foreign`（指向非 `skills/<name>` 形状的软链接，或普通文件）。`toggle` 派生：enabled/copy → `disable`，disabled → `enable`，custom/foreign → **`locked`**。
+- **自定义永不被碰**：对 `custom` / `foreign` 的 enable/disable 一律拒绝（`SkillError` `SKILL_CUSTOM_KEEP` / `SKILL_FOREIGN_LINK`；API 409 `CONFLICT`，`details.code` 带该 token），sync 对它们零动作；要回到仓库版只能 owner 手动移走。`custom` 行显示 `installed_version`（本地 frontmatter）与 `relation` / `distance`：`behind` / `ahead` / `same` / `unknown`，**N 版 = 第一个不同的 semver 分量之差**（`0.2.1` → `0.4.0` = 落后 2 版；无版本号 = unknown）。
+- **单写者**：`~/.claude/skills` 的链接与 `state/skills.json` 只有 `act/lib/skills.py` 写（server 与 CLI 都调它，不镜像——镜像一个写者就是第二个写者；§58.3 规则 3 允许 server → act.lib）。`skills/` 目录本身只有 git 写（防腐 #8）。
+- **决策文件** `state/skills.json`：`{"schema":1, "decisions":{name: enabled|disabled}, "copies":{name:{version,hash}}, "updated_at"}`；读坏 = 当空（不崩）。它让 `default_enabled` 只在**没有记录**时生效——owner 关掉的 skill 在每次部署后**仍然关着**。
+
+### 67.3 跨机同步 `sync`（R2.7.2「另一台机器 git pull + 刷新即同步」）
+
+`python3 -m act.lib.skills sync`（`scripts/skills_sync.sh` 包它；`--pull` 先 `git pull --ff-only`）对清单每项：`enabled`/`copy` 且 `stale_target` → 重指本 checkout / 刷新拷贝（`repointed` / `copy_refreshed`）；`disabled` 且决策 `enabled` → 重建链接（`relinked`：决策文件是真相，手删链接不是决策）；`disabled` 且**无决策**且 `default_enabled` → 启用（`enabled_default`；`--no-defaults` 关掉这一条）；其余零动作。幂等。**install.sh 步 3b `install_skills`** 在每次安装/自动部署时跑它（把 §55 验证过的守护解释器经 `AIASSISTANT_PYTHON` 交给脚本——TCC 按 binary 记账，不能用 PATH 的 python3）：§23 step `skills` = `ok:<一行摘要>` / `skipped`（无守护解释器 / 脚本缺席）/ **`fail`（exit 3，清单坏——进 `failed_deploy_steps`）** / `warn:exit N — <stderr 尾行>`（其余非零：环境问题永不回滚部署，§56.5）。一台空白机器跑完一次 `install.sh`，`board-agent` 与 `test-code` 已在 `~/.claude/skills`——这是 owner「另一台电脑起一个空白环境就能直接使用」的 skill 半边。
+
+### 67.4 派工 agent 看得见仓库 skills（R2.7.4）——机制与边界
+
+- Claude Code 读 skill 的两个位置（其文档）：个人 `~/.claude/skills/`，项目 **工作目录及其每一级父目录到仓库根的 `.claude/skills/`**，都跟随软链接；同名冲突个人覆盖项目、同一目标只加载一次。本 repo 因此**在 git 里追踪** `.claude/skills/<name>` → `../../skills/<name>`（**相对**软链接，只为 `default_enabled` 集合），`.gitignore` 加 `.claude/*` + `!.claude/skills/`（Claude Code 自己的 worktrees / 锁 / local settings 不进 repo）。效果：每个 checkout、每个 `git worktree`——包括 `claude --bg` 隔离进去的 `<repo>/.claude/worktrees/<name>`——都自带这两个 skill，agent 读到的是**该 worktree 自己那份**（改 skill 的 agent 看见自己的改动），零 per-machine 步骤、零 executor 改动。
+- **executor argv 不变**（§59.1「follow 时逐字节相同」的判例继续成立）：不加 `--add-dir`。理由：目标仓库是别的 repo 时，agent 该看到的是这台机器**启用了**的 skill（= 个人 `~/.claude/skills`，67.2 的产物），`--add-dir <本 repo>` 会把默认关的 skill 也推给每个 agent，与 67.1 默认策略相悖；目标是本 repo（P6 自动 PR 通道，D7 唯一通道）时 67.4 第一条已经覆盖。日后若确需，另修本节。
+- **判例的诚实边界**：`tests/integration/test_skills_agent_visibility.py` 用真 git worktree + 经 `executor._default_runner` 启动的 **假 claude**（按文档规则实现发现：项目链 + 个人覆盖）钉住的是**我们这侧的文件系统契约**（链接形状、解析到 worktree 自己的副本、个人优先），不是 Claude Code 本身——测试永不真起 claude（`tests/__init__.py` 守卫）。
+
+### 67.5 server / web 面
+
+`GET /api/skills` → `{"skills":[row…], "skills_dir", "repo_skills_dir", "state_path"}`；row = `Store.inspect` 输出（`name / version / upstream / upstream_version / default_enabled / description / path / target / link / state / stale_target / installed_version / relation / distance / decision / project_visible / toggle`，add-only；web `SkillRow` 逐字镜像）。`POST /api/skills {name, action: enable|disable}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状 400 `INVALID_FIELD`、未知名 404、custom/foreign 409 `CONFLICT`）→ 新快照。设置页 section「Skills」：一行一个 skill（名 / 版本 / 描述 / 状态徽章 / 「仓库内可见」「默认开」章 / 启用·停用按钮，locked 行禁用并解释），server 拒绝的整句原文 toast（`role=alert`）。**不做**：远程拉取 / 市场（skill 随 repo 走，作为代码审查）、per-skill 配置 UI、编辑器。
+
+### 67.6 R2.8.2 留待后续
+
+「agent 收工前自动跑 test-code + 报告附 PR」不在本节——它改 executor prompt（`_quality_gate_block`），另 PR 与 §33 同修。本节只保证 agent **看得见** `test-code`（67.4）。
+## 68. legacy-app parity 面：设置全套 / 凭证 / 权限体检 / 诊断 / 首次运行向导 / 看板余量（v0.48.x；D3 / R2.2.2，P4 余量）
+
+owner（2026-09-02）：「一路推进到完成。最终状态：我能够在另一台电脑上起一个空白环境，或者在其他电脑上更新这个软件，就能够直接使用。」本节把原生 Mac app 剩下的用户功能全部立法到 web + server + 壳三处（§54 定位，§61 桥），使 `mac/` 可按 R2.2.4 改名 -old 备用、P8 删除。执法：`server/settings_catalog.py` / `secrets_store.py` / `permissions.py` / `diagnostics.py` / `doctor_run.py` / `setup.py` / `about.py` / `repair.py` / `terminal_launch.py` / `mcp_servers.py` / `claude_sessions.py` / `subproc.py`；`web/src/pages/{Settings,Permissions,Diagnostics,Setup,Archive}Page.tsx` 与 `web/src/components/settings/*`、`components/board/{MergeSuggestionCard,SelectionBar,ForceMergeDialog,ProposalsTriageButton}.tsx`、`components/detail/TitleEditor.tsx`；`shell/Sources/{NotifyRelay,ShellSystem}.swift` + `shell/Helpers/`。判例：`tests/test_server_settings_catalog.py`、`test_server_secrets.py`、`test_server_diagnostics.py`、`test_server_permissions_setup.py`、`test_server_board_tools.py`、`test_shell_engine_mirror.py`（§68.13）、web `CatalogSection.test.tsx` / `MergeSuggestionCard.test.tsx` / `ParityPages.test.tsx`、`shell/tests/run.sh`。
+
+### 68.1 设置目录（`GET /api/settings`；写 = `PUT /api/settings/{section}`）
+
+server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语言取键、逐字镜像）。wire 形：
+
+```json
+{"sections": [{"id": "general", "title": {"zh": "通用", "en": "General"}, "help": {"zh": "", "en": ""},
+  "fields": [{"key": "language", "kind": "enum", "label": {"zh": "界面语言", "en": "Interface language"},
+              "help": {"zh": "…", "en": "…"}, "default": "zh", "choices": ["zh", "en"],
+              "effective": "zh", "source": "override|config|default"}]}]}
+```
+
+- section 词表（顺序 = 设置页通用区顺序；truth = `settings_catalog.SECTIONS`）：`sources`（gmail_enabled / gmail_address / slack_enabled / obsidian_enabled / obsidian_raw）、`notifications`（review_notify）、`telemetry`（telemetry.enabled / level / capture_input）、`digest`（digest_frequency / weekly_digest_enabled）、`general`（language / default_output_format / updates_check_enabled）、`approval`（default_target_repo / skip_permissions / create_github_repo / show_cost_above_usd / require_text_confirm_above_usd / trash_retention_days）、`flags`（features.*，`DEFAULT_FEATURES` 全集）、`redaction`（enabled / terms_file / mask_secrets）、`voice`（voice_enabled）、`maintainer`（repo_path / session_id）。`models` 仍由 §59 自己的模块服务（同一 URL 前缀，精确表优先）。
+- `kind` 词表 `bool | enum | string | number | int`；effective 三层 = override（嵌套块优先，再扁平点号键）→ config.yaml 路径 → default，归一失败视为缺席（管线同款）。
+- PUT：body 为 `{key: value}` 子集；未知键 400 `UNKNOWN_FIELD`；空 body / 类型错 / 越界（enum 外、负数、非整数 int、多行或 >1024 字符串）400 `INVALID_FIELD`；bool **只认 JSON 布尔**；string 空 = 清键；全部键先校验再一次落盘；overrides 不可解析 409 `CONFLICT` 不覆盖。diff-write 与 nested 规则见 §15 v0.48.x 追记。`set_flat_override` 是其它 server 模块的窄写口（Slack auth.test 自动填 `owner_slack_user_id`）。
+- web 之外的其它 section（模型 §59、录制 / 字幕 = 壳 UserDefaults 经 §61 桥、Skills / MCP / 导入 = 只读列表 + inbox 动作、素材库 = P5 占位、关于 = §68.6）在设置页有固定落点（`SettingsPage.SETTINGS_TOC` 是目录，`?anchor=<id>` 深链）。
+
+### 68.2 字幕偏好（桥 add-only）
+
+`captions` 快照新增八键 `source | translate | translate_direction | apple_locale | ark_model | font_size | opacity`（+ 既有 `engine`）；写 = `setCaptionPrefs {…任意子集}`——每键先校验（engine ∈ auto|doubao|apple、source ∈ both|mic|system、translate_direction ∈ auto|zh2en|en2zh、apple_locale ∈ zh|en、translate bool、ark_model 非空 ≤64、font_size 14…40、opacity 0.2…1），**任一坏值整个请求拒绝、零写入**（`INVALID_ARGS`）；写入即 `LiveCaptionsController` 的 `@Published` 属性（UserDefaults `captions*` 键，原生同名），引擎在跑则按原生规则重启。两把 BYO key 是 §19 文件 `volcano-speech-key.txt` / `volcano-ark-key.txt`（经 §68.3 凭证面写）。
+
+### 68.3 凭证与权限体检
+
+- **凭证**（`server/secrets_store.py`）：名单 = §19 三把 + 字幕两把（与 `act/lib/secrets.py` 常量、`ShellSupport.SecretsIO` 逐字一致，判例钉住）。`GET /api/secrets` → `{"secrets":[{name, label:{zh,en}, present, verifiable, mtime}]}`——**值永不回显**（write-only）。`PUT /api/secrets/{name} {value}`：dir 0700 / file 0600、多行只留首个非空行、空值 = 删文件、未知名 404、`value` 非字符串 / >4096 400。`POST /api/secrets/{name}/verify {}` → `{ok, network, detail, extra}`：Anthropic `GET /v1/models`、Slack `auth.test`（成功 `extra.user_id` → override `owner_slack_user_id`，§15.3 v0.14）、Gmail IMAP LOGIN（地址 = `sources.gmail_address` effective；缺地址 = ok:false 人话）；网络层失败 `ok:false, network:true`（不是凭证的错）；火山两把无探针 → 400；未保存 → 400。探针经 `prober` 注入缝，判例零网络。
+- **权限体检**（`?page=permissions`；`GET /api/permissions`）：两半——GUI 三项（屏幕录制 / 麦克风 / 通知）真相只有壳知道：桥 `getPermissions` 刷新 `PermissionsProbe`（`CGPreflightScreenCaptureAccess` / `AVCaptureDevice.authorizationStatus(.audio)` / `UNUserNotificationCenter.getNotificationSettings`），快照 `permissions.{screen,microphone,notifications}` ∈ `granted|denied|unknown`；`requestPermission {kind}`（屏幕：首次 `CGRequestScreenCaptureAccess`、之后深链；麦克风：notDetermined 才弹；通知：notDetermined 才弹）；`openPane {pane}`，pane 词表 `full_disk | screen | microphone | notifications`（深链 URL 表 server / 壳两侧同一张，判例钉住）。页面 2 s 轮询（原生 PermissionsModel 节拍）。浏览器里打开 = 如实说「只在看板 app 里可探」。**FDA 半边**（原生窗从不管、D20 家族的真因）：server 列出要授「完全磁盘访问」的可执行文件——守护 python（`config/runtime.json`）、claude（`execution.claude_bin` → `~/.local/bin/claude` → PATH）、node（ui 构建）、壳 app——每条 `path` / `realpath`（TCC 按真实二进制记账）/ `exists` / `note:{zh,en}`，**路径可复制**；`fda.needed` = home 在可移动卷或 ~/Documents / ~/Desktop / ~/Downloads；`doctor` = `--fast` 报告里 TCC 相关行（failure_id ∈ claude_blind / deploy_blind_tcc / cron_tcc_blocked / cron_fda_blocked / ui_build_tcc_blocked / interpreter_blind / screen_tcc_lost，或行名 ∈ launchd claude / launchd volume access / cron write access / cron ingest chain / board ui build / launchd paths）。授权步骤原样印在页面上（系统设置 → 隐私与安全性 → 完全磁盘访问 → + → ⌘⇧G → 粘贴路径；等下一轮 timer 自证，终端 kickstart 不算）。
+
+### 68.4 诊断（`?page=diagnostics`）
+
+`GET /api/diagnostics` = `doctor`（`server/doctor_run.py`：子进程 `python -m act.doctor --json --fast`，进程内缓存 15 s，`?refresh=1` 绕过；非 JSON 输出 → `ok:false` + 尾巴，不 500）+ `health`（§47.4 快照）+ `deploy_state`（dashboard 顶层键）+ `radar_sources`（§48 投影）+ `install_report`（§23 公开子集 version / generated_at / ok / steps[name,status,detail]）+ `registry_backend` + `logs[]`（两个目录里实际存在的 `*.log`：`~/Library/Logs/zelin-ai-assistant/` 与 `<home>/state/logs/`，按 mtime 倒序最多 60 条）。`GET /api/doctor[?fast=0]` = 完整体检（含活探针，花 token；页面按钮显式点）。`GET /api/logs/{name}?lines=N`：name 只认 `[A-Za-z0-9._-]+\.log` 且在清单里（防穿越）；**size-cap** 最多读末尾 64 KiB、最多 1000 行（默认 200）；`truncated` 如实；server 永不写 / 删日志（§55 审计 L3）。
+
+### 68.5 首次运行向导（`?page=setup`；原生 SetupWizard 的 web 版）
+
+`GET /api/setup` → `{needed, done, config_exists, config_example_exists, secrets:{name: present}, home, protected_location}`；`needed` = 未写完成标记 ∧（config.yaml 缺席 ∨ §19 三把主凭证一把都没有）。app.tsx 在看板页且 `needed` 时整页换到向导（一次性 replace）。四步：配置文件（`POST /api/setup/config-from-example {}`：复制 `config.example.yaml` → `config.yaml`，**已存在 409 绝不覆盖**——install.sh 步 2 同一纪律；模板也缺 404）→ 后台进程磁盘授权（§68.3 FDA 清单）→ 可选凭证（§68.3 凭证行）→ 完成（`POST /api/setup/complete {}` 写 `state/setup_done.json {completed_at}`；`POST /api/setup/reset {}` 删标记 = 设置 → 关于「重新运行初始设置」）。完成标记住在 home 下（替代原生 UserDefaults `setupWizardCompleted`：换壳 / 换浏览器不重问）。幂等：每步预填真值、不清数据；中途关掉下次还回来。
+
+### 68.6 关于 / 更新
+
+`GET /api/about` → `{version, home, repo, update_available, update_check}`（§26 追记）；`POST /api/update/check {}`（§26 `--force`）。设置页「关于 / 看板 app」区另有：诊断 / 权限体检链接、「重新运行初始设置」、壳在场时的「登录时启动」（桥 `setLaunchAtLogin {on}` = `SMAppService.mainApp` register / unregister，失败整句 `INVALID_ARGS` 转出；快照 `launch_at_login`）、全局快捷键提示（快照 `hotkey`）、通知权限状态。
+
+### 68.7 在终端接管会话（`POST /api/terminal {card_id}`）
+
+原生双击指令行 → TerminalLauncher 的 web 落点：server 从**投影行**推导命令（`copy_cmd` 优先，其次 `claude --resume <session_id>`，session_id 过 SAFE_ID），写可执行 `.command`（`cd <cwd|home>` + `export AIASSISTANT_HOME` + `exec <cmd>`）到 `$TMPDIR` 并 `open`（Terminal.app 执行，不需要自动化授权）；**绝不接受客户端文本**（与 reveal / ai-fix 同一纪律）；查无此卡 404、无会话 400、非 darwin 501；`opener` 注入缝。web：运行中（非排队 / 非受阻）与待验收卡的「在终端接管」按钮。
+
+### 68.8 横幅一键修复（`POST /api/repair/actd {}`）
+
+原生 PipelineRepair 的最小诚实版：`com.zelin.aiassistant.actd` 在 launchd **已加载**（`launchctl print` 退出 0）→ `launchctl kickstart -k`；**未加载** → 409 `CONFLICT`，修法 `bash install.sh`（渲染 + 加载模板是安装器的活，server 不重造 §55 占位符替换）；kickstart 非零 → 500 带输出；非 darwin 501；label 与 `act/doctor.ACTD_LABEL` 逐字一致（判例）。web：`PipelineBanner` 在 stalled / failing / stale 三态给「一键修复」+ 诊断链接，成功 3 s 后重拉 health。
+
+### 68.9 MCP servers 只读列表（Skills 商店 = §67）
+
+Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`，web `SkillsSection.tsx`），本节不再有第二份 skill 列表。`GET /api/mcp` → `{"scopes":[user ~/.claude.json, project <home>/.mcp.json]}`，**隐私规则**：只取 `mcpServers` 子树、env 只给个数、args / URL 过密钥掩码、URL query 整段打码；文件缺席 / 坏 JSON 如实标注不 500。
+
+### 68.10 导入 Claude Code 工作
+
+`GET /api/claude-sessions?window=N`（1..90，默认 7）= `python -m act.radar_claude_sessions --scan --window N` 的 JSON 行透传（`~/.claude/projects` 缺席 `ok:false, reason: no_claude_dir`；子进程失败 `reason: scan_failed`）；导入动作照旧是 §22 inbox `import_claude_sessions {session_ids}`（server 不重造）。web 设置页区：窗口天数、重新扫描、候选列表（默认勾「等你回复」且未回答的，`session_mismatch` 不可选）、导入所选。
+
+### 68.11 永久性完成整页
+
+`?page=archive`：与右侧书立条（§54.1 第 6 项）同一行组件 `ArchiveRow`（你封存 / 自动封存、原来在、相对时间、「放回看板」= `unarchive`），加整页搜索与 cap 说明；不是看板列。
+
+### 68.12 多选与批量
+
+见 §54.1 第 11 项。store 持 `selectionMode` / `selectedIds`（会话内瞬态）；退出选择即清空。批量批准的 T2 跳过是**硬规则**：typed-confirm（§50 W17 生效档）只能逐卡在提案卡上完成，操作条的提示如实列出被跳过的 id。
+
+### 68.13 壳的其余原生残留（R2.2.3；`shell/Sources/ShellSystem.swift` + `NotifyRelay.swift` + `shell/Helpers/`）
+
+- **通知中继**：§28 追记（搬入副本、5 s drain、点击前置窗口、`NotifyRelayDelegate.install()`）。
+- **TCC 探针 / 请求 / 深链**：§68.3；`Analytics.log("permissions_action", cap)` 词表不变。
+- **登录时启动**：§68.6（`SMAppService.mainApp`；bare binary 无 bundle 时如实报不支持）。
+- **全局快速捕获快捷键**：`⌃⌥Space`（Carbon `RegisterEventHotKey`，**不需要辅助功能授权**；`QuickCaptureHotkey.label` 是页面显示的人话）→ 前置看板窗口 + 向页面推 `zai-shell-command {command: "quick_capture"}`（§61.1 之外的第二个事件名，冻结 `zai-shell-command`；add-only 命令词表）；页面聚焦提案列 composer，不在看板页先回看板。
+- **Dock 徽章**：桥 `setBadge {count}`（非负整数）→ `NSApp.dockTile.badgeLabel`；count = 等你动作的卡数（提案 + 需输入 + 待验收，`counts` 真实总数优先；原生 §15 v0.46 ② 的 Dock 版）。页面每次看板回流推一次。
+- **helper CLI**：`shell/Helpers/VaultSyncHelper.swift` / `framegrab.swift` 是 `mac/` 顶层两文件的**逐字节副本**（判例），`shell/build.sh` 编成 `Contents/MacOS/vault-sync-helper` / `framegrab` 装进壳 bundle（`Zelin's AI Assistant.app`，§54 名字互换后的产品路径）；`ingest/vault-sync.sh find_vault_sync_helper` 候选顺序**不变**——旧 app `(old).app` 先（它已持有 Documents 授权，§54 不变式「认 id 不认目录名」），再到产品路径上的壳：旧 app 装着时继续用旧授权，**新机器（没有旧 app）才用壳的那份**，此时 Documents 授权按壳的 id 记一次（权限体检页有步骤）；`act/radar_slack.FRAMEGRAB` import 期选第一个存在的候选，`shell/build/framegrab` 先于 `mac/build/framegrab`。
+- 桥请求词表新增六个方法：`getPermissions` / `requestPermission {kind}` / `openPane {pane}` / `setLaunchAtLogin {on}` / `setCaptionPrefs {…}` / `setBadge {count}`；快照新增 `permissions{}` / `launch_at_login` / `hotkey` + §68.2 八键。全部 add-only，`shell/tests/run.sh` 钉词表与拒绝码，`tests/test_shell_engine_mirror.py` 钉两侧互镜。
+
+### 68.14 s4 清单的诚实例外
+
+- **0.8 Sparkle**：壳不集成 Sparkle——owner 机器由 §56 自动部署（D17），其它安装走 release 页手动；web 关于区承担「有没有新版」的告知（§68.6）。
+- **0.9 bundle 身份**：保留 `com.zelin.ai-board` + ad-hoc 签名（审计 Q1 默认；稳定证书随 P8 换名同车）——代价是屏幕录制 / Documents 授权各重做一次并在每次重建后可能失效（TROUBLESHOOTING）。
+- **1.5 / 1.7 / 1.9 粘贴图片**：feedback / capture 的 `images[]` 需要 `POST /api/attachments` 上传面（1MiB body 上限之外的第二条上传通道），本轮**未做**；文字反馈与文字捕获照旧，图片路径字段 wire 不变（inbox_writer 已接受），另 PR 补。
+- **1.13 终端**：走 `.command` + `open`，不是 Apple Events 到 Ghostty / iTerm2（无 `NSAppleEventsUsageDescription`，无终端 app 偏好）——Terminal.app 一种；owner 终端偏好留作 P5 提案输入。
+- **1.15 会话索引搜索**（`state/search_index.json` 合进 ⌘F）与 **1.16 看板动画**：未做（s4 自评 defer；搜索索引另 PR）。
+- **Tier 2 同步 / 配对**（iPhone 联动 QR）：随 §31 syncd 面另议，不在设置页。
+
+
+## 69. 一条命令装到能用：fresh-machine bootstrap + macOS CI 验收（owner 2026-09-02 验收标准）
+
+owner 的最终验收标准原话：「我能够在另一台电脑上起一个空白环境，或者在其他电脑上
+更新这个软件，就能够直接使用。」本节把它做成一条命令、一个机器可读的判决、一个
+CI job。执法：`scripts/bootstrap.sh`、`install.sh --no-launchd`、
+`act/lib/fresh_install.py` + `act.doctor --fresh-install`、
+`.github/workflows/fresh-install.yml`；看板侧的首启入口是 §68.5 的向导（本节不另造
+第二套，§54.1 第 11 项记接力方式）；判例 `tests/integration/test_bootstrap_script.py`
+（假工具 + 真 git 两组）、`tests/test_install_no_launchd.py`、
+`tests/test_fresh_install_summary.py`。
+
+### 69.1 `scripts/bootstrap.sh` —— 同一条命令既是安装也是更新
+
+```
+curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
+curl -fsSL …/scripts/bootstrap.sh | bash -s -- ~/Code/zelin-ai-assistant     # 自选目录
+bash scripts/bootstrap.sh [--dir PATH] [--ref BRANCH] [--no-open] [--no-launchd] [PATH]
+```
+
+- **顺序固定**：① preflight（只支持 macOS，其它 OS 指向 `install-linux.sh` /
+  `install.ps1` 退出 2；`xcode-select -p` 判 CLT——**永不**用会弹安装对话框的探法，
+  缺则打出 `xcode-select --install` 退出 3；git 4；python3 5；claude 缺席只 warn）
+  → ② checkout 目录（默认 `~/Projects/zelin-ai-assistant`；位置参数 / `--dir` /
+  `ZAI_BOOTSTRAP_DIR` / 字面 `~/` 皆可；物理路径在 `$HOME` 之外 → §55 警告）→
+  ③ clone 或更新 → ④ `config.yaml` 缺则从 `config.example.yaml` 复制、**存在永不
+  覆盖** → ⑤ `bash install.sh --non-interactive [--no-launchd]`，stdin 接
+  `/dev/null` → ⑥ `python3 -m act.doctor --fresh-install`（用 install.sh 刚 pin 的
+  解释器）→ ⑦ `open` 看板 bundle（`--no-open` / `ZAI_BOOTSTRAP_NO_OPEN=1` 跳过；
+  没 bundle 就指向 `http://127.0.0.1:<port>/`）。
+- **更新即再跑一遍**：目录已是本 repo 的 checkout（origin 含 `zelin-ai-assistant`
+  或等于 `ZAI_BOOTSTRAP_REPO_URL`）→ `fetch --tags --force` → `checkout <ref>` →
+  `merge --ff-only origin/<ref>`；**本地改动 = 不动代码只装现状**（`local-edits`）；
+  fetch 失败 = 装现状（`offline`）；分叉 = 拒绝（9）。目录存在但**不是 git
+  checkout 且非空**、或是**别的 repo** 的 checkout → 拒绝（7），一个字节不碰——本
+  脚本永不销毁它没创建的东西。
+- **stdin 纪律**：脚本本体经 `curl | bash` 从 stdin 到达，任何读 stdin 的子进程都
+  会吃掉脚本正文——所以整个脚本包在 `main()` 里、每个 git / install.sh / doctor 调用
+  都 `</dev/null`；判例用 `bash -s --` 喂脚本正文复现这条管道。
+- **退出码**：preflight 2–6 / 目录拒绝 7 / clone 或 checkout 失败 8 / 分叉 9 /
+  install.sh 缺失 10；否则 = install.sh 的失败步数；再否则 = doctor `--fresh-install`
+  的 broken 行数；0 = 装好了、没坏的——TCC 授权与凭证可能仍待办，但那是人的事，
+  已逐条列出。
+- **测试缝**：一切外部工具经 PATH（假 git / xcode-select / uname / sw_vers /
+  open / python3 可前置）；`ZAI_BOOTSTRAP_REPO_URL` 把 clone 指向任意地址（CI 用
+  本地 bare repo）；`AIASSISTANT_UI_APPS_DIR` 与 install.sh 同一把 seam。
+
+### 69.2 `install.sh` 对「真空环境」的承诺
+
+没有 config.yaml、没有 secrets、没有 state/、没有 claude、没有 node、没有 PyYAML
+的机器是每种模式的合法输入：config 来自模板；PyYAML 缺则 `pip install --user`
+（PEP 668 回退）；claude / node / gh 缺席 = warn + 修法一句（`--non-interactive`
+下**永不**停下来问）；雷达在凭证到位前静默待机；UI 步在 node / swiftc 缺席时
+`skipped` 不算失败（§56.5）。`--no-launchd`（§23 追记）把步 5/6 换成一次
+`actd --once` 的证明。flag 可叠加、未知 flag exit 2。收尾横幅改为「剩下的是你的」
+清单，机器版 = `bash install.sh --check --fresh-install`。
+
+### 69.3 `act.doctor --fresh-install` —— 机器可读的「还差什么」
+
+`act/lib/fresh_install.py`（stdlib + act.lib，纯函数）把 §25 的 doctor 行分五桶：
+**wired**（OK 行）→ **unwired**（仅当 §23 `launchd` step 带 `--no-launchd` 字面：
+`agent_unloaded` / `cron_missing` / `dashboard_stale` / `actd_stalled` /
+`board_server_down` 与 launchd·cron·dashboard·heartbeat·board server 行名族——按
+要求没接，不是坏）→ **human**（failure id 目录：`claude_cli_missing` /
+`claude_cli_outdated` / `claude_auth_failed` / `claude_blind` / `interpreter_blind`
+/ `deploy_blind_tcc` / `cron_tcc_blocked` / `cron_fda_blocked` /
+`ui_build_tcc_blocked` / `node_missing` / `engine_dead`；行名目录：anthropic key /
+claude CLI / daemon claude / claude auth / obsidian vault / screenpipe db /
+node/npx / gh CLI / launchd claude / launchd volume access / cron disk access /
+cron write access）→ **broken**（其余 FAIL）→ **notes**（其余 WARN）。
+`manual_steps[]` 按序：打开看板（bundle → 浏览器 → 「先 brew install node」三选一）
+/ 装 Claude Code（claude 行非 OK 时）/ API key 文件命令（key 行非 OK 时）/ 三条
+完全磁盘访问路径（§55 追记；claude 一条 = 第五幕的稳定副本 `config.stable_claude_bin()`，§23
+`stable_claude` ok 或副本已在场即用它，否则退到 `claude_bin`）/ 接线守护（--no-launchd 时）。**exit = len(broken)**
+（≤ 99）。两张目录表是法条的一部分：新增 doctor 行或 failure id 时先问「这是人的
+事还是代码的事」，答案写进表。
+
+### 69.4 CI job「Fresh install (macOS)」—— 验收标准的机器版
+
+`.github/workflows/fresh-install.yml`（push main + 夜间 schedule 11:17 UTC + dispatch，
+**不跑 pull_request**——§56.8 矩阵：free plan 的 5 个 macOS 槽是几十个并行 agent PR
+排队的资源，这个 job 占一个槽最多 40 min，判的是安装路径整体而不是某个 PR 的 diff；
+落地当天曾短暂带 pull_request 触发，同日改掉；macos-latest；40 min 顶；**informational**，
+永不进 required 集合——没有 PR 上下文可挂；红了 = 一条命令安装坏了，是 bug、在落地后一天内
+被发现，而不是拦住落地它的 PR）。剧本：空 `$HOME` 临时目录 + 本地 bare origin（main = 被测 commit，tag
+一并推入让 §56.1 盖章为真）→ `bash scripts/bootstrap.sh --no-launchd --dir …`
+（用**本 checkout 的脚本**，不是 main 上的）→ 断言 §23 报告：`config=ok`（bootstrap 第 4 步已从模板建好，install.sh 记 kept）/ `runtime_python=ok` / `version=ok` / `ui=ok`（web + shell 两半都建）/
+`launchd=skipped`（`--no-launchd`）/ `actd_once=ok` / `cron=skipped`，且
+`store2_truth.json` + `actd.heartbeat` + `web/dist/index.html` 在 → 用 pin 的解释器
+起 `python3 -m server`：`/api/health` 200、`/api/board` 200 JSON 带 `generated_at`、
+`/api/setup`（§68.5）`needed=true` / `done=false` / `config_exists=true` 且无凭证、
+`/api/permissions` 的 FDA 清单含存在的 `daemon_python` 与一条 `claude`、`/` 200 →
+`doctor --fresh-install --json` **exit 0** →
+第二次 bootstrap = `updated`、config.yaml 字节不变、仍在 main → 证据（两份
+bootstrap 日志 / server 日志 / setup.json / permissions.json / doctor 五桶 / install_report /
+`~/Library/Logs/zelin-ai-assistant/*.log`）上传 artifact `fresh-install-evidence`。
+这个 job 绿 = 「另一台电脑、空白环境、一条命令、直接能用（剩 TCC 与 key 两件人
+手的事）」成立。
+
+## 70. 每日自我改进循环：先维护再提案（P5；owner 决策 D10 / D12 / D18；R2.4）
 
 owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在设置里面允许别人修改，但默认是 5 条。」「Running 就不要去重，毕竟它在跑，但是像潜在任务和提案这里面的都是没有处理的。去重啊，包括过时了的卡片去掉。」「如果合并卡片的话直接合并……把这三四张全部去掉，直接提供一张新的卡片。去掉的老卡片直接丢进回收站。」「可以在 UI 上显示一下……至于最后要不要提醒一声，你作为设计师来判断吧。」→ 设计判断：不弹通知，看板顶部留一行。执法：`act/lib/daily_loop.py`（编排 + 投影 + 计划报告 CLI）、`act/lib/maintenance.py`（去重合成 / 过时规则 / 分级保留期）、`act/lib/loop_inputs.py`（输入读取器）；挂点 `act/actd.py run_once`（`daily_loop.tick`，在 `archive_stale` 之后）；判例 `tests/test_daily_loop_{dedup_merge,stale_rules,inputs,proposals,run}.py`、`tests/test_server_settings_daily_loop.py`、web `MaintenanceBanner.test.tsx` / `DailyLoopSection.test.tsx`。
 
-### 65.1 运行位置、节奏与安全边界
+### 70.1 运行位置、节奏与安全边界
 
 - **只在 actd 的 pass 里跑**：每 pass 一次 `daily_loop.tick(cfg, interval)`——`due()` = 开关开 ∧ 本地时间 ≥ `daily_loop.time`（默认 03:30）∧ 今天（本地日）还没跑（标记 `state/daily_loop.json.last_run_day`）；不到点 = 一次 stat 级开销。**状态转移单写者不变**（§0 第 1 条）：trash / 合成新卡 / 铸提案全部发生在 actd 进程内、system actor（store2 白名单里 `detected|card_sent|raising → trashed` 的 system 行早已存在，本节不改 schema）。`python3 -m act.lib.daily_loop --plan` 只出**计划报告**（会做什么），`--status` 只读投影；CLI **零写入**——想手动触发一轮 = 把 `daily_loop.time` 改到当前时刻之前等下一 pass。进程级总闸 `AIASSISTANT_DAILY_LOOP=0`（同 §55 `AIASSISTANT_LAUNCHD_PROBE` 的 belt-and-braces）：测试套件默认设它——任何走真 `run_once` 的判例都不会在沙箱里跑起整轮循环；循环自己的判例全部注入假 `gh` / 假 doctor runner（tests/__init__ 的出网名单收编 `gh` 待 doctor 的 `gh auth status` 探针可注入后再做）。
 - **不调 LLM**（Uncle Bob 原则 R2.9：价值靠确定性工具不靠提示词）：合并只认确定性同题信号；过时只认确定性规则；提案是确定性模板。理解素材 URL、修 CI、补测试的智力活留给被派工的 agent（它有工具与全上下文）。§34bis 判例（LLM 只许出报告不许动卡）因此在本节不构成例外。
 - **失败不外溢**（§0 第 11 条）：三个阶段（dedup → stale_sweep → proposals）各自隔离，任一阶段抛异常只记进 `last_result.errors` 与审计行，后续阶段照跑，`tick` 自身永不 raise；阶段边界各写一次心跳 `daily_loop:<phase>`（§47.4，gh 每次调用前再 beat 一次——一轮可能跑到一两分钟，不许被 `/api/health` 误判 stalled）。
 - **顺序**：先维护再提案（R2.4.1）——提案的去重要对着整理过的板。
 
-### 65.2 维护半边（`act/lib/maintenance.py`）
+### 70.2 维护半边（`act/lib/maintenance.py`）
 
 - **范围**：只碰 `detected`（潜在任务）与 `card_sent`（提案）两列；`raising` / `approved` / `executing` / `review` / `delivered` / `merged` / `archived` / `trashed` 永不入簇、永不判过时；`preset` 卡（§34bis）不入簇不判过时。
 - **去重合成（dedup_lanes）**：两列内按**同题**做 union-find 成簇（同题 = 归一标题相等且 ≥ 6 字，或 §38.3 `auto_merge.is_near_dupe` 的 **`high`** 信号——`contact` 信号只够触发 LLM 复核、不够直接合并，本节没有判官，宁可留重复卡不可错并；血缘相连的卡（`improvement_of` / `split_from` / 同 thread 根——thread 缺省按自根 / `merged_from`）永不同簇）。每簇 ≥ 2 → **一张新卡**（`registry.next_id()` 主键 `P-`）：`merged_from[]` = 旧卡主键（升序）；`title` / `display_title` / `user_titled` / `summary` / `plan` / `definition_of_done` / `target_repo` / `delivery_mode` 取**主稿**（用户改过名 > 提及最多 > 最新）；`sources` = `registry.dedupe_sources` 并集；`repeated_mentions` = 累加；`hardness` = 有 hard 则 hard；`deadline` = 最早；`green_sign_required` = 任一；`thread_id` = 最老旧卡的 thread 根；`thread_key` = 全部相同才继承否则 None（永不模糊）；`former_titles` = 旧名并集（去重保序，cap `registry.FORMER_TITLES_CAP`——超出的旧名仍逐字活在 fold note 里，§37「旧名仍可搜索」）；`origin_trust` 由 `policy.classify_origin` 按并集重算（最小信任者定卡，§50）；`status` = 簇内有 card_sent 则 card_sent 否则 detected（**永不** approved/executing，§44.4 轻状态铁律同款）；每张旧卡一行 §38.2 冻结文法的 fold note `[radar] 每日整理并入 <old id>「<旧名>」：<旧 summary 或旧名> [@ts]`（自带拆出句柄，`split_note` 照常可用）。落盘次序：**新卡先写**（crash 只会多一张、绝不丢），再逐张 `registry.trash(old, "daily-merge: 并入 <new id>")`（`prev_status` 完整保留），每对 `auto_merge.record_pair_final(new, old)`（恢复旧卡后 §38.3 不再建议并回；`auto_merge.linked` 自此认 `merged_from`），最后一条 §44.6 回执（channel `daily_loop`，内容只进散列）。**绝不使用 §21 的 `merged` 终态**。撤销 = 回收站恢复旧卡（+ 手动 trash 新卡）；不新增 inbox 动词。
@@ -4956,23 +5541,23 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
   - 命中 → `registry.trash(req, "stale:<rule>")`，可恢复；本节是 §0 第 10 条「拿不准的落备选静默过期」的第一份实现。
 - **分级保留期**：见 §9 / §40.5 追记（`maintenance.retention_days` / `purge_due` / `purge_at` 单源；循环卡默认 90 天）。
 
-### 65.3 提案半边（`act/lib/loop_inputs.py` + `daily_loop._propose`）
+### 70.3 提案半边（`act/lib/loop_inputs.py` + `daily_loop._propose`）
 
 - **输入 → Signal**（每个读取器独立、坏了只丢自己、`inputs.<name>` 记 `unavailable: <Exc>`）：① 卡片 `execution` 块（approved 且 `dispatch_attempts ≥ 3` 或 `dispatch_halted` → `stuck_dispatch:<failure_id|hash>`；`last_error` 未被 `failures.classify` 命中 → `unclassified_failure:<hash>`）；② `state/analytics/events.jsonl` 近 8 天按日计数，今天 ≥ 50 且 > 5× 前七日中位数 → `event_anomaly:<event>`；③ `state/radar_failed.json` 的 `gave_up` 按报错类别聚合 → `radar_give_up:<hash>`（key 里的文件名**不进卡**，s2 H7）；④ `state/registry_writes.jsonl` 24 h 内同文件 > 100 写 → `write_storm:<file>`；⑤ `state/actd.log` 末 2000 行去时间戳后同形报错 ≥ 50 → `log_loop:<hash>`；⑥ `state/install_report.json` 的 fail 步骤 → `install_step_fail:<step>`；⑦ `~/Library/Logs/zelin-ai-assistant/*.log` 各尾 200 行命中已知环境故障正则（no module act / yaml、TCC EPERM、Xcode license、fd limit）→ `launchd_fault:<name>`（测试经 `ZAI_LAUNCHD_LOG_DIR` 指进沙箱）；⑧ `python3 -m act.doctor --fast --json` 的 FAIL 行 → `doctor_fail:<name>`（WARN 不铸卡）；⑨ §57 pinned issue「Nightly mutation report」的模块表：存活最多且 ≥ 5 的一个模块 → `mutation:<module>`；⑩ GitHub 开放 issue（`gh issue list`）：**owner 作者（`Wan-ZL` / `zelinPostman`）→ `issue:<n>`**；**他人作者 → 只出摘要行 `Summary`（D18），不铸卡不开 PR**，除非 owner 在该 issue 评论里写了「do it」（每轮最多查 10 张）；机器人报告 issue（夜间变异 / `[bot]` 作者）不是待办；⑪ GitHub 开放 PR（最多 20 张 `gh pr view --json comments,reviews,statusCheckRollup`）：必需检查有 FAILURE/TIMED_OUT/CANCELLED → `pr_red:<n>`；**owner 本人**近 7 天的评论 → `pr_comment:<n>:<hash(id)>`（D12：「Where is the test?」= 下一轮任务）——带 🤖 / `Generated with Claude` / `Co-Authored-By: Claude` 落款的评论是 agent 借 owner 账号（D8）写的，不算 owner 指令；⑫ 素材库（§62 台账，`materials.list_items` 取 `new` 与 `picked_up`——上一轮读过但没排上额度的重试）→ `material:<id>`：标题与证据经 `materials.fetch(url)`（永不抛，注入缝）+ `materials.prompt_block`（owner 备注与抓取内容各自围栏），提案 = 「消化这份素材」，真正的理解与实现交给被派工的 agent；**台账回写**（`loop_inputs.mark_materials`，本循环是 §62 预留的第二写者）：本轮读过的条目 → `picked_up`，铸了卡的 → `proposal_created` + `links.proposal_id = <P- 主键>`（状态机顺序 new → picked_up → proposal_created 逐级走），卡片侧反向链接 `sources[].ref = self_improve:material:<id>`；逐条隔离，被 owner 同时放弃的条目只丢那一条。**不读**：`state/logs/R-*.log`、legacy `state/*.launchd.log`、`dashboard.json` 正文、`search_index.json`（s2 §3 parse spec）。外来文本（issue 正文、PR 评论、素材备注）进 `quote` 前一律 `sanitize.fence_untrusted`（§0 第 5 条）。`gh` 缺席 / 未登录 / 超时（25 s）= GitHub 输入不可用，循环照跑。
 - **挑选（`select_signals`）**：按 `priority` 升序（红 CI 5 < owner PR 评论 8 < 派发卡死 10 < 安装失败 12 < doctor 14 < 事件风暴 15 < launchd 18 < 未分类报错 20 < 写风暴 25 < 雷达放弃 30 < 日志刷屏 35 < 变异 40 < 素材 42 < issue 45）逐条 offer，跳过原因逐类计数进审计行：`dedup`（指纹已在 registry 任何状态（含回收站——owner 扔掉 = 拒绝记忆，R2.6.6）的 `sources[].ref = self_improve:<fp>` 里，或在 90 天指纹台账 `state/daily_loop.json.fingerprints` 里）→ `kind_taken`（**每 class 每天一条**，s2：一场风暴 = 一条提案不是 954 条）→ `gh_title`（非 GitHub 来源的信号标题与某开放 issue/PR 标题互相包含 ≥ 12 字 = 已在 GitHub 上）→ `cap`（今日额度 = `daily_loop.max_proposals_per_day`（默认 5，0 = 只维护不提案）− 今天已铸的循环卡数（registry 现算，任何状态；重启不丢账））。
 - **铸卡（`build_card` → `registry.merge_or_new_with_kind`）**：`title` = `🤖 ` + 信号标题（≤ 120）；`type` = `self-improvement`；`tier` T1；`status` = **card_sent**（进提案列走正常三选一闸门——owner 批准才派工；P6 通道另立法）；`hardness` soft；`summary` / `plan[]` / `definition_of_done[]` / `cost_estimate_usd` 全部非空（R2.4.3）；`target_repo` = `config.HOME`（本仓库物理路径）；`delivery_mode` repo；`sources = [{channel: "self_improve", date: <今天>, ref: "self_improve:<fingerprint>", quote: <证据 ≤ 500，外来文本已 fence>, who: "daily_loop"}]`——**channel 是代码字面量，不经任何 LLM**（write-locked），`policy.CHANNEL_CLASS["self_improve"] = proposed`（§50）→ §51 不免批。同题（`merge_or_new` 的标题匹配）折进既有卡而不重复（outcome `folded`）。
 - **审计行**（`state/daily_loop.jsonl`，`logcap` 1 MB，防腐 #4）：`{ts, day, duration_s, merges[{new, from[], title}], trashed[{id, rule, display_id}], proposals[{id|error, fingerprint, kind, outcome, title}], skipped{dedup, kind_taken, gh_title, cap}, summaries[{kind, text, ref}], inputs{<reader>: n | "unavailable: …"}, errors[]}`。D18 的摘要行只活在这里与 `last_result.summaries` 计数里。
 
-### 65.4 配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）
+### 70.4 配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）
 
 `daily_loop.enabled`（默认 true）/ `daily_loop.time`（本地 `HH:MM`，默认 `03:30`，`coerce_clock_time` 归一，坏值回默认）/ `daily_loop.max_proposals_per_day`（默认 5）/ `daily_loop.stale_days`（默认 45）/ `daily_loop.trash_retention_days`（默认 90）；三个整数 yaml 路径负数按 0。overrides 扁平键与 web 写入面见 §15 追记；actd 每 pass 现读（`daily_loop.LIVE_KNOBS`）。
 
-### 65.5 面（投影 / web / server）
+### 70.5 面（投影 / web / server）
 
 - 投影：§2 `maintenance` 顶层键（`daily_loop.projection`）。
 - web：`MaintenanceBanner`（`shell-banner is-info`，`role=status`）——「正在整理看板…（去重合并 / 清理过时卡 / 生成提案）」或「今日整理：合并 N、清理 M（可撤销）、提案 K」+「回收站可恢复」链接；全零 / 昨天的运行 / 陈旧 running（started_at > 2 h）/ server 连不上 都不渲染。设置页 section「每日整理」（`DailyLoopSection`）：开关 / 时刻 / 三个数字；保存 = 一次 PUT 只带改动键，数字原样交 server 校验；400 整句 toast。
 - server：`GET/PUT /api/settings/daily-loop`（§49）；wire 形 `{enabled, time, max_proposals_per_day, stale_days, trash_retention_days, source{<field>: override|config|default}}`（web `DailyLoopSettings` 逐字镜像）；`server/settings.py` **手抄** 默认值 / 键名 / `CLOCK_TIME_RE` / 三个 coercer（server 不 import act，§49），`tests/test_server_paths_mirror.py::DailyLoopSettingsMirrorTestCase` 钉漂移（含 coerce 真值表）。
 
-### 65.6 边界（明确不做）
+### 70.6 边界（明确不做）
 
 不弹系统通知；不给他人的 issue 铸卡（D18）；不自动派工（§51 不变——P6 立法）；不用 LLM 判同题或过时；不理解 URL 内容（`materials.fetch` 只借标题与正文作证据，读懂与实现是被派工 agent 的活）；不新增 inbox 动词（撤销 = 回收站恢复）；素材库台账只经 `materials.transition` 走 §62 状态机（不越级、不 dismiss）；CLI 不写 registry。

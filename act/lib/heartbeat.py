@@ -102,13 +102,17 @@ def read(path: Optional[Path] = None) -> Optional[dict]:
     return out
 
 
+def stale_limit(hb: dict) -> int:
+    """The writer's own ``stale_after_s``; torn/absent → the floor."""
+    try:
+        return int(hb.get("stale_after_s") or 0) or STALE_FLOOR_SECONDS
+    except (TypeError, ValueError):
+        return STALE_FLOOR_SECONDS
+
+
 def is_stale(hb: Optional[dict]) -> Optional[bool]:
     """None = no heartbeat at all; else whether its age exceeds the writer's
     own ``stale_after_s`` (falling back to the floor when the body is torn)."""
     if not hb:
         return None
-    try:
-        limit = int(hb.get("stale_after_s") or 0) or STALE_FLOOR_SECONDS
-    except (TypeError, ValueError):
-        limit = STALE_FLOOR_SECONDS
-    return float(hb.get("age_s") or 0) > limit
+    return float(hb.get("age_s") or 0) > stale_limit(hb)

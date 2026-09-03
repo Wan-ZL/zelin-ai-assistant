@@ -1,4 +1,4 @@
-// MaintenanceBanner（§65，D10）：board.maintenance → 「正在整理」/「今日整理：合并 N、清理 M（可撤销）」。
+// MaintenanceBanner（§70，D10）：board.maintenance → 「正在整理」/「今日整理：合并 N、清理 M（可撤销）」。
 // 不弹系统通知；缺键 / 昨天的运行 / 全零 / 半路崩掉的陈旧 running 都闭嘴；server 连不上时闭嘴。
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

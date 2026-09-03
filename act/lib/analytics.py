@@ -1,5 +1,8 @@
 """Usage analytics — append-only event log for every feature use.
 
+CONTRACT §16（features.analytics 本地 gate，隐私 fail-closed）/ §15（telemetry
+内容字段：content_gate + clip_content 无条件密钥掩码）。
+
 One JSONL line per event in ``state/analytics/events.jsonl``:
     {"ts": "2026-07-06T23:01:02Z", "event": "inbox_approve", "req": "R-004", ...}
 
@@ -19,7 +22,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from act import __version__
-from act.lib import config
+from act.lib import config, secret_patterns
 
 ANALYTICS_DIR: Path = config.STATE_DIR / "analytics"
 EVENTS_PATH: Path = ANALYTICS_DIR / "events.jsonl"
@@ -44,7 +47,7 @@ CONTENT_CLIP: int = 500
 # explicit capture_input key (first-run checkbox / Settings toggle /
 # config.yaml) does. The marker keeps being written as a record that the
 # disclosure surface was shown (the v1 marker still gates ALL uploads in
-# analytics_sync, unchanged).
+# telemetry_upload, unchanged).
 CONSENT_V2_PATH: Path = config.STATE_DIR / "telemetry_consent_shown_v2"
 
 
@@ -72,59 +75,26 @@ def content_gate(cfg=None) -> bool:
         return False
 
 
-def _secret_positions(s: str, patterns) -> set:
-    """Index set of every character of ``s`` that is secret material.
-
-    两遍扫描：先扫原串；再把空白拼掉扫一遍并映射回原串下标——邮件式换行/
-    空格会把 key 劈成两段，只有拼合后才能看出整条是密钥素材（§15 承诺任何
-    设置下都不收集 key，劈开的尾段也是）。拼合可能把紧邻 key 的词也圈进来
-    （无法与折行区分），宁可多掩不可半漏（fail safe）。
-    """
-    positions: set = set()
-    for pat in patterns:
-        for m in pat.finditer(s):
-            positions.update(range(m.start(), m.end()))
-    idx_map = [i for i, ch in enumerate(s) if ch != " "]
-    compact = "".join(ch for ch in s if ch != " ")
-    for pat in patterns:
-        for m in pat.finditer(compact):
-            positions.update(idx_map[j] for j in range(m.start(), m.end()))
-    return positions
+def _collapse_ws(text) -> str:
+    """Whitespace-collapsed str of any value (None → "")."""
+    return " ".join(str(text or "").split())
 
 
 def clip_content(text) -> Optional[str]:
     """clip() for user-typed CONTENT fields: secret-mask FIRST, then cap at
-    CONTENT_CLIP. The masking (act/lib/sanitize._SECRET_PATTERNS) is
+    CONTENT_CLIP. The masking (act/lib/secret_patterns.SECRET_PATTERNS) is
     UNCONDITIONAL — independent of every redaction.* switch — because the
     docs promise keys never ride in telemetry at any setting (the Swift
     writer mirrors the same patterns in Analytics.clip). Fail closed: if
     masking itself breaks, the content is dropped, never sent raw.
     """
-    s = " ".join(str(text or "").split())
+    s = _collapse_ws(text)
     if not s:
         return None
     try:
-        from act.lib import sanitize  # lazy: keep analytics import-light
-        positions = _secret_positions(s, sanitize._SECRET_PATTERNS)
+        positions = secret_patterns.secret_positions(s)
         if positions:
-            # 每段连续的密钥区间折叠成一个 MASK；夹在两段掩码之间的折行
-            # 空格一并吞掉（它只是被 split 归一出来的换行痕迹）
-            out: list = []
-            i = 0
-            while i < len(s):
-                if i in positions:
-                    out.append(sanitize.MASK)
-                    while i < len(s):
-                        if i in positions:
-                            i += 1
-                        elif s[i] == " " and (i + 1) in positions:
-                            i += 1
-                        else:
-                            break
-                else:
-                    out.append(s[i])
-                    i += 1
-            s = "".join(out)
+            s = secret_patterns.mask_positions(s, positions)
     except Exception:  # noqa: BLE001 - never emit unmasked content
         return None
     return s[:CONTENT_CLIP] or None
@@ -160,6 +130,58 @@ def _sources_fingerprint() -> tuple:
     return tuple(fp)
 
 
+_MISSING = object()   # 「键不存在」哨兵（None 是合法的 yaml 值，不能兼任）
+
+
+class _CorruptSource(Exception):
+    """配置源存在但读不懂（无解析器 / 顶层不是 mapping）——隐私 fail-closed 用。"""
+
+
+def _yaml_source():
+    """config.yaml 的顶层 mapping；文件不存在 → None；存在但读不懂 → raise
+    （PyYAML 缺失、顶层不是 mapping、yaml/OS 错误——调用方一律按损坏处理）。"""
+    if not config.CONFIG_PATH.exists():
+        return None
+    if config.yaml is None:  # 文件在场却无解析器 = 损坏同款
+        raise _CorruptSource("config.yaml present but no yaml parser")
+    loaded = config.yaml.safe_load(config.CONFIG_PATH.read_text(encoding="utf-8"))
+    if loaded is not None and not isinstance(loaded, dict):
+        raise _CorruptSource("config.yaml top level is not a mapping")
+    return loaded
+
+
+def _overrides_source():
+    """settings_overrides.json 的顶层 dict；文件不存在 → None；坏 JSON / 非
+    dict → raise（同上，按损坏处理）。"""
+    if not config.SETTINGS_OVERRIDES_PATH.exists():
+        return None
+    data = json.loads(config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise _CorruptSource("settings_overrides.json top level is not a mapping")
+    return data
+
+
+def _nested_analytics(mapping) -> object:
+    """嵌套形 ``features: {analytics: …}`` 的原值；键不存在 → _MISSING。"""
+    feats = mapping.get("features") if isinstance(mapping, dict) else None
+    if isinstance(feats, dict) and "analytics" in feats:
+        return feats["analytics"]
+    return _MISSING
+
+
+def _flat_analytics(data) -> object:
+    """平铺形 ``"features.analytics"`` 键（§15）的原值；键不存在 → _MISSING。"""
+    if data is not None and "features.analytics" in data:
+        return data["features.analytics"]
+    return _MISSING
+
+
+def _coerce_if_present(raw) -> None:
+    """判不动布尔（"banana" 之类的手改坏值）→ raise，调用方按损坏处理。"""
+    if raw is not _MISSING:
+        config._coerce_bool(raw)
+
+
 def _config_sources_intact() -> bool:
     """两份配置源是否处于「存在但读不懂」的损坏态（隐私 fail-closed 用）。
 
@@ -172,35 +194,37 @@ def _config_sources_intact() -> bool:
     Analytics.featureEnabled 同一保守探测）。「读不懂」也包括 PyYAML 缺失
     （config.yaml=None）而文件在场——退出可能就写在这份没人能读的文件里
     （运行时依赖白名单本含 PyYAML，走到这说明环境已残，但 fail-closed
-    不赌可达性）。
+    不赌可达性）。overrides 侧嵌套形与平铺形**都**要判得动。
     """
     try:
-        if config.CONFIG_PATH.exists():
-            if config.yaml is None:  # 文件在场却无解析器 = 损坏同款
-                return False
-            loaded = config.yaml.safe_load(
-                config.CONFIG_PATH.read_text(encoding="utf-8"))
-            if loaded is not None and not isinstance(loaded, dict):
-                return False
-            feats = loaded.get("features") if isinstance(loaded, dict) else None
-            if isinstance(feats, dict) and "analytics" in feats:
-                config._coerce_bool(feats["analytics"])  # 判不动 → except
+        _coerce_if_present(_nested_analytics(_yaml_source()))
     except Exception:  # noqa: BLE001 - 读不到/判不动 = 按损坏处理
         return False
     try:
-        if config.SETTINGS_OVERRIDES_PATH.exists():
-            data = json.loads(
-                config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                return False
-            feats = data.get("features")
-            if isinstance(feats, dict) and "analytics" in feats:
-                config._coerce_bool(feats["analytics"])
-            if "features.analytics" in data:  # 平铺形（§15）
-                config._coerce_bool(data["features.analytics"])
+        data = _overrides_source()
+        _coerce_if_present(_nested_analytics(data))
+        _coerce_if_present(_flat_analytics(data))
     except Exception:  # noqa: BLE001 - 读不到/判不动 = 按损坏处理
         return False
     return True
+
+
+def _evaluate_gate(cfg: Optional["config.Config"] = None) -> bool:
+    """flag 与损坏探测合取；任何异常 = off（隐私 flag：读不到就当关）。"""
+    try:
+        if cfg is None:
+            cfg = config.load_config()
+        return bool(cfg.feature("analytics")) and _config_sources_intact()
+    except Exception:  # noqa: BLE001 - privacy flag: unreadable = off
+        return False
+
+
+def _cached_gate(now: float, fp: tuple) -> Optional[bool]:
+    """缓存命中（未过期且配置源指纹未变）→ 缓存值；否则 None。"""
+    if (_gate_cache is not None and now < _gate_cache[0]
+            and fp == _gate_cache[2]):
+        return _gate_cache[1]
+    return None
 
 
 def feature_gate(cfg: Optional["config.Config"] = None) -> bool:
@@ -221,23 +245,24 @@ def feature_gate(cfg: Optional["config.Config"] = None) -> bool:
     事件即重判，TTL 只兜指纹失灵的底。
     """
     if cfg is not None:
-        try:
-            return bool(cfg.feature("analytics")) and _config_sources_intact()
-        except Exception:  # noqa: BLE001 - privacy flag: unreadable = off
-            return False
+        return _evaluate_gate(cfg)
     global _gate_cache
     now = _time.monotonic()
     fp = _sources_fingerprint()
-    if (_gate_cache is not None and now < _gate_cache[0]
-            and fp == _gate_cache[2]):
-        return _gate_cache[1]
-    try:
-        value = (bool(config.load_config().feature("analytics"))
-                 and _config_sources_intact())
-    except Exception:  # noqa: BLE001 - privacy flag: unreadable = off
-        value = False
+    cached = _cached_gate(now, fp)
+    if cached is not None:
+        return cached
+    value = _evaluate_gate()
     _gate_cache = (now + GATE_TTL, value, fp)
     return value
+
+
+def _override_analytics(data) -> object:
+    """overrides 的 analytics 原值：嵌套 features 块优先，其次平铺键（§15）。"""
+    raw = _nested_analytics(data)
+    if raw is not _MISSING:
+        return raw
+    return _flat_analytics(data)
 
 
 def feature_gate_fresh() -> bool:
@@ -254,29 +279,15 @@ def feature_gate_fresh() -> bool:
     """
     value = True  # §16 默认 on：键不存在 = 用户从未表达过退出
     try:
-        if config.CONFIG_PATH.exists():
-            if config.yaml is None:  # 文件在场却无解析器 = 损坏同款 off
-                return False
-            loaded = config.yaml.safe_load(
-                config.CONFIG_PATH.read_text(encoding="utf-8"))
-            if loaded is not None and not isinstance(loaded, dict):
-                return False
-            feats = loaded.get("features") if isinstance(loaded, dict) else None
-            if isinstance(feats, dict) and "analytics" in feats:
-                value = config._coerce_bool(feats["analytics"])
+        raw = _nested_analytics(_yaml_source())
+        if raw is not _MISSING:
+            value = config._coerce_bool(raw)
     except Exception:  # noqa: BLE001 - 存在但读不懂/判不动 = off
         return False
     try:
-        if config.SETTINGS_OVERRIDES_PATH.exists():
-            data = json.loads(
-                config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                return False
-            feats = data.get("features")
-            if isinstance(feats, dict) and "analytics" in feats:
-                value = config._coerce_bool(feats["analytics"])
-            elif "features.analytics" in data:  # 平铺形（§15），嵌套形优先
-                value = config._coerce_bool(data["features.analytics"])
+        raw = _override_analytics(_overrides_source())
+        if raw is not _MISSING:
+            value = config._coerce_bool(raw)
     except Exception:  # noqa: BLE001 - 存在但读不懂/判不动 = off
         return False
     return value
@@ -318,6 +329,12 @@ def log_event(event: str, **fields) -> bool:
 _MARKER_SAFE = _re.compile(r"[^A-Za-z0-9_.-]+")
 
 
+def _first_marker(event: str) -> Path:
+    """里程碑名 → 文件系统安全的 marker 路径（非法字符折成 _，空名回落 event）。"""
+    name = _MARKER_SAFE.sub("_", str(event)).strip("._") or "event"
+    return FIRST_DIR / name
+
+
 def log_first(event: str, **fields) -> None:
     """Emit ``event`` at most once per install (lifecycle milestone).
 
@@ -341,8 +358,7 @@ def log_first(event: str, **fields) -> None:
     if not feature_gate():
         return
     try:
-        name = _MARKER_SAFE.sub("_", str(event)).strip("._") or "event"
-        marker = FIRST_DIR / name
+        marker = _first_marker(event)
         if marker.exists():
             return
         if not log_event(event, **fields):
@@ -358,8 +374,7 @@ def clip(text, limit: int = 200) -> Optional[str]:
     (docs/TELEMETRY.md; content fields use limit=CONTENT_CLIP) — None when
     empty so log_event drops it.
     """
-    s = " ".join(str(text or "").split())
-    return s[:limit] or None
+    return _collapse_ws(text)[:limit] or None
 
 
 def parse_ts(s: str) -> Optional[_dt.datetime]:
@@ -369,6 +384,17 @@ def parse_ts(s: str) -> Optional[_dt.datetime]:
             tzinfo=_dt.timezone.utc)
     except (ValueError, TypeError):
         return None
+
+
+def _event_passes_since(d: dict, since: Optional[_dt.datetime]) -> bool:
+    """``since`` 过滤：无 since 一律放行；ts 缺失/坏形 → 不放行。"""
+    if since is None:
+        return True
+    try:
+        ts = _dt.datetime.strptime(d.get("ts", ""), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return ts.replace(tzinfo=_dt.timezone.utc) >= since
 
 
 def read_events(since: Optional[_dt.datetime] = None) -> Iterator[dict]:
@@ -383,12 +409,5 @@ def read_events(since: Optional[_dt.datetime] = None) -> Iterator[dict]:
                 d = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if since is not None:
-                try:
-                    ts = _dt.datetime.strptime(d.get("ts", ""), "%Y-%m-%dT%H:%M:%SZ")
-                    ts = ts.replace(tzinfo=_dt.timezone.utc)
-                except ValueError:
-                    continue
-                if ts < since:
-                    continue
-            yield d
+            if _event_passes_since(d, since):
+                yield d

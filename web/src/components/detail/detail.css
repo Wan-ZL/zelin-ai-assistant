@@ -17,7 +17,7 @@
   display: flex;
   flex-direction: column;
   background: var(--surface-raised);
-  border-left: var(--border-hairline) solid var(--border-strong);
+  border-left: var(--stroke-w) solid var(--border-strong);
   box-shadow: var(--dialog-shadow);
   outline: none;
   animation: zai-drawer-in 160ms ease-out;
@@ -38,14 +38,14 @@
   justify-content: space-between;
   gap: 12px;
   padding: 16px 18px 10px;
-  border-bottom: var(--border-hairline) solid var(--border);
+  border-bottom: var(--stroke-w) solid var(--border);
 }
 
 .zai-drawer-heading { min-width: 0; }
 
 .zai-drawer-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   color: var(--text-tertiary);
 }
 /* §60：抬头并排的主键（与展示编号不同时才出现），更轻一档 */
@@ -56,7 +56,7 @@
 
 .zai-drawer-heading h2 {
   margin: 2px 0 0;
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   line-height: 1.35;
   overflow-wrap: break-word;
 }
@@ -67,7 +67,7 @@
   border: none;
   background: none;
   color: var(--text-tertiary);
-  font-size: 20px;
+  font-size: calc(20px * var(--text-scale));
   line-height: 1;
   padding: 4px 8px;
   border-radius: 6px;
@@ -80,14 +80,14 @@
   display: flex;
   gap: 4px;
   padding: 8px 18px 0;
-  border-bottom: var(--border-hairline) solid var(--border);
+  border-bottom: var(--stroke-w) solid var(--border);
 }
 
 .zai-drawer-tabbtn {
   border: none;
   background: none;
   padding: 6px 10px 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   color: var(--text-secondary);
   border-bottom: 2px solid transparent;
   cursor: pointer;
@@ -108,7 +108,7 @@
   position: fixed;
   z-index: 70;
   background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--dialog-shadow);
   padding: 4px;
@@ -121,7 +121,7 @@
   background: none;
   text-align: left;
   padding: 7px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   color: var(--text-primary);
   border-radius: 5px;
   cursor: pointer;
@@ -136,9 +136,9 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   background: var(--surface-muted);
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   color: var(--text-secondary);
 }
 
@@ -158,13 +158,13 @@
 .zai-detail-callout {
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   margin: 8px 0;
 }
 
 .zai-detail-callout--warn {
   color: var(--warning);
-  border: var(--border-hairline) solid var(--warning);
+  border: var(--stroke-w) solid var(--warning);
 }
 
 .zai-detail-callout--danger {
@@ -172,7 +172,7 @@
   color: var(--danger);
 }
 
-.zai-detail-summary { font-size: 14px; line-height: 1.6; margin: 8px 0; }
+.zai-detail-summary { font-size: calc(14px * var(--text-scale)); line-height: 1.6; margin: 8px 0; }
 
 .zai-detail-meta { margin: 10px 0; }
 
@@ -180,7 +180,7 @@
   display: flex;
   gap: 10px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
 }
 
 .zai-detail-meta dt { flex: 0 0 96px; color: var(--text-tertiary); }
@@ -189,7 +189,7 @@
 .zai-detail-section { margin: 14px 0; }
 
 .zai-detail-section > h3 {
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-tertiary);
@@ -197,7 +197,7 @@
 }
 
 .zai-detail-section ol,
-.zai-detail-section ul { margin: 4px 0; padding-left: 1.5em; font-size: 13px; }
+.zai-detail-section ul { margin: 4px 0; padding-left: 1.5em; font-size: calc(13px * var(--text-scale)); }
 
 .zai-detail-dod li { list-style: "☐  "; }
 
@@ -207,24 +207,24 @@
   border-left: 3px solid var(--accent);
   background: var(--surface-muted);
   border-radius: 0 8px 8px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
 }
 
 .zai-detail-source-quote { margin: 0 0 4px; }
-.zai-detail-source footer { color: var(--text-tertiary); font-size: 12px; }
+.zai-detail-source footer { color: var(--text-tertiary); font-size: calc(12px * var(--text-scale)); }
 .zai-detail-source-ref { overflow-wrap: anywhere; }
 
 .zai-detail-folds { list-style: none; padding-left: 0 !important; }
 .zai-detail-folds li { margin: 4px 0; }
 
-.zai-detail-dim { color: var(--text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
+.zai-detail-dim { color: var(--text-tertiary); font-size: calc(12px * var(--text-scale)); overflow-wrap: anywhere; }
 
 .zai-detail-cmd {
   display: flex;
   align-items: center;
   gap: 8px;
   background: var(--surface-muted);
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   padding: 6px 10px;
 }
@@ -232,18 +232,18 @@
 .zai-detail-cmd code {
   flex: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   overflow-x: auto;
   white-space: nowrap;
 }
 
 .zai-detail-copy {
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   background: var(--surface);
   color: var(--text-secondary);
   border-radius: 6px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -269,12 +269,12 @@
 .zai-deliverable-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .zai-deliverable-tab {
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface);
   color: var(--text-secondary);
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   cursor: pointer;
   max-width: 260px;
   overflow: hidden;
@@ -292,7 +292,7 @@
   width: 100%;
   min-height: 420px;
   flex: 1;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   background: #ffffff; /* 交付物 HTML 自带配色，浅底兜住透明页面 */
 }
@@ -300,16 +300,16 @@
 .zai-deliverable-image {
   max-width: 100%;
   border-radius: 8px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
 }
 
 .zai-deliverable-text {
   background: var(--surface-muted);
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   overflow-x: auto;
   white-space: pre-wrap;
 }

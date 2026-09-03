@@ -123,12 +123,18 @@ def collect_notes(cfg: config.Config,
     # mirror-aware (claude TCC isolation): reads the repo-local vault mirror
     # when the ingest chain maintains one, the real vault otherwise.
     root = config.effective_obsidian_raw(cfg)
-    if root is None:
-        return []
-    if not root.exists():
+    if root is None or not root.exists():
         return []
     now = now or _dt.datetime.now()
     cutoff = now.timestamp() - WINDOW_DAYS * 86400
+    notes = _notes_since(root, cutoff)
+    notes.sort(key=lambda t: t[1], reverse=True)
+    return notes
+
+
+def _notes_since(root: Path, cutoff: float) -> list:
+    """[(path, mtime)] of ``*.md`` under root with mtime >= cutoff (unstattable
+    files skipped)."""
     notes = []
     for p in root.glob("*.md"):
         try:
@@ -137,7 +143,6 @@ def collect_notes(cfg: config.Config,
             continue
         if mtime >= cutoff:
             notes.append((p, mtime))
-    notes.sort(key=lambda t: t[1], reverse=True)
     return notes
 
 
@@ -181,38 +186,60 @@ def _run_claude(prompt: str, runner=None) -> str:
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"claude exit {proc.returncode}: {(proc.stderr or proc.stdout or '')[-160:]}"
-        )
+        raise _exit_error(proc)
     return proc.stdout or ""
 
 
+def _exit_error(proc) -> RuntimeError:
+    """Non-zero ``claude -p`` exit → the error the caller logs (stderr tail,
+    stdout tail as the fallback)."""
+    return RuntimeError(
+        f"claude exit {proc.returncode}: {(proc.stderr or proc.stdout or '')[-160:]}"
+    )
+
+
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _strip_fence(text: str) -> str:
+    """Drop a ```json ... ``` fence if the model added one."""
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    return text
+
+
+def _loads_or_search(text: str):
+    """``json.loads``, falling back to the first ``{...}`` block in prose;
+    None when neither parses (the caller type-checks the result)."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    m = _JSON_OBJ_RE.search(text)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def _valid_digest(data) -> Optional[dict]:
+    """The parsed reply only counts when it is a dict with a non-blank digest.
+    D19: a `suggestions` key the model volunteers anyway is simply ignored
+    downstream — nothing reads it, nothing is filed from it."""
+    if not isinstance(data, dict) or not str(data.get("digest") or "").strip():
+        return None
+    return data
 
 
 def parse_output(raw: str) -> Optional[dict]:
     """Parse the strict-JSON reply. None = malformed (caller logs + aborts)."""
     if not raw or not raw.strip():
         return None
-    text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text).strip()
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        m = _JSON_OBJ_RE.search(text)
-        if not m:
-            return None
-        try:
-            data = json.loads(m.group(0))
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(data, dict) or not str(data.get("digest") or "").strip():
-        return None
-    # D19: a `suggestions` key the model volunteers anyway is simply ignored
-    # downstream — nothing reads it, nothing is filed from it.
-    return data
+    text = _strip_fence(raw.strip())
+    return _valid_digest(_loads_or_search(text))
 
 
 # --------------------------------------------------------------------------- #
@@ -274,15 +301,147 @@ def due(cfg: config.Config, marker: dict,
         return False
     if now.hour < cfg.weekly_digest_hour:
         return False
+    return not _ran_recently(marker, now.date())
+
+
+def _ran_recently(marker: dict, today: _dt.date) -> bool:
+    """``last_run`` parses and is less than 6 days old (an unparseable
+    marker counts as never run)."""
     last_run = str(marker.get("last_run") or "")
     if last_run:
         try:
             last = _dt.date.fromisoformat(last_run)
-            if (now.date() - last).days < 6:
-                return False
+            if (today - last).days < 6:
+                return True
         except ValueError:
             pass
-    return True
+    return False
+
+
+def _skip(summary: dict, reason: str, log_line: str) -> dict:
+    """A loud skip: summary + one log line + a ``weekly_digest_skip`` event."""
+    summary["skipped"] = reason
+    print(log_line)
+    analytics.log_event("weekly_digest_skip", reason=reason)
+    return summary
+
+
+def _disabled(summary: dict, force: bool) -> dict:
+    if not force:
+        # D19: default-off + hourly launchd fire — quiet like not_due,
+        # else this is 24 log lines + 24 analytics events a day forever.
+        summary["skipped"] = "disabled"
+        return summary
+    return _skip(summary, "disabled", "weekly digest: sources.weekly_digest.enabled "
+                                      "is off — no-op")
+
+
+def _no_data(cfg: config.Config, force: bool, summary: dict) -> dict:
+    """COST GUARD: nothing to digest -> no claude call (a manual run is told)."""
+    if force:
+        notify.notify(
+            _lang(cfg, "本周摘要没有生成", "Weekly digest not generated"),
+            _lang(cfg,
+                  f"近 {WINDOW_DAYS} 天没有新的 ingest 数据，先让录制/ingest 跑起来。",
+                  f"No ingest data in the last {WINDOW_DAYS} days — "
+                  "start recording/ingest first."))
+    return _skip(summary, "no_data",
+                 f"weekly digest: no ingest data in the last {WINDOW_DAYS} "
+                 "days — skipping (nothing to digest, no claude call)")
+
+
+def _fail(summary: dict, cfg: config.Config, force: bool, reason: str,
+          error: str, zh_cause: str, en_cause: str) -> dict:
+    # §40: error exits on a MANUAL run (force=True, the Settings
+    # 「现在生成一份」 button) NOTIFY — the press detaches
+    # (actd._spawn_weekly_digest), so without this it just goes quiet
+    # while the no-data path DOES notify: a silent failure next to a
+    # loud skip. Scheduled runs stay print+analytics only, mirroring the
+    # no-data gate — a failed Monday never advances the marker, so due()
+    # keeps firing hourly and an unconditional notify would ping all day.
+    summary["ok"] = False
+    summary["error"] = error
+    print(f"weekly digest: {error}")
+    analytics.log_event("weekly_digest_skip", reason=reason)
+    if force:
+        notify.notify(
+            _lang(cfg, "本周摘要生成失败", "Weekly digest failed"),
+            _lang(cfg,
+                  f"{zh_cause}——可在设置页「现在生成一份」重试。",
+                  f"{en_cause} — retry from Settings (\"Generate now\")."))
+    return summary
+
+
+def _write_marker_loud(data: dict, summary: dict) -> None:
+    # The marker is the ONLY thing standing between "once a week" and "every
+    # hourly fire on Monday" (due() treats an absent marker as due; the card
+    # itself dedups by title but the notify does not). A marker that cannot
+    # be written must therefore be one loud, readable line — not a traceback
+    # that hides the fact the card WAS filed, and not silence.
+    try:
+        _write_marker(data)
+    except OSError as e:
+        summary["marker_error"] = f"{type(e).__name__}: {e}"
+        print(f"weekly digest: marker write failed ({_marker_path()}): "
+              f"{type(e).__name__}: {e} — the next scheduled fire will "
+              "re-run; fix the state dir")
+
+
+def _generate(cfg: config.Config, force: bool, runner, notes: list,
+              now: _dt.datetime, newest_mtime: float, summary: dict) -> dict:
+    """claude call → parse → review-lane card → marker → notify."""
+    prompt = build_prompt(cfg, _notes_material(notes))
+    try:
+        raw = _run_claude(prompt, runner=runner)
+    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+        return _fail(summary, cfg, force, "claude_failed",
+                     f"{type(e).__name__}: {str(e)[:160]}",
+                     "AI 调用失败", "the AI call failed")
+
+    data = parse_output(raw)
+    if data is None:
+        return _fail(summary, cfg, force, "unparseable",
+                     f"unparseable output: {(raw or '')[:120]!r}",
+                     "AI 返回的内容无法解析", "the AI reply couldn't be parsed")
+
+    today = now.date()
+    digest_card = _file_digest_card(cfg, str(data["digest"]).strip(),
+                                    len(notes), today)
+    summary["digest_id"] = digest_card.id
+    summary["suggestion_ids"] = []   # add-only: pre-D19 shape, always empty
+    summary["suggestions"] = 0
+
+    _write_marker_loud({"last_run": today.isoformat(),
+                        "last_ingest_mtime": newest_mtime}, summary)
+    # D19: no automation proposals ride along anymore — the body must not
+    # promise cards that were never filed (§40 honest receipts).
+    notify.notify(
+        _lang(cfg, "本周摘要已生成", "Weekly digest ready"),
+        _lang(cfg,
+              "去「待验收」看看这周的回顾。",
+              "Review this week's recap in the Review lane."))
+    # `suggestions` stays in the event as an add-only field (always 0).
+    analytics.log_event("weekly_digest_generated", notes=len(notes), suggestions=0)
+    print(f"weekly digest: generated {digest_card.id} from {len(notes)} notes")
+    return summary
+
+
+def _digest_pass(cfg: config.Config, force: bool, runner, now: _dt.datetime,
+                 marker: dict, summary: dict) -> dict:
+    """Past the schedule gate: the two cost guards, then the generation."""
+    notes = collect_notes(cfg, now)
+    summary["notes"] = len(notes)
+    if not notes:
+        return _no_data(cfg, force, summary)
+
+    newest_mtime = notes[0][1]
+    last_mtime = float(marker.get("last_ingest_mtime") or 0.0)
+    if not force and newest_mtime <= last_mtime:
+        # COST GUARD: window has notes but none newer than the last digest.
+        return _skip(summary, "no_new_data",
+                     "weekly digest: no NEW ingest data since the last digest "
+                     "— skipping (no claude call)")
+    return _generate(cfg, force, runner, notes, now, newest_mtime, summary)
 
 
 def run(force: bool = False, runner=None,
@@ -295,115 +454,15 @@ def run(force: bool = False, runner=None,
     now = now or _dt.datetime.now()
     summary: dict = {"ok": True, "notes": 0, "suggestions": 0, "skipped": None}
 
-    def skip(reason: str, log_line: str) -> dict:
-        summary["skipped"] = reason
-        print(log_line)
-        analytics.log_event("weekly_digest_skip", reason=reason)
-        return summary
-
     if not cfg.weekly_digest_enabled:
-        if not force:
-            # D19: default-off + hourly launchd fire — quiet like not_due,
-            # else this is 24 log lines + 24 analytics events a day forever.
-            summary["skipped"] = "disabled"
-            return summary
-        return skip("disabled", "weekly digest: sources.weekly_digest.enabled "
-                                "is off — no-op")
+        return _disabled(summary, force)
 
     marker = _read_marker()
     if not force and not due(cfg, marker, now):
         summary["skipped"] = "not_due"
         # quiet: this fires hourly by design; no analytics/noise for the gate
         return summary
-
-    notes = collect_notes(cfg, now)
-    summary["notes"] = len(notes)
-    if not notes:
-        # COST GUARD: nothing to digest -> no claude call.
-        if force:
-            notify.notify(
-                _lang(cfg, "本周摘要没有生成", "Weekly digest not generated"),
-                _lang(cfg,
-                      f"近 {WINDOW_DAYS} 天没有新的 ingest 数据，先让录制/ingest 跑起来。",
-                      f"No ingest data in the last {WINDOW_DAYS} days — "
-                      "start recording/ingest first."))
-        return skip("no_data",
-                    f"weekly digest: no ingest data in the last {WINDOW_DAYS} "
-                    "days — skipping (nothing to digest, no claude call)")
-
-    newest_mtime = notes[0][1]
-    last_mtime = float(marker.get("last_ingest_mtime") or 0.0)
-    if not force and newest_mtime <= last_mtime:
-        # COST GUARD: window has notes but none newer than the last digest.
-        return skip("no_new_data",
-                    "weekly digest: no NEW ingest data since the last digest "
-                    "— skipping (no claude call)")
-
-    material = _notes_material(notes)
-    prompt = build_prompt(cfg, material)
-
-    def fail(reason: str, error: str, zh_cause: str, en_cause: str) -> dict:
-        # §40: error exits on a MANUAL run (force=True, the Settings
-        # 「现在生成一份」 button) NOTIFY — the press detaches
-        # (actd._spawn_weekly_digest), so without this it just goes quiet
-        # while the no-data path DOES notify: a silent failure next to a
-        # loud skip. Scheduled runs stay print+analytics only, mirroring the
-        # no-data gate — a failed Monday never advances the marker, so due()
-        # keeps firing hourly and an unconditional notify would ping all day.
-        summary["ok"] = False
-        summary["error"] = error
-        print(f"weekly digest: {error}")
-        analytics.log_event("weekly_digest_skip", reason=reason)
-        if force:
-            notify.notify(
-                _lang(cfg, "本周摘要生成失败", "Weekly digest failed"),
-                _lang(cfg,
-                      f"{zh_cause}——可在设置页「现在生成一份」重试。",
-                      f"{en_cause} — retry from Settings (\"Generate now\")."))
-        return summary
-
-    try:
-        raw = _run_claude(prompt, runner=runner)
-    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
-        return fail("claude_failed", f"{type(e).__name__}: {str(e)[:160]}",
-                    "AI 调用失败", "the AI call failed")
-
-    data = parse_output(raw)
-    if data is None:
-        return fail("unparseable", f"unparseable output: {(raw or '')[:120]!r}",
-                    "AI 返回的内容无法解析", "the AI reply couldn't be parsed")
-
-    today = now.date()
-    digest_card = _file_digest_card(cfg, str(data["digest"]).strip(),
-                                    len(notes), today)
-    summary["digest_id"] = digest_card.id
-    summary["suggestion_ids"] = []   # add-only: pre-D19 shape, always empty
-    summary["suggestions"] = 0
-
-    # The marker is the ONLY thing standing between "once a week" and "every
-    # hourly fire on Monday" (due() treats an absent marker as due; the card
-    # itself dedups by title but the notify does not). A marker that cannot
-    # be written must therefore be one loud, readable line — not a traceback
-    # that hides the fact the card WAS filed, and not silence.
-    try:
-        _write_marker({"last_run": today.isoformat(),
-                       "last_ingest_mtime": newest_mtime})
-    except OSError as e:
-        summary["marker_error"] = f"{type(e).__name__}: {e}"
-        print(f"weekly digest: marker write failed ({_marker_path()}): "
-              f"{type(e).__name__}: {e} — the next scheduled fire will "
-              "re-run; fix the state dir")
-    # D19: no automation proposals ride along anymore — the body must not
-    # promise cards that were never filed (§40 honest receipts).
-    notify.notify(
-        _lang(cfg, "本周摘要已生成", "Weekly digest ready"),
-        _lang(cfg,
-              "去「待验收」看看这周的回顾。",
-              "Review this week's recap in the Review lane."))
-    # `suggestions` stays in the event as an add-only field (always 0).
-    analytics.log_event("weekly_digest_generated", notes=len(notes), suggestions=0)
-    print(f"weekly digest: generated {digest_card.id} from {len(notes)} notes")
-    return summary
+    return _digest_pass(cfg, force, runner, now, marker, summary)
 
 
 def main(argv: Optional[list] = None) -> int:

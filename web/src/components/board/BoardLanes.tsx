@@ -19,9 +19,12 @@ import { DebtCardItem } from "./DebtCardItem";
 import { DoneCard } from "./DoneCard";
 import { Lane } from "./Lane";
 import { LaneComposer } from "./LaneComposer";
+import { MergeSuggestionCard } from "./MergeSuggestionCard";
 import { ProposalCard } from "./ProposalCard";
+import { ProposalsTriageButton } from "./ProposalsTriageButton";
 import { ReviewCard } from "./ReviewCard";
 import { RunningCard } from "./RunningCard";
+import { SelectionBar } from "./SelectionBar";
 
 /** 提案列排序（原生 visibleApprovals）：processing 占位卡保持在顶、不参与排序；其余按偏好，deadline 模式可用 */
 export function orderProposals(cards: ApprovalCard[], order: SortOrder): ApprovalCard[] {
@@ -43,6 +46,8 @@ export function BoardLanes() {
   const running = sortCards(pick(board.running), sortOrder);
   const review = sortCards(pick(board.review), sortOrder);
   const completed = sortCards(pick(board.completed), sortOrder);
+  // §21 合并建议卡：紫 accent 钉在提案列顶（analyzing/done/failed 都发，dismissed 不发）；不进排序/过滤
+  const suggestions = Array.isArray(board.merge_suggestions) ? board.merge_suggestions : [];
 
   const counts = board.counts;
   // 徽章 = counts 真实总数（completed cap 50 后仍读 counts）；过滤命中数另行标注
@@ -60,15 +65,22 @@ export function BoardLanes() {
         countLabel={label(proposals.length, counts["needs_approval"] ?? board.needs_approval.length)}
         colorToken="--status-todo"
         composer={
-          <LaneComposer
-            placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
-            submitLabel={text("捕获", "Capture")}
-            successNote={text("已提交，AI 分析中（通常 2-3 分钟）", "Submitted; AI is analyzing (usually 2-3 min)")}
-            buildBody={(t) => ({ action: "capture", text: t })}
-          />
+          <>
+            <LaneComposer
+              placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
+              submitLabel={text("捕获", "Capture")}
+              successNote={text("已提交，AI 分析中（通常 2-3 分钟）", "Submitted; AI is analyzing (usually 2-3 min)")}
+              buildBody={(t) => ({ action: "capture", text: t })}
+            />
+            {/* §34bis 清理积压：后端提案卡数（含 processing 占位）为积压口径 */}
+            <ProposalsTriageButton backlogCount={board.needs_approval.length} />
+          </>
         }
-        isEmpty={proposals.length === 0}
+        isEmpty={proposals.length === 0 && suggestions.length === 0}
       >
+        {suggestions.map((s) => (
+          <MergeSuggestionCard key={s.id} suggestion={s} />
+        ))}
         {proposals.map((card) => (
           <ProposalCard key={card.id} card={card} />
         ))}
@@ -127,6 +139,8 @@ export function BoardLanes() {
       </Lane>
 
       <ArchiveStrip />
+      {/* §21 多选操作条（selectionMode 才渲染；入口「选择」在 FilterBar） */}
+      <SelectionBar />
     </div>
   );
 }

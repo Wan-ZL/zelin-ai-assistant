@@ -310,7 +310,12 @@ OPTIONAL_ORDER = [
     # {summary, verdict, verdict_reason, at, source_hash | error}，只由
     # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
     "assessment",
-    # §65 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
+    # §65 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
+    # 只会让卡**更不自主**——self_improve lane 见到即拒（self_improve:needs_mcp，
+    # 只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开。
+    # 默认 False 整键省略。
+    "needs_mcp",
+    # §70 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
     # 旧卡主键列表；旧卡进回收站（reason `daily-merge: 并入 <new>`）、可恢复。
     # 只在合成卡上出现；空列表整键省略。
     "merged_from",
@@ -393,9 +398,12 @@ class Requirement:
 
     # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
     assessment: Optional[dict] = None
-    # §65 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
+    # §70 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
     # 主键）。None/[] = 不是合成卡。
     merged_from: Optional[list] = None
+
+    # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
+    needs_mcp: bool = False
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -1520,7 +1528,7 @@ def capture_source(who: str, channel: str, quote: str,
 def dedupe_sources(existing: list, incoming: list) -> tuple[list, int]:
     """Append incoming sources not already present. Returns (merged, added_count).
 
-    Public since §65 (防腐 #2：跨模块引用 `_私名` = 当场升 public)——the
+    Public since §70 (防腐 #2：跨模块引用 `_私名` = 当场升 public)——the
     fold/merge sites in actd, quick_capture, silent_merge and maintenance all
     union sources through this one key."""
     def key(s: dict) -> tuple:

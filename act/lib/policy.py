@@ -26,11 +26,19 @@ channel 由各 radar/capture 写入端硬编码（quick/slack/gmail/meeting/...�
 v0.48.7——owner decision D9（docs/design/vnext2-plan.md：「取消一切预算……钱是
 足够的」）。钱的可见性由 §7/§41 的 `require_text_confirm_above_usd` 文字确认线
 承担（那是审批语义不是预算），卡上的 cost_estimate_usd 仍作披露展示。
+
+第二条免批 lane（§65，P6；owner 决策 D7/D8/D9，§0 第 12 条修宪）：出身仍是
+proposed（四类词表不动），**资格**另裁——sources 全部是写死的 `self_improve`
+渠道 **且** `target_repo` 的 realpath 就是本仓库（`self_improve.repo_path`，
+默认安装根）才免批；type/target_repo 之类 LLM 可写字段单独永远开不了这条
+lane（§50 M1.d 教训：判据必须锚在 producer 硬编码的字段上）。
 """
 from __future__ import annotations
 
 import os
 from typing import Callable, Optional
+
+from act.lib import config
 
 # --------------------------------------------------------------------------- #
 # 域：origin trust classes（四类，locked）
@@ -63,11 +71,14 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 #       提形态（会话挖掘卡、§40/§47.2 诊断降级卡；analytics 是遥测建议通道）
 #   meeting / audio — obsidian radar 的会议音频与笔记通道
 #   slack / gmail — 第三方消息（radar_slack 非 self-DM 路径、radar_gmail）
-#   self_improve — §65 每日自我改进循环铸的 🤖 提案卡（act/lib/daily_loop.py
-#       SOURCE_CHANNEL 逐字同款，代码硬编码、无 LLM 参与 = write-locked）：
-#       AI 自提 → proposed，照旧人批；P6 自动 PR 通道的准入只认这个 channel
-#       + 物理 repo 路径，永不认 type/target_repo 这类 LLM 可写字段
 #   screen — §45 防御行：屏幕永不铸卡，真出现即异常，按最不信任处理
+#   self_improve — §65 自动草稿 PR 通道的**唯一**铸卡渠道（§70 每日循环的 🤖
+#       提案卡 / PR 跟进卡，producer 硬编码写入——act/lib/daily_loop.py
+#       SOURCE_CHANNEL 逐字同款，无 LLM 参与 = write-locked）：出身仍是
+#       proposed（AI 自提），免批资格由 may_auto_dispatch 的第二条 lane 另裁
+#       （只认这个 channel + 物理 repo 路径，永不认 type/target_repo 这类 LLM
+#       可写字段）——见模块 docstring。
+SELF_IMPROVE_CHANNEL = "self_improve"
 CHANNEL_CLASS: dict = {
     "quick": HAND,
     "quick_capture": HAND,
@@ -80,7 +91,7 @@ CHANNEL_CLASS: dict = {
     "claude_code": PROPOSED,
     "radar-diagnostic": PROPOSED,
     "radar-parse-degraded": PROPOSED,
-    "self_improve": PROPOSED,
+    SELF_IMPROVE_CHANNEL: PROPOSED,
     "meeting": MEETING,
     "audio": MEETING,
     "slack": EXTERNAL,
@@ -186,6 +197,87 @@ def autodispatch_config(cfg: object) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# self_improve 配置（config.yaml `self_improve:` 块，全 add-only；§65）
+# --------------------------------------------------------------------------- #
+SELF_IMPROVE_DEFAULTS: dict = {
+    "enabled": True,        # 通道总开关：false = self_improve 卡照旧人工审批
+    "repo_path": "",        # "" = 安装根（config.HOME）；比对用 realpath
+    "tick_minutes": 60,     # PR 跟进巡检（owner 评论 / 红 CI / 合并 / 关闭）间隔
+    "owner_logins": [],     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
+    "github_repo": "",      # 显式 owner/repo；"" = 首次使用时 gh repo view 取并缓存
+}
+
+
+def _raw_block(cfg: object, key: str) -> dict:
+    """cfg.raw 或裸 dict 里取一个配置块；不是 dict 一律当空块。"""
+    raw = getattr(cfg, "raw", None)
+    if not isinstance(raw, dict) and isinstance(cfg, dict):
+        raw = cfg
+    block = raw.get(key) if isinstance(raw, dict) else None
+    return block if isinstance(block, dict) else {}
+
+
+def _str_or(value: object, default: str) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else default
+
+
+def _str_list(value: object) -> list:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(x).strip() for x in value if str(x).strip()]
+
+
+def self_improve_config(cfg: object) -> dict:
+    """读 `self_improve:` 块，脏值逐键回退默认（宪法第 11 条口径）——通道配置
+    的唯一读取点（同 autodispatch_config 的纪律）。"""
+    block = _raw_block(cfg, "self_improve")
+    out = dict(SELF_IMPROVE_DEFAULTS)
+    out["enabled"] = bool(block.get("enabled", out["enabled"]))
+    out["repo_path"] = _str_or(block.get("repo_path"), "")
+    minutes = _int(block.get("tick_minutes"))
+    out["tick_minutes"] = (minutes if minutes is not None and minutes >= 1
+                           else out["tick_minutes"])
+    out["owner_logins"] = _str_list(block.get("owner_logins"))
+    out["github_repo"] = _str_or(block.get("github_repo"), "")
+    return out
+
+
+def self_improve_repo_path(cfg: object) -> str:
+    """通道唯一放行的仓库路径（未 realpath；比对时再 realpath）。默认 = 安装根
+    ``config.HOME``——本软件自己的 checkout（D7：只给 zelin-ai-assistant 开）。"""
+    configured = self_improve_config(cfg)["repo_path"]
+    return configured or str(config.HOME)
+
+
+def same_repo(a: object, b: object,
+              realpath: Optional[Callable[[str], str]] = None) -> bool:
+    """两个路径 realpath 后是否同一目录（`~/Projects/...` 是指向外置卷的
+    symlink——v0.48.2 的 symlink 事故就在这里，必须 realpath 再比）。非字符串 /
+    空串 = False（fail-closed）。``realpath`` 是测试注入缝。"""
+    pa, pb = _str_or(a, ""), _str_or(b, "")
+    if not pa or not pb:
+        return False
+    rp = realpath if realpath is not None else os.path.realpath
+    return rp(os.path.expanduser(pa)) == rp(os.path.expanduser(pb))
+
+
+def is_self_improve_sources(sources: object) -> bool:
+    """sources 非空且**每一条**都是 `self_improve` 渠道。混入任何别的渠道
+    （hand 卡被 fold、slack 来源并入……）即失格——「混合来源取最小信任」在
+    这条 lane 上的同构：搭便车两个方向都关死。"""
+    if not isinstance(sources, (list, tuple)) or not sources:
+        return False
+    return all(isinstance(s, dict)
+               and channel_class_key(s.get("channel")) == SELF_IMPROVE_CHANNEL
+               for s in sources)
+
+
+def channel_class_key(channel: object) -> str:
+    """channel 值归一（strip+lower）；非字符串给空串。"""
+    return channel.strip().lower() if isinstance(channel, str) else ""
+
+
+# --------------------------------------------------------------------------- #
 # may_auto_dispatch — 自动派发资格闸（天花板全过才放行）
 # --------------------------------------------------------------------------- #
 # 拒绝原因 token（稳定机读词表；UI 文案由调用方映射）：
@@ -201,11 +293,34 @@ def autodispatch_config(cfg: object) -> dict:
 #   cost:over_ceiling / budget:unknown / budget:exhausted — retired v0.48.7
 #                       （D9 取消预算天花板；旧卡上残留的 token 由 actd 在下一
 #                       pass 按「解除即清」清掉，不再产生）
+#   ok:self_improve   — 放行，且走的是 §65 lane（actd 据此选文案/通知）
+#   self_improve:disabled      — self_improve.enabled=false（常态，不上卡）
+#   self_improve:paused        — 通道被敏感路径护栏挂起（§65.4），等 owner 清
+#   self_improve:needs_mcp     — 卡声明 needs_mcp：只能走 owner 亲批路径
+#   self_improve:repo_mismatch — target_repo 的 realpath 不是本仓库（D7）
 MAY_REASONS = (
     "ok", "disabled", "origin:proposed", "origin:meeting", "origin:external",
     "t2_confirm", "outbound", "repo:new", "repo:none", "repo:missing",
     "cost:unknown",
+    "ok:self_improve", "self_improve:disabled", "self_improve:paused",
+    "self_improve:needs_mcp", "self_improve:repo_mismatch",
 )
+# 常态原因：不上卡不留痕（C-6，宪法第 10 条口径）
+_ROUTINE_REASONS = ("disabled", "self_improve:disabled")
+
+
+def is_routine_reason(reason: object) -> bool:
+    """C-6：`origin:*` / `disabled` / `self_improve:disabled` 是常态回落——
+    逐卡留痕即噪音。其余 token 上卡陈述。"""
+    return reason in _ROUTINE_REASONS or str(reason).startswith("origin:")
+
+
+def auto_dispatch_note(reason: str, cost: float, today: str) -> str:
+    """免批放行的 notes 痕（actd 落卡）：hand lane 原文不动；§65 lane 报自己的名字。"""
+    if reason == "ok:self_improve":
+        return (f"[{today} auto-dispatch] self_improve 通道免批自动派发"
+                "（交付只能是草稿 PR，§65）")
+    return f"[{today} auto-dispatch] hand 出身免批自动派发（est ${cost:g}）"
 
 
 def _field(card: object, name: str, default: object = None) -> object:
@@ -215,10 +330,53 @@ def _field(card: object, name: str, default: object = None) -> object:
     return getattr(card, name, default)
 
 
+def _lane_gate(card: object, cfg: object, lane_paused: bool,
+               realpath: Optional[Callable[[str], str]]) -> Optional[str]:
+    """§65 lane 的专属天花板（sources 已判定全为 self_improve）：
+    开关 → 暂停 → needs_mcp → 仓库 realpath。返回拒绝 token 或 None。"""
+    si = self_improve_config(cfg)
+    if not si["enabled"]:
+        return "self_improve:disabled"
+    if lane_paused:
+        return "self_improve:paused"
+    if bool(_field(card, "needs_mcp")):
+        return "self_improve:needs_mcp"
+    if not same_repo(_field(card, "target_repo"), self_improve_repo_path(cfg),
+                     realpath):
+        return "self_improve:repo_mismatch"
+    return None
+
+
+def _origin_gate(card: object, cfg: object, lane_paused: bool,
+                 realpath: Optional[Callable[[str], str]]) -> tuple:
+    """出身闸 -> (拒绝 token | None, 是否走 §65 lane)。hand 直接放行；sources
+    全为 self_improve 交给 _lane_gate；其余出身一律 `origin:<class>`。"""
+    sources = _field(card, "sources") or []
+    origin = classify_origin(sources)
+    if origin == HAND:
+        return None, False
+    if not is_self_improve_sources(sources):
+        return "origin:" + origin, False
+    return _lane_gate(card, cfg, lane_paused, realpath), True
+
+
+def _cost_verdict(cost: Optional[float], lane: bool) -> tuple:
+    """末位裁决：hand 卡估价缺失即拒（不可证明 ≤ 文字确认线）；§65 lane 无
+    审批步骤、无预算（D9），估价缺失不拦，token 报 `ok:self_improve`。"""
+    if lane:
+        return True, "ok:self_improve"
+    if cost is None:
+        return False, "cost:unknown"
+    return True, "ok"
+
+
 def may_auto_dispatch(
     card: object,
     cfg: object,
     path_exists: Optional[Callable[[str], bool]] = None,
+    *,
+    lane_paused: bool = False,
+    realpath: Optional[Callable[[str], str]] = None,
 ) -> tuple:
     """自动派发资格裁决 -> (bool, reason_token)。
 
@@ -230,14 +388,20 @@ def may_auto_dispatch(
     排在合并运行列的 queued 子状态）。预算不在这里管——没有预算（D9，v0.48.7
     起 ``today_spend`` 参数随台账一并退役）。纯函数：repo 存在性经
     ``path_exists`` seam（默认 os.path.exists），测试注入假的。
+
+    §65 第二条 lane（add-only kwargs）：``lane_paused`` = 通道暂停状态（actd
+    从 state/self_improve/lane.json 读后传入，本模块不做 I/O）；``realpath``
+    = 仓库比对的 seam（默认 os.path.realpath）。lane 卡放行 token 为
+    ``ok:self_improve``；其余天花板（t2_confirm / outbound / repo:*）对两条
+    lane 一视同仁。
     """
     ad = autodispatch_config(cfg)
     if not ad["enabled"]:
         return False, "disabled"
 
-    origin = classify_origin(_field(card, "sources") or [])
-    if origin != HAND:
-        return False, "origin:" + origin
+    blocked, lane = _origin_gate(card, cfg, lane_paused, realpath)
+    if blocked:
+        return False, blocked
 
     # §7/§41 审批语义不变：T2 / green-sign / 高成本文字确认线，一律人批。
     tier = _field(card, "tier")
@@ -269,12 +433,9 @@ def may_auto_dispatch(
     if not exists(os.path.expanduser(repo)):
         return False, "repo:missing"
 
-    # 估价必须存在：缺失即不可证明 <= 上面的文字确认线，保守回人批。金额本身
-    # 不设上限——单卡 $5 天花板与当日预算 retired v0.48.7（D9）。
-    if cost is None:
-        return False, "cost:unknown"
-
-    return True, "ok"
+    # 估价必须存在（hand lane）：缺失即不可证明 <= 上面的文字确认线，保守回人批。
+    # 金额本身不设上限——单卡 $5 天花板与当日预算 retired v0.48.7（D9）。
+    return _cost_verdict(cost, lane)
 
 
 # --------------------------------------------------------------------------- #

@@ -1,0 +1,9 @@
+# ui/parity/waivers.txt —— 原生 UI 里「有意不搬到 web」的条目（shrink-only，CONTRACT §66.2）。
+# 每行：<inventory-id>  <理由>  <issue / 决策引用>。只许划掉、不许新增——新的「不搬」判断
+# 走 scripts/ui/extract_native_inventory.py 的归属表（SCREEN_OWNER 标 retired / shell，
+# 带决策引用，代码可审），不走这里。种子 = #119 需输入退役（answer_input 通道整条退役，
+# 回答对话框与「回答发送中」状态没有 web 落点；「回答…」按钮本身以 comment/steer 保留，不在此列）。
+control:board.dialogs:label:answer-the-ai-s-question  #119 needs-input/answer_input retired (CONTRACT §39 tombstone); dialog has no web landing  #119 / #126
+control:board.dialogs:label:send-newline#2  promptAnswer sheet hint — retired with #119 answer_input  #119 / #126
+control:board.dialogs:alert-button:send#2  promptAnswer sheet Send — retired with #119 answer_input  #119 / #126
+control:board.running:label:sending-answer  needs-input lane answer-in-flight state — retired with #119  #119 / #126

@@ -1,4 +1,4 @@
-"""daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §65；R2.4；owner D10/D12/D18）。
+"""daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §70；R2.4；owner D10/D12/D18）。
 
 一句话：每天固定时段（`daily_loop.time`，默认 03:30 本地）在 actd 的 pass 里
 跑一次——**先**整理看板（act/lib/maintenance：提案列 + 潜在任务列去重合成、

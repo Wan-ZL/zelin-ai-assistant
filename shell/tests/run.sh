@@ -22,7 +22,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 FRAMEWORKS=(-framework AppKit -framework WebKit -framework SwiftUI -framework Foundation
-            -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications)
+            -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications
+            -framework ServiceManagement -framework Carbon)
 
 echo "==> [1/3] Typecheck shell module (swiftc -typecheck, all Sources + shared I18n)"
 swiftc -typecheck "$SRC_DIR"/*.swift "$SHARED_I18N" "${FRAMEWORKS[@]}"

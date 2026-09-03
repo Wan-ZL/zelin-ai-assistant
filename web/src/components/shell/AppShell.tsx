@@ -4,7 +4,8 @@
 //   2. <html lang> 与 document.title 随语言同步；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
 //   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话）；
-//   5. 每日整理横幅（MaintenanceBanner，§65：正在整理 / 今日整理：合并 N、清理 M）。
+//   5. 自我改进通道横幅（SelfImproveBanner，§65.4：敏感路径护栏挂起通道时点名 PR 并给「恢复通道」）。
+//   6. 每日整理横幅（MaintenanceBanner，§70：正在整理 / 今日整理：合并 N、清理 M）。
 import { useEffect, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { refreshBoard, useAppState } from "../../store";
@@ -13,6 +14,7 @@ import { ErrorBanner } from "./ErrorBanner";
 import { HeaderBar } from "./HeaderBar";
 import { MaintenanceBanner } from "./MaintenanceBanner";
 import { PipelineBanner } from "./PipelineBanner";
+import { SelfImproveBanner } from "./SelfImproveBanner";
 
 export interface AppShellProps {
   /** 透传给 HeaderBar 的搜索/过滤槽位（A8 组件经 app.tsx 注入） */
@@ -79,7 +81,9 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
       <ErrorBanner />
       {/* §47.4 管线健康（后台服务卡住/崩/停）——与离线横幅互斥，见组件头注 */}
       <PipelineBanner />
-      {/* §65 每日整理：正在整理 / 今日整理摘要（不弹系统通知，D10） */}
+      {/* §65.4 自动草稿 PR 通道被敏感路径护栏挂起——点名 PR + 「恢复通道」 */}
+      <SelfImproveBanner />
+      {/* §70 每日整理：正在整理 / 今日整理摘要（不弹系统通知，D10） */}
       <MaintenanceBanner />
       <main className="shell-main">{content}</main>
     </div>

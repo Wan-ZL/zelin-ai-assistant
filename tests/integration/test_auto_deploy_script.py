@@ -110,7 +110,8 @@ FIXTURE_INIT = ('"""fixture act: resolves like the real package (stamp -> git ta
                 '__version__ = "0.0.0"\n'
                 "__version__ = _version.resolve(__version__)\n")
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 300  # ~80 runs of real bash+git; ~170 s on a 2024 Mac (v0.48.20: +33 runs)
+BUDGET_SECONDS = 420  # 89 runs of real bash+git; ~240 s on a 2024 Mac, 327 s seen on the macos-latest
+                      # CI leg after #174 + #176 landed together (2026-09-03) — budget follows the run count
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -268,7 +269,9 @@ exit 0
 
 FAKE_SHIM = '"""fake act.auto_deploy: only has to import (the script self-checks it after the merge)."""\n'
 
-FAKE_DOCTOR = r'''"""fake act.doctor: FAIL names per call from FAKE_DOCTOR_PLAN (one line per call, consumed)."""
+FAKE_DOCTOR = r'''"""fake act.doctor: FAIL names per call from FAKE_DOCTOR_PLAN (one line per call, consumed).
+A name written `<row>@owner_action` FAILs with that §25 row_class; plain names omit the key
+(the shape of a doctor from before the key existed — a rollback target)."""
 import json, os, sys
 from act import __version__
 plan = os.environ.get("FAKE_DOCTOR_PLAN")
@@ -289,7 +292,13 @@ if "GARBAGE" in names:
     # the doctor itself is broken on this commit: no JSON at all
     print("Traceback (most recent call last): ModuleNotFoundError: No module named 'yaml'")
     sys.exit(1)
-checks = [{"name": n, "status": "fail", "detail": "", "fix": ""} for n in names]
+checks = []
+for n in names:
+    name, _, row_class = n.partition("@")
+    row = {"name": name, "status": "fail", "detail": "", "fix": ""}
+    if row_class:
+        row["row_class"] = row_class
+    checks.append(row)
 checks.append({"name": "home", "status": "ok", "detail": "", "fix": ""})
 print(json.dumps({"home": os.getcwd(), "checks": checks}))
 sys.exit(len(names))
@@ -1415,6 +1424,75 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("dashboard", st["detail"])
         self.assertNotIn("store2", st["detail"], "a transient first-attempt name is not the verdict")
         self.assertEqual(len(self.doctor_runs()), 4, "baseline + 3 attempts")
+
+    # -- 3c. owner-action rows never trigger a rollback（2026-09-03 v1.0.7 事故，§56.3 step 10） -- #
+    # 实录：install.sh 刚建好 claude 稳定副本并打印「一次性授权指引」，30 s 后 doctor 在
+    # launchd 会话里、cwd 在外置卷上跑 `<副本> --version`——副本还没拿到完全磁盘访问，
+    # `stable claude` 从基线的 WARN（缺失）变成 FAIL（跑不了）→ 三次采样都在 → 回滚到
+    # v1.0.3；几分钟后 owner 在终端里跑同一探针是绿的（终端借出自己的授权）。授权只有
+    # owner 能点，代码回滚治不了它，因此 §25 `row_class=owner_action` 的 FAIL 永不进判决。
+
+    def test_new_owner_action_fail_never_rolls_back_and_is_reported_as_needs_owner(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "stable claude@owner_action"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "a grant the owner has yet to click is not a broken deploy")
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertNotIn("failed_sha", st)
+        self.assertIn("needs owner: stable claude", st["detail"])
+        self.assertNotIn("pre-existing", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        self.assertEqual(len(self.doctor_runs()), 2, "baseline + one sample: nothing to settle")
+        log = self.log_text()
+        self.assertIn("needs owner (not a rollback trigger): stable claude", log)
+        self.assertNotIn("daemons may still be settling", log)
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("v0.48.4", notes[0])
+        self.assertIn("needs owner: stable claude", notes[0], "the owner is told what to click")
+
+    def test_owner_action_fail_does_not_shield_a_real_new_fail(self):
+        target = self.push("0.48.4")
+        both = "stable claude@owner_action,dashboard"
+        proc = self.run_script(doctor_plan=["-", both, both, both])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "the code-class new FAIL still rolls back")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("dashboard", st["detail"])
+        self.assertNotIn("stable claude", st["detail"], "the owner-action row is not the verdict")
+
+    def test_pre_existing_owner_action_fail_is_needs_owner_not_pre_existing(self):
+        # the live shape before the fix landed: `launchd claude` red (claude_blind)
+        # on every baseline since 2026-09-02 — it was already excluded as
+        # pre-existing; now it is reported for what it is
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["launchd claude@owner_action", "launchd claude@owner_action"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertIn("needs owner: launchd claude", st["detail"])
+        self.assertNotIn("pre-existing", st["detail"])
+        log = self.log_text()
+        self.assertIn("baseline (pre-install) FAIL needs owner", log)
+        self.assertNotIn("doctor baseline (pre-install) FAIL: launchd claude", log)
+
+    def test_owner_action_row_that_turns_into_a_code_fail_is_a_new_fail(self):
+        # same row name, different failure: `launchd claude` was the grant
+        # (owner_action) before the install and an unclassified FAIL after —
+        # the class changed, so the name IS new to the verdict
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["launchd claude@owner_action",
+                                            "launchd claude", "launchd claude", "launchd claude"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("launchd claude", st["detail"])
 
     def test_git_failure_during_rollback_is_reported_as_git_not_detached(self):
         target = self.push("0.48.4")

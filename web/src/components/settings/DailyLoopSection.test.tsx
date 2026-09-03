@@ -1,4 +1,4 @@
-// 设置页「每日整理」section（CONTRACT §65，D10）：
+// 设置页「每日整理」section（CONTRACT §70，D10）：
 //   1) 五把旋钮从 server 快照水合；2) 保存 = 一次 PUT、只带改动键、数字原样交 server 校验；
 //   3) 400 的整句原文以 toast(role=alert) 显示；4) 读失败只红本 section。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";

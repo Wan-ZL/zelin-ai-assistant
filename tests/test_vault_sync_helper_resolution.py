@@ -3,8 +3,11 @@
 The vault-sync-helper ships inside the LEGACY menu-bar app (bundle id
 com.zelin.ai-engineer, the identity holding the one-time Documents grant —
 CONTRACT §12). The §54 name swap (owner 2026-09-02) moved that bundle to
-"Zelin's AI Assistant (old).app" and gave the product name to the board shell,
-which carries no helper. Pinned here (the real function, sourced from the real
+"Zelin's AI Assistant (old).app" and gave the product name to the board shell.
+Since P4 (CONTRACT §68.13) the shell bundle ALSO ships a helper copy (shell/build.sh
+compiles shell/Helpers/VaultSyncHelper.swift) — a fresh machine without the legacy
+app syncs through the shell's identity; when both are installed the legacy app's
+existing grant wins. Pinned here (the real function, sourced from the real
 script, against a temp apps dir + temp HOME; mdfind is a fake on PATH):
 
   - "(old)" in the apps dir or ~/Applications → its helper;
@@ -98,8 +101,18 @@ class HelperResolutionTestCase(unittest.TestCase):
         old = self._plant(self.apps / OLD_APP)
         self.assertEqual(self._resolve(), (0, str(old)), '"(old)" is the legacy app\'s home now')
 
-    def test_the_shell_under_the_product_name_has_no_helper_so_spotlight_finds_the_moved_legacy(self):
-        # the board shell (com.zelin.ai-board) under the product name: no vault-sync-helper inside
+    def test_p4_shell_helper_is_used_when_no_legacy_app_and_loses_to_the_legacy_when_both(self):
+        # §68.13: the shell bundle carries its own helper (shell/build.sh) — a fresh machine syncs
+        # through it without Spotlight; the legacy "(old)" grant still wins while it is installed
+        shell_helper = self._plant(self.apps / PRODUCT_APP)
+        (self.apps / PRODUCT_APP / "Contents" / "MacOS" / "ZelinAIBoard").write_text("", encoding="utf-8")
+        self.assertEqual(self._resolve(), (0, str(shell_helper)))
+        self.assertEqual(self._mdfind_calls(), [])
+        old = self._plant(self.apps / OLD_APP)
+        self.assertEqual(self._resolve(), (0, str(old)))
+
+    def test_a_pre_p4_shell_under_the_product_name_has_no_helper_so_spotlight_finds_the_moved_legacy(self):
+        # a board shell built before P4 (no vault-sync-helper inside) under the product name
         (self.apps / PRODUCT_APP / "Contents" / "MacOS").mkdir(parents=True)
         (self.apps / PRODUCT_APP / "Contents" / "MacOS" / "ZelinAIBoard").write_text("", encoding="utf-8")
         relocated = self.apps / "Archive" / "Zelin legacy.app"

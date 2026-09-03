@@ -156,5 +156,5 @@ exercised on Windows here — please test and PR fixes:
   (`tests/test_doctor.py::WindowsScheduledTasksDoctorTestCase`).
 - **Pure-Python Windows bugs fixed** so the `windows-latest` job goes greener:
   `import fcntl` (POSIX-only) is now guarded in `act/radar.py` and
-  `act/lib/health.py` (it crashed the import on Windows); the doctor key-mode
+  `act/lib/radar_health.py` (it crashed the import on Windows); the doctor key-mode
   check no longer false-WARNs on NTFS.

@@ -1,6 +1,6 @@
 pr: `feat/daily-loop`（PR-P5）
 phase: P5（D10 / D12 / D18；R2.4；素材库消费侧 R2.5.3）
-law: §1 / §2 / §9 / §15 / §40.5 / §49 / §50 追记；**§65（新增）**
+law: §1 / §2 / §9 / §15 / §40.5 / §49 / §50 追记；**§70（新增）**
 
 **每日自我改进循环，先维护再提案**：actd pass 内 `daily_loop.tick`（默认 03:30 本地，一天一次，标记 `state/daily_loop.json`；进程级总闸 `AIASSISTANT_DAILY_LOOP=0` 给测试沙箱）。维护 = `act/lib/maintenance.py`：提案列 + 潜在任务列去重合成（同题簇 → 一张新卡 `merged_from[]`，旧卡 `daily-merge: 并入 <new>` 进回收站）+ 过时卡进回收站 `stale:<deadline_passed|diagnostic_expired|superseded|idle>`（45 天 + guards：未来 deadline / user_titled / 提及 ≥3 / 同簇在跑 / 解析不了 = 不动）；循环卡保留 90 天，`purge_at` 与 `purge_trash` 单源（§9/§40.5）。
 

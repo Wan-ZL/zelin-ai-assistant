@@ -1,52 +1,97 @@
-# Codex PR review — second-opinion advisory review on every same-repo PR.
+# Codex PR review — second-opinion advisory review ON DEMAND (CONTRACT §56.8).
 #
-# Same design rules as pr-review-claude.yml: fork PRs skipped, missing
-# OPENAI_API_KEY = green no-op, superseded runs cancelled, never a required
-# check. Codex runs read-only over the checkout (safety guidance from the
-# action docs); the diff is pre-materialized so the sandbox never needs
-# network or git writes. The final message is posted as one PR comment.
+# Same trigger and design rules as pr-review-claude.yml: the `review:ai`
+# label (consumed once picked up) or a workflow_dispatch with the PR number;
+# fork PRs skipped, missing OPENAI_API_KEY = green no-op, superseded runs
+# cancelled, never a required check. Codex runs read-only over the checkout
+# (safety guidance from the action docs); the diff is pre-materialized with
+# `gh pr diff` so the sandbox never needs network or git writes. The final
+# message is posted as one PR comment.
 name: Codex PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to review"
+        required: true
+        type: number
 
 concurrency:
-  group: codex-review-${{ github.event.pull_request.number }}
+  group: codex-review-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
+# Job-level grants only (the default workflow token is read-only in this repo).
+permissions: {}
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    name: review (advisory, on demand)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.label.name == 'review:ai'
+          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout of the PR under review
+      pull-requests: write # inline review comments + consuming the review:ai label
+      issues: write # the summary comment goes through the issues API
+    # §56.6 timeout discipline — a hung review must not hold a slot for 6 h.
+    timeout-minutes: 30
     steps:
-      - id: key
-        run: echo "present=${{ secrets.OPENAI_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+      - id: pr
+        name: Resolve the PR, consume the label, probe the API key
+        # Every dynamic value enters the shell via env (zizmor
+        # template-injection); same shape as pr-review-claude.yml.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr }}
+          KEY_PRESENT: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          PR="${EVENT_PR:-$INPUT_PR}"
+          case "$PR" in (*[!0-9]*|"") echo "::error::no PR number"; exit 1 ;; esac
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --remove-label "review:ai" 2>/dev/null \
+            || echo "label review:ai already gone (or never set) on #$PR"
+          CROSS="$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json isCrossRepository --jq .isCrossRepository)"
+          HEAD="$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          RUN="$KEY_PRESENT"
+          if [ "$CROSS" = "true" ]; then
+            echo "::notice::PR #$PR is from a fork — bot review skipped"
+            RUN=false
+          elif [ "$RUN" != "true" ]; then
+            echo "::notice::OPENAI_API_KEY not configured — review skipped (green no-op)"
+          fi
+          {
+            echo "number=$PR"
+            echo "head=$HEAD"
+            echo "run=$RUN"
+          } >> "$GITHUB_OUTPUT"
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
+          # label event: the default (the PR's synthetic merge ref); dispatch
+          # → the PR head resolved above (same-repo only)
+          ref: ${{ github.event_name == 'workflow_dispatch' && steps.pr.outputs.head || '' }}
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         name: Materialize the PR diff for the sandboxed review
-        # base_ref 经 env 进 shell，绝不直接插值进 run 脚本体（zizmor
-        # template-injection：分支名是攻击者可控字符串，展开即代码）。
-        # 与 ci.yml 的 contract-reminder 同一处置。
+        # `gh pr diff` reads the diff from the API — no base fetch, no
+        # github.base_ref (empty on dispatch), works for both triggers.
         env:
-          BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
         run: |
           set -euo pipefail
-          git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
+          gh pr diff "$PR" -R "$GITHUB_REPOSITORY" > /tmp/pr.diff
           wc -c /tmp/pr.diff
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -58,7 +103,7 @@ jobs:
           # model: gpt-5.6
           effort: high
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         name: Load the review into env
         run: |
           set -euo pipefail
@@ -72,13 +117,15 @@ jobs:
             echo "CODEX_EOF"
           } >> "$GITHUB_ENV"
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         with:
           script: |
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
+              issue_number: Number(process.env.PR_NUMBER),
               body: "## Codex review\n\n" + process.env.CODEX_FINAL_MESSAGE,
             })

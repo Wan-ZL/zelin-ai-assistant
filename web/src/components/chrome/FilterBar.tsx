@@ -12,7 +12,8 @@ import {
   type LabelTable,
 } from "../../i18n";
 import { normalizeSortOrder, SORT_ORDERS, type SortOrder } from "../../cardSort";
-import { clearFilters, initFiltersFromUrl, setFilters, setSortOrder, useAppState } from "../../store";
+import { clearFilters, initFiltersFromUrl, setFilters, setSelectionMode, setSortOrder, useAppState } from "../../store";
+import { FeedbackButton } from "./FeedbackButton";
 import {
   cardFilterCount,
   collectChannels,
@@ -28,7 +29,7 @@ const TIER_VALUES = ["T0", "T1", "T2"] as const;
 
 export function FilterBar() {
   const { text, language } = useI18n();
-  const { board, filters, sortOrder } = useAppState();
+  const { board, filters, sortOrder, selectionMode } = useAppState();
   const [openChip, setOpenChip] = useState<ChipKey | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -176,6 +177,18 @@ export function FilterBar() {
           {text(`清除（${activeCount}）`, `Clear (${activeCount})`)}
         </button>
       )}
+
+      {/* §29 全局提建议（原生 header「提建议」）：ids=[] 的 feedback 动作 */}
+      <FeedbackButton />
+      {/* §21 多选入口（原生 header「选择」）：切进 selectionMode，卡上长出勾选框、底部出操作条 */}
+      <button
+        type="button"
+        className={`chrome-select-toggle${selectionMode ? " is-on" : ""}`}
+        aria-pressed={selectionMode}
+        onClick={() => setSelectionMode(!selectionMode)}
+      >
+        {selectionMode ? text("退出选择", "Done selecting") : text("选择", "Select")}
+      </button>
 
       <label className="chrome-sort">
         <span className="chrome-sort-label">{text("排序", "Sort")}</span>

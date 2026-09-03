@@ -1,4 +1,4 @@
-"""§65 每日提案器的输入读取器：读台账不读 traceback，外来文本过围栏，D18 分流。
+"""§70 每日提案器的输入读取器：读台账不读 traceback，外来文本过围栏，D18 分流。
 
 每个读取器一段：registry execution 块 / analytics 风暴 / radar_failed 放弃 /
 写风暴 / actd.log 刷屏 / install_report fail / launchd 日志故障形状 / doctor
