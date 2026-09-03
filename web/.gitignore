@@ -1,2 +1,7 @@
 node_modules/
 dist/
+# Playwright 视觉基线（CONTRACT §62.4）：跑出来的报告 / diff 是产物，goldens 住 e2e/__screenshots__/ 并提交
+test-results/
+playwright-report/
+# scripts/ui/parity_check.py 跑 vitest 的 JSON 报告（门的中间产物）
+.parity-vitest.json

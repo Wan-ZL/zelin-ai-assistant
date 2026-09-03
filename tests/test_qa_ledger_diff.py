@@ -152,6 +152,29 @@ class GatesLoosenTestCase(unittest.TestCase):
                                   "declare direction for [%s].%s" % (section, key))
 
 
+class ParityLedgerTestCase(unittest.TestCase):
+    """§62.2：ui/parity/pending.txt 与 waivers.txt 同样只许缩（按 id 集合比，备注列不是分数）。"""
+
+    def test_added_id_is_caught_and_remarks_are_ignored(self):
+        base = "# head\ncontrol:a:b:c\ncontrol:x:y:z  reason #119\n"
+        head = "control:a:b:c\ncontrol:x:y:z  reworded reason\ncontrol:new:one\n"
+        findings = ledger_diff.diff_parity_ledger("ui/parity/pending.txt", base, head)
+        self.assertEqual(findings, ["GROW: ui/parity/pending.txt added control:new:one"])
+
+    def test_striking_lines_birth_and_deletion(self):
+        base = "control:a:b:c\nlane:debt\n"
+        self.assertEqual(ledger_diff.diff_parity_ledger("ui/parity/waivers.txt", base, "lane:debt\n"), [])
+        self.assertEqual(ledger_diff.diff_parity_ledger("ui/parity/waivers.txt", None, base), [])
+        self.assertIn("deleted", ledger_diff.diff_parity_ledger("ui/parity/waivers.txt", base, None)[0])
+
+    def test_collect_findings_covers_both_parity_ledgers(self):
+        base_files = {"ui/parity/pending.txt": "a:b\n", "ui/parity/waivers.txt": "c:d  why\n"}
+        head_files = {"ui/parity/pending.txt": "a:b\ne:f\n", "ui/parity/waivers.txt": "c:d  why\ng:h  why2 D3\n"}
+        findings = ledger_diff.collect_findings(base_files.get, head_files.get, set())
+        self.assertEqual(sorted(findings), ["GROW: ui/parity/pending.txt added e:f",
+                                            "GROW: ui/parity/waivers.txt added g:h"])
+
+
 class CollectFindingsTestCase(unittest.TestCase):
     def test_all_guarded_files_are_compared_and_findings_aggregate(self):
         base_files = {
