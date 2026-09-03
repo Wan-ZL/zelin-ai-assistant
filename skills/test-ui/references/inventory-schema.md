@@ -15,7 +15,7 @@ Every adapter and every sensor speaks this. `testui_common.validate_inventory` c
     "key": {"screen": "board", "role": "button", "slug": "approve"},
     "kind": "interactive | static | landmark | heading",
     "name": {"raw": "Approve", "zh": "批准", "en": "Approve", "alt": []}, "name_source": "text | aria-label | aria-labelledby | alt | label | title | none | L()",
-    "pin": null, "owner": "web | shell | os | retired", "gated": false, "shortcut": "⌘↩", "count": 1, "dynamic": false,
+    "pin": null, "owner": "web | shell | os | retired", "gated": false, "project_gated": true, "shortcut": "⌘↩", "count": 1, "dynamic": false,
     "topology": {"parent": "window>main:main>list:proposals", "order": 2, "side": null},
     "states": {"source": {"visible": true, "hidden_by": null, "focusable": true},
                "light::desktop::zh::rest": {"visible": true, "hidden_by": null, "focusable": true, "tab_index": null, "bbox": [812, 140, 64, 28],
@@ -46,3 +46,5 @@ Rules: roles are WAI-ARIA names (`testui_common.ALL_ROLES`); the id grammar is t
 ```
 
 Colors canonical `#rrggbbaa`; lengths in px (`rem/em` × 16); weights regular/medium/semibold/bold → 400/500/600/700; a token in one theme and not the other is a `tokens.theme_parity` hit; MISSING tokens are reported only for `token_required_families` (default `layout`).
+
+`gated` = behind a feature flag (subject side: `{flags.x && …}` / `data-gated`; runtime: present only with all flags on). `project_gated` (reference side, add-only) = the project's own inventory judges this id (`native-inventory.json` `gated`); `false` = listed, not judged (copy / help text) → the pairing marks it N-A. Same word in the native JSON, different meaning — kept apart on purpose.

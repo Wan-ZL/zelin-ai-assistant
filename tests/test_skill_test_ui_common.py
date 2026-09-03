@@ -101,6 +101,11 @@ class IdGrammarTestCase(unittest.TestCase):
         self.assertEqual(tc.normalize_name("  Last  checked 12 "), "last checked {n}")
         self.assertEqual(tc.normalize_name("Hello ${name}"), "hello {}")
         self.assertEqual(tc.normalize_name(None), "")
+        # 首尾装饰符号（emoji / 省略号 / 冒号）不是改名——slugify 配对时本就忽略它们
+        self.assertEqual(tc.normalize_name("🗑 Trash"), tc.normalize_name("Trash"))
+        self.assertEqual(tc.normalize_name("Answer…"), "answer")
+        self.assertEqual(tc.normalize_name("Delivered:"), "delivered")
+        self.assertNotEqual(tc.normalize_name("Re-raised"), tc.normalize_name("Raised"))
 
 
 class TokensFlattenTestCase(unittest.TestCase):

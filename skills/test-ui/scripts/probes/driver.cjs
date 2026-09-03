@@ -58,7 +58,10 @@ const PAGE_SCRIPT = `(() => {
     }
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) return "0x0";
-    if (r.right < 0 || r.bottom < 0 || r.left > innerWidth || r.top > innerHeight) return "off-screen";
+    // off-canvas = outside the DOCUMENT's scrollable box (the left:-9999px family), not merely below the fold:
+    // an element at y > innerHeight on a scrolling page is still in the accessibility tree and one scroll away.
+    const de = document.documentElement, sx = window.scrollX || 0, sy = window.scrollY || 0;
+    if (r.right + sx < 0 || r.bottom + sy < 0 || r.left + sx > de.scrollWidth || r.top + sy > de.scrollHeight) return "off-canvas";
     return null;
   };
   const focusable = (el) => {
@@ -67,7 +70,10 @@ const PAGE_SCRIPT = `(() => {
     return ["a","button","input","select","textarea","summary"].includes(el.tagName.toLowerCase()) || el.isContentEditable;
   };
   const parseColor = (s) => { const m = /rgba?\\(([^)]+)\\)/.exec(s || ""); if (!m) return null; const p = m[1].split(/[,\\s\\/]+/).filter(Boolean).map(Number); return {r:p[0],g:p[1],b:p[2],a:p.length > 3 ? p[3] : 1}; };
-  const effectiveBg = (el) => { for (let n = el; n; n = n.parentElement) { const c = parseColor(getComputedStyle(n).backgroundColor); if (c && c.a > 0) return c; } return {r:255,g:255,b:255,a:1}; };
+  // effective background = every ancestor's background composited bottom-up until opaque (a 12 % tinted chip over the
+  // page is NOT the chip color — taking the first non-transparent layer as-is made text == background, ratio 1).
+  const over = (top, bot) => { const a = top.a + bot.a * (1 - top.a); if (a <= 0) return {r:0,g:0,b:0,a:0}; return {r: (top.r * top.a + bot.r * bot.a * (1 - top.a)) / a, g: (top.g * top.a + bot.g * bot.a * (1 - top.a)) / a, b: (top.b * top.a + bot.b * bot.a * (1 - top.a)) / a, a}; };
+  const effectiveBg = (el) => { let acc = {r:0,g:0,b:0,a:0}; for (let n = el; n; n = n.parentElement) { const c = parseColor(getComputedStyle(n).backgroundColor); if (!c || c.a <= 0) continue; acc = over(acc, c); if (acc.a >= 0.999) return acc; } return over(acc, {r:255,g:255,b:255,a:1}); };
   const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
   const composite = (fg, bg) => ({r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1});
   const hex = (c) => "#" + [c.r, c.g, c.b, Math.round(c.a * 255)].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
@@ -99,8 +105,12 @@ const PAGE_SCRIPT = `(() => {
   const geometry = {};
   for (const [pathKey, spec] of Object.entries(window.__tuGeometry || {})) {
     if (spec.screen && spec.screen !== "*" && spec.screen !== window.__tuScreen) continue;
-    const els = spec.selector ? document.querySelectorAll(spec.selector) : Array.from(document.querySelectorAll("body *")).filter((e) => roleOf(e) === spec.role);
-    const rects = Array.from(els).map((e) => e.getBoundingClientRect()).filter((b) => b.width > 0);
+    let els = spec.selector ? document.querySelectorAll(spec.selector) : Array.from(document.querySelectorAll("body *")).filter((e) => roleOf(e) === spec.role);
+    let rects = Array.from(els).map((e) => e.getBoundingClientRect()).filter((b) => b.width > 0);
+    // fallback: the elements whose CSS rule consumes the token (selectors derived from the project's component CSS)
+    if (!rects.length && spec.css_selectors && spec.css_selectors.length) {
+      try { els = document.querySelectorAll(spec.css_selectors.join(",")); rects = Array.from(els).map((e) => e.getBoundingClientRect()).filter((b) => b.width > 0); } catch (_) { /* invalid selector → unmeasured */ }
+    }
     if (spec.measure === "gap") { const xs = rects.map((b) => b.left).sort((a, b) => a - b); geometry[pathKey] = xs.slice(1).map((x, i) => Math.round(x - rects[i].right)); }
     else geometry[pathKey] = rects.map((b) => Math.round(spec.measure === "height" ? b.height : b.width));
   }
@@ -111,14 +121,25 @@ const PAGE_SCRIPT = `(() => {
 
 function sha256(file) { return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
 
+// Tab walk: stop on wrap-around (an inventoried element seen twice) or when focus stops moving (end of document /
+// focus trap). A focused element that is NOT in the inventory (a generic focusable <div>) is skipped, never a stop —
+// otherwise every control after the first such element would be reported unreachable.
 async function tabWalk(page, limit) {
-  const seen = [];
+  const seen = []; let skipped = 0;
   await page.evaluate(() => { document.activeElement && document.activeElement.blur && document.activeElement.blur(); });
   for (let i = 0; i < limit; i += 1) {
     await page.keyboard.press("Tab");
-    const idx = await page.evaluate(() => document.activeElement ? document.activeElement.getAttribute("data-tu-idx") : null);
-    if (idx === null || seen.includes(idx)) break;
-    seen.push(idx);
+    const step = await page.evaluate(() => {
+      const a = document.activeElement; if (!a || a === document.body) return {idx: null, same: false, body: true};
+      const same = a.hasAttribute("data-tu-last");
+      for (const e of document.querySelectorAll("[data-tu-last]")) e.removeAttribute("data-tu-last");
+      a.setAttribute("data-tu-last", "1");
+      return {idx: a.getAttribute("data-tu-idx"), same, body: false};
+    });
+    if (step.same) break;
+    if (step.idx === null) { skipped += 1; if (skipped > 100) break; continue; }
+    if (seen.includes(step.idx)) break;
+    seen.push(step.idx);
   }
   return seen;
 }

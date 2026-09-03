@@ -260,6 +260,20 @@ def declared_default_theme(index_html, tokens_css):
             "evidence": [evidence, "tokens.css: prefers-color-scheme media block %s" % ("present" if system else "absent")]}
 
 
+def selectors_consuming(css_texts, var_name):
+    """→ 消费 `var(<var_name>)` 的规则选择器（去重、按出现顺序；token 表自身的作用域不算）。"""
+    out, needle = [], "var(%s)" % var_name
+    for css in css_texts:
+        for selector, body, _dark, _line in _blocks(_strip_css_comments(css)):
+            if _consumes(selector, body, needle) and selector not in out:
+                out.append(selector)
+    return out
+
+
+def _consumes(selector, body, needle):
+    return bool(selector) and needle in body and _scope_theme(selector, False) is None
+
+
 def literal_census(css, rel, families=("color", "radius", "typography")):
     """组件 CSS 里绕过 var(--…) 的字面量 → [{file, line, property, value, family}]。"""
     hits = []
@@ -400,7 +414,10 @@ def load_design_tokens(path):
     themes = design_tokens_to_themes(doc)
     default = themes["light"].get("theme.default", {}).get("$value")
     follows = themes["light"].get("theme.follows_system", {}).get("$value")
-    declared = {"mode": "system" if follows else "fixed", "fallback": default, "evidence": ["%s: theme.default" % path]}
+    # 声明了具体默认值 = 固定默认（§66.3：theme.default = light 是 owner 拍板的要求；follows_system 只记录原生
+    # 历史上跟随 macOS 外观）；只有没给默认值时 follows_system 才把 mode 定成 system。
+    evidence = ["%s: theme.default = %s" % (path, default)] + (["%s: theme.follows_system = true (informational)" % path] if follows else [])
+    declared = {"mode": "fixed" if default else ("system" if follows else "fixed"), "fallback": default, "evidence": evidence}
     return tokens_document("design-tokens-json", "frozen", path, themes, declared)
 
 

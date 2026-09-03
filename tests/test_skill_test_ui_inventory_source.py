@@ -107,6 +107,15 @@ class TsxTestCase(unittest.TestCase):
         self.assertEqual(inv.screen_for_file("web/src/x/Y.tsx", [{"id": "custom", "source": ["web/src/x/*"]}]), "custom")
 
 
+class StaticNamesTestCase(unittest.TestCase):
+    def test_names_include_both_bilingual_halves(self):
+        """runtime 在 zh 下看到「批准」必须能对上源里的 text("批准","Approve")——names 集合两半都有；{dynamic} 永不入集。"""
+        items = [dict(kit.make_item("board", "button", "Approve"), name={"raw": "Approve", "zh": "批准", "en": "Approve", "alt": ["OK"]}),
+                 kit.make_item("board", "static", "{dynamic}")]
+        self.assertEqual(inv.static_names(items), ["Approve", "OK", "批准"])
+        self.assertEqual(inv.finish_inventory(kit.make_inventory(items))["names"], ["Approve", "OK", "批准"])
+
+
 class ExtractTreeTestCase(unittest.TestCase):
     def test_extract_source_dir_and_errors(self):
         import tempfile
@@ -133,7 +142,8 @@ class NativeAdapterTestCase(unittest.TestCase):
               "rail": {"side": "left", "items": [{"id": "rail:dashboard", "zh": "任务台", "en": "Workbench", "slug": "dashboard", "index": 0, "owner": "web", "gated": True, "shortcut": "⌘1"}]},
               "lanes": {"items": [{"id": "lane:debt", "zh": "潜在任务", "en": "Backlog", "slug": "debt", "index": 0, "rail": "left", "owner": "web", "gated": True},
                                   {"id": "lane:needs_approval", "zh": "提案", "en": "Proposals", "slug": "needs_approval", "index": 1, "rail": None, "owner": "web", "gated": True}], "order": ["debt", "needs_approval"]},
-              "screens": [{"id": "screen:settings", "zh": "设置", "en": "Settings", "kind": "rail-page", "owner": "web", "gated": True}],
+              "screens": [{"id": "screen:settings", "zh": "设置", "en": "Settings", "kind": "rail-page", "owner": "web", "gated": True},
+                          {"id": "screen:settings.recording", "zh": "录制", "en": "Recording", "kind": "settings-section", "owner": "web", "gated": True}],
               "shortcuts": [{"id": "shortcut:menu.main:cmd-,-settings", "zh": "设置…", "en": "Settings…", "key": "⌘,", "screen": "menu.main", "owner": "shell", "gated": False}],
               "settings_keys": [{"id": "setting:overrides:create_github_repo", "key": "create_github_repo", "store": "overrides", "owner": "web", "gated": True}],
               "theme_layout": [{"id": "theme:default", "value": "light", "owner": "web", "gated": True},
@@ -147,11 +157,18 @@ class NativeAdapterTestCase(unittest.TestCase):
         self.assertEqual((approve["key"], approve["name"]["en"], approve["source"]), ({"screen": "board", "role": "button", "slug": "approve"}, "Approve", {"file": "Cards.swift", "line": 12}))
         self.assertEqual(by["control:about:label:about"]["key"]["role"], "static")
         self.assertEqual((by["control:board:toggle:mute"]["key"]["role"], by["control:board:toggle:mute"]["owner"]), ("switch", "shell"))
-        self.assertEqual(by["rail:navigation"]["topology"]["side"], "left")
+        # 地标 id = 项目门的 `rail:order`（同一本账）；无名地标配对键 slug = 角色名
+        self.assertEqual((by["rail:order"]["topology"]["side"], by["rail:order"]["key"]), ("left", {"screen": "window", "role": "navigation", "slug": "navigation"}))
+        self.assertEqual(by["rail:dashboard"]["topology"]["parent"], "window>navigation:rail")
+        # 原生 `gated` 落到 project_gated；本 schema 的 gated（feature flag）恒 False
+        self.assertEqual((by["control:board:button:approve"]["project_gated"], by["control:board:button:approve"]["gated"]), (True, False))
+        self.assertFalse(by["shortcut:menu.main:cmd-,-settings"]["project_gated"])
         self.assertEqual((by["rail:dashboard"]["key"]["role"], by["rail:dashboard"]["shortcut"]), ("link", "⌘1"))
         self.assertEqual(by["lane:debt"]["topology"]["side"], "left")
         self.assertEqual(by["lane:needs_approval"]["topology"]["side"], "inside")
         self.assertEqual(by["screen:settings"]["key"]["role"], "heading")
+        # 带点号的 screen id 的配对键 slug 来自标题文字（"Recording" → recording），不是 id 尾段 settings.recording
+        self.assertEqual(by["screen:settings.recording"]["key"], {"screen": "settings", "role": "heading", "slug": "recording"})
         self.assertEqual(by["setting:overrides:create_github_repo"]["key"]["role"], "switch")
         self.assertEqual(result["dims"]["default_theme"], "light")
         self.assertEqual(result["layout_pointers"], {"layout:lane-width": "layout.lane.width"})

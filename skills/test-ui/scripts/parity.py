@@ -116,8 +116,13 @@ def _is_dynamic(item):
 
 
 def index_subject(items):
+    """by_key（家族内元组）· by_any（去掉 screen 的元组，首见者胜，供 union 回退）· families（被测有哪些 screen 家族）。"""
+    by_any = {}
+    for item in items:
+        by_any.setdefault(_key_tuple(item)[1:], item)
     return {"by_key": {_key_tuple(i): i for i in items}, "by_id": {i["id"]: i for i in items},
-            "by_pin": {i["pin"]: i for i in items if i.get("pin")}}
+            "by_pin": {i["pin"]: i for i in items if i.get("pin")}, "by_any": by_any,
+            "families": {i["key"]["screen"] for i in items}}
 
 
 def similarity(a, b):
@@ -166,8 +171,17 @@ def _suggest(ref, subject_items, floor):
     return sorted(out, key=lambda s: -s["similarity"])[:3]
 
 
+def _match_union(ref, idx):
+    """参照的 screen 家族在被测侧根本不存在（原生独有的页：about / ask / deps / header…）→ 在全部家族的并集里
+    找同 (role, slug, ordinal)（§66.2「web 尚无的页面在全部面的并集里找」）；家族存在则不回退——同名控件在别的页上
+    不是 parity。"""
+    if ref["key"]["screen"] in idx["families"]:
+        return None
+    return idx["by_any"].get(_key_tuple(ref)[1:])
+
+
 def find_match(ref, idx, ledgers, problems):
-    """→ (subject item | None, how, spoofed)。"""
+    """→ (subject item | None, how, spoofed)；how ∈ alias | pin | tuple | tuple:union | none。"""
     via_alias = _match_alias(ref, idx, ledgers, problems)
     if via_alias is not None:
         return via_alias, "alias", False
@@ -175,7 +189,10 @@ def find_match(ref, idx, ledgers, problems):
     if via_pin is not None:
         return via_pin, "pin", spoofed
     tuple_hit = idx["by_key"].get(_key_tuple(ref))
-    return tuple_hit, "tuple" if tuple_hit is not None else "none", False
+    if tuple_hit is not None:
+        return tuple_hit, "tuple", False
+    union_hit = _match_union(ref, idx)
+    return union_hit, "tuple:union" if union_hit is not None else "none", False
 
 
 # --------------------------------------------------------------------------- #
@@ -183,7 +200,9 @@ def find_match(ref, idx, ledgers, problems):
 # --------------------------------------------------------------------------- #
 
 def _name_changed(ref, sub):
-    if _is_dynamic(sub) or _is_dynamic(ref):
+    """地标（navigation / banner / main…）按角色 + 拓扑配对，名字只是辅助——原生侧栏没有 accessible name，web 给
+    <nav> 加 aria-label 是更好的 a11y，不是 parity 破坏。"""
+    if _is_dynamic(sub) or _is_dynamic(ref) or ref["key"]["role"] in tc.LANDMARK_ROLES:
         return False
     ref_name = ref["name"].get("en") or ref["name"].get("raw")
     sub_name = sub["name"].get("en") or sub["name"].get("raw")
@@ -216,12 +235,14 @@ def _both_differ(a, b):
 
 
 def _topology_changed(ref, sub):
-    """→ 变化的子字段列表（side / parent / order），只对 TOPOLOGY 类角色。"""
-    if ref["key"]["role"] not in TOPOLOGY_ROLES:
-        return []
+    """→ 变化的子字段列表（side / parent / order）。TOPOLOGY 类角色比全部三项；普通控件不比拓扑（按钮换个父地标
+    不算 CHANGED）——唯一例外是参照放在 navigation 地标里的条目：导航项离开导航 = 导航被重构（侧栏的 link 搬进
+    header → `topology:parent` navigation → banner，owner (a) 的「挪到顶栏」）。"""
     rt, st = _topology_of(ref), _topology_of(sub)
-    checks = (("side", _both_differ(rt.get("side"), st.get("side"))),
-              ("parent", _parent_role(rt.get("parent")) != _parent_role(st.get("parent"))),
+    parent_differs = _parent_role(rt.get("parent")) != _parent_role(st.get("parent"))
+    if ref["key"]["role"] not in TOPOLOGY_ROLES:
+        return ["parent"] if _parent_role(rt.get("parent")) == "navigation" and parent_differs else []
+    checks = (("side", _both_differ(rt.get("side"), st.get("side"))), ("parent", parent_differs),
               ("order", _both_differ(rt.get("order"), st.get("order"))))
     return [name for name, changed in checks if changed]
 
@@ -240,9 +261,10 @@ def _count_of(item):
 
 
 def fields_changed(ref, sub, spoofed):
+    """count 只在被测比参照少时算变化——多出来的同名实例是 extras，永不是 parity（anti-gaming #4）。"""
     checks = (("spoofed_pin", spoofed), ("role", ref["key"]["role"] != sub["key"]["role"]),
               ("name", _name_changed(ref, sub)), ("states", _states_changed(ref, sub)),
-              ("count", _count_of(ref) != _count_of(sub)))
+              ("count", _count_of(sub) < _count_of(ref)))
     changed = [name for name, flag in checks if flag]
     return changed + ["topology:%s" % f for f in _topology_changed(ref, sub)]
 
@@ -271,6 +293,8 @@ def judge_item(ref, idx, ledgers, ctx):
     """一条 reference 条目 → row（PRESENT / MISSING / CHANGED / WAIVED），账本已套用。"""
     if _na_owner(ref):
         return _row(ref, "N-A", detail={"owner": ref.get("owner")})
+    if ref.get("project_gated") is False:
+        return _row(ref, "N-A", detail={"informational": True, "note": "listed, not gated by the project inventory (copy / help text)"})
     if _is_dynamic(ref):
         return _row(ref, "N-A", detail={"dynamic": True, "note": "runtime-named item has no source identity to pair"})
     subject, how, spoofed = find_match(ref, idx, ledgers, ctx["problems"])
@@ -319,10 +343,11 @@ def _judge_matched(ref, subject, how, spoofed, ctx):
 
 
 def apply_ledger(row, ledgers, problems):
-    """pending：MISSING → 记账；PRESENT/CHANGED 却挂账 → stale。waivers：MISSING/CHANGED → WAIVED（要理由）。"""
+    """pending：MISSING / CHANGED → 记账（挂账的条目还没按规格落地——搬了位置的导航项仍算没到）；PRESENT 却挂账
+    → stale（该划掉了）。waivers：MISSING/CHANGED → WAIVED（要理由）。"""
     pending, waivers = ledgers["pending"], ledgers["waivers"]
     if row["id"] in pending:
-        if row["status"] == "MISSING":
+        if row["status"] in ("MISSING", "CHANGED"):
             row["ledger"] = "pending"
         else:
             problems.append({"kind": "stale_pending", "line": row["id"]})
@@ -353,6 +378,57 @@ def compare_items(subject, reference, ledgers, thresholds, focus_walk=None):
     extras = [i["id"] for i in subject["items"] if i["id"] not in matched and not _is_dynamic(i) and _visible(i)]
     suggestions = [s for r in rows for s in r["detail"].get("suggestions", [])]
     return {"rows": rows, "extras": extras, "suggestions": suggestions, "problems": ctx["problems"]}
+
+
+# --------------------------------------------------------------------------- #
+# a11y 树表达不了的 id 种类（快捷键字形、设置键名）：项目门在场就采它的判决，不在场就查源字符串（§66.2 的探针语义）
+# --------------------------------------------------------------------------- #
+
+STRING_PROBE_KINDS = ("shortcut", "setting")
+_PROJECT_STATUS = {"PRESENT": ("PRESENT", None), "STALE": ("PRESENT", "stale"), "PENDING": ("MISSING", "pending"),
+                   "MISSING": ("MISSING", None), "WAIVED": ("WAIVED", "waived")}
+
+
+def _probe_kind(row):
+    return row["id"].split(":", 1)[0]
+
+
+def adopt_project_verdicts(rows, project_items):
+    """`shortcut:*` / `setting:*` 行：项目门（scripts/ui/parity_check.py）判过的 id 采用它的判决——快捷键是字形在源码里、
+    设置键是 "key" 在 server/web 源码里，都不是可达树能量的东西；matched_by 记 project:parity_check。"""
+    items = project_items if project_items else {}
+    for row in rows:
+        verdict = items.get(row["id"]) if _probe_kind(row) in STRING_PROBE_KINDS else None
+        if verdict in _PROJECT_STATUS:
+            status, ledger = _PROJECT_STATUS[verdict]
+            row.update(status=status, ledger=ledger, matched_by="project:parity_check", fields_changed=[],
+                       detail=dict(row["detail"], project_verdict=verdict))
+    return rows
+
+
+def _needle(ref):
+    if _probe_kind(ref) == "shortcut":
+        return ref.get("shortcut")
+    return '"%s"' % ref["id"].split(":")[-1].split("#")[0]
+
+
+def string_probe(rows, reference_items, source_text, ledgers, problems):
+    """无项目门时的替代探针：MISSING 的 shortcut / setting 行，字形或 "key" 出现在 subject 源码文本里 → PRESENT
+    （matched_by source-string，evidence 记 needle）；账本重新套用。"""
+    by_id = {i["id"]: i for i in reference_items}
+    for row in rows:
+        needle = _probe_needle(row, by_id)
+        if needle and needle in source_text:
+            row.update(status="PRESENT", ledger=None, matched_by="source-string", detail=dict(row["detail"], evidence=needle))
+            apply_ledger(row, ledgers, problems)
+    return rows
+
+
+def _probe_needle(row, by_id):
+    """MISSING 的 shortcut / setting 行 → 要在源码里找的字符串；其它行 → None。"""
+    if row["status"] != "MISSING" or _probe_kind(row) not in STRING_PROBE_KINDS or row["id"] not in by_id:
+        return None
+    return _needle(by_id[row["id"]])
 
 
 # --------------------------------------------------------------------------- #
@@ -402,20 +478,29 @@ def _theme_table(doc, theme):
     return table if table else {}
 
 
+BASE_THEME = "light"  # `:root` 作用域落在这一表（tokens._scope_theme）；其它主题只声明覆盖项，其余按 CSS 级联继承
+
+
 def compare_tokens(subject_doc, reference_doc, thresholds):
-    """逐主题逐路径：共有 → PRESENT/CHANGED；参照有、被测无且家族在 token_required_families → MISSING。"""
+    """逐主题逐路径：共有 → PRESENT/CHANGED；参照有、被测无且家族在 token_required_families → MISSING。被测主题表
+    缺的路径先看 :root（BASE_THEME）——dark 没重声明的变量在 dark 下生效的就是 :root 值（row.inherited = true）；
+    只有 :root 也没有才算 MISSING。"""
     rows, tolerance = [], float(thresholds.get("geometry_tolerance_px", 1.0))
     required = set(thresholds.get("token_required_families", []))
+    base = _theme_table(subject_doc, BASE_THEME)
     for theme, ref_tokens in sorted(_themes_of(reference_doc).items()):
         sub_tokens = _theme_table(subject_doc, theme)
         for path, ref_tok in sorted(ref_tokens.items()):
-            rows += _token_row(theme, path, ref_tok, sub_tokens.get(path), required, tolerance)
+            sub_tok, inherited = sub_tokens.get(path), False
+            if sub_tok is None and theme != BASE_THEME and path in base:
+                sub_tok, inherited = base[path], True
+            rows += _token_row(theme, path, ref_tok, sub_tok, required, tolerance, inherited)
     return rows
 
 
-def _token_row(theme, path, ref_tok, sub_tok, required, tolerance):
+def _token_row(theme, path, ref_tok, sub_tok, required, tolerance, inherited=False):
     base = {"id": "token:%s:%s" % (theme, path), "location": path, "theme": theme, "kind": "token",
-            "reference": ref_tok.get("$value"), "subject": sub_tok.get("$value") if sub_tok else None}
+            "reference": ref_tok.get("$value"), "subject": sub_tok.get("$value") if sub_tok else None, "inherited": inherited}
     if sub_tok is None:
         if path.split(".")[0] not in required:
             return []
@@ -451,11 +536,14 @@ def _observed_differs(observed, fallback):
 
 
 def compare_default_theme(subject_doc, reference_doc, observed=None):
-    """声明 vs 声明（fallback 与 mode）；有 observed 再比首帧观察值。"""
+    """声明 vs 声明（fallback 与 mode）；有 observed 再比首帧观察值。参照声明了固定默认（mode fixed）而被测
+    跟随系统（mode system）= CHANGED `mode`：无存储偏好时深色系统上首帧就是深色——owner (b) 的「默认成了深色」。"""
     ref, sub = _declared_theme(reference_doc), _declared_theme(subject_doc)
     changed = []
     if _both_differ(ref.get("fallback"), sub.get("fallback")):
         changed.append("declared")
+    if _both_differ(ref.get("mode"), sub.get("mode")):
+        changed.append("mode")
     if _observed_differs(observed, ref.get("fallback")):
         changed.append("observed")
     return {"id": "theme:default", "location": "theme:default", "kind": "theme", "reference": ref, "subject": sub,
@@ -622,7 +710,8 @@ def rule_keyboard(inventory, rules, thresholds):
     reached = _reached(inventory)
     if reached is None:
         return []
-    candidates = [i for i in inventory["items"] if i["kind"] == "interactive" and _visible(i)]
+    # 可见且在某个状态下可聚焦的交互项才算候选：disabled 的按钮（composer 的「捕获」在没输入时）本就不在 Tab 序里
+    candidates = [i for i in inventory["items"] if i["kind"] == "interactive" and _visible(i) and _focusable(i)]
     return [_hit("wcag.keyboard", rules, i["id"], "unreachable", "in tab order") for i in candidates if i["id"] not in reached]
 
 

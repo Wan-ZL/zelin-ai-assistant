@@ -4,6 +4,7 @@
 
 法典：docs/CONTRACT.md §UI-parity.3；设计 vnext2-plan R2.8。零子进程。
 """
+import tempfile
 import unittest
 
 from tests import skill_test_ui_testkit as kit
@@ -63,6 +64,30 @@ class GeometryTestCase(unittest.TestCase):
         self.assertEqual(sensors.check_geometry_runtime(ctx)["status"], "pass")
         self.assertEqual(sensors.check_geometry_runtime(checks_ui.make_ctx("/r", kit.fake_det(["b.html"])))["status"], "unavailable")
 
+    def test_unmeasured_geometry_is_never_pass(self):
+        """负控制（dogfood 抓到的假绿）：driver 一个 bbox 都没量到 → 不许 pass。token 没被任何组件 CSS 消费 → MISSING
+        （substituted：没有元素可量）；消费了但 role 没命中 → UNAVAILABLE 且整层 unavailable。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit.make_repo(tmp, {"web/src/styles/board.css": ".lane { width: var(--native-layout-lane-width); }"})
+            det = kit.fake_det(["board.html"], repo=tmp, config={"geometry": GEOMETRY},
+                               tokens_files={"css": [], "component_dirs": ["web/src/styles"]})
+            ctx = checks_ui.make_ctx(tmp, det)
+            ctx["state"]["reference_tokens"] = kit.make_tokens({"light": {"layout.lane.width": "400px", "layout.rail.default_width": "200px"}})
+            ctx["state"]["runtime"] = {"inventory": kit.make_inventory([]), "geometry": {}}
+            res = sensors.check_geometry_runtime(ctx)
+            rows = {r["location"]: r for r in res["details"]["rows"]}
+            self.assertEqual(res["status"], "fail")  # rail width token consumed nowhere → MISSING
+            self.assertEqual((rows["layout.rail.default_width"]["status"], rows["layout.rail.default_width"]["substituted"]), ("MISSING", True))
+            self.assertEqual(rows["layout.lane.width"]["status"], "UNAVAILABLE")  # consumed by .lane, but role=list matched nothing
+            ctx["state"]["runtime"]["geometry"] = {"layout.rail.default_width": [200]}
+            res = sensors.check_geometry_runtime(ctx)
+            self.assertEqual(res["status"], "unavailable")
+            self.assertIn("1/2 layout token(s) measured OK; unmeasured", res["summary"])
+            # the driver config carries the CSS-derived selector so the next run can measure .lane by itself
+            cfg = sensors._driver_config(ctx, {"url": "http://127.0.0.1:1", "ready": "/", "flags_all_on": None}, 2)
+            self.assertEqual(cfg["geometry"]["layout.lane.width"]["css_selectors"], [".lane"])
+            self.assertNotIn("css_selectors", cfg["geometry"]["layout.rail.default_width"])
+
 
 class DefaultThemeTestCase(unittest.TestCase):
     def test_dark_default_is_changed(self):
@@ -73,6 +98,14 @@ class DefaultThemeTestCase(unittest.TestCase):
         self.assertEqual((row["status"], row["fields_changed"]), ("CHANGED", ["declared"]))
         same = parity.compare_default_theme(ref, ref)
         self.assertEqual(same["status"], "PRESENT")
+
+    def test_system_mode_against_fixed_reference_is_changed(self):
+        """负控制（owner (b) 原形）：参照 fixed light、被测 system（fallback light）→ CHANGED mode；两侧都 system → PRESENT。"""
+        fixed = kit.make_tokens({"light": {}}, declared={"mode": "fixed", "fallback": "light", "evidence": []})
+        system = kit.make_tokens({"light": {}}, declared={"mode": "system", "fallback": "light", "evidence": []})
+        self.assertEqual(parity.compare_default_theme(system, fixed)["fields_changed"], ["mode"])
+        self.assertEqual(parity.compare_default_theme(system, system)["status"], "PRESENT")
+        self.assertEqual(parity.compare_default_theme(fixed, system)["fields_changed"], ["mode"])
 
     def test_observed_first_frame(self):
         ref = kit.make_tokens({"light": {}}, declared={"mode": "system", "fallback": "light", "evidence": []})
@@ -89,7 +122,13 @@ class DefaultThemeTestCase(unittest.TestCase):
         ctx["state"]["reference_tokens"] = kit.make_tokens({"light": {}}, declared={"mode": "system", "fallback": "light", "evidence": []})
         res = sensors.check_theme_default_declared(ctx)
         self.assertEqual(res["status"], "fail")
-        self.assertIn("light → dark", res["summary"])
+        self.assertIn("system (fallback light) → dark (declared,mode)", res["summary"])
+        # owner (b) 的原形：参照固定 light、被测跟随系统（fallback light）→ CHANGED mode（深色系统首帧即深色）
+        ctx["state"]["subject_tokens"] = kit.make_tokens({"light": {}}, declared={"mode": "system", "fallback": "light", "evidence": []})
+        ctx["state"]["reference_tokens"] = kit.make_tokens({"light": {}}, declared={"mode": "fixed", "fallback": "light", "evidence": []})
+        res = sensors.check_theme_default_declared(ctx)
+        self.assertEqual((res["status"], res["details"]["row"]["fields_changed"]), ("fail", ["mode"]))
+        self.assertIn("light → system (fallback light) (mode)", res["summary"])
         ctx["state"]["reference_tokens"] = None
         self.assertEqual(sensors.check_theme_default_declared(ctx)["status"], "pass")
         ctx["state"]["subject_tokens"] = None

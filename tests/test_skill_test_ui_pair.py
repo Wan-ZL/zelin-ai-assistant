@@ -89,6 +89,85 @@ class PairingTestCase(unittest.TestCase):
         self.assertIn("count", rows["control:board:list:lane"]["fields_changed"])
         self.assertEqual(rows["control:board:list:lane#3"]["status"], "MISSING")
 
+    def test_informational_reference_items_are_na(self):
+        """原生清单 `gated: false` 的 copy / help 文案（§66.1 只列不判）→ N-A，不进 MISSING；project_gated 缺席 = 判。"""
+        ref = [dict(kit.make_item("about", "static", "Long explanatory copy"), project_gated=False),
+               dict(kit.make_item("about", "button", "Check now"), project_gated=True), kit.make_item("about", "button", "Quit")]
+        rows = _by_id(_compare(ref, []))
+        self.assertEqual(rows["control:about:static:long-explanatory-copy"]["status"], "N-A")
+        self.assertTrue(rows["control:about:static:long-explanatory-copy"]["detail"]["informational"])
+        self.assertEqual(rows["control:about:button:check-now"]["status"], "MISSING")
+        self.assertEqual(rows["control:about:button:quit"]["status"], "MISSING")
+
+    def test_union_fallback_only_when_family_absent(self):
+        """§66.2「web 尚无的页面在全部面的并集里找」：参照 about 页的 Cancel，被测没有 about 家族 → 并集里的 Cancel
+        配上（matched_by tuple:union）；board 家族存在但 board 上没有 Put back → MISSING，不去别的页借。"""
+        ref = [kit.make_item("about", "button", "Cancel"), kit.make_item("board", "button", "Put back")]
+        sub = [kit.make_item("settings", "button", "Cancel"), kit.make_item("board", "button", "Approve"),
+               kit.make_item("trash", "button", "Put back")]
+        rows = _by_id(_compare(ref, sub))
+        self.assertEqual((rows["control:about:button:cancel"]["status"], rows["control:about:button:cancel"]["matched_by"]), ("PRESENT", "tuple:union"))
+        self.assertEqual(rows["control:board:button:put-back"]["status"], "MISSING")
+
+    def test_chrome_screens_share_the_window_family(self):
+        """原生 `window`（侧栏 / 顶栏）↔ web `shell` / `app` 同属 window 家族：顶栏的 Settings 链接配得上。"""
+        ref = [kit.make_item("window", "link", "Settings")]
+        rows = _by_id(_compare(ref, [kit.make_item("shell", "link", "Settings")]))
+        self.assertEqual(rows["control:window:link:settings"]["status"], "PRESENT")
+        self.assertEqual(kit.tc.screen_family("app"), "window")
+        self.assertEqual(kit.tc.screen_family("board.card"), "board")
+
+    def test_more_instances_than_reference_is_not_a_change(self):
+        """被测有 5 个 Cancel、参照 1 个 → PRESENT（多出来的是 extras，永不是 parity）；少了才 CHANGED count。"""
+        ref = [kit.make_item("board", "button", "Cancel", count=1)]
+        sub = [kit.make_item("board", "button", "Cancel", count=5)] + [kit.make_item("board", "button", "Cancel", count=5, ordinal=n) for n in range(2, 6)]
+        self.assertEqual(_by_id(_compare(ref, sub))["control:board:button:cancel"]["status"], "PRESENT")
+
+    def test_navigation_child_moved_into_banner_is_changed_parent(self):
+        """owner (a)：侧栏 link 搬进顶栏 → CHANGED topology:parent（navigation → banner）；main 里的按钮换父地标不算。"""
+        ref = [kit.make_item("window", "link", "Trash", parent="window>navigation:rail"),
+               kit.make_item("board", "button", "Approve", parent="window>main:board")]
+        sub = [kit.make_item("shell", "link", "Trash", parent="window>banner:shell-header"),
+               kit.make_item("board", "button", "Approve", parent="window>banner:shell-header")]
+        rows = _by_id(_compare(ref, sub))
+        self.assertEqual((rows["control:window:link:trash"]["status"], rows["control:window:link:trash"]["fields_changed"]), ("CHANGED", ["topology:parent"]))
+        self.assertEqual(rows["control:board:button:approve"]["status"], "PRESENT")
+
+    def test_landmark_name_is_advisory(self):
+        """无名原生侧栏 vs 带 aria-label 的 <nav>：不算 CHANGED name（地标按角色 + 拓扑配对）。"""
+        ref = [kit.make_item("window", "navigation", None, parent="window", side_="left")]
+        sub = [kit.make_item("shell", "navigation", None, parent="window", side_="left")]
+        sub[0]["name"] = {"raw": "Main navigation", "zh": None, "en": None, "alt": []}
+        self.assertEqual(_by_id(_compare(ref, sub))["landmark:window:navigation:navigation"]["status"], "PRESENT")
+
+    def test_shortcut_and_setting_rows_adopt_the_project_verdict(self):
+        """快捷键字形 / 设置键名不是可达树能量的：项目门判过的采它的（PENDING → MISSING[pending]，STALE → PRESENT[stale]），
+        control 行不受影响；没判过的 id 原样。"""
+        rows = [{"id": "shortcut:board:cmd-f", "status": "MISSING", "ledger": None, "detail": {}, "fields_changed": [], "matched_by": None},
+                {"id": "setting:prefs:cardSortOrder", "status": "MISSING", "ledger": "pending", "detail": {}, "fields_changed": [], "matched_by": None},
+                {"id": "setting:overrides:x", "status": "MISSING", "ledger": None, "detail": {}, "fields_changed": [], "matched_by": None},
+                {"id": "control:board:button:approve", "status": "MISSING", "ledger": None, "detail": {}, "fields_changed": [], "matched_by": None}]
+        parity.adopt_project_verdicts(rows, {"shortcut:board:cmd-f": "PRESENT", "setting:prefs:cardSortOrder": "STALE",
+                                             "control:board:button:approve": "PRESENT"})
+        by = {r["id"]: r for r in rows}
+        self.assertEqual((by["shortcut:board:cmd-f"]["status"], by["shortcut:board:cmd-f"]["matched_by"]), ("PRESENT", "project:parity_check"))
+        self.assertEqual((by["setting:prefs:cardSortOrder"]["status"], by["setting:prefs:cardSortOrder"]["ledger"]), ("PRESENT", "stale"))
+        self.assertEqual((by["setting:overrides:x"]["status"], by["setting:overrides:x"]["matched_by"]), ("MISSING", None))
+        self.assertEqual(by["control:board:button:approve"]["status"], "MISSING")  # controls keep the skill's own verdict
+
+    def test_string_probe_without_project_gate(self):
+        """无项目门：字形 `⌘F` / 键名 "cardSortOrder" 出现在 subject 源码文本 → PRESENT(source-string)；没出现仍 MISSING。"""
+        ref = [dict(kit.make_item("board", "menuitem", "Find"), id="shortcut:board:cmd-f", shortcut="⌘F"),
+               dict(kit.make_item("settings", "switch", "cardSortOrder"), id="setting:prefs:cardSortOrder"),
+               dict(kit.make_item("settings", "switch", "nope"), id="setting:prefs:nope")]
+        result = _compare(ref, [])
+        text = 'const KEY = "cardSortOrder"; title="⌘F"'
+        parity.string_probe(result["rows"], ref, text, EMPTY, result["problems"])
+        by = _by_id(result)
+        self.assertEqual((by["shortcut:board:cmd-f"]["status"], by["shortcut:board:cmd-f"]["matched_by"]), ("PRESENT", "source-string"))
+        self.assertEqual(by["setting:prefs:cardSortOrder"]["detail"]["evidence"], '"cardSortOrder"')
+        self.assertEqual(by["setting:prefs:nope"]["status"], "MISSING")
+
     def test_owner_and_dynamic_are_na(self):
         ref = [kit.make_item("about", "button", "Quit", owner="shell"), kit.make_item("board", "button", "{dynamic}")]
         rows = _by_id(_compare(ref, []))

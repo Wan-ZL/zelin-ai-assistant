@@ -53,6 +53,9 @@ class ApplyLedgerTestCase(unittest.TestCase):
         self.assertEqual((row["status"], row["ledger"], problems), ("MISSING", "pending", []))
         row = parity.apply_ledger(self._row("PRESENT"), ledgers, problems)
         self.assertEqual((row["ledger"], problems[0]["kind"]), ("stale", "stale_pending"))
+        # 搬了位置（CHANGED）的挂账条目还没按规格落地 → 仍记 pending，不是 stale
+        moved = parity.apply_ledger(dict(self._row("CHANGED"), fields_changed=["topology:parent"]), ledgers, [])
+        self.assertEqual((moved["status"], moved["ledger"]), ("CHANGED", "pending"))
 
     def test_waiver_needs_reason(self):
         problems = []

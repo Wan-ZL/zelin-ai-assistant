@@ -101,6 +101,27 @@ class InventoryRulesTestCase(unittest.TestCase):
         self.assertEqual(sensors.check_off_token_literals(ctx)["status"], "fail")
 
 
+class KeyboardRuleTestCase(unittest.TestCase):
+    def test_disabled_items_are_not_unreachable(self):
+        """composer 的「捕获」在没输入时 disabled（不可聚焦）→ 不在 Tab 序里是设计，不是 wcag.keyboard 命中；可聚焦却没走到才是。"""
+        go = kit.make_item("board", "button", "Go")
+        disabled = kit.make_item("board", "button", "Capture", focusable=False)
+        inv = kit.make_inventory([go, disabled], focus_walk={"board::light": []})
+        hits = parity.rule_keyboard(inv, parity.load_rules(), {})
+        self.assertEqual([h["id"] for h in hits], ["control:board:button:go"])
+
+
+class HitDedupeTestCase(unittest.TestCase):
+    def test_same_defect_across_viewports_and_languages_counts_once(self):
+        """同一 (rule, id, theme) 在 4 个 viewport × language 状态各命中一次 = 一个缺陷（occurrences 4），不是四个。"""
+        base = {"rule_id": "wcag.target.size", "id": "control:board:link:trash", "measured": 17, "threshold": 24, "severity": "moderate", "status": "hit"}
+        hits = [dict(base, theme="light")] * 4 + [dict(base, theme="dark")] * 4 + [dict(base, id="control:board:link:x", theme="light", severity="serious")]
+        res = sensors._rules_verdict(hits, "t")
+        self.assertEqual((res["details"]["minor"], res["details"]["serious"]), (2, 1))
+        by = {(h["id"], h["theme"]): h["occurrences"] for h in res["details"]["hits"]}
+        self.assertEqual(by[("control:board:link:trash", "light")], 4)
+
+
 class OpinionIsolationTestCase(unittest.TestCase):
     def test_apply_opinion_drops_measurement_keys(self):
         result = {"items": [{"id": "x", "status": "MISSING"}], "checks": []}

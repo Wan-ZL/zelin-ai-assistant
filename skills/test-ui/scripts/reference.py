@@ -255,19 +255,65 @@ def _dig(obj, dotted):
     return node
 
 
-def probe_marker(base_url, marker, fetch=None):
-    """marker = {"path": "/api/health", "expr": ".demo == true"} → seen bool；非回环地址 = False。
+def _children(obj):
+    if isinstance(obj, dict):
+        return list(obj.items())
+    return [(None, value) for value in obj] if isinstance(obj, list) else []
+
+
+def _scalars_under(obj, keys, out):
+    """递归收集 obj 里键名 ∈ keys 的标量值 → {key: set(str)}（seed 回声比对用）。"""
+    for key, value in _children(obj):
+        if key in keys and isinstance(value, (str, int, float, bool)):
+            out.setdefault(key, set()).add(str(value))
+        _scalars_under(value, keys, out)
+    return out
+
+
+def _read_seed_json(home, rel):
+    if not home or not rel:
+        return None
+    try:
+        return json.loads(lc.read_text(os.path.join(home, rel)) or "")
+    except (OSError, ValueError):
+        return None
+
+
+def _echo_seen(body, echo, home):
+    """echo = {"file": "state/dashboard.json", "keys": ["generated_at", "id"]}：skill 自己种进 <home>/<file>
+    的每个 key 的标量值集合 ≠ 空，且与 app 端答复里同 key 的集合逐一相等 → 这个进程服务的就是我们的 seed
+    （真实数据的 id / 时间戳不可能逐一撞上）。seed 文件读不到 / 集合为空 / 任一 key 不等 → False。"""
+    keys = tuple(echo.get("keys") or ("id",))
+    seeded = _read_seed_json(home, echo.get("file"))
+    if seeded is None:
+        return False
+    want, got = _scalars_under(seeded, keys, {}), _scalars_under(body, keys, {})
+    return all(want.get(k) and want.get(k) == got.get(k) for k in keys)
+
+
+def _fetch_json(base_url, path, fetch):
+    try:
+        return json.loads(fetch(base_url.rstrip("/") + path))
+    except (OSError, ValueError):
+        return None
+
+
+def probe_marker(base_url, marker, fetch=None, home=None):
+    """marker → seen bool；非回环地址 = False。两种写法（add-only）：
+    {"path": "/api/health", "expr": ".demo == true"}                       app 自报 demo 标志
+    {"path": "/api/board", "echo": {"file": "state/dashboard.json", "keys": [...]}}  seed 回声（见 _echo_seen）
     fetch(url) -> text 可注入（测试永不出网）。"""
     if not marker or not _loopback(base_url):
         return False
-    fetch = fetch or _fetch_loopback
-    try:
-        body = json.loads(fetch(base_url.rstrip("/") + marker.get("path", "/api/health")))
-    except (OSError, ValueError):
+    body = _fetch_json(base_url, marker.get("path", "/api/health"), fetch or _fetch_loopback)
+    if body is None:
         return False
-    key, _sep, expected = (marker.get("expr") or ".demo == true").partition("==")
-    value = _dig(body, key.strip())
-    return json.dumps(value) == expected.strip()
+    return _echo_seen(body, marker["echo"], home) if marker.get("echo") else _expr_seen(body, marker.get("expr"))
+
+
+def _expr_seen(body, expr):
+    key, _sep, expected = (expr or ".demo == true").partition("==")
+    return json.dumps(_dig(body, key.strip())) == expected.strip()
 
 
 def _fetch_loopback(url):

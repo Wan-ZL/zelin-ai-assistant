@@ -52,6 +52,8 @@ class SurfacesAndFilesTestCase(unittest.TestCase):
             self.assertEqual([s["id"] for s in cfg["screens"]], ["board", "settings", "shell"])
             self.assertEqual(cfg["screens"][0]["route"], "")
             self.assertEqual(cfg["launch"]["server"], ["{py}", "-m", "server"])
+            # 本 repo 的 server 没有 demo 自报字段：内置标记 = seed 回声（/api/board 的 id / generated_at == 刚种的 dashboard.json）
+            self.assertEqual(cfg["launch"]["marker"], {"path": "/api/board", "echo": {"file": "state/dashboard.json", "keys": ["generated_at", "id"]}})
             self.assertNotIn("geometry", cfg)  # no ui/tokens → no geometry defaults
             self.assertIn("built-in adapter defaults", source)
             kit.make_repo(tmp, {"ui/parity/config.json": '{"screens": [{"id": "only", "route": "", "source": ["x"]}], "thresholds": {"max_changed_pct": 0.02}}'})
@@ -81,6 +83,16 @@ class DiffAndTriggersTestCase(unittest.TestCase):
         self.assertEqual(detect_ui.detect_triggers(diff), [])
         det = {"diff": diff, "triggers": [], "config": {}}
         self.assertEqual(detect_ui.recommend(det)["tier"], 1)
+
+    def test_fixture_and_test_files_never_fire(self):
+        """tests/fixtures/test_ui/*.html 里的 aria-label / data-theme 是判例材料——不点火、不推高 tier。"""
+        diff = {"changed_files": ["tests/fixtures/test_ui/subject/board.html", "tests/test_skill_test_ui_pair.py", "web/src/__tests__/x.tsx"],
+                "added_text": {"tests/fixtures/test_ui/subject/board.html": [(1, '<nav aria-label="rail" data-theme="dark">')],
+                               "web/src/__tests__/x.tsx": [(1, "aria-label")]}, "untracked": []}
+        self.assertEqual(detect_ui.detect_triggers(diff), [])
+        real = {"changed_files": ["web/src/components/shell/HeaderBar.tsx"], "untracked": [],
+                "added_text": {"web/src/components/shell/HeaderBar.tsx": [(1, '<a aria-label="x">')]}}
+        self.assertEqual(sorted(t["id"] for t in detect_ui.detect_triggers(real)), ["a11y_attr_changed", "screen_changed"])
 
     def test_ui_diff_fires_and_recommends(self):
         diff = {"changed_files": ["web/src/components/shell/HeaderBar.tsx", "web/src/styles/tokens.css", "act/x.py"],

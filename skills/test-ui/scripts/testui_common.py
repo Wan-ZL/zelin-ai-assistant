@@ -278,11 +278,15 @@ def slugify(text, limit=48):
     return slug[:limit].rstrip("-") or "item"
 
 
+_DECOR_RE = re.compile(r"^[^\w\u4e00-\u9fff{]+|[^\w\u4e00-\u9fff}]+$")
+
+
 def normalize_name(text):
-    """可达名归一：trim、空白折叠、数字串 → {n}、插值 → {}、case fold。"""
+    """可达名归一：trim、首尾装饰符号（emoji / 标点，slugify 配对时本就忽略）剥掉、空白折叠、数字串 → {n}、插值 → {}、
+    case fold。「🗑 Trash」与「Trash」是同一个名字，不是改名。"""
     if not text:
         return ""
-    value = _WS_RE.sub(" ", str(text)).strip()
+    value = _DECOR_RE.sub("", _WS_RE.sub(" ", str(text)).strip()).strip()
     value = _INTERP_RE.sub("{}", value)
     value = _DIGITS_RE.sub("{n}", value)
     return value.casefold()
@@ -293,9 +297,14 @@ def make_id(kind, screen, role, slug):
     return "%s:%s:%s:%s" % (kind, screen, role, slug)
 
 
+CHROME_SCREENS = frozenset({"window", "shell", "chrome", "app", "main", "layout", "root"})
+
+
 def screen_family(screen):
-    """`board.card` → `board`：配对键只看首段（子屏精度进 topology.parent）。"""
-    return (screen or "").split(".")[0] or "window"
+    """`board.card` → `board`：配对键只看首段（子屏精度进 topology.parent）。全局壳（原生的 `window`、web 的
+    `components/shell/*`、`App.tsx`、`main.tsx`）统一归 `window` 家族——侧栏 / 顶栏的控件才能跨实现配对。"""
+    family = (screen or "").split(".")[0] or "window"
+    return "window" if family in CHROME_SCREENS else family
 
 
 def pair_key(screen, role, name):

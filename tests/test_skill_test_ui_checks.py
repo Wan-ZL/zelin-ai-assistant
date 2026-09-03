@@ -5,6 +5,9 @@ kind / sensor / mode / est_seconds。零子进程。
 
 法典：docs/CONTRACT.md §58 / §UI-parity；设计 vnext2-plan R2.8。
 """
+import json
+import os
+import tempfile
 import unittest
 
 from tests import skill_test_ui_testkit as kit
@@ -72,6 +75,9 @@ class BuildersTestCase(unittest.TestCase):
         parity_plan = checks.BY_ID["project_parity"]["build"](ctx)
         self.assertEqual(parity_plan["kind"], "cmd")
         self.assertEqual(parity_plan["steps"][0]["argv"][1:3], ["scripts/ui/parity_check.py", "--check"])
+        # 门的三个产物全部落到 <report>/project_parity/：report.json / report.md 的默认路径在项目树 ui/parity/——skill 不重写它
+        self.assertEqual(parity_plan["steps"][0]["argv"][3:], ["--report", "/o/project_parity", "--report-json", "/o/project_parity/report.json",
+                                                            "--report-md", "/o/project_parity/report.md"])
         visual_plan = checks.BY_ID["project_visual"]["build"](ctx)
         self.assertEqual(visual_plan["steps"][0]["argv"], ["npx", "--no-install", "playwright", "test", "e2e/visual.spec.ts"])
         self.assertEqual(visual_plan["steps"][0]["cwd"], "/r/web")
@@ -79,6 +85,21 @@ class BuildersTestCase(unittest.TestCase):
         self.assertEqual(checks.BY_ID["project_visual"]["build"](ctx)["kind"], "unavailable")
         det["adapters"] = {}
         self.assertEqual(checks.BY_ID["project_parity"]["build"](ctx)["kind"], "na")
+
+    def test_project_parity_post_reads_the_gate_report(self):
+        """post hook：<report>/project_parity/report.json 缺席 → fail closed；在场 → items 进 ctx.state、summary 带 counts。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            det = kit.fake_det(["board.html"], adapters={"parity_check": "scripts/ui/parity_check.py"},
+                               tools={"npx": "/bin/npx", "node": "/bin/node"}, web_dir="web")
+            ctx = checks.make_ctx("/r", det, out=tmp)
+            plan = checks.BY_ID["project_parity"]["build"](ctx)
+            self.assertEqual(plan["post"](ctx, plan, [])["status"], "fail")
+            report = {"counts": {"PRESENT": 1, "PENDING": 2}, "items": {"a": "PRESENT", "b": "PENDING", "c": "PENDING"}}
+            kit.tc.write_text(os.path.join(tmp, "project_parity", "report.json"), json.dumps(report))
+            extra = plan["post"](ctx, plan, [])
+            self.assertEqual(ctx["state"]["project_parity"]["items"]["b"], "PENDING")
+            self.assertIn('"PENDING": 2', extra["summary"])
+            self.assertEqual(extra["details"]["counts"], report["counts"])
 
     def test_seed_probe_two_steps(self):
         launch = {"server": ["{py}", "-m", "server"], "seed": ["{py}", "scripts/demo_seed.py", "{home}", "--scene", "{scene}"]}

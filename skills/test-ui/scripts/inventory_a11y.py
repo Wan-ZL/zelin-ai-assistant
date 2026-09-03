@@ -703,11 +703,26 @@ def finish_inventory(inv):
     """合并后的收尾：全局 #n 序号、地标 children_order、静态名字集合（幂等，可重复调用）。"""
     _assign_ordinals(inv["items"])
     _fill_children_order(inv["items"], inv["landmarks"])
-    inv["names"] = sorted({i["name"]["raw"] for i in inv["items"] if i["name"]["raw"] and i["name"]["raw"] != "{dynamic}"})
+    inv["names"] = static_names(inv["items"])
     for item in inv["items"]:
         if item["name"]["raw"] == "{dynamic}":
             item["dynamic"] = True
     return inv
+
+
+def _name_halves(item):
+    name = item.get("name") or {}
+    return [name.get("raw"), name.get("zh"), name.get("en")] + list(name.get("alt") or [])
+
+
+def _is_static_text(value):
+    return isinstance(value, str) and bool(value.strip()) and value != "{dynamic}"
+
+
+def static_names(items):
+    """清单里全部静态字面量：raw + zh + en + alt 每一半都算（runtime 在 zh 语言下看到的「批准」必须能对上源里的
+    text("批准","Approve")）；{dynamic} 永不入集。"""
+    return sorted({value for item in items for value in _name_halves(item) if _is_static_text(value)})
 
 
 def _is_ui_source(rel):
@@ -787,10 +802,12 @@ def _native_name(entry):
 
 
 def _native_item(entry, role, kind, screen, order, parent, side=None, extra=None):
+    # 原生清单的 `gated` = 「parity 门判不判这条」（§66.1：copy / help 说明性文案与 shell/os/retired 条目只列不判），
+    # 与本清单 schema 的 `gated`（藏在 feature flag 后）同名异义——落到 add-only 字段 project_gated，`gated` 恒 False。
     item = {"id": entry["id"], "key": {"screen": tc.screen_family(screen), "role": role,
                                        "slug": entry["id"].split(":")[-1].split("#")[0]},
             "kind": kind, "name": _native_name(entry), "name_source": "L()", "pin": None,
-            "owner": entry.get("owner", "web"), "gated": bool(entry.get("gated", False)),
+            "owner": entry.get("owner", "web"), "gated": False, "project_gated": bool(entry.get("gated", True)),
             "shortcut": entry.get("shortcut"), "count": 1,
             "topology": {"parent": parent, "order": order, "side": side},
             "states": {"frozen": {"visible": True, "hidden_by": None, "focusable": role in tc.INTERACTIVE_ROLES}},
@@ -817,13 +834,17 @@ def _native_controls(native):
     return items
 
 
+RAIL_LANDMARK_ID = "rail:order"  # 项目门给「侧栏容器在左 + 条目顺序」的 id（§66.2）——同一 id 才能同一本账、同一判决
+
+
 def _native_rail(native):
     rail = native.get("rail") or {}
     side = rail.get("side") or "left"
-    mark = {"id": "rail:navigation", "role": "navigation", "topology": {"parent": "window", "order": 0, "side": side},
+    mark = {"id": RAIL_LANDMARK_ID, "role": "navigation", "topology": {"parent": "window", "order": 0, "side": side},
             "bbox": None, "children_order": [e["id"] for e in rail.get("items") or []]}
-    items = [_native_item({"id": "rail:navigation", "en": "rail", "zh": "侧栏", "owner": "web", "gated": True},
-                          "navigation", "landmark", "window", 0, "window", side)]
+    # 地标本身无 accessible name（原生侧栏没有）：配对键 slug 取角色名 `navigation`（无名地标的约定），名字留空
+    items = [_native_item({"id": RAIL_LANDMARK_ID, "en": "", "zh": "", "owner": "web", "gated": True},
+                          "navigation", "landmark", "window", 0, "window", side, extra={"key": {"screen": "window", "role": "navigation", "slug": "navigation"}})]
     for index, entry in enumerate(rail.get("items") or []):
         items.append(_native_item(entry, "link", "interactive", "window", index, "window>navigation:rail",
                                   extra={"shortcut": entry.get("shortcut")}))
@@ -843,7 +864,15 @@ def _native_lanes(native):
 
 
 def _native_screens(native):
-    return [_native_item(e, "heading", "heading", e["id"].split(":", 1)[1], 0, "window") for e in _rows(native, "screens")]
+    """screen:<screen> → heading 条目；配对键 slug 来自标题文字（`screen:settings.recording` 的标题是 "Recording"，
+    slug = recording），不是 id 尾段——id 尾段带点号，永远配不上任何 <h*>。"""
+    items = []
+    for entry in _rows(native, "screens"):
+        screen = entry["id"].split(":", 1)[1]
+        slug = tc.slugify(str(entry.get("en") or entry.get("zh") or screen))
+        items.append(_native_item(entry, "heading", "heading", screen, 0, "window",
+                                  extra={"key": {"screen": tc.screen_family(screen), "role": "heading", "slug": slug}}))
+    return items
 
 
 def _native_shortcuts(native):
@@ -971,6 +1000,8 @@ def _run_nodes(run, screen, items_by_id):
 def _run_walks(run, screen, inv, by_idx):
     key = "%s::%s" % (screen, _dim_key(run))
     inv["focus_walk"][key] = [by_idx.get(i, str(i)) for i in _rows(run, "focus_walk")]
+    # 原始元素序号也留一份：四张卡各有一颗「批准」→ 同一个 id，按 id 看像回环，按元素看不是（focus_order 用这份）
+    inv.setdefault("focus_walk_idx", {})[key] = list(_rows(run, "focus_walk"))
     inv["overflow"][key] = run.get("overflow")
     inv["lang"] = run.get("lang", inv.get("lang"))
 

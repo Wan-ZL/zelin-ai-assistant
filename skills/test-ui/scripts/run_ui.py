@@ -38,6 +38,7 @@ BLIND_SPOTS = [
     "native macOS runtime (AX tree, AppKit computed styles) — frozen source only under D3",
     "motion, easing, scroll physics, haptics, sound — clocks frozen and animations disabled by design",
     "undeclared interaction states and undeclared feature flags",
+    "interaction-revealed UI (dialog buttons, expanded card details, open menus) — the runtime tree is the REST state; a project probe that clicks through (this repo's parity_check vitest) sees more, and its verdicts stand on those ids",
     "real-data layouts — never shot; the static-name filter hides dynamic text on purpose",
     "cross-machine rendering — goldens are machine-bound, fingerprint recorded",
     "color perception beyond contrast arithmetic",
@@ -244,7 +245,9 @@ def parity_disagreement(ctx):
     mine, theirs = _skill_verdicts(pair["rows"]), _project_verdicts(project)
     shared = sorted(set(mine) & set(theirs))
     conflicts = [{"id": i, "project": theirs[i], "skill": mine[i]} for i in shared if mine[i] != theirs[i]]
-    summary = "%d disagreement(s) on %d shared id(s) — both lists kept, never averaged" % (len(conflicts), len(shared))
+    mode = "runtime rest-state tree" if ctx["state"].get("pair_runtime") else "source extraction"
+    summary = "%d disagreement(s) on %d shared id(s) — skill (%s) vs project gate (click-through vitest); both lists kept, never averaged" % (
+        len(conflicts), len(shared), mode)
     return {"id": "parity_disagreement", "tier": None, "trigger": None, "label": "项目门 vs skill 判官一致性", "sensor": "structure",
             "status": "fail" if conflicts else "pass", "tool": "internal", "command": "internal:parity_disagreement",
             "summary": summary, "details": {"conflicts": conflicts[:100], "shared": len(shared)}, "reason": None, "rc": None,
@@ -278,15 +281,19 @@ def _needs_fix(row):
     return row["status"] in ("MISSING", "CHANGED") and row["ledger"] != "pending"
 
 
-def _fix_items(rows, screens):
-    """rank 1：改动屏上 MISSING 的交互项 + CHANGED topology；rank 5：其它屏。"""
-    out = []
-    for row in [r for r in rows if _needs_fix(r)]:
-        rank = 1 if _is_hot(row) and _on_changed_screen(row, screens) else 5
-        fields = ",".join(row["fields_changed"])
-        out.append({"rank": rank, "kind": "%s %s" % (row["status"], fields if fields else row["kind"]),
-                    "item": row["id"], "check": "pair_structure"})
-    return out
+def _fix_items(rows, screens, project_items=None):
+    """rank 1：改动屏上 MISSING 的交互项 + CHANGED topology；rank 5：其它屏。项目门（点遍按钮的 vitest）判 PRESENT 的
+    id 不进 rank 1——rest 态树看不见对话框里的按钮，那是 parity_disagreement 的材料，不是先修项。"""
+    project = project_items if project_items else {}
+    return [_fix_item(row, screens, project.get(row["id"]) in ("PRESENT", "STALE")) for row in rows if _needs_fix(row)]
+
+
+def _fix_item(row, screens, gate_present):
+    rank = 1 if _is_hot(row) and _on_changed_screen(row, screens) and not gate_present else 5
+    fields = ",".join(row["fields_changed"])
+    kind = "%s %s" % (row["status"], fields if fields else row["kind"])
+    return {"rank": rank, "kind": kind + (" — project gate says PRESENT (interaction-revealed?)" if gate_present else ""),
+            "item": row["id"], "check": "pair_structure"}
 
 
 _TOKEN_FIX_SOURCES = {"theme_default_declared": ("row", "location"), "theme_default_observed": ("row", "location"),
@@ -311,12 +318,17 @@ def _fix_tokens(results, screens):
     return out
 
 
+def _rule_item_text(hit):
+    theme = ", %s" % hit["theme"] if hit.get("theme") else ""
+    return "%s (%s < %s%s)" % (hit["id"], hit["measured"], hit["threshold"], theme)
+
+
 def _fix_rules(results):
     out = []
     for r in results:
         for hit in r["details"].get("hits") or []:
             if hit.get("status") == "hit" and hit.get("severity") in ("critical", "serious"):
-                out.append({"rank": 3, "kind": "rule %s" % hit["rule_id"], "item": "%s (%s < %s)" % (hit["id"], hit["measured"], hit["threshold"]), "check": r["id"]})
+                out.append({"rank": 3, "kind": "rule %s" % hit["rule_id"], "item": _rule_item_text(hit), "check": r["id"]})
     return out
 
 
@@ -355,7 +367,8 @@ def fix_first(results, ctx, sel):
     """1 MISSING 交互项 / CHANGED topology（改动屏）→ 2 theme:default、几何、字号、颜色 → 3 WCAG serious →
     4 视觉超阈 → 5 其它屏的 MISSING/CHANGED/规则 → 6 账本噪音 → 7 其它红层。"""
     screens = _changed_screens(sel)
-    items = _fix_items(_rows(ctx), screens) + _fix_tokens(results, screens) + _fix_rules(results) + _fix_visual(results) + _fix_ledger(results)
+    project = (ctx["state"].get("project_parity") or {}).get("items")
+    items = _fix_items(_rows(ctx), screens, project) + _fix_tokens(results, screens) + _fix_rules(results) + _fix_visual(results) + _fix_ledger(results)
     covered = {i["check"] for i in items}
     items += [{"rank": 7, "kind": "failing layer", "item": "%s: %s" % (r["id"], r["summary"]), "check": r["id"]}
               for r in results if r["status"] == "fail" and r["id"] not in covered]
@@ -513,13 +526,36 @@ def _md_layers(rep):
     return lines + [""]
 
 
+_ITEMS_CAP = 80
+_KIND_ORDER = {"theme": 0, "rail": 1, "layout": 2, "lane": 3, "lanes": 3, "screen": 4, "setting": 5, "shortcut": 6, "control": 7}
+
+
+def _item_sort_key(row):
+    """结构类 id（theme / rail / layout / lane / screen）先于 control；同类里 NEW（不在账上）先于挂账；CHANGED 先于 MISSING。"""
+    kind = row["id"].split(":", 1)[0]
+    return (_KIND_ORDER.get(kind, 9), 0 if row["ledger"] != "pending" else 1, 0 if row["status"] == "CHANGED" else 1, row["id"])
+
+
+def _md_kind_table(rows):
+    counts = {}
+    for row in rows:
+        kind = row["id"].split(":", 1)[0]
+        counts.setdefault(kind, {})[row["status"]] = counts.setdefault(kind, {}).get(row["status"], 0) + 1
+    lines = ["| kind | MISSING | CHANGED | WAIVED | of which pending |", "|---|---|---|---|---|"]
+    for kind in sorted(counts, key=lambda k: (_KIND_ORDER.get(k, 9), k)):
+        c = counts[kind]
+        pending = sum(1 for r in rows if r["id"].split(":", 1)[0] == kind and r["ledger"] == "pending")
+        lines.append("| %s | %d | %d | %d | %d |" % (kind, c.get("MISSING", 0), c.get("CHANGED", 0), c.get("WAIVED", 0), pending))
+    return lines + [""]
+
+
 def _md_items(rep):
     items = rep["items"]
     head = ["## Items (%s · %d pending · %d extras)" % (json.dumps(items["counts"]), items["pending"], len(items["extras"])), ""]
-    rows = [r for r in items["rows"] if r["status"] != "N-A"]
-    body = ["- %s `%s` %s%s" % (r["status"], r["id"], ",".join(r["fields_changed"]), " [%s]" % r["ledger"] if r["ledger"] else "") for r in rows[:_MD_CAP]]
-    tail = ["- … and %d more — full list in report.json" % (len(rows) - _MD_CAP)] if len(rows) > _MD_CAP else []
-    return head + (body or ["- every reference item PRESENT"]) + tail + [""]
+    rows = sorted([r for r in items["rows"] if r["status"] != "N-A"], key=_item_sort_key)
+    body = ["- %s `%s` %s%s" % (r["status"], r["id"], ",".join(r["fields_changed"]), " [%s]" % r["ledger"] if r["ledger"] else "") for r in rows[:_ITEMS_CAP]]
+    tail = ["- … and %d more — full list in report.json" % (len(rows) - _ITEMS_CAP)] if len(rows) > _ITEMS_CAP else []
+    return head + (_md_kind_table(rows) if rows else []) + (body or ["- every reference item PRESENT"]) + tail + [""]
 
 
 def _md_not_run(rep):
@@ -546,8 +582,10 @@ def _md_tail(rep):
 
 def render_md(rep):
     lines = _md_header(rep) + _md_sensors(rep) + _md_layers(rep) + _md_items(rep)
-    lines += _md_list("Rules (hits)", [h for h in rep["rules"] if h.get("status") == "hit"],
-                      lambda h: "- %s `%s` %s vs %s (%s)" % (h["rule_id"], h["id"], h["measured"], h["threshold"], h["severity"]))
+    severity_rank = {"critical": 0, "serious": 1, "moderate": 2, "minor": 3}
+    hits = sorted([h for h in rep["rules"] if h.get("status") == "hit"], key=lambda h: (severity_rank.get(h.get("severity"), 9), h.get("rule_id", ""), str(h.get("id"))))
+    lines += _md_list("Rules (hits)", hits,  # serious first, then moderate / minor
+                      lambda h: "- %s `%s` %s vs %s (%s%s)" % (h["rule_id"], h["id"], h["measured"], h["threshold"], h["severity"], ", %s" % h["theme"] if h.get("theme") else ""))
     lines += _md_list("Visual", rep["visual"], lambda v: "- `%s` %s %.3f%% (threshold %.2f%%, masked %.1f%%)" % (
         v["id"], v.get("item_status") or v.get("status"), 100 * v.get("changed_pct", 0), 100 * v.get("threshold", 0), 100 * v.get("masked_ratio", 0)))
     lines += _md_not_run(rep)

@@ -282,9 +282,37 @@ def check_pair_structure(ctx):
         return _res("na", "reference has no inventory (design-system mode) — structure is measured by a11y_static")
     if subject is None:
         return _res("unavailable", "no subject source inventory (see structure_source)")
-    result = parity.compare_items(subject, reference, _ledgers(ctx), _thresholds(ctx))
+    result = _string_kinds(ctx, parity.compare_items(subject, reference, _ledgers(ctx), _thresholds(ctx)), reference)
     _state(ctx)["pair_source"] = result
     return _pair_verdict(ctx, result, "structure")
+
+
+_CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", ".html", ".py")
+
+
+def _subject_source_text(ctx):
+    """subject 侧代码文本（缓存）：源字符串探针用。排除测试 / fixtures / 账本与清单目录（它们本身就写着这些 id）、
+    以及参照自己的源目录（mac/ 之类的 swift 不在 _CODE_EXT 里）。"""
+    state = _state(ctx)
+    if "subject_source_text" not in state:
+        rels = [rel for rel in _det_list(ctx, "files") if _is_probe_source(rel)]
+        state["subject_source_text"] = "\n".join(lc.read_text_or_empty(os.path.join(ctx["repo"], rel)) for rel in rels)
+    return state["subject_source_text"]
+
+
+def _is_probe_source(rel):
+    excluded = rel.startswith(("tests/", "ui/parity/", "ui/tokens/")) or "/fixtures/" in "/" + rel or ".test." in rel
+    return rel.endswith(_CODE_EXT) and not excluded
+
+
+def _string_kinds(ctx, result, reference):
+    """shortcut / setting 行的第二仪器：项目门判决优先（wrapper），否则源字符串探针。"""
+    project = _state(ctx).get("project_parity")
+    if project and project.get("items"):
+        parity.adopt_project_verdicts(result["rows"], project["items"])
+    else:
+        parity.string_probe(result["rows"], reference["items"], _subject_source_text(ctx), _ledgers(ctx), result["problems"])
+    return result
 
 
 def _pair_details(result):
@@ -329,8 +357,15 @@ def check_theme_default_declared(ctx):
     row = parity.compare_default_theme(subject, reference)
     _state(ctx)["theme_row"] = row
     if row["status"] == "CHANGED":
-        return _res("fail", "theme:default CHANGED %s → %s" % (row["reference"].get("fallback"), row["subject"].get("fallback")), {"row": row})
-    return _res("pass", "theme:default %s matches reference" % row["subject"].get("fallback"), {"row": row})
+        return _res("fail", "theme:default CHANGED %s → %s (%s)" % (_theme_words(row["reference"]), _theme_words(row["subject"]),
+                                                                   ",".join(row["fields_changed"])), {"row": row})
+    return _res("pass", "theme:default %s matches reference" % _theme_words(row["subject"]), {"row": row})
+
+
+def _theme_words(declared):
+    """`light` / `dark` / `system (fallback light)`——报告里一眼看出「跟随系统」与「固定」的差别。"""
+    fallback, mode = declared.get("fallback"), declared.get("mode")
+    return "system (fallback %s)" % fallback if mode == "system" else str(fallback)
 
 
 def check_off_token_literals(ctx):
@@ -373,7 +408,23 @@ def check_a11y_static(ctx):
     return _rules_verdict([parity._waive_hit(h, _waivers(ctx)) for h in hits], "static WCAG subset (name, lang, heading order)")
 
 
+def _dedupe_hits(hits):
+    """同一 (rule, id, theme) 在 viewport × language 的每个状态各报一次是同一个缺陷——合成一条，记 occurrences。"""
+    merged, loose = {}, []
+    for hit in hits:
+        if not hit.get("id"):
+            loose.append(hit)  # 没有条目 id 的命中无从合并，原样保留
+            continue
+        key = (hit.get("rule_id"), hit["id"], hit.get("theme"))
+        if key in merged:
+            merged[key]["occurrences"] = merged[key].get("occurrences", 1) + 1
+        else:
+            merged[key] = dict(hit, occurrences=1)
+    return list(merged.values()) + loose
+
+
 def _rules_verdict(hits, label):
+    hits = _dedupe_hits(hits)
     red = [h for h in hits if h["status"] == "hit" and h["severity"] in ("critical", "serious")]
     minor = [h for h in hits if h["status"] == "hit" and h not in red]
     details = {"hits": hits, "serious": len(red), "minor": len(minor)}
@@ -499,8 +550,10 @@ def _launch_recipe(ctx):
         return None
     port = free_port()
     home = tempfile.mkdtemp(prefix="test-ui-home-")
+    # HOME 也指向临时目录（同 web/e2e/demoServer.ts）：app 读 ~/.claude/settings.json 之类的用户文件时
+    # 拿到的是「不存在」态——截图里永不出现开发者机器的路径 / 模型名（不截真实数据）。
     env = dict(os.environ, **{launch.get("home_env", "AIASSISTANT_HOME"): home, launch.get("port_env", "ZAI_PORT"): str(port),
-                              "PYTHONPATH": ctx["repo"]})
+                              "HOME": home, "PYTHONPATH": ctx["repo"]})
     marker = launch.get("marker")
     argv = [a.replace("{py}", sys.executable).replace("{port}", str(port)).replace("{home}", home) for a in launch["server"]]
     return {"argv": argv, "env": env, "home": home, "port": port,
@@ -539,8 +592,20 @@ def _driver_config(ctx, recipe, tier):
             "scenes": _cfg_or(dims, "scenes", ["initial"])[:1], "ready": recipe["ready"],
             "theme_storage_key": cfg.get("theme_storage_key", "zai.theme"),
             "lang_storage_key": cfg.get("lang_storage_key", "zai.lang"), "tokens": _token_var_names(ctx),
-            "geometry": _cfg_or(cfg, "geometry", {}), "masks": _cfg_or(cfg, "masks", {}), "axe": _det(ctx, "tools", "axe"),
+            "geometry": _geometry_with_css_selectors(ctx, _cfg_or(cfg, "geometry", {})), "masks": _cfg_or(cfg, "masks", {}),
+            "axe": _det(ctx, "tools", "axe"),
             "flags_all_on": recipe.get("flags_all_on"), "shots_dir": _out_path(ctx, "shots", "x")[:-1], "tab_limit": 400}
+
+
+def _geometry_with_css_selectors(ctx, geometry_map):
+    """每个 layout path 附上「消费该 token 的 CSS 规则的选择器」（css_selectors）：role 映射没命中时 driver 量这些
+    元素——项目一旦把 var(--native-layout-…) 接进组件 CSS，几何就自动可量，不用再手写 selector。"""
+    texts = _component_css_texts(ctx)
+    out = {}
+    for path, spec in (geometry_map or {}).items():
+        selectors = tk.selectors_consuming(texts, "--native-" + path.replace("_", "-").replace(".", "-"))
+        out[path] = dict(spec, css_selectors=selectors) if selectors else dict(spec)
+    return out
 
 
 def _token_var_names(ctx):
@@ -582,7 +647,7 @@ def _capture(ctx, recipe, state):
         launcher.start(recipe["argv"], ctx["repo"], recipe["env"])
         if not wait_ready(recipe["url"] + recipe["ready"], fetch, ctx.get("ready_timeout", 30.0)):
             return _res("fail", "app did not become ready at %s within budget" % recipe["url"])
-        seen = refmod.probe_marker(recipe["url"], recipe["marker"], fetch)
+        seen = refmod.probe_marker(recipe["url"], recipe["marker"], fetch, home=recipe["home"])
         state["launch"]["marker_seen"] = seen
         if not seen:
             return _res("fail", "seed_guard: demo marker %s not seen — refusing to capture (real data risk)" % recipe["marker"])
@@ -612,9 +677,15 @@ def _drive(ctx, recipe, state):
 
 
 def _known_names(ctx):
+    """静态名字集合 = subject 源字符串（zh / en 两半）∪ 参照清单的名字（规格文本，永不是用户数据）。"""
     source = subject_inventory(ctx)
-    names = (source if source else {}).get("names")
-    return set(names if names else [])
+    names = set((source if source else {}).get("names") or [])
+    try:
+        reference = reference_inventory(ctx)  # phase 2 runs before pair_*: load it here, cached for phase 3
+    except ValueError:
+        reference = None  # unreadable reference is pair_structure's FAIL, not the filter's business
+    names |= set(inv.static_names((reference if reference else {}).get("items") or []))
+    return names
 
 
 def _foreign_name(item, known):
@@ -675,8 +746,8 @@ def check_pair_runtime(ctx):
     reference = reference_inventory(ctx)
     if reference is None:
         return _res("na", "design-system mode has no reference inventory")
-    result = parity.compare_items(_runtime(ctx)["inventory"], reference, _ledgers(ctx), _thresholds(ctx),
-                                  parity._reached(_runtime(ctx)["inventory"]))
+    result = _string_kinds(ctx, parity.compare_items(_runtime(ctx)["inventory"], reference, _ledgers(ctx), _thresholds(ctx),
+                                                     parity._reached(_runtime(ctx)["inventory"])), reference)
     _state(ctx)["pair_runtime"] = result
     return _pair_verdict(ctx, result, "structure")
 
@@ -757,9 +828,36 @@ def check_geometry_runtime(ctx):
         return _geometry_substitute(ctx, geometry_map)
     rows = parity.compare_geometry(geometry_map, reference_tokens(ctx), _cfg_or(_runtime(ctx), "geometry", {}), _thresholds(ctx),
                                    _state(ctx).get("subject_tokens"))
-    changed = [r for r in rows if r["status"] == "CHANGED"]
-    if changed:
-        return _res("fail", "%d geometry CHANGED: %s" % (len(changed), "; ".join(_geometry_line(r) for r in changed)), {"rows": rows})
+    rows = _fill_unmeasured_geometry(ctx, geometry_map, rows)
+    return _geometry_verdict(rows)
+
+
+def _fill_unmeasured_geometry(ctx, geometry_map, rows):
+    """driver 没量到 bbox 的 path：token 在组件 CSS 里根本没被消费 → MISSING（substituted：没有元素可量，§66.2 的
+    layout 探针语义）；消费了却没量到 → 仍 UNAVAILABLE（映射的 role / selector 在运行时没命中）。"""
+    unmeasured = [r["location"] for r in rows if r["status"] == "UNAVAILABLE"]
+    if not unmeasured:
+        return rows
+    consumed = {r["location"]: r for r in parity.geometry_source_substitute({p: geometry_map[p] for p in unmeasured}, _component_css_texts(ctx))}
+    return [_unmeasured_row(row, consumed.get(row["location"])) for row in rows]
+
+
+def _unmeasured_row(row, substitute):
+    if row["status"] == "UNAVAILABLE" and substitute and substitute["status"] == "MISSING":
+        return dict(row, status="MISSING", substituted=True, note=substitute["note"] + "; no element renders it, nothing to measure")
+    return row
+
+
+def _geometry_verdict(rows):
+    """CHANGED / MISSING → fail；量到的都对但还有没量到的 → unavailable（不许把没量的写成 pass）；全量到全对 → pass。"""
+    red = [r for r in rows if r["status"] in ("CHANGED", "MISSING")]
+    unmeasured = [r["location"] for r in rows if r["status"] == "UNAVAILABLE"]
+    measured = [r for r in rows if r["status"] == "PRESENT"]
+    if red:
+        return _res("fail", "%d geometry CHANGED/MISSING: %s" % (len(red), "; ".join(_geometry_line(r) for r in red)), {"rows": rows})
+    if unmeasured:
+        return _res("unavailable", "%d/%d layout token(s) measured OK; unmeasured (mapped role/selector matched nothing at runtime): %s"
+                    % (len(measured), len(rows), ", ".join(unmeasured)), {"rows": rows})
     return _res("pass", "%d layout token(s) rendered at declared size" % len(rows), {"rows": rows})
 
 
@@ -880,7 +978,8 @@ def check_focus_order(ctx):
     miss = _need_runtime(ctx)
     if miss:
         return miss
-    walks = _cfg_or(_runtime(ctx)["inventory"], "focus_walk", {})
+    inventory = _runtime(ctx)["inventory"]
+    walks = _cfg_or(inventory, "focus_walk_idx", None) or _cfg_or(inventory, "focus_walk", {})
     loops = [k for k, walk in walks.items() if len(walk) != len(set(walk))]
     if loops:
         return _res("fail", "focus walk revisits an element before finishing: %s" % ", ".join(loops[:3]), {"loops": loops})

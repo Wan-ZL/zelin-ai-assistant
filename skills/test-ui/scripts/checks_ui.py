@@ -152,21 +152,28 @@ def _b_project_parity(ctx):
         return _na("no project parity gate (scripts/ui/parity_check.py) — skill pairing is the only instrument")
     if not _det(ctx, "tools", "npx"):
         return _unavailable("scripts/ui/parity_check.py needs npx (vitest) on PATH")
-    return _cmd([ctx["py"], script, "--check", "--report", os.path.join(ctx["out"] or ".", "project_parity")], ctx["repo"],
-                tool="parity_check", post=_post_project_parity)
+    # 三个输出全部落到 <report>/project_parity/：--report DIR 只写判决文本，report.json / report.md 的默认路径是
+    # 项目树里的 ui/parity/*（门自己的产物）——skill 只读项目树，永不重写它。
+    out = _project_parity_dir(ctx)
+    return _cmd([ctx["py"], script, "--check", "--report", out, "--report-json", os.path.join(out, "report.json"),
+                 "--report-md", os.path.join(out, "report.md")], ctx["repo"], tool="parity_check", post=_post_project_parity)
+
+
+def _project_parity_dir(ctx):
+    return os.path.join(ctx["out"] or ".", "project_parity")
 
 
 def _post_project_parity(ctx, plan, runs):
-    """项目门的 report.json → MISSING 集合，供 run_ui 比对 parity_disagreement。"""
+    """项目门的 report.json → items{id: PRESENT|PENDING|MISSING|STALE|WAIVED}，供 run_ui 比对 parity_disagreement。"""
     import json
-    path = os.path.join(ctx["out"] or ".", "project_parity", "report.json")
+    path = os.path.join(_project_parity_dir(ctx), "report.json")
     if not os.path.exists(path):
         return {"status": "fail", "summary": "parity_check produced no report.json — fail closed"}
     with open(path, "r", encoding="utf-8") as fh:
         report = json.load(fh)
     ctx["state"]["project_parity"] = report
     return {"summary": "project gate: %s" % json.dumps(report.get("counts") or report.get("summary") or {})[:200],
-            "details": {"report": path}}
+            "details": {"report": path, "counts": report.get("counts")}}
 
 
 def _b_project_visual(ctx):

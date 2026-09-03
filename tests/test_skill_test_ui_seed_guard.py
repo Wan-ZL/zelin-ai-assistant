@@ -90,6 +90,58 @@ class GuardTestCase(unittest.TestCase):
             self.assertFalse(ctx["state"]["launch"]["marker_seen"])
             self.assertEqual(sensors.check_app_launch(ctx)["status"], "fail")
 
+    def test_reference_names_are_known_to_the_static_filter(self):
+        """参照清单里的名字是规格文本，不是用户数据：runtime 看到的「拒绝」只在参照（zh 半）里出现也不该被抹成 {dynamic}；
+        真正的用户内容（不在源也不在参照）仍被抹掉。"""
+        output = json.loads(json.dumps(DRIVER_OUTPUT))
+        output["runs"][0]["nodes"].append({"idx": 2, "role": "button", "name": "拒绝", "name_source": "text", "text": "拒绝",
+                                           "parent": "window>main:main", "order": 2, "visible": True, "hidden_by": None, "focusable": True})
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = _ctx(tmp, _runtime_det(tmp), lambda url: '{"demo": true}', _driver_runner(output))
+            ref = kit.make_item("board", "button", "Reject")
+            ref["name"] = {"raw": "Reject", "zh": "拒绝", "en": "Reject", "alt": []}
+            ctx["state"]["reference_inventory"] = kit.make_inventory([ref], role="reference")
+            self.assertEqual(sensors.check_structure_runtime(ctx)["status"], "pass")
+            names = {i["id"]: i["name"]["raw"] for i in ctx["state"]["runtime"]["inventory"]["items"]}
+            self.assertEqual(names["control:board:button:拒绝"], "拒绝")
+            self.assertEqual(names["control:board:static:alice-s-secret"], "{dynamic}")
+
+    def test_seed_echo_marker_through_capture(self):
+        """回声标记走完整链路：seed 写进 skill 的临时 HOME（runner 假装 demo_seed 写文件）→ /api/board 回同一批 id → seen；
+        server 进程的 env 里 HOME 与 home_env 都指向那个临时目录（不读开发者的 ~/.claude）。答回别的 id（真实数据）→ 拒采。"""
+        echo_launch = dict(LAUNCH, marker={"path": "/api/board", "echo": {"file": "state/dashboard.json", "keys": ["id"]}})
+        seeded = {"running": [{"id": "P-101"}, {"id": "R-7"}]}
+
+        def seed_writes(argv, cwd):
+            kit.tc.write_text(os.path.join(argv[2], "state", "dashboard.json"), json.dumps(seeded))
+            return kit.lc.RunResult(0, "seeded", "")
+
+        def make_runner():
+            base = _driver_runner(DRIVER_OUTPUT)
+            return kit.FakeRunner([("driver.cjs", base.rules[0][1]), ("demo_seed.py", seed_writes)])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            det = _runtime_det(tmp)
+            det["sides"]["subject"]["launch"] = echo_launch
+            envs = []
+            ctx = _ctx(tmp, det, lambda url: json.dumps({"running": [{"id": "R-7"}], "trash": [{"id": "P-101"}]}), make_runner(),
+                       spawner=lambda a, c, e: envs.append(e) or FakeProc())
+            ctx["state"]["reference_inventory"] = kit.make_inventory([kit.make_item("board", "button", "批准")], role="reference")
+            res = sensors.check_structure_runtime(ctx)
+            self.assertEqual(res["status"], "pass", res["summary"])
+            self.assertTrue(ctx["state"]["launch"]["marker_seen"])
+            home = ctx["state"]["launch"]["recipe"]["home"]
+            self.assertEqual((envs[0]["H"], envs[0]["HOME"]), (home, home))
+        with tempfile.TemporaryDirectory() as tmp:
+            det = _runtime_det(tmp)
+            det["sides"]["subject"]["launch"] = echo_launch
+            runner = make_runner()
+            ctx = _ctx(tmp, det, lambda url: json.dumps({"running": [{"id": "R-7"}, {"id": "P-101"}, {"id": "P-9"}]}), runner)
+            res = sensors.check_structure_runtime(ctx)
+            self.assertEqual(res["status"], "fail")
+            self.assertIn("seed_guard", res["summary"])
+            self.assertFalse(any("driver.cjs" in c for c in runner.commands()))
+
     def test_not_ready_fails(self):
         def never(url):
             raise OSError("refused")
@@ -130,6 +182,12 @@ class GuardTestCase(unittest.TestCase):
             self.assertEqual(sensors.check_screens_capture(ctx)["status"], "pass")
             self.assertEqual(sensors.check_keyboard_reach(ctx)["status"], "pass")
             self.assertEqual(sensors.check_focus_order(ctx)["status"], "pass")
+            # 两张卡各一颗「批准」→ 同 id 两次不是回环（按元素序号判）；序号重复才是
+            bundle["inventory"]["focus_walk"]["board::light::desktop::zh::rest"] = ["control:board:button:批准", "control:board:button:批准"]
+            bundle["inventory"]["focus_walk_idx"]["board::light::desktop::zh::rest"] = [0, 7]
+            self.assertEqual(sensors.check_focus_order(ctx)["status"], "pass")
+            bundle["inventory"]["focus_walk_idx"]["board::light::desktop::zh::rest"] = [0, 7, 0]
+            self.assertEqual(sensors.check_focus_order(ctx)["status"], "fail")
             self.assertEqual(sensors.check_reflow(ctx)["status"], "pass")
             self.assertEqual(sensors.check_matrix_themes_viewports(ctx)["status"], "substituted")
             self.assertEqual(sensors.check_visual_diff(ctx)["status"], "unavailable")  # no goldens for this machine

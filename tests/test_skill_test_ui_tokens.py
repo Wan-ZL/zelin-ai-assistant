@@ -97,7 +97,15 @@ class DesignTokensTestCase(unittest.TestCase):
         self.assertEqual(loaded["themes"]["light"]["color.semantic.green"]["$value"], "#28cd41ff")
         self.assertEqual(loaded["themes"]["dark"]["color.semantic.green"]["$value"], "#32d74bff")
         self.assertEqual(loaded["themes"]["dark"]["layout.lane.width"]["$value"], "400px")
-        self.assertEqual(loaded["default_theme"]["declared"], {"mode": "system", "fallback": "light", "evidence": ["%s: theme.default" % path]})
+        # theme.default 给了值 = 固定默认（follows_system 只是备注）——web 跟随系统就是 CHANGED mode（owner (b)）
+        declared = loaded["default_theme"]["declared"]
+        self.assertEqual((declared["mode"], declared["fallback"]), ("fixed", "light"))
+        self.assertEqual(declared["evidence"], ["%s: theme.default = light" % path, "%s: theme.follows_system = true (informational)" % path])
+        doc["theme"].pop("default")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "native-tokens.json")
+            kit.make_repo(tmp, {"native-tokens.json": kit.tc.dump_json(doc)})
+            self.assertEqual(tk.load_design_tokens(path)["default_theme"]["declared"]["mode"], "system")
         self.assertEqual(loaded["families"], {"color": 1, "layout": 1, "theme": 2})
 
     def test_type_scale_ts(self):
@@ -137,6 +145,24 @@ class CompareTokensTestCase(unittest.TestCase):
         sub2 = kit.make_tokens({"light": {"color.bg": "#fafbfc"}, "dark": {"color.bg": "#1b1d23"}})
         rows2 = {r["id"]: r for r in parity.compare_tokens(sub2, ref, dict(parity.DEFAULT_THRESHOLDS))}
         self.assertEqual(rows2["token:light:layout.lane.width"]["status"], "MISSING")
+
+    def test_root_declarations_inherit_into_other_themes(self):
+        """CSS 级联：dark 没重声明的 --native-layout-lane-width 在 dark 下生效的是 :root 值 → PRESENT(inherited)，不是
+        MISSING；dark 重声明了不同的颜色照旧 CHANGED；:root 也没有才 MISSING。"""
+        ref = kit.make_tokens({"light": {"layout.lane.width": "400px", "color.bg": "#fafbfc"}, "dark": {"layout.lane.width": "400px", "color.bg": "#1b1d23"}})
+        sub = kit.make_tokens({"light": {"layout.lane.width": "400px", "color.bg": "#fafbfc"}, "dark": {"color.bg": "#000000"}})
+        rows = {r["id"]: r for r in parity.compare_tokens(sub, ref, dict(parity.DEFAULT_THRESHOLDS))}
+        self.assertEqual((rows["token:dark:layout.lane.width"]["status"], rows["token:dark:layout.lane.width"]["inherited"]), ("PRESENT", True))
+        self.assertFalse(rows["token:light:layout.lane.width"]["inherited"])
+        self.assertEqual(rows["token:dark:color.bg"]["status"], "CHANGED")
+        sub2 = kit.make_tokens({"light": {"color.bg": "#fafbfc"}, "dark": {"color.bg": "#1b1d23"}})
+        self.assertEqual({r["id"]: r for r in parity.compare_tokens(sub2, ref, dict(parity.DEFAULT_THRESHOLDS))}["token:dark:layout.lane.width"]["status"], "MISSING")
+
+    def test_selectors_consuming(self):
+        css = ":root { --native-layout-lane-width: 400px; }\n.lane, .strip { width: var(--native-layout-lane-width); }\n" \
+              "@media (max-width: 900px) { .lane { width: var(--native-layout-lane-width); } }\n.other { color: red; }"
+        self.assertEqual(tk.selectors_consuming([css], "--native-layout-lane-width"), [".lane, .strip", ".lane"])
+        self.assertEqual(tk.selectors_consuming([css], "--native-layout-rail-default-width"), [])
 
     def test_theme_parity_negative_control(self):
         """dark 作用域缺 --surface → theme_parity 报 only_in light。"""

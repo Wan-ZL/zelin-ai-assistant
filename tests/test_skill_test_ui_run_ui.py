@@ -208,5 +208,27 @@ class CliTestCase(unittest.TestCase):
                 self.assertTrue(os.path.exists(os.path.join(out, "report.json")))
 
 
+class FixFirstGateTestCase(unittest.TestCase):
+    def test_gate_present_items_are_not_rank_one(self):
+        """rest 态树看不见对话框里的 Cancel，项目门点遍按钮说 PRESENT → 不进 rank 1（标注后落 rank 5）；门没判过的仍 rank 1。"""
+        rows = [{"id": "control:board:button:cancel", "status": "MISSING", "ledger": None, "kind": "interactive", "fields_changed": [], "screen": "board"},
+                {"id": "control:board:button:approve", "status": "MISSING", "ledger": None, "kind": "interactive", "fields_changed": [], "screen": "board"}]
+        items = {i["item"]: i for i in run_ui._fix_items(rows, set(), {"control:board:button:cancel": "PRESENT"})}
+        self.assertEqual(items["control:board:button:cancel"]["rank"], 5)
+        self.assertIn("project gate says PRESENT", items["control:board:button:cancel"]["kind"])
+        self.assertEqual(items["control:board:button:approve"]["rank"], 1)
+
+    def test_items_markdown_orders_structural_kinds_first(self):
+        rows = [{"id": "control:board:button:x", "status": "MISSING", "ledger": "pending", "fields_changed": []},
+                {"id": "rail:trash", "status": "CHANGED", "ledger": "pending", "fields_changed": ["topology:parent"]},
+                {"id": "control:board:button:y", "status": "MISSING", "ledger": None, "fields_changed": []},
+                {"id": "screen:settings.general", "status": "MISSING", "ledger": "pending", "fields_changed": []}]
+        rep = {"items": {"rows": rows, "counts": {"MISSING": 3, "CHANGED": 1}, "pending": 3, "extras": []}}
+        md = "\n".join(run_ui._md_items(rep))
+        order = [line for line in md.splitlines() if line.startswith("- ")]
+        self.assertEqual([o.split("`")[1] for o in order], ["rail:trash", "screen:settings.general", "control:board:button:y", "control:board:button:x"])
+        self.assertIn("| rail | 0 | 1 | 0 | 1 |", md)
+
+
 if __name__ == "__main__":
     unittest.main()

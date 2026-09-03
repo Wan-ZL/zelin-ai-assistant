@@ -186,8 +186,11 @@ def _builtin_screens(files):
 def _builtin_launch(adapters):
     if not (adapters.get("server_module") and adapters.get("demo_seed")):
         return None
+    # marker = seed 回声：/api/board 答回的 card id / generated_at 集合必须与 skill 刚种进 <home>/state/dashboard.json
+    # 的逐一相等——server 没有 demo 自报字段（§66.4 的 demoServer.ts 也只等 /api/board 通），回声比布尔标志更硬。
     return {"server": ["{py}", "-m", "server"], "seed": ["{py}", "scripts/demo_seed.py", "{home}", "--scene", "{scene}"],
-            "ready": "/api/health", "marker": {"path": "/api/health", "expr": ".demo == true"},
+            "ready": "/api/health",
+            "marker": {"path": "/api/board", "echo": {"file": "state/dashboard.json", "keys": ["generated_at", "id"]}},
             "home_env": "AIASSISTANT_HOME", "port_env": "ZAI_PORT", "needs": ["web_dist"],
             "flags_all_on": {"file": "settings_overrides.json", "prefix": "features."}}
 
@@ -356,7 +359,8 @@ def detect_diff(runner, repo, requested_base, untracked):
 
 
 def _is_doc(path):
-    return path.endswith(_DOC_EXT)
+    """文档 / 测试 / fixture 不点火：tests/fixtures/test_ui/*.html 里的 aria-label 是判例材料，不是 UI 改动。"""
+    return path.endswith(_DOC_EXT) or path.startswith(("tests/", "test/")) or "/fixtures/" in "/" + path or "/__tests__/" in "/" + path
 
 
 def _file_hits(changed, hits):
@@ -367,8 +371,8 @@ def _file_hits(changed, hits):
 
 
 def _ui_file(path):
-    """只有 UI 文件的新增行参与正则；文档 / Python / JSON / 测试不点火。"""
-    return path.endswith(_UI_EXT) and ".test." not in path
+    """只有 UI 文件的新增行参与正则；文档 / Python / JSON / 测试 / fixture 不点火。"""
+    return path.endswith(_UI_EXT) and ".test." not in path and not _is_doc(path)
 
 
 def _line_triggers(path, lineno, text, hits):

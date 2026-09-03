@@ -6,6 +6,7 @@ fetch 可注入；坏 config.json fail closed。零真子进程。
 """
 import os
 import tempfile
+import json
 import unittest
 
 from tests import skill_test_ui_testkit as kit
@@ -120,6 +121,27 @@ class MarkerTestCase(unittest.TestCase):
         self.assertFalse(ref.probe_marker("http://127.0.0.1:1", None, fetch=lambda url: '{"demo": true}'))
         nested = {"path": "/h", "expr": ".seed.demo == \"yes\""}
         self.assertTrue(ref.probe_marker("http://localhost:9", nested, fetch=lambda url: '{"seed": {"demo": "yes"}}'))
+
+    def test_probe_marker_seed_echo(self):
+        """回声标记（本 repo 的 server 没有 demo 自报字段）：app 答回的 id / generated_at 集合 == skill 种进 <home> 的 →
+        seen；任一 key 集合不等（真实数据）/ seed 文件缺席 / 集合为空 / 非回环 → False。"""
+        seeded = {"generated_at": "2026-09-03T00:00:00Z", "counts": {"running": 1},
+                  "running": [{"id": "P-101", "title": "x"}, {"id": "R-7", "children": [{"id": "P-102"}]}]}
+        echo = {"path": "/api/board", "echo": {"file": "state/dashboard.json", "keys": ["generated_at", "id"]}}
+        with tempfile.TemporaryDirectory() as home:
+            kit.make_repo(home, {"state/dashboard.json": json.dumps(seeded)})
+            same = json.dumps({"generated_at": "2026-09-03T00:00:00Z", "running": [{"id": "R-7"}, {"id": "P-101"}], "trash": [{"id": "P-102"}]})
+            self.assertTrue(ref.probe_marker("http://127.0.0.1:1", echo, fetch=lambda url: same, home=home))
+            real = json.dumps({"generated_at": "2026-09-03T00:00:00Z", "running": [{"id": "R-7"}, {"id": "P-101"}, {"id": "P-9"}]})
+            self.assertFalse(ref.probe_marker("http://127.0.0.1:1", echo, fetch=lambda url: real, home=home))
+            stale = json.dumps({"generated_at": "2026-01-01T00:00:00Z", "running": [{"id": "R-7"}, {"id": "P-101"}, {"id": "P-102"}]})
+            self.assertFalse(ref.probe_marker("http://127.0.0.1:1", echo, fetch=lambda url: stale, home=home))
+            self.assertFalse(ref.probe_marker("http://example.com", echo, fetch=lambda url: same, home=home))
+            self.assertFalse(ref.probe_marker("http://127.0.0.1:1", echo, fetch=lambda url: same, home=None))
+            self.assertFalse(ref.probe_marker("http://127.0.0.1:1", echo, fetch=lambda url: same, home=os.path.join(home, "nope")))
+        with tempfile.TemporaryDirectory() as home:
+            kit.make_repo(home, {"state/dashboard.json": json.dumps({"running": []})})
+            self.assertFalse(ref.probe_marker("http://127.0.0.1:1", echo, fetch=lambda url: json.dumps({"running": []}), home=home))
 
     def test_subject_side(self):
         side = ref.subject_side("/r", "web-dom", True, {"server": ["x"], "seed": ["s"], "marker": {"path": "/h"}}, "abc", True)
