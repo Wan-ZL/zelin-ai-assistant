@@ -1,10 +1,10 @@
 /*
  * 设计 token 表。结构 fork 自 dashi web/src/styles.css L1-83（Apache-2.0，NOTICE 登记）：
  * 变量名/分层（bg→surface→text→border→accent→语义色→status→shadow）逐字保留，
- * 配色整体 rebrand：dark 继承 Mac app（mac/Sources 全部用 SwiftUI 系统语义色，
- * 故取 macOS dark 解析值：teal #6ac4dc / green #32d74b / red #ff453a / blue #0a84ff
- * / purple #bf5af2 / orange #ff9f0a / gray #98989d / yellow #ffd60a；窗口底
- * ~#1b1d23 蓝灰系）；light 为同色相家族按白底对比度加深（WCAG-ish ≥4.5 文本、≥3 大件）。
+ * 配色：mac/Sources 全部用 SwiftUI 系统语义色，两个主题的窗口底 / 状态色点 / dark 语义色直接
+ * 取文件末尾 @generated 块的 --native-color-*（Apple HIG 解析值，§66.3）；light 的**文字角色**语义色
+ * （--danger / --success / --warning / --info / --purple / --notice / --accent）仍按浅底对比度加深
+ * （WCAG-ish ≥4.5 文本）——原生的系统红 #ff3b30 之类作文字在 #ececec 上只有 ~3:1，色点 / 章底才用原值。
  * 色值全表见 docs/design/vnext.md「Theme」节。
  * 语义色阶梯（owner 验收单 sanctioned enrichment，hue 不变）：每个语义 hue 一套
  *   --X / --X-hover / --X-active / --X-soft（+ lineage 用 --X-soft-quiet）——
@@ -12,8 +12,12 @@
  *   方向规则：light 逐级加深（hover→active 越按越深），dark 逐级提亮。
  *   -soft 一律 rgba(基色, light .12 / dark .16)，-soft-quiet 为 .07 / .09
  *  （例外：light --notice-soft 用暗黄 hue 的亮锚 #ffd60a 调底，纯暗黄调底发灰）。
- * 主题规则：显式 [data-theme="dark"|"light"]（index.html 首帧从 localStorage zai.theme 设置）
- * 覆写系统偏好；未设置 data-theme 时走 prefers-color-scheme。
+ * 主题规则（§54.4 / §66.2 theme:default，owner 2026-09-02 (b)）：**默认浅色**。index.html 首帧脚本
+ * 读 localStorage zai.theme，没有就写 dataset.theme = "light"——不跟随系统深色；暗色只经顶栏切换
+ * 显式选择、持久化。因此这里只有 :root（light）与 :root[data-theme="dark"] 两块，没有
+ * prefers-color-scheme 兜底块（tokens.test.ts 钉住）。
+ * 原生数值单源：文件末尾 @generated 块的 --native-*（scripts/ui/extract_native_tokens.py 生成，§66.3）；
+ * 两个主题的窗口底 / 状态色点 / 布局定点都经 var(--native-…) 取值，不再手抄字面量。
  * 列语义 → token 映射（组件层约定，别造新变量）：
  *   潜在任务/queued 灰卡 → --status-backlog；提案 → --status-todo；
  *   working → --status-progress；待验收 → --status-review；阶段性完成 → --status-done。
@@ -24,9 +28,12 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --bg: #fafbfc;
-  --header-bg: #fafbfc;
-  --sidebar-bg: #f1f3f6;
+  --bg: var(--native-color-window-background-light); /* macOS windowBackgroundColor（light 解析值） */
+  --header-bg: var(--native-color-window-background-light);
+  --sidebar-bg: rgba(0, 0, 0, var(--native-overlay-primary-03)); /* 原生 sidebar：Color.primary.opacity(0.03) */
+  --lane-bg: rgba(0, 0, 0, var(--native-overlay-primary-018)); /* 原生 lane：Color.primary.opacity(0.018) */
+  --rail-hover-bg: rgba(0, 0, 0, var(--native-overlay-primary-06)); /* 原生 sectionRow hover：primary 6% */
+  --rail-active-bg: color-mix(in srgb, var(--native-color-accent-color-light) calc(var(--native-overlay-accent-color-18) * 100%), transparent); /* 原生选中行：accentColor 18% */
   --surface: #ffffff;
   --surface-raised: #ffffff;
   --surface-muted: #f1f3f6;
@@ -77,12 +84,12 @@
   --priority-medium: var(--text-tertiary);
   --priority-low: var(--text-tertiary);
   --priority-none: var(--text-tertiary);
-  --status-backlog: #8e8e93;
-  --status-todo: #8e8e93;
-  --status-progress: #c05d00;
-  --status-review: #218739;
-  --status-done: #9440d6;
-  --status-canceled: #8e8e93;
+  --status-backlog: var(--native-color-gray-light);
+  --status-todo: var(--native-color-gray-light);
+  --status-progress: var(--native-color-orange-light);
+  --status-review: var(--native-color-green-light);
+  --status-done: var(--native-color-purple-light);
+  --status-canceled: var(--native-color-gray-light);
   --scrollbar-thumb: rgba(26, 28, 34, 0.15);
   --scrollbar-thumb-hover: rgba(26, 28, 34, 0.46);
   --card-shadow: 0 3px 6px -2px rgba(0, 0, 0, 0.02), 0 1px 1px rgba(0, 0, 0, 0.04);
@@ -91,127 +98,66 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #1b1d23;
-  --header-bg: #1f2229;
-  --sidebar-bg: #17191e;
-  --surface: #23262e;
-  --surface-raised: #282b34;
-  --surface-muted: #2a2d36;
-  --surface-hover: #313540;
-  --surface-active: #3a3f4b;
-  --column-header: #20232b;
+  --bg: var(--native-color-window-background-dark); /* macOS windowBackgroundColor（dark 解析值） */
+  --header-bg: var(--native-color-window-background-dark);
+  --sidebar-bg: rgba(255, 255, 255, var(--native-overlay-primary-03));
+  --lane-bg: rgba(255, 255, 255, var(--native-overlay-primary-018));
+  --rail-hover-bg: rgba(255, 255, 255, var(--native-overlay-primary-06));
+  --rail-active-bg: color-mix(in srgb, var(--native-color-accent-color-dark) calc(var(--native-overlay-accent-color-18) * 100%), transparent);
+  --surface: #3a3a3a;
+  --surface-raised: #404040;
+  --surface-muted: #2c2c2c;
+  --surface-hover: #454545;
+  --surface-active: #505050;
+  --column-header: #2e2e2e;
   --text-primary: #edeef2;
   --text-secondary: #b4b9c2;
   --text-tertiary: #858c99;
   --text-quaternary: #636a78;
   --border: rgba(255, 255, 255, 0.075);
   --border-strong: rgba(255, 255, 255, 0.13);
-  --accent: #6ac4dc;
+  --accent: var(--native-color-teal-dark);
   --accent-hover: #7ecfe4;
   --accent-active: #8ed2e4;
   --accent-soft: rgba(106, 196, 220, 0.16);
   --accent-soft-quiet: rgba(106, 196, 220, 0.09);
   --on-accent: #0c2a33; /* 本 repo 追加（非 fork）：accent 底上的前景色，随主题取值（light 白字/dark 墨字） */
-  --danger: #ff453a;
+  --danger: var(--native-color-red-dark);
   --danger-hover: #ff5b52;
   --danger-active: #ff7269;
   --danger-soft: rgba(255, 69, 58, 0.14);
-  --warning: #ff9f0a;
+  --warning: var(--native-color-orange-dark);
   --warning-hover: #ffab27;
   --warning-active: #ffb645;
   --warning-soft: rgba(255, 159, 10, 0.16);
   --warning-soft-quiet: rgba(255, 159, 10, 0.09);
-  --success: #32d74b;
+  --success: var(--native-color-green-dark);
   --success-hover: #4bdc61;
   --success-active: #63e176;
   --success-soft: rgba(50, 215, 75, 0.16);
-  --info: #0a84ff; /* macOS dark systemBlue 解析值（Mac .blue 一比一） */
+  --info: var(--native-color-blue-dark); /* macOS dark systemBlue 解析值（Mac .blue 一比一） */
   --info-hover: #2793ff;
   --info-active: #45a2ff;
   --info-soft: rgba(10, 132, 255, 0.16);
-  --purple: #bf5af2; /* macOS dark systemPurple——owner 口中的「粉紫」，tier 章本色 */
+  --purple: var(--native-color-purple-dark); /* macOS dark systemPurple——owner 口中的「粉紫」，tier 章本色 */
   --purple-hover: #c76ef4;
   --purple-active: #ce82f5;
   --purple-soft: rgba(191, 90, 242, 0.16);
   --purple-soft-quiet: rgba(191, 90, 242, 0.09);
-  --notice: #ffd60a; /* macOS dark systemYellow 解析值（Mac .yellow 一比一） */
+  --notice: var(--native-color-yellow-dark); /* macOS dark systemYellow 解析值（Mac .yellow 一比一） */
   --notice-hover: #ffdb27;
   --notice-active: #ffe045;
   --notice-soft: rgba(255, 214, 10, 0.16);
-  --status-backlog: #7c7c81;
-  --status-todo: #98989d;
-  --status-progress: #ff9f0a;
-  --status-review: #32d74b;
-  --status-done: #bf5af2;
-  --status-canceled: #85858a;
+  --status-backlog: var(--native-color-gray-dark);
+  --status-todo: var(--native-color-gray-dark);
+  --status-progress: var(--native-color-orange-dark);
+  --status-review: var(--native-color-green-dark);
+  --status-done: var(--native-color-purple-dark);
+  --status-canceled: var(--native-color-gray-dark);
   --scrollbar-thumb: rgba(237, 238, 242, 0.15);
   --scrollbar-thumb-hover: rgba(237, 238, 242, 0.5);
   --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
   --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
-}
-
-/* 系统偏好暗色 + 用户未显式选 light —— 与上面 dark 块保持逐值一致（改一处必改两处） */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #1b1d23;
-    --header-bg: #1f2229;
-    --sidebar-bg: #17191e;
-    --surface: #23262e;
-    --surface-raised: #282b34;
-    --surface-muted: #2a2d36;
-    --surface-hover: #313540;
-    --surface-active: #3a3f4b;
-    --column-header: #20232b;
-    --text-primary: #edeef2;
-    --text-secondary: #b4b9c2;
-    --text-tertiary: #858c99;
-    --text-quaternary: #636a78;
-    --border: rgba(255, 255, 255, 0.075);
-    --border-strong: rgba(255, 255, 255, 0.13);
-    --accent: #6ac4dc;
-    --accent-hover: #7ecfe4;
-    --accent-active: #8ed2e4;
-    --accent-soft: rgba(106, 196, 220, 0.16);
-    --accent-soft-quiet: rgba(106, 196, 220, 0.09);
-    --on-accent: #0c2a33; /* 本 repo 追加（非 fork）：accent 底上的前景色，随主题取值（light 白字/dark 墨字） */
-    --danger: #ff453a;
-    --danger-hover: #ff5b52;
-    --danger-active: #ff7269;
-    --danger-soft: rgba(255, 69, 58, 0.14);
-    --warning: #ff9f0a;
-    --warning-hover: #ffab27;
-    --warning-active: #ffb645;
-    --warning-soft: rgba(255, 159, 10, 0.16);
-    --warning-soft-quiet: rgba(255, 159, 10, 0.09);
-    --success: #32d74b;
-    --success-hover: #4bdc61;
-    --success-active: #63e176;
-    --success-soft: rgba(50, 215, 75, 0.16);
-    --info: #0a84ff; /* macOS dark systemBlue 解析值（Mac .blue 一比一） */
-    --info-hover: #2793ff;
-    --info-active: #45a2ff;
-    --info-soft: rgba(10, 132, 255, 0.16);
-    --purple: #bf5af2; /* macOS dark systemPurple——owner 口中的「粉紫」，tier 章本色 */
-    --purple-hover: #c76ef4;
-    --purple-active: #ce82f5;
-    --purple-soft: rgba(191, 90, 242, 0.16);
-    --purple-soft-quiet: rgba(191, 90, 242, 0.09);
-    --notice: #ffd60a; /* macOS dark systemYellow 解析值（Mac .yellow 一比一） */
-    --notice-hover: #ffdb27;
-    --notice-active: #ffe045;
-    --notice-soft: rgba(255, 214, 10, 0.16);
-    --status-backlog: #7c7c81;
-    --status-todo: #98989d;
-    --status-progress: #ff9f0a;
-    --status-review: #32d74b;
-    --status-done: #bf5af2;
-    --status-canceled: #85858a;
-    --scrollbar-thumb: rgba(237, 238, 242, 0.15);
-    --scrollbar-thumb-hover: rgba(237, 238, 242, 0.5);
-    --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
-    --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
-  }
 }
 
 /*
@@ -257,8 +203,9 @@
   /* 列顶输入框 */
   --type-composer: 400 12px/1.4 var(--font-sans);
   --type-composer-hint: 400 10px/1.4 var(--font-sans);
-  /* 顶栏 */
+  /* 侧栏 / 顶栏 */
   --type-header-title: 600 14px/1.4 var(--font-sans);
+  --type-rail-item: 400 13px/1.4 var(--font-sans);
   --type-header-control: 400 12px/1.4 var(--font-sans);
   --type-header-meta: 400 10px/1.4 var(--font-sans);
 }

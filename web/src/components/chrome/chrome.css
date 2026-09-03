@@ -170,18 +170,30 @@
   gap: 4px;
 }
 
+/* 展开态 = 一根原生列（400 下限，随视口长开）；收起态 = 原生 collapsedStrip 的 44pt 竖条（§66.2 layout:strip-width） */
 .backlog-strip:not(.is-collapsed) {
-  flex: 0 0 300px;
-  width: 300px;
+  flex: 1 1 var(--native-layout-lane-width);
+  min-width: var(--native-layout-lane-width);
+  padding: 6px 10px 10px;
+  border-radius: var(--native-layout-lane-radius);
+  background: var(--lane-bg);
+}
+
+.backlog-strip.is-collapsed {
+  flex: 0 0 var(--native-layout-strip-width);
+  width: var(--native-layout-strip-width);
 }
 
 /* 收起态：竖排窄条（列外侧，点击展开） */
 .backlog-strip.is-collapsed .backlog-strip-toggle {
   writing-mode: vertical-rl;
-  padding: 12px 6px;
-  border: var(--border-hairline) solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-muted);
+  width: var(--native-layout-strip-width);
+  height: 100%;
+  justify-content: flex-start;
+  padding: 12px 0;
+  border: none;
+  border-radius: var(--native-layout-lane-radius);
+  background: var(--lane-bg);
 }
 
 /* 右侧书立条（永久性完成）：与左条对称，收起时贴在最后一列右边 */

@@ -68,7 +68,7 @@ class CatalogGetTestCase(_ServerCase):
         _s, digest = get_json(self.port, "/api/settings/digest")
         freq = self._field(digest, "digest_frequency")
         self.assertEqual((freq["effective"], freq["source"]), ("daily", "override"))
-        _s, sources = get_json(self.port, "/api/settings/sources")
+        _s, sources = get_json(self.port, "/api/settings/gmail")
         gmail = self._field(sources, "gmail_enabled")
         self.assertEqual((gmail["effective"], gmail["source"]), (False, "config"))
 
@@ -154,9 +154,27 @@ class CatalogPutTestCase(_ServerCase):
 
     def test_empty_string_clears_a_string_override(self):
         write_text(self.overrides_path, json.dumps({"gmail_address": "a@b.c"}))
-        _s, obj = put_json(self.port, "/api/settings/sources", {"gmail_address": "  "})
+        _s, obj = put_json(self.port, "/api/settings/gmail", {"gmail_address": "  "})
         self.assertEqual(self._field(obj, "gmail_address")["source"], "default")
         self.assertEqual(self._overrides(), {})
+
+    def test_list_kind_accepts_csv_or_json_list_and_clears_on_empty(self):
+        """§68.1 list 字段（Slack 频道 / 关注的人）：web 输入框给逗号分隔字串，也接受 JSON 字串表；
+        空 = 清键；非字串元素 400；config.yaml 里的 {id, name} 字典投影成 id。"""
+        _s, obj = put_json(self.port, "/api/settings/slack", {"slack_channels": " C1, C2 ,,\nC3 "})
+        self.assertEqual(self._field(obj, "slack_channels")["effective"], ["C1", "C2", "C3"])
+        self.assertEqual(self._overrides(), {"slack_channels": ["C1", "C2", "C3"]})
+        _s, obj = put_json(self.port, "/api/settings/slack", {"watch_people": ["alice", " bob "]})
+        self.assertEqual(self._field(obj, "watch_people")["effective"], ["alice", "bob"])
+        _s, obj = put_json(self.port, "/api/settings/slack", {"slack_channels": ""})
+        self.assertEqual(self._field(obj, "slack_channels")["source"], "default")
+        self.assertNotIn("slack_channels", self._overrides())
+        status, obj = put_json(self.port, "/api/settings/slack", {"slack_channels": [1, 2]})
+        self.assertEqual(status, 400)
+        assert_envelope(self, obj, "INVALID_FIELD")
+        write_text(self.home / "config.yaml", "sources:\n  slack_channels:\n    - {id: C9, name: general}\n    - C8\n")
+        _s, slack = get_json(self.port, "/api/settings/slack")
+        self.assertEqual(self._field(slack, "slack_channels")["effective"], ["C9", "C8"])
 
     def test_unknown_field_is_400(self):
         status, obj = put_json(self.port, "/api/settings/general", {"language": "en", "theme": "x"})
@@ -224,6 +242,8 @@ class ConfigMirrorTestCase(unittest.TestCase):
                         self.assertIn(sub, allowed)
                     else:
                         self.assertIn(sub, act_config.DEFAULT_FEATURES)
+                elif spelling in act_config._OVERRIDE_LIST_FIELDS:
+                    self.assertEqual(field["kind"], "list")
                 else:
                     self.assertIn(spelling, act_config._OVERRIDE_FIELDS)
 

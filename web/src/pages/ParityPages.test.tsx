@@ -122,7 +122,7 @@ describe("DiagnosticsPage", () => {
     vi.mocked(fetchLogTail).mockResolvedValue({ name: "actd.launchd.log", path: "/l/actd.launchd.log", size: 2048, lines: ["a", "b"], truncated: true });
     renderEn(<DiagnosticsPage />);
     await screen.findByText("actd heartbeat");
-    expect(screen.getByText(/1 ok \/ 0 warn \/ 1 fail/)).toBeTruthy();
+    expect(screen.getByText(/1 failed \(1 ok \/ 0 warn\)/)).toBeTruthy();
     expect(screen.getByText("deployed")).toBeTruthy();
     expect(screen.getByText("skipped_tcc")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Pick a log"), { target: { value: "actd.launchd.log" } });
@@ -136,12 +136,14 @@ describe("DiagnosticsPage", () => {
     vi.mocked(fetchDoctor).mockResolvedValue({ ...diagnostics().doctor, fast: false });
     renderEn(<DiagnosticsPage />);
     await screen.findByText("actd heartbeat");
-    fireEvent.click(screen.getByRole("button", { name: /Full checkup/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Run diagnostics/ }));
     await waitFor(() => expect(fetchDoctor).toHaveBeenCalledWith(false, true));
   });
 
-  it("doctorSummary counts statuses", () => {
-    expect(doctorSummary(diagnostics().doctor, en)).toBe("1 ok / 0 warn / 1 fail");
+  it("doctorSummary counts statuses（原生 DepsView：零失败说全部通过 ✓）", () => {
+    expect(doctorSummary(diagnostics().doctor, en)).toBe("1 failed (1 ok / 0 warn)");
+    const clean = { ...diagnostics().doctor, checks: diagnostics().doctor.checks.filter((c) => c.status !== "FAIL") };
+    expect(doctorSummary(clean, en)).toBe("All checks passed ✓ (1 ok / 0 warn)");
   });
 });
 

@@ -12,8 +12,11 @@ import { refreshBoard, refreshHealth, refreshLanes, refreshSetup, setConnection,
 import { AppShell } from "./components/shell/AppShell";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
+import { AboutPage } from "./pages/AboutPage";
 import { ArchivePage } from "./pages/ArchivePage";
+import { AskPage } from "./pages/AskPage";
 import { BoardPage } from "./pages/BoardPage";
+import { IngestPage } from "./pages/IngestPage";
 import { RecapsPage } from "./pages/RecapsPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
@@ -45,7 +48,11 @@ function renderPage(page: AppPage) {
     case "archive": return <ArchivePage />;
     case "permissions": return <PermissionsPage />;
     case "diagnostics": return <DiagnosticsPage />;
+    case "deps": return <DiagnosticsPage />; // 原生 rail 名（依赖检查）；diagnostics 是同一页的旧深链
     case "setup": return <SetupPage />;
+    case "ask": return <AskPage />;
+    case "ingest": return <IngestPage />;
+    case "about": return <AboutPage />;
     default: return <BoardPage />;
   }
 }

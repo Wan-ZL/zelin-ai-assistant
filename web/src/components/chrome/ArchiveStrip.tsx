@@ -43,7 +43,7 @@ export function ArchiveRow({ item }: { item: ArchivedRow }) {
         {reason && <span className={reason.cls}>{reason.label}</span>}
         {item.kind && <span className="chip">{domainLabel(TRASH_KIND_LABELS, language, item.kind)}</span>}
         {typeof item.prev_status === "string" && item.prev_status && (
-          <span className="card-meta-text">{text("原来在：", "was in: ")}{prevStatusLabel(item.prev_status, language, text)}</span>
+          <span className="card-meta-text"><span className="card-meta-prefix">{text("原来在：", "was in: ")}</span><span>{prevStatusLabel(item.prev_status, language, text)}</span></span>
         )}
         <RelativeTime iso={item.archived_at} />
       </div>
@@ -74,7 +74,7 @@ export function ArchiveStrip() {
   const rows = !needle
     ? all
     : all.filter((it) => it.title.toLowerCase().includes(needle) || (it.summary ?? "").toLowerCase().includes(needle));
-  const title = text("永久性完成 · done for good", "Done for good");
+  const title = text("🗄 永久性完成 · done for good", "🗄 Done for good");
 
   return (
     <aside className={`backlog-strip is-archive${expanded ? "" : " is-collapsed"}`} aria-label={title}>

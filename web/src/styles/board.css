@@ -6,23 +6,28 @@
  * 动画（hover 抬升 / sheen / settle / reduced-motion）在 animations.css 的 fork 块里。
  */
 
-/* —— 页面骨架（顶栏归 shell.css / 侧条与过滤 chips 归 chrome.css，此处只管列区）—— */
+/* —— 页面骨架（顶栏归 shell.css / 侧条与过滤 chips 归 chrome.css，此处只管列区）——
+   布局定点全部取 tokens.css @generated 块的原生数值（§54.4 / §66.2 layout:*）：列距 12（HStack spacing）、
+   看板内边距 16（.padding(16)）、列宽 400（.frame(width: 400)）为**下限**——原生四列各 400pt 铺满一屏，
+   web 在更宽的窗口里让列等比长开填满视口（flex-grow），窄于四列之和时与原生一样横向滚动。 */
 .board-main {
   flex: 1;
   display: flex;
   align-items: stretch;
-  gap: 12px;
-  padding: 12px 20px 20px;
+  gap: var(--native-layout-lane-gap);
+  padding: var(--native-layout-board-padding);
   overflow-x: auto;
 }
 
-/* —— 列 —— */
+/* —— 列（原生 lane：primary 1.8% 底、圆角 10；内容区 padding 10 / 6 / 10）—— */
 .board-column {
   display: flex;
   flex-direction: column;
-  flex: 0 0 300px;
-  width: 300px;
-  min-width: 0;
+  flex: 1 1 var(--native-layout-lane-width);
+  min-width: var(--native-layout-lane-width);
+  padding: 6px 10px 10px;
+  border-radius: var(--native-layout-lane-radius);
+  background: var(--lane-bg);
 }
 
 /* 列头（原生 SectionHeader：标题 12 semibold 次级色 · ? · 计数胶囊 11 bold 紧跟其后） */
@@ -132,7 +137,7 @@
   padding: 8px 9px;
   overflow: hidden;
   border: var(--border-hairline) solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--native-layout-card-radius);
   background: var(--surface);
   box-shadow: var(--card-shadow);
 }

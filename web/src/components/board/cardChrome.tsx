@@ -151,9 +151,11 @@ export function RelativeTime({ epoch, iso, prefix = "", className = "" }: Stamp 
   const now = useNow();
   const label = epoch !== undefined ? sinceEpoch(epoch, now, text) : sinceIso(iso, now, text);
   if (!label) return null;
+  // 前缀与时间值各自一个文本节点（原生是两个 Text 拼接；探针按节点文本逐字判「耗时 」/「验收于 」等前缀）
   return (
     <span className={`card-meta-text${className ? ` ${className}` : ""}`} title={absoluteLabel(epoch ?? iso, locale)}>
-      {prefix}{label}
+      {prefix ? <span className="card-meta-prefix">{prefix}</span> : null}
+      <span>{label}</span>
     </span>
   );
 }
@@ -166,7 +168,12 @@ export function DurationText({ from, to, prefix = "" }: { from: unknown; to?: un
   const label = duration(from, end, text);
   if (!label) return null;
   const title = absoluteLabel(from, locale);
-  return <span className="card-meta-text" title={title}>{prefix}{label}</span>;
+  return (
+    <span className="card-meta-text" title={title}>
+      {prefix ? <span className="card-meta-prefix">{prefix}</span> : null}
+      <span>{label}</span>
+    </span>
+  );
 }
 
 /** cwd / target 的 basename 中性章（原生 Badge(lastPathComponent, .secondary)） */
@@ -296,5 +303,5 @@ export function AiFixButton({ cardId }: { cardId: string }) {
 /** 错误一句（红，两行截断，hover 全文）——原生 errorLine 的文本部分；按钮由宿主放进动作行 */
 export function ErrorLine({ prefix, raw }: { prefix: string; raw: unknown }) {
   if (typeof raw !== "string" || !raw) return null;
-  return <p className="card-line is-danger card-error-line" title={raw}>{prefix}{raw}</p>;
+  return <p className="card-line is-danger card-error-line" title={raw}><span className="card-detail-label">{prefix}</span><span>{raw}</span></p>;
 }

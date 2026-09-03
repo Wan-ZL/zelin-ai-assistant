@@ -88,7 +88,7 @@ export function CopyPathLine({ label, path }: { label: string; path: unknown }) 
         }}
       >
         <span aria-hidden="true">{copied ? "✓ " : "⧉ "}</span>
-        {label}{path}
+        <span className="card-detail-label">{label}</span><span>{path}</span>
       </button>
       <CopiedAnnouncer copied={copied} />
     </>
@@ -98,7 +98,7 @@ export function CopyPathLine({ label, path }: { label: string; path: unknown }) 
 /** 等宽小字元信息行（会话 ID / claude agents 列表名） */
 export function MetaLine({ label, value }: { label: string; value: unknown }) {
   if (typeof value !== "string" || !value) return null;
-  return <p className="card-detail-mono">{label}{value}</p>;
+  return <p className="card-detail-mono"><span className="card-detail-label">{label}</span><span>{value}</span></p>;
 }
 
 /** 正文段（summary / delivered_summary）——空不渲染 */

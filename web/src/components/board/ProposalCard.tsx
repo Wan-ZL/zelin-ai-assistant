@@ -9,7 +9,7 @@ import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, effectiveTier, useSubmit } from "./boardActions";
+import { cardAction, costLine, costText, deadlinePhrase, effectiveTier, hardnessLabel, tierHint, useSubmit, pendingNote } from "./boardActions";
 import { CardDetails, CardHead, CardSurface, DetailsToggle } from "./cardChrome";
 import { DodList, PlanList, SourceList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
@@ -76,7 +76,7 @@ export function EgressLines({ card }: { card: ApprovalCard }) {
 
 export function ProposalCard({ card }: ProposalCardProps) {
   const { text } = useI18n();
-  const { pending, error, submit } = useSubmit();
+  const { pending, pendingAction, error, submit } = useSubmit();
   const [dialog, setDialog] = useState<DialogKind>("none");
 
   const summary = typeof card.summary === "string" && card.summary ? card.summary : card.title;
@@ -110,8 +110,16 @@ export function ProposalCard({ card }: ProposalCardProps) {
       <TargetLine card={card} />
       <EgressLines card={card} />
       <div className="card-badges">
-        {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
-        <span className="chip chip-purple">{card.tier}{card.tier_hint ? ` · ${card.tier_hint}` : ""}</span>
+        {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板）。
+            原生 tierLine：「T1 · 一键可批」——tier 与大白话各一个节点；未知 tier 只剩「未分级」 */}
+        <span className="chip chip-purple">
+          {typeof card.tier === "string" && /^T[0-2]$/.test(card.tier) && <><span>{card.tier}</span>{" · "}</>}
+          <span>{tierHint(card, text)}</span>
+        </span>
+        {/* 原生 ↳ 改进 #R-xx（improvement_of，§7 提案改进已交付的卡） */}
+        {typeof card.improvement_of === "string" && card.improvement_of && (
+          <span className="chip chip-quiet">{text(`↳ 改进 #${card.improvement_of}`, `↳ Improves #${card.improvement_of}`)}</span>
+        )}
         {/* §50 W17：外部出身把声明档提级 T2 时点明——否则见 "T1" 却弹 T2
             确认框会莫名其妙。origin_trust 也一并 surface（types.ts 已有字段）。 */}
         {effectiveTier(card) === "T2" && card.tier !== "T2" && (
@@ -122,17 +130,20 @@ export function ProposalCard({ card }: ProposalCardProps) {
         {card.delivery_mode === "chat" && (
           <span className="chip chip-purple">{text("交付：聊天成稿", "Deliver: chat draft")}</span>
         )}
-        {/* 紧急截止 = Mac 红字——outline 档红 chip（文字前置），非紧急保持中性 */}
+        {/* 紧急截止 = Mac 红字——outline 档红 chip（文字前置），非紧急保持中性；
+            原生「截止 2026-09-08 · 还剩 6 天」（已逾期 N 天 / 今天截止 / 还剩 N 天） */}
         {card.deadline && (
           <span className={typeof card.days_left === "number" && card.days_left <= 3 ? "chip chip-danger chip-outline" : "chip"}>
-            {card.deadline}
-            {typeof card.days_left === "number" ? text(`（剩 ${card.days_left} 天）`, ` (${card.days_left}d left)`) : ""}
+            <span>{text(`截止 ${card.deadline}`, `Due ${card.deadline}`)}</span>
+            {deadlinePhrase(card.days_left, text) && <>{" · "}<span>{deadlinePhrase(card.days_left, text)}</span></>}
           </span>
         )}
         {card.show_cost && typeof card.cost_usd === "number" && (
           <span className="chip">${card.cost_usd}</span>
         )}
-        {card.hardness === "hard" && <span className="chip chip-danger">{text("硬需求", "Hard")}</span>}
+        {hardnessLabel(card.hardness, text) && (
+          <span className={card.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardnessLabel(card.hardness, text)}</span>
+        )}
         {/* 被提×N 是 lineage 计数——quiet 档，比状态 chip 安静 */}
         {typeof card.repeated === "number" && card.repeated > 1 && (
           <span
@@ -156,22 +167,25 @@ export function ProposalCard({ card }: ProposalCardProps) {
             {text("需 manager green-sign（只出草稿）", "Needs manager green-sign (draft only)")}
           </span>
         )}
-        {card.reraised && <span className="chip chip-warning">{text("↩︎ 回锅", "↩︎ Returned")}</span>}
+        {card.reraised && <span className="chip chip-warning">{text("↩︎ 回锅 · Returned", "↩︎ Returned")}</span>}
       </div>
-      {card.reraised && card.reraised_note && <p className="card-line is-warning">{card.reraised_note}</p>}
+      {/* 原生 returnedNote：「新增：<回锅带来的新信息>」 */}
+      {card.reraised && card.reraised_note && (
+        <p className="card-line is-warning"><span className="card-detail-label">{text("新增：", "New: ")}</span><span>{String(card.reraised_note)}</span></p>
+      )}
       {card.disagreement && (
-        <p className="card-line is-warning is-body">{text("⚠ 有分歧：", "⚠ Disagreement: ")}{card.disagreement}</p>
+        <p className="card-line is-warning is-body"><span className="card-detail-label">{text("⚠︎ 分歧: ", "⚠︎ Disagreement: ")}</span><span>{String(card.disagreement)}</span></p>
       )}
       <CardDetails cardId={card.id}>
         {/* 长技术标题住在详情里（原生 expandedDetail 首行）；展示名与它不同才重复一遍 */}
         {card.title !== displayTitle && <p className="card-detail-title">{card.title}</p>}
-        <p className="card-detail-heading">💰 {costLine(card, text)}</p>
+        <p className="card-detail-heading">{costText(card, text)}</p>
         <SourceList sources={card.sources} />
         <PlanList plan={card.plan} />
         <DodList dod={card.dod} />
       </CardDetails>
       {pending ? (
-        <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
+        <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (
         <div className="card-actions">
           {/* 四动词色相 = Mac tint 一比一（Cards.swift normalBody）：绿批准 · 红拒绝 · 蓝修改 · 灰暂缓 */}

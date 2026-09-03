@@ -23,6 +23,29 @@
       "summary": "冷交付 30 天自动封存",
       "title": "example-bench README 补 badge",
       "work_id": "R-064"
+    },
+    {
+      "archive_reason": "auto",
+      "archived_at": "2026-09-02T11:20:00Z",
+      "display_id": "P-072",
+      "id": "P-072",
+      "id_kind": "proposal",
+      "kind": "suggestion",
+      "prev_status": "merged",
+      "summary": "被并入主卡后封存",
+      "title": "重复的周报提案（并入 P-071）"
+    },
+    {
+      "archive_reason": "user",
+      "archived_at": "2026-09-02T11:59:30Z",
+      "display_id": "R-073",
+      "id": "P-073",
+      "id_kind": "work",
+      "kind": "debt",
+      "prev_status": "review",
+      "summary": "kind=debt、原来在待验收",
+      "title": "待验收时被你封存的潜在任务",
+      "work_id": "R-073"
     }
   ],
   "completed": [
@@ -67,14 +90,14 @@
     }
   ],
   "counts": {
-    "archived": 2,
+    "archived": 4,
     "completed": 2,
-    "debt": 3,
-    "needs_approval": 4,
+    "debt": 4,
+    "needs_approval": 8,
     "needs_input": 1,
     "review": 2,
-    "running": 3,
-    "trash": 1
+    "running": 7,
+    "trash": 3
   },
   "debt": [
     {
@@ -127,10 +150,82 @@
       "summary": "warning 刷屏，出真错时没人看得见。",
       "title": "inkweld 报错日志太吵，真错误被淹没",
       "type": "engineering"
+    },
+    {
+      "display_id": "P-161",
+      "hardness": "soft",
+      "id": "P-161",
+      "id_kind": "proposal",
+      "sources": [
+        {
+          "channel": "manual",
+          "date": "2026-09-01",
+          "quote": "先记下",
+          "who": "me"
+        }
+      ],
+      "summary": "type=other 的词表行。",
+      "title": "其他类型的潜在任务",
+      "type": "other"
     }
   ],
   "device_label": "demo-mac",
   "generated_at": "2026-09-02T12:00:00Z",
+  "merge_suggestions": [
+    {
+      "id": "MS-1",
+      "ids": [
+        "P-131",
+        "P-133"
+      ],
+      "requested_at": 1788350280,
+      "status": "analyzing"
+    },
+    {
+      "action_plan": [
+        "P-132 并入 P-101",
+        "P-133 保持独立"
+      ],
+      "confidence": "medium",
+      "groups": [
+        {
+          "ids": [
+            "P-101",
+            "P-132"
+          ],
+          "primary": "P-101",
+          "reason": "同一份报告"
+        },
+        {
+          "ids": [
+            "P-133"
+          ],
+          "primary": "P-133",
+          "reason": "独立"
+        }
+      ],
+      "id": "MS-2",
+      "ids": [
+        "P-101",
+        "P-132",
+        "P-133"
+      ],
+      "rationale": "两张讲导出报告，一张讲入职文书。",
+      "requested_at": 1788349200,
+      "status": "done",
+      "verdict": "partition"
+    },
+    {
+      "error": "model timeout after 60s",
+      "id": "MS-3",
+      "ids": [
+        "P-102",
+        "P-103"
+      ],
+      "requested_at": 1788346800,
+      "status": "failed"
+    }
+  ],
   "needs_approval": [
     {
       "cost_usd": 12,
@@ -291,6 +386,136 @@
       "tier": "T1",
       "tier_hint": "AI 研究中",
       "title": "统一 example-bench 和 inkweld 的 lint 配置"
+    },
+    {
+      "cost_usd": 3.5,
+      "days_left": -3,
+      "deadline": "2026-08-30",
+      "delivery_mode": "repo",
+      "disagreement": "研究员认为图表来源应改为 warehouse 视图，而不是直接读生产库。",
+      "display_id": "P-131",
+      "dod": [
+        "四张图数据与源一致"
+      ],
+      "hardness": "hard",
+      "id": "P-131",
+      "id_kind": "proposal",
+      "improvement_of": "R-111",
+      "plan": [
+        "接数据源",
+        "生成时刷新"
+      ],
+      "processing": false,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "把季度报告里的四张图接到数据源，生成时自动刷新。",
+      "target_kind": "existing",
+      "target_name": "example-bench",
+      "target_repo": "~/Projects/example-bench",
+      "tier": "T0",
+      "tier_hint": "自动执行",
+      "title": "季度报告图表自动刷新",
+      "type": "code"
+    },
+    {
+      "cost_usd": 80,
+      "days_left": 0,
+      "deadline": "2026-09-02",
+      "delivery_mode": "doc",
+      "display_id": "P-132",
+      "dod": [
+        "邮件草稿在 outbox"
+      ],
+      "hardness": "soft",
+      "id": "P-132",
+      "id_kind": "proposal",
+      "plan": [
+        "起草",
+        "你审阅"
+      ],
+      "processing": false,
+      "reraise_note": "又有两个人在群里问同一件事",
+      "reraised": true,
+      "show_cost": true,
+      "silent_merged": 2,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "以你的口吻起草迁移说明，发前你过一眼。",
+      "target_kind": "new",
+      "target_name": "migration-notes",
+      "tier": "T2",
+      "tier_hint": "需文字确认",
+      "title": "给全员发一封迁移说明邮件",
+      "type": "comms"
+    },
+    {
+      "cost_usd": null,
+      "days_left": 10,
+      "deadline": "2026-09-12",
+      "delivery_mode": "doc",
+      "display_id": "P-133",
+      "dod": [
+        "一页清单"
+      ],
+      "hardness": "soft",
+      "id": "P-133",
+      "id_kind": "proposal",
+      "plan": [
+        "收集",
+        "整理"
+      ],
+      "processing": false,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "把入职文书按部门整理成一页。",
+      "target_kind": "existing",
+      "target_name": "your-workbench",
+      "target_repo": "~/Projects/your-workbench",
+      "tier": null,
+      "tier_hint": "未分级",
+      "title": "整理 onboarding 文书清单",
+      "type": "paperwork"
+    },
+    {
+      "display_id": "P-134",
+      "hardness": "hard",
+      "id": "P-134",
+      "id_kind": "proposal",
+      "processing": true,
+      "rework": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "按你的修改意见重提中。",
+      "tier": "T1",
+      "tier_hint": "一键可批",
+      "title": "评审新的 API 设计稿",
+      "type": "review"
     }
   ],
   "needs_input": [
@@ -308,6 +533,26 @@
       "work_id": "R-108"
     }
   ],
+  "radar_sources": {
+    "gmail": {
+      "enabled": true,
+      "last_ok": "2026-09-02T11:55:00Z",
+      "skip_reason": null,
+      "stale": false
+    },
+    "obsidian": {
+      "enabled": false,
+      "last_ok": null,
+      "skip_reason": null,
+      "stale": false
+    },
+    "slack": {
+      "enabled": true,
+      "last_ok": null,
+      "skip_reason": "no_credentials",
+      "stale": false
+    }
+  },
   "review": [
     {
       "agent_name": "eval cache layer",
@@ -382,7 +627,7 @@
         "中英双语成稿",
         "放进结束总结等验收"
       ],
-      "review_at": 1788349800,
+      "review_at": 1788353977,
       "session_id": "f2d6b8a3-9c14-4d57-8e60-3b7a5f1c9d42",
       "short_id": "f2d6b8a3",
       "sources": [
@@ -477,6 +722,95 @@
       "state": "working",
       "summary": "数据集 v2 换了 schema，加兼容层让老评测脚本不用改。",
       "work_id": "R-107"
+    },
+    {
+      "agent_name": "dispatched sample",
+      "copy_cmd": "claude attach f1f1f1f1",
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788350220,
+      "display_id": "R-141",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-141",
+      "id_kind": "work",
+      "name": "已派发但还没开工的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "session_id": "f1f1f1f1-0000-4000-8000-000000000141",
+      "short_id": "f1f1f1f1",
+      "state": "dispatched",
+      "summary": "词表行。",
+      "work_id": "R-141"
+    },
+    {
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": null,
+      "display_id": "R-142",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-142",
+      "id_kind": "work",
+      "last_error": "dispatch failed: claude not found (Errno 2)",
+      "name": "排队等派发的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "state": "queued",
+      "summary": "词表行。",
+      "work_id": "R-142"
+    },
+    {
+      "agent_name": "idle sample",
+      "copy_cmd": "claude attach f3f3f3f3",
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788331380,
+      "display_id": "R-143",
+      "dod": [
+        "验收点"
+      ],
+      "id": "P-143",
+      "id_kind": "work",
+      "name": "会话空闲的卡",
+      "plan": [
+        "步骤一"
+      ],
+      "session_id": "f3f3f3f3-0000-4000-8000-000000000143",
+      "short_id": "f3f3f3f3",
+      "started_at": 1788331380,
+      "state": "idle",
+      "summary": "词表行。",
+      "work_id": "R-143"
+    },
+    {
+      "accepted_at": 1788177600,
+      "copy_cmd": "claude attach f4f4f4f4",
+      "cwd": "~/Projects/example-bench",
+      "delivery_mode": "repo",
+      "dispatched_at": 1788256800,
+      "display_id": "R-144",
+      "dod": [
+        "验收点"
+      ],
+      "from_review": true,
+      "id": "P-144",
+      "id_kind": "work",
+      "last_error": "Traceback (most recent call last): boom",
+      "name": "状态未知的卡（roster 漏了）",
+      "plan": [
+        "步骤一"
+      ],
+      "session_id": "f4f4f4f4-0000-4000-8000-000000000144",
+      "short_id": "f4f4f4f4",
+      "started_at": 1788256800,
+      "state": "unknown",
+      "summary": "词表行。",
+      "work_id": "R-144"
     }
   ],
   "trash": [
@@ -492,6 +826,32 @@
       "trash_reason": "rejected",
       "trashed_at": "2026-08-31T12:00:00Z",
       "type": "engineering"
+    },
+    {
+      "display_id": "P-151",
+      "hardness": "hard",
+      "id": "P-151",
+      "id_kind": "proposal",
+      "kind": "debt",
+      "permanent": true,
+      "summary": "你删除的，且钉住永久保留。",
+      "title": "永久保留在回收站的潜在任务",
+      "trash_reason": "deleted",
+      "trashed_at": "2026-08-31T12:00:00Z",
+      "type": "research"
+    },
+    {
+      "display_id": "P-152",
+      "hardness": "soft",
+      "id": "P-152",
+      "id_kind": "proposal",
+      "kind": "suggestion",
+      "permanent": false,
+      "summary": "拒绝的建议。",
+      "title": "训练一个分类小模型",
+      "trash_reason": "rejected",
+      "trashed_at": "2026-09-02T11:00:00Z",
+      "type": "training"
     }
   ]
 }

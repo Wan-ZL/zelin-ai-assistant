@@ -199,3 +199,16 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* —— 本 repo 自写（非 fork）：设置 → 通用「看板动画」开关关掉时（localStorage boardAnimations=false，
+   原生 UserDefaults 同名键 → index.html / GeneralExtras 写 <html data-board-animations="off">），
+   与上面 reduced-motion 同一套降级——只关看板动效，不关 spinner 之类的「在加载」语义。 —— */
+:root[data-board-animations="off"] .task-card,
+:root[data-board-animations="off"] .task-card::before,
+:root[data-board-animations="off"] .task-card::after,
+:root[data-board-animations="off"] .board-column,
+:root[data-board-animations="off"] .backlog-strip {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

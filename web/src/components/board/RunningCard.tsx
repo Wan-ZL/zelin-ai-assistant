@@ -13,7 +13,7 @@ import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
-import { cardAction, useSubmit } from "./boardActions";
+import { cardAction, useSubmit, pendingNote } from "./boardActions";
 import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
@@ -56,7 +56,7 @@ export function resumeCommand(row: TaskRow): string | null {
 
 export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   const { text } = useI18n();
-  const { pending, error, steerQueued, submit } = useSubmit();
+  const { pending, pendingAction, error, steerQueued, submit } = useSubmit();
   const [dialog, setDialog] = useState<DialogKind>("none");
 
   const isQueued = row.state === "queued";
@@ -107,7 +107,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
               </span>
             )}
             {/* 等待 chip = Mac .yellow notice（owner 验收单：黄等待）——--notice 槽位 */}
-            {row.waiting_for && <span className="chip chip-notice">{text(`等待：${row.waiting_for}`, `waiting: ${row.waiting_for}`)}</span>}
+            {row.waiting_for && <span className="chip chip-notice"><span className="card-detail-label">{text("等待: ", "Waiting: ")}</span><span>{String(row.waiting_for)}</span></span>}
             <RepoChip path={row.cwd} />
           </div>
           {question && <p className="card-line is-warning is-body">{question}</p>}
@@ -124,10 +124,13 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
             {/* 原生 TaskRow meta：状态章（accent 蓝）· 已交付过·再运行（青）· 运行时长 · repo 章。
                 working 由下方 sheen 行表达（执行中 / agents 列表名），只有非常规状态（idle / unknown /
                 review-active…）才出状态章——同一信息不在卡面说两遍 */}
-            {row.state !== "working" && <span className="chip chip-info">{stateLabel(row.state, text)}</span>}
+            {row.state === "review-active"
+              ? <span className="chip chip-accent">{text("会话有新活动", "Session active")}</span>
+              : row.state !== "working" && <span className="chip chip-info">{stateLabel(row.state, text)}</span>}
             {row.from_review && <span className="chip chip-accent">{text("已交付过·再运行", "Delivered · re-running")}</span>}
             <RelativeTime epoch={row.started_at ?? row.dispatched_at} />
-            {row.waiting_for && <span className="chip chip-notice">{text(`等待：${row.waiting_for}`, `waiting: ${row.waiting_for}`)}</span>}
+            {row.from_review && <RelativeTime epoch={row.accepted_at} prefix={text("验收于 ", "accepted ")} />}
+            {row.waiting_for && <span className="chip chip-notice"><span className="card-detail-label">{text("等待: ", "Waiting: ")}</span><span>{String(row.waiting_for)}</span></span>}
             <RepoChip path={row.cwd} />
           </div>
           <div className="task-processing-row is-running">
@@ -164,7 +167,12 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         <ErrorLine prefix={isQueued ? text("派发失败：", "Dispatch failed: ") : text("错误：", "Error: ")} raw={errorText} />
       )}
       <CardDetails cardId={row.id}>
-        {(hasError || (isBlocked && row.last_error)) && <pre className="card-error-block">{errorText ?? row.last_error}</pre>}
+        {(hasError || (isBlocked && row.last_error)) && (
+          <>
+            <div className="card-detail-subheading">{text("错误全文", "Full error")}</div>
+            <pre className="card-error-block">{errorText ?? row.last_error}</pre>
+          </>
+        )}
         <BodyText value={row.summary} />
         <PlanList plan={row.plan} />
         <DodList dod={row.dod} />
@@ -177,7 +185,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         <p className="card-pending-note">
           {steerQueued
             ? text("已提交 · 方向修正排队中…", "Submitted · steer queued…")
-            : text("已提交…", "Submitted…")}
+            : pendingNote(pendingAction, text)}
         </p>
       ) : (
         <div className="card-actions">

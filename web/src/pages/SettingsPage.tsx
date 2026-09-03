@@ -1,49 +1,54 @@
-// 设置页（CONTRACT §59 + §68；?page=settings 深链，顶栏齿轮入口；?anchor=<id> 滚到某区）。
-// 原生 Settings.swift 的 20 个区在 web 的落点（D3 退役前的 parity 清单，§54.1 / §68.1）：
-//   模型（§59，ModelsSection）· 来源开关 + 凭证（sources）· 录制（桥）· 实时字幕（桥 + 凭证）·
-//   通知 · 产品改进计划 · 摘要与回顾 · 通用 · 审批 / 成本 · Feature flags · 脱敏 · 语气档案 ·
-//   开发者会话（以上通用区由 server 目录驱动，CatalogSection）· 导入 Claude Code 工作 · MCP servers · Skills（D13，§67，SkillsSection）·
-//   素材库（D11，§62，MaterialsSection）· 会议纪要（§63，RecapSection）· 关于 / 看板 app。
-//   已删（Dock-only 决策 D3）：菜单栏图标开关；同步 / 配对（iPhone 联动）随 §31 syncd 面另议。
-// 页面级只做骨架：返回链接 + 标题 + 目录 + section 列表；每个 section 自己拉自己的数据（经 store action）。
+// 设置页（CONTRACT §59 + §68 + §54.4；?page=settings 深链，左侧导航栏「设置」；?anchor=<id> 滚到某区）。
+// 分区与顺序逐字镜像原生 Settings.swift 的 SettingsSectionDescriptor 注册表（ui/parity/native-inventory.json
+// screen:settings.*；§66.2）：通用 · 录制 · 实时字幕 · 笔记库 · 凭证 · Slack 接入 · Gmail 接入 · 导入 Claude Code 工作 ·
+// Skills · MCP servers · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话；
+// web 自有区（模型 §59、通知 §28、素材库 §62、会议纪要 §63）插在语义最近的位置。已退役：菜单栏（D3）；
+// 同步 / 配对随 §31 syncd 面另议（§68.14），不在本页；「关于」是 sidebar 页（?page=about），不再重复。
+// 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
 import { useEffect } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
-import { AboutSection } from "../components/settings/AboutSection";
 import { CaptionsSection } from "../components/settings/CaptionsSection";
 import { CatalogSection } from "../components/settings/CatalogSection";
 import { ClaudeImportSection } from "../components/settings/ClaudeImportSection";
+import { CredentialsSection } from "../components/settings/CredentialsSection";
+import { GeneralExtras } from "../components/settings/GeneralExtras";
+import { GmailSection } from "../components/settings/GmailSection";
 import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
 import { SkillsSection } from "../components/settings/SkillsSection";
 import { RecordingSection } from "../components/settings/RecordingSection";
 import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
-import { SourcesSection } from "../components/settings/SourcesSection";
+import { ObsidianSection } from "../components/settings/ObsidianSection";
+import { SlackSection } from "../components/settings/SlackSection";
 import { useI18n } from "../i18n";
 import { buildAppUrl, readAnchor } from "../route";
 
-/** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序） */
+/** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序 = 原生注册表顺序，web 自有区就近插入）。
+ *  标题 zh / en 逐字镜像原生 SettingsSectionDescriptor（screen:settings.* 探针读这里）。 */
 export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "models", zh: "模型", en: "Models" },
-  { id: "sources", zh: "来源开关与凭证", en: "Sources & credentials" },
+  { id: "general", zh: "通用", en: "General" },
+  { id: "notifications", zh: "通知", en: "Notifications" },
   { id: "recording", zh: "录制", en: "Recording" },
   { id: "live_captions", zh: "实时字幕", en: "Live captions" },
-  { id: "notifications", zh: "通知", en: "Notifications" },
-  { id: "telemetry", zh: "产品改进计划", en: "Product improvement" },
-  { id: "digest", zh: "摘要与回顾", en: "Digests" },
-  { id: "general", zh: "通用", en: "General" },
-  { id: "approval", zh: "审批 / 成本", en: "Approval / Cost" },
-  { id: "flags", zh: "Feature flags", en: "Feature flags" },
-  { id: "redaction", zh: "脱敏", en: "Redaction" },
-  { id: "voice", zh: "语气档案", en: "Voice profile" },
-  { id: "maintainer", zh: "开发者会话", en: "Developer session" },
+  { id: "obsidian", zh: "笔记库", en: "Notes vault" },
+  { id: "credentials", zh: "凭证（存本机 config/secrets/，保存后自动验证）", en: "Credentials (stored locally in config/secrets/; verified automatically on save)" },
+  { id: "slack", zh: "Slack 接入", en: "Slack" },
+  { id: "gmail", zh: "Gmail 接入", en: "Gmail" },
   { id: "claude_import", zh: "导入 Claude Code 工作", en: "Import Claude Code work" },
-  { id: "skills", zh: "Skills", en: "Skills" },
-  { id: "mcp", zh: "MCP servers", en: "MCP servers" },
+  { id: "skills", zh: "Skills（Claude Code 技能）", en: "Skills (Claude Code)" },
+  { id: "mcp", zh: "MCP servers（Claude Code 外接工具）", en: "MCP servers (Claude Code external tools)" },
+  { id: "approval", zh: "审批 / 成本", en: "Approval / Cost" },
+  { id: "flags", zh: "Feature flags（§16，默认全开）", en: "Feature flags (§16, all on by default)" },
+  { id: "digest", zh: "每周摘要", en: "Weekly digest" },
+  { id: "voice", zh: "语气档案（以你的口吻起草）", en: "Voice profile (drafts in your voice)" },
+  { id: "redaction", zh: "脱敏（发给 AI 前本地打码）", en: "Redaction (local masking before sending to AI)" },
+  { id: "telemetry", zh: "产品改进计划", en: "Product improvement program" },
+  { id: "maintainer", zh: "开发者 · 开发会话", en: "Developer session" },
   { id: "materials", zh: "素材库", en: "Materials" },
   { id: "recap", zh: "会议纪要", en: "Recaps" },
-  { id: "about", zh: "关于 / 看板 app", en: "About / Board app" },
 ];
 
 export function SettingsPage() {
@@ -76,25 +81,27 @@ export function SettingsPage() {
         ))}
       </nav>
       <div id="settings-models"><ModelsSection /></div>
-      <SourcesSection />
+      <CatalogSection sectionId="general"><GeneralExtras /></CatalogSection>
+      <CatalogSection sectionId="notifications" />
       <RecordingSection />
       <CaptionsSection />
-      <CatalogSection sectionId="notifications" />
-      <CatalogSection sectionId="telemetry" />
-      <CatalogSection sectionId="digest" />
-      <CatalogSection sectionId="general" />
+      <ObsidianSection />
+      <CredentialsSection />
+      <SlackSection />
+      <GmailSection />
+      <ClaudeImportSection />
+      <div id="settings-skills"><SkillsSection /></div>
+      <McpSection />
       <CatalogSection sectionId="approval" />
       <CatalogSection sectionId="flags" />
-      <CatalogSection sectionId="redaction" />
+      <CatalogSection sectionId="digest" />
       <CatalogSection sectionId="voice" />
+      <CatalogSection sectionId="redaction" />
+      <CatalogSection sectionId="telemetry" />
       <CatalogSection sectionId="maintainer" />
-      <ClaudeImportSection />
-      <McpSection />
       <div id="settings-materials"><MaterialsSection /></div>
       {/* §63 会议纪要：会后自动出稿 / 默认语言 / Slack 草稿开关（默认关） */}
       <div id="settings-recap"><RecapSection /></div>
-      <div id="settings-skills"><SkillsSection /></div>
-      <AboutSection />
     </main>
   );
 }

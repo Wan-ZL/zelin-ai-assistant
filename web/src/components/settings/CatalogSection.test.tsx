@@ -104,22 +104,36 @@ describe("CatalogSection", () => {
 });
 
 describe("SecretRow", () => {
-  it("saves write-only: input cleared, value never rendered, status refreshed", async () => {
+  it("saves write-only and verifies on save（原生「保存即验证」）: input cleared, value never rendered, status refreshed", async () => {
     vi.mocked(fetchSecrets)
       .mockResolvedValueOnce({ secrets: [{ name: "slack-user-token.txt", label: { zh: "Slack", en: "Slack token" }, present: false, verifiable: true, mtime: null }] })
       .mockResolvedValue({ secrets: [{ name: "slack-user-token.txt", label: { zh: "Slack", en: "Slack token" }, present: true, verifiable: true, mtime: 1 }] });
     vi.mocked(putSecret).mockResolvedValue({ name: "slack-user-token.txt", label: { zh: "Slack", en: "Slack token" }, present: true, verifiable: true, mtime: 1 });
+    vi.mocked(verifySecret).mockResolvedValue({ ok: true, network: false, detail: "auth.test ok", extra: {} });
     renderEn(<SecretRow name="slack-user-token.txt" />);
     const { refreshSecrets } = await import("../../store");
     await refreshSecrets();
     await screen.findByText("Not set");
     const input = screen.getByLabelText("Slack token value") as HTMLInputElement;
+    expect(input.placeholder).toBe("Paste, then Save (stored locally; verified on save)");
     fireEvent.change(input, { target: { value: "xoxp-SECRET" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(putSecret).toHaveBeenCalledWith("slack-user-token.txt", "xoxp-SECRET"));
-    await screen.findByText("Saved");
+    await screen.findByText(/Saved ✓ verified/);
+    expect(verifySecret).toHaveBeenCalledWith("slack-user-token.txt");
+    expect(screen.getByText("verified ✓")).toBeTruthy();
     expect(input.value).toBe("");
     expect(document.body.textContent).not.toContain("xoxp-SECRET");
+  });
+
+  it("a key without a probe says 已保存（App 内管理）and never shows Verify", async () => {
+    vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [{ name: "volcano-ark-key.txt", label: { zh: "Ark", en: "Ark key" }, present: true, verifiable: false, mtime: 1 }] });
+    renderEn(<SecretRow name="volcano-ark-key.txt" />);
+    const { refreshSecrets } = await import("../../store");
+    await refreshSecrets();
+    await screen.findByText("Saved (managed in-app)");
+    expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
+    expect((screen.getByLabelText("Ark key value") as HTMLInputElement).placeholder).toBe("Paste, then Save (stored locally; no network)");
   });
 
   it("verify separates network errors from credential rejections", async () => {
@@ -134,5 +148,6 @@ describe("SecretRow", () => {
     await screen.findByText(/Network error \(not the credential\)/);
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     await screen.findByText(/Verification failed: HTTP 401/);
+    expect(screen.getByText("verification failed")).toBeTruthy();
   });
 });

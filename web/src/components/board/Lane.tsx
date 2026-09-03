@@ -18,6 +18,8 @@ interface LaneProps {
   composer?: ReactNode;
   /** 列表被 cap 截断时的补充说明（如 completed「仅显示最近 N 条」） */
   capNote?: string;
+  /** 空列文案（原生每列一句；过滤生效时 BoardLanes 换成「无匹配卡片」）；缺省「空」 */
+  emptyText?: string;
   isEmpty: boolean;
   children: ReactNode;
 }
@@ -70,7 +72,7 @@ export function LaneHelpButton({ help }: { help: string }) {
   );
 }
 
-export function Lane({ title, slug, countLabel, colorToken, composer, capNote, isEmpty, children }: LaneProps) {
+export function Lane({ title, slug, countLabel, colorToken, composer, capNote, emptyText, isEmpty, children }: LaneProps) {
   const { text } = useI18n();
   const help = useLaneHelp(slug);
   return (
@@ -83,7 +85,7 @@ export function Lane({ title, slug, countLabel, colorToken, composer, capNote, i
       </header>
       {composer}
       <div className="column-list">
-        {isEmpty ? <p className="column-empty">{text("空", "Empty")}</p> : children}
+        {isEmpty ? <p className="column-empty">{emptyText ?? text("空", "Empty")}</p> : children}
       </div>
       {capNote && <p className="column-cap-note">{capNote}</p>}
     </section>

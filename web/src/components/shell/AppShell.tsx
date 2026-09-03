@@ -1,4 +1,5 @@
-// App 外壳（G7，自写非 fork）：顶栏 + 离线横幅 + 主内容区的布局骨架。
+// App 外壳（G7，自写非 fork）：左侧导航栏 + 顶栏 + 离线横幅 + 主内容区的布局骨架（§54.4：
+// 布局跟原生 MainWindow——sidebar 通高在左，顶栏与内容在右）。
 // app.tsx 保持薄——页面组件作为 children 传进来，这里只管壳层关注点：
 //   1. 整页状态分派：首载 loading / 从未加载成功且离线（诚实空态+恢复路径）/ 正常渲染页面；
 //   2. <html lang> 与 document.title 随语言同步；
@@ -11,6 +12,7 @@ import { refreshBoard, useAppState } from "../../store";
 import { EmptyState } from "./EmptyState";
 import { ErrorBanner } from "./ErrorBanner";
 import { HeaderBar } from "./HeaderBar";
+import { NavRail } from "./NavRail";
 import { PipelineBanner } from "./PipelineBanner";
 import { SelfImproveBanner } from "./SelfImproveBanner";
 
@@ -75,13 +77,17 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
 
   return (
     <div className="shell">
-      <HeaderBar searchSlot={searchSlot} />
-      <ErrorBanner />
-      {/* §47.4 管线健康（后台服务卡住/崩/停）——与离线横幅互斥，见组件头注 */}
-      <PipelineBanner />
-      {/* §65.4 自动草稿 PR 通道被敏感路径护栏挂起——点名 PR + 「恢复通道」 */}
-      <SelfImproveBanner />
-      <main className="shell-main">{content}</main>
+      {/* §54.4 左侧导航栏：原生 sidebar 的八页，通高、可折叠 */}
+      <NavRail />
+      <div className="shell-body">
+        <HeaderBar searchSlot={searchSlot} />
+        <ErrorBanner />
+        {/* §47.4 管线健康（后台服务卡住/崩/停）——与离线横幅互斥，见组件头注 */}
+        <PipelineBanner />
+        {/* §65.4 自动草稿 PR 通道被敏感路径护栏挂起——点名 PR + 「恢复通道」 */}
+        <SelfImproveBanner />
+        <main className="shell-main">{content}</main>
+      </div>
     </div>
   );
 }

@@ -545,13 +545,15 @@ export interface BilingualText {
 
 export interface SettingsField {
   key: string;
-  kind: "bool" | "enum" | "string" | "number" | "int" | string;
+  kind: "bool" | "enum" | "string" | "number" | "int" | "list" | string;
   label: BilingualText;
   help: BilingualText;
   default: unknown;
   choices: string[] | null;
   effective: unknown;
   source: "override" | "config" | "default" | string;
+  /** add-only（§68.1）：输入框示例文案（原生 TextField prompt，如「例：you@gmail.com」）；老 server 缺席 */
+  placeholder?: string;
   [key: string]: unknown;
 }
 
@@ -776,5 +778,34 @@ export interface RepairReceipt {
   ok: boolean;
   label: string;
   action: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/ask/history 的一行（§27：act.ask 追加，最新在前，cap 20；键逐字镜像 act/ask.py _append_history） */
+export interface AskHistoryItem {
+  q: string;
+  a: string;
+  citation?: string | null;
+  lang?: string;
+  ts?: string;
+  elapsed_s?: number;
+  [key: string]: unknown;
+}
+
+export interface AskHistory {
+  items: AskHistoryItem[];
+  [key: string]: unknown;
+}
+
+/** POST /api/ask 回执 = act.ask 的一行 JSON（§27）：ok 时 answer / citation；否则 error（+ failure_id / timeout） */
+export interface AskAnswer {
+  ok: boolean;
+  answer?: string;
+  citation?: string | null;
+  lang?: string;
+  elapsed_s?: number;
+  error?: string;
+  failure_id?: string | null;
+  timeout?: boolean;
   [key: string]: unknown;
 }

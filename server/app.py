@@ -29,6 +29,10 @@
   POST /api/setup/{config-from-example,complete,reset}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
+- 问问助手（§27 / §54.4 左侧导航栏页）：GET /api/ask/history（只读 state/ask_history.json）、
+  POST /api/ask {question}（子进程 ``python -m act.ask``，server/ask.py）；
+  Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_setup.py）；
+  关于页 POST /api/uninstall/terminal（在 Terminal 跑 uninstall.sh 的 .command，server/uninstall_launch.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 
@@ -50,11 +54,12 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (about, ai_fix_launch, board_source, claude_sessions,
+from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
                     diagnostics, doctor_run, files, health, inbox_writer, lanes,
                     materials, mcp_servers, paths, permissions, recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
-                    settings_catalog, setup, terminal_launch)
+                    settings_catalog, setup, slack_setup, terminal_launch,
+                    uninstall_launch)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -508,6 +513,10 @@ _GET_JSON_ROUTES = {
     "/api/mcp": lambda ctx, query: mcp_servers.mcp(ctx.home),
     # §68.10 导入 Claude Code 工作：扫描预览
     "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
+    # §27 问问助手：最近的问答（只读；写者是 act.ask）
+    "/api/ask/history": lambda ctx, query: ask.history(ctx.home),
+    # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
+    "/api/slack/manifest": lambda ctx, query: slack_setup.manifest(ctx.home),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -545,6 +554,10 @@ _POST_JSON_ROUTES = {
     "/api/setup/reset": lambda ctx, payload: setup.reset(ctx.home, payload),
     # §26 手动「立即检查」
     "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
+    # §27 问问助手：一问一答（子进程 act.ask，≤75 s）
+    "/api/ask": lambda ctx, payload: ask.ask(ctx.home, payload),
+    # §68.6 关于页「在 Terminal 中卸载…」：.command + open，server 自己不删任何东西
+    "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload),
 }
 
 _POST_PREFIX_ROUTES = {
