@@ -1,4 +1,4 @@
-// Playwright 视觉基线（CONTRACT §63.4）。e2e/visual.spec.ts 自己种 demo 数据、起 server（随机
+// Playwright 视觉基线（CONTRACT §64.4）。e2e/visual.spec.ts 自己种 demo 数据、起 server（随机
 // 空闲端口）——这里只定浏览器、视口与 golden 的落点。
 //   · 视口 1440×900（owner 机器的常用窗口尺寸；原生 app 默认窗 900×640 + 侧栏，放大后看得清列）
 //   · golden 路径不带平台/浏览器后缀：web/e2e/__screenshots__/<spec>/<name>.png——

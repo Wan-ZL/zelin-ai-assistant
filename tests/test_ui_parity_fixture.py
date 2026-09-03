@@ -1,4 +1,4 @@
-"""§63.2 vitest demo fixture 生成器（scripts/ui/parity_fixture.py）的判例。
+"""§64.2 vitest demo fixture 生成器（scripts/ui/parity_fixture.py）的判例。
 
 fixture = demo_seed 的 initial 场景（固定 now，确定性）+ 两行封存卡 + server/lanes.py
 目录；形状必须让 web 的每个渲染面都有东西可画（看板六列、回收站、右侧书立条）。

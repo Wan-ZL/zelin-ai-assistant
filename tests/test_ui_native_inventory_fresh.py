@@ -1,4 +1,4 @@
-"""§63 UI 对齐契约：提交进仓的机器生成物必须与生成器重跑结果逐字节一致。
+"""§64 UI 对齐契约：提交进仓的机器生成物必须与生成器重跑结果逐字节一致。
 
 ui/parity/native-inventory.json（终版规格）、ui/tokens/native-tokens.json + tokens.css 的
 `@generated native-tokens` 块、ui/parity/fixtures/*.json（vitest 的 demo fixture）都是

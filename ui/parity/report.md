@@ -1,6 +1,6 @@
-# UI parity report (CONTRACT §63)
+# UI parity report (CONTRACT §64)
 
-Inventory `ui/parity/native-inventory.json` sha256 `97f338508162`.
+Inventory `ui/parity/native-inventory.json` sha256 `0890d4f13efa`.
 
 | status | count |
 |---|---|

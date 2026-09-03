@@ -1,4 +1,4 @@
-"""§63.1 原生 UI 清单提取器（scripts/ui/extract_native_inventory.py）的判例。
+"""§64.1 原生 UI 清单提取器（scripts/ui/extract_native_inventory.py）的判例。
 
 用一座迷你 mac/Sources（覆盖 MainSection 侧栏、Settings 注册表与 group、Slack 子
 section、Kanban 列、卡片按钮 / 对话框、AppDelegate 菜单与 ⌘n、NotifyRelay kind）钉住：
