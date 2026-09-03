@@ -65,6 +65,8 @@ _SPECIAL_FIELDS = {
     # ——recap_slack_draft 的 channel_id 是 owner 自己草稿箱的会话，不是发送目标
     "recap_generate": ({"meeting_key"}, {"note", "partial"}),
     "recap_slack_draft": ({"meeting_key", "channel_id"}, set()),
+    # §48.7 设置页「立即测试一轮」：source ∈ gmail|slack；actd 分离起 act.radar_<src> --once
+    "radar_test_round": ({"source"}, set()),
 }
 
 ALLOWED_ACTIONS = CARD_VERBS | frozenset(_SPECIAL_FIELDS)
@@ -361,6 +363,17 @@ def _build_recap_slack_draft(payload: dict) -> dict:
             "channel_id": channel}
 
 
+# §48.7 有「立即测试一轮」的源（镜像 act/lib/radar_rounds.SOURCES；obsidian 走 cron 链，原生也无此键）
+_RADAR_ROUND_SOURCES = frozenset({"gmail", "slack"})
+
+
+def _build_radar_test_round(payload: dict) -> dict:
+    source = payload.get("source")
+    if source not in _RADAR_ROUND_SOURCES:
+        raise InvalidFieldError("source must be gmail or slack", {"field": "source"})
+    return {"action": "radar_test_round", "source": source}
+
+
 _SPECIAL_BUILDERS = {
     "split_note": _build_split_note,
     "set_title": _build_set_title,
@@ -372,6 +385,7 @@ _SPECIAL_BUILDERS = {
     "import_claude_sessions": _build_import_sessions,
     "recap_generate": _build_recap_generate,
     "recap_slack_draft": _build_recap_slack_draft,
+    "radar_test_round": _build_radar_test_round,
 }
 
 

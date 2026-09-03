@@ -6,6 +6,7 @@
 // 这是一份 wire contract（CONTRACT §61.1，add-only）：
 //   request  = window.webkit.messageHandlers.zaiShell.postMessage({method, ...args})
 //              → Promise<state>；未知 method / 坏参数 → reject(String)
+//              对话框类方法（chooseFolder）的回执 = 快照 + add-only `dialog: {path: string|null}`
 //   event    = window.dispatchEvent(new CustomEvent("zai-shell-state", {detail: state}))
 //   state    = ShellBridge.stateSnapshot()（键名 snake_case，前端逐字镜像——防腐 #10）
 // 页面只在 `window.webkit?.messageHandlers?.zaiShell` 存在时渲染这两个开关
@@ -159,6 +160,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
               let method = dict["method"] as? String else {
             throw BridgeError.invalidArgs("body must be {method: string, ...}")
         }
+        // 对话框类方法：回执 = 快照 + `dialog` 块（§61.1 add-only；页面 chooseFolder() 读它）
+        var dialog: [String: Any]? = nil
         switch method {
         case "getState":
             break
@@ -215,10 +218,23 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
                 throw BridgeError.invalidArgs("setBadge needs count: non-negative int")
             }
             DockBadge.set(count)
+        case "chooseFolder":
+            // §68.1 目录字段「选择…」：NSOpenPanel 只选目录、可新建；current / prompt 都可选但类型严格
+            if let raw = dict["current"], !(raw is String) {
+                throw BridgeError.invalidArgs("chooseFolder current must be a string")
+            }
+            if let raw = dict["prompt"], !(raw is String) {
+                throw BridgeError.invalidArgs("chooseFolder prompt must be a string")
+            }
+            let picked = FolderDialog.chooseFolder(current: dict["current"] as? String ?? "",
+                                                   prompt: dict["prompt"] as? String)
+            dialog = ["path": picked ?? NSNull()]
         default:
             throw BridgeError.unknownMethod(method)
         }
-        return Self.stateSnapshot()
+        var snapshot = Self.stateSnapshot()
+        if let dialog { snapshot["dialog"] = dialog }
+        return snapshot
     }
 
     /// §68.2 字幕偏好：全部可选键；每键先校验再写（任一坏值整个请求拒绝、零写入）。

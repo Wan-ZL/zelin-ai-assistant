@@ -474,8 +474,10 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         rs = dash["radar_sources"]
         self.assertEqual(set(rs), set(sources.SOURCES))
         for entry in rs.values():
+            # §48.7 add-only：last_attempt / test_round
             self.assertEqual(set(entry),
-                             {"enabled", "last_ok", "skip_reason", "stale"})
+                             {"enabled", "last_ok", "skip_reason", "stale",
+                              "last_attempt", "test_round"})
             self.assertIsInstance(entry["enabled"], bool)
             self.assertIsInstance(entry["stale"], bool)
 

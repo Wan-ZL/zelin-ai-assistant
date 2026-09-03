@@ -1,13 +1,15 @@
 // Gmail 接入区（§48 / §68；原生 SettingsGmail.swift 的 web 版，标签逐字镜像）：「启用 Gmail 雷达」开关 →
 // 「抓取方式」A · 应用专用密码（推荐）/ B · 自定义抓取命令（= gmail_fetch_command 非空；单选只决定显示哪个字段）→
 // ① 应用专用密码页链接（打不开？先开两步验证）② 填 Gmail 地址（目录 string 字段，占位「例：you@gmail.com」）
-// ③ Gmail 应用密码（SecretRow，保存即验证 = IMAP 只读登录一次）→ 「运行状态（真实轮询结果）」（§48 投影）。
+// ③ Gmail 应用密码（SecretRow，保存即验证 = IMAP 只读登录一次）→ 「后台雷达」行（launchd agent 状态 / 重新安装）
+// + 「运行状态（真实轮询结果）」+ 立即测试一轮（RadarAgentPanel，§48.7）+ 健康摘要（§48 投影）。
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { refreshSecrets, useAppState } from "../../store";
 import { CatalogSection } from "./CatalogSection";
+import { RadarAgentPanel } from "./RadarAgentPanel";
 import { SecretRow } from "./SecretRow";
-import { HealthLine, RunStatusLine } from "./sourceHealth";
+import { HealthLine } from "./sourceHealth";
 
 type FetchPath = "app_password" | "command";
 
@@ -68,8 +70,7 @@ export function GmailSection() {
       only={isA ? ["gmail_enabled", "gmail_address"] : ["gmail_enabled", "gmail_address", "gmail_fetch_command"]}
       between={{ gmail_enabled: <>{picker}{isA ? stepsA : null}</>, gmail_address: step3 }}
     >
-      <div className="settings-subhead">{text("运行状态（真实轮询结果）", "Run status (real poll results)")}</div>
-      <RunStatusLine health={health} />
+      <RadarAgentPanel source="gmail" />
       {health && <ul className="settings-health"><HealthLine source="gmail" health={health} /></ul>}
     </CatalogSection>
   );

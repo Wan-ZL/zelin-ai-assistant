@@ -49,14 +49,19 @@ _FALSE_WORDS = frozenset({"false", "no", "off", "0"})
 def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
        config: "tuple | None" = None, choices: "tuple | None" = None,
        help_zh: str = "", help_en: str = "", override: Optional[str] = None,
-       write: str = "diff", placeholder: "tuple | None" = None) -> dict:
+       write: str = "diff", placeholder: "tuple | None" = None,
+       path: Optional[str] = None) -> dict:
     """一条 field 描述（目录内部形；对外投影去掉 config/override/write 三个内部键）。
-    ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。"""
+    ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。
+    ``path``（add-only；今日词表 ``"dir"``）= 这是一个目录字段：投影多带 ``path`` 与 ``path_exists``
+    （effective 值展开 ``~`` 后是不是目录；空值 → null），web 据此渲染 选择… / 打开 / 创建 与
+    「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。"""
     zh_ph, en_ph = placeholder or ("", "")
     return {"key": key, "kind": kind, "label": {"zh": zh, "en": en},
             "help": {"zh": help_zh, "en": help_en}, "default": default,
             "choices": list(choices) if choices else None, "config": config,
-            "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph}}
+            "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph},
+            "path": path}
 
 
 def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
@@ -125,7 +130,7 @@ SECTIONS: tuple = (
                help_zh="扫描笔记库 raw 目录里的新笔记（屏幕/会议 ingest 的落点）。",
                help_en="Scans new notes in the vault's raw folder (where screen / meeting ingest lands)."),
             _f("obsidian_raw", "string", "Obsidian Vault 位置", "Obsidian Vault location", default="",
-               config=("sources", "obsidian_raw"),
+               config=("sources", "obsidian_raw"), path="dir",
                help_zh="雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。",
                help_en="The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root)."),
         ],
@@ -208,7 +213,7 @@ SECTIONS: tuple = (
         "approval", "审批 / 成本", "Approval / Cost",
         [
             _f("default_target_repo", "string", "任务工作目录", "Task working folder",
-               default="~/Projects/your-workbench", config=("execution", "default_target_repo"),
+               default="~/Projects/your-workbench", config=("execution", "default_target_repo"), path="dir",
                help_zh="卡片没指定落点时的兜底目录（文书 / 调研的家；绝不默认进你的代码 repo）。",
                help_en="Fallback folder when a card names no target (home for paperwork / research; never your code repo by default)."),
             _f("skip_permissions", "bool", "后台任务免确认执行（更快，默认开）",
@@ -271,7 +276,7 @@ SECTIONS: tuple = (
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
             _f("maintainer_repo_path", "string", "本软件的仓库路径", "This software's repo path", default="",
-               config=("maintainer", "repo_path"),
+               config=("maintainer", "repo_path"), path="dir",
                help_zh="「让 AI 修」与开发会话打开的仓库；留空 = 当前 checkout。",
                help_en="Repo opened by Fix with AI and developer sessions; blank = this checkout."),
             _f("maintainer_session_id", "string", "续接的会话 id", "Session id to resume", default="",
@@ -441,11 +446,26 @@ def effective(field: dict, overrides: dict, config_doc: dict) -> "tuple[Any, str
 _PUBLIC_FIELD_KEYS = ("key", "kind", "label", "help", "default", "choices", "placeholder")
 
 
+def path_exists(value: Any) -> Optional[bool]:
+    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``；空 / 非字串 → None（无从判断）。"""
+    raw = value.strip() if isinstance(value, str) else ""
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser().is_dir()
+    except (OSError, ValueError):
+        return False
+
+
 def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
     out = {k: field[k] for k in _PUBLIC_FIELD_KEYS}
     value, source = effective(field, overrides, config_doc)
     out["effective"] = value
     out["source"] = source
+    if field.get("path"):
+        # add-only（§68.1 目录字段）：web 的 选择… / 打开 / 创建 与「目录不存在」警告据此渲染
+        out["path"] = field["path"]
+        out["path_exists"] = path_exists(value)
     return out
 
 

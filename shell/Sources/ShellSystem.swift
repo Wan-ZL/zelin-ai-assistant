@@ -255,3 +255,34 @@ enum DockBadge {
         NSApp.dockTile.badgeLabel = count > 0 ? String(count) : nil
     }
 }
+
+// MARK: - folder dialog（原生 Settings.pickFolder 的 NSOpenPanel；CONTRACT §61.1 `chooseFolder` / §68.1 目录字段）
+
+@MainActor
+enum FolderDialog {
+    /// 对话框的执行体（注入缝：桥 harness 换成假实现，绝不弹真面板）。参数 (current, prompt) →
+    /// 选中的路径（`$HOME` 缩回 `~`，同原生 abbreviateHome）或 nil（取消）。
+    static var runner: (String, String?) -> String? = { current, prompt in
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        if let prompt, !prompt.isEmpty { panel.prompt = prompt }
+        let cur = (current.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        if !cur.isEmpty, FileManager.default.fileExists(atPath: cur) {
+            panel.directoryURL = URL(fileURLWithPath: cur, isDirectory: true)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return abbreviateHome(url.path)
+    }
+
+    static func chooseFolder(current: String, prompt: String?) -> String? {
+        runner(current, prompt)
+    }
+
+    /// `/Users/x/Notes` → `~/Notes`（原生 Settings.abbreviateHome 同款；其它路径原样）。
+    static func abbreviateHome(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}

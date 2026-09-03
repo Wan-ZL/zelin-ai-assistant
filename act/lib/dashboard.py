@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
-                     policy, radar_health, recap_store, risk, self_improve, sources, steer,
-                     titles, transcripts)
+                     policy, radar_health, radar_rounds, recap_store, risk, self_improve,
+                     sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -806,7 +806,8 @@ def _opt_text(v: Any) -> Optional[str]:
     return v if isinstance(v, str) and v else None
 
 
-def _source_health(src: str, on: bool, data: dict, now: _dt.datetime) -> dict:
+def _source_health(src: str, on: bool, data: dict, now: _dt.datetime,
+                   rounds: Optional[dict] = None) -> dict:
     # 关掉的源不带健康摘要：清理僵尸条目发生在 liveness 巡检（同 pass 的
     # dashboard 构建在它之前）——不在这里屏蔽的话，关源后的第一个 pass
     # 会把旧 last_ok/skip_reason 投影出去（关着 = null 的契约被破一拍）。
@@ -824,7 +825,18 @@ def _source_health(src: str, on: bool, data: dict, now: _dt.datetime) -> dict:
         # 进程级宽限状态会让 CLI 构建永远压掉 stale）；告警宽限是通知侧
         # 的关切。睡醒后的一轮假 stale 随雷达补跑自愈，消费者自行防抖。
         "stale": bool(on and sources.is_stale(src, entry, now)),
+        # §48.7 add-only：最近一轮尝试（原生「最近一轮 <相对时间>」）与
+        # 「立即测试一轮」的回执（无请求 → null；关着的源同样屏蔽）
+        "last_attempt": _opt_text(entry.get("last_attempt")),
+        "test_round": radar_rounds.projection(src, entry, now, rounds) if on else None,
     }
+
+
+def _radar_rounds_data() -> dict:
+    try:
+        return radar_rounds.load_rounds()
+    except Exception:  # noqa: BLE001 - 台账坏了不许崩 dashboard
+        return {}
 
 
 def _radar_sources(cfg: config.Config) -> dict:
@@ -833,17 +845,20 @@ def _radar_sources(cfg: config.Config) -> dict:
     形状（每个 act.lib.sources.SOURCES 成员一条，键恒在）::
 
         {"gmail": {"enabled": bool, "last_ok": iso|null,
-                   "skip_reason": str|null, "stale": bool}, ...}
+                   "skip_reason": str|null, "stale": bool,
+                   "last_attempt": iso|null, "test_round": {...}|null}, ...}
 
     ``enabled`` 来自真源 sources.enabled()（App 侧的 intent 判断自此读这里，
     不再猜「凭证文件非空」）；``last_ok``/``skip_reason`` 摘自 radar_health
     条目（关掉的源条目已被清除 → null）；``stale`` = 开着且超 liveness 阈值
-    没有成功信号（告警的看板投影，恢复后自动变回 false）。Never raises。
+    没有成功信号（告警的看板投影，恢复后自动变回 false）；``last_attempt`` /
+    ``test_round`` 见 act/lib/radar_rounds.py（§48.7）。Never raises。
     """
     cfg = _live_config(cfg)
     data = _radar_health_data()
+    rounds = _radar_rounds_data()
     now = _dt.datetime.now(_dt.timezone.utc)
-    return {src: _source_health(src, _source_enabled(cfg, src), data, now)
+    return {src: _source_health(src, _source_enabled(cfg, src), data, now, rounds)
             for src in sources.SOURCES}
 
 

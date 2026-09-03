@@ -355,6 +355,16 @@ direct-run 变体（golden `capture-run`）：
 ```
 `channel_id` 形状 `^[CDG][A-Z0-9]{6,20}$`（Slack 会话 id；镜像 `recap_store.CHANNEL_ID_RE`）——它是 owner **自己草稿箱**要附着的会话，不是发送目标：actd 派出的 `act.recap --slack-draft` 只走 Slack MCP 的建草稿白名单，开关（`recap.slack_draft.enabled`，默认关）关着时直接回执 `disabled`。golden：`recap_slack_draft`。
 
+### 3.12 radar_test_round（§48.7，无 `id`；web-only 特形）
+```json
+{
+  "action" : "radar_test_round",
+  "source" : "gmail",
+  "ts" : "2026-08-30T12:00:00Z"
+}
+```
+`source ∈ gmail | slack`（镜像 `act/lib/radar_rounds.SOURCES`；obsidian 雷达走 cron ingest 链，原生也没有这颗按钮）——设置页 Slack / Gmail 接入区「立即测试一轮」。actd 走 `_DETACHED_ACTIONS`：源开着才分离起 `python -m act.radar_<source> --once`，回执落 `state/radar_test_rounds.json` → dashboard `radar_sources.<src>.test_round`。golden：`radar_test_round`。
+
 ### 3.9 import_claude_sessions（§22，无 `id`）
 ```json
 {
@@ -388,7 +398,7 @@ def mac_json_bytes(obj: dict) -> bytes:
 
 ## 5. golden fixtures（`tests/fixtures/inbox/`）
 
-35 个 `<verb>[-variant].golden.json`：31 个由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`；另 4 个 web-only 特形（§63，Mac 端没有对应按钮——D3 不加功能）由 `server.inbox_writer.mac_json_bytes` 按同一字节规则生成：`recap_generate`(+`-note`,`-partial`) / `recap_slack_draft`。
+36 个 `<verb>[-variant].golden.json`：31 个由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`；另 5 个 web-only 特形（Mac 端没有对应 inbox 动作——D3 不加功能）由 `server.inbox_writer.mac_json_bytes` 按同一字节规则生成：`recap_generate`(+`-note`,`-partial`) / `recap_slack_draft`（§63）/ `radar_test_round`（§48.7；原生的「立即测试一轮」是 launchctl kickstart，web 走 inbox）。
 
 G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server 产物的 `ts` 值替换为 `2026-08-30T12:00:00Z` 后**逐字节比较**；`images`/附图路径含 tmpdir 时同样先做值替换（golden 用 `/tmp/zai-demo/...` 占位）。替换只许动 JSON 值、不许 reserialize——reserialize 会洗掉 `\/` 与空数组渲染，测试就失去牙齿。
 
@@ -401,5 +411,5 @@ G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server
 - **R5 `\/` 转义**：NSJSONSerialization 转义正斜杠、Python 默认不转——byte-parity 的最大陷阱，路径类字段（`images`、附图尾行）必踩。配方见 §4。
 - **R6 长度单位漂移**：`set_title` Swift 守卫按 Character（grapheme cluster）数 ≤64，actd 复验按 code points——emoji/组合字符标题可能 Swift 放行、actd 拒收（fail-closed no-op，无害但静默）。web 端按 code points 裁（JS `[...str].length`）比 Swift 更贴 actd。`answer_input` 的 4000 上限两侧都已按 code points（Swift 用 unicodeScalars），照抄即可。
 - **R7 `ts` 不被校验**：actd 今天不解析 inbox `ts`（provenance-only）。格式仍必须保持 `YYYY-MM-DDTHH:MM:SSZ`——registry/审计侧同格式假设。
-- **R8 无 `id` 动作**：`capture`/`feedback`/`weekly_digest_now`/`import_claude_sessions`/`merge_review`/`merge_force`/`recap_generate`/`recap_slack_draft` 无卡片级 `id` 键——G1 校验器不得对它们强制 `id`。
+- **R8 无 `id` 动作**：`capture`/`feedback`/`weekly_digest_now`/`import_claude_sessions`/`merge_review`/`merge_force`/`recap_generate`/`recap_slack_draft`/`radar_test_round` 无卡片级 `id` 键——G1 校验器不得对它们强制 `id`。
 - **R9 rework 空反馈替换文案**：是 Mac 客户端行为（§2.10 字面量），actd 不做此替换；web 不复刻则空打回会被 actd 当空 comment 处理，语义走样。~~TODO(contract)~~ **已落**：字面量随 CONTRACT §10 的 v0.48 追记（T-18）冻结入典。

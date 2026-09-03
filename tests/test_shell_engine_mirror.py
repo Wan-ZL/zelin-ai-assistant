@@ -182,7 +182,9 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
                "openScreenRecordingSettings", "setCaptions", "setLanguage",
                # §68.13
                "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin",
-               "setCaptionPrefs", "setBadge"]
+               "setCaptionPrefs", "setBadge",
+               # §68.1 目录字段的文件对话框
+               "chooseFolder"]
 
     def setUp(self):
         self.swift = _read(SHELL / "ShellBridge.swift")

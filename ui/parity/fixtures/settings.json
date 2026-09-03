@@ -166,7 +166,7 @@
         {
           "choices": null,
           "default": "",
-          "effective": "",
+          "effective": "~/Documents/Obsidian Vault/2 - raw",
           "help": {
             "en": "The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root).",
             "zh": "雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。"
@@ -177,11 +177,13 @@
             "en": "Obsidian Vault location",
             "zh": "Obsidian Vault 位置"
           },
+          "path": "dir",
+          "path_exists": false,
           "placeholder": {
             "en": "",
             "zh": ""
           },
-          "source": "default"
+          "source": "override"
         }
       ],
       "help": {
@@ -510,6 +512,8 @@
             "en": "Task working folder",
             "zh": "任务工作目录"
           },
+          "path": "dir",
+          "path_exists": false,
           "placeholder": {
             "en": "",
             "zh": ""
@@ -922,6 +926,8 @@
             "en": "This software's repo path",
             "zh": "本软件的仓库路径"
           },
+          "path": "dir",
+          "path_exists": null,
           "placeholder": {
             "en": "",
             "zh": ""

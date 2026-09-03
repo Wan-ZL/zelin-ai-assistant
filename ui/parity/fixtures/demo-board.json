@@ -576,21 +576,31 @@
   "radar_sources": {
     "gmail": {
       "enabled": true,
+      "last_attempt": "2026-09-02T11:55:00Z",
       "last_ok": "2026-09-02T11:55:00Z",
       "skip_reason": null,
-      "stale": false
+      "stale": false,
+      "test_round": null
     },
     "obsidian": {
       "enabled": false,
+      "last_attempt": null,
       "last_ok": null,
       "skip_reason": null,
-      "stale": false
+      "stale": false,
+      "test_round": null
     },
     "slack": {
       "enabled": true,
+      "last_attempt": "2026-09-02T11:57:00Z",
       "last_ok": null,
       "skip_reason": "no_credentials",
-      "stale": false
+      "stale": false,
+      "test_round": {
+        "note": null,
+        "requested_at": "2026-09-02T11:56:40Z",
+        "state": "done"
+      }
     }
   },
   "review": [

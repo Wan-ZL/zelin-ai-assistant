@@ -625,19 +625,25 @@
       "enabled": true,
       "last_ok": "2020-01-01T00:00:00Z",
       "skip_reason": null,
-      "stale": true
+      "stale": true,
+      "last_attempt": "2020-01-01T00:00:00Z",
+      "test_round": null
     },
     "slack": {
       "enabled": true,
       "last_ok": null,
       "skip_reason": "mcp_failed",
-      "stale": false
+      "stale": false,
+      "last_attempt": null,
+      "test_round": null
     },
     "obsidian": {
       "enabled": true,
       "last_ok": null,
       "skip_reason": null,
-      "stale": false
+      "stale": false,
+      "last_attempt": null,
+      "test_round": null
     }
   },
   "self_improve": {

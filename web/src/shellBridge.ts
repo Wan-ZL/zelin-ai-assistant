@@ -81,7 +81,8 @@ export type ShellMethod =
   | "openPane"
   | "setLaunchAtLogin"
   | "setCaptionPrefs"
-  | "setBadge";
+  | "setBadge"
+  | "chooseFolder";
 
 export const PERMISSION_KINDS = ["screen", "microphone", "notifications", "vault"] as const;
 export const PANE_IDS = ["full_disk", "screen", "microphone", "notifications", "files_folders"] as const;
@@ -242,6 +243,33 @@ export function onShellCommand(handler: (command: string) => void): () => void {
   };
   window.addEventListener(SHELL_COMMAND_EVENT, listener);
   return () => window.removeEventListener(SHELL_COMMAND_EVENT, listener);
+}
+
+/** 文件对话框（§61.1 `chooseFolder`；§68.1 目录字段）：壳开 NSOpenPanel（只选目录、可新建，prompt =
+ *  原生「选择」），回执 = 快照 + add-only `dialog.path`（取消 = null）。抛错的三种：`NO_BRIDGE`（浏览器）、
+ *  `UNKNOWN_METHOD`（老壳）、`INVALID_ARGS`——调用方据此退化成路径文本框（FolderField）。 */
+export async function chooseFolder(args: { current?: string; prompt?: string } = {}): Promise<string | null> {
+  const handler = shellHandler();
+  if (!handler) throw new Error("NO_BRIDGE");
+  let reply: unknown;
+  try {
+    reply = await handler.postMessage({ method: "chooseFolder", ...args });
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+  applyShellState(reply);
+  const dialog = (reply && typeof reply === "object" ? (reply as Record<string, unknown>).dialog : null) as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const path = dialog && typeof dialog === "object" ? dialog.path : null;
+  return typeof path === "string" && path ? path : null;
+}
+
+/** 桥的 reject 是否「这个壳不会 / 没有壳」——退化到浏览器路径的判据（真错误照抛） */
+export function isBridgeUnavailable(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /^(NO_BRIDGE|UNKNOWN_METHOD)/.test(message);
 }
 
 /** Dock 徽章 = 等你动作的卡数（提案 + 需输入 + 待验收，原生 §15 v0.46 ②）；壳不在场 no-op */
