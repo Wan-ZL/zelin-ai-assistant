@@ -212,7 +212,18 @@ class CaptureReceiptTestCase(unittest.TestCase):
             self._ack("proposed",
                       resp={"ok": False, "error": "missing_scope"})
         self.assertEqual(events[0][0], "capture_receipt_failed")
-        self.assertEqual(events[0][1]["error"], "missing_scope")
+        # #37: Slack's enum code rides as `slack_error`; no free-text `error` key
+        self.assertEqual(events[0][1]["slack_error"], "missing_scope")
+        self.assertNotIn("error", events[0][1])
+
+    def test_non_enum_slack_error_is_dropped_not_uploaded(self):
+        events = []
+        with mock.patch.object(radar_slack.analytics, "log_event",
+                               lambda name, **kw: events.append((name, kw))):
+            self._ack("proposed",
+                      resp={"ok": False, "error": "Bad thing at /Users/x/secret.txt"})
+        self.assertEqual(events[0][0], "capture_receipt_failed")
+        self.assertIsNone(events[0][1]["slack_error"])
 
     def test_already_reacted_is_a_success_echo_not_a_failure(self):
         events = []

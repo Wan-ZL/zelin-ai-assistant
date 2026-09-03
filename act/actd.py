@@ -30,7 +30,6 @@ import argparse
 import datetime as _dt
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -43,6 +42,7 @@ import yaml
 from act.lib import (
     analytics,
     config,
+    failures,
     health,
     heartbeat,
     logcap,
@@ -803,13 +803,10 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         # 该铸新卡（plan 也不进 _carries_increment 的增量口径）。
         plan=list(plan) if plan else None,
         preset=preset if plan else None,
-        sources=[{
-            "who": "zelin" if owner else
-                   ("agent" if channel == "agent_capture" else "remote"),
-            "channel": channel,
-            "date": _dt.date.today().isoformat(),
-            "quote": t,
-        }],
+        # §10 capture_id（issue #7）= inbox 文件 stem，随出生源引文落盘
+        sources=[registry.capture_source(
+            "zelin" if owner else ("agent" if channel == "agent_capture" else "remote"),
+            channel, t, capture_id=inbox_stem)],
         notes=("[direct-run] 用户直接开跑" if run else
                ("from app quick capture" if owner else f"from {channel}")),
     )
@@ -1525,12 +1522,10 @@ def _stop_session_tracked(req: Requirement, ex: dict, sid, why: str,
            f"可能仍在后台运行——请在终端 `claude stop` 手动停止")
     req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
     notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id)
-    # analytics 打点脱敏（TELEMETRY 红线，对齐 answer_failed 的截断 error 口径）：
-    # 会话 UUID 只留前 8 位、PID 不出机——detail 里两者都可能出现（"session
-    # <uuid> still alive (pid N)"），全量只进本机台账（stop_failed_error/notes）。
-    safe = str(detail).replace(str(sid), str(sid)[:8])
-    safe = re.sub(r"\bpid\s+\d+", "pid ?", safe)
-    analytics.log_event("stop_failed", req=req.id, error=safe[:120])
+    # TELEMETRY 红线（issue #37）：事件只带 req + 分类 id，原文（会话 UUID、
+    # PID）一个字节都不出机——全量 detail 只进本机台账（stop_failed_error/notes）。
+    analytics.log_event("stop_failed", req=req.id,
+                        failure_id=failures.classify(str(detail)))
     return False, issued
 
 
@@ -2265,7 +2260,7 @@ def dispatch_approved(cfg: config.Config) -> int:
                 analytics.log_event(
                     "dispatch_failed",
                     req=req.id,
-                    error=err[:120],
+                    failure_id=failures.classify(err),   # id only (#37)
                     reason="dispatch_crashed",
                 )
     return count

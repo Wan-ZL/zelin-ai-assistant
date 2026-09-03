@@ -8,8 +8,8 @@ import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
-import { cardAction, openCardDetail, useSubmit } from "./boardActions";
-import { CardDetails, CardHead, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
+import { cardAction, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { resumeCommand, stateLabel } from "./RunningCard";
@@ -29,7 +29,7 @@ export function DoneCard({ row }: DoneCardProps) {
   const shownId = displayId(row);   // §60：展示工作编号；动作仍送主键 row.id
 
   return (
-    <article className="task-card" onDoubleClick={() => openCardDetail(row.id)}>
+    <CardSurface cardId={row.id} label={`${text("已完成", "Done")} · ${title}`}>
       <CardHead card={row} title={title} leading={<span className="card-dot is-done" aria-hidden="true" />} />
       <div className="card-badges">
         {/* 原生 completed 行：状态章 已交付（绿 accent）· 验收于 <相对> · repo 章 */}
@@ -88,6 +88,6 @@ export function DoneCard({ row }: DoneCardProps) {
           onCancel={() => setConfirmArchive(false)}
         />
       )}
-    </article>
+    </CardSurface>
   );
 }

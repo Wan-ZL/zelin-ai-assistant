@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import type { CardSource } from "../../types";
 import { copyText } from "../detail/copyText";
+import { CopiedAnnouncer } from "./cardChrome";
 
 export function PlanList({ plan }: { plan: unknown }) {
   const { text } = useI18n();
@@ -72,22 +73,25 @@ export function CopyPathLine({ label, path }: { label: string; path: unknown }) 
   }, []);
   if (typeof path !== "string" || !path) return null;
   return (
-    <button
-      type="button"
-      className={`card-copy-path${copied ? " is-copied" : ""}`}
-      title={path}
-      onClick={() => {
-        void copyText(path).then((ok) => {
-          if (!ok) return;
-          setCopied(true);
-          if (timer.current) clearTimeout(timer.current);
-          timer.current = setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      <span aria-hidden="true">{copied ? "✓ " : "⧉ "}</span>
-      {label}{path}
-    </button>
+    <>
+      <button
+        type="button"
+        className={`card-copy-path${copied ? " is-copied" : ""}`}
+        title={path}
+        onClick={() => {
+          void copyText(path).then((ok) => {
+            if (!ok) return;
+            setCopied(true);
+            if (timer.current) clearTimeout(timer.current);
+            timer.current = setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+      >
+        <span aria-hidden="true">{copied ? "✓ " : "⧉ "}</span>
+        {label}{path}
+      </button>
+      <CopiedAnnouncer copied={copied} />
+    </>
   );
 }
 

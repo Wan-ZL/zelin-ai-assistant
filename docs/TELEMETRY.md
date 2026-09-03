@@ -37,6 +37,7 @@ truth，上传只读不改不删。
 | `source` | 事件来源渠道 | `"slack"` |
 | `outcome` | 动作类事件的结果（`ok` \| `fail`）；目前带此字段的事件：`merge_apply`（合并建议落地）；历史事件见下方注 | `"ok"` |
 | `failure` | `outcome="fail"` 时的失败分类 id（`act/lib/failures.py` 目录）；**只有 id，绝不含原始报错文本**，无法分类时整个字段缺席 | `"claude_auth_failed"` |
+| `failure_id` | 失败类事件（`dispatch_failed` / `rework_failed` / `stop_failed` / `telemetry_sync`）的 §25 分类 id，**同样只有 id、绝不含原始报错文本**；无法分类时整个字段缺席。**issue #37 起这些事件不再携带任何 `error` 自由文本字段**（此前上传 ≤120 字符的裸 stderr 节选——路径/值可能藏在里面）；原文只进本机台账（`execution.last_error` / `stop_failed_error` / 派发日志）。`telemetry_sync` 另带 `error_type` = 异常**类名**（如 `OSError`）；`radar_message_failed.error_type` 同义；`capture_receipt_failed.slack_error` = Slack API 的枚举错误码（`^[a-z0-9_]+$`，非此形状整键为 null）。执法：`tests/test_telemetry_no_raw_error.py` 的 AST lint——`act/` `server/` 下任何 `log_event`/`log_first` 调用带 `error=` 关键字即红 | `"claude_auth_failed"` |
 | 各事件自带的元数据 | req id、状态、布尔结果、计数、耗时秒数、字符**数**（不含字符本身）等（见 `props`，即事件原始记录） | `"req": "R-004"` |
 
 **level 本身（basic / detailed 两档）都不携带内容数据**——内容字段全部由下一节

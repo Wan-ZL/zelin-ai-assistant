@@ -137,6 +137,25 @@
   box-shadow: var(--card-shadow);
 }
 
+/* a11y（issue #8）：卡片本身可聚焦（Enter/Space 开详情）——键盘焦点用与输入框同一套 accent 轮廊；鼠标点击不出框 */
+.task-card:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* 屏幕阅读器专用文本（复制成功播报等）：视觉隐藏、可访问性树里仍在 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .task-card.is-queued {
   background: var(--surface-muted);
   border-style: dashed;
@@ -397,6 +416,9 @@
 .card-line.is-body { font: var(--type-card-body); }
 .card-line.is-warning { color: var(--warning); }
 .card-line.is-danger { color: var(--danger); }
+
+/* §7 egress[]（issue #11）：出机后果行——列表零装饰，每行沿用 .card-line.is-danger 的红 */
+.card-egress { list-style: none; margin: 0; padding: 0; }
 
 /* §25 错误一句（原生 10 regular 红）：两行截断，hover 全文——放在 .card-line 之后压过它的字重 */
 .card-line.card-error-line {

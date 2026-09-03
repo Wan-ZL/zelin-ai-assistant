@@ -95,12 +95,12 @@ jobs:
           fi
           echo "Sparkle key preflight OK — secret derives the baked SUPublicEDKey (${BAKED})"
 
-      - name: Select newest Xcode
-        # Match the recent toolchain the Swift sources target (see ci.yml).
-        run: |
-          XCODE="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -V | tail -n1)"
-          sudo xcode-select -s "$XCODE/Contents/Developer"
-          swiftc --version
+      - name: Select pinned Xcode
+        # Same pin as ci.yml (issue #15): .github/xcode-version via
+        # scripts/ci/select_xcode.sh — the release build of a commit resolves
+        # exactly the Xcode its CI run was green on; a missing pin fails here
+        # instead of silently picking another toolchain at tag time.
+        run: bash scripts/ci/select_xcode.sh
 
       - name: Install PyYAML
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.

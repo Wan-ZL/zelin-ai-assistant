@@ -9,8 +9,8 @@ import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, effectiveTier, openCardDetail, useSubmit } from "./boardActions";
-import { CardDetails, CardHead, DetailsToggle } from "./cardChrome";
+import { cardAction, costLine, effectiveTier, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CardSurface, DetailsToggle } from "./cardChrome";
 import { DodList, PlanList, SourceList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
@@ -48,6 +48,32 @@ export function TargetLine({ card }: { card: ApprovalCard }) {
   );
 }
 
+/**
+ * §7 `egress[]`（issue #11）：批准这张卡会触发的出机后果，每条一行、醒目色 + ⇪ 图标，
+ * 读作「后果」而不是描述。github_repo_create = 在你的 GitHub 建私有仓库并推送派生内容；
+ * 未知 kind 按原文显示（披露宁多勿少）。空/缺席不渲染（flag 关 = 今日默认）。
+ */
+export function EgressLines({ card }: { card: ApprovalCard }) {
+  const { text } = useI18n();
+  const rows = Array.isArray(card.egress) ? card.egress.filter((r) => r && typeof r.kind === "string") : [];
+  if (rows.length === 0) return null;
+  return (
+    <ul className="card-egress" aria-label={text("批准后的出机后果", "What leaves this Mac if you approve")}>
+      {rows.map((r, i) => {
+        const target = typeof r.target === "string" && r.target ? r.target : "";
+        const label = r.kind === "github_repo_create"
+          ? text(`批准后将在你的 GitHub 新建私有仓库「${target}」并推送内容`, `Approving creates the private GitHub repo “${target}” and pushes content`)
+          : text(`批准后出机：${r.kind}${target ? ` → ${target}` : ""}`, `Approving sends data out: ${r.kind}${target ? ` → ${target}` : ""}`);
+        return (
+          <li key={`${r.kind}-${i}`} className="card-line is-danger card-egress-line">
+            <span aria-hidden="true">⇪ </span>{label}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function ProposalCard({ card }: ProposalCardProps) {
   const { text } = useI18n();
   const { pending, error, submit } = useSubmit();
@@ -59,7 +85,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
   if (card.processing) {
     // raising 占位：dashboard.py 对 status=raising 发的形状（cf. demo_seed R-104）
     return (
-      <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
+      <CardSurface cardId={card.id} label={`${text("AI 研究中", "AI researching")} · ${card.title}`}>
         <CardHead card={card} title={card.title} variant="placeholder" />
         <div className="task-processing-row is-running">
           <span className="task-processing-ring" aria-hidden="true"><span /></span>
@@ -67,7 +93,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
             {text("AI 研究中，完成后变成正式提案", "AI is researching; becomes a proposal when done")}
           </span>
         </div>
-      </article>
+      </CardSurface>
     );
   }
 
@@ -78,10 +104,11 @@ export function ProposalCard({ card }: ProposalCardProps) {
   const shownId = displayId(card);
 
   return (
-    <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
+    <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${displayTitle}`}>
       {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题） */}
       <CardHead card={card} title={displayTitle} variant="lg" />
       <TargetLine card={card} />
+      <EgressLines card={card} />
       <div className="card-badges">
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
         <span className="chip chip-purple">{card.tier}{card.tier_hint ? ` · ${card.tier_hint}` : ""}</span>
@@ -201,6 +228,6 @@ export function ProposalCard({ card }: ProposalCardProps) {
           onCancel={() => setDialog("none")}
         />
       )}
-    </article>
+    </CardSurface>
   );
 }

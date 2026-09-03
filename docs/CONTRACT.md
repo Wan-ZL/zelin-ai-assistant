@@ -245,6 +245,18 @@ debt item 新增 `summary`（同上，大白话）。
 - "展开详情 ▸" 切换 → 显示带小标题的两块：**「需求来自」**(sources，灰字原话) 和 **「要做什么」**(plan，编号)。折叠为默认。
 - 目的：不展开就能一眼看懂；灰/黑差异由显式小标题承载，不靠颜色猜。
 
+**issue #11 追记（add-only）——`egress[]`：批准即出机的后果披露**。每条 needs_approval 卡（raising 占位项除外）
+恒带 `egress: [{kind, target?, visibility?}]`，空 list = 批了什么也不出机。`kind` 开放枚举，今日唯一值
+`github_repo_create`（`act/lib/dashboard.EGRESS_GITHUB_REPO_CREATE`）：`{"kind":"github_repo_create","target":"<目录名>","visibility":"private"}`，
+仅当 config `execution.create_github_repo` 为真 **且** 交付方式为 repo（chat 永不碰仓库，§20）**且** 派发会 bootstrap 仓库——
+目标目录 = 显式 `target_repo`，否则**默认工作 repo**（`cfg.target_repo_path`）；该目录缺失/为空（`compute_target_kind` 现算）
+**或**存量 `target_kind` 已记为 new 即视为会 bootstrap（`dashboard._will_bootstrap_repo`，与 `act/executor.py dispatch → ensure_repo`
+的判定逐字同源；**不**复用本节 `_target_view` 把默认目录一律报 existing 的捷径——Codex 审 #158 抓到的漏报：默认目录为空时
+卡面 `[]` 而派发仍建 repo）；开关关（默认）时恒 `[]`，存量安装卡面零变化。dispatch 时 `gh` 缺席
+只会让仓库留在本地，卡面**仍**披露意图（审批决定不得依赖用户看不见的二进制）。web `ProposalCard.EgressLines` 以
+红色后果句渲染（「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」），未知 kind 按原文降级显示、永不吞掉；
+客户端 decodeIfPresent / `?? []`。docs/PRIVACY.md 出机清单第 8 行反向引用本条。判例 `tests/test_dashboard_egress_disclosure.py`。
+
 **v0.48 引用注（W17，本文见 §50）**：审批与调度层的生效档位自 v0.48 起读派生值 `effective_tier`（外部出身——显式 `origin_trust=="external"` 章或 sources 现算为 external，v0.48.1 修订——的卡强制按 T2 对待 + 强制 plan expansion），声明字段 `tier` 在 registry YAML 里原样不动；T2 typed-confirm 闸门（Mac/web，§41）应读 `effective_tier` 而非 `tier`——web 客户端自 v0.48.1 已接线（ProposalCard 批准闸门），Mac 端接线是排期项（缺席期间 daemon 侧强制扩写是后盾）。
 
 ## 8. 欠账 → 建议 循环
@@ -299,6 +311,18 @@ debt item 新增 `summary`（同上，大白话）。
 {"action":"capture","text":"<用户一句话>","ts":"<ISO8601>"}
 ```
 actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="quick_capture"`，sources 里保留原话）→ 置状态 `raising` → 复用 process_raising 每轮扩写一条 → 变 card_sent 正式提案卡。快速、不堵轮询。幂等：同 text 重复文件不重复建卡（merge_or_new 按 title 合并）。
+
+**issue #7 追记（add-only）——`capture_id`：捕获与卡片的精确对账**。文件名里的 stem
+（`capture-<uuid>`；server 的 `POST /api/actions` 以 `file: "<stem>.json"` 回给 web，§49）随出生
+源引文落盘：`sources[0].capture_id = "<stem>"`（`registry.capture_source` 单点构造，`mode:"run"`
+的卡同样带、且等于既有的 `execution.inbox_stem`）。dashboard 投影两处：`needs_approval[]` 行
+（含 `raising` 占位行——客户端对账「我刚输入的那条」不用等扩写完成）加卡级 `capture_id`
+（= 第一条带该键的源引文，即出生行；折叠只追加源引文、永不改写它），`sources[]` 每条源引文加
+`capture_id`（有才发）。Slack self-DM / radar / digest 出身的卡没有 inbox 文件 → 整键缺席；
+存量卡投影逐字不变。不进 `_dedupe_sources` 的键（channel/date/ref|quote），折叠语义不变；
+YAML 与 store2 payload 都原样往返。客户端 decodeIfPresent；web `types.ts` 镜像
+`ApprovalCard.capture_id` / `CardSource.capture_id`（原生 `PendingSweep` 的标题前缀猜测法已随
+mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test_capture_id.py`。
 
 **§10bis 输入框贴图 `images` 字段（v0.46，add-only；用户建议 #4/#5）**：`capture` 与 `feedback` 动作可携带 `images` = 本机 PNG 绝对路径数组。App 侧先把粘贴的图片降采样（最长边 2560px）落成 PNG——capture / answer 附图 → `state/attachments/<uuid>-<n>.png`，feedback 附图 → `state/feedback/attachments/<uuid>-<n>.png`（`<uuid>` 每次发送一批、`n` 从 1 起）；UI 上限 4 张；inbox 写失败时 App 删除本批 PNG（孤儿兜底见下方 GC）。actd 边界校验（§33 口径，fail-closed）：非 list 整体忽略，仅收非空字符串、去重、上限 4。`answer_input` **无新键**——附图以尾行 `[附图，用 Read 工具查看] <路径>` 拼进 `text`（前缀常量两侧逐字一致：`act/actd.py` 的 `ANSWER_ATTACHMENT_PREFIX` = `mac/Sources/PastedImages.swift` 的 `answerLinePrefix`；附图行连同正文一起受 §39.2 的 4000 上限约束，App 先给附图行留位再裁剪正文）。
 
@@ -362,6 +386,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
   - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。**v0.18 修订（见下条 capture_input 追加）**：detailed 单独不再附带任何内容字段——内容一律再要求 capture_input，本行仅作历史语义记录。
   - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `sanitize._SECRET_PATTERNS` 掩码，独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。**（v0.48 修订见下条：capture_input 默认已翻转为 false/opt-in、v2 标记不再单独作为内容同意来源——本条中与此冲突的默认值与文案要求表述仅作历史语义记录。）**
   - **v0.48 修订（capture_input 默认翻转为 opt-in）**：`capture_input` 的内置默认由 true 改为 **false**——**输入文本上传自此严格 opt-in**（键形状、允许列表、双开关语义、字段表、红线与密钥掩码均不变；`telemetry.enabled` / `level` 的默认与语义不动）。开启的三个等效入口（全部落**显式**键，即 `Config.telemetry_capture_input_explicit`）：①首启「权限体检 / 设置向导」披露块（TelemetryBlockView）新增**默认未勾选**的复选框「分享输入文本以帮助改进产品 / Share typed text to improve the product」，勾选即写嵌套 override `{"telemetry": {"capture_input": true}}`（取消勾选写 false——切动过即为知情选择，同设置页 captureTouched 语义）；②设置页「上传我输入的文本」开关（原语义不变）；③config.yaml `telemetry.capture_input: true`。**consent 语义收紧**：内容收集的同意来源自此**只认显式 capture_input 键**——v0.18 的 v2 标记 `state/telemetry_consent_shown_v2` 继续在披露块渲染时写入（仅作「披露展示过」的记录），但其单独存在**不再**打开内容门（看到披露 ≠ 同意；`analytics.content_gate` / Swift `Telemetry.contentCaptureActive` 同步收紧，测试锁死）。从 v0.18–v0.47 升级且从未显式落键的安装：行为遥测照旧，内容上传自动停止，直到用户勾选/开启一次。首启披露文案同步修订为诚实的 opt-in 表述（行为统计默认开、仅元数据；输入文本默认不传），v0.18 的「因默认收集输入文本，文案必须明说包含」要求随默认翻转失效，替换为「文案不得声称输入文本默认上传」（tests/test_telemetry_level.py honesty drift-guard 同步改判）。v1 标记 `telemetry_consent_shown` 与 analytics_sync 的上传 consent 门（本节 v0.13 条）语义完全不变。
+  - **issue #37 追记（add-only，两条收紧）**：①**consent 标记只在披露块实际可见时写**——v1 `telemetry_consent_shown` 与 v2 `telemetry_consent_shown_v2` 的写入时机从「披露块插入视图树（`.onAppear`）」收紧为「披露块**进入视口**」：权限体检页与设置向导第 3 步都是 ScrollView 里的非 lazy VStack，480 pt 最小窗高下披露块可能在折线之下就被 `.onAppear` 记成「已展示」。原生宿主 `TelemetryBlockView` 经 `ConsentVisibilityProbe`（背景里一枚 AppKit 探针：`NSView.visibleRect` 对 clip view 感知，块的 ≥50% 进入滚动视口才写；窗口挂接 / layout / 每次滚动都复核，只触发一次；**macOS 14+ 同一条路径，无插入即写的回落**——#158 审查指出 macOS 15 API 的回落分支仍会在折线下写）落地；**任何后继宿主（web 设置页的 telemetry 节，P4）沿用同一条：披露文案可见（IntersectionObserver）才请求 server 落标记，永不在挂载时写**。标记语义（「披露界面出现过」、v2 不作内容同意）不变。②**失败类事件只上传分类 id**：`dispatch_failed` / `rework_failed` / `stop_failed` / `telemetry_sync` 的 `error` 自由文本字段退役（永不以同义复活），改为 §25 `failure_id`（`failures.classify`，无法分类整键缺席）；`telemetry_sync` / `radar_message_failed` 另带异常**类名** `error_type`；`capture_receipt_failed` 的 Slack 枚举码改名 `slack_error` 且只收 `^[a-z0-9_]+$` 形状。原文一律只进本机台账。执法 = `tests/test_telemetry_no_raw_error.py`（行为判例 + AST privacy lint：`act/` `server/` 下 `log_event`/`log_first` 带 `error=` 即红）；字段表见 docs/TELEMETRY.md。
 
 **v0.13 补充（iPhone 联动 / iMessage 设置区，add-only）**：设置页新增「iPhone 联动（iMessage）」区（`mac/Sources/SettingsIMessage.swift`，改动即时生效、不走表单的保存按钮），写两个 §15.3 overrides 键：`phone_channel`（该区只写 `"imessage"` 或 `"none"`）与 `imessage_self_handle`（str，E.164 手机号或 iCloud 邮箱）——两键自 v0.12 起即在 `act/lib/config.py` `_OVERRIDE_FIELDS` 允许列表内，语义见 §13 通道可插拔。App 侧附带职责（不新增数据契约字段）：①开关 = 按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.imessageradar.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`/`unload`（先写 overrides 再 load，保证 RunAtLoad 首轮就能读到 `phone_channel: imessage`）；②状态行读 `state/radar_health.json` 的 `imessage` 条目（契约 E 同形，radar_imessage 每轮写入）+ `launchctl print gui/<uid>/…`，「立即测试一轮」= `launchctl kickstart`（Full Disk Access 的真值只能来自 launchd 语境下 python 的真实运行结果——TCC 按 responsible process 判权限，app 内直接探测会失真）；③「发送测试消息」经 runtime python（CONTRACT §19 指针）调 `act.radar_imessage` 的同一 osascript 发送路径。
 
@@ -539,6 +564,19 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 - **降级永远可用**：helper 缺失 / 未授权（exit 3）/ 非 mac → direct 模式 =
   本节原有行为逐字不变；mirror 是升级，不是前置条件。附带：ingest 的 claude
   调用加 watchdog（默认 7200s，`CLAUDE_MAX_SECONDS` 可调）。
+
+**issue #16 追记（add-only；`process-screenpipe.sh` 退出码词表与判例）**：退出码
+`0` = 处理完成或 inbox 为空；`3` = 另一轮仍持有 PID 锁（跳过，链不算失败）；
+**`1` = inbox 目录不可读**（`find` 非零：vault 缺失/未配置 `sources.obsidian_unprocessed`
+或 TCC 挡住本会话）——此前这条路被当成「无文件」静默退出 0，是穿着成功外衣的
+静默丢数据；现在日志一行点名路径与原因、claude 不起；其余非零 = claude 自身的退出码
+原样上传（`❌ Processing failed (exit N)`）。凭证分支（§19 顺序）不改 claude 的 argv：
+两个分支都是 `-p <prompt> --allowedTools Read,Write,Edit,Bash,Glob,Grep`，只差
+`ANTHROPIC_API_KEY` 是否导出。watchdog 收尾同时回收其 `sleep` 子进程（此前孤儿 sleep
+挂着调用方的 stdout/stderr 直到 `CLAUDE_MAX_SECONDS`）。**判例**
+`tests/integration/test_ingest_smoke.py`：真 bash 跑真脚本，PATH 前置一个只记 argv/env、
+永不出网的桩 `claude`；锁与日志走 env seam `PROCESS_SCREENPIPE_LOCK` /
+`PROCESS_SCREENPIPE_LOG`（`vault-sync.sh` 读同一个锁 seam；生产默认路径不变）。
 
 ## 19. 凭证与 secrets（跨组件契约，两侧逐字一致）
 
@@ -3358,7 +3396,8 @@ queued 灰卡 + needs_input 行排最前）；**没有拖拽换状态**——一
 
 **依赖澄清（宪法第 7 条执法注，T-3 裁 A 案：条文零改动）**：web/ 的 npm 依赖
 （运行时仅 `react`/`react-dom`；dev 限 `vite`/`@vitejs/plugin-react`/
-`typescript`/`vitest`/`jsdom`/`@testing-library/react` + 纯类型包
+`typescript`/`vitest`/`jsdom`/`@testing-library/react`/`axe-core`（a11y 判例，
+§54.1 第 11 项，issue #8）+ 纯类型包
 `@types/react`/`@types/react-dom`，T-20）属**构建/测试侧**，交付物为静态文件、
 由 server/（纯 stdlib）服务；Python 管线运行时白名单 stdlib + PyYAML 不变。
 mermaid **不进**白名单，保持禁用降级（code block 展示，T-23）。Fork 纪律：
@@ -3922,6 +3961,18 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
     `web/src/styles/typeScale.ts`（角色 → Swift file:line → token）。判例
     `web/src/styles/typeScale.test.ts`（CSS ↔ 表）+ `tests/test_web_type_scale_mirror.py`
     （表 ↔ Swift 源行）。
+11. **可访问性（issue #8，原 Mac 版诉求改指 web）**：(a) 每张卡的 `<article>` 是
+    `CardSurface`（`cardChrome.tsx`）——`tabIndex=0`、Enter / Space 打开详情抽屉（整卡双击
+    的键盘等价物；焦点在卡内按钮/输入框时不响应，Enter 归按钮）、`aria-label` = 「<状态词> ·
+    <标题>」（提案 / AI 研究中 / 排队中 / 执行中… / 需输入 / 待验收 / 已完成 / 潜在任务），
+    色点一律 `aria-hidden`——**状态不靠颜色**；(b) 单击复制（指令行 / 路径行）成功后有
+    `role=status` 的「已复制到剪贴板」播报（`CopiedAnnouncer`，`.sr-only`）；按钮可见文案
+    即可访问名（WCAG 2.5.3，不另加 aria-label）；(c) 图标按钮全部带 `aria-label`（顶栏
+    设置/主题/语言/录制/字幕、列头「?」、抽屉关闭）；横幅 `role=alert` / 状态行
+    `role=status`。判例 `web/src/components/board/a11y.test.tsx`：八种卡形的键盘路径 +
+    状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
+    （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
+    `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。

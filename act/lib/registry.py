@@ -1484,6 +1484,25 @@ def _same_source_and_title(a: Requirement, b: Requirement) -> bool:
     return False
 
 
+def capture_source(who: str, channel: str, quote: str,
+                   capture_id: Optional[str] = None) -> dict:
+    """The birth ``sources[]`` row of an owner/agent capture (§10).
+
+    ``capture_id`` (issue #7, add-only) = the inbox file stem of the capture
+    that minted the card (``capture-<uuid>``; the server hands the same stem
+    back to the web as ``file`` minus ``.json``). It rides on the source row so
+    the dashboard can project a card-level ``capture_id`` and a client can match
+    "the card born from MY input" by id instead of guessing from a title prefix.
+    Absent (Slack self-DM, no inbox file) → key omitted. Not part of
+    :func:`_dedupe_sources`' key (channel/date/ref|quote) — fold semantics
+    are unchanged."""
+    row = {"who": who, "channel": channel,
+           "date": _dt.date.today().isoformat(), "quote": quote}
+    if capture_id:
+        row["capture_id"] = capture_id
+    return row
+
+
 def _dedupe_sources(existing: list, incoming: list) -> tuple[list, int]:
     """Append incoming sources not already present. Returns (merged, added_count)."""
     def key(s: dict) -> tuple:

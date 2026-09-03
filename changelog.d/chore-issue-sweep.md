@@ -1,0 +1,9 @@
+type: added
+- **loop-seed issue sweep（#18 #19 #15 #16 #11 #8 #7，每 issue 一个 commit）**：
+  - `scripts/demo_seed.py --english` / `--lang en`（#18）：同一份虚构数据集经 `zh → en` 词表逐值替换出全英文看板——形状 / id / 时间戳 / 校验结论与中文版逐字一致、输出零 CJK（`tests/test_demo_seed.py` 钉死，漏译即红）；默认中文不变；DEMO.md / CONTRIBUTING 记法。外部 PR #136 的并行双份字面树方案（已漂移、与 D21 冲突、抬高 `build()` 复杂度）留评论说明后由本实现取代。
+  - `docs/assets/social-preview.png`（#19）：1280×640 OpenGraph 卡（图标 + 英文 tagline + 低透明度看板截图），`bash promo/social-preview.sh` 用 headless Chrome 可重现渲染（输入先 stage 进临时目录——Chrome 直读外置卷 file:// 会挂死，§55 家族；等 PNG 落地而不等 Chrome 退出）。GitHub 无写 API：上传是 owner 手动步骤，CONTRIBUTING 维护者清单记录 + GraphQL 验证命令。
+  - **CI 钉 Xcode 版本**（#15，`.github/xcode-version` = 26.6，`scripts/ci/select_xcode.sh` 为 ci.yml 与 release.yml 共用）：镜像上缺该版本 = `::error::` 列出已装 Xcode 后失败，永不回落「最新」；判例 `tests/integration/test_select_xcode.py`。
+  - **ingest 链 smoke test**（#16，`tests/integration/test_ingest_smoke.py`）：真 bash 跑 `process-screenpipe.sh`，PATH 前置只记 argv/env、永不出网的桩 `claude`：三条凭证分支 argv 相同、成功 / claude 非零退出码原样上传 / 活锁 exit 3。**行为变化（CONTRACT §18）**：inbox 目录不可读（vault 缺失 / TCC）→ exit 1 + 一行点名路径，claude 不起——此前伪装成「无文件」exit 0；watchdog 收尾同时回收孤儿 `sleep`；锁 / 日志加 env seam（默认路径不变）。
+  - **审批卡披露建 repo 出机后果**（#11，CONTRACT §7 `egress[]`）：`execution.create_github_repo: true` + 新目录 + repo 交付 → 卡带 `{"kind":"github_repo_create","target":…,"visibility":"private"}`，web 提案卡红色后果句「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」；开关关（默认）恒 `[]`，卡面零变化；PRIVACY.md 第 8 行反向引用。
+  - **web 看板可访问性**（#8，CONTRACT §54.1 第 11 项）：五种卡共用 `CardSurface`——可聚焦、Enter/Space 开详情（双击的键盘等价物）、`aria-label` = 状态词 + 标题（色点 aria-hidden，状态不靠颜色）；单击复制成功有 `role=status` 播报；`a11y.test.tsx` 八种卡形键盘路径 + **axe-core** WCAG A/AA 扫描零 violation（`axe-core` 进 §49 dev 白名单）。
+  - **`capture_id` 贯通**（#7，CONTRACT §10）：inbox 文件 stem（`capture-<uuid>`，= server 回给 web 的 `file`）随出生源引文落盘（`registry.capture_source` 单点），dashboard 在 needs_approval 行（含 raising 占位）与 `sources[]` 投影；折叠只追加不改写出生 id；YAML 与 store2 payload 都往返；web types 镜像。

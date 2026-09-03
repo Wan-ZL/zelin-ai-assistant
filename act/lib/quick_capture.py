@@ -44,7 +44,6 @@ Slack 原生路径 / Slack MCP 兜底路径 (act/radar_slack.py) 和 Obsidian �
 """
 from __future__ import annotations
 
-import datetime as _dt
 import re
 import subprocess
 from typing import Callable, Optional
@@ -769,12 +768,8 @@ def _apply_new_proposal(
                      if isinstance(res.get("target_repo"), str) and res.get("target_repo").strip()
                      else None),
         target_kind=tk if tk in ("new", "existing") else None,
-        sources=[{
-            "who": "zelin",
-            "channel": "quick",
-            "date": _dt.date.today().isoformat(),
-            "quote": quote or title,
-        }],
+        # Slack self-DM has no inbox file → no capture_id (§10, issue #7)
+        sources=[registry.capture_source("zelin", "quick", quote or title)],
         notes=notes,
     )
     # delivery_mode: "chat" | "repo" — anything illegal (or the LLM-failure
@@ -865,12 +860,7 @@ def _apply_relates_to(
             type=req.type,
             tier=req.tier,
             summary=note,
-            sources=[{
-                "who": "zelin",
-                "channel": "quick",
-                "date": _dt.date.today().isoformat(),
-                "quote": note or req.title,
-            }],
+            sources=[registry.capture_source("zelin", "quick", note or req.title)],
         )
         # explicit self-capture is inherently actionable (无损原则).
         same_task = registry._same_source_and_title(req, child)

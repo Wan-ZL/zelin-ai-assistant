@@ -361,8 +361,9 @@ def _record_poison_message(uid: int, err: Exception) -> None:
             except OSError:
                 pass
     try:
+        # exception CLASS only (identifier) — never str(err) (TELEMETRY 红线 #37)
         analytics.log_event("radar_message_failed", source="gmail", uid=uid,
-                            error=type(err).__name__)
+                            error_type=type(err).__name__)
     except Exception:  # noqa: BLE001
         pass
 

@@ -16,12 +16,12 @@ AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 bash mac/build.sh
 
 # 3. Run the app against entirely fictional data — no keys, no recording:
-python3 scripts/demo_seed.py /tmp/assistant-demo
+python3 scripts/demo_seed.py /tmp/assistant-demo          # add --english for English demo data
 AIASSISTANT_HOME=/tmp/assistant-demo \
   "mac/build/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
 ```
 
-The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
+The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` and `--english` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
 
 What you need for what:
 
@@ -37,7 +37,7 @@ Note that `install.sh` is the *end-user* installer — it installs the app to /A
 ## Dev environment
 
 - **Python 3.9+ with PyYAML** — deliberately the only Python dependency (that's why there is no lockfile). If `pip install --user pyyaml` fails with "externally managed environment" (Homebrew Python, PEP 668), retry with `--break-system-packages`; CI uses the same fallback.
-- **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI; see the "Select newest Xcode" comment in `.github/workflows/ci.yml`). `mac/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash mac/build.sh` is the whole build.
+- **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI, which pins one exact Xcode for both `ci.yml` and `release.yml` — truth = `.github/xcode-version`, applied by `scripts/ci/select_xcode.sh`; a pin missing from the runner image fails loudly instead of falling back to "newest"; bump it in a PR). `mac/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash mac/build.sh` is the whole build.
 - Only needed for full-pipeline work: [Claude Code CLI](https://claude.com/claude-code) + API key, Node.js LTS, Obsidian — setup in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## The four gates
@@ -95,6 +95,11 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
   Sparkle), verify it landed with `bash scripts/smoke-deploy.sh` — version
   match, binary feature markers, actd liveness, and the full doctor in one
   command (also printed as step 7 at the end of `install.sh`).
+- **Social preview** (issue #19): when the board UI changes materially, `bash promo/social-preview.sh`
+  re-renders `docs/assets/social-preview.png` (1280 × 640) and you upload it by hand under GitHub →
+  Settings → General → Social preview — GitHub has no API for this, so it is the one manual step
+  left in a release. Verify it took: `gh api graphql -f query='{ repository(owner:"Wan-ZL", name:"zelin-ai-assistant") { usesCustomOpenGraphImage } }'`
+  must say `true` (the field is read-only — there is no write API).
 
 ## Versioning
 

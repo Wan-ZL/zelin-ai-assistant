@@ -9,8 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ReviewCard as ReviewCardRow } from "../../types";
-import { cardAction, openCardDetail, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
-import { CardDetails, CardHead, CopyCommandLine, DetailsToggle, DurationText, RepoChip } from "./cardChrome";
+import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, RepoChip } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
 import { TextDialog } from "./TextDialog";
 
@@ -41,7 +41,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
   const title = typeof card.display_title === "string" && card.display_title ? card.display_title : card.name;
 
   return (
-    <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
+    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`}>
       <CardHead card={card} title={title} leading={<span className="card-dot is-review" aria-hidden="true" />} />
       <div className="card-badges">
         {/* §30 会话再活跃：只是平静地标注，不是打回轮（原生 teal 章） */}
@@ -113,6 +113,6 @@ export function ReviewCard({ card }: ReviewCardProps) {
           onCancel={() => setShowRework(false)}
         />
       )}
-    </article>
+    </CardSurface>
   );
 }
