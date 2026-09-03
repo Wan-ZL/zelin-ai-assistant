@@ -353,6 +353,16 @@ class RowClassTestCase(unittest.TestCase):
             self.assertNotIn(failures.FAILURES[fid]["action_id"], self._CODE_REPAIRS,
                              "%s is owner_action yet maps to an in-app code repair" % fid)
 
+    def test_owner_action_is_a_strict_subset_of_the_fresh_install_human_bucket(self):
+        # §69's "human" bucket = grants + credentials + tool installs; the deploy
+        # verdict skips only the grants — a deploy that newly loses a tool or a
+        # credential is a regression, so those must stay out of OWNER_ACTION_IDS
+        from act.lib import fresh_install
+        self.assertTrue(failures.OWNER_ACTION_IDS < fresh_install.HUMAN_FAILURE_IDS)
+        for fid in ("claude_cli_missing", "claude_auth_failed", "node_missing", "engine_dead"):
+            self.assertIn(fid, fresh_install.HUMAN_FAILURE_IDS)
+            self.assertEqual(failures.row_class(fid), "", fid)
+
     def test_with_failure_stamps_the_class_on_the_row(self):
         owner = doctor.CheckResult("launchd claude", doctor.FAIL, "blind", "grant").with_failure("claude_blind")
         code = doctor.CheckResult("dashboard", doctor.FAIL, "stale", "restart").with_failure("dashboard_stale")

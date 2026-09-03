@@ -85,16 +85,17 @@ flowchart TB
 
 ## 快速开始
 
+空白 Mac（macOS 14+，装了 Xcode Command Line Tools）上一条命令——以后更新也是同一条：
+
 ```bash
-git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant
-cd ~/Projects/zelin-ai-assistant
-cp config.example.yaml config.yaml   # 编辑:Obsidian vault 路径、watch_people、Slack ID
-bash install.sh                      # 依赖检查 → 构建装 app → launchd agents + crontab
+curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
 ```
 
-首次启动 app 会弹出双语**权限体检页**:唯一的屏幕记录 consent(默认**仅屏幕**,音频需在「设置 → 录制」单独打开)、屏幕录制/通知/完全磁盘访问 的实时授权清单,以及一行匿名使用统计披露(详情与关闭在设置);之后随时可从 菜单 → 权限体检 重开。然后在旧 app 的设置窗口粘贴 Anthropic API key——或自己写进 `config/secrets/anthropic-api-key.txt`(权限 `0600`);cron/launchd 下的 headless `claude` 读不了 Keychain OAuth,所以 key 就住在这个文件里。
+它把仓库 clone 到 `~/Projects/zelin-ai-assistant`（`bash -s -- <目录>` 可改），从模板生成 `config.yaml`，跑 `install.sh --non-interactive`（永不停下来问；构建 web 看板 + Dock 壳 app、装 launchd agents 与 crontab），打出**剩下要你做的事**（带本机真实路径），然后打开看板。看板的首次运行向导（`?page=setup`）只列脚本做不了的几件：缺 [Claude Code](https://claude.com/claude-code) 就装、把 Anthropic API key 放进 `config/secrets/anthropic-api-key.txt`（launchd/cron 下的 headless `claude` 读不了 Keychain OAuth）、仓库在受保护目录或外置卷上时给守护解释器和 `claude` 开完全磁盘访问。合并进 `main` 的每个 PR 也会自动部署到已装机器（CONTRACT §56）；每个 PR 都有一个 macOS CI job 在干净 runner 上重放这条命令（CONTRACT §68）。
 
-- 完整安装教程(逐步 checkpoint、TCC 授权准确路径、"第一张卡 5 分钟"练习):**[docs/INSTALL.md](docs/INSTALL.md)**(也覆盖 `.pkg` 安装包路线)。
+手动等价：`git clone … && cd zelin-ai-assistant && cp config.example.yaml config.yaml && bash install.sh`（交互模式，结尾跑全套诊断）。之后哪里不对：`bash install.sh --check`。
+
+- 完整安装教程（逐步 checkpoint、TCC 授权准确路径、「第一张卡 5 分钟」练习）：**[docs/INSTALL.md](docs/INSTALL.md)**。
 - 还没有 API key?一条命令用完全虚构的数据预览整个看板:`bash scripts/dev-preview.sh`,见下一节与 [docs/DEMO.md](docs/DEMO.md)。
 
 ## 看板 · 两分钟上手

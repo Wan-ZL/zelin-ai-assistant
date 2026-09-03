@@ -57,15 +57,40 @@ def _daemon_python(home: Path) -> Optional[str]:
     return py if isinstance(py, str) and py.startswith("/") else None
 
 
+# §55 第五幕 mirror of act/lib/config.stable_claude_bin(): the stable daemon
+# copy install.sh maintains at a fixed $HOME path — the one claude path whose
+# Full Disk Access grant survives Claude Code updates. Same env override as the
+# pipeline (`AIASSISTANT_STABLE_CLAUDE`) so both sides agree; drift-pinned by
+# tests/test_server_permissions_setup.py.
+def stable_claude_bin() -> Path:
+    override = os.environ.get("AIASSISTANT_STABLE_CLAUDE", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / "Library" / "Application Support" / "ZelinAIAssistant" / "bin" / "claude"
+
+
 def _claude_bin(home: Path) -> Optional[str]:
+    """Resolution order = act/lib/config.resolve_claude_bin (§55 第五幕):
+    pin → stable copy → ~/.local/bin → PATH."""
     execution = settings_catalog.load_config_doc(home).get("execution")
     pinned = execution.get("claude_bin") if isinstance(execution, dict) else None
     if isinstance(pinned, str) and pinned.strip():
         return os.path.expanduser(pinned.strip())
+    stable = stable_claude_bin()
+    if stable.exists():
+        return str(stable)
     local = Path.home() / ".local" / "bin" / "claude"
     if local.exists():
         return str(local)
     return shutil.which("claude")
+
+
+def _claude_note(path: Optional[str]) -> tuple:
+    if path and path == str(stable_claude_bin()):
+        return ("claude CLI 的稳定副本（install.sh 在此路径原地刷新，授权一次即可，claude 更新不再失效——CONTRACT §55 第五幕）",
+                "Stable daemon copy of claude (install.sh refreshes it in place, so this grant survives Claude Code updates — CONTRACT §55)")
+    return ("claude CLI（派工 agent 与管线判断；这是按版本换路径的二进制——跑一次 bash install.sh 生成稳定副本后授权只需做一次）",
+            "claude CLI (dispatch agents + pipeline judgment; this path moves with every update — run bash install.sh once to create the stable copy so the grant is one-time)")
 
 
 def _entry(role: str, path: Optional[str], zh: str, en: str) -> dict:
@@ -77,13 +102,12 @@ def _entry(role: str, path: Optional[str], zh: str, en: str) -> dict:
 
 def executables(home: Path) -> list:
     """需要「完全磁盘访问」的可执行文件清单（路径可复制；不存在的如实标 exists:false）。"""
+    claude = _claude_bin(home)
     return [
         _entry("daemon_python", _daemon_python(home),
                "守护进程解释器（actd / 雷达 / server / 自动部署都用它；launchd 会话里没有终端的授权可借）",
                "Daemon interpreter (actd / radars / server / auto-deploy all run on it; a launchd session borrows no terminal grant)"),
-        _entry("claude", _claude_bin(home),
-               "claude CLI（派工 agent 与管线判断；每次 claude 更新换路径后要重做一次）",
-               "claude CLI (dispatch agents + pipeline judgment; redo after every claude update that moves the binary)"),
+        _entry("claude", claude, *_claude_note(claude)),
         _entry("node", shutil.which("node"),
                "node（自动部署构建看板 UI；缺授权时 install.sh 的 ui 步记 skipped_tcc）",
                "node (auto-deploy builds the board UI; without the grant install.sh records ui=skipped_tcc)"),

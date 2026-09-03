@@ -85,16 +85,17 @@ Solid arrows are local file/process flow; dashed arrows are the only network egr
 
 ## Quickstart
 
+One command on a blank Mac (macOS 14+, Xcode Command Line Tools) — and the same command later to update:
+
 ```bash
-git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant
-cd ~/Projects/zelin-ai-assistant
-cp config.example.yaml config.yaml   # edit: Obsidian vault path, watched people, Slack IDs
-bash install.sh                      # dependency checks → builds the app → launchd agents + cron chain
+curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
 ```
 
-On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and a one-line anonymous-usage-stats disclosure (details & opt-out in Settings). Reopen it anytime via the app menu → Permissions Checkup. Then paste your Anthropic API key in the legacy app's Settings — or write it to `config/secrets/anthropic-api-key.txt` (mode `0600`) yourself; headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in that file.
+It clones to `~/Projects/zelin-ai-assistant` (`bash -s -- <dir>` to choose), creates `config.yaml` from the example, runs `install.sh --non-interactive` (never prompts; builds the web board + Dock app, loads the launchd agents and the cron chain), prints **what is left for you** with this machine's real paths, and opens the board. The board's first-run wizard (`?page=setup`) then walks the only things a script cannot do: install [Claude Code](https://claude.com/claude-code) if missing, put your Anthropic API key in `config/secrets/anthropic-api-key.txt` (headless `claude` under launchd/cron cannot read Keychain OAuth), and grant Full Disk Access to the daemon interpreter and `claude` when your repos live in protected folders or on an external volume. Every PR merged to `main` also auto-deploys to installed machines (CONTRACT §56), and a macOS CI job replays this exact bootstrap on a clean runner for every PR (CONTRACT §69).
 
-- Full walkthrough with per-step checkpoints, exact TCC permission paths, and a "first card in 5 minutes" exercise: **[docs/INSTALL.md](docs/INSTALL.md)** (also covers the `.pkg` installer route).
+Manual equivalent: `git clone … && cd zelin-ai-assistant && cp config.example.yaml config.yaml && bash install.sh` (interactive; runs the full diagnostics at the end). Anything off later: `bash install.sh --check`.
+
+- Full walkthrough with per-step checkpoints, exact TCC permission paths, and a "first card in 5 minutes" exercise: **[docs/INSTALL.md](docs/INSTALL.md)**.
 - No API key yet? One command previews the full board with fictional data: `bash scripts/dev-preview.sh` — see the section below and [docs/DEMO.md](docs/DEMO.md) (demo & recording guide).
 
 ## The board · two minutes to first look
