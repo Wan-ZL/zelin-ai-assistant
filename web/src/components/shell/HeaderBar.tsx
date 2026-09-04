@@ -5,7 +5,8 @@
 // 永远一行（§49 追记 2026-09-04）：按实测宽度分三档 data-density（headerDensity.ts）——
 //   full    今天的布局；
 //   compact 左侧收掉设备标签（槽位里的 FilterBar 自己把 chips 收进「筛选」popover）；
-//   tight   左侧只剩标识 + 标题，新鲜度 / 部署小字折进连接点的 tooltip；右侧开关只留图标（CSS）。
+//   tight   左侧只剩标识 + 标题（极窄时标题省略号 + title 全名，标识不缩），新鲜度 / 部署小字折进连接点的 tooltip；
+//           右侧开关只留图标（CSS）。
 // 档位经 HeaderDensityContext 发给槽位与右侧开关；`density` prop 是测试 / 预览用的覆写。
 import { useRef, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
@@ -49,6 +50,9 @@ export function HeaderBar({ searchSlot, density: densityOverride }: HeaderBarPro
   const deploy = useDeployLabel();
   const deviceLabel = typeof board?.device_label === "string" ? board.device_label : "";
   const tight = density === "tight";
+  // tight 档左翼只剩标识 + 标题，顶栏极窄（导航栏拖到最宽 + 壳桥）时标题省略号收场（shell.css）——全名挂 title；
+  // full / compact 标题不缩，不挂（视觉 golden 的 DOM 一字不变）
+  const appName = text("Zelin 的 AI 助理", "Zelin's AI Assistant");
 
   // tight：新鲜度 / 部署小字不占行，整句挂在连接点的 tooltip 上（连接词 · 数据生成于 … · v… 部署）
   const connectionText = connectionLabel(connection, text);
@@ -69,7 +73,7 @@ export function HeaderBar({ searchSlot, density: densityOverride }: HeaderBarPro
               <rect x="41" y="14" width="11" height="16" rx="3" fill="var(--on-accent)" opacity="0.6" />
             </svg>
           </span>
-          <h1 className="shell-title">{text("Zelin 的 AI 助理", "Zelin's AI Assistant")}</h1>
+          <h1 className="shell-title" title={tight ? appName : undefined}>{appName}</h1>
           {/* title 挂全文：左翼被槽位挤时三段小字会省略号（shell.css） */}
           {deviceLabel && density === "full" && <span className="shell-device" title={deviceLabel}>{deviceLabel}</span>}
           {!tight && <FreshnessLabel value={freshness} />}

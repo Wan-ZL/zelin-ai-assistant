@@ -3,7 +3,8 @@
 // §56 部署状态小字（deploy_state 缺失自隐藏 / healthy 次级色 / 回滚警告色）。
 // 页面入口（回收站 / 设置 …）已搬到左侧导航栏——判例在 NavRail.test.tsx（§54.4）。
 // 三档密度（§49 追记 2026-09-04）：data-density 反映档位；compact 收设备标签；tight 把新鲜度 / 部署小字折进
-// 连接点 tooltip、壳开关只留图标（title 说全「录制：状态词」）。jsdom 无 ResizeObserver → 不给 prop 时恒 full。
+// 连接点 tooltip、壳开关只留图标（title 说全「录制：状态词」）、标题挂 title 全名（极窄省略号的 tooltip；几何在
+// e2e/headerLayout.spec.ts）。jsdom 无 ResizeObserver → 不给 prop 时恒 full。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard } from "../../api";
@@ -298,5 +299,23 @@ describe("HeaderBar 三档密度（§49 追记 2026-09-04）", () => {
     cleanup();
     renderHeader("en", { density: "full" });
     expect((await screen.findByRole("button", { name: "Recording controls" })).getAttribute("title")).toBe("Recording controls");
+  });
+
+  it("tight：标题挂 title 全名（极窄时省略号的 tooltip，双语）；full / compact 标题不缩、不挂", async () => {
+    await seedDeviceBoard(10);
+    renderHeader("en", { density: "tight" });
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading.className).toBe("shell-title");
+    expect(heading.textContent).toBe("Zelin's AI Assistant");
+    expect(heading.getAttribute("title")).toBe("Zelin's AI Assistant");
+    cleanup();
+    renderHeader("zh", { density: "tight" });
+    expect(screen.getByRole("heading", { level: 1 }).getAttribute("title")).toBe("Zelin 的 AI 助理");
+    cleanup();
+    renderHeader("zh", { density: "compact" });
+    expect(screen.getByRole("heading", { level: 1 }).hasAttribute("title")).toBe(false);
+    cleanup();
+    renderHeader("zh");
+    expect(screen.getByRole("heading", { level: 1 }).hasAttribute("title")).toBe(false);
   });
 });
