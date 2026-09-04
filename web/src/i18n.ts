@@ -59,12 +59,6 @@ export const TYPE_LABELS: LabelTable = {
   },
 };
 
-/** 来源渠道（sources[].channel；开放枚举） */
-export const CHANNEL_LABELS: LabelTable = {
-  zh: { slack: "Slack", gmail: "Gmail", meeting: "会议", manual: "手动", screen: "屏幕" },
-  en: { slack: "Slack", gmail: "Gmail", meeting: "Meeting", manual: "Manual", screen: "Screen" },
-};
-
 /** 看板列 lane（board 投影的 needs_approval/running/… 闭枚举）。
  *  注：列头是复数形（"Proposals"，BoardLanes.tsx 的 Lane title 内联对），
  *  这里是详情抽屉里指代**单张卡**所属列的 chip，故取单数。 */
