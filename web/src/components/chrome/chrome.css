@@ -58,12 +58,14 @@
   display: inline-flex;
 }
 
-/* ----- 过滤 chip 条 + 搜索框 ------------------------------------------------ */
+/* ----- 过滤 chip 条 + 搜索框 ------------------------------------------------
+   永不换行（§49 追记 2026-09-04）：窄了由 HeaderBar 的 data-density 三档把控件收进「筛选」popover，
+   而不是让 chips 掉到第二行；顶栏 grid 给槽位的下限就是这条的内容宽（shell.css），左翼先让。 */
 .chrome-filterbar {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
 }
 
@@ -108,6 +110,7 @@
   padding: 5px 6px;
   cursor: pointer;
   border-radius: 6px;
+  white-space: nowrap;
 }
 
 .chrome-chip-clear:hover {
@@ -122,8 +125,27 @@
   font: var(--type-header-control);
   padding: 5px 10px;
   border-radius: 8px;
-  width: 200px;
-  min-width: 120px;
+  width: var(--header-search-width);
+  min-width: var(--header-search-min-width);
+}
+
+/* 只在顶栏的条里才是 flex item（回收站 / 永久性完成 / 设置页复用这个类，但它们的容器是竖排 flex——
+   flex-basis 在那儿会变成高度） */
+.chrome-filterbar .chrome-search {
+  flex: 0 1 var(--header-search-width);
+}
+
+/* tight 档：条铺满槽位（图标居中），展开后的搜索框吃掉槽位余下的宽度——basis 0 + min-width 0，
+   所以它不参与槽位的 max-content（顶栏 grid 给槽位的下限，shell.css），窄到极限也不会把标题挤掉 */
+[data-density="tight"] .chrome-filterbar {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.chrome-filterbar .chrome-search.is-expanded {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
 }
 
 .chrome-search:focus {
@@ -135,6 +157,145 @@
 .chrome-search::placeholder {
   color: var(--text-secondary);
   opacity: 1;
+}
+
+/* ----- 顶栏 compact / tight 档的收纳控件（§49 追记 2026-09-04） -------------------------
+   「筛选」按钮沿用 chip 的胶囊形制；图标按钮与 shell-icon-button 同尺寸（--header-control-size）；
+   popover 与 composer-popover 同一套底 / 边 / 阴影 token。 */
+.chrome-icon-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--header-control-size);
+  height: var(--header-control-size);
+  padding: 0;
+  border: var(--stroke-w) solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chrome-icon-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chrome-icon-button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chrome-icon-button:focus-visible,
+.chrome-filter-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 放大镜上的点：搜索词非空但输入框收着 */
+.chrome-search-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.chrome-filter-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: var(--header-control-size);
+  border: var(--stroke-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: calc(12px * var(--text-scale));
+  line-height: 1;
+  padding: 0 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chrome-filter-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chrome-filter-button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* tight：只剩图标 + 计数角标 */
+.chrome-filter-button.is-icon {
+  width: var(--header-control-size);
+  padding: 0;
+  justify-content: center;
+  position: relative;
+}
+
+.chrome-filter-badge {
+  font-size: calc(10.5px * var(--text-scale));
+  font-weight: var(--w-semibold);
+}
+
+.chrome-filter-button.is-icon .chrome-filter-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: calc(9px * var(--text-scale));
+  line-height: 14px;
+  text-align: center;
+}
+
+.chrome-filter-panel {
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: var(--header-popover-width);
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border: var(--stroke-w) solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: var(--dialog-shadow);
+}
+
+.chrome-filter-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chrome-filter-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: var(--stroke-w) solid var(--border);
+}
+
+/* 面板底是 --surface-raised，「选择」按钮要有边才看得出是按钮 */
+.chrome-filter-panel-footer .chrome-select-toggle {
+  border: var(--stroke-w) solid var(--border);
+  padding: 4px 10px;
 }
 
 /* ----- 潜在任务折叠侧条（debt / Backlog strip）——列头字号字重同原生 SectionHeader / collapsedStrip（12 semibold 次级 + 11 bold 计数胶囊） ----- */
@@ -445,6 +606,7 @@
   padding: 2px 10px;
   font-size: calc(11px * var(--text-scale));
   cursor: pointer;
+  white-space: nowrap; /* 条不换行了（§49 追记 2026-09-04），按钮自己也不许在字中间折行 */
 }
 
 .chrome-select-toggle.is-on {

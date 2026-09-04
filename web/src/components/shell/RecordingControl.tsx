@@ -9,9 +9,13 @@
 // 壳的真相（call 回执 / zai-shell-state 推送）一到就替换乐观值——`屏幕+音频` 要先过
 // ffmpeg 预检才提交，回执里 mode 可能还是旧值，所以乐观值保留到真相追平、或壳发出
 // 拒绝说明（note 非空）、或 15s 兜底超时。
+//
+// 顶栏 tight 档（§49 追记 2026-09-04）：按钮只留图标（文字由 shell.css 按 data-density 收起），
+// 「录制：」+ 状态词改挂 title——颜色三态照旧在图标上。
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, type ShellRecordingState } from "../../shellBridge";
+import { useHeaderDensity } from "./headerDensity";
 
 export interface RecordingControlProps {
   state: ShellRecordingState;
@@ -92,6 +96,7 @@ function ModeIcon({ mode, isRunning }: { mode: string; isRunning: boolean }) {
 
 export function RecordingControl({ state }: RecordingControlProps) {
   const { text } = useI18n();
+  const density = useHeaderDensity();
   const [isOpen, setOpen] = useState(false);
   const [optimisticMode, setOptimisticMode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +195,11 @@ export function RecordingControl({ state }: RecordingControlProps) {
   );
   const tone = shownMode === "off" ? "off" : runningForColor ? "live" : "warn";
   const isDead = state.mode !== "off" && !state.engine_running && optimisticMode === null;
+  const note = error ?? (state.note || "");
+  // tight：文字收起，tooltip 得把「录制：状态词」说全（有拒绝说明时接在后面）
+  const title = density === "tight"
+    ? [text("录制：", "Rec: ") + stateWord, note].filter(Boolean).join(" — ")
+    : note || text("录制控制", "Recording controls");
 
   return (
     <div className="shell-rec" ref={rootRef}>
@@ -199,7 +209,7 @@ export function RecordingControl({ state }: RecordingControlProps) {
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={text("录制控制", "Recording controls")}
-        title={error ?? (state.note || text("录制控制", "Recording controls"))}
+        title={title}
         onClick={() => setOpen((v) => !v)}
       >
         <ModeIcon mode={shownMode} isRunning={runningForColor} />

@@ -165,13 +165,17 @@
   padding: 48px 24px;
 }
 
-/* —— 顶栏 —— */
+/* —— 顶栏 —— 永远一行、定高（§49 追记 2026-09-04）：窄了不换行，由 data-density 三档
+   （full / compact / tight，HeaderBar 按实测宽度判，headerDensity.ts）收控件。
+   三列的让位次序：中间槽位的下限 = 自身内容（max-content），左翼 minmax(0, auto) 先缩——档位阈值
+   只看顶栏宽、不看左翼内容，所以左翼变长（陈旧新鲜度 + 回滚部署 + 设备标签能多出 ~400px）时
+   由左翼的设备标签 / 新鲜度 / 部署小字省略号收场，槽位里的控件一个不裁。 */
 .shell-header {
   position: sticky;
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, auto) minmax(max-content, 1fr) auto;
   align-items: center;
   gap: 16px;
   height: 52px;
@@ -180,11 +184,18 @@
   border-bottom: var(--stroke-w) solid var(--border);
 }
 
+.shell-header[data-density="tight"] {
+  gap: 10px;
+}
+
+/* min-width 0 + overflow hidden：让 grid 能把这一列缩到内容以下；标识 / 标题不缩，
+   设备标签 / 新鲜度 / 部署小字（下方 min-width 0 + ellipsis）让位 */
 .shell-header-left {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shell-logo {
@@ -232,15 +243,32 @@
   white-space: nowrap;
 }
 
+/* 左翼被槽位挤时这三段缩成省略号（整句在 title 里；警告色照留）；宽够时原样一字不少。
+   设备标签是用户机器名、长度不可预算——不让它缩，阈值预算就守不住 */
+.shell-device,
+.shell-freshness,
+.shell-deploy {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .shell-deploy.is-warn {
   color: var(--warning);
 }
 
-/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定 */
+/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定。
+   grid 给它的下限是自身内容（上方 minmax(max-content, 1fr)），多出来的宽才是 1fr，所以里面的控件
+   永不被槽位裁掉；内容自己按档位收纳（tokens.css 的阈值预算按左翼只剩标识 + 标题算）。
+   通高是为了不裁掉搜索框的 focus ring。 */
 .shell-search-slot {
   display: flex;
+  align-items: center;
+  align-self: stretch;
   justify-content: center;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shell-header-right {
@@ -268,6 +296,8 @@
 .shell-connection.is-live .shell-connection-dot { background: var(--success); }
 .shell-connection.is-connecting .shell-connection-dot { background: var(--warning); }
 .shell-connection.is-reconnecting .shell-connection-dot { background: var(--danger); }
+/* tight 档：新鲜度 / 部署小字折进这颗点的 tooltip——它们在报警（陈旧 / 非 healthy）时点也转橙 */
+.shell-connection.is-live.is-warn .shell-connection-dot { background: var(--warning); }
 
 .shell-connection.is-live .shell-connection-text {
   /* 正常态视觉降噪：文字仅供屏幕阅读器/tooltip，异常态才可见 */
@@ -328,6 +358,20 @@
 
 .shell-rec-restarting {
   color: var(--warning);
+}
+
+/* tight 档：两颗开关只留图标（文字进 title / aria-label，RecordingControl 把「录制：状态词」挂 title） */
+.shell-header[data-density="tight"] .shell-rec-label,
+.shell-header[data-density="tight"] .shell-cap-label,
+.shell-header[data-density="tight"] .shell-rec-restarting {
+  display: none;
+}
+
+.shell-header[data-density="tight"] .shell-rec-button,
+.shell-header[data-density="tight"] .shell-cap-button {
+  width: var(--header-control-size);
+  padding: 0;
+  justify-content: center;
 }
 
 /* 下拉菜单（原生 Menu 的 web 同义体：状态行 + 单选 + 动作） */
@@ -577,23 +621,8 @@
   }
 }
 
-/* —— 响应式：窄窗先收次要信息，再交给 .shell 的 min-width 横向滚动 —— */
-@media (max-width: 900px) {
-  .shell-device {
-    display: none;
-  }
-}
-
-@media (max-width: 780px) {
-  .shell-freshness,
-  .shell-deploy {
-    display: none;
-  }
-
-  .shell-header {
-    gap: 10px;
-  }
-}
+/* —— 响应式：顶栏的收纳不再看视口——按 .shell-header 实测宽分档（上方 data-density 规则 +
+   HeaderBar 按档位决定设备标签 / 新鲜度 / 部署小字渲不渲染）；页面主体仍交给 .shell 的 min-width 横向滚动 —— */
 
 /* ----- §68.8 横幅一键修复 ---------------------------------------------------------------- */
 .shell-banner-actions {

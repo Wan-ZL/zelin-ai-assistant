@@ -2,13 +2,16 @@
 // 主题切换（dataset + localStorage）、语言切换（store.setLanguage + zai.lang 持久化）、
 // §56 部署状态小字（deploy_state 缺失自隐藏 / healthy 次级色 / 回滚警告色）。
 // 页面入口（回收站 / 设置 …）已搬到左侧导航栏——判例在 NavRail.test.tsx（§54.4）。
+// 三档密度（§49 追记 2026-09-04）：data-density 反映档位；compact 收设备标签；tight 把新鲜度 / 部署小字折进
+// 连接点 tooltip、壳开关只留图标（title 说全「录制：状态词」）。jsdom 无 ResizeObserver → 不给 prop 时恒 full。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard } from "../../api";
 import { LanguageContext } from "../../i18n";
+import { resetShellBridgeForTests, type ShellState } from "../../shellBridge";
 import { getState, refreshBoard, resetStoreForTests } from "../../store";
 import type { Board, DeployState } from "../../types";
-import { HeaderBar } from "./HeaderBar";
+import { HeaderBar, type HeaderBarProps } from "./HeaderBar";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
@@ -38,12 +41,31 @@ async function seedBoard(ageSeconds: number, deployState?: DeployState) {
   await refreshBoard();
 }
 
-function renderHeader(language: "zh" | "en" = "en") {
+function renderHeader(language: "zh" | "en" = "en", props: HeaderBarProps = {}) {
   return render(
     <LanguageContext.Provider value={language}>
-      <HeaderBar />
+      <HeaderBar {...props} />
     </LanguageContext.Provider>,
   );
+}
+
+function shellState(): ShellState {
+  return {
+    recording: {
+      available: true, on: false, mode: "off", engine_running: false, diagnosis: null,
+      note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen",
+    },
+    captions: {
+      available: true, on: false, engine: "auto", paused: false, engine_dead: false,
+      status_text: "", status_is_error: false,
+      source: "both", translate: false, translate_direction: "auto", apple_locale: "zh",
+      ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7,
+    },
+    permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
+    launch_at_login: false,
+    hotkey: "⌃⌥Space",
+    language: "en",
+  };
 }
 
 describe("HeaderBar", () => {
@@ -199,5 +221,82 @@ describe("HeaderBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "切换到英文" }));
     expect(getState().language).toBe("en");
     expect(window.localStorage.getItem("zai.lang")).toBe("en");
+  });
+});
+
+describe("HeaderBar 三档密度（§49 追记 2026-09-04）", () => {
+  const withDevice = (generatedAt: string, deployState?: DeployState): Board =>
+    ({ ...makeBoard(generatedAt, deployState), device_label: "This Mac" }) as Board;
+
+  async function seedDeviceBoard(ageSeconds: number, deployState?: DeployState) {
+    fetchBoardMock.mockResolvedValue(withDevice(new Date(Date.now() - ageSeconds * 1000).toISOString(), deployState));
+    await refreshBoard();
+  }
+
+  beforeEach(() => {
+    resetStoreForTests();
+    fetchBoardMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    delete window.webkit;
+    resetShellBridgeForTests();
+  });
+
+  it("jsdom 没有 ResizeObserver：不给 prop 时 data-density=full，设备标签 / 新鲜度 / 部署小字都在", async () => {
+    await seedDeviceBoard(10, { status: "deployed", version: "1.0.7", last_deployed: new Date(Date.now() - 60_000).toISOString() });
+    renderHeader();
+    expect(screen.getByRole("banner").getAttribute("data-density")).toBe("full");
+    expect(screen.getByText("This Mac")).toBeTruthy();
+    expect(document.querySelector(".shell-freshness")?.textContent).toBe("Data generated just now");
+    expect(screen.getByText("v1.0.7 · deployed 1m ago")).toBeTruthy();
+    expect(document.querySelector(".shell-connection")?.getAttribute("title")).toBe("Connecting");
+  });
+
+  it("compact：只收设备标签，新鲜度 / 部署小字照旧", async () => {
+    await seedDeviceBoard(10, { status: "deployed", version: "1.0.7" });
+    renderHeader("en", { density: "compact" });
+    expect(screen.getByRole("banner").getAttribute("data-density")).toBe("compact");
+    expect(screen.queryByText("This Mac")).toBeNull();
+    expect(document.querySelector(".shell-freshness")?.textContent).toBe("Data generated just now");
+    expect(screen.getByText("v1.0.7")).toBeTruthy();
+  });
+
+  it("tight：新鲜度 / 部署小字不占行，整句折进连接点的 tooltip；陈旧 / 非 healthy 时点带 is-warn", async () => {
+    const deployedAt = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    await seedDeviceBoard(5 * 60, { status: "rolled_back", version: "1.0.6", last_deployed: deployedAt, failed_sha: "deadbeef" });
+    renderHeader("en", { density: "tight" });
+    expect(screen.getByRole("banner").getAttribute("data-density")).toBe("tight");
+    expect(screen.queryByText("This Mac")).toBeNull();
+    expect(document.querySelector(".shell-freshness")).toBeNull();
+    expect(document.querySelector(".shell-deploy")).toBeNull();
+    const connection = document.querySelector(".shell-connection")!;
+    expect(connection.getAttribute("title")).toBe(
+      "Connecting · Data generated 5 min ago — actd may be down · v1.0.6 · deployed 3h ago · rolled back",
+    );
+    expect(connection.className).toContain("is-warn");
+  });
+
+  it("tight + 新鲜 + healthy：tooltip 带上信息但连接点不报警", async () => {
+    await seedDeviceBoard(10, { status: "up_to_date", version: "1.0.7" });
+    renderHeader("zh", { density: "tight" });
+    const connection = document.querySelector(".shell-connection")!;
+    expect(connection.getAttribute("title")).toBe("连接中 · 数据生成于 刚刚 · v1.0.7");
+    expect(connection.className).not.toContain("is-warn");
+  });
+
+  it("tight + 壳桥：录制 / 字幕开关保留 aria-label，录制的 title 说全「Rec: Off」（文字由 CSS 收起）", async () => {
+    const state = shellState();
+    window.webkit = { messageHandlers: { zaiShell: { postMessage: vi.fn(async () => state) } } };
+    await seedDeviceBoard(10);
+    renderHeader("en", { density: "tight" });
+    const rec = await screen.findByRole("button", { name: "Recording controls" });
+    expect(rec.getAttribute("title")).toBe("Rec: Off");
+    expect(rec.textContent).toContain("Off"); // 文案节点仍在（判卷面按节点找），只是 tight 档 CSS 不显示
+    expect(screen.getByRole("button", { name: "Live captions" }).getAttribute("title")).toBe("Live captions");
+    cleanup();
+    renderHeader("en", { density: "full" });
+    expect((await screen.findByRole("button", { name: "Recording controls" })).getAttribute("title")).toBe("Recording controls");
   });
 });
