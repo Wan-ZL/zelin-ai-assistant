@@ -5,7 +5,8 @@
 // healthy 但 last_incident 在案（回滚被拒后 HEAD 留在新 sha，下一轮的 up_to_date 不许
 // 把判决冲掉——#135 review）→ 同样警告色，title 挂判决原文。无 deploy_state 或无
 // version → 整个隐藏：这台机器不跑 auto-deploy（.pkg 安装 / Linux / flag 关）。
-// 相对时间与 FreshnessLabel 共用 relativeAge，60s tick 自驱重算。
+// 相对时间与 FreshnessLabel 共用 relativeAge，60s tick 自驱重算。计算住 useDeployLabel（HeaderBar 调一次：
+// full / compact 渲染成小字，tight 折进连接点的 tooltip，§49 追记 2026-09-04）；DeployLabel 只管渲染。
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { useAppState } from "../../store";
@@ -43,7 +44,15 @@ function statusLabel(status: string, text: (zh: string, en: string) => string): 
   }
 }
 
-export function DeployLabel() {
+export interface DeployLabelState {
+  /** 「v0.48.4 · deployed 12m ago[ · rolled back]」 */
+  label: string;
+  /** detail 原文；healthy 但 last_incident 在案时是判决原文 */
+  title: string;
+  warn: boolean;
+}
+
+export function useDeployLabel(): DeployLabelState | null {
   const { text } = useI18n();
   const { board } = useAppState();
   const [now, setNow] = useState(() => Date.now());
@@ -69,12 +78,18 @@ export function DeployLabel() {
   if (!healthy) parts.push(statusLabel(status, text));
   else if (incident) parts.push(text("上次回滚判决待处理", "unresolved rollback verdict"));
   const detail = typeof state.detail === "string" ? state.detail : "";
-  const title = healthy && incident ? incident : detail;
-  const warn = !healthy || Boolean(incident);
+  return {
+    label: parts.join(" · "),
+    title: healthy && incident ? incident : detail,
+    warn: !healthy || Boolean(incident),
+  };
+}
 
+export function DeployLabel({ value }: { value: DeployLabelState | null }) {
+  if (!value) return null;
   return (
-    <span className={`shell-deploy${warn ? " is-warn" : ""}`} role="status" title={title || undefined}>
-      {parts.join(" · ")}
+    <span className={`shell-deploy${value.warn ? " is-warn" : ""}`} role="status" title={value.title || undefined}>
+      {value.label}
     </span>
   );
 }

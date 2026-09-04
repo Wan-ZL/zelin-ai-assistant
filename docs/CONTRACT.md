@@ -3682,6 +3682,8 @@ docs/design/vnext2-plan.md；它们来自上一轮外部 build contract §2.2 �
 让 AI 修 / 回答…、永久性完成书立条、列头「?」、composer 文案、id 位置）见
 **§54.1**。
 
+**2026-09-04 追记（add-only；`feat/responsive-header`；plan D31，owner 原话「在窄窗口中顶部会挤成多行。你看看如何 smartly 解决」）——顶栏永远一行**：`HeaderBar` 定高 52px 不换行，`.shell-search-slot` `min-width: 0; overflow: hidden`、`.chrome-filterbar` `flex-wrap: nowrap`——中缝内容再多也不许挤走两翼、不许溢到标题或下一行。收纳按**顶栏实测宽**（ResizeObserver；不是视口——顶栏宽 = 视口 − 导航栏，导航栏折叠 / 拖宽都要跟）分三档，`data-density` 挂在 `.shell-header` 上、经 `HeaderDensityContext` 发给槽位与右侧开关（`web/src/components/shell/headerDensity.ts`）：**full**（≥ `--header-density-full-min`）= 原行内布局；**compact**（≥ `--header-density-compact-min`）= Tier / 期限 / 回锅 chips、排序、清除、选择 收进「筛选 · N」按钮的 popover（`components/chrome/FilterPopover.tsx`：`role="dialog"` + aria-label、打开焦点进面板、Tab 在面板内循环、关闭焦点还给按钮、⎋ / 点外面 / 视口变化关闭；N 只数面板内生效的维度，搜索词不算），搜索框留在条上、可缩到 `--header-search-min-width`，左侧收掉设备标签；**tight** = 搜索框折成放大镜（点它 / ⌘F 展开成行内输入框并聚焦，失焦收起，有词时带点），「筛选」「提建议」只留图标，右侧 录制 / 实时字幕 只留图标（颜色三态照旧在图标上，「录制：状态词」挂 `title`），左侧只剩标识 + 标题，新鲜度 / 部署小字整句折进连接点的 tooltip（陈旧 / 非 healthy 时点转橙）。阈值单源 = `tokens.css` 的 `--header-density-*`（hook 挂载时 `getComputedStyle` 读一次、乘 `--text-scale`；壳桥在场 / 英文各加一个**静态**加项——只取决于桥与语言、不取决于档位，所以不会「收起 → 空间够了 → 展开 → 又不够」地抖）；jsdom 无 ResizeObserver → 恒 full，§66.2 判卷面与既有判例看到的仍是原顶栏。图标按钮的 `aria-label` = 全档的可见文案（搜索卡片 / 筛选 / 提建议 / 录制控制 / 实时字幕）。**纯客户端展示行为**：过滤 / 排序 / 多选状态仍只住 store + URL query（`taskFilters.ts`），收纳与展开不改一个字，wire 零变化；⌘F 在任何档位聚焦搜索，⎋ 两段（清词 → 收起 / 退出多选）不变、面板开着时 ⎋ 只关面板。原按视口的 `@media (max-width: 900px / 780px)` 收设备标签 / 新鲜度规则退役（并入 `data-density`）。判例 `headerDensity.test.ts`（宽度 → 档位、token 读取与加项、RO 驱动、jsdom 回落）、`HeaderBar.test.tsx`（三档渲染、tooltip 折句、壳开关 `title`）、`FilterBar.test.tsx`（popover 反映 / 改写 / ⎋ / 焦点、放大镜展开收起、⎋ 两段）、`tokens.test.ts`（token 在场且 full 阈值 ≤ 视觉 golden 的顶栏宽 1240）。
+
 **依赖澄清（宪法第 7 条执法注，T-3 裁 A 案：条文零改动）**：web/ 的 npm 依赖
 （运行时仅 `react`/`react-dom`；dev 限 `vite`/`@vitejs/plugin-react`/
 `typescript`/`vitest`/`jsdom`/`@testing-library/react`/`axe-core`（a11y 判例，
@@ -5578,7 +5580,7 @@ Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`�
 
 ### 68.12 多选与批量
 
-见 §54.1 第 11 项。store 持 `selectionMode` / `selectedIds`（会话内瞬态）；退出选择即清空。批量批准的 T2 跳过是**硬规则**：typed-confirm（§50 W17 生效档）只能逐卡在提案卡上完成，操作条的提示如实列出被跳过的 id。
+见 §54.1 第 11 项。store 持 `selectionMode` / `selectedIds`（会话内瞬态）；退出选择即清空。批量批准的 T2 跳过是**硬规则**：typed-confirm（§50 W17 生效档）只能逐卡在提案卡上完成，操作条的提示如实列出被跳过的 id。**2026-09-04 追记**：顶栏 compact / tight 档（§49 同日追记，D31）「选择」入口住「筛选」popover 的页脚，点它切进多选并关面板；full 档仍在条上——同一把 `setSelectionMode`，判例 `FilterBar.test.tsx`。
 
 ### 68.13 壳的其余原生残留（R2.2.3；`shell/Sources/ShellSystem.swift` + `NotifyRelay.swift` + `shell/Helpers/`）
 

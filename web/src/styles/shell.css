@@ -165,7 +165,8 @@
   padding: 48px 24px;
 }
 
-/* —— 顶栏 —— */
+/* —— 顶栏 —— 永远一行、定高（§49 追记 2026-09-04）：窄了不换行，由 data-density 三档
+   （full / compact / tight，HeaderBar 按实测宽度判，headerDensity.ts）收控件。 */
 .shell-header {
   position: sticky;
   top: 0;
@@ -178,6 +179,10 @@
   padding: 0 16px;
   background: var(--header-bg);
   border-bottom: var(--stroke-w) solid var(--border);
+}
+
+.shell-header[data-density="tight"] {
+  gap: 10px;
 }
 
 .shell-header-left {
@@ -236,11 +241,16 @@
   color: var(--warning);
 }
 
-/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定 */
+/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定。
+   min-width 0 + overflow hidden = 槽位只拿 1fr 剩下的宽，内容再多也不许把两翼挤走、不许溢出到标题
+   或下一行（内容自己按档位收纳；通高是为了不裁掉搜索框的 focus ring）。 */
 .shell-search-slot {
   display: flex;
+  align-items: center;
+  align-self: stretch;
   justify-content: center;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shell-header-right {
@@ -268,6 +278,8 @@
 .shell-connection.is-live .shell-connection-dot { background: var(--success); }
 .shell-connection.is-connecting .shell-connection-dot { background: var(--warning); }
 .shell-connection.is-reconnecting .shell-connection-dot { background: var(--danger); }
+/* tight 档：新鲜度 / 部署小字折进这颗点的 tooltip——它们在报警（陈旧 / 非 healthy）时点也转橙 */
+.shell-connection.is-live.is-warn .shell-connection-dot { background: var(--warning); }
 
 .shell-connection.is-live .shell-connection-text {
   /* 正常态视觉降噪：文字仅供屏幕阅读器/tooltip，异常态才可见 */
@@ -328,6 +340,20 @@
 
 .shell-rec-restarting {
   color: var(--warning);
+}
+
+/* tight 档：两颗开关只留图标（文字进 title / aria-label，RecordingControl 把「录制：状态词」挂 title） */
+.shell-header[data-density="tight"] .shell-rec-label,
+.shell-header[data-density="tight"] .shell-cap-label,
+.shell-header[data-density="tight"] .shell-rec-restarting {
+  display: none;
+}
+
+.shell-header[data-density="tight"] .shell-rec-button,
+.shell-header[data-density="tight"] .shell-cap-button {
+  width: var(--header-control-size);
+  padding: 0;
+  justify-content: center;
 }
 
 /* 下拉菜单（原生 Menu 的 web 同义体：状态行 + 单选 + 动作） */
@@ -577,23 +603,8 @@
   }
 }
 
-/* —— 响应式：窄窗先收次要信息，再交给 .shell 的 min-width 横向滚动 —— */
-@media (max-width: 900px) {
-  .shell-device {
-    display: none;
-  }
-}
-
-@media (max-width: 780px) {
-  .shell-freshness,
-  .shell-deploy {
-    display: none;
-  }
-
-  .shell-header {
-    gap: 10px;
-  }
-}
+/* —— 响应式：顶栏的收纳不再看视口——按 .shell-header 实测宽分档（上方 data-density 规则 +
+   HeaderBar 按档位决定设备标签 / 新鲜度 / 部署小字渲不渲染）；页面主体仍交给 .shell 的 min-width 横向滚动 —— */
 
 /* ----- §68.8 横幅一键修复 ---------------------------------------------------------------- */
 .shell-banner-actions {

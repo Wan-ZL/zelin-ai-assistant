@@ -256,6 +256,26 @@
   --type-header-meta: var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans);
 }
 
+/*
+ * —— 顶栏密度阈值与尺寸（CONTRACT §49 追记 2026-09-04；web/src/components/shell/headerDensity.ts 挂载时读一次）——
+ * 顶栏**实测宽**（不是视口：视口 − 导航栏）≥ full-min → full；≥ compact-min → compact；再窄 → tight。
+ * 两个加项只取决于静态事实、不取决于档位（所以不会来回抖）：壳桥在场 = 右侧多「录制：」「实时字幕」两颗
+ * 带字开关；英文 = 文案比中文长。JS 读完再整体乘 --text-scale（字号档放大，内容等比变宽）。
+ * 数值来自 1440×900 视口（导航栏 200 → 顶栏 1240，视觉 golden 的采集条件）的实测：zh 浏览器 full 内容
+ * ≈ 1030px（开着「清除」≈ 1105），en 再宽 ≈ 200，壳再宽 ≈ 180；compact 内容 zh ≈ 730 / en ≈ 900。
+ * full-min 定 1220 = golden 条件下仍是 full；搜索框可缩到 min-width 兜掉阈值附近 80px 的抖动。
+ */
+:root {
+  --header-density-full-min: 1220px;
+  --header-density-compact-min: 800px;
+  --header-density-shell-extra: 180px;
+  --header-density-en-extra: 200px;
+  --header-control-size: 28px;
+  --header-search-width: 200px;
+  --header-search-min-width: 120px;
+  --header-popover-width: 300px;
+}
+
 /* —— 以下为本 repo 自写的基础重置（非 fork）—— */
 * {
   box-sizing: border-box;
