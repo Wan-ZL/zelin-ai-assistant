@@ -5,9 +5,10 @@
 // （tooltip 双语标题），展开 = 200px 默认、160–320 可拖（原生 dragHandle）。三把偏好键逐字镜像原生
 // UserDefaults：`sidebarCollapsed` / `sidebarWidth` / `mainSection`（localStorage 同名；页面本身仍由 URL ?page=
 // 承担，`mainSection` 只记「上次在哪一页」——冷启动（本窗口会话第一次加载、URL 没指定页）回到那一页，
-// 原生 MainNav.init 的行为）。⌘1…⌘6 = 原生 keyboardShortcut 按剩下的六项连续重编（浏览器保留 ⌘1-8 时由浏览器
-// 胜出，壳里可用）。每个条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
-// 原生页之外的 web 自有页（会议纪要 §63）放分隔线下方，不带 data-rail-item。
+// 原生 MainNav.init 的行为）。⌘1…⌘7 = 原生 keyboardShortcut 按栏上的七项连续重编（浏览器保留 ⌘1-8 时由浏览器
+// 胜出，壳里可用）。每个原生条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
+// 原生页之外的 web 自有页（会议纪要 §63）owner 2026-09-04 要它紧跟任务台（D32）：列第二、拿 ⌘2，不带 data-rail-item——
+// 探针 rail:order 只读带锚的六项，相对顺序不变即绿；原先分隔线下再无条目，分隔线随之退役。
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, hasExplicitRoute, isDepsPage, navigate, readPage, type AppPage } from "../../route";
@@ -122,12 +123,12 @@ function RailLink({ page, zh, en, shortcut, icon, isActive, isCollapsed, ...rest
   );
 }
 
-/** ⌘1…⌘6 → 六页（原生 MainSection 顺序，去掉 ask / deps 后连续重编）；输入框里不劫持 */
+/** ⌘1…⌘7 → 七页（原生 MainSection 顺序去掉 ask / deps，会议纪要插在任务台之后——D32）；输入框里不劫持 */
 function shortcutPage(event: KeyboardEvent): AppPage | null {
   if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
   const target = event.target as HTMLElement | null;
   if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return null;
-  const order: AppPage[] = ["board", "ingest", "trash", "archive", "settings", "about"];
+  const order: AppPage[] = ["board", "recaps", "ingest", "trash", "archive", "settings", "about"];
   const index = Number(event.key) - 1;
   return index >= 0 && index < order.length && String(index + 1) === event.key ? order[index] : null;
 }
@@ -193,23 +194,22 @@ export function NavRail() {
       </div>
       {/* 原生第 2 / 3 项（问问助手 / 依赖检查）自 2026-09-04 起不在栏上：D29 退役、D30 并入设置页「依赖检查」区 */}
       <RailLink data-rail-item="dashboard" page="board" zh="任务台" en="Workbench" shortcut="⌘1" icon={<TrayFullIcon />} {...link("dashboard")} />
-      <RailLink data-rail-item="ingest" page="ingest" zh="录制与数据接入" en="Recording & Data Sources" shortcut="⌘2" icon={<RecordCircleIcon />} {...link("ingest")} />
-      <RailLink data-rail-item="trash" page="trash" zh="回收站" en="Trash" shortcut="⌘3" icon={<TrashIcon />} {...link("trash")} />
-      <RailLink data-rail-item="archive" page="archive" zh="永久性完成" en="Done for good" shortcut="⌘4" icon={<ArchiveBoxIcon />} {...link("archive")} />
-      <RailLink data-rail-item="settings" page="settings" zh="设置" en="Settings" shortcut="⌘5" icon={<GearIcon />} {...link("settings")} />
-      <RailLink data-rail-item="about" page="about" zh="关于" en="About" shortcut="⌘6" icon={<InfoCircleIcon />} {...link("about")} />
-      <div className="rail-divider" role="separator" />
-      {/* web 自有页（§63 会议纪要）：原生没有此页，不带 data-rail-item，不参与 ⌘ 数字键 */}
+      {/* web 自有页（§63 会议纪要）：原生没有此页，不带 data-rail-item（探针只数原生六项）；owner 要它紧跟任务台（D32），⌘2 */}
       <a
         className={`rail-item${page === "recaps" ? " is-active" : ""}`}
         href={buildAppUrl(window.location.href, "recaps", null).toString()}
         aria-current={page === "recaps" ? "page" : undefined}
-        title={text("会议纪要", "Recaps")}
+        title={`${text("会议纪要", "Recaps")} (⌘2)`}
         data-rail-extra="recaps"
       >
         <span className="rail-icon"><RecapIcon /></span>
         {!isCollapsed && <span className="rail-label">{text("会议纪要", "Recaps")}</span>}
       </a>
+      <RailLink data-rail-item="ingest" page="ingest" zh="录制与数据接入" en="Recording & Data Sources" shortcut="⌘3" icon={<RecordCircleIcon />} {...link("ingest")} />
+      <RailLink data-rail-item="trash" page="trash" zh="回收站" en="Trash" shortcut="⌘4" icon={<TrashIcon />} {...link("trash")} />
+      <RailLink data-rail-item="archive" page="archive" zh="永久性完成" en="Done for good" shortcut="⌘5" icon={<ArchiveBoxIcon />} {...link("archive")} />
+      <RailLink data-rail-item="settings" page="settings" zh="设置" en="Settings" shortcut="⌘6" icon={<GearIcon />} {...link("settings")} />
+      <RailLink data-rail-item="about" page="about" zh="关于" en="About" shortcut="⌘7" icon={<InfoCircleIcon />} {...link("about")} />
       {!isCollapsed && (
         <div
           className="rail-resize-handle"
