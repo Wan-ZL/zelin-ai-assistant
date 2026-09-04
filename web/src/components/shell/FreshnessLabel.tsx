@@ -60,9 +60,14 @@ export function useFreshness(): Freshness | null {
 
 export function FreshnessLabel({ value }: { value: Freshness | null }) {
   if (!value) return null;
-  // 前缀与相对时间各一个节点（原生 Freshness.swift 两个 Text；探针按节点判「数据生成于 」）
+  // 前缀与相对时间各一个节点（原生 Freshness.swift 两个 Text；探针按节点判「数据生成于 」）；
+  // title 挂整句——左翼被槽位挤成省略号时（shell.css）悬停仍读得到
   return (
-    <span className={`shell-freshness${value.stale ? " is-stale" : ""}`} role={value.stale ? "status" : undefined}>
+    <span
+      className={`shell-freshness${value.stale ? " is-stale" : ""}`}
+      role={value.stale ? "status" : undefined}
+      title={freshnessText(value)}
+    >
       <span>{value.prefix}</span>
       <span>{value.age}</span>
     </span>

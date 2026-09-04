@@ -60,7 +60,7 @@
 
 /* ----- 过滤 chip 条 + 搜索框 ------------------------------------------------
    永不换行（§49 追记 2026-09-04）：窄了由 HeaderBar 的 data-density 三档把控件收进「筛选」popover，
-   而不是让 chips 掉到第二行；兜底是搜索框先缩（min-width token）。 */
+   而不是让 chips 掉到第二行；顶栏 grid 给槽位的下限就是这条的内容宽（shell.css），左翼先让。 */
 .chrome-filterbar {
   display: flex;
   align-items: center;
@@ -125,19 +125,27 @@
   font: var(--type-header-control);
   padding: 5px 10px;
   border-radius: 8px;
-  flex: 0 1 var(--header-search-width);
   width: var(--header-search-width);
   min-width: var(--header-search-min-width);
 }
 
-/* tight 档：条铺满槽位（图标居中），展开后的搜索框吃掉槽位余下的宽度 */
+/* 只在顶栏的条里才是 flex item（回收站 / 永久性完成 / 设置页复用这个类，但它们的容器是竖排 flex——
+   flex-basis 在那儿会变成高度） */
+.chrome-filterbar .chrome-search {
+  flex: 0 1 var(--header-search-width);
+}
+
+/* tight 档：条铺满槽位（图标居中），展开后的搜索框吃掉槽位余下的宽度——basis 0 + min-width 0，
+   所以它不参与槽位的 max-content（顶栏 grid 给槽位的下限，shell.css），窄到极限也不会把标题挤掉 */
 [data-density="tight"] .chrome-filterbar {
   flex: 1 1 auto;
   justify-content: center;
 }
 
-.chrome-search.is-expanded {
-  flex: 1 1 var(--header-search-min-width);
+.chrome-filterbar .chrome-search.is-expanded {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
 }
 
 .chrome-search:focus {

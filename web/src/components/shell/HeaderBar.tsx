@@ -70,7 +70,8 @@ export function HeaderBar({ searchSlot, density: densityOverride }: HeaderBarPro
             </svg>
           </span>
           <h1 className="shell-title">{text("Zelin 的 AI 助理", "Zelin's AI Assistant")}</h1>
-          {deviceLabel && density === "full" && <span className="shell-device">{deviceLabel}</span>}
+          {/* title 挂全文：左翼被槽位挤时三段小字会省略号（shell.css） */}
+          {deviceLabel && density === "full" && <span className="shell-device" title={deviceLabel}>{deviceLabel}</span>}
           {!tight && <FreshnessLabel value={freshness} />}
           {/* §56：v0.48.x · deployed 12m ago（无 deploy_state 时自隐藏） */}
           {!tight && <DeployLabel value={deploy} />}

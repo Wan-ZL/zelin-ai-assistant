@@ -225,6 +225,29 @@ describe("FilterBar · tight（搜索折成放大镜）", () => {
     expect(screen.getByRole("button", { name: "Search cards" }).querySelector(".chrome-search-dot")).toBeTruthy();
   });
 
+  it("搜索框展开着点「筛选」/「提建议」：pointerdown 不抢焦点（不先收起重排），一下就开；「筛选」的 click 顺手收起搜索框", () => {
+    renderAt("tight");
+    fireEvent.click(screen.getByRole("button", { name: "Search cards" }));
+    const input = screen.getByRole("searchbox", { name: "Search cards" });
+    expect(document.activeElement).toBe(input);
+
+    // 旁边的图标：pointerdown 被 preventDefault（= 浏览器不会把焦点移走、输入框不 blur）；输入框自己不拦（要能点中放光标）
+    const filters = screen.getByRole("button", { name: "Filters" });
+    expect(fireEvent.pointerDown(filters)).toBe(false);
+    expect(fireEvent.pointerDown(screen.getByRole("button", { name: "Send feedback" }))).toBe(false);
+    expect(fireEvent.pointerDown(input)).toBe(true);
+    expect(screen.getByRole("searchbox")).toBeTruthy();
+
+    // 第一下 click 就开面板；搜索框在同一次渲染里收起（面板量到的锚点已是收起后的位置）
+    fireEvent.click(filters);
+    expect(screen.getByRole("dialog", { name: "Filters" })).toBeTruthy();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+
+    // 搜索框收着时不拦：图标正常拿焦点
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(fireEvent.pointerDown(filters)).toBe(true);
+  });
+
   it("⌘F 展开并聚焦；⎋ 两段：先清词（框留着）、再收起；再按退出多选", () => {
     renderAt("tight");
     act(() => { setFilters({ search: "readme" }); setSelectionMode(true); });

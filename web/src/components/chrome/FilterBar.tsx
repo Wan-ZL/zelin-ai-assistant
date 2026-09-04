@@ -5,9 +5,9 @@
 // 匹配语义见 taskFilters.ts 头注释——A6 各列用 matchesCardFilters(row, filters) 消费。
 // 顶栏三档密度（§49 追记 2026-09-04，档位来自 HeaderDensityContext）——纯展示，过滤 / 排序 / 多选状态一个字不变：
 //   full    搜索框 + chips + 清除 + 提建议 + 选择 + 排序 全部行内（今天的样子）；
-//   compact chips / 排序 / 清除 / 选择 收进「筛选 · N」按钮的 popover（FilterPopover），搜索框变窄；
+//   compact chips / 排序 / 清除 / 选择 收进「筛选 · N」按钮的 popover（FilterPopover），搜索框留在条上；
 //   tight   搜索框折成放大镜（点它 / ⌘F 展开，⎋ / 失焦收起，有词时带点），「筛选」只留图标 + 计数，提建议只留图标。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import "./chrome.css";
 import { useI18n } from "../../i18n";
 import { normalizeSortOrder, SORT_ORDERS, type SortOrder } from "../../cardSort";
@@ -151,6 +151,14 @@ export function FilterBar() {
 
   const filtersLabel = text("筛选", "Filters");
 
+  // tight 且搜索框展开着：点条上别的控件时先别让它抢焦点——否则 mousedown 的 blur 先把搜索框收成放大镜、
+  // 居中的图标行重排，mouseup 落在空处，第一下点击就丢了（WKWebView 点按钮不给焦点，blur.relatedTarget
+  // 靠不住）。收起搜索框交给「筛选」的 click 顺手做（与开面板同一次渲染，面板量到的是收起后的锚点位置）；
+  // 提建议开的是居中 modal，showModal 夺焦点时 blur 自然收起。
+  function keepSearchFocus(event: PointerEvent<HTMLDivElement>) {
+    if (tight && searchOpen && event.target !== searchRef.current) event.preventDefault();
+  }
+
   const chips = (
     <>
       <TaskPropertyPicker
@@ -236,7 +244,12 @@ export function FilterBar() {
   );
 
   return (
-    <div className="chrome-filterbar" role="toolbar" aria-label={text("过滤与搜索", "Filter and search")}>
+    <div
+      className="chrome-filterbar"
+      role="toolbar"
+      aria-label={text("过滤与搜索", "Filter and search")}
+      onPointerDownCapture={keepSearchFocus}
+    >
       {searchVisible ? (
         <input
           ref={searchRef}
@@ -280,7 +293,10 @@ export function FilterBar() {
             aria-expanded={panelOpen}
             aria-label={filtersLabel}
             title={panelCount > 0 ? `${filtersLabel} · ${panelCount}` : filtersLabel}
-            onClick={() => setPanelOpen((open) => !open)}
+            onClick={() => {
+              setPanelOpen((open) => !open);
+              setSearchOpen(false);
+            }}
           >
             <FunnelIcon />
             {!tight && <span>{filtersLabel}</span>}

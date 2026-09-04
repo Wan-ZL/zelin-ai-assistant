@@ -166,13 +166,16 @@
 }
 
 /* —— 顶栏 —— 永远一行、定高（§49 追记 2026-09-04）：窄了不换行，由 data-density 三档
-   （full / compact / tight，HeaderBar 按实测宽度判，headerDensity.ts）收控件。 */
+   （full / compact / tight，HeaderBar 按实测宽度判，headerDensity.ts）收控件。
+   三列的让位次序：中间槽位的下限 = 自身内容（max-content），左翼 minmax(0, auto) 先缩——档位阈值
+   只看顶栏宽、不看左翼内容，所以左翼变长（陈旧新鲜度 + 回滚部署 + 设备标签能多出 ~400px）时
+   由左翼的设备标签 / 新鲜度 / 部署小字省略号收场，槽位里的控件一个不裁。 */
 .shell-header {
   position: sticky;
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, auto) minmax(max-content, 1fr) auto;
   align-items: center;
   gap: 16px;
   height: 52px;
@@ -185,11 +188,14 @@
   gap: 10px;
 }
 
+/* min-width 0 + overflow hidden：让 grid 能把这一列缩到内容以下；标识 / 标题不缩，
+   设备标签 / 新鲜度 / 部署小字（下方 min-width 0 + ellipsis）让位 */
 .shell-header-left {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shell-logo {
@@ -237,13 +243,25 @@
   white-space: nowrap;
 }
 
+/* 左翼被槽位挤时这三段缩成省略号（整句在 title 里；警告色照留）；宽够时原样一字不少。
+   设备标签是用户机器名、长度不可预算——不让它缩，阈值预算就守不住 */
+.shell-device,
+.shell-freshness,
+.shell-deploy {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .shell-deploy.is-warn {
   color: var(--warning);
 }
 
 /* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定。
-   min-width 0 + overflow hidden = 槽位只拿 1fr 剩下的宽，内容再多也不许把两翼挤走、不许溢出到标题
-   或下一行（内容自己按档位收纳；通高是为了不裁掉搜索框的 focus ring）。 */
+   grid 给它的下限是自身内容（上方 minmax(max-content, 1fr)），多出来的宽才是 1fr，所以里面的控件
+   永不被槽位裁掉；内容自己按档位收纳（tokens.css 的阈值预算按左翼只剩标识 + 标题算）。
+   通高是为了不裁掉搜索框的 focus ring。 */
 .shell-search-slot {
   display: flex;
   align-items: center;
