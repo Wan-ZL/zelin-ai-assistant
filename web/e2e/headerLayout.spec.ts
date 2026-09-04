@@ -3,7 +3,9 @@
 //     三档各取一个视口：槽位里的每个控件都落在槽位矩形内（不被裁）、顶栏仍 52px 一行、标题完整；
 //     tight 再把搜索框展开量一次（basis 0 吃余量，不许把标题挤掉）；
 //   · 回收站页复用 .chrome-search 但容器竖排——flex-basis 不许变成高度；
-//   · tight 搜索框展开着点「筛选」/「提建议」：第一下就开（pointerdown 不抢焦点，见 FilterBar.tsx）。
+//   · tight 搜索框展开着点「筛选」/「提建议」：第一下就开（pointerdown 不抢焦点，见 FilterBar.tsx）；
+//   · 提建议回执（成功句 / server 原文错误句，长度不可预算）显示的 4 s 里顶栏不横向溢出、标题不裁、右翼在视口内、
+//     整页无横向滚动条——回执是 portal 到 body 的 fixed 小条，不是槽位 max-content 下限来源 .chrome-filterbar 的子元素。
 // 数据 = demo initial 场景，/api/board 经 page.route 改写 generated_at / device_label / deploy_state。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
@@ -144,4 +146,108 @@ test("tight：搜索框展开着，点「筛选」/「提建议」一下就开",
   await expect(page.getByRole("searchbox", { name: "Search cards" })).toBeFocused();
   await page.getByRole("button", { name: "Send feedback" }).click();
   await expect(page.getByRole("dialog").filter({ hasText: "Send feedback (overall)" })).toBeVisible();
+});
+
+// —— 提建议回执不撑顶栏（#206 review）——
+// 修复前回执是 nowrap 条的直接子元素、条又是槽位 max-content 下限的来源：en + 壳 @720 成功句就把标题裁 36px；
+// 下面这句 ≈1300px 的 server 原文（describeActionError 照登、长度不可预算）让顶栏横向溢出 1012–1377px（三档四个视口）、
+// 标题裁 130–159px、右翼被推出视口同样的像素数、整页出横向滚动条——持续 4 s。
+const LONG_SERVER_ERROR = "inbox_writer rejected the action: state/inbox is not writable — "
+  + "check the permissions of /Users/owner/Library/Application Support/zelin-ai-assistant/state/inbox/ "
+  + "and retry; details: [Errno 13] Permission denied while creating feedback-2026-09-04T21-32-50Z.md "
+  + "(this is the verbatim server message, passed through without truncation)";
+
+const FEEDBACK = {
+  zh: { button: "提建议", placeholder: "建议内容…", send: "发送", ok: "已记录建议，感谢" },
+  en: { button: "Send feedback", placeholder: "Your feedback…", send: "Send", ok: "Feedback recorded" },
+} as const;
+
+interface HeaderOverflow {
+  density: string | undefined;
+  headerHeight: number;
+  /** .shell-header 横向溢出量（scrollWidth − clientWidth） */
+  headerOverflow: number;
+  /** 标题被左翼裁掉的像素（标题右沿超出左翼右沿） */
+  titleClip: number;
+  titleInsideLeft: boolean;
+  /** 右翼（连接点 / 语言 / 主题 / 录制 / 字幕）右沿超出视口的像素 */
+  rightOverflow: number;
+  /** 整页横向溢出量（documentElement.scrollWidth − innerWidth） */
+  pageOverflow: number;
+  noteInBar: boolean;
+  noteInsideViewport: boolean;
+}
+
+function measureOverflow(page: Page): Promise<HeaderOverflow> {
+  return page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".shell-header")!;
+    const left = document.querySelector<HTMLElement>(".shell-header-left")!.getBoundingClientRect();
+    const title = document.querySelector<HTMLElement>(".shell-title")!.getBoundingClientRect();
+    const right = document.querySelector<HTMLElement>(".shell-header-right")!.getBoundingClientRect();
+    const note = document.querySelector<HTMLElement>(".chrome-feedback-note")!;
+    const noteRect = note.getBoundingClientRect();
+    return {
+      density: header.dataset.density,
+      headerHeight: header.getBoundingClientRect().height,
+      headerOverflow: header.scrollWidth - header.clientWidth,
+      titleClip: Math.max(0, Math.round(title.right - left.right)),
+      titleInsideLeft: title.right <= left.right + 0.5 && title.left >= left.left - 0.5,
+      rightOverflow: Math.max(0, Math.round(right.right - window.innerWidth)),
+      pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      noteInBar: note.closest(".chrome-filterbar") !== null,
+      noteInsideViewport: noteRect.left >= 0 && noteRect.right <= window.innerWidth && noteRect.width > 0,
+    };
+  });
+}
+
+async function sendFeedback(page: Page, lang: "zh" | "en", status: 200 | 500) {
+  await page.route("**/api/actions*", (route) => route.fulfill({
+    status,
+    contentType: "application/json",
+    body: JSON.stringify(status === 200 ? { ok: true } : { error: { code: "INBOX_WRITE_FAILED", message: LONG_SERVER_ERROR } }),
+  }));
+  await page.getByRole("button", { name: FEEDBACK[lang].button, exact: true }).click();
+  await page.getByPlaceholder(FEEDBACK[lang].placeholder).fill("layout probe");
+  await page.getByRole("button", { name: FEEDBACK[lang].send, exact: true }).click();
+  const note = page.locator(".chrome-feedback-note");
+  await expect(note).toBeVisible();
+  await expect(note).toHaveText(status === 200 ? FEEDBACK[lang].ok : LONG_SERVER_ERROR);
+}
+
+// 一次比对整组几何：失败时把 overflow / clip 的像素数一并打出来
+async function expectHeaderUnmovedByNote(page: Page) {
+  const geometry = await measureOverflow(page);
+  expect(geometry).toMatchObject({
+    noteInBar: false,
+    headerOverflow: 0,
+    titleClip: 0,
+    titleInsideLeft: true,
+    rightOverflow: 0,
+    pageOverflow: 0,
+    headerHeight: 52,
+    noteInsideViewport: true,
+  });
+  return geometry;
+}
+
+// zh @1440 无壳 = full（golden 条件）；zh / en + 壳 @1440 = compact；en + 壳 @720 = tight
+for (const scene of [
+  { lang: "zh", width: 1440, shell: false, density: "full" },
+  { lang: "zh", width: 1440, shell: true, density: "compact" },
+  { lang: "en", width: 1440, shell: true, density: "compact" },
+  { lang: "en", width: 720, shell: true, density: "tight" },
+] as const) {
+  test(`提建议被 server 拒绝（原文 ≈1300px）· ${scene.lang}${scene.shell ? " + 壳" : ""} @${scene.width}：回执不撑顶栏、标题完整、右翼在视口内、整页不横滚`, async ({ page }) => {
+    await open(page, { lang: scene.lang, width: scene.width, shell: scene.shell });
+    expect((await measureHeader(page)).density).toBe(scene.density);
+    await sendFeedback(page, scene.lang, 500);
+    await expectHeaderUnmovedByNote(page);
+  });
+}
+
+test("提建议成功句 · en + 壳 @720（tight）：回执显示时标题裁 0px、顶栏不溢出", async ({ page }) => {
+  await open(page, { lang: "en", width: 720, shell: true });
+  await sendFeedback(page, "en", 200);
+  const geometry = await expectHeaderUnmovedByNote(page);
+  expect(geometry.density).toBe("tight");
 });

@@ -621,7 +621,19 @@
   gap: 8px;
 }
 
+/* ----- 提建议回执小条（§29 / §49 追记 2026-09-04） ----------------------------------------------
+   portal 到 body、fixed 挂在「提建议」按钮下（FeedbackButton.tsx 定位），不是 .chrome-filterbar 的子元素——
+   条 nowrap、又是槽位 max-content 下限的来源，一句 server 原文进条就会把标题挤掉、把右翼推出视口。
+   宽度封顶 + 字内可折：再长也只在小条里换行，永不撑宽顶栏；底 / 边 / 阴影同 composer-popover。 */
 .chrome-feedback-note {
-  color: var(--text-secondary);
-  font: var(--type-header-meta);
+  z-index: 1000;
+  max-width: min(420px, calc(100vw - 16px));
+  padding: 4px 10px;
+  border: var(--stroke-w) solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--dialog-shadow);
+  color: var(--text-primary);
+  font: var(--type-header-control);
+  overflow-wrap: anywhere;
 }

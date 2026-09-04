@@ -3,17 +3,18 @@
 // 顶栏三档密度（§49 追记 2026-09-04）：compact 把 chips / 排序 / 清除 / 选择 收进「筛选 · N」popover（role=dialog，
 // 反映并改写同一份 store / URL 状态，⎋ 关面板不碰搜索词，焦点还给按钮）；tight 搜索折成放大镜（点击 / ⌘F 展开，
 // ⎋ 两段 = 清词 → 收起，有词带点）、「筛选」「提建议」只留图标但 aria-label = 全档的可见文案。
+// 提建议回执小条 portal 到 body、不进 .chrome-filterbar（条是槽位 max-content 下限的来源，server 原文长度不可预算）。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HeaderDensityContext, type HeaderDensity } from "../shell/headerDensity";
 import { getState, refreshBoard, resetStoreForTests, setFilters, setSelectionMode } from "../../store";
-import { fetchBoard } from "../../api";
+import { fetchBoard, postAction } from "../../api";
 import type { Board } from "../../types";
 import { FilterBar } from "./FilterBar";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
-  return { ...actual, fetchBoard: vi.fn() };
+  return { ...actual, fetchBoard: vi.fn(), postAction: vi.fn() };
 });
 
 // 带 type 与 sources[].channel 的看板——退役前会让「类型」「渠道」两颗 chip 长出来
@@ -39,6 +40,11 @@ function renderAt(density: HeaderDensity) {
 beforeEach(() => {
   window.history.replaceState(null, "", "/");
   resetStoreForTests();
+  // jsdom <dialog> 兜底（同 MergeSuggestionCard.test）：老版本没有 showModal/close——提建议弹窗要开
+  if (typeof HTMLDialogElement.prototype.showModal !== "function") {
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.open = false; };
+  }
 });
 
 afterEach(cleanup);
@@ -119,6 +125,26 @@ describe("FilterBar", () => {
     expect(getState().filters.deadline).toBe("all");
     expect(window.location.search).toBe("");
   });
+
+  // 条 nowrap 且是槽位 max-content 下限的来源：回执若是条的子元素，一句 1300px 的 server 原文就把标题挤掉、
+  // 右翼推出视口（#206 review）。真浏览器几何在 e2e/headerLayout.spec.ts；这里钉 DOM 归属
+  for (const density of ["full", "compact", "tight"] as const) {
+    it(`提建议回执（server 原文照登）portal 到 body、不是 .chrome-filterbar 的子元素 · ${density}`, async () => {
+      const message = "inbox_writer rejected the action: ".concat("very-long-path-segment/".repeat(40));
+      vi.mocked(postAction).mockRejectedValueOnce(new Error(message));
+      renderAt(density);
+      fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+      fireEvent.change(screen.getByPlaceholderText("Your feedback…"), { target: { value: "hi" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      const note = await screen.findByRole("status");
+      expect(note.className).toContain("chrome-feedback-note");
+      expect(note.textContent).toBe(message);
+      expect(note.closest(".chrome-filterbar")).toBeNull();
+      expect(note.parentElement).toBe(document.body);
+      expect(document.querySelector(".chrome-filterbar .chrome-feedback-note")).toBeNull();
+    });
+  }
 });
 
 describe("FilterBar · compact（「筛选」popover）", () => {
