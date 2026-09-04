@@ -1,6 +1,6 @@
 // 脚手架冒烟测试：route 深链序列化（纯函数）。
 import { describe, expect, it } from "vitest";
-import { buildAppUrl, readCardId, readPage } from "./route";
+import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, isDepsPage, readCardId, readPage, readSettingsAnchor } from "./route";
 
 describe("route", () => {
   it("reads the card deep link preserving case", () => {
@@ -35,5 +35,19 @@ describe("route", () => {
     expect(url.searchParams.get("page")).toBeNull(); // board 是缺省，不落 query
     expect(url.searchParams.get("card")).toBe("r-101"); // 大小写原样保留
     expect(readPage(buildAppUrl(url.href, "trash", null).search)).toBe("trash");
+  });
+
+  it("依赖检查是设置页的一区（D30）：deps / diagnostics 旧深链仍认、都滚到 anchor=deps；buildSettingsUrl 给出新形", () => {
+    expect(isDepsPage("deps")).toBe(true);
+    expect(isDepsPage("diagnostics")).toBe(true);
+    expect(isDepsPage("settings")).toBe(false);
+    expect(readSettingsAnchor("?page=deps&log=actd.log")).toBe(DEPS_ANCHOR);
+    expect(readSettingsAnchor("?page=settings&anchor=slack")).toBe("slack");
+    const url = buildSettingsUrl("http://127.0.0.1:47820/?page=deps&card=R-1", DEPS_ANCHOR);
+    expect(url.searchParams.get("page")).toBe("settings");
+    expect(url.searchParams.get("anchor")).toBe("deps");
+    expect(url.searchParams.get("card")).toBeNull();
+    // 问问助手页已退役（D29）：旧深链回落看板，不崩
+    expect(readPage("?page=ask")).toBe("board");
   });
 });

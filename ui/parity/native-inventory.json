@@ -1,6 +1,74 @@
 {
   "attribution": {
     "control_owner": {
+      "control:ask:button:ask": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:button:cancel": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:button:connect-setup-wizard": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:button:re-detect": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:button:retry": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:copy:ask-anything-about-this-product-why-there-are-no": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:copy:ask-is-disabled-in-config-yaml-ask-enabled-false": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:copy:couldn-t-start-the-q-a-helper-launcherror-run-a": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:copy:no-answer-came-back-hit-retry": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:copy:the-ai-didn-t-answer-within-60-s-hit-retry": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:copy:the-ai-engine-is-not-connected-connect-it-first": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:help:helpful-logs-an-anonymous-event-that-uploads-wit": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:help:not-helpful-logs-an-anonymous-event-that-uploads": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:label:ask-the-assistant": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:label:recent-questions": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:label:thinking-model-elapsed-s-elapsed-60s-max": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "control:ask:textfield:type-a-question-press-return": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
       "control:doctor:label:failed-to-write-dest": {
         "owner": "retired",
         "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）"
@@ -122,8 +190,19 @@
     "probed_shell_screens": [
       "notifications"
     ],
+    "rail_owner": {
+      "ask": {
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+      },
+      "deps": {
+        "owner": "retired",
+        "reason": "D30 依赖检查并入设置页一区（§49 / §54.4 追记 2026-09-04）；页面内容仍判，只有侧栏项退役"
+      }
+    },
     "screen_owner": {
       "app": "shell",
+      "ask": "retired",
       "captions": "shell",
       "menu.main": "shell",
       "menu.status": "retired",
@@ -644,7 +723,8 @@
       "en": "Couldn't start the Q&A helper ({launchError}) — run a checkup on the Diagnostics page first.",
       "gated": false,
       "id": "control:ask:copy:couldn-t-start-the-q-a-helper-launcherror-run-a",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "copy",
       "screen": "ask",
       "source": "Ask.swift:164",
@@ -655,7 +735,8 @@
       "en": "No answer came back — hit Retry.",
       "gated": false,
       "id": "control:ask:copy:no-answer-came-back-hit-retry",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "copy",
       "screen": "ask",
       "source": "Ask.swift:170",
@@ -666,7 +747,8 @@
       "en": "The AI didn't answer within 60 s — hit Retry.",
       "gated": false,
       "id": "control:ask:copy:the-ai-didn-t-answer-within-60-s-hit-retry",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "copy",
       "screen": "ask",
       "source": "Ask.swift:207",
@@ -675,9 +757,10 @@
     },
     {
       "en": "Ask the assistant",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:label:ask-the-assistant",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "label",
       "screen": "ask",
       "source": "Ask.swift:256",
@@ -688,7 +771,8 @@
       "en": "Ask anything about this product — why there are no new cards, how to switch recording modes… Answers are grounded in the product docs and this Mac's real state. Asking sends your question, the relevant doc excerpts and a machine-state summary to your AI engine (Anthropic); it runs in the background — no terminal window.",
       "gated": false,
       "id": "control:ask:copy:ask-anything-about-this-product-why-there-are-no",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "copy",
       "screen": "ask",
       "source": "Ask.swift:258",
@@ -697,9 +781,10 @@
     },
     {
       "en": "Type a question, press Return",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:textfield:type-a-question-press-return",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "textfield",
       "screen": "ask",
       "source": "Ask.swift:290",
@@ -708,9 +793,10 @@
     },
     {
       "en": "Ask",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:button:ask",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "button",
       "screen": "ask",
       "source": "Ask.swift:304",
@@ -719,9 +805,10 @@
     },
     {
       "en": "Thinking… {model.elapsed}s elapsed (60s max)",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:label:thinking-model-elapsed-s-elapsed-60s-max",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "label",
       "screen": "ask",
       "source": "Ask.swift:331",
@@ -730,9 +817,10 @@
     },
     {
       "en": "Cancel",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:button:cancel",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "button",
       "screen": "ask",
       "source": "Ask.swift:334",
@@ -743,7 +831,8 @@
       "en": "Helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — off by default)",
       "gated": false,
       "id": "control:ask:help:helpful-logs-an-anonymous-event-that-uploads-wit",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "help",
       "screen": "ask",
       "source": "Ask.swift:389",
@@ -754,7 +843,8 @@
       "en": "Not helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — off by default)",
       "gated": false,
       "id": "control:ask:help:not-helpful-logs-an-anonymous-event-that-uploads",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "help",
       "screen": "ask",
       "source": "Ask.swift:400",
@@ -763,9 +853,10 @@
     },
     {
       "en": "Retry",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:button:retry",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "button",
       "screen": "ask",
       "source": "Ask.swift:421",
@@ -776,7 +867,8 @@
       "en": "Ask is disabled in config.yaml (ask.enabled: false).",
       "gated": false,
       "id": "control:ask:copy:ask-is-disabled-in-config-yaml-ask-enabled-false",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "copy",
       "screen": "ask",
       "source": "Ask.swift:439",
@@ -787,7 +879,8 @@
       "en": "The AI engine is not connected — connect it first to ask questions.",
       "gated": false,
       "id": "control:ask:copy:the-ai-engine-is-not-connected-connect-it-first",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "copy",
       "screen": "ask",
       "source": "Ask.swift:453",
@@ -796,9 +889,10 @@
     },
     {
       "en": "Connect (setup wizard)",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:button:connect-setup-wizard",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "button",
       "screen": "ask",
       "source": "Ask.swift:458",
@@ -807,9 +901,10 @@
     },
     {
       "en": "Re-detect",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:button:re-detect",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "button",
       "screen": "ask",
       "source": "Ask.swift:462",
@@ -818,9 +913,10 @@
     },
     {
       "en": "Recent questions",
-      "gated": true,
+      "gated": false,
       "id": "control:ask:label:recent-questions",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
       "role": "label",
       "screen": "ask",
       "source": "Ask.swift:478",
@@ -14542,11 +14638,12 @@
       },
       {
         "en": "Ask",
-        "gated": true,
+        "gated": false,
         "icon": "questionmark.bubble",
         "id": "rail:ask",
         "index": 1,
-        "owner": "web",
+        "owner": "retired",
+        "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）",
         "shortcut": "⌘2",
         "slug": "ask",
         "source": "MainWindow.swift:132",
@@ -14554,11 +14651,12 @@
       },
       {
         "en": "Dependencies",
-        "gated": true,
+        "gated": false,
         "icon": "checklist",
         "id": "rail:deps",
         "index": 2,
-        "owner": "web",
+        "owner": "retired",
+        "reason": "D30 依赖检查并入设置页一区（§49 / §54.4 追记 2026-09-04）；页面内容仍判，只有侧栏项退役",
         "shortcut": "⌘3",
         "slug": "deps",
         "source": "MainWindow.swift:133",
@@ -14639,10 +14737,10 @@
     },
     {
       "en": "Ask",
-      "gated": true,
+      "gated": false,
       "id": "screen:ask",
       "kind": "rail-page",
-      "owner": "web",
+      "owner": "retired",
       "source": "MainWindow.swift:132",
       "zh": "问问助手"
     },

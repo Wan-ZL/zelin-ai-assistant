@@ -14,7 +14,7 @@ import { ApiError, postSetupStep, postUninstallTerminal, postUpdateCheck, postUp
 import { ForkDialog } from "../board/ForkDialog";
 import { ModalDialog } from "../board/ModalDialog";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, navigate } from "../../route";
+import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../../route";
 import { hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshAbout, setSetup, useAppState } from "../../store";
 import type { AboutInfo, UpdateCheckResult } from "../../types";
@@ -218,7 +218,7 @@ export function AboutSection() {
         <button type="button" className="btn" disabled={busy !== null} onClick={() => void rerunSetup()}>
           {text("重新运行初始设置", "Re-run setup")}
         </button>
-        <a className="settings-link" href={buildAppUrl(window.location.href, "deps", null).toString()}>{text("依赖检查", "Dependencies")}</a>
+        <a className="settings-link" href={buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString()}>{text("依赖检查", "Dependencies")}</a>
         <a className="settings-link" href={buildAppUrl(window.location.href, "permissions", null).toString()}>{text("权限体检", "Permissions checkup")}</a>
       </div>
       <p className="settings-helper">

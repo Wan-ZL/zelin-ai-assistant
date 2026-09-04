@@ -1,17 +1,18 @@
-// 左侧导航栏（CONTRACT §54.4 / §66.2 rail:*）：逐字镜像原生 MainWindow.swift 的 sidebar——
-// 八页同序同名同图标（任务台 / 问问助手 / 依赖检查 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于），
+// 左侧导航栏（CONTRACT §54.4 / §66.2 rail:*）：镜像原生 MainWindow.swift 的 sidebar，同序同名同图标——
+// 原生八页里 owner 2026-09-04 拿掉两页：问问助手整页退役（D29）、依赖检查并入设置页一区（D30），剩六项
+// （任务台 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于；清单 rail_owner 表标 retired，探针只数剩下的），
 // 顶部 app 名 + 折叠钮（sidebar.leading），选中页 accent 18% 底，hover 6% 底，收起 = 48px 图标条
 // （tooltip 双语标题），展开 = 200px 默认、160–320 可拖（原生 dragHandle）。三把偏好键逐字镜像原生
 // UserDefaults：`sidebarCollapsed` / `sidebarWidth` / `mainSection`（localStorage 同名；页面本身仍由 URL ?page=
 // 承担，`mainSection` 只记「上次在哪一页」——冷启动（本窗口会话第一次加载、URL 没指定页）回到那一页，
-// 原生 MainNav.init 的行为）。⌘1…⌘8 = 原生 keyboardShortcut（浏览器保留 ⌘1-8 时由浏览器胜出，壳里可用）。
-// 每个条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
-// 原生八页之外的 web 自有页（会议纪要 §63）放分隔线下方，不带 data-rail-item。
+// 原生 MainNav.init 的行为）。⌘1…⌘6 = 原生 keyboardShortcut 按剩下的六项连续重编（浏览器保留 ⌘1-8 时由浏览器
+// 胜出，壳里可用）。每个条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
+// 原生页之外的 web 自有页（会议纪要 §63）放分隔线下方，不带 data-rail-item。
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, hasExplicitRoute, navigate, readPage, type AppPage } from "../../route";
+import { buildAppUrl, hasExplicitRoute, isDepsPage, navigate, readPage, type AppPage } from "../../route";
 import {
-  ArchiveBoxIcon, ChecklistIcon, GearIcon, InfoCircleIcon, QuestionBubbleIcon, RecapIcon,
+  ArchiveBoxIcon, GearIcon, InfoCircleIcon, RecapIcon,
   RecordCircleIcon, SidebarLeadingIcon, TrashIcon, TrayFullIcon,
 } from "./railIcons";
 
@@ -24,15 +25,16 @@ const WIDTH_DEFAULT = 200;
 const WIDTH_MIN = 160;
 const WIDTH_MAX = 320;
 
-/** 原生 MainSection.rawValue → web ?page=（dashboard 是看板本体；deps 与 diagnostics 同一页） */
+/** 原生 MainSection.rawValue → web ?page=（dashboard 是看板本体）。`ask` / `deps` 不在表里：D29 退役、D30 并入设置——
+ *  localStorage 里残留的旧 `mainSection` 值查不到就不导航（restoreMainSection 的坏值路径）。 */
 export const RAIL_PAGE: Record<string, AppPage> = {
-  dashboard: "board", ask: "ask", deps: "deps", ingest: "ingest",
+  dashboard: "board", ingest: "ingest",
   trash: "trash", archive: "archive", settings: "settings", about: "about",
 };
 
-/** 当前 ?page= 属于哪个 rail slug（diagnostics 归 deps；permissions / setup / styleguide 不点亮任何项） */
+/** 当前 ?page= 属于哪个 rail slug（deps / diagnostics 旧深链归设置；permissions / setup / styleguide 不点亮任何项） */
 export function activeRailSlug(page: AppPage): string | null {
-  if (page === "diagnostics") return "deps";
+  if (isDepsPage(page)) return "settings";
   for (const [slug, target] of Object.entries(RAIL_PAGE)) if (target === page) return slug;
   return null;
 }
@@ -120,12 +122,12 @@ function RailLink({ page, zh, en, shortcut, icon, isActive, isCollapsed, ...rest
   );
 }
 
-/** ⌘1…⌘8 → 八页（原生 MainSection 顺序）；输入框里不劫持 */
+/** ⌘1…⌘6 → 六页（原生 MainSection 顺序，去掉 ask / deps 后连续重编）；输入框里不劫持 */
 function shortcutPage(event: KeyboardEvent): AppPage | null {
   if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
   const target = event.target as HTMLElement | null;
   if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return null;
-  const order: AppPage[] = ["board", "ask", "deps", "ingest", "trash", "archive", "settings", "about"];
+  const order: AppPage[] = ["board", "ingest", "trash", "archive", "settings", "about"];
   const index = Number(event.key) - 1;
   return index >= 0 && index < order.length && String(index + 1) === event.key ? order[index] : null;
 }
@@ -189,14 +191,13 @@ export function NavRail() {
           <SidebarLeadingIcon />
         </button>
       </div>
+      {/* 原生第 2 / 3 项（问问助手 / 依赖检查）自 2026-09-04 起不在栏上：D29 退役、D30 并入设置页「依赖检查」区 */}
       <RailLink data-rail-item="dashboard" page="board" zh="任务台" en="Workbench" shortcut="⌘1" icon={<TrayFullIcon />} {...link("dashboard")} />
-      <RailLink data-rail-item="ask" page="ask" zh="问问助手" en="Ask" shortcut="⌘2" icon={<QuestionBubbleIcon />} {...link("ask")} />
-      <RailLink data-rail-item="deps" page="deps" zh="依赖检查" en="Dependencies" shortcut="⌘3" icon={<ChecklistIcon />} {...link("deps")} />
-      <RailLink data-rail-item="ingest" page="ingest" zh="录制与数据接入" en="Recording & Data Sources" shortcut="⌘4" icon={<RecordCircleIcon />} {...link("ingest")} />
-      <RailLink data-rail-item="trash" page="trash" zh="回收站" en="Trash" shortcut="⌘5" icon={<TrashIcon />} {...link("trash")} />
-      <RailLink data-rail-item="archive" page="archive" zh="永久性完成" en="Done for good" shortcut="⌘6" icon={<ArchiveBoxIcon />} {...link("archive")} />
-      <RailLink data-rail-item="settings" page="settings" zh="设置" en="Settings" shortcut="⌘7" icon={<GearIcon />} {...link("settings")} />
-      <RailLink data-rail-item="about" page="about" zh="关于" en="About" shortcut="⌘8" icon={<InfoCircleIcon />} {...link("about")} />
+      <RailLink data-rail-item="ingest" page="ingest" zh="录制与数据接入" en="Recording & Data Sources" shortcut="⌘2" icon={<RecordCircleIcon />} {...link("ingest")} />
+      <RailLink data-rail-item="trash" page="trash" zh="回收站" en="Trash" shortcut="⌘3" icon={<TrashIcon />} {...link("trash")} />
+      <RailLink data-rail-item="archive" page="archive" zh="永久性完成" en="Done for good" shortcut="⌘4" icon={<ArchiveBoxIcon />} {...link("archive")} />
+      <RailLink data-rail-item="settings" page="settings" zh="设置" en="Settings" shortcut="⌘5" icon={<GearIcon />} {...link("settings")} />
+      <RailLink data-rail-item="about" page="about" zh="关于" en="About" shortcut="⌘6" icon={<InfoCircleIcon />} {...link("about")} />
       <div className="rail-divider" role="separator" />
       {/* web 自有页（§63 会议纪要）：原生没有此页，不带 data-rail-item，不参与 ⌘ 数字键 */}
       <a

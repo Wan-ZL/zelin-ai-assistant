@@ -23,8 +23,9 @@
 重跑零 diff 由 tests/test_ui_native_inventory_fresh.py 钉死。唯一手写的部分是
 `FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` / `FUNCTION_SCREEN` 五张归属表、
 `SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）、prefs 键的 `PREF_OWNER`
-（shell / server / retired + 理由）与单条 control 的 `CONTROL_OWNER`（retired + 理由：
-非界面文案 / 新架构无落点的句子）——表本身也进 JSON（`attribution`）。owner=shell 的
+（shell / server / retired + 理由）、单条 control 的 `CONTROL_OWNER`（retired + 理由：
+非界面文案 / 新架构无落点的句子）与 rail 项的 `RAIL_OWNER`（owner 决策拿掉的侧栏项：
+retired + 理由；`rail:order` 只数剩下的）——表本身也进 JSON（`attribution`）。owner=shell 的
 条目原则上只列不判；例外是带 `probe` 的条目（通知句 / kind → notify_catalog，
 壳持有的偏好键 → shell_source，搬到 server 的偏好键 → server_source），§66.2 追记。
 
@@ -189,9 +190,45 @@ CONTROL_OWNER = {
     },
 }
 
+# D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部
+# retired、只列不判（screen `ask` 同时在 SCREEN_OWNER 标 retired，screen:ask 随之不判）。`act/ask.py` 引擎与
+# `state/ask_history.json` 不动：旧 app 仍 shell out 到它，等 P8 一起删（CONTRACT §27 tombstone）。
+_ASK_RETIRED_REASON = "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+_ASK_CONTROL_IDS = (
+    "control:ask:copy:couldn-t-start-the-q-a-helper-launcherror-run-a",
+    "control:ask:copy:no-answer-came-back-hit-retry",
+    "control:ask:copy:the-ai-didn-t-answer-within-60-s-hit-retry",
+    "control:ask:label:ask-the-assistant",
+    "control:ask:copy:ask-anything-about-this-product-why-there-are-no",
+    "control:ask:textfield:type-a-question-press-return",
+    "control:ask:button:ask",
+    "control:ask:label:thinking-model-elapsed-s-elapsed-60s-max",
+    "control:ask:button:cancel",
+    "control:ask:help:helpful-logs-an-anonymous-event-that-uploads-wit",
+    "control:ask:help:not-helpful-logs-an-anonymous-event-that-uploads",
+    "control:ask:button:retry",
+    "control:ask:copy:ask-is-disabled-in-config-yaml-ask-enabled-false",
+    "control:ask:copy:the-ai-engine-is-not-connected-connect-it-first",
+    "control:ask:button:connect-setup-wizard",
+    "control:ask:button:re-detect",
+    "control:ask:label:recent-questions",
+)
+CONTROL_OWNER.update({cid: {"owner": "retired", "reason": _ASK_RETIRED_REASON} for cid in _ASK_CONTROL_IDS})
+
+# rail 项（MainSection 的 case）→ 归属（第八张归属表）：原生八页里被 owner 决策从左侧导航栏拿掉的项。owner=retired、
+# 不判、理由进 JSON attribution.rail_owner；`rail:order` 的期望顺序只数仍 gated 的项（parity_check._rail_order_ok）。
+#   ask  —— 整页退役（D29），screen:ask 随 SCREEN_OWNER 一起不判；
+#   deps —— 页面并入设置页的「依赖检查」区（D30，owner 原话「这个依赖检查我希望合并到 setting里面」）：只有 rail 项退役，
+#           screen:deps 与 control:deps.* / doctor.* 照判（渲染面 = 设置页，web/src/parity.test.tsx SCREEN_SURFACE）。
+RAIL_OWNER = {
+    "ask": {"owner": "retired", "reason": _ASK_RETIRED_REASON},
+    "deps": {"owner": "retired",
+             "reason": "D30 依赖检查并入设置页一区（§49 / §54.4 追记 2026-09-04）；页面内容仍判，只有侧栏项退役"},
+}
+
 # screen 前缀 → 负责补齐的一方。web = 看板必须补（进门）；shell = 原生残留
 # （R2.2.3：字幕悬浮窗、系统通知、TCC 引导）；os = macOS 应用菜单惯例；
-# retired = 计划明文退役（D3 菜单栏图标）。非 web 的条目只列不判——例外是
+# retired = 计划明文退役（D3 菜单栏图标；D29 问问助手页）。非 web 的条目只列不判——例外是
 # PROBED_SHELL_SCREENS：壳直发的系统通知句按 server-owned 目录判（§66.2 追记）。
 SCREEN_OWNER = {
     "captions": "shell",
@@ -201,6 +238,7 @@ SCREEN_OWNER = {
     "app": "shell",
     "settings.menuBar": "retired",
     "onboarding.hello_bubble": "retired",
+    "ask": "retired",
 }
 
 # 调用者标识 → screen（第四张归属表）：`Self.postSystemNotice(title: L(...))` 是壳
@@ -561,6 +599,11 @@ def _rail_item(f, slug, index, titles, icons, numbered):
             "index": index, "source": f.source(offset), "owner": "web", "gated": True}
     if numbered:
         item["shortcut"] = "⌘%d" % (index + 1)
+    retired = RAIL_OWNER.get(slug)   # owner 决策拿掉的侧栏项：只列不判，理由随行
+    if retired:
+        item["owner"] = retired["owner"]
+        item["gated"] = False
+        item["reason"] = retired["reason"]
     return item
 
 
@@ -774,8 +817,10 @@ _WINDOWS = (  # 独立窗口 / sheet / 条：类型名 → (screen, zh, en)
 
 
 def screens(files, rail, registry):
+    # rail 页的 screen 名 = slug；整页退役的（SCREEN_OWNER ask → retired）随 owner_of 不判，
+    # 只是侧栏项退役而页面并入别处的（deps → 设置页一区）仍是 web、照判
     out = [{"id": "screen:" + r["slug"], "kind": "rail-page", "zh": r["zh"], "en": r["en"],
-            "source": r["source"], "owner": "web", "gated": True} for r in rail]
+            "source": r["source"], "owner": owner_of(r["slug"]), "gated": owner_of(r["slug"]) == "web"} for r in rail]
     for entry in registry:
         screen = "settings." + entry["id"]
         out.append({"id": "screen:" + screen, "kind": "settings-section", "zh": entry["zh"],
@@ -865,7 +910,8 @@ def build_inventory(root=uc.MAC_SOURCES):
                         "function_screen": {"%s:%s" % k: v for k, v in FUNCTION_SCREEN.items()},
                         "screen_owner": SCREEN_OWNER, "via_screen": VIA_SCREEN,
                         "probed_shell_screens": sorted(PROBED_SHELL_SCREENS),
-                        "pref_owner": PREF_OWNER, "control_owner": CONTROL_OWNER},
+                        "pref_owner": PREF_OWNER, "control_owner": CONTROL_OWNER,
+                        "rail_owner": RAIL_OWNER},
         "controls": controls,
         "lanes": {"order": [lane["slug"] for lane in lanes], "items": lanes,
                   "card_affordances": card_affordances(controls)},

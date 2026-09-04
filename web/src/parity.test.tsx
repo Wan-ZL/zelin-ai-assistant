@@ -1,27 +1,27 @@
 // UI 对齐判例（CONTRACT §66.2）—— 由 ui/parity/native-inventory.json 驱动，不手写列表。
 // 原生 mac/Sources（D3 冻结）的每个 gated `control:*` 条目在这里变成一条 it()：
-//   · 不在 pending/waivers 上 → 断言标签「在」：用 demo fixture 渲染看板 / 回收站 / 设置 / 关于 / 问问助手 /
-//     依赖检查 / 录制与数据接入 / 初始设置向导（七步逐步）/ 权限体检 九个面（zh 与 en 各一遍；看板另渲染
+//   · 不在 pending/waivers 上 → 断言标签「在」：用 demo fixture 渲染看板 / 回收站 / 设置（含 D30 折进来的依赖检查区）/
+//     关于 / 录制与数据接入 / 初始设置向导（七步逐步）/ 权限体检 七个面（zh 与 en 各一遍；看板另渲染
 //     「空板 + 搜索中 + 后台服务卡住」与「诊断条：Gmail / Slack / 录制链各种 skip_reason」几遍；向导与权限体检
 //     另按几套假壳状态（录制开 / 关、引擎在 / 不在、授权 granted / denied / unknown）与 server 快照（引擎就绪 /
-//     没装 / 没登录；后台服务在跑 / 没跑；cron 探针 ok / 被挡 / 停跑）各渲染几遍收全部状态词；依赖检查另按
+//     没装 / 没登录；后台服务在跑 / 没跑；cron 探针 ok / 被挡 / 停跑）各渲染几遍收全部状态词；设置页另按依赖检查区的
 //     雷达 skip_reason 词表 × doctor 全绿 / 没回 渲染几遍；录制页另按 引擎没在录 / TCC 收回 / ffmpeg 缺失 / 崩了 与
 //     手动触发 成功 / 失败 / 持锁跳过 渲染几遍；关于页另按 没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开
 //     渲染几遍；看板另有「server 拒绝」一遍（接管 / 让 AI 修 / capture / 斜杠命令的失败句）与诊断条 agent_missing
-//     两遍、问问助手两种失败面）+ 把每颗按钮点一遍收集弹窗文案（看板：进多选态勾上每张卡、开弹窗的动词逐点收、
+//     两遍）+ 把每颗按钮点一遍收集弹窗文案（看板：进多选态勾上每张卡、开弹窗的动词逐点收、
 //     每张卡按同类轮换走一条提交路收 pending 一句），按 accessible name / 自身文本精确匹配；
 //     时钟冻结在 fixture 的 FIXED_NOW（相对时间词表才确定）；装一个假 zaiShell 桥（壳里才渲染的
 //     录制 / 字幕 / 登录时启动 开关也要判）；server 目录（设置 / 凭证）用 fixture 快照（文案 server-owned）。
 //   · 在 ui/parity/pending.txt 上 → it 标题带 ` [pending]`，断言「不在」——补齐后不划账即红
 //     （与 qa/*_baseline.txt 同一 shrink-only 语义）；
 //   · 在 ui/parity/waivers.txt 上 → it.skip（报告计 WAIVED）。
+//   · 问问助手（screen `ask`，17 条）自 D29 起在清单归属表里 retired、只列不判——web 没有这一面。
 // scripts/ui/parity_check.py 以 --reporter=json 跑本文件、按 it 标题读判决；两边读同两本账本，
 // 判决一致。双语都要命中（原生 L("zh","en") 是逐字规格，PR #143「逐字镜像」同理）。
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   fetchAbout,
-  fetchAskHistory,
   fetchBoard,
   fetchCard,
   fetchClaudeCodeDefault,
@@ -44,9 +44,7 @@ import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
 import { LanguageContext, type Language } from "./i18n";
 import { AboutPage } from "./pages/AboutPage";
-import { AskPage } from "./pages/AskPage";
 import { BoardPage } from "./pages/BoardPage";
-import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { IngestPage } from "./pages/IngestPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -142,7 +140,6 @@ vi.mock("./api", async (importOriginal) => {
     fetchDiagnostics: vi.fn(),
     fetchMcp: vi.fn(),
     fetchClaudeSessions: vi.fn(),
-    fetchAskHistory: vi.fn(),
     fetchFailures: vi.fn(),
     fetchDoctor: vi.fn().mockResolvedValue({ ok: true, checks: [], home: "/h", rc: 0, fast: false, ran_at: "2026-09-02T11:59:00Z" }),
     fetchLogTail: vi.fn().mockResolvedValue({ name: "actd.log", path: "/h/state/logs/actd.log", size: 12, lines: ["ok"], truncated: false }),
@@ -171,7 +168,6 @@ vi.mock("./api", async (importOriginal) => {
     postSeedDashboard: vi.fn().mockResolvedValue({ ok: true, rc: 0 }),
     postRevealTarget: vi.fn().mockResolvedValue({ ok: true }),
     postUpdateCheck: vi.fn().mockResolvedValue({ ok: true, checked_at: "2026-09-02T11:00:00Z", update_available: false, latest: "0.48.30" }),
-    postAsk: vi.fn().mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 }),
     postTerminal: vi.fn().mockResolvedValue({ ok: true }),
     postUninstallTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && bash uninstall.sh", command_file: "/tmp/u.command" }),
     postUpdateInstall: vi.fn().mockResolvedValue({ ok: true, label: "com.zelin.aiassistant.autodeploy", action: "kickstart" }),
@@ -215,7 +211,9 @@ const LANGUAGES: Language[] = ["zh", "en"];
 // web 已有的页面 = 渲染面；原生 screen 前缀 → 该面。web 新开页面时在这两处登记，它的原生条目
 // 才会按页判定；未登记的 screen 在全部面的并集里找（"any"）。setup 排在 permissions 之前：向导末步
 // 首帧要在 store 还没有 permissions 快照时渲染一次，「检测中…」这类瞬态词才收得到。
-const SURFACES = ["board", "trash", "settings", "about", "ask", "deps", "ingest", "setup", "permissions"] as const;
+// 原生 deps 页（+ Doctor.swift 的对症动词）D30 起住设置页的「依赖检查」区——两个 screen 都判在 settings 面上；
+// 原生 ask 页 D29 退役（清单 SCREEN_OWNER / CONTROL_OWNER 标 retired，不进这里）。
+const SURFACES = ["board", "trash", "settings", "about", "ingest", "setup", "permissions"] as const;
 type Surface = (typeof SURFACES)[number];
 const SCREEN_SURFACE: Array<[prefix: string, surface: Surface]> = [
   ["settings", "settings"],
@@ -226,9 +224,8 @@ const SCREEN_SURFACE: Array<[prefix: string, surface: Surface]> = [
   ["rail", "board"],
   ["shared", "board"],
   ["about", "about"],
-  ["ask", "ask"],
-  ["deps", "deps"],
-  ["doctor", "deps"],           // Doctor.swift FailureCatalog 的对症动词：web 落在依赖检查页的 doctor 行上
+  ["deps", "settings"],         // 依赖检查区（D30）：快速行 / 雷达健康 / 诊断 都在设置页里渲染
+  ["doctor", "settings"],       // Doctor.swift FailureCatalog 的对症动词：web 落在依赖检查区的 doctor 行上
   ["ingest", "ingest"],
   ["setup_wizard", "setup"],
   ["permissions", "permissions"],
@@ -597,8 +594,6 @@ const PAGES: Record<Surface, () => JSX.Element> = {
   trash: () => <TrashPage />,
   settings: () => <SettingsPage />,
   about: () => <AboutPage />,
-  ask: () => <AskPage />,
-  deps: () => <DiagnosticsPage />,
   ingest: () => <IngestPage />,
   setup: () => <SetupPage />,
   permissions: () => <PermissionsPage />,
@@ -831,9 +826,9 @@ async function renderDiagnosticsVariants(language: Language) {
   await refreshBoard();
 }
 
-/** 依赖检查页的其余状态（原生 DepsView radarDetail / cronFDARow / 诊断摘要）：雷达 skip_reason 词表逐个渲染到
+/** 依赖检查区（设置页，D30）的其余状态（原生 DepsView radarDetail / cronFDARow / 诊断摘要）：雷达 skip_reason 词表逐个渲染到
  *  （凭证无效 / 网络错误 / 连接失败 / 没指定 Obsidian 目录 / 已禁用 / 从未成功 / 暂无数据）、doctor 全绿（全部通过 ✓）、
- *  doctor 没回一行（点「重新检查」开始）、cron 探针 没数据 / 过期 / 被挡 三态。 */
+ *  doctor 没回一行（点「重新检查」开始）、cron 探针 没数据 / 过期 / 被挡 三态。不点按钮——设置页主遍已把每颗都点过。 */
 async function renderDepsVariants(language: Language) {
   const on = (skip_reason: string | null, last_ok: string | null = null, enabled = true): RadarSourceHealth => ({ enabled, last_ok, skip_reason, stale: false });
   const okReport = { ...diagnostics.doctor, checks: diagnostics.doctor.checks.filter((c) => c.status === "OK") };
@@ -848,8 +843,8 @@ async function renderDepsVariants(language: Language) {
   for (const v of variants) {
     vi.mocked(fetchDiagnostics).mockResolvedValue({ ...diagnostics, ...v } as DiagnosticsSnapshot);
     await refreshDiagnostics(true);   // 页面挂载时也会再拉一次；先落一份让首帧就是这一遍的快照
-    const pool = found[language].deps;
-    mount(language, "deps");
+    const pool = found[language].settings;
+    mount(language, "settings");
     await settle(pool);
     collectLabels(document.body, pool);
     cleanup();
@@ -956,24 +951,6 @@ async function renderBoardRejectVariant(language: Language) {
   vi.mocked(postTerminal).mockResolvedValue({ ok: true } as never);
   vi.mocked(postAiFix).mockResolvedValue({ ok: true, command_file: "/tmp/x.command" } as never);
   vi.mocked(postAction).mockResolvedValue({ ok: true });
-}
-
-/** 问问助手的两种失败面（原生 Ask.swift engineMissingCard / failureRow）：引擎没装 → 去接入（初始设置向导）/ 重新检测；
- *  提问被拒 → 重试。遍完复原。 */
-async function renderAskVariants(language: Language) {
-  const { postAsk } = await import("./api");
-  vi.mocked(fetchSetupEngine).mockResolvedValue(ENGINES.no_cli);
-  vi.mocked(postAsk).mockResolvedValue({ ok: false, error: "claude: command not found", failure_id: "claude_cli_missing" } as never);
-  const pool = found[language].ask;
-  const view = mount(language, "ask");
-  await settle(pool);
-  fillInputs(view.container, false);
-  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /提问|Ask/.test(b.textContent ?? "")), pool);
-  await settle(pool);
-  collectLabels(document.body, pool);
-  cleanup();
-  vi.mocked(fetchSetupEngine).mockResolvedValue(ENGINES.ready);
-  vi.mocked(postAsk).mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 } as never);
 }
 
 /** header 录制 / 字幕控件（原生 RecordingMenuButton）在几套壳状态下：打开菜单收状态行 + 修法项
@@ -1116,7 +1093,6 @@ beforeAll(async () => {
   vi.mocked(fetchIngestJob).mockImplementation(ingestJobs(0, 0));
   vi.mocked(fetchMcp).mockResolvedValue({ scopes: [{ scope: "user", path: "/Users/demo/.claude.json", exists: true, parseable: true, servers: [{ name: "slack", transport: "stdio", command: "npx", args: ["slack-mcp"], env_count: 1, incomplete: false }, { name: "broken", transport: "stdio", command: "", args: [], env_count: 0, incomplete: true }] }, { scope: "project", path: "/h/.mcp.json", exists: false, parseable: true, servers: [] }] } as never);
   vi.mocked(fetchClaudeSessions).mockResolvedValue({ ok: true, window: 7, root: "/Users/demo/.claude/projects", candidates: [{ session_id: "abc12345-0000-4000-8000-000000000001", project: "example-bench", title: "修 flaky 测试", last_activity: "2026-09-01T10:00:00Z", ended_waiting_on_user: true, answered: false, session_mismatch: false }, { session_id: "abc12345-0000-4000-8000-000000000002", project: "inkweld", title: "问答", last_activity: "2026-08-30T10:00:00Z", ended_waiting_on_user: false, answered: true, session_mismatch: false }] } as never);
-  vi.mocked(fetchAskHistory).mockResolvedValue({ items: [{ q: "为什么没有新卡片？", a: "雷达每 3 分钟扫一次。", citation: "docs/TROUBLESHOOTING.md", ts: "2026-09-02T11:30:00Z", elapsed_s: 4.2 }] });
   for (const language of LANGUAGES) {
     resetStoreForTests();
     resetShellBridgeForTests();
@@ -1136,11 +1112,10 @@ beforeAll(async () => {
     await renderDepsVariants(language);
     await renderIngestVariants(language);
     await renderAboutVariants(language);
-    await renderAskVariants(language);
     await renderHeaderVariants(language);
     await renderSettingsVariants(language);
   }
-  // 九个面 × 两种语言 × 若干状态变体：几十次整页渲染（单机 ~12 s），远超 vitest 默认 10 s 的 hook 预算
+  // 七个面 × 两种语言 × 若干状态变体：几十次整页渲染（单机 ~12 s），远超 vitest 默认 10 s 的 hook 预算
 }, 120_000);
 
 afterAll(() => {

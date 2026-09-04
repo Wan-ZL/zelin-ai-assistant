@@ -1,8 +1,11 @@
-// 设置页（CONTRACT §59 + §68 + §54.4；?page=settings 深链，左侧导航栏「设置」；?anchor=<id> 滚到某区）。
+// 设置页（CONTRACT §59 + §68 + §54.4；?page=settings 深链，左侧导航栏「设置」；?anchor=<id> 滚到某区；
+// ?page=deps / diagnostics 旧深链也开到这里并滚到「依赖检查」区——D30）。
 // 分区与顺序逐字镜像原生 Settings.swift 的 SettingsSectionDescriptor 注册表（ui/parity/native-inventory.json
 // screen:settings.*；§66.2）：通用 · 录制 · 实时字幕 · 笔记库 · 凭证 · Slack 接入 · Gmail 接入 · 导入 Claude Code 工作 ·
 // Skills · MCP servers · 同步 / 配对 · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话；
-// web 自有区（显示 §54.1 第 12 项、模型 §59、通知 §28、素材库 §62、会议纪要 §63、每日整理 §70）插在语义最近的位置。已退役：菜单栏（D3）；
+// web 自有区（显示 §54.1 第 12 项、模型 §59、通知 §28、素材库 §62、会议纪要 §63、每日整理 §70）插在语义最近的位置。
+// 依赖检查（原生 rail 页 DepsView，D30 2026-09-04 owner「合并到 setting里面」）紧跟通用区——它管的是这台机器能不能跑，
+// 与通用区的「初始设置向导 / 权限体检」两行同一话题。已退役：菜单栏（D3）；
 // 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
 // （?page=about），不再重复。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
@@ -14,6 +17,7 @@ import { CatalogSection } from "../components/settings/CatalogSection";
 import { ClaudeImportSection } from "../components/settings/ClaudeImportSection";
 import { CredentialsSection } from "../components/settings/CredentialsSection";
 import { DailyLoopSection } from "../components/settings/DailyLoopSection";
+import { DepsSection } from "../components/settings/DepsSection";
 import { DisplaySection } from "../components/settings/DisplaySection";
 import { GeneralExtras } from "../components/settings/GeneralExtras";
 import { GmailSection } from "../components/settings/GmailSection";
@@ -29,7 +33,7 @@ import { SlackSection } from "../components/settings/SlackSection";
 import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
-import { buildAppUrl, readAnchor } from "../route";
+import { buildAppUrl, readSettingsAnchor } from "../route";
 import { useAppState } from "../store";
 
 /** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序 = 原生注册表顺序，web 自有区就近插入）。
@@ -38,6 +42,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "display", zh: "显示", en: "Display" },
   { id: "models", zh: "模型", en: "Models" },
   { id: "general", zh: "通用", en: "General" },
+  { id: "deps", zh: "依赖检查", en: "Dependencies" },
   { id: "notifications", zh: "通知", en: "Notifications" },
   { id: "recording", zh: "录制", en: "Recording" },
   { id: "live_captions", zh: "实时字幕", en: "Live captions" },
@@ -84,8 +89,10 @@ function filterSections(query: string): number {
 
 export function SettingsPage() {
   const { text, language } = useI18n();
+  const { settingsCatalog } = useAppState();
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState<number | null>(null);
+  const catalogReady = settingsCatalog !== null;
 
   useEffect(() => {
     setShown(filterSections(query));
@@ -102,9 +109,10 @@ export function SettingsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions）：section 挂载后滚过去并高亮一下
+  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）：section 挂载后滚过去并高亮一下；
+  // server 目录到达会把上方的目录驱动区（通用…）从占位撑成全高、把目标区顶出视口——目录落地后再对准一次
   useEffect(() => {
-    const anchor = readAnchor(window.location.search);
+    const anchor = readSettingsAnchor(window.location.search);
     if (!anchor) return undefined;
     const el = document.getElementById(`settings-${anchor}`);
     if (!el) return undefined;
@@ -112,7 +120,7 @@ export function SettingsPage() {
     el.classList.add("is-anchored");
     const timer = window.setTimeout(() => el.classList.remove("is-anchored"), 2500);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [catalogReady]);
 
   return (
     <main className="settings-page">
@@ -145,6 +153,8 @@ export function SettingsPage() {
       <div id="settings-display"><DisplaySection /></div>
       <div id="settings-models"><ModelsSection /></div>
       <CatalogSection sectionId="general"><GeneralExtras /></CatalogSection>
+      {/* D30 依赖检查：原生 DepsView 整段（快速行 / 雷达健康 / 诊断 + web 自有的活性 / 部署 / 安装回执 / 日志）折进设置页 */}
+      <DepsSection />
       <CatalogSection sectionId="notifications" />
       <RecordingSection />
       <CaptionsSection />

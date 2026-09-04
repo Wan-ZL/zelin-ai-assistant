@@ -1,11 +1,12 @@
-// 左侧导航栏判例（CONTRACT §54.4 / §66.2 rail:*）：八页同序同名（zh / en）+ data-rail-item 锚、
-// 选中态跟 ?page=（diagnostics 归 deps）、深链正确、折叠持久化到 localStorage `sidebarCollapsed`
-// （原生 UserDefaults 同名）、收起态只剩图标 + tooltip、⌘1…⌘8 换页、宽度钳制 160–320。
+// 左侧导航栏判例（CONTRACT §54.4 / §66.2 rail:*）：六项同序同名（zh / en；原生八页去掉 D29 问问助手、D30 依赖检查——
+// 清单里 owner=retired 的 rail 项不再上栏）+ data-rail-item 锚、选中态跟 ?page=（deps / diagnostics 旧深链归设置）、
+// 深链正确、折叠持久化到 localStorage `sidebarCollapsed`（原生 UserDefaults 同名）、收起态只剩图标 + tooltip、
+// ⌘1…⌘6 换页（连续重编）、宽度钳制 160–320。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
 import { navigate } from "../../route";
-import { activeRailSlug, clampSidebarWidth, NavRail, rememberMainSection, restoreMainSection } from "./NavRail";
+import { activeRailSlug, clampSidebarWidth, NavRail, RAIL_PAGE, rememberMainSection, restoreMainSection } from "./NavRail";
 
 vi.mock("../../route", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../route")>();
@@ -25,9 +26,11 @@ function renderRail(language: "zh" | "en" = "en", search = "") {
 // CONTRACT §56.5；tests/test_web_build_self_contained.py 钉），找不到即抛错。
 const inventoryGlob = import.meta.glob("../../../../ui/parity/native-inventory.json", { eager: true, import: "default" });
 const inventory = inventoryGlob["../../../../ui/parity/native-inventory.json"] as
-  { rail: { items: Array<{ slug: string; zh: string; en: string }> } } | undefined;
+  { rail: { items: Array<{ slug: string; zh: string; en: string; gated: boolean; owner: string }> } } | undefined;
 if (!inventory) throw new Error("ui/parity/native-inventory.json not found — this suite runs from the repo's web/ dir");
-const nativeRail = inventory.rail.items;
+// 栏上只放清单里仍判（gated）的项；ask / deps 在清单 attribution.rail_owner 里标 retired（D29 / D30）
+const nativeRail = inventory.rail.items.filter((r) => r.gated);
+const retiredRail = inventory.rail.items.filter((r) => !r.gated);
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -37,16 +40,21 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("NavRail — 原生 sidebar 的 web 落点", () => {
-  it("八个条目按原生顺序渲染，data-rail-item 与双语标题逐字镜像清单", () => {
+  it("六个条目按原生顺序渲染，data-rail-item 与双语标题逐字镜像清单；退役的 ask / deps 不上栏", () => {
+    expect(nativeRail.map((r) => r.slug)).toEqual(["dashboard", "ingest", "trash", "archive", "settings", "about"]);
+    expect(retiredRail.map((r) => [r.slug, r.owner])).toEqual([["ask", "retired"], ["deps", "retired"]]);
     renderRail("en");
     const items = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-rail-item]"));
     expect(items.map((el) => el.dataset.railItem)).toEqual(nativeRail.map((r) => r.slug));
     expect(items.map((el) => el.querySelector(".rail-label")?.textContent)).toEqual(nativeRail.map((r) => r.en));
     expect(document.querySelector('[data-rail="left"]')).toBeTruthy();
+    expect(document.querySelector('[data-rail-item="ask"]')).toBeNull();
+    expect(document.querySelector('[data-rail-item="deps"]')).toBeNull();
     cleanup();
     renderRail("zh");
     const zh = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-rail-item] .rail-label"));
     expect(zh.map((el) => el.textContent)).toEqual(nativeRail.map((r) => r.zh));
+    expect(zh.map((el) => el.textContent)).not.toContain("问问助手");
   });
 
   it("深链：回收站 → ?page=trash，设置 → ?page=settings，任务台 → 无 page 参数", () => {
@@ -58,13 +66,19 @@ describe("NavRail — 原生 sidebar 的 web 落点", () => {
     expect(href("dashboard").searchParams.get("page")).toBeNull();
   });
 
-  it("选中态跟 ?page=：看板点亮任务台，diagnostics 归依赖检查，permissions 不点亮任何项", () => {
+  it("选中态跟 ?page=：看板点亮任务台，deps / diagnostics 旧深链点亮设置（D30），permissions 不点亮任何项", () => {
     renderRail("en", "?page=settings");
     expect(document.querySelector('[data-rail-item="settings"]')?.getAttribute("aria-current")).toBe("page");
     expect(document.querySelector('[data-rail-item="dashboard"]')?.getAttribute("aria-current")).toBeNull();
+    cleanup();
+    renderRail("en", "?page=deps");
+    expect(document.querySelector('[data-rail-item="settings"]')?.getAttribute("aria-current")).toBe("page");
     expect(activeRailSlug("board")).toBe("dashboard");
-    expect(activeRailSlug("diagnostics")).toBe("deps");
+    expect(activeRailSlug("diagnostics")).toBe("settings");
+    expect(activeRailSlug("deps")).toBe("settings");
     expect(activeRailSlug("permissions")).toBeNull();
+    expect(RAIL_PAGE).not.toHaveProperty("ask");
+    expect(RAIL_PAGE).not.toHaveProperty("deps");
   });
 
   it("折叠：按钮翻转 sidebarCollapsed 并持久化；收起态只剩图标，tooltip 仍是双语标题", () => {
@@ -74,27 +88,34 @@ describe("NavRail — 原生 sidebar 的 web 落点", () => {
     expect(window.localStorage.getItem("sidebarCollapsed")).toBe("true");
     expect(document.querySelector(".rail")?.classList.contains("is-collapsed")).toBe(true);
     expect(document.querySelectorAll(".rail-label").length).toBe(0);
-    expect(document.querySelector('[data-rail-item="trash"]')?.getAttribute("title")).toBe("Trash (⌘5)");
+    expect(document.querySelector('[data-rail-item="trash"]')?.getAttribute("title")).toBe("Trash (⌘3)");
     cleanup();
     // 重开：读回持久化的收起态
     renderRail("zh");
     expect(document.querySelector(".rail")?.classList.contains("is-collapsed")).toBe(true);
-    expect(document.querySelector('[data-rail-item="trash"]')?.getAttribute("title")).toBe("回收站 (⌘5)");
+    expect(document.querySelector('[data-rail-item="trash"]')?.getAttribute("title")).toBe("回收站 (⌘3)");
   });
 
-  it("⌘1…⌘8 换页（原生 keyboardShortcut）；输入框里不劫持", () => {
+  it("⌘1…⌘6 换页（原生 keyboardShortcut，去掉两页后连续重编）；⌘7 / ⌘8 不再有页；输入框里不劫持", () => {
     const nav = vi.mocked(navigate);
     nav.mockReset();
     renderRail();
-    fireEvent.keyDown(window, { key: "7", metaKey: true });
+    const titles = Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-rail-item]")).map((el) => el.getAttribute("title"));
+    expect(titles).toEqual(["Workbench (⌘1)", "Recording & Data Sources (⌘2)", "Trash (⌘3)", "Done for good (⌘4)", "Settings (⌘5)", "About (⌘6)"]);
+    fireEvent.keyDown(window, { key: "5", metaKey: true });
     expect(nav).toHaveBeenCalledTimes(1);
     expect(new URL(String(nav.mock.calls[0][0])).searchParams.get("page")).toBe("settings");
+    fireEvent.keyDown(window, { key: "2", metaKey: true });
+    expect(nav).toHaveBeenCalledTimes(2);
+    expect(new URL(String(nav.mock.calls[1][0])).searchParams.get("page")).toBe("ingest");
     const input = document.createElement("input");
     document.body.appendChild(input);
-    fireEvent.keyDown(input, { key: "5", metaKey: true });
-    expect(nav).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(input, { key: "3", metaKey: true });
+    expect(nav).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(window, { key: "7", metaKey: true });
+    fireEvent.keyDown(window, { key: "8", metaKey: true });
     fireEvent.keyDown(window, { key: "9", metaKey: true });
-    expect(nav).toHaveBeenCalledTimes(1);
+    expect(nav).toHaveBeenCalledTimes(2);
   });
 
   it("侧栏宽度钳制在 160–320（原生 clampSidebar）", () => {
@@ -104,14 +125,14 @@ describe("NavRail — 原生 sidebar 的 web 落点", () => {
   });
 
   it("mainSection：记住上次的 rail 页（原生 UserDefaults 同名），冷启动且 URL 没指定去处时回到它", () => {
-    rememberMainSection("settings");
+    rememberMainSection("trash");
+    expect(window.localStorage.getItem("mainSection")).toBe("trash");
+    rememberMainSection("diagnostics"); // deps / diagnostics 旧深链归设置（D30）
     expect(window.localStorage.getItem("mainSection")).toBe("settings");
-    rememberMainSection("diagnostics"); // diagnostics 归依赖检查（deps）
-    expect(window.localStorage.getItem("mainSection")).toBe("deps");
     rememberMainSection("permissions"); // 非 rail 页不记
-    expect(window.localStorage.getItem("mainSection")).toBe("deps");
+    expect(window.localStorage.getItem("mainSection")).toBe("settings");
     // 冷启动：无 ?page= / ?card= → 回上次的页
-    expect(restoreMainSection("")).toBe("deps");
+    expect(restoreMainSection("")).toBe("settings");
     // 同一窗口会话里再整页加载（← 返回看板）不再跳
     expect(restoreMainSection("")).toBeNull();
     window.sessionStorage.clear();
@@ -127,6 +148,12 @@ describe("NavRail — 原生 sidebar 的 web 落点", () => {
     window.localStorage.setItem("mainSection", "nowhere");
     expect(restoreMainSection("")).toBeNull();
     window.sessionStorage.clear();
+    // 旧版本残留的 ask / deps（D29 / D30 前记下的）→ 查不到页，不导航、不崩
+    for (const stale of ["ask", "deps"]) {
+      window.localStorage.setItem("mainSection", stale);
+      expect(restoreMainSection("")).toBeNull();
+      window.sessionStorage.clear();
+    }
     window.localStorage.removeItem("mainSection");
     expect(restoreMainSection("")).toBeNull();
   });

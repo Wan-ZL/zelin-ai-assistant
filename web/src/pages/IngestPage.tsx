@@ -15,7 +15,7 @@ import { FailureActionButton } from "../components/settings/failureAction";
 import { HealthLine } from "../components/settings/sourceHealth";
 import { errorMessage } from "../components/settings/useToast";
 import { useI18n } from "../i18n";
-import { buildAppUrl } from "../route";
+import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../route";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../shellBridge";
 import { refreshDiagnostics, refreshFailures, useAppState } from "../store";
 import type { IngestJob, IngestJobStart } from "../types";
@@ -105,7 +105,7 @@ function TriggerRow({ label, run, skipRc, logHref }: { label: string; run: () =>
 /** 原生 EngineDiagnosisRow：一句死因 + 一颗动作（ffmpeg 缺失另给「装好了，重启引擎」；崩了给「查看引擎日志」） */
 function EngineDiagnosisRow({ failureId, message, onRestart }: { failureId: string; message: string; onRestart: () => void }) {
   const { text } = useI18n();
-  const url = buildAppUrl(window.location.href, "deps", null);
+  const url = buildSettingsUrl(window.location.href, DEPS_ANCHOR); // 依赖检查区（D30）的日志尾巴
   url.searchParams.set("log", "engine.log");
   const downloading = failureId === "engine_npm_download";
   return (
@@ -156,7 +156,7 @@ export function IngestPage() {
   const dbStamp = activity?.screenpipe_db.mtime ?? null;
   const actdStamp = activity ? activity.actd_log.mtime : (diagnostics?.logs.find((log) => log.name === "actd.log")?.mtime ?? null);
   const failureText = (id: string) => failures?.failures[id]?.[language === "zh" ? "zh" : "en"] ?? id;
-  const depsHref = buildAppUrl(window.location.href, "deps", null).toString();
+  const depsHref = buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString();
   const settingsLink = (anchor: string, label: string) => {
     const url = buildAppUrl(window.location.href, "settings", null);
     url.searchParams.set("anchor", anchor);

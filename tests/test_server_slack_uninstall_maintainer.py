@@ -1,9 +1,11 @@
-"""server/ask_assistant.py — 问问助手的 server 落点（CONTRACT §27 / §54.4）：
+"""§54.4 左侧导航栏那轮补进 server 的三组小路由（CONTRACT §49 / §54.4 / §68.1 追记 / §68.6）：
 
-- GET /api/ask/history：只读 state/ask_history.json（缺席 / 坏 JSON → 空表；cap 20；非 dict 行丢弃）；
-- POST /api/ask {question}：子进程 ``python -m act.ask <question>``（runner 注入，绝不真起）——
-  一行 JSON 原样透传；空问题 / 非字符串 / 超长 400 INVALID_FIELD；多余字段 400 UNKNOWN_FIELD 由
-  路由层统一把关；子进程没给 JSON → ok:false 带 stderr 尾巴与 timeout 判定。
+- GET /api/slack/manifest：repo 的 config/slack-app-manifest.json 原文；缺席 404；
+- GET /api/slack/directory[?refresh=1]：子进程 ``act.lib.slack_setup --directory`` 的 JSON 透传（runner 注入，绝不真起）；
+- POST /api/uninstall/terminal / POST /api/maintainer/terminal：写 .command 并 open，server 自己不删不改任何东西。
+
+本文件此前叫 tests/test_server_ask.py，第一组是问问助手的 /api/ask*——D29（2026-09-04）随 web 页一起退役
+（§27 tombstone；``act/ask.py`` 与 tests/test_ask*.py 留给旧 app 到 P8），余下三组原样。
 """
 import json
 import os
@@ -15,15 +17,14 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import assert_envelope, get_json, post_json, start_server
 
-from server import ask_assistant as ask, maintainer_launch, subproc, uninstall_launch
-from server import slack_directory
+from server import maintainer_launch, slack_directory, subproc, uninstall_launch
 from server import slack_manifest as slack_setup
 from tests.test_server_common import write_text
 
 
 class _ServerCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="zai-ask-")
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-routes-")
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
         (self.home / "state").mkdir(parents=True)
@@ -44,50 +45,6 @@ class _ServerCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         return calls
-
-
-class AskTestCase(_ServerCase):
-    def test_history_missing_bad_and_capped(self):
-        _s, obj = get_json(self.port, "/api/ask/history")
-        self.assertEqual(obj, {"items": []})
-        ask.history_path(self.home).write_text("{not json", encoding="utf-8")
-        self.assertEqual(get_json(self.port, "/api/ask/history")[1], {"items": []})
-        rows = [{"q": "q%d" % i, "a": "a"} for i in range(25)] + ["junk"]
-        ask.history_path(self.home).write_text(json.dumps(rows), encoding="utf-8")
-        _s, obj = get_json(self.port, "/api/ask/history")
-        self.assertEqual(len(obj["items"]), 20)
-        self.assertEqual(obj["items"][0]["q"], "q0")
-
-    def test_ask_forwards_question_as_argv_and_passes_json_through(self):
-        calls = self._patch(json.dumps({"ok": True, "answer": "42", "citation": "README", "lang": "en", "elapsed_s": 1.5}))
-        status, obj = post_json(self.port, "/api/ask", {"question": "  why   no cards? "})
-        self.assertEqual(status, 200)
-        self.assertEqual(obj["answer"], "42")
-        argv, timeout_s = calls[0]
-        self.assertEqual(argv[1:], ["-m", "act.ask", "why no cards?"])
-        self.assertEqual(timeout_s, ask.TIMEOUT_S)
-
-    def test_bad_question_is_400(self):
-        for body in ({"question": ""}, {"question": "   "}, {"question": 7}, {}):
-            status, obj = post_json(self.port, "/api/ask", body)
-            self.assertEqual(status, 400, body)
-            assert_envelope(self, obj, "INVALID_FIELD")
-        status, obj = post_json(self.port, "/api/ask", {"question": "x" * (ask.QUESTION_MAX + 1)})
-        self.assertEqual(status, 400)
-        status, obj = post_json(self.port, "/api/ask", {"question": "hi", "extra": 1})
-        self.assertEqual(status, 400)
-        assert_envelope(self, obj, "UNKNOWN_FIELD")
-
-    def test_subprocess_without_json_is_honest_not_500(self):
-        self._patch("", rc=124, err="act.ask timed out after 75s")
-        status, obj = post_json(self.port, "/api/ask", {"question": "hi"})
-        self.assertEqual(status, 200)
-        self.assertFalse(obj["ok"])
-        self.assertTrue(obj["timeout"])
-        self.assertIn("timed out", obj["error"])
-        self._patch("", rc=1, err="")
-        _s, obj = post_json(self.port, "/api/ask", {"question": "hi"})
-        self.assertEqual(obj["error"], "ask exited 1")
 
 
 class SlackManifestTestCase(_ServerCase):

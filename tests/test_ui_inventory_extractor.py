@@ -458,6 +458,40 @@ class ControlClassificationTestCase(_FixtureCase):
         real = {c["id"] for c in uc.load_json(uc.INVENTORY_PATH)["controls"]}
         self.assertTrue(set(inv.CONTROL_OWNER) <= real, "CONTROL_OWNER names ids that are not in the inventory")
 
+    def test_ask_page_is_retired_whole_screen_and_per_control(self):
+        # D29（owner 2026-09-04）：问问助手 web 页整页退役——SCREEN_OWNER 标 ask，Ask.swift 的 17 条全部点名进 CONTROL_OWNER
+        self.assertEqual(inv.SCREEN_OWNER["ask"], "retired")
+        self.assertEqual(inv.owner_of("ask"), "retired")
+        ask_ids = [cid for cid in inv.CONTROL_OWNER if cid.startswith("control:ask:")]
+        self.assertEqual(len(ask_ids), 17)
+        real = uc.load_json(uc.INVENTORY_PATH)
+        real_ask = [c for c in real["controls"] if c["screen"] == "ask"]
+        self.assertEqual(sorted(c["id"] for c in real_ask), sorted(ask_ids))
+        for c in real_ask:
+            self.assertEqual((c["owner"], c["gated"]), ("retired", False), c["id"])
+            self.assertIn("D29", c["reason"])
+        screens = {s["id"]: s for s in real["screens"]}
+        self.assertEqual((screens["screen:ask"]["owner"], screens["screen:ask"]["gated"]), ("retired", False))
+        self.assertEqual((screens["screen:deps"]["owner"], screens["screen:deps"]["gated"]), ("web", True))   # D30：页面并入设置，仍判
+
+    def test_rail_owner_retires_ask_and_deps_rail_items_only(self):
+        # RAIL_OWNER（第八张归属表）：ask / deps 两个侧栏项 retired、不判、理由随行进 JSON；其余六项照判
+        self.assertEqual(set(inv.RAIL_OWNER), {"ask", "deps"})
+        for slug, entry in inv.RAIL_OWNER.items():
+            self.assertEqual(entry["owner"], "retired", slug)
+            self.assertRegex(entry["reason"], r"D(29|30)", slug)
+        real = uc.load_json(uc.INVENTORY_PATH)
+        self.assertEqual(real["attribution"]["rail_owner"], inv.RAIL_OWNER)
+        rail = {r["slug"]: r for r in real["rail"]["items"]}
+        self.assertEqual([slug for slug, r in rail.items() if not r["gated"]], ["ask", "deps"])
+        for slug in ("ask", "deps"):
+            self.assertEqual(rail[slug]["owner"], "retired")
+            self.assertEqual(rail[slug]["reason"], inv.RAIL_OWNER[slug]["reason"])
+        self.assertEqual([slug for slug, r in rail.items() if r["gated"]],
+                         ["dashboard", "ingest", "trash", "archive", "settings", "about"])
+        # 迷你 fixture 的三页不在表里 → 全部照判
+        self.assertTrue(all(r["gated"] and r["owner"] == "web" for r in self.inventory["rail"]["items"]))
+
     def test_card_affordances_group_verbs_by_lane(self):
         aff = self.inventory["lanes"]["card_affordances"]
         self.assertEqual([r["en"] for r in aff["needs_approval"]],
