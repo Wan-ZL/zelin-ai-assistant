@@ -12,7 +12,7 @@
 import { useEffect, useState } from "react";
 import { fetchRadarAgents, postRadarReinstall } from "../../api";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, readPage, type AppPage } from "../../route";
+import { buildAppUrl, DEPS_ANCHOR, readPage, type AppPage } from "../../route";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../../shellBridge";
 import { useAppState } from "../../store";
 import type { RadarAgentStatus, RadarSourceHealth } from "../../types";
@@ -94,7 +94,7 @@ function obsidianCard(reason: string, rec: ShellRecordingState | null, entry: Ra
       }
       return card("vault_empty.other", text("录制开着，但 vault 里没有新笔记", "Recording is on but no new notes appear"),
         text("屏幕→笔记这条链有一环没通（导出/清洗/ingest）。过一遍依赖检查能定位到具体哪一步。", "A step in the screen→note chain isn't firing (export/cleanup/ingest). The dependency check pinpoints which one."),
-        text("打开依赖检查", "Open Dependencies"), { kind: "page", page: "deps" });
+        text("打开依赖检查", "Open Dependencies"), { kind: "page", page: "settings", anchor: DEPS_ANCHOR });
     case "no_api_key":
       return card("no_api_key", text("定时任务没有 API key", "The scheduled job has no API key"),
         text("截图能录，但把截图变成笔记要调用 claude，而定时任务读不到 Anthropic API key。", "Capture works, but turning captures into notes calls claude — and the scheduled job can't read an Anthropic API key."),
@@ -102,7 +102,7 @@ function obsidianCard(reason: string, rec: ShellRecordingState | null, entry: Ra
     case "extract_failed":
       return card("extract_failed", text("截图→笔记这条链在报错", "The capture→note chain is erroring"),
         text("有 API key，但 claude 处理笔记时失败了（模型报错/超时/输出无法解析）。依赖检查里有完整日志。", "A key exists, but claude failed while processing a note (error/timeout/unparseable output). Full logs are in the dependency check."),
-        text("打开依赖检查", "Open Dependencies"), { kind: "page", page: "deps" });
+        text("打开依赖检查", "Open Dependencies"), { kind: "page", page: "settings", anchor: DEPS_ANCHOR });
     case "vault_missing":
       return card("vault_missing", text("还没指定 Obsidian 目录", "No Obsidian folder is set"),
         text("录制开着，但没告诉助手笔记该放哪个 vault 目录——先指定它，链路才能落地。", "Recording is on but no vault folder is set for the notes — point to one so the pipeline has somewhere to land."),

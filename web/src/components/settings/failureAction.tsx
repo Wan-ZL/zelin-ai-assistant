@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { postRepairActd, postRevealTarget } from "../../api";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, type AppPage } from "../../route";
+import { buildAppUrl, DEPS_ANCHOR, type AppPage } from "../../route";
 import { callShell, hasShellBridge } from "../../shellBridge";
 import { refreshHealth } from "../../store";
 import { errorMessage } from "./useToast";
@@ -42,8 +42,10 @@ const EXTERNAL: Record<string, string> = {
 };
 
 const PAGE: Record<string, { page: AppPage; anchor?: string }> = {
-  claude_cli_outdated: { page: "deps" }, interpreter_blind: { page: "deps" }, claude_blind: { page: "deps" }, deploy_blind_tcc: { page: "deps" },
-  cron_missing: { page: "deps" },
+  // 「去诊断」一族 → 设置页的依赖检查区（D30；原来是独立页 ?page=deps）
+  claude_cli_outdated: { page: "settings", anchor: DEPS_ANCHOR }, interpreter_blind: { page: "settings", anchor: DEPS_ANCHOR },
+  claude_blind: { page: "settings", anchor: DEPS_ANCHOR }, deploy_blind_tcc: { page: "settings", anchor: DEPS_ANCHOR },
+  cron_missing: { page: "settings", anchor: DEPS_ANCHOR },
   claude_auth_failed: { page: "settings", anchor: "credentials" },
   engine_dead: { page: "ingest" }, engine_npm_download: { page: "ingest" },
 };

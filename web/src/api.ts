@@ -6,8 +6,6 @@
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
 import type {
   AboutInfo,
-  AskAnswer,
-  AskHistory,
   AiFixReceipt,
   Board,
   CardDetail,
@@ -464,16 +462,6 @@ export function postTerminal(cardId: string): Promise<TerminalReceipt> {
 /** POST /api/repair/actd — 横幅一键修复（launchctl kickstart；未加载 → 409） */
 export function postRepairActd(): Promise<RepairReceipt> {
   return request<RepairReceipt>("/api/repair/actd", { method: "POST", body: JSON.stringify({}) });
-}
-
-/** GET /api/ask/history — 问问助手最近的问答（只读，§27） */
-export function fetchAskHistory(signal?: AbortSignal): Promise<AskHistory> {
-  return request<AskHistory>("/api/ask/history", { signal });
-}
-
-/** POST /api/ask — 一问一答（server 子进程 act.ask，最多 ~75 s；§27） */
-export function postAsk(question: string, signal?: AbortSignal): Promise<AskAnswer> {
-  return request<AskAnswer>("/api/ask", { method: "POST", body: JSON.stringify({ question }), signal });
 }
 
 /** GET /api/slack/manifest — repo 的 Slack App Manifest 原文（Slack 接入区「复制 App Manifest」） */

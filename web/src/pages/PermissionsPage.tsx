@@ -17,7 +17,7 @@ import { TelemetryBlock } from "../components/permissions/TelemetryBlock";
 import { pickText } from "../components/settings/catalogText";
 import { copyText } from "../components/detail/copyText";
 import { useI18n } from "../i18n";
-import { buildAppUrl, navigate } from "../route";
+import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../route";
 import { callShell, hasShellBridge, PANE_IDS, type PermissionStatus } from "../shellBridge";
 import { refreshPermissions, refreshSetup, useAppState } from "../store";
 import type { DoctorRow, FdaExecutable } from "../types";
@@ -163,7 +163,7 @@ export function PermissionsPage() {
       </section>
 
       <div className="settings-actions perm-footer">
-        <a className="settings-link" href={buildAppUrl(window.location.href, "deps", null).toString()}>{text("打开依赖检查", "Open dependency check")}</a>
+        <a className="settings-link" href={buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString()}>{text("打开依赖检查", "Open dependency check")}</a>
         <button type="button" className="btn btn-primary" onClick={() => navigate(buildAppUrl(window.location.href, firstRun ? "setup" : "board", null))}>
           {firstRun ? text("完成", "Done") : text("关闭", "Close")}
         </button>

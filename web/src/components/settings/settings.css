@@ -407,6 +407,12 @@
   outline: 2px solid var(--accent-soft);
 }
 
+/* ?anchor= 深链滚到某区时留出顶栏（sticky 52px + 过滤条）的高度，标题行不被盖住 */
+.settings-page > .settings-section,
+.settings-page > div[id^="settings-"] {
+  scroll-margin-top: 64px;
+}
+
 .settings-section.is-placeholder {
   opacity: 0.75;
 }
@@ -607,6 +613,10 @@
 .settings-update .settings-actions { margin: 0; }
 
 /* ----- §15.1 依赖检查快速行 / 雷达健康（原生 DepsView：✅/⚠️ + 名字 + 探针说明 + 一颗对症按钮） ----- */
+/* D30：依赖检查是设置页的一区——标题行带「重新检查」+「权限体检」，雷达健康 / 诊断 / 管线活性… 是区内细线分隔的子块 */
+.settings-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.settings-subsection { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: var(--border-hairline) solid var(--border); }
+.settings-subsection-title { margin: 0; font-size: calc(12.5px * var(--text-scale)); font-weight: var(--w-semibold); }
 .dep-row-head { display: flex; align-items: center; gap: 8px; }
 .dep-row-mark { width: 1.4em; text-align: center; flex: none; }
 .dep-row-action { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }

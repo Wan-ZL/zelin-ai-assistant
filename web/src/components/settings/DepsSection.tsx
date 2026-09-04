@@ -1,22 +1,22 @@
-// 依赖检查页（原生 Pages.swift DepsView：依赖 快速行 + 雷达健康 + 诊断 三段 → §15.1 / §68.4；?page=deps，左侧导航栏第三项；
-// ?page=diagnostics 是同一页的旧深链，横幅 / 关于区的链接仍指它）：
-//   依赖快速行（components/settings/DepRows：doctor 行 + 壳 + 凭证 + cron 探针，每行一颗对症按钮）· 雷达健康（原生
-//   radarDetail：最近成功 … / 从未成功：<原因> / 暂无数据）· doctor 表（--fast；「运行诊断」= fast=0 含活探针，会花 token；
-//   零失败「全部通过 ✓」、「完整报告」折叠成文本）· web 自有的 管线活性（心跳 / 看板新鲜度 / 连崩）· 自动部署状态（§56
-//   deploy_state 全字段）· 安装回执（§23）· 日志尾巴（只读、server size-cap；?log=<name> 深链直接翻开）。
+// 依赖检查区（设置页的一区，id `settings-deps`；D30 owner 2026-09-04「这个依赖检查我希望合并到 setting里面」）：原生 Pages.swift
+// DepsView 的 依赖 快速行 + 雷达健康 + 诊断 三段（§15.1 / §68.4）——此前是独立页 `?page=deps`（更早叫 `?page=diagnostics`），
+// 两个旧深链仍接受、都开到设置页并滚到本区（route.readSettingsAnchor）；横幅 / 诊断条 / 向导 / 权限体检 / 关于区的链接
+// 走 `?page=settings&anchor=deps`。控件与文案原样：
+//   依赖快速行（DepRows：doctor 行 + 壳 + 凭证 + cron 探针，每行一颗对症按钮）· 雷达健康（原生 radarDetail：最近成功 … /
+//   从未成功：<原因> / 暂无数据）· doctor 表（--fast；「运行诊断」= fast=0 含活探针，会花 token；零失败「全部通过 ✓」、
+//   「完整报告」折叠成文本）· web 自有的 管线活性（心跳 / 看板新鲜度 / 连崩）· 自动部署状态（§56 deploy_state 全字段）·
+//   安装回执（§23）· 日志尾巴（只读、server size-cap；?log=<name> 深链直接翻开）。
 //   让 AI 修在卡片上（§54.1 第 5 项），这里只在 doctor 有未通过项时出现。doctor 行带 §25 failure_id 时给原生 FailureCatalog
-//   的对症一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，components/settings/failureAction）。
+//   的对症一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，failureAction）。
 import { useEffect, useState } from "react";
-import "../components/chrome/chrome.css";
-import "../components/settings/settings.css";
-import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../api";
-import { DepRows, RadarHealthRows } from "../components/settings/DepRows";
-import { FailureActionButton } from "../components/settings/failureAction";
-import { errorMessage } from "../components/settings/useToast";
-import { useI18n } from "../i18n";
-import { buildAppUrl } from "../route";
-import { refreshDiagnostics, useAppState } from "../store";
-import type { DoctorReport, DoctorRow, LogTail } from "../types";
+import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../../api";
+import { useI18n } from "../../i18n";
+import { buildAppUrl } from "../../route";
+import { refreshDiagnostics, useAppState } from "../../store";
+import type { DoctorReport, DoctorRow, LogTail } from "../../types";
+import { DepRows, RadarHealthRows } from "./DepRows";
+import { FailureActionButton } from "./failureAction";
+import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;
 
@@ -71,7 +71,7 @@ function KeyValues({ obj }: { obj: Record<string, unknown> }) {
   );
 }
 
-export function DiagnosticsPage() {
+export function DepsSection() {
   const { text, language } = useI18n();
   const { diagnostics, pageErrors } = useAppState();
   const [full, setFull] = useState<DoctorReport | null>(null);
@@ -139,10 +139,9 @@ export function DiagnosticsPage() {
   const noRows = !rechecking && !busy && (report ? report.checks.length === 0 : Boolean(pageErrors.diagnostics));
 
   return (
-    <main className="settings-page diag-page">
-      <a className="trash-back-link" href={buildAppUrl(window.location.href, "board", null).toString()}>{text("← 返回看板", "← Back to board")}</a>
-      <div className="settings-page-head">
-        <h2 className="settings-page-title">{text("依赖检查", "Dependencies")}</h2>
+    <section className="settings-section deps-section" id="settings-deps" aria-labelledby="settings-deps-title">
+      <div className="settings-section-head">
+        <h3 id="settings-deps-title" className="settings-section-title">{text("依赖检查", "Dependencies")}</h3>
         <button type="button" className="btn" disabled={busy || rechecking} onClick={() => void recheck()}>{rechecking ? text("检查中…", "Checking…") : text("重新检查", "Re-check")}</button>
         <a className="settings-link" href={buildAppUrl(window.location.href, "permissions", null).toString()}>{text("权限体检", "Permissions Checkup")}</a>
       </div>
@@ -152,13 +151,13 @@ export function DiagnosticsPage() {
       {noRows && <p className="settings-helper">{text("点「重新检查」开始", "Click \"Re-check\" to start")}</p>}
       <DepRows report={report} probe={diagnostics?.cron_probe} />
 
-      <section className="settings-section" aria-labelledby="diag-sources-title">
-        <h3 id="diag-sources-title" className="settings-section-title">{text("雷达健康", "Radar Health")}</h3>
+      <div className="settings-subsection" aria-labelledby="diag-sources-title">
+        <h4 id="diag-sources-title" className="settings-subsection-title">{text("雷达健康", "Radar Health")}</h4>
         <RadarHealthRows sources={diagnostics ? diagnostics.radar_sources : undefined} />
-      </section>
+      </div>
 
-      <section className="settings-section" aria-labelledby="diag-doctor-title">
-        <h3 id="diag-doctor-title" className="settings-section-title">{text("诊断", "Diagnostics")}<span className="settings-helper"> · python -m act.doctor</span></h3>
+      <div className="settings-subsection" aria-labelledby="diag-doctor-title">
+        <h4 id="diag-doctor-title" className="settings-subsection-title">{text("诊断", "Diagnostics")}<span className="settings-helper"> · python -m act.doctor</span></h4>
         <div className="settings-actions">
           <button type="button" className="btn" disabled={busy} onClick={() => void runFull()}>{busy ? text("诊断中…", "Running…") : text("运行诊断", "Run diagnostics")}</button>
           {busy
@@ -188,12 +187,12 @@ export function DiagnosticsPage() {
           </details>
         )}
         {!report && !pageErrors.diagnostics && <p className="settings-helper">{text("检查中…", "Checking…")}</p>}
-      </section>
+      </div>
 
       {diagnostics && (
         <>
-          <section className="settings-section" aria-labelledby="diag-health-title">
-            <h3 id="diag-health-title" className="settings-section-title">{text("管线活性（§47.4）", "Pipeline liveness (§47.4)")} · <span className={`chip chip-${diagnostics.health.verdict === "ok" ? "success" : diagnostics.health.verdict === "unknown" ? "quiet" : "danger"}`}>{diagnostics.health.verdict}</span></h3>
+          <div className="settings-subsection" aria-labelledby="diag-health-title">
+            <h4 id="diag-health-title" className="settings-subsection-title">{text("管线活性（§47.4）", "Pipeline liveness (§47.4)")} · <span className={`chip chip-${diagnostics.health.verdict === "ok" ? "success" : diagnostics.health.verdict === "unknown" ? "quiet" : "danger"}`}>{diagnostics.health.verdict}</span></h4>
             <KeyValues obj={{
               heartbeat_age_s: diagnostics.health.heartbeat?.age_s,
               heartbeat_phase: diagnostics.health.heartbeat?.phase,
@@ -203,15 +202,15 @@ export function DiagnosticsPage() {
               last_error: diagnostics.health.loop_health.last_error,
               registry_backend: diagnostics.registry_backend,
             }} />
-          </section>
+          </div>
 
-          <section className="settings-section" aria-labelledby="diag-deploy-title">
-            <h3 id="diag-deploy-title" className="settings-section-title">{text("自动部署（§56）", "Auto-deploy (§56)")}</h3>
+          <div className="settings-subsection" aria-labelledby="diag-deploy-title">
+            <h4 id="diag-deploy-title" className="settings-subsection-title">{text("自动部署（§56）", "Auto-deploy (§56)")}</h4>
             {diagnostics.deploy_state ? <KeyValues obj={diagnostics.deploy_state} /> : <p className="settings-helper">{text("看板里没有 deploy_state（自动部署 agent 还没跑过）。", "No deploy_state in the board (the auto-deploy agent has not run yet).")}</p>}
-          </section>
+          </div>
 
-          <section className="settings-section" aria-labelledby="diag-install-title">
-            <h3 id="diag-install-title" className="settings-section-title">{text("安装回执（§23）", "Install report (§23)")}{diagnostics.install_report?.version && <span className="settings-helper"> · v{diagnostics.install_report.version} · {diagnostics.install_report.generated_at}</span>}</h3>
+          <div className="settings-subsection" aria-labelledby="diag-install-title">
+            <h4 id="diag-install-title" className="settings-subsection-title">{text("安装回执（§23）", "Install report (§23)")}{diagnostics.install_report?.version && <span className="settings-helper"> · v{diagnostics.install_report.version} · {diagnostics.install_report.generated_at}</span>}</h4>
             {diagnostics.install_report ? (
               <ul className="settings-list">
                 {diagnostics.install_report.steps.map((step, i) => (
@@ -222,10 +221,10 @@ export function DiagnosticsPage() {
                 ))}
               </ul>
             ) : <p className="settings-helper">{text("没有 install_report.json（还没跑过 install.sh）。", "No install_report.json (install.sh has not run yet).")}</p>}
-          </section>
+          </div>
 
-          <section className="settings-section" aria-labelledby="diag-logs-title">
-            <h3 id="diag-logs-title" className="settings-section-title">{text("日志（只读，最后 300 行）", "Logs (read-only, last 300 lines)")}</h3>
+          <div className="settings-subsection" aria-labelledby="diag-logs-title">
+            <h4 id="diag-logs-title" className="settings-subsection-title">{text("日志（只读，最后 300 行）", "Logs (read-only, last 300 lines)")}</h4>
             <div className="settings-knob-controls">
               <select className="settings-select" aria-label={text("选择日志", "Pick a log")} value={logName} onChange={(e) => void openLog(e.target.value)}>
                 <option value="">{text("— 选一个日志文件 —", "— pick a log file —")}</option>
@@ -242,9 +241,9 @@ export function DiagnosticsPage() {
                 <pre className="diag-log diag-log-tail">{log.lines.join("\n")}</pre>
               </>
             )}
-          </section>
+          </div>
         </>
       )}
-    </main>
+    </section>
   );
 }

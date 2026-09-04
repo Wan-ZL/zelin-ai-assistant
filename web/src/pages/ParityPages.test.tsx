@@ -1,5 +1,5 @@
-// §66 P4 parity 页：权限体检（FDA 清单 + 可复制路径 + 无桥诚实说明 + 首启 / 体检页脚）、诊断（doctor 表 + 对症一键 +
-// 日志尾巴）、首次运行向导（七步：?step= 深链、config-from-example、引擎检测三态、先验后存、末步健康行、完成标记）、
+// §66 P4 parity 页：权限体检（FDA 清单 + 可复制路径 + 无桥诚实说明 + 首启 / 体检页脚）、依赖检查区（D30 起住设置页：doctor 表 +
+// 对症一键 + 日志尾巴）、首次运行向导（七步：?step= 深链、config-from-example、引擎检测三态、先验后存、末步健康行、完成标记）、
 // 永久性完成整页（unarchive）、横幅一键修复、路由新页 / anchor、Dock 徽章计数与向导跳转判定。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,14 +10,14 @@ import {
 import { badgeCount, shouldRedirectToSetup } from "../app";
 import { RepairButton } from "../components/shell/PipelineBanner";
 import { LanguageContext } from "../i18n";
-import { navigate, readAnchor, readPage } from "../route";
+import { navigate, readAnchor, readPage, readSettingsAnchor } from "../route";
 import { refreshBoard, resetStoreForTests } from "../store";
 import type { Board, DiagnosticsSnapshot, PermissionsSnapshot, SetupSnapshot } from "../types";
 import { ArchivePage } from "./ArchivePage";
 import { consentPending } from "../components/permissions/RecordingConsentSection";
 import { cronVerdict, daemonRunning } from "../components/setup/FinaleStep";
+import { DepsSection, doctorSummary, fullReportText } from "../components/settings/DepsSection";
 import { failureActionLabel } from "../components/settings/failureAction";
-import { DiagnosticsPage, doctorSummary, fullReportText } from "./DiagnosticsPage";
 import { PermissionsPage, statusLabel } from "./PermissionsPage";
 import { firstOpenStep, SetupPage, stepFromSearch } from "./SetupPage";
 
@@ -168,12 +168,14 @@ describe("PermissionsPage", () => {
   });
 });
 
-describe("DiagnosticsPage", () => {
+describe("DepsSection（原 DiagnosticsPage，D30 折进设置页）", () => {
   it("renders doctor rows, deploy state, install steps and loads a log tail", async () => {
     vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics());
     vi.mocked(fetchLogTail).mockResolvedValue({ name: "actd.launchd.log", path: "/l/actd.launchd.log", size: 2048, lines: ["a", "b"], truncated: true });
-    renderEn(<DiagnosticsPage />);
+    renderEn(<DepsSection />);
     await screen.findByText("actd heartbeat");
+    expect(document.getElementById("settings-deps")?.classList.contains("settings-section")).toBe(true);
+    expect(screen.getByRole("heading", { level: 3, name: "Dependencies" })).toBeTruthy();
     expect(screen.getByText("1 check(s) failed — each has its own button")).toBeTruthy();
     expect(screen.getByText("(1 ok / 0 warn)")).toBeTruthy();
     expect(screen.getByText("deployed")).toBeTruthy();
@@ -187,7 +189,7 @@ describe("DiagnosticsPage", () => {
   it("full checkup calls fetchDoctor(fast=false, refresh=true)", async () => {
     vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics());
     vi.mocked(fetchDoctor).mockResolvedValue({ ...diagnostics().doctor, fast: false });
-    renderEn(<DiagnosticsPage />);
+    renderEn(<DepsSection />);
     await screen.findByText("actd heartbeat");
     fireEvent.click(screen.getByRole("button", { name: /Run diagnostics/ }));
     await waitFor(() => expect(fetchDoctor).toHaveBeenCalledWith(false, true));
@@ -199,7 +201,7 @@ describe("DiagnosticsPage", () => {
       { name: "cron chain", status: "FAIL", detail: "missing", fix: "bash install.sh", failure_id: "cron_missing" });
     vi.mocked(fetchDiagnostics).mockResolvedValue(diag);
     vi.mocked(postRevealTarget).mockResolvedValue({ ok: true });
-    renderEn(<DiagnosticsPage />);
+    renderEn(<DepsSection />);
     await screen.findByText("actd heartbeat");
     expect(screen.getByRole("link", { name: "How to fix" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Reveal file" }));
@@ -327,11 +329,17 @@ describe("RepairButton", () => {
 });
 
 describe("route + app helpers", () => {
-  it("knows the new pages and the anchor param", () => {
-    for (const page of ["archive", "permissions", "diagnostics", "setup", "ask", "deps", "ingest", "about"]) expect(readPage(`?page=${page}`)).toBe(page);
+  it("knows the new pages and the anchor param; ?page=ask (D29 退役) falls back to the board", () => {
+    for (const page of ["archive", "permissions", "diagnostics", "setup", "deps", "ingest", "about"]) expect(readPage(`?page=${page}`)).toBe(page);
+    expect(readPage("?page=ask")).toBe("board");
     expect(readAnchor("?page=settings&anchor=live_captions")).toBe("live_captions");
     expect(readAnchor("?anchor=<script>")).toBeNull();
     expect(readAnchor("")).toBeNull();
+    // 依赖检查的两个旧深链都开到设置页的 deps 区（D30）；显式 ?anchor= 优先
+    expect(readSettingsAnchor("?page=deps")).toBe("deps");
+    expect(readSettingsAnchor("?page=diagnostics&log=actd.log")).toBe("deps");
+    expect(readSettingsAnchor("?page=settings")).toBeNull();
+    expect(readSettingsAnchor("?page=deps&anchor=credentials")).toBe("credentials");
   });
 
   it("badgeCount = proposals + needs_input + review (counts first) and setup redirect only from the board", () => {

@@ -1,4 +1,4 @@
-// §66 清账轮 SLICE A（deps / ingest / about）：依赖检查快速行（doctor + 壳 + 凭证 + cron 探针四态）、雷达健康三态词、
+// §66 清账轮 SLICE A（deps / ingest / about）：依赖检查快速行（doctor + 壳 + 凭证 + cron 探针四态；D30 起是设置页一区）、雷达健康三态词、
 // 录制页手动触发（同一条脚本、同一套退出码 → 完成 ✓ / 已有 ingest 在运行 / 失败 (exit N)）、引擎诊断行、最近活动时间戳、
 // 关于页更新行逐态（一键更新 = 提前 kickstart 自动部署，409 → release 页）与卸载失败弹窗（server 给的手动命令）。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -7,13 +7,13 @@ import {
   ApiError, fetchAbout, fetchDiagnostics, fetchFailures, fetchIngestJob, fetchSecrets, postFolderOpen, postIngestExport, postIngestRun,
   postUninstallTerminal, postUpdateCheck, postUpdateInstall,
 } from "../api";
-import { buildDepRows, CRON_PROBE_FRESH_MS, cronVerdict, depsSkipReasonLabel, radarTone } from "../components/settings/DepRows";
 import { AboutSection, updateStatusText, updateView } from "../components/settings/AboutSection";
+import { buildDepRows, CRON_PROBE_FRESH_MS, cronVerdict, depsSkipReasonLabel, radarTone } from "../components/settings/DepRows";
+import { DepsSection } from "../components/settings/DepsSection";
 import { LanguageContext } from "../i18n";
 import { applyShellState, resetShellBridgeForTests, type ShellState } from "../shellBridge";
 import { resetStoreForTests } from "../store";
 import type { AboutInfo, DiagnosticsSnapshot, DoctorReport } from "../types";
-import { DiagnosticsPage } from "./DiagnosticsPage";
 import { IngestPage, stamp, verdictOf } from "./IngestPage";
 
 vi.mock("../api", async (importOriginal) => {
@@ -73,7 +73,7 @@ beforeEach(() => {
   vi.mocked(fetchSecrets).mockResolvedValue(secrets);
   vi.mocked(fetchFailures).mockResolvedValue({ failures: { engine_ffmpeg_missing: { zh: "缺 ffmpeg", en: "ffmpeg missing", action_id: "install_ffmpeg" }, screen_tcc_lost: { zh: "授权丢了", en: "grant lost", action_id: null } } });
   vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics());
-  window.history.replaceState(null, "", "/?page=deps");
+  window.history.replaceState(null, "", "/?page=settings&anchor=deps");
   delete (window as Window & { webkit?: unknown }).webkit;
 });
 
@@ -119,10 +119,10 @@ describe("DepRows（原生 DepsModel.check 的十二行）", () => {
     expect(radarTone({ enabled: true })).toBe("danger");
   });
 
-  it("DiagnosticsPage renders the rows, 雷达健康 three states, Reveal posts the obsidian_raw key", async () => {
+  it("DepsSection renders the rows, 雷达健康 three states, Reveal posts the obsidian_raw key", async () => {
     vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics({ radar_sources: { gmail: { enabled: true, last_ok: "2026-09-02T11:55:00Z" }, slack: { enabled: true, skip_reason: "connect_failed" } } }));
     vi.mocked(postFolderOpen).mockResolvedValue({ ok: true, key: "obsidian_raw", path: "/v" });
-    renderEn(<DiagnosticsPage />);
+    renderEn(<DepsSection />);
     await screen.findByText("cron can read /Users/d/Documents/V");
     expect(screen.getByText("(managed in-app)")).toBeTruthy();
     expect(screen.getByText("(managed in-app; not set)")).toBeTruthy();

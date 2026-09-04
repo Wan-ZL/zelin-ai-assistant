@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { postRepairActd } from "../../api";
 import { useI18n } from "../../i18n";
-import { buildAppUrl } from "../../route";
+import { buildSettingsUrl, DEPS_ANCHOR } from "../../route";
 import { refreshHealth, useAppState } from "../../store";
 import type { HealthSnapshot } from "../../types";
 
@@ -90,7 +90,11 @@ export function RepairButton({ verdict }: { verdict?: string }) {
       setBusy(false);
     }
   };
-  const depsHref = buildAppUrl(window.location.href, "deps", null).toString();
+  // 依赖检查自 D30 起是设置页的一区：?page=settings&anchor=deps（查看日志再带 ?log=actd.log，区内直接翻开该尾巴）
+  const depsUrl = buildSettingsUrl(window.location.href, DEPS_ANCHOR);
+  const depsHref = depsUrl.toString();
+  depsUrl.searchParams.set("log", "actd.log");
+  const logHref = depsUrl.toString();
   return (
     <span className="shell-banner-actions">
       {failed ? (
@@ -105,7 +109,7 @@ export function RepairButton({ verdict }: { verdict?: string }) {
         </button>
       )}
       <a className="shell-banner-link" href={depsHref}>{isStart ? text("打开依赖检查", "Open dependency check") : text("依赖检查", "Dependency check")}</a>
-      <a className="shell-banner-link" href={depsHref + "&log=actd.log"}>{text("查看日志", "View log")}</a>
+      <a className="shell-banner-link" href={logHref}>{text("查看日志", "View log")}</a>
       {note && <span className="shell-banner-note">{note}</span>}
     </span>
   );

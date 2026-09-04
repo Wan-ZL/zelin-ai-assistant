@@ -7,7 +7,7 @@
 import { useState, type ReactNode } from "react";
 import { postRepairActd, postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
-import { buildAppUrl } from "../../route";
+import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../../route";
 import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import type { DoctorRow, HealthSnapshot, SetupEngine } from "../../types";
@@ -119,7 +119,7 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   };
 
   const permissionsHref = buildAppUrl(window.location.href, "permissions", null).toString();
-  const depsHref = buildAppUrl(window.location.href, "deps", null).toString();
+  const depsHref = buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString(); // 依赖检查 = 设置页一区（D30）
 
   const rows: RowSpec[] = [];
 
