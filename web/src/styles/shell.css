@@ -188,8 +188,8 @@
   gap: 10px;
 }
 
-/* min-width 0 + overflow hidden：让 grid 能把这一列缩到内容以下；标识 / 标题不缩，
-   设备标签 / 新鲜度 / 部署小字（下方 min-width 0 + ellipsis）让位 */
+/* min-width 0 + overflow hidden：让 grid 能把这一列缩到内容以下；标识不缩、full / compact 里标题也不缩，
+   设备标签 / 新鲜度 / 部署小字（下方 min-width 0 + ellipsis）让位；tight 只剩标识 + 标题时标题自己省略号（下方） */
 .shell-header-left {
   display: flex;
   align-items: center;
@@ -214,6 +214,15 @@
   font: var(--type-header-title);
   color: var(--text-primary);
   white-space: nowrap;
+}
+
+/* tight 档左翼只剩标识 + 标题：顶栏窄到 ~430（zh）/ ~455（en）以下（.shell 下限 720 + 导航栏拖到 ≥280 + 壳桥）
+   标题自己省略号收场、全名挂 title（HeaderBar 只在 tight 挂）——不再被左翼的 overflow 硬裁；标识 flex: none 照旧不缩。
+   full / compact 不动：那两档标题的 min-width 仍是内容宽，让位的只有三段小字（视觉 golden 的顶栏一像素不变） */
+.shell-header[data-density="tight"] .shell-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .shell-device {

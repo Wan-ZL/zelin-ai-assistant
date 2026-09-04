@@ -5,8 +5,11 @@
 //   · 回收站页复用 .chrome-search 但容器竖排——flex-basis 不许变成高度；
 //   · tight 搜索框展开着点「筛选」/「提建议」：第一下就开（pointerdown 不抢焦点，见 FilterBar.tsx）；
 //   · 提建议回执（成功句 / server 原文错误句，长度不可预算）显示的 4 s 里顶栏不横向溢出、标题不裁、右翼在视口内、
-//     整页无横向滚动条——回执是 portal 到 body 的 fixed 小条，不是槽位 max-content 下限来源 .chrome-filterbar 的子元素。
-// 数据 = demo initial 场景，/api/board 经 page.route 改写 generated_at / device_label / deploy_state。
+//     整页无横向滚动条——回执是 portal 到 body 的 fixed 小条，不是槽位 max-content 下限来源 .chrome-filterbar 的子元素；
+//   · tight 极窄（.shell 下限 720 + 导航栏拖到 280–320 + 壳桥 → 顶栏 400–440）：标题省略号收场、全名挂 title、
+//     标题矩形仍在左翼内、标识 20px 不缩；顶栏 ≥460 与 golden 条件（zh @1440 导航栏 200 无壳）没有省略号也没有 title。
+// 数据 = demo initial 场景，/api/board 经 page.route 改写 generated_at / device_label / deploy_state；
+// 导航栏宽经 localStorage `sidebarWidth`（NavRail 与原生 UserDefaults 同名键）。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
 
@@ -34,16 +37,19 @@ interface OpenOptions {
   /** 左翼拉到最长：数据陈旧 125 分钟 + 设备标签 + 已回滚的部署状态 */
   longLeft?: boolean;
   query?: string;
+  /** 导航栏宽（160–320，默认 200）：顶栏宽 = 视口 − 导航栏 */
+  rail?: number;
 }
 
-async function open(page: Page, { lang, width, shell = false, longLeft = false, query = "" }: OpenOptions) {
-  await page.addInitScript(({ lang, shell, snapshot }) => {
+async function open(page: Page, { lang, width, shell = false, longLeft = false, query = "", rail }: OpenOptions) {
+  await page.addInitScript(({ lang, shell, snapshot, rail }) => {
     window.localStorage.setItem("zai.theme", "light");
     window.localStorage.setItem("zai.lang", lang);
+    if (rail) window.localStorage.setItem("sidebarWidth", String(rail));
     if (shell) {
       window.webkit = { messageHandlers: { zaiShell: { postMessage: async () => snapshot } } };
     }
-  }, { lang, shell, snapshot: SHELL_SNAPSHOT });
+  }, { lang, shell, snapshot: SHELL_SNAPSHOT, rail });
   if (longLeft) {
     await page.route("**/api/board", async (route) => {
       const response = await route.fetch();
@@ -230,15 +236,19 @@ async function expectHeaderUnmovedByNote(page: Page) {
   return geometry;
 }
 
-// zh @1440 无壳 = full（golden 条件）；zh / en + 壳 @1440 = compact；en + 壳 @720 = tight
+// zh @1440 无壳 = full（golden 条件）；zh / en + 壳 @1440 = compact；en + 壳 @1200（顶栏 1000 < 1180）/ @720 = tight；
+// 最后一条把导航栏拖到最宽 320（顶栏 400，标题已在省略号）——回执照样不参与顶栏布局
 for (const scene of [
   { lang: "zh", width: 1440, shell: false, density: "full" },
   { lang: "zh", width: 1440, shell: true, density: "compact" },
   { lang: "en", width: 1440, shell: true, density: "compact" },
+  { lang: "en", width: 1200, shell: true, density: "tight" },
   { lang: "en", width: 720, shell: true, density: "tight" },
+  { lang: "en", width: 720, shell: true, density: "tight", rail: 320 },
 ] as const) {
-  test(`提建议被 server 拒绝（原文 ≈1300px）· ${scene.lang}${scene.shell ? " + 壳" : ""} @${scene.width}：回执不撑顶栏、标题完整、右翼在视口内、整页不横滚`, async ({ page }) => {
-    await open(page, { lang: scene.lang, width: scene.width, shell: scene.shell });
+  const rail = "rail" in scene ? scene.rail : undefined;
+  test(`提建议被 server 拒绝（原文 ≈1300px）· ${scene.lang}${scene.shell ? " + 壳" : ""} @${scene.width}${rail ? ` 导航栏 ${rail}` : ""}：回执不撑顶栏、标题完整、右翼在视口内、整页不横滚`, async ({ page }) => {
+    await open(page, { lang: scene.lang, width: scene.width, shell: scene.shell, rail });
     expect((await measureHeader(page)).density).toBe(scene.density);
     await sendFeedback(page, scene.lang, 500);
     await expectHeaderUnmovedByNote(page);
@@ -250,4 +260,103 @@ test("提建议成功句 · en + 壳 @720（tight）：回执显示时标题裁 
   await sendFeedback(page, "en", 200);
   const geometry = await expectHeaderUnmovedByNote(page);
   expect(geometry.density).toBe("tight");
+});
+
+// —— tight 极窄：标题省略号 + tooltip、标识不缩（#208 review 余量）——
+// 修复前 .shell-header-left overflow: hidden 直接把 nowrap 的标题硬裁：顶栏 400 时 zh 标题右沿超出左翼 27px、en 56px，
+// 没有省略号也没有 tooltip。左翼 = 顶栏 − padding 32 − gap 20 − 槽位 96 − 右翼 149（tight + 壳）：
+// zh 标题 100px 在顶栏 < 427 时不够，en 129px 在 < 456 时不够——460 起两种语言都完整。
+interface TitleGeometry {
+  density: string | undefined;
+  headerHeight: number;
+  headerWidth: number;
+  logoWidth: number;
+  titleInsideLeft: boolean;
+  /** 标题被省略掉的像素（scrollWidth − clientWidth；0 = 全文可见） */
+  titleHidden: number;
+  textOverflow: string;
+  titleAttr: string | null;
+  titleText: string;
+}
+
+function measureTitle(page: Page): Promise<TitleGeometry> {
+  return page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".shell-header")!;
+    const left = document.querySelector<HTMLElement>(".shell-header-left")!.getBoundingClientRect();
+    const title = document.querySelector<HTMLElement>(".shell-title")!;
+    const rect = title.getBoundingClientRect();
+    return {
+      density: header.dataset.density,
+      headerHeight: header.getBoundingClientRect().height,
+      headerWidth: header.getBoundingClientRect().width,
+      logoWidth: document.querySelector<HTMLElement>(".shell-logo")!.getBoundingClientRect().width,
+      titleInsideLeft: rect.right <= left.right + 0.5 && rect.left >= left.left - 0.5,
+      titleHidden: title.scrollWidth - title.clientWidth,
+      textOverflow: getComputedStyle(title).textOverflow,
+      titleAttr: title.getAttribute("title"),
+      titleText: title.textContent ?? "",
+    };
+  });
+}
+
+const APP_NAME = { zh: "Zelin 的 AI 助理", en: "Zelin's AI Assistant" } as const;
+
+// 导航栏 320 / 300 / 280 → 顶栏 400 / 420 / 440：标题矩形在左翼内、标识 20px；省略了字就必须是 ellipsis + title 全名
+for (const lang of ["zh", "en"] as const) {
+  for (const rail of [320, 300, 280]) {
+    test(`tight 极窄 · ${lang} + 壳 @720 导航栏 ${rail}（顶栏 ${720 - rail}）：标题省略号在左翼内、tooltip 全名、标识不缩、顶栏一行`, async ({ page }) => {
+      await open(page, { lang, width: 720, shell: true, longLeft: true, rail });
+      const geometry = await measureTitle(page);
+      expect(geometry.density).toBe("tight");
+      expect(geometry.headerWidth).toBe(720 - rail);
+      expect(geometry.headerHeight).toBe(52);
+      expect(geometry.logoWidth).toBe(20);
+      expect(geometry.titleInsideLeft).toBe(true);
+      expect(geometry.titleText).toBe(APP_NAME[lang]);
+      expect(geometry.titleAttr).toBe(APP_NAME[lang]);
+      if (geometry.titleHidden > 0) expect(geometry.textOverflow).toBe("ellipsis");
+      // 槽位控件仍一个不裁；展开搜索框（basis 0 吃余量、顶替放大镜按钮）不多挤标题一像素（实测反而还回 6px）
+      await expectOneRowNoClipping(page);
+      const before = geometry.titleHidden;
+      await page.getByRole("button", { name: SEARCH_NAME[lang] }).click();
+      await expect(page.getByRole("searchbox", { name: SEARCH_NAME[lang] })).toBeFocused();
+      const expanded = await measureTitle(page);
+      expect(expanded.titleInsideLeft).toBe(true);
+      expect(expanded.titleHidden).toBeLessThanOrEqual(before);
+    });
+  }
+
+  // 顶栏 400 时 zh / en 标题都必然省略（左翼 103 < 标识 20 + gap 10 + 标题 100 / 129）——省略号真的出现过，不是空判
+  test(`tight 极窄 · ${lang} + 壳 @720 导航栏 320：标题确实省略了字（scrollWidth > clientWidth）`, async ({ page }) => {
+    await open(page, { lang, width: 720, shell: true, rail: 320 });
+    const geometry = await measureTitle(page);
+    expect(geometry.titleHidden).toBeGreaterThan(0);
+    expect(geometry.textOverflow).toBe("ellipsis");
+  });
+
+  // 顶栏 460（导航栏 260）：两种语言的标题都完整——省略号不许在 ≥460 出现
+  test(`tight · ${lang} + 壳 @720 导航栏 260（顶栏 460）：标题全文可见，没有省略`, async ({ page }) => {
+    await open(page, { lang, width: 720, shell: true, longLeft: true, rail: 260 });
+    const geometry = await measureTitle(page);
+    expect(geometry.density).toBe("tight");
+    expect(geometry.headerWidth).toBe(460);
+    expect(geometry.titleHidden).toBe(0);
+    expect(geometry.titleInsideLeft).toBe(true);
+    expect(geometry.logoWidth).toBe(20);
+  });
+}
+
+test("golden 条件 zh @1440 导航栏 200 无壳（full）：标题无省略、无 title、text-overflow 仍是 clip——DOM 与样式一字不变", async ({ page }) => {
+  await open(page, { lang: "zh", width: 1440 });
+  const geometry = await measureTitle(page);
+  expect(geometry).toMatchObject({
+    density: "full",
+    headerHeight: 52,
+    logoWidth: 20,
+    titleInsideLeft: true,
+    titleHidden: 0,
+    textOverflow: "clip",
+    titleAttr: null,
+    titleText: APP_NAME.zh,
+  });
 });
