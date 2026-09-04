@@ -1,0 +1,2 @@
+type: fixed
+- **#205 的两处收尾（CONTRACT §54.4 / §66）**：`ui/parity/report.json` / `report.md` 重铸并入库——#205 合并时带的还是改动前的报告（PRESENT 844，`control:ask:*` / `rail:ask` / `rail:deps` 仍判 PRESENT），而 §54.4 追记与进度片段都拿它当 truth 说 PRESENT 832 / MISSING 0；现在报告与法典一致（gated 851：PRESENT 832 / PENDING 15 / MISSING 0 / STALE 0 / WAIVED 4，retired 33 → 53），`run_gates.sh` 跑完 `git status ui/parity` 干净。§54.4 判例行原地改正两个陈旧引用：`tests/test_server_ask.py`（文件已随 ask 组退役改名 `tests/test_server_slack_uninstall_maintainer.py`）与 `NavRail.test.tsx` 的「八项 / ⌘1…⌘8」（已是六项 / ⌘1…⌘6）；CONTRACT 里引用的每个 `tests/test_*.py` 自此都在树上。
