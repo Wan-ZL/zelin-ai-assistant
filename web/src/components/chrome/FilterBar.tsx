@@ -1,35 +1,24 @@
-// 过滤 chip 条 + ⌘F 搜索（G4，BUILD-CONTRACT §2.2）。挂载点 = shell 的 searchSlot
+// 过滤 chip 条 + ⌘F 搜索（G4，BUILD-CONTRACT §2.2；chip 只剩 Tier / 期限 / 回锅——类型 / 渠道
+// 两维 2026-09-04 owner 决策 D28 退役）。挂载点 = shell 的 searchSlot
 // （HeaderBar 中缝槽位，app.tsx 注入 <AppShell searchSlot={<FilterBar />}>）。
 // 状态：store.filters 唯一真源，URL query 唯一持久化（taskFilters.ts）；挂载时水合深链。
 // 匹配语义见 taskFilters.ts 头注释——A6 各列用 matchesCardFilters(row, filters) 消费。
 import { useEffect, useRef, useState } from "react";
 import "./chrome.css";
-import {
-  CHANNEL_LABELS,
-  domainLabel,
-  TYPE_LABELS,
-  useI18n,
-  type LabelTable,
-} from "../../i18n";
+import { useI18n } from "../../i18n";
 import { normalizeSortOrder, SORT_ORDERS, type SortOrder } from "../../cardSort";
 import { clearFilters, initFiltersFromUrl, setFilters, setSelectionMode, setSortOrder, useAppState } from "../../store";
 import { FeedbackButton } from "./FeedbackButton";
-import {
-  cardFilterCount,
-  collectChannels,
-  collectTypes,
-  toggleFilterValue,
-  type DeadlineFilter,
-} from "../../taskFilters";
+import { cardFilterCount, toggleFilterValue, type DeadlineFilter } from "../../taskFilters";
 import { TaskPropertyPicker, type TaskPropertyOption } from "./TaskPropertyPicker";
 
-type ChipKey = "tier" | "type" | "channel" | "deadline";
+type ChipKey = "tier" | "deadline";
 
 const TIER_VALUES = ["T0", "T1", "T2"] as const;
 
 export function FilterBar() {
-  const { text, language } = useI18n();
-  const { board, filters, sortOrder, selectionMode } = useAppState();
+  const { text } = useI18n();
+  const { filters, sortOrder, selectionMode } = useAppState();
   const [openChip, setOpenChip] = useState<ChipKey | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -67,10 +56,9 @@ export function FilterBar() {
   const openFor = (key: ChipKey) => (open: boolean) => setOpenChip(open ? key : null);
 
   // 多选维度的 chip 触发内容：名称 + 已选摘要（≤2 个原样列出，更多显计数）
-  function chipContent(name: string, selected: string[], table?: LabelTable) {
+  function chipContent(name: string, selected: string[]) {
     if (!selected.length) return <span>{name}</span>;
-    const labels = selected.map((v) => (table ? domainLabel(table, language, v) : v));
-    const summary = labels.length <= 2 ? labels.join(", ") : String(labels.length);
+    const summary = selected.length <= 2 ? selected.join(", ") : String(selected.length);
     return (
       <>
         <span>{name}</span>
@@ -79,15 +67,9 @@ export function FilterBar() {
     );
   }
 
-  function multiOptions(values: string[], table?: LabelTable): TaskPropertyOption<string>[] {
-    return values.map((value) => ({
-      value,
-      label: table ? domainLabel(table, language, value) : value,
-    }));
+  function multiOptions(values: string[]): TaskPropertyOption<string>[] {
+    return values.map((value) => ({ value, label: value }));
   }
-
-  const typeValues = collectTypes(board);
-  const channelValues = collectChannels(board);
 
   const deadlineOptions: TaskPropertyOption<DeadlineFilter>[] = [
     { value: "all", label: text("全部期限", "Any deadline") },
@@ -128,34 +110,6 @@ export function FilterBar() {
         triggerContent={chipContent("Tier", filters.tiers)}
         ariaLabel={text("按 tier 过滤", "Filter by tier")}
       />
-
-      {typeValues.length > 0 && (
-        <TaskPropertyPicker
-          value={filters.types[0] ?? ""}
-          selectedValues={filters.types}
-          options={multiOptions(typeValues, TYPE_LABELS)}
-          open={openChip === "type"}
-          onOpenChange={openFor("type")}
-          onChange={(value) => setFilters({ types: toggleFilterValue(filters.types, value) })}
-          triggerClassName={`chrome-chip${filters.types.length ? " is-active" : ""}`}
-          triggerContent={chipContent(text("类型", "Type"), filters.types, TYPE_LABELS)}
-          ariaLabel={text("按类型过滤", "Filter by type")}
-        />
-      )}
-
-      {channelValues.length > 0 && (
-        <TaskPropertyPicker
-          value={filters.channels[0] ?? ""}
-          selectedValues={filters.channels}
-          options={multiOptions(channelValues, CHANNEL_LABELS)}
-          open={openChip === "channel"}
-          onOpenChange={openFor("channel")}
-          onChange={(value) => setFilters({ channels: toggleFilterValue(filters.channels, value) })}
-          triggerClassName={`chrome-chip${filters.channels.length ? " is-active" : ""}`}
-          triggerContent={chipContent(text("渠道", "Channel"), filters.channels, CHANNEL_LABELS)}
-          ariaLabel={text("按渠道过滤", "Filter by channel")}
-        />
-      )}
 
       <TaskPropertyPicker
         value={filters.deadline}
