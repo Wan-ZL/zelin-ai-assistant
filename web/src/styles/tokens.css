@@ -228,17 +228,14 @@
   --type-card-placeholder: var(--w-regular) calc(13px * var(--text-scale))/1.4 var(--font-sans);
   --type-card-line: var(--w-medium) calc(11px * var(--text-scale))/1.4 var(--font-sans);
   --type-card-body: var(--w-regular) calc(11px * var(--text-scale))/1.4 var(--font-sans);
-  --type-card-body-strong: var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans);
   --type-card-meta: var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans);
   --type-card-meta-strong: var(--w-medium) calc(10px * var(--text-scale))/1.4 var(--font-sans);
   --type-card-fine: var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-sans);
   --type-card-fine-mono: var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono);
-  --type-card-error-mono: var(--w-regular) calc(10px * var(--text-scale))/1.5 var(--font-mono);
   --type-chip: var(--w-semibold) calc(10px * var(--text-scale))/calc(16px * var(--text-scale)) var(--font-sans);
   --type-button: var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans);
   --type-details-toggle: var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans);
-  /* 展开详情 */
-  --type-detail-title: var(--w-medium) calc(12px * var(--text-scale))/1.4 var(--font-sans);
+  /* 卡面小节头（合并建议卡 / chrome.css 沿用；详情侧栏自有 detail.css，D34） */
   --type-detail-heading: var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans);
   --type-detail-subheading: var(--w-semibold) calc(10px * var(--text-scale))/1.4 var(--font-sans);
   /* 列 */

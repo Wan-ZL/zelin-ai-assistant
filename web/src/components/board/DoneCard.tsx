@@ -2,17 +2,16 @@
 //   退回待验收（revert_review：可能对方反馈来了要再看）·
 //   永久完成（archive → 封存，确认弹窗文案统一用「永久完成」，§41）。
 // 卡面（原生 TaskRow lane=.completed 收起态）：已交付 章（绿）· repo 章 · 验收于 <相对时间> ·
-//   一句话（§64 AI 白话摘要优先，缺席回落 delivered_summary；单行截断，hover 全文）· 单击复制指令 行；
-//   「展开详情 ▸」后：交付摘要全文 / 摘要 / 怎样算办完 / 指令 / 会话 ID。
+//   一句话（§64 AI 白话摘要优先，缺席回落 delivered_summary；单行截断，hover 全文）· 单击复制指令 行。
+//   交付摘要全文 / 摘要 / 怎样算办完 / 指令 / 会话 ID 住右侧详情侧栏（「展开详情 ▸」打开，D34；DetailFields 渲染）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
-import { cardAction, useSubmit, pendingNote } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
-import { BodyText, CopyPathLine, DodList, MetaLine } from "./detailBlocks";
+import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
+import { CardHead, CardSurface, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
-import { resumeCommand, stateLabel } from "./RunningCard";
+import { stateLabel } from "./RunningCard";
 import { AssessmentSummaryLine } from "./VerdictChip";
 
 interface DoneCardProps {
@@ -41,13 +40,6 @@ export function DoneCard({ row }: DoneCardProps) {
       {/* 原生 completed 行的一句：一行 11 regular 次级，lineLimit(1)——§64 AI 摘要优先，回落 delivered_summary */}
       <AssessmentSummaryLine assessment={row.assessment} fallback={row.delivered_summary} />
       <CopyCommandLine cmd={cmd} />
-      <CardDetails cardId={row.id}>
-        <BodyText value={row.delivered_summary} />
-        <BodyText value={row.summary} className={row.delivered_summary ? "card-detail-muted" : "card-summary"} />
-        <DodList dod={row.dod} />
-        <CopyPathLine label={text("指令：", "Command: ")} path={cmd} />
-        <MetaLine label={text("会话 ID：", "Session ID: ")} value={row.short_id ?? row.session_id} />
-      </CardDetails>
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (

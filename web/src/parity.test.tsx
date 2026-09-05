@@ -8,7 +8,8 @@
 //     雷达 skip_reason 词表 × doctor 全绿 / 没回 渲染几遍；录制页另按 引擎没在录 / TCC 收回 / ffmpeg 缺失 / 崩了 与
 //     手动触发 成功 / 失败 / 持锁跳过 渲染几遍；关于页另按 没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开
 //     渲染几遍；看板另有「server 拒绝」一遍（接管 / 让 AI 修 / capture / 斜杠命令的失败句）与诊断条 agent_missing
-//     两遍）+ 把每颗按钮点一遍收集弹窗文案（看板：进多选态勾上每张卡、开弹窗的动词逐点收、
+//     两遍）+ 把每颗按钮点一遍收集弹窗文案（看板：先把每张卡的「展开详情 ▸」各点一下——D34 起它开的是右侧详情
+//     侧栏，原生详情槽的积木全住那里，每开一张等详情落地收一遍；再进多选态勾上每张卡、开弹窗的动词逐点收、
 //     每张卡按同类轮换走一条提交路收 pending 一句），按 accessible name / 自身文本精确匹配；
 //     时钟冻结在 fixture 的 FIXED_NOW（相对时间词表才确定）；装一个假 zaiShell 桥（壳里才渲染的
 //     录制 / 字幕 / 登录时启动 开关也要判）；server 目录（设置 / 凭证）用 fixture 快照（文案 server-owned）。
@@ -109,13 +110,14 @@ const demoSettings = parityFile<SettingsCatalog>(parityJson, "fixtures/settings.
 const demoSecrets = parityFile<SecretsStatus>(parityJson, "fixtures/secrets.json");
 const pendingText = parityFile<string>(parityText, "pending.txt");
 
-/** fixture 里任一分区的投影行（详情 mock 以它为底，与 server/board_source.card_detail 同形） */
-function boardRowOf(id: string): Record<string, unknown> | undefined {
+/** fixture 里任一分区的投影行 + 所在分区名（详情 mock 以它为底，与 server/board_source.card_detail 同形：
+ *  投影行原样 + `lane`——侧栏按 lane 选积木：提案说钱 / 待验收清单永远渲染 / 需输入的「在终端接管会话：」） */
+function boardRowOf(id: string): { lane: string; row: Record<string, unknown> } | undefined {
   for (const lane of ["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash", "archived"] as const) {
     const rows = (demoBoard as unknown as Record<string, unknown>)[lane];
     if (!Array.isArray(rows)) continue;
     const hit = (rows as Array<Record<string, unknown>>).find((row) => row.id === id);
-    if (hit) return hit;
+    if (hit) return { lane, row: hit };
   }
   return undefined;
 }
@@ -527,8 +529,11 @@ function rotateSubmits(root: ParentNode, pool: Set<string>) {
     if (b.disabled || b.classList.contains("card-details-toggle") || b.closest("dialog")) continue;
     const card = b.closest("article");
     const toolbar = b.closest('[role="toolbar"]');
-    if (card) cards.set(card, [...(cards.get(card) ?? []), b]);
-    else if (toolbar) toolbars.set(toolbar, [...(toolbars.get(toolbar) ?? []), b]);
+    // 卡上只轮动作行（.card-actions）里的动词：单击复制指令 行 / AI 评语章也是 <button>，但不是提交路，
+    // 混进来会把同一列按「首颗是不是复制行」拆成不同类、还占掉一个轮换位（它们归 ④）
+    if (card) {
+      if (b.closest(".card-actions")) cards.set(card, [...(cards.get(card) ?? []), b]);
+    } else if (toolbar) toolbars.set(toolbar, [...(toolbars.get(toolbar) ?? []), b]);
     else if (opensDialog(b)) loose.push(b);
   }
   // 同类 = 动作行第一颗动词相同（批准… / 验收… / 评论…）：同类第 k 张点第 k % n 颗——复制成稿 / 在终端接管
@@ -547,11 +552,26 @@ function rotateSubmits(root: ParentNode, pool: Set<string>) {
   for (const b of loose) clickAndSubmitDialogs(b, pool);
 }
 
-/** 把页面上每颗按钮点一遍（弹窗 / 折叠详情 / 菜单展开后的文案也要收），失败的点击静默跳过。
- *  四轮：① 「展开详情 ▸」② 开弹窗的按钮（每点一下收一遍——同一张卡上后开的弹窗会顶掉先开的）
+/** ① 每张卡的「展开详情 ▸」各点一下（D34：打开右侧详情侧栏，不再就地展开）——每开一张等详情 mock 落地、收一遍
+ *  侧栏文案（💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完 / 验收清单 / 错误全文 / 日志 / 指令 / 会话 ID … 全住侧栏）；
+ *  顺手让 store 记下每张卡「看过明细」，T2 提案的「批准」才从「T2 需先展开看明细」换出来给 ② 点。
+ *  最后一张的侧栏留着——④ 会点到它正文里的按钮（拆成新卡…）与抬头的 ×。只在看板主遍调一次（重复开 96 次没有新词）。 */
+async function openEachDetail(root: ParentNode, pool: Set<string>) {
+  for (const button of Array.from(root.querySelectorAll<HTMLButtonElement>("button.card-details-toggle"))) {
+    fireEvent.click(button);
+    await settle(pool);
+    // 侧栏正文里的「复制」（错误全文 / 指令 / 日志）：点一下等 clipboard promise 落地才有「已复制」——④ 点它们之后紧接着
+    // 就点抬头的 × 把侧栏卸掉，那一拍收不到
+    clickAll(Array.from(document.querySelectorAll<HTMLButtonElement>(".zai-drawer-body button.zai-detail-copy")));
+    await settle(pool);
+  }
+}
+
+/** 把页面上每颗按钮点一遍（弹窗 / 菜单展开后的文案也要收），失败的点击静默跳过。
+ *  三轮：② 开弹窗的按钮（每点一下收一遍——同一张卡上后开的弹窗会顶掉先开的）
  *  ③ 轮换提交（rotateSubmits）④ 其余。动作按钮（批准 / 暂缓…）会把卡切到 pending 态并
  *  卸掉整个动作行——之后再点同卡的按钮就点在脱离 DOM 的旧节点上，所以提交类放最后；
- *  ④ 跳过 toggle，别把刚展开的又收起。 */
+ *  ①（「展开详情 ▸」）是 openEachDetail 的活，这里各轮都跳过它，别把侧栏换到另一张卡。 */
 /** 给每个空输入框填点字：提交类按钮（提问 / 保存 / 发送）在空输入时是 disabled 的；数字框填 -1 让校验句出现；
  *  搜索框填一个不可能命中的词让「无匹配」空态出现。 */
 function fillInputs(root: ParentNode, searches: boolean) {
@@ -569,7 +589,6 @@ function fillInputs(root: ParentNode, searches: boolean) {
 function clickEverything(root: ParentNode, pool: Set<string>, searches = false, perClick = false, fill = true) {
   const all = () => Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
   if (fill) fillInputs(root, searches);
-  clickAll(all().filter((b) => b.classList.contains("card-details-toggle")));
   collectLabels(document.body, pool);
   selectAllCards(root); // 看板：进多选态 + 勾上每张卡（操作条按钮解禁）；别的面没有勾选框，空转
   collectLabels(document.body, pool);
@@ -652,10 +671,11 @@ async function renderSurface(language: Language, page: Surface) {
   if (page === "settings") await refreshSettings();
   await settle(pool);
   collectLabels(document.body, pool);
+  if (page === "board") await openEachDetail(view.container, pool);
   clickEverything(view.container, pool, page !== "board", page === "ingest");
   await settle(pool);
   if (page === "board") {
-    // 详情抽屉：选中 hero 卡、再选一张待验收卡（抽屉里的字段标题 / 动作 / 所属列章）
+    // 详情侧栏再单独开三张：hero 卡、一张待验收卡、一张改过名的卡（侧栏里的字段标题 / 动作 / 所属列章 / 曾用名）
     const renamed = demoBoard.needs_approval.find((c) => Array.isArray(c.former_titles) && c.former_titles.length > 0);
     for (const id of [demoBoard.needs_approval[0].id, demoBoard.review[0].id, ...(renamed ? [renamed.id] : [])]) {
       selectCard(id);
@@ -1072,12 +1092,15 @@ beforeAll(async () => {
   vi.setSystemTime(new Date(demoBoard.generated_at));
   installFakeShell();
   vi.mocked(fetchBoard).mockResolvedValue(demoBoard);
-  // server card_detail = 投影行原样 + registry 字段（notes 里带 §38 fold 行：一条可拆、一条已拆出）
-  vi.mocked(fetchCard).mockImplementation(async (id: string) => ({
-    ...(boardRowOf(id) ?? {}), id, lane: null,
-    notes: "demo notes\n[quick] 又问了一次 [@2026-09-01T10:00:00Z]\n[radar] 群里又提了一次 [@2026-08-30T09:00:00Z] [已拆出 R-099]",
-    log_tail: "ok",
-  }));
+  // server card_detail = 投影行原样 + lane（所在分区名）+ registry 字段（notes 里带 §38 fold 行：一条可拆、一条已拆出）
+  vi.mocked(fetchCard).mockImplementation(async (id: string) => {
+    const hit = boardRowOf(id);
+    return {
+      ...(hit?.row ?? {}), id, lane: hit?.lane ?? null,
+      notes: "demo notes\n[quick] 又问了一次 [@2026-09-01T10:00:00Z]\n[radar] 群里又提了一次 [@2026-08-30T09:00:00Z] [已拆出 R-099]",
+      log_tail: "ok",
+    };
+  });
   vi.mocked(fetchHealth).mockResolvedValue(health);
   vi.mocked(fetchLanes).mockResolvedValue(demoLanes);
   vi.mocked(fetchModelsSettings).mockResolvedValue(models);

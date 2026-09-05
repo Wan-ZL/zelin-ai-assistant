@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import boardCss from "./board.css?raw";
 import chromeCss from "../components/chrome/chrome.css?raw";
+import recapsCss from "../components/recaps/recaps.css?raw";
 import shellCss from "./shell.css?raw";
 import tokensCss from "./tokens.css?raw";
 import { TYPE_SCALE, WEIGHT_OF } from "./typeScale";
@@ -30,7 +31,8 @@ function typeTokens(css: string): Map<string, string> {
 }
 
 const cssTokens = typeTokens(tokensCss);
-const consumerCss = [boardCss, shellCss, chromeCss].join("\n");
+// recaps.css（web 自有的会议纪要面）也消费卡面 meta 字级——D34 把详情积木搬进侧栏后它是 --type-card-meta-strong 的唯一消费者
+const consumerCss = [boardCss, shellCss, chromeCss, recapsCss].join("\n");
 
 describe("type scale（tokens.css ↔ typeScale.ts）", () => {
   it("对照表非空且 token 名唯一", () => {

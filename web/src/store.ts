@@ -82,9 +82,11 @@ export interface AppState {
   boardLoading: boolean;          // 首载 true；SSE 触发的静默 refetch 不置位
   connection: ConnectionState;
   health: HealthSnapshot | null;  // GET /api/health 最近快照（§47.4；PipelineBanner 读）
-  selectedCardId: string | null;  // 详情抽屉当前卡（route.ts 同步 ?card= 深链）
+  selectedCardId: string | null;  // 详情侧栏当前卡（route.ts 同步 ?card= 深链）——卡片详情的唯一面（D34，§49）
   cardDetail: CardDetail | null;  // selectedCardId 对应的 /api/cards/{id} 增补详情
   cardDetailError: string | null;
+  /** 本会话里详情侧栏**落地过**的卡主键（不持久化）：T2 提案「需先展开看明细」的闸门读它——看过明细才给「批准」（§54.1 第 2 项追记） */
+  detailViewedIds: ReadonlySet<string>;
   language: Language;             // UI 语言（G7 shell：?lang= 覆写 > localStorage > 浏览器）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
@@ -95,7 +97,6 @@ export interface AppState {
   materials: MaterialsList | null; // GET /api/materials/list?status=open 最近快照（§62 设置页「素材库」）
   materialsError: string | null;  // 素材库读失败的用户可读文案（成功后清空；写失败由 section toast）
   sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
-  expandedCardIds: ReadonlySet<string>; // 展开详情的卡 id（会话内记忆，不持久化——原生 @State 同义）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
@@ -153,6 +154,7 @@ const initialState: AppState = {
   selectedCardId: null,
   cardDetail: null,
   cardDetailError: null,
+  detailViewedIds: new Set<string>(),
   language: detectInitialLanguage(),
   filters: EMPTY_CARD_FILTERS,
   models: null,
@@ -163,7 +165,6 @@ const initialState: AppState = {
   materials: null,
   materialsError: null,
   sortOrder: readSortOrder(),
-  expandedCardIds: new Set<string>(),
   lanes: null,
   recapSettings: null,
   recapMarks: {},
@@ -230,13 +231,20 @@ export function refreshBoard(): Promise<void> {
   return boardRequest;
 }
 
-/** 选中卡片（null = 关抽屉）；选中即拉详情增补 */
+/** 选中卡片（null = 关侧栏）；选中即拉详情增补。详情**落地**才记「看过明细」（T2 闸门）：拉失败 / 换卡后迟到的
+ *  响应都不算——用户没看到任何明细。记的是 server 回的主键（§60.3：响应 `id` 恒为主键），所以 `?card=<work_id>`
+ *  深链打开的侧栏也能解锁卡面按主键判的「批准」。 */
 export function selectCard(cardId: string | null) {
   setState({ selectedCardId: cardId, cardDetail: null, cardDetailError: null });
   if (!cardId) return;
   void fetchCard(cardId).then(
     (detail) => {
-      if (getState().selectedCardId === cardId) setState({ cardDetail: detail });
+      if (getState().selectedCardId !== cardId) return;
+      const viewedId = typeof detail.id === "string" && detail.id ? detail.id : cardId;
+      const detailViewedIds = state.detailViewedIds.has(viewedId)
+        ? state.detailViewedIds
+        : new Set([...state.detailViewedIds, viewedId]);
+      setState({ cardDetail: detail, detailViewedIds });
     },
     (error) => {
       if (getState().selectedCardId !== cardId) return;
@@ -286,20 +294,12 @@ export function clearFilters() {
   setFilters(EMPTY_CARD_FILTERS);
 }
 
-// ----- 看板展示偏好（原生 parity：排序 / 展开详情 / 列说明） -------------------- #
+// ----- 看板展示偏好（原生 parity：排序 / 列说明；就地展开详情 D34 退役——详情只有侧栏一面） ------ #
 
 /** 改卡片排序偏好并持久化（localStorage cardSortOrder，原生同名 UserDefaults 键） */
 export function setSortOrder(sortOrder: SortOrder) {
   writeSortOrder(sortOrder);
   if (state.sortOrder !== sortOrder) setState({ sortOrder });
-}
-
-/** 展开/收起一张卡的详情（会话内记忆：切页/回流不丢，刷新页面即复位） */
-export function toggleCardExpanded(cardId: string) {
-  const next = new Set(state.expandedCardIds);
-  if (next.has(cardId)) next.delete(cardId);
-  else next.add(cardId);
-  setState({ expandedCardIds: next });
 }
 
 /** 拉一次列说明目录（server 常量；失败保留 null——列头只是少个「?」，不双报） */
@@ -544,7 +544,7 @@ export function resetStoreForTests() {
   state = {
     ...initialState,
     sortOrder: readSortOrder(),
-    expandedCardIds: new Set<string>(),
+    detailViewedIds: new Set<string>(),
     selectedIds: new Set<string>(),
     pageErrors: {},
   };

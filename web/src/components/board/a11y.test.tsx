@@ -1,14 +1,17 @@
 // 可访问性判例（issue #8；CONTRACT §54.1 第 11 项）：
-//   1) 键盘路径——每种卡的 <article> 可聚焦，Enter / Space 打开详情抽屉（双击的键盘等价物）；
-//      焦点在卡内按钮上按 Enter 不会顺带开抽屉（按钮自己的 Enter 归按钮）；
+//   1) 键盘路径——每种卡的 <article> 可聚焦，Enter / Space 打开详情侧栏（「展开详情 ▸」的键盘等价物）；
+//      焦点在卡内按钮上按 Enter 不会顺带开侧栏（按钮自己的 Enter 归按钮）；双击卡片不开侧栏（D34，语义留给 #216）；
+//      侧栏关闭（⎋ / ×）把焦点还给打开它的「展开详情 ▸」/ 卡片（WAI-ARIA dialog 往返——D34 后侧栏是唯一详情面，
+//      键盘用户不能被丢回 <body> 从页顶重新 Tab）；
 //   2) 状态不靠颜色——每张卡的 aria-label 以状态词开头（色点 aria-hidden）；
 //   3) 复制反馈可听——单击复制后有 role=status 的「已复制」播报；
 //   4) axe-core 全卡面扫描零 violation（color-contrast 规则在 jsdom 无布局不可判，关掉；
 //      其余 WCAG 2.x A/AA 规则全开）。
 import axe from "axe-core";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetStoreForTests, useAppState } from "../../store";
+import { DetailDrawer } from "../detail/DetailDrawer";
 import {
   DEBT_FIXTURE,
   PROPOSAL_PROCESSING,
@@ -28,9 +31,11 @@ import { RunningCard } from "./RunningCard";
 vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
   postAction: vi.fn().mockResolvedValue({ ok: true }),
+  fetchCard: vi.fn(async (id: string) => ({ id })),
 }));
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/"); // 上一条判例的 openCardDetail 留下的 ?card= 会让 DetailDrawer 一挂载就深链还原
   resetStoreForTests();
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
@@ -76,6 +81,34 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
     const details = screen.getByRole("button", { name: /Details/ });
     fireEvent.keyDown(details, { key: "Enter" });
     expect(screen.getByTestId("selected").textContent).toBe("");
+  });
+
+  it("「Details ▸」 click opens the sidebar for that card; double-click on the card does nothing (D34)", () => {
+    render(<><ProposalCard card={PROPOSAL_T1} /><SelectedProbe /></>);
+    fireEvent.doubleClick(screen.getByRole("article", { name: /^Proposal · / }));
+    expect(screen.getByTestId("selected").textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+    expect(screen.getByTestId("selected").textContent).toBe(PROPOSAL_T1.id);
+  });
+
+  it("closing the sidebar returns focus to the 「Details ▸」 / card that opened it", async () => {
+    render(<><ProposalCard card={PROPOSAL_T1} /><DetailDrawer /></>);
+    const details = screen.getByRole("button", { name: /Details/ });
+    details.focus();
+    fireEvent.click(details);
+    const dialog = await screen.findByRole("dialog");
+    expect(document.activeElement).toBe(dialog); // 打开：焦点进侧栏（⎋ 可达）
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(details); // 关闭：还给触发按钮
+
+    const surface = screen.getByRole("article", { name: /^Proposal · / });
+    surface.focus();
+    fireEvent.keyDown(surface, { key: "Enter" });
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(surface); // × 关也一样：还给按 Enter 的那张卡
   });
 
   it("click-to-copy announces success through a status region", async () => {

@@ -69,9 +69,17 @@
         "owner": "retired",
         "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
       },
+      "control:board.card:button:collapse": {
+        "owner": "retired",
+        "reason": "D34 卡片详情只留侧栏一面（§49 追记 2026-09-04 / §54.1 第 2 项 tombstone）：就地展开退役，无「收起 ▾」；侧栏关闭 = × / ⎋"
+      },
       "control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images": {
         "owner": "retired",
         "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬"
+      },
+      "control:board.needs_approval:button:collapse": {
+        "owner": "retired",
+        "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏"
       },
       "control:doctor:label:failed-to-write-dest": {
         "owner": "retired",
@@ -1633,9 +1641,10 @@
     },
     {
       "en": "Collapse ▾",
-      "gated": true,
+      "gated": false,
       "id": "control:board.card:button:collapse",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D34 卡片详情只留侧栏一面（§49 追记 2026-09-04 / §54.1 第 2 项 tombstone）：就地展开退役，无「收起 ▾」；侧栏关闭 = × / ⎋",
       "role": "button",
       "screen": "board.card",
       "source": "Cards.swift:356",
@@ -3427,9 +3436,10 @@
     },
     {
       "en": "Collapse ▾",
-      "gated": true,
+      "gated": false,
       "id": "control:board.needs_approval:button:collapse",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏",
       "role": "button",
       "screen": "board.needs_approval",
       "source": "Cards.swift:1050",

@@ -51,10 +51,19 @@ export function moneyOf(card: Record<string, unknown>): string | null {
   return null;
 }
 
-/** 展开详情里的金额行（原生 ApprovalCardView.costText：「💰 预计费用: $N」/「💰 成本未知」，ASCII 冒号） */
+/** 详情侧栏里提案的金额行（原生 ApprovalCardView.costText：「💰 预计费用: $N」/「💰 成本未知」，ASCII 冒号） */
 export function costText(card: Record<string, unknown>, text: (zh: string, en: string) => string): string {
   const money = moneyOf(card);
   return money ? text(`💰 预计费用: ${money}`, `💰 Estimated cost: ${money}`) : text("💰 成本未知", "💰 Cost unknown");
+}
+
+/** 状态正确的会话命令（原生 TaskRow.cmd）：copy_cmd 优先，其次 claude --resume <sid>；排队卡无。
+ *  卡面「单击复制指令」行与详情侧栏「指令：」行同一来源（投影行与 /api/cards 详情都带这几个键） */
+export function resumeCommand(row: Record<string, unknown>): string | null {
+  if (row.state === "queued") return null;
+  if (typeof row.copy_cmd === "string" && row.copy_cmd) return row.copy_cmd;
+  if (typeof row.session_id === "string" && row.session_id) return `claude --resume ${row.session_id}`;
+  return null;
 }
 
 /** tier 章的大白话（原生 tierLine 的词表；管线的 tier_hint 只有中文且与本表 zh 逐字相同，

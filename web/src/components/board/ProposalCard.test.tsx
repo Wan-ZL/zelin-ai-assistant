@@ -10,6 +10,8 @@ import { ProposalCard } from "./ProposalCard";
 vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
   postAction: vi.fn().mockResolvedValue({ ok: true }),
+  // 「Details ▸」打开详情侧栏 = selectCard → 拉详情；这里只要 store 记下「看过明细」（T2 闸门），详情内容不在本判例
+  fetchCard: vi.fn(async (id: string) => ({ id })),
 }));
 import { postAction } from "../../api";
 
@@ -56,13 +58,15 @@ describe("ProposalCard approve", () => {
     });
   });
 
-  it("T2 批准先过 typed-confirm：错词不发、正词(go/确认)放行且 wire 同 T1", () => {
+  it("T2 批准先过 typed-confirm：错词不发、正词(go/确认)放行且 wire 同 T1", async () => {
     render(<ProposalCard card={makeCard("T2")} />);
-    // 原生 T2 gate（Cards.swift:1127）：详情没展开前只有「T2 需先展开看明细」，没有批准键
+    // 原生 T2 gate（Cards.swift:1127）：没看过明细前只有「T2 需先展开看明细」，没有批准键；
+    // D34 后「看过明细」= 本会话这张卡的详情侧栏落地过（Details ▸ → selectCard → 详情到手 → store.detailViewedIds）
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.getByText("T2: expand details first")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull(); // 详情在途：还没看到明细
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
     // 弹窗出现，approve 尚未发出
     expect(postAction).not.toHaveBeenCalled();
     const input = screen.getByPlaceholderText("Type 确认 or go");
@@ -87,15 +91,15 @@ describe("ProposalCard approve", () => {
     });
   });
 
-  it("W17 外部升档：tier=T1 但 effective_tier=T2 → 批准必须过 typed-confirm", () => {
+  it("W17 外部升档：tier=T1 但 effective_tier=T2 → 批准必须过 typed-confirm", async () => {
     // F1/L3 修复判例（§50）：外部出身卡投影带 effective_tier="T2"，
     // 声明档 T1 也不许单击直批——弹窗拦住，确认词放行后 wire 与 T1 相同
     const card = { ...makeCard("T1"), effective_tier: "T2", origin_trust: "external" };
     render(<ProposalCard card={card} />);
     // M8：卡面点明升档，别让用户见 "T1" 却弹 T2 确认框
     expect(screen.getByText("External → T2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Details ▸" })); // 生效 T2 同样先展开（§50）
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Details ▸" })); // 生效 T2 同样先看明细（§50）
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
     expect(postAction).not.toHaveBeenCalled();
     const input = screen.getByPlaceholderText("Type 确认 or go");
     const dialogApprove = screen
@@ -147,11 +151,11 @@ describe("ProposalCard §60 two-stage ids (D21)", () => {
     expect(screen.getByText("R-050").className).toContain("card-id-legacy");
   });
 
-  it("T2 typed-confirm 弹窗点名的是展示编号，wire 仍是主键", () => {
+  it("T2 typed-confirm 弹窗点名的是展示编号，wire 仍是主键", async () => {
     const card = { ...makeCard("T2"), id: "P-012", work_id: "R-280", display_id: "R-280", id_kind: "work" };
     render(<ProposalCard card={card} />);
     fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
     expect(screen.getByText(/Approve R-280:/)).toBeTruthy();
     const input = screen.getByPlaceholderText("Type 确认 or go");
     const dialogApprove = screen

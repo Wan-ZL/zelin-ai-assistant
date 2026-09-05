@@ -3,15 +3,14 @@
 //   done_external，§41）· 修改（comment 文本弹窗）· 暂缓（defer，提案→潜在任务）。
 // processing=true 的灰卡是 AI 研究中占位——只展示 sheen，不给决策按钮。
 // 卡面（原生 ApprovalCardView.normalBody 收起态）：摘要 + 落点行（§7 target_kind）+ 章行
-//   + 分歧 + 回锅注；「展开详情 ▸」后：技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 /
-//   怎样算办完。id 在右上角（原生 idTag）。
+//   + 分歧 + 回锅注。技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完 住右侧详情侧栏
+//   （「展开详情 ▸」打开，D34——卡片详情只有这一面，DetailFields 渲染）。id 在右上角（原生 idTag）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, costText, deadlinePhrase, effectiveTier, hardnessLabel, tierHint, useSubmit, pendingNote } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, DetailsToggle, MergeStateChip, useCardExpanded } from "./cardChrome";
-import { DodList, PlanList, SourceList } from "./detailBlocks";
+import { cardAction, costLine, deadlinePhrase, effectiveTier, hardnessLabel, tierHint, useSubmit, pendingNote } from "./boardActions";
+import { CardHead, CardSurface, DetailsToggle, MergeStateChip, useDetailViewed } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
 import { TextDialog } from "./TextDialog";
@@ -78,7 +77,8 @@ export function ProposalCard({ card }: ProposalCardProps) {
   const { text, language } = useI18n();
   const { pending, pendingAction, error, submit } = useSubmit();
   const [dialog, setDialog] = useState<DialogKind>("none");
-  const expanded = useCardExpanded(card.id);
+  // 原生 T2 gate 的「展开过」= 本会话打开过这张卡的详情侧栏（就地展开退役后唯一的「看明细」入口）
+  const detailViewed = useDetailViewed(card.id);
 
   const summary = typeof card.summary === "string" && card.summary ? card.summary : card.title;
   const displayTitle = typeof card.display_title === "string" && card.display_title ? card.display_title : summary;
@@ -180,21 +180,13 @@ export function ProposalCard({ card }: ProposalCardProps) {
       {card.disagreement && (
         <p className="card-line is-warning is-body"><span className="card-detail-label">{text("⚠︎ 分歧: ", "⚠︎ Disagreement: ")}</span><span>{String(card.disagreement)}</span></p>
       )}
-      <CardDetails cardId={card.id}>
-        {/* 长技术标题住在详情里（原生 expandedDetail 首行）；展示名与它不同才重复一遍 */}
-        {card.title !== displayTitle && <p className="card-detail-title">{card.title}</p>}
-        <p className="card-detail-heading">{costText(card, text)}</p>
-        <SourceList sources={card.sources} />
-        <PlanList plan={card.plan} />
-        <DodList dod={card.dod} />
-      </CardDetails>
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (
         <div className="card-actions">
           {/* 四动词色相 = Mac tint 一比一（Cards.swift normalBody）：绿批准 · 红拒绝 · 蓝修改 · 灰暂缓 */}
-          {/* 原生 T2 gate：详情没展开前不给「批准」，只给一句提示——先看明细再确认（§50 读 effectiveTier） */}
-          {effectiveTier(card) === "T2" && !expanded ? (
+          {/* 原生 T2 gate：没看过明细（详情侧栏没打开过）不给「批准」，只给一句提示——先看明细再确认（§50 读 effectiveTier） */}
+          {effectiveTier(card) === "T2" && !detailViewed ? (
             <span className="card-line is-warning card-t2-hint">{text("T2 需先展开看明细", "T2: expand details first")}</span>
           ) : (
             <button
