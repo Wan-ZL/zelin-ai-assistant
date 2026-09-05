@@ -1,4 +1,4 @@
-pr: `fix/parity-shell-window-external-links`（PR #TBD）
+pr: `fix/parity-shell-window-external-links`（PR #223）
 phase: D3 行为 parity 回填——shell-window 链第 1 批（`shell-window-external-links`；gap: pages-shell-nav-shell-external-links-dead / diagnostics-setup-shell-external-links / pages-shell-nav-dock-reopen-blocked-by-caption-panel / lifecycle-dock-reopen-blocked-by-caption-overlay / pages-shell-nav-window-min-size / lifecycle-window-min-size-larger-than-native / pages-shell-nav-shell-splash-alerts-not-localized / lifecycle-window-title-static）
 law: §54 追记（外链交系统浏览器 / Dock 重开只看看板窗口 / 窗口下限 720×480 / 标题跟随页面 / splash 与失败弹窗 L()）
 
