@@ -1,4 +1,5 @@
-// 录制区（§15 录制三态 / §61 / §68）：默认录制模式三态单选 + 引擎状态 + 重启 + 权限深链——
+// 录制区（§15 录制三态 / §61 / §68.3 追记）：默认录制模式三态单选 + 自动启动说明句 + consent-race 自愈的绿色 ✓ 句
+// （`recording.self_heal_note`，原生 Settings.swift:709-721）+ 引擎状态 + 重启 + 权限深链——
 // 全部经 zaiShell 桥打到壳里的 RecordingController（screenpipe 是壳的直接子进程）。
 // 普通浏览器会话没有桥：如实说明「只在看板 app 里可控」，不装按钮。
 // 状态词 / 死因句复用 header RecordingControl 的同一张表（recordingStateWord / recordingDeadReason）。
@@ -54,6 +55,13 @@ export function RecordingSection() {
               </label>
             ))}
           </div>
+          {/* 原生 Settings.swift:709-712：三档下面那句「打开 App 时自动按此模式…」（10pt 次要色） */}
+          <p className="settings-helper">{text("打开 App 时自动按此模式启动 Screenpipe 持续录制。", "On app launch, Screenpipe recording starts automatically in this mode.")}</p>
+          {rec.self_heal_note && (
+            // 原生 Settings.swift:713-721（audit 2.2）：consent-race 自愈刚触发——checkmark.circle.fill + 绿字，壳侧 15 s 后自己清空；
+            // 与下面的引擎行 / 拒绝说明各自独立（原生是两个并列的 if，不是 else-if）
+            <p className="settings-helper is-ok self-heal-note" role="status"><span aria-hidden="true">✓ </span><span>{rec.self_heal_note}</span></p>
+          )}
           <p className={`settings-helper${rec.mode !== "off" && !rec.engine_running ? " is-warning" : ""}`}>
             {text("引擎：", "Engine: ")}
             {rec.mode === "off" ? recordingStateWord(rec, rec.mode, text) : rec.engine_running ? text("正在录制", "Recording") : recordingDeadReason(rec, text)}

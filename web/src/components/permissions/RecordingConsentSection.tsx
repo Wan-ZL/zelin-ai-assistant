@@ -6,7 +6,13 @@
 // PR #186）：录制开着 = 同意过；向导写过完成标记（`GET /api/setup` done）= 问过了；否则本会话内点过 开启 / 暂不 = 答过
 // （只在内存，刷新后还回来——向导是正路，app.tsx 在 needed 时本来就把看板换成向导）。引擎真相经 §61 桥；
 // 浏览器里（无桥）如实说只在看板 app 里可控。文案逐字镜像 Permissions.swift:394–518。
-import { useState } from "react";
+//
+// §68.3 追记（parity 批 `recording-consent-header-ui`）：「开启」是披露块的默认按钮（原生 `.keyboardShortcut(.defaultAction)`，
+// Permissions.swift:416-421）——块一挂载就 autoFocus 到它，块内焦点不在按钮 / 输入框 / 链接上时 Return 也等于点它
+// （preventDefault 让 §68.5 向导的 document 级 Return 让路）；「暂不」照旧只有点击 / Tab。状态行的三句说明按原生 else-if
+// 排：自愈成功句（`self_heal_note`，绿）> 拒绝 / 回滚说明（`note`，橙）> TCC 收回（`tcc_lost`，橙），Permissions.swift:466-486。
+// TCC 提示不在这里发：桥的 `setRecording {on:true}` 自己先补（§61.1 追记 (a)）。
+import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../../shellBridge";
 import { useAppState } from "../../store";
@@ -15,6 +21,17 @@ import type { SetupSnapshot } from "../../types";
 const PRIVACY_URL = "https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/PRIVACY.md";
 
 type Text = (zh: string, en: string) => string;
+
+/** 焦点落在这些元素上时 Enter 归它们自己（按钮激活 / 链接跳转 / 输入框提交）——与 SetupPage.RETURN_OWNERS 同一张表 */
+const RETURN_OWNERS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"]);
+
+/** 披露块里的这次 Enter 是否等于点「开启」（原生 defaultAction）：Enter、无修饰键、不在 IME 组字、焦点不在 RETURN_OWNERS 上 */
+export function consentReturnActivates(event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "isComposing" | "target">): boolean {
+  if (event.key !== "Enter" || event.isComposing) return false;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  const tag = event.target instanceof Element ? event.target.tagName.toUpperCase() : "";
+  return !RETURN_OWNERS.has(tag);
+}
 
 /** 一次性同意问题该不该再问：录制已开 / 向导已完成 = 不问（原生 P0-11：壳无存值 = 未同意 = off） */
 export function consentPending(rec: ShellRecordingState, setup: SetupSnapshot | null): boolean {
@@ -54,9 +71,20 @@ export function RecordingConsentSection() {
     void callShell("setRecording", on ? { on: true, mode } : { on: false }).catch((err) => setError(err instanceof Error ? err.message : String(err)));
   };
 
+  const turnOn = () => {
+    setAnsweredHere(true);
+    call(true, "screen");
+  };
+
   if (!answeredHere && consentPending(rec, setup)) {
+    // tabIndex=-1：点到块里的文字时焦点落在块上（而不是 body），Return 才到得了下面的 onKeyDown——原生 defaultAction 是窗口级的
+    const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (!consentReturnActivates(event.nativeEvent)) return;
+      event.preventDefault();
+      turnOn();
+    };
     return (
-      <div className="perm-consent-block" data-state="pending">
+      <div className="perm-consent-block" data-state="pending" tabIndex={-1} onKeyDown={onKeyDown}>
         <h4 className="perm-consent-title">{text("现在开启屏幕记录吗?", "Turn on screen recording now?")}</h4>
         <p className="perm-consent-copy">{text("Zelin AI Assistant 的核心功能依赖持续屏幕记录(OCR 文字识别)。", "Zelin AI Assistant's core features rely on continuous screen recording (OCR text capture).")}</p>
         <ul className="perm-consent-copy">
@@ -65,7 +93,8 @@ export function RecordingConsentSection() {
           <li>{text("保留多久:原始录屏本地保留约 1 天后自动清理;提炼后的笔记留在本地 vault", "How long it is kept: raw recordings are cleaned up locally after ~1 day; distilled notes stay in your local vault")}</li>
         </ul>
         <div className="settings-actions">
-          <button type="button" className="btn btn-primary" onClick={() => { setAnsweredHere(true); call(true, "screen"); }}>{text("开启", "Turn On")}</button>
+          {/* autoFocus：原生 .keyboardShortcut(.defaultAction)——块一出现 Return 就是「开启」 */}
+          <button type="button" className="btn btn-primary" autoFocus onClick={turnOn}>{text("开启", "Turn On")}</button>
           <button type="button" className="btn" onClick={() => setAnsweredHere(true)}>{text("暂不", "Not Now")}</button>
           <a className="settings-link" href={PRIVACY_URL} target="_blank" rel="noreferrer">{text("隐私说明…", "Privacy Details…")}</a>
         </div>
@@ -93,8 +122,12 @@ export function RecordingConsentSection() {
         </span>
       </div>
       <p className="settings-list-desc">{text("屏幕上的可见文字会被识别并整理进你的本地知识库;音频只能在「设置 → 录制」里显式打开。", "Visible on-screen text is captured into your local knowledge base; audio can only be enabled explicitly in Settings → Recording.")}</p>
-      {rec.note && <p className="settings-warning">{rec.note}</p>}
-      {!rec.note && rec.tcc_lost && rec.mode !== "off" && (
+      {rec.self_heal_note && (
+        // 原生 Permissions.swift:466-470（audit 2.2）：consent-race 自愈刚触发——绿字一句，壳侧 15 s 后自己清空；下面两句让位（else-if）
+        <p className="settings-helper is-ok self-heal-note" role="status">{rec.self_heal_note}</p>
+      )}
+      {!rec.self_heal_note && rec.note && <p className="settings-warning">{rec.note}</p>}
+      {!rec.self_heal_note && !rec.note && rec.tcc_lost && rec.mode !== "off" && (
         <p className="settings-warning">{text("「屏幕录制」授权被 macOS 收回了（系统更新或重装应用后常见）——重新授权一次即可恢复", "macOS revoked the Screen Recording permission (common after a macOS update or app reinstall) — grant it once more to resume")}</p>
       )}
       {error && <p className="settings-warning" role="alert">{error}</p>}

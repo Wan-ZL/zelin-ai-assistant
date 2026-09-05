@@ -2,7 +2,8 @@
 // / 通知 三行（web 另加麦克风——实时字幕的转写要它），权限体检页与初始设置向导第 3 步共用同一组件。
 // 真相只有壳知道（TCC 探针是原生 API，§61 桥 getPermissions 回报 granted / denied / unknown；笔记库另有
 // server 的被动探针 state/vault_sync_mode=mirror 兜底）；每行 = 名字 + 状态词 + 为什么要它 + 一颗按钮
-// （去授权… / 请求权限… / 打开系统设置），授了就只剩 ✓。文案逐字镜像 Permissions.swift:541–585。
+// （去授权… / 请求权限… / 打开系统设置），授了就只剩 ✓。文案逐字镜像 Permissions.swift:541–585。屏幕行的按钮在一次性系统提示
+// 弹过之后改说「打开系统设置」（壳 `permissions.screen_requested`，§68.3 追记 / parity 批 `recording-consent-header-ui`）。
 // 浏览器里打开（无桥）：如实说「只在看板 app 里可探」，不装假按钮。
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState, type PermissionStatus } from "../../shellBridge";
@@ -18,13 +19,15 @@ export function capabilityStatusText(kind: Kind, status: PermissionStatus, text:
   return text("尚未请求", "Not requested yet");
 }
 
-/** 按钮动词（原生 buttonLabel）：屏幕 = 去授权…（壳自己记「已请求过」并升级为深链，§68.13）；笔记库被拒后 →
- *  打开系统设置，否则 去授权…；通知 / 麦克风 unknown → 请求权限…，被拒 → 打开系统设置 */
-export function capabilityButtonLabel(kind: Kind, status: PermissionStatus, text: Text): string {
+/** 按钮动词（原生 buttonLabel）：屏幕 = 去授权…，一次性系统提示弹过之后（壳 `screenPermissionRequested`，快照
+ *  `permissions.screen_requested`，§61.1 追记）→ 打开系统设置——按钮说的与壳接下来做的（深链）一致，Permissions.swift:548-549；
+ *  笔记库被拒后 → 打开系统设置，否则 去授权…；通知 / 麦克风 unknown → 请求权限…，被拒 → 打开系统设置 */
+export function capabilityButtonLabel(kind: Kind, status: PermissionStatus, text: Text, screenRequested = false): string {
   if (kind === "notifications" || kind === "microphone") {
     return status === "denied" ? text("打开系统设置", "Open System Settings") : text("请求权限", "Request…");
   }
   if (kind === "vault" && status === "denied") return text("打开系统设置", "Open System Settings");
+  if (kind === "screen" && screenRequested) return text("打开系统设置", "Open System Settings");
   return text("去授权", "Grant…");
 }
 
@@ -104,7 +107,7 @@ export function CapabilityRows({ onError }: { onError?: (message: string | null)
               <span className="perm-capability-action">
                 {granted
                   ? <span className="perm-check" aria-label={text("已授权", "Granted")}>✓</span>
-                  : <button type="button" className="btn" onClick={() => act(kind, status)}>{capabilityButtonLabel(kind, status, text)}</button>}
+                  : <button type="button" className="btn" onClick={() => act(kind, status)}>{capabilityButtonLabel(kind, status, text, shell.permissions.screen_requested === true)}</button>}
               </span>
             </div>
             <p className="settings-list-desc">{rowWhy(kind, text)}</p>
