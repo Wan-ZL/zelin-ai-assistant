@@ -188,8 +188,8 @@
           "default": "",
           "effective": "~/Documents/Obsidian Vault/2 - raw",
           "help": {
-            "en": "The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root).",
-            "zh": "雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。"
+            "en": "Notes live here; the radar scans it for asks. Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw (radar scan source) · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault.",
+            "zh": "笔记存这里，雷达也从这里发现待办。vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw（雷达扫描源）· 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。"
           },
           "key": "obsidian_raw",
           "kind": "string",
@@ -200,8 +200,8 @@
           "path": "dir",
           "path_exists": false,
           "placeholder": {
-            "en": "",
-            "zh": ""
+            "en": "~/Documents/Obsidian Vault",
+            "zh": "~/Documents/Obsidian Vault"
           },
           "source": "override"
         }

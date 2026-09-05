@@ -154,10 +154,14 @@ SECTIONS: tuple = (
                config=("sources", "obsidian", "enabled"),
                help_zh="扫描笔记库 raw 目录里的新笔记（屏幕/会议 ingest 的落点）。",
                help_en="Scans new notes in the vault's raw folder (where screen / meeting ingest lands)."),
+            # 键存的是 raw 目录（`<根>/2 - raw`，act/lib/config.py 由它的父目录派生另外三个管线目录），但用户面对的是
+            # **vault 根**（原生 Settings.swift:740-792 一格 vault 根字段；§68.1 追记）：web 显示父目录、落 `<根>/2 - raw`；
+            # 文案随之说 vault（原生 :750 副标题 + :787 页脚逐字），placeholder = 默认根（DEFAULT_OBSIDIAN_VAULT）。
             _f("obsidian_raw", "string", "Obsidian Vault 位置", "Obsidian Vault location", default="",
                config=("sources", "obsidian_raw"), path="dir",
-               help_zh="雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。",
-               help_en="The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root)."),
+               placeholder=("~/Documents/Obsidian Vault", "~/Documents/Obsidian Vault"),
+               help_zh="笔记存这里，雷达也从这里发现待办。vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw（雷达扫描源）· 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。",
+               help_en="Notes live here; the radar scans it for asks. Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw (radar scan source) · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault."),
         ],
         help_zh="每个源 = feature flag × 源开关（§48）；这里是源开关，flag 在「Feature flags」。真正生效的状态看下方健康摘要。",
         help_en="Each source = feature flag × source switch (§48); this is the switch, the flag lives under \"Feature flags\". The health line below shows what is actually in effect.",

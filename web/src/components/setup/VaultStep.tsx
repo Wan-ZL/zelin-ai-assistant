@@ -11,9 +11,9 @@ import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { chooseFolder, hasShellBridge, isBridgeUnavailable } from "../../shellBridge";
 import { saveSettingsSection, useAppState } from "../../store";
+import { RAW_SUBDIR } from "../../vaultPaths";
 import { errorMessage } from "../settings/useToast";
 
-export const RAW_SUBDIR = "2 - raw";
 /** 原生 loadVaultChoices 的自定义目录默认值（也是对话框的起点与输入框的 placeholder） */
 export const DEFAULT_CUSTOM_ROOT = "~/Documents/AI Assistant Notes";
 
