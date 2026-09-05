@@ -3,16 +3,22 @@
 原生 Diagnostics.swift:161-168 + DiagnosticsRules.gmailCardEligible 的 web 版
 把「用户真的动过这个源」的判断搬进 actd 投影（§44 单写者；web 只读）：
 
-- ``intent`` = 碰过开关（settings_overrides 里 ``<src>_enabled`` / 嵌套
-  ``features.<src>_radar`` / 平铺 ``"features.<src>_radar"`` / ``<src>: {enabled}``，
-  开或关都算）∨ 凭证文件存在（哪怕为空 = 配到一半）∨ 凭证非空；
-  obsidian 的「配到一半」= 指定过 vault 目录。
-- ``secret_present`` = §19 凭证非空（secrets 文件 或 config.yaml 显式路径；
-  旧默认路径那层已弃用、不算）；obsidian 恒 False。
+- ``intent`` = 碰过开关（settings_overrides 里 ``<src>_enabled`` / 点式
+  ``"sources.<src>_enabled"`` / 嵌套 ``features.<src>_radar`` / 平铺
+  ``"features.<src>_radar"`` / 仅 gmail 的 ``gmail: {enabled}``——恰好是 config
+  ``_apply_settings_overrides`` 认的拼法，开或关都算）∨ 凭证文件存在（哪怕为空
+  = 配到一半）∨ 凭证非空；obsidian 的「配到一半」= 指定过 vault 目录。
+- ``secret_present`` = §19 凭证非空，三层与雷达 get_token / get_app_password
+  同一套（secrets 文件 → config.yaml 路径 → 旧默认路径 ``~/Desktop/Keys``）：
+  雷达能解析到 token 才写得出 ``connect_failed``，旧路径用户那张「Slack token
+  无效」卡不能因为投影少看一层而消失；旧默认路径经 read_path 探、不响弃用告警。
+  obsidian 恒 False。
 - 全新安装（没 overrides、没凭证）三源皆 False —— 这就是 anti-nag 的那张牌：
   「enabled 默认 true」本身不是 intent。
 - 坏 overrides / 探不到 → False，投影绝不崩。
 """
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -21,6 +27,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
+from act import radar_gmail, radar_slack   # import 前表未 patch：常量绑定的是真值
 from act.lib import config, dashboard, radar_health, secrets, sources
 
 
@@ -35,9 +42,15 @@ class SourceIntentSignalsTestCase(unittest.TestCase):
         self.overrides = root / "settings_overrides.json"
         self.secrets_dir = root / "secrets"
         self.secrets_dir.mkdir()
+        # §19 第三层（旧默认路径）指进沙箱：tests/__init__.py 只沙箱 AIASSISTANT_HOME，
+        # 不沙箱 ~，开发机 ~/Desktop/Keys 的真凭证绝不能成为判例输入
+        self.legacy_dir = root / "legacy-keys"
+        self.legacy_dir.mkdir()
+        legacy = {n: str(self.legacy_dir / n) for n in secrets.LEGACY_DEFAULT_PATHS}
         for patcher in (
             mock.patch.object(dashboard.config, "SETTINGS_OVERRIDES_PATH", self.overrides),
             mock.patch.object(secrets, "SECRETS_DIR", self.secrets_dir),
+            mock.patch.object(secrets, "LEGACY_DEFAULT_PATHS", legacy),
             mock.patch.object(radar_health, "load_radar_health", return_value={}),
         ):
             patcher.start()
@@ -88,6 +101,26 @@ class SourceIntentSignalsTestCase(unittest.TestCase):
         self._write_overrides({"gmail": {"enabled": True, "address": "me@example.com"}})
         self.assertTrue(self._project()["gmail"]["intent"])
 
+    def test_switch_touched_dotted_sources_key(self):
+        # config._override_sources_key 认 "sources.<src>_enabled"（手写点式）——
+        # 它真的关掉了源，所以也真的算碰过
+        self._write_overrides({"sources.gmail_enabled": False})
+        self.assertFalse(config.load_config().gmail_enabled)
+        rs = self._project()
+        self.assertTrue(rs["gmail"]["intent"])
+        self.assertFalse(rs["slack"]["intent"])
+
+    def test_nested_source_block_counts_only_for_gmail(self):
+        # _OVERRIDE_HANDLERS 只有 gmail 的嵌套处理器：slack / obsidian 的
+        # `<src>: {enabled}` 对 config 是无效键（源照旧开着）——不算碰过，
+        # 拼法表与 config 一致，不多不少
+        self._write_overrides({"slack": {"enabled": False}, "obsidian": {"enabled": False}})
+        cfg = config.load_config()
+        self.assertTrue((cfg.slack_enabled, cfg.obsidian_enabled) == (True, True))
+        rs = self._project()
+        self.assertFalse(rs["slack"]["intent"])
+        self.assertFalse(rs["obsidian"]["intent"])
+
     def test_unrelated_override_keys_are_not_intent(self):
         self._write_overrides({"language": "en", "features": {"digest": False},
                                "gmail": {"address": "me@example.com"}})
@@ -117,16 +150,63 @@ class SourceIntentSignalsTestCase(unittest.TestCase):
         sl = self._project(cfg)["slack"]
         self.assertEqual((sl["intent"], sl["secret_present"]), (True, True))
 
-    def test_default_legacy_path_is_not_probed(self):
-        # gmail_app_password_path 的缺省值就是 §19 第三层（~/Desktop/Keys，已弃用）：
-        # 投影不读它——哪怕那里真有文件（用假 read_path 证明没被调用）
+    # ---- §19 third tier: the legacy default path the radars still resolve ----
+    def test_legacy_default_path_counts_as_secret_present_without_warning(self):
+        # radar_slack.get_token 会从旧默认路径解析到 token → 投影必须同样报 present；
+        # 探针走 read_path，不触发 resolve_credential 那条弃用告警（stderr 静默，
+        # _warned_legacy 不变）
+        (self.legacy_dir / secrets.SLACK_TOKEN_FILE).write_text("xoxp-legacy\n", encoding="utf-8")
+        secrets._warned_legacy.clear()
+        self.addCleanup(secrets._warned_legacy.clear)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            sl = self._project()["slack"]
+        self.assertEqual((sl["intent"], sl["secret_present"]), (True, True))
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(secrets._warned_legacy, set())
+        self.assertFalse(self._project()["gmail"]["secret_present"])   # 另一源不沾光
+
+    def test_legacy_slack_token_keeps_connect_failed_visible(self):
+        # 回归钉：token 只在旧路径、Slack 拒绝它 → 雷达写 connect_failed（那条分支
+        # 只在解析到 token 时可达）——web 的「Slack token 无效」卡靠 secret_present
+        # 出，投影少看一层 = 主干上可见的失败在 web 上静默
+        (self.legacy_dir / secrets.SLACK_TOKEN_FILE).write_text("xoxp-rejected\n", encoding="utf-8")
+        with mock.patch.object(radar_health, "load_radar_health",
+                               return_value={"slack": {"skip_reason": "connect_failed"}}):
+            sl = self._project()["slack"]
+        self.assertEqual(sl["skip_reason"], "connect_failed")
+        self.assertTrue(sl["secret_present"])
+
+    def test_legacy_gmail_password_is_intent_for_no_address(self):
+        # gmail_app_password_path 的缺省值就是旧默认路径：应用密码只在那里、没填
+        # 地址 → 雷达写 no_address（setup 类，web 要 intent）——凭证在 = 显然配过
         cfg = _Cfg()
         self.assertEqual(cfg.gmail_app_password_path, config.Config.gmail_app_password_path)
-        with mock.patch.object(secrets, "read_path",
-                               side_effect=lambda p: "would-be-a-token" if p else None) as rp:
+        (self.legacy_dir / secrets.GMAIL_APP_PASSWORD_FILE).write_text(
+            "abcd efgh ijkl mnop\n", encoding="utf-8")
+        with mock.patch.object(radar_health, "load_radar_health",
+                               return_value={"gmail": {"skip_reason": "no_address"}}), \
+                mock.patch.object(secrets, "read_path", wraps=secrets.read_path) as rp:
             gm = self._project(cfg)["gmail"]
-        self.assertFalse(gm["secret_present"])
-        self.assertEqual({c.args[0] for c in rp.call_args_list}, {None})   # 从不带真路径去读
+        self.assertEqual((gm["skip_reason"], gm["intent"], gm["secret_present"]),
+                         ("no_address", True, True))
+        # Config 缺省字面就是旧默认路径：不当「显式路径」探（那会绕过沙箱读开发机
+        # 的真 ~/Desktop/Keys），只经 LEGACY_DEFAULT_PATHS 这一张表探一次
+        probed = [c.args[0] for c in rp.call_args_list]
+        self.assertNotIn(config.Config.gmail_app_password_path, probed)
+        self.assertEqual(probed.count(str(self.legacy_dir / secrets.GMAIL_APP_PASSWORD_FILE)), 1)
+
+    def test_empty_legacy_file_is_neither(self):
+        # 旧路径上的空文件：雷达解析不到 → 不 present；「配到一半」只认 config/secrets
+        (self.legacy_dir / secrets.SLACK_TOKEN_FILE).write_text("\n", encoding="utf-8")
+        sl = self._project()["slack"]
+        self.assertEqual((sl["intent"], sl["secret_present"]), (False, False))
+
+    def test_radar_defaults_derive_from_the_single_table(self):
+        # 雷达的 DEFAULT_*_PATH 与投影探针取自同一张表（防腐 #9 命名单源）
+        self.assertEqual(radar_slack.DEFAULT_TOKEN_PATH, "~/Desktop/Keys/slack-user-token.txt")
+        self.assertEqual(radar_gmail.DEFAULT_APP_PASSWORD_PATH,
+                         "~/Desktop/Keys/gmail-app-password.txt")
 
     def test_obsidian_vault_configured_is_intent(self):
         cfg = _Cfg()

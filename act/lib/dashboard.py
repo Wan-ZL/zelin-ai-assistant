@@ -836,36 +836,41 @@ def _overrides_doc() -> dict:
 
 
 def _switch_touched(overrides: dict, src: str) -> bool:
-    """用户碰过这个源的开关（开或关都算碰过）：扁平 ``<src>_enabled``（源开关，
-    server settings 与原生 SettingsGmail 都写它）、嵌套 ``features.<src>_radar``
-    或历史平铺 ``"features.<src>_radar"``（feature flag——config
-    _apply_settings_overrides 认的两种拼法都算）、手写的 ``<src>: {enabled: …}``
-    嵌套块（config.yaml 镜像拼法）。"""
-    if f"{src}_enabled" in overrides or f"features.{src}_radar" in overrides:
+    """用户碰过这个源的开关（开或关都算碰过）——拼法表 = config
+    ``_apply_settings_overrides`` 真认的那几种，不多不少：扁平 ``<src>_enabled``
+    （源开关，server settings 与原生 SettingsGmail 都写它）、点式
+    ``"sources.<src>_enabled"``（_override_sources_key）、嵌套 ``features.<src>_radar``
+    或历史平铺 ``"features.<src>_radar"``（feature flag 的两种拼法）、以及**仅
+    gmail** 的 ``gmail: {enabled: …}`` 嵌套块（_OVERRIDE_HANDLERS 只有 gmail 的
+    嵌套处理器；``slack: {enabled}`` 对 config 是无效键、不算碰过）。"""
+    if any(k in overrides for k in (f"{src}_enabled", f"sources.{src}_enabled",
+                                    f"features.{src}_radar")):
         return True
     feats = overrides.get("features")
     if isinstance(feats, dict) and f"{src}_radar" in feats:
         return True
-    block = overrides.get(src)
+    block = overrides.get(src) if src == "gmail" else None
     return isinstance(block, dict) and "enabled" in block
 
 
-def _explicit_secret_path(cfg: config.Config, src: str) -> Optional[str]:
-    """config.yaml **显式**给的凭证路径（§19 第二层）；等于 Config 缺省值（gmail 的
-    缺省就是旧默认路径 = §19 第三层，已弃用）→ None。投影不读弃用层：与原生
-    SecretsIO.hasSecret 同款只认 config/secrets（外加显式路径），也不让每个
-    dashboard 构建去 stat ``~/Desktop/Keys``。"""
-    attr = _SOURCE_SECRET_PATH_ATTR.get(src)
-    if not attr:
-        return None
-    val = getattr(cfg, attr, None)
-    return val if val and val != getattr(config.Config, attr, None) else None
-
-
-def _credential_present(name: str, explicit_path: Optional[str]) -> bool:
-    """§19 凭证非空：secrets 文件，或 config.yaml 显式路径的文件（雷达 resolve_credential
-    的前两层，同序）；只判在不在——值不出函数。"""
-    return bool(secrets.read_secret(name) or secrets.read_path(explicit_path))
+def _credential_present(cfg: config.Config, name: str, src: str) -> bool:
+    """§19 凭证非空——与雷达 ``get_token`` / ``get_app_password`` 同一套三层解析
+    （secrets 文件 → config.yaml 路径 → 旧默认路径 ``secrets.LEGACY_DEFAULT_PATHS``），
+    雷达解析得到、投影就报 true：``connect_failed`` 只在 token 已解析时才会被
+    雷达写下，旧路径用户的「Slack token 无效」卡不能因为投影少看一层而消失。
+    经 ``secrets.read_path`` 探——不触发第三层的弃用告警（那是雷达真用到它时
+    才该响的）；只判在不在，值不出函数。"""
+    if secrets.read_secret(name):
+        return True
+    # 「显式」= config.yaml 真给了值；等于 Config 类缺省（gmail 的缺省字面就是旧
+    # 默认路径）不算——那层由 LEGACY_DEFAULT_PATHS 兜、同一文件只探一次，旧路径
+    # 也只住在那一张表里（判例靠 patch 它进沙箱）。
+    attr = _SOURCE_SECRET_PATH_ATTR.get(src, "")
+    explicit = getattr(cfg, attr, None)
+    if explicit == getattr(config.Config, attr, None):
+        explicit = None
+    legacy = secrets.LEGACY_DEFAULT_PATHS.get(name)
+    return any(secrets.read_path(p) for p in (explicit, legacy) if p)
 
 
 def _secret_file_started(name: str) -> bool:
@@ -879,15 +884,15 @@ def _secret_file_started(name: str) -> bool:
 def _source_signals(cfg: config.Config, src: str, overrides: dict) -> dict:
     """§48.4 add-only ``intent`` / ``secret_present``（每源恒在）。
 
-    ``secret_present`` = 该源的 §19 凭证非空（slack: user token；gmail: 应用密码
-    ——抓取命令路径 B 不算凭证；obsidian 无凭证 → 恒 False）。
+    ``secret_present`` = 该源的 §19 凭证非空（三层同雷达；slack: user token；
+    gmail: 应用密码——抓取命令路径 B 不算凭证；obsidian 无凭证 → 恒 False）。
     ``intent`` = 碰过开关 ∨ 凭证文件存在 ∨ 凭证非空；obsidian 的「配到一半」
     = 指定过 vault 目录（sources.obsidian_raw）。Never raises。
     """
     try:
         name = _SOURCE_SECRET_FILES.get(src)
         if name:
-            present = _credential_present(name, _explicit_secret_path(cfg, src))
+            present = _credential_present(cfg, name, src)
             started = _secret_file_started(name)
         else:
             present = False

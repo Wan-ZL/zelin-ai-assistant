@@ -148,13 +148,17 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
 
     def test_bad_health_file_and_enabled_probe_never_raise(self):
         cfg = config.Config()
-        # §48.4 意愿信号读 overrides / secrets：钉到空目录，别吃共享沙箱里其它
-        # 判例落下的凭证（判例 tests/test_dashboard_source_intent.py 管信号本身）
+        # §48.4 意愿信号读 overrides / secrets / §19 旧默认路径：全钉到空目录，别吃
+        # 共享沙箱里其它判例落下的凭证、也别读开发机 ~/Desktop/Keys 的真凭证
+        # （判例 tests/test_dashboard_source_intent.py 管信号本身）
         empty = Path(tempfile.mkdtemp(prefix="dash-edge-"))
         with mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
                 mock.patch.object(dashboard.config, "SETTINGS_OVERRIDES_PATH",
                                   empty / "settings_overrides.json"), \
                 mock.patch.object(secrets, "SECRETS_DIR", empty / "secrets"), \
+                mock.patch.object(secrets, "LEGACY_DEFAULT_PATHS",
+                                  {n: str(empty / "legacy" / n)
+                                   for n in secrets.LEGACY_DEFAULT_PATHS}), \
                 mock.patch.object(radar_health, "load_radar_health",
                                   side_effect=ValueError("corrupt")), \
                 mock.patch.object(sources, "enabled", side_effect=KeyError("x")):
