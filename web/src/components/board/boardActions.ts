@@ -11,7 +11,7 @@ import { useI18n } from "../../i18n";
 import { buildAppUrl, readPage } from "../../route";
 import { steerAcknowledged } from "../../steer";
 import { getState, selectCard, setArchiveStripExpanded, setBacklogStripExpanded, useAppState } from "../../store";
-import { landed, recordPending, timeoutNotice, type PendingRecord } from "./pendingSettle";
+import { LANE_VERBS, landed, recordPending, timeoutNotice, type PendingRecord } from "./pendingSettle";
 
 /** 卡片决策类四键形（comment 键永远存在，无文本时 null——inbox-actions.md §2） */
 export function cardAction(id: string, action: string, comment: string | null = null) {
@@ -121,9 +121,13 @@ export const CONFIRM_TIMEOUT_MS = 180_000;
  *  - 提交成功（`submitted`，原生 applyAction 在 inbox 写成功后跑）：暂缓 = echo 落潜在任务条（addEcho target .debt，:861）
  *    → 左条；放回看板 = info 条落永久性完成条（beginReturn source .archived，:851）→ 右条。永久完成（archive）的 echo
  *    不开右条——原生只对 target .debt 开左条，右条只因 unarchive 打开。
- *  - 180 s 超时（`timeout`，原生 sweepTimeouts）：从潜在任务条发出的动作（研究并提议 / 删除 / 永久完成）超时通知落回该条、
+ *  - 180 s 超时（`timeout`，原生 sweepTimeouts）：从潜在任务条发出的**换列动词**（研究并提议 / 删除 / 永久完成）超时通知落回该条、
  *    卡也在那里静默恢复（:425 raise、:450 `e.source == .debt`）→ 左条；放回看板超时（:539 `entry.source == .archived`）→ 右条；
- *    暂缓超时卡还在提案列，不开。 */
+ *    暂缓超时卡还在提案列，不开。只认 raise / echo / return 三族（= LANE_VERBS）：详情抽屉里对 debt / archived 卡的改名
+ *    （set_title）、拆卡（split_note）、修改意见（comment）超时——原生 expiredTitles / expiredSplits / expiredComments
+ *    （:452-473 / :516-526）不碰任何条，这里同样不开。
+ *  注意超时半边只在发出动作的卡组件仍挂着时生效：两条书立条收起即卸载条内的卡（`{expanded && …}`），useSubmit 的
+ *  兜底定时器随组件卸载丢弃（#253 的 pending 状态是组件级的，不是原生 raisingLocal / pendingEchoes 那样的 store 级台账）。 */
 export function stripToForceOpen(
   rec: Pick<PendingRecord, "action" | "sourceLane">,
   phase: "submitted" | "timeout",
@@ -133,6 +137,7 @@ export function stripToForceOpen(
     if (rec.action === "unarchive") return "archive";
     return null;
   }
+  if (!LANE_VERBS.has(rec.action ?? "")) return null;
   if (rec.sourceLane === "debt") return "backlog";
   if (rec.sourceLane === "archived") return "archive";
   return null;

@@ -1,6 +1,8 @@
 // useSubmit 的书立条强制展开（§54.1 追记 `strips-force-open`；原生 Store.swift addEcho :861 / beginReturn :851 /
 // sweepTimeouts :425 :450 :539）：暂缓提交成功 → 潜在任务条开；放回看板提交成功 → 永久性完成条开；POST 被拒不开；
-// 从潜在任务条发出的动作 180 s 超时 → 潜在任务条开；放回看板超时 → 永久性完成条开；提案列的动作超时不碰任何条。
+// 从潜在任务条发出的换列动词 180 s 超时 → 潜在任务条开；放回看板超时 → 永久性完成条开；提案列的动作超时不碰任何条；
+// 详情抽屉里对 debt / archived 卡的改名 / 拆卡超时不碰任何条（原生 expiredTitles / expiredSplits 不动旗）；
+// 超时半边只在发出动作的卡组件仍挂着时生效（组件卸载即丢弃兜底定时器——#253 组件级 pending 的既定后果）。
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, postAction } from "../../api";
@@ -96,12 +98,12 @@ describe("useSubmit：书立条强制展开", () => {
     expect(getState().backlogStripExpanded).toBe(true);
   });
 
-  it("放回看板 180 s 超时 → 永久性完成条开（原生 :539 `entry.source == .archived`），即便用户中途收起了它", async () => {
+  it("放回看板 180 s 超时 → 永久性完成条开（原生 :539 `entry.source == .archived`）；hook 层：旗被 setter 关掉后超时仍重开（真实组件收起即卸载，见末条）", async () => {
     const { result } = renderHook(() => useSubmit());
     await act(async () => {
       await result.current.submit({ action: "unarchive", id: "R-701", comment: null });
     });
-    act(() => setArchiveStripExpanded(false)); // 用户收起
+    act(() => setArchiveStripExpanded(false)); // 旗关掉（hook 仍挂着——真实卡组件此时已卸载）
     act(() => {
       vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);
     });
@@ -121,6 +123,45 @@ describe("useSubmit：书立条强制展开", () => {
     expect(getState().backlogStripExpanded).toBe(false);
     expect(getState().archiveStripExpanded).toBe(false);
   });
+
+  it("详情抽屉里给 debt 卡改名（set_title）180 s 超时 → 不开左条（原生 expiredTitles :516-526 不动旗；只有换列动词的超时才开）", async () => {
+    const { result } = renderHook(() => useSubmit());
+    await act(async () => {
+      await result.current.submit({ action: "set_title", id: "R-301", title: "新名字" });
+    });
+    act(() => {
+      vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);
+    });
+    expect(result.current.pending).toBe(false);
+    expect(result.current.error).toMatch(/Rename timed out/);
+    expect(getState().backlogStripExpanded).toBe(false);
+    expect(getState().archiveStripExpanded).toBe(false);
+  });
+
+  it("详情抽屉里给 archived 卡拆卡（split_note）180 s 超时 → 不开右条（原生 expiredSplits :452-460 不动旗）", async () => {
+    const { result } = renderHook(() => useSubmit());
+    await act(async () => {
+      await result.current.submit({ action: "split_note", id: "R-701", note_ts: "2026-09-01T00:00:00Z" });
+    });
+    act(() => {
+      vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);
+    });
+    expect(result.current.pending).toBe(false);
+    expect(getState().archiveStripExpanded).toBe(false);
+    expect(getState().backlogStripExpanded).toBe(false);
+  });
+
+  it("超时半边只在卡组件仍挂着时生效：收起条 = 卸载条内的卡 → 兜底定时器随之丢弃，不开条（§54.1 追记诚实句；store 级 pending 台账是后续）", async () => {
+    const { result, unmount } = renderHook(() => useSubmit());
+    await act(async () => {
+      await result.current.submit({ action: "raise", id: "R-301", comment: null });
+    });
+    unmount(); // 用户收起潜在任务条 → DebtCardItem 卸载
+    act(() => {
+      vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS + 1_000);
+    });
+    expect(getState().backlogStripExpanded).toBe(false);
+  });
 });
 
 describe("stripToForceOpen（纯函数）", () => {
@@ -132,11 +173,20 @@ describe("stripToForceOpen（纯函数）", () => {
     expect(stripToForceOpen({ action: null, sourceLane: null }, "submitted")).toBeNull();
   });
 
-  it("timeout：看提交时所在的列——debt → backlog、archived → archive、其余 null", () => {
+  it("timeout：换列动词看提交时所在的列——debt → backlog、archived → archive、其余 null", () => {
     expect(stripToForceOpen({ action: "raise", sourceLane: "debt" }, "timeout")).toBe("backlog");
     expect(stripToForceOpen({ action: "trash", sourceLane: "debt" }, "timeout")).toBe("backlog");
+    expect(stripToForceOpen({ action: "archive", sourceLane: "debt" }, "timeout")).toBe("backlog");
     expect(stripToForceOpen({ action: "unarchive", sourceLane: "archived" }, "timeout")).toBe("archive");
     expect(stripToForceOpen({ action: "defer", sourceLane: "needs_approval" }, "timeout")).toBeNull();
     expect(stripToForceOpen({ action: "approve", sourceLane: null }, "timeout")).toBeNull();
+  });
+
+  it("timeout：非换列动词（改名 / 拆卡 / 修改意见）不看列、一律 null（原生 expiredTitles / expiredSplits / expiredComments 不动旗）", () => {
+    expect(stripToForceOpen({ action: "set_title", sourceLane: "debt" }, "timeout")).toBeNull();
+    expect(stripToForceOpen({ action: "split_note", sourceLane: "archived" }, "timeout")).toBeNull();
+    expect(stripToForceOpen({ action: "comment", sourceLane: "debt" }, "timeout")).toBeNull();
+    expect(stripToForceOpen({ action: "set_title", sourceLane: "archived" }, "timeout")).toBeNull();
+    expect(stripToForceOpen({ action: null, sourceLane: "debt" }, "timeout")).toBeNull();
   });
 });
