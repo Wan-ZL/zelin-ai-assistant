@@ -1,4 +1,4 @@
-pr: `fix/parity-catalog-help-copy`（PR #TBD；行为 parity 审计 batch `catalog-help-copy`，chain catalog-server 第 2 批）
+pr: `fix/parity-catalog-help-copy`（PR #248；行为 parity 审计 batch `catalog-help-copy`，chain catalog-server 第 2 批）
 phase: P4 余量（D3：web 看板是产品；原生 mac/Sources 只读参照）
 law: —（help 文案只改；§14bis / §15 / §15.3 v0.14 / §68 的既有法条本就如此写，今日文案对上法条，不修法）
 
