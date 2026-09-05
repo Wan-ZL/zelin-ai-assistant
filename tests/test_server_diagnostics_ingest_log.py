@@ -11,6 +11,7 @@ subproc.default_runner 经 mock.patch 替换——测试绝不真起 ``python -m
 """
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +77,26 @@ class IngestLogEntryTestCase(unittest.TestCase):
         self.log.mkdir(parents=True)
         _s, diag = get_json(self.port, "/api/diagnostics")
         self.assertEqual(diag["logs"], [])
+
+    @unittest.skipIf(sys.platform == "win32" or getattr(os, "geteuid", lambda: 1)() == 0,
+                     "chmod 000 does not block on Windows / root")
+    def test_untraversable_parent_dir_is_treated_as_absent_not_500(self):
+        """Path.is_file 只吞 ENOENT 一族——父目录 EACCES 会抛 PermissionError；诊断页与 /api/logs/* 不许因此 500（§0 第 11 条）。"""
+        write_text(self.home / "state" / "logs" / "R-101.log", "card log\n")
+        parent = self.log.parent
+        parent.mkdir(parents=True)
+        parent.chmod(0)
+        self.addCleanup(parent.chmod, 0o700)
+        with self.assertRaises(PermissionError):
+            self.log.is_file()                                   # 前提：这台机器上确实是 EACCES
+        status, diag = get_json(self.port, "/api/diagnostics")
+        self.assertEqual(status, 200)
+        self.assertEqual([e["name"] for e in diag["logs"]], ["R-101.log"])
+        status, obj = get_json(self.port, "/api/logs/screenpipe-auto.log")
+        self.assertEqual(status, 404)
+        assert_envelope(self, obj, "NOT_FOUND")
+        status, _tail = get_json(self.port, "/api/logs/R-101.log")
+        self.assertEqual(status, 200)
 
 
 if __name__ == "__main__":

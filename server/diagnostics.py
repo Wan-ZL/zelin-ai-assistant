@@ -24,8 +24,9 @@ mirror 模式看 ``state/vault-mirror``，直连模式只在它不住 TCC 保护
 2026-09-05 追记（add-only，§68.4 追记；原生 Doctor.swift ``AIFix.enabled`` / Pages.swift revealIngestLog）：
 ``ai_fix_enabled`` = config.yaml ``doctor.ai_fix_enabled``（act.lib.config ``doctor_ai_fix_enabled`` 的
 只读镜像；缺席 / 坏值 = true）——页面据此**隐藏**「让 AI 修」而不是点了才吃 501；日志清单多一条显式
-项 ``screenpipe-auto.log``（``paths.ingest_log_path()``，文件存在才列）——手动 ingest 失败后「查看日志」
-的落点，ingest 脚本完整的 claude 输出只在那里。``?lang=zh|en`` 透传给 doctor 子进程（server/doctor_run）。
+项 ``screenpipe-auto.log``（``paths.ingest_log_path()``，文件存在才列；探不到——含父目录 EACCES——当不在，
+不许 500 整页）——手动 ingest 失败后「查看日志」的落点，ingest 脚本完整的 claude 输出只在那里。
+``?lang=zh|en`` 透传给 doctor 子进程（server/doctor_run）。
 """
 from __future__ import annotations
 
@@ -76,7 +77,10 @@ def _ingest_log_entry() -> Optional[dict]:
     """ingest 链自己的日志（/tmp 不在扫描目录里，单列一条）：名字固定 ``screenpipe-auto.log``、
     ``path`` 是真实路径；文件不在 / 不是普通文件 = 不列。"""
     p = paths.ingest_log_path()
-    if not p.is_file():
+    try:
+        if not p.is_file():
+            return None
+    except OSError:   # Path.is_file 只吞 ENOENT 一族；父目录不可穿越（EACCES）等一律当「不在」，不许 500 整页（§0 第 11 条）
         return None
     entry = _log_entry(p)
     if entry is not None:

@@ -88,10 +88,29 @@ class DoctorLangCacheKeyTestCase(_ServerCase):
         self.assertEqual(self.langs_seen(), ["zh"])            # 同语言 15 s 内命中
         get_json(self.port, "/api/doctor?lang=en")
         self.assertEqual(self.langs_seen(), ["zh", "en"])      # 换语言 = 另一份
-        get_json(self.port, "/api/doctor")
-        self.assertEqual(self.langs_seen(), ["zh", "en", None])  # 不带 lang 也是自己的一份
         get_json(self.port, "/api/diagnostics?lang=en")
-        self.assertEqual(len(self.calls), 3)                    # diagnostics 与 doctor 共用 (home, fast, lang) 键
+        self.assertEqual(len(self.calls), 2)                    # diagnostics 与 doctor 共用 (home, fast, lang) 键
+
+    def test_no_lang_reuses_any_fresh_entry_but_a_lang_does_not(self):
+        """不挑语言的调用（权限体检 / 向导 / 让 AI 修 都是 lang=None）复用任一语言的新鲜条目——
+        依赖检查区刚跑完 doctor，紧接着开权限体检不许再跑一遍；反过来指定了语言就只认那一份。"""
+        get_json(self.port, "/api/diagnostics?lang=en")
+        get_json(self.port, "/api/permissions")
+        get_json(self.port, "/api/doctor")
+        self.assertEqual(self.langs_seen(), ["en"])            # 三个请求一次子进程
+        doctor_run.reset_cache_for_tests()
+        self.calls.clear()
+        get_json(self.port, "/api/permissions")
+        get_json(self.port, "/api/diagnostics?lang=zh")
+        self.assertEqual(self.langs_seen(), [None, "zh"])      # 不带 lang 那份的语言未知，zh 必须自己跑
+
+    def test_no_lang_reuse_honours_the_ttl(self):
+        now = 1_000_000.0
+        doctor_run.report(self.home, lang="en", now=now)
+        doctor_run.report(self.home, now=now + doctor_run.CACHE_TTL_S - 1)
+        self.assertEqual(self.langs_seen(), ["en"])            # 15 s 内复用
+        doctor_run.report(self.home, now=now + doctor_run.CACHE_TTL_S + 1)
+        self.assertEqual(self.langs_seen(), ["en", None])      # 过期就自己跑
 
     def test_refresh_reruns_only_the_requested_lang(self):
         get_json(self.port, "/api/doctor?lang=zh")
