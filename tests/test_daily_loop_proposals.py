@@ -4,9 +4,9 @@ D33：自检类信号（ADVISORY_KINDS / doctor owner_action）只成 advisory �
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py)。
 """
+import ast
 import datetime as _dt
 import inspect
-import re
 import unittest
 from unittest import mock
 
@@ -60,11 +60,26 @@ class AdvisoryKindsTestCase(unittest.TestCase):
     参数化，日后加一种 kind 归错类会在这里红。"""
 
     def test_every_signal_kind_in_loop_inputs_is_classified(self):
-        # 每个 Signal 构造点写的是 kind="<x>", fingerprint=f"<x>:…"——新 kind 必须归到一类
-        kinds = set(re.findall(r'kind="(\w+)", fingerprint=f"', inspect.getsource(loop_inputs)))
-        self.assertTrue(kinds >= {"issue", "doctor_fail", "material", "pr_red"})   # regex 还活着
-        self.assertEqual(kinds, set(CARD_KINDS) | set(ADVISORY_KINDS))
+        # 走 AST 找 loop_inputs 里每个 Signal(...) 调用点的 kind= 字面量（不看排版——kwargs 拆行也认）；
+        # 新 kind 必须归到一类。runtime 上没归类的 kind 默认 advisory，这里再钉一道让漏归类的人看见。
+        tree = ast.parse(inspect.getsource(loop_inputs))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Signal"]
+        kinds = [kw.value.value for call in calls for kw in call.keywords
+                 if kw.arg == "kind" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)]
+        self.assertGreaterEqual(len(calls), 10)                      # AST 还找得到构造点
+        self.assertEqual(len(kinds), len(calls))                     # 每个构造点都写字面量 kind
+        self.assertEqual(set(kinds), set(CARD_KINDS) | set(ADVISORY_KINDS))
         self.assertEqual(set(CARD_KINDS) & set(ADVISORY_KINDS), set())
+
+    def test_an_unclassified_kind_is_an_advisory_not_a_card(self):
+        # 铸卡是白名单：忘了归类的新 kind 走便宜的那条路（横幅），而不是铸一张派不出去的卡
+        sig = _sig("brand_new", "x", 1)
+        self.assertTrue(loop_inputs.is_advisory(sig))
+        chosen, skipped = daily_loop.select_signals([sig], taken=set(), gh_titles=[], budget=5)
+        self.assertEqual((chosen, skipped["advisory"]), ([], 1))
+        cards, adv = daily_loop.split_advisories([sig])
+        self.assertEqual((cards, [a.fingerprint for a in adv]), ([], ["brand_new:x"]))
 
     def test_selector_never_chooses_an_advisory_kind(self):
         for kind in ADVISORY_KINDS:
@@ -112,17 +127,18 @@ class AdvisoryKindsTestCase(unittest.TestCase):
 
     def test_advisory_rows_inherit_first_seen_and_are_capped(self):
         adv = [Summary(kind="doctor_fail", text=f"t{i}", fingerprint=f"doctor_fail:{i}") for i in range(25)]
-        state = {"last_result": {"advisories": [{"fingerprint": "doctor_fail:3", "first_seen": "2026-08-30"},
-                                                {"fingerprint": "doctor_fail:4"},            # no first_seen → today
-                                                "garbage", {"fingerprint": "", "first_seen": "x"}]}}
+        # 备忘 = state.advisory_first_seen（上一次跑成功的提案阶段写的）；坏条目逐个丢
+        state = {"advisory_first_seen": {"doctor_fail:3": "2026-08-30", "doctor_fail:4": None, "": "x"},
+                 "last_result": {"advisories": [{"fingerprint": "doctor_fail:0", "first_seen": "2026-08-01"}]}}
         rows = daily_loop.advisory_rows(adv, state, TODAY)
         self.assertEqual(len(rows), daily_loop.ADVISORIES_CAP)
         self.assertEqual(set(rows[0]), {"kind", "text", "ref", "fingerprint", "first_seen"})
         by_fp = {r["fingerprint"]: r["first_seen"] for r in rows}
         self.assertEqual(by_fp["doctor_fail:3"], "2026-08-30")
         self.assertEqual(by_fp["doctor_fail:4"], TODAY)
-        self.assertEqual(by_fp["doctor_fail:0"], TODAY)
-        self.assertEqual(daily_loop.advisory_rows(adv, {"last_result": "bad"}, TODAY)[0]["first_seen"], TODAY)
+        self.assertEqual(by_fp["doctor_fail:0"], TODAY)          # last_result is not the memory
+        self.assertEqual(daily_loop.advisory_rows(adv, {"advisory_first_seen": "bad"}, TODAY)[0]["first_seen"], TODAY)
+        self.assertEqual(daily_loop.advisory_rows(adv, {}, TODAY)[0]["first_seen"], TODAY)
 
 
 class FileProposalsTestCase(unittest.TestCase):

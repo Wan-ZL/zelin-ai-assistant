@@ -78,7 +78,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + numbered sections; truth f
 ### 2.4 每日自我改进循环
 - R2.4.1 每天固定时段(可配置)在 actd 的 pass 内运行一次「维护 + 提案」:先维护再提案。
 - R2.4.2 输入源:守护/雷达/执行日志、`state/analytics` 事件、变异测试存活体、GitHub 开放 issue、开放 PR 的评论与 CI 状态、素材库条目、doctor 结果。外来文本(issue/评论/网页)一律过 `sanitize.fence_untrusted`。
-- R2.4.3 输出:新提案卡 ≤ `max_proposals_per_day`(默认 5,设置可改);每张必须带 plan/DoD/成本估计;去重对象 = 现有提案 + 潜在任务 + 开放 issue + 开放 PR。
+- R2.4.3 输出:新提案卡 ≤ `max_proposals_per_day`(默认 truth = `config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS`,D10 定 5、D33 降到 2;设置可改);每张必须带 plan/DoD/成本估计;去重对象 = 现有提案 + 潜在任务 + 开放 issue + 开放 PR。自检类信号(D33)不铸卡,只成看板横幅里的 advisory。
 - R2.4.4 维护动作:提案列与潜在任务列的重复项合并为**一张新卡**(记录来源卡 id 以便恢复),旧卡进回收站;过时卡(已在别处完成 / 长期无人理)进回收站;running / 待验收 / 已交付 **不碰**。回收站保持既有可恢复语义。
 - R2.4.5 维护进行中,看板显示状态提示;结束后看板顶部留一行摘要「今日整理:合并 N、清理 M(可撤销)」,不弹系统通知(D10 设计判断)。
 - R2.4.6 PR 评论驱动(D12):循环读取 owner 在开放 PR 上的评论与 CI 红状态,为每条生成一个"修复/补充"任务并派会话处理、更新同一 PR。

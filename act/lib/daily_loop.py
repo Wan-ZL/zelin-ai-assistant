@@ -6,8 +6,9 @@
 issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 ≤
 `max_proposals_per_day`（默认 truth = config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS）张
 🤖 提案卡进正常审批闸门。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
-它们只成 advisory 行，落在 `last_result.advisories`（≤ 20 条，带 first_seen）、
-审计行与看板横幅「系统自检 N 条」里——同一根因的症状不该变成一排派不出去的卡。
+它们只成 advisory 行，落在 `last_result.advisories`（≤ 20 条，带 first_seen；跨天备忘
+`state.advisory_first_seen`）、审计行与看板横幅「系统自检 N 条」里——同一根因的症状
+不该变成一排派不出去的卡。
 
 边界（与法典对齐）：
 
@@ -365,25 +366,28 @@ def _propose(cfg, now: _dt.datetime, gh, doctor, state: dict, interval) -> dict:
     ledger.update({row["fingerprint"]: today for row in filed if "id" in row})
     state["fingerprints"] = ledger
     materials_marked = _mark_materials(collected["signals"], filed)
+    advisories = advisory_rows(collected["advisories"], state, today)
+    # first_seen 备忘只由跑成功的提案阶段改写：本函数抛异常那天备忘原样留着（见 advisory_rows）
+    state["advisory_first_seen"] = {row["fingerprint"]: row["first_seen"] for row in advisories}
     return {"filed": filed, "skipped": skipped, "budget": budget, "materials": materials_marked,
             "summaries": [{"kind": s.kind, "text": s.text, "ref": s.ref} for s in collected["summaries"]],
-            "advisories": advisory_rows(collected["advisories"], state, today),
+            "advisories": advisories,
             "inputs": collected["inputs"], "signals": len(collected["signals"])}
 
 
 def _prior_first_seen(state: dict) -> dict:
-    """上一轮 last_result.advisories 的 {fingerprint: first_seen}（坏形状 = 空）。"""
-    last = state.get("last_result")
-    rows = last.get("advisories") if isinstance(last, dict) else None
-    pairs = ((r.get("fingerprint"), r.get("first_seen"))
-             for r in (rows if isinstance(rows, list) else []) if isinstance(r, dict))
+    """`state.advisory_first_seen`——上一次跑成功的提案阶段留下的 {fingerprint: first_seen}
+    （坏形状 = 空）。"""
+    memo = state.get("advisory_first_seen")
+    pairs = memo.items() if isinstance(memo, dict) else ()
     return {str(fp): str(seen) for fp, seen in pairs if fp and seen}
 
 
 def advisory_rows(advisories: list, state: dict, today: str) -> list:
     """D33 advisory → 落盘行 `{kind, text, ref, fingerprint, first_seen}`（≤ ADVISORIES_CAP）。
-    `first_seen` 从上一轮同指纹的行继承——「launchd claude 从 09-01 就红着」比
-    「今天红」有用得多；隔天消失再出现 = 重新计日。"""
+    `first_seen` 从 `state.advisory_first_seen` 里同指纹继承——「launchd claude 从 09-01
+    就红着」比「今天红」有用得多；隔天消失再出现 = 重新计日。备忘与 `last_result.advisories`
+    分开放：提案阶段抛异常那天 advisories 为空（没观察到就不说），备忘却不动，第二天照旧继承。"""
     prior = _prior_first_seen(state)
     return [{"kind": s.kind, "text": s.text, "ref": s.ref, "fingerprint": s.fingerprint,
              "first_seen": prior.get(s.fingerprint, today)}

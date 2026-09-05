@@ -613,6 +613,14 @@
   color: var(--text-tertiary);
 }
 
+/* 三列里只有中间的说明文字可以换行；日期列不缩不折（flex 项默认缩到 min-content，
+   820 宽时「since 2026-09-01」被拆成三行）、靠右对齐成一列 */
+.shell-banner-list .shell-banner-note {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;

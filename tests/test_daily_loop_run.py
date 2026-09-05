@@ -144,8 +144,23 @@ class RunTestCase(_Sandbox):
         self.assertEqual(len([r for r in registry.load_all() if r.title.startswith("🤖 ")]), 0)
         # gone for a day → the row drops out; back the day after → a fresh first_seen
         daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=2), gh=_gh_none, doctor=lambda: "[]")
+        self.assertEqual(daily_loop.load_state()["advisory_first_seen"], {})
         back = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=3), gh=_gh_none, doctor=_doctor_fail)
         self.assertEqual(back["advisories"][0]["first_seen"], "2026-09-05")
+        self.assertEqual(daily_loop.load_state()["advisory_first_seen"], {"doctor_fail:launchd claude": "2026-09-05"})
+
+    def test_a_failed_proposals_phase_keeps_the_first_seen_memory(self):
+        # day 1 red → day 2 the proposals phase blows up (corrupt registry) → day 3 red again:
+        # the failed day reports no advisories (nothing was observed) but does not forget since when
+        daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
+        with mock.patch.object(registry, "load_all", side_effect=ValueError("corrupt yaml")):
+            broken = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=1), gh=_gh_none, doctor=_doctor_fail)
+        self.assertEqual(broken["advisories"], [])
+        self.assertTrue(any(e.startswith("proposals: ValueError") for e in broken["errors"]))
+        self.assertEqual(daily_loop.load_state()["last_result"]["advisories"], [])
+        self.assertEqual(daily_loop.load_state()["advisory_first_seen"], {"doctor_fail:launchd claude": "2026-09-02"})
+        again = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=2), gh=_gh_none, doctor=_doctor_fail)
+        self.assertEqual(again["advisories"][0]["first_seen"], "2026-09-02")
 
     def test_material_gets_proposed_and_the_ledger_is_written_back(self):
         from act.lib import loop_inputs, materials

@@ -75,8 +75,12 @@ describe("describeMaintenance", () => {
     const d = describeMaintenance(maint(), en, NOW);
     expect(d?.kind).toBe("summary");
     expect(d?.message).toBe("Today's tidy-up: 1 merged · 9 cleaned up (undoable) · 3 proposed");
+    expect(d?.trashed).toBe(true);
     const zh = describeMaintenance(maint(), (z) => z, NOW);
     expect(zh?.message).toBe("今日整理：合并 1、清理 9（可撤销）、提案 3");
+    // merges also send the old cards to the trash → still restorable; proposals alone do not
+    expect(describeMaintenance(maint({ last_result: { merged: 2, trashed: 0, proposals: 0 } }), en, NOW)?.trashed).toBe(true);
+    expect(describeMaintenance(maint({ last_result: { merged: 0, trashed: 0, proposals: 1 } }), en, NOW)?.trashed).toBe(false);
   });
 
   it("stays quiet for yesterday's run or an all-zero run", () => {
@@ -89,6 +93,11 @@ describe("describeMaintenance", () => {
     const d = describeMaintenance(maint({ last_result: { merged: 0, trashed: 0, proposals: 0, advisories: ADVISORIES } }), en, NOW);
     expect(d?.kind).toBe("summary");
     expect(d?.advisories).toEqual(ADVISORIES);
+    // nothing merged / cleaned / proposed → say so instead of three zeros, and promise no undo
+    expect(d?.message).toBe("Today's tidy-up: nothing to change");
+    expect(d?.trashed).toBe(false);
+    const zh = describeMaintenance(maint({ last_result: { merged: 0, trashed: 0, proposals: 0, advisories: ADVISORIES } }), (z) => z, NOW);
+    expect(zh?.message).toBe("今日整理：看板无变动");
     expect(describeMaintenance(maint(), en, NOW)?.advisories).toEqual([]);
     // running says nothing about advisories; garbage rows are dropped, not rendered
     expect(describeMaintenance(maint({ phase: "dedup", started_at: nowS - 30 }), en, NOW)?.advisories).toEqual([]);
@@ -126,7 +135,9 @@ describe("<MaintenanceBanner />", () => {
     await refreshBoard();
     renderBanner();
     const status = screen.getByRole("status");
-    expect(status.textContent).toContain("0 proposed");
+    expect(status.textContent).toContain("nothing to change");
+    expect(status.textContent).not.toContain("0 proposed");
+    expect(screen.queryByRole("link")).toBeNull();                 // nothing went to the trash → no undo link
     const toggle = screen.getByRole("button", { name: /2 self-check notes/ });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("list")).toBeNull();
@@ -141,6 +152,15 @@ describe("<MaintenanceBanner />", () => {
     fireEvent.click(toggle);
     expect(screen.queryByRole("list")).toBeNull();
     expect(status.className).not.toContain("is-open");
+  });
+
+  it("keeps the trash link next to the toggle when something was actually trashed", async () => {
+    fetchBoardMock.mockResolvedValue(board(maint({ last_run_at: Date.now() / 1000 - 60,
+      last_result: { merged: 0, trashed: 2, proposals: 0, advisories: ADVISORIES } })));
+    await refreshBoard();
+    renderBanner();
+    expect(screen.getByRole("status").textContent).toContain("2 cleaned up (undoable)");
+    expect(screen.getByRole("button", { name: /2 self-check notes/ })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Restore from the trash" })).toBeTruthy();
   });
 

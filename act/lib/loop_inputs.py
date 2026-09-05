@@ -16,9 +16,11 @@
   只出摘要行（``Summary``），owner 在 issue 评论里回「do it」才升格为提案。
 - **两类信号（D33，2026-09-04）**：`CARD_KINDS`（GitHub 面 + owner 亲手放的素材）
   照旧铸卡；`ADVISORY_KINDS`（自检类——派发卡死 / 日志刷屏 / doctor 红灯……）
-  只转成 ``Summary`` 进 digest 与看板横幅，**不铸可派发的卡**：这一周 15 张循环卡
-  里 9 张是同一根因（launchd 起的 claude 没有完全磁盘访问）的症状，代码改不了，
-  循环也分不清「owner 要点一下授权」与「代码有 bug」。doctor 判 `owner_action`
+  只转成 ``Summary`` 落 `state/daily_loop.json` 的 `last_result.advisories`、审计行与
+  看板横幅（不进 §17 digest），**不铸可派发的卡**：这一周 15 张循环卡里 9 张是同一
+  根因（launchd 起的 claude 没有完全磁盘访问）的症状，代码改不了，循环也分不清
+  「owner 要点一下授权」与「代码有 bug」。铸卡是**白名单**：kind 不在 CARD_KINDS
+  的一律 advisory（没归类的新 kind 默认走便宜的那条路）；doctor 判 `owner_action`
   的行（§25 `failures.OWNER_ACTION`）不论 kind 一律 advisory（belt and braces）。
 """
 from __future__ import annotations
@@ -104,7 +106,7 @@ class Summary:
     fingerprint: str = ""
 
 
-# D33 两类信号（truth = 本文件；判例 tests/test_daily_loop_proposals.py 钉住
+# D33 两类信号（truth = 本文件；判例 tests/test_daily_loop_proposals.py 走 AST 钉住
 # 每个 Signal 构造点的 kind 都归在其中一类）。CARD_KINDS 铸提案卡进审批闸门；
 # ADVISORY_KINDS 只出 Summary——它们说的是「环境 / 运行状态不对」，多半要 owner
 # 亲手做点什么（授权、装依赖），不是一张能派给 agent 的活。
@@ -115,10 +117,11 @@ ADVISORY_TEXT_CAP = 300
 
 
 def is_advisory(sig: Signal) -> bool:
-    """D33：kind 在 ADVISORY_KINDS，或 ref 是 §25 owner_action 类的 failure_id
-    （doctor 行把 failure_id 放在 ref）——后者不论 kind 都不铸卡，修法是 owner
-    亲手点一次授权，代码改不了。"""
-    return sig.kind in ADVISORY_KINDS or failures.row_class(sig.ref) == failures.OWNER_ACTION
+    """D33：kind 不在 CARD_KINDS（铸卡是白名单——ADVISORY_KINDS 里的，以及日后没归类的
+    新 kind，都走这条），或 ref 是 §25 owner_action 类的 failure_id（doctor 行把
+    failure_id 放在 ref）——后者不论 kind 都不铸卡，修法是 owner 亲手点一次授权，
+    代码改不了。"""
+    return sig.kind not in CARD_KINDS or failures.row_class(sig.ref) == failures.OWNER_ACTION
 
 
 def as_advisory(sig: Signal) -> Summary:
