@@ -14,7 +14,9 @@
 // Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
 // 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
 // hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
-// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）住在 ShellSupport.swift，§54 追记。
+// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）与主菜单纯表（MenuSpec：双语标题、
+// 设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 / 缩放，随 LanguageStore
+// 切换整个重建）住在 ShellSupport.swift，§54 追记；本文件只装菜单、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -27,6 +29,7 @@
 // 仅仅 attach 上去的既有 server 绝不动手（它属于 launchd 或另一个 shell）。
 
 import AppKit
+import Combine
 import WebKit
 
 // MARK: - ShellConfig（启动期一次性解析，全部只读）
@@ -105,13 +108,17 @@ enum ShellConfig {
 
     static var boardURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
     static var probeURL: URL { URL(string: "http://127.0.0.1:\(port)/api/board")! }
-    /// 设置页深链（web route.ts `?page=settings`；anchor 由页面自己滚动）。
-    static func settingsURL(anchor: String) -> URL {
+    /// 看板深链（web route.ts `?page=<page>`：about / permissions / settings…；路径仍是 `/`，
+    /// 所以 ExternalLinkPolicy 判 board、留在壳内加载）。
+    static func pageURL(_ page: String, anchor: String? = nil) -> URL {
         var c = URLComponents(url: boardURL, resolvingAgainstBaseURL: false)!
-        c.queryItems = [URLQueryItem(name: "page", value: "settings"),
-                        URLQueryItem(name: "anchor", value: anchor)]
+        var items = [URLQueryItem(name: "page", value: page)]
+        if let anchor { items.append(URLQueryItem(name: "anchor", value: anchor)) }
+        c.queryItems = items
         return c.url ?? boardURL
     }
+    /// 设置页深链（anchor 由页面自己滚动）。
+    static func settingsURL(anchor: String) -> URL { pageURL("settings", anchor: anchor) }
 
     static let logDir: String =
         ("~/Library/Logs/zelin-ai-assistant" as NSString).expandingTildeInPath
@@ -264,6 +271,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var engineTick: Timer?
     /// `webView.title` → `window.title` 的 KVO 句柄（§54 追记：标题跟随页面）。
     private var titleObservation: NSKeyValueObservation?
+    /// `LanguageStore.$lang` 订阅句柄（§54 追记：主菜单随界面语言重建）。
+    private var menuLanguage: AnyCancellable?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
@@ -277,27 +286,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self?.openSettingsPage(anchor: anchor)
         }
         ShellWindow.show = { [weak self] in self?.showWindow() }
-        buildMenu()
+        // 主菜单随界面语言重建（原生 Store.swift `/lang` 与设置页保存后 `app.installMainMenu()`
+        // 的壳版）：`$lang` 订阅时先同步发当前值 = 首次安装（窗口建起前菜单已在）；之后页面每次
+        // 经桥 `setLanguage` 改语言（ShellBridge.swift，不动它）再发一次。@Published 在 willSet
+        // 发值，sink 跑到时 LanguageMirror / L() 还是旧语言——所以 MenuSpec 显式吃这里收到的 lang。
+        menuLanguage = LanguageStore.shared.$lang
+            .removeDuplicates()
+            .sink { [weak self] lang in self?.installMainMenu(lang: lang) }
         buildWindow()
         connectOrSpawn()
         startEngines()
         startNativeResidue()
     }
 
-    /// §65.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
-    /// 全局快速捕获快捷键（⌃⌥Space → 前置窗口 + 向页面推 quick_capture）。
+    /// §68.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
+    /// 全局快速捕获快捷键（⌃⌥Space → 与 显示 → 聚焦捕获框 ⌘L 同一条路 focusCaptureField）。
     private func startNativeResidue() {
         NotifyRelayDelegate.install()
         PermissionsProbe.shared.refresh()
-        QuickCaptureHotkey.shared.onFire = { [weak self] in
-            guard let self else { return }
-            self.showWindow()
-            if self.webView.url?.host == "127.0.0.1" {
-                self.bridge.pushCommand("quick_capture")
-            } else {
-                self.loadBoard()
-            }
-        }
+        QuickCaptureHotkey.shared.onFire = { [weak self] in self?.focusCaptureField(nil) }
         QuickCaptureHotkey.shared.register()
     }
 
@@ -382,10 +389,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// 字幕悬浮窗齿轮 → 看板设置页（`?page=settings&anchor=<anchor>`）。
-    private func openSettingsPage(anchor: String) {
+    /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口 + 加载深链（`?page=…` 是看板 origin 上的
+    /// `/`，ExternalLinkPolicy 判 board）。还停在内嵌 splash / 失败页时同样直接加载：server 已
+    /// 上线就落到想去的那页，还没上线则加载失败、splash 原地不动（WKWebView 不渲染错误页）。
+    private func openBoardPage(_ url: URL) {
         showWindow()
-        webView.load(URLRequest(url: ShellConfig.settingsURL(anchor: anchor)))
+        webView.load(URLRequest(url: url))
+        window.makeFirstResponder(webView)
+    }
+
+    /// 字幕悬浮窗齿轮 / app 菜单「设置…」⌘, → 看板设置页（`?page=settings&anchor=<anchor>`）。
+    private func openSettingsPage(anchor: String) {
+        openBoardPage(ShellConfig.settingsURL(anchor: anchor))
     }
 
     // MARK: window / webview
@@ -583,7 +598,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         alert.runModal()
     }
 
-    // MARK: menu
+    // MARK: menu（§54 追记「菜单 l10n」：表在 ShellSupport.swift MenuSpec，这里只装与执行）
+
+    /// 把 `MenuSpec.menus(lang:)` 装成 NSMenu（原生 installMainMenu 的壳版）。每次语言切换整个重建
+    /// ——NSMenu 不观察任何东西，与原生同款。壳动作显式 target 到 delegate（不赌 responder chain）；
+    /// AppKit 标准动作 nil target 走 first-responder 链（webview 里的输入框吃 ⌘C/⌘V/⌘Z）。
+    /// 刻意没有 Find / ⌘1..7：⌘F 与切页不被菜单截胡，落到 WKWebView 再进页面（board 自己绑了）。
+    private func installMainMenu(lang: String) {
+        let main = NSMenu()
+        for spec in MenuSpec.menus(lang: lang, appName: ShellConfig.displayName) {
+            let top = NSMenuItem()
+            main.addItem(top)
+            let menu = NSMenu(title: spec.title)
+            top.submenu = menu
+            for item in spec.items {
+                switch item.action {
+                case .separator:
+                    menu.addItem(.separator())
+                case .responder(let name):
+                    let mi = NSMenuItem(title: item.title, action: Selector(name),
+                                        keyEquivalent: item.key)
+                    if item.option { mi.keyEquivalentModifierMask = [.command, .option] }
+                    menu.addItem(mi)
+                case .shell(let action):
+                    let mi = NSMenuItem(title: item.title, action: selector(for: action),
+                                        keyEquivalent: item.key)
+                    mi.target = self
+                    menu.addItem(mi)
+                }
+            }
+            if spec.isWindowsMenu { NSApp.windowsMenu = menu }
+        }
+        NSApp.mainMenu = main
+    }
+
+    /// MenuSpec.ShellAction → 本 delegate 的 @objc 方法（原生 AppDelegate 同名）。
+    private func selector(for action: MenuSpec.ShellAction) -> Selector {
+        switch action {
+        case .about: return #selector(openAboutPage(_:))
+        case .settings: return #selector(openSettingsPage(_:))
+        case .permissions: return #selector(openPermissionsPage(_:))
+        case .reload: return #selector(reloadPage(_:))
+        case .focusCapture: return #selector(focusCaptureField(_:))
+        }
+    }
+
+    /// 关于 → 看板 `?page=about`（原生 openAboutPage：MainNav.section = .about；不是系统 About 面板）。
+    @objc private func openAboutPage(_ sender: Any?) {
+        openBoardPage(ShellConfig.pageURL("about"))
+    }
+
+    /// 设置… ⌘, → 设置页顶部（原生 openSettingsPage：MainNav.section = .settings；`general` 是第一区）。
+    @objc private func openSettingsPage(_ sender: Any?) {
+        openSettingsPage(anchor: "general")
+    }
+
+    /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow：PermissionsWindowController.show）。
+    @objc private func openPermissionsPage(_ sender: Any?) {
+        openBoardPage(ShellConfig.pageURL("permissions"))
+    }
 
     @objc private func reloadPage(_ sender: Any?) {
         // ⌘R：已经在 board 上就 reload；还停在内嵌 splash/失败页则重走同一套
@@ -595,79 +668,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// 标准菜单骨架。刻意不放 Find 菜单项——⌘F 不被菜单截胡，落到 WKWebView
-    /// 再进页面（board 自己绑定了 Cmd+F 搜索）。
-    private func buildMenu() {
-        let main = NSMenu()
-
-        // App menu：About / Hide / Quit ⌘Q
-        let appItem = NSMenuItem()
-        main.addItem(appItem)
-        let appMenu = NSMenu()
-        appItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(
-            title: "About \(ShellConfig.displayName)",
-            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-            keyEquivalent: ""))
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(
-            title: "Hide \(ShellConfig.displayName)",
-            action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(
-            title: "Quit \(ShellConfig.displayName)",
-            action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-
-        // File menu：Close ⌘W
-        let fileItem = NSMenuItem()
-        main.addItem(fileItem)
-        let fileMenu = NSMenu(title: "File")
-        fileItem.submenu = fileMenu
-        fileMenu.addItem(NSMenuItem(
-            title: "Close Window",
-            action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-
-        // Edit menu：nil-target 标准编辑链——webview 里的输入框要吃 ⌘C/⌘V/⌘Z。
-        let editItem = NSMenuItem()
-        main.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit")
-        editItem.submenu = editMenu
-        editMenu.addItem(NSMenuItem(
-            title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(
-            title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(
-            title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(
-            title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(
-            title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(
-            title: "Select All",
-            action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
-
-        // View menu：Reload ⌘R（显式 target 到 delegate，不赌 responder chain）
-        let viewItem = NSMenuItem()
-        main.addItem(viewItem)
-        let viewMenu = NSMenu(title: "View")
-        viewItem.submenu = viewMenu
-        let reload = NSMenuItem(
-            title: "Reload", action: #selector(reloadPage(_:)), keyEquivalent: "r")
-        reload.target = self
-        viewMenu.addItem(reload)
-
-        // Window menu：标准最小化/前置
-        let winItem = NSMenuItem()
-        main.addItem(winItem)
-        let winMenu = NSMenu(title: "Window")
-        winItem.submenu = winMenu
-        winMenu.addItem(NSMenuItem(
-            title: "Minimize",
-            action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
-        NSApp.windowsMenu = winMenu
-
-        NSApp.mainMenu = main
+    /// 显示 → 聚焦捕获框 ⌘L 与 全局 ⌃⌥Space 同一条路（原生 focusCaptureField 的壳版，§68.13）：
+    /// 前置窗口 + 向页面推 `quick_capture`（app.tsx 聚焦提案列 composer，不在看板页先回看板）；
+    /// 还停在 splash 上则先加载看板（页面 mount 后 composer 自然在，命令这次不补发）。
+    @objc private func focusCaptureField(_ sender: Any?) {
+        showWindow()
+        if webView.url?.host == "127.0.0.1" {
+            bridge.pushCommand("quick_capture")
+        } else {
+            loadBoard()
+        }
     }
 }
 
