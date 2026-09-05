@@ -253,6 +253,70 @@ func run() {
         target: UserDefaults(suiteName: targetName + ".b")!, source: nil)
     check(noSource.isEmpty, "no native domain → nothing copied, no crash")
     UserDefaults(suiteName: targetName + ".b")?.removePersistentDomain(forName: targetName + ".b")
+
+    // ---- 6. §68.7 terminal takeover: launcher quoting / setting resolution, queue relay, heartbeat ----
+    print("[6] TerminalLauncher + TerminalRelay (issue #216):")
+    // quoting layers: single-quote the whole shell line, then AppleScript-escape it
+    check(TerminalLauncher.shellSingleQuoted("a 'b' c") == "'a '\\''b'\\'' c'", "POSIX single-quoting closes–escapes–reopens")
+    check(TerminalLauncher.appleScriptQuoted("say \"hi\" \\ there") == "\"say \\\"hi\\\" \\\\ there\"", "AppleScript literal escapes \\ and \"")
+    let ghostty = TerminalLauncher.script(for: .ghostty, command: "claude --resume x")
+    check(ghostty.contains("new tab in window 1 with configuration {command:\"/bin/zsh -lc 'claude --resume x'\"}")
+          && ghostty.contains("new window with configuration"), "Ghostty script: new tab in window 1, else new window",
+          ghostty)
+    check(TerminalLauncher.script(for: .terminal, command: "claude --resume x").contains("do script \"claude --resume x\""),
+          "Terminal.app script: do script <line>")
+    check(TerminalLauncher.script(for: .iterm2, command: "claude").contains("create window with default profile command \"/bin/zsh -lc 'claude'\""),
+          "iTerm2 script: create window with default profile command")
+    check(TerminalLauncher.bootstrapped("claude").hasPrefix(TerminalLauncher.pathBootstrap)
+          && TerminalLauncher.bootstrapped("claude").hasSuffix("claude"), "executed line = PATH bootstrap + raw command")
+    // terminal_app setting (server-owned, §68.1) resolved against installed apps — mirrors server resolve_terminal
+    let onlyTerminal: (TerminalApp) -> Bool = { $0 == .terminal }
+    let all: (TerminalApp) -> Bool = { _ in true }
+    check(TerminalLauncher.resolve(setting: "auto", installed: all) == .ghostty, "auto → Ghostty when installed")
+    check(TerminalLauncher.resolve(setting: "auto", installed: onlyTerminal) == .terminal, "auto → Terminal when Ghostty absent")
+    check(TerminalLauncher.resolve(setting: "iterm2", installed: all) == .iterm2, "explicit iterm2 wins when installed")
+    check(TerminalLauncher.resolve(setting: "iterm2", installed: onlyTerminal) == .terminal, "uninstalled choice falls back like auto")
+    check(TerminalLauncher.resolve(setting: "bogus", installed: all) == .ghostty, "unknown value = auto")
+    check(TerminalLauncher.resolve(setting: nil, installed: onlyTerminal) == .terminal, "missing override = auto")
+    // queue relay in the sandboxed AIASSISTANT_HOME: parse shape, stale + malformed dropped, fresh launched oldest-first, consumed
+    let fm = FileManager.default
+    let qdir = TerminalRelay.queueDir
+    check(qdir.hasPrefix(AppPaths.stateRoot) && qdir.hasSuffix("/state/terminal_queue"), "queue dir = <home>/state/terminal_queue")
+    try? fm.createDirectory(atPath: qdir, withIntermediateDirectories: true)
+    let now: TimeInterval = 1_700_000_000
+    func writeEntry(_ name: String, _ obj: [String: Any]) {
+        let data = try! JSONSerialization.data(withJSONObject: obj)
+        fm.createFile(atPath: qdir + "/" + name, contents: data)
+    }
+    writeEntry("b.json", ["id": "b", "kind": "takeover", "command": "claude", "shell_line": "exec claude", "created_at": now - 2])
+    writeEntry("a.json", ["id": "a", "kind": "maintainer", "command": "cd /r && claude", "shell_line": "cd /r; exec claude", "created_at": now - 30])
+    writeEntry("old.json", ["id": "old", "kind": "takeover", "command": "claude", "shell_line": "exec claude", "created_at": now - TerminalRelay.staleAfter - 1])
+    writeEntry("bad.json", ["id": "bad", "kind": "takeover"])          // no shell_line → malformed
+    fm.createFile(atPath: qdir + "/half.json.tmp", contents: Data("{".utf8))   // in-flight server write: never touched
+    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "exec c", "created_at": 1.0]) != nil,
+          "parse accepts the server entry shape")
+    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "", "created_at": 1.0]) == nil,
+          "parse rejects an empty shell_line")
+    var launched: [String] = []
+    let drained = TerminalRelay.drain(now: now) { launched.append($0.id + ":" + $0.shellLine) }
+    check(launched == ["a:cd /r; exec claude", "b:exec claude"], "fresh entries launched oldest first, stale/malformed never launched", "\(launched)")
+    check(drained.map(\.kind) == ["maintainer", "takeover"], "drain returns what it handed to launch")
+    let left = (try? fm.contentsOfDirectory(atPath: qdir))?.sorted() ?? []
+    check(left == ["half.json.tmp"], "consumed + stale + malformed entries deleted; the .tmp in-flight write is left alone", "\(left)")
+    check(TerminalRelay.drain(now: now) { _ in check(false, "nothing to launch on an empty queue") }.isEmpty, "empty queue → no launches")
+    check(TerminalRelay.staleAfter == 60 && TerminalRelay.tickInterval == 1.0, "stale threshold 60 s (server STALE_AFTER_S), 1 s tick")
+    // heartbeat: beat creates/touches state/shell.heartbeat, stop removes it
+    ShellHeartbeat.stop()
+    check(!fm.fileExists(atPath: ShellHeartbeat.path), "no heartbeat before the first beat")
+    ShellHeartbeat.beat(now: Date(timeIntervalSince1970: now - 100))
+    let beat1 = (try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.modificationDate] as? Date
+    ShellHeartbeat.beat(now: Date(timeIntervalSince1970: now))
+    let beat2 = (try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.modificationDate] as? Date
+    check(ShellHeartbeat.path.hasSuffix("/state/shell.heartbeat"), "heartbeat path = <home>/state/shell.heartbeat")
+    check(beat1 != nil && beat2 != nil && beat2! > beat1!, "beat touches the mtime forward", "\(String(describing: beat1)) → \(String(describing: beat2))")
+    check((try? String(contentsOfFile: ShellHeartbeat.path, encoding: .utf8))?.hasPrefix("pid=") == true, "heartbeat body carries the pid")
+    ShellHeartbeat.stop()
+    check(!fm.fileExists(atPath: ShellHeartbeat.path), "stop removes the heartbeat (server flips to 503 at once)")
 }
 
 MainActor.assumeIsolated { run() }

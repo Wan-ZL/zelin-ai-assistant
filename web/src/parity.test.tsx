@@ -567,6 +567,16 @@ async function openEachDetail(root: ParentNode, pool: Set<string>) {
   }
 }
 
+/** ①b 双击每张带「单击复制指令 · 双击在终端接管」行的卡（#216：接管会话没有按钮，是整卡双击）——回执一句
+ *  「已在终端打开」/ 被拒时「打开终端失败」在卡尾的 role=status 小字里；没有指令行的卡双击 no-op，不点。 */
+function doubleClickTakeovers(root: ParentNode, pool: Set<string>) {
+  for (const line of Array.from(root.querySelectorAll<HTMLButtonElement>("button.card-copy-line"))) {
+    const card = line.closest("article");
+    if (card) fireEvent.doubleClick(card);
+  }
+  collectLabels(document.body, pool);
+}
+
 /** 把页面上每颗按钮点一遍（弹窗 / 菜单展开后的文案也要收），失败的点击静默跳过。
  *  三轮：② 开弹窗的按钮（每点一下收一遍——同一张卡上后开的弹窗会顶掉先开的）
  *  ③ 轮换提交（rotateSubmits）④ 其余。动作按钮（批准 / 暂缓…）会把卡切到 pending 态并
@@ -671,7 +681,11 @@ async function renderSurface(language: Language, page: Surface) {
   if (page === "settings") await refreshSettings();
   await settle(pool);
   collectLabels(document.body, pool);
-  if (page === "board") await openEachDetail(view.container, pool);
+  if (page === "board") {
+    await openEachDetail(view.container, pool);
+    doubleClickTakeovers(view.container, pool); // ①b 双击接管 → 「已在终端打开」（#216）
+    await settle(pool);
+  }
   clickEverything(view.container, pool, page !== "board", page === "ingest");
   await settle(pool);
   if (page === "board") {
@@ -964,7 +978,8 @@ async function renderBoardRejectVariant(language: Language) {
   });
   clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer button")), pool);
   await settle(pool);
-  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /在终端接管|Open in Terminal|让 AI 修|Fix with AI/.test(b.textContent ?? "")), pool);
+  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /让 AI 修|Fix with AI/.test(b.textContent ?? "")), pool);
+  doubleClickTakeovers(view.container, pool); // 接管会话被拒 → 「打开终端失败」（#216：双击整卡，不再有按钮）
   await settle(pool);
   await settle(pool);
   cleanup();

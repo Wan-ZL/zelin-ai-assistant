@@ -280,6 +280,13 @@
 .card-copy-line:hover { color: var(--text-primary); text-decoration: underline; }
 .card-copy-line.is-copied { color: var(--success); }
 
+/* 双击接管的回执 / 降级提示（#216，CardSurface 卡尾一行 role=status 小字）：靠左、可折行——
+   原生 CopyPathLine 的 launched / launchFailed 两句同色（次级 / --danger 由 .is-danger 给） */
+.card-takeover-status {
+  align-self: flex-start;
+  white-space: normal;
+}
+
 /* —— 「展开详情 ▸」（原生 CardSurface 详情槽 toggle 的字面与位置；D34 起打开右侧详情侧栏——
    卡片详情只有侧栏一面，就地展开退役，卡面永远收起态）—— */
 .card-details-toggle {

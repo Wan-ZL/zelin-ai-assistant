@@ -454,7 +454,8 @@ export function fetchClaudeSessions(window = 7, signal?: AbortSignal): Promise<C
   return request<ClaudeSessionsScan>(`/api/claude-sessions?window=${window}`, { signal });
 }
 
-/** POST /api/terminal — 在终端接管会话（命令由 server 从投影推导；客户端只传 card_id） */
+/** POST /api/terminal — 在终端接管会话（双击卡片，§68.7 / issue #216）：命令由 server 从投影推导、入队给壳；客户端只传 card_id。
+ *  501（非 darwin）/ 503 SHELL_UNAVAILABLE（壳没在跑）= 页面降级为复制指令（terminalTakeover.ts） */
 export function postTerminal(cardId: string): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/terminal", { method: "POST", body: JSON.stringify({ card_id: cardId }) });
 }

@@ -15,7 +15,7 @@ import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
 import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
-import { AiFixButton, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
+import { AiFixButton, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -77,7 +77,9 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   const stateWord = isBlocked ? text("需输入", "Needs input") : isQueued ? text("排队中", "Queued") : stateLabel(row.state, text);
 
   return (
-    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`}>
+    // 双击整卡 = 在终端接管（§68.7，issue #216）：有会话命令的卡才响应——排队卡 cmd 为空即 no-op；
+    // 受阻卡也给（§39「把会话接到终端里」的第二条路）
+    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`} takeoverCmd={cmd}>
       <CardHead
         card={row}
         title={title}
@@ -187,8 +189,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           <button type="button" className="btn btn-warning" onClick={() => setDialog("stop")}>
             {text("停止", "Stop")}
           </button>
-          {/* §68.7 在终端接管（原生双击指令行 → 终端）：有会话指令的执行卡才给 */}
-          {!isBlocked && !isQueued && cmd && <TerminalButton cardId={row.id} />}
+          {/* 「在终端接管」按钮已砍（issue #216）：单击指令行复制、双击整卡接管（CardSurface takeoverCmd） */}
           <DetailsToggle cardId={row.id} />
         </div>
       )}

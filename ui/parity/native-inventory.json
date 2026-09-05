@@ -192,7 +192,7 @@
       "terminalApp": {
         "landing": "\"terminal_app\"",
         "owner": "server",
-        "reason": "「在终端打开」的执行者是 server（open -a，§68.7）——偏好落 settings_overrides terminal_app"
+        "reason": "「在终端打开」的偏好落 settings_overrides terminal_app（server 是写者，§68.1）——执行者 2026-09-05 起是壳（Apple Events，§68.7 追记），壳只读这把旋钮"
       },
       "vaultAccessGranted": {
         "owner": "shell",
@@ -15715,7 +15715,7 @@
       "landing": "\"terminal_app\"",
       "owner": "server",
       "probe": "server_source",
-      "reason": "「在终端打开」的执行者是 server（open -a，§68.7）——偏好落 settings_overrides terminal_app",
+      "reason": "「在终端打开」的偏好落 settings_overrides terminal_app（server 是写者，§68.1）——执行者 2026-09-05 起是壳（Apple Events，§68.7 追记），壳只读这把旋钮",
       "sources": [
         "Settings.swift:601",
         "TerminalLauncher.swift:88"

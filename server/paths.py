@@ -73,6 +73,18 @@ def settings_overrides_path(home: Path) -> Path:
     return home / "state" / "settings_overrides.json"
 
 
+def terminal_queue_dir(home: Path) -> Path:
+    # §68.7（2026-09-05，issue #216）：终端接管的 launch 请求队列——server 唯一写者、壳
+    # （shell/Sources/TerminalRelay.swift）唯一消费者；形制照 §28 state/notify_queue
+    return home / "state" / "terminal_queue"
+
+
+def shell_heartbeat_path(home: Path) -> Path:
+    # §68.7 / §68.13：壳每 5 s tick touch 一次、退出时删除——server 据 mtime 判「壳在跑」
+    # （队列有没有消费者），新鲜阈值 truth = server/terminal_launch.HEARTBEAT_FRESH_S
+    return home / "state" / "shell.heartbeat"
+
+
 def secrets_dir(home: Path) -> Path:
     # §19：act/lib/secrets.SECRETS_DIR（HOME / config / secrets；dir 0700 / file 0600）
     return home / "config" / "secrets"

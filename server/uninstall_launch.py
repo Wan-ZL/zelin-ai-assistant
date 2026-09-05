@@ -2,10 +2,11 @@
 ``POST /api/uninstall/terminal {}``。
 
 原生 Pages.swift AboutView.confirmUninstall：确认后在 Terminal.app 里跑 repo 的 ``uninstall.sh``
-（交互式，脚本自己再问一次、任务历史与密钥默认保留）。web 版沿用 terminal_launch 的 ``.command`` +
-``open`` 通道：server 写一个 ``cd <repo> && exec bash uninstall.sh`` 的 .command 并打开——**server 自己
-不删任何东西**，删的是用户在终端里亲手确认的脚本。脚本缺席 404（原生「找不到卸载脚本」）；非 darwin 501；
-open 失败 500 带手动命令（原生「请手动在 Terminal 里运行：…」）。
+（交互式，脚本自己再问一次、任务历史与密钥默认保留）。web 版走 terminal_launch 的队列通道（§68.7，
+2026-09-05 起：server 入队 ``cd <repo>; exec bash uninstall.sh``、壳经 Apple Events 开终端；
+``.command`` + ``open`` 已 retired）——**server 自己不删任何东西**，删的是用户在终端里亲手确认的脚本。
+脚本缺席 404（原生「找不到卸载脚本」）；非 darwin 501；壳没在跑 503 / 入队失败 500 都带手动命令
+（原生「请手动在 Terminal 里运行：…」）。
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from typing import Optional
 
 from server import paths
 from server.errors import ApiError, NotFoundError, NotImplementedError501, UnknownFieldError
-from server.terminal_launch import Opener, open_command_file, write_command_file
+from server.terminal_launch import enqueue, require_shell, shell_line_for
 
 SCRIPT_NAME = "uninstall.sh"
 
@@ -26,21 +27,12 @@ def script_path() -> Path:
 
 
 def shell_command() -> str:
-    """用户手动可跑的一行（open 失败时原样给页面显示）。"""
+    """用户手动可跑的一行（开不了终端时原样给页面显示）。"""
     return "cd %s && bash %s" % (shlex.quote(str(paths.repo_root())), SCRIPT_NAME)
 
 
-def _script_text() -> str:
-    return (
-        "#!/bin/bash\n"
-        "# Zelin's AI Assistant — uninstall (interactive; the script asks before removing anything)\n"
-        "cd %s || { echo \"repo not found: %s\"; exit 1; }\n"
-        "exec bash %s\n" % (shlex.quote(str(paths.repo_root())), paths.repo_root(), SCRIPT_NAME))
-
-
-def launch(payload: dict, opener: Optional[Opener] = None, out_dir: Optional[Path] = None,
-           platform: Optional[str] = None, home: Optional[Path] = None) -> dict:
-    """``{}`` → 写 .command → open → ``{"ok": true, "command": <手动命令>, "command_file": path}``。"""
+def _gates(payload: dict, platform: Optional[str]) -> None:
+    """多余字段 400 → 非 darwin 501 → 脚本缺席 404（带手动命令）。"""
     if payload:
         raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
     if (platform or sys.platform) != "darwin":
@@ -48,11 +40,25 @@ def launch(payload: dict, opener: Optional[Opener] = None, out_dir: Optional[Pat
     if not script_path().is_file():
         raise NotFoundError("uninstall script not found",
                             {"path": str(script_path()), "command": shell_command()})
-    path = write_command_file(_script_text(), out_dir)
+
+
+def _enqueue(home: Path, now: Optional[float]) -> "tuple[dict, Path]":
+    """壳在跑？→ 入队；503 / 500 的 details 都补上手动命令（原生「无法打开 Terminal」弹窗附带的那句，
+    add-only），页面原句照印。"""
+    repo = str(paths.repo_root())
     try:
-        open_command_file(path, opener, home)
+        require_shell(home, now)
+        return enqueue(home, "uninstall", shell_command(),
+                       shell_line_for("bash %s" % SCRIPT_NAME, repo, None), repo, now=now)
     except ApiError as exc:
-        # 原生「无法打开 Terminal」弹窗附带的手动命令：details 里带上（add-only），页面原句照印
         exc.details = dict(exc.details, command=shell_command())
         raise
-    return {"ok": True, "command": shell_command(), "command_file": str(path)}
+
+
+def launch(payload: dict, platform: Optional[str] = None, home: Optional[Path] = None,
+           now: Optional[float] = None) -> dict:
+    """``{}`` → 壳在跑？→ 入队 → ``{"ok": true, "command": <手动命令>, "queue_id", "command_file"}``
+    （``command_file`` = 队列条目路径，键名保留）。"""
+    _gates(payload, platform)
+    entry, path = _enqueue(home if home is not None else paths.home_dir(), now)
+    return {"ok": True, "command": shell_command(), "queue_id": entry["id"], "command_file": str(path)}

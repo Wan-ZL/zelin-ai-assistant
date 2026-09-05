@@ -29,9 +29,9 @@
   GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
   GET /api/setup/engine + POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
-  POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
+  POST /api/terminal（在终端接管会话：入队 state/terminal_queue 给壳，§68.7）、POST /api/repair/actd（横幅一键修复）。
 - Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
-  关于页 POST /api/uninstall/terminal（在 Terminal 跑 uninstall.sh 的 .command，server/uninstall_launch.py）；
+  关于页 POST /api/uninstall/terminal（入队「在终端跑 uninstall.sh」给壳，server/uninstall_launch.py）；
   开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
@@ -590,7 +590,7 @@ _POST_JSON_ROUTES = {
     "/api/setup/seed-dashboard": lambda ctx, payload: setup.seed_dashboard(ctx.home, payload),
     # §26 手动「立即检查」
     "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
-    # §68.6 关于页「在 Terminal 中卸载…」：.command + open，server 自己不删任何东西
+    # §68.6 关于页「在 Terminal 中卸载…」：入队给壳（§68.7 队列），server 自己不删任何东西
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
     "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
