@@ -9,10 +9,12 @@
 // `disabled` = 同 section 其它草稿值把这一格禁掉（原生 telemetry 组的 `.disabled(...)`，规则在 draftRules.isGated）；
 // 数字框的校验句按 kind：number 用原生 commitShowCost / commitConfirmAbove 的通式（示例数 = 目录 default），
 // int 的 trash_retention_days 用原生 commitTrashDays 的整句（Settings.swift:1727），其它 int 用整数通式。
-import { useI18n } from "../../i18n";
+// 带 `check`（§68.1 追记；今日词表 email）的 string 字段：保存前镜像 server 的同一条形状规则（draftRules.passesCheck），
+// 不合格 = aria-invalid + server-owned 的那句（原生 SettingsGmail.validateAddress 在 saveAddress 里拦），CatalogSection 据此不放行「保存」。
+import { useI18n, type Language } from "../../i18n";
 import type { SettingsField } from "../../types";
 import { pickText } from "./catalogText";
-import { isValidNumberDraft } from "./draftRules";
+import { isValidNumberDraft, passesCheck } from "./draftRules";
 import { FolderActions, FolderPicker } from "./FolderControls";
 
 export interface FieldControlProps {
@@ -24,6 +26,11 @@ export interface FieldControlProps {
   isBusy?: boolean;
   /** 被同 section 的其它草稿值禁用（联动；与 isBusy 的区别：整格淡显，不是保存中的瞬态） */
   disabled?: boolean;
+}
+
+/** 草稿值不合 field.check 的规则 → server-owned 的那句；合格 / 空值（= 清键，server 也不查）/ 无 check / 未知 kind → null */
+export function fieldProblem(field: SettingsField, value: unknown, language: Language): string | null {
+  return field.check && !passesCheck(field, value) ? pickText(field.check.message, language) : null;
 }
 
 /** 数字框的校验句（原生每个数字字段各有一句；web 按 kind + key 取，示例数 = 目录 default） */
@@ -137,21 +144,26 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
     // string 与 list 同一个文本框：list 的草稿是逗号分隔字串（CatalogSection.draftOf 拼、server 拆）
     const fallback = typeof field.default === "string" && field.default ? field.default : text("（未设置）", "(unset)");
     const isFolder = field.path === "dir";
+    const problem = fieldProblem(field, value, language);
     control = (
       <>
         <input
           id={id}
-          type="text"
+          type={field.check?.kind === "email" ? "email" : "text"}
           className="settings-input"
           value={typeof value === "string" ? value : ""}
           disabled={off}
           spellCheck={false}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? `${id}-problem` : undefined}
           placeholder={pickText(field.placeholder, language) || fallback}
           onChange={(event) => onChange(field.key, event.target.value)}
         />
         {isFolder && (
           <FolderPicker current={typeof value === "string" ? value : ""} disabled={off} onPick={(path) => onChange(field.key, path)} />
         )}
+        {/* 原生 addressNote 的错误态（validateAddress 那句，server-owned）；「保存」在 CatalogSection 里随之不放行 */}
+        {problem && <span id={`${id}-problem`} className="settings-warning">{problem}</span>}
       </>
     );
   }

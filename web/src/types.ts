@@ -701,6 +701,8 @@ export interface SettingsField {
   path?: "dir" | string;
   /** add-only：effective 值展开 ~ 后是不是目录；空值 null（无从判断）；老 server 缺席 */
   path_exists?: boolean | null;
+  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句（kind 词表今日 `email`）；老 server 缺席 */
+  check?: { kind: "email" | string; message: BilingualText };
   [key: string]: unknown;
 }
 

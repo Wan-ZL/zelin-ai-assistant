@@ -1,4 +1,4 @@
-"""server/settings_catalog.py — 设置页的通用 section 目录（CONTRACT §15.3 / §49 / §68）。
+"""server/settings_catalog.py — 设置页的通用 section 目录（CONTRACT §15.3 / §48.1 / §49 / §68）。
 
 原生 Settings.swift 的 20 个区里，凡是「一把旋钮 = settings_overrides.json 的一个
 键」的都收进这一张 server-owned 目录：每个 section 一组 field，每个 field 说明
@@ -19,6 +19,9 @@ UNKNOWN_FIELD；类型/取值不合法 400 INVALID_FIELD；落盘按 §15.3 v0.1
 ``write: "always"`` 的键（telemetry.capture_input——知情选择不可被静默 diff-drop）
 只要在 payload 里就落键。nested 拼法（``telemetry`` / ``features`` 块）写嵌套形并
 顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
+雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
+``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
+字段可带 ``check``（今日词表 ``email``）：server 400 + 目录投影双语句，web 镜像同一条规则。
 
 server/ 不 import act（§49）：override 键名、config 路径与默认值镜像自
 act/lib/config.py，判例 tests/test_server_settings_catalog.py 钉住每个键都在
@@ -45,23 +48,39 @@ LIST_MAX = 200          # list 字段：项数与每项长度的帽
 _TRUE_WORDS = frozenset({"true", "yes", "on", "1"})
 _FALSE_WORDS = frozenset({"false", "no", "off", "0"})
 
+# 字段校验词表（add-only，§68.1 追记）：kind → 不合格时的双语句。句子是 server-owned（防腐 #10）：目录投影
+# `check: {kind, message{zh,en}}`，web 保存前按同一条规则拦、显示同一句；server 侧 400 是非 web 客户端的兜底。
+# email = 原生 SettingsGmail.validateAddress 逐字（含 Workspace 提示）。
+CHECKS = {
+    "email": {"zh": "邮箱格式不对——例：you@gmail.com（公司 Google Workspace 邮箱也可以）",
+              "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)"},
+}
+
+# §48.1 合取写：雷达源开关 → 合取的另一半（flags 区的 feature flag 键）。原生 SettingsGmail.setEnabled /
+# SettingsSlack.persistFlag：打开 = 用户显式动作，把两个键都写进 override（yaml 里 features.<src>_radar:false
+# 仍压着雷达的话，只写开关会「显示开启、雷达静默」）；关闭只写单键（合取，一票否决）。
+RADAR_SWITCH_FLAGS = {"slack_enabled": "features.slack_radar", "gmail_enabled": "features.gmail_radar"}
+
 
 def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
        config: "tuple | None" = None, choices: "tuple | None" = None,
        help_zh: str = "", help_en: str = "", override: Optional[str] = None,
        write: str = "diff", placeholder: "tuple | None" = None,
-       path: Optional[str] = None) -> dict:
+       path: Optional[str] = None, check: Optional[str] = None) -> dict:
     """一条 field 描述（目录内部形；对外投影去掉 config/override/write 三个内部键）。
     ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。
     ``path``（add-only；今日词表 ``"dir"``）= 这是一个目录字段：投影多带 ``path`` 与 ``path_exists``
     （effective 值展开 ``~`` 后是不是目录；空值 → null），web 据此渲染 选择… / 打开 / 创建 与
-    「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。"""
+    「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。
+    ``check``（add-only；词表 = ``CHECKS`` 的键）= 值的形状校验：PUT 不合格 400，投影多带 ``check`` 供 web 镜像。"""
     zh_ph, en_ph = placeholder or ("", "")
+    if check is not None and check not in CHECKS:
+        raise ValueError("unknown check kind: %s" % check)
     return {"key": key, "kind": kind, "label": {"zh": zh, "en": en},
             "help": {"zh": help_zh, "en": help_en}, "default": default,
             "choices": list(choices) if choices else None, "config": config,
             "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph},
-            "path": path}
+            "path": path, "check": check}
 
 
 def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
@@ -171,6 +190,7 @@ SECTIONS: tuple = (
                help_en="Reads unread inbox mail into proposal cards (read-only, never sends). Credential: the Gmail app password below."),
             _f("gmail_address", "string", "Gmail 地址", "Gmail address", default="",
                config=("sources", "gmail", "address"), placeholder=("例：you@gmail.com", "e.g. you@gmail.com"),
+               check="email",
                help_zh="IMAP 登录用的邮箱地址；留空 = 用 config.yaml 里的值。",
                help_en="Address used for the IMAP login; blank = whatever config.yaml says."),
             _f("gmail_fetch_command", "string", "自定义抓取命令（B 路径）", "Custom fetch command (path B)", default="",
@@ -477,6 +497,9 @@ def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
         # add-only（§68.1 目录字段）：web 的 选择… / 打开 / 创建 与「目录不存在」警告据此渲染
         out["path"] = field["path"]
         out["path_exists"] = path_exists(value)
+    if field.get("check"):
+        # add-only（§68.1 追记）：web 保存前镜像同一条形状校验、显示同一句 server-owned 文案
+        out["check"] = {"kind": field["check"], "message": dict(CHECKS[field["check"]])}
     return out
 
 
@@ -545,6 +568,29 @@ def _validate_string(value, key: str) -> Optional[str]:
     return value.strip() or None   # 空串 = 清掉 override
 
 
+def looks_like_email(text: str) -> bool:
+    """原生 SettingsGmail.validateAddress 的规则：恰好一个 ``@``、本地部分非空、域名含 ``.`` 且不以 ``.`` 起止；
+    另拒绝内嵌空白（原生 trim 两端、不查中间——邮箱地址里从来不该有空格）。"""
+    s = text.strip()
+    local, at, domain = s.partition("@")
+    if not at or not local or "@" in domain or any(ch.isspace() for ch in s):
+        return False
+    return "." in domain.strip(".") and domain == domain.strip(".")
+
+
+_CHECKERS = {"email": looks_like_email}
+
+
+def _run_check(field: dict, value: Optional[str], key: str) -> None:
+    """``check`` 字段的形状校验（空值 = 清键，不查）；不合格 → 400，message 双语并列（server/settings.py 同款），
+    details 带 ``check`` 词让客户端能对上目录里的那句。"""
+    kind = field.get("check")
+    if kind is None or value is None or _CHECKERS[kind](value):
+        return
+    sentence = CHECKS[kind]
+    raise InvalidFieldError("%s / %s" % (sentence["zh"], sentence["en"]), {"field": key, "check": kind})
+
+
 def _split_list_input(value) -> list:
     """web 输入框给逗号 / 换行分隔的一个字串，JSON 客户端给字串表——两种入站形归一成字串表。"""
     if isinstance(value, str):
@@ -579,7 +625,9 @@ def validate(field: dict, value):
         return _validate_number(field, value, key)
     if kind == "list":
         return _validate_list(value, key)
-    return _validate_string(value, key)
+    text = _validate_string(value, key)
+    _run_check(field, text, key)
+    return text
 
 
 def _drop_override(overrides: dict, field: dict) -> None:
@@ -635,8 +683,20 @@ def update_section(home: Path, section_id: str, payload: dict) -> dict:
     config_doc = load_config_doc(home)
     for key, value in wanted.items():
         apply_field(overrides, index[key], value, config_doc)
+    apply_radar_switch_conjunction(overrides, wanted, config_doc)
     write_overrides(home, overrides)
     return project_section(home, section)
+
+
+def apply_radar_switch_conjunction(overrides: dict, wanted: dict, config_doc: dict) -> None:
+    """§48.1：payload 里雷达源开关为 true 的，同一笔把 ``features.<src>_radar`` 也写 true（原生 setEnabled /
+    persistFlag 同款）。flag 走同一条 diff-write——yaml 本就 true 时不落键、effective 仍是 true；原生「显式写 true
+    不做 drop-when-default」是因为 app 读不到两级嵌套的 yaml，server 读得到。关（false）不碰 flag：合取一票否决，
+    单键足以关。agent 的装 / 卸不在这里（§48.7：install.sh 步 5 与「重新安装」按钮管 launchd）。"""
+    flags = field_index(_BY_ID["flags"])
+    for key, flag_key in RADAR_SWITCH_FLAGS.items():
+        if wanted.get(key) is True:
+            apply_field(overrides, flags[flag_key], True, config_doc)
 
 
 def set_flat_override(home: Path, key: str, value: str) -> None:
