@@ -81,14 +81,15 @@ class IngestLogEntryTestCase(unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32" or getattr(os, "geteuid", lambda: 1)() == 0,
                      "chmod 000 does not block on Windows / root")
     def test_untraversable_parent_dir_is_treated_as_absent_not_500(self):
-        """Path.is_file 只吞 ENOENT 一族——父目录 EACCES 会抛 PermissionError；诊断页与 /api/logs/* 不许因此 500（§0 第 11 条）。"""
+        """Path.is_file 在 3.9-3.12 只吞 ENOENT 一族——父目录 EACCES 会抛 PermissionError（3.13 起它自己吞）；
+        诊断页与 /api/logs/* 在哪个解释器上都不许因此 500（§0 第 11 条）。"""
         write_text(self.home / "state" / "logs" / "R-101.log", "card log\n")
         parent = self.log.parent
         parent.mkdir(parents=True)
         parent.chmod(0)
         self.addCleanup(parent.chmod, 0o700)
         with self.assertRaises(PermissionError):
-            self.log.is_file()                                   # 前提：这台机器上确实是 EACCES
+            self.log.stat()                                      # 前提：这台机器上确实是 EACCES（stat 每个版本都抛）
         status, diag = get_json(self.port, "/api/diagnostics")
         self.assertEqual(status, 200)
         self.assertEqual([e["name"] for e in diag["logs"]], ["R-101.log"])
