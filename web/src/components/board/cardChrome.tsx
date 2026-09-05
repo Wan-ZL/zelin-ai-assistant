@@ -385,8 +385,12 @@ export function MergeStateChip({ cardId }: { cardId: string }) {
   return <span className="chip chip-purple chip-quiet">{text("合并分析中…", "Analyzing…")}</span>;
 }
 
-/** 错误一句（红，两行截断，hover 全文）——原生 errorLine 的文本部分；按钮由宿主放进动作行 */
-export function ErrorLine({ prefix, raw }: { prefix: string; raw: unknown }) {
+/**
+ * 错误一句（红，两行截断，hover 全文）——原生 errorLine 的文本部分；按钮由宿主放进动作行。
+ * §25：`sentence` = 失败目录里这个 failure id 的人话（原生 `FailureCatalog.message(failureID).map { prefix + $0 }`），
+ * 有就代替原文上卡面，原文降到 title 气泡（原生 `.help(raw)` 不论哪种都挂原文）+ 详情侧栏的「错误全文」；没有 → 原文。
+ */
+export function ErrorLine({ prefix, raw, sentence }: { prefix: string; raw: unknown; sentence?: string | null }) {
   if (typeof raw !== "string" || !raw) return null;
-  return <p className="card-line is-danger card-error-line" title={raw}><span className="card-detail-label">{prefix}</span><span>{raw}</span></p>;
+  return <p className="card-line is-danger card-error-line" title={raw}><span className="card-detail-label">{prefix}</span><span>{sentence || raw}</span></p>;
 }

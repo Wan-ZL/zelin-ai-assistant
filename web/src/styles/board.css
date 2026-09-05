@@ -459,6 +459,8 @@ a.chip:hover { text-decoration: underline; }
 .btn:hover:not(:disabled) { background: var(--surface-hover); }
 .btn:active:not(:disabled) { background: var(--surface-active); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+/* §25 卡片错误行的对症一键（FailureActionButton 的深链 / 外链形是 <a class="btn">）：与同排的按钮同貌，不带链接下划线 */
+.card-actions a.btn { text-decoration: none; }
 
 .btn.btn-primary {
   border-color: var(--accent);

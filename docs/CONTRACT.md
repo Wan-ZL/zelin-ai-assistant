@@ -1176,6 +1176,8 @@ msg_auto_resume_exhausted`。（**§46 追加**：`msg_resume_storm` /
 `msg_answer_failed` 退役；新增 `msg_review_interrupted`；`msg_resume_storm` 与
 `msg_auto_resume_exhausted` 文案改指「待验收」列的现存动词（验收/丢弃/打回）。）
 
+**§25 追记（2026-09-05，add-only；parity 批次 `review-running-card-fixes`，gap `board-cards-error-failure-catalog`）——web 卡片错误行说人话 + 对症一键**：上文「dashboard.json 新字段」里 `dispatch_error_id` / `last_error_id` 的读方自此在 web 落地（原生 Cards.swift:1646-1653 / 1667-1711 `TaskRow.errorLine`）：运行中列的卡（排队项读 `dispatch_error_id`、前缀「派发失败：」；其余读 `last_error_id`、前缀「错误：」——两个字段各归各的行形，排队卡不看 `last_error_id`）在 id 命中 `GET /api/failures`（本节 server-owned 双语目录，§68.4）时卡面 = 前缀 + **当前语言那句**，原文降到行的 `title` 气泡（原生 `.help(raw)` 不论哪种都挂原文）与详情侧栏「错误全文」；目录里没有这个 id / id 为 null / 目录还没回 → 原文照旧（上文「绝不硬凑分类」）。动作行在「让 AI 修」**之前**加原生 `FailureCatalog.actionLabel` 的那颗按钮（`web/src/components/settings/failureAction.tsx` `FailureActionButton`——§68.4 2026-09-03 追记 doctor 表用的同一实现，标签逐字、动作落点同一张表，卡面不抄第二份；未知 id / 无 in-app 动作的 id（`network_error` 一类）渲染 null，只剩 让 AI 修），§4 派发刹车行（blocked + `last_error_id`）同给按钮、错误行本身不重复（`question` 已带本节句子）。目录由 `web/src/app.tsx` 首帧拉一次（与列头说明目录同一批；静态）；卡组件只读 store，不自己发请求。此前 web 只渲染原文——`claude_blind` 一类的 TCC 事故在卡面上只有 Bun 的「low max file descriptors」猜测句，修法（去诊断 → 授权）要靠人记得。判例 `web/src/components/board/RunningCard.failureCatalog.test.tsx`。
+
 ---
 
 # v0.14 additions（应用内更新检查）
@@ -5452,6 +5454,8 @@ assessment:
 ### 64.5 投影与 web
 
 wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictChip`（`<button class="chip verdict-chip chip-success|chip-warning|chip-purple">AI · 建议验收</button>`，`aria-expanded`，点一下在 badges 行下展开 `role=note` 的理由行、再点收起；`title` = 理由；点击 `stopPropagation`，不发任何 inbox 动作），badges 行下加 `AssessmentSummaryLine`（与阶段性完成卡 `delivered_summary` 一句同款 11 次级单行截断，左侧 accent 细条标识「AI 摘要」）；执行器原话**原样**留在「展开详情 ▸」的「交付了什么」。`DoneCard` 卡面一句 = `assessment.summary` 优先、缺席回落 `delivered_summary`，**不带章**（已验收，评语失效）。英文标签 Looks done / Needs more work / Needs your call；未知 verdict 值按原文中性 chip 渲染。
+
+**§64.5 追记（2026-09-05，add-only；parity 批次 `review-running-card-fixes`，gap `board-cards-review-face-delivery` / `board-cards-copy-draft-no-fallback`）**：(a) **待验收卡面永远有一句交付说明**——`ReviewCard` 的 `AssessmentSummaryLine` 自此与 `DoneCard` 同款带回落：`assessment.summary` 优先；`assessment` 整键缺席（判官没评 / 内容已变而判官未归，§64.2 / §2 §64 块）或只有评语没摘要时回落 `delivered_summary`、再回落审批时 `summary`（空串按缺席算，原生 `!ds.isEmpty`）；三者皆无才不渲染。回落句**不带** AI 细条（`is-ai`），单行截断、hover 全文。此前 web 在 `assessment` 缺席时卡面没有任何一句交付说明，而原生 ReviewRow（Cards.swift:1832-1854）永远给一句（`delivered_summary` 为正文、`summary` 降灰；或只有 `summary`）。上文「执行器原话**原样**留在「展开详情 ▸」的「交付了什么」」不变——卡面只是单行的回落摘要，全文与 ☐ 验收清单仍只住详情侧栏（清单上卡面 = gap `board-cards-proposal-dod-on-face`，另议）。(b) **「复制成稿」走统一剪贴板入口**（原生 :1803-1815 `NSPasteboard`）：自此经 `web/src/components/detail/copyText.ts`（Clipboard API → `document.execCommand("copy")` 兜底，返回布尔、永不抛；兜底 textarea 用完即撤，execCommand 抛也撤），与复制指令行 / 详情 CopyChip / 去授权复制路径同一入口；成功 → 「已复制 ✓ / Copied ✓」1.5 s + `role=status` 播报；两条路都失败 → 按钮旁 `role=alert` 短注「复制失败——到「展开详情 ▸」里手动选中成稿复制 / Copy failed — select the draft under Details ▸ and copy it by hand」4 s，按钮文案不变。此前直连 `navigator.clipboard.writeText` 无 catch：非 secure context（从别的主机打开看板）或权限被拒时点了没有任何反应。判例 `web/src/components/board/ReviewCard.summaryFallbackCopyDraft.test.tsx`、`web/src/components/detail/copyText.fallback.test.ts`；`VerdictChip.test.tsx` 的「no assessment → 没有摘要行」判例改为「回落 `delivered_summary`、不带 is-ai」。
 
 ### 64.6 边界（明确不做）
 
