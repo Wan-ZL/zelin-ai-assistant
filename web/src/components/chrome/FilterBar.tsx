@@ -41,6 +41,21 @@ function MagnifierIcon() {
   );
 }
 
+/** 不承载文字的 <input> 类型：多选态卡上的勾选框等——焦点在它们上面时 ⎋ 仍归看板（退出多选） */
+const NON_TEXT_INPUT_TYPES = new Set(["button", "submit", "reset", "checkbox", "radio", "range", "color", "file", "image", "hidden"]);
+
+/** ⎋ 的目标是不是「别人的」文字输入框（列顶输入框、回收站 / 永久性完成的搜索、标题编辑、contenteditable……）。
+ *  原生 Kanban.swift:186 把 escClearSearch 只挂在搜索 TextField 上、Composer.escKey 自己吃 Esc（返 .handled）——
+ *  别的输入框里按 ⎋ 从来到不了看板层。web 的 window 监听没有这层天然作用域，这里补回来：只有 ⌘F 搜索框
+ *  本身（`ownField`）与非输入元素的 ⎋ 才算看板的。 */
+export function escapeBelongsToForeignField(target: EventTarget | null, ownField: HTMLElement | null): boolean {
+  if (!(target instanceof HTMLElement) || target === ownField) return false;
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(target.type);
+  // 可编辑区里的任何子节点都算（属性可继承）；不用 isContentEditable——jsdom 没实现，浏览器与判例要走同一条路
+  return target.closest('[contenteditable]:not([contenteditable="false"])') !== null;
+}
+
 export function FilterBar() {
   const { text } = useI18n();
   const density = useHeaderDensity();
@@ -84,7 +99,11 @@ export function FilterBar() {
     // ⌘F（mac）/ Ctrl+F 聚焦搜索框——接管浏览器查找（看板数据全在客户端）；任何档位都通
     // ⎋（原生 Kanban.swift:98 契约七 + escClearSearch 分两段）：有搜索词先清词；已空 → 退出多选；弹窗 / 筛选面板 / 详情侧栏
     // 开着时不插手（面板自己吃 ⎋ 关自己；侧栏是 <aside role=dialog aria-modal>，D34 后是唯一详情面、⎋ 是它的正式关法——
-    // 那一下只关侧栏，不顺手清词 / 退多选；tight 的搜索框失焦即收起，所以第二下 ⎋ 的 blur 也就是「收起」）
+    // 那一下只关侧栏，不顺手清词 / 退多选；tight 的搜索框失焦即收起，所以第二下 ⎋ 的 blur 也就是「收起」）。
+    // 作用域（§15 2026-09-05 追记，原生 Kanban.swift:186 / :225-236）：① IME 候选期间的 ⎋（isComposing / keyCode 229）
+    // 归输入法——撤销一串拼音不许顺手把整个搜索词抹掉（原生 hasMarkedText → .ignored，IME 红线）；② 光标在别的文字输入框
+    // 里（列顶输入框、回收站搜索、标题编辑……）时 ⎋ 归那个框——原生 escClearSearch 只挂在搜索 TextField 上，
+    // Composer 自己吃 Esc；window 监听没有这层作用域，按 target 补回来。
     function onKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
@@ -97,17 +116,19 @@ export function FilterBar() {
         searchRef.current?.select();
         return;
       }
-      if (event.key === "Escape" && !panelOpen && !document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) {
-        if (filters.search.trim()) {
-          setFilters({ search: "" });
-          return;
-        }
-        if (searchRef.current && document.activeElement === searchRef.current) {
-          searchRef.current.blur();
-          return;
-        }
-        if (selectionMode) setSelectionMode(false);
+      if (event.key !== "Escape") return;
+      if (event.isComposing || event.keyCode === 229) return; // IME 红线：候选期间的 ⎋ 归输入法
+      if (escapeBelongsToForeignField(event.target, searchRef.current)) return; // 别人的输入框，⎋ 归它
+      if (panelOpen || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+      if (filters.search.trim()) {
+        setFilters({ search: "" });
+        return;
       }
+      if (searchRef.current && document.activeElement === searchRef.current) {
+        searchRef.current.blur();
+        return;
+      }
+      if (selectionMode) setSelectionMode(false);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
