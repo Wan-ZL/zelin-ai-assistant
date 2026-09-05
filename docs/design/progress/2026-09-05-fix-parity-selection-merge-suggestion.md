@@ -1,4 +1,4 @@
-pr: `fix/parity-selection-merge-suggestion`（行为对齐批次 `selection-merge-suggestion`，链 cards-face 第 3 批）
+pr: `fix/parity-selection-merge-suggestion`（PR #258；行为对齐批次 `selection-merge-suggestion`，链 cards-face 第 3 批）
 phase: P4 收尾（D3：web 看板继承原生看板行为规格；§66 审计「原生有、web 丢」清账）
 law: §54.1 追记 / §41 追记（无新 §）
 
