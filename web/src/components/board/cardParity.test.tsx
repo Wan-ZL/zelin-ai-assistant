@@ -75,7 +75,7 @@ describe("one detail surface (D34): the card face stays collapsed, Details ▸ o
     expect(screen.getByRole("button", { name: "Details ▸" })).toBeTruthy();
   });
 
-  it("双击卡片不再开详情（语义留给 #216 终端接管）", () => {
+  it("双击卡片不开详情（#216 起双击 = 在终端接管；提案卡没有会话 → no-op，判例 cardTakeover.test.tsx）", () => {
     render(<ProposalCard card={proposal()} />);
     fireEvent.doubleClick(screen.getByRole("article"));
     expect(getState().selectedCardId).toBeNull();

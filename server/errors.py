@@ -5,7 +5,8 @@ codes 词表（CONTRACT §49，v0.48 已入典）：UNKNOWN_FIELD / INVALID_FIEL
 NOT_FOUND / INTERNAL_ERROR / NOT_IMPLEMENTED（501 专用，reveal 非 darwin——
 add-only 正式收编，原 TODO(contract) 关闭）/ FORBIDDEN / UNAUTHORIZED
 （§49 auth model 的 Host/Origin 闸与 instance token 闸，add-only 收编）/
-CONFLICT（409，§59 设置写入遇到不可解析的目标文件——拒绝覆盖，add-only 收编）。
+CONFLICT（409，§59 设置写入遇到不可解析的目标文件——拒绝覆盖，add-only 收编）/
+SHELL_UNAVAILABLE（503，§68.7 2026-09-05：终端接管队列没有消费者——壳没在跑，add-only 收编）。
 """
 from __future__ import annotations
 
@@ -73,3 +74,10 @@ class ConflictError(ApiError):
     ~/.claude/settings.json 不是合法 JSON——拒绝覆盖，让人手修）→ 409。"""
     status = 409
     code = "CONFLICT"
+
+
+class ShellUnavailableError(ApiError):
+    """壳（Zelin's AI Assistant.app）没在跑——终端接管的 launch 队列没有消费者（§68.7，
+    issue #216）→ 503。页面据此降级：复制指令 + 提示，与非 darwin 501 同一条降级逻辑。"""
+    status = 503
+    code = "SHELL_UNAVAILABLE"

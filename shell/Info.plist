@@ -52,6 +52,11 @@
 	     授权按本 bundle id 归属（无 usage-description 键，系统提示由 CGRequest
 	     ScreenCaptureAccess 触发）；麦克风由实时字幕的 AVCaptureDevice.requestAccess
 	     首次触发，缺这个键 macOS 会直接杀进程。文案与 mac/Info.plist 同义。 -->
+	<!-- §68.7（issue #216）：双击卡片在终端接管会话 = 壳经 Apple Events 控制所选终端
+	     （TerminalLauncher.swift）；首次按（本 app, 终端）这一对弹一次自动化授权，此后安静。
+	     缺这个键 macOS 会直接拒绝 Apple Events。文案与退役的 mac/Info.plist 同义。 -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>双击卡片在终端接管会话时，需要控制所选终端（Ghostty / Terminal / iTerm2）来新开窗口运行命令。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>实时字幕与「屏幕 + 音频」录制模式需要麦克风来转录会议与语音；音频只送往你自己 key 对应的识别服务，录制数据只存本地 ~/.screenpipe。</string>
 	<!-- Server repo（cwd of `python3 -m server`）。源文件留空：shell/build.sh

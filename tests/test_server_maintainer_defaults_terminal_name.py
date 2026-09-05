@@ -7,8 +7,8 @@ gap settings-maintainer-defaults-and-launch-copy；原生 SettingsMaintainer.swi
 - 两键 zh / en 同一句（路径 / id 不分语言）；
 - maintainer section 投影 add-only ``terminal_app_name`` = resolved 终端的展示名（auto → 装了 Ghostty 就 Ghostty 否则
   Terminal；``iterm2`` → ``iTerm2``，不是 ``open -a`` 用的 ``iTerm``）；其它 section 不带；
-- ``POST /api/maintainer/terminal`` 回执 add-only ``terminal_app_name``（同一个答案）；open 失败 500 的 details 带 ``command``
-  （原生「或手动在终端运行：」）；
+- ``POST /api/maintainer/terminal`` 回执 add-only ``terminal_app_name``（同一个答案）；壳没在跑 503 / 入队失败 500 的 details
+  带 ``command``（原生「或手动在终端运行：」；§68.7 2026-09-05 起走队列通道，server 不写 .command 不 open）；
 - fixture 生成器把 checkout 路径灰字与终端名抹成固定值（零 diff）。
 """
 import json
@@ -50,6 +50,10 @@ class _HomeCase(unittest.TestCase):
     def _field(self, key):
         section = catalog.section_snapshot(self.home, "maintainer")
         return next(f for f in section["fields"] if f["key"] == key)
+
+    def _beat(self):
+        """壳在跑 = state/shell.heartbeat 新鲜（§68.7 队列的消费者）——启动路才会入队而不是 503。"""
+        paths.shell_heartbeat_path(self.home).write_text("pid=1\n", encoding="utf-8")
 
 
 class PlaceholderTestCase(_HomeCase):
@@ -123,19 +127,26 @@ class TerminalNameTestCase(_HomeCase):
         self.assertEqual(with_name, ["maintainer"])
 
     def test_receipt_carries_the_same_terminal_name(self):
+        self._beat()
         write_text(self.home / "state" / "settings_overrides.json", json.dumps({"terminal_app": "iterm2"}))
-        receipt = maintainer_launch.launch(self.home, {}, opener=lambda p: None, out_dir=Path(self.tmp.name), platform="darwin")
+        receipt = maintainer_launch.launch(self.home, {}, platform="darwin")
         self.assertEqual(receipt["terminal_app_name"], "iTerm2")
-        self.assertEqual(set(receipt), {"ok", "command", "command_file", "cwd", "terminal_app_name"})
+        self.assertEqual(set(receipt), {"ok", "command", "command_file", "cwd", "queue_id", "terminal_app_name"})
 
-    def test_open_failure_carries_the_manual_command(self):
-        def boom(_path):
-            raise OSError("no Terminal")
+    def test_shell_unavailable_and_queue_failure_carry_the_manual_command(self):
+        # 壳没在跑（没有心跳）→ 503，details 带手动命令（原生「或手动在终端运行：」）
+        with self.assertRaises(terminal_launch.ShellUnavailableError) as ctx:
+            maintainer_launch.launch(self.home, {}, platform="darwin")
+        self.assertEqual(ctx.exception.status, 503)
+        self.assertEqual(ctx.exception.details["command"], maintainer_launch.command_for(paths.repo_root(), ""))
+        # 壳在跑但队列目录被普通文件占着 → 入队 500，同样带手动命令 + 队列目录
+        self._beat()
+        paths.terminal_queue_dir(self.home).write_text("not a dir", encoding="utf-8")
         with self.assertRaises(maintainer_launch.ApiError) as ctx:
-            maintainer_launch.launch(self.home, {}, opener=boom, out_dir=Path(self.tmp.name), platform="darwin")
+            maintainer_launch.launch(self.home, {}, platform="darwin")
         self.assertEqual(ctx.exception.status, 500)
         self.assertEqual(ctx.exception.details["command"], maintainer_launch.command_for(paths.repo_root(), ""))
-        self.assertIn("command_file", ctx.exception.details)
+        self.assertIn("queue_dir", ctx.exception.details)
 
 
 class RouteTestCase(_HomeCase):
@@ -144,25 +155,23 @@ class RouteTestCase(_HomeCase):
         _httpd, self.port = start_server(self, self.home)
 
     def test_get_settings_and_post_receipt_over_http(self):
+        self._beat()
         write_text(self.home / "state" / "settings_overrides.json", json.dumps({"terminal_app": "terminal"}))
         _s, section = get_json(self.port, "/api/settings/maintainer")
         self.assertEqual(section["terminal_app_name"], "Terminal")
         repo = next(f for f in section["fields"] if f["key"] == "maintainer_repo_path")
         self.assertEqual(repo["placeholder"]["zh"], str(paths.repo_root()))
-        with mock.patch.object(maintainer_launch.sys, "platform", "darwin"), \
-                mock.patch.object(terminal_launch, "_default_opener", lambda _path, _app=None: None):
+        with mock.patch.object(maintainer_launch.sys, "platform", "darwin"):
             status, receipt = post_json(self.port, "/api/maintainer/terminal", {})
         self.assertEqual(status, 200)
         self.assertEqual(receipt["terminal_app_name"], "Terminal")
+        self.assertEqual(Path(receipt["command_file"]).name, receipt["queue_id"] + ".json")
 
-    def test_open_failure_route_is_500_with_the_manual_command(self):
-        def boom(_path, _app=None):
-            raise OSError("no Terminal")
-        with mock.patch.object(maintainer_launch.sys, "platform", "darwin"), \
-                mock.patch.object(terminal_launch, "_default_opener", boom):
+    def test_shell_unavailable_route_is_503_with_the_manual_command(self):
+        with mock.patch.object(maintainer_launch.sys, "platform", "darwin"):
             status, obj = post_json(self.port, "/api/maintainer/terminal", {})
-        self.assertEqual(status, 500)
-        assert_envelope(self, obj, "INTERNAL_ERROR")
+        self.assertEqual(status, 503)
+        assert_envelope(self, obj, "SHELL_UNAVAILABLE")
         self.assertTrue(obj["error"]["details"]["command"].endswith("&& claude"))
 
 
