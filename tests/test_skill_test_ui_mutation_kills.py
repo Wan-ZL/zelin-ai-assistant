@@ -399,8 +399,8 @@ class CommonConstantsTestCase(unittest.TestCase):
         self.assertEqual(tc.parse_color("transparent")[:3], (0, 0, 0))
 
     def test_named_black_on_white_hits_the_wcag_ceiling(self):
-        """black on white / canvastext on canvas 对比度恰为 21.0（WCAG 上限）；red on white 3.998（AA 4.5 之下的负控制）——
-        任一通道偏 1 都到不了 21.0（254 白 → 20.96；1 黑 → 20.97）。"""
+        """black on white / canvastext on canvas 对比度恰为 21.0（WCAG 上限）；red on white 3.998 → 保留两位 4.0
+        （AA 4.5 之下的负控制，同时钉住 `round(…, 2)`）——任一通道偏 1 都到不了 21.0（254 白 → 20.96；1 黑 → 20.97）。"""
         self.assertEqual(tc.contrast_ratio(tc.parse_color("black"), tc.parse_color("white")), 21.0)
         self.assertEqual(tc.contrast_ratio(tc.parse_color("canvastext"), tc.parse_color("canvas")), 21.0)
         self.assertEqual(tc.contrast_ratio(tc.parse_color("red"), tc.parse_color("white")), 4.0)
