@@ -62,6 +62,17 @@ class AboutCheckEnabledTestCase(unittest.TestCase):
         write_text(self.home / "config.yaml", "updates:\n  check_enabled: false\n")
         self.assertIs(about.check_enabled(self.home), False)
 
+    def test_non_utf8_overrides_fall_back_too_never_500(self):
+        # 字节级坏文件（不是 UTF-8）：read_text 抛 UnicodeDecodeError（ValueError，非 OSError）——关于页照样 200，
+        # 整份快照（version / repo / home）不因这一把旋钮的文件坏了而消失；config 层照常生效
+        (self.home / "state" / "settings_overrides.json").write_bytes(b"\xff\xfe{garbage")
+        write_text(self.home / "config.yaml", "updates:\n  check_enabled: false\n")
+        status, obj = get_json(self.port, "/api/about")
+        self.assertEqual(status, 200)
+        self.assertIs(obj["check_enabled"], False)
+        for key in ("version", "home", "repo"):
+            self.assertIn(key, obj)
+
 
 if __name__ == "__main__":
     unittest.main()

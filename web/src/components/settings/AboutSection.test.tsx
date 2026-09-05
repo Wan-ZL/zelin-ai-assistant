@@ -126,6 +126,32 @@ describe("AboutSection Check now guards (native .disabled(checking || cooldown |
     await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("button", { name: "Update v1.0.8 available — install now" })).toBeTruthy();
   });
+
+  it("a projection change after a manual check re-derives the row from the snapshot (native reload overwrites finish)", async () => {
+    // 手动检查说「已是最新」→ 页面留着 → ≥24 h 后 actd 的日检落了新版投影 → 行必须跟着变，回执不能一直压着快照
+    vi.mocked(postUpdateCheck).mockResolvedValue({ ok: true, enabled: true, current: "1.0.7", latest: "1.0.7", update_available: false, checked_at: "2026-09-02T12:00:00Z" });
+    renderIn("en", <AboutSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check now" }));
+    await waitFor(() => expect(postUpdateCheck).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Up to date")).toBeTruthy();
+    const calls = vi.mocked(fetchAbout).mock.calls.length;
+
+    vi.mocked(fetchAbout).mockResolvedValue({ ...about, update_available: { latest: "1.0.8", url: "https://rel/1.0.8" }, update_check: { checked_at: "2026-09-03T12:00:00Z", latest: "1.0.8" } });
+    vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "y", counts: {}, update_available: { latest: "1.0.8", url: "https://rel/1.0.8" } } as unknown as Board);
+    await act(async () => { await refreshBoard(); });
+    await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(calls + 1));
+    expect(await screen.findByRole("button", { name: "Update v1.0.8 available — install now" })).toBeTruthy();
+    expect(screen.queryByText("Up to date")).toBeNull();
+    expect(screen.getByText(/Last checked:/)).toBeTruthy();
+
+    // 镜像情形：页面开着时部署完成 → 投影消失、about.version 已到 1.0.8 → 「新版本可用」按钮撤下，行说已是最新
+    vi.mocked(fetchAbout).mockResolvedValue({ ...about, version: "1.0.8", update_available: null, update_check: { checked_at: "2026-09-03T12:00:00Z", latest: "1.0.8" } });
+    vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "z", counts: {} } as unknown as Board);
+    await act(async () => { await refreshBoard(); });
+    await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(calls + 2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Update v1.0.8 available — install now" })).toBeNull());
+    expect(screen.getByText("Up to date")).toBeTruthy();
+  });
 });
 
 describe("Uninstall confirmation body mirrors the native informativeText", () => {

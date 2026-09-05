@@ -6,7 +6,8 @@
 // 上次检查没有取得结果 / 尚未检查过。「立即检查」= 原生非 Sparkle 分支的按钮（§26 --force，只问不装）；三道守卫同原生
 // （Pages.swift UpdateCheckModel）：正在检查 / 每次尝试后 10 s 冷却（不论成败，不许连点砸 GitHub 接口）/ 自动检查关着
 // （about.check_enabled，§68.6 追记——一进页就知道，不必等第一次点击的回执）。看板投影 update_available 变了
-// （actd 一个 pass 落了新投影，比如刚手动检查完）→ 重拉 /api/about（原生 onChange(dashboard.update_available)）。
+// （actd 一个 pass 落了新投影：刚手动检查完 / 日检发现新版 / 部署完成投影消失）→ 丢掉上次回执、重拉 /api/about，
+// 行按快照重推（原生 onChange(dashboard.update_available) → reload() 重写全部字段，finish() 的回执不再压着行）。
 // 「重新运行初始设置」（删 setup 标记；原生放在设置 → 通用「初始设置向导」行）；壳在场时多出登录时启动（SMAppService，
 // 经桥）、全局快速捕获快捷键提示、系统通知权限状态。挂在 ?page=about（左侧导航栏「关于」，AboutPage）。
 // 「卸载…」= 原生 confirmUninstall：确认弹窗（正文逐字原生 informativeText：会做的三件事 + 默认保留什么）→
@@ -139,8 +140,11 @@ export function AboutSection() {
   const latestProjected = projectedLatest(board);
 
   // 原生 onAppear + onChange(dashboard.update_available)：一进页拉一次；actd 一个 pass 落了新投影（比如刚手动检查完）再拉一次。
+  // 原生 reload() 会把 latest / url / current / updateAvailable / checkedAt 全部按快照重写——finish() 的回执不再压着行，
+  // 所以这里同时丢掉回执（挂载时本来就是 null，无副作用）：页面开着 ≥24 h 日检落了新版、或部署完成投影消失，行都跟着变。
   // store.loadPage 把并发 refresh 合成一个在途请求，挂载与「没快照」两条路不重复打 server。
   useEffect(() => {
+    setLast(null);
     void refreshAbout();
   }, [latestProjected]);
 
