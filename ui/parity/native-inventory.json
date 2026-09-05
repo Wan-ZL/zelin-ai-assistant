@@ -77,6 +77,10 @@
         "owner": "retired",
         "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬"
       },
+      "control:board.dialogs:label:send-newline": {
+        "owner": "retired",
+        "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬"
+      },
       "control:board.needs_approval:button:collapse": {
         "owner": "retired",
         "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏"
@@ -2692,9 +2696,10 @@
     },
     {
       "en": "↩ send · ⇧↩ newline",
-      "gated": true,
+      "gated": false,
       "id": "control:board.dialogs:label:send-newline",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬",
       "role": "label",
       "screen": "board.dialogs",
       "source": "AppDelegate.swift:904",

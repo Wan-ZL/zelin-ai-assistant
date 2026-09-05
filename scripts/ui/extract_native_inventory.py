@@ -214,6 +214,14 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏",
     },
+    # D35 推及弹窗（§41 2026-09-05 追记「弹窗一律按钮提交，Enter 换行」）：原生 promptFeedback / promptText 的
+    # 键位提示句「↩ 发送 · ⇧↩ 换行」（AppDelegate.swift:904）描述的是 PromptSendDelegate 的 Return=发送——web 的
+    # 提建议 / 修改方向 / 打回 / 强制合并弹窗都只有按钮提交，这句话没有对应机制。#2（promptAnswer 的同句）早已在
+    # waivers.txt（#119 answer_input），不动。
+    "control:board.dialogs:label:send-newline": {
+        "owner": "retired",
+        "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部

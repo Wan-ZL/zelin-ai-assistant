@@ -2,7 +2,9 @@
 // 语义逐项镜像 Mac AppDelegate.confirmT2（live CONTRACT §7/§40/§41）：
 //   - 标题「T2 · 高影响操作确认」；正文点名卡片 id/摘要 + 金额行（或「成本未知」）；
 //   - 输入 trim + lowercase 后必须恰为「确认」或「go」；
-//   - 不匹配不静默失败：提示「上次输入不匹配。」并留在弹窗里重试；取消是唯一 false 出口。
+//   - 不匹配不静默失败：提示「上次输入不匹配。」并留在弹窗里重试；取消是唯一 false 出口；
+//   - 只有「批准」按钮提交（CONTRACT §41 2026-09-05 追记，D35 推及弹窗）：输入框里的 Enter 不批准——
+//     正文本就写着「请输入 确认 或 go 后再点「批准」」；原生 NSAlert 的 Return=默认键是退役规则。
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { ModalDialog } from "./ModalDialog";
@@ -47,12 +49,6 @@ export function T2ConfirmDialog({ cardId, summary, costLine, onConfirm, onCancel
         placeholder={text("输入 确认 或 go", "Type 确认 or go")}
         autoFocus
         onChange={(e) => setTyped(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            approve();
-          }
-        }}
       />
       {mismatched && <p className="dialog-note">{text("上次输入不匹配。", "Previous input didn't match.")}</p>}
       <div className="dialog-actions">
