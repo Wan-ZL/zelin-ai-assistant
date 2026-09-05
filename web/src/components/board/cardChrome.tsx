@@ -11,9 +11,11 @@
 //   CardSurface（issue #8 a11y）：五种卡共用的 <article>——可聚焦、Enter/Space 打开详情侧栏
 //     （「展开详情 ▸」的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
 //     卡上没有双击绑定（D34：双击语义留给 #216 终端接管）。
+//     selectable（§21 多选，原生 Kanban.swift selectableCard 的 tap catcher）：selectionMode 下点卡身 = 切换选中，
+//     动作行（.card-actions）整排失效——误点不许批准 / 删除任何东西；勾选框留给 a11y。
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { postAiFix, postTerminal } from "../../api";
 import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
@@ -36,8 +38,20 @@ interface CardSurfaceProps {
   /** VoiceOver 读的一句：状态词 + 标题（例「执行中 · 修 flaky 测试」）——状态不靠色点 */
   label: string;
   className?: string;
+  /**
+   * §21 多选：这张卡可参与合并多选（原生 Kanban.swift `selectableCard(id, selectable:)`）。v0.21 起**全 lane
+   * 真实卡都可选**（潜在任务 / 提案 / 运行中含排队 / 需输入 / 待验收 / 阶段性完成）——跨状态合并的合法性交给
+   * 后端 merge_review 判，前端只保持选择面宽松；不可选的只有提案列 processing 占位、合并建议卡与永久性完成书立条。
+   */
+  selectable?: boolean;
   children: ReactNode;
 }
+
+/** 这张卡此刻在多选态里可选（selectable && store.selectionMode）：CardSurface 提供，CardHead 据此长出勾选框 */
+const SelectingContext = createContext(false);
+
+/** 多选态下卡上仍活着的控件（勾选框 / 复制指令行 / 标题里的链接 / 卡内弹窗）：点它们不算点卡身 */
+const LIVE_CONTROL = 'button, a, input, textarea, select, label, summary, [role="button"], dialog';
 
 /**
  * 卡片外壳（issue #8）：article 加 tabIndex + Enter/Space 打开详情侧栏（「展开详情 ▸」的键盘
@@ -45,8 +59,18 @@ interface CardSurfaceProps {
  * aria-label 把状态词与标题读出来（色点是 aria-hidden 的装饰）。<article> 的隐式 role 已是
  * article（可带 aria-label，VoiceOver 把整卡当一个可导航项）——不另加 role（axe aria-allowed-role 会拒）。
  * 不绑双击（D34）：双击作详情入口不可发现、还和选文本手势打架；它的语义留给 #216 终端接管。
+ *
+ * 多选态（原生 Kanban.swift:671-705 selectableCard 的整卡 tap catcher）：selectable 且 store.selectionMode 时
+ *   · 点卡身 = 切换选中（is-selectable 指针手形；选中 is-selected accent 淡底）；
+ *   · 动作行 `.card-actions` 整排失效——原生注释「the catcher deliberately blocks the card's own buttons while
+ *     selecting — a mis-click must not approve/trash anything」：CSS 指针穿透之外，capture 阶段把落在动作行里的
+ *     click（含键盘 Enter / Space 合成的）拦下、不让按钮自己的 onClick 跑，这一下改算点卡身；
+ *   · 勾选框留给 a11y（原生左上角 checkmark.circle 的语义等价物），点它走自己的 onChange，不再叠一次切换。
  */
-export function CardSurface({ cardId, label, className = "", children }: CardSurfaceProps) {
+export function CardSurface({ cardId, label, className = "", selectable = false, children }: CardSurfaceProps) {
+  const { selectionMode, selectedIds } = useAppState();
+  const selecting = selectable && selectionMode;
+  const selected = selecting && selectedIds.has(cardId);
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
@@ -54,15 +78,33 @@ export function CardSurface({ cardId, label, className = "", children }: CardSur
       openCardDetail(cardId);
     }
   };
+  const onClickCapture = (e: MouseEvent<HTMLElement>) => {
+    if (!selecting) return;
+    if (!(e.target as Element).closest(".card-actions")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toggleSelected(cardId);
+  };
+  const onClick = (e: MouseEvent<HTMLElement>) => {
+    if (!selecting) return;
+    const target = e.target as Element;
+    if (target !== e.currentTarget && target.closest(LIVE_CONTROL)) return;
+    toggleSelected(cardId);
+  };
+  const cls = ["task-card", selecting ? "is-selectable" : "", selected ? "is-selected" : "", className].filter(Boolean).join(" ");
   return (
-    <article
-      className={`task-card${className ? ` ${className}` : ""}`}
-      tabIndex={0}
-      aria-label={label}
-      onKeyDown={onKeyDown}
-    >
-      {children}
-    </article>
+    <SelectingContext.Provider value={selecting}>
+      <article
+        className={cls}
+        tabIndex={0}
+        aria-label={label}
+        onKeyDown={onKeyDown}
+        onClickCapture={onClickCapture}
+        onClick={onClick}
+      >
+        {children}
+      </article>
+    </SelectingContext.Provider>
   );
 }
 
@@ -83,8 +125,6 @@ interface CardHeadProps {
    * "lg" = 提案卡摘要 15 semibold（ApprovalCardView）；"placeholder" = AI 研究中占位 13 regular 次级
    */
   variant?: "lg" | "placeholder";
-  /** §21 多选：可选卡（提案 / 运行中 / 待验收）在 selectionMode 下标题前长出勾选框 */
-  selectable?: boolean;
   /**
    * 标题里的 URL 变可点链接（原生 `linkified`，Cards.swift:1073 提案摘要 / :2028 潜在任务摘要）——
    * 只给摘要优先面；运行中 / 待验收行标题原生明确不 linkify（:1829），缺省 false
@@ -108,13 +148,15 @@ export function SelectCheckbox({ cardId }: { cardId: string }) {
   );
 }
 
-export function CardHead({ card, title, leading, isMuted = false, variant, selectable = false, linkify = false }: CardHeadProps) {
+/** 标题行：可选性由外壳决定（CardSurface selectable → SelectingContext），selectionMode 下标题前长出勾选框 */
+export function CardHead({ card, title, leading, isMuted = false, variant, linkify = false }: CardHeadProps) {
+  const selecting = useContext(SelectingContext);
   const cls = ["card-title", variant === "lg" ? "is-lg" : "", variant === "placeholder" ? "is-placeholder" : "", isMuted ? "is-muted" : ""]
     .filter(Boolean)
     .join(" ");
   return (
     <div className="card-head">
-      {selectable && <SelectCheckbox cardId={card.id} />}
+      {selecting && <SelectCheckbox cardId={card.id} />}
       {leading}
       <div className={cls}>{linkify ? <Linkified text={title} /> : title}</div>
       <CardIdTag card={card} />

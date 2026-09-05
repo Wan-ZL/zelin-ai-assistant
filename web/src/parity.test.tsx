@@ -9,7 +9,8 @@
 //     手动触发 成功 / 失败 / 持锁跳过 渲染几遍；关于页另按 没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开
 //     渲染几遍；看板另有「server 拒绝」一遍（接管 / 让 AI 修 / capture / 斜杠命令的失败句）与诊断条 agent_missing
 //     两遍）+ 把每颗按钮点一遍收集弹窗文案（看板：先把每张卡的「展开详情 ▸」各点一下——D34 起它开的是右侧详情
-//     侧栏，原生详情槽的积木全住那里，每开一张等详情落地收一遍；再进多选态勾上每张卡、开弹窗的动词逐点收、
+//     侧栏，原生详情槽的积木全住那里，每开一张等详情落地收一遍；再进多选态勾上每张卡、操作条的弹窗逐点收并提交、
+//     退出多选（多选态里卡的动作行是死的——原生 tap catcher，§54.1 追记）、卡上开弹窗的动词逐点收、
 //     每张卡按同类轮换走一条提交路收 pending 一句），按 accessible name / 自身文本精确匹配；
 //     时钟冻结在 fixture 的 FIXED_NOW（相对时间词表才确定）；装一个假 zaiShell 桥（壳里才渲染的
 //     录制 / 字幕 / 登录时启动 开关也要判）；server 目录（设置 / 凭证）用 fixture 快照（文案 server-owned）。
@@ -514,29 +515,49 @@ function clickAndSubmitDialogs(button: HTMLButtonElement, pool: Set<string>) {
  * 次选项 / TextDialog 的提交），没开弹窗就是直接提交。fixture 里每类卡都不止 n 张，所以 批准 / 拒绝→已办完 /
  * 修改→提交 / 暂缓 / 停止→去待验收 / 打回→提交 每条路都有卡走到，pending 一句（启动中… / 已办完 /
  * 修改意见合并中… / 打回处理中… / 停止中，卡片将去待验收）各自收得到。
- * 工具条（FilterBar / 多选操作条）不会互相卸掉，每颗开弹窗的动词都点、每个弹窗都提交；多选操作条第一枪
- * 就清空选择，所以先点「强制合并」——它的回执是板上的「合并中…」章，别处收不到。
+ * 工具条（FilterBar / 多选操作条）不会互相卸掉，每颗开弹窗的动词都点、每个弹窗都提交——但它们在多选态里点
+ * （rotateToolbars），卡上的动词在退出多选之后点（rotateSubmits）：多选态里卡的动作行是死的。
  * 卡外其它按钮（书立条开合 / 列说明 ?）留给 ④。
  */
-function rotateSubmits(root: ParentNode, pool: Set<string>) {
-  // 先把 ② 留下的弹窗全关掉（点各自的取消）：每张卡从干净态出发，轮换才有意义
+
+/** 关掉此刻开着的弹窗（点各自的取消）：每张卡 / 每条工具条从干净态出发，轮换才有意义 */
+function cancelOpenDialogs() {
   for (const dialog of Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]"))) {
     const cancel = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find((b) => IS_CANCEL.test((b.textContent ?? "").trim()));
     if (cancel) fireEvent.click(cancel);
   }
-  const cards = new Map<Element, HTMLButtonElement[]>();
+}
+
+/** 工具条（FilterBar / 多选操作条）里开弹窗的动词逐个点 + 提交；多选操作条第一枪就清空选择，所以先点「强制合并」——
+ *  它的回执是板上的「合并中…」章，别处收不到。只在多选态里调（操作条只活在多选态） */
+function rotateToolbars(root: ParentNode, pool: Set<string>) {
+  cancelOpenDialogs();
   const toolbars = new Map<Element, HTMLButtonElement[]>();
+  for (const b of Array.from(root.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'))) {
+    if (b.disabled || b.closest("dialog")) continue;
+    const toolbar = b.closest('[role="toolbar"]')!;
+    toolbars.set(toolbar, [...(toolbars.get(toolbar) ?? []), b]);
+  }
+  for (const buttons of toolbars.values()) {
+    const ordered = [...buttons].sort((a, b) => Number(/强制合并|Force-merge/.test(b.textContent ?? "")) - Number(/强制合并|Force-merge/.test(a.textContent ?? "")));
+    for (const b of ordered) if (opensDialog(b)) clickAndSubmitDialogs(b, pool);
+  }
+}
+
+/** 卡上的动作行 + 卡外散落的开弹窗按钮（工具条归 rotateToolbars）。只在退出多选之后调：§54.1 追记（原生 selectableCard
+ *  的 tap catcher）——多选态里 .card-actions 整排是死的，点「批准」只会切换选中 */
+function rotateSubmits(root: ParentNode, pool: Set<string>) {
+  cancelOpenDialogs();
+  const cards = new Map<Element, HTMLButtonElement[]>();
   const loose: HTMLButtonElement[] = [];
   for (const b of Array.from(root.querySelectorAll<HTMLButtonElement>("button"))) {
-    if (b.disabled || b.classList.contains("card-details-toggle") || b.closest("dialog")) continue;
+    if (b.disabled || b.classList.contains("card-details-toggle") || b.closest("dialog") || b.closest('[role="toolbar"]')) continue;
     const card = b.closest("article");
-    const toolbar = b.closest('[role="toolbar"]');
     // 卡上只轮动作行（.card-actions）里的动词：单击复制指令 行 / AI 评语章也是 <button>，但不是提交路，
     // 混进来会把同一列按「首颗是不是复制行」拆成不同类、还占掉一个轮换位（它们归 ④）
     if (card) {
       if (b.closest(".card-actions")) cards.set(card, [...(cards.get(card) ?? []), b]);
-    } else if (toolbar) toolbars.set(toolbar, [...(toolbars.get(toolbar) ?? []), b]);
-    else if (opensDialog(b)) loose.push(b);
+    } else if (opensDialog(b)) loose.push(b);
   }
   // 同类 = 动作行第一颗动词相同（批准… / 验收… / 评论…）：同类第 k 张点第 k % n 颗——复制成稿 / 在终端接管
   // 这类只有部分卡才有的按钮不该把同一列拆成不同类，否则每类都只走到第一条路
@@ -546,10 +567,6 @@ function rotateSubmits(root: ParentNode, pool: Set<string>) {
     const k = seenShape.get(shape) ?? 0;
     seenShape.set(shape, k + 1);
     clickAndSubmitDialogs(buttons[k % buttons.length], pool);
-  }
-  for (const buttons of toolbars.values()) {
-    const ordered = [...buttons].sort((a, b) => Number(/强制合并|Force-merge/.test(b.textContent ?? "")) - Number(/强制合并|Force-merge/.test(a.textContent ?? "")));
-    for (const b of ordered) if (opensDialog(b)) clickAndSubmitDialogs(b, pool);
   }
   for (const b of loose) clickAndSubmitDialogs(b, pool);
 }
@@ -590,13 +607,25 @@ function fillInputs(root: ParentNode, searches: boolean) {
 
 function clickEverything(root: ParentNode, pool: Set<string>, searches = false, perClick = false, fill = true) {
   const all = () => Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
+  const isBoard = root.querySelector(".board-main") !== null;
+  const inToolbar = (b: HTMLButtonElement) => b.closest('[role="toolbar"]') !== null;
   if (fill) fillInputs(root, searches);
   collectLabels(document.body, pool);
-  selectAllCards(root); // 看板：进多选态 + 勾上每张卡（操作条按钮解禁）；别的面没有勾选框，空转
-  collectLabels(document.body, pool);
-  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && opensDialog(b)), pool);
+  if (isBoard) {
+    // 看板：多选态一段先走完再退出——§54.1 追记（原生 selectableCard 的 tap catcher）：selectionMode 下卡的动作行
+    // 整排是死的（点它 = 切换选中），卡的动词要退出多选之后才点得动；而操作条只活在多选态里，它的弹窗 / 提交先收。
+    // 多选态本身由 store 切（selectAllCards），FilterBar 的「选择 / 退出选择」按钮不点——点它会把多选态切回去
+    selectAllCards(root); // 进多选态 + 勾上每张卡（操作条按钮解禁）；顺手收：勾选框 aria-label、退出选择、操作条计数
+    collectLabels(document.body, pool);
+    clickAll(all().filter((b) => inToolbar(b) && opensDialog(b)), pool);
+    collectLabels(document.body, pool); // 弹窗开着时收：强制合并的主卡单选 / 提建议（N 张卡）标题
+    rotateToolbars(root, pool);
+    act(() => setSelectionMode(false));
+    collectLabels(document.body, pool);
+  }
+  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && opensDialog(b) && !(isBoard && inToolbar(b))), pool);
   collectLabels(document.body, pool); // 弹窗开着时收：弹窗标题 / 选项 / 提交键
-  if (root.querySelector(".board-main")) rotateSubmits(root, pool); // 看板：每张卡走一条提交路，pending 一句各收一遍
+  if (isBoard) rotateSubmits(root, pool); // 看板：每张卡走一条提交路，pending 一句各收一遍
   // perClick（向导 / 权限体检）：每点一下收一遍——「启动中…」「验证中…」只活到下一颗按钮把这一步换掉之前；
   // 向导页脚的 上一步 / 下一步 / 完成 不点（会把当前步卸掉，先验后存的「✅ key 有效,已保存」就落不到 DOM 上）——它们按文本判
   const isWizardNav = (b: HTMLButtonElement) => perClick && b.closest(".setup-footer") !== null;

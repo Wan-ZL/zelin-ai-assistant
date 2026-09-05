@@ -677,6 +677,24 @@ a.chip:hover { text-decoration: underline; }
   accent-color: var(--accent);
 }
 
+/* 原生 Kanban.swift selectableCard 的整卡 tap catcher：可选卡整卡可点（切换选中，手形；不选文本），
+   选中卡 accent 淡底（原生 accentColor.opacity(0.10)）+ accent 边；动作行整排失效——指针穿透到卡身
+   （点到「批准」也只是切换选中，误点不许批准 / 删除），略淡以示不可用；键盘激活由 CardSurface 的 capture 拦下 */
+.task-card.is-selectable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.task-card.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.task-card.is-selectable .card-actions {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 .selection-bar {
   position: sticky;
   bottom: 0;

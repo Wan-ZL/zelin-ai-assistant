@@ -109,10 +109,10 @@ export function ProposalCard({ card }: ProposalCardProps) {
   const shownId = displayId(card);
 
   return (
-    <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${headline}`}>
+    <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${headline}`} selectable>
       {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题）；
           摘要里的 URL 可点（原生 Cards.swift:1073 linkified；AI 研究中占位 :945 不 linkify） */}
-      <CardHead card={card} title={headline} variant="lg" selectable linkify />
+      <CardHead card={card} title={headline} variant="lg" linkify />
       <TargetLine card={card} />
       <EgressLines card={card} />
       <div className="card-badges">

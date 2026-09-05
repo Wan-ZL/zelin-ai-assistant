@@ -64,8 +64,8 @@ export function ReviewCard({ card }: ReviewCardProps) {
   const title = typeof card.display_title === "string" && card.display_title ? card.display_title : card.name;
 
   return (
-    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`}>
-      <CardHead card={card} title={title} selectable leading={<span className="card-dot is-review" aria-hidden="true" />} />
+    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`} selectable>
+      <CardHead card={card} title={title} leading={<span className="card-dot is-review" aria-hidden="true" />} />
       <div className="card-badges">
         <MergeStateChip cardId={card.id} />
         {/* §30 会话再活跃：只是平静地标注，不是打回轮（原生 teal 章） */}
