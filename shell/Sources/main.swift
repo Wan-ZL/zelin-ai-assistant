@@ -16,7 +16,7 @@
 // hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
 // （外链交系统浏览器 / Dock 重开 / 标题跟随页面）与主菜单纯表（MenuSpec：双语标题、
 // 设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 / 缩放，随 LanguageStore
-// 切换整个重建）住在 ShellSupport.swift，§54 追记；本文件只装菜单、做副作用。
+// 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；本文件只挂到 NSApp、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -600,36 +600,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: menu（§54 追记「菜单 l10n」：表在 ShellSupport.swift MenuSpec，这里只装与执行）
 
-    /// 把 `MenuSpec.menus(lang:)` 装成 NSMenu（原生 installMainMenu 的壳版）。每次语言切换整个重建
-    /// ——NSMenu 不观察任何东西，与原生同款。壳动作显式 target 到 delegate（不赌 responder chain）；
-    /// AppKit 标准动作 nil target 走 first-responder 链（webview 里的输入框吃 ⌘C/⌘V/⌘Z）。
+    /// 把 `MenuSpec.menus(lang:)` 装成 NSMenu 并挂到 NSApp（原生 installMainMenu 的壳版）。每次语言切换
+    /// 整个重建——NSMenu 不观察任何东西，与原生同款。逐项装配在 `MenuSpec.build`（ShellSupport.swift，
+    /// MenuHarness 不起 NSApplication 就能检查装好的 NSMenuItem）：壳动作显式 target 到 delegate（不赌
+    /// responder chain）；AppKit 标准动作 nil target 走 first-responder 链（webview 里的输入框吃 ⌘C/⌘V/⌘Z）。
     /// 刻意没有 Find / ⌘1..7：⌘F 与切页不被菜单截胡，落到 WKWebView 再进页面（board 自己绑了）。
     private func installMainMenu(lang: String) {
-        let main = NSMenu()
-        for spec in MenuSpec.menus(lang: lang, appName: ShellConfig.displayName) {
-            let top = NSMenuItem()
-            main.addItem(top)
-            let menu = NSMenu(title: spec.title)
-            top.submenu = menu
-            for item in spec.items {
-                switch item.action {
-                case .separator:
-                    menu.addItem(.separator())
-                case .responder(let name):
-                    let mi = NSMenuItem(title: item.title, action: Selector(name),
-                                        keyEquivalent: item.key)
-                    if item.option { mi.keyEquivalentModifierMask = [.command, .option] }
-                    menu.addItem(mi)
-                case .shell(let action):
-                    let mi = NSMenuItem(title: item.title, action: selector(for: action),
-                                        keyEquivalent: item.key)
-                    mi.target = self
-                    menu.addItem(mi)
-                }
-            }
-            if spec.isWindowsMenu { NSApp.windowsMenu = menu }
-        }
-        NSApp.mainMenu = main
+        let built = MenuSpec.build(MenuSpec.menus(lang: lang, appName: ShellConfig.displayName),
+                                   target: self, selector: selector(for:))
+        if let windows = built.windows { NSApp.windowsMenu = windows }
+        NSApp.mainMenu = built.main
     }
 
     /// MenuSpec.ShellAction → 本 delegate 的 @objc 方法（原生 AppDelegate 同名）。
@@ -648,9 +628,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         openBoardPage(ShellConfig.pageURL("about"))
     }
 
-    /// 设置… ⌘, → 设置页顶部（原生 openSettingsPage：MainNav.section = .settings；`general` 是第一区）。
+    /// 设置… ⌘, → 设置页**顶部**（原生 openSettingsPage 只是 MainNav.section = .settings）：不带 anchor——
+    /// web 设置页目录序是 显示 / 模型 / 通用，`anchor=general` 会把页面滚到第三区、目录与显示区顶出视口。
+    /// 带 anchor 的那条路留给字幕悬浮窗齿轮（`openSettingsPage(anchor:)` → live_captions）。
     @objc private func openSettingsPage(_ sender: Any?) {
-        openSettingsPage(anchor: "general")
+        openBoardPage(ShellConfig.pageURL("settings"))
     }
 
     /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow：PermissionsWindowController.show）。

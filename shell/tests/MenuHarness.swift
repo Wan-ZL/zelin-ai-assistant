@@ -4,19 +4,24 @@
 // table: L()-style bilingual titles, 关于 → ?page=about, 设置… ⌘, → settings,
 // 权限体检… → ?page=permissions, 隐藏 ⌘H / 隐藏其他 ⌥⌘H / 全部显示 / 退出 ⌘Q, 文件 →
 // 关闭窗口 ⌘W, 编辑 chain, 显示 → 重新载入 ⌘R + 聚焦捕获框 ⌘L, 窗口 → 最小化 ⌘M + 缩放;
-// ⌥⌘S sidebar toggle deliberately retired). Compiled by run.sh together with every
-// shell source except main.swift into a plain macOS CLI tool — no Xcode, no XCTest,
-// no NSApplication, no NSMenu. Exits non-zero on any failure. Same harness style as
-// BridgeHarness.swift / PolicyHarness.swift (one behaviour family per file, 防腐 #7).
+// ⌥⌘S sidebar toggle deliberately retired — tombstone §54.4 2026-09-05 追记 (c)).
+// Compiled by run.sh together with every shell source except main.swift into a plain
+// macOS CLI tool — no Xcode, no XCTest, no NSApplication. Exits non-zero on any
+// failure. Same harness style as BridgeHarness.swift / PolicyHarness.swift (one
+// behaviour family per file, 防腐 #7).
 //
-// Why the table and not NSApp.mainMenu: the menu cannot be enumerated without a
-// running NSApplication, so main.swift installs MenuSpec.menus(lang:) verbatim
-// (title / keyEquivalent / modifier / target) and the table is what gets pinned.
+// Two halves are pinned. (1) The table `MenuSpec.menus(lang:appName:)` — titles,
+// key equivalents, modifiers, actions, absences. (2) The assembly `MenuSpec.build`
+// — NSMenu / NSMenuItem objects can be built without a running NSApplication, so
+// every row is checked as it lands (title / keyEquivalent / modifier mask / target /
+// selector / separator), including the regression that `option` must reach `.shell`
+// rows too; only the final `NSApp.mainMenu = …` hand-off stays in main.swift.
 // The rebuild-on-language-switch half is a `LanguageStore.$lang` sink in
 // main.swift; the property it depends on — the table is a pure function of `lang`,
 // never of LanguageMirror (which is still the OLD language when a @Published sink
 // runs) — is pinned here by flipping the mirror and asserting the table ignores it.
 
+import AppKit
 import Foundation
 
 var allOK = true
@@ -133,10 +138,11 @@ func run() {
     check(focus?.title == "聚焦捕获框" && focus?.key == "l" && focus?.option == false,
           "聚焦捕获框 → ShellAction.focusCapture ⌘L (shortcut:menu.main:cmd-l-focus-capture-field; same path as ⌃⌥Space)")
     check(item(en, .shell(.focusCapture))?.title == "Focus Capture Field", "en: Focus Capture Field")
-    // owner decision (s4 acceptance table DELETE list): no ⌥⌘S sidebar toggle — the web board has no
-    // collapsible sidebar. Pin the absence so nobody re-adds it by mirroring the native file blindly.
+    // owner decision (s4 acceptance table DELETE list): no ⌥⌘S sidebar toggle — collapsing the web
+    // rail is the rail's own 折叠钮 only (tombstone §54.4 2026-09-05 追记 (c), pointer in §68.13).
+    // Pin the absence so nobody re-adds it by mirroring the native file blindly.
     check(!flat(zh).contains { $0.key.lowercased() == "s" },
-          "no ⌥⌘S 折叠/展开侧栏 (retired, §68.13 tombstone)")
+          "no ⌥⌘S 折叠/展开侧栏 (retired, §54.4 tombstone)")
     check(!flat(zh).contains { $0.title.contains("侧栏") } && !flat(en).contains { $0.title.contains("Sidebar") },
           "no sidebar item in either language")
 
@@ -174,6 +180,106 @@ func run() {
     check(MenuSpec.menus(lang: "en", appName: appName) == en, "mirror=zh, lang=en → en table")
     LanguageMirror.current = saved
     check(zh != en, "zh and en tables differ (titles are actually localised)")
+
+    // ---- 8. assembly: MenuSpec.build lands every row as an NSMenuItem verbatim ----
+    // main.swift only does `NSApp.mainMenu = built.main` / `NSApp.windowsMenu = built.windows`;
+    // everything else the installer used to do inline is here and checked row by row.
+    print("[8] MenuSpec.build (headless NSMenu assembly):")
+    let target = MenuTarget()
+    let built = MenuSpec.build(zh, target: target, selector: MenuTarget.selector(for:))
+    check(built.main.items.count == zh.count, "one top-level NSMenuItem per Menu", "count=\(built.main.items.count)")
+    check(built.main.items.map { $0.submenu?.title ?? "<nil>" } == zh.map { $0.title },
+          "every top-level item carries a submenu titled from the table",
+          String(describing: built.main.items.map { $0.submenu?.title }))
+    check(built.windows != nil && built.windows === built.main.items[4].submenu,
+          "windows menu = the 窗口 submenu object (main.swift assigns it to NSApp.windowsMenu)")
+    var rowsChecked = 0
+    for (spec, top) in zip(zh, built.main.items) {
+        guard let menu = top.submenu else { continue }
+        check(menu.items.count == spec.items.count, "\(spec.title.isEmpty ? "App" : spec.title): item count matches the table",
+              "\(menu.items.count) vs \(spec.items.count)")
+        for (item, mi) in zip(spec.items, menu.items) {
+            rowsChecked += 1
+            let expectedMask: NSEvent.ModifierFlags = item.option ? [.command, .option] : [.command]
+            switch item.action {
+            case .separator:
+                check(mi.isSeparatorItem, "separator lands as NSMenuItem.separator")
+            case .responder(let name):
+                check(mi.title == item.title && mi.keyEquivalent == item.key && mi.action == Selector(name)
+                          && mi.target == nil && mi.keyEquivalentModifierMask == expectedMask,
+                      "responder row '\(item.title)' → nil target, selector \(name), key '\(item.key)', mask \(item.option ? "⌥⌘" : "⌘")",
+                      "title=\(mi.title) key=\(mi.keyEquivalent) action=\(String(describing: mi.action)) target=\(String(describing: mi.target)) mask=\(mi.keyEquivalentModifierMask.rawValue)")
+            case .shell(let action):
+                check(mi.title == item.title && mi.keyEquivalent == item.key
+                          && mi.action == MenuTarget.selector(for: action) && mi.target === target
+                          && mi.keyEquivalentModifierMask == expectedMask,
+                      "shell row '\(item.title)' → explicit target, selector for .\(action), key '\(item.key)'",
+                      "title=\(mi.title) key=\(mi.keyEquivalent) action=\(String(describing: mi.action)) target=\(String(describing: mi.target)) mask=\(mi.keyEquivalentModifierMask.rawValue)")
+            }
+        }
+    }
+    check(rowsChecked == flat(zh).count, "every table row was inspected", "rows=\(rowsChecked)")
+    // regression pin: `option` must reach .shell rows too — the first ⌥⌘ shell chord must not silently
+    // collapse to plain ⌘<key> (the inline installer only applied the mask to .responder rows)
+    let optShell = MenuSpec.build([MenuSpec.Menu("X", items: [
+        MenuSpec.Item("Hard Reload", key: "r", option: true, action: .shell(.reload)),
+        MenuSpec.Item("Hide Others", key: "h", option: true, action: .responder("hideOtherApplications:")),
+    ])], target: target, selector: MenuTarget.selector(for:))
+    let optRows = optShell.main.items[0].submenu?.items ?? []
+    check(optRows.count == 2 && optRows.allSatisfy { $0.keyEquivalentModifierMask == [.command, .option] },
+          "option=true → ⌥⌘ mask on .shell rows exactly as on .responder rows",
+          String(describing: optRows.map { $0.keyEquivalentModifierMask.rawValue }))
+    check(optShell.windows == nil, "no isWindowsMenu in the table → windows = nil (NSApp.windowsMenu left alone)")
+    // AppKit standard selectors named in the table are the real ones, not typos: every responder
+    // row whose selector has a #selector form must land as exactly that selector. (undo: / redo: have
+    // no Swift #selector spelling — they are informal responder-chain messages — so they are not listed.)
+    let appKit: [String: Selector] = [
+        "hide:": #selector(NSApplication.hide(_:)),
+        "hideOtherApplications:": #selector(NSApplication.hideOtherApplications(_:)),
+        "unhideAllApplications:": #selector(NSApplication.unhideAllApplications(_:)),
+        "terminate:": #selector(NSApplication.terminate(_:)),
+        "performClose:": #selector(NSWindow.performClose(_:)),
+        "performMiniaturize:": #selector(NSWindow.performMiniaturize(_:)),
+        "performZoom:": #selector(NSWindow.performZoom(_:)),
+        "cut:": #selector(NSText.cut(_:)),
+        "copy:": #selector(NSText.copy(_:)),
+        "paste:": #selector(NSText.paste(_:)),
+        "selectAll:": #selector(NSText.selectAll(_:)),
+    ]
+    let installedResponders = built.main.items.flatMap { $0.submenu?.items ?? [] }
+        .filter { $0.target == nil && !$0.isSeparatorItem }
+    var matched = 0
+    for mi in installedResponders {
+        guard let action = mi.action, let expected = appKit[NSStringFromSelector(action)] else { continue }
+        matched += 1
+        check(action == expected, "installed '\(mi.title)' selector \(NSStringFromSelector(action)) is the AppKit #selector")
+    }
+    check(matched == appKit.count, "every AppKit selector in the table was matched against its #selector form",
+          "matched=\(matched) expected=\(appKit.count)")
+    // the ⌥⌘H / ⌘H pair from the real table really differ by modifier once installed
+    let hideRow = installedResponders.first { $0.action == appKit["hide:"] }
+    let hideOthersRow = installedResponders.first { $0.action == appKit["hideOtherApplications:"] }
+    check(hideRow?.keyEquivalentModifierMask == [.command] && hideOthersRow?.keyEquivalentModifierMask == [.command, .option],
+          "installed 隐藏 = ⌘H, 隐藏其他 = ⌥⌘H")
+}
+
+/// Stand-in for AppDelegate: one @objc method per ShellAction, same mapping shape as main.swift's `selector(for:)`.
+final class MenuTarget: NSObject {
+    @objc func openAboutPage(_ sender: Any?) {}
+    @objc func openSettingsPage(_ sender: Any?) {}
+    @objc func openPermissionsPage(_ sender: Any?) {}
+    @objc func reloadPage(_ sender: Any?) {}
+    @objc func focusCaptureField(_ sender: Any?) {}
+
+    static func selector(for action: MenuSpec.ShellAction) -> Selector {
+        switch action {
+        case .about: return #selector(openAboutPage(_:))
+        case .settings: return #selector(openSettingsPage(_:))
+        case .permissions: return #selector(openPermissionsPage(_:))
+        case .reload: return #selector(reloadPage(_:))
+        case .focusCapture: return #selector(focusCaptureField(_:))
+        }
+    }
 }
 
 run()

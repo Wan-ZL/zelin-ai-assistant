@@ -538,11 +538,13 @@ enum WindowTitlePolicy {
 //
 // 原生主菜单每个标题都走 L()，并在语言切换时整个重建（Store.swift `/lang` 与设置页保存后
 // `app.installMainMenu()`——NSMenu 不观察任何东西）。壳把「菜单长什么样」抽成这张纯表，
-// main.swift 的 `installMainMenu(lang:)` 只负责把表装成 NSMenu、并订阅 `LanguageStore.$lang`
+// `MenuSpec.build` 把表装成 NSMenu（不碰 NSApp，判例不起 NSApplication 就能检查装好的项），
+// main.swift 的 `installMainMenu(lang:)` 只负责挂到 NSApp、并订阅 `LanguageStore.$lang`
 // 在每次切换时重装。表**显式吃 lang、不读 LanguageMirror**：@Published 在 willSet 发值，订阅
 // sink 跑到时镜像（也就是 L()）还是旧语言。双语字面量与 L() 同一形式（zh, en 一对），不是
 // 第二套 i18n——菜单在 server 连上之前就得在，server-owned 文案目录此刻拿不到。
-// 判例 shell/tests/MenuHarness.swift 钉每个标题、键位与动作（含「没有 ⌘F / ⌘1..7 / ⌥⌘S」）。
+// 判例 shell/tests/MenuHarness.swift 钉每个标题、键位与动作（含「没有 ⌘F / ⌘1..7 / ⌥⌘S」）
+// 与装配结果（target / selector / 修饰键逐项落地）。
 
 enum MenuSpec {
     /// 壳自己处理的动作——每个都是原生 AppDelegate 同名 @objc 方法的壳版，main.swift 逐一映射到
@@ -550,7 +552,8 @@ enum MenuSpec {
     enum ShellAction: Equatable, CaseIterable {
         /// 关于 → 看板 `?page=about`（原生 openAboutPage；**不是**系统 About 面板）
         case about
-        /// 设置… ⌘, → `?page=settings&anchor=general`（原生 openSettingsPage 落在设置页顶部）
+        /// 设置… ⌘, → `?page=settings`（不带 anchor：原生 openSettingsPage 落在设置页顶部；web 目录序是
+        /// 显示 / 模型 / 通用，带 `anchor=general` 会滚到第三区）
         case settings
         /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow；权限页文案「之后随时可从菜单
         /// 「权限体检」再打开」自此在壳里为真）
@@ -606,7 +609,7 @@ enum MenuSpec {
     ///
     /// 刻意**没有**的：Find（⌘F 不被菜单截胡，落到 WKWebView 再进页面——board 自己绑了 ⌘F 搜索）；
     /// ⌘1..7 切页（归 web NavRail，同理）；⌥⌘S 折叠/展开侧栏（s4 清单 DELETE 项，owner 决策——
-    /// web 看板没有可折叠的侧栏，§68.13 tombstone）。
+    /// 折叠只走 web 导航栏栏顶的折叠钮，tombstone 在 §54.4 2026-09-05 追记 (c)）。
     static func menus(lang: String, appName: String) -> [Menu] {
         func t(_ zh: String, _ en: String) -> String { lang == "en" ? en : zh }
         return [
@@ -645,5 +648,38 @@ enum MenuSpec {
                 Item(t("缩放", "Zoom"), action: .responder("performZoom:")),
             ], isWindowsMenu: true),
         ]
+    }
+
+    /// 把表逐项装成 NSMenu（原生 installMainMenu 的装配半边；不碰 NSApp——挂到 `NSApp.mainMenu` /
+    /// `NSApp.windowsMenu` 是 main.swift 的事，所以判例不起 NSApplication 就能逐项检查）。
+    /// 壳动作 `selector(action)` + 显式 `target`；AppKit 标准动作 `Selector(name)`、nil target 走
+    /// first-responder 链；`option` 对两种动作一视同仁（⌥⌘ 不因为是壳动作就悄悄掉成 ⌘）。
+    /// 返回主菜单与 `isWindowsMenu` 那一份（没有则 nil）。
+    static func build(_ menus: [Menu], target: AnyObject,
+                      selector: (ShellAction) -> Selector) -> (main: NSMenu, windows: NSMenu?) {
+        let main = NSMenu()
+        var windows: NSMenu?
+        for spec in menus {
+            let top = NSMenuItem()
+            main.addItem(top)
+            let menu = NSMenu(title: spec.title)
+            top.submenu = menu
+            for item in spec.items {
+                let mi: NSMenuItem
+                switch item.action {
+                case .separator:
+                    mi = .separator()
+                case .responder(let name):
+                    mi = NSMenuItem(title: item.title, action: Selector(name), keyEquivalent: item.key)
+                case .shell(let action):
+                    mi = NSMenuItem(title: item.title, action: selector(action), keyEquivalent: item.key)
+                    mi.target = target
+                }
+                if item.option { mi.keyEquivalentModifierMask = [.command, .option] }
+                menu.addItem(mi)
+            }
+            if spec.isWindowsMenu { windows = menu }
+        }
+        return (main, windows)
     }
 }
