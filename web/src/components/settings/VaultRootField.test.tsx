@@ -3,6 +3,7 @@
 //   1) 框里显示的是存值的父目录（vault 根），不是 raw 目录；
 //   2) 选择…（桥 / 浏览器路径框）从根出发，选中的目录落草稿为 `<选中>/2 - raw`；叶子已是 "2 - raw" 原样；
 //   3) 敲字：每个字换算成 raw 进草稿，结尾的 / 留在框里（不被反向派生抹掉）；清空 = 清键；
+//      失焦 → 显示重派生成草稿的根（原生 focus-out commit → loadVault；「保存」点击本身先失焦，保存回执同串也不留结尾 /）；
 //   4) 草稿从外部换了（保存对齐 / 目录合并）→ 显示重新派生；
 //   5) placeholder = server 目录的 placeholder（默认根），老 server 缺席时回落到同一句；
 //   6) 其它目录字段（工作目录）仍逐字存取——只有 obsidian_raw 这一把键按根换算。
@@ -38,6 +39,8 @@ function Draft({ field, initial, onChange }: { field: SettingsField; initial: st
     <>
       <FieldControl sectionId="obsidian" field={field} value={value} onChange={(key, next) => { setValue(next); onChange(key, next); }} />
       <button type="button" onClick={() => setValue("~/Elsewhere/2 - raw")}>server-reset</button>
+      {/* CatalogSection.save 的对齐：回执与草稿同串（`setDraft(fresh)` 换对象不换值） */}
+      <button type="button" onClick={() => setValue((v: unknown) => (typeof v === "string" ? `${v}` : v))}>server-echo</button>
     </>
   );
 }
@@ -125,6 +128,28 @@ describe("typing the root", () => {
     fireEvent.change(vaultInput(), { target: { value: "~/Notes/Sub" } });
     expect(onChange).toHaveBeenLastCalledWith("obsidian_raw", "~/Notes/Sub/2 - raw");
     expect(vaultInput().value).toBe("~/Notes/Sub");
+  });
+
+  it("blur re-derives the shown root from the draft (a save whose echo equals the draft leaves the canonical form, not ` ~/Vault/`)", () => {
+    const onChange = vi.fn();
+    wrap(<Draft field={vaultField()} initial="~/Notes/2 - raw" onChange={onChange} />);
+    fireEvent.change(vaultInput(), { target: { value: " ~/Vault/" } });
+    expect(vaultInput().value).toBe(" ~/Vault/");   // 敲字期间原样
+    expect(onChange).toHaveBeenLastCalledWith("obsidian_raw", "~/Vault/2 - raw");
+    const calls = onChange.mock.calls.length;
+    fireEvent.blur(vaultInput());                    // 点「保存」/ 离开输入框：显示回到规范形，草稿不动
+    expect(vaultInput().value).toBe("~/Vault");
+    expect(onChange).toHaveBeenCalledTimes(calls);
+    // 保存回执与草稿同串（server 原样回 ~/Vault/2 - raw）→ 框里仍是根，不会退回敲的原文
+    fireEvent.click(screen.getByRole("button", { name: "server-echo" }));
+    expect(vaultInput().value).toBe("~/Vault");
+  });
+
+  it("blur on a typed full raw path shows its parent, like the native commit → loadVault", () => {
+    wrap(<Draft field={vaultField()} initial="" onChange={() => undefined} />);
+    fireEvent.change(vaultInput(), { target: { value: "~/Vault/2 - raw" } });
+    fireEvent.blur(vaultInput());
+    expect(vaultInput().value).toBe("~/Vault");
   });
 
   it("typing the full raw path is accepted as-is", () => {

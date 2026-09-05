@@ -5,6 +5,7 @@
 //     退化成一行路径文本框 + 「选择」确认 / 「取消」；
 //   · 「打开」/「创建」（「创建文件夹」）：POST /api/folders/{open,create} {key}——路径由 server 从**已保存**的
 //     effective 值读，客户端只传 key（reveal / ai-fix 同一纪律），草稿未保存时禁用并提示先保存；
+//     笔记库的「打开」由 server 落到 vault 根（raw 的父目录，原生 `openInFinder(vaultRoot)`），与框里显示的同一处；
 //   · 「⚠︎ 目录不存在」警告来自 server 投影 `path_exists`（空值 null 不警告）；创建失败 → 「创建目录失败：」+ 原文；
 //   · 「Obsidian Vault 位置」（`obsidian_raw`，§68.1 追记 vault 根）：框里显示的是 **vault 根**（= 存值的父目录，原生
 //     loadVault 的 `deletingLastPathComponent`），敲字 / 选择… 落进草稿的是 `<根>/2 - raw`（原生 commitVaultRoot →
@@ -126,8 +127,10 @@ export interface VaultRootFieldProps {
 }
 
 /** 「Obsidian Vault 位置」的输入框 + 「选择…」：显示 vault 根、落 `<根>/2 - raw`（原生 Settings.swift:740-792 一格 vault 根字段）。
- *  框里的字是本地态：敲的每个字都立刻换算成 raw 写进草稿，但显示不反向派生——否则「~/Notes/」刚敲完的 / 会被
- *  `vaultRootOf(rawDirOf(…))` 抹掉、下一个字接不上；只有草稿从**外部**换了（保存对齐 / 目录合并 / 选择…）才重新派生显示。 */
+ *  框里的字是本地态：敲的每个字都立刻换算成 raw 写进草稿，但敲字期间显示不反向派生——否则「~/Notes/」刚敲完的 / 会被
+ *  `vaultRootOf(rawDirOf(…))` 抹掉、下一个字接不上；**失焦**（blur）时才把显示重派生成草稿的根（原生 commitField 在
+ *  focus-out / Enter 时 commit → loadVault 重派生同拍；点「保存」本身先失焦，所以保存后框里是规范形，不留结尾 / 或首尾空白），
+ *  草稿从**外部**换了（保存对齐 / 目录合并 / 选择…）也重新派生显示。 */
 export function VaultRootField({ id, raw, onChange, disabled = false, placeholder = DEFAULT_VAULT_ROOT }: VaultRootFieldProps) {
   const [root, setRoot] = useState(() => vaultRootOf(raw));
   useEffect(() => {
@@ -138,6 +141,11 @@ export function VaultRootField({ id, raw, onChange, disabled = false, placeholde
   function type(next: string) {
     setRoot(next);
     onChange(rawDirOf(next));
+  }
+
+  /** 失焦：显示 = 草稿的根（`~/Vault/` → `~/Vault`；草稿本身不动，dirty 判定不变） */
+  function settle() {
+    setRoot(vaultRootOf(raw));
   }
 
   /** 选择…：一次性的完整路径——框里显示派生出的根（选到 raw 目录本身也显示它的父目录），草稿收 raw */
@@ -158,6 +166,7 @@ export function VaultRootField({ id, raw, onChange, disabled = false, placeholde
         spellCheck={false}
         placeholder={placeholder}
         onChange={(event) => type(event.target.value)}
+        onBlur={settle}
       />
       <FolderPicker current={root.trim()} disabled={disabled} placeholder={placeholder} onPick={pick} />
     </>
