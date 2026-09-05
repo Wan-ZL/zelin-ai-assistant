@@ -1,0 +1,9 @@
+pr: `fix/parity-strips-force-open`（behaviour-parity 批次 `strips-force-open`，chain `store-actions` 第 3 棒，接 #253；gap `board-cards-backlog-strip-force-open`）
+phase: P4 余量（D3：web 看板是产品、原生 mac/Sources 是冻结的行为规格；parity 补齐不是新 owner 决策，plan 决策表不加行）
+law: §54.1 追记（两条书立条的展开态住 store、不持久化；搜索 / 过滤命中潜在任务强制展开左条；暂缓 / 放回看板提交成功与 debt / archived 源动作 180 s 超时强制打开对应的条）
+
+**补回什么**：原生 v0.33 的两条书立条把展开态放在 `Store.swift:127-128`（「Expansion lives HERE — not view @State — so it survives page switches within a session, and is deliberately NOT persisted」），`Kanban.swift:316-328` 在搜索命中潜在任务时用 `.constant(true)` 强制展开左条（「a stale filter / collapsed strip can never silently hide cards」），`Store.swift:861` 暂缓 echo 落进潜在任务条时、`:851` 放回看板 info 条落进永久性完成条时、`:425` / `:450` / `:539` 对应源的 180 s 超时通知落回条里时都把旗置 true。web 移植版 `BacklogStrip.tsx` / `ArchiveStrip.tsx` 各自 `useState(false)`：换页回来就收起、搜索命中只改计数 n/N、动作回执落进收起的条里没人看得见。
+
+**怎么补**：`store.ts` 加 add-only `backlogStripExpanded` / `archiveStripExpanded` + 两个 setter（唯二写者），`resetStoreForTests` 归零；两条书立条的列头读旗写旗。`BacklogStrip` 在 `cardFilterCount(filters) > 0 && rows.length > 0` 时不看旗直接展开（web 的条吃全局过滤 chips + ⌘F，所以判据比原生的「搜索词非空」宽一维——同一不变量），此时列头开合是 no-op、清掉查询即回到旗的状态；右条没有搜索强开（原生同、归档不吃全局过滤）。`boardActions.ts` 加纯函数 `stripToForceOpen(rec, phase)`，`useSubmit` 在 `postAction` 成功后（= 原生 `applyAction` 在 inbox 写成功后的时点）按动词开条：`defer` → 左、`unarchive` → 右；180 s 兜底定时器按提交时所在列开条：`debt` → 左、`archived` → 右。放成功路径而不是 `landed` 路径：换列动词落地那一帧卡组件已随卡离开原列卸载，落地 effect 不会跑。audit 建议的「DoneCard `archive` 成功开右条」不是原生行为（`addEcho target: .archived` 不触发任何条），不继承并在 §54.1 追记里写明。无新文案、wire / server 零变化、视觉 golden 不动。
+
+**判例**：新 `chrome/BacklogStrip.forceOpen.test.tsx`（7）、`board/useSubmit.stripOpen.test.tsx`（9）、`chrome/ArchiveStrip.forceOpen.test.tsx`（3）；既有 `BacklogStrip.test.tsx` / `ArchiveStrip.test.tsx` / `BoardLanes.test.tsx` 的「默认收起」判例不改照过（store 缺省 false）。`ui/parity` 判卷面零变化。

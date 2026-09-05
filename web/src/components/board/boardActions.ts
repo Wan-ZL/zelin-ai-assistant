@@ -10,7 +10,7 @@ import { ApiError, postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readPage } from "../../route";
 import { steerAcknowledged } from "../../steer";
-import { getState, selectCard, useAppState } from "../../store";
+import { getState, selectCard, setArchiveStripExpanded, setBacklogStripExpanded, useAppState } from "../../store";
 import { landed, recordPending, timeoutNotice, type PendingRecord } from "./pendingSettle";
 
 /** 卡片决策类四键形（comment 键永远存在，无文本时 null——inbox-actions.md §2） */
@@ -117,6 +117,33 @@ export interface SubmitState {
 /** Mac Store.swift 同款 180s truth-timeout：真信号迟迟不来 → 解锁 + 诚实报未确认 */
 export const CONFIRM_TIMEOUT_MS = 180_000;
 
+/** v0.33 书立条强制展开（§54.1 追记）：用户点了按钮，回执不能落在收起的条里（原生 Store.swift）。
+ *  - 提交成功（`submitted`，原生 applyAction 在 inbox 写成功后跑）：暂缓 = echo 落潜在任务条（addEcho target .debt，:861）
+ *    → 左条；放回看板 = info 条落永久性完成条（beginReturn source .archived，:851）→ 右条。永久完成（archive）的 echo
+ *    不开右条——原生只对 target .debt 开左条，右条只因 unarchive 打开。
+ *  - 180 s 超时（`timeout`，原生 sweepTimeouts）：从潜在任务条发出的动作（研究并提议 / 删除 / 永久完成）超时通知落回该条、
+ *    卡也在那里静默恢复（:425 raise、:450 `e.source == .debt`）→ 左条；放回看板超时（:539 `entry.source == .archived`）→ 右条；
+ *    暂缓超时卡还在提案列，不开。 */
+export function stripToForceOpen(
+  rec: Pick<PendingRecord, "action" | "sourceLane">,
+  phase: "submitted" | "timeout",
+): "backlog" | "archive" | null {
+  if (phase === "submitted") {
+    if (rec.action === "defer") return "backlog";
+    if (rec.action === "unarchive") return "archive";
+    return null;
+  }
+  if (rec.sourceLane === "debt") return "backlog";
+  if (rec.sourceLane === "archived") return "archive";
+  return null;
+}
+
+function forceOpenStrip(rec: Pick<PendingRecord, "action" | "sourceLane">, phase: "submitted" | "timeout") {
+  const strip = stripToForceOpen(rec, phase);
+  if (strip === "backlog") setBacklogStripExpanded(true);
+  else if (strip === "archive") setArchiveStripExpanded(true);
+}
+
 /**
  * 每张卡一个提交状态机：submit → pending=true；失败即解锁并给出可读错误；
  * 成功后保持「已提交…」直到这条动作在看板快照里**真的落地**才解锁（pendingSettle.landed：
@@ -154,12 +181,15 @@ export function useSubmit(): SubmitState {
       record.current = null;
       setPending(false);
       setError(timeoutNotice(rec, getState().board, text));
+      // 超时通知落回发出动作的那条书立条 → 那条不能是收起的（原生 :425 / :450 / :539）
+      if (rec) forceOpenStrip(rec, "timeout");
     }, CONFIRM_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [pending, text]);
 
   const submit = async (body: Record<string, unknown>): Promise<boolean> => {
-    record.current = recordPending(body, getState().board);
+    const rec = recordPending(body, getState().board);
+    record.current = rec;
     setPending(true);
     setPendingAction(typeof body.action === "string" ? body.action : null);
     setError(null);
@@ -167,6 +197,9 @@ export function useSubmit(): SubmitState {
     try {
       const response = await postAction(body);
       setSteerQueued(steerAcknowledged(response));
+      // 原生 applyAction 的时点（inbox 写成功后）：暂缓 → 开潜在任务条；放回看板 → 开永久性完成条。放在这里而不是
+      // landed 路径：换列动词落地的那一帧卡组件已随卡离开原列卸载，落地 effect 不会跑
+      forceOpenStrip(rec, "submitted");
       return true;
     } catch (e) {
       setPending(false);

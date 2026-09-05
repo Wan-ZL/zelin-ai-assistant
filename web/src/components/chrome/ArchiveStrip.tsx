@@ -3,12 +3,15 @@
 // 收起 = 竖排窄条只显计数（counts.archived 真实总数）；展开 = 搜索框 + 行列表（原生
 // ArchiveLaneContent：title/summary 客户端过滤），每行「放回看板」→ inbox {action:"unarchive"}。
 // 归档不是看板列（不进多选/过滤 chips）；顺序保持 server 给的 archived_at 倒序（原生同）。
-// 展开态是本地瞬态不进 URL。整页形态 pages/ArchivePage 复用本文件的行组件与三句字面量
+// 展开态挂 store（store.archiveStripExpanded：换页不丢、不持久化、不进 URL——原生 Store.swift:127-128；§54.1 追记），
+// 「放回看板」提交成功 / 180 s 超时由 useSubmit 强制打开（原生 beginReturn / sweepTimeouts：回执不能落在收起的条里；
+// ?page=archive 整页上点的「放回看板」回到看板时也因此看得见）；条内搜索词仍是本地瞬态。
+// 整页形态 pages/ArchivePage 复用本文件的行组件与三句字面量
 // （原生 ArchivePageView 就是同一个 ArchiveSectionView，MainWindow.swift:483）——一份字面量两个面。
 import { useState } from "react";
 import "./chrome.css";
 import { domainLabel, LANE_LABELS, TRASH_KIND_LABELS, useI18n } from "../../i18n";
-import { useAppState } from "../../store";
+import { setArchiveStripExpanded, useAppState } from "../../store";
 import type { ArchivedRow } from "../../types";
 import { cardAction, useSubmit } from "../board/boardActions";
 import { CardHead, RelativeTime } from "../board/cardChrome";
@@ -72,8 +75,7 @@ export function ArchiveRow({ item }: { item: ArchivedRow }) {
 
 export function ArchiveStrip() {
   const { text } = useI18n();
-  const { board } = useAppState();
-  const [expanded, setExpanded] = useState(false);
+  const { board, archiveStripExpanded: expanded } = useAppState();
   const [query, setQuery] = useState("");
   const help = useLaneHelp("archived");
 
@@ -92,7 +94,7 @@ export function ArchiveStrip() {
           type="button"
           className="backlog-strip-toggle"
           aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => setArchiveStripExpanded(!expanded)}
         >
           <span aria-hidden="true">{expanded ? "▾" : "◂"}</span>
           <span>{title}</span>

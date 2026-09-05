@@ -132,6 +132,12 @@ export interface AppState {
   /** 2026-09-05 add-only：最近一批强制合并 180 s 没落地的时刻（epoch ms）；提案列顶据此显示原生那句诚实超时条，
    *  关掉 / 120 s 后归 null（原生 notice-merge-force） */
   forceMergeTimedOutAt: number | null;
+  /** 2026-09-05 add-only（§54.1 追记 `strips-force-open`）：两条书立条（潜在任务 / 永久性完成）的展开态——挂 store 不挂
+   *  组件 @State，换页不丢、**不持久化**（每次启动都收起；原生 Store.swift:127-128）。回执不能落在收起的条里：useSubmit 在
+   *  暂缓 / 放回看板 提交成功与 debt / archived 源动作 180 s 超时时置 true（原生 addEcho / beginReturn / sweepTimeouts）；
+   *  搜索命中潜在任务时左条不看这面旗直接展开（BacklogStrip，原生 Kanban.swift:326 `.constant(true)`） */
+  backlogStripExpanded: boolean;
+  archiveStripExpanded: boolean;
 }
 
 /** §63 本地标记（server marks.json 的镜像片段） */
@@ -198,6 +204,8 @@ const initialState: AppState = {
   selectedIds: new Set<string>(),
   forceMergingIds: new Set<string>(),
   forceMergeTimedOutAt: null,
+  backlogStripExpanded: false,
+  archiveStripExpanded: false,
 };
 
 let state: AppState = initialState;
@@ -575,6 +583,17 @@ export function toggleSelected(cardId: string) {
 
 export function clearSelection() {
   setState({ selectedIds: new Set<string>() });
+}
+
+// ----- v0.33 两条书立条的展开态（原生 Store.backlogStripExpanded / archiveStripExpanded；§54.1 追记） ------------ #
+// 只有这两个 setter 写旗：书立条头的开合按钮、useSubmit 的强制展开。不进 URL、不进 localStorage。
+
+export function setBacklogStripExpanded(on: boolean) {
+  if (state.backlogStripExpanded !== on) setState({ backlogStripExpanded: on });
+}
+
+export function setArchiveStripExpanded(on: boolean) {
+  if (state.archiveStripExpanded !== on) setState({ archiveStripExpanded: on });
 }
 
 // ----- §21bis 强制合并的在途批次（原生 Store.mergeForcingLocal: [PendingForceMerge]） -------------------- #
