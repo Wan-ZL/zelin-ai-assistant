@@ -465,30 +465,39 @@ final class LanguageStore: ObservableObject {
 /// 外链一律交系统浏览器（原生 Pages.swift DepAction.url / Doctor.swift
 /// FailureCatalog.perform 都是 `NSWorkspace.shared.open`）。WKWebView 不实现
 /// WKUIDelegate 时 target=_blank / window.open 会被静默取消——壳自 §54 追记起
-/// 按本策略分流：看板 origin 留在同一个 webView，其余交系统处理者。
+/// 按本策略分流：看板 SPA 留在同一个 webView，其余 http(s) / mailto 交系统处理者，
+/// 别的 scheme 一律不理（allow-list，不是 deny-list）。
 enum ExternalLinkPolicy {
     enum Verdict: Equatable {
-        /// http://127.0.0.1|localhost|::1:<port>/… — 看板自己的 origin，留在壳内。
+        /// http://127.0.0.1|localhost|::1:<port>/ 且路径就是 `/`（看板每一页都是
+        /// `?page=` query，见 web/src/route.ts）— 看板 SPA 自己，留在壳内加载。
         case board
-        /// 其余 http(s) / mailto / file 等 — `NSWorkspace.shared.open`，系统浏览器/处理者接手。
+        /// 其余 http(s)（含看板 origin 上路径不是 `/` 的 server 文件 / API 面：
+        /// `/files/…` 交付物、`/api/…`、markdown 相对链接解析出的路径）与 `mailto:`
+        /// — `NSWorkspace.shared.open`，系统浏览器 / 邮件客户端接手。壳只有一个
+        /// webView、没有后退，永不把它导航到看板之外的页面。
         case external
-        /// about:blank / javascript: / data: / blob: / 空 URL — WebKit 自己消化，绝不开浏览器。
+        /// about:blank / javascript: / data: / blob: / file: / 自定义 scheme / 空 URL
+        /// — 什么都不做。页面能发出的只有 http(s) / mailto（markdown sanitizeUrl 白名单）；
+        /// 其余 scheme 交 `NSWorkspace.open` 会直接启动处理者（file:///…app、
+        /// shortcuts://…），浏览器都不会不问就放行，壳更不。
         case ignore
     }
 
     private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1", "[::1]"]
-    private static let ignoredSchemes: Set<String> = ["about", "javascript", "data", "blob"]
 
     static func classify(_ url: URL?, port: Int) -> Verdict {
         guard let url = url, let scheme = url.scheme?.lowercased(), !scheme.isEmpty else {
             return .ignore
         }
-        if ignoredSchemes.contains(scheme) { return .ignore }
-        guard scheme == "http" || scheme == "https" else { return .external }
-        // origin = scheme + host + port，三者全对才是看板（ShellConfig.boardURL 是
-        // 明文 http；https://127.0.0.1:<port> 不是同一个 origin）。
+        if scheme == "mailto" { return .external }
+        guard scheme == "http" || scheme == "https" else { return .ignore }
+        // origin = scheme + host + port，三者全对（ShellConfig.boardURL 是明文 http；
+        // https://127.0.0.1:<port> 不是同一个 origin）**且**路径是 `/`（或空）才是
+        // 看板 SPA；同 origin 的其他路径是 server 的文件 / API 面，按 external。
         let host = (url.host ?? "").lowercased()
-        if scheme == "http", loopbackHosts.contains(host), (url.port ?? 80) == port {
+        if scheme == "http", loopbackHosts.contains(host), (url.port ?? 80) == port,
+           url.path.isEmpty || url.path == "/" {
             return .board
         }
         return .external
@@ -498,11 +507,19 @@ enum ExternalLinkPolicy {
 /// Dock 重开只看看板窗口，不看 AppKit 的 hasVisibleWindows（原生 AppDelegate.swift
 /// applicationShouldHandleReopen + MainWindowController.isWindowOpen 同义）：字幕悬浮
 /// NSPanel（CaptionOverlay，orderFrontRegardless）会把 hasVisibleWindows 顶成 true，
-/// 按它判 Dock 点击就成了空操作。可见或最小化 = 已开着（最小化交 AppKit 默认重开
-/// 处理还原），否则 show。
+/// 按它判 Dock 点击就成了空操作。三分：看板不在 → show；最小化 → 壳自己
+/// deminiaturize（AppKit 的默认重开只在 hasVisibleWindows == false 时才还原最小化
+/// 窗口——悬浮窗在场时它不会，所以不能交给它）；可见 → 什么都不做。
 enum ReopenPolicy {
-    static func shouldShow(boardVisible: Bool, boardMiniaturized: Bool) -> Bool {
-        return !(boardVisible || boardMiniaturized)
+    enum Action: Equatable {
+        case show
+        case deminiaturize
+        case none
+    }
+
+    static func action(boardVisible: Bool, boardMiniaturized: Bool) -> Action {
+        if boardMiniaturized { return .deminiaturize }
+        return boardVisible ? .none : .show
     }
 }
 

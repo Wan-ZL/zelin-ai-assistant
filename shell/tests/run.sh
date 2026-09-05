@@ -1,12 +1,12 @@
 #!/bin/bash
 # run.sh — shell/ Swift gates, XCTest-free (CONTRACT §61.5):
-#   [1] typecheck every shell source as ONE module (what build.sh compiles);
-#   [2] compile + run BridgeHarness.swift against every shell source except
-#       main.swift (the bootstrap has top-level statements; the harness is the
-#       main.swift of this build) — pins the `zaiShell` wire vocabulary and
-#       the LegacyPrefs seed rules;
-#   [3] compile + run PolicyHarness.swift the same way — pins the window
-#       policies of §54 追记 (ExternalLinkPolicy / ReopenPolicy /
+#   [1/5] typecheck every shell source as ONE module (what build.sh compiles);
+#   [2/5]+[3/5] compile + run BridgeHarness.swift against every shell source
+#       except main.swift (the bootstrap has top-level statements; the harness
+#       is the main.swift of this build) — pins the `zaiShell` wire vocabulary
+#       and the LegacyPrefs seed rules;
+#   [4/5]+[5/5] compile + run PolicyHarness.swift the same way — pins the
+#       window policies of §54 追记 (ExternalLinkPolicy / ReopenPolicy /
 #       WindowTitlePolicy) that AppDelegate consults.
 # Mirrors ios/tests/captions/run.sh: plain swiftc, no Xcode project, any
 # failed assertion exits non-zero.

@@ -359,13 +359,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。刻意**不看**
     /// `flag`（hasVisibleWindows）：字幕悬浮 NSPanel 在场时它恒为 true，Dock 点击
-    /// 就成了空操作（原生 AppDelegate.swift 同一处的教训）。只看看板窗口自己
-    /// （ReopenPolicy，判例 shell/tests/PolicyHarness.swift）；showWindow 幂等。
+    /// 就成了空操作（原生 AppDelegate.swift 同一处的教训）——同一个原因，最小化的
+    /// 看板也得壳自己还原：AppKit 的默认重开只在 flag == false 时 deminiaturize。
+    /// 只看看板窗口自己（ReopenPolicy，判例 shell/tests/PolicyHarness.swift）。
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
-        if ReopenPolicy.shouldShow(boardVisible: window.isVisible,
+        switch ReopenPolicy.action(boardVisible: window.isVisible,
                                    boardMiniaturized: window.isMiniaturized) {
+        case .show:
             showWindow()
+        case .deminiaturize:
+            window.deminiaturize(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        case .none:
+            break
         }
         return true
     }
@@ -425,8 +432,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: 外链（§54 追记：一律交系统浏览器；原生 DepAction.url / FailureCatalog.perform 同款）
 
-    /// 按 ExternalLinkPolicy 执行副作用：看板 origin 留在本 webView，其余交系统处理者，
-    /// about:blank / javascript: 之类什么都不做。
+    /// 按 ExternalLinkPolicy 执行副作用：看板 SPA（origin + 路径 `/`）留在本 webView，
+    /// 其余 http(s) / mailto 交系统处理者（含同 origin 的 `/files/…` 交付物——壳没有
+    /// 后退，永不把唯一的 webView 导航到看板之外），别的 scheme 什么都不做。
     private func route(_ url: URL?) {
         switch ExternalLinkPolicy.classify(url, port: ShellConfig.port) {
         case .board:
@@ -438,8 +446,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// target=_blank / window.open：不实现时 WebKit 直接取消该导航（页面上 16 处外链
-    /// 全成空操作）。壳永远只有一个 webView——这里分流后返回 nil，绝不开第二个窗口。
+    /// target=_blank / window.open：不实现时 WebKit 直接取消该导航（页面上每一处
+    /// target="_blank" / window.open 全成空操作）。壳永远只有一个 webView——这里分流后
+    /// 返回 nil，绝不开第二个窗口。
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -447,9 +456,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return nil
     }
 
-    /// 同 frame 的普通 `<a href>` / location 跳转：主 frame 要离开看板 origin 去别的
-    /// http(s) 主机 → 取消 + 交系统浏览器（看板永不被导航走）。子 frame 与「新窗口」
-    /// 请求（targetFrame == nil，随后进 createWebViewWith）一律放行。
+    /// 同 frame 的普通 `<a href>` / location 跳转：主 frame 要离开看板 SPA（别的 http(s)
+    /// 主机，或同 origin 的 `/files/…` / `/api/…` 路径）→ 取消 + 交系统浏览器（看板永不
+    /// 被导航走）。子 frame 与「新窗口」请求（targetFrame == nil，随后进
+    /// createWebViewWith）一律放行。
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let target = navigationAction.targetFrame, target.isMainFrame,

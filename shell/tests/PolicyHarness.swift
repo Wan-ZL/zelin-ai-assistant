@@ -27,21 +27,34 @@ func run() {
     func verdict(_ s: String) -> ExternalLinkPolicy.Verdict {
         ExternalLinkPolicy.classify(URL(string: s), port: port)
     }
-    // board origin: loopback host + the configured port, any path / query / fragment
+    // board SPA: loopback host + the configured port + root path; every app route is a
+    // ?page= query (web/src/route.ts), so query / fragment do not matter
     check(verdict("http://127.0.0.1:47821/") == .board, "board root → board")
+    check(verdict("http://127.0.0.1:47821") == .board, "board origin without a path → board")
     check(verdict("http://127.0.0.1:47821/?page=settings&anchor=live_captions") == .board,
-          "board deep link (?page=) → board")
-    check(verdict("http://127.0.0.1:47821/api/board#x") == .board, "board API path → board")
+          "board deep link (?page=settings&anchor=) → board")
+    check(verdict("http://127.0.0.1:47821/?page=permissions") == .board,
+          "board deep link (?page=permissions) → board")
+    check(verdict("http://127.0.0.1:47821/#top") == .board, "board root + fragment → board")
     check(verdict("http://localhost:47821/") == .board, "localhost + port → board")
     check(verdict("http://[::1]:47821/") == .board, "IPv6 loopback + port → board",
           String(describing: verdict("http://[::1]:47821/")))
     check(verdict("HTTP://127.0.0.1:47821/") == .board, "scheme compared case-insensitively")
+    // same origin, non-root path = the server's file / API surface, not the SPA: the
+    // shell has one webView and no Back, so these go to the system browser (the
+    // "open in a new tab" the DeliverableViewer link promises) instead of replacing
+    // the board
+    check(verdict("http://127.0.0.1:47821/files/deliverables/R-1/report.pdf") == .external,
+          "same-origin deliverable file → external (system browser), never loaded in the shell")
+    check(verdict("http://127.0.0.1:47821/CHANGELOG.md") == .external,
+          "same-origin relative markdown link (404 on the server) → external, never strands the board")
+    check(verdict("http://127.0.0.1:47821/api/board#x") == .external, "board API path → external")
     // same host, other port = some other local service, not the board
     check(verdict("http://127.0.0.1:47820/") == .external, "loopback on another port → external")
     check(verdict("http://127.0.0.1/") == .external, "loopback on the default port 80 → external")
     check(verdict("https://127.0.0.1:47821/") == .external,
           "https on the board port → external (the board is plain http)")
-    // the 16 web call sites: dependency download pages, GitHub PRs, release page, docs
+    // the web's target="_blank" sites: dependency download pages, GitHub PRs, release page, docs
     check(verdict("https://claude.com/claude-code") == .external, "claude.com → external")
     check(verdict("https://nodejs.org") == .external, "nodejs.org (no path) → external")
     check(verdict("https://ffmpeg.org/download.html") == .external, "ffmpeg.org → external")
@@ -49,10 +62,17 @@ func run() {
           "GitHub PR link → external")
     check(verdict("http://example.com:47821/") == .external,
           "board port on a non-loopback host → external")
-    // non-http schemes the system handler owns (markdown autolink allows mailto)
+    // mailto is the one non-http scheme the web can emit (markdown sanitizeUrl allows it)
     check(verdict("mailto:someone@example.com") == .external, "mailto: → external (system handler)")
-    check(verdict("file:///Users/x/Library/Logs/zelin-ai-assistant/board-shell.log") == .external,
-          "file: → external (system handler)")
+    // allow-list, not deny-list: every other scheme is ignored — NSWorkspace.open on a
+    // file:///…app or a custom scheme would launch the handler with no prompt
+    check(verdict("file:///Users/x/Library/Logs/zelin-ai-assistant/board-shell.log") == .ignore,
+          "file: → ignore (never handed to NSWorkspace.open)")
+    check(verdict("file:///Applications/Foo.app") == .ignore, "file: app bundle → ignore")
+    check(verdict("shortcuts://run-shortcut?name=X") == .ignore, "custom scheme (shortcuts:) → ignore")
+    check(verdict("x-apple.systempreferences:com.apple.preference.security") == .ignore,
+          "x-apple.systempreferences: → ignore (the shell's own deep links go via the bridge)")
+    check(verdict("ssh://host") == .ignore, "ssh: → ignore")
     // WebKit-internal / scripty URLs: never open a browser for these
     check(verdict("about:blank") == .ignore, "about:blank → ignore (splash / empty popup)")
     check(verdict("javascript:void(0)") == .ignore, "javascript: → ignore")
@@ -65,16 +85,16 @@ func run() {
     check(ExternalLinkPolicy.classify(URL(string: "http://127.0.0.1:47820/"), port: 47820) == .board,
           "default port is board when configured so")
 
-    // ---- 2. ReopenPolicy.shouldShow — the four cells; hasVisibleWindows is not an input ----
-    print("[2] ReopenPolicy.shouldShow:")
-    check(ReopenPolicy.shouldShow(boardVisible: false, boardMiniaturized: false),
+    // ---- 2. ReopenPolicy.action — the four cells; hasVisibleWindows is not an input ----
+    print("[2] ReopenPolicy.action:")
+    check(ReopenPolicy.action(boardVisible: false, boardMiniaturized: false) == .show,
           "board closed → show (even while the captions panel keeps hasVisibleWindows true)")
-    check(!ReopenPolicy.shouldShow(boardVisible: true, boardMiniaturized: false),
-          "board visible → no-op (show is idempotent anyway)")
-    check(!ReopenPolicy.shouldShow(boardVisible: false, boardMiniaturized: true),
-          "board minimized → no-op (AppKit's default reopen de-minimizes; mirrors isWindowOpen)")
-    check(!ReopenPolicy.shouldShow(boardVisible: true, boardMiniaturized: true),
-          "both flags → no-op")
+    check(ReopenPolicy.action(boardVisible: true, boardMiniaturized: false) == .none,
+          "board visible → no-op")
+    check(ReopenPolicy.action(boardVisible: false, boardMiniaturized: true) == .deminiaturize,
+          "board minimized → deminiaturize ourselves (AppKit only does it when hasVisibleWindows is false)")
+    check(ReopenPolicy.action(boardVisible: true, boardMiniaturized: true) == .deminiaturize,
+          "both flags → deminiaturize (miniaturized wins)")
 
     // ---- 3. WindowTitlePolicy.resolve — page title wins, blanks fall back ----
     print("[3] WindowTitlePolicy.resolve:")
