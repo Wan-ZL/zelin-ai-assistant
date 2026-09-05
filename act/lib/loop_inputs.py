@@ -691,13 +691,16 @@ def _ruleset_required_names(gh: Callable, repo: str) -> Optional[list]:
     rules = _gh_json(gh, ["api", f"repos/{repo}/rules/branches/{RULESET_BRANCH}"])
     if not isinstance(rules, list):
         return None
-    names = set()
-    for rule in rules:
-        if isinstance(rule, dict) and rule.get("type") == "required_status_checks":
-            params = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
-            names.update(str(c.get("context")) for c in _as_list(params.get("required_status_checks"))
-                         if isinstance(c, dict) and c.get("context"))
-    return sorted(names)
+    return sorted(set().union(*(_rule_contexts(r) for r in rules)))
+
+
+def _rule_contexts(rule) -> set:
+    """一条 ruleset 规则的 `required_status_checks[].context`；别的规则类型 → 空集。"""
+    if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+        return set()
+    params = rule.get("parameters")
+    checks = params.get("required_status_checks") if isinstance(params, dict) else None
+    return {str(c["context"]) for c in _as_list(checks) if isinstance(c, dict) and c.get("context")}
 
 
 def _pr_red_signal(pr: dict, red: list) -> Signal:

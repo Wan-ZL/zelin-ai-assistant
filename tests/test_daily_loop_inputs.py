@@ -225,8 +225,11 @@ class PrSignalsTestCase(unittest.TestCase):
 
     RED_ROLLUP = [{"name": "ci", "conclusion": "SUCCESS"}, {"name": "Lint", "conclusion": "FAILURE"}]
     RULESET = [{"type": "deletion"},
+               # 只认 type == required_status_checks 的规则——别的规则里同名字段是诱饵
+               {"type": "pull_request", "parameters": {"required_status_checks": [
+                   {"context": "Web visual (playwright)"}]}},
                {"type": "required_status_checks", "parameters": {"required_status_checks": [
-                   {"context": "ci"}, {"context": "Tests on ubuntu (Python 3.x)"}]}}]
+                   {"context": "ci"}, {"context": "Tests on ubuntu (Python 3.x)"}, {"name": "no context"}]}}]
     RULESET_CALL = ["api", f"repos/{loop_inputs.DEFAULT_REPO}/rules/branches/main"]
 
     def _gh(self, comments, rollup, checks="unset", ruleset="unset", prs=(7,)):
