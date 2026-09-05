@@ -9,13 +9,20 @@
   「此路不通」句、``application-specific password required`` → 「粘的是普通密码」句、其余通用句；Anthropic 去
   console 重新生成句；每句括号里带 raw ``detail`` 原文；telltale 比对不分大小写；
 - ``ok:true`` 与 ``network:true`` 的回执**不带** ``reason``（既有回执形状零改动）；
+- **前提失败不是判决**：Gmail 还没填地址 → 探针不跑，``ok:false, network:false`` + add-only
+  ``extra.precondition = "gmail_address"``、**不带** ``reason``（原生 runVerify(.gmail) 在 KeyProbe 之前就 return——
+  从没给这条路叫过 humanAuthReason；此前 web 在目录没到本地的 SetupPage 上会被告知「应用密码不对」）；
 - 默认探针的重分类（网络层 mock，零出网）：Anthropic 401 / 403 = 凭证错、其余非 2xx（429 / 529 / 5xx）=
   ``ProbeNetworkError``（判决未知）、2xx 都算通过、错误体 ``error.message`` 进 detail；Slack 五个 token 形状的错误
-  码 = 凭证错、其余错误码（ratelimited / internal_error / …）与非 JSON 回应 = ``ProbeNetworkError``；
-- 经 HTTP：``ProbeNetworkError`` → 200 ``{ok:false, network:true}`` 无 ``reason``。
+  码 = 凭证错、其余错误码（ratelimited / internal_error / …）与非 JSON 回应 = ``ProbeNetworkError``；Gmail IMAP
+  LOGIN **途中**的传输层 ``OSError``（socket.timeout / ssl.SSLError / ConnectionResetError）= ``ProbeNetworkError``
+  （原生 gmailProbeSync 的 ``PROBE_NET``；此前只包了建连那一步，LOGIN 阶段超时会漏成 500）；
+- 经 HTTP：``ProbeNetworkError`` → 200 ``{ok:false, network:true}`` 无 ``reason``，LOGIN 阶段的超时也不 500。
 """
 import io
 import json
+import socket
+import ssl
 import tempfile
 import unittest
 from pathlib import Path
@@ -142,6 +149,43 @@ class VerifyReceiptReasonTestCase(unittest.TestCase):
         self.assertEqual(obj["reason"], _expected("anthropic", "api.anthropic.com answered HTTP 403"))
         self.assertFalse((self.home / "config" / "secrets" / "anthropic-api-key.txt").exists())
 
+    def test_gmail_without_an_address_is_a_precondition_not_a_credential_verdict(self):
+        # 默认探针、不 patch：没地址就不出网。原生 runVerify(.gmail) 在 KeyProbe 之前 return——这条路从没叫过
+        # humanAuthReason，回执不得把它打扮成「应用密码或地址不对」。
+        write_text(self.home / "config" / "secrets" / "gmail-app-password.txt", "abcdefghijklmnop\n")
+        for body in ({}, {"value": "abcdefghijklmnop"}):
+            with self.subTest(body=body):
+                status, obj = post_json(self.port, "/api/secrets/gmail-app-password.txt/verify", body)
+                self.assertEqual(status, 200)
+                self.assertEqual(obj, {"ok": False, "network": False,
+                                       "detail": "no Gmail address configured (Sources → Gmail address)",
+                                       "extra": {"precondition": "gmail_address"}})
+                self.assertNotIn("reason", obj)
+                self.assertNotIn("应用密码", json.dumps(obj, ensure_ascii=False))
+
+    def test_gmail_login_phase_timeout_is_network_not_500(self):
+        write_text(self.home / "config" / "secrets" / "gmail-app-password.txt", "abcdefghijklmnop\n")
+        write_text(self.home / "config.yaml", "sources:\n  gmail:\n    address: me@gmail.com\n")
+
+        class SlowLogin:
+            def __init__(self, host, port, timeout):
+                pass
+
+            def login(self, user, pw):
+                raise socket.timeout("timed out")
+
+            def logout(self):
+                pass
+        patcher = mock.patch.object(secrets_store.imaplib, "IMAP4_SSL", SlowLogin)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        status, obj = post_json(self.port, "/api/secrets/gmail-app-password.txt/verify", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj["ok"], False)
+        self.assertEqual(obj["network"], True)
+        self.assertNotIn("reason", obj)
+        self.assertEqual(obj["detail"], "network error: timed out")
+
 
 class _Resp:
     def __init__(self, status, body):
@@ -222,6 +266,50 @@ class DefaultProberReclassificationTestCase(unittest.TestCase):
         self._patch_urlopen(lambda req, timeout: _Resp(502, b"<html>bad gateway</html>"))
         with self.assertRaises(secrets_store.ProbeNetworkError):
             secrets_store.default_prober("slack", "xoxp-1", {})
+
+    def test_gmail_login_phase_transport_errors_are_verdict_unknown(self):
+        # 原生 gmailProbeSync：``except imaplib.IMAP4.error`` = PROBE_AUTH，其余 ``Exception`` = PROBE_NET——LOGIN
+        # 途中的超时 / TLS / 对端重置都是后者；此前只包了 IMAP4_SSL() 建连那一步
+        class FakeImap:
+            failure = None
+            calls = []
+
+            def __init__(self, host, port, timeout):
+                pass
+
+            def login(self, user, pw):
+                FakeImap.calls.append("login")
+                raise FakeImap.failure
+
+            def logout(self):
+                FakeImap.calls.append("logout")
+        patcher = mock.patch.object(secrets_store.imaplib, "IMAP4_SSL", FakeImap)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for failure in (socket.timeout("timed out"), ssl.SSLError(1, "EOF occurred in violation of protocol"),
+                        ConnectionResetError(54, "Connection reset by peer")):
+            with self.subTest(failure=type(failure).__name__):
+                FakeImap.failure = failure
+                FakeImap.calls = []
+                with self.assertRaises(secrets_store.ProbeNetworkError) as ctx:
+                    secrets_store.default_prober("gmail", "pw", {"address": "me@gmail.com"})
+                self.assertEqual(str(ctx.exception), str(failure))
+                self.assertEqual(FakeImap.calls, ["login", "logout"])   # finally 仍收尾
+        FakeImap.failure = secrets_store.imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Invalid credentials")
+        ok, detail, extra = secrets_store.default_prober("gmail", "pw", {"address": "me@gmail.com"})
+        self.assertFalse(ok)
+        self.assertIn("AUTHENTICATIONFAILED", detail)
+        self.assertEqual(extra, {})
+
+    def test_gmail_no_address_returns_the_precondition_marker_without_touching_the_network(self):
+        def never(*_args, **_kwargs):
+            raise AssertionError("IMAP4_SSL must not be constructed without an address")
+        with mock.patch.object(secrets_store.imaplib, "IMAP4_SSL", never):
+            ok, detail, extra = secrets_store.default_prober("gmail", "pw", {"address": "   "})
+        self.assertFalse(ok)
+        self.assertEqual(detail, "no Gmail address configured (Sources → Gmail address)")
+        self.assertEqual(extra, {"precondition": secrets_store.PRECONDITION_GMAIL_ADDRESS})
+        self.assertEqual(secrets_store.PRECONDITION_GMAIL_ADDRESS, "gmail_address")
 
     def test_slack_native_vocabulary_mirrors_the_swift_sources(self):
         # 原生两处（KeyProbe.slack / SettingsSlack.authTest）同一张表；server 常量逐字对上

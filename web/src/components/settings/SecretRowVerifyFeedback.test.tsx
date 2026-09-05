@@ -136,6 +136,43 @@ describe("SecretRow verify feedback (§68.3 追记) — network / service = verd
   });
 });
 
+describe("SecretRow verify feedback (§68.3 追记) — Gmail no-address precondition judged by the server", () => {
+  // 目录没到本地（SetupPage 第 6 步不挂 CatalogSection，settingsCatalog 为 null）→ 本地 guard 判不了、探针发出去；
+  // server 回 extra.precondition = "gmail_address"（探针没跑，不是凭证的判决）→ 与本地 guard 同一句橙句、章不翻
+  const noAddress = receipt({ detail: "no Gmail address configured (Sources → Gmail address)", extra: { precondition: "gmail_address" } });
+
+  it("verify with no catalog loaded: the native no-address sentence, chip stays saved (not verified), no 「验证失败」", async () => {
+    vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [row("gmail-app-password.txt")] });
+    vi.mocked(verifySecret).mockResolvedValue(noAddress);
+    renderIn("en", <SecretRow name="gmail-app-password.txt" />);
+    await refreshSecrets();
+    expect(getState().settingsCatalog).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Verify" }));
+    await screen.findByText("No Gmail address yet —");
+    expect(screen.getByText(/fill in "Gmail address" above, then click Verify\./)).toBeTruthy();
+    expect(verifySecret).toHaveBeenCalledWith("gmail-app-password.txt");
+    expect(screen.queryByText(/Verification failed/)).toBeNull();
+    expect(screen.queryByText(/no Gmail address configured/)).toBeNull();   // raw detail 不裸露
+    expect(chip().textContent).toBe("saved (not verified)");
+    expect(chip().className).not.toContain("is-failed");
+    expect(screen.getByRole("alert").className).toBe("settings-warning");
+  });
+
+  it("save-then-verify with no catalog loaded: 「已保存，但还没填 Gmail 地址——」 and the chip does not flip", async () => {
+    vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [row("gmail-app-password.txt", { present: false })] });
+    vi.mocked(putSecret).mockResolvedValue(row("gmail-app-password.txt"));
+    vi.mocked(verifySecret).mockResolvedValue(noAddress);
+    renderIn("zh", <SecretRow name="gmail-app-password.txt" />);
+    await refreshSecrets();
+    fireEvent.change(await screen.findByLabelText("gmail-app-password.txt 的值"), { target: { value: "abcd efgh ijkl mnop" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await screen.findByText("已保存，但还没填 Gmail 地址——");
+    expect(screen.getByText(/在上面「Gmail 地址」填好后点「验证」。/)).toBeTruthy();
+    expect(screen.queryByText(/验证失败/)).toBeNull();
+    expect(chip().className).not.toContain("is-failed");
+  });
+});
+
 describe("SecretRow verify feedback (§68.3 追记) — Slack identity + directory autoload", () => {
   const slackOk = receipt({ ok: true, detail: "auth.test ok", extra: { user_id: "U1", user: "zelin", team: "Acme" } });
 

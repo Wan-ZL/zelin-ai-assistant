@@ -5,7 +5,8 @@
 // 已保存，但验证失败：…）。「验证」按钮照原生：框里有字 → 探这个值（粘贴即验证，不落盘，§68.3 `{value}`）；
 // 框空 → 探已保存的；两者都没有 → 「先粘贴（或保存）一个凭证再验证」（Slack 区换成它自己的那句）。
 // Gmail 的探针要地址：本地先看设置目录里的 `gmail_address`（原生 effectiveGmailAddress），没填就不发探针、
-// 说「还没填 Gmail 地址——在上面「Gmail 地址」填好后点「验证」。」；应用密码去掉全部空白再存 / 再探（audit 6.4）。
+// 说「还没填 Gmail 地址——在上面「Gmail 地址」填好后点「验证」。」；目录没到本地（SetupPage）就交给 server 判，回执
+// `extra.precondition = "gmail_address"` = 同一件事、同一句、章不翻（不是凭证的判决）；应用密码去掉全部空白再存 / 再探（audit 6.4）。
 // 验证 = server 侧最小活探针（Anthropic /v1/models、Slack auth.test、Gmail IMAP LOGIN），回执三分（原生 KeyProbe.Outcome）：
 // ok → 「验证通过 ✓」（Slack 探已保存的 token 成功 = 原生 SettingsSlack 的「已验证 ✓ 已连接 <team>，身份 @<user> 自动填好——
 // 不用再改任何文件。」+ 通知 SlackDirectoryPicker 带 refresh 重载一次）；凭证错（network:false）→ 章「验证失败」+ server
@@ -91,17 +92,27 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
     return field !== undefined && !String(field.effective ?? "").trim();
   }
 
+  /** 原生 runVerify(.gmail) 探针前的 guard 句：橙色、不是判决、章不动 */
+  function noteGmailAddressMissing(afterSave: boolean): void {
+    setNote({
+      ok: false,
+      message: afterSave ? text("已保存，但还没填 Gmail 地址——", "Saved, but no Gmail address yet — ") : text("还没填 Gmail 地址——", "No Gmail address yet — "),
+      detail: text("在上面「Gmail 地址」填好后点「验证」。", "fill in \"Gmail address\" above, then click Verify."),
+    });
+  }
+
   /** 一次探针（server）。afterSave = 「已保存，」前缀（保存即验证）；candidate 给了 = 粘贴即验证 */
   async function probe(afterSave: boolean, candidate?: string): Promise<void> {
     if (isGmail && gmailAddressMissing()) {
-      setNote({
-        ok: false,
-        message: afterSave ? text("已保存，但还没填 Gmail 地址——", "Saved, but no Gmail address yet — ") : text("还没填 Gmail 地址——", "No Gmail address yet — "),
-        detail: text("在上面「Gmail 地址」填好后点「验证」。", "fill in \"Gmail address\" above, then click Verify."),
-      });
+      noteGmailAddressMissing(afterSave);
       return;
     }
     const result = candidate ? await verifySecret(name, candidate) : await verifySecret(name);
+    if (result.extra.precondition === "gmail_address") {
+      // 目录没到本地时（SetupPage 不挂 CatalogSection）server 替本地判了同一件事：探针没跑、不是凭证的判决——同一句橙句，章不翻
+      noteGmailAddressMissing(afterSave);
+      return;
+    }
     if (result.ok) {
       setVerified(true);
       const identity = !candidate ? slackIdentity(result) : null;

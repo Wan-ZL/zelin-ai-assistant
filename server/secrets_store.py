@@ -32,7 +32,10 @@
   「应用密码或地址不对」；Anthropic 去 console 重新生成），raw ``detail`` 跟在括号里；
   ``ok:false, network:true`` = **判决未知**（DNS / 超时 / 拒连之外，还包括 Anthropic 非
   401 / 403 的回应——529 过载、5xx——和 Slack 非 token 形状的错误码——``ratelimited``、
-  ``internal_error``、非 JSON 回应；原生 ``.failed``），不带 ``reason``，web 不把章翻成「验证失败」。
+  ``internal_error``、非 JSON 回应；Gmail IMAP LOGIN 途中的传输层 ``OSError``；原生 ``.failed``），
+  不带 ``reason``，web 不把章翻成「验证失败」。**前提失败不是判决**：Gmail 还没填地址 → 探针不跑，
+  ``ok:false, network:false`` + add-only ``extra.precondition = "gmail_address"``、**不带** ``reason``
+  （原生 runVerify 在 KeyProbe 之前就 return 橙句）——web 据此说「还没填 Gmail 地址」、章不动。
 
 文件名是 §19 的固定词表（server 不 import act.lib.secrets：它 import 期就把
 SECRETS_DIR 钉在进程 env 的 HOME 上，测试注入 home 会失真——判例
@@ -109,6 +112,8 @@ SLACK_TOKEN_ERRORS: frozenset = frozenset(
     {"invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired"})
 # Anthropic 只有这两个状态码说明 key 本身有问题（原生 KeyProbe.anthropic）；其余非 2xx = 服务侧 / 判决未知
 ANTHROPIC_UNAUTHORIZED_STATUSES: frozenset = frozenset({401, 403})
+# 探针没跑的前提失败（``extra.precondition`` 的值）：Gmail 还没填地址——不是凭证的判决，verify() 不挂 reason
+PRECONDITION_GMAIL_ADDRESS = "gmail_address"
 
 # §19 后两层的**位置**（不是内容）：(config.yaml 显式路径的键路径 | None, 旧默认路径)。与
 # act/lib 各读者一致（act/llm.py / act/ask.py / act/radar_gmail.DEFAULT_APP_PASSWORD_PATH /
@@ -395,7 +400,10 @@ def _probe_slack(token: str, _ctx: dict) -> "tuple[bool, str, dict]":
 def _probe_gmail(token: str, ctx: dict) -> "tuple[bool, str, dict]":
     address = str(ctx.get("address") or "").strip()
     if not address:
-        return False, "no Gmail address configured (Sources → Gmail address)", {}
+        # 前提没满足、探针没跑——不是凭证的判决（原生 runVerify(.gmail) 在 KeyProbe 之前就 return）：
+        # add-only ``extra.precondition`` 让 verify() 不挂 reason、web 说「还没填 Gmail 地址」而不是「应用密码不对」
+        return (False, "no Gmail address configured (Sources → Gmail address)",
+                {"precondition": PRECONDITION_GMAIL_ADDRESS})
     try:
         conn = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=_PROBE_TIMEOUT_S)
     except (OSError, imaplib.IMAP4.error) as exc:
@@ -404,6 +412,9 @@ def _probe_gmail(token: str, ctx: dict) -> "tuple[bool, str, dict]":
         conn.login(address, token)
     except imaplib.IMAP4.error as exc:
         return False, "IMAP LOGIN rejected: %s" % _clip(str(exc)), {}
+    except OSError as exc:
+        # LOGIN 途中的传输层错（socket.timeout / ssl.SSLError / ConnectionResetError）——原生 gmailProbeSync 的 PROBE_NET，判决未知
+        raise ProbeNetworkError(str(exc))
     finally:
         _quiet_logout(conn)
     return True, "IMAP LOGIN ok as %s" % address, {}
@@ -491,7 +502,8 @@ def verify(home: Path, name: str, prober: Optional[Prober] = None,
     """``POST /api/secrets/{name}/verify`` → ``{"ok": bool, "network": bool, "detail": str, "extra": {}}``
     三分判决：凭证本身的错 ``ok:false, network:false`` 再多带 add-only ``reason {zh, en}``
     （``human_auth_reason``）；网络 / 服务层失败（``ProbeNetworkError``）``ok:false, network:true``
-    = 判决未知，不带 ``reason``。Slack 成功自动填 ``owner_slack_user_id``（只在探已保存的值时——
+    = 判决未知，不带 ``reason``。探针没跑的前提失败（Gmail 没地址，``extra.precondition``）也不带
+    ``reason``——那不是凭证的判决。Slack 成功自动填 ``owner_slack_user_id``（只在探已保存的值时——
     粘贴即验证还没落盘，不动 override）。"""
     kind, token = _probe_target(home, name, value)
     ctx = _gmail_context(home) if kind == "gmail" else {}
@@ -503,6 +515,6 @@ def verify(home: Path, name: str, prober: Optional[Prober] = None,
     if value is None:
         _autofill_slack_owner(home, kind, ok, extra)
     receipt = {"ok": ok, "network": False, "detail": detail, "extra": extra}
-    if not ok:
+    if not ok and not extra.get("precondition"):
         receipt["reason"] = human_auth_reason(kind, detail)
     return receipt
