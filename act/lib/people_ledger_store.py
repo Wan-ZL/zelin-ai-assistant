@@ -9,7 +9,8 @@
 
 这里没有 LLM 调用、没有通知、没有文件扫描——那些都在入口 ``act/people_ledger.py``；
 本模块只管人物解析与关键词护栏、提及检测、账本 JSON 的读写与合并、markdown
-渲染、游标。判例：tests/test_people_ledger_store.py。
+渲染、游标。判例：tests/test_people_ledger_guard.py（护栏 / 配置）、
+tests/test_people_ledger_merge.py（合并 / 渲染 / 落点 / 游标）。
 """
 from __future__ import annotations
 
@@ -292,21 +293,30 @@ def _close_items(doc: dict, done_ids: list, note_name: str, date: str) -> int:
     return closed
 
 
+def _id_num(item: dict) -> int:
+    """``L-12`` → 12；手改坏掉的 id 当 0（排序用，绝不因一条坏 id 崩整轮）。"""
+    try:
+        return int(str(item.get("id", ""))[2:])
+    except ValueError:
+        return 0
+
+
 def _trim_done(doc: dict) -> None:
     """已完成条目只留最近 DONE_RETENTION 条（按完成时间 + 编号排序，旧的掉）。"""
     done = [it for it in doc["items"] if it.get("status") == "done"]
     if len(done) <= DONE_RETENTION:
         return
-    done.sort(key=lambda it: (str(it.get("done_at") or ""), int(str(it.get("id", "L-0"))[2:] or 0)))
+    done.sort(key=lambda it: (str(it.get("done_at") or ""), _id_num(it)))
     drop = {it["id"] for it in done[:len(done) - DONE_RETENTION]}
     doc["items"] = [it for it in doc["items"] if it.get("id") not in drop]
 
 
-def merge(doc: dict, new_items: list, done_ids: list, note_name: str, date: str) -> "tuple[int, int]":
+def merge(doc: dict, new_items, done_ids, note_name: str, date: str) -> "tuple[int, int]":
     """并入一篇笔记的抽取结果；返回 ``(added, closed)``。同批内重复也去重
-    （逐条并入后再比对下一条）。"""
+    （逐条并入后再比对下一条）。``new`` / ``done`` 不是 list（模型给了 dict /
+    数字 / 字串）= 空表——宪法第 11 条，坏形状丢，不崩 pass。"""
     added = 0
-    for raw in new_items:
+    for raw in (new_items if isinstance(new_items, list) else []):
         item = clean_item(raw)
         if item is None or _is_duplicate(item, open_items(doc)):
             continue

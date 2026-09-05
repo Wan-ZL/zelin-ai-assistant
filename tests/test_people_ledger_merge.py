@@ -87,6 +87,18 @@ class MergeTestCase(unittest.TestCase):
         self.assertEqual(len(store.open_items(self.doc)), 1)
         self.assertNotIn("L-1", {it["id"] for it in self.doc["items"]})
 
+    def test_wrong_shaped_new_or_done_and_a_hand_edited_id_never_raise(self):
+        """宪法第 11 条：``new`` / ``done`` 不是 list = 空表；手改坏掉的 id 只影响排序。"""
+        for new, done in ((5, "L-1"), ({"text": "x"}, None), ("L-1", 3), (None, {"a": 1})):
+            with self.subTest(new=new, done=done):
+                self.assertEqual(store.merge(self.doc, new, done, "n.md", "d"), (0, 0))
+        self.assertEqual(self.doc["items"], [])
+        for i in range(store.DONE_RETENTION + 2):
+            store.merge(self.doc, [self._new("task %d" % i)], ["L-%d" % i], "n.md", "2026-01-01")
+        self.doc["items"][0]["id"] = "hand-edited"
+        store.merge(self.doc, [], ["L-%d" % (store.DONE_RETENTION + 2)], "n.md", "2026-01-02")
+        self.assertEqual(len([it for it in self.doc["items"] if it["status"] == "done"]), store.DONE_RETENTION)
+
 
 class RenderAndPathsTestCase(unittest.TestCase):
     def setUp(self):

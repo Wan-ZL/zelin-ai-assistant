@@ -178,6 +178,66 @@ class LedgerRunnerCase(unittest.TestCase):
         self.assertIn("call failed on n2.md for sal-khan: RuntimeError", log)
         self.assertEqual(store.load_cursor()["marker"], self.t)      # 仍推进（不回填、不重烧）
 
+    def test_new_and_done_of_the_wrong_type_are_dropped_not_fatal(self):
+        """宪法第 11 条：``new`` 给了数字 / dict、``done`` 给了字串——丢，不崩 pass。"""
+        self.first_run()
+        self.note("n1.md", "Arash said hi")
+        self.note("n2.md", "Arash said hi again")
+        runner = FakeRunner(json.dumps({"new": 5, "done": "L-1"}),
+                            json.dumps({"new": {"direction": "owner_owes", "text": "x"}, "done": None}))
+        s = self.run_once(runner=runner)
+        self.assertEqual((s["notes"], s["pairs"], s["new_items"], s["done_items"], s["parse_failed"]),
+                         (2, 2, 0, 0, 0))
+        self.assertFalse(store.ledger_path("arash-k").exists())
+
+    def test_main_never_leaks_a_traceback(self):
+        """cron 链的 stdout/stderr 进 screenpipe 日志：崩了只留 stderr 一行 + ledger.log 里的 traceback，exit 1。"""
+        with mock.patch.object(pl, "run_once", side_effect=KeyError("boom")), \
+                mock.patch("builtins.print") as out:
+            self.assertEqual(pl.main(["--once"]), 1)
+        self.assertEqual(out.call_count, 1)
+        self.assertIn("people_ledger: failed", out.call_args[0][0])
+        self.assertIs(out.call_args[1].get("file"), pl.sys.stderr)
+        log = store.log_path().read_text(encoding="utf-8")
+        self.assertIn("run crashed:", log)
+        self.assertIn("KeyError", log)
+
+    def test_pass_budget_defers_the_rest_but_keeps_same_mtime_siblings_together(self):
+        """墙钟预算：超预算后不开新笔记、游标停在最后处理的那篇；同 mtime 的兄弟篇一起过。"""
+        self.first_run()
+        a = self.note("a.md", "Arash a")
+        self.note("b.md", "Arash b")
+        os.utime(a, (self.t, self.t))                    # a 与 b 同 mtime
+        self.note("c.md", "Arash c")
+        self.note("d.md", "Arash d")
+        with mock.patch.object(pl, "PASS_BUDGET_S", -1):   # 每次边界检查都算超预算
+            runner = FakeRunner(reply())
+            s = self.run_once(runner=runner)
+        self.assertEqual(s["notes"], 2)                     # a + b（同 mtime），c / d 留下轮
+        seen = "".join(runner.prompts)
+        self.assertIn("Arash a", seen)
+        self.assertIn("Arash b", seen)
+        self.assertNotIn("Arash c", seen)
+        self.assertEqual(store.load_cursor()["marker"], self.t - 20)   # b 的 mtime（c、d 各 +10）
+        self.assertIn("pass budget", store.log_path().read_text(encoding="utf-8"))
+        s = self.run_once(runner=FakeRunner(reply()))       # 默认预算：余量一轮清完
+        self.assertEqual(s["notes"], 2)
+
+    def test_prompt_carries_only_the_most_recent_open_items(self):
+        self.first_run()
+        p = store.Person("arash.k", store.tokens_for("arash.k"))
+        doc = store.load_ledger(p)
+        store.merge(doc, [{"direction": "owner_owes", "text": "task %d" % i} for i in range(pl.PROMPT_OPEN_MAX + 5)],
+                    [], "seed.md", "2026-09-01")
+        store.save_ledger(doc)
+        self.note("n.md", "Arash")
+        runner = FakeRunner(reply())
+        self.run_once(runner=runner)
+        opened = json.loads(runner.prompts[0].split("CURRENT OPEN ITEMS:\n", 1)[1].split("\n")[1])
+        self.assertEqual(len(opened), pl.PROMPT_OPEN_MAX)
+        self.assertEqual(opened[-1]["id"], "L-%d" % (pl.PROMPT_OPEN_MAX + 5))
+        self.assertNotIn("L-1", {it["id"] for it in opened})
+
     def test_output_tolerates_fences_and_prose(self):
         self.assertEqual(pl.parse_output('Sure!\n```json\n{"new": [], "done": ["L-2"]}\n```'), {"new": [], "done": ["L-2"]})
         self.assertIsNone(pl.parse_output("[1, 2]"))

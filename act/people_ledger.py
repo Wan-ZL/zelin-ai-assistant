@@ -16,10 +16,17 @@ recap 之后、PID 锁之前跑 ``python -m act.people_ledger --once``，失败�
      日志，绝不用退化关键词扫描（2026-07-08 的 92 篇回填风暴）；
   3. 首跑只记游标 = 最新笔记 mtime 就退出（**不回填**）；此后只看 mtime 高于游标
      的笔记，按 mtime 升序**最多 ``max_notes_per_pass``（默认 10）篇**，余量下一轮；
+     另有一道**墙钟预算** ``PASS_BUDGET_S``——钩子挂在 ingest 的 PID 锁之前，一轮拖
+     长就是把整条 30 分钟链往后推，所以超预算后不再开新笔记（正在处理的那篇跑完，
+     游标只推进到它），余量同样下一轮；
   4. 每篇笔记 × 每个被提及的人一次密封模型调用（§59 单一边界 ``act/llm.py``，
      runner 注入缝）：输出 ``{"new": [...], "done": [ids]}``，逐字段消毒后并入；
   5. 通知合并：本轮有更新的人 ≤3 → 每人一条；>3 → 一条汇总；统一延后到 pass 末尾；
   6. analytics 只带计数（``people_ledger_pass``），不带人名、不带笔记名。
+
+任何没被上面各处接住的异常在 ``main()`` 收口：traceback 进 ``ledger.log``、stderr
+一行、exit 1——cron 链靠 ``|| true`` 本就不会断，但 screenpipe 日志里不该出现
+Python traceback（§63 recap 的 main 同款）。
 
 Run: ``python -m act.people_ledger --once``（cron）；``--status`` 打印各人账本条数。
 判例：tests/test_people_ledger_runner.py / tests/test_people_ledger_cron_hook.py。
@@ -29,7 +36,9 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -43,11 +52,17 @@ try:
 except ImportError:  # pragma: no cover - exercised only on Windows CI
     fcntl = None
 
-LLM_TIMEOUT_S = 300
+# 与 act/radar.py 同一口径：同一批 raw 笔记，稠密 OCR 一篇 100–360s+ 才抽得完
+# （2026-07-22 回放：32KB = 277s），300 正坐在分布中间、会制造慢性超时。
+LLM_TIMEOUT_S = 600
+# 一轮的墙钟预算：钩子在 ingest PID 锁之前，超预算就不再开新笔记（正在处理的
+# 那篇跑完），余量下一轮——每轮至少推进一篇，绝不在同一篇上空转。
+PASS_BUDGET_S = 600
 DEFAULT_MAX_NOTES_PER_PASS = 10
 NOTIFY_COALESCE_ABOVE = 3      # >3 个人有更新 → 一条汇总
 NOTIFY_KIND = "people_ledger"
 NOTE_MAX_CHARS = 60_000        # 超长笔记截尾进 prompt（OCR 大 dump 常见）
+PROMPT_OPEN_MAX = 60           # prompt 里只带最近这么多条 open（账本文件本身不截）——prompt 必有帽
 
 # {owner} / {person} 由 str.replace 代入（.format 会被 JSON 花括号绊倒——radar 同款）。
 EXTRACT_PROMPT = (
@@ -148,7 +163,7 @@ def due_notes(notes: list, marker: float, cap: int) -> list:
 def build_prompt(cfg: config.Config, person: store.Person, doc: dict, note_text: str) -> str:
     owner = (cfg.owner_name or "").strip() or "Zelin"
     opened = [{"id": it["id"], "direction": it["direction"], "text": it["text"]}
-              for it in store.open_items(doc)]
+              for it in store.open_items(doc)[-PROMPT_OPEN_MAX:]]   # 最近的在尾
     prompt = EXTRACT_PROMPT.replace("{owner}", owner).replace("{person}", person.display)
     prompt += "CURRENT OPEN ITEMS:\n" + sanitize.fence_untrusted(json.dumps(opened, ensure_ascii=False))
     prompt += "\n\nNOTE:\n" + sanitize.fence_untrusted(note_text[:NOTE_MAX_CHARS])
@@ -290,13 +305,28 @@ def _locked_pass(cfg: config.Config, runner, root: Path, summary: dict) -> dict:
         return _first_run(notes, summary)
     due = due_notes(notes, float(cursor["marker"]), max_notes_per_pass(cfg))
     run = _Pass(cfg, runner)
-    for mtime, note in due:
-        run.process_note(mtime, note, people)
-    if due:
-        store.save_cursor(due[-1][0])
+    done_upto = _process_within_budget(run, due, people)
+    if done_upto is not None:
+        store.save_cursor(done_upto)
     summary.update(run.summary)
     _notify_updates(run.updates)
     return summary
+
+
+def _process_within_budget(run: "_Pass", due: list, people: list) -> Optional[float]:
+    """按序处理 ``due``，墙钟超 ``PASS_BUDGET_S`` 就不再开新笔记；返回最后处理那篇的
+    mtime（= 新游标；一篇没处理 → None）。只在 mtime **边界**上停：游标是严格 >，
+    同 mtime 的兄弟篇必须一起过，否则下轮就丢了。第一篇永远跑——每轮至少推进一篇。"""
+    started = time.monotonic()
+    done_upto = None
+    for i, (mtime, note) in enumerate(due):
+        if done_upto is not None and mtime > done_upto and time.monotonic() - started > PASS_BUDGET_S:
+            _log("pass budget (%ss) hit after %d notes; %d left for the next round"
+                 % (PASS_BUDGET_S, i, len(due) - i))
+            break
+        run.process_note(mtime, note, people)
+        done_upto = mtime
+    return done_upto
 
 
 _PASS_EVENT_KEYS = ("people", "notes", "pairs", "new_items", "done_items", "parse_failed", "call_failed")
@@ -360,10 +390,15 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--once", action="store_true", help="run one pass (cron chain)")
     ap.add_argument("--status", action="store_true", help="print per-person counts")
     args = ap.parse_args(argv)
-    if args.status:
-        print("\n".join(status_lines()) or "(no people configured)")
-        return 0
-    summary = run_once()
+    try:
+        if args.status:
+            print("\n".join(status_lines()) or "(no people configured)")
+            return 0
+        summary = run_once()
+    except Exception:  # noqa: BLE001 - the cron chain must never see a traceback (§63 recap 同款)
+        _log("run crashed:\n" + traceback.format_exc())
+        print("people_ledger: failed (see %s)" % store.log_path(), file=sys.stderr)
+        return 1
     if summary.get("skipped") != "disabled":
         print(json.dumps(summary, ensure_ascii=False))
     return 0
