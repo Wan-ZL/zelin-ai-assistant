@@ -21,13 +21,14 @@ import { postAction } from "../../api";
 const en = (_zh: string, english: string) => english;
 const HINT = hintLine(en);
 const RUN_TITLE = "Runs now — skips the proposal & cost preview; the result still lands in Review";
+/** 捕获回执 = 「"<原话前 20 字>" Submitted — analyzing (usually 2-3 min)」（captureReceipt.ts） */
+const RECEIPT = /Submitted — analyzing/;
 
 function mount(mode: "propose" | "run" = "propose") {
   render(
     <LaneComposer
       placeholder="type here"
       submitLabel={mode === "run" ? "Run" : "Capture"}
-      successNote="Submitted"
       buildBody={(t) => (mode === "run" ? { action: "capture", text: t, mode: "run" } : { action: "capture", text: t })}
     />,
   );
@@ -70,13 +71,13 @@ describe("LaneComposer — '/' hint line", () => {
     await act(async () => {
       fireEvent.click(button);
     });
-    expect(screen.getByText("Submitted")).toBeTruthy();
+    expect(screen.getByText(RECEIPT)).toBeTruthy();
     fireEvent.change(field, { target: { value: "/op" } });
-    expect(screen.queryByText("Submitted")).toBeNull();
+    expect(screen.queryByText(RECEIPT)).toBeNull();
     expect(screen.getByText(HINT)).toBeTruthy();
   });
 
-  it("a slash command's receipt is one-shot like the capture receipt: the next keystroke retires it, '/' shows the hint instead", async () => {
+  it("a slash command's receipt is one-shot: the next keystroke retires it, '/' shows the hint instead", async () => {
     const { field, button } = mount();
     fireEvent.change(field, { target: { value: "/lang en" } });
     await act(async () => {
@@ -99,12 +100,12 @@ describe("LaneComposer — '/' hint line", () => {
     await act(async () => {
       fireEvent.click(button);
     });
-    expect(screen.getByText("Submitted")).toBeTruthy(); // 路径捕获照常发出并进历史
+    expect(screen.getByText(RECEIPT)).toBeTruthy(); // 路径捕获照常发出并进历史
     expect(postAction).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(field, { key: "ArrowUp" }); // 空草稿 → 翻历史接管，直接 setDraft，不经过 onChange
     expect(field.value).toBe("/Users/zelin/x 整理一下");
     expect(screen.getByText(HINT)).toBeTruthy();
-    expect(screen.queryByText("Submitted")).toBeNull();
+    expect(screen.queryByText(RECEIPT)).toBeNull();
     // 斜杠回执那条路同样：/lang en 成功后 ↑ 翻出 "/…" 旧条目 → 提示行顶掉「Language → en」
     // （成功的命令自己也进历史——原生 "commands count too"，§34 2026-09-05 追记——所以第一下翻出的是 /lang en，第二下才是路径）
     fireEvent.change(field, { target: { value: "/lang en" } });

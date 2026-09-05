@@ -40,7 +40,6 @@ function mount() {
     <LaneComposer
       placeholder="One sentence — AI researches and proposes…"
       submitLabel="Capture"
-      successNote="Submitted; AI is analyzing"
       buildBody={(t) => ({ action: "capture", text: t })}
     />,
   );
@@ -99,7 +98,9 @@ describe("LaneComposer — Enter is a newline, only the button submits (D35)", (
     expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({ action: "capture", text: "line one\nline two\n\nline four" });
     expect(field.value).toBe("");
     expect(field.rows).toBe(1);
-    expect(screen.getByText("Submitted; AI is analyzing")).toBeTruthy();
+    // 回执带原话前 20 字 + 原生状态句（captureReceipt.ts；细则在 LaneComposer.receipt.test.tsx）
+    // （前 20 个 code point = "line one\nline two\n\nl"；getByText 默认把空白折成单空格）
+    expect(screen.getByText('"line one line two l" Submitted — analyzing (usually 2-3 min)')).toBeTruthy();
     expect(JSON.parse(window.localStorage.getItem(HISTORY_KEY) ?? "[]")).toEqual(["line one\nline two\n\nline four"]);
   });
 

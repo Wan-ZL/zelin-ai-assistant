@@ -24,7 +24,6 @@ function composer() {
     <LaneComposer
       placeholder="type here"
       submitLabel="Capture"
-      successNote="Submitted"
       buildBody={(t) => ({ action: "capture", text: t })}
     />
   );
