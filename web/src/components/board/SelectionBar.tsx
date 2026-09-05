@@ -92,9 +92,9 @@ export function SelectionBar() {
         <FeedbackDialog ids={ids} onSubmit={(body) => void run([body], text("已记录建议，感谢", "Feedback recorded"))} onCancel={() => setConfirm("none")} />
       )}
       {confirm === "force" && (
-        // 提交即给涉及的卡挂「合并中…」章（原生 mergeForcingBadge），下一版看板落地才退场
+        // 提交即给涉及的卡挂「合并中…」章（原生 mergeForcingBadge）；副卡全部离开所在列（真信号）才退场，180 s 兜底
         <ForceMergeDialog ids={ids} titles={titles}
-          onConfirm={(primary) => { markForceMerging(ids); void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted")); }}
+          onConfirm={(primary) => { markForceMerging(ids, primary); void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted")); }}
           onCancel={() => setConfirm("none")} />
       )}
       {(confirm === "approve" || confirm === "reject") && (

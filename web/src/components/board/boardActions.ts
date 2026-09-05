@@ -3,13 +3,15 @@
 //   - **不上送 `ts`**——webui 契约「ts 一律 server 端(重)盖章，客户端不可伪造」，
 //     `ts` 不在 _INBOX_KEYS 白名单里，带上就是 400；
 //   - 卡片动词恒带显式 `comment`（null 或文本），镜像 Mac writeInbox 四键形；
-//   - 无乐观更新：动作发出 → SSE board.updated → refreshBoard 回流（CONVENTIONS §4）。
+//   - 无乐观更新：动作发出 → SSE board.updated → refreshBoard 回流（CONVENTIONS §4），
+//     解锁看的是回流里这条动作的**真信号**（pendingSettle.ts，§39.3 / §21bis），不是 generated_at。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readPage } from "../../route";
 import { steerAcknowledged } from "../../steer";
-import { selectCard, useAppState } from "../../store";
+import { getState, selectCard, useAppState } from "../../store";
+import { landed, recordPending, timeoutNotice, type PendingRecord } from "./pendingSettle";
 
 /** 卡片决策类四键形（comment 键永远存在，无文本时 null——inbox-actions.md §2） */
 export function cardAction(id: string, action: string, comment: string | null = null) {
@@ -112,59 +114,63 @@ export interface SubmitState {
   clearError: () => void;
 }
 
-/** Mac Store.swift 同款 180s truth-timeout：回流迟迟不来 → 解锁 + 诚实报未确认 */
+/** Mac Store.swift 同款 180s truth-timeout：真信号迟迟不来 → 解锁 + 诚实报未确认 */
 export const CONFIRM_TIMEOUT_MS = 180_000;
 
 /**
  * 每张卡一个提交状态机：submit → pending=true；失败即解锁并给出可读错误；
- * 成功后保持「已提交…」直到看板 generated_at 变化（SSE 回流落地）才解锁——
- * 没有乐观更新，回流就是唯一的成功回执。180s 无回流 → 解锁并报「backend
- * 未确认」（镜像 Mac 端 180s fallback，绝不永远挂在「已提交…」上装成功）。
+ * 成功后保持「已提交…」直到这条动作在看板快照里**真的落地**才解锁（pendingSettle.landed：
+ * 换列动词 = id 离开原列、comment = plan 变 / steers 增、set_title = 后台名等于新名、
+ * merge_force = 副卡全消失……原生 PendingSweep.cleared(by:) 逐动词判据）——不是 generated_at
+ * 一变就解锁：actd 每个 pass 结尾都重写看板，与这张卡动没动无关（§39.3「generated_at bump
+ * 不清（§21bis 先例）」）。没有乐观更新，回流里的真信号是唯一的成功回执。180s 没等到 →
+ * 解锁并按动词给诚实文案（pendingSettle.timeoutNotice，镜像 Store.swift sweepTimeouts）。
  */
 export function useSubmit(): SubmitState {
   const { board } = useAppState();
   const { text } = useI18n();
-  const generatedAt = board?.generated_at ?? null;
   const [pending, setPending] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [steerQueued, setSteerQueued] = useState(false);
-  const sentAt = useRef<string | null>(null);
+  const record = useRef<PendingRecord | null>(null);
 
   useEffect(() => {
-    if (pending && generatedAt !== sentAt.current) {
+    // 每一版快照（哪怕 generated_at 没变——同版重拉）都跑一遍谓词；提交那一刻也跑（同名改名之类
+    // 一出生就满足的记录不该白等 180 s——原生「闸门跳过路径共用一份谓词」的教训）
+    const rec = record.current;
+    if (!pending || !rec || !board) return;
+    if (landed(rec, board)) {
       setPending(false);
       setSteerQueued(false); // 回流后 steer 状态以投影 steers[] 为准，本地回执退场
-      sentAt.current = null;
+      record.current = null;
     }
-  }, [generatedAt, pending]);
+  }, [board, pending]);
 
   useEffect(() => {
     if (!pending) return undefined;
     const timer = window.setTimeout(() => {
+      const rec = record.current;
+      record.current = null;
       setPending(false);
-      sentAt.current = null;
-      setError(text(
-        "已提交，但 180 秒内看板未回流——backend 未确认，请检查 actd 是否在运行。",
-        "Submitted, but the board never refreshed within 180s — backend unconfirmed; check that actd is running.",
-      ));
+      setError(timeoutNotice(rec, getState().board, text));
     }, CONFIRM_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [pending, text]);
 
   const submit = async (body: Record<string, unknown>): Promise<boolean> => {
+    record.current = recordPending(body, getState().board);
     setPending(true);
     setPendingAction(typeof body.action === "string" ? body.action : null);
     setError(null);
     setSteerQueued(false);
-    sentAt.current = generatedAt;
     try {
       const response = await postAction(body);
       setSteerQueued(steerAcknowledged(response));
       return true;
     } catch (e) {
       setPending(false);
-      sentAt.current = null;
+      record.current = null;
       setError(describeActionError(e, text));
       return false;
     }
