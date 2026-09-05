@@ -9,12 +9,14 @@
 // (b) 有未保存改动时挂 beforeunload（rail / ⌘1…⌘7 / /open 都是整页导航，这就是离页守卫）；存净即摘。
 // (c) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用且该键不进 PUT（原生 numberField 解析失败写 NOTHING）；
 //     只看用户改过的键——config.yaml 里既有的越界值不锁整区。
+// (d) 带 `check` 的 string 字段（如 Gmail 地址）草稿不合格 → 同 (c)：「保存」禁用、不进 PUT（原生 saveAddress 先 validateAddress
+//     再落盘）；那句 server-owned 的提示由 FieldControl 就地渲染；同样只看改过的键——config.yaml 里一个坏地址不锁住同区的开关。
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { refreshSettingsCatalog, saveSettingsSection, useAppState } from "../../store";
 import type { SettingsSection } from "../../types";
 import { pickText } from "./catalogText";
-import { isGated, isValidNumberDraft, type Draft } from "./draftRules";
+import { isGated, isValidNumberDraft, passesCheck, type Draft } from "./draftRules";
 import { FieldControl } from "./FieldControl";
 import { errorMessage, useToast } from "./useToast";
 
@@ -58,14 +60,19 @@ export function changedKeys(section: SettingsSection, draft: Draft): string[] {
     .map((field) => field.key);
 }
 
-/** 草稿里非法的 number / int 键（挡「保存」、不进 PUT；其它 kind 永不在列）。
- *  只计**用户改过的**键（草稿 ≠ effective）：config.yaml 里既有的越界值（server `_coerce_number` 读文件不查 ≥0）
- *  原样显示、不锁整区的「保存」——原生每格独立提交，别的开关照常能落；它本来就不脏、也不会进 PUT。 */
+/** 草稿里非法的键（挡「保存」、不进 PUT）：number / int 草稿非法，或带 `check` 的 string 草稿不合形状；其它永不在列。
+ *  只计**用户改过的**键（草稿 ≠ effective）：config.yaml 里既有的越界值（server `_coerce_number` 读文件不查 ≥0）或坏地址
+ *  原样显示（提示句仍在）、不锁整区的「保存」——原生每格独立提交，别的开关照常能落；它本来就不脏、也不会进 PUT。 */
 export function invalidKeys(section: SettingsSection, draft: Draft): string[] {
   return section.fields
-    .filter((field) => (field.kind === "number" || field.kind === "int")
-      && draft[field.key] !== field.effective
-      && !isValidNumberDraft(field.kind, draft[field.key]))
+    .filter((field) => {
+      const value = draft[field.key];
+      if (field.kind === "number" || field.kind === "int") return value !== field.effective && !isValidNumberDraft(field.kind, value);
+      if (field.kind === "string" && field.check) {
+        return String(value ?? "").trim() !== String(field.effective ?? "").trim() && !passesCheck(field, value);
+      }
+      return false;
+    })
     .map((field) => field.key);
 }
 
@@ -146,7 +153,7 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
   const sectionKey = visible.id; // 早返回之后 visible 已非空；抓成常量让 save() 的闭包也知道
 
   async function save() {
-    // 非法数字挡整次保存（不是只剔掉它——用户看着「保存」成功却发现那一格没落，比禁用更糟）
+    // 非法数字 / 不合形状的地址挡整次保存（不是只剔掉它——用户看着「保存」成功却发现那一格没落，比禁用更糟）
     if (!draft || dirty.length === 0 || invalid.length > 0) return;
     setSaving(true);
     setToast(null);

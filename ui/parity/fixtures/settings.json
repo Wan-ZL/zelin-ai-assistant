@@ -332,6 +332,13 @@
           "source": "default"
         },
         {
+          "check": {
+            "kind": "email",
+            "message": {
+              "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)",
+              "zh": "邮箱格式不对——例：you@gmail.com（公司 Google Workspace 邮箱也可以）"
+            }
+          },
           "choices": null,
           "default": "",
           "effective": "",
