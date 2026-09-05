@@ -1,0 +1,2 @@
+type: fixed
+- **dependabot 把 vite 工具链成组，vite 跨大版本不再把 required check 带红**：PR #197（vite 6.4.3 → 8.2.2）单包 bump 后 `@vitejs/plugin-react` 4.x 的 peer range（vite ≤7）对不上，`npm ci` ERESOLVE，「Web tests」与「QA gates」在装依赖那一步就红。修法两侧：#197 分支上把 `@vitejs/plugin-react` 抬到 6.1.1（peer = vite ^8，其余 peer 可选；typecheck / build / vitest 在 vite 8.2.2 上全绿）；`.github/dependabot.yml` 的 npm 面新增 `vite-toolchain` 组（vite / @vitejs/* / vitest / @vitest/*），以后这几包在同一个 PR 里一起解析。
