@@ -156,6 +156,9 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
             "id": "P-102",
             "title": "inkweld: 搭对外可访问的 demo 环境 + 种子数据",
             "summary": "新建 inkweld-demo 仓库，部署一个带种子数据的公开 demo 站。对外可见，所以需要你文字确认。",
+            # §37 LLM 便车给的短名（无 user_titled）：提案是摘要优先面，卡面仍是 summary，
+            # 短名只在详情面「显示名」一行——钉住 display_title 不许挤掉大白话摘要
+            "display_title": "搭 inkweld 公开 demo 站",
             "target_repo": "~/Projects/inkweld-demo",
             "target_name": "inkweld-demo",
             "target_kind": "new",
@@ -467,6 +470,9 @@ def _debt(now: dt.datetime) -> list[dict]:
             "id": "P-114",
             "title": "周会纪要没人整理，action items 常丢",
             "summary": "口头说好的事没人记，下周就忘。",
+            # §37 用户钦定名（user_titled）：压过 summary 成为卡面标题（server 只在为真时发键）
+            "display_title": "周会 action items 自动整理",
+            "user_titled": True,
             "hardness": "hard",
             "type": "process",
             "sources": [
@@ -685,6 +691,7 @@ _EN: dict = {
         "Create the inkweld-demo repo and deploy a public demo site with seed data. "
         "It is publicly visible, so this needs your typed confirmation.",
     "需文字确认": "Typed confirmation required",
+    "搭 inkweld 公开 demo 站": "Stand up the public inkweld demo site",
     "demo 用真实数据还是合成数据，manager 和 alex.doe 意见不一致":
         "manager and alex.doe disagree on whether the demo should use real or synthetic data",
     "新建 inkweld-demo 仓库（从 inkweld 模板裁剪）":
@@ -851,6 +858,7 @@ _EN: dict = {
         "Nobody tidies the weekly notes; action items keep getting lost",
     "口头说好的事没人记，下周就忘。":
         "Verbal agreements go unrecorded and are forgotten by next week.",
+    "周会 action items 自动整理": "Auto-tidy the weekly action items",
     "inkweld 报错日志太吵，真错误被淹没":
         "inkweld's error log is too noisy; real errors drown",
     "warning 刷屏，出真错时没人看得见。":

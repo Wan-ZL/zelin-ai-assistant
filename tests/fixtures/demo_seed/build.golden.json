@@ -70,6 +70,7 @@
    },
    {
     "display_id": "P-114",
+    "display_title": "周会 action items 自动整理",
     "hardness": "hard",
     "id": "P-114",
     "id_kind": "proposal",
@@ -83,7 +84,8 @@
     ],
     "summary": "口头说好的事没人记，下周就忘。",
     "title": "周会纪要没人整理，action items 常丢",
-    "type": "process"
+    "type": "process",
+    "user_titled": true
    },
    {
     "display_id": "P-115",
@@ -162,6 +164,7 @@
     "delivery_mode": "repo",
     "disagreement": "demo 用真实数据还是合成数据，manager 和 alex.doe 意见不一致",
     "display_id": "P-102",
+    "display_title": "搭 inkweld 公开 demo 站",
     "dod": [
      "demo 站可公网访问，演示账号能登录",
      "数据全部合成，无任何真实客户信息",
@@ -470,19 +473,19 @@
  },
  "now": "2026-09-02T12:00:00Z",
  "sha256": {
-  "approved/en": "9e8ecad2669e37e0e42acac9927d4afd067a5cccbf4eefaf514b85bd6712f121",
-  "approved/zh": "c72489b9a0966cf45ebece442a311535e62df4be2035011afb9e16c31fd6a928",
-  "captured/en": "1d1e8f47b184a44d11f323f0c9b799569c59d4474f93bf300cff360d35e1a962",
-  "captured/zh": "6f091b29a448978044cff845324bb82b3de1aba1abf22da2b1201d24e7b27f6a",
-  "done/en": "4f7c63e0b5ca4b7ec43d4d982d39f163428c9de06fce9a88a6e196ffc93cbc92",
-  "done/zh": "b740a1de6a9ab30201a44b1177da87e821aa1ca50f8eaabe3074911876efe7d9",
-  "initial/en": "885d42c1b198e5f4e3ccd049cc09ff9f52a1876cbfff64bfaac3fab307ff9f65",
-  "initial/zh": "2bc66fd7cf1c00a94990a76c23eeace443907f610aa3509f4faff4cf25e34732",
-  "review/en": "61c1705ab5356f8638471760ff09c9e05a80a4919b295ae0f1d7fe22629d8cbd",
-  "review/zh": "76c8ae05c977c014a967a3cd8feecda4af17d9a212251114bb29a139472050e5",
-  "running/en": "2f3ca1bebbc9319df5e03ece95f68f5dbc22645e827c2a225c85453eb5d196ee",
-  "running/zh": "dcfb3e0495338ea31ce3433c5523f282b50152d8b3790679c2f5ba608decc939",
-  "steer/en": "a55cbdffb076478362a15cf803ebb48967d57df94d29ea11bc35b119840477d9",
-  "steer/zh": "2b8cf4db8c9b4c7d218385b66581282b390c3df6512b0d94782a980b9e74e792"
+  "approved/en": "65e438ad7e81e7e72b698b2ec5247b44a9327bf73a4bce66269855a243e5268a",
+  "approved/zh": "33ac54e039f5ea75e991c0ebb83aa90405251607c8b8cee69404577acc0ec040",
+  "captured/en": "472ef170911ebc97b494b2246c94bc8ef659f3399297e2f9f104d34cdac17a81",
+  "captured/zh": "a1cc25a55c5989cbfa102ee6f4f9f0712505227284ec9d75a041e7810dd03207",
+  "done/en": "5d1268047b98d5a81317ad6534e9c56be761f4ad61c2f5c443244b0f4a0e461b",
+  "done/zh": "06356e77b2706b1d075fbda85bf1f54298c92b5942d64ce4f5f9b1e5bdb3c32c",
+  "initial/en": "49efeb8912cb815c6523144ab75f36f97b489770ec46d401c4346741a141b93e",
+  "initial/zh": "1d6c91905a35af4a2386685f66be993506d559c04e52c00ac106f91ea62ca12d",
+  "review/en": "9cae74120840a2744709e0a7df013f19e2de45f29bbf69f4c8cc5701595b2bf2",
+  "review/zh": "857f0768e86acf67ad867db2c116b754162e938d0b00dc4bcc924452fb3cb90f",
+  "running/en": "48df570c1a66c09be1778eb939e414225b6ddd0a12543adb54a428e912938136",
+  "running/zh": "d3a8b30ee04cd9d69a812fa30516b672d66e70b7839ff0278167d6490084b5d8",
+  "steer/en": "975ac62cf057c1e2bdee37dacf5b2621926fce07f44e269fd6fa601e0856c8f6",
+  "steer/zh": "1ae3f43a5b093cb1543f4034d0dcff6627ebe8a5a9aa1cf6cebb2fdbbd8ac04f"
  }
 }

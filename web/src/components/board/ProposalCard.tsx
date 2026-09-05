@@ -5,12 +5,15 @@
 // 卡面（原生 ApprovalCardView.normalBody 收起态）：摘要 + 落点行（§7 target_kind）+ 章行
 //   + 分歧 + 回锅注。技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完 住右侧详情侧栏
 //   （「展开详情 ▸」打开，D34——卡片详情只有这一面，DetailFields 渲染）。id 在右上角（原生 idTag）。
+// 标题 = §37 摘要优先链 cardHeadline（原生 displaySummary：钦定名 > summary > display_title > title）——
+//   卡面、aria-label、T2 / 拒绝弹窗正文、AI 研究中占位同一个字串（原生 Cards.swift 945 / 984 / 1001 / 1073）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, deadlinePhrase, effectiveTier, hardnessLabel, tierHint, useSubmit, pendingNote } from "./boardActions";
+import { cardAction, costLine, deadlinePhrase, effectiveTier, hardnessLabel, moneyOf, tierHint, useSubmit, pendingNote } from "./boardActions";
 import { CardHead, CardSurface, DetailsToggle, MergeStateChip, useDetailViewed } from "./cardChrome";
+import { cardHeadline } from "./cardHeadline";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
 import { TextDialog } from "./TextDialog";
@@ -80,14 +83,14 @@ export function ProposalCard({ card }: ProposalCardProps) {
   // 原生 T2 gate 的「展开过」= 本会话打开过这张卡的详情侧栏（就地展开退役后唯一的「看明细」入口）
   const detailViewed = useDetailViewed(card.id);
 
-  const summary = typeof card.summary === "string" && card.summary ? card.summary : card.title;
-  const displayTitle = typeof card.display_title === "string" && card.display_title ? card.display_title : summary;
+  // §37 摘要优先面：卡面 / 弹窗 / 占位 全用同一个 headline（原生 card.displaySummary）
+  const headline = cardHeadline(card) || card.title;
 
   if (card.processing) {
-    // raising 占位：dashboard.py 对 status=raising 发的形状（cf. demo_seed R-104）
+    // raising 占位：dashboard.py 对 status=raising 发的形状（cf. demo_seed R-104）；原生 Cards.swift:945 同读 displaySummary
     return (
-      <CardSurface cardId={card.id} label={`${text("AI 研究中", "AI researching")} · ${card.title}`}>
-        <CardHead card={card} title={card.title} variant="placeholder" />
+      <CardSurface cardId={card.id} label={`${text("AI 研究中", "AI researching")} · ${headline}`}>
+        <CardHead card={card} title={headline} variant="placeholder" />
         <div className="task-processing-row is-running">
           <span className="task-processing-ring" aria-hidden="true"><span /></span>
           <span className="task-processing-label">
@@ -105,9 +108,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
   const shownId = displayId(card);
 
   return (
-    <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${displayTitle}`}>
+    <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${headline}`}>
       {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题） */}
-      <CardHead card={card} title={displayTitle} variant="lg" selectable />
+      <CardHead card={card} title={headline} variant="lg" selectable />
       <TargetLine card={card} />
       <EgressLines card={card} />
       <div className="card-badges">
@@ -141,8 +144,10 @@ export function ProposalCard({ card }: ProposalCardProps) {
             {deadlinePhrase(card.days_left, text) && <>{"\u00a0·\u00a0"}<span>{deadlinePhrase(card.days_left, text)}</span></>}
           </span>
         )}
-        {card.show_cost && typeof card.cost_usd === "number" && (
-          <span className="chip">${card.cost_usd}</span>
+        {/* 原生 Cards.swift:1240 `if card.show_cost, let cost = card.cost_usd { Badge(money(cost)) }`——
+            money：整数不带小数（$12），否则两位（$0.50）；show_cost 只在有估价（cost_state=estimated）时为真 */}
+        {card.show_cost && moneyOf(card) && (
+          <span className="chip">{moneyOf(card)}</span>
         )}
         {hardnessLabel(card.hardness, text) && (
           <span className={card.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardnessLabel(card.hardness, text)}</span>
@@ -171,7 +176,15 @@ export function ProposalCard({ card }: ProposalCardProps) {
             {text("需 manager green-sign（只出草稿）", "Needs manager green-sign (draft only)")}
           </span>
         )}
-        {card.reraised && <span className="chip chip-warning">{text("↩︎ 回锅 · Returned", "↩︎ Returned")}</span>}
+        {/* 原生 reraisedBadge（Cards.swift:1183-1196）：琥珀胶囊「↩︎ 回锅 · Returned」+ 同色大白话小字并排 */}
+        {card.reraised && (
+          <>
+            <span className="chip chip-warning">{text("↩︎ 回锅 · Returned", "↩︎ Returned")}</span>
+            <span className="card-meta-text is-warning">
+              {text("你之前验收过这件事，来了新信息", "You accepted this before — new info arrived")}
+            </span>
+          </>
+        )}
       </div>
       {/* 原生 returnedNote：「新增：<回锅带来的新信息>」 */}
       {card.reraised && card.reraised_note && (
@@ -217,7 +230,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
       {dialog === "t2" && (
         <T2ConfirmDialog
           cardId={shownId}
-          summary={summary}
+          summary={headline}
           costLine={costLine(card, text)}
           onConfirm={() => decide("approve")}
           onCancel={() => setDialog("none")}
@@ -226,7 +239,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
       {dialog === "reject" && (
         <ForkDialog
           title={text("这张卡不需要执行？", "No need to run this card?")}
-          body={summary}
+          body={headline}
           choices={[
             { label: text("不想做（进回收站）", "Won't do (to trash)"), isDanger: true, onPick: () => decide("reject") },
             { label: text("已办完（记为已交付）", "Already done (mark delivered)"), onPick: () => decide("done_external") },

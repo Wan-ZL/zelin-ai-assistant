@@ -246,6 +246,8 @@
 }
 
 .card-meta-text.is-danger { color: var(--danger); white-space: normal; }
+/* 回锅章旁的大白话小字（原生 reraisedBadge：10pt 同色 orange，可折行） */
+.card-meta-text.is-warning { color: var(--warning); white-space: normal; }
 
 .card-line.is-success { color: var(--success); }
 
