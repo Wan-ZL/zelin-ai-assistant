@@ -619,32 +619,48 @@ a.chip:hover { text-decoration: underline; }
   line-height: calc(15px * var(--text-scale));
 }
 
-/* —— 列顶输入框（快速捕获 / 直跑；原生 Composer TextField 12 regular，占位文案次级色）—— */
+/* —— 列顶输入框（快速捕获 / 直跑；原生 Composer TextField 12 regular，占位文案次级色）——
+   D35（§41 追记）：多行 textarea，rows 由 LaneComposer.fitComposerRows 按内容定 1…5 行，第 6 行起内部滚动；
+   按钮贴底（原生 HStack(alignment: .bottom)），最小高钉成一行 textarea 的高——一行时与旧 <input> 逐像素相同。
+   --composer-row-inner = 一行 textarea 的边框内高：--type-composer 的行高（12px × 1.4，随 --text-scale）+ 上下 padding 5px。
+   边框不进这个数：按钮自己的 var(--stroke-w) 边框与 textarea 的一样被浏览器按设备像素取整，让它自己加上去才逐像素相等。 */
 .lane-composer {
+  --composer-row-inner: calc(12px * 1.4 * var(--text-scale) + 10px);
   display: flex;
+  align-items: flex-end;
   gap: 6px;
   margin-bottom: 8px;
 }
 
-.lane-composer input {
+.lane-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
+  margin: 0;
   padding: 5px 8px;
   border: var(--stroke-w) solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-primary);
   font: var(--type-composer);
+  resize: none;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-.lane-composer input::placeholder {
+.lane-composer textarea::placeholder {
   color: var(--text-secondary);
   opacity: 1;
 }
 
-.lane-composer input:focus {
+.lane-composer textarea:focus {
   outline: 2px solid var(--accent-soft);
   border-color: var(--accent);
+}
+
+.lane-composer .btn {
+  /* content-box：min-height 只管内容高 = textarea 边框内高 − 按钮自己的上下 padding（.btn 3px × 2）；边框各自加 */
+  box-sizing: content-box;
+  min-height: calc(var(--composer-row-inner) - 6px);
 }
 
 .composer-error {

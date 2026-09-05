@@ -939,7 +939,7 @@ async function renderBoardRejectVariant(language: Language) {
   const view = mount(language, "board");
   await settle(pool);
   // 两个列顶输入框：第一个打一条参数错误的斜杠命令，其余照常一句捕获（走 postAction 的拒绝）
-  view.container.querySelectorAll<HTMLInputElement>(".lane-composer input").forEach((el, i) => {
+  view.container.querySelectorAll<HTMLTextAreaElement>(".lane-composer textarea").forEach((el, i) => {
     fireEvent.change(el, { target: { value: i === 0 ? "/rec nope" : "demo" } });
   });
   clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer button")), pool);

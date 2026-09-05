@@ -84,7 +84,7 @@ export function App() {
         navigate(buildAppUrl(window.location.href, "board", null));
         return;
       }
-      const input = document.querySelector<HTMLInputElement>(".board-column .lane-composer input");
+      const input = document.querySelector<HTMLTextAreaElement>(".board-column .lane-composer textarea");
       input?.focus();
       input?.select();
     });
