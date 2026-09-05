@@ -2,17 +2,18 @@
 //   - 只有读看板快照的页等 /api/board（看板 + 回收站 / 永久性完成 / 会议纪要，后三页见 AppShell.boardDependentPages.test.tsx）：
 //     自拉快照的 ?page= 在读失败 / 404 时照常渲染 children（原生 MainWindow.detail 非看板 section 不看 dashboard）；
 //   - 看板页 404（dashboard.json 不存在）≠ 离线：Freshness.swift PipelineEmptyStateView 文案 +「启动后台服务」+「打开依赖检查」
-//     + web 的「立即生成一次」+ 提案列 composer（Kanban.swift：capture 不依赖管线跑过；壳的 quick_capture 命令能聚焦它，
-//     原生 Composer.swift 每个 propose 形 composer 自己收 .focusCaptureField）；健康横幅同时闭嘴（.missing 归空态）；
+//     + web 的「立即生成一次」+ 提案列 composer（Kanban.swift：capture 不依赖管线跑过；⌘L / quick_capture 的共同落点
+//     focusComposer 也找得到它，跨页接力棒由空态挂载时消费——原生 emptyState 的 KanbanComposer 同样收 .focusCaptureField）；
+//     健康横幅同时闭嘴（.missing 归空态）；
 //   - 看板页网络失败仍是「连不上本地服务」+ 重试。
 // api 层 mock 掉，经 store 真实 action 驱动状态；零真实网络 / 子进程。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchBoard, fetchHealth, postAction, postRepairActd, postSeedDashboard } from "../../api";
 import { LanguageContext } from "../../i18n";
-import { SHELL_COMMAND_EVENT } from "../../shellBridge";
 import { refreshBoard, refreshHealth, resetStoreForTests } from "../../store";
 import type { Board, HealthSnapshot } from "../../types";
+import { focusComposer, focusComposerField, PENDING_FOCUS_KEY } from "../board/focusComposer";
 import { AppShell } from "./AppShell";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -182,35 +183,35 @@ describe("AppShell · dashboard.json 不存在（看板页）", () => {
     expect(await screen.findByText(/Submitted; AI is analyzing/)).toBeTruthy();
   });
 
-  it("壳的 quick_capture 命令（全局快捷键 / ⌘L）把光标交给这一态的 composer；壳不在场 = no-op", async () => {
+  it("⌘L / quick_capture 的共同落点 focusComposer 在这一态也找得到 composer：光标到草稿末尾、不全选", async () => {
     fetchBoardMock.mockRejectedValue(notFound());
     await refreshBoard();
-    const dispatch = () => window.dispatchEvent(new CustomEvent(SHELL_COMMAND_EVENT, { detail: { command: "quick_capture" } }));
-
-    // 浏览器会话（无壳）：没人订阅，光标不动
-    delete window.webkit;
     renderShell();
-    dispatch();
-    expect(document.activeElement).not.toBe(screen.getByPlaceholderText(/One sentence/));
+    const field = screen.getByPlaceholderText<HTMLTextAreaElement>(/One sentence/);
+    expect(document.activeElement).not.toBe(field);
+    fireEvent.change(field, { target: { value: "draft" } });
+    field.blur();
+
+    focusComposer(); // rail ⌘L / 壳 quick_capture（app.tsx）都调它；看板页 → focusComposerField
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe(5);
+    expect(field.selectionEnd).toBe(5);
+    expect(focusComposerField()).toBe(true);
+  });
+
+  it("从别的页按 ⌘L 过来（sessionStorage 接力棒）：空态挂载时消费它并聚焦 composer；刷新不重放", async () => {
+    fetchBoardMock.mockRejectedValue(notFound());
+    await refreshBoard();
+    window.sessionStorage.setItem(PENDING_FOCUS_KEY, "composer");
+    renderShell();
+    const field = screen.getByPlaceholderText(/One sentence/);
+    expect(document.activeElement).toBe(field);
+    expect(window.sessionStorage.getItem(PENDING_FOCUS_KEY)).toBeNull();
     cleanup();
 
-    // 壳在场：命令落到 composer；别的命令不抢焦点
-    window.webkit = { messageHandlers: { zaiShell: { postMessage: async () => ({}) } } };
-    try {
-      const { unmount } = renderShell();
-      const field = screen.getByPlaceholderText(/One sentence/);
-      window.dispatchEvent(new CustomEvent(SHELL_COMMAND_EVENT, { detail: { command: "something_else" } }));
-      expect(document.activeElement).not.toBe(field);
-      dispatch();
-      expect(document.activeElement).toBe(field);
-      // 卸载后监听器随之摘掉（effect cleanup = onShellCommand 的 stop）
-      field.blur();
-      unmount();
-      dispatch();
-      expect(document.activeElement).not.toBe(field);
-    } finally {
-      delete window.webkit;
-    }
+    // 没有接力棒：挂载不抢焦点
+    renderShell();
+    expect(document.activeElement).not.toBe(screen.getByPlaceholderText(/One sentence/));
   });
 
   it("健康横幅在这一态闭嘴（同一句「启动后台服务」不说两遍——原生 .missing 归 PipelineEmptyStateView）", async () => {

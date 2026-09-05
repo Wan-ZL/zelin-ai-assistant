@@ -13,12 +13,12 @@
 //   5. 自我改进通道横幅（SelfImproveBanner，§65.4：敏感路径护栏挂起通道时点名 PR 并给「恢复通道」）。
 //   6. 每日整理横幅（MaintenanceBanner，§70：正在整理 / 今日整理：合并 N、清理 M）。
 //   7. 板级诊断条（DiagnosticsStrip，§48：用户打开的源在静默失败——每 path 一张卡 + 一颗直达修复的按钮；只在看板页）。
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
 import { readPage, type AppPage } from "../../route";
-import { onShellCommand } from "../../shellBridge";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
+import { consumePendingFocus } from "../board/focusComposer";
 import { LaneComposer } from "../board/LaneComposer";
 import { errorMessage } from "../settings/useToast";
 import { DiagnosticsStrip } from "./DiagnosticsStrip";
@@ -71,20 +71,13 @@ export function BoardMissingState() {
   const { text } = useI18n();
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
 
-  // 壳的全局快捷键 / 菜单「聚焦捕获框」→ quick_capture（§61.6）：app.tsx 的落点只认列里的 composer
-  // （`.board-column .lane-composer textarea`），这一态没有列——这里的 composer 自己接命令，同原生 Composer.swift 的
-  // 每个 propose 形 KanbanComposer 各自收 `.focusCaptureField`（首份 dashboard.json 出现之前 ⌘L 也进得来）。
-  // 只交光标不全选（已有草稿时下一键不许覆盖）；壳不在场 = no-op。
-  useEffect(
-    () =>
-      onShellCommand((command) => {
-        if (command !== "quick_capture") return;
-        composerRef.current?.querySelector("textarea")?.focus();
-      }),
-    [],
-  );
+  // ⌘L / quick_capture 从别的页过来（focusComposer 留下的 sessionStorage 接力棒，§54.4 2026-09-05 追记）：这一态里
+  // 看板页的 body 是本组件而不是 BoardPage，所以由这里补上那一下聚焦；同页的 ⌘L / 命令走 focusComposerField 的
+  // `.shell-board-missing` 退路，不用再订阅一遍（原生 Kanban.emptyState 的 KanbanComposer 同样收 .focusCaptureField）。
+  useEffect(() => {
+    consumePendingFocus();
+  }, []);
 
   const seed = async () => {
     setSeeding(true);
@@ -102,7 +95,7 @@ export function BoardMissingState() {
 
   return (
     <div className="shell-board-missing" data-board-missing="true">
-      <div className="shell-board-missing-composer" ref={composerRef}>
+      <div className="shell-board-missing-composer">
         <LaneComposer
           placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
           submitLabel={text("捕获", "Capture")}
