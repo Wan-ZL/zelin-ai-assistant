@@ -182,7 +182,28 @@ class LedgerRunnerCase(unittest.TestCase):
         self.assertEqual(pl.parse_output('Sure!\n```json\n{"new": [], "done": ["L-2"]}\n```'), {"new": [], "done": ["L-2"]})
         self.assertIsNone(pl.parse_output("[1, 2]"))
         self.assertIsNone(pl.parse_output(""))
+        self.assertIsNone(pl.parse_output(None))
         self.assertEqual(pl.parse_output('{"a": {"b": 1}} trailing'), {"a": {"b": 1}})
+        # 第一个 "{" 不是合法 JSON → 跳过继续找
+        self.assertEqual(pl.parse_output('{oops} then {"a": 1}'), {"a": 1})
+        self.assertIsNone(pl.parse_output("{oops} {still bad"))
+
+    def test_main_status_and_once(self):
+        with mock.patch.object(pl, "status_lines", return_value=["Arash: 0 open / 0 total → x"]), \
+                mock.patch("builtins.print") as out:
+            self.assertEqual(pl.main(["--status"]), 0)
+            out.assert_called_once_with("Arash: 0 open / 0 total → x")
+        with mock.patch.object(pl, "status_lines", return_value=[]), mock.patch("builtins.print") as out:
+            pl.main(["--status"])
+            out.assert_called_once_with("(no people configured)")
+        with mock.patch.object(pl, "run_once", return_value={"enabled": False, "skipped": "disabled"}), \
+                mock.patch("builtins.print") as out:
+            self.assertEqual(pl.main(["--once"]), 0)
+            out.assert_not_called()                                   # 默认关：零输出
+        with mock.patch.object(pl, "run_once", return_value={"enabled": True, "notes": 1}), \
+                mock.patch("builtins.print") as out:
+            self.assertEqual(pl.main(["--once"]), 0)
+            self.assertEqual(json.loads(out.call_args[0][0]), {"enabled": True, "notes": 1})
 
     def test_unreadable_note_is_skipped(self):
         self.first_run()

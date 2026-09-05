@@ -172,11 +172,9 @@ def parse_output(raw: str) -> Optional[dict]:
         if ch != "{":
             continue
         try:
-            obj, _end = decoder.raw_decode(text, i)
+            return decoder.raw_decode(text, i)[0]   # 从 "{" 起解出来的必是 object
         except ValueError:
             continue
-        if isinstance(obj, dict):
-            return obj
     return None
 
 
