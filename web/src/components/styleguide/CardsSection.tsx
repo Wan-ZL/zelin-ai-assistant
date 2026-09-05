@@ -34,7 +34,7 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <ProposalCard card={PROPOSAL_T2} />
         <SpecimenNote
-          zh="提案 T2（ProposalCard）：批准弹键入确认（§41 confirmT2）；硬需求 .chip-danger（--danger / --danger-soft）；落点行「🟠 修改现有: …（只提 draft PR）」.card-line.is-warning"
+          zh="提案 T2（ProposalCard）：批准弹键入确认（§41 confirmT2）；较难 .chip-danger（hardness=hard，hardnessLabel；--danger / --danger-soft）；落点行「🟠 修改现有: …（只提 draft PR）」.card-line.is-warning"
           en="Proposal T2 (ProposalCard): Approve opens typed confirm (§41 confirmT2); Hard chip .chip-danger (--danger / --danger-soft); target line “🟠 Modify existing: … (draft PR only)” .card-line.is-warning"
         />
       </figure>
@@ -83,8 +83,8 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <DebtCardItem item={DEBT_FIXTURE} />
         <SpecimenNote
-          zh="潜在任务卡（DebtCardItem，附赠）：type 词表 .chip + 硬需求 .chip-danger"
-          en="Backlog card (DebtCardItem, bonus): type table .chip + Hard .chip-danger"
+          zh="潜在任务卡（DebtCardItem，附赠）：type 词表 .chip + 较难 .chip-danger（hardness=hard，hardnessLabel）"
+          en="Backlog card (DebtCardItem, bonus): type table .chip + Hard .chip-danger (hardness=hard, hardnessLabel)"
         />
       </figure>
     </div>
