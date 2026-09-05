@@ -60,6 +60,7 @@ import {
   refreshLanes,
   refreshPermissions,
   refreshSettings,
+  refreshSettingsCatalog,
   resetStoreForTests,
   selectCard,
   setFilters,
@@ -1009,9 +1010,12 @@ async function renderSettingsVariants(language: Language) {
     default_path: "/Users/demo/zai/config/voice-profile.default.md", default_exists: defaultExists,
     effective_path: privateExists ? "/Users/demo/zai/state/voice-profile.md" : defaultExists ? "/Users/demo/zai/config/voice-profile.default.md" : null,
   });
-  // 语气注入关掉的目录快照（voice_enabled effective=false → 状态词「已停用」）
-  const voiceOff: SettingsCatalog = { ...demoSettings, sections: demoSettings.sections.map((sec) => (sec.id !== "voice" ? sec
-    : { ...sec, fields: sec.fields.map((f) => (f.key === "voice_enabled" ? { ...f, effective: false, source: "override" } : f)) })) };
+  // 语气注入关掉 + 每周摘要开着的目录快照（voice_enabled effective=false → 状态词「已停用」；weekly_digest_enabled
+  // effective=true → DigestStatus 的「已开启」——fixture 默认关只渲得出「已关闭」）
+  const flip = (sec: SettingsCatalog["sections"][number], key: string, effective: boolean) =>
+    ({ ...sec, fields: sec.fields.map((f) => (f.key === key ? { ...f, effective, source: "override" } : f)) });
+  const voiceOff: SettingsCatalog = { ...demoSettings, sections: demoSettings.sections.map((sec) => (sec.id === "voice" ? flip(sec, "voice_enabled", false)
+    : sec.id === "digest" ? flip(sec, "weekly_digest_enabled", true) : sec)) };
   const verify = (anthropicOk: boolean) => (name: string) => new Promise((resolve) => setTimeout(() => resolve(
     name === "anthropic-api-key.txt" && !anthropicOk
       ? { ok: false, network: false, detail: "api.anthropic.com answered HTTP 401", extra: {} }
@@ -1026,6 +1030,7 @@ async function renderSettingsVariants(language: Language) {
     useShellVariant(pass.reject ? "login_off" : "default");
     vi.mocked(fetchVoiceProfile).mockResolvedValue(voice(...pass.voice));
     vi.mocked(fetchSettingsCatalog).mockResolvedValue(pass.voiceOff ? voiceOff : demoSettings);
+    await refreshSettingsCatalog(); // CatalogSection 只在 store 空着时才拉——这一遍的目录快照要显式落进去
     vi.mocked(verifySecret).mockImplementation(verify(pass.anthropicOk) as never);
     vi.mocked(putSecret).mockImplementation(((name: string) => (name === "volcano-ark-key.txt"
       ? Promise.reject(new Error("EACCES: config/secrets not writable"))
@@ -1072,6 +1077,7 @@ async function renderSettingsVariants(language: Language) {
   useShellVariant("default");
   vi.mocked(fetchBoard).mockResolvedValue(demoBoard as unknown as Board);
   vi.mocked(fetchSettingsCatalog).mockResolvedValue(demoSettings);
+  await refreshSettingsCatalog();
   await refreshBoard();
   vi.mocked(putSecret).mockResolvedValue({} as never);
   vi.mocked(putSettingsSection).mockResolvedValue({} as never);

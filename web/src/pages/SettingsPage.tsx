@@ -9,7 +9,10 @@
 // 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
 // （?page=about），不再重复。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
-import { useEffect, useState } from "react";
+// 搜索框（原生 Settings.swift SettingsSearchField + matches()，§54.4 / §68.1 追记）：干草 = 目录标题 zh+en + server 目录该区的
+// label / help zh+en（不看 UI 语言）+ 该区凭证行的双语 label + 渲染正文；查询按空白切 token、全部命中才算（AND）；
+// Esc 第一下清空、第二下交还光标，输入法候选期间不拦（§41 IME 红线同款）。
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { CaptionsSection } from "../components/settings/CaptionsSection";
@@ -18,6 +21,7 @@ import { ClaudeImportSection } from "../components/settings/ClaudeImportSection"
 import { CredentialsSection } from "../components/settings/CredentialsSection";
 import { DailyLoopSection } from "../components/settings/DailyLoopSection";
 import { DepsSection } from "../components/settings/DepsSection";
+import { DigestExtras } from "../components/settings/DigestExtras";
 import { DisplaySection } from "../components/settings/DisplaySection";
 import { GeneralExtras } from "../components/settings/GeneralExtras";
 import { GmailSection } from "../components/settings/GmailSection";
@@ -35,6 +39,7 @@ import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
 import { buildAppUrl, readSettingsAnchor } from "../route";
 import { useAppState } from "../store";
+import type { SecretsStatus, SettingsCatalog } from "../types";
 
 /** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序 = 原生注册表顺序，web 自有区就近插入）。
  *  标题 zh / en 逐字镜像原生 SettingsSectionDescriptor（screen:settings.* 探针读这里）。 */
@@ -75,12 +80,44 @@ function DigestStatus() {
   return <p className="settings-helper">{field.effective === true ? text("已开启", "Enabled") : text("已关闭", "Disabled")}</p>;
 }
 
-/** 原生 Settings.swift 顶部的搜索框（⌘F 聚焦）：按区块正文过滤，全不匹配时说「无匹配设置」 */
-function filterSections(query: string): number {
-  const q = query.trim().toLowerCase();
+/** 原生 matches() 的 fold：大小写 + 变音符不敏感（NFD 拆开再去掉组合符），两边都过一遍 */
+export function foldSearchText(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/** 原生 matches()：查询按空白切 token，每个 token 都得是干草的子串（AND）；空查询 = 全部可见 */
+export function matchesSearch(haystack: string, query: string): boolean {
+  const tokens = foldSearchText(query).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const hay = foldSearchText(haystack);
+  return tokens.every((token) => hay.includes(token));
+}
+
+/** 一区的双语干草（原生 titleZh + titleEn + keywords 的 web 版）：目录标题 zh+en；server 目录同 id 区的标题 / help /
+ *  每个 field 的 label + help（zh+en 都进，不看 UI 语言——原生 keywords 就是双语 blob）；这一区里渲染着的凭证行
+ *  （SecretRow 的 data-secret，落点由 DOM 说）的双语 label；最后是当前渲染出的正文（web 自有区的旋钮文案只在 DOM 里）。 */
+export function sectionHaystack(id: string, rendered: string, catalog: SettingsCatalog | null, secrets: SecretsStatus | null,
+  secretNames: readonly string[] = []): string {
+  const parts: string[] = [];
+  const toc = SETTINGS_TOC.find((entry) => entry.id === id);
+  if (toc) parts.push(toc.zh, toc.en);
+  const section = catalog?.sections.find((s) => s.id === id);
+  if (section) {
+    parts.push(section.title.zh, section.title.en, section.help.zh, section.help.en);
+    for (const field of section.fields) parts.push(field.label.zh, field.label.en, field.help.zh, field.help.en);
+  }
+  for (const row of secrets?.secrets ?? []) if (secretNames.includes(row.name)) parts.push(row.label.zh, row.label.en);
+  parts.push(rendered);
+  return parts.filter(Boolean).join(" ");
+}
+
+/** 原生 Settings.swift 顶部的搜索框（⌘F 聚焦）：逐区按双语干草过滤，全不匹配时说「无匹配设置」 */
+function filterSections(query: string, catalog: SettingsCatalog | null, secrets: SecretsStatus | null): number {
   let shown = 0;
   document.querySelectorAll<HTMLElement>(".settings-page > .settings-section, .settings-page > div[id^='settings-']").forEach((el) => {
-    const hit = !q || (el.textContent ?? "").toLowerCase().includes(q);
+    const id = el.id.replace(/^settings-/, "");
+    const secretNames = Array.from(el.querySelectorAll<HTMLElement>("[data-secret]"), (row) => row.dataset.secret ?? "");
+    const hit = matchesSearch(sectionHaystack(id, el.textContent ?? "", catalog, secrets, secretNames), query);
     el.hidden = !hit;
     if (hit) shown += 1;
   });
@@ -89,14 +126,22 @@ function filterSections(query: string): number {
 
 export function SettingsPage() {
   const { text, language } = useI18n();
-  const { settingsCatalog } = useAppState();
+  const { settingsCatalog, secrets } = useAppState();
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState<number | null>(null);
   const catalogReady = settingsCatalog !== null;
 
   useEffect(() => {
-    setShown(filterSections(query));
-  }, [query, language]);
+    setShown(filterSections(query, settingsCatalog, secrets));
+  }, [query, language, settingsCatalog, secrets]);
+
+  // 原生 SettingsSearchField.esc：输入法候选期间 Esc 归输入法（§41 IME 红线）；有字 → 第一下清空；没字 → 第二下交还光标
+  function onSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (query) setQuery("");
+    else event.currentTarget.blur();
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -140,6 +185,7 @@ export function SettingsPage() {
           aria-label={text("搜索设置", "Search settings")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={onSearchKeyDown}
         />
         {query && <button type="button" className="btn btn-quiet" onClick={() => setQuery("")}>{text("清除", "Clear")}</button>}
         {query && shown === 0 && <span className="settings-helper">{text("无匹配设置", "No matching settings")}</span>}
@@ -168,7 +214,8 @@ export function SettingsPage() {
       <SyncSection />
       <CatalogSection sectionId="approval" />
       <CatalogSection sectionId="flags" />
-      <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <DigestStatus /> }} />
+      {/* 每周摘要：原生 SettingsWeeklyDigest 的顺序——开关 → 状态字 → 「现在生成一份」+ 回执句；状态摘要频率是 web 自有旋钮 */}
+      <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <><DigestStatus /><DigestExtras /></> }} />
       {/* 语气档案：原生 voiceGroup 的「当前生效」状态行 + 打开档案 在开关之前 */}
       <CatalogSection sectionId="voice" lead={<VoiceStatus />} />
       <CatalogSection sectionId="redaction" />
