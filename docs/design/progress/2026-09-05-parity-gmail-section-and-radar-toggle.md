@@ -1,4 +1,4 @@
-pr: `fix/parity-gmail-section-and-radar-toggle`（PR #TBD；行为 parity 审计 batch `gmail-section-and-radar-toggle`，chain catalog-server 第 1 批）
+pr: `fix/parity-gmail-section-and-radar-toggle`（PR #232；行为 parity 审计 batch `gmail-section-and-radar-toggle`，chain catalog-server 第 1 批）
 phase: P4 余量（D3：web 看板是产品；原生 mac/Sources 只读参照）
 law: §48.1 追记 / §68.1 追记
 
