@@ -550,8 +550,10 @@ _GET_JSON_ROUTES = {
     "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
     # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
     "/api/slack/manifest": lambda ctx, query: slack_manifest.manifest(ctx.home),
-    # §68.1 追记：Slack 频道 / 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；?refresh=1 绕过）
-    "/api/slack/directory": lambda ctx, query: slack_directory.directory(ctx.home, refresh=_flag(query, "refresh")),
+    # §68.1 追记：Slack 频道 / 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；?refresh=1 绕过；
+    # ?lang=zh|en → 子进程 AIASSISTANT_UI_LANG，错误句随 web 当前语言——原生 SettingsSlack.fetchDirectory 同款）
+    "/api/slack/directory": lambda ctx, query: slack_directory.directory(
+        ctx.home, refresh=_flag(query, "refresh"), lang=doctor_run.parse_lang(query.get("lang"))),
     # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
     # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）

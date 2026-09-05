@@ -46,12 +46,12 @@ describe("SlackDirectoryPicker", () => {
     fireEvent.click(load);
     expect(screen.getByRole("button").textContent).toBe("Loading…");
     await screen.findByText("Channels (card only when @mentioned)");
-    expect(fetchSlackDirectory).toHaveBeenCalledWith(false);
+    expect(fetchSlackDirectory).toHaveBeenCalledWith(false, "en");
     const labels = Array.from(document.querySelectorAll(".slack-picker-list label")).map((l) => l.textContent);
     expect(labels).toEqual(["#random", "#eng", "@lee", "@sam.rivera（Sam Rivera）"]);   // 已勾的浮顶
     expect(screen.getAllByPlaceholderText("Filter…")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(fetchSlackDirectory).toHaveBeenLastCalledWith(true));
+    await waitFor(() => expect(fetchSlackDirectory).toHaveBeenLastCalledWith(true, "en"));
   });
 
   it("toggling writes the list fields through PUT /api/settings/slack (ids for channels, handles for people)", async () => {
