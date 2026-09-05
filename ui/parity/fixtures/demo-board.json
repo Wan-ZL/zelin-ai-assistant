@@ -119,6 +119,7 @@
     },
     {
       "display_id": "P-114",
+      "display_title": "周会 action items 自动整理",
       "hardness": "hard",
       "id": "P-114",
       "id_kind": "proposal",
@@ -132,7 +133,8 @@
       ],
       "summary": "口头说好的事没人记，下周就忘。",
       "title": "周会纪要没人整理，action items 常丢",
-      "type": "process"
+      "type": "process",
+      "user_titled": true
     },
     {
       "display_id": "P-115",
@@ -387,6 +389,7 @@
       "delivery_mode": "repo",
       "disagreement": "demo 用真实数据还是合成数据，manager 和 alex.doe 意见不一致",
       "display_id": "P-102",
+      "display_title": "搭 inkweld 公开 demo 站",
       "dod": [
         "demo 站可公网访问，演示账号能登录",
         "数据全部合成，无任何真实客户信息",

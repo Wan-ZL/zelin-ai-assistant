@@ -66,7 +66,8 @@ export function cardToMarkdown(detail: CardDetail, text: TextFn): string {
     return lines;
   }));
 
-  const { folds, rest } = parseFoldNotes(detail.notes);
+  // registry notes 缺席时退到投影的 notes_text（与 DetailFields 同一条回落链，§38）
+  const { folds, rest } = parseFoldNotes(detail.notes ?? detail.notes_text);
   section(out, text("并入记录", "Fold notes"), [
     ...folds.map((fold) => `- [${fold.kind}] ${fold.text}${fold.ts ? ` (@${fold.ts})` : ""}${fold.splitInto ? ` → ${fold.splitInto}` : ""}`),
     ...rest.map((line) => `- ${line}`),

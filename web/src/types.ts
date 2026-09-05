@@ -59,8 +59,11 @@ export interface ApprovalCard {
   silent_merged?: number;
   /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
   cost_state?: string;
-  /** §37 展示名 / 曾用名（原生 rowTitle 优先 display_title） */
+  /** §37 展示名 / 曾用名——提案是摘要优先面：卡面标题走 cardHeadline（钦定名 > summary > display_title > title），
+   *  不是 running 族的 rowTitle（display_title 优先） */
   display_title?: string;
+  /** §37 用户钦定标记（server 只在为真时发键）：为真时 display_title 压过 summary 成为卡面标题 */
+  user_titled?: boolean;
   former_titles?: string[];
   [key: string]: unknown;
 }
@@ -237,7 +240,9 @@ export interface DebtCard {
   type?: string;
   sources?: CardSource[];
   summary?: string;
+  /** §37 摘要优先面（原生 DebtRow displaySummary）：卡面标题走 cardHeadline */
   display_title?: string;
+  user_titled?: boolean;
   [key: string]: unknown;
 }
 
@@ -252,7 +257,9 @@ export interface ArchivedRow {
   prev_status?: string | null;
   type?: string;
   hardness?: string;
+  /** §37 摘要优先面（原生 ArchiveRow displaySummary）：行标题走 cardHeadline */
   display_title?: string;
+  user_titled?: boolean;
   [key: string]: unknown;
 }
 
@@ -274,6 +281,9 @@ export interface TrashRow {
   type?: string;
   hardness?: string;
   purge_at?: string | null;
+  /** §37 摘要优先面（原生 TrashRow displaySummary；trash/archived 行只解码这两键）：行标题走 cardHeadline */
+  display_title?: string;
+  user_titled?: boolean;
   [key: string]: unknown;
 }
 

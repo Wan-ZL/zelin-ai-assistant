@@ -7,13 +7,16 @@
 // 「📎 折叠进来的信息」每行的「拆成新卡」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
 // 在这里有归属（note_ts 就是这一行）。按 server 给的 `lane` 选积木（防腐 #10：lane 是 server 数据）：
 // needs_approval 才说钱（「展开详情永远说钱」§40）、review 的清单永远渲染（§11）、needs_input 的指令行
-// 用「在终端接管会话：」兜底句（§39）。
+// 用「在终端接管会话：」兜底句（§39）。§37 展示名：抬头是冻结 title（原生 expandedDetail 的技术标题）；
+// display_title 与抬头不同就在这里给一行「显示名」——侧栏是 modal，卡面未必在眼前（深链 / 收起的书立条），
+// 原生 expandedDetail 永远坐在 displaySummary 抬头下面，这一行是它在 web 上的位置。
 import { useState, type ReactNode } from "react";
 import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
 import type { CardDetail, CardSource } from "../../types";
 import { costText, resumeCommand, useSubmit } from "../board/boardActions";
 import { CopiedAnnouncer } from "../board/cardChrome";
+import { cardHeadline } from "../board/cardHeadline";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
 
@@ -33,7 +36,24 @@ const KNOWN_KEYS = new Set([
   "queued_reason", "steers",
   // §60（D21）两段式编号：work_id 进 meta 行，display_id/id_kind 是抬头的展示口径
   "work_id", "display_id", "id_kind",
+  // §37 活标题四键：display_title 有专属「显示名」行，user_titled 是它的钦定位，former_titles 由抬头的
+  // FormerNames 渲染，notes_text 是 notes 的搜索投影副本（§38 尾裁剪）——registry 的 notes 在时不渲染两遍，
+  // 缺席时（sqlite 真源下 store2.db 不在 / 只有投影的 demo 数据）它就是 📎 折叠信息唯一的来源
+  "display_title", "user_titled", "former_titles", "notes_text",
 ]);
+
+/** 名字优先面（原生 rowTitle：display_title > name）——其余 lane 是摘要优先面（cardHeadline） */
+const NAME_FIRST_LANES = new Set(["running", "needs_input", "review", "completed"]);
+
+/** 这张卡此刻在看板上的标题（与卡片组件同一条链），detail 缺 lane 时按摘要优先面算——
+ *  抽屉「✎ 改名」的预填读它（原生 TitleEditRow current = displaySummary，Cards.swift:1283） */
+export function faceHeadline(detail: CardDetail): string {
+  const lane = str(detail.lane);
+  if (lane && NAME_FIRST_LANES.has(lane)) {
+    return str(detail.display_title) ?? str(detail.name) ?? str(detail.title) ?? "";
+  }
+  return cardHeadline(detail);
+}
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
@@ -174,6 +194,12 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   if (workId) meta.push([text("工作编号", "Work number"), workId]);
   const primaryKey = str(detail.id);
   if (primaryKey && workId && primaryKey !== workId) meta.push([text("主键", "Card key"), primaryKey]);
+  // §37：display_title 不是抬头（DetailDrawer h2 = title ‖ name）就单独给一行——只跟抬头去重，不跟卡面去重：
+  // 侧栏是 modal，卡面未必在眼前（?card= 深链、收起的书立条、回收站行），用户钦定的名字不能在唯一详情面上消失
+  const displayTitle = str(detail.display_title);
+  if (displayTitle && displayTitle !== (str(detail.title) ?? str(detail.name))) {
+    meta.push([text("显示名", "Display name"), displayTitle]);
+  }
   const deadline = str(detail.deadline);
   if (deadline) {
     const daysLeft = typeof detail.days_left === "number" ? text(`（剩 ${detail.days_left} 天）`, ` (${detail.days_left}d left)`) : "";
@@ -214,7 +240,8 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   const dod = strList(detail.dod ?? detail.definition_of_done);
   const outputs = strList(detail.outputs);
   const sources = Array.isArray(detail.sources) ? (detail.sources as CardSource[]) : [];
-  const { folds, rest } = parseFoldNotes(detail.notes);
+  // registry 的 notes 是全文；缺席时退到投影的 notes_text（§38 尾裁剪副本，fold 句柄完整）——否则折叠信息整段消失
+  const { folds, rest } = parseFoldNotes(detail.notes ?? detail.notes_text);
   const execution = detail.execution && typeof detail.execution === "object" && !Array.isArray(detail.execution)
     ? Object.entries(detail.execution as Record<string, unknown>)
     : [];

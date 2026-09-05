@@ -3,11 +3,14 @@
 //   研究并提议（raise → AI 扩写成提案）· 删除（trash → 回收站，可恢复，不弹确认）·
 //   永久完成（封存，不再提示）（archive → 永久性完成书立条，可逆不弹确认；原生住右键菜单——
 //   web 没有右键惯例，做成动作行里安静的第三颗）。
-// 卡面：摘要标题 + type / 硬需求 章；技术标题 + 💬 需求来自 住右侧详情侧栏（「展开详情 ▸」打开，D34）。
+// 卡面：摘要标题（§37 摘要优先链 cardHeadline = 原生 item.displaySummary，Cards.swift:2028）+ type / 难度 章
+//   （原生 hardnessLabel：hard → 较难 红 / soft → 常规 灰 / 其它原样，Cards.swift:2036-2039）；
+//   技术标题 + 💬 需求来自 住右侧详情侧栏（「展开详情 ▸」打开，D34）。
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { DebtCard } from "../../types";
-import { cardAction, pendingNote, useSubmit } from "./boardActions";
+import { cardAction, hardnessLabel, pendingNote, useSubmit } from "./boardActions";
 import { CardHead, CardSurface, DetailsToggle } from "./cardChrome";
+import { cardHeadline } from "./cardHeadline";
 
 interface DebtCardItemProps {
   item: DebtCard;
@@ -16,15 +19,15 @@ interface DebtCardItemProps {
 export function DebtCardItem({ item }: DebtCardItemProps) {
   const { text, language } = useI18n();
   const { pending, pendingAction, error, submit } = useSubmit();
-  const summary = typeof item.summary === "string" && item.summary ? item.summary : item.title;
-  const displayTitle = typeof item.display_title === "string" && item.display_title ? item.display_title : summary;
+  const headline = cardHeadline(item) || item.title;
+  const hardness = hardnessLabel(item.hardness, text);
 
   return (
-    <CardSurface cardId={item.id} label={`${text("潜在任务", "Backlog")} · ${displayTitle}`}>
-      <CardHead card={item} title={displayTitle} leading={<span className="card-dot is-backlog" aria-hidden="true" />} />
+    <CardSurface cardId={item.id} label={`${text("潜在任务", "Backlog")} · ${headline}`}>
+      <CardHead card={item} title={headline} leading={<span className="card-dot is-backlog" aria-hidden="true" />} />
       <div className="card-badges">
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
-        {item.hardness === "hard" && <span className="chip chip-danger">{text("硬需求", "Hard")}</span>}
+        {hardness && <span className={item.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardness}</span>}
       </div>
       {pending ? (
         <p className="card-pending-note">
