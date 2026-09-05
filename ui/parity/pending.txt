@@ -12,7 +12,5 @@ control:settings.general:toggle:launch-at-login-recommended-keep-the-menu-bar-as
 control:settings.maintainer:label:path-doesn-t-exist
 control:settings.voice:button:generate-from-my-messages
 control:settings.voice:button:generating
-control:settings.weeklyDigest:button:generate-now
-control:settings.weeklyDigest:label:enabled
 control:settings.weeklyDigest:label:save-failed-try-again
 control:settings:label:generated

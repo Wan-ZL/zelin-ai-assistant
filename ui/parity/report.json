@@ -1,7 +1,7 @@
 {
   "counts": {
-    "PENDING": 15,
-    "PRESENT": 829,
+    "PENDING": 13,
+    "PRESENT": 831,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -639,9 +639,9 @@
     "control:settings.voice:button:open-profile": "PRESENT",
     "control:settings.voice:label:in-effect": "PRESENT",
     "control:settings.voice:toggle:voice-injection-default-on": "PRESENT",
-    "control:settings.weeklyDigest:button:generate-now": "PENDING",
+    "control:settings.weeklyDigest:button:generate-now": "PRESENT",
     "control:settings.weeklyDigest:label:disabled": "PRESENT",
-    "control:settings.weeklyDigest:label:enabled": "PENDING",
+    "control:settings.weeklyDigest:label:enabled": "PRESENT",
     "control:settings.weeklyDigest:label:save-failed-try-again": "PENDING",
     "control:settings.weeklyDigest:toggle:auto-generate-a-weekly-what-you-were-up-to-recap": "PRESENT",
     "control:settings:alert-button:ok": "PRESENT",
