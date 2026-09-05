@@ -6,12 +6,17 @@
 //     IME 候选上屏的回车自然安全；⌘↵ 提交没做（owner 要的是只按钮，日后想要再加）；
 //   - 草稿保留：仅在 server 确认成功后清空输入框，失败时草稿原样留着；换行原样进 wire text
 //     （只到 inbox 文件：actd _capture_text（§10）仍把空白含换行折成单空格——多行是编辑体验，落卡为单行）；
-//   - Esc 只交还光标（blur），草稿不动（原生 escKey 的「有草稿只 defocus」半边）；
+//   - Esc 只交还光标（blur），草稿不动（原生 escKey 的「有草稿只 defocus」半边）；且**在框内就地吃掉**
+//     （stopPropagation——原生 escKey 返 `.handled`，Esc 永不外泄到看板层：FilterBar 的 window ⎋ 不许因此
+//     清掉 ⌘F 搜索词 / 退出多选，§34 2026-09-05 追记）；IME 候选期间的 Esc 归输入法（不 blur，原生 hasMarkedText
+//     返 `.ignored`），但同样不外泄；
 //   - payload 由调用方经 buildBody(text) 构造（propose = {action:"capture",text}，
 //     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）。
 //   - 历史 ↑/↓（最近 20 条，localStorage）只在草稿为空或正在翻历史时接管——多行草稿里的 ↑/↓ 归光标；
 //     翻历史途中一改字就退出翻历史。斜杠命令 /rec /lang /open（composerCommands.ts，
-//     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执；
+//     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执；**成功的命令也进历史**
+//     （原生 AppDelegate.submitCapture `if ok { CaptureHistory.push(text) }  // item 5: commands count too`），
+//     所以 `/lang en` 之后 ↑ 能翻回它；命令报错不进历史（原生 ok=false 不 push）；
 //   - 输入框下一行状态（§41 2026-09-05 追记，原生 Composer.swift 的 slashError → hintLine 栈）：失败句优先；
 //     否则草稿以 "/" 开头时给命令词表提示行（hintLine）；否则才是成功回执。一改字失败句与回执都清
 //     （原生 `.onChange(of: text) { slashError = nil }`；回执是上一次提交的，新草稿一开打就过期）——但 ↑/↓ 翻历史
@@ -119,6 +124,10 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
             : { prefix: command.error.message });
           return;
         }
+        // 原生 submitCapture：命令成功也 `CaptureHistory.push`（"commands count too"），Composer.submit 同时把
+        // historyIndex 归零——`/lang en` 之后空草稿 ↑ 能翻回它，与普通捕获成功那条路同一套账
+        pushHistory(trimmed);
+        setHistoryIndex(-1);
         setDraft("");
         setNote(command.note);
         return;
@@ -146,10 +155,17 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter 不在这里：不拦 = 浏览器原生换行（IME 候选上屏的回车同样不受影响）。提交只有按钮一条路（D35）。
-    if (e.nativeEvent.isComposing) return;
     if (e.key === "Escape") {
-      e.currentTarget.blur(); // 只交还光标，草稿不动
-    } else if (e.key === "ArrowUp" && (draft === "" || historyIndex >= 0)) {
+      // 原生 Composer.escKey 返 `.handled`：Esc 在框内就地吃掉，永不外泄到 window——FilterBar 的两段 ⎋
+      // （清 ⌘F 搜索词 → 退出多选）不许因为光标在输入框里而被触发。React 17+ 的 stopPropagation 停的是
+      // 原生冒泡（监听挂在 root），所以 window.addEventListener 的听众确实收不到。
+      e.stopPropagation();
+      // IME 候选期间的 Esc 归输入法（原生 hasMarkedText → `.ignored`）：不 blur、不 preventDefault，输入法自己撤销拼音
+      if (!e.nativeEvent.isComposing) e.currentTarget.blur(); // 只交还光标，草稿不动
+      return;
+    }
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "ArrowUp" && (draft === "" || historyIndex >= 0)) {
       e.preventDefault();
       recall(1);
     } else if (e.key === "ArrowDown" && historyIndex >= 0) {

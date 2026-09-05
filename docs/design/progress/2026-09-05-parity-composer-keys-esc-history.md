@@ -1,0 +1,9 @@
+pr: `fix/parity-composer-keys-esc-history`（无版本 bump，版本由 tag 派生）
+phase: P4 余量（D3：web 看板是产品）；行为对齐审计 batch `composer-keys-esc-history`（chain composer 第 2 批，接 #227；gap ids composer-history-recall-guard / composer-esc-semantics / board-cards-esc-global-clears-search / board-cards-search-esc-ime / composer-multiline-autogrow）
+law: §15 追记（看板 ⎋ 作用域：IME 红线 + target 守卫）/ §34 追记（列顶输入框 Esc 就地吃掉、成功命令进历史、autogrow 已闭合）
+
+**做了什么**：原生 `Composer.swift:233-245 escKey` 返 `.handled`、`Kanban.swift:186` 把 `escClearSearch` 只挂在搜索 TextField、`:225-236` 的 IME 红线（`hasMarkedText` → `.ignored`）、`AppDelegate.swift:1241` 的 `if ok { CaptureHistory.push(text) }  // item 5: commands count too`，四件在 web 落地。`LaneComposer.onKeyDown` 先处理 Escape：`stopPropagation()`（React 17+ 停原生冒泡到 window），非 IME 组合中 `blur()`、草稿不动；IME 组合中不 blur 不 preventDefault、同样不外泄。命令成功分支 `pushHistory(trimmed); setHistoryIndex(-1)`——`/lang en` 之后 ↑ 翻回它，报错命令不进历史。`FilterBar` 的 window ⎋ 先过两道门：`isComposing || keyCode === 229` 归输入法；`escapeBelongsToForeignField(target, searchRef)`——textarea / 非按钮类 input / contenteditable 且不是 ⌘F 框本身 → 归那个框；勾选框 / 按钮 / 非输入元素与 ⌘F 框自己照旧两段。两边是双保险。**核对即闭合**：`composer-multiline-autogrow` 已随 D35（#220）落地，未动。**没动**：`DetailDrawer` 的 window ⎋ 归 `store-resilience-drawer` 批。
+
+**判例**（两个 NEW 文件，防腐 #7）：`LaneComposer.escHistory.test.tsx`（7 条：`/lang en` 后 ↑ 翻回、翻历史途中命令成功游标归零、报错命令不进历史、Esc 到不了 window 监听而别的键照常冒泡、与 FilterBar 同挂时 Esc 保词保多选 blur 留草稿、IME 组合中 Esc 不 blur 不外泄、光标离开后 window ⎋ 照旧两段）、`FilterBar.escScope.test.tsx`（8 条：isComposing / keyCode 229 保词、回收站同款搜索框 / textarea / contenteditable 里 ⎋ 保词保多选、勾选框上 ⎋ 仍两段、⌘F 框自己与 window ⎋ 照旧、`escapeBelongsToForeignField` 真值表）。变异检查：拔掉 composer 的 stopPropagation → 1 条红；拔掉 FilterBar 两道门 → 5 条红。既有 `LaneComposer.hints.test.tsx` 一条改期望（它此前钉的正是命令不进历史的缺口：第一下 ↑ 现在翻出 `/lang en`、第二下才是路径）；`FilterBar.test.tsx` / `LaneComposer.test.tsx` 未改。
+
+**门**：见 PR。**Playwright golden 未重生成**：键盘行为不在截图里。parity report 零 diff。

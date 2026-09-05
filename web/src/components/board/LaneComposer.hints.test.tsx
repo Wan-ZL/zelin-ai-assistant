@@ -105,12 +105,17 @@ describe("LaneComposer — '/' hint line", () => {
     expect(field.value).toBe("/Users/zelin/x 整理一下");
     expect(screen.getByText(HINT)).toBeTruthy();
     expect(screen.queryByText("Submitted")).toBeNull();
-    // 斜杠回执那条路同样：/lang en 成功后 ↑ 翻出那条 "/…" 旧捕获 → 提示行顶掉「Language → en」
+    // 斜杠回执那条路同样：/lang en 成功后 ↑ 翻出 "/…" 旧条目 → 提示行顶掉「Language → en」
+    // （成功的命令自己也进历史——原生 "commands count too"，§34 2026-09-05 追记——所以第一下翻出的是 /lang en，第二下才是路径）
     fireEvent.change(field, { target: { value: "/lang en" } });
     await act(async () => {
       fireEvent.click(button);
     });
     expect(screen.getByText("Language → en")).toBeTruthy();
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(field.value).toBe("/lang en");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.queryByText("Language → en")).toBeNull();
     fireEvent.keyDown(field, { key: "ArrowUp" });
     expect(field.value).toBe("/Users/zelin/x 整理一下");
     expect(screen.getByText(HINT)).toBeTruthy();
