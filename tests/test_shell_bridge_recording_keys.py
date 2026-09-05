@@ -96,13 +96,16 @@ class AddOnlyKeysMirrorTestCase(unittest.TestCase):
             self.assertNotIn('"" = 在翻', text)
 
     def test_web_normalize_defaults_every_new_key(self):
-        # 老壳缺席 → "" / false（asString / asBool 默认），页面永不读到 undefined
+        # 老壳缺席 → "" / false（asString / asBool 默认），页面永不读到 undefined。
+        # 唯一的三态是 apple_engine_available（§61.1 追记，batch captions-settings-notes）：缺席 / 非布尔 → null，
+        # 页面据此不出引擎脚注——「不知道」不能被补成「这台 Mac 低于 macOS 26」。
         for key in NEW_KEYS["recording"]:
             self.assertIn("%s: asString(rec.%s)" % (key, key), self.ts)
         self.assertIn("translation_note: asString(cap.translation_note)", self.ts)
         self.assertIn("translation_active: asBool(cap.translation_active)", self.ts)
         self.assertIn("source_note: asString(cap.source_note)", self.ts)
-        self.assertIn("apple_engine_available: asBool(cap.apple_engine_available)", self.ts)
+        self.assertIn("apple_engine_available: asBoolOrNull(cap.apple_engine_available)", self.ts)
+        self.assertIn("apple_engine_available?: boolean | null;", self.ts)
         self.assertIn("screen_requested: asBool(perm.screen_requested)", self.ts)
 
 

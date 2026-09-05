@@ -9,7 +9,8 @@
 //     暂停是用户意图，引擎的 status_text 在暂停时是 ""，不能让行消失得像在正常听；
 //   - source_note（音源部分不可用的降级句）橙色挂在「声音来源」下、暂停时不出（原生 !paused 同款）；
 //   - translation_note（翻译走不通的原因 / Ark 途中报错）次要色挂在翻译开关下；在不在翻只看 translation_active；
-//   - 引擎脚注两支按 apple_engine_available 选句（normalize 缺席补 false → 「没有 Apple 本地识别可用」那支）。
+//   - 引擎脚注两支按 apple_engine_available 选句；老壳没给这把键 = null → 不出脚注（缺键不渲多余的句子，
+//     更不替壳断言「这台 Mac 低于 macOS 26」——新 web/dist 撞上还没重启的老壳时那句会是假话）。
 // 其余脚注（豆包中英混识 / 两种凭证格式 / 两个控制台 + 只存本机 / 费用与「字幕文本永不离开这台 Mac」）
 // 是 copy：文字自己的，事实照原生（§66.2 只列不判）。
 import { useState } from "react";
@@ -108,7 +109,9 @@ export function CaptionsSection() {
             </div>
           </div>
           {select("engine", text("识别引擎", "Recognition engine"), [["auto", text("自动", "Auto")], ["doubao", text("豆包在线", "Doubao (online)")], ["apple", text("Apple 本地", "Apple on-device")]])}
-          <p className="settings-helper captions-engine-footnote">{engineFootnote(cap.apple_engine_available === true, text)}</p>
+          {typeof cap.apple_engine_available === "boolean" && (
+            <p className="settings-helper captions-engine-footnote">{engineFootnote(cap.apple_engine_available, text)}</p>
+          )}
           {select("source", text("声音来源", "Audio source"), [["both", text("麦克风 + 系统声音", "Mic + system audio")], ["mic", text("仅麦克风", "Microphone only")], ["system", text("仅系统声音", "System audio only")]])}
           {sourceNote && <p className="settings-helper is-warning captions-source-note">{sourceNote}</p>}
           <p className="settings-helper">{text("系统声音走「屏幕录制」权限；麦克风首次开启时弹系统授权。", "System audio rides the Screen Recording grant; the mic prompts on first enable.")}</p>

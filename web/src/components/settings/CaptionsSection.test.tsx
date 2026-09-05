@@ -2,7 +2,7 @@
 //   1) 状态行按 CaptionDisplayState.statusLine 的先后：已暂停（+「在悬浮窗上点 ▶ 继续」）压过引擎状态 / 错误；
 //      暂停时壳的 status_text 是 ""，行不能消失；非暂停按 status_text / status_is_error；都没有不出行；
 //   2) source_note 橙色挂在「声音来源」下、暂停时不出；translation_note 次要色挂在翻译开关下、与 translation_active 无关；
-//   3) 引擎脚注两支按 apple_engine_available 选句；老壳缺键 → normalize 补 false → 「没有 Apple 本地识别可用」那支，两句 note 不出；
+//   3) 引擎脚注两支按 apple_engine_available 选句；老壳缺键（normalize → null）→ 不出脚注、两句 note 也不出（缺键不渲多余的句子）；
 //   4) 其余脚注：豆包中英混识 / Ark 模型 placeholder / 两种凭证格式 / 两个控制台 + 只存本机 + 检测 / 费用与「字幕文本永不离开这台 Mac」；
 //   5) 浏览器（无桥）里只剩凭证行的脚注 + 费用句，引擎相关的行与 note 一个不出。
 import { cleanup, render, screen } from "@testing-library/react";
@@ -173,14 +173,22 @@ describe("CaptionsSection · 引擎脚注两支", () => {
       .toBe("自动 = 有豆包 Key 就用豆包。这台 Mac 低于 macOS 26，没有 Apple 本地识别可用。");
   });
 
-  it("old shell without the §61.1 keys: no notes; the footnote takes normalize's false default (no Apple engine)", () => {
+  it("old shell without the §61.1 keys: no notes and no footnote — the page never claims 'below macOS 26' for a shell that did not say", () => {
     const { translation_note: _tn, translation_active: _ta, source_note: _sn, apple_engine_available: _ae, key_probe: _kp, ...oldCaptions } = base.captions;
     installShell({}, { ...base, captions: { ...oldCaptions, paused: false, status_text: "" } });
     const { container } = renderSection();
     expect(container.querySelector(".captions-status")).toBeNull();
     expect(container.querySelector(".captions-source-note")).toBeNull();
     expect(container.querySelector(".captions-translation-note")).toBeNull();
-    expect(container.querySelector(".captions-engine-footnote")!.textContent).toBe(APPLE_NO_EN);
+    expect(container.querySelector(".captions-engine-footnote")).toBeNull();
+    expect(screen.queryByText(APPLE_NO_EN)).toBeNull();
+    // 引擎 select 本身照旧在（老壳只是少了脚注，不少控件）
+    expect(container.querySelector("#captions-engine")).not.toBeNull();
+  });
+
+  it("a non-boolean apple_engine_available (dirty shell value) is 'unknown' too: no footnote rather than a guessed fact", () => {
+    installShell({}, { ...base, captions: { ...base.captions, apple_engine_available: 1 as unknown as boolean } });
+    expect(renderSection().container.querySelector(".captions-engine-footnote")).toBeNull();
   });
 });
 

@@ -66,7 +66,8 @@ export interface ShellCaptionsState {
                                // 只在非空时渲染；「在不在翻」永不由它推断——唯一布尔是 translation_active
   translation_active?: boolean; // 壳 recomputeTranslation：翻译开 ∧ 豆包引擎 ∧ 有 Ark Key（悬浮窗按它选双语排版）
   source_note?: string;        // 音源部分不可用的降级句（"缺屏幕录制权限，只在听麦克风" 等）
-  apple_engine_available?: boolean;  // 壳 appleCaptionEngineAvailable()（macOS 26+ 才有本地引擎）
+  apple_engine_available?: boolean | null;  // 壳 appleCaptionEngineAvailable()（macOS 26+ 才有本地引擎）；
+                               // 老壳没给 / 给的不是布尔 = null（三态：页面不替壳断言这台 Mac 有没有本地引擎）
 }
 
 /** TCC 三项（壳侧 PermissionsProbe；§68.3）："granted" | "denied" | "unknown" */
@@ -147,6 +148,8 @@ const asBool = (v: unknown, fallback = false): boolean => (typeof v === "boolean
 const asString = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asNumber = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 const asStatus = (v: unknown): PermissionStatus => (typeof v === "string" && v ? v : "unknown");
+/** 三态布尔：壳没给（老壳）或给的不是布尔 → null——「不知道」不能被补成一个事实 */
+const asBoolOrNull = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
 
 function normalizeKeyProbe(raw: unknown): ShellKeyProbe | null {
   if (!raw || typeof raw !== "object") return null;
@@ -203,7 +206,7 @@ export function normalizeShellState(raw: unknown): ShellState {
       translation_note: asString(cap.translation_note),
       translation_active: asBool(cap.translation_active),
       source_note: asString(cap.source_note),
-      apple_engine_available: asBool(cap.apple_engine_available),
+      apple_engine_available: asBoolOrNull(cap.apple_engine_available),
     },
     permissions: {
       screen: asStatus(perm.screen),
