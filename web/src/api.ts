@@ -517,9 +517,14 @@ export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileSta
   return request<VoiceProfileStatus>("/api/voice", { signal });
 }
 
-/** GET /api/slack/directory[?refresh=1] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记） */
-export function fetchSlackDirectory(refresh = false, signal?: AbortSignal): Promise<SlackDirectory> {
-  return request<SlackDirectory>(`/api/slack/directory${refresh ? "?refresh=1" : ""}`, { signal });
+/** GET /api/slack/directory[?refresh=1][&lang=zh|en] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记）；
+ *  lang = 当前 UI 语言（ok:false 的双语 message 随之——原生 SettingsSlack.fetchDirectory 的 AIASSISTANT_UI_LANG） */
+export function fetchSlackDirectory(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<SlackDirectory> {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  if (lang) params.set("lang", lang);
+  const query = params.toString();
+  return request<SlackDirectory>(`/api/slack/directory${query ? `?${query}` : ""}`, { signal });
 }
 
 /** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 写 .command（cd repo && bash uninstall.sh）并 open（§68.6） */

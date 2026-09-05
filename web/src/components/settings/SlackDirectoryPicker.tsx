@@ -6,6 +6,8 @@
 // 原生「找不到可用的 python（」+ 原句 + 「）」（前缀独立节点）；保存失败 = 「保存设置失败: 」+ 原句。
 // 已保存的 token 刚通过验证（store `slackTokenVerifications` 变了，SecretRow 记的；§68.3 追记）→ 带 refresh 自动加载一次
 // （原生 verifyToken .ok → loadDirectory(refresh:true)：token freshly working → offer the pickers with fresh data）。
+// 每次请求带当前 UI 语言（?lang=）：act 侧的双语失败句按它挑（原生 fetchDirectory 的 env AIASSISTANT_UI_LANG = LanguageMirror.current）；
+// 切语言不重拉（原生 .onChange(of: i18n.lang) 只 refreshStatus，目录内容与语言无关）。
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchSlackDirectory } from "../../api";
 import { useI18n } from "../../i18n";
@@ -29,7 +31,7 @@ function listEffective(effective: unknown): string[] {
 }
 
 export function SlackDirectoryPicker() {
-  const { text } = useI18n();
+  const { text, language } = useI18n();
   const { settingsCatalog, slackTokenVerifications } = useAppState();
   const [dir, setDir] = useState<SlackDirectory | null>(null);
   const [loading, setLoading] = useState(false);
@@ -54,7 +56,7 @@ export function SlackDirectoryPicker() {
     setLoading(true);
     setFailure(null);
     try {
-      const result = await fetchSlackDirectory(refresh);
+      const result = await fetchSlackDirectory(refresh, language);
       if (result.ok) {
         setDir(result);
       } else {

@@ -245,12 +245,12 @@ describe("SlackDirectoryPicker autoload (§68.3 追记)", () => {
     markSlackTokenVerified();
     await screen.findByText("Channels (card only when @mentioned)");
     expect(fetchSlackDirectory).toHaveBeenCalledTimes(1);
-    expect(fetchSlackDirectory).toHaveBeenLastCalledWith(true);   // 原生 loadDirectory(refresh:true)
+    expect(fetchSlackDirectory).toHaveBeenLastCalledWith(true, "en");   // 原生 loadDirectory(refresh:true)
     markSlackTokenVerified();
     await waitFor(() => expect(fetchSlackDirectory).toHaveBeenCalledTimes(2));
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(fetchSlackDirectory).toHaveBeenCalledTimes(3));
-    expect(fetchSlackDirectory).toHaveBeenLastCalledWith(true);
+    expect(fetchSlackDirectory).toHaveBeenLastCalledWith(true, "en");
   });
 
   it("first manual load (no data yet) still goes through the cache", async () => {
@@ -258,7 +258,7 @@ describe("SlackDirectoryPicker autoload (§68.3 追记)", () => {
     renderIn("en", <SlackDirectoryPicker />);
     fireEvent.click(screen.getByRole("button", { name: "Load channels & members" }));
     await screen.findByText("Channels (card only when @mentioned)");
-    expect(fetchSlackDirectory).toHaveBeenCalledWith(false);
+    expect(fetchSlackDirectory).toHaveBeenCalledWith(false, "en");
   });
 
   it("a verification while a load is in flight is skipped (native guard !directoryLoading)", async () => {
