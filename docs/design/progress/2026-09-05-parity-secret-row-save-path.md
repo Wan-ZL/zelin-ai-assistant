@@ -1,0 +1,9 @@
+pr: `fix/parity-secret-row-save-path`
+phase: P4 余量——behaviour-parity 审计批 `secret-row-save-path`（chain secrets 第 1 批；D3 原生 = 终版规格）
+law: §68.3 追记（`PUT /api/secrets` 首行规则的两条按名字例外；`legacy_pair` 回执；xoxb 拒绝；保存路上的原生提示与 Enter）；§36 v0.37.1 原句不动、Swift enum 仍是真源
+
+**审计确认的五条丢失行为**（gap ids：`recording-captions-speech-legacy-pair-normalization` / `settings-volcano-legacy-credential-normalize` / `recording-captions-volcano-row-badge-and-save-note` / `settings-slack-xoxb-refusal` / `settings-slack-token-enter-saves`）。最重的一条是**绿色但坏掉的凭证**：原生 CredentialRowView.save() 把豆包语音凭证的粘贴交给 `VolcanoSpeechCredential.parse`，旧版 App ID + Access Token 对存成两行 `appid:` / `token:`；web 换成 server 写之后 `write_value` 对所有名字一律「只留首个非空行」（§68.3 原文），粘 `appid:X\ntoken:Y` 存成 `appid:X`、粘 `X:Y` 一行原样存——壳里逐字节冻结的 `decode()`（`tests/test_shell_engine_mirror.py` VERBATIM 钉着，不能改）只认两行带标签的形状，于是引擎按新版 `X-Api-Key` 发头、豆包报凭证无效，而「检测」探的是粘贴值（走 parse）所以是 ✅。§36 v0.37.1 与 §68.3 的这处互相矛盾以**按名字的 carve-out** 收口：`server/secrets_store.volcano_speech_credential` 是原生 parse / fileRepresentation 的 Python 镜像，25 组粘贴 fixture 的期望值由 `swiftc` 编译 mac/Sources/CaptionCore.swift 的 enum 逐条跑出，两侧逐字一致才过；回执 add-only `legacy_pair`。
+
+**其余四条**：字幕两把 key 的状态章从「已保存（App 内管理）」（原生 `.plain` 的词）改回「已保存（未验证）」，保存句尾随「——点「检测」可真连服务器验证一次」；Slack 行 `xoxb-` Bot token 门口拒绝、永不 PUT（原生 saveToken 原句），server 同一道门 400 `INVALID_FIELD` + `details.reason {zh,en}`；非 `xoxp-` 与 Gmail 非 16 位字母数字的橙色提示（原生里这两句在同一同步回合被「已保存，验证中…」覆盖、实际看不见——web 分开一行让「仍会尝试验证…」说到做到）；密码框 Enter = 保存（`isComposing` 的输入法 Enter 不算），与「保存」按钮同一道闸。verify / 探针路上的余量归下一批 `credential-verify-feedback`。
+
+**判例**：`tests/test_server_secrets_volcano_legacy_pair.py`（镜像 fixture + PUT 两行落盘 / 裸 key 原样 / 折行拼回 / 别的名字照旧首行）、`tests/test_server_secrets_slack_xoxb_refusal.py`（400 原句 / 既有文件不动 / 首个非空行判 / 别的名字不管 / web 内联同一句）、`web/src/components/settings/SecretRowSavePath.test.tsx`（12 条：拒绝不 PUT、提示与验证并存、16 位形状、章与保存句、Enter 闸）。

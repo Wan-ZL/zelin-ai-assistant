@@ -1,7 +1,7 @@
 {
   "counts": {
     "PENDING": 15,
-    "PRESENT": 830,
+    "PRESENT": 829,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -462,7 +462,6 @@
     "control:settings.credentials:label:saved": "PRESENT",
     "control:settings.credentials:label:saved#2": "PRESENT",
     "control:settings.credentials:label:saved-but-verification-failed": "PRESENT",
-    "control:settings.credentials:label:saved-managed-in-app": "PRESENT",
     "control:settings.credentials:label:saved-not-verified": "PRESENT",
     "control:settings.credentials:label:saved-verified": "PRESENT",
     "control:settings.credentials:label:saved-verifying": "PRESENT",
@@ -860,7 +859,7 @@
   "not_gated": {
     "informational": 414,
     "os": 11,
-    "retired": 56,
+    "retired": 57,
     "shell": 70
   },
   "ok": true,
