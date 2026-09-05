@@ -13,7 +13,7 @@
 // （标记只在最后一步写）。页脚 = 原生 footer：进度点 · 第 N / 7 步 · 上一步 / 下一步 / 完成。
 // 原生窗口的三件小事（2026-09-05 追回，§68.5 追记）：
 //   · Return = 下一步 / 完成（原生 .keyboardShortcut(.defaultAction)）——焦点不在输入框 / 按钮 / 链接上、无修饰键、
-//     不在 IME 组字时才算；Esc 不绑；
+//     不在 IME 组字时才算；首开步还没定（GET /api/setup 未回）时惰性；Esc 不绑；
 //   · 整个向导期间 2 s 轮询壳的 TCC 探针（原生 perms.startPolling），末步另起 2.5 s 管线探针
 //     （原生 PipelineProbeModel：health 心跳 / 首次数据 + permissions 的 doctor 行；引擎每 4 拍静默复检一次）；
 //   · 「先去看板（下次再来）」= 原生关窗：本窗口会话内不再跳回向导（sessionStorage 标记），新开窗口 / 下次启动再问，
@@ -142,6 +142,9 @@ export function SetupPage() {
   }, [detect]);
 
   async function advance() {
+    // 首开步还没定（GET /api/setup 未回、step 仍是 null）：Return / 「下一步」惰性——否则页面一加载就按 Enter 会从
+    // 「第 1 步」的空壳直接跳到引擎步，等 setup 回来 config_exists=false 时建 config.yaml 的欢迎步已被抢跳过
+    if (step === null) return;
     // 笔记库没落盘成功就不放行：末步不能在笔记会落到别处（或哪里都不落）时宣布 🎉（原生 applyVaultChoice）
     if (step === "vault") {
       const err = await applyVaultChoice(vaultChoice, currentRoot);
@@ -316,7 +319,7 @@ export function SetupPage() {
         <span className="setup-footer-spacer" />
         {index > 0 && <button type="button" className="btn" onClick={() => setStepAndSync(STEPS[index - 1])}>{text("上一步", "Back")}</button>}
         {index < STEPS.length - 1
-          ? <button type="button" className="btn btn-primary" onClick={() => void advance()}>{text("下一步", "Next")}</button>
+          ? <button type="button" className="btn btn-primary" disabled={step === null} onClick={() => void advance()}>{text("下一步", "Next")}</button>
           : <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void finish()}>{busy ? text("保存中…", "Saving…") : text("完成", "Done")}</button>}
       </div>
     </main>

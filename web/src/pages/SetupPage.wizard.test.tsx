@@ -2,6 +2,7 @@
 // Permissions.swift:46、AppDelegate.swift:82-90）：
 //   1) Return = 下一步 / 完成（.keyboardShortcut(.defaultAction)）：焦点在 body 上也算；焦点在输入框 / 按钮里不抢；
 //      带修饰键 / IME 组字 / 被内层 preventDefault 认领的不算；末步 Return = 「完成」（写标记 + 回看板），忙时不重发；
+//      GET /api/setup 未回（首开步还没定）时 Return / 「下一步」惰性——欢迎步（建 config.yaml）不能被抢跳过；
 //   2) 整个向导 2 s 轮询壳 TCC 探针（不只权限步），末步另起 2.5 s 管线探针（health + permissions），引擎每 4 拍静默复检，
 //      离开末步即停；浏览器（无桥）不打桥；
 //   3) 「先去看板（下次再来）」落 sessionStorage 标记，app.tsx 的 shouldRedirectToSetup 本会话不再跳；
@@ -13,7 +14,7 @@ import { fetchHealth, fetchPermissions, fetchSecrets, fetchSetup, fetchSetupEngi
 import { shouldRedirectToSetup } from "../app";
 import { LanguageContext } from "../i18n";
 import { navigate } from "../route";
-import { resetShellBridgeForTests } from "../shellBridge";
+import { callShell, resetShellBridgeForTests } from "../shellBridge";
 import { resetStoreForTests } from "../store";
 import type { PermissionsSnapshot, SetupSnapshot } from "../types";
 import { DEFAULT_CUSTOM_ROOT } from "../components/setup/VaultStep";
@@ -23,6 +24,12 @@ import { PERMISSION_POLL_MS } from "../components/permissions/usePermissionPolli
 vi.mock("../route", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../route")>();
   return { ...actual, navigate: vi.fn() };
+});
+
+// callShell 只包一层 spy（真实现照跑）：「无桥不打桥」要能数出零次调用，而不是只看 window.webkit 仍是 undefined
+vi.mock("../shellBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../shellBridge")>();
+  return { ...actual, callShell: vi.fn(actual.callShell) };
 });
 
 vi.mock("../api", async (importOriginal) => {
@@ -68,6 +75,7 @@ beforeEach(() => {
   resetStoreForTests();
   resetShellBridgeForTests();
   for (const fn of [fetchHealth, fetchPermissions, fetchSetup, fetchSecrets, fetchSetupEngine, postSetupStep, navigate]) vi.mocked(fn).mockReset();
+  vi.mocked(callShell).mockClear(); // 只清计数——实现仍是真 callShell
   vi.mocked(fetchSetup).mockResolvedValue(setup());
   vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [] });
   vi.mocked(fetchSetupEngine).mockResolvedValue(ENGINE_READY);
@@ -139,6 +147,26 @@ describe("Return advances the wizard (原生 Next / Done .keyboardShortcut(.defa
     expect(postSetupStep).toHaveBeenCalledTimes(1);
     await act(async () => { release?.(); });
   });
+
+  it("Return (and Next) before GET /api/setup resolves is inert, so a fresh machine still lands on the config.yaml step", async () => {
+    let release: ((snapshot: SetupSnapshot) => void) | null = null;
+    vi.mocked(fetchSetup).mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    window.history.replaceState(null, "", "/?page=setup"); // 无 ?step= → 首开步等 setup 回来才定
+    render(<LanguageContext.Provider value="en"><SetupPage /></LanguageContext.Provider>);
+    await stepLabel(1);
+    const next = () => screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
+    expect(next().disabled).toBe(true);
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    fireEvent.click(next());
+    await stepLabel(1);
+    expect(screen.queryByText("Step 2 of 7")).toBeNull();
+    await act(async () => { release?.(setup({ config_exists: false })); });
+    await screen.findByRole("button", { name: "Create from config.example.yaml" }); // 欢迎步没被抢跳过
+    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
+    expect(next().disabled).toBe(false);
+    fireEvent.keyDown(document.body, { key: "Enter" }); // 首开步定了，Return 照常推进
+    await stepLabel(2);
+  });
 });
 
 describe("live polling (原生 perms.startPolling 2 s + PipelineProbeModel 2.5 s)", () => {
@@ -184,12 +212,14 @@ describe("live polling (原生 perms.startPolling 2 s + PipelineProbeModel 2.5 s
     expect(bridgeCalls()).toBeGreaterThan(bridgeAfter);
   });
 
-  it("in a plain browser (no bridge) nothing is posted to a shell", async () => {
+  it("in a plain browser (no bridge) nothing is posted to a shell and no poll timer is scheduled", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    expect(window.webkit).toBeUndefined();
     renderAt("permissions");
     await stepLabel(3);
     await act(async () => { vi.advanceTimersByTime(PERMISSION_POLL_MS * 3); });
-    expect(window.webkit).toBeUndefined();
+    expect(callShell).not.toHaveBeenCalled(); // 挂载那一拍也没打（NO_BRIDGE 被 .catch 吞掉，所以要数调用而不是看报错）
+    expect(vi.getTimerCount()).toBe(0); // 非末步无管线探针、无桥无 TCC 轮询：向导一个 interval 都不挂
   });
 });
 
