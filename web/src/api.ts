@@ -364,16 +364,21 @@ export function fetchPermissions(refresh = false, signal?: AbortSignal): Promise
   return request<PermissionsSnapshot>(`/api/permissions${refresh ? "?refresh=1" : ""}`, { signal });
 }
 
-/** GET /api/diagnostics — doctor + health + deploy_state + install_report + 日志清单 */
-export function fetchDiagnostics(refresh = false, signal?: AbortSignal): Promise<DiagnosticsSnapshot> {
-  return request<DiagnosticsSnapshot>(`/api/diagnostics${refresh ? "?refresh=1" : ""}`, { signal });
+/** GET /api/diagnostics — doctor + health + deploy_state + install_report + 日志清单；lang = 当前 UI 语言（doctor 人话随之，§68.4 追记） */
+export function fetchDiagnostics(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<DiagnosticsSnapshot> {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  if (lang) params.set("lang", lang);
+  const query = params.toString();
+  return request<DiagnosticsSnapshot>(`/api/diagnostics${query ? `?${query}` : ""}`, { signal });
 }
 
-/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token） */
-export function fetchDoctor(fast = true, refresh = false, signal?: AbortSignal): Promise<DoctorReport> {
+/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token）；lang 同上（原生 runFullOutput 的 AIASSISTANT_UI_LANG） */
+export function fetchDoctor(fast = true, refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<DoctorReport> {
   const params = new URLSearchParams();
   if (!fast) params.set("fast", "0");
   if (refresh) params.set("refresh", "1");
+  if (lang) params.set("lang", lang);
   const query = params.toString();
   return request<DoctorReport>(`/api/doctor${query ? `?${query}` : ""}`, { signal });
 }

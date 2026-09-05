@@ -803,10 +803,11 @@ export interface SecretVerifyResult {
   [key: string]: unknown;
 }
 
-// ----- §25 doctor 行（act/doctor.render_json 的 wire 形） ----- #
+// ----- §25 doctor 行（act/doctor.render_json 的 wire 形；status 小写 ok|warn|fail = act/lib/checks/core 的常量，
+// server/doctor_run 归一后透出——比较一律按小写字面量，不做大小写翻译层） ----- #
 export interface DoctorRow {
   name: string;
-  status: "OK" | "WARN" | "FAIL" | string;
+  status: "ok" | "warn" | "fail" | string;
   detail: string;
   fix: string;
   failure_id?: string;
@@ -892,6 +893,8 @@ export interface DiagnosticsSnapshot {
   logs: LogEntry[];
   cron_probe?: CronProbe | null;
   activity?: IngestActivity | null;
+  /** config.yaml doctor.ai_fix_enabled（原生 AIFix.enabled；false = 「让 AI 修」整颗不出现；缺席 = 开；add-only） */
+  ai_fix_enabled?: boolean;
   [key: string]: unknown;
 }
 

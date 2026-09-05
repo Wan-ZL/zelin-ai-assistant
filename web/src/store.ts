@@ -499,7 +499,17 @@ function loadPage<K extends PageKey>(key: K, fetcher: () => Promise<AppState[K]>
 export const refreshSettingsCatalog = () => loadPage("settingsCatalog", fetchSettingsCatalog);
 export const refreshSecrets = () => loadPage("secrets", fetchSecrets);
 export const refreshPermissions = (refresh = false) => loadPage("permissions", () => fetchPermissions(refresh));
-export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh));
+// lang = store 的当前 UI 语言：doctor 子进程的人话随之（§68.4 追记；原生 DepsView 切语言即 model.check()）。
+// doctor 要跑几秒：在途请求带的若是另一种语言（正跑着切了语言），loadPage 的在途合并会把这次切换吞掉——
+// 等它落地再按当前语言补拉一次，旧语言的行不许留着。
+let diagnosticsLang: Language | null = null;   // 在途 diagnostics 请求带的语言
+export function refreshDiagnostics(refresh = false): Promise<void> {
+  const inflight = pageRequests.get("diagnostics");
+  if (inflight && diagnosticsLang !== state.language) return inflight.then(() => refreshDiagnostics(refresh));
+  const lang = state.language;
+  diagnosticsLang = lang;
+  return loadPage("diagnostics", () => fetchDiagnostics(refresh, lang));
+}
 export const refreshSetup = () => loadPage("setup", fetchSetup);
 export const refreshAbout = () => loadPage("about", fetchAbout);
 export const refreshFailures = () => loadPage("failures", fetchFailures);
@@ -563,4 +573,5 @@ export function resetStoreForTests() {
   };
   boardRequest = null;
   pageRequests.clear();
+  diagnosticsLang = null;
 }

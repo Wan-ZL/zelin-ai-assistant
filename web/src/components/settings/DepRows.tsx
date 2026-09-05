@@ -67,7 +67,7 @@ function doctorRow(report: DoctorReport | null, name: string): DoctorRow | null 
 function fromDoctor(report: DoctorReport | null, doctorName: string, id: string, display: string, action: ReactNode, text: Text): DepRow {
   const row = doctorRow(report, doctorName);
   const detail = row ? row.detail : report ? "—" : text("检查中…", "Checking…");
-  return { id, name: display, ok: row ? row.status === "OK" : null, detail: <code>{detail}</code>, action };
+  return { id, name: display, ok: row ? row.status === "ok" : null, detail: <code>{detail}</code>, action };   // §25 小写词表
 }
 
 function failureText(catalog: FailureCatalog | null, id: string, lang: "zh" | "en"): string | null {

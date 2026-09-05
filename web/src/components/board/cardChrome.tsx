@@ -264,6 +264,11 @@ export function TerminalButton({ cardId }: { cardId: string }) {
   );
 }
 
+/** 原生 AIFix.launch 的成功句（Doctor.swift）：卡片上的「让 AI 修」与依赖检查区的同名按钮共用这一句 */
+export function aiFixOpenedText(text: (zh: string, en: string) => string): string {
+  return text("已在 Terminal 打开修复会话——跟着 AI 走即可", "Repair session opened in Terminal — just follow the AI");
+}
+
 /**
  * 让 AI 修（原生 TaskRow.errorLine 的按钮）：POST /api/ai-fix → server 起 act.ai_fix
  * 的 Terminal 修复会话。状态行镜像原生 aiFixStatus：准备中 → 成功 4s 后淡出 / 失败红字留着。
@@ -284,7 +289,7 @@ export function AiFixButton({ cardId }: { cardId: string }) {
     setStatus({ msg: text("正在准备诊断包…", "Preparing the diagnostic bundle…"), failed: false });
     try {
       await postAiFix(cardId, language);
-      setStatus({ msg: text("已在 Terminal 打开修复会话——跟着 AI 走即可", "Repair session opened in Terminal — just follow the AI"), failed: false });
+      setStatus({ msg: aiFixOpenedText(text), failed: false });
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setStatus(null), 4000);
     } catch (e) {

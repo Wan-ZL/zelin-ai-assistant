@@ -73,7 +73,7 @@ function DoctorRows({ rows }: { rows: DoctorRow[] }) {
     <ul className="settings-list">
       {rows.map((row) => (
         <li key={row.name} className="settings-list-row" data-status={row.status}>
-          <span className="settings-list-title"><span className={`chip chip-${row.status === "FAIL" ? "danger" : row.status === "WARN" ? "warning" : "success"}`}>{row.status}</span> {row.name}</span>
+          <span className="settings-list-title"><span className={`chip chip-${row.status === "fail" ? "danger" : row.status === "warn" ? "warning" : "success"}`}>{row.status}</span> {row.name}</span>
           <p className="settings-list-desc">{row.detail}</p>
           {row.fix && <p className="settings-helper">{text("修法：", "Fix: ")}{row.fix}</p>}
         </li>
