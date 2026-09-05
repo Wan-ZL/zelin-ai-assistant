@@ -4,8 +4,9 @@
 //   running 分区 queued/working 混排，顶部 direct-run 框）| 待验收 | 阶段性完成 |
 //   永久性完成（ArchiveStrip 右侧折叠条——原生 v0.33 的第二根书立条）。
 // 全部列消费全局过滤 chips + ⌘F 搜索（taskFilters.matchesCardFilters，G4 与 BacklogStrip
-// 同一条规则），再按 store.sortOrder 排序（cardSort.ts 镜像原生 Store.sortCards：默认新的在上；
-// 提案列的 processing 占位卡钉在列顶不参与排序，原生 契约一）；徽章数字 = counts 真实总数，
+// 同一条规则；§37.2 词表 + 归一化 AND），再按 store.sortOrder 排序（cardSort.ts 镜像原生 Store.sortCards：
+// 默认新的在上；提案列的 processing 占位卡钉在列顶不参与排序、也不被搜索词藏起——chips 照常判定，
+// 原生 契约一 / Store.boardApprovals）；徽章数字 = counts 真实总数，
 // 过滤生效时显示「命中/总数」。列头「?」说明文案来自 server 目录（Lane.tsx）。
 // 列是审批状态机的投影——没有拖拽换状态，一切转移都是卡上的显式按钮动词（§0.8）。
 import { sortCards, type SortOrder } from "../../cardSort";
@@ -39,8 +40,12 @@ export function BoardLanes() {
   const { board, filters, sortOrder } = useAppState();
   if (!board) return null; // AppShell 只在有快照时渲染页面，这里兜底防御
 
+  // §37.2 / 原生 Store.boardApprovals：processing 占位行（raising / 捕获中的灰卡）不被搜索词藏起——
+  // 把一条在途提交藏到搜索后面，读起来就像捕获丢了。原生只有搜索这一维；tier / 期限 / 回锅 chips
+  // 是 web 加的维度，占位卡对它们照常判定（选了「只看 T2」就不该冒出 T1 的灰卡），不在此扩权。
+  const chipsOnly = { ...filters, search: "" };
   const pick = <T extends Record<string, unknown>>(rows: T[]): T[] =>
-    rows.filter((row) => matchesCardFilters(row, filters));
+    rows.filter((row) => matchesCardFilters(row, row.processing === true ? chipsOnly : filters));
 
   const proposals = orderProposals(pick(board.needs_approval), sortOrder);
   const blocked = sortCards(pick(board.needs_input), sortOrder);
@@ -93,6 +98,8 @@ export function BoardLanes() {
         ))}
       </Lane>
 
+      {/* 运行中列空态 = 原生 Kanban.swift 在常驻 composer 之下手动渲染的 lanePlaceholder 那句（「或在上面输入框里直接开跑」）；
+          原生 column(emptyText:) 参数里的「AI 就开始干活」因 isEmpty: false 从未显示过，web 不镜像它 */}
       <Lane
         title={text("运行中 · running", "Running")}
         slug="running"
@@ -107,7 +114,7 @@ export function BoardLanes() {
           />
         }
         isEmpty={blocked.length === 0 && running.length === 0}
-        emptyText={emptyText(text("没有正在执行的任务。批准一个提案，AI 就开始干活", "Nothing running — approve a proposal to start"))}
+        emptyText={emptyText(text("没有正在执行的任务。批准一个提案，或在上面输入框里直接开跑", "Nothing running — approve a proposal, or type above to run one now"))}
       >
         {blocked.map((row) => (
           <RunningCard key={row.id} row={row} isBlocked />
