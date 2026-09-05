@@ -180,6 +180,21 @@ SECTIONS: tuple = (
         ],
     ),
     _section(
+        "people_ledger", "重点人物账本", "People ledger",
+        [
+            _f("people_ledger_enabled", "bool", "启用重点人物账本（默认关）", "Enable the people ledger (off by default)",
+               default=False, config=("people_ledger", "enabled"),
+               help_zh="开了以后，笔记库里新出现的笔记只要提到下面这些人，就把「我答应对方的 / 对方答应我的」记进每人一本的账（带来源引文）；后来的笔记显示做完了就标完成。文件落在工作台（未配置则 state/）的 people_ledger/ 下；不是卡片、不会发送。首次开启不回填旧笔记。",
+               help_en="When on, every new note in the vault that mentions one of the people below adds \"what I owe them / what they owe me\" to that person's rolling ledger (with the source quote); a later note showing completion marks the item done. Files land under people_ledger/ in the workbench (or state/ when none is configured); not a card, never sent. Turning it on does not backfill old notes."),
+            _f("people_ledger_people", "list", "记账的人（姓名或 handle，逗号分隔）", "People to keep a ledger for (names or handles, comma-separated)",
+               default=[], config=("people_ledger", "people"),
+               help_zh="留空 = 沿用「Slack 接入」里的「关注的人」。示例占位 your.manager、少于 3 个字母的名字和 your / the / my 这类停用词会被自动跳过，不会拿来扫笔记。",
+               help_en="Blank = the \"people to watch\" list under Slack. The placeholder your.manager, names shorter than 3 letters and stopwords such as your / the / my are skipped automatically and never used to scan notes."),
+        ],
+        help_zh="旧「manager pack」的按人重做（issue #23）：每个人一本滚动账，而不是每篇笔记一个文件；严格 opt-in。",
+        help_en="The per-person redo of the old \"manager pack\" (issue #23): one rolling ledger per person instead of one file per note; strictly opt-in.",
+    ),
+    _section(
         "telemetry", "产品改进计划", "Product improvement program",
         [
             _f("telemetry.enabled", "bool", "参与产品改进（默认开，仅事件元数据——输入文本需在下方单独勾选）",

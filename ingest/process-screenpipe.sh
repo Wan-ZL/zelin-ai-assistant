@@ -78,6 +78,21 @@ run_recap_once() {
 }
 run_recap_once
 
+# 重点人物账本（CONTRACT §17 issue #23 追记）— same shape as the recap hook: one
+# `python -m act.people_ledger --once` pass per round, default OFF (returns
+# silently unless `people_ledger.enabled` is true), own flock, first run only
+# records the cursor (no backfill), <= max_notes_per_pass notes per round. Its
+# failure must NEVER break the ingest chain (|| true); runs before the PID lock
+# so a long ingest never delays it by a full round.
+run_people_ledger_once() {
+    local py
+    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
+    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    [ -n "$py" ] || return 0
+    (cd "$REPO_ROOT" 2>/dev/null && "$py" -m act.people_ledger --once >> "$LOGFILE" 2>&1) || true
+}
+run_people_ledger_once
+
 # Prevent concurrent runs — PID lock.
 # (Was an mtime lock with a 30-min staleness cutoff, but real runs take
 # 26-33 min: a slow run's lock could be declared stale and a second run

@@ -3,7 +3,7 @@
 // 分区与顺序逐字镜像原生 Settings.swift 的 SettingsSectionDescriptor 注册表（ui/parity/native-inventory.json
 // screen:settings.*；§66.2）：通用 · 录制 · 实时字幕 · 笔记库 · 凭证 · Slack 接入 · Gmail 接入 · 导入 Claude Code 工作 ·
 // Skills · MCP servers · 同步 / 配对 · 审批 / 成本 · Feature flags · 每周摘要 · 语气档案 · 脱敏 · 产品改进计划 · 开发者 · 开发会话；
-// web 自有区（显示 §54.1 第 12 项、模型 §59、通知 §28、素材库 §62、会议纪要 §63、每日整理 §70）插在语义最近的位置。
+// web 自有区（显示 §54.1 第 12 项、模型 §59、通知 §28、重点人物账本 §17、素材库 §62、会议纪要 §63、每日整理 §70）插在语义最近的位置。
 // 依赖检查（原生 rail 页 DepsView，D30 2026-09-04 owner「合并到 setting里面」）紧跟通用区——它管的是这台机器能不能跑，
 // 与通用区的「初始设置向导 / 权限体检」两行同一话题。已退役：菜单栏（D3）；
 // 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
@@ -57,6 +57,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "approval", zh: "审批 / 成本", en: "Approval / Cost" },
   { id: "flags", zh: "Feature flags（§16，默认全开）", en: "Feature flags (§16, all on by default)" },
   { id: "digest", zh: "每周摘要", en: "Weekly digest" },
+  { id: "people_ledger", zh: "重点人物账本", en: "People ledger" },
   { id: "voice", zh: "语气档案（以你的口吻起草）", en: "Voice profile (drafts in your voice)" },
   { id: "redaction", zh: "脱敏（发给 AI 前本地打码）", en: "Redaction (local masking before sending to AI)" },
   { id: "telemetry", zh: "产品改进计划", en: "Product improvement program" },
@@ -169,6 +170,8 @@ export function SettingsPage() {
       <CatalogSection sectionId="approval" />
       <CatalogSection sectionId="flags" />
       <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <DigestStatus /> }} />
+      {/* §17 重点人物账本（issue #23）：开关 + 人物表，目录驱动（server-owned 文案） */}
+      <CatalogSection sectionId="people_ledger" />
       {/* 语气档案：原生 voiceGroup 的「当前生效」状态行 + 打开档案 在开关之前 */}
       <CatalogSection sectionId="voice" lead={<VoiceStatus />} />
       <CatalogSection sectionId="redaction" />
