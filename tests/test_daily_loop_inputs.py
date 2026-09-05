@@ -220,18 +220,28 @@ class IssueSignalsTestCase(unittest.TestCase):
 
 class PrSignalsTestCase(unittest.TestCase):
     """§70 ⑪：`statusCheckRollup` 只是预筛，铸 `pr_red` 要 `gh pr checks --required`
-    里真有 fail——informational job（continue-on-error）的红不算（D5；#193 判例）。"""
+    里真有 fail / cancel——informational job（continue-on-error）的红不算（D5；#193
+    判例）；base 不在 ruleset 下的 PR 用 main 的 ruleset 名单 ∩ rollup 红名代判。"""
 
     RED_ROLLUP = [{"name": "ci", "conclusion": "SUCCESS"}, {"name": "Lint", "conclusion": "FAILURE"}]
+    RULESET = [{"type": "deletion"},
+               # 只认 type == required_status_checks 的规则——别的规则里同名字段是诱饵
+               {"type": "pull_request", "parameters": {"required_status_checks": [
+                   {"context": "Web visual (playwright)"}]}},
+               {"type": "required_status_checks", "parameters": {"required_status_checks": [
+                   {"context": "ci"}, {"context": "Tests on ubuntu (Python 3.x)"}, {"name": "no context"}]}}]
+    RULESET_CALL = ["api", f"repos/{loop_inputs.DEFAULT_REPO}/rules/branches/main"]
 
-    def _gh(self, comments, rollup, checks="unset"):
+    def _gh(self, comments, rollup, checks="unset", ruleset="unset", prs=(7,)):
         responses = {
-            "pr list": [{"number": 7, "title": "feat: x", "author": {"login": "Wan-ZL"},
-                         "url": "u7", "headRefName": "feat/x", "isDraft": True}],
+            "pr list": [{"number": n, "title": "feat: x", "author": {"login": "Wan-ZL"},
+                         "url": f"u{n}", "headRefName": "feat/x", "isDraft": True} for n in prs],
             "pr view": {"comments": comments, "reviews": [], "statusCheckRollup": rollup},
         }
         if checks != "unset":
             responses["pr checks"] = checks
+        if ruleset != "unset":
+            responses["api repos"] = ruleset
         return _fake_gh(responses)
 
     def test_red_ci_and_fresh_human_owner_comments(self):
@@ -268,18 +278,67 @@ class PrSignalsTestCase(unittest.TestCase):
         self.assertEqual(sigs, [])
 
     def test_red_rollup_without_required_answer_is_quiet(self):
-        # gh pr checks 不可用（None）→ 分不清 required 与否 → 宁可不铸
-        sigs, _ = loop_inputs.pr_signals(self._gh([], self.RED_ROLLUP))
+        # gh pr checks 与 ruleset 都拿不到（None）→ 分不清 required 与否 → 宁可不铸
+        gh = self._gh([], self.RED_ROLLUP)
+        sigs, _ = loop_inputs.pr_signals(gh)
         self.assertEqual(sigs, [])
-        # required 集合为空（ruleset 没配 / 查不到）同样不铸（fail-closed，宪法第 11 条）
-        self.assertEqual(loop_inputs.pr_signals(self._gh([], self.RED_ROLLUP, []))[0], [])
+        self.assertIn(self.RULESET_CALL, gh.calls)   # 退路问过了，也没答案
+        # `--required` 答了但 required 集合为空 → 不退回 ruleset，直接不铸（fail-closed，宪法第 11 条）
+        gh = self._gh([], self.RED_ROLLUP, [], self.RULESET)
+        self.assertEqual(loop_inputs.pr_signals(gh)[0], [])
+        self.assertNotIn(self.RULESET_CALL, gh.calls)
 
-    def test_cancelled_or_pending_required_checks_are_not_red(self):
-        # gh 的 bucket 词表：只有 fail 算红；cancel（被取消，重跑即可）与 pending 不铸
-        rollup = [{"name": "ci", "conclusion": "CANCELLED"}]
-        checks = [{"name": "ci", "bucket": "cancel"}, {"name": "Lint (shellcheck + ruff)", "bucket": "pending"}]
+    def test_cancelled_required_check_is_red_pending_is_not(self):
+        # gh 的 bucket 词表：fail 与 cancel 都算红——timeout-minutes 杀掉的 job 记作
+        # cancelled（§56.6 的挂死正是要修的东西）；pending 不算
+        rollup = [{"name": "Tests on ubuntu (Python 3.x)", "conclusion": "CANCELLED"}]
+        checks = [{"name": "Tests on ubuntu (Python 3.x)", "bucket": "cancel"},
+                  {"name": "Lint (shellcheck + ruff)", "bucket": "pending"}]
         sigs, _ = loop_inputs.pr_signals(self._gh([], rollup, checks))
-        self.assertEqual(sigs, [])
+        self.assertEqual([s.kind for s in sigs], ["pr_red"])
+        self.assertEqual(sigs[0].dod, ["PR #7 required checks 全绿：Tests on ubuntu (Python 3.x)"])
+        # 只有 pending（还在跑）→ 预筛就不过，一次 gh pr checks 都不花
+        gh = self._gh([], [{"name": "ci", "conclusion": None, "status": "IN_PROGRESS"}], checks)
+        self.assertEqual(loop_inputs.pr_signals(gh)[0], [])
+        self.assertFalse(any(c[:2] == ["pr", "checks"] for c in gh.calls))
+
+    def test_prefilter_covers_every_state_gh_calls_red(self):
+        # 预筛词表 ⊇ gh 的 fail ∪ cancel：CheckRun 的 ACTION_REQUIRED / ERROR、
+        # StatusContext（第三方 app，带 state 不带 conclusion）的 FAILURE / ERROR 都要放到第二步
+        checks = [{"name": "qlty check", "bucket": "fail"}]
+        for entry in ({"__typename": "CheckRun", "name": "ci", "conclusion": "ACTION_REQUIRED"},
+                      {"__typename": "StatusContext", "context": "qlty check", "state": "ERROR"},
+                      {"__typename": "StatusContext", "context": "qlty check", "state": "FAILURE"}):
+            with self.subTest(entry=entry):
+                sigs, _ = loop_inputs.pr_signals(self._gh([], [entry], checks))
+                self.assertEqual([s.fingerprint for s in sigs], ["pr_red:7"])
+        self.assertFalse(loop_inputs._ci_red({"statusCheckRollup": [
+            {"__typename": "StatusContext", "context": "qlty check", "state": "SUCCESS"},
+            {"__typename": "CheckRun", "name": "Web visual", "conclusion": "SKIPPED"}]}))
+
+    def test_non_ruleset_base_is_judged_by_main_ruleset_names(self):
+        # base=dev 的 PR：`--required` 退出 1（no required checks）→ None → main 的
+        # ruleset 名单 ∩ rollup 红名；informational（Web visual）照样不算
+        rollup = [{"name": "Web visual (playwright)", "conclusion": "FAILURE"},
+                  {"name": "Tests on ubuntu (Python 3.x)", "conclusion": "CANCELLED"},
+                  {"name": "ci", "conclusion": "SUCCESS"}]
+        gh = self._gh([], rollup, None, self.RULESET)
+        sigs, _ = loop_inputs.pr_signals(gh)
+        self.assertEqual([s.fingerprint for s in sigs], ["pr_red:7"])
+        self.assertEqual(sigs[0].dod, ["PR #7 required checks 全绿：Tests on ubuntu (Python 3.x)"])
+        self.assertNotIn("Web visual", sigs[0].summary)
+        # 只有 informational 红 → 不铸（#193 在 dev 上的形状）
+        only_visual = [{"name": "Web visual (playwright)", "conclusion": "FAILURE"}]
+        self.assertEqual(loop_inputs.pr_signals(self._gh([], only_visual, None, self.RULESET))[0], [])
+        # ruleset 没有 required_status_checks 规则 → 名单空 → 不铸
+        self.assertEqual(loop_inputs.pr_signals(self._gh([], rollup, None, [{"type": "deletion"}]))[0], [])
+
+    def test_ruleset_is_fetched_once_per_run(self):
+        rollup = [{"name": "Tests on ubuntu (Python 3.x)", "conclusion": "FAILURE"}]
+        gh = self._gh([], rollup, None, self.RULESET, prs=(7, 8, 9))
+        sigs, _ = loop_inputs.pr_signals(gh)
+        self.assertEqual(sorted(s.fingerprint for s in sigs), ["pr_red:7", "pr_red:8", "pr_red:9"])
+        self.assertEqual(sum(1 for c in gh.calls if c == self.RULESET_CALL), 1)
 
     def test_green_pr_without_comments_is_quiet(self):
         gh = self._gh([], [{"conclusion": "SUCCESS"}])
