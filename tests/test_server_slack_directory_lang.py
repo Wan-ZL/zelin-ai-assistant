@@ -116,6 +116,12 @@ class DirectoryFunctionTestCase(unittest.TestCase):
         self.assertEqual([e.get("AIASSISTANT_UI_LANG") for e in self.calls], ["zh", "en", None])
         self.assertTrue(all(e["AIASSISTANT_HOME"] == str(self.home) for e in self.calls))
 
+    def test_ui_lang_env_shape(self):
+        self.assertEqual(slack_directory.ui_lang_env("zh"), {"AIASSISTANT_UI_LANG": "zh"})
+        self.assertEqual(slack_directory.ui_lang_env("en"), {"AIASSISTANT_UI_LANG": "en"})
+        self.assertIsNone(slack_directory.ui_lang_env(None))
+        self.assertIsNone(slack_directory.ui_lang_env(""))
+
 
 if __name__ == "__main__":
     unittest.main()

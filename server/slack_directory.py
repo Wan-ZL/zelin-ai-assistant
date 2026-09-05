@@ -27,13 +27,17 @@ from server import subproc
 DIRECTORY_TIMEOUT_S = 60
 
 
+def ui_lang_env(lang: Optional[str]) -> Optional[dict]:
+    """``lang``（已校验的 zh / en）→ 子进程的 ``AIASSISTANT_UI_LANG``（§15 第一级）；None / 空 = 不注入。"""
+    return {"AIASSISTANT_UI_LANG": lang} if lang else None
+
+
 def directory(home: Path, refresh: bool = False, runner=None, lang: Optional[str] = None) -> dict:
     """``GET /api/slack/directory``：CLI 的 JSON 行透传；子进程起不来 / 没给 JSON → ``ok:false`` 不 500。
     ``lang``（已校验的 zh / en，None = 不注入）→ 子进程 ``AIASSISTANT_UI_LANG``，错误句随看板语言。"""
     args = ["--directory"] + (["--refresh"] if refresh else [])
-    extra_env = {"AIASSISTANT_UI_LANG": lang} if lang else None
-    rc, out, err = subproc.run_module(home, "act.lib.slack_setup", args,
-                                      timeout_s=DIRECTORY_TIMEOUT_S, runner=runner, extra_env=extra_env)
+    rc, out, err = subproc.run_module(home, "act.lib.slack_setup", args, timeout_s=DIRECTORY_TIMEOUT_S,
+                                      runner=runner, extra_env=ui_lang_env(lang))
     doc = subproc.parse_json_output(out)
     if doc is None:
         tail = subproc.tail(err or out) or ("directory exited %d" % rc)
