@@ -13,7 +13,8 @@
   §68.1 追记「vault 根」——web 框里显示的就是根，打开落到同一处）；create 仍 ``mkdir -p`` raw 目录本身（含根）。
   落点**不是目录**（还没建 / 被挪走）→ 打开**最近的既有祖先目录**并回 add-only ``opened: <祖先>, missing: true``
   （§68.4 追记；原生 Pages.swift ``.reveal``：``fileExists ? p : deletingLastPathComponent``——用户至少能看见它
-  本该在哪、顺手建出来）；连根都不在（相对路径的怪值）才 404。
+  本该在哪、顺手建出来）；**相对路径**（字段没有绝对路径校验、config.yaml 也能存）没有可开的祖先
+  （``parents`` 尽头是 ``.`` = server 的 cwd，不是用户的树）→ 仍 404，绝不 ``open .``。
 - create：``mkdir -p``（已在 = ``created:false`` 幂等）；``default_target_repo`` 另 ``git init -q``
   （原生 createTargetRepoDir 同款，best-effort：失败只回执 ``git_init:"failed"``）；mkdir 失败 →
   500 ``could not create the folder: <why>``（web 前缀原生句「创建目录失败：」）。
@@ -88,7 +89,11 @@ def open_target(key: str, path: Path) -> Path:
 
 def nearest_existing_ancestor(path: Path) -> Optional[Path]:
     """``path`` 不是目录时往上找第一个还在的目录（原生 ``deletingLastPathComponent`` 的多级版：
-    ``~/Documents/Vault`` 整棵没建时开到 ``~/Documents``，不是开一个同样不存在的父目录）。"""
+    ``~/Documents/Vault`` 整棵没建时开到 ``~/Documents``，不是开一个同样不存在的父目录）。
+    相对路径没有可开的祖先 → None：``Path("a/b").parents`` 的尽头是 ``.`` = server 进程的 cwd（launchd 下是 repo 根），
+    与用户存的值毫无关系——开它只会让访达亮出一个不相干的目录，还回执「已打开上级目录」。"""
+    if not path.is_absolute():
+        return None
     for parent in path.parents:
         if parent.is_dir():
             return parent

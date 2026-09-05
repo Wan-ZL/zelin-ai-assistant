@@ -100,14 +100,25 @@ class OpenMissingFolderTestCase(unittest.TestCase):
         here = Path(self.tmp.name)
         self.assertEqual(folders.nearest_existing_ancestor(here / "a" / "b" / "c"), here)
         self.assertEqual(folders.nearest_existing_ancestor(Path("/definitely-not-here-zai")), Path("/"))
-        with mock.patch.object(Path, "is_dir", return_value=False):
-            self.assertIsNone(folders.nearest_existing_ancestor(here / "x"))
+        # 相对路径：parents 的尽头是 "."（server 的 cwd，永远 is_dir）——不是用户那棵树的祖先，不许当回落
+        self.assertIsNone(folders.nearest_existing_ancestor(Path("Obsidian Vault")))
+        self.assertIsNone(folders.nearest_existing_ancestor(Path("a") / "b" / "c"))
 
-    def test_no_ancestor_at_all_is_still_404(self):
-        self._overrides(default_target_repo=str(Path(self.tmp.name) / "gone"))
-        with mock.patch.object(folders, "nearest_existing_ancestor", return_value=None):
-            with self.assertRaises(NotFoundError):
-                self._open()
+    def test_relative_stored_path_is_still_404_not_the_server_cwd(self):
+        # 设置字段没有绝对路径校验，config.yaml 也能存相对值；绝不 /usr/bin/open . 然后说「已打开上级目录」
+        self._overrides(default_target_repo="Obsidian Vault/2 - raw")
+        with self.assertRaises(NotFoundError):
+            self._open()
+        self.assertEqual(self.opened, [])
+
+    def test_relative_vault_path_is_404_after_root_resolution(self):
+        # obsidian_raw 的落点 = 根 "Obsidian Vault"（仍相对）——同样没有祖先可开
+        self._overrides(obsidian_raw="Obsidian Vault/2 - raw")
+        with self.assertRaises(NotFoundError):
+            self._open("obsidian_raw")
+        self._overrides(obsidian_raw="2 - raw")    # 一段名：open_target 原样、仍相对
+        with self.assertRaises(NotFoundError):
+            self._open("obsidian_raw")
         self.assertEqual(self.opened, [])
 
 

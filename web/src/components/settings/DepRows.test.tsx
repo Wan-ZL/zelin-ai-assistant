@@ -44,10 +44,13 @@ const READABLE = { ts: "2026-09-05T11:40:00Z", read_ok: true, protected_path: "/
 
 let writeText: ReturnType<typeof vi.fn>;
 let bridgeCalls: unknown[];
+/** 剪贴板写入与桥调用共用的一本顺序账（`copy:<text>` / `bridge:<method>`）——原生 beginGrant 是「先剪贴板、再面板」 */
+let order: string[];
 
 function installShell() {
   (window as Window & { webkit?: unknown }).webkit = { messageHandlers: { zaiShell: { postMessage: async (body: unknown) => {
     bridgeCalls.push(body);
+    order.push(`bridge:${(body as { method?: string }).method}`);
     return shell;
   } } } };
   applyShellState(shell);
@@ -58,7 +61,8 @@ beforeEach(() => {
   resetShellBridgeForTests();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(NOW));
-  writeText = vi.fn().mockResolvedValue(undefined);
+  order = [];
+  writeText = vi.fn(async (value: string) => { order.push(`copy:${value}`); });
   Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
   bridgeCalls = [];
   vi.mocked(fetchSecrets).mockReset().mockResolvedValue(secrets);
@@ -83,13 +87,16 @@ describe("cron FDA 「去授权」= 复制 /usr/sbin/cron + 开面板（原生 C
   it("with the shell: Grant… writes the clipboard first, then asks the shell to open the Full Disk Access pane", async () => {
     installShell();
     await grantCronFda();
-    expect(writeText).toHaveBeenCalledWith("/usr/sbin/cron");
+    // 顺序本身就是判例：复制在前、开面板在后（原生 beginGrant：清剪贴板 → 放路径 → 开面板）——反过来两个 toHaveBeenCalled 也能各自过
+    expect(order).toEqual(["copy:/usr/sbin/cron", "bridge:openPane"]);
     expect(bridgeCalls).toEqual([{ method: "openPane", pane: "full_disk" }]);
     // 剪贴板不可用（老 WebView 连 execCommand 都没有）也不挡开面板——原生同样不查 pasteboard 结果
     writeText.mockRejectedValueOnce(new Error("denied"));
     bridgeCalls = [];
+    order = [];
     await grantCronFda();
     expect(bridgeCalls).toEqual([{ method: "openPane", pane: "full_disk" }]);
+    expect(order).toEqual(["bridge:openPane"]);
   });
 
   it("in a browser: Grant… is the permissions deep link and still copies the path on click", async () => {
