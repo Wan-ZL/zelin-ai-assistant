@@ -7,6 +7,10 @@
 #
 # npm (web/) —— 运行时依赖只有 react/react-dom，其余是 dev 工具链；
 # 同样每周一次，PR 数量压到 5 以内，避免噪声淹没真正要看的 PR。
+# vite 工具链成组：vite 跨大版本时 @vitejs/plugin-react 的 peer range 跟着换代
+# （4.x 只认 vite ≤7，6.x 只认 vite 8），单包 bump 会让 `npm ci` ERESOLVE、两项
+# required check 在装依赖那一步就红（PR #197，vite 6→8）。成组后 vite /
+# @vitejs/* / vitest / @vitest/* 在同一个 PR 里一起解析，peer 才对得上。
 #
 # Python 侧不在此列：运行时白名单是 stdlib + PyYAML（宪法第 7 条），
 # 没有 requirements 锁文件可供 dependabot 追踪。
@@ -27,6 +31,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      vite-toolchain:
+        patterns:
+          - vite
+          - "@vitejs/*"
+          - vitest
+          - "@vitest/*"
     commit-message:
       prefix: chore
     labels:
