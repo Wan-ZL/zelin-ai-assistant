@@ -2,10 +2,11 @@
 //   屏幕录制权限（壳探针）· AI 引擎（GET /api/setup/engine）· 后台服务（GET /api/health 心跳）· 首次数据
 //   （health.dashboard）· 定时任务磁盘权限（doctor `cron disk access` 行，经 GET /api/permissions）· 录制引擎
 //   （壳录制状态，只在录制开着时出行）。每个红行带一颗修复按钮：去授权… / 去配置… / 启动后台服务（POST
-//   /api/repair/actd）/ 立即生成一次（POST /api/setup/seed-dashboard）/ 去授权… · 查看诊断 / 启动引擎。
+//   /api/repair/actd，之后与横幅一键修复同一状态机 useRepairActd：15 × 1 s 问 health，已恢复 / 没恢复各有下场，§68.8）
+//   / 立即生成一次（POST /api/setup/seed-dashboard）/ 去授权… · 查看诊断 / 启动引擎。
 // 「—」= 中性（没选录制 / 定时任务还没跑过），不算红；全绿才出「🎉 一切就绪!」。文案逐字镜像 SetupWizard.swift:1014–1242。
 import { useState, type ReactNode } from "react";
-import { postRepairActd, postSeedDashboard } from "../../api";
+import { postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../../route";
 import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
@@ -13,6 +14,7 @@ import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import type { DoctorRow, HealthSnapshot, SetupEngine } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
 import { errorMessage } from "../settings/useToast";
+import { useRepairActd } from "../shell/repairActd";
 import { authLabel } from "./EngineStep";
 
 type Text = (zh: string, en: string) => string;
@@ -31,6 +33,10 @@ export function daemonRunning(health: HealthSnapshot | null): boolean | null {
   if (!health) return null;
   return Boolean(health.heartbeat && !health.heartbeat.stale);
 }
+
+/** 「启动后台服务」轮询的恢复判据 = 本行的 daemonRunning（§68.5），不是横幅的 isRecovered：横幅对 `unknown`（无心跳、
+ *  看板新鲜——刚点过「立即生成一次」也会这样）闭嘴即算恢复，本行却仍判「没在跑」——两条判据不一致，行就会绿 6 s 再翻红。 */
+const daemonBack = (health: HealthSnapshot) => daemonRunning(health) === true;
 
 /** 定时任务磁盘权限：doctor `cron disk access` 行 → ok / fail(blocked | stale) / neutral(无探针) */
 export function cronVerdict(rows: DoctorRow[] | undefined): "ok" | "blocked" | "stale" | "neutral" | "checking" {
@@ -72,32 +78,26 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   const { health, permissions } = useAppState();
   const shell = useShellState();
   const present = hasShellBridge();
-  const [fixingDaemon, setFixingDaemon] = useState(false);
   const [seeding, setSeeding] = useState(false);
   // 原生 fixNote = 前缀 + 原因；按行各存一条（启动与生成可以先后都失败，互不覆盖）
   const [notes, setNotes] = useState<Record<string, { prefix: string; detail: string }>>({});
   const setFixNote = (key: string, note: { prefix: string; detail: string } | null) =>
     setNotes((prev) => { const next = { ...prev }; if (note) next[key] = note; else delete next[key]; return next; });
 
+  // 「启动后台服务」= 横幅一键修复的同一状态机（§68.8：POST kickstart → 15 × 1 s 问 health → 已恢复 / 没恢复），
+  // 恢复判据换成本行自己的 daemonBack；它的失败 note（server 拒绝 / 15 s 没转好 → 原生 fixNote 前缀「启动失败: 」+ 原因）
+  // 直接从 phase 派生，再点一次即清
+  const repair = useRepairActd(daemonBack);
+  const fixingDaemon = repair.phase.kind === "running";
+  const daemonNote = repair.phase.kind === "failure" ? { prefix: text("启动失败: ", "Start failed: "), detail: repair.phase.detail } : null;
+
   const rec = present ? shell?.recording ?? null : null;
   const recOn = Boolean(rec && rec.mode !== "off");
   const screen = present ? shell?.permissions.screen ?? "unknown" : "unknown";
-  const running = daemonRunning(health);
+  // 轮询看到心跳回来的那 6 s 里 store 还没刷（横幅要把「已恢复 ✓」说完）——行按轮询结果先转绿
+  const running = repair.phase.kind === "success" ? true : daemonRunning(health);
   const dashboard = health ? health.dashboard : undefined;
   const cron = cronVerdict(permissions?.doctor);
-
-  async function startDaemon() {
-    setFixingDaemon(true);
-    setFixNote("daemon", null);
-    try {
-      await postRepairActd();
-      window.setTimeout(() => void refreshHealth(), 3000);
-    } catch (err) {
-      setFixNote("daemon", { prefix: text("启动失败: ", "Start failed: "), detail: errorMessage(err) });
-    } finally {
-      setFixingDaemon(false);
-    }
-  }
 
   async function seed() {
     setSeeding(true);
@@ -149,7 +149,7 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
     : running
       ? { key: "daemon", state: "ok", name: text("后台服务", "Background service"), detail: text("在后台运行,几秒内处理你的每个操作", "Running in the background, handling your actions within seconds") }
       : { key: "daemon", state: "fail", name: text("后台服务", "Background service"), detail: text("没有运行——批准的卡片不会被执行", "Not running — approved cards won't execute"),
-        fix: { label: fixingDaemon ? text("启动中…", "Starting…") : text("启动后台服务", "Start it"), onClick: () => { if (!fixingDaemon) void startDaemon(); } } });
+        fix: { label: fixingDaemon ? text("启动中…", "Starting…") : text("启动后台服务", "Start it"), onClick: repair.run } });
 
   // 首次数据
   rows.push(dashboard === undefined
@@ -199,7 +199,7 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
       <ul className="setup-health">
         {rows.map((spec) => <Row key={spec.key} spec={spec} />)}
       </ul>
-      {Object.entries(notes).map(([key, note]) => (
+      {Object.entries(daemonNote ? { daemon: daemonNote, ...notes } : notes).map(([key, note]) => (
         <p key={key} className="settings-warning" role="alert"><span>{note.prefix}</span><span>{note.detail}</span></p>
       ))}
       {allGreen && (

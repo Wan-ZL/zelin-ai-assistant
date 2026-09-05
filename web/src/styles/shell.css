@@ -700,6 +700,12 @@
   flex-wrap: wrap;
 }
 
+/* 动作行里可以并排两颗按钮（再试一次 + 让 AI 修，§68.8 追记）——上面 `.shell-banner .shell-button` 的
+   margin-left:auto 是给单颗按钮靠右用的，进了动作行就按 gap 排、不各自推开 */
+.shell-banner-actions .shell-button {
+  margin-left: 0;
+}
+
 .shell-banner-link {
   color: inherit;
   font-size: calc(11px * var(--text-scale));
@@ -708,6 +714,13 @@
 .shell-banner-note {
   font-size: calc(11px * var(--text-scale));
   opacity: 0.85;
+}
+
+/* 一键修复的成功 verdict（原生 Freshness.swift「已恢复 ✓ 数据重新更新了」绿字 medium，停 6 s 后横幅随 health 退场） */
+.shell-banner-note.is-success {
+  color: var(--success);
+  font-weight: var(--w-medium);
+  opacity: 1;
 }
 
 /* §48 板级诊断条（原生 DiagnosticsStrip：橙色卡叠在管线横幅之下，每张一颗主按钮 + 右上 ×） */

@@ -637,3 +637,43 @@
   font: var(--type-header-control);
   overflow-wrap: anywhere;
 }
+
+/* ----- 可复制的一行命令（CopyLine，原生 CopyPathLine；§68.8 横幅「手动命令：」） -----------------------
+   label 独占节点 + 等宽正文 + 右侧「复制」→「已复制」chip，形状同详情侧栏的 .zai-detail-cmd / .zai-detail-copy；
+   横幅字级（11px）比详情小一号——它是横幅动作行里的一行小字，不是正文块 */
+.copy-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: calc(11px * var(--text-scale));
+}
+
+.copy-line-label {
+  flex: none;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.copy-line-value {
+  font-family: var(--font-mono);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.copy-line-chip {
+  flex: none;
+  border: var(--stroke-w) solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: calc(11px * var(--text-scale));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.copy-line-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
