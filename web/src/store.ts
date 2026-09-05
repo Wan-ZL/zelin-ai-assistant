@@ -559,6 +559,9 @@ export async function saveSettingsSection(sectionId: string, patch: Record<strin
   // §48.1 合取写：slack / gmail 的雷达开关翻开 = server 同一笔也写 features.<src>_radar=true（合取的另一半住 flags 区），
   // 而 PUT 回执只有本区——整本目录再拉一次让「Feature flags」那一格跟上（best-effort：拉不到不影响本次保存的回执）
   if ((sectionId === "slack" || sectionId === "gmail") && patch[`${sectionId}_enabled`] === true) void refreshSettingsCatalog();
+  // §68.7 追记：「通用 · 终端应用」换了 = 开发者区投影的 `terminal_app_name`（「会在 <终端> 中打开」的名字，server 算的）
+  // 要跟着变，而它住另一区、PUT 回执只有本区——同样整本再拉一次（best-effort）
+  if (sectionId === "general" && "terminal_app" in patch) void refreshSettingsCatalog();
   return section;
 }
 

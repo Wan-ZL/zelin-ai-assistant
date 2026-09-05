@@ -956,12 +956,25 @@
           "path": "dir",
           "path_exists": null,
           "placeholder": {
-            "en": "",
-            "zh": ""
+            "en": "/Users/demo/Projects/zelin-ai-assistant",
+            "zh": "/Users/demo/Projects/zelin-ai-assistant"
           },
           "source": "default"
         },
         {
+          "check": {
+            "kind": "session_id",
+            "message": {
+              "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape.",
+              "zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。"
+            },
+            "reasons": {
+              "leading_hyphen": {
+                "en": "A session id may not start with a hyphen (-) — that's the shape of a command-line flag, not a session id.",
+                "zh": "会话 ID 不能以连字符（-）开头——那是命令行选项的形状，不是会话 ID。"
+              }
+            }
+          },
           "choices": null,
           "default": "",
           "effective": "",
@@ -987,6 +1000,7 @@
         "zh": ""
       },
       "id": "maintainer",
+      "terminal_app_name": "Terminal",
       "title": {
         "en": "Developer session",
         "zh": "开发者 · 开发会话"

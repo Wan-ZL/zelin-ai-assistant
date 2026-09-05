@@ -21,7 +21,11 @@ UNKNOWN_FIELD；类型/取值不合法 400 INVALID_FIELD；落盘按 §15.3 v0.1
 顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
 雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
 ``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
-字段可带 ``check``（今日词表 ``email``）：server 400 + 目录投影双语句，web 镜像同一条规则。
+字段可带 ``check``（今日词表 ``email`` / ``session_id``）：server 400 + 目录投影双语句，web 镜像同一条规则；
+一个 check 不止一句时（session_id：以 ``-`` 开头另有一句）分句登记在 ``CHECK_REASONS``，投影 ``check.reasons``、
+400 的 details 带 ``reason``（§68.7 追记）。开发者区（maintainer）两行的 ``placeholder`` 是**动态**的（原生
+SettingsMaintainer 的灰字 = 生效默认：仓库路径 = config.yaml maintainer.repo_path 否则本 checkout；会话 id =
+config.yaml maintainer.session_id，没设才是示例），section 投影另带 add-only ``terminal_app_name``（「会在 <终端> 中打开」）。
 help 文案是 server-owned 的**披露句**，不只是提示：slack / gmail 两区的区首导语、``gmail_fetch_command`` 的
 §14bis 命令契约句（直接执行、``GMAIL_RADAR_LAST_UID``、stdout 一个 JSON 数组）、telemetry 三段知情披露
 （元数据字段表 / 500 字截断 + 密钥掩码 / 最上方开关停全部上传）逐字镜像原生段落——判例
@@ -34,8 +38,9 @@ act/lib/config.py，判例 tests/test_server_settings_catalog.py 钉住每个键
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 try:
     import yaml
@@ -55,10 +60,28 @@ _FALSE_WORDS = frozenset({"false", "no", "off", "0"})
 # 字段校验词表（add-only，§68.1 追记）：kind → 不合格时的双语句。句子是 server-owned（防腐 #10）：目录投影
 # `check: {kind, message{zh,en}}`，web 保存前按同一条规则拦、显示同一句；server 侧 400 是非 web 客户端的兜底。
 # email = 原生 SettingsGmail.validateAddress 逐字（含 Workspace 提示）。
+# session_id = 原生 SettingsMaintainer.validateSessionID 逐字（§68.7 追记）：主句 = 字符白名单；以 - 开头另有一句
+# （CHECK_REASONS）——id 之后骑在 shell 命令行上，白名单兼作注入闸，首连字符检查防它被当成 CLI 选项。
 CHECKS = {
     "email": {"zh": "邮箱格式不对——例：you@gmail.com（公司 Google Workspace 邮箱也可以）",
               "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)"},
+    "session_id": {"zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。",
+                   "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape."},
 }
+
+# 一个 check 不止一句时的分句（add-only）：kind → {reason → 双语句}；checker 返回的 reason 在表里就用那句，否则用
+# CHECKS 的主句。投影 ``check.reasons``，400 的 details 带 ``reason``——web 据此显示同一句。
+CHECK_REASONS = {
+    "session_id": {
+        "leading_hyphen": {"zh": "会话 ID 不能以连字符（-）开头——那是命令行选项的形状，不是会话 ID。",
+                           "en": "A session id may not start with a hyphen (-) — that's the shape of a command-line flag, not a session id."},
+    },
+}
+
+# 会话 id 的形状（保存与启动同一把，maintainer_launch 复用）：首字符字母 / 数字（首连字符 = CLI 选项的形状），其余
+# [A-Za-z0-9-]。原生同款**不设长度帽**——字符白名单本身就是注入闸，句子说的是字符，不合的只能是字符（PUT 的长度另有
+# STRING_MAX 那句兜着，两句不许混）。
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 
 # §48.1 合取写：雷达源开关 → 合取的另一半（flags 区的 feature flag 键）。原生 SettingsGmail.setEnabled /
 # SettingsSlack.persistFlag：打开 = 用户显式动作，把两个键都写进 override（yaml 里 features.<src>_radar:false
@@ -320,17 +343,64 @@ SECTIONS: tuple = (
     _section(
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
+            # 两行的 placeholder 动态（DYNAMIC_PLACEHOLDERS，§68.7 追记）：原生 SettingsMaintainer 的灰字是**生效默认**——
+            # 仓库路径 = config.yaml maintainer.repo_path（~ 展开）否则本 checkout（maintainer_launch.resolve 用的同一条）；
+            # 会话 id = config.yaml maintainer.session_id，没设才是下面这行示例。
             _f("maintainer_repo_path", "string", "本软件的仓库路径", "This software's repo path", default="",
                config=("maintainer", "repo_path"), path="dir",
                help_zh="「让 AI 修」与开发会话打开的仓库；留空 = 当前 checkout。",
                help_en="Repo opened by Fix with AI and developer sessions; blank = this checkout."),
             _f("maintainer_session_id", "string", "续接的会话 id", "Session id to resume", default="",
                config=("maintainer", "session_id"), placeholder=("例：6f9619ff-8b86-d011-b42d-00cf4fc964ff", "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
+               check="session_id",
                help_zh="填了就 claude --resume 这个会话，留空开新会话。",
                help_en="When set the session is resumed with claude --resume; blank starts fresh."),
         ],
     ),
 )
+
+
+def expand_user_path(raw: str) -> Path:
+    """``Path(raw).expanduser()``，但 ``~nosuchuser/x`` 不炸：Python 对查不到的用户名抛 RuntimeError（原生
+    ``expandingTildeInPath`` 原样返回）——config.yaml 里一个坏路径不许把整份设置快照 / 开发会话启动打成 500
+    （§0 第 11 条），原样当路径用（随后的 is_dir 自然是 False）。目录字段的 ``path_exists``、开发者区的灰字与
+    ``maintainer_launch.resolve`` 同一把。"""
+    path = Path(raw)
+    try:
+        return path.expanduser()
+    except (OSError, RuntimeError, ValueError):
+        return path
+
+
+def _maintainer_repo_placeholder(field: dict, config_doc: dict) -> str:
+    """原生 defaultRepoPath：config.yaml maintainer.repo_path（~ 展开），否则本软件自己的 checkout（paths.repo_root()）。"""
+    base, _src = base_effective(field, config_doc)
+    raw = base.strip() if isinstance(base, str) else ""
+    return str(expand_user_path(raw)) if raw else str(paths.repo_root())
+
+
+def _maintainer_session_placeholder(field: dict, config_doc: dict) -> Optional[str]:
+    """原生 defaultSessionID：config.yaml maintainer.session_id 设了就是它（灰字），没设 → None（保留目录里的示例句）。"""
+    base, src = base_effective(field, config_doc)
+    return base.strip() if src == "config" and isinstance(base, str) and base.strip() else None
+
+
+# 动态 placeholder（add-only；key → fn(field, config_doc) → 一句或 None = 用目录里的静态句）；两键同一句（路径 / id 不分语言）。
+DYNAMIC_PLACEHOLDERS: "dict[str, Callable[[dict, dict], Optional[str]]]" = {
+    "maintainer_repo_path": _maintainer_repo_placeholder,
+    "maintainer_session_id": _maintainer_session_placeholder,
+}
+
+
+def _maintainer_section_extras(home: Path) -> dict:
+    """开发者区投影的 add-only ``terminal_app_name``（§68.7 追记）：「会在 <终端> 中打开」要 resolved 的终端展示名——
+    ``auto`` 要看装没装 Ghostty，只有 server 知道（原生 ``TerminalLauncher.preferred.displayName``）。"""
+    from server import terminal_launch  # 惰性：terminal_launch import 本模块读 terminal_app，避免环
+    return {"terminal_app_name": terminal_launch.preferred_terminal_name(home)}
+
+
+# section 级 add-only 投影（id → fn(home) → 追加到 section 快照的键）
+SECTION_EXTRAS: "dict[str, Callable[[Path], dict]]" = {"maintainer": _maintainer_section_extras}
 
 _BY_ID = {s["id"]: s for s in SECTIONS}
 
@@ -497,14 +567,23 @@ _PUBLIC_FIELD_KEYS = ("key", "kind", "label", "help", "default", "choices", "pla
 
 
 def path_exists(value: Any) -> Optional[bool]:
-    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``；空 / 非字串 → None（无从判断）。"""
+    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``（``~nosuchuser`` 不炸，expand_user_path）；空 / 非字串 → None（无从判断）。"""
     raw = value.strip() if isinstance(value, str) else ""
     if not raw:
         return None
     try:
-        return Path(raw).expanduser().is_dir()
+        return expand_user_path(raw).is_dir()
     except (OSError, ValueError):
         return False
+
+
+def check_projection(kind: str) -> dict:
+    """``check`` 的投影形：``{kind, message{zh,en}}``，多句的 kind 另带 ``reasons{reason: {zh,en}}``（add-only）。"""
+    out = {"kind": kind, "message": dict(CHECKS[kind])}
+    reasons = CHECK_REASONS.get(kind)
+    if reasons:
+        out["reasons"] = {reason: dict(sentence) for reason, sentence in reasons.items()}
+    return out
 
 
 def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
@@ -512,22 +591,32 @@ def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
     value, source = effective(field, overrides, config_doc)
     out["effective"] = value
     out["source"] = source
+    dynamic = DYNAMIC_PLACEHOLDERS.get(field["key"])
+    if dynamic is not None:
+        # 动态灰字（§68.7 追记）：生效默认（config 层 / 内建）算出来的一句盖过目录里的静态句；None = 静态句照旧
+        hint = dynamic(field, config_doc)
+        if hint is not None:
+            out["placeholder"] = {"zh": hint, "en": hint}
     if field.get("path"):
         # add-only（§68.1 目录字段）：web 的 选择… / 打开 / 创建 与「目录不存在」警告据此渲染
         out["path"] = field["path"]
         out["path_exists"] = path_exists(value)
     if field.get("check"):
         # add-only（§68.1 追记）：web 保存前镜像同一条形状校验、显示同一句 server-owned 文案
-        out["check"] = {"kind": field["check"], "message": dict(CHECKS[field["check"]])}
+        out["check"] = check_projection(field["check"])
     return out
 
 
 def project_section(home: Path, section: dict) -> dict:
     overrides = read_overrides(home)
     config_doc = load_config_doc(home)
-    return {"id": section["id"], "title": dict(section["title"]),
-            "help": dict(section["help"]),
-            "fields": [_project_field(f, overrides, config_doc) for f in section["fields"]]}
+    out = {"id": section["id"], "title": dict(section["title"]),
+           "help": dict(section["help"]),
+           "fields": [_project_field(f, overrides, config_doc) for f in section["fields"]]}
+    extras = SECTION_EXTRAS.get(section["id"])
+    if extras is not None:
+        out.update(extras(home))
+    return out
 
 
 def snapshot(home: Path) -> dict:
@@ -597,17 +686,39 @@ def looks_like_email(text: str) -> bool:
     return "." in domain.strip(".") and domain == domain.strip(".")
 
 
-_CHECKERS = {"email": looks_like_email}
+def session_id_problem(text: str) -> Optional[str]:
+    """原生 SettingsMaintainer.validateSessionID 的规则：以 ``-`` 开头 → ``leading_hyphen``（CLI 选项的形状——
+    ``--dangerously-skip-permissions`` 全是白名单字符）；其余不合 ``SESSION_ID_RE`` → ``charset``；合格 → None。"""
+    s = text.strip()
+    if s.startswith("-"):
+        return "leading_hyphen"
+    return None if SESSION_ID_RE.match(s) else "charset"
 
 
-def _run_check(field: dict, value: Optional[str], key: str) -> None:
+# kind → checker(text) → None（合格）或 reason 词（在 CHECK_REASONS[kind] 里就用分句，否则用 CHECKS[kind] 主句）
+_CHECKERS: "dict[str, Callable[[str], Optional[str]]]" = {
+    "email": lambda text: None if looks_like_email(text) else "shape",
+    "session_id": session_id_problem,
+}
+
+
+def run_check(field: dict, value: Optional[str], key: str) -> None:
     """``check`` 字段的形状校验（空值 = 清键，不查）；不合格 → 400，message 双语并列（server/settings.py 同款），
-    details 带 ``check`` 词让客户端能对上目录里的那句。"""
+    details 带 ``check`` 词（多句的 kind 再带 ``reason``）让客户端能对上目录里的那句。公开名：maintainer_launch 启动前
+    对 effective 的会话 id 再过同一道闸（原生 openSession 重跑 validateSessionID）。"""
     kind = field.get("check")
-    if kind is None or value is None or _CHECKERS[kind](value):
+    if kind is None or value is None:
         return
-    sentence = CHECKS[kind]
-    raise InvalidFieldError("%s / %s" % (sentence["zh"], sentence["en"]), {"field": key, "check": kind})
+    reason = _CHECKERS[kind](value)
+    if reason is None:
+        return
+    details = {"field": key, "check": kind}
+    sentence = CHECK_REASONS.get(kind, {}).get(reason)
+    if sentence is not None:
+        details["reason"] = reason
+    else:
+        sentence = CHECKS[kind]
+    raise InvalidFieldError("%s / %s" % (sentence["zh"], sentence["en"]), details)
 
 
 def _split_list_input(value) -> list:
@@ -645,7 +756,7 @@ def validate(field: dict, value):
     if kind == "list":
         return _validate_list(value, key)
     text = _validate_string(value, key)
-    _run_check(field, text, key)
+    run_check(field, text, key)
     return text
 
 

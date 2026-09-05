@@ -268,21 +268,35 @@ def build_lanes():
 # 「⚠︎ 目录不存在」警告与 创建 / 创建文件夹 按钮才渲染得到；真实存在性依赖生成机器的磁盘，
 # 抹成固定值保证零 diff。
 _FIXTURE_PATH_EXISTS = False
+# 开发者区的两个机器相关值（§68.7 追记）：仓库路径的动态灰字 = 生成机器的 checkout 路径、`terminal_app_name` = 装没装
+# Ghostty——都抹成固定值保证零 diff。
+_FIXTURE_REPO_PLACEHOLDER = "/Users/demo/Projects/zelin-ai-assistant"
+_FIXTURE_TERMINAL_APP_NAME = "Terminal"
+
+
+def _scrub_settings_field(field):
+    """一个 field 的机器相关值抹成固定值：目录字段的 `path_exists`、开发者区仓库路径的动态灰字。"""
+    if field.get("path") and field.get("effective"):
+        field["path_exists"] = _FIXTURE_PATH_EXISTS
+    if field["key"] == "maintainer_repo_path":
+        field["placeholder"] = {"zh": _FIXTURE_REPO_PLACEHOLDER, "en": _FIXTURE_REPO_PLACEHOLDER}
 
 
 def build_settings():
     """GET /api/settings 的快照（文案 server-owned）：home 里只有一条 override
     `obsidian_raw`（默认空值下笔记库的目录按钮无从渲染），其余全默认；目录字段的
-    `path_exists` 抹成固定值（见 _FIXTURE_PATH_EXISTS）。"""
+    `path_exists` 抹成固定值（见 _FIXTURE_PATH_EXISTS），开发者区的 checkout 路径灰字与
+    终端名同样抹成固定值。"""
     with tempfile.TemporaryDirectory() as tmp:
         overrides = paths.settings_overrides_path(Path(tmp))
         overrides.parent.mkdir(parents=True, exist_ok=True)
         overrides.write_text('{"obsidian_raw": "~/Documents/Obsidian Vault/2 - raw"}\n', encoding="utf-8")
         snap = settings_catalog.snapshot(Path(tmp))
     for section in snap["sections"]:
+        if section["id"] == "maintainer":
+            section["terminal_app_name"] = _FIXTURE_TERMINAL_APP_NAME
         for field in section["fields"]:
-            if field.get("path") and field.get("effective"):
-                field["path_exists"] = _FIXTURE_PATH_EXISTS
+            _scrub_settings_field(field)
     return snap
 
 

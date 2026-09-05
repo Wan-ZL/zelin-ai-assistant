@@ -705,8 +705,9 @@ export interface SettingsField {
   path?: "dir" | string;
   /** add-only：effective 值展开 ~ 后是不是目录；空值 null（无从判断）；老 server 缺席 */
   path_exists?: boolean | null;
-  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句（kind 词表今日 `email`）；老 server 缺席 */
-  check?: { kind: "email" | string; message: BilingualText };
+  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句（kind 词表今日 `email` / `session_id`）；
+   *  `reasons`（add-only，§68.7 追记）= 多句的 kind 按 reason 分句（session_id：`leading_hyphen`），没对上的 reason 用 `message`；老 server 缺席 */
+  check?: { kind: "email" | "session_id" | string; message: BilingualText; reasons?: Record<string, BilingualText> };
   [key: string]: unknown;
 }
 
@@ -715,6 +716,8 @@ export interface SettingsSection {
   title: BilingualText;
   help: BilingualText;
   fields: SettingsField[];
+  /** add-only（§68.7 追记，只有 `maintainer` 区带）：resolved 终端的展示名（原生 TerminalLauncher.preferred.displayName）——「会在 <终端> 中打开」；老 server 缺席 */
+  terminal_app_name?: string;
   [key: string]: unknown;
 }
 
@@ -1063,6 +1066,8 @@ export interface TerminalReceipt {
   command: string;
   command_file: string;
   cwd: string;
+  /** add-only（§68.7 追记；今日只有 POST /api/maintainer/terminal 带）：打开用的终端展示名；老 server 缺席 */
+  terminal_app_name?: string;
   [key: string]: unknown;
 }
 
