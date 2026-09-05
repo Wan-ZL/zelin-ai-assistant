@@ -71,8 +71,9 @@ export function ReviewCard({ card }: ReviewCardProps) {
   const copied = copyState === "copied";
 
   const title = typeof card.display_title === "string" && card.display_title ? card.display_title : card.name;
-  // 原生 ReviewRow：delivered_summary 非空 → 它是正文；否则审批时的 summary（空串按缺席算，原生 `!ds.isEmpty`）
-  const deliveryFallback = card.delivered_summary || card.summary;
+  // 原生 ReviewRow：delivered_summary 非空 → 它是正文；否则审批时的 summary（空串 / 纯空白按缺席算——原生 `!ds.isEmpty`
+  // 对纯空白会渲染一行看不见的正文再把 summary 降灰，web 单行只有一句，纯空白直接让位给 summary）
+  const deliveryFallback = typeof card.delivered_summary === "string" && card.delivered_summary.trim() !== "" ? card.delivered_summary : card.summary;
 
   return (
     <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`} selectable>

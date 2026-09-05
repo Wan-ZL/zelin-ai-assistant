@@ -68,10 +68,13 @@ describe("review face delivery sentence fallback (§64.5 追记)", () => {
     expect(line.className).not.toContain("is-ai");
   });
 
-  it("delivered_summary 缺席 / 空串 → 回落审批时 summary（原生 else-if 分支）", () => {
+  it("delivered_summary 缺席 / 空串 / 纯空白 → 回落审批时 summary（原生 else-if 分支）", () => {
     const { rerender } = render(<ReviewCard card={review({ delivered_summary: undefined })} />);
     expect((document.querySelector(".card-summary-line") as HTMLElement).textContent).toBe("审批时的摘要：修 LoginForm 的空指针");
     rerender(<ReviewCard card={review({ delivered_summary: "" })} />);
+    expect((document.querySelector(".card-summary-line") as HTMLElement).textContent).toBe("审批时的摘要：修 LoginForm 的空指针");
+    // 纯空白不许吞掉 summary：`||` 会把 "   " 当真值留下，AssessmentSummaryLine 再 trim 成空 → 卡面一句都没有
+    rerender(<ReviewCard card={review({ delivered_summary: "   \n\t" })} />);
     expect((document.querySelector(".card-summary-line") as HTMLElement).textContent).toBe("审批时的摘要：修 LoginForm 的空指针");
   });
 

@@ -1,6 +1,7 @@
 // §25 卡片错误行的人话 + 对症一键（原生 Cards.swift:1646-1653 / 1667-1711 TaskRow.errorLine；parity 批次
 // review-running-card-fixes，gap board-cards-error-failure-catalog）：
-//   1) last_error_id 在 store.failures（GET /api/failures）里 → 卡面 = 前缀 + 当前语言那句，原文降到 title 气泡；
+//   1) last_error_id 在 store.failures（GET /api/failures）里 → 卡面 = 前缀 + 当前语言那句，原文降到 title 气泡
+//      （气泡 = 人话全句 + 空行 + 原文：卡面两行截断，长句 hover 得能读完）；
 //   2) 目录里没有这个 id / 没 id / 目录还没回 → 原文照旧；
 //   3) 动作行：FailureActionButton（原生 actionLabel 逐字，settings/failureAction.tsx 唯一实现）排在 让 AI 修 之前；
 //      未知 id 不装按钮，让 AI 修 照旧；
@@ -62,7 +63,8 @@ describe("working card with a classified last_error_id", () => {
     renderIn("en", <RunningCard row={workingRow({ last_error: RAW, last_error_id: "claude_blind" })} />);
     const line = document.querySelector(".card-error-line") as HTMLElement;
     expect(line.textContent).toBe(`Error: ${catalog.failures.claude_blind.en}`);
-    expect(line.getAttribute("title")).toBe(RAW);
+    // 气泡 = 人话全句（卡面两行截断，长句得能 hover 读完）+ 空行 + 原文（原生 .help(raw)）
+    expect(line.getAttribute("title")).toBe(`${catalog.failures.claude_blind.en}\n\n${RAW}`);
     expect(screen.queryByText(RAW)).toBeNull();
     // 按钮行：去诊断（claude_blind 的 actionLabel，深链依赖检查区）在 让 AI 修 之前
     const actions = document.querySelector(".card-actions") as HTMLElement;
@@ -94,7 +96,9 @@ describe("working card with a classified last_error_id", () => {
 
   it("未分类（last_error_id 缺席 / null）→ 原文 + 让 AI 修 兜底（§25：绝不硬凑分类）", () => {
     renderIn("en", <RunningCard row={workingRow({ last_error: "Traceback: boom", last_error_id: null })} />);
-    expect((document.querySelector(".card-error-line") as HTMLElement).textContent).toBe("Error: Traceback: boom");
+    const line = document.querySelector(".card-error-line") as HTMLElement;
+    expect(line.textContent).toBe("Error: Traceback: boom");
+    expect(line.getAttribute("title")).toBe("Traceback: boom");
     expect(screen.getByRole("button", { name: "Fix with AI" })).toBeTruthy();
     expect(screen.queryByRole("link")).toBeNull();
   });
@@ -121,7 +125,7 @@ describe("queued card with a classified dispatch_error_id", () => {
     ));
     const line = document.querySelector(".card-error-line") as HTMLElement;
     expect(line.textContent).toBe("Dispatch failed: Claude Code is not installed");
-    expect(line.getAttribute("title")).toBe("claude: command not found");
+    expect(line.getAttribute("title")).toBe("Claude Code is not installed\n\nclaude: command not found");
     const link = screen.getByRole("link", { name: "Install page" });
     expect(link.getAttribute("href")).toBe("https://claude.com/claude-code");
     expect(link.getAttribute("target")).toBe("_blank");

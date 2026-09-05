@@ -155,7 +155,7 @@ export interface TaskRow {
   steers?: SteerNote[];
   /** §30 待验收卡因会话再活跃投影回运行中——原生「已交付过·再运行」青章 */
   from_review?: boolean;
-  /** §25 错误分类 id（null = 未分类）——原生据此挑人话句；web 目前只用原文 */
+  /** §25 错误分类 id（null = 未分类）——RunningCard 据此从 store.failures 挑人话句 + 对症按钮（§25 追记 2026-09-05） */
   last_error_id?: string | null;
   dispatch_error_id?: string | null;
   agent_name?: string | null;

@@ -1,5 +1,6 @@
-// detail/copyText 的三条路（每个复制入口——复制指令行 / 详情 CopyChip / 复制成稿——都从这走，不许各自直连
-// navigator.clipboard；批次 review-running-card-fixes，gap board-cards-copy-draft-no-fallback）：
+// detail/copyText 的三条路（看板 / 详情 / 向导 / 权限页的复制入口——复制指令行 / 详情 CopyChip / 复制成稿…——都从这走，
+// 不许各自直连 navigator.clipboard；唯一例外 = 设置页 Slack manifest 复制，见 copyText.ts 头注；
+// 批次 review-running-card-fixes，gap board-cards-copy-draft-no-fallback）：
 //   1) Clipboard API 在且成功 → true，不碰 execCommand；
 //   2) Clipboard API 缺席（非 secure context）或 reject（权限拒绝）→ 退到 textarea + execCommand("copy")，返回它的布尔；
 //   3) execCommand 也抛 / 返回 false → false，永不抛给调用方；兜底 textarea 用完即撤。
