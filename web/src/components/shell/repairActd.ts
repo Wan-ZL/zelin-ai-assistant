@@ -3,7 +3,8 @@
 //   → 恢复：success 6 s（原生「让横幅庆祝一下再复位」）→ idle + refreshHealth（store 刷新，横幅随 verdict 退场）
 //   → 15 轮都没恢复：failure（原生整句「后台服务已重启，但数据还没更新——…」）；POST 本身被拒：failure（server 原文）。
 // 轮询直接调 fetchHealth、不写 store——横幅要留在屏上把「已恢复 ✓」说完；store 只在庆祝结束后刷一次。
-// 宿主：PipelineBanner.RepairButton（横幅）与 FinaleStep（向导「后台服务」行）。卸载时清定时器、丢弃在飞的结果。
+// 宿主：PipelineBanner.RepairButton（横幅，判据 isRecovered）与 FinaleStep（向导「后台服务」行，判据 = 该行自己的
+// daemonRunning，§68.5「心跳在且不 stale」——两处判据必须一致，见 useRepairActd 的参数注）。卸载时清定时器、丢弃在飞的结果。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchHealth, postRepairActd } from "../../api";
 import { useI18n } from "../../i18n";
@@ -23,7 +24,7 @@ export type RepairPhase =
   /** cause = post：server 拒绝了 kickstart（detail = server 原文）；timeout：重启了但 15 s 内 health 没转好 */
   | { kind: "failure"; cause: "post" | "timeout"; detail: string };
 
-/** 「恢复」= /api/health 的 verdict 不再是横幅要说话的三态：ok（心跳新鲜）或 unknown（无心跳文件但看板新鲜 = 数据在更新）。 */
+/** 横幅宿主的「恢复」= /api/health 的 verdict 不再是横幅要说话的三态：ok（心跳新鲜）或 unknown（无心跳文件但看板新鲜 = 数据在更新）。 */
 export function isRecovered(health: HealthSnapshot): boolean {
   return health.verdict === "ok" || health.verdict === "unknown";
 }
@@ -34,7 +35,11 @@ export interface RepairActd {
   run: () => void;
 }
 
-export function useRepairActd(): RepairActd {
+/**
+ * @param recovered 宿主自己的「恢复」判据（默认 = 横幅的 isRecovered）。宿主稍后拿 store 里的快照判「在跑」时用的
+ *   是哪条判据，轮询就得用同一条——否则轮询说恢复了、6 s 后 store 一刷又说没在跑（向导行的 unknown 翻面事故）。
+ */
+export function useRepairActd(recovered: (health: HealthSnapshot) => boolean = isRecovered): RepairActd {
   const { text } = useI18n();
   const [phase, setPhase] = useState<RepairPhase>({ kind: "idle" });
   const alive = useRef(true);
@@ -65,12 +70,12 @@ export function useRepairActd(): RepairActd {
       if (alive.current) setPhase({ kind: "failure", cause: "post", detail: errorMessage(err) });
       return;
     }
-    let recovered = false;
+    let back = false;
     for (let round = 0; round < REPAIR_POLL_ROUNDS; round += 1) {
       await sleep(REPAIR_POLL_MS);
       if (!alive.current) return;
       try {
-        if (isRecovered(await fetchHealth())) { recovered = true; break; }
+        if (recovered(await fetchHealth())) { back = true; break; }
       } catch {
         /* server 正在跟着 actd 一起喘（或短暂不可达）——这一轮算没恢复，下一轮再问 */
       }
@@ -78,7 +83,7 @@ export function useRepairActd(): RepairActd {
     }
     busy.current = false;
     if (!alive.current) return;
-    if (!recovered) {
+    if (!back) {
       setPhase({
         kind: "failure",
         cause: "timeout",
@@ -91,7 +96,7 @@ export function useRepairActd(): RepairActd {
     if (!alive.current) return;
     setPhase({ kind: "idle" });
     void refreshHealth();
-  }, [text]);
+  }, [text, recovered]);
 
   return { phase, run: () => void run() };
 }

@@ -65,6 +65,11 @@ afterEach(() => {
 });
 
 describe("RepairButton — 15 s recovery poll", () => {
+  it("pins the native cadence as literals: 15 rounds × 1 s, success shown 6 s (Doctor.swift:367-368, :383)", () => {
+    // 其余用例拿常量驱动假时钟——常量改了它们照样过；本例才是把原生数字钉死的判例（§68.8 追记）
+    expect([REPAIR_POLL_ROUNDS, REPAIR_POLL_MS, REPAIR_SUCCESS_MS]).toEqual([15, 1000, 6000]);
+  });
+
   it("recovers: health turns ok on the 3rd poll → 已恢复 ✓ for 6 s, then the store is refreshed once", async () => {
     repairMock.mockResolvedValue({ ok: true, label: "com.zelin.aiassistant.actd", action: "kickstart" });
     fetchHealthMock.mockResolvedValue(stalled);

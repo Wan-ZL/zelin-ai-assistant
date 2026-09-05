@@ -34,6 +34,10 @@ export function daemonRunning(health: HealthSnapshot | null): boolean | null {
   return Boolean(health.heartbeat && !health.heartbeat.stale);
 }
 
+/** 「启动后台服务」轮询的恢复判据 = 本行的 daemonRunning（§68.5），不是横幅的 isRecovered：横幅对 `unknown`（无心跳、
+ *  看板新鲜——刚点过「立即生成一次」也会这样）闭嘴即算恢复，本行却仍判「没在跑」——两条判据不一致，行就会绿 6 s 再翻红。 */
+const daemonBack = (health: HealthSnapshot) => daemonRunning(health) === true;
+
 /** 定时任务磁盘权限：doctor `cron disk access` 行 → ok / fail(blocked | stale) / neutral(无探针) */
 export function cronVerdict(rows: DoctorRow[] | undefined): "ok" | "blocked" | "stale" | "neutral" | "checking" {
   if (rows === undefined) return "checking";
@@ -80,9 +84,10 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   const setFixNote = (key: string, note: { prefix: string; detail: string } | null) =>
     setNotes((prev) => { const next = { ...prev }; if (note) next[key] = note; else delete next[key]; return next; });
 
-  // 「启动后台服务」= 横幅一键修复的同一状态机（§68.8：POST kickstart → 15 × 1 s 问 health → 已恢复 / 没恢复）；
-  // 它的失败 note（server 拒绝 / 15 s 没转好 → 原生 fixNote 前缀「启动失败: 」+ 原因）直接从 phase 派生，再点一次即清
-  const repair = useRepairActd();
+  // 「启动后台服务」= 横幅一键修复的同一状态机（§68.8：POST kickstart → 15 × 1 s 问 health → 已恢复 / 没恢复），
+  // 恢复判据换成本行自己的 daemonBack；它的失败 note（server 拒绝 / 15 s 没转好 → 原生 fixNote 前缀「启动失败: 」+ 原因）
+  // 直接从 phase 派生，再点一次即清
+  const repair = useRepairActd(daemonBack);
   const fixingDaemon = repair.phase.kind === "running";
   const daemonNote = repair.phase.kind === "failure" ? { prefix: text("启动失败: ", "Start failed: "), detail: repair.phase.detail } : null;
 
