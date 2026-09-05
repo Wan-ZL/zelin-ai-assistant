@@ -677,6 +677,34 @@ a.chip:hover { text-decoration: underline; }
   accent-color: var(--accent);
 }
 
+/* 原生 Kanban.swift selectableCard 的整卡 tap catcher：可选卡整卡可点（切换选中，手形；不选文本），
+   选中卡 accent 淡底（原生 accentColor.opacity(0.10)）+ accent 边；动作行整排失效——指针穿透到卡身
+   （点到「批准」也只是切换选中，误点不许批准 / 删除），略淡以示不可用；a11y 树里也失效（CardSurface 在
+   多选态给它挂 inert：不在 tab 序、读屏不报），键盘激活由 CardSurface 的 capture 兜底拦下 */
+.task-card.is-selectable {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 选中态必须压过 animations.css 的 .task-card:hover / .is-context-open（同为 (0,2,0)、且后加载）：
+   鼠标用户点卡的那一刻指针就在卡上，不写 :hover 变体则淡底要等指针离开才显现 */
+.task-card.is-selected,
+.task-card.is-selected:hover,
+.task-card.is-selected.is-context-open {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 需输入行（.is-blocked）的橙色左边在选中时保留——原生只叠淡底，不改行自身的状态色 */
+.task-card.is-blocked.is-selected {
+  border-left-color: var(--warning);
+}
+
+.task-card.is-selectable .card-actions {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 .selection-bar {
   position: sticky;
   bottom: 0;

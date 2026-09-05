@@ -217,6 +217,10 @@ def _merge_suggestions(now):
          "rationale": "一个是 planning 文书、一个是 onboarding 清单。", "requested_at": _epoch(now, minutes=45)},
         {"id": "MS-6", "ids": ["P-131", "P-134"], "status": "done", "verdict": None, "confidence": "deterministic",
          "rationale": "§38 规则：同标题前缀。", "requested_at": _epoch(now, minutes=50)},
+        # partition 但缺 groups 的老 payload：结论句回落「建议按分组分别合并」、按钮回落 接受 / 仍然合并 / 取消
+        # （原生 partitionGroups nil 那条路，Cards.swift:2351）
+        {"id": "MS-7", "ids": ["P-102", "P-134"], "status": "done", "verdict": "partition", "primary": "P-102",
+         "confidence": "low", "rationale": "旧版作业文件没有分组方案。", "requested_at": _epoch(now, minutes=55)},
     ]
 
 

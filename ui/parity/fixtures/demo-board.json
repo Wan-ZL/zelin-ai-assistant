@@ -329,6 +329,19 @@
       "requested_at": 1788347400,
       "status": "done",
       "verdict": null
+    },
+    {
+      "confidence": "low",
+      "id": "MS-7",
+      "ids": [
+        "P-102",
+        "P-134"
+      ],
+      "primary": "P-102",
+      "rationale": "旧版作业文件没有分组方案。",
+      "requested_at": 1788347100,
+      "status": "done",
+      "verdict": "partition"
     }
   ],
   "needs_approval": [

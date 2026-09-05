@@ -77,12 +77,11 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   const stateWord = isBlocked ? text("需输入", "Needs input") : isQueued ? text("排队中", "Queued") : stateLabel(row.state, text);
 
   return (
-    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`}>
+    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`} selectable>
       <CardHead
         card={row}
         title={title}
         isMuted={isQueued}
-        selectable={!isQueued}
         leading={<span className={`card-dot ${isBlocked ? "is-blocked" : isQueued ? "is-queued" : "is-running"}`} aria-hidden="true" />}
       />
       {isBlocked ? (

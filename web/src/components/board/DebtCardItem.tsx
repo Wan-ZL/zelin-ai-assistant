@@ -23,8 +23,8 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
   const hardness = hardnessLabel(item.hardness, text);
 
   return (
-    <CardSurface cardId={item.id} label={`${text("潜在任务", "Backlog")} · ${headline}`}>
-      {/* 摘要里的 URL 可点（原生 Cards.swift:2028 linkified） */}
+    <CardSurface cardId={item.id} label={`${text("潜在任务", "Backlog")} · ${headline}`} selectable>
+      {/* 摘要里的 URL 可点（原生 Cards.swift:2028 linkified）；v0.21 契约七：潜在任务卡也可多选参与合并（Kanban.swift:337-339） */}
       <CardHead card={item} title={headline} leading={<span className="card-dot is-backlog" aria-hidden="true" />} linkify />
       <div className="card-badges">
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
