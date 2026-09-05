@@ -632,32 +632,72 @@ def _is_report_issue(issue: dict) -> bool:
         issue.get("author")).endswith("[bot]")
 
 
-def _ci_red(pr: dict) -> bool:
-    """rollup 里有任何一个 check 红（含 informational job）——只是预筛，
-    要不要铸卡由 :func:`_red_required_checks` 定。"""
+# 「红」的词表 = gh `pr checks` 的 bucket `fail` ∪ `cancel`（cli/cli aggregate.go）。
+# CANCELLED 算红：`timeout-minutes`（§56.6）杀掉的 job 记作 cancelled（annotation
+# "The job has exceeded the maximum execution time"），正是本仓库要修的挂死；head
+# SHA 的 rollup 只留每个名字最新一次尝试，concurrency 取消的是上一个 commit 的
+# run，不会出现在这里。
+RED_STATES = ("FAILURE", "TIMED_OUT", "CANCELLED", "ERROR", "ACTION_REQUIRED")
+RED_BUCKETS = ("fail", "cancel")
+RULESET_BRANCH = "main"   # required set 的真源分支（ruleset 只挂在默认分支上）
+
+
+def _check_name(c: dict) -> str:
+    return str(c.get("name") or c.get("context") or "")
+
+
+def _check_state(c: dict) -> str:
+    # CheckRun（Actions job）带 conclusion；StatusContext（第三方 app）带 state
+    return str(c.get("conclusion") or c.get("state") or "").upper()
+
+
+def _red_rollup_names(pr: dict) -> list:
+    """rollup 里红的 check 名（排序去重，含 informational job）。"""
     rollup = pr.get("statusCheckRollup")
     checks = rollup if isinstance(rollup, list) else []
-    return any(str(c.get("conclusion") or "").upper() in ("FAILURE", "TIMED_OUT", "CANCELLED")
-               for c in checks if isinstance(c, dict))
+    return sorted({_check_name(c) for c in checks
+                   if isinstance(c, dict) and _check_state(c) in RED_STATES})
+
+
+def _ci_red(pr: dict) -> bool:
+    """rollup 里有任何一个 check 红——只是预筛，要不要铸卡由
+    :func:`_red_required_checks` / :func:`_ruleset_required_names` 定。"""
+    return bool(_red_rollup_names(pr))
 
 
 def _red_required_checks(gh: Callable, repo: str, number: object) -> Optional[list]:
-    """required check 里 bucket=fail 的名字（排序去重）；gh 不可用 → None。
+    """required check 里 bucket ∈ RED_BUCKETS 的名字（排序去重）；拿不到 → None。
 
     `statusCheckRollup` 不分 required 与 informational：`continue-on-error` 的
-    job（如 Web visual）在 rollup 里同样是 FAILURE，但 D5「必须绿」只指 required
-    （§65.5 的跟进卡也是这么数的）。2026-09-04 判例：#193 只有 informational 红，
-    被旧逻辑铸成 R-280。gh 经 GraphQL `isRequired` 读 ruleset / 分支保护的 required
-    set；`--json` 的 exporter 先于退出码返回，check 失败时仍退出 0（cli/cli
-    checks.go）；不认 `--json` 的旧 gh 用法错误退出 1 → None → 不铸（宁可漏一张
-    也不铸假卡）。bucket 词表里只有 `fail`（FAILURE/TIMED_OUT/ERROR/ACTION_REQUIRED）
-    算红，`cancel` / `pending` / `skipping` 不算。"""
+    job（如 Web visual）在 rollup 里同样是 FAILURE，但 D5「必须绿」只指 required。
+    2026-09-04 判例：#193 只有 informational 红，被旧逻辑铸成 R-280。gh 经 GraphQL
+    `isRequired` 读 ruleset / 分支保护的 required set；`--json` 的 exporter 先于
+    退出码返回，check 失败时仍退出 0（cli/cli checks.go）；不认 `--json` 的旧 gh
+    用法错误退出 1、base 不在 ruleset 下（dev）的 PR「no required checks」退出 1
+    → None（后者由调用方退回 ruleset 名单）。"""
     data = _gh_json(gh, ["pr", "checks", str(number), "-R", repo,
                          "--required", "--json", "name,bucket"])
     if not isinstance(data, list):
         return None
     return sorted({str(c.get("name")) for c in data
-                   if isinstance(c, dict) and c.get("bucket") == "fail"})
+                   if isinstance(c, dict) and c.get("bucket") in RED_BUCKETS})
+
+
+def _ruleset_required_names(gh: Callable, repo: str) -> Optional[list]:
+    """RULESET_BRANCH 的 ruleset 要求的 status check 名（`gh api
+    repos/<repo>/rules/branches/<b>` 里 `required_status_checks[].context`）；
+    拿不到 → None。base 不是 main 的 PR（dev）`--required` 查不出 required set，
+    用这份名单 ∩ rollup 红名代判——CI 对任何 base 的 PR 跑的是同一批 job。"""
+    rules = _gh_json(gh, ["api", f"repos/{repo}/rules/branches/{RULESET_BRANCH}"])
+    if not isinstance(rules, list):
+        return None
+    names = set()
+    for rule in rules:
+        if isinstance(rule, dict) and rule.get("type") == "required_status_checks":
+            params = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+            names.update(str(c.get("context")) for c in _as_list(params.get("required_status_checks"))
+                         if isinstance(c, dict) and c.get("context"))
+    return sorted(names)
 
 
 def _pr_red_signal(pr: dict, red: list) -> Signal:
@@ -668,7 +708,7 @@ def _pr_red_signal(pr: dict, red: list) -> Signal:
         title=f"修红 CI：PR #{n} {_clip(pr.get('title'), 60)}",
         summary=f"开放 PR 的 required check 有红（{names}）——红的是臣子自己的事，"
                 "皇上只看绿的（D5/D12）。informational job 的红不算。",
-        plan=[f"gh pr checks {n} --required 找红的 job（{names}），gh run view --log-failed 看根因",
+        plan=[f"gh pr checks {n} 看红的 job（{names}），gh run view --log-failed 看根因",
               f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到 required 全绿"],
         dod=[f"PR #{n} required checks 全绿：{names}"], cost_usd=2.0,
         ref=str(pr.get("url") or ""), priority=5)
@@ -740,19 +780,21 @@ def pr_signals(gh: Callable, repo: str = DEFAULT_REPO,
                since: Optional[_dt.datetime] = None) -> "tuple[list, list]":
     """开放 PR → (signals, titles)：红 required check 一条/PR，owner 新评论一条/评论。
     每张 PR 一次 `gh pr view --json comments,reviews,statusCheckRollup`
-    （最多 MAX_PR_DETAIL 张）；rollup 有红的再加一次 `gh pr checks --required`。"""
+    （最多 MAX_PR_DETAIL 张）；rollup 有红的再加一次 `gh pr checks --required`；
+    `--required` 查不出的（base 不在 ruleset 下）整轮最多再查一次 ruleset。"""
     rows = _gh_json(gh, ["pr", "list", "-R", repo, "--state", "open", "--limit",
                          str(GH_LIST_LIMIT), "--json", "number,title,author,url,headRefName,isDraft"])
     if not isinstance(rows, list):
         return [], []
     prs = [r for r in rows if isinstance(r, dict)]
     signals: list = []
+    ruleset: dict = {}       # 一轮一次的 memo：{"names": list | None}
     for pr in prs[:MAX_PR_DETAIL]:
-        signals.extend(_pr_detail_signals(gh, repo, pr, since))
+        signals.extend(_pr_detail_signals(gh, repo, pr, since, ruleset))
     return signals, _titles(prs)
 
 
-def _pr_detail_signals(gh, repo, pr, since) -> list:
+def _pr_detail_signals(gh, repo, pr, since, ruleset: Optional[dict] = None) -> list:
     detail = _gh_json(gh, ["pr", "view", str(pr.get("number")), "-R", repo,
                            "--json", "comments,reviews,statusCheckRollup"])
     if not isinstance(detail, dict):
@@ -762,9 +804,21 @@ def _pr_detail_signals(gh, repo, pr, since) -> list:
     out = []
     if _ci_red(merged):                      # 预筛过了才多花一次 gh 问 required 集合
         red = _red_required_checks(gh, repo, pr.get("number"))
+        if red is None:                      # base 不在 ruleset 下 / gh 抽风 → ruleset 名单代判
+            red = _required_by_ruleset(gh, repo, merged, ruleset if ruleset is not None else {})
         if red:
             out.append(_pr_red_signal(merged, red))
     return out + _comment_signals(merged, comments, since)
+
+
+def _required_by_ruleset(gh, repo, pr: dict, memo: dict) -> Optional[list]:
+    """rollup 红名 ∩ RULESET_BRANCH 的 required 名单；名单拿不到 → None（不铸）。"""
+    if "names" not in memo:
+        memo["names"] = _ruleset_required_names(gh, repo)
+    names = memo["names"]
+    if names is None:
+        return None
+    return sorted(set(_red_rollup_names(pr)) & set(names))
 
 
 # --------------------------------------------------------------------------- #
