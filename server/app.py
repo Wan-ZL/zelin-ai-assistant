@@ -440,19 +440,21 @@ def _post_actions(ctx, payload: dict) -> dict:
 
 
 def _post_reveal(ctx, payload: dict) -> dict:
-    unknown = set(payload) - {"card_id", "target", "name"}
+    # add-only ``mode``（reveal | open，缺省 reveal）：open 只对 voice_profile 放行（files.resolve_mode 裁）
+    unknown = set(payload) - {"card_id", "target", "name", "mode"}
     if unknown:
         raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
     if "target" in payload and "card_id" not in payload:
-        # §68.4 doctor 行「显示文件」（config_invalid）/ §67.5 Skills「在 Finder 显示」：词表项（+ skill 名），不是路径
+        # §68.4 doctor 行「显示文件」（config_invalid）/ §67.5 Skills「在 Finder 显示」/ §68.9 MCP 作用域 /
+        # §68.1 「打开档案」：词表项（+ skill 名），不是路径
         target = payload.get("target")
         if not isinstance(target, str):
             raise InvalidFieldError("target must be a string")
-        return files.reveal_target(ctx.home, target, payload.get("name"))
+        return files.reveal_target(ctx.home, target, payload.get("name"), payload.get("mode"))
     card_id = payload.get("card_id")
     if not isinstance(card_id, str):
         raise InvalidFieldError("card_id must be a string")
-    return files.reveal(ctx.home, card_id)
+    return files.reveal(ctx.home, card_id, payload.get("mode"))
 
 
 def _post_claude_code_default(ctx, payload: dict) -> dict:

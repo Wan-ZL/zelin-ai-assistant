@@ -1,7 +1,8 @@
 // 语气档案区的「当前生效」状态行（原生 Settings.swift voiceGroup 的 1) 2)；docs/VOICE.md；§68.1 追记）：
 // 状态词四选一逐字镜像 voiceStatusText——已停用 / 你的私有档案 / 出厂默认（作者风格）/ 无档案（不注入）——
-// + 生效文件路径（$HOME 缩成 ~）+「打开档案」（POST /api/reveal {target:"voice_profile"}：server 定位此刻生效、
-// 或重开后会生效的那个文件；两个都不在时按钮禁用）。开关本身是目录字段 voice_enabled（CatalogSection 渲）；
+// + 生效文件路径（$HOME 缩成 ~）+「打开档案」（POST /api/reveal {target:"voice_profile", mode:"open"}：server 在默认
+// 编辑器里打开此刻生效、或重开后会生效的那个文件——原生 NSWorkspace.open，不是访达定位；两个都不在时按钮禁用）。
+// 开关本身是目录字段 voice_enabled（CatalogSection 渲）；
 // 状态随目录的 effective 即时变（草稿未保存不算）。原生「从我的消息生成/更新档案」（几分钟的 act.voice_gen）另 PR。
 import { useEffect, useState } from "react";
 import { fetchVoiceProfile, postRevealTarget } from "../../api";
@@ -45,7 +46,7 @@ export function VoiceStatus() {
   async function open() {
     setNote(null);
     try {
-      await postRevealTarget("voice_profile");
+      await postRevealTarget("voice_profile", undefined, "open");
     } catch (err) {
       setNote(errorMessage(err));
     }

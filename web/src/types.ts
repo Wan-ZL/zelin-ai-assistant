@@ -994,6 +994,7 @@ export interface McpServer {
 export interface McpScope {
   scope: "user" | "project" | string;
   path: string;
+  path_display?: string;   // add-only（§68.9 追记）：$HOME 缩成 ~ 的展示路径；老 server 缺席时退回 path
   exists: boolean;
   parseable: boolean;
   servers: McpServer[];
