@@ -114,6 +114,10 @@ DEFAULT_TERMINAL_APP: str = "auto"
 # 形状由 coerce_clock_time 归一；坏值回落默认，绝不让循环因 typo 永不解锁。
 DEFAULT_DAILY_LOOP_TIME: str = "03:30"
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+# §70 每天最多铸几张 🤖 提案卡。D10 定 5；D33（2026-09-04）降到 2：自检类信号
+# 不再铸卡后剩下的都是 GitHub 面与素材，一天两张够审、也不会把提案列刷成一排 🤖。
+# server/settings.py DAILY_LOOP_DEFAULTS 手抄同值（§49，判例 test_server_paths_mirror）。
+DEFAULT_DAILY_LOOP_MAX_PROPOSALS: int = 2
 # §53 数据层后端（D2）：auto = 激活标记在则 SQLite 为真源（默认，首跑自动迁移）；
 # yaml / sqlite = 强制指定（yaml 是回滚开关，保留一个版本）。真解析在
 # registry.backend()——这里只是配置词表。
@@ -305,14 +309,15 @@ class Config:
     archive_after_days: int = 30
 
     # §70 每日自我改进循环（owner 决策 D10）：actd pass 内每天一次「先维护再
-    # 提案」。time = 本地 HH:MM 解锁时刻；max_proposals_per_day 默认 5（设置里
-    # 可改）；stale_days = 提案/潜在任务列无活动多少天判过时（Q4：45 + 保护罩）；
+    # 提案」。time = 本地 HH:MM 解锁时刻；max_proposals_per_day 默认见
+    # DEFAULT_DAILY_LOOP_MAX_PROPOSALS（D33 降为 2；设置里可改）；stale_days =
+    # 提案/潜在任务列无活动多少天判过时（Q4：45 + 保护罩）；
     # trash_retention_days = 循环自动扔进回收站的卡（`stale:*` / `daily-merge:*`）
     # 保留多少天再硬删——owner 没亲眼看过这些卡进回收站，比手动 trash 的 60 天
     # 更长（Q4：90）；trash.retention_days 为 0 时整体关闭，本值随之无效。
     daily_loop_enabled: bool = True
     daily_loop_time: str = DEFAULT_DAILY_LOOP_TIME
-    daily_loop_max_proposals_per_day: int = 5
+    daily_loop_max_proposals_per_day: int = DEFAULT_DAILY_LOOP_MAX_PROPOSALS
     daily_loop_stale_days: int = 45
     daily_loop_trash_retention_days: int = 90
 

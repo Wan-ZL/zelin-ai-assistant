@@ -148,7 +148,7 @@ archive:
 daily_loop:                            # 每日自我改进循环（CONTRACT §70，owner 决策 D10/D12/D18）：actd 每天在 time 之后的第一个 pass 跑一次「先维护再提案」
   enabled: true                        # false = 不整理、不提案（回滚开关）
   time: "03:30"                        # 本地时刻 HH:MM；到点后的第一个 pass 解锁，一天只跑一次（标记 state/daily_loop.json）
-  max_proposals_per_day: 5             # 每天新开 🤖 提案卡上限（web 设置页可改；0 = 只维护不提案）
+  max_proposals_per_day: 2             # 每天新开 🤖 提案卡上限（web 设置页可改；0 = 只维护不提案）。D33（2026-09-04）从 5 降到 2：自检类信号（派发卡死 / doctor 红灯 / 日志刷屏……）不再铸卡、只进看板横幅「系统自检」，剩下的 GitHub issue·PR 与素材一天两张够审
   stale_days: 45                       # 提案列 / 潜在任务列的卡无任何活动超过 N 天 → 回收站（stale:idle）；带未来 deadline / 用户改过名 / 提及 ≥3 次 / 同簇有在跑的卡 一律不动
   trash_retention_days: 90             # 循环自动扔进回收站的卡（stale:* / daily-merge:*）保留多久再硬删——比手动 trash 的 60 天更长；trash.retention_days = 0 时整体关闭
                                        # web 设置页「每日整理」写 state/settings_overrides.json 的 daily_loop_* 扁平键，优先级高于本块；下一个 pass 生效
