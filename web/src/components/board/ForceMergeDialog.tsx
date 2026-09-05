@@ -43,9 +43,11 @@ export function ForceMergeDialog({ ids, titles, defaultPrimary, onConfirm, onCan
           </label>
         ))}
       </div>
+      {/* 键盘纪律（§41 2026-09-05 追记，D35 同款）：弹窗一律按钮提交，没有 Enter=确认——原生 ForceMergeSheet 的
+          .defaultAction 是退役规则，不再挂 title="↩" 招牌；Esc 仍由 <dialog> 的 cancel 事件走 onCancel。 */}
       <div className="dialog-actions">
         <button type="button" className="btn" onClick={onCancel} title="⎋">{text("取消", "Cancel")}</button>
-        <button type="button" className="btn btn-danger" onClick={() => onConfirm(primary)} title="↩">
+        <button type="button" className="btn btn-danger" onClick={() => onConfirm(primary)}>
           {text("强制合并", "Force-merge")}
         </button>
       </div>

@@ -130,7 +130,6 @@
     "control:board.dialogs:label:send-back-add-requirements": "PRESENT",
     "control:board.dialogs:label:send-feedback-ids-count-cards": "PRESENT",
     "control:board.dialogs:label:send-feedback-overall": "PRESENT",
-    "control:board.dialogs:label:send-newline": "PRESENT",
     "control:board.dialogs:label:send-newline#2": "WAIVED",
     "control:board.dialogs:label:type-确认-or-go": "PRESENT",
     "control:board.dialogs:label:what-to-change": "PRESENT",

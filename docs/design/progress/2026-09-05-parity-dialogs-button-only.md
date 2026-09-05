@@ -1,0 +1,11 @@
+pr: `fix/parity-dialogs-button-only`（无版本 bump，版本由 tag 派生）
+phase: P4 余量（D3：web 看板是产品）；行为 parity 修复批次 `dialogs-button-only`（chain dialogs #1；D35 推及弹窗）
+law: §41 追记（弹窗键盘纪律 + 「↩ 发送 · ⇧↩ 换行」/ `title="↩"` 墓碑）/ §54.1 追记（弹窗按钮提交 + §29 明示条款正文）
+
+**背景**：行为 parity 审计（gap `dialogs-comment-rework-lost-return-to-send` / `board-cards-dialog-enter-semantics` / `notify-feedback-dialog-enter-not-ime-safe` / `board-cards-feedback-dialog-ime-enter` / `notify-feedback-dialog-omits-upload-disclosure`）发现看板弹窗有三套键盘规则：修改方向 / 打回（`TextDialog.tsx`）按钮提交、提建议（`FeedbackDialog.tsx`）Enter=发送 + 提示句「↩ 发送 · ⇧↩ 换行」、强制合并（`ForceMergeDialog.tsx`）确认按钮挂 `title="↩"` 却无任何绑定；且 FeedbackDialog 是仓库里唯一没有 `isComposing` 守卫的回车提交——拼音候选上屏的回车会把半截建议上传（勾了公开还成公开 issue），`FeedbackButton.send` 在 POST 前就关弹窗。另：提建议正文「本地先落 state/feedback/，勾选公开才会同步成 GitHub issue」暗示本地闭环，正是原生 `AppDelegate.swift` promptFeedback 注释「不得暗示是本地闭环」点名禁止的说法（§29 明示条款）。
+
+**做了什么**：owner 已在 D35 拍板「回车是下一行，要跑是需要点击按钮」，本批次把同一规则推及弹窗——(a) `FeedbackDialog.tsx` 拆掉 Enter→onSubmit 的 onKeyDown 与提示句，Enter 是浏览器原生换行（不拦、不 preventDefault），Shift+Enter / ⌘↵ / Ctrl+↵ 也不提交；IME 险情随之不存在（不拦 Enter 就不需要守卫）。(b) `ForceMergeDialog.tsx` 摘掉 `title="↩"`（`title="⎋"` 是真的，保留）。(c) 提建议正文换成 §29 明示条款：zh「说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。勾选公开时还会出现在公开 GitHub 仓库的 issue 列表里。」+ en 同义句；原生末句「粘贴的图片只保存在本机」不搬（web 弹窗只发文字，§68.14）；公开勾选旁「去掉卡片内容，只带你写的这段」与 `feedback_sync._issue_payload` 相符、不动。`TextDialog` 不动。**范围注**：T2 typed-confirm 的单行 `<input>`（Enter=批准，带 isComposing 守卫）没有换行语义，不在本条之内。**诚实注**：退役的原生 promptText / promptFeedback 是 Return 发送 / Shift+Return 换行（`PromptSendDelegate`）、ForceMergeSheet 是 Return 确认——本条与 D35 一样是 owner 偏好取代原生。
+
+**parity（§66）**：`CONTROL_OWNER` 收 `control:board.dialogs:label:send-newline`（原生 promptFeedback 的「↩ 发送 · ⇧↩ 换行」，AppDelegate.swift:904；`#2` 早在 waivers.txt，不动），清单重铸；`shortcut:board.merge:return` 照旧 gated（探针是字形出现在 web/src，`↩︎ 回锅` / `↩︎ 打回` 仍满足，本 PR 不改清单不改探针）；两本账本零改动。
+
+**判例**：新 `FeedbackDialog.test.tsx`（Enter / Shift+Enter / ⌘Enter / Ctrl+Enter / isComposing 的 Enter 都不提交也不被 preventDefault；无提示句；按钮提交 trimmed 多行、ids 升序去重；纯空白禁用；取消不提交；§29 明示条款 zh / en 都在、不含「本地先落」；公开勾选默认态读目录、改勾选写 PUT /api/settings/general）；新 `ForceMergeDialog.test.tsx`（确认按钮无 `title="↩"`、取消仍 `⎋`；Enter 不确认、按钮才 onConfirm(primary)；cancel 事件 → onCancel）。两个文件对改前的组件跑：7 / 14 与 1 / 3 失败（Enter 不确认在改前就成立——web 从未绑过它，招牌才是谎），确认判例咬得住。
