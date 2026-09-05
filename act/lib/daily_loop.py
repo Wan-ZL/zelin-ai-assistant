@@ -362,6 +362,8 @@ def _propose(cfg, now: _dt.datetime, gh, doctor, state: dict, interval) -> dict:
                  - proposals_today(reqs, today))
     chosen, skipped = select_signals(collected["signals"], taken=taken,
                                      gh_titles=collected["gh_titles"], budget=budget)
+    # 分诊标签拦下的 issue 在读取器层就没成 Signal（§70.3 ⑩ 追记）；审计行里与其余 skip 并列计数
+    skipped["label_parked"] = loop_inputs.parked_count(collected["summaries"])
     filed = file_proposals(chosen, today, str(config.HOME))
     ledger.update({row["fingerprint"]: today for row in filed if "id" in row})
     state["fingerprints"] = ledger

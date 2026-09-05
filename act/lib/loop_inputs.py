@@ -14,6 +14,11 @@
 - GitHub 面经 `gh` CLI 读（argv 列表，无 shell），注入缝 ``gh(args) -> str|None``；
   没装 gh / 未登录 / 超时 = 该输入不可用，循环照跑。D18：非 owner 作者的 issue
   只出摘要行（``Summary``），owner 在 issue 评论里回「do it」才升格为提案。
+- **owner 的 tracker 分诊标签先于一切**（§70.3 ⑩ 追记，2026-09-05）：带
+  `EXCLUDED_ISSUE_LABELS` 任一标签（逐字、区分大小写）的开放 issue 永不成提案——
+  owner 在 docs/design/vnext2-plan.md §5.1 已经把它们分到「素材库想法 / 等 owner /
+  不修 / 随 Mac 退役……」；PR #213 判例：#23 带 `素材库-idea` 仍被铸卡。这类 issue
+  只出 ``Summary``（kind `issue_parked`），不花「do it」额度。
 - **两类信号（D33，2026-09-04）**：`CARD_KINDS`（GitHub 面 + owner 亲手放的素材）
   照旧铸卡；`ADVISORY_KINDS`（自检类——派发卡死 / 日志刷屏 / doctor 红灯……）
   只转成 ``Summary`` 落 `state/daily_loop.json` 的 `last_result.advisories`、审计行与
@@ -46,6 +51,12 @@ DEFAULT_REPO = "Wan-ZL/zelin-ai-assistant"
 MUTATION_ISSUE_TITLE = "Nightly mutation report"   # scripts/qa/mutation_issue.py DEFAULT_TITLE
 DO_IT_RE = re.compile(r"\bdo it\b", re.IGNORECASE)
 AGENT_MARKERS = ("🤖", "Generated with Claude", "Co-Authored-By: Claude")
+# owner 在 tracker 上分诊过的 issue 不是待办（truth = 本元组；CONTRACT §70.3 ⑩ 追记）：
+# 标签名逐字、区分大小写匹配 `gh issue list --json labels` 的 `labels[].name`。
+# 词表来自 docs/design/vnext2-plan.md §5.5 的七枚 label（去掉可铸卡的 loop-seed /
+# owner-decided）+ GitHub 默认的三枚「不做」标签。
+EXCLUDED_ISSUE_LABELS = ("素材库-idea", "needs-owner", "wontfix", "invalid", "duplicate",
+                         "decision-needed", "proposal", "mac-retire")
 
 GH_TIMEOUT_S = 25
 GH_LIST_LIMIT = 100
@@ -571,6 +582,36 @@ def _issue_summary(issue: dict) -> Summary:
                    ref=str(issue.get("url") or ""))
 
 
+PARKED_SUMMARY_KIND = "issue_parked"
+
+
+def _issue_parked_summary(issue: dict, label: str) -> Summary:
+    n = issue.get("number")
+    return Summary(kind=PARKED_SUMMARY_KIND,
+                   text=f"issue #{n}：{_clip(issue.get('title'), 80)} — 带标签「{label}」，owner 已在 "
+                        f"tracker 上分诊过，不铸卡（§70.3 ⑩）；去掉标签即进入下一轮提案。",
+                   ref=str(issue.get("url") or ""))
+
+
+def _label_names(issue: dict) -> list:
+    """`labels[].name`（gh 的 `[{id, name, description, color}]`；裸字符串也认）。"""
+    out = []
+    for lab in _as_list(issue.get("labels")):
+        name = lab.get("name") if isinstance(lab, dict) else lab
+        if isinstance(name, str) and name:
+            out.append(name)
+    return out
+
+
+def parked_label(issue: dict) -> Optional[str]:
+    """issue 上第一个命中 EXCLUDED_ISSUE_LABELS 的标签名（逐字、区分大小写）；没有 → None。
+    命中 = owner 在 tracker 上已分诊为「不是待办」，先于作者 / 「do it」判定。"""
+    for name in _label_names(issue):
+        if name in EXCLUDED_ISSUE_LABELS:
+            return name
+    return None
+
+
 def _is_do_it(c) -> bool:
     if not isinstance(c, dict) or not is_owner(c.get("author")):
         return False
@@ -584,8 +625,10 @@ def _owner_said_do_it(gh: Callable, repo: str, number) -> bool:
 
 
 def issue_signals(gh: Callable, repo: str = DEFAULT_REPO) -> "tuple[list, list, list]":
-    """开放 issue → (signals, summaries, titles)。owner 作者直接成提案；他人
-    作者只出摘要，除非 owner 评论里有「do it」（最多查 MAX_ISSUE_DETAIL 张）。"""
+    """开放 issue → (signals, summaries, titles)。带 EXCLUDED_ISSUE_LABELS 标签的先出
+    摘要（`issue_parked`，不铸卡）；其余 owner 作者直接成提案；他人作者只出摘要，
+    除非 owner 评论里有「do it」（最多查 MAX_ISSUE_DETAIL 张）。titles 含全部非
+    机器人 issue（parked 的也在——它仍开着，`gh_title` 同题去重不变）。"""
     rows = _gh_json(gh, ["issue", "list", "-R", repo, "--state", "open", "--limit",
                          str(GH_LIST_LIMIT), "--json", "number,title,author,body,url,labels"])
     if not isinstance(rows, list):
@@ -602,7 +645,8 @@ def _titles(rows: list) -> list:
 
 
 class _IssueRouter:
-    """D18 分流：owner 作者 → 提案；他人作者 → 摘要，除非 owner 评论「do it」
+    """分流：带分诊标签（`parked_label`）→ `issue_parked` 摘要，先于一切、不花额度；
+    再按 D18：owner 作者 → 提案；他人作者 → 摘要，除非 owner 评论「do it」
     （每轮最多查 MAX_ISSUE_DETAIL 张的评论）。"""
 
     def __init__(self, gh: Callable, repo: str) -> None:
@@ -620,10 +664,18 @@ class _IssueRouter:
         return _owner_said_do_it(self.gh, self.repo, issue.get("number"))
 
     def route(self, issue: dict) -> None:
-        if self._authorized(issue):
+        label = parked_label(issue)
+        if label is not None:
+            self.summaries.append(_issue_parked_summary(issue, label))
+        elif self._authorized(issue):
             self.signals.append(_issue_signal(issue))
         else:
             self.summaries.append(_issue_summary(issue))
+
+
+def parked_count(summaries: Iterable[Summary]) -> int:
+    """本轮因分诊标签而没铸卡的 issue 数——进审计行 `skipped.label_parked`（add-only）。"""
+    return sum(1 for s in summaries if getattr(s, "kind", None) == PARKED_SUMMARY_KIND)
 
 
 def _is_report_issue(issue: dict) -> bool:
