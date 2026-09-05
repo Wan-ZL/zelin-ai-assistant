@@ -1,9 +1,10 @@
 // 通用设置区的草稿守则（§68.1 追记；原生 Settings.swift 头注「NO deferred save」的 web 对应）：
 //   (a) 同 section 别处即时写（Slack 勾选器 / 目录「创建」）刷新目录 → 用户改过的键留草稿、没改的键跟新 effective；
-//       自己「保存」成功 → 草稿对齐回执；
+//       同一个键两边都动了（文本框 vs 勾选器写 slack_channels）以 server 为准；自己「保存」成功 → 草稿对齐回执；
 //   (b) 有未保存改动才挂 beforeunload（rail / ⌘数字 / /open 都是整页导航，这就是离页守卫），存净即摘；
 //   (c) telemetry 联动禁用：level 在 enabled 关时禁用，capture_input 在 enabled 关或 level ≠ detailed 时禁用（只禁不改值）；
-//   (d) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用、该键不进 PUT；trash_retention_days 用原生整句提示。
+//   (d) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用、该键不进 PUT；trash_retention_days 用原生整句提示；
+//       只计用户改过的键——config.yaml 里既有的越界 effective 不锁整区。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchSettingsCatalog, putSettingsSection } from "../../api";
@@ -105,11 +106,30 @@ describe("CatalogSection draft survives a same-section refresh (a)", () => {
     expect(screen.queryByText(/unsaved/)).toBeNull();
   });
 
-  it("mergeDraft: first alignment takes everything, later ones keep only touched keys", () => {
+  it("mergeDraft: first alignment takes everything, later ones keep touched keys whose server value did not move", () => {
     expect(mergeDraft(null, null, { a: 1, b: "x" })).toEqual({ a: 1, b: "x" });
-    expect(mergeDraft({ a: 1, b: "typed" }, { a: 1, b: "x" }, { a: 2, b: "server" })).toEqual({ a: 2, b: "typed" });
+    // b 改过、server 没动 b → 留草稿；a 没改 → 跟新 effective
+    expect(mergeDraft({ a: 1, b: "typed" }, { a: 1, b: "x" }, { a: 2, b: "x" })).toEqual({ a: 2, b: "typed" });
+    // b 改过、server 也动了 b（别处刚落盘）→ server 赢，草稿让位
+    expect(mergeDraft({ a: 1, b: "typed" }, { a: 1, b: "x" }, { a: 2, b: "server" })).toEqual({ a: 2, b: "server" });
     // 刷新后多出的新键（server 升级）直接取 effective
     expect(mergeDraft({ a: 1 }, { a: 1 }, { a: 1, c: true })).toEqual({ a: 1, c: true });
+  });
+
+  it("a picker write to the SAME key the user is editing wins: the later Save never reverts the persisted change", async () => {
+    // Slack 区同时有 slack_channels 的文本框和勾选器（同一个键）：框里未保存 "C1, C9"，勾选器勾 C2 → server 落 [C1, C2]
+    primeCatalog(slackSection(["C1"]));
+    renderEn(<CatalogSection sectionId="slack" />);
+    const channels = await screen.findByLabelText("Watched channels") as HTMLInputElement;
+    fireEvent.change(channels, { target: { value: "C1, C9" } });
+    expect(screen.getByText("1 unsaved")).toBeTruthy();
+
+    vi.mocked(putSettingsSection).mockResolvedValue(slackSection(["C1", "C2"]));
+    await saveSettingsSection("slack", { slack_channels: ["C1", "C2"] });
+
+    await waitFor(() => expect(channels.value).toBe("C1, C2"));  // server 刚写的值接管这一格（C9 让位，而不是 C2 被下次保存撤回）
+    expect(screen.queryByText(/unsaved/)).toBeNull();
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -238,5 +258,36 @@ describe("invalid number drafts block Save (d)", () => {
     const s = approvalSection();
     expect(invalidKeys(s, { skip_permissions: true, show_cost_above_usd: 5, trash_retention_days: 60 })).toEqual([]);
     expect(invalidKeys(s, { skip_permissions: true, show_cost_above_usd: -1, trash_retention_days: 1.5 })).toEqual(["show_cost_above_usd", "trash_retention_days"]);
+    // 没改过的键（草稿 === effective）永不在列，哪怕 effective 本身越界（config.yaml 来的 -5）
+    const stored = { ...s, fields: s.fields.map((f) => (f.key === "trash_retention_days" ? { ...f, effective: -5, source: "config" as const } : f)) };
+    expect(invalidKeys(stored, { skip_permissions: true, show_cost_above_usd: 5, trash_retention_days: -5 })).toEqual([]);
+    expect(invalidKeys(stored, { skip_permissions: true, show_cost_above_usd: 5, trash_retention_days: -3 })).toEqual(["trash_retention_days"]);
+  });
+
+  it("an already-invalid effective from config.yaml does not lock Save for the rest of the section", async () => {
+    // server 读文件不查 ≥0（settings_catalog._coerce_number）：`trash: retention_days: -5` 进页就是 -5。
+    // 原生每格独立提交——别的开关照常能落；这一格原样显示（红字提示仍在），不脏、不进 PUT
+    const stored = approvalSection();
+    stored.fields = stored.fields.map((f) => (f.key === "trash_retention_days" ? { ...f, effective: -5, source: "config" as const } : f));
+    primeCatalog(stored);
+    renderEn(<CatalogSection sectionId="approval" />);
+    const days = await screen.findByLabelText("Trash retention days") as HTMLInputElement;
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(days.value).toBe("-5");
+    expect(save.disabled).toBe(true);                            // 干净：没东西可保存
+
+    fireEvent.click(screen.getByRole("switch", { name: "Skip confirmations" }));
+    expect(screen.getByText("1 unsaved")).toBeTruthy();
+    expect(save.disabled).toBe(false);                           // 没碰过的越界值不锁整区
+
+    fireEvent.change(days, { target: { value: "-3" } });         // 一碰它就按法条挡
+    expect(save.disabled).toBe(true);
+    fireEvent.change(days, { target: { value: "-5" } });         // 改回存值 = 没碰过
+    expect(save.disabled).toBe(false);
+
+    vi.mocked(putSettingsSection).mockResolvedValue({ ...stored, fields: stored.fields.map((f) => (f.key === "skip_permissions" ? { ...f, effective: false } : f)) });
+    fireEvent.click(save);
+    await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(putSettingsSection).mock.calls[0]).toEqual(["approval", { skip_permissions: false }]);
   });
 });

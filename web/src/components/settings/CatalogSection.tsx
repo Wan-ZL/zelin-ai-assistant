@@ -4,9 +4,11 @@
 // `children` 是 section 尾部的装饰槽（来源区放健康摘要 + 凭证行；通用区留空）。
 // 草稿三条守则（§68.1 追记；原生 Settings.swift 头注「NO deferred save」的 web 对应）：
 // (a) 同 section 的即时写者（Slack 勾选器 / 目录「创建」）刷新目录时**合并**而不是重置——用户改过的键留草稿、
-//     其余键跟新 effective；自己「保存」成功后草稿对齐回执（原生：commit 成功后显示值 = effective）。
+//     其余键跟新 effective；同一个键两边都动了以 server 为准（草稿不得静默撤回别处刚落盘的写）；
+//     自己「保存」成功后草稿对齐回执（原生：commit 成功后显示值 = effective）。
 // (b) 有未保存改动时挂 beforeunload（rail / ⌘1…⌘7 / /open 都是整页导航，这就是离页守卫）；存净即摘。
-// (c) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用且该键不进 PUT（原生 numberField 解析失败写 NOTHING）。
+// (c) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用且该键不进 PUT（原生 numberField 解析失败写 NOTHING）；
+//     只看用户改过的键——config.yaml 里既有的越界值不锁整区。
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { refreshSettingsCatalog, saveSettingsSection, useAppState } from "../../store";
@@ -56,19 +58,28 @@ export function changedKeys(section: SettingsSection, draft: Draft): string[] {
     .map((field) => field.key);
 }
 
-/** 草稿里非法的 number / int 键（挡「保存」、不进 PUT；其它 kind 永不在列） */
+/** 草稿里非法的 number / int 键（挡「保存」、不进 PUT；其它 kind 永不在列）。
+ *  只计**用户改过的**键（草稿 ≠ effective）：config.yaml 里既有的越界值（server `_coerce_number` 读文件不查 ≥0）
+ *  原样显示、不锁整区的「保存」——原生每格独立提交，别的开关照常能落；它本来就不脏、也不会进 PUT。 */
 export function invalidKeys(section: SettingsSection, draft: Draft): string[] {
   return section.fields
-    .filter((field) => (field.kind === "number" || field.kind === "int") && !isValidNumberDraft(field.kind, draft[field.key]))
+    .filter((field) => (field.kind === "number" || field.kind === "int")
+      && draft[field.key] !== field.effective
+      && !isValidNumberDraft(field.kind, draft[field.key]))
     .map((field) => field.key);
 }
 
-/** 目录刷新时的草稿合并：用户改过的键（草稿 ≠ 刷新前的 effective）留草稿，其余键跟新 effective */
+/** 目录刷新时的草稿合并：用户改过的键（草稿 ≠ 刷新前的 effective）留草稿，其余键跟新 effective。
+ *  例外：改过的键在 server 侧**也动了**（新 effective ≠ 刷新前的 effective）→ 新 effective 赢——那是别处（勾选器）
+ *  刚落盘的写，草稿再盖上去等于下次「保存」把它静默撤回（同键冲突以 server 为准，与首版「整份重置」同向）。 */
 export function mergeDraft(previous: Draft | null, previousBase: Draft | null, fresh: Draft): Draft {
   if (!previous || !previousBase) return fresh;
   const merged: Draft = { ...fresh };
   for (const key of Object.keys(fresh)) {
-    if (key in previous && key in previousBase && previous[key] !== previousBase[key]) merged[key] = previous[key];
+    if (!(key in previous) || !(key in previousBase)) continue;
+    const touched = previous[key] !== previousBase[key];
+    const serverMoved = fresh[key] !== previousBase[key];
+    if (touched && !serverMoved) merged[key] = previous[key];
   }
   return merged;
 }
