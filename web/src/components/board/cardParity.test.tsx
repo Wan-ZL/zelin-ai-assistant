@@ -1,12 +1,13 @@
 // 原生看板 parity 判例（mac/Sources/Cards.swift 为规格）：
-//   1) 详情默认收起，「Details ▸ / Collapse ▾」按卡切换，展开态按卡 id 在会话内记忆（卸载重挂仍展开）；
+//   1) 卡面永远收起（D34 / #217）：plan / DoD / 来源不在卡的 DOM 里；「Details ▸」= 打开右侧详情侧栏
+//      （选中卡 + ?card= 深链），卡上没有「Collapse ▾」、没有双击绑定——卡片详情只有侧栏一面；
 //   2) 卡面 chips / 行从投影字段渲染：提案落点行 + 已并入×N；待验收 repo 章 + 耗时 + 已等待验收；
 //      阶段性完成 已交付 + repo 章 + 验收于（相对时间，hover 绝对）+ 单击复制指令；
 //   3) 出错的执行卡：让 AI 修（POST /api/ai-fix，只传 card_id + lang）+ 回答…（comment/steer 四键形）+ 停止；
 //   4) 卡 id 在标题行右侧（.card-head 内）。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetStoreForTests } from "../../store";
+import { getState, resetStoreForTests } from "../../store";
 import type { ApprovalCard, ReviewCard as ReviewRow, TaskRow } from "../../types";
 import { DoneCard } from "./DoneCard";
 import { ProposalCard } from "./ProposalCard";
@@ -17,6 +18,7 @@ vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
   postAction: vi.fn().mockResolvedValue({ ok: true }),
   postAiFix: vi.fn().mockResolvedValue({ ok: true, command_file: "/tmp/x.command" }),
+  fetchCard: vi.fn(async (id: string) => ({ id })),
 }));
 import { postAction, postAiFix } from "../../api";
 
@@ -30,6 +32,7 @@ beforeEach(() => {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
     HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.open = false; };
   }
+  window.history.replaceState(null, "", "/");
   resetStoreForTests();
   vi.mocked(postAction).mockClear();
   vi.mocked(postAiFix).mockClear();
@@ -54,34 +57,28 @@ function proposal(extra: Partial<ApprovalCard> = {}): ApprovalCard {
   };
 }
 
-describe("details collapsed by default + per-card memory", () => {
-  it("提案卡：plan/DoD/来源默认不在 DOM；点 Details ▸ 出现；再点 Collapse ▾ 收起", () => {
+describe("one detail surface (D34): the card face stays collapsed, Details ▸ opens the sidebar", () => {
+  it("提案卡：plan/DoD/来源/技术标题不在卡的 DOM；点 Details ▸ = 选中这张卡 + ?card= 深链；卡上没有 Collapse ▾", () => {
     render(<ProposalCard card={proposal()} />);
     expect(screen.queryByText(/接后端/)).toBeNull();
     expect(screen.queryByText(/点击后下载 CSV/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
-    expect(screen.getByText(/接后端/)).toBeTruthy();
-    expect(screen.getByText(/点击后下载 CSV/)).toBeTruthy();
-    expect(screen.getByText(/能不能一键导出/)).toBeTruthy();
-    expect(screen.getByText(/技术标题/)).toBeTruthy(); // 长技术标题住在详情里
-    fireEvent.click(screen.getByRole("button", { name: "Collapse ▾" }));
+    expect(screen.queryByText(/能不能一键导出/)).toBeNull();
+    expect(screen.queryByText(/技术标题/)).toBeNull();
+    const details = screen.getByRole("button", { name: "Details ▸" });
+    expect(details.getAttribute("aria-haspopup")).toBe("dialog");
+    fireEvent.click(details);
+    expect(getState().selectedCardId).toBe("R-301");
+    expect(new URLSearchParams(window.location.search).get("card")).toBe("R-301");
+    // 卡面一个字没多：详情住侧栏（DetailFields），不就地撑开
     expect(screen.queryByText(/接后端/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Collapse ▾" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Details ▸" })).toBeTruthy();
   });
 
-  it("展开态按卡 id 记忆：卸载重挂仍展开；另一张卡不受影响", () => {
-    const { unmount } = render(<ProposalCard card={proposal()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
-    unmount();
-    render(
-      <>
-        <ProposalCard card={proposal()} />
-        <ProposalCard card={proposal({ id: "R-302", plan: ["另一张卡的步骤"] })} />
-      </>,
-    );
-    expect(screen.getByText(/接后端/)).toBeTruthy();
-    expect(screen.queryByText(/另一张卡的步骤/)).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Collapse ▾" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Details ▸" })).toHaveLength(1);
+  it("双击卡片不再开详情（语义留给 #216 终端接管）", () => {
+    render(<ProposalCard card={proposal()} />);
+    fireEvent.doubleClick(screen.getByRole("article"));
+    expect(getState().selectedCardId).toBeNull();
   });
 
   it("卡 id 在标题行右侧（.card-head 内的 .card-id）", () => {
@@ -118,7 +115,7 @@ describe("proposal chips from projection fields", () => {
 });
 
 describe("review card meta line", () => {
-  it("repo 章 + 耗时 + 已等待验收（自驱时长）+ 单击复制指令；DoD 在详情里", () => {
+  it("repo 章 + 耗时 + 已等待验收（自驱时长）+ 单击复制指令；DoD 只在侧栏", () => {
     const card: ReviewRow = {
       id: "R-410",
       name: "周报成稿",
@@ -136,10 +133,12 @@ describe("review card meta line", () => {
     expect(screen.getByText(byFullText("in review 10m"))).toBeTruthy();
     const copyLine = screen.getByRole("button", { name: /Click to copy the command/ });
     expect(copyLine.getAttribute("title")).toBe("cd '/tmp/w' && claude --resume abc");
+    // DoD / 交付了什么 都在侧栏（DetailFields.blocks.test.tsx 钉），卡面只有入口
     expect(screen.queryByText(/覆盖三条来源/)).toBeNull();
+    expect(screen.queryByText("Delivered:")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
-    expect(screen.getByText(/☐ 覆盖三条来源/)).toBeTruthy();
-    expect(screen.getByText("Delivered:")).toBeTruthy();
+    expect(getState().selectedCardId).toBe("R-410");
+    expect(screen.queryByText(/覆盖三条来源/)).toBeNull();
   });
 });
 

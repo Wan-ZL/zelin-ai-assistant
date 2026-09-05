@@ -10,6 +10,8 @@ import { ProposalCard } from "./ProposalCard";
 vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
   postAction: vi.fn().mockResolvedValue({ ok: true }),
+  // 「Details ▸」打开详情侧栏 = selectCard → 拉详情；这里只要 store 记下「看过明细」（T2 闸门），详情内容不在本判例
+  fetchCard: vi.fn(async (id: string) => ({ id })),
 }));
 import { postAction } from "../../api";
 
@@ -58,7 +60,8 @@ describe("ProposalCard approve", () => {
 
   it("T2 批准先过 typed-confirm：错词不发、正词(go/确认)放行且 wire 同 T1", () => {
     render(<ProposalCard card={makeCard("T2")} />);
-    // 原生 T2 gate（Cards.swift:1127）：详情没展开前只有「T2 需先展开看明细」，没有批准键
+    // 原生 T2 gate（Cards.swift:1127）：没看过明细前只有「T2 需先展开看明细」，没有批准键；
+    // D34 后「看过明细」= 本会话打开过这张卡的详情侧栏（Details ▸ → selectCard → store.detailViewedIds）
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.getByText("T2: expand details first")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
@@ -94,7 +97,7 @@ describe("ProposalCard approve", () => {
     render(<ProposalCard card={card} />);
     // M8：卡面点明升档，别让用户见 "T1" 却弹 T2 确认框
     expect(screen.getByText("External → T2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Details ▸" })); // 生效 T2 同样先展开（§50）
+    fireEvent.click(screen.getByRole("button", { name: "Details ▸" })); // 生效 T2 同样先看明细（§50）
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(postAction).not.toHaveBeenCalled();
     const input = screen.getByPlaceholderText("Type 确认 or go");

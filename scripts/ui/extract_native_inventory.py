@@ -195,6 +195,17 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬",
     },
+    # D34（owner 2026-09-04，issue #217）：卡片详情只留一面——「展开详情 ▸」打开右侧详情侧栏，原生 CardSurface 的
+    # 就地展开详情槽在 web 退役，卡面永远收起态。「收起 ▾」是就地展开的对偶动词，侧栏的关闭是 × / ⎋ / 背板；
+    # 详情槽里的积木（💬 需求来自 / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID …）照判——渲染面换成侧栏。
+    "control:board.card:button:collapse": {
+        "owner": "retired",
+        "reason": "D34 卡片详情只留侧栏一面（§49 追记 2026-09-04 / §54.1 第 2 项 tombstone）：就地展开退役，无「收起 ▾」；侧栏关闭 = × / ⎋",
+    },
+    "control:board.needs_approval:button:collapse": {
+        "owner": "retired",
+        "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部

@@ -1,6 +1,6 @@
 // 可访问性判例（issue #8；CONTRACT §54.1 第 11 项）：
-//   1) 键盘路径——每种卡的 <article> 可聚焦，Enter / Space 打开详情抽屉（双击的键盘等价物）；
-//      焦点在卡内按钮上按 Enter 不会顺带开抽屉（按钮自己的 Enter 归按钮）；
+//   1) 键盘路径——每种卡的 <article> 可聚焦，Enter / Space 打开详情侧栏（「展开详情 ▸」的键盘等价物）；
+//      焦点在卡内按钮上按 Enter 不会顺带开侧栏（按钮自己的 Enter 归按钮）；双击卡片不开侧栏（D34，语义留给 #216）；
 //   2) 状态不靠颜色——每张卡的 aria-label 以状态词开头（色点 aria-hidden）；
 //   3) 复制反馈可听——单击复制后有 role=status 的「已复制」播报；
 //   4) axe-core 全卡面扫描零 violation（color-contrast 规则在 jsdom 无布局不可判，关掉；
@@ -28,6 +28,7 @@ import { RunningCard } from "./RunningCard";
 vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
   postAction: vi.fn().mockResolvedValue({ ok: true }),
+  fetchCard: vi.fn(async (id: string) => ({ id })),
 }));
 
 beforeEach(() => {
@@ -76,6 +77,14 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
     const details = screen.getByRole("button", { name: /Details/ });
     fireEvent.keyDown(details, { key: "Enter" });
     expect(screen.getByTestId("selected").textContent).toBe("");
+  });
+
+  it("「Details ▸」 click opens the sidebar for that card; double-click on the card does nothing (D34)", () => {
+    render(<><ProposalCard card={PROPOSAL_T1} /><SelectedProbe /></>);
+    fireEvent.doubleClick(screen.getByRole("article", { name: /^Proposal · / }));
+    expect(screen.getByTestId("selected").textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+    expect(screen.getByTestId("selected").textContent).toBe(PROPOSAL_T1.id);
   });
 
   it("click-to-copy announces success through a status region", async () => {

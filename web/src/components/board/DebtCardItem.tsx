@@ -3,12 +3,11 @@
 //   研究并提议（raise → AI 扩写成提案）· 删除（trash → 回收站，可恢复，不弹确认）·
 //   永久完成（封存，不再提示）（archive → 永久性完成书立条，可逆不弹确认；原生住右键菜单——
 //   web 没有右键惯例，做成动作行里安静的第三颗）。
-// 卡面：摘要标题 + type / 硬需求 章；「展开详情 ▸」后：技术标题 + 💬 需求来自。
+// 卡面：摘要标题 + type / 硬需求 章；技术标题 + 💬 需求来自 住右侧详情侧栏（「展开详情 ▸」打开，D34）。
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { DebtCard } from "../../types";
 import { cardAction, pendingNote, useSubmit } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, DetailsToggle } from "./cardChrome";
-import { SourceList } from "./detailBlocks";
+import { CardHead, CardSurface, DetailsToggle } from "./cardChrome";
 
 interface DebtCardItemProps {
   item: DebtCard;
@@ -27,10 +26,6 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
         {item.hardness === "hard" && <span className="chip chip-danger">{text("硬需求", "Hard")}</span>}
       </div>
-      <CardDetails cardId={item.id}>
-        {item.title !== displayTitle && <p className="card-detail-title">{item.title}</p>}
-        <SourceList sources={item.sources} />
-      </CardDetails>
       {pending ? (
         <p className="card-pending-note">
           {pendingAction === "raise"

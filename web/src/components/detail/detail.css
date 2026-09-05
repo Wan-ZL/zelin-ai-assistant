@@ -188,18 +188,53 @@
 
 .zai-detail-section { margin: 14px 0; }
 
-.zai-detail-section > h3 {
+/* 小标题文案逐字镜像原生详情槽（📋 要做什么 / 怎样算办完： / 💬 需求来自 …）——不 uppercase，emoji + 冒号原样 */
+.zai-detail-section h3 {
   font-size: calc(12px * var(--text-scale));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: var(--w-semibold);
   color: var(--text-tertiary);
   margin: 0 0 6px;
 }
+
+/* 小标题 + 右侧小按钮（错误全文 · 复制） */
+.zai-detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.zai-detail-section-head h3 { margin: 0; }
 
 .zai-detail-section ol,
 .zai-detail-section ul { margin: 4px 0; padding-left: 1.5em; font-size: calc(13px * var(--text-scale)); }
 
 .zai-detail-dod li { list-style: "☐  "; }
+
+/* 「[修改方向]」行（原生 PlanListView：rework ? .semibold : .regular，橙） */
+.zai-detail-section li.is-rework { color: var(--warning); font-weight: var(--w-semibold); }
+
+/* 错误全文（原生 Cards.swift:746 的等宽全文块；卡面只留红色一句） */
+.zai-detail-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(12px * var(--text-scale));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 提案的 💰 费用行（原生 ApprovalCardView.costText） */
+.zai-detail-cost {
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-size: calc(13px * var(--text-scale));
+  font-weight: var(--w-semibold);
+}
 
 .zai-detail-source {
   margin: 8px 0;
@@ -227,6 +262,16 @@
   border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   padding: 6px 10px;
+}
+
+.zai-detail-cmd + .zai-detail-cmd { margin-top: 6px; }
+
+/* 行首标签（日志： / 指令： / 会话 ID： / claude agents 列表名：）——独占一个节点，前缀与值分开 */
+.zai-detail-cmd-label {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: calc(12px * var(--text-scale));
+  white-space: nowrap;
 }
 
 .zai-detail-cmd code {

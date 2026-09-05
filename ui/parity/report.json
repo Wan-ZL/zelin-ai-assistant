@@ -1,7 +1,7 @@
 {
   "counts": {
     "PENDING": 15,
-    "PRESENT": 832,
+    "PRESENT": 830,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -41,7 +41,6 @@
     "control:board.archived:textfield:search-title-summary": "PRESENT",
     "control:board.archived:textfield:search-title-summary#2": "PRESENT",
     "control:board.card:button:cancel": "PRESENT",
-    "control:board.card:button:collapse": "PRESENT",
     "control:board.card:button:copied": "PRESENT",
     "control:board.card:button:copy": "PRESENT",
     "control:board.card:button:details": "PRESENT",
@@ -172,7 +171,6 @@
     "control:board.needs_approval:alert-button:won-t-do-to-trash": "PRESENT",
     "control:board.needs_approval:button:approve": "PRESENT",
     "control:board.needs_approval:button:clean-up": "PRESENT",
-    "control:board.needs_approval:button:collapse": "PRESENT",
     "control:board.needs_approval:button:comment": "PRESENT",
     "control:board.needs_approval:button:details": "PRESENT",
     "control:board.needs_approval:button:later": "PRESENT",
@@ -862,7 +860,7 @@
   "not_gated": {
     "informational": 414,
     "os": 11,
-    "retired": 54,
+    "retired": 56,
     "shell": 70
   },
   "ok": true,

@@ -4,16 +4,15 @@
 //   复制成稿（final_draft 非空时，剪贴板 + 1.5s「已复制 ✓」回执，纯客户端）。
 // 卡面（原生 ReviewRow 收起态的 meta 行）：会话有新活动（青）· repo 章 · 耗时 <dispatched→review> ·
 //   已等待验收 <review→now，自驱走表> · §64 AI 评语章（建议验收/需继续做/需要拍板，点看理由）·
-//   §64 AI 一句白话摘要行 · 单击复制指令 行；「展开详情 ▸」后：交付了什么（执行器原话，原样）/
-//   摘要 / ☐ 验收清单（§11：永远渲染，空给兜底句）/ 📋 要做什么 / 💬 需求来自 / 日志 / 指令。
-//   评语只是建议：验收 / 打回仍只有下面两个按钮能按。
+//   §64 AI 一句白话摘要行 · 单击复制指令 行。交付了什么（执行器原话，原样）/ 摘要 / ☐ 验收清单
+//   （§11：永远渲染，空给兜底句）/ 📋 要做什么 / 💬 需求来自 / 日志 / 指令 住右侧详情侧栏
+//   （「展开详情 ▸」打开，D34；DetailFields 渲染）。评语只是建议：验收 / 打回仍只有下面两个按钮能按。
 import { useEffect, useRef, useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, MergeStateChip, RepoChip, TerminalButton } from "./cardChrome";
-import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
+import { CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, MergeStateChip, RepoChip, TerminalButton } from "./cardChrome";
 import { TextDialog } from "./TextDialog";
 import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
 
@@ -81,24 +80,6 @@ export function ReviewCard({ card }: ReviewCardProps) {
       </div>
       <AssessmentSummaryLine assessment={card.assessment} />
       <CopyCommandLine cmd={card.copy_cmd} />
-      <CardDetails cardId={card.id}>
-        {card.delivered_summary ? (
-          <>
-            {/* v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文 */}
-            <div className="card-detail-subheading">{text("交付了什么：", "Delivered:")}</div>
-            <BodyText value={card.delivered_summary} />
-            <BodyText value={card.summary} className="card-detail-muted" />
-          </>
-        ) : (
-          <BodyText value={card.summary} />
-        )}
-        <DodList dod={card.dod} heading={text("验收清单——逐条对照：", "Acceptance checklist:")} checklist />
-        <PlanList plan={card.plan} />
-        <SourceList sources={card.sources} />
-        <CopyPathLine label={text("日志：", "Log: ")} path={card.log} />
-        <CopyPathLine label={text("指令：", "Command: ")} path={card.copy_cmd} />
-        <MetaLine label={text("claude agents 列表名：", "claude agents list name: ")} value={card.agent_name} />
-      </CardDetails>
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (

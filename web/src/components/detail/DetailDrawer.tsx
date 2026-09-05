@@ -1,6 +1,6 @@
-// 详情抽屉（BUILD-CONTRACT §2.2）：selectedCardId 驱动，双击/⏎ 开抽屉的绑定在卡片
-// 组件侧（A6 调 selectCard(id)），本组件负责渲染 + 关闭（Esc/背板/按钮）+ ?card= 深链
-// 同步 + 「复制为 Markdown」（头部按钮 + 右键菜单项）。
+// 详情侧栏（BUILD-CONTRACT §2.2；D34 / CONTRACT §49 追记：卡片详情的**唯一**面）：selectedCardId 驱动，
+// 「展开详情 ▸」/ ⏎ 开侧栏的绑定在卡片组件侧（cardChrome 调 openCardDetail → selectCard(id)），
+// 本组件负责渲染 + 关闭（Esc/背板/按钮）+ ?card= 深链同步 + 「复制为 Markdown」（头部按钮 + 右键菜单项）。
 // 挂载点：app.tsx（或 BoardPage）加一行 <DetailDrawer />——集成 agent 接线（A7 无权改
 // A5/A6 的文件）。组件自身在 selectedCardId=null 时渲染 null，挂在任何页面都无副作用。
 import { useEffect, useRef, useState } from "react";

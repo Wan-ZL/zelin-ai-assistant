@@ -1,12 +1,15 @@
 // 卡面共用小件——镜像原生 CardSurface（mac/Sources/Cards.swift）的几样 chrome：
-//   CardHead：标题行 + 右上角等宽小字 id（原生 idTag 位置，收起态可见）；
-//   DetailsToggle：动作行尾右对齐的「展开详情 ▸ / 收起 ▾」（展开态记在 store，会话内按卡 id 记忆）；
+//   CardHead：标题行 + 右上角等宽小字 id（原生 idTag 位置）；
+//   DetailsToggle：动作行尾右对齐的「展开详情 ▸」——打开右侧详情侧栏（openCardDetail：选中卡 + ?card= 深链）。
+//     卡片详情只有这一面（D34 / issue #217，§49 追记）：原生 CardSurface 的就地展开详情槽在 web 退役，
+//     卡面永远是收起态，泳道不再被撑高；
 //   RelativeTime：卡面一律相对时间（19天前 / 2小时59分），hover 给绝对时间；
 //   RepoChip：cwd / target basename 中性章；
 //   CopyCommandLine：「单击复制指令」行——网页没有终端入口（server 无对应 endpoint），只复制，tooltip 说明；
 //   ErrorLine + 让 AI 修：错误一句（红）+ 起 server 的 act.ai_fix 修复会话（POST /api/ai-fix）。
-//   CardSurface（issue #8 a11y）：五种卡共用的 <article>——可聚焦、Enter/Space 打开详情抽屉
-//     （双击的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
+//   CardSurface（issue #8 a11y）：五种卡共用的 <article>——可聚焦、Enter/Space 打开详情侧栏
+//     （「展开详情 ▸」的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
+//     卡上没有双击绑定（D34：双击语义留给 #216 终端接管）。
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -15,7 +18,7 @@ import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
 import { openCardDetail } from "./boardActions";
-import { toggleCardExpanded, toggleSelected, useAppState } from "../../store";
+import { toggleSelected, useAppState } from "../../store";
 import { copyText } from "../detail/copyText";
 
 /** id 标签读的投影键（§60 两段式编号：卡面展示 display_id，动作回传仍送主键 id） */
@@ -35,11 +38,11 @@ interface CardSurfaceProps {
 }
 
 /**
- * 卡片外壳（issue #8）：原生 CardSurface 的整卡双击开详情在网页上没有键盘等价物——
- * 这里给 article 加 tabIndex + Enter/Space 打开详情抽屉（只在焦点落在卡本身、不是
- * 卡里的按钮/输入框时响应，免得抢走按钮自己的 Enter），aria-label 把状态词与标题
- * 读出来（色点是 aria-hidden 的装饰）。<article> 的隐式 role 已是 article（可带 aria-label，
- * VoiceOver 把整卡当一个可导航项）——不另加 role（axe aria-allowed-role 会拒）。
+ * 卡片外壳（issue #8）：article 加 tabIndex + Enter/Space 打开详情侧栏（「展开详情 ▸」的键盘
+ * 等价物；只在焦点落在卡本身、不是卡里的按钮/输入框时响应，免得抢走按钮自己的 Enter），
+ * aria-label 把状态词与标题读出来（色点是 aria-hidden 的装饰）。<article> 的隐式 role 已是
+ * article（可带 aria-label，VoiceOver 把整卡当一个可导航项）——不另加 role（axe aria-allowed-role 会拒）。
+ * 不绑双击（D34）：双击作详情入口不可发现、还和选文本手势打架；它的语义留给 #216 终端接管。
  */
 export function CardSurface({ cardId, label, className = "", children }: CardSurfaceProps) {
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -54,7 +57,6 @@ export function CardSurface({ cardId, label, className = "", children }: CardSur
       className={`task-card${className ? ` ${className}` : ""}`}
       tabIndex={0}
       aria-label={label}
-      onDoubleClick={() => openCardDetail(cardId)}
       onKeyDown={onKeyDown}
     >
       {children}
@@ -95,7 +97,6 @@ export function SelectCheckbox({ cardId }: { cardId: string }) {
       aria-label={text(`选择 ${cardId}`, `Select ${cardId}`)}
       checked={selectedIds.has(cardId)}
       onChange={() => toggleSelected(cardId)}
-      onDoubleClick={(event) => event.stopPropagation()}
     />
   );
 }
@@ -114,33 +115,29 @@ export function CardHead({ card, title, leading, isMuted = false, variant, selec
   );
 }
 
-/** 一张卡是否展开（store 会话内记忆） */
-export function useCardExpanded(cardId: string): boolean {
-  const { expandedCardIds } = useAppState();
-  return expandedCardIds.has(cardId);
+/** 这张卡的详情侧栏在本会话里打开过（T2 提案「需先展开看明细」闸门读它，§54.1 第 2 项追记） */
+export function useDetailViewed(cardId: string): boolean {
+  const { detailViewedIds } = useAppState();
+  return detailViewedIds.has(cardId);
 }
 
-/** 展开详情 ▸ / 收起 ▾（原生 CardSurface 详情槽的 toggle：plain 灰链接，动作行尾右对齐） */
+/**
+ * 「展开详情 ▸」（原生 CardSurface 详情槽 toggle 的字面 + 位置：plain 灰链接，动作行尾右对齐）——
+ * D34 起打开右侧详情侧栏（选中卡 + ?card= 深链，可刷新还原 / 可分享），不再就地撑开卡片；
+ * 关闭在侧栏自己（× / ⎋ / 背板），卡上没有「收起 ▾」。
+ */
 export function DetailsToggle({ cardId }: { cardId: string }) {
   const { text } = useI18n();
-  const expanded = useCardExpanded(cardId);
   return (
     <button
       type="button"
       className="card-details-toggle"
-      aria-expanded={expanded}
-      onClick={() => toggleCardExpanded(cardId)}
+      aria-haspopup="dialog"
+      onClick={() => openCardDetail(cardId)}
     >
-      {expanded ? text("收起 ▾", "Collapse ▾") : text("展开详情 ▸", "Details ▸")}
+      {text("展开详情 ▸", "Details ▸")}
     </button>
   );
-}
-
-/** 详情区容器（只在展开时渲染；children 由各卡按原生 detailBlock 组织） */
-export function CardDetails({ cardId, children }: { cardId: string; children: ReactNode }) {
-  const expanded = useCardExpanded(cardId);
-  if (!expanded) return null;
-  return <div className="card-details">{children}</div>;
 }
 
 type Stamp = { epoch?: unknown; iso?: unknown };
@@ -187,8 +184,7 @@ export function RepoChip({ path }: { path: unknown }) {
 
 /**
  * 「单击复制指令」行（原生 TaskRow / ReviewRow 的 copy 仰赖整卡点击 + 双击起终端）。
- * 网页：整卡双击已归详情抽屉，且 server 没有终端 endpoint——这一行本身就是复制热区，
- * 文案如实只承诺复制；tooltip 带完整命令。
+ * 网页：这一行本身就是复制热区，文案如实只承诺复制；tooltip 带完整命令。双击在终端接管归 #216。
  */
 export function CopyCommandLine({ cmd }: { cmd: unknown }) {
   const { text } = useI18n();

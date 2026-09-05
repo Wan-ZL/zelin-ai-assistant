@@ -394,8 +394,14 @@ class ControlClassificationTestCase(_FixtureCase):
         plist = self.controls["control:doctor:label:failed-to-write-dest"]
         self.assertEqual((plist["owner"], plist["gated"]), ("retired", False))
         self.assertIn("server 永不写 plist", plist["reason"])
+        # D34（§49 追记 2026-09-04）：就地展开退役 → 「收起 ▾」按 CONTROL_OWNER retired，理由带 §；「展开详情 ▸」照判
+        collapse = self.controls["control:board.needs_approval:button:collapse"]
+        self.assertEqual((collapse["owner"], collapse["gated"]), ("retired", False))
+        self.assertIn("§49", collapse["reason"])
+        self.assertTrue(self.controls["control:board.needs_approval:button:details"]["gated"])
         self.assertEqual({c["id"] for c in self.controls.values() if c.get("reason")},
-                         {"control:doctor:label:failed-to-write-dest", "control:settings:label:no-usable-python"})
+                         {"control:doctor:label:failed-to-write-dest", "control:settings:label:no-usable-python",
+                          "control:board.needs_approval:button:collapse"})
 
     def test_duplicate_ids_get_dense_suffixes_in_source_order(self):
         first = self.controls["control:settings.general:button:open"]

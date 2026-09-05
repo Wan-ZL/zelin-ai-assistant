@@ -7,15 +7,15 @@
 // （stop_to_review）；两动词都允许 approved（排队卡）与 executing。无拖拽换状态（§0.8）。
 // 出错的卡（原生 TaskRow.errorLine）：错误一句 + 「让 AI 修」（POST /api/ai-fix，起 act.ai_fix
 // 修复会话）+ 「回答…」（= comment 即 steer：answer_input 已退役，方向修正经 §44.3 中继）。
-// 「展开详情 ▸」后：summary / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID / agents 列表名。
+// 错误全文 / summary / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID / agents 列表名 住右侧详情侧栏
+// （「展开详情 ▸」打开，D34；DetailFields 渲染）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
-import { cardAction, useSubmit, pendingNote } from "./boardActions";
-import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
-import { BodyText, CopyButton, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
+import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
+import { AiFixButton, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -44,14 +44,6 @@ export function stateLabel(state: string, text: (zh: string, en: string) => stri
     case "unknown": return text("状态未知", "Unknown");
     default: return state;
   }
-}
-
-/** 状态正确的命令（原生 TaskRow.cmd）：copy_cmd 优先，其次 claude --resume <sid>；排队卡无 */
-export function resumeCommand(row: TaskRow): string | null {
-  if (row.state === "queued") return null;
-  if (typeof row.copy_cmd === "string" && row.copy_cmd) return row.copy_cmd;
-  if (typeof row.session_id === "string" && row.session_id) return `claude --resume ${row.session_id}`;
-  return null;
 }
 
 export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
@@ -165,30 +157,10 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           <CopyCommandLine cmd={cmd} />
         </>
       )}
-      {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；原文 hover 可见，详情里有全文 */}
+      {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；原文 hover 可见，详情侧栏有全文 + 复制 */}
       {!isBlocked && hasError && (
         <ErrorLine prefix={isQueued ? text("派发失败：", "Dispatch failed: ") : text("错误：", "Error: ")} raw={errorText} />
       )}
-      <CardDetails cardId={row.id}>
-        {(hasError || (isBlocked && row.last_error)) && (
-          <>
-            <div className="card-detail-subheading">
-              {text("错误全文", "Full error")}
-              <CopyButton value={String(errorText ?? row.last_error)} />
-            </div>
-            <pre className="card-error-block">{errorText ?? row.last_error}</pre>
-          </>
-        )}
-        {/* §39 受阻卡的第二条路（原生 detailBlock lane == .needsInput）：把会话接到终端里——复制状态正确的 attach / --resume 指令 */}
-        {isBlocked && <CopyPathLine label={text("在终端接管会话：", "Take over in terminal: ")} path={cmd} />}
-        <BodyText value={row.summary} />
-        <PlanList plan={row.plan} />
-        <DodList dod={row.dod} />
-        <CopyPathLine label={text("日志：", "Log: ")} path={row.log} />
-        <CopyPathLine label={text("指令：", "Command: ")} path={cmd} />
-        <MetaLine label={text("会话 ID：", "Session ID: ")} value={row.short_id ?? row.session_id} />
-        <MetaLine label={text("claude agents 列表名：", "claude agents list name: ")} value={row.agent_name} />
-      </CardDetails>
       {pending ? (
         <p className="card-pending-note">
           {steerQueued

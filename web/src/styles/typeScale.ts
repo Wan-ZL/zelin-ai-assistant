@@ -44,22 +44,17 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-card-body", font: "var(--w-regular) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1724, size: 11, weight: "regular" },
-    zh: "正文：详情 summary · 📋 计划条目 · 交付了什么正文 · 提问 · 分歧", en: "Body: detail summary · plan items · delivered text · question · disagreement",
-  },
-  {
-    token: "--type-card-body-strong", font: "var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 530, size: 11, weight: "semibold" },
-    zh: "📋 计划里的「[修改方向]」行（PlanListView rework 分支，橙）", en: "Plan rows starting with [修改方向] (PlanListView rework branch, orange)",
+    zh: "正文：合并建议「接受后将执行」条目 · 提问 · 分歧", en: "Body: merge-suggestion action-plan items · question · disagreement",
   },
   {
     token: "--type-card-meta", font: "var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1593, size: 10, weight: "regular" },
-    zh: "meta 小字：相对时间 · 耗时 · 验收于 · 怎样算办完条目 · 错误一句 · 引文", en: "Meta: relative time · took · accepted · DoD items · error line · quotes",
+    zh: "meta 小字：相对时间 · 耗时 · 验收于 · 错误一句", en: "Meta: relative time · took · accepted · error line",
   },
   {
     token: "--type-card-meta-strong", font: "var(--w-medium) calc(10px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1307, size: 10, weight: "medium" },
-    zh: "需求来自 who · channel · date 行 / 截止 / T2 提示", en: "Source who · channel · date / deadline / T2 hint",
+    zh: "会议纪要行的小标（recaps.css）/ 截止 / T2 提示", en: "Recap row small heading (recaps.css) / deadline / T2 hint",
   },
   {
     token: "--type-card-fine", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-sans)",
@@ -69,12 +64,7 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-card-fine-mono", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono)",
     swift: { file: "Cards.swift", line: 307, size: 9, weight: "regular", mono: true },
-    zh: "右上角卡 id（idTag）· 日志/指令 路径行 · 会话 ID", en: "Card id (idTag) · log / command path lines · session id",
-  },
-  {
-    token: "--type-card-error-mono", font: "var(--w-regular) calc(10px * var(--text-scale))/1.5 var(--font-mono)",
-    swift: { file: "Cards.swift", line: 768, size: 10, weight: "regular", mono: true },
-    zh: "错误全文块（ErrorTextBlock）", en: "Full error block (ErrorTextBlock)",
+    zh: "右上角卡 id（idTag）· 等宽小字", en: "Card id (idTag) · fine monospace",
   },
   {
     token: "--type-chip", font: "var(--w-semibold) calc(10px * var(--text-scale))/calc(16px * var(--text-scale)) var(--font-sans)",
@@ -89,22 +79,17 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-details-toggle", font: "var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans)",
     swift: { file: "Cards.swift", line: 362, size: 11, weight: "regular" },
-    zh: "展开详情 ▸ / 收起 ▾（动作行同字号，plain 灰链接）", en: "Details ▸ / Collapse ▾ (action-row size, plain grey link)",
-  },
-  {
-    token: "--type-detail-title", font: "var(--w-medium) calc(12px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 1277, size: 12, weight: "medium" },
-    zh: "展开后的长技术标题（expandedDetail 首行）", en: "Long technical title inside details (expandedDetail first line)",
+    zh: "展开详情 ▸（动作行同字号，plain 灰链接；D34 起打开详情侧栏）", en: "Details ▸ (action-row size, plain grey link; opens the detail sidebar since D34)",
   },
   {
     token: "--type-detail-heading", font: "var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1301, size: 11, weight: "semibold" },
-    zh: "详情小节头：💬 需求来自 · 📋 要做什么 · 💰 费用 · 📎 折叠进来的信息", en: "Detail section heads: requested by · plan · cost · folded-in updates",
+    zh: "合并建议卡「接受后将执行：」小节头", en: "Merge-suggestion card “On accept, this will:” heading",
   },
   {
     token: "--type-detail-subheading", font: "var(--w-semibold) calc(10px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1089, size: 10, weight: "semibold" },
-    zh: "怎样算办完： · 交付了什么： · 验收清单 · 错误全文", en: "Definition of done · Delivered · Acceptance checklist · Full error",
+    zh: "chrome.css 里沿用的小节头字级", en: "Small section-head size reused in chrome.css",
   },
   {
     token: "--type-lane-title", font: "var(--w-semibold) calc(12px * var(--text-scale))/1.4 var(--font-sans)",

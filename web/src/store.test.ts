@@ -159,6 +159,18 @@ describe("selectCard", () => {
     expect(getState().cardDetail).toEqual({ id: "R-202" });
   });
 
+  it("remembers every card whose sidebar was opened this session (detailViewedIds — the T2 gate reads it)", async () => {
+    vi.mocked(fetchCard).mockResolvedValue({ id: "R-101" });
+    expect(getState().detailViewedIds.has("R-101")).toBe(false);
+    selectCard("R-101");
+    expect(getState().detailViewedIds.has("R-101")).toBe(true);
+    selectCard(null); // 关侧栏不忘记：看过明细就是看过
+    expect(getState().detailViewedIds.has("R-101")).toBe(true);
+    selectCard("R-202");
+    expect([...getState().detailViewedIds].sort()).toEqual(["R-101", "R-202"]);
+    await Promise.resolve();
+  });
+
   it("selectCard(null) closes the drawer without fetching", () => {
     selectCard(null);
     expect(getState().selectedCardId).toBeNull();
