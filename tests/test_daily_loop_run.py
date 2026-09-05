@@ -1,4 +1,6 @@
-"""§70 循环运行：一天一次、先维护再提案、阶段失败隔离、审计行 + 投影键 maintenance。
+"""§70 循环运行：一天一次、先维护再提案、阶段失败隔离、审计行 + 投影键 maintenance；
+D33：doctor 红灯等自检类信号成 advisory 行（last_result.advisories，带 first_seen），
+不铸卡；owner 的 issue 照旧铸卡。
 
 假时钟 + 假 gh + 假 doctor + fixture registry；actd.run_once 的挂点用 mock 钉住。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py)。
@@ -22,8 +24,17 @@ def _gh_none(args):
     return None
 
 
+def _gh_owner_issue(args):
+    """一张 owner 开的 issue（CARD_KINDS 里唯一不需要素材台账就能铸的卡）；其余 gh 调用不可用。"""
+    if args[:2] == ["issue", "list"] and "--search" not in args:
+        return json.dumps([{"number": 5, "title": "make the loop quieter please", "body": "b",
+                            "author": {"login": "Wan-ZL"}, "url": "https://github.com/o/r/issues/5", "labels": []}])
+    return None
+
+
 def _doctor_fail():
-    return json.dumps([{"name": "launchd claude", "status": "FAIL", "detail": "TCC", "fix": "grant"}])
+    return json.dumps([{"name": "launchd claude", "status": "FAIL", "detail": "TCC", "fix": "grant",
+                        "failure_id": "claude_blind", "row_class": "owner_action"}])
 
 
 def _card(rid, title, status=State.DETECTED.value, age=60, **kw):
@@ -88,7 +99,7 @@ class RunTestCase(_Sandbox):
         _card("P-2", "duplicated topic about invoices this month", status=State.CARD_SENT.value)
         _card("P-3", "an idle backlog card nobody touched", age=70)
         _card("P-4", "fresh card stays", age=1)
-        result = daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
+        result = daily_loop.run(self.cfg, now=NOW, gh=_gh_owner_issue, doctor=_doctor_fail)
         self.assertEqual((result["merged"], result["trashed"], result["proposals"]), (1, 1, 1))
         self.assertEqual(result["errors"], [])
         reqs = {r.id: r for r in registry.load_all()}
@@ -97,13 +108,20 @@ class RunTestCase(_Sandbox):
         self.assertEqual(len(merged), 1)
         proposals = [r for r in reqs.values() if r.title.startswith("🤖 ")]
         self.assertEqual(len(proposals), 1)
-        self.assertEqual(proposals[0].sources[0]["ref"], "self_improve:doctor_fail:launchd claude")
+        self.assertEqual(proposals[0].sources[0]["ref"], "self_improve:issue:5")   # the owner issue
+        # D33: the doctor FAIL became an advisory row, not a card
+        self.assertEqual([a["kind"] for a in result["advisories"]], ["doctor_fail"])
+        self.assertEqual(result["advisories"][0]["fingerprint"], "doctor_fail:launchd claude")
+        self.assertEqual(result["advisories"][0]["first_seen"], "2026-09-02")
+        self.assertEqual(result["advisories"][0]["ref"], "claude_blind")
         # state + projection
         state = daily_loop.load_state()
         self.assertEqual(state["phase"], "idle")
         self.assertEqual(state["last_run_day"], "2026-09-02")
         self.assertEqual(state["last_result"]["merged"], 1)
-        self.assertIn("doctor_fail:launchd claude", state["fingerprints"])
+        self.assertEqual(state["last_result"]["advisories"], result["advisories"])
+        self.assertIn("issue:5", state["fingerprints"])
+        self.assertNotIn("doctor_fail:launchd claude", state["fingerprints"])
         # audit line
         lines = daily_loop.log_path().read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
@@ -111,9 +129,38 @@ class RunTestCase(_Sandbox):
         self.assertEqual(entry["day"], "2026-09-02")
         self.assertEqual([m["from"] for m in entry["merges"]], [["P-1", "P-2"]])
         self.assertEqual(entry["trashed"][0]["rule"], "idle")
-        self.assertEqual(entry["inputs"]["doctor"], 1)
-        self.assertEqual(entry["inputs"]["issues"], 0)          # gh unavailable → 0 signals, no crash
+        self.assertEqual(entry["inputs"]["doctor"], 1)          # advisory kinds still count as read
+        self.assertEqual(entry["inputs"]["issues"], 1)
+        self.assertEqual(entry["inputs"]["prs"], 0)             # gh unavailable → 0 signals, no crash
+        self.assertEqual(entry["advisories"], result["advisories"])
         self.assertIn("gh_title", entry["skipped"])
+        self.assertIn("advisory", entry["skipped"])
+
+    def test_advisory_first_seen_survives_to_the_next_day(self):
+        daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
+        again = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=1), gh=_gh_none, doctor=_doctor_fail)
+        self.assertEqual(again["proposals"], 0)
+        self.assertEqual(again["advisories"][0]["first_seen"], "2026-09-02")      # inherited
+        self.assertEqual(len([r for r in registry.load_all() if r.title.startswith("🤖 ")]), 0)
+        # gone for a day → the row drops out; back the day after → a fresh first_seen
+        daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=2), gh=_gh_none, doctor=lambda: "[]")
+        self.assertEqual(daily_loop.load_state()["advisory_first_seen"], {})
+        back = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=3), gh=_gh_none, doctor=_doctor_fail)
+        self.assertEqual(back["advisories"][0]["first_seen"], "2026-09-05")
+        self.assertEqual(daily_loop.load_state()["advisory_first_seen"], {"doctor_fail:launchd claude": "2026-09-05"})
+
+    def test_a_failed_proposals_phase_keeps_the_first_seen_memory(self):
+        # day 1 red → day 2 the proposals phase blows up (corrupt registry) → day 3 red again:
+        # the failed day reports no advisories (nothing was observed) but does not forget since when
+        daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
+        with mock.patch.object(registry, "load_all", side_effect=ValueError("corrupt yaml")):
+            broken = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=1), gh=_gh_none, doctor=_doctor_fail)
+        self.assertEqual(broken["advisories"], [])
+        self.assertTrue(any(e.startswith("proposals: ValueError") for e in broken["errors"]))
+        self.assertEqual(daily_loop.load_state()["last_result"]["advisories"], [])
+        self.assertEqual(daily_loop.load_state()["advisory_first_seen"], {"doctor_fail:launchd claude": "2026-09-02"})
+        again = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(days=2), gh=_gh_none, doctor=_doctor_fail)
+        self.assertEqual(again["advisories"][0]["first_seen"], "2026-09-02")
 
     def test_material_gets_proposed_and_the_ledger_is_written_back(self):
         from act.lib import loop_inputs, materials
@@ -134,8 +181,8 @@ class RunTestCase(_Sandbox):
         path.unlink(missing_ok=True)
 
     def test_second_run_same_day_does_not_repropose(self):
-        daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
-        again = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(hours=1), gh=_gh_none, doctor=_doctor_fail)
+        daily_loop.run(self.cfg, now=NOW, gh=_gh_owner_issue, doctor=_doctor_fail)
+        again = daily_loop.run(self.cfg, now=NOW + _dt.timedelta(hours=1), gh=_gh_owner_issue, doctor=_doctor_fail)
         self.assertEqual(again["proposals"], 0)
         self.assertEqual(len([r for r in registry.load_all() if r.title.startswith("🤖 ")]), 1)
 
@@ -143,7 +190,7 @@ class RunTestCase(_Sandbox):
         self.cfg.daily_loop_max_proposals_per_day = 1
         _card("P-9", "🤖 earlier proposal today", status=State.CARD_SENT.value, age=0,
               sources=[{"channel": "self_improve", "date": NOW.date().isoformat(), "ref": "self_improve:x:y"}])
-        result = daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
+        result = daily_loop.run(self.cfg, now=NOW, gh=_gh_owner_issue, doctor=_doctor_fail)
         self.assertEqual(result["proposals"], 0)
 
     def test_phase_failures_are_isolated_and_the_pass_survives(self):
@@ -184,8 +231,20 @@ class ProjectionTestCase(_Sandbox):
         self.assertIsInstance(m["started_at"], int)
         self.assertIsInstance(m["next_run_at"], int)
         self.assertGreater(m["next_run_at"], m["last_run_at"])
-        self.assertEqual(set(m["last_result"]), {"merged", "trashed", "proposals", "summaries", "errors"})
+        self.assertEqual(set(m["last_result"]), {"merged", "trashed", "proposals", "summaries", "errors",
+                                                 "advisories"})
         self.assertEqual(m["last_result"]["errors"], 0)
+        self.assertEqual(m["last_result"]["advisories"], [])
+
+    def test_projection_carries_advisories_verbatim(self):
+        daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)
+        m = daily_loop.attach({}, self.cfg)["maintenance"]
+        self.assertEqual(len(m["last_result"]["advisories"]), 1)
+        row = m["last_result"]["advisories"][0]
+        self.assertEqual(set(row), set(daily_loop.ADVISORY_WIRE_KEYS))
+        self.assertEqual((row["kind"], row["ref"], row["first_seen"]), ("doctor_fail", "claude_blind", "2026-09-02"))
+        self.assertTrue(row["text"].startswith("doctor 红灯：launchd claude"))
+        self.assertTrue(all(isinstance(v, str) for v in row.values()))
 
     def test_dashboard_carries_the_key_when_state_exists(self):
         daily_loop._write_state({"phase": "dedup", "started_at": "2026-09-02T10:31:00Z"})
@@ -199,6 +258,11 @@ class ProjectionTestCase(_Sandbox):
         self.assertEqual(m["phase"], "7")
         self.assertIsNone(m["started_at"])
         self.assertEqual(m["last_result"]["merged"], 0)
+        self.assertEqual(m["last_result"]["advisories"], [])
+        m = daily_loop.projection({"last_result": {"advisories": ["x", {"kind": 3}, {"text": None}]}}, self.cfg, NOW)
+        self.assertEqual(m["last_result"]["advisories"],
+                         [{"kind": "3", "text": "", "ref": "", "fingerprint": "", "first_seen": ""},
+                          {"kind": "", "text": "", "ref": "", "fingerprint": "", "first_seen": ""}])
 
 
 class PlanCliTestCase(_Sandbox):
@@ -214,6 +278,7 @@ class PlanCliTestCase(_Sandbox):
         self.assertEqual(report["stale"], [{"id": "P-3", "rule": "idle"}])
         self.assertTrue(report["due"])
         self.assertIn("issues", report["inputs"])
+        self.assertIn("advisories", report)
         self.assertEqual(sorted(p.name for p in config.REGISTRY_DIR.glob("*.yaml")), before)
         self.assertEqual(registry.load("P-3").status, State.DETECTED.value)
         self.assertFalse(daily_loop.state_path().exists())

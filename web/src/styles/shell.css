@@ -570,6 +570,57 @@
   white-space: nowrap;
 }
 
+/* D33 「系统自检 N 条」：横幅右侧一个文字按钮，点开在同一条横幅下方铺一列（flex-basis 100% 换行）——
+   自检类信号不铸卡、不弹通知，只在这里能看见；is-open 才允许换行，其余横幅保持单行 */
+.shell-banner-toggle {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11px * var(--text-scale));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell-banner-toggle + .shell-banner-link {
+  margin-left: 0;
+}
+
+.shell-banner.is-open {
+  flex-wrap: wrap;
+}
+
+.shell-banner-list {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--text-secondary);
+  font-size: calc(11px * var(--text-scale));
+  line-height: 1.6;
+}
+
+.shell-banner-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.shell-banner-list-kind {
+  flex: none;
+  font: var(--type-card-error-mono);
+  color: var(--text-tertiary);
+}
+
+/* 三列里只有中间的说明文字可以换行；日期列不缩不折（flex 项默认缩到 min-content，
+   820 宽时「since 2026-09-01」被拆成三行）、靠右对齐成一列 */
+.shell-banner-list .shell-banner-note {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;

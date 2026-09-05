@@ -14,6 +14,14 @@
 - GitHub 面经 `gh` CLI 读（argv 列表，无 shell），注入缝 ``gh(args) -> str|None``；
   没装 gh / 未登录 / 超时 = 该输入不可用，循环照跑。D18：非 owner 作者的 issue
   只出摘要行（``Summary``），owner 在 issue 评论里回「do it」才升格为提案。
+- **两类信号（D33，2026-09-04）**：`CARD_KINDS`（GitHub 面 + owner 亲手放的素材）
+  照旧铸卡；`ADVISORY_KINDS`（自检类——派发卡死 / 日志刷屏 / doctor 红灯……）
+  只转成 ``Summary`` 落 `state/daily_loop.json` 的 `last_result.advisories`、审计行与
+  看板横幅（不进 §17 digest），**不铸可派发的卡**：这一周 15 张循环卡里 9 张是同一
+  根因（launchd 起的 claude 没有完全磁盘访问）的症状，代码改不了，循环也分不清
+  「owner 要点一下授权」与「代码有 bug」。铸卡是**白名单**：kind 不在 CARD_KINDS
+  的一律 advisory（没归类的新 kind 默认走便宜的那条路）；doctor 判 `owner_action`
+  的行（§25 `failures.OWNER_ACTION`）不论 kind 一律 advisory（belt and braces）。
 """
 from __future__ import annotations
 
@@ -89,10 +97,37 @@ class Signal:
 
 @dataclass
 class Summary:
-    """D18 摘要行（非 owner 的 issue）：只进运行日志，不铸卡。"""
+    """不铸卡的一行：D18 摘要（非 owner 的 issue）只进运行日志；D33 advisory
+    （自检类信号）还进 `last_result.advisories` 与看板横幅。``fingerprint`` 只有
+    advisory 带（= 原 Signal 的指纹，跨天认「同一条」以记 first_seen）。"""
     kind: str
     text: str
     ref: str = ""
+    fingerprint: str = ""
+
+
+# D33 两类信号（truth = 本文件；判例 tests/test_daily_loop_proposals.py 走 AST 钉住
+# 每个 Signal 构造点的 kind 都归在其中一类）。CARD_KINDS 铸提案卡进审批闸门；
+# ADVISORY_KINDS 只出 Summary——它们说的是「环境 / 运行状态不对」，多半要 owner
+# 亲手做点什么（授权、装依赖），不是一张能派给 agent 的活。
+CARD_KINDS = ("issue", "pr_red", "pr_comment", "mutation", "material")
+ADVISORY_KINDS = ("stuck_dispatch", "unclassified_failure", "event_anomaly", "radar_give_up",
+                  "write_storm", "log_loop", "install_step_fail", "launchd_fault", "doctor_fail")
+ADVISORY_TEXT_CAP = 300
+
+
+def is_advisory(sig: Signal) -> bool:
+    """D33：kind 不在 CARD_KINDS（铸卡是白名单——ADVISORY_KINDS 里的，以及日后没归类的
+    新 kind，都走这条），或 ref 是 §25 owner_action 类的 failure_id（doctor 行把
+    failure_id 放在 ref）——后者不论 kind 都不铸卡，修法是 owner 亲手点一次授权，
+    代码改不了。"""
+    return sig.kind not in CARD_KINDS or failures.row_class(sig.ref) == failures.OWNER_ACTION
+
+
+def as_advisory(sig: Signal) -> Summary:
+    """Signal → 一行 advisory（标题 — 一句说明；证据不进——横幅只要知道「哪里不对」）。"""
+    return Summary(kind=sig.kind, text=_clip(f"{sig.title} — {sig.summary}", ADVISORY_TEXT_CAP),
+                   ref=sig.ref, fingerprint=sig.fingerprint)
 
 
 def _hash(text: str) -> str:
@@ -598,21 +633,44 @@ def _is_report_issue(issue: dict) -> bool:
 
 
 def _ci_red(pr: dict) -> bool:
+    """rollup 里有任何一个 check 红（含 informational job）——只是预筛，
+    要不要铸卡由 :func:`_red_required_checks` 定。"""
     rollup = pr.get("statusCheckRollup")
     checks = rollup if isinstance(rollup, list) else []
     return any(str(c.get("conclusion") or "").upper() in ("FAILURE", "TIMED_OUT", "CANCELLED")
                for c in checks if isinstance(c, dict))
 
 
-def _pr_red_signal(pr: dict) -> Signal:
+def _red_required_checks(gh: Callable, repo: str, number: object) -> Optional[list]:
+    """required check 里 bucket=fail 的名字（排序去重）；gh 不可用 → None。
+
+    `statusCheckRollup` 不分 required 与 informational：`continue-on-error` 的
+    job（如 Web visual）在 rollup 里同样是 FAILURE，但 D5「必须绿」只指 required
+    （§65.5 的跟进卡也是这么数的）。2026-09-04 判例：#193 只有 informational 红，
+    被旧逻辑铸成 R-280。gh 经 GraphQL `isRequired` 读 ruleset / 分支保护的 required
+    set；`--json` 的 exporter 先于退出码返回，check 失败时仍退出 0（cli/cli
+    checks.go）；不认 `--json` 的旧 gh 用法错误退出 1 → None → 不铸（宁可漏一张
+    也不铸假卡）。bucket 词表里只有 `fail`（FAILURE/TIMED_OUT/ERROR/ACTION_REQUIRED）
+    算红，`cancel` / `pending` / `skipping` 不算。"""
+    data = _gh_json(gh, ["pr", "checks", str(number), "-R", repo,
+                         "--required", "--json", "name,bucket"])
+    if not isinstance(data, list):
+        return None
+    return sorted({str(c.get("name")) for c in data
+                   if isinstance(c, dict) and c.get("bucket") == "fail"})
+
+
+def _pr_red_signal(pr: dict, red: list) -> Signal:
     n = pr.get("number")
+    names = ", ".join(red)
     return Signal(
         kind="pr_red", fingerprint=f"pr_red:{n}",
         title=f"修红 CI：PR #{n} {_clip(pr.get('title'), 60)}",
-        summary="开放 PR 的必需检查有红——红的是臣子自己的事，皇上只看绿的（D5/D12）。",
-        plan=[f"gh pr checks {n} 找红的 job，gh run view --log-failed 看根因",
-              f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到全绿"],
-        dod=[f"PR #{n} required checks 全绿"], cost_usd=2.0,
+        summary=f"开放 PR 的 required check 有红（{names}）——红的是臣子自己的事，"
+                "皇上只看绿的（D5/D12）。informational job 的红不算。",
+        plan=[f"gh pr checks {n} --required 找红的 job（{names}），gh run view --log-failed 看根因",
+              f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到 required 全绿"],
+        dod=[f"PR #{n} required checks 全绿：{names}"], cost_usd=2.0,
         ref=str(pr.get("url") or ""), priority=5)
 
 
@@ -680,9 +738,9 @@ def _comment_key(c: dict, body: str) -> str:
 
 def pr_signals(gh: Callable, repo: str = DEFAULT_REPO,
                since: Optional[_dt.datetime] = None) -> "tuple[list, list]":
-    """开放 PR → (signals, titles)：红 CI 一条/PR，owner 新评论一条/评论。
+    """开放 PR → (signals, titles)：红 required check 一条/PR，owner 新评论一条/评论。
     每张 PR 一次 `gh pr view --json comments,reviews,statusCheckRollup`
-    （最多 MAX_PR_DETAIL 张）。"""
+    （最多 MAX_PR_DETAIL 张）；rollup 有红的再加一次 `gh pr checks --required`。"""
     rows = _gh_json(gh, ["pr", "list", "-R", repo, "--state", "open", "--limit",
                          str(GH_LIST_LIMIT), "--json", "number,title,author,url,headRefName,isDraft"])
     if not isinstance(rows, list):
@@ -701,7 +759,11 @@ def _pr_detail_signals(gh, repo, pr, since) -> list:
         return []
     merged = dict(pr, **detail)
     comments = _as_list(detail.get("comments")) + _as_list(detail.get("reviews"))
-    out = [_pr_red_signal(merged)] if _ci_red(merged) else []
+    out = []
+    if _ci_red(merged):                      # 预筛过了才多花一次 gh 问 required 集合
+        red = _red_required_checks(gh, repo, pr.get("number"))
+        if red:
+            out.append(_pr_red_signal(merged, red))
     return out + _comment_signals(merged, comments, since)
 
 

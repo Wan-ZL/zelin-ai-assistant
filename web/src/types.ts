@@ -310,8 +310,18 @@ export interface DeployState {
 /**
  * §70 每日自我改进循环的投影（dashboard add-only 顶层键 maintenance；act/lib/daily_loop.projection）。
  * phase 已知值：idle | dedup | stale_sweep | proposals（未知值按「在跑」显示）；时间全是 epoch 秒或 null。
- * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数。
+ * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数；
+ * advisories（D33）= 自检类信号——不铸卡，只在横幅里列出来（kind / text / ref / fingerprint / first_seen 逐字镜像 wire）。
  */
+export interface MaintenanceAdvisory {
+  kind: string;
+  text: string;
+  ref?: string;
+  fingerprint?: string;
+  first_seen?: string;
+  [key: string]: unknown;
+}
+
 export interface Maintenance {
   phase: string;
   started_at: number | null;
@@ -323,6 +333,7 @@ export interface Maintenance {
     proposals: number;
     summaries?: number;
     errors?: number;
+    advisories?: MaintenanceAdvisory[];
     [key: string]: unknown;
   };
   [key: string]: unknown;

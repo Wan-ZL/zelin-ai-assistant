@@ -4,7 +4,11 @@
 跑一次——**先**整理看板（act/lib/maintenance：提案列 + 潜在任务列去重合成、
 过时卡进回收站），**再**从日志台账 / analytics / doctor / 夜间变异报告 / GitHub
 issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 ≤
-`max_proposals_per_day`（默认 5）张 🤖 提案卡进正常审批闸门。
+`max_proposals_per_day`（默认 truth = config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS）张
+🤖 提案卡进正常审批闸门。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
+它们只成 advisory 行，落在 `last_result.advisories`（≤ 20 条，带 first_seen；跨天备忘
+`state.advisory_first_seen`）、审计行与看板横幅「系统自检 N 条」里——同一根因的症状
+不该变成一排派不出去的卡。
 
 边界（与法典对齐）：
 
@@ -50,6 +54,7 @@ LEDGER_CAP = 2000
 COMMENT_LOOKBACK_DAYS = 7
 TITLE_CAP = 120
 DEDUP_MIN_TITLE = 12    # 与开放 issue/PR 标题做包含匹配的最短长度
+ADVISORIES_CAP = 20     # last_result.advisories 上限（D33；横幅可展开的列表不该无限长）
 
 # 进程级总闸（belt-and-braces，同 §55 AIASSISTANT_LAUNCHD_PROBE）：测试套件把它设为 "0"，
 # 任何走真 actd.run_once 的判例都不会在沙箱里跑起整轮循环（真 gh / doctor 子进程）。
@@ -192,19 +197,22 @@ def _prune_ledger(ledger: dict, today: _dt.date) -> dict:
 
 
 class _Selector:
-    """按优先级挑今天要铸的信号：跳过已有指纹 / 同 class 今天已取 / GitHub 上
-    已有同题 / 超额度。每条 skip 计数进审计行。"""
+    """按优先级挑今天要铸的信号：跳过 advisory 类（D33，collect_signals 已分流，
+    这里是第二道闸）/ 已有指纹 / 同 class 今天已取 / GitHub 上已有同题 / 超额度。
+    每条 skip 计数进审计行。"""
 
     def __init__(self, taken: set, gh_titles: list, budget: int) -> None:
         self.taken, self.gh_titles, self.budget = set(taken), list(gh_titles), budget
         self.kinds: set = set()
-        self.skipped = {"dedup": 0, "kind_taken": 0, "gh_title": 0, "cap": 0}
+        self.skipped = {"advisory": 0, "dedup": 0, "kind_taken": 0, "gh_title": 0, "cap": 0}
         self.chosen: list = []
 
     def _on_github(self, sig) -> bool:
         return sig.kind not in GITHUB_KINDS and title_on_github(sig.title, self.gh_titles)
 
     def _reason(self, sig) -> Optional[str]:
+        if loop_inputs.is_advisory(sig):
+            return "advisory"
         if sig.fingerprint in self.taken:
             return "dedup"
         if sig.kind in self.kinds:
@@ -267,8 +275,10 @@ def _beating_gh(gh: Callable, interval) -> Callable:
 
 def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
                     doctor: Optional[Callable], repo: str, interval=None) -> dict:
-    """全部输入源 → {"signals", "summaries", "gh_titles", "inputs"}；坏读取器
-    只在 inputs 里记 "unavailable"。"""
+    """全部输入源 → {"signals", "advisories", "summaries", "gh_titles", "inputs"}；
+    坏读取器只在 inputs 里记 "unavailable"。`signals` 只剩 CARD_KINDS（可铸卡）；
+    自检类已按 D33 转成 `advisories`（Summary，按原 priority 排）。`inputs.<name>`
+    仍数读取器给出的全部信号——两类都算，看得见每个读取器活着。"""
     gh = _beating_gh(gh, interval)
     since = now - _dt.timedelta(days=COMMENT_LOOKBACK_DAYS)
     readers = [
@@ -283,12 +293,22 @@ def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
         ("mutation", lambda: loop_inputs.mutation_signals(gh, repo)),
         ("materials", loop_inputs.materials_signals),
     ]
-    out: dict = {"signals": [], "summaries": [], "gh_titles": [], "inputs": {}}
+    out: dict = {"signals": [], "advisories": [], "summaries": [], "gh_titles": [], "inputs": {}}
     for name, fn in readers:
         _run_reader(out, name, fn)
     _run_reader(out, "issues", lambda: loop_inputs.issue_signals(gh, repo), github=True)
     _run_reader(out, "prs", lambda: loop_inputs.pr_signals(gh, repo, since), github=True)
+    out["signals"], out["advisories"] = split_advisories(out["signals"])
     return out
+
+
+def split_advisories(signals: list) -> "tuple[list, list]":
+    """D33 分流：(可铸卡的 Signal, advisory Summary 列表)；advisory 按原信号的
+    (priority, fingerprint) 排——横幅列表最上面的是最该先看的（派发卡死 > doctor）。"""
+    cards = [s for s in signals if not loop_inputs.is_advisory(s)]
+    advisory = sorted((s for s in signals if loop_inputs.is_advisory(s)),
+                      key=lambda s: (s.priority, s.fingerprint))
+    return cards, [loop_inputs.as_advisory(s) for s in advisory]
 
 
 def _run_reader(out: dict, name: str, fn: Callable, github: bool = False) -> None:
@@ -337,7 +357,8 @@ def _propose(cfg, now: _dt.datetime, gh, doctor, state: dict, interval) -> dict:
                                 repo=loop_inputs.DEFAULT_REPO, interval=interval)
     ledger = _prune_ledger(dict(state.get("fingerprints") or {}), now.date())
     taken = existing_fingerprints(reqs) | set(ledger)
-    budget = max(0, int(getattr(cfg, "daily_loop_max_proposals_per_day", 5) or 0)
+    budget = max(0, int(getattr(cfg, "daily_loop_max_proposals_per_day",
+                                config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS) or 0)
                  - proposals_today(reqs, today))
     chosen, skipped = select_signals(collected["signals"], taken=taken,
                                      gh_titles=collected["gh_titles"], budget=budget)
@@ -345,9 +366,32 @@ def _propose(cfg, now: _dt.datetime, gh, doctor, state: dict, interval) -> dict:
     ledger.update({row["fingerprint"]: today for row in filed if "id" in row})
     state["fingerprints"] = ledger
     materials_marked = _mark_materials(collected["signals"], filed)
+    advisories = advisory_rows(collected["advisories"], state, today)
+    # first_seen 备忘只由跑成功的提案阶段改写：本函数抛异常那天备忘原样留着（见 advisory_rows）
+    state["advisory_first_seen"] = {row["fingerprint"]: row["first_seen"] for row in advisories}
     return {"filed": filed, "skipped": skipped, "budget": budget, "materials": materials_marked,
             "summaries": [{"kind": s.kind, "text": s.text, "ref": s.ref} for s in collected["summaries"]],
+            "advisories": advisories,
             "inputs": collected["inputs"], "signals": len(collected["signals"])}
+
+
+def _prior_first_seen(state: dict) -> dict:
+    """`state.advisory_first_seen`——上一次跑成功的提案阶段留下的 {fingerprint: first_seen}
+    （坏形状 = 空）。"""
+    memo = state.get("advisory_first_seen")
+    pairs = memo.items() if isinstance(memo, dict) else ()
+    return {str(fp): str(seen) for fp, seen in pairs if fp and seen}
+
+
+def advisory_rows(advisories: list, state: dict, today: str) -> list:
+    """D33 advisory → 落盘行 `{kind, text, ref, fingerprint, first_seen}`（≤ ADVISORIES_CAP）。
+    `first_seen` 从 `state.advisory_first_seen` 里同指纹继承——「launchd claude 从 09-01
+    就红着」比「今天红」有用得多；隔天消失再出现 = 重新计日。备忘与 `last_result.advisories`
+    分开放：提案阶段抛异常那天 advisories 为空（没观察到就不说），备忘却不动，第二天照旧继承。"""
+    prior = _prior_first_seen(state)
+    return [{"kind": s.kind, "text": s.text, "ref": s.ref, "fingerprint": s.fingerprint,
+             "first_seen": prior.get(s.fingerprint, today)}
+            for s in advisories[:ADVISORIES_CAP]]
 
 
 def _material_id(fingerprint: str) -> Optional[str]:
@@ -376,16 +420,19 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
     trashed = _phase(lambda: maintenance.sweep_stale(cfg, today=now.date()), errors, "stale_sweep", [])
     _set_phase(state, PHASE_PROPOSALS, interval)
     proposed = _phase(lambda: _propose(cfg, now, gh or loop_inputs.default_gh, doctor, state, interval),
-                      errors, "proposals", {"filed": [], "skipped": {}, "summaries": [], "inputs": {}})
+                      errors, "proposals", {"filed": [], "skipped": {}, "summaries": [],
+                                            "advisories": [], "inputs": {}})
     filed = [row for row in proposed["filed"] if "id" in row]
     result = {"merged": len(merges), "trashed": len(trashed), "proposals": len(filed),
-              "summaries": len(proposed["summaries"]), "errors": errors}
+              "summaries": len(proposed["summaries"]), "errors": errors,
+              "advisories": proposed["advisories"]}          # D33 add-only
     _set_phase(state, PHASE_IDLE, interval, last_run_at=_iso(now),
                last_run_day=now.date().isoformat(), last_result=result)
     _append_log({"ts": _iso(now), "day": now.date().isoformat(),
                  "duration_s": round(time.time() - started, 1), "merges": merges,
                  "trashed": trashed, "proposals": proposed["filed"],
                  "skipped": proposed["skipped"], "summaries": proposed["summaries"],
+                 "advisories": proposed["advisories"],
                  "inputs": proposed["inputs"], "errors": errors})
     return dict(result, merges=merges, trashed_cards=trashed, filed=filed)
 
@@ -412,16 +459,28 @@ def _epoch(value) -> Optional[int]:
     return int(dt.timestamp()) if dt is not None else None
 
 
+ADVISORY_WIRE_KEYS = ("kind", "text", "ref", "fingerprint", "first_seen")
+
+
 def _result_ints(raw) -> dict:
     src = raw if isinstance(raw, dict) else {}
     out = {k: int(src.get(k) or 0) for k in ("merged", "trashed", "proposals", "summaries")}
     out["errors"] = len(src.get("errors") or [])
+    out["advisories"] = _advisories_wire(src.get("advisories"))
     return out
+
+
+def _advisories_wire(raw) -> list:
+    """D33 add-only 键：list[{kind, text, ref, fingerprint, first_seen}]，全 str；
+    坏形状整条丢，缺键按空串——client 逐字镜像（防腐 #10）。"""
+    rows = raw if isinstance(raw, list) else []
+    return [{k: str(r.get(k) or "") for k in ADVISORY_WIRE_KEYS}
+            for r in rows[:ADVISORIES_CAP] if isinstance(r, dict)]
 
 
 def projection(state: dict, cfg=None, now: Optional[_dt.datetime] = None) -> dict:
     """``{"phase", "started_at", "last_run_at", "next_run_at", "last_result"}``
-    （时间全是 epoch int 或 null，§2 惯例）。"""
+    （时间全是 epoch int 或 null，§2 惯例）；`last_result.advisories`（D33）原样带过。"""
     now = now or local_now()
     return {
         "phase": str(state.get("phase") or PHASE_IDLE),
@@ -462,6 +521,7 @@ def plan(cfg, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None)
         "stale": [x for x in _stale_plan(cfg, reqs, now.date()) if x["id"] not in clustered],
         "signals": [{"kind": s.kind, "fingerprint": s.fingerprint, "title": s.title}
                     for s in collected["signals"]],
+        "advisories": [{"kind": s.kind, "text": s.text} for s in collected["advisories"]],
         "summaries": [s.text for s in collected["summaries"]],
         "inputs": collected["inputs"],
     }

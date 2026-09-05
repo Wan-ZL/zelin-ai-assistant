@@ -1,5 +1,5 @@
 // 设置页 section「每日整理」（CONTRACT §70，owner 决策 D10）。
-// 五把旋钮：开关 / 解锁时刻（本地 HH:MM）/ 每天最多几张 🤖 提案（默认 5）/ 过时天数 / 循环卡回收站保留天数。
+// 五把旋钮：开关 / 解锁时刻（本地 HH:MM）/ 每天最多几张 🤖 提案（默认 2，D33）/ 过时天数 / 循环卡回收站保留天数。
 // 数据经 store（refreshDailyLoop / saveDailyLoop）；这里只存草稿 + toast。保存 = 一次 PUT 改动过的键；
 // server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。下一个 actd pass 生效，无需重启。
 import { useEffect, useState } from "react";
@@ -167,7 +167,8 @@ export function DailyLoopSection() {
 
       {numeric("max_proposals_per_day",
         text("每天最多几张提案", "Max proposals per day"),
-        text("默认 5（owner 决策 D10）。0 = 只整理不提案。", "Default 5 (owner decision D10). 0 = tidy only, no proposals."))}
+        text("默认 2（owner 决策 D33；自检类信号不占额度，只进顶部横幅）。0 = 只整理不提案。",
+          "Default 2 (owner decision D33; self-check notes bypass the cap and only show in the top banner). 0 = tidy only, no proposals."))}
       {numeric("stale_days",
         text("多少天没动算过时", "Days without activity before a card is stale"),
         text("默认 45。带未来 deadline / 你改过名 / 提及 ≥3 次 / 同簇有在跑的卡一律不动；0 = 关掉这条规则。", "Default 45. Cards with a future deadline / your own title / ≥3 mentions / a running sibling are never touched; 0 = rule off."))}
