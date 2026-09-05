@@ -794,12 +794,14 @@ export interface SlackDirectory {
   [key: string]: unknown;
 }
 
-/** POST /api/secrets/{name}/verify 回执 */
+/** POST /api/secrets/{name}/verify 回执（§68.3；三分判决：ok / 凭证错 network:false / 判决未知 network:true） */
 export interface SecretVerifyResult {
   ok: boolean;
   network: boolean;
   detail: string;
-  extra: Record<string, unknown>;
+  extra: Record<string, unknown>;   // Slack ok：user_id / user / team（auth.test 原字段）；Gmail 没地址：precondition = "gmail_address"（探针没跑）
+  /** §68.3 2026-09-05 追记（add-only）：只在 ok:false ∧ network:false 且探针真跑过（无 extra.precondition）时带——原生 humanAuthReason 的分类人话，raw detail 在括号里 */
+  reason?: BilingualText;
   [key: string]: unknown;
 }
 
