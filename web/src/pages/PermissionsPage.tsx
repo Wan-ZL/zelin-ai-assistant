@@ -3,7 +3,7 @@
 //   「系统权限」三行（屏幕录制 / 笔记库访问（Documents） / 通知 + web 多一行麦克风，CapabilityRows）→
 //   telemetry 披露块（TelemetryBlock）→ 页脚「打开依赖检查」…「完成」（首启：回向导）/「关闭」（体检：回看板）。
 // GUI 项的真相只有壳知道（TCC 探针是原生 API）：桥在场时读 shell.permissions、按钮 = requestPermission /
-// openPane，2 s 轮询一次；浏览器里如实说「只在看板 app 里可探」。
+// openPane，2 s 轮询一次（components/permissions/usePermissionPolling，与向导共用）；浏览器里如实说「只在看板 app 里可探」。
 // web 多出的下半：完全磁盘访问（D20 家族的一半原生窗从不管的事）——server 列出要授权的可执行文件
 // （守护 python / claude / node / 壳 app）+ 可复制的绝对路径 + 系统设置深链 + TCC 相关 doctor 行，
 // 授权步骤原样写在页面上（系统设置 → 隐私与安全性 → 完全磁盘访问 → + → ⌘⇧G 粘路径）。
@@ -14,6 +14,7 @@ import "../components/permissions/permissions.css";
 import { CapabilityRows } from "../components/permissions/CapabilityRows";
 import { RecordingConsentSection } from "../components/permissions/RecordingConsentSection";
 import { TelemetryBlock } from "../components/permissions/TelemetryBlock";
+import { usePermissionPolling } from "../components/permissions/usePermissionPolling";
 import { pickText } from "../components/settings/catalogText";
 import { copyText } from "../components/detail/copyText";
 import { useI18n } from "../i18n";
@@ -79,17 +80,6 @@ function DoctorRows({ rows }: { rows: DoctorRow[] }) {
       ))}
     </ul>
   );
-}
-
-/** 桥在场：2 s 轮询一次探针（原生 PermissionsModel.startPolling 的节拍——用户正在系统设置里翻开关） */
-export function usePermissionPolling(present: boolean) {
-  useEffect(() => {
-    if (!present) return undefined;
-    const tick = () => void callShell("getPermissions").catch(() => undefined);
-    tick();
-    const timer = window.setInterval(tick, 2000);
-    return () => window.clearInterval(timer);
-  }, [present]);
 }
 
 export function PermissionsPage() {

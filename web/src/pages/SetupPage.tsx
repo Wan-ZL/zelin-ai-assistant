@@ -11,6 +11,13 @@
 // 新机器 / 空环境：config.yaml 缺席或三把主凭证一把都没有（且没写过完成标记）时，看板开在这里而不是空看板
 // （app.tsx 按 GET /api/setup 的 needed 判定跳转）。幂等：每步预填当前真值、跳过不清数据；中途关掉下次还会回来
 // （标记只在最后一步写）。页脚 = 原生 footer：进度点 · 第 N / 7 步 · 上一步 / 下一步 / 完成。
+// 原生窗口的三件小事（2026-09-05 追回，§68.5 追记）：
+//   · Return = 下一步 / 完成（原生 .keyboardShortcut(.defaultAction)）——焦点不在输入框 / 按钮 / 链接上、无修饰键、
+//     不在 IME 组字时才算；Esc 不绑；
+//   · 整个向导期间 2 s 轮询壳的 TCC 探针（原生 perms.startPolling），末步另起 2.5 s 管线探针
+//     （原生 PipelineProbeModel：health 心跳 / 首次数据 + permissions 的 doctor 行；引擎每 4 拍静默复检一次）；
+//   · 「先去看板（下次再来）」= 原生关窗：本窗口会话内不再跳回向导（sessionStorage 标记），新开窗口 / 下次启动再问，
+//     向导本身仍可从 设置 → 关于「重新运行初始设置」进来。
 import { useCallback, useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
@@ -19,6 +26,7 @@ import { postSetupStep } from "../api";
 import { CapabilityRows } from "../components/permissions/CapabilityRows";
 import { RecordingConsentSection } from "../components/permissions/RecordingConsentSection";
 import { TelemetryBlock } from "../components/permissions/TelemetryBlock";
+import { usePermissionPolling } from "../components/permissions/usePermissionPolling";
 import { pickText } from "../components/settings/catalogText";
 import { SecretRow } from "../components/settings/SecretRow";
 import { errorMessage } from "../components/settings/useToast";
@@ -27,11 +35,18 @@ import { FinaleStep } from "../components/setup/FinaleStep";
 import { applyVaultChoice, VaultStep, type VaultChoice } from "../components/setup/VaultStep";
 import { useI18n, type Language } from "../i18n";
 import { buildAppUrl, navigate } from "../route";
-import { callShell, hasShellBridge } from "../shellBridge";
+import { hasShellBridge } from "../shellBridge";
 import { refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, saveSettingsSection, setLanguage, setSetup, useAppState } from "../store";
 
 export const STEPS = ["welcome", "engine", "permissions", "recording", "vault", "credentials", "finale"] as const;
 export type Step = (typeof STEPS)[number];
+
+/** 末步管线探针的节拍（原生 PipelineProbeModel 的 Timer 2.5 s，SetupWizard.swift:361） */
+export const FINALE_PROBE_MS = 2500;
+/** 引擎复检的稀疏度：每 N 拍静默 `GET /api/setup/engine` 一次（它要 spawn `claude --version`，不值得每拍都跑） */
+export const ENGINE_RECHECK_EVERY = 4;
+/** sessionStorage：本窗口会话里用户点过「先去看板（下次再来）」——app.tsx 的向导跳转本会话不再发生 */
+export const SETUP_SKIPPED_KEY = "zai.setupSkipped";
 
 /** 第一个还没满足的步骤：config.yaml 还没有就停在第 1 步（它就在那里建），否则从引擎开始 */
 export function firstOpenStep(configExists: boolean): Step {
@@ -44,6 +59,36 @@ export function stepFromSearch(search: string): Step | null {
   return raw && (STEPS as readonly string[]).includes(raw) ? (raw as Step) : null;
 }
 
+/** 「先去看板（下次再来）」：落会话标记再让链接自己整页导航（原生关窗 = 这次不问）。sessionStorage 不可写就当没点过（宁多问） */
+export function markSetupSkipped(): void {
+  try {
+    window.sessionStorage.setItem(SETUP_SKIPPED_KEY, "1");
+  } catch {
+    /* 隐私模式等：跳过——下次看板加载仍会跳回向导 */
+  }
+}
+
+export function isSetupSkipped(): boolean {
+  try {
+    return window.sessionStorage.getItem(SETUP_SKIPPED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 焦点落在这些元素上时 Enter 归它们自己（输入框提交 / 按钮激活 / 链接跳转），向导不抢 */
+const RETURN_OWNERS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"]);
+
+/** Return 是否推进向导（原生 Next / Done 的 `.keyboardShortcut(.defaultAction)` 是窗口级的，所以听在 document 上——
+ *  焦点在 body 时 <main> 收不到键）：Enter、无修饰键、不在 IME 组字、没被更内层的处理器认领（`defaultPrevented`——
+ *  录制步的「开启」若要接 Return，preventDefault 即可）、焦点不在 RETURN_OWNERS 上。 */
+export function isWizardReturn(event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "defaultPrevented" | "isComposing" | "target">): boolean {
+  if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return false;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  const tag = event.target instanceof Element ? event.target.tagName.toUpperCase() : "";
+  return !RETURN_OWNERS.has(tag);
+}
+
 export function SetupPage() {
   const { text, language } = useI18n();
   const { setup, permissions, pageErrors } = useAppState();
@@ -54,18 +99,34 @@ export function SetupPage() {
   const [vaultError, setVaultError] = useState<string | null>(null);
   const detector = useEngineDetector();
   const present = hasShellBridge();
+  const { detect } = detector;
 
   useEffect(() => {
     void refreshSetup();
     void refreshSecrets();
     void refreshPermissions();
     void refreshHealth();
-    if (present) void callShell("getPermissions").catch(() => undefined);
-  }, [present]);
+  }, []);
+  // 原生 SetupWizardController.show：开窗即 perms.startPolling（2 s），关窗才停——不只权限步，整个向导都在场
+  usePermissionPolling(present);
 
   useEffect(() => {
     if (setup && step === null) setStep(firstOpenStep(setup.config_exists));
   }, [setup, step]);
+
+  // 末步：原生 probe.startPolling（2.5 s）——后台服务 / 首次数据（health）+ 定时任务磁盘权限（permissions 的 doctor 行）
+  // 每拍拉一次；引擎每 ENGINE_RECHECK_EVERY 拍静默复检（用户装好 claude / 登录回来，红行自己变绿）。离开末步 / 卸载即停。
+  useEffect(() => {
+    if (step !== "finale") return undefined;
+    let ticks = 0;
+    const timer = window.setInterval(() => {
+      ticks += 1;
+      void refreshHealth();
+      void refreshPermissions();
+      if (ticks % ENGINE_RECHECK_EVERY === 0) void detect({ quiet: true });
+    }, FINALE_PROBE_MS);
+    return () => window.clearInterval(timer);
+  }, [step, detect]);
 
   const index = step ? STEPS.indexOf(step) : 0;
   const currentRoot = permissions?.vault?.root ?? "";
@@ -73,13 +134,12 @@ export function SetupPage() {
   const setStepAndSync = useCallback((next: Step) => {
     setStep(next);
     setNote(null);
-    if (next === "engine" || next === "finale") void detector.detect();
+    if (next === "engine" || next === "finale") void detect();
     if (next === "finale") {
       void refreshHealth();
       void refreshPermissions();
-      if (present) void callShell("getPermissions").catch(() => undefined);
     }
-  }, [detector, present]);
+  }, [detect]);
 
   async function advance() {
     // 笔记库没落盘成功就不放行：末步不能在笔记会落到别处（或哪里都不落）时宣布 🎉（原生 applyVaultChoice）
@@ -107,6 +167,7 @@ export function SetupPage() {
   }
 
   async function finish() {
+    if (busy) return;
     setBusy(true);
     setNote(null);
     try {
@@ -118,6 +179,19 @@ export function SetupPage() {
       setBusy(false);
     }
   }
+
+  // Return = 页脚的默认按钮（末步「完成」，其余「下一步」）；判据见 isWizardReturn。监听器每次渲染重挂——
+  // advance / finish 闭包着当前 step / busy，不用 ref 绕；Esc 不绑（原生也没有）。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isWizardReturn(event)) return;
+      event.preventDefault();
+      if (index < STEPS.length - 1) void advance();
+      else void finish();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  });
 
   /** 显式选语言：立刻生效（store，持久化 zai.lang）+ 写设置里同一把 language override（原生 setLanguage） */
   function chooseLanguage(lang: Language) {
@@ -154,7 +228,7 @@ export function SetupPage() {
     <main className="settings-page setup-page">
       <div className="settings-page-head">
         <h2 className="settings-page-title">{text("初始设置", "Setup")}</h2>
-        <a className="settings-link" href={buildAppUrl(window.location.href, "board", null).toString()}>{text("先去看板（下次再来）", "Go to the board (come back later)")}</a>
+        <a className="settings-link" href={buildAppUrl(window.location.href, "board", null).toString()} onClick={markSetupSkipped}>{text("先去看板（下次再来）", "Go to the board (come back later)")}</a>
       </div>
       {pageErrors.setup && <p className="settings-error" role="alert">{pageErrors.setup}</p>}
 
