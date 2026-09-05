@@ -634,7 +634,8 @@ export interface RadarTestRound {
 }
 
 /** §48 radar_sources 投影（dashboard 顶层键）：每源 enabled / last_ok / skip_reason / stale
- *  + §48.7 add-only last_attempt（原生「最近一轮 <相对时间>」）/ test_round */
+ *  + §48.7 add-only last_attempt（原生「最近一轮 <相对时间>」）/ test_round
+ *  + §48.4 add-only intent / secret_present（意愿信号；setup 类 / Slack token 类诊断卡的资格） */
 export interface RadarSourceHealth {
   enabled: boolean;
   last_ok?: string | null;
@@ -642,6 +643,10 @@ export interface RadarSourceHealth {
   stale?: boolean;
   last_attempt?: string | null;
   test_round?: RadarTestRound | null;
+  /** 碰过开关（overrides 里有 <src>_enabled / features.<src>_radar）/ 凭证文件在 / 凭证非空；缺 = 旧 payload = 老判据 */
+  intent?: boolean;
+  /** §19 凭证非空（slack user token / gmail 应用密码；obsidian 恒 false） */
+  secret_present?: boolean;
   [key: string]: unknown;
 }
 

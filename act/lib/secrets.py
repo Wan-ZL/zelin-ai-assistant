@@ -32,6 +32,14 @@ SLACK_TOKEN_FILE = "slack-user-token.txt"  # nosec B105 - file NAME, not a secre
 GMAIL_APP_PASSWORD_FILE = "gmail-app-password.txt"  # nosec B105 - file NAME, not a secret
 ANTHROPIC_API_KEY_FILE = "anthropic-api-key.txt"
 
+# §19 第三层（旧默认路径，已弃用但仍是最后兜底）——单源表：radar_slack /
+# radar_gmail 的 DEFAULT_*_PATH 与 dashboard `secret_present` 探针（§48.4）都
+# 从这里取，雷达解析到什么、投影就报什么。判例 patch 这张表指进沙箱。
+LEGACY_DEFAULT_PATHS: dict = {
+    SLACK_TOKEN_FILE: "~/Desktop/Keys/slack-user-token.txt",  # nosec B105 - file PATH
+    GMAIL_APP_PASSWORD_FILE: "~/Desktop/Keys/gmail-app-password.txt",  # nosec B105 - file PATH
+}
+
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 

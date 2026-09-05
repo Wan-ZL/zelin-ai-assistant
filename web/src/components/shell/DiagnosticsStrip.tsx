@@ -1,9 +1,13 @@
 // 板级诊断条（原生 Diagnostics.swift DiagnosticsStrip / DiagnosticCardView 的 web 版；§48 / §54.4）：把静默的
 // ingest 失败变成看得见、点得动的卡——每张卡 (1) 大白话说清哪条路断了，(2) 一颗直达修复的主按钮。
-// 数据 = board.radar_sources 投影（§48：enabled 就是用户的 intent，skip_reason 是闭集词表）+ 壳的录制状态
-// （引擎活着没 / 屏幕录制授权还在不在）。ANTI-NAG：只显示「用户 INTENDED 的路径在静默失败」——关着的源不上板，
-// fresh user 看到 0 张卡；每 path 至多一卡；可 dismiss（localStorage `dismissedDiagnostics`，签名 = <path>:<reason>，
-// 换原因 = 新卡；修好过一次再坏 / 满 7 天重现）；vault_empty 先等一个 ingest 周期（~35 min）再报，防装机误报。
+// 数据 = board.radar_sources 投影（§48.4：enabled 是开关判据，skip_reason 是闭集词表；add-only `intent` /
+// `secret_present` 是意愿信号——「enabled 默认 true」本身不是 intent）+ 壳的录制状态（引擎活着没 / 屏幕录制授权还在不在）。
+// ANTI-NAG：只显示「用户 INTENDED 的路径在静默失败」——关着的源不上板；setup 类卡（Gmail no_credentials / no_address、
+// Slack mcp_not_configured）另要 `intent`（碰过开关 / 凭证文件在），Slack token 类卡要 `secret_present`（真存了 token 才谈
+// 「被拒绝」）——全新安装的用户看到 0 张卡（原生 DiagnosticsRules.gmailCardEligible / Diagnostics.swift:268-291）；投影缺这两键
+// （旧 actd payload）= 老判据。每 path 至多一卡；可 dismiss（localStorage `dismissedDiagnostics`，签名 = <path>:<reason>，
+// 换原因 = 新卡；修好过一次再坏 / 满 7 天重现）；vault_empty 先等一个 ingest 周期（~35 min）再报，防装机误报——首见台账
+// （`diagnosticsFirstSeen`）只留还活着的签名（原生 pruneFirstSeen）：卡消失过再出现要重新预热，不然录制关几天再开会立刻告警。
 // 「Gmail / Slack 雷达开着，但后台调度没装上」一族（原生 agent_missing）：Slack / Gmail 雷达是各自的 launchd agent
 // （§48.7），状态问 GET /api/radars（server 问 launchd 本人），「重装后台调度」= POST /api/radars/reinstall（server 跑
 // install.sh --reinstall-agent，绝不自己写 plist）；失败留在卡上「上次重装失败：」+ 原文，按钮变「再试一次」
@@ -75,6 +79,23 @@ export function gmailCardKind(reason: string): "setup" | "command" | "connection
   if (reason === "no_credentials" || reason === "no_address") return "setup";
   if (reason.startsWith("fetch_command") || reason.startsWith("command")) return "command";
   return "connection";
+}
+
+/** Gmail 卡资格（原生 DiagnosticsRules.gmailCardEligible，§48.4）：源开着 + skip_reason 非空由调用方保证；这里判
+ *  (1) `disabled` 是退役码（仅升级瞬间的残留记录）永不出卡；(2) setup 类 reason 另要意愿信号 `intent`——碰过开关 /
+ *  凭证文件在（投影 add-only 键；缺 = 旧 payload = 老判据照出）；连接 / 命令类维持开关判据（有凭证在报错 = 显然配过）。 */
+export function gmailCardEligible(reason: string, entry: RadarSourceHealth): boolean {
+  if (reason === "disabled") return false;
+  if (gmailCardKind(reason) === "setup") return entry.intent !== false;
+  return true;
+}
+
+/** Slack 卡资格（原生 Diagnostics.swift:268-291）：connect_failed / auth_failed 只在**真存了 token**时才是「Slack 拒绝了它」
+ *  （`secret_present`）；mcp_not_configured 只在用户开始配过 Slack 时（`intent`：碰过开关 / 凭证文件在）。键缺 = 老判据。 */
+export function slackCardEligible(reason: string, entry: RadarSourceHealth): boolean {
+  if (reason === "connect_failed" || reason === "auth_failed") return entry.secret_present !== false;
+  if (reason === "mcp_not_configured") return entry.intent !== false;
+  return true; // 其余 reason 由 slackCard 自己决定（词表外不上板）
 }
 
 function obsidianCard(reason: string, rec: ShellRecordingState | null, entry: RadarSourceHealth, text: Text): DiagnosticCard | null {
@@ -185,10 +206,11 @@ export function buildDiagnosticCards(sources: Record<string, RadarSourceHealth> 
     out.push(agentMissingCard(source, entry, failMsg, text));
     return true;
   };
+  // gmail / slack：开着 + skip_reason 非空 + §48.4 意愿信号（setup 类要 intent、Slack token 类要 secret_present）
   const gm = sources.gmail;
-  if (!missing("gmail") && gm?.enabled && gm.skip_reason) out.push(gmailCard(gm.skip_reason, gm, text));
+  if (!missing("gmail") && gm?.enabled && gm.skip_reason && gmailCardEligible(gm.skip_reason, gm)) out.push(gmailCard(gm.skip_reason, gm, text));
   const sl = sources.slack;
-  if (!missing("slack") && sl?.enabled && sl.skip_reason) {
+  if (!missing("slack") && sl?.enabled && sl.skip_reason && slackCardEligible(sl.skip_reason, sl)) {
     const card = slackCard(sl.skip_reason, sl, text);
     if (card) out.push(card);
   }
@@ -211,6 +233,13 @@ export function isDebounced(card: DiagnosticCard, seen: Record<string, number>, 
   const first = seen[card.signature];
   if (first !== undefined) return { debounced: now - first < VAULT_EMPTY_WARMUP_MS, seen };
   return { debounced: true, seen: { ...seen, [card.signature]: now } };
+}
+
+/** 首见台账只留还活着的签名（原生 Diagnostics.swift pruneFirstSeen）：一张卡消失（录制关了 / 修好了）就忘掉它的首见时间，
+ *  下次再出现要重新等满预热——否则几天前记下的时间戳让 vault_empty 在录制刚打开的那一刻就告警。没变化时返回同一对象。 */
+export function pruneFirstSeen(seen: Record<string, number>, live: ReadonlySet<string>): Record<string, number> {
+  const kept = Object.fromEntries(Object.entries(seen).filter(([signature]) => live.has(signature)));
+  return Object.keys(kept).length === Object.keys(seen).length ? seen : kept;
 }
 
 function actionHref(action: DiagAction): string | null {
@@ -298,13 +327,15 @@ export function DiagnosticsStrip() {
   const seen0 = readMap(FIRST_SEEN_KEY);
   let seen = seen0;
   const cards: DiagnosticCard[] = [];
-  for (const card of buildDiagnosticCards(board.radar_sources, rec, text, agents)) {
+  const live = buildDiagnosticCards(board.radar_sources, rec, text, agents); // 活着的卡（预热 / dismiss 之前）
+  for (const card of live) {
     const verdict = isDebounced(card, seen, now);
     seen = verdict.seen;
     if (verdict.debounced || isDismissed(card, dismissed, now)) continue;
     cards.push(card);
   }
-  if (seen !== seen0) writeMap(FIRST_SEEN_KEY, seen); // 首见时间只在新签名出现时落一次
+  seen = pruneFirstSeen(seen, new Set(live.map((card) => card.signature))); // 消失的签名忘掉，再出现重新预热
+  if (seen !== seen0) writeMap(FIRST_SEEN_KEY, seen); // 首见台账只在新签名出现 / 旧签名消失时落一次
   if (cards.length === 0) return null;
 
   const dismiss = (card: DiagnosticCard) => {
