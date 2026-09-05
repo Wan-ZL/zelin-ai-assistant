@@ -8,7 +8,9 @@
 // 动作后不做乐观看板更新：每行一个 useSubmit（与永久性完成书立条的 ArchiveRow 同款）——恢复中显示原生那句
 // 「恢复中，卡片将回到原状态列」（Store.swift beginReturn），卡离开 trash 才解锁；180 s 没动 → 原生
 // 「恢复超时，卡片仍在回收站，可重试（检查 actd 是否在运行）」，行恢复可操作（不再永远挂着「已请求恢复」）。
-// 「永久」章的本地回执（镜像 Mac pinnedLocal）在 backend 回 permanent 后退场（PendingSweep.swift:277-279）。
+// 「永久保存」不锁行（原生 Store.swift:794-795 `case "pin": pinnedLocal.insert(id) // no hide — badge flips in place`）：
+// POST 成功章先翻、「永久保存」钮随之隐去、「恢复」照旧可点；本地章在 backend 回 permanent 后退场
+// （PendingSweep.swift:277-279），180 s 没确认则收回（原生 pinnedLocal 不在 sweepTimeouts 里——web 多一道诚实兜底）。
 import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import { useSubmit } from "../components/board/boardActions";
@@ -47,11 +49,13 @@ export function TrashRowView({ item }: { item: TrashRow }) {
     if (item.permanent && pinnedLocal) setPinnedLocal(false);
   }, [item.permanent, pinnedLocal]);
   useEffect(() => {
-    // 180 s 兜底解锁时 backend 还没说 permanent：章是本地翻的，没有真凭据就收回（超时句已说明原因）
-    if (!pending && error !== null && pinnedLocal && !item.permanent) setPinnedLocal(false);
-  }, [pending, error, pinnedLocal, item.permanent]);
+    // pin 的 180 s 兜底到点时 backend 还没说 permanent：章是本地翻的，没有真凭据就收回（超时句已说明原因）；
+    // 别的动作（恢复）出错不动这个章
+    if (!pending && error !== null && pendingAction === "pin" && pinnedLocal && !item.permanent) setPinnedLocal(false);
+  }, [pending, pendingAction, error, pinnedLocal, item.permanent]);
 
   const isPinned = item.permanent || pinnedLocal;
+  // 只有恢复（换列动词，原生 beginReturn）收起按钮行；pin 不换列、不锁行
   const isRestoring = pending && pendingAction === "restore";
   const days = daysUntilPurge(item.purge_at);
   const headline = cardHeadline(item) || item.title;
@@ -83,11 +87,9 @@ export function TrashRowView({ item }: { item: TrashRow }) {
           )
         )}
       </div>
-      {pending ? (
-        // 原生 beginReturn 的信息条（restore）；pin 没有换列，只有章先翻——等回流期间按钮行整体禁用
-        <p className="card-pending-note">
-          {isRestoring ? text("恢复中，卡片将回到原状态列", "Restoring — the card returns to its previous lane") : text("已提交…", "Submitted…")}
-        </p>
+      {isRestoring ? (
+        // 原生 beginReturn 的信息条：恢复在途，按钮行收起
+        <p className="card-pending-note">{text("恢复中，卡片将回到原状态列", "Restoring — the card returns to its previous lane")}</p>
       ) : (
         <div className="trash-row-actions">
           <button
@@ -97,8 +99,9 @@ export function TrashRowView({ item }: { item: TrashRow }) {
           >
             {text("恢复", "Restore")}
           </button>
+          {/* pin 在途（POST 还没落定）时禁点防双发；POST 成功章翻起、钮随 isPinned 隐去，「恢复」始终可点 */}
           {!isPinned && (
-            <button type="button" className="trash-button is-pin" onClick={() => void pin()}>
+            <button type="button" className="trash-button is-pin" disabled={pending} onClick={() => void pin()}>
               {text("永久保存", "Pin")}
             </button>
           )}

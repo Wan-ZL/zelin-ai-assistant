@@ -1,6 +1,7 @@
 // 回收站行的「恢复」是每行一个 useSubmit（原生 beginReturn + returningLocal 的 180 s 超时，Store.swift:731-739 /
 // :563-565）：恢复中显示信息条、卡离开 trash 才解锁、180 s 没动 → 原生「恢复超时」句 + 行恢复可操作；
-// 「永久」章的本地回执在 backend 回 permanent 后退场（PendingSweep.swift:277-279）。行标题走 §37 链
+// 「永久保存」不锁行（Store.swift:794-795 badge flips in place）：POST 成功章先翻、钮隐去、「恢复」照旧可点；本地章在 backend 回
+// permanent 后退场（PendingSweep.swift:277-279）、180 s 没确认则收回。行标题走 §37 链
 // （原生 TrashItem.displaySummary，Cards.swift:2594）：钦定名 > summary > display_title > title；搜索也搜 display_title。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,32 +87,62 @@ describe("TrashPage 恢复的真信号 + 180 s 兜底", () => {
     expect(postAction).toHaveBeenCalledTimes(2);
   });
 
-  it("「永久保存」→ 章先翻（本地回执）；backend 回 permanent 后本地标记退场、章仍在；180 s 没确认 → 章收回 + 解锁", async () => {
+  it("「永久保存」不锁行（原生 badge flips in place）：章先翻、钮隐去、「恢复」照旧可点；backend 回 permanent 后本地标记退场、章仍在；180 s 没确认 → 章收回", async () => {
     wrap();
     await act(async () => {
       fireEvent.click(screen.getAllByRole("button", { name: "永久保存" })[0]);
     });
-    expect(screen.getByText("已提交…")).toBeTruthy();
+    expect(screen.queryByText("已提交…")).toBeNull();          // 不是换列动词，没有信息条
+    expect(screen.getAllByRole("button", { name: "恢复" })).toHaveLength(2); // 「恢复」没被收起
+    expect(screen.getAllByRole("button", { name: "永久保存" })).toHaveLength(1); // 本行的钮随章隐去
     expect(screen.getAllByText("永久")).toHaveLength(1);
     expect(screen.getAllByText("已永久保留")).toHaveLength(1);
 
     await load(board([{ ...rows[0], permanent: true }, rows[1]], "2026-09-05T10:00:10Z"));
-    expect(screen.queryByText("已提交…")).toBeNull();   // permanent 为真 = 落地
-    expect(screen.getAllByText("永久")).toHaveLength(1); // 章由 backend 撑着
+    expect(screen.getAllByText("永久")).toHaveLength(1); // permanent 为真 = 落地，章由 backend 撑着
     expect(screen.getAllByRole("button", { name: "永久保存" })).toHaveLength(1); // 只剩 R-202 的
 
-    // 另一行：pin 提交后 backend 始终不认 → 180 s 后章收回，行解锁，给诚实句
+    // 另一行：pin 提交后 backend 始终不认 → 180 s 后章收回，钮回来，给诚实句；期间「恢复」一直可点
     await act(async () => {
       fireEvent.click(screen.getAllByRole("button", { name: "永久保存" })[0]);
     });
-    expect(screen.getByText("已提交…")).toBeTruthy();
     expect(screen.getAllByText("永久")).toHaveLength(2);
+    expect(screen.queryAllByRole("button", { name: "永久保存" })).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: "恢复" })).toHaveLength(2);
     act(() => {
       vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);
     });
     expect(screen.getAllByText("永久")).toHaveLength(1);
     expect(screen.getByRole("alert").textContent).toBe("后台响应超时，卡片已恢复可操作");
     expect(screen.getAllByRole("button", { name: "永久保存" })).toHaveLength(1);
+  });
+
+  it("pin 在途（POST 未落定）时钮禁点防双发；POST 被拒 → 章不翻、钮回来、错误句露出", async () => {
+    let resolve: (v: unknown) => void = () => {};
+    vi.mocked(postAction).mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    wrap();
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "永久保存" })[0]);
+    });
+    const pinButtons = screen.getAllByRole("button", { name: "永久保存" }) as HTMLButtonElement[];
+    expect(pinButtons).toHaveLength(2);
+    expect(pinButtons[0].disabled).toBe(true);   // 在途
+    expect(pinButtons[1].disabled).toBe(false);  // 别的行不受影响
+    expect(screen.queryAllByText("永久")).toHaveLength(0); // 章要等 POST 成功
+    await act(async () => {
+      resolve({});
+    });
+    expect(screen.getAllByText("永久")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "永久保存" })).toHaveLength(1);
+
+    // 另一行：server 拒了 → 没有章、钮可再点
+    vi.mocked(postAction).mockRejectedValueOnce(new Error("inbox write failed"));
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "永久保存" })[0]);
+    });
+    expect(screen.getAllByText("永久")).toHaveLength(1);
+    expect(screen.getByRole("alert").textContent).toBe("inbox write failed");
+    expect((screen.getAllByRole("button", { name: "永久保存" })[0] as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("en：恢复中 / 超时句同形", async () => {

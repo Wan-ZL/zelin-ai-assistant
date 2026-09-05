@@ -42,9 +42,10 @@ export function SelectionBar() {
   const approve = batchable(selectedIds, proposals, "approve");
   const reject = batchable(selectedIds, proposals, "reject");
 
-  async function run(bodies: Array<Record<string, unknown>>, done: string) {
+  /** 逐条 POST；全部成功才回执 + 清选择。返回「全部成功」——调用方据此决定要不要挂本地章 */
+  async function run(bodies: Array<Record<string, unknown>>, done: string): Promise<boolean> {
     setConfirm("none");
-    if (bodies.length === 0) return;
+    if (bodies.length === 0) return false;
     setBusy(true);
     setNote(null);
     let failed = 0;
@@ -61,6 +62,7 @@ export function SelectionBar() {
       setNote(done);
       clearSelection();
     }
+    return failed === 0;
   }
 
   return (
@@ -92,9 +94,14 @@ export function SelectionBar() {
         <FeedbackDialog ids={ids} onSubmit={(body) => void run([body], text("已记录建议，感谢", "Feedback recorded"))} onCancel={() => setConfirm("none")} />
       )}
       {confirm === "force" && (
-        // 提交即给涉及的卡挂「合并中…」章（原生 mergeForcingBadge）；副卡全部离开所在列（真信号）才退场，180 s 兜底
+        // POST 成功才给涉及的卡挂「合并中…」章（原生 submitMergeForce：`guard writeInboxFile` 才 beginMergeForce）——
+        // server 拒了就没有在途批次，否则章挂 180 s 再冒出「检查 actd」是两句谎话；副卡全部离开所在列（真信号）才退场
         <ForceMergeDialog ids={ids} titles={titles}
-          onConfirm={(primary) => { markForceMerging(ids, primary); void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted")); }}
+          onConfirm={(primary) => {
+            void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted")).then((ok) => {
+              if (ok) markForceMerging(ids, primary);
+            });
+          }}
           onCancel={() => setConfirm("none")} />
       )}
       {(confirm === "approve" || confirm === "reject") && (

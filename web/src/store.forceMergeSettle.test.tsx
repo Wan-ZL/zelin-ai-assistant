@@ -124,4 +124,33 @@ describe("180 s 兜底", () => {
     });
     expect(screen.queryByRole("status")).toBeNull();
   });
+
+  it("120 s 从落时间戳起算，不从挂载起算：超时发生在别的页（组件未挂载）→ 回看板时过期的条不复活、半程的只剩余下的时间", () => {
+    // 超时发生在设置页期间（ForceMergeTimeoutNotice 没挂载），十分钟后回看板
+    markForceMerging(["P-1", "P-2"], "P-1");
+    act(() => {
+      vi.advanceTimersByTime(FORCE_MERGE_TIMEOUT_MS + 10 * 60_000);
+    });
+    expect(getState().forceMergeTimedOutAt).not.toBeNull();
+    wrap();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(getState().forceMergeTimedOutAt).toBeNull(); // 过期的时间戳当场归 null
+    cleanup();
+
+    // 半程：超时 50 s 后回看板 → 条还在，但只剩 70 s
+    markForceMerging(["P-2", "P-3"], "P-2");
+    act(() => {
+      vi.advanceTimersByTime(FORCE_MERGE_TIMEOUT_MS + 50_000);
+    });
+    wrap();
+    expect(screen.getByRole("status")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(NOTICE_FADE_MS - 50_000 - 1);
+    });
+    expect(screen.getByRole("status")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+  });
 });
