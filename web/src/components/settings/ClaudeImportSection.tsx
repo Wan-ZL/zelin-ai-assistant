@@ -1,10 +1,15 @@
 // 导入 Claude Code 工作（§22 / §68.10）：原生 SettingsClaudeImport 的 web 版——扫描近 N 天的
 // ~/.claude/projects 会话（GET /api/claude-sessions）→ 勾选 → 一个 import_claude_sessions inbox 动作
 // （§10 词表既有；server inbox_writer 校验 session_ids）。默认只勾「等你回复」的（原生同）。
+// 已提交的 id 记在 store 的 `claudeSessionsImported`（原生 locallyImported）：立刻从列表消失、下一次重新扫描也不回来——
+// actd 处理 inbox 动作前的那几秒，state/claude_sessions_import.json 还没记它们（act/radar_claude_sessions）。
+// 放 store 而不是组件 state：扫描快照 `claudeSessions` 跨组件卸载 / 重挂载留存（看板 ↔ 设置来回不重新 GET），
+// 这个集合必须与它同寿命——否则回到设置页时刚导入的行会带着预勾重新出现、可再次提交。原生 ClaudeImportModel 的
+// candidates 与 locallyImported 是一起死的（@StateObject），web 对应的是「一起活」（整页刷新才一起清）。
 import { useEffect, useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
-import { refreshClaudeSessions, useAppState } from "../../store";
+import { markClaudeSessionsImported, refreshClaudeSessions, useAppState } from "../../store";
 import { RelativeTime } from "../board/cardChrome";
 import { errorMessage } from "./useToast";
 
@@ -13,7 +18,7 @@ const SHOW_DEFAULT = 8;
 
 export function ClaudeImportSection() {
   const { text } = useI18n();
-  const { claudeSessions, pageErrors } = useAppState();
+  const { claudeSessions, claudeSessionsImported: imported, pageErrors } = useAppState();
   const [window, setWindow] = useState(7);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
@@ -30,17 +35,24 @@ export function ClaudeImportSection() {
     setPicked(new Set(claudeSessions.candidates.filter((c) => c.ended_waiting_on_user && !c.answered).map((c) => c.session_id)));
   }, [claudeSessions]);
 
-  const candidates = claudeSessions?.candidates ?? [];
+  // 本会话已提交的行不再列出（重新扫描回来的同一批也过滤）
+  const candidates = (claudeSessions?.candidates ?? []).filter((c) => !imported.has(c.session_id));
+  const waitingCount = candidates.filter((c) => c.ended_waiting_on_user && !c.answered).length;
+  // 原生 importSelected：ids = candidates ∩ selected——藏起来的已导入行永不算在内
+  const pickedIds = candidates.filter((c) => picked.has(c.session_id)).map((c) => c.session_id);
 
   async function importPicked() {
-    if (picked.size === 0) return;
+    const ids = pickedIds;
+    if (ids.length === 0) return;
     setBusy(true);
     setNote(null);
     try {
       // §22 wire：{action, session_ids}——ts 由 server 盖章，多一个字段 400
-      await postAction({ action: "import_claude_sessions", session_ids: [...picked] });
-      setNote({ ok: true, message: text(`已提交 ${picked.size} 个会话，几秒后出现在潜在任务列。`, `Submitted ${picked.size} session(s); they appear in Backlog within seconds.`) });
+      await postAction({ action: "import_claude_sessions", session_ids: ids });
+      markClaudeSessionsImported(ids);
       setPicked(new Set());
+      // 两条去向 = act/radar_claude_sessions._import_status：等你回复 → card_sent（提案），其余 → detected（潜在任务）
+      setNote({ ok: true, message: text(`已提交 ${ids.length} 条——后台服务几秒内会把它们变成看板卡片（等你回复的进「提案」，其余进「潜在任务」）。`, `Submitted ${ids.length} — the background service turns them into board cards within seconds (waiting-on-you ones go to Proposals, the rest to Backlog).`) });
     } catch (err) {
       setNote({ ok: false, message: errorMessage(err) });
     } finally {
@@ -59,19 +71,24 @@ export function ClaudeImportSection() {
     <section className="settings-section" id="settings-claude_import" aria-labelledby="settings-claude_import-title">
       <h3 id="settings-claude_import-title" className="settings-section-title">{text("导入 Claude Code 工作", "Import Claude Code work")}</h3>
       <p className="settings-helper">
-        {text("扫描最近的 Claude Code 会话，把「AI 在等你回复」的那些变成潜在任务卡（空看板的最便宜种子）。已导入过的不会重复。", "Scans recent Claude Code sessions and turns the ones waiting on you into Backlog cards (the cheapest seed for an empty board). Already-imported sessions are skipped.")}
+        {text("把你最近在 Claude Code 里做的事一键变成看板卡片，尤其是 AI 还在等你回复的那些。全程本地，不上传任何内容。已导入过的不会重复。", "Turn your recent Claude Code work into board cards in one click — especially sessions where the AI is still waiting on your reply. Everything stays local; nothing is uploaded. Already-imported sessions are skipped.")}
       </p>
       <div className="settings-actions">
         <label className="settings-knob-label" htmlFor="claude-import-window">{text("窗口（天）", "Window (days)")}</label>
         <input id="claude-import-window" className="settings-input is-number" type="number" min={1} max={90} value={window}
           onChange={(e) => setWindow(Math.min(90, Math.max(1, Number(e.target.value) || 7)))} />
-        <button type="button" className="btn" disabled={busy} onClick={() => void refreshClaudeSessions(window)}>
+        <button type="button" className="btn" disabled={busy} onClick={() => { setNote(null); void refreshClaudeSessions(window); }}>
           {claudeSessions ? text("重新扫描", "Re-scan") : text(`扫描最近 ${window} 天`, `Scan last ${window} days`)}
         </button>
-        <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={() => void importPicked()}>
-          {text(`导入所选 (${picked.size})`, `Import selected (${picked.size})`)}
+        <button type="button" className="btn btn-primary" disabled={busy || pickedIds.length === 0} onClick={() => void importPicked()}>
+          {text(`导入所选 (${pickedIds.length})`, `Import selected (${pickedIds.length})`)}
         </button>
       </div>
+      {candidates.length > 0 && (
+        <p className="settings-helper">
+          {text(`找到 ${candidates.length} 个会话，其中 ${waitingCount} 个在等你回复（已默认勾选）`, `Found ${candidates.length} sessions — ${waitingCount} waiting on you (pre-checked)`)}
+        </p>
+      )}
       {pageErrors.claudeSessions && <p className="settings-error" role="alert">{pageErrors.claudeSessions}</p>}
       {claudeSessions && !claudeSessions.ok && (
         <p className="settings-warning">
@@ -80,7 +97,8 @@ export function ClaudeImportSection() {
             : text("扫描失败：", "Scan failed: ") + (claudeSessions.error ?? claudeSessions.reason ?? "")}
         </p>
       )}
-      {claudeSessions?.ok && candidates.length === 0 && <p className="settings-helper">{text("这个窗口里没有可导入的会话。", "No importable sessions in this window.")}</p>}
+      {/* 空态是扫描时刻的判决（原生 emptyReason）：刚导入完把列表清空的那一拍只留回执句，重新扫描后才判 */}
+      {claudeSessions?.ok && candidates.length === 0 && !note?.ok && <p className="settings-helper">{text("这个窗口里没有可导入的会话。", "No importable sessions in this window.")}</p>}
       {candidates.length > 0 && (
         <div className="settings-actions">
           <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setPicked(new Set(candidates.filter((c) => !c.session_mismatch).map((c) => c.session_id)))}>{text("全选", "Select all")}</button>
