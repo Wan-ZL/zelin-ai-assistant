@@ -612,8 +612,11 @@ def _red_required_checks(gh: Callable, repo: str, number: object) -> Optional[li
     `statusCheckRollup` 不分 required 与 informational：`continue-on-error` 的
     job（如 Web visual）在 rollup 里同样是 FAILURE，但 D5「必须绿」只指 required
     （§65.5 的跟进卡也是这么数的）。2026-09-04 判例：#193 只有 informational 红，
-    被旧逻辑铸成 R-280。`gh pr checks --json` 在 check 失败时 gh 2.89 仍退出 0；
-    更旧的 gh 退出 1 → None → 不铸（宁可漏一张也不铸假卡）。"""
+    被旧逻辑铸成 R-280。gh 经 GraphQL `isRequired` 读 ruleset / 分支保护的 required
+    set；`--json` 的 exporter 先于退出码返回，check 失败时仍退出 0（cli/cli
+    checks.go）；不认 `--json` 的旧 gh 用法错误退出 1 → None → 不铸（宁可漏一张
+    也不铸假卡）。bucket 词表里只有 `fail`（FAILURE/TIMED_OUT/ERROR/ACTION_REQUIRED）
+    算红，`cancel` / `pending` / `skipping` 不算。"""
     data = _gh_json(gh, ["pr", "checks", str(number), "-R", repo,
                          "--required", "--json", "name,bucket"])
     if not isinstance(data, list):

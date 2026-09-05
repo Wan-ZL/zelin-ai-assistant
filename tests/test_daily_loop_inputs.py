@@ -271,6 +271,15 @@ class PrSignalsTestCase(unittest.TestCase):
         # gh pr checks 不可用（None）→ 分不清 required 与否 → 宁可不铸
         sigs, _ = loop_inputs.pr_signals(self._gh([], self.RED_ROLLUP))
         self.assertEqual(sigs, [])
+        # required 集合为空（ruleset 没配 / 查不到）同样不铸（fail-closed，宪法第 11 条）
+        self.assertEqual(loop_inputs.pr_signals(self._gh([], self.RED_ROLLUP, []))[0], [])
+
+    def test_cancelled_or_pending_required_checks_are_not_red(self):
+        # gh 的 bucket 词表：只有 fail 算红；cancel（被取消，重跑即可）与 pending 不铸
+        rollup = [{"name": "ci", "conclusion": "CANCELLED"}]
+        checks = [{"name": "ci", "bucket": "cancel"}, {"name": "Lint (shellcheck + ruff)", "bucket": "pending"}]
+        sigs, _ = loop_inputs.pr_signals(self._gh([], rollup, checks))
+        self.assertEqual(sigs, [])
 
     def test_green_pr_without_comments_is_quiet(self):
         gh = self._gh([], [{"conclusion": "SUCCESS"}])
