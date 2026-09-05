@@ -4,7 +4,10 @@
 #   [2] compile + run BridgeHarness.swift against every shell source except
 #       main.swift (the bootstrap has top-level statements; the harness is the
 #       main.swift of this build) — pins the `zaiShell` wire vocabulary and
-#       the LegacyPrefs seed rules.
+#       the LegacyPrefs seed rules;
+#   [3] compile + run PolicyHarness.swift the same way — pins the window
+#       policies of §54 追记 (ExternalLinkPolicy / ReopenPolicy /
+#       WindowTitlePolicy) that AppDelegate consults.
 # Mirrors ios/tests/captions/run.sh: plain swiftc, no Xcode project, any
 # failed assertion exits non-zero.
 #
@@ -25,18 +28,34 @@ FRAMEWORKS=(-framework AppKit -framework WebKit -framework SwiftUI -framework Fo
             -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications
             -framework ServiceManagement -framework Carbon)
 
-echo "==> [1/3] Typecheck shell module (swiftc -typecheck, all Sources + shared I18n)"
+echo "==> [1/5] Typecheck shell module (swiftc -typecheck, all Sources + shared I18n)"
 swiftc -typecheck "$SRC_DIR"/*.swift "$SHARED_I18N" "${FRAMEWORKS[@]}"
 
-echo "==> [2/3] Compile bridge harness (every shell source except main.swift)"
+# Every shell source except main.swift — each harness below becomes the
+# main.swift of its own build.
 NON_MAIN=()
 for f in "$SRC_DIR"/*.swift; do
     [ "$(basename "$f")" = "main.swift" ] && continue
     NON_MAIN+=("$f")
 done
-cp "$HERE/BridgeHarness.swift" "$WORK/main.swift"
-swiftc -O "${NON_MAIN[@]}" "$SHARED_I18N" "$WORK/main.swift" \
-    -o "$WORK/BridgeHarness" "${FRAMEWORKS[@]}"
 
-echo "==> [3/3] Run assertions (AIASSISTANT_HOME sandboxed)"
-AIASSISTANT_HOME="$WORK/home" "$WORK/BridgeHarness"
+# compile_harness <Name>: shell/tests/<Name>.swift → $WORK/<Name>/<Name>
+compile_harness() {
+    local name="$1"
+    mkdir -p "$WORK/$name"
+    cp "$HERE/$name.swift" "$WORK/$name/main.swift"
+    swiftc -O "${NON_MAIN[@]}" "$SHARED_I18N" "$WORK/$name/main.swift" \
+        -o "$WORK/$name/$name" "${FRAMEWORKS[@]}"
+}
+
+echo "==> [2/5] Compile bridge harness (every shell source except main.swift)"
+compile_harness BridgeHarness
+
+echo "==> [3/5] Run bridge assertions (AIASSISTANT_HOME sandboxed)"
+AIASSISTANT_HOME="$WORK/home" "$WORK/BridgeHarness/BridgeHarness"
+
+echo "==> [4/5] Compile policy harness (window policies, §54 追记)"
+compile_harness PolicyHarness
+
+echo "==> [5/5] Run policy assertions (AIASSISTANT_HOME sandboxed)"
+AIASSISTANT_HOME="$WORK/home" "$WORK/PolicyHarness/PolicyHarness"

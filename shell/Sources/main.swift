@@ -12,7 +12,9 @@
 // ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。v0.48.x P4 余量（§68.13）：
 // §28 通知中继消费（NotifyRelay，5 s tick）、TCC 探针 + 系统设置深链、登录时启动、
 // Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
-// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口；⌘Q 正常退出。
+// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
+// hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
+// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）住在 ShellSupport.swift，§54 追记。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -252,7 +254,7 @@ private func splashHTML(_ message: String) -> String {
 
 // MARK: - AppDelegate
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private let server = ServerManager()
@@ -260,6 +262,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private let bridge = ShellBridge()
     /// 5 s 引擎巡检（镜像 mac AppDelegate.refresh 的录制半边：TCC 自愈 + pgrep 活性）。
     private var engineTick: Timer?
+    /// `webView.title` → `window.title` 的 KVO 句柄（§54 追记：标题跟随页面）。
+    private var titleObservation: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
@@ -353,10 +357,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         return false
     }
 
-    /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。
+    /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。刻意**不看**
+    /// `flag`（hasVisibleWindows）：字幕悬浮 NSPanel 在场时它恒为 true，Dock 点击
+    /// 就成了空操作（原生 AppDelegate.swift 同一处的教训）。只看看板窗口自己
+    /// （ReopenPolicy，判例 shell/tests/PolicyHarness.swift）；showWindow 幂等。
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showWindow() }
+        if ReopenPolicy.shouldShow(boardVisible: window.isVisible,
+                                   boardMiniaturized: window.isMiniaturized) {
+            showWindow()
+        }
         return true
     }
 
@@ -378,27 +388,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         bridge.install(into: config)   // 必须在 WKWebView 创建前注册 handler
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+        webView.uiDelegate = self          // target=_blank / window.open → 外链分流（§54 追记）
         webView.allowsMagnification = true
         if #available(macOS 13.3, *) {
             webView.isInspectable = true   // preview shell：允许 Safari Web Inspector
         }
         bridge.attach(to: webView)
-        webView.loadHTMLString(splashHTML("Starting board server\u{2026}"), baseURL: nil)
+        webView.loadHTMLString(splashHTML(
+            L("正在启动 board server\u{2026}", "Starting board server\u{2026}")), baseURL: nil)
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = ShellConfig.displayName
-        window.contentMinSize = NSSize(width: 900, height: 600)
+        // 窗口下限镜像原生 MainWindow（分屏 / 小屏要能缩；看板泳道本来就横向滚动）：
+        // truth = ui/tokens/native-tokens.json layout.window.min_width / min_height
+        window.contentMinSize = NSSize(width: 720, height: 480)
         window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
         window.contentView = webView
         // frameAutosaveName：记住上次位置/大小；首启（无存档）时居中。
         if !window.setFrameUsingName("ZAIBoardWindow") { window.center() }
         window.setFrameAutosaveName("ZAIBoardWindow")
+        // 标题跟随页面（原生 MainWindow.installTitleSink 的壳半边）：WKWebView.title
+        // 是 KVO-compliant 的；页面每次换 document.title（切页 / 换语言）都到这里，
+        // 空标题（内嵌 splash）回落产品名。web 半（每页各自的 document.title）另批。
+        titleObservation = webView.observe(\.title, options: [.initial, .new]) { [weak self] wv, _ in
+            guard let self else { return }
+            self.window.title = WindowTitlePolicy.resolve(pageTitle: wv.title,
+                                                          fallback: ShellConfig.displayName)
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: 外链（§54 追记：一律交系统浏览器；原生 DepAction.url / FailureCatalog.perform 同款）
+
+    /// 按 ExternalLinkPolicy 执行副作用：看板 origin 留在本 webView，其余交系统处理者，
+    /// about:blank / javascript: 之类什么都不做。
+    private func route(_ url: URL?) {
+        switch ExternalLinkPolicy.classify(url, port: ShellConfig.port) {
+        case .board:
+            if let url { webView.load(URLRequest(url: url)) }
+        case .external:
+            if let url { NSWorkspace.shared.open(url) }
+        case .ignore:
+            break
+        }
+    }
+
+    /// target=_blank / window.open：不实现时 WebKit 直接取消该导航（页面上 16 处外链
+    /// 全成空操作）。壳永远只有一个 webView——这里分流后返回 nil，绝不开第二个窗口。
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        route(navigationAction.request.url)
+        return nil
+    }
+
+    /// 同 frame 的普通 `<a href>` / location 跳转：主 frame 要离开看板 origin 去别的
+    /// http(s) 主机 → 取消 + 交系统浏览器（看板永不被导航走）。子 frame 与「新窗口」
+    /// 请求（targetFrame == nil，随后进 createWebViewWith）一律放行。
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let target = navigationAction.targetFrame, target.isMainFrame,
+              ExternalLinkPolicy.classify(navigationAction.request.url,
+                                          port: ShellConfig.port) == .external
+        else {
+            decisionHandler(.allow)
+            return
+        }
+        route(navigationAction.request.url)
+        decisionHandler(.cancel)
     }
 
     private func loadBoard() {
@@ -425,31 +487,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     /// 起不来 = 明说 + 给排障线索，绝不留一扇白窗。第一条永远是 launchd 的
-    /// 修法（§54：server 由 launchd 托管，壳只是连接方）。
+    /// 修法（§54：server 由 launchd 托管，壳只是连接方）。文案随界面语言
+    /// L(zh, en)（原生 AppDelegate / Pages 的每个 NSAlert 同款）；命令、label、
+    /// 路径逐字不译。
     private func showStartFailure() {
         let hosted = server.launchdHosted()
+        let kickstart = "launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)"
+        let serverLog = "~/Library/Logs/zelin-ai-assistant/server.launchd.log"
+        let shellLog = "~/Library/Logs/zelin-ai-assistant/board-shell.log"
         webView.loadHTMLString(splashHTML(
-            "Board server 未能连上。<br>server 由 launchd 托管：<code>launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)</code>"
-            + "<br>日志：<code>~/Library/Logs/zelin-ai-assistant/server.launchd.log</code>"),
+            L("Board server 未能连上。<br>server 由 launchd 托管：<code>\(kickstart)</code>"
+              + "<br>日志：<code>\(serverLog)</code>",
+              "Could not reach the board server.<br>The server is managed by launchd: <code>\(kickstart)</code>"
+              + "<br>Log: <code>\(serverLog)</code>")),
             baseURL: nil)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Board server 未能连上"
+        alert.messageText = L("Board server 未能连上", "Could not reach the board server")
         let spawnLine = server.spawned == nil
-            ? "• 壳未 spawn 兜底（launchd 已加载该 label，避免两个 server 抢端口）"
-            : "• 壳已 spawn 兜底 child（launchd 未加载该 label），它也没在 10 秒内答话——看 board-shell.log"
-        alert.informativeText = """
+            ? L("• 壳未 spawn 兜底（launchd 已加载该 label，避免两个 server 抢端口）",
+                "• The shell did not spawn a fallback (launchd has this label loaded; two servers must not fight over the port)")
+            : L("• 壳已 spawn 兜底 child（launchd 未加载该 label），它也没在 10 秒内答话——看 board-shell.log",
+                "• The shell spawned a fallback child (label not loaded in launchd) and it did not answer within 10 s either — see board-shell.log")
+        let labelState = hosted
+            ? L("已加载", "loaded")
+            : L("未加载——先 bash install.sh 渲染并加载它", "not loaded — run bash install.sh first to render and load it")
+        alert.informativeText = L("""
         10 秒内未能连上 http://127.0.0.1:\(ShellConfig.port)/api/board。
 
-        • server 由 launchd 托管：launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)
-          （label \(hosted ? "已加载" : "未加载——先 bash install.sh 渲染并加载它")）
-        • server 日志：~/Library/Logs/zelin-ai-assistant/server.launchd.log
-        • 壳日志：~/Library/Logs/zelin-ai-assistant/board-shell.log
+        • server 由 launchd 托管：\(kickstart)
+          （label \(labelState)）
+        • server 日志：\(serverLog)
+        • 壳日志：\(shellLog)
         \(spawnLine)
         • Server repo：\(ShellConfig.serverRepo ?? "(未配置)")
         • 手动试跑：cd 到 server repo 后执行 ZAI_PORT=\(ShellConfig.port) <config/runtime.json 的 python> -m server
-        """
-        alert.addButton(withTitle: "好")
+        """, """
+        No answer from http://127.0.0.1:\(ShellConfig.port)/api/board within 10 s.
+
+        • The server is managed by launchd: \(kickstart)
+          (label \(labelState))
+        • Server log: \(serverLog)
+        • Shell log: \(shellLog)
+        \(spawnLine)
+        • Server repo: \(ShellConfig.serverRepo ?? "(not configured)")
+        • Manual run: cd into the server repo, then ZAI_PORT=\(ShellConfig.port) <python from config/runtime.json> -m server
+        """)
+        alert.addButton(withTitle: L("好", "OK"))
         alert.runModal()
     }
 
@@ -457,23 +541,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private func showConfigFailure() {
         server.logLine("board-shell: no running server on 127.0.0.1:\(ShellConfig.port) "
             + "and no server repo configured (defaults serverRepo / Info.plist ZAIServerRepo both empty) — not spawning.")
+        let shellLog = "~/Library/Logs/zelin-ai-assistant/board-shell.log"
+        let kickstart = "launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)"
         webView.loadHTMLString(splashHTML(
-            "找不到 board server 的 repo 路径。<br>日志：<code>~/Library/Logs/zelin-ai-assistant/board-shell.log</code>"),
+            L("找不到 board server 的 repo 路径。<br>日志：<code>\(shellLog)</code>",
+              "Cannot find the board server's repo path.<br>Log: <code>\(shellLog)</code>")),
             baseURL: nil)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "找不到 board server 的 repo"
-        alert.informativeText = """
+        alert.messageText = L("找不到 board server 的 repo", "Board server repo not found")
+        alert.informativeText = L("""
         127.0.0.1:\(ShellConfig.port) 上没有在班的 server，launchd 也没有加载 \(ShellConfig.serverLabel)，而本壳不知道去哪里拉起兜底的 python3 -m server。
 
         修复（任选其一）：
-        • server 由 launchd 托管：bash install.sh（渲染并加载 \(ShellConfig.serverLabel)），之后 launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)
+        • server 由 launchd 托管：bash install.sh（渲染并加载 \(ShellConfig.serverLabel)），之后 \(kickstart)
         • defaults write com.zelin.ai-board serverRepo <repo 路径>
         • 重新运行 bash install.sh / shell/build.sh（构建时会把 repo 路径盖进 app）
 
-        日志：~/Library/Logs/zelin-ai-assistant/board-shell.log
-        """
-        alert.addButton(withTitle: "好")
+        日志：\(shellLog)
+        """, """
+        No server is answering on 127.0.0.1:\(ShellConfig.port), launchd has not loaded \(ShellConfig.serverLabel), and this shell does not know where to start the fallback python3 -m server.
+
+        Fix (any one of these):
+        • Let launchd manage the server: bash install.sh (renders and loads \(ShellConfig.serverLabel)), then \(kickstart)
+        • defaults write com.zelin.ai-board serverRepo <repo path>
+        • Re-run bash install.sh / shell/build.sh (the build stamps the repo path into the app)
+
+        Log: \(shellLog)
+        """)
+        alert.addButton(withTitle: L("好", "OK"))
         alert.runModal()
     }
 

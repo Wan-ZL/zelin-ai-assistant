@@ -4238,6 +4238,16 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
 自此全部 EXISTS**（例外与理由写在 §68.14）；owner 一周日用无需打开旧 app 是 P4 的完成判据
 （vnext2-plan §4）。
 
+**§54 追记（2026-09-05，add-only；parity 批次 `shell-window-external-links`——壳窗口四条原生行为的回填）**：原生 Mac app 退役为 web + 壳后，壳窗口这一层丢了四条行为，本追记逐条立法（判例 `shell/tests/PolicyHarness.swift`，run.sh 第 [4]/[5] 步；三条判断都是 `shell/Sources/ShellSupport.swift` 里的纯函数，`main.swift` 的 AppDelegate 只问策略、做副作用）：
+
+- **外链一律交系统浏览器**（原生 `Pages.swift DepAction.url` / `Doctor.swift FailureCatalog.perform` / `AppDelegate.openReleasePage` 都是 `NSWorkspace.shared.open`）：WKWebView 不实现 `WKUIDelegate` 时 `target="_blank"` / `window.open` 会被 WebKit **静默取消**——web 面 16 处外链（依赖下载页、安装页、GitHub PR / release 页、控制台链接、隐私说明……）在壳里曾全是空操作。壳自此 `webView.uiDelegate = self`，`ExternalLinkPolicy.classify(url, port)` 三分：`board`（origin = `http` + 回环主机 `127.0.0.1 | localhost | ::1` + `ShellConfig.port` 三者全对）→ 留在同一个 webView 加载（壳永远只有一个 webView，绝不开第二个窗口）；`external`（其余 http(s)、以及 `mailto:` / `file:` 等系统处理者的 scheme）→ `NSWorkspace.shared.open`；`ignore`（`about:` / `javascript:` / `data:` / `blob:` / 空 URL）→ 什么都不做。两个入口：`createWebViewWith`（新窗口请求，分流后返回 nil）与 `decidePolicyFor navigationAction`（**主 frame** 要离开看板 origin 去别的 http(s) 主机 → `.cancel` + 外开，看板永不被普通 `<a href>` 导航走；子 frame 与 `targetFrame == nil` 的新窗口请求放行，交前者）。同一回环主机的**其他端口**是别的本地服务，按 external。web 侧的 `rel="noreferrer"` 不动。
+- **Dock 重开只看看板窗口，不看 `hasVisibleWindows`**（原生 `AppDelegate.applicationShouldHandleReopen` + `MainWindowController.isWindowOpen`）：字幕悬浮 `NSPanel`（`CaptionOverlay`，`orderFrontRegardless`）在场时 AppKit 的 flag 恒为 true，按它判 Dock 点击就成了空操作——而 D3 无菜单栏图标，Dock 是主要的重开入口。`ReopenPolicy.shouldShow(boardVisible:, boardMiniaturized:) = !(visible || miniaturized)`；`showWindow` 幂等；最小化交 AppKit 默认重开处理（返回 true）。上文 v0.48.19 追记「点 Dock 图标重开窗口」的语义自此精确到「看板窗口不在（关了）就重开，悬浮窗不算窗口」。
+- **窗口下限 720×480**（原生 `MainWindow.swift` 从 900×640 放宽：分屏 / 小屏要能缩，泳道本来横向滚动）：壳此前 900×600 比原生和 web 自己的布局契约（`tokens.css --native-layout-window-min-*`、`shell.css .shell min-width`、D31 顶栏密度档）都严。**truth = `ui/tokens/native-tokens.json` `layout.window.min_width` / `min_height`**，`main.swift` 注释指向它，不手写第二份数字。
+- **标题跟随页面，壳半边**（原生 `MainWindow.installTitleSink`：标题随 section / 语言重算）：壳 KVO 观察 `webView.title`（KVO-compliant）→ `window.title`，`WindowTitlePolicy.resolve(pageTitle:, fallback:)` 把空 / 全空白标题（内嵌 splash）回落 `ShellConfig.displayName`。**web 半边**（每页各自的 `document.title`，替代 `AppShell.tsx` 的固定一句）属另一批次（`appshell-dashboard-missing`），本追记不立法。
+- **随手一并**：内嵌 splash 与两个失败弹窗（`showStartFailure` / `showConfigFailure`）的 messageText / informativeText / 按钮改走 `L(zh, en)`（原生每个 `NSAlert` 同款；`LanguageStore.shared` 在 `buildWindow` 之前就位），`launchctl` 命令、label、日志路径、`defaults write` 行逐字不译。这些句子出现在 server **连不上**的时刻，server-owned 文案目录（§68.13 `GET /api/notifications` 那类）此刻拿不到，`L()` 是壳既有的、也是唯一可行的机制——不是第二套 i18n。
+
+不动的：`buildMenu`（菜单 l10n 属同链下一批 `shell-menu-l10n`）、`BridgeHarness.swift`（`zaiShell` 词表属 `shell-recording-bridge`）、web 源码。
+
 ### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
 
 产品 = web 看板 + shell（D3）；原生看板（`mac/Sources/Kanban.swift` /
