@@ -6,7 +6,8 @@
 原生 SettingsSlack.swift 的 copyManifest 读 repo 的 ``config/slack-app-manifest.json``
 （真源 = act/lib/slack_setup.manifest_json，drift-guard 钉住两者一致）写进剪贴板；web 没有
 读 repo 文件的能力，server 把同一份文件原文交给页面，页面再写剪贴板。文件缺席 = 404
-（repo 不完整），不 500。
+（repo 不完整），不 500；原生 guard 的后半句「读出来只剩空白」同样算缺席 → 同一个 404，
+否则页面会把一串空白写进剪贴板还报「已复制 ✓」。
 """
 from __future__ import annotations
 
@@ -27,5 +28,8 @@ def manifest(_home: Path) -> dict:
     try:
         text = manifest_path().read_text(encoding="utf-8")
     except OSError:
+        text = ""
+    if not text.strip():
+        # 缺席与空白同罪（原生 copyManifest 的 guard：try? String(contentsOfFile:) 失败 || trimmed.isEmpty）
         raise NotFoundError("slack app manifest not found", {"path": str(MANIFEST_REL)})
     return {"manifest": text, "path": str(MANIFEST_REL)}

@@ -22,6 +22,10 @@ UNKNOWN_FIELD；类型/取值不合法 400 INVALID_FIELD；落盘按 §15.3 v0.1
 雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
 ``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
 字段可带 ``check``（今日词表 ``email``）：server 400 + 目录投影双语句，web 镜像同一条规则。
+help 文案是 server-owned 的**披露句**，不只是提示：slack / gmail 两区的区首导语、``gmail_fetch_command`` 的
+§14bis 命令契约句（直接执行、``GMAIL_RADAR_LAST_UID``、stdout 一个 JSON 数组）、telemetry 三段知情披露
+（元数据字段表 / 500 字截断 + 密钥掩码 / 最上方开关停全部上传）逐字镜像原生段落——判例
+tests/test_server_settings_help_copy.py 钉住每一句。
 
 server/ 不 import act（§49）：override 键名、config 路径与默认值镜像自
 act/lib/config.py，判例 tests/test_server_settings_catalog.py 钉住每个键都在
@@ -184,6 +188,9 @@ SECTIONS: tuple = (
                default=[], config=("sources", "watch_people"),
                help_zh="这些人发的消息按需求候选提取。", help_en="Messages from these people are mined for asks."),
         ],
+        # 区首导语逐字镜像原生 SettingsSlack.swift body 首段（parity 批 catalog-help-copy）
+        help_zh="把「别人在 Slack 上找你的事」（DM / 群 / @提及）自动变成提案卡。3 步全在这里完成，不用改任何文件；对外只出草稿，永远你自己发。此区改动即时生效。",
+        help_en="Turns \"people needing you on Slack\" (DMs / groups / @mentions) into proposal cards automatically. All 3 setup steps happen right here — no files to edit; outbound replies are drafts only, you always send them yourself. Changes apply immediately.",
     ),
     _section(
         "gmail", "Gmail 接入", "Gmail",
@@ -197,11 +204,16 @@ SECTIONS: tuple = (
                check="email",
                help_zh="IMAP 登录用的邮箱地址；留空 = 用 config.yaml 里的值。",
                help_en="Address used for the IMAP login; blank = whatever config.yaml says."),
+            # §14bis 契约句逐字镜像原生 SettingsGmail.swift commandCard（此前的「stdout 一行一封」是错的——雷达
+            # fetch_via_command 要的是一个 JSON 数组，照旧文案写出来的命令只会得到 command_bad_output）
             _f("gmail_fetch_command", "string", "自定义抓取命令（B 路径）", "Custom fetch command (path B)", default="",
                config=("sources", "gmail", "fetch_command"), placeholder=("例：/Users/you/bin/gmail-fetch.sh", "e.g. /Users/you/bin/gmail-fetch.sh"),
-               help_zh="填了就走 B · 自定义抓取命令（stdout 一行一封）；留空走 A · 应用专用密码（推荐）。",
-               help_en="Set = path B, a custom fetch command (one mail per stdout line); blank = path A, the app password (recommended)."),
+               help_zh="填了就走 B（留空 = A · 应用专用密码）。雷达每轮直接执行它（不走 shell），环境变量 GMAIL_RADAR_LAST_UID 带上次进度，命令在 stdout 打印一个 JSON 数组：{uid（单调递增）, from, subject, date, message_id, body}。Gmail API 脚本、MCP 客户端都可以。保存后下一轮起雷达改走这条命令抓邮件；跑没跑成看下面「运行状态」。",
+               help_en="Set = path B (blank = path A, the app password). The radar executes it directly each round (no shell). $GMAIL_RADAR_LAST_UID carries the progress marker; the command prints a JSON array to stdout: {uid (monotonic), from, subject, date, message_id, body}. A Gmail-API script or an MCP client both qualify. From the next round after saving the radar fetches mail via this command; see \"Run status\" below for the truth."),
         ],
+        # 区首导语逐字镜像原生 SettingsGmail.swift body 首段（parity 批 catalog-help-copy）
+        help_zh="轮询收件箱里的未读邮件，需要你处理的自动变成提案卡（纯通知/营销直接过滤）。只读——邮件绝不会被标成已读。全部在这里配好，不用改任何文件；此区改动即时生效。",
+        help_en="Polls unread inbox mail and turns the ones needing you into proposal cards (notifications/marketing filtered out). Read-only — mail is never marked read. Everything is set up right here, no files to edit; changes apply immediately.",
     ),
     _section(
         "telemetry", "产品改进计划", "Product improvement program",
@@ -211,19 +223,22 @@ SECTIONS: tuple = (
                default=True, config=("telemetry", "enabled"),
                help_zh="默认开：只上传事件元数据（事件名 / 耗时 / 计数）。关 = 完全不上传。",
                help_en="On by default: uploads event metadata only (names / durations / counts). Off = nothing is uploaded."),
+            # 三段知情披露逐字镜像原生 Settings.swift telemetryGroup（§15 v0.18 的同意记录发生在这把开关旁，披露
+            # 不能比原生弱）：级别句列出元数据字段 + 随机设备号；文本句写明 500 字截断 + 密钥掩码 + 关前已记录行的去向；
+            # 区导语 = 「关掉最上方开关即完全停止全部上传」（web 的区导语渲染在区首，「最上方开关」仍是第一把）。
             _f("telemetry.level", "enum", "行为事件级别", "Behavior-event level", default="detailed",
                choices=("basic", "detailed"), config=("telemetry", "level"),
-               help_zh="basic / detailed 都只是元数据粒度；切 basic 同时停掉输入文本上传。",
-               help_en="basic / detailed are both metadata-only granularity; basic also switches off typed-text upload."),
+               help_zh="基础与详细都发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号。切到基础还会同时停掉下方的输入文本上传（文本需要详细级）。",
+               help_en="Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed)."),
             _f("telemetry.capture_input", "bool",
                "上传我输入的文本以更懂我（默认关，勾选即同意：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
                "Upload the text I type, to know me better (off by default — checking is opting in: captures, questions, rework feedback, search terms; ≤500 chars each)",
                default=False, config=("telemetry", "capture_input"), write="always",
-               help_zh="绝不含 AI 回答、屏幕内容、邮件、Slack 消息、密钥。",
-               help_en="Never AI output, screen content, mail, Slack messages or secrets."),
+               help_zh="只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
+               help_en="Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."),
         ],
-        help_zh="字段表与边界见 docs/TELEMETRY.md。",
-        help_en="Field table and boundaries: docs/TELEMETRY.md.",
+        help_zh="关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+        help_en="Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md.",
     ),
     _section(
         "digest", "每周摘要", "Weekly digest",

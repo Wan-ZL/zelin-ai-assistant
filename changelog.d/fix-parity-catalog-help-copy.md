@@ -1,0 +1,4 @@
+type: fixed
+- **Gmail 接入区「自定义抓取命令（B 路径）」的说明改回 §14bis 契约**：此前 web 写的「stdout 一行一封」是错的——雷达要的是一个 JSON 数组，照那句写出来的命令只会得到 command_bad_output。现在与原生同一句：雷达每轮直接执行它（不走 shell），环境变量 `GMAIL_RADAR_LAST_UID` 带上次进度，stdout 打印一个 JSON 数组 `{uid（单调递增）, from, subject, date, message_id, body}`；Gmail API 脚本、MCP 客户端都可以；跑没跑成看下面「运行状态」。
+- **产品改进计划区的知情披露补回原生三段**：行为事件级别句列出元数据字段（事件名、时间、页面/动作、耗时计数、随机设备号、版本号）；输入文本句写明 截断 500 字符 + 内置密钥掩码 + 「关前已记录、尚未上传的少量行仍会随行为统计发出」；区导语改为「关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。」
+- **Slack / Gmail 接入区补回区首导语**（「把「别人在 Slack 上找你的事」…对外只出草稿，永远你自己发。」/「轮询收件箱里的未读邮件…只读——邮件绝不会被标成已读。」，server 目录 help、web 只渲染）；Slack 第 ② 步补回「公司要求管理员审批的话，等批下来再做第 ③ 步——期间雷达会用只读 MCP 兜底扫描，不会干等。」；「复制 App Manifest」遇 repo 里没有 `config/slack-app-manifest.json`（或文件读出来只剩空白——与原生 guard 同罪，不再把一串空白写进剪贴板还报「已复制 ✓」）时不再露 server 原句，改说「找不到 config/slack-app-manifest.json——repo 不完整？重装一次即可。」；这句只认 server 报的「缺文件」404，路由层的 unknown-route 404（web/server 版本错位）仍出原句。
