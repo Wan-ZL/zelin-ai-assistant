@@ -1,7 +1,7 @@
 {
   "counts": {
     "PENDING": 13,
-    "PRESENT": 831,
+    "PRESENT": 830,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -858,7 +858,7 @@
   "not_gated": {
     "informational": 414,
     "os": 11,
-    "retired": 57,
+    "retired": 58,
     "shell": 70
   },
   "ok": true,
