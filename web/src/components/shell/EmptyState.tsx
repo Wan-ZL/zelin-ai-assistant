@@ -13,11 +13,14 @@ export interface EmptyStateProps {
   action?: ReactNode;
   /** 对齐：整页居中空态用 center（默认）；原生 VStack(alignment: .leading) 式的顶左空态用 start */
   align?: "center" | "start";
+  /** live region 语义：常规空态 status（默认，polite）；渲染崩溃这类必须立刻播报的用 alert——调用方**不要**再在外面
+   *  套一层 role，嵌套 live region 会让辅助技术把同一段话读两遍 */
+  role?: "status" | "alert";
 }
 
-export function EmptyState({ icon, title, hint, action, align = "center" }: EmptyStateProps) {
+export function EmptyState({ icon, title, hint, action, align = "center", role = "status" }: EmptyStateProps) {
   return (
-    <div className={`shell-empty${align === "start" ? " is-start" : ""}`} role="status">
+    <div className={`shell-empty${align === "start" ? " is-start" : ""}`} role={role}>
       {icon != null && (
         <div className="shell-empty-icon" aria-hidden="true">
           {icon}

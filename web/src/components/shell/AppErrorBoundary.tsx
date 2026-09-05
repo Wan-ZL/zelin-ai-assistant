@@ -45,9 +45,11 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     const { error } = this.state;
     if (!error) return this.props.children;
     const { text } = getI18n(getState().language);
+    // 唯一的 live region 是 EmptyState 自己（role=alert，assertive）——外层不再套 role，嵌套 alert>status 会让辅助技术读两遍
     return (
-      <div className="shell-center" style={{ minHeight: "100vh" }} role="alert" data-testid="app-error-boundary">
+      <div className="shell-center" style={{ minHeight: "100vh" }} data-testid="app-error-boundary">
         <EmptyState
+          role="alert"
           title={text("看板渲染失败", "The board failed to render")}
           hint={renderErrorText(error)}
           action={

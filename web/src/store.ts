@@ -257,12 +257,35 @@ export function isBoardDecodeError(error: unknown): boolean {
 }
 
 /** 顶层形状校验（原生 `JSONDecoder().decode(Dashboard.self)` 的 web 版最小门）：必须是带字符串 `generated_at` 的对象。
- *  只验顶层——行级宽容留给各组件（wire add-only，前端绝不因新字段崩渲染）。返回不合格的原因（null = 合格）。 */
+ *  只验顶层——列级由 normalizeBoardShape 补齐、行级宽容留给各组件（wire add-only，前端绝不因新字段崩渲染）。
+ *  返回不合格的原因（null = 合格）。 */
 export function boardShapeProblem(value: unknown): string | null {
   const { text } = getI18n(state.language);
   if (value === null || typeof value !== "object" || Array.isArray(value)) return text("顶层不是对象", "top level is not an object");
   if (typeof (value as { generated_at?: unknown }).generated_at !== "string") return text("缺少 generated_at", "generated_at is missing");
   return null;
+}
+
+/** 七个必有列（`Board` 类型的必填数组键；原生 Dashboard CodingKeys 同一组） */
+const BOARD_LANE_KEYS = ["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash"] as const;
+/** 可选列（旧 server 缺席即缺席——缺席不补，免得往 wire 镜像里塞 server 没说的键；在场却不是数组才归 `[]`） */
+const BOARD_OPTIONAL_LIST_KEYS = ["archived", "merge_suggestions", "fold_receipts", "recaps"] as const;
+
+/** 列级宽容（原生 `Dashboard.init(from:)` / `decodeLossyRows`，shared/Sources/Contract.swift：缺列或整列不是数组 → `[]`，
+ *  `counts` 不是对象 → `Counts.empty`）。过了顶层门的合法 JSON 若少一列，`BoardLanes` 直接 `.filter` / `counts[...]` 会把
+ *  整板炸进错误边界——而旧快照那时已经被换掉，「重试」拉回同一份体只会再炸一次。这里把它补成能渲染的形状：
+ *  一切正常时原样返回（同一引用，不白拷）。 */
+export function normalizeBoardShape(board: Board): Board {
+  let out: Record<string, unknown> | null = null;
+  const patch = (key: string, value: unknown) => {
+    out ??= { ...board };
+    out[key] = value;
+  };
+  for (const key of BOARD_LANE_KEYS) if (!Array.isArray(board[key])) patch(key, []);
+  for (const key of BOARD_OPTIONAL_LIST_KEYS) if (key in board && !Array.isArray(board[key])) patch(key, []);
+  const counts: unknown = board.counts;
+  if (counts === null || typeof counts !== "object" || Array.isArray(counts)) patch("counts", {});
+  return out === null ? board : (out as unknown as Board);
 }
 
 /** 原生 Store.swift:320-324「Keep the previously good dashboard rather than blanking the UI」：快照不动，
@@ -283,12 +306,13 @@ export function refreshBoard(): Promise<void> {
   if (boardRequest) return boardRequest;
   boardRequest = (async () => {
     try {
-      const board = await fetchBoard();
-      const shapeProblem = boardShapeProblem(board);
+      const raw = await fetchBoard();
+      const shapeProblem = boardShapeProblem(raw);
       if (shapeProblem !== null) {
         failBoardDecode(shapeProblem);
         return;
       }
+      const board = normalizeBoardShape(raw); // 缺列 / 坏列 → `[]`、坏 counts → `{}`（原生列级宽容），渲染面永远拿到能读的形状
       const previous = state.board;
       // 「合并中…」章不看 generated_at：每一版快照都跑一遍 §21bis 谓词（副卡全部离开所有列才算落地）
       setState({

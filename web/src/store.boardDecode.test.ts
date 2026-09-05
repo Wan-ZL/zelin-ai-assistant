@@ -51,7 +51,7 @@ describe("isBoardDecodeError", () => {
 });
 
 describe("boardShapeProblem", () => {
-  it("accepts an object with a string generated_at (extra / missing lanes are the components' lenient business)", () => {
+  it("accepts an object with a string generated_at (missing lanes are normalizeBoardShape's business — store.boardLaneCoercion.test.ts; extra keys are the components')", () => {
     expect(boardShapeProblem(BOARD)).toBeNull();
     expect(boardShapeProblem({ generated_at: "x" })).toBeNull();
     expect(boardShapeProblem({ generated_at: "x", brand_new_key: 1 })).toBeNull();

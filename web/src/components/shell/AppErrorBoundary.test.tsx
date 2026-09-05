@@ -54,6 +54,15 @@ describe("AppErrorBoundary", () => {
     expect(screen.queryByText("board-content")).toBeNull();
   });
 
+  it("exactly one live region: the alert is the EmptyState itself, no role=status nested inside it", () => {
+    render(<AppErrorBoundary><Bomb /></AppErrorBoundary>);
+    const alert = screen.getByRole("alert");
+    expect(alert.classList.contains("shell-empty")).toBe(true);
+    expect(alert.querySelector("[role]")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByTestId("app-error-boundary").getAttribute("role")).toBeNull();
+  });
+
   it("Retry remounts the children and refetches the board through refreshBoard", async () => {
     render(<AppErrorBoundary><Bomb /></AppErrorBoundary>);
     screen.getByRole("alert");
