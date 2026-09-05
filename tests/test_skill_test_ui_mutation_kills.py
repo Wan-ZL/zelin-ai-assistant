@@ -408,19 +408,20 @@ class CommonConstantsTestCase(unittest.TestCase):
         self.assertEqual(tc.relative_luminance(tc.parse_color("black")), 0.0)
 
     def test_schema_version_is_one_on_every_product(self):
-        """testui_common::SCHEMA_VERSION = 1（字段 add-only；版本号只在破坏兼容时才动）——empty_inventory 骨架、
-        测试夹具（testkit 手写 `"schemaVersion": 1`）与它同号；0 / 2 都是另一个 schema。"""
+        """testui_common::SCHEMA_VERSION = 1（字段 add-only；版本号只在破坏兼容时才动）——empty_inventory 骨架与
+        testkit 里**手写字面量** `"schemaVersion": 1` 的夹具（make_tokens / fake_det）同号；0 / 2 都是另一个 schema。
+        注意 kit.make_inventory 走 tc.empty_inventory 读的就是 SCHEMA_VERSION 本身，拿它对照是自证（tautology），不算钉。"""
         self.assertEqual(tc.SCHEMA_VERSION, 1)
         skeleton = tc.empty_inventory("web", "source", "testkit", "reference")
         self.assertEqual(skeleton["schemaVersion"], 1)
-        self.assertEqual(skeleton["schemaVersion"], kit.make_inventory([])["schemaVersion"])
+        self.assertEqual(skeleton["schemaVersion"], kit.make_tokens({})["schemaVersion"])
+        self.assertEqual(skeleton["schemaVersion"], kit.fake_det([])["schemaVersion"])
         self.assertEqual(tc.validate_inventory(skeleton), [])
 
 
 class CommonFullSweepKillsTestCase(unittest.TestCase):
     """testui_common 全模块 430 体本地复跑（2026-09-04，夜报之外的 72 个存活体）里的**真洞**，逐个钉死。判为等价、不补
     判例的（理由写在这里，夜报再报也不用再判）：
-    * `_hsl_to_rgb` `int(hp) % 6` → `% 7`（76:23）：h % 360 保证 int(hp) ∈ 0..5，模数 ≥ 6 都是恒等；
     * `_func_color` `parts[:3]` → `[:4]`（91:60）：多出的第 4 元素没人读；
     * `parse_color` `func.group(1)` → `group(0)`（116:46）：name 只被 `startswith("hsl")` 用，整串匹配开头相同；
     * `contrast_ratio` `fg[3] < 1.0` → `<=`（144:7）：alpha 恰为 1.0 时 composite 是恒等映射（x*1.0 + y*0.0 == x）；
@@ -436,13 +437,17 @@ class CommonFullSweepKillsTestCase(unittest.TestCase):
 
     def test_hsl_every_sector_and_hue_wrap(self):
         """_hsl_to_rgb 六个扇区（s=50% l=40%，m > 0 才能暴露 table 里的 0 通道）、饱和色扇区 5（magenta）、hue 越界
-        `h % 360`（390 ≡ 30、-30 ≡ 330）；期望值与 colorsys.hls_to_rgb 逐值核对过。"""
+        `h % 360`（390 ≡ 30、-30 ≡ 330）；期望值与 colorsys.hls_to_rgb 逐值核对过。
+        `int(hp) % 6`（76:23）不是恒等：float 取模 `-1e-14 % 360 == 360.0`，hp == 6.0，int(hp) == 6——`% 6` 折回扇区 0
+        （≡ hsl(0)），`% 7` 会索引 table[6] 抛 IndexError，穿过只接 ValueError 的 _func_color_or_none 直达 parse_color。"""
         expected = {30: "#996633ff", 90: "#669933ff", 150: "#339966ff", 210: "#336699ff", 270: "#663399ff",
                     330: "#993366ff", 390: "#996633ff", -30: "#993366ff"}
         for hue, hex8 in expected.items():
             self.assertEqual(tc.canonical_color("hsl(%d, 50%%, 40%%)" % hue), hex8, hue)
         self.assertEqual(tc.canonical_color("hsl(300, 100%, 50%)"), "#ff00ffff")
         self.assertEqual(tc.canonical_color("hsl(240, 100%, 50%)"), "#0000ffff")
+        self.assertEqual(tc.canonical_color("hsl(-1e-14, 50%, 40%)"), tc.canonical_color("hsl(0, 50%, 40%)"))
+        self.assertEqual(tc.canonical_color("hsl(-1e-14, 50%, 40%)"), "#993333ff")
 
     def test_to_hex8_clamps_both_ends(self):
         """to_hex8 `max(0, min(255, …))`——出界通道钳到 0 / 255，而不是 `%02x` 吐出 `-1` / `100`。"""
