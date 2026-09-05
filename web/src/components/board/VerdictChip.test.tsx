@@ -1,5 +1,6 @@
 // §64（issue #128）AI 评语章 + 一句话摘要 —— 只是建议的判例：
-//   1) 待验收卡：有评语 → 三态章可见（点一下展开理由，再点收起）；没有 → 零 DOM；
+//   1) 待验收卡：有评语 → 三态章可见（点一下展开理由，再点收起）；没有 → 章零 DOM，一句话回落交付说明
+//      （§64.5 2026-09-05 追记；细节判例 ReviewCard.summaryFallbackCopyDraft.test.tsx）；
 //   2) 词表镜像 act/lib/card_summary.py VERDICTS（逐字），未知值按原文中性渲染；
 //   3) 摘要一句在卡面；执行器原话不在卡面（只住详情侧栏，DetailFields.blocks.test.tsx 钉「交付了什么：」）；
 //   4) 点章绝不触发任何 inbox 动作（验收/打回只有按钮能按）；
@@ -40,10 +41,12 @@ describe("VerdictChip on review cards", () => {
     expect(Object.values(VERDICTS)).toEqual(["建议验收", "需继续做", "需要拍板"]);
   });
 
-  it("no assessment → 没有章、没有摘要行", () => {
+  it("no assessment → 没有章；一句话回落 delivered_summary（不带 is-ai，§64.5 2026-09-05 追记：原生 ReviewRow 永远有交付一句）", () => {
     render(<ReviewCard card={review()} />);
     expect(screen.queryByRole("button", { name: /AI verdict/ })).toBeNull();
-    expect(document.querySelector(".card-summary-line")).toBeNull();
+    const line = document.querySelector(".card-summary-line") as HTMLElement;
+    expect(line.className).not.toContain("is-ai");
+    expect(line.textContent).toContain("fixed the null deref");
   });
 
   it("有评语 → 章可见；点一下展开理由，再点收起；执行器原话不在卡面", () => {

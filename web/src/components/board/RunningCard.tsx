@@ -5,15 +5,19 @@
 //   working：状态章 + 运行时长 + repo 章 + 单击复制指令 行 + steer 回执 + 评论/回答 + 停止 fork。
 // 停止 fork = Mac v0.21 两选弹窗：退回提案（abort_execution，destructive）/ 去待验收
 // （stop_to_review）；两动词都允许 approved（排队卡）与 executing。无拖拽换状态（§0.8）。
-// 出错的卡（原生 TaskRow.errorLine）：错误一句 + 「让 AI 修」（POST /api/ai-fix，起 act.ai_fix
-// 修复会话）+ 「回答…」（= comment 即 steer：answer_input 已退役，方向修正经 §44.3 中继）。
+// 出错的卡（原生 TaskRow.errorLine，§25）：错误一句——排队卡看 dispatch_error(_id)、其余看 last_error(_id)；
+// failure id 在 §25 失败目录（store.failures ← GET /api/failures）里时卡面说人话、原文降到 hover / 详情，
+// 否则原文——+ 目录的对症一键（FailureActionButton，标签逐字原生 actionLabel；未知 id 不装）+ 「让 AI 修」
+// （POST /api/ai-fix，起 act.ai_fix 修复会话）+ 「回答…」（= comment 即 steer：answer_input 已退役，方向修正经 §44.3 中继）。
 // 错误全文 / summary / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID / agents 列表名 住右侧详情侧栏
 // （「展开详情 ▸」打开，D34；DetailFields 渲染）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
-import { useI18n } from "../../i18n";
+import { useI18n, type Language } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
-import type { TaskRow } from "../../types";
+import { useAppState } from "../../store";
+import type { FailureCatalog, TaskRow } from "../../types";
+import { FailureActionButton } from "../settings/failureAction";
 import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
 import { AiFixButton, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
@@ -46,8 +50,20 @@ export function stateLabel(state: string, text: (zh: string, en: string) => stri
   }
 }
 
+/**
+ * §25 卡片错误行的人话（原生 `FailureCatalog.message(failureID)`）：failure id 在目录里 → 当前语言那句；
+ * 没 id / 目录里没有 / 目录还没回（`null`）→ null，卡面照旧原文。目录 = server-owned `GET /api/failures`（防腐 #10：web 不抄第二份句子）。
+ */
+export function failureSentence(failureId: unknown, catalog: FailureCatalog | null, lang: Language): string | null {
+  if (typeof failureId !== "string" || !failureId) return null;
+  const entry = catalog?.failures[failureId];
+  const sentence = entry?.[lang];
+  return typeof sentence === "string" && sentence !== "" ? sentence : null;
+}
+
 export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
-  const { text } = useI18n();
+  const { text, language } = useI18n();
+  const { failures } = useAppState();
   const { pending, pendingAction, error, steerQueued, submit } = useSubmit();
   const [dialog, setDialog] = useState<DialogKind>("none");
 
@@ -61,6 +77,9 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   // 错误文本：排队卡看 dispatch_error，其余看 last_error（原生 TaskRow.errorText）
   const errorText = isQueued ? row.dispatch_error : row.last_error;
   const hasError = typeof errorText === "string" && errorText !== "";
+  // §25 分类 id 与原文同源伴随（dashboard.py：queued 项 dispatch_error_id / 其余 last_error_id；未分类 = null）
+  const failureId = isQueued ? row.dispatch_error_id : row.last_error_id;
+  const sentence = failureSentence(failureId, failures, language);
   const cmd = resumeCommand(row);
   // 「回答…」只给执行中出错的卡（有会话可 steer）；排队/刹车行没有会话
   const showsAnswer = !isBlocked && !isQueued && hasError;
@@ -156,9 +175,9 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           <CopyCommandLine cmd={cmd} />
         </>
       )}
-      {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；原文 hover 可见，详情侧栏有全文 + 复制 */}
+      {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；分类 id 在目录里 → 人话，原文 hover 可见，详情侧栏有全文 + 复制 */}
       {!isBlocked && hasError && (
-        <ErrorLine prefix={isQueued ? text("派发失败：", "Dispatch failed: ") : text("错误：", "Error: ")} raw={errorText} />
+        <ErrorLine prefix={isQueued ? text("派发失败：", "Dispatch failed: ") : text("错误：", "Error: ")} raw={errorText} sentence={sentence} />
       )}
       {pending ? (
         <p className="card-pending-note">
@@ -168,8 +187,14 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </p>
       ) : (
         <div className="card-actions">
-          {/* 出错的卡（原生 errorLine）：让 AI 修 = 起本机修复会话；刹车行带 last_error 也给 */}
-          {(hasError || (isBlocked && !!row.last_error)) && <AiFixButton cardId={row.id} />}
+          {/* 出错的卡（原生 errorLine 的按钮行，顺序同原生）：§25 目录的对症一键（未知 id 渲染 null）→ 让 AI 修 = 起本机
+              修复会话；刹车行带 last_error 也给。按钮本体借自 settings/failureAction.tsx（唯一实现，不抄标签表） */}
+          {(hasError || (isBlocked && !!row.last_error)) && (
+            <>
+              <FailureActionButton failureId={failureId} compact />
+              <AiFixButton cardId={row.id} />
+            </>
+          )}
           {/* #119（v0.48.8）：「回答…」(answer_input) 退役——受阻会话由 actd 收割进
               待验收；blocked 行只剩「停止」（+ 让 AI 修）出口。执行中出错的卡：
               「回答…」= comment 即 steer（方向修正经 §44.3 中继），橙色同原生 answer tint。 */}
