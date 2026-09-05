@@ -3,12 +3,14 @@
 //   2) config.yaml 在 → 不复制，只 reveal；
 //   3) 复制撞 409（别处刚建好）→ 视同已在，照常 reveal，不报错；
 //   4) 判定读点击时刻的 GET /api/setup（不是挂载时的快照）；
-//   5) 其它复制错误（模板也缺 404）原句以 alert 显示、不 reveal。
+//   5) 其它复制错误（模板也缺 404）原句以 alert 显示、不 reveal；
+//   6) GET /api/setup 失败且 store 里没有快照 → 视同缺席照样尝试复制（409 = 已在），绝不直接 reveal 到模板；
+//   7) 复制成功后 reveal 失败 → 「已创建」status 句仍在，alert 另起一条。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchSetup, postRevealTarget, postSetupStep } from "../../api";
 import { LanguageContext } from "../../i18n";
-import { resetStoreForTests } from "../../store";
+import { getState, resetStoreForTests, setSetup } from "../../store";
 import type { SetupSnapshot } from "../../types";
 import { GeneralExtras } from "./GeneralExtras";
 
@@ -86,11 +88,51 @@ describe("GeneralExtras · 打开 config.yaml", () => {
 
   it("asks GET /api/setup at click time rather than trusting the mount-time snapshot", async () => {
     renderEn();
-    // 挂载后（app 启动时那份）说 config 在；用户随后删了它——点击时刻的答案才算
+    // 挂载时（app 启动那份）store 说 config 在；用户随后删了它——点击时刻的答案才算
+    setSetup(snapshot({ config_exists: true }));
     vi.mocked(fetchSetup).mockResolvedValue(snapshot({ config_exists: false }));
     fireEvent.click(screen.getByRole("button", { name: "Open config.yaml" }));
     await waitFor(() => expect(calls).toEqual(["setup:config-from-example", "reveal:config"]));
-    expect(fetchSetup).toHaveBeenCalled();
+    expect(fetchSetup).toHaveBeenCalledTimes(1);
+    expect(getState().setup?.config_exists).toBe(true);   // 复制回执把快照写回 store
+  });
+
+  it("with no snapshot at all and a failing GET /api/setup, still tries the copy before revealing", async () => {
+    // 首屏 refreshSetup 也失败（或还没回来）：store.setup == null。不能因为「不知道」就直接 reveal——
+    // server/files.py 会回落到 config.example.yaml，正是本 gap 要堵的路
+    vi.mocked(fetchSetup).mockRejectedValue(new ApiError(503, { error: { code: "UNAVAILABLE", message: "setup snapshot unavailable" } }));
+    renderEn();
+    expect(getState().setup).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open config.yaml" }));
+    await waitFor(() => expect(calls).toEqual(["setup:config-from-example", "reveal:config"]));
+    expect((await screen.findByRole("status")).textContent).toBe("Created config.yaml from config.example.yaml");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("with no snapshot and a failing GET /api/setup, a 409 from the copy still means exists → reveal", async () => {
+    vi.mocked(fetchSetup).mockRejectedValue(new Error("network down"));
+    vi.mocked(postSetupStep).mockImplementation(async (step) => {
+      calls.push(`setup:${step}`);
+      throw new ApiError(409, { error: { code: "CONFLICT", message: "config.yaml already exists - not overwriting" } });
+    });
+    renderEn();
+    fireEvent.click(screen.getByRole("button", { name: "Open config.yaml" }));
+    await waitFor(() => expect(calls).toEqual(["setup:config-from-example", "reveal:config"]));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the 「已创建」 note when the reveal fails after a successful copy", async () => {
+    vi.mocked(fetchSetup).mockResolvedValue(snapshot({ config_exists: false }));
+    vi.mocked(postRevealTarget).mockImplementation(async (target) => {
+      calls.push(`reveal:${target}`);
+      throw new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "reveal is only available on macOS" } });
+    });
+    renderEn();
+    fireEvent.click(screen.getByRole("button", { name: "Open config.yaml" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("reveal is only available on macOS");
+    expect(screen.getByRole("status").textContent).toBe("Created config.yaml from config.example.yaml");
+    expect(calls).toEqual(["setup:config-from-example", "reveal:config"]);
   });
 
   it("shows any other copy failure verbatim and does not reveal", async () => {

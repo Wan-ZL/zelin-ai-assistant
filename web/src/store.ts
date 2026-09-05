@@ -114,6 +114,9 @@ export interface AppState {
   failures: FailureCatalog | null;         // GET /api/failures（§25 失败目录双语句；引擎诊断行 / 依赖行按 id 取）
   mcp: McpList | null;                     // GET /api/mcp
   claudeSessions: ClaudeSessionsScan | null; // GET /api/claude-sessions
+  /** §68.10 追记：本页会话里「导入所选」已提交的 session_id（原生 locallyImported）——与 claudeSessions 快照同寿命
+   *  （快照跨组件卸载留存，这个集合也得留存；整页刷新一起清），重新扫描回来的同一批照样过滤 */
+  claudeSessionsImported: ReadonlySet<string>;
   pageErrors: Record<string, string | null>; // 上述各面最近一次读失败的文案（成功后清空）
   // ----- §21 多选（原生 Kanban「选择」态）：选中主键集合 + 是否在多选态 -----
   selectionMode: boolean;
@@ -180,6 +183,7 @@ const initialState: AppState = {
   failures: null,
   mcp: null,
   claudeSessions: null,
+  claudeSessionsImported: new Set<string>(),
   pageErrors: {},
   selectionMode: false,
   selectedIds: new Set<string>(),
@@ -517,6 +521,11 @@ export function setSetup(setup: SetupSnapshot) {
   setState({ setup });
 }
 
+/** §68.10 追记：「导入所选」成功提交的 session_id 记进本页会话（原生 locallyImported）；ClaudeImportSection 据此从候选里剔除 */
+export function markClaudeSessionsImported(ids: Iterable<string>) {
+  setState({ claudeSessionsImported: new Set([...state.claudeSessionsImported, ...ids]) });
+}
+
 // ----- §21 多选态（原生 Kanban「选择」）：进入/退出 + 勾选 -------------------------------- #
 
 export function setSelectionMode(on: boolean) {
@@ -546,6 +555,7 @@ export function resetStoreForTests() {
     sortOrder: readSortOrder(),
     detailViewedIds: new Set<string>(),
     selectedIds: new Set<string>(),
+    claudeSessionsImported: new Set<string>(),
     pageErrors: {},
   };
   boardRequest = null;

@@ -1,7 +1,7 @@
 // 设置页「导入 Claude Code 工作」（CONTRACT §68.10 追记；原生 SettingsClaudeImport locallyImported + 计数行）：
 //   1) 扫描结果上方一行「找到 N 个会话，其中 M 个在等你回复（已默认勾选）」，M 只数 等你回复 ∧ 未回答；
 //   2) 「导入所选」之后：已提交的行立刻从列表消失、回执句两条去向（提案 / 潜在任务）、不再出「没有可导入」空态；
-//   3) 重新扫描回来同一批 id → 已导入的仍不列出、不预勾、不计数——只剩没导过的；
+//   3) 重新扫描回来同一批 id → 已导入的仍不列出、不预勾、不计数——只剩没导过的；卸载重挂（看板 ↔ 设置）亦然；
 //   4) 导入 payload 只带 candidates ∩ picked 的 id（藏起来的已导入行永不重复提交）；
 //   5) 导入失败 → 行留在原处、可再点。
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -44,7 +44,7 @@ function rowTitles(): string[] {
 }
 
 beforeEach(() => {
-  resetStoreForTests();
+  resetStoreForTests();   // 也清 claudeSessionsImported（与扫描快照同寿命）
   vi.mocked(fetchClaudeSessions).mockReset().mockResolvedValue(scan([WAITING_A, WAITING_B, ANSWERED, RECENT]));
   vi.mocked(postAction).mockReset().mockResolvedValue({ ok: true });
 });
@@ -102,6 +102,23 @@ describe("ClaudeImportSection", () => {
     expect(await screen.findByText("No importable sessions in this window.")).toBeTruthy();
     expect(screen.queryByText(/^Found /)).toBeNull();
     expect(postAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("imported ids stay hidden across unmount → remount while the store keeps the cached scan", async () => {
+    // 看板 ↔ 设置 来回：SettingsPage 卸载重挂，store 里的扫描快照还是导入前那份（不重新 GET）
+    const first = renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "Import selected (2)" }));
+    await waitFor(() => expect(rowTitles()).toEqual(["Session ccc", "Session ddd"]));
+    first.unmount();
+    renderSection();
+    await waitFor(() => expect(rowTitles()).toEqual(["Session ccc", "Session ddd"]));
+    expect(fetchClaudeSessions).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Found 2 sessions — 0 waiting on you (pre-checked)")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Import selected (0)" }) as HTMLButtonElement).disabled).toBe(true);
+    // 「全选」也只勾可见行——藏起来的 aaa/bbb 永不重复提交
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import selected (2)" }));
+    await waitFor(() => expect(postAction).toHaveBeenLastCalledWith({ action: "import_claude_sessions", session_ids: ["ccc", "ddd"] }));
   });
 
   it("a rejected import leaves the rows in place so the user can retry", async () => {

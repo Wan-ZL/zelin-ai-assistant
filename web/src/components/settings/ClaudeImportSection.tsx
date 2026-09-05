@@ -1,12 +1,15 @@
 // 导入 Claude Code 工作（§22 / §68.10）：原生 SettingsClaudeImport 的 web 版——扫描近 N 天的
 // ~/.claude/projects 会话（GET /api/claude-sessions）→ 勾选 → 一个 import_claude_sessions inbox 动作
 // （§10 词表既有；server inbox_writer 校验 session_ids）。默认只勾「等你回复」的（原生同）。
-// 已提交的 id 记在组件级 `imported`（原生 locallyImported）：立刻从列表消失、下一次重新扫描也不回来——
+// 已提交的 id 记在 store 的 `claudeSessionsImported`（原生 locallyImported）：立刻从列表消失、下一次重新扫描也不回来——
 // actd 处理 inbox 动作前的那几秒，state/claude_sessions_import.json 还没记它们（act/radar_claude_sessions）。
+// 放 store 而不是组件 state：扫描快照 `claudeSessions` 跨组件卸载 / 重挂载留存（看板 ↔ 设置来回不重新 GET），
+// 这个集合必须与它同寿命——否则回到设置页时刚导入的行会带着预勾重新出现、可再次提交。原生 ClaudeImportModel 的
+// candidates 与 locallyImported 是一起死的（@StateObject），web 对应的是「一起活」（整页刷新才一起清）。
 import { useEffect, useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
-import { refreshClaudeSessions, useAppState } from "../../store";
+import { markClaudeSessionsImported, refreshClaudeSessions, useAppState } from "../../store";
 import { RelativeTime } from "../board/cardChrome";
 import { errorMessage } from "./useToast";
 
@@ -15,10 +18,9 @@ const SHOW_DEFAULT = 8;
 
 export function ClaudeImportSection() {
   const { text } = useI18n();
-  const { claudeSessions, pageErrors } = useAppState();
+  const { claudeSessions, claudeSessionsImported: imported, pageErrors } = useAppState();
   const [window, setWindow] = useState(7);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(null);
@@ -47,7 +49,7 @@ export function ClaudeImportSection() {
     try {
       // §22 wire：{action, session_ids}——ts 由 server 盖章，多一个字段 400
       await postAction({ action: "import_claude_sessions", session_ids: ids });
-      setImported((s) => new Set([...s, ...ids]));
+      markClaudeSessionsImported(ids);
       setPicked(new Set());
       // 两条去向 = act/radar_claude_sessions._import_status：等你回复 → card_sent（提案），其余 → detected（潜在任务）
       setNote({ ok: true, message: text(`已提交 ${ids.length} 条——后台服务几秒内会把它们变成看板卡片（等你回复的进「提案」，其余进「潜在任务」）。`, `Submitted ${ids.length} — the background service turns them into board cards within seconds (waiting-on-you ones go to Proposals, the rest to Backlog).`) });
