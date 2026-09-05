@@ -483,8 +483,15 @@ def _flag(query: dict, key: str) -> bool:
 
 
 def _get_doctor(ctx, query: dict) -> dict:
+    # §68.4 追记：?lang=zh|en → 子进程 AIASSISTANT_UI_LANG（doctor 人话随 web 当前语言；进缓存键）
     fast = query.get("fast", "1") not in ("0", "false", "no")
-    return doctor_run.report(ctx.home, fast=fast, refresh=_flag(query, "refresh"))
+    return doctor_run.report(ctx.home, fast=fast, refresh=_flag(query, "refresh"),
+                             lang=doctor_run.parse_lang(query.get("lang")))
+
+
+def _get_diagnostics(ctx, query: dict) -> dict:
+    return diagnostics.snapshot(ctx.home, refresh=_flag(query, "refresh"),
+                                lang=doctor_run.parse_lang(query.get("lang")))
 
 
 def _post_secret_verify(ctx, rest: str, payload: dict) -> dict:
@@ -529,8 +536,8 @@ _GET_JSON_ROUTES = {
     "/api/secrets": lambda ctx, query: secrets_store.snapshot(ctx.home),
     # §68.3 权限体检（FDA 清单 + TCC 相关 doctor 行）
     "/api/permissions": lambda ctx, query: permissions.snapshot(ctx.home, refresh=_flag(query, "refresh")),
-    # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单）
-    "/api/diagnostics": lambda ctx, query: diagnostics.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单 + ai_fix_enabled；?lang= 透传 doctor）
+    "/api/diagnostics": _get_diagnostics,
     "/api/doctor": _get_doctor,
     # §68.5 首次运行向导（engine = 原生 EngineDetector：claude CLI + 认证梯子）
     "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),

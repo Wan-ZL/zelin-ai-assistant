@@ -43,6 +43,12 @@ os.environ.setdefault("AIASSISTANT_GH", "0")
 # §70 每日循环的 launchd 日志读取器默认读 ~/Library/Logs/zelin-ai-assistant/——
 # 开发者机器上有真日志，读了就是不确定的测试输入；指进沙箱（目录可以不存在）。
 os.environ.setdefault("ZAI_LAUNCHD_LOG_DIR", os.path.join(TMP_HOME, "launchd-logs"))
+# §68.4 诊断页日志清单列出 ingest 链的 LOGFILE（默认 /tmp/screenpipe-auto.log，
+# server/paths.ingest_log_path）——开发者机器上那是一份真日志，读了就是不确定的测试
+# 输入（清单多一条、尾巴是真数据）。指进沙箱（默认不存在；要它的判例自己写）。
+# 无条件：shell 里残留的值也不许把套件对准真文件。integration/test_ingest_smoke.py
+# 起真脚本时在子进程 env 里显式设自己的一份，不受影响。
+os.environ["PROCESS_SCREENPIPE_LOG"] = os.path.join(TMP_HOME, "screenpipe-auto.log")
 # §70 每日循环挂在 actd.run_once 里：沙箱里没有 state/daily_loop.json，任何一条走
 # 真 run_once 的判例都会在本地时间 ≥ 03:30 时把整轮循环跑起来（真 gh、真 doctor
 # 子进程）。默认关掉；循环自己的判例显式打开（AIASSISTANT_DAILY_LOOP=1）。

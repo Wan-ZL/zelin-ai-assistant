@@ -499,7 +499,8 @@ function loadPage<K extends PageKey>(key: K, fetcher: () => Promise<AppState[K]>
 export const refreshSettingsCatalog = () => loadPage("settingsCatalog", fetchSettingsCatalog);
 export const refreshSecrets = () => loadPage("secrets", fetchSecrets);
 export const refreshPermissions = (refresh = false) => loadPage("permissions", () => fetchPermissions(refresh));
-export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh));
+// lang = store 的当前 UI 语言：doctor 子进程的人话随之（§68.4 追记；原生 DepsView 切语言即 model.check()）
+export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh, state.language));
 export const refreshSetup = () => loadPage("setup", fetchSetup);
 export const refreshAbout = () => loadPage("about", fetchAbout);
 export const refreshFailures = () => loadPage("failures", fetchFailures);

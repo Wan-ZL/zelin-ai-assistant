@@ -890,6 +890,8 @@ export interface DiagnosticsSnapshot {
   logs: LogEntry[];
   cron_probe?: CronProbe | null;
   activity?: IngestActivity | null;
+  /** config.yaml doctor.ai_fix_enabled（原生 AIFix.enabled；false = 「让 AI 修」整颗不出现；缺席 = 开；add-only） */
+  ai_fix_enabled?: boolean;
   [key: string]: unknown;
 }
 

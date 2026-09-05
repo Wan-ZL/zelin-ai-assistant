@@ -8,6 +8,11 @@
 
 进程内缓存 TTL 15 s（``--fast`` 也要跑 launchctl / 文件探针，几秒钟）：权限体检页
 与诊断页同时打开只跑一次；``?refresh=1`` 绕过缓存。
+
+2026-09-05 追记（§68.4；原生 Pages.swift runFullOutput 的 ``AIASSISTANT_UI_LANG``）：``?lang=zh|en``
+（``parse_lang`` 校验，其它值 400）经 ``extra_env`` 传给子进程——doctor 的 detail / fix 人话
+（act/lib/failures.ui_lang 第一级）随 web 的当前语言而不是随守护进程的 locale；lang 进缓存键
+（同一 home 两种语言各一份 15 s）。不带 ``lang`` = 老行为（python 侧按持久化设置 / locale 定）。
 """
 from __future__ import annotations
 
@@ -18,12 +23,23 @@ from pathlib import Path
 from typing import Optional
 
 from server import subproc
+from server.errors import InvalidFieldError
 
 CACHE_TTL_S = 15
 TIMEOUT_S = 120
+LANGS = ("zh", "en")   # §15 UI 语言词表（ai_fix_launch._LANGS 同款）
 
 _lock = threading.Lock()
-_cache: dict = {}   # (str(home), fast) -> (expires_at, result)
+_cache: dict = {}   # (str(home), fast, lang) -> (expires_at, result)
+
+
+def parse_lang(raw) -> Optional[str]:
+    """URL query 的 ``lang``：缺席 / 空 = None（不注入 env）；zh / en 原样；其它 400。"""
+    if raw is None or raw == "":
+        return None
+    if raw in LANGS:
+        return raw
+    raise InvalidFieldError("lang must be zh or en", {"lang": str(raw)[:20]})
 
 
 def _iso(now: float) -> str:
@@ -41,9 +57,11 @@ def _succeeded(home: Path, rc: int, fast: bool, now: float, doc: dict, rows: lis
             "fast": fast, "ran_at": _iso(now)}
 
 
-def _run(home: Path, fast: bool, runner, now: float) -> dict:
+def _run(home: Path, fast: bool, runner, now: float, lang: Optional[str]) -> dict:
     args = ["--json", "--fast"] if fast else ["--json"]
-    rc, out, err = subproc.run_module(home, "act.doctor", args, timeout_s=TIMEOUT_S, runner=runner)
+    extra_env = {"AIASSISTANT_UI_LANG": lang} if lang else None
+    rc, out, err = subproc.run_module(home, "act.doctor", args, timeout_s=TIMEOUT_S, runner=runner,
+                                      extra_env=extra_env)
     doc = subproc.parse_json_output(out) or {}
     rows = doc.get("checks")
     if not isinstance(rows, list):
@@ -52,15 +70,15 @@ def _run(home: Path, fast: bool, runner, now: float) -> dict:
 
 
 def report(home: Path, *, fast: bool = True, refresh: bool = False, runner=None,
-           now: Optional[float] = None) -> dict:
-    """缓存包装：同 (home, fast) 15 s 内复用；``refresh`` 强制重跑。"""
+           now: Optional[float] = None, lang: Optional[str] = None) -> dict:
+    """缓存包装：同 (home, fast, lang) 15 s 内复用；``refresh`` 强制重跑。"""
     now = time.time() if now is None else now
-    key = (str(home), fast)
+    key = (str(home), fast, lang)
     with _lock:
         hit = _cache.get(key)
         if hit and not refresh and hit[0] > now:
             return dict(hit[1])
-    result = _run(home, fast, runner, now)
+    result = _run(home, fast, runner, now, lang)
     with _lock:
         _cache[key] = (now + CACHE_TTL_S, result)
     return dict(result)

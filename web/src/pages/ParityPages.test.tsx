@@ -186,13 +186,13 @@ describe("DepsSection（原 DiagnosticsPage，D30 折进设置页）", () => {
     expect(document.querySelector(".diag-log-tail")?.textContent).toBe("a\nb");
   });
 
-  it("full checkup calls fetchDoctor(fast=false, refresh=true)", async () => {
+  it("full checkup calls fetchDoctor(fast=false, refresh=true, lang)", async () => {
     vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics());
     vi.mocked(fetchDoctor).mockResolvedValue({ ...diagnostics().doctor, fast: false });
     renderEn(<DepsSection />);
     await screen.findByText("actd heartbeat");
     fireEvent.click(screen.getByRole("button", { name: /Run diagnostics/ }));
-    await waitFor(() => expect(fetchDoctor).toHaveBeenCalledWith(false, true));
+    await waitFor(() => expect(fetchDoctor).toHaveBeenCalledWith(false, true, "en"));
   });
 
   it("doctor rows carry the §25 one-click action; Reveal file posts {target:'config'}", async () => {

@@ -119,6 +119,13 @@ def actd_log_path(home: Path) -> Path:
     return home / "state" / "actd.log"
 
 
+def ingest_log_path() -> Path:
+    # §15.2 / §68.4：ingest/process-screenpipe.sh 的 LOGFILE（`$PROCESS_SCREENPIPE_LOG`，默认 /tmp/screenpipe-auto.log）——
+    # 手动 ingest 失败后完整的 claude 输出都在这里（server/ingest_run 只回 400 字尾巴）；原生 IngestModel.revealIngestLog
+    # 同一路径。server 起脚本时 env 原样继承（subproc.module_env），所以这里读同一个 env 两边永远一致。
+    return Path(os.environ.get("PROCESS_SCREENPIPE_LOG") or "/tmp/screenpipe-auto.log")
+
+
 def cron_probe_path(home: Path) -> Path:
     # §25：act/lib/checks/cron.CRON_PROBE_PATH（cron 链每轮写的 FDA 探针；依赖检查页「定时任务磁盘权限」行）
     return home / "state" / "cron_probe.json"

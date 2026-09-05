@@ -6,14 +6,19 @@
 //   从未成功：<原因> / 暂无数据）· doctor 表（--fast；「运行诊断」= fast=0 含活探针，会花 token；零失败「全部通过 ✓」、
 //   「完整报告」折叠成文本）· web 自有的 管线活性（心跳 / 看板新鲜度 / 连崩）· 自动部署状态（§56 deploy_state 全字段）·
 //   安装回执（§23）· 日志尾巴（只读、server size-cap；?log=<name> 深链直接翻开）。
-//   让 AI 修在卡片上（§54.1 第 5 项），这里只在 doctor 有未通过项时出现。doctor 行带 §25 failure_id 时给原生 FailureCatalog
-//   的对症一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，failureAction）。
+//   让 AI 修在卡片上（§54.1 第 5 项），这里只在 doctor 有未通过项时出现；config.yaml doctor.ai_fix_enabled=false（快照
+//   ai_fix_enabled，原生 AIFix.enabled）整颗不出现；成功句「已在 Terminal 打开修复会话——跟着 AI 走即可」与卡片共用。
+//   doctor 表 = 原生 doctorFindingRow：只列没通过的行（OK 行在「完整报告」里），主句 = §25 FailureCatalog 的人话（当前语言，
+//   GET /api/failures）?? 原句，用了人话时原句 + 修法降成辅助行 + title 气泡；行带 failure_id 时给原生 FailureCatalog 的对症
+//   一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，failureAction）。doctor 人话是子进程按语言产出的：快照带
+//   ?lang=<当前语言>（store.refreshDiagnostics / fetchDoctor），切语言即重拉（原生 `.onChange(of: i18n.lang) { model.check() }`）。
 import { useEffect, useState } from "react";
 import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../../api";
-import { useI18n } from "../../i18n";
+import { useI18n, type Language } from "../../i18n";
 import { buildAppUrl } from "../../route";
 import { refreshDiagnostics, useAppState } from "../../store";
-import type { DoctorReport, DoctorRow, LogTail } from "../../types";
+import type { DoctorReport, DoctorRow, FailureCatalog, LogTail } from "../../types";
+import { aiFixOpenedText } from "../board/cardChrome";
 import { DepRows, RadarHealthRows } from "./DepRows";
 import { FailureActionButton } from "./failureAction";
 import { errorMessage } from "./useToast";
@@ -39,23 +44,41 @@ export function fullReportText(report: DoctorReport): string {
   }).join("\n");
 }
 
-function DoctorTable({ rows }: { rows: DoctorRow[] }) {
-  const { text } = useI18n();
+/** 原生 doctorFindingRow 的主句：`FailureCatalog.message(row.failureID) ?? row.detail`——没通过且目录里有这个 id 才是人话，否则 null（用原句） */
+export function doctorSentence(row: DoctorRow, catalog: FailureCatalog | null, lang: Language): string | null {
+  if (row.status === "OK" || !row.failure_id) return null;
+  return catalog?.failures[row.failure_id]?.[lang] ?? null;
+}
+
+/** 原生 `doctorRows.filter { $0.status != "ok" }`：表里只有没通过的行，OK 行留在「完整报告」 */
+export function doctorFindings(report: DoctorReport): DoctorRow[] {
+  return report.checks.filter((row) => row.status !== "OK");
+}
+
+/** 没通过的 doctor 行（调用方已过 doctorFindings） */
+function DoctorTable({ rows, catalog }: { rows: DoctorRow[]; catalog: FailureCatalog | null }) {
+  const { text, language } = useI18n();
   return (
     <table className="diag-table">
       <thead><tr><th>{text("状态", "Status")}</th><th>{text("检查", "Check")}</th><th>{text("说明 / 修法", "Detail / fix")}</th><th>{text("动作", "Action")}</th></tr></thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={row.name} data-status={row.status} data-failure={row.failure_id || undefined}>
-            <td><span className={`chip chip-${row.status === "FAIL" ? "danger" : row.status === "WARN" ? "warning" : "success"}`}>{row.status}</span></td>
-            <td>{row.name}</td>
-            <td>
-              <div>{row.detail}</div>
-              {row.fix && row.status !== "OK" && <div className="settings-helper">{text("修法：", "Fix: ")}{row.fix}</div>}
-            </td>
-            <td>{row.status !== "OK" && <FailureActionButton failureId={row.failure_id} compact />}</td>
-          </tr>
-        ))}
+        {rows.map((row) => {
+          const sentence = doctorSentence(row, catalog, language);
+          // 原生 .help(row.detail + "\nfix: " + row.fix)：用了人话时原句 + 修法进气泡
+          const tooltip = sentence ? row.detail + (row.fix ? `\nfix: ${row.fix}` : "") : undefined;
+          return (
+            <tr key={row.name} data-status={row.status} data-failure={row.failure_id || undefined}>
+              <td><span className={`chip chip-${row.status === "FAIL" ? "danger" : "warning"}`}>{row.status}</span></td>
+              <td>{row.name}</td>
+              <td title={tooltip}>
+                <div>{sentence ?? row.detail}</div>
+                {sentence && <div className="settings-helper diag-raw-detail">{row.detail}</div>}
+                {row.fix && <div className="settings-helper">{text("修法：", "Fix: ")}{row.fix}</div>}
+              </td>
+              <td><FailureActionButton failureId={row.failure_id} compact /></td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -71,23 +94,31 @@ function KeyValues({ obj }: { obj: Record<string, unknown> }) {
   );
 }
 
+type AiFixState = { phase: "idle" | "busy" | "done" | "failed"; msg?: string };
+
 export function DepsSection() {
   const { text, language } = useI18n();
-  const { diagnostics, pageErrors } = useAppState();
+  const { diagnostics, failures, pageErrors } = useAppState();
   const [full, setFull] = useState<DoctorReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [rechecking, setRechecking] = useState(false);
-  const [aiFix, setAiFix] = useState<"idle" | "busy" | string>("idle");
+  const [aiFix, setAiFix] = useState<AiFixState>({ phase: "idle" });
   const [log, setLog] = useState<LogTail | null>(null);
   const [logName, setLogName] = useState("");
   const [logError, setLogError] = useState<string | null>(null);
 
   useEffect(() => {
-    void refreshDiagnostics();
     // ?log=<name>：横幅「查看日志」深链——直接把该日志尾巴翻开（名字只认 server 同一白名单形）
     const wanted = new URLSearchParams(window.location.search).get("log") ?? "";
     if (/^[A-Za-z0-9._-]+\.log$/.test(wanted)) void openLog(wanted);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 首帧拉快照；切语言重拉（原生 DepsView `.onChange(of: i18n.lang) { model.check() }`：doctor 人话是子进程按语言产出的，
+  // 旧语言的行不许留着）——完整报告也是上一种语言跑出来的，一并放下（原生 check() 同样覆盖 doctorRows）
+  useEffect(() => {
+    setFull(null);
+    void refreshDiagnostics();
+  }, [language]);
 
   // 原生 DepsView「重新检查」：按钮与状态行都显示「检查中…」直到快照回来
   async function recheck() {
@@ -100,21 +131,22 @@ export function DepsSection() {
     }
   }
 
-  // 原生 DepsView「让 AI 修」：诊断有未通过项时出现；上下文由 server 从 doctor 报告推导（零客户端文本）
+  // 原生 DepsView「让 AI 修」：诊断有未通过项时出现；上下文由 server 从 doctor 报告推导（零客户端文本）；
+  // 成功 = 原生 AIFix.launch 完成句留在状态行（Pages.swift aiFixStatus），失败 = 前缀 + server 原句
   async function fixWithAi() {
-    setAiFix("busy");
+    setAiFix({ phase: "busy" });
     try {
       await postAiFixDoctor(language);
-      setAiFix("idle");
+      setAiFix({ phase: "done", msg: aiFixOpenedText(text) });
     } catch (err) {
-      setAiFix(text("让 AI 修启动失败：", "Fix with AI failed to launch: ") + errorMessage(err));
+      setAiFix({ phase: "failed", msg: text("让 AI 修启动失败：", "Fix with AI failed to launch: ") + errorMessage(err) });
     }
   }
 
   async function runFull() {
     setBusy(true);
     try {
-      setFull(await fetchDoctor(false, true));
+      setFull(await fetchDoctor(false, true, language));
     } catch (err) {
       setFull({ ok: false, checks: [], home: "", rc: -1, fast: false, ran_at: "", error: errorMessage(err) });
     } finally {
@@ -137,6 +169,9 @@ export function DepsSection() {
   const report = full ?? diagnostics?.doctor ?? null;
   const summary = report ? doctorSummary(report, text) : null;
   const noRows = !rechecking && !busy && (report ? report.checks.length === 0 : Boolean(pageErrors.diagnostics));
+  const findings = report ? doctorFindings(report) : [];
+  const hasFail = Boolean(report?.ok && report.checks.some((c) => c.status === "FAIL"));
+  const aiFixAllowed = diagnostics?.ai_fix_enabled !== false;   // 原生 AIFix.enabled：只有明确的 false 才隐藏
 
   return (
     <section className="settings-section deps-section" id="settings-deps" aria-labelledby="settings-deps-title">
@@ -168,18 +203,19 @@ export function DepsSection() {
                 <span>{report.fast ? text(" · 快速模式", " · fast mode") : ""}{report.ran_at ? ` · ${report.ran_at}` : ""}</span>
               </span>
             )}
-          {report && report.ok && report.checks.some((c) => c.status === "FAIL") && (
+          {hasFail && aiFixAllowed && (
             <>
-              <button type="button" className="btn" disabled={aiFix === "busy"} onClick={() => void fixWithAi()}>
-                {aiFix === "busy" ? text("正在准备诊断包…", "Preparing the diagnostic bundle…") : text("让 AI 修", "Fix with AI")}
+              <button type="button" className="btn" disabled={aiFix.phase === "busy"} onClick={() => void fixWithAi()}>
+                {aiFix.phase === "busy" ? text("正在准备诊断包…", "Preparing the diagnostic bundle…") : text("让 AI 修", "Fix with AI")}
               </button>
-              {aiFix !== "idle" && aiFix !== "busy" && <span className="settings-warning" role="alert">{aiFix}</span>}
+              {aiFix.phase === "done" && <span className="settings-helper diag-aifix-status" role="status">{aiFix.msg}</span>}
+              {aiFix.phase === "failed" && <span className="settings-warning" role="alert">{aiFix.msg}</span>}
             </>
           )}
         </div>
         <p className="settings-helper">{text("发现异常时会自动运行一次快速诊断；这个按钮跑完整版（含一次真实 claude 调用）。让 AI 修会在终端开一个带诊断包的 claude 修复会话。", "A quick diagnostic auto-runs when something looks broken; this button runs the full version (one live claude call). Fix with AI opens a claude repair session in Terminal with the diagnostic bundle attached.")}</p>
         {report && !report.ok && <p className="settings-warning" role="alert">{text("doctor 没跑成：", "doctor did not run: ")}{report.error}</p>}
-        {report && report.checks.length > 0 && <DoctorTable rows={report.checks} />}
+        {findings.length > 0 && <DoctorTable rows={findings} catalog={failures} />}
         {report && report.checks.length > 0 && (
           <details className="diag-full-report">
             <summary>{text("完整报告", "Full report")}</summary>
