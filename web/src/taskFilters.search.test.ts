@@ -68,9 +68,12 @@ describe("§37.2 词表：display_title / former_titles / notes_text / plan / do
     expect(matchesCardSearch(row, "新名字")).toBe(true);
   });
 
-  it("plan / dod / definition_of_done 数组逐条可搜", () => {
+  it("plan / dod 数组逐条可搜", () => {
     expect(matchesCardSearch({ id: "R-12", plan: ["call lawyer", "file form"] }, "lawyer")).toBe(true);
     expect(matchesCardSearch({ id: "R-13", dod: ["PR merged"] }, "merged")).toBe(true);
+  });
+
+  it("definition_of_done 只是容错兜底（lane 行今天一律发 dod，没有行带这个键）——出现了也照收，不是现役词表", () => {
     expect(matchesCardSearch({ id: "R-14", definition_of_done: ["tests green"] }, "green")).toBe(true);
   });
 

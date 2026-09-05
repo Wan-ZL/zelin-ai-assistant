@@ -1,5 +1,6 @@
 // 看板装配 × ⌘F 搜索的 parity 判例（CONTRACT §37.2；原生 Store.boardApprovals + Kanban.swift）：
-// 提案列 processing 占位卡不参与过滤隐藏（在途提交绝不「像丢了一样」消失）、搜索按 §37.2 归一化 AND
+// 提案列 processing 占位卡不被搜索词藏起（在途提交绝不「像丢了一样」消失）——但只有搜索这一维：
+// 原生没有 chips，tier / 期限 / 回锅 chips 是 web 加的，占位卡对它们照常判定；搜索按 §37.2 归一化 AND
 // 作用于全部列（display_title / former_titles / plan 也算）、运行中列的空态句 = 原生 composer 之下
 // 真正渲染过的那句 lanePlaceholder（不是从未显示的 column(emptyText:) 参数）。
 import { act, cleanup, render, screen } from "@testing-library/react";
@@ -66,10 +67,23 @@ describe("processing rows never hide behind a search (Store.boardApprovals)", ()
     expect(count).toBe("2/3");
   });
 
-  it("tier chip 也放占位卡过——在途提交绝不因过滤器而消失", () => {
+  it("直通只有搜索这一维：tier chip 对占位卡照常判定（原生没有 chips，不在此扩权）", () => {
     const { container } = render(<BoardLanes />);
     act(() => setFilters({ tiers: ["T2"] }));
-    expect(laneTitles(container, 0)).toEqual(["raising placeholder"]);
+    expect(laneTitles(container, 0)).toEqual([]);
+    expect(laneEmptyText(container, 0)).toBe("No matching cards");
+    const count = container.querySelectorAll(".board-column")[0].querySelector(".lane-count")?.textContent;
+    expect(count).toBe("0/3");
+  });
+
+  it("chips + 搜索同时开：占位卡过 chip 就留（搜索词不看），不过 chip 就走", () => {
+    const { container } = render(<BoardLanes />);
+    act(() => setFilters({ tiers: ["T1"], search: "eb1" }));
+    expect(laneTitles(container, 0)).toEqual(["raising placeholder", "EB-1A petition"]);
+    act(() => setFilters({ tiers: ["T2"], search: "eb1" }));
+    expect(laneTitles(container, 0)).toEqual([]);
+    act(() => setFilters({ tiers: [], reraisedOnly: true, search: "eb1" }));
+    expect(laneTitles(container, 0)).toEqual([]);
   });
 });
 

@@ -10,8 +10,8 @@
 //   （词表 + 归一化 AND 匹配 = CONTRACT §37.2，见下方 ⌘F 一节）。
 //   识别提案形行：`tier` 为字符串（dashboard.py 只给 needs_approval 行发 tier）；
 //   提案形行缺 `reraised` 字段 = false（会被「只看回锅」滤掉）。
-//   提案列的 processing 占位行（raising / 捕获中）不参与过滤隐藏——那是 BoardLanes.pick 的事，
-//   本模块的匹配函数对它们照常判定（原生 Store.boardApprovals 同一分工）。
+//   提案列的 processing 占位行（raising / 捕获中）不被搜索词藏起（chips 照常）——那是 BoardLanes.pick
+//   的事，本模块的匹配函数对它们照常判定（原生 Store.boardApprovals 同一分工）。
 // TODO(contract): 过滤器的跨分区语义未入 CONTRACT；A12 修宪草案可引用本注释钉死。
 export type DeadlineFilter = "all" | "has" | "soon" | "overdue" | "none";
 
@@ -110,7 +110,9 @@ export function searchTerms(query: string): string[] {
 // + former_titles + summary + notes_text（notes 折叠）+ plan/dod + delivered_summary/final_draft
 // + source quotes + agent_name。web 追加（add-only）：§60 work_id / display_id（用户记的是 R-280，
 // 主键可能是 P-012）、tier / type 与 sources 的 who / channel（D28 退役维度后仍可搜）。
-// definition_of_done 是 registry 原名（详情行 / 兜底），投影行叫 dod——两个都收，字符串或数组皆可。
+// definition_of_done 只是容错兜底：今天没有任何 lane 行带它（dashboard.py 七种行形状一律发 dod；
+// 该键只出现在 card_detail 的 registry 合并里，而搜索只跑 lane 行）——留着是为将来行形状变化时不漏搜，
+// 不是现役词表。各键字符串或数组皆可。
 const SEARCH_FIELDS = [
   "id", "work_id", "display_id", "title", "name", "display_title", "former_titles", "summary", "notes_text",
   "plan", "dod", "definition_of_done", "delivered_summary", "final_draft", "agent_name", "tier", "type",
