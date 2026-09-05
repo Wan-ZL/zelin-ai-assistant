@@ -109,57 +109,7 @@ func run() {
           "setRecording on:true mode:off rejected (off is on:false)")
     check(rejection(["method": "setRecording", "on": true, "mode": "video"]).hasPrefix("INVALID_ARGS"),
           "setRecording with unknown mode rejected")
-    // §61.1 追记 setRecording on:true = TCC 提示（缺才弹）→ setMode；on:false = setMode("off") 不碰 TCC。
-    // 注入 RecordingActions 四缝（绝不调真 CGRequest / setMode / pgrep）；`trace` 钉顺序。
-    var trace: [String] = []
-    var permissionGranted = false
-    let realHas = RecordingActions.hasScreenPermission
-    let realRequest = RecordingActions.requestScreenPermission
-    let realSetMode = RecordingActions.setMode
-    let realRefresh = RecordingActions.refresh
-    RecordingActions.hasScreenPermission = { permissionGranted }
-    RecordingActions.requestScreenPermission = { trace.append("request") }
-    RecordingActions.setMode = { trace.append("setMode:\($0)") }
-    RecordingActions.refresh = { trace.append("refresh") }
-    defer {
-        RecordingActions.hasScreenPermission = realHas
-        RecordingActions.requestScreenPermission = realRequest
-        RecordingActions.setMode = realSetMode
-        RecordingActions.refresh = realRefresh
-    }
-    if let reply = try? bridge.handle(["method": "setRecording", "on": true, "mode": "screen"]) {
-        check(trace == ["request", "setMode:screen"],
-              "on:true without the grant requests Screen Recording ONCE, then setMode", "got \(trace)")
-        check(reply["recording"] != nil, "setRecording reply is the snapshot")
-    } else {
-        check(false, "setRecording on:true mode:screen must not throw")
-    }
-    trace = []
-    _ = try? bridge.handle(["method": "setRecording", "on": true, "mode": "screen_audio"])
-    check(trace == ["request", "setMode:screen_audio"],
-          "every turn-on re-asks while the grant is missing (macOS itself dedups the prompt)", "got \(trace)")
-    trace = []
-    permissionGranted = true
-    _ = try? bridge.handle(["method": "setRecording", "on": true])
-    check(trace == ["setMode:\(RecordingController.shared.resumeMode)"],
-          "on:true with the grant never requests; mode defaults to resume_mode", "got \(trace)")
-    trace = []
-    permissionGranted = false
-    _ = try? bridge.handle(["method": "setRecording", "on": false])
-    check(trace == ["setMode:off"], "on:false = setMode(off), no TCC request even without the grant", "got \(trace)")
-    trace = []
-    _ = try? bridge.handle(["method": "setRecording", "on": true, "mode": "video"])
-    check(trace.isEmpty, "a rejected setRecording touches neither TCC nor setMode")
-    // §61.1 追记 refreshRecording：执行体跑一次（pollScreenPermission + refreshEngineState），回执 = 快照
-    if let reply = try? bridge.handle(["method": "refreshRecording"]) {
-        check(trace == ["refresh"], "refreshRecording runs the refresh seam exactly once", "got \(trace)")
-        check(reply["recording"] != nil && reply["dialog"] == nil, "refreshRecording reply is the plain snapshot")
-    } else {
-        check(false, "refreshRecording must not throw")
-    }
-    trace = []
-    _ = try? bridge.handle(["method": "getState"])
-    check(trace.isEmpty, "getState stays pure (no refresh, no TCC)")
+    checkRecordingActions(bridge)
     check(rejection(["method": "setCaptions"]).hasPrefix("INVALID_ARGS"),
           "setCaptions without on rejected")
     check(rejection(["method": "setLanguage", "lang": "fr"]).hasPrefix("INVALID_ARGS"),
@@ -323,8 +273,70 @@ func run() {
           "no native domain → no marker either (a later install of the native domain still seeds)")
     UserDefaults(suiteName: targetName + ".b")?.removePersistentDomain(forName: targetName + ".b")
 
-    // §61.4 追记：字幕悬浮窗的拖动位置（NSWindow autosave "liveCaptionsPanel"）在自己的一次性标记下
-    // 补种——已经播过种的壳（上面的 target：marker 已 true）也收到一次；壳自己拖过的永不覆盖。
+    checkOverlayFrameSeed(target: target, source: source, targetName: targetName)
+}
+
+/// §61.1 追记 setRecording on:true = TCC 提示（缺才弹）→ setMode；on:false = setMode("off") 不碰 TCC；
+/// refreshRecording 执行体恰跑一次、getState 纯读。注入 RecordingActions 四缝（绝不调真 CGRequest /
+/// setMode / pgrep）；`trace` 钉顺序。
+@MainActor
+func checkRecordingActions(_ bridge: ShellBridge) {
+    print("[3b] setRecording / refreshRecording through the RecordingActions seams:")
+    var trace: [String] = []
+    var permissionGranted = false
+    let realHas = RecordingActions.hasScreenPermission
+    let realRequest = RecordingActions.requestScreenPermission
+    let realSetMode = RecordingActions.setMode
+    let realRefresh = RecordingActions.refresh
+    RecordingActions.hasScreenPermission = { permissionGranted }
+    RecordingActions.requestScreenPermission = { trace.append("request") }
+    RecordingActions.setMode = { trace.append("setMode:\($0)") }
+    RecordingActions.refresh = { trace.append("refresh") }
+    defer {
+        RecordingActions.hasScreenPermission = realHas
+        RecordingActions.requestScreenPermission = realRequest
+        RecordingActions.setMode = realSetMode
+        RecordingActions.refresh = realRefresh
+    }
+    if let reply = try? bridge.handle(["method": "setRecording", "on": true, "mode": "screen"]) {
+        check(trace == ["request", "setMode:screen"],
+              "on:true without the grant requests Screen Recording ONCE, then setMode", "got \(trace)")
+        check(reply["recording"] != nil, "setRecording reply is the snapshot")
+    } else {
+        check(false, "setRecording on:true mode:screen must not throw")
+    }
+    trace = []
+    _ = try? bridge.handle(["method": "setRecording", "on": true, "mode": "screen_audio"])
+    check(trace == ["request", "setMode:screen_audio"],
+          "every turn-on re-asks while the grant is missing (macOS itself dedups the prompt)", "got \(trace)")
+    trace = []
+    permissionGranted = true
+    _ = try? bridge.handle(["method": "setRecording", "on": true])
+    check(trace == ["setMode:\(RecordingController.shared.resumeMode)"],
+          "on:true with the grant never requests; mode defaults to resume_mode", "got \(trace)")
+    trace = []
+    permissionGranted = false
+    _ = try? bridge.handle(["method": "setRecording", "on": false])
+    check(trace == ["setMode:off"], "on:false = setMode(off), no TCC request even without the grant", "got \(trace)")
+    trace = []
+    _ = try? bridge.handle(["method": "setRecording", "on": true, "mode": "video"])
+    check(trace.isEmpty, "a rejected setRecording touches neither TCC nor setMode")
+    // §61.1 追记 refreshRecording：执行体跑一次（pollScreenPermission + refreshEngineState），回执 = 快照
+    if let reply = try? bridge.handle(["method": "refreshRecording"]) {
+        check(trace == ["refresh"], "refreshRecording runs the refresh seam exactly once", "got \(trace)")
+        check(reply["recording"] != nil && reply["dialog"] == nil, "refreshRecording reply is the plain snapshot")
+    } else {
+        check(false, "refreshRecording must not throw")
+    }
+    trace = []
+    _ = try? bridge.handle(["method": "getState"])
+    check(trace.isEmpty, "getState stays pure (no refresh, no TCC)")
+}
+
+/// §61.4 追记：字幕悬浮窗的拖动位置（NSWindow autosave "liveCaptionsPanel"）在自己的一次性标记下
+/// 补种——已经播过种的壳（传入的 target：marker 已 true）也收到一次；壳自己拖过的永不覆盖。
+@MainActor
+func checkOverlayFrameSeed(target: UserDefaults, source: UserDefaults, targetName: String) {
     print("[6] LegacyPrefs overlay frame (own one-shot marker):")
     let frame = "120 80 760 110 0 0 1440 877 "
     check(LegacyPrefs.overlayFrameKey == "NSWindow Frame liveCaptionsPanel",
