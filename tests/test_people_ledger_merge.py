@@ -23,7 +23,7 @@ def person(handle="arash.k"):
 class CleanItemTestCase(unittest.TestCase):
     def test_good_item_is_trimmed_and_normalized(self):
         it = store.clean_item({"direction": " Owner_Owes ", "text": "send  the\nreport", "quote": "I'll send it",
-                               "speaker": "zelin"})
+                               "speaker": "owner"})
         self.assertEqual(it, {"direction": "owner_owes", "text": "send the report", "quote": "I'll send it"})
 
     def test_bad_shapes_are_dropped(self):

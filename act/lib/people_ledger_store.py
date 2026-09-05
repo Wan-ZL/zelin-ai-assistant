@@ -122,7 +122,8 @@ def slugify(handle: str) -> str:
     ascii_part = re.sub(r"[^a-z0-9]+", "-", str(handle).lower()).strip("-")
     if ascii_part:
         return ascii_part
-    return "p-" + hashlib.sha1(str(handle).encode("utf-8")).hexdigest()[:8]
+    # 文件名用的稳定短指纹，不是安全用途（bandit B324）
+    return "p-" + hashlib.sha1(str(handle).encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
 def display_name(handle: str) -> str:

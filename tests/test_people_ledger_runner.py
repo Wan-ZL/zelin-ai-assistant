@@ -116,7 +116,7 @@ class LedgerRunnerCase(unittest.TestCase):
         self.first_run()
         self.note("2026-09-04-sync.md", "Sync with Arash. Zelin: I'll send the eval report by Friday.")
         runner = FakeRunner(reply(new=[{"direction": "owner_owes", "text": "Send the eval report by Friday",
-                                        "quote": "I'll send the eval report by Friday", "speaker": "zelin"},
+                                        "quote": "I'll send the eval report by Friday", "speaker": "owner"},
                                        {"direction": "person_owes", "text": "ignored", "speaker": "assistant"}]))
         s = pl.run_once(cfg=self.cfg, runner=runner, root=self.vault)
         self.assertEqual((s["notes"], s["pairs"], s["new_items"], s["done_items"]), (1, 1, 1, 0))
@@ -313,6 +313,7 @@ class LedgerRunnerCase(unittest.TestCase):
         self.assertIn("4", body)
 
     # ---- lock ----
+    @unittest.skipIf(pl.fcntl is None, "flock is POSIX-only; the Windows pass runs unlocked by design")
     def test_lock_held_yields(self):
         self.first_run()
         self.note("n.md", "Arash")
