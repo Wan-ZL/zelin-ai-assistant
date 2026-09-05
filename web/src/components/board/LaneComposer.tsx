@@ -11,13 +11,24 @@
 //     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）。
 //   - 历史 ↑/↓（最近 20 条，localStorage）只在草稿为空或正在翻历史时接管——多行草稿里的 ↑/↓ 归光标；
 //     翻历史途中一改字就退出翻历史。斜杠命令 /rec /lang /open（composerCommands.ts，
-//     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执。
+//     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执；
+//   - 输入框下一行状态（§41 2026-09-05 追记，原生 Composer.swift 的 slashError → hintLine 栈）：失败句优先；
+//     否则草稿以 "/" 开头时给命令词表提示行（hintLine）；否则才是成功回执。一改字失败句与回执都清
+//     （原生 `.onChange(of: text) { slashError = nil }`；回执是上一次提交的，新草稿一开打就过期）——但 ↑/↓ 翻历史
+//     不走 onChange，翻出一条 "/…" 旧捕获时靠渲染处的 `!hint` 守卫保证仍只有一行。原生的键位提示句
+//     「↩ 发送 · ⇧↩ 换行 …」随 D35 退役，不补；
+//   - 输入框与按钮的 title = 原生 `.help` 提示：直跑「直接开跑：跳过提案与费用预估，成果仍进「待验收」」/
+//     捕获「快速捕获（<快捷键>）」——原生写死 ⌘L；web 只在壳（WKWebView）里有键：⌘L（rail 的 window keydown，
+//     §54.4 2026-09-05 追记）与全局快速捕获键（§61.6，壳快照 hotkey 如 ⌃⌥Space），写成「⌘L · ⌃⌥Space」；
+//     浏览器标签页里 ⌘L 归地址栏、也没有全局键，就不写键，不许谎报。身份（propose / run）从 buildBody 的 payload 读
+//     （§34 直跑 = mode:"run"），不另加 prop——wire 形是唯一真源（防腐 #10）。
 import { useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
+import { useShellState, type ShellState } from "../../shellBridge";
 import { describeActionError } from "./boardActions";
-import { pushHistory, readHistory, runSlashCommand } from "./composerCommands";
+import { hintLine, pushHistory, readHistory, runSlashCommand } from "./composerCommands";
 
 interface LaneComposerProps {
   placeholder: string;
@@ -25,6 +36,28 @@ interface LaneComposerProps {
   /** 提交成功后输入框下方的一次性回执文案（如「已提交，AI 分析中…」） */
   successNote: string;
   buildBody: (text: string) => Record<string, unknown>;
+}
+
+type ComposerMode = "propose" | "run";
+
+/** 输入框身份从它要发的 payload 读：§34 直跑 = `mode:"run"`，其余 = 提案捕获 */
+export function composerMode(buildBody: LaneComposerProps["buildBody"]): ComposerMode {
+  return buildBody("").mode === "run" ? "run" : "propose";
+}
+
+/** 捕获句里能报的键：只有壳在场才有——原生的 ⌘L（壳里由 rail 的 window keydown 落地，§54.4 2026-09-05 追记）
+ *  加壳快照里的全局快速捕获键（⌃⌥Space）；浏览器标签页里 ⌘L 归地址栏，一个键都不报 */
+export function quickCaptureKeys(shell: Pick<ShellState, "hotkey"> | null): string | null {
+  if (!shell) return null;
+  return ["⌘L", shell.hotkey].filter(Boolean).join(" · ");
+}
+
+/** 原生 Composer.swift `.help` 两句（Composer.swift:101-104）；捕获句的快捷键 = quickCaptureKeys，没有键就不写键 */
+export function composerTitle(mode: ComposerMode, hotkey: string | null, text: (zh: string, en: string) => string): string {
+  if (mode === "run") {
+    return text("直接开跑：跳过提案与费用预估，成果仍进「待验收」", "Runs now — skips the proposal & cost preview; the result still lands in Review");
+  }
+  return hotkey ? text(`快速捕获（${hotkey}）`, `Quick capture (${hotkey})`) : text("快速捕获", "Quick capture");
 }
 
 /** 失败一行（原生 slashError）：前缀句 + 细节各一节点——「提交失败，已保留输入」/「未识别或参数错误：」+ 原文 */
@@ -54,6 +87,8 @@ export function fitComposerRows(el: HTMLTextAreaElement, maxRows = COMPOSER_MAX_
 
 export function LaneComposer({ placeholder, submitLabel, successNote, buildBody }: LaneComposerProps) {
   const { text } = useI18n();
+  const shell = useShellState();
+  const title = composerTitle(composerMode(buildBody), quickCaptureKeys(shell), text);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ComposerError | null>(null);
@@ -123,6 +158,9 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
     }
   };
 
+  // 原生 Composer.swift 的一行状态栈：slashError > "/" 草稿的 hintLine >（键位提示句，D35 退役）——同一时刻只有一行
+  const hint = !error && draft.startsWith("/") ? hintLine(text) : null;
+
   return (
     <>
       <div className="lane-composer">
@@ -131,10 +169,13 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
           rows={1}
           value={draft}
           placeholder={placeholder}
+          title={title}
           disabled={busy}
           onChange={(e) => {
             setDraft(e.target.value);
-            setSent(false);
+            setError(null); // 一改字失败句即清（原生 `.onChange(of: text) { slashError = nil }`）
+            setSent(false); // 上一次提交的回执随之过期（捕获回执与斜杠回执同一规矩）
+            setNote(null);
             setHistoryIndex(-1); // 一改字就退出翻历史：↑/↓ 交还给多行草稿里的光标
           }}
           onKeyDown={onKeyDown}
@@ -142,6 +183,7 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
         <button
           type="button"
           className="btn btn-primary"
+          title={title}
           disabled={busy || !draft.trim()}
           onClick={() => void submit()}
         >
@@ -154,8 +196,10 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
           {error.detail && <span className="composer-error-detail">{` ${error.detail}`}</span>}
         </p>
       )}
-      {sent && !error && <p className="column-help">{successNote}</p>}
-      {note && !error && <p className="column-help">{note}</p>}
+      {hint && <p className="column-help">{hint}</p>}
+      {/* `!hint`：↑/↓ 翻出一条 "/…" 旧捕获不走 onChange、回执还在——提示行顶掉它，仍只有一行 */}
+      {sent && !error && !hint && <p className="column-help">{successNote}</p>}
+      {note && !error && !hint && <p className="column-help">{note}</p>}
     </>
   );
 }

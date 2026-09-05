@@ -1,4 +1,5 @@
-// 捕获历史（20 条 / 去重 / 最新在前）与斜杠命令（/rec 需壳、/lang、/open、未知命令）——s4 1.8。
+// 捕获历史（20 条 / 去重 / 最新在前）与斜杠命令（/rec 需壳、/lang、/open）——s4 1.8。
+// 三动词闸门 / 别名 / 大小写 / 词表超集 / 提示行的判例在 composerSlashGate.test.ts（§41 2026-09-05 追记）。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { navigate } from "../../route";
 import { resetStoreForTests, getState } from "../../store";
@@ -84,8 +85,7 @@ describe("slash commands", () => {
     expect(unrecognized(bad)).toEqual({ input: "/rec video", usage: expect.stringMatching(/Usage/) });
   });
 
-  it("unknown command is 未识别 (input kept) and lists the vocabulary", async () => {
-    const r = await runSlashCommand("/wat", en);
-    expect(unrecognized(r)).toEqual({ input: "/wat", usage: expect.stringMatching(/\/rec \/lang \/open/) });
+  it("an unknown verb is not a command — it is a plain capture (native isCommand gate; see composerSlashGate.test.ts)", async () => {
+    expect(await runSlashCommand("/wat", en)).toEqual({ handled: false });
   });
 });
