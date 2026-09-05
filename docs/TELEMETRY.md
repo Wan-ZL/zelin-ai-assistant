@@ -61,6 +61,9 @@ truth，上传只读不改不删。
 | `capture_submit.mode` / `composer_open.mode` | v0.34 add-only：值恒为 `"run"`，仅出现在运行中列的直接开跑输入框（缺席 = 提案输入框；source/trigger 词表不变） |
 | `mw_mcp_scan{user,project}` | 设置页扫描 MCP server 配置：两个作用域各解析出的 server **数量**（只有计数——server 名/命令/URL 都留在本机） |
 | `mw_mcp_reveal{scope}` | 点「在 Finder 显示」定位 MCP 配置文件：只有作用域枚举（`user` \| `project`） |
+| `people_ledger_pass{people,notes,pairs,new_items,done_items,parse_failed,call_failed,secs}` | 重点人物账本（CONTRACT §17 issue #23 追记）一轮 pass：配置且过护栏的人数、处理的笔记数、模型调用次数、新增 / 完成条目数、解析失败 / 调用失败次数、耗时秒——**只有计数**，人名、笔记文件名、承诺文本、引文都留在本机 |
+| `people_ledger_first_run{notes}` | 账本首次开启：只记游标不回填时，本机已有的笔记**数量**（每装机至多一条） |
+| `people_ledger_skip{reason}` | 账本一轮让路：`reason` 恒为 `lock_held`（默认关 / 无人配置 / 首跑都**不**发事件——默认关的旋钮不在 30 分钟 cron 上留痕） |
 
 （v0.18 同时移除：首启页勾选框及其 `telemetry_consent` 事件——首启改为一行
 披露 + 「详情与关闭在设置」链接，开关全部集中在设置页，写同一个 override 键。

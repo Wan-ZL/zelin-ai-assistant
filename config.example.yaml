@@ -31,11 +31,11 @@ sources:                               # 需求雷达监控的增量源
   # slack_capture_receipts: true       # 快速捕获回执（默认开）：给自己发的每条消息上打一个 emoji reaction
   #                                    # （📥 已记下/折叠 · ↩️ 回锅重提案 · 🚫 判定无需行动没建卡）。只打
   #                                    # reaction、绝不回帖；token 需 reactions:write scope（缺了只少回执，捕获不受影响）
-  watch_people:   # 你主要盯的人（第一个当作直属经理）。当前仅用于：设置页人物
-                  # 勾选 + 派生「追踪对象」显示名（config.requester_display 取
-                  # 第一个）。注意：这【不是】硬过滤——雷达仍会看所有 DM/@提及/
-                  # 会议记录，不会因某人不在此列就丢其消息（避免误配置清空看板）。
-    - your.manager
+  watch_people:   # 你主要盯的人。当前用于：设置页人物勾选 + 派生「追踪对象」显示名
+                  # （config.requester_display 取第一个）+ 重点人物账本 people 留空时的
+                  # 回落名单（见下方 people_ledger 块）。注意：这【不是】硬过滤——雷达仍会
+                  # 看所有 DM/@提及/会议记录，不会因某人不在此列就丢其消息（避免误配置清空看板）。
+    - your.manager  # 示例占位；账本会自动跳过它（关键词护栏）
   # gmail:                             # Gmail 捕获（见 docs/GMAIL_SETUP.md）
   #   address: "your.name@gmail.com"
   #   enabled: true
@@ -170,6 +170,17 @@ ui:                                    # 看板显示偏好（CONTRACT §54.1 �
     text_size: m                       #   s | m | l | xl —— 字号倍率 .9 / 1 / 1.1 / 1.25
     text_weight: regular               #   regular | medium | bold —— 字重平移 0 / +100 / +200
     stroke: normal                     #   thin | normal | thick —— 描边 1px / 1.5px / 2px（系统「增强对比度」再加一档）
+
+people_ledger:                         # 重点人物账本（CONTRACT §17 issue #23 追记）：旧 manager pack 的按人重做。挂在 30 分钟
+                                       # screenpipe cron 链上，笔记库里新笔记提到某人 → 把「我答应对方的 / 对方答应我的」并入
+                                       # 该人的滚动账本（每条带来源引文；后来的笔记显示做完即标 done）。产出是文件不是卡、不发送。
+  enabled: false                       # 【默认关，显式 opt-in】Settings「重点人物账本」同一开关（overrides 扁平键 people_ledger_enabled）。
+                                       # 首次开启只记游标、不回填旧笔记（2026-07-08 的 92 篇回填风暴教训）
+  # people:                            # 记账的人（姓名 / handle）；留空 = 沿用上面 sources.watch_people（overrides 键 people_ledger_people）
+  #   - arash.k                        #   占位 your.manager、<3 字母 token、your/the/my 等停用词自动跳过，绝不拿来扫笔记
+  #   - 小明
+  # max_notes_per_pass: 10             # 每轮最多处理几篇新笔记（余量下一轮；回填刹车）
+  # 落点：execution.default_target_repo 显式配置 → <工作台>/people_ledger/<人>.md；否则 state/people_ledger/
 
 recap:                                 # 会议 recap（CONTRACT §63，issue #129）：挂在 30 分钟 screenpipe cron 链上，只读 ~/.screenpipe/db.sqlite，
                                        # 确定性判会议 session，CLOSED 后出 5 行 copy-only 纪要（中英同产）到 state/recap/。不是卡，无发送路径。

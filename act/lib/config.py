@@ -379,6 +379,12 @@ class Config:
     recap_enabled: bool = True
     recap_default_language: str = "auto"   # auto | zh | en（auto 跟随 language）
     recap_slack_draft_enabled: bool = False
+    # 重点人物账本（§17 issue #23 追记）：config.yaml `people_ledger:` 块 + overrides
+    # 扁平键 people_ledger_enabled / people_ledger_people。**默认关**（显式 opt-in，
+    # 旧 manager pack 的显式启用守卫延续）；people 空 = 回落 sources.watch_people。
+    # 调参（max_notes_per_pass）留在 cfg.raw["people_ledger"]，由 act/people_ledger 读。
+    people_ledger_enabled: bool = False
+    people_ledger_people: list = field(default_factory=list)
 
     # 设置「开发者 · 维护会话」— the one-click claude session over THIS
     # software's own repo (App 设置区 diff-write; None = the app falls back
@@ -536,6 +542,17 @@ RECAP_LANGUAGES: tuple = ("auto", "zh", "en")
 def _coerce_recap_language(value) -> str:
     v = str(value or "").strip().lower()
     return v if v in RECAP_LANGUAGES else "auto"
+
+
+def _apply_people_ledger_block(cfg: "Config", data: dict) -> None:
+    """§17（issue #23）config.yaml `people_ledger:` 块：enabled（坏值保留默认 false）
+    + people（字串表，非字串项丢）；其余调参留在 cfg.raw。"""
+    blk = _dict_or(data.get("people_ledger"))
+    cfg.people_ledger_enabled = _bool_or(
+        blk.get("enabled", cfg.people_ledger_enabled), cfg.people_ledger_enabled)
+    people = blk.get("people")
+    if isinstance(people, list):
+        cfg.people_ledger_people = _clean_watch_people(people)
 
 
 def _apply_recap_block(cfg: "Config", data: dict) -> None:
@@ -917,6 +934,7 @@ def _apply_switch_blocks(cfg: Config, data: dict) -> None:
         ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
     )
     _apply_recap_block(cfg, data)   # §63 会议 recap 的三把旋钮
+    _apply_people_ledger_block(cfg, data)   # §17 重点人物账本（issue #23）
 
 
 def _nonblank(value) -> Optional[str]:
@@ -1195,6 +1213,9 @@ _OVERRIDE_FIELDS: dict = {
     "recap_enabled": _coerce_bool,
     "recap_default_language": _coerce_recap_language,
     "recap_slack_draft_enabled": _coerce_bool,
+    # §17（issue #23）重点人物账本：web Settings「重点人物账本」diff-write 这个开关
+    # （出厂 false = 显式 opt-in；people 表走 _OVERRIDE_LIST_FIELDS）。
+    "people_ledger_enabled": _coerce_bool,
     # §64 (#128): 待验收卡 AI 摘要 + 完成度评语开关（diff-write 同款；默认 true）。
     "card_summary_enabled": _coerce_bool,
     # §70 (D10): the daily self-improvement loop's knobs — web Settings「每日
@@ -1213,7 +1234,8 @@ _OVERRIDE_FIELDS: dict = {
 # coercion table above can't express these. Shapes mirror config.yaml:
 #   slack_channels: [ {"id": "C…", "name": "…"} | "C…" ]   (name optional)
 #   watch_people:   [ "handle", … ]
-_OVERRIDE_LIST_FIELDS: tuple = ("slack_channels", "watch_people")
+#   people_ledger_people: [ "handle", … ]   （§17 issue #23；与 watch_people 同形）
+_OVERRIDE_LIST_FIELDS: tuple = ("slack_channels", "watch_people", "people_ledger_people")
 
 
 def _channel_entry(it: dict) -> dict:
@@ -1459,6 +1481,12 @@ def _override_watch_people(cfg: Config, value, _nested: dict) -> None:
         cfg.watch_people = _clean_watch_people(value)
 
 
+def _override_people_ledger_people(cfg: Config, value, _nested: dict) -> None:
+    """§17（issue #23）：设置页的人物表整表写入；空表 = 「回落 watch_people」。"""
+    if isinstance(value, list):
+        cfg.people_ledger_people = _clean_watch_people(value)
+
+
 # exact-key overrides → handler(cfg, value, nested_feats); prefix families and
 # scalar fields are resolved in _apply_override.
 _OVERRIDE_HANDLERS = {
@@ -1472,6 +1500,7 @@ _OVERRIDE_HANDLERS = {
     "telemetry.capture_input": _override_telemetry_capture_input,
     "slack_channels": _override_slack_channels,
     "watch_people": _override_watch_people,
+    "people_ledger_people": _override_people_ledger_people,
 }
 
 
