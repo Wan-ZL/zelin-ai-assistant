@@ -5,7 +5,7 @@
 ``decode()``（shell/Sources/CaptionCore.swift）只认这一种旧版形状。web 的写者是 server，
 所以 ``server/secrets_store.py`` 带一份 Python 镜像 ``volcano_speech_credential``，本文件：
 
-- 镜像 fixture：25 组粘贴 → (isLegacy, fileRepresentation)，2026-09-05 用 ``swiftc`` 编译
+- 镜像 fixture：27 组粘贴 → (isLegacy, fileRepresentation)，2026-09-05 用 ``swiftc`` 编译
   mac/Sources/CaptionCore.swift:431-565 的 enum 逐条跑出来的期望值，两侧必须逐字一致；
 - ``PUT /api/secrets/volcano-speech-key.txt``：旧版对（两行 / 一行 / 带标签）→ 文件两行带标签，
   回执 add-only ``legacy_pair: true``；裸新版 key 原样、``legacy_pair: false``；硬折行的 key 拼回；
@@ -53,6 +53,9 @@ SWIFT_FIXTURES = [
      (False, "Access Token: " + TOKEN + "App ID: 123456789")),               # 顺序反了 = 不是那一对
     ("1234567890123:" + TOKEN, (False, "1234567890123:" + TOKEN)),          # 13 位超出 App ID
     ("123456789:" + TOKEN + " extra", (False, "123456789:" + TOKEN + " extra")),
+    ("note: 123456789\ntoken: " + TOKEN,
+     (False, "note: 123456789token: " + TOKEN)),                            # 未知标签不剥：裸 key 可含冒号
+    ("app-id：123456789\nACCESS-TOKEN：" + TOKEN, (True, PAIR)),            # 标签去连字符 / 大小写不敏感 / 全角冒号
 ]
 
 

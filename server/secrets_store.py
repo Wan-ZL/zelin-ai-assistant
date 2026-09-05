@@ -106,6 +106,8 @@ _LEGACY_LABELED_ONE_LINE = re.compile(
     r"^(?:app[\s_-]*(?:id|key)\s*[:：])?\s*(\d{6,12})\s*[\s:：,;，；]*(?:access[\s_-]*token|token|secret)\s*[:：]\s*(\S{20,})$",
     re.IGNORECASE)
 _KNOWN_LABELS = ("appid", "appkey", "accesstoken", "token", "secret")
+_COLON = re.compile(r"[:：]")
+_LABEL_NOISE = re.compile(r"[\s_-]")
 
 
 def _is_app_id(s: str) -> bool:
@@ -115,19 +117,36 @@ def _is_app_id(s: str) -> bool:
 
 def _looks_like_token(s: str) -> bool:
     """一个长的不透明 token（控制台的 Access Token 是 32 位）。"""
-    return len(s) >= 20 and not any(ch.isspace() for ch in s)
+    return len(s) >= 20 and re.search(r"\s", s) is None
 
 
 def _strip_label(line: str) -> str:
     """"App ID: 321…" / "ACCESS_TOKEN：2tz…" / "appid:321…" → 裸值。冒号前的前缀归一（小写；去空格、
     下划线、连字符）后必须是**已知**的凭证标签——别的前缀原样保留，因为裸 key 可能合法地含冒号。"""
-    idx = min((i for i in (line.find(":"), line.find("：")) if i >= 0), default=-1)
-    if idx < 0:
+    colon = _COLON.search(line)
+    if colon is None:
         return line
-    label = "".join(ch for ch in line[:idx].lower() if not ch.isspace() and ch not in "_-")
+    label = _LABEL_NOISE.sub("", line[:colon.start()].lower())
     if label not in _KNOWN_LABELS:
         return line
-    return line[idx + 1:].strip()
+    return line[colon.end():].strip()
+
+
+def _legacy_pair_from_lines(lines: list) -> "Optional[tuple[str, str]]":
+    """两个非空行：首行剥标签是 App ID、次行剥标签像 token → (id, token)；否则 None。"""
+    app_id, token = _strip_label(lines[0]), _strip_label(lines[1])
+    if _is_app_id(app_id) and _looks_like_token(token):
+        return app_id, token
+    return None
+
+
+def _legacy_pair_from_line(line: str) -> "Optional[tuple[str, str]]":
+    """一行 "AppID<sep>Token"（不带 / 带标签）→ (id, token)；否则 None。"""
+    for regex in (_LEGACY_ONE_LINE, _LEGACY_LABELED_ONE_LINE):
+        m = regex.match(line)
+        if m:
+            return m.group(1), m.group(2)
+    return None
 
 
 def volcano_speech_credential(text: str) -> Optional[dict]:
@@ -141,15 +160,12 @@ def volcano_speech_credential(text: str) -> Optional[dict]:
         return None
     lines = [ln.strip() for ln in trimmed.splitlines() if ln.strip()]
     if len(lines) >= 2:
-        app_id, token = _strip_label(lines[0]), _strip_label(lines[1])
-        if _is_app_id(app_id) and _looks_like_token(token):
-            return {"legacy": True, "file": "appid:%s\ntoken:%s" % (app_id, token)}
-        return {"legacy": False, "file": "".join(lines)}
-    for regex in (_LEGACY_ONE_LINE, _LEGACY_LABELED_ONE_LINE):
-        m = regex.match(trimmed)
-        if m:
-            return {"legacy": True, "file": "appid:%s\ntoken:%s" % (m.group(1), m.group(2))}
-    return {"legacy": False, "file": trimmed}
+        pair, api_key = _legacy_pair_from_lines(lines), "".join(lines)
+    else:
+        pair, api_key = _legacy_pair_from_line(trimmed), trimmed
+    if pair is None:
+        return {"legacy": False, "file": api_key}
+    return {"legacy": True, "file": "appid:%s\ntoken:%s" % pair}
 
 
 def _lookup(name: str) -> dict:
