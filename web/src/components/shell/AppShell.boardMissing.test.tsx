@@ -180,7 +180,7 @@ describe("AppShell · dashboard.json 不存在（看板页）", () => {
     fireEvent.change(field, { target: { value: "写一份 onboarding 文档" } });
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
     await vi.waitFor(() => expect(postActionMock).toHaveBeenCalledWith({ action: "capture", text: "写一份 onboarding 文档" }));
-    expect(await screen.findByText(/Submitted; AI is analyzing/)).toBeTruthy();
+    expect(await screen.findByText(/Submitted — analyzing/)).toBeTruthy();
   });
 
   it("⌘L / quick_capture 的共同落点 focusComposer 在这一态也找得到 composer：光标到草稿末尾、不全选", async () => {

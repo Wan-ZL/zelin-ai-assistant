@@ -2,10 +2,15 @@
 // prompt 的 direct-run capture——{action:"capture", text:<短标签>, mode:"run", preset:"proposals_triage"}；
 // 固定 prompt 的单一真源在 actd（_proposals_triage_plan），web 只发 preset 信号 + 短标签。
 // 提案列没有积压（后端提案卡 0 张，processing 占位也计入）时禁用；2s 防连点。
+// 回执 = 原生 RunCapturePendingRow 的状态句（AppDelegate.submitProposalsTriage → store.beginCapture(run: true)，
+// Cards.swift:848,863-867）：管线 ok「已提交，直接开跑（跳过提案），排队派发中…」/ 不 ok「已保存到队列，pipeline 启动后
+// 直接开跑」——判据与列顶输入框同一个 pipelineStalled（captureReceipt.ts），健康一变句子随之切换（§10 / §41 追记）。
 import { useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
+import { useAppState } from "../../store";
 import { describeActionError } from "./boardActions";
+import { captureNote, pipelineStalled } from "./captureReceipt";
 
 /** preset 词表值——与 act/actd.py PROPOSALS_TRIAGE_PRESET / 原生 ProposalsTriage.presetKey 逐字一致 */
 export const PROPOSALS_TRIAGE_PRESET = "proposals_triage";
@@ -18,19 +23,24 @@ export function proposalsTriageBody() {
 
 export function ProposalsTriageButton({ backlogCount }: { backlogCount: number }) {
   const { text } = useI18n();
+  const { health } = useAppState();
   const [cooling, setCooling] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const enabled = backlogCount > 0 && !cooling;
+  // 渲染时现算：管线健康在回执还挂着的时候变了，句子跟着变（原生 RunCapturePendingRow 每次 body 重算 stalled）
+  const note = error ?? (sent ? captureNote("run", pipelineStalled(health), text) : null);
 
   const fire = async () => {
     if (!enabled) return;
     setCooling(true);
-    setNote(null);
+    setSent(false);
+    setError(null);
     try {
       await postAction(proposalsTriageBody());
-      setNote(text("清理会话已提交（运行中列出现）", "Clean-up session submitted (appears in Running)"));
+      setSent(true);
     } catch (e) {
-      setNote(describeActionError(e, text));
+      setError(describeActionError(e, text));
     }
     window.setTimeout(() => setCooling(false), 2000);
   };

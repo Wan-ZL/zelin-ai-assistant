@@ -18,32 +18,55 @@
 //     （原生 AppDelegate.submitCapture `if ok { CaptureHistory.push(text) }  // item 5: commands count too`），
 //     所以 `/lang en` 之后 ↑ 能翻回它；命令报错不进历史（原生 ok=false 不 push）；
 //   - 输入框下一行状态（§41 2026-09-05 追记，原生 Composer.swift 的 slashError → hintLine 栈）：失败句优先；
-//     否则草稿以 "/" 开头时给命令词表提示行（hintLine）；否则才是成功回执。一改字失败句与回执都清
-//     （原生 `.onChange(of: text) { slashError = nil }`；回执是上一次提交的，新草稿一开打就过期）——但 ↑/↓ 翻历史
-//     不走 onChange，翻出一条 "/…" 旧捕获时靠渲染处的 `!hint` 守卫保证仍只有一行。原生的键位提示句
+//     否则草稿以 "/" 开头时给命令词表提示行（hintLine）；否则才是回执。一改字失败句与**斜杠回执**清
+//     （原生 `.onChange(of: text) { slashError = nil }`；「语言 → en」说的是上一次命令，新草稿一开打就过期）——
+//     ↑/↓ 翻历史不走 onChange，翻出一条 "/…" 旧捕获时靠渲染处的 `!hint` 守卫保证仍只有一行。原生的键位提示句
 //     「↩ 发送 · ⇧↩ 换行 …」随 D35 退役，不补；
+//   - **捕获回执活过键击**（§10 / §41 2026-09-05 追记，captureReceipt.ts）：「「<原话前 20 字>」已提交，AI 分析中…」
+//     是原生本地占位卡的 web 替身（那张卡不搬：server 的 processing / queued 行一个 actd pass 内就落列，防腐 #10），
+//     它的寿命也照占位卡的规矩——刷新带来一行属于这次提交的卡即清（先认 §10 issue #7 的 capture_id = POST 回的 stem，
+//     再退到原生 captureMatches 的标题 / 摘要前缀猜测；提交那一刻的快照不算），否则 300 s / 180 s 后换成
+//     原生的诚实超时条（管线 ok 时才计时，恢复时重新起算）；状态句随管线健康切换（P1-4：不 ok 时说「已保存到
+//     队列」而不是许诺「2-3 分钟」）。下一次提交（捕获或命令）才替换它；
 //   - 输入框与按钮的 title = 原生 `.help` 提示：直跑「直接开跑：跳过提案与费用预估，成果仍进「待验收」」/
 //     捕获「快速捕获（<快捷键>）」——原生写死 ⌘L；web 只在壳（WKWebView）里有键：⌘L（rail 的 window keydown，
 //     §54.4 2026-09-05 追记）与全局快速捕获键（§61.6，壳快照 hotkey 如 ⌃⌥Space），写成「⌘L · ⌃⌥Space」；
 //     浏览器标签页里 ⌘L 归地址栏、也没有全局键，就不写键，不许谎报。身份（propose / run）从 buildBody 的 payload 读
 //     （§34 直跑 = mode:"run"），不另加 prop——wire 形是唯一真源（防腐 #10）。
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { useShellState, type ShellState } from "../../shellBridge";
+import { getState, useAppState } from "../../store";
 import { describeActionError } from "./boardActions";
+import {
+  CAPTURE_NOTICE_FADE_MS,
+  CAPTURE_TIMEOUT_MS,
+  captureLanded,
+  captureReceiptLine,
+  captureStem,
+  captureTimeoutNotice,
+  pipelineStalled,
+  type CaptureIdentity,
+  type CaptureMode,
+} from "./captureReceipt";
 import { hintLine, pushHistory, readHistory, runSlashCommand } from "./composerCommands";
 
 interface LaneComposerProps {
   placeholder: string;
   submitLabel: string;
-  /** 提交成功后输入框下方的一次性回执文案（如「已提交，AI 分析中…」） */
-  successNote: string;
   buildBody: (text: string) => Record<string, unknown>;
 }
 
-type ComposerMode = "propose" | "run";
+type ComposerMode = CaptureMode;
+
+/** 上一次成功捕获的回执：对账凭据（原话 + inbox stem）+ 提交时看板的 generated_at（只对**之后**到的快照做对账）
+ *  + 是否已超时成通知条 */
+interface CaptureReceipt extends CaptureIdentity {
+  generatedAt: string | null;
+  timedOut: boolean;
+}
 
 /** 输入框身份从它要发的 payload 读：§34 直跑 = `mode:"run"`，其余 = 提案捕获 */
 export function composerMode(buildBody: LaneComposerProps["buildBody"]): ComposerMode {
@@ -90,14 +113,17 @@ export function fitComposerRows(el: HTMLTextAreaElement, maxRows = COMPOSER_MAX_
   el.rows = Math.min(maxRows, Math.max(1, contentLines));
 }
 
-export function LaneComposer({ placeholder, submitLabel, successNote, buildBody }: LaneComposerProps) {
+export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneComposerProps) {
   const { text } = useI18n();
   const shell = useShellState();
-  const title = composerTitle(composerMode(buildBody), quickCaptureKeys(shell), text);
+  const { health, board } = useAppState();
+  const mode = composerMode(buildBody);
+  const title = composerTitle(mode, quickCaptureKeys(shell), text);
+  const stalled = pipelineStalled(health); // 原生 P1-4：管线不 ok → 回执改口、超时不计时
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ComposerError | null>(null);
-  const [sent, setSent] = useState(false);
+  const [receipt, setReceipt] = useState<CaptureReceipt | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [historyIndex, setHistoryIndex] = useState(-1); // -1 = 不在翻历史
   const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -107,12 +133,37 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
     if (fieldRef.current) fitComposerRows(fieldRef.current);
   }, [draft]);
 
+  // 回执对账（原生 PendingSweep.captureMatches）：只看提交**之后**到的快照——提交那一刻的看板里若已有同词卡，
+  // 回执不该在同一帧消失（用户得先看见「已提交」）；下一版快照里它还在（merge_or_new 并入了它）才算落地
+  useEffect(() => {
+    if (!receipt || receipt.timedOut || !board || board.generated_at === receipt.generatedAt) return;
+    if (captureLanded(receipt, mode, board)) setReceipt(null);
+  }, [board, receipt, mode]);
+
+  // 超时（原生 sweepTimeouts）：300 s（propose）/ 180 s（run）后回执换成诚实超时条；管线不 ok 时不计时——占位句
+  // 已诚实说「已保存到队列」，此时报超时是假警报；恢复 ok 时 effect 重跑 = 重新起算整段窗口（原生 updateHealth 重置 created）
+  useEffect(() => {
+    if (!receipt || receipt.timedOut || stalled) return undefined;
+    const timer = window.setTimeout(
+      () => setReceipt((r) => (r === receipt ? { ...r, timedOut: true } : r)),
+      CAPTURE_TIMEOUT_MS[mode],
+    );
+    return () => window.clearTimeout(timer);
+  }, [receipt, stalled, mode]);
+
+  // 超时条 120 s 自然褪去（原生 notices 的寿命）
+  useEffect(() => {
+    if (!receipt?.timedOut) return undefined;
+    const timer = window.setTimeout(() => setReceipt((r) => (r === receipt ? null : r)), CAPTURE_NOTICE_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [receipt]);
+
   const submit = async () => {
     const trimmed = draft.trim();
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
-    setSent(false);
+    setReceipt(null); // 状态行只说最新一次提交
     setNote(null);
     try {
       const command = await runSlashCommand(trimmed, text);
@@ -132,11 +183,12 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
         setNote(command.note);
         return;
       }
-      await postAction(buildBody(trimmed));
+      const response = await postAction(buildBody(trimmed));
       pushHistory(trimmed);
       setHistoryIndex(-1);
       setDraft(""); // 仅确认成功后清空（§41 草稿保留）
-      setSent(true);
+      // stem = server 回的 inbox 文件名（§49，对账精确键）；generated_at 现读 store（POST 期间看板可能已刷新）：只认比它新的快照
+      setReceipt({ text: trimmed, stem: captureStem(response), generatedAt: getState().board?.generated_at ?? null, timedOut: false });
     } catch (e) {
       // capture 写入失败（原生 submitCapture 返回 false）：固定一句 + server 原文；草稿原样留着
       setError({ prefix: text("提交失败，已保留输入", "Submit failed — input kept"), detail: describeActionError(e, text) });
@@ -190,8 +242,7 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
           onChange={(e) => {
             setDraft(e.target.value);
             setError(null); // 一改字失败句即清（原生 `.onChange(of: text) { slashError = nil }`）
-            setSent(false); // 上一次提交的回执随之过期（捕获回执与斜杠回执同一规矩）
-            setNote(null);
+            setNote(null); // 斜杠回执随之过期；捕获回执**不清**——它是占位卡的替身，活到落地 / 超时（captureReceipt.ts）
             setHistoryIndex(-1); // 一改字就退出翻历史：↑/↓ 交还给多行草稿里的光标
           }}
           onKeyDown={onKeyDown}
@@ -214,7 +265,12 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
       )}
       {hint && <p className="column-help">{hint}</p>}
       {/* `!hint`：↑/↓ 翻出一条 "/…" 旧捕获不走 onChange、回执还在——提示行顶掉它，仍只有一行 */}
-      {sent && !error && !hint && <p className="column-help">{successNote}</p>}
+      {receipt && !error && !hint && (receipt.timedOut ? (
+        // 原生 NoticeRow：captureTimeout = .yellow（--notice）/ raiseTimeout = .orange（--warning）
+        <p className={`composer-notice is-${mode}-timeout`} role="status">{captureTimeoutNotice(mode, receipt.text, text)}</p>
+      ) : (
+        <p className="column-help" data-capture-receipt={mode}>{captureReceiptLine(mode, receipt.text, stalled, text)}</p>
+      ))}
       {note && !error && !hint && <p className="column-help">{note}</p>}
     </>
   );

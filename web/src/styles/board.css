@@ -590,6 +590,18 @@ a.chip:hover { text-decoration: underline; }
   font: var(--type-composer-hint);
 }
 
+/* 捕获 / 直跑回执的超时条（§10 / §41 追记；原生 Store.swift sweepTimeouts → NoticeRow：captureTimeout = .yellow、
+   raiseTimeout = .orange，底色 = 同色 0.14 透明、圆角 6）。与 .column-help 同一行位、同一字号，只多一层底色 */
+.composer-notice {
+  margin: 6px 2px 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font: var(--type-composer-hint);
+  overflow-wrap: anywhere;
+}
+.composer-notice.is-propose-timeout { background: var(--notice-soft); color: var(--notice); }
+.composer-notice.is-run-timeout { background: var(--warning-soft); color: var(--warning); }
+
 /* —— 原生 <dialog> —— */
 .zai-dialog {
   min-width: 320px;

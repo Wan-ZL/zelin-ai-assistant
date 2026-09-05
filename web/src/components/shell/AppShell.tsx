@@ -99,7 +99,6 @@ export function BoardMissingState() {
         <LaneComposer
           placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
           submitLabel={text("捕获", "Capture")}
-          successNote={text("已提交，AI 分析中（通常 2-3 分钟）", "Submitted; AI is analyzing (usually 2-3 min)")}
           buildBody={(t) => ({ action: "capture", text: t })}
         />
       </div>
