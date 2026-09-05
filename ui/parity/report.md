@@ -4,8 +4,8 @@ Inventory `ui/parity/native-inventory.json` sha256 `2f09a2197a34`.
 
 | status | count |
 |---|---|
-| PRESENT | 829 |
-| PENDING | 15 |
+| PRESENT | 831 |
+| PENDING | 13 |
 | MISSING | 0 |
 | STALE | 0 |
 | WAIVED | 4 |
@@ -14,7 +14,7 @@ Not gated: informational 414, os 11, retired 57, shell 70
 
 | kind | PRESENT | PENDING | MISSING | STALE | WAIVED |
 |---|---|---|---|---|---|
-| control | 712 | 15 | 0 | 0 | 4 |
+| control | 714 | 13 | 0 | 0 | 4 |
 | lane | 6 | 0 | 0 | 0 | 0 |
 | lanes | 3 | 0 | 0 | 0 | 0 |
 | layout | 5 | 0 | 0 | 0 | 0 |

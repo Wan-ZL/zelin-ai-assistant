@@ -111,10 +111,12 @@ export function sectionHaystack(id: string, rendered: string, catalog: SettingsC
   return parts.filter(Boolean).join(" ");
 }
 
+const SECTION_SELECTOR = ".settings-page > .settings-section, .settings-page > div[id^='settings-']";
+
 /** 原生 Settings.swift 顶部的搜索框（⌘F 聚焦）：逐区按双语干草过滤，全不匹配时说「无匹配设置」 */
 function filterSections(query: string, catalog: SettingsCatalog | null, secrets: SecretsStatus | null): number {
   let shown = 0;
-  document.querySelectorAll<HTMLElement>(".settings-page > .settings-section, .settings-page > div[id^='settings-']").forEach((el) => {
+  document.querySelectorAll<HTMLElement>(SECTION_SELECTOR).forEach((el) => {
     const id = el.id.replace(/^settings-/, "");
     const secretNames = Array.from(el.querySelectorAll<HTMLElement>("[data-secret]"), (row) => row.dataset.secret ?? "");
     const hit = matchesSearch(sectionHaystack(id, el.textContent ?? "", catalog, secrets, secretNames), query);
@@ -131,8 +133,27 @@ export function SettingsPage() {
   const [shown, setShown] = useState<number | null>(null);
   const catalogReady = settingsCatalog !== null;
 
+  // 原生 SwiftUI 每次 body 重算都重跑 matches()，晚到的数据自己浮出命中的区。web 先同步过一遍；有查询时再盯住各区的子树——
+  // 目录区在草稿对齐 effect 之后的下一帧才渲 field 与凭证行（store 拿到目录那一拍 data-secret 还不在 DOM），Skills / MCP 等区
+  // 各拉各的快照——正文一长出来就在下一帧重过滤一次（只看增删与文本，不看属性：hidden 的翻转本身不触发）
   useEffect(() => {
     setShown(filterSections(query, settingsCatalog, secrets));
+    if (!query.trim()) return undefined;
+    let frame = 0;
+    const observer = new MutationObserver(() => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        setShown(filterSections(query, settingsCatalog, secrets));
+      });
+    });
+    document.querySelectorAll<HTMLElement>(SECTION_SELECTOR).forEach((el) => {
+      observer.observe(el, { childList: true, characterData: true, subtree: true });
+    });
+    return () => {
+      observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [query, language, settingsCatalog, secrets]);
 
   // 原生 SettingsSearchField.esc：输入法候选期间 Esc 归输入法（§41 IME 红线）；有字 → 第一下清空；没字 → 第二下交还光标
