@@ -26,10 +26,10 @@ const zh = (chinese: string) => chinese;
 const renderIn = (language: Language, node: React.ReactNode) => render(<LanguageContext.Provider value={language}>{node}</LanguageContext.Provider>);
 
 const report: DoctorReport = { ok: true, fast: true, rc: 0, home: "/h", ran_at: "x", checks: [
-  { name: "claude CLI", status: "OK", detail: "/u/claude 1.0.99", fix: "" },
-  { name: "launchd claude", status: "FAIL", detail: "claude in launchd cannot read the vault (EPERM)", fix: "grant Full Disk Access to claude", failure_id: "claude_blind" },
-  { name: "gh CLI", status: "WARN", detail: "missing - optional", fix: "brew install gh" },
-  { name: "config", status: "FAIL", detail: "broken yaml at line 3", fix: "restore", failure_id: "config_invalid" },
+  { name: "claude CLI", status: "ok", detail: "/u/claude 1.0.99", fix: "" },
+  { name: "launchd claude", status: "fail", detail: "claude in launchd cannot read the vault (EPERM)", fix: "grant Full Disk Access to claude", failure_id: "claude_blind" },
+  { name: "gh CLI", status: "warn", detail: "missing - optional", fix: "brew install gh" },
+  { name: "config", status: "fail", detail: "broken yaml at line 3", fix: "restore", failure_id: "config_invalid" },
 ] };
 const catalog: FailureCatalog = { failures: {
   claude_blind: { zh: "后台的 claude 读不到笔记库——给它「完全磁盘访问」", en: "Background claude cannot read the vault — grant it Full Disk Access", action_id: "open_fda" },
@@ -65,7 +65,7 @@ describe("doctorSentence / doctorFindings（原生 doctorFindingRow 的两条规
     expect(doctorSentence(report.checks[1], catalog, "zh")).toBe("后台的 claude 读不到笔记库——给它「完全磁盘访问」");
     expect(doctorSentence(report.checks[2], catalog, "en")).toBeNull();          // 没 failure_id → 原句
     expect(doctorSentence(report.checks[3], catalog, "en")).toBeNull();          // 目录里没有这个 id → 原句
-    expect(doctorSentence({ ...report.checks[1], status: "OK" }, catalog, "en")).toBeNull();   // OK 行永不套失败句
+    expect(doctorSentence({ ...report.checks[1], status: "ok" }, catalog, "en")).toBeNull();   // OK 行永不套失败句
     expect(doctorSentence(report.checks[1], null, "en")).toBeNull();             // 目录还没回
   });
 
@@ -89,7 +89,7 @@ describe("DoctorTable（DepsSection 的诊断表）", () => {
     expect(config.querySelector("td[title]")).toBeNull();
     // OK 行不在表里，只在完整报告文本里
     expect(document.querySelectorAll(".diag-table tbody tr").length).toBe(3);
-    expect(document.querySelector(".diag-table tr[data-status=OK]")).toBeNull();
+    expect(document.querySelector(".diag-table tr[data-status=ok]")).toBeNull();
     expect(document.querySelector(".diag-full-report pre")?.textContent).toContain("[ok] claude CLI: /u/claude 1.0.99");
     expect(screen.getByText("2 check(s) failed — each has its own button")).toBeTruthy();
   });
@@ -122,6 +122,23 @@ describe("语言透传（原生 runFullOutput 的 AIASSISTANT_UI_LANG + onChange
     rerender(<LanguageContext.Provider value="zh"><DepsSection /></LanguageContext.Provider>);
     await waitFor(() => expect(fetchDiagnostics).toHaveBeenLastCalledWith(false, "zh"));
     expect(fetchDiagnostics).toHaveBeenCalledTimes(2);
+  });
+
+  it("a language switch while the previous-language doctor run is still in flight refetches once it lands (store dedupe must not swallow it)", async () => {
+    let settle: (snap: DiagnosticsSnapshot) => void = () => undefined;
+    vi.mocked(fetchDiagnostics).mockReset();
+    vi.mocked(fetchDiagnostics).mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+    vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics());
+    const { rerender } = renderIn("en", <DepsSection />);
+    await waitFor(() => expect(fetchDiagnostics).toHaveBeenCalledWith(false, "en"));
+    // doctor 还在跑（几秒）就切了语言：同 key 的在途请求本会把这次 refresh 合并掉
+    setLanguage("zh");
+    rerender(<LanguageContext.Provider value="zh"><DepsSection /></LanguageContext.Provider>);
+    expect(fetchDiagnostics).toHaveBeenCalledTimes(1);
+    settle(diagnostics());
+    await waitFor(() => expect(fetchDiagnostics).toHaveBeenLastCalledWith(false, "zh"));
+    expect(fetchDiagnostics).toHaveBeenCalledTimes(2);
+    await screen.findByText("2 项未通过——每条都有对应按钮");
   });
 });
 

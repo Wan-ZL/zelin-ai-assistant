@@ -351,17 +351,17 @@ const FAILURE_ROWS: DoctorRow[] = [
   "claude_cli_missing", "node_missing", "claude_cli_outdated", "claude_auth_failed", "engine_dead", "engine_npm_download",
   "engine_crashed", "engine_ffmpeg_missing", "screen_tcc_lost", "agent_unloaded", "cron_missing", "interpreter_blind",
   "cron_fda_blocked", "config_invalid",
-].map((id) => ({ name: `_vocab_${id}`, status: "FAIL", detail: id, fix: "see docs", failure_id: id, action_id: "" }));
+].map((id) => ({ name: `_vocab_${id}`, status: "fail", detail: id, fix: "see docs", failure_id: id, action_id: "" }));
 /** 原生 DepsModel 十二行里走 doctor 的那几行（node/npx · claude CLI · gh CLI · daemon python · obsidian vault） */
 const DEP_ROWS: DoctorRow[] = [
-  { name: "node/npx", status: "OK", detail: "/opt/homebrew/bin/npx", fix: "" },
-  { name: "claude CLI", status: "OK", detail: "/Users/demo/.local/bin/claude 1.0.99", fix: "" },
-  { name: "gh CLI", status: "WARN", detail: "missing - repo-mode cards deliver as local branches only (optional)", fix: "brew install gh" },
-  { name: "daemon python", status: "OK", detail: "/usr/bin/python3 (Python 3.9, PyYAML importable)", fix: "" },
-  { name: "obsidian vault", status: "OK", detail: "/Users/demo/Documents/Obsidian Vault/2 - raw (+ ingest inbox)", fix: "" },
+  { name: "node/npx", status: "ok", detail: "/opt/homebrew/bin/npx", fix: "" },
+  { name: "claude CLI", status: "ok", detail: "/Users/demo/.local/bin/claude 1.0.99", fix: "" },
+  { name: "gh CLI", status: "warn", detail: "missing - repo-mode cards deliver as local branches only (optional)", fix: "brew install gh" },
+  { name: "daemon python", status: "ok", detail: "/usr/bin/python3 (Python 3.9, PyYAML importable)", fix: "" },
+  { name: "obsidian vault", status: "ok", detail: "/Users/demo/Documents/Obsidian Vault/2 - raw (+ ingest inbox)", fix: "" },
 ];
 const diagnostics: DiagnosticsSnapshot = {
-  doctor: { ok: true, checks: [{ name: "python", status: "OK", detail: "3.9", fix: null }, { name: "claude", status: "FAIL", detail: "missing", fix: "install" }, ...DEP_ROWS, ...FAILURE_ROWS], home: "/h", rc: 0, fast: true, ran_at: "2026-09-02T11:59:00Z" },
+  doctor: { ok: true, checks: [{ name: "python", status: "ok", detail: "3.9", fix: null }, { name: "claude", status: "fail", detail: "missing", fix: "install" }, ...DEP_ROWS, ...FAILURE_ROWS], home: "/h", rc: 0, fast: true, ran_at: "2026-09-02T11:59:00Z" },
   health, deploy_state: null, radar_sources: demoBoard.radar_sources ?? null, install_report: null, registry_backend: "yaml",
   logs: [{ name: "actd.log", path: "/h/state/logs/actd.log", size: 2048, mtime: 1788350000 }],
   // 定时任务磁盘权限：探针新鲜且能读（「定时任务能读取 <path>」）；录制页三个时间戳都在
@@ -376,10 +376,10 @@ const failureCatalog: FailureCatalog = { failures: Object.fromEntries(
 /** 权限体检 / 向导的 server 半边：FDA 清单 + TCC 相关 doctor 行（cron disk access 三态各一份）+ 笔记库被动探针 */
 function permissionsFixture(cron: "ok" | "blocked" | "stale" | "none"): PermissionsSnapshot {
   const cronRow: DoctorRow[] = cron === "none" ? [] : [cron === "ok"
-    ? { name: "cron disk access", status: "OK", detail: "cron read ok (probe 12 min ago)", fix: "" }
+    ? { name: "cron disk access", status: "ok", detail: "cron read ok (probe 12 min ago)", fix: "" }
     : cron === "blocked"
-      ? { name: "cron disk access", status: "FAIL", detail: "cron CANNOT read the vault - Full Disk Access is blocking it", fix: "System Settings > Privacy & Security > Full Disk Access > + > /usr/sbin/cron", failure_id: "cron_fda_blocked" }
-      : { name: "cron disk access", status: "WARN", detail: "last cron probe 5h ago - the cron chain looks stopped", fix: "bash install.sh", failure_id: "cron_missing" }];
+      ? { name: "cron disk access", status: "fail", detail: "cron CANNOT read the vault - Full Disk Access is blocking it", fix: "System Settings > Privacy & Security > Full Disk Access > + > /usr/sbin/cron", failure_id: "cron_fda_blocked" }
+      : { name: "cron disk access", status: "warn", detail: "last cron probe 5h ago - the cron chain looks stopped", fix: "bash install.sh", failure_id: "cron_missing" }];
   return {
     home: "/Users/demo/zai", on_external_volume: false,
     fda: { needed: cron === "blocked", pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
@@ -389,7 +389,7 @@ function permissionsFixture(cron: "ok" | "blocked" | "stale" | "none"): Permissi
         { role: "node", path: null, realpath: null, exists: false, note: { zh: "node", en: "node" } },
       ] },
     panes: { full_disk: "x", screen: "y", microphone: "z", notifications: "n", files_folders: "f" },
-    doctor: [{ name: "launchd volume access", status: "FAIL", detail: "EPERM", fix: "grant FDA", failure_id: "deploy_blind_tcc" }, ...cronRow],
+    doctor: [{ name: "launchd volume access", status: "fail", detail: "EPERM", fix: "grant FDA", failure_id: "deploy_blind_tcc" }, ...cronRow],
     doctor_ran_at: "2026-09-02T11:59:00Z", doctor_ok: true,
     vault: { status: cron === "ok" ? "granted" : "unknown", root: "/Users/demo/Documents/Obsidian Vault" },
   };
@@ -851,7 +851,7 @@ async function renderDiagnosticsVariants(language: Language) {
  *  doctor 没回一行（点「重新检查」开始）、cron 探针 没数据 / 过期 / 被挡 三态。不点按钮——设置页主遍已把每颗都点过。 */
 async function renderDepsVariants(language: Language) {
   const on = (skip_reason: string | null, last_ok: string | null = null, enabled = true): RadarSourceHealth => ({ enabled, last_ok, skip_reason, stale: false });
-  const okReport = { ...diagnostics.doctor, checks: diagnostics.doctor.checks.filter((c) => c.status === "OK") };
+  const okReport = { ...diagnostics.doctor, checks: diagnostics.doctor.checks.filter((c) => c.status === "ok") };
   const variants: Array<Partial<DiagnosticsSnapshot>> = [
     { radar_sources: { gmail: on("auth_failed"), slack: on("connect_failed"), obsidian: on("vault_missing") }, doctor: okReport,
       cron_probe: null },

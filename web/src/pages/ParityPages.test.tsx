@@ -52,7 +52,7 @@ function permissions(over: Partial<PermissionsSnapshot> = {}): PermissionsSnapsh
         { role: "claude", path: null, realpath: null, exists: false, note: { zh: "c", en: "claude CLI" } },
       ] },
     panes: { full_disk: "x", screen: "y", microphone: "z", notifications: "n" },
-    doctor: [{ name: "launchd volume access", status: "FAIL", detail: "EPERM", fix: "grant FDA", failure_id: "deploy_blind_tcc" }],
+    doctor: [{ name: "launchd volume access", status: "fail", detail: "EPERM", fix: "grant FDA", failure_id: "deploy_blind_tcc" }],
     doctor_ran_at: "2026-09-02T00:00:00Z", doctor_ok: true,
     vault: { status: "unknown", root: "/Users/demo/Documents/Obsidian Vault" }, ...over,
   };
@@ -66,8 +66,8 @@ const HEALTH_DEAD = { verdict: "stale", heartbeat: null, dashboard: null, loop_h
 function diagnostics(): DiagnosticsSnapshot {
   return {
     doctor: { ok: true, fast: true, rc: 0, home: "/h", ran_at: "2026-09-02T00:00:00Z", checks: [
-      { name: "claude CLI", status: "OK", detail: "found", fix: "" },
-      { name: "actd heartbeat", status: "FAIL", detail: "stalled", fix: "kickstart it" },
+      { name: "claude CLI", status: "ok", detail: "found", fix: "" },
+      { name: "actd heartbeat", status: "fail", detail: "stalled", fix: "kickstart it" },
     ] },
     health: { verdict: "stalled", heartbeat: { age_s: 400, phase: "idle", pid: 1, interval: 10, stale_after_s: 90, stale: true }, dashboard: null,
       loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "x" },
@@ -197,8 +197,8 @@ describe("DepsSection（原 DiagnosticsPage，D30 折进设置页）", () => {
 
   it("doctor rows carry the §25 one-click action; Reveal file posts {target:'config'}", async () => {
     const diag = diagnostics();
-    diag.doctor.checks.push({ name: "config", status: "FAIL", detail: "broken yaml", fix: "restore", failure_id: "config_invalid" },
-      { name: "cron chain", status: "FAIL", detail: "missing", fix: "bash install.sh", failure_id: "cron_missing" });
+    diag.doctor.checks.push({ name: "config", status: "fail", detail: "broken yaml", fix: "restore", failure_id: "config_invalid" },
+      { name: "cron chain", status: "fail", detail: "missing", fix: "bash install.sh", failure_id: "cron_missing" });
     vi.mocked(fetchDiagnostics).mockResolvedValue(diag);
     vi.mocked(postRevealTarget).mockResolvedValue({ ok: true });
     renderEn(<DepsSection />);
@@ -214,7 +214,7 @@ describe("DepsSection（原 DiagnosticsPage，D30 折进设置页）", () => {
 
   it("doctorSummary counts statuses（原生 DepsView：零失败说全部通过 ✓，判词与计数两个节点）", () => {
     expect(doctorSummary(diagnostics().doctor, en)).toEqual({ verdict: "1 check(s) failed — each has its own button", counts: "(1 ok / 0 warn)" });
-    const clean = { ...diagnostics().doctor, checks: diagnostics().doctor.checks.filter((c) => c.status !== "FAIL") };
+    const clean = { ...diagnostics().doctor, checks: diagnostics().doctor.checks.filter((c) => c.status !== "fail") };
     expect(doctorSummary(clean, en)).toEqual({ verdict: "All checks passed ✓", counts: "(1 ok / 0 warn)" });
     expect(fullReportText(diagnostics().doctor)).toBe("[ok] claude CLI: found\n[fail] actd heartbeat: stalled\n    fix: kickstart it");
   });
@@ -274,7 +274,7 @@ describe("SetupPage", () => {
 
   it("finale rows: dead daemon → Start it (POST repair), no data → Generate now (seed); Done writes the marker", async () => {
     vi.mocked(fetchSetup).mockResolvedValue(setup({ config_exists: true }));
-    vi.mocked(fetchPermissions).mockResolvedValue(permissions({ doctor: [{ name: "cron disk access", status: "FAIL", detail: "blocked", fix: "", failure_id: "cron_fda_blocked" }] }));
+    vi.mocked(fetchPermissions).mockResolvedValue(permissions({ doctor: [{ name: "cron disk access", status: "fail", detail: "blocked", fix: "", failure_id: "cron_fda_blocked" }] }));
     vi.mocked(fetchHealth).mockResolvedValue(HEALTH_DEAD);
     vi.mocked(postRepairActd).mockRejectedValue(new Error("not loaded"));
     vi.mocked(postSeedDashboard).mockResolvedValue({ ok: false, rc: 1, error: "boom" });
@@ -287,7 +287,7 @@ describe("SetupPage", () => {
     await screen.findByText("Seeding failed:");
     expect(screen.getByText("boom")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Grant…" }).getAttribute("href")).toContain("page=permissions");
-    expect(cronVerdict([{ name: "cron disk access", status: "OK", detail: "", fix: "" }])).toBe("ok");
+    expect(cronVerdict([{ name: "cron disk access", status: "ok", detail: "", fix: "" }])).toBe("ok");
     expect(cronVerdict([])).toBe("neutral");
     expect(cronVerdict(undefined)).toBe("checking");
     expect(daemonRunning(HEALTH_OK)).toBe(true);

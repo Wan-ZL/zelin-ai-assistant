@@ -801,10 +801,11 @@ export interface SecretVerifyResult {
   [key: string]: unknown;
 }
 
-// ----- §25 doctor 行（act/doctor.render_json 的 wire 形） ----- #
+// ----- §25 doctor 行（act/doctor.render_json 的 wire 形；status 小写 ok|warn|fail = act/lib/checks/core 的常量，
+// server/doctor_run 归一后透出——比较一律按小写字面量，不做大小写翻译层） ----- #
 export interface DoctorRow {
   name: string;
-  status: "OK" | "WARN" | "FAIL" | string;
+  status: "ok" | "warn" | "fail" | string;
   detail: string;
   fix: string;
   failure_id?: string;

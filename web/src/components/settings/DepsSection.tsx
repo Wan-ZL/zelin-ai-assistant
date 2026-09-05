@@ -25,10 +25,12 @@ import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;
 
+// doctor 行的 status 词表 = §25 小写 ok|warn|fail（wire 原样，server/doctor_run 归一）——下面一律按小写字面量比
+
 /** 原生 DepsView：零失败说「全部通过 ✓」，否则「N 项未通过——每条都有对应按钮」；计数（正常 / 警告）是 web 加的第二个节点 */
 export function doctorSummary(report: DoctorReport, text: Text): { verdict: string; counts: string } {
-  const fail = report.checks.filter((c) => c.status === "FAIL").length;
-  const warn = report.checks.filter((c) => c.status === "WARN").length;
+  const fail = report.checks.filter((c) => c.status === "fail").length;
+  const warn = report.checks.filter((c) => c.status === "warn").length;
   const ok = report.checks.length - fail - warn;
   const verdict = fail === 0
     ? text("全部通过 ✓", "All checks passed ✓")
@@ -39,20 +41,25 @@ export function doctorSummary(report: DoctorReport, text: Text): { verdict: stri
 /** 原生「完整报告」的文本形：[status] name: detail（+ fix 缩进一行） */
 export function fullReportText(report: DoctorReport): string {
   return report.checks.map((row) => {
-    const line = `[${String(row.status).toLowerCase()}] ${row.name}: ${row.detail}`;
-    return row.fix && row.status !== "OK" ? `${line}\n    fix: ${row.fix}` : line;
+    const line = `[${row.status}] ${row.name}: ${row.detail}`;
+    return row.fix && row.status !== "ok" ? `${line}\n    fix: ${row.fix}` : line;
   }).join("\n");
 }
 
 /** 原生 doctorFindingRow 的主句：`FailureCatalog.message(row.failureID) ?? row.detail`——没通过且目录里有这个 id 才是人话，否则 null（用原句） */
 export function doctorSentence(row: DoctorRow, catalog: FailureCatalog | null, lang: Language): string | null {
-  if (row.status === "OK" || !row.failure_id) return null;
+  if (row.status === "ok" || !row.failure_id) return null;
   return catalog?.failures[row.failure_id]?.[lang] ?? null;
 }
 
 /** 原生 `doctorRows.filter { $0.status != "ok" }`：表里只有没通过的行，OK 行留在「完整报告」 */
 export function doctorFindings(report: DoctorReport): DoctorRow[] {
-  return report.checks.filter((row) => row.status !== "OK");
+  return report.checks.filter((row) => row.status !== "ok");
+}
+
+/** 原生 `doctorFails = rows.filter { $0.status == "fail" }.count > 0`：让 AI 修 / 判决行的红黄门 */
+export function hasDoctorFail(report: DoctorReport): boolean {
+  return report.checks.some((c) => c.status === "fail");
 }
 
 /** 没通过的 doctor 行（调用方已过 doctorFindings） */
@@ -68,7 +75,7 @@ function DoctorTable({ rows, catalog }: { rows: DoctorRow[]; catalog: FailureCat
           const tooltip = sentence ? row.detail + (row.fix ? `\nfix: ${row.fix}` : "") : undefined;
           return (
             <tr key={row.name} data-status={row.status} data-failure={row.failure_id || undefined}>
-              <td><span className={`chip chip-${row.status === "FAIL" ? "danger" : "warning"}`}>{row.status}</span></td>
+              <td><span className={`chip chip-${row.status === "fail" ? "danger" : "warning"}`}>{row.status}</span></td>
               <td>{row.name}</td>
               <td title={tooltip}>
                 <div>{sentence ?? row.detail}</div>
@@ -170,7 +177,7 @@ export function DepsSection() {
   const summary = report ? doctorSummary(report, text) : null;
   const noRows = !rechecking && !busy && (report ? report.checks.length === 0 : Boolean(pageErrors.diagnostics));
   const findings = report ? doctorFindings(report) : [];
-  const hasFail = Boolean(report?.ok && report.checks.some((c) => c.status === "FAIL"));
+  const hasFail = Boolean(report?.ok && hasDoctorFail(report));
   const aiFixAllowed = diagnostics?.ai_fix_enabled !== false;   // 原生 AIFix.enabled：只有明确的 false 才隐藏
 
   return (
@@ -198,7 +205,7 @@ export function DepsSection() {
           {busy
             ? <span className="settings-helper">{text("最长约 1-2 分钟（含一次真实 claude 调用）", "up to ~1-2 min (includes one live claude call)")}</span>
             : summary && report?.ok && (
-              <span className={`settings-helper diag-verdict${report.checks.some((c) => c.status === "FAIL") ? " is-warning" : " is-ok"}`}>
+              <span className={`settings-helper diag-verdict${hasFail ? " is-warning" : " is-ok"}`}>
                 <span>{summary.verdict}</span><span>{summary.counts}</span>
                 <span>{report.fast ? text(" · 快速模式", " · fast mode") : ""}{report.ran_at ? ` · ${report.ran_at}` : ""}</span>
               </span>

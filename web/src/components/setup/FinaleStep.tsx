@@ -37,7 +37,7 @@ export function cronVerdict(rows: DoctorRow[] | undefined): "ok" | "blocked" | "
   if (rows === undefined) return "checking";
   const row = rows.find((r) => r.name === "cron disk access");
   if (!row) return "neutral";
-  if (row.status === "OK") return "ok";
+  if (row.status === "ok") return "ok";   // §25 小写词表
   if (row.failure_id === "cron_fda_blocked") return "blocked";
   if (row.failure_id === "cron_missing") return "stale";
   return "neutral";

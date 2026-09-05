@@ -31,11 +31,11 @@ const zh = (chinese: string) => chinese;
 const renderEn = (node: React.ReactNode) => render(<LanguageContext.Provider value="en">{node}</LanguageContext.Provider>);
 
 const report: DoctorReport = { ok: true, fast: true, rc: 0, home: "/h", ran_at: "x", checks: [
-  { name: "node/npx", status: "OK", detail: "/opt/homebrew/bin/npx", fix: "" },
-  { name: "claude CLI", status: "OK", detail: "/u/claude", fix: "" },
-  { name: "gh CLI", status: "WARN", detail: "missing", fix: "brew install gh" },
-  { name: "daemon python", status: "OK", detail: "/usr/bin/python3 (Python 3.9, PyYAML importable)", fix: "" },
-  { name: "obsidian vault", status: "OK", detail: "/v (+ ingest inbox)", fix: "" },
+  { name: "node/npx", status: "ok", detail: "/opt/homebrew/bin/npx", fix: "" },
+  { name: "claude CLI", status: "ok", detail: "/u/claude", fix: "" },
+  { name: "gh CLI", status: "warn", detail: "missing", fix: "brew install gh" },
+  { name: "daemon python", status: "ok", detail: "/usr/bin/python3 (Python 3.9, PyYAML importable)", fix: "" },
+  { name: "obsidian vault", status: "ok", detail: "/v (+ ingest inbox)", fix: "" },
 ] };
 const secrets = { secrets: [
   { name: "anthropic-api-key.txt", label: { zh: "k", en: "k" }, present: true, verifiable: true, mtime: 1 },
