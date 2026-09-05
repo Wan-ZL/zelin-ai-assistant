@@ -142,7 +142,8 @@ describe("request shape", () => {
   });
 
   it("GET never carries the token; POST without injection omits the header (server will 401)", async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
+    // 每次调用一个新 Response：body 只能读一次，复用同一个对象第二次 .json() 会抛——自 2xx 非 JSON 体拒收起那不再被吞成 {}
+    fetchMock.mockImplementation(async () => jsonResponse(200, { ok: true }));
     await fetchBoard();
     await postAction({ id: "R-101", action: "approve", comment: null });
     const getHeaders = (fetchMock.mock.calls[0][1] as RequestInit).headers as Headers;

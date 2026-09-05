@@ -151,7 +151,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     body = (await response.json()) as T & ApiErrorBody;
   } catch (error) {
     if ((error as Error).name === "AbortError") throw error;
-    body = {} as T & ApiErrorBody;
+    if (response.ok) {
+      // 2xx 却解不出 JSON（/api/board 原样透传的 dashboard.json 写了一半、代理页……）：不许当 `{}` 放行——空对象
+      // 一路进 store 会让看板渲染崩（`board.needs_approval` 取不到）。按读失败上报，调用方留旧快照
+      //（原生 Store.swift:320-324 decode 失败分支）；status 带真值（2xx），store 据此与断网（status 0）分开
+      throw new ApiError(response.status, {
+        error: {
+          code: "READ_FAILED",
+          message: apiText(
+            `服务端响应不是合法 JSON（${response.status}）`,
+            `The server response is not valid JSON (${response.status})`,
+          ),
+          details: { method, failure: "invalid-json" },
+        },
+      });
+    }
+    body = {} as T & ApiErrorBody; // 非 2xx 的非 JSON 体：ApiError 用通用文案（REQUEST_FAILED）
   }
   if (!response.ok) throw new ApiError(response.status, body);
   return body;

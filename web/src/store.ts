@@ -41,7 +41,7 @@ import {
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { forceMergeLanded } from "./components/board/pendingSettle";
 import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
-import { resolveLanguage, type Language } from "./i18n";
+import { getI18n, resolveLanguage, type Language } from "./i18n";
 import {
   EMPTY_CARD_FILTERS,
   readCardFilters,
@@ -83,6 +83,11 @@ export interface AppState {
   /** server 可达但 dashboard.json 不存在（`GET /api/board` 404 `NOT_FOUND`，§49）——原生 Store.missing 的镜像：
    *  首次安装 / 后台服务从没跑过。与 boardError 互斥：404 不是「连不上」，不许借离线文案说话（§54.1 追记） */
   boardMissing: boolean;
+  /** 2026-09-05 add-only（§49 追记 `store-resilience-drawer`）：server 答了 2xx 但 dashboard.json 解不出来（不是 JSON /
+   *  顶层不是带 `generated_at` 的对象）——原生 Store.swift:320-324 decode 失败分支的镜像：**旧快照留着**（不清 board）、
+   *  一行「读取 dashboard.json 失败: …」。与 boardError（连不上）/ boardMissing（文件不在）三态互斥：server 在跑、文件在，
+   *  只是内容坏了——健康横幅照常说话，不许借离线文案说「连不上」 */
+  boardDecodeError: string | null;
   boardLoading: boolean;          // 首载 true；SSE 触发的静默 refetch 不置位
   connection: ConnectionState;
   health: HealthSnapshot | null;  // GET /api/health 最近快照（§47.4；PipelineBanner 读）
@@ -169,6 +174,7 @@ const initialState: AppState = {
   board: null,
   boardError: null,
   boardMissing: false,
+  boardDecodeError: null,
   boardLoading: true,
   connection: "connecting",
   health: null,
@@ -244,23 +250,92 @@ export function isBoardMissingError(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 404 || error.code === "NOT_FOUND");
 }
 
+/** `GET /api/board` 2xx 却解不出 JSON（api.request 合成 `READ_FAILED`、status 仍是 2xx）——server 答了、内容坏了，
+ *  与断网（status 0 的 `READ_FAILED`）分开。导出供判例直测分类。 */
+export function isBoardDecodeError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "READ_FAILED" && error.status >= 200 && error.status < 300;
+}
+
+/** 顶层形状校验（原生 `JSONDecoder().decode(Dashboard.self)` 的 web 版最小门）：必须是带字符串 `generated_at` 的对象。
+ *  只验顶层——列级由 normalizeBoardShape 补齐、行级宽容留给各组件（wire add-only，前端绝不因新字段崩渲染）。
+ *  返回不合格的原因（null = 合格）。 */
+export function boardShapeProblem(value: unknown): string | null {
+  const { text } = getI18n(state.language);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return text("顶层不是对象", "top level is not an object");
+  if (typeof (value as { generated_at?: unknown }).generated_at !== "string") return text("缺少 generated_at", "generated_at is missing");
+  return null;
+}
+
+/** 七个必有列（`Board` 类型的必填数组键；原生 Dashboard CodingKeys 同一组） */
+const BOARD_LANE_KEYS = ["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash"] as const;
+/** 可选列（旧 server 缺席即缺席——缺席不补，免得往 wire 镜像里塞 server 没说的键；在场却不是数组才归 `[]`） */
+const BOARD_OPTIONAL_LIST_KEYS = ["archived", "merge_suggestions", "fold_receipts", "recaps"] as const;
+
+/** 列级宽容（原生 `Dashboard.init(from:)` / `decodeLossyRows`，shared/Sources/Contract.swift：缺列或整列不是数组 → `[]`，
+ *  `counts` 不是对象 → `Counts.empty`）。过了顶层门的合法 JSON 若少一列，`BoardLanes` 直接 `.filter` / `counts[...]` 会把
+ *  整板炸进错误边界——而旧快照那时已经被换掉，「重试」拉回同一份体只会再炸一次。这里把它补成能渲染的形状：
+ *  一切正常时原样返回（同一引用，不白拷）。 */
+export function normalizeBoardShape(board: Board): Board {
+  let out: Record<string, unknown> | null = null;
+  const patch = (key: string, value: unknown) => {
+    out ??= { ...board };
+    out[key] = value;
+  };
+  for (const key of BOARD_LANE_KEYS) if (!Array.isArray(board[key])) patch(key, []);
+  for (const key of BOARD_OPTIONAL_LIST_KEYS) if (key in board && !Array.isArray(board[key])) patch(key, []);
+  const counts: unknown = board.counts;
+  if (counts === null || typeof counts !== "object" || Array.isArray(counts)) patch("counts", {});
+  return out === null ? board : (out as unknown as Board);
+}
+
+/** 原生 Store.swift:320-324「Keep the previously good dashboard rather than blanking the UI」：快照不动，
+ *  一行 `读取 dashboard.json 失败: <原因>`（`L(...) + error.localizedDescription` 逐字）；离线 / 缺文件两态清掉——
+ *  server 答了，就不是连不上也不是文件不在 */
+function failBoardDecode(reason: string) {
+  const { text } = getI18n(state.language);
+  setState({
+    boardDecodeError: text("读取 dashboard.json 失败: ", "Failed to read dashboard.json: ") + reason,
+    boardError: null,
+    boardMissing: false,
+    boardLoading: false,
+  });
+}
+
 /** 全量拉取看板（初载 + SSE board.updated 后 + 断线重连后都走这一条） */
 export function refreshBoard(): Promise<void> {
   if (boardRequest) return boardRequest;
   boardRequest = (async () => {
     try {
-      const board = await fetchBoard();
+      const raw = await fetchBoard();
+      const shapeProblem = boardShapeProblem(raw);
+      if (shapeProblem !== null) {
+        failBoardDecode(shapeProblem);
+        return;
+      }
+      const board = normalizeBoardShape(raw); // 缺列 / 坏列 → `[]`、坏 counts → `{}`（原生列级宽容），渲染面永远拿到能读的形状
+      const previous = state.board;
       // 「合并中…」章不看 generated_at：每一版快照都跑一遍 §21bis 谓词（副卡全部离开所有列才算落地）
-      setState({ board, boardError: null, boardMissing: false, boardLoading: false, forceMergingIds: settledForceMerging(board) });
+      setState({
+        board, boardError: null, boardMissing: false, boardDecodeError: null, boardLoading: false,
+        forceMergingIds: settledForceMerging(board),
+      });
+      // 侧栏开着 + 看板换版 → 详情跟上（原生 @Published dashboard 一发布，展开区从新快照重渲染，Store.swift:56-57）。
+      // 只认 generated_at 变化：同版重拉（断线重连）不多打一次；首版落地不拉——selectCard 自己的那一拉正在路上 / 刚落地
+      const selected = state.selectedCardId;
+      if (selected && previous && previous.generated_at !== board.generated_at) followSelectedCardDetail(selected);
     } catch (error) {
       if (isBoardMissingError(error)) {
         // 原生 Store.refresh 的缺文件分支（dashboard = nil / missing = true / loadError = nil）：快照一并清——
         // server 明说文件没了，留着旧快照再挂「连不上」横幅是两句谎话
-        setState({ board: null, boardError: null, boardMissing: true, boardLoading: false });
+        setState({ board: null, boardError: null, boardMissing: true, boardDecodeError: null, boardLoading: false });
+        return;
+      }
+      if (isBoardDecodeError(error)) {
+        failBoardDecode((error as ApiError).message);
         return;
       }
       const message = error instanceof ApiError ? error.message : String(error);
-      setState({ boardError: message, boardMissing: false, boardLoading: false });
+      setState({ boardError: message, boardMissing: false, boardDecodeError: null, boardLoading: false });
     } finally {
       boardRequest = null;
     }
@@ -268,21 +343,41 @@ export function refreshBoard(): Promise<void> {
   return boardRequest;
 }
 
+/** 详情落地：用户还停在这张卡才替换 cardDetail，并记「看过明细」（T2 闸门）。selectCard 的首拉与看板换版后的
+ *  跟随重拉共用同一条落地路——两条路对同一张卡的响应谁后到谁算（都是 server 此刻的真话） */
+function landCardDetail(cardId: string, detail: CardDetail) {
+  if (getState().selectedCardId !== cardId) return;
+  const viewedId = typeof detail.id === "string" && detail.id ? detail.id : cardId;
+  const detailViewedIds = state.detailViewedIds.has(viewedId)
+    ? state.detailViewedIds
+    : new Set([...state.detailViewedIds, viewedId]);
+  setState({ cardDetail: detail, cardDetailError: null, detailViewedIds });
+}
+
+let detailFollowSeq = 0; // 跟随重拉的序号：只有最新一次的响应才落 cardDetail（乱序到达的旧版丢弃）；换卡即作废在途的
+
+/** 看板换版后让开着的侧栏跟上：静默重拉 `/api/cards/{id}`，**成功才替换**——中途不清旧详情（不闪「加载详情…」，
+ *  旧详情仍在说上一版的真话）、失败不报（cardDetailError 归 selectCard 的首拉；下一版再试）。 */
+function followSelectedCardDetail(cardId: string) {
+  const seq = ++detailFollowSeq;
+  void fetchCard(cardId).then(
+    (detail) => {
+      if (seq !== detailFollowSeq) return;
+      landCardDetail(cardId, detail);
+    },
+    () => { /* 静默：旧详情留着 */ },
+  );
+}
+
 /** 选中卡片（null = 关侧栏）；选中即拉详情增补。详情**落地**才记「看过明细」（T2 闸门）：拉失败 / 换卡后迟到的
  *  响应都不算——用户没看到任何明细。记的是 server 回的主键（§60.3：响应 `id` 恒为主键），所以 `?card=<work_id>`
  *  深链打开的侧栏也能解锁卡面按主键判的「批准」。 */
 export function selectCard(cardId: string | null) {
+  detailFollowSeq += 1; // 上一张卡在途的跟随重拉作废
   setState({ selectedCardId: cardId, cardDetail: null, cardDetailError: null });
   if (!cardId) return;
   void fetchCard(cardId).then(
-    (detail) => {
-      if (getState().selectedCardId !== cardId) return;
-      const viewedId = typeof detail.id === "string" && detail.id ? detail.id : cardId;
-      const detailViewedIds = state.detailViewedIds.has(viewedId)
-        ? state.detailViewedIds
-        : new Set([...state.detailViewedIds, viewedId]);
-      setState({ cardDetail: detail, detailViewedIds });
-    },
+    (detail) => landCardDetail(cardId, detail),
     (error) => {
       if (getState().selectedCardId !== cardId) return;
       const message = error instanceof ApiError ? error.message : String(error);
@@ -684,6 +779,7 @@ export function resetStoreForTests() {
     pageErrors: {},
   };
   boardRequest = null;
+  detailFollowSeq = 0;
   pageRequests.clear();
   diagnosticsLang = null;
   for (const b of forceMergeBatches) window.clearTimeout(b.timer);

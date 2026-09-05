@@ -8,6 +8,7 @@ import { displayId, matchesCardRef } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readCardId, readPage } from "../../route";
 import { selectCard, useAppState } from "../../store";
+import { escapeBelongsToForeignField } from "../chrome/FilterBar";
 import { cardToMarkdown } from "./cardMarkdown";
 import { copyText } from "./copyText";
 import { DetailFields, faceHeadline } from "./DetailFields";
@@ -60,10 +61,16 @@ export function DetailDrawer() {
     };
   }, [selectedCardId]);
 
+  // ⎋ 关侧栏——作用域同 FilterBar 的看板 ⎋（§15 2026-09-05 追记，原生 Kanban.swift:186 / :225-236 的 scoped Esc）：
+  // ① IME 候选期间的 ⎋（isComposing / keyCode 229）归输入法——撤销一串拼音不许顺手把侧栏关掉（IME 红线）；
+  // ② 光标在文字输入框里（侧栏内的改名框、侧栏外仍可 Tab 到的 ⌘F 搜索框……）时 ⎋ 归那个框——原生 Esc 只在 TextField
+  //   自己的 onKeyPress 里处理。侧栏是 <aside role=dialog>，键盘从卡上进来、⎋ 出去的主路不受影响（焦点在 <aside> 本身）。
   useEffect(() => {
     if (!selectedCardId) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (escapeBelongsToForeignField(event.target, null)) return;
       if (menu) setMenu(null);
       else selectCard(null);
     };
@@ -73,7 +80,9 @@ export function DetailDrawer() {
 
   if (!selectedCardId) return null;
 
-  // 详情在途时用投影行占位标题（board 里找得到就先显示）
+  // 详情在途时用投影行占位标题（board 里找得到就先显示）。cardDetail 不是一次性的：看板换版（generated_at 变）时 store 静默
+  // 重拉并整份替换（原生 @Published dashboard 一发布展开区就重渲染，Store.swift:56-57），所以下面的抬头 / 列积木 / 改名框
+  // 预填都跟着最新一版走，不会在侧栏开着时冻结在打开那一刻
   const boardRow = board
     ? (["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash"] as const)
       .flatMap((section) => (Array.isArray(board[section]) ? (board[section] as Array<Record<string, unknown>>) : []))
