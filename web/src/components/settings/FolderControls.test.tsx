@@ -3,7 +3,7 @@
 //   2) 无桥 / 老壳（UNKNOWN_METHOD）：退化成路径框 + 「选择」确认 / 「取消」；桥真出错 → 原文；
 //   3) path_exists=false → 原生警告句 + 「创建」/「创建文件夹」；null → 不警告；
 //   4) 打开 / 创建 只传 key；草稿未保存时禁用并提示先保存；创建失败 → 「创建目录失败：」前缀 + 原文；
-//   5) FieldControl 只对 path:"dir" 字段长出这些按钮。
+//   5) FieldControl 只对 path:"dir" 字段长出这些按钮（笔记库字段按 vault 根显示 / 派生的判例在 VaultRootField.test.tsx）。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, postFolderCreate, postFolderOpen } from "../../api";
@@ -155,14 +155,15 @@ describe("<FolderActions />", () => {
 
 describe("<FieldControl /> for a folder field", () => {
   it("grows Choose… and the actions only for path:dir; a plain string field stays a bare input", () => {
+    // 工作目录是逐字存取的目录字段（笔记库那一把按 vault 根换算，判例在 VaultRootField.test.tsx）
     const onChange = vi.fn();
-    wrap(<FieldControl sectionId="obsidian" field={field()} value="~/Notes/2 - raw" onChange={onChange} />);
+    wrap(<FieldControl sectionId="approval" field={field({ key: "default_target_repo", effective: "~/Projects/x" })} value="~/Projects/x" onChange={onChange} />);
     expect(screen.getByRole("button", { name: "Choose…" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create folder" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Choose…" }));   // 无桥 → 路径框
     fireEvent.change(screen.getByLabelText("Folder path"), { target: { value: "~/Elsewhere" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose" }));
-    expect(onChange).toHaveBeenCalledWith("obsidian_raw", "~/Elsewhere");
+    expect(onChange).toHaveBeenCalledWith("default_target_repo", "~/Elsewhere");
     cleanup();
     wrap(<FieldControl sectionId="gmail" field={field({ key: "gmail_address", path: undefined, path_exists: undefined })} value="a@b" onChange={onChange} />);
     expect(screen.queryByRole("button", { name: "Choose…" })).toBeNull();

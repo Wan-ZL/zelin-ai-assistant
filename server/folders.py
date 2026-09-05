@@ -9,6 +9,8 @@
 
 - ``key`` ∈ :data:`FOLDER_FIELDS`（``obsidian_raw`` / ``default_target_repo``；未知 400）。
 - open：值为空 400；不是目录 404；darwin → ``/usr/bin/open <dir>``（访达），其它 501。
+  ``obsidian_raw`` 开的是 **vault 根**（= raw 目录的父目录；原生 Settings.swift:768 ``openInFinder(vaultRoot)``，
+  §68.1 追记「vault 根」——web 框里显示的就是根，打开落到同一处）；create 仍 ``mkdir -p`` raw 目录本身（含根）。
 - create：``mkdir -p``（已在 = ``created:false`` 幂等）；``default_target_repo`` 另 ``git init -q``
   （原生 createTargetRepoDir 同款，best-effort：失败只回执 ``git_init:"failed"``）；mkdir 失败 →
   500 ``could not create the folder: <why>``（web 前缀原生句「创建目录失败：」）。
@@ -31,6 +33,8 @@ FOLDER_FIELDS = {
     "obsidian_raw": ("obsidian", False),
     "default_target_repo": ("approval", True),
 }
+# 「打开」落到 vault 根而不是存值本身的那一把键（web `vaultPaths.VAULT_RAW_KEY` 同名）
+VAULT_RAW_KEY = "obsidian_raw"
 
 Opener = Callable[[Path], None]
 Runner = Callable[[list], int]
@@ -70,13 +74,22 @@ def resolve(home: Path, key: str) -> Path:
     return Path(raw).expanduser()
 
 
+def open_target(key: str, path: Path) -> Path:
+    """「打开」的落点：``obsidian_raw`` 开 vault 根（raw 的父目录，原生 ``openInFinder(vaultRoot)`` = ``loadVault`` 的
+    ``deletingLastPathComponent``，不管叶子叫什么）；其它键开存值本身。raw 没有目录部分（相对的一段名）就没有根可开 → 原样。"""
+    if key != VAULT_RAW_KEY:
+        return path
+    parent = path.parent
+    return path if str(parent) == "." else parent
+
+
 def open_folder(home: Path, payload: dict, opener: Optional[Opener] = None,
                 platform: Optional[str] = None) -> dict:
-    """``POST /api/folders/open {key}`` → ``{"ok": true, "path": "<dir>"}``。"""
+    """``POST /api/folders/open {key}`` → ``{"ok": true, "path": "<dir>"}``（``obsidian_raw`` 的 path = vault 根）。"""
     key = _key_of(payload)
     if (platform or sys.platform) != "darwin":
         raise NotImplementedError501("opening a folder in Finder is macOS only")
-    path = resolve(home, key)
+    path = open_target(key, resolve(home, key))
     if not path.is_dir():
         raise NotFoundError("folder does not exist", {"key": key, "path": str(path)})
     (opener or _default_opener)(path)

@@ -5,15 +5,16 @@
 // ~/Documents/AI Assistant Notes，prompt「选择」——原生 chooseCustomFolder，SetupWizard.swift:975–985）；浏览器 /
 // 老壳（NO_BRIDGE / UNKNOWN_METHOD）拿不到目录对话框——展开一个路径输入框，「选择」确认（§68.5 既有路）。
 // 「下一步」时若与当前不同 → PUT /api/settings/obsidian {obsidian_raw: <root>/2 - raw}（server diff-write，
-// §15.3 同一键）；四个标准子目录由导出 / ingest 链首次落笔记时建（server 不替 web 建目录）。
+// §15.3 同一键；根 → raw 的换算与 设置 → 笔记库 共用 `vaultPaths.rawDirOf`——同一把键两处一条规则，§68.1 追记）；
+// 四个标准子目录由导出 / ingest 链首次落笔记时建（server 不替 web 建目录）。
 // 文案逐字镜像 SetupWizard.swift:884–985。
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { chooseFolder, hasShellBridge, isBridgeUnavailable } from "../../shellBridge";
 import { saveSettingsSection, useAppState } from "../../store";
+import { rawDirOf } from "../../vaultPaths";
 import { errorMessage } from "../settings/useToast";
 
-export const RAW_SUBDIR = "2 - raw";
 /** 原生 loadVaultChoices 的自定义目录默认值（也是对话框的起点与输入框的 placeholder） */
 export const DEFAULT_CUSTOM_ROOT = "~/Documents/AI Assistant Notes";
 
@@ -108,12 +109,13 @@ export function VaultStep({ choice, onChoose, error }: { choice: VaultChoice | n
   );
 }
 
-/** 「下一步」时落盘：与当前生效根相同则不写（原生 applyVaultChoice 的 diff-write）；失败原句回给页面、不放行 */
+/** 「下一步」时落盘：与当前生效根相同则不写（原生 applyVaultChoice 的 diff-write）；失败原句回给页面、不放行。
+ *  落的 raw = `rawDirOf(root)`（`<根>/2 - raw`；选到的就是 `2 - raw` 目录本身则原样——与设置页同一条规则） */
 export async function applyVaultChoice(choice: VaultChoice | null, currentRoot: string): Promise<string | null> {
   const root = choice?.root.trim() ?? "";
   if (!root || root === currentRoot) return null;
   try {
-    await saveSettingsSection("obsidian", { obsidian_raw: `${root.replace(/\/+$/, "")}/${RAW_SUBDIR}` });
+    await saveSettingsSection("obsidian", { obsidian_raw: rawDirOf(root) });
     return null;
   } catch (err) {
     return errorMessage(err);

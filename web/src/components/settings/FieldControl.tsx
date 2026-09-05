@@ -11,11 +11,14 @@
 // int 的 trash_retention_days 用原生 commitTrashDays 的整句（Settings.swift:1727），其它 int 用整数通式。
 // 带 `check`（§68.1 追记；今日词表 email）的 string 字段：保存前镜像 server 的同一条形状规则（draftRules.passesCheck），
 // 不合格 = aria-invalid + server-owned 的那句（原生 SettingsGmail.validateAddress 在 saveAddress 里拦），CatalogSection 据此不放行「保存」。
+// 「Obsidian Vault 位置」（`obsidian_raw`，§68.1 追记 vault 根）是目录字段里的特例：草稿 / PUT 仍是 raw 目录 `<根>/2 - raw`，
+// 但框里显示、对话框起点与落进草稿的都按 **vault 根**换算（VaultRootField；原生 Settings.swift:740-792 一格 vault 根字段）。
 import { useI18n, type Language } from "../../i18n";
 import type { SettingsField } from "../../types";
+import { VAULT_RAW_KEY } from "../../vaultPaths";
 import { pickText } from "./catalogText";
 import { isValidNumberDraft, passesCheck } from "./draftRules";
-import { FolderActions, FolderPicker } from "./FolderControls";
+import { FolderActions, FolderPicker, VaultRootField } from "./FolderControls";
 
 export interface FieldControlProps {
   sectionId: string;
@@ -140,6 +143,17 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
         {invalid && <span className="settings-warning">{numberHint(field, text)}</span>}
       </>
     );
+  } else if (field.path === "dir" && field.key === VAULT_RAW_KEY) {
+    // 「Obsidian Vault 位置」：显示 vault 根（= 存值的父目录）、敲字 / 选择… 落 `<根>/2 - raw`；placeholder 缺席时用默认根
+    control = (
+      <VaultRootField
+        id={id}
+        raw={typeof value === "string" ? value : ""}
+        disabled={off}
+        placeholder={pickText(field.placeholder, language) || undefined}
+        onChange={(raw) => onChange(field.key, raw)}
+      />
+    );
   } else {
     // string 与 list 同一个文本框：list 的草稿是逗号分隔字串（CatalogSection.draftOf 拼、server 拆）
     const fallback = typeof field.default === "string" && field.default ? field.default : text("（未设置）", "(unset)");
@@ -160,7 +174,12 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
           onChange={(event) => onChange(field.key, event.target.value)}
         />
         {isFolder && (
-          <FolderPicker current={typeof value === "string" ? value : ""} disabled={off} onPick={(path) => onChange(field.key, path)} />
+          <FolderPicker
+            current={typeof value === "string" ? value : ""}
+            disabled={off}
+            placeholder={pickText(field.placeholder, language) || undefined}
+            onPick={(path) => onChange(field.key, path)}
+          />
         )}
         {/* 原生 addressNote 的错误态（validateAddress 那句，server-owned）；「保存」在 CatalogSection 里随之不放行 */}
         {problem && <span id={`${id}-problem`} className="settings-warning">{problem}</span>}

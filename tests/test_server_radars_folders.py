@@ -186,13 +186,14 @@ class CatalogPathFieldsTestCase(_ServerCase):
 
 class FoldersTestCase(_ServerCase):
     def test_open_uses_the_saved_effective_path(self):
-        target = Path(self.tmp.name) / "vault" / "2 - raw"
+        target = Path(self.tmp.name) / "work" / "bench"
         target.mkdir(parents=True)
-        self._overrides(obsidian_raw=str(target))
+        self._overrides(default_target_repo=str(target))
         opened = []
-        out = folders.open_folder(self.home, {"key": "obsidian_raw"}, opener=opened.append, platform="darwin")
+        out = folders.open_folder(self.home, {"key": "default_target_repo"}, opener=opened.append, platform="darwin")
         self.assertEqual(opened, [target])
-        self.assertEqual(out, {"ok": True, "key": "obsidian_raw", "path": str(target)})
+        self.assertEqual(out, {"ok": True, "key": "default_target_repo", "path": str(target)})
+        # 笔记库那一把键开的是 vault 根（raw 的父目录；§68.1 追记）——判例在 tests/test_server_folders_open_vault_root.py
 
     def test_open_gates(self):
         opened = []
@@ -248,18 +249,18 @@ class FoldersTestCase(_ServerCase):
         self.assertTrue(ctx.exception.message.startswith("could not create the folder: "))
 
     def test_routes_are_write_gated(self):
-        target = Path(self.tmp.name) / "v"
+        target = Path(self.tmp.name) / "v" / "2 - raw"
         self._overrides(obsidian_raw=str(target))
         with mock.patch.object(folders, "_default_runner", lambda argv: 0):
             status, obj = post_json(self.port, "/api/folders/create", {"key": "obsidian_raw"})
         self.assertEqual(status, 200, obj)
-        self.assertTrue(target.is_dir())
+        self.assertTrue(target.is_dir())    # create 建的是 raw 目录本身（含根）
         opened = []
         with mock.patch.object(folders, "_default_opener", opened.append), \
                 mock.patch.object(folders.sys, "platform", "darwin"):
             status, obj = post_json(self.port, "/api/folders/open", {"key": "obsidian_raw"})
         self.assertEqual(status, 200, obj)
-        self.assertEqual(opened, [target])
+        self.assertEqual(opened, [target.parent])    # 打开落到 vault 根（§68.1 追记）
         status, obj = post_json(self.port, "/api/folders/open", {"key": "obsidian_raw", "path": "/"})
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "UNKNOWN_FIELD")
