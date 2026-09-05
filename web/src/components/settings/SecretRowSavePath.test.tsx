@@ -87,6 +87,27 @@ describe("SecretRow save path — Slack token prefixes (SettingsSlack.swift save
     expect(screen.getByText(/Heads-up: User OAuth Tokens/).className).toBe("settings-warning");
   });
 
+  it("the heads-up survives a Verify click but clears on the next edit of the box (§68.3「下次编辑框即清」)", async () => {
+    vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [row(SLACK, { present: true })] });   // 存过：框空点「验证」探已保存的
+    vi.mocked(putSecret).mockResolvedValue(row(SLACK, { present: true }));
+    vi.mocked(verifySecret).mockResolvedValue({ ok: true, network: false, detail: "auth.test ok", extra: {} });
+    renderIn("en", <SecretRow name={SLACK} />);
+    await refreshSecrets();
+    fireEvent.change(input(SLACK), { target: { value: "xoxe-refresh-shaped" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/Heads-up: User OAuth Tokens/);
+    await screen.findByText("Saved ✓ verified");
+    // 与验证流并存：框空时点「验证」探已保存的，橙句留着（原生在同一同步回合被冲掉、web 分开一行）
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByText("Verified ✓");
+    expect(screen.getByText(/Heads-up: User OAuth Tokens/)).toBeTruthy();
+    expect(verifySecret).toHaveBeenCalledTimes(2);
+    // 下次编辑框即清：新 token 下不留上一把的提示
+    fireEvent.change(input(SLACK), { target: { value: "x" } });
+    expect(screen.queryByText(/Heads-up/)).toBeNull();
+    expect(screen.queryByText("Verified ✓")).toBeNull();
+  });
+
   it("an xoxp- token gets no heads-up", async () => {
     vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [row(SLACK)] });
     vi.mocked(putSecret).mockResolvedValue(row(SLACK, { present: true }));

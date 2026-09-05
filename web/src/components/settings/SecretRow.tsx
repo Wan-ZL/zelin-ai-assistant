@@ -1,5 +1,5 @@
 // 凭证行（原生 CredentialRowView + KeyProbe 的 web 版，§19 / §68.3；文案逐字镜像 Settings.swift:1900–2210）：
-// 状态章（未设置 / 使用旧路径 / 已保存（未验证）/ 已验证 ✓ / 验证失败；无探针的 key = 已保存（App 内管理））+
+// 状态章（未设置 / 使用旧路径 / 已保存（未验证）/ 已验证 ✓ / 验证失败；字幕两把 key 亦是「已保存（未验证）」）+
 // 密码框 + 保存 + 验证。**值 write-only**：保存后输入框清空、页面只看见「已保存」；server 永不回显。
 // 原生「保存即验证」：可验证的 key 保存成功后自动跑一次验证（已保存，验证中… → 已保存 ✓ 验证通过 /
 // 已保存，但验证失败：…）。「验证」按钮照原生：框里有字 → 探这个值（粘贴即验证，不落盘，§68.3 `{value}`）；
@@ -174,7 +174,9 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
     }
   }
 
-  // 原生 stateText：未设置 / 使用旧路径 / 已保存（未验证）/ 已保存（App 内管理）/ 已验证 ✓ / 验证失败
+  // 原生 stateText：未设置 / 使用旧路径 / 已保存（未验证）/ 已验证 ✓ / 验证失败。目录里五行都 testable，
+  // 末尾的「已保存（App 内管理）」是原生 Kind.plain 的词（从不渲染，清单条 retired，§68.3 2026-09-05 追记）——
+  // 只作未知名字、既无探针也无「检测」时的兜底，不是任何已知行的状态。
   const stateText = verified === true ? text("已验证 ✓", "verified ✓")
     : verified === false ? text("验证失败", "verification failed")
       : !present ? (legacy ? text("使用旧路径", "Using legacy path") : text("未设置", "Not set"))

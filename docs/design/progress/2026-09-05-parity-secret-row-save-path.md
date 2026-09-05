@@ -6,4 +6,4 @@ law: §68.3 追记（`PUT /api/secrets` 首行规则的两条按名字例外；`
 
 **其余四条**：字幕两把 key 的状态章从「已保存（App 内管理）」（原生 `.plain` 的词）改回「已保存（未验证）」，保存句尾随「——点「检测」可真连服务器验证一次」；Slack 行 `xoxb-` Bot token 门口拒绝、永不 PUT（原生 saveToken 原句），server 同一道门 400 `INVALID_FIELD` + `details.reason {zh,en}`；非 `xoxp-` 与 Gmail 非 16 位字母数字的橙色提示（原生里这两句在同一同步回合被「已保存，验证中…」覆盖、实际看不见——web 分开一行让「仍会尝试验证…」说到做到）；密码框 Enter = 保存（`isComposing` 的输入法 Enter 不算），与「保存」按钮同一道闸。verify / 探针路上的余量归下一批 `credential-verify-feedback`。
 
-**判例**：`tests/test_server_secrets_volcano_legacy_pair.py`（镜像 fixture + PUT 两行落盘 / 裸 key 原样 / 折行拼回 / 别的名字照旧首行）、`tests/test_server_secrets_slack_xoxb_refusal.py`（400 原句 / 既有文件不动 / 首个非空行判 / 别的名字不管 / web 内联同一句）、`web/src/components/settings/SecretRowSavePath.test.tsx`（12 条：拒绝不 PUT、提示与验证并存、16 位形状、章与保存句、Enter 闸）。
+**判例**：`tests/test_server_secrets_volcano_legacy_pair.py`（镜像 fixture + PUT 两行落盘 / 裸 key 原样 / 折行拼回 / 别的名字照旧首行）、`tests/test_server_secrets_slack_xoxb_refusal.py`（400 原句 / 既有文件不动 / 首个非空行判 / 别的名字不管 / web 内联同一句）、`web/src/components/settings/SecretRowSavePath.test.tsx`（13 条：拒绝不 PUT、提示与验证并存 / 下次编辑即清、16 位形状、章与保存句、Enter 闸）。
