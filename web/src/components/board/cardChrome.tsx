@@ -12,7 +12,7 @@
 //     （「展开详情 ▸」的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
 //     卡上没有双击绑定（D34：双击语义留给 #216 终端接管）。
 //     selectable（§21 多选，原生 Kanban.swift selectableCard 的 tap catcher）：selectionMode 下点卡身 = 切换选中，
-//     动作行（.card-actions）整排失效——误点不许批准 / 删除任何东西；勾选框留给 a11y。
+//     动作行（.card-actions）整排失效（指针穿透 + inert + capture 兜底）——误点不许批准 / 删除任何东西；勾选框留给 a11y。
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
 import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
@@ -63,14 +63,21 @@ const LIVE_CONTROL = 'button, a, input, textarea, select, label, summary, [role=
  * 多选态（原生 Kanban.swift:671-705 selectableCard 的整卡 tap catcher）：selectable 且 store.selectionMode 时
  *   · 点卡身 = 切换选中（is-selectable 指针手形；选中 is-selected accent 淡底）；
  *   · 动作行 `.card-actions` 整排失效——原生注释「the catcher deliberately blocks the card's own buttons while
- *     selecting — a mis-click must not approve/trash anything」：CSS 指针穿透之外，capture 阶段把落在动作行里的
- *     click（含键盘 Enter / Space 合成的）拦下、不让按钮自己的 onClick 跑，这一下改算点卡身；
+ *     selecting — a mis-click must not approve/trash anything」：CSS 指针穿透之外，动作行挂 `inert`（不在 tab 序、
+ *     读屏树里也没有——原生 overlay 盖住整卡，按钮本就不可达）；capture 阶段再兜底：落在动作行里的 click（含键盘
+ *     Enter / Space 合成的、不认 inert 的老 WebKit）拦下、不让按钮自己的 onClick 跑，这一下改算点卡身；
  *   · 勾选框留给 a11y（原生左上角 checkmark.circle 的语义等价物），点它走自己的 onChange，不再叠一次切换。
  */
 export function CardSurface({ cardId, label, className = "", selectable = false, children }: CardSurfaceProps) {
   const { selectionMode, selectedIds } = useAppState();
   const selecting = selectable && selectionMode;
   const selected = selecting && selectedIds.has(cardId);
+  const ref = useRef<HTMLElement>(null);
+  // 动作行由各卡自己渲染（pending 时换成一句话、结束再长回来），所以每次 render 后同步一次 inert，
+  // 不只盯 selecting；React 18 没有 inert prop，直接切 attribute（React 不管它没写过的属性）
+  useEffect(() => {
+    ref.current?.querySelectorAll<HTMLElement>(".card-actions").forEach((row) => row.toggleAttribute("inert", selecting));
+  });
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
@@ -95,6 +102,7 @@ export function CardSurface({ cardId, label, className = "", selectable = false,
   return (
     <SelectingContext.Provider value={selecting}>
       <article
+        ref={ref}
         className={cls}
         tabIndex={0}
         aria-label={label}
