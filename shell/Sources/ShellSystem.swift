@@ -46,6 +46,9 @@ final class PermissionsProbe: ObservableObject {
     ]
     /// 原生 Permissions.swift 同名 UserDefaults 键：一次成功的 app 内授权点击（§66.2 setting:prefs:vaultAccessGranted）
     static let vaultGrantedKey = "vaultAccessGranted"
+    /// 原生 Permissions.swift 同名 UserDefaults 键：屏幕录制的系统提示已弹过一次（之后只能深链面板）；
+    /// 经快照 `permissions.screen_requested` 推给页面（§61.1 追记）
+    static let screenRequestedKey = "screenPermissionRequested"
 
     private init() {}
 
@@ -144,8 +147,8 @@ final class PermissionsProbe: ObservableObject {
         case "vault":
             requestVaultAccess()
         case "screen":
-            if !Prefs.bool("screenPermissionRequested", default: false) {
-                UserDefaults.standard.set(true, forKey: "screenPermissionRequested")
+            if !Prefs.bool(Self.screenRequestedKey, default: false) {
+                UserDefaults.standard.set(true, forKey: Self.screenRequestedKey)
                 RecordingController.requestScreenPermission()
             } else {
                 RecordingController.openScreenRecordingSettings()

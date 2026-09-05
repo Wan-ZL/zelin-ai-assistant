@@ -29,6 +29,9 @@ export interface ShellRecordingState {
   tcc_lost: boolean;
   screen_permission: boolean;
   resume_mode: string;         // on:true 不带 mode 时壳会恢复到的模式
+  // §61.1 追记 add-only（normalize 补默认 "" ——老壳缺席也在；类型上 optional 只为不逼既有 fixture 改字）
+  self_heal_note?: string;     // consent-race 自愈后的 15s 成功句（壳侧已本地化，原生 selfHealNote）
+  log_tail?: string;           // 引擎死因的日志尾（原生 diagnosis.logTail；只在 engine_crashed / engine_ffmpeg_missing 非空）
 }
 
 /** 最近一次 BYO key「检测」（壳 CaptionKeyCheck；§68.2 追记）：running → done + verdict */
@@ -58,6 +61,12 @@ export interface ShellCaptionsState {
   font_size: number;           // 14–40
   opacity: number;             // 0.2–1
   key_probe?: ShellKeyProbe | null;  // 最近一次 BYO key 检测（add-only）；老壳 / 从未检测 = null
+  // §61.1 追记 add-only（normalize 补默认 "" / false）：原生字幕设置区的三句诚实说明 + Apple 引擎探针
+  translation_note?: string;   // 翻译走不通的原因句 / Ark 途中报错（无话可说 = ""，翻译关着也是 ""；壳侧已本地化）。
+                               // 只在非空时渲染；「在不在翻」永不由它推断——唯一布尔是 translation_active
+  translation_active?: boolean; // 壳 recomputeTranslation：翻译开 ∧ 豆包引擎 ∧ 有 Ark Key（悬浮窗按它选双语排版）
+  source_note?: string;        // 音源部分不可用的降级句（"缺屏幕录制权限，只在听麦克风" 等）
+  apple_engine_available?: boolean;  // 壳 appleCaptionEngineAvailable()（macOS 26+ 才有本地引擎）
 }
 
 /** TCC 三项（壳侧 PermissionsProbe；§68.3）："granted" | "denied" | "unknown" */
@@ -68,6 +77,9 @@ export interface ShellPermissionsState {
   microphone: PermissionStatus;
   notifications: PermissionStatus;
   vault: PermissionStatus;          // 笔记库（Documents）授权：壳的被动探针（vault_sync_mode=mirror 或 vaultAccessGranted）
+  // §61.1 追记 add-only（normalize 补默认 false）：屏幕录制的系统提示已弹过一次 → 原生 screenRow 按钮
+  // 「去授权」改「打开系统设置」的判据（壳 UserDefaults screenPermissionRequested）
+  screen_requested?: boolean;
 }
 
 export interface ShellState {
@@ -79,10 +91,15 @@ export interface ShellState {
   language?: string;
 }
 
-/** 请求词表（壳侧 ShellBridge.handle；add-only） */
+/** 请求词表（壳侧 ShellBridge.handle；add-only）。
+ *  `setRecording {on:true}` 在壳里先补屏幕录制的系统提示（缺才弹，原生 consent / 权限状态行两处「开启」同款）再 setMode——页面不用管 TCC；
+ *  `restartRecording` 不带这句（原生 restart 按钮都不带；向导终章「启动引擎」的守卫在 FinaleStep 自己那边）；
+ *  `refreshRecording` = 壳跑一次 5 s tick 的两步（TCC 自愈判定 + pgrep 活性），回执是起跑后的快照、活性随后以事件推回；
+ *  `getState` 保持纯读（startShellBridge 连上就拉它）。 */
 export type ShellMethod =
   | "getState"
   | "setRecording"
+  | "refreshRecording"
   | "restartRecording"
   | "openScreenRecordingSettings"
   | "setCaptions"
@@ -164,6 +181,8 @@ export function normalizeShellState(raw: unknown): ShellState {
       tcc_lost: asBool(rec.tcc_lost),
       screen_permission: asBool(rec.screen_permission, true),
       resume_mode: asString(rec.resume_mode, "screen"),
+      self_heal_note: asString(rec.self_heal_note),
+      log_tail: asString(rec.log_tail),
     },
     captions: {
       available: asBool(cap.available),
@@ -181,12 +200,17 @@ export function normalizeShellState(raw: unknown): ShellState {
       font_size: asNumber(cap.font_size, 24),
       opacity: asNumber(cap.opacity, 0.7),
       key_probe: normalizeKeyProbe(cap.key_probe),
+      translation_note: asString(cap.translation_note),
+      translation_active: asBool(cap.translation_active),
+      source_note: asString(cap.source_note),
+      apple_engine_available: asBool(cap.apple_engine_available),
     },
     permissions: {
       screen: asStatus(perm.screen),
       microphone: asStatus(perm.microphone),
       notifications: asStatus(perm.notifications),
       vault: asStatus(perm.vault),
+      screen_requested: asBool(perm.screen_requested),
     },
     launch_at_login: asBool(obj.launch_at_login),
     hotkey: asString(obj.hotkey, "⌃⌥Space"),

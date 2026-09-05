@@ -4,11 +4,14 @@
 // plain macOS CLI tool — no Xcode, no XCTest, no WKWebView. Exits non-zero on
 // any failure. Same harness style as ios/tests/captions.
 //
-// Boundaries the harness deliberately does NOT cross: no `setRecording` /
-// `setCaptions` with VALID args (those spawn pgrep/pkill, write UserDefaults
-// and analytics — run.sh sandboxes AIASSISTANT_HOME, but the engines are the
-// mac app's frozen logic and are covered by their own drift guards); no
-// UserDefaults.standard writes (LegacyPrefs gets injected suites).
+// Boundaries the harness deliberately does NOT cross: no `setCaptions` with
+// VALID args and no `setRecording` / `refreshRecording` against the REAL
+// RecordingController (those spawn pgrep/pkill, write UserDefaults and
+// analytics — run.sh sandboxes AIASSISTANT_HOME, but the engines are the mac
+// app's frozen logic and are covered by their own drift guards) — the valid
+// setRecording / refreshRecording cases below run against the injected
+// `RecordingActions` seams (never CGRequestScreenCaptureAccess, never setMode);
+// no UserDefaults.standard writes (LegacyPrefs gets injected suites).
 
 import Foundation
 
@@ -59,6 +62,19 @@ func run() {
     }
     check(snap["launch_at_login"] is Bool, "launch_at_login is bool")
     check((snap["hotkey"] as? String)?.isEmpty == false, "hotkey label present")
+    // §61.1 追记 add-only keys (parity batch shell-recording-bridge): typed, never absent
+    check(rec["self_heal_note"] is String, "recording.self_heal_note is a string")
+    check(rec["log_tail"] is String, "recording.log_tail is a string")
+    check((rec["log_tail"] as? String) == "" || rec["diagnosis"] is String,
+          "log_tail is empty unless a diagnosis is present")
+    check(cap["translation_note"] is String, "captions.translation_note is a string")
+    check(cap["translation_active"] is Bool, "captions.translation_active is bool")
+    check(cap["source_note"] is String, "captions.source_note is a string")
+    check(cap["apple_engine_available"] as? Bool == appleCaptionEngineAvailable(),
+          "captions.apple_engine_available mirrors appleCaptionEngineAvailable()")
+    check(perm["screen_requested"] is Bool, "permissions.screen_requested is bool")
+    check(perm["screen_requested"] as? Bool == Prefs.bool(PermissionsProbe.screenRequestedKey, default: false),
+          "permissions.screen_requested mirrors the screenPermissionRequested pref")
 
     // ---- 2. JSON is a valid JS expression for the event push ----
     print("[2] stateJSON round-trips:")
@@ -93,6 +109,7 @@ func run() {
           "setRecording on:true mode:off rejected (off is on:false)")
     check(rejection(["method": "setRecording", "on": true, "mode": "video"]).hasPrefix("INVALID_ARGS"),
           "setRecording with unknown mode rejected")
+    checkRecordingActions(bridge)
     check(rejection(["method": "setCaptions"]).hasPrefix("INVALID_ARGS"),
           "setCaptions without on rejected")
     check(rejection(["method": "setLanguage", "lang": "fr"]).hasPrefix("INVALID_ARGS"),
@@ -252,7 +269,112 @@ func run() {
     let noSource = LegacyPrefs.seedFromNativeAppIfNeeded(
         target: UserDefaults(suiteName: targetName + ".b")!, source: nil)
     check(noSource.isEmpty, "no native domain → nothing copied, no crash")
+    check(UserDefaults(suiteName: targetName + ".b")!.object(forKey: LegacyPrefs.marker) == nil,
+          "no native domain → no marker either (a later install of the native domain still seeds)")
     UserDefaults(suiteName: targetName + ".b")?.removePersistentDomain(forName: targetName + ".b")
+
+    checkOverlayFrameSeed(target: target, source: source, targetName: targetName)
+}
+
+/// §61.1 追记 setRecording on:true = TCC 提示（缺才弹）→ setMode；on:false = setMode("off") 不碰 TCC；
+/// refreshRecording 执行体恰跑一次、getState 纯读。注入 RecordingActions 四缝（绝不调真 CGRequest /
+/// setMode / pgrep）；`trace` 钉顺序。
+@MainActor
+func checkRecordingActions(_ bridge: ShellBridge) {
+    print("[3b] setRecording / refreshRecording through the RecordingActions seams:")
+    var trace: [String] = []
+    var permissionGranted = false
+    let realHas = RecordingActions.hasScreenPermission
+    let realRequest = RecordingActions.requestScreenPermission
+    let realSetMode = RecordingActions.setMode
+    let realRefresh = RecordingActions.refresh
+    RecordingActions.hasScreenPermission = { permissionGranted }
+    RecordingActions.requestScreenPermission = { trace.append("request") }
+    RecordingActions.setMode = { trace.append("setMode:\($0)") }
+    RecordingActions.refresh = { trace.append("refresh") }
+    defer {
+        RecordingActions.hasScreenPermission = realHas
+        RecordingActions.requestScreenPermission = realRequest
+        RecordingActions.setMode = realSetMode
+        RecordingActions.refresh = realRefresh
+    }
+    if let reply = try? bridge.handle(["method": "setRecording", "on": true, "mode": "screen"]) {
+        check(trace == ["request", "setMode:screen"],
+              "on:true without the grant requests Screen Recording ONCE, then setMode", "got \(trace)")
+        check(reply["recording"] != nil, "setRecording reply is the snapshot")
+    } else {
+        check(false, "setRecording on:true mode:screen must not throw")
+    }
+    trace = []
+    _ = try? bridge.handle(["method": "setRecording", "on": true, "mode": "screen_audio"])
+    check(trace == ["request", "setMode:screen_audio"],
+          "every turn-on re-asks while the grant is missing (macOS itself dedups the prompt)", "got \(trace)")
+    trace = []
+    permissionGranted = true
+    _ = try? bridge.handle(["method": "setRecording", "on": true])
+    check(trace == ["setMode:\(RecordingController.shared.resumeMode)"],
+          "on:true with the grant never requests; mode defaults to resume_mode", "got \(trace)")
+    trace = []
+    permissionGranted = false
+    _ = try? bridge.handle(["method": "setRecording", "on": false])
+    check(trace == ["setMode:off"], "on:false = setMode(off), no TCC request even without the grant", "got \(trace)")
+    trace = []
+    _ = try? bridge.handle(["method": "setRecording", "on": true, "mode": "video"])
+    check(trace.isEmpty, "a rejected setRecording touches neither TCC nor setMode")
+    // §61.1 追记 refreshRecording：执行体跑一次（pollScreenPermission + refreshEngineState），回执 = 快照
+    if let reply = try? bridge.handle(["method": "refreshRecording"]) {
+        check(trace == ["refresh"], "refreshRecording runs the refresh seam exactly once", "got \(trace)")
+        check(reply["recording"] != nil && reply["dialog"] == nil, "refreshRecording reply is the plain snapshot")
+    } else {
+        check(false, "refreshRecording must not throw")
+    }
+    trace = []
+    _ = try? bridge.handle(["method": "getState"])
+    check(trace.isEmpty, "getState stays pure (no refresh, no TCC)")
+}
+
+/// §61.4 追记：字幕悬浮窗的拖动位置（NSWindow autosave "liveCaptionsPanel"）在自己的一次性标记下
+/// 补种——已经播过种的壳（传入的 target：marker 已 true）也收到一次；壳自己拖过的永不覆盖。
+@MainActor
+func checkOverlayFrameSeed(target: UserDefaults, source: UserDefaults, targetName: String) {
+    print("[6] LegacyPrefs overlay frame (own one-shot marker):")
+    let frame = "120 80 760 110 0 0 1440 877 "
+    check(LegacyPrefs.overlayFrameKey == "NSWindow Frame liveCaptionsPanel",
+          "overlay frame key = NSWindow's autosave record for liveCaptionsPanel")
+    check(!LegacyPrefs.keys.contains(LegacyPrefs.overlayFrameKey), "frame is NOT in the first-seed key list")
+    // the seeded target above already has both markers (the second call armed the frame marker while the
+    // native domain had no frame yet) → a frame written natively afterwards must not leak in
+    check(target.bool(forKey: LegacyPrefs.overlayFrameMarker), "frame marker armed by the previous run")
+    source.set(frame, forKey: LegacyPrefs.overlayFrameKey)
+    check(LegacyPrefs.seedFromNativeAppIfNeeded(target: target, source: source).isEmpty
+          && target.object(forKey: LegacyPrefs.overlayFrameKey) == nil,
+          "frame marker set → later native frames do not leak in")
+    // an install seeded BEFORE this key existed: prefs marker true, frame marker absent → frame copied once
+    let legacyName = targetName + ".legacy"
+    let legacy = UserDefaults(suiteName: legacyName)!
+    defer { legacy.removePersistentDomain(forName: legacyName) }
+    legacy.set(true, forKey: LegacyPrefs.marker)
+    let frameOnly = LegacyPrefs.seedFromNativeAppIfNeeded(target: legacy, source: source)
+    check(frameOnly == [LegacyPrefs.overlayFrameKey],
+          "already-seeded install receives the frame once (and nothing else)", "got \(frameOnly)")
+    check(legacy.string(forKey: LegacyPrefs.overlayFrameKey) == frame, "frame value copied verbatim")
+    check(legacy.object(forKey: "recordingMode") == nil, "prefs marker still honoured — recordingMode not re-seeded")
+    check(legacy.bool(forKey: LegacyPrefs.overlayFrameMarker), "frame marker written")
+    source.set("1 1 320 72 0 0 1440 877 ", forKey: LegacyPrefs.overlayFrameKey)
+    check(LegacyPrefs.seedFromNativeAppIfNeeded(target: legacy, source: source).isEmpty
+          && legacy.string(forKey: LegacyPrefs.overlayFrameKey) == frame,
+          "frame copies once — later native drags stay native")
+    // a shell that already dragged its own overlay keeps its frame
+    let draggedName = targetName + ".dragged"
+    let dragged = UserDefaults(suiteName: draggedName)!
+    defer { dragged.removePersistentDomain(forName: draggedName) }
+    dragged.set("9 9 500 100 0 0 1440 877 ", forKey: LegacyPrefs.overlayFrameKey)
+    let draggedCopied = LegacyPrefs.seedFromNativeAppIfNeeded(target: dragged, source: source)
+    check(!draggedCopied.contains(LegacyPrefs.overlayFrameKey)
+          && dragged.string(forKey: LegacyPrefs.overlayFrameKey) == "9 9 500 100 0 0 1440 877 ",
+          "shell-side frame never overwritten", "got \(draggedCopied)")
+    check(dragged.bool(forKey: LegacyPrefs.overlayFrameMarker) && dragged.bool(forKey: LegacyPrefs.marker),
+          "fresh install arms both markers in one run")
 }
 
 MainActor.assumeIsolated { run() }
