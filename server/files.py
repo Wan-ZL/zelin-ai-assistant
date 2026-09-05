@@ -140,11 +140,13 @@ def _newest_deliverable(base: Path) -> Optional[Path]:
 def _open_reveal(target: Path, ident: dict, mode: str = "reveal") -> dict:
     """``reveal`` = ``open -R``（访达定位，原生 activateFileViewerSelecting）；``open`` = 裸 ``open``
     （系统默认处理者打开文件，原生 NSWorkspace.open）。回执键随 mode：``revealed`` / ``opened``（add-only）。"""
+    verb = "open" if mode == "open" else "reveal"
     argv = ["open", str(target)] if mode == "open" else ["open", "-R", str(target)]
     try:
         subprocess.run(argv, check=False, timeout=10)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise NotFoundError("could not reveal", dict(ident, reason=str(exc)))
+        # 报错动词随 mode：页面把 message 原样显示，编辑器打不开不该念成「could not reveal」
+        raise NotFoundError("could not " + verb, dict(ident, reason=str(exc)))
     return {"ok": True, ("opened" if mode == "open" else "revealed"): str(target)}
 
 

@@ -93,6 +93,19 @@ class RevealOpenModeTestCase(unittest.TestCase):
         assert_envelope(self, obj, "NOT_IMPLEMENTED")
         run.assert_not_called()
 
+    def test_spawn_failure_message_names_the_mode(self):
+        # 页面把 message 原样显示：编辑器打不开要念「could not open」，访达定位失败才是「could not reveal」
+        for payload, verb in (({"target": "voice_profile", "mode": "open"}, "open"),
+                              ({"target": "voice_profile"}, "reveal")):
+            with self.subTest(payload=payload):
+                with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                        mock.patch.object(files_mod.subprocess, "run", side_effect=OSError("boom")):
+                    status, obj = post_json(self.port, "/api/reveal", payload)
+                self.assertEqual(status, 404, obj)
+                assert_envelope(self, obj, "NOT_FOUND")
+                self.assertEqual(obj["error"]["message"], "could not " + verb)
+                self.assertEqual(obj["error"]["details"], {"target": "voice_profile", "reason": "boom"})
+
 
 if __name__ == "__main__":
     unittest.main()

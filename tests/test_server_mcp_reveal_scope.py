@@ -70,6 +70,13 @@ class McpRevealScopeTestCase(unittest.TestCase):
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "UNKNOWN_FIELD")
         run.assert_not_called()
+        # ``name`` 是 skill 专用的 add-only 字段：带在 mcp_* 上不报错、也绝不改路径（仍是 scope_paths 算出的那一个）
+        for name in ("x", "../../etc/passwd", str(self.home / ".mcp.json")):
+            with self.subTest(name=name):
+                status, obj, run = self._reveal({"target": "mcp_user", "name": name})
+                self.assertEqual(status, 200, obj)
+                self.assertEqual(obj, {"ok": True, "revealed": str(self.user_home / ".claude.json")})
+                self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.user_home / ".claude.json")])
         # 词表之外的 mcp_* 变体也是 400（不是 404）：词表先于路径
         status, obj, run = self._reveal({"target": "mcp_local"})
         self.assertEqual(status, 400)
