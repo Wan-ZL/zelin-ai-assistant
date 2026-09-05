@@ -1,6 +1,7 @@
 // 来源健康一行 + 「运行状态（真实轮询结果）」（CONTRACT §48 / §48.7 追记；原生 SettingsGmail / SettingsSlack 的
-// healthSummary + humanSkip）：1) skip_reason 闭集词表（act/lib/radar_health.SKIP_REASON_CODES）每个码都有一句人话、
-// 未知码原样——尤其 disabled / command_failed / command_bad_output（§14bis）/ mcp_failed 四句逐字镜像原生；
+// healthSummary + humanSkip）：1) skip_reason 词表里 disabled / command_failed / command_bad_output（§14bis）/ mcp_failed
+// 四句逐字镜像原生、未知码原样——词表**全员**对 act/lib/radar_health.SKIP_REASON_CODES 的跨层互镜是 Python 侧的
+// tests/test_skip_reason_vocabulary_mirror.py（读本组件源文件），这里不手抄那份词表；
 // 2) RunStatusLine 五态：运行正常 ✓ / 死因（最近一轮 …）/ 最近一轮 … / 还没有运行记录（开着且条目全空，
 // N 读 interval_s、没问到就省数字）/ 状态未知（只在投影里没有这一源时）；3) HealthLine 的静默失败句也走同一词表。
 import { cleanup, render, screen } from "@testing-library/react";
@@ -11,12 +12,6 @@ import { HealthLine, RunStatusLine, noRunsYetLabel, skipReasonLabel } from "./so
 
 const en = (_zh: string, english: string) => english;
 const zh = (chinese: string) => chinese;
-
-/** act/lib/radar_health.SKIP_REASON_CODES（+ public_skip_reason 的折叠码 error）——加码 = 同步这里 */
-const SKIP_REASON_CODES = [
-  "disabled", "no_credentials", "no_address", "auth_failed", "connect_failed", "command_failed", "command_bad_output",
-  "mcp_not_configured", "mcp_failed", "vault_missing", "vault_empty", "no_api_key", "extract_failed", "error",
-];
 
 function health(over: Partial<RadarSourceHealth> = {}): RadarSourceHealth {
   return { enabled: true, last_ok: null, skip_reason: null, stale: false, last_attempt: null, test_round: null, ...over };
@@ -33,14 +28,6 @@ function renderLine(h: RadarSourceHealth | undefined, language: "zh" | "en" = "e
 afterEach(cleanup);
 
 describe("skipReasonLabel", () => {
-  it("has a plain-language sentence for every code in the closed vocabulary, in both languages", () => {
-    for (const code of SKIP_REASON_CODES) {
-      expect(skipReasonLabel(code, en), code).not.toBe(code);
-      expect(skipReasonLabel(code, zh), code).not.toBe(code);
-      expect(skipReasonLabel(code, en), code).not.toBe(skipReasonLabel(code, zh));
-    }
-  });
-
   it("mirrors the native humanSkip sentences for the four codes the port had left raw", () => {
     expect(skipReasonLabel("disabled", zh)).toBe("上一轮运行时开关还没打开——点「立即测试一轮」再看");
     expect(skipReasonLabel("disabled", en)).toBe("The toggle was still off during the last round — click \"Test one round now\"");

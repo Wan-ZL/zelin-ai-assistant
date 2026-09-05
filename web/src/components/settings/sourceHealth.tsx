@@ -9,9 +9,10 @@ import type { RadarSourceHealth } from "../../types";
 
 type Text = (zh: string, en: string) => string;
 
-/** §48 skip_reason 闭集词表（act/lib/radar_health.SKIP_REASON_CODES 全员）→ 一句人话（未知原样）。
+/** §48 skip_reason 闭集词表（act/lib/radar_health.SKIP_REASON_CODES 全员 + §48.4 折叠码 error）→ 一句人话（未知原样）。
  *  disabled / command_failed / command_bad_output / mcp_failed 四句逐字镜像原生 SettingsGmail / SettingsSlack humanSkip
- *  （§14bis 要求 command 类码在设置页说成大白话；mcp_failed 出机前已被 §48.4 去尾，原生尾随的错误摘录不在投影里）。 */
+ *  （§14bis 要求 command 类码在设置页说成大白话；mcp_failed 出机前已被 §48.4 去尾，原生尾随的错误摘录不在投影里）。
+ *  「全员」由 tests/test_skip_reason_vocabulary_mirror.py 读本文件钉死——一行一码 `code: ["zh", "en"],` 的格式是它的解析契约。 */
 export function skipReasonLabel(reason: string, text: Text): string {
   const table: Record<string, [string, string]> = {
     disabled: ["上一轮运行时开关还没打开——点「立即测试一轮」再看", "The toggle was still off during the last round — click \"Test one round now\""],
