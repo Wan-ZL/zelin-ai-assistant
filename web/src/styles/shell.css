@@ -667,6 +667,39 @@
   margin-top: 8px;
 }
 
+/* 顶左对齐变体（原生 VStack(alignment: .leading) 的空态；EmptyState align="start"） */
+.shell-empty.is-start {
+  align-items: flex-start;
+  text-align: left;
+}
+
+/* 空态动作区里多颗按钮 / 链接 / 回执并排（RepairButton 的 .shell-banner-actions 是其中一员） */
+.shell-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-empty-actions .shell-banner-actions {
+  margin-left: 0; /* 横幅里靠右的动作组，在空态里从左排 */
+}
+
+/* —— 看板页「后台服务还没写出数据」空态（原生 Kanban.swift emptyState：composer 400 宽在上、
+   PipelineEmptyStateView 在下，整体 top-leading、padding 20）—— */
+.shell-board-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px;
+}
+
+.shell-board-missing-composer {
+  width: var(--native-layout-lane-width);
+  max-width: 100%;
+}
+
 /* —— 加载 spinner（壳层自用；转圈动画尊重 reduced-motion）—— */
 .shell-spinner {
   display: inline-block;
