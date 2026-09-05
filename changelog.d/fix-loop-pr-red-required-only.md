@@ -1,0 +1,2 @@
+type: fixed
+- **每日循环的「修红 CI」提案只认 required check 的红（§70 ⑪，D5）**：`act/lib/loop_inputs.py` 以前只看 `gh pr view --json statusCheckRollup`，而 rollup 不分 required 与 informational——`continue-on-error` 的 `Web visual (playwright)` 在 rollup 里同样是 FAILURE，于是 2026-09-04 把七项 required 全绿的 dependabot PR #193 铸成了 R-280「修红 CI」。现在 rollup 有红只是预筛，再问一次 `gh pr checks <n> --required --json name,bucket`，只有 required 里有 `fail` 才铸 `pr_red:<n>`，红的名字写进卡的 summary / plan / DoD；`--required` 拿不到（旧 gh 退出 1、超时）= 不铸。rollup 全绿的 PR 不多花那一次 gh。判例 `tests/test_daily_loop_inputs.py::PrSignalsTestCase`。

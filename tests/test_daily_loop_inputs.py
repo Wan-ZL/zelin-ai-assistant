@@ -219,12 +219,20 @@ class IssueSignalsTestCase(unittest.TestCase):
 
 
 class PrSignalsTestCase(unittest.TestCase):
-    def _gh(self, comments, rollup):
-        return _fake_gh({
+    """§70 ⑪：`statusCheckRollup` 只是预筛，铸 `pr_red` 要 `gh pr checks --required`
+    里真有 fail——informational job（continue-on-error）的红不算（D5；#193 判例）。"""
+
+    RED_ROLLUP = [{"name": "ci", "conclusion": "SUCCESS"}, {"name": "Lint", "conclusion": "FAILURE"}]
+
+    def _gh(self, comments, rollup, checks="unset"):
+        responses = {
             "pr list": [{"number": 7, "title": "feat: x", "author": {"login": "Wan-ZL"},
                          "url": "u7", "headRefName": "feat/x", "isDraft": True}],
             "pr view": {"comments": comments, "reviews": [], "statusCheckRollup": rollup},
-        })
+        }
+        if checks != "unset":
+            responses["pr checks"] = checks
+        return _fake_gh(responses)
 
     def test_red_ci_and_fresh_human_owner_comments(self):
         fresh = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -235,18 +243,41 @@ class PrSignalsTestCase(unittest.TestCase):
             {"id": "c3", "author": {"login": "coderabbitai[bot]"}, "body": "nit", "createdAt": fresh},
             {"id": "c4", "author": {"login": "Wan-ZL"}, "body": "old remark", "createdAt": stale},
         ]
-        rollup = [{"name": "ci", "conclusion": "SUCCESS"}, {"name": "Lint", "conclusion": "FAILURE"}]
-        sigs, titles = loop_inputs.pr_signals(self._gh(comments, rollup), since=NOW - _dt.timedelta(days=7))
+        checks = [{"name": "ci", "bucket": "pass"}, {"name": "Lint (shellcheck + ruff)", "bucket": "fail"}]
+        gh = self._gh(comments, self.RED_ROLLUP, checks)
+        sigs, titles = loop_inputs.pr_signals(gh, since=NOW - _dt.timedelta(days=7))
         kinds = sorted(s.kind for s in sigs)
         self.assertEqual(kinds, ["pr_comment", "pr_red"])
+        red = next(s for s in sigs if s.kind == "pr_red")
+        self.assertEqual(red.fingerprint, "pr_red:7")
+        self.assertIn("Lint (shellcheck + ruff)", red.summary)
+        self.assertIn("Lint (shellcheck + ruff)", red.dod[0])
+        self.assertIn(["pr", "checks", "7", "-R", loop_inputs.DEFAULT_REPO,
+                       "--required", "--json", "name,bucket"], gh.calls)
         comment = next(s for s in sigs if s.kind == "pr_comment")
         self.assertIn("Where is the test?", comment.title)
         self.assertIn(sanitize.UNTRUSTED_OPEN, comment.evidence)
         self.assertEqual(titles, ["feat: x"])
 
-    def test_green_pr_without_comments_is_quiet(self):
-        sigs, _ = loop_inputs.pr_signals(self._gh([], [{"conclusion": "SUCCESS"}]))
+    def test_informational_red_with_green_required_checks_is_quiet(self):
+        # #193 的形状：rollup 里 Web visual 红，`--required` 七项全 pass → 不铸卡
+        rollup = [{"name": "ci", "conclusion": "SUCCESS"},
+                  {"name": "Web visual (playwright)", "conclusion": "FAILURE"}]
+        checks = [{"name": "ci", "bucket": "pass"}, {"name": "Web tests (build + vitest)", "bucket": "pass"}]
+        sigs, _ = loop_inputs.pr_signals(self._gh([], rollup, checks))
         self.assertEqual(sigs, [])
+
+    def test_red_rollup_without_required_answer_is_quiet(self):
+        # gh pr checks 不可用（None）→ 分不清 required 与否 → 宁可不铸
+        sigs, _ = loop_inputs.pr_signals(self._gh([], self.RED_ROLLUP))
+        self.assertEqual(sigs, [])
+
+    def test_green_pr_without_comments_is_quiet(self):
+        gh = self._gh([], [{"conclusion": "SUCCESS"}])
+        sigs, _ = loop_inputs.pr_signals(gh)
+        self.assertEqual(sigs, [])
+        # rollup 全绿就不多花那一次 gh pr checks
+        self.assertFalse(any(c[:2] == ["pr", "checks"] for c in gh.calls))
 
 
 class MaterialsSignalsTestCase(unittest.TestCase):

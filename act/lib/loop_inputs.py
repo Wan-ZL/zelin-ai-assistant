@@ -598,21 +598,41 @@ def _is_report_issue(issue: dict) -> bool:
 
 
 def _ci_red(pr: dict) -> bool:
+    """rollup 里有任何一个 check 红（含 informational job）——只是预筛，
+    要不要铸卡由 :func:`_red_required_checks` 定。"""
     rollup = pr.get("statusCheckRollup")
     checks = rollup if isinstance(rollup, list) else []
     return any(str(c.get("conclusion") or "").upper() in ("FAILURE", "TIMED_OUT", "CANCELLED")
                for c in checks if isinstance(c, dict))
 
 
-def _pr_red_signal(pr: dict) -> Signal:
+def _red_required_checks(gh: Callable, repo: str, number: object) -> Optional[list]:
+    """required check 里 bucket=fail 的名字（排序去重）；gh 不可用 → None。
+
+    `statusCheckRollup` 不分 required 与 informational：`continue-on-error` 的
+    job（如 Web visual）在 rollup 里同样是 FAILURE，但 D5「必须绿」只指 required
+    （§65.5 的跟进卡也是这么数的）。2026-09-04 判例：#193 只有 informational 红，
+    被旧逻辑铸成 R-280。`gh pr checks --json` 在 check 失败时 gh 2.89 仍退出 0；
+    更旧的 gh 退出 1 → None → 不铸（宁可漏一张也不铸假卡）。"""
+    data = _gh_json(gh, ["pr", "checks", str(number), "-R", repo,
+                         "--required", "--json", "name,bucket"])
+    if not isinstance(data, list):
+        return None
+    return sorted({str(c.get("name")) for c in data
+                   if isinstance(c, dict) and c.get("bucket") == "fail"})
+
+
+def _pr_red_signal(pr: dict, red: list) -> Signal:
     n = pr.get("number")
+    names = ", ".join(red)
     return Signal(
         kind="pr_red", fingerprint=f"pr_red:{n}",
         title=f"修红 CI：PR #{n} {_clip(pr.get('title'), 60)}",
-        summary="开放 PR 的必需检查有红——红的是臣子自己的事，皇上只看绿的（D5/D12）。",
-        plan=[f"gh pr checks {n} 找红的 job，gh run view --log-failed 看根因",
-              f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到全绿"],
-        dod=[f"PR #{n} required checks 全绿"], cost_usd=2.0,
+        summary=f"开放 PR 的 required check 有红（{names}）——红的是臣子自己的事，"
+                "皇上只看绿的（D5/D12）。informational job 的红不算。",
+        plan=[f"gh pr checks {n} --required 找红的 job（{names}），gh run view --log-failed 看根因",
+              f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到 required 全绿"],
+        dod=[f"PR #{n} required checks 全绿：{names}"], cost_usd=2.0,
         ref=str(pr.get("url") or ""), priority=5)
 
 
@@ -680,9 +700,9 @@ def _comment_key(c: dict, body: str) -> str:
 
 def pr_signals(gh: Callable, repo: str = DEFAULT_REPO,
                since: Optional[_dt.datetime] = None) -> "tuple[list, list]":
-    """开放 PR → (signals, titles)：红 CI 一条/PR，owner 新评论一条/评论。
+    """开放 PR → (signals, titles)：红 required check 一条/PR，owner 新评论一条/评论。
     每张 PR 一次 `gh pr view --json comments,reviews,statusCheckRollup`
-    （最多 MAX_PR_DETAIL 张）。"""
+    （最多 MAX_PR_DETAIL 张）；rollup 有红的再加一次 `gh pr checks --required`。"""
     rows = _gh_json(gh, ["pr", "list", "-R", repo, "--state", "open", "--limit",
                          str(GH_LIST_LIMIT), "--json", "number,title,author,url,headRefName,isDraft"])
     if not isinstance(rows, list):
@@ -701,7 +721,11 @@ def _pr_detail_signals(gh, repo, pr, since) -> list:
         return []
     merged = dict(pr, **detail)
     comments = _as_list(detail.get("comments")) + _as_list(detail.get("reviews"))
-    out = [_pr_red_signal(merged)] if _ci_red(merged) else []
+    out = []
+    if _ci_red(merged):                      # 预筛过了才多花一次 gh 问 required 集合
+        red = _red_required_checks(gh, repo, pr.get("number"))
+        if red:
+            out.append(_pr_red_signal(merged, red))
     return out + _comment_signals(merged, comments, since)
 
 
