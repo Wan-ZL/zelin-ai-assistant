@@ -30,20 +30,24 @@ export function authLabel(auth: string | null | undefined, text: Text): string {
   return hit ? text(hit[1], hit[2]) : "";
 }
 
-/** 检测状态的小仓：页面级 hook，向导第 2 步与末步「AI 引擎」行共用同一份 */
+/** 检测状态的小仓：页面级 hook，向导第 2 步与末步「AI 引擎」行共用同一份。
+ *  `quiet`：末步定时复检用——不翻 `checking`（行不闪成「检测中…」），结果照样落下（红行会自己变绿）。 */
 export function useEngineDetector() {
   const [engine, setEngine] = useState<SetupEngine | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const detect = useCallback(async () => {
-    setChecking(true);
-    setError(null);
+  const detect = useCallback(async (opts: { quiet?: boolean } = {}) => {
+    if (!opts.quiet) {
+      setChecking(true);
+      setError(null);
+    }
     try {
       setEngine(await fetchSetupEngine());
+      if (opts.quiet) setError(null);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
-      setChecking(false);
+      if (!opts.quiet) setChecking(false);
     }
   }, []);
   useEffect(() => {

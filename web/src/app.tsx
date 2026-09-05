@@ -21,7 +21,7 @@ import { IngestPage } from "./pages/IngestPage";
 import { RecapsPage } from "./pages/RecapsPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { SetupPage } from "./pages/SetupPage";
+import { isSetupSkipped, SetupPage } from "./pages/SetupPage";
 import { StyleguidePage } from "./pages/StyleguidePage";
 import { TrashPage } from "./pages/TrashPage";
 
@@ -34,9 +34,10 @@ export function badgeCount(board: { counts?: Record<string, number>; needs_appro
   return n("needs_approval") + n("needs_input") + n("review");
 }
 
-/** 首次运行向导跳转（§68.5）：setup.needed 且当前在看板页 → 换到 ?page=setup（一次性、整页导航） */
+/** 首次运行向导跳转（§68.5）：setup.needed 且当前在看板页 → 换到 ?page=setup（一次性、整页导航）。
+ *  本窗口会话里点过「先去看板（下次再来）」（sessionStorage 标记，原生关窗 = 这次不问）→ 不跳；新开窗口再问。 */
 export function shouldRedirectToSetup(page: AppPage, needed: boolean | undefined): boolean {
-  return page === "board" && needed === true;
+  return page === "board" && needed === true && !isSetupSkipped();
 }
 
 function renderPage(page: AppPage) {
