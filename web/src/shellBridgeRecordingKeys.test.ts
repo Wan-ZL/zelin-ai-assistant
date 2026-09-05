@@ -1,7 +1,8 @@
 // 壳桥 add-only 键的镜像判例（§61.1 追记，parity batch shell-recording-bridge）：
 // recording.self_heal_note / log_tail、captions.translation_note / translation_active /
 // source_note / apple_engine_available、permissions.screen_requested 在 normalize 后永远在场
-// （老壳缺席 → "" / false），壳给的值逐字落下；`refreshRecording` 在方法词表里、经 callShell 原样发出。
+// （老壳缺席 → "" / false；apple_engine_available 是三态，缺席 → null——batch captions-settings-notes 的 §61.1 追记：
+// 「不知道」不能被补成「这台 Mac 低于 macOS 26」），壳给的值逐字落下；`refreshRecording` 在方法词表里、经 callShell 原样发出。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callShell, normalizeShellState, resetShellBridgeForTests } from "./shellBridge";
 
@@ -14,19 +15,20 @@ describe("shellBridge · §61.1 追记 recording/captions/permissions add-only k
     delete window.webkit;
   });
 
-  it("老壳缺席 → 每个新键都补默认（'' / false），页面永不读到 undefined", () => {
+  it("老壳缺席 → 每个新键都补默认（'' / false；apple_engine_available → null），页面永不读到 undefined", () => {
     const s = normalizeShellState({ recording: { mode: "screen" }, captions: {}, permissions: {} });
     expect(s.recording.self_heal_note).toBe("");
     expect(s.recording.log_tail).toBe("");
     expect(s.captions.translation_note).toBe("");
     expect(s.captions.translation_active).toBe(false);
     expect(s.captions.source_note).toBe("");
-    expect(s.captions.apple_engine_available).toBe(false);
+    expect(s.captions.apple_engine_available).toBeNull(); // 三态：老壳没说 ≠ 「没有 Apple 引擎」
     expect(s.permissions.screen_requested).toBe(false);
     // 整个快照都缺也一样
     const empty = normalizeShellState(null);
     expect(empty.recording.log_tail).toBe("");
     expect(empty.captions.translation_active).toBe(false);
+    expect(empty.captions.apple_engine_available).toBeNull();
     expect(empty.permissions.screen_requested).toBe(false);
   });
 
@@ -61,8 +63,10 @@ describe("shellBridge · §61.1 追记 recording/captions/permissions add-only k
     expect(dirty.recording.self_heal_note).toBe("");
     expect(dirty.recording.log_tail).toBe("");
     expect(dirty.captions.translation_active).toBe(false);
-    expect(dirty.captions.apple_engine_available).toBe(false);
+    expect(dirty.captions.apple_engine_available).toBeNull(); // 不是布尔 = 不知道，不猜
     expect(dirty.captions.source_note).toBe("");
+    // 壳明说 false 是一个事实（这台 Mac 没有 Apple 引擎），不是缺席
+    expect(normalizeShellState({ captions: { apple_engine_available: false } }).captions.apple_engine_available).toBe(false);
     expect(dirty.permissions.screen_requested).toBe(false);
   });
 
