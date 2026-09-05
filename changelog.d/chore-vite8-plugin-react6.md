@@ -1,0 +1,2 @@
+type: changed
+- **web 构建链升到 vite 8.2.2（dependabot PR #197 的修红）**：`@vitejs/plugin-react` 4.x 的 peer range 只到 vite 7，dependabot 单独 bump vite 后 `npm ci` 在三个 web job 里一律 ERESOLVE（`Web tests` / `QA gates` / `Web visual` 连 install 都过不去）。两包一起动：vite `^8.2.2` + `@vitejs/plugin-react` `^6.1.1`（6.x 的 peer = vite ^8，其余 peer 全 optional，不新增运行时依赖，dev 白名单不变）。`npm run typecheck` / `npm run build` / vitest 1399 条 / playwright 40 条（6 张 golden 零 diff）本地全绿；`vite.config.ts` 不用改。
