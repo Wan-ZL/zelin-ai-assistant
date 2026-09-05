@@ -3,12 +3,15 @@
 // 「新版本 v… 可用 — 一键更新」（= POST /api/update/install：提前 kickstart §56 自动部署 agent——merge 即上岗的那条路；
 // 这台机器不走自动部署（409）→ 退回原生非 Sparkle 的兜底：打开 release 页手动装）+「上次检查：…」；没新版 →
 // 「已是最新」/「最新发布：v…」+「（上次检查：…）」；正在检查… / 检查失败（限流 vs 网络两句）/ 自动检查已关闭 /
-// 上次检查没有取得结果 / 尚未检查过。「立即检查」= 原生非 Sparkle 分支的按钮（§26 --force，只问不装）。
+// 上次检查没有取得结果 / 尚未检查过。「立即检查」= 原生非 Sparkle 分支的按钮（§26 --force，只问不装）；三道守卫同原生
+// （Pages.swift UpdateCheckModel）：正在检查 / 每次尝试后 10 s 冷却（不论成败，不许连点砸 GitHub 接口）/ 自动检查关着
+// （about.check_enabled，§68.6 追记——一进页就知道，不必等第一次点击的回执）。看板投影 update_available 变了
+// （actd 一个 pass 落了新投影，比如刚手动检查完）→ 重拉 /api/about（原生 onChange(dashboard.update_available)）。
 // 「重新运行初始设置」（删 setup 标记；原生放在设置 → 通用「初始设置向导」行）；壳在场时多出登录时启动（SMAppService，
 // 经桥）、全局快速捕获快捷键提示、系统通知权限状态。挂在 ?page=about（左侧导航栏「关于」，AboutPage）。
-// 「卸载…」= 原生 confirmUninstall：确认弹窗 → POST /api/uninstall/terminal 在 Terminal 跑 uninstall.sh（脚本自己再问；
-// server 不删任何东西）；脚本缺席（404）→「找不到卸载脚本」、Terminal 打不开 →「无法打开 Terminal」，两个弹窗都附
-// 「请手动在 Terminal 里运行：<server 给的命令>」+「好」。
+// 「卸载…」= 原生 confirmUninstall：确认弹窗（正文逐字原生 informativeText：会做的三件事 + 默认保留什么）→
+// POST /api/uninstall/terminal 在 Terminal 跑 uninstall.sh（脚本自己再问；server 不删任何东西）；脚本缺席（404）→
+// 「找不到卸载脚本」、Terminal 打不开 →「无法打开 Terminal」，两个弹窗都附「请手动在 Terminal 里运行：<server 给的命令>」+「好」。
 import { useEffect, useState } from "react";
 import { ApiError, postSetupStep, postUninstallTerminal, postUpdateCheck, postUpdateInstall } from "../../api";
 import { ForkDialog } from "../board/ForkDialog";
@@ -17,12 +20,23 @@ import { useI18n } from "../../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../../route";
 import { hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshAbout, setSetup, useAppState } from "../../store";
-import type { AboutInfo, UpdateCheckResult } from "../../types";
+import type { AboutInfo, Board, UpdateCheckResult } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
 import { LaunchAtLoginRow } from "./LaunchAtLoginRow";
 import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;
+
+/** 原生 finish()：每次「立即检查」落地后按钮冷却 10 s——不论成败，永不连点砸 API */
+export const CHECK_COOLDOWN_MS = 10_000;
+
+/** 看板投影 update_available（§26）里的 latest；类型是 unknown（旧 server 缺席）——只认 dict 里的字串 */
+export function projectedLatest(board: Board | null): string | null {
+  const upd = board?.update_available;
+  if (!upd || typeof upd !== "object") return null;
+  const latest = (upd as { latest?: unknown }).latest;
+  return typeof latest === "string" ? latest : null;
+}
 
 /** 原生 UpdateCheckModel 的字段（reload 读 about 快照；checkNow 的回执优先） */
 export interface UpdateView {
@@ -43,7 +57,8 @@ export function updateView(about: AboutInfo, last: UpdateCheckResult | null): Up
     url: about.update_available?.url ?? about.update_check?.url ?? null,
     updateAvailable: Boolean(about.update_available),
     checkedAt: about.update_check?.checked_at ?? null,
-    failed: false, errorKind: null, enabled: true,
+    // 原生 reload：override → config → on；server 把 effective 值放进 about.check_enabled（旧 server 缺席 = on）
+    failed: false, errorKind: null, enabled: about.check_enabled ?? true,
   };
   if (!last) return base;
   return {
@@ -54,7 +69,7 @@ export function updateView(about: AboutInfo, last: UpdateCheckResult | null): Up
     checkedAt: last.checked_at ?? null,
     failed: !last.ok,
     errorKind: last.ok ? null : (last.error ?? null),
-    enabled: last.enabled ?? true,
+    enabled: last.enabled ?? base.enabled,
   };
 }
 
@@ -93,19 +108,48 @@ function UpdateStatus({ view, checking }: { view: UpdateView; checking: boolean 
   return <span className={cls}>{text("尚未检查过。", "Not checked yet.")}</span>;
 }
 
+/** 原生 confirmUninstall 的 informativeText 逐字（Pages.swift）：会做的三件事 + 默认保留什么；第三条点名壳 bundle
+ *  「Zelin's AI Assistant.app」（uninstall.sh 第 4 步删的就是它；退役的菜单栏 app 已不是产品）。uninstall.sh 在 Terminal 里
+ *  逐条再显示一遍并再确认一次——这里只是让用户在点之前就知道。 */
+export function UninstallBody() {
+  const { text } = useI18n();
+  return (
+    <div className="dialog-body">
+      <p>{text("将执行以下操作（在 Terminal 中逐条显示，动手前再确认一次）：", "What will happen (each step shown in Terminal, with one final confirmation there):")}</p>
+      <ul className="dialog-list">
+        <li>{text("停止并移除全部后台服务（AI 派发、屏幕录制、雷达、定时任务）", "Stop and remove every background service (AI dispatch, screen recording, radars, scheduled jobs)")}</li>
+        <li>{text("从 crontab 移除本产品的行（你的其他行原样保留）", "Remove this product's lines from your crontab (all your other lines kept)")}</li>
+        <li>{text("退出看板 app，删除 /Applications 里的 Zelin's AI Assistant.app 与系统级管线副本", "Quit the board app, delete Zelin's AI Assistant.app in /Applications and the system-level pipeline copy")}</li>
+      </ul>
+      <p>{text("默认保留：任务历史（state/）、API 密钥、Obsidian vault、屏幕录像——每一项都会附上删除命令。", "Kept by default: task history (state/), API keys, your Obsidian vault, screen recordings — each listed with its removal command.")}</p>
+    </div>
+  );
+}
+
 export function AboutSection() {
   const { text } = useI18n();
-  const { about, pageErrors } = useAppState();
+  const { about, board, pageErrors } = useAppState();
   const shell = useShellState();
   const present = hasShellBridge();
   const [last, setLast] = useState<UpdateCheckResult | null>(null);
   const [busy, setBusy] = useState<"check" | "install" | "setup" | "uninstall" | null>(null);
+  const [cooldownUntil, setCooldownUntil] = useState(0);   // 0 = 没在冷却
   const [note, setNote] = useState<string | null>(null);
   const [uninstall, setUninstall] = useState<"none" | "confirm" | { title: string; command: string; extra: string | null }>("none");
+  const latestProjected = projectedLatest(board);
 
+  // 原生 onAppear + onChange(dashboard.update_available)：一进页拉一次；actd 一个 pass 落了新投影（比如刚手动检查完）再拉一次。
+  // store.loadPage 把并发 refresh 合成一个在途请求，挂载与「没快照」两条路不重复打 server。
   useEffect(() => {
-    if (!about) void refreshAbout();
-  }, [about]);
+    void refreshAbout();
+  }, [latestProjected]);
+
+  // 冷却到点自动解锁；期中卸载组件就清 timer
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const timer = window.setTimeout(() => setCooldownUntil(0), Math.max(0, cooldownUntil - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [cooldownUntil]);
 
   async function checkNow() {
     setBusy("check");
@@ -117,6 +161,7 @@ export function AboutSection() {
       setNote(errorMessage(err));
     } finally {
       setBusy(null);
+      setCooldownUntil(Date.now() + CHECK_COOLDOWN_MS);   // 原生 finish()：不论成败都冷却，永不连点砸 API
     }
   }
 
@@ -172,6 +217,8 @@ export function AboutSection() {
   }
 
   const view = about ? updateView(about, last) : null;
+  // 原生 .disabled(upd.checking || upd.cooldown || !upd.enabled)
+  const checkDisabled = busy === "check" || busy === "install" || cooldownUntil > 0 || view?.enabled === false;
 
   return (
     <section className="settings-section" id="settings-about" aria-labelledby="settings-about-title">
@@ -191,7 +238,7 @@ export function AboutSection() {
               )}
               <UpdateStatus view={view} checking={busy === "check"} />
               <span className="settings-actions">
-                <button type="button" className="btn" title={text("检查更新", "Check for updates")} disabled={busy === "check" || busy === "install"} onClick={() => void checkNow()}>{text("立即检查", "Check now")}</button>
+                <button type="button" className="btn" title={text("检查更新", "Check for updates")} disabled={checkDisabled} onClick={() => void checkNow()}>{text("立即检查", "Check now")}</button>
                 {view.url && <a className="settings-link" href={view.url} target="_blank" rel="noreferrer">{text("打开 release 页", "Open the release page")}</a>}
               </span>
             </dd>
@@ -242,7 +289,7 @@ export function AboutSection() {
       {uninstall === "confirm" && (
         <ForkDialog
           title={text("卸载 Zelin's AI Assistant？", "Uninstall Zelin's AI Assistant?")}
-          body={text("会在 Terminal 里运行 uninstall.sh：停止全部后台服务并移除本产品；脚本会再问一次，任务历史与密钥默认保留。", "Runs uninstall.sh in Terminal: stops every background service and removes the product; the script asks again, task history and keys are kept by default.")}
+          body={<UninstallBody />}
           choices={[{ label: text("在 Terminal 中卸载…", "Uninstall in Terminal…"), isDanger: true, onPick: () => void uninstallInTerminal() }]}
           onCancel={() => setUninstall("none")}
         />

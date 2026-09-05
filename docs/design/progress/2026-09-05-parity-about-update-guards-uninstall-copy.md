@@ -1,0 +1,11 @@
+pr: `fix/parity-about-update-guards-uninstall-copy`（parity 批次 about-update-guards-uninstall-copy，chain about #1；无版本 bump，版本由 tag 派生）
+phase: P4 余量（D3：web 看板是产品；行为 parity 审计的补丁批次，非新 owner 决策）
+law: §68.6 追记（`check_enabled` add-only / 立即检查 三守卫 / 投影变更重拉 / 卸载确认全文）
+
+**为什么**：行为 parity 审计对照退役的 `mac/Sources/Pages.swift` AboutView 找到三条 web 版丢掉的行为（gap `pages-shell-nav-about-auto-check-off-state-hidden` / `pages-shell-nav-about-check-now-guards` / `pages-shell-nav-uninstall-dialog-abridged`）：关于页只有点过一次「立即检查」之后才知道自动检查关着（`/api/about` 不带 `updates.check_enabled`，`updateView` 写死 `enabled: true`）；按钮没有原生 `finish()` 的 10 s 冷却、也不在看板投影 `update_available` 变化时重拉；卸载确认正文被缩成一句，原生列出的三件事与「默认保留什么」都没了。
+
+**做了什么**：server `about.snapshot` add-only 加 `check_enabled` = `settings_catalog` general / `updates_check_enabled` 的 effective 值（override → config.yaml → 默认 true，与设置页同一把旋钮同一读法；overrides 坏文件当空——原生 `readOverrides` 回 `[:]`——关于页不因它 409）。web `updateView` 以 `about.check_enabled ?? true` 播种 `enabled`，回执的 `enabled` 仍优先（原生 `obj["enabled"] ?? enabled`）；「立即检查」`disabled = checking || cooldown || !enabled` 逐原生，`checkNow` 落地后 `cooldownUntil = now + 10 s`（`CHECK_COOLDOWN_MS`），`useEffect` 到点解锁、卸载即清 timer；`useEffect(() => refreshAbout(), [projectedLatest(board)])` = 原生 `onAppear` + `onChange(dashboard.update_available)`，store 零改动（`loadPage` 已把并发合成一个在途请求）。卸载确认改为 `<UninstallBody>`：首行 + `<ul class="dialog-list">` 三条 + 「默认保留：…」，zh/en 逐字原生，第三条点名壳 bundle「Zelin's AI Assistant.app」（uninstall.sh 第 4 步删的就是它）；`ForkDialog.body` add-only 收 `ReactNode`（string 照旧一段 `<p>`）；`board.css` 加 `.dialog-body > p` / `.dialog-list` 两条（列表用原生的 •）。
+
+**判例**：新文件 `tests/test_server_about_check_enabled.py`（默认 true / override false / config 层与 override 优先级与 `settings_catalog.effective_value` 同答 / 坏 overrides 不 409）与 `web/src/components/settings/AboutSection.test.tsx`（`updateView` 播种与回执优先；关着时一进页句子在场 + 按钮灰、点了不发请求；fake timers 下成功 / 失败都冷却 10 s 到点解锁；投影 `latest` 不变不重拉、变了重拉并长出「新版本 v… 可用 — 一键更新」；zh/en 卸载正文三条 + 首末行逐字）。既有 `DepsIngestAbout.test.tsx` / `parity.test.tsx` 未动、全绿；`parity_check.py` PRESENT 830 / PENDING 15 / MISSING 0（truth = `ui/parity/report.json`，本 PR 零改动）。
+
+**门**：compileall / unittest 全量 / hygiene / depgraph / ruff；web typecheck / vitest 全量 / build；Playwright golden 未重生成——关于页不在三张视觉基线里，弹窗只在点开后出现。

@@ -605,6 +605,17 @@ a.chip:hover { text-decoration: underline; }
   overflow-wrap: anywhere;
 }
 
+/* 多段正文（原生 informativeText 的项目符号列表——卸载确认 §68.6）：段落零外边距，列表用原生的 • */
+.zai-dialog .dialog-body > p {
+  margin: 0;
+}
+
+.zai-dialog .dialog-list {
+  margin: 6px 0;
+  padding-left: 1.4em;
+  list-style: "• ";
+}
+
 .zai-dialog .dialog-note {
   margin: 8px 0 0;
   font: var(--type-card-body);
