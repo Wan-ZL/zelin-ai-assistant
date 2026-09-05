@@ -2,11 +2,17 @@
 // 草稿 → 「保存」一次 PUT 改动过的键（server diff-write：等于 config 层即删键）。
 // 目录里没有的 section id（老 server）渲染成一行说明而不是空白；文案全部 server-owned。
 // `children` 是 section 尾部的装饰槽（来源区放健康摘要 + 凭证行；通用区留空）。
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+// 草稿三条守则（§68.1 追记；原生 Settings.swift 头注「NO deferred save」的 web 对应）：
+// (a) 同 section 的即时写者（Slack 勾选器 / 目录「创建」）刷新目录时**合并**而不是重置——用户改过的键留草稿、
+//     其余键跟新 effective；自己「保存」成功后草稿对齐回执（原生：commit 成功后显示值 = effective）。
+// (b) 有未保存改动时挂 beforeunload（rail / ⌘1…⌘7 / /open 都是整页导航，这就是离页守卫）；存净即摘。
+// (c) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用且该键不进 PUT（原生 numberField 解析失败写 NOTHING）。
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { refreshSettingsCatalog, saveSettingsSection, useAppState } from "../../store";
 import type { SettingsSection } from "../../types";
 import { pickText } from "./catalogText";
+import { isGated, isValidNumberDraft, type Draft } from "./draftRules";
 import { FieldControl } from "./FieldControl";
 import { errorMessage, useToast } from "./useToast";
 
@@ -22,8 +28,6 @@ export interface CatalogSectionProps {
   between?: Record<string, ReactNode>;
   children?: ReactNode;
 }
-
-type Draft = Record<string, unknown>;
 
 /** list 字段的草稿形：逗号分隔字串（server PUT 接受这个形，空 = 清键） */
 export function listDraft(value: unknown): string {
@@ -52,12 +56,30 @@ export function changedKeys(section: SettingsSection, draft: Draft): string[] {
     .map((field) => field.key);
 }
 
+/** 草稿里非法的 number / int 键（挡「保存」、不进 PUT；其它 kind 永不在列） */
+export function invalidKeys(section: SettingsSection, draft: Draft): string[] {
+  return section.fields
+    .filter((field) => (field.kind === "number" || field.kind === "int") && !isValidNumberDraft(field.kind, draft[field.key]))
+    .map((field) => field.key);
+}
+
+/** 目录刷新时的草稿合并：用户改过的键（草稿 ≠ 刷新前的 effective）留草稿，其余键跟新 effective */
+export function mergeDraft(previous: Draft | null, previousBase: Draft | null, fresh: Draft): Draft {
+  if (!previous || !previousBase) return fresh;
+  const merged: Draft = { ...fresh };
+  for (const key of Object.keys(fresh)) {
+    if (key in previous && key in previousBase && previous[key] !== previousBase[key]) merged[key] = previous[key];
+  }
+  return merged;
+}
+
 export function CatalogSection({ sectionId, titleOverride, only, lead, between, children }: CatalogSectionProps) {
   const { text, language } = useI18n();
   const { settingsCatalog, pageErrors } = useAppState();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isSaving, setSaving] = useState(false);
   const [toast, setToast] = useToast();
+  const base = useRef<Draft | null>(null); // 上一次对齐时的 effective（草稿形）——合并时据此判「用户改过没」
 
   useEffect(() => {
     if (!settingsCatalog) void refreshSettingsCatalog();
@@ -66,15 +88,35 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
   const section = settingsCatalog?.sections.find((s) => s.id === sectionId) ?? null;
   const fingerprint = section ? JSON.stringify(section.fields.map((f) => [f.key, f.effective])) : "";
 
-  // server 快照到了 / 保存回执到了 → 草稿对齐（草稿只在用户编辑期间领先于 server）
+  // server 快照到了 / 同 section 别处写了 → 草稿合并（用户改过的键不丢；首帧 = 全取 effective）
   useEffect(() => {
-    if (section) setDraft(draftOf(section));
+    if (!section) return;
+    const fresh = draftOf(section);
+    const previousBase = base.current; // 先取值：updater 可能到下一帧才跑，那时 base 已经换新
+    setDraft((previous) => mergeDraft(previous, previousBase, fresh));
+    base.current = fresh;
   }, [fingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visible = section && only ? { ...section, fields: section.fields.filter((f) => only.includes(f.key)) } : section;
+  const invalid = visible && draft ? invalidKeys(visible, draft) : [];
+  const dirty = visible && draft ? changedKeys(visible, draft).filter((key) => !invalid.includes(key)) : [];
+  const hasUnsaved = dirty.length > 0;
+
+  // 离页守卫：有未保存改动才挂（浏览器只认 preventDefault + 非空 returnValue，文案由浏览器出）；存净 / 卸载即摘
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = text("有未保存的设置修改", "There are unsaved settings changes");
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [hasUnsaved, text]);
 
   const title = titleOverride ?? (section ? pickText(section.title, language) : sectionId);
   const error = pageErrors.settingsCatalog;
 
-  if (!section) {
+  if (!section || !visible) {
     return (
       <section className="settings-section" id={`settings-${sectionId}`} aria-labelledby={`settings-${sectionId}-title`}>
         <h3 id={`settings-${sectionId}-title`} className="settings-section-title">{title}</h3>
@@ -90,17 +132,24 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
     );
   }
 
-  const visible = only ? { ...section, fields: section.fields.filter((f) => only.includes(f.key)) } : section;
-  const dirty = draft ? changedKeys(visible, draft) : [];
+  const sectionKey = visible.id; // 早返回之后 visible 已非空；抓成常量让 save() 的闭包也知道
 
   async function save() {
-    if (!draft || dirty.length === 0) return;
+    // 非法数字挡整次保存（不是只剔掉它——用户看着「保存」成功却发现那一格没落，比禁用更糟）
+    if (!draft || dirty.length === 0 || invalid.length > 0) return;
     setSaving(true);
     setToast(null);
     const patch: Record<string, unknown> = {};
     for (const key of dirty) patch[key] = draft[key];
     try {
-      await saveSettingsSection(visible.id, patch);
+      const saved = await saveSettingsSection(sectionKey, patch);
+      // 保存成功 → 草稿对齐回执（原生：commit 成功后显示值 = effective；输入框在保存期间禁用，没有并发编辑可丢）。
+      // 回执缺 fields（不该发生）就只靠上面的合并 effect，不当保存失败
+      if (Array.isArray(saved?.fields)) {
+        const fresh = draftOf(saved);
+        base.current = fresh;
+        setDraft(fresh);
+      }
       // 原生 noteSaved：「已保存 HH:mm:ss」（时刻单独节点）
       setToast({ kind: "ok", prefix: text("已保存 ", "Saved "), message: savedClock() });
     } catch (err) {
@@ -123,13 +172,14 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
             field={field}
             value={draft[field.key]}
             isBusy={isSaving}
+            disabled={isGated(field.key, draft)}
             onChange={(key, value) => setDraft((d) => (d ? { ...d, [key]: value } : d))}
           />
           {between?.[field.key]}
         </Fragment>
       ))}
       <div className="settings-actions">
-        <button type="button" className="btn btn-primary" disabled={dirty.length === 0 || isSaving} onClick={() => void save()}>
+        <button type="button" className="btn btn-primary" disabled={dirty.length === 0 || invalid.length > 0 || isSaving} onClick={() => void save()}>
           {isSaving ? text("保存中…", "Saving…") : text("保存", "Save")}
         </button>
         {dirty.length > 0 && (
