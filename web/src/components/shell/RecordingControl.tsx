@@ -16,7 +16,8 @@
 // 键盘（§68.3 追记，parity 批 `recording-consent-header-ui`；原生 SwiftUI Menu → NSMenu，DashboardView.swift:27-110）：
 // 打开即把焦点放到勾着的那一档（menuitemradio）；↑ / ↓ 在可用项间循环、Home / End 到两端、Enter / Space 激活是
 // button 原生语义；Esc 关菜单并把焦点还给触发按钮，点选一项也还；Tab 关菜单让焦点自然走。roving-focus 手法同
-// chrome/TaskPropertyPicker。菜单首行下另有 consent-race 自愈的成功句（`recording.self_heal_note`，绿），排在拒绝说明之前。
+// chrome/TaskPropertyPicker。菜单首行下另有 consent-race 自愈的成功句（`recording.self_heal_note`，绿），排在拒绝说明之前——
+// 与其余说明行一样是无 role 的 div（role=menu 的子元素只准 menuitem* / group / separator，不能挂 role=status）。
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, type ShellRecordingState } from "../../shellBridge";
@@ -268,7 +269,8 @@ export function RecordingControl({ state }: RecordingControlProps) {
           <div className="shell-menu-note">
             {isDead ? recordingDeadReason(state, text) : <><span>{text("录制：", "Recording: ")}</span><span>{stateWord}</span></>}
           </div>
-          {state.self_heal_note && <div className="shell-menu-note is-ok" role="status">{state.self_heal_note}</div>}
+          {/* 不挂 role=status：role=menu 只准 own menuitem* / group / separator（axe aria-required-children），与旁边说明行一样是无 role 的 div */}
+          {state.self_heal_note && <div className="shell-menu-note is-ok">{state.self_heal_note}</div>}
           {state.note && <div className="shell-menu-note is-warn">{state.note}</div>}
           {error && <div className="shell-menu-note is-warn">{error}</div>}
           <div className="shell-menu-divider" role="separator" />

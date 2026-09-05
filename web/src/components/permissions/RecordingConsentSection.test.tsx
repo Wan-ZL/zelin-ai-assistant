@@ -1,11 +1,12 @@
 // 屏幕记录同意块 / 状态行的键盘与说明句判例（CONTRACT §68.3 追记，parity 批 `recording-consent-header-ui`；原生
 // Permissions.swift:415-421 `.keyboardShortcut(.defaultAction)` 与 :466-486 的 else-if 三句）：
-//   1) 披露块挂载即把焦点放在「开启」上（Return 立刻就是它）；
+//   1) 披露块挂载即把焦点放在「开启」上（Return 立刻就是它）；状态行出现过之后再冒出来的块（从顶栏菜单 / 状态行关掉录制）
+//      不抢焦点——否则焦点从用户正操作的地方跳到「开启」，下一下 Space / Enter 就把录制开回去；
 //   2) 块内焦点不在按钮 / 链接上时 Return = 点「开启」（preventDefault 给 §68.5 向导让路），IME 组字 / 修饰键 / 焦点在「暂不」
 //      或链接上不抢——「暂不」照旧只有点击 / Tab；
 //   3) 状态行：自愈成功句（self_heal_note，绿 role=status）> 拒绝说明（note，橙）> TCC 收回句，同一时刻只出一句；
 //   4) 「开启」只发 `setRecording {on:true, mode:"screen"}`——TCC 提示是桥的活（§61.1 追记 (a)），web 不发 requestPermission。
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
 import { applyShellState, resetShellBridgeForTests, type ShellState } from "../../shellBridge";
@@ -120,6 +121,27 @@ describe("RecordingConsentSection · 披露块（Permissions.swift:394-443）", 
     renderSection("zh");
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "开启" }));
     expect(screen.getByRole("button", { name: "暂不" })).toBeTruthy();
+  });
+
+  it("a block that re-appears after the answered row was shown does not steal focus (turn-off from the header menu or the row)", async () => {
+    // 录制开着挂载 → 状态行；焦点在别处（顶栏触发按钮的替身）；壳推 mode:off → 块重新出现，焦点不动
+    installShell({ on: true, mode: "screen", engine_running: true });
+    render(<LanguageContext.Provider value="en"><><button type="button" data-testid="elsewhere">elsewhere</button><RecordingConsentSection /></></LanguageContext.Provider>);
+    const elsewhere = screen.getByTestId("elsewhere");
+    elsewhere.focus();
+    act(() => { applyShellState({ ...base, recording: { ...base.recording, mode: "off", on: false } }); });
+    const turnOn = screen.getByRole("button", { name: "Turn On" });
+    expect(document.activeElement).toBe(elsewhere);
+    expect(document.activeElement).not.toBe(turnOn);
+    cleanup();
+
+    // 状态行上的「关闭」：回执把 mode 变 off → 块重新出现，焦点不落到「开启」（否则下一下 Space / Enter 就开回去）
+    installShell({ on: true, mode: "screen", engine_running: true });
+    postMessage.mockImplementation(async () => base);
+    renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Turn Off" }));
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Turn On" })).toBeTruthy());
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Turn On" }));
   });
 });
 

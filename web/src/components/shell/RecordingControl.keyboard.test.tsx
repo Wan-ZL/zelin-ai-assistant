@@ -3,7 +3,9 @@
 //   1) 打开菜单 → 焦点落在勾着的 menuitemradio 上；
 //   2) ↓ / ↑ 在可用项间循环（禁用的「重启录制引擎」跳过）、Home / End 到两端、无关键不拦；
 //   3) Esc 关菜单并把焦点还给触发按钮；点选一项也还；Tab 关菜单让焦点自然走；
-//   4) 菜单里 consent-race 自愈成功句（self_heal_note，绿）排在拒绝说明之前。
+//   4) 菜单里 consent-race 自愈成功句（self_heal_note，绿）排在拒绝说明之前，且不挂 role（role=menu 的子元素只准
+//      menuitem* / group / separator——axe aria-required-children 钉死）。
+import axe from "axe-core";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
@@ -122,20 +124,23 @@ describe("RecordingControl · 关菜单与焦点归还", () => {
 });
 
 describe("RecordingControl · 菜单里的自愈成功句", () => {
-  it("self_heal_note renders green (role=status) ahead of the refusal note", () => {
-    renderControl(rec({ self_heal_note: "屏幕权限已生效，录制引擎已自动重启", note: "拒绝了这次切换" }));
+  it("self_heal_note renders green ahead of the refusal note, as a role-less note (role=menu may only own menuitem* / separator)", async () => {
+    const { container } = renderControl(rec({ self_heal_note: "屏幕权限已生效，录制引擎已自动重启", note: "拒绝了这次切换" }));
     fireEvent.click(trigger());
-    const ok = screen.getByRole("status");
-    expect(ok.className).toBe("shell-menu-note is-ok");
+    const ok = menu()!.querySelector<HTMLElement>(".shell-menu-note.is-ok")!;
+    expect(ok).not.toBeNull();
+    expect(ok.hasAttribute("role")).toBe(false);
     expect(ok.textContent).toBe("屏幕权限已生效，录制引擎已自动重启");
     const notes = Array.from(menu()!.querySelectorAll(".shell-menu-note")).map((el) => el.className);
     expect(notes.indexOf("shell-menu-note is-ok")).toBeLessThan(notes.indexOf("shell-menu-note is-warn"));
+    // 判例钉死：自愈句在场时菜单仍过 axe（曾经挂 role=status → aria-required-children 违例）
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations.map((v) => v.id)).toEqual([]);
   });
 
   it("empty self_heal_note renders nothing", () => {
     renderControl(rec());
     fireEvent.click(trigger());
-    expect(screen.queryByRole("status")).toBeNull();
     expect(menu()!.querySelector(".shell-menu-note.is-ok")).toBeNull();
   });
 });

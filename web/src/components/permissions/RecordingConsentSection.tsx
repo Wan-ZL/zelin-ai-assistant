@@ -9,10 +9,12 @@
 //
 // §68.3 追记（parity 批 `recording-consent-header-ui`）：「开启」是披露块的默认按钮（原生 `.keyboardShortcut(.defaultAction)`，
 // Permissions.swift:416-421）——块一挂载就 autoFocus 到它，块内焦点不在按钮 / 输入框 / 链接上时 Return 也等于点它
-// （preventDefault 让 §68.5 向导的 document 级 Return 让路）；「暂不」照旧只有点击 / Tab。状态行的三句说明按原生 else-if
+// （preventDefault 让 §68.5 向导的 document 级 Return 让路）；「暂不」照旧只有点击 / Tab。autoFocus 只在块是本节挂载后
+// **首次**展示的内容时生效：状态行出现过之后再冒出来的块（用户从状态行 / 顶栏菜单把录制关掉 → mode 回 off 的 web-only 重问）
+// 不抢焦点——否则焦点会从用户正在操作的地方跳到「开启」，下一下 Space / Enter 就把录制又开回去。状态行的三句说明按原生 else-if
 // 排：自愈成功句（`self_heal_note`，绿）> 拒绝 / 回滚说明（`note`，橙）> TCC 收回（`tcc_lost`，橙），Permissions.swift:466-486。
 // TCC 提示不在这里发：桥的 `setRecording {on:true}` 自己先补（§61.1 追记 (a)）。
-import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../../shellBridge";
 import { useAppState } from "../../store";
@@ -55,6 +57,14 @@ export function RecordingConsentSection() {
   const [error, setError] = useState<string | null>(null);
 
   const rec = shell?.recording;
+  const showPending = present && !!rec && !answeredHere && consentPending(rec, setup);
+  const showAnswered = present && !!rec && !showPending;
+  // 状态行出现过 → 之后再冒出来的披露块不 autoFocus（见文件头）；ref 不触发重渲染，effect 在状态行提交后落笔
+  const answeredShown = useRef(false);
+  useEffect(() => {
+    if (showAnswered) answeredShown.current = true;
+  }, [showAnswered]);
+
   if (!present || !rec) {
     return (
       <div className="settings-list-row perm-consent" data-state="no-bridge">
@@ -76,7 +86,7 @@ export function RecordingConsentSection() {
     call(true, "screen");
   };
 
-  if (!answeredHere && consentPending(rec, setup)) {
+  if (showPending) {
     // tabIndex=-1：点到块里的文字时焦点落在块上（而不是 body），Return 才到得了下面的 onKeyDown——原生 defaultAction 是窗口级的
     const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (!consentReturnActivates(event.nativeEvent)) return;
@@ -93,8 +103,8 @@ export function RecordingConsentSection() {
           <li>{text("保留多久:原始录屏本地保留约 1 天后自动清理;提炼后的笔记留在本地 vault", "How long it is kept: raw recordings are cleaned up locally after ~1 day; distilled notes stay in your local vault")}</li>
         </ul>
         <div className="settings-actions">
-          {/* autoFocus：原生 .keyboardShortcut(.defaultAction)——块一出现 Return 就是「开启」 */}
-          <button type="button" className="btn btn-primary" autoFocus onClick={turnOn}>{text("开启", "Turn On")}</button>
+          {/* autoFocus：原生 .keyboardShortcut(.defaultAction)——块一出现 Return 就是「开启」；状态行出现过之后的重问不抢焦点 */}
+          <button type="button" className="btn btn-primary" autoFocus={!answeredShown.current} onClick={turnOn}>{text("开启", "Turn On")}</button>
           <button type="button" className="btn" onClick={() => setAnsweredHere(true)}>{text("暂不", "Not Now")}</button>
           <a className="settings-link" href={PRIVACY_URL} target="_blank" rel="noreferrer">{text("隐私说明…", "Privacy Details…")}</a>
         </div>
