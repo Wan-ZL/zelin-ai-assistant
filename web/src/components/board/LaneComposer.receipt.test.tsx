@@ -3,7 +3,8 @@
 // PendingSweep.swift:169-192 captureMatches）：
 //   1) 回执 = 「"<原话前 20 字>" + 状态句」，状态句随 /api/health 切换（stalled / failing / stale → 「已保存到队列」；
 //      ok / unknown → 「AI 分析中」/「排队派发中」），健康在回执挂着时变了句子跟着变；
-//   2) 回执活过键击（新草稿开打不清），只被下一次提交替换；失败句与 "/" 提示行仍顶掉它（一行栈不变）；
+//   2) 回执活过键击（新草稿开打不清），只被下一次**成功的捕获**替换（原生 writeInboxFile 失败不 beginCapture、斜杠命令
+//      不进 store）；失败句 / "/" 提示行 / 斜杠回执按一行栈暂时顶掉它，一改字它们过期后回执回来，超时时钟全程没停；
 //   3) 刷新带来一行属于这次提交的卡即清——先认 row.capture_id === POST 回的 inbox stem（§10 issue #7），再退到原生的
 //      标题 / 摘要前缀猜测；propose 看 needs_approval、run 看 running + needs_input、都不看 review；提交那一刻的快照
 //      （generated_at 相同）不算；
@@ -190,25 +191,73 @@ describe("LaneComposer receipt — survives keystrokes, yields only to the one-l
     expect(document.querySelectorAll(".column-help")).toHaveLength(1);
   });
 
-  it("a failed second submit shows the failure line alone; editing clears the failure, not the receipt", async () => {
+  it("a failed second submit shows the failure line alone; editing clears the failure and the first receipt returns (writeInboxFile false never touched the placeholder)", async () => {
     const { field, button } = mount();
     await submit(field, button);
     vi.mocked(postAction).mockRejectedValueOnce(new Error("inbox not writable"));
     await submit(field, button, "another");
     expect(screen.getByText("Submit failed — input kept")).toBeTruthy();
-    expect(screen.queryByText(PROPOSE_OK)).toBeNull(); // 新提交先清了旧回执（状态行只说最新一次）
+    expect(screen.queryByText(PROPOSE_OK)).toBeNull(); // 一行栈：失败句顶在前面
+    expect(document.querySelectorAll(".column-help, .composer-notice, .composer-error")).toHaveLength(1);
     fireEvent.change(field, { target: { value: "another!" } });
     expect(screen.queryByText("Submit failed — input kept")).toBeNull();
-    expect(document.querySelectorAll(".column-help, .composer-notice, .composer-error")).toHaveLength(0);
+    expect(screen.getByText(PROPOSE_OK)).toBeTruthy(); // 第一次的回执还活着——失败的提交不替换它
+    expect(document.querySelectorAll(".column-help, .composer-notice, .composer-error")).toHaveLength(1);
   });
 
-  it("a successful slash command replaces the capture receipt with its own note", async () => {
+  it("a failed second submit does not drop the first receipt's timeout clock", async () => {
+    vi.useFakeTimers();
+    const { field, button } = mount("run");
+    await submit(field, button);
+    act(() => vi.advanceTimersByTime(100_000));
+    vi.mocked(postAction).mockRejectedValueOnce(new Error("inbox not writable"));
+    await submit(field, button, "another");
+    expect(screen.getByText("Submit failed — input kept")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(CAPTURE_TIMEOUT_MS.run - 100_000)); // 失败句挂着，时钟照走
+    expect(screen.queryByRole("status")).toBeNull(); // 失败句仍顶在前面
+    fireEvent.change(field, { target: { value: "another!" } });
+    expect(screen.getByRole("status").textContent).toBe(RUN_TIMEOUT); // 失败句过期 → 第一次的诚实超时条在这里
+  });
+
+  it("a successful slash command shows its own note in front; typing again expires the note and the capture receipt returns", async () => {
     const { field, button } = mount();
     await submit(field, button);
     await submit(field, button, "/lang en");
     expect(screen.getByText("Language → en")).toBeTruthy();
     expect(screen.queryByText(PROPOSE_OK)).toBeNull();
     expect(document.querySelectorAll(".column-help")).toHaveLength(1);
+    fireEvent.change(field, { target: { value: "n" } }); // 斜杠回执一改字过期（原生 onChange slashError = nil）
+    expect(screen.queryByText("Language → en")).toBeNull();
+    expect(screen.getByText(PROPOSE_OK)).toBeTruthy(); // 命令不进 store，占位卡（回执）照旧
+    expect(document.querySelectorAll(".column-help")).toHaveLength(1);
+  });
+
+  it("a slash command that fails leaves the receipt untouched behind the error line", async () => {
+    const { field, button } = mount();
+    await submit(field, button);
+    await submit(field, button, "/lang xx");
+    expect(screen.getByText(/Unrecognized or bad argument/)).toBeTruthy();
+    expect(screen.queryByText(PROPOSE_OK)).toBeNull();
+    expect(postAction).toHaveBeenCalledTimes(1); // 命令不发 inbox
+    fireEvent.change(field, { target: { value: "/lang x" } }); // 仍是 "/" 草稿 → 提示行顶着
+    expect(screen.getByText(hintLine(en))).toBeTruthy();
+    fireEvent.change(field, { target: { value: "lang" } });
+    expect(screen.getByText(PROPOSE_OK)).toBeTruthy();
+    expect(document.querySelectorAll(".column-help, .composer-notice, .composer-error")).toHaveLength(1);
+  });
+
+  it("only a successful capture replaces the receipt (and restarts its clock)", async () => {
+    vi.useFakeTimers();
+    const { field, button } = mount();
+    await submit(field, button);
+    act(() => vi.advanceTimersByTime(200_000));
+    await submit(field, button, "second thought");
+    expect(screen.getByText('"second thought" Submitted — analyzing (usually 2-3 min)')).toBeTruthy();
+    expect(screen.queryByText(PROPOSE_OK)).toBeNull();
+    act(() => vi.advanceTimersByTime(CAPTURE_TIMEOUT_MS.propose - 1)); // 旧时钟早该到期——但已被替换
+    expect(screen.queryByRole("status")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("status").textContent).toBe(PROPOSE_TIMEOUT);
   });
 });
 
