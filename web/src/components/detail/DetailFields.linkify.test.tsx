@@ -1,8 +1,9 @@
 // 详情侧栏（D34 唯一详情面）里的 URL 可点（原生 Utils.swift linkified 的详情槽落点，§54.1 追记）：
-//   · 摘要（原生 Cards.swift:1073）、💬 需求来自 引文（:508 / :1311「Slack quotes often carry links」）、
-//     📋 要做什么 步骤（:529 / :1329）里的 https?:// 成 <a target=_blank rel=noreferrer>；
-//   · 「[修改方向]」步骤仍带 is-rework；引文的 「」 不算进链接；
-//   · 交付了什么 正文（:1829 原生不 linkify）与 怎样算办完（DodListView）不变链接。
+//   · 摘要（原生提案面 Cards.swift:1073 / 潜在任务面 :2028）、💬 需求来自 引文（:508 / :1311「Slack quotes often
+//     carry links」）、📋 要做什么 步骤（:529 / :1329）里的 https?:// 成 <a target=_blank rel=noreferrer>；
+//   · 「[修改方向]」步骤仍带 is-rework；引文的 「」 不算进链接；URL 后紧跟的全角 ， 不算进链接（中文引文常态）；
+//   · 交付了什么 正文（:1829 原生不 linkify）与 怎样算办完（DodListView）不变链接；
+//   · 待验收行的灰色审批时摘要原生是纯 Text（:1843-1850，手势冲突理由）——web 侧栏无该手势，有意 linkify（扩展，非照抄）。
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CardDetail } from "../../types";
@@ -38,6 +39,16 @@ describe("DetailFields — URLs are clickable in summary / quotes / plan", () =>
     expect(quote?.textContent).toBe("能不能一键导出，参考「https://docs.example.dev/export」");
   });
 
+  it("💬 quote with `URL，更多字` (no space): the anchor text stops at the URL", () => {
+    const quoteText = "看 https://x.dev/a，更多字在后面。再看https://y.dev/b、谢谢";
+    render(<DetailFields detail={{ ...proposal, sources: [{ who: "sam", channel: "slack", date: "2026-08-30", quote: quoteText }] }} />);
+    const quote = document.querySelector(".zai-detail-source-quote");
+    const anchors = Array.from(quote?.querySelectorAll("a") ?? []);
+    expect(anchors.map((a) => a.getAttribute("href"))).toEqual(["https://x.dev/a", "https://y.dev/b"]);
+    expect(anchors.map((a) => a.textContent)).toEqual(["https://x.dev/a", "https://y.dev/b"]);
+    expect(quote?.textContent).toBe(quoteText);
+  });
+
   it("📋 要做什么 steps → anchors; [修改方向] keeps is-rework; trailing 。 outside", () => {
     render(<DetailFields detail={proposal} />);
     const items = Array.from(document.querySelectorAll(".zai-detail-section ol li"));
@@ -55,7 +66,7 @@ describe("DetailFields — URLs are clickable in summary / quotes / plan", () =>
     expect(hrefs(dodHeading.parentElement as ParentNode)).toEqual([]);
   });
 
-  it("交付了什么 body stays plain (Cards.swift:1829); the grey approval-time summary below it is linkified", () => {
+  it("交付了什么 body stays plain (Cards.swift:1829); the grey approval-time summary below it is linkified (deliberate web extension over :1843-1850)", () => {
     const review: CardDetail = {
       id: "R-410", lane: "review", state: "review", name: "导出按钮",
       delivered_summary: "已加按钮，PR 在 https://github.com/Wan-ZL/example-bench/pull/13",

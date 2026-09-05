@@ -6,14 +6,19 @@
 // web 落点：按 https?:// 切段，URL 段渲染 <a target=_blank rel=noreferrer>（壳的 WKUIDelegate 把 target=_blank
 // 交系统浏览器，§54 追记），其余原样文本节点；href 过 detail/markdown.ts 的 sanitizeUrl 白名单（正则只认
 // https?:// 本已排除 javascript: / data:，白名单是双保险）。**没有 URL 时原样返回字符串**——DOM 与此前逐节点相同，
-// 既有判例 / 视觉 golden 不动。URL 边界：空白、<>、「」()（） 不算进去（中文引文常用引号 / 括号包着链接）；
-// 尾随标点（.,;:!?。，、；：！？ 与右引号）不算进 URL（NSDataDetector 同判：「见 https://x.dev/a。」链接是 a 不是 a。）。
+// 既有判例 / 视觉 golden 不动。URL **硬边界**（中文正文里 URL 后面通常紧跟标点、没有空格，「见 https://x.dev/a，然后」
+// 链接必须在 a 处停）：空白、<>、ASCII 双引号、()（）、CJK 括号 「」『』【】《》〈〉〔〕〖〗、全角标点 ，。、；：！？～——
+// 这一组 NSDataDetector 同判（本机探针逐个核过）；弯引号 “”‘’ 也算边界，这一处比 NSDataDetector 更严一格
+// （它会把「“https://x.dev/a”然后」吞成 a”然后）。ASCII .,;:!?' 合法出现在 URL 内部（a.html?q=1,2），只在
+// 匹配段**末尾**剥掉（「see https://x.dev/x.」链接是 x 不是 x.）。scheme 大小写不敏感（HTTPS://X.DEV/A 也是链接，
+// NSDataDetector 同判；sanitizeUrl 本就 /i）。紧贴 URL 的 CJK 字（https://x.dev/a然后）与 — … · 不算边界，
+// 与 NSDataDetector 一致（IRI 允许非 ASCII 路径，无法区分）。
 // 只是展示积木：不含文案（无 i18n）、不上抛事件、不读 store。CONTRACT §54.1 追记。
 import type { ReactNode } from "react";
 import { sanitizeUrl } from "../detail/markdown";
 
-const URL_RE = /https?:\/\/[^\s<>「」()（）]+/g;
-const TRAILING_PUNCT_RE = /[.,;:!?。，、；：！？'"”’]+$/;
+const URL_RE = /https?:\/\/[^\s<>"()（）「」『』【】《》〈〉〔〕〖〗“”‘’，。、；：！？～]+/gi;
+const TRAILING_PUNCT_RE = /[.,;:!?']+$/;
 
 export type LinkifiedPart = { kind: "text" | "link"; value: string };
 
