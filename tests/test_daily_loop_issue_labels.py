@@ -25,13 +25,16 @@ PLAIN = dict(PARKED, labels=[{"id": "L1", "name": "enhancement"}])
 
 
 def _fake_gh(issues, comments=None):
-    """`gh issue list` → issues；`gh issue view` → comments（None = gh 失败）；记下每次调用。"""
+    """`gh issue list` → issues，但只回 `--json` 点名的字段（真 gh 亦然——`labels` 不在
+    字段表里就没有 `labels`，钉住 wire 契约）；`gh issue view` → comments（None = gh 失败）；
+    记下每次调用。"""
     calls = []
 
     def gh(args):
         calls.append(list(args))
         if args[:2] == ["issue", "list"] and "--search" not in args:
-            return json.dumps(issues)
+            fields = args[args.index("--json") + 1].split(",")
+            return json.dumps([{k: v for k, v in row.items() if k in fields} for row in issues])
         if args[:2] == ["issue", "view"] and comments is not None:
             return json.dumps({"comments": comments})
         return None
@@ -39,15 +42,23 @@ def _fake_gh(issues, comments=None):
     return gh
 
 
+def _list_fields(gh) -> list:
+    """记录里那次 `gh issue list` 请求的 `--json` 字段表。"""
+    call = next(c for c in gh.calls if c[:2] == ["issue", "list"] and "--search" not in c)
+    return call[call.index("--json") + 1].split(",")
+
+
 class ParkedLabelTestCase(unittest.TestCase):
     def test_labelled_issue_never_becomes_a_signal(self):
-        sigs, summaries, titles = loop_inputs.issue_signals(_fake_gh([PARKED]))
+        gh = _fake_gh([PARKED])
+        sigs, summaries, titles = loop_inputs.issue_signals(gh)
         self.assertEqual(sigs, [])
         self.assertEqual([s.kind for s in summaries], [loop_inputs.PARKED_SUMMARY_KIND])
         self.assertIn("#23", summaries[0].text)
         self.assertIn("素材库-idea", summaries[0].text)
         self.assertEqual(summaries[0].ref, "u23")
         self.assertEqual(titles, [PARKED["title"]])            # still open → still dedups gh_title
+        self.assertIn("labels", _list_fields(gh))              # the wire field the whole gate hangs on
 
     def test_same_issue_without_the_label_is_proposed(self):
         sigs, summaries, _ = loop_inputs.issue_signals(_fake_gh([PLAIN]))
@@ -92,7 +103,16 @@ class ParkedLabelTestCase(unittest.TestCase):
         self.assertEqual(loop_inputs.parked_label(dict(PLAIN, labels=[None, 3, {"id": "x"}])), None)
         self.assertEqual(loop_inputs.parked_label(dict(PLAIN, labels=["wontfix"])), "wontfix")   # bare strings
         self.assertEqual(loop_inputs.parked_label({"number": 1}), None)                          # field missing
+
+    def test_parked_count_only_counts_parked_summaries(self):
+        # D18 `issue_nonowner` 与 D33 advisory 摘要同住一个 summaries 列表，不能混进 label_parked
+        mixed = [loop_inputs.Summary(kind="issue_nonowner", text="#90 by Carol929"),
+                 loop_inputs.Summary(kind=loop_inputs.PARKED_SUMMARY_KIND, text="#23 素材库-idea"),
+                 loop_inputs.Summary(kind="advisory", text="doctor FAIL", fingerprint="doctor:x"),
+                 loop_inputs.Summary(kind=loop_inputs.PARKED_SUMMARY_KIND, text="#27 mac-retire")]
         self.assertEqual(loop_inputs.parked_count([]), 0)
+        self.assertEqual(loop_inputs.parked_count(mixed), 2)
+        self.assertEqual(loop_inputs.parked_count(mixed[:1]), 0)
 
 
 class AuditRowTestCase(unittest.TestCase):
@@ -109,16 +129,21 @@ class AuditRowTestCase(unittest.TestCase):
     def test_run_counts_parked_issues_and_mints_no_card(self):
         other = {"number": 5, "title": "make the loop quieter please", "body": "b",
                  "author": {"login": "Wan-ZL"}, "url": "u5", "labels": [{"name": "loop-seed"}]}
-        result = daily_loop.run(config.Config(), now=NOW, gh=_fake_gh([PARKED, other]), doctor=lambda: "[]")
+        # 非 owner、无标签、没人说「do it」→ D18 `issue_nonowner` 摘要，与 parked 同住 summaries
+        nonowner = {"number": 90, "title": "please add a dark mode toggle", "body": "b",
+                    "author": {"login": "Carol929"}, "url": "u90", "labels": []}
+        result = daily_loop.run(config.Config(), now=NOW, gh=_fake_gh([PARKED, other, nonowner]),
+                                doctor=lambda: "[]")
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["proposals"], 1)
-        self.assertEqual(result["summaries"], 1)
+        self.assertEqual(result["summaries"], 2)
         refs = sorted(r.sources[0]["ref"] for r in registry.load_all() if r.title.startswith("🤖 "))
-        self.assertEqual(refs, ["self_improve:issue:5"])                # #23 never minted
+        self.assertEqual(refs, ["self_improve:issue:5"])                # #23 / #90 never minted
         entry = json.loads(daily_loop.log_path().read_text(encoding="utf-8").splitlines()[0])
-        self.assertEqual(entry["skipped"]["label_parked"], 1)
+        self.assertEqual(entry["skipped"]["label_parked"], 1)            # counts parked rows only, not #90
         self.assertEqual(entry["skipped"]["advisory"], 0)               # the other skip keys are untouched
-        self.assertEqual([s["kind"] for s in entry["summaries"]], [loop_inputs.PARKED_SUMMARY_KIND])
+        self.assertEqual([s["kind"] for s in entry["summaries"]],
+                         [loop_inputs.PARKED_SUMMARY_KIND, "issue_nonowner"])
         self.assertEqual(entry["inputs"]["issues"], 1)
 
 
