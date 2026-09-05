@@ -5572,6 +5572,7 @@ owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通�
 
 - `@playwright/test` 为 web dev 依赖；`web/e2e/demoServer.ts` 把 `scripts/demo_seed.py` 的 initial 场景种进临时 `AIASSISTANT_HOME`（绝不碰生产 state/），随机空闲端口起 `python3 -m server`；spec 对 看板 / 回收站 / 设置 × light / dark 各截 1440×900 一张，与 `web/e2e/__screenshots__/visual.spec.ts/*.png` 的 golden 比对（`maxDiffPixelRatio` 2%；新鲜度 / 部署标签遮罩）。golden 路径不带平台后缀，在 macOS 生成，CI 也跑 macos-latest（ubuntu 字体会让每张都「回归」）。
 - **改 UI 的 PR 必须显式更新 golden**（`cd web && npm run visual:update`，提交 png，PR 描述写明哪几张为何变）——golden 漂移不是噪音是决策。job 出生 informational（`continue-on-error`，红了上传 diff artifact `web-visual`），稳定后再议升门。
+- **2026-09-05 追记（add-only）——golden 由 runner 渲染，不由任何一台 Mac 渲染**：上两条「在 macOS 生成」不够——开发 / agent 的 Mac 与 `macos-latest` 镜像的文字光栅化（PingFang / Chromium 构建 / hinting）不一致，笔记本上 `visual:update` 出的 golden 让每个 CJK 字形都「回归」（每张 1–3 % 像素），job 自 2026-09-04 起在 main 上红而背后零 UI 改动。自此 **golden 只出自 `.github/workflows/visual-goldens.yml`**（「Refresh visual goldens」，`workflow_dispatch`，`ref` 输入默认 main；`runs-on` 与 setup 步逐字镜像 ci.yml `web-visual`，跑 `--update-snapshots=all` 后再原样比对一次——runner 必须复现自己的输出，verify 红 = runner 自身不确定，那套 golden 不许提交；产物 = artifact `visual-goldens`，job 自己不 commit 不开 PR）；提交流程（跑 job → 下载 artifact → 覆盖 `web/e2e/__screenshots__/` → 开 PR 写明哪几张为何变）truth = CONTRIBUTING「Visual baselines」。本地 `npm run visual:update` 降为「看看自己改了什么」的工具，产出的 png **不得提交**。`macos-latest` 标签迁到新 macOS 大版本时两个 job 一起迁、刷一次 golden——那是唯一合法的「六张全变、零 UI diff」golden PR。
 
 ### 66.5 与其它法条的关系
 

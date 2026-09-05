@@ -414,9 +414,10 @@ jobs:
   web-visual:
     name: Web visual (playwright)
     # 视觉基线（docs/CONTRACT.md §66.4）：demo 数据 + 真 server + chromium，三页 × light/dark
-    # 截图对 web/e2e/__screenshots__/ 的 golden。macOS runner：golden 在 macOS 上生成
-    # （SF Pro / PingFang），ubuntu 的字体会让每张都「回归」。出生 informational
-    # （continue-on-error）：改 UI 的 PR 先看 diff artifact，稳定后再议升门。
+    # 截图对 web/e2e/__screenshots__/ 的 golden。golden 由 visual-goldens.yml 在**同一**
+    # runner 镜像上生成（§66.4 2026-09-05 追记：任何一台 Mac 出的 golden 都会让每个 CJK
+    # 字形「回归」）——下面的 runs-on 与 setup 步改了，那边要逐字跟着改并刷一次 golden。
+    # 出生 informational（continue-on-error）：改 UI 的 PR 先看 diff artifact，稳定后再议升门。
     # informational → merge queue 里不跑；§56.8 diet：web/ 没动的 PR 不占 macOS 槽
     # （filter 输出缺席时宁可多跑，与 web-tests 同款）。
     needs: changes
