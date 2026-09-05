@@ -4,7 +4,9 @@
 // （slack_channels 存 channel id、watch_people 存 handle——PUT /api/settings/slack，与原生 toggleChannel /
 // togglePerson 同一落点；已勾的浮到顶、最多列 200 项）。目录失败句：act 侧的双语 message 原文；解释器起不来 =
 // 原生「找不到可用的 python（」+ 原句 + 「）」（前缀独立节点）；保存失败 = 「保存设置失败: 」+ 原句。
-import { useMemo, useState } from "react";
+// 已保存的 token 刚通过验证（store `slackTokenVerifications` 变了，SecretRow 记的；§68.3 追记）→ 带 refresh 自动加载一次
+// （原生 verifyToken .ok → loadDirectory(refresh:true)：token freshly working → offer the pickers with fresh data）。
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchSlackDirectory } from "../../api";
 import { useI18n } from "../../i18n";
 import { saveSettingsSection, useAppState } from "../../store";
@@ -28,7 +30,7 @@ function listEffective(effective: unknown): string[] {
 
 export function SlackDirectoryPicker() {
   const { text } = useI18n();
-  const { settingsCatalog } = useAppState();
+  const { settingsCatalog, slackTokenVerifications } = useAppState();
   const [dir, setDir] = useState<SlackDirectory | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<{ prefix: string; detail: string } | null>(null);
@@ -38,11 +40,21 @@ export function SlackDirectoryPicker() {
   const people = listEffective(section?.fields.find((f) => f.key === "watch_people")?.effective);
   const hasData = dir !== null && (dir.channels.length > 0 || dir.users.length > 0);
 
-  async function load() {
+  // 原生 loadDirectory(refresh:true) 的触发：挂载后每次验证成功只重载一次（挂载前已有的次数不算——原生的勾选器在验证时就在屏上）；
+  // 正在加载则跳过（原生 guard !directoryLoading）
+  const seenVerifications = useRef(slackTokenVerifications);
+  useEffect(() => {
+    if (slackTokenVerifications === seenVerifications.current) return;
+    seenVerifications.current = slackTokenVerifications;
+    if (!loading) void load(true);
+  }, [slackTokenVerifications]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** refresh 缺省 = 已有数据才绕过缓存（按钮「刷新」）；验证成功后的自动加载恒 refresh（原生 refresh:true） */
+  async function load(refresh: boolean = hasData) {
     setLoading(true);
     setFailure(null);
     try {
-      const result = await fetchSlackDirectory(hasData);
+      const result = await fetchSlackDirectory(refresh);
       if (result.ok) {
         setDir(result);
       } else {

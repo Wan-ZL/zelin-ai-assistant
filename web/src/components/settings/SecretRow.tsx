@@ -6,7 +6,11 @@
 // 框空 → 探已保存的；两者都没有 → 「先粘贴（或保存）一个凭证再验证」（Slack 区换成它自己的那句）。
 // Gmail 的探针要地址：本地先看设置目录里的 `gmail_address`（原生 effectiveGmailAddress），没填就不发探针、
 // 说「还没填 Gmail 地址——在上面「Gmail 地址」填好后点「验证」。」；应用密码去掉全部空白再存 / 再探（audit 6.4）。
-// 验证 = server 侧最小活探针（Anthropic /v1/models、Slack auth.test、Gmail IMAP LOGIN）；网络错与凭证错分开说；
+// 验证 = server 侧最小活探针（Anthropic /v1/models、Slack auth.test、Gmail IMAP LOGIN），回执三分（原生 KeyProbe.Outcome）：
+// ok → 「验证通过 ✓」（Slack 探已保存的 token 成功 = 原生 SettingsSlack 的「已验证 ✓ 已连接 <team>，身份 @<user> 自动填好——
+// 不用再改任何文件。」+ 通知 SlackDirectoryPicker 带 refresh 重载一次）；凭证错（network:false）→ 章「验证失败」+ server
+// 的分类人话 `reason {zh,en}`（原生 humanAuthReason；没有就 detail 原文）；判决未知（network:true）→ **章不翻**（原生
+// handleOutcome(.failed)：state 3/4 退回 2 = 「已保存（未验证）」）+ 橙色「无法验证（网络/服务问题），稍后点「验证」重试：」+ detail。
 // 火山两把 key 没有 server 探针（verifiable:false）——壳在场时给「检测」（CaptionKeyProbe，经桥；§68.2 追记）；
 // 它们不是原生的 .plain 行：章是「已保存（未验证）」，保存句尾随「——点「检测」可真连服务器验证一次」，
 // 豆包语音凭证按 server 回执 `legacy_pair`（§68.3 2026-09-05 追记）说「已保存 ✓（识别为旧版 App ID + Access Token）」。
@@ -15,8 +19,8 @@
 import { useState } from "react";
 import { ApiError, putSecret, verifySecret } from "../../api";
 import { useI18n } from "../../i18n";
-import { refreshSecrets, refreshSetup, useAppState } from "../../store";
-import type { BilingualText, SecretStatus } from "../../types";
+import { markSlackTokenVerified, refreshSecrets, refreshSettingsCatalog, refreshSetup, useAppState } from "../../store";
+import type { BilingualText, SecretStatus, SecretVerifyResult } from "../../types";
 import { CaptionKeyTest } from "./CaptionKeyTest";
 import { pickText } from "./catalogText";
 import { errorMessage } from "./useToast";
@@ -98,13 +102,38 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
       return;
     }
     const result = candidate ? await verifySecret(name, candidate) : await verifySecret(name);
-    setVerified(result.ok);
     if (result.ok) {
+      setVerified(true);
+      const identity = !candidate ? slackIdentity(result) : null;
+      if (identity) {
+        // 原生 SettingsSlack.verifyToken .ok：身份句 + token freshly working → 勾选器带 refresh 重载；server 已把 user_id 写进
+        // owner_slack_user_id（只在探已保存的值时——粘贴即验证不落盘也不回填，所以那条路不说「自动填好」），目录刷新让字段跟上
+        setNote({ ok: true, message: identity });
+        markSlackTokenVerified();
+        void refreshSettingsCatalog();
+        return;
+      }
       setNote({ ok: true, message: afterSave ? text("已保存 ✓ 验证通过", "Saved ✓ verified") : text("验证通过 ✓", "Verified ✓"), detail: result.detail });
       return;
     }
-    const why = (result.network ? text("网络不通（不是凭证的问题）：", "Network error (not the credential): ") : "") + result.detail;
-    setNote({ ok: false, message: afterSave ? text("已保存，但验证失败：", "Saved, but verification FAILED: ") : text("验证失败：", "Verification failed: "), detail: why });
+    if (result.network) {
+      // 原生 handleOutcome(.failed)：网络 / 服务——凭证的判决未知，章退回「已保存（未验证）」而不是装作失败
+      setVerified(null);
+      setNote({ ok: false, message: text("无法验证（网络/服务问题），稍后点「验证」重试：", "Couldn't verify (network/service) — click Verify again later: "), detail: result.detail });
+      return;
+    }
+    setVerified(false);
+    const reason = pickText(result.reason, language) || result.detail;   // 原生 humanAuthReason 的分类句（server-owned）；老 server 没有就 detail
+    setNote({ ok: false, message: afterSave ? text("已保存，但验证失败：", "Saved, but verification FAILED: ") : text("验证失败：", "Verification failed: "), detail: reason });
+  }
+
+  /** 原生 SettingsSlack.verifyToken 的成功句：auth.test 的 team / user 都在才组，缺一个就回落通用句 */
+  function slackIdentity(result: SecretVerifyResult): string | null {
+    if (!isSlack) return null;
+    const team = result.extra.team;
+    const user = result.extra.user;
+    if (typeof team !== "string" || !team || typeof user !== "string" || !user) return null;
+    return text(`已验证 ✓ 已连接 ${team}，身份 @${user} 自动填好——不用再改任何文件。`, `Verified ✓ Connected to ${team}; identity @${user} filled in automatically — no files to edit.`);
   }
 
   async function save(next: string) {

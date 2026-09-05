@@ -148,7 +148,9 @@ describe("SecretRow", () => {
     await refreshSecrets();
     const verify = await screen.findByRole("button", { name: "Verify" });
     fireEvent.click(verify);
-    await screen.findByText(/Network error \(not the credential\): network error: dns/);
+    // §68.3 2026-09-05 追记：网络 / 服务 = 判决未知——原生 handleOutcome(.failed) 那句，章不翻（细则在 SecretRowVerifyFeedback.test.tsx）
+    await screen.findByText((_, el) => el?.tagName === "P" && /Couldn't verify \(network\/service\) — click Verify again later: network error: dns/.test(el.textContent ?? ""));
+    expect(screen.queryByText("verification failed")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     await screen.findByText((_, el) => el?.tagName === "P" && /Verification failed: HTTP 401/.test(el.textContent ?? ""));
     expect(screen.getByText("verification failed")).toBeTruthy();

@@ -320,10 +320,11 @@ class ProbeImplementationTestCase(unittest.TestCase):
         self._patch_urlopen(down)
         with self.assertRaises(secrets_store.ProbeNetworkError):
             secrets_store.default_prober("anthropic", "k", {})
-        # 非 JSON 响应体不崩：按空 dict 处理
+        # 非 JSON 响应体不崩：没有 ok 字段 = 没有判决（原生 .failed("no response")），走网络 / 服务层那一支
+        # （§68.3 2026-09-05 追记；三分判决的细则在 tests/test_server_secrets_verify_verdicts.py）
         self._patch_urlopen(lambda req, timeout: self._Resp(200, b"<html>"))
-        ok, _detail, _extra = secrets_store.default_prober("slack", "k", {})
-        self.assertFalse(ok)
+        with self.assertRaises(secrets_store.ProbeNetworkError):
+            secrets_store.default_prober("slack", "k", {})
 
     def test_gmail_probe_paths(self):
         # 无地址：不出网，直接 ok:false 人话
