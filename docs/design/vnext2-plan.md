@@ -164,6 +164,8 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + numbered sections; truth f
 
 另有 12 个 open PR(#121 本计划、#102 bundled skills、#108–#117 dependabot majors)——main 保护前第一批过门,majors 不许 loop 盲合。
 
+**机器遵守(2026-09-05)**:本表与 §5.5 的 relabel 结论自此由 §2.4 的循环自己读——issue 读取器跳过带 `loop_inputs.EXCLUDED_ISSUE_LABELS`(truth,含 `素材库-idea` / `needs-owner` / `decision-needed` / `proposal` / `mac-retire` 等)任一标签的 issue,不再靠 owner 亲手 close 才能让循环安静;判例 = 被按住的 PR #213(#23 带 `素材库-idea` 仍被铸卡),细则 CONTRACT §70.3 ⑩ 追记。
+
 ### 5.2 日志教训(8 条 → 改进/删除)
 
 | # | 发现 | → 处置 | 状态 |
