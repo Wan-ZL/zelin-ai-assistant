@@ -10,6 +10,8 @@
 // 用「在终端接管会话：」兜底句（§39）。§37 展示名：抬头是冻结 title（原生 expandedDetail 的技术标题）；
 // display_title 与抬头不同就在这里给一行「显示名」——侧栏是 modal，卡面未必在眼前（深链 / 收起的书立条），
 // 原生 expandedDetail 永远坐在 displaySummary 抬头下面，这一行是它在 web 上的位置。
+// 摘要 / 💬 引文 / 📋 步骤里的 URL 可点（board/Linkified，原生 Utils.swift linkified 的四处落点，§54.1 追记）；
+// 交付正文 / 怎样算办完 原生不 linkify（Cards.swift:1829 / DodListView），照抄边界。
 import { useState, type ReactNode } from "react";
 import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
@@ -17,6 +19,7 @@ import type { CardDetail, CardSource } from "../../types";
 import { costText, resumeCommand, useSubmit } from "../board/boardActions";
 import { CopiedAnnouncer } from "../board/cardChrome";
 import { cardHeadline } from "../board/cardHeadline";
+import { Linkified } from "../board/Linkified";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
 
@@ -280,13 +283,14 @@ export function DetailFields({ detail }: DetailFieldsProps) {
       {lane === "needs_approval" && <p className="zai-detail-cost">{costText(detail, text)}</p>}
 
       {deliveredSummary ? (
-        // v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文（原生 ReviewRow「交付了什么：」）
+        // v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文（原生 ReviewRow「交付了什么：」）。
+        // 摘要里的 URL 可点（原生 linkified，Cards.swift:1073）；交付正文原生明确不 linkify（:1829），照抄
         <Section title={text("交付了什么：", "Delivered:")}>
           <p className="zai-detail-summary">{deliveredSummary}</p>
-          {summary && <p className="zai-detail-summary zai-detail-dim">{summary}</p>}
+          {summary && <p className="zai-detail-summary zai-detail-dim"><Linkified text={summary} /></p>}
         </Section>
       ) : (
-        summary && <p className="zai-detail-summary">{summary}</p>
+        summary && <p className="zai-detail-summary"><Linkified text={summary} /></p>
       )}
 
       {meta.length > 0 && (
@@ -298,9 +302,9 @@ export function DetailFields({ detail }: DetailFieldsProps) {
       )}
 
       {plan.length > 0 && (
-        // 原生 PlanListView：📋 要做什么，编号；"[修改方向]" 行橙色加粗
+        // 原生 PlanListView：📋 要做什么，编号；"[修改方向]" 行橙色加粗；步骤里的 URL 可点（原生 linkified，Cards.swift:529 / :1329）
         <Section title={text("📋 要做什么", "📋 Plan")}>
-          <ol>{plan.map((step, index) => <li key={index} className={step.startsWith("[修改方向]") ? "is-rework" : undefined}>{step}</li>)}</ol>
+          <ol>{plan.map((step, index) => <li key={index} className={step.startsWith("[修改方向]") ? "is-rework" : undefined}><Linkified text={step} /></li>)}</ol>
         </Section>
       )}
       {lane === "review" ? (
@@ -323,17 +327,21 @@ export function DetailFields({ detail }: DetailFieldsProps) {
       )}
 
       {sources.length > 0 && (
-        // 原生 SourceListView：💬 需求来自，who · channel · date + 引文
+        // 原生 SourceListView：💬 需求来自，who · channel · date + 引文；引文里的 URL 可点
+        // （原生 linkified，Cards.swift:508 / :1311「Slack quotes often carry links — make them clickable」）
         <Section title={text("💬 需求来自", "💬 Requested by")}>
-          {sources.map((source, index) => (
-            <blockquote key={index} className="zai-detail-source">
-              <p className="zai-detail-source-quote">{str(source?.quote) ?? text("（无引文）", "(no quote)")}</p>
-              <footer>
-                {[str(source?.who), str(source?.channel), str(source?.date)].filter(Boolean).join(" · ")}
-                {str(source?.ref) && <span className="zai-detail-source-ref"> · {source.ref}</span>}
-              </footer>
-            </blockquote>
-          ))}
+          {sources.map((source, index) => {
+            const quote = str(source?.quote);
+            return (
+              <blockquote key={index} className="zai-detail-source">
+                <p className="zai-detail-source-quote">{quote ? <Linkified text={quote} /> : text("（无引文）", "(no quote)")}</p>
+                <footer>
+                  {[str(source?.who), str(source?.channel), str(source?.date)].filter(Boolean).join(" · ")}
+                  {str(source?.ref) && <span className="zai-detail-source-ref"> · {source.ref}</span>}
+                </footer>
+              </blockquote>
+            );
+          })}
         </Section>
       )}
 

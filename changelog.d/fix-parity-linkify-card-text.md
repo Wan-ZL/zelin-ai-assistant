@@ -1,0 +1,2 @@
+type: fixed
+- **卡面与详情里的 URL 可点（回到原生 `linkified`）**：退役原生 app 用 NSDataDetector 把提案 / 潜在任务卡摘要、「💬 需求来自」引文（Slack 引文常带链接）、「📋 要做什么」步骤里的 URL 标成可点链接；web 此前这四处全是纯字符串，只有 markdown 正文出链接。新增展示积木 `Linkified`（`web/src/components/board/Linkified.tsx`）：按 `https?://` 切段，URL 段渲染 `<a target=_blank rel=noreferrer>`（壳交系统浏览器），href 过既有 `sanitizeUrl` 白名单；`「」()（）` 与尾随标点（`。，.,;:!?` 右引号）不算进 URL；没有 URL 时原样字符串，DOM 与此前逐节点相同。接线与原生边界一比一：提案卡 / 潜在任务卡摘要（`CardHead linkify`），详情侧栏的摘要 / 引文 / 步骤；运行中 / 待验收行标题、AI 研究中占位、交付正文、「怎样算办完」原生不 linkify，web 照抄。无新文案、无 wire 变化、视觉 golden 零 diff。CONTRACT §54.1 追记。

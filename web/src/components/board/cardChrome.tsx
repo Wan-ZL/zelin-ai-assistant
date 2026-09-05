@@ -1,5 +1,6 @@
 // 卡面共用小件——镜像原生 CardSurface（mac/Sources/Cards.swift）的几样 chrome：
-//   CardHead：标题行 + 右上角等宽小字 id（原生 idTag 位置）；
+//   CardHead：标题行 + 右上角等宽小字 id（原生 idTag 位置）；linkify=true 时标题里的 URL 可点（Linkified，
+//     原生 linkified——只给提案 / 潜在任务的摘要优先面）；
 //   DetailsToggle：动作行尾右对齐的「展开详情 ▸」——打开右侧详情侧栏（openCardDetail：选中卡 + ?card= 深链）。
 //     卡片详情只有这一面（D34 / issue #217，§49 追记）：原生 CardSurface 的就地展开详情槽在 web 退役，
 //     卡面永远是收起态，泳道不再被撑高；
@@ -18,6 +19,7 @@ import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
 import { openCardDetail } from "./boardActions";
+import { Linkified } from "./Linkified";
 import { toggleSelected, useAppState } from "../../store";
 import { copyText } from "../detail/copyText";
 
@@ -83,6 +85,11 @@ interface CardHeadProps {
   variant?: "lg" | "placeholder";
   /** §21 多选：可选卡（提案 / 运行中 / 待验收）在 selectionMode 下标题前长出勾选框 */
   selectable?: boolean;
+  /**
+   * 标题里的 URL 变可点链接（原生 `linkified`，Cards.swift:1073 提案摘要 / :2028 潜在任务摘要）——
+   * 只给摘要优先面；运行中 / 待验收行标题原生明确不 linkify（:1829），缺省 false
+   */
+  linkify?: boolean;
 }
 
 /** §21 多选勾选框（原生 Kanban「选择」态的每卡 checkbox）；只在 store.selectionMode 下渲染 */
@@ -101,7 +108,7 @@ export function SelectCheckbox({ cardId }: { cardId: string }) {
   );
 }
 
-export function CardHead({ card, title, leading, isMuted = false, variant, selectable = false }: CardHeadProps) {
+export function CardHead({ card, title, leading, isMuted = false, variant, selectable = false, linkify = false }: CardHeadProps) {
   const cls = ["card-title", variant === "lg" ? "is-lg" : "", variant === "placeholder" ? "is-placeholder" : "", isMuted ? "is-muted" : ""]
     .filter(Boolean)
     .join(" ");
@@ -109,7 +116,7 @@ export function CardHead({ card, title, leading, isMuted = false, variant, selec
     <div className="card-head">
       {selectable && <SelectCheckbox cardId={card.id} />}
       {leading}
-      <div className={cls}>{title}</div>
+      <div className={cls}>{linkify ? <Linkified text={title} /> : title}</div>
       <CardIdTag card={card} />
     </div>
   );

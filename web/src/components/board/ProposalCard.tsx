@@ -6,7 +6,8 @@
 //   + 分歧 + 回锅注。技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完 住右侧详情侧栏
 //   （「展开详情 ▸」打开，D34——卡片详情只有这一面，DetailFields 渲染）。id 在右上角（原生 idTag）。
 // 标题 = §37 摘要优先链 cardHeadline（原生 displaySummary：钦定名 > summary > display_title > title）——
-//   卡面、aria-label、T2 / 拒绝弹窗正文、AI 研究中占位同一个字串（原生 Cards.swift 945 / 984 / 1001 / 1073）。
+//   卡面、aria-label、T2 / 拒绝弹窗正文、AI 研究中占位同一个字串（原生 Cards.swift 945 / 984 / 1001 / 1073）；
+//   卡面摘要里的 URL 可点（原生 :1073 linkified，CardHead linkify）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
@@ -109,8 +110,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
 
   return (
     <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${headline}`}>
-      {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题） */}
-      <CardHead card={card} title={headline} variant="lg" selectable />
+      {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题）；
+          摘要里的 URL 可点（原生 Cards.swift:1073 linkified；AI 研究中占位 :945 不 linkify） */}
+      <CardHead card={card} title={headline} variant="lg" selectable linkify />
       <TargetLine card={card} />
       <EgressLines card={card} />
       <div className="card-badges">
