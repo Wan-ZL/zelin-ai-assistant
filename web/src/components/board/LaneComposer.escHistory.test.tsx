@@ -75,17 +75,20 @@ describe("LaneComposer — successful slash commands enter the ↑/↓ history (
     expect(field.value).toBe("");
   });
 
-  it("a command that succeeds after browsing history resets the cursor: the next ↑ starts from the newest entry again", async () => {
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(["older capture"]));
+  it("a recalled command resubmitted unedited resets the cursor: the next ↑ starts from the newest entry again", async () => {
+    // 翻出一条旧命令原样重发（不经 onChange——onChange 自己也会归零 historyIndex，走那条路测不到提交分支的归零）：
+    // 原生 Composer.submit 成功后 historyIndex = nil，下一次 ↑ 必须从最新一条重新开始，而不是接着上次的游标往旧处翻
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(["/lang zh", "older capture"]));
     const { field, button } = mount();
     fireEvent.keyDown(field, { key: "ArrowUp" }); // historyIndex = 0
-    expect(field.value).toBe("older capture");
-    fireEvent.change(field, { target: { value: "/lang zh" } });
+    expect(field.value).toBe("/lang zh");
     await act(async () => {
-      fireEvent.click(button);
+      fireEvent.click(button); // 原样重发，历史里去重后顺序不变
     });
+    expect(field.value).toBe("");
+    expect(screen.getByText("Language → zh")).toBeTruthy();
     expect(history()).toEqual(["/lang zh", "older capture"]);
-    fireEvent.keyDown(field, { key: "ArrowUp" }); // 原生 submit 成功 historyIndex = nil → 从最新一条重新开始
+    fireEvent.keyDown(field, { key: "ArrowUp" }); // 游标已归零 → 最新一条；没归零会是 index 1 的 "older capture"
     expect(field.value).toBe("/lang zh");
     fireEvent.keyDown(field, { key: "ArrowUp" });
     expect(field.value).toBe("older capture");
