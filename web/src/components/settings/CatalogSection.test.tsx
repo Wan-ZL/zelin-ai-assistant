@@ -127,12 +127,14 @@ describe("SecretRow", () => {
     expect(document.body.textContent).not.toContain("xoxp-SECRET");
   });
 
-  it("a key without a probe says 已保存（App 内管理）and never shows Verify", async () => {
+  it("a caption key without a server probe says 已保存（未验证）(the 检测 row, not .plain) and never shows Verify", async () => {
+    // §68.3 2026-09-05 追记：原生 .volcanoArk 不是 .plain——章是「已保存（未验证）」；「App 内管理」在原生从不渲染（CONTROL_OWNER retired）
     vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [{ name: "volcano-ark-key.txt", label: { zh: "Ark", en: "Ark key" }, present: true, verifiable: false, mtime: 1 }] });
     renderEn(<SecretRow name="volcano-ark-key.txt" />);
     const { refreshSecrets } = await import("../../store");
     await refreshSecrets();
-    await screen.findByText("Saved (managed in-app)");
+    await screen.findByText("saved (not verified)");
+    expect(screen.queryByText("Saved (managed in-app)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
     expect((screen.getByLabelText("Ark key value") as HTMLInputElement).placeholder).toBe("Paste, then Save (stored locally; no network)");
   });

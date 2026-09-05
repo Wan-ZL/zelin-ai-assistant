@@ -170,6 +170,14 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "Gmail IMAP 探针在 server 进程内执行，无 runtime python 子进程可失败（§68.3）",
     },
+    # fix/parity-secret-row-save-path（settings.credentials 面）：CredentialRowView 的状态章 `kind == .plain ?
+    # 「已保存（App 内管理）」: 「已保存（未验证）」`——原生四个实例（anthropic / gmail / volcanoSpeech / volcanoArk）
+    # 没有一个是 .plain，这句从不渲染；web 五行都有 server 探针或壳的「检测」，同样恒走「已保存（未验证）」。
+    # 此前 web 把它错渲在字幕两把 key 上（parity 审计 gap recording-captions-volcano-row-badge-and-save-note）。
+    "control:settings.credentials:label:saved-managed-in-app": {
+        "owner": "retired",
+        "reason": "原生 Kind.plain 分支无任何行实例化、从不渲染；web 五行皆可验证 / 可检测 → 恒「已保存（未验证）」（§68.3 2026-09-05 追记）",
+    },
     # 原生「新建 skill」表单往 ~/.claude/skills/<name>/SKILL.md 写文件；§67 立法后仓库 = 商店、`skills/` 只有 git 写
     # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的 PR（§65 草稿 PR 通道），不是设置页表单。
     "control:settings.skills:button:new-skill": {
@@ -205,6 +213,14 @@ CONTROL_OWNER = {
     "control:board.needs_approval:button:collapse": {
         "owner": "retired",
         "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏",
+    },
+    # D35 推及弹窗（§41 2026-09-05 追记「弹窗一律按钮提交，Enter 换行」）：原生 promptFeedback / promptText 的
+    # 键位提示句「↩ 发送 · ⇧↩ 换行」（AppDelegate.swift:904）描述的是 PromptSendDelegate 的 Return=发送——web 的
+    # 提建议 / 修改方向 / 打回 / 强制合并弹窗都只有按钮提交，这句话没有对应机制。#2（promptAnswer 的同句）早已在
+    # waivers.txt（#119 answer_input），不动。
+    "control:board.dialogs:label:send-newline": {
+        "owner": "retired",
+        "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬",
     },
 }
 

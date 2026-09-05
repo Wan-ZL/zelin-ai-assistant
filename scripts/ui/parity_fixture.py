@@ -286,10 +286,12 @@ def build_settings():
     return snap
 
 
-# 凭证行的五种状态章都要渲染到（§66.2 control:settings.credentials:*）：Anthropic / Gmail 已保存且可验证
+# 凭证行能静态渲染的状态章都要渲染到（§66.2 control:settings.credentials:*）：Anthropic / Gmail 已保存且可验证
 # （「已保存（未验证）」；Gmail 的探针要地址，fixture 目录里地址为空 → 「还没填 Gmail 地址——」）、豆包语音已保存
-# 且无探针（「已保存（App 内管理）」）、Slack 缺 secrets 文件但 §19 旧路径有（「使用旧路径」——旧路径在生成机器
-# 的 $HOME 下，抹成固定值）、Ark 未设置（「未设置」）。
+# 且无 server 探针（同样是「已保存（未验证）」——字幕 key 不是原生 .plain 行，只有壳的「检测」；「已保存（App 内管理）」
+# 是原生 Kind.plain 的词、从不渲染，清单条 retired，§68.3 2026-09-05 追记）、Slack 缺 secrets 文件但 §19 旧路径有
+# （「使用旧路径」——旧路径在生成机器的 $HOME 下，抹成固定值）、Ark 未设置（「未设置」）。已验证 ✓ / 验证失败是会话态，
+# 快照渲不到。
 _FIXTURE_LEGACY = {"slack-user-token.txt": True}
 
 

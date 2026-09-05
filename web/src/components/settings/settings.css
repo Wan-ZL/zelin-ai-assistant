@@ -425,6 +425,13 @@
   border-top: var(--border-hairline) solid var(--border);
 }
 
+/* 联动禁用（原生 `.disabled(...)` 的淡显）：标签与控件一起淡（开关已有 :disabled 淡显），来源章与 help 照常可读 */
+.settings-field.is-gated .settings-knob-label,
+.settings-field.is-gated .settings-select:disabled,
+.settings-field.is-gated .settings-input:disabled {
+  opacity: 0.5;
+}
+
 .settings-field-head {
   display: flex;
   align-items: baseline;
@@ -953,4 +960,33 @@
 
 .sync-qr-hint {
   text-align: center;
+}
+
+/* MCP servers（原生 SettingsMCP：transport 章 http .blue / sse .purple / stdio .secondary；空态的 claude mcp add 命令可选中；
+   作用域行的路径等宽、截中） */
+.chip.chip-transport-http { color: var(--info); border-color: var(--info-soft); background: var(--info-soft); }
+.chip.chip-transport-sse { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
+.chip.chip-transport-stdio { color: var(--text-secondary); border-color: var(--border); background: var(--surface-muted); }
+
+.mcp-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcp-add-hint {
+  align-self: flex-start;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(11px * var(--text-scale));
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-radius: 5px;
+  padding: 2px 6px;
+  user-select: all;
+}
+
+.mcp-scope-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(10.5px * var(--text-scale));
+  overflow-wrap: anywhere;
 }

@@ -1,6 +1,6 @@
 {
   "counts": {
-    "PENDING": 15,
+    "PENDING": 13,
     "PRESENT": 830,
     "WAIVED": 4
   },
@@ -130,7 +130,6 @@
     "control:board.dialogs:label:send-back-add-requirements": "PRESENT",
     "control:board.dialogs:label:send-feedback-ids-count-cards": "PRESENT",
     "control:board.dialogs:label:send-feedback-overall": "PRESENT",
-    "control:board.dialogs:label:send-newline": "PRESENT",
     "control:board.dialogs:label:send-newline#2": "WAIVED",
     "control:board.dialogs:label:type-确认-or-go": "PRESENT",
     "control:board.dialogs:label:what-to-change": "PRESENT",
@@ -462,7 +461,6 @@
     "control:settings.credentials:label:saved": "PRESENT",
     "control:settings.credentials:label:saved#2": "PRESENT",
     "control:settings.credentials:label:saved-but-verification-failed": "PRESENT",
-    "control:settings.credentials:label:saved-managed-in-app": "PRESENT",
     "control:settings.credentials:label:saved-not-verified": "PRESENT",
     "control:settings.credentials:label:saved-verified": "PRESENT",
     "control:settings.credentials:label:saved-verifying": "PRESENT",
@@ -640,9 +638,9 @@
     "control:settings.voice:button:open-profile": "PRESENT",
     "control:settings.voice:label:in-effect": "PRESENT",
     "control:settings.voice:toggle:voice-injection-default-on": "PRESENT",
-    "control:settings.weeklyDigest:button:generate-now": "PENDING",
+    "control:settings.weeklyDigest:button:generate-now": "PRESENT",
     "control:settings.weeklyDigest:label:disabled": "PRESENT",
-    "control:settings.weeklyDigest:label:enabled": "PENDING",
+    "control:settings.weeklyDigest:label:enabled": "PRESENT",
     "control:settings.weeklyDigest:label:save-failed-try-again": "PENDING",
     "control:settings.weeklyDigest:toggle:auto-generate-a-weekly-what-you-were-up-to-recap": "PRESENT",
     "control:settings:alert-button:ok": "PRESENT",
@@ -860,7 +858,7 @@
   "not_gated": {
     "informational": 414,
     "os": 11,
-    "retired": 56,
+    "retired": 58,
     "shell": 70
   },
   "ok": true,

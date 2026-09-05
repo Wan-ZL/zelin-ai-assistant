@@ -1,10 +1,13 @@
-// 捕获输入框的历史与斜杠命令（原生 Store.swift 捕获历史 ↑/↓ 20 条 + Composer.swift `/rec /open /lang`，
-// s4 1.8）。历史 = localStorage `captureHistory`（键名逐字镜像原生 UserDefaults，§66.2 setting:prefs:*；
-// 最近 20 条，去重、最新在前；旧键 `zai.captureHistory` 首次读到即搬过来）；斜杠命令不发 inbox：
-//   /rec off|screen|screen_audio   → 壳桥 setRecording（无桥时如实说只在 app 里可用）
-//   /lang zh|en                    → setLanguage
-//   /open board|trash|archive|settings|permissions|diagnostics|setup → 整页导航
-// 纯逻辑放这里便于 vitest；LaneComposer 只做接线。
+// 捕获输入框的历史与斜杠命令（原生 Store.swift 捕获历史 ↑/↓ 20 条 + SlashCommands `/rec /open /lang`，
+// s4 1.8；§41 2026-09-05 追记）。历史 = localStorage `captureHistory`（键名逐字镜像原生 UserDefaults，
+// §66.2 setting:prefs:*；最近 20 条，去重、最新在前；旧键 `zai.captureHistory` 首次读到即搬过来）。
+// 斜杠命令**只有三个动词**（原生 SlashCommands.isCommand `^/(rec|open|lang)\b`）：以 "/" 开头的其他任何
+// 文字——尤其是绝对路径「/Users/… 整理一下」——都是普通捕获，照常铸卡；命令不发 inbox：
+//   /rec off|screen|audio|screen_audio → 壳桥 setRecording（audio = 原生词，映到壳的 screen_audio；无桥时如实说只在 app 里可用）
+//   /lang zh|en                        → setLanguage
+//   /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup → 整页导航
+//     （原生五页在前、web 独有页在后；deps / diagnostics 自 D30 起都落设置页的依赖检查区）
+// 动词与参数都不分大小写（原生 `parts[1].lowercased()`）。纯逻辑放这里便于 vitest；LaneComposer 只做接线。
 import type { Language } from "../../i18n";
 import { buildAppUrl, navigate, type AppPage } from "../../route";
 import { callShell, hasShellBridge } from "../../shellBridge";
@@ -50,11 +53,27 @@ export function pushHistory(entry: string): string[] {
   return next;
 }
 
-const PAGES: readonly AppPage[] = ["board", "trash", "archive", "settings", "permissions", "diagnostics", "setup"];
+/** `/open` 词表：原生 MainSection 五页（Store.swift `sections`，顺序同原生 hintLine）在前，web 独有页在后——
+ *  是原生词表的超集（§54.1）。用法句与 "/" 提示行都从这里派生，没有第二份词表。 */
+const PAGES: readonly AppPage[] = ["board", "deps", "ingest", "settings", "about", "trash", "archive", "permissions", "diagnostics", "setup"];
+/** 壳桥 setRecording 认的 mode（§61.1） */
 const REC_MODES = ["off", "screen", "screen_audio"] as const;
+type RecMode = (typeof REC_MODES)[number];
+/** 用户词 → 壳 mode（原生 Store.swift `modes` 表：`audio` = screen_audio）；Map 而非对象，免得 `constructor` 之类原型键蒙混 */
+const REC_ALIASES = new Map<string, RecMode>([["audio", "screen_audio"]]);
+/** 用法句 / 提示行里 /rec 的词表：原生三词 + web 既有的 screen_audio */
+const REC_WORDS = ["off", "screen", "audio", "screen_audio"] as const;
+
+/** 只有这三个动词算命令（原生 SlashCommands.isCommand `^/(rec|open|lang)\b`）。JS 的 `\b` 只认 ASCII 词字符
+ *  （「/rec整理」会被判成命令），原生 ICU 的 `\b` 是 Unicode 词界——这里用负向前瞻逐字镜像 ICU 的 `\w`
+ *  （Alphabetic + Mark + 十进制数字 + 连接符 + ZWNJ/ZWJ）：动词后面紧跟词字符（「/rec整理」「/rec_x」「/rec2」「/reckon」）
+ *  = 不是词界 = 普通捕获；紧跟空白 / 行尾 / 标点（「/rec,」「/rec:off」「/open/settings」）= 词界 = 命令——参数随即打错，
+ *  与原生一样报「未识别或参数错误：」而不是悄悄铸卡。
+ *  动词不分大小写（原生的参数已 lowercased；动词放宽是 web 的超集，textarea 首字母自动大写不至于吞掉命令）。 */
+const COMMAND_RE = /^\/(rec|open|lang)(?![\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\u200C\u200D])/iu;
 
 /** handled:false = 不是命令（按普通捕获发出）；note = 成功回执；error = 原生 Composer.swift 的失败形——
- *  `unrecognized`（打错了：「未识别或参数错误：」+ 原文，输入保留）或 `io`（命令本身坏了：原句）。 */
+ *  `unrecognized`（三个动词之一但参数打错：「未识别或参数错误：」+ 原文，输入保留）或 `io`（命令本身坏了：原句）。 */
 export type CommandResult =
   | { handled: false }
   | { handled: true; note: string }
@@ -62,20 +81,33 @@ export type CommandResult =
 
 type Text = (zh: string, en: string) => string;
 
-/** 解析并执行一条斜杠命令；不是命令 → handled:false（调用方按普通捕获发出） */
+/** 打「/…」草稿时输入框下的一行提示（原生 Store.swift SlashCommands.hintLine
+ *  「命令：/rec off|screen|audio · /open board|deps|ingest|settings|about · /lang zh|en」）——词表与用法句同源，
+ *  所以列的是 web 的完整词表（原生词在前）。 */
+export function hintLine(text: Text): string {
+  const rec = REC_WORDS.join("|");
+  const pages = PAGES.join("|");
+  return text(`命令：/rec ${rec} · /open ${pages} · /lang zh|en`, `Commands: /rec ${rec} · /open ${pages} · /lang zh|en`);
+}
+
+/** 解析并执行一条斜杠命令；不是命令（含 "/" 开头的路径等一切非三动词文字）→ handled:false（调用方按普通捕获发出） */
 export async function runSlashCommand(raw: string, text: Text): Promise<CommandResult> {
   const trimmed = raw.trim();
-  if (!trimmed.startsWith("/")) return { handled: false };
-  const [cmd, arg = ""] = trimmed.slice(1).split(/\s+/, 2);
-  // 参数打错 / 动词不认识 = 原生 SlashCommands.run 返回 false 的那条路：输入保留，一行「未识别或参数错误：」
+  const match = COMMAND_RE.exec(trimmed);
+  if (!match) return { handled: false };
+  const verb = match[1].toLowerCase() as "rec" | "open" | "lang";
+  // 第二个 token 是参数，之后的忽略（原生 parts[1]）；参数不分大小写（原生 `.lowercased()`）
+  const arg = (trimmed.slice(match[0].length).trim().split(/\s+/, 1)[0] ?? "").toLowerCase();
+  // 参数打错 = 原生 SlashCommands.run 返回 false 的那条路：输入保留，一行「未识别或参数错误：」+ 用法
   const unrecognized = (usage: string): CommandResult => ({ handled: true, error: { kind: "unrecognized", input: trimmed, usage } });
-  switch (cmd) {
+  switch (verb) {
     case "rec": {
-      if (!(REC_MODES as readonly string[]).includes(arg)) return unrecognized(text("用法：/rec off|screen|screen_audio", "Usage: /rec off|screen|screen_audio"));
+      const mode = REC_ALIASES.get(arg) ?? ((REC_MODES as readonly string[]).includes(arg) ? (arg as RecMode) : null);
+      if (mode === null) return unrecognized(text(`用法：/rec ${REC_WORDS.join("|")}`, `Usage: /rec ${REC_WORDS.join("|")}`));
       if (!hasShellBridge()) return { handled: true, note: text("/rec 只在看板 app（壳）里可用", "/rec only works inside the board app") };
       try {
-        await (arg === "off" ? callShell("setRecording", { on: false }) : callShell("setRecording", { on: true, mode: arg }));
-        return { handled: true, note: text(`录制 → ${arg}`, `Recording → ${arg}`) };
+        await (mode === "off" ? callShell("setRecording", { on: false }) : callShell("setRecording", { on: true, mode }));
+        return { handled: true, note: text(`录制 → ${mode}`, `Recording → ${mode}`) };
       } catch (e) {
         return { handled: true, error: { kind: "io", message: e instanceof Error ? e.message : String(e) } };
       }
@@ -90,7 +122,5 @@ export async function runSlashCommand(raw: string, text: Text): Promise<CommandR
       navigate(buildAppUrl(window.location.href, arg as AppPage, null));
       return { handled: true, note: text(`打开 ${arg}…`, `Opening ${arg}…`) };
     }
-    default:
-      return unrecognized(text("可用：/rec /lang /open", "Available: /rec /lang /open"));
   }
 }

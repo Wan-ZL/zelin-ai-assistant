@@ -1,10 +1,15 @@
 """server/about.py — 「关于」与更新检查的 server 半边（§26 / §56.1 / §68.6）。
 
-- ``GET /api/about`` → ``{"version", "home", "repo", "update_available", "update_check"}``：
+- ``GET /api/about`` → ``{"version", "home", "repo", "update_available", "update_check", "check_enabled"}``：
   版本真源 = ``act.__version__``（§56.1：act/_version.py 盖章 → git describe →
   回落值）；``update_available`` 原样透传 dashboard.json 的同名顶层键（§26，
   actd 每 pass 投影；缺席 = 没有已知新版）；``update_check`` = ``state/update_check.json``
-  的公开子集（checked_at / latest / url；ETag 不外发）。
+  的公开子集（checked_at / latest / url；ETag 不外发）；``check_enabled``（2026-09-05
+  add-only，§68.6 追记）= ``updates.check_enabled`` 的 effective 值（override → config.yaml
+  → 默认 true，与设置页「自动检查新版本」同一把旋钮 ``settings_catalog`` general /
+  ``updates_check_enabled``）——原生 AboutView 一进页就读它：关着 → 「自动检查新版本已关闭」
+  + 「立即检查」灰掉，不必等第一次点击的回执。overrides 文件坏了 → 与原生 ``readOverrides``
+  同款当作空（落到 config → true），关于页不因它 409。
 - ``POST /api/update/check`` → ``python -m act.lib.update_check --force``（§26 手动
   「立即检查」CLI；``updates.check_enabled: false`` 时它自己拒发网络请求），stdout
   那一行 JSON 原样透出；子进程失败 → ``{"ok": false, "error": ...}``。
@@ -25,11 +30,12 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from server import paths, repair, subproc
+from server import paths, repair, settings_catalog, subproc
 from server.errors import ApiError, ConflictError, NotImplementedError501, UnknownFieldError
 
 _UPDATE_TIMEOUT_S = 40
 AUTODEPLOY_LABEL = "com.zelin.aiassistant.autodeploy"   # mirrors act/lib/checks/launchd.AUTODEPLOY_LABEL
+CHECK_ENABLED_FIELD = ("general", "updates_check_enabled")   # settings_catalog 里那把旋钮（§68.1）
 
 
 def version() -> str:
@@ -55,6 +61,20 @@ def update_check_public(home: Path) -> Optional[dict]:
     return {k: doc.get(k) for k in ("checked_at", "latest", "url", "pkg_asset_url")}
 
 
+def check_enabled(home: Path) -> bool:
+    """``updates.check_enabled`` 的 effective 值（override → config.yaml → 默认 true）——原生
+    ``UpdateCheckModel.reload`` 同一读法：overrides 坏文件当空（原生 ``readOverrides`` 回 ``[:]``），
+    落到 config.yaml；关于页永不因 overrides 坏了而 409（那是设置页写入时才该说的话）。"""
+    section, key = CHECK_ENABLED_FIELD
+    field = settings_catalog.field_index(settings_catalog.lookup(section))[key]
+    try:
+        overrides = settings_catalog.read_overrides(home)
+    except ConflictError:
+        overrides = {}
+    value, _src = settings_catalog.effective(field, overrides, settings_catalog.load_config_doc(home))
+    return value is not False
+
+
 def snapshot(home: Path) -> dict:
     """``GET /api/about``。"""
     board = _read_json(paths.dashboard_path(home)) or {}
@@ -65,6 +85,7 @@ def snapshot(home: Path) -> dict:
         "repo": str(paths.repo_root()),
         "update_available": update if isinstance(update, dict) else None,
         "update_check": update_check_public(home),
+        "check_enabled": check_enabled(home),
     }
 
 

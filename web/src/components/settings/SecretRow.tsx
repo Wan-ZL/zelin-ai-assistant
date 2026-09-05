@@ -1,5 +1,5 @@
 // 凭证行（原生 CredentialRowView + KeyProbe 的 web 版，§19 / §68.3；文案逐字镜像 Settings.swift:1900–2210）：
-// 状态章（未设置 / 使用旧路径 / 已保存（未验证）/ 已验证 ✓ / 验证失败；无探针的 key = 已保存（App 内管理））+
+// 状态章（未设置 / 使用旧路径 / 已保存（未验证）/ 已验证 ✓ / 验证失败；字幕两把 key 亦是「已保存（未验证）」）+
 // 密码框 + 保存 + 验证。**值 write-only**：保存后输入框清空、页面只看见「已保存」；server 永不回显。
 // 原生「保存即验证」：可验证的 key 保存成功后自动跑一次验证（已保存，验证中… → 已保存 ✓ 验证通过 /
 // 已保存，但验证失败：…）。「验证」按钮照原生：框里有字 → 探这个值（粘贴即验证，不落盘，§68.3 `{value}`）；
@@ -7,12 +7,16 @@
 // Gmail 的探针要地址：本地先看设置目录里的 `gmail_address`（原生 effectiveGmailAddress），没填就不发探针、
 // 说「还没填 Gmail 地址——在上面「Gmail 地址」填好后点「验证」。」；应用密码去掉全部空白再存 / 再探（audit 6.4）。
 // 验证 = server 侧最小活探针（Anthropic /v1/models、Slack auth.test、Gmail IMAP LOGIN）；网络错与凭证错分开说；
-// 火山两把 key 没有 server 探针（verifiable:false）——壳在场时给「检测」（CaptionKeyProbe，经桥；§68.2 追记）。
+// 火山两把 key 没有 server 探针（verifiable:false）——壳在场时给「检测」（CaptionKeyProbe，经桥；§68.2 追记）；
+// 它们不是原生的 .plain 行：章是「已保存（未验证）」，保存句尾随「——点「检测」可真连服务器验证一次」，
+// 豆包语音凭证按 server 回执 `legacy_pair`（§68.3 2026-09-05 追记）说「已保存 ✓（识别为旧版 App ID + Access Token）」。
+// 保存路上的原生把关（同一追记）：Slack 行 xoxb- Bot token 门口拒绝、永不 PUT（SettingsSlack.swift saveToken）；
+// 非 xoxp- 与 Gmail 非 16 位字母数字只给橙色提示、照常保存并验证；Enter（非输入法组字中）= 点「保存」，同一道闸。
 import { useState } from "react";
-import { putSecret, verifySecret } from "../../api";
+import { ApiError, putSecret, verifySecret } from "../../api";
 import { useI18n } from "../../i18n";
 import { refreshSecrets, refreshSetup, useAppState } from "../../store";
-import type { SecretStatus } from "../../types";
+import type { BilingualText, SecretStatus } from "../../types";
 import { CaptionKeyTest } from "./CaptionKeyTest";
 import { pickText } from "./catalogText";
 import { errorMessage } from "./useToast";
@@ -31,10 +35,17 @@ export interface SecretRowProps {
 }
 
 const GMAIL = "gmail-app-password.txt";
+const SLACK = "slack-user-token.txt";
 /** 火山两把 key：无 server 探针，壳的 CaptionKeyProbe 是唯一真连一次服务器的检测 */
 export const CAPTION_KEYS = new Set(["volcano-speech-key.txt", "volcano-ark-key.txt"]);
 
-type Note = { ok: boolean; message: string; detail?: string };
+/** 原生 looksLikeAppPassword：16 位字母 / 数字（Google 应用密码的形状）——只提示，不拦 */
+export function looksLikeAppPassword(s: string): boolean {
+  return /^[\p{L}\p{N}]{16}$/u.test(s);
+}
+
+/** suffix = 紧跟 message、无分隔的尾句（原生 `L(a) + L(b)` 拼句：两段各是一条清单标签，各占一个节点） */
+type Note = { ok: boolean; message: string; detail?: string; suffix?: string };
 
 export function SecretRow({ name, labelOverride, links = [], helper, placeholderOverride, emptyVerifyNote }: SecretRowProps) {
   const { text, language } = useI18n();
@@ -43,6 +54,7 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState<"save" | "verify" | null>(null);
   const [note, setNote] = useState<Note | null>(null);
+  const [headsUp, setHeadsUp] = useState<string | null>(null); // 原生的橙色「提示：…仍会尝试验证…」，与保存 / 验证句并存
   const [verified, setVerified] = useState<boolean | null>(null); // 本会话内最近一次验证结果（原生 state 3 / 4）
 
   const label = labelOverride ?? (status ? pickText(status.label, language) : name);
@@ -50,9 +62,24 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
   const legacy = status?.legacy === true;
   const verifiable = status?.verifiable ?? false;
   const isGmail = name === GMAIL;
+  const isSlack = name === SLACK;
+  const isCaption = CAPTION_KEYS.has(name);
+  /** 原生 kind != .plain：有 server 探针或有壳的「检测」——章说「已保存（未验证）」而不是「App 内管理」 */
+  const testable = verifiable || isCaption;
 
   /** 原生 audit 6.4：Google 把应用密码显示成 "abcd efgh ijkl mnop"，内部空白从不是密码的一部分 */
   const normalize = (raw: string): string => (isGmail ? raw.replace(/\s+/g, "") : raw.trim());
+
+  /** 原生 saveToken / save() 存后的橙色提示（形状不对也照常保存并验证）；null = 形状没问题 */
+  function shapeHeadsUp(token: string): string | null {
+    if (isSlack && !token.startsWith("xoxp-")) {
+      return text("提示：User OAuth Token 通常以 xoxp- 开头——检查是否复制对了。仍会尝试验证…", "Heads-up: User OAuth Tokens usually start with xoxp- — double-check the copy. Verifying anyway…");
+    }
+    if (isGmail && !looksLikeAppPassword(token)) {
+      return text("提示：应用密码通常是 16 位字母——检查是否粘贴了别的东西。仍会尝试验证…", "Heads-up: app passwords are usually 16 letters — check you pasted the right thing. Verifying anyway…");
+    }
+    return null;
+  }
 
   /** 原生 effectiveGmailAddress：设置目录 gmail 区 `gmail_address` 的生效值（目录没到 = 交给 server 判） */
   function gmailAddressMissing(): boolean {
@@ -82,28 +109,51 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
 
   async function save(next: string) {
     const token = normalize(next);
+    setHeadsUp(null);
+    if (isSlack && token.startsWith("xoxb-")) {
+      // 原生 saveToken：Bot token 能过 auth.test 却读不了你的 DM——门口拒绝，永不落盘（server 同一道门，§68.3 追记）
+      setNote({ ok: false, message: text("这是 Bot token（xoxb-）——雷达读你的 DM 需要 User OAuth Token（xoxp- 开头，在 OAuth & Permissions 页的 User 区）。", "That's a Bot token (xoxb-) — reading your DMs needs the User OAuth Token (starts with xoxp-, in the User section of OAuth & Permissions).") });
+      return;
+    }
     setBusy("save");
     setNote(null);
     setVerified(null);
     try {
-      await putSecret(name, token);
+      const receipt = await putSecret(name, token);
       setValue("");
       await Promise.all([refreshSecrets(), refreshSetup()]);
       if (!token) {
         setNote({ ok: true, message: text("已清除", "Cleared") });
       } else if (verifiable) {
+        setHeadsUp(shapeHeadsUp(token));
         setNote({ ok: true, message: text("已保存，验证中…", "Saved — verifying…") });
         setBusy("verify");
         await probe(true);
+      } else if (isCaption) {
+        // 原生 isVolcano：保存 = 只存本机不联网，句尾指向「检测」；豆包语音凭证按 server 回执说识别出了旧版对
+        const saved = receipt.legacy_pair === true
+          ? text("已保存 ✓（识别为旧版 App ID + Access Token）", "Saved ✓ (detected legacy App ID + Access Token)")
+          : text("已保存 ✓", "Saved ✓");
+        setNote({ ok: true, message: saved, suffix: text("——点「检测」可真连服务器验证一次", " — click Test for one real server check") });
       } else {
         setNote({ ok: true, message: text("已保存 ✓", "Saved ✓") });
       }
     } catch (err) {
-      setNote({ ok: false, message: text("保存失败: ", "Save failed: "), detail: errorMessage(err) });
+      setNote({ ok: false, message: text("保存失败: ", "Save failed: "), detail: saveFailureDetail(err) });
     } finally {
       setBusy(null);
     }
   }
+
+  /** server 400 带 `details.reason {zh,en}`（§68.3 追记：绕过 UI 预检的 xoxb- 也被 server 拒）→ 按 UI 语言取原句；否则 server 整句原文 */
+  function saveFailureDetail(err: unknown): string {
+    const reason = err instanceof ApiError ? (err.details as { reason?: BilingualText } | undefined)?.reason : undefined;
+    const picked = reason && typeof reason === "object" ? pickText(reason, language) : "";
+    return picked || errorMessage(err);
+  }
+
+  /** 「保存」按钮的闸（原生 .disabled(validating || input 空)）——Enter 走同一道 */
+  const canSave = busy === null && value.trim() !== "";
 
   /** 原生 verify()：框里有字探它（先验再决定存不存），框空探已保存的，都没有就提示 */
   async function verify() {
@@ -124,11 +174,13 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
     }
   }
 
-  // 原生 stateText：未设置 / 使用旧路径 / 已保存（未验证）/ 已保存（App 内管理）/ 已验证 ✓ / 验证失败
+  // 原生 stateText：未设置 / 使用旧路径 / 已保存（未验证）/ 已验证 ✓ / 验证失败。目录里五行都 testable，
+  // 末尾的「已保存（App 内管理）」是原生 Kind.plain 的词（从不渲染，清单条 retired，§68.3 2026-09-05 追记）——
+  // 只作未知名字、既无探针也无「检测」时的兜底，不是任何已知行的状态。
   const stateText = verified === true ? text("已验证 ✓", "verified ✓")
     : verified === false ? text("验证失败", "verification failed")
       : !present ? (legacy ? text("使用旧路径", "Using legacy path") : text("未设置", "Not set"))
-        : verifiable ? text("已保存（未验证）", "saved (not verified)") : text("已保存（App 内管理）", "Saved (managed in-app)");
+        : testable ? text("已保存（未验证）", "saved (not verified)") : text("已保存（App 内管理）", "Saved (managed in-app)");
 
   return (
     <div className="settings-secret" data-secret={name}>
@@ -151,9 +203,15 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
           disabled={busy !== null}
           autoComplete="off"
           spellCheck={false}
-          onChange={(event) => { setValue(event.target.value); if (event.target.value) setNote(null); }}
+          onChange={(event) => { setValue(event.target.value); if (event.target.value) { setNote(null); setHeadsUp(null); } }}
+          onKeyDown={(event) => {
+            // 原生 SecureField .onSubmit { saveToken() }：Enter = 保存；输入法组字中的 Enter 是选字，不算
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            if (canSave) void save(value);
+          }}
         />
-        <button type="button" className="btn btn-primary" disabled={busy !== null || !value.trim()} onClick={() => void save(value)}>
+        <button type="button" className="btn btn-primary" disabled={!canSave} onClick={() => void save(value)}>
           {busy === "save" ? text("保存中…", "Saving…") : text("保存", "Save")}
         </button>
         {verifiable && (
@@ -171,9 +229,10 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
         )}
       </div>
       {helper && <p className="settings-helper">{helper}</p>}
+      {headsUp && <p className="settings-warning" role="status">{headsUp}</p>}
       {note && (
         <p className={note.ok ? "settings-helper is-ok" : "settings-warning"} role={note.ok ? "status" : "alert"}>
-          <span>{note.message}</span>{note.detail ? <span>{note.ok ? " · " : ""}{note.detail}</span> : null}
+          <span>{note.message}</span>{note.suffix ? <span>{note.suffix}</span> : null}{note.detail ? <span>{note.ok ? " · " : ""}{note.detail}</span> : null}
         </p>
       )}
     </div>

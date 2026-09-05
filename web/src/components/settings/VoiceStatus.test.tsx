@@ -1,5 +1,6 @@
 // 语气档案「当前生效」状态行（CONTRACT §68.1 追记；原生 Settings.swift voiceStatusText）：四个状态词按 (开关, 私有在, 出厂在)；
-// 开关读目录 voice_enabled 的 effective；「打开档案」= POST /api/reveal {target:"voice_profile"}，两个都不在时禁用。
+// 开关读目录 voice_enabled 的 effective；「打开档案」= POST /api/reveal {target:"voice_profile", mode:"open"}（原生 NSWorkspace.open：
+// 在默认编辑器里打开，不是访达定位），两个都不在时禁用。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchSettingsCatalog, fetchVoiceProfile, postRevealTarget } from "../../api";
@@ -34,7 +35,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("VoiceStatus", () => {
-  it("shows the effective profile with its ~ path and reveals it through the server target", async () => {
+  it("shows the effective profile with its ~ path and opens it (mode open) through the server target", async () => {
     vi.mocked(fetchSettingsCatalog).mockResolvedValue(catalog(true));
     await refreshSettingsCatalog();
     vi.mocked(fetchVoiceProfile).mockResolvedValue(status(true, true));
@@ -43,7 +44,7 @@ describe("VoiceStatus", () => {
     await screen.findByText("Your private profile");
     expect(screen.getByText("~/zai/state/voice-profile.md")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open profile" }));
-    await waitFor(() => expect(postRevealTarget).toHaveBeenCalledWith("voice_profile"));
+    await waitFor(() => expect(postRevealTarget).toHaveBeenCalledWith("voice_profile", undefined, "open"));
   });
 
   it("no profile at all → nothing injected + Open disabled; switch off in the catalog → Disabled", async () => {

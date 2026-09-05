@@ -701,6 +701,8 @@ export interface SettingsField {
   path?: "dir" | string;
   /** add-only：effective 值展开 ~ 后是不是目录；空值 null（无从判断）；老 server 缺席 */
   path_exists?: boolean | null;
+  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句（kind 词表今日 `email`）；老 server 缺席 */
+  check?: { kind: "email" | string; message: BilingualText };
   [key: string]: unknown;
 }
 
@@ -724,6 +726,8 @@ export interface SecretStatus {
   present: boolean;
   verifiable: boolean;
   mtime: number | null;
+  /** PUT 回执 add-only（§68.3 2026-09-05 追记）：豆包语音凭证识别为旧版 App ID + Access Token 对；GET 行不带 */
+  legacy_pair?: boolean;
   [key: string]: unknown;
 }
 
@@ -975,6 +979,8 @@ export interface AboutInfo {
   repo: string;
   update_available: { current?: string; latest?: string; url?: string; pkg_asset_url?: string | null; [key: string]: unknown } | null;
   update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
+  /** §68.6 追记（add-only）：updates.check_enabled 的 effective 值（override → config → true）；旧 server 缺席 = 当 true */
+  check_enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -1004,6 +1010,7 @@ export interface McpServer {
 export interface McpScope {
   scope: "user" | "project" | string;
   path: string;
+  path_display?: string;   // add-only（§68.9 追记）：$HOME 缩成 ~ 的展示路径；老 server 缺席时退回 path
   exists: boolean;
   parseable: boolean;
   servers: McpServer[];

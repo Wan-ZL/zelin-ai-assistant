@@ -9,6 +9,7 @@ import { buildAppUrl, navigate, readPage, type AppPage } from "./route";
 import { createBoardRealtime } from "./realtime";
 import { onShellCommand, pushBadge } from "./shellBridge";
 import { refreshBoard, refreshDisplaySettings, refreshHealth, refreshLanes, refreshSetup, setConnection, useAppState } from "./store";
+import { focusComposer } from "./components/board/focusComposer";
 import { AppShell } from "./components/shell/AppShell";
 import { rememberMainSection, restoreMainSection } from "./components/shell/NavRail";
 import { FilterBar } from "./components/chrome/FilterBar";
@@ -77,16 +78,10 @@ export function App() {
     // §47.4 管线活性轮询：心跳的 stale 阈值下限 90s，30s 一拉足够及时且几乎零成本
     // （server 只 stat 三个文件）。SSE 的 board.updated 不携带心跳，所以要独立拉。
     const healthTimer = setInterval(() => void refreshHealth(), HEALTH_POLL_MS);
-    // §61.6 壳的全局快捷键 → quick_capture：聚焦提案列 composer（不在看板页就先回看板）
+    // §68.13 壳的全局快捷键 ⌃⌥Space / 壳菜单 View ▸ 聚焦捕获框（⌘L）→ quick_capture：与 rail 的 ⌘L 同一落点
+    // focusComposer（§54.4 2026-09-05 追记）——聚焦提案列 composer，不在看板页就留接力棒先回看板
     const stopCommands = onShellCommand((command) => {
-      if (command !== "quick_capture") return;
-      if (readPage(window.location.search) !== "board") {
-        navigate(buildAppUrl(window.location.href, "board", null));
-        return;
-      }
-      const input = document.querySelector<HTMLTextAreaElement>(".board-column .lane-composer textarea");
-      input?.focus();
-      input?.select();
+      if (command === "quick_capture") focusComposer();
     });
     return () => {
       realtime.stop();
