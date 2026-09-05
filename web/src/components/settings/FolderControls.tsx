@@ -184,7 +184,8 @@ export function FolderActions({ field, dirty }: FolderActionsProps) {
   const { text } = useI18n();
   const ui = folderUi(field.key);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<{ ok: boolean; prefix?: string; message: string } | null>(null);
+  // tone：ok = 绿（建好了）；missing = 警告色但 role=status（目录不在、开了上级——不是错误，DepRows 的「显示」同一形）；error = alert
+  const [note, setNote] = useState<{ tone: "ok" | "missing" | "error"; prefix?: string; message: string } | null>(null);
   const missing = field.path_exists === false;
   const hasValue = typeof field.effective === "string" && field.effective.trim() !== "";
 
@@ -193,15 +194,17 @@ export function FolderActions({ field, dirty }: FolderActionsProps) {
     setNote(null);
     try {
       if (action === "open") {
-        await postFolderOpen(field.key);
+        // 目录不在 → server 开最近的既有祖先并回 add-only `missing`（§68.4 追记）；如实说一句，「创建」就在旁边
+        const receipt = await postFolderOpen(field.key);
+        if (receipt.missing) setNote({ tone: "missing", message: text("目录不存在，已打开上级目录", "Folder doesn't exist — opened its parent instead") });
       } else {
         const receipt = await postFolderCreate(field.key);
-        setNote({ ok: true, message: receipt.created ? text("已创建。", "Created.") : text("目录已存在。", "The folder already exists.") });
+        setNote({ tone: "ok", message: receipt.created ? text("已创建。", "Created.") : text("目录已存在。", "The folder already exists.") });
         void refreshSettingsCatalog();
       }
     } catch (err) {
       // 原生 noteError(L("创建目录失败：", …) + error)：前缀与原文各自一个节点（探针按节点文本逐字判前缀）
-      setNote({ ok: false, prefix: action === "create" ? text("创建目录失败：", "Couldn't create the folder: ") : undefined, message: errorMessage(err) });
+      setNote({ tone: "error", prefix: action === "create" ? text("创建目录失败：", "Couldn't create the folder: ") : undefined, message: errorMessage(err) });
     } finally {
       setBusy(false);
     }
@@ -226,7 +229,7 @@ export function FolderActions({ field, dirty }: FolderActionsProps) {
       {createButton}
       {dirty && (openButton || createButton) && <span className="settings-helper">{saveFirst}</span>}
       {note && (
-        <span className={note.ok ? "settings-helper is-ok" : "settings-warning"} role={note.ok ? "status" : "alert"}>
+        <span className={note.tone === "ok" ? "settings-helper is-ok" : "settings-warning"} role={note.tone === "error" ? "alert" : "status"}>
           {note.prefix ? <span>{note.prefix}</span> : null}
           <span>{note.message}</span>
         </span>

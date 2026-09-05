@@ -3,7 +3,8 @@
 //   （health.dashboard）· 定时任务磁盘权限（doctor `cron disk access` 行，经 GET /api/permissions）· 录制引擎
 //   （壳录制状态，只在录制开着时出行）。每个红行带一颗修复按钮：去授权… / 去配置… / 启动后台服务（POST
 //   /api/repair/actd，之后与横幅一键修复同一状态机 useRepairActd：15 × 1 s 问 health，已恢复 / 没恢复各有下场，§68.8）
-//   / 立即生成一次（POST /api/setup/seed-dashboard）/ 去授权… · 查看诊断 / 启动引擎。
+//   / 立即生成一次（POST /api/setup/seed-dashboard）/ 去授权…（cron：原生 CronFDA.beginGrant = 复制 /usr/sbin/cron
+//   + 开面板，failureAction.grantCronFda 唯一实现；浏览器里复制 + 权限体检页深链）· 查看诊断 / 启动引擎。
 // 「—」= 中性（没选录制 / 定时任务还没跑过），不算红；全绿才出「🎉 一切就绪!」。文案逐字镜像 SetupWizard.swift:1014–1242。
 import { useState, type ReactNode } from "react";
 import { postSeedDashboard } from "../../api";
@@ -13,6 +14,7 @@ import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import type { DoctorRow, HealthSnapshot, SetupEngine } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
+import { grantCronFda } from "../settings/failureAction";
 import { errorMessage } from "../settings/useToast";
 import { useRepairActd } from "../shell/repairActd";
 import { authLabel } from "./EngineStep";
@@ -25,6 +27,7 @@ interface RowSpec {
   state: HealthState;
   name: string;
   detail: ReactNode;
+  /** href = 深链 <a>（可带 onClick 顺手做事，不拦导航）；否则 <button> */
   fix?: { label: string; onClick?: () => void; href?: string };
 }
 
@@ -60,7 +63,7 @@ function Row({ spec }: { spec: RowSpec }) {
       </span>
       <span>
         {spec.fix && (spec.fix.href
-          ? <a className="btn" href={spec.fix.href}>{spec.fix.label}</a>
+          ? <a className="btn" href={spec.fix.href} onClick={spec.fix.onClick}>{spec.fix.label}</a>
           : <button type="button" className="btn" onClick={spec.fix.onClick}>{spec.fix.label}</button>)}
       </span>
     </li>
@@ -167,9 +170,11 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   if (cron === "checking") rows.push({ key: "cron", state: "checking", name: cronName, detail: text("检测中…", "Checking…") });
   else if (cron === "ok") rows.push({ key: "cron", state: "ok", name: cronName, detail: text("定时任务能读取你的数据", "The scheduled jobs can read your data") });
   else if (cron === "blocked") {
+    // 原生 cronFDAHealthRow fix = CronFDA.beginGrant()：复制 /usr/sbin/cron + 开面板；浏览器里复制照做、面板换成权限体检页深链
+    const grant = () => { setFixNote("shell", null); void grantCronFda().catch((err) => setFixNote("shell", { prefix: "", detail: errorMessage(err) })); };
     rows.push({ key: "cron", state: "fail", name: cronName,
       detail: text("定时任务被 macOS 挡住了（缺「完全磁盘访问」）——笔记会静默丢失", "macOS is blocking the scheduled jobs (no Full Disk Access) — notes are silently lost"),
-      fix: present ? { label: text("去授权", "Grant…"), onClick: () => shellCall("openPane", { pane: "full_disk" }) } : { label: text("去授权", "Grant…"), href: permissionsHref } });
+      fix: present ? { label: text("去授权", "Grant…"), onClick: grant } : { label: text("去授权", "Grant…"), href: permissionsHref, onClick: grant } });
   } else if (cron === "stale") {
     const row = permissions?.doctor.find((r) => r.name === "cron disk access");
     rows.push({ key: "cron", state: "fail", name: cronName, detail: row?.detail ?? text("定时任务可能停跑了", "The jobs may have stopped"),

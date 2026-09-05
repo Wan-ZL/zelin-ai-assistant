@@ -3,9 +3,13 @@
 // 数据来源按行诚实：
 //   · doctor 行（node/npx · claude CLI · gh CLI · daemon python = PyYAML · obsidian vault）——说明 = doctor 的 detail 原句；
 //   · 壳（录制引擎 · 屏幕录制权限 · 麦克风权限）——浏览器里如实说只在看板 app 里可探；
-//   · GET /api/secrets（Slack token · Gmail 应用密码 · Anthropic API key）：（App 内管理）/（App 内管理；未设置）；
+//   · GET /api/secrets（Slack token · Gmail 应用密码 · Anthropic API key）：（App 内管理）/（App 内管理；当前用旧路径）/
+//     （App 内管理；未设置）——原生 credRow 的 hasSecret || hasLegacy 三态，`legacy` 是 §68.3 追记的 add-only 键；
 //   · state/cron_probe.json（定时任务磁盘权限）：没探针 / 探针过期 / 能读 / 被挡 四态，原生 cronFDARow 同规则。
-// 「显示」= POST /api/folders/open {key:"obsidian_raw"}（路径 server 读）；「去授权」壳里开系统设置面板，浏览器里退成权限体检页。
+// 「显示」= POST /api/folders/open {key:"obsidian_raw"}（路径 server 读；目录不在 → server 开最近的既有祖先、回 `missing`，
+// 这里说「目录不存在，已打开上级目录」+ 去 设置 → 笔记库 建，原生 reveal 的 deletingLastPathComponent 回落）；
+// 屏幕 / 麦克风的「去授权」壳里开系统设置面板，浏览器里退成权限体检页；cron 的「去授权」是 failureAction 的
+// CronFdaGrantButton（复制 /usr/sbin/cron + 开面板），失败行下方另印原生 grantSteps 的 click-by-click 步骤。
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { postFolderOpen } from "../../api";
@@ -15,6 +19,7 @@ import { callShell, hasShellBridge, useShellState, type ShellRecordingState, typ
 import { refreshFailures, refreshSecrets, useAppState } from "../../store";
 import type { CronProbe, DoctorReport, DoctorRow, FailureCatalog, RadarSourceHealth, SecretsStatus } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
+import { CronFdaGrantButton, cronGrantSteps } from "./failureAction";
 import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;
@@ -25,6 +30,8 @@ export interface DepRow {
   ok: boolean | null;          // null = 探不到（浏览器里的壳行 / doctor 还没回）
   detail: ReactNode;
   action: ReactNode;
+  /** 说明行下方再一行小字（原生 DepsView 只有 cron 行有：ok == false 时的 CronFDA.grantSteps） */
+  note?: ReactNode;
 }
 
 /** 原生 CronProbe.read + cronFDARow：2 h 内的探针才算新鲜 */
@@ -40,22 +47,33 @@ function ExternalLink({ href, label }: { href: string; label: string }) {
   return <a className="btn btn-quiet" href={href} target="_blank" rel="noreferrer">{label}</a>;
 }
 
-/** 「去授权」：壳里开系统设置面板；浏览器里退成权限体检页深链（原生 DepAction.grant / cronFDA） */
-function GrantButton({ pane }: { pane: "screen" | "microphone" | "full_disk" }) {
+/** 「去授权」（屏幕 / 麦克风）：壳里开系统设置面板；浏览器里退成权限体检页深链（原生 DepAction.grant）。
+ *  cron 行不用它——那颗是 failureAction 的 CronFdaGrantButton（先复制 /usr/sbin/cron 再开面板）。 */
+function GrantButton({ pane }: { pane: "screen" | "microphone" }) {
   const { text } = useI18n();
   const label = text("去授权", "Grant…");
   if (!hasShellBridge()) return <a className="btn btn-quiet" href={pageHref("permissions")}>{label}</a>;
   return <button type="button" className="btn btn-quiet" onClick={() => void callShell("openPane", { pane }).catch(() => undefined)}>{label}</button>;
 }
 
-/** 「显示」：原生 NSWorkspace.activateFileViewerSelecting(vault) → server 按已保存的 obsidian_raw 打开访达 */
+/** 「显示」：原生 NSWorkspace.activateFileViewerSelecting(vault) → server 按已保存的 obsidian_raw 打开访达；
+ *  目录不在时 server 开最近的既有祖先并回 `missing`（原生 `fileExists ? p : deletingLastPathComponent`）——
+ *  这里如实说「目录不存在，已打开上级目录」并给 设置 → 笔记库 的深链（那里有「创建」）。 */
 function RevealButton() {
   const { text } = useI18n();
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ kind: "missing" | "error"; message: string } | null>(null);
+  const reveal = () => void postFolderOpen("obsidian_raw")
+    .then((receipt) => setNote(receipt.missing ? { kind: "missing", message: text("目录不存在，已打开上级目录", "Folder doesn't exist — opened its parent instead") } : null))
+    .catch((e) => setNote({ kind: "error", message: errorMessage(e) }));
   return (
     <>
-      <button type="button" className="btn btn-quiet" onClick={() => void postFolderOpen("obsidian_raw").then(() => setNote(null)).catch((e) => setNote(errorMessage(e)))}>{text("显示", "Reveal")}</button>
-      {note && <span className="settings-warning" role="alert">{note}</span>}
+      <button type="button" className="btn btn-quiet" onClick={reveal}>{text("显示", "Reveal")}</button>
+      {note && (
+        <span className="settings-warning" role={note.kind === "missing" ? "status" : "alert"}>
+          <span>{note.message}</span>
+          {note.kind === "missing" && <>{" "}<a className="settings-link" href={pageHref("settings", "obsidian")}>{text("去 设置 → 笔记库 创建", "Create it in Settings → Notes vault")}</a></>}
+        </span>
+      )}
     </>
   );
 }
@@ -126,14 +144,22 @@ const SECRET_ROWS: Array<[id: string, file: string, zh: string, en: string]> = [
   ["anthropic", "anthropic-api-key.txt", "Anthropic API key", "Anthropic API key"],
 ];
 
-/** 三把凭证（原生 credRow：secrets 文件在 = （App 内管理），否则（App 内管理；未设置）；旧路径回退在新架构里已退役） */
+/** 原生 credRow（Pages.swift:225-243）的三态后缀：hasSecret → （App 内管理）；只有旧路径 → （App 内管理；当前用旧路径）；
+ *  都没有 → （App 内管理；未设置）。ok = hasSecret || hasLegacy——旧路径的文件照样喂得饱雷达，不该亮 ⚠️。 */
+export function secretVerdict(entry: { present: boolean; legacy?: boolean } | null, text: Text): { ok: boolean | null; suffix: string } {
+  if (!entry) return { ok: null, suffix: "" };
+  if (entry.present) return { ok: true, suffix: text("（App 内管理）", " (managed in-app)") };
+  if (entry.legacy) return { ok: true, suffix: text("（App 内管理；当前用旧路径）", " (managed in-app; using legacy path)") };
+  return { ok: false, suffix: text("（App 内管理；未设置）", " (managed in-app; not set)") };
+}
+
+/** 三把凭证；`legacy` 是 GET /api/secrets 的 add-only 键（§68.3 2026-09-03 追记），SecretRow 的「使用旧路径」读的同一把 */
 function secretRows(secrets: SecretsStatus | null, text: Text): DepRow[] {
   const action = <a className="btn btn-quiet" href={pageHref("settings", "credentials")}>{text("去设置", "Open Settings")}</a>;
   return SECRET_ROWS.map(([id, file, zh, en]) => {
     const entry = secrets?.secrets.find((s) => s.name === file) ?? null;
-    const present = entry ? entry.present : null;
-    const suffix = present === null ? "" : present ? text("（App 内管理）", " (managed in-app)") : text("（App 内管理；未设置）", " (managed in-app; not set)");
-    return { id, name: text(zh, en), ok: present, action,
+    const { ok, suffix } = secretVerdict(entry, text);
+    return { id, name: text(zh, en), ok, action,
       detail: <><code>config/secrets/{file}</code>{suffix && <span>{suffix}</span>}</> };
   });
 }
@@ -156,9 +182,11 @@ export function cronVerdict(probe: CronProbe | null | undefined, now: number, te
     `macOS blocks the scheduled jobs from reading ${path} — captures never become notes. Click Grant and follow the steps`) };
 }
 
+/** 原生 Pages.swift:485-492：cron 行 ok == false 时（没探针 / 过期 / 被挡都算）在说明下方印 CronFDA.grantSteps；按钮 = 引导授权 */
 function cronRow(probe: CronProbe | null | undefined, text: Text): DepRow {
   const verdict = cronVerdict(probe, Date.now(), text);
-  return { id: "cron_fda", name: text("定时任务磁盘权限", "Cron disk access"), ok: verdict.ok, detail: verdict.detail, action: <GrantButton pane="full_disk" /> };
+  return { id: "cron_fda", name: text("定时任务磁盘权限", "Cron disk access"), ok: verdict.ok, detail: verdict.detail,
+    action: <CronFdaGrantButton />, note: verdict.ok ? undefined : cronGrantSteps(text) };
 }
 
 /** 原生 DepsModel.check 的 12 行，顺序照旧 */
@@ -196,6 +224,7 @@ export function DepRows({ report, probe }: { report: DoctorReport | null; probe:
             <span className="dep-row-action">{row.action}</span>
           </div>
           <p className="settings-list-desc dep-row-detail">{row.detail}</p>
+          {row.note && <p className="settings-helper dep-row-note">{row.note}</p>}
         </li>
       ))}
     </ul>

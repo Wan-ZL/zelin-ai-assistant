@@ -161,8 +161,12 @@ def _probe_verdict_row(probes, ts: float, read_ok: bool, probed: str) -> CheckRe
             _ROW, FAIL,
             "cron CANNOT read %s - macOS Full Disk Access is blocking it; "
             "captures are silently lost" % (probed or "the vault"),
+            # the board's Settings > dependency check row 「定时任务磁盘权限」 has the guided
+            # 「去授权」 (copies /usr/sbin/cron + opens the pane) and prints the click-by-click
+            # steps; name that surface, not the retired native app's page
             "System Settings > Privacy & Security > Full Disk Access > '+' > "
-            "Cmd+Shift+G > /usr/sbin/cron (the app's dependency page has a guided button)",
+            "Cmd+Shift+G > /usr/sbin/cron (or click Grant on the board's Settings > "
+            "dependency check 'Cron disk access' row: it copies the path and opens the pane)",
         ).with_failure("cron_fda_blocked")
     return CheckResult(_ROW, OK,
                        "cron read %s ok (probe %d min ago)" % (probed, int(age // 60)))

@@ -8,7 +8,7 @@
 - settings 目录：obsidian_raw / default_target_repo / maintainer_repo_path 投影 add-only `path` + `path_exists`
   （空值 null、目录在 true、不在 false），其它字段不带这两键；
 - POST /api/folders/open {key} / create {key}：路径由 server 从 effective 值读（客户端只传 key），
-  空 400、open 不在 404、非 darwin 501、create 幂等 + default_target_repo 的 git init（runner 注入）、
+  空 400、open 不在 → 开最近的既有祖先 + `missing`（§68.4 追记）、非 darwin 501、create 幂等 + default_target_repo 的 git init（runner 注入）、
   mkdir 失败 500 `could not create the folder`。
 """
 import json
@@ -24,7 +24,7 @@ from tests.test_server_common import (assert_envelope, get_json, post_json,
                                       start_server, write_text)
 
 from server import folders, paths, radars, repair, settings_catalog
-from server.errors import (ApiError, ConflictError, InvalidFieldError, NotFoundError,
+from server.errors import (ApiError, ConflictError, InvalidFieldError,
                            NotImplementedError501, UnknownFieldError)
 
 _WIN = sys.platform.startswith("win")
@@ -203,13 +203,16 @@ class FoldersTestCase(_ServerCase):
             folders.open_folder(self.home, {"key": "gmail_address"}, opener=opened.append, platform="darwin")
         with self.assertRaises(NotImplementedError501):
             folders.open_folder(self.home, {"key": "obsidian_raw"}, opener=opened.append, platform="linux")
-        # 空值（obsidian_raw 默认 ""）→ 400；不存在的目录 → 404
+        # 空值（obsidian_raw 默认 ""）→ 400
         with self.assertRaises(InvalidFieldError):
             folders.open_folder(self.home, {"key": "obsidian_raw"}, opener=opened.append, platform="darwin")
-        self._overrides(default_target_repo=str(Path(self.tmp.name) / "nowhere"))
-        with self.assertRaises(NotFoundError):
-            folders.open_folder(self.home, {"key": "default_target_repo"}, opener=opened.append, platform="darwin")
         self.assertEqual(opened, [])
+        # 不存在的目录：不再 404——开最近的既有祖先并如实回 missing（§68.4 追记；原生 reveal 的
+        # deletingLastPathComponent 回落；细则 tests/test_server_folders_open_missing_ancestor.py）
+        self._overrides(default_target_repo=str(Path(self.tmp.name) / "nowhere"))
+        out = folders.open_folder(self.home, {"key": "default_target_repo"}, opener=opened.append, platform="darwin")
+        self.assertEqual(opened, [Path(self.tmp.name)])
+        self.assertEqual((out["missing"], out["opened"]), (True, self.tmp.name))
 
     def test_create_makes_the_folder_and_git_inits_the_workbench_only(self):
         vault = Path(self.tmp.name) / "vault" / "2 - raw"

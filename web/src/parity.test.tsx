@@ -59,6 +59,7 @@ import {
   refreshHealth,
   refreshLanes,
   refreshPermissions,
+  refreshSecrets,
   refreshSettings,
   refreshSettingsCatalog,
   resetStoreForTests,
@@ -872,6 +873,16 @@ async function renderDepsVariants(language: Language) {
   }
   vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics);
   await refreshDiagnostics(true);
+  // 凭证快速行的第三个后缀「（App 内管理；未设置）」：fixture 里三把主凭证是 已保存 / 已保存 / 走旧路径——Slack 自 §68.3 追记
+  // 起算 ok、后缀「当前用旧路径」（原生 credRow hasLegacy），「未设置」得再渲一遍：Gmail 抹成缺 secrets 文件且无旧路径
+  vi.mocked(fetchSecrets).mockResolvedValue({ secrets: demoSecrets.secrets.map((s) => (s.name === "gmail-app-password.txt" ? { ...s, present: false, legacy: false, mtime: null } : s)) });
+  await refreshSecrets();
+  mount(language, "settings");
+  await settle(found[language].settings);
+  collectLabels(document.body, found[language].settings);
+  cleanup();
+  vi.mocked(fetchSecrets).mockResolvedValue(demoSecrets);
+  await refreshSecrets();
 }
 
 /** 录制与数据接入页的其余状态（原生 IngestView）：引擎没在录且没授权（未在录制 + 原因句 + 去授权）、TCC 被收回（横幅 +

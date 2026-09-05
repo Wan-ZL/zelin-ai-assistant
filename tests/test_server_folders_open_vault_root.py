@@ -3,7 +3,7 @@ vaultRoot = effective ``obsidian_raw`` 的 ``deletingLastPathComponent``）：
 
 - POST /api/folders/open {key:"obsidian_raw"} 开的是 raw 目录的**父目录**（web 框里显示的就是它），回执 path 也是根；
 - 叶子不叫 ``2 - raw``（config.yaml 手工自定义）仍取父目录——原生 loadVault 同式，不看叶子；
-- 根不存在 → 404（raw 更不会在）；raw 不在但根在 → 仍开根（原生 Open 按钮不看 vaultMissing）；
+- 根不存在 → 开最近的既有祖先 + add-only `opened` / `missing`（§68.4 追记；此前 404）；raw 不在但根在 → 仍开根（原生 Open 按钮不看 vaultMissing）；
 - 相对的一段名没有目录部分 → 没有根可开，原样按存值判；
 - create 不变：仍 ``mkdir -p`` raw 目录本身（含根）；``default_target_repo`` 的打开仍是存值本身。
 """
@@ -18,7 +18,6 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import post_json, start_server, write_text
 
 from server import folders
-from server.errors import NotFoundError
 
 
 class OpenVaultRootTestCase(unittest.TestCase):
@@ -70,11 +69,15 @@ class OpenVaultRootTestCase(unittest.TestCase):
         opened, _out = self._open("obsidian_raw")
         self.assertEqual(opened, [root])
 
-    def test_missing_root_is_404(self):
-        self._overrides(obsidian_raw=str(Path(self.tmp.name) / "nowhere" / "2 - raw"))
-        with self.assertRaises(NotFoundError) as ctx:
-            self._open("obsidian_raw")
-        self.assertEqual(ctx.exception.details["path"], str(Path(self.tmp.name) / "nowhere"))
+    def test_missing_root_opens_the_nearest_existing_ancestor(self):
+        # 根不在：不再 404——开最近的既有祖先并如实回 missing（§68.4 追记，原生 DepsView reveal 的
+        # deletingLastPathComponent 回落；细则 tests/test_server_folders_open_missing_ancestor.py）；path 仍是根
+        root = Path(self.tmp.name) / "nowhere"
+        self._overrides(obsidian_raw=str(root / "2 - raw"))
+        opened, out = self._open("obsidian_raw")
+        self.assertEqual(opened, [Path(self.tmp.name)])
+        self.assertEqual(out, {"ok": True, "key": "obsidian_raw", "path": str(root),
+                               "opened": self.tmp.name, "missing": True})
 
     def test_bare_relative_name_has_no_root_to_open(self):
         self.assertEqual(folders.open_target("obsidian_raw", Path("2 - raw")), Path("2 - raw"))

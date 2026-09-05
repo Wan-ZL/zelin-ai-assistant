@@ -629,6 +629,8 @@
 .dep-row-action { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .dep-row-detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(10.5px * var(--text-scale)); overflow-wrap: anywhere; }
 .dep-row-detail code { font: inherit; }
+/* §25 cron 行 ok == false 时的 CronFDA.grantSteps（原生 10 pt secondary，可折行） */
+.dep-row-note { font-size: calc(10px * var(--text-scale)); overflow-wrap: anywhere; }
 .diag-verdict { display: inline-flex; gap: 2px; align-items: baseline; font-weight: var(--w-medium); }
 .diag-verdict.is-ok { color: var(--success); }
 .diag-verdict.is-warning { color: var(--danger); }

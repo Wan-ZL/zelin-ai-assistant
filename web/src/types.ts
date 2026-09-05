@@ -676,6 +676,10 @@ export interface FolderReceipt {
   path: string;
   created?: boolean;
   git_init?: "done" | "skipped" | "failed" | null | string;
+  /** open 的 add-only（§68.4 追记）：目录不在时实际打开的最近既有祖先目录；在的时候不带 */
+  opened?: string;
+  /** open 的 add-only：true = `path` 不是目录、打开的是 `opened`（原生 reveal 的 deletingLastPathComponent 回落） */
+  missing?: boolean;
   [key: string]: unknown;
 }
 
@@ -726,6 +730,8 @@ export interface SecretStatus {
   present: boolean;
   verifiable: boolean;
   mtime: number | null;
+  /** add-only（§68.3 2026-09-03 追记）：secrets 文件缺席但 §19 第二 / 三层旧路径的文件非空 = 原生「使用旧路径」态；老 server 缺席 */
+  legacy?: boolean;
   /** PUT 回执 add-only（§68.3 2026-09-05 追记）：豆包语音凭证识别为旧版 App ID + Access Token 对；GET 行不带 */
   legacy_pair?: boolean;
   [key: string]: unknown;
