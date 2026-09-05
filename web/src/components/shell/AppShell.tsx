@@ -5,7 +5,8 @@
 //      board.trash / archived / recaps 同一份快照；原生 MainWindow.detail 的其余 section 从不依赖 store.dashboard，§54.1 追记）：
 //      首载 loading / 从未加载成功且离线（诚实空态+恢复路径——「拉不到」绝不渲染成「为空」）/ dashboard.json 不存在
 //      （server 在、文件不在：看板页 = 原生 PipelineEmptyStateView + 列顶 composer；三个列表页 = 空列表，原生
-//      `dashboard?.trash ?? []`）/ 正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
+//      `dashboard?.trash ?? []`）/ dashboard.json 解不出来且从未有过好快照（原生 loadError 那一行 + 重试，§49 追记
+//      `store-resilience-drawer`）/ 正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
 //   2. <html lang> 与 document.title 随语言与当前页同步（原生 installTitleSink：「Zelin's AI Assistant — <页>」，pageTitles.ts）；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
 //   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话；看板页的「没写出数据」空态
@@ -131,7 +132,7 @@ export function BoardMissingState() {
 
 export function AppShell({ searchSlot, children }: AppShellProps) {
   const { language, text } = useI18n();
-  const { board, boardError, boardMissing, boardLoading } = useAppState();
+  const { board, boardError, boardMissing, boardDecodeError, boardLoading } = useAppState();
   const page = readPage(window.location.search);
   const isBoard = page === "board";
   const readsBoard = BOARD_FED_PAGES.has(page);
@@ -160,6 +161,26 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
     // server 在、dashboard.json 不在（404）：不是离线——看板页 = 原生 PipelineEmptyStateView + composer；
     // 回收站 / 永久性完成 / 会议纪要 = 空列表（原生 TrashPageView 读 `dashboard?.trash ?? []`，健康横幅照常说话）
     content = isBoard ? <BoardMissingState /> : children;
+  } else if (boardDecodeError) {
+    // 从未加载成功 + server 答了但 dashboard.json 解不出来（§49 追记 `store-resilience-drawer`）：原生 loadError 那一行
+    // + 重试；不是离线（server 在跑），不借「连不上」说话——有旧快照时同一句话由 ErrorBanner 的 warning 变体说
+    content = (
+      <div className="shell-center">
+        <EmptyState
+          icon={<WarningIcon />}
+          title={boardDecodeError}
+          hint={text(
+            "后台服务下一次写出看板后本页自动恢复；也可以现在重试。",
+            "This page recovers when the background service next writes the board; you can also retry now.",
+          )}
+          action={
+            <button type="button" className="shell-button" onClick={() => void refreshBoard()}>
+              {text("重试", "Retry")}
+            </button>
+          }
+        />
+      </div>
+    );
   } else {
     // 从未加载成功 + 读失败（网络 / 5xx）：诚实说明原因与恢复路径——「拉不到」不许渲染成「为空」
     content = (
