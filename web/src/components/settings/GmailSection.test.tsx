@@ -3,8 +3,10 @@
 //   2) 选 A 而命令生效着 → PUT {gmail_fetch_command: ""} + 「已切回 A：…」；命令来自 config.yaml 清不掉 → 如实说；PUT 被拒 → 「保存设置失败: 」+ 原句、单选留在 B；
 //   3) 选 B 而命令空着 → 「填好下面的抓取命令并点「保存」即生效。」+ 命令字段出现；本会话切回过 A 的命令再选 B 直接写回；
 //   4) Gmail 地址不合 email 形状 → server-owned 那句就地出现、「保存」不放行、不发 PUT；改对即放行；
+//      config.yaml 里一个坏地址（没改过、不进 PUT）只就地亮那句，不锁住同区的开关；
 //   5) 第 ① 步的两步验证前提与 Workspace 提示回来了；
-//   6) 开关翻开 → PUT 后整本目录再拉一次（§48.1 合取写的另一半住 flags 区）。
+//   6) 开关翻开 → PUT 后整本目录再拉一次（§48.1 合取写的另一半住 flags 区）；
+//   7) 选 A 的旁路 PUT 换了本区快照，没保存的地址草稿不被吞（原生各 TextField 互不相干）。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchRadarAgents, fetchSecrets, fetchSettingsCatalog, fetchSetup, putSettingsSection } from "../../api";
@@ -33,7 +35,7 @@ const EMAIL_CHECK = {
   },
 };
 
-function gmail(command = "", commandSource = "override", address = ""): SettingsSection {
+function gmail(command = "", commandSource = "override", address = "", addressSource = "override"): SettingsSection {
   return {
     id: "gmail",
     title: { zh: "Gmail 接入", en: "Gmail" },
@@ -42,7 +44,7 @@ function gmail(command = "", commandSource = "override", address = ""): Settings
       { key: "gmail_enabled", kind: "bool", label: { zh: "启用 Gmail 雷达", en: "Enable the Gmail radar" }, help: { zh: "", en: "" },
         default: true, choices: null, effective: true, source: "default" },
       { key: "gmail_address", kind: "string", label: { zh: "Gmail 地址", en: "Gmail address" }, help: { zh: "", en: "" },
-        default: "", choices: null, effective: address, source: address ? "override" : "default",
+        default: "", choices: null, effective: address, source: address ? addressSource : "default",
         placeholder: { zh: "例：you@gmail.com", en: "e.g. you@gmail.com" }, check: EMAIL_CHECK },
       { key: "gmail_fetch_command", kind: "string", label: { zh: "自定义抓取命令（B 路径）", en: "Custom fetch command (path B)" }, help: { zh: "", en: "" },
         default: "", choices: null, effective: command, source: command ? commandSource : "default",
@@ -158,6 +160,24 @@ describe("GmailSection fetch path A/B (§14bis, native setUseCommand)", () => {
     expect(screen.getByRole("alert").textContent).toMatch(/comes from config\.yaml/);
     expect(radio("command").checked).toBe(true);
   });
+
+  it("keeps an unsaved address draft across the A click (the clearing PUT only realigns the command)", async () => {
+    vi.mocked(fetchSettingsCatalog).mockResolvedValue(catalog(gmail("/x/fetch.sh")));
+    vi.mocked(putSettingsSection).mockResolvedValue(gmail(""));
+    renderIn("en");
+    const input = await screen.findByPlaceholderText("e.g. you@gmail.com") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "new@gmail.com" } });
+    fireEvent.click(radio("app_password"));
+    await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
+    await screen.findByRole("status");
+    expect(radio("app_password").checked).toBe(true);
+    expect((screen.getByPlaceholderText("e.g. you@gmail.com") as HTMLInputElement).value).toBe("new@gmail.com");
+    expect(screen.getByText("1 unsaved")).toBeTruthy();
+    // 草稿还在、还能保存：PUT 只带地址（命令已在旁路里落盘）
+    fireEvent.click(sectionSave("Save"));
+    await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(putSettingsSection).mock.calls[1]).toEqual(["gmail", { gmail_address: "new@gmail.com" }]);
+  });
 });
 
 describe("GmailSection address validation + step ① copy (native validateAddress / stepCard)", () => {
@@ -181,6 +201,21 @@ describe("GmailSection address validation + step ① copy (native validateAddres
     fireEvent.click(save);
     await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
     expect(vi.mocked(putSettingsSection).mock.calls[0]).toEqual(["gmail", { gmail_address: "you@gmail.com" }]);
+  });
+
+  it("does not let a malformed config.yaml address (not dirty, not sent) lock the switch", async () => {
+    vi.mocked(fetchSettingsCatalog).mockResolvedValue(catalog(gmail("", "override", "me@gmail", "config")));
+    vi.mocked(putSettingsSection).mockResolvedValue({ ...gmail("", "override", "me@gmail", "config"), fields: gmail("", "override", "me@gmail", "config").fields.map((f) => (f.key === "gmail_enabled" ? { ...f, effective: false, source: "override" } : f)) });
+    renderIn("en");
+    const toggle = await screen.findByRole("switch", { name: "Enable the Gmail radar" });
+    expect(screen.getByText(EMAIL_CHECK.message.en)).toBeTruthy();   // 那句仍就地亮着
+    fireEvent.click(toggle);
+    const save = sectionSave("Save");
+    expect(screen.getByText("1 unsaved")).toBeTruthy();
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(putSettingsSection).mock.calls[0]).toEqual(["gmail", { gmail_enabled: false }]);
   });
 
   it("uses the English sentence under the English UI", async () => {

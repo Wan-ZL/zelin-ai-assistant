@@ -10,8 +10,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from server import settings_catalog
 from tests.test_server_common import auth_headers, get_json, http_request, start_server, write_text
 
 
@@ -80,11 +82,39 @@ class RadarSwitchConjunctionTestCase(unittest.TestCase):
         _s, _obj = put_json(self.port, "/api/settings/flags", {"features.gmail_radar": True})
         self.assertNotIn("gmail_enabled", self._overrides())
 
-    def test_conjunction_is_one_write_visible_in_a_single_snapshot(self):
-        # 同一笔落盘：开关与 flag 一起出现（不是两次 PUT）——文件只写一次，中间态不存在
+    def test_conjunction_lands_with_the_rest_of_the_put_in_the_final_snapshot(self):
+        # 终态：开关、同 PUT 里的其它键、flag 一起出现在 overrides（一次 PUT，不用先翻开关再去 flags 区）
         write_text(self.home / "config.yaml", "features:\n  slack_radar: false\nsources:\n  slack:\n    enabled: false\n")
         _s, _obj = put_json(self.port, "/api/settings/slack", {"slack_enabled": True, "owner_slack_user_id": "U1"})
         self.assertEqual(self._overrides(), {"slack_enabled": True, "owner_slack_user_id": "U1", "features": {"slack_radar": True}})
+
+
+class RadarSwitchConjunctionWriteCountTestCase(unittest.TestCase):
+    """「一笔落盘」在进程内数 write_overrides 的调用（HTTP 层只看得见终态；两次 write 中间态在磁盘上是看得见的）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-radar-switch-inproc-")
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "home"
+        (self.home / "state").mkdir(parents=True)
+
+    def _overrides(self):
+        return json.loads((self.home / "state" / "settings_overrides.json").read_text(encoding="utf-8"))
+
+    def test_switch_on_plus_flag_is_exactly_one_write(self):
+        write_text(self.home / "config.yaml", "features:\n  slack_radar: false\nsources:\n  slack:\n    enabled: false\n")
+        with mock.patch.object(settings_catalog, "write_overrides", wraps=settings_catalog.write_overrides) as writes:
+            settings_catalog.update_section(self.home, "slack", {"slack_enabled": True, "owner_slack_user_id": "U1"})
+        self.assertEqual(writes.call_count, 1)
+        self.assertEqual(writes.call_args.args[1], {"slack_enabled": True, "owner_slack_user_id": "U1", "features": {"slack_radar": True}})
+        self.assertEqual(self._overrides(), writes.call_args.args[1])
+
+    def test_switch_off_is_also_exactly_one_write(self):
+        write_text(self.home / "config.yaml", "features:\n  gmail_radar: false\n")
+        with mock.patch.object(settings_catalog, "write_overrides", wraps=settings_catalog.write_overrides) as writes:
+            settings_catalog.update_section(self.home, "gmail", {"gmail_enabled": False})
+        self.assertEqual(writes.call_count, 1)
+        self.assertEqual(self._overrides(), {"gmail_enabled": False})
 
 
 if __name__ == "__main__":
