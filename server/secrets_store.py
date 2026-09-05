@@ -9,7 +9,13 @@
 - ``PUT /api/secrets/{name}`` body ``{"value": "<token>"}`` → 写
   ``<home>/config/secrets/<name>``（dir 0700 / file 0600；多行粘贴只留首个非空行，
   与 act/lib/secrets.write_secret 同一契约）；空值 = 删文件（回落 config.yaml 显式
-  路径 / 旧默认路径的解析顺序）。
+  路径 / 旧默认路径的解析顺序）。**两条按名字的例外（§68.3 2026-09-05 追记）**：
+  ``volcano-speech-key.txt`` 不截首行——粘贴经 ``VolcanoSpeechCredential``（§36
+  v0.37.1；原生 CaptionCore.swift 的 Python 镜像 ``volcano_speech_credential``）
+  归一：旧版 App ID + Access Token 对 → 两行 ``appid:<id>\\ntoken:<tok>``（壳冻结的
+  decode() 唯一认得的旧版形状）、裸新版 key 原样、硬折行的 key 拼回；回执 add-only
+  ``legacy_pair``。``slack-user-token.txt`` 拒 ``xoxb-`` Bot token（能过 auth.test
+  却读不了 DM）→ 400 INVALID_FIELD + ``details.reason {zh,en}`` 原生原句，永不落盘。
 - ``POST /api/secrets/{name}/verify`` → 用文件里的值做一次最小活探针
   （Anthropic ``GET /v1/models``、Slack ``auth.test``——成功顺手把 ``user_id``
   写进 override ``owner_slack_user_id``（§15.3 v0.14 身份零手填）、Gmail IMAP
@@ -50,6 +56,15 @@ SECRETS: tuple = (
      "label": {"zh": "Ark API key（字幕翻译）", "en": "Ark API key (caption translation)"}},
 )
 _BY_NAME = {s["name"]: s for s in SECRETS}
+VOLCANO_SPEECH = "volcano-speech-key.txt"
+SLACK_TOKEN = "slack-user-token.txt"
+
+# 原生 SettingsSlack.saveToken 的门口拒绝句（xoxb- 永不落盘）——web SecretRow 先按同一句拒，
+# server 这层是给绕过 UI 的写者（curl / 别的客户端）留的同一道门。
+XOXB_REFUSAL: dict = {
+    "zh": "这是 Bot token（xoxb-）——雷达读你的 DM 需要 User OAuth Token（xoxp- 开头，在 OAuth & Permissions 页的 User 区）。",
+    "en": "That's a Bot token (xoxb-) — reading your DMs needs the User OAuth Token (starts with xoxp-, in the User section of OAuth & Permissions).",
+}
 
 # §19 后两层的**位置**（不是内容）：(config.yaml 显式路径的键路径 | None, 旧默认路径)。与
 # act/lib 各读者一致（act/llm.py / act/ask.py / act/radar_gmail.DEFAULT_APP_PASSWORD_PATH /
@@ -74,6 +89,83 @@ Prober = Callable[[str, str, dict], "tuple[bool, str, dict]"]
 def _first_token_line(text: str) -> str:
     lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
     return lines[0] if lines else ""
+
+
+# --------------------------------------------------------------------------- #
+# 豆包语音凭证的粘贴归一（§36 v0.37.1）——mac/Sources/CaptionCore.swift
+# ``VolcanoSpeechCredential.parse`` / ``fileRepresentation`` 的 Python 镜像。Swift enum 仍是真源
+# （壳的 decode() 是逐字节冻结的副本，只认两行 ``appid:`` / ``token:``）；server 是 web 侧唯一的写者，
+# 不在这里归一，旧版凭证对就永远到不了壳认得的形状。判例用同一组 fixture 钉两侧不漂。
+# --------------------------------------------------------------------------- #
+# 一行 "AppID<sep>Token"：旧版 App ID 是 6–12 位数字，Access Token 是长的不透明串——新版 API key
+# 从来没有「数字 + 分隔符」这个前缀形状。
+_LEGACY_ONE_LINE = re.compile(r"^(\d{6,12})[\s:：,;，；]+(\S{20,})$")
+# 带标签的一行（两行粘贴被单行输入框拍扁：换行变空格或直接丢）——控制台自己的标签活过了拍扁，
+# 标出丢掉的换行原来在哪；token 标签在这里是必需的（无标签的拍扁对已被上一条认了）。
+_LEGACY_LABELED_ONE_LINE = re.compile(
+    r"^(?:app[\s_-]*(?:id|key)\s*[:：])?\s*(\d{6,12})\s*[\s:：,;，；]*(?:access[\s_-]*token|token|secret)\s*[:：]\s*(\S{20,})$",
+    re.IGNORECASE)
+_KNOWN_LABELS = ("appid", "appkey", "accesstoken", "token", "secret")
+_COLON = re.compile(r"[:：]")
+_LABEL_NOISE = re.compile(r"[\s_-]")
+
+
+def _is_app_id(s: str) -> bool:
+    """6–12 位 ASCII 数字——旧版控制台的 App ID 形状。"""
+    return 6 <= len(s) <= 12 and s.isascii() and s.isdigit()
+
+
+def _looks_like_token(s: str) -> bool:
+    """一个长的不透明 token（控制台的 Access Token 是 32 位）。"""
+    return len(s) >= 20 and re.search(r"\s", s) is None
+
+
+def _strip_label(line: str) -> str:
+    """"App ID: 321…" / "ACCESS_TOKEN：2tz…" / "appid:321…" → 裸值。冒号前的前缀归一（小写；去空格、
+    下划线、连字符）后必须是**已知**的凭证标签——别的前缀原样保留，因为裸 key 可能合法地含冒号。"""
+    colon = _COLON.search(line)
+    if colon is None:
+        return line
+    label = _LABEL_NOISE.sub("", line[:colon.start()].lower())
+    if label not in _KNOWN_LABELS:
+        return line
+    return line[colon.end():].strip()
+
+
+def _legacy_pair_from_lines(lines: list) -> "Optional[tuple[str, str]]":
+    """两个非空行：首行剥标签是 App ID、次行剥标签像 token → (id, token)；否则 None。"""
+    app_id, token = _strip_label(lines[0]), _strip_label(lines[1])
+    if _is_app_id(app_id) and _looks_like_token(token):
+        return app_id, token
+    return None
+
+
+def _legacy_pair_from_line(line: str) -> "Optional[tuple[str, str]]":
+    """一行 "AppID<sep>Token"（不带 / 带标签）→ (id, token)；否则 None。"""
+    for regex in (_LEGACY_ONE_LINE, _LEGACY_LABELED_ONE_LINE):
+        m = regex.match(line)
+        if m:
+            return m.group(1), m.group(2)
+    return None
+
+
+def volcano_speech_credential(text: str) -> Optional[dict]:
+    """粘贴自动识别 → ``{"legacy": bool, "file": <存盘内容>}``；空 = None。
+
+    旧版形状：两个非空行且两半真像那一对（App ID 在前；控制台的 "App ID:" / "Access Token:" 标签——
+    以及我们自己的存盘标签——先剥掉），或一行 "AppID<sep>Token"（带标签或不带）。其余一律是新版
+    API key，原样放行——包括被硬折行的 key：拼回而不是撕成一对假凭证。"""
+    trimmed = str(text).strip()
+    if not trimmed:
+        return None
+    lines = [ln.strip() for ln in trimmed.splitlines() if ln.strip()]
+    if len(lines) >= 2:
+        pair, api_key = _legacy_pair_from_lines(lines), "".join(lines)
+    else:
+        pair, api_key = _legacy_pair_from_line(trimmed), trimmed
+    if pair is None:
+        return {"legacy": False, "file": api_key}
+    return {"legacy": True, "file": "appid:%s\ntoken:%s" % pair}
 
 
 def _lookup(name: str) -> dict:
@@ -132,7 +224,9 @@ def snapshot(home: Path) -> dict:
 
 
 def write_value(home: Path, name: str, payload: dict) -> dict:
-    """``PUT /api/secrets/{name}``：写 0600 文件（空值 = 删）；返回该条状态。"""
+    """``PUT /api/secrets/{name}``：写 0600 文件（空值 = 删）；返回该条状态 + add-only
+    ``legacy_pair``（只有豆包语音凭证识别为旧版 App ID + Access Token 对时 True）。
+    Slack 行拒 ``xoxb-``（原生 saveToken 门口那句，永不落盘）。"""
     entry = _lookup(name)
     unknown = set(payload) - {"value"}
     if unknown:
@@ -142,13 +236,29 @@ def write_value(home: Path, name: str, payload: dict) -> dict:
         raise InvalidFieldError("value must be a string", {"field": "value"})
     if len(value) > VALUE_MAX:
         raise InvalidFieldError("value is too long", {"field": "value", "max": VALUE_MAX})
-    token = _first_token_line(value)
+    token, legacy_pair = _stored_form(entry["name"], value)
     path = paths.secrets_dir(home) / entry["name"]
     if not token:
         _remove(path)
     else:
         _write_file(path, token)
-    return _status(home, entry)
+    receipt = _status(home, entry)
+    receipt["legacy_pair"] = legacy_pair
+    return receipt
+
+
+def _stored_form(name: str, value: str) -> "tuple[str, bool]":
+    """粘贴 → (落盘内容, 识别为旧版凭证对?)。默认只留首个非空行（§19 一行 token）；
+    豆包语音凭证走 ``volcano_speech_credential`` 归一（§36 v0.37.1，可能两行）；Slack 的 Bot token 拒。"""
+    if name == VOLCANO_SPEECH:
+        cred = volcano_speech_credential(value)
+        return ("", False) if cred is None else (cred["file"], cred["legacy"])
+    token = _first_token_line(value)
+    if name == SLACK_TOKEN and token.startswith("xoxb-"):
+        raise InvalidFieldError(
+            "that's a Bot token (xoxb-) - reading your DMs needs the User OAuth Token (xoxp-)",
+            {"field": "value", "reason": dict(XOXB_REFUSAL)})
+    return token, False
 
 
 def _remove(path: Path) -> None:

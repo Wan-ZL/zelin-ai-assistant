@@ -93,6 +93,10 @@
         "owner": "retired",
         "reason": "AIFix.launch(context:) 的 prompt 上下文字串，从不渲染；web 的「让 AI 修」上下文由 server 从 doctor 报告推导（§68.4 / §54.4）"
       },
+      "control:settings.credentials:label:saved-managed-in-app": {
+        "owner": "retired",
+        "reason": "原生 Kind.plain 分支无任何行实例化、从不渲染；web 五行皆可验证 / 可检测 → 恒「已保存（未验证）」（§68.3 2026-09-05 追记）"
+      },
       "control:settings.skills:button:hide-form": {
         "owner": "retired",
         "reason": "同 new-skill：新建表单不存在（§67.5）"
@@ -9105,9 +9109,10 @@
     },
     {
       "en": "Saved (managed in-app)",
-      "gated": true,
+      "gated": false,
       "id": "control:settings.credentials:label:saved-managed-in-app",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "原生 Kind.plain 分支无任何行实例化、从不渲染；web 五行皆可验证 / 可检测 → 恒「已保存（未验证）」（§68.3 2026-09-05 追记）",
       "role": "label",
       "screen": "settings.credentials",
       "source": "Settings.swift:1987",

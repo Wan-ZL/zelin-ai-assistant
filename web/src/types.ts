@@ -724,6 +724,8 @@ export interface SecretStatus {
   present: boolean;
   verifiable: boolean;
   mtime: number | null;
+  /** PUT 回执 add-only（§68.3 2026-09-05 追记）：豆包语音凭证识别为旧版 App ID + Access Token 对；GET 行不带 */
+  legacy_pair?: boolean;
   [key: string]: unknown;
 }
 
