@@ -39,6 +39,7 @@ import {
   putSettingsSection,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
+import { forceMergeLanded } from "./components/board/pendingSettle";
 import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
 import { resolveLanguage, type Language } from "./i18n";
 import {
@@ -124,9 +125,13 @@ export interface AppState {
   // ----- §21 多选（原生 Kanban「选择」态）：选中主键集合 + 是否在多选态 -----
   selectionMode: boolean;
   selectedIds: ReadonlySet<string>;
-  /** §21bis 强制合并已提交、等下一版 dashboard 落地的卡（原生 mergeForcingBadge「合并中…」）；
-   *  会话内瞬态：看板 generated_at 一变即清（回流就是回执，不做乐观换列） */
+  /** §21bis 强制合并已提交、等真信号的卡（原生 mergeForcingBadge「合并中…」）；会话内瞬态：一批的**每张副卡都
+   *  离开所有列**（成为终态 merged）才清（settleForceMerging，原生 PendingForceMerge 判据）——不是 generated_at
+   *  一变就清（actd 每个 pass 都重写看板，§39.3 / §21bis）；180 s 没等到 → 章退场 + forceMergeTimedOutAt 落时间戳 */
   forceMergingIds: ReadonlySet<string>;
+  /** 2026-09-05 add-only：最近一批强制合并 180 s 没落地的时刻（epoch ms）；提案列顶据此显示原生那句诚实超时条，
+   *  关掉 / 120 s 后归 null（原生 notice-merge-force） */
+  forceMergeTimedOutAt: number | null;
 }
 
 /** §63 本地标记（server marks.json 的镜像片段） */
@@ -192,6 +197,7 @@ const initialState: AppState = {
   selectionMode: false,
   selectedIds: new Set<string>(),
   forceMergingIds: new Set<string>(),
+  forceMergeTimedOutAt: null,
 };
 
 let state: AppState = initialState;
@@ -232,9 +238,8 @@ export function refreshBoard(): Promise<void> {
   boardRequest = (async () => {
     try {
       const board = await fetchBoard();
-      // 新一版快照落地 = 强制合并的回执到了（或过期了）：「合并中…」章随之退场（原生 Store 同一时机）
-      const forceMergingIds = board.generated_at !== state.board?.generated_at ? new Set<string>() : state.forceMergingIds;
-      setState({ board, boardError: null, boardMissing: false, boardLoading: false, forceMergingIds });
+      // 「合并中…」章不看 generated_at：每一版快照都跑一遍 §21bis 谓词（副卡全部离开所有列才算落地）
+      setState({ board, boardError: null, boardMissing: false, boardLoading: false, forceMergingIds: settledForceMerging(board) });
     } catch (error) {
       if (isBoardMissingError(error)) {
         // 原生 Store.refresh 的缺文件分支（dashboard = nil / missing = true / loadError = nil）：快照一并清——
@@ -572,9 +577,67 @@ export function clearSelection() {
   setState({ selectedIds: new Set<string>() });
 }
 
-/** §21bis 强制合并已提交：这些卡挂「合并中…」章直到下一版看板落地（refreshBoard 清） */
-export function markForceMerging(ids: Iterable<string>) {
-  setState({ forceMergingIds: new Set([...state.forceMergingIds, ...ids]) });
+// ----- §21bis 强制合并的在途批次（原生 Store.mergeForcingLocal: [PendingForceMerge]） -------------------- #
+
+/** 原生 180 s sweep 同款：一批副卡 180 s 还没离开所在列 = 合并没落地（actd 没在跑 / 请求被判无效丢弃） */
+export const FORCE_MERGE_TIMEOUT_MS = 180_000;
+
+interface ForceMergeBatch {
+  primary: string;
+  secondaries: string[];
+  sentGeneratedAt: string | null;
+  timer: number;
+}
+
+let forceMergeBatches: ForceMergeBatch[] = []; // 章的真源；forceMergingIds 是它派生的平铺集合
+
+function forceMergingIdsOf(batches: readonly ForceMergeBatch[]): ReadonlySet<string> {
+  return new Set(batches.flatMap((b) => [b.primary, ...b.secondaries]));
+}
+
+/** §21bis 强制合并已提交：涉及的卡挂「合并中…」章，直到每张副卡都离开所有列（settleForceMerging）或 180 s 到期。
+ *  primary 缺席（旧调用方）→ 第一张当主卡。 */
+export function markForceMerging(ids: Iterable<string>, primary: string | null = null) {
+  const list = [...new Set(ids)];
+  if (list.length === 0) return;
+  const head = primary !== null && list.includes(primary) ? primary : list[0];
+  const batch: ForceMergeBatch = {
+    primary: head,
+    secondaries: list.filter((id) => id !== head),
+    sentGeneratedAt: state.board?.generated_at ?? null,
+    timer: 0,
+  };
+  batch.timer = window.setTimeout(() => expireForceMerge(batch), FORCE_MERGE_TIMEOUT_MS);
+  forceMergeBatches = [...forceMergeBatches, batch];
+  setState({ forceMergingIds: forceMergingIdsOf(forceMergeBatches) });
+}
+
+/** 对一版快照跑 §21bis 谓词：落地的批次出列（清它的定时器），返回还在途的平铺 id 集合（不 setState——refreshBoard
+ *  与 board 同一笔落地；对外的 settleForceMerging 才 setState） */
+function settledForceMerging(board: Board): ReadonlySet<string> {
+  const remaining = forceMergeBatches.filter((b) => !forceMergeLanded(b.secondaries, board, b.sentGeneratedAt));
+  if (remaining.length === forceMergeBatches.length) return state.forceMergingIds;
+  for (const b of forceMergeBatches) if (!remaining.includes(b)) window.clearTimeout(b.timer);
+  forceMergeBatches = remaining;
+  return forceMergingIdsOf(remaining);
+}
+
+/** add-only：按一版快照结算在途的强制合并批次（refreshBoard 内联同一谓词；导出给判例与别的回流路径） */
+export function settleForceMerging(board: Board) {
+  const forceMergingIds = settledForceMerging(board);
+  if (forceMergingIds !== state.forceMergingIds) setState({ forceMergingIds });
+}
+
+/** 180 s 到期：这一批的章退场，提案列顶给原生那句诚实超时条（forceMergeTimedOutAt） */
+function expireForceMerge(batch: ForceMergeBatch) {
+  if (!forceMergeBatches.includes(batch)) return;
+  forceMergeBatches = forceMergeBatches.filter((b) => b !== batch);
+  setState({ forceMergingIds: forceMergingIdsOf(forceMergeBatches), forceMergeTimedOutAt: Date.now() });
+}
+
+/** 关掉强制合并超时条（用户点 × / 120 s 自动） */
+export function dismissForceMergeTimeout() {
+  if (state.forceMergeTimedOutAt !== null) setState({ forceMergeTimedOutAt: null });
 }
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */
@@ -590,4 +653,6 @@ export function resetStoreForTests() {
   boardRequest = null;
   pageRequests.clear();
   diagnosticsLang = null;
+  for (const b of forceMergeBatches) window.clearTimeout(b.timer);
+  forceMergeBatches = [];
 }

@@ -774,6 +774,13 @@ a.chip:hover { text-decoration: underline; }
   font: var(--type-composer-hint);
 }
 
+/* §21bis 强制合并超时条（原生 NoticeRow kind .raiseTimeout，橙色）：同一行形，独立成段（<p>）时补外边距 */
+.fold-receipt.is-timeout {
+  margin: 0 10px 6px;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .fold-receipt-text { flex: 1 1 auto; }
 
 .fold-receipt-dismiss {

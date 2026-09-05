@@ -19,6 +19,7 @@ import { BacklogStrip } from "../chrome/BacklogStrip";
 import { DebtCardItem } from "./DebtCardItem";
 import { DoneCard } from "./DoneCard";
 import { FoldReceiptNotices } from "./FoldReceiptNotices";
+import { ForceMergeTimeoutNotice } from "./ForceMergeTimeoutNotice";
 import { Lane } from "./Lane";
 import { LaneComposer } from "./LaneComposer";
 import { MergeSuggestionCard } from "./MergeSuggestionCard";
@@ -85,6 +86,8 @@ export function BoardLanes() {
             <ProposalsTriageButton backlogCount={board.needs_approval.length} />
             {/* §44.6 并入回执：原生 LocalNotice lane .approval——提案列 composer 之下、卡之上 */}
             <FoldReceiptNotices />
+            {/* §21bis 强制合并 180 s 没落地的诚实超时条（原生 notice-merge-force，同一 lane） */}
+            <ForceMergeTimeoutNotice />
           </>
         }
         isEmpty={proposals.length === 0 && suggestions.length === 0}

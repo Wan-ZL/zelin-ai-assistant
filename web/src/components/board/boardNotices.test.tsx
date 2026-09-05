@@ -1,6 +1,6 @@
 // §44.6 并入回执 + 合并态角标（原生 Store.swift LocalNotice / Kanban.swift cardOverlay 的 web 版，§54.4 追记）：
 // 回执三节点、可关（sessionStorage `seenFoldReceipts`）、坏形跳过；「合并分析中…」跟 backend 的 analyzing 建议，
-// 「合并中…」跟强制合并的会话内瞬态且随新一版看板落地退场。
+// 「合并中…」跟强制合并的会话内瞬态（真批次随副卡全部离开所有列退场——§21bis，判例在 store.forceMergeSettle.test.tsx）。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard } from "../../api";
@@ -85,7 +85,8 @@ describe("MergeStateChip（契约七 / §21bis）", () => {
     expect(screen.getByText("Analyzing…")).toBeTruthy();
   });
 
-  it("强制合并已提交 → 合并中…（压过 analyzing）；下一版看板落地即清，同一版重拉不清", async () => {
+  // 真批次（≥2 张）的清除判据 = 副卡全部离开所有列，见 store.forceMergeSettle.test.tsx；这里是单卡退化批次（无副卡）→ 退回看新快照
+  it("强制合并已提交 → 合并中…（压过 analyzing）；单卡退化批次：下一版看板落地即清，同一版重拉不清", async () => {
     await load(board({ merge_suggestions: [{ id: "MS-1", ids: ["P-1"], status: "analyzing", requested_at: 1 }] as never }));
     wrap(<MergeStateChip cardId="P-1" />);
     act(() => markForceMerging(["P-1"]));
