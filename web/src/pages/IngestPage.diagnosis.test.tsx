@@ -11,6 +11,7 @@ import { applyShellState, resetShellBridgeForTests, type ShellState } from "../s
 import { resetStoreForTests } from "../store";
 import type { DiagnosticsSnapshot } from "../types";
 import { INGEST_LOG_NAME, IngestPage, logTailHref, probeRecording, showsEngineLog } from "./IngestPage";
+import settingsCss from "../components/settings/settings.css?raw";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -107,6 +108,33 @@ describe("EngineDiagnosisRow（原生 Pages.swift:881-909）", () => {
     await screen.findByText("Engine crashed");
     expect(document.querySelector("[data-failure=engine_crashed] pre")).toBeNull();
     expect(screen.getByRole("link", { name: "View engine log" }).getAttribute("href")).toContain("log=engine.log");
+  });
+
+  it("the tail is capped at 6 lines (native lineLimit(6)) and scrolls inside — the cap must beat .diag-log's own max-height declared later in settings.css", async () => {
+    // jsdom 的 getComputedStyle 按 specificity 走级联（不看布局）：把真 stylesheet 注进去，钉 cascade 而不是钉 class 名。
+    // 单类 .engine-log-tail 会被后文同权的 .diag-log { max-height: 420px } 按源顺序盖掉——这条判例就是那次事故的钉子。
+    const style = document.createElement("style");
+    style.textContent = settingsCss;
+    document.head.appendChild(style);
+    try {
+      installShell(withRecording({ diagnosis: "engine_crashed", log_tail: Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n") }));
+      renderEn(<IngestPage />);
+      await screen.findByText("Engine crashed");
+      const tail = document.querySelector("[data-failure=engine_crashed] pre.engine-log-tail") as HTMLElement;
+      tail.style.fontSize = "10px";   // 钉住 em 基准，让「6 行 × line-height 1.45 + 上下 padding 16px」可精确验算
+      const cs = getComputedStyle(tail);
+      expect(cs.maxHeight).toBe(`${6 * 1.45 * 10 + 16}px`);   // 103px——不是 .diag-log 的 420px
+      expect(cs.overflow).toBe("auto");   // 多出的行在框内滚
+      expect(cs.userSelect).toBe("text");   // 可选中复制
+      // 对照：引擎块之外的日志查看器（DepsSection 的 pre.diag-log.diag-log-tail）仍是 420px——封顶只作用于引擎尾
+      const control = document.createElement("pre");
+      control.className = "diag-log diag-log-tail";
+      document.body.appendChild(control);
+      expect(getComputedStyle(control).maxHeight).toBe("420px");
+      control.remove();
+    } finally {
+      style.remove();
+    }
   });
 
   it("engine_ffmpeg_missing keeps Install ffmpeg + Installed — restart engine and now also links the engine log + shows its tail", async () => {
