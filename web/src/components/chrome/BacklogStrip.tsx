@@ -1,15 +1,19 @@
 // 潜在任务（debt/Backlog）折叠侧条（G4，BUILD-CONTRACT §2.2：「潜在任务(折叠侧条)」）。
 // 收起 = 竖排窄条只显计数；展开 = 列表（吃全局过滤 chips + ⌘F 搜索）。
 // 行点击 = 开详情抽屉（selectCard + ?card= 深链同步）。「研究并提议」(raise)/「删除」(trash)
-// 动词按钮属 A6 卡组件——经 renderCard 注入；缺省渲染只读简行。展开态是本地瞬态不进 URL。
+// 动词按钮属 A6 卡组件——经 renderCard 注入；缺省渲染只读简行。
+// 展开态挂 store（store.backlogStripExpanded：换页不丢、不持久化、不进 URL——原生 Store.swift:127-128；§54.1 追记）；
+// 暂缓落地 / debt 源动作超时由 useSubmit 强制打开（回执不能落在收起的条里）。搜索 / 过滤命中潜在任务时**不看旗直接
+// 展开**（原生 Kanban.swift:326 `searching && !debt.isEmpty ? .constant(true)`：过时的过滤器 / 收起的条永不静默藏卡），
+// 此时列头开合是 no-op，清掉查询即回到旗的状态。
 // 行序吃全局排序偏好（store.sortOrder，cardSort.ts）；展开态列头带原生同款「?」说明（server 目录）。
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import "./chrome.css";
 import { sortCards } from "../../cardSort";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import { buildAppUrl } from "../../route";
-import { selectCard, useAppState } from "../../store";
-import { matchesCardFilters } from "../../taskFilters";
+import { selectCard, setBacklogStripExpanded, useAppState } from "../../store";
+import { cardFilterCount, matchesCardFilters } from "../../taskFilters";
 import type { DebtCard } from "../../types";
 import { LaneHelpButton, useLaneHelp } from "../board/Lane";
 
@@ -20,13 +24,16 @@ export interface BacklogStripProps {
 
 export function BacklogStrip({ renderCard }: BacklogStripProps) {
   const { text, language } = useI18n();
-  const { board, filters, sortOrder } = useAppState();
-  const [expanded, setExpanded] = useState(false);
+  const { board, filters, sortOrder, backlogStripExpanded } = useAppState();
   const help = useLaneHelp("debt");
 
   const all = board?.debt ?? [];
   const rows = sortCards(all.filter((card) => matchesCardFilters(card, filters)), sortOrder);
   const countLabel = rows.length === all.length ? `${all.length}` : `${rows.length}/${all.length}`;
+  // 原生 `searching && !debt.isEmpty ? .constant(true) : $store.backlogStripExpanded`：过滤 / 搜索命中潜在任务 → 强制展开，
+  // 旗不动；无命中或无过滤 → 旗说了算
+  const forced = cardFilterCount(filters) > 0 && rows.length > 0;
+  const expanded = forced || backlogStripExpanded;
 
   function openCard(id: string) {
     selectCard(id);
@@ -40,7 +47,10 @@ export function BacklogStrip({ renderCard }: BacklogStripProps) {
           type="button"
           className="backlog-strip-toggle"
           aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => {
+            // 强制展开期间列头是 `.constant(true)`——点了不收、也不改旗（清掉查询后回到用户原来的开合状态）
+            if (!forced) setBacklogStripExpanded(!backlogStripExpanded);
+          }}
         >
           <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
           <span>{text("潜在任务 · backlog", "Backlog")}</span>
