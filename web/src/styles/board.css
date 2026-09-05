@@ -222,6 +222,16 @@
   color: var(--text-secondary);
 }
 
+/* 纯文本里的 URL（board/Linkified，原生 Utils.swift linkified：.link + 下划线）：卡面摘要 / 侧栏摘要 · 引文 · 步骤共用；
+   继承所在文本的字级字重，只换色 + 下划线；长 URL 任意处可断 */
+.linkified {
+  color: var(--accent);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.linkified:hover { color: var(--accent-hover); }
+.linkified:focus-visible { outline: 2px solid var(--accent-soft); border-radius: 2px; }
+
 /* 原生 TaskRow / ReviewRow 的 7pt 色点：lane 语义色 */
 .card-dot {
   flex: 0 0 auto;
