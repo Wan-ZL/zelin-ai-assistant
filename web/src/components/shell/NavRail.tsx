@@ -9,9 +9,14 @@
 // 胜出，壳里可用）。每个原生条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
 // 原生页之外的 web 自有页（会议纪要 §63）owner 2026-09-04 要它紧跟任务台（D32）：列第二、拿 ⌘2，不带 data-rail-item——
 // 探针 rail:order 只读带锚的六项，相对顺序不变即绿；原先分隔线下再无条目，分隔线随之退役。
+// ⌘L = 原生 View ▸ 聚焦捕获框（AppDelegate.swift focusCaptureField）：光标进提案列 composer（board/focusComposer，
+// 与壳的 quick_capture 命令同一落点；浏览器里 ⌘L 归地址栏拦不到，壳内可用）。原生 ⌥⌘S 折叠 / 展开侧栏随 s4 DELETE
+// 退役、不移植（owner 决策）——折叠只走顶部的折叠钮。折叠 / 展开 150ms ease-in-out（shell.css，原生 MainWindow.swift
+// `.animation(.easeInOut(duration: 0.15))`），拖宽期间挂 `is-dragging` 关掉过渡，宽度才跟得上指针。
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, hasExplicitRoute, isDepsPage, navigate, readPage, type AppPage } from "../../route";
+import { focusComposer } from "../board/focusComposer";
 import {
   ArchiveBoxIcon, GearIcon, InfoCircleIcon, RecapIcon,
   RecordCircleIcon, SidebarLeadingIcon, TrashIcon, TrayFullIcon,
@@ -133,16 +138,28 @@ function shortcutPage(event: KeyboardEvent): AppPage | null {
   return index >= 0 && index < order.length && String(index + 1) === event.key ? order[index] : null;
 }
 
+/** ⌘L → 聚焦提案列 composer（原生菜单快捷键：只认 ⌘ 单修饰 + L；输入框里也接——从运行中 composer / 搜索框按 ⌘L
+ *  照样跳到提案框，已在提案框里 = 光标到末尾）。⌥⌘S 不在这里：原生的侧栏折叠快捷键已退役（见文件头）。 */
+export function isFocusComposerShortcut(event: KeyboardEvent): boolean {
+  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "l";
+}
+
 export function NavRail() {
   const { text } = useI18n();
   const [isCollapsed, setCollapsed] = useState<boolean>(readCollapsed);
   const [width, setWidth] = useState<number>(readSidebarWidth);
+  const [isDragging, setDragging] = useState(false);
   const dragStart = useRef<{ x: number; width: number } | null>(null);
   const page = readPage(window.location.search);
   const active = activeRailSlug(page);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (isFocusComposerShortcut(event)) {
+        event.preventDefault();
+        focusComposer();
+        return;
+      }
       const target = shortcutPage(event);
       if (!target) return;
       event.preventDefault();
@@ -158,10 +175,12 @@ export function NavRail() {
     persist(COLLAPSED_KEY, String(next));
   };
 
-  // 原生 dragHandle：拖动中只改本地宽度，松手才持久化（UserDefaults sidebarWidth 同义）
+  // 原生 dragHandle：拖动中只改本地宽度，松手才持久化（UserDefaults sidebarWidth 同义）；
+  // 拖动期间 `is-dragging` 关掉折叠 / 展开的宽度过渡（否则每一步都 150ms 滞后于指针）
   const onHandleDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (isCollapsed) return;
     dragStart.current = { x: event.clientX, width };
+    setDragging(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onHandleMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -171,14 +190,16 @@ export function NavRail() {
   const onHandleUp = () => {
     if (!dragStart.current) return;
     dragStart.current = null;
+    setDragging(false);
     persist(WIDTH_KEY, String(width));
   };
 
   const style = isCollapsed ? undefined : { width: `${width}px` };
   const link = (slug: string) => ({ isActive: active === slug, isCollapsed });
+  const railClass = `rail${isCollapsed ? " is-collapsed" : ""}${isDragging ? " is-dragging" : ""}`;
 
   return (
-    <nav className={`rail${isCollapsed ? " is-collapsed" : ""}`} data-rail="left" style={style} aria-label={text("导航", "Navigation")}>
+    <nav className={railClass} data-rail="left" style={style} aria-label={text("导航", "Navigation")}>
       <div className="rail-head">
         {!isCollapsed && <span className="rail-title">Zelin's AI Assistant</span>}
         <button

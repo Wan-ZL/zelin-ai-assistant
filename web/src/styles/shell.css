@@ -52,6 +52,19 @@
   padding: 12px 6px;
 }
 
+/* 折叠 / 展开动效（原生 MainWindow.swift `.animation(.easeInOut(duration: 0.15), value: sidebarCollapsed)`）：
+   宽与内边距 150ms ease-in-out。拖宽期间（NavRail 挂 is-dragging）关掉，宽度才跟得上指针；
+   系统「减弱动效」下整块不生效（animations.css 的全局降级之外再多一道）。 */
+@media (prefers-reduced-motion: no-preference) {
+  .rail {
+    transition: width 150ms ease-in-out, padding 150ms ease-in-out;
+  }
+
+  .rail.is-dragging {
+    transition: none;
+  }
+}
+
 .rail-head {
   display: flex;
   align-items: center;
