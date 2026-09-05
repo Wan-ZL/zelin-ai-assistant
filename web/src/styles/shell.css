@@ -416,6 +416,11 @@
   color: var(--warning);
 }
 
+/* consent-race 自愈的成功句（recording.self_heal_note，§68.3 追记）——与设置页 .settings-helper.is-ok 同色 */
+.shell-menu-note.is-ok {
+  color: var(--success);
+}
+
 .shell-menu-divider {
   height: var(--stroke-w);
   margin: 4px 6px;

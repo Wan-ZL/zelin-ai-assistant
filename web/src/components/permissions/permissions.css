@@ -36,6 +36,9 @@
   background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
+/* 块本身 tabIndex=-1 只为让 Return 到得了它（§68.3 追记）——鼠标点进块里不画焦点框 */
+.perm-consent-block:focus { outline: none; }
+
 .perm-consent-title { margin: 0; font-size: calc(14px * var(--text-scale)); font-weight: var(--w-semibold); }
 .perm-consent-copy { margin: 0; font-size: calc(12px * var(--text-scale)); }
 ul.perm-consent-copy { padding-left: 1.2em; }
