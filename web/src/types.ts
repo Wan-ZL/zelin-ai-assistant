@@ -977,6 +977,8 @@ export interface AboutInfo {
   repo: string;
   update_available: { current?: string; latest?: string; url?: string; pkg_asset_url?: string | null; [key: string]: unknown } | null;
   update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
+  /** §68.6 追记（add-only）：updates.check_enabled 的 effective 值（override → config → true）；旧 server 缺席 = 当 true */
+  check_enabled?: boolean;
   [key: string]: unknown;
 }
 

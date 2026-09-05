@@ -326,7 +326,8 @@ def read_overrides(home: Path) -> dict:
         text = p.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # byte-corrupted (non-UTF-8) is as unparsable as bad JSON: 409, never a 500
         raise ConflictError("settings_overrides.json is unreadable",
                             {"path": str(p), "error": str(exc)})
     return _parse_overrides(text, p)
