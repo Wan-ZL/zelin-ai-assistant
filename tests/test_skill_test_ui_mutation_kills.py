@@ -7,6 +7,7 @@
 设计 = docs/design/vnext2-plan.md R2.8；CONTRACT §57（存活变异体 = 补测试提案）。
 """
 import os
+import struct
 import tempfile
 import unittest
 
@@ -346,7 +347,6 @@ class CommonBoundariesTestCase(unittest.TestCase):
 
     def test_ihdr_rejects_each_shape(self):
         """testui_common::_parse_ihdr `depth != 8 or color_type not in (2, 6) or interlace != 0`。"""
-        import struct
         self.assertEqual(tc._parse_ihdr(struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)), (1, 1, 4))
         for depth, ctype, inter in ((16, 2, 0), (8, 3, 0), (8, 2, 1)):
             with self.assertRaises(ValueError):
@@ -471,7 +471,6 @@ class CommonFullSweepKillsTestCase(unittest.TestCase):
     def test_encode_png_rgb_header_and_roundtrip(self):
         """encode_png channels=3 → color_type 2、compression/filter/interlace 字段全 0（PNG 规范唯一合法值）；RGB 往返；
         channels 缺省 = 3（与显式 3 逐字节相同）。"""
-        import struct
         png = tc.encode_png(1, 1, [b"\x01\x02\x03"], 3)
         self.assertEqual(png[16:29], struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
         self.assertEqual(tc.decode_png(png), (1, 1, 3, [b"\x01\x02\x03"]))
@@ -489,7 +488,6 @@ class CommonFullSweepKillsTestCase(unittest.TestCase):
 
     def test_missing_ihdr_alone_is_a_value_error(self):
         """decode_png `header is None or not idat`——只缺 IHDR（有 IDAT）也必须是 ValueError，`and` 会漏成 TypeError。"""
-        import struct
         no_ihdr = tc._PNG_SIG + tc._chunk(b"IDAT", b"x") + tc._chunk(b"IEND", b"")
         with self.assertRaises(ValueError):
             tc.decode_png(no_ihdr)
