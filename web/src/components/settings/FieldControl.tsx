@@ -9,15 +9,16 @@
 // `disabled` = 同 section 其它草稿值把这一格禁掉（原生 telemetry 组的 `.disabled(...)`，规则在 draftRules.isGated）；
 // 数字框的校验句按 kind：number 用原生 commitShowCost / commitConfirmAbove 的通式（示例数 = 目录 default），
 // int 的 trash_retention_days 用原生 commitTrashDays 的整句（Settings.swift:1727），其它 int 用整数通式。
-// 带 `check`（§68.1 追记；今日词表 email）的 string 字段：保存前镜像 server 的同一条形状规则（draftRules.passesCheck），
-// 不合格 = aria-invalid + server-owned 的那句（原生 SettingsGmail.validateAddress 在 saveAddress 里拦），CatalogSection 据此不放行「保存」。
+// 带 `check`（§68.1 追记；词表 email / session_id）的 string 字段：保存前镜像 server 的同一条形状规则（draftRules.checkReason），
+// 不合格 = aria-invalid + server-owned 的那句（原生 SettingsGmail.validateAddress 在 saveAddress 里拦；SettingsMaintainer.validateSessionID
+// 在 saveSessionID 里拦——首连字符与字符白名单各一句，按 reason 取目录 `check.reasons`），CatalogSection 据此不放行「保存」。
 // 「Obsidian Vault 位置」（`obsidian_raw`，§68.1 追记 vault 根）是目录字段里的特例：草稿 / PUT 仍是 raw 目录 `<根>/2 - raw`，
 // 但框里显示、对话框起点与落进草稿的都按 **vault 根**换算（VaultRootField；原生 Settings.swift:740-792 一格 vault 根字段）。
 import { useI18n, type Language } from "../../i18n";
 import type { SettingsField } from "../../types";
 import { VAULT_RAW_KEY } from "../../vaultPaths";
 import { pickText } from "./catalogText";
-import { isValidNumberDraft, passesCheck } from "./draftRules";
+import { checkReason, isValidNumberDraft } from "./draftRules";
 import { FolderActions, FolderPicker, VaultRootField } from "./FolderControls";
 
 export interface FieldControlProps {
@@ -31,9 +32,21 @@ export interface FieldControlProps {
   disabled?: boolean;
 }
 
-/** 草稿值不合 field.check 的规则 → server-owned 的那句；合格 / 空值（= 清键，server 也不查）/ 无 check / 未知 kind → null */
+/** 草稿值不合 field.check 的规则 → server-owned 的那句（reason 对上 `check.reasons` 用分句，否则主句 `message`）；
+ *  合格 / 空值（= 清键，server 也不查）/ 无 check / 未知 kind → null */
 export function fieldProblem(field: SettingsField, value: unknown, language: Language): string | null {
-  return field.check && !passesCheck(field, value) ? pickText(field.check.message, language) : null;
+  const reason = checkReason(field, value);
+  if (!field.check || reason === null) return null;
+  return pickText(field.check.reasons?.[reason] ?? field.check.message, language);
+}
+
+/** 400 details `{check, reason?}`（PUT 或 POST /api/maintainer/terminal 的启动重检）→ 目录里的同一句；对不上 → null */
+export function checkSentence(field: SettingsField | undefined, details: unknown, language: Language): string | null {
+  if (!field?.check || !details || typeof details !== "object") return null;
+  const { check, reason } = details as { check?: unknown; reason?: unknown };
+  if (check !== field.check.kind) return null;
+  const variant = typeof reason === "string" ? field.check.reasons?.[reason] : undefined;
+  return pickText(variant ?? field.check.message, language) || null;
 }
 
 /** 数字框的校验句（原生每个数字字段各有一句；web 按 kind + key 取，示例数 = 目录 default） */
