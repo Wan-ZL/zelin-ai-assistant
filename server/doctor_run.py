@@ -82,13 +82,10 @@ def _run(home: Path, fast: bool, runner, now: float, lang: Optional[str]) -> dic
 def _fresh(home_key: str, fast: bool, lang: Optional[str], now: float) -> Optional[dict]:
     """新鲜的缓存条目。指定了 lang 只认同语言那份；``lang=None``（权限体检 / 向导 / 让 AI 修——
     只看 status / name / failure_id）任一语言的新鲜条目都算，取最晚写入的那份。调用方持锁。"""
-    exact = _cache.get((home_key, fast, lang))
-    if exact and exact[0] > now:
-        return exact[1]
-    if lang is not None:
-        return None
-    fresh = [v for (h, f, _l), v in _cache.items() if h == home_key and f == fast and v[0] > now]
-    return max(fresh, key=lambda v: v[0])[1] if fresh else None
+    langs = (lang,) if lang is not None else (None,) + LANGS
+    hits = [_cache.get((home_key, fast, one)) for one in langs]
+    fresh = [hit for hit in hits if hit is not None and hit[0] > now]
+    return max(fresh, key=lambda hit: hit[0])[1] if fresh else None
 
 
 def report(home: Path, *, fast: bool = True, refresh: bool = False, runner=None,
