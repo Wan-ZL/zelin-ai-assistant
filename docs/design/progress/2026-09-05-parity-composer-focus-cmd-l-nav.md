@@ -8,6 +8,6 @@ law: §54.4 追记（⌘L 落点、`zai.pendingFocus` 接力、⌥⌘S tombstone
 
 **parity（§66）**：`shortcut:menu.main:cmd-l-focus-capture-field`（owner=shell，只列不判）现由 web 与壳共同交付；`opt-cmd-s-collapse-expand-sidebar` 按退役读；`python3 scripts/ui/parity_check.py` gated 849：PRESENT 830 / PENDING 15 / MISSING 0 / STALE 0 / WAIVED 4，`report.json` 零 diff，两本账本零改动。
 
-**判例**（三个 NEW 文件，防腐 #7 一行为一文件）：`focusComposer.test.ts`（6 条）、`NavRail.cmdL.test.tsx`（5 条：⌘L 聚焦 + preventDefault、输入框里也接、Caps Lock 的 L、⌃L / ⌥⌘L / ⇧⌘L 不算、⌘1…⌘7 照旧、⌥⌘S 什么都不做、离板接力）、`NavRail.collapseMotion.test.tsx`（2 条：CSS 过渡只在 no-preference 块且 is-dragging 关掉、拖动挂 / 摘 is-dragging、折叠钮不挂）。既有 `NavRail.test.tsx` 未改。
+**判例**（五个 NEW 文件，防腐 #7 一行为一文件）：`focusComposer.test.ts`（6 条）、`NavRail.cmdL.test.tsx`（5 条：⌘L 聚焦 + preventDefault、输入框里也接、Caps Lock 的 L、⌃L / ⌥⌘L / ⇧⌘L 不算、⌘1…⌘7 照旧、⌥⌘S 什么都不做、离板接力）、`NavRail.collapseMotion.test.tsx`（2 条：CSS 过渡只在 no-preference 块且 is-dragging 关掉、拖动挂 / 摘 is-dragging、折叠钮不挂）；review 后补的两个接线判例——`pages/BoardPage.pendingFocus.test.tsx`（3 条：真 BoardLanes / LaneComposer DOM 下挂载消费接力棒聚焦提案列而非运行中列、没标记不抢焦点、消费过再挂载不重放）、`app.quickCapture.test.tsx`（2 条：壳 `zai-shell-command` quick_capture → `focusComposer` 一次、别的命令 / 坏 detail 不调、App 卸载后监听器摘掉）。补它们的理由：review 的变异检查把 `BoardPage` 的 effect 或 `app.tsx` 的 quick_capture 分支改成 no-op，原三文件全绿——helper 钉住了、真正修 gap 的接线没钉住。既有 `NavRail.test.tsx` 未改。
 
-**门**：web typecheck / build / vitest 73 文件 1339 通过（4 skipped）；compileall / hygiene / depgraph OK；unittest 全量见 PR。**Playwright golden 未重生成**：静态截图里侧栏展开态一像素没动（过渡只在切换瞬间存在）。
+**门**：web typecheck / build / vitest 75 文件 1344 通过（4 skipped）；compileall / hygiene / depgraph OK；unittest 全量见 PR。**Playwright golden 未重生成**：静态截图里侧栏展开态一像素没动（过渡只在切换瞬间存在）。
