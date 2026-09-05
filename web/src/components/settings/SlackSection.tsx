@@ -20,12 +20,16 @@ import { errorMessage } from "./useToast";
 const MANIFEST_REL = "config/slack-app-manifest.json";
 
 /** 「复制 App Manifest」失败句：GET /api/slack/manifest 404（repo 里没有那份文件）→ 原生 copyManifest 的大白话
- *  「找不到 <path>——repo 不完整？重装一次即可。」（路径取 server details.path，缺了就用 repo 相对路径）；其它错误原句。 */
+ *  「找不到 <path>——repo 不完整？重装一次即可。」（路径取 server details.path，缺了就用 repo 相对路径）；其它错误原句。
+ *  只认 server/slack_manifest.py 那个 404：details.path 是 repo 相对路径。路由层的 unknown-route 404 同样是 NOT_FOUND，
+ *  但 details.path 是 URL（/api/slack/manifest）——那是 web/server 版本错位，不是 repo 缺文件，原句照出、不冒充。 */
 export function manifestErrorMessage(err: unknown, text: I18n["text"]): string {
-  if (err instanceof ApiError && err.status === 404) {
+  if (err instanceof ApiError && err.status === 404 && err.code === "NOT_FOUND") {
     const details = err.details as { path?: unknown } | undefined;
     const path = typeof details?.path === "string" && details.path ? details.path : MANIFEST_REL;
-    return text(`找不到 ${path}——repo 不完整？重装一次即可。`, `Missing ${path} — incomplete repo? Reinstall to fix.`);
+    if (!path.startsWith("/")) {
+      return text(`找不到 ${path}——repo 不完整？重装一次即可。`, `Missing ${path} — incomplete repo? Reinstall to fix.`);
+    }
   }
   return errorMessage(err);
 }

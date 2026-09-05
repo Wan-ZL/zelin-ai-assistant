@@ -70,6 +70,19 @@ describe("manifestErrorMessage (native copyManifest)", () => {
     expect(manifestErrorMessage(denied, getI18n("zh").text)).toBe("origin not allowed");
     expect(manifestErrorMessage(new Error("clipboard blocked"), getI18n("en").text)).toBe("clipboard blocked");
   });
+
+  it("does not dress the router's unknown-route 404 (details.path is a URL) up as a missing repo file", () => {
+    // server/app.py _route_api_get: NotFoundError("not found", {"path": "/api/slack/manifest"}) —
+    // a web build talking to a server without the route (version skew) must see the server's own message.
+    const unknownRoute = new ApiError(404, { error: { code: "NOT_FOUND", message: "not found", details: { path: "/api/slack/manifest" } } });
+    expect(manifestErrorMessage(unknownRoute, getI18n("zh").text)).toBe("not found");
+    expect(manifestErrorMessage(unknownRoute, getI18n("en").text)).toBe("not found");
+  });
+
+  it("does not claim a missing file for a 404 whose body is not the server envelope", () => {
+    // request() turns a non-JSON 404 body (proxy / static server) into code REQUEST_FAILED + the generic message
+    expect(manifestErrorMessage(new ApiError(404, {}), getI18n("en").text)).toBe("Request failed (404)");
+  });
 });
 
 describe("SlackSection copy", () => {
