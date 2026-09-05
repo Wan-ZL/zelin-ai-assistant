@@ -367,6 +367,165 @@ class CommonBoundariesTestCase(unittest.TestCase):
         self.assertEqual(tc.validate_inventory({"schemaVersion": 1, "producer": [], "side": {}, "items": {"a": 1}}), ["producer.mode", "items"])
 
 
+class CommonConstantsTestCase(unittest.TestCase):
+    """testui_common 模块级常量表 —— 2026-09-04 夜报（pinned issue #150）testui_common 的 32 个存活体全在这里：
+    `_NAMED` 六个命名色的 18 路整数通道（int ±1）+ `SCHEMA_VERSION`（1 → 0 / 2）。都不是等价变异：
+    parse_color 直接把元组交给调用方，to_hex8 才 clamp——所以判例比的是裸元组，不是 hex 串（旧判例只比 hex，
+    -1 / 256 被 clamp 回 0 / 255 就漏网了）。"""
+
+    _NAMED_EXPECTED = {
+        "white": (255, 255, 255, 1.0), "black": (0, 0, 0, 1.0), "transparent": (0, 0, 0, 0.0),
+        "red": (255, 0, 0, 1.0), "canvas": (255, 255, 255, 1.0), "canvastext": (0, 0, 0, 1.0),
+    }
+
+    def test_named_color_tuples_are_exact(self):
+        """testui_common::_NAMED 每路通道逐字面钉死（255 → 254/256、0 → -1/1 任一路都分叉）；词表恰好这六个名字，
+        大小写不敏感（`White` / `CanvasText` 与小写同一元组）。"""
+        self.assertEqual(set(tc._NAMED), set(self._NAMED_EXPECTED))
+        for name, rgba in self._NAMED_EXPECTED.items():
+            self.assertEqual(tc.parse_color(name), rgba, name)
+            self.assertEqual(tc.parse_color(name.upper()), rgba, name)
+            self.assertEqual(tc.parse_color(name.title()), rgba, name)
+
+    def test_named_colors_agree_with_their_hex_spelling(self):
+        """命名色 = 同色 hex 写法的解析结果（white ≡ #ffffff、canvastext ≡ #000000、transparent ≡ #00000000）——
+        两条解析路径互为对照，谁的常量偏 1 都露馅；transparent 的 rgb 通道虽被 alpha 0 盖住，元组仍必须是纯零。"""
+        hex_spelling = {"white": "#ffffff", "black": "#000000", "red": "#ff0000",
+                        "canvas": "#ffffff", "canvastext": "#000000", "transparent": "#00000000"}
+        for name, hex_text in hex_spelling.items():
+            self.assertEqual(tc.parse_color(name), tc.parse_color(hex_text), name)
+        self.assertEqual(tc.parse_color("canvas"), tc.parse_color("white"))
+        self.assertEqual(tc.parse_color("canvastext"), tc.parse_color("black"))
+        self.assertEqual(tc.parse_color("transparent")[:3], (0, 0, 0))
+
+    def test_named_black_on_white_hits_the_wcag_ceiling(self):
+        """black on white / canvastext on canvas 对比度恰为 21.0（WCAG 上限）；red on white 3.998（AA 4.5 之下的负控制）——
+        任一通道偏 1 都到不了 21.0（254 白 → 20.96；1 黑 → 20.97）。"""
+        self.assertEqual(tc.contrast_ratio(tc.parse_color("black"), tc.parse_color("white")), 21.0)
+        self.assertEqual(tc.contrast_ratio(tc.parse_color("canvastext"), tc.parse_color("canvas")), 21.0)
+        self.assertEqual(tc.contrast_ratio(tc.parse_color("red"), tc.parse_color("white")), 4.0)
+        self.assertEqual(tc.relative_luminance(tc.parse_color("white")), 1.0)
+        self.assertEqual(tc.relative_luminance(tc.parse_color("black")), 0.0)
+
+    def test_schema_version_is_one_on_every_product(self):
+        """testui_common::SCHEMA_VERSION = 1（字段 add-only；版本号只在破坏兼容时才动）——empty_inventory 骨架、
+        测试夹具（testkit 手写 `"schemaVersion": 1`）与它同号；0 / 2 都是另一个 schema。"""
+        self.assertEqual(tc.SCHEMA_VERSION, 1)
+        skeleton = tc.empty_inventory("web", "source", "testkit", "reference")
+        self.assertEqual(skeleton["schemaVersion"], 1)
+        self.assertEqual(skeleton["schemaVersion"], kit.make_inventory([])["schemaVersion"])
+        self.assertEqual(tc.validate_inventory(skeleton), [])
+
+
+class CommonFullSweepKillsTestCase(unittest.TestCase):
+    """testui_common 全模块 430 体本地复跑（2026-09-04，夜报之外的 72 个存活体）里的**真洞**，逐个钉死。判为等价、不补
+    判例的（理由写在这里，夜报再报也不用再判）：
+    * `_hsl_to_rgb` `int(hp) % 6` → `% 7`（76:23）：h % 360 保证 int(hp) ∈ 0..5，模数 ≥ 6 都是恒等；
+    * `_func_color` `parts[:3]` → `[:4]`（91:60）：多出的第 4 元素没人读；
+    * `parse_color` `func.group(1)` → `group(0)`（116:46）：name 只被 `startswith("hsl")` 用，整串匹配开头相同；
+    * `contrast_ratio` `fg[3] < 1.0` → `<=`（144:7）：alpha 恰为 1.0 时 composite 是恒等映射（x*1.0 + y*0.0 == x）；
+    * `encode_png` `zlib.compress(raw, 9)` → 8（176:81）：压缩级别只改字节数不改解码结果；
+    * `_check_crc` `unpack(...)[0]` → `[-1]`（193:35）：单元素元组；
+    * `_paeth` `pa <= pb` → `<`（207:7）：pa == pb 且 pa <= pc 推出 a == b，两分支同值；
+    * `_unfilter_paeth` upleft 默认 `0` → `-1`（235:48）：只在 i < bpp 时用到，此时 left 恒为 0，paeth(0, b, c) 对 c ∈ {0, -1} 同值。"""
+
+    def test_hex_four_digit_expands(self):
+        """_hex_parts `len(digits) in (3, 4)`——`#abcd` 是 4 位带 alpha 的合法写法，必须展开而不是 None。"""
+        self.assertEqual(tc.canonical_color("#abcd"), "#aabbccdd")
+        self.assertEqual(tc.parse_color("#abcd"), (0xaa, 0xbb, 0xcc, 0xdd / 255.0))
+
+    def test_hsl_every_sector_and_hue_wrap(self):
+        """_hsl_to_rgb 六个扇区（s=50% l=40%，m > 0 才能暴露 table 里的 0 通道）、饱和色扇区 5（magenta）、hue 越界
+        `h % 360`（390 ≡ 30、-30 ≡ 330）；期望值与 colorsys.hls_to_rgb 逐值核对过。"""
+        expected = {30: "#996633ff", 90: "#669933ff", 150: "#339966ff", 210: "#336699ff", 270: "#663399ff",
+                    330: "#993366ff", 390: "#996633ff", -30: "#993366ff"}
+        for hue, hex8 in expected.items():
+            self.assertEqual(tc.canonical_color("hsl(%d, 50%%, 40%%)" % hue), hex8, hue)
+        self.assertEqual(tc.canonical_color("hsl(300, 100%, 50%)"), "#ff00ffff")
+        self.assertEqual(tc.canonical_color("hsl(240, 100%, 50%)"), "#0000ffff")
+
+    def test_to_hex8_clamps_both_ends(self):
+        """to_hex8 `max(0, min(255, …))`——出界通道钳到 0 / 255，而不是 `%02x` 吐出 `-1` / `100`。"""
+        self.assertEqual(tc.to_hex8((-5, 300, 0, 2.0)), "#00ff00ff")
+        self.assertEqual(tc.to_hex8((0, 0, 0, -1.0)), "#00000000")
+
+    def test_composite_and_luminance_are_per_channel(self):
+        """composite 三路通道各取各的（fg[i] 配 bg[i]，权重 a / 1-a）——旧判例用灰对白，通道错位看不出来；
+        relative_luminance 三个系数各配各的通道（G 0.7152、B 0.0722）。"""
+        self.assertEqual(tc.composite((255, 0, 0, 0.5), (0, 0, 255, 1.0)), (127.5, 0.0, 127.5, 1.0))
+        self.assertEqual(tc.composite((255, 100, 0, 0.5), (0, 50, 255, 1.0)), (127.5, 75.0, 127.5, 1.0))
+        self.assertEqual(tc.composite((10, 20, 30, 0.0), (1, 2, 3, 1.0)), (1.0, 2.0, 3.0, 1.0))
+        self.assertEqual(tc.relative_luminance((0, 255, 0, 1.0)), 0.7152)
+        self.assertEqual(tc.relative_luminance((0, 0, 255, 1.0)), 0.0722)
+
+    def test_linear_boundary_is_inclusive(self):
+        """_linear `c <= 0.03928`（WCAG 2.x 低段含端点）——通道 0.03928×255 恰落边界，走线性段；`<` 会跳到幂段。"""
+        boundary = 0.03928 * 255.0
+        self.assertEqual(boundary / 255.0, 0.03928)
+        self.assertEqual(tc._linear(boundary), 0.03928 / 12.92)
+
+    def test_contrast_composites_on_alpha_not_blue(self):
+        """contrast_ratio 看 fg[3]（alpha）决定是否合成——半透明白压黑 ≈ 5.28，不是不合成的 21.0。"""
+        self.assertEqual(tc.contrast_ratio((255, 255, 255, 0.5), (0, 0, 0, 1.0)), 5.28)
+
+    def test_encode_png_rgb_header_and_roundtrip(self):
+        """encode_png channels=3 → color_type 2、compression/filter/interlace 字段全 0（PNG 规范唯一合法值）；RGB 往返；
+        channels 缺省 = 3（与显式 3 逐字节相同）。"""
+        import struct
+        png = tc.encode_png(1, 1, [b"\x01\x02\x03"], 3)
+        self.assertEqual(png[16:29], struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        self.assertEqual(tc.decode_png(png), (1, 1, 3, [b"\x01\x02\x03"]))
+        self.assertEqual(tc.encode_png(1, 1, [b"\x01\x02\x03"]), png)
+        rgba = tc.encode_png(1, 1, [b"\x01\x02\x03\x04"], 4)
+        self.assertEqual(rgba[16:29], struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+
+    def test_truncated_tail_is_still_a_value_error(self):
+        """_iter_chunks `pos + 8 <= len(data)` / `len(data) < pos + 12 + length`——尾块只剩块头、或 CRC 少一字节，
+        都得抛 ValueError（fail closed），不能静默当成完整文件，也不能漏成 struct.error。"""
+        png = tc.encode_png(1, 1, [b"\x01\x02\x03"], 3)
+        for cut in (1, 4):
+            with self.assertRaises(ValueError):
+                tc.decode_png(png[:-cut])
+
+    def test_missing_ihdr_alone_is_a_value_error(self):
+        """decode_png `header is None or not idat`——只缺 IHDR（有 IDAT）也必须是 ValueError，`and` 会漏成 TypeError。"""
+        import struct
+        no_ihdr = tc._PNG_SIG + tc._chunk(b"IDAT", b"x") + tc._chunk(b"IEND", b"")
+        with self.assertRaises(ValueError):
+            tc.decode_png(no_ihdr)
+        no_idat = tc._PNG_SIG + tc._chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + tc._chunk(b"IEND", b"")
+        with self.assertRaises(ValueError):
+            tc.decode_png(no_idat)
+
+    def test_paeth_tie_breaks_toward_a_then_b(self):
+        """_paeth 平局按 PNG 规范先 a 再 b：pa == pc → a（`pa <= pc` 变 `<` 会给 c）；pb == pc → b。"""
+        self.assertEqual(tc._paeth(0, 3, 2), 0)   # p=1: pa 1, pb 2, pc 1 → a
+        self.assertEqual(tc._paeth(3, 0, 2), 0)   # p=1: pa 2, pb 1, pc 1 → b
+
+    def test_unfilter_low_bit_and_odd_neighbours(self):
+        """_unfilter_sub `& 0xFF` 保留低位（奇数和）；_unfilter_average 前 bpp 字节 left=0（prev 为奇数时 >>1 见分晓）；
+        _unfilter_paeth 第 bpp 个字节的 upleft 是 prev[0]（`i >= bpp` 含端点）。"""
+        self.assertEqual(tc._unfilter_sub(bytearray([1, 1, 1, 2, 2, 2]), None, 3), bytearray([1, 1, 1, 3, 3, 3]))
+        self.assertEqual(tc._unfilter_average(bytearray(3), bytearray([1, 1, 1]), 3), bytearray([0, 0, 0]))
+        self.assertEqual(tc._unfilter_paeth(bytearray(6), bytearray([10, 0, 0, 5, 0, 0]), 3), bytearray([10, 0, 0, 5, 0, 0]))
+
+    def test_dump_json_and_sha256_are_deterministic(self):
+        """dump_json：键排序、2 空格缩进、非 ASCII 原样、末尾换行（与 scripts/ui/ui_common 同形）；sha256_bytes / sha256_file 给出真摘要。"""
+        self.assertEqual(tc.dump_json({"b": 1, "a": "中"}), '{\n  "a": "中",\n  "b": 1\n}\n')
+        empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        self.assertEqual(tc.sha256_bytes(b""), empty)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "empty.bin")
+            open(path, "wb").close()
+            self.assertEqual(tc.sha256_file(path), empty)
+
+    def test_token_value_text_sorts_and_stringifies(self):
+        """token_value_text：dict/list 走 sort_keys=True 的 json（比较要与键序无关）；其余 str()。"""
+        self.assertEqual(tc.token_value_text({"$type": "color", "$value": {"z": 1, "a": 2}}), '{"a": 2, "z": 1}')
+        self.assertEqual(tc.token_value_text({"$type": "dimension", "$value": "8px"}), "8px")
+        self.assertEqual(tc.token_value_text({"$type": "number", "$value": 8}), "8")
+
+
 class TokensBoundariesTestCase(unittest.TestCase):
     def test_blocks_media_scope_and_native_path(self):
         """tokens::_blocks — 只有 dark 媒体块里的 :root 算 dark；非 dark 媒体块不算；_native_path 单段。"""
