@@ -38,7 +38,8 @@ def _effective(home: Path, key: str) -> str:
 def resolve(home: Path) -> "tuple[Path, str]":
     """(repo 目录, session id)；目录不存在 400、session id 不合目录 check 400（同一句、同一 details）。"""
     raw = _effective(home, REPO_PATH_KEY).strip()
-    repo = Path(raw).expanduser() if raw else paths.repo_root()
+    # ~ 展开与目录灰字 / path_exists 同一把（~nosuchuser 不炸成 500，落到下面的「路径不存在」400）
+    repo = settings_catalog.expand_user_path(raw) if raw else paths.repo_root()
     if not repo.is_dir():
         raise InvalidFieldError("repo path does not exist", {"path": str(repo)})
     sid = _effective(home, SESSION_ID_KEY).strip()

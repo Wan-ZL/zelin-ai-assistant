@@ -79,8 +79,9 @@ CHECK_REASONS = {
 }
 
 # 会话 id 的形状（保存与启动同一把，maintainer_launch 复用）：首字符字母 / 数字（首连字符 = CLI 选项的形状），其余
-# [A-Za-z0-9-]，≤64 字（server 侧的帽；claude 的会话 id 是 36 字的 UUID）。
-SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+# [A-Za-z0-9-]。原生同款**不设长度帽**——字符白名单本身就是注入闸，句子说的是字符，不合的只能是字符（PUT 的长度另有
+# STRING_MAX 那句兜着，两句不许混）。
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 
 # §48.1 合取写：雷达源开关 → 合取的另一半（flags 区的 feature flag 键）。原生 SettingsGmail.setEnabled /
 # SettingsSlack.persistFlag：打开 = 用户显式动作，把两个键都写进 override（yaml 里 features.<src>_radar:false
@@ -359,11 +360,23 @@ SECTIONS: tuple = (
 )
 
 
+def expand_user_path(raw: str) -> Path:
+    """``Path(raw).expanduser()``，但 ``~nosuchuser/x`` 不炸：Python 对查不到的用户名抛 RuntimeError（原生
+    ``expandingTildeInPath`` 原样返回）——config.yaml 里一个坏路径不许把整份设置快照 / 开发会话启动打成 500
+    （§0 第 11 条），原样当路径用（随后的 is_dir 自然是 False）。目录字段的 ``path_exists``、开发者区的灰字与
+    ``maintainer_launch.resolve`` 同一把。"""
+    path = Path(raw)
+    try:
+        return path.expanduser()
+    except (OSError, RuntimeError, ValueError):
+        return path
+
+
 def _maintainer_repo_placeholder(field: dict, config_doc: dict) -> str:
     """原生 defaultRepoPath：config.yaml maintainer.repo_path（~ 展开），否则本软件自己的 checkout（paths.repo_root()）。"""
     base, _src = base_effective(field, config_doc)
     raw = base.strip() if isinstance(base, str) else ""
-    return str(Path(raw).expanduser()) if raw else str(paths.repo_root())
+    return str(expand_user_path(raw)) if raw else str(paths.repo_root())
 
 
 def _maintainer_session_placeholder(field: dict, config_doc: dict) -> Optional[str]:
@@ -554,12 +567,12 @@ _PUBLIC_FIELD_KEYS = ("key", "kind", "label", "help", "default", "choices", "pla
 
 
 def path_exists(value: Any) -> Optional[bool]:
-    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``；空 / 非字串 → None（无从判断）。"""
+    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``（``~nosuchuser`` 不炸，expand_user_path）；空 / 非字串 → None（无从判断）。"""
     raw = value.strip() if isinstance(value, str) else ""
     if not raw:
         return None
     try:
-        return Path(raw).expanduser().is_dir()
+        return expand_user_path(raw).is_dir()
     except (OSError, ValueError):
         return False
 

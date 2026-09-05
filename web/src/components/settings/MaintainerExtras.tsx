@@ -1,7 +1,9 @@
 // 开发者 · 开发会话 区的动作行（§68.1 / §68.7 追记；原生 SettingsMaintainer.openSession + launchRow）：「在终端打开开发会话」→
 // POST /api/maintainer/terminal（server 读 effective 的仓库路径 / 会话 id 拼命令，客户端零参数）。
 // 文案逐字原生（SettingsMaintainer.swift:215-226, 330-331）：帮助句「会在 <终端> 中打开（终端应用在「通用」里换）。」——终端名是
-// server 算的（maintainer 区投影 add-only `terminal_app_name`：auto 要看装没装 Ghostty；回执里的同名键更新一次）；忙态「正在打开终端…」；
+// server 算的（maintainer 区投影 add-only `terminal_app_name`：auto 要看装没装 Ghostty），**只读目录**：「通用 · 终端应用」一保存
+// store 就重拉整本目录（store.saveSettingsSection），这句随之换名；回执里的同名键是同一个答案，页面不另存一份（存了就会盖过
+// 目录的新值）；忙态「正在打开终端…」；
 // 成功「已在终端打开 ✓ 直接告诉它要修什么、改什么就行。」（不再把命令原文当成功句）；open 失败（500，details.command）→
 // 「打开终端失败——去「通用」检查终端应用设置，或手动在终端运行：」+ 可复制的命令；400 路径不存在 → 「路径不存在」；
 // 400 会话 id 不合形状（details.check = session_id [+ reason]，启动前重检 config.yaml 里的 id）→ 目录 `check` 里的那句（server-owned，
@@ -32,20 +34,18 @@ export function MaintainerExtras() {
   const { settingsCatalog } = useAppState();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note | null>(null);
-  const [openedIn, setOpenedIn] = useState<string | null>(null);
 
   const section = settingsCatalog?.sections.find((s) => s.id === "maintainer");
   const sessionField = section?.fields.find((f) => f.key === SESSION_ID_KEY);
-  // 回执里的终端名（刚打开用的）优先；其次目录投影；老 server 两者都缺 → 泛称「终端」
+  // 终端名只读目录投影（「通用」换了终端 → store 重拉目录 → 这里跟着变）；老 server 缺键 → 泛称「终端」
   const catalogName = typeof section?.terminal_app_name === "string" && section.terminal_app_name ? section.terminal_app_name : null;
-  const terminalName = openedIn ?? catalogName ?? text("终端", "the terminal");
+  const terminalName = catalogName ?? text("终端", "the terminal");
 
   async function open() {
     setBusy(true);
     setNote({ kind: "busy" });
     try {
-      const receipt = await postMaintainerTerminal();
-      if (typeof receipt.terminal_app_name === "string" && receipt.terminal_app_name) setOpenedIn(receipt.terminal_app_name);
+      await postMaintainerTerminal();
       setNote({ kind: "opened" });
     } catch (err) {
       setNote(failureNote(err));

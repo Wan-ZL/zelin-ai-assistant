@@ -1,5 +1,5 @@
 // 会话 id 的保存前校验（§68.7 追记；原生 SettingsMaintainer.validateSessionID 在 saveSessionID 里拦）：
-// draftRules.sessionIdProblem 是 server `session_id_problem` 的逐字镜像（首连字符 / 字符白名单 / ≤64 字）；
+// draftRules.sessionIdProblem 是 server `session_id_problem` 的逐字镜像（首连字符 / 字符白名单；原生同款不设长度帽）；
 // FieldControl.fieldProblem 按 reason 取目录 `check.reasons` 的分句、对不上用主句；CatalogSection 据此不放行「保存」；
 // 动态 placeholder（生效默认的灰字）原样渲染进输入框。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -45,12 +45,14 @@ describe("sessionIdProblem — server session_id_problem 的镜像", () => {
     expect(sessionIdProblem("  abc-123  ")).toBeNull();
     expect(sessionIdProblem("a")).toBeNull();
     expect(sessionIdProblem("a".repeat(64))).toBeNull();
+    // 原生不设长度帽：长的但全是白名单字符 = 合格（字符句不许被拿来说长度）
+    expect(sessionIdProblem("a".repeat(65))).toBeNull();
+    expect(sessionIdProblem("a-".repeat(100) + "z")).toBeNull();
     expect(sessionIdProblem("-abc")).toBe("leading_hyphen");
     expect(sessionIdProblem("--dangerously-skip-permissions")).toBe("leading_hyphen");
     expect(sessionIdProblem("a b")).toBe("charset");
     expect(sessionIdProblem("abc; rm -rf /")).toBe("charset");
     expect(sessionIdProblem("abc_def")).toBe("charset");
-    expect(sessionIdProblem("a".repeat(65))).toBe("charset");
   });
 
   it("checkReason / passesCheck: empty = clearing, never checked; unknown kinds pass", () => {

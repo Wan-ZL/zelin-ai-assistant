@@ -6,8 +6,9 @@
 //     只禁不改值（原生 persistTelemetry 切 level 也不动 capture_input 的存值）。按草稿判，不按 effective——用户看到的就是它。
 // (3) 带 `check` 的 string 字段（§68.1 追记；词表 email / session_id）——server 同一条规则的逐字镜像：email = `looks_like_email`
 //     （原生 SettingsGmail.validateAddress：恰好一个 @、本地部分非空、域名含 . 且不以 . 起止、无空白）；session_id = `session_id_problem`
-//     （原生 SettingsMaintainer.validateSessionID，§68.7 追记：以 - 开头 → reason `leading_hyphen`，其余不合 [A-Za-z0-9][A-Za-z0-9-]{0,63}
-//     → `charset`）；不合格的 reason 对上目录 `check.reasons` 就显示那句，否则 `check.message`；空值 = 清键，server 也不查。
+//     （原生 SettingsMaintainer.validateSessionID，§68.7 追记：以 - 开头 → reason `leading_hyphen`，其余不合 [A-Za-z0-9][A-Za-z0-9-]*
+//     → `charset`；原生同款不设长度帽——字符句只说字符）；不合格的 reason 对上目录 `check.reasons` 就显示那句，否则 `check.message`；
+//     空值 = 清键，server 也不查。
 import type { SettingsField } from "../../types";
 
 export type Draft = Record<string, unknown>;
@@ -28,8 +29,8 @@ export function looksLikeEmail(raw: string): boolean {
   return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
 }
 
-/** server `SESSION_ID_RE` 的逐字镜像：首字符字母 / 数字，其余 [A-Za-z0-9-]，≤64 字 */
-const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+/** server `SESSION_ID_RE` 的逐字镜像：首字符字母 / 数字，其余 [A-Za-z0-9-]，不设长度帽（原生同款） */
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
 /** server `session_id_problem` 的逐字镜像（原生 validateSessionID）：`leading_hyphen` / `charset` / null（合格） */
 export function sessionIdProblem(raw: string): string | null {

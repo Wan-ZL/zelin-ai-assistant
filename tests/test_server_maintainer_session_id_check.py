@@ -1,9 +1,9 @@
 """§68.7 追记：会话 id 在**保存时**就过原生 SettingsMaintainer.validateSessionID 的闸（parity 批 maintainer-rows，
 gap settings-maintainer-session-id-validation）。
 
-- 目录 ``maintainer_session_id`` 带 ``check: "session_id"``：``SESSION_ID_RE`` = ``^[A-Za-z0-9][A-Za-z0-9-]{0,63}$``——
-  以 ``-`` 开头（``--dangerously-skip-permissions`` 全是白名单字符）→ reason ``leading_hyphen`` 与原生那句；其余不合
-  白名单 → 原生的字符白名单句；两句 zh / en 逐字；
+- 目录 ``maintainer_session_id`` 带 ``check: "session_id"``：``SESSION_ID_RE`` = ``^[A-Za-z0-9][A-Za-z0-9-]*$``（原生同款
+  不设长度帽——字符句只说字符）——以 ``-`` 开头（``--dangerously-skip-permissions`` 全是白名单字符）→ reason ``leading_hyphen``
+  与原生那句；其余不合白名单 → 原生的字符白名单句；两句 zh / en 逐字；
 - PUT 不合格 → 400 INVALID_FIELD，message 双语并列，details ``{field, check[, reason]}``，overrides 不落；空串仍是清键；
 - 投影 add-only ``check.reasons``（多句的 kind 才有；email 没有）；
 - 启动（POST /api/maintainer/terminal）对 effective 的 id 再过同一道闸（原生 openSession）：config.yaml 里的坏 id 没经过
@@ -21,8 +21,9 @@ from server import maintainer_launch
 from server import settings_catalog as catalog
 
 HYPHEN = ("-abc", "--dangerously-skip-permissions", "-")
-CHARSET = ("a b", "abc; rm -rf /", "abc_def", "会话", "a" * 65, "abc\tdef")
-GOOD = ("6f9619ff-8b86-d011-b42d-00cf4fc964ff", "a", "A-1", "a" * 64, "  padded-id  ")
+CHARSET = ("a b", "abc; rm -rf /", "abc_def", "会话", "abc\tdef")
+# 原生 validateSessionID 不设长度帽：长的但全是白名单字符 = 合格（字符句不许被拿来说长度）
+GOOD = ("6f9619ff-8b86-d011-b42d-00cf4fc964ff", "a", "A-1", "a" * 64, "a" * 65, "a-" * 100 + "z", "  padded-id  ")
 
 
 def put_json(port, path, payload):

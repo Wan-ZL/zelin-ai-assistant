@@ -1,5 +1,5 @@
 // 开发者 · 开发会话 的动作行（§68.7 追记；原生 SettingsMaintainer.swift:215-226, 330-331）：
-// 帮助句带 server 算的终端名；成功句是原生整句（不再是命令原文）；open 失败 = 原生句 + 可复制命令；
+// 帮助句带 server 算的终端名（只读目录；「通用」换终端后的跟随在 TerminalAppNameRefresh.test）；成功句是原生整句（不再是命令原文）；open 失败 = 原生句 + 可复制命令；
 // 400 会话 id 不合形状 → 目录 check 里的那句（按 UI 语言）；路径不存在 → 「路径不存在」；老 server 缺终端名 → 泛称。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,7 +73,7 @@ describe("MaintainerExtras — 帮助句的终端名", () => {
 });
 
 describe("MaintainerExtras — 打开的下场", () => {
-  it("busy word while opening, then the native success sentence (not the raw command); the receipt's terminal name updates the helper", async () => {
+  it("busy word while opening, then the native success sentence (not the raw command); the helper keeps reading the catalog, not the receipt", async () => {
     let release: (value: TerminalReceipt) => void = () => undefined;
     vi.mocked(postMaintainerTerminal).mockImplementation(() => new Promise<TerminalReceipt>((resolve) => { release = resolve; }));
     await renderWith("zh");
@@ -85,7 +85,8 @@ describe("MaintainerExtras — 打开的下场", () => {
     release({ ok: true, command: "cd /r && claude", command_file: "/tmp/x.command", cwd: "/r", terminal_app_name: "iTerm2" });
     await screen.findByText("已在终端打开 ✓ 直接告诉它要修什么、改什么就行。");
     expect(screen.queryByText("cd /r && claude")).toBeNull();
-    expect(screen.getByText("会在 iTerm2 中打开（终端应用在「通用」里换）。")).toBeTruthy();
+    // 回执的名字不另存：目录才是真源（「通用」换终端后 store 重拉目录，存了回执的名字就会盖过新值——TerminalAppNameRefresh.test）
+    expect(screen.getByText("会在 Ghostty 中打开（终端应用在「通用」里换）。")).toBeTruthy();
     await waitFor(() => expect(button.disabled).toBe(false));
     expect(screen.queryByRole("alert")).toBeNull();
   });
