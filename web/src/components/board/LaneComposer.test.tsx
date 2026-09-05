@@ -2,7 +2,7 @@
 // 要跑是需要点击按钮。」）：
 //   1) Enter / Shift+Enter / ⌘Enter / Ctrl+Enter 都不提交——键盘上没有提交键，Enter 也不被 preventDefault（浏览器原生换行）；
 //   2) 只有按钮提交，换行原样进 payload.text；成功后清空、失败草稿留着（§41 草稿保留）；
-//   3) textarea 随内容 1 → 5 行增高、第 6 行起不再长（rows 停在 5）；清空回到 1 行；
+//   3) textarea 随内容 1 → 5 行增高、第 6 行起不再长（rows 停在 5）；清空回到 1 行；空草稿不量 scrollHeight（placeholder 软换行不长高）；
 //   4) ↑/↓ 历史只在草稿为空（或已在翻历史）时接管；多行草稿里的 ↑ 归光标；翻历史途中一改字就退出翻历史；
 //   5) Esc 只交还光标，草稿不动。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -143,6 +143,20 @@ describe("LaneComposer — auto-grow 1…5 rows", () => {
     const { field } = mount();
     fireEvent.change(field, { target: { value: "one very long sentence that wraps" } });
     expect(field.rows).toBe(2);
+  });
+
+  it("an empty draft stays at 1 row even when the placeholder soft-wraps (scrollHeight includes the placeholder)", () => {
+    // 英文 + 大字号：占位句折两行，Chromium / WebKit 的 scrollHeight 都把它算进去——空草稿不量
+    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+      configurable: true,
+      get: () => 2 * LINE + PADDING_Y,
+    });
+    const { field } = mount();
+    expect(field.rows).toBe(1); // 首次挂载
+    fireEvent.change(field, { target: { value: "x" } });
+    expect(field.rows).toBe(2); // 有内容才按 scrollHeight 量
+    fireEvent.change(field, { target: { value: "" } });
+    expect(field.rows).toBe(1); // 删空回到 1 行，不跳回 2
   });
 
   it("leaves rows alone when there is no layout to measure (line-height empty)", () => {

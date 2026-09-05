@@ -4,7 +4,8 @@
 //   - Enter = 换行，Shift+Enter 也是换行，键盘上没有任何键提交——只有「捕获」/「直跑」按钮提交
 //     （owner：「这个我回车我不希望是直接跑而是下一行，要跑是需要点击按钮。」）。不拦 Enter，
 //     IME 候选上屏的回车自然安全；⌘↵ 提交没做（owner 要的是只按钮，日后想要再加）；
-//   - 草稿保留：仅在 server 确认成功后清空输入框，失败时草稿原样留着；换行原样进 text；
+//   - 草稿保留：仅在 server 确认成功后清空输入框，失败时草稿原样留着；换行原样进 wire text
+//     （只到 inbox 文件：actd _capture_text（§10）仍把空白含换行折成单空格——多行是编辑体验，落卡为单行）；
 //   - Esc 只交还光标（blur），草稿不动（原生 escKey 的「有草稿只 defocus」半边）；
 //   - payload 由调用方经 buildBody(text) 构造（propose = {action:"capture",text}，
 //     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）。
@@ -34,8 +35,14 @@ export const COMPOSER_MAX_ROWS = 5;
 
 /** 把 textarea 的 rows 调成内容需要的行数（1…COMPOSER_MAX_ROWS）：先收回 1 行让 scrollHeight 只反映内容，
  *  再按行高换算。行高 / 上下内边距从 computed style 读（token 单源）；jsdom 没有布局（行高空、scrollHeight 0）
- *  → 原样不动，交给判例桩掉这两项。超过上限后 rows 停在上限，textarea 自己的 overflow-y:auto 出滚动条。 */
+ *  → 原样不动，交给判例桩掉这两项。超过上限后 rows 停在上限，textarea 自己的 overflow-y:auto 出滚动条。
+ *  空草稿不量、直接 1 行：Chromium / WebKit 都把软换行的 placeholder 算进 scrollHeight（英文 + 大字号时
+ *  占位句折两行），量了会让空框长到 2 行、一打字又缩回 1 行（#220 审查）。 */
 export function fitComposerRows(el: HTMLTextAreaElement, maxRows = COMPOSER_MAX_ROWS): void {
+  if (!el.value) {
+    el.rows = 1;
+    return;
+  }
   const style = window.getComputedStyle(el);
   const lineHeight = parseFloat(style.lineHeight);
   if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
