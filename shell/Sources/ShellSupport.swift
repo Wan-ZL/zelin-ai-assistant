@@ -1,6 +1,7 @@
 // ShellSupport.swift — 壳内最小原生残留（R2.2.3）的公共底座：AppPaths / Analytics /
 // SettingsIO（只读）/ Shell / Prefs / SecretsIO（只读）/ FailureCatalog（引擎子集）/
-// LanguageStore。
+// LanguageStore + 窗口三条纯策略（ExternalLinkPolicy / ReopenPolicy / WindowTitlePolicy，
+// §54 追记；判例 shell/tests/PolicyHarness.swift）。
 //
 // 为什么这些名字与 mac/Sources/Utils.swift、Doctor.swift、L10n.swift 完全同名：
 // 录制引擎（Recording.swift）与实时字幕引擎（CaptionCore / LiveCaptions /
@@ -453,5 +454,81 @@ final class LanguageStore: ObservableObject {
 
     nonisolated static var systemDefault: String {
         (Locale.preferredLanguages.first ?? "en").hasPrefix("zh") ? "zh" : "en"
+    }
+}
+
+// MARK: - 窗口策略（纯函数，无 AppKit 状态；§54 追记「外链 / Dock 重开 / 标题」）
+//
+// main.swift 的 AppDelegate 只做「问策略 → 执行副作用」两步，判断本身住在这里，
+// 好让 shell/tests/PolicyHarness.swift 不用 WKWebView / NSWindow 就能钉住每一格。
+
+/// 外链一律交系统浏览器（原生 Pages.swift DepAction.url / Doctor.swift
+/// FailureCatalog.perform 都是 `NSWorkspace.shared.open`）。WKWebView 不实现
+/// WKUIDelegate 时 target=_blank / window.open 会被静默取消——壳自 §54 追记起
+/// 按本策略分流：看板 SPA 留在同一个 webView，其余 http(s) / mailto 交系统处理者，
+/// 别的 scheme 一律不理（allow-list，不是 deny-list）。
+enum ExternalLinkPolicy {
+    enum Verdict: Equatable {
+        /// http://127.0.0.1|localhost|::1:<port>/ 且路径就是 `/`（看板每一页都是
+        /// `?page=` query，见 web/src/route.ts）— 看板 SPA 自己，留在壳内加载。
+        case board
+        /// 其余 http(s)（含看板 origin 上路径不是 `/` 的 server 文件 / API 面：
+        /// `/files/…` 交付物、`/api/…`、markdown 相对链接解析出的路径）与 `mailto:`
+        /// — `NSWorkspace.shared.open`，系统浏览器 / 邮件客户端接手。壳只有一个
+        /// webView、没有后退，永不把它导航到看板之外的页面。
+        case external
+        /// about:blank / javascript: / data: / blob: / file: / 自定义 scheme / 空 URL
+        /// — 什么都不做。页面能发出的只有 http(s) / mailto（markdown sanitizeUrl 白名单）；
+        /// 其余 scheme 交 `NSWorkspace.open` 会直接启动处理者（file:///…app、
+        /// shortcuts://…），浏览器都不会不问就放行，壳更不。
+        case ignore
+    }
+
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1", "[::1]"]
+
+    static func classify(_ url: URL?, port: Int) -> Verdict {
+        guard let url = url, let scheme = url.scheme?.lowercased(), !scheme.isEmpty else {
+            return .ignore
+        }
+        if scheme == "mailto" { return .external }
+        guard scheme == "http" || scheme == "https" else { return .ignore }
+        // origin = scheme + host + port，三者全对（ShellConfig.boardURL 是明文 http；
+        // https://127.0.0.1:<port> 不是同一个 origin）**且**路径是 `/`（或空）才是
+        // 看板 SPA；同 origin 的其他路径是 server 的文件 / API 面，按 external。
+        let host = (url.host ?? "").lowercased()
+        if scheme == "http", loopbackHosts.contains(host), (url.port ?? 80) == port,
+           url.path.isEmpty || url.path == "/" {
+            return .board
+        }
+        return .external
+    }
+}
+
+/// Dock 重开只看看板窗口，不看 AppKit 的 hasVisibleWindows（原生 AppDelegate.swift
+/// applicationShouldHandleReopen + MainWindowController.isWindowOpen 同义）：字幕悬浮
+/// NSPanel（CaptionOverlay，orderFrontRegardless）会把 hasVisibleWindows 顶成 true，
+/// 按它判 Dock 点击就成了空操作。三分：看板不在 → show；最小化 → 壳自己
+/// deminiaturize（AppKit 的默认重开只在 hasVisibleWindows == false 时才还原最小化
+/// 窗口——悬浮窗在场时它不会，所以不能交给它）；可见 → 什么都不做。
+enum ReopenPolicy {
+    enum Action: Equatable {
+        case show
+        case deminiaturize
+        case none
+    }
+
+    static func action(boardVisible: Bool, boardMiniaturized: Bool) -> Action {
+        if boardMiniaturized { return .deminiaturize }
+        return boardVisible ? .none : .show
+    }
+}
+
+/// 窗口标题跟随页面（原生 MainWindow.installTitleSink：标题随 section / 语言重算）：
+/// 壳这半 KVO 观察 `webView.title`，页面没给标题（内嵌 splash / 空串 / 全空白）时
+/// 回落产品名。
+enum WindowTitlePolicy {
+    static func resolve(pageTitle: String?, fallback: String) -> String {
+        let trimmed = (pageTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 }
