@@ -274,6 +274,14 @@ _FIXTURE_REPO_PLACEHOLDER = "/Users/demo/Projects/zelin-ai-assistant"
 _FIXTURE_TERMINAL_APP_NAME = "Terminal"
 
 
+def _scrub_settings_field(field):
+    """一个 field 的机器相关值抹成固定值：目录字段的 `path_exists`、开发者区仓库路径的动态灰字。"""
+    if field.get("path") and field.get("effective"):
+        field["path_exists"] = _FIXTURE_PATH_EXISTS
+    if field["key"] == "maintainer_repo_path":
+        field["placeholder"] = {"zh": _FIXTURE_REPO_PLACEHOLDER, "en": _FIXTURE_REPO_PLACEHOLDER}
+
+
 def build_settings():
     """GET /api/settings 的快照（文案 server-owned）：home 里只有一条 override
     `obsidian_raw`（默认空值下笔记库的目录按钮无从渲染），其余全默认；目录字段的
@@ -288,10 +296,7 @@ def build_settings():
         if section["id"] == "maintainer":
             section["terminal_app_name"] = _FIXTURE_TERMINAL_APP_NAME
         for field in section["fields"]:
-            if field.get("path") and field.get("effective"):
-                field["path_exists"] = _FIXTURE_PATH_EXISTS
-            if field["key"] == "maintainer_repo_path":
-                field["placeholder"] = {"zh": _FIXTURE_REPO_PLACEHOLDER, "en": _FIXTURE_REPO_PLACEHOLDER}
+            _scrub_settings_field(field)
     return snap
 
 
