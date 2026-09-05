@@ -1,4 +1,4 @@
-pr: `fix/parity-shell-menu-l10n`（PR #TBD）
+pr: `fix/parity-shell-menu-l10n`（PR #243）
 phase: D3 行为 parity 回填——shell-window 链第 2 批（`shell-menu-l10n`；gap: lifecycle-shell-menu-lacks-settings-permissions-focus-shortcuts / lifecycle-shell-menu-english-only-no-sidebar-toggle / pages-shell-nav-shell-menu-skeleton / diagnostics-setup-shell-menu-permissions-settings-items）
 law: §54 追记（壳主菜单：MenuSpec 纯表 + 装配、随 LanguageStore 重建、设置… ⌘, / 权限体检… / 关于 → 看板页 / 聚焦捕获框 ⌘L / 隐藏其他 / 缩放）/ §68.13 追记（应用菜单清单 + ⌥⌘S tombstone）
 
