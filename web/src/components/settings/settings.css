@@ -645,7 +645,14 @@
 .engine-status { align-items: center; }
 .ingest-db-stamp { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ingest-trigger { align-items: baseline; }
-.engine-diagnosis { align-items: center; flex-wrap: wrap; }
+/* 原生 EngineDiagnosisRow 的 VStack：动作行 + 日志尾（engine_crashed / engine_ffmpeg_missing 非空时） */
+.engine-diagnosis { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.engine-diagnosis-row { align-items: center; flex-wrap: wrap; }
+/* npm 首次下载的 ProgressView().controlSize(.small)：小号 spinner，跟 11.5px 的句子一行 */
+.engine-diagnosis .engine-spinner { width: 14px; height: 14px; flex: none; }
+/* 原生 lineLimit(6)：6 行封顶（.diag-log 的 line-height 1.45 + 上下 padding 8px），多了在框内滚。
+   两级选择器（0,2,0）压过后文 .diag-log 自己的 max-height: 420px（0,1,0）——单类同权时后者按源顺序赢，封顶会失效 */
+.engine-diagnosis .engine-log-tail { max-height: calc(6 * 1.45em + 16px); user-select: text; }
 .tcc-lost { border-left: 3px solid var(--warning); padding-left: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 
 .btn.btn-quiet { opacity: 0.8; }
