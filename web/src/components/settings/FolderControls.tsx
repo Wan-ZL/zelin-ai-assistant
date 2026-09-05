@@ -193,7 +193,9 @@ export function FolderActions({ field, dirty }: FolderActionsProps) {
     setNote(null);
     try {
       if (action === "open") {
-        await postFolderOpen(field.key);
+        // 目录不在 → server 开最近的既有祖先并回 add-only `missing`（§68.4 追记）；如实说一句，「创建」就在旁边
+        const receipt = await postFolderOpen(field.key);
+        if (receipt.missing) setNote({ ok: true, message: text("目录不存在，已打开上级目录", "Folder doesn't exist — opened its parent instead") });
       } else {
         const receipt = await postFolderCreate(field.key);
         setNote({ ok: true, message: receipt.created ? text("已创建。", "Created.") : text("目录已存在。", "The folder already exists.") });

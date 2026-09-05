@@ -2,6 +2,7 @@
 
 macOS TCC 按**可执行文件**记账（§55 三幕 + D20）：launchd 会话里的守护 python、
 claude CLI、构建 UI 的 node 各自都要一次「完全磁盘访问」才能读外置卷上的 repo；
+cron（§25 ingest 链读 ~/Documents 下的 vault）是第四个——原生 CronFDA 引导授权的那条路径；
 壳（GUI）另有屏幕录制 / 麦克风 / 通知三项。原生 Permissions.swift 只探 GUI 那三项
 （那部分留在壳里，经 §61 桥回报）；这里补上 D20 家族缺的一半：
 
@@ -34,6 +35,9 @@ from typing import Optional
 from server import doctor_run, paths, settings_catalog
 
 SHELL_APP_PATH = "/Applications/Zelin's AI Assistant.app"   # §54 名字互换后的产品路径（act.lib.version.BOARD_APP_NAME）
+# §25 cron FDA：原生 Doctor.swift CronFDA.cronBinary——⌘⇧G 弹层里要粘的那条路径；与
+# act/lib/fresh_install.CRON_BINARY 同一字面量（判例钉住，server 不 import act.lib.fresh_install）
+CRON_BINARY = "/usr/sbin/cron"
 _SYS_PREFS = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 PANES = {
     "full_disk": _SYS_PREFS + "AllFiles",
@@ -119,6 +123,11 @@ def executables(home: Path) -> list:
         _entry("node", shutil.which("node"),
                "node（自动部署构建看板 UI；缺授权时 install.sh 的 ui 步记 skipped_tcc）",
                "node (auto-deploy builds the board UI; without the grant install.sh records ui=skipped_tcc)"),
+        # §25：cron 链读 ~/Documents 下的 vault——#1 静默失败的那把授权（doctor `cron disk access` 行 / 依赖检查
+        # 「定时任务磁盘权限」行的「去授权」把这条路径放进剪贴板，原生 CronFDA.beginGrant 同款）
+        _entry("cron", CRON_BINARY,
+               "定时任务（ingest 链）——只有「完全磁盘访问」才能读 ~/Documents 下的 Obsidian vault；缺了截图静默变不成笔记",
+               "cron (the ingest chain) — needs Full Disk Access to read the Obsidian vault under ~/Documents; without it captures silently never become notes"),
         _entry("shell_app", SHELL_APP_PATH,
                "看板 app（屏幕录制 / 麦克风 / 通知三项按它的 bundle id 记账，用下方三个按钮授权）",
                "Board app (Screen Recording / Microphone / Notifications key on its bundle id — grant via the three buttons below)"),
