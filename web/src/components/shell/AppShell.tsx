@@ -1,9 +1,11 @@
 // App 外壳（G7，自写非 fork）：左侧导航栏 + 顶栏 + 离线横幅 + 主内容区的布局骨架（§54.4：
 // 布局跟原生 MainWindow——sidebar 通高在左，顶栏与内容在右）。
 // app.tsx 保持薄——页面组件作为 children 传进来，这里只管壳层关注点：
-//   1. 整页状态分派（**只在看板页**，原生 MainWindow.detail：非看板 section 从不依赖 store.dashboard，§54.1 追记）：
-//      首载 loading / dashboard.json 不存在（server 在、文件不在——原生 PipelineEmptyStateView + 列顶 composer）/
-//      从未加载成功且离线（诚实空态+恢复路径）/ 正常渲染页面；其余页无条件渲染 children（各页自拉快照、自报读失败）；
+//   1. 整页状态分派（**只在读 /api/board 快照的页**——看板本体 + 回收站 / 永久性完成 / 会议纪要，它们读的是
+//      board.trash / archived / recaps 同一份快照；原生 MainWindow.detail 的其余 section 从不依赖 store.dashboard，§54.1 追记）：
+//      首载 loading / 从未加载成功且离线（诚实空态+恢复路径——「拉不到」绝不渲染成「为空」）/ dashboard.json 不存在
+//      （server 在、文件不在：看板页 = 原生 PipelineEmptyStateView + 列顶 composer；三个列表页 = 空列表，原生
+//      `dashboard?.trash ?? []`）/ 正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
 //   2. <html lang> 与 document.title 随语言与当前页同步（原生 installTitleSink：「Zelin's AI Assistant — <页>」，pageTitles.ts）；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
 //   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话；看板页的「没写出数据」空态
@@ -11,10 +13,11 @@
 //   5. 自我改进通道横幅（SelfImproveBanner，§65.4：敏感路径护栏挂起通道时点名 PR 并给「恢复通道」）。
 //   6. 每日整理横幅（MaintenanceBanner，§70：正在整理 / 今日整理：合并 N、清理 M）。
 //   7. 板级诊断条（DiagnosticsStrip，§48：用户打开的源在静默失败——每 path 一张卡 + 一颗直达修复的按钮；只在看板页）。
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
-import { readPage } from "../../route";
+import { readPage, type AppPage } from "../../route";
+import { onShellCommand } from "../../shellBridge";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import { LaneComposer } from "../board/LaneComposer";
 import { errorMessage } from "../settings/useToast";
@@ -33,6 +36,11 @@ export interface AppShellProps {
   searchSlot?: ReactNode;
   children: ReactNode;
 }
+
+/** 数据住在 `GET /api/board` 快照里的页：看板本体，加上读 `board.trash` / `board.archived` / `board.recaps` 的三个列表页
+ *  （TrashPage / ArchivePage / RecapsPage）。首载 / 离线无快照时这些页由壳统一说真话——没有快照时页面自己只会渲染成
+ *  「为空」（ErrorBanner 无快照不说话、PipelineBanner 离线拿不到 health）。其余页自拉快照、自报读失败，不在此列。 */
+export const BOARD_FED_PAGES: ReadonlySet<AppPage> = new Set<AppPage>(["board", "trash", "archive", "recaps"]);
 
 const WarningIcon = () => (
   <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
@@ -63,6 +71,20 @@ export function BoardMissingState() {
   const { text } = useI18n();
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  // 壳的全局快捷键 / 菜单「聚焦捕获框」→ quick_capture（§61.6）：app.tsx 的落点只认列里的 composer
+  // （`.board-column .lane-composer textarea`），这一态没有列——这里的 composer 自己接命令，同原生 Composer.swift 的
+  // 每个 propose 形 KanbanComposer 各自收 `.focusCaptureField`（首份 dashboard.json 出现之前 ⌘L 也进得来）。
+  // 只交光标不全选（已有草稿时下一键不许覆盖）；壳不在场 = no-op。
+  useEffect(
+    () =>
+      onShellCommand((command) => {
+        if (command !== "quick_capture") return;
+        composerRef.current?.querySelector("textarea")?.focus();
+      }),
+    [],
+  );
 
   const seed = async () => {
     setSeeding(true);
@@ -80,7 +102,7 @@ export function BoardMissingState() {
 
   return (
     <div className="shell-board-missing" data-board-missing="true">
-      <div className="shell-board-missing-composer">
+      <div className="shell-board-missing-composer" ref={composerRef}>
         <LaneComposer
           placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
           submitLabel={text("捕获", "Capture")}
@@ -120,6 +142,7 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
   const { board, boardError, boardMissing, boardLoading } = useAppState();
   const page = readPage(window.location.search);
   const isBoard = page === "board";
+  const readsBoard = BOARD_FED_PAGES.has(page);
 
   // 语言 / 页变化时同步文档级属性（无障碍朗读随 UI 语言；标签页标题 = 原生窗口标题「Zelin's AI Assistant — <页>」）
   useEffect(() => {
@@ -128,9 +151,9 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
   }, [language, text, page]);
 
   let content: ReactNode;
-  if (!isBoard || board) {
-    // 非看板页从不等看板（原生 MainWindow.detail：settings / about / ingest / trash / archive 各读各的快照）；
-    // 看板页有快照就渲染（离线降级由 ErrorBanner 声明）
+  if (!readsBoard || board) {
+    // 自拉快照的页从不等看板（原生 MainWindow.detail：settings / about / ingest / permissions / setup 各读各的）；
+    // 读看板快照的页有快照就渲染（离线降级由 ErrorBanner 声明）
     content = children;
   } else if (boardLoading) {
     content = (
@@ -142,10 +165,11 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
       </div>
     );
   } else if (boardMissing) {
-    // server 在、dashboard.json 不在（404）：不是离线——原生 PipelineEmptyStateView + composer
-    content = <BoardMissingState />;
+    // server 在、dashboard.json 不在（404）：不是离线——看板页 = 原生 PipelineEmptyStateView + composer；
+    // 回收站 / 永久性完成 / 会议纪要 = 空列表（原生 TrashPageView 读 `dashboard?.trash ?? []`，健康横幅照常说话）
+    content = isBoard ? <BoardMissingState /> : children;
   } else {
-    // 从未加载成功 + 读失败（网络 / 5xx）：诚实说明原因与恢复路径
+    // 从未加载成功 + 读失败（网络 / 5xx）：诚实说明原因与恢复路径——「拉不到」不许渲染成「为空」
     content = (
       <div className="shell-center">
         <EmptyState

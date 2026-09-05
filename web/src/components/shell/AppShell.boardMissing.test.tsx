@@ -1,13 +1,16 @@
 // AppShell 的看板读失败分派（CONTRACT §49 / §54.1 / §68.8 追记；原生 Store.swift missing → Kanban.emptyState）：
-//   - 只有看板页等 /api/board：其余 ?page= 在读失败 / 404 时照常渲染 children（原生 MainWindow.detail 非看板 section 不看 dashboard）；
+//   - 只有读看板快照的页等 /api/board（看板 + 回收站 / 永久性完成 / 会议纪要，后三页见 AppShell.boardDependentPages.test.tsx）：
+//     自拉快照的 ?page= 在读失败 / 404 时照常渲染 children（原生 MainWindow.detail 非看板 section 不看 dashboard）；
 //   - 看板页 404（dashboard.json 不存在）≠ 离线：Freshness.swift PipelineEmptyStateView 文案 +「启动后台服务」+「打开依赖检查」
-//     + web 的「立即生成一次」+ 提案列 composer（Kanban.swift：capture 不依赖管线跑过）；健康横幅同时闭嘴（.missing 归空态）；
+//     + web 的「立即生成一次」+ 提案列 composer（Kanban.swift：capture 不依赖管线跑过；壳的 quick_capture 命令能聚焦它，
+//     原生 Composer.swift 每个 propose 形 composer 自己收 .focusCaptureField）；健康横幅同时闭嘴（.missing 归空态）；
 //   - 看板页网络失败仍是「连不上本地服务」+ 重试。
 // api 层 mock 掉，经 store 真实 action 驱动状态；零真实网络 / 子进程。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchBoard, fetchHealth, postAction, postRepairActd, postSeedDashboard } from "../../api";
 import { LanguageContext } from "../../i18n";
+import { SHELL_COMMAND_EVENT } from "../../shellBridge";
 import { refreshBoard, refreshHealth, resetStoreForTests } from "../../store";
 import type { Board, HealthSnapshot } from "../../types";
 import { AppShell } from "./AppShell";
@@ -179,6 +182,37 @@ describe("AppShell · dashboard.json 不存在（看板页）", () => {
     expect(await screen.findByText(/Submitted; AI is analyzing/)).toBeTruthy();
   });
 
+  it("壳的 quick_capture 命令（全局快捷键 / ⌘L）把光标交给这一态的 composer；壳不在场 = no-op", async () => {
+    fetchBoardMock.mockRejectedValue(notFound());
+    await refreshBoard();
+    const dispatch = () => window.dispatchEvent(new CustomEvent(SHELL_COMMAND_EVENT, { detail: { command: "quick_capture" } }));
+
+    // 浏览器会话（无壳）：没人订阅，光标不动
+    delete window.webkit;
+    renderShell();
+    dispatch();
+    expect(document.activeElement).not.toBe(screen.getByPlaceholderText(/One sentence/));
+    cleanup();
+
+    // 壳在场：命令落到 composer；别的命令不抢焦点
+    window.webkit = { messageHandlers: { zaiShell: { postMessage: async () => ({}) } } };
+    try {
+      const { unmount } = renderShell();
+      const field = screen.getByPlaceholderText(/One sentence/);
+      window.dispatchEvent(new CustomEvent(SHELL_COMMAND_EVENT, { detail: { command: "something_else" } }));
+      expect(document.activeElement).not.toBe(field);
+      dispatch();
+      expect(document.activeElement).toBe(field);
+      // 卸载后监听器随之摘掉（effect cleanup = onShellCommand 的 stop）
+      field.blur();
+      unmount();
+      dispatch();
+      expect(document.activeElement).not.toBe(field);
+    } finally {
+      delete window.webkit;
+    }
+  });
+
   it("健康横幅在这一态闭嘴（同一句「启动后台服务」不说两遍——原生 .missing 归 PipelineEmptyStateView）", async () => {
     fetchBoardMock.mockRejectedValue(notFound());
     fetchHealthMock.mockResolvedValue(staleHealth);
@@ -213,7 +247,7 @@ describe("AppShell · dashboard.json 不存在（看板页）", () => {
   });
 });
 
-describe("AppShell · 非看板页不等看板（原生 MainWindow.detail）", () => {
+describe("AppShell · 自拉快照的页不等看板（原生 MainWindow.detail）", () => {
   beforeEach(() => {
     resetStoreForTests();
     fetchBoardMock.mockReset();
@@ -225,7 +259,8 @@ describe("AppShell · 非看板页不等看板（原生 MainWindow.detail）", (
     goTo("");
   });
 
-  for (const page of ["settings", "about", "ingest", "permissions", "setup", "trash", "archive", "recaps"] as const) {
+  // 回收站 / 永久性完成 / 会议纪要读的是看板快照，跟看板同一套三态——见 AppShell.boardDependentPages.test.tsx
+  for (const page of ["settings", "about", "ingest", "permissions", "setup", "deps", "diagnostics", "styleguide"] as const) {
     it(`?page=${page}：首载中 / 读失败 / 404 三态下 children 都渲染`, async () => {
       goTo(`?page=${page}`);
       // 首载中
