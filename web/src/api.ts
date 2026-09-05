@@ -403,10 +403,18 @@ export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
   return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
 }
 
-/** POST /api/reveal {target[, name]} — 访达定位 server 词表里的文件（config = config.yaml / 模板，§68.4「显示文件」；
- *  skill + name = 该 skill 的 SKILL.md，§67.5「在 Finder 显示」——客户端只传词与名，路径 server 推导） */
-export function postRevealTarget(target: "config" | "skill" | "voice_profile", name?: string): Promise<unknown> {
-  return request("/api/reveal", { method: "POST", body: JSON.stringify(name === undefined ? { target } : { target, name }) });
+export type RevealTarget = "config" | "skill" | "voice_profile" | "mcp_user" | "mcp_project";
+export type RevealMode = "reveal" | "open";
+
+/** POST /api/reveal {target[, name][, mode]} — 访达定位 server 词表里的文件（config = config.yaml / 模板，§68.4「显示文件」；
+ *  skill + name = 该 skill 的 SKILL.md，§67.5「在 Finder 显示」；mcp_user / mcp_project = 该作用域的 MCP 配置文件，§68.9——
+ *  客户端只传词与名，路径 server 推导）。add-only mode（缺省 reveal）：voice_profile 的「打开档案」传 "open"（默认编辑器打开，
+ *  原生 NSWorkspace.open，§68.1 追记 (b)）；其它 target 传 open 会被 server 400。缺省时不发该键（零多余字段）。 */
+export function postRevealTarget(target: RevealTarget, name?: string, mode?: RevealMode): Promise<unknown> {
+  const body: Record<string, string> = { target };
+  if (name !== undefined) body.name = name;
+  if (mode !== undefined) body.mode = mode;
+  return request("/api/reveal", { method: "POST", body: JSON.stringify(body) });
 }
 
 /** GET /api/about — 版本 / 路径 / 更新状态 */

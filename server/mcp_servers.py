@@ -7,6 +7,9 @@
   ``mcpServers``。**隐私规则**（原生同款，load-bearing）：``~/.claude.json`` 还装着
   无关的 Claude Code 状态，**只**取 ``mcpServers`` 子树；env 只给个数；args / URL
   过密钥掩码（sk-ant- / xox* / AKIA / gh*_ / Bearer），URL 的 query 整段打码。
+- 作用域行另带 add-only ``path_display``（``$HOME`` 缩成 ``~``，原生 abbrevHome——server 知道
+  HOME、客户端不知道）；两个固定路径由 ``scope_paths`` 单点计算，``POST /api/reveal
+  {target:"mcp_user"|"mcp_project"}``（server/files）的「在 Finder 显示」复用同一处（§68.9 追记）。
 """
 from __future__ import annotations
 
@@ -59,9 +62,28 @@ def _server_entry(name: str, v: dict, scope: str) -> dict:
             "env_count": len(env) if isinstance(env, dict) else 0}
 
 
-def _read_scope(path: Path, scope: str) -> dict:
-    """一个作用域：``{"path", "exists", "parseable", "servers": [...]}``。"""
-    out = {"scope": scope, "path": str(path), "exists": path.is_file(), "parseable": True, "servers": []}
+def abbrev_home(path: Path, user_home: Path) -> str:
+    """原生 SettingsMCP.abbrevHome：``$HOME`` 前缀缩成 ``~``（``/Users/me/.claude.json`` →
+    ``~/.claude.json``），不在 HOME 下的原样返回。纯字串前缀匹配，不 resolve（展示用，不是安全边界）。"""
+    text, home = str(path), str(user_home).rstrip("/")
+    if not home:            # HOME="/"：什么都不缩（否则所有路径都成 ~/…）
+        return text
+    if text == home:
+        return "~"
+    if text.startswith(home + "/"):
+        return "~" + text[len(home):]
+    return text
+
+
+def scope_paths(home: Path, user_home: Optional[Path] = None) -> "dict[str, Path]":
+    """两个作用域的固定配置文件路径（唯一计算点：列表与 reveal 共用）。"""
+    return {"user": (user_home or Path.home()) / ".claude.json", "project": home / ".mcp.json"}
+
+
+def _read_scope(path: Path, scope: str, user_home: Path) -> dict:
+    """一个作用域：``{"path", "path_display", "exists", "parseable", "servers": [...]}``。"""
+    out = {"scope": scope, "path": str(path), "path_display": abbrev_home(path, user_home),
+           "exists": path.is_file(), "parseable": True, "servers": []}
     if not out["exists"]:
         return out
     try:
@@ -77,5 +99,6 @@ def _read_scope(path: Path, scope: str) -> dict:
 
 def mcp(home: Path, user_home: Optional[Path] = None) -> dict:
     """``GET /api/mcp``：``{"scopes": [user, project]}``（只读；增删改在终端 ``claude mcp``）。"""
-    user = (user_home or Path.home()) / ".claude.json"
-    return {"scopes": [_read_scope(user, "user"), _read_scope(home / ".mcp.json", "project")]}
+    user_home = user_home or Path.home()
+    paths = scope_paths(home, user_home)
+    return {"scopes": [_read_scope(paths[scope], scope, user_home) for scope in ("user", "project")]}
