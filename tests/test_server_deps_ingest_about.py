@@ -262,17 +262,26 @@ class FailureCatalogTestCase(_ServerCase):
 
 class UninstallDetailsTestCase(_ServerCase):
     def test_missing_script_and_open_failure_carry_the_manual_command(self):
+        """脚本缺席 404、壳没在跑 503、队列写不进去 500——三种都把手动命令带在 details 里（§68.6 / §68.7 队列通道）。"""
+        from server import terminal_launch
         with mock.patch.object(uninstall_launch, "script_path", lambda: Path(self.tmp.name) / "nope.sh"):
             with self.assertRaises(uninstall_launch.NotFoundError) as ctx:
-                uninstall_launch.launch({}, opener=lambda p: None, platform="darwin")
+                uninstall_launch.launch({}, platform="darwin", home=self.home)
         self.assertEqual(ctx.exception.details["command"], uninstall_launch.shell_command())
 
-        def boom(_path):
-            raise OSError("no Terminal")
-        with self.assertRaises(uninstall_launch.ApiError) as ctx:
-            uninstall_launch.launch({}, opener=boom, out_dir=Path(self.tmp.name), platform="darwin")
+        # 壳没在跑（没有 state/shell.heartbeat）→ 503，仍带手动命令
+        with self.assertRaises(terminal_launch.ShellUnavailableError) as ctx:
+            uninstall_launch.launch({}, platform="darwin", home=self.home)
         self.assertEqual(ctx.exception.details["command"], uninstall_launch.shell_command())
-        self.assertIn("command_file", ctx.exception.details)
+
+        # 壳在跑但队列目录被一个普通文件占着 → 入队 500，仍带手动命令 + 队列目录
+        terminal_launch.paths.shell_heartbeat_path(self.home).write_text("pid=1\n", encoding="utf-8")
+        terminal_launch.paths.terminal_queue_dir(self.home).write_text("not a dir", encoding="utf-8")
+        with self.assertRaises(uninstall_launch.ApiError) as ctx:
+            uninstall_launch.launch({}, platform="darwin", home=self.home)
+        self.assertEqual(ctx.exception.status, 500)
+        self.assertEqual(ctx.exception.details["command"], uninstall_launch.shell_command())
+        self.assertIn("queue_dir", ctx.exception.details)
 
 
 if __name__ == "__main__":

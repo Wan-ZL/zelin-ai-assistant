@@ -5,19 +5,21 @@
 //     卡面永远是收起态，泳道不再被撑高；
 //   RelativeTime：卡面一律相对时间（19天前 / 2小时59分），hover 给绝对时间；
 //   RepoChip：cwd / target basename 中性章；
-//   CopyCommandLine：「单击复制指令」行——网页没有终端入口（server 无对应 endpoint），只复制，tooltip 说明；
+//   CopyCommandLine：「单击复制指令 · 双击在终端接管」行——单击复制（本行是复制热区），双击由 CardSurface 接管；
 //   ErrorLine + 让 AI 修：错误一句（红）+ 起 server 的 act.ai_fix 修复会话（POST /api/ai-fix）。
 //   CardSurface（issue #8 a11y）：五种卡共用的 <article>——可聚焦、Enter/Space 打开详情侧栏
 //     （「展开详情 ▸」的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
-//     卡上没有双击绑定（D34：双击语义留给 #216 终端接管）。
+//     双击整卡 = 在终端接管会话（issue #216，§68.7；terminalTakeover.ts）：只对有可接管会话的卡（takeoverCmd
+//     非空）生效，落在卡内按钮 / 输入框上的双击归它们自己（指令行除外——它就是接管热区）；回执一行小字。
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { postAiFix, postTerminal } from "../../api";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { postAiFix } from "../../api";
 import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
 import { openCardDetail } from "./boardActions";
+import { useTerminalTakeover } from "./terminalTakeover";
 import { toggleSelected, useAppState } from "../../store";
 import { copyText } from "../detail/copyText";
 
@@ -34,7 +36,20 @@ interface CardSurfaceProps {
   /** VoiceOver 读的一句：状态词 + 标题（例「执行中 · 修 flaky 测试」）——状态不靠色点 */
   label: string;
   className?: string;
+  /**
+   * 这张卡可接管的会话命令（RunningCard: resumeCommand；ReviewCard: copy_cmd）——非空 = 双击整卡在终端接管
+   * （§68.7，issue #216）；空 / 缺省 = 没有会话可接管，双击 no-op（提案 / 排队 / 已完成 / 积压卡）。
+   * 只用来判「有没有」并在降级时复制；发给 server 的仍只有 card_id，命令由 server 从投影行推导。
+   */
+  takeoverCmd?: string | null;
   children: ReactNode;
+}
+
+/** 落在卡内交互件上的双击归它们自己（按钮的双击不该顺带开终端）；唯一例外是指令行——它本身就是接管热区 */
+function isInnerControl(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const control = target.closest("button, a, input, textarea, select, label, dialog, [role='dialog']");
+  return control !== null && !control.classList.contains("card-copy-line");
 }
 
 /**
@@ -42,9 +57,11 @@ interface CardSurfaceProps {
  * 等价物；只在焦点落在卡本身、不是卡里的按钮/输入框时响应，免得抢走按钮自己的 Enter），
  * aria-label 把状态词与标题读出来（色点是 aria-hidden 的装饰）。<article> 的隐式 role 已是
  * article（可带 aria-label，VoiceOver 把整卡当一个可导航项）——不另加 role（axe aria-allowed-role 会拒）。
- * 不绑双击（D34）：双击作详情入口不可发现、还和选文本手势打架；它的语义留给 #216 终端接管。
+ * 双击 = 在终端接管会话（issue #216；D34 把双击从详情入口上解绑就是留给它的）：`takeoverCmd` 非空才响应，
+ * Enter 仍归详情（无障碍语义是看详情，不该触发外部进程）；回执 / 降级提示是卡尾一行 role=status 小字。
  */
-export function CardSurface({ cardId, label, className = "", children }: CardSurfaceProps) {
+export function CardSurface({ cardId, label, className = "", takeoverCmd = null, children }: CardSurfaceProps) {
+  const { status, takeOver, canTakeOver } = useTerminalTakeover(cardId, takeoverCmd);
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
@@ -52,14 +69,27 @@ export function CardSurface({ cardId, label, className = "", children }: CardSur
       openCardDetail(cardId);
     }
   };
+  const onDoubleClick = (e: MouseEvent<HTMLElement>) => {
+    if (!canTakeOver || isInnerControl(e.target)) return;
+    // 双击顺带选中了一个词：接管是动作不是选文本，清掉免得卡面留着高亮
+    try { window.getSelection()?.removeAllRanges(); } catch { /* 无 Selection API 的环境 */ }
+    void takeOver();
+  };
   return (
     <article
       className={`task-card${className ? ` ${className}` : ""}`}
       tabIndex={0}
       aria-label={label}
       onKeyDown={onKeyDown}
+      onDoubleClick={canTakeOver ? onDoubleClick : undefined}
     >
       {children}
+      {status && (
+        <span className={`card-meta-text card-takeover-status${status.failed ? " is-danger" : ""}`} role="status">
+          <span>{status.msg}</span>
+          {status.detail && <span className="card-meta-detail">{` · ${status.detail}`}</span>}
+        </span>
+      )}
     </article>
   );
 }
@@ -183,8 +213,9 @@ export function RepoChip({ path }: { path: unknown }) {
 }
 
 /**
- * 「单击复制指令」行（原生 TaskRow / ReviewRow 的 copy 仰赖整卡点击 + 双击起终端）。
- * 网页：这一行本身就是复制热区，文案如实只承诺复制；tooltip 带完整命令。双击在终端接管归 #216。
+ * 「单击复制指令 · 双击在终端接管」行（原生 TaskRow / ReviewRow 的 copy 仰赖整卡点击 + 双击起终端）。
+ * 网页：这一行本身就是复制热区；双击冒泡到 CardSurface 接管（issue #216——本行是卡内唯一不拦双击的
+ * 按钮，见 isInnerControl）；tooltip 带完整命令。
  */
 export function CopyCommandLine({ cmd }: { cmd: unknown }) {
   const { text } = useI18n();
@@ -211,55 +242,9 @@ export function CopyCommandLine({ cmd }: { cmd: unknown }) {
       >
         {copied
           ? text("已复制 ✓", "Copied ✓")
-          : text("单击复制指令 · 粘贴到终端即可接管会话", "Click to copy the command · paste it in a terminal to take over the session")}
+          : text("单击复制指令 · 双击在终端接管", "Click to copy the command · double-click to take over in a terminal")}
       </button>
       <CopiedAnnouncer copied={copied} />
-    </>
-  );
-}
-
-/**
- * 「在终端接管」（原生 双击指令行 → TerminalLauncher 的 web 落点，§68.7）：POST /api/terminal →
- * server 从投影行推导命令、写 .command 并 open（Terminal.app 执行）。客户端只传 card_id。
- * 非 darwin / 无会话时 server 报 501 / 400，原文显示。
- */
-export function TerminalButton({ cardId }: { cardId: string }) {
-  const { text } = useI18n();
-  // 回执两句逐字镜像原生 CopyPathLine 的 launched / launchFailed（已在终端打开 / 打开终端失败）；失败另附 server 原文
-  const [status, setStatus] = useState<{ msg: string; detail?: string; failed: boolean } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
-
-  const open = async () => {
-    if (busy) return;
-    setBusy(true);
-    setStatus(null);
-    try {
-      await postTerminal(cardId);
-      setStatus({ msg: text("已在终端打开", "Opened in terminal"), failed: false });
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setStatus(null), 3000);
-    } catch (e) {
-      setStatus({ msg: text("打开终端失败", "Terminal launch failed"), detail: e instanceof Error ? e.message : String(e), failed: true });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <button type="button" className="btn" disabled={busy} onClick={() => void open()} title={text("在终端里接管这个会话（server 推导命令）", "Take over this session in a terminal (command derived by the server)")}>
-        {text("在终端接管", "Open in Terminal")}
-      </button>
-      {status && (
-        <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>
-          <span>{status.msg}</span>
-          {status.detail && <span className="card-meta-detail">{` · ${status.detail}`}</span>}
-        </span>
-      )}
     </>
   );
 }

@@ -1046,12 +1046,15 @@ export interface ClaudeSessionsScan {
   [key: string]: unknown;
 }
 
-/** POST /api/terminal 回执（§68.7）：server 已写 .command 并 open */
+/** POST /api/terminal 回执（§68.7）：server 已把 launch 请求入队 state/terminal_queue（2026-09-05 起，issue #216；
+ *  壳消费队列经 Apple Events 开终端）。`command_file` 键保留 = 队列条目路径（跨组件字段只增不删）；`queue_id` add-only。
+ *  同一形状也是 POST /api/uninstall/terminal / /api/maintainer/terminal 的回执。 */
 export interface TerminalReceipt {
   ok: boolean;
   command: string;
   command_file: string;
-  cwd: string;
+  cwd?: string;
+  queue_id?: string;
   [key: string]: unknown;
 }
 

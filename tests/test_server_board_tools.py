@@ -1,7 +1,8 @@
 """server/ 看板工具面（CONTRACT §21 / §22 / §47.4 / §54 / §68.7–§68.10）：
 
-- POST /api/terminal：命令由 server 从投影行推导（copy_cmd → claude --resume），写
-  .command + open（opener 注入）；404 / 400 / 501 / UNKNOWN_FIELD；
+- POST /api/terminal：命令由 server 从投影行推导（copy_cmd → claude --resume），**入队**
+  state/terminal_queue/<id>.json 给壳消费（2026-09-05 起不写 .command 不 open）；404 / 400 /
+  501 / 503 SHELL_UNAVAILABLE（壳心跳缺席）/ UNKNOWN_FIELD；写侧清扫过期条目；
 - POST /api/repair/actd：launchctl 注入——已加载 → kickstart；未加载 → 409 指向
   install.sh；label 与 act/doctor.ACTD_LABEL 逐字一致；
 - GET /api/mcp：MCP 只读 mcpServers 子树、掩码、env 只给个数（Skills 商店 = §67 自己的判例）；
@@ -9,7 +10,6 @@
 """
 import json
 import os
-import stat
 import sys
 import tempfile
 import unittest
@@ -24,7 +24,6 @@ from act import doctor as act_doctor
 from server import repair, subproc, terminal_launch
 
 _WIN = sys.platform.startswith("win")
-_REAL_DEFAULT_OPENER = terminal_launch._default_opener   # setUp 会把模块属性换成替身；直测原函数用这个
 
 
 class _ServerCase(unittest.TestCase):
@@ -42,37 +41,50 @@ class _ServerCase(unittest.TestCase):
 
 
 class TerminalLaunchTestCase(_ServerCase):
+    """§68.7（2026-09-05，issue #216）：server 只入队，不写 .command、不 open、不 spawn 任何进程。"""
+
     def setUp(self):
         super().setUp()
         self.board = seed_scene(self.home, "running")
-        self.opened = []
-        # 默认 opener 现在收 (path, app)：app = 设置「终端应用」解析出的 open -a 目标（记下来给判例看）
-        self.opened_apps = []
-        for target, value in (("_default_opener", lambda p, app=None: (self.opened.append(p), self.opened_apps.append(app))),):
-            patcher = mock.patch.object(terminal_launch, target, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
         darwin = mock.patch.object(terminal_launch.sys, "platform", "darwin")
         darwin.start()
         self.addCleanup(darwin.stop)
+        self.queue = terminal_launch.paths.terminal_queue_dir(self.home)
+        self.heartbeat = terminal_launch.paths.shell_heartbeat_path(self.home)
+        self._beat()
+
+    def _beat(self):
+        """壳在跑 = state/shell.heartbeat 新鲜（壳每 5 s touch 一次）。"""
+        self.heartbeat.write_text("pid=1\n", encoding="utf-8")
 
     def _running_row(self):
         return next(r for r in self.board["running"] if r.get("session_id") or r.get("copy_cmd"))
 
-    def test_launch_writes_command_file_from_projection_and_opens_it(self):
+    def _entries(self):
+        return sorted(self.queue.glob("*.json")) if self.queue.is_dir() else []
+
+    def test_launch_enqueues_a_request_derived_from_the_projection(self):
         row = self._running_row()
         status, obj = post_json(self.port, "/api/terminal", {"card_id": row["id"]})
         self.assertEqual(status, 200, obj)
         self.assertTrue(obj["ok"])
         self.assertEqual(obj["command"], terminal_launch.command_for(row))
-        path = Path(obj["command_file"])
-        self.assertEqual(self.opened, [path])
-        text = path.read_text(encoding="utf-8")
-        self.assertIn("exec " + obj["command"], text)
-        self.assertIn(row["id"], text)
-        if not _WIN:
-            self.assertTrue(path.stat().st_mode & stat.S_IXUSR)
-        path.unlink()
+        entries = self._entries()
+        self.assertEqual([str(e) for e in entries], [obj["command_file"]])
+        entry = json.loads(entries[0].read_text(encoding="utf-8"))
+        self.assertEqual(entry["id"], obj["queue_id"])
+        self.assertEqual(entries[0].name, entry["id"] + ".json")
+        self.assertEqual(entry["kind"], "takeover")
+        self.assertEqual(entry["card_id"], row["id"])
+        self.assertEqual(entry["command"], obj["command"])
+        self.assertEqual(entry["cwd"], obj["cwd"])
+        self.assertTrue(entry["shell_line"].endswith("exec " + obj["command"]))
+        self.assertIn("export AIASSISTANT_HOME=", entry["shell_line"])
+        self.assertIsInstance(entry["created_at"], int)
+        # 队列目录里只有这一条：没有 .tmp 尸体，也没有 .command（通道已 retired，server 不再写 $TMPDIR）
+        self.assertEqual([f.name for f in self.queue.iterdir()], [entries[0].name])
+        self.assertFalse(hasattr(terminal_launch, "write_command_file"))
+        self.assertFalse(hasattr(terminal_launch, "open_command_file"))
 
     def test_command_for_prefers_copy_cmd_then_resume(self):
         self.assertEqual(terminal_launch.command_for({"copy_cmd": " claude --resume abc "}), "claude --resume abc")
@@ -81,11 +93,26 @@ class TerminalLaunchTestCase(_ServerCase):
         self.assertIsNone(terminal_launch.command_for({}))
 
     @unittest.skipIf(_WIN, "POSIX shell quoting")
-    def test_script_quotes_cwd_and_falls_back_to_home(self):
-        text = terminal_launch.script_for("R-1", "claude --resume x", "/tmp/my dir", Path("/h"))
-        self.assertIn("cd '/tmp/my dir'", text)
-        text = terminal_launch.script_for("R-1", "claude --resume x", None, Path("/h"))
-        self.assertIn("cd /h ", text)
+    def test_shell_line_quotes_cwd_and_home_and_skips_what_is_absent(self):
+        line = terminal_launch.shell_line_for("claude --resume x", "/tmp/my dir", Path("/h"))
+        self.assertEqual(line, "cd '/tmp/my dir' || { echo \"folder not found: /tmp/my dir\"; exit 1; }; "
+                               "export AIASSISTANT_HOME=/h; exec claude --resume x")
+        # 相对 / 缺席的 cwd 不 cd；home None（卸载脚本）不导出
+        self.assertEqual(terminal_launch.shell_line_for("bash uninstall.sh", "relative", None), "exec bash uninstall.sh")
+        self.assertEqual(terminal_launch.shell_line_for("claude", None, Path("/h")),
+                         "export AIASSISTANT_HOME=/h; exec claude")
+
+    def test_launch_falls_back_to_home_when_the_row_has_no_cwd(self):
+        row = self._running_row()
+        row_id = row["id"]
+        for r in self.board["running"]:
+            if r["id"] == row_id:
+                r.pop("cwd", None)
+        from tests.test_server_common import rewrite_board
+        rewrite_board(self.home, self.board)
+        status, obj = post_json(self.port, "/api/terminal", {"card_id": row_id})
+        self.assertEqual(status, 200, obj)
+        self.assertEqual(obj["cwd"], str(self.home))
 
     def test_unknown_card_is_404_and_no_session_is_400(self):
         status, obj = post_json(self.port, "/api/terminal", {"card_id": "R-999999"})
@@ -95,7 +122,7 @@ class TerminalLaunchTestCase(_ServerCase):
         status, obj = post_json(self.port, "/api/terminal", {"card_id": proposal})
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "INVALID_FIELD")
-        self.assertEqual(self.opened, [])
+        self.assertEqual(self._entries(), [])
 
     def test_field_gates(self):
         status, obj = post_json(self.port, "/api/terminal", {"card_id": "R-1", "cmd": "rm -rf /"})
@@ -109,51 +136,54 @@ class TerminalLaunchTestCase(_ServerCase):
         with self.assertRaises(terminal_launch.NotImplementedError501):
             terminal_launch.launch(self.home, {"card_id": "R-1"}, platform="linux")
 
-    # ---- 设置「通用 · 终端应用」（原生 UserDefaults terminalApp 的 server 侧落点，§66.2 / §68.7）----
-    def test_resolve_terminal_mirrors_native_preferred(self):
-        installed = {"Ghostty"}.__contains__
-        self.assertEqual(terminal_launch.resolve_terminal("auto", installed), "Ghostty")
-        self.assertEqual(terminal_launch.resolve_terminal("auto", lambda _n: False), "Terminal")
-        self.assertEqual(terminal_launch.resolve_terminal("bogus", lambda _n: False), "Terminal")
-        self.assertEqual(terminal_launch.resolve_terminal("iterm2", lambda _n: False), "iTerm")
-        self.assertEqual(terminal_launch.resolve_terminal("terminal", installed), "Terminal")
-        # 显式选择不看是否已装：open -a 失败时 _default_opener 再回落
-        self.assertEqual(terminal_launch.resolve_terminal("ghostty", lambda _n: False), "Ghostty")
-        with mock.patch.object(terminal_launch, "_APP_DIRS", (self.tmp.name,)):
-            self.assertFalse(terminal_launch.terminal_installed("Ghostty"))
-            (Path(self.tmp.name) / "Ghostty.app").mkdir()
-            self.assertTrue(terminal_launch.terminal_installed("Ghostty"))
-
-    def test_launch_opens_with_the_configured_terminal(self):
-        from server import settings_catalog
+    # ---- 壳在不在跑：心跳新鲜才入队；没有消费者 → 503（页面降级为复制指令 + 提示）----
+    def test_missing_or_stale_heartbeat_is_503_and_nothing_is_queued(self):
         row = self._running_row()
-        settings_catalog.update_section(self.home, "general", {"terminal_app": "iterm2"})
+        self.heartbeat.unlink()
         status, obj = post_json(self.port, "/api/terminal", {"card_id": row["id"]})
-        self.assertEqual(status, 200, obj)
-        self.assertEqual(self.opened_apps, ["iTerm"])
-        Path(obj["command_file"]).unlink()
-        # 没有 home（调用方未配）= auto；坏 override 值按管线同款回落
-        self.assertEqual(terminal_launch.preferred_terminal(None), terminal_launch.resolve_terminal("auto"))
-        settings_catalog.write_overrides(self.home, {"terminal_app": "bogus"})
-        self.assertEqual(terminal_launch.preferred_terminal(self.home), terminal_launch.resolve_terminal("auto"))
+        self.assertEqual(status, 503)
+        assert_envelope(self, obj, "SHELL_UNAVAILABLE")
+        self.assertEqual(obj["error"]["details"]["heartbeat"], str(self.heartbeat))
+        self.assertEqual(self._entries(), [])
+        # 过期心跳（壳死了没来得及删）同样 503
+        self._beat()
+        stale = self.heartbeat.stat().st_mtime + terminal_launch.HEARTBEAT_FRESH_S + 1
+        with self.assertRaises(terminal_launch.ShellUnavailableError):
+            terminal_launch.launch(self.home, {"card_id": row["id"]}, platform="darwin", now=stale)
+        self.assertEqual(self._entries(), [])
+        self.assertTrue(terminal_launch.shell_alive(self.home))
+        self.assertFalse(terminal_launch.shell_alive(self.home, now=stale))
+        self.assertFalse(terminal_launch.shell_alive(Path(self.tmp.name) / "nowhere"))
 
-    def test_default_opener_falls_back_to_plain_open_when_the_app_is_missing(self):
-        calls = []
+    # ---- 写侧清扫：过期条目（含 .tmp 尸体）随下一次入队被删——壳一直没跑时目录不会无限长 ----
+    def test_enqueue_sweeps_stale_entries_but_keeps_fresh_ones(self):
+        self.queue.mkdir(parents=True)
+        old = self.queue / "old.json"
+        old.write_text("{}", encoding="utf-8")
+        corpse = self.queue / "half.json.tmp"
+        corpse.write_text("", encoding="utf-8")
+        fresh = self.queue / "fresh.json"
+        fresh.write_text("{}", encoding="utf-8")
+        past = fresh.stat().st_mtime - terminal_launch.STALE_AFTER_S - 5
+        os.utime(old, (past, past))
+        os.utime(corpse, (past, past))
+        entry, path = terminal_launch.enqueue(self.home, "takeover", "claude", "exec claude", str(self.home),
+                                              card_id="R-1")
+        names = sorted(f.name for f in self.queue.iterdir())
+        self.assertEqual(names, sorted(["fresh.json", path.name]))
+        self.assertEqual(entry["card_id"], "R-1")
+        with self.assertRaises(ValueError):
+            terminal_launch.enqueue(self.home, "bogus", "claude", "exec claude", str(self.home))
+        self.assertEqual(terminal_launch.KINDS, ("takeover", "maintainer", "uninstall"))
 
-        def fake_run(argv):
-            calls.append(list(argv))
-            return 1 if "-a" in argv else 0
-        with mock.patch.object(terminal_launch, "_run_open", fake_run):
-            _REAL_DEFAULT_OPENER(Path("/tmp/x.command"), "Ghostty")
-            self.assertEqual(calls, [["/usr/bin/open", "-a", "Ghostty", "/tmp/x.command"],
-                                     ["/usr/bin/open", "/tmp/x.command"]])
-            calls.clear()
-            _REAL_DEFAULT_OPENER(Path("/tmp/x.command"), None)
-            self.assertEqual(calls, [["/usr/bin/open", "/tmp/x.command"]])
-        calls.clear()
-        with mock.patch.object(terminal_launch, "_run_open", lambda argv: (calls.append(list(argv)), 0)[1]):
-            _REAL_DEFAULT_OPENER(Path("/tmp/x.command"), "Terminal")
-        self.assertEqual(calls, [["/usr/bin/open", "-a", "Terminal", "/tmp/x.command"]])
+    def test_unwritable_queue_dir_is_500_not_a_crash(self):
+        blocker = self.queue
+        blocker.parent.mkdir(parents=True, exist_ok=True)
+        blocker.write_text("not a dir", encoding="utf-8")   # mkdir(exist_ok) 撞上普通文件 → OSError
+        with self.assertRaises(terminal_launch.ApiError) as ctx:
+            terminal_launch.enqueue(self.home, "takeover", "claude", "exec claude", str(self.home))
+        self.assertEqual(ctx.exception.status, 500)
+        self.assertIn("could not queue", ctx.exception.message)
 
 
 class RepairTestCase(_ServerCase):

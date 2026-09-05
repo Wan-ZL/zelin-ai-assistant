@@ -12,7 +12,7 @@ import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
-import { CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, MergeStateChip, RepoChip, TerminalButton } from "./cardChrome";
+import { CardHead, CardSurface, CopyCommandLine, DetailsToggle, DurationText, MergeStateChip, RepoChip } from "./cardChrome";
 import { TextDialog } from "./TextDialog";
 import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
 
@@ -64,7 +64,8 @@ export function ReviewCard({ card }: ReviewCardProps) {
   const title = typeof card.display_title === "string" && card.display_title ? card.display_title : card.name;
 
   return (
-    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`}>
+    // 双击整卡 = 在终端接管（§68.7，issue #216）；没有 copy_cmd 的待验收卡双击 no-op
+    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`} takeoverCmd={typeof card.copy_cmd === "string" ? card.copy_cmd : null}>
       <CardHead card={card} title={title} selectable leading={<span className="card-dot is-review" aria-hidden="true" />} />
       <div className="card-badges">
         <MergeStateChip cardId={card.id} />
@@ -100,7 +101,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
               {copied ? text("已复制 ✓", "Copied ✓") : text("复制成稿", "Copy final draft")}
             </button>
           )}
-          {card.copy_cmd && <TerminalButton cardId={card.id} />}
+          {/* 「在终端接管」按钮已砍（issue #216）：单击指令行复制、双击整卡接管（CardSurface takeoverCmd） */}
           <DetailsToggle cardId={card.id} />
         </div>
       )}

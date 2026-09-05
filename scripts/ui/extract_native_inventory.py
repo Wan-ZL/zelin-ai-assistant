@@ -298,7 +298,7 @@ PREF_OWNER = {
     "vaultAccessGranted": {"owner": "shell",
                            "reason": "Documents 授权按壳的 bundle id 记账（§68.13）：PermissionsProbe vault 探针同名键"},
     "terminalApp": {"owner": "server", "landing": '"terminal_app"',
-                    "reason": "「在终端打开」的执行者是 server（open -a，§68.7）——偏好落 settings_overrides terminal_app"},
+                    "reason": "「在终端打开」的偏好落 settings_overrides terminal_app（server 是写者，§68.1）——执行者 2026-09-05 起是壳（Apple Events，§68.7 追记），壳只读这把旋钮"},
     "hasCompletedFirstRun": {"owner": "server", "landing": "setup_done.json",
                              "reason": "首启标记 = server 侧 state/setup_done.json（§68.5）：换壳 / 换浏览器不重问"},
     "showMenuBarIcon": {"owner": "retired",

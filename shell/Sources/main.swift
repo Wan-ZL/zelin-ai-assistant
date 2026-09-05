@@ -11,7 +11,9 @@
 // 子进程——TCC 屏幕录制授权按 GUI 父进程归属）、实时字幕引擎 + 悬浮窗；两者经
 // ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。v0.48.x P4 余量（§68.13）：
 // §28 通知中继消费（NotifyRelay，5 s tick）、TCC 探针 + 系统设置深链、登录时启动、
-// Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
+// Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）；§68.7（issue #216）终端接管
+// 队列消费（TerminalRelay，1 s tick，Apple Events → 终端）+ 壳心跳（server 据它判
+// 「队列有消费者」）。Dock-only（D3）：无菜单栏
 // 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
 // hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
 // （外链交系统浏览器 / Dock 重开 / 标题跟随页面）住在 ShellSupport.swift，§54 追记。
@@ -262,6 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let bridge = ShellBridge()
     /// 5 s 引擎巡检（镜像 mac AppDelegate.refresh 的录制半边：TCC 自愈 + pgrep 活性）。
     private var engineTick: Timer?
+    /// 1 s 终端接管队列消费（§68.7 TerminalRelay）：双击到终端出现应在一秒内。
+    private var terminalTick: Timer?
     /// `webView.title` → `window.title` 的 KVO 句柄（§54 追记：标题跟随页面）。
     private var titleObservation: NSKeyValueObservation?
 
@@ -338,15 +342,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     RecordingController.shared.pollScreenPermission()
                     RecordingController.shared.refreshEngineState()
                     NotifyRelay.drain()   // §28：5 s 节拍消费 state/notify_queue（原生 refresh tick 同款）
+                    ShellHeartbeat.beat() // §68.7：server 据 state/shell.heartbeat 判「终端队列有消费者」
                 }
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         engineTick = timer
+        // 起跑即心跳一次：不然头 5 s 里双击卡片会被 server 判「壳没在跑」（503）
+        ShellHeartbeat.beat()
+        let relay = Timer(timeInterval: TerminalRelay.tickInterval, repeats: true) { _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    _ = TerminalRelay.drain()   // §68.7：消费 state/terminal_queue → Apple Events 开终端
+                }
+            }
+        }
+        RunLoop.main.add(relay, forMode: .common)
+        terminalTick = relay
     }
 
     func applicationWillTerminate(_ note: Notification) {
         engineTick?.invalidate()
+        terminalTick?.invalidate()
+        ShellHeartbeat.stop()   // 没有消费者了：server 立刻转 503，不等 15 s 过期
         QuickCaptureHotkey.shared.unregister()
         server.stopIfSpawned()
     }
