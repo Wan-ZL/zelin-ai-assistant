@@ -860,9 +860,9 @@
   },
   "new": [],
   "not_gated": {
-    "informational": 415,
+    "informational": 414,
     "os": 11,
-    "retired": 53,
+    "retired": 54,
     "shell": 70
   },
   "ok": true,

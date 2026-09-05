@@ -188,6 +188,13 @@ CONTROL_OWNER = {
     "control:settings.skills:label:write-failed": {
         "owner": "retired", "reason": "同 new-skill：web 不写 SKILL.md，无写入失败态（§67.5）",
     },
+    # D35（owner 2026-09-04 原话「这个我回车我不希望是直接跑而是下一行，要跑是需要点击按钮。」）：原生 Composer.swift 的
+    # 键位提示句「↩ 发送 · ⇧↩ 换行 · Esc 退出 · ⌘V 可贴图」描述的是 Return=发送 / Shift+Return=换行——web 列顶输入框自
+    # D35 起 Enter=换行、只有按钮提交，这句话在 web 里没有对应机制（copy 本就只列不判；这里点名是把判断落成判例）。
+    "control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images": {
+        "owner": "retired",
+        "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部

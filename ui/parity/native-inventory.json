@@ -69,6 +69,10 @@
         "owner": "retired",
         "reason": "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
       },
+      "control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images": {
+        "owner": "retired",
+        "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬"
+      },
       "control:doctor:label:failed-to-write-dest": {
         "owner": "retired",
         "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）"
@@ -2005,7 +2009,8 @@
       "en": "↩ send · ⇧↩ newline · Esc dismiss · ⌘V pastes images",
       "gated": false,
       "id": "control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬",
       "role": "copy",
       "screen": "board.composer",
       "source": "Composer.swift:145",

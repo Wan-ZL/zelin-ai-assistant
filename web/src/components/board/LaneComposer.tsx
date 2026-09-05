@@ -1,11 +1,17 @@
-// 列顶输入框（提案列快速捕获 / 运行中列直跑）。§41 网页纪律：
-//   - IME 回车守卫：拼音候选未上屏时的 Enter（isComposing）不提交；
-//   - 草稿保留：仅在 server 确认成功后清空输入框，失败时草稿原样留着；
+// 列顶输入框（提案列快速捕获 / 运行中列直跑）。§41 网页纪律（2026-09-04 追记，owner 决策 D35）：
+//   - 多行 <textarea>，1 行起随内容增高、5 行封顶后内部滚动（fitComposerRows；行高 / 内边距从
+//     computed style 读，单源 = tokens.css 的 --type-composer）；
+//   - Enter = 换行，Shift+Enter 也是换行，键盘上没有任何键提交——只有「捕获」/「直跑」按钮提交
+//     （owner：「这个我回车我不希望是直接跑而是下一行，要跑是需要点击按钮。」）。不拦 Enter，
+//     IME 候选上屏的回车自然安全；⌘↵ 提交没做（owner 要的是只按钮，日后想要再加）；
+//   - 草稿保留：仅在 server 确认成功后清空输入框，失败时草稿原样留着；换行原样进 text；
+//   - Esc 只交还光标（blur），草稿不动（原生 escKey 的「有草稿只 defocus」半边）；
 //   - payload 由调用方经 buildBody(text) 构造（propose = {action:"capture",text}，
 //     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）。
-//   - 历史 ↑/↓（最近 20 条，localStorage）与斜杠命令 /rec /lang /open（composerCommands.ts，
+//   - 历史 ↑/↓（最近 20 条，localStorage）只在草稿为空或正在翻历史时接管——多行草稿里的 ↑/↓ 归光标；
+//     翻历史途中一改字就退出翻历史。斜杠命令 /rec /lang /open（composerCommands.ts，
 //     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执。
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
@@ -23,6 +29,22 @@ interface LaneComposerProps {
 /** 失败一行（原生 slashError）：前缀句 + 细节各一节点——「提交失败，已保留输入」/「未识别或参数错误：」+ 原文 */
 type ComposerError = { prefix: string; detail?: string };
 
+/** 自动增高的上限行数（原生 Composer.swift `.lineLimit(1...5)`） */
+export const COMPOSER_MAX_ROWS = 5;
+
+/** 把 textarea 的 rows 调成内容需要的行数（1…COMPOSER_MAX_ROWS）：先收回 1 行让 scrollHeight 只反映内容，
+ *  再按行高换算。行高 / 上下内边距从 computed style 读（token 单源）；jsdom 没有布局（行高空、scrollHeight 0）
+ *  → 原样不动，交给判例桩掉这两项。超过上限后 rows 停在上限，textarea 自己的 overflow-y:auto 出滚动条。 */
+export function fitComposerRows(el: HTMLTextAreaElement, maxRows = COMPOSER_MAX_ROWS): void {
+  const style = window.getComputedStyle(el);
+  const lineHeight = parseFloat(style.lineHeight);
+  if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+  const paddingY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  el.rows = 1;
+  const contentLines = Math.round((el.scrollHeight - paddingY) / lineHeight);
+  el.rows = Math.min(maxRows, Math.max(1, contentLines));
+}
+
 export function LaneComposer({ placeholder, submitLabel, successNote, buildBody }: LaneComposerProps) {
   const { text } = useI18n();
   const [draft, setDraft] = useState("");
@@ -31,6 +53,12 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
   const [sent, setSent] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [historyIndex, setHistoryIndex] = useState(-1); // -1 = 不在翻历史
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  // 草稿每变一次量一次（输入 / 翻历史 / 成功清空都走这里）
+  useLayoutEffect(() => {
+    if (fieldRef.current) fitComposerRows(fieldRef.current);
+  }, [draft]);
 
   const submit = async () => {
     const trimmed = draft.trim();
@@ -74,11 +102,11 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
     setDraft(next < 0 ? "" : history[next]);
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    // IME 守卫：组合输入中的 Enter 是「上屏」不是「提交」
-    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void submit();
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter 不在这里：不拦 = 浏览器原生换行（IME 候选上屏的回车同样不受影响）。提交只有按钮一条路（D35）。
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
+      e.currentTarget.blur(); // 只交还光标，草稿不动
     } else if (e.key === "ArrowUp" && (draft === "" || historyIndex >= 0)) {
       e.preventDefault();
       recall(1);
@@ -91,14 +119,16 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
   return (
     <>
       <div className="lane-composer">
-        <input
-          type="text"
+        <textarea
+          ref={fieldRef}
+          rows={1}
           value={draft}
           placeholder={placeholder}
           disabled={busy}
           onChange={(e) => {
             setDraft(e.target.value);
             setSent(false);
+            setHistoryIndex(-1); // 一改字就退出翻历史：↑/↓ 交还给多行草稿里的光标
           }}
           onKeyDown={onKeyDown}
         />
