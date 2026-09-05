@@ -1,5 +1,7 @@
 // 卡片 → markdown 文档（「复制为 Markdown」）。纯函数，输出面向粘贴到笔记/聊天。
 // 只序列化已知语义字段；未知字段不进成文（避免把内部字段泄进分享文本）。
+// 小节标题与侧栏 DetailFields 的积木标签同词（D34 / §49 追记：📋 要做什么 · 怎样算办完 · 💬 需求来自 · 交付了什么）——
+// 用户刚在侧栏读到什么词，复制出去就是什么词；标题去掉原生行内标签的尾冒号（markdown 标题自带分隔）。
 import { displayId } from "../../cardId";
 import type { CardDetail, CardSource } from "../../types";
 import { parseFoldNotes } from "./foldNotes";
@@ -46,16 +48,16 @@ export function cardToMarkdown(detail: CardDetail, text: TextFn): string {
   const summary = asString(detail.summary);
   if (summary) out.push(summary, "");
 
-  section(out, text("计划", "Plan"), asStringList(detail.plan).map((step, index) => `${index + 1}. ${step}`));
+  section(out, text("📋 要做什么", "📋 Plan"), asStringList(detail.plan).map((step, index) => `${index + 1}. ${step}`));
   section(
     out,
-    text("验收标准", "Definition of done"),
+    text("怎样算办完", "Definition of done"),
     asStringList(detail.dod ?? detail.definition_of_done).map((item) => `- [ ] ${item}`),
   );
   section(out, text("产出", "Outputs"), asStringList(detail.outputs).map((item) => `- ${item}`));
 
   const sources = Array.isArray(detail.sources) ? (detail.sources as CardSource[]) : [];
-  section(out, text("来源引文", "Sources"), sources.flatMap((source) => {
+  section(out, text("💬 需求来自", "💬 Requested by"), sources.flatMap((source) => {
     if (!source || typeof source !== "object") return [];
     const head = [source.who, source.channel, source.date].filter(Boolean).join(" · ");
     const lines = [`- ${head}`];
@@ -71,7 +73,7 @@ export function cardToMarkdown(detail: CardDetail, text: TextFn): string {
   ]);
 
   const delivered = asString(detail.delivered_summary);
-  section(out, text("交付总结", "Delivered summary"), delivered ? [delivered] : []);
+  section(out, text("交付了什么", "Delivered"), delivered ? [delivered] : []);
 
   const finalDraft = asString(detail.final_draft);
   if (finalDraft) out.push(`## ${text("成稿", "Final draft")}`, "", finalDraft, "");

@@ -85,7 +85,7 @@ export interface AppState {
   selectedCardId: string | null;  // 详情侧栏当前卡（route.ts 同步 ?card= 深链）——卡片详情的唯一面（D34，§49）
   cardDetail: CardDetail | null;  // selectedCardId 对应的 /api/cards/{id} 增补详情
   cardDetailError: string | null;
-  /** 本会话里打开过详情侧栏的卡 id（不持久化）：T2 提案「需先展开看明细」的闸门读它——看过明细才给「批准」（§54.1 第 2 项追记） */
+  /** 本会话里详情侧栏**落地过**的卡主键（不持久化）：T2 提案「需先展开看明细」的闸门读它——看过明细才给「批准」（§54.1 第 2 项追记） */
   detailViewedIds: ReadonlySet<string>;
   language: Language;             // UI 语言（G7 shell：?lang= 覆写 > localStorage > 浏览器）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
@@ -231,16 +231,20 @@ export function refreshBoard(): Promise<void> {
   return boardRequest;
 }
 
-/** 选中卡片（null = 关侧栏）；选中即拉详情增补，并记住这张卡「看过明细」（T2 闸门） */
+/** 选中卡片（null = 关侧栏）；选中即拉详情增补。详情**落地**才记「看过明细」（T2 闸门）：拉失败 / 换卡后迟到的
+ *  响应都不算——用户没看到任何明细。记的是 server 回的主键（§60.3：响应 `id` 恒为主键），所以 `?card=<work_id>`
+ *  深链打开的侧栏也能解锁卡面按主键判的「批准」。 */
 export function selectCard(cardId: string | null) {
-  const detailViewedIds = cardId && !state.detailViewedIds.has(cardId)
-    ? new Set([...state.detailViewedIds, cardId])
-    : state.detailViewedIds;
-  setState({ selectedCardId: cardId, cardDetail: null, cardDetailError: null, detailViewedIds });
+  setState({ selectedCardId: cardId, cardDetail: null, cardDetailError: null });
   if (!cardId) return;
   void fetchCard(cardId).then(
     (detail) => {
-      if (getState().selectedCardId === cardId) setState({ cardDetail: detail });
+      if (getState().selectedCardId !== cardId) return;
+      const viewedId = typeof detail.id === "string" && detail.id ? detail.id : cardId;
+      const detailViewedIds = state.detailViewedIds.has(viewedId)
+        ? state.detailViewedIds
+        : new Set([...state.detailViewedIds, viewedId]);
+      setState({ cardDetail: detail, detailViewedIds });
     },
     (error) => {
       if (getState().selectedCardId !== cardId) return;

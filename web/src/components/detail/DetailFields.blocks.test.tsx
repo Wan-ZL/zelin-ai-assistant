@@ -4,6 +4,9 @@
 //   待验收：交付了什么：（执行器原话 + 灰色摘要）· 验收清单——逐条对照：（§11 永远渲染，空给兜底句）· 日志： · 指令： · claude agents 列表名：
 //   运行中：错误全文 + 复制 / 已复制 · 📋 要做什么（"[修改方向]" 行 is-rework）· 指令： · 会话 ID：
 //   需输入：指令行用 §39 兜底句「在终端接管会话：」；排队卡无指令行（resumeCommand 同卡面）
+//   钱：需要审批列走 💰 行；其余列 registry 并进来的 cost_estimate_usd 仍是一行「成本」（老侧栏就有，不能藏）；
+//     cost_state（§40 诚实位）是专属版式读的键，不落「其他字段」
+//   复制回执可听：每颗「复制」旁有 role=status 播报（卡面 CopyCommandLine 同法，a11y.test 第 3 条）
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CardDetail } from "../../types";
@@ -40,12 +43,27 @@ describe("DetailFields — proposal blocks", () => {
     expect(screen.queryByRole("heading", { name: /^(Plan|Sources|Delivered summary)$/ })).toBeNull();
   });
 
-  it("成本未知（cost_state=unknown / 无数字）→ 💰 成本未知；非提案列不说钱", () => {
+  it("成本未知（cost_state=unknown / 无数字）→ 💰 成本未知；cost_state 不落「其他字段」", () => {
     const { unmount } = render(<DetailFields detail={{ ...proposal, cost_usd: null, cost_state: "unknown" }} />);
     expect(screen.getByText("💰 Cost unknown")).toBeTruthy();
+    expect(screen.queryByText("cost_state")).toBeNull();
     unmount();
-    render(<DetailFields detail={{ ...proposal, lane: "running", state: "working" }} />);
+    render(<DetailFields detail={{ ...proposal, cost_state: "estimated" }} />);
+    expect(screen.getByText("💰 Estimated cost: $85")).toBeTruthy();
+    expect(screen.queryByText("cost_state")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Other fields" })).toBeNull();
+  });
+
+  it("非提案列不说 💰，但 registry 并进来的 cost_estimate_usd 仍是一行「成本」（show_cost=false 才藏）", () => {
+    const { unmount } = render(<DetailFields detail={{ id: "R-410", lane: "review", state: "review", cost_estimate_usd: 12 }} />);
     expect(screen.queryByText(/💰/)).toBeNull();
+    expect(screen.getByText("Cost").tagName).toBe("DT");
+    expect(screen.getByText("$12")).toBeTruthy();
+    expect(screen.queryByText("cost_estimate_usd")).toBeNull(); // 有专属行，不进「其他字段」
+    unmount();
+    render(<DetailFields detail={{ id: "R-411", lane: "running", state: "working", cost_estimate_usd: 12, show_cost: false }} />);
+    expect(screen.queryByText("Cost")).toBeNull();
+    expect(screen.queryByText("$12")).toBeNull();
   });
 });
 
@@ -91,6 +109,9 @@ describe("DetailFields — running / blocked / queued blocks", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[0]); // 第一颗 = 错误全文旁的；第二颗 = 指令行
     expect(writeText).toHaveBeenCalledWith("Traceback: boom\n  line 2");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+    // 复制成功有 role=status 播报（按钮文案变化 VoiceOver 不一定读）——每颗复制各一个区，只有点过的那个在说话
+    expect(await screen.findByText("Copied to clipboard", { selector: "[role='status']" })).toBeTruthy();
+    expect(document.querySelectorAll("[role='status']")).toHaveLength(2);
     expect(screen.getByText(label("Command: "))).toBeTruthy();
     expect(screen.getByText("claude --resume sess-1")).toBeTruthy();
     expect(screen.getByText(label("Session ID: "))).toBeTruthy();

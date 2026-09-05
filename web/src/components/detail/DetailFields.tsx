@@ -13,6 +13,7 @@ import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
 import type { CardDetail, CardSource } from "../../types";
 import { costText, resumeCommand, useSubmit } from "../board/boardActions";
+import { CopiedAnnouncer } from "../board/cardChrome";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
 
@@ -20,7 +21,8 @@ import { parseFoldNotes } from "./foldNotes";
 const KNOWN_KEYS = new Set([
   "id", "lane", "title", "name", "tier", "tier_hint", "state", "status", "hardness", "type",
   "delivery_mode", "deadline", "days_left", "repeated", "repeated_mentions",
-  "cost_usd", "cost_estimate_usd", "show_cost", "green_sign", "green_sign_required", "processing",
+  // §40 诚实成本三件套：cost_state 是 costText / moneyOf 读的「unknown」位，不是兜底区的杂项
+  "cost_usd", "cost_estimate_usd", "cost_state", "show_cost", "green_sign", "green_sign_required", "processing",
   "summary", "plan", "dod", "definition_of_done", "outputs", "sources", "notes", "execution",
   "copy_cmd", "log", "cwd", "target_repo", "session_id", "short_id", "agent_name",
   "started_at", "dispatched_at", "accepted_at", "review_at", "created", "updated", "trashed_at",
@@ -49,22 +51,26 @@ function formatWhen(value: unknown, locale: string): string | null {
   return str(value);
 }
 
+/** 「复制」→「已复制」1.5 s；旁边一个 role=status 播报（按钮文案变化 VoiceOver 不一定读——卡面 CopyCommandLine 同法） */
 function CopyChip({ value, label }: { value: string; label: string }) {
   const { text } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
-      className="zai-detail-copy"
-      onClick={() => {
-        void copyText(value).then((ok) => {
-          setCopied(ok);
-          if (ok) window.setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      {copied ? text("已复制", "Copied") : label}
-    </button>
+    <>
+      <button
+        type="button"
+        className="zai-detail-copy"
+        onClick={() => {
+          void copyText(value).then((ok) => {
+            setCopied(ok);
+            if (ok) window.setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+      >
+        {copied ? text("已复制", "Copied") : label}
+      </button>
+      <CopiedAnnouncer copied={copied} />
+    </>
   );
 }
 
@@ -178,6 +184,10 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   // 结构化排队原因（§M6.2）：queued 卡「排队中 · 等 R-xx / 等预算」的详情行
   const queuedReason = queuedReasonLabel(detail.queued_reason, text);
   if (queuedReason) meta.push([text("排队原因", "Queued because"), queuedReason]);
+  // 提案列的钱走下面的 💰 行（§40）；其余列 registry 并进来的 cost_estimate_usd（§49 add-only 合并）仍要看得见——
+  // 老侧栏就有这一行，不能因为换了渲染器就把数字藏起来
+  const cost = detail.cost_usd ?? detail.cost_estimate_usd;
+  if (lane !== "needs_approval" && detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
   const repo = str(detail.target_repo) ?? str(detail.cwd);
   if (repo) meta.push([text("工作目录", "Workdir"), repo]);
   const timeDefs: Array<[string, string, unknown]> = [

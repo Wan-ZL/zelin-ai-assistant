@@ -82,8 +82,9 @@ export function FilterBar() {
 
   useEffect(() => {
     // ⌘F（mac）/ Ctrl+F 聚焦搜索框——接管浏览器查找（看板数据全在客户端）；任何档位都通
-    // ⎋（原生 Kanban.swift:98 契约七 + escClearSearch 分两段）：有搜索词先清词；已空 → 退出多选；弹窗 / 筛选面板开着时不插手
-    // （面板自己吃 ⎋ 关自己；tight 的搜索框失焦即收起，所以第二下 ⎋ 的 blur 也就是「收起」）
+    // ⎋（原生 Kanban.swift:98 契约七 + escClearSearch 分两段）：有搜索词先清词；已空 → 退出多选；弹窗 / 筛选面板 / 详情侧栏
+    // 开着时不插手（面板自己吃 ⎋ 关自己；侧栏是 <aside role=dialog aria-modal>，D34 后是唯一详情面、⎋ 是它的正式关法——
+    // 那一下只关侧栏，不顺手清词 / 退多选；tight 的搜索框失焦即收起，所以第二下 ⎋ 的 blur 也就是「收起」）
     function onKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
@@ -96,7 +97,7 @@ export function FilterBar() {
         searchRef.current?.select();
         return;
       }
-      if (event.key === "Escape" && !panelOpen && !document.querySelector("dialog[open]")) {
+      if (event.key === "Escape" && !panelOpen && !document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) {
         if (filters.search.trim()) {
           setFilters({ search: "" });
           return;

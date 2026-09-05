@@ -24,6 +24,8 @@ export function DetailDrawer() {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+  // 打开侧栏那一刻的焦点元素（「展开详情 ▸」/ 卡片本身）——关闭时还给它；侧栏内换卡不覆盖
+  const openerRef = useRef<HTMLElement | null>(null);
 
   // 初载深链恢复：?card=R-101 → selectCard（A8 接手整页路由后可移走，这里幂等）
   useEffect(() => {
@@ -37,12 +39,25 @@ export function DetailDrawer() {
     window.history.replaceState(null, "", url);
   }, [selectedCardId]);
 
-  // 换卡重置局部瞬态 + 聚焦抽屉（Esc 可达）
+  // 换卡重置局部瞬态 + 聚焦抽屉（Esc 可达）；关闭把焦点还给打开它的控件（WAI-ARIA dialog 往返；
+  // FilterPopover 同法）——除非关闭的那一下已经把焦点送去了别处，那就不抢。侧栏是 D34 后唯一的详情面，
+  // 键盘用户点「展开详情 ▸」/ 在卡上按 Enter 进来、⎋ 出去，不能掉回 <body> 从页顶重新 Tab。
   useEffect(() => {
     setTab("fields");
     setMenu(null);
     setCopied(false);
-    if (selectedCardId) drawerRef.current?.focus();
+    if (!selectedCardId) return undefined;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !drawerRef.current?.contains(active)) {
+      openerRef.current = active;
+    }
+    drawerRef.current?.focus();
+    return () => {
+      // 换卡时侧栏还在（焦点仍在里面）→ 不还；真关闭时 <aside> 已卸载、焦点掉到 body → 还给 opener
+      const now = document.activeElement;
+      const opener = openerRef.current;
+      if ((!now || now === document.body) && opener?.isConnected) opener.focus({ preventScroll: true });
+    };
   }, [selectedCardId]);
 
   useEffect(() => {

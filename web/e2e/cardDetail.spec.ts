@@ -1,8 +1,9 @@
 // 卡片详情只有一面（CONTRACT §49 追记 2026-09-04，D34 / issue #217）——真浏览器判例：
 //   · 点卡上的「展开详情 ▸」→ 右侧详情侧栏（role=dialog）出现、抬头是这张卡的标题、URL 带 ?card=<主键>（可刷新还原 / 可分享）；
 //     卡片自身高度不变（不就地撑开，泳道不跳）；⎋ 关侧栏、?card= 清掉；
-//   · 键盘：焦点在卡上按 Enter → 同一个侧栏（a11y，「展开详情 ▸」的键盘等价物）；
-//   · 双击卡片不开侧栏（语义留给 #216 终端接管）。
+//   · 键盘：焦点在卡上按 Enter → 同一个侧栏（a11y，「展开详情 ▸」的键盘等价物）；关侧栏把焦点还给打开它的控件；
+//   · 双击卡片不开侧栏（语义留给 #216 终端接管）；
+//   · 侧栏开着时 ⎋ 只关侧栏：⌘F 搜索词 / URL ?q= 不动（FilterBar 的两段 ⎋ 那一下不插手）。
 // 数据 = demo initial 场景（demoServer.ts 起随机端口的真 server）；用「执行中」列第一张卡——卡面标题与详情抬头都是 name。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
@@ -59,6 +60,8 @@ test("点「展开详情 ▸」→ 右侧详情侧栏带这张卡的标题 + ?ca
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(new URL(page.url()).searchParams.get("card")).toBeNull();
+  // 关侧栏：焦点回到打开它的「展开详情 ▸」（键盘用户不必从页顶重新 Tab）
+  await expect(card.getByRole("button", { name: "展开详情 ▸" })).toBeFocused();
 });
 
 test("键盘：焦点在卡上按 Enter → 同一个详情侧栏；双击卡片不开", async ({ page }) => {
@@ -76,6 +79,31 @@ test("键盘：焦点在卡上按 Enter → 同一个详情侧栏；双击卡片
   const drawer = page.getByRole("dialog", { name: /^卡片详情 / });
   await expect(drawer).toBeVisible();
   await expect(drawer.locator(".zai-drawer-heading h2")).toHaveText(title);
+  await expect(drawer).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(card).toBeFocused(); // 还给按 Enter 的那张卡
+});
+
+test("侧栏开着时 ⎋ 只关侧栏：搜索词与 ?q= 留着，看板还是筛过的那几张", async ({ page }) => {
+  await openBoard(page);
+  const search = page.getByRole("searchbox", { name: "搜索卡片" });
+  const total = await page.locator("article.task-card").count();
+  await search.fill("example");
+  await expect(page).toHaveURL(/[?&]q=example/);
+  const narrowed = await page.locator("article.task-card").count();
+  expect(narrowed).toBeGreaterThan(0);
+  expect(narrowed).toBeLessThan(total);
+
+  // 筛出来的第一张带「展开详情 ▸」的卡（占位 / 待办卡没有这个入口）
+  const details = page.getByRole("button", { name: "展开详情 ▸" }).first();
+  await details.click();
+  await expect(page.getByRole("dialog", { name: /^卡片详情 / })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(search).toHaveValue("example");
+  expect(new URL(page.url()).searchParams.get("q")).toBe("example");
+  expect(await page.locator("article.task-card").count()).toBe(narrowed);
 });
 
 test("?card= 深链刷新还原：直接打开带 ?card= 的 URL 就是那张卡的侧栏", async ({ page }) => {
