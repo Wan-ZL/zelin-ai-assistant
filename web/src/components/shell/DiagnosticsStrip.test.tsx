@@ -26,6 +26,9 @@ const rec = (over: Partial<{ mode: string; engine_running: boolean; tcc_lost: bo
 
 describe("buildDiagnosticCards（原生 DiagnosticsRules）", () => {
   it("fresh user: nothing intended → zero cards; disabled sources never alarm", () => {
+    // 全新安装：开关默认全开（enabled:true）、雷达如实报 no_credentials / mcp_not_configured，但没人碰过开关也没凭证
+    // （§48.4 投影 intent:false）→ 不出常驻卡（原生 gmailCardEligible 的 switchTouched || credentialFileExists）
+    expect(buildDiagnosticCards({ gmail: on("no_credentials", { intent: false, secret_present: false }), slack: on("mcp_not_configured", { intent: false, secret_present: false }), obsidian: { enabled: false, skip_reason: "vault_empty" } }, null, en)).toEqual([]);
     expect(buildDiagnosticCards({ gmail: { enabled: false, skip_reason: "no_credentials" }, slack: { enabled: false }, obsidian: { enabled: false, skip_reason: "vault_empty" } }, null, en)).toEqual([]);
     expect(buildDiagnosticCards(null, null, en)).toEqual([]);
   });

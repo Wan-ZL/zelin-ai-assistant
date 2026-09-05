@@ -12,6 +12,12 @@ under ``state/merge/*.json`` (actd/act.merge_review write them; we only read):
 analyzing/done/failed are emitted, dismissed is not, corrupt files are skipped,
 and ``requested_at`` is converted from registry ISO to epoch int. Cards whose
 registry status is ``merged`` (契约 四 终态) enter NO column at all.
+
+``radar_sources`` (§48.4) is the source on/off + health projection the board's
+diagnostics strip reads; its add-only ``intent`` / ``secret_present`` keys are
+the §48.4 意愿信号 (switch touched in settings_overrides / §19 credential
+present) that gate the setup-class cards — computed here, in the actd
+projection, never rewritten server-side (§44 single writer).
 """
 from __future__ import annotations
 
@@ -24,8 +30,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
-                     policy, radar_health, radar_rounds, recap_store, risk, self_improve,
-                     sources, steer, titles, transcripts)
+                     policy, radar_health, radar_rounds, recap_store, risk, secrets,
+                     self_improve, sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -806,13 +812,102 @@ def _opt_text(v: Any) -> Optional[str]:
     return v if isinstance(v, str) and v else None
 
 
+# §48.4 意愿信号：setup 类诊断卡（gmail no_credentials / no_address、slack
+# mcp_not_configured）只在用户**真的**动过这个源时才出——「enabled 默认 true」
+# 本身不是 intent，否则全新安装、从没碰过 Gmail 的用户永久吃一张「开着但没
+# 配好」常驻卡（§3.6 anti-nag）。原生 Diagnostics.swift:161-168 在 App 侧
+# stat 凭证文件 + 读 overrides；web 没有文件系统，信号随投影一起出机
+# （actd 单写者，§44；server 只读转发）。
+_SOURCE_SECRET_FILES: dict = {"gmail": secrets.GMAIL_APP_PASSWORD_FILE,
+                              "slack": secrets.SLACK_TOKEN_FILE}
+_SOURCE_SECRET_PATH_ATTR: dict = {"gmail": "gmail_app_password_path",
+                                  "slack": "slack_token_path"}
+_NO_SIGNALS: dict = {"intent": False, "secret_present": False}
+
+
+def _overrides_doc() -> dict:
+    """settings_overrides.json 顶层 dict；缺失 / 坏 JSON / 非 dict → {}
+    （与 config._read_overrides 同款容错：坏 overrides 不许崩投影）。"""
+    try:
+        data = json.loads(config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _switch_touched(overrides: dict, src: str) -> bool:
+    """用户碰过这个源的开关（开或关都算碰过）：扁平 ``<src>_enabled``（源开关，
+    server settings 与原生 SettingsGmail 都写它）、嵌套 ``features.<src>_radar``
+    或历史平铺 ``"features.<src>_radar"``（feature flag——config
+    _apply_settings_overrides 认的两种拼法都算）、手写的 ``<src>: {enabled: …}``
+    嵌套块（config.yaml 镜像拼法）。"""
+    if f"{src}_enabled" in overrides or f"features.{src}_radar" in overrides:
+        return True
+    feats = overrides.get("features")
+    if isinstance(feats, dict) and f"{src}_radar" in feats:
+        return True
+    block = overrides.get(src)
+    return isinstance(block, dict) and "enabled" in block
+
+
+def _explicit_secret_path(cfg: config.Config, src: str) -> Optional[str]:
+    """config.yaml **显式**给的凭证路径（§19 第二层）；等于 Config 缺省值（gmail 的
+    缺省就是旧默认路径 = §19 第三层，已弃用）→ None。投影不读弃用层：与原生
+    SecretsIO.hasSecret 同款只认 config/secrets（外加显式路径），也不让每个
+    dashboard 构建去 stat ``~/Desktop/Keys``。"""
+    attr = _SOURCE_SECRET_PATH_ATTR.get(src)
+    if not attr:
+        return None
+    val = getattr(cfg, attr, None)
+    return val if val and val != getattr(config.Config, attr, None) else None
+
+
+def _credential_present(name: str, explicit_path: Optional[str]) -> bool:
+    """§19 凭证非空：secrets 文件，或 config.yaml 显式路径的文件（雷达 resolve_credential
+    的前两层，同序）；只判在不在——值不出函数。"""
+    return bool(secrets.read_secret(name) or secrets.read_path(explicit_path))
+
+
+def _secret_file_started(name: str) -> bool:
+    """凭证文件**存在**（可能为空 = 配到一半；原生 slackStarted / gmailCredFileExists）。"""
+    try:
+        return (secrets.SECRETS_DIR / name).exists()
+    except OSError:
+        return False
+
+
+def _source_signals(cfg: config.Config, src: str, overrides: dict) -> dict:
+    """§48.4 add-only ``intent`` / ``secret_present``（每源恒在）。
+
+    ``secret_present`` = 该源的 §19 凭证非空（slack: user token；gmail: 应用密码
+    ——抓取命令路径 B 不算凭证；obsidian 无凭证 → 恒 False）。
+    ``intent`` = 碰过开关 ∨ 凭证文件存在 ∨ 凭证非空；obsidian 的「配到一半」
+    = 指定过 vault 目录（sources.obsidian_raw）。Never raises。
+    """
+    try:
+        name = _SOURCE_SECRET_FILES.get(src)
+        if name:
+            present = _credential_present(name, _explicit_secret_path(cfg, src))
+            started = _secret_file_started(name)
+        else:
+            present = False
+            started = bool(str(getattr(cfg, "obsidian_raw", None) or "").strip())
+        touched = _switch_touched(overrides, src)
+    except Exception:  # noqa: BLE001 - 信号探不到 = 没信号（原生 stat 失败同款）
+        return dict(_NO_SIGNALS)
+    return {"intent": bool(touched or started or present),
+            "secret_present": bool(present)}
+
+
 def _source_health(src: str, on: bool, data: dict, now: _dt.datetime,
-                   rounds: Optional[dict] = None) -> dict:
+                   rounds: Optional[dict] = None,
+                   signals: Optional[dict] = None) -> dict:
     # 关掉的源不带健康摘要：清理僵尸条目发生在 liveness 巡检（同 pass 的
     # dashboard 构建在它之前）——不在这里屏蔽的话，关源后的第一个 pass
     # 会把旧 last_ok/skip_reason 投影出去（关着 = null 的契约被破一拍）。
     entry = data.get(src) if on else None
     entry = entry if isinstance(entry, dict) else {}
+    signals = signals if isinstance(signals, dict) else _NO_SIGNALS
     return {
         "enabled": on,
         "last_ok": _opt_text(entry.get("last_ok")),
@@ -829,6 +924,10 @@ def _source_health(src: str, on: bool, data: dict, now: _dt.datetime,
         # 「立即测试一轮」的回执（无请求 → null；关着的源同样屏蔽）
         "last_attempt": _opt_text(entry.get("last_attempt")),
         "test_round": radar_rounds.projection(src, entry, now, rounds) if on else None,
+        # §48.4 add-only（2026-09-05）：setup 类诊断卡的意愿信号。关着的源也
+        # 照算（碰过开关关掉 = 碰过）；消费者自己再合取 enabled。
+        "intent": bool(signals.get("intent", False)),
+        "secret_present": bool(signals.get("secret_present", False)),
     }
 
 
@@ -846,19 +945,23 @@ def _radar_sources(cfg: config.Config) -> dict:
 
         {"gmail": {"enabled": bool, "last_ok": iso|null,
                    "skip_reason": str|null, "stale": bool,
-                   "last_attempt": iso|null, "test_round": {...}|null}, ...}
+                   "last_attempt": iso|null, "test_round": {...}|null,
+                   "intent": bool, "secret_present": bool}, ...}
 
-    ``enabled`` 来自真源 sources.enabled()（App 侧的 intent 判断自此读这里，
+    ``enabled`` 来自真源 sources.enabled()（App 侧的开关判断自此读这里，
     不再猜「凭证文件非空」）；``last_ok``/``skip_reason`` 摘自 radar_health
     条目（关掉的源条目已被清除 → null）；``stale`` = 开着且超 liveness 阈值
     没有成功信号（告警的看板投影，恢复后自动变回 false）；``last_attempt`` /
-    ``test_round`` 见 act/lib/radar_rounds.py（§48.7）。Never raises。
+    ``test_round`` 见 act/lib/radar_rounds.py（§48.7）；``intent`` /
+    ``secret_present`` = §48.4 意愿信号（_source_signals）。Never raises。
     """
     cfg = _live_config(cfg)
     data = _radar_health_data()
     rounds = _radar_rounds_data()
+    overrides = _overrides_doc()
     now = _dt.datetime.now(_dt.timezone.utc)
-    return {src: _source_health(src, _source_enabled(cfg, src), data, now, rounds)
+    return {src: _source_health(src, _source_enabled(cfg, src), data, now, rounds,
+                                _source_signals(cfg, src, overrides))
             for src in sources.SOURCES}
 
 

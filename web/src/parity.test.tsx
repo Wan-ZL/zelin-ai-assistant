@@ -833,9 +833,9 @@ async function renderDiagnosticsVariants(language: Language) {
   // 这几遍 launchd 里两个 agent 都装着：凭证 / 连接类卡才不被 agent_missing 顶掉（§48.7 schedulerMissing 赢）
   const agent = (source: string, loaded: boolean) => ({ label: `com.zelin.aiassistant.${source}radar`, interval_s: source === "gmail" ? 300 : 180, loaded, plist_installed: loaded });
   vi.mocked(fetchRadarAgents).mockResolvedValue({ radars: { gmail: agent("gmail", true), slack: agent("slack", true) } });
-  // vault_empty 要等满一个 ingest 周期才报——把「首见」时间拨到 36 分钟前
+  // vault_empty 要等满一个 ingest 周期才报——把「首见」时间拨到 36 分钟前。每遍渲染前重设：§48.4 追记的 pruneFirstSeen
+  // 会在一张卡不活着的那一遍把它的首见忘掉（这正是被搬回来的原生行为），不重设的话后面的 vault_empty 遍会被重新预热压住
   const firstSeen = Object.fromEntries(["screenpipe:vault_empty.engine", "screenpipe:vault_empty.tcc", "screenpipe:vault_empty.other"].map((sig) => [sig, Date.now() - 36 * 60_000]));
-  window.localStorage.setItem("diagnosticsFirstSeen", JSON.stringify(firstSeen));
   const variants: Array<{ shell: keyof typeof SHELL_VARIANTS; sources: Record<string, RadarSourceHealth> }> = [
     { shell: "default", sources: { gmail: on("auth_failed", "2026-09-01T10:00:00Z"), slack: on("connect_failed"), obsidian: on("no_api_key") } },
     { shell: "default", sources: { gmail: on("no_credentials"), slack: on("mcp_not_configured"), obsidian: on("vault_missing") } },
@@ -846,6 +846,7 @@ async function renderDiagnosticsVariants(language: Language) {
   ];
   for (const v of variants) {
     useShellVariant(v.shell);
+    window.localStorage.setItem("diagnosticsFirstSeen", JSON.stringify(firstSeen));
     vi.mocked(fetchBoard).mockResolvedValue({ ...demoBoard, radar_sources: v.sources } as unknown as Board);
     await refreshBoard();
     const pool = found[language].board;

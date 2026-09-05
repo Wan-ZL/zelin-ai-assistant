@@ -19,7 +19,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from act.lib import config, dashboard, radar_health, sources
+from act.lib import config, dashboard, radar_health, secrets, sources
 from act.lib.registry import Requirement
 
 
@@ -143,11 +143,18 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
         self.assertEqual(set(out), set(sources.SOURCES))
         for entry in out.values():
             self.assertEqual(set(entry), {"enabled", "last_ok", "skip_reason", "stale",
-                                          "last_attempt", "test_round"})   # §48.7 add-only
+                                          "last_attempt", "test_round",
+                                          "intent", "secret_present"})   # §48.7 / §48.4 add-only
 
     def test_bad_health_file_and_enabled_probe_never_raise(self):
         cfg = config.Config()
+        # §48.4 意愿信号读 overrides / secrets：钉到空目录，别吃共享沙箱里其它
+        # 判例落下的凭证（判例 tests/test_dashboard_source_intent.py 管信号本身）
+        empty = Path(tempfile.mkdtemp(prefix="dash-edge-"))
         with mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
+                mock.patch.object(dashboard.config, "SETTINGS_OVERRIDES_PATH",
+                                  empty / "settings_overrides.json"), \
+                mock.patch.object(secrets, "SECRETS_DIR", empty / "secrets"), \
                 mock.patch.object(radar_health, "load_radar_health",
                                   side_effect=ValueError("corrupt")), \
                 mock.patch.object(sources, "enabled", side_effect=KeyError("x")):
@@ -155,7 +162,8 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
         for entry in out.values():
             self.assertEqual(entry, {"enabled": False, "last_ok": None,
                                      "skip_reason": None, "stale": False,
-                                     "last_attempt": None, "test_round": None})
+                                     "last_attempt": None, "test_round": None,
+                                     "intent": False, "secret_present": False})
 
     def test_non_dict_health_payload_is_ignored(self):
         cfg = config.Config()

@@ -474,12 +474,15 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         rs = dash["radar_sources"]
         self.assertEqual(set(rs), set(sources.SOURCES))
         for entry in rs.values():
-            # §48.7 add-only：last_attempt / test_round
+            # §48.7 add-only：last_attempt / test_round；§48.4 add-only（2026-09-05）：
+            # intent / secret_present（意愿信号，判例 tests/test_dashboard_source_intent.py）
             self.assertEqual(set(entry),
                              {"enabled", "last_ok", "skip_reason", "stale",
-                              "last_attempt", "test_round"})
+                              "last_attempt", "test_round", "intent", "secret_present"})
             self.assertIsInstance(entry["enabled"], bool)
             self.assertIsInstance(entry["stale"], bool)
+            self.assertIsInstance(entry["intent"], bool)
+            self.assertIsInstance(entry["secret_present"], bool)
 
     def test_disabled_source_projects_enabled_false(self):
         # 投影配置现读：开关状态以磁盘 config.yaml 为准
