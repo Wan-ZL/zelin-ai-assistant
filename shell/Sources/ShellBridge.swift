@@ -16,7 +16,7 @@
 //
 // 桥本身零业务逻辑：所有语义都在被搬进来的引擎文件里（§61.3 逻辑零改动）；这里
 // 只做 参数校验 → 调用 → 快照。唯一的例外是 `setRecording on:true` 前的 TCC 提示
-// （RecordingActions.turnOn——原生三处「开启」按钮各自带的那一句，桥替页面统一补上）。
+// （RecordingActions.turnOn——原生两处 setMode「开启」按钮各自带的那一句，桥替页面统一补上）。
 // 管我的法条：CONTRACT §54 / §61（§61.1 wire、§61.4 偏好迁移）。
 
 import AppKit
@@ -129,7 +129,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             // §68.2 追记 add-only：最近一次 BYO key「检测」（probeCaptionKey）；null = 从未检测
             "key_probe": CaptionKeyCheck.shared.snapshotValue(),
             // §61.1 追记 add-only：原生 SettingsLiveCaptions 的两句 statusRow + 引擎脚注的判据
-            //   translation_note  翻译开着却没在翻的原因（"" = 在翻）；translation_active 同源布尔
+            //   translation_note  翻译走不通的原因句 / Ark 途中报错（无话可说 = ""，翻译关着也是 ""）；
+            //                     页面只在非空时渲染它，「在不在翻」只看 translation_active（原生同此）
             //   source_note       音源部分不可用的降级句（"缺屏幕录制权限，只在听麦克风" 等；悬浮窗也显示）
             //   apple_engine_available  appleCaptionEngineAvailable()（macOS 26+ 才有本地引擎；脚注选句）
             "translation_note": cap.translationNote,
@@ -210,6 +211,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             // getState 保持纯读。
             RecordingActions.refresh()
         case "restartRecording":
+            // 刻意不带 TCC 守卫：原生的 restartEngine 按钮（DashboardView / Pages / Diagnostics /
+            // Doctor）都不带；唯一带守卫的 restart 站点是 SetupWizard 终章「启动引擎」，它的 web
+            // 半边 FinaleStep.tsx 自己先发 requestPermission(screen) 再发这条。
             RecordingController.shared.restartEngine()
         case "openScreenRecordingSettings":
             RecordingController.openScreenRecordingSettings()
@@ -354,13 +358,16 @@ enum BridgeError: Error {
 
 // MARK: - recording actions（桥 → RecordingController 的动作缝；CONTRACT §61.1 追记）
 //
-// 原生三处「开启」——Onboarding.record（consent「开启」）、Permissions 状态行「开启(仅屏幕
-// / 屏幕+音频)」、SetupWizard 终章「启动引擎」——都是同一句：
+// 原生两处 setMode「开启」——Onboarding.record（consent「开启」）、Permissions 状态行「开启(仅屏幕
+// / 屏幕+音频)」——都是同一句：
 //   `if !RecordingController.hasScreenPermission() { RecordingController.requestScreenPermission() }`
 // 再 setMode。没有 TCC 授权引擎起来就立刻退出（Recording.swift autostartIfNeeded 的注释），
 // 而 CGRequestScreenCaptureAccess 每个 bundle 身份只弹一次、之后 macOS 静默，所以每次
 // 开都调一遍是安全的。web 移植曾把这句丢了（consent「开启」只发 setRecording）——桥在
 // 这里替页面补回，页面不用知道 TCC。
+// SetupWizard 终章「启动引擎」带同一句守卫但接的是 restartEngine 而非 setMode——它对应桥的
+// `restartRecording`，守卫留在 web 半边（FinaleStep.tsx 先发 requestPermission(screen)），
+// 桥的 restartRecording 与其余原生 restart 按钮一样不带守卫；不归这里。
 // Recording.swift 是逐字节冻结的引擎副本（§61.3），缝只能长在它外面：四个执行体默认直连
 // RecordingController；harness 换成假实现——真 setMode 会 pkill 机器上正跑的 screenpipe、
 // 真 CGRequest 会弹系统框，两者都不许进测试。

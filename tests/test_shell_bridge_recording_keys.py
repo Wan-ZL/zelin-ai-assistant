@@ -1,8 +1,11 @@
 """壳桥 §61.1 追记（parity batch shell-recording-bridge）的两侧互镜判例。
 
-原生三处「开启」（Onboarding.record / Permissions 状态行 / SetupWizard 终章）在 setMode 前都
-先 `if !hasScreenPermission { requestScreenPermission() }`；web 移植把这句丢了。本批在桥里补回
-（`RecordingActions.turnOn`），并 add-only 地把原生录制 / 字幕 / 权限面还在用的几个值推给页面：
+原生两处 setMode「开启」（Onboarding.record / Permissions 状态行）在 setMode 前都先
+`if !hasScreenPermission { requestScreenPermission() }`；web 移植把这句丢了。本批在桥里补回
+（`RecordingActions.turnOn`）。SetupWizard 终章「启动引擎」带同一句守卫但接的是 restartEngine——
+对应桥的 `restartRecording`，守卫留在 web 半边（FinaleStep 自己先发 requestPermission），桥的
+restartRecording 与其余原生 restart 按钮一样不带守卫。另 add-only 地把原生录制 / 字幕 / 权限面还在
+用的几个值推给页面：
 `recording.self_heal_note` / `recording.log_tail`、`captions.translation_note` /
 `translation_active` / `source_note` / `apple_engine_available`、`permissions.screen_requested`，
 加方法 `refreshRecording`。这里钉：
@@ -10,6 +13,9 @@
 - 每个新键 Swift 快照与 `web/src/shellBridge.ts` 类型两侧都有（防腐 #10 逐字镜像）；
 - `refreshRecording` 两侧词表都有，`getState` 仍是纯读（不经 RecordingActions.refresh）；
 - `setRecording on:true` 走 `RecordingActions.turnOn`，turnOn = 缺授权先请求、再 setMode（顺序）；
+  `restartRecording` 直连 restartEngine、不经 RecordingActions（向导终章的守卫在 FinaleStep.tsx）；
+- `translation_note` 不是活性信号：冻结引擎里翻译关着它也是 ""、Ark 报错时 translationActive 仍 true——
+  「在不在翻」只看 `translation_active`（§61.1 追记 (c) 的措辞据此）；
 - 缝长在 ShellBridge.swift 外面的引擎文件一个字不动（§61.3 逐字节判例在 test_shell_engine_mirror.py）；
 - §61.4 追记：LegacyPrefs 的悬浮窗 frame 键 = NSWindow 对 CaptionOverlay 同名 autosave 的记录键，
   且带自己的一次性标记（不复用 `legacyPrefsSeeded`）；
@@ -70,6 +76,25 @@ class AddOnlyKeysMirrorTestCase(unittest.TestCase):
             self.assertIn("@Published private(set) var %s" % field, captions)
         self.assertIn("func appleCaptionEngineAvailable() -> Bool", captions)
 
+    def test_translation_note_is_not_an_activity_signal(self):
+        # §61.1 追记 (c) 的措辞据此：冻结引擎的 recomputeTranslation 在翻译关着时也把 note 置 ""，
+        # Ark 途中报错把错误句写进 note 而 translationActive 不动——所以 "" ≠ 在翻、非空 ≠ 没在翻，
+        # 「在不在翻」只看 translation_active。原生设置区也只在非空时渲染 note。
+        captions = _read(SHELL / "LiveCaptions.swift")
+        body = re.search(r"private func recomputeTranslation\(\) \{(.*?)\n    \}", captions, re.DOTALL).group(1)
+        off_branch = re.search(r"guard translateEnabled else \{(.*?)\}", body, re.DOTALL).group(1)
+        self.assertIn("translationActive = false", off_branch)
+        self.assertIn('translationNote = ""', off_branch)
+        on_error = re.search(r"onError: \{ \[weak self\] message in\s*(.*?)\}", captions, re.DOTALL).group(1)
+        self.assertIn("translationNote = message", on_error)
+        self.assertNotIn("translationActive", on_error)
+        settings = _read(MAC / "SettingsLiveCaptions.swift")
+        self.assertIsNotNone(re.search(r"if !cap\.translationNote\.isEmpty \{\s*statusRow\(cap\.translationNote",
+                                       settings))
+        # 桥 / web 两侧的注释都不许再写「"" = 在翻」
+        for text in (self.swift, self.ts):
+            self.assertNotIn('"" = 在翻', text)
+
     def test_web_normalize_defaults_every_new_key(self):
         # 老壳缺席 → "" / false（asString / asBool 默认），页面永不读到 undefined
         for key in NEW_KEYS["recording"]:
@@ -119,13 +144,40 @@ class RefreshAndTurnOnTestCase(unittest.TestCase):
                       self.swift)
         self.assertIn("static var setMode: (String) -> Void = { RecordingController.shared.setMode($0) }", self.swift)
 
-    def test_native_three_turn_on_sites_share_the_guard(self):
-        # 冻结参考：原生三处「开启」确实都带这句（本批复原的依据）
-        guard = re.compile(r"if (?:granted, )?!RecordingController\.hasScreenPermission\(\) \{\s*"
-                           r"RecordingController\.requestScreenPermission\(\)\s*\}")
-        for name in ("Onboarding.swift", "Permissions.swift", "SetupWizard.swift"):
+    # 冻结参考里的那句守卫；`granted, ` 是 Onboarding.record 的前置条件
+    GUARD = (r"if (?:granted, )?!RecordingController\.hasScreenPermission\(\) \{\s*"
+             r"RecordingController\.requestScreenPermission\(\)\s*\}\s*(?://[^\n]*\n\s*)*")
+
+    def test_native_set_mode_turn_on_sites_share_the_guard(self):
+        # 冻结参考：原生两处 setMode「开启」确实都是「守卫 → setMode」（本批复原的依据）
+        guard_then_set_mode = re.compile(self.GUARD + r"(?:RecordingController\.shared|rec)\.setMode\(")
+        for name in ("Onboarding.swift", "Permissions.swift"):
             with self.subTest(file=name):
-                self.assertIsNotNone(guard.search(_read(MAC / name)), "%s lost the TCC guard" % name)
+                self.assertIsNotNone(guard_then_set_mode.search(_read(MAC / name)),
+                                     "%s lost the guard → setMode pair" % name)
+
+    def test_setup_wizard_start_engine_is_a_restart_site_not_a_set_mode_site(self):
+        # SetupWizard 终章「启动引擎」= 守卫 → restartEngine（不是 setMode）：它对应桥的 restartRecording，
+        # 不归 setRecording 的守卫管；SetupWizard 里根本没有 setMode 调用
+        wizard = _read(MAC / "SetupWizard.swift")
+        self.assertIsNotNone(re.search(self.GUARD + r"rec\.restartEngine\(\)", wizard))
+        self.assertNotIn(".setMode(", wizard)
+
+    def test_restart_recording_stays_unguarded_like_every_native_restart_button(self):
+        # 桥的 restartRecording 直连 restartEngine、不经 RecordingActions（原生 DashboardView / Pages /
+        # Diagnostics / Doctor 的 restart 都不带守卫）；向导终章的守卫在 web 半边 FinaleStep 自己那里
+        case = self.swift[self.swift.index('case "restartRecording":'):
+                          self.swift.index('case "openScreenRecordingSettings":')]
+        self.assertIn("RecordingController.shared.restartEngine()", case)
+        self.assertNotIn("RecordingActions", case)
+        for name in ("DashboardView.swift", "Pages.swift", "Diagnostics.swift", "Doctor.swift"):
+            with self.subTest(file=name):
+                self.assertNotIn("requestScreenPermission", _read(MAC / name))
+        finale = _read(REPO_ROOT / "web" / "src" / "components" / "setup" / "FinaleStep.tsx")
+        start_engine = finale[finale.index('text("启动引擎"'):]
+        request = start_engine.index('shellCall("requestPermission", { kind: "screen" })')
+        restart = start_engine.index('shellCall("restartRecording")')
+        self.assertLess(request, restart, "FinaleStep keeps its own guard before restartRecording")
 
     def test_harness_pins_the_seams(self):
         harness = _read(HARNESS)
@@ -148,9 +200,12 @@ class LegacyOverlayFrameTestCase(unittest.TestCase):
 
     def test_frame_rides_its_own_one_shot_marker(self):
         swift = _read(SHELL / "ShellBridge.swift")
-        self.assertIn('static let overlayFrameMarker = "legacyOverlayFrameSeeded"', swift)
-        self.assertNotEqual("legacyOverlayFrameSeeded", "legacyPrefsSeeded")
         legacy = swift[swift.index("enum LegacyPrefs"):]
+        # 两个一次性标记从源码里抓出来比：并成同一把键就会让已播种的壳永远收不到 frame
+        first_seed = re.search(r'static let marker = "([^"]+)"', legacy).group(1)
+        frame_seed = re.search(r'static let overlayFrameMarker = "([^"]+)"', legacy).group(1)
+        self.assertEqual(frame_seed, "legacyOverlayFrameSeeded")
+        self.assertNotEqual(frame_seed, first_seed, "the frame seed must not reuse the first-run marker")
         # 首批 keys 清单不含 frame（已播种的壳靠第二个标记补收）
         keys = re.search(r"static let keys = \[(.*?)\]", legacy, re.DOTALL).group(1)
         self.assertNotIn("NSWindow Frame", keys)
