@@ -99,6 +99,10 @@ class DirectoryFunctionTestCase(unittest.TestCase):
     """不经 HTTP 直接调 ``slack_directory.directory``：``lang`` 只在给了值时才进 env。"""
 
     def setUp(self):
+        # 与 _ServerCase 同一形状：pop 发生在 patch.dict 作用域内，cleanup 时还给宿主 shell
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
         os.environ.pop("AIASSISTANT_UI_LANG", None)
         self.tmp = tempfile.TemporaryDirectory(prefix="zai-slack-dir-fn-")
         self.addCleanup(self.tmp.cleanup)
