@@ -2209,6 +2209,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **iOS 本期无搜索 UI**（诚实声明）：搜索仍是 Mac 看板专属；iOS 自动获得的只
   是行渲染上的 display_title。webui 搜索面不变。
 
+**§37.2 2026-09-05 追记（add-only；`fix/parity-search-fields-normalization`，看板搜索的 web 面）**：标题里的「（Mac）」自 D3 起读作 web 看板（`web/src/taskFilters.ts`，⌘F / `?q=`），本节前两条自此在 web 逐字生效——此前 web 只做整句 lowercase 子串、词表只有 id / work_id / display_id / title / name / summary / delivered_summary / tier / type + sources（"eb1" 找不到 "EB-1A"，两个词只能按原顺序连着出现，改过名的卡搜卡面上看见的名字搜不到）。(a) **归一化匹配** = `normalizeSearchText` / `searchTerms` / `matchesCardSearch`（`shared/Sources/SearchMatch.swift` 的 TS 孪生；`act/lib/match_corpus.normalize` 仍是 python 孪生，§38.1——三边语义同步改）：两侧 lowercase 并剥 `-`/`_`/`.`/空白后子串比较，CJK 原样，查询按空白切词 = AND（每个词至少命中一个字段，命中的字段可以不同），空查询直通。(b) **词表** = 本节词表全量，按行有什么搜什么（投影行缺的键静默跳过）：id + 冻结 title/name + display_title + former_titles + summary + notes_text + plan/dod + delivered_summary/final_draft + source quotes + agent_name；web 另保留其 add-only 追加：§60 `work_id`/`display_id`、`tier`/`type`、sources 的 `who`/`channel`（D28 退役过滤维度后仍可搜）、registry 原名 `definition_of_done`（字符串或数组皆收）。(c) **占位卡直通**（原生 `Store.boardApprovals`）：提案列 `processing == true` 的行（raising / 捕获中的灰卡）不参与过滤隐藏——web 的过滤器除搜索外还有 tier / 期限 / 回锅 chips，占位卡对它们同样直通（同一条理由：在途提交藏进过滤器后面读起来像捕获丢了），徽章「命中/总数」把占位卡计入命中；实施点 = `BoardLanes.pick`，匹配函数本身对占位行照常判定。(d) **会话内容层（第三条）仍未搬**：server 尚无 `state/search_index.json` 面，「命中会话」badge（`board.card:label:session-match`）继续挂 `ui/parity/pending.txt`（§68.14 1.15）。判例 `web/src/taskFilters.search.test.ts` / `web/src/components/board/BoardLanes.search.test.tsx`。
+
 ## 38. v0.38.0 少建卡、会折叠 — 折叠优先 + 可逆拆分 + 规则合并提示（add-only）
 
 三层设计，目标 = 琐碎信息不再张张成卡；全程不改 §1 状态机、不动冻结 `title`。
