@@ -11,11 +11,13 @@ export interface EmptyStateProps {
   hint?: string;
   /** 可选动作区（按钮等），由调用方自带语义与回调 */
   action?: ReactNode;
+  /** 对齐：整页居中空态用 center（默认）；原生 VStack(alignment: .leading) 式的顶左空态用 start */
+  align?: "center" | "start";
 }
 
-export function EmptyState({ icon, title, hint, action }: EmptyStateProps) {
+export function EmptyState({ icon, title, hint, action, align = "center" }: EmptyStateProps) {
   return (
-    <div className="shell-empty" role="status">
+    <div className={`shell-empty${align === "start" ? " is-start" : ""}`} role="status">
       {icon != null && (
         <div className="shell-empty-icon" aria-hidden="true">
           {icon}

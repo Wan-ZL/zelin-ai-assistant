@@ -79,6 +79,9 @@ export type ConnectionState = "connecting" | "live" | "reconnecting";
 export interface AppState {
   board: Board | null;
   boardError: string | null;      // 最近一次 board 读失败的用户可读文案（成功后清空）
+  /** server 可达但 dashboard.json 不存在（`GET /api/board` 404 `NOT_FOUND`，§49）——原生 Store.missing 的镜像：
+   *  首次安装 / 后台服务从没跑过。与 boardError 互斥：404 不是「连不上」，不许借离线文案说话（§54.1 追记） */
+  boardMissing: boolean;
   boardLoading: boolean;          // 首载 true；SSE 触发的静默 refetch 不置位
   connection: ConnectionState;
   health: HealthSnapshot | null;  // GET /api/health 最近快照（§47.4；PipelineBanner 读）
@@ -151,6 +154,7 @@ function detectInitialLanguage(): Language {
 const initialState: AppState = {
   board: null,
   boardError: null,
+  boardMissing: false,
   boardLoading: true,
   connection: "connecting",
   health: null,
@@ -216,6 +220,12 @@ export function useAppState(): AppState {
 
 let boardRequest: Promise<void> | null = null; // 并发 refetch 合并成一个在途请求
 
+/** `GET /api/board` 的 404 = server 在、文件不在（server/board_source.py 对缺席的 dashboard.json 抛 NOT_FOUND）——
+ *  不是离线。导出供判例直测分类。 */
+export function isBoardMissingError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.code === "NOT_FOUND");
+}
+
 /** 全量拉取看板（初载 + SSE board.updated 后 + 断线重连后都走这一条） */
 export function refreshBoard(): Promise<void> {
   if (boardRequest) return boardRequest;
@@ -224,10 +234,16 @@ export function refreshBoard(): Promise<void> {
       const board = await fetchBoard();
       // 新一版快照落地 = 强制合并的回执到了（或过期了）：「合并中…」章随之退场（原生 Store 同一时机）
       const forceMergingIds = board.generated_at !== state.board?.generated_at ? new Set<string>() : state.forceMergingIds;
-      setState({ board, boardError: null, boardLoading: false, forceMergingIds });
+      setState({ board, boardError: null, boardMissing: false, boardLoading: false, forceMergingIds });
     } catch (error) {
+      if (isBoardMissingError(error)) {
+        // 原生 Store.refresh 的缺文件分支（dashboard = nil / missing = true / loadError = nil）：快照一并清——
+        // server 明说文件没了，留着旧快照再挂「连不上」横幅是两句谎话
+        setState({ board: null, boardError: null, boardMissing: true, boardLoading: false });
+        return;
+      }
       const message = error instanceof ApiError ? error.message : String(error);
-      setState({ boardError: message, boardLoading: false });
+      setState({ boardError: message, boardMissing: false, boardLoading: false });
     } finally {
       boardRequest = null;
     }
