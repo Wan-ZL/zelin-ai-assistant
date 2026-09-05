@@ -1,5 +1,7 @@
 // 斜杠命令的三动词闸门与词表（CONTRACT §41 2026-09-05 追记；原生 Store.swift SlashCommands）：
 //   1) 只有 /rec /open /lang 是命令——「/Users/… 整理一下」「/wat」「/rec整理」都是普通捕获（handled:false），照常铸卡；
+//      闸门镜像 ICU 的 `\b`（Unicode 词界）：动词后紧跟标点（「/rec,」「/open/settings」）仍是命令 → 参数错 → 未识别，
+//      紧跟词字符（「/rec_x」「/rec2」「/rec整理」）不是词界 → 普通捕获；
 //   2) 动词与参数不分大小写（原生 `parts[1].lowercased()`）；参数只看第二个 token；
 //   3) /rec 收原生词 audio（→ 壳的 screen_audio）与 web 既有的 screen_audio；
 //   4) /open 词表是原生五页的超集：board|deps|ingest|settings|about 在前，web 独有页在后；
@@ -32,7 +34,10 @@ describe("slash gate — only /rec /open /lang are commands", () => {
   for (const capture of [
     "/Users/zelin/Downloads 整理一下",
     "/wat",
-    "/rec整理",   // ICU `\b` 是 Unicode 词界：原生把它当捕获；JS 的 ASCII `\b` 会误判——闸门用 (?=\s|$)
+    "/rec整理",   // ICU `\b` 是 Unicode 词界：原生把它当捕获；JS 的 ASCII `\b` 会误判——闸门用 Unicode 负向前瞻镜像 ICU
+    "/rec_x",     // `_` 是词字符（\p{Pc}）：不是词界
+    "/rec2",      // 数字是词字符（\p{Nd}）：不是词界
+    "/recé",      // 带音标的字母同样是词字符
     "/reckon the cost",
     "/opened the door",
     "/language",
@@ -51,6 +56,18 @@ describe("slash gate — only /rec /open /lang are commands", () => {
     expect(usageOf(await runSlashCommand("/open", en))).toMatch(/^Usage: \/open board\|deps\|ingest\|settings\|about\|/);
     expect(usageOf(await runSlashCommand("/lang fr", en))).toBe("Usage: /lang zh|en");
   });
+
+  // 原生 `^/(rec|open|lang)\b`：字母 → 标点是 ICU 词界，isCommand 为真、run() 的 parts[0] 是「/rec,」→ 返 false → 未识别。
+  // 打错的命令不许悄悄铸卡。
+  for (const typo of ["/rec,", "/rec.", "/rec:off", "/open/settings", "/lang;en", "/rec🎤"]) {
+    it(`${JSON.stringify(typo)} — verb glued to punctuation is a command with a bad argument (未识别), not a capture`, async () => {
+      const r = await runSlashCommand(typo, en);
+      expect(r.handled).toBe(true);
+      expect(usageOf(r)).toMatch(/^Usage: \//);
+      expect(r.handled && "error" in r && r.error.kind === "unrecognized" ? r.error.input : null).toBe(typo);
+      expect(navigate).not.toHaveBeenCalled();
+    });
+  }
 
   it("the verb is case-insensitive and only the second token is the argument", async () => {
     await runSlashCommand("/Open   Settings  extra words ignored", en);

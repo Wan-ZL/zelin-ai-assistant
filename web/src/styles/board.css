@@ -104,6 +104,9 @@
   margin: 6px 2px 8px;
   color: var(--text-tertiary);
   font: var(--type-composer-hint);
+  /* "/" 提示行的词表「board|deps|…|setup」是一个没有断点的长 token（`|` 不是断点）：text_size l / xl 下比列宽，
+     不许横向溢出到运行中列底下（#227 审查实测 xl 451px vs 376px），与 .card-title 等长文本类同款 */
+  overflow-wrap: anywhere;
 }
 
 .column-list {

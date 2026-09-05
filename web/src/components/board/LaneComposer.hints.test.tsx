@@ -1,15 +1,16 @@
 // 列顶输入框的提示栈与 title（CONTRACT §41 2026-09-05 追记；原生 Composer.swift:101-104 `.help`、:121 onChange 清错、
 // :134-149 slashError → hintLine 栈）：
-//   1) 草稿以 "/" 开头时输入框下给一行命令词表提示（hintLine），不以 "/" 开头就没有；提示行顶掉成功回执；
+//   1) 草稿以 "/" 开头时输入框下给一行命令词表提示（hintLine），不以 "/" 开头就没有；提示行顶掉成功回执——
+//      包括 ↑/↓ 翻历史翻出一条 "/…" 旧捕获（不走 onChange）的那条路；回执（捕获的 / 斜杠的）一改字即过期；
 //   2) 失败句优先于提示行；一改字失败句即清（原生 `.onChange(of: text) { slashError = nil }`），"/" 草稿随即回到提示行；
-//   3) textarea 与按钮的 title：直跑 = 「直接开跑：跳过提案与费用预估，成果仍进「待验收」」；捕获 = 「快速捕获（<壳快捷键>）」，
-//      壳不在场时没有键可报就只有「快速捕获」（不谎报 ⌘L）；身份从 buildBody 的 payload 读（mode:"run"）。
+//   3) textarea 与按钮的 title：直跑 = 「直接开跑：跳过提案与费用预估，成果仍进「待验收」」；捕获 = 「快速捕获（⌘L · <壳全局键>）」，
+//      壳不在场时没有键可报就只有「快速捕获」（浏览器里 ⌘L 归地址栏，不谎报）；身份从 buildBody 的 payload 读（mode:"run"）。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyShellState, resetShellBridgeForTests } from "../../shellBridge";
 import { resetStoreForTests } from "../../store";
 import { hintLine } from "./composerCommands";
-import { LaneComposer, composerMode, composerTitle } from "./LaneComposer";
+import { LaneComposer, composerMode, composerTitle, quickCaptureKeys } from "./LaneComposer";
 
 vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),
@@ -74,6 +75,48 @@ describe("LaneComposer — '/' hint line", () => {
     expect(screen.queryByText("Submitted")).toBeNull();
     expect(screen.getByText(HINT)).toBeTruthy();
   });
+
+  it("a slash command's receipt is one-shot like the capture receipt: the next keystroke retires it, '/' shows the hint instead", async () => {
+    const { field, button } = mount();
+    fireEvent.change(field, { target: { value: "/lang en" } });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(screen.getByText("Language → en")).toBeTruthy();
+    expect(field.value).toBe(""); // 命令成功清空草稿
+    fireEvent.change(field, { target: { value: "/" } });
+    expect(screen.queryByText("Language → en")).toBeNull();
+    expect(screen.getByText(HINT)).toBeTruthy();
+    fireEvent.change(field, { target: { value: "x" } });
+    expect(screen.queryByText("Language → en")).toBeNull(); // 回执不回来：新草稿一开打它就过期
+    expect(screen.queryByText(HINT)).toBeNull();
+    expect(postAction).not.toHaveBeenCalled();
+  });
+
+  it("↑ recalling a '/…' capture from history (no onChange) still shows exactly one line: the hint, not the receipt", async () => {
+    const { field, button } = mount();
+    fireEvent.change(field, { target: { value: "/Users/zelin/x 整理一下" } });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(screen.getByText("Submitted")).toBeTruthy(); // 路径捕获照常发出并进历史
+    expect(postAction).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(field, { key: "ArrowUp" }); // 空草稿 → 翻历史接管，直接 setDraft，不经过 onChange
+    expect(field.value).toBe("/Users/zelin/x 整理一下");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.queryByText("Submitted")).toBeNull();
+    // 斜杠回执那条路同样：/lang en 成功后 ↑ 翻出那条 "/…" 旧捕获 → 提示行顶掉「Language → en」
+    fireEvent.change(field, { target: { value: "/lang en" } });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(screen.getByText("Language → en")).toBeTruthy();
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(field.value).toBe("/Users/zelin/x 整理一下");
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.queryByText("Language → en")).toBeNull();
+    expect(document.querySelectorAll(".column-help")).toHaveLength(1);
+  });
 });
 
 describe("LaneComposer — the error line clears on edit and outranks the hint", () => {
@@ -113,18 +156,25 @@ describe("LaneComposer — native .help tooltips as title", () => {
     expect(button.title).toBe(RUN_TITLE);
   });
 
-  it("the propose composer says 「快速捕获」 without a key in a plain browser (no shell hotkey to report)", () => {
+  it("the propose composer says 「快速捕获」 without a key in a plain browser (⌘L belongs to the address bar, no global key)", () => {
     const { field, button } = mount("propose");
     expect(field.title).toBe("Quick capture");
     expect(button.title).toBe("Quick capture");
   });
 
-  it("inside the shell the propose tooltip names the shell's real quick-capture hotkey", () => {
-    const { field } = mount("propose");
+  it("inside the shell the propose tooltip names ⌘L (the native key) and the shell's global quick-capture hotkey", () => {
+    const { field, button } = mount("propose");
     act(() => {
       applyShellState({ hotkey: "⌃⌥Space" });
     });
-    expect(field.title).toBe("Quick capture (⌃⌥Space)");
+    expect(field.title).toBe("Quick capture (⌘L · ⌃⌥Space)");
+    expect(button.title).toBe("Quick capture (⌘L · ⌃⌥Space)");
+  });
+
+  it("quickCaptureKeys: nothing without a shell; ⌘L alone when the shell reports no global hotkey", () => {
+    expect(quickCaptureKeys(null)).toBeNull();
+    expect(quickCaptureKeys({ hotkey: "⌃⌥Space" })).toBe("⌘L · ⌃⌥Space");
+    expect(quickCaptureKeys({ hotkey: "" })).toBe("⌘L"); // 原生字面量「快速捕获（⌘L）」
   });
 
   it("composerMode reads the identity off the payload; composerTitle renders both languages", () => {
@@ -132,7 +182,8 @@ describe("LaneComposer — native .help tooltips as title", () => {
     expect(composerMode((t) => ({ action: "capture", text: t, mode: "run" }))).toBe("run");
     const zh = (chinese: string) => chinese;
     expect(composerTitle("run", null, zh)).toBe("直接开跑：跳过提案与费用预估，成果仍进「待验收」");
-    expect(composerTitle("propose", "⌃⌥Space", zh)).toBe("快速捕获（⌃⌥Space）");
+    expect(composerTitle("propose", "⌘L · ⌃⌥Space", zh)).toBe("快速捕获（⌘L · ⌃⌥Space）");
+    expect(composerTitle("propose", "⌘L", zh)).toBe("快速捕获（⌘L）");
     expect(composerTitle("propose", null, zh)).toBe("快速捕获");
     expect(composerTitle("propose", "", zh)).toBe("快速捕获");
   });

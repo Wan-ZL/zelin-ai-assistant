@@ -64,10 +64,13 @@ const REC_ALIASES = new Map<string, RecMode>([["audio", "screen_audio"]]);
 /** 用法句 / 提示行里 /rec 的词表：原生三词 + web 既有的 screen_audio */
 const REC_WORDS = ["off", "screen", "audio", "screen_audio"] as const;
 
-/** 只有这三个动词算命令（原生 SlashCommands.isCommand `^/(rec|open|lang)\b`）。用 `(?=\s|$)` 而不是 `\b`：
- *  JS 的 `\b` 只认 ASCII 词字符，「/rec整理」会被 `\b` 判成命令，而原生 ICU 的 `\b` 是 Unicode 词界——它是普通捕获。
+/** 只有这三个动词算命令（原生 SlashCommands.isCommand `^/(rec|open|lang)\b`）。JS 的 `\b` 只认 ASCII 词字符
+ *  （「/rec整理」会被判成命令），原生 ICU 的 `\b` 是 Unicode 词界——这里用负向前瞻逐字镜像 ICU 的 `\w`
+ *  （Alphabetic + Mark + 十进制数字 + 连接符 + ZWNJ/ZWJ）：动词后面紧跟词字符（「/rec整理」「/rec_x」「/rec2」「/reckon」）
+ *  = 不是词界 = 普通捕获；紧跟空白 / 行尾 / 标点（「/rec,」「/rec:off」「/open/settings」）= 词界 = 命令——参数随即打错，
+ *  与原生一样报「未识别或参数错误：」而不是悄悄铸卡。
  *  动词不分大小写（原生的参数已 lowercased；动词放宽是 web 的超集，textarea 首字母自动大写不至于吞掉命令）。 */
-const COMMAND_RE = /^\/(rec|open|lang)(?=\s|$)/i;
+const COMMAND_RE = /^\/(rec|open|lang)(?![\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\u200C\u200D])/iu;
 
 /** handled:false = 不是命令（按普通捕获发出）；note = 成功回执；error = 原生 Composer.swift 的失败形——
  *  `unrecognized`（三个动词之一但参数打错：「未识别或参数错误：」+ 原文，输入保留）或 `io`（命令本身坏了：原句）。 */
