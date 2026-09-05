@@ -514,7 +514,11 @@ def verify(home: Path, name: str, prober: Optional[Prober] = None,
                 "extra": {}}
     if value is None:
         _autofill_slack_owner(home, kind, ok, extra)
-    receipt = {"ok": ok, "network": False, "detail": detail, "extra": extra}
-    if not ok and not extra.get("precondition"):
-        receipt["reason"] = human_auth_reason(kind, detail)
+    return _with_reason({"ok": ok, "network": False, "detail": detail, "extra": extra}, kind)
+
+
+def _with_reason(receipt: dict, kind: str) -> dict:
+    """凭证本身的错才挂 add-only ``reason``：ok 的、探针没跑的前提失败（``extra.precondition``）都不挂。"""
+    if not receipt["ok"] and not receipt["extra"].get("precondition"):
+        receipt["reason"] = human_auth_reason(kind, receipt["detail"])
     return receipt
