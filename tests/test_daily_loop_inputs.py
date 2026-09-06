@@ -221,7 +221,7 @@ class IssueSignalsTestCase(unittest.TestCase):
 class PrSignalsTestCase(unittest.TestCase):
     """§70 ⑪：`statusCheckRollup` 只是预筛，铸 `pr_red` 要 `gh pr checks --required`
     里真有 fail / cancel——informational job（continue-on-error）的红不算（D5；#193
-    判例）；base 不在 ruleset 下的 PR 用 main 的 ruleset 名单 ∩ rollup 红名代判。"""
+    与 #194 判例）；base 不在 ruleset 下的 PR 用 main 的 ruleset 名单 ∩ rollup 红名代判。"""
 
     RED_ROLLUP = [{"name": "ci", "conclusion": "SUCCESS"}, {"name": "Lint", "conclusion": "FAILURE"}]
     RULESET = [{"type": "deletion"},
@@ -276,6 +276,58 @@ class PrSignalsTestCase(unittest.TestCase):
         checks = [{"name": "ci", "bucket": "pass"}, {"name": "Web tests (build + vitest)", "bucket": "pass"}]
         sigs, _ = loop_inputs.pr_signals(self._gh([], rollup, checks))
         self.assertEqual(sigs, [])
+
+    # PR #194（dependabot actions/checkout 7.0.1，head 6475511）2026-09-06 的真实回包：
+    # `gh pr view --json statusCheckRollup` 11 条（10 个 CheckRun + qlty 的 StatusContext），
+    # 唯一红 = informational 的 Web visual；`gh pr checks --required --json name,bucket`
+    # 七项全 pass。2026-09-06 生产机跑的还是 #214 之前的读取器，把它铸成了 R-286——
+    # 现行逻辑对这份原样回包必须安静。字段只留读取器会看的（__typename/name/context/
+    # conclusion/state/workflowName），顺序与 GitHub 返回一致。
+    PR194_ROLLUP = [
+        {"__typename": "CheckRun", "name": "Changed paths (per-PR filter)", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Lint (shellcheck + ruff)", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Tests on ubuntu (Python 3.9)", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Tests on ubuntu (Python 3.x)", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Contract reminder (soft gate)", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Version pins untouched", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "QA gates (complexity + CRAP + coverage floor + deps + hygiene)",
+         "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Web tests (build + vitest)", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "Web visual (playwright)", "conclusion": "FAILURE", "workflowName": "CI"},
+        {"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "workflowName": "CI"},
+        {"__typename": "StatusContext", "context": "qlty check", "state": "SUCCESS", "workflowName": None},
+    ]
+    PR194_REQUIRED = [
+        {"bucket": "pass", "name": "ci"},
+        {"bucket": "pass", "name": "Web tests (build + vitest)"},
+        {"bucket": "pass", "name": "Lint (shellcheck + ruff)"},
+        {"bucket": "pass", "name": "Tests on ubuntu (Python 3.9)"},
+        {"bucket": "pass", "name": "Tests on ubuntu (Python 3.x)"},
+        {"bucket": "pass", "name": "Version pins untouched"},
+        {"bucket": "pass", "name": "QA gates (complexity + CRAP + coverage floor + deps + hygiene)"},
+    ]
+
+    def test_pr194_verbatim_payloads_only_informational_red_is_quiet(self):
+        # #194 判例：预筛看到 Web visual 红 → 问一次 `--required` → 七项全 pass → 不铸；
+        # `--required` 有答案就不再退回 ruleset 名单
+        self.assertEqual(loop_inputs._red_rollup_names({"statusCheckRollup": self.PR194_ROLLUP}),
+                         ["Web visual (playwright)"])
+        gh = self._gh([], self.PR194_ROLLUP, self.PR194_REQUIRED, self.RULESET, prs=(194,))
+        sigs, _ = loop_inputs.pr_signals(gh)
+        self.assertEqual(sigs, [])
+        self.assertEqual([c for c in gh.calls if c[:2] == ["pr", "checks"]],
+                         [["pr", "checks", "194", "-R", loop_inputs.DEFAULT_REPO,
+                           "--required", "--json", "name,bucket"]])
+        self.assertNotIn(self.RULESET_CALL, gh.calls)
+        # 同一份 required 名单下，只要真有一项 required 红（这里假设 Web tests 红），照样铸卡
+        red_required = [dict(c, bucket="fail") if c["name"].startswith("Web tests") else c
+                        for c in self.PR194_REQUIRED]
+        red_rollup = [dict(c, conclusion="FAILURE") if c.get("name", "").startswith("Web tests") else c
+                      for c in self.PR194_ROLLUP]
+        sigs, _ = loop_inputs.pr_signals(self._gh([], red_rollup, red_required, prs=(194,)))
+        self.assertEqual([s.fingerprint for s in sigs], ["pr_red:194"])
+        self.assertEqual(sigs[0].dod, ["PR #194 required checks 全绿：Web tests (build + vitest)"])
+        self.assertNotIn("Web visual", sigs[0].summary)
 
     def test_red_rollup_without_required_answer_is_quiet(self):
         # gh pr checks 与 ruleset 都拿不到（None）→ 分不清 required 与否 → 宁可不铸
