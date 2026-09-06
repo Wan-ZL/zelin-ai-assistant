@@ -102,14 +102,19 @@ def is_stale(source: str, entry: Optional[dict],
     threshold = LIVENESS_THRESHOLDS.get(source)
     if threshold is None or not isinstance(entry, dict):
         return False
-    stamps = [t for t in (_parse_iso(entry.get("last_ok")),
-                          _parse_iso(entry.get("last_attempt"))) if t]
-    if not stamps:
+    signal = _latest_signal(entry)
+    if signal is None:
         return False
-    signal = max(stamps)
     if now is None:
         now = _dt.datetime.now(_dt.timezone.utc)
     return (now - signal).total_seconds() > threshold
+
+
+def _latest_signal(entry: dict) -> Optional[_dt.datetime]:
+    """较新的那个活动时间戳（last_ok / last_attempt）；两个都缺/坏 → None。"""
+    stamps = [t for t in (_parse_iso(entry.get("last_ok")),
+                          _parse_iso(entry.get("last_attempt"))) if t]
+    return max(stamps) if stamps else None
 
 
 def main(argv: Optional[list] = None) -> int:

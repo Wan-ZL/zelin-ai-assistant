@@ -1,5 +1,8 @@
 """建议公开跟踪表 — publish opted-in feedback records as GitHub issues.
 
+契约：CONTRACT §29（feedback 记录形状 + 「同时公开到 GitHub」opt-in 的同步器：
+预写计数、重试先对账、瞬态不烧预算、无 token = 整体静默关闭）。
+
 Records land in ``state/feedback/<id>.json`` via act/lib/feedback.py; the ones
 the user explicitly checked「同时公开到 GitHub 建议跟踪表」carry ``publish:
 true``. Each actd pass, :func:`sweep` turns every published record that has no
@@ -108,7 +111,7 @@ def _token_path(cfg: config.Config) -> Path:
 def _read_token(cfg: config.Config) -> Optional[str]:
     """First token line of the token file, or None (missing/empty = feature
     quietly off — the gmail no-credential philosophy)."""
-    return secrets._read_path(_token_path(cfg))
+    return secrets.read_path(_token_path(cfg))
 
 
 # --------------------------------------------------------------------------- #
@@ -158,11 +161,20 @@ def _issue_payload(record: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Transport — plain urllib POST to api.github.com (no new dependency)
 # --------------------------------------------------------------------------- #
+def _parse_json_or_empty(data: bytes) -> object:
+    """Body → JSON; a lost/torn body parses to {} → "no number" → counted as a
+    failure, and the NEXT pass reconciles by marker instead of re-posting
+    (the duplicate-guard docstring, piece 3)."""
+    try:
+        return json.loads(data.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _make_transport(token: str) -> Transport:
     def send(method: str, url: str, payload: Optional[dict] = None) -> object:
-        body = None
-        if payload is not None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        body = (json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                if payload is not None else None)
         req = urllib.request.Request(
             url,
             data=body,
@@ -178,13 +190,7 @@ def _make_transport(token: str) -> Transport:
         # B310: url is built from API_BASE (https) + the configured repo slug
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # nosec B310
             data = resp.read()
-        try:
-            # a 201 whose body was lost/torn parses to {} → "no number" →
-            # counted as a failure, and the NEXT pass reconciles by marker
-            # instead of re-posting (the duplicate-guard docstring, piece 3)
-            return json.loads(data.decode("utf-8"))
-        except Exception:  # noqa: BLE001
-            return {}
+        return _parse_json_or_empty(data)
 
     return send
 
@@ -226,43 +232,62 @@ def _find_existing(send: Transport, repo: str, record: dict) -> Optional[dict]:
         resp = send("GET", url, None)
         if not isinstance(resp, list):
             raise ValueError("issue list response was not a list")
-        for item in resp:
-            if not isinstance(item, dict) or "pull_request" in item:
-                continue
-            if marker in str(item.get("body") or ""):
-                return item
+        hit = _page_hit(resp, marker)
+        if hit is not None:
+            return hit
         if len(resp) < LIST_PAGE_SIZE:
             break  # short page = end of the listing, no point paging on
     return None
 
 
+def _is_issue_with_marker(item, marker: str) -> bool:
+    """A real issue (not a PR) whose body carries this record's marker."""
+    return bool(isinstance(item, dict) and "pull_request" not in item
+                and marker in str(item.get("body") or ""))
+
+
+def _page_hit(resp: list, marker: str) -> Optional[dict]:
+    return next((item for item in resp if _is_issue_with_marker(item, marker)), None)
+
+
 # --------------------------------------------------------------------------- #
 # Sweep — the one public entry point (daemon-safe, never raises)
 # --------------------------------------------------------------------------- #
+def _opted_in_unpublished(record) -> bool:
+    """Well-formed, publish explicitly opted in, no issue yet (idempotence).
+    Legacy records without the explicit True never sync."""
+    return bool(isinstance(record, dict) and record.get("id")
+                and record.get("publish") is True
+                and not record.get("issue_number"))
+
+
+def _sync_attempts(record: dict) -> int:
+    """Attempt counter; an unreadable counter fails safe (= the cap, stop)."""
+    try:
+        return int(record.get("sync_attempts") or 0)
+    except (TypeError, ValueError):
+        return MAX_SYNC_ATTEMPTS
+
+
+def _in_cooldown(record: dict) -> bool:
+    """重试节流 (feedback.retry_pending 先例): skipped passes cost nothing —
+    the counter only moves inside _sync_one's 预写, so an offline stretch
+    burns ONE attempt per MIN_RETRY_AGE_SECONDS, not one per 10s pass.
+    An unparseable timestamp fails open: the attempts cap still bounds it."""
+    last = analytics.parse_ts(str(record.get("last_sync_attempt_at") or ""))
+    if last is None:
+        return False
+    now = _dt.datetime.now(_dt.timezone.utc)
+    return (now - last).total_seconds() < MIN_RETRY_AGE_SECONDS
+
+
 def _is_pending(record) -> bool:
     """publish opted-in, not yet on GitHub, not given up, not in cooldown."""
-    if not isinstance(record, dict) or not record.get("id"):
+    if not _opted_in_unpublished(record):
         return False
-    if record.get("publish") is not True:
-        return False  # explicit opt-in only — legacy records never sync
-    if record.get("issue_number"):
-        return False  # already published (idempotence)
-    try:
-        attempts = int(record.get("sync_attempts") or 0)
-    except (TypeError, ValueError):
-        attempts = MAX_SYNC_ATTEMPTS  # unreadable counter: fail safe, stop
-    if attempts >= MAX_SYNC_ATTEMPTS:
+    if _sync_attempts(record) >= MAX_SYNC_ATTEMPTS:
         return False
-    # 重试节流 (feedback.retry_pending 先例): skipped passes cost nothing —
-    # the counter only moves inside _sync_one's 预写, so an offline stretch
-    # burns ONE attempt per MIN_RETRY_AGE_SECONDS, not one per 10s pass.
-    # An unparseable timestamp fails open: the attempts cap still bounds it.
-    last = analytics.parse_ts(str(record.get("last_sync_attempt_at") or ""))
-    if last is not None:
-        now = _dt.datetime.now(_dt.timezone.utc)
-        if (now - last).total_seconds() < MIN_RETRY_AGE_SECONDS:
-            return False
-    return True
+    return not _in_cooldown(record)
 
 
 def _is_transient(e: Exception) -> bool:
@@ -282,7 +307,7 @@ def _is_transient(e: Exception) -> bool:
 
 def _sync_one(send: Transport, repo: str, record: dict) -> bool:
     """One publish attempt; True = the record now has its GitHub issue.
-    All record rewrites are atomic tmp+replace via feedback._write_record.
+    All record rewrites are atomic tmp+replace via feedback.write_record.
 
     预写计数 (duplicate-guard piece 1): ``sync_attempts`` and
     ``last_sync_attempt_at`` (the retry-spacing clock) are bumped and
@@ -301,43 +326,62 @@ def _sync_one(send: Transport, repo: str, record: dict) -> bool:
     # Evidence of an earlier send — a counted attempt, or the timestamp a
     # rolled-back transient left behind. Read BEFORE the 预写 overwrites it.
     ever_sent = already_tried >= 1 or bool(record.get("last_sync_attempt_at"))
+    if not _prewrite_attempt(record, already_tried):
+        return False
+    try:
+        _record_issue(record, _locate_or_create(send, repo, record, ever_sent))
+        return True
+    except Exception as e:  # noqa: BLE001 - one bad record must not stop the sweep
+        _note_failure(record, e, already_tried)
+        return False
+
+
+def _prewrite_attempt(record: dict, already_tried: int) -> bool:
+    """预写计数: bump + persist BEFORE any network call; False = skip with
+    ZERO requests sent (no bookkeeping => no network, period)."""
     try:
         record["sync_attempts"] = already_tried + 1
         record["last_sync_attempt_at"] = _iso_now()
-        feedback._write_record(record)
-    except Exception:  # noqa: BLE001 - no bookkeeping => no network, period
-        return False
-    try:
-        resp: Optional[dict] = None
-        if ever_sent:
-            # duplicate-guard piece 3: the previous POST may have half-
-            # succeeded (response lost / timed out) — reconcile by body
-            # marker first; a failed listing raises => this record is
-            # skipped this pass (宁可晚发不可重发).
-            resp = _find_existing(send, repo, record)
-        if resp is None:
-            created = _create_issue(send, repo, record)
-            resp = created if isinstance(created, dict) else {}
-        number = resp.get("number")
-        if not isinstance(number, int):
-            raise ValueError("issue create response carried no number")
-        record["issue_number"] = number
-        record["issue_url"] = str(resp.get("html_url") or "")
-        record["issue_synced_at"] = _iso_now()
-        record.pop("sync_error", None)
-        feedback._write_record(record)
+        feedback.write_record(record)
         return True
-    except Exception as e:  # noqa: BLE001 - one bad record must not stop the sweep
-        if _is_transient(e):
-            # 瞬态不烧预算: roll the counter back to what it was — the
-            # record stays fully pending and pays only the 60s spacing.
-            record["sync_attempts"] = already_tried
-        record["sync_error"] = str(e)[:ERROR_CAP]
-        try:
-            feedback._write_record(record)
-        except Exception:  # noqa: BLE001 - bookkeeping is best-effort too
-            pass
+    except Exception:  # noqa: BLE001
         return False
+
+
+def _locate_or_create(send: Transport, repo: str, record: dict, ever_sent: bool) -> dict:
+    """Reconcile by marker first when an earlier POST may have half-succeeded
+    (a failed listing raises => the record is skipped this pass, 宁可晚发不可
+    重发); otherwise POST the issue."""
+    resp: Optional[dict] = None
+    if ever_sent:
+        resp = _find_existing(send, repo, record)
+    if resp is None:
+        created = _create_issue(send, repo, record)
+        resp = created if isinstance(created, dict) else {}
+    return resp
+
+
+def _record_issue(record: dict, resp: dict) -> None:
+    number = resp.get("number")
+    if not isinstance(number, int):
+        raise ValueError("issue create response carried no number")
+    record["issue_number"] = number
+    record["issue_url"] = str(resp.get("html_url") or "")
+    record["issue_synced_at"] = _iso_now()
+    record.pop("sync_error", None)
+    feedback.write_record(record)
+
+
+def _note_failure(record: dict, e: Exception, already_tried: int) -> None:
+    """Transient failures roll the counter back (they don't burn the budget);
+    ``last_sync_attempt_at`` stays as the spacing clock + send evidence."""
+    if _is_transient(e):
+        record["sync_attempts"] = already_tried
+    record["sync_error"] = str(e)[:ERROR_CAP]
+    try:
+        feedback.write_record(record)
+    except Exception:  # noqa: BLE001 - bookkeeping is best-effort too
+        pass
 
 
 def sweep(cfg: Optional[config.Config] = None,
@@ -349,36 +393,50 @@ def sweep(cfg: Optional[config.Config] = None,
     exists. Returns the number of issues created. Never raises.
     """
     try:
-        pending: list = []
-        try:
-            files = sorted(feedback.FEEDBACK_DIR.glob("*.json"))
-        except OSError:
-            return 0
-        for path in files:
-            try:
-                record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if _is_pending(record):
-                pending.append(record)
+        pending = _pending_records()
         if not pending:
             return 0
-
-        cfg = cfg or config.load_config()
-        if not cfg.feature("feedback_sync"):
-            return 0
-        send = transport
-        if send is None:
-            token = _read_token(cfg)
-            if not token:
-                return 0  # no credential = feature quietly off (gmail 哲学)
-            send = _make_transport(token)
-
-        repo = _repo(cfg)
-        created = 0
-        for record in pending:
-            if _sync_one(send, repo, record):
-                created += 1
-        return created
+        return _publish_all(pending, cfg, transport)
     except Exception:  # noqa: BLE001 - sync must never break the daemon pass
         return 0
+
+
+def _pending_records() -> list:
+    """Every record that passes :func:`_is_pending` (one directory glob;
+    unreadable files skipped)."""
+    try:
+        files = sorted(feedback.FEEDBACK_DIR.glob("*.json"))
+    except OSError:
+        return []
+    pending: list = []
+    for path in files:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if _is_pending(record):
+            pending.append(record)
+    return pending
+
+
+def _transport_for(cfg: config.Config, transport: Optional[Transport]) -> Optional[Transport]:
+    """The injected transport, else a token-backed one; None = no credential
+    (feature quietly off, gmail 哲学)."""
+    if transport is not None:
+        return transport
+    token = _read_token(cfg)
+    if not token:
+        return None
+    return _make_transport(token)
+
+
+def _publish_all(pending: list, cfg: Optional[config.Config],
+                 transport: Optional[Transport]) -> int:
+    cfg = cfg or config.load_config()
+    if not cfg.feature("feedback_sync"):
+        return 0
+    send = _transport_for(cfg, transport)
+    if send is None:
+        return 0
+    repo = _repo(cfg)
+    return sum(1 for record in pending if _sync_one(send, repo, record))

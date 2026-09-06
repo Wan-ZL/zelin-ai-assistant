@@ -1,4 +1,4 @@
-"""素材库 HTTP 面（CONTRACT §62.4；§49 路由表 + 四闸；server/materials.py）。
+"""素材库 HTTP 面（CONTRACT §62.4；§49 路由表 + 四闸；server/material_box.py）。
 
 - GET /api/materials/list：token-light；?status=open 默认（只回尚未开 PR / 完成 /
   放弃的条目）、all、单状态；坏 status → 400；counts 反映全量。
@@ -20,7 +20,7 @@ from tests.test_server_common import (assert_envelope, auth_headers, get_json,
                                       http_request, post_json, start_server)
 
 from act.lib import materials
-from server import materials as server_materials
+from server import material_box as server_materials
 from server import security as security_mod
 
 

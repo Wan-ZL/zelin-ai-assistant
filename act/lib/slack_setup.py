@@ -97,52 +97,57 @@ def manifest_json() -> str:
 # --------------------------------------------------------------------------- #
 # error classification — Slack API error code -> bilingual next-action sentence
 # --------------------------------------------------------------------------- #
+_AUTH_CODES = ("invalid_auth", "not_authed", "token_revoked", "token_expired",
+               "account_inactive")
+# 精确码 → (zh, en)；auth 族与 transport: 前缀在 _error_pair 里另判
+_EXACT_PAIRS = {
+    "missing_scope": (
+        "token 缺少列频道/成员所需的权限——用「复制 App Manifest」按钮的最新内容"
+        "更新你的 Slack app（api.slack.com/apps → App Manifest → 粘贴 → Save），"
+        "再 Reinstall to Workspace 换新 token 粘贴回来",
+        "The token is missing the scopes needed to list channels/members — "
+        "update your Slack app with the latest \"Copy App Manifest\" content "
+        "(api.slack.com/apps → App Manifest → paste → Save), then Reinstall "
+        "to Workspace and paste the fresh token here",
+    ),
+    "ratelimited": (
+        "Slack 限流了——等一分钟再点「刷新」",
+        "Slack is rate-limiting — wait a minute and click Refresh again",
+    ),
+    "no_token": (
+        "还没保存 Slack token——先完成上面的第 3 步",
+        "No Slack token saved yet — finish step 3 above first",
+    ),
+}
+_AUTH_PAIR = (
+    "token 无效或已失效——到 api.slack.com/apps → OAuth & Permissions "
+    "重新复制 User OAuth Token 粘贴保存",
+    "The token is invalid or expired — copy the User OAuth Token again "
+    "at api.slack.com/apps → OAuth & Permissions and save it here",
+)
+_TRANSPORT_PAIR = (
+    "网络问题，连不上 Slack——稍后点「刷新」重试",
+    "Network trouble reaching Slack — click Refresh again later",
+)
+
+
+def _error_pair(c: str) -> tuple:
+    """(zh, en) sentence pair for a Slack error code (fallback names the code)."""
+    if c in _AUTH_CODES:
+        return _AUTH_PAIR
+    if c.startswith("transport:"):
+        return _TRANSPORT_PAIR
+    pair = _EXACT_PAIRS.get(c)
+    if pair:
+        return pair
+    return (f"Slack 返回了错误 {c}——稍后重试；反复出现就点「让 AI 修」",
+            f"Slack returned error {c} — retry later; if it persists use Fix with AI")
+
+
 def error_message(code: str, lang: Optional[str] = None) -> str:
     """Plain-language sentence (current UI language) for a Slack error code."""
-    c = str(code or "unknown_error")
-    if c == "missing_scope":
-        return failures.pick(
-            "token 缺少列频道/成员所需的权限——用「复制 App Manifest」按钮的最新内容"
-            "更新你的 Slack app（api.slack.com/apps → App Manifest → 粘贴 → Save），"
-            "再 Reinstall to Workspace 换新 token 粘贴回来",
-            "The token is missing the scopes needed to list channels/members — "
-            "update your Slack app with the latest \"Copy App Manifest\" content "
-            "(api.slack.com/apps → App Manifest → paste → Save), then Reinstall "
-            "to Workspace and paste the fresh token here",
-            lang,
-        )
-    if c in ("invalid_auth", "not_authed", "token_revoked", "token_expired",
-             "account_inactive"):
-        return failures.pick(
-            "token 无效或已失效——到 api.slack.com/apps → OAuth & Permissions "
-            "重新复制 User OAuth Token 粘贴保存",
-            "The token is invalid or expired — copy the User OAuth Token again "
-            "at api.slack.com/apps → OAuth & Permissions and save it here",
-            lang,
-        )
-    if c == "ratelimited":
-        return failures.pick(
-            "Slack 限流了——等一分钟再点「刷新」",
-            "Slack is rate-limiting — wait a minute and click Refresh again",
-            lang,
-        )
-    if c == "no_token":
-        return failures.pick(
-            "还没保存 Slack token——先完成上面的第 3 步",
-            "No Slack token saved yet — finish step 3 above first",
-            lang,
-        )
-    if c.startswith("transport:"):
-        return failures.pick(
-            "网络问题，连不上 Slack——稍后点「刷新」重试",
-            "Network trouble reaching Slack — click Refresh again later",
-            lang,
-        )
-    return failures.pick(
-        f"Slack 返回了错误 {c}——稍后重试；反复出现就点「让 AI 修」",
-        f"Slack returned error {c} — retry later; if it persists use Fix with AI",
-        lang,
-    )
+    zh, en = _error_pair(str(code or "unknown_error"))
+    return failures.pick(zh, en, lang)
 
 
 def _fail(code: str) -> dict:
@@ -157,6 +162,22 @@ def _default_api(method: str, token: str, params: Optional[dict] = None) -> dict
     return radar_slack.slack_api(method, token, params)
 
 
+def _page_params(base_params: dict, cursor: Optional[str]) -> dict:
+    params = dict(base_params)
+    params["limit"] = _PAGE_LIMIT
+    if cursor:
+        params["cursor"] = cursor
+    return params
+
+
+def _next_cursor(resp: dict) -> Optional[str]:
+    return (resp.get("response_metadata") or {}).get("next_cursor") or None
+
+
+def _error_code(resp: dict) -> str:
+    return str(resp.get("error") or "unknown_error")
+
+
 def _paginate(method: str, token: str, base_params: dict, list_key: str,
               api: Callable) -> tuple:
     """Collect all pages of a cursor-paginated Slack list call.
@@ -167,18 +188,21 @@ def _paginate(method: str, token: str, base_params: dict, list_key: str,
     items: list = []
     cursor = None
     for _ in range(_MAX_PAGES):
-        params = dict(base_params)
-        params["limit"] = _PAGE_LIMIT
-        if cursor:
-            params["cursor"] = cursor
-        resp = api(method, token, params)
+        resp = api(method, token, _page_params(base_params, cursor))
         if not resp.get("ok"):
-            return None, str(resp.get("error") or "unknown_error")
+            return None, _error_code(resp)
         items.extend(resp.get(list_key) or [])
-        cursor = (resp.get("response_metadata") or {}).get("next_cursor") or None
+        cursor = _next_cursor(resp)
         if not cursor:
             break
     return items, None
+
+
+def _channel_row(c) -> Optional[dict]:
+    """{id, name} for a conversations.list entry; junk rows → None."""
+    if not isinstance(c, dict) or not c.get("id"):
+        return None
+    return {"id": str(c["id"]), "name": str(c.get("name") or c["id"])}
 
 
 def list_channels(token: str, api: Optional[Callable] = None) -> tuple:
@@ -190,13 +214,26 @@ def list_channels(token: str, api: Optional[Callable] = None) -> tuple:
         "channels", api)
     if err:
         return None, err
-    out = []
-    for c in raw:
-        if not isinstance(c, dict) or not c.get("id"):
-            continue
-        out.append({"id": str(c["id"]), "name": str(c.get("name") or c["id"])})
+    out = [row for row in map(_channel_row, raw) if row is not None]
     out.sort(key=lambda c: c["name"].lower())
     return out, None
+
+
+def _skip_user(u: dict) -> bool:
+    """bots / deleted users / Slackbot are not people to watch."""
+    return bool(u.get("deleted") or u.get("is_bot") or u["id"] == "USLACKBOT")
+
+
+def _real_name(u: dict) -> str:
+    return str((u.get("profile") or {}).get("real_name") or u.get("real_name") or "")
+
+
+def _user_row(u) -> Optional[dict]:
+    """{id, name, real_name} for a users.list member; junk / non-human → None."""
+    if not isinstance(u, dict) or not u.get("id") or _skip_user(u):
+        return None
+    return {"id": str(u["id"]), "name": str(u.get("name") or u["id"]),
+            "real_name": _real_name(u)}
 
 
 def list_users(token: str, api: Optional[Callable] = None) -> tuple:
@@ -210,16 +247,7 @@ def list_users(token: str, api: Optional[Callable] = None) -> tuple:
     raw, err = _paginate("users.list", token, {}, "members", api)
     if err:
         return None, err
-    out = []
-    for u in raw:
-        if not isinstance(u, dict) or not u.get("id"):
-            continue
-        if u.get("deleted") or u.get("is_bot") or u["id"] == "USLACKBOT":
-            continue
-        name = str(u.get("name") or u["id"])
-        real = str((u.get("profile") or {}).get("real_name")
-                   or u.get("real_name") or "")
-        out.append({"id": str(u["id"]), "name": name, "real_name": real})
+    out = [row for row in map(_user_row, raw) if row is not None]
     out.sort(key=lambda u: u["name"].lower())
     return out, None
 
@@ -256,6 +284,35 @@ def _write_cache(data: dict) -> None:
         pass                       # cache is best-effort, never fail the fetch
 
 
+def _fresh_cache() -> Optional[dict]:
+    cached = _read_cache()
+    return cached if cached and _cache_fresh(cached) else None
+
+
+def _resolve_token(token: Optional[str]) -> Optional[str]:
+    if token is None:
+        from act import radar_slack
+        return radar_slack.get_token()
+    return token
+
+
+def _fetch_directory(token: str, api: Optional[Callable]) -> dict:
+    """Live fetch: channels then users; the first failing call is the answer."""
+    channels, err = list_channels(token, api=api)
+    if err:
+        return _fail(err)
+    users, err = list_users(token, api=api)
+    if err:
+        return _fail(err)
+    return {
+        "ok": True,
+        "fetched_at": _dt.datetime.now(_dt.timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "channels": channels,
+        "users": users,
+    }
+
+
 def directory(refresh: bool = False, token: Optional[str] = None,
               api: Optional[Callable] = None) -> dict:
     """Channels + people for the Settings pickers (cached).
@@ -264,28 +321,15 @@ def directory(refresh: bool = False, token: Optional[str] = None,
     [...]}`` or ``{"ok": false, "error": code, "message": <bilingual>}``.
     """
     if not refresh:
-        cached = _read_cache()
-        if cached and _cache_fresh(cached):
+        cached = _fresh_cache()
+        if cached:
             return cached
-    if token is None:
-        from act import radar_slack
-        token = radar_slack.get_token()
+    token = _resolve_token(token)
     if not token:
         return _fail("no_token")
-    channels, err = list_channels(token, api=api)
-    if err:
-        return _fail(err)
-    users, err = list_users(token, api=api)
-    if err:
-        return _fail(err)
-    data = {
-        "ok": True,
-        "fetched_at": _dt.datetime.now(_dt.timezone.utc)
-        .strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "channels": channels,
-        "users": users,
-    }
-    _write_cache(data)
+    data = _fetch_directory(token, api)
+    if data.get("ok"):
+        _write_cache(data)
     return data
 
 

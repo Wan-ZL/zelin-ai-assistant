@@ -1,6 +1,6 @@
-// 详情抽屉（BUILD-CONTRACT §2.2）：selectedCardId 驱动，双击/⏎ 开抽屉的绑定在卡片
-// 组件侧（A6 调 selectCard(id)），本组件负责渲染 + 关闭（Esc/背板/按钮）+ ?card= 深链
-// 同步 + 「复制为 Markdown」（头部按钮 + 右键菜单项）。
+// 详情侧栏（BUILD-CONTRACT §2.2；D34 / CONTRACT §49 追记：卡片详情的**唯一**面）：selectedCardId 驱动，
+// 「展开详情 ▸」/ ⏎ 开侧栏的绑定在卡片组件侧（cardChrome 调 openCardDetail → selectCard(id)），
+// 本组件负责渲染 + 关闭（Esc/背板/按钮）+ ?card= 深链同步 + 「复制为 Markdown」（头部按钮 + 右键菜单项）。
 // 挂载点：app.tsx（或 BoardPage）加一行 <DetailDrawer />——集成 agent 接线（A7 无权改
 // A5/A6 的文件）。组件自身在 selectedCardId=null 时渲染 null，挂在任何页面都无副作用。
 import { useEffect, useRef, useState } from "react";
@@ -8,11 +8,12 @@ import { displayId, matchesCardRef } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readCardId, readPage } from "../../route";
 import { selectCard, useAppState } from "../../store";
+import { escapeBelongsToForeignField } from "../chrome/FilterBar";
 import { cardToMarkdown } from "./cardMarkdown";
 import { copyText } from "./copyText";
-import { DetailFields } from "./DetailFields";
+import { DetailFields, faceHeadline } from "./DetailFields";
 import { DeliverableViewer } from "./DeliverableViewer";
-import { TitleEditor } from "./TitleEditor";
+import { FormerNames, TitleEditor } from "./TitleEditor";
 import "./detail.css";
 
 type DrawerTab = "fields" | "deliverable";
@@ -24,6 +25,8 @@ export function DetailDrawer() {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+  // 打开侧栏那一刻的焦点元素（「展开详情 ▸」/ 卡片本身）——关闭时还给它；侧栏内换卡不覆盖
+  const openerRef = useRef<HTMLElement | null>(null);
 
   // 初载深链恢复：?card=R-101 → selectCard（A8 接手整页路由后可移走，这里幂等）
   useEffect(() => {
@@ -37,18 +40,37 @@ export function DetailDrawer() {
     window.history.replaceState(null, "", url);
   }, [selectedCardId]);
 
-  // 换卡重置局部瞬态 + 聚焦抽屉（Esc 可达）
+  // 换卡重置局部瞬态 + 聚焦抽屉（Esc 可达）；关闭把焦点还给打开它的控件（WAI-ARIA dialog 往返；
+  // FilterPopover 同法）——除非关闭的那一下已经把焦点送去了别处，那就不抢。侧栏是 D34 后唯一的详情面，
+  // 键盘用户点「展开详情 ▸」/ 在卡上按 Enter 进来、⎋ 出去，不能掉回 <body> 从页顶重新 Tab。
   useEffect(() => {
     setTab("fields");
     setMenu(null);
     setCopied(false);
-    if (selectedCardId) drawerRef.current?.focus();
+    if (!selectedCardId) return undefined;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !drawerRef.current?.contains(active)) {
+      openerRef.current = active;
+    }
+    drawerRef.current?.focus();
+    return () => {
+      // 换卡时侧栏还在（焦点仍在里面）→ 不还；真关闭时 <aside> 已卸载、焦点掉到 body → 还给 opener
+      const now = document.activeElement;
+      const opener = openerRef.current;
+      if ((!now || now === document.body) && opener?.isConnected) opener.focus({ preventScroll: true });
+    };
   }, [selectedCardId]);
 
+  // ⎋ 关侧栏——作用域同 FilterBar 的看板 ⎋（§15 2026-09-05 追记，原生 Kanban.swift:186 / :225-236 的 scoped Esc）：
+  // ① IME 候选期间的 ⎋（isComposing / keyCode 229）归输入法——撤销一串拼音不许顺手把侧栏关掉（IME 红线）；
+  // ② 光标在文字输入框里（侧栏内的改名框、侧栏外仍可 Tab 到的 ⌘F 搜索框……）时 ⎋ 归那个框——原生 Esc 只在 TextField
+  //   自己的 onKeyPress 里处理。侧栏是 <aside role=dialog>，键盘从卡上进来、⎋ 出去的主路不受影响（焦点在 <aside> 本身）。
   useEffect(() => {
     if (!selectedCardId) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (escapeBelongsToForeignField(event.target, null)) return;
       if (menu) setMenu(null);
       else selectCard(null);
     };
@@ -58,7 +80,9 @@ export function DetailDrawer() {
 
   if (!selectedCardId) return null;
 
-  // 详情在途时用投影行占位标题（board 里找得到就先显示）
+  // 详情在途时用投影行占位标题（board 里找得到就先显示）。cardDetail 不是一次性的：看板换版（generated_at 变）时 store 静默
+  // 重拉并整份替换（原生 @Published dashboard 一发布展开区就重渲染，Store.swift:56-57），所以下面的抬头 / 列积木 / 改名框
+  // 预填都跟着最新一版走，不会在侧栏开着时冻结在打开那一刻
   const boardRow = board
     ? (["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash"] as const)
       .flatMap((section) => (Array.isArray(board[section]) ? (board[section] as Array<Record<string, unknown>>) : []))
@@ -110,8 +134,11 @@ export function DetailDrawer() {
               <span className="zai-drawer-id zai-drawer-id-key" title={text("主键（动作/深链用）", "Primary key (actions / deep links)")}>{primaryKey}</span>
             )}
             <h2>{heading}</h2>
-            {/* §37 活标题：详情已到 + 主键可用才给改名（trash/archived 行也能改，actd 侧复验） */}
-            {cardDetail && primaryKey && <TitleEditor cardId={primaryKey} current={heading} />}
+            {/* §37 活标题：详情已到 + 主键可用才给改名（trash/archived 行也能改，actd 侧复验）；预填 = 此刻的
+                卡面标题（原生 TitleEditRow current = displaySummary，Cards.swift:1283——改名从看板上那个名字起手，
+                不是抬头的冻结 title）；曾用名一行同原生 TitleEditRow（改过的旧名仍可搜索） */}
+            {cardDetail && primaryKey && <TitleEditor cardId={primaryKey} current={faceHeadline(cardDetail) || heading} />}
+            {cardDetail && <FormerNames titles={cardDetail.former_titles} />}
           </div>
           <div className="zai-drawer-tools">
             <button type="button" className="zai-detail-copy" onClick={onCopyMarkdown} disabled={!cardDetail}>

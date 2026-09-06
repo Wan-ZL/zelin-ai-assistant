@@ -190,10 +190,10 @@ export const PALETTE_ROWS: PaletteRow[] = [
     sample: { kind: "chip", className: "chip", zh: "排队中", en: "Queued" }, flagged: false,
   },
   {
-    key: "hard", zh: "硬需求（hardness=hard）", en: "Hard requirement",
+    key: "hard", zh: "较难（hardness=hard）", en: "Hard (hardness=hard)",
     oldValue: ".red · #ff453a", oldSwatches: ["#ff453a"],
     token: "--danger（.chip-danger）", newDark: "#ff453a", newLight: "#d70015", swatchVars: ["--danger"],
-    sample: { kind: "chip", className: "chip chip-danger", zh: "硬需求", en: "Hard" }, flagged: false,
+    sample: { kind: "chip", className: "chip chip-danger", zh: "较难", en: "Hard" }, flagged: false,
   },
   {
     key: "accent", zh: "accent（会话活动 / 主按钮 / 焦点）", en: "Accent (session activity / primary / focus)",

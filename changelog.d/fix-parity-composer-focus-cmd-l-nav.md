@@ -1,0 +1,2 @@
+type: fixed
+- **⌘L 聚焦捕获框回来了、快速捕获跨页不再丢焦点、侧栏折叠有了动效（行为对齐审计 `composer-focus-cmd-l-nav`，CONTRACT §54.4 追记）**：原生 View ▸ 聚焦捕获框（⌘L）在 web 落成 `focusComposer()`——光标进提案列的输入框、停在草稿末尾（此前壳的 quick_capture 会全选草稿，下一键把半句覆盖掉）；运行中列的「直跑」框不响应。壳里按 ⌘L、壳菜单同名项与全局 ⌃⌥Space 三条入口同一落点（浏览器标签页里 ⌘L 归地址栏、拦不到）。不在看板页按下：先留 sessionStorage `zai.pendingFocus` 接力棒再回看板，新文档的看板页挂载时补上那一下聚焦——此前整页导航把命令丢了，回到看板却没聚焦。原生 ⌥⌘S 折叠侧栏随 s4 DELETE 退役、不移植。侧栏折叠 / 展开 150ms ease-in-out（原生 `.animation(.easeInOut(duration: 0.15))`），拖把手改宽期间关掉过渡、系统减弱动效下不开。Playwright golden 未重生成（静态截图无变化）。

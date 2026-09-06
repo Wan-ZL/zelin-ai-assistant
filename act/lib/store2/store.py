@@ -73,6 +73,22 @@ _INTEGRITY_CODES = (
 )
 
 
+# cards INSERT（create_card 与 put_card 的新卡路径共用；列序 = CARD_COLUMNS，
+# version 出生 1、tombstone 出生 0 由 SQL 字面钉死）
+_INSERT_CARD_SQL = (
+    "INSERT INTO cards (id, status, prev_status, tier, type, title,"
+    " origin_trust, target_repo, deadline, created, updated, version,"
+    " merged_into_id, board_rev, tombstone, last_actor_type, payload,"
+    " work_id)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)"
+)
+_INSERT_SOURCE_SQL = (
+    "INSERT INTO sources (card_id, channel, who, date, ref,"
+    " quote, origin_key, created_at)"
+    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)"
+)
+
+
 # --------------------------------------------------------------------------- #
 # 错误族 — code 语义对齐 server error envelope（NOT_FOUND/409 分层）
 # --------------------------------------------------------------------------- #
@@ -191,6 +207,89 @@ def pre_upgrade_snapshot_path(db_path, from_version: int) -> Path:
 
 
 # --------------------------------------------------------------------------- #
+# create_card / put_card 的入参校验与行组装（纯函数；错误形状 = StoreError）
+# --------------------------------------------------------------------------- #
+def _check_create_keys(card: dict, actor_type: str) -> None:
+    """未知键 fail-closed 拒收（对齐 server 的 zero-tolerance 纪律）；agent 面
+    再收紧（_AGENT_CREATE_KEYS）；id/status/title 必填。"""
+    allowed = _AGENT_CREATE_KEYS if actor_type == "agent" else _CREATE_KEYS
+    unknown = set(card) - allowed
+    if unknown:
+        raise StoreError("UNKNOWN_FIELD", f"unknown card fields: {sorted(unknown)}",
+                         {"fields": sorted(unknown)})
+    missing = [k for k in _CREATE_REQUIRED if not card.get(k)]
+    if missing:
+        raise StoreError("INVALID_FIELD", f"missing required fields: {missing}",
+                         {"fields": missing})
+
+
+def _payload_dict(card: dict) -> dict:
+    """``payload`` 缺省 {}；非 dict 拒收。"""
+    payload = card.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise StoreError("INVALID_FIELD", "payload must be a dict", {"field": "payload"})
+    return payload
+
+
+def _require_payload_dict(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise StoreError("INVALID_FIELD", "payload must be a dict", {"field": "payload"})
+
+
+def _create_row_args(card: dict, rev: int, actor_type: str, payload: dict, now: str) -> tuple:
+    """create_card 的 INSERT 参数（列序 = _INSERT_CARD_SQL）。"""
+    return (
+        card["id"], card["status"], card.get("prev_status"),
+        card.get("tier", "T1"), card.get("type", ""), card["title"],
+        # origin_trust 缺省 external = fail-closed（出身不明一律走审批）
+        card.get("origin_trust", "external"),
+        card.get("target_repo"), card.get("deadline"),
+        card.get("created") or now, card.get("updated") or now,
+        card.get("merged_into_id"), rev, actor_type, _dump_json(payload),
+        card.get("work_id"),
+    )
+
+
+def _put_row_args(card_id: str, hot: dict, rev: int, actor_type: str, payload: dict,
+                  now: str) -> tuple:
+    """put_card 新卡路径的 INSERT 参数（热列来自 hot.derive 投影）。"""
+    return (card_id, hot.get("status"), hot.get("prev_status"),
+            hot.get("tier", "T1"), hot.get("type", ""),
+            hot.get("title", ""),
+            hot.get("origin_trust") or "external",
+            hot.get("target_repo"), hot.get("deadline"),
+            now, now, hot.get("merged_into_id"), rev, actor_type,
+            _dump_json(payload), hot.get("work_id"))
+
+
+def _put_update_args(card_id: str, hot: dict, rev: int, actor_type: str, payload: dict,
+                     now: str) -> tuple:
+    """put_card 既有卡路径的 UPDATE 参数（列序 = _PUT_UPDATE_SQL）。"""
+    return (hot.get("status"), hot.get("prev_status"),
+            hot.get("tier", "T1"), hot.get("type", ""),
+            hot.get("title", ""), hot.get("origin_trust") or "external",
+            hot.get("target_repo"), hot.get("deadline"),
+            hot.get("merged_into_id"), hot.get("work_id"),
+            _dump_json(payload), actor_type, now, rev, card_id)
+
+
+_PUT_UPDATE_SQL = (
+    "UPDATE cards SET status = ?, prev_status = ?, tier = ?,"
+    " type = ?, title = ?, origin_trust = ?, target_repo = ?,"
+    " deadline = ?, merged_into_id = ?, work_id = ?, payload = ?,"
+    " last_actor_type = ?, updated = ?, version = version + 1,"
+    " board_rev = ? WHERE id = ?"
+)
+
+
+def _payload_changes(old_payload: dict, payload: dict) -> list:
+    """payload 变更按顶层键 diff 进审计（值可能很大，诚实优先不截断）。"""
+    return [{"field": f"payload.{k}", "before": old_payload.get(k), "after": payload.get(k)}
+            for k in sorted(set(old_payload) | set(payload))
+            if old_payload.get(k) != payload.get(k)]
+
+
+# --------------------------------------------------------------------------- #
 # verb 表 — 动词只算「去哪 + 带什么」，合法性（老状态×新状态×actor）由 whitelist trigger 执法。
 # 用户动词与 live inbox 动作同名（actd.py handlers）；管线动词按 CONTRACT 法条命名。
 # --------------------------------------------------------------------------- #
@@ -246,6 +345,109 @@ def _parse_payload(text: Any) -> dict:
     except (TypeError, ValueError):
         return {}
     return obj if isinstance(obj, dict) else {}
+
+
+def _check_parent_arg(spec: _Verb, verb: str, card_id: str,
+                      merged_into_id: Optional[str]) -> None:
+    if spec.needs_parent and not merged_into_id:
+        raise StoreError("INVALID_FIELD", f"verb '{verb}' requires merged_into_id",
+                         {"verb": verb})
+    if spec.needs_parent and merged_into_id == card_id:
+        raise StoreError("INVALID_FIELD", "card cannot merge into itself",
+                         {"verb": verb, "merged_into_id": merged_into_id})
+
+
+def _verb_spec(verb: str, card_id: str, merged_into_id: Optional[str]) -> _Verb:
+    """动词表查找 + 父指针入参校验（未知动词 UNKNOWN_VERB）。"""
+    spec = VERBS.get(verb)
+    if spec is None:
+        raise StoreError("UNKNOWN_VERB", f"unknown transition verb '{verb}'", {"verb": verb})
+    _check_parent_arg(spec, verb, card_id, merged_into_id)
+    return spec
+
+
+def _prev_target(spec: _Verb, old_prev: Optional[str]) -> tuple:
+    """回程票动词（restore/unarchive）：目标 = prev_status（缺票用兜底）。
+    回程票用掉即清空（对齐 live registry.restore/unarchive）；唯 restore 回
+    archived 时必须补一张（schema CHECK 要求封存卡带票）。
+    TODO(contract): trashed→archived 复位后的 prev_status 语义未入宪，
+    此处取 unarchive 兜底值 'delivered'（最保守：解封后落已验收）。"""
+    new_status = old_prev or spec.fallback
+    new_prev = "delivered" if new_status == "archived" else None
+    return new_status, new_prev
+
+
+def _fixed_target(spec: _Verb, old_status: str, old_prev: Optional[str]) -> tuple:
+    """固定目标动词：stash_prev 的动词在真变化时把老状态存进回程票。"""
+    new_status = spec.to
+    new_prev = old_status if (spec.stash_prev and old_status != new_status) else old_prev
+    return new_status, new_prev
+
+
+def _target_status(spec: _Verb, old_status: str, old_prev: Optional[str]) -> tuple:
+    """—— 算目标状态与随行字段 ——（合法性交给 trigger）"""
+    if spec.to_prev:
+        return _prev_target(spec, old_prev)
+    return _fixed_target(spec, old_status, old_prev)
+
+
+def _transition_changes(old: tuple, new: tuple) -> list:
+    """审计行：status 恒记，prev_status / merged_into_id 只在真变化时追加。"""
+    changes = [{"field": "status", "before": old[0], "after": new[0]}]
+    if new[1] != old[1]:
+        changes.append({"field": "prev_status", "before": old[1], "after": new[1]})
+    if new[2] != old[2]:
+        changes.append({"field": "merged_into_id", "before": old[2], "after": new[2]})
+    return changes
+
+
+def _check_update_fields(fields: dict, actor_type: str) -> None:
+    """status 族只许走 transition；title 是 FROZEN 身份锚（§37）不收；信任档
+    只许用户拨（cards_origin_trust_user_only trigger 兜底 SQL 面）：agent/system
+    把外部卡自封 hand = 绕过审批闸门的自提权。"""
+    bad = set(fields) - _MUTABLE_FIELDS
+    if bad:
+        raise StoreError("UNKNOWN_FIELD",
+                         f"fields not updatable here: {sorted(bad)}", {"fields": sorted(bad)})
+    if "origin_trust" in fields and actor_type != "user":
+        raise TransitionDenied("ORIGIN_TRUST_USER_ONLY",
+                               "origin_trust can only be changed by the user",
+                               {"actor_type": actor_type})
+
+
+def _payload_assignment(row, value) -> Optional[tuple]:
+    """(changes, sql, arg) for a payload replacement; None when identical."""
+    if not isinstance(value, dict):
+        raise StoreError("INVALID_FIELD", "payload must be a dict", {"field": "payload"})
+    old_payload = _parse_payload(row["payload"])
+    if value == old_payload:
+        return None
+    return _payload_changes(old_payload, value), "payload = ?", _dump_json(value)
+
+
+def _field_assignment(row, key: str, value) -> Optional[tuple]:
+    """(changes, sql, arg) for one hot column; None when unchanged."""
+    if value == row[key]:
+        return None
+    return [{"field": key, "before": row[key], "after": value}], f"{key} = ?", value
+
+
+def _collect_assignments(row, fields: dict) -> tuple:
+    """(changes, assigns, args) over ``fields`` in key order; unchanged fields
+    contribute nothing (an all-unchanged call is a no-op)."""
+    changes: list = []
+    assigns: list = []
+    args: list = []
+    for key in sorted(fields):
+        value = fields[key]
+        found = (_payload_assignment(row, value) if key == "payload"
+                 else _field_assignment(row, key, value))
+        if found is None:
+            continue
+        changes.extend(found[0])
+        assigns.append(found[1])
+        args.append(found[2])
+    return changes, assigns, args
 
 
 class Store:
@@ -533,38 +735,12 @@ class Store:
         未知键 fail-closed 拒收（对齐 server 的 zero-tolerance 纪律）。
         """
         self._require_actor(actor_type)
-        allowed = _AGENT_CREATE_KEYS if actor_type == "agent" else _CREATE_KEYS
-        unknown = set(card) - allowed
-        if unknown:
-            raise StoreError("UNKNOWN_FIELD", f"unknown card fields: {sorted(unknown)}",
-                             {"fields": sorted(unknown)})
-        missing = [k for k in _CREATE_REQUIRED if not card.get(k)]
-        if missing:
-            raise StoreError("INVALID_FIELD", f"missing required fields: {missing}",
-                             {"fields": missing})
+        _check_create_keys(card, actor_type)
+        payload = _payload_dict(card)
         now = self._now()
-        payload = card.get("payload") or {}
-        if not isinstance(payload, dict):
-            raise StoreError("INVALID_FIELD", "payload must be a dict", {"field": "payload"})
         with self._write() as conn:
             rev = self._bump_revision(conn)
-            conn.execute(
-                "INSERT INTO cards (id, status, prev_status, tier, type, title,"
-                " origin_trust, target_repo, deadline, created, updated, version,"
-                " merged_into_id, board_rev, tombstone, last_actor_type, payload,"
-                " work_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)",
-                (
-                    card["id"], card["status"], card.get("prev_status"),
-                    card.get("tier", "T1"), card.get("type", ""), card["title"],
-                    # origin_trust 缺省 external = fail-closed（出身不明一律走审批）
-                    card.get("origin_trust", "external"),
-                    card.get("target_repo"), card.get("deadline"),
-                    card.get("created") or now, card.get("updated") or now,
-                    card.get("merged_into_id"), rev, actor_type, _dump_json(payload),
-                    card.get("work_id"),
-                ),
-            )
+            conn.execute(_INSERT_CARD_SQL, _create_row_args(card, rev, actor_type, payload, now))
             self._append_activity(conn, card["id"], actor_type, actor_id or "create",
                                   [{"field": "status", "before": None, "after": card["status"]}])
             row = self._get_row(conn, card["id"])
@@ -596,91 +772,67 @@ class Store:
           version 列照常随每笔真实变更 +1（审计/护栏可比对）。
         """
         self._require_actor(actor_type)
-        if not isinstance(payload, dict):
-            raise StoreError("INVALID_FIELD", "payload must be a dict",
-                             {"field": "payload"})
-        src_rows = [tuple((s or {}).get(k) for k in self._SRC_KEYS)
-                    for s in (sources or [])]
+        _require_payload_dict(payload)
+        src_rows = self._src_rows(sources)
         now = self._now()
         with self._write() as conn:
             row = self._get_row(conn, card_id)
             if row is not None and row["tombstone"]:
                 raise NotFound("card", card_id)
             if row is None:
-                rev = self._bump_revision(conn)
-                conn.execute(
-                    "INSERT INTO cards (id, status, prev_status, tier, type,"
-                    " title, origin_trust, target_repo, deadline, created,"
-                    " updated, version, merged_into_id, board_rev, tombstone,"
-                    " last_actor_type, payload, work_id)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)",
-                    (card_id, hot.get("status"), hot.get("prev_status"),
-                     hot.get("tier", "T1"), hot.get("type", ""),
-                     hot.get("title", ""),
-                     hot.get("origin_trust") or "external",
-                     hot.get("target_repo"), hot.get("deadline"),
-                     now, now, hot.get("merged_into_id"), rev, actor_type,
-                     _dump_json(payload), hot.get("work_id")),
-                )
-                for s in src_rows:
-                    conn.execute(
-                        "INSERT INTO sources (card_id, channel, who, date, ref,"
-                        " quote, origin_key, created_at)"
-                        " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
-                        (card_id, s[0] or "", s[1], s[2], s[3], s[4], now))
-                self._append_activity(
-                    conn, card_id, actor_type, actor_id or "put_card",
-                    [{"field": "status", "before": None,
-                      "after": hot.get("status")}])
-                fresh = self._get_row(conn, card_id)
-                return self._row_to_card(fresh)
+                return self._put_insert(conn, card_id, payload, hot, src_rows,
+                                        actor_type, actor_id, now)
+            return self._put_update(conn, row, card_id, payload, hot, src_rows,
+                                    actor_type, actor_id, now)
 
-            old_payload = _parse_payload(row["payload"])
-            changes = []
-            for k in self._PUT_HOT_KEYS:
-                if row[k] != hot.get(k):
-                    changes.append({"field": k, "before": row[k],
-                                    "after": hot.get(k)})
-            payload_changed = old_payload != payload
-            cur_src = [tuple(r[k] for k in self._SRC_KEYS) for r in conn.execute(
-                "SELECT channel, who, date, ref, quote FROM sources"
-                " WHERE card_id = ? ORDER BY id", (card_id,))]
-            src_changed = cur_src != src_rows
-            if not changes and not payload_changed and not src_changed:
-                return self._row_to_card(row)
-            if payload_changed:
-                # payload 变更按顶层键 diff 进审计（同 update_card_fields 口径）
-                for k in sorted(set(old_payload) | set(payload)):
-                    if old_payload.get(k) != payload.get(k):
-                        changes.append({"field": f"payload.{k}",
-                                        "before": old_payload.get(k),
-                                        "after": payload.get(k)})
-            rev = self._bump_revision(conn)
-            conn.execute(
-                "UPDATE cards SET status = ?, prev_status = ?, tier = ?,"
-                " type = ?, title = ?, origin_trust = ?, target_repo = ?,"
-                " deadline = ?, merged_into_id = ?, work_id = ?, payload = ?,"
-                " last_actor_type = ?, updated = ?, version = version + 1,"
-                " board_rev = ? WHERE id = ?",
-                (hot.get("status"), hot.get("prev_status"),
-                 hot.get("tier", "T1"), hot.get("type", ""),
-                 hot.get("title", ""), hot.get("origin_trust") or "external",
-                 hot.get("target_repo"), hot.get("deadline"),
-                 hot.get("merged_into_id"), hot.get("work_id"),
-                 _dump_json(payload), actor_type, now, rev, card_id),
-            )
-            if src_changed:
-                conn.execute("DELETE FROM sources WHERE card_id = ?", (card_id,))
-                for s in src_rows:
-                    conn.execute(
-                        "INSERT INTO sources (card_id, channel, who, date, ref,"
-                        " quote, origin_key, created_at)"
-                        " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
-                        (card_id, s[0] or "", s[1], s[2], s[3], s[4], now))
-            self._append_activity(conn, card_id, actor_type,
-                                  actor_id or "put_card", changes)
-            fresh = self._get_row(conn, card_id)
-        return self._row_to_card(fresh)
+    @classmethod
+    def _src_rows(cls, sources) -> list:
+        """sources 投影行 (channel, who, date, ref, quote)；None/垃圾成员按空 dict。"""
+        return [tuple((s or {}).get(k) for k in cls._SRC_KEYS) for s in (sources or [])]
+
+    def _insert_sources(self, conn, card_id: str, src_rows: list, now: str) -> None:
+        for s in src_rows:
+            conn.execute(_INSERT_SOURCE_SQL, (card_id, s[0] or "", s[1], s[2], s[3], s[4], now))
+
+    def _current_src_rows(self, conn, card_id: str) -> list:
+        return [tuple(r[k] for k in self._SRC_KEYS) for r in conn.execute(
+            "SELECT channel, who, date, ref, quote FROM sources"
+            " WHERE card_id = ? ORDER BY id", (card_id,))]
+
+    def _put_insert(self, conn, card_id: str, payload: dict, hot: dict, src_rows: list,
+                    actor_type: str, actor_id: Optional[str], now: str) -> dict:
+        """新卡 INSERT：出生状态不设限（应用层裁决）；agent 铸敏感出生态由
+        ``cards_agent_insert_wall`` trigger 拒收。"""
+        rev = self._bump_revision(conn)
+        conn.execute(_INSERT_CARD_SQL, _put_row_args(card_id, hot, rev, actor_type, payload, now))
+        self._insert_sources(conn, card_id, src_rows, now)
+        self._append_activity(
+            conn, card_id, actor_type, actor_id or "put_card",
+            [{"field": "status", "before": None, "after": hot.get("status")}])
+        return self._row_to_card(self._get_row(conn, card_id))
+
+    def _hot_changes(self, row, hot: dict) -> list:
+        return [{"field": k, "before": row[k], "after": hot.get(k)}
+                for k in self._PUT_HOT_KEYS if row[k] != hot.get(k)]
+
+    def _put_update(self, conn, row, card_id: str, payload: dict, hot: dict, src_rows: list,
+                    actor_type: str, actor_id: Optional[str], now: str) -> dict:
+        """既有卡 UPDATE：热列 + payload + last_actor_type 同一条语句；status
+        变更由 ``cards_status_transition`` trigger 按 (old,new,actor) 白名单执法。
+        no-op（payload 与全部热列均未变、sources 投影也未变）：不 bump、不写
+        activity、原样返回。"""
+        changes = self._hot_changes(row, hot)
+        changes += _payload_changes(_parse_payload(row["payload"]), payload)
+        src_changed = self._current_src_rows(conn, card_id) != src_rows
+        if not changes and not src_changed:
+            return self._row_to_card(row)
+        rev = self._bump_revision(conn)
+        conn.execute(_PUT_UPDATE_SQL, _put_update_args(card_id, hot, rev, actor_type, payload, now))
+        if src_changed:
+            conn.execute("DELETE FROM sources WHERE card_id = ?", (card_id,))
+            self._insert_sources(conn, card_id, src_rows, now)
+        self._append_activity(conn, card_id, actor_type, actor_id or "put_card", changes)
+        return self._row_to_card(self._get_row(conn, card_id))
 
     def _cas_precheck(self, conn, card_id: str, expected_version: Optional[int]) -> sqlite3.Row:
         """CAS 件一：预检。缺卡/tombstone → 404；版本不符 → 409（带 expected/actual）。
@@ -716,41 +868,15 @@ class Store:
         （幂等重放无害，例如对已在 review 的卡再点 stop_to_review）。
         """
         self._require_actor(actor_type)
-        spec = VERBS.get(verb)
-        if spec is None:
-            raise StoreError("UNKNOWN_VERB", f"unknown transition verb '{verb}'", {"verb": verb})
-        if spec.needs_parent and not merged_into_id:
-            raise StoreError("INVALID_FIELD", f"verb '{verb}' requires merged_into_id",
-                             {"verb": verb})
-        if spec.needs_parent and merged_into_id == card_id:
-            raise StoreError("INVALID_FIELD", "card cannot merge into itself",
-                             {"verb": verb, "merged_into_id": merged_into_id})
+        spec = _verb_spec(verb, card_id, merged_into_id)
         with self._write() as conn:
             row = self._cas_precheck(conn, card_id, expected_version)
-            if spec.needs_parent:
-                parent = self._get_row(conn, merged_into_id)
-                if parent is None or parent["tombstone"]:
-                    # 并入幽灵父卡 = lineage 断链；tombstone 对写路径一律视同不存在
-                    raise NotFound("card", merged_into_id)
-            old_status, old_prev = row["status"], row["prev_status"]
-
-            # —— 算目标状态与随行字段 ——
-            if spec.to_prev:
-                new_status = old_prev or spec.fallback
-                # 回程票用掉即清空（对齐 live registry.restore/unarchive）；
-                # 唯 restore 回 archived 时必须补一张（schema CHECK 要求封存卡带票）。
-                # TODO(contract): trashed→archived 复位后的 prev_status 语义未入宪，
-                # 此处取 unarchive 兜底值 'delivered'（最保守：解封后落已验收）。
-                new_prev = "delivered" if new_status == "archived" else None
-            else:
-                new_status = spec.to
-                new_prev = old_status if (spec.stash_prev and old_status != new_status) else old_prev
-            new_minto = merged_into_id if spec.needs_parent else row["merged_into_id"]
-
-            # —— no-op 过滤 ——
-            if (new_status, new_prev, new_minto) == (old_status, old_prev, row["merged_into_id"]):
-                return self._row_to_card(row)
-
+            self._require_parent_row(conn, spec, merged_into_id)
+            old = (row["status"], row["prev_status"], row["merged_into_id"])
+            new_status, new_prev = _target_status(spec, old[0], old[1])
+            new_minto = merged_into_id if spec.needs_parent else old[2]
+            if (new_status, new_prev, new_minto) == old:
+                return self._row_to_card(row)          # no-op 过滤
             used_version = row["version"]
             rev = self._bump_revision(conn)
             # status UPDATE 必须同语句 SET last_actor_type（trigger 读 NEW.last_actor_type 执法）
@@ -762,15 +888,18 @@ class Store:
                 (new_status, new_prev, new_minto, actor_type, self._now(), rev,
                  card_id, used_version),
             )
-            changes = [{"field": "status", "before": old_status, "after": new_status}]
-            if new_prev != old_prev:
-                changes.append({"field": "prev_status", "before": old_prev, "after": new_prev})
-            if new_minto != row["merged_into_id"]:
-                changes.append({"field": "merged_into_id",
-                                "before": row["merged_into_id"], "after": new_minto})
+            changes = _transition_changes(old, (new_status, new_prev, new_minto))
             self._append_activity(conn, card_id, actor_type, actor_id or verb, changes)
             fresh = self._get_row(conn, card_id)
         return self._row_to_card(fresh)
+
+    def _require_parent_row(self, conn, spec: _Verb, merged_into_id: Optional[str]) -> None:
+        """并入幽灵父卡 = lineage 断链；tombstone 对写路径一律视同不存在。"""
+        if not spec.needs_parent:
+            return
+        parent = self._get_row(conn, merged_into_id)
+        if parent is None or parent["tombstone"]:
+            raise NotFound("card", merged_into_id)
 
     def update_card_fields(self, card_id: str, expected_version: Optional[int],
                            fields: dict, actor_type: str,
@@ -778,42 +907,10 @@ class Store:
         """非状态热列 + payload 的 CAS 更新。status 族只许走 transition；title 是
         FROZEN 身份锚（§37）不收。payload 传入即整体替换（真源在调用方内存）。"""
         self._require_actor(actor_type)
-        bad = set(fields) - _MUTABLE_FIELDS
-        if bad:
-            raise StoreError("UNKNOWN_FIELD",
-                             f"fields not updatable here: {sorted(bad)}", {"fields": sorted(bad)})
-        if "origin_trust" in fields and actor_type != "user":
-            # 信任档只许用户拨（cards_origin_trust_user_only trigger 兜底 SQL 面）：
-            # agent/system 把外部卡自封 hand = 绕过审批闸门的自提权
-            raise TransitionDenied("ORIGIN_TRUST_USER_ONLY",
-                                   "origin_trust can only be changed by the user",
-                                   {"actor_type": actor_type})
+        _check_update_fields(fields, actor_type)
         with self._write() as conn:
             row = self._cas_precheck(conn, card_id, expected_version)
-            changes, assigns, args = [], [], []
-            for key in sorted(fields):
-                value = fields[key]
-                if key == "payload":
-                    if not isinstance(value, dict):
-                        raise StoreError("INVALID_FIELD", "payload must be a dict",
-                                         {"field": "payload"})
-                    old_payload = _parse_payload(row["payload"])
-                    if value == old_payload:
-                        continue
-                    # payload 变更按顶层键 diff 进审计（值可能很大，诚实优先不截断）
-                    for k in sorted(set(old_payload) | set(value)):
-                        if old_payload.get(k) != value.get(k):
-                            changes.append({"field": f"payload.{k}",
-                                            "before": old_payload.get(k),
-                                            "after": value.get(k)})
-                    assigns.append("payload = ?")
-                    args.append(_dump_json(value))
-                else:
-                    if value == row[key]:
-                        continue
-                    changes.append({"field": key, "before": row[key], "after": value})
-                    assigns.append(f"{key} = ?")
-                    args.append(value)
+            changes, assigns, args = _collect_assignments(row, fields)
             if not assigns:                       # no-op：不 bump、不写 activity
                 return self._row_to_card(row)
             used_version = row["version"]

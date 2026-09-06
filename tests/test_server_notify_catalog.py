@@ -94,6 +94,26 @@ class ShellMirrorTestCase(unittest.TestCase):
                 self.assertTrue(nc.has_sentence(control["zh"], control["en"]),
                                 "%s has no server-owned sentence" % control["id"])
 
+    def test_slot_values_are_l_pairs_in_shell_sources(self):
+        """回滚句的插值词表（模式名 / 死因）每个取值都是壳真有的 L() 对，且清单把它们判为 notifications。"""
+        reverted = next(n for n in nc.SHELL_NOTICES if n["id"] == "recording_mode_reverted")
+        self.assertEqual(set(reverted["slots"]), {"failed", "kept", "cause"})
+        for slot, values in reverted["slots"].items():
+            self.assertTrue(values, slot)
+            for value in values:
+                with self.subTest(slot=slot, value=value["en"]):
+                    self.assertTrue(_has_template(self.pairs, value["zh"], value["en"]),
+                                    "slot value %r is not what the shell composes" % value["en"])
+        self.assertTrue(nc.has_sentence("缺 Node.js", "Node.js is missing"))
+        self.assertTrue(nc.has_sentence("屏幕 + 音频", "Screen + Audio"))
+        self.assertFalse(nc.has_sentence("屏幕+音频", "Screen + audio"))   # header 按钮词是另一对，web 自己渲
+        rollback = [c for c in self.inventory["controls"]
+                    if c["source"] in ("Recording.swift:348", "Recording.swift:350", "Recording.swift:159")]
+        self.assertEqual(len(rollback), 3)
+        for control in rollback:
+            self.assertEqual((control["screen"], control["owner"], control.get("probe")),
+                             ("notifications", "shell", "notify_catalog"), control["id"])
+
     def test_daemon_written_kinds_are_in_the_vocabulary(self):
         names = nc.kind_names()
         self.assertIn(recap.NOTIFY_KIND, names)
@@ -118,7 +138,7 @@ class CatalogShapeTestCase(unittest.TestCase):
         ids = [n["id"] for n in doc["shell_notices"]]
         self.assertEqual(len(ids), len(set(ids)))
         for notice in doc["shell_notices"]:
-            self.assertEqual(set(notice), {"id", "title", "body", "source"})
+            self.assertEqual(set(notice), {"id", "title", "body", "slots", "source"})
             for key in ("title", "body"):
                 self.assertTrue(notice[key]["zh"] and notice[key]["en"])
         for kind in doc["kinds"]:

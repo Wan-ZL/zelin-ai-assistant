@@ -183,41 +183,47 @@ FUNNEL = [
 ]
 
 
-def funnel(rows: list) -> dict:
+def _device_rows(rows: list):
+    """(device, row) for every dict row that carries a device id."""
+    for row in rows:
+        dev = _device(row) if isinstance(row, dict) else None
+        if dev:
+            yield dev, row
+
+
+def _stage_hit(row: dict, kind: str, spec) -> bool:
+    """Does this row reach a stage: a feature_first_reach marker for the spec'd
+    feature, or any event name in the spec set."""
+    if kind == _STAGE_FEATURE:
+        return _event(row) == "feature_first_reach" and _feature(row) == spec
+    return _event(row) in spec
+
+
+def _reached_by_stage(rows: list) -> "tuple[dict, set]":
+    """(stage → devices that reached it, all telemetry-producing devices)."""
     reached: dict = {key: set() for key, _, _ in FUNNEL}
     all_devices: set = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        dev = _device(row)
-        if not dev:
-            continue
+    for dev, row in _device_rows(rows):
         all_devices.add(dev)
-        ev = _event(row)
-        feat = _feature(row)
         for key, _label, (kind, spec) in FUNNEL:
-            if kind == _STAGE_FEATURE:
-                if ev == "feature_first_reach" and feat == spec:
-                    reached[key].add(dev)
-            elif ev in spec:
+            if _stage_hit(row, kind, spec):
                 reached[key].add(dev)
+    return reached, all_devices
 
-    # Install proxy: every telemetry-producing device has the app installed, so
-    # when the explicit app_launch marker is sparse (upgraded installs never
-    # fired it), fall back to all distinct devices.
-    if not reached["installed"]:
-        reached["installed"] = set(all_devices)
 
-    # Monotonic: reaching a later stage implies every earlier stage, so
-    # accumulate from the bottom up. Guarantees a non-increasing funnel even on
-    # messy historical data (e.g. a device with only a dispatch row).
+def _cumulative_counts(reached: dict) -> dict:
+    """Monotonic: reaching a later stage implies every earlier stage, so
+    accumulate from the bottom up. Guarantees a non-increasing funnel even on
+    messy historical data (e.g. a device with only a dispatch row)."""
     cum: set = set()
     counts: dict = {}
     for key, _label, _m in reversed(FUNNEL):
         cum |= reached[key]
         counts[key] = len(cum)
+    return counts
 
-    base = counts[FUNNEL[0][0]]
+
+def _stage_rows(counts: dict, base: int) -> list:
     stages = []
     prev = None
     for key, label, _m in FUNNEL:
@@ -229,71 +235,100 @@ def funnel(rows: list) -> dict:
             "pct_of_install": pct, "drop_from_prev_pct": drop,
         })
         prev = n
-    return {"stages": stages, "install_base": base}
+    return stages
+
+
+def funnel(rows: list) -> dict:
+    reached, all_devices = _reached_by_stage(rows)
+    # Install proxy: every telemetry-producing device has the app installed, so
+    # when the explicit app_launch marker is sparse (upgraded installs never
+    # fired it), fall back to all distinct devices.
+    if not reached["installed"]:
+        reached["installed"] = set(all_devices)
+    counts = _cumulative_counts(reached)
+    base = counts[FUNNEL[0][0]]
+    return {"stages": _stage_rows(counts, base), "install_base": base}
 
 
 # --------------------------------------------------------------------------- #
 # 2. reliability — failure rate per path
 # --------------------------------------------------------------------------- #
-def path_failures(rows: list) -> dict:
-    ok_events: dict = defaultdict(lambda: {"fail": 0, "total": 0})
-    ingest_scans: Counter = Counter()          # by source
-    ingest_skips: Counter = Counter()          # by source
-    skip_reasons: dict = defaultdict(Counter)  # source -> reason -> count
-    dispatch_ok = 0
-    dispatch_fail = 0
+class _PathTally:
+    """Per-row accumulator behind path_failures."""
 
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    def __init__(self):
+        self.ok_events: dict = defaultdict(lambda: {"fail": 0, "total": 0})
+        self.ingest_scans: Counter = Counter()          # by source
+        self.ingest_skips: Counter = Counter()          # by source
+        self.skip_reasons: dict = defaultdict(Counter)  # source -> reason -> count
+        self.dispatch_ok = 0
+        self.dispatch_fail = 0
+
+    def add(self, row: dict) -> None:
         ev = _event(row)
         props = _props(row)
-
-        ok = props.get("ok")
-        if isinstance(ok, bool):
-            ok_events[ev]["total"] += 1
-            if not ok:
-                ok_events[ev]["fail"] += 1
-
+        self._add_ok_flag(ev, props.get("ok"))
         if ev == "radar_scan":
-            ingest_scans[_source(row) or "(unknown)"] += 1
+            self.ingest_scans[_source(row) or "(unknown)"] += 1
         elif ev == "radar_skip":
-            src = _source(row) or "(unknown)"
-            ingest_skips[src] += 1
-            reason = props.get("reason")
-            if isinstance(reason, str) and reason:
-                skip_reasons[src][reason] += 1
-        elif ev == "dispatch":
-            dispatch_ok += 1
-        elif ev == "dispatch_failed":
-            dispatch_fail += 1
+            self._add_skip(_source(row) or "(unknown)", props.get("reason"))
+        else:
+            self._add_dispatch(ev)
 
-    ingest = {}
-    for src in sorted(set(ingest_scans) | set(ingest_skips)):
-        scans = ingest_scans[src]
-        skips = ingest_skips[src]
-        denom = scans + skips
-        top = skip_reasons[src].most_common(1)
-        ingest[src] = {
-            "scans": scans,
-            "skips": skips,
-            "skip_rate_pct": (100.0 * skips / denom) if denom else 0.0,
-            "top_reason": (top[0][0], top[0][1]) if top else None,
+    def _add_dispatch(self, ev: str) -> None:
+        if ev == "dispatch":
+            self.dispatch_ok += 1
+        elif ev == "dispatch_failed":
+            self.dispatch_fail += 1
+
+    def _add_ok_flag(self, ev: str, ok) -> None:
+        if isinstance(ok, bool):
+            self.ok_events[ev]["total"] += 1
+            if not ok:
+                self.ok_events[ev]["fail"] += 1
+
+    def _add_skip(self, src: str, reason) -> None:
+        self.ingest_skips[src] += 1
+        if isinstance(reason, str) and reason:
+            self.skip_reasons[src][reason] += 1
+
+    def _ingest_view(self) -> dict:
+        ingest = {}
+        for src in sorted(set(self.ingest_scans) | set(self.ingest_skips)):
+            scans = self.ingest_scans[src]
+            skips = self.ingest_skips[src]
+            denom = scans + skips
+            top = self.skip_reasons[src].most_common(1)
+            ingest[src] = {
+                "scans": scans,
+                "skips": skips,
+                "skip_rate_pct": (100.0 * skips / denom) if denom else 0.0,
+                "top_reason": (top[0][0], top[0][1]) if top else None,
+            }
+        return ingest
+
+    def view(self) -> dict:
+        d_total = self.dispatch_ok + self.dispatch_fail
+        return {
+            "ok_events": {
+                ev: {"fail": v["fail"], "total": v["total"],
+                     "rate_pct": 100.0 * v["fail"] / v["total"]}
+                for ev, v in sorted(self.ok_events.items()) if v["total"]
+            },
+            "ingest": self._ingest_view(),
+            "dispatch": {
+                "ok": self.dispatch_ok, "failed": self.dispatch_fail, "total": d_total,
+                "fail_rate_pct": (100.0 * self.dispatch_fail / d_total) if d_total else 0.0,
+            },
         }
 
-    d_total = dispatch_ok + dispatch_fail
-    return {
-        "ok_events": {
-            ev: {"fail": v["fail"], "total": v["total"],
-                 "rate_pct": 100.0 * v["fail"] / v["total"]}
-            for ev, v in sorted(ok_events.items()) if v["total"]
-        },
-        "ingest": ingest,
-        "dispatch": {
-            "ok": dispatch_ok, "failed": dispatch_fail, "total": d_total,
-            "fail_rate_pct": (100.0 * dispatch_fail / d_total) if d_total else 0.0,
-        },
-    }
+
+def path_failures(rows: list) -> dict:
+    tally = _PathTally()
+    for row in rows:
+        if isinstance(row, dict):
+            tally.add(row)
+    return tally.view()
 
 
 # --------------------------------------------------------------------------- #
@@ -311,128 +346,155 @@ _MILESTONE_EVENTS = {
 }
 
 
-def abandonment(rows: list) -> dict:
+def _abandonment_sets(rows: list) -> "tuple[set, set, dict]":
+    """(configured devices, carded devices, event → device → count)."""
     configured: set = set()
     carded: set = set()
     per_event: dict = defaultdict(Counter)  # event -> device -> count
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        dev = _device(row)
-        if not dev:
-            continue
+    for dev, row in _device_rows(rows):
         ev = _event(row)
-        if ev == "feature_first_reach" and _feature(row) == "ingest_configured":
+        if _is_configured_marker(row, ev):
             configured.add(dev)
         if ev in _CARD_EVENTS:
             carded.add(dev)
         if ev not in _MILESTONE_EVENTS:   # milestones are once-by-construction
             per_event[ev][dev] += 1
+    return configured, carded, per_event
 
-    no_card = configured - carded
+
+def _is_configured_marker(row: dict, ev: str) -> bool:
+    return ev == "feature_first_reach" and _feature(row) == "ingest_configured"
+
+
+def _used_once(per_event: dict) -> dict:
     used_once = {}
     for ev, devc in per_event.items():
         once = sum(1 for c in devc.values() if c == 1)
         if once:
             used_once[ev] = once
+    return used_once
 
+
+def abandonment(rows: list) -> dict:
+    configured, carded, per_event = _abandonment_sets(rows)
+    no_card = configured - carded
     conf = len(configured)
     return {
         "configured": conf,
         "configured_no_card": len(no_card),
         "configured_no_card_pct": (100.0 * len(no_card) / conf) if conf else 0.0,
-        "used_once": used_once,
+        "used_once": _used_once(per_event),
     }
 
 
 # --------------------------------------------------------------------------- #
 # 4. retention — distinct devices returning after their first-seen day
 # --------------------------------------------------------------------------- #
-def retention(rows: list) -> dict:
-    first_day: dict = {}                    # device -> earliest date
-    active_days: dict = defaultdict(set)    # device -> {date, ...}
+def _activity_days(rows: list) -> "tuple[dict, dict, object]":
+    """(device → first-seen day, device → {active days}, newest day or None)."""
+    first_day: dict = {}
+    active_days: dict = defaultdict(set)
     max_day = None
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        dev = _device(row)
-        if not dev:
-            continue
+    for dev, row in _device_rows(rows):
         d = _row_dt(row)
         if d is None:
             continue
         day = d.date()
         active_days[dev].add(day)
-        if dev not in first_day or day < first_day[dev]:
-            first_day[dev] = day
-        if max_day is None or day > max_day:
-            max_day = day
+        _note_first_day(first_day, dev, day)
+        max_day = max(max_day, day) if max_day is not None else day
+    return first_day, active_days, max_day
 
-    def cohort(min_delta: int) -> dict:
-        # Only devices with enough elapsed window to have HAD the chance to
-        # return (first-seen at least min_delta days before the newest event).
-        seen = 0
-        returned = 0
-        for dev, f in first_day.items():
-            if (max_day - f).days < min_delta:
-                continue
-            seen += 1
-            if any((day - f).days >= min_delta for day in active_days[dev]):
-                returned += 1
-        return {"cohort": seen, "returned": returned,
-                "rate_pct": (100.0 * returned / seen) if seen else 0.0}
 
+def _note_first_day(first_day: dict, dev: str, day) -> None:
+    if dev not in first_day or day < first_day[dev]:
+        first_day[dev] = day
+
+
+def _cohort(first_day: dict, active_days: dict, max_day, min_delta: int) -> dict:
+    """Only devices with enough elapsed window to have HAD the chance to
+    return (first-seen at least min_delta days before the newest event)."""
+    seen = 0
+    returned = 0
+    for dev, f in first_day.items():
+        if (max_day - f).days < min_delta:
+            continue
+        seen += 1
+        if any((day - f).days >= min_delta for day in active_days[dev]):
+            returned += 1
+    return {"cohort": seen, "returned": returned,
+            "rate_pct": (100.0 * returned / seen) if seen else 0.0}
+
+
+def retention(rows: list) -> dict:
+    first_day, active_days, max_day = _activity_days(rows)
     if max_day is None:
         empty = {"cohort": 0, "returned": 0, "rate_pct": 0.0}
         return {"devices": 0, "d2": dict(empty), "d7": dict(empty)}
-    return {"devices": len(first_day), "d2": cohort(1), "d7": cohort(6)}
+    return {"devices": len(first_day),
+            "d2": _cohort(first_day, active_days, max_day, 1),
+            "d7": _cohort(first_day, active_days, max_day, 6)}
 
 
 # --------------------------------------------------------------------------- #
 # legacy aggregate — counts only; kept for the appendix + the no-change gate
 # --------------------------------------------------------------------------- #
-def aggregate(rows: list) -> dict:
-    by_event: Counter = Counter()
-    by_day: Counter = Counter()
-    by_version: Counter = Counter()
-    by_level: Counter = Counter()
-    devices: set = set()
-    errors: dict = defaultdict(lambda: {"fail": 0, "total": 0})
+class _Aggregate:
+    """Per-row accumulator behind aggregate (counts only)."""
 
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    def __init__(self):
+        self.by_event: Counter = Counter()
+        self.by_day: Counter = Counter()
+        self.by_version: Counter = Counter()
+        self.by_level: Counter = Counter()
+        self.devices: set = set()
+        self.errors: dict = defaultdict(lambda: {"fail": 0, "total": 0})
+
+    def add(self, row: dict) -> None:
         event = str(row.get("event") or "(unknown)")
-        by_event[event] += 1
-        ts = str(row.get("inserted_at") or "")
-        if len(ts) >= 10:
-            by_day[ts[:10]] += 1
-        by_version[str(row.get("app_version") or "(unset)")] += 1
+        self.by_event[event] += 1
+        self._add_day(row)
+        self.by_version[str(row.get("app_version") or "(unset)")] += 1
         dev = row.get("device_id")
         if dev:
-            devices.add(str(dev))
+            self.devices.add(str(dev))
         props = row.get("props")
         if isinstance(props, dict):
-            level = props.get("level")
-            if isinstance(level, str) and level:
-                by_level[level] += 1
-            ok = props.get("ok")
-            if isinstance(ok, bool):
-                errors[event]["total"] += 1
-                if not ok:
-                    errors[event]["fail"] += 1
+            self._add_props(event, props)
 
-    return {
-        "total": sum(by_event.values()),
-        "devices": len(devices),
-        "by_event": dict(by_event),
-        "by_day": dict(by_day),
-        "by_version": dict(by_version),
-        "by_level": dict(by_level),
-        "error_rates": {k: dict(v) for k, v in errors.items()},
-    }
+    def _add_day(self, row: dict) -> None:
+        ts = str(row.get("inserted_at") or "")
+        if len(ts) >= 10:
+            self.by_day[ts[:10]] += 1
+
+    def _add_props(self, event: str, props: dict) -> None:
+        level = props.get("level")
+        if isinstance(level, str) and level:
+            self.by_level[level] += 1
+        ok = props.get("ok")
+        if isinstance(ok, bool):
+            self.errors[event]["total"] += 1
+            if not ok:
+                self.errors[event]["fail"] += 1
+
+    def view(self) -> dict:
+        return {
+            "total": sum(self.by_event.values()),
+            "devices": len(self.devices),
+            "by_event": dict(self.by_event),
+            "by_day": dict(self.by_day),
+            "by_version": dict(self.by_version),
+            "by_level": dict(self.by_level),
+            "error_rates": {k: dict(v) for k, v in self.errors.items()},
+        }
+
+
+def aggregate(rows: list) -> dict:
+    agg = _Aggregate()
+    for row in rows:
+        if isinstance(row, dict):
+            agg.add(row)
+    return agg.view()
 
 
 # --------------------------------------------------------------------------- #
@@ -465,38 +527,47 @@ def render_funnel(f: dict) -> str:
     ])
 
 
-def render_reliability(pf: dict) -> str:
-    parts = ["### 2. Reliability", ""]
-
+def _ingest_block(pf: dict) -> list:
     ing_rows = []
     for src, v in sorted(pf["ingest"].items()):
         top = v["top_reason"]
         top_str = f"{top[0]} ({top[1]})" if top else "—"
         ing_rows.append((src, v["scans"], v["skips"],
                          _pct(v["skip_rate_pct"]), top_str))
-    if ing_rows:
-        parts += ["**Ingest paths** — scans vs. skips per source "
-                  "(top skip reason surfaces `no_credentials` and friends):",
-                  "",
-                  _table(["source", "scans", "skips", "skip rate",
-                          "top skip reason"], ing_rows),
-                  ""]
+    if not ing_rows:
+        return []
+    return ["**Ingest paths** — scans vs. skips per source "
+            "(top skip reason surfaces `no_credentials` and friends):",
+            "",
+            _table(["source", "scans", "skips", "skip rate",
+                    "top skip reason"], ing_rows),
+            ""]
 
+
+def _dispatch_block(pf: dict) -> list:
     d = pf["dispatch"]
-    if d["total"]:
-        parts += [f"**Dispatch:** {d['ok']} ok / {d['failed']} failed "
-                  f"({_pct(d['fail_rate_pct'])} of {d['total']} attempts).", ""]
+    if not d["total"]:
+        return []
+    return [f"**Dispatch:** {d['ok']} ok / {d['failed']} failed "
+            f"({_pct(d['fail_rate_pct'])} of {d['total']} attempts).", ""]
 
+
+def _ok_block(pf: dict) -> list:
     ok_rows = [(ev, v["fail"], v["total"], _pct(v["rate_pct"]))
                for ev, v in pf["ok_events"].items()]
-    if ok_rows:
-        parts += ["**Other action paths** (events carrying an `ok` flag):",
-                  "",
-                  _table(["event", "failures", "total", "rate"], ok_rows)]
+    if not ok_rows:
+        return []
+    return ["**Other action paths** (events carrying an `ok` flag):",
+            "",
+            _table(["event", "failures", "total", "rate"], ok_rows)]
 
-    if not ing_rows and not d["total"] and not ok_rows:
-        parts += ["_No failure-bearing events in this window._"]
-    return "\n".join(parts).rstrip()
+
+def render_reliability(pf: dict) -> str:
+    parts = ["### 2. Reliability", ""]
+    blocks = _ingest_block(pf) + _dispatch_block(pf) + _ok_block(pf)
+    if not blocks:
+        blocks = ["_No failure-bearing events in this window._"]
+    return "\n".join(parts + blocks).rstrip()
 
 
 def render_abandonment(ab: dict) -> str:
@@ -625,16 +696,24 @@ def analyze(views_md: str, api_key: str,
     try:
         with opener(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        if data.get("stop_reason") == "refusal":
-            return None
-        texts = [b.get("text", "") for b in data.get("content", [])
-                 if isinstance(b, dict) and b.get("type") == "text"]
-        joined = "\n".join(t for t in texts if t).strip()
-        return joined or None
+        return _message_text(data)
     except Exception as exc:  # noqa: BLE001 — degrade, never fail the report
         print(f"anthropic analysis skipped: {type(exc).__name__}: "
               f"{str(exc)[:160]}", file=sys.stderr)
         return None
+
+
+def _text_blocks(data: dict) -> list:
+    return [b.get("text", "") for b in data.get("content", [])
+            if isinstance(b, dict) and b.get("type") == "text"]
+
+
+def _message_text(data: dict) -> "str | None":
+    """The joined text blocks of a messages response; None on refusal / empty."""
+    if data.get("stop_reason") == "refusal":
+        return None
+    joined = "\n".join(t for t in _text_blocks(data) if t).strip()
+    return joined or None
 
 
 # --------------------------------------------------------------------------- #
@@ -655,51 +734,16 @@ def build_body(agg: "dict | None", insights: "str | None", days: int,
         "",
     ]
     if missing_key:
-        parts += [
-            "## ⚠️ Not configured",
-            "",
-            "The `SUPABASE_INSIGHTS_KEY` repository secret is missing, so no "
-            "data could be read. Set it with a read-capable key:",
-            "",
-            "```sh",
-            "gh secret set SUPABASE_INSIGHTS_KEY -R <owner/repo> < "
-            "path/to/service-key.txt",
-            "```",
-        ]
-        return "\n".join(parts)
+        return "\n".join(parts + _MISSING_KEY_LINES)
     if error:
-        parts += [
-            "## ⚠️ This run failed",
-            "",
-            f"Could not read aggregates from Supabase: `{error}`",
-            "",
-            "The previous report (if any) was replaced by this notice; the "
-            "next scheduled run will retry.",
-        ]
-        return "\n".join(parts)
-
-    if insights:
-        parts += ["## Insights (AI-generated — concrete fixes from the views "
-                  "below)", "", insights, ""]
-    else:
-        parts += ["_No AI analysis this run (no `ANTHROPIC_API_KEY` or the "
-                  "call failed) — the derived views below stand on their own._",
-                  ""]
-
+        return "\n".join(parts + _error_lines(error))
+    parts += _insights_lines(insights)
     parts += [TENANT_CAVEAT, ""]
     # The **Totals:** line is load-bearing: insights.yml greps it for the
     # no-change gate (it must appear verbatim, N == total event count).
     parts += [f"**Totals:** {agg['total']} events from {agg['devices']} "
               "devices.", ""]
-    if funnel_v is not None:
-        parts += [render_funnel(funnel_v), ""]
-    if failures_v is not None:
-        parts += [render_reliability(failures_v), ""]
-    if abandon_v is not None:
-        parts += [render_abandonment(abandon_v), ""]
-    if retention_v is not None:
-        parts += [render_retention(retention_v), ""]
-
+    parts += _view_sections(funnel_v, failures_v, abandon_v, retention_v)
     parts += ["<details>",
               "<summary>Appendix — raw aggregate tables</summary>",
               "",
@@ -709,15 +753,77 @@ def build_body(agg: "dict | None", insights: "str | None", days: int,
     return "\n".join(parts)
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="build the usage-insights issue body")
-    ap.add_argument("--out", default="insights-body.md")
-    args = ap.parse_args(argv)
+_MISSING_KEY_LINES = [
+    "## ⚠️ Not configured",
+    "",
+    "The `SUPABASE_INSIGHTS_KEY` repository secret is missing, so no "
+    "data could be read. Set it with a read-capable key:",
+    "",
+    "```sh",
+    "gh secret set SUPABASE_INSIGHTS_KEY -R <owner/repo> < "
+    "path/to/service-key.txt",
+    "```",
+]
 
+
+def _error_lines(error: str) -> list:
+    return [
+        "## ⚠️ This run failed",
+        "",
+        f"Could not read aggregates from Supabase: `{error}`",
+        "",
+        "The previous report (if any) was replaced by this notice; the "
+        "next scheduled run will retry.",
+    ]
+
+
+def _insights_lines(insights: "str | None") -> list:
+    if insights:
+        return ["## Insights (AI-generated — concrete fixes from the views "
+                "below)", "", insights, ""]
+    return ["_No AI analysis this run (no `ANTHROPIC_API_KEY` or the "
+            "call failed) — the derived views below stand on their own._",
+            ""]
+
+
+def _view_sections(funnel_v, failures_v, abandon_v, retention_v) -> list:
+    parts: list = []
+    for view, render in ((funnel_v, render_funnel), (failures_v, render_reliability),
+                         (abandon_v, render_abandonment), (retention_v, render_retention)):
+        if view is not None:
+            parts += [render(view), ""]
+    return parts
+
+
+def _env_settings() -> tuple:
+    """(days, supabase url, supabase key, anthropic key) from the environment."""
     days = int(os.environ.get("INSIGHTS_DAYS") or 30)
     url = os.environ.get("SUPABASE_URL") or DEFAULT_SUPABASE_URL
     key = (os.environ.get("SUPABASE_INSIGHTS_KEY") or "").strip()
     anthropic_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    return days, url, key, anthropic_key
+
+
+def _unchanged_since_last(agg: dict) -> bool:
+    """Daily no-change gate: the workflow passes the total from the last posted
+    report (extracted by regex from the **Totals:** line, validated numeric
+    there). Identical total -> no report file at all, so the update step posts
+    nothing and the Anthropic call is never made on a quiet day."""
+    prev_total = (os.environ.get("INSIGHTS_PREV_TOTAL") or "").strip()
+    return prev_total.isdigit() and int(prev_total) == agg["total"]
+
+
+def _maybe_insights(agg: dict, anthropic_key: str, views: tuple) -> "str | None":
+    if anthropic_key and agg["total"] > 0:
+        return analyze(_ai_context(*views), anthropic_key)
+    return None
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="build the usage-insights issue body")
+    ap.add_argument("--out", default="insights-body.md")
+    args = ap.parse_args(argv)
+    days, url, key, anthropic_key = _env_settings()
 
     def write(body: str) -> None:
         with open(args.out, "w", encoding="utf-8") as fh:
@@ -742,30 +848,16 @@ def main(argv=None) -> int:
     agg = aggregate(rows)
     print(f"fetched {len(rows)} rows -> {agg['total']} events / "
           f"{agg['devices']} devices")
-
-    # Daily no-change gate: the workflow passes the total from the last posted
-    # report (extracted by regex from the **Totals:** line, validated numeric
-    # there). Identical total -> no report file at all, so the update step posts
-    # nothing and the Anthropic call is never made on a quiet day.
-    prev_total = (os.environ.get("INSIGHTS_PREV_TOTAL") or "").strip()
-    if prev_total.isdigit() and int(prev_total) == agg["total"]:
+    if _unchanged_since_last(agg):
         print(f"no new events since last report (total={agg['total']}) "
               "— skipping report and AI analysis")
         return 0
 
-    funnel_v = funnel(rows)
-    failures_v = path_failures(rows)
-    abandon_v = abandonment(rows)
-    retention_v = retention(rows)
-
-    insights = None
-    if anthropic_key and agg["total"] > 0:
-        insights = analyze(
-            _ai_context(funnel_v, failures_v, abandon_v, retention_v),
-            anthropic_key)
+    views = (funnel(rows), path_failures(rows), abandonment(rows), retention(rows))
+    insights = _maybe_insights(agg, anthropic_key, views)
     write(build_body(agg, insights, days,
-                     funnel_v=funnel_v, failures_v=failures_v,
-                     abandon_v=abandon_v, retention_v=retention_v))
+                     funnel_v=views[0], failures_v=views[1],
+                     abandon_v=views[2], retention_v=views[3]))
     return 0
 
 

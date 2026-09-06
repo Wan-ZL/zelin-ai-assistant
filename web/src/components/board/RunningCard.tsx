@@ -5,17 +5,21 @@
 //   working：状态章 + 运行时长 + repo 章 + 单击复制指令 行 + steer 回执 + 评论/回答 + 停止 fork。
 // 停止 fork = Mac v0.21 两选弹窗：退回提案（abort_execution，destructive）/ 去待验收
 // （stop_to_review）；两动词都允许 approved（排队卡）与 executing。无拖拽换状态（§0.8）。
-// 出错的卡（原生 TaskRow.errorLine）：错误一句 + 「让 AI 修」（POST /api/ai-fix，起 act.ai_fix
-// 修复会话）+ 「回答…」（= comment 即 steer：answer_input 已退役，方向修正经 §44.3 中继）。
-// 「展开详情 ▸」后：summary / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID / agents 列表名。
+// 出错的卡（原生 TaskRow.errorLine，§25）：错误一句——排队卡看 dispatch_error(_id)、其余看 last_error(_id)；
+// failure id 在 §25 失败目录（store.failures ← GET /api/failures）里时卡面说人话、原文降到 hover / 详情，
+// 否则原文——+ 目录的对症一键（FailureActionButton，标签逐字原生 actionLabel；未知 id 不装）+ 「让 AI 修」
+// （POST /api/ai-fix，起 act.ai_fix 修复会话）+ 「回答…」（= comment 即 steer：answer_input 已退役，方向修正经 §44.3 中继）。
+// 错误全文 / summary / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID / agents 列表名 住右侧详情侧栏
+// （「展开详情 ▸」打开，D34；DetailFields 渲染）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
-import { useI18n } from "../../i18n";
+import { useI18n, type Language } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
-import type { TaskRow } from "../../types";
-import { cardAction, useSubmit, pendingNote } from "./boardActions";
-import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
-import { BodyText, CopyButton, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
+import { useAppState } from "../../store";
+import type { FailureCatalog, TaskRow } from "../../types";
+import { FailureActionButton } from "../settings/failureAction";
+import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
+import { AiFixButton, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -46,16 +50,20 @@ export function stateLabel(state: string, text: (zh: string, en: string) => stri
   }
 }
 
-/** 状态正确的命令（原生 TaskRow.cmd）：copy_cmd 优先，其次 claude --resume <sid>；排队卡无 */
-export function resumeCommand(row: TaskRow): string | null {
-  if (row.state === "queued") return null;
-  if (typeof row.copy_cmd === "string" && row.copy_cmd) return row.copy_cmd;
-  if (typeof row.session_id === "string" && row.session_id) return `claude --resume ${row.session_id}`;
-  return null;
+/**
+ * §25 卡片错误行的人话（原生 `FailureCatalog.message(failureID)`）：failure id 在目录里 → 当前语言那句；
+ * 没 id / 目录里没有 / 目录还没回（`null`）→ null，卡面照旧原文。目录 = server-owned `GET /api/failures`（防腐 #10：web 不抄第二份句子）。
+ */
+export function failureSentence(failureId: unknown, catalog: FailureCatalog | null, lang: Language): string | null {
+  if (typeof failureId !== "string" || !failureId) return null;
+  const entry = catalog?.failures[failureId];
+  const sentence = entry?.[lang];
+  return typeof sentence === "string" && sentence !== "" ? sentence : null;
 }
 
 export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
-  const { text } = useI18n();
+  const { text, language } = useI18n();
+  const { failures } = useAppState();
   const { pending, pendingAction, error, steerQueued, submit } = useSubmit();
   const [dialog, setDialog] = useState<DialogKind>("none");
 
@@ -69,6 +77,9 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   // 错误文本：排队卡看 dispatch_error，其余看 last_error（原生 TaskRow.errorText）
   const errorText = isQueued ? row.dispatch_error : row.last_error;
   const hasError = typeof errorText === "string" && errorText !== "";
+  // §25 分类 id 与原文同源伴随（dashboard.py：queued 项 dispatch_error_id / 其余 last_error_id；未分类 = null）
+  const failureId = isQueued ? row.dispatch_error_id : row.last_error_id;
+  const sentence = failureSentence(failureId, failures, language);
   const cmd = resumeCommand(row);
   // 「回答…」只给执行中出错的卡（有会话可 steer）；排队/刹车行没有会话
   const showsAnswer = !isBlocked && !isQueued && hasError;
@@ -85,17 +96,17 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   const stateWord = isBlocked ? text("需输入", "Needs input") : isQueued ? text("排队中", "Queued") : stateLabel(row.state, text);
 
   return (
-    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`}>
+    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`} selectable>
       <CardHead
         card={row}
         title={title}
         isMuted={isQueued}
-        selectable={!isQueued}
         leading={<span className={`card-dot ${isBlocked ? "is-blocked" : isQueued ? "is-queued" : "is-running"}`} aria-hidden="true" />}
       />
       {isBlocked ? (
         <>
           <div className="card-badges">
+            <MergeStateChip cardId={row.id} />
             <span className="chip chip-warning">{text("需输入", "Input")}</span>
             {row.resume_exhausted && (
               <span className="chip chip-danger">{text("恢复已放弃", "Auto-resume exhausted")}</span>
@@ -114,6 +125,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </>
       ) : isQueued ? (
         <div className="card-badges">
+          <MergeStateChip cardId={row.id} />
           <span className="chip">{text("排队中", "Queued")}</span>
           {/* 结构化排队原因（「等 R-xx / 等并发位」）——§M6.2 字段；过渡期字符串形也兼容，缺席不渲染 */}
           {queuedReason && <span className="chip">{queuedReason}</span>}
@@ -121,6 +133,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       ) : (
         <>
           <div className="card-badges">
+            <MergeStateChip cardId={row.id} />
             {/* 原生 TaskRow meta：状态章（accent 蓝）· 已交付过·再运行（青）· 运行时长 · repo 章。
                 working 由下方 sheen 行表达（执行中 / agents 列表名），只有非常规状态（idle / unknown /
                 review-active…）才出状态章——同一信息不在卡面说两遍 */}
@@ -162,28 +175,10 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           <CopyCommandLine cmd={cmd} />
         </>
       )}
-      {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；原文 hover 可见，详情里有全文 */}
+      {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；分类 id 在目录里 → 人话，原文 hover 可见，详情侧栏有全文 + 复制 */}
       {!isBlocked && hasError && (
-        <ErrorLine prefix={isQueued ? text("派发失败：", "Dispatch failed: ") : text("错误：", "Error: ")} raw={errorText} />
+        <ErrorLine prefix={isQueued ? text("派发失败：", "Dispatch failed: ") : text("错误：", "Error: ")} raw={errorText} sentence={sentence} />
       )}
-      <CardDetails cardId={row.id}>
-        {(hasError || (isBlocked && row.last_error)) && (
-          <>
-            <div className="card-detail-subheading">
-              {text("错误全文", "Full error")}
-              <CopyButton value={String(errorText ?? row.last_error)} />
-            </div>
-            <pre className="card-error-block">{errorText ?? row.last_error}</pre>
-          </>
-        )}
-        <BodyText value={row.summary} />
-        <PlanList plan={row.plan} />
-        <DodList dod={row.dod} />
-        <CopyPathLine label={text("日志：", "Log: ")} path={row.log} />
-        <CopyPathLine label={text("指令：", "Command: ")} path={cmd} />
-        <MetaLine label={text("会话 ID：", "Session ID: ")} value={row.short_id ?? row.session_id} />
-        <MetaLine label={text("claude agents 列表名：", "claude agents list name: ")} value={row.agent_name} />
-      </CardDetails>
       {pending ? (
         <p className="card-pending-note">
           {steerQueued
@@ -192,8 +187,14 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </p>
       ) : (
         <div className="card-actions">
-          {/* 出错的卡（原生 errorLine）：让 AI 修 = 起本机修复会话；刹车行带 last_error 也给 */}
-          {(hasError || (isBlocked && !!row.last_error)) && <AiFixButton cardId={row.id} />}
+          {/* 出错的卡（原生 errorLine 的按钮行，顺序同原生）：§25 目录的对症一键（未知 id 渲染 null）→ 让 AI 修 = 起本机
+              修复会话；刹车行带 last_error 也给。按钮本体借自 settings/failureAction.tsx（唯一实现，不抄标签表） */}
+          {(hasError || (isBlocked && !!row.last_error)) && (
+            <>
+              <FailureActionButton failureId={failureId} compact />
+              <AiFixButton cardId={row.id} />
+            </>
+          )}
           {/* #119（v0.48.8）：「回答…」(answer_input) 退役——受阻会话由 actd 收割进
               待验收；blocked 行只剩「停止」（+ 让 AI 修）出口。执行中出错的卡：
               「回答…」= comment 即 steer（方向修正经 §44.3 中继），橙色同原生 answer tint。 */}
@@ -218,11 +219,12 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       {error && <p className="card-error">{error}</p>}
 
       {dialog === "stop" && (
+        // 标题逐字镜像原生 confirmationDialog「停止这个任务？」；卡号进正文首行（原生的对话框挂在卡上，不需要点名）
         <ForkDialog
-          title={text(`停止 ${displayId(row)}？`, `Stop ${displayId(row)}?`)}
+          title={text("停止这个任务？", "Stop this task?")}
           body={text(
-            "退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
-            "Discard & re-propose throws this run away; Keep for review keeps what it made for you to check",
+            `${displayId(row)} · 退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查`,
+            `${displayId(row)} · Discard & re-propose throws this run away; Keep for review keeps what it made for you to check`,
           )}
           choices={[
             {

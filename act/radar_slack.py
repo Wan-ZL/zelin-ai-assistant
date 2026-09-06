@@ -81,7 +81,7 @@ SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
 MCP_MARKER_FILE = "slack_mcp.marker"   # iso start-ts of the last SUCCESSFUL MCP pass
 MCP_PRESENT_MARKER_FILE = "slack_mcp_present.marker"  # B4: cached `claude mcp list` verdict
-DEFAULT_TOKEN_PATH = "~/Desktop/Keys/slack-user-token.txt"  # nosec B105 - file PATH, not a secret
+DEFAULT_TOKEN_PATH = secrets.LEGACY_DEFAULT_PATHS[secrets.SLACK_TOKEN_FILE]   # §19 第三层，单源表在 secrets
 MEDIA_DIR = config.STATE_DIR / "media"
 # AVFoundation frame extractor：壳构建（shell/build.sh，§68.13）先于退役中的 mac/build.sh
 # 产物；import 期选第一个存在的（radar_slack 是每轮重起的 launchd 进程，import 即最新）。

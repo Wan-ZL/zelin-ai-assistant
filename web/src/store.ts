@@ -15,6 +15,7 @@ import {
   fetchClaudeSessions,
   fetchDiagnostics,
   fetchDailyLoopSettings,
+  fetchFailures,
   fetchHealth,
   fetchLanes,
   fetchMaterials,
@@ -38,8 +39,9 @@ import {
   putSettingsSection,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
+import { forceMergeLanded } from "./components/board/pendingSettle";
 import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
-import { resolveLanguage, type Language } from "./i18n";
+import { getI18n, resolveLanguage, type Language } from "./i18n";
 import {
   EMPTY_CARD_FILTERS,
   readCardFilters,
@@ -57,6 +59,7 @@ import type {
   DiagnosticsSnapshot,
   DailyLoopPatch,
   DailyLoopSettings,
+  FailureCatalog,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
@@ -77,12 +80,22 @@ export type ConnectionState = "connecting" | "live" | "reconnecting";
 export interface AppState {
   board: Board | null;
   boardError: string | null;      // 最近一次 board 读失败的用户可读文案（成功后清空）
+  /** server 可达但 dashboard.json 不存在（`GET /api/board` 404 `NOT_FOUND`，§49）——原生 Store.missing 的镜像：
+   *  首次安装 / 后台服务从没跑过。与 boardError 互斥：404 不是「连不上」，不许借离线文案说话（§54.1 追记） */
+  boardMissing: boolean;
+  /** 2026-09-05 add-only（§49 追记 `store-resilience-drawer`）：server 答了 2xx 但 dashboard.json 解不出来（不是 JSON /
+   *  顶层不是带 `generated_at` 的对象）——原生 Store.swift:320-324 decode 失败分支的镜像：**旧快照留着**（不清 board）、
+   *  一行「读取 dashboard.json 失败: …」。与 boardError（连不上）/ boardMissing（文件不在）三态互斥：server 在跑、文件在，
+   *  只是内容坏了——健康横幅照常说话，不许借离线文案说「连不上」 */
+  boardDecodeError: string | null;
   boardLoading: boolean;          // 首载 true；SSE 触发的静默 refetch 不置位
   connection: ConnectionState;
   health: HealthSnapshot | null;  // GET /api/health 最近快照（§47.4；PipelineBanner 读）
-  selectedCardId: string | null;  // 详情抽屉当前卡（route.ts 同步 ?card= 深链）
+  selectedCardId: string | null;  // 详情侧栏当前卡（route.ts 同步 ?card= 深链）——卡片详情的唯一面（D34，§49）
   cardDetail: CardDetail | null;  // selectedCardId 对应的 /api/cards/{id} 增补详情
   cardDetailError: string | null;
+  /** 本会话里详情侧栏**落地过**的卡主键（不持久化）：T2 提案「需先展开看明细」的闸门读它——看过明细才给「批准」（§54.1 第 2 项追记） */
+  detailViewedIds: ReadonlySet<string>;
   language: Language;             // UI 语言（G7 shell：?lang= 覆写 > localStorage > 浏览器）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
@@ -93,7 +106,6 @@ export interface AppState {
   materials: MaterialsList | null; // GET /api/materials/list?status=open 最近快照（§62 设置页「素材库」）
   materialsError: string | null;  // 素材库读失败的用户可读文案（成功后清空；写失败由 section toast）
   sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
-  expandedCardIds: ReadonlySet<string>; // 展开详情的卡 id（会话内记忆，不持久化——原生 @State 同义）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
@@ -108,12 +120,32 @@ export interface AppState {
   diagnostics: DiagnosticsSnapshot | null; // GET /api/diagnostics
   setup: SetupSnapshot | null;             // GET /api/setup（首次运行向导判定）
   about: AboutInfo | null;                 // GET /api/about
+  failures: FailureCatalog | null;         // GET /api/failures（§25 失败目录双语句；引擎诊断行 / 依赖行按 id 取）
   mcp: McpList | null;                     // GET /api/mcp
   claudeSessions: ClaudeSessionsScan | null; // GET /api/claude-sessions
+  /** §68.10 追记：本页会话里「导入所选」已提交的 session_id（原生 locallyImported）——与 claudeSessions 快照同寿命
+   *  （快照跨组件卸载留存，这个集合也得留存；整页刷新一起清），重新扫描回来的同一批照样过滤 */
+  claudeSessionsImported: ReadonlySet<string>;
+  /** §68.3 追记：已保存的 Slack token 通过 auth.test 的次数（原生 SettingsSlack.verifyToken .ok → loadDirectory(refresh:true)）——
+   *  SecretRow 每次成功 +1，SlackDirectoryPicker 看到它变了就带 refresh 重载一次；会话内瞬态，不是快照 */
+  slackTokenVerifications: number;
   pageErrors: Record<string, string | null>; // 上述各面最近一次读失败的文案（成功后清空）
   // ----- §21 多选（原生 Kanban「选择」态）：选中主键集合 + 是否在多选态 -----
   selectionMode: boolean;
   selectedIds: ReadonlySet<string>;
+  /** §21bis 强制合并已提交、等真信号的卡（原生 mergeForcingBadge「合并中…」）；会话内瞬态：一批的**每张副卡都
+   *  离开所有列**（成为终态 merged）才清（settleForceMerging，原生 PendingForceMerge 判据）——不是 generated_at
+   *  一变就清（actd 每个 pass 都重写看板，§39.3 / §21bis）；180 s 没等到 → 章退场 + forceMergeTimedOutAt 落时间戳 */
+  forceMergingIds: ReadonlySet<string>;
+  /** 2026-09-05 add-only：最近一批强制合并 180 s 没落地的时刻（epoch ms）；提案列顶据此显示原生那句诚实超时条，
+   *  关掉 / 120 s 后归 null（原生 notice-merge-force） */
+  forceMergeTimedOutAt: number | null;
+  /** 2026-09-05 add-only（§54.1 追记 `strips-force-open`）：两条书立条（潜在任务 / 永久性完成）的展开态——挂 store 不挂
+   *  组件 @State，换页不丢、**不持久化**（每次启动都收起；原生 Store.swift:127-128）。回执不能落在收起的条里：useSubmit 在
+   *  暂缓 / 放回看板 提交成功与 debt / archived 源动作 180 s 超时时置 true（原生 addEcho / beginReturn / sweepTimeouts）；
+   *  搜索命中潜在任务时左条不看这面旗直接展开（BacklogStrip，原生 Kanban.swift:326 `.constant(true)`） */
+  backlogStripExpanded: boolean;
+  archiveStripExpanded: boolean;
 }
 
 /** §63 本地标记（server marks.json 的镜像片段） */
@@ -141,12 +173,15 @@ function detectInitialLanguage(): Language {
 const initialState: AppState = {
   board: null,
   boardError: null,
+  boardMissing: false,
+  boardDecodeError: null,
   boardLoading: true,
   connection: "connecting",
   health: null,
   selectedCardId: null,
   cardDetail: null,
   cardDetailError: null,
+  detailViewedIds: new Set<string>(),
   language: detectInitialLanguage(),
   filters: EMPTY_CARD_FILTERS,
   models: null,
@@ -157,7 +192,6 @@ const initialState: AppState = {
   materials: null,
   materialsError: null,
   sortOrder: readSortOrder(),
-  expandedCardIds: new Set<string>(),
   lanes: null,
   recapSettings: null,
   recapMarks: {},
@@ -170,11 +204,18 @@ const initialState: AppState = {
   diagnostics: null,
   setup: null,
   about: null,
+  failures: null,
   mcp: null,
   claudeSessions: null,
+  claudeSessionsImported: new Set<string>(),
+  slackTokenVerifications: 0,
   pageErrors: {},
   selectionMode: false,
   selectedIds: new Set<string>(),
+  forceMergingIds: new Set<string>(),
+  forceMergeTimedOutAt: null,
+  backlogStripExpanded: false,
+  archiveStripExpanded: false,
 };
 
 let state: AppState = initialState;
@@ -203,16 +244,98 @@ export function useAppState(): AppState {
 
 let boardRequest: Promise<void> | null = null; // 并发 refetch 合并成一个在途请求
 
+/** `GET /api/board` 的 404 = server 在、文件不在（server/board_source.py 对缺席的 dashboard.json 抛 NOT_FOUND）——
+ *  不是离线。导出供判例直测分类。 */
+export function isBoardMissingError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.code === "NOT_FOUND");
+}
+
+/** `GET /api/board` 2xx 却解不出 JSON（api.request 合成 `READ_FAILED`、status 仍是 2xx）——server 答了、内容坏了，
+ *  与断网（status 0 的 `READ_FAILED`）分开。导出供判例直测分类。 */
+export function isBoardDecodeError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "READ_FAILED" && error.status >= 200 && error.status < 300;
+}
+
+/** 顶层形状校验（原生 `JSONDecoder().decode(Dashboard.self)` 的 web 版最小门）：必须是带字符串 `generated_at` 的对象。
+ *  只验顶层——列级由 normalizeBoardShape 补齐、行级宽容留给各组件（wire add-only，前端绝不因新字段崩渲染）。
+ *  返回不合格的原因（null = 合格）。 */
+export function boardShapeProblem(value: unknown): string | null {
+  const { text } = getI18n(state.language);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return text("顶层不是对象", "top level is not an object");
+  if (typeof (value as { generated_at?: unknown }).generated_at !== "string") return text("缺少 generated_at", "generated_at is missing");
+  return null;
+}
+
+/** 七个必有列（`Board` 类型的必填数组键；原生 Dashboard CodingKeys 同一组） */
+const BOARD_LANE_KEYS = ["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash"] as const;
+/** 可选列（旧 server 缺席即缺席——缺席不补，免得往 wire 镜像里塞 server 没说的键；在场却不是数组才归 `[]`） */
+const BOARD_OPTIONAL_LIST_KEYS = ["archived", "merge_suggestions", "fold_receipts", "recaps"] as const;
+
+/** 列级宽容（原生 `Dashboard.init(from:)` / `decodeLossyRows`，shared/Sources/Contract.swift：缺列或整列不是数组 → `[]`，
+ *  `counts` 不是对象 → `Counts.empty`）。过了顶层门的合法 JSON 若少一列，`BoardLanes` 直接 `.filter` / `counts[...]` 会把
+ *  整板炸进错误边界——而旧快照那时已经被换掉，「重试」拉回同一份体只会再炸一次。这里把它补成能渲染的形状：
+ *  一切正常时原样返回（同一引用，不白拷）。 */
+export function normalizeBoardShape(board: Board): Board {
+  let out: Record<string, unknown> | null = null;
+  const patch = (key: string, value: unknown) => {
+    out ??= { ...board };
+    out[key] = value;
+  };
+  for (const key of BOARD_LANE_KEYS) if (!Array.isArray(board[key])) patch(key, []);
+  for (const key of BOARD_OPTIONAL_LIST_KEYS) if (key in board && !Array.isArray(board[key])) patch(key, []);
+  const counts: unknown = board.counts;
+  if (counts === null || typeof counts !== "object" || Array.isArray(counts)) patch("counts", {});
+  return out === null ? board : (out as unknown as Board);
+}
+
+/** 原生 Store.swift:320-324「Keep the previously good dashboard rather than blanking the UI」：快照不动，
+ *  一行 `读取 dashboard.json 失败: <原因>`（`L(...) + error.localizedDescription` 逐字）；离线 / 缺文件两态清掉——
+ *  server 答了，就不是连不上也不是文件不在 */
+function failBoardDecode(reason: string) {
+  const { text } = getI18n(state.language);
+  setState({
+    boardDecodeError: text("读取 dashboard.json 失败: ", "Failed to read dashboard.json: ") + reason,
+    boardError: null,
+    boardMissing: false,
+    boardLoading: false,
+  });
+}
+
 /** 全量拉取看板（初载 + SSE board.updated 后 + 断线重连后都走这一条） */
 export function refreshBoard(): Promise<void> {
   if (boardRequest) return boardRequest;
   boardRequest = (async () => {
     try {
-      const board = await fetchBoard();
-      setState({ board, boardError: null, boardLoading: false });
+      const raw = await fetchBoard();
+      const shapeProblem = boardShapeProblem(raw);
+      if (shapeProblem !== null) {
+        failBoardDecode(shapeProblem);
+        return;
+      }
+      const board = normalizeBoardShape(raw); // 缺列 / 坏列 → `[]`、坏 counts → `{}`（原生列级宽容），渲染面永远拿到能读的形状
+      const previous = state.board;
+      // 「合并中…」章不看 generated_at：每一版快照都跑一遍 §21bis 谓词（副卡全部离开所有列才算落地）
+      setState({
+        board, boardError: null, boardMissing: false, boardDecodeError: null, boardLoading: false,
+        forceMergingIds: settledForceMerging(board),
+      });
+      // 侧栏开着 + 看板换版 → 详情跟上（原生 @Published dashboard 一发布，展开区从新快照重渲染，Store.swift:56-57）。
+      // 只认 generated_at 变化：同版重拉（断线重连）不多打一次；首版落地不拉——selectCard 自己的那一拉正在路上 / 刚落地
+      const selected = state.selectedCardId;
+      if (selected && previous && previous.generated_at !== board.generated_at) followSelectedCardDetail(selected);
     } catch (error) {
+      if (isBoardMissingError(error)) {
+        // 原生 Store.refresh 的缺文件分支（dashboard = nil / missing = true / loadError = nil）：快照一并清——
+        // server 明说文件没了，留着旧快照再挂「连不上」横幅是两句谎话
+        setState({ board: null, boardError: null, boardMissing: true, boardDecodeError: null, boardLoading: false });
+        return;
+      }
+      if (isBoardDecodeError(error)) {
+        failBoardDecode((error as ApiError).message);
+        return;
+      }
       const message = error instanceof ApiError ? error.message : String(error);
-      setState({ boardError: message, boardLoading: false });
+      setState({ boardError: message, boardMissing: false, boardDecodeError: null, boardLoading: false });
     } finally {
       boardRequest = null;
     }
@@ -220,14 +343,41 @@ export function refreshBoard(): Promise<void> {
   return boardRequest;
 }
 
-/** 选中卡片（null = 关抽屉）；选中即拉详情增补 */
+/** 详情落地：用户还停在这张卡才替换 cardDetail，并记「看过明细」（T2 闸门）。selectCard 的首拉与看板换版后的
+ *  跟随重拉共用同一条落地路——两条路对同一张卡的响应谁后到谁算（都是 server 此刻的真话） */
+function landCardDetail(cardId: string, detail: CardDetail) {
+  if (getState().selectedCardId !== cardId) return;
+  const viewedId = typeof detail.id === "string" && detail.id ? detail.id : cardId;
+  const detailViewedIds = state.detailViewedIds.has(viewedId)
+    ? state.detailViewedIds
+    : new Set([...state.detailViewedIds, viewedId]);
+  setState({ cardDetail: detail, cardDetailError: null, detailViewedIds });
+}
+
+let detailFollowSeq = 0; // 跟随重拉的序号：只有最新一次的响应才落 cardDetail（乱序到达的旧版丢弃）；换卡即作废在途的
+
+/** 看板换版后让开着的侧栏跟上：静默重拉 `/api/cards/{id}`，**成功才替换**——中途不清旧详情（不闪「加载详情…」，
+ *  旧详情仍在说上一版的真话）、失败不报（cardDetailError 归 selectCard 的首拉；下一版再试）。 */
+function followSelectedCardDetail(cardId: string) {
+  const seq = ++detailFollowSeq;
+  void fetchCard(cardId).then(
+    (detail) => {
+      if (seq !== detailFollowSeq) return;
+      landCardDetail(cardId, detail);
+    },
+    () => { /* 静默：旧详情留着 */ },
+  );
+}
+
+/** 选中卡片（null = 关侧栏）；选中即拉详情增补。详情**落地**才记「看过明细」（T2 闸门）：拉失败 / 换卡后迟到的
+ *  响应都不算——用户没看到任何明细。记的是 server 回的主键（§60.3：响应 `id` 恒为主键），所以 `?card=<work_id>`
+ *  深链打开的侧栏也能解锁卡面按主键判的「批准」。 */
 export function selectCard(cardId: string | null) {
+  detailFollowSeq += 1; // 上一张卡在途的跟随重拉作废
   setState({ selectedCardId: cardId, cardDetail: null, cardDetailError: null });
   if (!cardId) return;
   void fetchCard(cardId).then(
-    (detail) => {
-      if (getState().selectedCardId === cardId) setState({ cardDetail: detail });
-    },
+    (detail) => landCardDetail(cardId, detail),
     (error) => {
       if (getState().selectedCardId !== cardId) return;
       const message = error instanceof ApiError ? error.message : String(error);
@@ -276,20 +426,12 @@ export function clearFilters() {
   setFilters(EMPTY_CARD_FILTERS);
 }
 
-// ----- 看板展示偏好（原生 parity：排序 / 展开详情 / 列说明） -------------------- #
+// ----- 看板展示偏好（原生 parity：排序 / 列说明；就地展开详情 D34 退役——详情只有侧栏一面） ------ #
 
 /** 改卡片排序偏好并持久化（localStorage cardSortOrder，原生同名 UserDefaults 键） */
 export function setSortOrder(sortOrder: SortOrder) {
   writeSortOrder(sortOrder);
   if (state.sortOrder !== sortOrder) setState({ sortOrder });
-}
-
-/** 展开/收起一张卡的详情（会话内记忆：切页/回流不丢，刷新页面即复位） */
-export function toggleCardExpanded(cardId: string) {
-  const next = new Set(state.expandedCardIds);
-  if (next.has(cardId)) next.delete(cardId);
-  else next.add(cardId);
-  setState({ expandedCardIds: next });
 }
 
 /** 拉一次列说明目录（server 常量；失败保留 null——列头只是少个「?」，不双报） */
@@ -460,7 +602,7 @@ export async function toggleSkill(name: string, action: "enable" | "disable"): P
 // ----- §68 parity 页快照（一个通用 loader：成功落字段、失败落 pageErrors[key]） -------- #
 
 type PageKey = "settingsCatalog" | "secrets" | "permissions" | "diagnostics" | "setup" | "about"
-  | "mcp" | "claudeSessions";
+  | "failures" | "mcp" | "claudeSessions";
 
 const pageRequests = new Map<PageKey, Promise<void>>(); // 同一面并发 refresh 合并成一个在途请求（十个通用区同时挂载）
 
@@ -485,9 +627,20 @@ function loadPage<K extends PageKey>(key: K, fetcher: () => Promise<AppState[K]>
 export const refreshSettingsCatalog = () => loadPage("settingsCatalog", fetchSettingsCatalog);
 export const refreshSecrets = () => loadPage("secrets", fetchSecrets);
 export const refreshPermissions = (refresh = false) => loadPage("permissions", () => fetchPermissions(refresh));
-export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh));
+// lang = store 的当前 UI 语言：doctor 子进程的人话随之（§68.4 追记；原生 DepsView 切语言即 model.check()）。
+// doctor 要跑几秒：在途请求带的若是另一种语言（正跑着切了语言），loadPage 的在途合并会把这次切换吞掉——
+// 等它落地再按当前语言补拉一次，旧语言的行不许留着。
+let diagnosticsLang: Language | null = null;   // 在途 diagnostics 请求带的语言
+export function refreshDiagnostics(refresh = false): Promise<void> {
+  const inflight = pageRequests.get("diagnostics");
+  if (inflight && diagnosticsLang !== state.language) return inflight.then(() => refreshDiagnostics(refresh));
+  const lang = state.language;
+  diagnosticsLang = lang;
+  return loadPage("diagnostics", () => fetchDiagnostics(refresh, lang));
+}
 export const refreshSetup = () => loadPage("setup", fetchSetup);
 export const refreshAbout = () => loadPage("about", fetchAbout);
+export const refreshFailures = () => loadPage("failures", fetchFailures);
 export const refreshMcp = () => loadPage("mcp", fetchMcp);
 export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", () => fetchClaudeSessions(window));
 
@@ -498,12 +651,29 @@ export async function saveSettingsSection(sectionId: string, patch: Record<strin
   if (catalog) {
     setState({ settingsCatalog: { ...catalog, sections: catalog.sections.map((s) => (s.id === section.id ? section : s)) } });
   }
+  // §48.1 合取写：slack / gmail 的雷达开关翻开 = server 同一笔也写 features.<src>_radar=true（合取的另一半住 flags 区），
+  // 而 PUT 回执只有本区——整本目录再拉一次让「Feature flags」那一格跟上（best-effort：拉不到不影响本次保存的回执）
+  if ((sectionId === "slack" || sectionId === "gmail") && patch[`${sectionId}_enabled`] === true) void refreshSettingsCatalog();
+  // §68.7 追记：「通用 · 终端应用」换了 = 开发者区投影的 `terminal_app_name`（「会在 <终端> 中打开」的名字，server 算的）
+  // 要跟着变，而它住另一区、PUT 回执只有本区——同样整本再拉一次（best-effort）
+  if (sectionId === "general" && "terminal_app" in patch) void refreshSettingsCatalog();
   return section;
 }
 
 /** 外部（向导 / 凭证保存）改了 setup 判定后直接落新快照 */
 export function setSetup(setup: SetupSnapshot) {
   setState({ setup });
+}
+
+/** §68.10 追记：「导入所选」成功提交的 session_id 记进本页会话（原生 locallyImported）；ClaudeImportSection 据此从候选里剔除 */
+export function markClaudeSessionsImported(ids: Iterable<string>) {
+  setState({ claudeSessionsImported: new Set([...state.claudeSessionsImported, ...ids]) });
+}
+
+/** §68.3 追记：已保存的 Slack token 刚通过 auth.test（原生「token freshly working → offer the pickers with fresh data」）；
+ *  挂着的 SlackDirectoryPicker 据此带 refresh 重载一次 */
+export function markSlackTokenVerified() {
+  setState({ slackTokenVerifications: state.slackTokenVerifications + 1 });
 }
 
 // ----- §21 多选态（原生 Kanban「选择」）：进入/退出 + 勾选 -------------------------------- #
@@ -523,15 +693,95 @@ export function clearSelection() {
   setState({ selectedIds: new Set<string>() });
 }
 
+// ----- v0.33 两条书立条的展开态（原生 Store.backlogStripExpanded / archiveStripExpanded；§54.1 追记） ------------ #
+// 只有这两个 setter 写旗：书立条头的开合按钮、useSubmit 的强制展开。不进 URL、不进 localStorage。
+
+export function setBacklogStripExpanded(on: boolean) {
+  if (state.backlogStripExpanded !== on) setState({ backlogStripExpanded: on });
+}
+
+export function setArchiveStripExpanded(on: boolean) {
+  if (state.archiveStripExpanded !== on) setState({ archiveStripExpanded: on });
+}
+
+// ----- §21bis 强制合并的在途批次（原生 Store.mergeForcingLocal: [PendingForceMerge]） -------------------- #
+
+/** 原生 180 s sweep 同款：一批副卡 180 s 还没离开所在列 = 合并没落地（actd 没在跑 / 请求被判无效丢弃） */
+export const FORCE_MERGE_TIMEOUT_MS = 180_000;
+
+interface ForceMergeBatch {
+  primary: string;
+  secondaries: string[];
+  sentGeneratedAt: string | null;
+  timer: number;
+}
+
+let forceMergeBatches: ForceMergeBatch[] = []; // 章的真源；forceMergingIds 是它派生的平铺集合
+
+function forceMergingIdsOf(batches: readonly ForceMergeBatch[]): ReadonlySet<string> {
+  return new Set(batches.flatMap((b) => [b.primary, ...b.secondaries]));
+}
+
+/** §21bis 强制合并已提交：涉及的卡挂「合并中…」章，直到每张副卡都离开所有列（settleForceMerging）或 180 s 到期。
+ *  primary 缺席（旧调用方）→ 第一张当主卡。 */
+export function markForceMerging(ids: Iterable<string>, primary: string | null = null) {
+  const list = [...new Set(ids)];
+  if (list.length === 0) return;
+  const head = primary !== null && list.includes(primary) ? primary : list[0];
+  const batch: ForceMergeBatch = {
+    primary: head,
+    secondaries: list.filter((id) => id !== head),
+    sentGeneratedAt: state.board?.generated_at ?? null,
+    timer: 0,
+  };
+  batch.timer = window.setTimeout(() => expireForceMerge(batch), FORCE_MERGE_TIMEOUT_MS);
+  forceMergeBatches = [...forceMergeBatches, batch];
+  setState({ forceMergingIds: forceMergingIdsOf(forceMergeBatches) });
+}
+
+/** 对一版快照跑 §21bis 谓词：落地的批次出列（清它的定时器），返回还在途的平铺 id 集合（不 setState——refreshBoard
+ *  与 board 同一笔落地；对外的 settleForceMerging 才 setState） */
+function settledForceMerging(board: Board): ReadonlySet<string> {
+  const remaining = forceMergeBatches.filter((b) => !forceMergeLanded(b.secondaries, board, b.sentGeneratedAt));
+  if (remaining.length === forceMergeBatches.length) return state.forceMergingIds;
+  for (const b of forceMergeBatches) if (!remaining.includes(b)) window.clearTimeout(b.timer);
+  forceMergeBatches = remaining;
+  return forceMergingIdsOf(remaining);
+}
+
+/** add-only：按一版快照结算在途的强制合并批次（refreshBoard 内联同一谓词；导出给判例与别的回流路径） */
+export function settleForceMerging(board: Board) {
+  const forceMergingIds = settledForceMerging(board);
+  if (forceMergingIds !== state.forceMergingIds) setState({ forceMergingIds });
+}
+
+/** 180 s 到期：这一批的章退场，提案列顶给原生那句诚实超时条（forceMergeTimedOutAt） */
+function expireForceMerge(batch: ForceMergeBatch) {
+  if (!forceMergeBatches.includes(batch)) return;
+  forceMergeBatches = forceMergeBatches.filter((b) => b !== batch);
+  setState({ forceMergingIds: forceMergingIdsOf(forceMergeBatches), forceMergeTimedOutAt: Date.now() });
+}
+
+/** 关掉强制合并超时条（用户点 × / 120 s 自动） */
+export function dismissForceMergeTimeout() {
+  if (state.forceMergeTimedOutAt !== null) setState({ forceMergeTimedOutAt: null });
+}
+
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */
 export function resetStoreForTests() {
   state = {
     ...initialState,
     sortOrder: readSortOrder(),
-    expandedCardIds: new Set<string>(),
+    detailViewedIds: new Set<string>(),
     selectedIds: new Set<string>(),
+    claudeSessionsImported: new Set<string>(),
+    slackTokenVerifications: 0,
     pageErrors: {},
   };
   boardRequest = null;
+  detailFollowSeq = 0;
   pageRequests.clear();
+  diagnosticsLang = null;
+  for (const b of forceMergeBatches) window.clearTimeout(b.timer);
+  forceMergeBatches = [];
 }

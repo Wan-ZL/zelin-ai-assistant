@@ -89,7 +89,7 @@ OVERRIDE_KEY = "models_%s"
 # ---- §70 daily loop knobs — mirrors of act/lib/config.py (drift-pinned) ---- #
 DAILY_LOOP_FIELDS = ("enabled", "time", "max_proposals_per_day", "stale_days",
                      "trash_retention_days")
-DAILY_LOOP_DEFAULTS = {"enabled": True, "time": "03:30", "max_proposals_per_day": 5,
+DAILY_LOOP_DEFAULTS = {"enabled": True, "time": "03:30", "max_proposals_per_day": 2,   # D33: 5 → 2
                        "stale_days": 45, "trash_retention_days": 90}
 DAILY_LOOP_KEY = "daily_loop_%s"
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -326,7 +326,8 @@ def read_overrides(home: Path) -> dict:
         text = p.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # byte-corrupted (non-UTF-8) is as unparsable as bad JSON: 409, never a 500
         raise ConflictError("settings_overrides.json is unreadable",
                             {"path": str(p), "error": str(exc)})
     return _parse_overrides(text, p)

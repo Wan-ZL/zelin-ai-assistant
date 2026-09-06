@@ -12,6 +12,10 @@
 // CONTRACT §53 T-19（v0.48 裁决）：结构化清单字段 ``execution.deliverables``
 // 预留 add-only、随接线 PR 落法；在那之前本模块的「目录约定推导 + 穿越防护」
 // 追认为过渡合法（§49）。字段落地后应改读该字段。
+
+词表 reveal（``POST /api/reveal {target, name?, mode?}``，客户端只点名词表项、路径由 server 推导）：
+``config``（§68.4）/ ``skill``（§67.5）/ ``voice_profile``（§68.1 追记，``mode:"open"`` = 默认编辑器打开）/
+``mcp_user`` / ``mcp_project``（§68.9 追记）。
 """
 from __future__ import annotations
 
@@ -133,10 +137,42 @@ def _newest_deliverable(base: Path) -> Optional[Path]:
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
-def reveal(home: Path, card_id: str) -> dict:
+def _open_reveal(target: Path, ident: dict, mode: str = "reveal") -> dict:
+    """``reveal`` = ``open -R``（访达定位，原生 activateFileViewerSelecting）；``open`` = 裸 ``open``
+    （系统默认处理者打开文件，原生 NSWorkspace.open）。回执键随 mode：``revealed`` / ``opened``（add-only）。"""
+    verb = "open" if mode == "open" else "reveal"
+    argv = ["open", str(target)] if mode == "open" else ["open", "-R", str(target)]
+    try:
+        subprocess.run(argv, check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # 报错动词随 mode：页面把 message 原样显示，编辑器打不开不该念成「could not reveal」
+        raise NotFoundError("could not " + verb, dict(ident, reason=str(exc)))
+    return {"ok": True, ("opened" if mode == "open" else "revealed"): str(target)}
+
+
+# POST /api/reveal 的 add-only ``mode``（缺省 reveal）。``open`` 只对 ``voice_profile`` 放行——原生「打开档案」
+# 是 NSWorkspace.open（在默认编辑器里打开 .md），其余词表项与交付物都是访达定位（原生 reveal 语义）。
+REVEAL_MODES = ("reveal", "open")
+_OPENABLE_TARGETS = frozenset({"voice_profile"})
+
+
+def resolve_mode(mode: object, target: Optional[str]) -> str:
+    """缺省 → ``reveal``；词表外 400；``open`` 用在 voice_profile 之外（含交付物 reveal，target=None）→ 400。"""
+    if mode is None:
+        return "reveal"
+    if not isinstance(mode, str) or mode not in REVEAL_MODES:
+        raise InvalidFieldError("unknown reveal mode", {"field": "mode", "choices": list(REVEAL_MODES)})
+    if mode == "open" and target not in _OPENABLE_TARGETS:
+        raise InvalidFieldError('mode "open" is only honoured for target voice_profile',
+                                {"field": "mode", "target": target, "openable": sorted(_OPENABLE_TARGETS)})
+    return mode
+
+
+def reveal(home: Path, card_id: str, mode: object = None) -> dict:
     """POST /api/reveal {card_id} → ``open -R``（访达定位，分享=拖拽起点）。
-    定位目标 = 最新交付物文件；目录空则定位目录本身。非 darwin → 501。"""
+    定位目标 = 最新交付物文件；目录空则定位目录本身。非 darwin → 501。``mode`` 只认 ``reveal``。"""
     _validate_card_id(card_id)
+    resolve_mode(mode, None)
     if sys.platform != "darwin":
         raise NotImplementedError501("reveal is only available on macOS")
     base = deliverables_dir(home, card_id)
@@ -145,9 +181,83 @@ def reveal(home: Path, card_id: str) -> dict:
         if not base.is_dir():
             raise NotFoundError("no deliverables for this card", {"id": card_id})
         target = base
-    try:
-        subprocess.run(["open", "-R", str(target)], check=False, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise NotFoundError("could not reveal deliverable",
-                            {"id": card_id, "reason": str(exc)})
-    return {"ok": True, "revealed": str(target)}
+    return _open_reveal(target, {"id": card_id})
+
+
+# 客户端只能点名一个词表项，路径仍由 server 推导（同一条「绝不接受客户端路径」红线）。
+# ``skill`` 另带 add-only ``name``（清单里的 skill 名，仍不是路径）——§67.5 Skills 区「在 Finder 显示」；
+# ``voice_profile`` = 语气档案区「打开档案」：此刻生效（或重开后会生效）的档案文件（server/voice_profile）。
+# ``mcp_user`` / ``mcp_project`` = MCP 区每个作用域的「在 Finder 显示」：``~/.claude.json`` / ``<home>/.mcp.json``
+# （server/mcp_servers.scope_paths 的同一处计算；文件不在 → 404，页面据 ``exists`` 先把按钮禁掉）。§68.9 追记。
+REVEAL_TARGETS = ("config", "skill", "voice_profile", "mcp_user", "mcp_project")
+
+
+def reveal_target(home: Path, target: str, name: Optional[str] = None, mode: object = None) -> dict:
+    """POST /api/reveal {target:"config"} → 访达定位 ``config.yaml``（缺席则模板
+    ``config.example.yaml``）——原生 FailureCatalog ``config_invalid`` 的「显示文件」。
+    {target:"skill", name} → 定位该 skill 的 ``SKILL.md``（原生 SettingsSkills.reveal：选中要编辑的
+    那个文件）：本机已链 / 已拷的副本优先，否则仓库里的商店原件；清单里没有这个名字 → 404。
+    {target:"voice_profile"} → 此刻生效（或重开后会生效）的语气档案（server/voice_profile）；都不在 → 404；
+    带 ``mode:"open"`` 时在默认编辑器里打开它（原生「打开档案」= NSWorkspace.open）而不是访达定位。
+    {target:"mcp_user"|"mcp_project"} → 访达定位该作用域的 MCP 配置文件（原生 SettingsMCP.reveal）；不在 → 404。"""
+    if target not in REVEAL_TARGETS:
+        raise InvalidFieldError("unknown reveal target", {"field": "target", "choices": list(REVEAL_TARGETS)})
+    resolved = resolve_mode(mode, target)
+    if sys.platform != "darwin":
+        raise NotImplementedError501("reveal is only available on macOS")
+    ident = {"target": target} if target != "skill" else {"target": target, "name": name}
+    return _open_reveal(_REVEAL_PATHS[target](home, name), ident, resolved)
+
+
+def _config_file(home: Path, _name: Optional[str]) -> Path:
+    path = home / "config.yaml"
+    if not path.is_file():
+        path = home / "config.example.yaml"
+    if not path.is_file():
+        raise NotFoundError("neither config.yaml nor config.example.yaml exists", {"target": "config"})
+    return path
+
+
+def _voice_profile_file(home: Path, _name: Optional[str]) -> Path:
+    from server import voice_profile
+    path = voice_profile.effective_path(home)
+    if path is None:
+        raise NotFoundError("no voice profile exists yet (state/voice-profile.md or config/voice-profile.default.md)",
+                            {"target": "voice_profile"})
+    return path
+
+
+def _mcp_scope_file(scope: str):
+    """``mcp_user`` / ``mcp_project`` → 该作用域的配置文件（路径算法只在 mcp_servers.scope_paths 一处）；不在 → 404。"""
+    def resolve(home: Path, _name: Optional[str]) -> Path:
+        from server import mcp_servers
+        path = mcp_servers.scope_paths(home)[scope]
+        if not path.is_file():
+            raise NotFoundError("no MCP config file in this scope yet", {"target": "mcp_" + scope, "scope": scope})
+        return path
+    return resolve
+
+
+def _skill_row(home: Path, name: Optional[str]) -> dict:
+    """skill 名 → 清单行（名字不是非空字串 400、清单里没有 404）。"""
+    if not isinstance(name, str) or not name.strip():
+        raise InvalidFieldError("name must be a non-empty string", {"field": "name"})
+    from server import settings  # 惰性：settings 不 import files，避免环
+    rows = {row["name"]: row for row in settings.skills_snapshot(home)["skills"]}
+    row = rows.get(name.strip())
+    if row is None:
+        raise NotFoundError("no such skill", {"name": name.strip()[:100]})
+    return row
+
+
+def _skill_file(home: Path, name: Optional[str]) -> Path:
+    """要在访达里选中的 SKILL.md：副本 ``row.path`` 优先，再商店原件 ``row.target``；都缺 404。"""
+    row = _skill_row(home, name)
+    for base in (row.get("path"), row.get("target")):
+        if base and (Path(base) / "SKILL.md").is_file():
+            return Path(base) / "SKILL.md"
+    raise NotFoundError("SKILL.md not found for this skill", {"name": str(name).strip()})
+
+
+_REVEAL_PATHS = {"config": _config_file, "skill": _skill_file, "voice_profile": _voice_profile_file,
+                 "mcp_user": _mcp_scope_file("user"), "mcp_project": _mcp_scope_file("project")}

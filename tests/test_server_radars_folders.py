@@ -8,7 +8,7 @@
 - settings 目录：obsidian_raw / default_target_repo / maintainer_repo_path 投影 add-only `path` + `path_exists`
   （空值 null、目录在 true、不在 false），其它字段不带这两键；
 - POST /api/folders/open {key} / create {key}：路径由 server 从 effective 值读（客户端只传 key），
-  空 400、open 不在 404、非 darwin 501、create 幂等 + default_target_repo 的 git init（runner 注入）、
+  空 400、open 不在 → 开最近的既有祖先 + `missing`（§68.4 追记）、非 darwin 501、create 幂等 + default_target_repo 的 git init（runner 注入）、
   mkdir 失败 500 `could not create the folder`。
 """
 import json
@@ -24,7 +24,7 @@ from tests.test_server_common import (assert_envelope, get_json, post_json,
                                       start_server, write_text)
 
 from server import folders, paths, radars, repair, settings_catalog
-from server.errors import (ApiError, ConflictError, InvalidFieldError, NotFoundError,
+from server.errors import (ApiError, ConflictError, InvalidFieldError,
                            NotImplementedError501, UnknownFieldError)
 
 _WIN = sys.platform.startswith("win")
@@ -186,13 +186,14 @@ class CatalogPathFieldsTestCase(_ServerCase):
 
 class FoldersTestCase(_ServerCase):
     def test_open_uses_the_saved_effective_path(self):
-        target = Path(self.tmp.name) / "vault" / "2 - raw"
+        target = Path(self.tmp.name) / "work" / "bench"
         target.mkdir(parents=True)
-        self._overrides(obsidian_raw=str(target))
+        self._overrides(default_target_repo=str(target))
         opened = []
-        out = folders.open_folder(self.home, {"key": "obsidian_raw"}, opener=opened.append, platform="darwin")
+        out = folders.open_folder(self.home, {"key": "default_target_repo"}, opener=opened.append, platform="darwin")
         self.assertEqual(opened, [target])
-        self.assertEqual(out, {"ok": True, "key": "obsidian_raw", "path": str(target)})
+        self.assertEqual(out, {"ok": True, "key": "default_target_repo", "path": str(target)})
+        # 笔记库那一把键开的是 vault 根（raw 的父目录；§68.1 追记）——判例在 tests/test_server_folders_open_vault_root.py
 
     def test_open_gates(self):
         opened = []
@@ -202,13 +203,16 @@ class FoldersTestCase(_ServerCase):
             folders.open_folder(self.home, {"key": "gmail_address"}, opener=opened.append, platform="darwin")
         with self.assertRaises(NotImplementedError501):
             folders.open_folder(self.home, {"key": "obsidian_raw"}, opener=opened.append, platform="linux")
-        # 空值（obsidian_raw 默认 ""）→ 400；不存在的目录 → 404
+        # 空值（obsidian_raw 默认 ""）→ 400
         with self.assertRaises(InvalidFieldError):
             folders.open_folder(self.home, {"key": "obsidian_raw"}, opener=opened.append, platform="darwin")
-        self._overrides(default_target_repo=str(Path(self.tmp.name) / "nowhere"))
-        with self.assertRaises(NotFoundError):
-            folders.open_folder(self.home, {"key": "default_target_repo"}, opener=opened.append, platform="darwin")
         self.assertEqual(opened, [])
+        # 不存在的目录：不再 404——开最近的既有祖先并如实回 missing（§68.4 追记；原生 reveal 的
+        # deletingLastPathComponent 回落；细则 tests/test_server_folders_open_missing_ancestor.py）
+        self._overrides(default_target_repo=str(Path(self.tmp.name) / "nowhere"))
+        out = folders.open_folder(self.home, {"key": "default_target_repo"}, opener=opened.append, platform="darwin")
+        self.assertEqual(opened, [Path(self.tmp.name)])
+        self.assertEqual((out["missing"], out["opened"]), (True, self.tmp.name))
 
     def test_create_makes_the_folder_and_git_inits_the_workbench_only(self):
         vault = Path(self.tmp.name) / "vault" / "2 - raw"
@@ -248,18 +252,18 @@ class FoldersTestCase(_ServerCase):
         self.assertTrue(ctx.exception.message.startswith("could not create the folder: "))
 
     def test_routes_are_write_gated(self):
-        target = Path(self.tmp.name) / "v"
+        target = Path(self.tmp.name) / "v" / "2 - raw"
         self._overrides(obsidian_raw=str(target))
         with mock.patch.object(folders, "_default_runner", lambda argv: 0):
             status, obj = post_json(self.port, "/api/folders/create", {"key": "obsidian_raw"})
         self.assertEqual(status, 200, obj)
-        self.assertTrue(target.is_dir())
+        self.assertTrue(target.is_dir())    # create 建的是 raw 目录本身（含根）
         opened = []
         with mock.patch.object(folders, "_default_opener", opened.append), \
                 mock.patch.object(folders.sys, "platform", "darwin"):
             status, obj = post_json(self.port, "/api/folders/open", {"key": "obsidian_raw"})
         self.assertEqual(status, 200, obj)
-        self.assertEqual(opened, [target])
+        self.assertEqual(opened, [target.parent])    # 打开落到 vault 根（§68.1 追记）
         status, obj = post_json(self.port, "/api/folders/open", {"key": "obsidian_raw", "path": "/"})
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "UNKNOWN_FIELD")

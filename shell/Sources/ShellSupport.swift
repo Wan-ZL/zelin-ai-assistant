@@ -1,6 +1,8 @@
 // ShellSupport.swift — 壳内最小原生残留（R2.2.3）的公共底座：AppPaths / Analytics /
 // SettingsIO（只读）/ Shell / Prefs / SecretsIO（只读）/ FailureCatalog（引擎子集）/
-// LanguageStore。
+// LanguageStore + 窗口三条纯策略（ExternalLinkPolicy / ReopenPolicy / WindowTitlePolicy，
+// §54 追记；判例 shell/tests/PolicyHarness.swift）+ 主菜单纯表（MenuSpec，§54 追记「菜单 l10n」；
+// 判例 shell/tests/MenuHarness.swift）。
 //
 // 为什么这些名字与 mac/Sources/Utils.swift、Doctor.swift、L10n.swift 完全同名：
 // 录制引擎（Recording.swift）与实时字幕引擎（CaptionCore / LiveCaptions /
@@ -453,5 +455,231 @@ final class LanguageStore: ObservableObject {
 
     nonisolated static var systemDefault: String {
         (Locale.preferredLanguages.first ?? "en").hasPrefix("zh") ? "zh" : "en"
+    }
+}
+
+// MARK: - 窗口策略（纯函数，无 AppKit 状态；§54 追记「外链 / Dock 重开 / 标题」）
+//
+// main.swift 的 AppDelegate 只做「问策略 → 执行副作用」两步，判断本身住在这里，
+// 好让 shell/tests/PolicyHarness.swift 不用 WKWebView / NSWindow 就能钉住每一格。
+
+/// 外链一律交系统浏览器（原生 Pages.swift DepAction.url / Doctor.swift
+/// FailureCatalog.perform 都是 `NSWorkspace.shared.open`）。WKWebView 不实现
+/// WKUIDelegate 时 target=_blank / window.open 会被静默取消——壳自 §54 追记起
+/// 按本策略分流：看板 SPA 留在同一个 webView，其余 http(s) / mailto 交系统处理者，
+/// 别的 scheme 一律不理（allow-list，不是 deny-list）。
+enum ExternalLinkPolicy {
+    enum Verdict: Equatable {
+        /// http://127.0.0.1|localhost|::1:<port>/ 且路径就是 `/`（看板每一页都是
+        /// `?page=` query，见 web/src/route.ts）— 看板 SPA 自己，留在壳内加载。
+        case board
+        /// 其余 http(s)（含看板 origin 上路径不是 `/` 的 server 文件 / API 面：
+        /// `/files/…` 交付物、`/api/…`、markdown 相对链接解析出的路径）与 `mailto:`
+        /// — `NSWorkspace.shared.open`，系统浏览器 / 邮件客户端接手。壳只有一个
+        /// webView、没有后退，永不把它导航到看板之外的页面。
+        case external
+        /// about:blank / javascript: / data: / blob: / file: / 自定义 scheme / 空 URL
+        /// — 什么都不做。页面能发出的只有 http(s) / mailto（markdown sanitizeUrl 白名单）；
+        /// 其余 scheme 交 `NSWorkspace.open` 会直接启动处理者（file:///…app、
+        /// shortcuts://…），浏览器都不会不问就放行，壳更不。
+        case ignore
+    }
+
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1", "[::1]"]
+
+    static func classify(_ url: URL?, port: Int) -> Verdict {
+        guard let url = url, let scheme = url.scheme?.lowercased(), !scheme.isEmpty else {
+            return .ignore
+        }
+        if scheme == "mailto" { return .external }
+        guard scheme == "http" || scheme == "https" else { return .ignore }
+        // origin = scheme + host + port，三者全对（ShellConfig.boardURL 是明文 http；
+        // https://127.0.0.1:<port> 不是同一个 origin）**且**路径是 `/`（或空）才是
+        // 看板 SPA；同 origin 的其他路径是 server 的文件 / API 面，按 external。
+        let host = (url.host ?? "").lowercased()
+        if scheme == "http", loopbackHosts.contains(host), (url.port ?? 80) == port,
+           url.path.isEmpty || url.path == "/" {
+            return .board
+        }
+        return .external
+    }
+}
+
+/// Dock 重开只看看板窗口，不看 AppKit 的 hasVisibleWindows（原生 AppDelegate.swift
+/// applicationShouldHandleReopen + MainWindowController.isWindowOpen 同义）：字幕悬浮
+/// NSPanel（CaptionOverlay，orderFrontRegardless）会把 hasVisibleWindows 顶成 true，
+/// 按它判 Dock 点击就成了空操作。三分：看板不在 → show；最小化 → 壳自己
+/// deminiaturize（AppKit 的默认重开只在 hasVisibleWindows == false 时才还原最小化
+/// 窗口——悬浮窗在场时它不会，所以不能交给它）；可见 → 什么都不做。
+enum ReopenPolicy {
+    enum Action: Equatable {
+        case show
+        case deminiaturize
+        case none
+    }
+
+    static func action(boardVisible: Bool, boardMiniaturized: Bool) -> Action {
+        if boardMiniaturized { return .deminiaturize }
+        return boardVisible ? .none : .show
+    }
+}
+
+/// 窗口标题跟随页面（原生 MainWindow.installTitleSink：标题随 section / 语言重算）：
+/// 壳这半 KVO 观察 `webView.title`，页面没给标题（内嵌 splash / 空串 / 全空白）时
+/// 回落产品名。
+enum WindowTitlePolicy {
+    static func resolve(pageTitle: String?, fallback: String) -> String {
+        let trimmed = (pageTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
+    }
+}
+
+// MARK: - 主菜单纯表（§54 追记「菜单 l10n」；原生 AppDelegate.installMainMenu 的壳版）
+//
+// 原生主菜单每个标题都走 L()，并在语言切换时整个重建（Store.swift `/lang` 与设置页保存后
+// `app.installMainMenu()`——NSMenu 不观察任何东西）。壳把「菜单长什么样」抽成这张纯表，
+// `MenuSpec.build` 把表装成 NSMenu（不碰 NSApp，判例不起 NSApplication 就能检查装好的项），
+// main.swift 的 `installMainMenu(lang:)` 只负责挂到 NSApp、并订阅 `LanguageStore.$lang`
+// 在每次切换时重装。表**显式吃 lang、不读 LanguageMirror**：@Published 在 willSet 发值，订阅
+// sink 跑到时镜像（也就是 L()）还是旧语言。双语字面量与 L() 同一形式（zh, en 一对），不是
+// 第二套 i18n——菜单在 server 连上之前就得在，server-owned 文案目录此刻拿不到。
+// 判例 shell/tests/MenuHarness.swift 钉每个标题、键位与动作（含「没有 ⌘F / ⌘1..7 / ⌥⌘S」）
+// 与装配结果（target / selector / 修饰键逐项落地）。
+
+enum MenuSpec {
+    /// 壳自己处理的动作——每个都是原生 AppDelegate 同名 @objc 方法的壳版，main.swift 逐一映射到
+    /// 显式 target = AppDelegate 的 selector。
+    enum ShellAction: Equatable, CaseIterable {
+        /// 关于 → 看板 `?page=about`（原生 openAboutPage；**不是**系统 About 面板）
+        case about
+        /// 设置… ⌘, → `?page=settings`（不带 anchor：原生 openSettingsPage 落在设置页顶部；web 目录序是
+        /// 显示 / 模型 / 通用，带 `anchor=general` 会滚到第三区）
+        case settings
+        /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow；权限页文案「之后随时可从菜单
+        /// 「权限体检」再打开」自此在壳里为真）
+        case permissions
+        /// 重新载入 ⌘R（壳独有：已在看板上 reload；还停在 splash / 失败页则重走连接序）
+        case reload
+        /// 聚焦捕获框 ⌘L → 推 `quick_capture`（原生 focusCaptureField；与 ⌃⌥Space 同一条路，§68.13）
+        case focusCapture
+    }
+
+    /// 菜单项动作三分：壳动作（显式 target）、AppKit first-responder 链 selector（nil target，随焦点
+    /// 走——webview 里的输入框吃 ⌘C/⌘V/⌘Z，窗口吃 ⌘W/⌘M/缩放，NSApp 吃 隐藏/退出）、分隔线。
+    enum Action: Equatable {
+        case shell(ShellAction)
+        case responder(String)
+        case separator
+    }
+
+    struct Item: Equatable {
+        let title: String
+        /// NSMenuItem.keyEquivalent：`""` = 无快捷键；大写字母 = 带 ⇧（AppKit 约定，重做 = "Z"）。
+        let key: String
+        /// 除 ⌘ 之外再带 ⌥——只有「隐藏其他」（⌥⌘H）。
+        let option: Bool
+        let action: Action
+
+        init(_ title: String, key: String = "", option: Bool = false, action: Action) {
+            self.title = title
+            self.key = key
+            self.option = option
+            self.action = action
+        }
+
+        static let separator = Item("", action: .separator)
+    }
+
+    struct Menu: Equatable {
+        /// 顶层标题；app 菜单为 `""`（AppKit 用进程名显示）。
+        let title: String
+        let items: [Item]
+        /// 装成 `NSApp.windowsMenu`（AppKit 自动在里面列出打开的窗口）——只有「窗口」。
+        let isWindowsMenu: Bool
+
+        init(_ title: String, items: [Item], isWindowsMenu: Bool = false) {
+            self.title = title
+            self.items = items
+            self.isWindowsMenu = isWindowsMenu
+        }
+    }
+
+    /// 整张主菜单（App / 文件 / 编辑 / 显示 / 窗口），顺序与原生 installMainMenu 一致。
+    /// `lang`：`"en"` → 英文，其余一律中文（L() 同一判定）。`appName` = ShellConfig.displayName。
+    ///
+    /// 刻意**没有**的：Find（⌘F 不被菜单截胡，落到 WKWebView 再进页面——board 自己绑了 ⌘F 搜索）；
+    /// ⌘1..7 切页（归 web NavRail，同理）；⌥⌘S 折叠/展开侧栏（s4 清单 DELETE 项，owner 决策——
+    /// 折叠只走 web 导航栏栏顶的折叠钮，tombstone 在 §54.4 2026-09-05 追记 (c)）。
+    static func menus(lang: String, appName: String) -> [Menu] {
+        func t(_ zh: String, _ en: String) -> String { lang == "en" ? en : zh }
+        return [
+            Menu("", items: [
+                Item(t("关于 \(appName)", "About \(appName)"), action: .shell(.about)),
+                .separator,
+                Item(t("设置…", "Settings…"), key: ",", action: .shell(.settings)),
+                Item(t("权限体检…", "Permissions Checkup…"), action: .shell(.permissions)),
+                .separator,
+                Item(t("隐藏 \(appName)", "Hide \(appName)"), key: "h", action: .responder("hide:")),
+                Item(t("隐藏其他", "Hide Others"), key: "h", option: true,
+                     action: .responder("hideOtherApplications:")),
+                Item(t("全部显示", "Show All"), action: .responder("unhideAllApplications:")),
+                .separator,
+                Item(t("退出", "Quit"), key: "q", action: .responder("terminate:")),
+            ]),
+            Menu(t("文件", "File"), items: [
+                Item(t("关闭窗口", "Close Window"), key: "w", action: .responder("performClose:")),
+            ]),
+            Menu(t("编辑", "Edit"), items: [
+                Item(t("撤销", "Undo"), key: "z", action: .responder("undo:")),
+                Item(t("重做", "Redo"), key: "Z", action: .responder("redo:")),
+                .separator,
+                Item(t("剪切", "Cut"), key: "x", action: .responder("cut:")),
+                Item(t("拷贝", "Copy"), key: "c", action: .responder("copy:")),
+                Item(t("粘贴", "Paste"), key: "v", action: .responder("paste:")),
+                Item(t("全选", "Select All"), key: "a", action: .responder("selectAll:")),
+            ]),
+            Menu(t("显示", "View"), items: [
+                Item(t("重新载入", "Reload"), key: "r", action: .shell(.reload)),
+                .separator,
+                Item(t("聚焦捕获框", "Focus Capture Field"), key: "l", action: .shell(.focusCapture)),
+            ]),
+            Menu(t("窗口", "Window"), items: [
+                Item(t("最小化", "Minimize"), key: "m", action: .responder("performMiniaturize:")),
+                Item(t("缩放", "Zoom"), action: .responder("performZoom:")),
+            ], isWindowsMenu: true),
+        ]
+    }
+
+    /// 把表逐项装成 NSMenu（原生 installMainMenu 的装配半边；不碰 NSApp——挂到 `NSApp.mainMenu` /
+    /// `NSApp.windowsMenu` 是 main.swift 的事，所以判例不起 NSApplication 就能逐项检查）。
+    /// 壳动作 `selector(action)` + 显式 `target`；AppKit 标准动作 `Selector(name)`、nil target 走
+    /// first-responder 链；`option` 对两种动作一视同仁（⌥⌘ 不因为是壳动作就悄悄掉成 ⌘）。
+    /// 返回主菜单与 `isWindowsMenu` 那一份（没有则 nil）。
+    static func build(_ menus: [Menu], target: AnyObject,
+                      selector: (ShellAction) -> Selector) -> (main: NSMenu, windows: NSMenu?) {
+        let main = NSMenu()
+        var windows: NSMenu?
+        for spec in menus {
+            let top = NSMenuItem()
+            main.addItem(top)
+            let menu = NSMenu(title: spec.title)
+            top.submenu = menu
+            for item in spec.items {
+                let mi: NSMenuItem
+                switch item.action {
+                case .separator:
+                    mi = .separator()
+                case .responder(let name):
+                    mi = NSMenuItem(title: item.title, action: Selector(name), keyEquivalent: item.key)
+                case .shell(let action):
+                    mi = NSMenuItem(title: item.title, action: selector(action), keyEquivalent: item.key)
+                    mi.target = target
+                }
+                if item.option { mi.keyEquivalentModifierMask = [.command, .option] }
+                menu.addItem(mi)
+            }
+            if spec.isWindowsMenu { windows = menu }
+        }
+        return (main, windows)
     }
 }

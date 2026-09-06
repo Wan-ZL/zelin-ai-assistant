@@ -10,7 +10,8 @@ with an ISO started_at, review (idle / working / interrupted), delivered
 invisible), a corrupt card (skipped, others survive), archived[] rows,
 merge_suggestions job files (analyzing / done with groups / failed /
 dismissed / corrupt / non-dict / bad groups), radar_sources with a stale
-enabled source, §7 egress[] (repo-delivery card bootstrapping a missing dir
+enabled source and the §48.4 intent / secret_present signals (switch touched
+vs credential present vs neither), §7 egress[] (repo-delivery card bootstrapping a missing dir
 vs chat delivery), §10 capture_id (birth source row + proposal key), the §63 ``recaps[]``
 top-level key (empty store) and the §64 ``assessment`` block (fresh on a
 review card, stale-hash on a delivered card → omitted). Byte-for-byte: key ORDER inside every row is part of the wire
@@ -33,7 +34,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
 from act.lib import (card_summary, config, dashboard, deploy_state, fold_receipts,
-                     radar_health, registry)
+                     radar_health, registry, secrets)
 from act.lib.registry import Requirement
 
 GOLDEN = Path(__file__).parent / "fixtures" / "dashboard_golden.json"
@@ -245,12 +246,23 @@ def build_fixture_dashboard(merge_dir: Path, state_dir: Path) -> dict:
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "sync.json").write_text(json.dumps({"label": " Zelin 的 Mac "}),
                                          encoding="utf-8")
+    # §48.4 意愿信号 inputs (add-only intent / secret_present): gmail's switch was
+    # touched in overrides (intent, no credential); slack has a non-empty token
+    # file (intent + secret_present); obsidian has neither.
+    (state_dir / "settings_overrides.json").write_text(
+        json.dumps({"gmail_enabled": True}), encoding="utf-8")
+    secrets_dir = state_dir / "secrets"
+    secrets_dir.mkdir(parents=True, exist_ok=True)
+    (secrets_dir / secrets.SLACK_TOKEN_FILE).write_text("xoxp-golden\n", encoding="utf-8")
     # every disk-backed side input is pinned: the suite's shared sandbox
     # STATE_DIR accumulates fold receipts / deploy state from other tests
     with mock.patch.object(dashboard, "_iso_now", return_value=FIXED_NOW), \
             mock.patch.object(dashboard, "_today", return_value=FIXED_TODAY), \
             mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
             mock.patch.object(dashboard.config, "STATE_DIR", state_dir), \
+            mock.patch.object(dashboard.config, "SETTINGS_OVERRIDES_PATH",
+                              state_dir / "settings_overrides.json"), \
+            mock.patch.object(secrets, "SECRETS_DIR", secrets_dir), \
             mock.patch.object(radar_health, "load_radar_health",
                               return_value=_radar_health()), \
             mock.patch.object(fold_receipts, "load_recent",
@@ -310,6 +322,10 @@ class DashboardGoldenTestCase(unittest.TestCase):
         self.assertTrue(any(r.get("from_review") for r in dash["running"]))
         self.assertTrue(dash["radar_sources"]["gmail"]["stale"])
         self.assertEqual(dash["radar_sources"]["slack"]["skip_reason"], "mcp_failed")
+        rs = dash["radar_sources"]                                   # §48.4 意愿信号
+        self.assertEqual((rs["gmail"]["intent"], rs["gmail"]["secret_present"]), (True, False))
+        self.assertEqual((rs["slack"]["intent"], rs["slack"]["secret_present"]), (True, True))
+        self.assertEqual((rs["obsidian"]["intent"], rs["obsidian"]["secret_present"]), (False, False))
         self.assertEqual([r["title"] for r in dash["fold_receipts"]], ["显示名 R-220", ""])
         self.assertEqual(dash["device_label"], "Zelin 的 Mac")
         self.assertEqual(dash["deploy_state"]["version"], "0.48.99")

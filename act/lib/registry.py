@@ -35,49 +35,23 @@ import re
 import sys
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
 import yaml
 
 from act.lib import config, policy
+# The card model lives in the leaf module act/lib/card_model.py (P3b: breaks the
+# registry → store2.export_yaml → registry import cycle). Re-exported here under
+# the historical names — every caller keeps writing ``registry.Requirement``.
+from act.lib.card_model import (  # noqa: F401 - re-exports are the public API
+    CORE_ORDER,
+    MERGED_PREFIX,
+    OPTIONAL_ORDER,
+    Requirement,
+    State,
+)
 
-
-class State(str, Enum):
-    """Canonical linear states. Legacy ``merged_into:<id>`` is stored verbatim
-    as the status string (see :meth:`Requirement.is_merged`); the merge-review
-    flow (契约 四) instead uses the ``merged`` terminal state below plus the
-    ``merged_into`` field."""
-
-    DETECTED = "detected"
-    CARD_SENT = "card_sent"
-    RAISING = "raising"    # debt -> (AI expanding) -> card_sent
-    APPROVED = "approved"
-    EXECUTING = "executing"
-    REVIEW = "review"
-    DELIVERED = "delivered"
-    REJECTED = "rejected"
-    TRASHED = "trashed"
-    # merge-review 终态（契约 四）：副卡并入主卡。可见性语义同回收站（不进任何
-    # 看板列、purge 不删），但 merge_or_new 匹配语义同 delivered —— 参与匹配
-    # 以压住后续重述（这点与 trashed 相反，决策 6）。
-    MERGED = "merged"
-    # v0.20.0 sealed-completed state (卡片生命周期 §3.1). Reached from delivered
-    # (已验收) or detected (备选) via the archive action, or an auto sweep of
-    # cold delivered matters. Semantics mirror trashed for VISIBILITY (in NO
-    # kanban lane) but are EXCLUDED from merge_or_new matching + hidden from the
-    # triage/capture LLM (same as trashed), NEVER purged, and RELOCATED to the
-    # ``archive/`` subdir so the hot registry scan skips them (#10). Later
-    # related info opens a NEW card rather than re-raising a sealed one.
-    ARCHIVED = "archived"
-
-    def __str__(self) -> str:  # so f-strings emit the bare value
-        return self.value
-
-
-MERGED_PREFIX = "merged_into:"
 
 # --------------------------------------------------------------------------- #
 # storage backend (CONTRACT §53) — YAML files vs store2 SQLite
@@ -225,7 +199,7 @@ def _agent_wall(req: "Requirement", old_status: Optional[str]) -> None:
     from act.lib.store2.store import TransitionDenied
     new_status = str(req.status)
     if old_status is None:
-        if new_status in _AGENT_FORBIDDEN or                 (req.prev_status and str(req.prev_status) in _AGENT_FORBIDDEN):
+        if _forbidden_birth(req, new_status):
             raise TransitionDenied(
                 "AGENT_TRANSITION_FORBIDDEN",
                 f"agent may not mint card {req.id} in/into {new_status!r}")
@@ -234,235 +208,12 @@ def _agent_wall(req: "Requirement", old_status: Optional[str]) -> None:
             "AGENT_TRANSITION_FORBIDDEN",
             f"agent may not move card {req.id} {old_status!r} -> {new_status!r}")
 
-# Core fields always serialized (in this order); optional fields appended when set.
-# PUBLIC on purpose: these two lists are the card field vocabulary's single
-# source — store2's export/migrate import them so a new field can never be
-# add-only here and silently missing there (see act/lib/store2/export_yaml.py
-# and tests/test_store2_field_parity.py).
-CORE_ORDER = [
-    "id",
-    "title",
-    "type",
-    "tier",
-    "status",
-    "hardness",
-    "deadline",
-    "repeated_mentions",
-    "green_sign_required",
-    "disagreement",
-    "cost_estimate_usd",
-    "sources",
-    "plan",
-]
-# Optional fields serialized only when set (keeps the YAML files clean).
-# ``summary`` is placed first so it reads right below the core block.
-OPTIONAL_ORDER = [
-    "summary",
-    "definition_of_done",
-    "outputs",
-    "card",
-    "execution",
-    "improvement_of",
-    "merged_into",
-    "target_repo",
-    "target_kind",
-    "delivery_mode",
-    "notes",
-    # trash / recycle-bin bookkeeping (§9) — only present once trashed/restored
-    "trashed_at",
-    "prev_status",
-    "trash_reason",
-    "permanent",
-    # v-next add-only（amendments §50 / M8.3 C-1）：出身信任章，铸卡/fold 时由
-    # policy.classify_origin 盖（hand/proposed/meeting/external）。调度侧不读
-    # 章、每次从 sources 现算（M1.a）；章只服务投影/审计。
-    "origin_trust",
-    # v0.20.0 thread-level matching (卡片生命周期 §2) — appended so old YAML that
-    # lacks them round-trips clean (to_dict skips None) and lazily backfills.
-    "thread_id",
-    "thread_key",
-    # v0.20.0 archive bookkeeping (§4) — only present once archived; prev_status
-    # (above) is reused to remember the restore target for unarchive.
-    "archived_at",
-    "archive_reason",
-# v0.37 living display titles (§37) — the frozen `title` above stays the
-    # dedupe/re-raise identity anchor; these carry the human-facing name.
-    "display_title",
-    "user_titled",
-    "former_titles",
-    # §38 split lineage — set once on a card minted by the split_note undo;
-    # machine-readable so auto_merge never suggests merging the split back
-    # (the [拆自 R-xxx] notes breadcrumb is prose, not a signal).
-    "split_from",
-    # §44 silent merge — how many duplicate cards were folded in silently
-    # (distinct from repeated_mentions, which also counts restatements and
-    # user-approved merges). Only present once >0.
-    "silent_merge_count",
-    # §34bis preset 卡标记 — 按钮注入固定 plan 的卡（词表目前仅
-    # "proposals_triage"）。顶层字段而非 execution 键：executor.dispatch
-    # 成功路径会整个重建 execution，标记放那里活不过起跑。
-    "preset",
-    # §60（D21）工作编号 ``R-<m>``：进入 approved 时由 save() 分配，set-once。
-    # None = 从未批准过（提案/备选/回收站卡）或存量 legacy 卡——整键省略，
-    # 旧 YAML 逐字节 round-trip 不受影响。
-    "work_id",
-    # §64（issue #128）AI 一句话摘要 + 完成度评语：dict
-    # {summary, verdict, verdict_reason, at, source_hash | error}，只由
-    # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
-    "assessment",
-    # §65 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
-    # 只会让卡**更不自主**——self_improve lane 见到即拒（self_improve:needs_mcp，
-    # 只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开。
-    # 默认 False 整键省略。
-    "needs_mcp",
-    # §70 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
-    # 旧卡主键列表；旧卡进回收站（reason `daily-merge: 并入 <new>`）、可恢复。
-    # 只在合成卡上出现；空列表整键省略。
-    "merged_from",
-]
 
-
-@dataclass
-class Requirement:
-    id: str
-    title: str = ""
-    type: str = ""
-    tier: str = "T1"
-    status: str = "detected"
-    hardness: str = "soft"
-    deadline: Optional[str] = None
-    repeated_mentions: int = 1
-    green_sign_required: bool = False
-    disagreement: Optional[str] = None
-    cost_estimate_usd: Optional[float] = None
-    sources: list = field(default_factory=list)
-    plan: Union[str, list, None] = None
-    summary: str = ""  # plain-language one-liner (§7); shown by default in the card
-    definition_of_done: Optional[list] = None  # §11 验收标准 — approved WITH the card
-    outputs: Optional[list] = None
-    card: Optional[dict] = None
-    execution: Optional[dict] = None
-    improvement_of: Optional[str] = None
-    merged_into: Optional[str] = None
-    target_repo: Optional[str] = None  # executor override (not in CONTRACT core)
-    target_kind: Optional[str] = None  # "new" | "existing" (§7); computed if unset
-    delivery_mode: str = "repo"  # "chat"=会话内交付成稿 | "repo"=分支交付 (§20; 缺失视为 repo)
-    notes: str = ""
-
-    # trash / recycle-bin bookkeeping (§9) — only populated once trashed
-    trashed_at: Optional[str] = None
-    prev_status: Optional[str] = None
-    trash_reason: Optional[str] = None
-    permanent: bool = False
-
-    # v-next（amendments §50）：出身信任章；None = 存量卡未盖章（缺章不追溯
-    # 抬档、也不授予自动派发资格——两侧 fail-closed 分工见 risk.py/policy.py）。
-    origin_trust: Optional[str] = None
-
-    # v0.20.0 thread-level matching (卡片生命周期 §2)
-    # thread_id: the thread anchor = the primary ``id`` of the thread-root card
-    #   (same namespace as ``id`` — P-/legacy R- keys, never work_id; inherited
-    #   on a match, self-rooted on a brand-new card).
-    # thread_key: a STRONG deterministic bucket, only from an external thread ref
-    #   ("gmail:<X-GM-THRID>" / "slack:<thread_ts>"); None when there is no strong
-    #   signal — never fuzzy. See :func:`derive_thread_key`.
-    thread_id: Optional[str] = None
-    thread_key: Optional[str] = None
-    # v0.20.0 archive bookkeeping (§4) — set once archived (prev_status reused).
-    archived_at: Optional[str] = None
-    archive_reason: Optional[str] = None
-    # §38 split lineage (see OPTIONAL_ORDER note) — origin card of a split.
-    split_from: Optional[str] = None
-    # §44 silent merge counter — fold-in events only (see OPTIONAL_ORDER
-    # note). 0 is skipped by to_dict (0 == False), so files stay clean.
-    silent_merge_count: int = 0
-
-    # v0.37 living display titles (§37). `title` above is FROZEN (identity
-    # anchor for merge_or_new/_same_source_and_title/re-raise) — display_title
-    # is the human-facing name shown on board rows. user_titled=True pins a
-    # user-chosen name: LLM/harvest updates never overwrite it. former_titles
-    # keeps the last few previous display names (searchable, so a renamed card
-    # is still findable by its old name).
-    display_title: Optional[str] = None
-    user_titled: bool = False
-    former_titles: Optional[list] = None
-
-    # §34bis preset 卡标记（add-only，见 OPTIONAL_ORDER 注）——快照护栏靠它
-    # 在 dispatch/收割时认出提案清理卡。
-    preset: Optional[str] = None
-
-    # §60（D21）工作编号：``R-<m>``，进入 approved 时 save() 分配、此后永不
-    # 改写；``id`` 仍是唯一主键/lineage 锚点（merged_into/thread_id/
-    # improvement_of/split_from 全部指 id，绝不指 work_id）。
-    work_id: Optional[str] = None
-
-    # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
-    assessment: Optional[dict] = None
-    # §70 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
-    # 主键）。None/[] = 不是合成卡。
-    merged_from: Optional[list] = None
-
-    # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
-    needs_mcp: bool = False
-
-    # internal bookkeeping (never serialized)
-    _file: Optional[str] = field(default=None, repr=False, compare=False)
-    _in_list: bool = field(default=False, repr=False, compare=False)
-
-    # -- construction ------------------------------------------------------- #
-    @classmethod
-    def from_dict(cls, d: dict) -> "Requirement":
-        d = dict(d or {})
-        known = {f for f in cls.__dataclass_fields__ if not f.startswith("_")}
-        kwargs = {k: v for k, v in d.items() if k in known}
-        # accept `repo` as an alias for target_repo
-        if "target_repo" not in kwargs and "repo" in d:
-            kwargs["target_repo"] = d["repo"]
-        # delivery_mode tolerance (§20): missing / unknown values -> "repo"
-        dm = str(kwargs.get("delivery_mode") or "").strip().lower()
-        kwargs["delivery_mode"] = dm if dm in ("chat", "repo") else "repo"
-        if "id" not in kwargs:
-            kwargs["id"] = d.get("id", "")
-        # YAML 类型归一：手写卡把 `id: 4` / `title: 456` / `tier: 7` 写成无引号
-        # 数字时 PyYAML 解析成 int —— 一律 str() 归一，否则 next_id 的正则
-        # match 抛 TypeError（快速捕获整条链瘫痪），且 dashboard wire 上的 int
-        # 会让 Swift 端硬 String decode 把整列清空（CONTRACT §2）。
-        for k in ("id", "title", "tier", "work_id"):
-            v = kwargs.get(k)
-            if v is not None and not isinstance(v, str):
-                kwargs[k] = str(v)
-        return cls(**kwargs)
-
-    def to_dict(self) -> dict:
-        out: dict = {}
-        for k in CORE_ORDER:
-            out[k] = getattr(self, k)
-        for k in OPTIONAL_ORDER:
-            v = getattr(self, k)
-            # skip unset optionals (incl. permanent=False) so files stay clean
-            if v in (None, "", [], False):
-                continue
-            # delivery_mode: "repo" is the default (missing == repo, §20), so only
-            # the non-default "chat" is serialized — round-trips without loss.
-            if k == "delivery_mode" and v == "repo":
-                continue
-            out[k] = v
-        return out
-
-    # -- status helpers ----------------------------------------------------- #
-    @property
-    def is_merged(self) -> bool:
-        return isinstance(self.status, str) and self.status.startswith(MERGED_PREFIX)
-
-    @property
-    def merged_parent(self) -> Optional[str]:
-        if self.is_merged:
-            return self.status[len(MERGED_PREFIX):]
-        return self.merged_into
-
-    def set_status(self, status: Union[State, str]) -> None:
-        self.status = str(status)
-
+def _forbidden_birth(req: "Requirement", new_status: str) -> bool:
+    """agent 铸卡：出生态在批准后各态、或带这些态的 prev_status 回程票
+    （restore 组合旁路的弹药）都不许。"""
+    return bool(new_status in _AGENT_FORBIDDEN
+                or (req.prev_status and str(req.prev_status) in _AGENT_FORBIDDEN))
 
 # --------------------------------------------------------------------------- #
 # Load
@@ -529,71 +280,89 @@ def load_all(include_archived: bool = False) -> list[Requirement]:
     （回收站到期硬删的替身）不出现。
     """
     if backend() == BACKEND_SQLITE:
-        out: list[Requirement] = []
-        for card in _store().list_cards():
-            if not include_archived and card["status"] == State.ARCHIVED.value:
-                continue
-            r = Requirement.from_dict(card["payload"])
-            out.append(r)
-        return out
+        return _sqlite_load_all(include_archived)
     reqs: list[Requirement] = []
     for path in _iter_files(include_archived):
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as e:
-            # 单个损坏/不可读文件（语法坏 YAML、chmod 000 等）只跳过这一个 +
-            # log，绝不拖垮 load_all 的所有消费者（dashboard/收件箱/雷达/capture）。
-            print(f"registry: skip unreadable card file {path.name}: {e}",
-                  file=sys.stderr)
-            continue
-        if data is None:
-            continue
-        if isinstance(data, list):
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                r = Requirement.from_dict(item)
-                r._file = str(path)
-                r._in_list = True
-                reqs.append(r)
-        elif isinstance(data, dict):
-            r = Requirement.from_dict(data)
-            r._file = str(path)
-            r._in_list = False
-            reqs.append(r)
+        reqs.extend(_cards_from_file(path))
     return reqs
+
+
+def _sqlite_load_all(include_archived: bool) -> list[Requirement]:
+    out: list[Requirement] = []
+    for card in _store().list_cards():
+        if not include_archived and card["status"] == State.ARCHIVED.value:
+            continue
+        out.append(Requirement.from_dict(card["payload"]))
+    return out
+
+
+def _read_card_file(path: Path):
+    """YAML 文件内容；单个损坏/不可读文件（语法坏 YAML、chmod 000 等）只跳过
+    这一个 + log，绝不拖垮 load_all 的所有消费者（dashboard/收件箱/雷达/
+    capture）——返回 None 表示跳过。"""
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as e:
+        print(f"registry: skip unreadable card file {path.name}: {e}",
+              file=sys.stderr)
+        return None
+
+
+def _from_file(item: dict, path: Path, in_list: bool) -> Requirement:
+    r = Requirement.from_dict(item)
+    r._file = str(path)
+    r._in_list = in_list
+    return r
+
+
+def _cards_from_file(path: Path) -> list[Requirement]:
+    """一个卡文件里的全部卡：单 doc（dict）或 list 文件（非 dict 成员跳过）；
+    空文件 / 不可读 / 其他形状 → []。"""
+    data = _read_card_file(path)
+    if isinstance(data, list):
+        return [_from_file(item, path, True) for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        return [_from_file(data, path, False)]
+    return []
 
 
 def load(req_id: str) -> Optional[Requirement]:
     if backend() == BACKEND_SQLITE:
-        from act.lib.store2.store import NotFound
-        try:
-            card = _store().get_card(str(req_id))
-        except NotFound:
-            return None
-        if card.get("tombstone"):
-            return None      # 硬删替身：对读方等同不存在（yaml 同义 = 文件已删）
-        return Requirement.from_dict(card["payload"])
-    # CRITICAL (§4): scan the archive dir too, or an archived card is invisible
-    # to load()/unarchive and — worse — next_id() would reallocate its id and
-    # overwrite it (silent data loss). Both funnel through include_archived=True.
-    found: Optional[Requirement] = None
-    for r in load_all(include_archived=True):
-        if r.id != req_id:
-            continue
-        # Crash-mid-move residue (§4): archive() writes archive/<id>.yaml FIRST
-        # and deletes the active original SECOND, so a crash between the two
-        # leaves BOTH copies on disk. The archive copy is authoritative — the
-        # dashboard already hides the active twin (archived_ids dedup) — so
-        # load() must agree, or actd sees the stale active status and the
-        # user's unarchive click dead-ends in a silent no-op forever.
-        # unarchive() then repairs the residue: save() overwrites the stale
-        # active file and the archive copy is unlinked.
-        if r._file and Path(r._file).parent == ARCHIVE_DIR:
+        return _sqlite_load(str(req_id))
+    return _yaml_load(req_id)
+
+
+def _sqlite_load(req_id: str) -> Optional[Requirement]:
+    from act.lib.store2.store import NotFound
+    try:
+        card = _store().get_card(req_id)
+    except NotFound:
+        return None
+    return _from_live_card(card)     # 硬删替身：对读方等同不存在（yaml 同义 = 文件已删）
+
+
+def _in_archive_dir(r: Requirement) -> bool:
+    return bool(r._file and Path(r._file).parent == ARCHIVE_DIR)
+
+
+def _yaml_load(req_id: str) -> Optional[Requirement]:
+    """CRITICAL (§4): scan the archive dir too, or an archived card is invisible
+    to load()/unarchive and — worse — next_id() would reallocate its id and
+    overwrite it (silent data loss). Both funnel through include_archived=True.
+
+    Crash-mid-move residue (§4): archive() writes archive/<id>.yaml FIRST
+    and deletes the active original SECOND, so a crash between the two
+    leaves BOTH copies on disk. The archive copy is authoritative — the
+    dashboard already hides the active twin (archived_ids dedup) — so
+    load() must agree, or actd sees the stale active status and the
+    user's unarchive click dead-ends in a silent no-op forever.
+    unarchive() then repairs the residue: save() overwrites the stale
+    active file and the archive copy is unlinked."""
+    matches = [r for r in load_all(include_archived=True) if r.id == req_id]
+    for r in matches:
+        if _in_archive_dir(r):
             return r
-        if found is None:
-            found = r
-    return found
+    return matches[0] if matches else None
 
 
 def load_archived() -> list[Requirement]:
@@ -659,19 +428,32 @@ def writes_since(ts: str) -> frozenset:
     字符串比较即时间比较。
     """
     names = {n for n, t in _PROC_WRITES.items() if str(t) >= str(ts)}
+    return frozenset(names | _journal_names_since(ts))
+
+
+def _journal_entry_name(line: str, ts: str) -> Optional[str]:
+    """台账一行 → 文件名（ts 之后含）；坏行 / 早于 ts → None。"""
     try:
-        for line in _writes_journal_path().read_text(
-                encoding="utf-8").splitlines():
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(rec, dict) and rec.get("f") \
-                    and str(rec.get("ts", "")) >= str(ts):
-                names.add(str(rec["f"]))
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(rec, dict) and rec.get("f") and str(rec.get("ts", "")) >= str(ts):
+        return str(rec["f"])
+    return None
+
+
+def _journal_names_since(ts: str) -> set:
+    """持久台账里 ts 起（含）的文件名集合；台账缺失/不可读 = 空集。"""
+    names: set = set()
+    try:
+        lines = _writes_journal_path().read_text(encoding="utf-8").splitlines()
     except OSError:
-        pass
-    return frozenset(names)
+        return names
+    for line in lines:
+        name = _journal_entry_name(line, ts)
+        if name:
+            names.add(name)
+    return names
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -714,17 +496,10 @@ def save(req: Requirement) -> None:
     所以调用方零改动、零遗漏；detected/card_sent/raising/trashed/merged
     的落盘永不分配。分配失败（序列文件读不了等）不崩 save：编号是显示层
     资产，卡照常落盘，下一次 approved 落盘再补。"""
-    if current_actor() == "agent":
-        # R2.1.4 权限墙（两后端一致）：agent 不得转移状态/铸敏感出生态。
-        # 旧状态从真源现查（agent 路径罕见，额外一读可接受）。
-        prior = load(req.id) if req.id else None
-        _agent_wall(req, str(prior.status) if prior is not None else None)
+    _enforce_agent_wall(req)
     allocated = _allocate_work_id(req)
     try:
-        if backend() == BACKEND_SQLITE:
-            _sqlite_save(req)
-        else:
-            _yaml_save(req)
+        _persist(req)
     except BaseException:
         if allocated:
             # 没落盘的编号不占位：清掉内存里的号，下一次 approved 落盘重分
@@ -734,6 +509,22 @@ def save(req: Requirement) -> None:
     if allocated:
         _bump_work_seq(allocated)
     _note_first_card(req)
+
+
+def _enforce_agent_wall(req: Requirement) -> None:
+    """R2.1.4 权限墙（两后端一致）：agent 不得转移状态/铸敏感出生态。
+    旧状态从真源现查（agent 路径罕见，额外一读可接受）。"""
+    if current_actor() != "agent":
+        return
+    prior = load(req.id) if req.id else None
+    _agent_wall(req, str(prior.status) if prior is not None else None)
+
+
+def _persist(req: Requirement) -> None:
+    if backend() == BACKEND_SQLITE:
+        _sqlite_save(req)
+    else:
+        _yaml_save(req)
 
 
 def _yaml_save(req: Requirement) -> None:
@@ -897,10 +688,26 @@ def set_display_title(req: Requirement, title, *, by_user: bool = False) -> bool
       newest last, capped at FORMER_TITLES_CAP) so a renamed card stays
       findable under its old name.
     """
+    t = _accepted_title(req, title, by_user)
+    if t is None:
+        return False
+    prev = str(req.display_title or "").strip()
+    changed = False
+    if _is_rename(t, prev, by_user):
+        _apply_rename(req, t, prev)
+        changed = True
+    pinned = _pin_user_title(req, by_user)
+    return changed or pinned
+
+
+def _accepted_title(req: Requirement, title, by_user: bool) -> Optional[str]:
+    """The clipped candidate, or None when the write must be a no-op:
+    fail-closed input, a redaction mask, or an LLM/harvest title against a
+    user-pinned name."""
     from act.lib import sanitize, titles  # lazy: keep registry import-light
     t = titles.clip_title(title)
     if t is None:
-        return False
+        return None
     # 掩码拒收在唯一落笔点（§37.1）：display_title 的每条便车路径（analyze
     # 扩写、quick_capture capture/triage、CARD TITLE 收割）outbound prompt
     # 都过 sanitize.scrub，LLM 都可能把围栏里的 [脱敏] 抄进标题键——含掩码
@@ -908,33 +715,44 @@ def set_display_title(req: Requirement, title, *, by_user: bool = False) -> bool
     # 显示名与 former_titles 永不出现掩码，不管候选从哪条口进来。harvest
     # 侧的同款检查保留为提前拒收（marker 行照剥的语义在那边）。
     if sanitize.MASK in t:
-        return False
+        return None
     if req.user_titled and not by_user:
-        return False
-    changed = False
-    prev = str(req.display_title or "").strip()
-    # same-value 判定比较侧同口径规范化（PR #103 review P2）：手编 YAML 的
-    # 超长（>64）或含内部空白/换行的存量 display_title，agent 原样重复注入
-    # 现值（executor._current_display_name 注入的就是 clip 规范形）不算改名
-    # ——否则一次假 rename 把旧值追进 former_titles。经本函数落笔的存量值
-    # 本就是 clip 规范形，prev_norm == prev，行为不变；真改名时
-    # former_titles 记录的仍是磁盘上的原始 prev（可搜索性不受规范化影响）。
-    # 规范化短路只作用于 LLM/harvest 回流（by_user=False）：用户主动改名按
-    # 原始形态比较——存量「整理\n合同」、用户给「整理 合同」是真改名（否则
-    # 异常存量被永久钉死、user_titled 却已置位），旧形态照记 former_titles。
+        return None
+    return t
+
+
+def _is_rename(t: str, prev: str, by_user: bool) -> bool:
+    """same-value 判定比较侧同口径规范化（PR #103 review P2）：手编 YAML 的
+    超长（>64）或含内部空白/换行的存量 display_title，agent 原样重复注入
+    现值（executor._current_display_name 注入的就是 clip 规范形）不算改名
+    ——否则一次假 rename 把旧值追进 former_titles。经本函数落笔的存量值
+    本就是 clip 规范形，prev_norm == prev，行为不变；真改名时
+    former_titles 记录的仍是磁盘上的原始 prev（可搜索性不受规范化影响）。
+    规范化短路只作用于 LLM/harvest 回流（by_user=False）：用户主动改名按
+    原始形态比较——存量「整理\n合同」、用户给「整理 合同」是真改名（否则
+    异常存量被永久钉死、user_titled 却已置位），旧形态照记 former_titles。"""
+    from act.lib import titles  # lazy: keep registry import-light
     prev_norm = titles.clip_title(prev) if prev else None
-    if t != prev and (by_user or t != prev_norm):
-        if prev:
-            former = [str(x) for x in (req.former_titles or []) if str(x).strip()]
-            former = [x for x in former if x != prev]
-            former.append(prev)
-            req.former_titles = former[-FORMER_TITLES_CAP:]
-        req.display_title = t
-        changed = True
+    return t != prev and (by_user or t != prev_norm)
+
+
+def _apply_rename(req: Requirement, t: str, prev: str) -> None:
+    """Set the new display name; the previous one (when any) goes to
+    ``former_titles`` (deduped, newest last, capped at FORMER_TITLES_CAP)."""
+    if prev:
+        former = [str(x) for x in (req.former_titles or []) if str(x).strip()]
+        former = [x for x in former if x != prev]
+        former.append(prev)
+        req.former_titles = former[-FORMER_TITLES_CAP:]
+    req.display_title = t
+
+
+def _pin_user_title(req: Requirement, by_user: bool) -> bool:
+    """A user write pins the name (user_titled); True when that flag flipped."""
     if by_user and not req.user_titled:
         req.user_titled = True
-        changed = True
-    return changed
+        return True
+    return False
 
 
 def delete(req: Requirement) -> bool:
@@ -949,55 +767,80 @@ def delete(req: Requirement) -> bool:
     已 tombstone / 不存在 → False（幂等语义对齐 yaml 的「没删到东西」）。
     """
     if backend() == BACKEND_SQLITE:
-        from act.lib.store2.store import NotFound, StoreError
-        try:
-            row = _store().get_card(str(req.id))
-            if row.get("tombstone"):
-                return False
-            _store().purge_trashed(str(req.id))
-        except (NotFound, StoreError):
-            return False
-        _journal_write(f"{req.id}.yaml")     # §34bis 台账：管线的合法删除
-        return True
-    if not req._file:
-        existing = load(req.id)
-        if existing is None or not existing._file:
-            return False
-        req._file = existing._file
-        req._in_list = existing._in_list
+        return _sqlite_delete(req)
+    if not _locate_file(req):
+        return False
     path = Path(req._file)
     if req._in_list:
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
-        except (OSError, yaml.YAMLError):
+        return _delete_list_member(path, req.id)
+    return _unlink_card_file(path)
+
+
+def _sqlite_delete(req: Requirement) -> bool:
+    from act.lib.store2.store import NotFound, StoreError
+    try:
+        row = _store().get_card(str(req.id))
+        if row.get("tombstone"):
             return False
-        if not isinstance(data, list):
-            data = [data]
-        remaining = [
-            it for it in data
-            # str() both sides — same normalization as save(): an on-disk
-            # hand-written int id must match its str-normalized in-memory twin,
-            # or delete() drops the wrong row / nothing at all.
-            if not (isinstance(it, dict) and it.get("id") is not None
-                    and str(it.get("id")) == str(req.id))
-        ]
-        if len(remaining) == len(data):
-            return False
-        if remaining:
-            _atomic_write(path, _dump_yaml(remaining))
-        else:
-            try:
-                path.unlink()
-            except OSError:
-                return False
-            _journal_write(path.name)    # §34bis 台账：管线的合法删除
+        _store().purge_trashed(str(req.id))
+    except (NotFound, StoreError):
+        return False
+    _journal_write(f"{req.id}.yaml")     # §34bis 台账：管线的合法删除
+    return True
+
+
+def _locate_file(req: Requirement) -> bool:
+    """Ensure ``req`` knows its on-disk location (inherit it from the stored
+    copy when the caller built a fresh object); False = nothing on disk."""
+    if req._file:
         return True
+    existing = load(req.id)
+    if existing is None or not existing._file:
+        return False
+    req._file = existing._file
+    req._in_list = existing._in_list
+    return True
+
+
+def _load_list_file(path: Path) -> Optional[list]:
+    """A list file's members; unreadable → None (refuse: never rewrite what
+    cannot be read). A single doc is wrapped as a one-member list."""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    except (OSError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, list) else [data]
+
+
+def _write_or_unlink(path: Path, remaining: list) -> bool:
+    """Write the surviving members back, or remove the file once empty."""
+    if remaining:
+        _atomic_write(path, _dump_yaml(remaining))
+        return True
+    return _unlink_card_file(path)
+
+
+def _delete_list_member(path: Path, rid: str) -> bool:
+    """Drop ``rid`` from a multi-card list file (the file goes once empty)."""
+    data = _load_list_file(path)
+    if data is None:
+        return False
+    # str() both sides (_same_card) — same normalization as save(): an on-disk
+    # hand-written int id must match its str-normalized in-memory twin,
+    # or delete() drops the wrong row / nothing at all.
+    remaining = [it for it in data if not _same_card(it, rid)]
+    if len(remaining) == len(data):
+        return False
+    return _write_or_unlink(path, remaining)
+
+
+def _unlink_card_file(path: Path) -> bool:
     try:
         path.unlink()
-        _journal_write(path.name)        # §34bis 台账：管线的合法删除
-        return True
     except OSError:
         return False
+    _journal_write(path.name)        # §34bis 台账：管线的合法删除
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -1330,13 +1173,16 @@ def find_open_follow_up(parent_id: str) -> Optional[Requirement]:
     by_id = {r.id: r for r in reqs}
     target = _canonical_id(parent_id, by_id)
     for r in reqs:
-        if not r.improvement_of:
-            continue
-        if is_resolved(r) or r.status in (State.REJECTED.value, State.TRASHED.value):
-            continue
-        if _canonical_id(r.improvement_of, by_id) == target:
+        if _is_open_child(r) and _canonical_id(r.improvement_of, by_id) == target:
             return r
     return None
+
+
+def _is_open_child(r: Requirement) -> bool:
+    """A follow-up (has improvement_of) that is still unresolved — not
+    delivered/merged/rejected/trashed."""
+    return bool(r.improvement_of) and not (
+        is_resolved(r) or r.status in (State.REJECTED.value, State.TRASHED.value))
 
 
 def _max_number(values: Iterable, regex) -> int:
@@ -1487,8 +1333,11 @@ def _norm_title(t: str) -> str:
     return re.sub(r"\s+", " ", (t or "")).strip().lower()
 
 
-def _same_source_and_title(a: Requirement, b: Requirement) -> bool:
+def same_source_and_title(a: Requirement, b: Requirement) -> bool:
     """Restatement heuristic: same requirement (near-identical title).
+
+    PUBLIC since P3b (防腐 #2): quick_capture's relates_to paths decide
+    same_task through it.
 
     Matching is title-based on purpose: the same ask restated in a *different*
     channel (meeting -> slack -> confluence) is exactly the multi-source case
@@ -1498,12 +1347,15 @@ def _same_source_and_title(a: Requirement, b: Requirement) -> bool:
     ta, tb = _norm_title(a.title), _norm_title(b.title)
     if not ta or not tb:
         return False
-    if ta == tb:
-        return True
-    # containment match, guarded against short/ambiguous titles
-    if (ta in tb or tb in ta) and min(len(ta), len(tb)) >= 12:
-        return True
-    return False
+    return ta == tb or _contains_either(ta, tb)
+
+
+_same_source_and_title = same_source_and_title   # 本模块内部沿用的旧名（判例仍引用）
+
+
+def _contains_either(ta: str, tb: str) -> bool:
+    """containment match, guarded against short/ambiguous titles"""
+    return (ta in tb or tb in ta) and min(len(ta), len(tb)) >= 12
 
 
 def capture_source(who: str, channel: str, quote: str,
@@ -1605,16 +1457,27 @@ def append_fold_note(req: Requirement, note, kind: str = "radar") -> Optional[st
     if not text:
         return None
     existing = parse_fold_notes(req.notes)
-    if any(e["kind"] == kind and e["text"] == text for e in existing):
+    if _has_fold_note(existing, kind, text):
         return None
+    ts = _unique_fold_ts(existing)
+    line = f"[{kind}] {text} [@{ts}]"
+    req.notes = (req.notes + "\n" + line).strip() if req.notes else line
+    return ts
+
+
+def _has_fold_note(existing: list, kind: str, text: str) -> bool:
+    return any(e["kind"] == kind and e["text"] == text for e in existing)
+
+
+def _unique_fold_ts(existing: list) -> str:
+    """Now (UTC second); same-second folds get a ``#n`` suffix so every ts tag
+    on one card stays a unique split handle."""
     base = _iso_now()
     used = {e["ts"] for e in existing if e["ts"]}
     ts, n = base, 2
     while ts in used:
         ts = f"{base}#{n}"
         n += 1
-    line = f"[{kind}] {text} [@{ts}]"
-    req.notes = (req.notes + "\n" + line).strip() if req.notes else line
     return ts
 
 
@@ -1626,15 +1489,24 @@ def mark_note_split(req: Requirement, note_ts, new_id: str) -> bool:
     ts = str(note_ts or "").strip()
     if not ts:
         return False
-    lines = str(req.notes or "").split("\n")
+    lines = _note_lines(req)
     for i, line in enumerate(lines):
-        m = _FOLD_LINE_RE.match(line.strip())
-        if m is None or f"[@{ts}]" not in line or "[已拆出 " in line:
+        if not _splittable_fold_line(line, ts):
             continue
         lines[i] = f"{line} [已拆出 {new_id}]"
         req.notes = "\n".join(lines)
         return True
     return False
+
+
+def _note_lines(req: Requirement) -> list:
+    return str(req.notes or "").split("\n")
+
+
+def _splittable_fold_line(line: str, ts: str) -> bool:
+    """A fold-note line carrying ``[@ts]`` that has not been split yet."""
+    return (_FOLD_LINE_RE.match(line.strip()) is not None
+            and f"[@{ts}]" in line and "[已拆出 " not in line)
 
 
 def _carries_increment(parent: Requirement, new: Requirement) -> bool:
@@ -1643,15 +1515,21 @@ def _carries_increment(parent: Requirement, new: Requirement) -> bool:
     Increment = a new/earlier deadline, or a cost estimate the parent lacked,
     or an explicit escalation to a harder directive.
     """
-    if new.deadline and (parent.deadline is None or str(new.deadline) < str(parent.deadline)):
-        return True
-    if new.cost_estimate_usd is not None and parent.cost_estimate_usd is None:
-        return True
-    if new.hardness == "hard" and parent.hardness == "soft":
-        return True
-    if new.improvement_of:
-        return True
-    return False
+    return (_earlier_deadline(parent, new) or _adds_cost(parent, new)
+            or _escalates(parent, new) or bool(new.improvement_of))
+
+
+def _earlier_deadline(parent: Requirement, new: Requirement) -> bool:
+    return bool(new.deadline and (parent.deadline is None
+                                  or str(new.deadline) < str(parent.deadline)))
+
+
+def _adds_cost(parent: Requirement, new: Requirement) -> bool:
+    return new.cost_estimate_usd is not None and parent.cost_estimate_usd is None
+
+
+def _escalates(parent: Requirement, new: Requirement) -> bool:
+    return new.hardness == "hard" and parent.hardness == "soft"
 
 
 def _stamp_origin(req: Requirement) -> None:
@@ -1668,16 +1546,31 @@ def _fold_hit(target: Requirement, new_req: Optional[Requirement],
 
     Mirrors quick_capture's ``_fold_into`` so both the deterministic and LLM
     re-raise paths add the same ``[radar]`` note tag and dedupe identically."""
-    src = sources if sources is not None else (
-        new_req.sources if new_req is not None else None)
-    merged, added = dedupe_sources(target.sources or [], src or [])
-    target.sources = merged
-    if added:
-        target.repeated_mentions = int(target.repeated_mentions or 1) + added
-    _stamp_origin(target)                     # 并入新来源 → 章过期，重盖
+    _absorb_sources(target, _pick_sources(new_req, sources))
     append_fold_note(target, note, "radar")   # §38: timestamped + deduped
     save(target)
     return target
+
+
+def _pick_sources(new_req: Optional[Requirement], sources: Optional[list]) -> Optional[list]:
+    """Explicit ``sources`` win; else the candidate's own; else None."""
+    if sources is not None:
+        return sources
+    return new_req.sources if new_req is not None else None
+
+
+def _bump_mentions(target: Requirement, added: int) -> None:
+    if added:
+        target.repeated_mentions = int(target.repeated_mentions or 1) + added
+
+
+def _absorb_sources(target: Requirement, src: Optional[list]) -> None:
+    """Union ``src`` into the card's sources; mentions bump by the number of
+    NEW rows; the origin stamp is refreshed (并入新来源 → 章过期，重盖)."""
+    merged, added = dedupe_sources(target.sources or [], src or [])
+    target.sources = merged
+    _bump_mentions(target, added)
+    _stamp_origin(target)
 
 
 def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
@@ -1714,8 +1607,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
     ——出生资格 gate 非 FULL 时由调用方传 True，fold 类结果不受影响。
     """
     parent = canonical(parent)                       # merged 副卡 -> 主卡
-    if parent.status in (State.REJECTED.value, State.TRASHED.value,
-                         State.ARCHIVED.value):
+    if parent.status in _DEAD_END_STATES:
         # canonical dead-end — caller re-cards from scratch (决策6 / 归档语义).
         return None, None
     parent.thread_id = parent.thread_id or parent.id
@@ -1724,87 +1616,134 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
         # primary is card_sent/approved/executing/review): never pull running/
         # queued work back to card_sent — just fold the note + source.
         return "folded", _fold_hit(parent, new_req, note, sources)
-
     # resolved parent (delivered / merged, NOT archived):
     acts = _carries_increment(parent, new_req) if actionable is None else bool(actionable)
+    return _resolved_outcome(parent, new_req, same_task, acts, sources, note, cap_detected)
+
+
+# canonical dead-ends for a re-raise: sealed cards never get restated INTO.
+_DEAD_END_STATES = (State.REJECTED.value, State.TRASHED.value, State.ARCHIVED.value)
+
+
+def _resolved_outcome(parent: Requirement, new_req: Requirement, same_task: bool,
+                      acts: bool, sources: Optional[list], note: str,
+                      cap_detected: bool) -> tuple[str, Requirement]:
+    """The four exits for a hit on a RESOLVED (delivered/merged) parent."""
     if same_task and not acts:
         # Q3 pure-restatement gate: a closed thread re-mentioned with NO new
         # actionable content → bump repeated_mentions, do NOT flip (kills the
         # hot-thread 提案 noise that LLM-recall jitter would otherwise create).
-        merged, _added = dedupe_sources(
-            parent.sources or [],
-            (sources if sources is not None else new_req.sources) or [])
-        parent.sources = merged
-        parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
-        _stamp_origin(parent)          # M1.a：fold 并入新来源后刷新信任章
+        _absorb_restatement(parent, new_req, sources)
         save(parent)
         return "folded", parent
-
     # actionable (or a different-task hit): first dedupe into an already-open
     # follow-up of this cluster (cross-pass / cross-source window) so a second
     # radar source of the same event never produces a second card.
     existing_child = find_open_follow_up(parent.id)
     if existing_child is not None:
         return "folded", _fold_hit(existing_child, new_req, note, sources)
-
     if same_task:
-        # in-place re-raise: flip the ORIGINAL card back to 提案 (Q3 ownership).
-        merged, _added = dedupe_sources(
-            parent.sources or [],
-            (sources if sources is not None else new_req.sources) or [])
-        parent.sources = merged
-        parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
-        _stamp_origin(parent)          # M1.a：re-raise 折入新来源同样重盖
-        if note:
-            tag = f"[re-raised] {note}"
-            parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
-            parent.summary = (f"{parent.summary} · 新增:{note}").strip()
-        ex = dict(parent.execution or {})
-        ex["reraised_at"] = _iso_now()
-        ex["reraised_note"] = note or ""
-        # The flip starts a NEW round: the resolved parent still carries the
-        # FINISHED round's session_id, and actd.dispatch_approved skips any
-        # approved card with one ("already dispatched") — left in place, the
-        # re-raised round would sit queued forever after approval, with no
-        # agent behind it and no error anywhere. Archive it (audit trail,
-        # mirrors abort's aborted_session_id) and drop the stale done flag;
-        # the round's other bookkeeping (accepted_at/delivered_summary/…) is
-        # history and stays.
-        sid = ex.get("session_id")
-        if sid:
-            ex["reraised_session_id"] = sid
-            ex.pop("session_id", None)
-        ex.pop("done", None)
-        parent.execution = ex
-        parent.set_status(State.DETECTED if cap_detected else State.CARD_SENT)
-        return "reraised", upsert(parent)
-
+        return "reraised", _reraise(parent, new_req, sources, note, cap_detected)
     # different task, same thread -> distinct follow-up child (card_sent),
     # inheriting the thread lineage; the old card's title is left untouched.
+    return "follow_up", _open_follow_up(parent, new_req, note, cap_detected)
+
+
+def _absorb_restatement(parent: Requirement, new_req: Requirement,
+                        sources: Optional[list]) -> None:
+    """Fold the restatement's sources in and count ONE more mention (the
+    re-raise / restatement paths bump by 1, not by the number of new rows);
+    the origin stamp is refreshed (M1.a：fold 并入新来源后刷新信任章)."""
+    merged, _added = dedupe_sources(
+        parent.sources or [],
+        (sources if sources is not None else new_req.sources) or [])
+    parent.sources = merged
+    parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
+    _stamp_origin(parent)
+
+
+def _reraised_execution(execution: Optional[dict], note: str) -> dict:
+    """The flip starts a NEW round: the resolved parent still carries the
+    FINISHED round's session_id, and actd.dispatch_approved skips any
+    approved card with one ("already dispatched") — left in place, the
+    re-raised round would sit queued forever after approval, with no
+    agent behind it and no error anywhere. Archive it (audit trail,
+    mirrors abort's aborted_session_id) and drop the stale done flag;
+    the round's other bookkeeping (accepted_at/delivered_summary/…) is
+    history and stays."""
+    ex = dict(execution or {})
+    ex["reraised_at"] = _iso_now()
+    ex["reraised_note"] = note or ""
+    sid = ex.get("session_id")
+    if sid:
+        ex["reraised_session_id"] = sid
+        ex.pop("session_id", None)
+    ex.pop("done", None)
+    return ex
+
+
+def _reraise(parent: Requirement, new_req: Requirement, sources: Optional[list],
+             note: str, cap_detected: bool) -> Requirement:
+    """in-place re-raise: flip the ORIGINAL card back to 提案 (Q3 ownership)."""
+    _absorb_restatement(parent, new_req, sources)
+    if note:
+        tag = f"[re-raised] {note}"
+        parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
+        parent.summary = (f"{parent.summary} · 新增:{note}").strip()
+    parent.execution = _reraised_execution(parent.execution, note)
+    parent.set_status(State.DETECTED if cap_detected else State.CARD_SENT)
+    return upsert(parent)
+
+
+def _birth_state(cap_detected: bool) -> str:
+    """§45 LIMITED 天花板：re-raise 的翻回与 follow-up 子卡都只落 detected。"""
+    return State.DETECTED.value if cap_detected else State.CARD_SENT.value
+
+
+def _inherited_fields(parent: Requirement, new_req: Requirement) -> dict:
+    """type / tier: the candidate's own, else the parent's."""
+    return {"type": new_req.type or parent.type, "tier": new_req.tier or parent.tier}
+
+
+def _lineage_fields(parent: Requirement, new_req: Requirement) -> dict:
+    """improvement_of / thread_id / thread_key under ``parent`` (§2 lineage
+    only ever points at primary keys)."""
+    return {"improvement_of": parent.id,
+            "thread_id": parent.thread_id or parent.id,
+            "thread_key": new_req.thread_key or parent.thread_key}
+
+
+def _follow_up_title(parent: Requirement, new_req: Requirement, note: str) -> str:
+    return (new_req.title or note or parent.title)[:80]
+
+
+def _follow_up_summary(parent: Requirement, new_req: Requirement, note: str) -> str:
     summary = str(new_req.summary or new_req.title or note).strip()
+    return f"既往卡 {parent.id} 的后续：{summary}"
+
+
+def _open_follow_up(parent: Requirement, new_req: Requirement, note: str,
+                    cap_detected: bool) -> Requirement:
     child = Requirement(
         id=next_id(),
-        title=(new_req.title or note or parent.title)[:80],
-        type=new_req.type or parent.type,
-        tier=new_req.tier or parent.tier,
-        status=State.DETECTED.value if cap_detected else State.CARD_SENT.value,
+        title=_follow_up_title(parent, new_req, note),
+        status=_birth_state(cap_detected),
         hardness=new_req.hardness or "soft",
         deadline=new_req.deadline,
         repeated_mentions=1,
         cost_estimate_usd=new_req.cost_estimate_usd,
         sources=list(new_req.sources or []),
         plan=new_req.plan or [],
-        improvement_of=parent.id,
-        thread_id=parent.thread_id or parent.id,
-        thread_key=new_req.thread_key or parent.thread_key,
-        summary=f"既往卡 {parent.id} 的后续：{summary}",
+        summary=_follow_up_summary(parent, new_req, note),
         # §37: the candidate's LLM display title carries over (fresh card,
         # no user pin / former names inherited)
         display_title=new_req.display_title,
         notes=(f"[radar] {note}" if note else ""),
+        **_inherited_fields(parent, new_req),
+        **_lineage_fields(parent, new_req),
     )
     _stamp_origin(child)               # §50：follow-up 子卡按自身 sources 盖章
-    return "follow_up", upsert(child)
+    return upsert(child)
 
 
 def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = False,
@@ -1853,91 +1792,143 @@ def merge_or_new_with_kind(
     """
     if isinstance(new_req, dict):
         new_req = Requirement.from_dict(new_req)
-    # Derive the strong thread_key from the primary source when the caller
-    # (a radar) did not set it — keeps A self-sufficient before B lands.
-    if not new_req.thread_key and new_req.sources:
-        new_req.thread_key = derive_thread_key(new_req.sources[0])
-
-    existing = load_all()
-
-    def matchable(r: Requirement) -> bool:
-        # Never match: legacy merged_into:<id>, rejected, trashed, ARCHIVED
-        # (决策 6 / 归档语义). MERGED (契约 四) DOES match — treated like delivered.
-        return not (r.is_merged or r.status in (
-            State.REJECTED.value, State.TRASHED.value, State.ARCHIVED.value))
-
-    parent: Optional[Requirement] = None
-    same_task = False
-    if new_req.thread_key:
-        parent = next((r for r in existing
-                       if matchable(r) and r.thread_key == new_req.thread_key), None)
-        # thread_key alone is a GROUPING key, not a same-task signal: only a
-        # title match on top of it means the same task (else = different matter).
-        same_task = bool(parent and _same_source_and_title(parent, new_req))
-    if parent is None:
-        parent = next((r for r in existing
-                       if matchable(r) and _same_source_and_title(r, new_req)), None)
-        same_task = parent is not None                # a title match IS same-task
-
+    _ensure_thread_key(new_req)
+    parent, same_task = _match_parent(load_all(), new_req)
     if parent is not None:
         if is_resolved(parent):
             # is_resolved MUST be decided here (before _carries_increment).
-            # cap_detected 必须跟进：§45 LIMITED 的 new_proposal 命中完结卡标题
-            # 时走的就是这条内部 re-raise/follow-up——没有它，LIMITED 的天花板
-            # 会被这条路径穿透（P1-2b，正好复活 R-020/R-093 回声环）。
-            kind, res = reraise_or_followup(
-                parent, new_req, same_task=same_task,
-                sources=new_req.sources,
-                note=(new_req.summary or new_req.title),
-                cap_detected=cap_detected)
-            if res is not None:
-                return kind or "folded", res
+            outcome = _reconcile_resolved(parent, new_req, same_task, cap_detected)
+            if outcome is not None:
+                return outcome
             # dead-end (canonical trashed/rejected/archived) -> fresh card below
         else:
-            parent.thread_id = parent.thread_id or parent.id
-            if _carries_increment(parent, new_req):
-                child = Requirement(
-                    id=next_id(),
-                    title=new_req.title or parent.title,
-                    type=new_req.type or parent.type,
-                    tier=new_req.tier or parent.tier,
-                    status=State.CARD_SENT.value if high_confidence else State.DETECTED.value,
-                    hardness=new_req.hardness or parent.hardness,
-                    deadline=new_req.deadline or parent.deadline,
-                    repeated_mentions=1,
-                    cost_estimate_usd=new_req.cost_estimate_usd,
-                    sources=list(new_req.sources or []),
-                    plan=new_req.plan or parent.plan,
-                    improvement_of=parent.id,
-                    thread_id=parent.thread_id or parent.id,
-                    thread_key=new_req.thread_key or parent.thread_key,
-                    # §37: keep the candidate's LLM display title on the
-                    # increment child (fresh card, no pin/former inherited)
-                    display_title=new_req.display_title,
-                    notes=new_req.notes or "",
-                )
-                _stamp_origin(child)   # §50：增量子卡按自身 sources 盖章
-                return "proposed", upsert(child)
-            # pure restatement -> merge sources, bump count, keep status
-            merged, added = dedupe_sources(parent.sources or [], new_req.sources or [])
-            parent.sources = merged
-            if added:
-                parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
-            # 盖章刷新（amendments M1.a）：fold 并入新来源后章会过期——最小
-            # 信任者定卡（手打卡被 slack/gmail 来源并入即降 external）。铸卡
-            # 与 fold 都走这个漏斗，章集中在这里盖：调度侧仍每次从 sources
-            # 现算，章只服务投影/审计。
-            _stamp_origin(parent)
-            return "folded", upsert(parent)
+            return _reconcile_open(parent, new_req, high_confidence)
+    return "proposed", _file_new(new_req, high_confidence)
 
-    # brand new — self-root the thread on its own id
+
+def _ensure_thread_key(new_req: Requirement) -> None:
+    """Derive the strong thread_key from the primary source when the caller
+    (a radar) did not set it — keeps A self-sufficient before B lands."""
+    if not new_req.thread_key and new_req.sources:
+        new_req.thread_key = derive_thread_key(new_req.sources[0])
+
+
+def _matchable(r: Requirement) -> bool:
+    """Never match: legacy merged_into:<id>, rejected, trashed, ARCHIVED
+    (决策 6 / 归档语义). MERGED (契约 四) DOES match — treated like delivered."""
+    return not (r.is_merged or r.status in (
+        State.REJECTED.value, State.TRASHED.value, State.ARCHIVED.value))
+
+
+def _match_by_thread(existing: list, new_req: Requirement) -> tuple:
+    """(parent, same_task) via the STRONG external thread_key; (None, False)
+    without one. thread_key alone is a GROUPING key, not a same-task signal:
+    only a title match on top of it means the same task (else = different
+    matter)."""
+    if not new_req.thread_key:
+        return None, False
+    parent = next((r for r in existing
+                   if _matchable(r) and r.thread_key == new_req.thread_key), None)
+    return parent, bool(parent and _same_source_and_title(parent, new_req))
+
+
+def _match_by_title(existing: list, new_req: Requirement) -> tuple:
+    """(parent, same_task) via the legacy title heuristic — a title match IS
+    same-task."""
+    parent = next((r for r in existing
+                   if _matchable(r) and _same_source_and_title(r, new_req)), None)
+    return parent, parent is not None
+
+
+def _match_parent(existing: list, new_req: Requirement) -> tuple:
+    """Parent selection (v0.20.0 §3.4): a STRONG external ``thread_key`` match
+    wins first, then the legacy title heuristic."""
+    parent, same_task = _match_by_thread(existing, new_req)
+    if parent is None:
+        parent, same_task = _match_by_title(existing, new_req)
+    return parent, same_task
+
+
+def _reconcile_resolved(parent: Requirement, new_req: Requirement, same_task: bool,
+                        cap_detected: bool) -> Optional[tuple]:
+    """Delegate a hit on a RESOLVED parent to :func:`reraise_or_followup`;
+    None = canonical dead-end (the caller files a fresh card).
+
+    cap_detected 必须跟进：§45 LIMITED 的 new_proposal 命中完结卡标题
+    时走的就是这条内部 re-raise/follow-up——没有它，LIMITED 的天花板
+    会被这条路径穿透（P1-2b，正好复活 R-020/R-093 回声环）。"""
+    kind, res = reraise_or_followup(
+        parent, new_req, same_task=same_task,
+        sources=new_req.sources,
+        note=(new_req.summary or new_req.title),
+        cap_detected=cap_detected)
+    if res is None:
+        return None
+    return kind or "folded", res
+
+
+def _increment_fields(parent: Requirement, new_req: Requirement) -> dict:
+    """title / hardness / deadline / plan: the candidate's own, else the parent's."""
+    return {"title": new_req.title or parent.title,
+            "hardness": new_req.hardness or parent.hardness,
+            "deadline": new_req.deadline or parent.deadline,
+            "plan": new_req.plan or parent.plan}
+
+
+def _increment_child(parent: Requirement, new_req: Requirement,
+                     high_confidence: bool) -> Requirement:
+    """An ``improvement_of`` child under an OPEN parent that carries an increment."""
+    child = Requirement(
+        id=next_id(),
+        status=State.CARD_SENT.value if high_confidence else State.DETECTED.value,
+        repeated_mentions=1,
+        cost_estimate_usd=new_req.cost_estimate_usd,
+        sources=list(new_req.sources or []),
+        # §37: keep the candidate's LLM display title on the
+        # increment child (fresh card, no pin/former inherited)
+        display_title=new_req.display_title,
+        notes=new_req.notes or "",
+        **_increment_fields(parent, new_req),
+        **_inherited_fields(parent, new_req),
+        **_lineage_fields(parent, new_req),
+    )
+    _stamp_origin(child)   # §50：增量子卡按自身 sources 盖章
+    return child
+
+
+def _reconcile_open(parent: Requirement, new_req: Requirement,
+                    high_confidence: bool) -> tuple[str, Requirement]:
+    """Open parents keep the increment-child / restatement-bump behavior
+    (never pulled back)."""
+    parent.thread_id = parent.thread_id or parent.id
+    if _carries_increment(parent, new_req):
+        return "proposed", upsert(_increment_child(parent, new_req, high_confidence))
+    # pure restatement -> merge sources, bump count, keep status.
+    # 盖章刷新（amendments M1.a）：fold 并入新来源后章会过期——最小
+    # 信任者定卡（手打卡被 slack/gmail 来源并入即降 external）。铸卡
+    # 与 fold 都走这个漏斗，章集中在这里盖：调度侧仍每次从 sources
+    # 现算，章只服务投影/审计。
+    _absorb_sources(parent, new_req.sources)
+    return "folded", upsert(parent)
+
+
+def _needs_birth_status(new_req: Requirement) -> bool:
+    return not new_req.status or new_req.status == State.DETECTED.value
+
+
+def _brand_new_status(new_req: Requirement, high_confidence: bool) -> str:
+    """card_sent when high-confidence + a hard deadline, else detected."""
+    if high_confidence and new_req.hardness == "hard" and new_req.deadline:
+        return State.CARD_SENT.value
+    return State.DETECTED.value
+
+
+def _file_new(new_req: Requirement, high_confidence: bool) -> Requirement:
+    """brand new — self-root the thread on its own id"""
     new_req.id = new_req.id or next_id()
     new_req.thread_id = new_req.thread_id or new_req.id
     _stamp_origin(new_req)             # §50：铸卡即盖出身信任章
-    if not new_req.status or new_req.status == State.DETECTED.value:
-        if high_confidence and new_req.hardness == "hard" and new_req.deadline:
-            new_req.status = State.CARD_SENT.value
-        else:
-            new_req.status = State.DETECTED.value
+    if _needs_birth_status(new_req):
+        new_req.status = _brand_new_status(new_req, high_confidence)
     new_req.repeated_mentions = int(new_req.repeated_mentions or 1)
-    return "proposed", upsert(new_req)
+    return upsert(new_req)

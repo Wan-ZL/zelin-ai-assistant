@@ -14,6 +14,19 @@
 - GitHub 面经 `gh` CLI 读（argv 列表，无 shell），注入缝 ``gh(args) -> str|None``；
   没装 gh / 未登录 / 超时 = 该输入不可用，循环照跑。D18：非 owner 作者的 issue
   只出摘要行（``Summary``），owner 在 issue 评论里回「do it」才升格为提案。
+- **owner 的 tracker 分诊标签先于一切**（§70.3 ⑩ 追记，2026-09-05）：带
+  `EXCLUDED_ISSUE_LABELS` 任一标签（逐字、区分大小写）的开放 issue 永不成提案——
+  owner 在 docs/design/vnext2-plan.md §5.1 已经把它们分到「素材库想法 / 等 owner /
+  不修 / 随 Mac 退役……」；PR #213 判例：#23 带 `素材库-idea` 仍被铸卡。这类 issue
+  只出 ``Summary``（kind `issue_parked`），不花「do it」额度。
+- **两类信号（D33，2026-09-04）**：`CARD_KINDS`（GitHub 面 + owner 亲手放的素材）
+  照旧铸卡；`ADVISORY_KINDS`（自检类——派发卡死 / 日志刷屏 / doctor 红灯……）
+  只转成 ``Summary`` 落 `state/daily_loop.json` 的 `last_result.advisories`、审计行与
+  看板横幅（不进 §17 digest），**不铸可派发的卡**：这一周 15 张循环卡里 9 张是同一
+  根因（launchd 起的 claude 没有完全磁盘访问）的症状，代码改不了，循环也分不清
+  「owner 要点一下授权」与「代码有 bug」。铸卡是**白名单**：kind 不在 CARD_KINDS
+  的一律 advisory（没归类的新 kind 默认走便宜的那条路）；doctor 判 `owner_action`
+  的行（§25 `failures.OWNER_ACTION`）不论 kind 一律 advisory（belt and braces）。
 """
 from __future__ import annotations
 
@@ -38,6 +51,12 @@ DEFAULT_REPO = "Wan-ZL/zelin-ai-assistant"
 MUTATION_ISSUE_TITLE = "Nightly mutation report"   # scripts/qa/mutation_issue.py DEFAULT_TITLE
 DO_IT_RE = re.compile(r"\bdo it\b", re.IGNORECASE)
 AGENT_MARKERS = ("🤖", "Generated with Claude", "Co-Authored-By: Claude")
+# owner 在 tracker 上分诊过的 issue 不是待办（truth = 本元组；CONTRACT §70.3 ⑩ 追记）：
+# 标签名逐字、区分大小写匹配 `gh issue list --json labels` 的 `labels[].name`。
+# 词表来自 docs/design/vnext2-plan.md §5.5 的七枚 label（去掉可铸卡的 loop-seed /
+# owner-decided）+ GitHub 默认的三枚「不做」标签。
+EXCLUDED_ISSUE_LABELS = ("素材库-idea", "needs-owner", "wontfix", "invalid", "duplicate",
+                         "decision-needed", "proposal", "mac-retire")
 
 GH_TIMEOUT_S = 25
 GH_LIST_LIMIT = 100
@@ -89,10 +108,37 @@ class Signal:
 
 @dataclass
 class Summary:
-    """D18 摘要行（非 owner 的 issue）：只进运行日志，不铸卡。"""
+    """不铸卡的一行：D18 摘要（非 owner 的 issue）只进运行日志；D33 advisory
+    （自检类信号）还进 `last_result.advisories` 与看板横幅。``fingerprint`` 只有
+    advisory 带（= 原 Signal 的指纹，跨天认「同一条」以记 first_seen）。"""
     kind: str
     text: str
     ref: str = ""
+    fingerprint: str = ""
+
+
+# D33 两类信号（truth = 本文件；判例 tests/test_daily_loop_proposals.py 走 AST 钉住
+# 每个 Signal 构造点的 kind 都归在其中一类）。CARD_KINDS 铸提案卡进审批闸门；
+# ADVISORY_KINDS 只出 Summary——它们说的是「环境 / 运行状态不对」，多半要 owner
+# 亲手做点什么（授权、装依赖），不是一张能派给 agent 的活。
+CARD_KINDS = ("issue", "pr_red", "pr_comment", "mutation", "material")
+ADVISORY_KINDS = ("stuck_dispatch", "unclassified_failure", "event_anomaly", "radar_give_up",
+                  "write_storm", "log_loop", "install_step_fail", "launchd_fault", "doctor_fail")
+ADVISORY_TEXT_CAP = 300
+
+
+def is_advisory(sig: Signal) -> bool:
+    """D33：kind 不在 CARD_KINDS（铸卡是白名单——ADVISORY_KINDS 里的，以及日后没归类的
+    新 kind，都走这条），或 ref 是 §25 owner_action 类的 failure_id（doctor 行把
+    failure_id 放在 ref）——后者不论 kind 都不铸卡，修法是 owner 亲手点一次授权，
+    代码改不了。"""
+    return sig.kind not in CARD_KINDS or failures.row_class(sig.ref) == failures.OWNER_ACTION
+
+
+def as_advisory(sig: Signal) -> Summary:
+    """Signal → 一行 advisory（标题 — 一句说明；证据不进——横幅只要知道「哪里不对」）。"""
+    return Summary(kind=sig.kind, text=_clip(f"{sig.title} — {sig.summary}", ADVISORY_TEXT_CAP),
+                   ref=sig.ref, fingerprint=sig.fingerprint)
 
 
 def _hash(text: str) -> str:
@@ -536,6 +582,36 @@ def _issue_summary(issue: dict) -> Summary:
                    ref=str(issue.get("url") or ""))
 
 
+PARKED_SUMMARY_KIND = "issue_parked"
+
+
+def _issue_parked_summary(issue: dict, label: str) -> Summary:
+    n = issue.get("number")
+    return Summary(kind=PARKED_SUMMARY_KIND,
+                   text=f"issue #{n}：{_clip(issue.get('title'), 80)} — 带标签「{label}」，owner 已在 "
+                        f"tracker 上分诊过，不铸卡（§70.3 ⑩）；去掉标签即进入下一轮提案。",
+                   ref=str(issue.get("url") or ""))
+
+
+def _label_names(issue: dict) -> list:
+    """`labels[].name`（gh 的 `[{id, name, description, color}]`；裸字符串也认）。"""
+    out = []
+    for lab in _as_list(issue.get("labels")):
+        name = lab.get("name") if isinstance(lab, dict) else lab
+        if isinstance(name, str) and name:
+            out.append(name)
+    return out
+
+
+def parked_label(issue: dict) -> Optional[str]:
+    """issue 上第一个命中 EXCLUDED_ISSUE_LABELS 的标签名（逐字、区分大小写）；没有 → None。
+    命中 = owner 在 tracker 上已分诊为「不是待办」，先于作者 / 「do it」判定。"""
+    for name in _label_names(issue):
+        if name in EXCLUDED_ISSUE_LABELS:
+            return name
+    return None
+
+
 def _is_do_it(c) -> bool:
     if not isinstance(c, dict) or not is_owner(c.get("author")):
         return False
@@ -549,8 +625,10 @@ def _owner_said_do_it(gh: Callable, repo: str, number) -> bool:
 
 
 def issue_signals(gh: Callable, repo: str = DEFAULT_REPO) -> "tuple[list, list, list]":
-    """开放 issue → (signals, summaries, titles)。owner 作者直接成提案；他人
-    作者只出摘要，除非 owner 评论里有「do it」（最多查 MAX_ISSUE_DETAIL 张）。"""
+    """开放 issue → (signals, summaries, titles)。带 EXCLUDED_ISSUE_LABELS 标签的先出
+    摘要（`issue_parked`，不铸卡）；其余 owner 作者直接成提案；他人作者只出摘要，
+    除非 owner 评论里有「do it」（最多查 MAX_ISSUE_DETAIL 张）。titles 含全部非
+    机器人 issue（parked 的也在——它仍开着，`gh_title` 同题去重不变）。"""
     rows = _gh_json(gh, ["issue", "list", "-R", repo, "--state", "open", "--limit",
                          str(GH_LIST_LIMIT), "--json", "number,title,author,body,url,labels"])
     if not isinstance(rows, list):
@@ -567,7 +645,8 @@ def _titles(rows: list) -> list:
 
 
 class _IssueRouter:
-    """D18 分流：owner 作者 → 提案；他人作者 → 摘要，除非 owner 评论「do it」
+    """分流：带分诊标签（`parked_label`）→ `issue_parked` 摘要，先于一切、不花额度；
+    再按 D18：owner 作者 → 提案；他人作者 → 摘要，除非 owner 评论「do it」
     （每轮最多查 MAX_ISSUE_DETAIL 张的评论）。"""
 
     def __init__(self, gh: Callable, repo: str) -> None:
@@ -585,10 +664,18 @@ class _IssueRouter:
         return _owner_said_do_it(self.gh, self.repo, issue.get("number"))
 
     def route(self, issue: dict) -> None:
-        if self._authorized(issue):
+        label = parked_label(issue)
+        if label is not None:
+            self.summaries.append(_issue_parked_summary(issue, label))
+        elif self._authorized(issue):
             self.signals.append(_issue_signal(issue))
         else:
             self.summaries.append(_issue_summary(issue))
+
+
+def parked_count(summaries: Iterable[Summary]) -> int:
+    """本轮因分诊标签而没铸卡的 issue 数——进审计行 `skipped.label_parked`（add-only）。"""
+    return sum(1 for s in summaries if getattr(s, "kind", None) == PARKED_SUMMARY_KIND)
 
 
 def _is_report_issue(issue: dict) -> bool:
@@ -597,22 +684,88 @@ def _is_report_issue(issue: dict) -> bool:
         issue.get("author")).endswith("[bot]")
 
 
-def _ci_red(pr: dict) -> bool:
+# 「红」的词表 = gh `pr checks` 的 bucket `fail` ∪ `cancel`（cli/cli aggregate.go）。
+# CANCELLED 算红：`timeout-minutes`（§56.6）杀掉的 job 记作 cancelled（annotation
+# "The job has exceeded the maximum execution time"），正是本仓库要修的挂死；head
+# SHA 的 rollup 只留每个名字最新一次尝试，concurrency 取消的是上一个 commit 的
+# run，不会出现在这里。
+RED_STATES = ("FAILURE", "TIMED_OUT", "CANCELLED", "ERROR", "ACTION_REQUIRED")
+RED_BUCKETS = ("fail", "cancel")
+RULESET_BRANCH = "main"   # required set 的真源分支（ruleset 只挂在默认分支上）
+
+
+def _check_name(c: dict) -> str:
+    return str(c.get("name") or c.get("context") or "")
+
+
+def _check_state(c: dict) -> str:
+    # CheckRun（Actions job）带 conclusion；StatusContext（第三方 app）带 state
+    return str(c.get("conclusion") or c.get("state") or "").upper()
+
+
+def _red_rollup_names(pr: dict) -> list:
+    """rollup 里红的 check 名（排序去重，含 informational job）。"""
     rollup = pr.get("statusCheckRollup")
     checks = rollup if isinstance(rollup, list) else []
-    return any(str(c.get("conclusion") or "").upper() in ("FAILURE", "TIMED_OUT", "CANCELLED")
-               for c in checks if isinstance(c, dict))
+    return sorted({_check_name(c) for c in checks
+                   if isinstance(c, dict) and _check_state(c) in RED_STATES})
 
 
-def _pr_red_signal(pr: dict) -> Signal:
+def _ci_red(pr: dict) -> bool:
+    """rollup 里有任何一个 check 红——只是预筛，要不要铸卡由
+    :func:`_red_required_checks` / :func:`_ruleset_required_names` 定。"""
+    return bool(_red_rollup_names(pr))
+
+
+def _red_required_checks(gh: Callable, repo: str, number: object) -> Optional[list]:
+    """required check 里 bucket ∈ RED_BUCKETS 的名字（排序去重）；拿不到 → None。
+
+    `statusCheckRollup` 不分 required 与 informational：`continue-on-error` 的
+    job（如 Web visual）在 rollup 里同样是 FAILURE，但 D5「必须绿」只指 required。
+    2026-09-04 判例：#193 只有 informational 红，被旧逻辑铸成 R-280。gh 经 GraphQL
+    `isRequired` 读 ruleset / 分支保护的 required set；`--json` 的 exporter 先于
+    退出码返回，check 失败时仍退出 0（cli/cli checks.go）；不认 `--json` 的旧 gh
+    用法错误退出 1、base 不在 ruleset 下（dev）的 PR「no required checks」退出 1
+    → None（后者由调用方退回 ruleset 名单）。"""
+    data = _gh_json(gh, ["pr", "checks", str(number), "-R", repo,
+                         "--required", "--json", "name,bucket"])
+    if not isinstance(data, list):
+        return None
+    return sorted({str(c.get("name")) for c in data
+                   if isinstance(c, dict) and c.get("bucket") in RED_BUCKETS})
+
+
+def _ruleset_required_names(gh: Callable, repo: str) -> Optional[list]:
+    """RULESET_BRANCH 的 ruleset 要求的 status check 名（`gh api
+    repos/<repo>/rules/branches/<b>` 里 `required_status_checks[].context`）；
+    拿不到 → None。base 不是 main 的 PR（dev）`--required` 查不出 required set，
+    用这份名单 ∩ rollup 红名代判——CI 对任何 base 的 PR 跑的是同一批 job。"""
+    rules = _gh_json(gh, ["api", f"repos/{repo}/rules/branches/{RULESET_BRANCH}"])
+    if not isinstance(rules, list):
+        return None
+    return sorted(set().union(*(_rule_contexts(r) for r in rules)))
+
+
+def _rule_contexts(rule) -> set:
+    """一条 ruleset 规则的 `required_status_checks[].context`；别的规则类型 → 空集。"""
+    if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+        return set()
+    params = rule.get("parameters")
+    checks = params.get("required_status_checks") if isinstance(params, dict) else None
+    return {str(c["context"]) for c in _as_list(checks) if isinstance(c, dict) and c.get("context")}
+
+
+def _pr_red_signal(pr: dict, red: list) -> Signal:
     n = pr.get("number")
+    names = ", ".join(red)
     return Signal(
         kind="pr_red", fingerprint=f"pr_red:{n}",
         title=f"修红 CI：PR #{n} {_clip(pr.get('title'), 60)}",
-        summary="开放 PR 的必需检查有红——红的是臣子自己的事，皇上只看绿的（D5/D12）。",
-        plan=[f"gh pr checks {n} 找红的 job，gh run view --log-failed 看根因",
-              f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到全绿"],
-        dod=[f"PR #{n} required checks 全绿"], cost_usd=2.0,
+        summary=f"开放 PR 的 required check 有红（{names}）——红的是臣子自己的事，"
+                "皇上只看绿的（D5/D12）。informational job 的红不算。",
+        plan=[f"gh pr checks {n} 看红的 job（{names}），gh run view --log-failed 看根因",
+              f"在分支 {pr.get('headRefName')} 上最小修复、提交、推送", "轮询到 required 全绿"],
+        dod=[f"PR #{n} required checks 全绿：{names}"], cost_usd=2.0,
         ref=str(pr.get("url") or ""), priority=5)
 
 
@@ -680,29 +833,47 @@ def _comment_key(c: dict, body: str) -> str:
 
 def pr_signals(gh: Callable, repo: str = DEFAULT_REPO,
                since: Optional[_dt.datetime] = None) -> "tuple[list, list]":
-    """开放 PR → (signals, titles)：红 CI 一条/PR，owner 新评论一条/评论。
+    """开放 PR → (signals, titles)：红 required check 一条/PR，owner 新评论一条/评论。
     每张 PR 一次 `gh pr view --json comments,reviews,statusCheckRollup`
-    （最多 MAX_PR_DETAIL 张）。"""
+    （最多 MAX_PR_DETAIL 张）；rollup 有红的再加一次 `gh pr checks --required`；
+    `--required` 查不出的（base 不在 ruleset 下）整轮最多再查一次 ruleset。"""
     rows = _gh_json(gh, ["pr", "list", "-R", repo, "--state", "open", "--limit",
                          str(GH_LIST_LIMIT), "--json", "number,title,author,url,headRefName,isDraft"])
     if not isinstance(rows, list):
         return [], []
     prs = [r for r in rows if isinstance(r, dict)]
     signals: list = []
+    ruleset: dict = {}       # 一轮一次的 memo：{"names": list | None}
     for pr in prs[:MAX_PR_DETAIL]:
-        signals.extend(_pr_detail_signals(gh, repo, pr, since))
+        signals.extend(_pr_detail_signals(gh, repo, pr, since, ruleset))
     return signals, _titles(prs)
 
 
-def _pr_detail_signals(gh, repo, pr, since) -> list:
+def _pr_detail_signals(gh, repo, pr, since, ruleset: Optional[dict] = None) -> list:
     detail = _gh_json(gh, ["pr", "view", str(pr.get("number")), "-R", repo,
                            "--json", "comments,reviews,statusCheckRollup"])
     if not isinstance(detail, dict):
         return []
     merged = dict(pr, **detail)
     comments = _as_list(detail.get("comments")) + _as_list(detail.get("reviews"))
-    out = [_pr_red_signal(merged)] if _ci_red(merged) else []
+    out = []
+    if _ci_red(merged):                      # 预筛过了才多花一次 gh 问 required 集合
+        red = _red_required_checks(gh, repo, pr.get("number"))
+        if red is None:                      # base 不在 ruleset 下 / gh 抽风 → ruleset 名单代判
+            red = _required_by_ruleset(gh, repo, merged, ruleset if ruleset is not None else {})
+        if red:
+            out.append(_pr_red_signal(merged, red))
     return out + _comment_signals(merged, comments, since)
+
+
+def _required_by_ruleset(gh, repo, pr: dict, memo: dict) -> Optional[list]:
+    """rollup 红名 ∩ RULESET_BRANCH 的 required 名单；名单拿不到 → None（不铸）。"""
+    if "names" not in memo:
+        memo["names"] = _ruleset_required_names(gh, repo)
+    names = memo["names"]
+    if names is None:
+        return None
+    return sorted(set(_red_rollup_names(pr)) & set(names))
 
 
 # --------------------------------------------------------------------------- #

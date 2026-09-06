@@ -6,8 +6,6 @@
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
 import type {
   AboutInfo,
-  AskAnswer,
-  AskHistory,
   AiFixReceipt,
   Board,
   CardDetail,
@@ -18,6 +16,9 @@ import type {
   ClaudeSessionsScan,
   DiagnosticsSnapshot,
   DoctorReport,
+  FailureCatalog,
+  IngestJob,
+  IngestJobStart,
   DailyLoopPatch,
   DailyLoopSettings,
   FolderReceipt,
@@ -37,9 +38,16 @@ import type {
   RepairReceipt,
   SecretStatus,
   SecretVerifyResult,
+  SlackDirectory,
+  SyncDisableReceipt,
+  SyncPairReceipt,
+  SyncStatus,
+  VoiceProfileStatus,
   SecretsStatus,
+  SeedDashboardReceipt,
   SettingsCatalog,
   SettingsSection,
+  SetupEngine,
   SetupReceipt,
   SetupSnapshot,
   TerminalReceipt,
@@ -143,7 +151,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     body = (await response.json()) as T & ApiErrorBody;
   } catch (error) {
     if ((error as Error).name === "AbortError") throw error;
-    body = {} as T & ApiErrorBody;
+    if (response.ok) {
+      // 2xx 却解不出 JSON（/api/board 原样透传的 dashboard.json 写了一半、代理页……）：不许当 `{}` 放行——空对象
+      // 一路进 store 会让看板渲染崩（`board.needs_approval` 取不到）。按读失败上报，调用方留旧快照
+      //（原生 Store.swift:320-324 decode 失败分支）；status 带真值（2xx），store 据此与断网（status 0）分开
+      throw new ApiError(response.status, {
+        error: {
+          code: "READ_FAILED",
+          message: apiText(
+            `服务端响应不是合法 JSON（${response.status}）`,
+            `The server response is not valid JSON (${response.status})`,
+          ),
+          details: { method, failure: "invalid-json" },
+        },
+      });
+    }
+    body = {} as T & ApiErrorBody; // 非 2xx 的非 JSON 体：ApiError 用通用文案（REQUEST_FAILED）
   }
   if (!response.ok) throw new ApiError(response.status, body);
   return body;
@@ -342,11 +365,12 @@ export function putSecret(name: string, value: string): Promise<SecretStatus> {
   });
 }
 
-/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id） */
-export function verifySecret(name: string): Promise<SecretVerifyResult> {
+/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id）。
+ *  带 value = 粘贴即验证（§68.3；只探这个值、不落盘——向导「先验后存」用） */
+export function verifySecret(name: string, value?: string): Promise<SecretVerifyResult> {
   return request<SecretVerifyResult>(`/api/secrets/${encodeURIComponent(name)}/verify`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(value === undefined ? {} : { value }),
   });
 }
 
@@ -355,16 +379,21 @@ export function fetchPermissions(refresh = false, signal?: AbortSignal): Promise
   return request<PermissionsSnapshot>(`/api/permissions${refresh ? "?refresh=1" : ""}`, { signal });
 }
 
-/** GET /api/diagnostics — doctor + health + deploy_state + install_report + 日志清单 */
-export function fetchDiagnostics(refresh = false, signal?: AbortSignal): Promise<DiagnosticsSnapshot> {
-  return request<DiagnosticsSnapshot>(`/api/diagnostics${refresh ? "?refresh=1" : ""}`, { signal });
+/** GET /api/diagnostics — doctor + health + deploy_state + install_report + 日志清单；lang = 当前 UI 语言（doctor 人话随之，§68.4 追记） */
+export function fetchDiagnostics(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<DiagnosticsSnapshot> {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  if (lang) params.set("lang", lang);
+  const query = params.toString();
+  return request<DiagnosticsSnapshot>(`/api/diagnostics${query ? `?${query}` : ""}`, { signal });
 }
 
-/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token） */
-export function fetchDoctor(fast = true, refresh = false, signal?: AbortSignal): Promise<DoctorReport> {
+/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token）；lang 同上（原生 runFullOutput 的 AIASSISTANT_UI_LANG） */
+export function fetchDoctor(fast = true, refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<DoctorReport> {
   const params = new URLSearchParams();
   if (!fast) params.set("fast", "0");
   if (refresh) params.set("refresh", "1");
+  if (lang) params.set("lang", lang);
   const query = params.toString();
   return request<DoctorReport>(`/api/doctor${query ? `?${query}` : ""}`, { signal });
 }
@@ -384,6 +413,30 @@ export function postSetupStep(step: "config-from-example" | "complete" | "reset"
   return request<SetupReceipt>(`/api/setup/${step}`, { method: "POST", body: JSON.stringify({}) });
 }
 
+/** GET /api/setup/engine — AI 引擎检测（claude CLI + 认证梯子；原生 EngineDetector） */
+export function fetchSetupEngine(signal?: AbortSignal): Promise<SetupEngine> {
+  return request<SetupEngine>("/api/setup/engine", { signal });
+}
+
+/** POST /api/setup/seed-dashboard — 首次数据「立即生成一次」（python -m act.lib.dashboard） */
+export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
+  return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
+}
+
+export type RevealTarget = "config" | "skill" | "voice_profile" | "mcp_user" | "mcp_project";
+export type RevealMode = "reveal" | "open";
+
+/** POST /api/reveal {target[, name][, mode]} — 访达定位 server 词表里的文件（config = config.yaml / 模板，§68.4「显示文件」；
+ *  skill + name = 该 skill 的 SKILL.md，§67.5「在 Finder 显示」；mcp_user / mcp_project = 该作用域的 MCP 配置文件，§68.9——
+ *  客户端只传词与名，路径 server 推导）。add-only mode（缺省 reveal）：voice_profile 的「打开档案」传 "open"（默认编辑器打开，
+ *  原生 NSWorkspace.open，§68.1 追记 (b)）；其它 target 传 open 会被 server 400。缺省时不发该键（零多余字段）。 */
+export function postRevealTarget(target: RevealTarget, name?: string, mode?: RevealMode): Promise<unknown> {
+  const body: Record<string, string> = { target };
+  if (name !== undefined) body.name = name;
+  if (mode !== undefined) body.mode = mode;
+  return request("/api/reveal", { method: "POST", body: JSON.stringify(body) });
+}
+
 /** GET /api/about — 版本 / 路径 / 更新状态 */
 export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
   return request<AboutInfo>("/api/about", { signal });
@@ -392,6 +445,31 @@ export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
 /** POST /api/update/check — §26 手动「立即检查」 */
 export function postUpdateCheck(): Promise<UpdateCheckResult> {
   return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/update/install — 关于页「新版本 v… 可用 — 一键更新」：提前 kickstart §56 自动部署 agent（未加载 → 409） */
+export function postUpdateInstall(): Promise<RepairReceipt> {
+  return request<RepairReceipt>("/api/update/install", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/ingest/export — 录制页「立即导出」= bash ingest/screenpipe-export.sh（后台跑，回 job id） */
+export function postIngestExport(): Promise<IngestJobStart> {
+  return request<IngestJobStart>("/api/ingest/export", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/ingest/run — 录制页「立即 ingest」= SCREENPIPE_NO_WAIT=1 bash ingest/process-screenpipe.sh（exit 3 = 持锁跳过） */
+export function postIngestRun(): Promise<IngestJobStart> {
+  return request<IngestJobStart>("/api/ingest/run", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/ingest/jobs/{id} — 手动触发的进度：running → done（回执五键） */
+export function fetchIngestJob(id: string, signal?: AbortSignal): Promise<IngestJob> {
+  return request<IngestJob>(`/api/ingest/jobs/${encodeURIComponent(id)}`, { signal });
+}
+
+/** GET /api/failures — §25 失败目录（原生 FailureCatalog.message 的 server-owned 双语句） */
+export function fetchFailures(signal?: AbortSignal): Promise<FailureCatalog> {
+  return request<FailureCatalog>("/api/failures", { signal });
 }
 
 /** GET /api/mcp — MCP servers 两作用域（只读、已掩码） */
@@ -414,19 +492,39 @@ export function postRepairActd(): Promise<RepairReceipt> {
   return request<RepairReceipt>("/api/repair/actd", { method: "POST", body: JSON.stringify({}) });
 }
 
-/** GET /api/ask/history — 问问助手最近的问答（只读，§27） */
-export function fetchAskHistory(signal?: AbortSignal): Promise<AskHistory> {
-  return request<AskHistory>("/api/ask/history", { signal });
-}
-
-/** POST /api/ask — 一问一答（server 子进程 act.ask，最多 ~75 s；§27） */
-export function postAsk(question: string, signal?: AbortSignal): Promise<AskAnswer> {
-  return request<AskAnswer>("/api/ask", { method: "POST", body: JSON.stringify({ question }), signal });
-}
-
 /** GET /api/slack/manifest — repo 的 Slack App Manifest 原文（Slack 接入区「复制 App Manifest」） */
 export function fetchSlackManifest(signal?: AbortSignal): Promise<{ manifest: string; path: string }> {
   return request<{ manifest: string; path: string }>("/api/slack/manifest", { signal });
+}
+
+/** GET /api/sync — 同步 / 配对状态（开关 + 设备名 + 配对二维码 PNG） */
+export function fetchSync(signal?: AbortSignal): Promise<SyncStatus> {
+  return request<SyncStatus>("/api/sync", { signal });
+}
+
+/** POST /api/sync/pair {label?} — 起 act.syncd --pair --json（开启 / 重新生成 / 改名；幂等，同一 channel 同一码） */
+export function postSyncPair(label?: string): Promise<SyncPairReceipt> {
+  return request<SyncPairReceipt>("/api/sync/pair", { method: "POST", body: JSON.stringify(label ? { label } : {}) });
+}
+
+/** POST /api/sync/disable {} — act.syncd --disable（mode=off，密钥保留） */
+export function postSyncDisable(): Promise<SyncDisableReceipt> {
+  return request<SyncDisableReceipt>("/api/sync/disable", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/voice — 语气档案「当前生效」状态行（私有 / 出厂 / 无；开关） */
+export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileStatus> {
+  return request<VoiceProfileStatus>("/api/voice", { signal });
+}
+
+/** GET /api/slack/directory[?refresh=1][&lang=zh|en] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记）；
+ *  lang = 当前 UI 语言（ok:false 的双语 message 随之——原生 SettingsSlack.fetchDirectory 的 AIASSISTANT_UI_LANG） */
+export function fetchSlackDirectory(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<SlackDirectory> {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  if (lang) params.set("lang", lang);
+  const query = params.toString();
+  return request<SlackDirectory>(`/api/slack/directory${query ? `?${query}` : ""}`, { signal });
 }
 
 /** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 写 .command（cd repo && bash uninstall.sh）并 open（§68.6） */

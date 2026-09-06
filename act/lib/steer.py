@@ -131,6 +131,27 @@ def enqueue_steer(req, text, ts: Optional[str] = None,
     主循环，registry 单写者）负责 save。返回入队的 note dict；重复/垃圾
     返回 None（调用者据此 log noop）。
     """
+    body = _normalize_steer_text(text)
+    if body is None:
+        return None
+    stamp = _stamp_or_now(ts)
+    key = steer_key(body, stamp, stem)
+
+    ex = dict(req.execution or {})
+    pend = pending_steers(req)
+    if _is_duplicate(key, pend, ex):
+        return None                      # 重放（同 ts 同文）——去重，非新指令
+
+    note = {"class": STEER_CLASS, "text": body, "ts": stamp, "key": key}
+    _push_with_cap(req, pend, note)
+    ex["pending_steers"] = pend
+    _ring_append(ex, "steer_queued", stamp, TS_RING_CAP)
+    req.execution = ex
+    return note
+
+
+def _normalize_steer_text(text) -> Optional[str]:
+    """fail-closed 的指令正文：非 str / 空白 → None；超长截断保头部。"""
     if not isinstance(text, str):
         return None
     body = text.strip()
@@ -138,24 +159,25 @@ def enqueue_steer(req, text, ts: Optional[str] = None,
         return None
     if len(body) > MAX_STEER_CHARS:
         body = body[:MAX_STEER_CHARS]
-    stamp = ts if isinstance(ts, str) and ts.strip() else _iso_now()
-    key = steer_key(body, stamp, stem)
+    return body
 
-    ex = dict(req.execution or {})
-    pend = pending_steers(req)
-    if key in {n["key"] for n in pend} or key in _delivered_keys(ex):
-        return None                      # 重放（同 ts 同文）——去重，非新指令
 
-    note = {"class": STEER_CLASS, "text": body, "ts": stamp, "key": key}
+def _stamp_or_now(ts) -> str:
+    """inbox 自带的时间戳（非空 str）否则当前时刻。"""
+    return ts if isinstance(ts, str) and ts.strip() else _iso_now()
+
+
+def _is_duplicate(key: str, pend: list, ex: dict) -> bool:
+    """同键已在 pending 或已投递台账 = 重放。"""
+    return key in {n["key"] for n in pend} or key in _delivered_keys(ex)
+
+
+def _push_with_cap(req, pend: list, note: dict) -> None:
+    """追加入队；溢出时最老的挤出 + §39 式留痕（notes 是卡片的一部分，纯变异无 I/O）。"""
     pend.append(note)
-    # 溢出：最老的挤出 + §39 式留痕（notes 是卡片的一部分，纯变异无 I/O）
     while len(pend) > PENDING_CAP:
         evicted = pend.pop(0)
         _append_trace(req, evicted, "队列已满，被更新的指令挤出")
-    ex["pending_steers"] = pend
-    _ring_append(ex, "steer_queued", stamp, TS_RING_CAP)
-    req.execution = ex
-    return note
 
 
 def pending_steers(req) -> list:
@@ -165,18 +187,24 @@ def pending_steers(req) -> list:
     raw = ex.get("pending_steers")
     if not isinstance(raw, list):
         return []
-    out = []
-    for n in raw:
-        if not isinstance(n, dict):
-            continue
-        body = n.get("text")
-        if not isinstance(body, str) or not body.strip():
-            continue
-        stamp = str(n.get("ts") or "")
-        key = str(n.get("key") or "") or steer_key(body.strip(), stamp)
-        out.append({"class": STEER_CLASS, "text": body.strip(),
-                    "ts": stamp, "key": key})
-    return out
+    return [c for c in map(_clean_note, raw) if c is not None]
+
+
+def _clean_note(n) -> Optional[dict]:
+    """单条 pending 条目 → 可投递 note dict；脏条目（非 dict / 无文本）→ None。"""
+    if not isinstance(n, dict):
+        return None
+    body = n.get("text")
+    if not isinstance(body, str) or not body.strip():
+        return None
+    stamp = str(n.get("ts") or "")
+    return {"class": STEER_CLASS, "text": body.strip(), "ts": stamp,
+            "key": _note_key(n, body.strip(), stamp)}
+
+
+def _note_key(n: dict, body: str, stamp: str) -> str:
+    """条目自带的 key，缺失时按 ts|hash 双段形重建（无 stem 可用）。"""
+    return str(n.get("key") or "") or steer_key(body, stamp)
 
 
 # --------------------------------------------------------------------------- #
@@ -223,29 +251,47 @@ def mark_delivered(req, notes: list, delivered_at: Optional[str] = None) -> None
     ex = dict(req.execution or {})
     _remove_pending(req, ex, sent)
     # 旧台账保留（裸 key 历史条目按 C-3 容忍原样携带），本批同键条目剔除
-    old = ex.get("delivered_steers")
-    ledger = []
-    if isinstance(old, list):
-        for entry in old:
-            k = entry.get("key") if isinstance(entry, dict) else entry
-            if k and str(k) not in sent:
-                ledger.append(entry)
-    seen: set = set()
-    for n in notes:                       # 保送达顺序，批内同键去重
-        if n["key"] in seen:
-            continue
-        seen.add(n["key"])
-        ledger.append({
-            "key": n["key"],
-            "text": n["text"][:TRACE_CLIP],
-            "ts": n.get("ts") or "",
-            "delivered_at": now,
-        })
+    ledger = _surviving_ledger(ex.get("delivered_steers"), sent)
+    ledger += _delivered_rows(notes, now)
     ex["delivered_steers"] = ledger[-DELIVERED_LEDGER_CAP:]
     ex["steer_count"] = int(ex.get("steer_count", 0) or 0) + len(sent)
     ex["last_steer_at"] = now
     _ring_append(ex, "steer_delivered", now, TS_RING_CAP)
     req.execution = ex
+
+
+def _entry_key(entry):
+    """台账条目的 key：C-3 dict 条目取 ``key``，历史裸 key 条目即本身。"""
+    return entry.get("key") if isinstance(entry, dict) else entry
+
+
+def _surviving_ledger(old, sent: set) -> list:
+    """旧台账里不属于本批（且有 key）的条目，原样携带。"""
+    if not isinstance(old, list):
+        return []
+    out = []
+    for entry in old:
+        k = _entry_key(entry)
+        if k and str(k) not in sent:
+            out.append(entry)
+    return out
+
+
+def _delivered_rows(notes: list, now: str) -> list:
+    """本批送达条目（保送达顺序，批内同键去重；text 截 TRACE_CLIP）。"""
+    seen: set = set()
+    rows = []
+    for n in notes:
+        if n["key"] in seen:
+            continue
+        seen.add(n["key"])
+        rows.append({
+            "key": n["key"],
+            "text": n["text"][:TRACE_CLIP],
+            "ts": n.get("ts") or "",
+            "delivered_at": now,
+        })
+    return rows
 
 
 def record_attempt(req) -> int:
@@ -302,22 +348,26 @@ def delivered_entries(req) -> list:
     raw = ex.get("delivered_steers")
     if not isinstance(raw, list):
         return []
-    out = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        text, ts = entry.get("text"), entry.get("ts")
-        if not (isinstance(text, str) and text.strip() and
-                isinstance(ts, str) and ts.strip()):
-            continue
-        out.append({
-            "key": str(entry.get("key") or ""),
-            "text": text,
-            "ts": ts,
-            "delivered_at": (str(entry.get("delivered_at"))
-                             if entry.get("delivered_at") else None),
-        })
-    return out
+    return [row for row in map(_projectable, raw) if row is not None]
+
+
+def _has_text_and_ts(entry: dict) -> bool:
+    text, ts = entry.get("text"), entry.get("ts")
+    return bool(isinstance(text, str) and text.strip()
+                and isinstance(ts, str) and ts.strip())
+
+
+def _projectable(entry) -> Optional[dict]:
+    """C-3 dict 条目（带 text 与 ts）→ 投影行；裸 key / 脏条目 → None。"""
+    if not isinstance(entry, dict) or not _has_text_and_ts(entry):
+        return None
+    return {
+        "key": str(entry.get("key") or ""),
+        "text": entry["text"],
+        "ts": entry["ts"],
+        "delivered_at": (str(entry.get("delivered_at"))
+                         if entry.get("delivered_at") else None),
+    }
 
 
 def steer_status(req) -> dict:

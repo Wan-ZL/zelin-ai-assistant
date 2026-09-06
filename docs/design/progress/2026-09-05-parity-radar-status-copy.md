@@ -1,0 +1,9 @@
+pr: `fix/parity-radar-status-copy`（无版本 bump，版本由 tag 派生；行为对齐审计 radar-status 链第 1 批 `radar-status-copy`，gap `settings-skip-reason-vocabulary` + `settings-radar-no-runs-sentence`）
+phase: P4 余量（D3：web 看板是产品；原生 → web 行为对齐——非新 owner 决策，plan 决策表不加行）
+law: §48.7 追记（运行状态行五态 + skip_reason 词表全员；§14bis 的 web 落点）
+
+**两处丢失的原生行为**（源：`mac/Sources/SettingsGmail.swift` healthSummary / humanSkip、`SettingsSlack.swift` 同名）：① 原生 `guard model.healthHasData` 在 health 文件里还没有这一源的条目时说「还没有运行记录。等一轮（≤5 分钟）或点「立即测试一轮」。」（Slack ≤3）；web 的 `RunStatusLine` 把这一态和「投影里没有这一源」一起兜进「状态未知」——刚装好、还没跑第一轮的用户看到的是一句没有下一步的话。② 原生 humanSkip 给 `disabled` / `command_failed` / `command_bad_output`（§14bis 抓取命令的两种失败）/ `mcp_failed` 各一句人话；web 的 `skipReasonLabel` 词表漏了这四个，机器码原样上屏，而 `act/lib/radar_health.SKIP_REASON_CODES` 仍在产出它们、`dashboard.public_skip_reason` 原样放行。
+
+**修法**：`sourceHealth.tsx` 词表补四句（逐字镜像原生；`mcp_failed` 原生尾随错误摘录，但 §48.4 出机清洗已去尾，投影里没有、不搬）；`RunStatusLine` 新增第四态——开着且 `last_ok` / `skip_reason` / `last_attempt` 三者皆 null 时出「还没有运行记录」一句（`noRunsYetLabel`），「状态未知」只剩 `health === undefined`。N 不写死：`RadarAgentPanel` 把 `GET /api/radars` 的 `interval_s` 传给 `RunStatusLine`（与「已安装，每 N 分钟自动运行」同一个数，gmail 300 → 5、slack 180 → 3），launchd 还没回 / 问不到时省掉括号里的数字。§48.4 投影本就把「开着但没条目」写成全 null、与投影缺席可分辨，所以不改 server、wire 零变化。
+
+**判例**：新文件 `tests/test_skip_reason_vocabulary_mirror.py`（跨层：读 `sourceHealth.tsx` 的句表，与 `radar_health.SKIP_REASON_CODES` ∪ `public_skip_reason` 折叠码互为子集、每行 zh / en 非空且不同——Python 加码不加句即红；review 指出此前「全员」只靠 vitest 里一份手抄词表，Python 侧加码所有门照旧全绿）、`sourceHealth.test.tsx`（四句逐字、未知码原样、`noRunsYetLabel` 有 N / 无 N、RunStatusLine 五态 + 老 server 无 `last_attempt` 键也走「还没有运行记录」、HealthLine 同词表）、`RadarAgentPanel.noRunsSentence.test.tsx`（N 与「每 N 分钟」同源、检查中 / 问不到时省数字、投影缺席仍「状态未知」、落笔后换成死因 / 运行正常）。§66.2 判卷面 `report.*` 不变（原生这几句在 inventory 里是 `copy`，只列不判；`pending.txt` / `waivers.txt` 零改动）。

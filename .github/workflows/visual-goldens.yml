@@ -1,0 +1,133 @@
+# Refresh visual goldens — re-captures web/e2e/__screenshots__/ ON THE RUNNER
+# IMAGE THAT JUDGES THEM (CONTRACT §66.4 追记 2026-09-05).
+#
+# Why this exists: the informational CI job "Web visual (playwright)" (ci.yml
+# `web-visual`) compares Playwright screenshots against goldens committed in
+# web/e2e/__screenshots__/visual.spec.ts/. Every golden set so far was captured
+# on a developer / agent Mac and compared on `macos-latest`; the two rasterize
+# text differently (PingFang / Chromium build / hinting), so every CJK glyph
+# lights up in the diff at 1–3 % of pixels and the job has been red on main
+# since 2026-09-04 with zero UI change behind it. A golden is only meaningful
+# when the pixels come from the same image that will judge them — so goldens
+# are produced HERE, never on a laptop.
+#
+# What it does: checks out `ref` (default main), sets up node exactly like the
+# web-visual job (same pinned actions, same node major, same `npm ci` +
+# `npx playwright install chromium`, same PyYAML install, same `npm run build`),
+# runs the visual spec with `--update-snapshots=all`, then re-runs the plain
+# comparison once — the runner must reproduce its own goldens or the whole
+# scheme is noise (a red verify step is a real finding: runner nondeterminism,
+# not fonts). The PNGs are uploaded as artifact `visual-goldens`; a human (or
+# an agent) downloads them, copies them over web/e2e/__screenshots__/, and
+# opens a PR (CONTRIBUTING「Visual baselines」). The job deliberately does NOT
+# commit or open a PR itself: GITHUB_TOKEN-created PRs get no CI here.
+#
+# `runs-on` MUST stay byte-identical with ci.yml `web-visual` — when the label
+# moves (macos-latest → a new macOS major) both jobs move together and the
+# goldens need one refresh; that is the only legitimate "everything changed"
+# golden PR.
+#
+# On demand only (workflow_dispatch). Informational, never a required check.
+name: Refresh visual goldens
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to capture goldens from (branch, tag or sha)"
+        required: false
+        default: main
+        type: string
+
+# Read-only: the job never pushes, comments or opens PRs — the artifact is the
+# deliverable.
+permissions:
+  contents: read
+
+# One refresh at a time; a second dispatch queues (its artifact is a distinct
+# run's evidence — never cancel a capture halfway).
+concurrency:
+  group: visual-goldens
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh visual goldens (playwright)
+    # runs-on + every setup step mirror ci.yml `web-visual` — see header.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies + chromium
+        run: |
+          npm ci
+          npx playwright install chromium
+
+      - name: Install PyYAML (the demo server is the real python3 -m server)
+        # 运行时白名单内的依赖（§0 宪法第 7 条）；runner 的 python3 是 PEP 668 managed，两种装法都试。
+        run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
+        working-directory: .
+
+      - name: Build (the server serves web/dist)
+        run: npm run build
+
+      - name: Capture goldens (playwright --update-snapshots=all)
+        # e2e/demoServer.ts 种 demo 数据到临时 AIASSISTANT_HOME、随机端口起 python3 -m server。
+        # `all` 重写每一张（不是只改「变了」的）：整套 golden 都出自同一次 runner 渲染。
+        run: |
+          PYTHON="$(command -v python3)"
+          echo "python3 = $PYTHON ($("$PYTHON" --version 2>&1))"
+          "$PYTHON" -c "import yaml, sqlite3; print('pyyaml', yaml.__version__)"
+          PYTHON="$PYTHON" npx playwright test --config playwright.config.ts --update-snapshots=all
+
+      - name: Verify (the runner must reproduce its own goldens)
+        # 同一台 runner、同一构建、紧接着再比一次：红 = runner 自身不确定（不是字体），
+        # 这套 golden 不该被提交——diff 三件套跟着上传。
+        run: |
+          PYTHON="$(command -v python3)"
+          PYTHON="$PYTHON" npx playwright test --config playwright.config.ts
+
+      - name: Summary
+        if: always()
+        run: |
+          # GITHUB_SHA on a dispatch is the workflow's ref, not `inputs.ref` — read the checkout.
+          {
+            echo "### visual goldens (captured on \`${RUNNER_OS}\` \`${ImageOS:-?}\` / \`${ImageVersion:-?}\`, ref \`${REF}\` @ $(git rev-parse HEAD))"
+            echo
+            echo '```'
+            (cd e2e/__screenshots__ && find . -type f -name '*.png' | sort | xargs shasum -a 256)
+            echo '```'
+            echo
+            echo "Download artifact \`visual-goldens\`, copy into \`web/e2e/__screenshots__/\`, open a PR — CONTRIBUTING「Visual baselines」."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.ref }}
+
+      - name: Upload goldens
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: visual-goldens
+          path: web/e2e/__screenshots__/**
+          if-no-files-found: error
+
+      - name: Upload verify diffs + report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-visual
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore

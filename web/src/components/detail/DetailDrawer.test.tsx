@@ -1,9 +1,11 @@
 // 抽屉行为测试：开合（selectCard/Esc/背板）、?card= 深链同步、详情渲染、
-// 复制为 Markdown、交付物页签切换。fetch 全程 stub——绝不打真 server。
+// 复制为 Markdown、交付物页签切换；⎋ 开着侧栏时只关侧栏——FilterBar 的两段 ⎋（清词 → 退出多选，§54.4）
+// 那一下不动（D34 后侧栏是唯一详情面、⎋ 是它的正式关法，不能顺手把用户筛好的看板抽掉）。fetch 全程 stub——绝不打真 server。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DetailDrawer } from "./DetailDrawer";
-import { resetStoreForTests, selectCard } from "../../store";
+import { FilterBar } from "../chrome/FilterBar";
+import { getState, resetStoreForTests, selectCard, setFilters, setSelectionMode } from "../../store";
 
 const DETAIL = {
   id: "R-101",
@@ -59,6 +61,25 @@ describe("DetailDrawer", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(new URLSearchParams(window.location.search).get("card")).toBeNull();
+  });
+
+  it("⎋ with the drawer open closes only the drawer — the search term and selection mode survive (§54.4 two-stage ⎋ stays out)", async () => {
+    window.history.replaceState(null, "", "/?q=example");
+    render(<><FilterBar /><DetailDrawer /></>);
+    act(() => { setFilters({ search: "example" }); setSelectionMode(true); });
+    act(() => selectCard("R-101"));
+    await screen.findByRole("dialog");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(getState().filters.search).toBe("example");
+    expect(new URLSearchParams(window.location.search).get("q")).toBe("example");
+    expect(getState().selectionMode).toBe(true);
+
+    // 侧栏关了，下一下 ⎋ 才是 FilterBar 的第一段：清词
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(getState().filters.search).toBe("");
+    expect(getState().selectionMode).toBe(true);
   });
 
   it("restores a ?card= deep link on mount", async () => {

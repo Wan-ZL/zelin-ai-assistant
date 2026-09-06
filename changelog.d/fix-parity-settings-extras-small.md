@@ -1,0 +1,2 @@
+type: fixed
+- **设置页两处找回原生行为（§66 behaviour parity，settings-extras 链第一批）**：通用区页脚「打开 config.yaml」在 config.yaml 缺席（或 GET /api/setup 答不上来）时先从 config.example.yaml 建出 config.yaml 再定位（既有 `POST /api/setup/config-from-example`，409 视同已在；建出来时多一句「已从 config.example.yaml 创建 config.yaml」，reveal 失败也不吞这句）——不再把 tracked 的模板亮给你去改；「导入 Claude Code 工作」区：「导入所选」之后那批会话立刻从列表消失、重新扫描也不回来、看板 ↔ 设置来回也不回来（store 级 `claudeSessionsImported`，原生 `locallyImported`——actd 处理 inbox 前的那几秒不再能重复提交），候选上方多一行「找到 N 个会话，其中 M 个在等你回复（已默认勾选）」，回执句改回原生两条去向（等你回复的进「提案」，其余进「潜在任务」）。

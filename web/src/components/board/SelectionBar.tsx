@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
-import { clearSelection, setSelectionMode, useAppState } from "../../store";
+import { clearSelection, markForceMerging, setSelectionMode, useAppState } from "../../store";
 import type { ApprovalCard } from "../../types";
 import { cardAction, describeActionError, effectiveTier } from "./boardActions";
 import { FeedbackDialog } from "./FeedbackDialog";
@@ -42,9 +42,10 @@ export function SelectionBar() {
   const approve = batchable(selectedIds, proposals, "approve");
   const reject = batchable(selectedIds, proposals, "reject");
 
-  async function run(bodies: Array<Record<string, unknown>>, done: string) {
+  /** 逐条 POST；全部成功才回执 + 清选择。返回「全部成功」——调用方据此决定要不要挂本地章 */
+  async function run(bodies: Array<Record<string, unknown>>, done: string): Promise<boolean> {
     setConfirm("none");
-    if (bodies.length === 0) return;
+    if (bodies.length === 0) return false;
     setBusy(true);
     setNote(null);
     let failed = 0;
@@ -61,6 +62,7 @@ export function SelectionBar() {
       setNote(done);
       clearSelection();
     }
+    return failed === 0;
   }
 
   return (
@@ -89,10 +91,18 @@ export function SelectionBar() {
       {note && <span className="selection-note">{note}</span>}
 
       {confirm === "feedback" && (
-        <FeedbackDialog ids={ids} onSubmit={(body) => void run([body], text("建议已记下", "Feedback recorded"))} onCancel={() => setConfirm("none")} />
+        <FeedbackDialog ids={ids} onSubmit={(body) => void run([body], text("已记录建议，感谢", "Feedback recorded"))} onCancel={() => setConfirm("none")} />
       )}
       {confirm === "force" && (
-        <ForceMergeDialog ids={ids} titles={titles} onConfirm={(primary) => void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted"))} onCancel={() => setConfirm("none")} />
+        // POST 成功才给涉及的卡挂「合并中…」章（原生 submitMergeForce：`guard writeInboxFile` 才 beginMergeForce）——
+        // server 拒了就没有在途批次，否则章挂 180 s 再冒出「检查 actd」是两句谎话；副卡全部离开所在列（真信号）才退场
+        <ForceMergeDialog ids={ids} titles={titles}
+          onConfirm={(primary) => {
+            void run([forceMergeBody(ids, primary)], text("已提交强制合并", "Force merge submitted")).then((ok) => {
+              if (ok) markForceMerging(ids, primary);
+            });
+          }}
+          onCancel={() => setConfirm("none")} />
       )}
       {(confirm === "approve" || confirm === "reject") && (
         <ModalDialog

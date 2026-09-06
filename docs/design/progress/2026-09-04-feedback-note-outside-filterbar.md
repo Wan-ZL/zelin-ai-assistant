@@ -1,0 +1,11 @@
+pr: `fix/feedback-note-outside-filterbar`（无版本 bump，版本由 tag 派生；#206 review MUST FIX 的收尾，#206 已并入 main）
+phase: P4 余量（D3：web 看板是产品；D31「顶栏永远一行」的自身验收——无新 owner 决策，plan 决策表不加行）
+law: §49 追记（「提建议」回执 portal 出条：不参与顶栏布局、宽度封顶、字内可折；判例清单）
+
+**做了什么**：#206 把顶栏做成永远一行、槽位下限 = `.chrome-filterbar` 的 max-content、左翼先让。review 复测发现一个漏网的槽位参与者：「提建议」发出后的回执 `<span class="chrome-feedback-note">` 是条的直接子元素——条 `nowrap`，回执的单行宽就直接加进槽位下限。成功句短（en + 壳 @720 也只裁标题 36px），但失败句是 `describeActionError` 照登的 server 原文（`ApiError.message`，长度不可预算）：本地用 `page.route` 把 `/api/actions` 改成 500 + 一句 ≈1300px 的原文实测——zh @1440 full 顶栏 `scrollWidth − clientWidth` = 1172、标题裁 130px；zh + 壳 @1440 compact = 1012 / 130；en + 壳 @1440 compact = 1088 / 159；en + 壳 @720 tight = 1377 / 159；右翼右沿超出视口同样的像素数，整页横向滚动条同样的像素数，持续 4 s。
+
+**怎么修**：回执 portal 到 `document.body`、`position: fixed` 挂在按钮下方——`FilterPopover` 的定位算法原样复用（左沿对齐按钮、贴视口边裁 8px、`gap` 4px；视口变化重量而不是关掉——只活 4 s）；`.chrome-feedback-note` 改成小条形制（底 / 边 / 阴影同 `composer-popover` token），`max-width: min(420px, 100vw − 16px)` + `overflow-wrap: anywhere`，再长也只在小条里换行。`role="status"`、4 s、文案不截（server 原文一字不少）都不变。**为什么不走 CSS-only**（review 给的另一条路：条 `flex: 1 1 auto` 全档 + 回执 `flex: 1 1 0` 省略号 + `title`）：review 自己也量到回执单独 `flex: 1 1 0` 在 full / compact 会缩成 0px（条在那两档不铺满槽位）；而让条全档铺满会把控件从槽位居中挪成左对齐，动的是视觉 golden 的顶栏，一个回执样式的修复不值得换布局。portal 方案在回执不显示时对布局零影响。
+
+**判例**：真浏览器 `web/e2e/headerLayout.spec.ts` +5（8 → 13）：500 + 长原文 × {zh @1440 full、zh + 壳 @1440 compact、en + 壳 @1440 compact、en + 壳 @720 tight}、200 成功句 en + 壳 @720——回执可见期间一次比对整组几何（`toMatchObject`，失败把像素数全打出来）：回执 `closest('.chrome-filterbar')` 为空、顶栏 `scrollWidth == clientWidth`、标题裁 0px 且在左翼矩形内、右翼右沿 ≤ `innerWidth`、`documentElement.scrollWidth == innerWidth`、顶栏 52px、回执整个在视口内。修复前 5 条全红（数字如上），修复后 13 条全绿。jsdom `FilterBar.test.tsx` +3（三档：回执父节点 = body、不在条里、原文一字不少；`postAction` 加进既有 `vi.mock`）——修复前 3 条全红。**注意**：e2e 跑的是 `web/dist`（demo server 起 `python3 -m server` 发静态包），改源码后要先 `npm run build` 再跑 Playwright，否则量到的是旧包（本次就先撞了一回）。
+
+**不变的**：视觉 golden 条件下回执不显示、布局零改动——6 张 golden 在 main 上自 #204 / #205 起已全红，本 PR 跑出的 diff 像素数与 #206 记的 main 数字逐一相同（board 6324 / 6080、trash 14596 / 5090、settings 23968 / 14579），未重生成，留给刷 golden 的 PR；§66.2 判卷面 `run_gates.sh` 重生成 PRESENT 832 / PENDING 15 / MISSING 0 / WAIVED 4，与 #206 相同（回执 portal 到 body，`screen` 级探针仍看得见），`report.*` 不带。wire 零变化；`vnext2-plan.md` 决策表不加行（D31 自身验收，无新 owner 原话）。

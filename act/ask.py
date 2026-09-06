@@ -92,15 +92,19 @@ def _split_sections(text: str) -> List[Tuple[str, str]]:
     body: List[str] = []
     for line in text.splitlines():
         if re.match(r"^#{1,4} ", line):
-            if body or heading:
-                sections.append((heading, "\n".join(body).strip()))
+            _flush_section(sections, heading, body)
             heading = line.lstrip("#").strip()
             body = []
         else:
             body.append(line)
+    _flush_section(sections, heading, body)
+    return sections
+
+
+def _flush_section(sections: list, heading: str, body: List[str]) -> None:
+    """Append the pending section unless it is the empty headingless prefix."""
     if body or heading:
         sections.append((heading, "\n".join(body).strip()))
-    return sections
 
 
 def _read_corpus() -> List[Tuple[str, str]]:
@@ -131,23 +135,35 @@ def relevant_sections(question: str, corpus: Optional[List[Tuple[str, str]]] = N
     qtokens = _tokens(question)
     if not qtokens:
         return []
-    scored = []
-    for rel, text in (corpus if corpus is not None else _read_corpus()):
-        for heading, body in _split_sections(text):
-            if not body:
-                continue
-            h_low, b_low = heading.lower(), body.lower()
-            score = 0
-            for tok in qtokens:
-                if tok in h_low:
-                    score += 3
-                # occurrence count capped so one repetitive doc can't drown out
-                # a precise heading match elsewhere
-                score += min(b_low.count(tok), 5)
-            if score > 0:
-                scored.append((score, rel, heading, body[:_SECTION_CAP]))
+    scored = _scored_sections(qtokens, corpus if corpus is not None else _read_corpus())
     scored.sort(key=lambda s: s[0], reverse=True)
     return [(rel, heading, body) for _, rel, heading, body in scored[:top]]
+
+
+def _scored_sections(qtokens: set, corpus) -> list:
+    """[(score, rel, heading, body[:cap])] for every section that scores > 0."""
+    scored = []
+    for rel, text in corpus:
+        for heading, body in _split_sections(text):
+            score = _section_score(qtokens, heading, body)
+            if score > 0:
+                scored.append((score, rel, heading, body[:_SECTION_CAP]))
+    return scored
+
+
+def _section_score(qtokens: set, heading: str, body: str) -> int:
+    """Keyword overlap: a heading hit weighs 3, body occurrences count up to 5
+    each (capped so one repetitive doc can't drown out a precise heading match
+    elsewhere); an empty body scores 0."""
+    if not body:
+        return 0
+    h_low, b_low = heading.lower(), body.lower()
+    score = 0
+    for tok in qtokens:
+        if tok in h_low:
+            score += 3
+        score += min(b_low.count(tok), 5)
+    return score
 
 
 # --------------------------------------------------------------------------- #
@@ -350,6 +366,25 @@ def answer(question: str,
     cfg = cfg or config.load_config()
     lang = failures.ui_lang()
     question = str(question or "").strip()
+    refusal = _precheck(cfg, question, lang, started)
+    if refusal is not None:
+        return refusal
+    return _answer_question(question, cfg, lang, runner, started)
+
+
+def _answer_question(question: str, cfg, lang, runner, started: float) -> dict:
+    proc, failure = _run_model(question, cfg, lang, runner or _default_runner, started)
+    if failure is not None:
+        return failure
+    elapsed = time.monotonic() - started
+    text, citation, failure = _parse_answer(proc, elapsed, lang)
+    if failure is not None:
+        return failure
+    return _success(question, text, citation, lang, elapsed, cfg)
+
+
+def _precheck(cfg, question: str, lang, started: float) -> Optional[dict]:
+    """Disabled switch / empty question → the §27 failure dict; else None."""
     if not getattr(cfg, "ask_enabled", True):
         return _fail(failures.pick(
             "问问助手已在 config.yaml 里关闭（ask.enabled: false）。",
@@ -360,39 +395,65 @@ def answer(question: str,
                                    "The question is empty — type something first.",
                                    lang),
                      time.monotonic() - started)
-    if runner is None:
-        runner = _default_runner
+    return None
+
+
+def _run_model(question: str, cfg, lang, runner, started: float):
+    """(proc, None) or (None, failure dict) — timeouts and spawn errors become
+    classified failures, never exceptions."""
     try:
         prompt = build_prompt(question, build_bundle(question, cfg), lang)
-        proc = runner(prompt)
+        return runner(prompt), None
     except subprocess.TimeoutExpired:
-        return _fail(failures.pick(
+        return None, _fail(failures.pick(
             "AI 没有在 %d 秒内回答——点「重试」再问一次（网络慢或问题太大都会这样）。" % ASK_TIMEOUT,
             "The AI didn't answer within %ds — hit Retry (slow network or a "
             "very broad question can cause this)." % ASK_TIMEOUT, lang),
             time.monotonic() - started, timeout=True)
     except Exception as exc:  # noqa: BLE001 - spawn errors -> classified failure
-        return _fail(str(exc), time.monotonic() - started,
-                     failure_id=failures.classify(str(exc)))
-    elapsed = time.monotonic() - started
+        return None, _fail(str(exc), time.monotonic() - started,
+                           failure_id=failures.classify(str(exc)))
+
+
+def _proc_streams(proc) -> Tuple[int, str, str]:
     rc = getattr(proc, "returncode", 1)
     stdout = (getattr(proc, "stdout", "") or "").strip()
     stderr = (getattr(proc, "stderr", "") or "").strip()
+    return rc, stdout, stderr
+
+
+def _parse_answer(proc, elapsed: float, lang):
+    """(text, citation, None) or (None, None, failure dict)."""
+    rc, stdout, stderr = _proc_streams(proc)
     if rc != 0:
-        return _fail(stderr[-300:] or stdout[-300:] or "claude -p exited %s" % rc,
-                     elapsed, failure_id=failures.classify(stderr + "\n" + stdout))
+        return None, None, _rc_failure(rc, stdout, stderr, elapsed)
     data = _extract_json(stdout)
-    if isinstance(data, dict) and str(data.get("answer") or "").strip():
-        text = str(data["answer"]).strip()[:_ANSWER_CAP]
-        citation = data.get("citation")
-        citation = str(citation).strip() if citation else None
-    elif stdout:
+    if _has_json_answer(data):
+        return _json_answer(data)
+    if stdout:
         # tolerate a model that answered in prose — an answer beats an error
-        text, citation = stdout[:_ANSWER_CAP], None
-    else:
-        return _fail(failures.pick("AI 返回了空回答——点「重试」。",
-                                   "The AI returned an empty answer — hit Retry.",
-                                   lang), elapsed)
+        return stdout[:_ANSWER_CAP], None, None
+    return None, None, _fail(failures.pick("AI 返回了空回答——点「重试」。",
+                                           "The AI returned an empty answer — hit Retry.",
+                                           lang), elapsed)
+
+
+def _rc_failure(rc: int, stdout: str, stderr: str, elapsed: float) -> dict:
+    return _fail(stderr[-300:] or stdout[-300:] or "claude -p exited %s" % rc,
+                 elapsed, failure_id=failures.classify(stderr + "\n" + stdout))
+
+
+def _has_json_answer(data) -> bool:
+    return isinstance(data, dict) and bool(str(data.get("answer") or "").strip())
+
+
+def _json_answer(data: dict):
+    text = str(data["answer"]).strip()[:_ANSWER_CAP]
+    citation = data.get("citation")
+    return text, (str(citation).strip() if citation else None), None
+
+
+def _success(question: str, text: str, citation, lang, elapsed: float, cfg) -> dict:
     result = {
         "ok": True,
         "answer": text,

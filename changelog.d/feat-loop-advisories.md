@@ -1,0 +1,3 @@
+type: changed
+- **每日循环的自检类信号不再铸卡，改成看板横幅里的「系统自检 N 条」（§70.7，owner 决策 D33）**：派发卡死 / 未分类报错 / 事件风暴 / 雷达放弃 / 写风暴 / 日志刷屏 / 安装步骤失败 / launchd 环境故障 / doctor 红灯 这九类信号（`loop_inputs.ADVISORY_KINDS`）只转成 advisory 行——落在 `state/daily_loop.json` 的 `last_result.advisories`（≤ 20 条，带首见日期）与审计行里，看板顶部「每日整理」横幅右侧多一个可展开的「系统自检 N 条」；仍不弹系统通知。doctor 判 `owner_action`（修法是 owner 亲手点一次授权）的行不论类别一律不铸。GitHub issue / 红 CI / owner PR 评论 / 变异存活 / 素材库 五类照旧铸 🤖 提案卡。起因：上线头一周 15 张循环卡里 9 张是同一根因（launchd 起的 claude 没有完全磁盘访问）的症状，没有一张能派给 agent 做。
+- **每日循环默认额度 `daily_loop.max_proposals_per_day` 5 → 2（D33）**：自检类不再占额度后剩下的都是 GitHub 面与素材，一天两张够审。已在设置页改过这个数的机器不受影响（override 优先）；`config.example.yaml` 与设置页提示同步。

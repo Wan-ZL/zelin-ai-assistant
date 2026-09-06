@@ -1,5 +1,8 @@
 """golden_eval — 来源角色政策（provenance）的历史回测工具.
 
+契约：CONTRACT §45（来源角色决策表——出生资格；本工具是它的回测面，数据集与
+报告只写 `state/golden/`，绝不碰 registry）+ §59（extractor 经 act/llm.py 单一边界）。
+
 act/lib/provenance.py 的决策表是一条新法：屏幕 OCR 来源的候选不再发起卡片
 （CORROBORATE）。上线前拿历史卡片回测一遍——注册表里的每张卡都自带真值标签
 （用户亲手给它的最终结局：批准/验收 = 真需求，扔回收站/备选里过期封存 =
@@ -67,15 +70,20 @@ def _report_path():
 def label_card(status: object, prev_status: object) -> str:
     """生命周期 -> 真值标签。REAL 优先：一张 review 后被 trash 的卡仍是真需求
     （用户扔的是「不用再跟了」，不是「当初不该出生」）。"""
-    s = str(status or "").strip().lower()
-    p = str(prev_status or "").strip().lower()
+    s = _norm_state(status)
+    p = _norm_state(prev_status)
     if s in _REAL_STATES or p in _REAL_STATES:
         return LABEL_REAL
-    if s == "trashed":
-        return LABEL_NOISE
-    if s == "archived" and p == "detected":
-        return LABEL_NOISE                  # 备选里过期封存 = 从没被认过
-    return LABEL_PENDING
+    return LABEL_NOISE if _is_noise(s, p) else LABEL_PENDING
+
+
+def _norm_state(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_noise(s: str, p: str) -> bool:
+    """trashed, or archived straight out of 备选 (过期封存 = 从没被认过)."""
+    return s == "trashed" or (s == "archived" and p == "detected")
 
 
 def build_cards() -> list:
@@ -88,21 +96,29 @@ def build_cards() -> list:
         # 回测不能把一张卡数成两张，也不能拿 stale 的旧 status 当结局。
         if rid in by_id and str(r.status) != registry.State.ARCHIVED.value:
             continue
-        src = r.sources[0] if r.sources and isinstance(r.sources[0], dict) else {}
-        card = {
-            "id": rid,
-            "title": r.title,
-            "status": str(r.status or ""),
-            "channel": src.get("channel"),
-            "quote": src.get("quote"),
-            "who": src.get("who"),
-            "date": src.get("date"),
-            "label": label_card(r.status, r.prev_status),
-        }
-        if r.prev_status:
-            card["prev_status"] = str(r.prev_status)
-        by_id[rid] = card
+        by_id[rid] = _card_row(r)
     return list(by_id.values())
+
+
+def _first_source(r) -> dict:
+    return r.sources[0] if r.sources and isinstance(r.sources[0], dict) else {}
+
+
+def _card_row(r) -> dict:
+    src = _first_source(r)
+    card = {
+        "id": str(r.id),
+        "title": r.title,
+        "status": str(r.status or ""),
+        "channel": src.get("channel"),
+        "quote": src.get("quote"),
+        "who": src.get("who"),
+        "date": src.get("date"),
+        "label": label_card(r.status, r.prev_status),
+    }
+    if r.prev_status:
+        card["prev_status"] = str(r.prev_status)
+    return card
 
 
 def _load_cards() -> list:
@@ -110,18 +126,19 @@ def _load_cards() -> list:
         text = _cards_path().read_text(encoding="utf-8")
     except OSError:
         return []
-    out = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
-    return out
+    return [obj for obj in map(_parse_card_line, text.splitlines()) if obj is not None]
+
+
+def _parse_card_line(line: str) -> Optional[dict]:
+    """One JSONL line → dict; blank / broken / non-object lines are skipped."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def _save_cards(cards: list) -> None:
@@ -164,37 +181,45 @@ def _parse_json_array(text: str) -> list:
     """Tolerant: find the first [...] block."""
     start = text.find("[")
     end = text.rfind("]")
-    if start == -1 or end == -1 or end < start:
+    if start == -1 or end < start:
         return []
+    return _json_list(text[start:end + 1])
+
+
+def _json_list(text: str) -> list:
     try:
-        val = json.loads(text[start:end + 1])
-        return val if isinstance(val, list) else []
+        val = json.loads(text)
     except json.JSONDecodeError:
         return []
+    return val if isinstance(val, list) else []
 
 
 def _classify_batch(batch: list, extractor: Callable) -> dict:
     """一批卡 -> {id: LLM 裁决 dict}。LLM 挂掉/输出垃圾 = 空 dict（调用方按
     unknown 兜底），绝不崩整条管线。"""
-    blocks = []
-    for c in batch:
-        blocks.append(
-            f"--- 卡 {c.get('id')} ---\n"
+    blocks = [_card_block(c) for c in batch]
+    prompt = _CLASSIFY_PROMPT + sanitize.fence_untrusted("\n\n".join(blocks))
+    return _verdicts_by_id(_extract_items(extractor, prompt))
+
+
+def _card_block(c: dict) -> str:
+    return (f"--- 卡 {c.get('id')} ---\n"
             f"title: {c.get('title')}\n"
             f"quote: {c.get('quote')}\n"
-            f"who: {c.get('who')}"
-        )
-    prompt = _CLASSIFY_PROMPT + sanitize.fence_untrusted("\n\n".join(blocks))
+            f"who: {c.get('who')}")
+
+
+def _extract_items(extractor: Callable, prompt: str) -> list:
     try:
         proc = extractor(prompt)
-        items = _parse_json_array(getattr(proc, "stdout", "") or "")
+        return _parse_json_array(getattr(proc, "stdout", "") or "")
     except (OSError, subprocess.SubprocessError):
-        items = []
-    out: dict = {}
-    for it in items:
-        if isinstance(it, dict) and it.get("id") is not None:
-            out[str(it["id"])] = it
-    return out
+        return []
+
+
+def _verdicts_by_id(items: list) -> dict:
+    return {str(it["id"]): it for it in items
+            if isinstance(it, dict) and it.get("id") is not None}
 
 
 def classify_cards(cards: list,
@@ -205,6 +230,18 @@ def classify_cards(cards: list,
     垃圾值落 unknown，永不崩。"""
     if extractor is None:
         extractor = _default_extractor
+    meeting = _split_meeting_cards(cards)
+    verdicts: dict = {}
+    for i in range(0, len(meeting), BATCH_SIZE):
+        verdicts.update(_classify_batch(meeting[i:i + BATCH_SIZE], extractor))
+    for c in meeting:
+        _apply_verdict(c, verdicts.get(str(c.get("id"))))
+    return cards
+
+
+def _split_meeting_cards(cards: list) -> list:
+    """Meeting-channel cards (returned for the LLM); every other card is
+    stamped channel_api in place."""
     meeting = []
     for c in cards:
         if str(c.get("channel") or "").strip().lower() == MEETING_CHANNEL:
@@ -212,16 +249,13 @@ def classify_cards(cards: list,
         else:
             c["provenance"] = CHANNEL_API
             c.pop("speaker", None)
-    verdicts: dict = {}
-    for i in range(0, len(meeting), BATCH_SIZE):
-        verdicts.update(_classify_batch(meeting[i:i + BATCH_SIZE], extractor))
-    for c in meeting:
-        v = verdicts.get(str(c.get("id")))
-        v = v if isinstance(v, dict) else {}
-        c["provenance"] = provenance.normalize(
-            v.get("provenance"), provenance.PROVENANCES)
-        c["speaker"] = provenance.normalize(v.get("speaker"), provenance.SPEAKERS)
-    return cards
+    return meeting
+
+
+def _apply_verdict(c: dict, v) -> None:
+    v = v if isinstance(v, dict) else {}
+    c["provenance"] = provenance.normalize(v.get("provenance"), provenance.PROVENANCES)
+    c["speaker"] = provenance.normalize(v.get("speaker"), provenance.SPEAKERS)
 
 
 # --------------------------------------------------------------------------- #
@@ -230,49 +264,74 @@ def classify_cards(cards: list,
 def score_cards(cards: list) -> dict:
     """混淆矩阵。verdict 是全函数：没跑过 classify 的 meeting 卡（缺
     provenance/speaker）按 unknown 处理 -> LIMITED 出生，与政策语义一致。"""
-    real_blocked = []      # 误杀：REAL 且被拦（最该盯的数字）
-    noise_blocked = []     # 正确拦截：NOISE 且被拦（政策的正差）
-    noise_born = []        # 漏放：NOISE 且出生
-    real_born = 0
-    pending = 0
-    pending_blocked = 0
-    born = 0
+    tally = _Tally()
     for c in cards:
-        if c.get("provenance") == CHANNEL_API:
-            would_be_born = True      # API 直采渠道任何政策下都出生
-        else:
-            v = provenance.verdict(c.get("provenance"), c.get("speaker"))
-            would_be_born = v != provenance.CORROBORATE
+        tally.add(c, _would_be_born(c))
+    return tally.report(len(cards))
+
+
+def _would_be_born(c: dict) -> bool:
+    """API 直采渠道任何政策下都出生；meeting 卡按 provenance.verdict。"""
+    if c.get("provenance") == CHANNEL_API:
+        return True
+    v = provenance.verdict(c.get("provenance"), c.get("speaker"))
+    return v != provenance.CORROBORATE
+
+
+class _Tally:
+    """混淆矩阵计数器（REAL / NOISE 进矩阵，PENDING 单独计数）。"""
+
+    def __init__(self):
+        self.real_blocked: list = []      # 误杀：REAL 且被拦（最该盯的数字）
+        self.noise_blocked: list = []     # 正确拦截：NOISE 且被拦（政策的正差）
+        self.noise_born: list = []        # 漏放：NOISE 且出生
+        self.real_born = 0
+        self.pending = 0
+        self.pending_blocked = 0
+        self.born = 0
+
+    def add(self, c: dict, would_be_born: bool) -> None:
         if would_be_born:
-            born += 1
+            self.born += 1
         brief = {"id": c.get("id"), "title": c.get("title")}
         label = c.get("label")
         if label == LABEL_REAL:
-            if would_be_born:
-                real_born += 1
-            else:
-                real_blocked.append(brief)
+            self._add_real(brief, would_be_born)
         elif label == LABEL_NOISE:
-            if would_be_born:
-                noise_born.append(brief)
-            else:
-                noise_blocked.append(brief)
+            self._add_noise(brief, would_be_born)
         else:
-            pending += 1              # 未定论：不进矩阵，单独计数
-            if not would_be_born:
-                pending_blocked += 1
-    return {
-        "generated_at": _dt.datetime.now(_dt.timezone.utc)
-                        .strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "total": len(cards),
-        "born": born,
-        "blocked": len(cards) - born,
-        "real_blocked": {"count": len(real_blocked), "cards": real_blocked},
-        "noise_blocked": {"count": len(noise_blocked), "cards": noise_blocked},
-        "real_born": real_born,
-        "noise_born": {"count": len(noise_born), "cards": noise_born},
-        "pending": {"count": pending, "blocked": pending_blocked},
-    }
+            self._add_pending(would_be_born)
+
+    def _add_real(self, brief: dict, would_be_born: bool) -> None:
+        if would_be_born:
+            self.real_born += 1
+        else:
+            self.real_blocked.append(brief)
+
+    def _add_noise(self, brief: dict, would_be_born: bool) -> None:
+        if would_be_born:
+            self.noise_born.append(brief)
+        else:
+            self.noise_blocked.append(brief)
+
+    def _add_pending(self, would_be_born: bool) -> None:
+        self.pending += 1              # 未定论：不进矩阵，单独计数
+        if not would_be_born:
+            self.pending_blocked += 1
+
+    def report(self, total: int) -> dict:
+        return {
+            "generated_at": _dt.datetime.now(_dt.timezone.utc)
+                            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "total": total,
+            "born": self.born,
+            "blocked": total - self.born,
+            "real_blocked": {"count": len(self.real_blocked), "cards": self.real_blocked},
+            "noise_blocked": {"count": len(self.noise_blocked), "cards": self.noise_blocked},
+            "real_born": self.real_born,
+            "noise_born": {"count": len(self.noise_born), "cards": self.noise_born},
+            "pending": {"count": self.pending, "blocked": self.pending_blocked},
+        }
 
 
 def _print_summary(report: dict) -> None:
@@ -341,18 +400,19 @@ def _main(argv: Optional[list] = None) -> int:
     sub.add_parser("score", help="混淆矩阵 -> state/golden/report.json + 摘要")
     sub.add_parser("all", help="build + classify + score 顺序全跑")
     args = parser.parse_args(argv)
-    if args.cmd == "build":
-        return cmd_build()
-    if args.cmd == "classify":
-        return cmd_classify()
-    if args.cmd == "score":
-        return cmd_score()
-    rc = cmd_build()
-    if rc == 0:
-        rc = cmd_classify()
-    if rc == 0:
-        rc = cmd_score()
-    return rc
+    single = {"build": cmd_build, "classify": cmd_classify, "score": cmd_score}.get(args.cmd)
+    if single is not None:
+        return single()
+    return _run_all()
+
+
+def _run_all() -> int:
+    """build → classify → score，任一步非零即停。"""
+    for step in (cmd_build, cmd_classify, cmd_score):
+        rc = step()
+        if rc != 0:
+            return rc
+    return 0
 
 
 if __name__ == "__main__":

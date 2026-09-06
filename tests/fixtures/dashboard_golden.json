@@ -627,7 +627,9 @@
       "skip_reason": null,
       "stale": true,
       "last_attempt": "2020-01-01T00:00:00Z",
-      "test_round": null
+      "test_round": null,
+      "intent": true,
+      "secret_present": false
     },
     "slack": {
       "enabled": true,
@@ -635,7 +637,9 @@
       "skip_reason": "mcp_failed",
       "stale": false,
       "last_attempt": null,
-      "test_round": null
+      "test_round": null,
+      "intent": true,
+      "secret_present": true
     },
     "obsidian": {
       "enabled": true,
@@ -643,7 +647,9 @@
       "skip_reason": null,
       "stale": false,
       "last_attempt": null,
-      "test_round": null
+      "test_round": null,
+      "intent": false,
+      "secret_present": false
     }
   },
   "self_improve": {

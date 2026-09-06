@@ -65,7 +65,9 @@ _LOCK_PATH: Path = config.STATE_DIR / "radar_health.lock"
 # **闭集**。radar_health.json 本身是本机文件，radar 可以往 skip_reason 写带
 # 细节的串（如 `mcp_failed: <错误摘录>`——Settings 面板要看细节）；但
 # dashboard 会云同步，任意错误串（Slack MCP 非法输出片段、本机路径）不许
-# 出机——词表外一律折叠。add-only：加新码要同步进 docstring 词表。
+# 出机——词表外一律折叠。add-only：加新码要同步进 docstring 词表，并给 web
+# sourceHealth.skipReasonLabel 加一句人话（§48.7 追记「全员」；tests/
+# test_skip_reason_vocabulary_mirror.py 跨层钉死，漏一句即红）。
 SKIP_REASON_CODES: frozenset = frozenset({
     "disabled",                                     # deprecated（§48.2）
     "no_credentials", "no_address", "auth_failed", "connect_failed",

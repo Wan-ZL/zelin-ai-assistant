@@ -46,6 +46,8 @@ INVENTORY = {
     ],
     "rail": {"side": "left", "items": [
         {"id": "rail:dashboard", "slug": "dashboard", "zh": "任务台", "en": "Workbench", "gated": True, "owner": "web"},
+        # 归属表 RAIL_OWNER 标 retired 的侧栏项（D29 / D30）：只列不判，rail:order 的期望顺序里没有它
+        {"id": "rail:ask", "slug": "ask", "zh": "问问助手", "en": "Ask", "gated": False, "owner": "retired", "reason": "D29"},
         {"id": "rail:trash", "slug": "trash", "zh": "回收站", "en": "Trash", "gated": True, "owner": "web"},
     ]},
     "lanes": {"order": ["debt", "needs_approval", "archived"], "items": [
@@ -237,6 +239,16 @@ class StaticProbesTestCase(_RepoCase):
         bad_lanes = dict(INVENTORY, lanes=dict(INVENTORY["lanes"], order=["needs_approval", "debt", "archived"]))
         self.assertFalse(pc.structural_items(snap, bad_lanes)["lanes:order"])
 
+    def test_rail_order_skips_retired_rail_items_but_flags_them_when_rendered(self):
+        # 清单里 ask 在 dashboard 与 trash 之间、owner=retired（D29）：web 栏上没有它 = 顺序正确
+        self.assertTrue(pc.structural_items(self.snap, INVENTORY)["rail:order"])
+        # 要是 web 把退役项又画回栏上，顺序探针照样红——退役不是「可选」
+        _write(self.root, "web/src/components/shell/Rail.tsx",
+               WEB_TSX.replace('<a data-rail-item="trash">', '<a data-rail-item="ask">Ask</a>\n    <a data-rail-item="trash">'))
+        self.assertFalse(pc.structural_items(pc.WebSnapshot(self.root), INVENTORY)["rail:order"])
+        # 退役项不进 gated 清单，报告里不计
+        self.assertNotIn("rail:ask", pc.gated_ids(INVENTORY))
+
 
 class VitestProbeTestCase(_RepoCase):
     def test_control_presence_reads_normal_and_pending_titles(self):
@@ -314,8 +326,8 @@ class JudgementTestCase(_RepoCase):
         self.assertEqual(report["items"]["screen:about"], "PENDING")
         self.assertEqual(report["items"]["control:board:label:gone"], "WAIVED")
         self.assertEqual(report["counts"]["WAIVED"], 5)
-        # 只列不判的：copy 文案（web）、菜单项（shell）、退役的偏好键（retired）；通知 / 壳偏好键现在都判
-        self.assertEqual(report["not_gated"], {"informational": 1, "shell": 1, "retired": 1})
+        # 只列不判的：copy 文案（web）、菜单项（shell）、退役的偏好键 + 退役的侧栏项 ask（retired）；通知 / 壳偏好键现在都判
+        self.assertEqual(report["not_gated"], {"informational": 1, "shell": 1, "retired": 2})
         self.assertEqual(report["items"]["notification:review_ready"], "PRESENT")
         self.assertEqual(report["items"]["setting:prefs:terminalApp"], "PRESENT")
         self.assertEqual(report["items"]["control:notifications:label:only-in-catalog"], "PENDING")

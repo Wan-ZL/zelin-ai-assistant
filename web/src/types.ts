@@ -59,8 +59,11 @@ export interface ApprovalCard {
   silent_merged?: number;
   /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
   cost_state?: string;
-  /** §37 展示名 / 曾用名（原生 rowTitle 优先 display_title） */
+  /** §37 展示名 / 曾用名——提案是摘要优先面：卡面标题走 cardHeadline（钦定名 > summary > display_title > title），
+   *  不是 running 族的 rowTitle（display_title 优先） */
   display_title?: string;
+  /** §37 用户钦定标记（server 只在为真时发键）：为真时 display_title 压过 summary 成为卡面标题 */
+  user_titled?: boolean;
   former_titles?: string[];
   [key: string]: unknown;
 }
@@ -152,7 +155,7 @@ export interface TaskRow {
   steers?: SteerNote[];
   /** §30 待验收卡因会话再活跃投影回运行中——原生「已交付过·再运行」青章 */
   from_review?: boolean;
-  /** §25 错误分类 id（null = 未分类）——原生据此挑人话句；web 目前只用原文 */
+  /** §25 错误分类 id（null = 未分类）——RunningCard 据此从 store.failures 挑人话句 + 对症按钮（§25 追记 2026-09-05） */
   last_error_id?: string | null;
   dispatch_error_id?: string | null;
   agent_name?: string | null;
@@ -237,7 +240,9 @@ export interface DebtCard {
   type?: string;
   sources?: CardSource[];
   summary?: string;
+  /** §37 摘要优先面（原生 DebtRow displaySummary）：卡面标题走 cardHeadline */
   display_title?: string;
+  user_titled?: boolean;
   [key: string]: unknown;
 }
 
@@ -252,7 +257,9 @@ export interface ArchivedRow {
   prev_status?: string | null;
   type?: string;
   hardness?: string;
+  /** §37 摘要优先面（原生 ArchiveRow displaySummary）：行标题走 cardHeadline */
   display_title?: string;
+  user_titled?: boolean;
   [key: string]: unknown;
 }
 
@@ -274,6 +281,9 @@ export interface TrashRow {
   type?: string;
   hardness?: string;
   purge_at?: string | null;
+  /** §37 摘要优先面（原生 TrashRow displaySummary；trash/archived 行只解码这两键）：行标题走 cardHeadline */
+  display_title?: string;
+  user_titled?: boolean;
   [key: string]: unknown;
 }
 
@@ -310,8 +320,18 @@ export interface DeployState {
 /**
  * §70 每日自我改进循环的投影（dashboard add-only 顶层键 maintenance；act/lib/daily_loop.projection）。
  * phase 已知值：idle | dedup | stale_sweep | proposals（未知值按「在跑」显示）；时间全是 epoch 秒或 null。
- * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数。
+ * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数；
+ * advisories（D33）= 自检类信号——不铸卡，只在横幅里列出来（kind / text / ref / fingerprint / first_seen 逐字镜像 wire）。
  */
+export interface MaintenanceAdvisory {
+  kind: string;
+  text: string;
+  ref?: string;
+  fingerprint?: string;
+  first_seen?: string;
+  [key: string]: unknown;
+}
+
 export interface Maintenance {
   phase: string;
   started_at: number | null;
@@ -323,6 +343,7 @@ export interface Maintenance {
     proposals: number;
     summaries?: number;
     errors?: number;
+    advisories?: MaintenanceAdvisory[];
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -353,6 +374,18 @@ export interface Board {
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
   radar_sources?: Record<string, RadarSourceHealth>;
+  /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——提案列顶一行 info 通知 */
+  fold_receipts?: FoldReceipt[];
+  [key: string]: unknown;
+}
+
+/** §44.6 并入回执行（dashboard._fold_receipts 的 wire 形逐字镜像）：只有目标卡 id + 展示名，永不带被并入原文 */
+export interface FoldReceipt {
+  id: string;
+  req: string;
+  title: string;
+  channel: string;
+  at: number;
   [key: string]: unknown;
 }
 
@@ -601,7 +634,8 @@ export interface RadarTestRound {
 }
 
 /** §48 radar_sources 投影（dashboard 顶层键）：每源 enabled / last_ok / skip_reason / stale
- *  + §48.7 add-only last_attempt（原生「最近一轮 <相对时间>」）/ test_round */
+ *  + §48.7 add-only last_attempt（原生「最近一轮 <相对时间>」）/ test_round
+ *  + §48.4 add-only intent / secret_present（意愿信号；setup 类 / Slack token 类诊断卡的资格） */
 export interface RadarSourceHealth {
   enabled: boolean;
   last_ok?: string | null;
@@ -609,6 +643,10 @@ export interface RadarSourceHealth {
   stale?: boolean;
   last_attempt?: string | null;
   test_round?: RadarTestRound | null;
+  /** 碰过开关（overrides 里有 <src>_enabled / features.<src>_radar）/ 凭证文件在 / 凭证非空；缺 = 旧 payload = 老判据 */
+  intent?: boolean;
+  /** §19 凭证非空（slack user token / gmail 应用密码；obsidian 恒 false） */
+  secret_present?: boolean;
   [key: string]: unknown;
 }
 
@@ -643,6 +681,10 @@ export interface FolderReceipt {
   path: string;
   created?: boolean;
   git_init?: "done" | "skipped" | "failed" | null | string;
+  /** open 的 add-only（§68.4 追记）：目录不在时实际打开的最近既有祖先目录；在的时候不带 */
+  opened?: string;
+  /** open 的 add-only：true = `path` 不是目录、打开的是 `opened`（原生 reveal 的 deletingLastPathComponent 回落） */
+  missing?: boolean;
   [key: string]: unknown;
 }
 
@@ -668,6 +710,9 @@ export interface SettingsField {
   path?: "dir" | string;
   /** add-only：effective 值展开 ~ 后是不是目录；空值 null（无从判断）；老 server 缺席 */
   path_exists?: boolean | null;
+  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句（kind 词表今日 `email` / `session_id`）；
+   *  `reasons`（add-only，§68.7 追记）= 多句的 kind 按 reason 分句（session_id：`leading_hyphen`），没对上的 reason 用 `message`；老 server 缺席 */
+  check?: { kind: "email" | "session_id" | string; message: BilingualText; reasons?: Record<string, BilingualText> };
   [key: string]: unknown;
 }
 
@@ -676,6 +721,8 @@ export interface SettingsSection {
   title: BilingualText;
   help: BilingualText;
   fields: SettingsField[];
+  /** add-only（§68.7 追记，只有 `maintainer` 区带）：resolved 终端的展示名（原生 TerminalLauncher.preferred.displayName）——「会在 <终端> 中打开」；老 server 缺席 */
+  terminal_app_name?: string;
   [key: string]: unknown;
 }
 
@@ -691,6 +738,10 @@ export interface SecretStatus {
   present: boolean;
   verifiable: boolean;
   mtime: number | null;
+  /** add-only（§68.3 2026-09-03 追记）：secrets 文件缺席但 §19 第二 / 三层旧路径的文件非空 = 原生「使用旧路径」态；老 server 缺席 */
+  legacy?: boolean;
+  /** PUT 回执 add-only（§68.3 2026-09-05 追记）：豆包语音凭证识别为旧版 App ID + Access Token 对；GET 行不带 */
+  legacy_pair?: boolean;
   [key: string]: unknown;
 }
 
@@ -699,19 +750,80 @@ export interface SecretsStatus {
   [key: string]: unknown;
 }
 
-/** POST /api/secrets/{name}/verify 回执 */
+/** GET /api/sync（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码（PNG base64；开着才带回） */
+export interface SyncStatus {
+  enabled: boolean;
+  channel_id: string;
+  label: string;           // state/sync.json 里的设备名（从未命名 = ""）
+  default_label: string;   // 这台 Mac 的主机名（预填）
+  qr_png_base64: string | null;
+  [key: string]: unknown;
+}
+
+/** POST /api/sync/pair 回执：ok:true 带 channel / label / registered / 二维码；ok:false 带 error（no_python | pair_failed）+ message */
+export interface SyncPairReceipt {
+  ok: boolean;
+  channel_id?: string;
+  label?: string;
+  registered?: boolean;
+  qr_png_base64?: string | null;
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/sync/disable 回执 = ok + 快照（失败带 error / message） */
+export interface SyncDisableReceipt extends SyncStatus {
+  ok: boolean;
+  error?: string;
+  message?: string;
+}
+
+/** GET /api/voice（§68.1 追记）：语气档案两级候选的在场性 + 开关 */
+export interface VoiceProfileStatus {
+  enabled: boolean;
+  private_path: string;
+  private_exists: boolean;
+  default_path: string;
+  default_exists: boolean;
+  effective_path: string | null;
+  [key: string]: unknown;
+}
+
+/** GET /api/slack/directory（§68.1 追记）：act/lib/slack_setup.directory 的 JSON 行原样 */
+export interface SlackDirEntry {
+  id: string;
+  name: string;
+  real_name?: string;
+  [key: string]: unknown;
+}
+
+export interface SlackDirectory {
+  ok: boolean;
+  fetched_at?: string;
+  channels: SlackDirEntry[];
+  users: SlackDirEntry[];
+  error?: string;      // ok:false 时：no_token / no_python / directory_failed / …（act 侧词表）
+  message?: string;    // ok:false 时的人话（act 侧按界面语言生成；no_python / directory_failed 是尾巴原文）
+  [key: string]: unknown;
+}
+
+/** POST /api/secrets/{name}/verify 回执（§68.3；三分判决：ok / 凭证错 network:false / 判决未知 network:true） */
 export interface SecretVerifyResult {
   ok: boolean;
   network: boolean;
   detail: string;
-  extra: Record<string, unknown>;
+  extra: Record<string, unknown>;   // Slack ok：user_id / user / team（auth.test 原字段）；Gmail 没地址：precondition = "gmail_address"（探针没跑）
+  /** §68.3 2026-09-05 追记（add-only）：只在 ok:false ∧ network:false 且探针真跑过（无 extra.precondition）时带——原生 humanAuthReason 的分类人话，raw detail 在括号里 */
+  reason?: BilingualText;
   [key: string]: unknown;
 }
 
-// ----- §25 doctor 行（act/doctor.render_json 的 wire 形） ----- #
+// ----- §25 doctor 行（act/doctor.render_json 的 wire 形；status 小写 ok|warn|fail = act/lib/checks/core 的常量，
+// server/doctor_run 归一后透出——比较一律按小写字面量，不做大小写翻译层） ----- #
 export interface DoctorRow {
   name: string;
-  status: "OK" | "WARN" | "FAIL" | string;
+  status: "ok" | "warn" | "fail" | string;
   detail: string;
   fix: string;
   failure_id?: string;
@@ -744,10 +856,12 @@ export interface PermissionsSnapshot {
   home: string;
   on_external_volume: boolean;
   fda: { needed: boolean; pane: string; executables: FdaExecutable[]; [key: string]: unknown };
-  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; [key: string]: unknown };
+  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; files_folders?: string; [key: string]: unknown };
   doctor: DoctorRow[];
   doctor_ran_at: string | null;
   doctor_ok: boolean;
+  /** 笔记库（Documents）被动探针：state/vault_sync_mode=mirror → granted；root = 生效 obsidian_raw 的父目录（add-only） */
+  vault?: { status: "granted" | "unknown" | string; root: string; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -768,6 +882,23 @@ export interface InstallReport {
   [key: string]: unknown;
 }
 
+/** state/cron_probe.json 公开子集（§25；原生 CronProbe.read——「定时任务磁盘权限」行四态由页面判；add-only） */
+export interface CronProbe {
+  ts: string | null;
+  read_ok: boolean | null;
+  protected_path: string | null;
+  [key: string]: unknown;
+}
+
+/** 录制页「最近活动」三个时间戳（原生 IngestModel.refreshLabels；epoch 秒，缺席 null；add-only） */
+export interface IngestActivity {
+  screenpipe_db: { path: string; mtime: number | null; [key: string]: unknown };
+  actd_log: { path: string; mtime: number | null; [key: string]: unknown };
+  /** readable:false = 目录住 TCC 保护位置且不在 mirror 模式——server 永不读 ~/Documents（§68.3） */
+  unprocessed: { path: string; mtime: number | null; readable: boolean; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
 export interface DiagnosticsSnapshot {
   doctor: DoctorReport;
   health: HealthSnapshot;
@@ -776,6 +907,40 @@ export interface DiagnosticsSnapshot {
   install_report: InstallReport | null;
   registry_backend: string;
   logs: LogEntry[];
+  cron_probe?: CronProbe | null;
+  activity?: IngestActivity | null;
+  /** config.yaml doctor.ai_fix_enabled（原生 AIFix.enabled；false = 「让 AI 修」整颗不出现；缺席 = 开；add-only） */
+  ai_fix_enabled?: boolean;
+  [key: string]: unknown;
+}
+
+/** POST /api/ingest/{export,run} 回执：脚本在 server 后台线程跑，页面拿 job id 轮询（同脚本在跑 → reused） */
+export interface IngestJobStart {
+  ok: boolean;
+  job: string;
+  state: "running" | string;
+  script: string;
+  reused?: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /api/ingest/jobs/{id}：running 只有前四键；done 多出脚本回执（同一条 ingest/ 脚本、同一套退出码；skipped = ingest 的 exit 3 持锁） */
+export interface IngestJob {
+  id: string;
+  script: string;
+  state: "running" | "done" | string;
+  started_at: string;
+  ok?: boolean;
+  rc?: number;
+  skipped?: boolean;
+  tail?: string;
+  seconds?: number;
+  [key: string]: unknown;
+}
+
+/** GET /api/failures：§25 FailureCatalog 的 server-owned 投影（原生 FailureCatalog.message） */
+export interface FailureCatalog {
+  failures: Record<string, { zh: string; en: string; action_id?: string | null; [key: string]: unknown }>;
   [key: string]: unknown;
 }
 
@@ -807,6 +972,25 @@ export interface SetupReceipt {
   [key: string]: unknown;
 }
 
+/** GET /api/setup/engine（§68.5；原生 EngineDetector）：CLI 路径 / 版本 / 认证梯子（顺序 = server AUTH_LADDER） */
+export type EngineAuth = "oauth" | "env_key" | "secrets_file" | "legacy_file";
+export interface SetupEngine {
+  cli_path: string | null;
+  version: string | null;
+  auth: EngineAuth | string | null;
+  auth_sources: Record<string, boolean>;
+  ready: boolean;
+  [key: string]: unknown;
+}
+
+/** POST /api/setup/seed-dashboard：ok:false 带 error 尾巴（不 500） */
+export interface SeedDashboardReceipt {
+  ok: boolean;
+  rc: number;
+  error?: string;
+  [key: string]: unknown;
+}
+
 // ----- §68.6 关于 / 更新（§26） ----- #
 export interface AboutInfo {
   version: string;
@@ -814,6 +998,8 @@ export interface AboutInfo {
   repo: string;
   update_available: { current?: string; latest?: string; url?: string; pkg_asset_url?: string | null; [key: string]: unknown } | null;
   update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
+  /** §68.6 追记（add-only）：updates.check_enabled 的 effective 值（override → config → true）；旧 server 缺席 = 当 true */
+  check_enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -843,6 +1029,7 @@ export interface McpServer {
 export interface McpScope {
   scope: "user" | "project" | string;
   path: string;
+  path_display?: string;   // add-only（§68.9 追记）：$HOME 缩成 ~ 的展示路径；老 server 缺席时退回 path
   exists: boolean;
   parseable: boolean;
   servers: McpServer[];
@@ -884,6 +1071,8 @@ export interface TerminalReceipt {
   command: string;
   command_file: string;
   cwd: string;
+  /** add-only（§68.7 追记；今日只有 POST /api/maintainer/terminal 带）：打开用的终端展示名；老 server 缺席 */
+  terminal_app_name?: string;
   [key: string]: unknown;
 }
 
@@ -892,34 +1081,5 @@ export interface RepairReceipt {
   ok: boolean;
   label: string;
   action: string;
-  [key: string]: unknown;
-}
-
-/** GET /api/ask/history 的一行（§27：act.ask 追加，最新在前，cap 20；键逐字镜像 act/ask.py _append_history） */
-export interface AskHistoryItem {
-  q: string;
-  a: string;
-  citation?: string | null;
-  lang?: string;
-  ts?: string;
-  elapsed_s?: number;
-  [key: string]: unknown;
-}
-
-export interface AskHistory {
-  items: AskHistoryItem[];
-  [key: string]: unknown;
-}
-
-/** POST /api/ask 回执 = act.ask 的一行 JSON（§27）：ok 时 answer / citation；否则 error（+ failure_id / timeout） */
-export interface AskAnswer {
-  ok: boolean;
-  answer?: string;
-  citation?: string | null;
-  lang?: string;
-  elapsed_s?: number;
-  error?: string;
-  failure_id?: string | null;
-  timeout?: boolean;
   [key: string]: unknown;
 }

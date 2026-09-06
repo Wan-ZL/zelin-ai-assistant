@@ -92,6 +92,26 @@
             "zh": ""
           },
           "source": "default"
+        },
+        {
+          "choices": null,
+          "default": false,
+          "effective": false,
+          "help": {
+            "en": "Default state of the \"also publish to the GitHub feedback tracker\" checkbox in the feedback dialog; changing it there is remembered.",
+            "zh": "「提建议」弹窗里「同时公开到 GitHub 建议跟踪表」的默认勾选态；弹窗里改一次就记住。"
+          },
+          "key": "feedback_publish_default",
+          "kind": "bool",
+          "label": {
+            "en": "Publish feedback by default",
+            "zh": "提建议默认勾选「公开到 GitHub」"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
         }
       ],
       "help": {
@@ -168,8 +188,8 @@
           "default": "",
           "effective": "~/Documents/Obsidian Vault/2 - raw",
           "help": {
-            "en": "The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root).",
-            "zh": "雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。"
+            "en": "Notes live here; the radar scans it for asks. Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw (radar scan source) · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault.",
+            "zh": "笔记存这里，雷达也从这里发现待办。vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw（雷达扫描源）· 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。"
           },
           "key": "obsidian_raw",
           "kind": "string",
@@ -180,8 +200,8 @@
           "path": "dir",
           "path_exists": false,
           "placeholder": {
-            "en": "",
-            "zh": ""
+            "en": "~/Documents/Obsidian Vault",
+            "zh": "~/Documents/Obsidian Vault"
           },
           "source": "override"
         }
@@ -280,8 +300,8 @@
         }
       ],
       "help": {
-        "en": "",
-        "zh": ""
+        "en": "Turns \"people needing you on Slack\" (DMs / groups / @mentions) into proposal cards automatically. All 3 setup steps happen right here — no files to edit; outbound replies are drafts only, you always send them yourself. Changes apply immediately.",
+        "zh": "把「别人在 Slack 上找你的事」（DM / 群 / @提及）自动变成提案卡。3 步全在这里完成，不用改任何文件；对外只出草稿，永远你自己发。此区改动即时生效。"
       },
       "id": "slack",
       "title": {
@@ -312,6 +332,13 @@
           "source": "default"
         },
         {
+          "check": {
+            "kind": "email",
+            "message": {
+              "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)",
+              "zh": "邮箱格式不对——例：you@gmail.com（公司 Google Workspace 邮箱也可以）"
+            }
+          },
           "choices": null,
           "default": "",
           "effective": "",
@@ -336,8 +363,8 @@
           "default": "",
           "effective": "",
           "help": {
-            "en": "Set = path B, a custom fetch command (one mail per stdout line); blank = path A, the app password (recommended).",
-            "zh": "填了就走 B · 自定义抓取命令（stdout 一行一封）；留空走 A · 应用专用密码（推荐）。"
+            "en": "Set = path B (blank = path A, the app password). The radar executes it directly each round (no shell). $GMAIL_RADAR_LAST_UID carries the progress marker; the command prints a JSON array to stdout: {uid (monotonic), from, subject, date, message_id, body}. A Gmail-API script or an MCP client both qualify. From the next round after saving the radar fetches mail via this command; see \"Run status\" below for the truth.",
+            "zh": "填了就走 B（留空 = A · 应用专用密码）。雷达每轮直接执行它（不走 shell），环境变量 GMAIL_RADAR_LAST_UID 带上次进度，命令在 stdout 打印一个 JSON 数组：{uid（单调递增）, from, subject, date, message_id, body}。Gmail API 脚本、MCP 客户端都可以。保存后下一轮起雷达改走这条命令抓邮件；跑没跑成看下面「运行状态」。"
           },
           "key": "gmail_fetch_command",
           "kind": "string",
@@ -353,8 +380,8 @@
         }
       ],
       "help": {
-        "en": "",
-        "zh": ""
+        "en": "Polls unread inbox mail and turns the ones needing you into proposal cards (notifications/marketing filtered out). Read-only — mail is never marked read. Everything is set up right here, no files to edit; changes apply immediately.",
+        "zh": "轮询收件箱里的未读邮件，需要你处理的自动变成提案卡（纯通知/营销直接过滤）。只读——邮件绝不会被标成已读。全部在这里配好，不用改任何文件；此区改动即时生效。"
       },
       "id": "gmail",
       "title": {
@@ -392,8 +419,8 @@
           "default": "detailed",
           "effective": "detailed",
           "help": {
-            "en": "basic / detailed are both metadata-only granularity; basic also switches off typed-text upload.",
-            "zh": "basic / detailed 都只是元数据粒度；切 basic 同时停掉输入文本上传。"
+            "en": "Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed).",
+            "zh": "基础与详细都发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号。切到基础还会同时停掉下方的输入文本上传（文本需要详细级）。"
           },
           "key": "telemetry.level",
           "kind": "enum",
@@ -412,8 +439,8 @@
           "default": false,
           "effective": false,
           "help": {
-            "en": "Never AI output, screen content, mail, Slack messages or secrets.",
-            "zh": "绝不含 AI 回答、屏幕内容、邮件、Slack 消息、密钥。"
+            "en": "Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected.",
+            "zh": "只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。"
           },
           "key": "telemetry.capture_input",
           "kind": "bool",
@@ -429,8 +456,8 @@
         }
       ],
       "help": {
-        "en": "Field table and boundaries: docs/TELEMETRY.md.",
-        "zh": "字段表与边界见 docs/TELEMETRY.md。"
+        "en": "Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md.",
+        "zh": "关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。"
       },
       "id": "telemetry",
       "title": {
@@ -929,12 +956,25 @@
           "path": "dir",
           "path_exists": null,
           "placeholder": {
-            "en": "",
-            "zh": ""
+            "en": "/Users/demo/Projects/zelin-ai-assistant",
+            "zh": "/Users/demo/Projects/zelin-ai-assistant"
           },
           "source": "default"
         },
         {
+          "check": {
+            "kind": "session_id",
+            "message": {
+              "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape.",
+              "zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。"
+            },
+            "reasons": {
+              "leading_hyphen": {
+                "en": "A session id may not start with a hyphen (-) — that's the shape of a command-line flag, not a session id.",
+                "zh": "会话 ID 不能以连字符（-）开头——那是命令行选项的形状，不是会话 ID。"
+              }
+            }
+          },
           "choices": null,
           "default": "",
           "effective": "",
@@ -960,6 +1000,7 @@
         "zh": ""
       },
       "id": "maintainer",
+      "terminal_app_name": "Terminal",
       "title": {
         "en": "Developer session",
         "zh": "开发者 · 开发会话"

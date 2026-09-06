@@ -45,10 +45,10 @@ describe("BacklogStrip", () => {
     expect(screen.getByText(/周会纪要/)).toBeTruthy();
   });
 
-  it("吃全局 type 过滤器：计数显 1/2，只剩匹配行", () => {
+  it("吃全局 ⌘F 搜索（D28 后 debt 行唯一适用的维度）：计数显 1/2，只剩匹配行", () => {
     render(<BacklogStrip />);
     fireEvent.click(screen.getByRole("button", { name: /Backlog/ }));
-    act(() => setFilters({ types: ["process"] }));
+    act(() => setFilters({ search: "周会" }));
 
     expect(screen.getByText("1/2")).toBeTruthy();
     expect(screen.queryByText(/README/)).toBeNull();

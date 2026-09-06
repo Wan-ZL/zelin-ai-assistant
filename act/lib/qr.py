@@ -1,5 +1,8 @@
 """qr.py — a tiny, pure-stdlib QR-code encoder (no pip deps; PyYAML-only floor).
 
+契约：CONTRACT §41 区的 QR-only 能力模型（v0.30.0 supersession note：配对二维码
+= 该 Mac 看板的主钥匙，`e2e.build_channel_qr` 的载荷经这里渲染成终端/PNG）。
+
 Just enough to turn a channel pairing blob (``act.lib.e2e.build_channel_qr`` —
 a ~120–200 char base64url string) into a *scannable* QR code, both as a
 Unicode/ASCII block matrix for the terminal and as a PNG file. Byte mode only,
@@ -127,8 +130,9 @@ def _choose_version(nbytes: int, ec: str) -> int:
 # --------------------------------------------------------------------------- #
 # Bit / codeword assembly.
 # --------------------------------------------------------------------------- #
-def _encode_codewords(data: bytes, version: int, ec: str) -> List[int]:
-    cap_cw = _data_capacity_cw(version, ec)
+def _data_bits(data: bytes, version: int, cap_cw: int) -> List[int]:
+    """Byte-mode header + payload + terminator (≤4 zero bits, capacity-bounded)
+    + zero padding to a byte boundary."""
     bits: List[int] = []
 
     def put(val: int, n: int) -> None:
@@ -139,24 +143,26 @@ def _encode_codewords(data: bytes, version: int, ec: str) -> List[int]:
     put(len(data), _char_count_bits(version))
     for b in data:
         put(b, 8)
-    # terminator (up to 4 zero bits, bounded by capacity)
     cap_bits = cap_cw * 8
     for _ in range(min(4, cap_bits - len(bits))):
         bits.append(0)
-    # pad to byte boundary
     while len(bits) % 8 != 0:
         bits.append(0)
-    # to codewords
+    return bits
+
+
+def _pad_codewords(bits: List[int], cap_cw: int) -> List[int]:
+    """Bits → codewords, padded with alternating 0xEC / 0x11 up to capacity."""
     cw = [int("".join(str(x) for x in bits[i:i + 8]), 2) for i in range(0, len(bits), 8)]
-    # pad codewords with alternating 0xEC / 0x11
     pad = (0xEC, 0x11)
     i = 0
     while len(cw) < cap_cw:
         cw.append(pad[i % 2])
         i += 1
+    return cw
 
-    # split into blocks, compute EC, interleave
-    ecpb, g1, g1d, g2, g2d = _EC_TABLE[version][_EC_LEVELS.index(ec)]
+
+def _split_blocks(cw: List[int], g1: int, g1d: int, g2: int, g2d: int) -> List[List[int]]:
     blocks: List[List[int]] = []
     pos = 0
     for _ in range(g1):
@@ -165,18 +171,34 @@ def _encode_codewords(data: bytes, version: int, ec: str) -> List[int]:
     for _ in range(g2):
         blocks.append(cw[pos:pos + g2d])
         pos += g2d
-    ec_blocks = [_rs_ec(b, ecpb) for b in blocks]
+    return blocks
 
+
+def _interleave_data(blocks: List[List[int]]) -> List[int]:
     result: List[int] = []
-    max_data = max(len(b) for b in blocks)
-    for i in range(max_data):
+    for i in range(max(len(b) for b in blocks)):
         for b in blocks:
             if i < len(b):
                 result.append(b[i])
+    return result
+
+
+def _interleave_ec(ec_blocks: List[List[int]], ecpb: int) -> List[int]:
+    result: List[int] = []
     for i in range(ecpb):
         for b in ec_blocks:
             result.append(b[i])
     return result
+
+
+def _encode_codewords(data: bytes, version: int, ec: str) -> List[int]:
+    cap_cw = _data_capacity_cw(version, ec)
+    cw = _pad_codewords(_data_bits(data, version, cap_cw), cap_cw)
+    # split into blocks, compute EC, interleave
+    ecpb, g1, g1d, g2, g2d = _EC_TABLE[version][_EC_LEVELS.index(ec)]
+    blocks = _split_blocks(cw, g1, g1d, g2, g2d)
+    ec_blocks = [_rs_ec(b, ecpb) for b in blocks]
+    return _interleave_data(blocks) + _interleave_ec(ec_blocks, ecpb)
 
 
 # --------------------------------------------------------------------------- #
@@ -267,24 +289,57 @@ class _Matrix:
             self._set(a, b, bit)
             self._set(b, a, bit)
 
-    def draw_codewords(self, codewords: List[int]) -> None:
+    def _place_bit(self, x: int, y: int, codewords: List[int], i: int) -> int:
+        """Write data bit ``i`` at (x, y) unless the module is a function
+        pattern or the stream is exhausted; returns the next bit index."""
+        if not self.fun[y][x] and i < len(codewords) * 8:
+            byte = codewords[i >> 3]
+            self.mods[y][x] = ((byte >> (7 - (i & 7))) & 1) != 0
+            return i + 1
+        return i
+
+    def _place_column_pair(self, col: int, codewords: List[int], i: int) -> int:
+        """Fill the two-module-wide column ``col`` (zigzag: upward when
+        ``(col + 1) & 2 == 0``); returns the next bit index."""
         n = self.size
-        total_bits = len(codewords) * 8
+        upward = ((col + 1) & 2) == 0
+        for row_iter in range(n):
+            y = (n - 1 - row_iter) if upward else row_iter
+            for c in range(2):
+                i = self._place_bit(col - c, y, codewords, i)
+        return i
+
+    def draw_codewords(self, codewords: List[int]) -> None:
         i = 0
-        col = n - 1
+        col = self.size - 1
         while col > 0:
             if col == 6:
                 col = 5
-            for row_iter in range(n):
-                for c in range(2):
-                    x = col - c
-                    upward = ((col + 1) & 2) == 0
-                    y = (n - 1 - row_iter) if upward else row_iter
-                    if not self.fun[y][x] and i < total_bits:
-                        byte = codewords[i >> 3]
-                        self.mods[y][x] = ((byte >> (7 - (i & 7))) & 1) != 0
-                        i += 1
+            i = self._place_column_pair(col, codewords, i)
             col -= 2
+
+    @staticmethod
+    def _mask_bit(mask: int, x: int, y: int) -> bool:
+        """The eight ISO 18004 mask conditions (mask 7 for anything else)."""
+        if mask == 0:
+            return (x + y) % 2 == 0
+        if mask == 1:
+            return y % 2 == 0
+        if mask == 2:
+            return x % 3 == 0
+        if mask == 3:
+            return (x + y) % 3 == 0
+        return _Matrix._mask_bit_high(mask, x, y)
+
+    @staticmethod
+    def _mask_bit_high(mask: int, x: int, y: int) -> bool:
+        if mask == 4:
+            return (y // 2 + x // 3) % 2 == 0
+        if mask == 5:
+            return (x * y) % 2 + (x * y) % 3 == 0
+        if mask == 6:
+            return ((x * y) % 2 + (x * y) % 3) % 2 == 0
+        return ((x + y) % 2 + (x * y) % 3) % 2 == 0
 
     def apply_mask(self, mask: int) -> None:
         n = self.size
@@ -292,78 +347,74 @@ class _Matrix:
             for x in range(n):
                 if self.fun[y][x]:
                     continue
-                if mask == 0:
-                    inv = (x + y) % 2 == 0
-                elif mask == 1:
-                    inv = y % 2 == 0
-                elif mask == 2:
-                    inv = x % 3 == 0
-                elif mask == 3:
-                    inv = (x + y) % 3 == 0
-                elif mask == 4:
-                    inv = (y // 2 + x // 3) % 2 == 0
-                elif mask == 5:
-                    inv = (x * y) % 2 + (x * y) % 3 == 0
-                elif mask == 6:
-                    inv = ((x * y) % 2 + (x * y) % 3) % 2 == 0
-                else:
-                    inv = ((x + y) % 2 + (x * y) % 3) % 2 == 0
-                if inv:
+                if self._mask_bit(mask, x, y):
                     self.mods[y][x] = not self.mods[y][x]
 
-    def penalty(self) -> int:
-        n = self.size
-        m = self.mods
+    @staticmethod
+    def _run_penalty(line: List[bool]) -> int:
+        """Rule 1 on one row/column: every run of ≥5 same-colour modules
+        scores 3 + (run − 5)."""
         score = 0
-        # rule 1: runs of >=5 same-colour in row/col
-        for y in range(n):
-            run = 1
-            for x in range(1, n):
-                if m[y][x] == m[y][x - 1]:
-                    run += 1
-                else:
-                    if run >= 5:
-                        score += 3 + (run - 5)
-                    run = 1
-            if run >= 5:
-                score += 3 + (run - 5)
-        for x in range(n):
-            run = 1
-            for y in range(1, n):
-                if m[y][x] == m[y - 1][x]:
-                    run += 1
-                else:
-                    if run >= 5:
-                        score += 3 + (run - 5)
-                    run = 1
-            if run >= 5:
-                score += 3 + (run - 5)
-        # rule 2: 2x2 blocks of same colour
+        run = 1
+        for k in range(1, len(line)):
+            if line[k] == line[k - 1]:
+                run += 1
+            else:
+                if run >= 5:
+                    score += 3 + (run - 5)
+                run = 1
+        if run >= 5:
+            score += 3 + (run - 5)
+        return score
+
+    def _rule1(self) -> int:
+        m, n = self.mods, self.size
+        score = sum(self._run_penalty(m[y]) for y in range(n))
+        score += sum(self._run_penalty([m[y][x] for y in range(n)]) for x in range(n))
+        return score
+
+    def _rule2(self) -> int:
+        """2x2 blocks of the same colour: 3 each."""
+        m, n = self.mods, self.size
+        score = 0
         for y in range(n - 1):
             for x in range(n - 1):
                 c = m[y][x]
                 if c == m[y][x + 1] == m[y + 1][x] == m[y + 1][x + 1]:
                     score += 3
-        # rule 3: finder-like 1:1:3:1:1 patterns (with 4 light) in rows/cols
-        patt_a = [True, False, True, True, True, False, True, False, False, False, False]
-        patt_b = [False, False, False, False, True, False, True, True, True, False, True]
-        for y in range(n):
-            for x in range(n - 10):
-                seg = [m[y][x + k] for k in range(11)]
-                if seg == patt_a or seg == patt_b:
-                    score += 40
-        for x in range(n):
-            for y in range(n - 10):
-                seg = [m[y + k][x] for k in range(11)]
-                if seg == patt_a or seg == patt_b:
-                    score += 40
-        # rule 4: deviation of dark-module proportion from 50%
+        return score
+
+    _PATT_A = [True, False, True, True, True, False, True, False, False, False, False]
+    _PATT_B = [False, False, False, False, True, False, True, True, True, False, True]
+
+    @staticmethod
+    def _finder_like_count(line: List[bool]) -> int:
+        """Windows of 11 modules in one row/column matching either pattern."""
+        count = 0
+        for x in range(len(line) - 10):
+            seg = line[x:x + 11]
+            if seg == _Matrix._PATT_A or seg == _Matrix._PATT_B:
+                count += 1
+        return count
+
+    def _rule3(self) -> int:
+        """Finder-like 1:1:3:1:1 patterns (with 4 light) in rows/cols: 40 each."""
+        m, n = self.mods, self.size
+        hits = sum(self._finder_like_count(m[y]) for y in range(n))
+        hits += sum(self._finder_like_count([m[y][x] for y in range(n)]) for x in range(n))
+        return hits * 40
+
+    def _rule4(self) -> int:
+        """Deviation of the dark-module proportion from 50%."""
+        m, n = self.mods, self.size
         dark = sum(row.count(True) for row in m)
         ratio = dark * 100 // (n * n)
         prev = (ratio // 5) * 5
         nxt = prev + 5
-        score += min(abs(prev - 50), abs(nxt - 50)) // 5 * 10
-        return score
+        return min(abs(prev - 50), abs(nxt - 50)) // 5 * 10
+
+    def penalty(self) -> int:
+        return self._rule1() + self._rule2() + self._rule3() + self._rule4()
 
 
 def qr_matrix(data: str, ec: str = "M") -> List[List[bool]]:
@@ -391,6 +442,9 @@ def qr_matrix(data: str, ec: str = "M") -> List[List[bool]]:
 # --------------------------------------------------------------------------- #
 # Renderers.
 # --------------------------------------------------------------------------- #
+_HALF_BLOCKS = {(True, True): "█", (True, False): "▀", (False, True): "▄", (False, False): " "}
+
+
 def qr_terminal(data: str, ec: str = "M", quiet: int = 4) -> str:
     """Render ``data`` as a scannable Unicode half-block QR (dark on a light
     terminal). Two module-rows per text-row keep the aspect ratio square."""
@@ -405,18 +459,8 @@ def qr_terminal(data: str, ec: str = "M", quiet: int = 4) -> str:
 
     lines = []
     for y in range(0, full, 2):
-        row = []
-        for x in range(full):
-            top = dark(x, y)
-            bot = dark(x, y + 1) if y + 1 < full else False
-            if top and bot:
-                row.append("█")     # █
-            elif top and not bot:
-                row.append("▀")     # ▀
-            elif not top and bot:
-                row.append("▄")     # ▄
-            else:
-                row.append(" ")
+        row = [_HALF_BLOCKS[(dark(x, y), dark(x, y + 1) if y + 1 < full else False)]
+               for x in range(full)]
         lines.append("".join(row))
     return "\n".join(lines)
 

@@ -69,18 +69,16 @@ export function ButtonsSection() {
         <LaneComposer
           placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
           submitLabel={text("捕获", "Capture")}
-          successNote={text("已提交，AI 分析中（通常 2-3 分钟）", "Submitted; AI is analyzing (usually 2-3 min)")}
           buildBody={(t) => ({ action: "capture", text: t })}
         />
         <LaneComposer
           placeholder={text("一句话，直接开跑（跳过提案）…", "One line — run it now (skips proposal)…")}
           submitLabel={text("直跑", "Run")}
-          successNote={text("已提交，直接开跑（跳过提案），排队派发中…", "Submitted to run directly; queued for dispatch…")}
           buildBody={(t) => ({ action: "capture", text: t, mode: "run" })}
         />
         <SpecimenNote
-          zh="列顶输入框（真 LaneComposer，⚠️ 真捕获通道——在这里提交会真的铸卡）：捕获 / 直跑按钮都是 .btn-primary；输入框空或提交中自动 disabled（下方即活的 disabled 态）；focus 环 --accent-soft + --accent"
-          en="Lane composers (real LaneComposer — ⚠️ the real capture channel; submitting here mints a real card): Capture / Run are .btn-primary; the button disables itself while empty or busy (a live disabled state); focus ring --accent-soft + --accent"
+          zh="列顶输入框（真 LaneComposer，⚠️ 真捕获通道——在这里提交会真的铸卡）：多行 textarea 1…5 行自动增高，回车 = 换行、只有按钮提交（D35）；捕获 / 直跑按钮都是 .btn-primary、贴底；输入框空或提交中自动 disabled（下方即活的 disabled 态）；focus 环 --accent-soft + --accent"
+          en="Lane composers (real LaneComposer — ⚠️ the real capture channel; submitting here mints a real card): a textarea that grows from 1 to 5 rows, Enter = newline, the button is the only submit (D35); Capture / Run are .btn-primary, bottom-aligned; the button disables itself while empty or busy (a live disabled state); focus ring --accent-soft + --accent"
         />
       </figure>
       <figure className="sg-specimen">

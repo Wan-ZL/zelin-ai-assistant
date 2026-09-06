@@ -1,0 +1,2 @@
+type: fixed
+- **Slack「监控范围」的目录失败句跟看板语言（parity 批 `slack-directory-ui-lang`；CONTRACT §68.1 追记）**：「加载频道和成员」失败时（还没保存 token、token 失效、Slack 限流……）那一句是 act 侧按 UI 语言挑的双语句，之前 server 起子进程时没告诉它看板正用哪种语言，于是看板切到 English 时仍可能冒出中文（或反过来），取决于守护进程的持久化设置 / locale。现在 `GET /api/slack/directory` 接受 `?lang=zh|en`（其它值 400），web 每次请求都带当前 UI 语言，子进程照原生 SettingsSlack.fetchDirectory 的 `AIASSISTANT_UI_LANG` 那样收到它。目录内容与缓存不受影响；哪把语言旋钮是真源（顶栏切换 vs 设置里的 `language`）仍待裁。

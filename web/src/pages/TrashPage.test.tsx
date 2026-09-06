@@ -52,7 +52,7 @@ describe("TrashPage", () => {
     render(<TrashPage />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
-    await screen.findByText("Restore requested");
+    await screen.findByText("Restoring — the card returns to its previous lane"); // 原生 beginReturn 信息条
 
     expect(postAction).toHaveBeenCalledTimes(1);
     const payload = vi.mocked(postAction).mock.calls[0][0];

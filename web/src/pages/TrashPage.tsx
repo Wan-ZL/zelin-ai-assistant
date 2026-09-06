@@ -1,14 +1,21 @@
 // 回收站页（G4；?page=trash 深链）。行为对齐 mac/Sources/Cards.swift
-// TrashSectionView/TrashRow（CONTRACT §9 + §40.5）：
-//   - 搜索框客户端过滤 title/summary；
+// TrashSectionView/TrashRow（CONTRACT §9 + §37 + §40.5）：
+//   - 行标题 = §37 摘要优先面 cardHeadline（钦定名 > summary > display_title > title；原生 TrashItem.displaySummary，
+//     Cards.swift:2594）——改过名再删的卡在回收站也显示你起的名字；搜索框客户端过滤 title/summary/display_title；
 //   - 每行「恢复」→ inbox {action:"restore"}、「永久保存」→ {action:"pin"}（已 pinned 不显）；
 //   - purge 倒计时「X 天后永久删除」：天数向上取整、≤7 天红色；pinned 显「已永久保留」；
 //     purge_at 缺失/null = 不会自动清 → 不显示倒计时（倒计时绝不许诺不会发生的删除）。
-// 动作后不做乐观看板更新——只置行级本地标记（镜像 Mac pinnedLocal），等 SSE → refetch 回流。
-import { useState } from "react";
+// 动作后不做乐观看板更新：每行一个 useSubmit（与永久性完成书立条的 ArchiveRow 同款）——恢复中显示原生那句
+// 「恢复中，卡片将回到原状态列」（Store.swift beginReturn），卡离开 trash 才解锁；180 s 没动 → 原生
+// 「恢复超时，卡片仍在回收站，可重试（检查 actd 是否在运行）」，行恢复可操作（不再永远挂着「已请求恢复」）。
+// 「永久保存」不锁行（原生 Store.swift:794-795 `case "pin": pinnedLocal.insert(id) // no hide — badge flips in place`）：
+// POST 成功章先翻、「永久保存」钮随之隐去、「恢复」照旧可点；本地章在 backend 回 permanent 后退场
+// （PendingSweep.swift:277-279），180 s 没确认则收回（原生 pinnedLocal 不在 sweepTimeouts 里——web 多一道诚实兜底）。
+import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
-import { ApiError, postAction } from "../api";
+import { useSubmit } from "../components/board/boardActions";
 import { RelativeTime } from "../components/board/cardChrome";
+import { cardHeadline } from "../components/board/cardHeadline";
 import {
   domainLabel,
   TRASH_KIND_LABELS,
@@ -27,105 +34,92 @@ function daysUntilPurge(purgeAt: string | null | undefined): number | null {
   return Math.max(0, Math.ceil((t - Date.now()) / 86_400_000));
 }
 
-export function TrashPage() {
+/** 搜索命中：title / summary / display_title 三个字段之一（原生 TrashSectionView 过滤 + §37 展示名） */
+export function trashRowMatches(item: TrashRow, needle: string): boolean {
+  const fields = [item.title, item.summary, item.display_title];
+  return fields.some((f) => typeof f === "string" && f.toLowerCase().includes(needle));
+}
+
+export function TrashRowView({ item }: { item: TrashRow }) {
   const { text, language } = useI18n();
-  const { board } = useAppState();
-  const [query, setQuery] = useState("");
-  // 行级本地回执（镜像 Mac pinnedLocal）：动作已发出、等 actd 消化 + SSE 回流期间的即时反馈
-  const [pinnedLocal, setPinnedLocal] = useState<ReadonlySet<string>>(new Set());
-  const [restoredLocal, setRestoredLocal] = useState<ReadonlySet<string>>(new Set());
-  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
-  const [actionError, setActionError] = useState<string | null>(null);
+  const { pending, pendingAction, error, submit } = useSubmit();
+  // 行级本地回执（镜像 Mac pinnedLocal）：pin 已发出、等 actd 消化 + 回流期间章先翻；backend 说 permanent 了它就多余
+  const [pinnedLocal, setPinnedLocal] = useState(false);
+  useEffect(() => {
+    if (item.permanent && pinnedLocal) setPinnedLocal(false);
+  }, [item.permanent, pinnedLocal]);
+  useEffect(() => {
+    // pin 的 180 s 兜底到点时 backend 还没说 permanent：章是本地翻的，没有真凭据就收回（超时句已说明原因）；
+    // 别的动作（恢复）出错不动这个章
+    if (!pending && error !== null && pendingAction === "pin" && pinnedLocal && !item.permanent) setPinnedLocal(false);
+  }, [pending, pendingAction, error, pinnedLocal, item.permanent]);
 
-  const items = board?.trash ?? [];
-  const needle = query.trim().toLowerCase();
-  const filtered = !needle
-    ? items
-    : items.filter(
-        (it) =>
-          it.title.toLowerCase().includes(needle)
-          || (it.summary ?? "").toLowerCase().includes(needle),
-      );
+  const isPinned = item.permanent || pinnedLocal;
+  // 只有恢复（换列动词，原生 beginReturn）收起按钮行；pin 不换列、不锁行
+  const isRestoring = pending && pendingAction === "restore";
+  const days = daysUntilPurge(item.purge_at);
+  const headline = cardHeadline(item) || item.title;
 
-  const mark = (set: ReadonlySet<string>, id: string, on: boolean): ReadonlySet<string> => {
-    const next = new Set(set);
-    if (on) next.add(id);
-    else next.delete(id);
-    return next;
+  const pin = async () => {
+    // §3 卡路径动词 wire：只发 action + id；ts 由 server 盖章，comment 省略（可选字段）
+    const ok = await submit({ action: "pin", id: item.id });
+    if (ok) setPinnedLocal(true);
   };
 
-  async function submit(action: "restore" | "pin", id: string) {
-    setActionError(null);
-    setBusyIds((s) => mark(s, id, true));
-    try {
-      // §3 卡路径动词 wire：只发 action + id；ts 由 server 盖章，comment 省略（可选字段）
-      await postAction({ action, id });
-      if (action === "pin") setPinnedLocal((s) => mark(s, id, true));
-      else setRestoredLocal((s) => mark(s, id, true));
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 501) {
-        setActionError(text(
-          "动作通道尚未接线（server 返回 501）——G1 inbox_writer 落地后自动可用。",
-          "Action channel not wired yet (server returned 501) — available once G1 inbox_writer lands.",
-        ));
-      } else {
-        setActionError(error instanceof ApiError ? error.message : String(error));
-      }
-    } finally {
-      setBusyIds((s) => mark(s, id, false));
-    }
-  }
-
-  function renderRow(item: TrashRow) {
-    const isPinned = item.permanent || pinnedLocal.has(item.id);
-    const isRestored = restoredLocal.has(item.id);
-    const isBusy = busyIds.has(item.id);
-    const days = daysUntilPurge(item.purge_at);
-
-    return (
-      <article key={item.id} className={`trash-row${isRestored ? " is-restored" : ""}`}>
-        <div className="trash-row-main">
-          <span className="trash-row-text">{item.summary || item.title}</span>
-          {isPinned && <span className="chrome-badge is-pinned">{text("永久", "Pinned")}</span>}
-        </div>
-        <div className="trash-row-meta">
-          {item.kind && <span className="chrome-badge">{domainLabel(TRASH_KIND_LABELS, language, item.kind)}</span>}
-          {item.trash_reason && <span>{domainLabel(TRASH_REASON_LABELS, language, item.trash_reason)}</span>}
-          {/* trashed_at 相对时间（原生 RelativeTime.since：刚刚/N分钟前/N小时前/N天前），hover 绝对 */}
-          <RelativeTime iso={item.trashed_at} />
-          {isPinned ? (
-            <span className="trash-row-purge is-pinned">{text("已永久保留", "Kept forever")}</span>
-          ) : (
-            days !== null && (
-              <span className={`trash-row-purge${days <= 7 ? " is-imminent" : ""}`}>
-                {text(`${days} 天后永久删除`, `Deleted for good in ${days}d`)}
-              </span>
-            )
-          )}
-        </div>
+  return (
+    <article className={`trash-row${isRestoring ? " is-restored" : ""}`}>
+      <div className="trash-row-main">
+        <span className="trash-row-text">{headline}</span>
+        {isPinned && <span className="chrome-badge is-pinned">{text("永久", "Pinned")}</span>}
+      </div>
+      <div className="trash-row-meta">
+        {item.kind && <span className="chrome-badge">{domainLabel(TRASH_KIND_LABELS, language, item.kind)}</span>}
+        {item.trash_reason && <span>{domainLabel(TRASH_REASON_LABELS, language, item.trash_reason)}</span>}
+        {/* trashed_at 相对时间（原生 RelativeTime.since：刚刚/N分钟前/N小时前/N天前），hover 绝对 */}
+        <RelativeTime iso={item.trashed_at} />
+        {isPinned ? (
+          <span className="trash-row-purge is-pinned">{text("已永久保留", "Kept forever")}</span>
+        ) : (
+          days !== null && (
+            <span className={`trash-row-purge${days <= 7 ? " is-imminent" : ""}`}>
+              {text(`${days} 天后永久删除`, `Deleted for good in ${days}d`)}
+            </span>
+          )
+        )}
+      </div>
+      {isRestoring ? (
+        // 原生 beginReturn 的信息条：恢复在途，按钮行收起
+        <p className="card-pending-note">{text("恢复中，卡片将回到原状态列", "Restoring — the card returns to its previous lane")}</p>
+      ) : (
         <div className="trash-row-actions">
           <button
             type="button"
             className="trash-button is-restore"
-            disabled={isBusy || isRestored}
-            onClick={() => void submit("restore", item.id)}
+            onClick={() => void submit({ action: "restore", id: item.id })}
           >
-            {isRestored ? text("已请求恢复", "Restore requested") : text("恢复", "Restore")}
+            {text("恢复", "Restore")}
           </button>
+          {/* pin 在途（POST 还没落定）时禁点防双发；POST 成功章翻起、钮随 isPinned 隐去，「恢复」始终可点 */}
           {!isPinned && (
-            <button
-              type="button"
-              className="trash-button is-pin"
-              disabled={isBusy || isRestored}
-              onClick={() => void submit("pin", item.id)}
-            >
+            <button type="button" className="trash-button is-pin" disabled={pending} onClick={() => void pin()}>
               {text("永久保存", "Pin")}
             </button>
           )}
         </div>
-      </article>
-    );
-  }
+      )}
+      {error && <p className="trash-action-error" role="alert">{error}</p>}
+    </article>
+  );
+}
+
+export function TrashPage() {
+  const { text } = useI18n();
+  const { board } = useAppState();
+  const [query, setQuery] = useState("");
+
+  const items = board?.trash ?? [];
+  const needle = query.trim().toLowerCase();
+  const filtered = !needle ? items : items.filter((it) => trashRowMatches(it, needle));
 
   return (
     <main className="trash-page">
@@ -146,14 +140,12 @@ export function TrashPage() {
         onChange={(event) => setQuery(event.target.value)}
       />
 
-      {actionError && <p className="trash-action-error" role="alert">{actionError}</p>}
-
       {filtered.length === 0 ? (
         <p className="trash-empty">
           {items.length === 0 ? text("回收站为空", "Trash is empty") : text("无匹配项", "No matches")}
         </p>
       ) : (
-        filtered.map(renderRow)
+        filtered.map((item) => <TrashRowView key={item.id} item={item} />)
       )}
     </main>
   );

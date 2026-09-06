@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from server import paths
-from server.errors import NotFoundError, NotImplementedError501, UnknownFieldError
+from server.errors import ApiError, NotFoundError, NotImplementedError501, UnknownFieldError
 from server.terminal_launch import Opener, open_command_file, write_command_file
 
 SCRIPT_NAME = "uninstall.sh"
@@ -46,7 +46,13 @@ def launch(payload: dict, opener: Optional[Opener] = None, out_dir: Optional[Pat
     if (platform or sys.platform) != "darwin":
         raise NotImplementedError501("uninstalling from a terminal window is macOS only")
     if not script_path().is_file():
-        raise NotFoundError("uninstall script not found", {"path": str(script_path())})
+        raise NotFoundError("uninstall script not found",
+                            {"path": str(script_path()), "command": shell_command()})
     path = write_command_file(_script_text(), out_dir)
-    open_command_file(path, opener, home)
+    try:
+        open_command_file(path, opener, home)
+    except ApiError as exc:
+        # 原生「无法打开 Terminal」弹窗附带的手动命令：details 里带上（add-only），页面原句照印
+        exc.details = dict(exc.details, command=shell_command())
+        raise
     return {"ok": True, "command": shell_command(), "command_file": str(path)}

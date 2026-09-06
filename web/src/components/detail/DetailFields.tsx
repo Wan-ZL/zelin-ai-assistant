@@ -1,13 +1,29 @@
-// 详情 tab：GET /api/cards/{id} 增补详情的全字段渲染。
+// 详情 tab：GET /api/cards/{id} 增补详情的全字段渲染——**卡片详情的唯一渲染器**（D34 / issue #217，
+// CONTRACT §49 追记）：原生 Cards.swift 详情槽的积木（💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完 ·
+// ☐ 验收清单 / 交付了什么 / 错误全文 + 复制 / 日志 / 指令 · 在终端接管会话 / 会话 ID / claude agents 列表名）
+// 全部住在这里，标签逐字镜像原生（§54.1 / §66 探针按面精确匹配）；就地展开的第二套渲染已退役。
 // 已知语义字段给专属版式；未知字段落「其他字段」兜底区（wire add-only，
 // 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）；唯一例外 =
-// 并入记录每行的「拆回独立卡片」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
-// 在这里有归属（note_ts 就是这一行）。
+// 「📎 折叠进来的信息」每行的「拆成新卡」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
+// 在这里有归属（note_ts 就是这一行）。按 server 给的 `lane` 选积木（防腐 #10：lane 是 server 数据）：
+// needs_approval 才说钱（「展开详情永远说钱」§40）、review 的清单永远渲染（§11）、needs_input 的指令行
+// 用「在终端接管会话：」兜底句（§39）。§37 展示名：抬头是冻结 title（原生 expandedDetail 的技术标题）；
+// display_title 与抬头不同就在这里给一行「显示名」——侧栏是 modal，卡面未必在眼前（深链 / 收起的书立条），
+// 原生 expandedDetail 永远坐在 displaySummary 抬头下面，这一行是它在 web 上的位置。
+// 摘要 / 💬 引文 / 📋 步骤里的 URL 可点（board/Linkified，原生 Utils.swift linkified 的落点，§54.1 追记）：
+// 引文与步骤原生在所有 lane 都 linkify（PlanListView / SourceListView 共用，Cards.swift:508 / :529 / :1311 / :1329）；
+// 摘要原生只在提案面（:1073）与潜在任务面（:2028）linkify，运行中 / 待验收行的摘要是纯 Text（:1722 / :1843-1850，
+// 原因 = 链接点击与整卡复制手势冲突 :1829）——web 的详情侧栏没有整卡复制手势，这个约束不存在，所以摘要段
+// 在所有 lane 都走 Linkified，是**有意的一处扩展**（同一侧栏里步骤可点、摘要不可点才是怪的）。
+// 交付正文 / 怎样算办完 原生不 linkify（:1829 / DodListView），照抄边界。
 import { useState, type ReactNode } from "react";
 import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
 import type { CardDetail, CardSource } from "../../types";
-import { useSubmit } from "../board/boardActions";
+import { costText, resumeCommand, useSubmit } from "../board/boardActions";
+import { CopiedAnnouncer } from "../board/cardChrome";
+import { cardHeadline } from "../board/cardHeadline";
+import { Linkified } from "../board/Linkified";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
 
@@ -15,7 +31,8 @@ import { parseFoldNotes } from "./foldNotes";
 const KNOWN_KEYS = new Set([
   "id", "lane", "title", "name", "tier", "tier_hint", "state", "status", "hardness", "type",
   "delivery_mode", "deadline", "days_left", "repeated", "repeated_mentions",
-  "cost_usd", "cost_estimate_usd", "show_cost", "green_sign", "green_sign_required", "processing",
+  // §40 诚实成本三件套：cost_state 是 costText / moneyOf 读的「unknown」位，不是兜底区的杂项
+  "cost_usd", "cost_estimate_usd", "cost_state", "show_cost", "green_sign", "green_sign_required", "processing",
   "summary", "plan", "dod", "definition_of_done", "outputs", "sources", "notes", "execution",
   "copy_cmd", "log", "cwd", "target_repo", "session_id", "short_id", "agent_name",
   "started_at", "dispatched_at", "accepted_at", "review_at", "created", "updated", "trashed_at",
@@ -26,7 +43,24 @@ const KNOWN_KEYS = new Set([
   "queued_reason", "steers",
   // §60（D21）两段式编号：work_id 进 meta 行，display_id/id_kind 是抬头的展示口径
   "work_id", "display_id", "id_kind",
+  // §37 活标题四键：display_title 有专属「显示名」行，user_titled 是它的钦定位，former_titles 由抬头的
+  // FormerNames 渲染，notes_text 是 notes 的搜索投影副本（§38 尾裁剪）——registry 的 notes 在时不渲染两遍，
+  // 缺席时（sqlite 真源下 store2.db 不在 / 只有投影的 demo 数据）它就是 📎 折叠信息唯一的来源
+  "display_title", "user_titled", "former_titles", "notes_text",
 ]);
+
+/** 名字优先面（原生 rowTitle：display_title > name）——其余 lane 是摘要优先面（cardHeadline） */
+const NAME_FIRST_LANES = new Set(["running", "needs_input", "review", "completed"]);
+
+/** 这张卡此刻在看板上的标题（与卡片组件同一条链），detail 缺 lane 时按摘要优先面算——
+ *  抽屉「✎ 改名」的预填读它（原生 TitleEditRow current = displaySummary，Cards.swift:1283） */
+export function faceHeadline(detail: CardDetail): string {
+  const lane = str(detail.lane);
+  if (lane && NAME_FIRST_LANES.has(lane)) {
+    return str(detail.display_title) ?? str(detail.name) ?? str(detail.title) ?? "";
+  }
+  return cardHeadline(detail);
+}
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
@@ -44,36 +78,45 @@ function formatWhen(value: unknown, locale: string): string | null {
   return str(value);
 }
 
+/** 「复制」→「已复制」1.5 s；旁边一个 role=status 播报（按钮文案变化 VoiceOver 不一定读——卡面 CopyCommandLine 同法） */
 function CopyChip({ value, label }: { value: string; label: string }) {
   const { text } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
-      className="zai-detail-copy"
-      onClick={() => {
-        void copyText(value).then((ok) => {
-          setCopied(ok);
-          if (ok) window.setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      {copied ? text("已复制", "Copied") : label}
-    </button>
+    <>
+      <button
+        type="button"
+        className="zai-detail-copy"
+        onClick={() => {
+          void copyText(value).then((ok) => {
+            setCopied(ok);
+            if (ok) window.setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+      >
+        {copied ? text("已复制", "Copied") : label}
+      </button>
+      <CopiedAnnouncer copied={copied} />
+    </>
   );
 }
 
-/** §38.2 拆回独立卡片：{action:"split_note", id, note_ts}（legacy 无 ts 的 fold 行不可拆，原生同） */
+/** §38.2 拆成新卡：{action:"split_note", id, note_ts}（legacy 无 ts 的 fold 行不可拆，原生同）。
+ *  动词 / 忙态词逐字镜像原生 FoldNotesView（拆成新卡 / 拆分中…，§54.4）。 */
 function SplitNoteButton({ cardId, noteTs }: { cardId: string; noteTs: string }) {
   const { text } = useI18n();
   const { pending, error, submit } = useSubmit();
   return (
     <>
-      <button type="button" className="zai-detail-copy" disabled={pending}
-        title={text("把这条并入记录拆回一张独立卡片（原卡留一行「已拆出 …」）", "Split this fold note back into its own card (the original keeps a \"split into …\" line)")}
-        onClick={() => void submit({ action: "split_note", id: cardId, note_ts: noteTs })}>
-        {pending ? text("拆分中…", "Splitting…") : text("拆回独立卡片", "Split out")}
-      </button>
+      {pending ? (
+        <span className="zai-detail-dim">{text("拆分中…", "Splitting…")}</span>
+      ) : (
+        <button type="button" className="zai-detail-copy"
+          title={text("这条信息不该折在这张卡里？拆出去单独成卡（原记录保留）", "Folded into the wrong card? Split it out (the origin line is kept)")}
+          onClick={() => void submit({ action: "split_note", id: cardId, note_ts: noteTs })}>
+          {text("拆成新卡", "Split into card")}
+        </button>
+      )}
       {error && <span className="zai-detail-callout zai-detail-callout--danger">{error}</span>}
     </>
   );
@@ -85,6 +128,22 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <h3>{title}</h3>
       {children}
     </section>
+  );
+}
+
+/**
+ * 一行等宽路径 / 命令（原生 CopyPathLine / MetaLine 的侧栏版）：标签独占一个节点（§54.4 前缀与值分两个节点，
+ * 探针按节点文本逐字判「日志：」「指令：」「会话 ID：」…）；copy = 右侧「复制」→「已复制」1.5 s（原生 clipboard→✓）。
+ */
+function CmdLine({ label, value, copy = false }: { label: string; value: string | null; copy?: boolean }) {
+  const { text } = useI18n();
+  if (!value) return null;
+  return (
+    <div className="zai-detail-cmd">
+      <span className="zai-detail-cmd-label">{label}</span>
+      <code>{value}</code>
+      {copy && <CopyChip value={value} label={text("复制", "Copy")} />}
+    </div>
   );
 }
 
@@ -124,8 +183,6 @@ export function DetailFields({ detail }: DetailFieldsProps) {
     ["disagreement", "分歧", "Disagreement", "warn"],
     ["waiting_for", "等待输入", "Waiting for", "warn"],
     ["reraised_note", "再提名说明", "Re-raise note", "warn"],
-    ["last_error", "最近错误", "Last error", "danger"],
-    ["dispatch_error", "派发错误", "Dispatch error", "danger"],
   ];
   for (const [key, zh, en, tone] of warnDefs) {
     const value = str(detail[key]);
@@ -134,6 +191,9 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   if (detail.resume_exhausted === true) {
     warnings.push({ key: "resume_exhausted", label: text("重试", "Retries"), value: text("自动重试已用尽", "Automatic resume attempts exhausted"), tone: "danger" });
   }
+  // 错误全文（原生 TaskRow 详情槽：错误全文 + 复制）：排队卡看 dispatch_error，其余看 last_error——另一个有值也兜底
+  const errorFull = (detail.state === "queued" ? str(detail.dispatch_error) : str(detail.last_error))
+    ?? str(detail.last_error) ?? str(detail.dispatch_error);
 
   const meta: Array<[string, string]> = [];
   // §60：工作编号（有才显示）+ 主键——抬头已给展示编号，这里把两者都留在字段面
@@ -141,6 +201,12 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   if (workId) meta.push([text("工作编号", "Work number"), workId]);
   const primaryKey = str(detail.id);
   if (primaryKey && workId && primaryKey !== workId) meta.push([text("主键", "Card key"), primaryKey]);
+  // §37：display_title 不是抬头（DetailDrawer h2 = title ‖ name）就单独给一行——只跟抬头去重，不跟卡面去重：
+  // 侧栏是 modal，卡面未必在眼前（?card= 深链、收起的书立条、回收站行），用户钦定的名字不能在唯一详情面上消失
+  const displayTitle = str(detail.display_title);
+  if (displayTitle && displayTitle !== (str(detail.title) ?? str(detail.name))) {
+    meta.push([text("显示名", "Display name"), displayTitle]);
+  }
   const deadline = str(detail.deadline);
   if (deadline) {
     const daysLeft = typeof detail.days_left === "number" ? text(`（剩 ${detail.days_left} 天）`, ` (${detail.days_left}d left)`) : "";
@@ -151,12 +217,10 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   // 结构化排队原因（§M6.2）：queued 卡「排队中 · 等 R-xx / 等预算」的详情行
   const queuedReason = queuedReasonLabel(detail.queued_reason, text);
   if (queuedReason) meta.push([text("排队原因", "Queued because"), queuedReason]);
+  // 提案列的钱走下面的 💰 行（§40）；其余列 registry 并进来的 cost_estimate_usd（§49 add-only 合并）仍要看得见——
+  // 老侧栏就有这一行，不能因为换了渲染器就把数字藏起来
   const cost = detail.cost_usd ?? detail.cost_estimate_usd;
-  if (detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
-  const agent = str(detail.agent_name);
-  if (agent) meta.push([text("执行代号", "Agent"), agent]);
-  const session = str(detail.short_id) ?? str(detail.session_id);
-  if (session) meta.push(["Session", session]);
+  if (lane !== "needs_approval" && detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
   const repo = str(detail.target_repo) ?? str(detail.cwd);
   if (repo) meta.push([text("工作目录", "Workdir"), repo]);
   const timeDefs: Array<[string, string, unknown]> = [
@@ -173,18 +237,24 @@ export function DetailFields({ detail }: DetailFieldsProps) {
     if (rendered) meta.push([label, rendered]);
   }
   const log = str(detail.log);
+  // 会话命令与卡面「单击复制指令」同源（copy_cmd → claude --resume <sid>；排队卡无）
+  const cmd = resumeCommand(detail);
+  const session = str(detail.short_id) ?? str(detail.session_id);
+  const agent = str(detail.agent_name);
 
   const steers = parseSteers(detail.steers);
   const plan = strList(detail.plan);
   const dod = strList(detail.dod ?? detail.definition_of_done);
   const outputs = strList(detail.outputs);
   const sources = Array.isArray(detail.sources) ? (detail.sources as CardSource[]) : [];
-  const { folds, rest } = parseFoldNotes(detail.notes);
+  // registry 的 notes 是全文；缺席时退到投影的 notes_text（§38 尾裁剪副本，fold 句柄完整）——否则折叠信息整段消失
+  const { folds, rest } = parseFoldNotes(detail.notes ?? detail.notes_text);
   const execution = detail.execution && typeof detail.execution === "object" && !Array.isArray(detail.execution)
     ? Object.entries(detail.execution as Record<string, unknown>)
     : [];
-  const copyCmd = str(detail.copy_cmd);
   const unknown = Object.entries(detail).filter(([key, value]) => !KNOWN_KEYS.has(key) && value != null);
+  const summary = str(detail.summary);
+  const deliveredSummary = str(detail.delivered_summary);
 
   return (
     <div className="zai-detail-fields">
@@ -202,11 +272,30 @@ export function DetailFields({ detail }: DetailFieldsProps) {
         </p>
       ))}
 
-      {str(detail.summary) && <p className="zai-detail-summary">{str(detail.summary)}</p>}
-      {str(detail.delivered_summary) && (
-        <Section title={text("交付总结", "Delivered summary")}>
-          <p className="zai-detail-summary">{str(detail.delivered_summary)}</p>
+      {errorFull && (
+        // 原生 Cards.swift:746–759：「错误全文」小标题 + 右侧 复制 / 已复制 + 等宽全文块（卡面只留红色一句）
+        <section className="zai-detail-section">
+          <div className="zai-detail-section-head">
+            <h3>{text("错误全文", "Full error")}</h3>
+            <CopyChip value={errorFull} label={text("复制", "Copy")} />
+          </div>
+          <pre className="zai-detail-error">{errorFull}</pre>
+        </section>
+      )}
+
+      {/* 提案「展开详情永远说钱」（§40）：有数「💰 预计费用: $N」，无数「💰 成本未知」——只在 needs_approval 列 */}
+      {lane === "needs_approval" && <p className="zai-detail-cost">{costText(detail, text)}</p>}
+
+      {deliveredSummary ? (
+        // v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文（原生 ReviewRow「交付了什么：」）。
+        // 交付正文原生明确不 linkify（:1829），照抄；灰色摘要原生也是纯 Text（:1843-1850，同一手势冲突理由）——
+        // web 侧栏无整卡复制手势，这里有意走 Linkified（见文件头），是 web 对原生的一处扩展，不是照抄
+        <Section title={text("交付了什么：", "Delivered:")}>
+          <p className="zai-detail-summary">{deliveredSummary}</p>
+          {summary && <p className="zai-detail-summary zai-detail-dim"><Linkified text={summary} /></p>}
         </Section>
+      ) : (
+        summary && <p className="zai-detail-summary"><Linkified text={summary} /></p>
       )}
 
       {meta.length > 0 && (
@@ -218,13 +307,22 @@ export function DetailFields({ detail }: DetailFieldsProps) {
       )}
 
       {plan.length > 0 && (
-        <Section title={text("计划", "Plan")}>
-          <ol>{plan.map((step, index) => <li key={index}>{step}</li>)}</ol>
+        // 原生 PlanListView：📋 要做什么，编号；"[修改方向]" 行橙色加粗；步骤里的 URL 可点（原生 linkified，Cards.swift:529 / :1329）
+        <Section title={text("📋 要做什么", "📋 Plan")}>
+          <ol>{plan.map((step, index) => <li key={index} className={step.startsWith("[修改方向]") ? "is-rework" : undefined}><Linkified text={step} /></li>)}</ol>
         </Section>
       )}
-      {dod.length > 0 && (
-        <Section title={text("验收标准", "Definition of done")}>
-          <ul className="zai-detail-dod">{dod.map((item, index) => <li key={index}>{item}</li>)}</ul>
+      {lane === "review" ? (
+        // §11 待验收：☐ 验收清单永远渲染，空时给兜底句（原生 ReviewRow）
+        <Section title={text("验收清单——逐条对照：", "Acceptance checklist:")}>
+          {dod.length === 0
+            ? <p className="zai-detail-dim">{text("该任务未定义验收标准，请自行判断", "No acceptance criteria defined — judge manually")}</p>
+            : <ul className="zai-detail-dod">{dod.map((item, index) => <li key={index}>{item}</li>)}</ul>}
+        </Section>
+      ) : dod.length > 0 && (
+        // 原生 DodListView：怎样算办完，编号
+        <Section title={text("怎样算办完：", "Definition of done:")}>
+          <ol>{dod.map((item, index) => <li key={index}>{item}</li>)}</ol>
         </Section>
       )}
       {outputs.length > 0 && (
@@ -234,30 +332,43 @@ export function DetailFields({ detail }: DetailFieldsProps) {
       )}
 
       {sources.length > 0 && (
-        <Section title={text("来源引文", "Sources")}>
-          {sources.map((source, index) => (
-            <blockquote key={index} className="zai-detail-source">
-              <p className="zai-detail-source-quote">{str(source?.quote) ?? text("（无引文）", "(no quote)")}</p>
-              <footer>
-                {[str(source?.who), str(source?.channel), str(source?.date)].filter(Boolean).join(" · ")}
-                {str(source?.ref) && <span className="zai-detail-source-ref"> · {source.ref}</span>}
-              </footer>
-            </blockquote>
-          ))}
+        // 原生 SourceListView：💬 需求来自，who · channel · date + 引文；引文里的 URL 可点
+        // （原生 linkified，Cards.swift:508 / :1311「Slack quotes often carry links — make them clickable」）
+        <Section title={text("💬 需求来自", "💬 Requested by")}>
+          {sources.map((source, index) => {
+            const quote = str(source?.quote);
+            return (
+              <blockquote key={index} className="zai-detail-source">
+                <p className="zai-detail-source-quote">{quote ? <Linkified text={quote} /> : text("（无引文）", "(no quote)")}</p>
+                <footer>
+                  {[str(source?.who), str(source?.channel), str(source?.date)].filter(Boolean).join(" · ")}
+                  {str(source?.ref) && <span className="zai-detail-source-ref"> · {source.ref}</span>}
+                </footer>
+              </blockquote>
+            );
+          })}
         </Section>
       )}
 
-      {(folds.length > 0 || rest.length > 0) && (
-        <Section title={text("并入记录 / 备注", "Fold notes")}>
+      {folds.length > 0 && (
+        // 原生 FoldNotesView（§38）：标题「📎 折叠进来的信息」，每行 💬（quick）/ 📡（radar）+ 正文 +
+        // 尾部「已拆出 R-yyy」章 / 拆分中… / 「拆成新卡」——词逐字镜像（§54.4）
+        <Section title={text("📎 折叠进来的信息", "📎 Folded-in updates")}>
           <ul className="zai-detail-folds">
             {folds.map((fold, index) => (
               <li key={`fold-${index}`}>
-                <span className="zai-chip">{fold.kind}</span> {fold.text}
+                <span aria-hidden="true">{fold.kind === "quick" ? "💬" : "📡"}</span> {fold.text}
                 {fold.ts && <span className="zai-detail-dim"> @{fold.ts}</span>}
-                {fold.splitInto && <span className="zai-detail-dim"> {text("已拆出", "split into")} {fold.splitInto}</span>}
+                {fold.splitInto && <> <span className="zai-chip">{text(`已拆出 ${fold.splitInto}`, `Split → ${fold.splitInto}`)}</span></>}
                 {fold.ts && !fold.splitInto && <> <SplitNoteButton cardId={detail.id} noteTs={fold.ts} /></>}
               </li>
             ))}
+          </ul>
+        </Section>
+      )}
+      {rest.length > 0 && (
+        <Section title={text("备注", "Notes")}>
+          <ul className="zai-detail-folds">
             {rest.map((line, index) => <li key={`rest-${index}`}>{line}</li>)}
           </ul>
         </Section>
@@ -288,15 +399,14 @@ export function DetailFields({ detail }: DetailFieldsProps) {
         </Section>
       )}
 
-      {(copyCmd || log) && (
+      {(cmd || log || session || agent) && (
+        // 原生 TaskRow / ReviewRow 详情槽尾部：日志 / 指令（点击复制）+ 会话 ID / claude agents 列表名；
+        // 需输入列的指令行用 §39 兜底句「在终端接管会话：」（把会话接到终端里的第二条路）
         <Section title={text("会话", "Session")}>
-          {copyCmd && (
-            <div className="zai-detail-cmd">
-              <code>{copyCmd}</code>
-              <CopyChip value={copyCmd} label={text("复制命令", "Copy command")} />
-            </div>
-          )}
-          {log && <p className="zai-detail-dim">{text("日志：", "Log: ")}{log}</p>}
+          <CmdLine label={lane === "needs_input" ? text("在终端接管会话：", "Take over in terminal: ") : text("指令：", "Command: ")} value={cmd} copy />
+          <CmdLine label={text("日志：", "Log: ")} value={log} copy />
+          <CmdLine label={text("会话 ID：", "Session ID: ")} value={session} />
+          <CmdLine label={text("claude agents 列表名：", "claude agents list name: ")} value={agent} />
         </Section>
       )}
 

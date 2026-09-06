@@ -55,22 +55,29 @@ def update_card(card_id: str, session_id: Optional[str]) -> bool:
     the index changed. Never raises; no transcript/empty text keeps whatever
     entry already exists (an earlier round's text is better than nothing)."""
     try:
-        cid = str(card_id or "").strip()
-        if not cid or not session_id:
-            return False
-        from act import executor  # lazy: keep the module import-light
-        text = executor.transcript_plain_text(str(session_id), cap=TEXT_CAP)
-        if not text:
-            return False
-        data = load_index()
-        prev = data.get(cid)
-        if isinstance(prev, dict) and prev.get("text") == text:
-            return False
-        data[cid] = {"updated_at": _iso_now(), "text": text}
-        _write(data)
-        return True
+        return _refresh_entry(str(card_id or "").strip(), session_id)
     except Exception:  # noqa: BLE001 - indexing must never break the pipeline
         return False
+
+
+def _refresh_entry(cid: str, session_id: Optional[str]) -> bool:
+    if not cid or not session_id:
+        return False
+    from act import executor  # lazy: keep the module import-light
+    text = executor.transcript_plain_text(str(session_id), cap=TEXT_CAP)
+    if not text:
+        return False
+    data = load_index()
+    if _same_text(data.get(cid), text):
+        return False
+    data[cid] = {"updated_at": _iso_now(), "text": text}
+    _write(data)
+    return True
+
+
+def _same_text(prev, text: str) -> bool:
+    """The existing entry already carries exactly this transcript text."""
+    return isinstance(prev, dict) and prev.get("text") == text
 
 
 def prune() -> int:
@@ -90,20 +97,31 @@ def prune() -> int:
         data = load_index()
         if not data:
             return 0
-        from act.lib import registry  # lazy import, same reason as above
-        live: set = set()
-        for r in registry.load_all(include_archived=True):
-            if r.is_merged or str(r.status) in (
-                    registry.State.REJECTED.value,
-                    registry.State.MERGED.value):
-                continue
-            live.add(str(r.id))
-        stale = [k for k in data if k not in live]
-        if not stale:
-            return 0
-        for k in stale:
-            data.pop(k, None)
-        _write(data)
-        return len(stale)
+        removed = _drop_stale(data)
+        if removed:
+            _write(data)
+        return removed
     except Exception:  # noqa: BLE001 - housekeeping must never break the pass
         return 0
+
+
+def _gone(r, registry) -> bool:
+    """Irreversibly gone: merged (terminal, incl. legacy ``merged_into:``) or
+    legacy bare ``rejected``. Trashed/archived are recoverable → NOT gone."""
+    return r.is_merged or str(r.status) in (registry.State.REJECTED.value,
+                                            registry.State.MERGED.value)
+
+
+def _live_ids() -> set:
+    from act.lib import registry  # lazy import, same reason as above
+    return {str(r.id) for r in registry.load_all(include_archived=True)
+            if not _gone(r, registry)}
+
+
+def _drop_stale(data: dict) -> int:
+    """Remove every index key that is not a live card; returns the count."""
+    live = _live_ids()
+    stale = [k for k in data if k not in live]
+    for k in stale:
+        data.pop(k, None)
+    return len(stale)

@@ -12,7 +12,11 @@
 // ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。v0.48.x P4 余量（§68.13）：
 // §28 通知中继消费（NotifyRelay，5 s tick）、TCC 探针 + 系统设置深链、登录时启动、
 // Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
-// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口；⌘Q 正常退出。
+// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
+// hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
+// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）与主菜单纯表（MenuSpec：双语标题、
+// 设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 / 缩放，随 LanguageStore
+// 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；本文件只挂到 NSApp、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -25,6 +29,7 @@
 // 仅仅 attach 上去的既有 server 绝不动手（它属于 launchd 或另一个 shell）。
 
 import AppKit
+import Combine
 import WebKit
 
 // MARK: - ShellConfig（启动期一次性解析，全部只读）
@@ -103,13 +108,17 @@ enum ShellConfig {
 
     static var boardURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
     static var probeURL: URL { URL(string: "http://127.0.0.1:\(port)/api/board")! }
-    /// 设置页深链（web route.ts `?page=settings`；anchor 由页面自己滚动）。
-    static func settingsURL(anchor: String) -> URL {
+    /// 看板深链（web route.ts `?page=<page>`：about / permissions / settings…；路径仍是 `/`，
+    /// 所以 ExternalLinkPolicy 判 board、留在壳内加载）。
+    static func pageURL(_ page: String, anchor: String? = nil) -> URL {
         var c = URLComponents(url: boardURL, resolvingAgainstBaseURL: false)!
-        c.queryItems = [URLQueryItem(name: "page", value: "settings"),
-                        URLQueryItem(name: "anchor", value: anchor)]
+        var items = [URLQueryItem(name: "page", value: page)]
+        if let anchor { items.append(URLQueryItem(name: "anchor", value: anchor)) }
+        c.queryItems = items
         return c.url ?? boardURL
     }
+    /// 设置页深链（anchor 由页面自己滚动）。
+    static func settingsURL(anchor: String) -> URL { pageURL("settings", anchor: anchor) }
 
     static let logDir: String =
         ("~/Library/Logs/zelin-ai-assistant" as NSString).expandingTildeInPath
@@ -252,7 +261,7 @@ private func splashHTML(_ message: String) -> String {
 
 // MARK: - AppDelegate
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private let server = ServerManager()
@@ -260,6 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private let bridge = ShellBridge()
     /// 5 s 引擎巡检（镜像 mac AppDelegate.refresh 的录制半边：TCC 自愈 + pgrep 活性）。
     private var engineTick: Timer?
+    /// `webView.title` → `window.title` 的 KVO 句柄（§54 追记：标题跟随页面）。
+    private var titleObservation: NSKeyValueObservation?
+    /// `LanguageStore.$lang` 订阅句柄（§54 追记：主菜单随界面语言重建）。
+    private var menuLanguage: AnyCancellable?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
@@ -273,27 +286,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             self?.openSettingsPage(anchor: anchor)
         }
         ShellWindow.show = { [weak self] in self?.showWindow() }
-        buildMenu()
+        // 主菜单随界面语言重建（原生 Store.swift `/lang` 与设置页保存后 `app.installMainMenu()`
+        // 的壳版）：`$lang` 订阅时先同步发当前值 = 首次安装（窗口建起前菜单已在）；之后页面每次
+        // 经桥 `setLanguage` 改语言（ShellBridge.swift，不动它）再发一次。@Published 在 willSet
+        // 发值，sink 跑到时 LanguageMirror / L() 还是旧语言——所以 MenuSpec 显式吃这里收到的 lang。
+        menuLanguage = LanguageStore.shared.$lang
+            .removeDuplicates()
+            .sink { [weak self] lang in self?.installMainMenu(lang: lang) }
         buildWindow()
         connectOrSpawn()
         startEngines()
         startNativeResidue()
     }
 
-    /// §65.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
-    /// 全局快速捕获快捷键（⌃⌥Space → 前置窗口 + 向页面推 quick_capture）。
+    /// §68.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
+    /// 全局快速捕获快捷键（⌃⌥Space → 与 显示 → 聚焦捕获框 ⌘L 同一条路 focusCaptureField）。
     private func startNativeResidue() {
         NotifyRelayDelegate.install()
         PermissionsProbe.shared.refresh()
-        QuickCaptureHotkey.shared.onFire = { [weak self] in
-            guard let self else { return }
-            self.showWindow()
-            if self.webView.url?.host == "127.0.0.1" {
-                self.bridge.pushCommand("quick_capture")
-            } else {
-                self.loadBoard()
-            }
-        }
+        QuickCaptureHotkey.shared.onFire = { [weak self] in self?.focusCaptureField(nil) }
         QuickCaptureHotkey.shared.register()
     }
 
@@ -353,10 +364,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         return false
     }
 
-    /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。
+    /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。刻意**不看**
+    /// `flag`（hasVisibleWindows）：字幕悬浮 NSPanel 在场时它恒为 true，Dock 点击
+    /// 就成了空操作（原生 AppDelegate.swift 同一处的教训）——同一个原因，最小化的
+    /// 看板也得壳自己还原：AppKit 的默认重开只在 flag == false 时 deminiaturize。
+    /// 只看看板窗口自己（ReopenPolicy，判例 shell/tests/PolicyHarness.swift）。
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showWindow() }
+        switch ReopenPolicy.action(boardVisible: window.isVisible,
+                                   boardMiniaturized: window.isMiniaturized) {
+        case .show:
+            showWindow()
+        case .deminiaturize:
+            window.deminiaturize(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        case .none:
+            break
+        }
         return true
     }
 
@@ -365,10 +389,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// 字幕悬浮窗齿轮 → 看板设置页（`?page=settings&anchor=<anchor>`）。
-    private func openSettingsPage(anchor: String) {
+    /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口 + 加载深链（`?page=…` 是看板 origin 上的
+    /// `/`，ExternalLinkPolicy 判 board）。还停在内嵌 splash / 失败页时同样直接加载：server 已
+    /// 上线就落到想去的那页，还没上线则加载失败、splash 原地不动（WKWebView 不渲染错误页）。
+    private func openBoardPage(_ url: URL) {
         showWindow()
-        webView.load(URLRequest(url: ShellConfig.settingsURL(anchor: anchor)))
+        webView.load(URLRequest(url: url))
+        window.makeFirstResponder(webView)
+    }
+
+    /// 字幕悬浮窗齿轮 / app 菜单「设置…」⌘, → 看板设置页（`?page=settings&anchor=<anchor>`）。
+    private func openSettingsPage(anchor: String) {
+        openBoardPage(ShellConfig.settingsURL(anchor: anchor))
     }
 
     // MARK: window / webview
@@ -378,27 +410,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         bridge.install(into: config)   // 必须在 WKWebView 创建前注册 handler
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+        webView.uiDelegate = self          // target=_blank / window.open → 外链分流（§54 追记）
         webView.allowsMagnification = true
         if #available(macOS 13.3, *) {
             webView.isInspectable = true   // preview shell：允许 Safari Web Inspector
         }
         bridge.attach(to: webView)
-        webView.loadHTMLString(splashHTML("Starting board server\u{2026}"), baseURL: nil)
+        webView.loadHTMLString(splashHTML(
+            L("正在启动 board server\u{2026}", "Starting board server\u{2026}")), baseURL: nil)
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = ShellConfig.displayName
-        window.contentMinSize = NSSize(width: 900, height: 600)
+        // 窗口下限镜像原生 MainWindow（分屏 / 小屏要能缩；看板泳道本来就横向滚动）：
+        // truth = ui/tokens/native-tokens.json layout.window.min_width / min_height
+        window.contentMinSize = NSSize(width: 720, height: 480)
         window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
         window.contentView = webView
         // frameAutosaveName：记住上次位置/大小；首启（无存档）时居中。
         if !window.setFrameUsingName("ZAIBoardWindow") { window.center() }
         window.setFrameAutosaveName("ZAIBoardWindow")
+        // 标题跟随页面（原生 MainWindow.installTitleSink 的壳半边）：WKWebView.title
+        // 是 KVO-compliant 的；页面每次换 document.title（切页 / 换语言）都到这里，
+        // 空标题（内嵌 splash）回落产品名。web 半（每页各自的 document.title）另批。
+        titleObservation = webView.observe(\.title, options: [.initial, .new]) { [weak self] wv, _ in
+            guard let self else { return }
+            self.window.title = WindowTitlePolicy.resolve(pageTitle: wv.title,
+                                                          fallback: ShellConfig.displayName)
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: 外链（§54 追记：一律交系统浏览器；原生 DepAction.url / FailureCatalog.perform 同款）
+
+    /// 按 ExternalLinkPolicy 执行副作用：看板 SPA（origin + 路径 `/`）留在本 webView，
+    /// 其余 http(s) / mailto 交系统处理者（含同 origin 的 `/files/…` 交付物——壳没有
+    /// 后退，永不把唯一的 webView 导航到看板之外），别的 scheme 什么都不做。
+    private func route(_ url: URL?) {
+        switch ExternalLinkPolicy.classify(url, port: ShellConfig.port) {
+        case .board:
+            if let url { webView.load(URLRequest(url: url)) }
+        case .external:
+            if let url { NSWorkspace.shared.open(url) }
+        case .ignore:
+            break
+        }
+    }
+
+    /// target=_blank / window.open：不实现时 WebKit 直接取消该导航（页面上每一处
+    /// target="_blank" / window.open 全成空操作）。壳永远只有一个 webView——这里分流后
+    /// 返回 nil，绝不开第二个窗口。
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        route(navigationAction.request.url)
+        return nil
+    }
+
+    /// 同 frame 的普通 `<a href>` / location 跳转：主 frame 要离开看板 SPA（别的 http(s)
+    /// 主机，或同 origin 的 `/files/…` / `/api/…` 路径）→ 取消 + 交系统浏览器（看板永不
+    /// 被导航走）。子 frame 与「新窗口」请求（targetFrame == nil，随后进
+    /// createWebViewWith）一律放行。
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let target = navigationAction.targetFrame, target.isMainFrame,
+              ExternalLinkPolicy.classify(navigationAction.request.url,
+                                          port: ShellConfig.port) == .external
+        else {
+            decisionHandler(.allow)
+            return
+        }
+        route(navigationAction.request.url)
+        decisionHandler(.cancel)
     }
 
     private func loadBoard() {
@@ -425,31 +512,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     /// 起不来 = 明说 + 给排障线索，绝不留一扇白窗。第一条永远是 launchd 的
-    /// 修法（§54：server 由 launchd 托管，壳只是连接方）。
+    /// 修法（§54：server 由 launchd 托管，壳只是连接方）。文案随界面语言
+    /// L(zh, en)（原生 AppDelegate / Pages 的每个 NSAlert 同款）；命令、label、
+    /// 路径逐字不译。
     private func showStartFailure() {
         let hosted = server.launchdHosted()
+        let kickstart = "launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)"
+        let serverLog = "~/Library/Logs/zelin-ai-assistant/server.launchd.log"
+        let shellLog = "~/Library/Logs/zelin-ai-assistant/board-shell.log"
         webView.loadHTMLString(splashHTML(
-            "Board server 未能连上。<br>server 由 launchd 托管：<code>launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)</code>"
-            + "<br>日志：<code>~/Library/Logs/zelin-ai-assistant/server.launchd.log</code>"),
+            L("Board server 未能连上。<br>server 由 launchd 托管：<code>\(kickstart)</code>"
+              + "<br>日志：<code>\(serverLog)</code>",
+              "Could not reach the board server.<br>The server is managed by launchd: <code>\(kickstart)</code>"
+              + "<br>Log: <code>\(serverLog)</code>")),
             baseURL: nil)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Board server 未能连上"
+        alert.messageText = L("Board server 未能连上", "Could not reach the board server")
         let spawnLine = server.spawned == nil
-            ? "• 壳未 spawn 兜底（launchd 已加载该 label，避免两个 server 抢端口）"
-            : "• 壳已 spawn 兜底 child（launchd 未加载该 label），它也没在 10 秒内答话——看 board-shell.log"
-        alert.informativeText = """
+            ? L("• 壳未 spawn 兜底（launchd 已加载该 label，避免两个 server 抢端口）",
+                "• The shell did not spawn a fallback (launchd has this label loaded; two servers must not fight over the port)")
+            : L("• 壳已 spawn 兜底 child（launchd 未加载该 label），它也没在 10 秒内答话——看 board-shell.log",
+                "• The shell spawned a fallback child (label not loaded in launchd) and it did not answer within 10 s either — see board-shell.log")
+        let labelState = hosted
+            ? L("已加载", "loaded")
+            : L("未加载——先 bash install.sh 渲染并加载它", "not loaded — run bash install.sh first to render and load it")
+        alert.informativeText = L("""
         10 秒内未能连上 http://127.0.0.1:\(ShellConfig.port)/api/board。
 
-        • server 由 launchd 托管：launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)
-          （label \(hosted ? "已加载" : "未加载——先 bash install.sh 渲染并加载它")）
-        • server 日志：~/Library/Logs/zelin-ai-assistant/server.launchd.log
-        • 壳日志：~/Library/Logs/zelin-ai-assistant/board-shell.log
+        • server 由 launchd 托管：\(kickstart)
+          （label \(labelState)）
+        • server 日志：\(serverLog)
+        • 壳日志：\(shellLog)
         \(spawnLine)
         • Server repo：\(ShellConfig.serverRepo ?? "(未配置)")
         • 手动试跑：cd 到 server repo 后执行 ZAI_PORT=\(ShellConfig.port) <config/runtime.json 的 python> -m server
-        """
-        alert.addButton(withTitle: "好")
+        """, """
+        No answer from http://127.0.0.1:\(ShellConfig.port)/api/board within 10 s.
+
+        • The server is managed by launchd: \(kickstart)
+          (label \(labelState))
+        • Server log: \(serverLog)
+        • Shell log: \(shellLog)
+        \(spawnLine)
+        • Server repo: \(ShellConfig.serverRepo ?? "(not configured)")
+        • Manual run: cd into the server repo, then ZAI_PORT=\(ShellConfig.port) <python from config/runtime.json> -m server
+        """)
+        alert.addButton(withTitle: L("好", "OK"))
         alert.runModal()
     }
 
@@ -457,27 +566,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private func showConfigFailure() {
         server.logLine("board-shell: no running server on 127.0.0.1:\(ShellConfig.port) "
             + "and no server repo configured (defaults serverRepo / Info.plist ZAIServerRepo both empty) — not spawning.")
+        let shellLog = "~/Library/Logs/zelin-ai-assistant/board-shell.log"
+        let kickstart = "launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)"
         webView.loadHTMLString(splashHTML(
-            "找不到 board server 的 repo 路径。<br>日志：<code>~/Library/Logs/zelin-ai-assistant/board-shell.log</code>"),
+            L("找不到 board server 的 repo 路径。<br>日志：<code>\(shellLog)</code>",
+              "Cannot find the board server's repo path.<br>Log: <code>\(shellLog)</code>")),
             baseURL: nil)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "找不到 board server 的 repo"
-        alert.informativeText = """
+        alert.messageText = L("找不到 board server 的 repo", "Board server repo not found")
+        alert.informativeText = L("""
         127.0.0.1:\(ShellConfig.port) 上没有在班的 server，launchd 也没有加载 \(ShellConfig.serverLabel)，而本壳不知道去哪里拉起兜底的 python3 -m server。
 
         修复（任选其一）：
-        • server 由 launchd 托管：bash install.sh（渲染并加载 \(ShellConfig.serverLabel)），之后 launchctl kickstart -k gui/\(getuid())/\(ShellConfig.serverLabel)
+        • server 由 launchd 托管：bash install.sh（渲染并加载 \(ShellConfig.serverLabel)），之后 \(kickstart)
         • defaults write com.zelin.ai-board serverRepo <repo 路径>
         • 重新运行 bash install.sh / shell/build.sh（构建时会把 repo 路径盖进 app）
 
-        日志：~/Library/Logs/zelin-ai-assistant/board-shell.log
-        """
-        alert.addButton(withTitle: "好")
+        日志：\(shellLog)
+        """, """
+        No server is answering on 127.0.0.1:\(ShellConfig.port), launchd has not loaded \(ShellConfig.serverLabel), and this shell does not know where to start the fallback python3 -m server.
+
+        Fix (any one of these):
+        • Let launchd manage the server: bash install.sh (renders and loads \(ShellConfig.serverLabel)), then \(kickstart)
+        • defaults write com.zelin.ai-board serverRepo <repo path>
+        • Re-run bash install.sh / shell/build.sh (the build stamps the repo path into the app)
+
+        Log: \(shellLog)
+        """)
+        alert.addButton(withTitle: L("好", "OK"))
         alert.runModal()
     }
 
-    // MARK: menu
+    // MARK: menu（§54 追记「菜单 l10n」：表在 ShellSupport.swift MenuSpec，这里只装与执行）
+
+    /// 把 `MenuSpec.menus(lang:)` 装成 NSMenu 并挂到 NSApp（原生 installMainMenu 的壳版）。每次语言切换
+    /// 整个重建——NSMenu 不观察任何东西，与原生同款。逐项装配在 `MenuSpec.build`（ShellSupport.swift，
+    /// MenuHarness 不起 NSApplication 就能检查装好的 NSMenuItem）：壳动作显式 target 到 delegate（不赌
+    /// responder chain）；AppKit 标准动作 nil target 走 first-responder 链（webview 里的输入框吃 ⌘C/⌘V/⌘Z）。
+    /// 刻意没有 Find / ⌘1..7：⌘F 与切页不被菜单截胡，落到 WKWebView 再进页面（board 自己绑了）。
+    private func installMainMenu(lang: String) {
+        let built = MenuSpec.build(MenuSpec.menus(lang: lang, appName: ShellConfig.displayName),
+                                   target: self, selector: selector(for:))
+        if let windows = built.windows { NSApp.windowsMenu = windows }
+        NSApp.mainMenu = built.main
+    }
+
+    /// MenuSpec.ShellAction → 本 delegate 的 @objc 方法（原生 AppDelegate 同名）。
+    private func selector(for action: MenuSpec.ShellAction) -> Selector {
+        switch action {
+        case .about: return #selector(openAboutPage(_:))
+        case .settings: return #selector(openSettingsPage(_:))
+        case .permissions: return #selector(openPermissionsPage(_:))
+        case .reload: return #selector(reloadPage(_:))
+        case .focusCapture: return #selector(focusCaptureField(_:))
+        }
+    }
+
+    /// 关于 → 看板 `?page=about`（原生 openAboutPage：MainNav.section = .about；不是系统 About 面板）。
+    @objc private func openAboutPage(_ sender: Any?) {
+        openBoardPage(ShellConfig.pageURL("about"))
+    }
+
+    /// 设置… ⌘, → 设置页**顶部**（原生 openSettingsPage 只是 MainNav.section = .settings）：不带 anchor——
+    /// web 设置页目录序是 显示 / 模型 / 通用，`anchor=general` 会把页面滚到第三区、目录与显示区顶出视口。
+    /// 带 anchor 的那条路留给字幕悬浮窗齿轮（`openSettingsPage(anchor:)` → live_captions）。
+    @objc private func openSettingsPage(_ sender: Any?) {
+        openBoardPage(ShellConfig.pageURL("settings"))
+    }
+
+    /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow：PermissionsWindowController.show）。
+    @objc private func openPermissionsPage(_ sender: Any?) {
+        openBoardPage(ShellConfig.pageURL("permissions"))
+    }
 
     @objc private func reloadPage(_ sender: Any?) {
         // ⌘R：已经在 board 上就 reload；还停在内嵌 splash/失败页则重走同一套
@@ -489,79 +650,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
     }
 
-    /// 标准菜单骨架。刻意不放 Find 菜单项——⌘F 不被菜单截胡，落到 WKWebView
-    /// 再进页面（board 自己绑定了 Cmd+F 搜索）。
-    private func buildMenu() {
-        let main = NSMenu()
-
-        // App menu：About / Hide / Quit ⌘Q
-        let appItem = NSMenuItem()
-        main.addItem(appItem)
-        let appMenu = NSMenu()
-        appItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(
-            title: "About \(ShellConfig.displayName)",
-            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-            keyEquivalent: ""))
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(
-            title: "Hide \(ShellConfig.displayName)",
-            action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(
-            title: "Quit \(ShellConfig.displayName)",
-            action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-
-        // File menu：Close ⌘W
-        let fileItem = NSMenuItem()
-        main.addItem(fileItem)
-        let fileMenu = NSMenu(title: "File")
-        fileItem.submenu = fileMenu
-        fileMenu.addItem(NSMenuItem(
-            title: "Close Window",
-            action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-
-        // Edit menu：nil-target 标准编辑链——webview 里的输入框要吃 ⌘C/⌘V/⌘Z。
-        let editItem = NSMenuItem()
-        main.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit")
-        editItem.submenu = editMenu
-        editMenu.addItem(NSMenuItem(
-            title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(
-            title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(
-            title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(
-            title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(
-            title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(
-            title: "Select All",
-            action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
-
-        // View menu：Reload ⌘R（显式 target 到 delegate，不赌 responder chain）
-        let viewItem = NSMenuItem()
-        main.addItem(viewItem)
-        let viewMenu = NSMenu(title: "View")
-        viewItem.submenu = viewMenu
-        let reload = NSMenuItem(
-            title: "Reload", action: #selector(reloadPage(_:)), keyEquivalent: "r")
-        reload.target = self
-        viewMenu.addItem(reload)
-
-        // Window menu：标准最小化/前置
-        let winItem = NSMenuItem()
-        main.addItem(winItem)
-        let winMenu = NSMenu(title: "Window")
-        winItem.submenu = winMenu
-        winMenu.addItem(NSMenuItem(
-            title: "Minimize",
-            action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
-        NSApp.windowsMenu = winMenu
-
-        NSApp.mainMenu = main
+    /// 显示 → 聚焦捕获框 ⌘L 与 全局 ⌃⌥Space 同一条路（原生 focusCaptureField 的壳版，§68.13）：
+    /// 前置窗口 + 向页面推 `quick_capture`（app.tsx 聚焦提案列 composer，不在看板页先回看板）；
+    /// 还停在 splash 上则先加载看板（页面 mount 后 composer 自然在，命令这次不补发）。
+    @objc private func focusCaptureField(_ sender: Any?) {
+        showWindow()
+        if webView.url?.host == "127.0.0.1" {
+            bridge.pushCommand("quick_capture")
+        } else {
+            loadBoard()
+        }
     }
 }
 

@@ -1,5 +1,8 @@
 """OS seam — the generic OS-specific effects behind one thin choke point.
 
+契约：CONTRACT §5（macOS 通知）/ §25（doctor 的 service 列表来源）/ §28（通知中继
+的原生落点 `notify_user`）；移植清单 docs/PORTING.md。
+
 Exactly three concerns in the python tree are generic enough to port (the
 full audit lives in docs/PORTING.md): firing a user notification, opening a
 path with the system file handler, and listing the user's background
@@ -60,6 +63,45 @@ def _run(argv: List[str], timeout: float) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
 
 
+def _darwin_notify_argv(title: str, body: str, subtitle: Optional[str]) -> List[str]:
+    def esc(s: str) -> str:
+        return str(s).replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f'display notification "{esc(body)}" with title "{esc(title)}"'
+    if subtitle:
+        script += f' subtitle "{esc(subtitle)}"'
+    return ["osascript", "-e", script]
+
+
+def _windows_notify_argv(title: str, body: str, subtitle: Optional[str]) -> List[str]:
+    # PowerShell single-quoted strings take everything literally; the only
+    # metacharacter is the quote itself, escaped by doubling it.
+    def psq(s) -> str:
+        return str(s).replace("'", "''")
+
+    text = f"{subtitle}\n{body}" if subtitle else str(body)
+    script = (_WINDOWS_TOAST_PS
+              .replace("@TITLE@", psq(title))
+              .replace("@BODY@", psq(text)))
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
+def _linux_notify_argv(title: str, body: str, subtitle: Optional[str]) -> List[str]:
+    text = f"{subtitle}\n{body}" if subtitle else str(body)
+    return ["notify-send", str(title), text]
+
+
+def _notify_argv(title: str, body: str, subtitle: Optional[str]) -> Optional[List[str]]:
+    """Per-OS notification command; None on an OS without a port."""
+    if is_darwin():
+        return _darwin_notify_argv(title, body, subtitle)
+    if is_windows():
+        return _windows_notify_argv(title, body, subtitle)
+    if sys.platform.startswith("linux"):
+        return _linux_notify_argv(title, body, subtitle)
+    return None
+
+
 def notify_user(title: str, body: str, subtitle: Optional[str] = None,
                 runner: Optional[Runner] = None) -> bool:
     """Fire a native user notification. True on success, never raises.
@@ -69,33 +111,21 @@ def notify_user(title: str, body: str, subtitle: Optional[str] = None,
     a WinRT toast via PowerShell (no pip dep; _WINDOWS_TOAST_PS). Other OSes:
     False until a port lands (docs/PORTING.md).
     """
-    if is_darwin():
-        def esc(s: str) -> str:
-            return str(s).replace("\\", "\\\\").replace('"', '\\"')
-
-        script = f'display notification "{esc(body)}" with title "{esc(title)}"'
-        if subtitle:
-            script += f' subtitle "{esc(subtitle)}"'
-        argv = ["osascript", "-e", script]
-    elif is_windows():
-        # PowerShell single-quoted strings take everything literally; the only
-        # metacharacter is the quote itself, escaped by doubling it.
-        def psq(s) -> str:
-            return str(s).replace("'", "''")
-
-        text = f"{subtitle}\n{body}" if subtitle else str(body)
-        script = (_WINDOWS_TOAST_PS
-                  .replace("@TITLE@", psq(title))
-                  .replace("@BODY@", psq(text)))
-        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
-    elif sys.platform.startswith("linux"):
-        text = f"{subtitle}\n{body}" if subtitle else str(body)
-        argv = ["notify-send", str(title), text]
-    else:
+    argv = _notify_argv(title, body, subtitle)
+    if argv is None:
         return False
     try:
         return (runner or _run)(argv, 10).returncode == 0
     except Exception:  # noqa: BLE001 - a notification must never break a caller
+        return False
+
+
+def _startfile(path: str) -> bool:
+    """windows: os.startfile — the OS default handler. Never raises."""
+    try:
+        os.startfile(path)  # noqa: S606 # nosec B606 - the whole point of this function
+        return True
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -108,11 +138,7 @@ def open_path(path, runner: Optional[Runner] = None) -> bool:
     """
     p = str(path)
     if sys.platform.startswith("win"):
-        try:
-            os.startfile(p)  # noqa: S606 # nosec B606 - the whole point of this function
-            return True
-        except Exception:  # noqa: BLE001
-            return False
+        return _startfile(p)
     argv = ["open", p] if is_darwin() else ["xdg-open", p]
     try:
         return (runner or _run)(argv, 15).returncode == 0
@@ -136,17 +162,26 @@ def service_list_text(runner: Optional[Runner] = None) -> str:
     to just the unit rows. Other OSes return "" (doctor then honestly reports
     the agents as not registered); see docs/PORTING.md.
     """
-    if is_darwin():
-        argv = ["launchctl", "list"]
-    elif is_windows():
-        argv = ["schtasks", "/query", "/fo", "LIST", "/v"]
-    elif sys.platform.startswith("linux"):
-        argv = ["systemctl", "--user", "list-units", "--type=service,timer",
-                "--all", "--no-legend", "--no-pager"]
-    else:
+    argv = _service_list_argv()
+    if argv is None:
         return ""
     try:
-        proc = (runner or _run)(argv, 10)
-        return (proc.stdout or "") + (proc.stderr or "")
+        return _combined_output((runner or _run)(argv, 10))
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _combined_output(proc) -> str:
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def _service_list_argv() -> Optional[List[str]]:
+    """Per-OS user-session service listing command; None on an OS without a port."""
+    if is_darwin():
+        return ["launchctl", "list"]
+    if is_windows():
+        return ["schtasks", "/query", "/fo", "LIST", "/v"]
+    if sys.platform.startswith("linux"):
+        return ["systemctl", "--user", "list-units", "--type=service,timer",
+                "--all", "--no-legend", "--no-pager"]
+    return None

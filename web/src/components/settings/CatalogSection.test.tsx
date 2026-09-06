@@ -75,7 +75,8 @@ describe("CatalogSection", () => {
     fireEvent.click(save);
     await waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
     expect(vi.mocked(putSettingsSection).mock.calls[0]).toEqual(["general", { updates_check_enabled: false }]);
-    await screen.findByText("Saved.");
+    await screen.findByRole("status");
+    expect(screen.getByRole("status").textContent).toMatch(/^Saved \d\d:\d\d:\d\d$/);   // 原生 noteSaved：「Saved HH:mm:ss」
     expect(screen.getByText("set here")).toBeTruthy();
   });
 
@@ -87,7 +88,7 @@ describe("CatalogSection", () => {
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "en" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
-    expect(screen.getByRole("alert").textContent).toContain("language must be one of zh, en");
+    expect(screen.getByRole("alert").textContent).toBe("Failed to save settings: language must be one of zh, en");
   });
 
   it("is honest when the server catalog lacks the section", async () => {
@@ -126,12 +127,14 @@ describe("SecretRow", () => {
     expect(document.body.textContent).not.toContain("xoxp-SECRET");
   });
 
-  it("a key without a probe says 已保存（App 内管理）and never shows Verify", async () => {
+  it("a caption key without a server probe says 已保存（未验证）(the 检测 row, not .plain) and never shows Verify", async () => {
+    // §68.3 2026-09-05 追记：原生 .volcanoArk 不是 .plain——章是「已保存（未验证）」；「App 内管理」在原生从不渲染（CONTROL_OWNER retired）
     vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [{ name: "volcano-ark-key.txt", label: { zh: "Ark", en: "Ark key" }, present: true, verifiable: false, mtime: 1 }] });
     renderEn(<SecretRow name="volcano-ark-key.txt" />);
     const { refreshSecrets } = await import("../../store");
     await refreshSecrets();
-    await screen.findByText("Saved (managed in-app)");
+    await screen.findByText("saved (not verified)");
+    expect(screen.queryByText("Saved (managed in-app)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
     expect((screen.getByLabelText("Ark key value") as HTMLInputElement).placeholder).toBe("Paste, then Save (stored locally; no network)");
   });
@@ -145,7 +148,9 @@ describe("SecretRow", () => {
     await refreshSecrets();
     const verify = await screen.findByRole("button", { name: "Verify" });
     fireEvent.click(verify);
-    await screen.findByText(/Network error \(not the credential\): network error: dns/);
+    // §68.3 2026-09-05 追记：网络 / 服务 = 判决未知——原生 handleOutcome(.failed) 那句，章不翻（细则在 SecretRowVerifyFeedback.test.tsx）
+    await screen.findByText((_, el) => el?.tagName === "P" && /Couldn't verify \(network\/service\) — click Verify again later: network error: dns/.test(el.textContent ?? ""));
+    expect(screen.queryByText("verification failed")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     await screen.findByText((_, el) => el?.tagName === "P" && /Verification failed: HTTP 401/.test(el.textContent ?? ""));
     expect(screen.getByText("verification failed")).toBeTruthy();

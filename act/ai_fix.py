@@ -1,5 +1,8 @@
 """Fix with AI — generate a Terminal repair session from the diagnostic bundle.
 
+契约：CONTRACT §25（失败分类层的「让 AI 修」出口；`doctor.ai_fix_enabled: false`
+关闭整条路径，CLI exit 2）+ §49（server `POST /api/ai-fix` 是它的看板落点）。
+
 ``python3 -m act.ai_fix [--open]`` builds a ``.command`` file in ``$TMPDIR``
 that launches ``claude`` preloaded with a diagnostic bundle (doctor findings +
 relevant log tails, scrubbed of secrets by act/lib/sanitize before anything is
@@ -162,6 +165,16 @@ exec claude "$PROMPT"
     return path
 
 
+def _read_context(path: Optional[str]) -> Optional[str]:
+    """The app's optional extra-context file; absent/unreadable → None."""
+    if not path:
+        return None
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python3 -m act.ai_fix",
@@ -180,13 +193,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "\"Fix with AI\" is disabled in config.yaml (doctor.ai_fix_enabled:"
                 " false). Re-enable it, or run python3 -m act.doctor manually."))
             return 2
-        extra = None
-        if args.context_file:
-            try:
-                extra = Path(args.context_file).read_text(encoding="utf-8")
-            except OSError:
-                extra = None
-        path = build_command_file(extra_context=extra, cfg=cfg)
+        path = build_command_file(extra_context=_read_context(args.context_file), cfg=cfg)
         print(str(path))
         if args.open_it:
             platform.open_path(path)

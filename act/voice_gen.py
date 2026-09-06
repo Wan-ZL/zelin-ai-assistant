@@ -160,17 +160,44 @@ def generate(cfg: Optional[config.Config] = None,
         cfg = config.load_config()
     if runner is None:
         runner = _default_runner
-    prompt = build_prompt(cfg)
+    proc, failure = _run(runner, build_prompt(cfg))
+    if failure is not None:
+        return failure
+    text = _proc_text(proc)
+    problem = validate_profile(text)
+    if problem:
+        return _skeleton_failure(problem)
+    return _save_profile(text)
 
-    def _fail(reason: str, msg: str) -> tuple[bool, str]:
-        analytics.log_event("voice_gen", ok=False, chars=0,
-                            reason=analytics.clip(reason, 120))
-        return False, msg
 
+def _proc_text(proc) -> str:
+    return _clean_output(getattr(proc, "stdout", "") or "")
+
+
+def _skeleton_failure(problem: str) -> tuple[bool, str]:
+    return _fail(
+        f"skeleton: {problem}",
+        failures.pick(
+            f"生成结果不符合档案骨架（{problem}），已拒绝写入。旧档案未改动。",
+            f"The generated text does not match the profile skeleton "
+            f"({problem}); refused to save it. The old profile is untouched.",
+        ),
+    )
+
+
+def _fail(reason: str, msg: str) -> tuple[bool, str]:
+    analytics.log_event("voice_gen", ok=False, chars=0,
+                        reason=analytics.clip(reason, 120))
+    return False, msg
+
+
+def _run(runner, prompt: str):
+    """(proc, None) on a clean exit; (None, failure tuple) when claude could not
+    start / timed out / exited non-zero."""
     try:
         proc = runner(prompt)
     except (OSError, subprocess.SubprocessError) as e:   # incl. TimeoutExpired
-        return _fail(
+        return None, _fail(
             f"{type(e).__name__}: {e}",
             failures.pick(
                 "生成超时或无法启动 claude，请稍后重试。旧档案未改动。",
@@ -179,29 +206,25 @@ def generate(cfg: Optional[config.Config] = None,
             ),
         )
     if getattr(proc, "returncode", 1) != 0:
-        err = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "").strip()
-        return _fail(
-            f"exit {getattr(proc, 'returncode', '?')}: {err}"[:200],
-            failures.pick(
-                "生成失败：claude 运行出错（常见原因：Slack MCP 未接入或未授权）。旧档案未改动。",
-                "Generation failed: claude exited with an error (most common "
-                "cause: the Slack MCP server is not connected). The old "
-                "profile is untouched.",
-            ),
-        )
+        return None, _exit_failure(proc)
+    return proc, None
 
-    text = _clean_output(getattr(proc, "stdout", "") or "")
-    problem = validate_profile(text)
-    if problem:
-        return _fail(
-            f"skeleton: {problem}",
-            failures.pick(
-                f"生成结果不符合档案骨架（{problem}），已拒绝写入。旧档案未改动。",
-                f"The generated text does not match the profile skeleton "
-                f"({problem}); refused to save it. The old profile is untouched.",
-            ),
-        )
 
+def _exit_failure(proc) -> tuple[bool, str]:
+    err = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "").strip()
+    return _fail(
+        f"exit {getattr(proc, 'returncode', '?')}: {err}"[:200],
+        failures.pick(
+            "生成失败：claude 运行出错（常见原因：Slack MCP 未接入或未授权）。旧档案未改动。",
+            "Generation failed: claude exited with an error (most common "
+            "cause: the Slack MCP server is not connected). The old "
+            "profile is untouched.",
+        ),
+    )
+
+
+def _save_profile(text: str) -> tuple[bool, str]:
+    """Back the old profile up, write the new one atomically, report both."""
     dest = profile_path()
     bak = _backup_existing(dest)
     _atomic_write(dest, text if text.endswith("\n") else text + "\n")

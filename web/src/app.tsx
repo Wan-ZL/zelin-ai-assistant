@@ -8,21 +8,20 @@ import { getI18n, LanguageContext } from "./i18n";
 import { buildAppUrl, navigate, readPage, type AppPage } from "./route";
 import { createBoardRealtime } from "./realtime";
 import { onShellCommand, pushBadge } from "./shellBridge";
-import { refreshBoard, refreshDisplaySettings, refreshHealth, refreshLanes, refreshSetup, setConnection, useAppState } from "./store";
+import { refreshBoard, refreshDisplaySettings, refreshFailures, refreshHealth, refreshLanes, refreshSetup, setConnection, useAppState } from "./store";
+import { focusComposer } from "./components/board/focusComposer";
 import { AppShell } from "./components/shell/AppShell";
 import { rememberMainSection, restoreMainSection } from "./components/shell/NavRail";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
 import { AboutPage } from "./pages/AboutPage";
 import { ArchivePage } from "./pages/ArchivePage";
-import { AskPage } from "./pages/AskPage";
 import { BoardPage } from "./pages/BoardPage";
 import { IngestPage } from "./pages/IngestPage";
 import { RecapsPage } from "./pages/RecapsPage";
-import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { SetupPage } from "./pages/SetupPage";
+import { isSetupSkipped, SetupPage } from "./pages/SetupPage";
 import { StyleguidePage } from "./pages/StyleguidePage";
 import { TrashPage } from "./pages/TrashPage";
 
@@ -35,9 +34,10 @@ export function badgeCount(board: { counts?: Record<string, number>; needs_appro
   return n("needs_approval") + n("needs_input") + n("review");
 }
 
-/** 首次运行向导跳转（§68.5）：setup.needed 且当前在看板页 → 换到 ?page=setup（一次性、整页导航） */
+/** 首次运行向导跳转（§68.5）：setup.needed 且当前在看板页 → 换到 ?page=setup（一次性、整页导航）。
+ *  本窗口会话里点过「先去看板（下次再来）」（sessionStorage 标记，原生关窗 = 这次不问）→ 不跳；新开窗口再问。 */
 export function shouldRedirectToSetup(page: AppPage, needed: boolean | undefined): boolean {
-  return page === "board" && needed === true;
+  return page === "board" && needed === true && !isSetupSkipped();
 }
 
 function renderPage(page: AppPage) {
@@ -48,10 +48,9 @@ function renderPage(page: AppPage) {
     case "recaps": return <RecapsPage />;
     case "archive": return <ArchivePage />;
     case "permissions": return <PermissionsPage />;
-    case "diagnostics": return <DiagnosticsPage />;
-    case "deps": return <DiagnosticsPage />; // 原生 rail 名（依赖检查）；diagnostics 是同一页的旧深链
+    // 依赖检查的两个旧深链（原生 rail 名 deps / 更早的 diagnostics）：D30 起是设置页的一区，SettingsPage 按 readSettingsAnchor 滚到它
+    case "diagnostics": case "deps": return <SettingsPage />;
     case "setup": return <SetupPage />;
-    case "ask": return <AskPage />;
     case "ingest": return <IngestPage />;
     case "about": return <AboutPage />;
     default: return <BoardPage />;
@@ -70,6 +69,7 @@ export function App() {
     void refreshBoard();
     void refreshHealth();
     void refreshLanes(); // 列头「?」说明文案（server-owned 目录，§54；静态，拉一次）
+    void refreshFailures(); // §25 失败目录双语句（server-owned，GET /api/failures）：卡片错误行按 failure id 说人话；静态，拉一次
     void refreshDisplaySettings(); // 字号 / 字重 / 描边（§54.1 第 12 项）：到达即落 <html> data-*，首帧由 index.html 的缓存顶住
     void refreshSetup(); // §68.5 首次运行判定（config.yaml / 凭证 / 完成标记）
     const realtime = createBoardRealtime({
@@ -80,16 +80,10 @@ export function App() {
     // §47.4 管线活性轮询：心跳的 stale 阈值下限 90s，30s 一拉足够及时且几乎零成本
     // （server 只 stat 三个文件）。SSE 的 board.updated 不携带心跳，所以要独立拉。
     const healthTimer = setInterval(() => void refreshHealth(), HEALTH_POLL_MS);
-    // §61.6 壳的全局快捷键 → quick_capture：聚焦提案列 composer（不在看板页就先回看板）
+    // §68.13 壳的全局快捷键 ⌃⌥Space / 壳菜单 View ▸ 聚焦捕获框（⌘L）→ quick_capture：与 rail 的 ⌘L 同一落点
+    // focusComposer（§54.4 2026-09-05 追记）——聚焦提案列 composer，不在看板页就留接力棒先回看板
     const stopCommands = onShellCommand((command) => {
-      if (command !== "quick_capture") return;
-      if (readPage(window.location.search) !== "board") {
-        navigate(buildAppUrl(window.location.href, "board", null));
-        return;
-      }
-      const input = document.querySelector<HTMLInputElement>(".board-column .lane-composer input");
-      input?.focus();
-      input?.select();
+      if (command === "quick_capture") focusComposer();
     });
     return () => {
       realtime.stop();

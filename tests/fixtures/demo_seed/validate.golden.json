@@ -1,0 +1,48 @@
+{
+ "broken_initial_zh": [
+  "generated_at: required ISO string",
+  "counts.running=99 but len(running)=3",
+  "needs_approval[0].show_cost: required bool",
+  "needs_approval[0].plan: required list",
+  "needs_approval[0].cost_usd: number or null",
+  "running[0].queued_reason: only queued items may carry it",
+  "running[0].queued_reason.blocking_id: waiting_card must carry the blocking card id",
+  "running[0].steers[0].text: required non-empty string",
+  "running[0].steers[0].ts: required ISO string — the timestamp-bearing dedup key (verbatim repeats are legitimate steers; web parser drops rows without a string ts)",
+  "running[0].steers[0].delivered_at: delivered notes must carry an ISO string (honest status)",
+  "running[0].steers[1]: not a dict",
+  "running[0].steers[2].status: must be one of ('queued', 'delivered', 'dropped')",
+  "review[0].delivery_mode: must be 'chat' or 'repo'",
+  "review[0].final_draft: string or null",
+  "debt[0].id: required non-empty string",
+  "debt[0].title: required non-empty string",
+  "debt[0]: sources is not a list",
+  "trash[0].permanent: required bool",
+  "trash[0].trashed_at: required ISO string"
+ ],
+ "queued_reason_cases": [
+  "x.queued_reason: string form must be non-empty",
+  "x.queued_reason: must be an object {kind, detail?, blocking_id?} or a string",
+  "x.queued_reason.kind: must be one of ('waiting_card', 'concurrency') (closed list — UI 由 kind 渲染)",
+  "x.queued_reason.detail: string or null",
+  "x.queued_reason.blocking_id: string or null",
+  "x.queued_reason: only queued items may carry it"
+ ],
+ "steer_cases": [
+  "y.steers: must be a list",
+  "y.steers[0].delivered_at: delivered notes must carry an ISO string (honest status)"
+ ],
+ "top_level": [
+  "top level is not a JSON object"
+ ],
+ "no_counts": [
+  "counts: required object",
+  "needs_approval: required list",
+  "running: required list",
+  "needs_input: required list",
+  "review: required list",
+  "completed: required list",
+  "debt: required list",
+  "trash: required list"
+ ]
+}

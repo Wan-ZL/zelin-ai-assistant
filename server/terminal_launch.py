@@ -39,6 +39,9 @@ Opener = Callable[[Path], None]
 
 # terminal_app 词表 → `open -a` 认的应用名（原生 TerminalApp.bundleID 的 open 侧拼法）
 TERMINAL_APP_NAMES = {"ghostty": "Ghostty", "terminal": "Terminal", "iterm2": "iTerm"}
+# `open -a` 名 → 用户看到的名（原生 TerminalApp.displayName；只有 iTerm 两者不同）——设置页「会在 <终端> 中打开」与
+# 开发会话回执的 ``terminal_app_name`` 用它（§68.7 追记）
+TERMINAL_DISPLAY_NAMES = {"Ghostty": "Ghostty", "Terminal": "Terminal", "iTerm": "iTerm2"}
 _APP_DIRS = ("/Applications", "~/Applications", "/System/Applications/Utilities")
 
 
@@ -59,6 +62,17 @@ def preferred_terminal(home: Optional[Path]) -> str:
     """设置「通用 · 终端应用」的 effective 值 → 应用名；没有 home（调用方未配）= auto。"""
     choice = settings_catalog.effective_value(home, "general", "terminal_app") if home is not None else "auto"
     return resolve_terminal(str(choice or "auto"))
+
+
+def display_name(app_name: str) -> str:
+    """``open -a`` 应用名 → 展示名（原生 TerminalApp.displayName；词表外原样）。"""
+    return TERMINAL_DISPLAY_NAMES.get(app_name, app_name)
+
+
+def preferred_terminal_name(home: Optional[Path]) -> str:
+    """resolved 终端的展示名（原生 ``TerminalLauncher.preferred.displayName``）：设置目录 maintainer 区的
+    ``terminal_app_name`` 与开发会话回执共用这一个答案。"""
+    return display_name(preferred_terminal(home))
 
 
 def _run_open(argv: list) -> int:

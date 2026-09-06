@@ -52,6 +52,19 @@
   padding: 12px 6px;
 }
 
+/* 折叠 / 展开动效（原生 MainWindow.swift `.animation(.easeInOut(duration: 0.15), value: sidebarCollapsed)`）：
+   宽与内边距 150ms ease-in-out。拖宽期间（NavRail 挂 is-dragging）关掉，宽度才跟得上指针；
+   系统「减弱动效」下整块不生效（animations.css 的全局降级之外再多一道）。 */
+@media (prefers-reduced-motion: no-preference) {
+  .rail {
+    transition: width 150ms ease-in-out, padding 150ms ease-in-out;
+  }
+
+  .rail.is-dragging {
+    transition: none;
+  }
+}
+
 .rail-head {
   display: flex;
   align-items: center;
@@ -130,12 +143,6 @@
   text-overflow: ellipsis;
 }
 
-.rail-divider {
-  height: var(--border-hairline);
-  margin: 6px 4px;
-  background: var(--border);
-}
-
 .rail-toggle:focus-visible,
 .rail-item:focus-visible {
   outline: 2px solid var(--accent);
@@ -165,13 +172,17 @@
   padding: 48px 24px;
 }
 
-/* —— 顶栏 —— */
+/* —— 顶栏 —— 永远一行、定高（§49 追记 2026-09-04）：窄了不换行，由 data-density 三档
+   （full / compact / tight，HeaderBar 按实测宽度判，headerDensity.ts）收控件。
+   三列的让位次序：中间槽位的下限 = 自身内容（max-content），左翼 minmax(0, auto) 先缩——档位阈值
+   只看顶栏宽、不看左翼内容，所以左翼变长（陈旧新鲜度 + 回滚部署 + 设备标签能多出 ~400px）时
+   由左翼的设备标签 / 新鲜度 / 部署小字省略号收场，槽位里的控件一个不裁。 */
 .shell-header {
   position: sticky;
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, auto) minmax(max-content, 1fr) auto;
   align-items: center;
   gap: 16px;
   height: 52px;
@@ -180,11 +191,18 @@
   border-bottom: var(--stroke-w) solid var(--border);
 }
 
+.shell-header[data-density="tight"] {
+  gap: 10px;
+}
+
+/* min-width 0 + overflow hidden：让 grid 能把这一列缩到内容以下；标识不缩、full / compact 里标题也不缩，
+   设备标签 / 新鲜度 / 部署小字（下方 min-width 0 + ellipsis）让位；tight 只剩标识 + 标题时标题自己省略号（下方） */
 .shell-header-left {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shell-logo {
@@ -203,6 +221,15 @@
   font: var(--type-header-title);
   color: var(--text-primary);
   white-space: nowrap;
+}
+
+/* tight 档左翼只剩标识 + 标题：顶栏窄到 ~430（zh）/ ~455（en）以下（.shell 下限 720 + 导航栏拖到 ≥280 + 壳桥）
+   标题自己省略号收场、全名挂 title（HeaderBar 只在 tight 挂）——不再被左翼的 overflow 硬裁；标识 flex: none 照旧不缩。
+   full / compact 不动：那两档标题的 min-width 仍是内容宽，让位的只有三段小字（视觉 golden 的顶栏一像素不变） */
+.shell-header[data-density="tight"] .shell-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .shell-device {
@@ -232,15 +259,32 @@
   white-space: nowrap;
 }
 
+/* 左翼被槽位挤时这三段缩成省略号（整句在 title 里；警告色照留）；宽够时原样一字不少。
+   设备标签是用户机器名、长度不可预算——不让它缩，阈值预算就守不住 */
+.shell-device,
+.shell-freshness,
+.shell-deploy {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .shell-deploy.is-warn {
   color: var(--warning);
 }
 
-/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定 */
+/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定。
+   grid 给它的下限是自身内容（上方 minmax(max-content, 1fr)），多出来的宽才是 1fr，所以里面的控件
+   永不被槽位裁掉；内容自己按档位收纳（tokens.css 的阈值预算按左翼只剩标识 + 标题算）。
+   通高是为了不裁掉搜索框的 focus ring。 */
 .shell-search-slot {
   display: flex;
+  align-items: center;
+  align-self: stretch;
   justify-content: center;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shell-header-right {
@@ -268,6 +312,8 @@
 .shell-connection.is-live .shell-connection-dot { background: var(--success); }
 .shell-connection.is-connecting .shell-connection-dot { background: var(--warning); }
 .shell-connection.is-reconnecting .shell-connection-dot { background: var(--danger); }
+/* tight 档：新鲜度 / 部署小字折进这颗点的 tooltip——它们在报警（陈旧 / 非 healthy）时点也转橙 */
+.shell-connection.is-live.is-warn .shell-connection-dot { background: var(--warning); }
 
 .shell-connection.is-live .shell-connection-text {
   /* 正常态视觉降噪：文字仅供屏幕阅读器/tooltip，异常态才可见 */
@@ -330,6 +376,20 @@
   color: var(--warning);
 }
 
+/* tight 档：两颗开关只留图标（文字进 title / aria-label，RecordingControl 把「录制：状态词」挂 title） */
+.shell-header[data-density="tight"] .shell-rec-label,
+.shell-header[data-density="tight"] .shell-cap-label,
+.shell-header[data-density="tight"] .shell-rec-restarting {
+  display: none;
+}
+
+.shell-header[data-density="tight"] .shell-rec-button,
+.shell-header[data-density="tight"] .shell-cap-button {
+  width: var(--header-control-size);
+  padding: 0;
+  justify-content: center;
+}
+
 /* 下拉菜单（原生 Menu 的 web 同义体：状态行 + 单选 + 动作） */
 .shell-menu {
   position: absolute;
@@ -356,6 +416,11 @@
   color: var(--warning);
 }
 
+/* consent-race 自愈的成功句（recording.self_heal_note，§68.3 追记）——与设置页 .settings-helper.is-ok 同色 */
+.shell-menu-note.is-ok {
+  color: var(--success);
+}
+
 .shell-menu-divider {
   height: var(--stroke-w);
   margin: 4px 6px;
@@ -377,6 +442,8 @@
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
+  text-decoration: none; /* 外链菜单项（安装 ffmpeg…）与按钮同貌 */
+  box-sizing: border-box;
 }
 
 .shell-menu-item:hover:not(:disabled) {
@@ -521,6 +588,57 @@
   white-space: nowrap;
 }
 
+/* D33 「系统自检 N 条」：横幅右侧一个文字按钮，点开在同一条横幅下方铺一列（flex-basis 100% 换行）——
+   自检类信号不铸卡、不弹通知，只在这里能看见；is-open 才允许换行，其余横幅保持单行 */
+.shell-banner-toggle {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11px * var(--text-scale));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shell-banner-toggle + .shell-banner-link {
+  margin-left: 0;
+}
+
+.shell-banner.is-open {
+  flex-wrap: wrap;
+}
+
+.shell-banner-list {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--text-secondary);
+  font-size: calc(11px * var(--text-scale));
+  line-height: 1.6;
+}
+
+.shell-banner-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.shell-banner-list-kind {
+  flex: none;
+  font: var(--type-card-error-mono);
+  color: var(--text-tertiary);
+}
+
+/* 三列里只有中间的说明文字可以换行；日期列不缩不折（flex 项默认缩到 min-content，
+   820 宽时「since 2026-09-01」被拆成三行）、靠右对齐成一列 */
+.shell-banner-list .shell-banner-note {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;
@@ -554,6 +672,39 @@
   margin-top: 8px;
 }
 
+/* 顶左对齐变体（原生 VStack(alignment: .leading) 的空态；EmptyState align="start"） */
+.shell-empty.is-start {
+  align-items: flex-start;
+  text-align: left;
+}
+
+/* 空态动作区里多颗按钮 / 链接 / 回执并排（RepairButton 的 .shell-banner-actions 是其中一员） */
+.shell-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-empty-actions .shell-banner-actions {
+  margin-left: 0; /* 横幅里靠右的动作组，在空态里从左排 */
+}
+
+/* —— 看板页「后台服务还没写出数据」空态（原生 Kanban.swift emptyState：composer 400 宽在上、
+   PipelineEmptyStateView 在下，整体 top-leading、padding 20）—— */
+.shell-board-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px;
+}
+
+.shell-board-missing-composer {
+  width: var(--native-layout-lane-width);
+  max-width: 100%;
+}
+
 /* —— 加载 spinner（壳层自用；转圈动画尊重 reduced-motion）—— */
 .shell-spinner {
   display: inline-block;
@@ -575,23 +726,8 @@
   }
 }
 
-/* —— 响应式：窄窗先收次要信息，再交给 .shell 的 min-width 横向滚动 —— */
-@media (max-width: 900px) {
-  .shell-device {
-    display: none;
-  }
-}
-
-@media (max-width: 780px) {
-  .shell-freshness,
-  .shell-deploy {
-    display: none;
-  }
-
-  .shell-header {
-    gap: 10px;
-  }
-}
+/* —— 响应式：顶栏的收纳不再看视口——按 .shell-header 实测宽分档（上方 data-density 规则 +
+   HeaderBar 按档位决定设备标签 / 新鲜度 / 部署小字渲不渲染）；页面主体仍交给 .shell 的 min-width 横向滚动 —— */
 
 /* ----- §68.8 横幅一键修复 ---------------------------------------------------------------- */
 .shell-banner-actions {
@@ -600,6 +736,12 @@
   gap: 8px;
   margin-left: auto;
   flex-wrap: wrap;
+}
+
+/* 动作行里可以并排两颗按钮（再试一次 + 让 AI 修，§68.8 追记）——上面 `.shell-banner .shell-button` 的
+   margin-left:auto 是给单颗按钮靠右用的，进了动作行就按 gap 排、不各自推开 */
+.shell-banner-actions .shell-button {
+  margin-left: 0;
 }
 
 .shell-banner-link {
@@ -611,3 +753,15 @@
   font-size: calc(11px * var(--text-scale));
   opacity: 0.85;
 }
+
+/* 一键修复的成功 verdict（原生 Freshness.swift「已恢复 ✓ 数据重新更新了」绿字 medium，停 6 s 后横幅随 health 退场） */
+.shell-banner-note.is-success {
+  color: var(--success);
+  font-weight: var(--w-medium);
+  opacity: 1;
+}
+
+/* §48 板级诊断条（原生 DiagnosticsStrip：橙色卡叠在管线横幅之下，每张一颗主按钮 + 右上 ×） */
+.diag-strip { display: flex; flex-direction: column; gap: 6px; }
+.diag-card { position: relative; }
+.diag-dismiss { margin-left: auto; }

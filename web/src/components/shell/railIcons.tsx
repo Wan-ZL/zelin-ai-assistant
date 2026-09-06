@@ -1,6 +1,7 @@
 // 左侧导航栏的图标（CONTRACT §54.4）：原生 MainSection.icon 的 SF Symbol 名 → 同名内联 SVG
-// （tray.full / questionmark.bubble / checklist / record.circle / trash / archivebox / gearshape /
-// info.circle + 折叠钮 sidebar.leading）。16×16 线稿、currentColor、aria-hidden——文字在 NavRail 里。
+// （tray.full / record.circle / trash / archivebox / gearshape / info.circle + 折叠钮 sidebar.leading；
+// questionmark.bubble / checklist 随 D29 / D30 的两页一起从栏上撤下）。16×16 线稿、currentColor、
+// aria-hidden——文字在 NavRail 里。
 import type { ReactNode } from "react";
 
 interface IconProps {
@@ -23,27 +24,6 @@ export function TrayFullIcon() {
       <path d="M3 13.5V17a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3.5" />
       <path d="M3 13.5h5l1.5 2.5h5l1.5-2.5h5" />
       <path d="M7 9h10M8.5 5.5h7" />
-    </Icon>
-  );
-}
-
-/** questionmark.bubble — 问问助手 */
-export function QuestionBubbleIcon() {
-  return (
-    <Icon>
-      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5v-8Z" />
-      <path d="M9.8 8.2a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 1.7-2.2 3.1" />
-      <path d="M12 14.4h.01" />
-    </Icon>
-  );
-}
-
-/** checklist — 依赖检查 */
-export function ChecklistIcon() {
-  return (
-    <Icon>
-      <path d="M3.5 6.5 5 8l2.5-3M3.5 12.5 5 14l2.5-3M3.5 18.5 5 20l2.5-3" />
-      <path d="M11 6.5h9.5M11 12.5h9.5M11 18.5h9.5" />
     </Icon>
   );
 }

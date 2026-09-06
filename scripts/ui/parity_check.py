@@ -8,7 +8,8 @@
                 本脚本以 `--reporter=json` 跑它并读每条 it() 的 pass/fail
   screen:*      zh + en 标题字面量都出现在 web/src 源码（剥注释、排除 *.test.*）
   rail:*        web/src 有 `data-rail-item="<slug>"` + 双语标题；rail:order 要求
-                data-rail-item 的出现顺序 = 原生顺序，且容器带 `data-rail="left"`
+                data-rail-item 的出现顺序 = 原生顺序（只数清单里仍 gated 的项——归属表
+                RAIL_OWNER 标 retired 的 ask / deps 不在栏上，D29 / D30），且容器带 `data-rail="left"`
   lane:*        双语列名出现在 web/src 或 server/lanes.py；lanes:order 要求 server/lanes.py
                 LANES 的 slug 顺序 = 原生顺序；lanes:rail-left/right 要求 BoardLanes.tsx
                 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 在之后
@@ -204,7 +205,7 @@ _STATIC_PROBES = {
 
 def _rail_order_ok(snap, inventory):
     found = re.findall(r'data-rail-item="([\w-]+)"', snap.ts_all)
-    expected = [r["slug"] for r in inventory["rail"]["items"]]
+    expected = [r["slug"] for r in inventory["rail"]["items"] if r.get("gated")]   # 退役的侧栏项不在期望里
     return found == expected and 'data-rail="left"' in snap.ts_all
 
 

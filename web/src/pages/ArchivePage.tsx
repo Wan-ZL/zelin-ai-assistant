@@ -1,9 +1,10 @@
 // 永久性完成页（原生 MainWindow ArchivePageView / §54.1 第 6 项的整页形态 → §68.11；?page=archive）。
 // 与右侧书立条 ArchiveStrip 同一行组件（ArchiveRow：你封存 / 自动封存、原来在、相对时间、
-// 「放回看板」= unarchive），只是给一整页 + 搜索——57 张以上的封存卡在窄条里翻不动。
+// 「放回看板」= unarchive）与同一份标题 / 空态字面量（原生 ArchivePageView 复用 ArchiveSectionView，
+// MainWindow.swift:483——两个面不许各写一套），只是给一整页 + 搜索——57 张以上的封存卡在窄条里翻不动。
 import { useState } from "react";
 import "../components/chrome/chrome.css";
-import { ArchiveRow } from "../components/chrome/ArchiveStrip";
+import { ARCHIVE_EMPTY, ARCHIVE_NO_MATCH, ARCHIVE_TITLE, ArchiveRow } from "../components/chrome/ArchiveStrip";
 import { useI18n } from "../i18n";
 import { buildAppUrl } from "../route";
 import { useAppState } from "../store";
@@ -26,7 +27,7 @@ export function ArchivePage() {
         {text("← 返回看板", "← Back to board")}
       </a>
       <div className="trash-page-head">
-        <h2 className="trash-page-title">{text("🗄 永久性完成", "🗄 Done for good")}</h2>
+        <h2 className="trash-page-title">{text(...ARCHIVE_TITLE)}</h2>
         <span className="trash-page-count">{total}</span>
       </div>
       <p className="column-help">
@@ -42,7 +43,7 @@ export function ArchivePage() {
       />
       {total > all.length && <p className="column-cap-note">{text(`仅显示最近 ${all.length} 条`, `Showing the latest ${all.length} only`)}</p>}
       {rows.length === 0 ? (
-        <p className="trash-empty">{all.length === 0 ? text("还没有封存的卡", "Nothing archived yet") : text("无匹配项", "No matches")}</p>
+        <p className="trash-empty">{all.length === 0 ? text(...ARCHIVE_EMPTY) : text(...ARCHIVE_NO_MATCH)}</p>
       ) : (
         <div className="archive-page-list">{rows.map((item) => <ArchiveRow key={item.id} item={item} />)}</div>
       )}

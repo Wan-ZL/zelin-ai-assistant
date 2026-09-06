@@ -1,0 +1,2 @@
+type: fixed
+- **设置页 Slack / Gmail 「运行状态（真实轮询结果）」补回原生的两句人话**（CONTRACT §48.7 追记；parity 批 `radar-status-copy`）：① 源开着但雷达还没落过笔（没成功过、没死因、连一轮尝试都没有）时说「还没有运行记录。等一轮（≤N 分钟）或点「立即测试一轮」。」而不是「状态未知」——N 与上一行「已安装，每 N 分钟自动运行」同源（launchd 模板 `StartInterval`），launchd 没回 / 非 darwin 时省掉数字；「状态未知」只剩投影里根本没有这一源那一种情形。② skip_reason 词表补齐 `disabled` / `command_failed` / `command_bad_output` / `mcp_failed` 四句（此前原样露出机器码），逐字镜像原生 SettingsGmail / SettingsSlack `humanSkip`——§14bis「抓取命令的失败在设置页说成大白话」自此在 web 落地；同一词表也是接入页健康行「开着但在静默失败：」的后半句。

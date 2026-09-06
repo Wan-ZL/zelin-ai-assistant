@@ -159,6 +159,47 @@ describe("selectCard", () => {
     expect(getState().cardDetail).toEqual({ id: "R-202" });
   });
 
+  it("remembers every card whose detail landed this session (detailViewedIds — the T2 gate reads it)", async () => {
+    vi.mocked(fetchCard).mockImplementation(async (id: string) => ({ id }));
+    expect(getState().detailViewedIds.has("R-101")).toBe(false);
+    selectCard("R-101");
+    expect(getState().detailViewedIds.has("R-101")).toBe(false); // 详情还没落地：什么都没看到，不算看过
+    await flush();
+    expect(getState().detailViewedIds.has("R-101")).toBe(true);
+    selectCard(null); // 关侧栏不忘记：看过明细就是看过
+    expect(getState().detailViewedIds.has("R-101")).toBe(true);
+    selectCard("R-202");
+    await flush();
+    expect([...getState().detailViewedIds].sort()).toEqual(["R-101", "R-202"]);
+  });
+
+  it("a failed detail fetch does not count as viewed (T2 gate stays shut on 「加载详情…」→ error)", async () => {
+    vi.mocked(fetchCard).mockRejectedValueOnce(new ApiError(404, { error: { code: "NOT_FOUND", message: "gone" } }));
+    selectCard("R-101");
+    await flush();
+    expect(getState().cardDetailError).toBe("gone");
+    expect(getState().detailViewedIds.has("R-101")).toBe(false);
+  });
+
+  it("records the primary key the server resolves, so a ?card=<work_id> deep link unlocks the card too (§60.3)", async () => {
+    vi.mocked(fetchCard).mockResolvedValue({ id: "P-012", work_id: "R-280", display_id: "R-280" });
+    selectCard("R-280");
+    await flush();
+    expect(getState().detailViewedIds.has("P-012")).toBe(true);
+  });
+
+  it("a late response for a card the user already left does not mark it viewed", async () => {
+    const slow = deferred<CardDetail>();
+    const fast = deferred<CardDetail>();
+    vi.mocked(fetchCard).mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise);
+    selectCard("R-101");
+    selectCard("R-202");
+    fast.resolve({ id: "R-202" });
+    slow.resolve({ id: "R-101" });
+    await flush();
+    expect([...getState().detailViewedIds]).toEqual(["R-202"]);
+  });
+
   it("selectCard(null) closes the drawer without fetching", () => {
     selectCard(null);
     expect(getState().selectedCardId).toBeNull();

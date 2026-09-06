@@ -77,3 +77,24 @@ describe("原生数值单源（§66.3 @generated 块 → 语义 token）", () =>
     }
   });
 });
+
+describe("顶栏密度阈值单源（§49 追记 2026-09-04；headerDensity.ts 只读这里）", () => {
+  it("两把阈值 + 两个静态加项 + 收纳控件尺寸都在 tokens.css，且是纯 px（hook 直接 parseFloat）", () => {
+    for (const token of [
+      "--header-density-full-min", "--header-density-compact-min",
+      "--header-density-shell-extra", "--header-density-en-extra",
+      "--header-control-size", "--header-search-width", "--header-search-min-width", "--header-popover-width",
+    ]) {
+      const match = stripped.match(new RegExp(`${token}: ([^;]+);`));
+      expect(match, `${token} 缺席`).toBeTruthy();
+      expect(match![1]).toMatch(/^\d+(\.\d+)?px$/);
+    }
+  });
+
+  it("full 阈值 ≤ 视觉 golden 的顶栏宽（1440 视口 − 200 导航栏 = 1240）：golden 条件下仍是 full", () => {
+    const fullMin = parseFloat(stripped.match(/--header-density-full-min: ([^;]+);/)![1]);
+    const compactMin = parseFloat(stripped.match(/--header-density-compact-min: ([^;]+);/)![1]);
+    expect(fullMin).toBeLessThanOrEqual(1240);
+    expect(compactMin).toBeLessThan(fullMin);
+  });
+});

@@ -21,9 +21,11 @@
 
 输出确定性：键排序 + 条目按 (screen, source) 排序 + 同 id 递增 #n 后缀——
 重跑零 diff 由 tests/test_ui_native_inventory_fresh.py 钉死。唯一手写的部分是
-`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` 四张归属表、
-`SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）与 prefs 键的 `PREF_OWNER`
-（shell / server / retired + 理由）——表本身也进 JSON（`attribution`）。owner=shell 的
+`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` / `FUNCTION_SCREEN` 五张归属表、
+`SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）、prefs 键的 `PREF_OWNER`
+（shell / server / retired + 理由）、单条 control 的 `CONTROL_OWNER`（retired + 理由：
+非界面文案 / 新架构无落点的句子）与 rail 项的 `RAIL_OWNER`（owner 决策拿掉的侧栏项：
+retired + 理由；`rail:order` 只数剩下的）——表本身也进 JSON（`attribution`）。owner=shell 的
 条目原则上只列不判；例外是带 `probe` 的条目（通知句 / kind → notify_catalog，
 壳持有的偏好键 → shell_source，搬到 server 的偏好键 → server_source），§66.2 追记。
 
@@ -124,11 +126,143 @@ MEMBER_SCREEN = {
     ("AppDelegate", "pastedImagesAccessory"): "board.dialogs",
     ("AppDelegate", "copyCommand"): "board.card",
     ("AppDelegate", "applicationShouldTerminate"): "app",
+    # 录制模式回滚句（RecordingController.rollbackNote + 它的 label(forMode:) 词表）：壳 Recording.swift
+    # 组句、经 postSystemNotice 直发 + 经桥 `recording.note` 原文推给页面——web 只显示不组句，
+    # 归 notifications（owner shell、探针 notify_catalog：server/notify_catalog.py 的 slots 词表 + 壳 L()）。
+    ("RecordingController", "rollbackNote"): "notifications",
+    ("RecordingController", "label"): "notifications",
+    # rollbackNote 体内的 `let cause: String` + switch 被成员扫描器认成最内层成员（mac/ 冻结 → 稳定），
+    # 三句 cause 片段由它归属
+    ("RecordingController", "cause"): "notifications",
+}
+
+# (文件, 顶层自由函数) → screen（第六张归属表）：Cards.swift 的 fileprivate 词表函数默认
+# 归文件 screen board.card，但 trashReasonLabel（你拒绝的 / 你删除的）只被 TrashRow 调用——
+# 它是回收站页的词，web 也只在回收站页渲染它（§68.11 / TrashPage）。
+FUNCTION_SCREEN = {
+    ("Cards.swift", "trashReasonLabel"): "trash",
+}
+
+# 单条 control id → 归属（第七张归属表；改表 = 改规格，PR 可见）。同一 screen 里个别 L()
+# 不是界面文案、或其机制在新架构里没有落点时，在这里点名 retired 并写一行理由（进 JSON
+# attribution.control_owner；只列不判）。§66.2 末句「新的不搬判断走归属表」的单条版——
+# 不进 waivers.txt（那本账只许缩）。
+CONTROL_OWNER = {
+    "control:header.freshness:button:board-health-banner-background-service-down-one": {
+        "owner": "retired",
+        "reason": "AIFix.launch(context:) 的 prompt 上下文字串，从不渲染；web 的「让 AI 修」上下文由 server 从 doctor 报告推导（§68.4 / §54.4）",
+    },
+    "control:doctor:label:failed-to-write-dest": {
+        "owner": "retired",
+        "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）",
+    },
+    "control:doctor:label:launchctl-load-failed": {
+        "owner": "retired",
+        "reason": "原生 app 自己 launchctl load 的失败句；server 永不 load plist（§68.8 同上，install.sh --reinstall-agent 是唯一装载路径 §48.7）",
+    },
+    "control:setup_wizard:label:failed-to-write-dest": {
+        "owner": "retired",
+        "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist",
+    },
+    # fix/parity-r2-settings-header（settings 面）：原生 Gmail IMAP 探针是壳起 runtime python 子进程；web 的探针在
+    # server 进程内跑（§68.3 secrets_store._probe_gmail），没有「找不到解释器」这一失败态。
+    "control:settings:label:no-usable-python": {
+        "owner": "retired",
+        "reason": "Gmail IMAP 探针在 server 进程内执行，无 runtime python 子进程可失败（§68.3）",
+    },
+    # fix/parity-secret-row-save-path（settings.credentials 面）：CredentialRowView 的状态章 `kind == .plain ?
+    # 「已保存（App 内管理）」: 「已保存（未验证）」`——原生四个实例（anthropic / gmail / volcanoSpeech / volcanoArk）
+    # 没有一个是 .plain，这句从不渲染；web 五行都有 server 探针或壳的「检测」，同样恒走「已保存（未验证）」。
+    # 此前 web 把它错渲在字幕两把 key 上（parity 审计 gap recording-captions-volcano-row-badge-and-save-note）。
+    "control:settings.credentials:label:saved-managed-in-app": {
+        "owner": "retired",
+        "reason": "原生 Kind.plain 分支无任何行实例化、从不渲染；web 五行皆可验证 / 可检测 → 恒「已保存（未验证）」（§68.3 2026-09-05 追记）",
+    },
+    # 原生「新建 skill」表单往 ~/.claude/skills/<name>/SKILL.md 写文件；§67 立法后仓库 = 商店、`skills/` 只有 git 写
+    # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的 PR（§65 草稿 PR 通道），不是设置页表单。
+    "control:settings.skills:button:new-skill": {
+        "owner": "retired",
+        "reason": "仓库 = skill 商店，skills/ 只有 git 写；新 skill 走 PR，设置页不做编辑器（§67.1 / §67.5）",
+    },
+    "control:settings.skills:button:hide-form": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:textfield:name-kebab-case-e-g-my-skill": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:textfield:one-line-description-claude-uses-it-to-decide-wh": {
+        "owner": "retired", "reason": "同 new-skill：新建表单不存在（§67.5）",
+    },
+    "control:settings.skills:label:write-failed": {
+        "owner": "retired", "reason": "同 new-skill：web 不写 SKILL.md，无写入失败态（§67.5）",
+    },
+    # D35（owner 2026-09-04 原话「这个我回车我不希望是直接跑而是下一行，要跑是需要点击按钮。」）：原生 Composer.swift 的
+    # 键位提示句「↩ 发送 · ⇧↩ 换行 · Esc 退出 · ⌘V 可贴图」描述的是 Return=发送 / Shift+Return=换行——web 列顶输入框自
+    # D35 起 Enter=换行、只有按钮提交，这句话在 web 里没有对应机制（copy 本就只列不判；这里点名是把判断落成判例）。
+    "control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images": {
+        "owner": "retired",
+        "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬",
+    },
+    # D34（owner 2026-09-04，issue #217）：卡片详情只留一面——「展开详情 ▸」打开右侧详情侧栏，原生 CardSurface 的
+    # 就地展开详情槽在 web 退役，卡面永远收起态。「收起 ▾」是就地展开的对偶动词，侧栏的关闭是 × / ⎋ / 背板；
+    # 详情槽里的积木（💬 需求来自 / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID …）照判——渲染面换成侧栏。
+    "control:board.card:button:collapse": {
+        "owner": "retired",
+        "reason": "D34 卡片详情只留侧栏一面（§49 追记 2026-09-04 / §54.1 第 2 项 tombstone）：就地展开退役，无「收起 ▾」；侧栏关闭 = × / ⎋",
+    },
+    "control:board.needs_approval:button:collapse": {
+        "owner": "retired",
+        "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏",
+    },
+    # D35 推及弹窗（§41 2026-09-05 追记「弹窗一律按钮提交，Enter 换行」）：原生 promptFeedback / promptText 的
+    # 键位提示句「↩ 发送 · ⇧↩ 换行」（AppDelegate.swift:904）描述的是 PromptSendDelegate 的 Return=发送——web 的
+    # 提建议 / 修改方向 / 打回 / 强制合并弹窗都只有按钮提交，这句话没有对应机制。#2（promptAnswer 的同句）早已在
+    # waivers.txt（#119 answer_input），不动。
+    "control:board.dialogs:label:send-newline": {
+        "owner": "retired",
+        "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬",
+    },
+}
+
+# D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部
+# retired、只列不判（screen `ask` 同时在 SCREEN_OWNER 标 retired，screen:ask 随之不判）。`act/ask.py` 引擎与
+# `state/ask_history.json` 不动：旧 app 仍 shell out 到它，等 P8 一起删（CONTRACT §27 tombstone）。
+_ASK_RETIRED_REASON = "D29 owner 去掉问问助手 web 页（§27 tombstone 2026-09-04；act.ask 引擎留给旧 app 到 P8）"
+_ASK_CONTROL_IDS = (
+    "control:ask:copy:couldn-t-start-the-q-a-helper-launcherror-run-a",
+    "control:ask:copy:no-answer-came-back-hit-retry",
+    "control:ask:copy:the-ai-didn-t-answer-within-60-s-hit-retry",
+    "control:ask:label:ask-the-assistant",
+    "control:ask:copy:ask-anything-about-this-product-why-there-are-no",
+    "control:ask:textfield:type-a-question-press-return",
+    "control:ask:button:ask",
+    "control:ask:label:thinking-model-elapsed-s-elapsed-60s-max",
+    "control:ask:button:cancel",
+    "control:ask:help:helpful-logs-an-anonymous-event-that-uploads-wit",
+    "control:ask:help:not-helpful-logs-an-anonymous-event-that-uploads",
+    "control:ask:button:retry",
+    "control:ask:copy:ask-is-disabled-in-config-yaml-ask-enabled-false",
+    "control:ask:copy:the-ai-engine-is-not-connected-connect-it-first",
+    "control:ask:button:connect-setup-wizard",
+    "control:ask:button:re-detect",
+    "control:ask:label:recent-questions",
+)
+CONTROL_OWNER.update({cid: {"owner": "retired", "reason": _ASK_RETIRED_REASON} for cid in _ASK_CONTROL_IDS})
+
+# rail 项（MainSection 的 case）→ 归属（第八张归属表）：原生八页里被 owner 决策从左侧导航栏拿掉的项。owner=retired、
+# 不判、理由进 JSON attribution.rail_owner；`rail:order` 的期望顺序只数仍 gated 的项（parity_check._rail_order_ok）。
+#   ask  —— 整页退役（D29），screen:ask 随 SCREEN_OWNER 一起不判；
+#   deps —— 页面并入设置页的「依赖检查」区（D30，owner 原话「这个依赖检查我希望合并到 setting里面」）：只有 rail 项退役，
+#           screen:deps 与 control:deps.* / doctor.* 照判（渲染面 = 设置页，web/src/parity.test.tsx SCREEN_SURFACE）。
+RAIL_OWNER = {
+    "ask": {"owner": "retired", "reason": _ASK_RETIRED_REASON},
+    "deps": {"owner": "retired",
+             "reason": "D30 依赖检查并入设置页一区（§49 / §54.4 追记 2026-09-04）；页面内容仍判，只有侧栏项退役"},
 }
 
 # screen 前缀 → 负责补齐的一方。web = 看板必须补（进门）；shell = 原生残留
 # （R2.2.3：字幕悬浮窗、系统通知、TCC 引导）；os = macOS 应用菜单惯例；
-# retired = 计划明文退役（D3 菜单栏图标）。非 web 的条目只列不判——例外是
+# retired = 计划明文退役（D3 菜单栏图标；D29 问问助手页）。非 web 的条目只列不判——例外是
 # PROBED_SHELL_SCREENS：壳直发的系统通知句按 server-owned 目录判（§66.2 追记）。
 SCREEN_OWNER = {
     "captions": "shell",
@@ -138,6 +272,7 @@ SCREEN_OWNER = {
     "app": "shell",
     "settings.menuBar": "retired",
     "onboarding.hello_bubble": "retired",
+    "ask": "retired",
 }
 
 # 调用者标识 → screen（第四张归属表）：`Self.postSystemNotice(title: L(...))` 是壳
@@ -171,6 +306,7 @@ PREF_OWNER = {
     "recordingConsentShown": {"owner": "retired",
                               "reason": "并入 recordingMode（壳无存值 = 未同意 = off，P0-11）+ setup_done.json；不再有第二把标记"},
 }
+
 
 # 调用链里算「控件」的标识 → role
 CONTROL_ROLES = {
@@ -229,6 +365,7 @@ class SwiftFile(object):
         self.lines = uc.LineIndex(self.raw)
         self.types = uc.top_level_spans(self.masked)
         self.members = {t[1]: uc.member_spans(self.masked, t[2], t[3]) for t in self.types}
+        self.funcs = uc.top_level_funcs(self.masked)
 
     def line(self, offset):
         return self.lines.line_of(offset)
@@ -243,6 +380,11 @@ class SwiftFile(object):
     def owner_member(self, offset):
         type_name = self.owner_type(offset)
         span = uc.innermost(self.members.get(type_name, []), offset)
+        return span[1] if span else ""
+
+    def owner_func(self, offset):
+        """offset 所在的顶层自由函数名（不在任何类型体内时才有意义）；没有 → ''。"""
+        span = uc.innermost(self.funcs, offset)
         return span[1] if span else ""
 
     def type_span(self, name):
@@ -305,7 +447,7 @@ def _settings_maps(registry):
 
 class Attribution(object):
     """L() 所在位置 → screen：注册表类型 > SettingsFormView 的 group 成员 >
-    (类型, 成员) 表 > 类型表 > 注册表类型所在文件的默认 > 文件表 > misc。"""
+    (类型, 成员) 表 > 类型表 > (文件, 顶层自由函数) 表 > 注册表类型所在文件的默认 > 文件表 > misc。"""
 
     def __init__(self, registry, files):
         self.section_members, self.section_types = _settings_maps(registry)
@@ -335,7 +477,15 @@ class Attribution(object):
         if section:
             return section
         return (MEMBER_SCREEN.get((type_name, member)) or TYPE_SCREEN.get(type_name)
+                or _function_screen(f, offset, type_name)
                 or self.file_defaults.get(f.name) or FILE_SCREEN.get(f.name, "misc"))
+
+
+def _function_screen(f, offset, type_name):
+    """不在任何类型体内的 L() → 所在顶层自由函数是否被 FUNCTION_SCREEN 点名；否则 None。"""
+    if type_name:
+        return None
+    return FUNCTION_SCREEN.get((f.name, f.owner_func(offset)))
 
 
 def owner_of(screen):
@@ -483,6 +633,11 @@ def _rail_item(f, slug, index, titles, icons, numbered):
             "index": index, "source": f.source(offset), "owner": "web", "gated": True}
     if numbered:
         item["shortcut"] = "⌘%d" % (index + 1)
+    retired = RAIL_OWNER.get(slug)   # owner 决策拿掉的侧栏项：只列不判，理由随行
+    if retired:
+        item["owner"] = retired["owner"]
+        item["gated"] = False
+        item["reason"] = retired["reason"]
     return item
 
 
@@ -696,8 +851,10 @@ _WINDOWS = (  # 独立窗口 / sheet / 条：类型名 → (screen, zh, en)
 
 
 def screens(files, rail, registry):
+    # rail 页的 screen 名 = slug；整页退役的（SCREEN_OWNER ask → retired）随 owner_of 不判，
+    # 只是侧栏项退役而页面并入别处的（deps → 设置页一区）仍是 web、照判
     out = [{"id": "screen:" + r["slug"], "kind": "rail-page", "zh": r["zh"], "en": r["en"],
-            "source": r["source"], "owner": "web", "gated": True} for r in rail]
+            "source": r["source"], "owner": owner_of(r["slug"]), "gated": owner_of(r["slug"]) == "web"} for r in rail]
     for entry in registry:
         screen = "settings." + entry["id"]
         out.append({"id": "screen:" + screen, "kind": "settings-section", "zh": entry["zh"],
@@ -749,9 +906,21 @@ def assign_ids(controls):
         base = "control:%s:%s:%s" % (c["screen"], c["role"], uc.slugify(c["en"] or c["zh"]))
         seen[base] = seen.get(base, 0) + 1
         c["id"] = base if seen[base] == 1 else "%s#%d" % (base, seen[base])
+        _apply_control_owner(c)
     for c in controls:
         del c["_file"], c["_offset"]
     return sorted(controls, key=lambda c: (c["screen"], _source_key(c["source"]), c["id"]))
+
+
+def _apply_control_owner(control):
+    """CONTROL_OWNER 点名的单条：owner 改成表值、不再判（gated False）、理由随行。id 已铸好才查表。"""
+    entry = CONTROL_OWNER.get(control["id"])
+    if not entry:
+        return
+    control["owner"] = entry["owner"]
+    control["gated"] = False
+    control["reason"] = entry["reason"]
+    control.pop("probe", None)
 
 
 def _digest(files):
@@ -772,9 +941,11 @@ def build_inventory(root=uc.MAC_SOURCES):
     return {
         "attribution": {"file_screen": FILE_SCREEN, "type_screen": TYPE_SCREEN,
                         "member_screen": {"%s.%s" % k: v for k, v in MEMBER_SCREEN.items()},
+                        "function_screen": {"%s:%s" % k: v for k, v in FUNCTION_SCREEN.items()},
                         "screen_owner": SCREEN_OWNER, "via_screen": VIA_SCREEN,
                         "probed_shell_screens": sorted(PROBED_SHELL_SCREENS),
-                        "pref_owner": PREF_OWNER},
+                        "pref_owner": PREF_OWNER, "control_owner": CONTROL_OWNER,
+                        "rail_owner": RAIL_OWNER},
         "controls": controls,
         "lanes": {"order": [lane["slug"] for lane in lanes], "items": lanes,
                   "card_affordances": card_affordances(controls)},

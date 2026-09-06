@@ -6,7 +6,8 @@
 //     → 「已重新安装 ✓」+ 回执里 server 装完再问 launchd 的 loaded / 错误原文；
 //   · 「立即测试一轮」= inbox 特形 radar_test_round {source}（actd 分离起 act.radar_<src> --once），
 //     结果回到看板：radar_sources.<src>.test_round（running → done / noop / lost）+ health 的 last_attempt；
-//     按钮在回执落地或 90 s 兜底前显示「测试中…」。
+//     按钮在回执落地或 90 s 兜底前显示「测试中…」；
+//   · 运行状态行（sourceHealth.RunStatusLine）拿同一份 interval_s 说「还没有运行记录。等一轮（≤N 分钟）…」。
 import { useEffect, useRef, useState } from "react";
 import { fetchRadarAgents, postAction, postRadarReinstall } from "../../api";
 import { useI18n } from "../../i18n";
@@ -128,7 +129,8 @@ export function RadarAgentPanel({ source }: { source: RadarSource }) {
       )}
       <div className="settings-subhead">{text("运行状态（真实轮询结果）", "Run status (real poll results)")}</div>
       <div className="settings-radar-row">
-        <RunStatusLine health={health} />
+        {/* 「还没有运行记录。等一轮（≤N 分钟）…」的 N 与上一行「每 N 分钟自动运行」同源（launchd 模板 StartInterval） */}
+        <RunStatusLine health={health} intervalS={agent?.interval_s ?? null} />
         <span className="settings-radar-spacer" />
         <button type="button" className="btn" disabled={testing !== null || !health?.enabled} onClick={() => void testRound()}>
           {testing ? text("测试中…", "Testing…") : text("立即测试一轮", "Test one round now")}

@@ -17,7 +17,8 @@
   旧快照文件（默认不删，保守）。
 
 本模块同时是 card 序列化形状的**单一落点**（migrate_yaml 从这里 import）：
-字段词表直接 ``from ..registry import CORE_ORDER, OPTIONAL_ORDER``——真源只有
+字段词表直接 ``from ..card_model import CORE_ORDER, OPTIONAL_ORDER``（registry
+门面 re-export 同一对象）——真源只有
 一份，live 加字段时迁移/导出自动跟上（v0.48 前这里手抄了整套词表，因为当时的
 worktree 基线 registry 缺 §37/§38/§44 字段；merge 后理由失效，已去重）。
 ``FIELD_DEFAULTS`` 与 from_dict/to_dict 语义仍是逐字复刻（dataclass 默认值不
@@ -34,10 +35,10 @@ from pathlib import Path
 
 import yaml
 
-from ..registry import CORE_ORDER, OPTIONAL_ORDER
+from ..card_model import CORE_ORDER, OPTIONAL_ORDER
 
 # --------------------------------------------------------------------------- #
-# card shape — 词表 import 自 live act/lib/registry.py（单一真源）：
+# card shape — 词表 import 自 live act/lib/card_model.py（单一真源；registry 门面 re-export）：
 # CORE_ORDER 永远序列化（哪怕 null），顺序即 YAML 顺序；OPTIONAL_ORDER 的值
 # in (None, "", [], False) 时整键跳过（0 == False 也被跳过——silent_merge_count: 0
 # 不落盘，registry 明示这是有意的）。下面的默认值/归一语义仍是复刻，加字段时
@@ -110,33 +111,50 @@ def normalize_card(raw: dict) -> dict:
     不归一**（legacy `merged_into:<id>` 状态串原样保留——热列归一是 migrate
     的事，payload 真源永远 verbatim）。
     """
-    d = dict(raw or {})
-    vals = {}
-    for k, default in FIELD_DEFAULTS.items():
-        if k in d:
-            vals[k] = d[k]
-        elif k == "sources":
-            vals[k] = []
-        else:
-            vals[k] = default
+    vals = _field_values(dict(raw or {}))
+    vals["delivery_mode"] = _coerce_delivery_mode(vals.get("delivery_mode"))
+    _coerce_scalars(vals)
+    return _serialize(vals)
+
+
+def _field_values(d: dict) -> dict:
+    """每个词表字段的值：raw 里有就取 raw 的，否则默认（sources 的默认是新
+    list——dataclass 的 default_factory）；``repo`` 是 target_repo 的读侧别名。"""
+    vals = {k: (d[k] if k in d else ([] if k == "sources" else default))
+            for k, default in FIELD_DEFAULTS.items()}
     if "target_repo" not in d and "repo" in d:
         vals["target_repo"] = d["repo"]
-    dm = str(vals.get("delivery_mode") or "").strip().lower()
-    vals["delivery_mode"] = dm if dm in ("chat", "repo") else "repo"
+    return vals
+
+
+def _coerce_delivery_mode(value) -> str:
+    dm = str(value or "").strip().lower()
+    return dm if dm in ("chat", "repo") else "repo"
+
+
+def _coerce_scalars(vals: dict) -> None:
+    """id/title/tier/work_id 非 str 一律 str() 归一（数字 title、`id: 4` 真实出现过）。"""
     for k in ("id", "title", "tier", "work_id"):
         v = vals[k]
         if v is not None and not isinstance(v, str):
             vals[k] = str(v)
+
+
+def _skip_optional(key: str, value) -> bool:
+    """to_dict 的 optional 省略语义（复刻 card_model._skip_optional）。"""
+    if value in (None, "", [], False):
+        return True
+    return key == "delivery_mode" and value == "repo"
+
+
+def _serialize(vals: dict) -> dict:
+    """core 恒序列化 + optional 省略（顺序即 YAML 顺序）。"""
     out: dict = {}
     for k in CORE_ORDER:
         out[k] = vals[k]
     for k in OPTIONAL_ORDER:
-        v = vals[k]
-        if v in (None, "", [], False):
-            continue
-        if k == "delivery_mode" and v == "repo":
-            continue
-        out[k] = v
+        if not _skip_optional(k, vals[k]):
+            out[k] = vals[k]
     return out
 
 
@@ -153,61 +171,90 @@ def dump_card_yaml(obj) -> str:
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
 
 
-def export_db(db_path: Path, out_dir: Path, prune: bool = False) -> int:
-    """全库导出。返回进程退出码（0=干净，2=有跳过/异常行）。"""
+def _read_rows(db_path: Path) -> list:
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
-        rows = con.execute(
+        return con.execute(
             "SELECT id, status, tombstone, payload FROM cards ORDER BY id"
         ).fetchall()
     finally:
         con.close()
 
+
+def _valid_snapshot_id(card_id) -> bool:
+    return isinstance(card_id, str) and bool(_SAFE_ID_RE.match(card_id))
+
+
+def _card_object(card_id, payload) -> tuple:
+    """(payload dict, None) 或 (None, 跳过原因)。"""
+    if not _valid_snapshot_id(card_id):
+        return None, f"skip {card_id!r}: id 不符合文件名白名单"
+    try:
+        obj = json.loads(payload)
+    except ValueError as e:
+        return None, f"skip {card_id}: payload 不是合法 JSON: {e}"
+    if not isinstance(obj, dict) or not obj.get("id"):
+        return None, f"skip {card_id}: payload 缺 id（疑似半截行）"
+    return obj, None
+
+
+def _snapshot_rel(card_id: str, status) -> Path:
+    """archived 卡落 archive/ 子目录（对齐 registry 的 RELOCATE 模型）。"""
+    if status == "archived":
+        return Path("archive") / f"{card_id}.yaml"
+    return Path(f"{card_id}.yaml")
+
+
+def _write_if_changed(path: Path, text: str) -> bool:
+    """幂等：内容未变不重写（保 mtime 稳定）；返回是否写了。"""
+    if path.exists() and path.read_text(encoding="utf-8") == text:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+def _export_row(row, out_dir: Path, tally: dict, problems: list, expected: set) -> None:
+    card_id, status, tombstone, payload = row
+    if tombstone:
+        tally["tombstones"] += 1
+        return
+    obj, problem = _card_object(card_id, payload)
+    if problem:
+        problems.append(problem)
+        return
+    path = out_dir / _snapshot_rel(card_id, status)
+    expected.add(path)
+    tally["written" if _write_if_changed(path, dump_card_yaml(obj)) else "unchanged"] += 1
+
+
+def _prune_snapshots(out_dir: Path, expected: set) -> int:
+    """删除 DB 里已不存在的旧快照 *.yaml（含 archive/）；文档样例永不动。"""
+    candidates = list(out_dir.glob("*.yaml"))
+    if (out_dir / "archive").exists():
+        candidates += list((out_dir / "archive").glob("*.yaml"))
+    pruned = 0
+    for p in candidates:
+        if p.name == "R-000-example.yaml":  # 文档样例永不动（对齐 registry）
+            continue
+        if p not in expected:
+            p.unlink()
+            pruned += 1
+    return pruned
+
+
+def export_db(db_path: Path, out_dir: Path, prune: bool = False) -> int:
+    """全库导出。返回进程退出码（0=干净，2=有跳过/异常行）。"""
+    rows = _read_rows(db_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    written = unchanged = tombstones = 0
+    tally = {"written": 0, "unchanged": 0, "tombstones": 0}
     problems: list = []
     expected: set = set()
-    for card_id, status, tombstone, payload in rows:
-        if tombstone:
-            tombstones += 1
-            continue
-        if not isinstance(card_id, str) or not _SAFE_ID_RE.match(card_id):
-            problems.append(f"skip {card_id!r}: id 不符合文件名白名单")
-            continue
-        try:
-            obj = json.loads(payload)
-        except ValueError as e:
-            problems.append(f"skip {card_id}: payload 不是合法 JSON: {e}")
-            continue
-        if not isinstance(obj, dict) or not obj.get("id"):
-            problems.append(f"skip {card_id}: payload 缺 id（疑似半截行）")
-            continue
-        rel = Path("archive") / f"{card_id}.yaml" if status == "archived" \
-            else Path(f"{card_id}.yaml")
-        path = out_dir / rel
-        expected.add(path)
-        text = dump_card_yaml(obj)
-        if path.exists() and path.read_text(encoding="utf-8") == text:
-            unchanged += 1
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-        written += 1
-
-    pruned = 0
-    if prune:
-        candidates = list(out_dir.glob("*.yaml"))
-        if (out_dir / "archive").exists():
-            candidates += list((out_dir / "archive").glob("*.yaml"))
-        for p in candidates:
-            if p.name == "R-000-example.yaml":  # 文档样例永不动（对齐 registry）
-                continue
-            if p not in expected:
-                p.unlink()
-                pruned += 1
-
-    say(f"export: {written} written, {unchanged} unchanged, "
-        f"{tombstones} tombstones skipped, {pruned} pruned -> {out_dir}")
+    for row in rows:
+        _export_row(row, out_dir, tally, problems, expected)
+    pruned = _prune_snapshots(out_dir, expected) if prune else 0
+    say(f"export: {tally['written']} written, {tally['unchanged']} unchanged, "
+        f"{tally['tombstones']} tombstones skipped, {pruned} pruned -> {out_dir}")
     for msg in problems:
         say(f"export: WARN {msg}", err=True)
     return 2 if problems else 0

@@ -29,7 +29,7 @@ export const PROPOSAL_T1: ApprovalCard = {
   dod: ["成稿可直接发送"],
 };
 
-/** 提案 T2：typed-confirm 档 + 硬需求 chip */
+/** 提案 T2：typed-confirm 档 + 较难 chip（hardness=hard） */
 export const PROPOSAL_T2: ApprovalCard = {
   id: "SG-T2",
   title: "Styleguide fixture — T2 proposal",
@@ -122,7 +122,7 @@ export const TASK_DONE: TaskRow = {
   accepted_at: Math.floor(Date.now() / 1000) - 19 * 86400,
 };
 
-/** 潜在任务（debt）卡：type + 硬需求 chips + 两动词 */
+/** 潜在任务（debt）卡：type + 较难 chips（hardness=hard）+ 两动词 */
 export const DEBT_FIXTURE: DebtCard = {
   id: "SG-DEBT",
   title: "潜在任务（fixture）：调研竞品定价页",

@@ -32,6 +32,14 @@ SLACK_TOKEN_FILE = "slack-user-token.txt"  # nosec B105 - file NAME, not a secre
 GMAIL_APP_PASSWORD_FILE = "gmail-app-password.txt"  # nosec B105 - file NAME, not a secret
 ANTHROPIC_API_KEY_FILE = "anthropic-api-key.txt"
 
+# §19 第三层（旧默认路径，已弃用但仍是最后兜底）——单源表：radar_slack /
+# radar_gmail 的 DEFAULT_*_PATH 与 dashboard `secret_present` 探针（§48.4）都
+# 从这里取，雷达解析到什么、投影就报什么。判例 patch 这张表指进沙箱。
+LEGACY_DEFAULT_PATHS: dict = {
+    SLACK_TOKEN_FILE: "~/Desktop/Keys/slack-user-token.txt",  # nosec B105 - file PATH
+    GMAIL_APP_PASSWORD_FILE: "~/Desktop/Keys/gmail-app-password.txt",  # nosec B105 - file PATH
+}
+
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 
@@ -49,18 +57,25 @@ def _first_token_line(text: str, origin) -> Optional[str]:
     lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
     if not lines:
         return None
-    if len(lines) > 1 and str(origin) not in _warned_multiline:
-        _warned_multiline.add(str(origin))
-        try:
-            print(
-                f"[secrets] WARNING: {origin} has {len(lines)} non-empty lines"
-                " — expected a single-line token (CONTRACT §19);"
-                " using the first line only",
-                file=sys.stderr,
-            )
-        except Exception:  # noqa: BLE001 - warning must never break resolution
-            pass
+    if len(lines) > 1:
+        _warn_multiline_once(origin, len(lines))
     return lines[0]
+
+
+def _warn_multiline_once(origin, count: int) -> None:
+    """一次性（每个来源）的畸形提示——只报来源与行数，绝不带凭证值。"""
+    if str(origin) in _warned_multiline:
+        return
+    _warned_multiline.add(str(origin))
+    try:
+        print(
+            f"[secrets] WARNING: {origin} has {count} non-empty lines"
+            " — expected a single-line token (CONTRACT §19);"
+            " using the first line only",
+            file=sys.stderr,
+        )
+    except Exception:  # noqa: BLE001 - warning must never break resolution
+        pass
 
 
 def read_secret(name: str) -> Optional[str]:

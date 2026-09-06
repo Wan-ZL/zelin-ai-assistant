@@ -117,9 +117,10 @@ def context_for_doctor(home: Path, doctor_runner=None) -> str:
     """依赖检查页的上下文 = doctor --fast 报告里没过的行（name / detail / fix），server 自己跑的。"""
     from server import doctor_run  # 局部 import：避免与 board_source 同层的循环
     report = doctor_run.report(home, fast=True, runner=doctor_runner)
-    bad = [row for row in report.get("checks", []) if row.get("status") in ("FAIL", "WARN")]
+    # status 词表 = §25 小写 ok|warn|fail（server/doctor_run 归一）；上下文里印成大写徽记（doctor 文本版的 [FAIL] 同款）
+    bad = [row for row in report.get("checks", []) if row.get("status") in ("fail", "warn")]
     head = "doctor --fast: %d check(s) not OK" % len(bad)
-    lines = ["%s %s: %s%s" % (row.get("status"), row.get("name"), row.get("detail") or "",
+    lines = ["%s %s: %s%s" % (str(row.get("status")).upper(), row.get("name"), row.get("detail") or "",
                               (" (fix: %s)" % row["fix"]) if row.get("fix") else "") for row in bad]
     return "\n".join([head] + lines)
 

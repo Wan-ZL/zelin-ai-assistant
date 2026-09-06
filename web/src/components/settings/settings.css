@@ -407,6 +407,12 @@
   outline: 2px solid var(--accent-soft);
 }
 
+/* ?anchor= 深链滚到某区时留出顶栏（sticky 52px + 过滤条）的高度，标题行不被盖住 */
+.settings-page > .settings-section,
+.settings-page > div[id^="settings-"] {
+  scroll-margin-top: 64px;
+}
+
 .settings-section.is-placeholder {
   opacity: 0.75;
 }
@@ -417,6 +423,13 @@
   gap: 6px;
   padding-top: 6px;
   border-top: var(--border-hairline) solid var(--border);
+}
+
+/* 联动禁用（原生 `.disabled(...)` 的淡显）：标签与控件一起淡（开关已有 :disabled 淡显），来源章与 help 照常可读 */
+.settings-field.is-gated .settings-knob-label,
+.settings-field.is-gated .settings-select:disabled,
+.settings-field.is-gated .settings-input:disabled {
+  opacity: 0.5;
 }
 
 .settings-field-head {
@@ -603,6 +616,46 @@
 
 .settings-update-line.is-ok { color: var(--success); }
 .settings-update-line.is-warning { color: var(--warning); font-weight: var(--w-semibold); }
+.settings-update { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.settings-update .settings-actions { margin: 0; }
+
+/* ----- §15.1 依赖检查快速行 / 雷达健康（原生 DepsView：✅/⚠️ + 名字 + 探针说明 + 一颗对症按钮） ----- */
+/* D30：依赖检查是设置页的一区——标题行带「重新检查」+「权限体检」，雷达健康 / 诊断 / 管线活性… 是区内细线分隔的子块 */
+.settings-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.settings-subsection { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: var(--border-hairline) solid var(--border); }
+.settings-subsection-title { margin: 0; font-size: calc(12.5px * var(--text-scale)); font-weight: var(--w-semibold); }
+.dep-row-head { display: flex; align-items: center; gap: 8px; }
+.dep-row-mark { width: 1.4em; text-align: center; flex: none; }
+.dep-row-action { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.dep-row-detail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: calc(10.5px * var(--text-scale)); overflow-wrap: anywhere; }
+.dep-row-detail code { font: inherit; }
+/* §25 cron 行 ok == false 时的 CronFDA.grantSteps（原生 10 pt secondary，可折行） */
+.dep-row-note { font-size: calc(10px * var(--text-scale)); overflow-wrap: anywhere; }
+.diag-verdict { display: inline-flex; gap: 2px; align-items: baseline; font-weight: var(--w-medium); }
+.diag-verdict.is-ok { color: var(--success); }
+.diag-verdict.is-warning { color: var(--danger); }
+.diag-full-report summary { cursor: pointer; font-size: calc(11px * var(--text-scale)); color: var(--text-secondary); }
+.radar-row { flex-direction: row; align-items: baseline; gap: 10px; }
+.radar-detail { display: inline-flex; gap: 0; color: var(--text-secondary); font-size: calc(12px * var(--text-scale)); }
+.radar-row.is-success .radar-detail { color: var(--success); }
+.radar-row.is-warning .radar-detail { color: var(--warning); }
+.radar-row.is-danger .radar-detail { color: var(--danger); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: var(--text-quaternary); }
+.status-dot-success { background: var(--success); }
+.status-dot-warning { background: var(--warning); }
+.status-dot-danger { background: var(--danger); }
+.engine-status { align-items: center; }
+.ingest-db-stamp { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ingest-trigger { align-items: baseline; }
+/* 原生 EngineDiagnosisRow 的 VStack：动作行 + 日志尾（engine_crashed / engine_ffmpeg_missing 非空时） */
+.engine-diagnosis { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.engine-diagnosis-row { align-items: center; flex-wrap: wrap; }
+/* npm 首次下载的 ProgressView().controlSize(.small)：小号 spinner，跟 11.5px 的句子一行 */
+.engine-diagnosis .engine-spinner { width: 14px; height: 14px; flex: none; }
+/* 原生 lineLimit(6)：6 行封顶（.diag-log 的 line-height 1.45 + 上下 padding 8px），多了在框内滚。
+   两级选择器（0,2,0）压过后文 .diag-log 自己的 max-height: 420px（0,1,0）——单类同权时后者按源顺序赢，封顶会失效 */
+.engine-diagnosis .engine-log-tail { max-height: calc(6 * 1.45em + 16px); user-select: text; }
+.tcc-lost { border-left: 3px solid var(--warning); padding-left: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 
 .btn.btn-quiet { opacity: 0.8; }
 
@@ -848,4 +901,101 @@
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 4px;
+}
+
+/* Slack 监控范围勾选器（原生 SettingsSlack pickers：标题行 + 加载/刷新、每张清单 标题 + 筛选… + 勾选表，最高 140pt 滚动） */
+.settings-subhead-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-subhead-row .settings-subhead {
+  flex: 1;
+}
+
+.slack-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.settings-input.is-filter {
+  flex: 0 0 160px;
+  font-size: calc(11px * var(--text-scale));
+}
+
+.slack-picker-list {
+  max-height: 140px;
+  margin: 0;
+  padding: 4px 6px;
+  overflow-y: auto;
+  list-style: none;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  font-size: calc(11px * var(--text-scale));
+}
+
+.slack-picker-list li {
+  padding: 1px 0;
+}
+
+.skill-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 同步 / 配对的 qrCard（原生：220pt 二维码白底圆角 + 设备名 + 警句 + 重新生成 / channel id） */
+.sync-qr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+}
+
+.sync-qr {
+  align-self: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.sync-qr-hint {
+  text-align: center;
+}
+
+/* MCP servers（原生 SettingsMCP：transport 章 http .blue / sse .purple / stdio .secondary；空态的 claude mcp add 命令可选中；
+   作用域行的路径等宽、截中） */
+.chip.chip-transport-http { color: var(--info); border-color: var(--info-soft); background: var(--info-soft); }
+.chip.chip-transport-sse { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
+.chip.chip-transport-stdio { color: var(--text-secondary); border-color: var(--border); background: var(--surface-muted); }
+
+.mcp-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcp-add-hint {
+  align-self: flex-start;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(11px * var(--text-scale));
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-radius: 5px;
+  padding: 2px 6px;
+  user-select: all;
+}
+
+.mcp-scope-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(10.5px * var(--text-scale));
+  overflow-wrap: anywhere;
 }

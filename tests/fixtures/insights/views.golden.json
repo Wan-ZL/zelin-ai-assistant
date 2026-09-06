@@ -1,0 +1,243 @@
+{
+ "abandonment": {
+  "configured": 3,
+  "configured_no_card": 2,
+  "configured_no_card_pct": 66.66666666666667,
+  "used_once": {
+   "ask_answered": 1,
+   "dispatch": 2,
+   "dispatch_failed": 1,
+   "inbox_approve": 1,
+   "radar_scan": 1
+  }
+ },
+ "aggregate": {
+  "by_day": {
+   "2026-08-03": 1,
+   "2026-08-13": 1,
+   "2026-08-14": 1,
+   "2026-08-15": 1,
+   "2026-08-16": 1,
+   "2026-08-17": 1,
+   "2026-08-18": 2,
+   "2026-08-19": 2,
+   "2026-08-20": 1,
+   "2026-08-21": 1,
+   "2026-08-22": 1,
+   "2026-08-23": 1,
+   "2026-08-24": 2,
+   "2026-08-25": 1,
+   "2026-08-26": 1,
+   "2026-08-31": 1,
+   "2026-09-01": 2
+  },
+  "by_event": {
+   "ask_answered": 1,
+   "card_sent": 3,
+   "dispatch": 2,
+   "dispatch_failed": 1,
+   "feature_first_reach": 5,
+   "inbox_approve": 1,
+   "milestone_first_card": 1,
+   "orphan": 1,
+   "radar_scan": 1,
+   "radar_skip": 4,
+   "resume_launch": 2
+  },
+  "by_level": {
+   "basic": 1,
+   "detailed": 1
+  },
+  "by_version": {
+   "(unset)": 2,
+   "1.0.0": 20
+  },
+  "devices": 5,
+  "error_rates": {
+   "ask_answered": {
+    "fail": 0,
+    "total": 1
+   },
+   "dispatch_failed": {
+    "fail": 1,
+    "total": 1
+   },
+   "inbox_approve": {
+    "fail": 0,
+    "total": 1
+   },
+   "resume_launch": {
+    "fail": 1,
+    "total": 2
+   }
+  },
+  "total": 22
+ },
+ "body_error": "_Auto-updated by `.github/workflows/insights.yml` — last run 2026-09-02 12:00 UTC, window: last 7 days. Aggregates only; no raw rows leave the database._\n\n## ⚠️ This run failed\n\nCould not read aggregates from Supabase: `URLError: boom`\n\nThe previous report (if any) was replaced by this notice; the next scheduled run will retry.",
+ "body_missing_key": "_Auto-updated by `.github/workflows/insights.yml` — last run 2026-09-02 12:00 UTC, window: last 7 days. Aggregates only; no raw rows leave the database._\n\n## ⚠️ Not configured\n\nThe `SUPABASE_INSIGHTS_KEY` repository secret is missing, so no data could be read. Set it with a read-capable key:\n\n```sh\ngh secret set SUPABASE_INSIGHTS_KEY -R <owner/repo> < path/to/service-key.txt\n```",
+ "body_no_views": "_Auto-updated by `.github/workflows/insights.yml` — last run 2026-09-02 12:00 UTC, window: last 7 days. Aggregates only; no raw rows leave the database._\n\n_No AI analysis this run (no `ANTHROPIC_API_KEY` or the call failed) — the derived views below stand on their own._\n\n> _Caveat: these aggregates commingle the anonymous devices of **every** install. A single shared / multi-user deployment counts as many devices and can skew the funnel and retention rates below. A per-tenant marker to separate installs is deferred (privacy-sensitive)._\n\n**Totals:** 0 events from 0 devices.\n\n<details>\n<summary>Appendix — raw aggregate tables</summary>\n\n### Events\n| event | count |\n|---|---|\n\n### Daily volume\n| day | events |\n|---|---|\n\n### App versions\n| version | events |\n|---|---|\n\n</details>",
+ "funnel": {
+  "install_base": 5,
+  "stages": [
+   {
+    "devices": 5,
+    "drop_from_prev_pct": null,
+    "key": "installed",
+    "label": "Installed (app launched)",
+    "pct_of_install": 100.0
+   },
+   {
+    "devices": 5,
+    "drop_from_prev_pct": 0.0,
+    "key": "configured",
+    "label": "Configured an ingest source",
+    "pct_of_install": 100.0
+   },
+   {
+    "devices": 3,
+    "drop_from_prev_pct": 40.0,
+    "key": "first_card",
+    "label": "First proposal card",
+    "pct_of_install": 60.0
+   },
+   {
+    "devices": 2,
+    "drop_from_prev_pct": 33.333333333333336,
+    "key": "first_approval",
+    "label": "First approval",
+    "pct_of_install": 40.0
+   },
+   {
+    "devices": 2,
+    "drop_from_prev_pct": 0.0,
+    "key": "first_delivery",
+    "label": "First delivery (dispatch)",
+    "pct_of_install": 40.0
+   }
+  ]
+ },
+ "funnel_fallback": {
+  "install_base": 5,
+  "stages": [
+   {
+    "devices": 5,
+    "drop_from_prev_pct": null,
+    "key": "installed",
+    "label": "Installed (app launched)",
+    "pct_of_install": 100.0
+   },
+   {
+    "devices": 5,
+    "drop_from_prev_pct": 0.0,
+    "key": "configured",
+    "label": "Configured an ingest source",
+    "pct_of_install": 100.0
+   },
+   {
+    "devices": 3,
+    "drop_from_prev_pct": 40.0,
+    "key": "first_card",
+    "label": "First proposal card",
+    "pct_of_install": 60.0
+   },
+   {
+    "devices": 2,
+    "drop_from_prev_pct": 33.333333333333336,
+    "key": "first_approval",
+    "label": "First approval",
+    "pct_of_install": 40.0
+   },
+   {
+    "devices": 2,
+    "drop_from_prev_pct": 0.0,
+    "key": "first_delivery",
+    "label": "First delivery (dispatch)",
+    "pct_of_install": 40.0
+   }
+  ]
+ },
+ "path_failures": {
+  "dispatch": {
+   "fail_rate_pct": 33.333333333333336,
+   "failed": 1,
+   "ok": 2,
+   "total": 3
+  },
+  "ingest": {
+   "(unknown)": {
+    "scans": 0,
+    "skip_rate_pct": 100.0,
+    "skips": 1,
+    "top_reason": null
+   },
+   "gmail": {
+    "scans": 1,
+    "skip_rate_pct": 75.0,
+    "skips": 3,
+    "top_reason": [
+     "no_credentials",
+     2
+    ]
+   }
+  },
+  "ok_events": {
+   "ask_answered": {
+    "fail": 0,
+    "rate_pct": 0.0,
+    "total": 1
+   },
+   "dispatch_failed": {
+    "fail": 1,
+    "rate_pct": 100.0,
+    "total": 1
+   },
+   "inbox_approve": {
+    "fail": 0,
+    "rate_pct": 0.0,
+    "total": 1
+   },
+   "resume_launch": {
+    "fail": 1,
+    "rate_pct": 50.0,
+    "total": 2
+   }
+  }
+ },
+ "path_failures_empty": {
+  "dispatch": {
+   "fail_rate_pct": 0.0,
+   "failed": 0,
+   "ok": 0,
+   "total": 0
+  },
+  "ingest": {},
+  "ok_events": {}
+ },
+ "render_reliability_empty": "### 2. Reliability\n\n_No failure-bearing events in this window._",
+ "retention": {
+  "d2": {
+   "cohort": 5,
+   "rate_pct": 60.0,
+   "returned": 3
+  },
+  "d7": {
+   "cohort": 4,
+   "rate_pct": 50.0,
+   "returned": 2
+  },
+  "devices": 5
+ },
+ "retention_empty": {
+  "d2": {
+   "cohort": 0,
+   "rate_pct": 0.0,
+   "returned": 0
+  },
+  "d7": {
+   "cohort": 0,
+   "rate_pct": 0.0,
+   "returned": 0
+  },
+  "devices": 0
+ }
+}

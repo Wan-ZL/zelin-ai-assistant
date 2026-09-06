@@ -1,4 +1,4 @@
-"""server/settings_catalog.py — 设置页的通用 section 目录（CONTRACT §15.3 / §49 / §68）。
+"""server/settings_catalog.py — 设置页的通用 section 目录（CONTRACT §15.3 / §48.1 / §49 / §68）。
 
 原生 Settings.swift 的 20 个区里，凡是「一把旋钮 = settings_overrides.json 的一个
 键」的都收进这一张 server-owned 目录：每个 section 一组 field，每个 field 说明
@@ -19,6 +19,17 @@ UNKNOWN_FIELD；类型/取值不合法 400 INVALID_FIELD；落盘按 §15.3 v0.1
 ``write: "always"`` 的键（telemetry.capture_input——知情选择不可被静默 diff-drop）
 只要在 payload 里就落键。nested 拼法（``telemetry`` / ``features`` 块）写嵌套形并
 顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
+雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
+``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
+字段可带 ``check``（今日词表 ``email`` / ``session_id``）：server 400 + 目录投影双语句，web 镜像同一条规则；
+一个 check 不止一句时（session_id：以 ``-`` 开头另有一句）分句登记在 ``CHECK_REASONS``，投影 ``check.reasons``、
+400 的 details 带 ``reason``（§68.7 追记）。开发者区（maintainer）两行的 ``placeholder`` 是**动态**的（原生
+SettingsMaintainer 的灰字 = 生效默认：仓库路径 = config.yaml maintainer.repo_path 否则本 checkout；会话 id =
+config.yaml maintainer.session_id，没设才是示例），section 投影另带 add-only ``terminal_app_name``（「会在 <终端> 中打开」）。
+help 文案是 server-owned 的**披露句**，不只是提示：slack / gmail 两区的区首导语、``gmail_fetch_command`` 的
+§14bis 命令契约句（直接执行、``GMAIL_RADAR_LAST_UID``、stdout 一个 JSON 数组）、telemetry 三段知情披露
+（元数据字段表 / 500 字截断 + 密钥掩码 / 最上方开关停全部上传）逐字镜像原生段落——判例
+tests/test_server_settings_help_copy.py 钉住每一句。
 
 server/ 不 import act（§49）：override 键名、config 路径与默认值镜像自
 act/lib/config.py，判例 tests/test_server_settings_catalog.py 钉住每个键都在
@@ -27,8 +38,9 @@ act/lib/config.py，判例 tests/test_server_settings_catalog.py 钉住每个键
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 try:
     import yaml
@@ -45,23 +57,57 @@ LIST_MAX = 200          # list 字段：项数与每项长度的帽
 _TRUE_WORDS = frozenset({"true", "yes", "on", "1"})
 _FALSE_WORDS = frozenset({"false", "no", "off", "0"})
 
+# 字段校验词表（add-only，§68.1 追记）：kind → 不合格时的双语句。句子是 server-owned（防腐 #10）：目录投影
+# `check: {kind, message{zh,en}}`，web 保存前按同一条规则拦、显示同一句；server 侧 400 是非 web 客户端的兜底。
+# email = 原生 SettingsGmail.validateAddress 逐字（含 Workspace 提示）。
+# session_id = 原生 SettingsMaintainer.validateSessionID 逐字（§68.7 追记）：主句 = 字符白名单；以 - 开头另有一句
+# （CHECK_REASONS）——id 之后骑在 shell 命令行上，白名单兼作注入闸，首连字符检查防它被当成 CLI 选项。
+CHECKS = {
+    "email": {"zh": "邮箱格式不对——例：you@gmail.com（公司 Google Workspace 邮箱也可以）",
+              "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)"},
+    "session_id": {"zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。",
+                   "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape."},
+}
+
+# 一个 check 不止一句时的分句（add-only）：kind → {reason → 双语句}；checker 返回的 reason 在表里就用那句，否则用
+# CHECKS 的主句。投影 ``check.reasons``，400 的 details 带 ``reason``——web 据此显示同一句。
+CHECK_REASONS = {
+    "session_id": {
+        "leading_hyphen": {"zh": "会话 ID 不能以连字符（-）开头——那是命令行选项的形状，不是会话 ID。",
+                           "en": "A session id may not start with a hyphen (-) — that's the shape of a command-line flag, not a session id."},
+    },
+}
+
+# 会话 id 的形状（保存与启动同一把，maintainer_launch 复用）：首字符字母 / 数字（首连字符 = CLI 选项的形状），其余
+# [A-Za-z0-9-]。原生同款**不设长度帽**——字符白名单本身就是注入闸，句子说的是字符，不合的只能是字符（PUT 的长度另有
+# STRING_MAX 那句兜着，两句不许混）。
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+
+# §48.1 合取写：雷达源开关 → 合取的另一半（flags 区的 feature flag 键）。原生 SettingsGmail.setEnabled /
+# SettingsSlack.persistFlag：打开 = 用户显式动作，把两个键都写进 override（yaml 里 features.<src>_radar:false
+# 仍压着雷达的话，只写开关会「显示开启、雷达静默」）；关闭只写单键（合取，一票否决）。
+RADAR_SWITCH_FLAGS = {"slack_enabled": "features.slack_radar", "gmail_enabled": "features.gmail_radar"}
+
 
 def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
        config: "tuple | None" = None, choices: "tuple | None" = None,
        help_zh: str = "", help_en: str = "", override: Optional[str] = None,
        write: str = "diff", placeholder: "tuple | None" = None,
-       path: Optional[str] = None) -> dict:
+       path: Optional[str] = None, check: Optional[str] = None) -> dict:
     """一条 field 描述（目录内部形；对外投影去掉 config/override/write 三个内部键）。
     ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。
     ``path``（add-only；今日词表 ``"dir"``）= 这是一个目录字段：投影多带 ``path`` 与 ``path_exists``
     （effective 值展开 ``~`` 后是不是目录；空值 → null），web 据此渲染 选择… / 打开 / 创建 与
-    「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。"""
+    「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。
+    ``check``（add-only；词表 = ``CHECKS`` 的键）= 值的形状校验：PUT 不合格 400，投影多带 ``check`` 供 web 镜像。"""
     zh_ph, en_ph = placeholder or ("", "")
+    if check is not None and check not in CHECKS:
+        raise ValueError("unknown check kind: %s" % check)
     return {"key": key, "kind": kind, "label": {"zh": zh, "en": en},
             "help": {"zh": help_zh, "en": help_en}, "default": default,
             "choices": list(choices) if choices else None, "config": config,
             "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph},
-            "path": path}
+            "path": path, "check": check}
 
 
 def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
@@ -109,6 +155,12 @@ SECTIONS: tuple = (
                choices=("auto", "ghostty", "terminal", "iterm2"),
                help_zh="「在终端打开」（接管会话）/ 开发会话 / 卸载 都在这个终端里新开窗口运行。自动 = 装了 Ghostty 就用 Ghostty，否则 Terminal；选了没装的会回落到系统默认终端。",
                help_en="\"Open in terminal\" (take over a session) / development session / uninstall open a new window in this terminal. Auto = Ghostty when installed, else Terminal; a choice that is not installed falls back to the system default terminal."),
+            # 原生 AppDelegate.rememberFeedbackPublishDefault 的 override 键（§66.2 setting:overrides:feedback_publish_default）：
+            # 「提建议」弹窗里「同时公开到 GitHub」勾选的默认态 = 上次选择；web 弹窗读 effective、勾选即 PUT（§29bis）。
+            _f("feedback_publish_default", "bool", "提建议默认勾选「公开到 GitHub」", "Publish feedback by default",
+               default=False,
+               help_zh="「提建议」弹窗里「同时公开到 GitHub 建议跟踪表」的默认勾选态；弹窗里改一次就记住。",
+               help_en="Default state of the \"also publish to the GitHub feedback tracker\" checkbox in the feedback dialog; changing it there is remembered."),
         ],
     ),
     _section(
@@ -129,10 +181,14 @@ SECTIONS: tuple = (
                config=("sources", "obsidian", "enabled"),
                help_zh="扫描笔记库 raw 目录里的新笔记（屏幕/会议 ingest 的落点）。",
                help_en="Scans new notes in the vault's raw folder (where screen / meeting ingest lands)."),
+            # 键存的是 raw 目录（`<根>/2 - raw`，act/lib/config.py 由它的父目录派生另外三个管线目录），但用户面对的是
+            # **vault 根**（原生 Settings.swift:740-792 一格 vault 根字段；§68.1 追记）：web 显示父目录、落 `<根>/2 - raw`；
+            # 文案随之说 vault（原生 :750 副标题 + :787 页脚逐字），placeholder = 默认根（DEFAULT_OBSIDIAN_VAULT）。
             _f("obsidian_raw", "string", "Obsidian Vault 位置", "Obsidian Vault location", default="",
                config=("sources", "obsidian_raw"), path="dir",
-               help_zh="雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。",
-               help_en="The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root)."),
+               placeholder=("~/Documents/Obsidian Vault", "~/Documents/Obsidian Vault"),
+               help_zh="笔记存这里，雷达也从这里发现待办。vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw（雷达扫描源）· 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。",
+               help_en="Notes live here; the radar scans it for asks. Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw (radar scan source) · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault."),
         ],
         help_zh="每个源 = feature flag × 源开关（§48）；这里是源开关，flag 在「Feature flags」。真正生效的状态看下方健康摘要。",
         help_en="Each source = feature flag × source switch (§48); this is the switch, the flag lives under \"Feature flags\". The health line below shows what is actually in effect.",
@@ -155,6 +211,9 @@ SECTIONS: tuple = (
                default=[], config=("sources", "watch_people"),
                help_zh="这些人发的消息按需求候选提取。", help_en="Messages from these people are mined for asks."),
         ],
+        # 区首导语逐字镜像原生 SettingsSlack.swift body 首段（parity 批 catalog-help-copy）
+        help_zh="把「别人在 Slack 上找你的事」（DM / 群 / @提及）自动变成提案卡。3 步全在这里完成，不用改任何文件；对外只出草稿，永远你自己发。此区改动即时生效。",
+        help_en="Turns \"people needing you on Slack\" (DMs / groups / @mentions) into proposal cards automatically. All 3 setup steps happen right here — no files to edit; outbound replies are drafts only, you always send them yourself. Changes apply immediately.",
     ),
     _section(
         "gmail", "Gmail 接入", "Gmail",
@@ -165,13 +224,19 @@ SECTIONS: tuple = (
                help_en="Reads unread inbox mail into proposal cards (read-only, never sends). Credential: the Gmail app password below."),
             _f("gmail_address", "string", "Gmail 地址", "Gmail address", default="",
                config=("sources", "gmail", "address"), placeholder=("例：you@gmail.com", "e.g. you@gmail.com"),
+               check="email",
                help_zh="IMAP 登录用的邮箱地址；留空 = 用 config.yaml 里的值。",
                help_en="Address used for the IMAP login; blank = whatever config.yaml says."),
+            # §14bis 契约句逐字镜像原生 SettingsGmail.swift commandCard（此前的「stdout 一行一封」是错的——雷达
+            # fetch_via_command 要的是一个 JSON 数组，照旧文案写出来的命令只会得到 command_bad_output）
             _f("gmail_fetch_command", "string", "自定义抓取命令（B 路径）", "Custom fetch command (path B)", default="",
                config=("sources", "gmail", "fetch_command"), placeholder=("例：/Users/you/bin/gmail-fetch.sh", "e.g. /Users/you/bin/gmail-fetch.sh"),
-               help_zh="填了就走 B · 自定义抓取命令（stdout 一行一封）；留空走 A · 应用专用密码（推荐）。",
-               help_en="Set = path B, a custom fetch command (one mail per stdout line); blank = path A, the app password (recommended)."),
+               help_zh="填了就走 B（留空 = A · 应用专用密码）。雷达每轮直接执行它（不走 shell），环境变量 GMAIL_RADAR_LAST_UID 带上次进度，命令在 stdout 打印一个 JSON 数组：{uid（单调递增）, from, subject, date, message_id, body}。Gmail API 脚本、MCP 客户端都可以。保存后下一轮起雷达改走这条命令抓邮件；跑没跑成看下面「运行状态」。",
+               help_en="Set = path B (blank = path A, the app password). The radar executes it directly each round (no shell). $GMAIL_RADAR_LAST_UID carries the progress marker; the command prints a JSON array to stdout: {uid (monotonic), from, subject, date, message_id, body}. A Gmail-API script or an MCP client both qualify. From the next round after saving the radar fetches mail via this command; see \"Run status\" below for the truth."),
         ],
+        # 区首导语逐字镜像原生 SettingsGmail.swift body 首段（parity 批 catalog-help-copy）
+        help_zh="轮询收件箱里的未读邮件，需要你处理的自动变成提案卡（纯通知/营销直接过滤）。只读——邮件绝不会被标成已读。全部在这里配好，不用改任何文件；此区改动即时生效。",
+        help_en="Polls unread inbox mail and turns the ones needing you into proposal cards (notifications/marketing filtered out). Read-only — mail is never marked read. Everything is set up right here, no files to edit; changes apply immediately.",
     ),
     _section(
         "telemetry", "产品改进计划", "Product improvement program",
@@ -181,19 +246,22 @@ SECTIONS: tuple = (
                default=True, config=("telemetry", "enabled"),
                help_zh="默认开：只上传事件元数据（事件名 / 耗时 / 计数）。关 = 完全不上传。",
                help_en="On by default: uploads event metadata only (names / durations / counts). Off = nothing is uploaded."),
+            # 三段知情披露逐字镜像原生 Settings.swift telemetryGroup（§15 v0.18 的同意记录发生在这把开关旁，披露
+            # 不能比原生弱）：级别句列出元数据字段 + 随机设备号；文本句写明 500 字截断 + 密钥掩码 + 关前已记录行的去向；
+            # 区导语 = 「关掉最上方开关即完全停止全部上传」（web 的区导语渲染在区首，「最上方开关」仍是第一把）。
             _f("telemetry.level", "enum", "行为事件级别", "Behavior-event level", default="detailed",
                choices=("basic", "detailed"), config=("telemetry", "level"),
-               help_zh="basic / detailed 都只是元数据粒度；切 basic 同时停掉输入文本上传。",
-               help_en="basic / detailed are both metadata-only granularity; basic also switches off typed-text upload."),
+               help_zh="基础与详细都发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号。切到基础还会同时停掉下方的输入文本上传（文本需要详细级）。",
+               help_en="Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed)."),
             _f("telemetry.capture_input", "bool",
                "上传我输入的文本以更懂我（默认关，勾选即同意：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
                "Upload the text I type, to know me better (off by default — checking is opting in: captures, questions, rework feedback, search terms; ≤500 chars each)",
                default=False, config=("telemetry", "capture_input"), write="always",
-               help_zh="绝不含 AI 回答、屏幕内容、邮件、Slack 消息、密钥。",
-               help_en="Never AI output, screen content, mail, Slack messages or secrets."),
+               help_zh="只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
+               help_en="Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."),
         ],
-        help_zh="字段表与边界见 docs/TELEMETRY.md。",
-        help_en="Field table and boundaries: docs/TELEMETRY.md.",
+        help_zh="关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+        help_en="Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md.",
     ),
     _section(
         "digest", "每周摘要", "Weekly digest",
@@ -275,17 +343,64 @@ SECTIONS: tuple = (
     _section(
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
+            # 两行的 placeholder 动态（DYNAMIC_PLACEHOLDERS，§68.7 追记）：原生 SettingsMaintainer 的灰字是**生效默认**——
+            # 仓库路径 = config.yaml maintainer.repo_path（~ 展开）否则本 checkout（maintainer_launch.resolve 用的同一条）；
+            # 会话 id = config.yaml maintainer.session_id，没设才是下面这行示例。
             _f("maintainer_repo_path", "string", "本软件的仓库路径", "This software's repo path", default="",
                config=("maintainer", "repo_path"), path="dir",
                help_zh="「让 AI 修」与开发会话打开的仓库；留空 = 当前 checkout。",
                help_en="Repo opened by Fix with AI and developer sessions; blank = this checkout."),
             _f("maintainer_session_id", "string", "续接的会话 id", "Session id to resume", default="",
                config=("maintainer", "session_id"), placeholder=("例：6f9619ff-8b86-d011-b42d-00cf4fc964ff", "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
+               check="session_id",
                help_zh="填了就 claude --resume 这个会话，留空开新会话。",
                help_en="When set the session is resumed with claude --resume; blank starts fresh."),
         ],
     ),
 )
+
+
+def expand_user_path(raw: str) -> Path:
+    """``Path(raw).expanduser()``，但 ``~nosuchuser/x`` 不炸：Python 对查不到的用户名抛 RuntimeError（原生
+    ``expandingTildeInPath`` 原样返回）——config.yaml 里一个坏路径不许把整份设置快照 / 开发会话启动打成 500
+    （§0 第 11 条），原样当路径用（随后的 is_dir 自然是 False）。目录字段的 ``path_exists``、开发者区的灰字与
+    ``maintainer_launch.resolve`` 同一把。"""
+    path = Path(raw)
+    try:
+        return path.expanduser()
+    except (OSError, RuntimeError, ValueError):
+        return path
+
+
+def _maintainer_repo_placeholder(field: dict, config_doc: dict) -> str:
+    """原生 defaultRepoPath：config.yaml maintainer.repo_path（~ 展开），否则本软件自己的 checkout（paths.repo_root()）。"""
+    base, _src = base_effective(field, config_doc)
+    raw = base.strip() if isinstance(base, str) else ""
+    return str(expand_user_path(raw)) if raw else str(paths.repo_root())
+
+
+def _maintainer_session_placeholder(field: dict, config_doc: dict) -> Optional[str]:
+    """原生 defaultSessionID：config.yaml maintainer.session_id 设了就是它（灰字），没设 → None（保留目录里的示例句）。"""
+    base, src = base_effective(field, config_doc)
+    return base.strip() if src == "config" and isinstance(base, str) and base.strip() else None
+
+
+# 动态 placeholder（add-only；key → fn(field, config_doc) → 一句或 None = 用目录里的静态句）；两键同一句（路径 / id 不分语言）。
+DYNAMIC_PLACEHOLDERS: "dict[str, Callable[[dict, dict], Optional[str]]]" = {
+    "maintainer_repo_path": _maintainer_repo_placeholder,
+    "maintainer_session_id": _maintainer_session_placeholder,
+}
+
+
+def _maintainer_section_extras(home: Path) -> dict:
+    """开发者区投影的 add-only ``terminal_app_name``（§68.7 追记）：「会在 <终端> 中打开」要 resolved 的终端展示名——
+    ``auto`` 要看装没装 Ghostty，只有 server 知道（原生 ``TerminalLauncher.preferred.displayName``）。"""
+    from server import terminal_launch  # 惰性：terminal_launch import 本模块读 terminal_app，避免环
+    return {"terminal_app_name": terminal_launch.preferred_terminal_name(home)}
+
+
+# section 级 add-only 投影（id → fn(home) → 追加到 section 快照的键）
+SECTION_EXTRAS: "dict[str, Callable[[Path], dict]]" = {"maintainer": _maintainer_section_extras}
 
 _BY_ID = {s["id"]: s for s in SECTIONS}
 
@@ -328,6 +443,11 @@ def _walk(doc: dict, path: tuple):
             return None
         cur = cur[part]
     return cur
+
+
+def walk_config(doc: dict, path: tuple):
+    """config.yaml 文档按键路径取值（缺席 None）——其它 server 模块读一条非目录键时用（防腐 #2：不引 _私名）。"""
+    return _walk(doc, path)
 
 
 def _split_override(spelling: str) -> "tuple[Optional[str], str]":
@@ -447,14 +567,23 @@ _PUBLIC_FIELD_KEYS = ("key", "kind", "label", "help", "default", "choices", "pla
 
 
 def path_exists(value: Any) -> Optional[bool]:
-    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``；空 / 非字串 → None（无从判断）。"""
+    """目录字段的存在性：非空字串展开 ``~`` 后 ``is_dir()``（``~nosuchuser`` 不炸，expand_user_path）；空 / 非字串 → None（无从判断）。"""
     raw = value.strip() if isinstance(value, str) else ""
     if not raw:
         return None
     try:
-        return Path(raw).expanduser().is_dir()
+        return expand_user_path(raw).is_dir()
     except (OSError, ValueError):
         return False
+
+
+def check_projection(kind: str) -> dict:
+    """``check`` 的投影形：``{kind, message{zh,en}}``，多句的 kind 另带 ``reasons{reason: {zh,en}}``（add-only）。"""
+    out = {"kind": kind, "message": dict(CHECKS[kind])}
+    reasons = CHECK_REASONS.get(kind)
+    if reasons:
+        out["reasons"] = {reason: dict(sentence) for reason, sentence in reasons.items()}
+    return out
 
 
 def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
@@ -462,19 +591,32 @@ def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
     value, source = effective(field, overrides, config_doc)
     out["effective"] = value
     out["source"] = source
+    dynamic = DYNAMIC_PLACEHOLDERS.get(field["key"])
+    if dynamic is not None:
+        # 动态灰字（§68.7 追记）：生效默认（config 层 / 内建）算出来的一句盖过目录里的静态句；None = 静态句照旧
+        hint = dynamic(field, config_doc)
+        if hint is not None:
+            out["placeholder"] = {"zh": hint, "en": hint}
     if field.get("path"):
         # add-only（§68.1 目录字段）：web 的 选择… / 打开 / 创建 与「目录不存在」警告据此渲染
         out["path"] = field["path"]
         out["path_exists"] = path_exists(value)
+    if field.get("check"):
+        # add-only（§68.1 追记）：web 保存前镜像同一条形状校验、显示同一句 server-owned 文案
+        out["check"] = check_projection(field["check"])
     return out
 
 
 def project_section(home: Path, section: dict) -> dict:
     overrides = read_overrides(home)
     config_doc = load_config_doc(home)
-    return {"id": section["id"], "title": dict(section["title"]),
-            "help": dict(section["help"]),
-            "fields": [_project_field(f, overrides, config_doc) for f in section["fields"]]}
+    out = {"id": section["id"], "title": dict(section["title"]),
+           "help": dict(section["help"]),
+           "fields": [_project_field(f, overrides, config_doc) for f in section["fields"]]}
+    extras = SECTION_EXTRAS.get(section["id"])
+    if extras is not None:
+        out.update(extras(home))
+    return out
 
 
 def snapshot(home: Path) -> dict:
@@ -534,6 +676,51 @@ def _validate_string(value, key: str) -> Optional[str]:
     return value.strip() or None   # 空串 = 清掉 override
 
 
+def looks_like_email(text: str) -> bool:
+    """原生 SettingsGmail.validateAddress 的规则：恰好一个 ``@``、本地部分非空、域名含 ``.`` 且不以 ``.`` 起止；
+    另拒绝内嵌空白（原生 trim 两端、不查中间——邮箱地址里从来不该有空格）。"""
+    s = text.strip()
+    local, at, domain = s.partition("@")
+    if not at or not local or "@" in domain or any(ch.isspace() for ch in s):
+        return False
+    return "." in domain.strip(".") and domain == domain.strip(".")
+
+
+def session_id_problem(text: str) -> Optional[str]:
+    """原生 SettingsMaintainer.validateSessionID 的规则：以 ``-`` 开头 → ``leading_hyphen``（CLI 选项的形状——
+    ``--dangerously-skip-permissions`` 全是白名单字符）；其余不合 ``SESSION_ID_RE`` → ``charset``；合格 → None。"""
+    s = text.strip()
+    if s.startswith("-"):
+        return "leading_hyphen"
+    return None if SESSION_ID_RE.match(s) else "charset"
+
+
+# kind → checker(text) → None（合格）或 reason 词（在 CHECK_REASONS[kind] 里就用分句，否则用 CHECKS[kind] 主句）
+_CHECKERS: "dict[str, Callable[[str], Optional[str]]]" = {
+    "email": lambda text: None if looks_like_email(text) else "shape",
+    "session_id": session_id_problem,
+}
+
+
+def run_check(field: dict, value: Optional[str], key: str) -> None:
+    """``check`` 字段的形状校验（空值 = 清键，不查）；不合格 → 400，message 双语并列（server/settings.py 同款），
+    details 带 ``check`` 词（多句的 kind 再带 ``reason``）让客户端能对上目录里的那句。公开名：maintainer_launch 启动前
+    对 effective 的会话 id 再过同一道闸（原生 openSession 重跑 validateSessionID）。"""
+    kind = field.get("check")
+    if kind is None or value is None:
+        return
+    reason = _CHECKERS[kind](value)
+    if reason is None:
+        return
+    details = {"field": key, "check": kind}
+    sentence = CHECK_REASONS.get(kind, {}).get(reason)
+    if sentence is not None:
+        details["reason"] = reason
+    else:
+        sentence = CHECKS[kind]
+    raise InvalidFieldError("%s / %s" % (sentence["zh"], sentence["en"]), details)
+
+
 def _split_list_input(value) -> list:
     """web 输入框给逗号 / 换行分隔的一个字串，JSON 客户端给字串表——两种入站形归一成字串表。"""
     if isinstance(value, str):
@@ -568,7 +755,9 @@ def validate(field: dict, value):
         return _validate_number(field, value, key)
     if kind == "list":
         return _validate_list(value, key)
-    return _validate_string(value, key)
+    text = _validate_string(value, key)
+    run_check(field, text, key)
+    return text
 
 
 def _drop_override(overrides: dict, field: dict) -> None:
@@ -624,8 +813,20 @@ def update_section(home: Path, section_id: str, payload: dict) -> dict:
     config_doc = load_config_doc(home)
     for key, value in wanted.items():
         apply_field(overrides, index[key], value, config_doc)
+    apply_radar_switch_conjunction(overrides, wanted, config_doc)
     write_overrides(home, overrides)
     return project_section(home, section)
+
+
+def apply_radar_switch_conjunction(overrides: dict, wanted: dict, config_doc: dict) -> None:
+    """§48.1：payload 里雷达源开关为 true 的，同一笔把 ``features.<src>_radar`` 也写 true（原生 setEnabled /
+    persistFlag 同款）。flag 走同一条 diff-write——yaml 本就 true 时不落键、effective 仍是 true；原生「显式写 true
+    不做 drop-when-default」是因为 app 读不到两级嵌套的 yaml，server 读得到。关（false）不碰 flag：合取一票否决，
+    单键足以关。agent 的装 / 卸不在这里（§48.7：install.sh 步 5 与「重新安装」按钮管 launchd）。"""
+    flags = field_index(_BY_ID["flags"])
+    for key, flag_key in RADAR_SWITCH_FLAGS.items():
+        if wanted.get(key) is True:
+            apply_field(overrides, flags[flag_key], True, config_doc)
 
 
 def set_flat_override(home: Path, key: str, value: str) -> None:

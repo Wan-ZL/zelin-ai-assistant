@@ -3,13 +3,15 @@
 //   - **不上送 `ts`**——webui 契约「ts 一律 server 端(重)盖章，客户端不可伪造」，
 //     `ts` 不在 _INBOX_KEYS 白名单里，带上就是 400；
 //   - 卡片动词恒带显式 `comment`（null 或文本），镜像 Mac writeInbox 四键形；
-//   - 无乐观更新：动作发出 → SSE board.updated → refreshBoard 回流（CONVENTIONS §4）。
+//   - 无乐观更新：动作发出 → SSE board.updated → refreshBoard 回流（CONVENTIONS §4），
+//     解锁看的是回流里这条动作的**真信号**（pendingSettle.ts，§39.3 / §21bis），不是 generated_at。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readPage } from "../../route";
 import { steerAcknowledged } from "../../steer";
-import { selectCard, useAppState } from "../../store";
+import { getState, selectCard, setArchiveStripExpanded, setBacklogStripExpanded, useAppState } from "../../store";
+import { LANE_VERBS, landed, recordPending, timeoutNotice, type PendingRecord } from "./pendingSettle";
 
 /** 卡片决策类四键形（comment 键永远存在，无文本时 null——inbox-actions.md §2） */
 export function cardAction(id: string, action: string, comment: string | null = null) {
@@ -51,10 +53,19 @@ export function moneyOf(card: Record<string, unknown>): string | null {
   return null;
 }
 
-/** 展开详情里的金额行（原生 ApprovalCardView.costText：「💰 预计费用: $N」/「💰 成本未知」，ASCII 冒号） */
+/** 详情侧栏里提案的金额行（原生 ApprovalCardView.costText：「💰 预计费用: $N」/「💰 成本未知」，ASCII 冒号） */
 export function costText(card: Record<string, unknown>, text: (zh: string, en: string) => string): string {
   const money = moneyOf(card);
   return money ? text(`💰 预计费用: ${money}`, `💰 Estimated cost: ${money}`) : text("💰 成本未知", "💰 Cost unknown");
+}
+
+/** 状态正确的会话命令（原生 TaskRow.cmd）：copy_cmd 优先，其次 claude --resume <sid>；排队卡无。
+ *  卡面「单击复制指令」行与详情侧栏「指令：」行同一来源（投影行与 /api/cards 详情都带这几个键） */
+export function resumeCommand(row: Record<string, unknown>): string | null {
+  if (row.state === "queued") return null;
+  if (typeof row.copy_cmd === "string" && row.copy_cmd) return row.copy_cmd;
+  if (typeof row.session_id === "string" && row.session_id) return `claude --resume ${row.session_id}`;
+  return null;
 }
 
 /** tier 章的大白话（原生 tierLine 的词表；管线的 tier_hint 只有中文且与本表 zh 逐字相同，
@@ -103,59 +114,101 @@ export interface SubmitState {
   clearError: () => void;
 }
 
-/** Mac Store.swift 同款 180s truth-timeout：回流迟迟不来 → 解锁 + 诚实报未确认 */
+/** Mac Store.swift 同款 180s truth-timeout：真信号迟迟不来 → 解锁 + 诚实报未确认 */
 export const CONFIRM_TIMEOUT_MS = 180_000;
+
+/** v0.33 书立条强制展开（§54.1 追记）：用户点了按钮，回执不能落在收起的条里（原生 Store.swift）。
+ *  - 提交成功（`submitted`，原生 applyAction 在 inbox 写成功后跑）：暂缓 = echo 落潜在任务条（addEcho target .debt，:861）
+ *    → 左条；放回看板 = info 条落永久性完成条（beginReturn source .archived，:851）→ 右条。永久完成（archive）的 echo
+ *    不开右条——原生只对 target .debt 开左条，右条只因 unarchive 打开。
+ *  - 180 s 超时（`timeout`，原生 sweepTimeouts）：从潜在任务条发出的**换列动词**（研究并提议 / 删除 / 永久完成）超时通知落回该条、
+ *    卡也在那里静默恢复（:425 raise、:450 `e.source == .debt`）→ 左条；放回看板超时（:539 `entry.source == .archived`）→ 右条；
+ *    暂缓超时卡还在提案列，不开。只认 raise / echo / return 三族（= LANE_VERBS）：详情抽屉里对 debt / archived 卡的改名
+ *    （set_title）、拆卡（split_note）、修改意见（comment）超时——原生 expiredTitles / expiredSplits / expiredComments
+ *    （:452-473 / :516-526）不碰任何条，这里同样不开。
+ *  注意超时半边只在发出动作的卡组件仍挂着时生效：两条书立条收起即卸载条内的卡（`{expanded && …}`），useSubmit 的
+ *  兜底定时器随组件卸载丢弃（#253 的 pending 状态是组件级的，不是原生 raisingLocal / pendingEchoes 那样的 store 级台账）。 */
+export function stripToForceOpen(
+  rec: Pick<PendingRecord, "action" | "sourceLane">,
+  phase: "submitted" | "timeout",
+): "backlog" | "archive" | null {
+  if (phase === "submitted") {
+    if (rec.action === "defer") return "backlog";
+    if (rec.action === "unarchive") return "archive";
+    return null;
+  }
+  if (!LANE_VERBS.has(rec.action ?? "")) return null;
+  if (rec.sourceLane === "debt") return "backlog";
+  if (rec.sourceLane === "archived") return "archive";
+  return null;
+}
+
+function forceOpenStrip(rec: Pick<PendingRecord, "action" | "sourceLane">, phase: "submitted" | "timeout") {
+  const strip = stripToForceOpen(rec, phase);
+  if (strip === "backlog") setBacklogStripExpanded(true);
+  else if (strip === "archive") setArchiveStripExpanded(true);
+}
 
 /**
  * 每张卡一个提交状态机：submit → pending=true；失败即解锁并给出可读错误；
- * 成功后保持「已提交…」直到看板 generated_at 变化（SSE 回流落地）才解锁——
- * 没有乐观更新，回流就是唯一的成功回执。180s 无回流 → 解锁并报「backend
- * 未确认」（镜像 Mac 端 180s fallback，绝不永远挂在「已提交…」上装成功）。
+ * 成功后保持「已提交…」直到这条动作在看板快照里**真的落地**才解锁（pendingSettle.landed：
+ * 换列动词 = id 离开原列、comment = plan 变 / steers 增、set_title = 后台名等于新名、
+ * merge_force = 副卡全消失……原生 PendingSweep.cleared(by:) 逐动词判据）——不是 generated_at
+ * 一变就解锁：actd 每个 pass 结尾都重写看板，与这张卡动没动无关（§39.3「generated_at bump
+ * 不清（§21bis 先例）」）。没有乐观更新，回流里的真信号是唯一的成功回执。180s 没等到 →
+ * 解锁并按动词给诚实文案（pendingSettle.timeoutNotice，镜像 Store.swift sweepTimeouts）。
  */
 export function useSubmit(): SubmitState {
   const { board } = useAppState();
   const { text } = useI18n();
-  const generatedAt = board?.generated_at ?? null;
   const [pending, setPending] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [steerQueued, setSteerQueued] = useState(false);
-  const sentAt = useRef<string | null>(null);
+  const record = useRef<PendingRecord | null>(null);
 
   useEffect(() => {
-    if (pending && generatedAt !== sentAt.current) {
+    // 每一版快照（哪怕 generated_at 没变——同版重拉）都跑一遍谓词；提交那一刻也跑（同名改名之类
+    // 一出生就满足的记录不该白等 180 s——原生「闸门跳过路径共用一份谓词」的教训）
+    const rec = record.current;
+    if (!pending || !rec || !board) return;
+    if (landed(rec, board)) {
       setPending(false);
       setSteerQueued(false); // 回流后 steer 状态以投影 steers[] 为准，本地回执退场
-      sentAt.current = null;
+      record.current = null;
     }
-  }, [generatedAt, pending]);
+  }, [board, pending]);
 
   useEffect(() => {
     if (!pending) return undefined;
     const timer = window.setTimeout(() => {
+      const rec = record.current;
+      record.current = null;
       setPending(false);
-      sentAt.current = null;
-      setError(text(
-        "已提交，但 180 秒内看板未回流——backend 未确认，请检查 actd 是否在运行。",
-        "Submitted, but the board never refreshed within 180s — backend unconfirmed; check that actd is running.",
-      ));
+      setError(timeoutNotice(rec, getState().board, text));
+      // 超时通知落回发出动作的那条书立条 → 那条不能是收起的（原生 :425 / :450 / :539）
+      if (rec) forceOpenStrip(rec, "timeout");
     }, CONFIRM_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [pending, text]);
 
   const submit = async (body: Record<string, unknown>): Promise<boolean> => {
+    const rec = recordPending(body, getState().board);
+    record.current = rec;
     setPending(true);
     setPendingAction(typeof body.action === "string" ? body.action : null);
     setError(null);
     setSteerQueued(false);
-    sentAt.current = generatedAt;
     try {
       const response = await postAction(body);
       setSteerQueued(steerAcknowledged(response));
+      // 原生 applyAction 的时点（inbox 写成功后）：暂缓 → 开潜在任务条；放回看板 → 开永久性完成条。放在这里而不是
+      // landed 路径：换列动词落地的那一帧卡组件已随卡离开原列卸载，落地 effect 不会跑
+      forceOpenStrip(rec, "submitted");
       return true;
     } catch (e) {
       setPending(false);
-      sentAt.current = null;
+      record.current = null;
       setError(describeActionError(e, text));
       return false;
     }
@@ -172,7 +225,8 @@ export function pendingNote(action: string | null, text: (zh: string, en: string
     case "rework": return text("打回处理中…", "Sending back…");
     case "accept": return text("验收确认中…", "Accepting…");
     case "defer": return text("暂缓中…", "Moving to backlog…");
-    case "abort_execution": case "stop_to_review": return text("停止中，卡片将去待验收", "Stopping — card moves to Review");
+    case "abort_execution": return text("停止中，卡片将回到提案列", "Stopping — card returns to Proposals");
+    case "stop_to_review": return text("停止中，卡片将去待验收", "Stopping — card moves to Review");
     case "revert_review": return text("退回中，卡片将回到待验收", "Reverting to review");
     case "done_external": return text("已办完", "done outside");
     case "comment": return text("修改意见合并中…", "Merging your feedback…");

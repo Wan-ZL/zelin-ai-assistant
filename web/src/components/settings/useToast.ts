@@ -6,6 +6,8 @@ import { ApiError } from "../../api";
 export interface Toast {
   kind: "ok" | "error";
   message: string;
+  /** 前缀独立节点（原生「保存设置失败: 」+ 原句 / 「已保存 」+ 时刻）：探针按节点直接文本判短标签 */
+  prefix?: string;
 }
 
 const TOAST_MS = 6000;

@@ -108,6 +108,39 @@ def user_log_dir() -> Path:
     return Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
 
 
+def screenpipe_dir() -> Path:
+    # §15.2：录制引擎的数据目录（db.sqlite 的 mtime = 「最近写入」；engine.log = 引擎日志，
+    # 与 shell/Sources/Recording.swift engineLogPath 同一路径）
+    return Path.home() / ".screenpipe"
+
+
+def actd_log_path(home: Path) -> Path:
+    # §15.2 / 原生 AppPaths.actdLogPath：录制与数据接入页「state/actd.log 更新于」读的文件
+    return home / "state" / "actd.log"
+
+
+def ingest_log_path() -> Path:
+    # §15.2 / §68.4：ingest/process-screenpipe.sh 的 LOGFILE（`$PROCESS_SCREENPIPE_LOG`，默认 /tmp/screenpipe-auto.log）——
+    # 手动 ingest 失败后完整的 claude 输出都在这里（server/ingest_run 只回 400 字尾巴）；原生 IngestModel.revealIngestLog
+    # 同一路径。server 起脚本时 env 原样继承（subproc.module_env），所以这里读同一个 env 两边永远一致。
+    return Path(os.environ.get("PROCESS_SCREENPIPE_LOG") or "/tmp/screenpipe-auto.log")
+
+
+def cron_probe_path(home: Path) -> Path:
+    # §25：act/lib/checks/cron.CRON_PROBE_PATH（cron 链每轮写的 FDA 探针；依赖检查页「定时任务磁盘权限」行）
+    return home / "state" / "cron_probe.json"
+
+
+def vault_sync_mode_path(home: Path) -> Path:
+    # ingest/vault-sync.sh 的模式文件（"mirror" = 链在 state/vault-mirror 里干活，不碰 ~/Documents）
+    return home / "state" / "vault_sync_mode"
+
+
+def vault_mirror_dir(home: Path) -> Path:
+    # ingest/vault-sync.sh VAULT_MIRROR
+    return home / "state" / "vault-mirror"
+
+
 def repo_root() -> Path:
     """server/ 所在的 repo 根（``python -m act.*`` 子进程的 cwd；不随进程 cwd 变）。"""
     return Path(__file__).resolve().parent.parent
