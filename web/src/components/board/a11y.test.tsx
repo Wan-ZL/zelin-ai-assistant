@@ -5,6 +5,7 @@
 //   3) 复制反馈可听——单击复制后有 role=status 的「已复制」播报；
 //   4) axe-core 全卡面扫描零 violation（color-contrast 规则在 jsdom 无布局不可判，关掉；
 //      其余 WCAG 2.x A/AA 规则全开）。
+import type { ReactElement } from "react";
 import axe from "axe-core";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +45,7 @@ function SelectedProbe() {
   return <output data-testid="selected">{selectedCardId ?? ""}</output>;
 }
 
-const CARDS: Array<{ name: string; id: string; stateWord: string; node: () => JSX.Element }> = [
+const CARDS: Array<{ name: string; id: string; stateWord: string; node: () => ReactElement }> = [
   { name: "proposal", id: PROPOSAL_T1.id, stateWord: "Proposal", node: () => <ProposalCard card={PROPOSAL_T1} /> },
   { name: "raising placeholder", id: PROPOSAL_PROCESSING.id, stateWord: "AI researching", node: () => <ProposalCard card={PROPOSAL_PROCESSING} /> },
   { name: "queued", id: TASK_QUEUED.id, stateWord: "Queued", node: () => <RunningCard row={TASK_QUEUED} /> },

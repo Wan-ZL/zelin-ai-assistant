@@ -4,6 +4,7 @@
 //   3) path_exists=false → 原生警告句 + 「创建」/「创建文件夹」；null → 不警告；
 //   4) 打开 / 创建 只传 key；草稿未保存时禁用并提示先保存；创建失败 → 「创建目录失败：」前缀 + 原文；
 //   5) FieldControl 只对 path:"dir" 字段长出这些按钮。
+import type { ReactElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, postFolderCreate, postFolderOpen } from "../../api";
@@ -27,7 +28,7 @@ function field(over: Partial<SettingsField> = {}): SettingsField {
   };
 }
 
-const wrap = (node: JSX.Element) => render(<LanguageContext.Provider value="en">{node}</LanguageContext.Provider>);
+const wrap = (node: ReactElement) => render(<LanguageContext.Provider value="en">{node}</LanguageContext.Provider>);
 
 function installShell(postMessage: (body: unknown) => Promise<unknown>) {
   window.webkit = { messageHandlers: { zaiShell: { postMessage } } };

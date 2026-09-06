@@ -10,6 +10,7 @@
 //   · 在 ui/parity/waivers.txt 上 → it.skip（报告计 WAIVED）。
 // scripts/ui/parity_check.py 以 --reporter=json 跑本文件、按 it 标题读判决；两边读同两本账本，
 // 判决一致。双语都要命中（原生 L("zh","en") 是逐字规格，PR #143「逐字镜像」同理）。
+import type { ReactElement } from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -355,7 +356,7 @@ function clickEverything(root: ParentNode, pool: Set<string>, searches = false) 
   collectLabels(document.body, pool);
 }
 
-const PAGES: Record<Surface, () => JSX.Element> = {
+const PAGES: Record<Surface, () => ReactElement> = {
   board: () => <BoardPage />,
   trash: () => <TrashPage />,
   settings: () => <SettingsPage />,
