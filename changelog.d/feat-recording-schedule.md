@@ -1,0 +1,2 @@
+type: added
+- **录制日程：只在设定时间录（issue #27；CONTRACT §61.7）**：设置 → 录制区新增「仅在设定时间录制 / Record only between…」——开关 + 起止时刻 + 星期勾选（默认 09:00–19:00 周一至周五，支持跨午夜窗口）。**默认关 = 现状不变**（录制开着就一直录）；开了以后壳在窗外把 screenpipe 引擎停掉、到点自动拉起，睡醒 / 启动 / 改日程当场判，录制模式本身不动。顶栏录制按钮多一个与「关」「未在录制」都不同的状态词「按日程暂停」（accent 色），菜单里说明日程与「到点自动恢复」；录制页 / 权限体检 / 向导终章同一判据（暂停不是故障）。壳桥 add-only：快照 `recording.schedule {enabled, start, end, days, paused}` + 方法 `setRecordingSchedule`（坏值整个请求拒绝、零写入）。

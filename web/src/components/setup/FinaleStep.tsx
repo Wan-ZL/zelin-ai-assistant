@@ -10,7 +10,7 @@ import { useState, type ReactNode } from "react";
 import { postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../../route";
-import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
+import { callShell, hasShellBridge, useShellState, schedulePaused } from "../../shellBridge";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import type { DoctorRow, HealthSnapshot, SetupEngine } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
@@ -187,7 +187,10 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   // 录制引擎（只在录制开着时）
   if (rec && recOn) {
     const downloading = rec.diagnosis === "engine_npm_download";
-    rows.push(downloading
+    rows.push(schedulePaused(rec)
+      // §61.7：按日程暂停不是失败——中性行，到点自动开
+      ? { key: "capture", state: "neutral", name: text("录制引擎", "Capture engine"), detail: text("按日程暂停中——到设定时间自动开始录制", "Paused by schedule — recording starts automatically at the scheduled time") }
+      : downloading
       ? { key: "capture", state: "checking", name: text("录制引擎", "Capture engine"), detail: text("录制引擎首次下载中（约 1-3 分钟）——不用做任何事，下载完会自动开始录制", "The recording engine is downloading for the first time (~1-3 min) — nothing to do; recording starts automatically when it finishes") }
       : rec.engine_running
         ? { key: "capture", state: "ok", name: text("录制引擎", "Capture engine"), detail: rec.mode === "screen_audio" ? text("录制中(屏幕+音频)", "Recording (screen + audio)") : text("录制中(仅屏幕)", "Recording (screen only)") }

@@ -16,7 +16,7 @@
 // TCC 提示不在这里发：桥的 `setRecording {on:true}` 自己先补（§61.1 追记 (a)）。
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../i18n";
-import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../../shellBridge";
+import { callShell, hasShellBridge, useShellState, type ShellRecordingState, schedulePaused } from "../../shellBridge";
 import { useAppState } from "../../store";
 import type { SetupSnapshot } from "../../types";
 
@@ -44,6 +44,7 @@ export function consentPending(rec: ShellRecordingState, setup: SetupSnapshot | 
 /** 原生 recordingStateWord：已关闭 / 已开启,引擎未在录制 / 录制中(屏幕+音频) / 录制中(仅屏幕) */
 export function consentStateWord(rec: ShellRecordingState, text: Text): string {
   if (rec.mode === "off") return text("已关闭", "Off");
+  if (schedulePaused(rec)) return text("已开启,按日程暂停中", "On — paused by schedule");   // §61.7
   if (!rec.engine_running) return text("已开启,引擎未在录制", "On — engine not recording");
   return rec.mode === "screen_audio" ? text("录制中(屏幕+音频)", "Recording (screen + audio)") : text("录制中(仅屏幕)", "Recording (screen only)");
 }
@@ -114,7 +115,7 @@ export function RecordingConsentSection() {
     );
   }
 
-  const tone = rec.engine_running ? "granted" : rec.mode !== "off" ? "denied" : "unknown";
+  const tone = rec.engine_running ? "granted" : rec.mode !== "off" && !schedulePaused(rec) ? "denied" : "unknown";
   return (
     <div className="settings-list-row perm-consent" data-state="answered" data-mode={rec.mode}>
       <div className="perm-capability-head">

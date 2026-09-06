@@ -369,6 +369,8 @@
 
 .shell-rec-button.is-live { color: var(--danger); }
 .shell-rec-button.is-warn { color: var(--warning); }
+/* §61.7 按日程暂停：第三个非录制态——与 关（次级）/ 未在录制（橙）都不同，用 accent */
+.shell-rec-button.is-sched { color: var(--accent); }
 .shell-cap-button.is-on { color: var(--accent); }
 .shell-cap-button.is-warn { color: var(--warning); }
 
@@ -419,6 +421,11 @@
 /* consent-race 自愈的成功句（recording.self_heal_note，§68.3 追记）——与设置页 .settings-helper.is-ok 同色 */
 .shell-menu-note.is-ok {
   color: var(--success);
+}
+
+/* §61.7 按日程暂停的说明行——与按钮 .is-sched 同色 */
+.shell-menu-note.is-sched {
+  color: var(--accent);
 }
 
 .shell-menu-divider {

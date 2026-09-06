@@ -32,6 +32,26 @@ export interface ShellRecordingState {
   // §61.1 追记 add-only（normalize 补默认 "" ——老壳缺席也在；类型上 optional 只为不逼既有 fixture 改字）
   self_heal_note?: string;     // consent-race 自愈后的 15s 成功句（壳侧已本地化，原生 selfHealNote）
   log_tail?: string;           // 引擎死因的日志尾（原生 diagnosis.logTail；只在 engine_crashed / engine_ffmpeg_missing 非空）
+  // §61.7 add-only：录制日程（normalize 补默认 = 关 / 09:00–19:00 / 周一至周五 / 未暂停——老壳缺席也在）
+  schedule?: ShellRecordingSchedule;
+}
+
+/** 录制日程（§61.7；壳侧 RecordingSchedule 的投影）：只在设定时间窗内录，默认关 = always-on */
+export interface ShellRecordingSchedule {
+  enabled: boolean;
+  start: string;               // "HH:MM"（24 h，本地时间）
+  end: string;                 // "HH:MM"；start > end = 跨午夜窗口，归开始那天
+  days: number[];              // Calendar weekday：1 = 周日 … 7 = 周六（已排序去重）
+  paused: boolean;             // 派生：日程开 ∧ mode != off ∧ 现在在窗外 ⇒ 引擎被壳按日程停着（不是错、不是关）
+}
+
+export const DEFAULT_RECORDING_SCHEDULE: ShellRecordingSchedule = Object.freeze({
+  enabled: false, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: false,
+}) as ShellRecordingSchedule;
+
+/** 「按日程暂停中」——header 状态词 / 设置区 / 录制页共用的唯一判据（mode off 时壳恒给 false） */
+export function schedulePaused(rec: Pick<ShellRecordingState, "mode" | "schedule">): boolean {
+  return rec.mode !== "off" && rec.schedule?.paused === true;
 }
 
 /** 最近一次 BYO key「检测」（壳 CaptionKeyCheck；§68.2 追记）：running → done + verdict */
@@ -110,6 +130,7 @@ export type ShellMethod =
   | "openPane"
   | "setLaunchAtLogin"
   | "setCaptionPrefs"
+  | "setRecordingSchedule"
   | "setBadge"
   | "chooseFolder"
   | "probeCaptionKey";
@@ -166,6 +187,23 @@ function normalizeKeyProbe(raw: unknown): ShellKeyProbe | null {
   };
 }
 
+function normalizeSchedule(raw: unknown): ShellRecordingSchedule {
+  const d = DEFAULT_RECORDING_SCHEDULE;
+  if (!raw || typeof raw !== "object") return { ...d, days: [...d.days] };
+  const obj = raw as Record<string, unknown>;
+  const clock = (v: unknown, fallback: string) => (typeof v === "string" && /^\d{2}:\d{2}$/.test(v) ? v : fallback);
+  const days = Array.isArray(obj.days)
+    ? Array.from(new Set(obj.days.filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x >= 1 && x <= 7))).sort((a, b) => a - b)
+    : [];
+  return {
+    enabled: asBool(obj.enabled),
+    start: clock(obj.start, d.start),
+    end: clock(obj.end, d.end),
+    days: days.length ? days : [...d.days],
+    paused: asBool(obj.paused),
+  };
+}
+
 /** 壳快照 → 类型化状态；缺失字段取默认值（壳 add-only，页面永不因新/缺字段崩） */
 export function normalizeShellState(raw: unknown): ShellState {
   const obj = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -186,6 +224,7 @@ export function normalizeShellState(raw: unknown): ShellState {
       resume_mode: asString(rec.resume_mode, "screen"),
       self_heal_note: asString(rec.self_heal_note),
       log_tail: asString(rec.log_tail),
+      schedule: normalizeSchedule(rec.schedule),
     },
     captions: {
       available: asBool(cap.available),

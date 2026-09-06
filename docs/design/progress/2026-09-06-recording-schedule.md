@@ -1,0 +1,5 @@
+pr: `ai/self-improve/R-288`（self-improve lane §65，issue #27 `Closes #27`；无版本 bump，版本由 tag 派生）
+phase: P4 余量（D3：录制控制已 re-home 到壳 + web，#27 的 `mac-retire` 前置条件成立——§5.5 里「随 P4 re-home 之后再 scope」的那条）
+law: §61.7（新增）/ §15 追记 / §61.1 add-only（`recording.schedule` 五键 + `setRecordingSchedule`）
+
+**做了什么**：录制日程「仅在设定时间录制」。默认关 = 现状 always-on 一字不差；开了以后引擎只在窗内跑（例 09:00–19:00 周一至周五，支持跨午夜窗口）。门长在 `shell/Sources/RecordingSchedule.swift`——`Recording.swift` 仍是 mac/ 冻结规范的逐字节副本（§61.3），日程只借它的 `mode` / `applyMode()` / pgrep / pkill，全部缝注入。四个执法点：启动窗外跳过 autostart、5 s tick、`didWakeNotification`、偏好改动即执法。边界：进暂停立刻 pkill；出暂停 `applyMode()` 一次（不每拍拉 = 无重启风暴）；暂停中被复活的引擎给 3 拍宽限再停（避开冻结引擎 8 s「慢死亡观察」造成的假回滚——代价 ~15 s 残余帧，写进法条）。快照 add-only `recording.schedule {enabled,start,end,days,paused}`，paused ⇒ `diagnosis` null / `log_tail` 空（故意停不是故障）。web：header 第三个非录制态「按日程暂停」（accent，与 关 / 未在录制 可区分），菜单说日程与「到点自动恢复」、重启禁用；设置 → 录制区新块（开关 + 两个 `type=time` + 七天勾选，只发改动键，all-or-nothing 拒绝原文照印，老壳退化成说明句）；录制页 / 权限 consent 行 / 向导终章同一判据，暂停 = 中性。向导步没加（issue 标 optional，默认关的功能不该在首次运行多问一步）。判例：harness [7]/[7b]、vitest 两文件 + ShellControls 追加、Python `test_shell_recording_schedule.py`。
