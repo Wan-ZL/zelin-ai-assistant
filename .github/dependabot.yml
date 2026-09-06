@@ -11,6 +11,11 @@
 # （4.x 只认 vite ≤7，6.x 只认 vite 8），单包 bump 会让 `npm ci` ERESOLVE、两项
 # required check 在装依赖那一步就红（PR #197，vite 6→8）。成组后 vite /
 # @vitejs/* / vitest / @vitest/* 在同一个 PR 里一起解析，peer 才对得上。
+# react 四包成组：react / react-dom / @types/react / @types/react-dom 的大版本
+# 必须一起走——react-dom 与 @types/react-dom 的 peer 钉死同 major 的 react /
+# @types/react，单包或半截 bump 会让 `npm ci` ERESOLVE、两项 required check
+# 在装依赖那一步就红（#115 只抬 react 侧、#199 只抬 react-dom 侧，各红一次）。
+# 成组后四包在同一个 PR 里一起解析，peer 才对得上。
 #
 # Python 侧不在此列：运行时白名单是 stdlib + PyYAML（宪法第 7 条），
 # 没有 requirements 锁文件可供 dependabot 追踪。
@@ -38,6 +43,12 @@ updates:
           - "@vitejs/*"
           - vitest
           - "@vitest/*"
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
     commit-message:
       prefix: chore
     labels:

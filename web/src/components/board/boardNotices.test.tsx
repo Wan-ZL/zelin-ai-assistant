@@ -1,6 +1,7 @@
 // §44.6 并入回执 + 合并态角标（原生 Store.swift LocalNotice / Kanban.swift cardOverlay 的 web 版，§54.4 追记）：
 // 回执三节点、可关（sessionStorage `seenFoldReceipts`）、坏形跳过；「合并分析中…」跟 backend 的 analyzing 建议，
 // 「合并中…」跟强制合并的会话内瞬态（真批次随副卡全部离开所有列退场——§21bis，判例在 store.forceMergeSettle.test.tsx）。
+import type { ReactElement } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard } from "../../api";
@@ -27,7 +28,7 @@ async function load(b: Board) {
   await refreshBoard();
 }
 
-const wrap = (node: JSX.Element, language: "zh" | "en" = "zh") => render(<LanguageContext.Provider value={language}>{node}</LanguageContext.Provider>);
+const wrap = (node: ReactElement, language: "zh" | "en" = "zh") => render(<LanguageContext.Provider value={language}>{node}</LanguageContext.Provider>);
 
 beforeEach(() => {
   resetStoreForTests();

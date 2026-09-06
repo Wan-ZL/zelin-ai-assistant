@@ -8,7 +8,7 @@
 //   5) placeholder = server 目录的 placeholder（默认根），老 server 缺席时回落到同一句；
 //   6) 其它目录字段（工作目录）仍逐字存取——只有 obsidian_raw 这一把键按根换算。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
 import { resetShellBridgeForTests } from "../../shellBridge";
@@ -30,7 +30,7 @@ function vaultField(over: Partial<SettingsField> = {}): SettingsField {
   };
 }
 
-const wrap = (node: JSX.Element) => render(<LanguageContext.Provider value="en">{node}</LanguageContext.Provider>);
+const wrap = (node: ReactElement) => render(<LanguageContext.Provider value="en">{node}</LanguageContext.Provider>);
 
 /** CatalogSection 的草稿角色：把 onChange 的值喂回 value（受控） */
 function Draft({ field, initial, onChange }: { field: SettingsField; initial: string; onChange: (key: string, value: unknown) => void }) {

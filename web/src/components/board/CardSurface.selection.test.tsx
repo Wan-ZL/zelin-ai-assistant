@@ -7,6 +7,7 @@
 //      提案列 AI 研究中占位不长；
 //   4) 不在多选态：动作照常、点卡身不选中、没有 is-selectable；
 //   5) axe：多选态的卡零 violation。
+import type { ReactElement } from "react";
 import axe from "axe-core";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -115,7 +116,7 @@ describe("card body toggles selection; the checkbox stays the a11y path", () => 
 describe("every board lane is selectable (v0.21 selectableIDs)", () => {
   it("潜在任务 / 阶段性完成 / 排队中 / 执行中 都长勾选框；AI 研究中占位不长", () => {
     setSelectionMode(true);
-    const faces: Array<[string, JSX.Element, boolean]> = [
+    const faces: Array<[string, ReactElement, boolean]> = [
       [DEBT_FIXTURE.id, <DebtCardItem item={DEBT_FIXTURE} />, true],
       [TASK_DONE.id, <DoneCard row={TASK_DONE} />, true],
       [TASK_QUEUED.id, <RunningCard row={TASK_QUEUED} />, true],

@@ -4,6 +4,7 @@
 //   2) 回执没有 `missing`（目录在 / 老 server）→ 一句都不说；
 //   3) 「创建」照旧走绿的 is-ok——两种回执的色调不混。
 // 第一个调用点（依赖检查快速行的「显示」）在 DepRows.test.tsx。
+import type { ReactElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { postFolderCreate, postFolderOpen } from "../../api";
@@ -25,7 +26,7 @@ function field(over: Partial<SettingsField> = {}): SettingsField {
   };
 }
 
-const wrap = (node: JSX.Element, lang: "zh" | "en" = "en") => render(<LanguageContext.Provider value={lang}>{node}</LanguageContext.Provider>);
+const wrap = (node: ReactElement, lang: "zh" | "en" = "en") => render(<LanguageContext.Provider value={lang}>{node}</LanguageContext.Provider>);
 
 beforeEach(() => {
   resetStoreForTests();
