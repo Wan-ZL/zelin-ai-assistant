@@ -149,7 +149,10 @@ def request(primary_id: str, secondary_id: str) -> Optional[str]:
 
 
 def _finish(job_id: str, status: str, **extra) -> None:
-    job = _load_job(job_id) or {"id": job_id}
+    job = _load_job(job_id) or {}
+    # 记录缺 id（手写/损坏的 job 文件）时以调用方的 job_id 补上——否则
+    # _write_job 的 job["id"] 直接 KeyError，sweep 整个 pass 崩掉（宪法第 11 条）
+    job["id"] = job.get("id") or job_id
     job["status"] = status
     job["finished_at"] = _iso_now()
     job.update({k: v for k, v in extra.items() if v is not None})
