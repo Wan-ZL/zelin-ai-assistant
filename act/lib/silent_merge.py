@@ -150,6 +150,10 @@ def request(primary_id: str, secondary_id: str) -> Optional[str]:
 
 def _finish(job_id: str, status: str, **extra) -> None:
     job = _load_job(job_id) or {"id": job_id}
+    # 记录里缺 id（手改/损坏的文件）时按调用方给的 id 落盘——_sweep_one 的
+    # _job_id 回落到文件名就是为这一步准备的；否则 _write_job 的 KeyError 会
+    # 让 sweep 在每个 actd pass 都炸一次。
+    job.setdefault("id", job_id)
     job["status"] = status
     job["finished_at"] = _iso_now()
     job.update({k: v for k, v in extra.items() if v is not None})

@@ -1,0 +1,2 @@
+type: fixed
+- **静默并入 sweep 不再被缺 `id` 的 job 文件炸掉（§44）**：`state/silent_merge/SM-*.json` 里若记录没有 `id` 字段（手改 / 损坏的文件），`_finish` 现在按 `_sweep_one` 从文件名回落的 id 落盘，此前是 `KeyError` 让 actd 每个 pass 的 sweep 都炸一次。由 R-287 补的变异判例（`tests/test_silent_merge_mutation_kills.py`）暴露；同 PR 把 `tests/test_silent_merge_jobs_edge.py` 与新判例映射进 `qa/mutation_targets.toml` 的 silent_merge 靶区——夜报 9/5 的 38 个存活体本地复跑只剩 2 个（`json.dumps(indent=2)` 的 ±1，纯排版等价体），全模块 258 体杀伤 60.9% → 84.9%。
