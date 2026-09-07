@@ -111,13 +111,14 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             "self_heal_note": rec.selfHealNote,
             "log_tail": rec.diagnosis?.logTail ?? "",
         ]
-        // §61.7 add-only：录制日程四键 + 派生 `paused`（日程开 ∧ mode != off ∧ 现在在窗外）
+        // §61.7 add-only：录制日程四键 + 派生 `paused`（日程开 ∧ mode != off ∧ 现在在窗外——读时算，
+        // setRecording 改完 mode 的回执就已经是「按日程暂停」，不等下一拍）
         let schedule = RecordingSchedule.active
         recording["schedule"] = schedule.wireValue()
         // JSON null when healthy / off（前端按 string | null 镜像）。按日程暂停时引擎是被**故意**停的：
         // 冻结引擎的 diagnoseEngine 会把它读成 engine_crashed / engine_dead——那是误判，不投给页面
         // （§61.7：paused ⇒ diagnosis null、log_tail ""）。
-        if schedule.paused {
+        if schedule.pausedNow {
             recording["diagnosis"] = NSNull()
             recording["log_tail"] = ""
         } else {
@@ -316,7 +317,11 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         if let v = try clock("end") { spec.end = v; touched = true }
         if let raw = dict["days"] {
             let list = raw as? [Any] ?? []
-            let ints = list.compactMap { $0 as? Int }
+            // JSON 的 true / false 到这里是 NSNumber，`as? Int` 会把它桥成 1 / 0——类型严格：CFBoolean 不是整数
+            // （反过来 `is Bool` 会把 NSNumber(1) 也判成 Bool，所以看 CF 类型而不是 Swift 类型）
+            let ints = list.compactMap { item -> Int? in
+                CFGetTypeID(item as CFTypeRef) == CFBooleanGetTypeID() ? nil : item as? Int
+            }
             guard raw is [Any], ints.count == list.count,
                   let days = RecordingScheduleSpec.normalizedDays(ints) else {
                 throw BridgeError.invalidArgs("days must be a non-empty list of weekdays 1…7 (1 = Sunday)")

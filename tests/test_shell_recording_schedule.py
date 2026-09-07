@@ -63,10 +63,13 @@ class WireMirrorTestCase(unittest.TestCase):
         self.assertIn('| "setRecordingSchedule"', self.ts)
 
     def test_paused_hides_engine_diagnosis(self):
-        # §61.7：故意停不是故障——paused ⇒ diagnosis null + log_tail ""
-        block = self.bridge[self.bridge.index("if schedule.paused {"):self.bridge.index("} else {", self.bridge.index("if schedule.paused {"))]
+        # §61.7：故意停不是故障——paused ⇒ diagnosis null + log_tail ""；判据是读时算的 pausedNow（mode 改了不等下一拍）
+        start = self.bridge.index("if schedule.pausedNow {")
+        block = self.bridge[start:self.bridge.index("} else {", start)]
         self.assertIn('recording["diagnosis"] = NSNull()', block)
         self.assertIn('recording["log_tail"] = ""', block)
+        self.assertIn('value["paused"] = pausedNow', self.schedule)
+        self.assertIn("var pausedNow: Bool", self.schedule)
 
     def test_web_has_single_paused_predicate_and_consumers_use_it(self):
         self.assertIn("export function schedulePaused(", self.ts)
@@ -167,6 +170,9 @@ class ContractTestCase(unittest.TestCase):
         section = contract[contract.index("### 61.7 录制日程"):contract.index("## 62.")]
         for rel in ("shell/Sources/RecordingSchedule.swift", "web/src/shellBridgeSchedule.test.ts",
                     "web/src/components/settings/RecordingSection.schedule.test.tsx",
+                    "web/src/components/setup/FinaleStep.schedulePaused.test.tsx",
+                    "web/src/pages/IngestPage.diagnosis.test.tsx",
+                    "web/src/components/permissions/RecordingConsentSection.test.tsx",
                     "tests/test_shell_recording_schedule.py"):
             with self.subTest(file=rel):
                 self.assertIn(rel.split("/")[-1], section)

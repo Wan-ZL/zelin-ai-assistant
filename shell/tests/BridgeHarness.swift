@@ -406,7 +406,8 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
           "defaults = off, 09:00–19:00, Mon–Fri (issue #27's example; off = today's always-on)")
     check(RecordingScheduleSpec.minutes("09:00") == 540 && RecordingScheduleSpec.minutes("23:59") == 1439
           && RecordingScheduleSpec.minutes("00:00") == 0, "HH:MM parses to minutes")
-    for bad in ["9:00", "24:00", "09:60", "0900", "09:00 ", "", "ab:cd"] {
+    // 带正负号的两位段：Int("+9") / Int("-0") 都解析得出来，长度检查拦不住——必须是 ASCII 数字（全角数字也不是）
+    for bad in ["9:00", "24:00", "09:60", "0900", "09:00 ", "", "ab:cd", "+9:00", "-0:30", "09:-0", "09:+5", "０９:00"] {
         check(RecordingScheduleSpec.minutes(bad) == nil, "\"\(bad)\" is not a clock value")
     }
     check(RecordingScheduleSpec.normalizedDays([5, 2, 2]) == [2, 5], "days sort + dedupe")
@@ -488,13 +489,19 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
     sched.enforce(reason: "tick")
     check(sched.paused && trace == ["stop:tick"] && !sched.allowsCaptureNow(),
           "crossing into the pause window stops the engine on that very tick", "got \(trace)")
+    // overdue timer 先处理了边界、didWake 紧跟着来：缓存的 engineRunning 还是 true（pgrep 跑在 pkill 前面），
+    // 但 stop 已经在路上——醒来那一拍不能再 stop 一次（那就是第二条 recording_schedule_pause 虚报）
+    sched.enforce(reason: "wake")
+    check(trace == ["stop:tick"], "tick-then-wake across one boundary = exactly one stop (the wake sees a stop already in flight)", "got \(trace)")
     trace = []
     running = true
+    // stop 之后的第一拍读到的是 stop 前那次 pgrep（refreshEngineState 异步、enforce 永远读上一拍）——不算一次「看见」
     sched.enforce(reason: "tick")
     sched.enforce(reason: "tick")
-    check(trace.isEmpty, "a revived engine is tolerated for \(RecordingSchedule.killAfterTicks - 1) ticks (frozen applyMode's slow-death watch)")
     sched.enforce(reason: "tick")
-    check(trace == ["stop:tick"], "the \(RecordingSchedule.killAfterTicks)rd consecutive running tick stops it", "got \(trace)")
+    check(trace.isEmpty, "the tick right after a stop reads the pre-stop pgrep and does not count; then \(RecordingSchedule.killAfterTicks - 1) real sightings are tolerated (frozen applyMode's slow-death watch)")
+    sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "the \(RecordingSchedule.killAfterTicks)rd real sighting stops it", "got \(trace)")
     trace = []
     running = false
     sched.enforce(reason: "tick")
@@ -502,9 +509,22 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
     sched.enforce(reason: "tick")
     sched.enforce(reason: "tick")
     check(trace.isEmpty, "the running counter resets whenever the engine is seen down")
+    // prefs / launch / wake 都不是 5 s 节拍上的一拍：暂停中改一次 days 不该把宽限缩短
+    sched.apply(RecordingScheduleSpec(enabled: true, start: spec.start, end: spec.end, days: [2, 3, 4, 5, 6, 7]))
+    sched.apply(spec)
+    check(trace.isEmpty, "prefs writes while paused (no edge) are not grace sightings", "got \(trace)")
+    sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "…the 3rd tick sighting still stops it", "got \(trace)")
+    trace = []
+    running = false
+    sched.enforce(reason: "tick")
+    running = true
+    sched.enforce(reason: "tick")
+    sched.enforce(reason: "tick")
+    check(trace.isEmpty, "counter reset again (engine seen down, then two sightings)", "got \(trace)")
     trace = []
     sched.enforce(reason: "wake")
-    check(trace == ["stop:wake"], "waking inside the pause window stops immediately (no 3-tick grace)", "got \(trace)")
+    check(trace == ["stop:wake"], "waking inside the pause window with a revived engine (no stop in flight) stops immediately (no 3-tick grace)", "got \(trace)")
     trace = []
     running = false
     sched.enforce(reason: "wake")
@@ -547,6 +567,46 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
           && wire["days"] as? [Int] == [2, 3, 4, 5, 6] && wire["paused"] as? Bool == false,
           "wireValue carries the four keys + paused")
 
+    // ---- live → live 切换的观察期：边界不立刻 pkill，改走宽限（冻结 applyMode 的 ~9 s 慢死亡观察会把它读成假回滚） ----
+    spec.enabled = true
+    mode = "screen"
+    running = true
+    clock = at(4, 18, 59)                                   // Wed 18:59:00，窗内
+    sched.apply(spec)
+    trace = []
+    sched.enforce(reason: "tick")
+    mode = "screen_audio"                                   // owner 在 18:59:50 切到 屏幕+音频
+    clock = at(4, 18, 59).addingTimeInterval(50)
+    sched.enforce(reason: "tick")
+    clock = at(4, 19, 0)                                    // 边界 tick：切换 10 s 前才被看见
+    sched.enforce(reason: "tick")
+    check(sched.paused && trace.isEmpty,
+          "a live→live switch seen within \(Int(RecordingSchedule.liveSwitchHold)) s of the boundary defers the edge kill (it would land inside the frozen slow-death watch → false rollback + notice)", "got \(trace)")
+    clock = clock.addingTimeInterval(5); sched.enforce(reason: "tick")
+    clock = clock.addingTimeInterval(5); sched.enforce(reason: "tick")
+    check(trace.isEmpty, "…the deferred edge rides the grace: the switch tick's sighting is stale, two real ones are tolerated", "got \(trace)")
+    clock = clock.addingTimeInterval(5); sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "…and the 3rd real sighting stops it (≥ 15 s after the switch was seen)", "got \(trace)")
+    // 对照：切换早于观察期的边界照旧立刻停
+    trace = []
+    clock = at(5, 12, 0); mode = "screen"; sched.enforce(reason: "tick")
+    check(trace == ["start:tick"], "sanity: Thu noon resumes once", "got \(trace)")
+    trace = []
+    mode = "screen_audio"; clock = at(5, 18, 59); sched.enforce(reason: "tick")   // 边界前 60 s 看见切换
+    clock = at(5, 19, 0); sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "a switch seen ≥ \(Int(RecordingSchedule.liveSwitchHold)) s before the boundary does not defer the edge kill", "got \(trace)")
+
+    // ---- paused 读时算：setRecording 改 mode 不经 enforce，快照 / 回执不能等下一拍 ----
+    trace = []
+    mode = "off"
+    sched.enforce(reason: "tick")
+    check(!sched.paused && sched.wireValue()["paused"] as? Bool == false, "mode off: not paused (stored and live agree)")
+    mode = "screen"                                         // header 单选改了 mode，下一拍还没到
+    check(!sched.paused && sched.pausedNow && sched.wireValue()["paused"] as? Bool == true,
+          "wireValue derives paused at read time: a mode change outside the window is 按日程暂停 before the next tick")
+    sched.enforce(reason: "tick")
+    check(sched.paused && trace == ["stop:tick"], "…and the next tick catches up with the edge stop", "got \(trace)")
+
     // load: bad plist values fall back PER KEY; start == end falls back as a pair
     suite.set("9am", forKey: RecordingSchedule.startKey)
     suite.set([0, 9], forKey: RecordingSchedule.daysKey)
@@ -574,6 +634,10 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
     check(rejection(["method": "setRecordingSchedule", "days": []]).hasPrefix("INVALID_ARGS"), "days must be non-empty")
     check(rejection(["method": "setRecordingSchedule", "days": [0, 2]]).hasPrefix("INVALID_ARGS"), "days outside 1…7 rejected")
     check(rejection(["method": "setRecordingSchedule", "days": ["2"]]).hasPrefix("INVALID_ARGS"), "days must be ints (type-strict)")
+    // 真 JSON 路径：true 到 Swift 是 NSNumber(CFBoolean)，`as? Int` 会桥成 1——类型严格必须挡住它
+    let boolDays = try? JSONSerialization.jsonObject(with: Data(#"{"method":"setRecordingSchedule","days":[true,3]}"#.utf8))
+    check(rejection(boolDays).hasPrefix("INVALID_ARGS") && sched.spec == .defaults,
+          "JSON booleans in days are rejected (NSNumber true must not bridge to Sunday)")
     check(rejection(["method": "setRecordingSchedule", "start": "19:00"]) == "INVALID_ARGS: start and end must differ",
           "start colliding with the stored end is rejected after the merge")
     check(rejection(["method": "setRecordingSchedule", "enabled": true, "start": "bad"]).hasPrefix("INVALID_ARGS")
@@ -596,6 +660,8 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
     _ = try? bridge.handle(["method": "setRecordingSchedule", "enabled": false])
     check(sched.spec.enabled == false && sched.spec.start == "08:30" && trace == ["start:prefs"],
           "partial update keeps the other keys and resumes the engine", "got \(trace)")
+    let intDays = try? JSONSerialization.jsonObject(with: Data(#"{"method":"setRecordingSchedule","days":[3,1]}"#.utf8))
+    check(rejection(intDays) == "" && sched.spec.days == [1, 3], "JSON integers in days still land (sorted)", "got \(sched.spec.days)")
     let snap = ShellBridge.stateSnapshot()
     let block = (snap["recording"] as? [String: Any])?["schedule"] as? [String: Any] ?? [:]
     for key in ["enabled", "start", "end", "days", "paused"] {

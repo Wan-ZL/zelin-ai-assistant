@@ -31,9 +31,11 @@ struct RecordingScheduleSpec: Equatable {
     static let weekdayRange = 1...7
 
     /// 严格 "HH:MM" → 当天分钟数；任何别的形状（"9:00"、"24:00"、"09:60"、带空格）→ nil。
+    /// 两段各两位 ASCII 数字——`Int("+9")` / `Int("-0")` 都能解析，所以不能只看长度（"+9:00" 曾被放进来）。
     static func minutes(_ hhmm: String) -> Int? {
         let parts = hhmm.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2, parts[0].count == 2, parts[1].count == 2,
+        guard parts.count == 2,
+              parts.allSatisfy({ $0.count == 2 && $0.allSatisfy { $0.isASCII && $0.isNumber } }),
               let h = Int(parts[0]), let m = Int(parts[1]),
               (0...23).contains(h), (0...59).contains(m) else { return nil }
         return h * 60 + m
@@ -91,6 +93,10 @@ final class RecordingSchedule: ObservableObject {
     /// 「新模式没起来」而回滚到上一个模式并弹「已退回…」——那是日程造成的假回滚。边界跨越
     /// （active → paused）与醒来的那一拍不受此限，立刻停。
     static let killAfterTicks = 3
+    /// 看见 live → live 模式切换（screen ↔ screen_audio）后多久内边界不立刻 pkill：冻结引擎的切换是
+    /// pkill + 1 s + spawn + 0.5 s + 7.5 s 观察 ≈ 9 s，这期间 pkill 同样会被读成「新模式没起来」→ 假回滚
+    /// + 系统通知。切换只在 tick 上被看见（最多晚 5 s），15 s 留足余量；期间的边界改走上面的宽限。
+    static let liveSwitchHold: TimeInterval = 15
 
     // 缝（默认直连冻结引擎 / 本机时钟与日历；harness 注入）
     static var now: () -> Date = { Date() }
@@ -112,12 +118,21 @@ final class RecordingSchedule: ObservableObject {
     }
 
     @Published private(set) var spec: RecordingScheduleSpec
-    /// 派生：日程开 ∧ mode != off ∧ 现在不在窗内。快照 `recording.schedule.paused`。
+    /// 派生：日程开 ∧ mode != off ∧ 现在不在窗内——每拍由 enforce 刷新（翻转即推快照）。
+    /// 快照本身读 `pausedNow`（读时算）：mode 的改动不经 enforce，等下一拍会让 setRecording 的回执说错话。
     @Published private(set) var paused = false
 
     private let defaults: UserDefaults
     private var lastPaused: Bool?
     private var runningWhilePausedTicks = 0
+    /// 下一次读到的 `engineRunning` 已知是过时的：refreshEngineState 的 pgrep 是异步的，enforce 读到的永远是
+    /// **上一拍**的活性，所以 (a) 我们刚发过 stop 的下一拍必然还「看见它在跑」——不计宽限（否则 3 拍宽限实际只剩
+    /// 2 次真实观察，pkill 可能落进冻结引擎的慢死亡观察里）、醒来那一拍也不重复 stop（overdue timer 先处理了边界，
+    /// wake 的缓存还是 true）；(b) 刚看见 live → live 切换的那一拍读到的是旧引擎 / 乐观发布，同理不计。
+    private var holdNextSighting = false
+    private var lastMode: String?
+    /// 最近一次看见 live → live 模式切换的时刻（`liveSwitchHold` 内边界不立刻 pkill）。
+    private var liveSwitchSeenAt: Date?
     private var wakeObserver: NSObjectProtocol?
 
     init(defaults: UserDefaults) {
@@ -171,34 +186,67 @@ final class RecordingSchedule: ObservableObject {
         !spec.enabled || spec.contains(Self.now(), calendar: Self.calendar())
     }
 
-    /// 每拍一次：算 应暂停 → 与上一拍比 → 停 / 起。幂等；reason 只进日志 / analytics。
+    /// 派生 `paused` 的唯一公式：日程开 ∧ mode != off ∧ 现在在窗外。
+    private static func derivePaused(_ spec: RecordingScheduleSpec, mode: String, at now: Date) -> Bool {
+        spec.enabled && mode != "off" && !spec.contains(now, calendar: calendar())
+    }
+
+    /// 读时算的 `paused`（快照 / 桥回执用）：setRecording 改了 mode 之后立刻正确，不等下一拍的 enforce。
+    var pausedNow: Bool {
+        Self.derivePaused(spec, mode: Self.currentMode(), at: Self.now())
+    }
+
+    /// 每拍一次：算 应暂停 → 与上一拍比 → 停 / 起。幂等；reason 只进日志 / analytics（宽限只数 "tick"）。
     func enforce(reason: String) {
         let mode = Self.currentMode()
-        let shouldPause = spec.enabled && mode != "off" && !spec.contains(Self.now(), calendar: Self.calendar())
+        let now = Self.now()
+        // live → live 切换（screen ↔ screen_audio）只在这里被看见：记下时刻，边界在 liveSwitchHold 内不立刻 pkill；
+        // 这一拍读到的活性是旧引擎 / 冻结引擎的乐观发布，也不计宽限。off ↔ live 不算——prev == off 的切换
+        // 冻结引擎永不回滚，边界立停是安全的。
+        if let prev = lastMode, prev != mode, prev != "off", mode != "off" {
+            liveSwitchSeenAt = now
+            holdNextSighting = true
+            runningWhilePausedTicks = 0   // 新引擎从零数：之前攒的「看见」不能记在它头上
+        }
+        lastMode = mode
+        // 时钟倒走（NTP / harness）= 不算在观察期里
+        let switchInFlight = liveSwitchSeenAt.map { (0..<Self.liveSwitchHold).contains(now.timeIntervalSince($0)) } ?? false
+
+        let shouldPause = Self.derivePaused(spec, mode: mode, at: now)
         if paused != shouldPause { paused = shouldPause }
         let edge = lastPaused != nil && lastPaused != shouldPause
         lastPaused = shouldPause
 
         if shouldPause {
-            // 边界跨越 / 刚开日程：立刻停。醒来：本来就暂停着且引擎没在跑 = 无事（睡前那一拍已经停过，
-            // 再记一次 pause 事件就是虚报）；引擎在跑才不等宽限立刻停。其余拍：引擎又被拉起来了
-            // （autostart、TCC 自愈、owner 在窗外点了模式或「重启」）→ 连续 killAfterTicks 拍看见它在跑才停
-            // （见常量注释）。
-            if edge || (reason == "wake" && Self.engineRunning()) {
+            // 边界跨越 / 刚开日程：立刻停（除非冻结引擎正在做 live → live 切换——那就交给下面的宽限）。
+            // 醒来：引擎在跑且没有 stop 在路上才立刻停；本来就暂停着且引擎没在跑 = 无事（睡前那一拍已经停过，
+            // 再记一次 pause 事件就是虚报），overdue tick 刚处理完边界 = 同样无事（缓存还是 true，不能再 stop 一次）。
+            if (edge && !switchInFlight) || (reason == "wake" && Self.engineRunning() && !holdNextSighting) {
+                holdNextSighting = true
                 runningWhilePausedTicks = 0
                 Analytics.log("recording_schedule_pause", fields: ["reason": reason, "mode": mode])
                 Self.stopEngine(reason)
                 return
             }
+            // 宽限只数 5 s 节拍上的拍：wake / prefs / launch 都是额外的一次采样，数进去会把宽限缩短
+            guard reason == "tick" else { return }
+            // 引擎又被拉起来了（autostart、TCC 自愈、owner 在窗外点了模式或「重启」）→ 连续 killAfterTicks 拍
+            // 看见它在跑才停（见常量注释）。stop / 切换之后的第一拍读到的是之前的 pgrep，不算一次看见。
             if Self.engineRunning() {
+                if holdNextSighting {
+                    holdNextSighting = false
+                    return
+                }
                 runningWhilePausedTicks += 1
                 if runningWhilePausedTicks >= Self.killAfterTicks {
                     runningWhilePausedTicks = 0
+                    holdNextSighting = true
                     Analytics.log("recording_schedule_pause", fields: ["reason": "\(reason)_late", "mode": mode])
                     Self.stopEngine(reason)
                 }
             } else {
                 runningWhilePausedTicks = 0
+                holdNextSighting = false
             }
             return
         }
@@ -222,10 +270,10 @@ final class RecordingSchedule: ObservableObject {
         }
     }
 
-    /// 快照块（§61.1 add-only）：日程四键 + 派生 `paused`。
+    /// 快照块（§61.1 add-only）：日程四键 + 派生 `paused`（读时算——见 `pausedNow`）。
     func wireValue() -> [String: Any] {
         var value = spec.wireValue
-        value["paused"] = paused
+        value["paused"] = pausedNow
         return value
     }
 }
