@@ -1092,7 +1092,7 @@ export interface ConsentShownReceipt {
   [key: string]: unknown;
 }
 
-/** POST /api/analytics 的事件词表 = server 白名单（server/analytics_ingest.py EVENTS，D48）——加事件先加 server */
+/** POST /api/analytics 的事件词表 = server 白名单（server/analytics_ingest.py EVENTS，D48）——加事件先加 server；tests/test_web_analytics_event_vocabulary_mirror.py 钉两边同词 */
 export type WebAnalyticsEvent = "wizard_complete" | "pipeline_repair_result";
 
 /** POST /api/analytics 回执（§16，D48）：logged=false = features.analytics 关着（server 诚实报 no-op，仍 200） */

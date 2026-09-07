@@ -8,4 +8,4 @@ law: §15 追记（consent 标记的 web 写入者与时机；issue #37 追记�
 
 **诚实边界**：(1) 深链 `?step=finale` 直达末步再点「完成」也会落标记——那是 owner 自己重跑向导，§15 追记照实写；(2) `pipeline_repair_result` 与原生一样只报下场、不报 install 失败与超时的区别（`ok:false` 两者同形）；(3) 其余原生 UI 事件既未恢复也未退役——要恢复先加白名单，要退役另立 tombstone；(4) 写者的路径是 `act/lib/analytics.py` 模块常量、随 env `AIASSISTANT_HOME`（§55 模板给 server 的同一个值），`make_server(home=…)` 与 env 不同只是测试缝。
 
-**判例**：新 `tests/test_server_telemetry_consent_shown.py`（7）、`tests/test_server_analytics_ingest.py`（12）；web 新 `telemetry.test.ts`（4）、`SetupPage.finishTelemetry.test.tsx`（4）、`TelemetryBlock.consentShown.test.tsx`（3）、`repairActd.analytics.test.tsx`（3）；三个既有 vitest 文件只加了两个 api mock（不出网）。视觉 golden 零变化（无 UI 改动）。
+**判例**：新 `tests/test_server_telemetry_consent_shown.py`（7）、`tests/test_server_analytics_ingest.py`（16，含字段类型闭集 `_FIELD_TYPES = {bool, int}`：int 规格照判、表外类型 fail-loud 不放行）、`tests/test_web_analytics_event_vocabulary_mirror.py`（2：web `WebAnalyticsEvent` = server `EVENTS`，单边改名即红）；web 新 `telemetry.test.ts`（4）、`SetupPage.finishTelemetry.test.tsx`（4）、`TelemetryBlock.consentShown.test.tsx`（3）、`repairActd.analytics.test.tsx`（3）；三个既有 vitest 文件只加了两个 api mock（不出网）。视觉 golden 零变化（无 UI 改动）。

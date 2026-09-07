@@ -24,20 +24,45 @@ from typing import Callable, Optional
 from act.lib import analytics
 from server.errors import InvalidFieldError, UnknownFieldError
 
-# server-owned 白名单：事件名 → {字段名: 期望类型}。add-only；加事件 = 加一行 + docs/TELEMETRY.md 表加一行。
+# server-owned 白名单：事件名 → {字段名: 期望类型}。add-only；加事件 = 加一行 + docs/TELEMETRY.md 表加一行
+# + web/src/types.ts 的 WebAnalyticsEvent 加一项（判例 tests/test_web_analytics_event_vocabulary_mirror.py 钉两边同词）。
 EVENTS: dict = {
     "wizard_complete": {},
     "pipeline_repair_result": {"ok": bool},
 }
+
+# 白名单里准用的字段类型 → (人话名, 严格判定)。**只收元数据级标量**：bool 只认 JSON 布尔（1 / "true" 不算）；
+# int 排除 bool（Python 里 True 也是 int）。str / list / dict 永不进表——自由文本从这条路根本进不来（§16 追记）。
+# 加类型 = 加一行 + 判例；EVENTS 里出现表外类型在 import 期就炸（_check_spec），绝不静默放行。
+_FIELD_TYPES: dict = {
+    bool: ("boolean", lambda v: isinstance(v, bool)),
+    int: ("integer", lambda v: isinstance(v, int) and not isinstance(v, bool)),
+}
+
+
+def _check_spec(events: dict) -> None:
+    """白名单自检：每个字段的期望类型都得在 _FIELD_TYPES 里，否则 TypeError（server 自己的错，fail-loud）。"""
+    for event, spec in events.items():
+        for key, expected in spec.items():
+            if expected not in _FIELD_TYPES:
+                raise TypeError(f"EVENTS[{event!r}][{key!r}]: unsupported field type {expected!r}; "
+                                f"allowed: {[t.__name__ for t in _FIELD_TYPES]}")
+
+
+_check_spec(EVENTS)
 
 # log_event 同形：(event, **fields) → 是否真的落盘
 Logger = Callable[..., bool]
 
 
 def _typed(key: str, value, expected):
-    """一个字段的类型核对（bool 只认真 bool——JSON 的 1 / "true" 不算）。"""
-    if expected is bool and not isinstance(value, bool):
-        raise InvalidFieldError(f"{key} must be a boolean")
+    """一个字段的类型核对，按 _FIELD_TYPES 逐型严判；表外类型 = 白名单坏了，炸 500 而不是放行。"""
+    try:
+        name, check = _FIELD_TYPES[expected]
+    except KeyError:
+        raise TypeError(f"{key}: unsupported field type {expected!r} in whitelist") from None
+    if not check(value):
+        raise InvalidFieldError(f"{key} must be a {name}")
     return value
 
 

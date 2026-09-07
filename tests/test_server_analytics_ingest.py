@@ -6,6 +6,9 @@ server owns the whitelist — the client cannot mint event names or fields:
 - ``wizard_complete`` (no fields) and ``pipeline_repair_result{ok: bool}``;
   anything else → 400 (INVALID_FIELD for an unlisted event / bad type,
   UNKNOWN_FIELD for a stray top-level key or an unlisted field);
+- field types are checked from a closed table (``bool``, ``int`` — metadata
+  scalars only); a whitelist entry with a type outside the table fails loud
+  (TypeError at import / request) instead of forwarding the raw client value;
 - the record goes through ``act.lib.analytics.log_event`` — same file, same
   §16 ``features.analytics`` gate (flag off ⇒ nothing written, receipt says
   ``logged: false`` and the HTTP status is still 200: analytics never breaks
@@ -102,6 +105,43 @@ class IngestWhitelistTestCase(unittest.TestCase):
         receipt = analytics_ingest.ingest({"event": "wizard_complete"}, log=rec)
         self.assertEqual(receipt["logged"], False)
         self.assertEqual(receipt["ok"], True)
+
+
+class FieldTypeTableTestCase(unittest.TestCase):
+    """The whitelist's field types are enforced generically from ``_FIELD_TYPES`` — a
+    future ``{"count": int}`` entry is checked, and a type outside the table (``str``:
+    free text) fails loud instead of passing the client value straight through."""
+
+    def _with_events(self, events):
+        p = mock.patch.object(analytics_ingest, "EVENTS", events)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_current_whitelist_passes_the_self_check(self):
+        analytics_ingest._check_spec(analytics_ingest.EVENTS)   # must not raise
+
+    def test_table_holds_only_metadata_scalars(self):
+        self.assertEqual(set(analytics_ingest._FIELD_TYPES), {bool, int})
+
+    def test_int_spec_is_enforced_not_passed_through(self):
+        self._with_events({"wizard_step": {"index": int}})
+        rec = _Recorder()
+        for bad in ("3", 3.0, True, False, None, [3]):
+            with self.assertRaises(InvalidFieldError):
+                analytics_ingest.ingest({"event": "wizard_step", "fields": {"index": bad}}, log=rec)
+        self.assertEqual(rec.calls, [])
+        analytics_ingest.ingest({"event": "wizard_step", "fields": {"index": 3}}, log=rec)
+        self.assertEqual(rec.calls, [("wizard_step", {"via": "web", "index": 3})])
+
+    def test_unsupported_spec_type_fails_loud_at_import_and_at_request(self):
+        with self.assertRaises(TypeError):
+            analytics_ingest._check_spec({"note": {"text": str}})
+        # a whitelist that slipped past the import-time check still never forwards the value
+        self._with_events({"note": {"text": str}})
+        rec = _Recorder()
+        with self.assertRaises(TypeError):
+            analytics_ingest.ingest({"event": "note", "fields": {"text": "free text"}}, log=rec)
+        self.assertEqual(rec.calls, [])
 
 
 class IngestThroughTheRealWriterTestCase(unittest.TestCase):
