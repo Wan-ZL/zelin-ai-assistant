@@ -32,15 +32,18 @@ deliberately NOT imported.
              non-fork in a comment.
 
 2. Animation CSS blocks
-   Upstream: web/src/styles.css lines 2363-2409 + 2438-2447 (shared
-             easing cubic-bezier(0.2,0.8,0.2,1), .is-moving/
-             .is-settling, settle keyframes), lines 9371-9494 +
-             9560-9562 (working-card sheen + conic progress ring),
-             lines 8590-8599 (prefers-reduced-motion nuke)
+   Upstream: web/src/styles.css lines 2363-2409 (shared easing
+             cubic-bezier(0.2,0.8,0.2,1), card hover lift), lines
+             9371-9494 + 9560-9562 (working-card sheen + conic
+             progress ring), lines 8590-8599 (prefers-reduced-motion
+             nuke)
    Here:     web/src/styles/animations.css
    Changes:  drag-and-drop-specific rules dropped (this board has no
              drag-to-change-state); four hardcoded green color values
-             replaced with --accent/--accent-soft tokens.
+             replaced with --accent/--accent-soft tokens; lane-change/
+             settle rules removed (.is-moving/.is-settling from lines
+             2363-2409 and the task-card-settle keyframes, lines
+             2438-2447) — D46 / CONTRACT §68.14, 2026-09-06.
 
 3. MarkdownDocument component (markdown rendering + mermaid sandbox,
    including all security hooks: strict securityLevel, DOMPurify

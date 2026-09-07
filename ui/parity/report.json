@@ -1,6 +1,6 @@
 {
   "counts": {
-    "PENDING": 13,
+    "PENDING": 12,
     "PRESENT": 830,
     "WAIVED": 4
   },
@@ -254,7 +254,6 @@
     "control:board:button:send-feedback-activecount": "PRESENT",
     "control:board:button:suggest-merge-activecount": "PRESENT",
     "control:board:label:analyzing": "PRESENT",
-    "control:board:label:card": "PENDING",
     "control:board:label:merging": "PRESENT",
     "control:board:label:no-matching-cards": "PRESENT",
     "control:board:label:nothing-accepted-yet": "PRESENT",
@@ -858,7 +857,7 @@
   "not_gated": {
     "informational": 414,
     "os": 11,
-    "retired": 58,
+    "retired": 59,
     "shell": 70
   },
   "ok": true,

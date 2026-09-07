@@ -1,16 +1,21 @@
 /*
  * 看板动画块。fork 自 dashi web/src/styles.css（Apache-2.0，NOTICE 由 A12 登记）：
- *   - L2363-2409 卡片 easing/hover/.is-moving/.is-settling + L2438-2447 task-card-settle keyframes
+ *   - L2363-2409 卡片 easing/hover（.is-moving/.is-settling 与 L2438-2447 task-card-settle keyframes 已按 ③ 删除）
  *   - L9371-9494 working 卡 sheen 文字 + conic 进度环 + 进度分段条 + L9560-9562 sheen keyframes
  *   - L8590-8599 prefers-reduced-motion 全局降级
- * 与源文件的差异（仅两类，其余逐字）：
+ * 与源文件的差异（仅三类，其余逐字）：
  *   ① 拖拽相关规则整体删除（cursor: grab/grabbing、.is-dragging、.is-drag-shifted、
  *      view-transition 列规则）——本看板无拖拽换状态（BUILD-CONTRACT §0.8 语义红线）；
  *   ② conic 环与进度分段的 4 个硬编码绿色（#00b978/#cfeee1/#00a558/rgba(0,165,88,.2)）
- *      换成 --accent/--accent-soft token（rebrand 政策同 tokens.css，不造新色值）。
+ *      换成 --accent/--accent-soft token（rebrand 政策同 tokens.css，不造新色值）；
+ *   ③ 换列 / 落定动效（.task-card.is-moving / .is-settling + task-card-settle keyframes）整体删除——
+ *      原生 BoardMotion / BoardDiff 的飞行 / deal-in / 书立条脉冲层自 D46 起正式退役（CONTRACT §68.14
+ *      1.16 tombstone，2026-09-06）：不做、不计划；没有任何 TSX 挂这两个 class，死规则不留。
+ *      留下的动效（hover 抬升、working 卡 sheen / 进度环、侧栏滑入、spinner）仍受下面的
+ *      prefers-reduced-motion 与「看板动画」开关双重降级。
  */
 
-/* —— L2363-2409：卡片过渡 easing + hover 抬升 + 移动/落定态 —— */
+/* —— L2363-2409：卡片过渡 easing + hover 抬升 —— */
 .task-card {
   transition: border-color 100ms ease, background-color 100ms ease, box-shadow 100ms ease, opacity 100ms ease, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -31,28 +36,6 @@
 
 :root[data-theme="dark"] .task-card:hover {
   box-shadow: 0 3px 7px rgba(0, 0, 0, 0.48);
-}
-
-.task-card.is-moving {
-  opacity: 0.48;
-  pointer-events: none;
-  transform: scale(0.985);
-}
-
-.task-card.is-settling {
-  animation: task-card-settle 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-/* —— L2438-2447 —— */
-@keyframes task-card-settle {
-  from {
-    opacity: 0.38;
-    transform: translateY(-4px) scale(0.975);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 /* —— L9371-9494：working 卡 conic 进度环 + sheen 扫光文字 + 进度分段条 —— */
