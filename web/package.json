@@ -13,14 +13,14 @@
     "visual:update": "playwright test --config playwright.config.ts --update-snapshots"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@testing-library/react": "^16.1.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "axe-core": "^4.13.0",
     "jsdom": "^30.0.1",
