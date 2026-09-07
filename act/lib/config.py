@@ -326,6 +326,11 @@ class Config:
     recording_ignored_apps: list = field(
         default_factory=lambda: list(DEFAULT_IGNORED_APPS)
     )
+    # §71 screenpipe DB 保留期（天）：0 = 永久保留（出厂默认 = 现状不变）；N ≥ 1 =
+    # cron 链的 cleanup 步删掉「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行
+    # （act/lib/screenpipe_retention.py）。config.yaml 落点 recording.retention_days，
+    # 设置页 override 扁平键 screenpipe_retention_days。
+    screenpipe_retention_days: int = 0
 
     # local pre-send redaction (opt-in)
     redaction_enabled: bool = False
@@ -855,6 +860,10 @@ def _apply_recording(cfg: Config, data: dict) -> None:
         cfg.recording_ignored_apps = [
             str(a).strip() for a in apps if a is not None and str(a).strip()
         ]
+    # §71：坏值 / 负数按「未设」= 永久保留（宽容读，与 daily_loop 数字键同款）
+    days = _int_or(recording.get("retention_days", cfg.screenpipe_retention_days),
+                   cfg.screenpipe_retention_days)
+    cfg.screenpipe_retention_days = days if days >= 0 else cfg.screenpipe_retention_days
 
 
 def _apply_telemetry(cfg: Config, data: dict) -> None:
@@ -1160,6 +1169,8 @@ _OVERRIDE_FIELDS: dict = {
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
     "trash_retention_days": int,
+    # §71 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
+    "screenpipe_retention_days": int,
     "language": _coerce_language,
     "default_output_format": _coerce_output_format,
     "redaction_enabled": _coerce_bool,

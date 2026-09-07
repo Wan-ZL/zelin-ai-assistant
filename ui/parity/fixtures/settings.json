@@ -165,6 +165,39 @@
       "fields": [
         {
           "choices": null,
+          "default": 0,
+          "effective": 0,
+          "help": {
+            "en": "Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are still deleted after one hour regardless.",
+            "zh": "早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 一小时后照旧删，与此无关。"
+          },
+          "key": "screenpipe_retention_days",
+          "kind": "int",
+          "label": {
+            "en": "Recording data retention (days)",
+            "zh": "录制数据保留天数"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        }
+      ],
+      "help": {
+        "en": "The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever; see how much disk it takes, how fast it grows, and give it a retention window.",
+        "zh": "录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite；这里看它占了多少盘、每月长多少，并给它一个保留期。"
+      },
+      "id": "storage",
+      "title": {
+        "en": "Recording data & disk",
+        "zh": "录制数据与磁盘"
+      }
+    },
+    {
+      "fields": [
+        {
+          "choices": null,
           "default": true,
           "effective": true,
           "help": {

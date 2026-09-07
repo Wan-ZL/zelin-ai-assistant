@@ -694,6 +694,14 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 永不出网的桩 `claude`；锁与日志走 env seam `PROCESS_SCREENPIPE_LOCK` /
 `PROCESS_SCREENPIPE_LOG`（`vault-sync.sh` 读同一个锁 seam；生产默认路径不变）。
 
+
+**issue #28 追记（2026-09-07，add-only；§71）——cron 链第二步 `ingest/screenpipe-cleanup.sh` 多了一件事**：
+删完一小时前的 jpg / mp4 之后，再以守护进程的解释器（`config/runtime.json` 的 python，否则 PATH python3）跑
+`python3 -m act.lib.screenpipe_retention`——按 `recording.retention_days`（设置页 storage 区
+`screenpipe_retention_days`，默认 0 = 永久保留 = 现状不变）删 db.sqlite 里「已导出进 vault 且早于 N 天」的文本行，
+回执落 `state/screenpipe_retention.json`。crontab 行本体（`install.sh` `INGEST_CHAIN`）不改；该步永不让链断
+（模块自己把错误写进回执并退出 0，脚本再 `|| true`），链尾 `process-screenpipe.sh` / radar 照旧。细则与判例见 §71.2。
+
 ## 19. 凭证与 secrets（跨组件契约，两侧逐字一致）
 
 - **SECRETS 目录** = `<AIASSISTANT_HOME>/config/secrets/`，目录权限 **0700**、文件权限 **0600**（App 设置窗口写入方与 `act/lib/secrets.write_secret` 均强制）。gitignore：`config/secrets/`。
@@ -6068,3 +6076,69 @@ owner 原话（D33）：「你说的把 5 降到 2，我可以接受；第三点
 - **投影（§2 `maintenance`，add-only）**：`last_result` 五个计数照旧恒在，**新增** `advisories`（同上列表；每字段 `str`，坏形状整行丢，≤ 20）。web `MaintenanceBanner`：advisories 非空时同一行右侧多一个「系统自检 N 条」按钮（`aria-expanded`），点开在横幅下方列出每条 `kind` / `text` / 「首见 <first_seen>」（三列：kind 与日期列不缩不折，只有中间的说明文字换行）；三计数全零而 advisories 非空也渲染（否则这些行没人看得见），此时文案是「今日整理：看板无变动」而不是「合并 0、清理 0（可撤销）、提案 0」；「回收站可恢复」链接只在 `merged + trashed > 0`（合并也把旧卡送进回收站）时出现——不许诺一次没发生过的撤销；**仍不弹系统通知**（D10）、不新增 inbox 动词。client `MaintenanceAdvisory` 逐字镜像 wire key（防腐 #10）。判例 `MaintenanceBanner.test.tsx`（DOM）、`web/e2e/maintenanceBanner.spec.ts`（真浏览器量展开态：日期一行、横幅不溢出，1280 / 820 宽 × zh / en）。
 - **默认额度**：`daily_loop.max_proposals_per_day` 默认 **5 → 2**（truth = `config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS`；`server/settings.py DAILY_LOOP_DEFAULTS` 手抄同值，§49，`test_server_paths_mirror` 钉漂移；`config.example.yaml` 同步）。已写过 override 的机器不受影响（override > config > default 的层次不变，§15 追记）；`GET /api/settings/daily-loop` 对未改过的机器报 `2` / `source: default`。§70.3「默认 5」与 §70.4 的旧字面量自本条起失效。
 - **不变的**：§70.1–70.2 维护半边一字不动；CARD_KINDS 的铸卡形状（§70.3 铸卡段）、`kind_taken` / `gh_title` / `dedup` / `cap` 四个 skip 语义不变；§70.6 边界照旧。advisory 只是「不铸卡」，不是「不读」——读取器、阈值、`inputs` 计数与 §70.3 ①–⑧ 的定义全部保留，日后要把某一类升回可铸卡只需把 kind 挪回 CARD_KINDS（并在本节追记）。
+
+## 71. 录制数据磁盘占用与保留期（issue #28；P4 re-home 之后的 retention UI；2026-09-07）
+
+设计评审的原话（issue #28）：screenpipe 的数据在用户眼里无界增长——界面上没有任何地方说它占了多少盘、
+留多久，第一个信号是一个月后磁盘满；清理只有一份看不见、不可配的 launchd prune。owner 机器 2026-09-07 实测
+`~/.screenpipe` 43 GB：db.sqlite 10.7 GB、一份 6/4 的旧备份 `db.sqlite.bak-20260604` 33 GB、日志 ~30 MB、
+`data/`（jpg / mp4）0 B（cron 链一小时即删）。本节把「看得见 + 一把保留期旋钮」立法；`mac-retire` 标签的含义
+（设置面落 web，不动冻结的 `mac/Sources/Settings.swift`，§66 / D3）在此兑现。执法代码：`server/screenpipe_disk.py`、
+`act/lib/screenpipe_retention.py`、`server/settings_catalog.py` storage 区、`ingest/screenpipe-cleanup.sh`、
+`web/src/components/settings/StorageStatus.tsx`；判例 `tests/test_server_screenpipe_disk.py`、
+`tests/test_screenpipe_retention.py`、`web/src/components/settings/StorageStatus.test.tsx`。
+
+### 71.1 度量：`GET /api/screenpipe/disk`（只读、token-light、永不阻塞）
+
+- **渲染路径零扫描**：GET 立刻返回缓存快照；缓存缺席 / 过期（`CACHE_TTL_S`，truth = `server/screenpipe_disk.py`）/
+  `?refresh=1` 时才在**后台线程**重算，同一 home 同一时刻最多一个后台算（在算时 refresh 不叠加）。首次响应是
+  `state: "computing"` 的空壳（数字全 `null`、`refreshing: true`），算完变 `ready`；后台失败 = `state: "error"` +
+  `error` 一句并释放 in-flight（宪法第 11 条：失败不卡死下一次）。判例用 `spawn` 注入缝钉「GET 路径调不到 `scan`」。
+- **算什么**：`os.walk` `~/.screenpipe`（`server/paths.screenpipe_dir()`）累加 `lstat().st_size`（不跟符号链接、读不到的跳过），
+  按类归并 `db`（db.sqlite 及 -wal / -shm）/ `backup`（`db.sqlite.bak*`、`*.bak`）/ `log` / `media`（`data/` 下）/ `other`；
+  `backups[]` 列出最大的几个备份文件（名字 + 字节）——**只报不删**（宪法第 2 条：不可恢复的删除留给用户在访达里亲手做，
+  web 不给按钮）；db.sqlite 以只读 URI 打开问 `PRAGMA page_size × freelist_count`（= 清理后可复用的字节，
+  解释「删了文件为什么没变小」）与 `MIN/MAX(frames.timestamp)`；库打不开 / 锁住 → `db_error` 一句，数字不虚报
+  （宪法第 3 条）。
+- **增长估算 `growth`**：server 每次算完在 `state/screenpipe_disk_samples.json` 记一条 `[ts, total_bytes]`
+  （间隔 ≥ `SAMPLE_MIN_GAP_S`、容量 `SAMPLE_CAP` 条——防腐 #4 出生即带帽），最近 `SAMPLE_WINDOW_S` 内首末样本跨度 ≥ 1 天
+  才给斜率（`basis: "samples"`、`span_days`）；样本不够退到「db 字节 ÷ 最早 frame 至今天数」（`basis: "lifetime"`）；
+  两者都没有 → `bytes_per_month: null`，web 说「样本不足（需要相隔 ≥ 1 天的两次统计）」而不是 0。**估算的依据随数字一起投影**，
+  web 逐字带出（「约 X GB / 月（按最近 N 天采样 | 按全部 N 天录制历史平均）」）。
+- **一并带出**：`retention_days`（storage 区 effective 值）与 `last_prune`（§71.2 回执原样；缺席 = null）。
+- **字节全是十进制原值**，格式化是 web 的事（`formatBytes`：≥ 10 GB 取整、≥ 1 GB 一位小数、MB 取整、其余 KB；null → —）。
+- add-only：快照的每个键只增不改；`state` 词表 `computing | ready | error`。
+
+### 71.2 保留期：`recording.retention_days` ← `screenpipe_retention_days`（默认 0 = 永久保留）
+
+- **旋钮**：config.yaml `recording.retention_days`；设置页 storage 区目录字段 `screenpipe_retention_days`（int，`≥ 0`，
+  §68.1 通用目录 diff-write 到 `state/settings_overrides.json`）；`Config.screenpipe_retention_days`（默认 0）+
+  `_OVERRIDE_FIELDS` 同键；yaml 坏值 / 负数按未设。**0 = 关 = 出厂默认 = 现状一字不变**（此前 OCR / 转写永久保留）。
+- **删什么、留什么**（`act/lib/screenpipe_retention.py`，stdlib sqlite3）：N ≥ 1 时删 `frames`（连带 `ocr_text`、有
+  `elements` 表时连带 `elements`）与 `audio_transcriptions` 里 **`timestamp < now − N 天` ∧ `id ≤ 导出标记`** 的行。
+  导出标记 = `~/.screenpipe/export_markers/last_frame_id` / `last_audio_id`（`ingest/screenpipe-export.sh` 每轮推进）：
+  **id 在标记之前 = 它的文本已写进 vault `2 - raw`**，那份笔记就是这条数据的回程票——本节据此**不修宪**（宪法第 2 条
+  「绝无不可恢复的自动删除」：删的只是 vault 里已有副本的引擎缓存行；未导出的一行不碰、标记缺席 = 0 = 一行不删）。
+  `video_chunks` / `audio_chunks` 元数据行与 a11y 日清（本机 launchd `com.zelin.screenpipe-prune`，§55 提到的 plist）不在本节范围。
+- **怎么删**：分批短事务（`BATCH` 条 / 笔，`PRAGMA busy_timeout`——引擎同时在写）+ 单轮时间预算 `MAX_SECONDS`
+  （用尽即停、回执 `budget_exhausted: true`，下一轮 30 分钟 cron 接着删）；**不 VACUUM**（要独占锁）——释放的页由新数据复用，
+  文件大小到达稳态而不是立刻缩小，§71.1 的「可复用」字节就是这个数。`--dry-run` 只数不删。
+- **回执** `state/screenpipe_retention.json`（覆盖写 + 原子 rename，单文件无增长）：`ran_at / retention_days / cutoff /
+  frame_marker / audio_marker / eligible_* / deleted_* / batches / budget_exhausted / dry_run / skipped / error /
+  db_bytes_after / duration_s`；`skipped` 词表 `retention_off | no_db`。文件名两侧逐字镜像（act `RECEIPT_NAME` ==
+  server `RECEIPT_NAME`，判例钉）。
+- **失败不外溢**（宪法第 11 条）：模块任何异常只进回执、退出码 0；`cleanup.sh` 再 `|| true`；链尾 ingest / radar 照旧。
+- **挂点**：§18 cron 链第二步 `ingest/screenpipe-cleanup.sh`（同日追记）。actd 不参与（不是 registry 写者，§44 无涉）。
+
+### 71.3 设置面：「录制数据与磁盘 / Recording data & disk」（web 自有区，紧跟录制区）
+
+- `SettingsPage.SETTINGS_TOC` 新条目 `storage`（默认折叠——`settingsFolds.DEFAULT_EXPANDED_SECTIONS` 不动）；fold 内 =
+  `CatalogSection sectionId="storage"`，`lead` 槽渲 `StorageStatus`：当前占用（总 + 数据库 / 备份 / 日志 / 媒体 分项 +
+  可复用）、每月增长（含依据句）、最早 / 最新数据、上次清理（回执一句话：尚未运行 / 保留期关闭 / 删了 N 帧 M 条 /
+  出错）、备份文件告示（只报不删）、「刷新」= `?refresh=1`。computing / refreshing 期间前端每 `POLL_INTERVAL_MS`
+  轮询一次、上限 `POLL_MAX` 次（不无限打）。拉取失败只显示一句（`role=alert`）不炸整页——folds 判例把所有 fetch*
+  桩成 reject，本区照样渲染。
+- 保留天数本身是目录字段（server-owned 文案，防腐 #10；help 句写明「已导出进笔记库」「不 VACUUM：文件不立刻缩小」「原始 jpg / mp4
+  一小时后照旧删」）；web 零自有文案写这把旋钮。
+- §66 parity：原生 Settings.swift 没有这一区，清单无对应 control，两本账本零改动；`ui/parity/fixtures/settings.json`
+  随目录重铸（`scripts/ui/parity_fixture.py --write`，`tests/test_ui_parity_fixture.py` 钉新鲜）。

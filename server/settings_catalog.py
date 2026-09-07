@@ -181,6 +181,20 @@ SECTIONS: tuple = (
         help_en="System notifications are posted by the board app (§28); no app running = no banners. Permission status: Permissions checkup.",
     ),
     _section(
+        "storage", "录制数据与磁盘", "Recording data & disk",
+        [
+            # §71.2（issue #28）：screenpipe DB 的保留期。0 = 永久保留 = 出厂默认（现状不变）；N ≥ 1 = cron 链的
+            # cleanup 步删「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行（act/lib/screenpipe_retention.py）。
+            # 磁盘占用 / 增长估算 / 上次清理回执不是旋钮，走 GET /api/screenpipe/disk（web StorageStatus 渲在这一区的 lead 槽）。
+            _f("screenpipe_retention_days", "int", "录制数据保留天数", "Recording data retention (days)", default=0,
+               config=("recording", "retention_days"),
+               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 一小时后照旧删，与此无关。",
+               help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are still deleted after one hour regardless."),
+        ],
+        help_zh="录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite；这里看它占了多少盘、每月长多少，并给它一个保留期。",
+        help_en="The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever; see how much disk it takes, how fast it grows, and give it a retention window.",
+    ),
+    _section(
         "obsidian", "笔记库", "Notes vault",
         [
             _f("obsidian_enabled", "bool", "启用 Obsidian 雷达", "Enable the Obsidian radar", default=True,

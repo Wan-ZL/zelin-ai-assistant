@@ -109,6 +109,11 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
   # `Slack::#hr` 只排除 Slack 里标题含 #hr 的窗口，`::标题` 只按窗口标题匹配。
   # 设为 `ignored_apps: []` = 明确关闭此过滤（不推荐）。
   # 改动后重启录制引擎生效：菜单栏切一次录制模式，或重启 App。
+  # retention_days（CONTRACT §71.2，issue #28）：录制数据保留天数。0 = 永久保留（默认，现状不变）；N ≥ 1 =
+  # 30 分钟 cron 链的 cleanup 步删掉 ~/.screenpipe/db.sqlite 里「已导出进 vault 且早于 N 天」的 OCR / 音频转写行
+  # （分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）。设置页「录制数据与磁盘」区同一把旋钮（override 键
+  # screenpipe_retention_days）；磁盘占用与每月增长估算也在那一区看。
+  # retention_days: 0
   ignored_apps:
     - 1Password
     - Bitwarden

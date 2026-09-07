@@ -79,7 +79,8 @@ from server import (about, ai_fix_launch, analytics_ingest, attachments,
                     doctor_run, failure_catalog, files, folders, health,
                     inbox_writer, ingest_run, lanes, maintainer_launch,
                     material_box, mcp_servers, notify_catalog, paths,
-                    permissions, radars, recaps, repair, secrets_store,
+                    permissions, radars, recaps, repair, screenpipe_disk,
+                    secrets_store,
                     security, self_improve_lane, settings, settings_catalog,
                     setup, slack_directory, slack_manifest, sync_pairing,
                     telemetry_consent,
@@ -627,6 +628,8 @@ _GET_JSON_ROUTES = {
     "/api/radars": lambda ctx, query: radars.snapshot(ctx.home),
     # §25 / §68.4 失败目录（原生 FailureCatalog.message 的 server-owned 投影；防腐 #10）
     "/api/failures": lambda ctx, query: failure_catalog.catalog(),
+    # §71.1 录制数据磁盘占用：缓存快照立刻回（首次 computing），扫目录 / 问 sqlite 在后台线程；?refresh=1 强制重算
+    "/api/screenpipe/disk": lambda ctx, query: screenpipe_disk.snapshot(ctx.home, refresh=_flag(query, "refresh")),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。

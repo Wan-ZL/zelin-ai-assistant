@@ -8,6 +8,7 @@
 // 与通用区的「初始设置向导 / 权限体检」两行同一话题。已退役：菜单栏（D3）；
 // 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
 // （?page=about），不再重复。
+// web 自有区另有 录制数据与磁盘（§71，issue #28：磁盘占用 / 增长估算 / 保留天数，紧跟录制区）。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
 // 搜索框（原生 Settings.swift SettingsSearchField + matches()，§54.4 / §68.1 追记）：干草 = 目录标题 zh+en + server 目录该区的
 // label / help zh+en（不看 UI 语言）+ 该区凭证行的双语 label + 渲染正文；查询按空白切 token、全部命中才算（AND）；
@@ -43,6 +44,7 @@ import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
 import { ObsidianSection } from "../components/settings/ObsidianSection";
 import { SlackSection } from "../components/settings/SlackSection";
+import { StorageStatus } from "../components/settings/StorageStatus";
 import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceGenerate } from "../components/settings/VoiceGenerate";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
@@ -60,6 +62,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "deps", zh: "依赖检查", en: "Dependencies" },
   { id: "notifications", zh: "通知", en: "Notifications" },
   { id: "recording", zh: "录制", en: "Recording" },
+  { id: "storage", zh: "录制数据与磁盘", en: "Recording data & disk" },
   { id: "live_captions", zh: "实时字幕", en: "Live captions" },
   { id: "obsidian", zh: "笔记库", en: "Notes vault" },
   { id: "credentials", zh: "凭证（存本机 config/secrets/，保存后自动验证）", en: "Credentials (stored locally in config/secrets/; verified automatically on save)" },
@@ -294,6 +297,9 @@ export function SettingsPage() {
       <Fold id="deps" isForced={searchActive}><DepsSection /></Fold>
       <Fold id="notifications" isForced={searchActive}><CatalogSection sectionId="notifications" /></Fold>
       <Fold id="recording" isForced={searchActive}><RecordingSection /></Fold>
+      {/* §71 录制数据与磁盘（issue #28）：占用 / 增长 / 上次清理 状态行（StorageStatus，GET /api/screenpipe/disk 非阻塞快照）
+          + 目录字段 screenpipe_retention_days（保留天数，0 = 永久保留） */}
+      <Fold id="storage" isForced={searchActive}><CatalogSection sectionId="storage" lead={<StorageStatus />} /></Fold>
       <Fold id="live_captions" isForced={searchActive}><CaptionsSection /></Fold>
       <Fold id="obsidian" isForced={searchActive}><ObsidianSection /></Fold>
       <Fold id="credentials" isForced={searchActive}><CredentialsSection /></Fold>
