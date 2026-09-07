@@ -136,16 +136,16 @@ def request(decision: dict, log: Optional[Callable[[str], None]] = None) -> str:
         # 原生 guard !voiceGenRunning：一份在跑就不再起第二份（两份 claude 同时改档案没有好结果）
         say(f"inbox: {ACTION} — a generation is already running, not started again")
         return detached.NOOP
-    try:
-        JOB_DIR.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        say(f"inbox: {ACTION} launch FAILED: {e}")
-        mark_launch_failed(str(e))
-        return detached.NOOP
-    logcap.cap(config.STATE_DIR / LOG_NAME)   # 防腐 #4：append-only 日志出生即带帽
-    mark_running()                             # spawn 之前落笔：子进程回执只覆盖、不竞争
+    return _launch(say)
+
+
+def _launch(say: Callable[[str], None]) -> str:
+    """目录 + 日志帽 + running 落笔 + spawn；任何一步失败 → 台账 failed:launch_failed、ack noop。"""
     # detached.launch 的同一套（Popen 新会话、永不 wait）；自己接异常是为了把原因写进台账给 web 的结果行
     try:
+        JOB_DIR.mkdir(parents=True, exist_ok=True)
+        logcap.cap(config.STATE_DIR / LOG_NAME)   # 防腐 #4：append-only 日志出生即带帽
+        mark_running()                             # spawn 之前落笔：子进程回执只覆盖、不竞争
         detached.spawn(list(MODULE_ARGV), LOG_NAME)
     except Exception as e:  # noqa: BLE001 — never let a button kill the pass
         say(f"inbox: {ACTION} launch FAILED: {e}")
