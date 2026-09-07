@@ -9,9 +9,21 @@
 /* —— 页面骨架（顶栏归 shell.css / 侧条与过滤 chips 归 chrome.css，此处只管列区）——
    布局定点全部取 tokens.css @generated 块的原生数值（§54.4 / §66.2 layout:*）：列距 12（HStack spacing）、
    看板内边距 16（.padding(16)）、列宽 400（.frame(width: 400)）为**下限**——原生四列各 400pt 铺满一屏，
-   web 在更宽的窗口里让列等比长开填满视口（flex-grow），窄于四列之和时与原生一样横向滚动。 */
+   web 在更宽的窗口里让列等比长开填满视口（flex-grow），窄于四列之和时与原生一样横向滚动。
+   滚动模型（D42，§54.4 2026-09-06 追记；原生 Kanban.swift：横向 ScrollView 里每列各一个纵向 ScrollView）：
+   .board-page 吃满 .shell-main 的一屏高（min-height: 0 让它缩得下去），.board-main 只横向滚，
+   每列的 .column-list 各自纵向滚——列头 / 列顶输入框 / 「仅显示最近 N 条」钉在列里不动，
+   多选操作条钉在看板底部横贯全宽（原生 `.overlay(alignment: .bottom)`）。 */
+.board-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .board-main {
   flex: 1;
+  min-height: 0;
   display: flex;
   align-items: stretch;
   gap: var(--native-layout-lane-gap);
@@ -25,6 +37,7 @@
   flex-direction: column;
   flex: 1 1 var(--native-layout-lane-width);
   min-width: var(--native-layout-lane-width);
+  min-height: 0;
   padding: 6px 10px 10px;
   border-radius: var(--native-layout-lane-radius);
   background: var(--lane-bg);
@@ -109,11 +122,24 @@
   overflow-wrap: anywhere;
 }
 
+/* 列的滚动容器（原生每列自己的 ScrollView(.vertical)）：吃掉列头 / 输入框之外的全部列高，卡多了在列内滚。
+   负外边距 + 同宽内边距把滚动容器撑到列的全宽（原生 ScrollView 也占满列、内容才 .padding(.horizontal, 10)）：
+   卡的几何一像素不动，焦点环（2px）与卡片阴影不被滚动容器裁掉，覆盖式滚动条骑在 10px 的边上而不压卡 */
 .column-list {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 40px;
+  margin: 0 -10px;
+  padding: 0 10px 4px;
+  overflow-y: auto;
+}
+
+/* 列表成了定高的 flex 列之后，卡不许被压扁来凑高度（.task-card 自带 overflow: hidden，flex 的 min-height:auto 因此归零，
+   默认 flex-shrink: 1 会把每张卡缩到剩余高度里）——溢出的部分归列表滚动 */
+.column-list > * {
+  flex: 0 0 auto;
 }
 
 .column-empty {
@@ -711,20 +737,19 @@ a.chip:hover { text-decoration: underline; }
   opacity: 0.55;
 }
 
+/* 看板底部横贯全宽的操作条（原生 `.overlay(alignment: .bottom)`）：.board-page 的最后一个 flex 子项、不缩，
+   列区在它上方各自滚——此前它是 .board-main 横排里的一个 flex 项，被排到最右列之后、视口之外（D42 顺手修正） */
 .selection-bar {
-  position: sticky;
-  bottom: 0;
+  flex: none;
   z-index: 20;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 8px 14px;
-  margin: 0 -8px -8px;
+  padding: 8px var(--native-layout-board-padding);
   background: var(--surface-raised);
   border-top: var(--border-hairline) solid var(--border-strong);
   box-shadow: var(--dialog-shadow);
-  grid-column: 1 / -1;
 }
 
 .selection-count {

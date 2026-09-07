@@ -345,11 +345,18 @@
   width: var(--native-layout-strip-width);
 }
 
-/* 收起态：竖排窄条（列外侧，点击展开） */
+/* 收起态：竖排窄条（列外侧，点击展开）。竖条的高由 flex 撑满这根条（列头 flex: 1 → 竖排按钮 align-self: stretch），
+   不再写 `height: 100%`：竖排（orthogonal flow）里百分比高在容器高不定时回落到视口 / 最近滚动口的高（CSS Writing Modes §7.3.1），
+   D42 列高钉一屏之后那会把按钮撑到比条还高、让 .board-main 多出一截纵向滚动 */
+.backlog-strip.is-collapsed .backlog-strip-head {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .backlog-strip.is-collapsed .backlog-strip-toggle {
   writing-mode: vertical-rl;
   width: var(--native-layout-strip-width);
-  height: 100%;
+  align-self: stretch;
   justify-content: flex-start;
   padding: 12px 0;
   border: none;
@@ -376,12 +383,22 @@
   writing-mode: horizontal-tb;
 }
 
+/* 展开态的行列表 = 这根条自己的滚动容器（与 board.css .column-list 同一套：吃掉列头之外的条高、
+   负外边距撑到条的全宽、行的几何不动；D42 起列高钉一屏，这里的 overflow-y 才真的生效） */
 .backlog-strip-list {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 6px 0;
+  margin: 0 -10px;
+  padding: 6px 10px;
   overflow-y: auto;
+}
+
+/* 行不被压扁来凑条高（同 board.css `.column-list > *`）——溢出归列表滚动 */
+.backlog-strip-list > * {
+  flex: 0 0 auto;
 }
 
 .backlog-row {

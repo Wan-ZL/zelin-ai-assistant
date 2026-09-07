@@ -1,0 +1,15 @@
+pr: `feat/lanes-independent-scroll`（owner 决策 D42；行为对齐审计 batch `lanes-independent-scroll`，chain `board` 第 1 棒；gap `board-cards-lanes-independent-scroll`）
+phase: P4 余量（D3：web 看板是产品、原生 mac/Sources 是冻结的行为规格）+ D42（owner 2026-09-06 整批授权代拍）
+law: §54.4 追记（滚动模型：壳一屏高、`.shell-main` 是非看板页的滚动容器、看板页只有 `.column-list` / `.backlog-strip-list` 纵向滚、`.board-main` 只横向滚、多选操作条横贯看板底、rail / 顶栏 sticky 退役、设置页 anchor 顶边距）
+
+**补回什么**：原生 `Kanban.swift` 的看板是一个横向 `ScrollView` 里每列各一个纵向 `ScrollView`（`column(...)`：`VStack { SectionHeader; ScrollView(.vertical) { cards } }`），窗口从不整体滚动、列头常驻。web 移植版让整个文档滚（`.shell { min-height: 100vh }`、`.column-list` 没有 overflow）：卡一多，列头与「捕获」/「直跑」输入框随文档滚走，横向滚动条躺在最高那一列的底下；没有任何 D-row 或法条选过整页滚动（§54.4 只钉了列宽）。
+
+**怎么补**：全在 CSS + 一层页壳。`shell.css`：`.shell { height: 100vh }`（不再 `min-height`）、`.shell-body` / `.shell-main` `min-height: 0`、`.shell-main { overflow: auto }` 成为非看板页（设置 / 回收站 / 永久性完成 / 会议纪要 / 录制 / 关于 / 权限 / 向导 / 样式页）的滚动容器；`.rail` 与 `.shell-header` 的 `position: sticky` 退役（改 `relative`——文档不滚了，它们天然常驻；把手仍有容器、顶栏仍是层叠上下文）。`pages/BoardPage.tsx` 长出 `.board-page`（竖排 flex，吃满 `.shell-main`）：上面 `BoardLanes` 的 `.board-main`（`flex: 1; min-height: 0; overflow-x: auto`，只横向滚），下面 `SelectionBar`（自 `BoardLanes` 搬来）。`board.css`：`.board-column { min-height: 0 }`，`.column-list { flex: 1 1 auto; min-height: 0; overflow-y: auto }` 是列里唯一的滚动容器，列头 / 输入框槽位 / 「仅显示最近 N 条」是它的兄弟节点、钉在列里；`.column-list > * { flex: 0 0 auto }`（卡自带 `overflow: hidden`，flex 的 `min-height: auto` 归零后默认 shrink 会把卡压扁——第一版实测抓到）；滚动容器以 `margin: 0 -10px; padding: 0 10px 4px` 撑到列的全宽（原生 ScrollView 占满列、内容才 `.padding(.horizontal, 10)`）：卡的几何一像素不动，焦点环 / 阴影不被裁，覆盖式滚动条骑在 10px 边上不压卡。`chrome.css`：`.backlog-strip-list` 同一套（此前的 `overflow-y: auto` 因条高不定从未生效）；收起态竖排按钮改由 flex 撑满条高（`.backlog-strip-head { flex: 1 1 auto }` + `align-self: stretch`）——原来的 `height: 100%` 在竖排（orthogonal flow）里、容器高不定时回落到视口高（CSS Writing Modes §7.3.1），列高钉一屏后它把 44px 竖条撑到比条还高、让 `.board-main` 多出 200 多像素的纵向滚动（第二版实测抓到）。`settings.css`：`?anchor=` 的 `scroll-margin-top` 64px → 20px（顶栏在滚动容器之外永不盖住内容）。
+
+**顺手修正**：多选操作条此前是 `.board-main` 横排里的一个 flex 项（`position: sticky; bottom: 0; grid-column: 1 / -1` 是 grid 时代的死规则），被排到最右列之后、1440 宽下在视口之外——demo 场景实测 x = 1816；自此 `flex: none` 贴在 `.board-page` 底部、横贯全宽（原生 `.overlay(alignment: .bottom)`）。
+
+**没做 / 边界**：列内滚动位置不持久化（原生 ScrollView 也不）；列头不做「滚动时阴影」；极矮视口下横幅会把列区挤得很矮（100vh 模型的本性，原生窗口有最小高）。窄于 720 仍由 `.shell` 的 `min-width` 交给文档横向滚动（既有）。D31 三档顶栏与滚动模型无涉。
+
+**视觉 golden**：本机同一渲染器下 branch vs main 逐像素比对，六张里只有 board 两张有几何变化——列底不再溢出视口（列圆角 + 16px 看板内边距露出来，色差 5/255，低于 golden 比对的单像素阈值），其余全是合成层的 ±1 舍入；trash / settings 零几何变化。goldens 不在本 PR 手改，合并后跑「Refresh visual goldens」workflow 让 runner 重生成。
+
+**判例**：新 `web/src/pages/BoardPage.independentScroll.test.tsx`（11：DOM 结构 3 + 样式文本 8）、新 `web/e2e/lanesScroll.spec.ts`（3，真浏览器 600px 高：滚提案列只动这一列、列头 / 输入框 / 其余列 / 文档 / `.shell-main` 一像素不动、`.board-main` 无纵向溢出；焦点落到列外的卡 → 这一列自己滚过去；多选操作条横贯看板底、整条在视口里）。既有 `BoardLanes.test.tsx`（书立条仍是横排首尾）、`cardDetail.spec.ts` / `headerLayout.spec.ts` / `maintenanceBanner.spec.ts` 照过。`ui/parity` 判卷面零变化。
