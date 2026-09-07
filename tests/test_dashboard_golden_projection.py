@@ -242,6 +242,10 @@ def build_fixture_dashboard(merge_dir: Path, state_dir: Path) -> dict:
     cfg.trash_retention_days = 30
     cfg.default_target_repo = "/golden/workbench"   # no $HOME leak into the golden
     cfg.create_github_repo = True                   # §7 egress[] disclosure path
+    # §55 第五幕 追记: copy_cmd starts with the worker's own claude binary
+    # (resolve_claude_bin, one shell word). Pin a fixture path and treat it as
+    # present so the golden shows that shape on every machine.
+    cfg.claude_bin = "/golden/bin/claude"
     _write_merge_jobs(merge_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "sync.json").write_text(json.dumps({"label": " Zelin 的 Mac "}),
@@ -259,6 +263,7 @@ def build_fixture_dashboard(merge_dir: Path, state_dir: Path) -> dict:
     with mock.patch.object(dashboard, "_iso_now", return_value=FIXED_NOW), \
             mock.patch.object(dashboard, "_today", return_value=FIXED_TODAY), \
             mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
+            mock.patch.object(dashboard.config, "stable_claude_present", return_value=True), \
             mock.patch.object(dashboard.config, "STATE_DIR", state_dir), \
             mock.patch.object(dashboard.config, "SETTINGS_OVERRIDES_PATH",
                               state_dir / "settings_overrides.json"), \

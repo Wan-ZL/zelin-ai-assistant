@@ -1105,7 +1105,33 @@ except Exception:
 # Every refusal keeps whatever copy was already there and is a warn, never a
 # fail: an environment problem must not roll a deploy back (§56.5, the
 # cron=skipped_tcc precedent). Writes §23 step `stable_claude`.
+#
+# 2026-09-06 追记 — never swap the file under a running worker. The `mv` is
+# atomic and a process already running keeps its old inode, but that is the
+# problem, not the safety: the board's takeover command and every new spawn
+# would then run the NEW file against a worker (and, on Claude Code ≥ 2.1.26x,
+# the per-user daemon that hosts its spares) still running the OLD one — the
+# 2026-09-04 / 09-07 "worker crashed (exit 143) … exit 1 before init" shape.
+# So when `lsof` sees any process executing the copy, the refresh is deferred:
+# report `stable_claude=skipped:in use …`, keep the copy, say so. The next
+# deploy (or `bash install.sh` while the board is idle) retries; the doctor's
+# `stable claude` row shows the lag and the live count meanwhile. No lsof →
+# cannot tell → refresh as before (fail-open, exactly today's behaviour).
 STABLE_CLAUDE_BIN="${AIASSISTANT_STABLE_CLAUDE:-$HOME/Library/Application Support/ZelinAIAssistant/bin/claude}"
+# stable_claude_in_use: prints the number of processes currently executing
+# $STABLE_CLAUDE_BIN (lsof -t lists pids holding it open or mapped as text);
+# "0" when none or when lsof is unavailable.
+stable_claude_in_use() {
+    _lsof="$(command -v lsof 2>/dev/null || true)"
+    if [ -z "$_lsof" ] && [ -x /usr/sbin/lsof ]; then
+        _lsof=/usr/sbin/lsof   # launchd's PATH may lack /usr/sbin
+    fi
+    if [ -z "$_lsof" ] || [ ! -e "$STABLE_CLAUDE_BIN" ]; then
+        printf '0'
+        return 0
+    fi
+    "$_lsof" -t -w -- "$STABLE_CLAUDE_BIN" 2>/dev/null | grep -c . || true
+}
 refresh_stable_claude() { # $1 = the claude to copy (login-shell resolution)
     _src="${1:-}"
     if [ -z "$_src" ] || [ ! -x "$_src" ]; then
@@ -1124,6 +1150,13 @@ refresh_stable_claude() { # $1 = the claude to copy (login-shell resolution)
     fi
     _kept=""
     [ -x "$STABLE_CLAUDE_BIN" ] && _kept="; the previous copy stays in place"
+    _live="$(stable_claude_in_use)"
+    case "$_live" in ''|*[!0-9]*) _live=0 ;; esac
+    if [ "$_live" -gt 0 ]; then
+        info "stable daemon claude: $STABLE_CLAUDE_BIN is running in $_live process(es) — not swapped under them; ${_ver:-$_real} lands at the next deploy (or bash install.sh once the board is idle)"
+        report_step "stable_claude" "skipped" "in use by $_live process(es): $STABLE_CLAUDE_BIN kept; refresh to ${_ver:-$_real} deferred until no session runs it"
+        return 0
+    fi
     if ! codesign --verify --strict -R='anchor apple generic' "$_real" >/dev/null 2>&1; then
         warn "claude at $_real carries no valid Apple-anchored signature (npm install? tampered?) — not copied$_kept"
         report_step "stable_claude" "warn" "refused: $_real is not a validly signed binary$_kept"

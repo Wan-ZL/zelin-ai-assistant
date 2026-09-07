@@ -99,6 +99,7 @@ class RefreshStableClaudeTestCase(unittest.TestCase):
                   + _install_sh_fn("report_step")
                   + _install_sh_fn("failed_deploy_steps")
                   + _install_sh_line("STABLE_CLAUDE_BIN=")
+                  + _install_sh_fn("stable_claude_in_use")
                   + _install_sh_fn("refresh_stable_claude")
                   + 'refresh_stable_claude "$1"\n'
                     'printf "===REPORT===\\n%s" "$REPORT_STEPS"\n'
