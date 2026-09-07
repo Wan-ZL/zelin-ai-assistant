@@ -2769,6 +2769,8 @@ SM-*.json` 记 pending → 分离子进程 `python -m act.lib.silent_merge SM-x`
 `merge_suggestions` 分区形状不变，仅剩人工多选路径产出）。actd 每 pass 清扫：
 pending >20min 判 failed，done/failed 过 24h 删文件。
 
+**§44.1 追记（2026-09-06，add-only；R-198 变异测试补判例）——job 记录的身份 = `id` 字段，缺则退回文件 stem**：`state/silent_merge/SM-*.json` 是本模块唯一写者的私有台账，但手写 / 损坏的记录若没有 `id` 字段，此前 sweep 把它判 failed 落盘时在 `_write_job` 处 KeyError；该异常被 actd `_silent_merge_sweep` 的兜底 except **静默吞掉**——pass 不崩，但 `sweep()` 在坏文件处中断，同一 pass 里排在它之后的 job 不再清扫，且坏文件永远 pending、永不消失，于是**每个 pass 都在同处中断**：那些 stuck pending 永不判 failed、过期文件永不清、`pending_count()` 虚高占掉上段 `MAX_OUTSTANDING` 的并发预算，且无日志。`id` 为 null / 空串的记录同病异形：`_write_job` 按 `str(id)` 另写一个 `None.json` / `.json` 流浪文件，原记录永远 pending。宪法第 11 条：坏记录只丢自己，不得连坐同伴。自此 `_finish` 以调用方给的 job id（sweep / consume 侧 `_job_id` = 记录 `id` 或文件 stem）补回 `id` 再落盘——缺失 / null / 空串一律视为缺：这类 pending 记录超时后**原地**标 failed（同一文件，不另生文件）。上段两个清扫边界是**严格大于**（恰好 20 min / 恰好 24 h 都保留）。判例 tests/test_silent_merge_mutation_kills.py（缺 id / null id / 空 id 记录按 stem 原地处置；20 min / 24 h 严格边界与常数本身；job 文件 UTF-8 原文 + 2 空格缩进；id = `SM-` + 8 hex；judge 子进程 `start_new_session=True` + stdin 关闭；材料 `display_title` 仅在与 title 不同时出行、source ≤ 6 条；crash-retry 三分收敛的边（无关 radar note 不算已应用标记、owner 亲手回收的副卡走中止而非补完、重放中止不重写主卡、事件窗口恰 48 h）；fold 目标搜索跳过关闭卡且越过 linked 命中继续扫）；变异靶区映射 `qa/mutation_targets.toml`（§57）自此把 tests/test_silent_merge_jobs_edge.py 与该文件一并纳入。
+
 **§44.2 建卡前拦截（radar 慢路径，内联）**：triage 判 `new_proposal` 后、
 `merge_or_new` 落库前，对 open 卡跑同一确定性规则；命中最佳候选 → 同款两卡
 复核 → 同一件事 → 直接 `_fold_into` 主卡（不建新卡，返回既有 kind="folded"），
