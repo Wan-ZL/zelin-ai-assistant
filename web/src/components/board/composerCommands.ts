@@ -4,8 +4,8 @@
 // 斜杠命令**只有三个动词**（原生 SlashCommands.isCommand `^/(rec|open|lang)\b`）：以 "/" 开头的其他任何
 // 文字——尤其是绝对路径「/Users/… 整理一下」——都是普通捕获，照常铸卡；命令不发 inbox：
 //   /rec off|screen|audio|screen_audio → 壳桥 setRecording（audio = 原生词，映到壳的 screen_audio；无桥时如实说只在 app 里可用）
-//   /lang zh|en                        → store.chooseLanguage（D37 §15：UI 立刻切 + PUT general.language，与顶栏切换同一把开关；
-//                                          原生 Store.swift `/lang` 读-合并-写 language override 的 web 版）
+//   /lang zh|en                        → store.chooseLanguage（D37 §15：UI 立刻切 + 摘掉一次性的 ?lang= + PUT general.language，
+//                                          与顶栏切换同一把开关；原生 Store.swift `/lang` 读-合并-写 language override 的 web 版）
 //   /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup → route.navigate 换页
 //     （D40 起 pushState 不重载；原生五页在前、web 独有页在后；deps / diagnostics 自 D30 起都落设置页的依赖检查区）
 // 动词与参数都不分大小写（原生 `parts[1].lowercased()`）。纯逻辑放这里便于 vitest；LaneComposer 只做接线。

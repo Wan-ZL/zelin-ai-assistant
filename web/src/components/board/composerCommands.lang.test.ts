@@ -1,6 +1,7 @@
 // `/lang zh|en` 写回 server（CONTRACT §15 追记 2026-09-06，D37；§41 斜杠命令）：原生 Store.swift `/lang` 是读-合并-写 language
 // override + LanguageStore.lang——web 版 = store.chooseLanguage：UI 立刻切、PUT /api/settings/general {language}，回执不等 PUT；
-// PUT 失败不改变命令的成功回执（UI 已经切了，下次启动由 server 决定）；参数打错仍是「用法」、不写。
+// PUT 失败不改变命令的成功回执（UI 已经切了，下次启动由 server 决定）；参数打错仍是「用法」、不写；URL 上一次性的 ?lang= 覆写随手
+// 摘掉（与顶栏切换同款——否则刷新后 query 又压过刚选的语言、且有它就不水合）。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, putSettingsSection } from "../../api";
 import { getState, resetStoreForTests, setLanguage } from "../../store";
@@ -22,10 +23,14 @@ beforeEach(() => {
   resetStoreForTests();
   window.localStorage.clear();
   vi.mocked(putSettingsSection).mockReset();
+  window.history.replaceState(null, "", "/");
   setLanguage("en");
 });
 
-afterEach(() => window.localStorage.clear());
+afterEach(() => {
+  window.localStorage.clear();
+  window.history.replaceState(null, "", "/");
+});
 
 describe("/lang · 写回 server", () => {
   it("/lang zh → store 立刻 zh + PUT general {language: zh}；回执不等 PUT", async () => {
@@ -49,6 +54,15 @@ describe("/lang · 写回 server", () => {
     expect(result).toEqual({ handled: true, note: "Language → zh" });
     await vi.waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
     expect(getState().language).toBe("zh");
+  });
+
+  it("摘掉一次性的 ?lang= 覆写（别的 query 留着）：/lang 与顶栏切换一个样", async () => {
+    vi.mocked(putSettingsSection).mockResolvedValue(receipt("zh"));
+    window.history.replaceState(null, "", "/?lang=en&q=x");
+    await runSlashCommand("/lang zh", en);
+    expect(window.location.search).toBe("?q=x");
+    expect(getState().language).toBe("zh");
+    await vi.waitFor(() => expect(putSettingsSection).toHaveBeenCalledTimes(1));
   });
 
   it("参数打错：用法句、不写、语言不动", async () => {

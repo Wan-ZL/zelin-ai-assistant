@@ -43,7 +43,7 @@ import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { forceMergeLanded } from "./components/board/pendingSettle";
 import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
 import { getI18n, resolveLanguage, type Language } from "./i18n";
-import { readCardId } from "./route";
+import { navigate, readCardId } from "./route";
 import { readExpandedSections, toggledSections, writeExpandedSections } from "./settingsFolds";
 import {
   EMPTY_CARD_FILTERS,
@@ -161,25 +161,35 @@ export interface RecapMark {
 
 const LANGUAGE_STORAGE_KEY = "zai.lang";
 
+const isLanguage = (value: unknown): value is Language => value === "zh" || value === "en";
+
+/** URL `?lang=<值>` 的一次性覆写：**非空**才算（`?lang=` 空值与没写一样），值经 resolveLanguage 归到 zh / en（`zh-CN` 也是 zh，
+ *  与 navigator.language 同一规则）。detectInitialLanguage 与 hasLanguageQueryOverride 都读这一条——两边判据永远一致，
+ *  不会出现「首帧没用它、却因它跳过水合」的裂缝 */
+function readLanguageQueryOverride(search: string): Language | null {
+  const fromQuery = new URLSearchParams(search).get("lang");
+  return fromQuery ? resolveLanguage(fromQuery) : null;
+}
+
 // 首帧语言（D37 §15 追记：只是**水合前的提示**，真源在 server 的 general.language——hydrateLanguage 随后对齐）：
 // URL ?lang=（本次会话的一次性覆写，截图 / 演示用；有它就不水合也不持久化）> localStorage 缓存（上次水合 / 选择落下的值，
 // 免得首帧闪一下另一种语言）> navigator。try/catch 兜底（无 window / localStorage 被禁的环境一律回落 en）。
 function detectInitialLanguage(): Language {
   try {
-    const fromQuery = new URLSearchParams(window.location.search).get("lang");
-    if (fromQuery) return resolveLanguage(fromQuery);
+    const fromQuery = readLanguageQueryOverride(window.location.search);
+    if (fromQuery) return fromQuery;
     const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (stored === "zh" || stored === "en") return stored;
+    if (isLanguage(stored)) return stored;
     return resolveLanguage(navigator.language);
   } catch {
     return "en";
   }
 }
 
-/** URL 上有 `?lang=` = 这次加载的语言由 URL 说了算（一次性覆写）：不从 server 水合、也不把它写进设置 */
+/** URL 上有（非空的）`?lang=` = 这次加载的语言由 URL 说了算（一次性覆写）：不从 server 水合、也不把它写进设置 */
 export function hasLanguageQueryOverride(search = window.location.search): boolean {
   try {
-    return new URLSearchParams(search).has("lang");
+    return readLanguageQueryOverride(search) !== null;
   } catch {
     return false;
   }
@@ -432,23 +442,38 @@ export function setLanguage(language: Language) {
   if (state.language !== language) setState({ language });
 }
 
-let languageChoiceSeq = 0; // 用户每次显式选语言 +1：晚到的 PUT 回执 / 启动水合不许压掉更新的选择（detailFollowSeq 同款守卫）
+// 每一笔带 language 的 general 写 +1（saveSettingsSection 记；chooseLanguage / 设置区「保存」/ 首启持久化都经它）：晚到的 PUT 回执 /
+// 启动水合不许压掉更新的选择（detailFollowSeq 同款守卫）
+let languageChoiceSeq = 0;
 
 /** 用户显式选语言（顶栏切换 / `/lang` / 向导单选；原生 Store.swift `/lang` 与 Settings.persistLanguage 同一条路）：UI 立刻切、
- *  再 PUT general.language 让 python 侧 / 壳 / 下次启动都跟上。PUT 失败静默（离线、无 token 的浏览器会话）：本次会话仍是新语言，
- *  下次启动由 server 的值决定——与 §29bis feedback_publish_default 的 best-effort 同款 */
+ *  摘掉 URL 上一次性的 `?lang=`（三个入口一个样——不摘，刷新后 query 又压过刚选的语言、且有它就不水合），再 PUT general.language
+ *  让 python 侧 / 壳 / 下次启动都跟上。PUT 失败静默（离线、无 token 的浏览器会话）：本次会话仍是新语言，下次启动由 server 的值
+ *  决定——与 §29bis feedback_publish_default 的 best-effort 同款 */
 export function chooseLanguage(language: Language): Promise<void> {
-  languageChoiceSeq += 1;
   setLanguage(language);
+  dropLanguageQueryOverride();
   return saveSettingsSection("general", { language }).then(() => undefined, () => undefined);
 }
 
-const isLanguage = (value: unknown): value is Language => value === "zh" || value === "en";
+/** 摘掉 URL 上的 `?lang=`（别的 query 留着；replaceState 不进历史栈，经 route.navigate 让 useRoute 订阅者同步——D44 摘锚点同法）；
+ *  URL 操作失败不影响语言切换本身 */
+function dropLanguageQueryOverride(): void {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("lang")) return;
+    url.searchParams.delete("lang");
+    navigate(url, true);
+  } catch {
+    /* 无 window / URL 不可写：只是留着一次性覆写，本次切换照样生效 */
+  }
+}
 
 /** 启动水合（App 挂载一次）：`GET /api/settings/general` → 显式值（source override / config）压过首帧的缓存 / 浏览器猜测；
  *  **source == default（谁都没选过）→ 首启持久化**：把用户此刻正看着的语言写进设置（原生 L10n.swift 首启的同一件事——launchd / cron
- *  下的 python 没有 LANG，不持久化的 zh 用户通知会回落成 en；幂等：只在 default 时写，永不盖显式值）。`?lang=` 在场 = 一次性覆写，
- *  两件事都不做；读失败 = 留着首帧的提示（离线由 ErrorBanner 声明）；水合期间用户先选了语言 → 用户赢（languageChoiceSeq） */
+ *  下的 python 没有 LANG，不持久化的 zh 用户通知会回落成 en；幂等：只在 default 时写，永不盖显式值；best-effort——离线 / 无 token
+ *  就留给下一次启动）。`?lang=` 在场 = 一次性覆写，两件事都不做；读失败 = 留着首帧的提示（离线由 ErrorBanner 声明）；水合期间用户
+ *  先选了语言（顶栏 / `/lang` / 向导 / 设置区「保存」——都经 saveSettingsSection 记序号）→ 用户赢，server 的旧值不压回来、也不再首启持久化 */
 export async function hydrateLanguage(): Promise<void> {
   if (hasLanguageQueryOverride()) return;
   const seq = languageChoiceSeq;
@@ -460,22 +485,10 @@ export async function hydrateLanguage(): Promise<void> {
   }
   if (!field || seq !== languageChoiceSeq) return;
   if (field.source === "default") {
-    await persistFirstRunLanguage(state.language);
+    await saveSettingsSection("general", { language: state.language }).then(() => undefined, () => undefined);
     return;
   }
   if (isLanguage(field.effective)) setLanguage(field.effective);
-}
-
-/** 首启持久化的写：与设置页同时挂载时目录 GET 可能正在路上、带回的还是写之前的 source=default——等它落地再补拉一次
- *  （refreshDiagnostics 的在途语言同款处理），「界面语言」那格的来源章才不会说谎 */
-async function persistFirstRunLanguage(language: Language): Promise<void> {
-  try {
-    await saveSettingsSection("general", { language });
-  } catch {
-    return; /* best-effort：离线 / 无 token 就留给下一次启动 */
-  }
-  const inflight = pageRequests.get("settingsCatalog");
-  if (inflight) void inflight.then(() => refreshSettingsCatalog());
 }
 
 /** 深链进场：从当前 URL 水合过滤器（FilterBar 挂载时调一次；之后的换页 / 后退前进由 syncRouteFromUrl 跟） */
@@ -749,15 +762,28 @@ export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", 
 
 /** 保存一个通用 section（PUT，server 校验 + diff-write）；成功以回执替换目录里的该 section，失败原样抛给页面 toast */
 export async function saveSettingsSection(sectionId: string, patch: Record<string, unknown>): Promise<SettingsSection> {
+  // D37（§15 追记）：patch 带 language = 拨了「界面语言」这把开关（顶栏 / `/lang` / 向导经 chooseLanguage，设置区「保存」与首启持久化
+  // 直接到这里）——记一个序号：晚到的启动水合、更早那一笔的回执都不许压掉它
+  const chosen = sectionId === "general" && isLanguage(patch.language) ? patch.language : null;
+  if (chosen) languageChoiceSeq += 1;
   const languageSeq = languageChoiceSeq;
   const section = await putSettingsSection(sectionId, patch);
+  const superseded = chosen !== null && languageSeq !== languageChoiceSeq;
   const catalog = state.settingsCatalog;
-  if (catalog) {
+  // 回执替换目录里的该 section——被更新的语言选择超过的回执除外：拿它替目录会让「界面语言」那格说旧话（下面改成整本再拉）
+  if (catalog && !superseded) {
     setState({ settingsCatalog: { ...catalog, sections: catalog.sections.map((s) => (s.id === section.id ? section : s)) } });
   }
-  // D37（§15 追记）：「通用 · 界面语言」保存成功 = 同一把开关拨了——UI 立刻切（原生 persistLanguage 写完即 LanguageStore.lang = …），
-  // 不等下次启动；保存期间用户在顶栏又选了别的 → 顶栏赢（languageChoiceSeq），回执不许把它拨回去
-  if (sectionId === "general" && isLanguage(patch.language) && languageSeq === languageChoiceSeq) setLanguage(patch.language);
+  if (chosen) {
+    // 落键成功 = 同一把开关拨了——UI 立刻切（原生 persistLanguage 写完即 LanguageStore.lang = …），不等下次启动；
+    // 写的期间用户又选了别的 → 后选的赢，这份回执不拨回去
+    if (!superseded) setLanguage(chosen);
+    // 目录 GET 正在路上（与设置页同时挂载 / 首启持久化）时带回的还是写之前的快照——等它落地再补拉一次（refreshDiagnostics 的在途
+    // 语言同款处理），「界面语言」那格的来源章才不说谎；被超过的回执没替目录，目录在手就补拉一次对齐 server 现状
+    const inflight = pageRequests.get("settingsCatalog");
+    if (inflight) void inflight.then(() => refreshSettingsCatalog());
+    else if (superseded && catalog) void refreshSettingsCatalog();
+  }
   // §48.1 合取写：slack / gmail 的雷达开关翻开 = server 同一笔也写 features.<src>_radar=true（合取的另一半住 flags 区），
   // 而 PUT 回执只有本区——整本目录再拉一次让「Feature flags」那一格跟上（best-effort：拉不到不影响本次保存的回执）
   if ((sectionId === "slack" || sectionId === "gmail") && patch[`${sectionId}_enabled`] === true) void refreshSettingsCatalog();

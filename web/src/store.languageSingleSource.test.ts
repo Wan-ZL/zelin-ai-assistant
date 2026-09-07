@@ -1,7 +1,8 @@
 // 语言只有一把开关（CONTRACT §15 追记 2026-09-06，owner 授权代拍 D37；§49 / §61.1 追记）：真源 = server 的 general.language。
-// store 三条路：chooseLanguage（用户显式选：UI 立刻切 + PUT general.language，失败静默）；hydrateLanguage（启动水合：显式值压过
-// 首帧缓存；source default → 首启持久化一次；?lang= 一次性覆写两件都不做；用户先选了就用户赢）；saveSettingsSection("general",
-// {language}) 成功 → UI 立刻切（设置区「保存」= 同一把开关）。经 vi.mock 替换 api，零真实网络。
+// store 三条路：chooseLanguage（用户显式选：UI 立刻切 + 摘掉一次性的 ?lang= + PUT general.language，失败静默）；hydrateLanguage
+// （启动水合：显式值压过首帧缓存；source default → 首启持久化一次；非空 ?lang= 一次性覆写两件都不做；用户先选了就用户赢——
+// 顶栏 / `/lang` / 向导 / 设置区「保存」都算）；saveSettingsSection("general", {language}) 成功 → UI 立刻切（设置区「保存」= 同一把
+// 开关）；晚到的回执（被更新的选择超过）既不拨语言也不替目录；目录 GET 在途时等它落地补拉。经 vi.mock 替换 api，零真实网络。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchSettingsCatalog, fetchSettingsSection, putSettingsSection } from "./api";
 import {
@@ -89,6 +90,58 @@ describe("chooseLanguage（顶栏 / /lang / 向导）", () => {
     await first;
     expect(getState().language).toBe("en");
   });
+
+  it("连拨两次：晚到的第一次回执也不许替目录里的 general 区（「界面语言」那格不说旧话）——改成整本再拉", async () => {
+    vi.mocked(fetchSettingsCatalog)
+      .mockResolvedValueOnce({ sections: [general("en", "default")] })
+      .mockResolvedValueOnce({ sections: [general("en", "override")] });   // 补拉：server 现状
+    await refreshSettingsCatalog();
+    let resolveFirst: (s: SettingsSection) => void = () => undefined;
+    vi.mocked(putSettingsSection)
+      .mockImplementationOnce(() => new Promise<SettingsSection>((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce(receipt("en"));
+    const first = chooseLanguage("zh");
+    const second = chooseLanguage("en");
+    await second;
+    expect(getState().settingsCatalog!.sections[0].fields[0].effective).toBe("en"); // 第二笔的回执落了
+    resolveFirst(receipt("zh"));
+    await first;
+    expect(getState().settingsCatalog!.sections[0].fields[0].effective).toBe("en"); // 过期回执没替上去
+    await vi.waitFor(() => expect(fetchSettingsCatalog).toHaveBeenCalledTimes(2));
+    expect(getState().settingsCatalog!.sections[0].fields[0].source).toBe("override");
+    expect(getState().language).toBe("en");
+  });
+
+  it("选语言时目录 GET 正在路上（设置页刚挂载）→ 等它落地再补拉一次，旧快照压不掉回执", async () => {
+    let resolveCatalog: (c: { sections: SettingsSection[] }) => void = () => undefined;
+    vi.mocked(fetchSettingsCatalog)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveCatalog = resolve; }))   // 写之前发出的 GET
+      .mockResolvedValueOnce({ sections: [general("zh", "override")] });                       // 补拉：新鲜
+    vi.mocked(putSettingsSection).mockResolvedValue(receipt("zh"));
+    const inflight = refreshSettingsCatalog();
+    await chooseLanguage("zh");
+    resolveCatalog({ sections: [general("en", "default")] });                                  // 旧快照后到
+    await inflight;
+    await vi.waitFor(() => expect(fetchSettingsCatalog).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(getState().settingsCatalog!.sections[0].fields[0]).toMatchObject({ effective: "zh", source: "override" }));
+  });
+
+  it("摘掉 URL 上一次性的 ?lang= 覆写（别的 query 留着；不进历史栈）——顶栏 / `/lang` / 向导三个入口一个样", async () => {
+    vi.mocked(putSettingsSection).mockResolvedValue(receipt("zh"));
+    window.history.replaceState(null, "", "/?page=settings&lang=en");
+    const depth = window.history.length;
+    await chooseLanguage("zh");
+    expect(window.location.search).toBe("?page=settings");
+    expect(window.history.length).toBe(depth);
+    expect(hasLanguageQueryOverride()).toBe(false);   // 之后的水合不再被挡
+  });
+
+  it("URL 没有 ?lang= 时不碰 URL", async () => {
+    vi.mocked(putSettingsSection).mockResolvedValue(receipt("zh"));
+    window.history.replaceState(null, "", "/?page=settings&q=x");
+    await chooseLanguage("zh");
+    expect(window.location.search).toBe("?page=settings&q=x");
+  });
 });
 
 describe("hydrateLanguage（启动）", () => {
@@ -156,6 +209,22 @@ describe("hydrateLanguage（启动）", () => {
     expect(putSettingsSection).not.toHaveBeenCalled();
   });
 
+  it("空的 ?lang= 不算覆写（首帧本来就没用它）→ 照常水合", async () => {
+    window.history.replaceState(null, "", "/?page=settings&lang=");
+    expect(hasLanguageQueryOverride()).toBe(false);
+    vi.mocked(fetchSettingsSection).mockResolvedValue(general("zh", "override"));
+    await hydrateLanguage();
+    expect(fetchSettingsSection).toHaveBeenCalledWith("general");
+    expect(getState().language).toBe("zh");
+  });
+
+  it("覆写的判据与首帧同一条：?lang=zh-CN 也是覆写（resolveLanguage 归 zh，与 navigator.language 同规则）", async () => {
+    window.history.replaceState(null, "", "/?lang=zh-CN");
+    expect(hasLanguageQueryOverride()).toBe(true);
+    await hydrateLanguage();
+    expect(fetchSettingsSection).not.toHaveBeenCalled();
+  });
+
   it("读失败 → 留着首帧的提示，不报错", async () => {
     vi.mocked(fetchSettingsSection).mockRejectedValue(offline());
     await expect(hydrateLanguage()).resolves.toBeUndefined();
@@ -195,6 +264,30 @@ describe("saveSettingsSection（设置区「保存」）", () => {
     expect(getState().language).toBe("en");
     await saveSettingsSection("approval", { trash_retention_days: 7 });
     expect(getState().language).toBe("en");
+  });
+
+  it("启动水合迟到时用户已在设置区保存了语言 → 保存的赢（server 的旧值不压回来）", async () => {
+    let resolveGet: (s: SettingsSection) => void = () => undefined;
+    vi.mocked(fetchSettingsSection).mockImplementation(() => new Promise((resolve) => { resolveGet = resolve; }));
+    vi.mocked(putSettingsSection).mockResolvedValue(receipt("zh"));
+    const hydrating = hydrateLanguage();
+    await saveSettingsSection("general", { language: "zh" });
+    expect(getState().language).toBe("zh");
+    resolveGet(general("en", "override"));   // 保存之前 server 的样子
+    await hydrating;
+    expect(getState().language).toBe("zh");
+  });
+
+  it("启动水合迟到 + server 还是 default → 不再首启持久化保存前的语言（只 PUT 用户保存的那一笔）", async () => {
+    let resolveGet: (s: SettingsSection) => void = () => undefined;
+    vi.mocked(fetchSettingsSection).mockImplementation(() => new Promise((resolve) => { resolveGet = resolve; }));
+    vi.mocked(putSettingsSection).mockResolvedValue(receipt("zh"));
+    const hydrating = hydrateLanguage();
+    await saveSettingsSection("general", { language: "zh" });
+    resolveGet(general("zh", "default"));
+    await hydrating;
+    expect(vi.mocked(putSettingsSection).mock.calls).toEqual([["general", { language: "zh" }]]);
+    expect(getState().language).toBe("zh");
   });
 
   it("保存期间用户在顶栏又选了别的 → 顶栏赢", async () => {
