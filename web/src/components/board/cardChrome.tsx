@@ -134,12 +134,12 @@ export function CardSurface({ cardId, label, className = "", selectable = false,
         onDoubleClick={canTakeOver && !selecting ? onDoubleClick : undefined}
       >
         {children}
-        {status && (
-          <span className={`card-meta-text card-takeover-status${status.failed ? " is-danger" : ""}`} role="status">
-            <span>{status.msg}</span>
-            {status.detail && <span className="card-meta-detail">{` · ${status.detail}`}</span>}
-          </span>
-        )}
+        {/* 常驻的 role=status 节点（CopiedAnnouncer 同款）：读屏只播报已在树里的 live region 里的变化，按需挂载
+            往往读不到；空时 CSS :empty 收成 sr-only 尺寸、不占 flex gap */}
+        <span className={`card-meta-text card-takeover-status${status?.failed ? " is-danger" : ""}`} role="status">
+          {status && <span>{status.msg}</span>}
+          {status?.detail && <span className="card-meta-detail">{` · ${status.detail}`}</span>}
+        </span>
       </article>
     </SelectingContext.Provider>
   );

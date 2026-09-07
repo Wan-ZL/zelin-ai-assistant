@@ -284,6 +284,19 @@
   white-space: normal;
 }
 
+/* 常驻的 live region（读屏只播报已在树里的 role=status 的变化，按需挂载往往读不到——CopiedAnnouncer 同款）：
+   空时按 .sr-only 收起——绝对定位不参与 flex 布局，卡的 6px gap 不多出一格，视觉零像素 */
+.card-takeover-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* —— 「展开详情 ▸」（原生 CardSurface 详情槽 toggle 的字面与位置；D34 起打开右侧详情侧栏——
    卡片详情只有侧栏一面，就地展开退役，卡面永远收起态）—— */
 .card-details-toggle {

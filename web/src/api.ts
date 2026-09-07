@@ -531,7 +531,7 @@ export function fetchSlackDirectory(refresh = false, lang?: "zh" | "en", signal?
   return request<SlackDirectory>(`/api/slack/directory${query ? `?${query}` : ""}`, { signal });
 }
 
-/** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 写 .command（cd repo && bash uninstall.sh）并 open（§68.6） */
+/** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 把 `cd repo && bash uninstall.sh` 入队 state/terminal_queue 给壳开终端（§68.6 / §68.7 队列通道；壳没在跑 503 SHELL_UNAVAILABLE，details.command 是手动命令） */
 export function postUninstallTerminal(): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/uninstall/terminal", { method: "POST", body: JSON.stringify({}) });
 }

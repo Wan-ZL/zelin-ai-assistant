@@ -5,11 +5,13 @@
 //   2) 没有会话的卡（排队 / 提案 / 没 copy_cmd 的待验收）双击 no-op：不发请求、不开详情（400 语义前移到 UI）；
 //   3) 键盘 Enter 仍是打开详情侧栏，绝不触发接管；卡内按钮上的双击归按钮；
 //   4) 降级：server 501（非 darwin）/ 503 SHELL_UNAVAILABLE（壳没在跑）→ 复制指令到剪贴板 + 提示句；其它错误红字 + 原句；
-//   5) 在途中重复双击只发一次。
+//   5) 在途中重复双击只发一次；
+//   6) §21 多选态里双击 = 两次切换选中，不接管；
+//   7) 卡尾的 role=status 节点常驻（空时 :empty 收起）——读屏才播报得到「已在终端打开」/ 降级提示。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api";
-import { getState, resetStoreForTests } from "../../store";
+import { getState, resetStoreForTests, setSelectionMode } from "../../store";
 import type { ReviewCard as ReviewRow, TaskRow } from "../../types";
 import { PROPOSAL_T1, REVIEW_FIXTURE, TASK_BLOCKED, TASK_QUEUED, TASK_WORKING } from "../styleguide/fixtures";
 import { ProposalCard } from "./ProposalCard";
@@ -131,6 +133,30 @@ describe("double-click = take over in a terminal (#216)", () => {
     expect(status.classList.contains("is-danger")).toBe(true);
     expect(status.textContent).toContain("could not queue the terminal request: EACCES");
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("double-click in §21 selection mode never takes over (two toggles, no terminal)", () => {
+    setSelectionMode(true);
+    render(<RunningCard row={TASK_WORKING} />);
+    const surface = article(/^Working · /);
+    fireEvent.doubleClick(surface);
+    expect(postTerminal).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+    // 双击 = 两次 click：选中再取消（切换两次回到未选），详情也没开
+    fireEvent.click(surface);
+    expect(getState().selectedIds.has(TASK_WORKING.id)).toBe(true);
+    fireEvent.click(surface);
+    expect(getState().selectedIds.has(TASK_WORKING.id)).toBe(false);
+    expect(getState().selectedCardId).toBeNull();
+  });
+
+  it("the role=status live region is mounted before any status arrives (screen readers announce changes, not insertions)", async () => {
+    render(<RunningCard row={TASK_WORKING} />);
+    const region = article(/^Working · /).querySelector(".card-takeover-status")!;
+    expect(region.getAttribute("role")).toBe("status");
+    expect(region.textContent).toBe("");   // 空 → CSS :empty 收成 sr-only 尺寸
+    fireEvent.doubleClick(article(/^Working · /));
+    await waitFor(() => expect(region.textContent).toBe("Opened in terminal"));
   });
 
   it("repeated double-clicks while a request is in flight send one request", async () => {

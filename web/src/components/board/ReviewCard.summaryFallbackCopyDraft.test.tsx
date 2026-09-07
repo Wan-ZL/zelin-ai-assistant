@@ -86,6 +86,7 @@ describe("review face delivery sentence fallback (§64.5 追记)", () => {
 
 describe("复制成稿 goes through copyText", () => {
   const draft = "**Weekly Report**\n- line 1";
+  const announcer = () => document.querySelector('.sr-only[role="status"]')!;
 
   it("成功 → 按钮变「已复制 ✓」1.5 s 后复原，role=status 播报", async () => {
     vi.useFakeTimers();
@@ -98,13 +99,14 @@ describe("复制成稿 goes through copyText", () => {
     });
     expect(copyText).toHaveBeenCalledWith(draft);
     expect(button.textContent).toBe("Copied ✓");
-    expect(screen.getByRole("status").textContent).toBe("Copied to clipboard");
+    // 播报节点 = CopiedAnnouncer（sr-only）；卡尾另有常驻的双击接管 role=status（cardChrome，#216），不是它
+    expect(announcer().textContent).toBe("Copied to clipboard");
     expect(screen.queryByRole("alert")).toBeNull();
     await act(async () => {
       vi.advanceTimersByTime(1500);
     });
     expect(button.textContent).toBe("Copy final draft");
-    expect(screen.getByRole("status").textContent).toBe("");
+    expect(announcer().textContent).toBe("");
   });
 
   it("两条路都失败（copyText → false）→ 短注 role=alert，按钮文案不变，注在 COPY_FAILED_NOTE_MS 后消失", async () => {
@@ -147,6 +149,6 @@ describe("复制成稿 goes through copyText", () => {
   it("没有 final_draft → 没有按钮、没有播报节点", () => {
     render(<ReviewCard card={review({ final_draft: null })} />);
     expect(screen.queryByRole("button", { name: "Copy final draft" })).toBeNull();
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.querySelector('.sr-only[role="status"]')).toBeNull();
   });
 });

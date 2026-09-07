@@ -214,7 +214,7 @@ export interface ReviewCard {
   dispatched_at?: number;
   review_at?: number;
   delivery_mode: "chat" | "repo" | string;
-  /** 原生 ReviewRow meta 行：cwd basename 章 / 会话有新活动 / 单击复制指令 */
+  /** 原生 ReviewRow meta 行：cwd basename 章 / 会话有新活动；copy_cmd = 双击整卡接管的「有没有会话」判据 + 详情侧栏「复制接管指令」的正文（D36：卡面不再渲染指令行） */
   cwd?: string;
   copy_cmd?: string | null;
   session_active?: boolean;
