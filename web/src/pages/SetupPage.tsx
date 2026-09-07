@@ -9,7 +9,8 @@
 //   6 可选：Slack / Gmail 凭证（SecretRow 经 server 写 0600）
 //   7 最后检查（六行健康 + 每个红行一颗修复按钮 + 「登录时自动启动」默认勾选行）→ 「完成」写 state/setup_done.json；
 //     再也不弹，设置 → 关于 可重跑。
-//     完成同时：先按勾选经桥 `setLaunchAtLogin` 注册登录项（§28 追记 D39；壳报正式安装才提供，失败原句留在本步、不放行），
+//     完成同时：先按勾选经桥 `setLaunchAtLogin` 注册登录项（§28 追记 D39；壳报正式安装才提供，失败原句留在本步、不放行；
+//     首跑默认勾选、表过态后重跑预填壳真相——localStorage 一次性标记 launchAtLoginDefaultApplied，原生同名），
 //     再请 server 落 telemetry consent 标记（§15 D49）+ 发 wizard_complete（§16 D48），见 telemetry.ts。
 // 新机器 / 空环境：config.yaml 缺席或三把主凭证一把都没有（且没写过完成标记）时，看板开在这里而不是空看板
 // （app.tsx 按 GET /api/setup 的 needed 判定跳转）。幂等：每步预填当前真值、跳过不清数据；中途关掉下次还会回来
@@ -35,7 +36,7 @@ import { SecretRow } from "../components/settings/SecretRow";
 import { errorMessage } from "../components/settings/useToast";
 import { EngineStep, useEngineDetector } from "../components/setup/EngineStep";
 import { FinaleStep } from "../components/setup/FinaleStep";
-import { applyLaunchAtLoginChoice, LaunchAtLoginChoice, launchAtLoginOffer } from "../components/setup/LaunchAtLoginChoice";
+import { applyLaunchAtLoginChoice, defaultLaunchAtLogin, LaunchAtLoginChoice, launchAtLoginOffer, markLaunchAtLoginDefaultApplied } from "../components/setup/LaunchAtLoginChoice";
 import { applyVaultChoice, VaultStep, type VaultChoice } from "../components/setup/VaultStep";
 import { useI18n, type Language } from "../i18n";
 import { buildAppUrl, navigate } from "../route";
@@ -104,12 +105,14 @@ export function SetupPage() {
   const [note, setNote] = useState<string | null>(null);
   const [vaultChoice, setVaultChoice] = useState<VaultChoice | null>(null);
   const [vaultError, setVaultError] = useState<string | null>(null);
-  // 终章「登录时自动启动」默认勾选（D39）；是否真能动手由壳的 launch_at_login_available 决定（launchAtLoginOffer）
-  const [launchAtLogin, setLaunchAtLogin] = useState(true);
+  // 终章「登录时自动启动」（D39）：null = 用户没碰过复选框 → 默认值随壳快照派生（首跑勾选；表过态后 = 壳的当前真相，
+  // defaultLaunchAtLogin）；是否真能动手由壳的 launch_at_login_available 决定（launchAtLoginOffer）
+  const [launchAtLoginChoice, setLaunchAtLoginChoice] = useState<boolean | null>(null);
   const detector = useEngineDetector();
   const present = hasShellBridge();
   const shell = useShellState();
   const { detect } = detector;
+  const launchAtLogin = launchAtLoginChoice ?? defaultLaunchAtLogin(shell);
 
   useEffect(() => {
     void refreshSetup();
@@ -193,6 +196,8 @@ export function SetupPage() {
         setBusy(false);
         return;
       }
+      // 表过态（原生 launchAtLoginDefaultApplied）：之后重跑向导，行预填壳的真相而不是再默认勾选——关掉过的不会被重新注册
+      markLaunchAtLoginDefaultApplied();
     }
     try {
       const receipt = await postSetupStep("complete");
@@ -340,7 +345,7 @@ export function SetupPage() {
         {step === "finale" && (
           <>
             <FinaleStep engine={detector.engine} engineChecking={detector.checking} goEngine={() => setStepAndSync("engine")} />
-            <LaunchAtLoginChoice checked={launchAtLogin} onChange={setLaunchAtLogin} shell={shell} />
+            <LaunchAtLoginChoice checked={launchAtLogin} onChange={setLaunchAtLoginChoice} shell={shell} />
           </>
         )}
 

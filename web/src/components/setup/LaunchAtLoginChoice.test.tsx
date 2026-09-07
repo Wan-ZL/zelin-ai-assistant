@@ -1,11 +1,12 @@
-// 向导终章「登录时自动启动」一行（决策 D39，CONTRACT §28 追记）：默认勾选；只在壳报 launch_at_login_available 时可用；
-// 浏览器（无桥）/ 开发版 / 快照未到 → 禁用 + 原因句；applyLaunchAtLoginChoice 是 diff-write（与壳真相一致不打桥），
-// 走的是 设置 → 关于 同一条桥方法 `setLaunchAtLogin {on}`，拒绝 → 原生 loginItemAlert 同款「标题: 壳原句」。
+// 向导终章「登录时自动启动」一行（决策 D39，CONTRACT §28 追记）：首跑默认勾选；只在壳报 launch_at_login_available 时可用；
+// 浏览器（无桥）/ 开发版（false）/ 老壳（键缺席 → null）/ 快照未到 → 禁用 + 各自的原因句；applyLaunchAtLoginChoice 是
+// diff-write（与壳真相一致不打桥），走的是 设置 → 关于 同一条桥方法 `setLaunchAtLogin {on}`，拒绝 → 原生 loginItemAlert
+// 同款「标题: 壳原句」。defaultLaunchAtLogin：一次性标记 launchAtLoginDefaultApplied 在 → 壳真相，否则 true。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
-import { applyShellState, resetShellBridgeForTests, type ShellState } from "../../shellBridge";
-import { applyLaunchAtLoginChoice, LaunchAtLoginChoice, launchAtLoginOffer } from "./LaunchAtLoginChoice";
+import { applyShellState, normalizeShellState, resetShellBridgeForTests, type ShellState } from "../../shellBridge";
+import { applyLaunchAtLoginChoice, defaultLaunchAtLogin, LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY, LaunchAtLoginChoice, launchAtLoginOffer, markLaunchAtLoginDefaultApplied } from "./LaunchAtLoginChoice";
 
 const postMessage = vi.fn<(body: unknown) => Promise<unknown>>();
 const text = (zh: string, en: string) => en;
@@ -34,6 +35,7 @@ function installShell() {
 beforeEach(() => {
   resetShellBridgeForTests();
   postMessage.mockReset();
+  window.localStorage.clear();
 });
 afterEach(() => {
   cleanup();
@@ -54,15 +56,45 @@ describe("launchAtLoginOffer", () => {
     expect(offer.reason).toContain("Reading");
   });
 
-  it("shell says not an installed bundle (dev build / old shell without the key) → unavailable, dev-build reason", () => {
+  it("shell says not an installed bundle (dev build) → unavailable, dev-build reason", () => {
     expect(launchAtLoginOffer(true, state({ launch_at_login_available: false }), text)).toEqual(expect.objectContaining({ available: false }));
     expect(launchAtLoginOffer(true, state({ launch_at_login_available: false }), text).reason).toContain("/Applications");
-    const old = { ...state(), launch_at_login_available: undefined };
-    expect(launchAtLoginOffer(true, old, text).available).toBe(false);
+  });
+
+  it("old shell without the key (normalize → null) → unavailable with the 'update the app' reason, never the dev-build one", () => {
+    // 三态：D39 前的正式安装壳没给这个键——「不知道」不能被说成「不是 /Applications 里的正式版」（版本错位期间那句是假的）
+    const old = normalizeShellState({ launch_at_login: true, hotkey: "⌃⌥Space" });
+    expect(old.launch_at_login_available).toBeNull();
+    const offer = launchAtLoginOffer(true, old, text);
+    expect(offer.available).toBe(false);
+    expect(offer.reason).toContain("update the app");
+    expect(offer.reason).toContain("Settings → About");
+    expect(offer.reason).not.toContain("/Applications");
+    expect(launchAtLoginOffer(true, { ...state(), launch_at_login_available: undefined }, text).reason).toContain("update the app");
   });
 
   it("installed shell → available, no reason", () => {
     expect(launchAtLoginOffer(true, state(), text)).toEqual({ available: true, reason: null });
+  });
+});
+
+describe("defaultLaunchAtLogin (one-shot marker launchAtLoginDefaultApplied, native UserDefaults key verbatim)", () => {
+  it("no marker (first run) → true regardless of the shell's current state or a missing snapshot", () => {
+    expect(defaultLaunchAtLogin(null)).toBe(true);
+    expect(defaultLaunchAtLogin(state({ launch_at_login: false }))).toBe(true);
+    expect(defaultLaunchAtLogin(state({ launch_at_login: true }))).toBe(true);
+  });
+
+  it("marker present → the shell's truth (owner turned it off in Settings → About stays off; on stays on)", () => {
+    markLaunchAtLoginDefaultApplied();
+    expect(window.localStorage.getItem(LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY)).toBe("1");
+    expect(defaultLaunchAtLogin(state({ launch_at_login: false }))).toBe(false);
+    expect(defaultLaunchAtLogin(state({ launch_at_login: true }))).toBe(true);
+  });
+
+  it("marker present but snapshot not yet in → false (the row is disabled then anyway; never a guess that turns something on)", () => {
+    markLaunchAtLoginDefaultApplied();
+    expect(defaultLaunchAtLogin(null)).toBe(false);
   });
 });
 

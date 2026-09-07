@@ -1,11 +1,15 @@
-// 向导「完成」→ 登录项（CONTRACT §28 追记；决策 D39；原生 Onboarding.registerLaunchAtLoginDefault 的显式版）：
-//   · 壳报正式安装 ∧ 行勾着（默认）∧ 壳的 launch_at_login 还是 false → 「完成」先桥 `setLaunchAtLogin {on:true}`，再 complete、再回看板；
-//   · 取消勾选 → 不打桥（壳本来就是 false），complete 照走；
-//   · 桥拒绝 → 原句留在本步（role=status）、complete 与导航都不发生；取消勾选再点「完成」就放行；
-//   · 浏览器（无桥）/ 开发版（launch_at_login_available:false）→ 行禁用、不打桥、complete 照走。
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+// 重跑向导时的「登录时自动启动」默认值（CONTRACT §28 追记；决策 D39；原生 Onboarding.registerLaunchAtLoginDefault 的
+// `launchAtLoginDefaultApplied` 一次性标记保留为 localStorage 同名键）：
+//   · 首跑（无标记）「完成」放行 → 写标记；
+//   · 标记在 ∧ 壳 launch_at_login=false（owner 在 设置 → 关于 关掉了）→ 重跑向导时行**未勾选**，「完成」不打桥——
+//     原生保证「用户之后把开关关掉，永不被重新注册」，一路 Return 到终章也不会把登录项偷偷加回来；
+//   · 标记在 ∧ 壳 launch_at_login=true → 行勾选，「完成」no-op（diff-write）；
+//   · 标记在、owner 重新勾上 → 显式要求 → `setLaunchAtLogin {on:true}`；
+//   · 标记在、快照晚于首帧到 → 默认值跟快照走（不能在 mount 时定死成 false，否则会把开着的登录项 `on:false` 关掉）。
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchHealth, fetchPermissions, fetchSecrets, fetchSetup, fetchSetupEngine, postSetupStep } from "../api";
+import { LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY, markLaunchAtLoginDefaultApplied } from "../components/setup/LaunchAtLoginChoice";
 import { LanguageContext } from "../i18n";
 import { navigate } from "../route";
 import { applyShellState, resetShellBridgeForTests, type ShellState } from "../shellBridge";
@@ -64,18 +68,24 @@ function shellState(over: Partial<ShellState> = {}): ShellState {
 
 const postMessage = vi.fn<(body: unknown) => Promise<unknown>>();
 
-/** 假壳：getState / getPermissions 回当前快照；setLaunchAtLogin 记账并按 `reject` 决定成败 */
-function installShell(state: ShellState, reject: string | null = null) {
-  postMessage.mockImplementation(async (body: unknown) => {
+/** 假壳：getState / getPermissions 回当前快照；setLaunchAtLogin 记账并回带新值的快照。`snapshot:false` = 桥装了但快照还没到
+ *  ——此时读类调用（向导一开就跑的 2 s 权限轮询也会带回快照）一律悬着不回，直到测试调 `releaseSnapshot()` */
+let snapshotHeld = false;
+function installShell(state: ShellState, snapshot = true) {
+  snapshotHeld = !snapshot;
+  postMessage.mockImplementation((body: unknown) => {
     const { method, on } = body as { method: string; on?: boolean };
-    if (method === "setLaunchAtLogin") {
-      if (reject) throw new Error(reject);
-      return { ...state, launch_at_login: Boolean(on) };
-    }
-    return state;
+    if (method === "setLaunchAtLogin") return Promise.resolve({ ...state, launch_at_login: Boolean(on) });
+    if (snapshotHeld) return new Promise<unknown>(() => undefined);
+    return Promise.resolve(state);
   });
   window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
-  applyShellState(state);
+  if (snapshot) applyShellState(state);
+}
+
+function releaseSnapshot(state: ShellState) {
+  snapshotHeld = false;
+  act(() => { applyShellState(state); });
 }
 
 function renderFinale() {
@@ -83,6 +93,7 @@ function renderFinale() {
   return render(<LanguageContext.Provider value="en"><SetupPage /></LanguageContext.Provider>);
 }
 
+const box = () => screen.getByRole("checkbox", { name: /Launch at login/ }) as HTMLInputElement;
 const setLaunchCalls = () => postMessage.mock.calls.map((c) => c[0] as { method: string; on?: boolean }).filter((b) => b.method === "setLaunchAtLogin");
 
 beforeEach(() => {
@@ -97,7 +108,7 @@ beforeEach(() => {
   vi.mocked(fetchPermissions).mockResolvedValue(permissions());
   vi.mocked(postSetupStep).mockResolvedValue({ ok: true, setup: setup({ done: true, needed: false }) });
   window.sessionStorage.clear();
-  window.localStorage.clear(); // 首跑语义：一次性标记 launchAtLoginDefaultApplied 不在（重跑判例住 SetupPage.launchAtLoginRerun.test.tsx）
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -106,96 +117,110 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-describe("wizard 完成 → 登录项 (D39)", () => {
-  it("installed shell, row left at its default (checked): Done registers the login item BEFORE complete, then navigates", async () => {
-    const order: string[] = [];
+describe("wizard re-run → 登录项默认值 (D39 one-shot marker)", () => {
+  it("first run: Done writes the one-shot marker (after the register succeeded, before complete)", async () => {
     installShell(shellState());
+    const order: string[] = [];
     postMessage.mockImplementation(async (body: unknown) => {
       const { method } = body as { method: string };
-      if (method === "setLaunchAtLogin") order.push("register");
+      if (method === "setLaunchAtLogin") order.push(`register marker=${window.localStorage.getItem(LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY)}`);
       return shellState({ launch_at_login: method === "setLaunchAtLogin" });
     });
-    vi.mocked(postSetupStep).mockImplementation(async () => { order.push("complete"); return { ok: true, setup: setup({ done: true, needed: false }) }; });
-    vi.mocked(navigate).mockImplementation(() => { order.push("navigate"); });
+    vi.mocked(postSetupStep).mockImplementation(async () => { order.push(`complete marker=${window.localStorage.getItem(LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY)}`); return { ok: true, setup: setup({ done: true, needed: false }) }; });
     renderFinale();
     await screen.findByText("Step 7 of 7");
-    const box = screen.getByRole("checkbox", { name: /Launch at login/ }) as HTMLInputElement;
-    expect(box.checked).toBe(true);
-    expect(box.disabled).toBe(false);
+    expect(window.localStorage.getItem(LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY)).toBeNull();
+    expect(box().checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
-    expect(setLaunchCalls()).toEqual([{ method: "setLaunchAtLogin", on: true }]);
-    expect(order.indexOf("register")).toBeLessThan(order.indexOf("complete"));
-    expect(order.indexOf("complete")).toBeLessThan(order.indexOf("navigate"));
+    expect(order).toEqual(["register marker=null", "complete marker=1"]);
   });
 
-  it("unchecking the row: Done never calls the bridge (shell already off) and completes normally", async () => {
+  it("first run, row unchecked: Done still writes the marker (a choice was made) without any bridge call", async () => {
     installShell(shellState());
     renderFinale();
     await screen.findByText("Step 7 of 7");
-    fireEvent.click(screen.getByRole("checkbox", { name: /Launch at login/ }));
+    fireEvent.click(box());
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+    expect(setLaunchCalls()).toEqual([]);
+    expect(window.localStorage.getItem(LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY)).toBe("1");
+  });
+
+  it("bridge rejected: no marker (the choice has not taken effect yet)", async () => {
+    installShell(shellState());
+    postMessage.mockImplementation(async (body: unknown) => {
+      if ((body as { method: string }).method === "setLaunchAtLogin") throw new Error("INVALID_ARGS: launch at login: SMAppService: Operation not permitted");
+      return shellState();
+    });
+    renderFinale();
+    await screen.findByText("Step 7 of 7");
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await screen.findByRole("status");
+    expect(window.localStorage.getItem(LAUNCH_AT_LOGIN_DEFAULT_APPLIED_KEY)).toBeNull();
+  });
+
+  it("marker present + shell off (owner turned it off in Settings → About): row renders unchecked, Done makes no bridge call", async () => {
+    markLaunchAtLoginDefaultApplied();
+    installShell(shellState({ launch_at_login: false }));
+    renderFinale();
+    await screen.findByText("Step 7 of 7");
+    expect(box().disabled).toBe(false);
+    expect(box().checked).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
     expect(setLaunchCalls()).toEqual([]);
     expect(postSetupStep).toHaveBeenCalledWith("complete");
   });
 
-  it("shell already has it on: Done is a no-op on the bridge (diff-write)", async () => {
+  it("marker present + shell on: row renders checked, Done is a bridge no-op (diff-write)", async () => {
+    markLaunchAtLoginDefaultApplied();
     installShell(shellState({ launch_at_login: true }));
     renderFinale();
     await screen.findByText("Step 7 of 7");
+    expect(box().checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
     expect(setLaunchCalls()).toEqual([]);
   });
 
-  it("bridge rejects: the reason stays on this step, complete and navigation do not happen; unchecking then Done proceeds", async () => {
-    installShell(shellState(), "INVALID_ARGS: launch at login: SMAppService: Operation not permitted");
+  it("marker present + shell off, owner re-checks the row: Done registers (explicit ask wins over the memory)", async () => {
+    markLaunchAtLoginDefaultApplied();
+    installShell(shellState({ launch_at_login: false }));
     renderFinale();
     await screen.findByText("Step 7 of 7");
-    fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    const note = await screen.findByRole("status");
-    expect(note.textContent).toBe("Failed to enable launch at login: SMAppService: Operation not permitted");
-    expect(postSetupStep).not.toHaveBeenCalled();
-    expect(navigate).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: "Done" }) as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(screen.getByRole("checkbox", { name: /Launch at login/ }));
+    fireEvent.click(box());
+    expect(box().checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
-    expect(postSetupStep).toHaveBeenCalledWith("complete");
-    expect(setLaunchCalls()).toHaveLength(1); // 只有失败那一次；第二次「完成」勾选已取消 = 与壳真相一致
+    expect(setLaunchCalls()).toEqual([{ method: "setLaunchAtLogin", on: true }]);
   });
 
-  it("browser (no bridge): the row is disabled with a reason and Done completes without any bridge call", async () => {
+  it("marker present, snapshot arrives after the first frame: the default follows the snapshot (an on login item is not turned off)", async () => {
+    markLaunchAtLoginDefaultApplied();
+    installShell(shellState({ launch_at_login: true }), false);
     renderFinale();
     await screen.findByText("Step 7 of 7");
-    const box = screen.getByRole("checkbox", { name: /Launch at login/ }) as HTMLInputElement;
-    expect(box.disabled).toBe(true);
-    expect(screen.getByTestId("setup-launch-at-login-reason").textContent).toContain("browser");
-    fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
-    expect(postMessage).not.toHaveBeenCalled();
-  });
-
-  it("dev build (shell present, launch_at_login_available false): disabled row, no bridge call, complete proceeds", async () => {
-    installShell(shellState({ launch_at_login_available: false }));
-    renderFinale();
-    await screen.findByText("Step 7 of 7");
-    expect((screen.getByRole("checkbox", { name: /Launch at login/ }) as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByTestId("setup-launch-at-login-reason").textContent).toContain("/Applications");
+    // 快照未到：行禁用、显示未勾选（不能动手就不许看起来会动手）
+    expect(box().disabled).toBe(true);
+    expect(box().checked).toBe(false);
+    releaseSnapshot(shellState({ launch_at_login: true }));
+    expect(box().disabled).toBe(false);
+    expect(box().checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
     expect(setLaunchCalls()).toEqual([]);
   });
 
-  it("the row lives only on the finale step", async () => {
-    installShell(shellState());
-    window.history.replaceState(null, "", "/?page=setup&step=credentials");
-    render(<LanguageContext.Provider value="en"><SetupPage /></LanguageContext.Provider>);
-    await screen.findByText("Step 6 of 7");
-    expect(screen.queryByRole("checkbox", { name: /Launch at login/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  it("no marker (first run), snapshot arrives late: default stays checked → Done registers", async () => {
+    installShell(shellState({ launch_at_login: false }), false);
+    renderFinale();
     await screen.findByText("Step 7 of 7");
-    expect(screen.getByRole("checkbox", { name: /Launch at login/ })).toBeTruthy();
+    expect(box().disabled).toBe(true);
+    releaseSnapshot(shellState({ launch_at_login: false }));
+    expect(box().checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+    expect(setLaunchCalls()).toEqual([{ method: "setLaunchAtLogin", on: true }]);
   });
 });
