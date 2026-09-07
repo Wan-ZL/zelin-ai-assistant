@@ -96,6 +96,11 @@ version_stamp.py 算期望版本，假 install.sh 用同一把尺盖章 + 写心
   - 日志 1 MB 自压；ff-merge 途中脚本自身被替换（哪怕换成执行即 exit 99 的
     booby trap）也照常按旧逻辑跑完——main 包裹 + git rename 写文件；推论：
     第 N 版新增的闸门保护的是 N 之后的部署，永远保护不了部署 N 自己的那一轮。
+
+会话闸门（§56.3 第 4b 步：roster 上有活着的后台 claude 会话 → deferred，不重启
+actd）的判例住 tests/integration/test_auto_deploy_session_gate.py（防腐 #7，一个
+行为一个文件，经 ``base.AutoDeployFixture`` 复用本夹具）；本夹具的假
+act/executor.py 默认回 0 个活会话，所以这里的每一轮都照常部署。
 """
 import json
 import os
@@ -371,6 +376,28 @@ def notify(title, body, subtitle=None, req=None, kind=None):
     return not os.environ.get("FAKE_NOTIFY_RETURN_FALSE")
 '''
 
+FAKE_EXECUTOR = '''"""fake act.executor: only live_session_count() — the §56.3 session gate's roster
+count. Answers per FAKE_ROSTER_PLAN (one line per call, consumed): an integer, or
+`unknown` (= None: the roster could not be read). Default 0 = no live sessions, so
+every other fixture run deploys as before. Each call is appended to FAKE_ROSTER_LOG."""
+import os
+def live_session_count():
+    answer = "0"
+    plan = os.environ.get("FAKE_ROSTER_PLAN")
+    if plan and os.path.exists(plan):
+        with open(plan, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        if lines:
+            answer, rest = lines[0], lines[1:]
+            with open(plan, "w", encoding="utf-8") as fh:
+                fh.write("\\n".join(rest) + ("\\n" if rest else ""))
+    log = os.environ.get("FAKE_ROSTER_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(answer + "\\n")
+    return None if answer == "unknown" else int(answer)
+'''
+
 
 def _install_sh_fn(name):
     """install.sh 里 `name() {` … 行首 `}` 的原文（同 tests/test_auto_deploy_agent）。"""
@@ -396,7 +423,12 @@ def tearDownModule():
 
 
 @unittest.skipIf(_WIN, "bash + install.sh are POSIX-only; the Windows installer is install.ps1")
-class AutoDeployScriptTestCase(unittest.TestCase):
+class AutoDeployFixture(unittest.TestCase):
+    """The origin + live clone + fakes, without tests: per-behaviour files under
+    tests/integration/ (防腐 #7) subclass this through the module name
+    (``base.AutoDeployFixture``) so unittest discovery never re-collects the
+    89 runs below into their module."""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="autodeploy-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
@@ -415,6 +447,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.install_fds.write_text(_install_sh_fn("failed_deploy_steps"), encoding="utf-8")
         self.ci_log = self.tmp / "ci.log"
         self.ci_plan = self.tmp / "ci.plan"
+        # the §56.3 session gate's roster answers (fake act.executor.live_session_count)
+        self.roster_log = self.tmp / "roster.log"
+        self.roster_plan = self.tmp / "roster.plan"
         # fake gh + fake curl shadow the real ones on PATH — both are how the
         # script reaches the check-runs API, and the real gh on the dev Mac /
         # the CI runners may well be logged in
@@ -472,6 +507,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(str(REPO / rel), str(dst))
         (root / "act" / "lib" / "notify.py").write_text(FAKE_NOTIFY, encoding="utf-8")
+        (root / "act" / "executor.py").write_text(FAKE_EXECUTOR, encoding="utf-8")
         (root / "act" / "doctor.py").write_text(FAKE_DOCTOR, encoding="utf-8")
         (root / "act" / "auto_deploy.py").write_text(FAKE_SHIM, encoding="utf-8")
         inst = root / "install.sh"
@@ -496,11 +532,15 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         return _git(self.dev, "rev-parse", "HEAD")
 
     def run_script(self, *args, doctor_plan=None, install_rc=None, ci=None, env=None,
-                   install_steps=None):
+                   install_steps=None, roster=None):
         if doctor_plan is not None:
             self.doctor_plan.write_text("\n".join(doctor_plan) + "\n", encoding="utf-8")
         elif self.doctor_plan.exists():
             self.doctor_plan.unlink()
+        if roster is not None:
+            self.roster_plan.write_text("\n".join(str(r) for r in roster) + "\n", encoding="utf-8")
+        elif self.roster_plan.exists():
+            self.roster_plan.unlink()
         if install_rc is not None:
             self.install_rc_plan.write_text("\n".join(str(r) for r in install_rc) + "\n", encoding="utf-8")
         elif self.install_rc_plan.exists():
@@ -548,6 +588,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             "FAKE_INSTALL_FDS": str(self.install_fds),
             "FAKE_CI_LOG": str(self.ci_log),
             "FAKE_CI_PLAN": str(self.ci_plan),
+            "FAKE_ROSTER_LOG": str(self.roster_log),
+            "FAKE_ROSTER_PLAN": str(self.roster_plan),
             **(env or {}),
         }
         proc = subprocess.run(["bash", str(self.script), *args], cwd=str(self.tmp),
@@ -595,6 +637,10 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def launchctl_calls(self):
         return self.launchctl_log.read_text(encoding="utf-8").splitlines() if self.launchctl_log.exists() else []
+
+    def roster_queries(self):
+        """Every answer the session gate's roster query returned, in call order."""
+        return self.roster_log.read_text(encoding="utf-8").splitlines() if self.roster_log.exists() else []
 
     def doctor_runs(self):
         return self.doctor_log.read_text(encoding="utf-8").splitlines() if self.doctor_log.exists() else []
@@ -657,6 +703,10 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         fake.write_text(FAKE_GIT.replace("@REAL_GIT@", real), encoding="utf-8")
         fake.chmod(0o755)
         return self.tmp / "git.break"  # tests hand this path to FAKE_GIT_BREAK_FILE
+
+
+@unittest.skipIf(_WIN, "bash + install.sh are POSIX-only; the Windows installer is install.ps1")
+class AutoDeployScriptTestCase(AutoDeployFixture):
 
     # -- 1. nothing to do ---------------------------------------------------- #
 

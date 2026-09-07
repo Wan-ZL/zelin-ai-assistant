@@ -297,7 +297,10 @@ export interface TrashRow {
  * last_incident（上一次回滚判决「<ts> <status>: <detail>」，healthy 状态下仍在 =
  * 回滚被拒后没人看过，直到下一次 deployed 才清）。2026-09-03 add-only：
  * behind_main / behind_main_why（上一次部署停在 origin/main head 之前的最新绿 commit，
- * head 的 CI 还没绿 / 红了 / 已中毒；部署到 head 或 up_to_date 时清掉）。
+ * head 的 CI 还没绿 / 红了 / 已中毒；部署到 head 或 up_to_date 时清掉）。2026-09-07
+ * add-only（§56.3 会话闸门）：status `deferred` + deferred_reason（sessions_running |
+ * roster_unknown）/ deferred_sessions（挡住部署的活会话数）/ deferred_since（本轮
+ * 延后首次的时间戳——顶栏按它算「已 X 小时」）。
  */
 export interface DeployState {
   status?: string;
@@ -314,6 +317,9 @@ export interface DeployState {
   last_incident?: string;
   behind_main?: string;
   behind_main_why?: string;
+  deferred_reason?: string;
+  deferred_sessions?: string;
+  deferred_since?: string;
   [key: string]: unknown;
 }
 
