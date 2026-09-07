@@ -150,8 +150,10 @@ def request(primary_id: str, secondary_id: str) -> Optional[str]:
 
 def _finish(job_id: str, status: str, **extra) -> None:
     job = _load_job(job_id) or {}
-    # 记录缺 id（手写/损坏的 job 文件）时以调用方的 job_id 补上——否则
-    # _write_job 的 job["id"] 直接 KeyError，sweep 整个 pass 崩掉（宪法第 11 条）
+    # 记录缺 id / id 为 null·空串（手写/损坏的 job 文件）时以调用方的 job_id 补上
+    # ——否则 _write_job 的 job["id"] KeyError（或按 str(None) 另写流浪文件）：
+    # actd 兜底 except 吞掉异常，但 sweep 在此中断，排在后面的 job 每个 pass
+    # 都清扫不到、坏文件永远 pending、pending_count 虚高（§44.1 追记，宪法第 11 条）
     job["id"] = job.get("id") or job_id
     job["status"] = status
     job["finished_at"] = _iso_now()

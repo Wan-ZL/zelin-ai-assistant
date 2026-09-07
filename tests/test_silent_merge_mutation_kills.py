@@ -7,9 +7,10 @@ the extra ``mark_note_split`` call lands on an already-split (or ts-less) line,
 which ``mark_note_split`` refuses anyway, so ``changed`` is untouched; and the
 ``getattr(primary, "silent_merge_count", 0)`` default in ``_bump_counters`` —
 the field always exists on a Requirement, so the default is never read. The
-rest were real holes (one a real crash: ``_finish`` on a job record without
-``id`` KeyError'd out of the sweep); each is a behavior the module promises,
-pinned here:
+rest were real holes (one a real outage: ``_finish`` on a job record without
+``id`` KeyError'd out of the sweep — actd swallows that, so every job sorted
+after the bad file went unswept on every pass and ``pending_count`` stayed
+inflated); each is a behavior the module promises, pinned here:
 
   * sweep boundaries are STRICT (``>``): a check pending exactly 20 min is not
     stuck, a job done exactly 24 h ago is not expired — and the two constants
@@ -17,7 +18,8 @@ pinned here:
   * job files are human-readable JSON (UTF-8 verbatim, 2-space indent), the
     job dir may pre-exist, ids are ``SM-`` + 8 hex, the detached judge is
     spawned as its own session (never waited on) with stdin closed;
-  * a job record without ``id`` is addressed by its file stem;
+  * a job record without ``id`` (or with a null / empty one) is addressed by
+    its file stem and failed in place — no stray ``None.json`` beside it;
   * judge material: ``display_title`` only when it differs from ``title``,
     at most 6 sources; the verdict object may carry ``same_thing`` alone when
     it IS the whole output; a balanced object followed by prose (``…}.``) still
@@ -150,6 +152,41 @@ class SweepBoundaryTest(_Sandbox):
         self.assertEqual(self._read_job("SM-noid")["status"], "failed")
         self.assertEqual(sorted(p.name for p in self.jobs.glob("*.json")),
                          ["SM-noid.json"])
+
+    def test_job_with_falsy_id_is_failed_in_place_too(self):
+        # "id": null / "" is present-but-useless: the fix must treat it like a
+        # missing key, else _write_job writes a stray None.json / .json and the
+        # original record stays pending forever
+        for bad in (None, ""):
+            with self.subTest(id=bad):
+                for p in self.jobs.glob("*.json"):
+                    p.unlink()
+                self._job("SM-falsy", id=bad, status="pending",
+                          requested_at=_iso(self.NOW - _dt.timedelta(minutes=30)))
+                silent_merge.sweep(self.NOW)
+                self.assertEqual(sorted(p.name for p in self.jobs.glob("*.json")),
+                                 ["SM-falsy.json"])
+                failed = self._read_job("SM-falsy")
+                self.assertEqual(failed["status"], "failed")
+                self.assertEqual(failed["id"], "SM-falsy")
+
+    def test_bad_record_does_not_stall_its_siblings(self):
+        # the actual outage: sweep() stopped at the bad file, so every job
+        # behind it in glob order stayed pending on every pass and
+        # pending_count() (auto_merge's budget) stayed inflated
+        (self.jobs / "SM-b-noid.json").write_text(json.dumps({
+            "status": "pending",
+            "requested_at": _iso(self.NOW - _dt.timedelta(minutes=30))}),
+            encoding="utf-8")
+        self._pending_aged("SM-a", 30)
+        self._pending_aged("SM-c", 30)
+        real_glob = Path.glob
+        with mock.patch.object(Path, "glob",
+                               lambda self, pat: iter(sorted(real_glob(self, pat)))):
+            silent_merge.sweep(self.NOW)
+        for name in ("SM-a", "SM-b-noid", "SM-c"):
+            self.assertEqual(self._read_job(name)["status"], "failed", name)
+        self.assertEqual(silent_merge.pending_count(), 0)
 
 
 class JobFilePlumbingTest(_Sandbox):
