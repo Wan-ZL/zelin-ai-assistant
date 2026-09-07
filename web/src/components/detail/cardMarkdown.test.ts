@@ -42,6 +42,34 @@ describe("cardToMarkdown", () => {
     expect(md).not.toContain("## 📋 要做什么");
   });
 
+  it("多行引文（D52）仍是「需求来自」下的同一个列表项：续行缩进到内容列，空行不带尾随空格", () => {
+    const detail = {
+      id: "R-9",
+      sources: [
+        { who: "zelin", channel: "quick_capture", date: "2026-09-06", quote: "给 my-bench 加导出按钮\n- 支持 CSV\n- 支持 PDF\n\n附：上周会议提过一次", ref: "inbox:1" },
+        { who: "manager", channel: "slack", date: "2026-08-20", quote: "要能导出" },
+      ],
+    } as unknown as CardDetail;
+    const md = cardToMarkdown(detail, text);
+    expect(md).toContain([
+      "## 💬 需求来自",
+      "",
+      "- zelin · quick_capture · 2026-09-06",
+      '  - "给 my-bench 加导出按钮',
+      "    - 支持 CSV",
+      "    - 支持 PDF",
+      "",
+      '    附：上周会议提过一次"',
+      "  - ref: inbox:1",
+      "- manager · slack · 2026-08-20",
+      '  - "要能导出"',
+    ].join("\n"));
+    // 引文自己的项目符号不会逃成小节的顶层项；单行引文的成文与此前逐字相同
+    const sectionBody = md.slice(md.indexOf("## 💬 需求来自"));
+    expect(sectionBody.split("\n").filter((line) => line.startsWith("- "))).toEqual(["- zelin · quick_capture · 2026-09-06", "- manager · slack · 2026-08-20"]);
+    expect(md).not.toMatch(/ +$/m);
+  });
+
   it("delivered_summary 的小节叫「交付了什么」（侧栏 ReviewRow 同词）", () => {
     const md = cardToMarkdown({ id: "R-8", delivered_summary: "已按 DoD 完成成稿" } as unknown as CardDetail, text);
     expect(md).toContain("## 交付了什么\n\n已按 DoD 完成成稿");

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -348,22 +349,41 @@ def attach_capture_images(d: Daemon, req: Requirement, images) -> None:
 def normalize_capture_text(text: str) -> str:
     """§10 capture 正文归一（D52，2026-09-06）：**保留换行**——多行输入框（D35）
     敲出的结构要活到卡上，LLM 扩写 / 派发 prompt 看到的是用户排好的行，
-    不是折成一行的糊。规则：CRLF / 孤 CR → LF；每行内部的空白串折成单空格
-    （行首缩进原样保留——嵌套列表 / 贴进来的代码靠它）、行尾空白剥掉；连续
-    空行最多留 1 行；首尾空行剥掉。单行输入的结果与旧「全部空白折单空格」
-    逐字相同。"""
+    不是折成一行的糊。规则：CRLF / 孤 CR → LF；每行内部的空白串折成单空格、
+    行尾空白剥掉；行首缩进（**只认空格与 tab**——NBSP / 全角空格 / FF / VT /
+    U+2028 之类照旧折掉）先留着，最后剥掉所有非空行的**公共缩进**、保留相对
+    缩进（嵌套列表 / 贴进来的代码靠它；首行不特殊——`"  - a\\n  - b"` 是两个
+    同级项，不是父子）；连续空行最多留 1 行；首尾空行剥掉。单行输入的公共
+    缩进就是它自己的缩进，结果与旧「全部空白折单空格」逐字相同。"""
+    lines = _capture_lines(text)
+    if lines and not lines[-1]:     # 尾部空行（_capture_lines 已保证最多一个）
+        lines.pop()
+    return "\n".join(_dedent_common(lines))
+
+
+def _indent(line: str) -> str:
+    """行首缩进——只认空格与 tab（其余 Unicode 空白按行内空白折掉）。"""
+    return line[:len(line) - len(line.lstrip(" \t"))]
+
+
+def _capture_lines(text: str) -> list:
+    """normalize_capture_text 第一步：逐行归一（缩进 + 折成单空格的正文），
+    空行只在前一行非空时记一个 ""——于是首部空行天然不进列表、连续空行封顶 1。"""
     lines: list = []
-    blank_run = 0
     for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         body = " ".join(raw.split())
-        if not body:
-            blank_run += 1
-            if blank_run == 1:
-                lines.append("")
-            continue
-        blank_run = 0
-        lines.append(raw[:len(raw) - len(raw.lstrip())] + body)
-    return "\n".join(lines).strip()
+        if body:
+            lines.append(_indent(raw) + body)
+        elif lines and lines[-1]:
+            lines.append("")
+    return lines
+
+
+def _dedent_common(lines: list) -> list:
+    """剥掉所有非空行逐字共有的缩进前缀（空格 / tab 混用时只剥真正共有的那段；
+    空行是 ""，切片后仍是 ""）。"""
+    common = os.path.commonprefix([_indent(ln) for ln in lines if ln])
+    return [ln[len(common):] for ln in lines]
 
 
 def capture_title(text: str) -> str:

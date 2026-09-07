@@ -5,8 +5,9 @@ Before D52 ``act/lib/actd/inbox.py`` ``_capture_text`` collapsed ALL whitespace
 multi-line composer was gone before the LLM / agent ever saw it. Now:
 
 - ``normalize_capture_text``: CRLF → LF, interior space runs collapse per
-  line, trailing spaces stripped, leading indentation kept, consecutive blank
-  lines capped at one, outer blank lines stripped; a single-line input is
+  line, trailing spaces stripped, the common leading indentation (spaces / tabs
+  only) is dedented and the RELATIVE indentation kept, consecutive blank lines
+  capped at one, outer blank lines stripped; a single-line input is
   byte-identical to the old flattening.
 - ``capture_title``: the card ``title`` stays ONE line ≤80 chars (flattened —
   the dedupe / re-raise identity anchor, §37).
@@ -55,9 +56,32 @@ class NormalizeCaptureTextTestCase(unittest.TestCase):
         self.assertEqual(inbox.normalize_capture_text("a\n\n\n\nb\n \n  \nc"),
                          "a\n\nb\n\nc")
 
-    def test_outer_blank_lines_and_first_line_indent_are_stripped(self):
+    def test_outer_blank_lines_are_stripped_but_a_first_line_indent_is_relative(self):
+        # only the outer blank lines go; the first line is not special — its
+        # indent relative to line 2 survives (review of D52: `.strip()` used to
+        # eat it and turn "  - a\n  - b" into parent + nested child)
         self.assertEqual(inbox.normalize_capture_text("\n\n   标题\n正文\n\n\n"),
-                         "标题\n正文")
+                         "   标题\n正文")
+
+    def test_common_indentation_is_dedented_relative_indentation_kept(self):
+        # sibling bullets stay siblings; pasted code keeps its nesting
+        self.assertEqual(inbox.normalize_capture_text("  - a\n  - b"), "- a\n- b")
+        self.assertEqual(inbox.normalize_capture_text("    def f():\n        return 1"),
+                         "def f():\n    return 1")
+        # blank lines do not count towards the common indent
+        self.assertEqual(inbox.normalize_capture_text("  x\n\n  y"), "x\n\ny")
+        # tabs and spaces are distinct characters: only the truly common prefix goes
+        self.assertEqual(inbox.normalize_capture_text("\t\ta\n\t  b"), "\ta\n  b")
+
+    def test_only_spaces_and_tabs_count_as_indentation(self):
+        # NBSP / U+3000 / form feed / vertical tab / U+2028 at the start of a
+        # line collapse exactly like they did before D52 (interior runs already
+        # did) — they never ride into the quote / prompts as "indentation"
+        for odd in ["\xa0\xa0", "\u3000\u3000", "\x0c\x0c", "\x0b", "\u2028"]:
+            self.assertEqual(inbox.normalize_capture_text("x\n" + odd + "y"), "x\ny", repr(odd))
+            self.assertEqual(inbox.normalize_capture_text(odd + "x"), "x", repr(odd))
+        # a real space in front of the odd run is indentation; the run behind it collapses
+        self.assertEqual(inbox.normalize_capture_text("x\n \xa0 y"), "x\n y")
 
     def test_whitespace_only_is_empty(self):
         for text in ["", "   ", "\r\n \n\t\n"]:
