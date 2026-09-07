@@ -6,13 +6,14 @@
 //      需继续做 / 需要拍板 / 未知 / 没评 → ☐；
 //   5) 非字符串 / 空白条目过滤（LLM 输出不可信，宪法第 11 条）；「+N」不是按钮（D34 单一详情面，卡上不长开合）。
 import { cleanup, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { LanguageContext } from "../../i18n";
 import { checklistChecked, DodFace, FACE_DOD_MAX } from "./DodFace";
 
 afterEach(cleanup);
 
-const zh = (node: JSX.Element) => <LanguageContext.Provider value="zh">{node}</LanguageContext.Provider>;
+const zh = (node: ReactElement) => <LanguageContext.Provider value="zh">{node}</LanguageContext.Provider>;
 
 describe("DodFace — dod variant (proposal face)", () => {
   it("编号清单 + 逐字标题；空清单零 DOM", () => {
