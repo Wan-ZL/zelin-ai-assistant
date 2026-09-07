@@ -5,10 +5,13 @@
 // 轮询直接调 fetchHealth、不写 store——横幅要留在屏上把「已恢复 ✓」说完；store 只在庆祝结束后刷一次。
 // 宿主：PipelineBanner.RepairButton（横幅，判据 isRecovered）与 FinaleStep（向导「后台服务」行，判据 = 该行自己的
 // daemonRunning，§68.5「心跳在且不 stale」——两处判据必须一致，见 useRepairActd 的参数注）。卸载时清定时器、丢弃在飞的结果。
+// analytics（§16 D48）：每次修复的**下场**发一条 pipeline_repair_result{ok}（原生 Doctor.swift:379 在最终 phase 落定时发，
+// install 失败 / 15 s 没转好 / 恢复 三种下场都算）——POST 被拒 ok:false、超时 ok:false、恢复 ok:true；卸载后丢弃的结果不发。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchHealth, postRepairActd } from "../../api";
 import { useI18n } from "../../i18n";
 import { refreshHealth } from "../../store";
+import { trackEvent } from "../../telemetry";
 import type { HealthSnapshot } from "../../types";
 import { errorMessage } from "../settings/useToast";
 
@@ -67,7 +70,10 @@ export function useRepairActd(recovered: (health: HealthSnapshot) => boolean = i
       await postRepairActd();
     } catch (err) {
       busy.current = false;
-      if (alive.current) setPhase({ kind: "failure", cause: "post", detail: errorMessage(err) });
+      if (alive.current) {
+        setPhase({ kind: "failure", cause: "post", detail: errorMessage(err) });
+        void trackEvent("pipeline_repair_result", { ok: false });
+      }
       return;
     }
     let back = false;
@@ -83,6 +89,7 @@ export function useRepairActd(recovered: (health: HealthSnapshot) => boolean = i
     }
     busy.current = false;
     if (!alive.current) return;
+    void trackEvent("pipeline_repair_result", { ok: back });
     if (!back) {
       setPhase({
         kind: "failure",

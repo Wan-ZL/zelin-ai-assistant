@@ -8,6 +8,7 @@
 //   5 笔记放在哪里（当前生效的笔记库根 / 普通 Markdown 文件夹；「下一步」时 diff-write obsidian_raw）
 //   6 可选：Slack / Gmail 凭证（SecretRow 经 server 写 0600）
 //   7 最后检查（六行健康 + 每个红行一颗修复按钮）→ 「完成」写 state/setup_done.json；再也不弹，设置 → 关于 可重跑。
+//     完成同时：请 server 落 telemetry consent 标记（§15 D49）+ 发 wizard_complete（§16 D48），见 telemetry.ts。
 // 新机器 / 空环境：config.yaml 缺席或三把主凭证一把都没有（且没写过完成标记）时，看板开在这里而不是空看板
 // （app.tsx 按 GET /api/setup 的 needed 判定跳转）。幂等：每步预填当前真值、跳过不清数据；中途关掉下次还会回来
 // （标记只在最后一步写）。页脚 = 原生 footer：进度点 · 第 N / 7 步 · 上一步 / 下一步 / 完成。
@@ -37,6 +38,7 @@ import { useI18n, type Language } from "../i18n";
 import { buildAppUrl, navigate } from "../route";
 import { hasShellBridge } from "../shellBridge";
 import { refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, saveSettingsSection, setLanguage, setSetup, useAppState } from "../store";
+import { markTelemetryConsentShown, trackEvent } from "../telemetry";
 
 export const STEPS = ["welcome", "engine", "permissions", "recording", "vault", "credentials", "finale"] as const;
 export type Step = (typeof STEPS)[number];
@@ -176,6 +178,10 @@ export function SetupPage() {
     try {
       const receipt = await postSetupStep("complete");
       setSetup(receipt.setup);
+      // D49：「完成」= consent surface 已呈现过（第 3 步渲染披露块）→ 请 server write-once 落 state/telemetry_consent_shown，
+      // 上传端的 consent 门自此放行；D48：wizard_complete（原生 SetupWizard.swift:615）。两者永不 reject；等它们落地再整页导航
+      //（离开文档会打断在飞的 fetch），本地 server 毫秒级、且刚回了 complete
+      await Promise.all([markTelemetryConsentShown(), trackEvent("wizard_complete")]);
       navigate(buildAppUrl(window.location.href, "board", null));
     } catch (err) {
       setNote(errorMessage(err));

@@ -73,6 +73,18 @@ def settings_overrides_path(home: Path) -> Path:
     return home / "state" / "settings_overrides.json"
 
 
+def telemetry_consent_marker_path(home: Path) -> Path:
+    # §15 consent 门标记：act/lib/telemetry_upload.CONSENT_MARKER_PATH（STATE_DIR / telemetry_consent_shown）——
+    # 上传端只看它在不在；web 宿主经 POST /api/telemetry/consent-shown 落笔（server/telemetry_consent.py，D49）
+    return home / "state" / "telemetry_consent_shown"
+
+
+def telemetry_consent_v2_path(home: Path) -> Path:
+    # §15 v2 披露记录：act/lib/analytics.CONSENT_V2_PATH（STATE_DIR / telemetry_consent_shown_v2）——只是「披露展示过」
+    # 的记录，不开内容门（v0.48 起内容同意只认显式 capture_input 键）
+    return home / "state" / "telemetry_consent_shown_v2"
+
+
 def secrets_dir(home: Path) -> Path:
     # §19：act/lib/secrets.SECRETS_DIR（HOME / config / secrets；dir 0700 / file 0600）
     return home / "config" / "secrets"

@@ -2,10 +2,13 @@
 // 一句诚实的话（行为元数据默认开；输入文本只在下方勾选后才上传）+ 「详情与关闭在设置。」深链 + 一颗
 // 「分享输入文本以帮助改进产品」复选框——写的就是设置目录 telemetry 区的 `telemetry.capture_input`
 // （server diff-write 嵌套 override，与设置页开关同一键，§68.1），两处永不打架。权限体检页与向导第 3 步共用。
+// consent-surface 标记（§15 D49）：复选框保存**成功后**请 server write-once 落 state/telemetry_consent_shown——复选框就在
+// 披露块里，保存 = 块确实在屏上；挂载 / 渲染时不写（§15 issue #37 追记）。保存失败不落标记。
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { buildAppUrl } from "../../route";
 import { refreshSettingsCatalog, saveSettingsSection, useAppState } from "../../store";
+import { markTelemetryConsentShown } from "../../telemetry";
 import { errorMessage } from "../settings/useToast";
 
 const KEY = "telemetry.capture_input";
@@ -28,6 +31,7 @@ export function TelemetryBlock() {
     setError(null);
     try {
       await saveSettingsSection("telemetry", { [KEY]: next });
+      void markTelemetryConsentShown();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
