@@ -8,7 +8,8 @@ act/lib/search_index.py；形状 ``{card_id: {"updated_at", "text"}}``，每卡�
 - 响应 ``{"entries": {card_id: text}, "truncated": bool}``——只发 ``text``（``updated_at`` 不发，web 不消费），
   每条再按 :data:`TEXT_CAP` 尾裁一次（镜像 act 侧上限；手编 / 旧版文件的超长条目不许把响应撑爆）。
 - **ETag / 304**：``ETag = "<mtime_ns>-<size>"``（原生 Store 的 (mtime, size) 重验戳的 HTTP 形），
-  ``If-None-Match`` 命中 → 304 无体——store 每次搜索开始与每版看板落地都重验一次，文件没变零传输。
+  ``If-None-Match`` 命中 → 304 无体（app.py ``_send_not_modified``：不发 Content-Type / Content-Length，
+  RFC 9110 §8.6）——store 每次搜索开始与每版看板落地都重验一次，文件没变零传输。
 - **size cap**：文件超过 :data:`MAX_FILE_BYTES` 不读（一个失控的索引不许把 server 内存与响应撑到几十 MB），
   响应空 ``entries`` + ``truncated: true``——层诚实缺席，字段搜索照常。
 - 缺席 → 200 空 ``entries``、**不带 ETag**（新装机 / 还没索引过任何会话时的常态，不是错误——宪法第 11 条：

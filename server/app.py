@@ -150,6 +150,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _send_not_modified(self, extra: Optional[dict] = None) -> None:
+        """304：无体，**不发 Content-Type / Content-Length**（RFC 9110 §8.6——304 上的 Content-Length
+        只许等于 200 会发的体长，发 0 是错的；客户端本就知道 304 没体）；安全头 + ETag / Cache-Control 照发。"""
+        self.send_response(304)
+        self._emit_security_headers()
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+
     def _send_json(self, status: int, obj: dict) -> None:
         body = json.dumps(obj, ensure_ascii=False, sort_keys=True).encode("utf-8")
         self._send_bytes(status, body, "application/json; charset=utf-8",
@@ -263,7 +272,10 @@ class Handler(BaseHTTPRequestHandler):
             # §37.2 会话内容层（D45）：条件 GET——304 走不了 _send_json 的表路由；query 一律忽略
             status, body, extra = search_index_source.response(
                 ctx.home, self.headers.get("If-None-Match"))
-            self._send_bytes(status, body, search_index_source.CONTENT_TYPE, extra)
+            if status == 304:
+                self._send_not_modified(extra)
+            else:
+                self._send_bytes(status, body, search_index_source.CONTENT_TYPE, extra)
         else:
             # 纯 JSON 读面（health / 设置面 / 目录 / 诊断…）——表驱动：精确表先，前缀表后
             handler = _lookup(_GET_JSON_ROUTES, _GET_PREFIX_ROUTES, path)

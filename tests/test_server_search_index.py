@@ -5,8 +5,8 @@
   带 If-None-Match 也照样 200：没有 (mtime, size) 可比）；
 - 200 投影 ``{entries: {card_id: text}, truncated: false}``：只发 text（updated_at 不发）、非 dict / 非 str 条目跳过、
   每条尾裁 TEXT_CAP（与 act/lib/search_index.TEXT_CAP 同值——drift-pin）；
-- ETag = "<mtime_ns>-<size>"；If-None-Match 命中（含 ``W/`` 弱前缀、多值、``*``）→ 304 空体仍带 ETag；文件换版后
-  旧 ETag → 200 新体新 ETag；
+- ETag = "<mtime_ns>-<size>"；If-None-Match 命中（含 ``W/`` 弱前缀、多值、``*``）→ 304 空体仍带 ETag，
+  且不发 Content-Length / Content-Type（RFC 9110 §8.6）而安全头照发；文件换版后旧 ETag → 200 新体新 ETag；
 - size cap：超过 MAX_FILE_BYTES 的文件不读 → 空 entries + truncated:true；坏 JSON / 顶层 list → 200 空 entries，永不 500；
 - 路径永不由客户端控制：query 里的 path / home / file 一律忽略，同一响应；路由只有精确 ``/api/search-index``；
 - server/paths.search_index_path 与 act/lib/search_index.INDEX_PATH 的布局镜像 pin（server 绝不 import act，测试侧可以）。
@@ -88,6 +88,13 @@ class SearchIndexRouteTestCase(unittest.TestCase):
                 self.assertEqual(status, 304)
                 self.assertEqual(body2, b"")
                 self.assertEqual(headers2.get("ETag"), etag)  # 304 也带 ETag，客户端缓存戳不丢
+                self.assertEqual(headers2.get("Cache-Control"), "no-store")
+                # RFC 9110 §8.6：304 不发 Content-Length（发 0 ≠ 200 的体长即违规）也不发 Content-Type
+                self.assertNotIn("Content-Length", headers2)
+                self.assertNotIn("Content-Type", headers2)
+                # 安全头单一真源（_emit_security_headers）在 304 路上也不漏
+                self.assertEqual(headers2.get("X-Content-Type-Options"), "nosniff")
+                self.assertEqual(headers2.get("X-Frame-Options"), "DENY")
         # 不命中的 ETag → 200 全体
         status, _h, body3 = self._get({"If-None-Match": '"0-0"'})
         self.assertEqual(status, 200)
