@@ -1,0 +1,9 @@
+pr: `ai/self-improve/R-284`（PR #245；R-284「修红 CI：PR #197 vite 6.4.3 → 8.2.2」的 dependabot 配置半边）
+phase: 横切（依赖维护；D5 / D12 每日循环「红 CI 是臣子的事」）
+law: —（无新 §；dependabot 在 CONTRACT 里只作 §70.3 ⑪ 追记的判例出现，§0 第 7 条运行时白名单未动，web/ dev 白名单只列包名不锁版本）
+
+**病灶**：dependabot 对 `web/` 逐包开 PR。vite 跨大版本时 `@vitejs/plugin-react` 的 peer range 跟着换代（`npm view` 核过：4.x 与 5.0–5.1 只认 `vite ^4.2 || ^5 || ^6 || ^7`；5.2.0 起放宽到 `|| ^8`；6.x 只认 `^8`；`vitest` 的 `@vitest/*` peer 更是逐版本精确钉死），单包 bump 的 PR 在 `npm ci` 那一步 ERESOLVE，required 的「Web tests」与「QA gates」在装依赖时就红、测试根本没跑（判例 #197，vite 6→8，lockfile 里是 plugin-react 4.7.0）。vite 8 本身的升级另走 #244（R-195，接替 #197）。**注**：#114 关闭时留下的 `@dependabot ignore this major version`（plugin-react 6.x.x）仍在 dependabot 那头生效，直到 #244 自己把它抬到 6.x（或重开 #114 / `@dependabot unignore`）——所以第一个 `vite-toolchain` 组 PR 里 plugin-react 可能落在 5.2.0（#198 现在单开的那版）而不是 6.x；5.2.0 已认 vite 8，组照样能装。
+
+**改法**：`.github/dependabot.yml` npm 面加 `groups.vite-toolchain`，patterns = `vite` / `@vitejs/*` / `vitest` / `@vitest/*`——以后这几包在同一个 PR 里一起解析、lockfile 一次重铸，peer 才对得上。只加这一个键：schedule / open-pull-requests-limit / labels / commit-message 逐字不变，无 `ignore` / `allow`（分组不关掉任何更新，不匹配的包照旧单独开 PR；不带 `applies-to` 即只管 version updates，security updates 不受影响）。
+
+**门**：`check-jsonschema --builtin-schema vendor.dependabot`（含拼错键的阴性对照会红）、PyYAML 结构断言（对 origin/main 的差只有 `groups`）、`ruff check .`、`compileall`、全量 unittest、`scripts/qa/hygiene.py` / `depgraph.py`、`changelog_fragments.py check` / `progress_log.py check`。不触及 web/ 与 shell/，对应两门按 §56.8 路径 filter 不需跑。**长期门**：七项 required check 里没有一项解析 `dependabot.yml`（Lint = shellcheck + ruff；actionlint / zizmor 只管 workflows），一个拼错的键会让 GitHub 拒掉整份配置、两条生态的 version updates 一起静默停摆——review 判定后新增 `tests/test_dependabot_config.py`（stdlib + PyYAML；钉 version 2 / 两条生态 / 键名白名单 / `vite-toolchain` 四个 pattern 与 web/package.json 对得上 / 无 `ignore` `allow`；含拼错键、`groups` 掉进 `schedule` 两条阴性对照），此后走 `Tests on ubuntu` 两条 required 腿。
