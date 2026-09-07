@@ -5,8 +5,9 @@
      「卡片 / Card」）经 `CONTROL_OWNER` 标 retired、理由带 D46 与 §68.14，JSON 里 gated=False；
   2. 账本：`ui/parity/pending.txt` 不再挂这一行（退役条目留在 pending 上会被 §66.2 判 STALE）；
   3. 死 CSS：`web/src/styles/animations.css` 不再定义 `.is-moving` / `.is-settling` /
-     `task-card-settle`，且 web/src 没有任何 TS/TSX/CSS 再引用这三个名字——飞行层没被移植，
-     这些规则从出生起就没人挂，删了就不许再长回来（长回来 = 先修 §68.14 的 tombstone）。
+     `task-card-settle`，且 web/src 没有任何 TS/TSX/CSS/HTML 在注释之外再引用这三个名字——飞行层
+     没被移植，这些规则从出生起就没人挂，删了就不许再长回来（长回来 = 先修 §68.14 的 tombstone）；
+     注释里引 tombstone 提到名字不算。
 纯文件读，无 subprocess、无网络（防腐 #7）。
 """
 import os
@@ -33,6 +34,15 @@ def _web_src_files():
         for name in files:
             if name.endswith((".ts", ".tsx", ".css", ".html")):
                 yield os.path.join(dirpath, name)
+
+
+def _strip_comments(body):
+    """去掉三种注释：/* */ 块注释、// 行注释（整行或行尾，`://` 这种 URL 不算）、<!-- --> HTML 注释。
+    注释里提退役名字是合法的（引用 D46 tombstone 的自然位置，animations.css 头部就这么做）；
+    剩下的代码 / 字符串 / 选择器里出现才算长回来。"""
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+    return re.sub(r"(?m)(?:^|(?<=\s))//.*$", "", body)
 
 
 class LaneMotionRetiredTestCase(unittest.TestCase):
@@ -67,10 +77,23 @@ class LaneMotionRetiredTestCase(unittest.TestCase):
         self.assertIn("prefers-reduced-motion: reduce", rules)
         self.assertIn('data-board-animations="off"', rules)
 
+    def test_comment_stripper_spares_comments_but_not_code(self):
+        # 行注释 / 块注释 / HTML 注释里提名字不算复活；className 字串与选择器才算
+        spared = "\n".join((
+            "// legacy is-moving note (D46)",
+            "const url = 'https://x.test/a'; // see task-card-settle tombstone",
+            "/* .is-settling was here */",
+            "<!-- is-moving -->",
+        ))
+        self.assertNotRegex(_strip_comments(spared), r"is-moving|is-settling|task-card-settle")
+        self.assertIn("https://x.test/a", _strip_comments(spared))
+        self.assertIn("is-moving", _strip_comments('<div className="task-card is-moving" />'))
+        self.assertIn(".is-settling", _strip_comments(".task-card.is-settling { opacity: 1 }"))
+
     def test_nothing_in_web_src_references_the_retired_class_names(self):
         offenders = []
         for path in _web_src_files():
-            body = re.sub(r"/\*.*?\*/", "", uc.read_text(path), flags=re.S)
+            body = _strip_comments(uc.read_text(path))
             for name in RETIRED_NAMES:
                 if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(name), body):
                     offenders.append("%s: %s" % (uc.display_path(path), name))
