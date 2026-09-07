@@ -29,6 +29,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],
+    // 防腐 #7：把 Node 的真 fetch 换成不开 socket 的拒绝桩——没 mock 住 api.ts 的判例不再真打 localhost
+    setupFiles: ["src/vitest.setup.ts"],
     // vitest 默认把 CSS 换成空串跳过处理——连 `?raw` 一起空掉，而
     // styles/tokens.test.ts 要读 tokens.css 原文钉暗色双写。打开后 CSS 走
     // 与 vite build 相同的处理链。
