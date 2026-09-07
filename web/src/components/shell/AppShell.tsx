@@ -224,7 +224,8 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
         <MaintenanceBanner />
         {/* §48 诊断条：录制 / Gmail / Slack 这条路断了 + 一颗修复按钮（原生 kanban header 的 DiagnosticsStrip） */}
         <DiagnosticsStrip />
-        <main className="shell-main">{content}</main>
+        {/* tabIndex=-1：pushState 换页后焦点掉到 body 时 route.focusPageRoot 把焦点放到这里（读屏器报到主区、Tab 从新页起步，D40） */}
+        <main className="shell-main" tabIndex={-1}>{content}</main>
       </div>
     </div>
   );

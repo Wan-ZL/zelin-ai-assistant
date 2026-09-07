@@ -28,6 +28,11 @@
   flex-direction: column;
 }
 
+/* 换页后的程序化聚焦（route.focusPageRoot）与 WebKit 点击非交互内容时落到最近 tabindex 祖先的焦点：主区不画焦点环 */
+.shell-main:focus {
+  outline: none;
+}
+
 /* —— 左侧导航栏（NavRail；原生 sidebar 逐字镜像：底 primary 3%、行 hover primary 6%、选中 accent 18%、
    圆角 6、行内 padding 6/8、图标 16、文字 13 regular、标题 14 semibold；收起 = 48pt 图标条，展开默认 200pt）—— */
 .rail {

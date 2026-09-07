@@ -1,13 +1,14 @@
 // App 壳（刻意薄）：只做五件事——语言接线、realtime 生命周期（SSE + /api/health 轮询）、页面分发、
 // 壳桥接线（Dock 徽章 / 全局快速捕获命令 / 壳菜单换页 / 首次运行向导跳转）、客户端路由器的启停（D40：换页 = pushState +
-// 从 store 重渲染，不整页重载——store / SSE / 未决的「合并中…」章与多选都活过换页；看板滚动位置回来还原）。
+// 从 store 重渲染，不整页重载——store / SSE / 未决的「合并中…」章与多选都活过换页；去过的页回来滚动位置还原、焦点不掉到 body）。
 // 布局骨架/顶栏/离线横幅/整页空态在 components/shell/AppShell（G7）；
 // 一切业务 state 进 store.ts，一切板块 UI 进 pages/ 与 components/。禁止在这里堆 useState。
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { setApiText } from "./api";
 import { getI18n, LanguageContext } from "./i18n";
 import {
-  buildAppUrl, navigate, readAnchor, readPage, readSettingsAnchor, restoreScroll, startRouter, subscribeRoute, useRoute, type AppPage,
+  buildAppUrl, focusPageRoot, isDepsPage, navigate, readAnchor, readPage, readSettingsAnchor, restoreScroll, startRouter, subscribeRoute,
+  useRoute, type AppPage,
 } from "./route";
 import { createBoardRealtime } from "./realtime";
 import { onShellCommand, pushBadge } from "./shellBridge";
@@ -47,13 +48,11 @@ export function shouldRedirectToSetup(page: AppPage, needed: boolean | undefined
 }
 
 /** 壳的 `open_page {page, anchor?}` 命令（D40，§61.6）→ 目标 URL：page 过 readPage 白名单（不认识的值 = 看板）、anchor 过
- *  readAnchor 同款校验；与壳整页加载时的 `?page=<p>&anchor=<a>` 深链同形（shell ShellConfig.pageURL），只是不重载。
- *  当前 URL 上的 anchor 不继承——壳说「设置页顶部」就是顶部。 */
+ *  readAnchor 同款校验；与壳整页加载时的 `?page=<p>&anchor=<a>` 深链同形（shell ShellConfig.pageURL），只是不重载。 */
 export function shellPageUrl(args: Record<string, unknown>, href = window.location.href): URL {
   const page = typeof args.page === "string" ? readPage(`?page=${encodeURIComponent(args.page)}`) : "board";
   const anchor = typeof args.anchor === "string" ? readAnchor(`?anchor=${encodeURIComponent(args.anchor)}`) : null;
-  const url = buildAppUrl(href, page, null);
-  url.searchParams.delete("anchor");
+  const url = buildAppUrl(href, page, null); // 页内 query（anchor / log / step）不继承——壳说「设置页顶部」就是顶部
   if (anchor) url.searchParams.set("anchor", anchor);
   return url;
 }
@@ -81,7 +80,10 @@ export function App() {
   // 路由真源是 URL（route.useRoute 订阅 location.search；navigate / popstate 后重渲染——D40 客户端路由）
   const search = useRoute();
   const page = readPage(search);
-  const anchor = readSettingsAnchor(search);
+  // 设置页的 anchor 深链（含 ?page=deps / diagnostics 旧深链）由 SettingsPage 自己滚到那一区——只在设置页上才算：别的页 URL 上
+  // 万一残留的 ?anchor= 不许压掉滚动还原（buildAppUrl 已不带页内 query，这里是第二道）
+  const settingsAnchor = page === "settings" || isDepsPage(page) ? readSettingsAnchor(search) : null;
+  const lastPage = useRef<AppPage | null>(null);
 
   // api.ts 无 React：错误文案的语言经注入接线（语言切换后重注入，幂等）
   setApiText(getI18n(language).text);
@@ -133,12 +135,18 @@ export function App() {
     else rememberMainSection(page);
   }, [page]);
 
-  // 换页后的滚动（D40）：回看板还原离开时的位置，其余页到顶（整页导航的默认行为）；带 anchor 的设置页深链由
-  // SettingsPage 自己滚到那一区。layout effect：DOM 已换好、还没绘出——不闪一帧顶部
+  // 换页后的滚动与焦点（D40）——只在**页变了**那一拍做：同一页上 URL 的其它变化（anchor 被 SettingsPage 消费掉、?card= 抽屉、
+  // 过滤器）不是换页，不许把刚滚到的 anchor 区又拉回去。滚动：记过的页还原到离开时的位置（看板在内），第一次到的页到顶（整页导航
+  // 的默认行为）；带 anchor 的设置页深链不动（SettingsPage 滚到那一区）。焦点：整页导航会把焦点归零、读屏器报新文档标题；pushState
+  // 换页时刚点的「← 返回看板」随旧页卸载、焦点掉到 <body>——放到 <main>（AppShell tabIndex=-1），读屏器报到主区、Tab 从新页起步；
+  // 焦点还在（rail 项、⌘1…⌘7 时的输入框）就不动。layout effect：DOM 已换好、还没绘出——不闪一帧顶部
   useLayoutEffect(() => {
-    if (anchor) return;
-    restoreScroll(page);
-  }, [page, anchor]);
+    const previous = lastPage.current;
+    if (previous === page) return;
+    lastPage.current = page;
+    if (!settingsAnchor) restoreScroll(page);
+    if (previous !== null) focusPageRoot();
+  }, [page, settingsAnchor]);
 
   // 首次运行向导：空环境（无 config / 无凭证、且没走完向导）时看板开在向导页
   useEffect(() => {

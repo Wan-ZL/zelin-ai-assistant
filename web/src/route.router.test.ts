@@ -5,11 +5,12 @@
 //   · 文档级链接委托：左键点本 SPA 的 <a href> → preventDefault + navigate；⌘ / ⌃ / ⇧ / ⌥ 点、中键、target=_blank、
 //     download、别的路径、纯片段（设置页目录 #settings-<id>）、内层已 preventDefault 的都不拦；
 //   · 滚动记忆：离开一页记 window 滚动 + [data-scroll-memory] 容器，回来还原；没记过 → 到顶；
-//   · buildAppUrl 不带片段；isAppUrl / isHashOnlyChange 真值表。
+//   · 焦点：换页后焦点掉到 body → 放到 main.shell-main；焦点还在别处不动；
+//   · buildAppUrl 不带片段、不带上一页的页内 query（anchor / log / step）；isAppUrl / isHashOnlyChange 真值表。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  buildAppUrl, interceptAppLinks, isAppUrl, isHashOnlyChange, navigate, readPage, rememberScroll, resetRouterForTests,
-  restoreScroll, startRouter, subscribeRoute,
+  buildAppUrl, buildSettingsUrl, focusPageRoot, interceptAppLinks, isAppUrl, isHashOnlyChange, navigate, readPage, rememberScroll,
+  resetRouterForTests, restoreScroll, startRouter, subscribeRoute,
 } from "./route";
 
 beforeEach(() => {
@@ -106,6 +107,19 @@ describe("route — navigate 是 pushState，不是整页重载", () => {
     expect(url.hash).toBe("");
     expect(url.search).toBe("");
     expect(buildAppUrl("http://127.0.0.1:47820/#x", "trash", "R-1").href).toBe("http://127.0.0.1:47820/?page=trash&card=R-1");
+  });
+
+  it("buildAppUrl 不带上一页的页内 query（?anchor= / ?log= / ?step=）——过滤器照旧带着；要带的调用方之后自己 set", () => {
+    // ?page=settings&anchor=deps&log=actd.log 之后点 rail 任务台：不许成 /?anchor=deps&log=actd.log（再点设置又滚回 deps、又翻开日志）
+    const board = buildAppUrl("http://127.0.0.1:47820/?page=settings&anchor=deps&log=actd.log&q=foo&tier=T1", "board", null);
+    expect(board.search).toBe("?q=foo&tier=T1");
+    // 已在设置页（anchor 还在 URL 上）点 rail 设置：同样不带
+    expect(buildAppUrl("http://127.0.0.1:47820/?page=settings&anchor=deps", "settings", null).search).toBe("?page=settings");
+    // 向导的 ?step= 是向导页内的
+    expect(buildAppUrl("http://127.0.0.1:47820/?page=setup&step=vault", "board", null).search).toBe("");
+    expect(buildAppUrl("http://127.0.0.1:47820/?step=vault", "setup", null).search).toBe("?page=setup");
+    // buildSettingsUrl 在之后 set anchor：照旧只有它这一个
+    expect(buildSettingsUrl("http://127.0.0.1:47820/?page=settings&anchor=general&log=x.log", "deps").search).toBe("?page=settings&anchor=deps");
   });
 });
 
@@ -278,5 +292,25 @@ describe("route — 滚动记忆", () => {
     restoreScroll("settings");
     expect(scrollTo).toHaveBeenLastCalledWith(0, 40);
     stop();
+  });
+});
+
+describe("route — 换页后的焦点", () => {
+  it("焦点掉到了 body → 放到 main.shell-main（不滚动）；焦点还在别处 → 不动；没有 main 不抛", () => {
+    const main = document.createElement("main");
+    main.className = "shell-main";
+    main.tabIndex = -1;
+    const focus = vi.spyOn(main, "focus");
+    const button = document.createElement("button");
+    document.body.append(main, button);
+    focusPageRoot();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.activeElement).toBe(main);
+    button.focus();
+    focusPageRoot();
+    expect(document.activeElement).toBe(button); // rail 项 / 输入框还握着焦点：不抢
+    expect(focus).toHaveBeenCalledTimes(1);
+    document.body.innerHTML = "";
+    expect(() => focusPageRoot()).not.toThrow();
   });
 });

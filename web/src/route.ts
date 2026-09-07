@@ -19,12 +19,16 @@
 // 「← 返回看板」、横幅 / 诊断条 / 向导的深链……）左键点下去都走 `navigate()`，href 照旧留着（⌘点 / 中键开新标签、
 // 复制链接、无 JS 退化都还是原来的 URL）。原生 MainWindow.swift 在进程内换 section、store 是 app 寿命的
 // （AppDelegate.swift:21）；web 自此同样：store / SSE / 「合并中…」章与它的 180 s 定时器 / 多选 / 书立条展开态
-// 都活过换页；看板的滚动位置离开时记住、回来还原（其余页到顶——整页导航的默认行为）。
+// 都活过换页；每一页的滚动位置离开时记住、回来还原（看板在内），第一次到的页从顶部开始（整页导航的默认行为）。
 import { useSyncExternalStore } from "react";
 
 const CARD_QUERY_PARAM = "card";
 const PAGE_QUERY_PARAM = "page";
 const ANCHOR_QUERY_PARAM = "anchor";
+/** 只属于某一页的 query（设置页 `?anchor=` / 依赖检查区 `?log=` / 向导 `?step=`）：换页链接不带上一页的这些——否则
+ *  `?page=settings&anchor=deps` 之后点 rail 任务台成了 `/?anchor=deps`，再点设置又滚回 deps 区、`?log=` 又翻开日志。
+ *  要带的调用方在 buildAppUrl 之后自己 set（buildSettingsUrl / PipelineBanner / IngestPage / DepRows / failureAction…） */
+const PAGE_SCOPED_PARAMS = [ANCHOR_QUERY_PARAM, "log", "step"] as const;
 
 export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps" | "archive" | "permissions" | "diagnostics" | "setup"
   | "deps" | "ingest" | "about";
@@ -76,8 +80,9 @@ export function buildAppUrl(href: string, page: AppPage, cardId: string | null):
   if (cardId) url.searchParams.set(CARD_QUERY_PARAM, cardId.trim());
   else url.searchParams.delete(CARD_QUERY_PARAM);
 
-  // 换页链接不带上一页的片段（设置页目录 `#settings-<id>` 点过之后 location.href 会带着它）——
-  // 片段是页内锚点，不是路由的一部分
+  // 上一页的页内 query（anchor / log / step）与片段（设置页目录 `#settings-<id>` 点过之后 location.href 会带着它）都不带——
+  // 它们是页内的一次性指令 / 锚点，不是路由的一部分；过滤器（?q= / tier=…）照旧带着
+  for (const key of PAGE_SCOPED_PARAMS) url.searchParams.delete(key);
   url.hash = "";
   return url;
 }
@@ -213,7 +218,9 @@ export function startRouter(): () => void {
   };
 }
 
-// ----- 滚动记忆：按页记 window 滚动 + 任何 `[data-scroll-memory="<key>"]` 滚动容器（列独立滚动的看板日后挂这个属性即可） ----- #
+// ----- 滚动记忆与焦点：整页导航白送的两样默认行为，pushState 换页要自己补 ------------------------------------------------ #
+// 滚动按页记 window 滚动 + 任何 `[data-scroll-memory="<key>"]` 滚动容器（看板的列容器 `.board-main` 挂 "board-main"——窄窗下横向
+// 滚过的列回来还在；列独立滚动（D42）再给每列挂一个即可）。
 
 interface ScrollSnapshot {
   x: number;
@@ -248,6 +255,15 @@ export function restoreScroll(page: AppPage, doc: Document = document): void {
       el.scrollTop = saved.top;
     }
   }
+}
+
+/** 换页后焦点掉到了 <body>（刚点的「← 返回看板」随旧页卸载）→ 放到 `<main class="shell-main">`（AppShell，tabIndex=-1）：读屏器报到
+ *  主区、Tab 从新页内容起步——整页导航时浏览器归零焦点 + 报新文档标题，pushState 什么都不报。焦点还在（rail 项 / ⌘1…⌘7 时的输入框）
+ *  就不动；preventScroll——滚动归 restoreScroll 管 */
+export function focusPageRoot(doc: Document = document): void {
+  const active = doc.activeElement;
+  if (active && active !== doc.body) return;
+  doc.querySelector<HTMLElement>("main.shell-main")?.focus({ preventScroll: true });
 }
 
 /** 仅测试用：清空滚动记忆与订阅者 */
