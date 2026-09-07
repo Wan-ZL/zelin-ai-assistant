@@ -3,8 +3,12 @@
 //   · 在提案列上滚滚轮 → 只有这一列的卡片列表动了：这一列的列头与列顶输入框一像素不动、其余列的列头与首卡不动、
 //     文档与 .shell-main 都没滚（document 不再是滚动容器）；
 //   · 键盘：把焦点落到这一列视口外的卡上 → 浏览器把这一列滚过去（卡进入列表的可视框），列头照旧钉着；
-//   · 多选态的操作条横贯看板底部、整条在视口里（此前它是横排里的一个 flex 项，被排到最右列之后、视口之外）。
-// 数据 = demo initial 场景（提案列四张卡 + 一张占位；600px 高的视口下列表必然溢出）。
+//   · 首卡的焦点环（2px outline，在卡的 border box 之外）落在滚动容器的 padding box 里——滚动容器只画 padding box，
+//     顶上不留 2px 就把环的上边切掉（#274 审查抓到）；卡自己的位置一像素不动；
+//   · 多选态的操作条横贯看板底部、整条在视口里（此前它是横排里的一个 flex 项，被排到最右列之后、视口之外）；
+//   · 永久性完成书立条展开后：搜索框是滚动容器的兄弟、钉在条顶，滚行列表时它不动（与列顶输入框同款；#274 审查抓到）。
+// 数据 = demo initial 场景（提案列四张卡 + 一张占位；600px 高的视口下列表必然溢出）；书立条那条用 page.route
+// 往 /api/board 里注 20 条 archived 行（demo seed 的 archived 是空的）。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
 
@@ -128,6 +132,67 @@ test("键盘：焦点落到列视口外的卡上 → 这一列自己滚过去，
   expect(after.composerTop).toBe(before.composerTop);
   expect(after.docScrollY).toBe(0);
   expect(after.mainScrollTop).toBe(0);
+});
+
+test("首卡的焦点环不被滚动容器切掉：每列 scrollTop 0 时列表的 padding box 比首卡的 border box 至少高出 2px", async ({ page }) => {
+  await openBoard(page);
+  const columns = page.locator(".board-column");
+  const n = await columns.count();
+  for (let i = 0; i < n; i += 1) {
+    const column = columns.nth(i);
+    const list = column.locator(".column-list");
+    const card = list.locator("article.task-card").first();
+    if ((await card.count()) === 0) continue;
+    await card.focus();
+    await expect(card).toBeFocused();
+    // 聚焦首卡不引发列表滚动（它已在可视框里）
+    expect(await list.evaluate((el) => el.scrollTop)).toBe(0);
+    const listBox = (await list.boundingBox())!;
+    const cardBox = (await card.boundingBox())!;
+    // 环画在 border box 之外 2px：滚动容器的可视框（padding box）顶边必须在卡顶之上 ≥ 2px，否则环的上边被裁
+    expect(cardBox.y - listBox.y).toBeGreaterThanOrEqual(2);
+    // 左右两边同理（负外边距 + 同宽内边距把滚动容器撑到列的全宽）
+    expect(cardBox.x - listBox.x).toBeGreaterThanOrEqual(2);
+    expect(listBox.x + listBox.width - (cardBox.x + cardBox.width)).toBeGreaterThanOrEqual(2);
+  }
+});
+
+test("永久性完成书立条：展开后搜索框钉在条顶，滚行列表时不动", async ({ page }) => {
+  // demo seed 的 archived 是空的：注 20 条进 /api/board，600px 高的条必然溢出
+  await page.route("**/api/board", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.archived = Array.from({ length: 20 }, (_, i) => ({
+      id: `R-9${String(i).padStart(2, "0")}`, title: `archived demo card ${i}`, summary: "demo", kind: "debt",
+      archived_at: "2026-09-01T10:00:00Z", archive_reason: "user", prev_status: "detected",
+    }));
+    body.counts = { ...(body.counts ?? {}), archived: 20 };
+    await route.fulfill({ response, json: body });
+  });
+  await openBoard(page);
+  await page.locator(".backlog-strip.is-archive .backlog-strip-toggle").click();
+  const strip = page.locator(".backlog-strip.is-archive");
+  const list = strip.locator(".backlog-strip-list");
+  const search = strip.getByRole("searchbox");
+  await expect(search).toBeVisible();
+  // 搜索框是滚动容器的兄弟（条的直接子项），不在列表里
+  expect(await search.evaluate((el) => el.parentElement!.classList.contains("backlog-strip"))).toBe(true);
+  expect(await list.evaluate((el) => el.querySelector("input"))).toBeNull();
+  expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100);
+  const searchBefore = (await search.boundingBox())!;
+  const firstRowBefore = (await list.locator("article.task-card").first().boundingBox())!;
+
+  await list.hover();
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(100);
+
+  const searchAfter = (await search.boundingBox())!;
+  const firstRowAfter = (await list.locator("article.task-card").first().boundingBox())!;
+  expect(searchAfter.y).toBe(searchBefore.y);
+  expect(firstRowAfter.y).toBeLessThan(firstRowBefore.y - 100);
+  await expect(search).toBeInViewport();
+  // 看板层仍无纵向溢出（展开的条没把 .board-main 撑高）
+  expect(await page.locator(".board-main").evaluate((el) => el.scrollHeight - el.clientHeight)).toBe(0);
 });
 
 test("多选态：操作条横贯看板底部、整条在视口里", async ({ page }) => {

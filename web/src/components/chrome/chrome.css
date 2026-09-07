@@ -383,7 +383,14 @@
   writing-mode: horizontal-tb;
 }
 
-/* 展开态的行列表 = 这根条自己的滚动容器（与 board.css .column-list 同一套：吃掉列头之外的条高、
+/* 展开态条顶的搜索框（永久性完成条）：列表的兄弟节点、钉在条顶不随行滚走（与列顶输入框同款，D42）。
+   6px 上边距 = 它此前在列表里吃到的列表上内边距，列表自己的 6px 上内边距接着当框与首行的间距——几何一像素不动 */
+.backlog-strip > .trash-search {
+  flex: 0 0 auto;
+  margin-top: 6px;
+}
+
+/* 展开态的行列表 = 这根条自己的滚动容器（与 board.css .column-list 同一套：吃掉列头 / 搜索框之外的条高、
    负外边距撑到条的全宽、行的几何不动；D42 起列高钉一屏，这里的 overflow-y 才真的生效） */
 .backlog-strip-list {
   flex: 1 1 auto;

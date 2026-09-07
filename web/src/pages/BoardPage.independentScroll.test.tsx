@@ -1,14 +1,15 @@
 // 列各自滚、列头与列顶输入框钉在列顶（owner 决策 D42，CONTRACT §54.4 2026-09-06 追记；原生 Kanban.swift：
 // 横向 ScrollView 里每列 VStack { header; ScrollView(.vertical) { cards } }，窗口从不整体滚）。
 // jsdom 没有布局，这里钉两样东西：(a) DOM 结构——滚动容器只有 `.column-list`，列头 / 输入框 / 「仅显示最近 N 条」
-// 是它的兄弟节点；多选操作条是 `.board-page`（pages/BoardPage）的最后一个子项、不在 `.board-main` 横排里；(b) 样式文本——壳钉一屏高、
+// 是它的兄弟节点；多选操作条是 `.board-page`（pages/BoardPage）的最后一个子项、不在 `.board-main` 横排里；永久性完成书立条的搜索框
+// 是 `.backlog-strip-list` 的兄弟、钉在条顶；(b) 样式文本——壳钉一屏高、
 // `.shell-main` 是非看板页的滚动容器、`.column-list` / `.backlog-strip-list` 是各自的滚动容器、卡不被压扁。
 // 真实的滚动几何由 e2e/lanesScroll.spec.ts 在真浏览器里验。
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchLanes } from "../api";
 import chromeCss from "../components/chrome/chrome.css?raw";
-import { refreshBoard, resetStoreForTests, setSelectionMode } from "../store";
+import { refreshBoard, resetStoreForTests, setArchiveStripExpanded, setSelectionMode } from "../store";
 import boardCss from "../styles/board.css?raw";
 import shellCss from "../styles/shell.css?raw";
 import type { Board } from "../types";
@@ -115,6 +116,22 @@ describe("board DOM: only .column-list scrolls; header / composer / cap note are
     expect(main.firstElementChild?.classList.contains("backlog-strip")).toBe(true);
     expect(main.lastElementChild?.classList.contains("is-archive")).toBe(true);
   });
+
+  it("永久性完成书立条展开后：搜索框是 .backlog-strip-list 的兄弟、钉在条顶（不在滚动容器里）", () => {
+    const { container } = render(<BoardPage />);
+    act(() => setArchiveStripExpanded(true));
+    const strip = container.querySelector(".backlog-strip.is-archive")!;
+    const list = strip.querySelector(".backlog-strip-list")!;
+    const search = strip.querySelector("input[type=search]")!;
+    expect(search).toBeTruthy();
+    expect(search.parentElement).toBe(strip);
+    expect(list.contains(search)).toBe(false);
+    // 列头 → 搜索框 → 列表：搜索框在列表之前、列头之后
+    expect(search.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.querySelector(".backlog-strip-head")!.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 列表里只剩行 / 空态 / 封顶注
+    expect(list.querySelector("input")).toBeNull();
+  });
 });
 
 describe("stylesheet pins (shell.css / board.css / chrome.css)", () => {
@@ -157,9 +174,10 @@ describe("stylesheet pins (shell.css / board.css / chrome.css)", () => {
     expect(list).toContain("flex: 1 1 auto");
     expect(list).toContain("min-height: 0");
     expect(list).toContain("overflow-y: auto");
-    // 负外边距 + 同宽内边距：滚动容器撑到列的全宽（焦点环 / 阴影不被裁、覆盖式滚动条不压卡），卡的几何不动
-    expect(list).toContain("margin: 0 -10px");
-    expect(list).toMatch(/padding: 0 10px/);
+    // 负外边距 + 同宽内边距：滚动容器撑到列的全宽（覆盖式滚动条不压卡），顶上 2px 给首卡的焦点环（滚动容器只画 padding box，
+    // 环在卡的 border box 之外——#274 审查抓到顶边被裁）、底下 8px 给末卡的阴影；每一边的负外边距都被同宽内边距抵回，卡的几何不动
+    expect(list).toContain("margin: -2px -10px 0");
+    expect(list).toContain("padding: 2px 10px 8px");
     expect(ruleBody(boardCss, ".column-list > *")).toContain("flex: 0 0 auto");
   });
 
@@ -171,7 +189,7 @@ describe("stylesheet pins (shell.css / board.css / chrome.css)", () => {
     expect(bar).toContain("padding: 8px var(--native-layout-board-padding)");
   });
 
-  it("两根书立条的展开列表是各自的滚动容器（与 .column-list 同一套）", () => {
+  it("两根书立条的展开列表是各自的滚动容器（与 .column-list 同一套）；条顶搜索框不缩、留 6px 上边距", () => {
     const list = ruleBody(chromeCss, ".backlog-strip-list")!;
     expect(list).toContain("flex: 1 1 auto");
     expect(list).toContain("min-height: 0");
@@ -179,6 +197,9 @@ describe("stylesheet pins (shell.css / board.css / chrome.css)", () => {
     expect(list).toContain("margin: 0 -10px");
     expect(ruleBody(chromeCss, ".backlog-strip-list > *")).toContain("flex: 0 0 auto");
     expect(ruleBody(chromeCss, ".backlog-strip")).toContain("min-height: 0");
+    const search = ruleBody(chromeCss, ".backlog-strip > .trash-search")!;
+    expect(search).toContain("flex: 0 0 auto");
+    expect(search).toContain("margin-top: 6px");
   });
 
   it("收起的书立条：竖排按钮靠 flex 撑满条高，不写 height: 100%（竖排百分比高会回落到视口高、把 .board-main 撑出纵向滚动）", () => {

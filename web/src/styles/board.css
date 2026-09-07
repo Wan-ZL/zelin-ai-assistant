@@ -124,15 +124,18 @@
 
 /* 列的滚动容器（原生每列自己的 ScrollView(.vertical)）：吃掉列头 / 输入框之外的全部列高，卡多了在列内滚。
    负外边距 + 同宽内边距把滚动容器撑到列的全宽（原生 ScrollView 也占满列、内容才 .padding(.horizontal, 10)）：
-   卡的几何一像素不动，焦点环（2px）与卡片阴影不被滚动容器裁掉，覆盖式滚动条骑在 10px 的边上而不压卡 */
+   卡的几何一像素不动，覆盖式滚动条骑在 10px 的边上而不压卡。滚动容器只画 padding box 里的东西，
+   所以顶上也要留 2px（同样负外边距抵回去、首卡不动）给首卡的焦点环（2px outline，在卡的 border box 之外——
+   原生 ScrollView 内容 .padding(.top, 6) 同一用意：「so the first item's focus ring clears the clip」）；
+   底下留 8px 给末卡的阴影（--card-shadow 向下最远 7px），滚到底时阴影不被切平 */
 .column-list {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 0 -10px;
-  padding: 0 10px 4px;
+  margin: -2px -10px 0;
+  padding: 2px 10px 8px;
   overflow-y: auto;
 }
 

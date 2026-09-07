@@ -103,15 +103,19 @@ export function ArchiveStrip() {
         {expanded && help && <LaneHelpButton help={help} />}
       </div>
 
+      {/* 搜索框是列表的兄弟节点、钉在条顶（D42，§54.4 2026-09-06 追记：与列顶输入框同款——只有 .backlog-strip-list 滚，
+          输入框不随行滚走；原生 ArchiveLaneContent 把 TextField 放在 ScrollView 里，spec 拍板输入框钉住） */}
+      {expanded && (
+        <input
+          type="search"
+          className="chrome-search trash-search"
+          placeholder={text("搜索标题 / summary…", "Search title / summary…")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
       {expanded && (
         <div className="backlog-strip-list">
-          <input
-            type="search"
-            className="chrome-search trash-search"
-            placeholder={text("搜索标题 / summary…", "Search title / summary…")}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
           {rows.length === 0 && (
             <p className="trash-empty">
               {all.length === 0 ? text(...ARCHIVE_EMPTY) : text(...ARCHIVE_NO_MATCH)}
