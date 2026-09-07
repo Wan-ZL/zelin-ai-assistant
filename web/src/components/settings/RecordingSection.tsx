@@ -99,9 +99,13 @@ export function RecordingSection() {
   );
 }
 
+type ClockKey = "start" | "end";
+const CLOCK_INPUT_ID: Record<ClockKey, string> = { start: "recording-schedule-start", end: "recording-schedule-end" };
+
 /**
  * 录制日程块（§61.7）：开关 + 起止时刻 + 七个星期勾选。开关与勾选即改即发；时刻在失焦 / 回车时发（半截输入不打扰壳）。
  * 每次只发改动的键（桥合并进现有日程、整份校验；坏值 = 整个请求拒绝、零写入——拒绝原文照印）。
+ * 时间窗在日程关着时也可编（先设好窗口再开，不必开 → 改 → 引擎两次起停；桥本来就接受 enabled=false 下的 start / end / days）。
  * 老壳（UNKNOWN_METHOD）：说明句代替控件。
  */
 export function RecordingScheduleBlock({ schedule }: { schedule: ShellRecordingSchedule | undefined }) {
@@ -113,14 +117,29 @@ export function RecordingScheduleBlock({ schedule }: { schedule: ShellRecordingS
   const [start, setStart] = useState(s?.start ?? "09:00");
   const [end, setEnd] = useState(s?.end ?? "19:00");
   // 回滚 = 把两个时刻输入重挂一次（key 变）：受控 <input type="time"> 在 state 拨回同一个值时 React 不一定重写 DOM
-  // （jsdom 与 WebKit 都见过清空后的框一直空着），重挂最直接
+  // （jsdom 与 WebKit 都见过清空后的框一直空着），重挂最直接。重挂会把键盘焦点丢到 body——回车路径上焦点本来在
+  // 输入框里，回滚后放回去（refocus）；失焦路径上用户已经走开了，不抢。
   const [rollbackGen, setRollbackGen] = useState(0);
+  const [refocus, setRefocus] = useState<ClockKey | null>(null);
   // 壳的真相到了（别的入口改了日程 / 拒绝回滚）→ 本地草稿跟着走
   useEffect(() => { if (s) setStart(s.start); }, [s?.start]);
   useEffect(() => { if (s) setEnd(s.end); }, [s?.end]);
+  useEffect(() => {
+    if (!refocus) return;
+    document.getElementById(CLOCK_INPUT_ID[refocus])?.focus();
+    setRefocus(null);
+  }, [rollbackGen, refocus]);
   if (!s) return null;
 
-  async function send(args: Record<string, unknown>) {
+  /** 两个时刻输入拨回壳的真相并重挂；`keepFocus` = 回滚后把焦点还给那个输入框 */
+  function rollbackClocks(keepFocus: ClockKey | null) {
+    setStart(s!.start);
+    setEnd(s!.end);
+    setRollbackGen((g) => g + 1);
+    setRefocus(keepFocus);
+  }
+
+  async function send(args: Record<string, unknown>, keepFocus: ClockKey | null = null) {
     setBusy(true);
     setError(null);
     try {
@@ -129,25 +148,24 @@ export function RecordingScheduleBlock({ schedule }: { schedule: ShellRecordingS
       const message = err instanceof Error ? err.message : String(err);
       if (/^UNKNOWN_METHOD/.test(message)) setUnsupported(true);
       else setError(message);
-      // 时刻输入回滚到壳的真相
-      setStart(s!.start);
-      setEnd(s!.end);
-      setRollbackGen((g) => g + 1);
+      rollbackClocks(keepFocus);
     } finally {
       setBusy(false);
     }
   }
 
   /** 失焦 / 回车：与壳真相相同不发；坏值（type=time 被清空成 "" / 文本回退乱写）页面先拦并把草稿拨回真相。 */
-  function commitClock(key: "start" | "end", value: string) {
+  function commitClock(key: ClockKey, input: HTMLInputElement) {
+    const value = input.value;
     if (value === s![key]) return;
+    // 回车时焦点还在框里（blur 事件里 activeElement 已经是 body / 下一个控件）——回滚后要把焦点放回去的只有这种
+    const keepFocus = document.activeElement === input ? key : null;
     if (!isClock(value)) {
       setError(text("时间要写成 HH:MM（例如 09:00）", "Time must be HH:MM (for example 09:00)"));
-      if (key === "start") setStart(s!.start); else setEnd(s!.end);
-      setRollbackGen((g) => g + 1);
+      rollbackClocks(keepFocus);
       return;
     }
-    void send({ [key]: value });
+    void send({ [key]: value }, keepFocus);
   }
 
   function toggleDay(id: number, on: boolean) {
@@ -177,18 +195,21 @@ export function RecordingScheduleBlock({ schedule }: { schedule: ShellRecordingS
       {unsupported ? (
         <p className="settings-helper">{text("这个版本的看板 app 还不认识录制日程——升级壳后再来。", "This board app build does not know recording schedules yet — update the shell and come back.")}</p>
       ) : (
-        <fieldset className="recording-schedule-window" disabled={busy || !s.enabled} aria-label={text("录制时间窗", "Recording window")}>
+        // 不随 busy 禁用：桥往返是毫秒级，而禁用会把键盘焦点从正在编辑的框里踢出去（每次回车提交都得重新 Tab 回来）；
+        // 发送幂等（只发改动的键、桥合并），双击不可能在毫秒内发生
+        <fieldset className="recording-schedule-window" aria-label={text("录制时间窗", "Recording window")}>
           <div className="settings-actions recording-schedule-times">
-            <label className="settings-knob-label" htmlFor="recording-schedule-start">{text("从", "From")}</label>
-            <input key={`start-${rollbackGen}`} id="recording-schedule-start" className="settings-input settings-input-short" type="time" step={60} value={start}
+            {/* 可见标签只有「从 / 到」；读屏的可访问名补全成「从（开始时间）」——名字里含可见文字（WCAG 2.5.3） */}
+            <label className="settings-knob-label" htmlFor={CLOCK_INPUT_ID.start}>{text("从", "From")}<span className="sr-only">{text("（开始时间）", " (start time)")}</span></label>
+            <input key={`start-${rollbackGen}`} id={CLOCK_INPUT_ID.start} className="settings-input settings-input-short" type="time" step={60} value={start}
               onChange={(e) => setStart(e.target.value)}
-              onBlur={(e) => commitClock("start", e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") commitClock("start", (e.target as HTMLInputElement).value); }} />
-            <label className="settings-knob-label" htmlFor="recording-schedule-end">{text("到", "to")}</label>
-            <input key={`end-${rollbackGen}`} id="recording-schedule-end" className="settings-input settings-input-short" type="time" step={60} value={end}
+              onBlur={(e) => commitClock("start", e.target)}
+              onKeyDown={(e) => { if (e.key === "Enter") commitClock("start", e.target as HTMLInputElement); }} />
+            <label className="settings-knob-label" htmlFor={CLOCK_INPUT_ID.end}>{text("到", "to")}<span className="sr-only">{text("（结束时间）", " (end time)")}</span></label>
+            <input key={`end-${rollbackGen}`} id={CLOCK_INPUT_ID.end} className="settings-input settings-input-short" type="time" step={60} value={end}
               onChange={(e) => setEnd(e.target.value)}
-              onBlur={(e) => commitClock("end", e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") commitClock("end", (e.target as HTMLInputElement).value); }} />
+              onBlur={(e) => commitClock("end", e.target)}
+              onKeyDown={(e) => { if (e.key === "Enter") commitClock("end", e.target as HTMLInputElement); }} />
             {s.start > s.end && <span className="settings-helper">{text("跨午夜：到次日", "Overnight: ends the next day")}</span>}
           </div>
           <div className="settings-radio-row recording-schedule-days" role="group" aria-label={text("星期", "Days")}>

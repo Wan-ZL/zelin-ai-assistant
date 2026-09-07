@@ -173,4 +173,19 @@ describe("RecordingConsentSection · 状态行三句（Permissions.swift:466-486
     expect(screen.queryByRole("status")).toBeNull();
     expect(container.querySelectorAll(".settings-warning")).toHaveLength(0);
   });
+
+  it("§61.7 按日程暂停：状态词「On — paused by schedule」、点是中性 unknown 而不是 denied；不暂停时回到 denied + 「engine not recording」", () => {
+    const paused = { enabled: true, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: true };
+    installShell({ on: true, mode: "screen", engine_running: false, schedule: paused });
+    const first = renderSection();
+    expect(first.container.querySelector(".perm-status")?.textContent).toBe("On — paused by schedule");
+    expect(first.container.querySelector(".perm-dot")?.className).toBe("perm-dot is-unknown");
+    expect(screen.getByRole("button", { name: "Turn Off" })).toBeTruthy();   // 仍是「已答过」的行，不是重问的披露块
+    cleanup();
+
+    installShell({ on: true, mode: "screen", engine_running: false, schedule: { ...paused, paused: false } });
+    const second = renderSection();
+    expect(second.container.querySelector(".perm-status")?.textContent).toBe("On — engine not recording");
+    expect(second.container.querySelector(".perm-dot")?.className).toBe("perm-dot is-denied");
+  });
 });
