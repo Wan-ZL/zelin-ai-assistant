@@ -14,9 +14,11 @@
 // Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
 // 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
 // hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
-// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）与主菜单纯表（MenuSpec：双语标题、
-// 设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 / 缩放，随 LanguageStore
-// 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；本文件只挂到 NSApp、做副作用。
+// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）、启动来源策略（LaunchPolicy，D38：
+// `--background` argv / 登录项启动 → 建窗不前置不 activate，§56.5 / §61 追记）与主菜单纯表
+// （MenuSpec：双语标题、设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 /
+// 缩放，随 LanguageStore 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；
+// 本文件只挂到 NSApp、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -273,6 +275,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var titleObservation: NSKeyValueObservation?
     /// `LanguageStore.$lang` 订阅句柄（§54 追记：主菜单随界面语言重建）。
     private var menuLanguage: AnyCancellable?
+    /// 本次启动的来源判决（D38，presentOnLaunch 落定）；失败弹窗的时机据此决定。
+    private var launchPresentation: LaunchPolicy.Presentation = .foreground
+    /// 后台启动时压下的失败弹窗（D38）：窗口第一次 showWindow() 时补弹，之后清空。
+    private var deferredAlert: NSAlert?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
@@ -294,9 +300,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .removeDuplicates()
             .sink { [weak self] lang in self?.installMainMenu(lang: lang) }
         buildWindow()
+        presentOnLaunch()
         connectOrSpawn()
         startEngines()
         startNativeResidue()
+    }
+
+    /// D38：启动来源决定窗口要不要前置（原生 AppDelegate「Do NOT show the main window on
+    /// launch」的壳版，§56.5 / §61 追记）。后台启动——install.sh 自动部署 relaunch 的
+    /// `--background` argv、或 loginwindow 的登录项启动事件——窗口已建好但**不 orderFront、
+    /// 不 activate**，落一行 log 取证（这是唯一能证明登录项判定在这台机器上生效的地方）；
+    /// 之后 Dock 点击（ReopenPolicy 见看板不在 → show）/ ⌃⌥Space / 通知点击 / 菜单深链照旧前置。
+    /// 其余启动（Dock / Finder / 用户手敲 `open`）与从前一样直接前置。**必须在
+    /// applicationDidFinishLaunching 里调**：`LaunchAtLogin.launchedAsLoginItem()` 只在此刻读得到启动事件。
+    private func presentOnLaunch() {
+        launchPresentation = LaunchPolicy.presentation(arguments: CommandLine.arguments,
+                                                       launchedAsLoginItem: LaunchAtLogin.launchedAsLoginItem())
+        switch launchPresentation {
+        case .foreground:
+            showWindow()
+        case .background(let reason):
+            server.logLine("board-shell: background launch (\(reason)) — window built but not shown; "
+                + "Dock click / ⌃⌥Space / notification click bring it up")
+        }
+    }
+
+    /// D38 的另一半：两个失败弹窗（showStartFailure / showConfigFailure）的时机。NSAlert 面板住在
+    /// modal-panel 层、盖在所有 app 的窗口之上——登录项启动时 server 冷启动超过 10 s，它就会成为
+    /// owner 登录后看到的第一件东西。后台启动且看板窗口还没露面 → 不 runModal：alert 全文先落
+    /// board-shell.log，压到下一次 showWindow()（Dock 点击 / ⌃⌥Space / 通知点击）再弹；隐藏窗口里的
+    /// 失败 splash 照常渲染，窗口一露面就带着排障线索。前台启动或窗口已在屏上 → 照旧立刻 runModal。
+    private func presentFailureAlert(_ alert: NSAlert) {
+        switch LaunchPolicy.failureAlertTiming(presentation: launchPresentation,
+                                               boardVisible: window.isVisible) {
+        case .now:
+            alert.runModal()
+        case .deferUntilShown:
+            deferredAlert = alert
+            let detail = alert.informativeText
+                .split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " | ")
+            server.logLine("board-shell: \(alert.messageText) — alert deferred until the window is shown "
+                + "(background launch): \(detail)")
+        }
     }
 
     /// §68.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
@@ -387,6 +435,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func showWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if let alert = deferredAlert {   // D38：后台启动时压下的失败弹窗，窗口露面这一刻补弹
+            deferredAlert = nil
+            alert.runModal()
+        }
     }
 
     /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口 + 加载深链（`?page=…` 是看板 origin 上的
@@ -441,8 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.window.title = WindowTitlePolicy.resolve(pageTitle: wv.title,
                                                           fallback: ShellConfig.displayName)
         }
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // 刻意不在这里 orderFront / activate：要不要前置由 presentOnLaunch 按启动来源决定（D38）。
     }
 
     // MARK: 外链（§54 追记：一律交系统浏览器；原生 DepAction.url / FailureCatalog.perform 同款）
@@ -559,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         • Manual run: cd into the server repo, then ZAI_PORT=\(ShellConfig.port) <python from config/runtime.json> -m server
         """)
         alert.addButton(withTitle: L("好", "OK"))
-        alert.runModal()
+        presentFailureAlert(alert)
     }
 
     /// SERVER_REPO 解析不到 = 明说怎么修（弹窗 + log 各一份），绝不猜路径。
@@ -595,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         Log: \(shellLog)
         """)
         alert.addButton(withTitle: L("好", "OK"))
-        alert.runModal()
+        presentFailureAlert(alert)
     }
 
     // MARK: menu（§54 追记「菜单 l10n」：表在 ShellSupport.swift MenuSpec，这里只装与执行）

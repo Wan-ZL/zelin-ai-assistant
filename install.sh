@@ -813,8 +813,11 @@ install_ui() {
 # this run installed a new shell bundle AND the app is running, and only AFTER
 # step 5 reloaded the server agent. SIGTERM → the shell's DispatchSource turns
 # it into a regular NSApp.terminate (it spawned nothing to clean up: the server
-# is launchd's). `open -g` relaunches without stealing focus. Interactive runs
-# leave a running app alone (the owner picks the moment).
+# is launchd's). `open -g` relaunches without stealing focus, and `--args
+# --background` tells the shell itself not to order its window front or activate
+# (D38, shell LaunchPolicy): `-g` alone only asks LaunchServices not to switch —
+# a window the owner had closed would still reappear. Interactive runs leave a
+# running app alone (the owner picks the moment).
 relaunch_shell_app() {
     [ "$NON_INTERACTIVE" -eq 1 ] || return 0
     [ "$UI_SHELL_INSTALLED" -eq 1 ] || return 0
@@ -826,7 +829,7 @@ relaunch_shell_app() {
         sleep 0.5
     done
     pkill -KILL -x "$UI_EXEC_NAME" 2>/dev/null || true
-    if open -g "$UI_APP_PATH" 2>/dev/null; then
+    if open -g "$UI_APP_PATH" --args --background 2>/dev/null; then
         ok "ui: relaunched the shell app on the new build (server agent reloaded first)"
     else
         warn "ui: relaunch failed — start it manually: open \"$UI_APP_PATH\""

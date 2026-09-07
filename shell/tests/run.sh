@@ -1,16 +1,19 @@
 #!/bin/bash
 # run.sh — shell/ Swift gates, XCTest-free (CONTRACT §61.5):
-#   [1/7] typecheck every shell source as ONE module (what build.sh compiles);
-#   [2/7]+[3/7] compile + run BridgeHarness.swift against every shell source
+#   [1/9] typecheck every shell source as ONE module (what build.sh compiles);
+#   [2/9]+[3/9] compile + run BridgeHarness.swift against every shell source
 #       except main.swift (the bootstrap has top-level statements; the harness
 #       is the main.swift of this build) — pins the `zaiShell` wire vocabulary
 #       and the LegacyPrefs seed rules;
-#   [4/7]+[5/7] compile + run PolicyHarness.swift the same way — pins the
+#   [4/9]+[5/9] compile + run PolicyHarness.swift the same way — pins the
 #       window policies of §54 追记 (ExternalLinkPolicy / ReopenPolicy /
 #       WindowTitlePolicy) that AppDelegate consults;
-#   [6/7]+[7/7] compile + run MenuHarness.swift the same way — pins the
+#   [6/9]+[7/9] compile + run MenuHarness.swift the same way — pins the
 #       main-menu table of §54 追记「菜单 l10n」(MenuSpec: bilingual titles, key
-#       equivalents, actions; ⌥⌘S retired) that AppDelegate installs verbatim.
+#       equivalents, actions; ⌥⌘S retired) that AppDelegate installs verbatim;
+#   [8/9]+[9/9] compile + run LaunchHarness.swift the same way — pins the
+#       launch-source policy of D38 (§56.5 / §61 追记: `--background` argv or a
+#       login-item launch builds the window without ordering it front).
 # Mirrors ios/tests/captions/run.sh: plain swiftc, no Xcode project, any
 # failed assertion exits non-zero.
 #
@@ -31,7 +34,7 @@ FRAMEWORKS=(-framework AppKit -framework WebKit -framework SwiftUI -framework Fo
             -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications
             -framework ServiceManagement -framework Carbon)
 
-echo "==> [1/7] Typecheck shell module (swiftc -typecheck, all Sources + shared I18n)"
+echo "==> [1/9] Typecheck shell module (swiftc -typecheck, all Sources + shared I18n)"
 swiftc -typecheck "$SRC_DIR"/*.swift "$SHARED_I18N" "${FRAMEWORKS[@]}"
 
 # Every shell source except main.swift — each harness below becomes the
@@ -51,20 +54,26 @@ compile_harness() {
         -o "$WORK/$name/$name" "${FRAMEWORKS[@]}"
 }
 
-echo "==> [2/7] Compile bridge harness (every shell source except main.swift)"
+echo "==> [2/9] Compile bridge harness (every shell source except main.swift)"
 compile_harness BridgeHarness
 
-echo "==> [3/7] Run bridge assertions (AIASSISTANT_HOME sandboxed)"
+echo "==> [3/9] Run bridge assertions (AIASSISTANT_HOME sandboxed)"
 AIASSISTANT_HOME="$WORK/home" "$WORK/BridgeHarness/BridgeHarness"
 
-echo "==> [4/7] Compile policy harness (window policies, §54 追记)"
+echo "==> [4/9] Compile policy harness (window policies, §54 追记)"
 compile_harness PolicyHarness
 
-echo "==> [5/7] Run policy assertions (AIASSISTANT_HOME sandboxed)"
+echo "==> [5/9] Run policy assertions (AIASSISTANT_HOME sandboxed)"
 AIASSISTANT_HOME="$WORK/home" "$WORK/PolicyHarness/PolicyHarness"
 
-echo "==> [6/7] Compile menu harness (main-menu table, §54 追记「菜单 l10n」)"
+echo "==> [6/9] Compile menu harness (main-menu table, §54 追记「菜单 l10n」)"
 compile_harness MenuHarness
 
-echo "==> [7/7] Run menu assertions (AIASSISTANT_HOME sandboxed)"
+echo "==> [7/9] Run menu assertions (AIASSISTANT_HOME sandboxed)"
 AIASSISTANT_HOME="$WORK/home" "$WORK/MenuHarness/MenuHarness"
+
+echo "==> [8/9] Compile launch harness (launch-source policy, D38)"
+compile_harness LaunchHarness
+
+echo "==> [9/9] Run launch assertions (AIASSISTANT_HOME sandboxed)"
+AIASSISTANT_HOME="$WORK/home" "$WORK/LaunchHarness/LaunchHarness"
