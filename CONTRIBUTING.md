@@ -90,6 +90,7 @@ The retired Mac app under `mac/Sources` is the terminal UI spec; `ui/parity/nati
 3. **失败弹窗**：`launchctl bootout gui/$UID/com.zelin.aiassistant.server` 再把 `defaults write com.zelin.ai-board serverRepo /nonexistent` → `open` 壳 → 弹窗第一条是 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`，注明 label 未加载 → `bash install.sh`。完事 `defaults delete com.zelin.ai-board serverRepo && bash install.sh`。
 4. **名字**（§54 名字互换）：Dock、窗口标题、app 菜单都读 "Zelin's AI Assistant"；`osascript -e 'id of app "Zelin's AI Assistant"'` 是 `com.zelin.ai-board`（旧菜单栏 app 是 "Zelin's AI Assistant (old)" / `com.zelin.ai-engineer`）。
 5. **原生残留（CONTRACT §69.13，改 `ShellSystem.swift` / `NotifyRelay.swift` 时）**：`python3 -c "from act.lib import notify; notify.notify('测试', '通知中继')"` → 5 s 内壳弹出横幅，点它前置看板窗口；`⌃⌥Space` 在任何 app 里按下 → 壳前置且提案列输入框获得焦点；看板 `?page=permissions` 三行状态与 系统设置 一致，点「授权」弹系统提示；设置 → 关于「登录时启动」翻开关后 `sfltool dumpbtm | grep -i zelin` 有 / 无记录；Dock 徽章 = 提案 + 需输入 + 待验收数。
+6. **后台启动不弹窗（D38，CONTRACT §56.5 / §61 追记）**：壳未运行时 `open -g "shell/build/Zelin's AI Assistant.app" --args --background` → Dock 里出现图标、**没有**窗口、当前 app 焦点不变，`board-shell.log` 多一行 `background launch (argv --background)`；点 Dock 图标 → 看板出现。登录项半边：「登录时启动」开着时重新登录一次 → 同样没有窗口且 log 有 `background launch (login item)`（没有这行 = 登录项判定在这台机器上没生效，开 issue）。
 
 ## Project rules
 

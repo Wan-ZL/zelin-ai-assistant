@@ -1,8 +1,9 @@
 // ShellSupport.swift — 壳内最小原生残留（R2.2.3）的公共底座：AppPaths / Analytics /
 // SettingsIO（只读）/ Shell / Prefs / SecretsIO（只读）/ FailureCatalog（引擎子集）/
 // LanguageStore + 窗口三条纯策略（ExternalLinkPolicy / ReopenPolicy / WindowTitlePolicy，
-// §54 追记；判例 shell/tests/PolicyHarness.swift）+ 主菜单纯表（MenuSpec，§54 追记「菜单 l10n」；
-// 判例 shell/tests/MenuHarness.swift）。
+// §54 追记；判例 shell/tests/PolicyHarness.swift）+ 启动来源策略（LaunchPolicy，D38，
+// §56.5 / §61 追记；判例 shell/tests/LaunchHarness.swift）+ 主菜单纯表（MenuSpec，
+// §54 追记「菜单 l10n」；判例 shell/tests/MenuHarness.swift）。
 //
 // 为什么这些名字与 mac/Sources/Utils.swift、Doctor.swift、L10n.swift 完全同名：
 // 录制引擎（Recording.swift）与实时字幕引擎（CaptionCore / LiveCaptions /
@@ -531,6 +532,41 @@ enum WindowTitlePolicy {
     static func resolve(pageTitle: String?, fallback: String) -> String {
         let trimmed = (pageTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
+    }
+}
+
+/// 启动来源决定窗口要不要在启动时前置（D38；原生 AppDelegate.swift「Do NOT show the main
+/// window on launch: background restarts (login items, install scripts) would pop it over
+/// whatever Zelin is doing」的壳版，CONTRACT §56.5 / §61 追记）。两种**后台启动**——
+/// (a) install.sh 自动部署 relaunch：`open -g <bundle> --args --background`（argv 里有
+/// `--background`）；(b) 登录时启动：loginwindow 发来的 `oapp` 启动 Apple Event 带
+/// `keyAELaunchedAsLogInItem`（`LaunchAtLogin.launchedAsLoginItem()`，ShellSystem.swift）——
+/// 窗口照建、**不 orderFront、不 activate**；其余（Dock / Finder / 用户手敲 `open`）照旧前置。
+/// 后台启动后的重开入口不变：Dock 点击（ReopenPolicy 见看板窗口不在 → show）、⌃⌥Space、
+/// 通知点击、菜单深链。纯函数：argv 与登录标记都由 main.swift 采集后喂进来。
+enum LaunchPolicy {
+    enum Presentation: Equatable {
+        /// 建窗 + makeKeyAndOrderFront + activate（用户亲手启动）。
+        case foreground
+        /// 建窗但不前置、不 activate；`reason` 进 board-shell.log 取证。
+        case background(reason: String)
+    }
+
+    /// install.sh `relaunch_shell_app` 传的唯一旗标（逐字；`--background=…` 一类变体不认）。
+    static let backgroundFlag = "--background"
+
+    /// `arguments` = `CommandLine.arguments` 全量（argv[0] 是可执行路径、永不等于旗标，所以
+    /// 不用特判；`open --args` 之后的词从 argv[1] 起原样透传，位置不限、其余参数不理）；
+    /// `launchedAsLoginItem` = 启动 Apple Event 的登录项标记。两者任一为真 → background
+    /// （argv 先判：它是确定性的、登录标记是系统给的）。
+    static func presentation(arguments: [String], launchedAsLoginItem: Bool) -> Presentation {
+        if arguments.contains(backgroundFlag) {
+            return .background(reason: "argv \(backgroundFlag)")
+        }
+        if launchedAsLoginItem {
+            return .background(reason: "login item")
+        }
+        return .foreground
     }
 }
 

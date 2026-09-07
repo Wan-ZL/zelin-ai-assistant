@@ -14,9 +14,11 @@
 // Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）。Dock-only（D3）：无菜单栏
 // 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
 // hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
-// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）与主菜单纯表（MenuSpec：双语标题、
-// 设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 / 缩放，随 LanguageStore
-// 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；本文件只挂到 NSApp、做副作用。
+// （外链交系统浏览器 / Dock 重开 / 标题跟随页面）、启动来源策略（LaunchPolicy，D38：
+// `--background` argv / 登录项启动 → 建窗不前置不 activate，§56.5 / §61 追记）与主菜单纯表
+// （MenuSpec：双语标题、设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 /
+// 缩放，随 LanguageStore 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；
+// 本文件只挂到 NSApp、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -294,9 +296,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .removeDuplicates()
             .sink { [weak self] lang in self?.installMainMenu(lang: lang) }
         buildWindow()
+        presentOnLaunch()
         connectOrSpawn()
         startEngines()
         startNativeResidue()
+    }
+
+    /// D38：启动来源决定窗口要不要前置（原生 AppDelegate「Do NOT show the main window on
+    /// launch」的壳版，§56.5 / §61 追记）。后台启动——install.sh 自动部署 relaunch 的
+    /// `--background` argv、或 loginwindow 的登录项启动事件——窗口已建好但**不 orderFront、
+    /// 不 activate**，落一行 log 取证（这是唯一能证明登录项判定在这台机器上生效的地方）；
+    /// 之后 Dock 点击（ReopenPolicy 见看板不在 → show）/ ⌃⌥Space / 通知点击 / 菜单深链照旧前置。
+    /// 其余启动（Dock / Finder / 用户手敲 `open`）与从前一样直接前置。**必须在
+    /// applicationDidFinishLaunching 里调**：`LaunchAtLogin.launchedAsLoginItem()` 只在此刻读得到启动事件。
+    private func presentOnLaunch() {
+        switch LaunchPolicy.presentation(arguments: CommandLine.arguments,
+                                         launchedAsLoginItem: LaunchAtLogin.launchedAsLoginItem()) {
+        case .foreground:
+            showWindow()
+        case .background(let reason):
+            server.logLine("board-shell: background launch (\(reason)) — window built but not shown; "
+                + "Dock click / ⌃⌥Space / notification click bring it up")
+        }
     }
 
     /// §68.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
@@ -441,8 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.window.title = WindowTitlePolicy.resolve(pageTitle: wv.title,
                                                           fallback: ShellConfig.displayName)
         }
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // 刻意不在这里 orderFront / activate：要不要前置由 presentOnLaunch 按启动来源决定（D38）。
     }
 
     // MARK: 外链（§54 追记：一律交系统浏览器；原生 DepAction.url / FailureCatalog.perform 同款）

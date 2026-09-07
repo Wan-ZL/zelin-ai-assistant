@@ -208,6 +208,21 @@ enum LaunchAtLogin {
             return error.localizedDescription
         }
     }
+
+    /// 本次进程是不是 loginwindow 作为登录项拉起的（D38，LaunchPolicy 的第二个输入）：
+    /// 启动 Apple Event 是 `oapp`（kAEOpenApplication）且其 `keyAEPropData` 属性是枚举
+    /// `keyAELaunchedAsLogInItem`（'lgit'）——Apple 文档给登录项的判法，SMAppService.mainApp
+    /// 注册的「登录时打开」项同样由 loginwindow 发这枚事件（sindresorhus/LaunchAtLogin-Modern
+    /// `wasLaunchedAtLogin` 同一句）。**只能在 applicationDidFinishLaunching 里读**：那一刻
+    /// `currentAppleEvent` 才是启动事件，早了是 nil、晚了是别的事件。Dock / Finder / `open`
+    /// 启动的 `oapp` 不带这个属性 → false；读不到事件一律 false（宁可前置，不许误藏窗口）。
+    static func launchedAsLoginItem() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == AEEventID(kAEOpenApplication),
+              let prop = event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))
+        else { return false }
+        return prop.enumCodeValue == OSType(keyAELaunchedAsLogInItem)
+    }
 }
 
 // MARK: - global quick-capture hotkey（⌃⌥Space，Carbon；无需辅助功能授权）
