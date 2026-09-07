@@ -3,11 +3,13 @@
 // + 生效文件路径（$HOME 缩成 ~）+「打开档案」（POST /api/reveal {target:"voice_profile", mode:"open"}：server 在默认
 // 编辑器里打开此刻生效、或重开后会生效的那个文件——原生 NSWorkspace.open，不是访达定位；两个都不在时按钮禁用）。
 // 开关本身是目录字段 voice_enabled（CatalogSection 渲）；
-// 状态随目录的 effective 即时变（草稿未保存不算）。原生「从我的消息生成/更新档案」（几分钟的 act.voice_gen）另 PR。
+// 状态随目录的 effective 即时变（草稿未保存不算）。快照住 store.voiceProfile（refreshVoiceProfile，§68 parity 页
+// 通用 loader）：区尾的「从我的消息生成/更新档案」（VoiceGenerate，D47）生成完成后重拉一次，这一行的「私有档案」才跟得上
+// ——原生 runVoiceGen 收尾的 refreshVoiceProfileStatus()。
 import { useEffect, useState } from "react";
-import { fetchVoiceProfile, postRevealTarget } from "../../api";
+import { postRevealTarget } from "../../api";
 import { useI18n } from "../../i18n";
-import { useAppState } from "../../store";
+import { refreshVoiceProfile, useAppState } from "../../store";
 import type { VoiceProfileStatus } from "../../types";
 import { errorMessage } from "./useToast";
 
@@ -28,18 +30,16 @@ function abbreviateHome(path: string): string {
 
 export function VoiceStatus() {
   const { text } = useI18n();
-  const { settingsCatalog } = useAppState();
-  const [status, setStatus] = useState<VoiceProfileStatus | null>(null);
+  const { settingsCatalog, voiceProfile: status, pageErrors } = useAppState();
   const [note, setNote] = useState<string | null>(null);
   const field = settingsCatalog?.sections.find((s) => s.id === "voice")?.fields.find((f) => f.key === "voice_enabled");
 
   useEffect(() => {
-    let cancelled = false;
-    fetchVoiceProfile().then((s) => { if (!cancelled) setStatus(s); }).catch((err) => { if (!cancelled) setNote(errorMessage(err)); });
-    return () => { cancelled = true; };
+    void refreshVoiceProfile();
   }, []);
 
-  if (!status) return note ? <p className="settings-warning" role="alert">{note}</p> : null;
+  const loadError = pageErrors.voiceProfile ?? null;
+  if (!status) return loadError ? <p className="settings-warning" role="alert">{loadError}</p> : null;
   const enabled = field ? field.effective !== false : status.enabled;
   const tone = !enabled ? "" : status.private_exists ? " is-ok" : status.default_exists ? " is-info" : " is-warning";
 

@@ -790,6 +790,24 @@ export interface VoiceProfileStatus {
   [key: string]: unknown;
 }
 
+/** GET /api/voice/generate-status（§68.1 追记 D47）：「从我的消息生成/更新档案」最近一次 job（state/voice_gen/job.json，
+ *  actd 写 running、act.voice_gen --job 写 done / failed）；lost = running 却超过 15 分钟没回执（server 算） */
+export interface VoiceGenJob {
+  status: "running" | "done" | "failed";
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  message: string | null;
+  profile_path: string | null;
+  lost: boolean;
+  [key: string]: unknown;
+}
+
+export interface VoiceGenStatus {
+  job: VoiceGenJob | null;
+  [key: string]: unknown;
+}
+
 /** GET /api/slack/directory（§68.1 追记）：act/lib/slack_setup.directory 的 JSON 行原样 */
 export interface SlackDirEntry {
   id: string;

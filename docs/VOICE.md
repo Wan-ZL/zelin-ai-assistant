@@ -64,11 +64,16 @@ the default the moment it exists.
 
 The goal: 100–200 messages **you actually sent**, distilled into the same
 template structure as the default file. The Settings page's one-click
-**Generate voice profile** button runs exactly this flow headlessly
-(`python -m act.voice_gen`): read-only Slack MCP tools collect your sent
-messages, the profile is induced against the default template's skeleton and
-validated, any existing `state/voice-profile.md` is backed up to
+**Generate from my messages** button (语气档案 section) runs exactly this flow
+headlessly (`python -m act.voice_gen`): read-only Slack MCP tools collect your
+sent messages, the profile is induced against the default template's skeleton
+and validated, any existing `state/voice-profile.md` is backed up to
 `.bak-<timestamp>` first, and a failed run never overwrites the old profile.
+On the web board the button posts the inbox action `voice_generate`; the
+daemon (actd) starts `python -m act.voice_gen --job` detached and the run
+reports back through `state/voice_gen/job.json` (`GET /api/voice/generate-status`),
+so the button shows "Generating…" until the one-line result lands — even
+across a page reload (CONTRACT §68.1 追记, D47).
 Alternatively, with the Slack MCP server connected (see
 [SLACK_SETUP.md](SLACK_SETUP.md)), a Claude Code session can do the whole
 loop by hand:

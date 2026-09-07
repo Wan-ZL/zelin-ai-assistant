@@ -64,6 +64,7 @@ from act.lib import (
     recap_store,
     registry,  # noqa: F401 - surface: tests patch ``actd.registry.load`` (module attr)
     self_improve,
+    voice_job,
 )
 from act.lib.actd import alerts as _alerts
 from act.lib.actd import decisions as _decisions
@@ -223,7 +224,8 @@ def _write_applied_ack(action_id: str, result_status: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# detached special forms（§24 weekly digest on demand, §63 recap buttons, §48.7 radar「立即测试一轮」）
+# detached special forms（§24 weekly digest on demand, §63 recap buttons, §48.7 radar「立即测试一轮」,
+# §68.1 追记 voice「从我的消息生成/更新档案」）
 # --------------------------------------------------------------------------- #
 def _spawn_weekly_digest(_decision: Optional[dict] = None) -> str:
     """§24 Settings「现在生成一份」→ ``act.weekly_digest --now`` detached (§5.4 ack)."""
@@ -249,6 +251,7 @@ _DETACHED_ACTIONS = {  # late-bound lambdas: tests patch the module attribute
     "recap_generate": lambda decision: _spawn_recap(decision),
     "recap_slack_draft": lambda decision: _spawn_recap(decision),
     "radar_test_round": lambda decision: radar_rounds.request(decision, _log),  # §48.7 立即测试一轮
+    "voice_generate": lambda decision: voice_job.request(decision, _log),  # §68.1 追记 从我的消息生成/更新档案（D47）
 }
 
 

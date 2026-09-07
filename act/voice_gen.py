@@ -1,7 +1,12 @@
-"""One-click voice-profile generation (docs/VOICE.md — "Generate your own profile").
+"""One-click voice-profile generation (docs/VOICE.md — "Generate your own profile";
+CONTRACT §68.1 追记 voice「从我的消息生成/更新档案」/ §10 ``voice_generate``).
 
-``python -m act.voice_gen`` is what the 设置页 "生成语气档案" button runs (and it
-works as a plain CLI too). One pass:
+``python -m act.voice_gen`` is what the 设置页 "从我的消息生成/更新档案" button runs
+(and it works as a plain CLI too). The web button reaches it through the inbox:
+``voice_generate`` → actd spawns ``python -m act.voice_gen --job`` detached and
+``--job`` makes this module write its one-line result back into
+``state/voice_gen/job.json`` (act/lib/voice_job) for ``GET /api/voice/generate-status``;
+without the flag nothing but the profile is touched. One pass:
 
 1. Headless ``claude -p`` with the USER-level Slack MCP restricted to the same
    READ-ONLY tool group as the radar fallback (radar_slack._MCP_ALLOWED_TOOLS —
@@ -36,7 +41,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import analytics, config, failures
+from act.lib import analytics, config, failures, voice_job
 
 # Read/search-only Slack MCP tool group — single source of truth is the radar
 # fallback's red-line list (never add write tools THERE either).
@@ -243,9 +248,15 @@ def _main(argv: Optional[list[str]] = None,
         prog="voice_gen",
         description="Induce state/voice-profile.md from your own Slack messages "
                     "(read-only Slack MCP; docs/VOICE.md).")
-    parser.parse_args(argv)
+    parser.add_argument(
+        "--job", action="store_true",
+        help="write the result into state/voice_gen/job.json (the web settings "
+             "button's receipt; actd passes this when it spawns the run)")
+    args = parser.parse_args(argv)
     ok, msg = generate(runner=runner)
     print(msg)   # stdout either way — the settings page shows this line verbatim
+    if args.job:
+        voice_job.finish(ok, msg, str(profile_path()) if ok else None)
     return 0 if ok else 1
 
 

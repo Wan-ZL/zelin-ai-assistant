@@ -30,6 +30,9 @@
   GET /api/setup/engine + POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话：入队 state/terminal_queue 给壳，§68.7）、POST /api/repair/actd（横幅一键修复）。
+- 语气档案区（§68.1 追记）：GET /api/voice（当前生效行）+ GET /api/voice/generate-status（「从我的消息生成/更新档案」
+  的回执：inbox 特形 voice_generate 由 actd 分离起 act.voice_gen --job，server 只读 state/voice_gen/job.json；D47），
+  server/voice_profile.py。
 - Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
   关于页 POST /api/uninstall/terminal（入队「在终端跑 uninstall.sh」给壳，server/uninstall_launch.py）；
   开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
@@ -589,6 +592,9 @@ _GET_JSON_ROUTES = {
     "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
     # 语气档案「当前生效」状态行（docs/VOICE.md；§68.1 追记）
     "/api/voice": lambda ctx, query: voice_profile.snapshot(ctx.home),
+    # §68.1 追记（D47）「从我的消息生成/更新档案」回执：只读 actd / act.voice_gen --job 写的 state/voice_gen/job.json
+    # （按钮本身 = POST /api/actions {action:"voice_generate"}；server 不起子进程——§44 单写者精神）
+    "/api/voice/generate-status": lambda ctx, query: voice_profile.generate_status(ctx.home),
     # 同步 / 配对（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码
     "/api/sync": lambda ctx, query: sync_pairing.snapshot(ctx.home),
     # §68 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
