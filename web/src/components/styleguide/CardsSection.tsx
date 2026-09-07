@@ -27,8 +27,8 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <ProposalCard card={PROPOSAL_T1} />
         <SpecimenNote
-          zh="提案 T1（ProposalCard）：徽章全开——tier .chip-purple 粉紫、交付 .chip-purple、紧急截止 .chip-danger.chip-outline 红字、成本 .chip、被提×N .chip-warning.chip-quiet、已并入×N .chip-purple.chip-quiet、green-sign / 回锅 .chip-warning、分歧行 .card-line.is-warning；落点行「📄 草稿落点: your-workbench（只出文档）」；id 右上角；详情在右侧侧栏（展开详情 ▸ 打开，D34）"
-          en="Proposal T1 (ProposalCard): full badge row — tier .chip-purple pink-magenta, deliver .chip-purple, urgent deadline .chip-danger.chip-outline red, cost .chip, raised ×N .chip-warning.chip-quiet, folded ×N .chip-purple.chip-quiet, green-sign / returned .chip-warning, disagreement line .card-line.is-warning; target line “📄 Drafts land in: your-workbench”; id top-right; details live in the right sidebar (Details ▸ opens it, D34)"
+          zh="提案 T1（ProposalCard）：徽章全开——tier .chip-purple 粉紫、交付 .chip-purple、紧急截止 .chip-danger.chip-outline 红字、成本 .chip、被提×N .chip-warning.chip-quiet、已并入×N .chip-purple.chip-quiet、green-sign / 回锅 .chip-warning、章行之后「怎样算办完：」紧凑形 .card-dod.is-dod（前 3 条 + 「+N」，空 DoD 不渲染，D43）、分歧行 .card-line.is-warning；落点行「📄 草稿落点: your-workbench（只出文档）」；id 右上角；DoD 全文与其余详情在右侧侧栏（展开详情 ▸ 打开，D34）"
+          en="Proposal T1 (ProposalCard): full badge row — tier .chip-purple pink-magenta, deliver .chip-purple, urgent deadline .chip-danger.chip-outline red, cost .chip, raised ×N .chip-warning.chip-quiet, folded ×N .chip-purple.chip-quiet, green-sign / returned .chip-warning, compact “Definition of done:” .card-dod.is-dod after the badge row (first 3 + “+N”, hidden when empty, D43), disagreement line .card-line.is-warning; target line “📄 Drafts land in: your-workbench”; id top-right; full DoD and the rest of the details live in the right sidebar (Details ▸ opens it, D34)"
         />
       </figure>
       <figure className="sg-specimen">
@@ -69,8 +69,8 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <ReviewCard card={REVIEW_FIXTURE} />
         <SpecimenNote
-          zh="review 卡（ReviewCard）：meta 行 repo 章 + 耗时 + 已等待验收（自驱走表）；双击整卡 = 在终端接管（D36，卡面无指令行）；交付摘要 / ☐ 验收清单在 详情侧栏（展开详情 ▸ 打开）；三动词（复制成稿仅 final_draft 非空时）"
-          en="Review card (ReviewCard): meta line repo chip + took + in review (live); double-click the card = take over in a terminal (D36, no command line on the face); delivery summary / ☐ checklist live in the detail sidebar (Details ▸ opens it); three verbs (Copy final draft only with final_draft)"
+          zh="review 卡（ReviewCard）：meta 行 repo 章 + 耗时 + 已等待验收（自驱走表）；双击整卡 = 在终端接管（D36，卡面无指令行）；卡面永远渲染「☐ 验收清单」紧凑形 .card-dod.is-checklist（前 3 条 + 「+N」，空给兜底句；§64 评语 = 建议验收 → ☑ accent 记号，D43），全文清单 + 交付摘要在详情侧栏（展开详情 ▸ 打开）；三动词（复制成稿仅 final_draft 非空时）"
+          en="Review card (ReviewCard): meta line repo chip + took + in review (live); double-click the card = take over in a terminal (D36, no command line on the face); the face always renders the compact “☐ Acceptance checklist” .card-dod.is-checklist (first 3 + “+N”, fallback sentence when empty; §64 verdict Looks done → ☑ accent mark, D43); full list + delivery summary live in the detail sidebar (Details ▸ opens it); three verbs (Copy final draft only with final_draft)"
         />
       </figure>
       <figure className="sg-specimen">

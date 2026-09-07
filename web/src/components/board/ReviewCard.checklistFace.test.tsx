@@ -61,12 +61,16 @@ describe("review face: ☐ 验收清单 always on the face (D43)", () => {
     expect(screen.getByText("No acceptance criteria defined — judge manually")).toBeTruthy();
   });
 
-  it("§64 建议验收 → ☑（is-ai-checked，title 点明 AI 判断）；验收 / 打回按钮照常、不多一颗", () => {
+  it("§64 建议验收 → ☑（is-ai-checked，☑ 记号自己的 title 点明 AI 判断）；验收 / 打回按钮照常、不多一颗", () => {
     const { container } = render(<ReviewCard card={review({ assessment: { summary: "缓存做好了", verdict: "建议验收", verdict_reason: "三条都有对应改动" } })} />);
     const block = container.querySelector(".card-dod.is-checklist")!;
     expect(block.className).toContain("is-ai-checked");
-    expect(Array.from(block.querySelectorAll(".card-dod-mark")).map((m) => m.textContent)).toEqual(["☑", "☑", "☑"]);
-    expect(block.querySelector(".card-dod-list")!.getAttribute("title")).toContain("AI verdict");
+    const marks = Array.from(block.querySelectorAll(".card-dod-mark"));
+    expect(marks.map((m) => m.textContent)).toEqual(["☑", "☑", "☑"]);
+    // 说明挂在记号自己（与标题）上——<ul> 的 title 会被每条 <li title=全文> 盖住，owner 悬停永远看不到
+    for (const mark of marks) expect(mark.getAttribute("title")).toContain("AI verdict");
+    expect(block.querySelector(".card-dod-heading")!.getAttribute("title")).toContain("AI verdict");
+    expect(block.querySelector(".card-dod-list")!.getAttribute("title")).toBeNull();
     expect(screen.getByRole("button", { name: "Accept" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send Back" })).toBeTruthy();
     expect(block.querySelectorAll("button")).toHaveLength(0);

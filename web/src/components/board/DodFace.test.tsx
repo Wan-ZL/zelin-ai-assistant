@@ -2,7 +2,8 @@
 //   1) dod 变体：编号「1. …」，空清单零 DOM（原生 Cards.swift:1085 `if !card.dod.isEmpty`）；
 //   2) checklist 变体：永远渲染，空给兜底句「该任务未定义验收标准，请自行判断」（原生 :1858 always rendered）；
 //   3) 紧凑形：最多 FACE_DOD_MAX（3）条 + 「+N」（N = 余量），恰好 3 条没有 +N；每条 title = 全文（单行截断 hover 看全）；
-//   4) §64 评语：verdict 逐字 = 建议验收 → ☑ + is-ai-checked + title 点明是 AI 判断；需继续做 / 需要拍板 / 未知 / 没评 → ☐；
+//   4) §64 评语：verdict 逐字 = 建议验收 → ☑ + is-ai-checked + ☑ 记号 / 标题各自的 title 点明是 AI 判断（不挂 <ul>——被 <li> 全文 title 盖住）；
+//      需继续做 / 需要拍板 / 未知 / 没评 → ☐；
 //   5) 非字符串 / 空白条目过滤（LLM 输出不可信，宪法第 11 条）；「+N」不是按钮（D34 单一详情面，卡上不长开合）。
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,16 +71,22 @@ describe("DodFace — checklist variant (review face)", () => {
     expect(screen.getByText("No acceptance criteria defined — judge manually")).toBeTruthy();
   });
 
-  it("§64 评语 = 建议验收 → ☑ + is-ai-checked + title 点明 AI 判断；其余 verdict / 没评 → ☐", () => {
+  it("§64 评语 = 建议验收 → ☑ + is-ai-checked + 说明 title 挂在 ☑ 记号与标题上（指针到得了）；其余 verdict / 没评 → ☐", () => {
     const { container, rerender } = render(<DodFace items={["a", "b"]} variant="checklist" assessment={{ verdict: "建议验收", summary: "ok" }} />);
     expect(container.querySelector(".card-dod")!.className).toContain("is-ai-checked");
-    expect(Array.from(container.querySelectorAll(".card-dod-mark")).map((m) => m.textContent)).toEqual(["☑", "☑"]);
-    expect(container.querySelector(".card-dod-list")!.getAttribute("title")).toMatch(/^AI verdict “Looks done”/);
+    const marks = Array.from(container.querySelectorAll(".card-dod-mark"));
+    expect(marks.map((m) => m.textContent)).toEqual(["☑", "☑"]);
+    // 说明必须是记号自己的 title：外层 <li title=全文> 会盖住任何祖先（<ul>）的 title，挂在 <ul> 上等于没有
+    for (const mark of marks) expect(mark.getAttribute("title")).toMatch(/^AI verdict “Looks done”/);
+    expect(container.querySelector(".card-dod-heading")!.getAttribute("title")).toMatch(/^AI verdict “Looks done”/);
+    expect(container.querySelector(".card-dod-list")!.getAttribute("title")).toBeNull();
+    expect(container.querySelector(".card-dod-item")!.getAttribute("title")).toBe("a");
     for (const verdict of ["需继续做", "需要拍板", "somethingelse", null, undefined]) {
       rerender(<DodFace items={["a", "b"]} variant="checklist" assessment={verdict === undefined ? undefined : { verdict }} />);
       expect(container.querySelector(".card-dod")!.className).not.toContain("is-ai-checked");
       expect(Array.from(container.querySelectorAll(".card-dod-mark")).map((m) => m.textContent)).toEqual(["☐", "☐"]);
-      expect(container.querySelector(".card-dod-list")!.getAttribute("title")).toBeNull();
+      expect(container.querySelector(".card-dod-mark")!.getAttribute("title")).toBeNull();
+      expect(container.querySelector(".card-dod-heading")!.getAttribute("title")).toBeNull();
     }
   });
 

@@ -3,7 +3,8 @@
 // card approves this」）、:1858-1876 把 ☐ 清单永远渲染在待验收行上（空给兜底句）；D34 把两者搬进侧栏后卡面一条不剩。
 // 自此卡面回到原生的位置，但只给紧凑形：前 FACE_DOD_MAX 条 + 「+N」，每条单行截断（hover 全文）——全文仍只住
 // 详情侧栏（DetailFields），卡面摘要 ≠ 详情面：D34 的单一详情面不动，卡上不长任何开合、「+N」也不是按钮。
-// 待验收面的方框反映 §64 评语：verdict = 建议验收（判官定义 = 清单 / 需求每条都有对应交付）→ ☑（title 点明是 AI 判断）；
+// 待验收面的方框反映 §64 评语：verdict = 建议验收（判官定义 = 清单 / 需求每条都有对应交付）→ ☑（☑ 记号与标题各自的
+// title 点明是 AI 判断——说明不能挂在 <ul> 上：每条 <li> 的 title = 全文会把它整个盖住，指针到不了）；
 // 需继续做 / 需要拍板 / 未知值 / 没评 → ☐（判官不逐条打分，不知道缺哪条，不猜）。只是展示：验收 / 打回仍只有按钮能按。
 // 字级 = 原生 10 semibold 头 + 10 regular 条（--type-detail-subheading / --type-card-meta），spacing 1。
 import { useI18n } from "../../i18n";
@@ -35,20 +36,21 @@ export function DodFace({ items, variant, assessment }: DodFaceProps) {
   const heading = variant === "dod"
     ? text("怎样算办完：", "Definition of done:")
     : text("验收清单——逐条对照：", "Acceptance checklist:");
-  const listTitle = checked
+  // ☑ 的说明挂在指针真能落到的节点上：标题 <p>（不在 <ul> 里）与每个 ☑ 记号 <span>（自带 title 压过外层 <li> 的全文 title）
+  const checkedTitle = checked
     ? text("AI 评语「建议验收」：清单每条都有对应交付——仍请你逐条对照", "AI verdict “Looks done”: every item has a matching delivery — still check each one yourself")
     : undefined;
   return (
     <div className={`card-dod is-${variant}${checked ? " is-ai-checked" : ""}`}>
-      <p className="card-dod-heading">{heading}</p>
+      <p className="card-dod-heading" title={checkedTitle}>{heading}</p>
       {list.length === 0 ? (
         <p className="card-dod-empty">{text("该任务未定义验收标准，请自行判断", "No acceptance criteria defined — judge manually")}</p>
       ) : (
-        <ul className="card-dod-list" title={listTitle}>
+        <ul className="card-dod-list">
           {shown.map((item, index) => (
-            // 原生一行一个 Text（"1. …" / "☐ …"）；记号单独一个节点只为给 ☑ 上 accent 色，读屏照读（不 aria-hidden）
+            // 原生一行一个 Text（"1. …" / "☐ …"）；记号单独一个节点只为给 ☑ 上 accent 色 + 挂说明，读屏照读（不 aria-hidden）
             <li key={index} className="card-dod-item" title={item}>
-              <span className="card-dod-mark">{variant === "dod" ? `${index + 1}.` : checked ? "☑" : "☐"}</span>
+              <span className="card-dod-mark" title={checkedTitle}>{variant === "dod" ? `${index + 1}.` : checked ? "☑" : "☐"}</span>
               {" "}{item}
             </li>
           ))}

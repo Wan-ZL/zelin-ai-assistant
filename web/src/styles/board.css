@@ -512,7 +512,7 @@ a.chip:hover { text-decoration: underline; }
   overflow-wrap: anywhere;
 }
 
-/* §64 评语 = 建议验收：☑ 记号走 AI 摘要同一 accent 色，别读成 owner 自己打的勾；条目正文仍次级色 */
+/* §64 评语 = 建议验收：☑ 记号走 --accent（与 AI 摘要细条的 --accent-soft 同一 accent 系），别读成 owner 自己打的勾；条目正文仍次级色 */
 .card-dod.is-ai-checked .card-dod-mark {
   color: var(--accent);
 }
