@@ -220,7 +220,9 @@ export function startRouter(): () => void {
 
 // ----- 滚动记忆与焦点：整页导航白送的两样默认行为，pushState 换页要自己补 ------------------------------------------------ #
 // 滚动按页记 window 滚动 + 任何 `[data-scroll-memory="<key>"]` 滚动容器（看板的列容器 `.board-main` 挂 "board-main"——窄窗下横向
-// 滚过的列回来还在；列独立滚动（D42）再给每列挂一个即可）。
+// 滚过的列回来还在；每列的 `.column-list` 挂 "lane:<slug>"）。D42（§54.4 2026-09-06 追记）起文档不滚：非看板页在
+// `<main class="shell-main">`（挂 "shell-main"）里滚，window 那一份恒为 0 只是留着——所以「没记过 → 到顶」也要把每个容器归零：
+// `.shell-main` 跨页常驻，不归零的话上一页滚到哪、第一次到的新页就从哪开始（整页导航的新文档从不这样）。
 
 interface ScrollSnapshot {
   x: number;
@@ -240,20 +242,21 @@ export function rememberScroll(page: AppPage, doc: Document = document): void {
   scrollMemory.set(page, { x: window.scrollX, y: window.scrollY, parts });
 }
 
-/** 回到 `page`（DOM 已换好）：有记忆就还原到那里，没有就到顶——整页导航的默认行为 */
+/** 回到 `page`（DOM 已换好）：有记忆就还原到那里，没有就到顶——整页导航的默认行为。容器同理：记过的还原、没记过的
+ *  （页没记过 / 记的时候还没有这个容器）归零——跨页常驻的 `.shell-main` 不许把上一页的滚动位置带进新页 */
 export function restoreScroll(page: AppPage, doc: Document = document): void {
   const snapshot = scrollMemory.get(page);
   if (!snapshot) {
     if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
-    return;
+  } else {
+    window.scrollTo(snapshot.x, snapshot.y);
   }
-  window.scrollTo(snapshot.x, snapshot.y);
   for (const el of Array.from(doc.querySelectorAll<HTMLElement>("[data-scroll-memory]"))) {
-    const saved = el.dataset.scrollMemory ? snapshot.parts[el.dataset.scrollMemory] : undefined;
-    if (saved) {
-      el.scrollLeft = saved.left;
-      el.scrollTop = saved.top;
-    }
+    const saved = (snapshot && el.dataset.scrollMemory) ? snapshot.parts[el.dataset.scrollMemory] : undefined;
+    const left = saved?.left ?? 0;
+    const top = saved?.top ?? 0;
+    if (el.scrollLeft !== left) el.scrollLeft = left;
+    if (el.scrollTop !== top) el.scrollTop = top;
   }
 }
 

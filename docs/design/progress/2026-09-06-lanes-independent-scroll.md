@@ -1,6 +1,6 @@
 pr: `feat/lanes-independent-scroll`（owner 决策 D42；行为对齐审计 batch `lanes-independent-scroll`，chain `board` 第 1 棒；gap `board-cards-lanes-independent-scroll`）
 phase: P4 余量（D3：web 看板是产品、原生 mac/Sources 是冻结的行为规格）+ D42（owner 2026-09-06 整批授权代拍）
-law: §54.4 追记（滚动模型：壳一屏高、`.shell-main` 是非看板页的滚动容器、看板页只有 `.column-list` / `.backlog-strip-list` 纵向滚、`.board-main` 只横向滚、多选操作条横贯看板底、rail / 顶栏 sticky 退役、设置页 anchor 顶边距）
+law: §54.4 追记（滚动模型：壳一屏高、`.shell-main` 是非看板页的滚动容器、看板页只有 `.column-list` / `.backlog-strip-list` 纵向滚、`.board-main` 只横向滚、多选操作条横贯看板底、rail / 顶栏 sticky 退役、设置页 anchor 顶边距、与 D40 换页滚动记忆的交汇）
 
 **补回什么**：原生 `Kanban.swift` 的看板是一个横向 `ScrollView` 里每列各一个纵向 `ScrollView`（`column(...)`：`VStack { SectionHeader; ScrollView(.vertical) { cards } }`），窗口从不整体滚动、列头常驻。web 移植版让整个文档滚（`.shell { min-height: 100vh }`、`.column-list` 没有 overflow）：卡一多，列头与「捕获」/「直跑」输入框随文档滚走，横向滚动条躺在最高那一列的底下；没有任何 D-row 或法条选过整页滚动（§54.4 只钉了列宽）。
 
@@ -10,8 +10,10 @@ law: §54.4 追记（滚动模型：壳一屏高、`.shell-main` 是非看板页
 
 **审查修正（#274，两条 minor 都成立）**：(1) 首卡的焦点环上边被 `.column-list` 切掉——滚动容器只画 padding box，第一版 `padding: 0 10px 4px` 顶上没留位；像素探针实测四列首卡上方 1–2px 都是列底 / 列头底色而左边是环色。修法 = 顶上 `-2px` 外边距 + `2px` 内边距（卡不动），底部 4px → 8px 让末卡阴影（最远 7px）滚到底时不被切平；修后探针四列上方都是环色、`card.y` 逐列不变。(2) 永久性完成条的搜索框住在 `.backlog-strip-list`（唯一的滚动容器）里、随行滚走（注 20 条 archived 实测：滚 400px 后输入框 y 从 108.8 到 −291.2），与「输入框钉住」的裁决不一致——搬成列表的兄弟；修后滚动时 y 不变、首行 y 与框宽逐像素同前。两条都进了 e2e（各一个新判例，pre-fix 实跑为红）与 vitest（样式文本 + DOM 结构）。
 
+**与 D40 的交汇（rebase 时发现）**：`feat/client-side-routing`（D40）在本 PR 之后先合进 main，它的换页滚动记忆记 `window` 滚动 + `[data-scroll-memory]` 容器、「没记过 → `window.scrollTo(0, 0)`」。文档不滚之后 window 那一份恒为 0：非看板页的位置记不到、也回不去（真浏览器实测：设置页滚 400 → 换页回来是 0），而跨页常驻的 `<main class="shell-main">` 还会把上一页的 scrollTop 带进第一次到的页。修法照 D40 作者留的钩子（route.ts 注释「列独立滚动（D42）再给每列挂一个即可」）：`<main>` 挂 `data-scroll-memory="shell-main"`，每列 `.column-list` 挂 `"lane:<slug>"`，`route.restoreScroll` 没记过 / 快照缺键的容器归零（已在 0 不写）。三层判例：`route.scrollMemory.reset.test.ts`、`app.shellMainScrollMemory.test.tsx`、`lanesScroll.spec.ts` 新增一例（pre-fix 实跑：设置页回来 Expected 400 Received 0）。
+
 **没做 / 边界**：列内滚动位置不持久化（原生 ScrollView 也不）；列头不做「滚动时阴影」；极矮视口下横幅会把列区挤得很矮（100vh 模型的本性，原生窗口有最小高）。窄于 720 仍由 `.shell` 的 `min-width` 交给文档横向滚动（既有）。D31 三档顶栏与滚动模型无涉。
 
 **视觉 golden**：本机同一渲染器下 branch vs main 逐像素比对，六张里只有 board 两张有几何变化——列底不再溢出视口（列圆角 + 16px 看板内边距露出来，色差 5/255，低于 golden 比对的单像素阈值），其余全是合成层的 ±1 舍入；trash / settings 零几何变化。goldens 不在本 PR 手改，合并后跑「Refresh visual goldens」workflow 让 runner 重生成。
 
-**判例**：新 `web/src/pages/BoardPage.independentScroll.test.tsx`（12：DOM 结构 4 + 样式文本 8）、新 `web/e2e/lanesScroll.spec.ts`（5，真浏览器 600px 高：滚提案列只动这一列、列头 / 输入框 / 其余列 / 文档 / `.shell-main` 一像素不动、`.board-main` 无纵向溢出；焦点落到列外的卡 → 这一列自己滚过去；每列首卡与滚动容器 padding box 的顶 / 左 / 右边距 ≥ 2px（焦点环不被裁）；`page.route` 注 20 条 archived、展开永久性完成条滚行列表 → 搜索框一像素不动、`.board-main` 仍无纵向溢出；多选操作条横贯看板底、整条在视口里）。既有 `BoardLanes.test.tsx`（书立条仍是横排首尾）、`cardDetail.spec.ts` / `headerLayout.spec.ts` / `maintenanceBanner.spec.ts` 照过。`ui/parity` 判卷面零变化。
+**判例**：新 `web/src/pages/BoardPage.independentScroll.test.tsx`（12：DOM 结构 4 + 样式文本 8）、新 `web/e2e/lanesScroll.spec.ts`（6，真浏览器 600px 高：滚提案列只动这一列、列头 / 输入框 / 其余列 / 文档 / `.shell-main` 一像素不动、`.board-main` 无纵向溢出；焦点落到列外的卡 → 这一列自己滚过去；每列首卡与滚动容器 padding box 的顶 / 左 / 右边距 ≥ 2px（焦点环不被裁）；`page.route` 注 20 条 archived、展开永久性完成条滚行列表 → 搜索框一像素不动、`.board-main` 仍无纵向溢出；设置页在 `.shell-main` 里滚 400 → 第一次到回收站 0 → 回设置页 400；多选操作条横贯看板底、整条在视口里）；新 `web/src/route.scrollMemory.reset.test.ts`（3）与 `web/src/app.shellMainScrollMemory.test.tsx`（3）钉 D40 × D42。既有 `BoardLanes.test.tsx`（书立条仍是横排首尾）、`cardDetail.spec.ts` / `headerLayout.spec.ts` / `maintenanceBanner.spec.ts` 照过。`ui/parity` 判卷面零变化。

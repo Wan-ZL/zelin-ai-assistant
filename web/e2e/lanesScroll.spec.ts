@@ -6,7 +6,8 @@
 //   · 首卡的焦点环（2px outline，在卡的 border box 之外）落在滚动容器的 padding box 里——滚动容器只画 padding box，
 //     顶上不留 2px 就把环的上边切掉（#274 审查抓到）；卡自己的位置一像素不动；
 //   · 多选态的操作条横贯看板底部、整条在视口里（此前它是横排里的一个 flex 项，被排到最右列之后、视口之外）；
-//   · 永久性完成书立条展开后：搜索框是滚动容器的兄弟、钉在条顶，滚行列表时它不动（与列顶输入框同款；#274 审查抓到）。
+//   · 永久性完成书立条展开后：搜索框是滚动容器的兄弟、钉在条顶，滚行列表时它不动（与列顶输入框同款；#274 审查抓到）；
+//   · D40 的换页滚动记忆挂在 .shell-main 上（文档不滚了）：设置页滚过 400 → 第一次到回收站从顶开始 → 回设置页还原 400。
 // 数据 = demo initial 场景（提案列四张卡 + 一张占位；600px 高的视口下列表必然溢出）；书立条那条用 page.route
 // 往 /api/board 里注 20 条 archived 行（demo seed 的 archived 是空的）。
 import { expect, test, type Page } from "@playwright/test";
@@ -193,6 +194,27 @@ test("永久性完成书立条：展开后搜索框钉在条顶，滚行列表�
   await expect(search).toBeInViewport();
   // 看板层仍无纵向溢出（展开的条没把 .board-main 撑高）
   expect(await page.locator(".board-main").evaluate((el) => el.scrollHeight - el.clientHeight)).toBe(0);
+});
+
+test("换页滚动记忆（D40）挂在 .shell-main 上：设置页滚过的位置回来还原、第一次到的页从顶开始；文档始终不滚", async ({ page }) => {
+  await openBoard(page);
+  const main = page.locator("main.shell-main");
+  await page.locator('[data-rail-item="settings"]').click();
+  await page.locator(".settings-page").waitFor();
+  // 设置页在 .shell-main 里滚（不是文档）
+  expect(await main.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(400);
+  await main.evaluate((el) => { el.scrollTop = 400; });
+  await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBe(400);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  // 第一次到回收站页：从顶开始（跨页常驻的 <main> 不带设置页的位置）
+  await page.locator('[data-rail-item="trash"]').click();
+  await page.locator(".trash-page").waitFor();
+  await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBe(0);
+  // 回设置页：还原 400
+  await page.locator('[data-rail-item="settings"]').click();
+  await page.locator(".settings-page").waitFor();
+  await expect.poll(() => main.evaluate((el) => el.scrollTop)).toBe(400);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight === window.innerHeight)).toBe(true);
 });
 
 test("多选态：操作条横贯看板底部、整条在视口里", async ({ page }) => {

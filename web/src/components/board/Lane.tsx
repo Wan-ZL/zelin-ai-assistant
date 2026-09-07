@@ -87,7 +87,8 @@ export function Lane({ title, slug, countLabel, colorToken, composer, capNote, e
         <span className="lane-count">{countLabel}</span>
       </header>
       {composer}
-      <div className="column-list">
+      {/* data-scroll-memory：换页再回看板时这一列滚到哪还原到哪（route.rememberScroll / restoreScroll，D40；同文档内的记忆，不持久化） */}
+      <div className="column-list" data-scroll-memory={`lane:${slug}`}>
         {isEmpty ? <p className="column-empty">{emptyText ?? text("空", "Empty")}</p> : children}
       </div>
       {capNote && <p className="column-cap-note">{capNote}</p>}
