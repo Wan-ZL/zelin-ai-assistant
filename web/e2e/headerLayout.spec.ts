@@ -67,7 +67,11 @@ async function open(page: Page, { lang, width, shell = false, longLeft = false, 
     });
   }
   await page.setViewportSize({ width, height: 900 });
-  await page.goto(`${server.baseURL}/${query}`);
+  // 语言经 ?lang=（D37 §15：一次性覆写——有它就不从 server 水合也不写设置）。同一个 demo server 被本文件所有用例共用，第一个
+  // 用例的首启持久化会把它的语言写进 settings_overrides.json，只靠 localStorage 提示的话后面的用例会被 server 的值压回去
+  const url = new URL(`${server.baseURL}/${query}`);
+  url.searchParams.set("lang", lang);
+  await page.goto(url.toString());
   await page.getByRole("heading", { level: 1 }).waitFor();
   await page.locator(".shell-main").waitFor();
   await page.waitForLoadState("networkidle");

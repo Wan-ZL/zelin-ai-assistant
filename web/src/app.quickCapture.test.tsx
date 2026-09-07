@@ -15,6 +15,7 @@ vi.mock("./api", async (importOriginal) => {
   return {
     ...actual,
     fetchBoard: offline(), fetchHealth: offline(), fetchLanes: offline(), fetchDisplaySettings: offline(), fetchSetup: offline(),
+    fetchFailures: offline(), fetchSettingsSection: offline(),
   };
 });
 

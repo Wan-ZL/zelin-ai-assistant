@@ -116,9 +116,11 @@ class CatalogPutTestCase(_ServerCase):
         self.assertEqual(self._overrides(), {"models_dispatch": "claude-opus-5", "language": "en"})
 
     def test_put_equal_to_default_deletes_the_key(self):
-        write_text(self.overrides_path, json.dumps({"language": "en", "review_notify": "off"}))
-        _s, obj = put_json(self.port, "/api/settings/general", {"language": "zh"})
-        self.assertEqual(self._field(obj, "language")["source"], "default")
+        # 示例键曾是 language；D37（§15 追记 2026-09-06）起它是 write:always（判例 test_server_settings_language_always_write.py），
+        # diff-write 本身不变——换同区的 default_output_format 钉它
+        write_text(self.overrides_path, json.dumps({"default_output_format": "html", "review_notify": "off"}))
+        _s, obj = put_json(self.port, "/api/settings/general", {"default_output_format": "markdown"})
+        self.assertEqual(self._field(obj, "default_output_format")["source"], "default")
         self.assertEqual(self._overrides(), {"review_notify": "off"})
 
     def test_put_equal_to_config_layer_deletes_the_key(self):

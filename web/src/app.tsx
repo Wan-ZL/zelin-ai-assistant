@@ -13,8 +13,8 @@ import {
 import { createBoardRealtime } from "./realtime";
 import { onShellCommand, pushBadge } from "./shellBridge";
 import {
-  refreshBoard, refreshDisplaySettings, refreshFailures, refreshHealth, refreshLanes, refreshSetup, setConnection, syncRouteFromUrl,
-  useAppState,
+  hydrateLanguage, refreshBoard, refreshDisplaySettings, refreshFailures, refreshHealth, refreshLanes, refreshSetup, setConnection,
+  syncRouteFromUrl, useAppState,
 } from "./store";
 import { focusComposer } from "./components/board/focusComposer";
 import { AppShell } from "./components/shell/AppShell";
@@ -75,7 +75,8 @@ function renderPage(page: AppPage) {
 }
 
 export function App() {
-  // 语言真源在 store（初值解析 ?lang= > localStorage zai.lang > 浏览器；切换经 setLanguage）
+  // 语言读 store（D37 §15：真源是 server 的 general.language——首帧先按 ?lang= > localStorage 缓存 > 浏览器猜一下，挂载后 hydrateLanguage
+  // 对齐；切换经 chooseLanguage 立刻切 + 写回 server）
   const { language, board, setup } = useAppState();
   // 路由真源是 URL（route.useRoute 订阅 location.search；navigate / popstate 后重渲染——D40 客户端路由）
   const search = useRoute();
@@ -95,6 +96,9 @@ export function App() {
     void refreshFailures(); // §25 失败目录双语句（server-owned，GET /api/failures）：卡片错误行按 failure id 说人话；静态，拉一次
     void refreshDisplaySettings(); // 字号 / 字重 / 描边（§54.1 第 12 项）：到达即落 <html> data-*，首帧由 index.html 的缓存顶住
     void refreshSetup(); // §68.5 首次运行判定（config.yaml / 凭证 / 完成标记）
+    // D37（§15 追记）：语言的真源是 server 的 general.language——显式值压过首帧缓存；谁都没选过（source default）就把此刻正显示的
+    // 语言写进设置一次（原生 L10n.swift 首启持久化：launchd 下的 python 没有 LANG）；?lang= 在场 = 一次性覆写，不水合不写
+    void hydrateLanguage();
     // D40 客户端路由：popstate + 文档级链接委托；URL 变了把不进历史栈的过滤器 / ?card= 同步回 store。
     // 这两条与 realtime 同寿命——换页不再重建文档，SSE 只连一次、看板 store 一直是同一份
     const stopRouter = startRouter();

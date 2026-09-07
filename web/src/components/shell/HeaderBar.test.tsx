@@ -1,5 +1,5 @@
 // 顶栏行为测试（G7）：新鲜度阈值（镜像 Freshness.swift 的 90s 语义）、
-// 主题切换（dataset + localStorage）、语言切换（store.setLanguage + zai.lang 持久化）、
+// 主题切换（dataset + localStorage）、语言切换（store.chooseLanguage：store 翻转 + zai.lang 首帧缓存；PUT 半边见 LanguageToggle.persist.test.tsx）、
 // §56 部署状态小字（deploy_state 缺失自隐藏 / healthy 次级色 / 回滚警告色）。
 // 页面入口（回收站 / 设置 …）已搬到左侧导航栏——判例在 NavRail.test.tsx（§54.4）。
 // 三档密度（§49 追记 2026-09-04）：data-density 反映档位；compact 收设备标签；tight 把新鲜度 / 部署小字折进
@@ -16,7 +16,8 @@ import { HeaderBar, type HeaderBarProps } from "./HeaderBar";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
-  return { ...mod, fetchBoard: vi.fn(), fetchCard: vi.fn() };
+  // putSettingsSection：D37 起顶栏切换还 PUT general.language（判例在 LanguageToggle.persist.test.tsx；这里只要它不打真网络）
+  return { ...mod, fetchBoard: vi.fn(), fetchCard: vi.fn(), putSettingsSection: vi.fn().mockResolvedValue({ id: "general", fields: [] }) };
 });
 
 const fetchBoardMock = vi.mocked(fetchBoard);
@@ -217,7 +218,7 @@ describe("HeaderBar", () => {
     expect(screen.getByText("v0.48.4")).toBeTruthy();
   });
 
-  it("语言切换：store.language 翻转 + 持久化 zai.lang", () => {
+  it("语言切换：store.language 翻转 + 首帧缓存 zai.lang", () => {
     renderHeader("zh");
     fireEvent.click(screen.getByRole("button", { name: "切换到英文" }));
     expect(getState().language).toBe("en");

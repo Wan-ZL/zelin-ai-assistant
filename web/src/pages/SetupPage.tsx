@@ -1,7 +1,7 @@
 // 首次运行向导（§15 v0.14 初始设置向导 → §68.5 web 版；?page=setup[&step=<name>]）。原生 SetupWizard 六步的 web 版，
 // 外加 web 独有的两件事（config.yaml 从模板建、可选的 Slack / Gmail 凭证）——一共七步，一屏一步，全部按检测结果
 // 预填，一路「下一步」就能得到一套能用的系统：
-//   1 欢迎 + 界面语言（写 general.language override）+ config.yaml（从 config.example.yaml 复制，绝不覆盖）
+//   1 欢迎 + 界面语言（store.chooseLanguage：切 UI + 写 general.language override，D37 单一开关）+ config.yaml（从 config.example.yaml 复制，绝不覆盖）
 //   2 接入 AI 引擎（GET /api/setup/engine：claude CLI + 认证梯子；B 路：粘贴 key 先验后存）
 //   3 系统权限（屏幕录制 / 笔记库 Documents / 通知 三行 + telemetry 披露块，与权限体检页同组件）+ 后台进程的磁盘授权（FDA 清单）
 //   4 屏幕记录（一次性同意块 / 实时状态行，同权限体检页）
@@ -38,10 +38,10 @@ import { EngineStep, useEngineDetector } from "../components/setup/EngineStep";
 import { FinaleStep } from "../components/setup/FinaleStep";
 import { applyLaunchAtLoginChoice, defaultLaunchAtLogin, LaunchAtLoginChoice, launchAtLoginOffer, markLaunchAtLoginDefaultApplied } from "../components/setup/LaunchAtLoginChoice";
 import { applyVaultChoice, VaultStep, type VaultChoice } from "../components/setup/VaultStep";
-import { useI18n, type Language } from "../i18n";
+import { useI18n } from "../i18n";
 import { buildAppUrl, navigate } from "../route";
 import { hasShellBridge, useShellState } from "../shellBridge";
-import { refreshBoard, refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, saveSettingsSection, setLanguage, setSetup, useAppState } from "../store";
+import { chooseLanguage, refreshBoard, refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, setSetup, useAppState } from "../store";
 import { markTelemetryConsentShown, trackEvent } from "../telemetry";
 
 export const STEPS = ["welcome", "engine", "permissions", "recording", "vault", "credentials", "finale"] as const;
@@ -232,11 +232,9 @@ export function SetupPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   });
 
-  /** 显式选语言：立刻生效（store，持久化 zai.lang）+ 写设置里同一把 language override（原生 setLanguage） */
-  function chooseLanguage(lang: Language) {
-    setLanguage(lang);
-    void saveSettingsSection("general", { language: lang }).catch(() => undefined);
-  }
+  // 界面语言单选 = store.chooseLanguage（D37 §15：立刻生效 + PUT general.language；顶栏 / `/lang` / 设置区同一把开关——此前这里
+  // 是唯一的双写点，现在它住 store）。「已按系统语言预选;随时可在 设置 里更改。」这句原生原话（parity id
+  // control:setup_wizard:copy:preselected-from-your-system-language-changeable）自 D37 起重新为真：设置里改的就是看板的语言
 
   const titles: Record<Step, [zh: string, en: string, subZh: string, subEn: string]> = {
     welcome: ["欢迎使用 Zelin's AI Assistant", "Welcome to Zelin's AI Assistant",
@@ -283,8 +281,8 @@ export function SetupPage() {
             <div className="setup-card">
               <h4 className="setup-card-title">{text("界面语言", "Interface language")}</h4>
               <div className="settings-radio-row" role="radiogroup" aria-label={text("界面语言", "Interface language")}>
-                <label className="settings-radio"><input type="radio" name="setup-language" value="zh" checked={language === "zh"} onChange={() => chooseLanguage("zh")} />中文</label>
-                <label className="settings-radio"><input type="radio" name="setup-language" value="en" checked={language === "en"} onChange={() => chooseLanguage("en")} />English</label>
+                <label className="settings-radio"><input type="radio" name="setup-language" value="zh" checked={language === "zh"} onChange={() => void chooseLanguage("zh")} />中文</label>
+                <label className="settings-radio"><input type="radio" name="setup-language" value="en" checked={language === "en"} onChange={() => void chooseLanguage("en")} />English</label>
               </div>
               <p className="settings-helper">{text("已按系统语言预选;随时可在 设置 里更改。", "Preselected from your system language; changeable anytime in Settings.")}</p>
             </div>
