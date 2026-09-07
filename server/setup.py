@@ -24,6 +24,12 @@ Gmail / Slack 凭证 → 完成。
 - ``POST /api/setup/seed-dashboard {}`` → 跑一次 ``python -m act.lib.dashboard``（doctor 文档里
   「首次数据」的修法；原生 ``PipelineProbeModel.seedDashboard``），经 server/subproc；``{"ok", "rc"}``，
   失败 ``ok:false`` + ``error`` 尾巴（不 500——页面把它接在「生成失败: 」后面）。
+- ``GET /api/setup/vaults`` → ``{"vaults": [{"name", "path"}]}``——Obsidian 自己登记过的库
+  （``~/Library/Application Support/obsidian/obsidian.json`` 的 ``vaults`` 子树；原生
+  ``ObsidianVaults.registered``，向导第 5 步的「Obsidian vault」行；§68.5 追记 D51）。只读、
+  token-light；**只回路径仍是目录的条目**（按路径排序、去重），文件缺席 / 不是 JSON / 形状不对 /
+  超过 size-cap 一律 ``[]``、永不 500——没装 Obsidian 是常态不是错误。路径由 ``registry`` 参数注入
+  （判例不碰真 HOME）；client 不能指定任何路径。
 """
 from __future__ import annotations
 
@@ -182,3 +188,54 @@ def seed_dashboard(home: Path, payload: dict, runner=None) -> dict:
         return {"ok": False, "rc": rc,
                 "error": subproc.tail(err or out) or "act.lib.dashboard exited %d" % rc}
     return {"ok": True, "rc": 0}
+
+
+# --------------------------------------------------------------------------- #
+# Obsidian 已注册的库（§68.5 追记 D51；原生 SetupWizard.swift ObsidianVaults.registered）
+# --------------------------------------------------------------------------- #
+# obsidian.json 正常只有几 KB；超过这个帽视同坏文件 → []（防腐 #4：读外来文件带上限）
+_VAULT_REGISTRY_MAX_BYTES = 1 << 20
+
+
+def obsidian_registry_path(user_home: Optional[Path] = None) -> Path:
+    """Obsidian 桌面版登记库的文件（macOS 路径；原生逐字同款）。不在 TCC 保护目录下。"""
+    return (user_home or Path.home()) / "Library" / "Application Support" / "obsidian" / "obsidian.json"
+
+
+def _load_registry(registry: Path) -> Optional[dict]:
+    """读 + 解析 obsidian.json；任何一步不成 → None（缺席 / 太大 / 不是 JSON / 顶层不是对象）。"""
+    try:
+        if not registry.is_file() or registry.stat().st_size > _VAULT_REGISTRY_MAX_BYTES:
+            return None
+        doc = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def registered_vaults(registry: Optional[Path] = None) -> "list[dict]":
+    """``vaults`` 子树 ``{id: {"path": ...}}`` → ``[{"name", "path"}]``：只留路径仍是目录的，按路径排序、去重。"""
+    doc = _load_registry(registry or obsidian_registry_path())
+    vaults = doc.get("vaults") if doc else None
+    if not isinstance(vaults, dict):
+        return []
+    seen = set()
+    for entry in vaults.values():
+        path = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(path, str) or not path.strip():
+            continue
+        path = path.rstrip("/") or "/"
+        if path in seen:
+            continue
+        try:
+            if not Path(path).is_dir():
+                continue
+        except OSError:
+            continue
+        seen.add(path)
+    return [{"name": Path(p).name or p, "path": p} for p in sorted(seen)]
+
+
+def vaults_snapshot(registry: Optional[Path] = None) -> dict:
+    """``GET /api/setup/vaults``。"""
+    return {"vaults": registered_vaults(registry)}

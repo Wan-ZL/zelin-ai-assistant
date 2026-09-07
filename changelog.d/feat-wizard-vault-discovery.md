@@ -1,0 +1,2 @@
+type: added
+- **首次运行向导「笔记放在哪里?」这一步现在会列出 Obsidian 自己登记过的库，点一行就选中（owner 决策 D51；CONTRACT §68.5 追记）**：装了 Obsidian 的人不用再敲路径或开对话框——每座库一行（库名 + 路径 + 「Obsidian vault」徽章），排在「当前」行之后、「不用 Obsidian — 存成普通 Markdown 文件夹」+「选择…」之前；当前生效的笔记库就是其中一座时合成一行、预先选中。列表来自本机 server 新增的只读 `GET /api/setup/vaults`（读 `~/Library/Application Support/obsidian/obsidian.json`，只回路径仍存在的库；没装 Obsidian / 文件坏了 → 空列表，向导照常只剩两行）。选中后落盘仍是原来那条 `PUT /api/settings/obsidian` diff-write。

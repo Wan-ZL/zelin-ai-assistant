@@ -38,6 +38,8 @@ vi.mock("../api", async (importOriginal) => {
     ...actual,
     fetchHealth: vi.fn(), fetchPermissions: vi.fn(), fetchSetup: vi.fn(), fetchSecrets: vi.fn(), fetchSetupEngine: vi.fn(),
     postSetupStep: vi.fn(), putSettingsSection: vi.fn(), fetchSettingsCatalog: vi.fn().mockResolvedValue({ sections: [] }),
+    // 笔记库步还拉 Obsidian 登记过的库（D51）——这里没装 Obsidian：空列表；判例在 components/setup/VaultStep.registeredVaults.test.tsx
+    fetchSetupVaults: vi.fn().mockResolvedValue({ vaults: [] }),
     // 「完成」还会落 consent 标记 + 发 wizard_complete（D48 / D49）——这里只要它们不出网；判例在 SetupPage.finishTelemetry.test.tsx
     postTelemetryConsentShown: vi.fn().mockResolvedValue({ ok: true, written: true, shown_at: "x" }),
     postAnalytics: vi.fn().mockResolvedValue({ ok: true, event: "wizard_complete", logged: true }),

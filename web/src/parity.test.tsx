@@ -142,6 +142,8 @@ vi.mock("./api", async (importOriginal) => {
     fetchSecrets: vi.fn(),
     fetchSetup: vi.fn(),
     fetchSetupEngine: vi.fn(),
+    // 向导第 5 步的 Obsidian 登记库列表（D51）：demo 机器上一座库——「Obsidian vault」行连同当前 / 自定义两行一起渲染
+    fetchSetupVaults: vi.fn().mockResolvedValue({ vaults: [{ name: "Obsidian Vault", path: "/Users/demo/Documents/Obsidian Vault" }] }),
     fetchPermissions: vi.fn(),
     fetchAbout: vi.fn(),
     fetchDiagnostics: vi.fn(),
