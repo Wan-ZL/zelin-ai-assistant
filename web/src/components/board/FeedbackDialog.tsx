@@ -5,7 +5,9 @@
 // rememberFeedbackPublishDefault 同一把键，§66.2 setting:overrides:*；server 目录 general 区投影它，
 // 写 = PUT /api/settings/general）——不再有第二份 localStorage 副本。记不住只影响下次默认态，不挡发送
 // （原生 try? 先例：写失败静默）。
-// 粘贴图片的 images[] 走 §68.14 的诚实例外（上传通道另 PR），本弹窗只发文字。
+// 本弹窗**只发文字**（owner 决策 D41，§10bis 追记）：贴图上传通道 POST /api/attachments 只落 state/attachments/、
+// 只接列顶输入框的 capture；feedback 的 images[] 按 §29ter 该住 state/feedback/attachments/ 另一个目录（GC 口径也分开），
+// 没有第二条落盘通道就不接贴图，正文也不提图片（原生那句「粘贴的图片只保存在本机」随之不搬——没有图就不许诺）。
 // 键盘纪律（§41 2026-09-05 追记，D35 同款）：弹窗一律按钮提交——Enter 在 textarea 里就是换行（不拦、不
 // preventDefault），键盘上没有提交键；IME 候选上屏的回车因此天然安全（半截拼音再也不会被发出去、还公开成 issue）。
 // 正文 = §29 的明示条款（原生 AppDelegate.promptFeedback 同款）：建议全文 + 所选卡片标题快照会上传给维护者，

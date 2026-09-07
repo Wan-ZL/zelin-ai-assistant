@@ -1,7 +1,7 @@
 {
   "counts": {
-    "PENDING": 12,
-    "PRESENT": 830,
+    "PENDING": 10,
+    "PRESENT": 832,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -119,14 +119,14 @@
     "control:board.dialogs:alert-button:cancel": "PRESENT",
     "control:board.dialogs:alert-button:cancel#2": "PRESENT",
     "control:board.dialogs:alert-button:cancel#3": "PRESENT",
-    "control:board.dialogs:alert-button:ok": "PENDING",
+    "control:board.dialogs:alert-button:ok": "PRESENT",
     "control:board.dialogs:alert-button:send": "PRESENT",
     "control:board.dialogs:alert-button:send#2": "WAIVED",
     "control:board.dialogs:label:answer-the-ai-s-question": "WAIVED",
     "control:board.dialogs:label:comment-change-direction": "PRESENT",
     "control:board.dialogs:label:cost-unknown": "PRESENT",
     "control:board.dialogs:label:estimated-cost-money": "PRESENT",
-    "control:board.dialogs:label:images-could-not-be-saved": "PENDING",
+    "control:board.dialogs:label:images-could-not-be-saved": "PRESENT",
     "control:board.dialogs:label:send-back-add-requirements": "PRESENT",
     "control:board.dialogs:label:send-feedback-ids-count-cards": "PRESENT",
     "control:board.dialogs:label:send-feedback-overall": "PRESENT",

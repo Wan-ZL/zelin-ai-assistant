@@ -186,6 +186,8 @@ vi.mock("./api", async (importOriginal) => {
     postSelfImproveResume: vi.fn().mockResolvedValue({ ok: true, paused: false, was_paused: true }),
     postClaudeCodeDefault: vi.fn().mockResolvedValue({ model: "x", previous: null, backup: null, path: "p" }),
     postAction: vi.fn().mockResolvedValue({ ok: true }),
+    // §10bis 贴图上传（D41）：默认成功回一条路径；「server 拒绝」那一遍换成拒绝 → 「图片保存失败」+ 好
+    postAttachment: vi.fn().mockResolvedValue({ ok: true, path: "/Users/demo/zai/state/attachments/demo-1.png", bytes: 7 }),
     postReveal: vi.fn().mockResolvedValue({ ok: true }),
     postAiFix: vi.fn().mockResolvedValue({ ok: true, command_file: "/tmp/x.command" }),
     // §48.7 后台雷达行：launchd 说两个 agent 都「未安装」；点「重新安装」后回执说已加载（面板信回执）→
@@ -201,6 +203,13 @@ vi.mock("./api", async (importOriginal) => {
     postFolderCreate: vi.fn().mockRejectedValue(new Error("could not create the folder: [Errno 13] Permission denied")),
   };
 });
+
+// 贴图的 canvas 转 PNG 只在真浏览器里跑（createImageBitmap / toBlob，jsdom 没有）——桩成直接回一个 PNG blob，
+// 让 postAttachment 的拒绝路径（而不是「createImageBitmap unavailable」）决定弹窗里的原因句
+vi.mock("./components/board/pastedImages", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./components/board/pastedImages")>()),
+  encodePng: vi.fn().mockResolvedValue(new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1])], { type: "image/png" })),
+}));
 
 interface ControlItem {
   id: string;
@@ -1009,20 +1018,30 @@ async function renderAboutVariants(language: Language) {
 }
 
 /** 看板「server 拒绝」那一遍（原生的失败态文案）：接管会话 → 打开终端失败；让 AI 修 → 让 AI 修启动失败：；
- *  composer 捕获写入失败 → 提交失败，已保留输入；斜杠命令打错 → 未识别或参数错误：。遍完全部复原。 */
+ *  composer 捕获写入失败 → 提交失败，已保留输入；斜杠命令打错 → 未识别或参数错误：；贴图上传被拒 →
+ *  「图片保存失败」弹窗 + 好（§10bis 追记，D41：先往第一个输入框粘一张截图，弹窗收完点「好」关掉）。遍完全部复原。 */
 async function renderBoardRejectVariant(language: Language) {
-  const { postAction, postAiFix, postTerminal } = await import("./api");
+  const { postAction, postAiFix, postAttachment, postTerminal } = await import("./api");
   vi.mocked(postTerminal).mockRejectedValue(new Error("open -a failed (exit 1)"));
   vi.mocked(postAiFix).mockRejectedValue(new Error("claude not found (Errno 2)"));
   vi.mocked(postAction).mockRejectedValue(new Error("inbox not writable (EACCES)"));
+  vi.mocked(postAttachment).mockRejectedValue(new Error("disk full (ENOSPC)"));
   const pool = found[language].board;
   const view = mount(language, "board");
   await settle(pool);
+  // 贴一张纯位图进第一个列顶输入框：认领 → 上传被拒 → 「图片保存失败」+ 好
+  const firstField = view.container.querySelector<HTMLTextAreaElement>(".lane-composer textarea");
+  if (firstField) {
+    const shot = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+    fireEvent.paste(firstField, { clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => shot }], files: [shot], getData: () => "" } });
+    await settle(pool);
+    clickAll(Array.from(document.querySelectorAll<HTMLButtonElement>("dialog[open] button")).filter((b) => /^(好|OK)$/.test(normalize(b.textContent))), pool);
+  }
   // 两个列顶输入框：第一个打一条参数错误的斜杠命令，其余照常一句捕获（走 postAction 的拒绝）
   view.container.querySelectorAll<HTMLTextAreaElement>(".lane-composer textarea").forEach((el, i) => {
     fireEvent.change(el, { target: { value: i === 0 ? "/rec nope" : "demo" } });
   });
-  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer button")), pool);
+  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer .btn-primary")), pool);
   await settle(pool);
   clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /让 AI 修|Fix with AI/.test(b.textContent ?? "")), pool);
   doubleClickTakeovers(view.container, pool); // 接管会话被拒 → 「打开终端失败」（#216：双击整卡，不再有按钮）
@@ -1032,6 +1051,7 @@ async function renderBoardRejectVariant(language: Language) {
   vi.mocked(postTerminal).mockResolvedValue({ ok: true } as never);
   vi.mocked(postAiFix).mockResolvedValue({ ok: true, command_file: "/tmp/x.command" } as never);
   vi.mocked(postAction).mockResolvedValue({ ok: true });
+  vi.mocked(postAttachment).mockResolvedValue({ ok: true, path: "/Users/demo/zai/state/attachments/demo-1.png", bytes: 7 });
 }
 
 /** header 录制 / 字幕控件（原生 RecordingMenuButton）在几套壳状态下：打开菜单收状态行 + 修法项

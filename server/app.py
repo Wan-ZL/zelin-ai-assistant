@@ -47,11 +47,15 @@
   标记 write-once，server/telemetry_consent.py）、POST /api/analytics {event[, fields]}
   （server 白名单内的两个 web 事件经 act.lib.analytics 落同一份 events.jsonl，
   server/analytics_ingest.py）。
+- 贴图上传（§10bis web 路径，D41）：POST /api/attachments，body = 原始 PNG 字节
+  （唯一的**二进制体**路由：Content-Type 闸认 image/png、自带 8MiB 上限，
+  ``_POST_RAW_ROUTES``），落 state/attachments/<uuid>-1.png 回绝对路径，
+  server/attachments.py；其余四闸逐字同款。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
-§67（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）、§68（parity 面）、
-§70（每日整理设置面）。
+localhost 例外的法源）、§10bis（贴图 images 字段与上传面）、§59（设置面）、
+§62（素材库）、§63（会议 recap）、§67（skill 商店：GET/POST /api/skills，写者是
+act/lib/skills.py）、§68（parity 面）、§70（每日整理设置面）。
 """
 from __future__ import annotations
 
@@ -67,14 +71,15 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (about, ai_fix_launch, analytics_ingest, board_source,
-                    claude_sessions, diagnostics, display, doctor_run,
-                    failure_catalog, files, folders, health, inbox_writer,
-                    ingest_run, lanes, maintainer_launch, material_box,
-                    mcp_servers, notify_catalog, paths, permissions, radars,
-                    recaps, repair, secrets_store, security, self_improve_lane,
-                    settings, settings_catalog, setup, slack_directory,
-                    slack_manifest, sync_pairing, telemetry_consent,
+from server import (about, ai_fix_launch, analytics_ingest, attachments,
+                    board_source, claude_sessions, diagnostics, display,
+                    doctor_run, failure_catalog, files, folders, health,
+                    inbox_writer, ingest_run, lanes, maintainer_launch,
+                    material_box, mcp_servers, notify_catalog, paths,
+                    permissions, radars, recaps, repair, secrets_store,
+                    security, self_improve_lane, settings, settings_catalog,
+                    setup, slack_directory, slack_manifest, sync_pairing,
+                    telemetry_consent,
                     terminal_launch, uninstall_launch, voice_profile)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
@@ -176,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlsplit(self.path).path)
         if "\x00" in path:
             raise InvalidFieldError("NUL in path")
-        self._check_auth(method)
+        self._check_auth(method, path)
         if method == "GET":
             self._route_get(path)
         elif method == "PUT":
@@ -192,27 +197,31 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         raise err
 
-    def _check_auth(self, method: str) -> None:
+    def _check_auth(self, method: str, path: str) -> None:
         # Host 闸：每个请求（页面加载也算）——DNS-rebinding 防线。
         if not security.host_ok(self.headers.get("Host")):
             self._reject(ForbiddenError("bad host"))
         if method in ("POST", "PUT"):
-            self._check_write_auth()
+            self._check_write_auth(path)
         # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
 
-    def _check_write_auth(self) -> None:
-        """写请求的后三闸：Origin（present 才查）→ Content-Type → instance token。"""
+    def _check_write_auth(self, path: str) -> None:
+        """写请求的后三闸：Origin（present 才查）→ Content-Type → instance token。
+
+        Content-Type 闸按路径取 media type：二进制体路由（``_POST_RAW_ROUTES``，
+        今日只有 §10bis 的贴图上传 image/png）之外一律 application/json——放宽
+        纪律见 security.content_type_is docstring。"""
         ctx = self.server.ctx  # type: ignore[attr-defined]
         origin = self.headers.get("Origin")
         if origin is not None and not security.origin_ok(
                 origin, ctx.allowed_origins):
             self._reject(ForbiddenError("bad origin"))
-        if not security.content_type_is_json(
-                self.headers.get("Content-Type")):
+        want = _write_media_type(path)
+        if not security.content_type_is(self.headers.get("Content-Type"), want):
             # 415 复用 INVALID_FIELD（§49 的 413 先例：status 已表意，
             # 不为 loopback 面扩词表）
             self._reject(InvalidFieldError(
-                "Content-Type must be application/json", status=415))
+                f"Content-Type must be {want}", status=415))
         if not security.token_ok(self.headers.get(security.TOKEN_HEADER),
                                  ctx.token):
             self._reject(UnauthorizedError("missing or bad token"))
@@ -258,6 +267,12 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     def _route_post(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
+        raw = _POST_RAW_ROUTES.get(path)
+        if raw is not None:
+            # 二进制体路由（§10bis 贴图上传）：不解析 JSON、自带 body 上限
+            _media_type, limit, fn = raw
+            self._send_json(200, fn(ctx, self._read_raw_body(limit)))
+            return
         handler = _lookup(_POST_JSON_ROUTES, _POST_PREFIX_ROUTES, path)
         if handler is None:
             raise NotFoundError("not found", {"path": path})
@@ -278,6 +293,11 @@ class Handler(BaseHTTPRequestHandler):
     def _query(self) -> dict:
         """URL query → 扁平 dict（同名键后者胜；空值保留）——GET 表路由的第二个实参。"""
         return dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
+
+    def _read_raw_body(self, limit: int) -> bytes:
+        """二进制体（贴图上传）：Content-Length 过 ``limit`` 后整段读回，不解析。"""
+        length = _content_length(self.headers.get("Content-Length"), limit)
+        return self.rfile.read(length)
 
     def _read_json_body(self) -> dict:
         length = _content_length(self.headers.get("Content-Length"))
@@ -361,8 +381,9 @@ class Handler(BaseHTTPRequestHandler):
 # --------------------------------------------------------------------------- #
 # 请求体 / 静态资源的纯函数小件（Handler 方法只做发送）
 # --------------------------------------------------------------------------- #
-def _content_length(raw: Optional[str]) -> int:
-    """Content-Length 头 → 字节数；缺失/非数/负数 400，超上限 413。"""
+def _content_length(raw: Optional[str], limit: int = MAX_BODY_BYTES) -> int:
+    """Content-Length 头 → 字节数；缺失/非数/负数 400，超 ``limit`` 413
+    （JSON 面 1MiB；二进制体路由各自带上限，见 ``_POST_RAW_ROUTES``）。"""
     if raw is None:
         raise InvalidFieldError("Content-Length required")
     try:
@@ -371,12 +392,18 @@ def _content_length(raw: Optional[str]) -> int:
         raise InvalidFieldError("bad Content-Length")
     if length < 0:
         raise InvalidFieldError("bad Content-Length")
-    if length > MAX_BODY_BYTES:
+    if length > limit:
         # CONTRACT §49（v0.48 追认）：413 复用 INVALID_FIELD——status 已
         # 表意，不为 loopback 面扩词表
         raise InvalidFieldError("body too large",
-                                {"limit": MAX_BODY_BYTES}, status=413)
+                                {"limit": limit}, status=413)
     return length
+
+
+def _write_media_type(path: str) -> str:
+    """写请求 Content-Type 闸要求的 media type：二进制体路由登记的类型，否则 JSON。"""
+    raw = _POST_RAW_ROUTES.get(path)
+    return raw[0] if raw is not None else "application/json"
 
 
 def _inside(target: Path, real_dist: Path) -> bool:
@@ -633,6 +660,15 @@ _POST_JSON_ROUTES = {
 _POST_PREFIX_ROUTES = {
     # §68.3 POST /api/secrets/<name>/verify
     "/api/secrets/": _post_secret_verify,
+}
+
+# 二进制体路由：path → (media type, body 上限, handler(ctx, bytes) → dict)。
+# 四闸里的 Content-Type 闸按这张表取 media type（_write_media_type），其余三闸
+# 与 JSON 面逐字同款；只许登记非 CORS-safelisted 的类型（security.content_type_is）。
+_POST_RAW_ROUTES = {
+    # §10bis 贴图上传：原始 PNG 字节 → state/attachments/<uuid>-1.png（D41）
+    attachments.ROUTE: (attachments.CONTENT_TYPE, attachments.MAX_BYTES,
+                        lambda ctx, data: attachments.save(ctx.home, data)),
 }
 
 _PUT_JSON_ROUTES = {
