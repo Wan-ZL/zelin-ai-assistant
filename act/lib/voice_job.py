@@ -126,7 +126,7 @@ def finish(ok: bool, message: str, profile_path: Optional[str] = None) -> dict:
 
 
 def request(decision: dict, log: Optional[Callable[[str], None]] = None) -> str:
-    """actd 侧入口：没在跑才 ``detached.launch(["act.voice_gen", "--job"])`` → 记台账。
+    """actd 侧入口：没在跑才 ``detached.spawn(["act.voice_gen", "--job"])`` → 记台账。
     返回 §5.4 ack 词表（running / noop）。绝不 raise。"""
     say = log or (lambda _msg: None)
     if not isinstance(decision, dict) or decision.get("action") != ACTION:
