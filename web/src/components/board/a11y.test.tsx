@@ -112,14 +112,15 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
     expect(document.activeElement).toBe(surface); // × 关也一样：还给按 Enter 的那张卡
   });
 
-  it("click-to-copy announces success through a status region", async () => {
+  it("a plain click on the card body does nothing (D36): no detail, no request, no copy", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    render(<RunningCard row={TASK_WORKING} />);
-    const copy = screen.getByRole("button", { name: /Click to copy the command/ });   // visible text = accessible name (WCAG 2.5.3)
-    fireEvent.click(copy);
-    await screen.findByText("Copied to clipboard", { selector: "[role='status']" });
-    expect(writeText).toHaveBeenCalledTimes(1);
+    render(<><RunningCard row={TASK_WORKING} /><SelectedProbe /></>);
+    fireEvent.click(screen.getByRole("article", { name: /^Working · / }));
+    expect(screen.getByTestId("selected").textContent).toBe("");
+    expect(writeText).not.toHaveBeenCalled();
+    // the copy affordance left the card face (the sidebar's 「复制接管指令」 is the one manual copy path)
+    expect(screen.queryByRole("button", { name: /copy the command/i })).toBeNull();
   });
 });
 

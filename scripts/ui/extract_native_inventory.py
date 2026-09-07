@@ -230,6 +230,22 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "D46 看板换列 / deal-in 动画正式退役（§68.14 1.16 tombstone 2026-09-06；§43 是原生 display-only 层）：BoardMotion 飞行标签的兜底词无落点",
     },
+    # D36（owner 2026-09-06 原话「我希望去掉单击复制指令，单击卡片什么功能也没有。」；issue #216）：原生 CopyPathLine 的
+    # 「单击复制 · 双击在终端运行」help 与 TaskRow / ReviewRow 指令行的「单击复制指令 · 双击在终端打开会话」文案描述的是
+    # 「单击 = 复制」这一半——web 卡面自 D36 起没有单击入口（单击什么也不做），双击整卡接管照旧（CardSurface takeoverCmd），
+    # 手动复制 = 详情侧栏的「复制接管指令」。三句都是 help / copy（本就只列不判），点名是把判断落成判例。
+    "control:board.card:help:click-to-copy-double-click-to-run-in-terminal": {
+        "owner": "retired",
+        "reason": "D36 单击卡片无功能（§54.1 第 3 / 11 项 2026-09-06 追记）：卡面无「单击复制」热区；双击接管照旧、手动复制在详情侧栏「复制接管指令」",
+    },
+    "control:board.review:copy:click-to-copy-the-command-double-click-opens-the": {
+        "owner": "retired",
+        "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：待验收卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」",
+    },
+    "control:board.running:copy:click-to-copy-the-command-double-click-opens-the": {
+        "owner": "retired",
+        "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：运行卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部

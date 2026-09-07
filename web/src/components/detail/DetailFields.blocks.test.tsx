@@ -6,7 +6,8 @@
 //   需输入：指令行用 §39 兜底句「在终端接管会话：」；排队卡无指令行（resumeCommand 同卡面）
 //   钱：需要审批列走 💰 行；其余列 registry 并进来的 cost_estimate_usd 仍是一行「成本」（老侧栏就有，不能藏）；
 //     cost_state（§40 诚实位）是专属版式读的键，不落「其他字段」
-//   复制回执可听：每颗「复制」旁有 role=status 播报（卡面 CopyCommandLine 同法，a11y.test 第 3 条）
+//   复制回执可听：每颗「复制」/「复制接管指令」旁有 role=status 播报
+//   指令行的按钮字面 = 「复制接管指令」（D36，owner 2026-09-06：卡面无「单击复制指令」行，这里是唯一手动复制路）
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CardDetail } from "../../types";
@@ -88,7 +89,8 @@ describe("DetailFields — review blocks", () => {
     expect(screen.getByText("/tmp/w/run.log")).toBeTruthy();
     expect(screen.getByText(label("claude agents list name: "))).toBeTruthy();
     expect(screen.getByText("zai-R-410")).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(2); // 指令 + 日志
+    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(1); // 日志
+    expect(screen.getByRole("button", { name: "Copy takeover command" })).toBeTruthy(); // 指令行（D36 唯一手动复制路）
   });
 
   it("§11：清单空时仍渲染小标题 + 兜底句", () => {
@@ -106,7 +108,7 @@ describe("DetailFields — running / blocked / queued blocks", () => {
       session_id: "sess-1", short_id: "sess", last_error: "Traceback: boom\n  line 2" }} />);
     expect(screen.getByRole("heading", { name: "Full error" })).toBeTruthy();
     expect(screen.getByText(/Traceback: boom/).tagName).toBe("PRE");
-    fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[0]); // 第一颗 = 错误全文旁的；第二颗 = 指令行
+    fireEvent.click(screen.getByRole("button", { name: "Copy" })); // 错误全文旁的；指令行的那颗叫「复制接管指令」
     expect(writeText).toHaveBeenCalledWith("Traceback: boom\n  line 2");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
     // 复制成功有 role=status 播报（按钮文案变化 VoiceOver 不一定读）——每颗复制各一个区，只有点过的那个在说话
@@ -114,6 +116,8 @@ describe("DetailFields — running / blocked / queued blocks", () => {
     expect(document.querySelectorAll("[role='status']")).toHaveLength(2);
     expect(screen.getByText(label("Command: "))).toBeTruthy();
     expect(screen.getByText("claude --resume sess-1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy takeover command" }));
+    expect(writeText).toHaveBeenLastCalledWith("claude --resume sess-1");
     expect(screen.getByText(label("Session ID: "))).toBeTruthy();
     expect(screen.getByText("sess")).toBeTruthy();
     // last_error 不再另出一条「最近错误」callout（全文块就是它）

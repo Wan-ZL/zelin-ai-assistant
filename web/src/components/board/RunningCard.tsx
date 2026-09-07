@@ -2,7 +2,8 @@
 //   blocked（needs_input 混排在最前，橙）：v0.48.8（#119）起只剩 §4 派发刹车行
 //   （dispatch_halted），无「回答」入口——受阻会话由 actd 收割进待验收；
 //   queued（灰卡）：「排队中」chip + 排队原因 chip + 派发失败一句（+ 让 AI 修）+ 评论 + 停止 fork；
-//   working：状态章 + 运行时长 + repo 章 + 单击复制指令 行 + steer 回执 + 评论/回答 + 停止 fork。
+//   working：状态章 + 运行时长 + repo 章 + steer 回执 + 评论/回答 + 停止 fork；卡面没有指令行——D36
+//   （owner 2026-09-06）：单击卡片什么也不做，双击整卡 = 在终端接管，手动复制走详情侧栏的「复制接管指令」。
 // 停止 fork = Mac v0.21 两选弹窗：退回提案（abort_execution，destructive）/ 去待验收
 // （stop_to_review）；两动词都允许 approved（排队卡）与 executing。无拖拽换状态（§0.8）。
 // 出错的卡（原生 TaskRow.errorLine，§25）：错误一句——排队卡看 dispatch_error(_id)、其余看 last_error(_id)；
@@ -19,7 +20,7 @@ import { useAppState } from "../../store";
 import type { FailureCatalog, TaskRow } from "../../types";
 import { FailureActionButton } from "../settings/failureAction";
 import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
-import { AiFixButton, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip } from "./cardChrome";
+import { AiFixButton, CardHead, CardSurface, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -174,7 +175,6 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
               )}
             </div>
           )}
-          <CopyCommandLine cmd={cmd} />
         </>
       )}
       {/* §25 错误一句（红）：排队卡的派发失败 / 执行卡的错误；分类 id 在目录里 → 人话，原文 hover 可见，详情侧栏有全文 + 复制 */}
@@ -213,7 +213,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           <button type="button" className="btn btn-warning" onClick={() => setDialog("stop")}>
             {text("停止", "Stop")}
           </button>
-          {/* 「在终端接管」按钮已砍（issue #216）：单击指令行复制、双击整卡接管（CardSurface takeoverCmd） */}
+          {/* 「在终端接管」按钮已砍（issue #216 / D36）：双击整卡接管（CardSurface takeoverCmd），卡面没有单击入口 */}
           <DetailsToggle cardId={row.id} />
         </div>
       )}

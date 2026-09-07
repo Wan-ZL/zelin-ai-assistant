@@ -60,7 +60,7 @@ export function costText(card: Record<string, unknown>, text: (zh: string, en: s
 }
 
 /** 状态正确的会话命令（原生 TaskRow.cmd）：copy_cmd 优先，其次 claude --resume <sid>；排队卡无。
- *  卡面「单击复制指令」行与详情侧栏「指令：」行同一来源（投影行与 /api/cards 详情都带这几个键） */
+ *  卡面双击接管的「有没有会话」判断与详情侧栏「指令：」行同一来源（投影行与 /api/cards 详情都带这几个键） */
 export function resumeCommand(row: Record<string, unknown>): string | null {
   if (row.state === "queued") return null;
   if (typeof row.copy_cmd === "string" && row.copy_cmd) return row.copy_cmd;

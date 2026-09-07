@@ -2,7 +2,7 @@
 //   1) 卡面永远收起（D34 / #217）：plan / DoD / 来源不在卡的 DOM 里；「Details ▸」= 打开右侧详情侧栏
 //      （选中卡 + ?card= 深链），卡上没有「Collapse ▾」、没有双击绑定——卡片详情只有侧栏一面；
 //   2) 卡面 chips / 行从投影字段渲染：提案落点行 + 已并入×N；待验收 repo 章 + 耗时 + 已等待验收；
-//      阶段性完成 已交付 + repo 章 + 验收于（相对时间，hover 绝对）+ 单击复制指令；
+//      阶段性完成 已交付 + repo 章 + 验收于（相对时间，hover 绝对）；卡面没有「单击复制指令」行（D36）；
 //   3) 出错的执行卡：让 AI 修（POST /api/ai-fix，只传 card_id + lang）+ 回答…（comment/steer 四键形）+ 停止；
 //   4) 卡 id 在标题行右侧（.card-head 内）。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -115,7 +115,7 @@ describe("proposal chips from projection fields", () => {
 });
 
 describe("review card meta line", () => {
-  it("repo 章 + 耗时 + 已等待验收（自驱时长）+ 单击复制指令；DoD 只在侧栏", () => {
+  it("repo 章 + 耗时 + 已等待验收（自驱时长）；卡面没有指令行（D36）；DoD 只在侧栏", () => {
     const card: ReviewRow = {
       id: "R-410",
       name: "周报成稿",
@@ -131,8 +131,9 @@ describe("review card meta line", () => {
     expect(screen.getByText("your-workbench").className).toContain("chip");
     expect(screen.getByText(byFullText("took 3h 59m"))).toBeTruthy();
     expect(screen.getByText(byFullText("in review 10m"))).toBeTruthy();
-    const copyLine = screen.getByRole("button", { name: /Click to copy the command/ });
-    expect(copyLine.getAttribute("title")).toBe("cd '/tmp/w' && claude --resume abc");
+    // D36：卡面没有「单击复制指令」行，命令只在侧栏（「复制接管指令」）；双击整卡是一键路（cardTakeover.test.tsx）
+    expect(screen.queryByRole("button", { name: /copy the command/i })).toBeNull();
+    expect(screen.queryByText("cd '/tmp/w' && claude --resume abc")).toBeNull();
     // DoD / 交付了什么 都在侧栏（DetailFields.blocks.test.tsx 钉），卡面只有入口
     expect(screen.queryByText(/覆盖三条来源/)).toBeNull();
     expect(screen.queryByText("Delivered:")).toBeNull();
@@ -143,7 +144,7 @@ describe("review card meta line", () => {
 });
 
 describe("done card meta line", () => {
-  it("已交付 章 + repo 章 + 验收于 <相对时间>（hover 绝对）+ 单击复制指令", () => {
+  it("已交付 章 + repo 章 + 验收于 <相对时间>（hover 绝对）；卡面没有指令行（D36）", () => {
     const row: TaskRow = {
       id: "R-520",
       name: "已验收的任务",
@@ -157,7 +158,7 @@ describe("done card meta line", () => {
     expect(screen.getByText("acme").className).toContain("chip");
     const accepted = screen.getByText(byFullText("accepted 19d ago"));
     expect(accepted.getAttribute("title")).toBe(new Date((NOW_S - 19 * 86400 - 3600) * 1000).toLocaleString("en"));
-    expect(screen.getByRole("button", { name: /Click to copy the command/ }).getAttribute("title")).toBe("claude --resume 1234");
+    expect(screen.queryByRole("button", { name: /copy the command/i })).toBeNull();
     expect(screen.getByRole("button", { name: "Back to review" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Done for good" })).toBeTruthy();
   });

@@ -7,7 +7,8 @@
 // 「📎 折叠进来的信息」每行的「拆成新卡」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
 // 在这里有归属（note_ts 就是这一行）。按 server 给的 `lane` 选积木（防腐 #10：lane 是 server 数据）：
 // needs_approval 才说钱（「展开详情永远说钱」§40）、review 的清单永远渲染（§11）、needs_input 的指令行
-// 用「在终端接管会话：」兜底句（§39）。§37 展示名：抬头是冻结 title（原生 expandedDetail 的技术标题）；
+// 用「在终端接管会话：」兜底句（§39）。指令行旁的按钮是「复制接管指令」——D36（owner 2026-09-06，issue #216）
+// 起卡面没有「单击复制指令」行、单击卡片什么也不做，这里是**唯一**的手动复制路（一键路 = 双击整卡）。§37 展示名：抬头是冻结 title（原生 expandedDetail 的技术标题）；
 // display_title 与抬头不同就在这里给一行「显示名」——侧栏是 modal，卡面未必在眼前（深链 / 收起的书立条），
 // 原生 expandedDetail 永远坐在 displaySummary 抬头下面，这一行是它在 web 上的位置。
 // 摘要 / 💬 引文 / 📋 步骤里的 URL 可点（board/Linkified，原生 Utils.swift linkified 的落点，§54.1 追记）：
@@ -78,7 +79,7 @@ function formatWhen(value: unknown, locale: string): string | null {
   return str(value);
 }
 
-/** 「复制」→「已复制」1.5 s；旁边一个 role=status 播报（按钮文案变化 VoiceOver 不一定读——卡面 CopyCommandLine 同法） */
+/** 「复制」→「已复制」1.5 s；旁边一个 role=status 播报（按钮文案变化 VoiceOver 不一定读） */
 function CopyChip({ value, label }: { value: string; label: string }) {
   const { text } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -133,16 +134,17 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 /**
  * 一行等宽路径 / 命令（原生 CopyPathLine / MetaLine 的侧栏版）：标签独占一个节点（§54.4 前缀与值分两个节点，
- * 探针按节点文本逐字判「日志：」「指令：」「会话 ID：」…）；copy = 右侧「复制」→「已复制」1.5 s（原生 clipboard→✓）。
+ * 探针按节点文本逐字判「日志：」「指令：」「会话 ID：」…）；copy = 右侧「复制」→「已复制」1.5 s（原生 clipboard→✓）；
+ * copyLabel 换按钮字面（指令行用「复制接管指令」，D36）。
  */
-function CmdLine({ label, value, copy = false }: { label: string; value: string | null; copy?: boolean }) {
+function CmdLine({ label, value, copy = false, copyLabel }: { label: string; value: string | null; copy?: boolean; copyLabel?: string }) {
   const { text } = useI18n();
   if (!value) return null;
   return (
     <div className="zai-detail-cmd">
       <span className="zai-detail-cmd-label">{label}</span>
       <code>{value}</code>
-      {copy && <CopyChip value={value} label={text("复制", "Copy")} />}
+      {copy && <CopyChip value={value} label={copyLabel ?? text("复制", "Copy")} />}
     </div>
   );
 }
@@ -237,7 +239,7 @@ export function DetailFields({ detail }: DetailFieldsProps) {
     if (rendered) meta.push([label, rendered]);
   }
   const log = str(detail.log);
-  // 会话命令与卡面「单击复制指令」同源（copy_cmd → claude --resume <sid>；排队卡无）
+  // 会话命令与双击接管走的 server 推导同源（copy_cmd → claude --resume <sid>；排队卡无）
   const cmd = resumeCommand(detail);
   const session = str(detail.short_id) ?? str(detail.session_id);
   const agent = str(detail.agent_name);
@@ -400,10 +402,12 @@ export function DetailFields({ detail }: DetailFieldsProps) {
       )}
 
       {(cmd || log || session || agent) && (
-        // 原生 TaskRow / ReviewRow 详情槽尾部：日志 / 指令（点击复制）+ 会话 ID / claude agents 列表名；
-        // 需输入列的指令行用 §39 兜底句「在终端接管会话：」（把会话接到终端里的第二条路）
+        // 原生 TaskRow / ReviewRow 详情槽尾部：日志 / 指令 + 会话 ID / claude agents 列表名；
+        // 需输入列的指令行用 §39 兜底句「在终端接管会话：」（把会话接到终端里的第二条路）；
+        // 「复制接管指令」= D36 起唯一的手动复制路（卡面无单击入口，双击整卡是一键路）
         <Section title={text("会话", "Session")}>
-          <CmdLine label={lane === "needs_input" ? text("在终端接管会话：", "Take over in terminal: ") : text("指令：", "Command: ")} value={cmd} copy />
+          <CmdLine label={lane === "needs_input" ? text("在终端接管会话：", "Take over in terminal: ") : text("指令：", "Command: ")} value={cmd} copy
+                   copyLabel={text("复制接管指令", "Copy takeover command")} />
           <CmdLine label={text("日志：", "Log: ")} value={log} copy />
           <CmdLine label={text("会话 ID：", "Session ID: ")} value={session} />
           <CmdLine label={text("claude agents 列表名：", "claude agents list name: ")} value={agent} />

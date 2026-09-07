@@ -1,8 +1,9 @@
-// 双击卡片 = 在终端接管会话（CONTRACT §54.1 第 11 项 / §68.7 2026-09-05 追记，issue #216）：
+// 双击卡片 = 在终端接管会话（CONTRACT §54.1 第 11 项 / §68.7 2026-09-05 追记，issue #216；D36 2026-09-06）：
 //   1) 有可接管会话的卡（执行中 copy_cmd / session_id、待验收 copy_cmd、受阻卡）双击 → POST /api/terminal 只带 card_id，
-//      成功一句「已在终端打开」（role=status）；卡面没有「在终端接管」按钮；指令行文案「单击复制指令 · 双击在终端接管」；
+//      成功一句「已在终端打开」（role=status）；卡面没有「在终端接管」按钮、也没有「单击复制指令」行；
+//      单击卡身什么也不做（D36）——不发请求、不开详情、不复制；
 //   2) 没有会话的卡（排队 / 提案 / 没 copy_cmd 的待验收）双击 no-op：不发请求、不开详情（400 语义前移到 UI）；
-//   3) 键盘 Enter 仍是打开详情侧栏，绝不触发接管；卡内按钮上的双击归按钮，指令行上的双击照常接管；
+//   3) 键盘 Enter 仍是打开详情侧栏，绝不触发接管；卡内按钮上的双击归按钮；
 //   4) 降级：server 501（非 darwin）/ 503 SHELL_UNAVAILABLE（壳没在跑）→ 复制指令到剪贴板 + 提示句；其它错误红字 + 原句；
 //   5) 在途中重复双击只发一次。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -38,15 +39,25 @@ afterEach(cleanup);
 const article = (name: RegExp) => screen.getByRole("article", { name });
 
 describe("double-click = take over in a terminal (#216)", () => {
-  it("working card: double-click → POST /api/terminal {card_id} → 「Opened in terminal」 status line; no button on the card", async () => {
+  it("working card: double-click → POST /api/terminal {card_id} → 「Opened in terminal」 status line; no button, no copy line on the card", async () => {
     render(<RunningCard row={TASK_WORKING} />);
     expect(screen.queryByRole("button", { name: /Open in Terminal/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Click to copy the command · double-click to take over in a terminal" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /copy the command/i })).toBeNull();   // D36：卡面无「单击复制指令」行
+    expect(screen.queryByText(TASK_WORKING.copy_cmd as string)).toBeNull();          // 命令只在侧栏（DetailFields）
     fireEvent.doubleClick(article(/^Working · /));
     expect(postTerminal).toHaveBeenCalledTimes(1);
     expect(postTerminal).toHaveBeenCalledWith(TASK_WORKING.id);
     await screen.findByText("Opened in terminal", { selector: "[role='status'] span" });
     expect(getState().selectedCardId).toBeNull(); // 双击不再是详情入口
+  });
+
+  it("a single click on the card body does nothing (D36): no request, no detail, no copy", () => {
+    render(<><RunningCard row={TASK_WORKING} /><ReviewCard card={REVIEW_FIXTURE} /></>);
+    fireEvent.click(article(/^Working · /));
+    fireEvent.click(article(/^In review · /));
+    expect(postTerminal).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+    expect(getState().selectedCardId).toBeNull();
   });
 
   it("review card with copy_cmd takes over; review card without copy_cmd is a no-op", () => {
@@ -85,12 +96,12 @@ describe("double-click = take over in a terminal (#216)", () => {
     expect(postTerminal).not.toHaveBeenCalled();
   });
 
-  it("double-click on an inner button belongs to the button; on the command line it takes over", () => {
+  it("double-click on an inner button belongs to the button; on the card's own text it takes over", () => {
     render(<RunningCard row={TASK_WORKING} />);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Stop" }));
     fireEvent.doubleClick(screen.getByRole("button", { name: /Details/ }));
     expect(postTerminal).not.toHaveBeenCalled();
-    fireEvent.doubleClick(screen.getByRole("button", { name: /Click to copy the command/ }));
+    fireEvent.doubleClick(screen.getByText(TASK_WORKING.name));   // 标题文字 = 卡身，不是控件
     expect(postTerminal).toHaveBeenCalledTimes(1);
   });
 

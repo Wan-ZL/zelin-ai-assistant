@@ -3,13 +3,14 @@
 //   永久完成（archive → 封存；一点即发、不弹确认——可逆，永久性完成书立条「放回看板」随时撤回；
 //   原生 Cards.swift:1540-1548「One tap, no confirm (reversible via 放回看板)」，潜在任务卡同一动词同款，§41 / §54.1 追记）。
 // 卡面（原生 TaskRow lane=.completed 收起态）：已交付 章（绿）· repo 章 · 验收于 <相对时间> ·
-//   一句话（§64 AI 白话摘要优先，缺席回落 delivered_summary；单行截断，hover 全文）· 单击复制指令 行。
+//   一句话（§64 AI 白话摘要优先，缺席回落 delivered_summary；单行截断，hover 全文）。卡面没有指令行（D36：
+//   单击卡片什么也不做；会话命令与「复制接管指令」住详情侧栏）。
 //   交付摘要全文 / 摘要 / 怎样算办完 / 指令 / 会话 ID 住右侧详情侧栏（「展开详情 ▸」打开，D34；DetailFields 渲染）。
 //   v0.21 契约七：阶段性完成卡也可多选参与合并（Kanban.swift:491-493，CardSurface selectable）。
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
-import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
-import { CardHead, CardSurface, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
+import { cardAction, useSubmit, pendingNote } from "./boardActions";
+import { CardHead, CardSurface, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
 import { stateLabel } from "./RunningCard";
 import { AssessmentSummaryLine } from "./VerdictChip";
 
@@ -22,7 +23,6 @@ export function DoneCard({ row }: DoneCardProps) {
   const { pending, pendingAction, error, submit } = useSubmit();
 
   const title = typeof row.display_title === "string" && row.display_title ? row.display_title : row.name;
-  const cmd = resumeCommand(row);
 
   return (
     <CardSurface cardId={row.id} label={`${text("已完成", "Done")} · ${title}`} selectable>
@@ -35,7 +35,6 @@ export function DoneCard({ row }: DoneCardProps) {
       </div>
       {/* 原生 completed 行的一句：一行 11 regular 次级，lineLimit(1)——§64 AI 摘要优先，回落 delivered_summary */}
       <AssessmentSummaryLine assessment={row.assessment} fallback={row.delivered_summary} />
-      <CopyCommandLine cmd={cmd} />
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (

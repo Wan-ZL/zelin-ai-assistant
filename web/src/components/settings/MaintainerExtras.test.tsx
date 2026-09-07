@@ -115,6 +115,18 @@ describe("MaintainerExtras — 打开的下场", () => {
     await screen.findByText("Couldn't open the terminal — check the terminal app under General, or run this by hand:");
   });
 
+  it("shell not running (503 SHELL_UNAVAILABLE with details.command) → its own sentence + the copyable command", async () => {
+    vi.mocked(postMaintainerTerminal).mockRejectedValue(
+      apiError(503, "the app is not running, so no terminal can be opened", { heartbeat: "/h/state/shell.heartbeat", command: "cd '/r' && claude" }, "SHELL_UNAVAILABLE"),
+    );
+    await renderWith("zh");
+    fireEvent.click(screen.getByRole("button", { name: "在终端打开开发会话" }));
+    const alert = await screen.findByRole("alert");
+    expect(screen.getByText("无法直接打开终端——看板 app 没在运行；手动在终端运行：")).toBeTruthy();
+    expect(alert.textContent).toContain("cd '/r' && claude");
+    expect(screen.getByRole("button", { name: "复制" })).toBeTruthy();
+  });
+
   it("a 500 without a command keeps the server's own message", async () => {
     vi.mocked(postMaintainerTerminal).mockRejectedValue(apiError(500, "disk full", {}, "INTERNAL_ERROR"));
     await renderWith("zh");

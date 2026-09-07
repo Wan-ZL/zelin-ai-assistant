@@ -2,7 +2,7 @@
 //   1) selectionMode 下卡的动作行是死的——点「批准」/「删除」/「永久完成」不发任何动作、只切换选中
 //      （原生注释「a mis-click must not approve/trash anything」），键盘 Enter 合成的 click 同样拦下；
 //   2) 点卡身 = 切换选中（is-selectable 手形、is-selected accent 淡底）；勾选框自己切一次、不叠加；
-//      仍活着的控件（单击复制指令行）点了不算点卡身；
+//      仍活着的控件（标题里的链接）点了不算点卡身；
 //   3) 全 lane 可选（v0.21，Kanban.swift:575-591 selectableIDs）：潜在任务 / 阶段性完成 / 排队中 也长勾选框，
 //      提案列 AI 研究中占位不长；
 //   4) 不在多选态：动作照常、点卡身不选中、没有 is-selectable；
@@ -93,10 +93,13 @@ describe("card body toggles selection; the checkbox stays the a11y path", () => 
     expect(box.checked).toBe(false);
   });
 
-  it("仍活着的控件（单击复制指令行）点了不算点卡身", () => {
+  it("仍活着的控件（标题里的链接）点了不算点卡身", () => {
     setSelectionMode(true);
-    render(<RunningCard row={TASK_WORKING} />);
-    fireEvent.click(screen.getByRole("button", { name: /Click to copy the command/ }));
+    // 卡面自 D36 起没有「单击复制指令」行；提案摘要里的 URL（Linkified 的 <a>）是卡身之外仍活着的控件
+    render(<ProposalCard card={{ ...PROPOSAL_T1, summary: "把 https://github.com/Wan-ZL/example-bench/pull/12 的评审意见并进 README" }} />);
+    const link = document.querySelector<HTMLAnchorElement>(".card-title a")!;
+    expect(link).toBeTruthy();
+    fireEvent.click(link);
     expect(selected()).toEqual([]);
   });
 

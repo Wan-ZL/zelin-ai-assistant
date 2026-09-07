@@ -59,7 +59,7 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-card-fine", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1639, size: 9, weight: "regular" },
-    zh: "单击复制指令 行 · claude agents 列表名", en: "Click-to-copy line · claude agents list name",
+    zh: "原生 9pt 细行（指令行 · claude agents 列表名；web 卡面自 D36 起无指令行，这一档留给侧栏 / 状态小字）", en: "Native 9pt fine line (command line · claude agents list name; no command line on web card faces since D36 — kept for the sidebar / status text)",
   },
   {
     token: "--type-card-fine-mono", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono)",

@@ -55,8 +55,8 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <RunningCard row={TASK_WORKING} />
         <SpecimenNote
-          zh="working 卡（RunningCard）：运行时长（相对时间，hover 绝对）+ repo 章 .chip + sheen 行 + 单击复制指令 行 .card-copy-line + steer 三态回执 chips + 错误一句 .card-line.is-danger；出错 → 让 AI 修（.btn，POST /api/ai-fix）· 回答…（.btn-warning，comment/steer）· 停止"
-          en="Working card (RunningCard): run age (relative, absolute on hover) + repo chip .chip + sheen row + copy-command line .card-copy-line + tri-state steer chips + error line .card-line.is-danger; on error → Fix with AI (.btn, POST /api/ai-fix) · Answer… (.btn-warning, comment/steer) · Stop"
+          zh="working 卡（RunningCard）：运行时长（相对时间，hover 绝对）+ repo 章 .chip + sheen 行 + steer 三态回执 chips + 错误一句 .card-line.is-danger；出错 → 让 AI 修（.btn，POST /api/ai-fix）· 回答…（.btn-warning，comment/steer）· 停止"
+          en="Working card (RunningCard): run age (relative, absolute on hover) + repo chip .chip + sheen row + tri-state steer chips + error line .card-line.is-danger; on error → Fix with AI (.btn, POST /api/ai-fix) · Answer… (.btn-warning, comment/steer) · Stop"
         />
       </figure>
       <figure className="sg-specimen">
@@ -69,15 +69,15 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <ReviewCard card={REVIEW_FIXTURE} />
         <SpecimenNote
-          zh="review 卡（ReviewCard）：meta 行 repo 章 + 耗时 + 已等待验收（自驱走表）+ 单击复制指令 行；交付摘要 / ☐ 验收清单在 详情侧栏（展开详情 ▸ 打开）；三动词（复制成稿仅 final_draft 非空时）"
-          en="Review card (ReviewCard): meta line repo chip + took + in review (live) + copy-command line; delivery summary / ☐ checklist live in the detail sidebar (Details ▸ opens it); three verbs (Copy final draft only with final_draft)"
+          zh="review 卡（ReviewCard）：meta 行 repo 章 + 耗时 + 已等待验收（自驱走表）；双击整卡 = 在终端接管（D36，卡面无指令行）；交付摘要 / ☐ 验收清单在 详情侧栏（展开详情 ▸ 打开）；三动词（复制成稿仅 final_draft 非空时）"
+          en="Review card (ReviewCard): meta line repo chip + took + in review (live); double-click the card = take over in a terminal (D36, no command line on the face); delivery summary / ☐ checklist live in the detail sidebar (Details ▸ opens it); three verbs (Copy final draft only with final_draft)"
         />
       </figure>
       <figure className="sg-specimen">
         <DoneCard row={TASK_DONE} />
         <SpecimenNote
-          zh="done 卡（DoneCard）：已交付 .chip-success（--success）+ repo 章 + 验收于 <相对时间>（hover 绝对）+ 单击复制指令 行 + 退回待验收 / 永久完成"
-          en="Done card (DoneCard): Delivered .chip-success (--success) + repo chip + accepted <relative> (absolute on hover) + copy-command line + Back to review / Done for good"
+          zh="done 卡（DoneCard）：已交付 .chip-success（--success）+ repo 章 + 验收于 <相对时间>（hover 绝对）+ 退回待验收 / 永久完成"
+          en="Done card (DoneCard): Delivered .chip-success (--success) + repo chip + accepted <relative> (absolute on hover) + Back to review / Done for good"
         />
       </figure>
       <figure className="sg-specimen">

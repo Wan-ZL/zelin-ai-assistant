@@ -6,12 +6,12 @@
 //     卡面永远是收起态，泳道不再被撑高；
 //   RelativeTime：卡面一律相对时间（19天前 / 2小时59分），hover 给绝对时间；
 //   RepoChip：cwd / target basename 中性章；
-//   CopyCommandLine：「单击复制指令 · 双击在终端接管」行——单击复制（本行是复制热区），双击由 CardSurface 接管；
 //   ErrorLine + 让 AI 修：错误一句（红）+ 起 server 的 act.ai_fix 修复会话（POST /api/ai-fix）。
 //   CardSurface（issue #8 a11y）：五种卡共用的 <article>——可聚焦、Enter/Space 打开详情侧栏
 //     （「展开详情 ▸」的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
 //     双击整卡 = 在终端接管会话（issue #216，§68.7；terminalTakeover.ts）：只对有可接管会话的卡（takeoverCmd
-//     非空）生效，落在卡内按钮 / 输入框上的双击归它们自己（指令行除外——它就是接管热区）；回执一行小字。
+//     非空）生效，落在卡内按钮 / 输入框上的双击归它们自己；回执一行小字。单击卡身什么也不做（D36，owner
+//     2026-09-06）：卡面没有「单击复制指令」行，手动复制 = 详情侧栏的「复制接管指令」（DetailFields）。
 //     selectable（§21 多选，原生 Kanban.swift selectableCard 的 tap catcher）：selectionMode 下点卡身 = 切换选中，
 //     动作行（.card-actions）整排失效（指针穿透 + inert + capture 兜底）——误点不许批准 / 删除任何东西；勾选框留给 a11y。
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
@@ -25,7 +25,6 @@ import { openCardDetail } from "./boardActions";
 import { Linkified } from "./Linkified";
 import { useTerminalTakeover } from "./terminalTakeover";
 import { toggleSelected, useAppState } from "../../store";
-import { copyText } from "../detail/copyText";
 
 /** id 标签读的投影键（§60 两段式编号：卡面展示 display_id，动作回传仍送主键 id） */
 export type CardIdRow = { id: string; display_id?: unknown; work_id?: unknown; id_kind?: unknown };
@@ -58,14 +57,13 @@ interface CardSurfaceProps {
 /** 这张卡此刻在多选态里可选（selectable && store.selectionMode）：CardSurface 提供，CardHead 据此长出勾选框 */
 const SelectingContext = createContext(false);
 
-/** 多选态下卡上仍活着的控件（勾选框 / 复制指令行 / 标题里的链接 / 卡内弹窗）：点它们不算点卡身 */
+/** 多选态下卡上仍活着的控件（勾选框 / 标题里的链接 / 卡内弹窗）：点它们不算点卡身 */
 const LIVE_CONTROL = 'button, a, input, textarea, select, label, summary, [role="button"], dialog';
 
-/** 落在卡内交互件上的双击归它们自己（按钮的双击不该顺带开终端）；唯一例外是指令行——它本身就是接管热区 */
+/** 落在卡内交互件上的双击归它们自己（按钮的双击不该顺带开终端） */
 function isInnerControl(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  const control = target.closest(LIVE_CONTROL + ", [role='dialog']");
-  return control !== null && !control.classList.contains("card-copy-line");
+  return target.closest(LIVE_CONTROL + ", [role='dialog']") !== null;
 }
 
 /**
@@ -268,43 +266,6 @@ export function RepoChip({ path }: { path: unknown }) {
   if (typeof path !== "string" || !path) return null;
   const base = path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
   return <span className="chip" title={path}>{base}</span>;
-}
-
-/**
- * 「单击复制指令 · 双击在终端接管」行（原生 TaskRow / ReviewRow 的 copy 仰赖整卡点击 + 双击起终端）。
- * 网页：这一行本身就是复制热区；双击冒泡到 CardSurface 接管（issue #216——本行是卡内唯一不拦双击的
- * 按钮，见 isInnerControl）；tooltip 带完整命令。
- */
-export function CopyCommandLine({ cmd }: { cmd: unknown }) {
-  const { text } = useI18n();
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
-  if (typeof cmd !== "string" || !cmd) return null;
-  return (
-    <>
-      <button
-        type="button"
-        className={`card-copy-line${copied ? " is-copied" : ""}`}
-        title={cmd}
-        onClick={() => {
-          void copyText(cmd).then((ok) => {
-            if (!ok) return;
-            setCopied(true);
-            if (timer.current) clearTimeout(timer.current);
-            timer.current = setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-      >
-        {copied
-          ? text("已复制 ✓", "Copied ✓")
-          : text("单击复制指令 · 双击在终端接管", "Click to copy the command · double-click to take over in a terminal")}
-      </button>
-      <CopiedAnnouncer copied={copied} />
-    </>
-  );
 }
 
 /** 原生 AIFix.launch 的成功句（Doctor.swift）：卡片上的「让 AI 修」与依赖检查区的同名按钮共用这一句 */

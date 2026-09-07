@@ -73,6 +73,10 @@
         "owner": "retired",
         "reason": "D34 卡片详情只留侧栏一面（§49 追记 2026-09-04 / §54.1 第 2 项 tombstone）：就地展开退役，无「收起 ▾」；侧栏关闭 = × / ⎋"
       },
+      "control:board.card:help:click-to-copy-double-click-to-run-in-terminal": {
+        "owner": "retired",
+        "reason": "D36 单击卡片无功能（§54.1 第 3 / 11 项 2026-09-06 追记）：卡面无「单击复制」热区；双击接管照旧、手动复制在详情侧栏「复制接管指令」"
+      },
       "control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images": {
         "owner": "retired",
         "reason": "D35 owner 要 Enter=换行、只按钮提交（§41 2026-09-04 追记）；原生「↩ 发送 · ⇧↩ 换行」的键位与提示句不搬"
@@ -84,6 +88,14 @@
       "control:board.needs_approval:button:collapse": {
         "owner": "retired",
         "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏"
+      },
+      "control:board.review:copy:click-to-copy-the-command-double-click-opens-the": {
+        "owner": "retired",
+        "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：待验收卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」"
+      },
+      "control:board.running:copy:click-to-copy-the-command-double-click-opens-the": {
+        "owner": "retired",
+        "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：运行卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」"
       },
       "control:board:label:card": {
         "owner": "retired",
@@ -1623,7 +1635,8 @@
       "en": "Click to copy · double-click to run in terminal",
       "gated": false,
       "id": "control:board.card:help:click-to-copy-double-click-to-run-in-terminal",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D36 单击卡片无功能（§54.1 第 3 / 11 项 2026-09-06 追记）：卡面无「单击复制」热区；双击接管照旧、手动复制在详情侧栏「复制接管指令」",
       "role": "help",
       "screen": "board.card",
       "source": "Cards.swift:284",
@@ -4333,7 +4346,8 @@
       "en": "Click to copy the command · double-click opens the session in Terminal",
       "gated": false,
       "id": "control:board.review:copy:click-to-copy-the-command-double-click-opens-the",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：待验收卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」",
       "role": "copy",
       "screen": "board.review",
       "source": "Cards.swift:1905",
@@ -4575,7 +4589,8 @@
       "en": "Click to copy the command · double-click opens the session in Terminal",
       "gated": false,
       "id": "control:board.running:copy:click-to-copy-the-command-double-click-opens-the",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：运行卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」",
       "role": "copy",
       "screen": "board.running",
       "source": "Cards.swift:1637",
