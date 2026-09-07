@@ -568,6 +568,24 @@ enum LaunchPolicy {
         }
         return .foreground
     }
+
+    /// 两个失败弹窗（server 连不上 / repo 未配置）的时机。NSAlert 面板住在 modal-panel 层、盖在
+    /// 所有 app 的普通窗口之上——登录项启动时 server 冷启动超过 10 s，它就会成为 owner 登录后看到的
+    /// 第一件东西，正是 D38 要挡的那种弹窗。
+    enum AlertTiming: Equatable {
+        /// 立刻 runModal（前台启动、或看板窗口已经在屏上）。
+        case now
+        /// 压到下一次 showWindow()（Dock 点击 / ⌃⌥Space / 通知点击）再 runModal；全文先进 board-shell.log。
+        case deferUntilShown
+    }
+
+    /// 后台启动且看板窗口还没露过面 → 压后；其余（前台启动、或窗口已可见）→ 照旧立刻弹。
+    static func failureAlertTiming(presentation: Presentation, boardVisible: Bool) -> AlertTiming {
+        if case .background = presentation, !boardVisible {
+            return .deferUntilShown
+        }
+        return .now
+    }
 }
 
 // MARK: - 主菜单纯表（§54 追记「菜单 l10n」；原生 AppDelegate.installMainMenu 的壳版）

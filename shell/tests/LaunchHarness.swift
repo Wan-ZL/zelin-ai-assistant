@@ -11,6 +11,13 @@
 // app, so main.swift collects the two inputs (CommandLine.arguments and the launch
 // Apple Event's login-item flag) and asks LaunchPolicy; the side effect (showWindow or
 // a log line) is the only thing left in the delegate. Every cell is pinned here.
+//
+// The login-item half is split the same way: LaunchAtLogin.launchedAsLoginItem() only
+// reads NSAppleEventManager.currentAppleEvent; the decode is the pure
+// LaunchAtLogin.isLoginItemLaunch(_:), pinned in [5] with synthesized
+// NSAppleEventDescriptors (oapp + keyAELaunchedAsLogInItem is the only true cell).
+// The failure-alert timing (defer the connect-failure NSAlert on a background launch
+// until the window is first shown) is LaunchPolicy.failureAlertTiming, pinned in [6].
 
 import Foundation
 
@@ -68,6 +75,55 @@ func run() {
     } else {
         check(false, "login-item launch must be background")
     }
+
+    // ---- 5. the login-item decoder, fed synthesized launch Apple Events ----
+    // loginwindow sends `oapp` with keyAEPropData == keyAELaunchedAsLogInItem ('lgit');
+    // Dock / Finder / `open` send a bare `oapp`; a service item carries 'lsvc' instead.
+    print("[5] login-item event:")
+    func launchEvent(_ eventID: AEEventID, propData: OSType? = nil) -> NSAppleEventDescriptor {
+        let target = NSAppleEventDescriptor(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        let event = NSAppleEventDescriptor(eventClass: AEEventClass(kCoreEventClass),
+                                           eventID: eventID,
+                                           targetDescriptor: target,
+                                           returnID: AEReturnID(kAutoGenerateReturnID),
+                                           transactionID: AETransactionID(kAnyTransactionID))
+        if let code = propData {
+            event.setParam(NSAppleEventDescriptor(enumCode: code),
+                           forKeyword: AEKeyword(keyAEPropData))
+        }
+        return event
+    }
+    let oapp = AEEventID(kAEOpenApplication), odoc = AEEventID(kAEOpenDocuments), rapp = AEEventID(kAEReopenApplication)
+    let lgit = OSType(keyAELaunchedAsLogInItem), lsvc = OSType(keyAELaunchedAsServiceItem)
+    check(LaunchAtLogin.isLoginItemLaunch(launchEvent(oapp, propData: lgit)),
+          "`oapp` + keyAEPropData == keyAELaunchedAsLogInItem → true (the loginwindow launch)")
+    check(!LaunchAtLogin.isLoginItemLaunch(launchEvent(oapp)),
+          "bare `oapp` (Dock / Finder / `open`) → false")
+    check(!LaunchAtLogin.isLoginItemLaunch(launchEvent(odoc, propData: lgit)),
+          "`odoc` carrying the login-item enum → false (only the open-application event counts)")
+    check(!LaunchAtLogin.isLoginItemLaunch(launchEvent(oapp, propData: lsvc)),
+          "`oapp` + keyAELaunchedAsServiceItem → false (a service item is not a login item)")
+    check(!LaunchAtLogin.isLoginItemLaunch(nil), "no launch event at all → false (never hide by accident)")
+    check(!LaunchAtLogin.isLoginItemLaunch(launchEvent(rapp, propData: lgit)),
+          "`rapp` (Dock reopen) with the enum → false")
+    check(!LaunchAtLogin.isLoginItemLaunch(NSAppleEventManager.shared().currentAppleEvent),
+          "this harness process (no launch Apple Event) decodes false via the same reader input")
+
+    // ---- 6. failure-alert timing: a background launch must not runModal over the owner's work ----
+    print("[6] failure alert timing:")
+    typealias T = LaunchPolicy.AlertTiming
+    let bg = P.background(reason: "login item")
+    check(LaunchPolicy.failureAlertTiming(presentation: .foreground, boardVisible: true) == T.now,
+          "foreground launch, window shown → alert now (unchanged pre-D38 behaviour)")
+    check(LaunchPolicy.failureAlertTiming(presentation: .foreground, boardVisible: false) == T.now,
+          "foreground launch, owner already closed the window → still now (they launched it by hand)")
+    check(LaunchPolicy.failureAlertTiming(presentation: bg, boardVisible: false) == T.deferUntilShown,
+          "background launch, window never shown → defer until the first showWindow()")
+    check(LaunchPolicy.failureAlertTiming(presentation: P.background(reason: "argv --background"),
+                                          boardVisible: false) == T.deferUntilShown,
+          "auto-deploy relaunch (argv flag) → defer as well; reason does not matter")
+    check(LaunchPolicy.failureAlertTiming(presentation: bg, boardVisible: true) == T.now,
+          "background launch but the owner has since brought the window up → now")
 }
 
 run()

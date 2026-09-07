@@ -275,6 +275,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var titleObservation: NSKeyValueObservation?
     /// `LanguageStore.$lang` 订阅句柄（§54 追记：主菜单随界面语言重建）。
     private var menuLanguage: AnyCancellable?
+    /// 本次启动的来源判决（D38，presentOnLaunch 落定）；失败弹窗的时机据此决定。
+    private var launchPresentation: LaunchPolicy.Presentation = .foreground
+    /// 后台启动时压下的失败弹窗（D38）：窗口第一次 showWindow() 时补弹，之后清空。
+    private var deferredAlert: NSAlert?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
@@ -310,13 +314,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 其余启动（Dock / Finder / 用户手敲 `open`）与从前一样直接前置。**必须在
     /// applicationDidFinishLaunching 里调**：`LaunchAtLogin.launchedAsLoginItem()` 只在此刻读得到启动事件。
     private func presentOnLaunch() {
-        switch LaunchPolicy.presentation(arguments: CommandLine.arguments,
-                                         launchedAsLoginItem: LaunchAtLogin.launchedAsLoginItem()) {
+        launchPresentation = LaunchPolicy.presentation(arguments: CommandLine.arguments,
+                                                       launchedAsLoginItem: LaunchAtLogin.launchedAsLoginItem())
+        switch launchPresentation {
         case .foreground:
             showWindow()
         case .background(let reason):
             server.logLine("board-shell: background launch (\(reason)) — window built but not shown; "
                 + "Dock click / ⌃⌥Space / notification click bring it up")
+        }
+    }
+
+    /// D38 的另一半：两个失败弹窗（showStartFailure / showConfigFailure）的时机。NSAlert 面板住在
+    /// modal-panel 层、盖在所有 app 的窗口之上——登录项启动时 server 冷启动超过 10 s，它就会成为
+    /// owner 登录后看到的第一件东西。后台启动且看板窗口还没露面 → 不 runModal：alert 全文先落
+    /// board-shell.log，压到下一次 showWindow()（Dock 点击 / ⌃⌥Space / 通知点击）再弹；隐藏窗口里的
+    /// 失败 splash 照常渲染，窗口一露面就带着排障线索。前台启动或窗口已在屏上 → 照旧立刻 runModal。
+    private func presentFailureAlert(_ alert: NSAlert) {
+        switch LaunchPolicy.failureAlertTiming(presentation: launchPresentation,
+                                               boardVisible: window.isVisible) {
+        case .now:
+            alert.runModal()
+        case .deferUntilShown:
+            deferredAlert = alert
+            let detail = alert.informativeText
+                .split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " | ")
+            server.logLine("board-shell: \(alert.messageText) — alert deferred until the window is shown "
+                + "(background launch): \(detail)")
         }
     }
 
@@ -408,6 +435,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func showWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if let alert = deferredAlert {   // D38：后台启动时压下的失败弹窗，窗口露面这一刻补弹
+            deferredAlert = nil
+            alert.runModal()
+        }
     }
 
     /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口 + 加载深链（`?page=…` 是看板 origin 上的
@@ -579,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         • Manual run: cd into the server repo, then ZAI_PORT=\(ShellConfig.port) <python from config/runtime.json> -m server
         """)
         alert.addButton(withTitle: L("好", "OK"))
-        alert.runModal()
+        presentFailureAlert(alert)
     }
 
     /// SERVER_REPO 解析不到 = 明说怎么修（弹窗 + log 各一份），绝不猜路径。
@@ -615,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         Log: \(shellLog)
         """)
         alert.addButton(withTitle: L("好", "OK"))
-        alert.runModal()
+        presentFailureAlert(alert)
     }
 
     // MARK: menu（§54 追记「菜单 l10n」：表在 ShellSupport.swift MenuSpec，这里只装与执行）
