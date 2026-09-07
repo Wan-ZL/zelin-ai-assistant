@@ -68,7 +68,7 @@ export function ClaudeImportSection() {
   });
 
   return (
-    <section className="settings-section" id="settings-claude_import" aria-labelledby="settings-claude_import-title">
+    <section className="settings-section" aria-labelledby="settings-claude_import-title">
       <h3 id="settings-claude_import-title" className="settings-section-title">{text("导入 Claude Code 工作", "Import Claude Code work")}</h3>
       <p className="settings-helper">
         {text("把你最近在 Claude Code 里做的事一键变成看板卡片，尤其是 AI 还在等你回复的那些。全程本地，不上传任何内容。已导入过的不会重复。", "Turn your recent Claude Code work into board cards in one click — especially sessions where the AI is still waiting on your reply. Everything stays local; nothing is uploaded. Already-imported sessions are skipped.")}

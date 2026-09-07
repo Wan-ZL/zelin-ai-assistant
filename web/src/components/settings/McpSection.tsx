@@ -55,7 +55,7 @@ export function McpSection() {
   }
 
   return (
-    <section className="settings-section" id="settings-mcp" aria-labelledby="settings-mcp-title">
+    <section className="settings-section" aria-labelledby="settings-mcp-title">
       <h3 id="settings-mcp-title" className="settings-section-title">{text("MCP servers（Claude Code 外接工具）", "MCP servers (Claude Code external tools)")}</h3>
       <p className="settings-helper">
         {text("只读展示 user 与 project 两个作用域；增删改在终端用 claude mcp add / remove。env 值绝不显示，URL 与参数里的密钥已打码。", "Read-only view of the user and project scopes; add or remove with claude mcp add / remove in a terminal. env values are never shown; secrets in URLs / args are masked.")}

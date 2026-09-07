@@ -12,7 +12,14 @@
 // 搜索框（原生 Settings.swift SettingsSearchField + matches()，§54.4 / §68.1 追记）：干草 = 目录标题 zh+en + server 目录该区的
 // label / help zh+en（不看 UI 语言）+ 该区凭证行的双语 label + 渲染正文；查询按空白切 token、全部命中才算（AND）；
 // Esc 第一下清空、第二下交还光标，输入法候选期间不拦（§41 IME 红线同款）。
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+// 分区开合（D44，§68.1 追记；原生 Settings.swift SettingsCollapseStore + CollapsibleSection 的混合式 web 版）：每区包在
+// SettingsFold 里（区头 = aria-expanded 按钮，正文常挂载、折叠时 hidden——草稿与搜索干草都不丢）；默认展开 通用 / 依赖检查 /
+// 录制 / 实时字幕（settingsFolds.DEFAULT_EXPANDED_SECTIONS），其余折叠；记忆 = store.expandedSettingsSections ↔ localStorage
+// settings.expandedSections；搜索命中的区强制展开（toggle 禁用、记忆不动）；?anchor= / #settings-<id> 深链与目录点击 expand
+// 并记住；目录条目 data-expanded 反映状态。锚点 `#settings-<id>` 落在 fold 壳上（永远可见，折着也滚得到）。深链锚点挂载时
+// 只读一次、读完就从 URL 上摘掉（route.withoutSettingsAnchor）：rail 的 buildAppUrl 原样带着 query / hash 去别页再回来，不摘
+// 就每次回设置页都重新展开 + 记住 + 滚动，把用户手动折起的区又翻开；目录点击自己滚（preventDefault），不留 hash。
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { CaptionsSection } from "../components/settings/CaptionsSection";
@@ -29,6 +36,7 @@ import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
 import { SkillsSection } from "../components/settings/SkillsSection";
 import { RecordingSection } from "../components/settings/RecordingSection";
+import { SettingsFold } from "../components/settings/SettingsFold";
 import { MaintainerExtras } from "../components/settings/MaintainerExtras";
 import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
@@ -37,8 +45,8 @@ import { SlackSection } from "../components/settings/SlackSection";
 import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
-import { buildAppUrl, readSettingsAnchor } from "../route";
-import { useAppState } from "../store";
+import { buildAppUrl, readSettingsAnchor, withoutSettingsAnchor } from "../route";
+import { expandSettingsSection, toggleSettingsSection, useAppState } from "../store";
 import type { SecretsStatus, SettingsCatalog } from "../types";
 
 /** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序 = 原生注册表顺序，web 自有区就近插入）。
@@ -111,13 +119,32 @@ export function sectionHaystack(id: string, rendered: string, catalog: SettingsC
   return parts.filter(Boolean).join(" ");
 }
 
-const SECTION_SELECTOR = ".settings-page > .settings-section, .settings-page > div[id^='settings-']";
+/** 每区的 fold 壳（SettingsFold：id `settings-<id>`、data-section=<id>）——搜索过滤 / 晚到正文观察都以它为单位 */
+const SECTION_SELECTOR = ".settings-page > .settings-fold";
+
+/** `#settings-<id>` 片段（§68.15 的 `?page=settings#settings-sync` 深链 / 目录条目的 href 被新标签打开）→ 目录里的 id；其它形当没有 */
+export function readHashSection(hash: string): string | null {
+  const match = /^#settings-([a-z0-9_-]{1,40})$/i.exec(hash);
+  return match && SETTINGS_TOC.some((entry) => entry.id === match[1]) ? match[1] : null;
+}
+
+/** 深链要落的区：?anchor= 优先（含 ?page=deps / diagnostics 旧深链），其次 #settings-<id> 片段；挂载时读一次 */
+function readDeepLinkSection(): string | null {
+  return readSettingsAnchor(window.location.search) ?? readHashSection(window.location.hash);
+}
+
+/** 滚到一区的 fold 壳（永远可见，折着也滚得到；壳上的 scroll-margin-top 留出顶栏） */
+function scrollToFold(id: string): HTMLElement | null {
+  const el = document.getElementById(`settings-${id}`);
+  el?.scrollIntoView({ block: "start" });
+  return el;
+}
 
 /** 原生 Settings.swift 顶部的搜索框（⌘F 聚焦）：逐区按双语干草过滤，全不匹配时说「无匹配设置」 */
 function filterSections(query: string, catalog: SettingsCatalog | null, secrets: SecretsStatus | null): number {
   let shown = 0;
   document.querySelectorAll<HTMLElement>(SECTION_SELECTOR).forEach((el) => {
-    const id = el.id.replace(/^settings-/, "");
+    const id = el.dataset.section ?? el.id.replace(/^settings-/, "");
     const secretNames = Array.from(el.querySelectorAll<HTMLElement>("[data-secret]"), (row) => row.dataset.secret ?? "");
     const hit = matchesSearch(sectionHaystack(id, el.textContent ?? "", catalog, secrets, secretNames), query);
     el.hidden = !hit;
@@ -126,12 +153,26 @@ function filterSections(query: string, catalog: SettingsCatalog | null, secrets:
   return shown;
 }
 
+/** 一区的开合壳：标题取目录条目（与目录同源，zh / en 随 UI 语言），开合读 store 记忆，toggle 写 store（持久化在 store 动作里） */
+function Fold({ id, isForced, children }: { id: string; isForced: boolean; children: ReactNode }) {
+  const { language } = useI18n();
+  const { expandedSettingsSections } = useAppState();
+  const entry = SETTINGS_TOC.find((candidate) => candidate.id === id);
+  const title = entry ? (language === "zh" ? entry.zh : entry.en) : id;
+  return (
+    <SettingsFold id={id} title={title} isExpanded={expandedSettingsSections.has(id)} isForced={isForced} onToggle={toggleSettingsSection}>
+      {children}
+    </SettingsFold>
+  );
+}
+
 export function SettingsPage() {
   const { text, language } = useI18n();
-  const { settingsCatalog, secrets } = useAppState();
+  const { settingsCatalog, secrets, expandedSettingsSections } = useAppState();
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState<number | null>(null);
   const catalogReady = settingsCatalog !== null;
+  const searchActive = query.trim().length > 0; // 原生 searchActive：命中的区强制展开、toggle 禁用
 
   // 原生 SwiftUI 每次 body 重算都重跑 matches()，晚到的数据自己浮出命中的区。web 先同步过一遍；有查询时再盯住各区的子树——
   // 目录区在草稿对齐 effect 之后的下一帧才渲 field 与凭证行（store 拿到目录那一拍 data-secret 还不在 DOM），Skills / MCP 等区
@@ -164,6 +205,14 @@ export function SettingsPage() {
     else event.currentTarget.blur();
   }
 
+  // 目录条目：展开并记住，再滚到壳；不让浏览器导航到 #settings-<id>（留下的 hash 会在下次挂载时被当深链重放）
+  function onTocClick(event: ReactMouseEvent<HTMLAnchorElement>, id: string) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    expandSettingsSection(id);
+    scrollToFold(id);
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "f") {
@@ -175,18 +224,21 @@ export function SettingsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）：section 挂载后滚过去并高亮一下；
-  // server 目录到达会把上方的目录驱动区（通用…）从占位撑成全高、把目标区顶出视口——目录落地后再对准一次
+  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）与 #settings-<id> 片段：挂载时读一次
+  // （之后 URL 上的锚点就摘掉——只消费一次，rail 来回不重放）；section 挂载后强制展开（并记住——原生 expandAnchorIfPending 的
+  // collapse.expand）、滚过去并高亮一下；server 目录到达会把上方的目录驱动区（通用…）从占位撑成全高、把目标区顶出视口——目录
+  // 落地后再对准一次。高亮记在 data-anchored（React 不管的属性）：壳的 className 随 expand 重渲时会把 imperative 加的 class 抹掉
+  const [anchor] = useState(readDeepLinkSection);
   useEffect(() => {
-    const anchor = readSettingsAnchor(window.location.search);
     if (!anchor) return undefined;
-    const el = document.getElementById(`settings-${anchor}`);
+    window.history.replaceState(window.history.state, "", withoutSettingsAnchor(window.location.href).toString());
+    if (SETTINGS_TOC.some((entry) => entry.id === anchor)) expandSettingsSection(anchor);
+    const el = scrollToFold(anchor);
     if (!el) return undefined;
-    el.scrollIntoView({ block: "start" });
-    el.classList.add("is-anchored");
-    const timer = window.setTimeout(() => el.classList.remove("is-anchored"), 2500);
+    el.dataset.anchored = "";
+    const timer = window.setTimeout(() => { delete el.dataset.anchored; }, 2500);
     return () => window.clearTimeout(timer);
-  }, [catalogReady]);
+  }, [anchor, catalogReady]);
 
   return (
     <main className="settings-page">
@@ -211,42 +263,53 @@ export function SettingsPage() {
         {query && <button type="button" className="btn btn-quiet" onClick={() => setQuery("")}>{text("清除", "Clear")}</button>}
         {query && shown === 0 && <span className="settings-helper">{text("无匹配设置", "No matching settings")}</span>}
       </div>
+      {/* 目录反映开合（data-expanded；搜索期间一律 true）；点条目 = 深链语义：展开并记住、滚到 fold 壳（永远可见）——自己滚、不让浏览器
+          留下 #settings-<id>（否则 rail 来回时当深链重放）；带修饰键的点击（新标签 / 新窗口）交给浏览器，新标签里由片段深链自己展开 */}
       <nav className="settings-toc" aria-label={text("设置目录", "Settings sections")}>
         {SETTINGS_TOC.map((entry) => (
-          <a key={entry.id} href={`#settings-${entry.id}`}>{language === "zh" ? entry.zh : entry.en}</a>
+          <a
+            key={entry.id}
+            href={`#settings-${entry.id}`}
+            data-expanded={searchActive || expandedSettingsSections.has(entry.id)}
+            onClick={(event) => onTocClick(event, entry.id)}
+          >
+            {language === "zh" ? entry.zh : entry.en}
+          </a>
         ))}
       </nav>
       {/* §54.1 第 12 项 显示：字号 / 字重 / 描边三把旋钮，点选即生效（owner 4K 屏「框细字细」） */}
-      <div id="settings-display"><DisplaySection /></div>
-      <div id="settings-models"><ModelsSection /></div>
-      <CatalogSection sectionId="general"><GeneralExtras /></CatalogSection>
+      <Fold id="display" isForced={searchActive}><DisplaySection /></Fold>
+      <Fold id="models" isForced={searchActive}><ModelsSection /></Fold>
+      <Fold id="general" isForced={searchActive}><CatalogSection sectionId="general"><GeneralExtras /></CatalogSection></Fold>
       {/* D30 依赖检查：原生 DepsView 整段（快速行 / 雷达健康 / 诊断 + web 自有的活性 / 部署 / 安装回执 / 日志）折进设置页 */}
-      <DepsSection />
-      <CatalogSection sectionId="notifications" />
-      <RecordingSection />
-      <CaptionsSection />
-      <ObsidianSection />
-      <CredentialsSection />
-      <SlackSection />
-      <GmailSection />
-      <ClaudeImportSection />
-      <div id="settings-skills"><SkillsSection /></div>
-      <McpSection />
-      <SyncSection />
-      <CatalogSection sectionId="approval" />
-      <CatalogSection sectionId="flags" />
+      <Fold id="deps" isForced={searchActive}><DepsSection /></Fold>
+      <Fold id="notifications" isForced={searchActive}><CatalogSection sectionId="notifications" /></Fold>
+      <Fold id="recording" isForced={searchActive}><RecordingSection /></Fold>
+      <Fold id="live_captions" isForced={searchActive}><CaptionsSection /></Fold>
+      <Fold id="obsidian" isForced={searchActive}><ObsidianSection /></Fold>
+      <Fold id="credentials" isForced={searchActive}><CredentialsSection /></Fold>
+      <Fold id="slack" isForced={searchActive}><SlackSection /></Fold>
+      <Fold id="gmail" isForced={searchActive}><GmailSection /></Fold>
+      <Fold id="claude_import" isForced={searchActive}><ClaudeImportSection /></Fold>
+      <Fold id="skills" isForced={searchActive}><SkillsSection /></Fold>
+      <Fold id="mcp" isForced={searchActive}><McpSection /></Fold>
+      <Fold id="sync" isForced={searchActive}><SyncSection /></Fold>
+      <Fold id="approval" isForced={searchActive}><CatalogSection sectionId="approval" /></Fold>
+      <Fold id="flags" isForced={searchActive}><CatalogSection sectionId="flags" /></Fold>
       {/* 每周摘要：原生 SettingsWeeklyDigest 的顺序——开关 → 状态字 → 「现在生成一份」+ 回执句；状态摘要频率是 web 自有旋钮 */}
-      <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <><DigestStatus /><DigestExtras /></> }} />
+      <Fold id="digest" isForced={searchActive}>
+        <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <><DigestStatus /><DigestExtras /></> }} />
+      </Fold>
       {/* 语气档案：原生 voiceGroup 的「当前生效」状态行 + 打开档案 在开关之前 */}
-      <CatalogSection sectionId="voice" lead={<VoiceStatus />} />
-      <CatalogSection sectionId="redaction" />
-      <CatalogSection sectionId="telemetry" />
-      <CatalogSection sectionId="maintainer"><MaintainerExtras /></CatalogSection>
-      <div id="settings-materials"><MaterialsSection /></div>
+      <Fold id="voice" isForced={searchActive}><CatalogSection sectionId="voice" lead={<VoiceStatus />} /></Fold>
+      <Fold id="redaction" isForced={searchActive}><CatalogSection sectionId="redaction" /></Fold>
+      <Fold id="telemetry" isForced={searchActive}><CatalogSection sectionId="telemetry" /></Fold>
+      <Fold id="maintainer" isForced={searchActive}><CatalogSection sectionId="maintainer"><MaintainerExtras /></CatalogSection></Fold>
+      <Fold id="materials" isForced={searchActive}><MaterialsSection /></Fold>
       {/* §63 会议纪要：会后自动出稿 / 默认语言 / Slack 草稿开关（默认关） */}
-      <div id="settings-recap"><RecapSection /></div>
+      <Fold id="recap" isForced={searchActive}><RecapSection /></Fold>
       {/* §70 每日整理：开关 / 时刻 / 每天最多几张提案 / 过时天数 / 回收站保留天数 */}
-      <div id="settings-daily_loop"><DailyLoopSection /></div>
+      <Fold id="daily_loop" isForced={searchActive}><DailyLoopSection /></Fold>
     </main>
   );
 }

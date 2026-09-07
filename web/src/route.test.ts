@@ -1,6 +1,6 @@
 // 脚手架冒烟测试：route 深链序列化（纯函数）。
 import { describe, expect, it } from "vitest";
-import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, isDepsPage, readCardId, readPage, readSettingsAnchor } from "./route";
+import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, isDepsPage, readCardId, readPage, readSettingsAnchor, withoutSettingsAnchor } from "./route";
 
 describe("route", () => {
   it("reads the card deep link preserving case", () => {
@@ -49,5 +49,14 @@ describe("route", () => {
     expect(url.searchParams.get("card")).toBeNull();
     // 问问助手页已退役（D29）：旧深链回落看板，不崩
     expect(readPage("?page=ask")).toBe("board");
+  });
+
+  it("withoutSettingsAnchor 摘掉 ?anchor= 与 #settings-<id>（D44：设置页读过一次就 replaceState），其余 query / hash 原样", () => {
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings&anchor=gmail").toString()).toBe("http://127.0.0.1:47820/?page=settings");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings#settings-sync").toString()).toBe("http://127.0.0.1:47820/?page=settings");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=deps&log=actd.log&anchor=deps#settings-deps").toString())
+      .toBe("http://127.0.0.1:47820/?page=deps&log=actd.log");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings#other").toString()).toBe("http://127.0.0.1:47820/?page=settings#other");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings").toString()).toBe("http://127.0.0.1:47820/?page=settings");
   });
 });

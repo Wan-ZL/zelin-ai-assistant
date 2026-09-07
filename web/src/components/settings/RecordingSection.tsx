@@ -33,7 +33,7 @@ export function RecordingSection() {
 
   const rec = state?.recording;
   return (
-    <section className="settings-section" id="settings-recording" aria-labelledby="settings-recording-title">
+    <section className="settings-section" aria-labelledby="settings-recording-title">
       <h3 id="settings-recording-title" className="settings-section-title">{text("录制", "Recording")}</h3>
       <p className="settings-helper">
         {text(

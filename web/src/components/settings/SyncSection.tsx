@@ -102,7 +102,7 @@ export function SyncSection() {
 
   const enabled = status?.enabled ?? false;
   return (
-    <section className="settings-section" id="settings-sync" aria-labelledby="settings-sync-title">
+    <section className="settings-section" aria-labelledby="settings-sync-title">
       <h3 id="settings-sync-title" className="settings-section-title">{text("同步 / 配对", "Sync / Pairing")}</h3>
       <p className="settings-helper">{text("把这台 Mac 的看板同步到手机,就能在手机上查看、远程审批。开启后生成一个配对二维码——在手机 App 里扫一次即可。卡片正文端到端加密,服务器和维护者都读不到明文。此区改动即时生效。", "Sync this Mac's board to your phone so you can view it and approve remotely. Turning it on generates a pairing QR — scan it once in the phone app. Card bodies are end-to-end encrypted; neither the server nor the maintainer can read them. Changes apply immediately.")}</p>
       <div className="settings-field is-bool">
