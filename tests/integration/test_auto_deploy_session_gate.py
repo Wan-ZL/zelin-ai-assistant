@@ -18,7 +18,7 @@ claude 会话，就不重启 actd**——整轮部署 `deferred`，下一个 int
   - roster 读不到 = fail closed：deferred_reason=roster_unknown、无 deferred_sessions、
     镜像私账 roster_unknown_ticks 计连续次数，第 AUTODEPLOY_ROSTER_UNKNOWN_LIMIT+1 轮
     闸门让行并在日志说明；中间任一轮读到数字就把计数清零；
-  - 连续 deferred 满 AUTODEPLOY_DEFER_WARN_AFTER（默认 6 h）→ 日志 WARN，且真读方
+  - 连续 deferred 满 act.lib.deploy_state.DEFER_WARN_AFTER_S（6 h，唯一真源）→ 日志 WARN，且真读方
     `act.lib.deploy_state.auto_deploy_row` 把这份投影渲染成 WARN（之前是 OK）；
   - `--force` 跳过闸门，日志记下会被打断的会话数；
   - install_incomplete 的修补重跑（同样重启全部 daemon）走同一道闸门；

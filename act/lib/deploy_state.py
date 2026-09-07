@@ -32,6 +32,9 @@ Unknown keys are dropped, unknown ``status`` values are kept verbatim
 keys mean a green target is waiting for live background claude sessions to
 end; :func:`auto_deploy_row` keeps it OK until ``DEFER_WARN_AFTER_S`` of
 continuous deferral, then WARNs — the deploy never ends a session itself.
+Two things override that OK (§56.3 会话闸门追记, review of #284): a deferred
+REPAIR (``reason`` still carries the install_incomplete tokens — the machine
+is not running its checkout) and a ``last_incident`` on file (#135 rule).
 """
 from __future__ import annotations
 
@@ -95,7 +98,10 @@ BLOCKED_TCC = "blocked_tcc"
 # `roster_unknown_ticks` runs) and the deploy waits for the next interval
 # rather than restart actd under them. Not a WARN by itself — the owner is
 # working and the update follows by itself; it becomes one after
-# DEFER_WARN_AFTER_S of continuous deferral (a stuck session, §46/#119's job).
+# DEFER_WARN_AFTER_S of continuous deferral (a session nobody has ended: a
+# done worker awaiting 验收, a blocked one §46/#119 has not harvested). This
+# constant is the ONE truth for that threshold: scripts/auto-deploy.sh reads
+# it (defer_warn_after) for its log WARN and web DeployLabel mirrors it.
 DEFERRED = "deferred"
 DEFER_REASON_SESSIONS = "sessions_running"
 DEFER_REASON_UNKNOWN = "roster_unknown"
@@ -405,11 +411,31 @@ def deferred_hours(state: dict, now: float) -> Optional[float]:
 
 
 def _deferred_ok_detail(state: dict, sessions: str) -> str:
+    """「deferred on v<running> (waiting for N live claude session(s) since …): <detail>」
+    — `version` is the CHECKOUT's (what runs now); the target the deploy waits
+    with is named by `detail` (`deploy of vX (sha) deferred: …`). Saying
+    "vX ready" here named the running version as the ready one (review of #284)."""
     since = state.get("deferred_since", "")
     detail = state.get("detail", "")
-    return "deferred (v%s ready, waiting for %s live claude session(s)%s)%s" % (
+    return "deferred on v%s (waiting for %s live claude session(s)%s)%s" % (
         state.get("version") or "?", sessions,
         (" since " + since) if since else "", (": " + detail) if detail else "")
+
+
+def _deferred_fix() -> str:
+    """What actually ends a session the gate counts. A `done` worker keeps its
+    process until claude retires it or the owner 验收/打回 its 待验收 card (actd
+    stops the worker) or `claude stop <id>`s it; a blocked one is §46/#119's
+    harvest; the deploy never kills any — `--force` is the owner's override."""
+    return failures.pick(
+        "看 `claude agents` 里哪些后台会话还有进程：done 的 worker（待验收卡）在 claude 回收它、"
+        "或你验收/打回那张卡（actd 停掉 worker）、或 `claude stop <id>` 后才退出；blocked 的由 "
+        "§46/#119 收割；部署任务永不替它杀。等不及就 bash scripts/auto-deploy.sh --force（会打断这些会话）",
+        "check `claude agents` for background sessions that still have a process: a done "
+        "worker (a card awaiting review) exits when claude retires it, when you accept/reject "
+        "that card (actd stops the worker) or on `claude stop <id>`; a blocked one is §46/#119's "
+        "harvest; the deploy never kills any. In a hurry: bash scripts/auto-deploy.sh --force "
+        "(interrupts those sessions)")
 
 
 def _deferred_warn_row(state: dict, sessions: str, hours: float) -> dict:
@@ -417,27 +443,82 @@ def _deferred_warn_row(state: dict, sessions: str, hours: float) -> dict:
     return _row("warn", failures.pick(
         "更新已就绪，等待 %s 个会话结束已 %d 小时：%s",
         "update ready, waiting for %s session(s) to finish for %d h: %s")
-        % (sessions, int(hours), detail),
+        % (sessions, int(hours), detail), _deferred_fix())
+
+
+def deferred_repair_tokens(state: dict) -> str:
+    """The `reason` tokens a deferral carries BESIDES its own — the repair path
+    (§56.3 step 2) keeps its install_incomplete tokens (`heartbeat_missing`,
+    `install_report_version_mismatch`…) in front of `sessions_running` /
+    `roster_unknown`, because a deferred repair is still a machine that is not
+    running its checkout. "" for a plain deploy deferral."""
+    own = {DEFER_REASON_SESSIONS, DEFER_REASON_UNKNOWN}
+    return " ".join(t for t in (state.get("reason") or "").split() if t not in own)
+
+
+def _deferred_repair_row(state: dict, sessions: str, tokens: str) -> dict:
+    """A deferred install.sh re-run: WARN from the first run, whatever the age —
+    the row it replaces (`install_incomplete`) was a WARN and the condition
+    behind it is unchanged (review of #284: it turned OK「update waiting」)."""
+    detail = state.get("detail") or tokens
+    return _row("warn", failures.pick(
+        "安装未完成（%s），修补等待 %s 个会话结束：%s",
+        "install incomplete (%s); the repair waits for %s session(s) to finish: %s")
+        % (tokens, sessions, detail),
         failures.pick(
-        "看 `claude agents` 里哪个后台会话一直活着（卡住的会话由 §46/#119 的收割机制处理，"
-        "部署任务永不替它杀）；等不及就 bash scripts/auto-deploy.sh --force（会打断这些会话）",
-        "check `claude agents` for the background session that stays alive (a stuck one is "
-        "§46/#119's harvest job to end — the deploy never kills it); in a hurry: "
-        "bash scripts/auto-deploy.sh --force (interrupts those sessions)"))
+        "会话散了下一轮自动重跑 install.sh（actd 没在跑时没有任何自动机制结束它们——"
+        "只有 claude 自己回收、`claude stop <id>` 或 --force）；",
+        "the next run re-runs install.sh once the sessions are gone (with actd down nothing "
+        "automatic ends them - only claude's own retirement, `claude stop <id>` or --force); ")
+        + _deferred_fix())
 
 
 def _deferred_row(state: dict, now: float) -> dict:
     """The `deferred` row (§56.3 session gate). Under DEFER_WARN_AFTER_S the
     wait is the intended behaviour — OK, saying what it waits for; past it the
     row WARNs「更新已就绪，等待 N 个会话结束已 X 小时」: no deferral ever kills a
-    session (that is §46/#119's harvest machinery), so a stuck one must at
-    least be seen. `deferred_sessions` is absent when the roster could not be
-    read (`deferred_reason=roster_unknown`)."""
+    session, so a stuck one must at least be seen. `deferred_sessions` is
+    absent when the roster could not be read (`deferred_reason=roster_unknown`).
+    Two things override the OK (review of #284): a deferred REPAIR (extra
+    `reason` tokens — the machine is not running its checkout) is WARN from the
+    first run; and a `last_incident` still on file WARNs exactly as it does
+    under a healthy status (#135 rule) — a deferral must not hide a rollback
+    verdict for as long as the episode lasts."""
     sessions = state.get("deferred_sessions") or "?"
+    tokens = deferred_repair_tokens(state)
     hours = deferred_hours(state, now)
-    if hours is None or hours < DEFER_WARN_AFTER_S / 3600.0:
-        return _row("ok", _deferred_ok_detail(state, sessions))
-    return _deferred_warn_row(state, sessions, hours)
+    if tokens:
+        row = _deferred_repair_row(state, sessions, tokens)
+    elif hours is not None and hours >= DEFER_WARN_AFTER_S / 3600.0:
+        row = _deferred_warn_row(state, sessions, hours)
+    else:
+        row = _row("ok", _deferred_ok_detail(state, sessions))
+    return _with_incident(row, state.get("last_incident", ""))
+
+
+def _with_incident(row: dict, incident: str) -> dict:
+    """Overlay a `last_incident` on a row: an OK row becomes the #135 WARN
+    (same text and fix as the healthy path), a row that already WARNs keeps
+    its own verdict and names the incident after it."""
+    if not incident:
+        return row
+    if row["status"] == "ok":
+        return _incident_row(row["detail"], incident)
+    row["detail"] += "; unresolved deploy incident: " + incident
+    return row
+
+
+def _incident_row(ok_detail: str, incident: str) -> dict:
+    """WARN「<ok detail>; unresolved deploy incident: <last_incident>」— the
+    #135 rule: a rollback verdict no later `deployed` has cleared stays visible
+    through every routine write (healthy statuses and `deferred` alike)."""
+    return _row("warn", "%s; unresolved deploy incident: %s" % (ok_detail, incident),
+                failures.pick(
+                "上一次回滚判决还没人看过（新 sha 留在原地）：核对它点名的问题；下一次成功部署"
+                "（合并新提交，或 bash scripts/auto-deploy.sh --force 部署新 sha）会清掉本行",
+                "the last rollback verdict has not been looked at (the new sha stayed in place): "
+                "check what it names; the next successful deploy (a new commit on main, or bash "
+                "scripts/auto-deploy.sh --force onto a new sha) clears this"))
 
 
 def auto_deploy_row(state: dict, now: Optional[float] = None) -> dict:
@@ -456,10 +537,4 @@ def auto_deploy_row(state: dict, now: Optional[float] = None) -> dict:
     incident = state.get("last_incident", "")
     if not incident:
         return _row("ok", _auto_deploy_ok_detail(state))
-    return _row("warn", "%s; unresolved deploy incident: %s" % (_auto_deploy_ok_detail(state), incident),
-                failures.pick(
-                "上一次回滚判决还没人看过（新 sha 留在原地）：核对它点名的问题；下一次成功部署"
-                "（合并新提交，或 bash scripts/auto-deploy.sh --force 部署新 sha）会清掉本行",
-                "the last rollback verdict has not been looked at (the new sha stayed in place): "
-                "check what it names; the next successful deploy (a new commit on main, or bash "
-                "scripts/auto-deploy.sh --force onto a new sha) clears this"))
+    return _incident_row(_auto_deploy_ok_detail(state), incident)

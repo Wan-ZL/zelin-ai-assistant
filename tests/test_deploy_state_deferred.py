@@ -67,8 +67,11 @@ class DeferredRowTestCase(unittest.TestCase):
     def test_fresh_deferral_is_an_ok_row_that_says_what_it_waits_for(self):
         row = deploy_state.auto_deploy_row(self._state(), now=SINCE_EPOCH + 10 * 60)
         self.assertEqual(row["status"], "ok")
-        self.assertIn("deferred (v1.0.73 ready, waiting for 2 live claude session(s) since %s)" % SINCE,
+        # `version` is the RUNNING checkout (1.0.73); the target (1.0.74) is named
+        # by `detail` — the row must not call the running version "ready"
+        self.assertIn("deferred on v1.0.73 (waiting for 2 live claude session(s) since %s)" % SINCE,
                       row["detail"])
+        self.assertNotIn("v1.0.73 ready", row["detail"])
         self.assertIn("deploy of v1.0.74", row["detail"])
         self.assertEqual(row["fix"], "")
 

@@ -71,20 +71,35 @@
 #      through act.executor.live_session_count — the daemon's own reader, same
 #      binary) how many BACKGROUND sessions still have a live process. Any →
 #      `deferred` (add-only keys deferred_reason=sessions_running /
-#      deferred_sessions=N / deferred_since=<first deferral>), one log line,
-#      exit 0, HEAD untouched; the next StartInterval tick asks again. No time
-#      cap ever ends a session — a stuck one is §46/#119's harvest job — but
-#      after AUTODEPLOY_DEFER_WARN_AFTER (6 h) of continuous deferral the log
-#      WARNs and the doctor `auto-deploy` row turns WARN so the owner sees it.
+#      deferred_sessions=N / deferred_since=<first deferral of the episode —
+#      consecutive `deferred` runs; any other outcome in between closes it>),
+#      one log line, exit 0, HEAD untouched; the next StartInterval tick asks
+#      again. "Live" = a `pid` on a non-interactive roster entry, whatever its
+#      `state`: a `done` worker whose process is still up (every 待验收 card
+#      until claude retires it or the owner 验收/打回 it — actd stops the
+#      worker — or `claude stop`s it) defers the deploy too; that is the price
+#      of the fail-closed predicate and the incident's exact shape. No time
+#      cap ever ends a session, but after deploy_state.DEFER_WARN_AFTER_S
+#      (6 h, one truth) of continuous deferral the log WARNs and the doctor
+#      `auto-deploy` row turns WARN so the owner sees it.
 #      Roster unreadable (claude missing / non-zero / bad JSON) = FAIL CLOSED:
 #      deferred_reason=roster_unknown for at most AUTODEPLOY_ROSTER_UNKNOWN_LIMIT
 #      (3) consecutive runs, then the gate yields and says why — a broken
 #      roster must neither block deploys forever nor kill sessions silently.
-#      `--force` skips the gate (the owner typed it, the count is logged). The
-#      same gate guards the install.sh re-run of step 2 (a repair restarts
-#      actd too); the rollback below is NOT deferred — it is the emergency
+#      `--force` skips the gate (the owner typed it, the count is logged, the
+#      deferred_* keys are cleared with the rest of the forgotten bookkeeping).
+#      The same gate guards the install.sh re-run of step 2 (a repair restarts
+#      actd too — the install_incomplete tokens stay in `reason` so the doctor
+#      row stays WARN over a machine not running its checkout; with actd dead,
+#      nothing but claude's own retirement, the owner or --force ends those
+#      sessions); the rollback below is NOT deferred — it is the emergency
 #      exit of a deploy that passed this gate minutes earlier, and its bootout
 #      only logs how many sessions the new actd dispatched in between.
+#      Residual window (documented, not closed): the gate answers before the
+#      ff-merge; install.sh reaches its bootout step minutes later (self-check,
+#      doctor baseline, stable-claude refresh, ui build), and a card the still-
+#      running actd dispatches in that window is restarted under — the roster
+#      is not re-asked mid-install.
 #   5. PREV=HEAD; `git merge --ff-only origin/main` (diverged local main =
 #      refuse + notify, never force)
 #   6. SELF-CHECK the new deploy agent (`bash -n` this script, `import
@@ -178,8 +193,7 @@
 # AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
 # AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS, AUTODEPLOY_CI_WALK,
 # AUTODEPLOY_GH, AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE,
-# AUTODEPLOY_TRIGGER, AUTODEPLOY_PLIST, AUTODEPLOY_ROSTER_UNKNOWN_LIMIT,
-# AUTODEPLOY_DEFER_WARN_AFTER.
+# AUTODEPLOY_TRIGGER, AUTODEPLOY_PLIST, AUTODEPLOY_ROSTER_UNKNOWN_LIMIT.
 set -uo pipefail
 
 # Everything lives in functions and runs from main "$@" at the very end: bash
@@ -234,8 +248,9 @@ CI_WALK="${AUTODEPLOY_CI_WALK:-30}"                     # first-parent commits e
                                                         # the cap on the failed_shas ledger
 ROSTER_UNKNOWN_LIMIT="${AUTODEPLOY_ROSTER_UNKNOWN_LIMIT:-3}"  # step 4b: consecutive runs the session
                                                         # gate stays closed on an unreadable roster
-DEFER_WARN_AFTER="${AUTODEPLOY_DEFER_WARN_AFTER:-21600}"  # step 4b: seconds of continuous deferral
-                                                        # before the log WARNs (doctor row too)
+                                                        # (the 6 h "still deferred" threshold is NOT a
+                                                        # knob here: defer_warn_after reads the one
+                                                        # truth, act/lib/deploy_state.py DEFER_WARN_AFTER_S)
 FORCE=0
 PY=""
 TRIGGER=""      # terminal | launchd | $AUTODEPLOY_TRIGGER (detect_trigger)
@@ -1154,11 +1169,29 @@ target_version() { # $1=sha
     printf '%s' "${_tv#v}"
 }
 
+# The 6 h "still deferred" threshold has ONE truth: act/lib/deploy_state.py
+# DEFER_WARN_AFTER_S — the doctor row judges with that constant and the web
+# label mirrors it, so the log WARN here must read the same number (review of
+# #284: an env knob on this side alone let the log WARN at 2 h while doctor and
+# header stayed OK until 6 h). 21600 only when the checkout's deploy_state.py
+# predates the constant (a rollback target).
+defer_warn_after() {
+    _dwa="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
+        "$PY" -c 'from act.lib import deploy_state
+print(int(deploy_state.DEFER_WARN_AFTER_S))') 2>/dev/null )" || _dwa=""
+    case "$_dwa" in ''|*[!0-9]*) _dwa=21600 ;; esac
+    printf '%s' "$_dwa"
+}
+
 # The gate itself. $1=sha about to be installed, $2=what would restart actd
-# ("deploy" | "install.sh re-run"). Returns 0 = proceed (any earlier deferral
-# episode is closed: the deferred_* keys and the unknown-ticks counter are
-# cleared), 1 = deferred — `status=deferred` + the add-only keys are written,
-# one line logged, and the caller exits 0 so the next interval asks again.
+# ("deploy" | "install.sh re-run"), $3=reason tokens the deferral must KEEP in
+# front of its own (the repair path's install_incomplete tokens — a deferred
+# repair still means the machine is not running its checkout, and the doctor
+# row must not turn OK over that), $4=detail to append (the repair's mismatch
+# explanation). Returns 0 = proceed (any earlier deferral episode is closed:
+# the deferred_* keys and the unknown-ticks counter are cleared), 1 = deferred
+# — `status=deferred` + the add-only keys are written, one line logged, and
+# the caller exits 0 so the next interval asks again.
 #
 #   roster says N > 0   → deferred_reason=sessions_running, deferred_sessions=N
 #   roster says 0       → proceed
@@ -1170,49 +1203,68 @@ target_version() { # $1=sha
 #                         restart must not happen silently either
 #   --force             → the owner typed it: skip, log the count
 #
-# `deferred_since` is the FIRST deferral of the episode and survives every
-# later deferral write (the 6 h WARN and the board banner age read it); a
-# known count of 0 (or the gate yielding) ends the episode.
-session_gate() { # $1=sha $2=what
-    _live="$(live_sessions)"
+# An EPISODE is a run of consecutive `deferred` results. `deferred_since` is
+# its first deferral and survives every later deferral write (the 6 h WARN and
+# the board banner age read it); a known count of 0 (or the gate yielding)
+# ends it — and so does ANY other outcome in between: the stamp and the
+# unknown-ticks counter on file are inherited only while the previous run was
+# itself `deferred`. Every exit that runs before this gate (refused_dirty,
+# fetch_failed, ci_pending, ci_failed, refused_branch, a --force that skipped
+# the gate and rolled back…) leaves the keys untouched, and without this rule
+# a deferral days later inherited a stale stamp and WARNed「已 7 小时」on a wait
+# that was seconds old (review of #284, reproduced with the real fixture).
+session_gate() { # $1=sha $2=what [$3=reason tokens to keep] [$4=detail suffix]
+    _sg_live="$(live_sessions)"
     if [ "$FORCE" -eq 1 ]; then
-        log "--force: session gate skipped — roster: ${_live} live background claude session(s); the restart interrupts them"
+        log "--force: session gate skipped — roster: ${_sg_live} live background claude session(s); the restart interrupts them"
         return 0
     fi
-    _since="$(read_state deferred_since)"
-    _ticks="$(read_state roster_unknown_ticks)"
-    case "$_ticks" in ''|*[!0-9]*) _ticks=0 ;; esac
-    _tv="$(target_version "$1")"
-    _what="$2 of ${_tv:+v$_tv }($(short "$1"))"
-    if [ "$_live" = "unknown" ]; then
-        if [ "$_ticks" -ge "$ROSTER_UNKNOWN_LIMIT" ]; then
-            log "claude roster unreadable for $_ticks consecutive runs — session gate yields: $_what proceeds WITHOUT knowing whether sessions are live (fail-closed budget AUTODEPLOY_ROSTER_UNKNOWN_LIMIT=$ROSTER_UNKNOWN_LIMIT spent; see auto-deploy.log for the roster error)"
+    _sg_since="$(read_state deferred_since)"
+    _sg_ticks="$(read_state roster_unknown_ticks)"
+    case "$_sg_ticks" in ''|*[!0-9]*) _sg_ticks=0 ;; esac
+    if [ "$(read_state status)" != "deferred" ]; then
+        # the previous run ended some other way — whatever is on file belongs
+        # to a closed episode, not to this one
+        _sg_since=""
+        _sg_ticks=0
+    fi
+    _sg_tv="$(target_version "$1")"
+    _sg_what="$2 of ${_sg_tv:+v$_sg_tv }($(short "$1"))"
+    _sg_keep="${3:-}"
+    _sg_suffix="${4:+; $4}"
+    if [ "$_sg_live" = "unknown" ]; then
+        if [ "$_sg_ticks" -ge "$ROSTER_UNKNOWN_LIMIT" ]; then
+            log "claude roster unreadable for $_sg_ticks consecutive runs — session gate yields: $_sg_what proceeds WITHOUT knowing whether sessions are live (fail-closed budget AUTODEPLOY_ROSTER_UNKNOWN_LIMIT=$ROSTER_UNKNOWN_LIMIT spent; see auto-deploy.log for the roster error)"
             write_state "roster_unknown_ticks=" "deferred_reason=" "deferred_sessions=" "deferred_since="
             return 0
         fi
-        _ticks=$((_ticks + 1))
-        _reason=roster_unknown
-        _detail="$_what deferred: the claude roster cannot be read (claude agents --json failed) — assuming sessions may be live; the gate yields after $ROSTER_UNKNOWN_LIMIT consecutive unknowns ($_ticks so far)"
-        _extra=("roster_unknown_ticks=$_ticks" "deferred_sessions=")
-    elif [ "$_live" -gt 0 ] 2>/dev/null; then
-        _reason=sessions_running
-        _detail="$_what deferred: $_live live background claude session(s) on the roster — restarting actd would interrupt them; retried next interval"
-        _extra=("roster_unknown_ticks=" "deferred_sessions=$_live")
+        _sg_ticks=$((_sg_ticks + 1))
+        _sg_reason=roster_unknown
+        _sg_detail="$_sg_what deferred: the claude roster cannot be read (claude agents --json failed) — assuming sessions may be live; the gate yields after $ROSTER_UNKNOWN_LIMIT consecutive unknowns ($_sg_ticks so far)$_sg_suffix"
+        _sg_extra=("roster_unknown_ticks=$_sg_ticks" "deferred_sessions=")
+    elif [ "$_sg_live" -gt 0 ] 2>/dev/null; then
+        _sg_reason=sessions_running
+        _sg_detail="$_sg_what deferred: $_sg_live live background claude session(s) on the roster — restarting actd would interrupt them; retried next interval$_sg_suffix"
+        _sg_extra=("roster_unknown_ticks=" "deferred_sessions=$_sg_live")
     else
-        if [ -n "$_since" ] || [ "$_ticks" -gt 0 ]; then
-            log "session gate open again (roster: 0 live background sessions) — $_what proceeds"
+        if [ -n "$(read_state deferred_since)" ] || [ -n "$(read_state roster_unknown_ticks)" ]; then
+            log "session gate open again (roster: 0 live background sessions) — $_sg_what proceeds"
             write_state "roster_unknown_ticks=" "deferred_reason=" "deferred_sessions=" "deferred_since="
         fi
         return 0
     fi
-    [ -n "$_since" ] || _since="$_now"
-    log "DEFERRED ($_reason): $_detail — episode since $_since"
+    [ -n "$_sg_since" ] || _sg_since="$_now"
+    log "DEFERRED ($_sg_reason): $_sg_detail — episode since $_sg_since"
     write_state "status=deferred" "last_run=$_now" "head=$(git_q rev-parse HEAD)" "version=$(repo_version)" \
-                "reason=$_reason" "deferred_reason=$_reason" "deferred_since=$_since" \
-                "detail=$_detail" "${_extra[@]}"
-    _age="$(iso_age "$_since")"
-    if [ -n "$_age" ] && [ "$_age" -ge "$DEFER_WARN_AFTER" ]; then
-        log "WARN deploy deferred for $((_age / 3600)) h now (since $_since): a background session that never ends is §46/#119's harvest job, not the deployer's — the doctor auto-deploy row WARNs from here; bash scripts/auto-deploy.sh --force deploys now and interrupts it"
+                "reason=${_sg_keep:+$_sg_keep }$_sg_reason" "deferred_reason=$_sg_reason" "deferred_since=$_sg_since" \
+                "detail=$_sg_detail" "${_sg_extra[@]}"
+    _sg_age="$(iso_age "$_sg_since")"
+    if [ -n "$_sg_age" ] && [ "$_sg_age" -ge "$(defer_warn_after)" ]; then
+        # Honest about what ends such a session: a `done` worker keeps its
+        # process until claude's daemon retires it or the owner ends it (验收 /
+        # 打回 the 待验收 card — actd stops the worker —, or `claude stop <id>`);
+        # a BLOCKED one is §46/#119's harvest. The deployer never kills any.
+        log "WARN deploy deferred for $((_sg_age / 3600)) h now (since $_sg_since): the deployer never ends a session — a done worker goes when claude retires it or the owner 验收/打回 its card or runs claude stop <id>; a blocked one is §46/#119's harvest — the doctor auto-deploy row WARNs from here; bash scripts/auto-deploy.sh --force deploys now and interrupts them"
     fi
     return 1
 }
@@ -1429,7 +1481,14 @@ verify_running() { # $1=sha (HEAD == origin/main)
     fi
     # The repair restarts every daemon exactly like a deploy does — same gate
     # (§56.3 step 4b): live background sessions → `deferred`, retried next run.
-    session_gate "$1" "install.sh re-run" || return 0
+    # The install_incomplete tokens stay in front of the deferral's own in
+    # `reason`, and the mismatch explanation rides in `detail`: a deferred
+    # repair is still a machine not running its checkout, and the doctor row
+    # renders it WARN, never the plain OK「update waiting」(review of #284).
+    # With actd dead (heartbeat_missing / heartbeat_stale) the gate still holds
+    # — the owner's rule has no exception — but nothing automatic ends those
+    # sessions then: claude's own retirement, `claude stop <id>` or --force.
+    session_gate "$1" "install.sh re-run" "$_reason" "install incomplete: $_why" || return 0
     _n=$((_n + 1))
     log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — re-running install.sh ($_n/$INCOMPLETE_LIMIT at this sha)"
     # Spent BEFORE the run: an install.sh that takes this process down with it
@@ -1558,9 +1617,15 @@ main() {
     fi
 
     if [ "$FORCE" -eq 1 ]; then
-        log "--force: forgetting failed/notified/incomplete shas"
+        # …and the session-gate episode: --force skips the gate (§56.3 step 4b),
+        # so this is the only place that closes a deferral it overrides — left
+        # on file, the stale stamp/ticks would be inherited by nothing (the gate
+        # checks `status == deferred`) but would still sit in the mirror under
+        # `rolled_back` / `deployed`, confusing every reader of the raw file.
+        log "--force: forgetting failed/notified/incomplete shas and any deferral episode"
         write_state "failed_sha=" "failed_shas=" "notified_sha=" "incomplete_sha=" "incomplete_seen=" \
-                    "incomplete_runs=" "incomplete_runs_sha=" "incomplete_notified_sha="
+                    "incomplete_runs=" "incomplete_runs_sha=" "incomplete_notified_sha=" \
+                    "deferred_reason=" "deferred_sessions=" "deferred_since=" "roster_unknown_ticks="
     fi
 
     # rc 1 (with -q) = genuinely detached → refused_branch; rc >1 = git could
