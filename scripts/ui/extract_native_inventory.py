@@ -154,15 +154,15 @@ CONTROL_OWNER = {
     },
     "control:doctor:label:failed-to-write-dest": {
         "owner": "retired",
-        "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）",
+        "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8 / D50：已加载 → launchctl kickstart，未加载 → bash install.sh --reinstall-agent 由安装器渲染 + 加载，其失败以 server 原文 + 可复制的手动命令回到失败行）",
     },
     "control:doctor:label:launchctl-load-failed": {
         "owner": "retired",
-        "reason": "原生 app 自己 launchctl load 的失败句；server 永不 load plist（§68.8 同上，install.sh --reinstall-agent 是唯一装载路径 §48.7）",
+        "reason": "原生 app 自己 launchctl load 的失败句；server 永不 load plist（§68.8 / D50 同上：install.sh --reinstall-agent 是唯一装载路径 §48.7，一键修复对未加载的 actd 也走它，load 失败 = install.sh 的原文进失败行）",
     },
     "control:setup_wizard:label:failed-to-write-dest": {
         "owner": "retired",
-        "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist",
+        "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦；未加载时 server 经 install.sh --reinstall-agent 渲染 + 加载，§68.8 D50），server 不写 plist",
     },
     # fix/parity-r2-settings-header（settings 面）：原生 Gmail IMAP 探针是壳起 runtime python 子进程；web 的探针在
     # server 进程内跑（§68.3 secrets_store._probe_gmail），没有「找不到解释器」这一失败态。

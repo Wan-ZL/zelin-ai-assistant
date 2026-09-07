@@ -1,0 +1,2 @@
+type: fixed
+- **「一键修复」/「启动后台服务」现在能把没装好的后台服务真正拉起来（owner 决策 D50；CONTRACT §68.8 追记）**：此前 actd 的 launchd agent 未加载（新装机、被 `launchctl bootout` 过、升级后没重装）时，横幅 / 向导末步 / 看板空态的那颗按钮只回一句「去终端跑 bash install.sh」。现在本机 server 会走雷达「重新安装」的同一条路——`bash install.sh --reinstall-agent com.zelin.aiassistant.actd`（渲染 + 加载仍由安装器完成，server 不写 plist）——然后照旧 15 秒轮询 health 报「已恢复 ✓」或诚实的失败句。只有这台机器从没跑过完整安装（没有 pinned 守护解释器）或 install.sh 不在时才拒绝，此时失败行里的「手动命令：」换成可复制的 `bash <repo>/install.sh`。已加载的 agent 仍是 `launchctl kickstart -k`。

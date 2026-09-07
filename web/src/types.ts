@@ -1080,11 +1080,12 @@ export interface TerminalReceipt {
   [key: string]: unknown;
 }
 
-/** POST /api/repair/actd 回执（§68.8） */
+/** POST /api/repair/actd 回执（§68.8）：action = "kickstart"（已加载）| "reinstall"（未加载 → install.sh，D50；此时另带 loaded） */
 export interface RepairReceipt {
   ok: boolean;
   label: string;
   action: string;
+  loaded?: boolean;
   [key: string]: unknown;
 }
 
