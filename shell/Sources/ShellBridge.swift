@@ -60,6 +60,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         CaptionKeyCheck.shared.objectWillChange
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
+        RecordingSchedule.active.objectWillChange
+            .sink { [weak self] _ in self?.schedulePush() }
+            .store(in: &cancellables)
     }
 
     /// 壳 → 页面 的命令事件（§61.6）：全局快捷键等原生入口向页面发一个动作。
@@ -125,8 +128,19 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             "self_heal_note": rec.selfHealNote,
             "log_tail": rec.diagnosis?.logTail ?? "",
         ]
-        // JSON null when healthy / off（前端按 string | null 镜像）
-        recording["diagnosis"] = rec.diagnosis?.failureId ?? NSNull()
+        // §61.7 add-only：录制日程四键 + 派生 `paused`（日程开 ∧ mode != off ∧ 现在在窗外——读时算，
+        // setRecording 改完 mode 的回执就已经是「按日程暂停」，不等下一拍）
+        let schedule = RecordingSchedule.active
+        recording["schedule"] = schedule.wireValue()
+        // JSON null when healthy / off（前端按 string | null 镜像）。按日程暂停时引擎是被**故意**停的：
+        // 冻结引擎的 diagnoseEngine 会把它读成 engine_crashed / engine_dead——那是误判，不投给页面
+        // （§61.7：paused ⇒ diagnosis null、log_tail ""）。
+        if schedule.pausedNow {
+            recording["diagnosis"] = NSNull()
+            recording["log_tail"] = ""
+        } else {
+            recording["diagnosis"] = rec.diagnosis?.failureId ?? NSNull()
+        }
         let captions: [String: Any] = [
             "available": true,
             "on": cap.enabled,
@@ -263,6 +277,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let why = LaunchAtLogin.set(on) { throw BridgeError.invalidArgs("launch at login: \(why)") }
         case "setCaptionPrefs":
             try Self.applyCaptionPrefs(dict)
+        case "setRecordingSchedule":
+            // §61.7 录制日程：全部可选键、整份先校验再落盘（任一坏值整个请求拒绝、零写入）
+            try Self.applyRecordingSchedule(dict)
         case "setBadge":
             guard let count = dict["count"] as? Int, count >= 0 else {
                 throw BridgeError.invalidArgs("setBadge needs count: non-negative int")
@@ -294,6 +311,46 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         var snapshot = Self.stateSnapshot()
         if let dialog { snapshot["dialog"] = dialog }
         return snapshot
+    }
+
+    /// §61.7 录制日程：`enabled: bool` / `start` / `end`（严格 "HH:MM"）/ `days: [int]`（1 = 周日 … 7 = 周六，
+    /// 非空）全部可选、至少一键；合并进现有日程后 start == end 也拒绝。校验全过才 `RecordingSchedule.apply`。
+    static func applyRecordingSchedule(_ dict: [String: Any]) throws {
+        var spec = RecordingSchedule.active.spec
+        var touched = false
+        if let raw = dict["enabled"] {
+            guard let v = raw as? Bool else { throw BridgeError.invalidArgs("enabled must be bool") }
+            spec.enabled = v
+            touched = true
+        }
+        func clock(_ key: String) throws -> String? {
+            guard let raw = dict[key] else { return nil }
+            guard let v = raw as? String, RecordingScheduleSpec.minutes(v) != nil else {
+                throw BridgeError.invalidArgs("\(key) must be \"HH:MM\" (00:00…23:59)")
+            }
+            return v
+        }
+        if let v = try clock("start") { spec.start = v; touched = true }
+        if let v = try clock("end") { spec.end = v; touched = true }
+        if let raw = dict["days"] {
+            let list = raw as? [Any] ?? []
+            // JSON 的 true / false 到这里是 NSNumber，`as? Int` 会把它桥成 1 / 0——类型严格：CFBoolean 不是整数
+            // （反过来 `is Bool` 会把 NSNumber(1) 也判成 Bool，所以看 CF 类型而不是 Swift 类型）
+            let ints = list.compactMap { item -> Int? in
+                CFGetTypeID(item as CFTypeRef) == CFBooleanGetTypeID() ? nil : item as? Int
+            }
+            guard raw is [Any], ints.count == list.count,
+                  let days = RecordingScheduleSpec.normalizedDays(ints) else {
+                throw BridgeError.invalidArgs("days must be a non-empty list of weekdays 1…7 (1 = Sunday)")
+            }
+            spec.days = days
+            touched = true
+        }
+        guard touched else { throw BridgeError.invalidArgs("setRecordingSchedule needs at least one of enabled|start|end|days") }
+        guard RecordingScheduleSpec.minutes(spec.start) != RecordingScheduleSpec.minutes(spec.end) else {
+            throw BridgeError.invalidArgs("start and end must differ")
+        }
+        RecordingSchedule.active.apply(spec)
     }
 
     /// §68.2 字幕偏好：全部可选键；每键先校验再写（任一坏值整个请求拒绝、零写入）。

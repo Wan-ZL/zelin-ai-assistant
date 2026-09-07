@@ -382,13 +382,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 引擎落户壳后的启动序列（逐字对应 mac AppDelegate 的同名调用；P0-11：
     /// 无 recordingMode = 尚未 consent = off，autostart 自然不动）。
     private func startEngines() {
-        RecordingController.shared.autostartIfNeeded()
+        // §61.7 录制日程：窗外启动 = 引擎根本不起（autostart 跳过，`paused` 立刻为真，页面读到
+        // 「按日程暂停」）；日程关着 / 窗内 = 原样 autostart。醒来那一拍另有观察者。
+        let schedule = RecordingSchedule.active
+        schedule.enforce(reason: "launch")
+        if schedule.allowsCaptureNow() {
+            RecordingController.shared.autostartIfNeeded()
+        } else {
+            DispatchQueue.global(qos: .utility).async {
+                _ = Shell.ok("echo \"[app $(date '+%F %T')] autostart skipped: outside recording schedule\" >> \"$HOME/.screenpipe/engine.log\"")
+            }
+        }
+        schedule.startObservingWake()
         LiveCaptionsController.shared.restoreOnLaunch()
         let timer = Timer(timeInterval: 5.0, repeats: true) { _ in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     RecordingController.shared.pollScreenPermission()
                     RecordingController.shared.refreshEngineState()
+                    RecordingSchedule.active.enforce(reason: "tick")   // §61.7：边界 / 复活的引擎在此拍执法
                     NotifyRelay.drain()   // §28：5 s 节拍消费 state/notify_queue（原生 refresh tick 同款）
                 }
             }

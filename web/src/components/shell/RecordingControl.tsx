@@ -13,6 +13,10 @@
 // 顶栏 tight 档（§49 追记 2026-09-04）：按钮只留图标（文字由 shell.css 按 data-density 收起），
 // 「录制：」+ 状态词改挂 title——颜色三态照旧在图标上。
 //
+// 录制日程（§61.7）：`recording.schedule.paused` 时状态词是第三个非录制态「按日程暂停」（不是「关」、也不是
+// 「未在录制」的橙色警告）——颜色 `is-sched`（accent），菜单首行说日程本身与「到点自动恢复」，「重启录制引擎」禁用
+// （壳会在下一拍按日程再停掉它）；三态单选照常可点（改的是 mode，日程不动）。
+//
 // 键盘（§68.3 追记，parity 批 `recording-consent-header-ui`；原生 SwiftUI Menu → NSMenu，DashboardView.swift:27-110）：
 // 打开即把焦点放到勾着的那一档（menuitemradio）；↑ / ↓ 在可用项间循环、Home / End 到两端、Enter / Space 激活是
 // button 原生语义；Esc 关菜单并把焦点还给触发按钮，点选一项也还；Tab 关菜单让焦点自然走。roving-focus 手法同
@@ -20,8 +24,9 @@
 // 与其余说明行一样是无 role 的 div（role=menu 的子元素只准 menuitem* / group / separator，不能挂 role=status）。
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../i18n";
-import { callShell, type ShellRecordingState } from "../../shellBridge";
+import { callShell, schedulePaused, type ShellRecordingState } from "../../shellBridge";
 import { useHeaderDensity } from "./headerDensity";
+import { scheduledPauseSentence, scheduledPauseWord } from "./recordingSchedule";
 
 export interface RecordingControlProps {
   state: ShellRecordingState;
@@ -43,6 +48,7 @@ type Text = (zh: string, en: string) => string;
 /** 契约4 录制词：header 按钮的状态词（与 Swift stateWord 同表） */
 export function recordingStateWord(s: ShellRecordingState, mode: string, text: Text): string {
   if (mode === "off") return text("关", "Off");
+  if (schedulePaused({ mode, schedule: s.schedule })) return scheduledPauseWord(text);
   if (!s.engine_running) return text("未在录制", "Not recording");
   return mode === "screen_audio" ? text("屏幕+音频", "Screen + audio") : text("仅屏幕", "Screen only");
 }
@@ -240,8 +246,9 @@ export function RecordingControl({ state }: RecordingControlProps) {
     shownMode,
     text,
   );
-  const tone = shownMode === "off" ? "off" : runningForColor ? "live" : "warn";
-  const isDead = state.mode !== "off" && !state.engine_running && optimisticMode === null;
+  const paused = schedulePaused({ mode: shownMode, schedule: state.schedule });
+  const tone = shownMode === "off" ? "off" : paused ? "sched" : runningForColor ? "live" : "warn";
+  const isDead = state.mode !== "off" && !paused && !state.engine_running && optimisticMode === null;
   const note = error ?? (state.note || "");
   // tight：文字收起，tooltip 得把「录制：状态词」说全（有拒绝说明时接在后面）
   const title = density === "tight"
@@ -270,6 +277,7 @@ export function RecordingControl({ state }: RecordingControlProps) {
             {isDead ? recordingDeadReason(state, text) : <><span>{text("录制：", "Recording: ")}</span><span>{stateWord}</span></>}
           </div>
           {/* 不挂 role=status：role=menu 只准 own menuitem* / group / separator（axe aria-required-children），与旁边说明行一样是无 role 的 div */}
+          {paused && state.schedule && <div className="shell-menu-note is-sched">{scheduledPauseSentence(state.schedule, text)}</div>}
           {state.self_heal_note && <div className="shell-menu-note is-ok">{state.self_heal_note}</div>}
           {state.note && <div className="shell-menu-note is-warn">{state.note}</div>}
           {error && <div className="shell-menu-note is-warn">{error}</div>}
@@ -292,7 +300,8 @@ export function RecordingControl({ state }: RecordingControlProps) {
             type="button"
             role="menuitem"
             className="shell-menu-item"
-            disabled={state.mode === "off"}
+            disabled={state.mode === "off" || paused}
+            title={paused ? scheduledPauseWord(text) : undefined}
             onClick={() => void restart()}
           >
             <span className="shell-menu-check" aria-hidden="true" />

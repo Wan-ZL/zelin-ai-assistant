@@ -20,7 +20,8 @@ import { HealthLine } from "../components/settings/sourceHealth";
 import { errorMessage } from "../components/settings/useToast";
 import { useI18n } from "../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../route";
-import { callShell, hasShellBridge, isBridgeUnavailable, useShellState, type ShellRecordingState } from "../shellBridge";
+import { callShell, hasShellBridge, isBridgeUnavailable, schedulePaused, useShellState, type ShellRecordingState } from "../shellBridge";
+import { scheduledPauseSentence, scheduledPauseWord } from "../components/shell/recordingSchedule";
 import { refreshDiagnostics, refreshFailures, useAppState } from "../store";
 import type { IngestJob, IngestJobStart } from "../types";
 
@@ -53,6 +54,7 @@ type Text = (zh: string, en: string) => string;
 /** 原生 IngestView.engineStatusText：页内状态用裸词（不带「录制：」前缀，那是顶栏按钮的） */
 export function engineStatusText(rec: ShellRecordingState, text: Text): string {
   if (rec.mode === "off") return text("关", "Off");
+  if (schedulePaused(rec)) return scheduledPauseWord(text);   // §61.7：故意停着，不是「未在录制」的警告
   if (!rec.engine_running) return text("未在录制", "Not recording");
   return rec.mode === "screen_audio" ? text("屏幕+音频", "Screen + audio") : text("仅屏幕", "Screen only");
 }
@@ -238,14 +240,18 @@ export function IngestPage() {
               </div>
             </div>
             <div className="settings-actions engine-status">
-              <span className={`status-dot status-dot-${rec.engine_running ? "success" : rec.mode !== "off" ? "warning" : "quiet"}`} aria-hidden="true" />
-              <span className={`settings-helper${rec.mode !== "off" && !rec.engine_running ? " is-warning" : ""}`}>{engineStatusText(rec, text)}</span>
+              <span className={`status-dot status-dot-${rec.engine_running ? "success" : rec.mode !== "off" && !schedulePaused(rec) ? "warning" : "quiet"}`} aria-hidden="true" />
+              <span className={`settings-helper${rec.mode !== "off" && !rec.engine_running && !schedulePaused(rec) ? " is-warning" : ""}`}>{engineStatusText(rec, text)}</span>
               <span className="settings-helper ingest-db-stamp">
                 {dbStamp !== null ? <><span>{text("最近写入 ", "Last write ")}</span><span>{stamp(dbStamp, false)}</span></> : text("无数据", "No data")}
               </span>
               <button type="button" className="btn btn-quiet" onClick={refresh}>{text("刷新", "Refresh")}</button>
-              <button type="button" className="btn btn-quiet" disabled={busy || rec.mode === "off"} onClick={restart}>{text("重启引擎", "Restart engine")}</button>
+              <button type="button" className="btn btn-quiet" disabled={busy || rec.mode === "off" || schedulePaused(rec)} onClick={restart}>{text("重启引擎", "Restart engine")}</button>
             </div>
+            {schedulePaused(rec) && rec.schedule && (
+              // §61.7：按日程暂停——说日程本身；权限 / 死因分支不出（壳已把 diagnosis 置 null），改日程在 设置 → 录制
+              <p className="settings-helper recording-schedule-paused">{scheduledPauseSentence(rec.schedule, text)}</p>
+            )}
             {rec.self_heal_note && (
               // 原生 selfHealNote（audit 2.2）：consent-race 自愈刚触发——绿色 ✓ + 壳侧已本地化的一句，15 s 后壳自己清空
               <p className="settings-helper is-ok self-heal-note" role="status"><span aria-hidden="true">✓ </span><span>{rec.self_heal_note}</span></p>
@@ -257,7 +263,7 @@ export function IngestPage() {
                 <p className="settings-helper">{text("macOS 按应用签名识别授权；系统更新或重装应用会改变签名，旧授权就静默失效——不是你操作错了。重新授权后录制会自动恢复。", "macOS ties this permission to the app's signature; an OS update or reinstall changes it, so the old grant silently stops working — nothing you did wrong. Recording resumes automatically once re-granted.")}</p>
                 <FailureActionButton failureId="screen_tcc_lost" />
               </div>
-            ) : !rec.engine_running && rec.mode !== "off" && !rec.screen_permission ? (
+            ) : !rec.engine_running && rec.mode !== "off" && !rec.screen_permission && !schedulePaused(rec) ? (
               <div className="settings-actions">
                 <span className="settings-warning">{text("原因：macOS 还没把「屏幕录制」权限授给本 App（授权一次即可，之后开 App 自动录制）。", "Cause: macOS hasn't granted this app Screen Recording yet (grant once; recording then auto-starts with the app).")}</span>
                 <button type="button" className="btn" onClick={() => void callShell("openScreenRecordingSettings").catch(() => undefined)}>{text("去授权", "Grant…")}</button>

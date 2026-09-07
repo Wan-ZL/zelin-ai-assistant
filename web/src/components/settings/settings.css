@@ -655,6 +655,30 @@
   gap: 5px;
 }
 
+/* §61.7 录制日程块：起止时刻一行、星期一行；日程关着时窗口照样可编（先设好窗口再开），不淡显、不禁用 */
+.recording-schedule-window {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.recording-schedule-times {
+  gap: 8px;
+}
+
+.recording-schedule-times .settings-input-short {
+  width: auto;
+  font-family: inherit;
+}
+
+.recording-schedule-paused {
+  color: var(--accent);
+}
+
 .settings-list {
   list-style: none;
   margin: 0;

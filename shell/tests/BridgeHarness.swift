@@ -11,6 +11,9 @@
 // app's frozen logic and are covered by their own drift guards) — the valid
 // setRecording / refreshRecording cases below run against the injected
 // `RecordingActions` seams (never CGRequestScreenCaptureAccess, never setMode);
+// the §61.7 schedule cases swap `RecordingSchedule.active` for one backed by
+// a throwaway UserDefaults suite and inject its now / mode / engine seams
+// (never pkill, never applyMode);
 // no UserDefaults.standard writes (LegacyPrefs gets injected suites).
 
 import Foundation
@@ -142,6 +145,7 @@ func run() {
     check(rejection(["method": "setRecording", "on": true, "mode": "video"]).hasPrefix("INVALID_ARGS"),
           "setRecording with unknown mode rejected")
     checkRecordingActions(bridge)
+    checkRecordingSchedule(bridge)
     check(rejection(["method": "setCaptions"]).hasPrefix("INVALID_ARGS"),
           "setCaptions without on rejected")
     check(rejection(["method": "setLanguage", "lang": "fr"]).hasPrefix("INVALID_ARGS"),
@@ -412,3 +416,294 @@ func checkOverlayFrameSeed(target: UserDefaults, source: UserDefaults, targetNam
 MainActor.assumeIsolated { run() }
 print(allOK ? "ALL PASS" : "FAILURES")
 exit(allOK ? 0 : 1)
+
+/// §61.7 录制日程：纯窗口数学（固定 UTC 公历，日期自证星期）+ 控制器边界执法（缝注入：时钟 / 模式 /
+/// 引擎活性 / 停 / 起——绝不 pkill、绝不 applyMode）+ 桥 `setRecordingSchedule` 词表与 all-or-nothing +
+/// 快照 `recording.schedule` 与「paused ⇒ diagnosis null」。
+@MainActor
+func checkRecordingSchedule(_ bridge: ShellBridge) {
+    print("[7] RecordingSchedule (§61.7):")
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+    // 2026-09-06 是周日（weekday 1）；at(weekday, h, m) = 那一周的某天某刻
+    func at(_ weekday: Int, _ h: Int, _ m: Int) -> Date {
+        cal.date(from: DateComponents(year: 2026, month: 9, day: 6 + (weekday - 1), hour: h, minute: m))!
+    }
+    check(cal.component(.weekday, from: at(1, 0, 0)) == 1 && cal.component(.weekday, from: at(7, 0, 0)) == 7,
+          "harness calendar anchor: 2026-09-06 is a Sunday")
+
+    // ---- spec math ----
+    let d = RecordingScheduleSpec.defaults
+    check(!d.enabled && d.start == "09:00" && d.end == "19:00" && d.days == [2, 3, 4, 5, 6] && d.isValid,
+          "defaults = off, 09:00–19:00, Mon–Fri (issue #27's example; off = today's always-on)")
+    check(RecordingScheduleSpec.minutes("09:00") == 540 && RecordingScheduleSpec.minutes("23:59") == 1439
+          && RecordingScheduleSpec.minutes("00:00") == 0, "HH:MM parses to minutes")
+    // 带正负号的两位段：Int("+9") / Int("-0") 都解析得出来，长度检查拦不住——必须是 ASCII 数字（全角数字也不是）
+    for bad in ["9:00", "24:00", "09:60", "0900", "09:00 ", "", "ab:cd", "+9:00", "-0:30", "09:-0", "09:+5", "０９:00"] {
+        check(RecordingScheduleSpec.minutes(bad) == nil, "\"\(bad)\" is not a clock value")
+    }
+    check(RecordingScheduleSpec.normalizedDays([5, 2, 2]) == [2, 5], "days sort + dedupe")
+    check(RecordingScheduleSpec.normalizedDays([]) == nil && RecordingScheduleSpec.normalizedDays([0]) == nil
+          && RecordingScheduleSpec.normalizedDays([8]) == nil, "days must be non-empty and within 1…7")
+    check(d.contains(at(2, 9, 0), calendar: cal) && d.contains(at(2, 18, 59), calendar: cal),
+          "Mon 09:00 and 18:59 are inside [start, end)")
+    check(!d.contains(at(2, 8, 59), calendar: cal) && !d.contains(at(2, 19, 0), calendar: cal),
+          "Mon 08:59 and 19:00 are outside (end is exclusive)")
+    check(!d.contains(at(7, 12, 0), calendar: cal) && !d.contains(at(1, 12, 0), calendar: cal),
+          "weekend noon is outside a Mon–Fri schedule")
+    let night = RecordingScheduleSpec(enabled: true, start: "22:00", end: "02:00", days: [6])
+    check(night.isValid, "overnight window is a valid spec")
+    check(night.contains(at(6, 23, 0), calendar: cal) && night.contains(at(7, 1, 0), calendar: cal),
+          "Fri 22:00–02:00: Fri 23:00 and Sat 01:00 are inside (window belongs to its start day)")
+    check(!night.contains(at(6, 21, 59), calendar: cal) && !night.contains(at(7, 3, 0), calendar: cal)
+          && !night.contains(at(5, 23, 0), calendar: cal) && !night.contains(at(7, 23, 0), calendar: cal),
+          "Fri 21:59 / Sat 03:00 / Thu 23:00 / Sat 23:00 are outside")
+    let sunWrap = RecordingScheduleSpec(enabled: true, start: "22:00", end: "02:00", days: [7])
+    check(sunWrap.contains(at(1, 1, 0), calendar: cal), "Sat night wraps into Sunday 01:00 (weekday 7 → 1)")
+    let broken = RecordingScheduleSpec(enabled: true, start: "09:00", end: "09:00", days: [2])
+    check(!broken.isValid && broken.contains(at(1, 3, 0), calendar: cal),
+          "start == end is invalid and never pauses (a bad value must not kill recording)")
+
+    // ---- controller: persistence + edge enforcement through the seams ----
+    let stamp = String(Int(Date().timeIntervalSince1970 * 1000))
+    let suiteName = "zai.harness.schedule.\(stamp)"
+    let suite = UserDefaults(suiteName: suiteName)!
+    defer { suite.removePersistentDomain(forName: suiteName) }
+    let sched = RecordingSchedule(defaults: suite)
+    check(sched.spec == .defaults && !sched.paused, "fresh suite loads the defaults, not paused")
+
+    var clock = at(2, 12, 0)     // Monday noon
+    var mode = "screen"
+    var running = true
+    var trace: [String] = []
+    let realNow = RecordingSchedule.now
+    let realCalendar = RecordingSchedule.calendar
+    let realMode = RecordingSchedule.currentMode
+    let realRunning = RecordingSchedule.engineRunning
+    let realStop = RecordingSchedule.stopEngine
+    let realStart = RecordingSchedule.startEngine
+    let realActive = RecordingSchedule.active
+    RecordingSchedule.now = { clock }
+    RecordingSchedule.calendar = { cal }     // 窗口数学按 harness 的 UTC 公历算，不看本机时区
+    RecordingSchedule.currentMode = { mode }
+    RecordingSchedule.engineRunning = { running }
+    RecordingSchedule.stopEngine = { trace.append("stop:\($0)") }
+    RecordingSchedule.startEngine = { trace.append("start:\($0)") }
+    RecordingSchedule.active = sched
+    defer {
+        RecordingSchedule.now = realNow
+        RecordingSchedule.calendar = realCalendar
+        RecordingSchedule.currentMode = realMode
+        RecordingSchedule.engineRunning = realRunning
+        RecordingSchedule.stopEngine = realStop
+        RecordingSchedule.startEngine = realStart
+        RecordingSchedule.active = realActive
+    }
+
+    sched.enforce(reason: "launch")
+    check(!sched.paused && trace.isEmpty && sched.allowsCaptureNow(), "disabled schedule never touches the engine")
+    clock = at(1, 3, 0)
+    sched.enforce(reason: "tick")
+    check(!sched.paused && trace.isEmpty, "disabled schedule ignores the clock entirely (always-on = today's behavior)")
+    clock = at(2, 12, 0)
+
+    var spec = RecordingScheduleSpec.defaults
+    spec.enabled = true
+    sched.apply(spec)
+    check(!sched.paused && trace.isEmpty, "enabling inside the window changes nothing")
+    check(suite.bool(forKey: RecordingSchedule.enabledKey) && suite.string(forKey: RecordingSchedule.startKey) == "09:00"
+          && suite.string(forKey: RecordingSchedule.endKey) == "19:00"
+          && (suite.array(forKey: RecordingSchedule.daysKey) as? [Int]) == [2, 3, 4, 5, 6],
+          "apply persists all four keys")
+    check(RecordingSchedule.load(from: suite) == spec, "load reads back exactly what apply wrote")
+
+    clock = at(2, 19, 0)
+    sched.enforce(reason: "tick")
+    check(sched.paused && trace == ["stop:tick"] && !sched.allowsCaptureNow(),
+          "crossing into the pause window stops the engine on that very tick", "got \(trace)")
+    // overdue timer 先处理了边界、didWake 紧跟着来：缓存的 engineRunning 还是 true（pgrep 跑在 pkill 前面），
+    // 但 stop 已经在路上——醒来那一拍不能再 stop 一次（那就是第二条 recording_schedule_pause 虚报）
+    sched.enforce(reason: "wake")
+    check(trace == ["stop:tick"], "tick-then-wake across one boundary = exactly one stop (the wake sees a stop already in flight)", "got \(trace)")
+    trace = []
+    running = true
+    // stop 之后的第一拍读到的是 stop 前那次 pgrep（refreshEngineState 异步、enforce 永远读上一拍）——不算一次「看见」
+    sched.enforce(reason: "tick")
+    sched.enforce(reason: "tick")
+    sched.enforce(reason: "tick")
+    check(trace.isEmpty, "the tick right after a stop reads the pre-stop pgrep and does not count; then \(RecordingSchedule.killAfterTicks - 1) real sightings are tolerated (frozen applyMode's slow-death watch)")
+    sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "the \(RecordingSchedule.killAfterTicks)rd real sighting stops it", "got \(trace)")
+    trace = []
+    running = false
+    sched.enforce(reason: "tick")
+    running = true
+    sched.enforce(reason: "tick")
+    sched.enforce(reason: "tick")
+    check(trace.isEmpty, "the running counter resets whenever the engine is seen down")
+    // prefs / launch / wake 都不是 5 s 节拍上的一拍：暂停中改一次 days 不该把宽限缩短
+    sched.apply(RecordingScheduleSpec(enabled: true, start: spec.start, end: spec.end, days: [2, 3, 4, 5, 6, 7]))
+    sched.apply(spec)
+    check(trace.isEmpty, "prefs writes while paused (no edge) are not grace sightings", "got \(trace)")
+    sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "…the 3rd tick sighting still stops it", "got \(trace)")
+    trace = []
+    running = false
+    sched.enforce(reason: "tick")
+    running = true
+    sched.enforce(reason: "tick")
+    sched.enforce(reason: "tick")
+    check(trace.isEmpty, "counter reset again (engine seen down, then two sightings)", "got \(trace)")
+    trace = []
+    sched.enforce(reason: "wake")
+    check(trace == ["stop:wake"], "waking inside the pause window with a revived engine (no stop in flight) stops immediately (no 3-tick grace)", "got \(trace)")
+    trace = []
+    running = false
+    sched.enforce(reason: "wake")
+    sched.enforce(reason: "wake")
+    check(trace.isEmpty && sched.paused, "waking while already paused with the engine down is a no-op (no stop, no phantom pause event)", "got \(trace)")
+    running = true
+    // 睡前在窗内（引擎在跑），醒来已在窗外 = 边界跨越，醒来那一拍就停
+    clock = at(2, 12, 0)
+    sched.enforce(reason: "tick")
+    check(!sched.paused && trace == ["start:tick"], "sanity: back inside the window resumes once", "got \(trace)")
+    trace = []
+    clock = at(2, 19, 0)
+    sched.enforce(reason: "wake")
+    check(sched.paused && trace == ["stop:wake"], "sleeping across the end boundary: the wake tick itself stops the engine", "got \(trace)")
+    trace = []
+    mode = "off"
+    sched.enforce(reason: "tick")
+    check(!sched.paused && trace.isEmpty, "mode off is never 'paused by schedule' and never starts anything")
+    mode = "screen"
+    sched.enforce(reason: "tick")
+    check(sched.paused && trace == ["stop:tick"], "picking a mode outside the window pauses again", "got \(trace)")
+
+    trace = []
+    clock = at(3, 9, 0)
+    sched.enforce(reason: "tick")
+    check(!sched.paused && trace == ["start:tick"], "entering the window restarts the engine once", "got \(trace)")
+    running = false
+    sched.enforce(reason: "tick")
+    sched.enforce(reason: "tick")
+    check(trace == ["start:tick"], "no restart storm on later ticks while the engine is down for its own reasons")
+
+    clock = at(3, 20, 0)
+    sched.enforce(reason: "tick")
+    trace = []
+    spec.enabled = false
+    sched.apply(spec)
+    check(!sched.paused && trace == ["start:prefs"], "turning the schedule off while paused brings the engine back", "got \(trace)")
+    let wire = sched.wireValue()
+    check(wire["enabled"] as? Bool == false && wire["start"] as? String == "09:00" && wire["end"] as? String == "19:00"
+          && wire["days"] as? [Int] == [2, 3, 4, 5, 6] && wire["paused"] as? Bool == false,
+          "wireValue carries the four keys + paused")
+
+    // ---- live → live 切换的观察期：边界不立刻 pkill，改走宽限（冻结 applyMode 的 ~9 s 慢死亡观察会把它读成假回滚） ----
+    spec.enabled = true
+    mode = "screen"
+    running = true
+    clock = at(4, 18, 59)                                   // Wed 18:59:00，窗内
+    sched.apply(spec)
+    trace = []
+    sched.enforce(reason: "tick")
+    mode = "screen_audio"                                   // owner 在 18:59:50 切到 屏幕+音频
+    clock = at(4, 18, 59).addingTimeInterval(50)
+    sched.enforce(reason: "tick")
+    clock = at(4, 19, 0)                                    // 边界 tick：切换 10 s 前才被看见
+    sched.enforce(reason: "tick")
+    check(sched.paused && trace.isEmpty,
+          "a live→live switch seen within \(Int(RecordingSchedule.liveSwitchHold)) s of the boundary defers the edge kill (it would land inside the frozen slow-death watch → false rollback + notice)", "got \(trace)")
+    clock = clock.addingTimeInterval(5); sched.enforce(reason: "tick")
+    clock = clock.addingTimeInterval(5); sched.enforce(reason: "tick")
+    check(trace.isEmpty, "…the deferred edge rides the grace: the switch tick's sighting is stale, two real ones are tolerated", "got \(trace)")
+    clock = clock.addingTimeInterval(5); sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "…and the 3rd real sighting stops it (≥ 15 s after the switch was seen)", "got \(trace)")
+    // 对照：切换早于观察期的边界照旧立刻停
+    trace = []
+    clock = at(5, 12, 0); mode = "screen"; sched.enforce(reason: "tick")
+    check(trace == ["start:tick"], "sanity: Thu noon resumes once", "got \(trace)")
+    trace = []
+    mode = "screen_audio"; clock = at(5, 18, 59); sched.enforce(reason: "tick")   // 边界前 60 s 看见切换
+    clock = at(5, 19, 0); sched.enforce(reason: "tick")
+    check(trace == ["stop:tick"], "a switch seen ≥ \(Int(RecordingSchedule.liveSwitchHold)) s before the boundary does not defer the edge kill", "got \(trace)")
+
+    // ---- paused 读时算：setRecording 改 mode 不经 enforce，快照 / 回执不能等下一拍 ----
+    trace = []
+    mode = "off"
+    sched.enforce(reason: "tick")
+    check(!sched.paused && sched.wireValue()["paused"] as? Bool == false, "mode off: not paused (stored and live agree)")
+    mode = "screen"                                         // header 单选改了 mode，下一拍还没到
+    check(!sched.paused && sched.pausedNow && sched.wireValue()["paused"] as? Bool == true,
+          "wireValue derives paused at read time: a mode change outside the window is 按日程暂停 before the next tick")
+    sched.enforce(reason: "tick")
+    check(sched.paused && trace == ["stop:tick"], "…and the next tick catches up with the edge stop", "got \(trace)")
+
+    // load: bad plist values fall back PER KEY; start == end falls back as a pair
+    suite.set("9am", forKey: RecordingSchedule.startKey)
+    suite.set([0, 9], forKey: RecordingSchedule.daysKey)
+    suite.set("17:30", forKey: RecordingSchedule.endKey)
+    let loaded = RecordingSchedule.load(from: suite)
+    check(loaded.start == "09:00" && loaded.days == [2, 3, 4, 5, 6] && loaded.end == "17:30",
+          "bad start / days fall back to defaults, good end survives", "got \(loaded)")
+    suite.set("17:30", forKey: RecordingSchedule.startKey)
+    let collapsed = RecordingSchedule.load(from: suite)
+    check(collapsed.start == "09:00" && collapsed.end == "19:00", "start == end on disk falls back to the default window")
+
+    // ---- bridge: setRecordingSchedule vocabulary (all-or-nothing) + snapshot block ----
+    print("[7b] setRecordingSchedule through the bridge:")
+    sched.apply(RecordingScheduleSpec.defaults)
+    trace = []
+    func rejection(_ body: Any?) -> String {
+        do { _ = try bridge.handle(body); return "" }
+        catch let e as BridgeError { return e.code }
+        catch { return "OTHER" }
+    }
+    check(rejection(["method": "setRecordingSchedule"]).hasPrefix("INVALID_ARGS"), "no keys rejected")
+    check(rejection(["method": "setRecordingSchedule", "enabled": "yes"]).hasPrefix("INVALID_ARGS"), "enabled must be bool")
+    check(rejection(["method": "setRecordingSchedule", "start": "9:00"]).hasPrefix("INVALID_ARGS"), "start must be HH:MM")
+    check(rejection(["method": "setRecordingSchedule", "end": 1900]).hasPrefix("INVALID_ARGS"), "end must be a string")
+    check(rejection(["method": "setRecordingSchedule", "days": []]).hasPrefix("INVALID_ARGS"), "days must be non-empty")
+    check(rejection(["method": "setRecordingSchedule", "days": [0, 2]]).hasPrefix("INVALID_ARGS"), "days outside 1…7 rejected")
+    check(rejection(["method": "setRecordingSchedule", "days": ["2"]]).hasPrefix("INVALID_ARGS"), "days must be ints (type-strict)")
+    // 真 JSON 路径：true 到 Swift 是 NSNumber(CFBoolean)，`as? Int` 会桥成 1——类型严格必须挡住它
+    let boolDays = try? JSONSerialization.jsonObject(with: Data(#"{"method":"setRecordingSchedule","days":[true,3]}"#.utf8))
+    check(rejection(boolDays).hasPrefix("INVALID_ARGS") && sched.spec == .defaults,
+          "JSON booleans in days are rejected (NSNumber true must not bridge to Sunday)")
+    check(rejection(["method": "setRecordingSchedule", "start": "19:00"]) == "INVALID_ARGS: start and end must differ",
+          "start colliding with the stored end is rejected after the merge")
+    check(rejection(["method": "setRecordingSchedule", "enabled": true, "start": "bad"]).hasPrefix("INVALID_ARGS")
+          && sched.spec == .defaults && trace.isEmpty,
+          "a bad key alongside a good one rejects the WHOLE request (zero writes, no enforcement)")
+    clock = at(2, 20, 0)
+    if let reply = try? bridge.handle(["method": "setRecordingSchedule", "enabled": true, "start": "08:30", "end": "17:45", "days": [4, 2, 2]]) {
+        let rec = reply["recording"] as? [String: Any] ?? [:]
+        let block = rec["schedule"] as? [String: Any] ?? [:]
+        check(block["enabled"] as? Bool == true && block["start"] as? String == "08:30" && block["end"] as? String == "17:45"
+              && block["days"] as? [Int] == [2, 4], "valid request lands in recording.schedule (days sorted + deduped)", String(describing: block))
+        check(block["paused"] as? Bool == true && trace == ["stop:prefs"],
+              "enabling outside the window pauses at once and stops the engine", "got \(trace)")
+        check(rec["diagnosis"] is NSNull && rec["log_tail"] as? String == "",
+              "paused ⇒ diagnosis null + log_tail empty (a deliberate stop is not an engine failure)")
+    } else {
+        check(false, "setRecordingSchedule with valid keys must not throw")
+    }
+    trace = []
+    _ = try? bridge.handle(["method": "setRecordingSchedule", "enabled": false])
+    check(sched.spec.enabled == false && sched.spec.start == "08:30" && trace == ["start:prefs"],
+          "partial update keeps the other keys and resumes the engine", "got \(trace)")
+    let intDays = try? JSONSerialization.jsonObject(with: Data(#"{"method":"setRecordingSchedule","days":[3,1]}"#.utf8))
+    check(rejection(intDays) == "" && sched.spec.days == [1, 3], "JSON integers in days still land (sorted)", "got \(sched.spec.days)")
+    let snap = ShellBridge.stateSnapshot()
+    let block = (snap["recording"] as? [String: Any])?["schedule"] as? [String: Any] ?? [:]
+    for key in ["enabled", "start", "end", "days", "paused"] {
+        check(block[key] != nil, "recording.schedule.\(key) present in every snapshot")
+    }
+    if let json = ShellBridge.stateJSON(),
+       let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+       let rec = obj["recording"] as? [String: Any], let sch = rec["schedule"] as? [String: Any] {
+        check(sch["days"] is [Any] && sch["paused"] is Bool, "schedule block serializes (days array, paused bool)")
+    } else {
+        check(false, "stateJSON with the schedule block must serialize")
+    }
+}

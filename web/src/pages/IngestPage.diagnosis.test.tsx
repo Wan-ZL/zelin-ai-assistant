@@ -154,6 +154,29 @@ describe("EngineDiagnosisRow（原生 Pages.swift:881-909）", () => {
     expect(showsEngineLog("node_missing")).toBe(false);
   });
 
+  it("§61.7 按日程暂停：quiet 点、不是橙色警告、说日程句、不出「去授权」死因分支、重启禁用；同一状态不暂停时全反过来", async () => {
+    const paused = { enabled: true, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: true };
+    installShell(withRecording({ engine_running: false, screen_permission: false, schedule: paused }));
+    renderEn(<IngestPage />);
+    await screen.findByText("Paused by schedule");
+    const dot = document.querySelector(".engine-status .status-dot") as HTMLElement;
+    expect(dot.className).toBe("status-dot status-dot-quiet");
+    expect(screen.getByText("Paused by schedule").className).not.toContain("is-warning");
+    expect(screen.getByText("Paused by schedule — recording only 09:00–19:00 · Mon–Fri; resumes automatically").className).toContain("recording-schedule-paused");
+    expect(screen.queryByRole("button", { name: "Grant…" })).toBeNull();   // 壳已把 diagnosis 置 null；权限分支也让位
+    expect((screen.getByRole("button", { name: "Restart engine" }) as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    resetStoreForTests();
+    installShell(withRecording({ engine_running: false, screen_permission: false, schedule: { ...paused, paused: false } }));
+    renderEn(<IngestPage />);
+    await screen.findByText("Not recording");
+    expect((document.querySelector(".engine-status .status-dot") as HTMLElement).className).toBe("status-dot status-dot-warning");
+    expect(screen.getByText("Not recording").className).toContain("is-warning");
+    expect(screen.getByRole("button", { name: "Grant…" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Restart engine" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Paused by schedule/)).toBeNull();
+  });
+
   it("self_heal_note renders as a green ✓ status line before the refusal note", async () => {
     installShell(withRecording({ engine_running: true, self_heal_note: "屏幕权限已生效，录制引擎已自动重启", note: "拒绝了这次切换" }));
     renderEn(<IngestPage />);

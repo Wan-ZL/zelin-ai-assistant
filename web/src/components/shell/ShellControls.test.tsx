@@ -131,6 +131,31 @@ describe("ShellControls", () => {
     expect(recButton().textContent).toContain("Rec: Not recording");
   });
 
+  it("§61.7 按日程暂停：第三个非录制态——accent is-sched + 「Paused by schedule」，菜单说日程句，重启禁用；mode off 仍是 Off", async () => {
+    const paused = { enabled: true, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: true };
+    installBridge(makeState({ recording: { on: true, mode: "screen", engine_running: false, schedule: paused } }));
+    renderControls();
+    await waitFor(() => expect(recButton()).toBeTruthy());
+    expect(recButton().className).toBe("shell-rec-button is-sched");
+    expect(recButton().textContent).toContain("Rec: Paused by schedule");
+    fireEvent.click(recButton());
+    const menu = screen.getByRole("menu", { name: "Recording controls" });
+    expect(menu.textContent).toContain("Recording: Paused by schedule");
+    expect(menu.textContent).toContain("Paused by schedule — recording only 09:00–19:00 · Mon–Fri; resumes automatically");
+    expect(menu.textContent).not.toContain("Not recording");
+    expect((screen.getByRole("menuitem", { name: "Restart recording engine" }) as HTMLButtonElement).disabled).toBe(true);
+    // 三态单选照常可点（改 mode，日程不动）
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(3);
+    fireEvent.keyDown(document, { key: "Escape" });
+    // 壳说 paused 但 mode 是 off → 就是「关」（次级），不是日程态
+    pushState(makeState({ recording: { on: false, mode: "off", engine_running: false, schedule: paused } }));
+    expect(recButton().className).toBe("shell-rec-button is-off");
+    expect(recButton().textContent).toContain("Rec: Off");
+    // 老壳没有 schedule 键 → 与从前一样的橙色「未在录制」
+    pushState(makeState({ recording: { on: true, mode: "screen", engine_running: false } }));
+    expect(recButton().className).toBe("shell-rec-button is-warn");
+  });
+
   it("菜单：三态单选（原生标签 + 当前项 checked）、重启项在关态禁用；引擎死了首行说真实原因", async () => {
     installBridge(makeState({
       recording: { on: true, mode: "screen", engine_running: false, screen_permission: false },

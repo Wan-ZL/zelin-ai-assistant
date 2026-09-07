@@ -416,7 +416,7 @@ const shellState: ShellState = {
  *  目录字段因此退化成路径文本框，原生 NSOpenPanel 的确认词「选择」在 DOM 里才收得到 */
 const FAKE_SHELL_METHODS = new Set(["getState", "setRecording", "restartRecording", "openScreenRecordingSettings",
   "setCaptions", "setLanguage", "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin", "setCaptionPrefs", "setBadge",
-  "probeCaptionKey"]);
+  "probeCaptionKey", "setRecordingSchedule"]);
 /** 某些方法在变体遍里要被壳拒绝（登录时启动开不了：not an app bundle / SMAppService 报错）：method → reject 原文 */
 let shellRejects: Record<string, string> = {};
 /** 权限体检 / 向导要收全的壳状态词：录制 关（两种恢复模式）/ 开但引擎没在录 / 录制中(仅屏幕)；授权 denied / unknown */
