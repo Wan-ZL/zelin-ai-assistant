@@ -58,7 +58,10 @@ describe("LaunchAtLoginRow", () => {
     fireEvent.click(screen.getByRole("switch"));
     await screen.findByText("Can't enable launch at login");
     expect(screen.getByText("not an app bundle")).toBeTruthy();   // 桥前缀剥掉、壳原句留下
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    // 弹窗由桥的 reject（异步、非 discrete 更新）触发，ModalDialog 的 showModal 住在 useEffect 里——标题落进 DOM
+    // 与 <dialog> 变 open 之间隔一个 passive-effect flush，机器忙时 getByRole 会在 open 之前跑到（关着的 dialog 里
+    // 的按钮对 a11y 树不可见）。findByRole 等到它可见为止；同步 click 开的弹窗没有这一段（effect 同步刷）。
+    fireEvent.click(await screen.findByRole("button", { name: "OK" }));
     expect(screen.queryByText("Can't enable launch at login")).toBeNull();
   });
 
