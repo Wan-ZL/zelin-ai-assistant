@@ -13,7 +13,7 @@ export function CredentialsSection() {
     if (!secrets) void refreshSecrets();
   }, [secrets]);
   return (
-    <section className="settings-section" id="settings-credentials" aria-labelledby="settings-credentials-title">
+    <section className="settings-section" aria-labelledby="settings-credentials-title">
       <h3 id="settings-credentials-title" className="settings-section-title">
         {text("凭证（存本机 config/secrets/，保存后自动验证）", "Credentials (stored locally in config/secrets/; verified automatically on save)")}
       </h3>

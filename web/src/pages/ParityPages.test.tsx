@@ -174,7 +174,8 @@ describe("DepsSection（原 DiagnosticsPage，D30 折进设置页）", () => {
     vi.mocked(fetchLogTail).mockResolvedValue({ name: "actd.launchd.log", path: "/l/actd.launchd.log", size: 2048, lines: ["a", "b"], truncated: true });
     renderEn(<DepsSection />);
     await screen.findByText("actd heartbeat");
-    expect(document.getElementById("settings-deps")?.classList.contains("settings-section")).toBe(true);
+    // 锚点 `#settings-deps` 自 D44 起由 SettingsPage 的 fold 壳给；区自己顶着标题 id（aria-labelledby 的名源）
+    expect(document.getElementById("settings-deps-title")?.closest("section")?.classList.contains("settings-section")).toBe(true);
     expect(screen.getByRole("heading", { level: 3, name: "Dependencies" })).toBeTruthy();
     expect(screen.getByText("1 check(s) failed — each has its own button")).toBeTruthy();
     expect(screen.getByText("(1 ok / 0 warn)")).toBeTruthy();

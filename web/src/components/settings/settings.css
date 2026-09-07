@@ -403,14 +403,98 @@
   border-color: var(--border-strong);
 }
 
-.settings-section.is-anchored {
+/* ----- D44 分区开合（§68.1 追记；原生 CollapsibleSection 的 web 版）------------------------------------------- */
+/* fold 壳是那张卡（边框 / 底色 / 阴影），区内原本的 .settings-section 卡在壳里脱掉卡壳、只留正文；
+ * 区头 = h3 里一颗全宽按钮（chevron + 目录标题），区内自己的 h3 只做 aria-labelledby 的名源，视觉藏掉 */
+.settings-fold {
+  border: var(--stroke-w) solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  scroll-margin-top: 64px; /* ?anchor= / #settings-<id> 滚到某区时留出顶栏（sticky 52px + 过滤条）的高度 */
+}
+
+.settings-fold.is-anchored {
   outline: 2px solid var(--accent-soft);
 }
 
-/* ?anchor= 深链滚到某区时留出顶栏（sticky 52px + 过滤条）的高度，标题行不被盖住 */
-.settings-page > .settings-section,
-.settings-page > div[id^="settings-"] {
-  scroll-margin-top: 64px;
+.settings-fold-title {
+  margin: 0;
+}
+
+.settings-fold-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(14px * var(--text-scale));
+  font-weight: var(--w-bold);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-fold-toggle:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.settings-fold-toggle:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: -2px;
+}
+
+/* 搜索期间 toggle 禁用（命中的区全部展开、记忆不动）——标题照常可读，只是不像按钮 */
+.settings-fold-toggle:disabled {
+  cursor: default;
+}
+
+.settings-fold-chevron {
+  flex: none;
+  width: 0.9em;
+  color: var(--text-tertiary);
+  transition: transform 0.18s ease;
+}
+
+.settings-fold.is-expanded .settings-fold-chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-fold-chevron {
+    transition: none;
+  }
+}
+
+.settings-fold-body > .settings-section {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 16px 16px;
+}
+
+.settings-fold-body > .settings-section > .settings-section-title,
+.settings-fold-body > .settings-section > .settings-section-head > .settings-section-title {
+  display: none;
+}
+
+/* 目录条目反映开合：展开着的区实色 + 强边（与 hover 同一档），折着的区淡一档；搜索期间一律按展开画 */
+.settings-toc a[data-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.settings-toc a[data-expanded="false"] {
+  color: var(--text-tertiary);
+}
+
+.settings-toc a[data-expanded="false"]:hover {
+  color: var(--text-primary);
 }
 
 .settings-section.is-placeholder {

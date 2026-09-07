@@ -136,7 +136,7 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
 
   if (!section || !visible) {
     return (
-      <section className="settings-section" id={`settings-${sectionId}`} aria-labelledby={`settings-${sectionId}-title`}>
+      <section className="settings-section" aria-labelledby={`settings-${sectionId}-title`}>
         <h3 id={`settings-${sectionId}-title`} className="settings-section-title">{title}</h3>
         {error && !settingsCatalog
           ? <p className="settings-error" role="alert">{error}</p>
@@ -179,7 +179,7 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
   }
 
   return (
-    <section className="settings-section" id={`settings-${sectionId}`} aria-labelledby={`settings-${sectionId}-title`}>
+    <section className="settings-section" aria-labelledby={`settings-${sectionId}-title`}>
       <h3 id={`settings-${sectionId}-title`} className="settings-section-title">{title}</h3>
       {pickText(section.help, language) && <p className="settings-helper">{pickText(section.help, language)}</p>}
       {lead}

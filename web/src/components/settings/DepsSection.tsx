@@ -1,4 +1,4 @@
-// 依赖检查区（设置页的一区，id `settings-deps`；D30 owner 2026-09-04「这个依赖检查我希望合并到 setting里面」）：原生 Pages.swift
+// 依赖检查区（设置页的一区，锚点 `#settings-deps` 落在 SettingsPage 的 fold 壳上——D44；D30 owner 2026-09-04「这个依赖检查我希望合并到 setting里面」）：原生 Pages.swift
 // DepsView 的 依赖 快速行 + 雷达健康 + 诊断 三段（§15.1 / §68.4）——此前是独立页 `?page=deps`（更早叫 `?page=diagnostics`），
 // 两个旧深链仍接受、都开到设置页并滚到本区（route.readSettingsAnchor）；横幅 / 诊断条 / 向导 / 权限体检 / 关于区的链接
 // 走 `?page=settings&anchor=deps`。控件与文案原样：
@@ -181,7 +181,7 @@ export function DepsSection() {
   const aiFixAllowed = diagnostics?.ai_fix_enabled !== false;   // 原生 AIFix.enabled：只有明确的 false 才隐藏
 
   return (
-    <section className="settings-section deps-section" id="settings-deps" aria-labelledby="settings-deps-title">
+    <section className="settings-section deps-section" aria-labelledby="settings-deps-title">
       <div className="settings-section-head">
         <h3 id="settings-deps-title" className="settings-section-title">{text("依赖检查", "Dependencies")}</h3>
         <button type="button" className="btn" disabled={busy || rechecking} onClick={() => void recheck()}>{rechecking ? text("检查中…", "Checking…") : text("重新检查", "Re-check")}</button>

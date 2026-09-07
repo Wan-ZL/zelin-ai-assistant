@@ -88,7 +88,7 @@ export function CaptionsSection() {
   const translationNote = cap?.translation_note ?? "";
 
   return (
-    <section className="settings-section" id="settings-live_captions" aria-labelledby="settings-live_captions-title">
+    <section className="settings-section" aria-labelledby="settings-live_captions-title">
       <h3 id="settings-live_captions-title" className="settings-section-title">{text("实时字幕", "Live captions")}</h3>
       <p className="settings-helper">
         {text("歌词式置顶字幕：实时转写麦克风和/或系统声音，可选同传翻译。也可从看板右上角开关。", "Lyrics-style always-on-top captions: live transcription of the mic and/or system audio, optional translation. Also toggleable from the board header.")}

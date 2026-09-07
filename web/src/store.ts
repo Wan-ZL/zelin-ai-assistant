@@ -42,6 +42,7 @@ import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { forceMergeLanded } from "./components/board/pendingSettle";
 import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
 import { getI18n, resolveLanguage, type Language } from "./i18n";
+import { readExpandedSections, toggledSections, writeExpandedSections } from "./settingsFolds";
 import {
   EMPTY_CARD_FILTERS,
   readCardFilters,
@@ -106,6 +107,7 @@ export interface AppState {
   materials: MaterialsList | null; // GET /api/materials/list?status=open 最近快照（§62 设置页「素材库」）
   materialsError: string | null;  // 素材库读失败的用户可读文案（成功后清空；写失败由 section toast）
   sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
+  expandedSettingsSections: ReadonlySet<string>; // 设置页展开着的区（D44；镜像原生 settings.expandedSections；localStorage 持久化，settingsFolds.ts）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
@@ -192,6 +194,7 @@ const initialState: AppState = {
   materials: null,
   materialsError: null,
   sortOrder: readSortOrder(),
+  expandedSettingsSections: readExpandedSections(),
   lanes: null,
   recapSettings: null,
   recapMarks: {},
@@ -432,6 +435,24 @@ export function clearFilters() {
 export function setSortOrder(sortOrder: SortOrder) {
   writeSortOrder(sortOrder);
   if (state.sortOrder !== sortOrder) setState({ sortOrder });
+}
+
+// ----- 设置页分区开合（D44；原生 SettingsCollapseStore：toggle 由区头按钮驱动、expand 由 ?anchor= / 目录点击驱动，都记住） ----- #
+
+/** 翻一区的开合并持久化（localStorage settings.expandedSections，原生同名 UserDefaults 键） */
+export function toggleSettingsSection(id: string) {
+  const expandedSettingsSections = toggledSections(state.expandedSettingsSections, id);
+  writeExpandedSections(expandedSettingsSections);
+  setState({ expandedSettingsSections });
+}
+
+/** 强制展开一区并记住（深链 / 目录点击；已展开则零动作——原生 `expand` 的 guard） */
+export function expandSettingsSection(id: string) {
+  if (state.expandedSettingsSections.has(id)) return;
+  const expandedSettingsSections = new Set(state.expandedSettingsSections);
+  expandedSettingsSections.add(id);
+  writeExpandedSections(expandedSettingsSections);
+  setState({ expandedSettingsSections });
 }
 
 /** 拉一次列说明目录（server 常量；失败保留 null——列头只是少个「?」，不双报） */
@@ -772,6 +793,7 @@ export function resetStoreForTests() {
   state = {
     ...initialState,
     sortOrder: readSortOrder(),
+    expandedSettingsSections: readExpandedSections(),
     detailViewedIds: new Set<string>(),
     selectedIds: new Set<string>(),
     claudeSessionsImported: new Set<string>(),
