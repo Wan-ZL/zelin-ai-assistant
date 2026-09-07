@@ -4,7 +4,8 @@
 //   2) 点一行 = 选中它（onChoose {root, custom:false}，◉ + aria-pressed）——一键，不用敲路径；「选择…」/ 输入框照旧在；
 //   3) 当前生效根就是登记库之一 → 合成一行（两枚徽章），不重复；不是 → 「当前」行照旧单独在前；
 //   4) 列表拉不到（没装 Obsidian / 老 server 404）→ 没有这些行、不报错，当前 + 自定义两行照旧；
-//   5) server 回的列表逐字段消毒（缺 path / 类型不对的条目丢掉；缺 name 用 basename）。
+//   5) server 回的列表逐字段消毒（缺 path / 类型不对的条目丢掉；缺 name 用 basename）；
+//   6) 行 button 的可访问名 = 库名 + 路径（原生 Button 包整行、VoiceOver 连路径读）——两座同名库读屏分得开。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,6 +50,8 @@ async function seedPermissions(root?: string) {
 }
 
 const radio = (name: string) => screen.getByRole("button", { name });
+/** 候选根那一行的 ◉ / ○：可访问名 = 「<库名> — <路径>」 */
+const rootRadio = (title: string, root: string) => radio(`${title} — ${root}`);
 
 beforeEach(() => {
   resetStoreForTests();
@@ -89,12 +92,14 @@ describe("registered Obsidian vaults are one-click rows (原生 ObsidianVaults.r
     render(<Host />);
     await screen.findByText(WORK);
     // 预填 = 当前根
-    await waitFor(() => expect(radio("Notes").getAttribute("aria-pressed")).toBe("true"));
-    expect(radio("Team Vault").getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(radio("Team Vault"));
-    await waitFor(() => expect(radio("Team Vault").getAttribute("aria-pressed")).toBe("true"));
-    expect(radio("Team Vault").textContent).toBe("◉");
-    expect(radio("Notes").getAttribute("aria-pressed")).toBe("false");
+    const current = () => rootRadio("Notes", "/Users/demo/Notes");
+    const team = () => rootRadio("Team Vault", WORK);
+    await waitFor(() => expect(current().getAttribute("aria-pressed")).toBe("true"));
+    expect(team().getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(team());
+    await waitFor(() => expect(team().getAttribute("aria-pressed")).toBe("true"));
+    expect(team().textContent).toBe("◉");
+    expect(current().getAttribute("aria-pressed")).toBe("false");
     expect(radio("No Obsidian — plain markdown folder").getAttribute("aria-pressed")).toBe("false");
     expect(latest).toEqual({ root: WORK, custom: false });
     // 没有输入框冒出来——一键选中，不用敲路径
@@ -115,7 +120,26 @@ describe("registered Obsidian vaults are one-click rows (原生 ObsidianVaults.r
     expect(merged.textContent).toContain(OBSIDIAN_VAULT_BADGE);
     expect(merged.textContent).toContain("current");
     await waitFor(() => expect(merged.querySelector("button")?.getAttribute("aria-pressed")).toBe("true"));
-    expect(radio("Team Vault").getAttribute("aria-pressed")).toBe("false");
+    expect(rootRadio("Team Vault", WORK).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("two same-named vaults stay distinguishable to assistive tech: the row button's name carries the path", async () => {
+    await seedPermissions("/Users/demo/Notes");   // 当前根与两座登记库同名——三个 button 光靠 basename 分不开
+    const external = "/Volumes/ext/Notes";
+    const laptop = "/Users/demo/Sync/Notes";
+    vi.mocked(fetchSetupVaults).mockResolvedValue({ vaults: [
+      { name: "Notes", path: laptop },
+      { name: "Notes", path: external },
+    ] });
+    render(<Host />);
+    await screen.findByText(external);
+    expect(screen.queryByRole("button", { name: "Notes" })).toBeNull();          // 光秃秃的库名不再是任何一行的名字
+    expect(screen.getAllByRole("button", { name: /^Notes — / })).toHaveLength(3);
+    fireEvent.click(rootRadio("Notes", external));
+    await waitFor(() => expect(rootRadio("Notes", external).getAttribute("aria-pressed")).toBe("true"));
+    expect(rootRadio("Notes", laptop).getAttribute("aria-pressed")).toBe("false");
+    expect(rootRadio("Notes", "/Users/demo/Notes").getAttribute("aria-pressed")).toBe("false");
+    expect(latest).toEqual({ root: external, custom: false });
   });
 
   it("no Obsidian (empty list) or an unreachable endpoint → just the current + custom rows, no error", async () => {

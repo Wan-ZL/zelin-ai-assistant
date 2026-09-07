@@ -203,12 +203,15 @@ def obsidian_registry_path(user_home: Optional[Path] = None) -> Path:
 
 
 def _registry_vaults(registry: Path) -> dict:
-    """读 + 解析 obsidian.json，取 ``vaults`` 子树；任何一步不成 → ``{}``（缺席 / 太大 / 不是 JSON / 形状不对）。"""
+    """读 + 解析 obsidian.json，取 ``vaults`` 子树；任何一步不成 → ``{}``（缺席 / 太大 / 不是 JSON / 嵌套过深 / 形状不对）。
+
+    ``json.loads`` 对帽内的深嵌套括号抛的是 RecursionError 不是 ValueError——一并吞掉，永不 500（§0 第 11 条）。
+    """
     try:
         if not registry.is_file() or registry.stat().st_size > _VAULT_REGISTRY_MAX_BYTES:
             return {}
         doc = json.loads(registry.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     vaults = doc.get("vaults") if isinstance(doc, dict) else None
     return vaults if isinstance(vaults, dict) else {}

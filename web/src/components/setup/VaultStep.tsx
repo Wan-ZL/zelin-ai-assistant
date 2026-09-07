@@ -111,12 +111,14 @@ export function VaultStep({ choice, onChoose, error }: { choice: VaultChoice | n
     }
   }
 
-  /** 一行一个候选根（当前 / Obsidian 库）：整行可点，◉ / ○ 是同一个 button（原生 vaultRow 的 Button 包整行） */
+  /** 一行一个候选根（当前 / Obsidian 库）：整行可点，◉ / ○ 是同一个 button（原生 vaultRow 的 Button 包整行）。
+   *  可访问名 = 库名 + 路径（原生 Button 的 label 就是整行内容，VoiceOver 连路径一起读）——两座同名库（如
+   *  ~/Notes 与 /Volumes/ext/Notes）只靠 basename 分不开，路径不在 button 里读屏就不知道选的是哪一个 */
   function rootRow(root: string, title: string, badges: string[], key: string) {
     const on = isSelectedRoot(root);
     return (
       <div key={key} className={`setup-vault-row${on ? " is-selected" : ""}`} data-vault-root={root}>
-        <button type="button" className="setup-vault-radio" aria-pressed={on} aria-label={title} onClick={() => onChoose({ root, custom: false })}>
+        <button type="button" className="setup-vault-radio" aria-pressed={on} aria-label={`${title} — ${root}`} onClick={() => onChoose({ root, custom: false })}>
           {on ? "◉" : "○"}
         </button>
         <span>
