@@ -4,8 +4,10 @@
 // server 算的（maintainer 区投影 add-only `terminal_app_name`：auto 要看装没装 Ghostty），**只读目录**：「通用 · 终端应用」一保存
 // store 就重拉整本目录（store.saveSettingsSection），这句随之换名；回执里的同名键是同一个答案，页面不另存一份（存了就会盖过
 // 目录的新值）；忙态「正在打开终端…」；
-// 成功「已在终端打开 ✓ 直接告诉它要修什么、改什么就行。」（不再把命令原文当成功句）；open 失败（500，details.command）→
-// 「打开终端失败——去「通用」检查终端应用设置，或手动在终端运行：」+ 可复制的命令；400 路径不存在 → 「路径不存在」；
+// 成功「已在终端打开 ✓ 直接告诉它要修什么、改什么就行。」（不再把命令原文当成功句）；入队失败（500，details.command）→
+// 「打开终端失败——去「通用」检查终端应用设置，或手动在终端运行：」+ 可复制的命令；壳没在跑（503 SHELL_UNAVAILABLE，
+// §68.7 2026-09-05 追记：开终端的是壳，server 只入队）→ 「无法直接打开终端——看板 app 没在运行；手动在终端运行：」+ 同一颗
+// 可复制命令；400 路径不存在 → 「路径不存在」；
 // 400 会话 id 不合形状（details.check = session_id [+ reason]，启动前重检 config.yaml 里的 id）→ 目录 `check` 里的那句（server-owned，
 // 按 UI 语言取键，FieldControl.checkSentence）；其它错误原文。
 import { useState } from "react";
@@ -19,7 +21,7 @@ import { errorMessage } from "./useToast";
 type Note =
   | { kind: "busy" }
   | { kind: "opened" }
-  | { kind: "open_failed"; command: string }
+  | { kind: "open_failed"; command: string; shellDown: boolean }
   | { kind: "error"; message: string };
 
 const SESSION_ID_KEY = "maintainer_session_id";
@@ -61,8 +63,8 @@ export function MaintainerExtras() {
       const sentence = checkSentence(sessionField, details, language);
       if (sentence) return { kind: "error", message: sentence };
     }
-    if (err instanceof ApiError && err.status === 500 && typeof details.command === "string") {
-      return { kind: "open_failed", command: details.command };
+    if (err instanceof ApiError && (err.status === 500 || err.status === 503) && typeof details.command === "string") {
+      return { kind: "open_failed", command: details.command, shellDown: err.status === 503 };
     }
     return { kind: "error", message: errorMessage(err) };
   }
@@ -83,7 +85,9 @@ export function MaintainerExtras() {
       )}
       {note?.kind === "open_failed" && (
         <span className="settings-warning" role="alert">
-          <span>{text("打开终端失败——去「通用」检查终端应用设置，或手动在终端运行：", "Couldn't open the terminal — check the terminal app under General, or run this by hand: ")}</span>
+          <span>{note.shellDown
+            ? text("无法直接打开终端——看板 app 没在运行；手动在终端运行：", "Couldn't open a terminal — the app isn't running; run this by hand: ")
+            : text("打开终端失败——去「通用」检查终端应用设置，或手动在终端运行：", "Couldn't open the terminal — check the terminal app under General, or run this by hand: ")}</span>
           <CopyLine label="" value={note.command} />
         </span>
       )}

@@ -310,6 +310,7 @@ func run() {
     UserDefaults(suiteName: targetName + ".b")?.removePersistentDomain(forName: targetName + ".b")
 
     checkOverlayFrameSeed(target: target, source: source, targetName: targetName)
+    checkTerminalTakeover()
 }
 
 /// §61.1 追记 setRecording on:true = TCC 提示（缺才弹）→ setMode；on:false = setMode("off") 不碰 TCC；
@@ -411,6 +412,98 @@ func checkOverlayFrameSeed(target: UserDefaults, source: UserDefaults, targetNam
           "shell-side frame never overwritten", "got \(draggedCopied)")
     check(dragged.bool(forKey: LegacyPrefs.overlayFrameMarker) && dragged.bool(forKey: LegacyPrefs.marker),
           "fresh install arms both markers in one run")
+}
+
+/// §68.7（issue #216）终端接管：TerminalLauncher 三形 AppleScript + 两层引号、terminal_app 解析六例、
+/// TerminalRelay 队列消费（新鲜 / 过期 / 坏形 / .tmp / 顺序 / 消费）、ShellHeartbeat beat / stop——全部在沙盒
+/// AIASSISTANT_HOME 下，绝不 spawn osascript。
+@MainActor
+func checkTerminalTakeover() {
+    // ---- 7. §68.7 terminal takeover: launcher quoting / setting resolution, queue relay, heartbeat ----
+    print("[7] TerminalLauncher + TerminalRelay (issue #216):")
+    // quoting layers: single-quote the whole shell line, then AppleScript-escape it
+    check(TerminalLauncher.shellSingleQuoted("a 'b' c") == "'a '\\''b'\\'' c'", "POSIX single-quoting closes–escapes–reopens")
+    check(TerminalLauncher.appleScriptQuoted("say \"hi\" \\ there") == "\"say \\\"hi\\\" \\\\ there\"", "AppleScript literal escapes \\ and \"")
+    let ghostty = TerminalLauncher.script(for: .ghostty, command: "claude --resume x")
+    check(ghostty.contains("new tab in window 1 with configuration {command:\"/bin/zsh -lc 'claude --resume x'\"}")
+          && ghostty.contains("new window with configuration"), "Ghostty script: new tab in window 1, else new window",
+          ghostty)
+    check(TerminalLauncher.script(for: .terminal, command: "claude --resume x").contains("do script \"claude --resume x\""),
+          "Terminal.app script: do script <line>")
+    check(TerminalLauncher.script(for: .iterm2, command: "claude").contains("create window with default profile command \"/bin/zsh -lc 'claude'\""),
+          "iTerm2 script: create window with default profile command")
+    check(TerminalLauncher.bootstrapped("claude").hasPrefix(TerminalLauncher.pathBootstrap)
+          && TerminalLauncher.bootstrapped("claude").hasSuffix("claude"), "executed line = PATH bootstrap + raw command")
+    // D36 / issue #216 复合接管命令：server 的 shell_line 是 `cd '<cwd>' || { echo 'folder not found:' '<cwd>'; exit 1; }; export AIASSISTANT_HOME=…; cd '<wt>' && claude --resume <id>`
+    // （不 exec——`exec cd` 会让 shell 静默退出，退役 .command 通道就是这样坏的；echo 里的 cwd 也 shlex.quote 过——路径可能是 LLM 原文）。
+    // 壳必须把整行**作为一个 shell 字串**交给 /bin/zsh -lc：单引号层 closes–escapes–reopens 每个 '，双引号只在 AppleScript 层
+    // 转义（PATH 兜底那句里有），&& / ; / {} 原样进 zsh。
+    let compound = "cd '/tmp/h' || { echo 'folder not found:' '/tmp/h'; exit 1; }; export AIASSISTANT_HOME=/tmp/h; cd '/tmp/wt' && claude --resume 6f9619ff"
+    let executed = TerminalLauncher.bootstrapped(compound)
+    check(executed == TerminalLauncher.pathBootstrap + compound && !executed.contains("exec "),
+          "compound shell_line rides verbatim behind the PATH bootstrap — no exec anywhere", executed)
+    let ghosttyCompound = TerminalLauncher.script(for: .ghostty, command: executed)
+    let expectedZsh = "/bin/zsh -lc '" + executed.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    check(ghosttyCompound.contains("{command:" + TerminalLauncher.appleScriptQuoted(expectedZsh) + "}"),
+          "Ghostty: the whole compound line is ONE zsh -lc argument (cd && claude survive both quoting layers)", ghosttyCompound)
+    check(ghosttyCompound.contains("cd '\\\\''/tmp/wt'\\\\'' && claude --resume 6f9619ff")
+          && ghosttyCompound.contains("echo '\\\\''folder not found:'\\\\'' '\\\\''/tmp/h'\\\\''; exit 1;")
+          && ghosttyCompound.contains("export PATH=\\\"$HOME/.local/bin"),
+          "Ghostty: single quotes re-opened, double quotes AppleScript-escaped, && and ; untouched", ghosttyCompound)
+    check(TerminalLauncher.script(for: .iterm2, command: executed).contains("command " + TerminalLauncher.appleScriptQuoted(expectedZsh)),
+          "iTerm2: same zsh -lc wrapping for the compound line")
+    check(TerminalLauncher.script(for: .terminal, command: executed).contains("do script " + TerminalLauncher.appleScriptQuoted(executed)),
+          "Terminal.app: compound line goes to do script as one AppleScript string (login shell parses it)")
+    // terminal_app setting (server-owned, §68.1) resolved against installed apps — mirrors server resolve_terminal
+    let onlyTerminal: (TerminalApp) -> Bool = { $0 == .terminal }
+    let all: (TerminalApp) -> Bool = { _ in true }
+    check(TerminalLauncher.resolve(setting: "auto", installed: all) == .ghostty, "auto → Ghostty when installed")
+    check(TerminalLauncher.resolve(setting: "auto", installed: onlyTerminal) == .terminal, "auto → Terminal when Ghostty absent")
+    check(TerminalLauncher.resolve(setting: "iterm2", installed: all) == .iterm2, "explicit iterm2 wins when installed")
+    check(TerminalLauncher.resolve(setting: "iterm2", installed: onlyTerminal) == .terminal, "uninstalled choice falls back like auto")
+    check(TerminalLauncher.resolve(setting: "bogus", installed: all) == .ghostty, "unknown value = auto")
+    check(TerminalLauncher.resolve(setting: nil, installed: onlyTerminal) == .terminal, "missing override = auto")
+    // queue relay in the sandboxed AIASSISTANT_HOME: parse shape, stale + malformed dropped, fresh launched oldest-first, consumed
+    let fm = FileManager.default
+    let qdir = TerminalRelay.queueDir
+    check(qdir.hasPrefix(AppPaths.stateRoot) && qdir.hasSuffix("/state/terminal_queue"), "queue dir = <home>/state/terminal_queue")
+    try? fm.createDirectory(atPath: qdir, withIntermediateDirectories: true)
+    let now: TimeInterval = 1_700_000_000
+    func writeEntry(_ name: String, _ obj: [String: Any]) {
+        let data = try! JSONSerialization.data(withJSONObject: obj)
+        fm.createFile(atPath: qdir + "/" + name, contents: data)
+    }
+    writeEntry("b.json", ["id": "b", "kind": "takeover", "command": "claude", "shell_line": "claude", "created_at": now - 2])
+    writeEntry("a.json", ["id": "a", "kind": "maintainer", "command": "cd /r && claude", "shell_line": "cd /r; claude", "created_at": now - 30])
+    writeEntry("old.json", ["id": "old", "kind": "takeover", "command": "claude", "shell_line": "claude", "created_at": now - TerminalRelay.staleAfter - 1])
+    writeEntry("bad.json", ["id": "bad", "kind": "takeover"])          // no shell_line → malformed
+    fm.createFile(atPath: qdir + "/half.json.tmp", contents: Data("{".utf8))   // in-flight server write: never touched
+    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "c", "created_at": 1.0]) != nil,
+          "parse accepts the server entry shape")
+    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "", "created_at": 1.0]) == nil,
+          "parse rejects an empty shell_line")
+    var launched: [String] = []
+    let drained = TerminalRelay.drain(now: now) { launched.append($0.id + ":" + $0.shellLine) }
+    check(launched == ["a:cd /r; claude", "b:claude"], "fresh entries launched oldest first, stale/malformed never launched", "\(launched)")
+    check(drained.map(\.kind) == ["maintainer", "takeover"], "drain returns what it handed to launch")
+    let left = (try? fm.contentsOfDirectory(atPath: qdir))?.sorted() ?? []
+    check(left == ["half.json.tmp"], "consumed + stale + malformed entries deleted; the .tmp in-flight write is left alone", "\(left)")
+    check(TerminalRelay.drain(now: now) { _ in check(false, "nothing to launch on an empty queue") }.isEmpty, "empty queue → no launches")
+    check(TerminalRelay.staleAfter == 60 && TerminalRelay.tickInterval == 1.0, "stale threshold 60 s (server STALE_AFTER_S), 1 s tick")
+    // heartbeat: beat creates/touches state/shell.heartbeat, stop removes it
+    ShellHeartbeat.stop()
+    check(!fm.fileExists(atPath: ShellHeartbeat.path), "no heartbeat before the first beat")
+    ShellHeartbeat.beat(now: Date(timeIntervalSince1970: now - 100))
+    let beat1 = (try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.modificationDate] as? Date
+    ShellHeartbeat.beat(now: Date(timeIntervalSince1970: now))
+    let beat2 = (try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.modificationDate] as? Date
+    check(ShellHeartbeat.path.hasSuffix("/state/shell.heartbeat"), "heartbeat path = <home>/state/shell.heartbeat")
+    check(beat1 != nil && beat2 != nil && beat2! > beat1!, "beat touches the mtime forward", "\(String(describing: beat1)) → \(String(describing: beat2))")
+    check((try? String(contentsOfFile: ShellHeartbeat.path, encoding: .utf8))?.hasPrefix("pid=") == true, "heartbeat body carries the pid")
+    let beatMode = ((try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.posixPermissions] as? NSNumber)?.intValue ?? -1
+    check(beatMode == 0o600, "heartbeat file is 0600 (private-file lens inside state/)", "\(beatMode)")
+    ShellHeartbeat.stop()
+    check(!fm.fileExists(atPath: ShellHeartbeat.path), "stop removes the heartbeat (server flips to 503 at once)")
 }
 
 MainActor.assumeIsolated { run() }

@@ -6,7 +6,8 @@
 // 卡面（原生 ReviewRow 收起态的 meta 行）：会话有新活动（青）· repo 章 · 耗时 <dispatched→review> ·
 //   已等待验收 <review→now，自驱走表> · §64 AI 评语章（建议验收/需继续做/需要拍板，点看理由）·
 //   一句话（§64 AI 白话摘要优先；判官没评 / 内容已变时回落 delivered_summary、再回落审批时 summary——原生
-//   ReviewRow 永远给一句交付说明，Cards.swift:1832-1854；单行截断，hover 全文，同 DoneCard）· 单击复制指令 行。
+//   ReviewRow 永远给一句交付说明，Cards.swift:1832-1854；单行截断，hover 全文，同 DoneCard）。卡面没有指令行
+//   （D36，owner 2026-09-06：单击卡片什么也不做；双击整卡 = 在终端接管；手动复制走详情侧栏「复制接管指令」）。
 //   交付了什么（执行器原话，原样全文）/ 摘要 / ☐ 验收清单（§11：永远渲染，空给兜底句）/ 📋 要做什么 /
 //   💬 需求来自 / 日志 / 指令 住右侧详情侧栏（「展开详情 ▸」打开，D34；DetailFields 渲染）。
 //   评语只是建议：验收 / 打回仍只有下面两个按钮能按。
@@ -16,7 +17,7 @@ import { useI18n } from "../../i18n";
 import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { copyText } from "../detail/copyText";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
-import { CardHead, CardSurface, CopiedAnnouncer, CopyCommandLine, DetailsToggle, DurationText, MergeStateChip, RepoChip, TerminalButton } from "./cardChrome";
+import { CardHead, CardSurface, CopiedAnnouncer, DetailsToggle, DurationText, MergeStateChip, RepoChip } from "./cardChrome";
 import { TextDialog } from "./TextDialog";
 import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
 
@@ -76,7 +77,8 @@ export function ReviewCard({ card }: ReviewCardProps) {
   const deliveryFallback = typeof card.delivered_summary === "string" && card.delivered_summary.trim() !== "" ? card.delivered_summary : card.summary;
 
   return (
-    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`} selectable>
+    // 双击整卡 = 在终端接管（§68.7，issue #216）；没有 copy_cmd 的待验收卡双击 no-op
+    <CardSurface cardId={card.id} label={`${text("待验收", "In review")} · ${title}`} selectable takeoverCmd={typeof card.copy_cmd === "string" ? card.copy_cmd : null}>
       <CardHead card={card} title={title} leading={<span className="card-dot is-review" aria-hidden="true" />} />
       <div className="card-badges">
         <MergeStateChip cardId={card.id} />
@@ -92,7 +94,6 @@ export function ReviewCard({ card }: ReviewCardProps) {
       </div>
       {/* §64 AI 一句优先；判官没评 / 内容已变（assessment 整键缺席）→ 回落交付说明（原生卡面永远有这一句），执行器原话全文仍住详情侧栏 */}
       <AssessmentSummaryLine assessment={card.assessment} fallback={deliveryFallback} />
-      <CopyCommandLine cmd={card.copy_cmd} />
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (
@@ -122,7 +123,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
               )}
             </>
           )}
-          {card.copy_cmd && <TerminalButton cardId={card.id} />}
+          {/* 「在终端接管」按钮已砍（issue #216 / D36）：双击整卡接管（CardSurface takeoverCmd），卡面没有单击入口 */}
           <DetailsToggle cardId={card.id} />
         </div>
       )}

@@ -140,9 +140,11 @@ class SessionIdLaunchRecheckTestCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
         (self.home / "state").mkdir(parents=True)
+        # 壳在跑（§68.7 队列通道的消费者）：id 校验通过后才会入队而不是 503
+        (self.home / "state" / "shell.heartbeat").write_text("pid=1\n", encoding="utf-8")
 
     def _launch(self):
-        return maintainer_launch.launch(self.home, {}, opener=lambda p: None, out_dir=Path(self.tmp.name), platform="darwin")
+        return maintainer_launch.launch(self.home, {}, platform="darwin")
 
     def test_config_yaml_leading_hyphen_id_is_refused_with_the_same_sentence(self):
         write_text(self.home / "config.yaml", "maintainer:\n  session_id: --dangerously-skip-permissions\n")

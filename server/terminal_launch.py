@@ -1,48 +1,73 @@
 """server/terminal_launch.py — 「在终端接管会话」的 server 落点：``POST /api/terminal {card_id}``（§54.1 / §68.7）。
 
-原生看板双击指令行 = TerminalLauncher（Apple Events 到 Ghostty / iTerm2 / Terminal）。
-web 没有 Apple Events；这里走 ai_fix 同款的 ``.command`` 路径：server 从**投影行**
-推导命令（``copy_cmd``，其次 ``claude --resume <session_id>``）、写一个可执行的
-``.command`` 文件到 ``$TMPDIR``、``open -a <终端>`` 它——Terminal / Ghostty / iTerm2
-都把 .command 当「终端脚本」文档类型直接执行，不需要任何自动化授权。**命令永远由
-server 从卡片记录推导，绝不接受客户端文本**（与 reveal / ai-fix 同一条纪律：客户端只给
-SAFE_ID 白名单内的 card_id）。
+**2026-09-05（issue #216）起 server 不再写 ``.command``、不再 ``open``**——macOS 26 对每个时间戳
+文件名的「脚本文档」都弹一次 "Allow Ghostty to execute …?"，结构上没有「记住我」可言，原
+docstring 里「不需要任何自动化授权」的断言被现实推翻。现在 server 只把一条 launch 请求**入队**：
+``state/terminal_queue/<id>.json``（§28 通知中继同款形制：原子 ``.json.tmp`` + rename、写侧清扫
+过期条目），壳（``shell/Sources/TerminalRelay.swift``）按节拍消费队列、经 Apple Events
+（``shell/Sources/TerminalLauncher.swift``，老版 mac/ 实战验证过的那份）在 Ghostty / iTerm2 /
+Terminal 新开窗口跑命令。自动化授权按（壳, 终端）这一对记忆——TCC 以壳的签名 requirement 为键：壳仍 ad-hoc 签名
+期间每次重建（= 每次自动部署）后首次双击会再弹一次，稳定签名后才是一次性（§68.7 追记 (b)）。
 
-用哪个终端 = 设置「通用 · 终端应用」（overrides ``terminal_app``，原生 UserDefaults
-``terminalApp`` 的 server 侧落点，§66.2）：``auto`` = 装了 Ghostty 就 Ghostty，否则
-Terminal（原生 ``TerminalLauncher.preferred`` 同款）；选了没装的终端 ``open -a`` 会失败，
-回落到不带 ``-a`` 的 ``open``（系统默认 .command 处理者）。maintainer_launch /
-uninstall_launch 复用同一条 ``open_command_file(path, opener, home)`` 通道。
+**命令永远由 server 从投影行推导，绝不接受客户端文本**（``copy_cmd``，其次
+``claude --resume <session_id>``；与 reveal / ai-fix 同一条纪律：客户端只给 SAFE_ID 白名单内的
+card_id）。队列条目里 ``shell_line`` 是壳逐字交给终端的一行（``cd <cwd|home>`` + ``export
+AIASSISTANT_HOME`` + ``<cmd>``——**不 exec**：投影里的 ``copy_cmd`` 常是复合命令 ``cd '<worktree>' && claude
+--resume <id>``，``exec cd …`` 会让 shell 静默退出、终端一闪就关，退役的 .command 通道就是这样坏的；壳把
+整行交给 ``/bin/zsh -lc``，复合命令原样能跑），``command`` 是给人看的原命令。
 
-- 非 darwin → 501（.command 只有 macOS 终端会执行）；
+用哪个终端仍是设置「通用 · 终端应用」（``terminal_app``，§68.1 overrides）——偏好住 server 侧
+不变，**执行者换成壳**：壳只读同一把旋钮（§61.3 SettingsIO 读侧），``auto`` = 装了 Ghostty 就
+Ghostty，否则 Terminal；选了没装的回落同款。server 侧的 ``resolve_terminal`` / ``preferred_terminal``
+/ ``preferred_terminal_name`` **留下**只做一件事：设置目录 maintainer 区的 ``terminal_app_name``
+（「会在 <终端> 中打开」）与开发会话回执要 resolved 终端的展示名——同一条规则两面镜子（壳
+``TerminalLauncher.resolve`` 同款），server 不再据它 ``open`` 任何东西。maintainer_launch /
+uninstall_launch 复用同一条 ``enqueue(...)`` 通道。
+
+- 非 darwin → 501（Apple Events 只有 macOS 有）；
+- 壳没在跑（``state/shell.heartbeat`` 缺席或过期）→ 503 ``SHELL_UNAVAILABLE``（队列没有消费者；
+  页面降级为复制指令 + 提示，与 501 同一条降级逻辑）；
 - 卡不存在 / 投影行没有可接管的会话 → 404 / 400；
-- ``opener`` 注入缝（测试绝不真 ``open``）。文件名带时间戳，内容含 cd 到 ``cwd``
-  （投影行有则用，没有就在 home 下运行）。
+- ``now`` 注入缝（时钟）；测试用 tmp home，绝不 spawn 任何进程。
+
+**tombstone（防腐 #6）**：``write_command_file`` / ``open_command_file`` / ``_default_opener`` /
+``_run_open`` / ``script_for`` / ``Opener`` 的 ``.command`` + ``open -a`` 通道 retired 2026-09-05
+（issue #216），并入本模块的 ``enqueue``；``act/ai_fix.py`` 的 .command 用途另行裁定，不在此列。
 """
 from __future__ import annotations
 
-import datetime as _dt
+import json
+import os
 import shlex
-import stat
-import subprocess
 import sys
-import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
-from server import settings_catalog
+from server import paths, settings_catalog
 from server.board_source import SAFE_ID_RE, locate_card
 from server.errors import (ApiError, InvalidFieldError, NotFoundError,
-                           NotImplementedError501, UnknownFieldError)
+                           NotImplementedError501, ShellUnavailableError,
+                           UnknownFieldError)
 
-Opener = Callable[[Path], None]
-
-# terminal_app 词表 → `open -a` 认的应用名（原生 TerminalApp.bundleID 的 open 侧拼法）
+# terminal_app 词表 → 应用名（原生 TerminalApp.bundleID 的 open 侧拼法；2026-09-05 起 server 只拿它算展示名）
 TERMINAL_APP_NAMES = {"ghostty": "Ghostty", "terminal": "Terminal", "iterm2": "iTerm"}
-# `open -a` 名 → 用户看到的名（原生 TerminalApp.displayName；只有 iTerm 两者不同）——设置页「会在 <终端> 中打开」与
+# 应用名 → 用户看到的名（原生 TerminalApp.displayName；只有 iTerm 两者不同）——设置页「会在 <终端> 中打开」与
 # 开发会话回执的 ``terminal_app_name`` 用它（§68.7 追记）
 TERMINAL_DISPLAY_NAMES = {"Ghostty": "Ghostty", "Terminal": "Terminal", "iTerm": "iTerm2"}
 _APP_DIRS = ("/Applications", "~/Applications", "/System/Applications/Utilities")
+
+# 队列条目过期阈值（两侧同值：壳 TerminalRelay.staleAfter）——一分钟没被消费的接管请求
+# 直接丢弃：用户早走开了，终端一分钟后才蹦出来只会吓人。
+STALE_AFTER_S = 60.0
+# 壳心跳新鲜阈值：壳每 5 s touch 一次（shell/Sources/main.swift 引擎 tick），15 s = 三拍容错。
+HEARTBEAT_FRESH_S = 15.0
+# 队列条目 kind 词表（add-only）：接管会话 / 开发会话（§68.1）/ 卸载（§68.6）
+KINDS = ("takeover", "maintainer", "uninstall")
+# 队列权限：条目是壳会在终端里执行的命令行——目录 0700 / 文件 0600（act/lib/secrets 同款；壳与 server 同一 uid）
+QUEUE_DIR_MODE = 0o700
+QUEUE_FILE_MODE = 0o600
 
 
 def terminal_installed(app_name: str) -> bool:
@@ -51,9 +76,11 @@ def terminal_installed(app_name: str) -> bool:
 
 
 def resolve_terminal(choice: str, installed: Callable[[str], bool] = terminal_installed) -> str:
-    """terminal_app 值 → ``open -a`` 应用名。auto / 未知值：Ghostty 装了就 Ghostty，否则 Terminal。"""
+    """terminal_app 值 → 应用名。显式选择**装了**才算；auto / 未知值 / 选了没装的：Ghostty 装了就 Ghostty，
+    否则 Terminal——壳 ``TerminalLauncher.resolve(setting:installed:)`` 逐字同一条规则（原生 ``preferred`` 同款），
+    否则 maintainer 区「会在 iTerm2 中打开」会说一个壳根本不会去开的终端；server 侧只用来算展示名。"""
     name = TERMINAL_APP_NAMES.get(choice)
-    if name is not None:
+    if name is not None and installed(name):
         return name
     return "Ghostty" if installed("Ghostty") else "Terminal"
 
@@ -65,7 +92,7 @@ def preferred_terminal(home: Optional[Path]) -> str:
 
 
 def display_name(app_name: str) -> str:
-    """``open -a`` 应用名 → 展示名（原生 TerminalApp.displayName；词表外原样）。"""
+    """应用名 → 展示名（原生 TerminalApp.displayName；词表外原样）。"""
     return TERMINAL_DISPLAY_NAMES.get(app_name, app_name)
 
 
@@ -73,17 +100,6 @@ def preferred_terminal_name(home: Optional[Path]) -> str:
     """resolved 终端的展示名（原生 ``TerminalLauncher.preferred.displayName``）：设置目录 maintainer 区的
     ``terminal_app_name`` 与开发会话回执共用这一个答案。"""
     return display_name(preferred_terminal(home))
-
-
-def _run_open(argv: list) -> int:
-    return subprocess.run(argv, check=False, timeout=20).returncode
-
-
-def _default_opener(path: Path, app: Optional[str] = None) -> None:
-    """``open -a <app> <path>``；该终端没装（open 非零）→ 回落到不带 -a 的 open（系统默认处理者）。"""
-    if app and _run_open(["/usr/bin/open", "-a", app, str(path)]) == 0:
-        return
-    _run_open(["/usr/bin/open", str(path)])
 
 
 def _validate(payload: dict) -> str:
@@ -107,24 +123,94 @@ def command_for(row: dict) -> Optional[str]:
     return None
 
 
-def script_for(card_id: str, cmd: str, cwd: Optional[str], home: Path) -> str:
-    """.command 文件正文：cd 到工作目录 → exec 命令。cwd 用 shlex.quote，命令本身
-    是投影里 actd 写好的一行 shell（原生 TerminalLauncher 也是逐字送进终端）。"""
-    where = cwd if isinstance(cwd, str) and cwd.startswith("/") else str(home)
-    return (
-        "#!/bin/bash\n"
-        "# Zelin's AI Assistant — take over the session of %s\n"
-        "cd %s || { echo \"folder not found: %s\"; exit 1; }\n"
-        "export AIASSISTANT_HOME=%s\n"
-        "exec %s\n" % (card_id, shlex.quote(where), where, shlex.quote(str(home)), cmd))
+def shell_line_for(cmd: str, cwd: Optional[str], home: Optional[Path]) -> str:
+    """壳逐字交给终端的一行：cd 到工作目录 → 导出 AIASSISTANT_HOME → 命令本身。cwd / home 用
+    shlex.quote——**cd 失败那句 echo 里的 cwd 也一样过 shlex.quote**：cwd 可能是 LLM 给的 ``target_repo``
+    原文（act/analyze 只要非空字串；chat 投递或 ensure_repo 失败时目录并不存在），裸放进双引号里，一个 ``"`` 让
+    整行 ``unmatched "`` 什么都不跑，一个 ``$(…)`` 会在用户终端里真的执行。命令是投影里 actd 写好的一行 shell
+    （老版 TerminalLauncher 也是逐字送进终端），**原样接在分号后，不加 exec**——``copy_cmd`` 常是复合命令
+    ``cd '<wt>' && claude --resume <id>``，``exec cd`` 在 zsh / bash 里都是「执行内建后退出」，后半句永远跑不到
+    （退役 .command 通道的实际故障）。``home`` 为 None 时不导出（卸载脚本不需要）。"""
+    parts = []
+    if isinstance(cwd, str) and cwd.startswith("/"):
+        q = shlex.quote(cwd)
+        parts.append("cd %s || { echo 'folder not found:' %s; exit 1; }" % (q, q))
+    if home is not None:
+        parts.append("export AIASSISTANT_HOME=%s" % shlex.quote(str(home)))
+    parts.append(cmd)
+    return "; ".join(parts)
 
 
-def write_command_file(text: str, out_dir: Optional[Path] = None) -> Path:
-    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    path = (out_dir or Path(tempfile.gettempdir())) / ("zelin-ai-terminal-%s.command" % stamp)
-    path.write_text(text, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return path
+def shell_alive(home: Path, now: Optional[float] = None) -> bool:
+    """壳在跑 ⇔ ``state/shell.heartbeat`` 存在且 mtime 在 HEARTBEAT_FRESH_S 内。"""
+    try:
+        age = (now if now is not None else time.time()) - paths.shell_heartbeat_path(home).stat().st_mtime
+    except OSError:
+        return False
+    return age <= HEARTBEAT_FRESH_S
+
+
+def require_shell(home: Path, now: Optional[float] = None) -> None:
+    """没有消费者就不入队——503，页面据此降级（复制指令 + 提示）。"""
+    if not shell_alive(home, now):
+        raise ShellUnavailableError("the app is not running, so no terminal can be opened",
+                                    {"heartbeat": str(paths.shell_heartbeat_path(home))})
+
+
+def _unlink_if_stale(f: Path, cutoff: float) -> int:
+    """1 = 早于 cutoff 且已删；0 = 新鲜或 stat 失败（与壳的删除竞态无妨，missing_ok）。"""
+    try:
+        if f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+            return 1
+    except OSError:
+        pass
+    return 0
+
+
+def sweep_stale(qdir: Path, now: Optional[float] = None) -> int:
+    """删掉 mtime 早于 STALE_AFTER_S 的条目（含 .tmp 尸体）；尽力而为、永不抛，返回删了几个。"""
+    cutoff = (now if now is not None else time.time()) - STALE_AFTER_S
+    try:
+        return sum(_unlink_if_stale(f, cutoff) for f in qdir.iterdir())
+    except OSError:
+        return 0
+
+
+def _write_private(tmp: Path, body: str) -> None:
+    """0600 + O_EXCL 落盘（act/lib/secrets 同款）：条目是壳一秒内就会交给终端执行的命令行，比 §28 通知队列的
+    umask 默认权限多一层——目录 0700 在 enqueue 里给。"""
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, QUEUE_FILE_MODE)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(body)
+
+
+def enqueue(home: Path, kind: str, command: str, shell_line: str, cwd: str,
+            card_id: Optional[str] = None, now: Optional[float] = None) -> "tuple[dict, Path]":
+    """写一条队列条目（原子 .json.tmp + rename，目录 0700 / 文件 0600），先清扫过期同伴；返回 (entry, path)。
+    写不进去 → 500（磁盘 / 权限问题如实报，不吞）。"""
+    if kind not in KINDS:
+        raise ValueError("unknown terminal queue kind: %r" % (kind,))
+    stamp = now if now is not None else time.time()
+    qdir = paths.terminal_queue_dir(home)
+    entry = {"id": uuid.uuid4().hex, "kind": kind, "command": command,
+             "shell_line": shell_line, "cwd": cwd, "created_at": int(stamp)}
+    if card_id is not None:
+        entry["card_id"] = card_id
+    target = qdir / (entry["id"] + ".json")
+    tmp = qdir / (entry["id"] + ".json.tmp")   # 壳只认 *.json，半写的文件永不被读到
+    try:
+        qdir.mkdir(parents=True, exist_ok=True, mode=QUEUE_DIR_MODE)
+        os.chmod(qdir, QUEUE_DIR_MODE)   # 目录早就在（老 umask 建的）也收紧
+        sweep_stale(qdir, stamp)
+        try:
+            _write_private(tmp, json.dumps(entry, ensure_ascii=False))
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ApiError("could not queue the terminal request: %s" % exc, {"queue_dir": str(qdir)})
+    return entry, target
 
 
 def _resolve(home: Path, card_id: str) -> "tuple[dict, str]":
@@ -138,29 +224,17 @@ def _resolve(home: Path, card_id: str) -> "tuple[dict, str]":
     return row, cmd
 
 
-def open_command_file(path: Path, opener: Optional[Opener], home: Optional[Path] = None) -> None:
-    """``open -a <首选终端> <path>``（终端执行 .command）；起不来 → 500 带文件路径。uninstall_launch /
-    maintainer_launch 复用同一条通道（公开名，防腐 #2）。注入的 ``opener`` 只收 path（测试替身）。"""
-    try:
-        if opener is not None:
-            opener(path)
-        else:
-            _default_opener(path, preferred_terminal(home))
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ApiError("could not open Terminal: %s" % exc, {"command_file": str(path)})
-
-
-_open = open_command_file
-
-
-def launch(home: Path, payload: dict, opener: Optional[Opener] = None,
-           out_dir: Optional[Path] = None, platform: Optional[str] = None) -> dict:
-    """校验 → 推导命令 → 写 .command → open → ``{"ok": true, "command": cmd, "command_file": path}``。"""
+def launch(home: Path, payload: dict, platform: Optional[str] = None,
+           now: Optional[float] = None) -> dict:
+    """校验 → 推导命令 → 壳在跑？→ 入队 → ``{"ok": true, "command", "cwd", "queue_id", "command_file"}``
+    （``command_file`` 自 2026-09-05 起 = 队列条目路径，键名保留：跨组件字段只增不删）。"""
     card_id = _validate(payload)
     if (platform or sys.platform) != "darwin":
         raise NotImplementedError501("opening a terminal session is macOS only")
     row, cmd = _resolve(home, card_id)
-    cwd = row.get("cwd") if isinstance(row.get("cwd"), str) else None
-    path = write_command_file(script_for(card_id, cmd, cwd, home), out_dir)
-    _open(path, opener, home)
-    return {"ok": True, "command": cmd, "command_file": str(path), "cwd": cwd or str(home)}
+    raw_cwd = row.get("cwd")
+    cwd = raw_cwd if isinstance(raw_cwd, str) and raw_cwd.startswith("/") else str(home)
+    require_shell(home, now)
+    entry, path = enqueue(home, "takeover", cmd, shell_line_for(cmd, cwd, home), cwd,
+                          card_id=card_id, now=now)
+    return {"ok": True, "command": cmd, "cwd": cwd, "queue_id": entry["id"], "command_file": str(path)}

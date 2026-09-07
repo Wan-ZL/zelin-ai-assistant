@@ -855,9 +855,9 @@
   },
   "new": [],
   "not_gated": {
-    "informational": 414,
+    "informational": 411,
     "os": 11,
-    "retired": 59,
+    "retired": 62,
     "shell": 70
   },
   "ok": true,

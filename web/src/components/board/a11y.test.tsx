@@ -1,6 +1,7 @@
 // 可访问性判例（issue #8；CONTRACT §54.1 第 11 项）：
 //   1) 键盘路径——每种卡的 <article> 可聚焦，Enter / Space 打开详情侧栏（「展开详情 ▸」的键盘等价物）；
-//      焦点在卡内按钮上按 Enter 不会顺带开侧栏（按钮自己的 Enter 归按钮）；双击卡片不开侧栏（D34，语义留给 #216）；
+//      焦点在卡内按钮上按 Enter 不会顺带开侧栏（按钮自己的 Enter 归按钮）；双击卡片不开侧栏（D34；#216 起双击 =
+//      在终端接管会话，判例 cardTakeover.test.tsx——Enter 仍归详情，无障碍语义是看详情，不触发外部进程）；
 //      侧栏关闭（⎋ / ×）把焦点还给打开它的「展开详情 ▸」/ 卡片（WAI-ARIA dialog 往返——D34 后侧栏是唯一详情面，
 //      键盘用户不能被丢回 <body> 从页顶重新 Tab）；
 //   2) 状态不靠颜色——每张卡的 aria-label 以状态词开头（色点 aria-hidden）；
@@ -83,7 +84,7 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
     expect(screen.getByTestId("selected").textContent).toBe("");
   });
 
-  it("「Details ▸」 click opens the sidebar for that card; double-click on the card does nothing (D34)", () => {
+  it("「Details ▸」 click opens the sidebar for that card; double-click never opens it (D34 — a proposal has no session, so it is a no-op)", () => {
     render(<><ProposalCard card={PROPOSAL_T1} /><SelectedProbe /></>);
     fireEvent.doubleClick(screen.getByRole("article", { name: /^Proposal · / }));
     expect(screen.getByTestId("selected").textContent).toBe("");
@@ -111,14 +112,15 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
     expect(document.activeElement).toBe(surface); // × 关也一样：还给按 Enter 的那张卡
   });
 
-  it("click-to-copy announces success through a status region", async () => {
+  it("a plain click on the card body does nothing (D36): no detail, no request, no copy", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    render(<RunningCard row={TASK_WORKING} />);
-    const copy = screen.getByRole("button", { name: /Click to copy the command/ });   // visible text = accessible name (WCAG 2.5.3)
-    fireEvent.click(copy);
-    await screen.findByText("Copied to clipboard", { selector: "[role='status']" });
-    expect(writeText).toHaveBeenCalledTimes(1);
+    render(<><RunningCard row={TASK_WORKING} /><SelectedProbe /></>);
+    fireEvent.click(screen.getByRole("article", { name: /^Working · / }));
+    expect(screen.getByTestId("selected").textContent).toBe("");
+    expect(writeText).not.toHaveBeenCalled();
+    // the copy affordance left the card face (the sidebar's 「复制接管指令」 is the one manual copy path)
+    expect(screen.queryByRole("button", { name: /copy the command/i })).toBeNull();
   });
 });
 

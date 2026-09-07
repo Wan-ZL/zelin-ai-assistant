@@ -59,7 +59,7 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-card-fine", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1639, size: 9, weight: "regular" },
-    zh: "单击复制指令 行 · claude agents 列表名", en: "Click-to-copy line · claude agents list name",
+    zh: "双击接管的回执行（已在终端打开 / 打开终端失败，原生 CopyPathLine 9pt）· claude agents 列表名", en: "Takeover status line (Opened in terminal / Terminal launch failed, native CopyPathLine 9pt) · claude agents list name",
   },
   {
     token: "--type-card-fine-mono", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono)",

@@ -34,6 +34,32 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **旧 app 的名字与位置(§54 名字互换,2026-09-02)**:`bash install.sh`(含 auto-deploy)第一次装新壳时,把原来的 `/Applications/Zelin's AI Assistant.app`(bundle id `com.zelin.ai-engineer`)**同目录改名**为 `/Applications/Zelin's AI Assistant (old).app`——只改文件夹名,bundle 内容一个字节不动(它在签名封条之内,改了 TCC 授权就名存实亡),所以旧 app 的授权与偏好全部原地保留。**它在系统设置里显示的名字要等下一次重新构建**(`mac/build.sh --install`、.pkg 或 Sparkle 更新——名字盖在 `mac/Info.plist` 里)才变成 "(old)";在那之前隐私列表里会有两条 "Zelin's AI Assistant"。用 .pkg 装过的旧 bundle 是 root 属主:install.sh 搬得动(rename 只要 /Applications 的写权限)但删不了、也不该 `sudo plutil` 去改名(同样破封条);想立刻看到 "(old)" 名字:先 `sudo rm -rf "/Applications/Zelin's AI Assistant (old).app"`(root 属主,用户级脚本删不掉;授权与偏好都不在 bundle 里,删了不丢),再在终端跑 `bash install.sh`——交互模式的第 4 步用同一 bundle id + 同一签名证书把旧 app 重建到 `(old).app`,名字随之到位、授权照旧。
 
+## 双击卡片在终端接管：第一次弹「"Zelin's AI Assistant" 想要控制 "Ghostty"」；纯浏览器里双击只复制不开终端；单击卡片什么也不做（2026-09-05 起，issue #216 / D36）
+
+**症状 A**：在看板里双击一张执行中 / 待验收的卡，macOS 弹出「"Zelin's AI Assistant" 想要控制 "Ghostty"（或 Terminal / iTerm2）」的自动化授权提示。
+
+**原因**：预期行为。开终端的动作现在由壳经 Apple Events 完成（CONTRACT §68.7 2026-09-05 追记）；授权按（壳, 终端）这一对记在 系统设置 → 隐私与安全性 → 自动化 里。点「允许」即可；拒绝了就到那里给 **Zelin's AI Assistant** 下面的对应终端打开开关。**多久弹一次取决于壳的签名**：壳目前是 ad-hoc 签名（`shell/build.sh`，TCC 记的是每次构建都变的 cdhash），而 `install.sh` 每次自动部署都重建壳——所以**每个新版本部署后第一次双击会再弹一次**，不是终身一次；与屏幕录制授权同一根因（上文「换壳后的 TCC 重授权」），稳定签名证书落地（Mac-retire 清单 0.9）后才是一次性。之前每次双击都弹的 "Allow Ghostty to execute …?" 是 server 写时间戳 `.command` 文件的老通道，已退役——现在最多是每个版本一次。
+
+**症状 B**：双击后卡上出现「无法直接打开终端 · 已复制指令，粘贴到终端即可接管」，终端没有打开。
+
+**原因**：server 判定没有人能开终端——壳 "Zelin's AI Assistant" 没在跑（`state/shell.heartbeat` 缺席或超过 15 s 没更新，`POST /api/terminal` 返回 503 `SHELL_UNAVAILABLE`），或看板跑在非 macOS 上（501）。这不是故障：指令已经在剪贴板里，粘贴到任意终端即可。要一键打开就把壳启动起来（Dock 里的 Zelin's AI Assistant；登录时启动开关在 关于 区）。
+
+**症状 B2**：单击卡片没有任何反应；卡面上找不到「在终端接管」按钮，也找不到「单击复制指令」那一行。
+
+**原因**：这就是设计（D36，owner 2026-09-06）：单击卡片什么功能也没有，双击整卡才是接管；要手动拿到命令，点「展开详情 ▸」打开侧栏，「会话」区的「复制接管指令」按钮把命令放进剪贴板。如果你看到的卡面**仍有**「在终端接管」按钮或「单击复制指令」行，说明装的还是旧版本——看 关于 区的版本号是否等于 main 上最新的 tag（`python3 scripts/version_stamp.py`），旧就 `bash install.sh`。
+
+**症状 C**：双击后卡上红字「打开终端失败 · …」。
+
+**原因**：**只有入队失败**会走到这句——`state/terminal_queue/` 写不进去（磁盘 / 权限），原句会写明。壳那边的失败到不了这条红线（见症状 C2）。
+
+**症状 C2**：双击后卡上是绿字「已在终端打开」，但终端窗口没有出现。
+
+**原因**：server 把请求排进队列就回 200（页面据此说「已在终端打开」），真正开窗口的是壳，而壳的 osascript 失败**不会回流**到 server 或页面——最常见是自动化授权被拒（症状 A：到 系统设置 → 隐私与安全性 → 自动化 给 Zelin's AI Assistant 下面的终端打开开关），其次是 Ghostty 版本太老不支持 `new tab in window 1`（-1708）。看 `Console.app`（或 `log show --last 5m --predicate 'process == "ZelinAIBoard"'`）里的 `TerminalLauncher: osascript failed …` 一行拿到原因。队列里 60 s 没被消费的请求会被两侧自动清掉，不会攒着在你回来时突然蹦出一堆终端窗口。
+
+**症状 D**：终端窗口闪了一下就关了，claude 没起来。
+
+**原因**：旧通道用 `exec` 跑复合命令 `cd '<worktree>' && claude --resume <id>`——`exec cd` 让 shell 静默退出，后半句永远跑不到。2026-09-06 起壳把整行原样交给 `/bin/zsh -lc`（不 exec），复合命令能跑；如果你还看到这个现象，说明装的是旧版本（同症状 B2 的检查法）。
+
 ## 雷达静默数天没有新卡 / headless claude 在 cron 下直接死
 
 **症状**:数天没有任何新审批卡;`state/radar.cron.log` 里 claude 报 auth 错误或 `command not found`,而手动在终端跑一切正常。
