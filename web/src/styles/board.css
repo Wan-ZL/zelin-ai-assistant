@@ -276,9 +276,11 @@
 
 /* 卡面的「单击复制指令」行（.card-copy-line）retired（D36，owner 2026-09-06：单击卡片什么也不做；手动复制
    走详情侧栏的「复制接管指令」）。双击接管的回执 / 降级提示（#216，CardSurface 卡尾一行 role=status 小字）：
-   靠左、可折行——原生 CopyPathLine 的 launched / launchFailed 两句同色（次级 / --danger 由 .is-danger 给） */
+   靠左、可折行——原生 CopyPathLine 的 launched / launchFailed 两句（Cards.swift:317-325，9pt = --type-card-fine）
+   同色（次级 / --danger 由 .is-danger 给） */
 .card-takeover-status {
   align-self: flex-start;
+  font: var(--type-card-fine);
   white-space: normal;
 }
 
