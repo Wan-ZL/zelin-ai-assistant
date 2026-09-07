@@ -61,7 +61,13 @@ export function cardToMarkdown(detail: CardDetail, text: TextFn): string {
     if (!source || typeof source !== "object") return [];
     const head = [source.who, source.channel, source.date].filter(Boolean).join(" · ");
     const lines = [`- ${head}`];
-    if (typeof source.quote === "string" && source.quote) lines.push(`  - "${source.quote}"`);
+    if (typeof source.quote === "string" && source.quote) {
+      // D52 起 actd 把 capture 正文的换行留在 quote 里：续行缩进到这一项的内容列（4 格），
+      // 整段引文仍是「需求来自」下的同一个列表项、引文自带的空行不带尾随空格；单行引文成文与此前逐字相同
+      const quoted = source.quote.split(/\r?\n/);
+      quoted[quoted.length - 1] += '"';
+      lines.push(...quoted.map((line, index) => (index === 0 ? `  - "${line}` : line ? `    ${line}` : "")));
+    }
     if (typeof source.ref === "string" && source.ref) lines.push(`  - ref: ${source.ref}`);
     return lines;
   }));

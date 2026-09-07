@@ -245,7 +245,8 @@
   font-size: calc(13px * var(--text-scale));
 }
 
-.zai-detail-source-quote { margin: 0 0 4px; }
+/* 引文保留换行（D52：actd 自此把 capture 正文的换行留到 sources 原话；原生 SwiftUI Text 本就逐行显示） */
+.zai-detail-source-quote { margin: 0 0 4px; white-space: pre-wrap; }
 .zai-detail-source footer { color: var(--text-tertiary); font-size: calc(12px * var(--text-scale)); }
 .zai-detail-source-ref { overflow-wrap: anywhere; }
 

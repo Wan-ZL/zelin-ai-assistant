@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -345,6 +346,53 @@ def attach_capture_images(d: Daemon, req: Requirement, images) -> None:
     d.save(req)
 
 
+def normalize_capture_text(text: str) -> str:
+    """§10 capture 正文归一（D52，2026-09-06）：**保留换行**——多行输入框（D35）
+    敲出的结构要活到卡上，LLM 扩写 / 派发 prompt 看到的是用户排好的行，
+    不是折成一行的糊。规则：CRLF / 孤 CR → LF；每行内部的空白串折成单空格、
+    行尾空白剥掉；行首缩进（**只认空格与 tab**——NBSP / 全角空格 / FF / VT /
+    U+2028 之类照旧折掉）先留着，最后剥掉所有非空行的**公共缩进**、保留相对
+    缩进（嵌套列表 / 贴进来的代码靠它；首行不特殊——`"  - a\\n  - b"` 是两个
+    同级项，不是父子）；连续空行最多留 1 行；首尾空行剥掉。单行输入的公共
+    缩进就是它自己的缩进，结果与旧「全部空白折单空格」逐字相同。"""
+    lines = _capture_lines(text)
+    if lines and not lines[-1]:     # 尾部空行（_capture_lines 已保证最多一个）
+        lines.pop()
+    return "\n".join(_dedent_common(lines))
+
+
+def _indent(line: str) -> str:
+    """行首缩进——只认空格与 tab（其余 Unicode 空白按行内空白折掉）。"""
+    return line[:len(line) - len(line.lstrip(" \t"))]
+
+
+def _capture_lines(text: str) -> list:
+    """normalize_capture_text 第一步：逐行归一（缩进 + 折成单空格的正文），
+    空行只在前一行非空时记一个 ""——于是首部空行天然不进列表、连续空行封顶 1。"""
+    lines: list = []
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        body = " ".join(raw.split())
+        if body:
+            lines.append(_indent(raw) + body)
+        elif lines and lines[-1]:
+            lines.append("")
+    return lines
+
+
+def _dedent_common(lines: list) -> list:
+    """剥掉所有非空行逐字共有的缩进前缀（空格 / tab 混用时只剥真正共有的那段；
+    空行是 ""，切片后仍是 ""）。"""
+    common = os.path.commonprefix([_indent(ln) for ln in lines if ln])
+    return [ln[len(common):] for ln in lines]
+
+
+def capture_title(text: str) -> str:
+    """卡片 ``title`` 恒为单行 ≤80 字（D52）：多行正文折成一行再截——title 是
+    判重 / re-raise 的身份锚（§37 set_title 只改显示名），与 `_norm_title`
+    的空白折叠同口径，同一段话有无换行都判成同一张卡。"""
+    return " ".join(text.split())[:80]
+
+
 def _capture_text(d: Daemon, text) -> Optional[str]:
     """Normalised capture text, or None when the payload must be acked noop."""
     # non-str text is a poison payload (§33 boundary doctrine): coercing it
@@ -352,7 +400,7 @@ def _capture_text(d: Daemon, text) -> Optional[str]:
     if text is not None and not isinstance(text, str):
         d.log(f"inbox: capture with non-string text ({type(text).__name__}) — ignored")
         return None
-    t = " ".join(str(text or "").split()).strip()
+    t = normalize_capture_text(str(text or ""))
     if not t:
         d.log("inbox: capture with empty text — ignored")
         return None
@@ -382,6 +430,12 @@ def apply_capture(d: Daemon, text: Optional[str], mode: Optional[str] = None,
     (title=text, channel=quick_capture, 原话进 sources) -> status=raising, so the
     existing process_raising() expands it (one per pass) into a card_sent
     proposal. Fast: no LLM call here, the poll loop is never blocked.
+
+    §10 追记 D52（2026-09-06）：``text`` 的换行**保留**到 sources 原话与交给
+    ``_capture_proposal`` / ``_capture_direct_run`` 的正文（归一规则见
+    :func:`normalize_capture_text`）；只有 ``title`` 折成单行 ≤80
+    （:func:`capture_title`）。此前全部空白折单空格，多行输入框（D35）的
+    结构在 LLM / agent 看到之前就丢了。
 
     v0.34.0 ``mode="run"`` (the 运行中 lane's second input, CONTRACT §34): the
     SAME minimal card, but instead of the raising→proposal loop it is filed
@@ -427,7 +481,7 @@ def apply_capture(d: Daemon, text: Optional[str], mode: Optional[str] = None,
     run = mode == "run" and owner
     req = Requirement(
         id=registry.next_id(),
-        title=t[:80],
+        title=capture_title(t),     # 单行 ≤80；正文 t 与 sources 原话保留换行（D52）
         type="other",
         tier="T1",
         status=State.DETECTED.value,
