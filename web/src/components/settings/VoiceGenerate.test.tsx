@@ -1,7 +1,8 @@
 // 语气档案「从我的消息生成/更新档案」（CONTRACT §68.1 追记 / §10 voice_generate / §49 generate-status；D47；
 // 原生 Settings.swift runVoiceGen）：按钮 = POST /api/actions {action:"voice_generate"}，当拍换「生成中…」并禁用；
 // 忙着才每 3 s 轮询 GET /api/voice/generate-status；新回执 started_at 变了即交棒；done → 工具那一句（缺席「已生成 ✓」）
-// 且重拉 store.voiceProfile；failed → 错误原文；lost → 一句 + 解锁；90 s 没人接手 → 一句 + 解锁；刷新回来 running 接着忙。
+// 且重拉 store.voiceProfile（挂载时拉到的第一份不算「变了」）；failed → 错误原文；lost → 一句 + 解锁；90 s 没人接手 → 一句 + 解锁；
+// 刷新回来 running 接着忙。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchVoiceGenerateStatus, fetchVoiceProfile, postAction } from "../../api";
@@ -105,6 +106,37 @@ describe("VoiceGenerate", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS * 2); });
     expect(fetchVoiceGenerateStatus).toHaveBeenCalledTimes(3);
     expect(postAction).not.toHaveBeenCalled();
+  });
+
+  it("mounting with a finished job is not a 'change': the profile row is left to VoiceStatus's own fetch", async () => {
+    vi.mocked(fetchVoiceGenerateStatus).mockResolvedValue({ job: job("done", "2026-09-06T12:00:00Z", { message: "old" }) });
+    renderEn();
+    await flush();
+    expect(screen.getByRole("status").textContent).toBe("old");
+    expect(fetchVoiceProfile).not.toHaveBeenCalled();
+    cleanup();
+    vi.mocked(fetchVoiceGenerateStatus).mockResolvedValue({ job: job("failed", "2026-09-06T12:00:00Z", { error: "boom" }) });
+    renderEn();
+    await flush();
+    expect(screen.getByRole("alert").textContent).toBe("boom");
+    expect(fetchVoiceProfile).not.toHaveBeenCalled();
+  });
+
+  it("never ran → click → running → done still refreshes the profile row exactly once", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchVoiceGenerateStatus).mockResolvedValue({ job: null });
+    vi.mocked(postAction).mockResolvedValue({ ok: true });
+    renderEn();
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Generate from my messages" }));
+    await flush();
+    vi.mocked(fetchVoiceGenerateStatus).mockResolvedValue({ job: job("running", "2026-09-06T12:00:00Z") });
+    await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS); });
+    expect(fetchVoiceProfile).not.toHaveBeenCalled();
+    vi.mocked(fetchVoiceGenerateStatus).mockResolvedValue({ job: job("done", "2026-09-06T12:00:00Z", { message: "fresh" }) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS); });
+    expect(screen.getByRole("status").textContent).toBe("fresh");
+    expect(fetchVoiceProfile).toHaveBeenCalledTimes(1);
   });
 
   it("done without a stdout line falls back to Generated ✓; failed shows the error verbatim in orange", async () => {

@@ -253,11 +253,29 @@ def _main(argv: Optional[list[str]] = None,
         help="write the result into state/voice_gen/job.json (the web settings "
              "button's receipt; actd passes this when it spawns the run)")
     args = parser.parse_args(argv)
-    ok, msg = generate(runner=runner)
+    try:
+        ok, msg = generate(runner=runner)
+    except Exception as e:  # noqa: BLE001 — anything generate() did not turn into (False, msg)
+        # --job: the receipt MUST land even when the run crashes (config load, an
+        # ENOSPC/EACCES from the profile write, a non-OSError runner failure…);
+        # otherwise job.json sits at `running` for the whole LOST_AFTER_S budget
+        # with the web button locked. Re-raise so run.log keeps the traceback.
+        if args.job:
+            voice_job.finish(False, _crash_line(e))
+        raise
     print(msg)   # stdout either way — the settings page shows this line verbatim
     if args.job:
         voice_job.finish(ok, msg, str(profile_path()) if ok else None)
     return 0 if ok else 1
+
+
+def _crash_line(e: BaseException) -> str:
+    """One human line for the job receipt when generate() itself raised."""
+    return failures.pick(
+        f"生成过程异常：{type(e).__name__}: {e}。旧档案未改动（详见 state/voice_gen/run.log）。",
+        f"Generation crashed: {type(e).__name__}: {e}. The old profile is untouched "
+        f"(see state/voice_gen/run.log).",
+    )[:300]
 
 
 if __name__ == "__main__":

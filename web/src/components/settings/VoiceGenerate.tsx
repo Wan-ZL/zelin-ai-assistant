@@ -90,9 +90,15 @@ export function VoiceGenerate() {
   useEffect(() => {
     const key = jobKey(job);
     const before = seenKey.current;
+    // 第一份不算「变了」——挂载那一拍 job 还是 null、不算拉到过，哨兵要等第一份真实快照才落位
+    //（否则挂载时的 done 会被当成「刚落成」，白拉一次 /api/voice——VoiceStatus 自己已经拉过）
+    if (before === undefined) {
+      if (job) seenKey.current = key;
+      return;
+    }
     seenKey.current = key;
-    // 第一份不算「变了」；之后任何一次落成 done / failed（含从 running 交棒过来的）→ 「当前生效」行重拉
-    if (before === undefined || before === key || !job) return;
+    // 之后任何一次落成 done / failed（含从 running 交棒过来的）→ 「当前生效」行重拉
+    if (before === key || !job) return;
     if (job.status === "done" || job.status === "failed") void refreshVoiceProfile();
   }, [job]);
 

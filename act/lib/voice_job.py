@@ -13,7 +13,8 @@ server 落 ``{"action": "voice_generate"}``，actd 在 pass 里（``_DETACHED_AC
 
 两个写者、先后接力不重叠：actd 在 spawn **之前**写 ``running``（spawn 失败 → ``failed`` +
 ``error: "launch_failed: …"``）；子进程在 ``generate()`` 之后写 ``done`` / ``failed``（保留
-``started_at``；``message`` = act.voice_gen 打给 stdout 的那一句人话，``error`` = 失败时同一句）。
+``started_at``；``message`` = act.voice_gen 打给 stdout 的那一句人话，``error`` = 失败时同一句；
+``generate()`` 自己抛异常也先写 ``failed`` 再重抛——秒级崩溃不许把台账卡在 running 直到 lost）。
 ``running`` 超过 :data:`LOST_AFTER_S` 仍无回执 = 子进程崩在 import / 被杀——诚实说「丢了」而不是
 永远「生成中」：server 投影 ``lost: true``，actd 也不再把它当正在跑。同一时刻只跑一份：running
 且未过期时新的请求 = noop（原生 ``guard !voiceGenRunning``），两份 claude 同时改写档案没有好结果。

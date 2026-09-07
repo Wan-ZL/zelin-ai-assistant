@@ -216,6 +216,35 @@ class VoiceGenJobFlagTestCase(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(voice_job.load())
 
+    def test_job_flag_records_failed_when_generate_itself_crashes(self):
+        # generate() raising (not returning (False, msg)) must still land a receipt —
+        # otherwise job.json sits at running for the whole 15-min lost budget with the
+        # web button locked. The exception still propagates so run.log keeps the traceback.
+        started = voice_job.mark_running()["started_at"]
+
+        def boom(prompt):
+            raise RuntimeError("runner exploded")
+
+        with self.assertRaises(RuntimeError):
+            self._run(["--job"], boom)
+        job = voice_job.load()
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["started_at"], started)
+        self.assertIsNotNone(job["finished_at"])
+        self.assertIn("RuntimeError", job["error"])
+        self.assertIn("runner exploded", job["error"])
+        self.assertLessEqual(len(job["error"]), 300)
+        self.assertIsNone(job["profile_path"])
+        self.assertFalse(voice_job.is_running(job))
+
+    def test_without_the_flag_a_crash_leaves_the_ledger_alone(self):
+        def boom(prompt):
+            raise RuntimeError("runner exploded")
+
+        with self.assertRaises(RuntimeError):
+            self._run([], boom)
+        self.assertIsNone(voice_job.load())
+
 
 class InboxWriterTestCase(unittest.TestCase):
     """server 入站面：``{action}`` 一个键，其余零容忍；golden ``voice_generate`` 由 test_server_actions 逐字节判。"""
