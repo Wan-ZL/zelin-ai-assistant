@@ -209,6 +209,25 @@ enum LaunchAtLogin {
         }
     }
 
+    /// 向导终章「登录时自动启动」行**能不能提供 / 动手**（D39，快照键 `launch_at_login_available`）：原生
+    /// `Onboarding.registerLaunchAtLoginDefault` 的安装位置守卫——有 bundle id（bare binary 不算）∧ bundle 装在
+    /// `/Applications/` 或 `~/Applications/` 下。从 build 目录跑的开发版不许默认注册：登录项会钉住一个临时路径。
+    /// 关于区的手动开关（`set`）**不**走这道守卫（原生也不走）；这只管向导默认勾选那一下。
+    static var isAvailable: Bool {
+        guard Bundle.main.bundleIdentifier != nil else { return false }
+        return isInstalledBundle(path: Bundle.main.bundlePath, home: NSHomeDirectory())
+    }
+
+    /// 纯判定（判例 shell/tests/LaunchHarness.swift）：`path` 以 `/Applications/` 或 `<home>/Applications/` 开头。
+    /// `home` 尾部的 `/` 容忍；空 home 不会把 `/Applications/` 之外的路径放进来。
+    nonisolated static func isInstalledBundle(path: String, home: String) -> Bool {
+        if path.hasPrefix("/Applications/") { return true }
+        var base = home
+        while base.hasSuffix("/") { base.removeLast() }
+        guard !base.isEmpty else { return false }
+        return path.hasPrefix(base + "/Applications/")
+    }
+
     /// 本次进程是不是 loginwindow 作为登录项拉起的（D38，LaunchPolicy 的第二个输入）：
     /// 启动 Apple Event 是 `oapp`（kAEOpenApplication）且其 `keyAEPropData` 属性是枚举
     /// `keyAELaunchedAsLogInItem`（'lgit'）——Apple 文档给登录项的判法，SMAppService.mainApp

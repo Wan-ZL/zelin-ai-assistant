@@ -64,6 +64,11 @@ func run() {
               "permissions.\(key) ∈ granted|denied|unknown", "got \(value)")
     }
     check(snap["launch_at_login"] is Bool, "launch_at_login is bool")
+    // §28 追记 add-only (D39): the wizard finale's 「登录时自动启动」 row is offered only when the shell
+    // reports an installed bundle; this harness is a bare CLI tool, so the key is present and false.
+    check(snap["launch_at_login_available"] is Bool, "launch_at_login_available is bool")
+    check(snap["launch_at_login_available"] as? Bool == false,
+          "launch_at_login_available is false for a bare binary (no bundle id / not under /Applications)")
     check((snap["hotkey"] as? String)?.isEmpty == false, "hotkey label present")
     // §61.1 追记 add-only keys (parity batch shell-recording-bridge): typed, never absent
     check(rec["self_heal_note"] is String, "recording.self_heal_note is a string")

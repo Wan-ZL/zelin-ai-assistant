@@ -18,6 +18,9 @@
 // NSAppleEventDescriptors (oapp + keyAELaunchedAsLogInItem is the only true cell).
 // The failure-alert timing (defer the connect-failure NSAlert on a background launch
 // until the window is first shown) is LaunchPolicy.failureAlertTiming, pinned in [6].
+// [7] pins LaunchAtLogin.isInstalledBundle — the D39 predicate behind the snapshot key
+// `launch_at_login_available` (the wizard finale offers 「登录时自动启动」 only for a bundle
+// installed under /Applications or ~/Applications; CONTRACT §28 追记).
 
 import Foundation
 
@@ -124,6 +127,32 @@ func run() {
           "auto-deploy relaunch (argv flag) → defer as well; reason does not matter")
     check(LaunchPolicy.failureAlertTiming(presentation: bg, boardVisible: true) == T.now,
           "background launch but the owner has since brought the window up → now")
+
+    // ---- 7. D39: the wizard finale's 「登录时自动启动」 row is offered only for an installed bundle ----
+    // Native Onboarding.registerLaunchAtLoginDefault guarded on /Applications or ~/Applications so a dev
+    // build never pins its temporary path as a login item; the shell reports the same predicate as the
+    // add-only snapshot key `launch_at_login_available` (CONTRACT §28 追记).
+    print("[7] installed bundle (launch_at_login_available):")
+    let home = "/Users/zelin"
+    func installed(_ path: String, home: String = home) -> Bool {
+        LaunchAtLogin.isInstalledBundle(path: path, home: home)
+    }
+    check(installed("/Applications/Zelin's AI Assistant.app"), "/Applications/<bundle> → available")
+    check(installed("/Users/zelin/Applications/Zelin's AI Assistant.app"),
+          "~/Applications/<bundle> → available (AIASSISTANT_UI_APPS_DIR installs, fresh-install CI)")
+    check(installed("/Users/zelin/Applications/Zelin's AI Assistant.app", home: home + "/"),
+          "trailing slash on home tolerated")
+    check(!installed("/Volumes/Storage/repo/shell/build/Zelin's AI Assistant.app"),
+          "build directory (dev build) → not available")
+    check(!installed("/Users/other/Applications/Zelin's AI Assistant.app"),
+          "another user's ~/Applications → not available (only this home counts)")
+    check(!installed("/ApplicationsX/Zelin's AI Assistant.app"),
+          "prefix must be the directory `/Applications/`, not a sibling name")
+    check(installed("/Applications/Zelin's AI Assistant.app", home: ""),
+          "empty home still accepts /Applications/ itself")
+    check(!installed("/tmp/Zelin's AI Assistant.app", home: ""),
+          "empty home does not widen the rule to a bare `/Applications/` suffix match")
+    check(!installed(""), "empty path → not available")
 }
 
 run()

@@ -409,6 +409,7 @@ const shellState: ShellState = {
   captions: { available: true, on: true, engine: "doubao", paused: true, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: true, translate_direction: "auto", apple_locale: "zh", ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7 },
   permissions: { screen: "granted", microphone: "unknown", notifications: "granted", vault: "unknown" },
   launch_at_login: true,
+  launch_at_login_available: true, // 正式安装（/Applications）——向导终章「登录时自动启动」行以可用态渲染（D39）
   hotkey: "⌃⌥Space",
   language: "en",
 };

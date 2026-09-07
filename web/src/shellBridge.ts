@@ -109,6 +109,10 @@ export interface ShellState {
   captions: ShellCaptionsState;
   permissions: ShellPermissionsState;
   launch_at_login: boolean;
+  // §28 追记 add-only（D39；normalize 补默认 false——老壳缺席 = 不提供）：向导终章「登录时自动启动」行能不能提供 / 动手
+  // = 壳是 /Applications（或 ~/Applications）里的正式安装 ∧ 有 bundle id；开发版 / bare binary 为 false（登录项会钉住临时路径）。
+  // 只管向导那一下默认勾选；关于区的手动开关（LaunchAtLoginRow）不看它，与原生一致。
+  launch_at_login_available?: boolean;
   hotkey: string;              // 全局快速捕获快捷键的人话（如 "⌃⌥Space"）
   language?: string;
 }
@@ -256,6 +260,7 @@ export function normalizeShellState(raw: unknown): ShellState {
       screen_requested: asBool(perm.screen_requested),
     },
     launch_at_login: asBool(obj.launch_at_login),
+    launch_at_login_available: asBool(obj.launch_at_login_available),
     hotkey: asString(obj.hotkey, "⌃⌥Space"),
     ...(typeof obj.language === "string" ? { language: obj.language } : {}),
   };
