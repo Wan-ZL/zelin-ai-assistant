@@ -20,6 +20,7 @@
 //   · 问问助手（screen `ask`，17 条）自 D29 起在清单归属表里 retired、只列不判——web 没有这一面。
 // scripts/ui/parity_check.py 以 --reporter=json 跑本文件、按 it 标题读判决；两边读同两本账本，
 // 判决一致。双语都要命中（原生 L("zh","en") 是逐字规格，PR #143「逐字镜像」同理）。
+import type { ReactElement } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -658,7 +659,7 @@ function clickEverything(root: ParentNode, pool: Set<string>, searches = false, 
   collectLabels(document.body, pool);
 }
 
-const PAGES: Record<Surface, () => JSX.Element> = {
+const PAGES: Record<Surface, () => ReactElement> = {
   board: () => <BoardPage />,
   trash: () => <TrashPage />,
   settings: () => <SettingsPage />,

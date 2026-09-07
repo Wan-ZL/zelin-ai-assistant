@@ -1,4 +1,4 @@
-"""`.github/dependabot.yml` 成立且 vite 工具链成组（CONTRACT §54 依赖澄清、§56.8、§70.3 ⑪ 判例）。
+"""`.github/dependabot.yml` 成立且 vite 工具链、react 四包各自成组（CONTRACT §54 依赖澄清、§56.8、§70.3 ⑪ 判例）。
 
 七项 required check 里没有一项解析这个文件：Lint 只跑 shellcheck + ruff，qlty 的
 actionlint / zizmor 只管 workflows。一个拼错的键（`patterns` → `pattern`）或缩进
@@ -15,6 +15,12 @@ dependabot 的 JSON schema 校验器，键名白名单抄 GitHub 文档）：
     「QA gates」在装依赖时就红（判例 #197，vite 6→8）；web/package.json 里今天在装的
     vite / @vitejs/plugin-react / vitest 都被 pattern 覆盖（组不是空转），运行时依赖
     react / react-dom 不在组里；
+  - npm 面 `groups.react.patterns` = react / react-dom / @types/react / @types/react-dom
+    四个字面名（不带通配，`react-*` 会把无关包卷进来）：react-dom 与 @types/react-dom 的
+    peer 钉死同 major 的 react / @types/react，半截 bump 同样在 `npm ci` 那一步 ERESOLVE
+    （判例 #115 只抬 react 侧、#199 只抬 react-dom 侧，各红一次；owner 关 #115 时的要求
+    是「四包同 PR 落」）；两个运行时依赖 + 两个类型包都被覆盖，其余 dev 工具链不在组里；
+    两组互不相交（一个包落进两个组 GitHub 只认先声明的那个，另一组静默少一包）；
   - 分组不关掉任何更新：npm 面无 `ignore` / `allow`，组不带 `applies-to`（只管
     version updates，security updates 不受影响）；
   - 检查器本身不是空转：拼错键与错层键的阴性对照必须被抓到。
@@ -46,6 +52,8 @@ GROUP_KEYS = {"applies-to", "dependency-type", "patterns", "exclude-patterns", "
 COMMIT_MESSAGE_KEYS = {"prefix", "prefix-development", "include"}
 
 VITE_TOOLCHAIN_PATTERNS = ["vite", "@vitejs/*", "vitest", "@vitest/*"]
+# 四个字面名、不带通配：`react*` 会把 @testing-library/react 之类无关包卷进同一个 PR
+REACT_PATTERNS = ["react", "react-dom", "@types/react", "@types/react-dom"]
 
 
 def _load():
@@ -126,38 +134,92 @@ class ShapeTestCase(unittest.TestCase):
             self.assertEqual(entry["labels"], ["dependencies"])
 
 
-class ViteToolchainGroupTestCase(unittest.TestCase):
+def _grouped(group, name):
+    return any(fnmatch.fnmatchcase(name, p) for p in group["patterns"])
+
+
+class GroupsTestCase(unittest.TestCase):
+    """npm 面恰好两组：vite-toolchain（#245）与 react（#265），别无其他。"""
+
     def setUp(self):
         self.npm = _entry(_load(), "npm")
-        self.group = self.npm["groups"]["vite-toolchain"]
 
-    def test_group_patterns_are_exactly_the_vite_toolchain(self):
-        self.assertEqual(self.npm["groups"], {"vite-toolchain": {"patterns": VITE_TOOLCHAIN_PATTERNS}})
+    def test_groups_are_exactly_vite_toolchain_and_react(self):
+        self.assertEqual(self.npm["groups"], {
+            "vite-toolchain": {"patterns": VITE_TOOLCHAIN_PATTERNS},
+            "react": {"patterns": REACT_PATTERNS},
+        })
 
-    def test_group_covers_the_installed_toolchain_and_nothing_at_runtime(self):
+    def test_groups_are_disjoint_over_the_installed_packages(self):
+        # 一个包命中两个组时 GitHub 只把它算进先声明的那个——另一组会静默少一包、peer 又对不上
         pkg = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
-        dev = pkg["devDependencies"]
-
-        def grouped(name):
-            return any(fnmatch.fnmatchcase(name, p) for p in self.group["patterns"])
-
-        for name in ("vite", "@vitejs/plugin-react", "vitest"):
-            self.assertIn(name, dev, "%s left web/package.json — refit the vite-toolchain group" % name)
-            self.assertTrue(grouped(name), "%s no longer matches the vite-toolchain patterns" % name)
-        for name in pkg["dependencies"]:
-            self.assertFalse(grouped(name), "runtime dependency %s must not ride the toolchain group" % name)
-        # the rest of the dev toolchain keeps its own PRs
-        for name in ("typescript", "jsdom", "@testing-library/react", "@playwright/test", "axe-core"):
-            self.assertIn(name, dev)
-            self.assertFalse(grouped(name), "%s is not vite toolchain" % name)
+        for name in list(pkg["dependencies"]) + list(pkg["devDependencies"]):
+            hits = [g for g, rules in self.npm["groups"].items() if _grouped(rules, name)]
+            self.assertLessEqual(len(hits), 1, "%s matches more than one group: %s" % (name, hits))
 
     def test_grouping_disables_no_update(self):
         # grouping only changes PR shape: no ignore / allow filters, no applies-to
         # (security updates keep their own path, non-matching packages keep single PRs)
         self.assertNotIn("ignore", self.npm)
         self.assertNotIn("allow", self.npm)
-        self.assertNotIn("applies-to", self.group)
-        self.assertNotIn("exclude-patterns", self.group)
+        for name, group in self.npm["groups"].items():
+            self.assertNotIn("applies-to", group, name)
+            self.assertNotIn("exclude-patterns", group, name)
+
+
+class ViteToolchainGroupTestCase(unittest.TestCase):
+    def setUp(self):
+        self.npm = _entry(_load(), "npm")
+        self.group = self.npm["groups"]["vite-toolchain"]
+
+    def test_group_covers_the_installed_toolchain_and_nothing_at_runtime(self):
+        pkg = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
+        dev = pkg["devDependencies"]
+
+        for name in ("vite", "@vitejs/plugin-react", "vitest"):
+            self.assertIn(name, dev, "%s left web/package.json — refit the vite-toolchain group" % name)
+            self.assertTrue(_grouped(self.group, name), "%s no longer matches the vite-toolchain patterns" % name)
+        for name in pkg["dependencies"]:
+            self.assertFalse(_grouped(self.group, name), "runtime dependency %s must not ride the toolchain group" % name)
+        # the rest of the dev toolchain keeps its own PRs
+        for name in ("typescript", "jsdom", "@testing-library/react", "@playwright/test", "axe-core"):
+            self.assertIn(name, dev)
+            self.assertFalse(_grouped(self.group, name), "%s is not vite toolchain" % name)
+
+
+class ReactGroupTestCase(unittest.TestCase):
+    """react 四包一个 PR（#115 / #199 各半截 bump 红过一次；owner：「四包同 PR 落」）。"""
+
+    def setUp(self):
+        self.npm = _entry(_load(), "npm")
+        self.group = self.npm["groups"]["react"]
+
+    def test_group_covers_both_runtime_deps_and_both_type_packages(self):
+        pkg = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(pkg["dependencies"]), ["react", "react-dom"], "runtime whitelist moved — refit the react group")
+        for name in pkg["dependencies"]:
+            self.assertTrue(_grouped(self.group, name), "%s must ride the react group" % name)
+        for name in ("@types/react", "@types/react-dom"):
+            self.assertIn(name, pkg["devDependencies"], "%s left web/package.json — refit the react group" % name)
+            self.assertTrue(_grouped(self.group, name), "%s must ride the react group" % name)
+
+    def test_group_is_literal_names_and_takes_nothing_else(self):
+        pkg = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
+        for pattern in self.group["patterns"]:
+            self.assertFalse(any(ch in pattern for ch in "*?["), "react group must list literal names, got %r" % pattern)
+        # @testing-library/react / @vitejs/plugin-react carry "react" in the name but peer on it, not with it
+        for name in pkg["devDependencies"]:
+            if name in ("@types/react", "@types/react-dom"):
+                continue
+            self.assertFalse(_grouped(self.group, name), "%s is not one of the four react packages" % name)
+
+    def test_installed_react_majors_agree(self):
+        # the very failure the group prevents: the four installed majors must already agree today
+        pkg = json.loads(WEB_PACKAGE_JSON.read_text(encoding="utf-8"))
+        ranges = dict(pkg["dependencies"])
+        ranges.update(pkg["devDependencies"])
+        majors = {name: ranges[name].lstrip("^~").split(".")[0] for name in REACT_PATTERNS}
+        self.assertEqual(len(set(majors.values())), 1, "react four-pack majors disagree: %s" % majors)
 
 
 class CheckerBitesTestCase(unittest.TestCase):
