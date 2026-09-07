@@ -16,8 +16,10 @@
 // SettingsFold 里（区头 = aria-expanded 按钮，正文常挂载、折叠时 hidden——草稿与搜索干草都不丢）；默认展开 通用 / 依赖检查 /
 // 录制 / 实时字幕（settingsFolds.DEFAULT_EXPANDED_SECTIONS），其余折叠；记忆 = store.expandedSettingsSections ↔ localStorage
 // settings.expandedSections；搜索命中的区强制展开（toggle 禁用、记忆不动）；?anchor= / #settings-<id> 深链与目录点击 expand
-// 并记住；目录条目 data-expanded 反映状态。锚点 `#settings-<id>` 落在 fold 壳上（永远可见，折着也滚得到）。
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+// 并记住；目录条目 data-expanded 反映状态。锚点 `#settings-<id>` 落在 fold 壳上（永远可见，折着也滚得到）。深链锚点挂载时
+// 只读一次、读完就从 URL 上摘掉（route.withoutSettingsAnchor）：rail 的 buildAppUrl 原样带着 query / hash 去别页再回来，不摘
+// 就每次回设置页都重新展开 + 记住 + 滚动，把用户手动折起的区又翻开；目录点击自己滚（preventDefault），不留 hash。
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { CaptionsSection } from "../components/settings/CaptionsSection";
@@ -43,7 +45,7 @@ import { SlackSection } from "../components/settings/SlackSection";
 import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
-import { buildAppUrl, readSettingsAnchor } from "../route";
+import { buildAppUrl, readSettingsAnchor, withoutSettingsAnchor } from "../route";
 import { expandSettingsSection, toggleSettingsSection, useAppState } from "../store";
 import type { SecretsStatus, SettingsCatalog } from "../types";
 
@@ -120,10 +122,22 @@ export function sectionHaystack(id: string, rendered: string, catalog: SettingsC
 /** 每区的 fold 壳（SettingsFold：id `settings-<id>`、data-section=<id>）——搜索过滤 / 晚到正文观察都以它为单位 */
 const SECTION_SELECTOR = ".settings-page > .settings-fold";
 
-/** `#settings-<id>` 片段（目录点击留下的 / §68.15 的 `?page=settings#settings-sync` 深链）→ 目录里的 id；其它形当没有 */
+/** `#settings-<id>` 片段（§68.15 的 `?page=settings#settings-sync` 深链 / 目录条目的 href 被新标签打开）→ 目录里的 id；其它形当没有 */
 export function readHashSection(hash: string): string | null {
   const match = /^#settings-([a-z0-9_-]{1,40})$/i.exec(hash);
   return match && SETTINGS_TOC.some((entry) => entry.id === match[1]) ? match[1] : null;
+}
+
+/** 深链要落的区：?anchor= 优先（含 ?page=deps / diagnostics 旧深链），其次 #settings-<id> 片段；挂载时读一次 */
+function readDeepLinkSection(): string | null {
+  return readSettingsAnchor(window.location.search) ?? readHashSection(window.location.hash);
+}
+
+/** 滚到一区的 fold 壳（永远可见，折着也滚得到；壳上的 scroll-margin-top 留出顶栏） */
+function scrollToFold(id: string): HTMLElement | null {
+  const el = document.getElementById(`settings-${id}`);
+  el?.scrollIntoView({ block: "start" });
+  return el;
 }
 
 /** 原生 Settings.swift 顶部的搜索框（⌘F 聚焦）：逐区按双语干草过滤，全不匹配时说「无匹配设置」 */
@@ -191,6 +205,14 @@ export function SettingsPage() {
     else event.currentTarget.blur();
   }
 
+  // 目录条目：展开并记住，再滚到壳；不让浏览器导航到 #settings-<id>（留下的 hash 会在下次挂载时被当深链重放）
+  function onTocClick(event: ReactMouseEvent<HTMLAnchorElement>, id: string) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    expandSettingsSection(id);
+    scrollToFold(id);
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "f") {
@@ -202,20 +224,21 @@ export function SettingsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）与 #settings-<id> 片段：section 挂载后
-  // 强制展开（并记住——原生 expandAnchorIfPending 的 collapse.expand）、滚过去并高亮一下；server 目录到达会把上方的目录驱动区
-  // （通用…）从占位撑成全高、把目标区顶出视口——目录落地后再对准一次
+  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）与 #settings-<id> 片段：挂载时读一次
+  // （之后 URL 上的锚点就摘掉——只消费一次，rail 来回不重放）；section 挂载后强制展开（并记住——原生 expandAnchorIfPending 的
+  // collapse.expand）、滚过去并高亮一下；server 目录到达会把上方的目录驱动区（通用…）从占位撑成全高、把目标区顶出视口——目录
+  // 落地后再对准一次。高亮记在 data-anchored（React 不管的属性）：壳的 className 随 expand 重渲时会把 imperative 加的 class 抹掉
+  const [anchor] = useState(readDeepLinkSection);
   useEffect(() => {
-    const anchor = readSettingsAnchor(window.location.search) ?? readHashSection(window.location.hash);
     if (!anchor) return undefined;
-    const el = document.getElementById(`settings-${anchor}`);
-    if (!el) return undefined;
+    window.history.replaceState(window.history.state, "", withoutSettingsAnchor(window.location.href).toString());
     if (SETTINGS_TOC.some((entry) => entry.id === anchor)) expandSettingsSection(anchor);
-    el.scrollIntoView({ block: "start" });
-    el.classList.add("is-anchored");
-    const timer = window.setTimeout(() => el.classList.remove("is-anchored"), 2500);
+    const el = scrollToFold(anchor);
+    if (!el) return undefined;
+    el.dataset.anchored = "";
+    const timer = window.setTimeout(() => { delete el.dataset.anchored; }, 2500);
     return () => window.clearTimeout(timer);
-  }, [catalogReady]);
+  }, [anchor, catalogReady]);
 
   return (
     <main className="settings-page">
@@ -240,14 +263,15 @@ export function SettingsPage() {
         {query && <button type="button" className="btn btn-quiet" onClick={() => setQuery("")}>{text("清除", "Clear")}</button>}
         {query && shown === 0 && <span className="settings-helper">{text("无匹配设置", "No matching settings")}</span>}
       </div>
-      {/* 目录反映开合（data-expanded；搜索期间一律 true）；点条目 = 深链语义：展开并记住，再由浏览器滚到 #settings-<id>（fold 壳永远可见） */}
+      {/* 目录反映开合（data-expanded；搜索期间一律 true）；点条目 = 深链语义：展开并记住、滚到 fold 壳（永远可见）——自己滚、不让浏览器
+          留下 #settings-<id>（否则 rail 来回时当深链重放）；带修饰键的点击（新标签 / 新窗口）交给浏览器，新标签里由片段深链自己展开 */}
       <nav className="settings-toc" aria-label={text("设置目录", "Settings sections")}>
         {SETTINGS_TOC.map((entry) => (
           <a
             key={entry.id}
             href={`#settings-${entry.id}`}
             data-expanded={searchActive || expandedSettingsSections.has(entry.id)}
-            onClick={() => expandSettingsSection(entry.id)}
+            onClick={(event) => onTocClick(event, entry.id)}
           >
             {language === "zh" ? entry.zh : entry.en}
           </a>

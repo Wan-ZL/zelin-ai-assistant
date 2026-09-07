@@ -414,7 +414,8 @@
   scroll-margin-top: 64px; /* ?anchor= / #settings-<id> 滚到某区时留出顶栏（sticky 52px + 过滤条）的高度 */
 }
 
-.settings-fold.is-anchored {
+/* ?anchor= / #settings-<id> 深链落地后的高亮（2.5s；SettingsPage 写 data-anchored——React 不管的属性，壳的 className 随 expand 重渲不会抹掉它） */
+.settings-fold[data-anchored] {
   outline: 2px solid var(--accent-soft);
 }
 

@@ -75,6 +75,15 @@ export function buildSettingsUrl(href: string, anchor: string): URL {
   return url;
 }
 
+/** 摘掉设置页深链的锚点（`?anchor=` 与 `#settings-<id>` 片段；`?page=` 不动）：设置页挂载读过一次锚点就 replaceState 成这个形——
+ *  buildAppUrl 走 `new URL(href)`、原样带着 query 与 hash 去别页再回来，不摘就每次回到设置页都重新展开 + 记住 + 滚动（D44，§68.1 追记） */
+export function withoutSettingsAnchor(href: string): URL {
+  const url = new URL(href);
+  url.searchParams.delete(ANCHOR_QUERY_PARAM);
+  if (url.hash.startsWith("#settings-")) url.hash = "";
+  return url;
+}
+
 /** 整页导航（向导完成 / 重跑向导 / 壳命令回看板）：集中一处便于测试替身；replace=true 不进历史栈 */
 export function navigate(url: URL | string, replace = false): void {
   const href = url.toString();
