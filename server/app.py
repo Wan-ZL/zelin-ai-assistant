@@ -43,6 +43,10 @@
   /api/radars/reinstall {source}（= bash install.sh --reinstall-agent <label>），
   server/radars.py；目录字段的 POST /api/folders/{open,create} {key}（路径由
   server 从设置目录读，§68.1），server/folders.py。
+- telemetry（§15 / §16，D48 / D49）：POST /api/telemetry/consent-shown {}（consent 门
+  标记 write-once，server/telemetry_consent.py）、POST /api/analytics {event[, fields]}
+  （server 白名单内的两个 web 事件经 act.lib.analytics 落同一份 events.jsonl，
+  server/analytics_ingest.py）。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
@@ -63,13 +67,14 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (about, ai_fix_launch, board_source, claude_sessions,
-                    diagnostics, display, doctor_run, failure_catalog, files,
-                    folders, health, inbox_writer, ingest_run, lanes,
-                    maintainer_launch, material_box, mcp_servers, notify_catalog,
-                    paths, permissions, radars, recaps, repair, secrets_store,
-                    security, self_improve_lane, settings, settings_catalog,
-                    setup, slack_directory, slack_manifest, sync_pairing,
+from server import (about, ai_fix_launch, analytics_ingest, board_source,
+                    claude_sessions, diagnostics, display, doctor_run,
+                    failure_catalog, files, folders, health, inbox_writer,
+                    ingest_run, lanes, maintainer_launch, material_box,
+                    mcp_servers, notify_catalog, paths, permissions, radars,
+                    recaps, repair, secrets_store, security, self_improve_lane,
+                    settings, settings_catalog, setup, slack_directory,
+                    slack_manifest, sync_pairing, telemetry_consent,
                     terminal_launch, uninstall_launch, voice_profile)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
@@ -618,6 +623,10 @@ _POST_JSON_ROUTES = {
     # §68.15 同步 / 配对：起 act.syncd --pair --json / --disable（syncd 是 state/sync 的唯一写者）
     "/api/sync/pair": lambda ctx, payload: sync_pairing.pair(ctx.home, payload),
     "/api/sync/disable": lambda ctx, payload: sync_pairing.disable(ctx.home, payload),
+    # §15 consent 门标记（D49）：向导「完成」/ 披露块保存后 write-once 落 state/telemetry_consent_shown(+_v2)
+    "/api/telemetry/consent-shown": lambda ctx, payload: telemetry_consent.mark_shown(ctx.home, payload),
+    # §16 web 极简 analytics（D48）：server 白名单 {wizard_complete, pipeline_repair_result} → act.lib.analytics.log_event
+    "/api/analytics": lambda ctx, payload: analytics_ingest.ingest(payload),
 }
 
 _POST_PREFIX_ROUTES = {

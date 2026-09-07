@@ -112,6 +112,19 @@ v0.48 首启页新增一个**默认未勾选**的「分享输入文本以帮助�
 v0.14 从产品移除（发射端不复存在），维护者项目中已上传的历史数据仍然存在；
 字段语义同上表，仅作解读旧数据用。
 
+**web 看板的 UI 事件（2026-09-06，owner 决策 D48；CONTRACT §16 追记）**：原生 Mac app
+退役后，它从向导 / 权限 / 诊断漏斗发的 UI 事件（`wizard_*` / `mw_*` / `permissions_*` /
+`diag_*` / `pipeline_repair` 等）**不再有发射端**——web 看板只恢复下面两条、且事件名与
+字段由 **server 白名单**（`server/analytics_ingest.py`）裁定，客户端传不进任何自由文本；
+经 `act.lib.analytics.log_event` 落同一份 `events.jsonl`，`features.analytics` 与上传门
+原样适用。其余原生 UI 事件既未恢复也未退役（要恢复先加白名单）。
+
+| 事件 / 字段 | 端 | 内容 |
+|-------------|----|------|
+| `wizard_complete{via:"web"}` | web | 首次运行向导点了「完成」（原生 SetupWizard 同名事件）；无其它字段 |
+| `pipeline_repair_result{ok,via:"web"}` | web | 横幅 / 向导「一键修复」的下场：`ok` = 15 秒内后台服务的数据重新更新了（原生 Doctor.swift 同名事件）；被 server 拒绝或超时都是 `false` |
+| `via` | web | 常量 `"web"`——把 web 看板发的这两条与原生 app 的同名历史事件分开 |
+
 ### `capture_input`（**默认关，v0.48 起 opt-in**）——你输入的文本
 
 `telemetry.capture_input: true` **且** `telemetry.level: detailed`（level 出厂
@@ -208,22 +221,26 @@ no-op，不必删除。
 三者**全部缺席**时，`act.analytics_sync` 什么都不上传，只在日志里写一行
 "waiting for first-run consent surface"：
 
-1. 标记文件 `state/telemetry_consent_shown`——App「权限体检」页/设置向导第一次
-   **展示**「匿名使用统计」披露行时写入（内容为时间戳），与你是否点开设置无关；
+1. 标记文件 `state/telemetry_consent_shown`——内容为首次展示的时间戳，与你是否点开
+   设置无关。**谁写它（2026-09-06 起，owner 决策 D49；CONTRACT §15 追记）**：web 看板
+   在两个显式动作上请本机 server 写入（`POST /api/telemetry/consent-shown`，只写一次）：
+   首次运行向导点「完成」（向导第 3 步就是那块披露），或权限体检 / 向导里披露块下的
+   「分享输入文本」勾选框保存成功后。页面打开、切页都不写。原生 Mac app 时代它由
+   披露行进入视口时写；退役后曾经没人写——那段时间的新装机什么都没上传过；
 2. config.yaml 里显式写了 `telemetry:` 块（显式配置 = 知情同意）；
 3. `state/settings_overrides.json` 里有 telemetry 键（在 App 里动过开关）。
 
-也就是说：哪怕 install.sh 已经装好 cron，在你第一次看到披露界面（或显式配置过
-telemetry）之前，不会有任何事件离开本机。
+也就是说：哪怕 install.sh 已经装好 cron，在你第一次走完向导（或动过 telemetry 开关、
+或显式配置过 telemetry）之前，不会有任何事件离开本机。
 
 **内容 consent（v0.48 修订，只认显式落键）**：输入文本字段除双开关外，
 唯一被接受的同意来源是 `telemetry.capture_input` 被**显式**写进
 config.yaml / overrides——首启页勾选「分享输入文本以帮助改进产品」或设置页
 「上传我输入的文本」开关被亲手切动过一次即会显式落键，且此后不会被无关保存
 diff 掉。历史的 v2 标记文件 `state/telemetry_consent_shown_v2`（v0.18 引入，
-首启披露块渲染时写）仍会写入，但**只是「披露展示过」的记录**——它单独存在
-**不再**打开内容收集（看到披露 ≠ 同意）。设置页**不会**被动写标记（页面打开
-不等于那一节真的被看到）。从 v0.48 之前升级上来的安装：行为遥测照旧流动，
+首启披露块渲染时写；2026-09-06 起与 v1 同一次 server 写入落下）仍会写入，但**只是
+「披露展示过」的记录**——它单独存在**不再**打开内容收集（看到披露 ≠ 同意）。
+设置页**不会**被动写标记（页面打开不等于那一节真的被看到）。从 v0.48 之前升级上来的安装：行为遥测照旧流动，
 但如果你从没亲手落过 capture_input 键，**内容一个字都不会再上传**，直到你
 勾选/开启一次（`act/lib/analytics.content_gate`，测试锁死）。
 

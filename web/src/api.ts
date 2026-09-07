@@ -7,10 +7,12 @@
 import type {
   AboutInfo,
   AiFixReceipt,
+  AnalyticsReceipt,
   Board,
   CardDetail,
   ClaudeCodeDefault,
   ClaudeCodeDefaultWrite,
+  ConsentShownReceipt,
   DisplaySettings,
   DisplaySettingsPatch,
   ClaudeSessionsScan,
@@ -52,6 +54,7 @@ import type {
   SetupSnapshot,
   TerminalReceipt,
   UpdateCheckResult,
+  WebAnalyticsEvent,
 } from "./types";
 
 interface ApiErrorBody {
@@ -555,4 +558,15 @@ export function postFolderOpen(key: string): Promise<FolderReceipt> {
 /** POST /api/folders/create {key} — 目录字段「创建」/「创建文件夹」：mkdir -p（任务工作目录另 git init）（§68.1） */
 export function postFolderCreate(key: string): Promise<FolderReceipt> {
   return request<FolderReceipt>("/api/folders/create", { method: "POST", body: JSON.stringify({ key }) });
+}
+
+/** POST /api/telemetry/consent-shown {} — consent 门标记 write-once（§15，D49）；调用点见 telemetry.ts（永不在挂载时调） */
+export function postTelemetryConsentShown(): Promise<ConsentShownReceipt> {
+  return request<ConsentShownReceipt>("/api/telemetry/consent-shown", { method: "POST", body: JSON.stringify({}), keepalive: true });
+}
+
+/** POST /api/analytics {event[, fields]} — web 极简事件（server 白名单裁事件名与字段；§16 gate 在 server 侧，D48） */
+export function postAnalytics(event: WebAnalyticsEvent, fields?: Record<string, boolean>): Promise<AnalyticsReceipt> {
+  const body = fields && Object.keys(fields).length > 0 ? { event, fields } : { event };
+  return request<AnalyticsReceipt>("/api/analytics", { method: "POST", body: JSON.stringify(body), keepalive: true });
 }

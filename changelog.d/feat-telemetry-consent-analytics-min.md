@@ -1,0 +1,3 @@
+type: fixed
+- **telemetry consent 门的标记文件终于有人写了（owner 决策 D49；CONTRACT §15 追记）**：原生 Mac app 退役后没人再写 `state/telemetry_consent_shown`，新装机的每小时 sync 一直静默跳过、什么都没上传。现在 web 看板在两个显式动作上请本机 server 写一次（`POST /api/telemetry/consent-shown`，write-once，v1 + v2 一起）：首次运行向导点「完成」，或披露块下「分享输入文本」勾选框保存成功后；页面打开 / 切页一律不写。标记语义不变——只记「披露出现过」，不代表同意上传输入文本。
+- **web 看板恢复两条元数据级 analytics 事件（owner 决策 D48；CONTRACT §16 追记）**：`wizard_complete`（向导「完成」）与 `pipeline_repair_result{ok}`（「一键修复」的成败）经 `POST /api/analytics` 落进既有的 `state/analytics/events.jsonl`——事件名与字段由 server 白名单裁定（白名单外 400），页面传不进任何自由文本；`features.analytics` gate、上传门都原样适用，gate 关着时回执 `logged:false`。原生 app 时代的其余 UI 事件没有恢复。docs/TELEMETRY.md、docs/PRIVACY.md 第 9 条同步。

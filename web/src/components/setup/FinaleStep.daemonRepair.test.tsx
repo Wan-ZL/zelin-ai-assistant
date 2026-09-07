@@ -14,7 +14,8 @@ import { FinaleStep } from "./FinaleStep";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
-  return { ...mod, fetchHealth: vi.fn(), postRepairActd: vi.fn(), postSeedDashboard: vi.fn() };
+  // postAnalytics：修复下场会发 pipeline_repair_result（D48）——这里只要它不出网；判例在 shell/repairActd.analytics.test.tsx
+  return { ...mod, fetchHealth: vi.fn(), postRepairActd: vi.fn(), postSeedDashboard: vi.fn(), postAnalytics: vi.fn().mockResolvedValue({ ok: true, event: "pipeline_repair_result", logged: true }) };
 });
 
 const fetchHealthMock = vi.mocked(fetchHealth);
