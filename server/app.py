@@ -596,7 +596,8 @@ _POST_JSON_ROUTES = {
     "/api/skills": lambda ctx, payload: settings.update_skill(ctx.home, payload),
     # §68.7 在终端接管会话（命令由 server 从投影推导）
     "/api/terminal": lambda ctx, payload: terminal_launch.launch(ctx.home, payload),
-    # §68.8 横幅一键修复：actd 已加载 → kickstart；未加载 → 409 指向 install.sh
+    # §68.8 横幅一键修复：actd 已加载 → kickstart；未加载 → install.sh --reinstall-agent
+    # （退出 4 / 缺 install.sh → 409 带 details.command，D50 追记）
     "/api/repair/actd": lambda ctx, payload: repair.kickstart_actd(payload),
     # §68.5 向导三步
     "/api/setup/config-from-example": lambda ctx, payload: setup.config_from_example(ctx.home, payload),

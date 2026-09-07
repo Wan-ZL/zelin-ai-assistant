@@ -4,13 +4,14 @@
   （label / 路径全是 server 常量，payload 只认 ``{}``）；不 kickstart；
 - install.sh 退出 0 → ``{"ok", "label", "action": "reinstall", "loaded"}``（loaded 再问一次 launchctl）；
 - 退出 4（没 pinned 解释器）→ 409 CONFLICT，``details.fix`` = ``bash install.sh``、``details.command`` = 可复制的
-  ``bash <repo>/install.sh``；install.sh 文件不在 → 同款 409；
-- runner 超时（rc 124）→ 500 带「timed out」；其余非零 → 500 带输出尾巴 + rc + command；
+  ``bash <repo>/install.sh``（路径 shlex.quote，含空格照贴）；install.sh 文件不在 → 同款 409；
+- runner 超时（rc 124）→ 500 带「timed out」（整句只说一遍）；其余非零 → 500 带输出尾巴 + rc + command；
 - 已加载仍 kickstart、绝不碰 install.sh；非 darwin 501；多余字段 400；
 - 路由：``POST /api/repair/actd`` 走默认 install runner 的注入替身，envelope 形状与 details 落到 HTTP。
 真 launchctl / 真 install.sh 一律不跑（runner 注入）。
 """
 import os
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -98,6 +99,21 @@ class ReinstallBranchTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.details["rc"], 124)
         self.assertIn("command", ctx.exception.details)
 
+    def test_timeout_sentence_is_said_once_not_twice(self):
+        # 默认 runner 的 124 尾巴已是整句；envelope 照用，横幅失败行不读成「timed out …: timed out …」
+        run, _calls = _launchctl([False])
+        install, _ = _install(rc=124, out="install.sh --reinstall-agent timed out after 120s")
+        with self.assertRaises(ApiError) as ctx:
+            repair.kickstart_actd({}, runner=run, install_runner=install, platform="darwin")
+        self.assertEqual(ctx.exception.message, "install.sh --reinstall-agent timed out after 120s")
+        self.assertEqual(ctx.exception.message.count("timed out"), 1)
+        # 注入 runner 给空尾巴 → server 自己补一句，仍只说一遍
+        install_silent, _ = _install(rc=124, out="")
+        with self.assertRaises(ApiError) as ctx2:
+            repair.kickstart_actd({}, runner=run, install_runner=install_silent, platform="darwin")
+        self.assertEqual(ctx2.exception.message,
+                         "install.sh --reinstall-agent timed out after %ds" % repair.INSTALL_TIMEOUT_S)
+
     def test_other_nonzero_is_500_with_the_output_tail(self):
         run, _calls = _launchctl([False])
         install, _ = _install(rc=1, out="x" * 1000 + "\n  [ERR ] failed to load com.zelin.aiassistant.actd (may need TCC/Full Disk Access approval)")
@@ -127,11 +143,30 @@ class ReinstallBranchTestCase(unittest.TestCase):
         self.assertEqual((launchctl_calls, install_calls), ([], []))
 
     def test_manual_command_is_the_full_install_at_this_checkout(self):
-        self.assertEqual(repair.manual_command(), "bash %s" % repair.install_sh_path())
+        self.assertEqual(repair.manual_command(), "bash %s" % shlex.quote(str(repair.install_sh_path())))
         self.assertEqual(repair.install_sh_path(), paths.repo_root() / "install.sh")
         self.assertTrue(repair.install_sh_path().is_file())
         # 模板在：--reinstall-agent 对这个 label 不会退出 2
         self.assertTrue((paths.repo_root() / "act" / "launchd" / (repair.ACTD_LABEL + ".plist")).is_file())
+
+    def test_manual_command_shell_quotes_a_checkout_path_with_spaces(self):
+        # 「手动命令：」是给人贴进终端的：路径含空格必须引起来，否则 bash 断在空格上；
+        # 不含空格的路径 shlex.quote 原样不动（上一条判例的等式因此仍成立）
+        spaced = Path(tempfile.mkdtemp(prefix="zai spaced "))
+        self.addCleanup(lambda: os.rmdir(spaced))
+        with mock.patch.object(paths, "repo_root", lambda: spaced):
+            command = repair.manual_command()
+        script = str(spaced / "install.sh")
+        self.assertEqual(command, "bash '%s'" % script)
+        self.assertEqual(shlex.split(command), ["bash", script])
+        # 409 envelope 里的 details.command 就是这一条（install.sh 不在 → 同款 409，零子进程）
+        run, _calls = _launchctl([False])
+        install, install_calls = _install()
+        with mock.patch.object(paths, "repo_root", lambda: spaced):
+            with self.assertRaises(ConflictError) as ctx:
+                repair.kickstart_actd({}, runner=run, install_runner=install, platform="darwin")
+        self.assertEqual(ctx.exception.details["command"], command)
+        self.assertEqual(install_calls, [])
 
 
 class ReinstallRouteTestCase(unittest.TestCase):

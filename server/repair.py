@@ -20,6 +20,7 @@ server 不 import act.doctor（entrypoint 层）：label 常量在此镜像，�
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -77,8 +78,10 @@ def install_sh_path() -> Path:
 
 
 def manual_command() -> str:
-    """409 / 500 envelope 里可复制的手动命令：完整安装（渲染 + pin 解释器 + 加载全部 agent）。"""
-    return "bash %s" % install_sh_path()
+    """409 / 500 envelope 里可复制的手动命令：完整安装（渲染 + pin 解释器 + 加载全部 agent）。
+    路径经 shlex.quote——checkout 路径含空格时贴进终端才不会断在空格上（uninstall_launch.py / terminal_launch.py 同一纪律）；
+    不含空格的路径原样不动。"""
+    return "bash %s" % shlex.quote(str(install_sh_path()))
 
 
 def _gate(payload: dict, platform: Optional[str]) -> None:
@@ -107,7 +110,9 @@ def _reinstall_actd(run: Runner, install_run: Runner) -> dict:
             % ACTD_LABEL,
             {"label": ACTD_LABEL, "fix": "bash install.sh", "command": command, "rc": rc})
     if rc == 124:
-        raise ApiError("install.sh --reinstall-agent timed out after %ds: %s" % (INSTALL_TIMEOUT_S, tail),
+        # default_install_runner 的 124 已经是整句人话（「… timed out after Ns」）——照用，不再前缀一遍；
+        # 注入 runner 给空尾巴时才由这里补一句
+        raise ApiError(tail or "install.sh --reinstall-agent timed out after %ds" % INSTALL_TIMEOUT_S,
                        {"label": ACTD_LABEL, "rc": rc, "command": command})
     raise ApiError("install.sh --reinstall-agent exited %d: %s" % (rc, tail),
                    {"label": ACTD_LABEL, "rc": rc, "command": command})
