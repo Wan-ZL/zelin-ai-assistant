@@ -202,38 +202,39 @@ def obsidian_registry_path(user_home: Optional[Path] = None) -> Path:
     return (user_home or Path.home()) / "Library" / "Application Support" / "obsidian" / "obsidian.json"
 
 
-def _load_registry(registry: Path) -> Optional[dict]:
-    """读 + 解析 obsidian.json；任何一步不成 → None（缺席 / 太大 / 不是 JSON / 顶层不是对象）。"""
+def _registry_vaults(registry: Path) -> dict:
+    """读 + 解析 obsidian.json，取 ``vaults`` 子树；任何一步不成 → ``{}``（缺席 / 太大 / 不是 JSON / 形状不对）。"""
     try:
         if not registry.is_file() or registry.stat().st_size > _VAULT_REGISTRY_MAX_BYTES:
-            return None
+            return {}
         doc = json.loads(registry.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return {}
+    vaults = doc.get("vaults") if isinstance(doc, dict) else None
+    return vaults if isinstance(vaults, dict) else {}
+
+
+def _entry_path(entry: object) -> Optional[str]:
+    """一条登记 ``{"path": ...}`` → 归一的路径字串（结尾 ``/`` 去掉）；形状不对 → None。"""
+    path = entry.get("path") if isinstance(entry, dict) else None
+    if not isinstance(path, str) or not path.strip():
         return None
-    return doc if isinstance(doc, dict) else None
+    return path.rstrip("/") or "/"
+
+
+def _is_dir(path: str) -> bool:
+    """``is_dir()`` 的不抛版：路径怪到 stat 都做不了（OSError）也算「不是目录」。"""
+    try:
+        return Path(path).is_dir()
+    except OSError:
+        return False
 
 
 def registered_vaults(registry: Optional[Path] = None) -> "list[dict]":
     """``vaults`` 子树 ``{id: {"path": ...}}`` → ``[{"name", "path"}]``：只留路径仍是目录的，按路径排序、去重。"""
-    doc = _load_registry(registry or obsidian_registry_path())
-    vaults = doc.get("vaults") if doc else None
-    if not isinstance(vaults, dict):
-        return []
-    seen = set()
-    for entry in vaults.values():
-        path = entry.get("path") if isinstance(entry, dict) else None
-        if not isinstance(path, str) or not path.strip():
-            continue
-        path = path.rstrip("/") or "/"
-        if path in seen:
-            continue
-        try:
-            if not Path(path).is_dir():
-                continue
-        except OSError:
-            continue
-        seen.add(path)
-    return [{"name": Path(p).name or p, "path": p} for p in sorted(seen)]
+    entries = _registry_vaults(registry or obsidian_registry_path()).values()
+    paths = {p for p in map(_entry_path, entries) if p and _is_dir(p)}
+    return [{"name": Path(p).name or p, "path": p} for p in sorted(paths)]
 
 
 def vaults_snapshot(registry: Optional[Path] = None) -> dict:
