@@ -619,6 +619,65 @@ a.chip:hover { text-decoration: underline; }
   min-height: calc(var(--composer-row-inner) - 6px);
 }
 
+/* 📎 常驻按钮（§10bis 贴图，D41；原生 PastedImagesRow.pasteButton 的 paperclip 12pt secondary）：与提交按钮同高、
+   不加粗、只一个字形宽 */
+.lane-composer .composer-attach {
+  padding-left: 6px;
+  padding-right: 6px;
+  color: var(--text-secondary);
+}
+
+/* 缩略图行（原生 PastedImagesRow：40×40 圆角 6 描边 0.15，✕ 叠在右上角；提示 10pt 次级色 0.7） */
+.composer-images {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 2px 8px;
+}
+
+.composer-image {
+  position: relative;
+  display: inline-flex;
+  padding: 5px 5px 0 0;
+}
+
+.composer-image img {
+  display: block;
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: var(--stroke-w) solid var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.composer-image-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-chip); /* 10px / 16px 行高——✕ 正好占满 16px 的圆 */
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 0 0 var(--stroke-w) var(--border-strong);
+}
+
+.composer-image-remove:hover { color: var(--danger); }
+
+.composer-image-status,
+.composer-image-hint {
+  font: var(--type-composer-hint);
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
 .composer-error {
   margin: -4px 2px 8px;
   color: var(--danger);

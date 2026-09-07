@@ -8,6 +8,7 @@ import type {
   AboutInfo,
   AiFixReceipt,
   AnalyticsReceipt,
+  AttachmentReceipt,
   Board,
   CardDetail,
   ClaudeCodeDefault,
@@ -196,6 +197,22 @@ export function fetchHealth(signal?: AbortSignal): Promise<HealthSnapshot> {
  */
 export function postAction(body: Record<string, unknown>): Promise<unknown> {
   return request<unknown>("/api/actions", { method: "POST", body: JSON.stringify(body) });
+}
+
+/**
+ * POST /api/attachments — 贴图上传（CONTRACT §10bis web 路径，D41）：body = 客户端 canvas 已转好的**原始 PNG 字节**
+ * （Content-Type image/png——本面唯一的二进制体路由，四闸同 POST，token 照带），server 落 state/attachments/<uuid>-1.png
+ * 并回绝对路径；文件名 / 目录全由 server 定，这里不传任何名字。写请求：失败不重试。signal = 调用方的超时 / 取消
+ * （LaneComposer 给 AbortSignal.timeout——上传是粘贴顺带触发的，卡死不许把整个输入框锁到刷新；TimeoutError 走
+ * 上面的 failure:"timeout" 分支成 SERVICE_UNAVAILABLE，调用方按「保存失败」弹窗处理）。
+ */
+export function postAttachment(png: Blob, signal?: AbortSignal): Promise<AttachmentReceipt> {
+  return request<AttachmentReceipt>("/api/attachments", {
+    method: "POST",
+    headers: { "Content-Type": "image/png" },
+    body: png,
+    signal,
+  });
 }
 
 /** POST /api/reveal — 访达定位交付物（路径由 server 从卡片记录推导，客户端只传 card_id） */

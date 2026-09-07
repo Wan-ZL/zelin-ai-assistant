@@ -204,11 +204,25 @@ def origin_ok(origin_header: object, allowed: frozenset) -> bool:
     return origin_header.strip().lower() in allowed
 
 
-def content_type_is_json(ct_header: object) -> bool:
-    """POST body 必须自报 application/json（charset 等参数位随意）。"""
+def content_type_is(ct_header: object, media_type: str) -> bool:
+    """写请求的 Content-Type 闸：media type 必须**精确**等于 ``media_type``
+    （charset 等参数位随意）。
+
+    默认写面 = ``application/json``；唯一的例外登记在 app.py 的二进制体路由表
+    （§10bis 贴图上传 ``image/png``）。**放宽纪律（origin_ok docstring 的耦合
+    条）**：能登记进来的只许是**非 CORS-safelisted** 类型——text/plain /
+    multipart/form-data / application/x-www-form-urlencoded 三种是浏览器不经
+    预检就能跨源发出的 simple request，本闸的整个价值就是把它们挡在 body 解析
+    之前；image/png 不在其列，跨源 fetch 带它必触发 preflight，而本面对 OPTIONS
+    不答 CORS 头，真请求根本发不出来。"""
     if not isinstance(ct_header, str):
         return False
-    return ct_header.split(";", 1)[0].strip().lower() == "application/json"
+    return ct_header.split(";", 1)[0].strip().lower() == media_type
+
+
+def content_type_is_json(ct_header: object) -> bool:
+    """POST body 必须自报 application/json（charset 等参数位随意）。"""
+    return content_type_is(ct_header, "application/json")
 
 
 def token_ok(got: object, want: str) -> bool:

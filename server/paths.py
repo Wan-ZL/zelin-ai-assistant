@@ -52,6 +52,13 @@ def inbox_dir(home: Path) -> Path:
     return home / "state" / "inbox"
 
 
+def attachments_dir(home: Path) -> Path:
+    # §10bis：capture 贴图的 PNG 目录（原生 PastedImages.savePNGs 与 actd
+    # housekeeping.sweep_attachment_dirs 的 `STATE_DIR / "attachments"` 同一处；
+    # server/attachments.py 是它的 web 侧写者，GC 仍归 actd）
+    return home / "state" / "attachments"
+
+
 def heartbeat_path(home: Path) -> Path:
     # §47.4：act/lib/heartbeat.HEARTBEAT_PATH（actd 每阶段 touch；mtime 为真源）
     return home / "state" / "actd.heartbeat"

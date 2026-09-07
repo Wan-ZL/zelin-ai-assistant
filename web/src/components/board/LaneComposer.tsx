@@ -11,7 +11,18 @@
 //     清掉 ⌘F 搜索词 / 退出多选，§34 2026-09-05 追记）；IME 候选期间的 Esc 归输入法（不 blur，原生 hasMarkedText
 //     返 `.ignored`），但同样不外泄；
 //   - payload 由调用方经 buildBody(text) 构造（propose = {action:"capture",text}，
-//     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）。
+//     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）；有附图时本组件再补 `images:[路径]`
+//     （§10bis 既有 wire 键，≤4；没有附图就不带这个键——inbox 文件形与 golden 逐字节不变）。
+//   - **贴图**（§10bis 追记 / §29ter 认领规则，owner 决策 D41；原生 PastedImages.swift 的 web 版，纯逻辑在 pastedImages.ts）：
+//     textarea 的 onPaste 认领图片 flavor（纯位图 / 位图 + 单个 URL token / Finder 文件 + 逐行文件名；位图 + 实质文本让路给
+//     文本粘贴并亮 3 s 提示：只复制图片再贴，或 📎 选文件），认领即吃掉事件、canvas 降采样到最长边 2560 转 PNG、**贴进来
+//     那一刻就上传** POST /api/attachments（回绝对路径，单张 30 s 超时——卡死的上传不许锁死提交），缩略图行（≤4，每张 ✕
+//     「移除这张图」，✕ 后焦点落到下一颗 ✕ / 回输入框）用本地 blob URL 预览；📎 按钮 = 文件选择器（原生 📎 读剪贴板，
+//     浏览器没有可靠的 clipboard.read，这里改为选文件——同一个入口位、同一条上限；壳里 WKWebView 的 <input type=file>
+//     要壳实现 runOpenPanelWith 才会弹面板，shell/Sources/main.swift）。任一张保存失败 → 弹窗「图片保存失败」+ 好（原生
+//     alertImagesNotSaved 同名），文字草稿与已加的图原样保留。附图与文字同命：Esc / blur 不丢、失败不丢、只有成功的捕获
+//     才清；斜杠命令不消费附图（原生 Composer.swift:211-219）。上传中「捕获」/「直跑」禁点（半批路径不发）。丢弃草稿留下
+//     的孤儿 PNG 由 actd 附件 GC（§10bis，30 天）收走。
 //   - 历史 ↑/↓（最近 20 条，localStorage）只在草稿为空或正在翻历史时接管——多行草稿里的 ↑/↓ 归光标；
 //     翻历史途中一改字就退出翻历史。斜杠命令 /rec /lang /open（composerCommands.ts，
 //     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执；**成功的命令也进历史**
@@ -35,14 +46,16 @@
 //     §54.4 2026-09-05 追记）与全局快速捕获键（§61.6，壳快照 hotkey 如 ⌃⌥Space），写成「⌘L · ⌃⌥Space」；
 //     浏览器标签页里 ⌘L 归地址栏、也没有全局键，就不写键，不许谎报。身份（propose / run）从 buildBody 的 payload 读
 //     （§34 直跑 = mode:"run"），不另加 prop——wire 形是唯一真源（防腐 #10）。
-import { useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
-import { postAction } from "../../api";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from "react";
+import { postAction, postAttachment } from "../../api";
 import { useI18n } from "../../i18n";
 import { useShellState, type ShellState } from "../../shellBridge";
 import { describeActionError } from "./boardActions";
 import { captureReceiptLine, captureTimeoutNotice, type CaptureMode } from "./captureReceipt";
 import { hintLine, pushHistory, readHistory, runSlashCommand } from "./composerCommands";
+import { ModalDialog } from "./ModalDialog";
+import { IMAGES_MAX, encodePng, imageFilesFromClipboard, pasteClaim } from "./pastedImages";
 import { useCaptureReceipt } from "./useCaptureReceipt";
 
 interface LaneComposerProps {
@@ -52,6 +65,33 @@ interface LaneComposerProps {
 }
 
 type ComposerMode = CaptureMode;
+
+/** 一张已上传的附图：path = server 回的绝对路径（进 wire）；previewUrl = 本地 blob URL（只给缩略图，不进 wire） */
+export interface ComposerImage {
+  id: number;
+  path: string;
+  previewUrl: string;
+  name: string;
+}
+
+/** 缩略图行的 3 s 瞬时提示时长（原生 flashClipboardImageHint） */
+export const IMAGE_HINT_MS = 3000;
+/** 单张上传的超时：loopback 上 8 MiB 毫秒级；上传是粘贴顺带触发的，卡死的请求不许把「捕获」/「直跑」锁到刷新 */
+export const IMAGE_UPLOAD_TIMEOUT_MS = 30_000;
+
+/** 上传超时信号（AbortSignal.timeout → TimeoutError → api.request 归为 SERVICE_UNAVAILABLE，走保存失败弹窗） */
+function uploadSignal(): AbortSignal | undefined {
+  return typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(IMAGE_UPLOAD_TIMEOUT_MS) : undefined;
+}
+
+/** blob → 预览 URL；jsdom 没有 createObjectURL → 空串（缩略图 src 为空，判例只看 alt / 路径） */
+function previewUrlFor(png: Blob): string {
+  return typeof URL.createObjectURL === "function" ? URL.createObjectURL(png) : "";
+}
+
+function releasePreview(url: string): void {
+  if (url && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url);
+}
 
 /** 输入框身份从它要发的 payload 读：§34 直跑 = `mode:"run"`，其余 = 提案捕获 */
 export function composerMode(buildBody: LaneComposerProps["buildBody"]): ComposerMode {
@@ -111,15 +151,109 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
   const [note, setNote] = useState<string | null>(null);
   const [historyIndex, setHistoryIndex] = useState(-1); // -1 = 不在翻历史
   const fieldRef = useRef<HTMLTextAreaElement>(null);
+  // 附图（§10bis）：已上传的 ≤4 张 + 在途上传数 + 保存失败弹窗的细节句 + 缩略图行的 3 s 提示
+  const [images, setImages] = useState<ComposerImage[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [imageAlert, setImageAlert] = useState<string | null>(null);
+  const [imageHint, setImageHint] = useState<string | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nextImageId = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 草稿每变一次量一次（输入 / 翻历史 / 成功清空都走这里）
   useLayoutEffect(() => {
     if (fieldRef.current) fitComposerRows(fieldRef.current);
   }, [draft]);
 
+  // 卸载：提示定时器与 blob URL 一起收
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  useEffect(() => () => {
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    imagesRef.current.forEach((img) => releasePreview(img.previewUrl));
+  }, []);
+
+  const flashHint = (message: string) => {
+    setImageHint(message);
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    hintTimer.current = setTimeout(() => setImageHint(null), IMAGE_HINT_MS);
+  };
+
+  /** 贴进来的图逐张：canvas 转 PNG → POST /api/attachments → 进缩略图行；任一步失败弹「图片保存失败」，其余照旧 */
+  const addImages = async (files: File[]) => {
+    const room = Math.max(0, IMAGES_MAX - images.length - uploading);
+    const accepted = files.slice(0, room);
+    if (accepted.length < files.length) {
+      // 原生满员 beep；web 用一行提示说清（多出的那几张没收）
+      flashHint(text(`最多 ${IMAGES_MAX} 张图`, `Up to ${IMAGES_MAX} images`));
+    }
+    if (accepted.length === 0) return;
+    setUploading((n) => n + accepted.length);
+    for (const file of accepted) {
+      try {
+        const png = await encodePng(file);
+        const receipt = await postAttachment(png, uploadSignal());
+        if (imagesRef.current.length >= IMAGES_MAX) continue; // 并发两批在途时满了：这张不收（server 侧成孤儿，GC 收）
+        nextImageId.current += 1;
+        const image: ComposerImage = { id: nextImageId.current, path: receipt.path, previewUrl: previewUrlFor(png), name: file.name };
+        setImages((prev) => (prev.length >= IMAGES_MAX ? prev : [...prev, image]));
+      } catch (e) {
+        setImageAlert(describeActionError(e, text));
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  };
+
+  // ✕ 之后焦点不许掉到 <body>（键盘 / 读屏用户得从列顶重找）：落到同位的下一颗 ✕，没有就回输入框
+  const imagesRowRef = useRef<HTMLDivElement>(null);
+  const focusAfterRemove = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (focusAfterRemove.current === null) return;
+    const index = focusAfterRemove.current;
+    focusAfterRemove.current = null;
+    const buttons = imagesRowRef.current?.querySelectorAll<HTMLButtonElement>(".composer-image-remove") ?? [];
+    (buttons[Math.min(index, buttons.length - 1)] ?? fieldRef.current)?.focus();
+  }, [images]);
+
+  const removeImage = (id: number) => {
+    const index = images.findIndex((img) => img.id === id);
+    if (index < 0) return;
+    releasePreview(images[index].previewUrl);
+    focusAfterRemove.current = index;
+    setImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const clearImages = () => {
+    images.forEach((img) => releasePreview(img.previewUrl));
+    setImages([]);
+  };
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = imageFilesFromClipboard(e.clipboardData);
+    if (files.length === 0) return; // 纯文本粘贴：不拦
+    if (pasteClaim(files, e.clipboardData.getData("text/plain")) === "text") {
+      // 位图 + 实质文本：文本优先照常粘贴，缩略图行亮 3 s 指路（原生 flashClipboardImageHint 指向 ⌥⌘V 强制贴图；web 没有
+      // ⌥⌘V，而剪贴板里的位图不在磁盘上、📎 选不到它——给的路必须走得通：只复制图片再贴一次，或 📎 选磁盘上的文件）
+      flashHint(text(
+        "剪贴板里还有图片：只复制图片后再粘贴，或点 📎 选择文件",
+        "The clipboard also holds an image — copy the image alone and paste again, or click 📎 to pick a file",
+      ));
+      return;
+    }
+    e.preventDefault(); // 认领：吃掉事件，绝不回退文本粘贴（文件路径 / 文件名不进正文）
+    void addImages(files);
+  };
+
+  const onPickFiles = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
+    e.target.value = ""; // 同一个文件再选一次也要触发 change
+    if (files.length > 0) void addImages(files);
+  };
+
   const submit = async () => {
     const trimmed = draft.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy || uploading > 0) return;
     setBusy(true);
     setError(null);
     setNote(null);
@@ -143,10 +277,13 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
         setNote(command.note);
         return;
       }
-      const response = await postAction(buildBody(trimmed));
+      const body = buildBody(trimmed);
+      if (images.length > 0) body.images = images.map((img) => img.path); // §10bis：路径原样进 wire，没有附图就不带键
+      const response = await postAction(body);
       pushHistory(trimmed);
       setHistoryIndex(-1);
       setDraft(""); // 仅确认成功后清空（§41 草稿保留）
+      clearImages(); // 附图与文字同命：成功才清（原生 model.clear() 在 submitCapture 成功之后）
       beginReceipt(trimmed, response); // 成功才替换上一份回执、时钟重来（stem = server 回的 inbox 文件名，§49 对账精确键）
     } catch (e) {
       // capture 写入失败（原生 submitCapture 返回 false）：固定一句 + server 原文；草稿原样留着
@@ -188,6 +325,9 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
   // 原生 Composer.swift 的一行状态栈：slashError > "/" 草稿的 hintLine > 斜杠回执 > 捕获回执 >（键位提示句，D35 退役）
   // ——同一时刻只有一行；斜杠回执一改字过期后，还活着的捕获回执（或它的超时条）回到这一行
   const hint = !error && draft.startsWith("/") ? hintLine(text) : null;
+  const attachTitle = text(`添加图片（最多 ${IMAGES_MAX} 张，仅保存在本机）`, `Attach images (up to ${IMAGES_MAX}; kept on this Mac)`);
+  const removeTitle = text("移除这张图", "Remove this image");
+  const imagesFull = images.length + uploading >= IMAGES_MAX;
 
   return (
     <>
@@ -206,17 +346,59 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
             setHistoryIndex(-1); // 一改字就退出翻历史：↑/↓ 交还给多行草稿里的光标
           }}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
         />
+        {/* 📎 常驻（原生 PastedImagesRow.pasteButton 同位）：这里是文件选择器，满 4 张禁点 */}
+        <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={onPickFiles} />
+        <button
+          type="button"
+          className="btn composer-attach"
+          title={attachTitle}
+          aria-label={attachTitle}
+          disabled={busy || imagesFull}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          📎
+        </button>
         <button
           type="button"
           className="btn btn-primary"
           title={title}
-          disabled={busy || !draft.trim()}
+          disabled={busy || uploading > 0 || !draft.trim()}
           onClick={() => void submit()}
         >
           {busy ? text("提交中…", "Sending…") : submitLabel}
         </button>
       </div>
+      {(images.length > 0 || uploading > 0 || imageHint) && (
+        <div ref={imagesRowRef} className="composer-images" role="group" aria-label={text("附图", "Attached images")}>
+          {images.map((img, i) => (
+            <span key={img.id} className="composer-image" data-image-path={img.path}>
+              <img src={img.previewUrl} alt={text(`附图 ${i + 1}`, `Image ${i + 1}`)} />
+              <button type="button" className="composer-image-remove" title={removeTitle} aria-label={removeTitle} disabled={busy} onClick={() => removeImage(img.id)}>
+                ✕
+              </button>
+            </span>
+          ))}
+          {uploading > 0 && <span className="composer-image-status" role="status">{text("图片上传中…", "Uploading image…")}</span>}
+          {imageHint && <span className="composer-image-hint" role="status">{imageHint}</span>}
+        </div>
+      )}
+      {imageAlert !== null && (
+        // 原生 AppDelegate.alertImagesNotSaved（标题 / 「好」逐字）；正文按 web 的实际行为说话：贴那一刻就上传，失败的只是这一张
+        <ModalDialog title={text("图片保存失败", "Images Could Not Be Saved")} onCancel={() => setImageAlert(null)}>
+          <p className="dialog-body">
+            {text(
+              "粘贴的图片未能保存（磁盘空间或编码问题），这张图没有加进附图；文字与已加的图原样保留，请重试。",
+              "The pasted image could not be saved (disk space or encoding issue) and was not attached; your text and the other images are kept — please try again.",
+            )}
+          </p>
+          {imageAlert && <p className="dialog-note">{imageAlert}</p>}
+          <div className="dialog-actions">
+            <button type="button" className="btn btn-primary" onClick={() => setImageAlert(null)}>{text("好", "OK")}</button>
+          </div>
+        </ModalDialog>
+      )}
       {error && (
         <p className="composer-error">
           <span>{error.prefix}</span>

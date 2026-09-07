@@ -1080,6 +1080,15 @@ export interface TerminalReceipt {
   [key: string]: unknown;
 }
 
+/** POST /api/attachments 回执（§10bis web 贴图路径，D41）：path = server 铸的 state/attachments/<uuid>-1.png 绝对路径，
+ *  客户端只把它原样塞进 capture 的 images[]；bytes = 落盘字节数 */
+export interface AttachmentReceipt {
+  ok: boolean;
+  path: string;
+  bytes: number;
+  [key: string]: unknown;
+}
+
 /** POST /api/repair/actd 回执（§68.8）：action = "kickstart"（已加载）| "reinstall"（未加载 → install.sh，D50；此时另带 loaded） */
 export interface RepairReceipt {
   ok: boolean;

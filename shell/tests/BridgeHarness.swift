@@ -258,6 +258,20 @@ func run() {
           "analytics result vocabulary mirrors the native applyCaptionVerdict")
     check(FolderDialog.abbreviateHome(NSHomeDirectory() + "/Notes") == "~/Notes", "abbreviateHome folds $HOME to ~")
     check(FolderDialog.abbreviateHome("/Volumes/X") == "/Volumes/X", "abbreviateHome leaves other paths alone")
+    // §54 追记 2026-09-06 / D41：页面 <input type=file>（📎 贴图）的 WKUIDelegate runOpenPanelWith 落点 = FileDialog。
+    // 注入假面板（绝不弹真 NSOpenPanel）：多选标志原样透传；取消 = nil；今日只认图片（页面唯一的文件输入是 📎）
+    var fileDialogCalls: [Bool] = []
+    let realFileRunner = FileDialog.runner
+    FileDialog.runner = { multiple in
+        fileDialogCalls.append(multiple)
+        return multiple ? [URL(fileURLWithPath: "/tmp/a.png"), URL(fileURLWithPath: "/tmp/b.png")] : nil
+    }
+    defer { FileDialog.runner = realFileRunner }
+    check(FileDialog.chooseImages(multiple: true)?.map(\.lastPathComponent) == ["a.png", "b.png"],
+          "chooseImages hands the picked URLs back (multiple)")
+    check(FileDialog.chooseImages(multiple: false) == nil, "chooseImages returns nil on cancel")
+    check(fileDialogCalls == [true, false], "chooseImages passes the page's allowsMultipleSelection through")
+    check(FileDialog.imageTypes == [.image], "file panel only admits images (the page's only file input is the 📎 picker)")
     check(PermissionsProbe.kinds == ["screen", "microphone", "notifications", "vault"], "permission kinds vocabulary frozen")
     check(Set(PermissionsProbe.panes.keys) == Set(["full_disk", "screen", "microphone", "notifications", "files_folders"]),
           "pane vocabulary frozen")

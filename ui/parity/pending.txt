@@ -2,8 +2,6 @@
 # 只许缩：新缺项 FAIL（补实现，不许记账）；已补齐仍挂账 FAIL（划掉这行）。
 # 每行：<inventory-id>。重铸：python3 scripts/ui/parity_check.py --write-pending（清账轮以外别用）。
 control:board.card:label:session-match
-control:board.dialogs:alert-button:ok
-control:board.dialogs:label:images-could-not-be-saved
 control:deps:label:which-gh-login-shell
 control:settings.claudeImport:button:show-all-model-candidates-count
 control:settings.claudeImport:button:show-fewer
