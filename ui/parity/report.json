@@ -1,7 +1,7 @@
 {
   "counts": {
-    "PENDING": 7,
-    "PRESENT": 835,
+    "PENDING": 6,
+    "PRESENT": 836,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -81,7 +81,7 @@
     "control:board.card:label:review": "PRESENT",
     "control:board.card:label:routine": "PRESENT",
     "control:board.card:label:secs-s": "PRESENT",
-    "control:board.card:label:session-match": "PENDING",
+    "control:board.card:label:session-match": "PRESENT",
     "control:board.card:label:split-rid": "PRESENT",
     "control:board.card:label:splitting": "PRESENT",
     "control:board.card:label:suggestion": "PRESENT",

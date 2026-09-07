@@ -20,7 +20,7 @@ import { useAppState } from "../../store";
 import type { FailureCatalog, TaskRow } from "../../types";
 import { FailureActionButton } from "../settings/failureAction";
 import { cardAction, resumeCommand, useSubmit, pendingNote } from "./boardActions";
-import { AiFixButton, CardHead, CardSurface, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip } from "./cardChrome";
+import { AiFixButton, CardHead, CardSurface, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, SessionHitChip } from "./cardChrome";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -110,6 +110,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         <>
           <div className="card-badges">
             <MergeStateChip cardId={row.id} />
+            <SessionHitChip row={row} />
             <span className="chip chip-warning">{text("需输入", "Input")}</span>
             {row.resume_exhausted && (
               <span className="chip chip-danger">{text("恢复已放弃", "Auto-resume exhausted")}</span>
@@ -129,6 +130,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       ) : isQueued ? (
         <div className="card-badges">
           <MergeStateChip cardId={row.id} />
+          <SessionHitChip row={row} />
           <span className="chip">{text("排队中", "Queued")}</span>
           {/* 结构化排队原因（「等 R-xx / 等并发位」）——§M6.2 字段；过渡期字符串形也兼容，缺席不渲染 */}
           {queuedReason && <span className="chip">{queuedReason}</span>}
@@ -137,6 +139,8 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         <>
           <div className="card-badges">
             <MergeStateChip cardId={row.id} />
+            {/* §37.2 会话层「命中会话」（原生 TaskRow meta HStack 首位，Cards.swift:1566） */}
+            <SessionHitChip row={row} />
             {/* 原生 TaskRow meta：状态章（accent 蓝）· 已交付过·再运行（青）· 运行时长 · repo 章。
                 working 由下方 sheen 行表达（执行中 / agents 列表名），只有非常规状态（idle / unknown /
                 review-active…）才出状态章——同一信息不在卡面说两遍 */}

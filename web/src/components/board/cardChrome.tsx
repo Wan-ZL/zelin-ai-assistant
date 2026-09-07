@@ -15,12 +15,15 @@
 //     selectable（§21 多选，原生 Kanban.swift selectableCard 的 tap catcher）：selectionMode 下点卡身 = 切换选中，
 //     动作行（.card-actions）整排失效（指针穿透 + inert + capture 兜底）——误点不许批准 / 删除任何东西；勾选框留给 a11y。
 //   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
+//   SessionHitChip（§37.2 会话内容层，D45；原生 Cards.swift SessionHitBadge）：紫章「命中会话」——这张卡只靠会话正文
+//     命中当前 ⌘F 搜索词，卡面字段一个都不含它；六列卡的章行各放一颗，自己从 store 算。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
 import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { postAiFix } from "../../api";
 import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
+import { searchHit } from "../../taskFilters";
 import { openCardDetail } from "./boardActions";
 import { Linkified } from "./Linkified";
 import { useTerminalTakeover } from "./terminalTakeover";
@@ -330,6 +333,21 @@ export function MergeStateChip({ cardId }: { cardId: string }) {
   const analyzing = (board?.merge_suggestions ?? []).some((s) => s.status === "analyzing" && Array.isArray(s.ids) && s.ids.includes(cardId));
   if (!analyzing) return null;
   return <span className="chip chip-purple chip-quiet">{text("合并分析中…", "Analyzing…")}</span>;
+}
+
+/**
+ * 「命中会话」（§37.2 第三条；原生 Cards.swift:636 SessionHitBadge `Badge(L("命中会话","Session match"), .purple)`）：
+ * 这张卡命中了当前 ⌘F 搜索词、但**仅靠卡面字段不命中**——词只在它的会话正文里（`store.sessionIndex`，GET /api/search-index）。
+ * 诚实条件与原生 `Store.hitInfo` 同款（`taskFilters.searchHit(...).sessionOnly`）：字段本就命中 → 不出章（章不是「有会话」
+ * 的意思）；没搜索 / 层缺席 / 这张卡没条目 → 不渲染。六列行（提案 / 运行中 / 需输入 / 待验收 / 阶段性完成 / 潜在任务）
+ * 的章行各放一颗，与原生 Kanban.swift 传 `sessionHit:` 的六处一致；回收站 / 封存行不搜会话层（原生也不）。
+ */
+export function SessionHitChip({ row }: { row: Record<string, unknown> & { id: string } }) {
+  const { text } = useI18n();
+  const { filters, sessionIndex } = useAppState();
+  const sessionText = sessionIndex?.texts[row.id];
+  if (!sessionText || !searchHit(row, filters.search, sessionText).sessionOnly) return null;
+  return <span className="chip chip-purple">{text("命中会话", "Session match")}</span>;
 }
 
 /**

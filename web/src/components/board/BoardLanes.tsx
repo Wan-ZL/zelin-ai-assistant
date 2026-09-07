@@ -4,7 +4,9 @@
 //   running 分区 queued/working 混排，顶部 direct-run 框）| 待验收 | 阶段性完成 |
 //   永久性完成（ArchiveStrip 右侧折叠条——原生 v0.33 的第二根书立条）。
 // 全部列消费全局过滤 chips + ⌘F 搜索（taskFilters.matchesCardFilters，G4 与 BacklogStrip
-// 同一条规则；§37.2 词表 + 归一化 AND），再按 store.sortOrder 排序（cardSort.ts 镜像原生 Store.sortCards：
+// 同一条规则；§37.2 词表 + 归一化 AND + 会话正文第三层——store.sessionIndex 按 id 取这张卡的归一化正文传进匹配函数，
+// 只靠会话命中的卡照样留下、计入「命中/总数」并在章行长出「命中会话」（cardChrome.SessionHitChip，D45）），
+// 再按 store.sortOrder 排序（cardSort.ts 镜像原生 Store.sortCards：
 // 默认新的在上；提案列的 processing 占位卡钉在列顶不参与排序、也不被搜索词藏起——chips 照常判定，
 // 原生 契约一 / Store.boardApprovals）；徽章数字 = counts 真实总数，
 // 过滤生效时显示「命中/总数」。列头「?」说明文案来自 server 目录（Lane.tsx）。
@@ -40,15 +42,16 @@ export function orderProposals(cards: ApprovalCard[], order: SortOrder): Approva
 
 export function BoardLanes() {
   const { text } = useI18n();
-  const { board, filters, sortOrder } = useAppState();
+  const { board, filters, sortOrder, sessionIndex } = useAppState();
   if (!board) return null; // AppShell 只在有快照时渲染页面，这里兜底防御
 
   // §37.2 / 原生 Store.boardApprovals：processing 占位行（raising / 捕获中的灰卡）不被搜索词藏起——
   // 把一条在途提交藏到搜索后面，读起来就像捕获丢了。原生只有搜索这一维；tier / 期限 / 回锅 chips
   // 是 web 加的维度，占位卡对它们照常判定（选了「只看 T2」就不该冒出 T1 的灰卡），不在此扩权。
+  // 第三层（会话正文）按 id 从 store.sessionIndex 取（没拉过 / 缺席 = undefined，只剩字段层）。
   const chipsOnly = { ...filters, search: "" };
-  const pick = <T extends Record<string, unknown>>(rows: T[]): T[] =>
-    rows.filter((row) => matchesCardFilters(row, row.processing === true ? chipsOnly : filters));
+  const pick = <T extends Record<string, unknown> & { id: string }>(rows: T[]): T[] =>
+    rows.filter((row) => matchesCardFilters(row, row.processing === true ? chipsOnly : filters, sessionIndex?.texts[row.id]));
 
   const proposals = orderProposals(pick(board.needs_approval), sortOrder);
   const blocked = sortCards(pick(board.needs_input), sortOrder);

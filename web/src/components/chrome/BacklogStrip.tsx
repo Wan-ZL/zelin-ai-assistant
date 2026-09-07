@@ -24,11 +24,12 @@ export interface BacklogStripProps {
 
 export function BacklogStrip({ renderCard }: BacklogStripProps) {
   const { text, language } = useI18n();
-  const { board, filters, sortOrder, backlogStripExpanded } = useAppState();
+  const { board, filters, sortOrder, backlogStripExpanded, sessionIndex } = useAppState();
   const help = useLaneHelp("debt");
 
   const all = board?.debt ?? [];
-  const rows = sortCards(all.filter((card) => matchesCardFilters(card, filters)), sortOrder);
+  // §37.2 第三层：潜在任务卡也搜会话正文（原生 Kanban.swift:341 DebtRow sessionHit）——store.sessionIndex 按 id 取
+  const rows = sortCards(all.filter((card) => matchesCardFilters(card, filters, sessionIndex?.texts[card.id])), sortOrder);
   const countLabel = rows.length === all.length ? `${all.length}` : `${rows.length}/${all.length}`;
   // 原生 `searching && !debt.isEmpty ? .constant(true) : $store.backlogStripExpanded`：过滤 / 搜索命中潜在任务 → 强制展开，
   // 旗不动；无命中或无过滤 → 旗说了算

@@ -977,6 +977,15 @@ export interface LogTail {
   [key: string]: unknown;
 }
 
+// ----- §37.2 会话内容搜索层（D45）：GET /api/search-index 的投影 ----- #
+export interface SearchIndexSnapshot {
+  /** card_id → 会话正文（actd 维护的 state/search_index.json 每条的 text，server 尾裁；原文，未归一化） */
+  entries: Record<string, string>;
+  /** server 因 size cap 拒读了文件（entries 为空、层诚实缺席） */
+  truncated: boolean;
+  [key: string]: unknown;
+}
+
 // ----- §68.5 首次运行向导 ----- #
 export interface SetupSnapshot {
   needed: boolean;
