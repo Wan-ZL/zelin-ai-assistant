@@ -1,4 +1,4 @@
-pr: `fix/deploy-defer-live-sessions`（PR #TBD）
+pr: `fix/deploy-defer-live-sessions`（PR #284）
 phase: 横切（§56 合并即上岗的守护规则；defect fix，无 D 行）
 law: §56.3 追记（第 4 步之后的会话闸门：`deferred` / fail-closed 三轮 / 6 h WARN / `--force` 跳过 / 修补重跑同受闸 / 回滚不延后 / bootout 实证）；§56.4 追记（词表 `deferred`，add-only 键 `deferred_reason` / `deferred_sessions` / `deferred_since`，镜像私账 `roster_unknown_ticks`，doctor 行与顶栏文案）
 
