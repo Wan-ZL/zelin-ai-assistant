@@ -38,11 +38,6 @@ def _utc_epoch(*args) -> int:
 class BuildDashboardV010TestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()
-        # copy_cmd starts with the worker's own claude binary (§55 第五幕 追记;
-        # tests/test_dashboard_copy_cmd_binary.py). Pin a path that does not
-        # exist so these liveness/shape tests see the bare-``claude`` fallback
-        # on every machine, with or without a claude on PATH.
-        self.cfg.claude_bin = "/nonexistent/claude"
         home = tempfile.mkdtemp(prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
@@ -327,7 +322,6 @@ class EmptySidNoGlobBindTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cfg = config.Config()
-        self.cfg.claude_bin = "/nonexistent/claude"   # bare-``claude`` fallback, see above
         self.home = tempfile.mkdtemp(prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()

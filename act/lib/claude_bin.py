@@ -142,61 +142,6 @@ def _stable_cannot_run_row(stable: Path, err: str, installer: str) -> dict:
                       "bash %s (re-copies it from your login shell's claude)") % installer)
 
 
-def live_users(run: Run, path: Path) -> int:
-    """How many processes are executing ``path`` right now (``lsof -t``; the
-    same question install.sh `stable_claude_in_use` asks before it swaps the
-    copy). 0 when none, or when lsof is missing / fails — "cannot tell" must
-    never read as "in use"."""
-    lsof = shutil.which("lsof") or "/usr/sbin/lsof"
-    try:
-        rc, out = run([lsof, "-t", "-w", "--", str(path)], timeout=15)
-    except (OSError, ValueError):
-        return 0
-    if rc != 0:
-        return 0
-    return sum(1 for ln in (out or "").splitlines() if ln.strip().isdigit())
-
-
-def _version_gap_row(stable: Path, stable_ver: str, shell_claude: str, shell_ver: str,
-                     live: int, installer: str) -> dict:
-    """WARN: the copy and the login shell's Claude Code are two versions.
-
-    The daemons AND the board's takeover command (copy_cmd, §55 第五幕 追记
-    2026-09-06) both run the copy, so the board stays consistent; what breaks
-    is a bare ``claude --resume`` typed into the shell — the shell's newer
-    client attached to the copy's older worker (live 2026-09-04: ``[worker
-    crashed (exit 143) — respawning…] … exit 1 before init``). The fix names
-    the one thing to do right now: with sessions running the copy, wait or
-    stop them (install.sh refuses to swap the file under them); with none,
-    run the installer — the next auto-deploy does the same on its own.
-    """
-    detail = failures.pick(
-        "稳定副本 %s 是 %s，而你的 shell 跑的是 %s（%s）——后台任务与看板的接管命令都跑副本，"
-        "只是落后一版；别在终端手敲裸 `claude --resume`：那会把 %s 的客户端接到 %s 的 worker 上"
-        "（09-04 的 exit 143 / exit 1 before init）",
-        "stable daemon copy %s is %s while your shell runs %s (%s) - the daemons and the board's "
-        "takeover command both run the copy, just one version behind; do not type a bare "
-        "`claude --resume` in your terminal: that attaches a %s client to a %s worker "
-        "(the 09-04 exit 143 / exit 1 before init)") % (
-        stable, stable_ver, shell_claude, shell_ver, shell_ver, stable_ver)
-    if live > 0:
-        fix = failures.pick(
-            "此刻有 %d 个进程在跑这份副本，install.sh 不会在它们脚下换文件——等它们结束"
-            "（或在看板上停止）后 bash %s 原地刷新（同一路径，完全磁盘访问授权不变）；"
-            "下一次自动部署也会刷。接管请用看板复制的命令（它点名副本路径）",
-            "%d process(es) run the copy right now and install.sh will not swap the file under them - "
-            "let them finish (or stop them on the board), then bash %s refreshes it in place (same "
-            "path, the Full Disk Access grant stays); the next auto-deploy does too. Take over with "
-            "the board's command (it names the copy's path)") % (live, installer)
-    else:
-        fix = failures.pick(
-            "没有进程在跑副本：现在就 bash %s 原地刷新（同一路径，完全磁盘访问授权不变）；"
-            "下一次自动部署也会刷",
-            "nothing runs the copy right now: bash %s refreshes it in place (same path, the Full "
-            "Disk Access grant stays); the next auto-deploy does too") % installer
-    return _row("warn", detail, fix)
-
-
 def _stable_present_row(run: Run, login_shell_claude: Callable[[], Optional[str]],
                         which: Callable[[str], Optional[str]], installer: str, stable: Path) -> dict:
     stable_ver, err = stable_version(run, stable)
@@ -204,8 +149,14 @@ def _stable_present_row(run: Run, login_shell_claude: Callable[[], Optional[str]
         return _stable_cannot_run_row(stable, err, installer)
     shell_claude, shell_ver = login_shell_version(run, login_shell_claude, which)
     if shell_ver and shell_ver != stable_ver:
-        return _version_gap_row(stable, stable_ver, shell_claude, shell_ver,
-                                live_users(run, stable), installer)
+        return _row("warn", failures.pick(
+            "稳定副本 %s 是 %s，而你的 shell 跑的是 %s（%s）——后台任务仍用副本，只是落后一版",
+            "stable daemon copy %s is %s while your shell runs %s (%s) - daemons keep using the "
+            "copy, just one version behind") % (stable, stable_ver, shell_claude, shell_ver),
+            failures.pick(
+            "bash %s 刷新副本（原地替换、同一路径，完全磁盘访问授权不变）；下一次自动部署也会刷",
+            "bash %s refreshes the copy in place (same path, the Full Disk Access grant stays); "
+            "the next auto-deploy does too") % installer)
     same = failures.pick("——与登录 shell 同版本", " - same version as your login shell") if shell_ver else ""
     return _row("ok", failures.pick("%s（%s）%s", "%s (%s)%s") % (stable, stable_ver, same))
 
