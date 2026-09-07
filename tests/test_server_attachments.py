@@ -183,6 +183,22 @@ class GatesTestCase(_AttachmentsHome, unittest.TestCase):
         self._assert_rejected(status, obj, 413, "INVALID_FIELD")
         self.assertEqual(obj["error"]["details"]["limit"], attachments.MAX_BYTES)
 
+    def test_oversize_with_real_body_still_delivers_the_413_envelope(self):
+        """真发 8MiB+1 的体（不是只发头）：server 先把在路上的体读掉丢弃再关连接
+        （app.Handler._body_length 的 lingering close），客户端读到的是 413 envelope
+        而不是 BrokenPipe——此前残字节会被当成下一条请求行、连接被 RST。零落盘。"""
+        body = attachments.PNG_MAGIC + b"\x00" * (attachments.MAX_BYTES + 1 - len(attachments.PNG_MAGIC))
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            conn.request("POST", attachments.ROUTE, body=body,
+                         headers=auth_headers(self.port, content_type=attachments.CONTENT_TYPE))
+            resp = conn.getresponse()
+            obj = json.loads(resp.read().decode("utf-8"))
+        finally:
+            conn.close()
+        self._assert_rejected(resp.status, obj, 413, "INVALID_FIELD")
+        self.assertEqual(obj["error"]["details"]["limit"], attachments.MAX_BYTES)
+
     def test_put_is_not_a_route(self):
         status, _h, data = http_request(
             self.port, "PUT", attachments.ROUTE, body=PNG_1X1,

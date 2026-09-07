@@ -58,8 +58,11 @@ export function pasteClaim(files: File[], text: string): "image" | "text" {
   if (files.length === 0) return "text";
   const trimmed = text.trim();
   if (trimmed === "" || isCompanionUrlText(trimmed)) return "image";
-  // Finder 拷贝的图片文件：文本 flavor 就是文件名（可能含空格）——原生「文件 URL 无条件认领」的浏览器对应物
-  if (files.some((f) => f.name !== "" && f.name === trimmed)) return "image";
+  // Finder 拷贝的图片文件：文本 flavor 就是文件名（可能含空格；多选时一行一个名字）——原生「文件 URL 无条件认领」
+  // 的浏览器对应物：每一行都恰是某个文件的名字才算，否则那是实质文本，让路
+  const names = new Set(files.map((f) => f.name).filter((name) => name !== ""));
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
+  if (lines.length > 0 && lines.every((line) => names.has(line))) return "image";
   return "text";
 }
 

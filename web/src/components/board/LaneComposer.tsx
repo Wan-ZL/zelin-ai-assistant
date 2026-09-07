@@ -14,13 +14,15 @@
 //     direct-run = {action:"capture",text,mode:"run"}——多一个字段 server 400）；有附图时本组件再补 `images:[路径]`
 //     （§10bis 既有 wire 键，≤4；没有附图就不带这个键——inbox 文件形与 golden 逐字节不变）。
 //   - **贴图**（§10bis 追记 / §29ter 认领规则，owner 决策 D41；原生 PastedImages.swift 的 web 版，纯逻辑在 pastedImages.ts）：
-//     textarea 的 onPaste 认领图片 flavor（纯位图 / 位图 + 单个 URL token / Finder 文件 + 文件名；位图 + 实质文本让路给
-//     文本粘贴并亮 3 s 提示指向 📎），认领即吃掉事件、canvas 降采样到最长边 2560 转 PNG、**贴进来那一刻就上传**
-//     POST /api/attachments（回绝对路径），缩略图行（≤4，每张 ✕「移除这张图」）用本地 blob URL 预览；📎 按钮 = 文件选择器
-//     （原生 📎 读剪贴板，浏览器没有可靠的 clipboard.read，这里改为选文件——同一个入口位、同一条上限）。任一张保存失败
-//     → 弹窗「图片保存失败」+ 好（原生 alertImagesNotSaved 同名），文字草稿与已加的图原样保留。附图与文字同命：
-//     Esc / blur 不丢、失败不丢、只有成功的捕获才清；斜杠命令不消费附图（原生 Composer.swift:211-219）。
-//     上传中「捕获」/「直跑」禁点（半批路径不发）。丢弃草稿留下的孤儿 PNG 由 actd 附件 GC（§10bis，30 天）收走。
+//     textarea 的 onPaste 认领图片 flavor（纯位图 / 位图 + 单个 URL token / Finder 文件 + 逐行文件名；位图 + 实质文本让路给
+//     文本粘贴并亮 3 s 提示：只复制图片再贴，或 📎 选文件），认领即吃掉事件、canvas 降采样到最长边 2560 转 PNG、**贴进来
+//     那一刻就上传** POST /api/attachments（回绝对路径，单张 30 s 超时——卡死的上传不许锁死提交），缩略图行（≤4，每张 ✕
+//     「移除这张图」，✕ 后焦点落到下一颗 ✕ / 回输入框）用本地 blob URL 预览；📎 按钮 = 文件选择器（原生 📎 读剪贴板，
+//     浏览器没有可靠的 clipboard.read，这里改为选文件——同一个入口位、同一条上限；壳里 WKWebView 的 <input type=file>
+//     要壳实现 runOpenPanelWith 才会弹面板，shell/Sources/main.swift）。任一张保存失败 → 弹窗「图片保存失败」+ 好（原生
+//     alertImagesNotSaved 同名），文字草稿与已加的图原样保留。附图与文字同命：Esc / blur 不丢、失败不丢、只有成功的捕获
+//     才清；斜杠命令不消费附图（原生 Composer.swift:211-219）。上传中「捕获」/「直跑」禁点（半批路径不发）。丢弃草稿留下
+//     的孤儿 PNG 由 actd 附件 GC（§10bis，30 天）收走。
 //   - 历史 ↑/↓（最近 20 条，localStorage）只在草稿为空或正在翻历史时接管——多行草稿里的 ↑/↓ 归光标；
 //     翻历史途中一改字就退出翻历史。斜杠命令 /rec /lang /open（composerCommands.ts，
 //     原生 Store.swift / Composer.swift 同款，s4 1.8）——命令不发 inbox，只给一行回执；**成功的命令也进历史**
@@ -74,6 +76,13 @@ export interface ComposerImage {
 
 /** 缩略图行的 3 s 瞬时提示时长（原生 flashClipboardImageHint） */
 export const IMAGE_HINT_MS = 3000;
+/** 单张上传的超时：loopback 上 8 MiB 毫秒级；上传是粘贴顺带触发的，卡死的请求不许把「捕获」/「直跑」锁到刷新 */
+export const IMAGE_UPLOAD_TIMEOUT_MS = 30_000;
+
+/** 上传超时信号（AbortSignal.timeout → TimeoutError → api.request 归为 SERVICE_UNAVAILABLE，走保存失败弹窗） */
+function uploadSignal(): AbortSignal | undefined {
+  return typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(IMAGE_UPLOAD_TIMEOUT_MS) : undefined;
+}
 
 /** blob → 预览 URL；jsdom 没有 createObjectURL → 空串（缩略图 src 为空，判例只看 alt / 路径） */
 function previewUrlFor(png: Blob): string {
@@ -183,7 +192,7 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
     for (const file of accepted) {
       try {
         const png = await encodePng(file);
-        const receipt = await postAttachment(png);
+        const receipt = await postAttachment(png, uploadSignal());
         if (imagesRef.current.length >= IMAGES_MAX) continue; // 并发两批在途时满了：这张不收（server 侧成孤儿，GC 收）
         nextImageId.current += 1;
         const image: ComposerImage = { id: nextImageId.current, path: receipt.path, previewUrl: previewUrlFor(png), name: file.name };
@@ -196,9 +205,22 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
     }
   };
 
+  // ✕ 之后焦点不许掉到 <body>（键盘 / 读屏用户得从列顶重找）：落到同位的下一颗 ✕，没有就回输入框
+  const imagesRowRef = useRef<HTMLDivElement>(null);
+  const focusAfterRemove = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (focusAfterRemove.current === null) return;
+    const index = focusAfterRemove.current;
+    focusAfterRemove.current = null;
+    const buttons = imagesRowRef.current?.querySelectorAll<HTMLButtonElement>(".composer-image-remove") ?? [];
+    (buttons[Math.min(index, buttons.length - 1)] ?? fieldRef.current)?.focus();
+  }, [images]);
+
   const removeImage = (id: number) => {
-    const hit = images.find((img) => img.id === id);
-    if (hit) releasePreview(hit.previewUrl);
+    const index = images.findIndex((img) => img.id === id);
+    if (index < 0) return;
+    releasePreview(images[index].previewUrl);
+    focusAfterRemove.current = index;
     setImages((prev) => prev.filter((img) => img.id !== id));
   };
 
@@ -211,8 +233,12 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
     const files = imageFilesFromClipboard(e.clipboardData);
     if (files.length === 0) return; // 纯文本粘贴：不拦
     if (pasteClaim(files, e.clipboardData.getData("text/plain")) === "text") {
-      // 位图 + 实质文本：文本优先照常粘贴，缩略图行亮 3 s 指路（原生 flashClipboardImageHint；web 没有 ⌥⌘V，指向 📎）
-      flashHint(text("剪贴板里还有图片：要贴图请点 📎 选择文件", "The clipboard also holds an image — click 📎 to attach a file instead"));
+      // 位图 + 实质文本：文本优先照常粘贴，缩略图行亮 3 s 指路（原生 flashClipboardImageHint 指向 ⌥⌘V 强制贴图；web 没有
+      // ⌥⌘V，而剪贴板里的位图不在磁盘上、📎 选不到它——给的路必须走得通：只复制图片再贴一次，或 📎 选磁盘上的文件）
+      flashHint(text(
+        "剪贴板里还有图片：只复制图片后再粘贴，或点 📎 选择文件",
+        "The clipboard also holds an image — copy the image alone and paste again, or click 📎 to pick a file",
+      ));
       return;
     }
     e.preventDefault(); // 认领：吃掉事件，绝不回退文本粘贴（文件路径 / 文件名不进正文）
@@ -345,7 +371,7 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
         </button>
       </div>
       {(images.length > 0 || uploading > 0 || imageHint) && (
-        <div className="composer-images" role="group" aria-label={text("附图", "Attached images")}>
+        <div ref={imagesRowRef} className="composer-images" role="group" aria-label={text("附图", "Attached images")}>
           {images.map((img, i) => (
             <span key={img.id} className="composer-image" data-image-path={img.path}>
               <img src={img.previewUrl} alt={text(`附图 ${i + 1}`, `Image ${i + 1}`)} />

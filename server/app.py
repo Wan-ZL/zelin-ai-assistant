@@ -91,6 +91,9 @@ from server.watcher import BoardWatcher
 BIND_HOST = "127.0.0.1"   # 硬编码——绝不做成可配置（隐私宪法）
 DEFAULT_PORT = 47820
 MAX_BODY_BYTES = 1 << 20  # 1MiB
+# 413 / 400 前把在路上的 body 读掉丢弃的时间上限（Handler._body_length）：真在发体的
+# 客户端毫秒级读完；只发头探路的（判例）等这么久就放行
+LINGER_SECONDS = 1.0
 
 # web/dist 缺席时的占位页（A5 的 vite build 落地前 dev-preview 也能自检）
 _PLACEHOLDER_HTML = (b"<!doctype html><meta charset='utf-8'>"
@@ -296,12 +299,42 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_raw_body(self, limit: int) -> bytes:
         """二进制体（贴图上传）：Content-Length 过 ``limit`` 后整段读回，不解析。"""
-        length = _content_length(self.headers.get("Content-Length"), limit)
-        return self.rfile.read(length)
+        return self.rfile.read(self._body_length(limit))
+
+    def _body_length(self, limit: int = MAX_BODY_BYTES) -> int:
+        """Content-Length 闸（``_content_length``）的 Handler 半边：400 / 413 时 body
+        一字未读——残字节留在 keep-alive 上会被当成下一条请求行（400 + 断连，客户端
+        看到的是 BrokenPipe 而不是 envelope）。所以拒绝前先 **lingering close**：把
+        已在路上的 body 读掉丢弃（最多 ``limit`` 字节、最多 ``LINGER_SECONDS``——
+        只发头不发体的客户端不会把连接卡到 15s），再经 ``_reject`` 关连接。裁决本身
+        仍只看 Content-Length：超限的体不解析、不落盘。"""
+        try:
+            return _content_length(self.headers.get("Content-Length"), limit)
+        except ApiError as err:
+            self._discard_body(limit)
+            self._reject(err)
+            raise  # unreachable（_reject 必抛）；让类型检查看到出口
+
+    def _discard_body(self, cap: int) -> None:
+        """读掉并丢弃 ≤ ``cap`` 字节的请求体（Content-Length 缺失 / 非数 → 什么都不读）。"""
+        try:
+            remaining = min(int(self.headers.get("Content-Length") or 0), cap)
+        except ValueError:
+            return
+        if remaining <= 0:
+            return
+        self.connection.settimeout(LINGER_SECONDS)
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read(min(remaining, 1 << 16))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass  # 客户端不发体 / 半路挂断：能读多少算多少，照常回 envelope
 
     def _read_json_body(self) -> dict:
-        length = _content_length(self.headers.get("Content-Length"))
-        raw = self.rfile.read(length)
+        raw = self.rfile.read(self._body_length())
         try:
             doc = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):

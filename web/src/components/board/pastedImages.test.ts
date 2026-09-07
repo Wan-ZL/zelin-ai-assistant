@@ -89,4 +89,13 @@ describe("pasteClaim — ⌘V claim rules (§29ter)", () => {
     expect(pasteClaim([png("shot.png")], "other.png")).toBe("text");
     expect(pasteClaim([png("")], "")).toBe("image"); // 空名 + 空文本走纯位图那条，不靶空名等空串
   });
+
+  it("two or more Finder-copied files: text flavor is one name per line → image (review of PR #272)", () => {
+    const files = [png("Screenshot 1.png"), png("Screenshot 2.png")];
+    expect(pasteClaim(files, "Screenshot 1.png\nScreenshot 2.png")).toBe("image");
+    expect(pasteClaim(files, "Screenshot 2.png\r\nScreenshot 1.png\n")).toBe("image"); // CRLF、顺序无关、尾随换行
+    expect(pasteClaim(files, "Screenshot 1.png\nnotes for the team")).toBe("text"); // 一行不是文件名 = 实质文本，让路
+    expect(pasteClaim(files, "Screenshot 1.png\n\nScreenshot 2.png")).toBe("image"); // 空行不算
+    expect(pasteClaim([png("")], "\n")).toBe("image"); // 空名文件 + 只有换行：仍是纯位图那条
+  });
 });

@@ -246,6 +246,19 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "D36 单击卡片无功能（§54.1 2026-09-06 追记）：运行卡面无指令行；双击整卡接管，手动复制在详情侧栏「复制接管指令」",
     },
+    # D41（§10bis 2026-09-06 追记）：原生 alertImagesNotSaved 的两句正文「…已只提交文字部分」/「…建议未提交——请重试」
+    # 说的是原生**发送时**才落 PNG 的失败语义；web 在**贴入时**就上传，失败那一刻什么都没发出去，正文按实际行为改写
+    # （「这张图没有加进附图；文字与已加的图原样保留，请重试」）。标题「图片保存失败」与「好」逐字照搬、照判（pending.txt
+    # 已划掉）；这两句 copy 本就只列不判，这里点名是把语义分歧落成判例（D35 键位提示句同款）。#2 是 feedback 弹窗那句，
+    # feedback 保持文字-only（D41 一并裁定），更没有落点。
+    "control:board.dialogs:copy:the-pasted-images-could-not-be-saved-disk-space": {
+        "owner": "retired",
+        "reason": "D41：web 在贴入时上传，失败弹窗正文按实际行为改写——那一刻什么都没提交，不说「已只提交文字部分」（§10bis 追记 2026-09-06）",
+    },
+    "control:board.dialogs:copy:the-pasted-images-could-not-be-saved-disk-space#2": {
+        "owner": "retired",
+        "reason": "D41：feedback 弹窗保持文字-only、不接贴图（§10bis 追记 2026-09-06），「建议未提交」这句无落点",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部

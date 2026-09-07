@@ -14,7 +14,9 @@
   （security.origin_ok docstring 的耦合纪律）。multipart 一律不收：那是
   simple-request 向量。
 - **body = 原始 PNG 字节**，上限 ``MAX_BYTES``（独立于 app.py 的 1MiB JSON 上限
-  ——§68.14 说的「第二条上传通道」就是它；超限 413，只看 Content-Length 不读体）；
+  ——§68.14 说的「第二条上传通道」就是它；超限 413，裁决只看 Content-Length、超限的体
+  不解析不落盘——app.py ``_body_length`` 先把在路上的体读掉丢弃再关连接，客户端才读得到
+  envelope 而不是 BrokenPipe）；
   前 8 字节必须是 PNG magic（客户端 canvas 已转 PNG；别的格式 400，不落盘）。
 - **路径永不由客户端决定**：文件名 = server 铸的 uuid4 + ``-1``（§10bis 的
   ``<uuid>-<n>`` 形，web 每次上传就是一批一张），目录 = ``state/attachments/``

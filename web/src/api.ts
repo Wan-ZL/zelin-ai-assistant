@@ -202,13 +202,16 @@ export function postAction(body: Record<string, unknown>): Promise<unknown> {
 /**
  * POST /api/attachments — 贴图上传（CONTRACT §10bis web 路径，D41）：body = 客户端 canvas 已转好的**原始 PNG 字节**
  * （Content-Type image/png——本面唯一的二进制体路由，四闸同 POST，token 照带），server 落 state/attachments/<uuid>-1.png
- * 并回绝对路径；文件名 / 目录全由 server 定，这里不传任何名字。写请求：失败不重试。
+ * 并回绝对路径；文件名 / 目录全由 server 定，这里不传任何名字。写请求：失败不重试。signal = 调用方的超时 / 取消
+ * （LaneComposer 给 AbortSignal.timeout——上传是粘贴顺带触发的，卡死不许把整个输入框锁到刷新；TimeoutError 走
+ * 上面的 failure:"timeout" 分支成 SERVICE_UNAVAILABLE，调用方按「保存失败」弹窗处理）。
  */
-export function postAttachment(png: Blob): Promise<AttachmentReceipt> {
+export function postAttachment(png: Blob, signal?: AbortSignal): Promise<AttachmentReceipt> {
   return request<AttachmentReceipt>("/api/attachments", {
     method: "POST",
     headers: { "Content-Type": "image/png" },
     body: png,
+    signal,
   });
 }
 
