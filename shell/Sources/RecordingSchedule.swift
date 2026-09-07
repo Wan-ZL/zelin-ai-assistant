@@ -180,9 +180,11 @@ final class RecordingSchedule: ObservableObject {
         lastPaused = shouldPause
 
         if shouldPause {
-            // 边界跨越 / 醒来 / 刚开日程：立刻停。其余拍：引擎又被拉起来了（autostart、TCC 自愈、
-            // owner 在窗外点了模式或「重启」）→ 连续 killAfterTicks 拍看见它在跑才停（见常量注释）。
-            if edge || reason == "wake" {
+            // 边界跨越 / 刚开日程：立刻停。醒来：本来就暂停着且引擎没在跑 = 无事（睡前那一拍已经停过，
+            // 再记一次 pause 事件就是虚报）；引擎在跑才不等宽限立刻停。其余拍：引擎又被拉起来了
+            // （autostart、TCC 自愈、owner 在窗外点了模式或「重启」）→ 连续 killAfterTicks 拍看见它在跑才停
+            // （见常量注释）。
+            if edge || (reason == "wake" && Self.engineRunning()) {
                 runningWhilePausedTicks = 0
                 Analytics.log("recording_schedule_pause", fields: ["reason": reason, "mode": mode])
                 Self.stopEngine(reason)

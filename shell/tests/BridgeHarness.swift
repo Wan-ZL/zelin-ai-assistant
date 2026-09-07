@@ -506,6 +506,20 @@ func checkRecordingSchedule(_ bridge: ShellBridge) {
     sched.enforce(reason: "wake")
     check(trace == ["stop:wake"], "waking inside the pause window stops immediately (no 3-tick grace)", "got \(trace)")
     trace = []
+    running = false
+    sched.enforce(reason: "wake")
+    sched.enforce(reason: "wake")
+    check(trace.isEmpty && sched.paused, "waking while already paused with the engine down is a no-op (no stop, no phantom pause event)", "got \(trace)")
+    running = true
+    // 睡前在窗内（引擎在跑），醒来已在窗外 = 边界跨越，醒来那一拍就停
+    clock = at(2, 12, 0)
+    sched.enforce(reason: "tick")
+    check(!sched.paused && trace == ["start:tick"], "sanity: back inside the window resumes once", "got \(trace)")
+    trace = []
+    clock = at(2, 19, 0)
+    sched.enforce(reason: "wake")
+    check(sched.paused && trace == ["stop:wake"], "sleeping across the end boundary: the wake tick itself stops the engine", "got \(trace)")
+    trace = []
     mode = "off"
     sched.enforce(reason: "tick")
     check(!sched.paused && trace.isEmpty, "mode off is never 'paused by schedule' and never starts anything")
