@@ -5,7 +5,8 @@
 //   LaunchAtLogin      SMAppService.mainApp（原生 Settings 通用区「登录时启动」）；
 //   QuickCaptureHotkey Carbon RegisterEventHotKey 全局快捷键 ⌃⌥Space（不需要辅助功能授权），
 //                      触发 = 前置窗口 + 向页面推 `zai-shell-command {command: "quick_capture"}`；
-//   DockBadge          Dock 图标徽章（原生菜单栏徽章的 Dock 版，D3：等你动作的卡数由页面推来）。
+//   DockBadge          Dock 图标徽章（原生菜单栏徽章的 Dock 版，D3：等你动作的卡数由页面推来）；
+//   FolderDialog / FileDialog  NSOpenPanel（§68.1 目录字段「选择…」/ 页面 <input type=file> 的 WKUIDelegate 落点）。
 // 全部只做「原生 API 调用 + 状态」，无业务逻辑（§54 薄壳）；经 ShellBridge 暴露给页面。
 
 import AppKit
@@ -13,6 +14,7 @@ import AVFoundation
 import Carbon.HIToolbox
 import Combine
 import ServiceManagement
+import UniformTypeIdentifiers
 import UserNotifications
 
 // MARK: - window hook
@@ -329,6 +331,38 @@ enum FolderDialog {
     static func abbreviateHome(_ path: String) -> String {
         let home = NSHomeDirectory()
         return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
+// MARK: - file dialog（页面 `<input type="file">` 的壳侧落点；CONTRACT §54 追记 2026-09-06 / §10bis 贴图 📎，D41）
+//
+// macOS 的 WKWebView 不实现 WKUIDelegate `runOpenPanelWith` 就**静默禁用**文件上传（Apple 文档原话：
+// "By default on macOS, file uploads are disabled if you don't implement this method."）——页面里的 📎 点了
+// 什么都不发生、没有错误、没有提示。今日壳里唯一的文件输入是列顶输入框的 📎（accept="image/*" multiple，
+// web/src/components/board/LaneComposer.tsx），WKOpenPanelParameters 又不公开 accept 列表，所以面板只选
+// 图片文件（`imageTypes`）、多选随页面、目录永不许选；取消 → nil（WebKit 当没选）。壳零业务逻辑：选中的 URL
+// 直接交回 WebKit，文件内容由页面自己读、降采样、经 POST /api/attachments 落盘（§49 追记）。
+// 日后页面若添非图片的文件输入，这里的类型限制要跟着放宽——判例钉住今日的 `[.image]`。
+
+@MainActor
+enum FileDialog {
+    /// 面板放行的类型：今日页面唯一的文件输入是贴图 📎，只认图片
+    static let imageTypes: [UTType] = [.image]
+
+    /// 对话框的执行体（注入缝：桥 harness 换成假实现，绝不弹真面板）。参数 = 页面是否允许多选 →
+    /// 选中的 URL（取消 = nil）。
+    static var runner: (Bool) -> [URL]? = { multiple in
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = multiple
+        panel.allowedContentTypes = imageTypes
+        guard panel.runModal() == .OK else { return nil }
+        return panel.urls
+    }
+
+    static func chooseImages(multiple: Bool) -> [URL]? {
+        runner(multiple)
     }
 }
 

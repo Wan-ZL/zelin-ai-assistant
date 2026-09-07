@@ -580,6 +580,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         decisionHandler(.cancel)
     }
 
+    /// 页面的 `<input type="file">`（今日只有列顶输入框的 📎 贴图，§10bis 追记 / D41）：macOS 的 WKWebView
+    /// 不实现这个回调就**静默禁用**文件上传——📎 点了没有任何反应。面板 = FileDialog（只选图片文件、
+    /// 多选随页面、目录永不许选，注入缝归 harness）；取消 → nil。§54 追记 2026-09-06。
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        completionHandler(FileDialog.chooseImages(multiple: parameters.allowsMultipleSelection))
+    }
+
     private func loadBoard() {
         webView.load(URLRequest(url: ShellConfig.boardURL))
         window.makeFirstResponder(webView)   // ⌘F / 键盘事件直达页面
