@@ -78,7 +78,8 @@ class TerminalLaunchTestCase(_ServerCase):
         self.assertEqual(entry["card_id"], row["id"])
         self.assertEqual(entry["command"], obj["command"])
         self.assertEqual(entry["cwd"], obj["cwd"])
-        self.assertTrue(entry["shell_line"].endswith("exec " + obj["command"]))
+        self.assertTrue(entry["shell_line"].endswith("; " + obj["command"]))
+        self.assertNotIn("exec ", entry["shell_line"])   # 复合 copy_cmd（cd … && claude …）经 exec 会静默退出
         self.assertIn("export AIASSISTANT_HOME=", entry["shell_line"])
         self.assertIsInstance(entry["created_at"], int)
         # 队列目录里只有这一条：没有 .tmp 尸体，也没有 .command（通道已 retired，server 不再写 $TMPDIR）
@@ -96,11 +97,34 @@ class TerminalLaunchTestCase(_ServerCase):
     def test_shell_line_quotes_cwd_and_home_and_skips_what_is_absent(self):
         line = terminal_launch.shell_line_for("claude --resume x", "/tmp/my dir", Path("/h"))
         self.assertEqual(line, "cd '/tmp/my dir' || { echo \"folder not found: /tmp/my dir\"; exit 1; }; "
-                               "export AIASSISTANT_HOME=/h; exec claude --resume x")
+                               "export AIASSISTANT_HOME=/h; claude --resume x")
         # 相对 / 缺席的 cwd 不 cd；home None（卸载脚本）不导出
-        self.assertEqual(terminal_launch.shell_line_for("bash uninstall.sh", "relative", None), "exec bash uninstall.sh")
+        self.assertEqual(terminal_launch.shell_line_for("bash uninstall.sh", "relative", None), "bash uninstall.sh")
         self.assertEqual(terminal_launch.shell_line_for("claude", None, Path("/h")),
-                         "export AIASSISTANT_HOME=/h; exec claude")
+                         "export AIASSISTANT_HOME=/h; claude")
+
+    @unittest.skipIf(_WIN, "POSIX shell quoting")
+    def test_shell_line_keeps_a_compound_copy_cmd_runnable(self):
+        """投影里 actd 写的 copy_cmd 是复合命令 ``cd '<worktree>' && claude --resume <id>``（act/lib/dashboard._resume_cmd）：
+        整段原样接在分号后、**没有 exec**——``exec cd …`` 在 zsh / bash 里是「执行内建后退出」，claude 永远起不来，
+        终端一闪就关（退役 .command 通道的实际故障；真 shell 判例在 tests/integration/test_terminal_shell_line_runs.py）。"""
+        compound = "cd '/tmp/wt' && claude --resume 6f9619ff"
+        line = terminal_launch.shell_line_for(compound, "/tmp/wt", Path("/h"))
+        self.assertTrue(line.endswith("; " + compound), line)
+        self.assertNotIn("exec", line)
+        # server 的整条通道：投影行 copy_cmd 复合 → 队列条目 shell_line 里原样、不 exec
+        row = self._running_row()
+        for r in self.board["running"]:
+            if r["id"] == row["id"]:
+                r["copy_cmd"] = compound
+        from tests.test_server_common import rewrite_board
+        rewrite_board(self.home, self.board)
+        status, obj = post_json(self.port, "/api/terminal", {"card_id": row["id"]})
+        self.assertEqual(status, 200, obj)
+        self.assertEqual(obj["command"], compound)
+        entry = json.loads(self._entries()[0].read_text(encoding="utf-8"))
+        self.assertTrue(entry["shell_line"].endswith("; " + compound), entry["shell_line"])
+        self.assertNotIn("exec", entry["shell_line"])
 
     def test_launch_falls_back_to_home_when_the_row_has_no_cwd(self):
         row = self._running_row()

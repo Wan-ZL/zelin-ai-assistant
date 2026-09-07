@@ -3,7 +3,7 @@
 
 原生 Pages.swift AboutView.confirmUninstall：确认后在 Terminal.app 里跑 repo 的 ``uninstall.sh``
 （交互式，脚本自己再问一次、任务历史与密钥默认保留）。web 版走 terminal_launch 的队列通道（§68.7，
-2026-09-05 起：server 入队 ``cd <repo>; exec bash uninstall.sh``、壳经 Apple Events 开终端；
+2026-09-05 起：server 入队 ``cd <repo>; bash uninstall.sh``、壳经 Apple Events 开终端；
 ``.command`` + ``open`` 已 retired）——**server 自己不删任何东西**，删的是用户在终端里亲手确认的脚本。
 脚本缺席 404（原生「找不到卸载脚本」）；非 darwin 501；壳没在跑 503 / 入队失败 500 都带手动命令
 （原生「请手动在 Terminal 里运行：…」）。

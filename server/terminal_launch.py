@@ -11,7 +11,9 @@ Terminal 新开窗口跑命令。自动化授权按（壳, 终端）这一对记
 **命令永远由 server 从投影行推导，绝不接受客户端文本**（``copy_cmd``，其次
 ``claude --resume <session_id>``；与 reveal / ai-fix 同一条纪律：客户端只给 SAFE_ID 白名单内的
 card_id）。队列条目里 ``shell_line`` 是壳逐字交给终端的一行（``cd <cwd|home>`` + ``export
-AIASSISTANT_HOME`` + ``exec <cmd>``），``command`` 是给人看的原命令。
+AIASSISTANT_HOME`` + ``<cmd>``——**不 exec**：投影里的 ``copy_cmd`` 常是复合命令 ``cd '<worktree>' && claude
+--resume <id>``，``exec cd …`` 会让 shell 静默退出、终端一闪就关，退役的 .command 通道就是这样坏的；壳把
+整行交给 ``/bin/zsh -lc``，复合命令原样能跑），``command`` 是给人看的原命令。
 
 用哪个终端仍是设置「通用 · 终端应用」（``terminal_app``，§68.1 overrides）——偏好住 server 侧
 不变，**执行者换成壳**：壳只读同一把旋钮（§61.3 SettingsIO 读侧），``auto`` = 装了 Ghostty 就
@@ -117,15 +119,17 @@ def command_for(row: dict) -> Optional[str]:
 
 
 def shell_line_for(cmd: str, cwd: Optional[str], home: Optional[Path]) -> str:
-    """壳逐字交给终端的一行：cd 到工作目录 → 导出 AIASSISTANT_HOME → exec 命令。cwd / home 用
-    shlex.quote；命令本身是投影里 actd 写好的一行 shell（老版 TerminalLauncher 也是逐字送进终端）。
-    ``home`` 为 None 时不导出（卸载脚本不需要）。"""
+    """壳逐字交给终端的一行：cd 到工作目录 → 导出 AIASSISTANT_HOME → 命令本身。cwd / home 用
+    shlex.quote；命令是投影里 actd 写好的一行 shell（老版 TerminalLauncher 也是逐字送进终端），**原样接在
+    分号后，不加 exec**——``copy_cmd`` 常是复合命令 ``cd '<wt>' && claude --resume <id>``，``exec cd`` 在 zsh /
+    bash 里都是「执行内建后退出」，后半句永远跑不到（退役 .command 通道的实际故障）。``home`` 为 None 时
+    不导出（卸载脚本不需要）。"""
     parts = []
     if isinstance(cwd, str) and cwd.startswith("/"):
         parts.append("cd %s || { echo \"folder not found: %s\"; exit 1; }" % (shlex.quote(cwd), cwd))
     if home is not None:
         parts.append("export AIASSISTANT_HOME=%s" % shlex.quote(str(home)))
-    parts.append("exec %s" % cmd)
+    parts.append(cmd)
     return "; ".join(parts)
 
 

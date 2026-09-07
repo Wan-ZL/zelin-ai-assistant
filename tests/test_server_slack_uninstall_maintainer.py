@@ -108,7 +108,7 @@ def _entries(home: Path):
 
 
 class UninstallLaunchTestCase(_ServerCase):
-    """POST /api/uninstall/terminal：入队 ``cd <repo>; exec bash uninstall.sh`` 给壳（§68.7 队列通道）；脚本缺席 404；
+    """POST /api/uninstall/terminal：入队 ``cd <repo>; bash uninstall.sh`` 给壳（§68.7 队列通道）；脚本缺席 404；
     非 darwin 501；多余字段 400；壳没在跑 503 带手动命令。server 自己永不删文件、不 spawn。"""
 
     def test_launch_enqueues_the_uninstall_command(self):
@@ -119,7 +119,7 @@ class UninstallLaunchTestCase(_ServerCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["kind"], "uninstall")
         self.assertEqual(entries[0]["id"], receipt["queue_id"])
-        self.assertTrue(entries[0]["shell_line"].endswith("exec bash uninstall.sh"))
+        self.assertTrue(entries[0]["shell_line"].endswith("; bash uninstall.sh"))
         self.assertIn(str(uninstall_launch.paths.repo_root()), entries[0]["shell_line"])
         self.assertNotIn("AIASSISTANT_HOME", entries[0]["shell_line"])
         self.assertEqual(entries[0]["command"], receipt["command"])
@@ -159,7 +159,7 @@ class MaintainerLaunchTestCase(_ServerCase):
         self.assertEqual(entries[0]["kind"], "maintainer")
         self.assertEqual(entries[0]["command"], receipt["command"])
         self.assertTrue(entries[0]["shell_line"].startswith("cd %s ||" % maintainer_launch.shlex.quote(str(repo))))
-        self.assertTrue(entries[0]["shell_line"].endswith("; exec claude"))
+        self.assertTrue(entries[0]["shell_line"].endswith("; claude"))
         write_text(self.home / "state" / "settings_overrides.json",
                    json.dumps({"maintainer_repo_path": str(self.home), "maintainer_session_id": "6f9619ff-8b86"}))
         receipt = maintainer_launch.launch(self.home, {}, platform="darwin")
@@ -167,7 +167,7 @@ class MaintainerLaunchTestCase(_ServerCase):
         self.assertEqual(receipt["cwd"], str(self.home))
         lines = sorted(e["shell_line"] for e in _entries(self.home))   # 文件名是 uuid，不按时间排
         self.assertEqual(len(lines), 2)
-        self.assertTrue(any(line.endswith("; exec claude --resume 6f9619ff-8b86") for line in lines), lines)
+        self.assertTrue(any(line.endswith("; claude --resume 6f9619ff-8b86") for line in lines), lines)
 
     def test_gates(self):
         _beat(self.home)

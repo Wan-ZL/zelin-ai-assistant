@@ -51,7 +51,7 @@ def resolve(home: Path) -> "tuple[Path, str]":
 
 
 def claude_command(sid: str) -> str:
-    """终端里真正 exec 的那段（cd 由 shell_line_for 负责）。"""
+    """终端里真正跑的那段（cd 由 shell_line_for 负责）。"""
     return "claude" + (" --resume %s" % sid if sid else "")
 
 

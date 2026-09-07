@@ -434,6 +434,24 @@ func checkTerminalTakeover() {
           "iTerm2 script: create window with default profile command")
     check(TerminalLauncher.bootstrapped("claude").hasPrefix(TerminalLauncher.pathBootstrap)
           && TerminalLauncher.bootstrapped("claude").hasSuffix("claude"), "executed line = PATH bootstrap + raw command")
+    // D36 / issue #216 复合接管命令：server 的 shell_line 是 `cd '<cwd>' || {…}; export AIASSISTANT_HOME=…; cd '<wt>' && claude --resume <id>`
+    // （不 exec——`exec cd` 会让 shell 静默退出，退役 .command 通道就是这样坏的）。壳必须把整行**作为一个 shell 字串**
+    // 交给 /bin/zsh -lc：单引号层 closes–escapes–reopens 每个 '，双引号只在 AppleScript 层转义，&& / ; / {} 原样进 zsh。
+    let compound = "cd '/tmp/h' || { echo \"folder not found: /tmp/h\"; exit 1; }; export AIASSISTANT_HOME=/tmp/h; cd '/tmp/wt' && claude --resume 6f9619ff"
+    let executed = TerminalLauncher.bootstrapped(compound)
+    check(executed == TerminalLauncher.pathBootstrap + compound && !executed.contains("exec "),
+          "compound shell_line rides verbatim behind the PATH bootstrap — no exec anywhere", executed)
+    let ghosttyCompound = TerminalLauncher.script(for: .ghostty, command: executed)
+    let expectedZsh = "/bin/zsh -lc '" + executed.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    check(ghosttyCompound.contains("{command:" + TerminalLauncher.appleScriptQuoted(expectedZsh) + "}"),
+          "Ghostty: the whole compound line is ONE zsh -lc argument (cd && claude survive both quoting layers)", ghosttyCompound)
+    check(ghosttyCompound.contains("cd '\\\\''/tmp/wt'\\\\'' && claude --resume 6f9619ff")
+          && ghosttyCompound.contains("echo \\\"folder not found: /tmp/h\\\"; exit 1;"),
+          "Ghostty: single quotes re-opened, double quotes AppleScript-escaped, && and ; untouched", ghosttyCompound)
+    check(TerminalLauncher.script(for: .iterm2, command: executed).contains("command " + TerminalLauncher.appleScriptQuoted(expectedZsh)),
+          "iTerm2: same zsh -lc wrapping for the compound line")
+    check(TerminalLauncher.script(for: .terminal, command: executed).contains("do script " + TerminalLauncher.appleScriptQuoted(executed)),
+          "Terminal.app: compound line goes to do script as one AppleScript string (login shell parses it)")
     // terminal_app setting (server-owned, §68.1) resolved against installed apps — mirrors server resolve_terminal
     let onlyTerminal: (TerminalApp) -> Bool = { $0 == .terminal }
     let all: (TerminalApp) -> Bool = { _ in true }
@@ -453,18 +471,18 @@ func checkTerminalTakeover() {
         let data = try! JSONSerialization.data(withJSONObject: obj)
         fm.createFile(atPath: qdir + "/" + name, contents: data)
     }
-    writeEntry("b.json", ["id": "b", "kind": "takeover", "command": "claude", "shell_line": "exec claude", "created_at": now - 2])
-    writeEntry("a.json", ["id": "a", "kind": "maintainer", "command": "cd /r && claude", "shell_line": "cd /r; exec claude", "created_at": now - 30])
-    writeEntry("old.json", ["id": "old", "kind": "takeover", "command": "claude", "shell_line": "exec claude", "created_at": now - TerminalRelay.staleAfter - 1])
+    writeEntry("b.json", ["id": "b", "kind": "takeover", "command": "claude", "shell_line": "claude", "created_at": now - 2])
+    writeEntry("a.json", ["id": "a", "kind": "maintainer", "command": "cd /r && claude", "shell_line": "cd /r; claude", "created_at": now - 30])
+    writeEntry("old.json", ["id": "old", "kind": "takeover", "command": "claude", "shell_line": "claude", "created_at": now - TerminalRelay.staleAfter - 1])
     writeEntry("bad.json", ["id": "bad", "kind": "takeover"])          // no shell_line → malformed
     fm.createFile(atPath: qdir + "/half.json.tmp", contents: Data("{".utf8))   // in-flight server write: never touched
-    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "exec c", "created_at": 1.0]) != nil,
+    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "c", "created_at": 1.0]) != nil,
           "parse accepts the server entry shape")
     check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "", "created_at": 1.0]) == nil,
           "parse rejects an empty shell_line")
     var launched: [String] = []
     let drained = TerminalRelay.drain(now: now) { launched.append($0.id + ":" + $0.shellLine) }
-    check(launched == ["a:cd /r; exec claude", "b:exec claude"], "fresh entries launched oldest first, stale/malformed never launched", "\(launched)")
+    check(launched == ["a:cd /r; claude", "b:claude"], "fresh entries launched oldest first, stale/malformed never launched", "\(launched)")
     check(drained.map(\.kind) == ["maintainer", "takeover"], "drain returns what it handed to launch")
     let left = (try? fm.contentsOfDirectory(atPath: qdir))?.sorted() ?? []
     check(left == ["half.json.tmp"], "consumed + stale + malformed entries deleted; the .tmp in-flight write is left alone", "\(left)")
