@@ -5,8 +5,9 @@ gap settings-maintainer-defaults-and-launch-copy；原生 SettingsMaintainer.swi
   （``paths.repo_root()``——maintainer_launch.resolve 用的同一条）；override 不改灰字（灰字说的是「留空时用什么」）；
 - ``maintainer_session_id.placeholder`` = config.yaml ``maintainer.session_id`` 设了就是它，没设保留目录里的示例句；
 - 两键 zh / en 同一句（路径 / id 不分语言）；
-- maintainer section 投影 add-only ``terminal_app_name`` = resolved 终端的展示名（auto → 装了 Ghostty 就 Ghostty 否则
-  Terminal；``iterm2`` → ``iTerm2``，不是 ``open -a`` 用的 ``iTerm``）；其它 section 不带；
+- maintainer section 投影 add-only ``terminal_app_name`` = resolved 终端的展示名（显式选择装了才算；auto / 选了没装的 →
+  装了 Ghostty 就 Ghostty 否则 Terminal——壳 ``TerminalLauncher.resolve`` 逐字同一条规则；``iterm2`` 装了 → ``iTerm2``，
+  不是 ``open -a`` 用的 ``iTerm``）；其它 section 不带；
 - ``POST /api/maintainer/terminal`` 回执 add-only ``terminal_app_name``（同一个答案）；壳没在跑 503 / 入队失败 500 的 details
   带 ``command``（原生「或手动在终端运行：」；§68.7 2026-09-05 起走队列通道，server 不写 .command 不 open）；
 - fixture 生成器把 checkout 路径灰字与终端名抹成固定值（零 diff）。
@@ -112,15 +113,41 @@ class TerminalNameTestCase(_HomeCase):
         self.assertEqual(terminal_launch.display_name("Other"), "Other")
         self.assertEqual(set(terminal_launch.TERMINAL_DISPLAY_NAMES), set(terminal_launch.TERMINAL_APP_NAMES.values()))
 
-    def test_section_carries_the_resolved_terminal_name_and_others_do_not(self):
+    def _apps(self):
+        """假的 /Applications：``_APP_DIRS`` 只指到它，装没装终端由测试摆 ``<Name>.app`` 目录决定。"""
         apps = Path(self.tmp.name) / "apps"
-        apps.mkdir()
-        with mock.patch.object(terminal_launch, "_APP_DIRS", (str(apps),)):
-            # auto：没装 Ghostty → Terminal；装了 → Ghostty（原生 TerminalLauncher.preferred）
-            self.assertEqual(catalog.section_snapshot(self.home, "maintainer")["terminal_app_name"], "Terminal")
-            (apps / "Ghostty.app").mkdir()
-            self.assertEqual(catalog.section_snapshot(self.home, "maintainer")["terminal_app_name"], "Ghostty")
+        apps.mkdir(exist_ok=True)
+        patch = mock.patch.object(terminal_launch, "_APP_DIRS", (str(apps),))
+        patch.start()
+        self.addCleanup(patch.stop)
+        return apps
+
+    def test_resolve_terminal_mirrors_the_shell_and_native_preferred(self):
+        """壳 ``TerminalLauncher.resolve(setting:installed:)``（shell/tests/run.sh 第 7 节六例）逐字同一条规则：显式选择装了才算，
+        auto / 未知 / 选了没装的 → 装了 Ghostty 就 Ghostty 否则 Terminal——否则「会在 iTerm2 中打开」会说一个壳不会开的终端。"""
+        every = lambda _n: True  # noqa: E731
+        none = lambda _n: False  # noqa: E731
+        only_terminal = lambda n: n == "Terminal"  # noqa: E731
+        self.assertEqual(terminal_launch.resolve_terminal("auto", every), "Ghostty")
+        self.assertEqual(terminal_launch.resolve_terminal("auto", only_terminal), "Terminal")
+        self.assertEqual(terminal_launch.resolve_terminal("iterm2", every), "iTerm")
+        self.assertEqual(terminal_launch.resolve_terminal("iterm2", only_terminal), "Terminal")   # 选了没装的 = auto
+        self.assertEqual(terminal_launch.resolve_terminal("iterm2", none), "Terminal")
+        self.assertEqual(terminal_launch.resolve_terminal("ghostty", only_terminal), "Terminal")
+        self.assertEqual(terminal_launch.resolve_terminal("terminal", every), "Terminal")
+        self.assertEqual(terminal_launch.resolve_terminal("bogus", every), "Ghostty")
+        self.assertEqual(terminal_launch.resolve_terminal("", only_terminal), "Terminal")
+
+    def test_section_carries_the_resolved_terminal_name_and_others_do_not(self):
+        apps = self._apps()
+        # auto：没装 Ghostty → Terminal；装了 → Ghostty（原生 TerminalLauncher.preferred）
+        self.assertEqual(catalog.section_snapshot(self.home, "maintainer")["terminal_app_name"], "Terminal")
+        (apps / "Ghostty.app").mkdir()
+        self.assertEqual(catalog.section_snapshot(self.home, "maintainer")["terminal_app_name"], "Ghostty")
+        # 选了 iTerm2 但没装 → 壳会开 Ghostty，帮助句也说 Ghostty；装上才是 iTerm2
         write_text(self.home / "state" / "settings_overrides.json", json.dumps({"terminal_app": "iterm2"}))
+        self.assertEqual(catalog.section_snapshot(self.home, "maintainer")["terminal_app_name"], "Ghostty")
+        (apps / "iTerm.app").mkdir()
         self.assertEqual(catalog.section_snapshot(self.home, "maintainer")["terminal_app_name"], "iTerm2")
         snapshot = catalog.snapshot(self.home)
         with_name = [s["id"] for s in snapshot["sections"] if "terminal_app_name" in s]
@@ -128,6 +155,7 @@ class TerminalNameTestCase(_HomeCase):
 
     def test_receipt_carries_the_same_terminal_name(self):
         self._beat()
+        (self._apps() / "iTerm.app").mkdir()
         write_text(self.home / "state" / "settings_overrides.json", json.dumps({"terminal_app": "iterm2"}))
         receipt = maintainer_launch.launch(self.home, {}, platform="darwin")
         self.assertEqual(receipt["terminal_app_name"], "iTerm2")

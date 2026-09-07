@@ -92,6 +92,24 @@ class ShellLineRunsTestCase(unittest.TestCase):
         self.assertIn("folder not found", proc.stdout + proc.stderr)
         self.assertFalse(self.record.exists(), "claude must not start when the cd failed")
 
+    def test_cwd_with_a_double_quote_still_parses_and_runs(self):
+        """cd 失败那句 echo 里的 cwd 也过 shlex.quote：路径里一个 ``"`` 此前让整行 ``unmatched "``、什么都不跑。"""
+        odd = self.worktree / 'wt"q'
+        odd.mkdir()
+        got = self._run(terminal_launch.shell_line_for("claude attach q", str(odd), self.home))
+        self.assertEqual(got["argv"], ["attach", "q"])
+        self.assertEqual(Path(got["cwd"]).resolve(), odd.resolve())
+
+    def test_command_substitution_in_a_missing_cwd_is_not_executed(self):
+        """cwd 是 LLM 给的 target_repo 原文（目录不存在）时走到 echo：``$(…)`` 必须是字面字符，不许在用户终端里执行。"""
+        marker = self.worktree / "INJECTED"
+        hostile = "%s/nonexistent/$(touch %s)" % (self.worktree, terminal_launch.shlex.quote(str(marker)))
+        proc = self._spawn(terminal_launch.shell_line_for("claude attach x", hostile, self.home))
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("folder not found: " + hostile, proc.stdout)   # 原文回显，未被替换
+        self.assertFalse(marker.exists(), "the $(…) inside the cwd ran in the shell")
+        self.assertFalse(self.record.exists())
+
     def test_the_retired_exec_form_would_have_lost_the_command(self):
         """反面判例：老 .command 通道的 ``exec <复合命令>``——shell 静默退出、claude 不跑（这就是要修的故障）。"""
         compound = "cd %s && claude --resume 6f9619ff" % terminal_launch.shlex.quote(str(self.worktree))

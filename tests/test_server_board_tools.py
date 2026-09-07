@@ -86,6 +86,18 @@ class TerminalLaunchTestCase(_ServerCase):
         self.assertEqual([f.name for f in self.queue.iterdir()], [entries[0].name])
         self.assertFalse(hasattr(terminal_launch, "write_command_file"))
         self.assertFalse(hasattr(terminal_launch, "open_command_file"))
+        if not _WIN:
+            # 条目是壳会拿去执行的命令行：目录 0700 / 文件 0600（不是 §28 通知队列的 umask 默认）
+            self.assertEqual(self.queue.stat().st_mode & 0o777, terminal_launch.QUEUE_DIR_MODE)
+            self.assertEqual(entries[0].stat().st_mode & 0o777, terminal_launch.QUEUE_FILE_MODE)
+
+    @unittest.skipIf(_WIN, "POSIX permission bits")
+    def test_enqueue_tightens_a_queue_dir_that_already_exists_with_loose_perms(self):
+        self.queue.mkdir(parents=True)
+        os.chmod(self.queue, 0o755)
+        _entry, path = terminal_launch.enqueue(self.home, "takeover", "claude", "claude", str(self.home))
+        self.assertEqual(self.queue.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_command_for_prefers_copy_cmd_then_resume(self):
         self.assertEqual(terminal_launch.command_for({"copy_cmd": " claude --resume abc "}), "claude --resume abc")
@@ -96,8 +108,14 @@ class TerminalLaunchTestCase(_ServerCase):
     @unittest.skipIf(_WIN, "POSIX shell quoting")
     def test_shell_line_quotes_cwd_and_home_and_skips_what_is_absent(self):
         line = terminal_launch.shell_line_for("claude --resume x", "/tmp/my dir", Path("/h"))
-        self.assertEqual(line, "cd '/tmp/my dir' || { echo \"folder not found: /tmp/my dir\"; exit 1; }; "
+        self.assertEqual(line, "cd '/tmp/my dir' || { echo 'folder not found:' '/tmp/my dir'; exit 1; }; "
                                "export AIASSISTANT_HOME=/h; claude --resume x")
+        # cwd 可能是 LLM 给的 target_repo 原文：echo 里的那份也过 shlex.quote，`"` 与 `$(…)` 都成了字面字符
+        hostile = '/tmp/wt"q/$(echo INJECTED >&2)'
+        line = terminal_launch.shell_line_for("claude", hostile, None)
+        self.assertEqual(line, "cd %s || { echo 'folder not found:' %s; exit 1; }; claude"
+                               % ((terminal_launch.shlex.quote(hostile),) * 2))
+        self.assertNotIn('"folder not found', line)
         # 相对 / 缺席的 cwd 不 cd；home None（卸载脚本）不导出
         self.assertEqual(terminal_launch.shell_line_for("bash uninstall.sh", "relative", None), "bash uninstall.sh")
         self.assertEqual(terminal_launch.shell_line_for("claude", None, Path("/h")),

@@ -6,7 +6,8 @@ docstring 里「不需要任何自动化授权」的断言被现实推翻。现�
 ``state/terminal_queue/<id>.json``（§28 通知中继同款形制：原子 ``.json.tmp`` + rename、写侧清扫
 过期条目），壳（``shell/Sources/TerminalRelay.swift``）按节拍消费队列、经 Apple Events
 （``shell/Sources/TerminalLauncher.swift``，老版 mac/ 实战验证过的那份）在 Ghostty / iTerm2 /
-Terminal 新开窗口跑命令。自动化授权按（壳, 终端）这一对记忆——首次弹一次，此后安静。
+Terminal 新开窗口跑命令。自动化授权按（壳, 终端）这一对记忆——TCC 以壳的签名 requirement 为键：壳仍 ad-hoc 签名
+期间每次重建（= 每次自动部署）后首次双击会再弹一次，稳定签名后才是一次性（§68.7 追记 (b)）。
 
 **命令永远由 server 从投影行推导，绝不接受客户端文本**（``copy_cmd``，其次
 ``claude --resume <session_id>``；与 reveal / ai-fix 同一条纪律：客户端只给 SAFE_ID 白名单内的
@@ -64,6 +65,9 @@ STALE_AFTER_S = 60.0
 HEARTBEAT_FRESH_S = 15.0
 # 队列条目 kind 词表（add-only）：接管会话 / 开发会话（§68.1）/ 卸载（§68.6）
 KINDS = ("takeover", "maintainer", "uninstall")
+# 队列权限：条目是壳会在终端里执行的命令行——目录 0700 / 文件 0600（act/lib/secrets 同款；壳与 server 同一 uid）
+QUEUE_DIR_MODE = 0o700
+QUEUE_FILE_MODE = 0o600
 
 
 def terminal_installed(app_name: str) -> bool:
@@ -72,10 +76,11 @@ def terminal_installed(app_name: str) -> bool:
 
 
 def resolve_terminal(choice: str, installed: Callable[[str], bool] = terminal_installed) -> str:
-    """terminal_app 值 → 应用名。auto / 未知值：Ghostty 装了就 Ghostty，否则 Terminal
-    （壳 ``TerminalLauncher.resolve`` 同一条规则；server 侧只用来算展示名）。"""
+    """terminal_app 值 → 应用名。显式选择**装了**才算；auto / 未知值 / 选了没装的：Ghostty 装了就 Ghostty，
+    否则 Terminal——壳 ``TerminalLauncher.resolve(setting:installed:)`` 逐字同一条规则（原生 ``preferred`` 同款），
+    否则 maintainer 区「会在 iTerm2 中打开」会说一个壳根本不会去开的终端；server 侧只用来算展示名。"""
     name = TERMINAL_APP_NAMES.get(choice)
-    if name is not None:
+    if name is not None and installed(name):
         return name
     return "Ghostty" if installed("Ghostty") else "Terminal"
 
@@ -120,13 +125,16 @@ def command_for(row: dict) -> Optional[str]:
 
 def shell_line_for(cmd: str, cwd: Optional[str], home: Optional[Path]) -> str:
     """壳逐字交给终端的一行：cd 到工作目录 → 导出 AIASSISTANT_HOME → 命令本身。cwd / home 用
-    shlex.quote；命令是投影里 actd 写好的一行 shell（老版 TerminalLauncher 也是逐字送进终端），**原样接在
-    分号后，不加 exec**——``copy_cmd`` 常是复合命令 ``cd '<wt>' && claude --resume <id>``，``exec cd`` 在 zsh /
-    bash 里都是「执行内建后退出」，后半句永远跑不到（退役 .command 通道的实际故障）。``home`` 为 None 时
-    不导出（卸载脚本不需要）。"""
+    shlex.quote——**cd 失败那句 echo 里的 cwd 也一样过 shlex.quote**：cwd 可能是 LLM 给的 ``target_repo``
+    原文（act/analyze 只要非空字串；chat 投递或 ensure_repo 失败时目录并不存在），裸放进双引号里，一个 ``"`` 让
+    整行 ``unmatched "`` 什么都不跑，一个 ``$(…)`` 会在用户终端里真的执行。命令是投影里 actd 写好的一行 shell
+    （老版 TerminalLauncher 也是逐字送进终端），**原样接在分号后，不加 exec**——``copy_cmd`` 常是复合命令
+    ``cd '<wt>' && claude --resume <id>``，``exec cd`` 在 zsh / bash 里都是「执行内建后退出」，后半句永远跑不到
+    （退役 .command 通道的实际故障）。``home`` 为 None 时不导出（卸载脚本不需要）。"""
     parts = []
     if isinstance(cwd, str) and cwd.startswith("/"):
-        parts.append("cd %s || { echo \"folder not found: %s\"; exit 1; }" % (shlex.quote(cwd), cwd))
+        q = shlex.quote(cwd)
+        parts.append("cd %s || { echo 'folder not found:' %s; exit 1; }" % (q, q))
     if home is not None:
         parts.append("export AIASSISTANT_HOME=%s" % shlex.quote(str(home)))
     parts.append(cmd)
@@ -169,9 +177,17 @@ def sweep_stale(qdir: Path, now: Optional[float] = None) -> int:
         return 0
 
 
+def _write_private(tmp: Path, body: str) -> None:
+    """0600 + O_EXCL 落盘（act/lib/secrets 同款）：条目是壳一秒内就会交给终端执行的命令行，比 §28 通知队列的
+    umask 默认权限多一层——目录 0700 在 enqueue 里给。"""
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, QUEUE_FILE_MODE)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(body)
+
+
 def enqueue(home: Path, kind: str, command: str, shell_line: str, cwd: str,
             card_id: Optional[str] = None, now: Optional[float] = None) -> "tuple[dict, Path]":
-    """写一条队列条目（原子 .json.tmp + rename），先清扫过期同伴；返回 (entry, path)。
+    """写一条队列条目（原子 .json.tmp + rename，目录 0700 / 文件 0600），先清扫过期同伴；返回 (entry, path)。
     写不进去 → 500（磁盘 / 权限问题如实报，不吞）。"""
     if kind not in KINDS:
         raise ValueError("unknown terminal queue kind: %r" % (kind,))
@@ -184,10 +200,11 @@ def enqueue(home: Path, kind: str, command: str, shell_line: str, cwd: str,
     target = qdir / (entry["id"] + ".json")
     tmp = qdir / (entry["id"] + ".json.tmp")   # 壳只认 *.json，半写的文件永不被读到
     try:
-        qdir.mkdir(parents=True, exist_ok=True)
+        qdir.mkdir(parents=True, exist_ok=True, mode=QUEUE_DIR_MODE)
+        os.chmod(qdir, QUEUE_DIR_MODE)   # 目录早就在（老 umask 建的）也收紧
         sweep_stale(qdir, stamp)
         try:
-            tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+            _write_private(tmp, json.dumps(entry, ensure_ascii=False))
             os.replace(tmp, target)
         finally:
             tmp.unlink(missing_ok=True)

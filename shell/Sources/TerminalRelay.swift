@@ -109,8 +109,9 @@ enum ShellHeartbeat {
         let dir = (path as NSString).deletingLastPathComponent
         try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         if !fm.fileExists(atPath: path) {
+            // 0600 like the server's queue entries (private-file lens inside state/); body is informational
             let body = "pid=\(ProcessInfo.processInfo.processIdentifier)\n"
-            try? body.write(toFile: path, atomically: true, encoding: .utf8)
+            fm.createFile(atPath: path, contents: Data(body.utf8), attributes: [.posixPermissions: 0o600])
         }
         try? fm.setAttributes([.modificationDate: now], ofItemAtPath: path)
     }

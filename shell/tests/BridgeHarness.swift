@@ -434,10 +434,11 @@ func checkTerminalTakeover() {
           "iTerm2 script: create window with default profile command")
     check(TerminalLauncher.bootstrapped("claude").hasPrefix(TerminalLauncher.pathBootstrap)
           && TerminalLauncher.bootstrapped("claude").hasSuffix("claude"), "executed line = PATH bootstrap + raw command")
-    // D36 / issue #216 复合接管命令：server 的 shell_line 是 `cd '<cwd>' || {…}; export AIASSISTANT_HOME=…; cd '<wt>' && claude --resume <id>`
-    // （不 exec——`exec cd` 会让 shell 静默退出，退役 .command 通道就是这样坏的）。壳必须把整行**作为一个 shell 字串**
-    // 交给 /bin/zsh -lc：单引号层 closes–escapes–reopens 每个 '，双引号只在 AppleScript 层转义，&& / ; / {} 原样进 zsh。
-    let compound = "cd '/tmp/h' || { echo \"folder not found: /tmp/h\"; exit 1; }; export AIASSISTANT_HOME=/tmp/h; cd '/tmp/wt' && claude --resume 6f9619ff"
+    // D36 / issue #216 复合接管命令：server 的 shell_line 是 `cd '<cwd>' || { echo 'folder not found:' '<cwd>'; exit 1; }; export AIASSISTANT_HOME=…; cd '<wt>' && claude --resume <id>`
+    // （不 exec——`exec cd` 会让 shell 静默退出，退役 .command 通道就是这样坏的；echo 里的 cwd 也 shlex.quote 过——路径可能是 LLM 原文）。
+    // 壳必须把整行**作为一个 shell 字串**交给 /bin/zsh -lc：单引号层 closes–escapes–reopens 每个 '，双引号只在 AppleScript 层
+    // 转义（PATH 兜底那句里有），&& / ; / {} 原样进 zsh。
+    let compound = "cd '/tmp/h' || { echo 'folder not found:' '/tmp/h'; exit 1; }; export AIASSISTANT_HOME=/tmp/h; cd '/tmp/wt' && claude --resume 6f9619ff"
     let executed = TerminalLauncher.bootstrapped(compound)
     check(executed == TerminalLauncher.pathBootstrap + compound && !executed.contains("exec "),
           "compound shell_line rides verbatim behind the PATH bootstrap — no exec anywhere", executed)
@@ -446,7 +447,8 @@ func checkTerminalTakeover() {
     check(ghosttyCompound.contains("{command:" + TerminalLauncher.appleScriptQuoted(expectedZsh) + "}"),
           "Ghostty: the whole compound line is ONE zsh -lc argument (cd && claude survive both quoting layers)", ghosttyCompound)
     check(ghosttyCompound.contains("cd '\\\\''/tmp/wt'\\\\'' && claude --resume 6f9619ff")
-          && ghosttyCompound.contains("echo \\\"folder not found: /tmp/h\\\"; exit 1;"),
+          && ghosttyCompound.contains("echo '\\\\''folder not found:'\\\\'' '\\\\''/tmp/h'\\\\''; exit 1;")
+          && ghosttyCompound.contains("export PATH=\\\"$HOME/.local/bin"),
           "Ghostty: single quotes re-opened, double quotes AppleScript-escaped, && and ; untouched", ghosttyCompound)
     check(TerminalLauncher.script(for: .iterm2, command: executed).contains("command " + TerminalLauncher.appleScriptQuoted(expectedZsh)),
           "iTerm2: same zsh -lc wrapping for the compound line")
@@ -498,6 +500,8 @@ func checkTerminalTakeover() {
     check(ShellHeartbeat.path.hasSuffix("/state/shell.heartbeat"), "heartbeat path = <home>/state/shell.heartbeat")
     check(beat1 != nil && beat2 != nil && beat2! > beat1!, "beat touches the mtime forward", "\(String(describing: beat1)) → \(String(describing: beat2))")
     check((try? String(contentsOfFile: ShellHeartbeat.path, encoding: .utf8))?.hasPrefix("pid=") == true, "heartbeat body carries the pid")
+    let beatMode = ((try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.posixPermissions] as? NSNumber)?.intValue ?? -1
+    check(beatMode == 0o600, "heartbeat file is 0600 (private-file lens inside state/)", "\(beatMode)")
     ShellHeartbeat.stop()
     check(!fm.fileExists(atPath: ShellHeartbeat.path), "stop removes the heartbeat (server flips to 503 at once)")
 }
