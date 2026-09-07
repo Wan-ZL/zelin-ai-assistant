@@ -4,7 +4,6 @@
 control:board.card:label:session-match
 control:board.dialogs:alert-button:ok
 control:board.dialogs:label:images-could-not-be-saved
-control:board:label:card
 control:deps:label:which-gh-login-shell
 control:settings.claudeImport:button:show-all-model-candidates-count
 control:settings.claudeImport:button:show-fewer

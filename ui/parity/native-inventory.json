@@ -85,6 +85,10 @@
         "owner": "retired",
         "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏"
       },
+      "control:board:label:card": {
+        "owner": "retired",
+        "reason": "D46 看板换列 / deal-in 动画正式退役（§68.14 1.16 tombstone 2026-09-06；§43 是原生 display-only 层）：BoardMotion 飞行标签的兜底词无落点"
+      },
       "control:doctor:label:failed-to-write-dest": {
         "owner": "retired",
         "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）"
@@ -945,9 +949,10 @@
     },
     {
       "en": "Card",
-      "gated": true,
+      "gated": false,
       "id": "control:board:label:card",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D46 看板换列 / deal-in 动画正式退役（§68.14 1.16 tombstone 2026-09-06；§43 是原生 display-only 层）：BoardMotion 飞行标签的兜底词无落点",
       "role": "label",
       "screen": "board",
       "source": "BoardMotion.swift:203",

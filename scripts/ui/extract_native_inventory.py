@@ -222,6 +222,14 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬",
     },
+    # D46（2026-09-06，Claude 按 owner 授权代拍；审计 board-cards-lane-change-motion 选项 (c)）：原生 BoardMotion.swift
+    # 的飞行 / deal-in / 书立条脉冲层（§43，display-only）在 web 正式退役——不做、不计划（§68.14 1.16 由「未做」改
+    # tombstone）。「卡片」是 BoardMotion.titlesFor 给飞行标签用的兜底词（store 解析不出标题时代替裸 id），飞行层
+    # 不存在这个词就没有落点；D34 的动机（减少泳道布局跳动）与它同向。
+    "control:board:label:card": {
+        "owner": "retired",
+        "reason": "D46 看板换列 / deal-in 动画正式退役（§68.14 1.16 tombstone 2026-09-06；§43 是原生 display-only 层）：BoardMotion 飞行标签的兜底词无落点",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部

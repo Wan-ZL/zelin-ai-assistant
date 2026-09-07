@@ -1,0 +1,2 @@
+type: removed
+- **看板换列飞行 / deal-in / 书立条脉冲动画正式退役（决策 D46；CONTRACT §68.14 1.16 tombstone）**：退役中的原生 app 有一层「卡片换列时飞到目的列、新卡落定、书立条计数脉冲」的动效，web 看板从未移植、也不再计划——它与 D34「减少泳道布局跳动」的方向相反，而 web 的看板回流是整版快照，多卡同版换列时飞行起点只能猜。`web/src/styles/animations.css` 里从未被任何组件引用的 `.is-moving` / `.is-settling` / `task-card-settle` 三条死规则一并删除。留下的动效（卡片 hover 抬升、运行卡 sheen 扫光与进度环、详情侧栏滑入、加载 spinner）不变，仍跟随系统「减弱动态效果」与 设置 → 通用「看板动画」开关。§66 对齐清单里飞行标签的兜底词「卡片 / Card」按归属表标 retired，`ui/parity/pending.txt` 划掉这一行；不加任何新 UI，看板视觉不变。

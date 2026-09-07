@@ -5828,6 +5828,8 @@ Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`�
 - **1.15 会话索引搜索**（`state/search_index.json` 合进 ⌘F）与 **1.16 看板动画**：未做（s4 自评 defer；搜索索引另 PR）。
 - **Tier 2 同步 / 配对**（iPhone 联动 QR）：~~随 §31 syncd 面另议，不在设置页~~ → **2026-09-03 修订**：按 §68.15 落在设置页「同步 / 配对」区（server 起 `act.syncd --pair` / `--disable`，二维码用 syncd 已落盘的 PNG）——原生 SettingsSync 的整面搬齐，本条例外撤销。
 
+**§68.14 追记（2026-09-06，add-only；决策 D46，Claude 按 owner 授权代拍——审计 `board-cards-lane-change-motion` 选项 (c)；PR `feat/lane-motion-retire`）——1.16 看板动画：「未做」→ tombstone「不做、不计划」**。原生 §43 的 display-only 层（`mac/Sources/BoardDiff.swift` 快照差分 + `BoardMotion.swift` 飞行层：换列的卡飞到目的列、新卡 deal-in 落定、书立条计数脉冲）在 web 看板**正式退役**（防腐 #6）：web 从未移植它（`animations.css` 里 fork 来的 `.task-card.is-moving` / `.is-settling` / `task-card-settle` 三条规则没有任何 TSX 挂过，本 PR 连死规则一并删除），也不再列为待办——理由与 D34 同向（2026-09-04 单一详情面的成立理由之一就是「就地展开撑高泳道、引发布局跳动」，owner 认可；一张卡换列时飞过整块看板正是最大的一次布局动感），且 web 的看板回流是 SSE 推的整版快照，同一版里多张卡同时换列时飞行层只能靠猜测起点（原生也承认 nil / 越界端点直接放弃飞行）。**留下的动效**（卡片 hover 抬升、running 卡 sheen 扫光与 conic 进度环、详情侧栏滑入、导航栏折叠、加载 spinner）不变，仍受两重降级：系统 `prefers-reduced-motion: reduce`（全部动画即时完成）与 设置 → 通用「看板动画」开关（`localStorage boardAnimations=false` → `<html data-board-animations="off">`，只关看板动效、不关 spinner 的「在加载」语义）——开关本身不退役，它管的是这些留下来的。§66 清单：`control:board:label:card`（BoardMotion.titlesFor 给飞行标签用的兜底词「卡片 / Card」，store 解析不出标题时代替裸 id）经 `CONTROL_OWNER` 标 retired、理由带本节引用进 JSON，`ui/parity/pending.txt` 划掉这一行（账本只缩；§54.4 2026-09-03 追记点名的「看板面仍挂账 5 条」自此少一条），`waivers.txt` 零改动。1.15 会话索引搜索不在本条范围，另由 D45 处置。判例 `tests/test_ui_parity_lane_motion_retired.py`。
+
 
 ### 68.15 同步 / 配对（`?page=settings#settings-sync`；原生 SettingsSync.swift 的 web 版；2026-09-03）
 
