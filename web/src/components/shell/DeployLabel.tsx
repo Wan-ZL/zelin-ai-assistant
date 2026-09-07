@@ -5,6 +5,11 @@
 // healthy 但 last_incident 在案（回滚被拒后 HEAD 留在新 sha，下一轮的 up_to_date 不许
 // 把判决冲掉——#135 review）→ 同样警告色，title 挂判决原文。无 deploy_state 或无
 // version → 整个隐藏：这台机器不跑 auto-deploy（.pkg 安装 / Linux / flag 关）。
+// `deferred`（§56.3 会话闸门，2026-09-07）：绿的新版本已就绪，但 roster 上还有活着的
+// 后台 claude 会话，部署任务不重启 actd——这是 owner 要的行为，不是故障：次级色 +
+// 「新版本已就绪，等待 N 个会话结束后更新」；连续等满 DEFER_WARN_HOURS（与
+// act/lib/deploy_state.py DEFER_WARN_AFTER_S 同值）才切警告色并追加「已 X 小时」——
+// 一个永不结束的会话是 §46/#119 收割机制的事，但 owner 得看得见。
 // 相对时间与 FreshnessLabel 共用 relativeAge，60s tick 自驱重算。计算住 useDeployLabel（HeaderBar 调一次：
 // full / compact 渲染成小字，tight 折进连接点的 tooltip，§49 追记 2026-09-04）；DeployLabel 只管渲染。
 import { useEffect, useState } from "react";
@@ -14,6 +19,25 @@ import { parseGeneratedAt, relativeAge } from "./FreshnessLabel";
 
 const TICK_MS = 60_000;
 const HEALTHY = new Set(["deployed", "up_to_date"]);
+const DEFERRED = "deferred";
+const DEFER_WARN_HOURS = 6;
+
+/** 「新版本已就绪，等待 N 个会话结束后更新[（已 X 小时）]」+ 是否已过警告线。 */
+function deferredLabel(
+  state: { deferred_sessions?: unknown; deferred_since?: unknown },
+  now: number,
+  text: (zh: string, en: string) => string,
+): { label: string; overdue: boolean } {
+  const n = typeof state.deferred_sessions === "string" ? state.deferred_sessions : "";
+  const since = parseGeneratedAt(state.deferred_since);
+  const hours = since == null ? 0 : Math.floor(Math.max(0, now - since) / 3_600_000);
+  const overdue = since != null && hours >= DEFER_WARN_HOURS;
+  let label = n
+    ? text(`新版本已就绪，等待 ${n} 个会话结束后更新`, `update ready, waiting for ${n} session${n === "1" ? "" : "s"} to finish`)
+    : text("新版本已就绪，等待会话结束后更新", "update ready, waiting for sessions to finish");
+  if (overdue) label += text(`（已 ${hours} 小时）`, ` (${hours}h)`);
+  return { label, overdue };
+}
 
 function statusLabel(status: string, text: (zh: string, en: string) => string): string {
   switch (status) {
@@ -69,19 +93,21 @@ export function useDeployLabel(): DeployLabelState | null {
   const status = typeof state.status === "string" ? state.status : "";
   const incident = typeof state.last_incident === "string" ? state.last_incident : "";
   const healthy = HEALTHY.has(status);
+  const deferred = status === DEFERRED ? deferredLabel(state, now, text) : null;
   const parts = [`v${version}`];
   const deployedAt = parseGeneratedAt(state.last_deployed);
   if (deployedAt != null) {
     const age = relativeAge(Math.max(0, (now - deployedAt) / 1000), text);
     parts.push(text(`${age}部署`, `deployed ${age}`));
   }
-  if (!healthy) parts.push(statusLabel(status, text));
+  if (deferred) parts.push(deferred.label);
+  else if (!healthy) parts.push(statusLabel(status, text));
   else if (incident) parts.push(text("上次回滚判决待处理", "unresolved rollback verdict"));
   const detail = typeof state.detail === "string" ? state.detail : "";
   return {
     label: parts.join(" · "),
     title: healthy && incident ? incident : detail,
-    warn: !healthy || Boolean(incident),
+    warn: deferred ? deferred.overdue || Boolean(incident) : !healthy || Boolean(incident),
   };
 }
 

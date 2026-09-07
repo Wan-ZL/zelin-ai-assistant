@@ -1,9 +1,12 @@
 """launchd entrypoint for the self-updating deploy job (CONTRACT §56).
 
 ``python3 -m act.auto_deploy`` runs ``scripts/auto-deploy.sh`` — the actual
-logic (fetch, ff-only merge, install.sh --non-interactive, doctor-gated
-rollback, state/deploy_state.json) lives in that shell script so it can be
-tested against a throwaway git repo (tests/integration).
+logic (fetch, ff-only merge, the §56.3 step-4b session gate that defers the
+whole run while background claude sessions are live — its roster count is
+``act.executor.live_session_count``, called from the script, since this
+entrypoint may not import another (§58.3) —, install.sh --non-interactive,
+doctor-gated rollback, state/deploy_state.json) lives in that shell script so
+it can be tested against a throwaway git repo (tests/integration).
 
 Why a python shim instead of ``/bin/bash <script>`` in the plist: §55 pins
 ``ProgramArguments[0]`` of every agent to the pinned, launchd-viable

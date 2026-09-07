@@ -27,6 +27,11 @@ Field by field type-checking, never raising: the writer is a shell script and
 a torn/half-edited file must not take the dashboard pass down (§0 第 11 条).
 Unknown keys are dropped, unknown ``status`` values are kept verbatim
 (add-only: readers tolerate what they do not know).
+
+§56.3 session gate (2026-09-07): ``status == deferred`` + the ``deferred_*``
+keys mean a green target is waiting for live background claude sessions to
+end; :func:`auto_deploy_row` keeps it OK until ``DEFER_WARN_AFTER_S`` of
+continuous deferral, then WARNs — the deploy never ends a session itself.
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ import datetime as _dt
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -58,10 +64,17 @@ MIRROR_PATH: Path = (Path.home() / "Library" / "Application Support"
 # `failed_shas` — every poisoned sha since the last clear, `failed_sha` being
 # only the newest —, `incomplete_runs` / `incomplete_runs_sha` /
 # `incomplete_seen` / `incomplete_sha` / `incomplete_notified_sha`,
-# `tcc_notified_day`); not projected.
+# `tcc_notified_day`, `roster_unknown_ticks`); not projected.
+# 2026-09-07 add-only (§56.3 session gate): `deferred_reason`
+# (`sessions_running` | `roster_unknown`) / `deferred_sessions` (the roster
+# count that held the deploy) / `deferred_since` (ISO of the FIRST deferral of
+# the current episode — the 6 h WARN and the web banner's age read it);
+# written with `status == deferred`, cleared when the gate passes, by a
+# `deployed` and by an `up_to_date`.
 FIELDS = ("status", "version", "head", "prev", "last_deployed", "last_run",
           "detail", "failed_sha", "running_version", "install_report_version",
-          "reason", "last_incident", "behind_main", "behind_main_why")
+          "reason", "last_incident", "behind_main", "behind_main_why",
+          "deferred_reason", "deferred_sessions", "deferred_since")
 
 # Mirror-only keys (never in the dashboard: local paths and the unattended
 # triple are diagnostics for the doctor, not board content).
@@ -77,6 +90,16 @@ HEALTHY = frozenset({"deployed", "up_to_date"})
 # `blocked_tcc` (the volume-access probe got EPERM before any git call).
 INSTALL_INCOMPLETE = "install_incomplete"
 BLOCKED_TCC = "blocked_tcc"
+# 2026-09-07 (§56.3 session gate): a green target is ready but the roster shows
+# live background claude sessions (or cannot be read — fail closed, at most
+# `roster_unknown_ticks` runs) and the deploy waits for the next interval
+# rather than restart actd under them. Not a WARN by itself — the owner is
+# working and the update follows by itself; it becomes one after
+# DEFER_WARN_AFTER_S of continuous deferral (a stuck session, §46/#119's job).
+DEFERRED = "deferred"
+DEFER_REASON_SESSIONS = "sessions_running"
+DEFER_REASON_UNKNOWN = "roster_unknown"
+DEFER_WARN_AFTER_S = 6 * 3600
 
 
 def _load_object(target: Path) -> Optional[dict]:
@@ -372,14 +395,62 @@ def _auto_deploy_ok_detail(state: dict) -> str:
                              (" at " + when) if when else "", _behind_main_note(state))
 
 
-def auto_deploy_row(state: dict) -> dict:
+def deferred_hours(state: dict, now: float) -> Optional[float]:
+    """Hours since `deferred_since`; None when the stamp is absent/unparseable
+    (a deferral with no readable start is never counted as overdue)."""
+    since = parse_iso_utc(state.get("deferred_since", ""))
+    if since is None:
+        return None
+    return max(0.0, (now - since) / 3600.0)
+
+
+def _deferred_ok_detail(state: dict, sessions: str) -> str:
+    since = state.get("deferred_since", "")
+    detail = state.get("detail", "")
+    return "deferred (v%s ready, waiting for %s live claude session(s)%s)%s" % (
+        state.get("version") or "?", sessions,
+        (" since " + since) if since else "", (": " + detail) if detail else "")
+
+
+def _deferred_warn_row(state: dict, sessions: str, hours: float) -> dict:
+    detail = state.get("detail") or state.get("deferred_reason") or DEFERRED
+    return _row("warn", failures.pick(
+        "更新已就绪，等待 %s 个会话结束已 %d 小时：%s",
+        "update ready, waiting for %s session(s) to finish for %d h: %s")
+        % (sessions, int(hours), detail),
+        failures.pick(
+        "看 `claude agents` 里哪个后台会话一直活着（卡住的会话由 §46/#119 的收割机制处理，"
+        "部署任务永不替它杀）；等不及就 bash scripts/auto-deploy.sh --force（会打断这些会话）",
+        "check `claude agents` for the background session that stays alive (a stuck one is "
+        "§46/#119's harvest job to end — the deploy never kills it); in a hurry: "
+        "bash scripts/auto-deploy.sh --force (interrupts those sessions)"))
+
+
+def _deferred_row(state: dict, now: float) -> dict:
+    """The `deferred` row (§56.3 session gate). Under DEFER_WARN_AFTER_S the
+    wait is the intended behaviour — OK, saying what it waits for; past it the
+    row WARNs「更新已就绪，等待 N 个会话结束已 X 小时」: no deferral ever kills a
+    session (that is §46/#119's harvest machinery), so a stuck one must at
+    least be seen. `deferred_sessions` is absent when the roster could not be
+    read (`deferred_reason=roster_unknown`)."""
+    sessions = state.get("deferred_sessions") or "?"
+    hours = deferred_hours(state, now)
+    if hours is None or hours < DEFER_WARN_AFTER_S / 3600.0:
+        return _row("ok", _deferred_ok_detail(state, sessions))
+    return _deferred_warn_row(state, sessions, hours)
+
+
+def auto_deploy_row(state: dict, now: Optional[float] = None) -> dict:
     """``auto-deploy`` row for a sanitized :func:`read` result. Healthy
     statuses are OK — unless a `last_incident`
     (a rollback verdict no later `deployed` has cleared) is still on file: the
     machine may well be up to date NOW, but the refusal that put it there has
     not been looked at, and the routine `up_to_date` write must not hide it
-    (#135 review)."""
+    (#135 review). `deferred` (§56.3 session gate) is OK until it has lasted
+    DEFER_WARN_AFTER_S, then WARN; ``now`` is the clock seam."""
     status = state.get("status", "")
+    if status == DEFERRED:
+        return _deferred_row(state, time.time() if now is None else now)
     if status not in HEALTHY:
         return _row("warn", _auto_deploy_warn_detail(state), _auto_deploy_fix(status))
     incident = state.get("last_incident", "")

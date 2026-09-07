@@ -190,6 +190,50 @@ describe("HeaderBar", () => {
     expect(screen.getByText("v0.48.11 · 后台任务读不到外置盘（需授权）").className).toBe("shell-deploy is-warn");
   });
 
+  it("§56.3 会话闸门：deferred → 次级色「新版本已就绪，等待 N 个会话结束后更新」，满 6 h 才警告色 + 「已 X 小时」", async () => {
+    const lastDeployed = new Date(Date.now() - 40 * 60 * 1000).toISOString();
+    const fresh: DeployState = {
+      status: "deferred",
+      version: "1.0.73",
+      last_deployed: lastDeployed,
+      deferred_reason: "sessions_running",
+      deferred_sessions: "2",
+      deferred_since: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+      detail: "deploy of v1.0.74 (abc1234) deferred: 2 live background claude session(s) on the roster",
+    };
+    await seedBoard(10, fresh);
+    renderHeader();
+    const label = screen.getByText("v1.0.73 · deployed 40m ago · update ready, waiting for 2 sessions to finish");
+    expect(label.className, "a deferral under 6 h is the intended behaviour, not a warning").toBe("shell-deploy");
+    expect(label.getAttribute("title")).toContain("2 live background claude session(s)");
+    cleanup();
+    resetStoreForTests();
+    await seedBoard(10, { ...fresh, deferred_sessions: "1" });
+    renderHeader("zh");
+    expect(screen.getByText("v1.0.73 · 40分钟前部署 · 新版本已就绪，等待 1 个会话结束后更新").className).toBe("shell-deploy");
+    cleanup();
+    resetStoreForTests();
+    // 7 h of continuous deferral: warning colour + the age, both languages
+    const overdue: DeployState = { ...fresh, deferred_since: new Date(Date.now() - 7 * 3600 * 1000).toISOString() };
+    await seedBoard(10, overdue);
+    renderHeader();
+    const warn = screen.getByText("v1.0.73 · deployed 40m ago · update ready, waiting for 2 sessions to finish (7h)");
+    expect(warn.className).toBe("shell-deploy is-warn");
+    cleanup();
+    resetStoreForTests();
+    await seedBoard(10, overdue);
+    renderHeader("zh");
+    expect(screen.getByText("v1.0.73 · 40分钟前部署 · 新版本已就绪，等待 2 个会话结束后更新（已 7 小时）").className)
+      .toBe("shell-deploy is-warn");
+    cleanup();
+    resetStoreForTests();
+    // roster unreadable (fail closed): no count → generic wording, still not a warning
+    await seedBoard(10, { status: "deferred", version: "1.0.73", deferred_reason: "roster_unknown",
+      deferred_since: new Date().toISOString() });
+    renderHeader();
+    expect(screen.getByText("v1.0.73 · update ready, waiting for sessions to finish").className).toBe("shell-deploy");
+  });
+
   it("§56 部署状态：healthy 但 last_incident 在案 → 警告色 + 判决进 title（#135 review）", async () => {
     const verdict = "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2 became the registry truth)";
     await seedBoard(10, {

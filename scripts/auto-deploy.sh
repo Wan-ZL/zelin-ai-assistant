@@ -65,6 +65,26 @@
 #      state file records `behind_main` = the head that was skipped and why.
 #   4. refuse when the tracked tree is dirty (the owner's work in progress —
 #      never touched; one notification per pending commit, then silence)
+#   4b. SESSION GATE (2026-09-07; live: P-029's worker died with exit 143 at
+#      the very second the v1.0.72 deploy restarted actd while the owner sat
+#      attached to it): ask the roster (`<stable claude> agents --json --all`
+#      through act.executor.live_session_count — the daemon's own reader, same
+#      binary) how many BACKGROUND sessions still have a live process. Any →
+#      `deferred` (add-only keys deferred_reason=sessions_running /
+#      deferred_sessions=N / deferred_since=<first deferral>), one log line,
+#      exit 0, HEAD untouched; the next StartInterval tick asks again. No time
+#      cap ever ends a session — a stuck one is §46/#119's harvest job — but
+#      after AUTODEPLOY_DEFER_WARN_AFTER (6 h) of continuous deferral the log
+#      WARNs and the doctor `auto-deploy` row turns WARN so the owner sees it.
+#      Roster unreadable (claude missing / non-zero / bad JSON) = FAIL CLOSED:
+#      deferred_reason=roster_unknown for at most AUTODEPLOY_ROSTER_UNKNOWN_LIMIT
+#      (3) consecutive runs, then the gate yields and says why — a broken
+#      roster must neither block deploys forever nor kill sessions silently.
+#      `--force` skips the gate (the owner typed it, the count is logged). The
+#      same gate guards the install.sh re-run of step 2 (a repair restarts
+#      actd too); the rollback below is NOT deferred — it is the emergency
+#      exit of a deploy that passed this gate minutes earlier, and its bootout
+#      only logs how many sessions the new actd dispatched in between.
 #   5. PREV=HEAD; `git merge --ff-only origin/main` (diverged local main =
 #      refuse + notify, never force)
 #   6. SELF-CHECK the new deploy agent (`bash -n` this script, `import
@@ -158,7 +178,8 @@
 # AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
 # AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS, AUTODEPLOY_CI_WALK,
 # AUTODEPLOY_GH, AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE,
-# AUTODEPLOY_TRIGGER, AUTODEPLOY_PLIST.
+# AUTODEPLOY_TRIGGER, AUTODEPLOY_PLIST, AUTODEPLOY_ROSTER_UNKNOWN_LIMIT,
+# AUTODEPLOY_DEFER_WARN_AFTER.
 set -uo pipefail
 
 # Everything lives in functions and runs from main "$@" at the very end: bash
@@ -211,6 +232,10 @@ CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that m
 CI_WALK="${AUTODEPLOY_CI_WALK:-30}"                     # first-parent commits examined behind a
                                                         # non-green origin/main head (step 3); also
                                                         # the cap on the failed_shas ledger
+ROSTER_UNKNOWN_LIMIT="${AUTODEPLOY_ROSTER_UNKNOWN_LIMIT:-3}"  # step 4b: consecutive runs the session
+                                                        # gate stays closed on an unreadable roster
+DEFER_WARN_AFTER="${AUTODEPLOY_DEFER_WARN_AFTER:-21600}"  # step 4b: seconds of continuous deferral
+                                                        # before the log WARNs (doctor row too)
 FORCE=0
 PY=""
 TRIGGER=""      # terminal | launchd | $AUTODEPLOY_TRIGGER (detect_trigger)
@@ -1084,6 +1109,114 @@ restart_actd() {
     return 0
 }
 
+# §56.3 step 4b — SESSION GATE. Every actd restart this script causes (install.sh
+# step 5 bootout+bootstrap on a deploy or a repair, rollback's stop_actd) lands
+# on whatever background claude sessions are live: 2026-09-07T05:35Z the
+# v1.0.72 deploy restarted actd 17 min after P-029 was dispatched, while the
+# owner sat attached to that session in a terminal, and his terminal printed
+# `[worker crashed (exit 143) — respawning…] Session f40f2001 has exited`
+# (143 = SIGTERM). Whatever the exact signal path inside claude's daemon is,
+# the rule is the owner's: NEVER restart actd under a live session — defer the
+# whole deploy to the next interval instead. The count comes from the SAME
+# reader and the SAME binary actd uses (act.executor.live_session_count →
+# `<stable claude> agents --json --all`, §55 第五幕): one parser, one truth.
+#
+# One line on stdout: the number of background roster entries with a live
+# process, or `unknown` when the roster cannot be read (claude missing, timed
+# out, non-zero, bad JSON, or a checkout whose act.executor predates the
+# counter — a rollback target). Never the empty string.
+live_sessions() {
+    _ls="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
+        "$PY" -c 'from act import executor
+n = executor.live_session_count()
+print("unknown" if n is None else n)') 2>>"$LOG" )" || _ls=unknown
+    case "$_ls" in
+        unknown) ;;
+        ''|*[!0-9]*) _ls=unknown ;;
+    esac
+    printf '%s' "$_ls"
+}
+
+# Seconds since an ISO-Z stamp; "" when unparseable (never a guessed age).
+iso_age() { # $1=YYYY-MM-DDTHH:MM:SSZ
+    "$PY" -c 'import datetime, sys
+try:
+    then = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    print(max(0, int((datetime.datetime.now(datetime.timezone.utc) - then).total_seconds())))
+except Exception:
+    pass' "$1" 2>/dev/null
+}
+
+# The release version a commit carries (§56.1: its `v<X.Y.Z>` tag); "" when
+# the sha is untagged — the state detail then names the short sha alone.
+target_version() { # $1=sha
+    _tv="$(git_q describe --tags --exact-match --match 'v[0-9]*' "$1" 2>/dev/null)"
+    printf '%s' "${_tv#v}"
+}
+
+# The gate itself. $1=sha about to be installed, $2=what would restart actd
+# ("deploy" | "install.sh re-run"). Returns 0 = proceed (any earlier deferral
+# episode is closed: the deferred_* keys and the unknown-ticks counter are
+# cleared), 1 = deferred — `status=deferred` + the add-only keys are written,
+# one line logged, and the caller exits 0 so the next interval asks again.
+#
+#   roster says N > 0   → deferred_reason=sessions_running, deferred_sessions=N
+#   roster says 0       → proceed
+#   roster unreadable   → FAIL CLOSED: deferred_reason=roster_unknown (no
+#                         deferred_sessions), mirror-private roster_unknown_ticks
+#                         counts consecutive unknowns; at ROSTER_UNKNOWN_LIMIT
+#                         the gate yields with a log line saying so — a broken
+#                         roster must not block deploys forever, and a blind
+#                         restart must not happen silently either
+#   --force             → the owner typed it: skip, log the count
+#
+# `deferred_since` is the FIRST deferral of the episode and survives every
+# later deferral write (the 6 h WARN and the board banner age read it); a
+# known count of 0 (or the gate yielding) ends the episode.
+session_gate() { # $1=sha $2=what
+    _live="$(live_sessions)"
+    if [ "$FORCE" -eq 1 ]; then
+        log "--force: session gate skipped — roster: ${_live} live background claude session(s); the restart interrupts them"
+        return 0
+    fi
+    _since="$(read_state deferred_since)"
+    _ticks="$(read_state roster_unknown_ticks)"
+    case "$_ticks" in ''|*[!0-9]*) _ticks=0 ;; esac
+    _tv="$(target_version "$1")"
+    _what="$2 of ${_tv:+v$_tv }($(short "$1"))"
+    if [ "$_live" = "unknown" ]; then
+        if [ "$_ticks" -ge "$ROSTER_UNKNOWN_LIMIT" ]; then
+            log "claude roster unreadable for $_ticks consecutive runs — session gate yields: $_what proceeds WITHOUT knowing whether sessions are live (fail-closed budget AUTODEPLOY_ROSTER_UNKNOWN_LIMIT=$ROSTER_UNKNOWN_LIMIT spent; see auto-deploy.log for the roster error)"
+            write_state "roster_unknown_ticks=" "deferred_reason=" "deferred_sessions=" "deferred_since="
+            return 0
+        fi
+        _ticks=$((_ticks + 1))
+        _reason=roster_unknown
+        _detail="$_what deferred: the claude roster cannot be read (claude agents --json failed) — assuming sessions may be live; the gate yields after $ROSTER_UNKNOWN_LIMIT consecutive unknowns ($_ticks so far)"
+        _extra=("roster_unknown_ticks=$_ticks" "deferred_sessions=")
+    elif [ "$_live" -gt 0 ] 2>/dev/null; then
+        _reason=sessions_running
+        _detail="$_what deferred: $_live live background claude session(s) on the roster — restarting actd would interrupt them; retried next interval"
+        _extra=("roster_unknown_ticks=" "deferred_sessions=$_live")
+    else
+        if [ -n "$_since" ] || [ "$_ticks" -gt 0 ]; then
+            log "session gate open again (roster: 0 live background sessions) — $_what proceeds"
+            write_state "roster_unknown_ticks=" "deferred_reason=" "deferred_sessions=" "deferred_since="
+        fi
+        return 0
+    fi
+    [ -n "$_since" ] || _since="$_now"
+    log "DEFERRED ($_reason): $_detail — episode since $_since"
+    write_state "status=deferred" "last_run=$_now" "head=$(git_q rev-parse HEAD)" "version=$(repo_version)" \
+                "reason=$_reason" "deferred_reason=$_reason" "deferred_since=$_since" \
+                "detail=$_detail" "${_extra[@]}"
+    _age="$(iso_age "$_since")"
+    if [ -n "$_age" ] && [ "$_age" -ge "$DEFER_WARN_AFTER" ]; then
+        log "WARN deploy deferred for $((_age / 3600)) h now (since $_since): a background session that never ends is §46/#119's harvest job, not the deployer's — the doctor auto-deploy row WARNs from here; bash scripts/auto-deploy.sh --force deploys now and interrupts it"
+    fi
+    return 1
+}
+
 # A rollback verdict (`rolled_back` / `rollback_failed`) is written twice: as
 # this run's `status` AND as `last_incident` (add-only, projected). `status`
 # is overwritten by the very next interval — after a REFUSED rollback HEAD sits
@@ -1099,6 +1232,16 @@ write_rollback_state() { # $1=status $2=detail, rest = extra key=value pairs
 
 rollback() { # $1=PREV $2=reason $3=the sha that failed  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
+    # Not deferred (§56.3 step 4b): the session gate passed minutes ago with 0
+    # live sessions, and a rollback is the emergency exit of a deploy the
+    # doctor just condemned — parking it would leave that code running with
+    # no resumable path (the store2 before-snapshot is per run). What the NEW
+    # actd dispatched in between is interrupted here; say so, so the #119
+    # harvest that follows is not a mystery.
+    _live_rb="$(live_sessions)"
+    if [ "$_live_rb" != "0" ]; then
+        log "WARN rollback restarts actd with ${_live_rb} live background claude session(s) on the roster (dispatched after the session gate passed, or roster unreadable) — they are interrupted; §46/#119 harvests them"
+    fi
     # Freeze the ledger before deciding anything (TOCTOU above).
     stop_actd
     poison_pairs "$3"     # every exit below remembers $3 (failed_sha + failed_shas)
@@ -1218,7 +1361,8 @@ verify_running() { # $1=sha (HEAD == origin/main)
         write_state "status=up_to_date" "last_run=$_now" "head=$1" "version=$_version" \
                     "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
                     "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "failed_shas=" \
-                    "notified_sha=" "behind_main=" "behind_main_why=" "detail="
+                    "notified_sha=" "behind_main=" "behind_main_why=" "detail=" \
+                    "deferred_reason=" "deferred_sessions=" "deferred_since=" "roster_unknown_ticks="
         return 0
     fi
     _reason="$MISMATCH_REASON"
@@ -1283,6 +1427,9 @@ verify_running() { # $1=sha (HEAD == origin/main)
                 return 0 ;;
         esac
     fi
+    # The repair restarts every daemon exactly like a deploy does — same gate
+    # (§56.3 step 4b): live background sessions → `deferred`, retried next run.
+    session_gate "$1" "install.sh re-run" || return 0
     _n=$((_n + 1))
     log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — re-running install.sh ($_n/$INCOMPLETE_LIMIT at this sha)"
     # Spent BEFORE the run: an install.sh that takes this process down with it
@@ -1304,7 +1451,8 @@ verify_running() { # $1=sha (HEAD == origin/main)
         write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" "head=$1" "version=$_version" \
                     "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
                     "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "failed_shas=" "notified_sha=" \
-                    "behind_main=" "behind_main_why=" "last_incident=" "detail=$_detail"
+                    "behind_main=" "behind_main_why=" "last_incident=" "detail=$_detail" \
+                    "deferred_reason=" "deferred_sessions=" "deferred_since=" "roster_unknown_ticks="
         log "DEPLOYED v${_version:-?}: $_detail"
         notify "已自动部署 v${_version:-?} / auto-deployed (install re-run)" "$_detail"
         return 0
@@ -1558,6 +1706,11 @@ main() {
         exit 0
     fi
 
+    # SESSION GATE (§56.3 step 4b) — the last thing before HEAD moves: from here
+    # on install.sh restarts every daemon, and a live background claude session
+    # would be interrupted. Deferred = nothing changed, next interval asks again.
+    session_gate "$DEPLOY" "deploy" || exit 0
+
     log "deploying $(short "$PREV") -> $(short "$DEPLOY")"
     if ! git_q merge --ff-only --quiet "$DEPLOY" 2>>"$LOG"; then
         log "fast-forward to $(short "$DEPLOY") impossible (local $BRANCH diverged?) — refusing"
@@ -1666,7 +1819,8 @@ main() {
                 "head=$NEW" "prev=$PREV" "version=$VERSION" \
                 "running_version=${_hb_now%% *}" "install_report_version=$(install_report_version)" \
                 "reason=" "incomplete_seen=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" \
-                "incomplete_notified_sha=" "notified_sha=" "last_incident=" "${_target_pairs[@]}" "detail=$_detail"
+                "incomplete_notified_sha=" "notified_sha=" "last_incident=" "${_target_pairs[@]}" "detail=$_detail" \
+                "deferred_reason=" "deferred_sessions=" "deferred_since=" "roster_unknown_ticks="
     log "DEPLOYED v${VERSION:-?}: $_detail"
     notify "已自动部署 v${VERSION:-?} / auto-deployed" "$_detail"
     exit 0
