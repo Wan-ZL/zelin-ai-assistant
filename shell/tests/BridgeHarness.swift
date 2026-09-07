@@ -107,6 +107,15 @@ func run() {
     } else {
         check(false, "commandJSON with a rogue command arg still parses")
     }
+    // the dispatched event is cancelable and the script evaluates to "was it handled" (page preventDefault → dispatchEvent false)
+    if let script = ShellBridge.commandScript("open_page", args: ["page": "about"]) {
+        check(script.hasPrefix("!window.dispatchEvent(new CustomEvent('zai-shell-command'"),
+              "commandScript dispatches zai-shell-command and evaluates to the handled flag")
+        check(script.contains("cancelable: true") && script.contains("\"page\":\"about\""),
+              "commandScript event is cancelable and carries the detail")
+    } else {
+        check(false, "commandScript produced a script")
+    }
 
     // ---- 3. request vocabulary: getState / rejections ----
     print("[3] request dispatch:")

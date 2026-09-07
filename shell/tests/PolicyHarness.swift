@@ -115,8 +115,8 @@ func run() {
     // ---- 4. PageOpenPolicy.action — board loaded → push open_page (no reload); otherwise load the deep link ----
     // (CONTRACT §54.4 D40 追记: 菜单 关于 / 设置… / 权限体检… 与悬浮窗齿轮在看板已载入时让 SPA 自己 pushState 换页)
     print("[4] PageOpenPolicy.action:")
-    func open(_ current: String?, _ page: String, _ anchor: String? = nil) -> PageOpenPolicy.Action {
-        PageOpenPolicy.action(currentURL: current.flatMap { URL(string: $0) }, port: port, page: page, anchor: anchor)
+    func open(_ current: String?, _ page: String, _ anchor: String? = nil, loading: Bool = false) -> PageOpenPolicy.Action {
+        PageOpenPolicy.action(currentURL: current.flatMap { URL(string: $0) }, port: port, isLoading: loading, page: page, anchor: anchor)
     }
     check(open("http://127.0.0.1:47821/", "about") == .pushCommand(page: "about", anchor: nil),
           "board root loaded → push open_page about (SPA switches in place)")
@@ -136,6 +136,12 @@ func run() {
           "another port (not our server) → load")
     check(open("https://example.com/", "about") == .load(page: "about", anchor: nil),
           "foreign origin → load")
+    // WKWebView.url is already the target URL while the document is still in flight (loadBoard / ⌘R): no SPA listening yet
+    check(open("http://127.0.0.1:47821/", "settings", loading: true) == .load(page: "settings", anchor: nil),
+          "board URL but still loading (provisional) → load the deep link, do not push into an empty document")
+    check(open("http://127.0.0.1:47821/?page=about", "settings", "live_captions", loading: true)
+          == .load(page: "settings", anchor: "live_captions"),
+          "reload in flight on another page → load, anchor carried")
 }
 
 run()

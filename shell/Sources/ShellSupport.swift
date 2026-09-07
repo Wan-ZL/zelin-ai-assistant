@@ -507,11 +507,13 @@ enum ExternalLinkPolicy {
 }
 
 /// 壳 → 看板换页（菜单 关于 / 设置… ⌘, / 权限体检…、字幕悬浮窗齿轮；CONTRACT §54.4 D40 追记）：
-/// 看板 SPA 已经载入（webView 停在看板 origin 的 `/`，ExternalLinkPolicy 判 `.board`）→ 推
-/// `open_page {page, anchor?}` 命令，让页面自己 pushState 换页——不重载文档，store / SSE /
-/// 未决的「合并中…」章都留着（原生 openAboutPage 等只是 `MainNav.section = .about`，进程内换页）；
-/// 还停在内嵌 splash / 失败页（或任何不是看板的 URL）→ 只能整页加载 `?page=…` 深链：server 已
-/// 上线就落到想去的那页，还没上线则加载失败、splash 原地不动（原行为）。
+/// 看板 SPA 已经载入（webView 停在看板 origin 的 `/`，ExternalLinkPolicy 判 `.board`，且不在加载中——
+/// `WKWebView.url` 在 `load()` 一发出就是目标 URL，文档还没到、页面还没挂监听）→ 推 `open_page {page, anchor?}`
+/// 命令，让页面自己 pushState 换页——不重载文档，store / SSE / 未决的「合并中…」章都留着（原生 openAboutPage
+/// 等只是 `MainNav.section = .about`，进程内换页）；还停在内嵌 splash / 失败页（或任何不是看板的 URL）、
+/// 或看板正在加载 → 整页加载 `?page=…` 深链：server 已上线就落到想去的那页，还没上线则加载失败、splash 原地
+/// 不动（原行为）。第二道保险不在这里：命令推出去没人接（React 树死了 / 老 web 构建）时 `ShellBridge.pushCommand`
+/// 的回执是 false，调用方同样退回整页加载。
 enum PageOpenPolicy {
     enum Action: Equatable {
         /// 看板在场：`ShellBridge.pushCommand("open_page", args:)`
@@ -520,8 +522,8 @@ enum PageOpenPolicy {
         case load(page: String, anchor: String?)
     }
 
-    static func action(currentURL: URL?, port: Int, page: String, anchor: String?) -> Action {
-        if ExternalLinkPolicy.classify(currentURL, port: port) == .board {
+    static func action(currentURL: URL?, port: Int, isLoading: Bool, page: String, anchor: String?) -> Action {
+        if !isLoading, ExternalLinkPolicy.classify(currentURL, port: port) == .board {
             return .pushCommand(page: page, anchor: anchor)
         }
         return .load(page: page, anchor: anchor)

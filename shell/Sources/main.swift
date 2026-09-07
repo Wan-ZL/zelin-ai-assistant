@@ -439,19 +439,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口，然后按 PageOpenPolicy（§54.4 D40 追记）——看板 SPA 已载入
-    /// （webView 停在看板 origin 的 `/`）→ 推 `open_page {page, anchor?}` 让页面自己 pushState 换页，文档不重载、
-    /// store / SSE 都留着；还停在内嵌 splash / 失败页 → 整页加载深链（`?page=…` 是看板 origin 上的 `/`，
-    /// ExternalLinkPolicy 判 board）：server 已上线就落到想去的那页，还没上线则加载失败、splash 原地不动
-    /// （WKWebView 不渲染错误页）。
+    /// （webView 停在看板 origin 的 `/` 且不在加载中）→ 推 `open_page {page, anchor?}` 让页面自己 pushState 换页，
+    /// 文档不重载、store / SSE 都留着；页面没人接（回执 false：React 树没起来 / 老 web 构建没有这个词）或还停在
+    /// 内嵌 splash / 失败页 / 正在加载 → 整页加载深链（`?page=…` 是看板 origin 上的 `/`，ExternalLinkPolicy 判
+    /// board）：server 已上线就落到想去的那页，还没上线则加载失败、splash 原地不动（WKWebView 不渲染错误页）。
     private func openBoardPage(_ page: String, anchor: String? = nil) {
         showWindow()
-        switch PageOpenPolicy.action(currentURL: webView.url, port: ShellConfig.port, page: page, anchor: anchor) {
+        let deepLink = URLRequest(url: ShellConfig.pageURL(page, anchor: anchor))
+        switch PageOpenPolicy.action(currentURL: webView.url, port: ShellConfig.port, isLoading: webView.isLoading,
+                                     page: page, anchor: anchor) {
         case .pushCommand(let page, let anchor):
             var args = ["page": page]
             if let anchor { args["anchor"] = anchor }
-            bridge.pushCommand("open_page", args: args)
-        case .load(let page, let anchor):
-            webView.load(URLRequest(url: ShellConfig.pageURL(page, anchor: anchor)))
+            bridge.pushCommand("open_page", args: args) { [weak self] handled in
+                guard let self, !handled else { return }
+                self.webView.load(deepLink)
+            }
+        case .load:
+            webView.load(deepLink)
         }
         window.makeFirstResponder(webView)
     }

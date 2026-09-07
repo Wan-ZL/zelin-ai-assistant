@@ -65,10 +65,11 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// 壳 → 页面 的命令事件（§61.6）：全局快捷键等原生入口向页面发一个动作。
     /// 词表（add-only）：`quick_capture`（⌃⌥Space / ⌘L）、`open_page {page, anchor?}`（菜单 关于 / 设置… /
     /// 权限体检… 与悬浮窗齿轮在看板已载入时让 SPA 自己换页，不重载——D40，PageOpenPolicy）。
-    func pushCommand(_ command: String, args: [String: String] = [:]) {
-        guard let webView, let json = Self.commandJSON(command, args: args) else { return }
-        let js = "window.dispatchEvent(new CustomEvent('\(Self.commandEventName)', {detail: \(json)}));"
-        webView.evaluateJavaScript(js) { _, _ in }
+    /// `completion(handled)`：页面的处理器接到命令会 preventDefault（web shellBridge.onShellCommand）——false =
+    /// 没人接（文档还在加载、React 树没起来、老 web 构建没有这个词），调用方据此退回整页加载等旧路。
+    func pushCommand(_ command: String, args: [String: String] = [:], completion: ((Bool) -> Void)? = nil) {
+        guard let webView, let js = Self.commandScript(command, args: args) else { completion?(false); return }
+        webView.evaluateJavaScript(js) { result, _ in completion?((result as? Bool) ?? false) }
     }
 
     /// 命令事件的 detail（纯函数，判例钉 wire 形）：`{"command": …}` + args 各键；args 不许覆盖 `command`。
@@ -78,6 +79,13 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else { return nil }
         return json
+    }
+
+    /// 命令事件的 JS（纯函数）：cancelable 的 CustomEvent，表达式的值 = 有没有处理器 preventDefault（dispatchEvent 回 false
+    /// = 被取消 = 页面接到了）。
+    nonisolated static func commandScript(_ command: String, args: [String: String] = [:]) -> String? {
+        guard let json = commandJSON(command, args: args) else { return nil }
+        return "!window.dispatchEvent(new CustomEvent('\(commandEventName)', {detail: \(json), cancelable: true}))"
     }
 
     private func schedulePush() {

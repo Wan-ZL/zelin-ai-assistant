@@ -291,6 +291,9 @@ export function startShellBridge(): () => void {
  * 监听壳发来的命令（全局快捷键 → quick_capture；菜单 / 悬浮窗齿轮 → open_page）。返回 stop；壳不在场 = no-op。
  * 页面侧处理在 app.tsx 接线：quick_capture → 聚焦提案列 composer；open_page → route.navigate（不重载）。
  * handler 的第二个参数 = detail 里 command 之外的键（add-only；老壳只发 {command}，那就是 {}）。
+ * 回执：接到就 `preventDefault`——壳发的是 cancelable 事件，`dispatchEvent` 回 false = 页面接了；没人接（文档还在加载 /
+ * React 树没起来 / 老 web 构建）壳据此退回整页加载深链（ShellBridge.pushCommand completion）。老壳发的不 cancelable，
+ * preventDefault 是 no-op。
  */
 export function onShellCommand(handler: (command: string, args: Record<string, unknown>) => void): () => void {
   if (!hasShellBridge()) return () => {};
@@ -298,6 +301,7 @@ export function onShellCommand(handler: (command: string, args: Record<string, u
     const detail = (event as CustomEvent).detail as { command?: unknown } | undefined;
     if (detail && typeof detail.command === "string") {
       const { command, ...args } = detail as { command: string } & Record<string, unknown>;
+      event.preventDefault();
       handler(command, args);
     }
   };
