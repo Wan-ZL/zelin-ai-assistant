@@ -18,11 +18,19 @@ diagnostics strip reads; its add-only ``intent`` / ``secret_present`` keys are
 the §48.4 意愿信号 (switch touched in settings_overrides / §19 credential
 present) that gate the setup-class cards — computed here, in the actd
 projection, never rewritten server-side (§44 single writer).
+
+``copy_cmd`` (§2 / §6 / §68.7 takeover) deliberately starts with a bare
+``claude`` (§55 第五幕 追记 2026-09-07): a ``--bg`` worker runs the binary of
+Claude Code's per-user daemon, which follows the login shell's claude — NOT
+the stable copy dispatch launched it with. The roster query, a claude we
+spawn ourselves, resolves like every other subprocess site
+(``config.resolve_claude_bin`` + ``DISABLE_AUTOUPDATER=1``).
 """
 from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -106,14 +114,28 @@ def _transcript_info_cached(sid: str) -> Optional[tuple]:
 # --------------------------------------------------------------------------- #
 # claude agents --json --all
 # --------------------------------------------------------------------------- #
-def _claude_agents_stdout() -> Optional[str]:
-    """Raw stdout of ``claude agents --json --all``; None on any failure."""
+def _claude_agents_stdout(cfg: Optional[config.Config] = None) -> Optional[str]:
+    """Raw stdout of ``<claude> agents --json --all``; None on any failure.
+
+    ``<claude>`` resolves like every other claude we spawn
+    (``config.resolve_claude_bin``: pin → stable daemon copy → PATH — the
+    executor's ``_roster_query`` has used the same resolution since §55
+    第五幕), not a bare ``claude`` off actd's launchd PATH: this was the last
+    bare-``claude`` argv in act/ + server/ (§55 第五幕 追记 2026-09-07).
+    ``DISABLE_AUTOUPDATER=1`` is the §55 rule for every claude
+    subprocess of ours (``llm.runner_env`` sets it; act/lib cannot import
+    act.llm, 防腐 #2, so the one variable is spelled here). Verified on the
+    live machine: this query does NOT spawn Claude Code's per-user daemon
+    (2026-09-03T00:24Z → 09-05T04:42Z: no daemon while actd polled it every
+    10 s), so which file answers it has no bearing on the worker binary.
+    """
     try:
         proc = subprocess.run(
-            ["claude", "agents", "--json", "--all"],
+            [config.resolve_claude_bin(cfg), "agents", "--json", "--all"],
             capture_output=True,
             text=True,
             timeout=30,
+            env={**os.environ, "DISABLE_AUTOUPDATER": "1"},
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -135,9 +157,11 @@ def _agent_list(data: Any) -> list[dict]:
     return []
 
 
-def _run_claude_agents() -> list[dict]:
-    """Return the raw list of live agents. Defensive: never raises."""
-    stdout = _claude_agents_stdout()
+def _run_claude_agents(cfg: Optional[config.Config] = None) -> list[dict]:
+    """Return the raw list of live agents. Defensive: never raises. ``cfg``
+    only picks the claude binary (None = fresh load, like every other
+    separate-process site)."""
+    stdout = _claude_agents_stdout(cfg)
     if stdout is None:
         return []
     try:
@@ -1178,6 +1202,17 @@ class _Session:
     agent: dict   # roster record or {} (agent not found yet)
 
 
+# copy_cmd 的第一个词是裸 ``claude``——终端里解析到登录 shell 的 Claude Code——
+# 而不是派发用的稳定副本（§55 第五幕 追记 2026-09-07，判例
+# tests/test_dashboard_copy_cmd_bare_claude.py）。live 机器 ~/.claude/daemon.log
+# + ps 证实：``--bg`` worker 是 Claude Code per-user daemon 预起的 spare，跑
+# **daemon 自己的** binary；daemon 盯着起它的那条路径（47/47 次记录都是
+# ``~/.local/bin/claude``）并在它变化时自我重启——所以 worker 的版本跟登录 shell
+# 走，副本才是两次部署之间落后的一方。把副本写进 copy_cmd 会在整个滞后窗口里
+# 让旧客户端去接新 worker——正好把它想修的错配倒过来。
+TAKEOVER_CLAUDE = "claude"
+
+
 def _resume_cmd(sid_for_resume: str) -> Optional[str]:
     """``--resume`` is DIRECTORY-scoped (transcripts key to the session cwd,
     usually the agent's worktree) -> prefix with cd so the copied command
@@ -1188,9 +1223,9 @@ def _resume_cmd(sid_for_resume: str) -> Optional[str]:
         # full UUID + the transcript's LAST cwd (the agent's worktree) —
         # both required for --resume; the roster shows the launch dir,
         # which is the wrong place to resume from.
-        return f"cd '{tinfo[1]}' && claude --resume {tinfo[0]}"
+        return f"cd '{tinfo[1]}' && {TAKEOVER_CLAUDE} --resume {tinfo[0]}"
     if sid_for_resume:
-        return f"claude --resume {sid_for_resume}"
+        return f"{TAKEOVER_CLAUDE} --resume {sid_for_resume}"
     return None
 
 
@@ -1199,9 +1234,10 @@ def _copy_cmd(agent: dict, short_id: Any, resume_sid: Any) -> Optional[str]:
     work is "done" keeps its bg process alive (idle) for ~1h and ``--resume``
     errors with "currently running as a background agent". ``pid`` is present
     in claude agents --json ONLY while the process is alive -> attach (roster-
-    global, no cd); once it exits (pid gone) -> --resume."""
+    global, no cd); once it exits (pid gone) -> --resume. Both forms start
+    with the bare ``TAKEOVER_CLAUDE`` word (see the note above it)."""
     if agent.get("pid"):
-        return f"claude attach {short_id}"
+        return f"{TAKEOVER_CLAUDE} attach {short_id}"
     return _resume_cmd(str(resume_sid or short_id or ""))
 
 
@@ -1571,7 +1607,7 @@ def build_dashboard(
     if reqs is None:
         reqs = load_all()
     if agents is None:
-        agents = _run_claude_agents()
+        agents = _run_claude_agents(cfg)
     if archived is None:
         archived = load_archived()
     ctx = _Ctx(
