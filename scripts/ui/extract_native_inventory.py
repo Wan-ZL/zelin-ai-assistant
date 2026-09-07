@@ -205,7 +205,11 @@ CONTROL_OWNER = {
     },
     # D34（owner 2026-09-04，issue #217）：卡片详情只留一面——「展开详情 ▸」打开右侧详情侧栏，原生 CardSurface 的
     # 就地展开详情槽在 web 退役，卡面永远收起态。「收起 ▾」是就地展开的对偶动词，侧栏的关闭是 × / ⎋ / 背板；
-    # 详情槽里的积木（💬 需求来自 / 📋 要做什么 / 怎样算办完 / 日志 / 指令 / 会话 ID …）照判——渲染面换成侧栏。
+    # 详情槽里的积木（💬 需求来自 / 📋 要做什么 / 日志 / 指令 / 会话 ID …）照判——渲染面换成侧栏。
+    # D43 修正归属（2026-09-06，§54.1 第 2 项追记）：`control:board.needs_approval:label:definition-of-done`「怎样算办完：」
+    # 与 `control:board.review:label:acceptance-checklist`「验收清单——逐条对照：」原生本就在**卡面**（Cards.swift:1085 /
+    # :1858 收起态常显，不在详情槽），D34 把它们记成「详情槽积木、渲染面换侧栏」是误归——自 D43 起卡面以紧凑形（前 3 条 +
+    # 「+N」，DodFace）渲染同一标签，侧栏保留全文清单；两条 id 照判、owner 仍 web，渲染面 = 卡面 + 侧栏。
     "control:board.card:button:collapse": {
         "owner": "retired",
         "reason": "D34 卡片详情只留侧栏一面（§49 追记 2026-09-04 / §54.1 第 2 项 tombstone）：就地展开退役，无「收起 ▾」；侧栏关闭 = × / ⎋",

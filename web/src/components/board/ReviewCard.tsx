@@ -6,9 +6,10 @@
 // 卡面（原生 ReviewRow 收起态的 meta 行）：会话有新活动（青）· repo 章 · 耗时 <dispatched→review> ·
 //   已等待验收 <review→now，自驱走表> · §64 AI 评语章（建议验收/需继续做/需要拍板，点看理由）·
 //   一句话（§64 AI 白话摘要优先；判官没评 / 内容已变时回落 delivered_summary、再回落审批时 summary——原生
-//   ReviewRow 永远给一句交付说明，Cards.swift:1832-1854；单行截断，hover 全文，同 DoneCard）。卡面没有指令行
-//   （D36，owner 2026-09-06：单击卡片什么也不做；双击整卡 = 在终端接管；手动复制走详情侧栏「复制接管指令」）。
-//   交付了什么（执行器原话，原样全文）/ 摘要 / ☐ 验收清单（§11：永远渲染，空给兜底句）/ 📋 要做什么 /
+//   ReviewRow 永远给一句交付说明，Cards.swift:1832-1854；单行截断，hover 全文，同 DoneCard）·
+//   ☐ 验收清单（§11：永远渲染，空给兜底句；D43 紧凑形——前 3 条 + 「+N」，DodFace；§64 评语 = 建议验收 时画 ☑）。
+//   卡面没有指令行（D36，owner 2026-09-06：单击卡片什么也不做；双击整卡 = 在终端接管；手动复制走详情侧栏「复制接管指令」）。
+//   交付了什么（执行器原话，原样全文）/ 摘要 / ☐ 验收清单全文 / 📋 要做什么 /
 //   💬 需求来自 / 日志 / 指令 住右侧详情侧栏（「展开详情 ▸」打开，D34；DetailFields 渲染）。
 //   评语只是建议：验收 / 打回仍只有下面两个按钮能按。
 import { useEffect, useRef, useState } from "react";
@@ -18,6 +19,7 @@ import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { copyText } from "../detail/copyText";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
 import { CardHead, CardSurface, CopiedAnnouncer, DetailsToggle, DurationText, MergeStateChip, RepoChip } from "./cardChrome";
+import { DodFace } from "./DodFace";
 import { TextDialog } from "./TextDialog";
 import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
 
@@ -94,6 +96,9 @@ export function ReviewCard({ card }: ReviewCardProps) {
       </div>
       {/* §64 AI 一句优先；判官没评 / 内容已变（assessment 整键缺席）→ 回落交付说明（原生卡面永远有这一句），执行器原话全文仍住详情侧栏 */}
       <AssessmentSummaryLine assessment={card.assessment} fallback={deliveryFallback} />
+      {/* §11 ☐ 验收清单永远在卡面（原生 Cards.swift:1858「always rendered (fallback text when empty)」）；D43 紧凑形，
+          全文在详情侧栏；verdict = 建议验收 → ☑（判官定义 = 每条都有对应交付），其余 ☐——只是展示，不是按钮 */}
+      <DodFace items={card.dod} variant="checklist" assessment={card.assessment} />
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>
       ) : (

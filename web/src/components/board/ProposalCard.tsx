@@ -3,7 +3,8 @@
 //   done_external，§41）· 修改（comment 文本弹窗）· 暂缓（defer，提案→潜在任务）。
 // processing=true 的灰卡是 AI 研究中占位——只展示 sheen，不给决策按钮。
 // 卡面（原生 ApprovalCardView.normalBody 收起态）：摘要 + 落点行（§7 target_kind）+ 章行
-//   + 分歧 + 回锅注。技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完 住右侧详情侧栏
+//   + 怎样算办完（紧凑：前 3 条 + 「+N」，DodFace，D43——§11 批准即批准这份 DoD，原生 :1085 卡面常显）
+//   + 分歧 + 回锅注。技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完全文 住右侧详情侧栏
 //   （「展开详情 ▸」打开，D34——卡片详情只有这一面，DetailFields 渲染）。id 在右上角（原生 idTag）。
 // 标题 = §37 摘要优先链 cardHeadline（原生 displaySummary：钦定名 > summary > display_title > title）——
 //   卡面、aria-label、T2 / 拒绝弹窗正文、AI 研究中占位同一个字串（原生 Cards.swift 945 / 984 / 1001 / 1073）；
@@ -15,6 +16,7 @@ import type { ApprovalCard } from "../../types";
 import { cardAction, costLine, deadlinePhrase, effectiveTier, hardnessLabel, moneyOf, tierHint, useSubmit, pendingNote } from "./boardActions";
 import { CardHead, CardSurface, DetailsToggle, MergeStateChip, useDetailViewed } from "./cardChrome";
 import { cardHeadline } from "./cardHeadline";
+import { DodFace } from "./DodFace";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
 import { TextDialog } from "./TextDialog";
@@ -188,6 +190,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
           </>
         )}
       </div>
+      {/* §11 验收标准——原生 Cards.swift:1085「visible by default: approving the card approves this」，章行之后、分歧之前；
+          D43 紧凑形（前 3 条 + 「+N」，全文在详情侧栏） */}
+      <DodFace items={card.dod} variant="dod" />
       {/* 原生 returnedNote：「新增：<回锅带来的新信息>」 */}
       {card.reraised && card.reraised_note && (
         <p className="card-line is-warning"><span className="card-detail-label">{text("新增：", "New: ")}</span><span>{String(card.reraised_note)}</span></p>

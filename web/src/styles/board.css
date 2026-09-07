@@ -469,6 +469,54 @@ a.chip:hover { text-decoration: underline; }
   padding-left: 6px;
 }
 
+/* —— 卡面「怎样算办完」（提案）/「☐ 验收清单」（待验收）紧凑块（D43，DodFace；原生 Cards.swift:1085-1099 / :1858-1876：
+   VStack(spacing: 1)，10 semibold 次级头 + 10 regular 次级条）——前 3 条 + 「+N」，每条单行截断（hover 全文），
+   全文住详情侧栏；块高有界（头 + ≤3 行 + 可选 +N），卡面不因清单长短跳动 —— */
+.card-dod {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.card-dod-heading {
+  margin: 0;
+  color: var(--text-secondary);
+  font: var(--type-detail-subheading);
+}
+
+.card-dod-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
+}
+
+.card-dod-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「+N」：再淡一档（原生无此行——紧凑形自有的省略标记，不是按钮） */
+.card-dod-more {
+  color: var(--text-tertiary);
+}
+
+/* 空清单兜底句（原生 .secondary.opacity(0.7) → --text-quaternary） */
+.card-dod-empty {
+  margin: 0;
+  color: var(--text-quaternary);
+  font: var(--type-card-meta);
+  overflow-wrap: anywhere;
+}
+
+/* §64 评语 = 建议验收：☑ 记号走 --accent（与 AI 摘要细条的 --accent-soft 同一 accent 系），别读成 owner 自己打的勾；条目正文仍次级色 */
+.card-dod.is-ai-checked .card-dod-mark {
+  color: var(--accent);
+}
+
 /* —— 按钮行 —— */
 .card-actions {
   display: flex;

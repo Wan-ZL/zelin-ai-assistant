@@ -55,9 +55,9 @@ describe("review face delivery sentence fallback (§64.5 追记)", () => {
     expect(line.textContent).toBe("## Done\n- fixed the null deref in LoginForm");
     expect(line.getAttribute("title")).toBe("## Done\n- fixed the null deref in LoginForm");
     expect(line.className).not.toContain("is-ai");
-    // 「交付了什么：」小标题与 ☐ 清单仍只在详情侧栏
+    // 「交付了什么：」小标题（执行器原话全文）仍只在详情侧栏；☐ 清单自 D43 起以紧凑形在卡面（ReviewCard.checklistFace.test.tsx）
     expect(screen.queryByText("Delivered:")).toBeNull();
-    expect(screen.queryByText(/报错消失/)).toBeNull();
+    expect(screen.getByText(/报错消失/).closest(".card-dod.is-checklist")).not.toBeNull();
   });
 
   it("assessment 有但没 summary（只有评语）→ 章在、句子回落 delivered_summary", () => {

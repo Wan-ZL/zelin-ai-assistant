@@ -1,6 +1,8 @@
 // 原生看板 parity 判例（mac/Sources/Cards.swift 为规格）：
-//   1) 卡面永远收起（D34 / #217）：plan / DoD / 来源不在卡的 DOM 里；「Details ▸」= 打开右侧详情侧栏
-//      （选中卡 + ?card= 深链），卡上没有「Collapse ▾」、没有双击绑定——卡片详情只有侧栏一面；
+//   1) 卡面永远收起（D34 / #217）：plan / 来源 / 技术标题不在卡的 DOM 里；「Details ▸」= 打开右侧详情侧栏
+//      （选中卡 + ?card= 深链），卡上没有「Collapse ▾」、没有双击绑定——卡片详情只有侧栏一面。
+//      DoD 例外（D43，原生 :1085 / :1858 卡面常显）：提案面「怎样算办完」与待验收面「☐ 验收清单」以紧凑形回到卡面
+//      （判例 ProposalCard.dodFace.test.tsx / ReviewCard.checklistFace.test.tsx），点 Details ▸ 卡面仍一个字不多；
 //   2) 卡面 chips / 行从投影字段渲染：提案落点行 + 已并入×N；待验收 repo 章 + 耗时 + 已等待验收；
 //      阶段性完成 已交付 + repo 章 + 验收于（相对时间，hover 绝对）；卡面没有「单击复制指令」行（D36）；
 //   3) 出错的执行卡：让 AI 修（POST /api/ai-fix，只传 card_id + lang）+ 回答…（comment/steer 四键形）+ 停止；
@@ -58,10 +60,11 @@ function proposal(extra: Partial<ApprovalCard> = {}): ApprovalCard {
 }
 
 describe("one detail surface (D34): the card face stays collapsed, Details ▸ opens the sidebar", () => {
-  it("提案卡：plan/DoD/来源/技术标题不在卡的 DOM；点 Details ▸ = 选中这张卡 + ?card= 深链；卡上没有 Collapse ▾", () => {
+  it("提案卡：plan/来源/技术标题不在卡的 DOM（DoD 紧凑形在卡面，D43）；点 Details ▸ = 选中这张卡 + ?card= 深链；卡上没有 Collapse ▾", () => {
     render(<ProposalCard card={proposal()} />);
     expect(screen.queryByText(/接后端/)).toBeNull();
-    expect(screen.queryByText(/点击后下载 CSV/)).toBeNull();
+    // D43：怎样算办完 回到卡面（原生 Cards.swift:1085 收起态常显——批准即批准这份 DoD）
+    expect(screen.getByText(/点击后下载 CSV/).closest(".card-dod")).not.toBeNull();
     expect(screen.queryByText(/能不能一键导出/)).toBeNull();
     expect(screen.queryByText(/技术标题/)).toBeNull();
     const details = screen.getByRole("button", { name: "Details ▸" });
@@ -115,7 +118,7 @@ describe("proposal chips from projection fields", () => {
 });
 
 describe("review card meta line", () => {
-  it("repo 章 + 耗时 + 已等待验收（自驱时长）；卡面没有指令行（D36）；DoD 只在侧栏", () => {
+  it("repo 章 + 耗时 + 已等待验收（自驱时长）；卡面没有指令行（D36）；☐ 清单在卡面（D43），交付了什么 只在侧栏", () => {
     const card: ReviewRow = {
       id: "R-410",
       name: "周报成稿",
@@ -134,12 +137,14 @@ describe("review card meta line", () => {
     // D36：卡面没有「单击复制指令」行，命令只在侧栏（「复制接管指令」）；双击整卡是一键路（cardTakeover.test.tsx）
     expect(screen.queryByRole("button", { name: /copy the command/i })).toBeNull();
     expect(screen.queryByText("cd '/tmp/w' && claude --resume abc")).toBeNull();
-    // DoD / 交付了什么 都在侧栏（DetailFields.blocks.test.tsx 钉），卡面只有入口
-    expect(screen.queryByText(/覆盖三条来源/)).toBeNull();
+    // D43：☐ 验收清单永远在卡面（原生 Cards.swift:1858）；交付了什么 全文仍只在侧栏（DetailFields.blocks.test.tsx 钉）
+    expect(screen.getByText(/覆盖三条来源/).closest(".card-dod.is-checklist")).not.toBeNull();
     expect(screen.queryByText("Delivered:")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
     expect(getState().selectedCardId).toBe("R-410");
-    expect(screen.queryByText(/覆盖三条来源/)).toBeNull();
+    // 点 Details ▸ 卡面一个字不多（清单仍是那一条紧凑行，不就地撑开）
+    expect(screen.getAllByText(/覆盖三条来源/)).toHaveLength(1);
+    expect(screen.queryByText("Delivered:")).toBeNull();
   });
 });
 
