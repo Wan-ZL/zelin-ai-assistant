@@ -162,6 +162,12 @@ def cron_probe_path(home: Path) -> Path:
     return home / "state" / "cron_probe.json"
 
 
+def voice_gen_job_path(home: Path) -> Path:
+    # §68.1 追记（D47）：act/lib/voice_job.JOB_PATH——actd 起 act.voice_gen --job 前写 running、子进程写 done / failed；
+    # server 只读（GET /api/voice/generate-status）
+    return home / "state" / "voice_gen" / "job.json"
+
+
 def vault_sync_mode_path(home: Path) -> Path:
     # ingest/vault-sync.sh 的模式文件（"mirror" = 链在 state/vault-mirror 里干活，不碰 ~/Documents）
     return home / "state" / "vault_sync_mode"

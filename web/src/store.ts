@@ -28,6 +28,7 @@ import {
   fetchSettingsSection,
   fetchSetup,
   fetchSkills,
+  fetchVoiceProfile,
   postClaudeCodeDefault,
   postMaterialAdd,
   postMaterialDismiss,
@@ -77,6 +78,7 @@ import type {
   SettingsField,
   SettingsSection,
   SetupSnapshot,
+  VoiceProfileStatus,
 } from "./types";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -128,6 +130,7 @@ export interface AppState {
   failures: FailureCatalog | null;         // GET /api/failures（§25 失败目录双语句；引擎诊断行 / 依赖行按 id 取）
   mcp: McpList | null;                     // GET /api/mcp
   claudeSessions: ClaudeSessionsScan | null; // GET /api/claude-sessions
+  voiceProfile: VoiceProfileStatus | null;   // GET /api/voice（§68.1 追记：语气档案「当前生效」行；生成完成后 VoiceGenerate 重拉）
   /** §68.10 追记：本页会话里「导入所选」已提交的 session_id（原生 locallyImported）——与 claudeSessions 快照同寿命
    *  （快照跨组件卸载留存，这个集合也得留存；整页刷新一起清），重新扫描回来的同一批照样过滤 */
   claudeSessionsImported: ReadonlySet<string>;
@@ -233,6 +236,7 @@ const initialState: AppState = {
   failures: null,
   mcp: null,
   claudeSessions: null,
+  voiceProfile: null,
   claudeSessionsImported: new Set<string>(),
   slackTokenVerifications: 0,
   pageErrors: {},
@@ -718,7 +722,7 @@ export async function toggleSkill(name: string, action: "enable" | "disable"): P
 // ----- §68 parity 页快照（一个通用 loader：成功落字段、失败落 pageErrors[key]） -------- #
 
 type PageKey = "settingsCatalog" | "secrets" | "permissions" | "diagnostics" | "setup" | "about"
-  | "failures" | "mcp" | "claudeSessions";
+  | "failures" | "mcp" | "claudeSessions" | "voiceProfile";
 
 const pageRequests = new Map<PageKey, Promise<void>>(); // 同一面并发 refresh 合并成一个在途请求（十个通用区同时挂载）
 
@@ -759,6 +763,7 @@ export const refreshAbout = () => loadPage("about", fetchAbout);
 export const refreshFailures = () => loadPage("failures", fetchFailures);
 export const refreshMcp = () => loadPage("mcp", fetchMcp);
 export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", () => fetchClaudeSessions(window));
+export const refreshVoiceProfile = () => loadPage("voiceProfile", fetchVoiceProfile);
 
 /** 保存一个通用 section（PUT，server 校验 + diff-write）；成功以回执替换目录里的该 section，失败原样抛给页面 toast */
 export async function saveSettingsSection(sectionId: string, patch: Record<string, unknown>): Promise<SettingsSection> {

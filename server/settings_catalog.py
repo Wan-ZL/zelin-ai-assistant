@@ -326,8 +326,8 @@ SECTIONS: tuple = (
         [
             _f("voice_enabled", "bool", "启用语气注入（默认开）", "Voice injection (default on)", default=True,
                config=("voice", "enabled"),
-               help_zh="以你的口吻起草 Slack 回复 / 邮件（docs/VOICE.md）。档案生成：终端 python3 -m act.voice_gen。",
-               help_en="Drafts Slack replies / mail in your voice (docs/VOICE.md). Generate the profile: python3 -m act.voice_gen in a terminal."),
+               help_zh="以你的口吻起草 Slack 回复 / 邮件（docs/VOICE.md）。档案生成：下方「从我的消息生成/更新档案」（终端等价：python3 -m act.voice_gen）。",
+               help_en="Drafts Slack replies / mail in your voice (docs/VOICE.md). Generate the profile with \"Generate from my messages\" below (terminal equivalent: python3 -m act.voice_gen)."),
         ],
     ),
     _section(

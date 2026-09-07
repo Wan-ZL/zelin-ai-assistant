@@ -67,6 +67,8 @@ _SPECIAL_FIELDS = {
     "recap_slack_draft": ({"meeting_key", "channel_id"}, set()),
     # §48.7 设置页「立即测试一轮」：source ∈ gmail|slack；actd 分离起 act.radar_<src> --once
     "radar_test_round": ({"source"}, set()),
+    # §68.1 追记 语气档案「从我的消息生成/更新档案」（D47）：无字段；actd 分离起 act.voice_gen --job
+    "voice_generate": (set(), set()),
 }
 
 ALLOWED_ACTIONS = CARD_VERBS | frozenset(_SPECIAL_FIELDS)
@@ -386,6 +388,7 @@ _SPECIAL_BUILDERS = {
     "recap_generate": _build_recap_generate,
     "recap_slack_draft": _build_recap_slack_draft,
     "radar_test_round": _build_radar_test_round,
+    "voice_generate": lambda payload: {"action": "voice_generate"},
 }
 
 

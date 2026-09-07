@@ -165,6 +165,9 @@ vi.mock("./api", async (importOriginal) => {
     postSyncDisable: vi.fn(() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, enabled: false, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: "demo-mac", default_label: "demo-mac", qr_png_base64: null }), 0))),
     // 语气档案「当前生效」：默认私有档案在场；变体遍换成 出厂默认 / 无档案 / 已停用
     fetchVoiceProfile: vi.fn().mockResolvedValue({ enabled: true, private_path: "/Users/demo/zai/state/voice-profile.md", private_exists: true, default_path: "/Users/demo/zai/config/voice-profile.default.md", default_exists: true, effective_path: "/Users/demo/zai/state/voice-profile.md" }),
+    // §68.1 追记 D47「从我的消息生成/更新档案」的回执：上一次 done 且子进程没留下那一句（→ 结果行回落「已生成 ✓」）；
+    // 点按钮 → postAction voice_generate，按钮当拍换「生成中…」
+    fetchVoiceGenerateStatus: vi.fn().mockResolvedValue({ job: { status: "done", started_at: "2026-09-02T11:00:00Z", finished_at: "2026-09-02T11:04:00Z", error: null, message: null, profile_path: "/Users/demo/zai/state/voice-profile.md", lost: false } }),
     putModelsSettings: vi.fn().mockResolvedValue({}),
     putSettingsSection: vi.fn().mockResolvedValue({}),
     putSecret: vi.fn().mockResolvedValue({}),

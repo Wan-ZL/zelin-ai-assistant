@@ -44,6 +44,7 @@ import { McpSection } from "../components/settings/McpSection";
 import { ObsidianSection } from "../components/settings/ObsidianSection";
 import { SlackSection } from "../components/settings/SlackSection";
 import { SyncSection } from "../components/settings/SyncSection";
+import { VoiceGenerate } from "../components/settings/VoiceGenerate";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
 import { buildAppUrl, navigate, readSettingsAnchor, useRoute, withoutSettingsAnchor } from "../route";
@@ -309,7 +310,7 @@ export function SettingsPage() {
         <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <><DigestStatus /><DigestExtras /></> }} />
       </Fold>
       {/* 语气档案：原生 voiceGroup 的「当前生效」状态行 + 打开档案 在开关之前 */}
-      <Fold id="voice" isForced={searchActive}><CatalogSection sectionId="voice" lead={<VoiceStatus />} /></Fold>
+      <Fold id="voice" isForced={searchActive}><CatalogSection sectionId="voice" lead={<VoiceStatus />}><VoiceGenerate /></CatalogSection></Fold>
       <Fold id="redaction" isForced={searchActive}><CatalogSection sectionId="redaction" /></Fold>
       <Fold id="telemetry" isForced={searchActive}><CatalogSection sectionId="telemetry" /></Fold>
       <Fold id="maintainer" isForced={searchActive}><CatalogSection sectionId="maintainer"><MaintainerExtras /></CatalogSection></Fold>

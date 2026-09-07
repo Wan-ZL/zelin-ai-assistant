@@ -45,6 +45,7 @@ import type {
   SyncDisableReceipt,
   SyncPairReceipt,
   SyncStatus,
+  VoiceGenStatus,
   VoiceProfileStatus,
   SecretsStatus,
   SeedDashboardReceipt,
@@ -537,6 +538,11 @@ export function postSyncDisable(): Promise<SyncDisableReceipt> {
 /** GET /api/voice — 语气档案「当前生效」状态行（私有 / 出厂 / 无；开关） */
 export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileStatus> {
   return request<VoiceProfileStatus>("/api/voice", { signal });
+}
+
+/** GET /api/voice/generate-status — 「从我的消息生成/更新档案」的回执（§68.1 追记 D47；按钮本身 = postAction voice_generate） */
+export function fetchVoiceGenerateStatus(signal?: AbortSignal): Promise<VoiceGenStatus> {
+  return request<VoiceGenStatus>("/api/voice/generate-status", { signal });
 }
 
 /** GET /api/slack/directory[?refresh=1][&lang=zh|en] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记）；

@@ -365,6 +365,15 @@ direct-run 变体（golden `capture-run`）：
 ```
 `source ∈ gmail | slack`（镜像 `act/lib/radar_rounds.SOURCES`；obsidian 雷达走 cron ingest 链，原生也没有这颗按钮）——设置页 Slack / Gmail 接入区「立即测试一轮」。actd 走 `_DETACHED_ACTIONS`：源开着才分离起 `python -m act.radar_<source> --once`，回执落 `state/radar_test_rounds.json` → dashboard `radar_sources.<src>.test_round`。golden：`radar_test_round`。
 
+### 3.13 voice_generate（§68.1 追记 / D47，无 `id`、无字段；web-only 特形）
+```json
+{
+  "action" : "voice_generate",
+  "ts" : "2026-08-30T12:00:00Z"
+}
+```
+设置页语气档案区「从我的消息生成/更新档案」（原生 Settings.swift runVoiceGen 在 app 进程里同步跑几分钟的 `python -m act.voice_gen`；web 没有进程可挂）。actd 走 `_DETACHED_ACTIONS` → `act/lib/voice_job.request`：没有正在跑的一份才分离起 `python -m act.voice_gen --job`（一份在跑 = noop，原生 `guard !voiceGenRunning`），spawn 前写 `state/voice_gen/job.json` `{status:"running", started_at}`，子进程跑完自己写 `done` / `failed`（+ `message` / `error` / `profile_path`）；web 经 `GET /api/voice/generate-status` 轮询（`lost` = running 超过 15 分钟没回执）。golden：`voice_generate`。
+
 ### 3.9 import_claude_sessions（§22，无 `id`）
 ```json
 {
@@ -398,7 +407,7 @@ def mac_json_bytes(obj: dict) -> bytes:
 
 ## 5. golden fixtures（`tests/fixtures/inbox/`）
 
-36 个 `<verb>[-variant].golden.json`：31 个由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`；另 5 个 web-only 特形（Mac 端没有对应 inbox 动作——D3 不加功能）由 `server.inbox_writer.mac_json_bytes` 按同一字节规则生成：`recap_generate`(+`-note`,`-partial`) / `recap_slack_draft`（§63）/ `radar_test_round`（§48.7；原生的「立即测试一轮」是 launchctl kickstart，web 走 inbox）。
+37 个 `<verb>[-variant].golden.json`：31 个由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`；另 6 个 web-only 特形（Mac 端没有对应 inbox 动作——D3 不加功能）由 `server.inbox_writer.mac_json_bytes` 按同一字节规则生成：`recap_generate`(+`-note`,`-partial`) / `recap_slack_draft`（§63）/ `radar_test_round`（§48.7；原生的「立即测试一轮」是 launchctl kickstart，web 走 inbox）/ `voice_generate`（§68.1 追记 D47；原生的「从我的消息生成/更新档案」是 app 进程内同步 Process，web 走 inbox → actd 分离起）。
 
 G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server 产物的 `ts` 值替换为 `2026-08-30T12:00:00Z` 后**逐字节比较**；`images`/附图路径含 tmpdir 时同样先做值替换（golden 用 `/tmp/zai-demo/...` 占位）。替换只许动 JSON 值、不许 reserialize——reserialize 会洗掉 `\/` 与空数组渲染，测试就失去牙齿。
 
@@ -411,5 +420,5 @@ G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server
 - **R5 `\/` 转义**：NSJSONSerialization 转义正斜杠、Python 默认不转——byte-parity 的最大陷阱，路径类字段（`images`、附图尾行）必踩。配方见 §4。
 - **R6 长度单位漂移**：`set_title` Swift 守卫按 Character（grapheme cluster）数 ≤64，actd 复验按 code points——emoji/组合字符标题可能 Swift 放行、actd 拒收（fail-closed no-op，无害但静默）。web 端按 code points 裁（JS `[...str].length`）比 Swift 更贴 actd。`answer_input` 的 4000 上限两侧都已按 code points（Swift 用 unicodeScalars），照抄即可。
 - **R7 `ts` 不被校验**：actd 今天不解析 inbox `ts`（provenance-only）。格式仍必须保持 `YYYY-MM-DDTHH:MM:SSZ`——registry/审计侧同格式假设。
-- **R8 无 `id` 动作**：`capture`/`feedback`/`weekly_digest_now`/`import_claude_sessions`/`merge_review`/`merge_force`/`recap_generate`/`recap_slack_draft`/`radar_test_round` 无卡片级 `id` 键——G1 校验器不得对它们强制 `id`。
+- **R8 无 `id` 动作**：`capture`/`feedback`/`weekly_digest_now`/`import_claude_sessions`/`merge_review`/`merge_force`/`recap_generate`/`recap_slack_draft`/`radar_test_round`/`voice_generate` 无卡片级 `id` 键——G1 校验器不得对它们强制 `id`。
 - **R9 rework 空反馈替换文案**：是 Mac 客户端行为（§2.10 字面量），actd 不做此替换；web 不复刻则空打回会被 actd 当空 comment 处理，语义走样。~~TODO(contract)~~ **已落**：字面量随 CONTRACT §10 的 v0.48 追记（T-18）冻结入典。
