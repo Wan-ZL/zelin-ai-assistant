@@ -117,6 +117,17 @@ class EstimateTestCase(unittest.TestCase):
         self.assertEqual(out["samples"], 1)
         self.assertIsNone(out["bytes_per_month"])
 
+    def test_parse_ts_accepts_engine_shapes_and_rejects_garbage(self):
+        import datetime as dt
+        base = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp()
+        self.assertEqual(disk._parse_ts("2026-01-01T00:00:00.000000+00:00"), base)
+        self.assertEqual(disk._parse_ts("2026-01-01 00:00:00"), base)        # 空格分隔 + naive = UTC
+        self.assertEqual(disk._parse_ts("2026-01-01T00:00:00Z"), base)       # Z 后缀
+        self.assertIsNone(disk._parse_ts("garbage"))
+        self.assertIsNone(disk._parse_ts(""))
+        self.assertIsNone(disk._parse_ts(None))
+        self.assertIsNone(disk._parse_ts(42))
+
     def test_append_sample_gap_and_cap(self):
         samples = disk.append_sample([], NOW, 10)
         self.assertEqual(samples, [[NOW, 10]])

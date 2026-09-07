@@ -49,37 +49,63 @@ _cache: dict = {}    # str(home) -> {"snapshot": dict, "computed_at": float, "in
 # --------------------------------------------------------------------------- #
 # 目录扫描
 # --------------------------------------------------------------------------- #
+def _is_db(name: str, _top: str) -> bool:
+    return name in ("db.sqlite", "db.sqlite-wal", "db.sqlite-shm")
+
+
+def _is_backup(name: str, _top: str) -> bool:
+    return name.startswith("db.sqlite.bak") or name.endswith(".bak")
+
+
+def _is_log(name: str, _top: str) -> bool:
+    return name.endswith(".log")
+
+
+def _is_media(_name: str, top: str) -> bool:
+    return top == "data"
+
+
+# 归类顺序即优先级；(判据(name, 顶层目录名), kind)
+_KINDS = ((_is_db, "db"), (_is_backup, "backup"), (_is_log, "log"), (_is_media, "media"))
+
+
 def classify(rel: str, name: str) -> str:
     """文件归类：db（db.sqlite 及 -wal / -shm）/ backup（db.sqlite.bak*、*.bak）/ log / media（data/ 下）/ other。"""
-    if name in ("db.sqlite", "db.sqlite-wal", "db.sqlite-shm"):
-        return "db"
-    if name.startswith("db.sqlite.bak") or name.endswith(".bak"):
-        return "backup"
-    if name.endswith(".log"):
-        return "log"
-    if rel.split(os.sep, 1)[0] == "data":
-        return "media"
+    top = rel.split(os.sep, 1)[0]
+    for pred, kind in _KINDS:
+        if pred(name, top):
+            return kind
     return "other"
 
 
 def scan(root: Path) -> dict:
     """``os.walk`` 累加 ``lstat().st_size``（不跟符号链接；读不到的条目跳过）。"""
     sizes = {"db": 0, "backup": 0, "log": 0, "media": 0, "other": 0}
-    backups, files = [], 0
+    backups: list = []
+    files = 0
     for dirpath, _dirs, names in os.walk(str(root), onerror=lambda _e: None):
-        rel = os.path.relpath(dirpath, str(root))
+        rel = _rel_dir(dirpath, str(root))
         for name in names:
-            size = _lstat_size(os.path.join(dirpath, name))
-            if size is None:
-                continue
-            kind = classify("" if rel == "." else rel, name)
-            sizes[kind] += size
-            files += 1
-            if kind == "backup":
-                backups.append({"name": os.path.join("" if rel == "." else rel, name), "bytes": size})
+            files += _tally(sizes, backups, rel, name, _lstat_size(os.path.join(dirpath, name)))
     backups.sort(key=lambda b: -b["bytes"])
     return {"sizes": sizes, "total_bytes": sum(sizes.values()), "file_count": files,
             "backups": backups[:BACKUP_LIST_CAP]}
+
+
+def _rel_dir(dirpath: str, root: str) -> str:
+    rel = os.path.relpath(dirpath, root)
+    return "" if rel == "." else rel
+
+
+def _tally(sizes: dict, backups: list, rel: str, name: str, size: Optional[int]) -> int:
+    """一个文件记进 sizes（按 kind）与 backups（备份才记）；返回 1 = 计入文件数，0 = 读不到跳过。"""
+    if size is None:
+        return 0
+    kind = classify(rel, name)
+    sizes[kind] += size
+    if kind == "backup":
+        backups.append({"name": os.path.join(rel, name), "bytes": size})
+    return 1
 
 
 def _lstat_size(path: str) -> Optional[int]:
@@ -148,12 +174,10 @@ def save_samples(path: Path, samples: list) -> None:
 
 
 def _parse_ts(raw) -> Optional[float]:
-    """frames.timestamp 的 ISO 字串 → epoch；坏形 None。"""
-    if not isinstance(raw, str) or not raw:
+    """frames.timestamp 的 ISO 字串 → epoch；坏形 None（``Z`` 与空格分隔符都收，naive 按 UTC）。"""
+    text = raw.strip().replace(" ", "T").replace("Z", "+00:00") if isinstance(raw, str) else ""
+    if not text:
         return None
-    text = raw.strip().replace(" ", "T")
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
     try:
         stamp = _dt.datetime.fromisoformat(text)
     except ValueError:
@@ -167,17 +191,27 @@ def estimate(samples: list, now: float, db_bytes: int, oldest_ts) -> dict:
     """``{bytes_per_month, basis, span_days, samples}``：窗口内首末样本跨度 ≥ 1 天 → 斜率；否则 db 字节 ÷ 录制天数。"""
     recent = [s for s in samples if now - s[0] <= SAMPLE_WINDOW_S]
     out = {"bytes_per_month": None, "basis": None, "span_days": None, "samples": len(recent)}
-    if len(recent) >= 2 and recent[-1][0] - recent[0][0] >= 86400.0:
-        span = recent[-1][0] - recent[0][0]
-        out.update({"bytes_per_month": int(round((recent[-1][1] - recent[0][1]) * MONTH_S / span)),
-                    "basis": "samples", "span_days": round(span / 86400.0, 1)})
-        return out
-    since = _parse_ts(oldest_ts)
-    if since is not None and now - since >= 86400.0 and db_bytes > 0:
-        span = now - since
-        out.update({"bytes_per_month": int(round(db_bytes * MONTH_S / span)), "basis": "lifetime",
-                    "span_days": round(span / 86400.0, 1)})
+    out.update(_slope_estimate(recent) or _lifetime_estimate(now, db_bytes, oldest_ts) or {})
     return out
+
+
+def _slope_estimate(recent: list) -> Optional[dict]:
+    """首末样本跨度 ≥ 1 天才可信；不够 → None。"""
+    span = recent[-1][0] - recent[0][0] if len(recent) >= 2 else 0.0
+    if span < 86400.0:
+        return None
+    return {"bytes_per_month": int(round((recent[-1][1] - recent[0][1]) * MONTH_S / span)),
+            "basis": "samples", "span_days": round(span / 86400.0, 1)}
+
+
+def _lifetime_estimate(now: float, db_bytes: int, oldest_ts) -> Optional[dict]:
+    """db 字节 ÷ 最早 frame 至今的天数（≥ 1 天且有字节才给）。"""
+    since = _parse_ts(oldest_ts)
+    span = now - since if since is not None else 0.0
+    if span < 86400.0 or db_bytes <= 0:
+        return None
+    return {"bytes_per_month": int(round(db_bytes * MONTH_S / span)), "basis": "lifetime",
+            "span_days": round(span / 86400.0, 1)}
 
 
 # --------------------------------------------------------------------------- #
@@ -250,22 +284,27 @@ def _job(home: Path, key: str, now: float) -> None:
     _finish(key, result, now)
 
 
-def snapshot(home: Path, *, refresh: bool = False, now: Optional[float] = None,
-             spawn: Callable[[Callable[[], None]], None] = _spawn_thread) -> dict:
-    """GET 路径：返回缓存（首次 = computing 空壳）；过期 / refresh 且没有在算 → 起一个后台算。
-    这里不扫目录、不开 sqlite——只读两个小 JSON（目录 effective 值 + 上次清理回执），与其它设置 GET 同量级。"""
-    now = time.time() if now is None else now
-    key = str(home)
+def _claim(key: str, refresh: bool, now: float) -> "tuple[bool, Optional[dict], bool]":
+    """持锁判一次：要不要起后台算（过期 / refresh 且没在算）；返回 (start, 缓存快照或 None, 此刻是否在算)。"""
     with _lock:
         entry = _cache.setdefault(key, {"snapshot": None, "computed_at": 0.0, "inflight": False})
         stale = entry["snapshot"] is None or refresh or now - entry["computed_at"] >= CACHE_TTL_S
         start = stale and not entry["inflight"]
         if start:
             entry["inflight"] = True
-        base = dict(entry["snapshot"]) if entry["snapshot"] is not None else _placeholder(paths.screenpipe_dir())
-        inflight = entry["inflight"]
+        return start, entry["snapshot"], entry["inflight"]
+
+
+def snapshot(home: Path, *, refresh: bool = False, now: Optional[float] = None,
+             spawn: Callable[[Callable[[], None]], None] = _spawn_thread) -> dict:
+    """GET 路径：返回缓存（首次 = computing 空壳）；过期 / refresh 且没有在算 → 起一个后台算。
+    这里不扫目录、不开 sqlite——只读两个小 JSON（目录 effective 值 + 上次清理回执），与其它设置 GET 同量级。"""
+    now = time.time() if now is None else now
+    key = str(home)
+    start, cached, inflight = _claim(key, refresh, now)
     if start:
         spawn(lambda: _job(home, key, now))
+    base = dict(cached) if cached is not None else _placeholder(paths.screenpipe_dir())
     base.update({"refreshing": inflight, "retention_days": retention_days(home), "last_prune": last_prune(home)})
     return base
 

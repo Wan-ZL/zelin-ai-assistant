@@ -171,20 +171,29 @@ def run(*, db_path: Optional[Path] = None, state_dir: Optional[Path] = None, day
     db = Path(db_path or default_db_path())
     started = time.monotonic()
     receipt: dict = {"ran_at": _iso(now), "db": str(db), "error": None}
+    receipt.update(_attempt(db, days, dry_run, now, cfg))
+    receipt["duration_s"] = round(time.monotonic() - started, 3)
+    _persist(receipt, receipt_path(state_dir))
+    return receipt
+
+
+def _attempt(db: Path, days: Optional[int], dry_run: bool, now: float, cfg) -> dict:
+    """旋钮 → 开库 → 清理；任何异常折成 ``{"error": ...}``（§0 第 11 条）。"""
     try:
         retention = retention_days_from_config(cfg) if days is None else max(0, int(days))
         if not db.is_file():
-            receipt.update(prune_skipped(retention, "no_db"))
-        else:
-            receipt.update(_run_on_db(db, retention, now, dry_run))
-    except Exception as exc:  # noqa: BLE001 — §0 第 11 条：任何失败只进回执
-        receipt["error"] = "%s: %s" % (type(exc).__name__, exc)
-    receipt["duration_s"] = round(time.monotonic() - started, 3)
+            return prune_skipped(retention, "no_db")
+        return _run_on_db(db, retention, now, dry_run)
+    except Exception as exc:  # noqa: BLE001 — 任何失败只进回执
+        return {"error": "%s: %s" % (type(exc).__name__, exc)}
+
+
+def _persist(receipt: dict, path: Path) -> None:
+    """回执落盘；写不进去也只在回执里多一句（stdout 那份仍然完整）。"""
     try:
-        write_receipt(receipt_path(state_dir), receipt)
+        write_receipt(path, receipt)
     except OSError as exc:
-        receipt["error"] = (receipt.get("error") or "") + " receipt_write_failed: %s" % exc
-    return receipt
+        receipt["error"] = "%s receipt_write_failed: %s" % (receipt.get("error") or "", exc)
 
 
 def prune_skipped(retention: int, reason: str) -> dict:
