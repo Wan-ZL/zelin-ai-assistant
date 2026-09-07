@@ -42,6 +42,7 @@ import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { forceMergeLanded } from "./components/board/pendingSettle";
 import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
 import { getI18n, resolveLanguage, type Language } from "./i18n";
+import { readCardId } from "./route";
 import { readExpandedSections, toggledSections, writeExpandedSections } from "./settingsFolds";
 import {
   EMPTY_CARD_FILTERS,
@@ -413,9 +414,26 @@ export function setLanguage(language: Language) {
   if (state.language !== language) setState({ language });
 }
 
-/** 深链进场：从当前 URL 水合过滤器（FilterBar 挂载时调一次；popstate 暂不监听，与 route.ts 一致） */
+/** 深链进场：从当前 URL 水合过滤器（FilterBar 挂载时调一次；之后的换页 / 后退前进由 syncRouteFromUrl 跟） */
 export function initFiltersFromUrl() {
   setState({ filters: readCardFilters(window.location.search) });
+}
+
+function sameFilters(a: CardFilters, b: CardFilters): boolean {
+  return a.deadline === b.deadline && a.reraisedOnly === b.reraisedOnly && a.search === b.search
+    && a.tiers.length === b.tiers.length && a.tiers.every((tier, i) => tier === b.tiers[i]);
+}
+
+/** D40 客户端路由（§49 / §54.4 2026-09-06 追记）：`route.navigate` / popstate 之后把 URL 里**不进历史栈**的两样东西同步回
+ *  store——过滤器（URL 是它唯一的持久化：后退 / 前进带回那一版的 `?q=` / `tier=`）与 `?card=` 抽屉（后退回到开着抽屉的
+ *  那一版就重开；换页链接不带 `card` → 关）。页本身不进 AppState：组件经 `route.useRoute()` 直接读 URL（真源），
+ *  没有第二份。App 挂载时 `subscribeRoute(syncRouteFromUrl)` 接线。幂等——与 FilterBar / DetailDrawer 挂载时的水合同一结果。 */
+export function syncRouteFromUrl(): void {
+  const search = window.location.search;
+  const filters = readCardFilters(search);
+  if (!sameFilters(filters, state.filters)) setState({ filters });
+  const cardId = readCardId(search);
+  if (cardId !== state.selectedCardId) selectCard(cardId);
 }
 
 /** 改过滤器（部分更新）并同步 URL（replaceState，不进历史栈） */

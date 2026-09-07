@@ -63,12 +63,21 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     /// 壳 → 页面 的命令事件（§61.6）：全局快捷键等原生入口向页面发一个动作。
-    func pushCommand(_ command: String) {
-        guard let webView,
-              let data = try? JSONSerialization.data(withJSONObject: ["command": command]),
-              let json = String(data: data, encoding: .utf8) else { return }
+    /// 词表（add-only）：`quick_capture`（⌃⌥Space / ⌘L）、`open_page {page, anchor?}`（菜单 关于 / 设置… /
+    /// 权限体检… 与悬浮窗齿轮在看板已载入时让 SPA 自己换页，不重载——D40，PageOpenPolicy）。
+    func pushCommand(_ command: String, args: [String: String] = [:]) {
+        guard let webView, let json = Self.commandJSON(command, args: args) else { return }
         let js = "window.dispatchEvent(new CustomEvent('\(Self.commandEventName)', {detail: \(json)}));"
         webView.evaluateJavaScript(js) { _, _ in }
+    }
+
+    /// 命令事件的 detail（纯函数，判例钉 wire 形）：`{"command": …}` + args 各键；args 不许覆盖 `command`。
+    nonisolated static func commandJSON(_ command: String, args: [String: String] = [:]) -> String? {
+        var body: [String: String] = args
+        body["command"] = command
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
     }
 
     private func schedulePush() {

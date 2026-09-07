@@ -17,7 +17,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
-import { readPage, type AppPage } from "../../route";
+import { readPage, useRoute, type AppPage } from "../../route";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import { consumePendingFocus } from "../board/focusComposer";
 import { LaneComposer } from "../board/LaneComposer";
@@ -133,11 +133,12 @@ export function BoardMissingState() {
 export function AppShell({ searchSlot, children }: AppShellProps) {
   const { language, text } = useI18n();
   const { board, boardError, boardMissing, boardDecodeError, boardLoading } = useAppState();
-  const page = readPage(window.location.search);
+  const page = readPage(useRoute()); // D40：换页不重载，页从路由订阅里来
   const isBoard = page === "board";
   const readsBoard = BOARD_FED_PAGES.has(page);
 
-  // 语言 / 页变化时同步文档级属性（无障碍朗读随 UI 语言；标签页标题 = 原生窗口标题「Zelin's AI Assistant — <页>」）
+  // 语言 / 页变化时同步文档级属性（无障碍朗读随 UI 语言；标签页标题 = 原生窗口标题「Zelin's AI Assistant — <页>」；
+  // 壳经 WKWebView.title KVO 把它抬成窗口标题，pushState 换页后照样跟）
   useEffect(() => {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
     document.title = pageTitle(page, text);

@@ -16,9 +16,10 @@
 // SettingsFold 里（区头 = aria-expanded 按钮，正文常挂载、折叠时 hidden——草稿与搜索干草都不丢）；默认展开 通用 / 依赖检查 /
 // 录制 / 实时字幕（settingsFolds.DEFAULT_EXPANDED_SECTIONS），其余折叠；记忆 = store.expandedSettingsSections ↔ localStorage
 // settings.expandedSections；搜索命中的区强制展开（toggle 禁用、记忆不动）；?anchor= / #settings-<id> 深链与目录点击 expand
-// 并记住；目录条目 data-expanded 反映状态。锚点 `#settings-<id>` 落在 fold 壳上（永远可见，折着也滚得到）。深链锚点挂载时
-// 只读一次、读完就从 URL 上摘掉（route.withoutSettingsAnchor）：rail 的 buildAppUrl 原样带着 query / hash 去别页再回来，不摘
-// 就每次回设置页都重新展开 + 记住 + 滚动，把用户手动折起的区又翻开；目录点击自己滚（preventDefault），不留 hash。
+// 并记住；目录条目 data-expanded 反映状态。锚点 `#settings-<id>` 落在 fold 壳上（永远可见，折着也滚得到）。深链锚点是一次性
+// 指令：每次 URL 带来（挂载时、或 D40 换页不重载下已在设置页时又点了一条带 anchor 的链接）消费一次，读完就从 URL 上摘掉
+// （route.withoutSettingsAnchor，经 route.navigate replace）——不摘就后退 / 前进回到那条历史时重新展开 + 记住 + 滚动，把用户手动
+// 折起的区又翻开；目录点击自己滚（preventDefault），不留 hash。
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
@@ -45,7 +46,7 @@ import { SlackSection } from "../components/settings/SlackSection";
 import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
-import { buildAppUrl, readSettingsAnchor, withoutSettingsAnchor } from "../route";
+import { buildAppUrl, navigate, readSettingsAnchor, useRoute, withoutSettingsAnchor } from "../route";
 import { expandSettingsSection, toggleSettingsSection, useAppState } from "../store";
 import type { SecretsStatus, SettingsCatalog } from "../types";
 
@@ -126,11 +127,6 @@ const SECTION_SELECTOR = ".settings-page > .settings-fold";
 export function readHashSection(hash: string): string | null {
   const match = /^#settings-([a-z0-9_-]{1,40})$/i.exec(hash);
   return match && SETTINGS_TOC.some((entry) => entry.id === match[1]) ? match[1] : null;
-}
-
-/** 深链要落的区：?anchor= 优先（含 ?page=deps / diagnostics 旧深链），其次 #settings-<id> 片段；挂载时读一次 */
-function readDeepLinkSection(): string | null {
-  return readSettingsAnchor(window.location.search) ?? readHashSection(window.location.hash);
 }
 
 /** 滚到一区的 fold 壳（永远可见，折着也滚得到；壳上的 scroll-margin-top 留出顶栏） */
@@ -224,21 +220,33 @@ export function SettingsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）与 #settings-<id> 片段：挂载时读一次
-  // （之后 URL 上的锚点就摘掉——只消费一次，rail 来回不重放）；section 挂载后强制展开（并记住——原生 expandAnchorIfPending 的
-  // collapse.expand）、滚过去并高亮一下；server 目录到达会把上方的目录驱动区（通用…）从占位撑成全高、把目标区顶出视口——目录
-  // 落地后再对准一次。高亮记在 data-anchored（React 不管的属性）：壳的 className 随 expand 重渲时会把 imperative 加的 class 抹掉
-  const [anchor] = useState(readDeepLinkSection);
+  // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions；?page=deps / diagnostics 旧深链 → deps）与 #settings-<id> 片段 = URL 带来的
+  // **一次性指令**：到达就消费——强制展开（并记住——原生 expandAnchorIfPending 的 collapse.expand）、滚过去、高亮一下——随即从 URL
+  // 上摘掉（`route.navigate(…, true)` = replaceState 不进历史栈、经路由器通知订阅者，useRoute 的快照与 URL 一致；rail 来回 / 后退
+  // 前进都不重放）。D40 换页不重载：已在设置页时点一条带 anchor 的链接（录制页 → 依赖检查区、悬浮窗齿轮再点一次）本组件不重挂——
+  // 锚点从路由订阅里读，每次到达记一笔 seq（同一个 id 再来也再滚一次）；#settings-<id> 片段只在挂载时读一次（片段不在 useRoute 的
+  // 快照里，目录点击自己滚、不留 hash）。server 目录到达会把上方的目录驱动区（通用…）从占位撑成全高、把目标区顶出视口——目录落地
+  // 后再对准一次（pending 留着，不随摘掉的 URL 消失）。高亮记在 data-anchored（React 不管的属性）：壳的 className 随 expand 重渲时
+  // 会把 imperative 加的 class 抹掉
+  const routeAnchor = readSettingsAnchor(useRoute());
+  const [pending, setPending] = useState<{ id: string; seq: number } | null>(() => {
+    const hashSection = readHashSection(window.location.hash);
+    return hashSection ? { id: hashSection, seq: 0 } : null;
+  });
   useEffect(() => {
-    if (!anchor) return undefined;
-    window.history.replaceState(window.history.state, "", withoutSettingsAnchor(window.location.href).toString());
-    if (SETTINGS_TOC.some((entry) => entry.id === anchor)) expandSettingsSection(anchor);
-    const el = scrollToFold(anchor);
+    if (routeAnchor) setPending((prev) => ({ id: routeAnchor, seq: (prev?.seq ?? 0) + 1 }));
+  }, [routeAnchor]);
+  useEffect(() => {
+    if (!pending) return undefined;
+    const stripped = withoutSettingsAnchor(window.location.href);
+    if (stripped.href !== window.location.href) navigate(stripped, true);
+    if (SETTINGS_TOC.some((entry) => entry.id === pending.id)) expandSettingsSection(pending.id);
+    const el = scrollToFold(pending.id);
     if (!el) return undefined;
     el.dataset.anchored = "";
     const timer = window.setTimeout(() => { delete el.dataset.anchored; }, 2500);
     return () => window.clearTimeout(timer);
-  }, [anchor, catalogReady]);
+  }, [pending, catalogReady]);
 
   return (
     <main className="settings-page">

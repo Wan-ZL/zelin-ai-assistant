@@ -15,7 +15,8 @@ import { useSyncExternalStore } from "react";
 
 export const SHELL_STATE_EVENT = "zai-shell-state";
 export const SHELL_HANDLER_NAME = "zaiShell";
-/** 壳 → 页面的命令事件（§61.6）：detail = {command}; 今日词表 quick_capture（全局快捷键 ⌃⌥Space） */
+/** 壳 → 页面的命令事件（§61.6）：detail = {command, ...args}; 词表 quick_capture（全局快捷键 ⌃⌥Space）、
+ *  open_page {page, anchor?}（D40：壳菜单 关于 / 设置… / 权限体检… 与字幕悬浮窗齿轮在看板已载入时让 SPA 自己换页，不重载） */
 export const SHELL_COMMAND_EVENT = "zai-shell-command";
 
 /** 录制引擎快照（壳侧 RecordingController 的投影） */
@@ -287,14 +288,18 @@ export function startShellBridge(): () => void {
 }
 
 /**
- * 监听壳发来的命令（全局快捷键 → quick_capture）。返回 stop；壳不在场 = no-op。
- * 页面侧处理：聚焦提案列 composer（app.tsx 接线）。
+ * 监听壳发来的命令（全局快捷键 → quick_capture；菜单 / 悬浮窗齿轮 → open_page）。返回 stop；壳不在场 = no-op。
+ * 页面侧处理在 app.tsx 接线：quick_capture → 聚焦提案列 composer；open_page → route.navigate（不重载）。
+ * handler 的第二个参数 = detail 里 command 之外的键（add-only；老壳只发 {command}，那就是 {}）。
  */
-export function onShellCommand(handler: (command: string) => void): () => void {
+export function onShellCommand(handler: (command: string, args: Record<string, unknown>) => void): () => void {
   if (!hasShellBridge()) return () => {};
   const listener = (event: Event) => {
     const detail = (event as CustomEvent).detail as { command?: unknown } | undefined;
-    if (detail && typeof detail.command === "string") handler(detail.command);
+    if (detail && typeof detail.command === "string") {
+      const { command, ...args } = detail as { command: string } & Record<string, unknown>;
+      handler(command, args);
+    }
   };
   window.addEventListener(SHELL_COMMAND_EVENT, listener);
   return () => window.removeEventListener(SHELL_COMMAND_EVENT, listener);

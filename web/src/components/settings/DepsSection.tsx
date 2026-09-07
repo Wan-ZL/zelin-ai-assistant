@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../../api";
 import { useI18n, type Language } from "../../i18n";
-import { buildAppUrl } from "../../route";
+import { buildAppUrl, useRoute } from "../../route";
 import { refreshDiagnostics, useAppState } from "../../store";
 import type { DoctorReport, DoctorRow, FailureCatalog, LogTail } from "../../types";
 import { aiFixOpenedText } from "../board/cardChrome";
@@ -114,11 +114,12 @@ export function DepsSection() {
   const [logName, setLogName] = useState("");
   const [logError, setLogError] = useState<string | null>(null);
 
+  // ?log=<name>：横幅「查看日志」深链——直接把该日志尾巴翻开（名字只认 server 同一白名单形）。从路由订阅里读（D40 换页
+  // 不重载）：已在设置页时点「查看引擎日志」本区不重挂，靠 wantedLog 变化再翻一次
+  const wantedLog = new URLSearchParams(useRoute()).get("log") ?? "";
   useEffect(() => {
-    // ?log=<name>：横幅「查看日志」深链——直接把该日志尾巴翻开（名字只认 server 同一白名单形）
-    const wanted = new URLSearchParams(window.location.search).get("log") ?? "";
-    if (/^[A-Za-z0-9._-]+\.log$/.test(wanted)) void openLog(wanted);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (/^[A-Za-z0-9._-]+\.log$/.test(wantedLog)) void openLog(wantedLog);
+  }, [wantedLog]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 首帧拉快照；切语言重拉（原生 DepsView `.onChange(of: i18n.lang) { model.check() }`：doctor 人话是子进程按语言产出的，
   // 旧语言的行不许留着）——完整报告也是上一种语言跑出来的，一并放下（原生 check() 同样覆盖 doctorRows）
