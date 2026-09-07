@@ -49,6 +49,8 @@ export const FINALE_PROBE_MS = 2500;
 export const ENGINE_RECHECK_EVERY = 4;
 /** sessionStorage：本窗口会话里用户点过「先去看板（下次再来）」——app.tsx 的向导跳转本会话不再发生 */
 export const SETUP_SKIPPED_KEY = "zai.setupSkipped";
+/** 「完成」后等 telemetry 旁路（consent 标记 + wizard_complete）落地的上限，超时照样回看板（§15 / §16 追记，D48 / D49） */
+export const TELEMETRY_FLUSH_MS = 1500;
 
 /** 第一个还没满足的步骤：config.yaml 还没有就停在第 1 步（它就在那里建），否则从引擎开始 */
 export function firstOpenStep(configExists: boolean): Step {
@@ -180,8 +182,10 @@ export function SetupPage() {
       setSetup(receipt.setup);
       // D49：「完成」= consent surface 已呈现过（第 3 步渲染披露块）→ 请 server write-once 落 state/telemetry_consent_shown，
       // 上传端的 consent 门自此放行；D48：wizard_complete（原生 SetupWizard.swift:615）。两者永不 reject；等它们落地再整页导航
-      //（离开文档会打断在飞的 fetch），本地 server 毫秒级、且刚回了 complete
-      await Promise.all([markTelemetryConsentShown(), trackEvent("wizard_complete")]);
+      //（离开文档会打断在飞的 fetch），本地 server 毫秒级、且刚回了 complete——但最多等 TELEMETRY_FLUSH_MS：telemetry 不许
+      // 把「完成」卡住（fetch 自带 keepalive，超时后请求仍在飞）
+      const sideEffects = Promise.all([markTelemetryConsentShown(), trackEvent("wizard_complete")]);
+      await Promise.race([sideEffects, new Promise<void>((resolve) => window.setTimeout(resolve, TELEMETRY_FLUSH_MS))]);
       navigate(buildAppUrl(window.location.href, "board", null));
     } catch (err) {
       setNote(errorMessage(err));

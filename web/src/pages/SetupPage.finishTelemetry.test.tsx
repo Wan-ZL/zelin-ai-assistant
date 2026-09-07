@@ -1,9 +1,9 @@
 // 向导「完成」的两条旁路（CONTRACT §15 / §16 追记；owner 决策 D48 / D49；原生 SetupWizard.swift:615 `wizard_complete`）：
 //   · complete 成功 → 请 server 落 consent 标记（markTelemetryConsentShown）+ 发 wizard_complete（trackEvent），
 //     两者都在整页导航**之前**落地（离开文档会打断在飞的 fetch）；
-//   · complete 被拒 → 一个都不发（没完成就不是「完成」）；
+//   · complete 被拒 → 一个都不发（没完成就不是「完成」）；旁路挂住时最多等 TELEMETRY_FLUSH_MS 就回看板（telemetry 不许卡住完成）；
 //   · 只在「完成」上发：渲染向导、走到末步、点「上一步」都不触发（§15 issue #37 追记「永不在挂载时写」）。
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchHealth, fetchPermissions, fetchSecrets, fetchSetup, fetchSetupEngine, postSetupStep } from "../api";
 import { LanguageContext } from "../i18n";
@@ -11,7 +11,7 @@ import { navigate } from "../route";
 import { resetStoreForTests } from "../store";
 import { markTelemetryConsentShown, trackEvent } from "../telemetry";
 import type { PermissionsSnapshot, SetupSnapshot } from "../types";
-import { SetupPage } from "./SetupPage";
+import { SetupPage, TELEMETRY_FLUSH_MS } from "./SetupPage";
 
 vi.mock("../route", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../route")>();
@@ -93,6 +93,24 @@ describe("wizard 完成 → consent marker + wizard_complete (D48 / D49)", () =>
     expect(order.indexOf("complete")).toBeLessThan(order.indexOf("consent"));
     expect(order.indexOf("consent")).toBeLessThan(order.indexOf("navigate"));
     expect(order.indexOf("track")).toBeLessThan(order.indexOf("navigate"));
+  });
+
+  it("Done: a hung telemetry call never blocks the return to the board past TELEMETRY_FLUSH_MS", async () => {
+    vi.mocked(postSetupStep).mockResolvedValue({ ok: true, setup: setup({ done: true, needed: false }) });
+    consentMock.mockImplementation(() => new Promise<void>(() => undefined)); // 永不落地
+    renderAt("finale");
+    await screen.findByText("Step 7 of 7");
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(TELEMETRY_FLUSH_MS - 1); });
+      expect(navigate).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(navigate).toHaveBeenCalledTimes(1);
+      expect(trackMock).toHaveBeenCalledWith("wizard_complete");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("Done: complete is rejected → neither the marker nor the event is sent", async () => {
