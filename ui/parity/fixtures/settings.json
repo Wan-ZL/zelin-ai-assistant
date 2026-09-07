@@ -10,8 +10,8 @@
           "default": "zh",
           "effective": "zh",
           "help": {
-            "en": "Python-side copy (notifications / fix sentences) follows this; the board's own language is the header toggle.",
-            "zh": "Python 侧文案（通知 / 修法句）跟随此值；看板自己的语言由顶栏切换。"
+            "en": "One switch for the board, system notifications and fix sentences: the header toggle, /lang and this field all write the same value.",
+            "zh": "看板、系统通知与修法句共用这一把开关：顶栏切换、/lang 与这里改的都是同一个值。"
           },
           "key": "language",
           "kind": "enum",

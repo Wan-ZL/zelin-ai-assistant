@@ -16,8 +16,9 @@ approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不�
 写：``PUT /api/settings/{section}`` body = ``{key: value}`` 子集；未知键 400
 UNKNOWN_FIELD；类型/取值不合法 400 INVALID_FIELD；落盘按 §15.3 v0.14
 **diff-write**——新值等于「不含该 override 的 effective 值」就**删键**，不同才写；
-``write: "always"`` 的键（telemetry.capture_input——知情选择不可被静默 diff-drop）
-只要在 payload 里就落键。nested 拼法（``telemetry`` / ``features`` 块）写嵌套形并
+``write: "always"`` 的键（telemetry.capture_input——知情选择不可被静默 diff-drop；
+general.language——D37 §15 追记：语言的唯一开关，显式选择必须落键，python 侧无
+持久化值时回落的是 locale 而不是目录里那个占位 default）只要在 payload 里就落键。nested 拼法（``telemetry`` / ``features`` 块）写嵌套形并
 顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
 雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
 ``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
@@ -136,10 +137,15 @@ SECTIONS: tuple = (
     _section(
         "general", "通用", "General",
         [
+            # D37（§15 追记 2026-09-06）：语言只有一把开关——顶栏切换 / `/lang` / 向导 / 这里 都写这同一个键，看板与
+            # Python 侧文案（通知 / 修法句）都读它。`write="always"`：原生 Settings.persistLanguage「Language is an explicit
+            # user choice that must stick (the fallback is locale-dependent, not a config layer) — always written on change」——
+            # 目录里的 default "zh" 与 Config.language 的 dataclass 默认一样只是占位（python 侧 failures.ui_lang 没有持久化值时
+            # 回落到 locale，launchd 下无 LANG 即 en），diff-write 会把等于 "zh" 的显式选择删成「没选过」。
             _f("language", "enum", "界面语言", "Interface language", default="zh",
-               choices=("zh", "en"), config=("language",),
-               help_zh="Python 侧文案（通知 / 修法句）跟随此值；看板自己的语言由顶栏切换。",
-               help_en="Python-side copy (notifications / fix sentences) follows this; the board's own language is the header toggle."),
+               choices=("zh", "en"), config=("language",), write="always",
+               help_zh="看板、系统通知与修法句共用这一把开关：顶栏切换、/lang 与这里改的都是同一个值。",
+               help_en="One switch for the board, system notifications and fix sentences: the header toggle, /lang and this field all write the same value."),
             _f("default_output_format", "enum", "交付物默认格式", "Deliverable format", default="markdown",
                choices=("markdown", "html"), config=("default_output_format",),
                help_zh="以你名义起草文档 / 报告时用哪种标记语言。",

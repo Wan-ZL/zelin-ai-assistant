@@ -10,6 +10,12 @@ vi.mock("../../route", async (importOriginal) => {
   return { ...actual, navigate: vi.fn() };
 });
 
+// D37：/lang 还 PUT general.language（判例在 composerCommands.lang.test.ts；这里只要它不打真网络）
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return { ...actual, putSettingsSection: vi.fn().mockResolvedValue({ id: "general", fields: [] }) };
+});
+
 const en = (_zh: string, english: string) => english;
 
 beforeEach(() => {

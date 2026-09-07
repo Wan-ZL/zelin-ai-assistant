@@ -52,7 +52,9 @@ async function open(page: Page, lang: "zh" | "en", width: number) {
     await route.fulfill({ response, json: body });
   });
   await page.setViewportSize({ width, height: 900 });
-  await page.goto(`${server.baseURL}/`);
+  // 语言经 ?lang=（D37 §15 一次性覆写）：同一个 demo server 共用，第一个用例的首启持久化会把它的语言写进 overrides，
+  // 只靠 localStorage 提示的话后面的用例会被 server 的值压回去
+  await page.goto(`${server.baseURL}/?lang=${lang}`);
   await page.getByRole("heading", { level: 1 }).waitFor();
   await page.locator(".shell-main").waitFor();
   await page.waitForLoadState("networkidle");

@@ -25,6 +25,7 @@ import {
   fetchPermissions,
   fetchSecrets,
   fetchSettingsCatalog,
+  fetchSettingsSection,
   fetchSetup,
   fetchSkills,
   postClaudeCodeDefault,
@@ -73,6 +74,7 @@ import type {
   PermissionsSnapshot,
   SecretsStatus,
   SettingsCatalog,
+  SettingsField,
   SettingsSection,
   SetupSnapshot,
 } from "./types";
@@ -98,7 +100,7 @@ export interface AppState {
   cardDetailError: string | null;
   /** 本会话里详情侧栏**落地过**的卡主键（不持久化）：T2 提案「需先展开看明细」的闸门读它——看过明细才给「批准」（§54.1 第 2 项追记） */
   detailViewedIds: ReadonlySet<string>;
-  language: Language;             // UI 语言（G7 shell：?lang= 覆写 > localStorage > 浏览器）
+  language: Language;             // UI 语言（D37 §15：真源 = server general.language；首帧 ?lang= 覆写 > localStorage 缓存 > 浏览器，hydrateLanguage 随后对齐）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
@@ -159,8 +161,9 @@ export interface RecapMark {
 
 const LANGUAGE_STORAGE_KEY = "zai.lang";
 
-// 启动时解析一次语言偏好：URL ?lang=（一次性覆写）> localStorage > navigator。
-// try/catch 兜底（无 window / localStorage 被禁的环境一律回落 en）。
+// 首帧语言（D37 §15 追记：只是**水合前的提示**，真源在 server 的 general.language——hydrateLanguage 随后对齐）：
+// URL ?lang=（本次会话的一次性覆写，截图 / 演示用；有它就不水合也不持久化）> localStorage 缓存（上次水合 / 选择落下的值，
+// 免得首帧闪一下另一种语言）> navigator。try/catch 兜底（无 window / localStorage 被禁的环境一律回落 en）。
 function detectInitialLanguage(): Language {
   try {
     const fromQuery = new URLSearchParams(window.location.search).get("lang");
@@ -170,6 +173,15 @@ function detectInitialLanguage(): Language {
     return resolveLanguage(navigator.language);
   } catch {
     return "en";
+  }
+}
+
+/** URL 上有 `?lang=` = 这次加载的语言由 URL 说了算（一次性覆写）：不从 server 水合、也不把它写进设置 */
+export function hasLanguageQueryOverride(search = window.location.search): boolean {
+  try {
+    return new URLSearchParams(search).has("lang");
+  } catch {
+    return false;
   }
 }
 
@@ -404,14 +416,66 @@ export async function refreshHealth(): Promise<void> {
   }
 }
 
-/** 切换 UI 语言并持久化（localStorage zai.lang；写失败静默——仅影响下次启动的默认值） */
+// ----- 语言（D37，§15 追记 2026-09-06：一把开关）----------------------------------------------------- #
+// 真源 = server 的 general.language（settings_overrides.json `language`，python 侧通知 / 修法句读同一个键，壳启动时也读它）。
+// web 是它的**写者**：顶栏切换 / `/lang` / 向导单选 / 设置区「保存」全走 PUT /api/settings/general {language}（server 对这把键
+// write:always——显式选择必须落键，原生 Settings.persistLanguage）；壳不写（§61.1）。localStorage `zai.lang` 自此只是首帧缓存。
+
+/** 本地半边：切换 UI 语言 + 刷首帧缓存（localStorage zai.lang；写失败静默）。**不写 server**——那是 chooseLanguage / 设置区保存的事；
+ *  水合（hydrateLanguage）与设置区保存成功后的即时切换走这里 */
 export function setLanguage(language: Language) {
   try {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   } catch {
-    /* 隐私模式等 localStorage 不可写：跳过持久化，本次会话仍然生效 */
+    /* 隐私模式等 localStorage 不可写：跳过缓存，本次会话仍然生效 */
   }
   if (state.language !== language) setState({ language });
+}
+
+let languageChoiceSeq = 0; // 用户每次显式选语言 +1：晚到的 PUT 回执 / 启动水合不许压掉更新的选择（detailFollowSeq 同款守卫）
+
+/** 用户显式选语言（顶栏切换 / `/lang` / 向导单选；原生 Store.swift `/lang` 与 Settings.persistLanguage 同一条路）：UI 立刻切、
+ *  再 PUT general.language 让 python 侧 / 壳 / 下次启动都跟上。PUT 失败静默（离线、无 token 的浏览器会话）：本次会话仍是新语言，
+ *  下次启动由 server 的值决定——与 §29bis feedback_publish_default 的 best-effort 同款 */
+export function chooseLanguage(language: Language): Promise<void> {
+  languageChoiceSeq += 1;
+  setLanguage(language);
+  return saveSettingsSection("general", { language }).then(() => undefined, () => undefined);
+}
+
+const isLanguage = (value: unknown): value is Language => value === "zh" || value === "en";
+
+/** 启动水合（App 挂载一次）：`GET /api/settings/general` → 显式值（source override / config）压过首帧的缓存 / 浏览器猜测；
+ *  **source == default（谁都没选过）→ 首启持久化**：把用户此刻正看着的语言写进设置（原生 L10n.swift 首启的同一件事——launchd / cron
+ *  下的 python 没有 LANG，不持久化的 zh 用户通知会回落成 en；幂等：只在 default 时写，永不盖显式值）。`?lang=` 在场 = 一次性覆写，
+ *  两件事都不做；读失败 = 留着首帧的提示（离线由 ErrorBanner 声明）；水合期间用户先选了语言 → 用户赢（languageChoiceSeq） */
+export async function hydrateLanguage(): Promise<void> {
+  if (hasLanguageQueryOverride()) return;
+  const seq = languageChoiceSeq;
+  let field: SettingsField | undefined;
+  try {
+    field = (await fetchSettingsSection("general")).fields.find((f) => f.key === "language");
+  } catch {
+    return;
+  }
+  if (!field || seq !== languageChoiceSeq) return;
+  if (field.source === "default") {
+    await persistFirstRunLanguage(state.language);
+    return;
+  }
+  if (isLanguage(field.effective)) setLanguage(field.effective);
+}
+
+/** 首启持久化的写：与设置页同时挂载时目录 GET 可能正在路上、带回的还是写之前的 source=default——等它落地再补拉一次
+ *  （refreshDiagnostics 的在途语言同款处理），「界面语言」那格的来源章才不会说谎 */
+async function persistFirstRunLanguage(language: Language): Promise<void> {
+  try {
+    await saveSettingsSection("general", { language });
+  } catch {
+    return; /* best-effort：离线 / 无 token 就留给下一次启动 */
+  }
+  const inflight = pageRequests.get("settingsCatalog");
+  if (inflight) void inflight.then(() => refreshSettingsCatalog());
 }
 
 /** 深链进场：从当前 URL 水合过滤器（FilterBar 挂载时调一次；之后的换页 / 后退前进由 syncRouteFromUrl 跟） */
@@ -685,11 +749,15 @@ export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", 
 
 /** 保存一个通用 section（PUT，server 校验 + diff-write）；成功以回执替换目录里的该 section，失败原样抛给页面 toast */
 export async function saveSettingsSection(sectionId: string, patch: Record<string, unknown>): Promise<SettingsSection> {
+  const languageSeq = languageChoiceSeq;
   const section = await putSettingsSection(sectionId, patch);
   const catalog = state.settingsCatalog;
   if (catalog) {
     setState({ settingsCatalog: { ...catalog, sections: catalog.sections.map((s) => (s.id === section.id ? section : s)) } });
   }
+  // D37（§15 追记）：「通用 · 界面语言」保存成功 = 同一把开关拨了——UI 立刻切（原生 persistLanguage 写完即 LanguageStore.lang = …），
+  // 不等下次启动；保存期间用户在顶栏又选了别的 → 顶栏赢（languageChoiceSeq），回执不许把它拨回去
+  if (sectionId === "general" && isLanguage(patch.language) && languageSeq === languageChoiceSeq) setLanguage(patch.language);
   // §48.1 合取写：slack / gmail 的雷达开关翻开 = server 同一笔也写 features.<src>_radar=true（合取的另一半住 flags 区），
   // 而 PUT 回执只有本区——整本目录再拉一次让「Feature flags」那一格跟上（best-effort：拉不到不影响本次保存的回执）
   if ((sectionId === "slack" || sectionId === "gmail") && patch[`${sectionId}_enabled`] === true) void refreshSettingsCatalog();
@@ -822,6 +890,7 @@ export function resetStoreForTests() {
   detailFollowSeq = 0;
   pageRequests.clear();
   diagnosticsLang = null;
+  languageChoiceSeq = 0;
   for (const b of forceMergeBatches) window.clearTimeout(b.timer);
   forceMergeBatches = [];
 }

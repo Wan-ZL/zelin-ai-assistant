@@ -1,15 +1,16 @@
 // 语言切换（G7 shell，自写非 fork）：按钮文案显示"目标语言"（当前 zh 显示 EN，反之显示 中）。
-// 写路径走 store.setLanguage（持久化 zai.lang）；同时清掉 URL 上一次性的 ?lang= 覆写，
-// 否则刷新后 query 又压过用户刚选的语言（store.detectInitialLanguage 的优先级）。
+// 写路径走 store.chooseLanguage（D37，§15 追记：UI 立刻切 + PUT general.language——与 `/lang`、向导、设置区「保存」同一把开关，
+// python 侧通知 / 修法句与壳都读那个键；localStorage zai.lang 只是首帧缓存）；同时清掉 URL 上一次性的 ?lang= 覆写，
+// 否则刷新后 query 又压过用户刚选的语言（store.detectInitialLanguage 的优先级，且有 ?lang= 时不水合）。
 import { useI18n } from "../../i18n";
-import { setLanguage } from "../../store";
+import { chooseLanguage } from "../../store";
 
 export function LanguageToggle() {
   const { language, text } = useI18n();
   const next = language === "zh" ? "en" : "zh";
 
   const handleToggle = () => {
-    setLanguage(next);
+    void chooseLanguage(next);
     try {
       const url = new URL(window.location.href);
       if (url.searchParams.has("lang")) {
