@@ -53,7 +53,7 @@
 	     ScreenCaptureAccess 触发）；麦克风由实时字幕的 AVCaptureDevice.requestAccess
 	     首次触发，缺这个键 macOS 会直接杀进程。文案与 mac/Info.plist 同义。 -->
 	<!-- §68.7（issue #216）：双击卡片在终端接管会话 = 壳经 Apple Events 控制所选终端
-	     （TerminalLauncher.swift）；首次按（本 app, 终端）这一对弹一次自动化授权，此后安静。
+	     （TerminalLauncher.swift）；按（本 app, 终端）这一对弹自动化授权——ad-hoc 签名期间每个新版本一次，稳定签名后一次性。
 	     缺这个键 macOS 会直接拒绝 Apple Events。文案与退役的 mac/Info.plist 同义。 -->
 	<key>NSAppleEventsUsageDescription</key>
 	<string>双击卡片在终端接管会话时，需要控制所选终端（Ghostty / Terminal / iTerm2）来新开窗口运行命令。</string>

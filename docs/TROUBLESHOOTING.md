@@ -38,7 +38,7 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **症状 A**：在看板里双击一张执行中 / 待验收的卡，macOS 弹出「"Zelin's AI Assistant" 想要控制 "Ghostty"（或 Terminal / iTerm2）」的自动化授权提示。
 
-**原因**：预期行为，只弹这一次。开终端的动作现在由壳经 Apple Events 完成（CONTRACT §68.7 2026-09-05 追记）；授权按（壳, 终端）这一对记在 系统设置 → 隐私与安全性 → 自动化 里。点「允许」即可；拒绝了就到那里给 **Zelin's AI Assistant** 下面的对应终端打开开关。壳仍是 ad-hoc 签名时（P4 过渡期），重新 `bash shell/build.sh` 装机后这项授权可能要再点一次——与屏幕录制同一根因，稳定证书落地后不再需要。之前每次都弹的 "Allow Ghostty to execute …?" 是 server 写时间戳 `.command` 文件的老通道，已退役。
+**原因**：预期行为。开终端的动作现在由壳经 Apple Events 完成（CONTRACT §68.7 2026-09-05 追记）；授权按（壳, 终端）这一对记在 系统设置 → 隐私与安全性 → 自动化 里。点「允许」即可；拒绝了就到那里给 **Zelin's AI Assistant** 下面的对应终端打开开关。**多久弹一次取决于壳的签名**：壳目前是 ad-hoc 签名（`shell/build.sh`，TCC 记的是每次构建都变的 cdhash），而 `install.sh` 每次自动部署都重建壳——所以**每个新版本部署后第一次双击会再弹一次**，不是终身一次；与屏幕录制授权同一根因（上文「换壳后的 TCC 重授权」），稳定签名证书落地（Mac-retire 清单 0.9）后才是一次性。之前每次双击都弹的 "Allow Ghostty to execute …?" 是 server 写时间戳 `.command` 文件的老通道，已退役——现在最多是每个版本一次。
 
 **症状 B**：双击后卡上出现「无法直接打开终端 · 已复制指令，粘贴到终端即可接管」，终端没有打开。
 
@@ -50,7 +50,11 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **症状 C**：双击后卡上红字「打开终端失败 · …」。
 
-**原因**：入队失败（`state/terminal_queue/` 写不进去，原句会写明）或壳消费时 osascript 报错（看 `Console.app` 里 `TerminalLauncher: osascript failed`——常见是自动化授权被拒，见症状 A）。队列里 60 s 没被消费的请求会被两侧自动清掉，不会攒着在你回来时突然蹦出一堆终端窗口。
+**原因**：**只有入队失败**会走到这句——`state/terminal_queue/` 写不进去（磁盘 / 权限），原句会写明。壳那边的失败到不了这条红线（见症状 C2）。
+
+**症状 C2**：双击后卡上是绿字「已在终端打开」，但终端窗口没有出现。
+
+**原因**：server 把请求排进队列就回 200（页面据此说「已在终端打开」），真正开窗口的是壳，而壳的 osascript 失败**不会回流**到 server 或页面——最常见是自动化授权被拒（症状 A：到 系统设置 → 隐私与安全性 → 自动化 给 Zelin's AI Assistant 下面的终端打开开关），其次是 Ghostty 版本太老不支持 `new tab in window 1`（-1708）。看 `Console.app`（或 `log show --last 5m --predicate 'process == "ZelinAIBoard"'`）里的 `TerminalLauncher: osascript failed …` 一行拿到原因。队列里 60 s 没被消费的请求会被两侧自动清掉，不会攒着在你回来时突然蹦出一堆终端窗口。
 
 **症状 D**：终端窗口闪了一下就关了，claude 没起来。
 

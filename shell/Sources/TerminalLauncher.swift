@@ -12,8 +12,12 @@
 // `open -a` channel wrote a fresh, timestamp-named "script document" per
 // launch, and macOS 26 asks "Allow Ghostty to execute …?" for every one of
 // them — a unique filename has nothing to remember. Apple Events are
-// remembered per (this app, target terminal) pair: one Automation consent,
-// then silence. Info.plist carries NSAppleEventsUsageDescription for it.
+// remembered per (this app, target terminal) pair, keyed on this app's code
+// signature: one Automation consent per SIGNATURE — while shell/build.sh
+// signs ad-hoc (cdhash requirement, new on every rebuild = every auto-deploy)
+// the prompt returns once per released version; a stable signing identity
+// makes it truly one-time (CONTRACT §68.7 追记 (b)). Info.plist carries
+// NSAppleEventsUsageDescription for it.
 //
 // Mechanisms (plain Apple Events per app — no Accessibility hacks):
 // - Ghostty (≥1.2 scripting dictionary, verified live on 1.3.1): a new TAB in
