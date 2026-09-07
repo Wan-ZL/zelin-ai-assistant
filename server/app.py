@@ -27,7 +27,8 @@
   GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
   （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
   GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
-  GET /api/setup/engine + POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
+  GET /api/setup/engine + GET /api/setup/vaults（Obsidian 已登记的库，§68.5 追记 D51）+
+  POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话：入队 state/terminal_queue 给壳，§68.7）、POST /api/repair/actd（横幅一键修复）。
 - 语气档案区（§68.1 追记）：GET /api/voice（当前生效行）+ GET /api/voice/generate-status（「从我的消息生成/更新档案」
@@ -609,6 +610,9 @@ _GET_JSON_ROUTES = {
     # §68.5 首次运行向导（engine = 原生 EngineDetector：claude CLI + 认证梯子）
     "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
     "/api/setup/engine": lambda ctx, query: setup.engine_snapshot(ctx.home),
+    # §68.5 追记 D51：Obsidian 自己登记过的库（~/Library/Application Support/obsidian/obsidian.json；
+    # 只读、只回仍存在的目录；缺席 / 坏文件 → 空列表，永不 500）
+    "/api/setup/vaults": lambda ctx, query: setup.vaults_snapshot(),
     # §68.6 关于 + 更新
     "/api/about": lambda ctx, query: about.snapshot(ctx.home),
     # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）

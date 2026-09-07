@@ -54,6 +54,7 @@ import type {
   SetupEngine,
   SetupReceipt,
   SetupSnapshot,
+  SetupVaults,
   TerminalReceipt,
   UpdateCheckResult,
   WebAnalyticsEvent,
@@ -442,6 +443,11 @@ export function fetchSetupEngine(signal?: AbortSignal): Promise<SetupEngine> {
 /** POST /api/setup/seed-dashboard — 首次数据「立即生成一次」（python -m act.lib.dashboard） */
 export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
   return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/setup/vaults — Obsidian 自己登记过的库（obsidian.json；只回仍存在的目录；没装 Obsidian → 空列表；§68.5 追记 D51） */
+export function fetchSetupVaults(signal?: AbortSignal): Promise<SetupVaults> {
+  return request<SetupVaults>("/api/setup/vaults", { signal });
 }
 
 export type RevealTarget = "config" | "skill" | "voice_profile" | "mcp_user" | "mcp_project";

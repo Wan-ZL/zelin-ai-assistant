@@ -1001,6 +1001,17 @@ export interface SetupEngine {
   [key: string]: unknown;
 }
 
+/** GET /api/setup/vaults（§68.5 追记 D51；原生 ObsidianVaults.registered）：Obsidian 自己登记过、路径仍是目录的库 */
+export interface SetupVault {
+  name: string;
+  path: string;
+  [key: string]: unknown;
+}
+export interface SetupVaults {
+  vaults: SetupVault[];
+  [key: string]: unknown;
+}
+
 /** POST /api/setup/seed-dashboard：ok:false 带 error 尾巴（不 500） */
 export interface SeedDashboardReceipt {
   ok: boolean;

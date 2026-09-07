@@ -249,9 +249,10 @@ export function SetupPage() {
     recording: ["屏幕记录", "Screen recording",
       "这是助手的核心数据来源。先看清楚采集什么、去哪里、留多久,再决定。",
       "This is the assistant's core data source. See what is captured, where it goes and how long it stays — then decide."],
+    // D51：Obsidian 登记过的库又列出来了（GET /api/setup/vaults）——副标题回到原生原句（SetupWizard.swift:886-887）
     vault: ["笔记放在哪里?", "Where should notes live?",
-      "屏幕记录提炼出的笔记存在这里,雷达也从这里发现待办。列出的是当前生效的笔记库——不用 Obsidian 也完全没问题。",
-      "Distilled notes live here, and the radar scans it for asks. Listed is the vault in effect right now — not using Obsidian is perfectly fine."],
+      "屏幕记录提炼出的笔记存在这里,雷达也从这里发现待办。检测到的 Obsidian vault 已列出——不用 Obsidian 也完全没问题。",
+      "Distilled notes live here, and the radar scans it for asks. Obsidian vaults found on this Mac are listed — not using Obsidian is perfectly fine."],
     credentials: ["可选：Slack / Gmail", "Optional: Slack / Gmail",
       "都可以先跳过：没有凭证的源就静默不跑（不报错）。以后在设置 → Slack / Gmail 接入 里随时补。",
       "All optional: a source without a credential simply stays silent (no errors). Add them later under Settings → Slack / Gmail."],
