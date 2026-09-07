@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -91,14 +90,9 @@ def _source_of(payload: dict) -> str:
 
 
 def _default_install_runner(argv: list) -> "tuple[int, str]":
-    try:
-        proc = subprocess.run(argv, check=False, capture_output=True, text=True,
-                              timeout=_REINSTALL_TIMEOUT_S, cwd=str(paths.repo_root()))
-    except subprocess.TimeoutExpired:
-        return 124, "install.sh --reinstall-agent timed out after %ds" % _REINSTALL_TIMEOUT_S
-    except OSError as exc:
-        return 127, str(exc)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    # 与 §68.8 一键修复的未加载分支同一把 runner（repair.default_install_runner：cwd = repo 根、
+    # 超时 124、bash 不在 127）；上限留在本模块以便判例单独钉
+    return repair.default_install_runner(argv, timeout_s=_REINSTALL_TIMEOUT_S)
 
 
 def _raise_for_rc(rc: int, out: str, source: str, label: str) -> None:

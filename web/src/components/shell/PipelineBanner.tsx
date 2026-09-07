@@ -59,9 +59,10 @@ export function describeHealth(
       return {
         tone: "warning",
         title: text("后台服务没在运行", "Background service is not running"),
+        // D50（§68.8 追记）：「启动后台服务」对未加载的 agent 会经 install.sh 重装 + 加载，终端里的 bash install.sh 只是备选
         detail: text(
-          `${mins == null ? "看板从未生成" : `看板数据 ${mins} 分钟没更新`}，也没有心跳。修复：bash install.sh，或用「手动命令」重启。`,
-          `${mins == null ? "The board was never generated" : `Board data is ${mins} min old`} and there is no heartbeat. Fix: bash install.sh, or restart with the manual command.`,
+          `${mins == null ? "看板从未生成" : `看板数据 ${mins} 分钟没更新`}，也没有心跳。点「启动后台服务」原地拉起它（没装好会先重装）；或在终端跑 bash install.sh。`,
+          `${mins == null ? "The board was never generated" : `Board data is ${mins} min old`} and there is no heartbeat. "Start service" brings it up in place (reinstalling first if needed); or run bash install.sh in a terminal.`,
         ),
       };
     }
@@ -98,17 +99,21 @@ function AiFixDoctorButton() {
 
 /**
  * 一键修复（原生 PipelineRepair 的 web 落点，§68.8）：POST /api/repair/actd → server 对已加载的 actd agent
- * kickstart；未加载（409）时 server 的整句原文指向 bash install.sh。之后 useRepairActd 每 1 s 问一次 health、
+ * kickstart；未加载时经 install.sh --reinstall-agent 渲染 + 加载（D50；只在没 pinned 解释器 / install.sh 不在时 409，
+ * envelope 带可复制的 details.command）。之后 useRepairActd 每 1 s 问一次 health、
  * 最多 15 s：恢复 → 「已恢复 ✓ 数据重新更新了」6 s 后刷 store（横幅退场）；没恢复 → 诚实的失败行
  * （原生 Freshness.swift:208-238）：自动修复没成功：<原因> + 再试一次 + 让 AI 修 + 可复制的手动命令。
  */
 export function RepairButton({ verdict }: { verdict?: string }) {
   const { text } = useI18n();
   const { phase, run } = useRepairActd();
-  // 原生 Freshness.swift：卡住 / 连崩 = 「一键修复」（kickstart）；没在跑（stale）= 「启动后台服务」（同一 kickstart，
-  // 未加载时 server 409 指向 bash install.sh）；失败后按钮换成「再试一次」+ 让 AI 修 + 手动命令
+  // 原生 Freshness.swift：卡住 / 连崩 = 「一键修复」（kickstart）；没在跑（stale）= 「启动后台服务」（同一 POST，
+  // server 按加载状态选 kickstart / 重装）；失败后按钮换成「再试一次」+ 让 AI 修 + 手动命令
   const isStart = verdict === "stale";
   const busy = phase.kind === "running";
+  // 手动命令默认 = kickstart（三态常驻）；server 拒绝时若 envelope 给了自己的命令（bash <repo>/install.sh），换成它——
+  // 没装好的 agent kickstart 不动，照抄默认命令只会再失败一次
+  const manualCmd = phase.kind === "failure" && phase.command ? phase.command : RESTART_CMD;
   // 依赖检查自 D30 起是设置页的一区：?page=settings&anchor=deps（查看日志再带 ?log=actd.log，区内直接翻开该尾巴）
   const depsUrl = buildSettingsUrl(window.location.href, DEPS_ANCHOR);
   const depsHref = depsUrl.toString();
@@ -136,7 +141,7 @@ export function RepairButton({ verdict }: { verdict?: string }) {
           {isStart ? text("正在启动并等待首份数据…", "Starting and waiting for the first data…") : text("正在重启后台服务并等待数据更新（最多 15 秒）…", "Restarting the background service and waiting for data (up to 15 s)…")}
         </span>
       )}
-      <CopyLine label={text("手动命令：", "Manual command: ")} value={RESTART_CMD} />
+      <CopyLine label={text("手动命令：", "Manual command: ")} value={manualCmd} />
     </span>
   );
 }

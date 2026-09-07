@@ -491,7 +491,8 @@ export function postTerminal(cardId: string): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/terminal", { method: "POST", body: JSON.stringify({ card_id: cardId }) });
 }
 
-/** POST /api/repair/actd — 横幅一键修复（launchctl kickstart；未加载 → 409） */
+/** POST /api/repair/actd — 横幅一键修复（已加载 → launchctl kickstart；未加载 → install.sh --reinstall-agent，D50；
+ *  没 pinned 解释器 / install.sh 不在 → 409 带 details.command） */
 export function postRepairActd(): Promise<RepairReceipt> {
   return request<RepairReceipt>("/api/repair/actd", { method: "POST", body: JSON.stringify({}) });
 }

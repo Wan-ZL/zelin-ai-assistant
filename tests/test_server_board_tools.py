@@ -3,8 +3,8 @@
 - POST /api/terminal：命令由 server 从投影行推导（copy_cmd → claude --resume），**入队**
   state/terminal_queue/<id>.json 给壳消费（2026-09-05 起不写 .command 不 open）；404 / 400 /
   501 / 503 SHELL_UNAVAILABLE（壳心跳缺席）/ UNKNOWN_FIELD；写侧清扫过期条目；
-- POST /api/repair/actd：launchctl 注入——已加载 → kickstart；未加载 → 409 指向
-  install.sh；label 与 act/doctor.ACTD_LABEL 逐字一致；
+- POST /api/repair/actd：launchctl 注入——已加载 → kickstart；未加载 → install.sh --reinstall-agent
+  （D50，判例住 tests/test_server_repair_actd_reinstall.py）；label 与 act/doctor.ACTD_LABEL 逐字一致；
 - GET /api/mcp：MCP 只读 mcpServers 子树、掩码、env 只给个数（Skills 商店 = §67 自己的判例）；
 - GET /api/claude-sessions：--scan --window N 子进程注入与 window 校验。
 """
@@ -246,11 +246,16 @@ class RepairTestCase(_ServerCase):
         self.assertEqual(calls[1][:3], ["/bin/launchctl", "kickstart", "-k"])
         self.assertTrue(calls[1][3].endswith("/" + repair.ACTD_LABEL))
 
-    def test_unloaded_agent_is_409_pointing_at_install(self):
-        run, _calls = self._runner(loaded=False)
-        with self.assertRaises(repair.ConflictError) as ctx:
-            repair.kickstart_actd({}, runner=run, platform="darwin")
-        self.assertEqual(ctx.exception.details["fix"], "bash install.sh")
+    def test_unloaded_agent_goes_to_install_sh_not_kickstart(self):
+        # D50（§68.8 追记）：未加载不再 409 指向终端，而是走 install.sh --reinstall-agent；
+        # 该分支的全部下场钉在 tests/test_server_repair_actd_reinstall.py，这里只钉「不 kickstart」
+        run, calls = self._runner(loaded=False)
+        install_calls = []
+        out = repair.kickstart_actd({}, runner=run, platform="darwin",
+                                    install_runner=lambda argv: (install_calls.append(argv), (0, "ok"))[1])
+        self.assertEqual(out["action"], "reinstall")
+        self.assertEqual(len(install_calls), 1)
+        self.assertFalse(any(argv[1] == "kickstart" for argv in calls))
 
     def test_kickstart_failure_is_500_with_output(self):
         run, _calls = self._runner(kick_rc=5)
