@@ -65,8 +65,9 @@ export function BoardLanes() {
   const runningTotal = (counts["running"] ?? board.running.length) + (counts["needs_input"] ?? board.needs_input.length);
   const completedTotal = counts["completed"] ?? board.completed.length;
 
+  // data-scroll-memory：窄窗下横向滚过的列位置随换页记住、回看板还原（route.rememberScroll / restoreScroll，D40）
   return (
-    <div className="board-main">
+    <div className="board-main" data-scroll-memory="board-main">
       <BacklogStrip renderCard={(card) => <DebtCardItem item={card} />} />
 
       <Lane

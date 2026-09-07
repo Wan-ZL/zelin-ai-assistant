@@ -11,9 +11,24 @@
 // ?page=ask（问问助手 §27）已随 D29 退役：不再是合法页，旧深链按「未知页」回落看板。
 // ?anchor=<section id>：设置页滚到某个 section（字幕悬浮窗齿轮深链 live_captions，§61.3；依赖检查 = deps）。
 // 约定：路由只存"哪一页 + 哪张卡"，过滤器序列化由 A8 仿 dashi taskFilters.ts 在独立模块追加。
+//
+// 客户端路由（D40，CONTRACT §49 / §54.4 2026-09-06 追记）：**URL 仍是真源**——但换页不再整页重载。
+// `navigate()` = `history.pushState` / `replaceState` + 通知订阅者；`useRoute()` 让组件订阅 `location.search`
+// （与 realtime.ts / shellBridge.ts 同款的 useSyncExternalStore 小店，快照就是浏览器的 URL，没有第二份 state）；
+// `startRouter()` 挂 popstate（后退 / 前进）与文档级的链接委托——页面里任何指向本 SPA 的 `<a href>`（rail 项、
+// 「← 返回看板」、横幅 / 诊断条 / 向导的深链……）左键点下去都走 `navigate()`，href 照旧留着（⌘点 / 中键开新标签、
+// 复制链接、无 JS 退化都还是原来的 URL）。原生 MainWindow.swift 在进程内换 section、store 是 app 寿命的
+// （AppDelegate.swift:21）；web 自此同样：store / SSE / 「合并中…」章与它的 180 s 定时器 / 多选 / 书立条展开态
+// 都活过换页；每一页的滚动位置离开时记住、回来还原（看板在内），第一次到的页从顶部开始（整页导航的默认行为）。
+import { useSyncExternalStore } from "react";
+
 const CARD_QUERY_PARAM = "card";
 const PAGE_QUERY_PARAM = "page";
 const ANCHOR_QUERY_PARAM = "anchor";
+/** 只属于某一页的 query（设置页 `?anchor=` / 依赖检查区 `?log=` / 向导 `?step=`）：换页链接不带上一页的这些——否则
+ *  `?page=settings&anchor=deps` 之后点 rail 任务台成了 `/?anchor=deps`，再点设置又滚回 deps 区、`?log=` 又翻开日志。
+ *  要带的调用方在 buildAppUrl 之后自己 set（buildSettingsUrl / PipelineBanner / IngestPage / DepRows / failureAction…） */
+const PAGE_SCOPED_PARAMS = [ANCHOR_QUERY_PARAM, "log", "step"] as const;
 
 export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps" | "archive" | "permissions" | "diagnostics" | "setup"
   | "deps" | "ingest" | "about";
@@ -65,6 +80,10 @@ export function buildAppUrl(href: string, page: AppPage, cardId: string | null):
   if (cardId) url.searchParams.set(CARD_QUERY_PARAM, cardId.trim());
   else url.searchParams.delete(CARD_QUERY_PARAM);
 
+  // 上一页的页内 query（anchor / log / step）与片段（设置页目录 `#settings-<id>` 点过之后 location.href 会带着它）都不带——
+  // 它们是页内的一次性指令 / 锚点，不是路由的一部分；过滤器（?q= / tier=…）照旧带着
+  for (const key of PAGE_SCOPED_PARAMS) url.searchParams.delete(key);
+  url.hash = "";
   return url;
 }
 
@@ -84,9 +103,171 @@ export function withoutSettingsAnchor(href: string): URL {
   return url;
 }
 
-/** 整页导航（向导完成 / 重跑向导 / 壳命令回看板）：集中一处便于测试替身；replace=true 不进历史栈 */
+// ----- 客户端路由（D40）：订阅 / 导航 / 后退前进 / 链接委托 / 滚动记忆 ----------------------------- #
+
+const routeListeners = new Set<() => void>();
+
+/** 路由变了（navigate / popstate）就叫一声；返回退订。store.syncRouteFromUrl 与 useRoute 都挂在这里 */
+export function subscribeRoute(listener: () => void): () => void {
+  routeListeners.add(listener);
+  return () => {
+    routeListeners.delete(listener);
+  };
+}
+
+function emitRoute() {
+  for (const listener of routeListeners) listener();
+}
+
+function currentSearch(): string {
+  return window.location.search;
+}
+
+/** 组件读当前路由的唯一入口：返回 `location.search`（字符串，按值比较——同一 URL 不重渲染），navigate / popstate 后重渲染。
+ *  页 = `readPage(useRoute())`，设置页 anchor = `readSettingsAnchor(useRoute())`。 */
+export function useRoute(): string {
+  return useSyncExternalStore(subscribeRoute, currentSearch, currentSearch);
+}
+
+/** 这个 URL 是不是本 SPA 的一页（同 origin + 同路径；`?page=` / `?card=` 都是 query，片段不算）——
+ *  `/api/…` `/files/…` 与别的 origin 不是，交给浏览器整页走 */
+export function isAppUrl(url: URL, current: { origin: string; pathname: string } = window.location): boolean {
+  return url.origin === current.origin && url.pathname === current.pathname;
+}
+
+/** 只有片段不同（设置页目录 `#settings-<id>`）：那是页内锚点，交给浏览器原生滚动，不进路由 */
+export function isHashOnlyChange(url: URL, current: { search: string } = window.location): boolean {
+  return url.search === current.search && url.hash !== "";
+}
+
+/**
+ * 换页（rail / ⌘1…⌘7 / `/open` / 「← 返回看板」/ 向导完成 / 壳的 open_page 命令都走这一条）：
+ * 本 SPA 的 URL → `pushState`（`replace=true` 或目标就是当前 URL → `replaceState`，不叠历史）+ 通知订阅者，**不重载**；
+ * 不属于本 SPA 的 URL（别的路径 / origin）→ 仍是整页 `location.assign` / `replace`。
+ * 离开当前页前先记下它的滚动位置（restoreScroll 回来还原）。
+ */
 export function navigate(url: URL | string, replace = false): void {
-  const href = url.toString();
-  if (replace) window.location.replace(href);
-  else window.location.assign(href);
+  const target = new URL(String(url), window.location.href);
+  if (!isAppUrl(target)) {
+    if (replace) window.location.replace(target.href);
+    else window.location.assign(target.href);
+    return;
+  }
+  rememberScroll(readPage(window.location.search));
+  if (replace || target.href === window.location.href) window.history.replaceState(null, "", target);
+  else window.history.pushState(null, "", target);
+  emitRoute();
+}
+
+/**
+ * 文档级链接委托：左键、无修饰键（⌘ / ⌃ / ⇧ / ⌥ 点是浏览器的「新标签 / 新窗口 / 下载」手势，归浏览器）、没被更内层的
+ * 处理器 `preventDefault`、`<a href>` 没有 target（`_self` 除外）/ download、目标是本 SPA 的 URL 且不是纯片段跳转
+ * → `preventDefault` + `navigate(href)`。返回停止函数。
+ */
+export function interceptAppLinks(root: Pick<Document, "addEventListener" | "removeEventListener"> = document): () => void {
+  const onClick = (event: Event) => {
+    const mouse = event as MouseEvent;
+    if (mouse.defaultPrevented || mouse.button !== 0) return;
+    if (mouse.metaKey || mouse.ctrlKey || mouse.shiftKey || mouse.altKey) return;
+    const target = mouse.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest("a[href]");
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+    if (anchor.target && anchor.target !== "_self") return;
+    if (anchor.hasAttribute("download")) return;
+    let url: URL;
+    try {
+      url = new URL(anchor.href, window.location.href);
+    } catch {
+      return;
+    }
+    if (!isAppUrl(url) || isHashOnlyChange(url)) return;
+    mouse.preventDefault();
+    navigate(url);
+  };
+  root.addEventListener("click", onClick);
+  return () => root.removeEventListener("click", onClick);
+}
+
+/**
+ * 启动路由器（App 挂载时一次）：popstate（后退 / 前进）→ 记下刚离开那页的滚动位置 + 通知订阅者；文档级链接委托；
+ * `history.scrollRestoration = "manual"`——同一文档内换页由 restoreScroll 自己还原，不让浏览器在 React 还没换内容时
+ * 先把旧页滚一下。返回停止函数。
+ */
+export function startRouter(): () => void {
+  let routedPage = readPage(window.location.search);
+  const stopRoute = subscribeRoute(() => {
+    routedPage = readPage(window.location.search);
+  });
+  const onPop = () => {
+    // popstate 触发时 URL 已经是新的，DOM 还是旧页的——给旧页记滚动
+    rememberScroll(routedPage);
+    emitRoute();
+  };
+  try {
+    if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+  } catch {
+    /* 老浏览器 / 只读：忽略 */
+  }
+  window.addEventListener("popstate", onPop);
+  const stopLinks = interceptAppLinks();
+  return () => {
+    window.removeEventListener("popstate", onPop);
+    stopLinks();
+    stopRoute();
+  };
+}
+
+// ----- 滚动记忆与焦点：整页导航白送的两样默认行为，pushState 换页要自己补 ------------------------------------------------ #
+// 滚动按页记 window 滚动 + 任何 `[data-scroll-memory="<key>"]` 滚动容器（看板的列容器 `.board-main` 挂 "board-main"——窄窗下横向
+// 滚过的列回来还在；列独立滚动（D42）再给每列挂一个即可）。
+
+interface ScrollSnapshot {
+  x: number;
+  y: number;
+  parts: Record<string, { left: number; top: number }>;
+}
+
+const scrollMemory = new Map<AppPage, ScrollSnapshot>();
+
+/** 离开 `page` 前记下它的滚动位置（navigate / popstate 调；同一页记最后一次） */
+export function rememberScroll(page: AppPage, doc: Document = document): void {
+  const parts: ScrollSnapshot["parts"] = {};
+  for (const el of Array.from(doc.querySelectorAll<HTMLElement>("[data-scroll-memory]"))) {
+    const key = el.dataset.scrollMemory;
+    if (key) parts[key] = { left: el.scrollLeft, top: el.scrollTop };
+  }
+  scrollMemory.set(page, { x: window.scrollX, y: window.scrollY, parts });
+}
+
+/** 回到 `page`（DOM 已换好）：有记忆就还原到那里，没有就到顶——整页导航的默认行为 */
+export function restoreScroll(page: AppPage, doc: Document = document): void {
+  const snapshot = scrollMemory.get(page);
+  if (!snapshot) {
+    if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+    return;
+  }
+  window.scrollTo(snapshot.x, snapshot.y);
+  for (const el of Array.from(doc.querySelectorAll<HTMLElement>("[data-scroll-memory]"))) {
+    const saved = el.dataset.scrollMemory ? snapshot.parts[el.dataset.scrollMemory] : undefined;
+    if (saved) {
+      el.scrollLeft = saved.left;
+      el.scrollTop = saved.top;
+    }
+  }
+}
+
+/** 换页后焦点掉到了 <body>（刚点的「← 返回看板」随旧页卸载）→ 放到 `<main class="shell-main">`（AppShell，tabIndex=-1）：读屏器报到
+ *  主区、Tab 从新页内容起步——整页导航时浏览器归零焦点 + 报新文档标题，pushState 什么都不报。焦点还在（rail 项 / ⌘1…⌘7 时的输入框）
+ *  就不动；preventScroll——滚动归 restoreScroll 管 */
+export function focusPageRoot(doc: Document = document): void {
+  const active = doc.activeElement;
+  if (active && active !== doc.body) return;
+  doc.querySelector<HTMLElement>("main.shell-main")?.focus({ preventScroll: true });
+}
+
+/** 仅测试用：清空滚动记忆与订阅者 */
+export function resetRouterForTests(): void {
+  scrollMemory.clear();
+  routeListeners.clear();
 }

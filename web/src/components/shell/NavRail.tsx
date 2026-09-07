@@ -7,6 +7,9 @@
 // 承担，`mainSection` 只记「上次在哪一页」——冷启动（本窗口会话第一次加载、URL 没指定页）回到那一页，
 // 原生 MainNav.init 的行为）。⌘1…⌘7 = 原生 keyboardShortcut 按栏上的七项连续重编（浏览器保留 ⌘1-8 时由浏览器
 // 胜出，壳里可用）。每个原生条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
+// 换页不重载（D40，§54.4 2026-09-06 追记）：rail 项仍是 `<a href>`（⌘点 / 中键开新标签、复制链接照旧），左键点下去由
+// route.startRouter 的文档级链接委托拦成 pushState；⌘1…⌘7 直接 route.navigate；选中态从 useRoute() 订阅的 URL 里读——
+// 原生 MainWindow.swift 在进程内换 section，store / SSE 都活过换页。
 // 原生页之外的 web 自有页（会议纪要 §63）owner 2026-09-04 要它紧跟任务台（D32）：列第二、拿 ⌘2，不带 data-rail-item——
 // 探针 rail:order 只读带锚的六项，相对顺序不变即绿；原先分隔线下再无条目，分隔线随之退役。
 // ⌘L = 原生 View ▸ 聚焦捕获框（AppDelegate.swift focusCaptureField）：光标进提案列 composer（board/focusComposer，
@@ -15,7 +18,7 @@
 // `.animation(.easeInOut(duration: 0.15))`），拖宽期间挂 `is-dragging` 关掉过渡，宽度才跟得上指针。
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, hasExplicitRoute, isDepsPage, navigate, readPage, type AppPage } from "../../route";
+import { buildAppUrl, hasExplicitRoute, isDepsPage, navigate, readPage, useRoute, type AppPage } from "../../route";
 import { focusComposer } from "../board/focusComposer";
 import {
   ArchiveBoxIcon, GearIcon, InfoCircleIcon, RecapIcon,
@@ -150,7 +153,7 @@ export function NavRail() {
   const [width, setWidth] = useState<number>(readSidebarWidth);
   const [isDragging, setDragging] = useState(false);
   const dragStart = useRef<{ x: number; width: number } | null>(null);
-  const page = readPage(window.location.search);
+  const page = readPage(useRoute()); // D40：换页不重载，选中态跟着 pushState 后的 URL 走
   const active = activeRailSlug(page);
 
   useEffect(() => {

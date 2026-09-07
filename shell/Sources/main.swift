@@ -119,9 +119,6 @@ enum ShellConfig {
         c.queryItems = items
         return c.url ?? boardURL
     }
-    /// 设置页深链（anchor 由页面自己滚动）。
-    static func settingsURL(anchor: String) -> URL { pageURL("settings", anchor: anchor) }
-
     static let logDir: String =
         ("~/Library/Logs/zelin-ai-assistant" as NSString).expandingTildeInPath
     static var logPath: String { logDir + "/board-shell.log" }
@@ -441,18 +438,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口 + 加载深链（`?page=…` 是看板 origin 上的
-    /// `/`，ExternalLinkPolicy 判 board）。还停在内嵌 splash / 失败页时同样直接加载：server 已
-    /// 上线就落到想去的那页，还没上线则加载失败、splash 原地不动（WKWebView 不渲染错误页）。
-    private func openBoardPage(_ url: URL) {
+    /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口，然后按 PageOpenPolicy（§54.4 D40 追记）——看板 SPA 已载入
+    /// （webView 停在看板 origin 的 `/` 且不在加载中）→ 推 `open_page {page, anchor?}` 让页面自己 pushState 换页，
+    /// 文档不重载、store / SSE 都留着；页面没人接（回执 false：React 树没起来 / 老 web 构建没有这个词）或还停在
+    /// 内嵌 splash / 失败页 / 正在加载 → 整页加载深链（`?page=…` 是看板 origin 上的 `/`，ExternalLinkPolicy 判
+    /// board）：server 已上线就落到想去的那页，还没上线则加载失败、splash 原地不动（WKWebView 不渲染错误页）。
+    private func openBoardPage(_ page: String, anchor: String? = nil) {
         showWindow()
-        webView.load(URLRequest(url: url))
+        let deepLink = URLRequest(url: ShellConfig.pageURL(page, anchor: anchor))
+        switch PageOpenPolicy.action(currentURL: webView.url, port: ShellConfig.port, isLoading: webView.isLoading,
+                                     page: page, anchor: anchor) {
+        case .pushCommand(let page, let anchor):
+            var args = ["page": page]
+            if let anchor { args["anchor"] = anchor }
+            bridge.pushCommand("open_page", args: args) { [weak self] handled in
+                guard let self, !handled else { return }
+                self.webView.load(deepLink)
+            }
+        case .load:
+            webView.load(deepLink)
+        }
         window.makeFirstResponder(webView)
     }
 
     /// 字幕悬浮窗齿轮 / app 菜单「设置…」⌘, → 看板设置页（`?page=settings&anchor=<anchor>`）。
     private func openSettingsPage(anchor: String) {
-        openBoardPage(ShellConfig.settingsURL(anchor: anchor))
+        openBoardPage("settings", anchor: anchor)
     }
 
     // MARK: window / webview
@@ -676,19 +687,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// 关于 → 看板 `?page=about`（原生 openAboutPage：MainNav.section = .about；不是系统 About 面板）。
     @objc private func openAboutPage(_ sender: Any?) {
-        openBoardPage(ShellConfig.pageURL("about"))
+        openBoardPage("about")
     }
 
     /// 设置… ⌘, → 设置页**顶部**（原生 openSettingsPage 只是 MainNav.section = .settings）：不带 anchor——
     /// web 设置页目录序是 显示 / 模型 / 通用，`anchor=general` 会把页面滚到第三区、目录与显示区顶出视口。
     /// 带 anchor 的那条路留给字幕悬浮窗齿轮（`openSettingsPage(anchor:)` → live_captions）。
     @objc private func openSettingsPage(_ sender: Any?) {
-        openBoardPage(ShellConfig.pageURL("settings"))
+        openBoardPage("settings")
     }
 
     /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow：PermissionsWindowController.show）。
     @objc private func openPermissionsPage(_ sender: Any?) {
-        openBoardPage(ShellConfig.pageURL("permissions"))
+        openBoardPage("permissions")
     }
 
     @objc private func reloadPage(_ sender: Any?) {

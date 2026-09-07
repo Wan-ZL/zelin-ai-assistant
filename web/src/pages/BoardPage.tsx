@@ -7,8 +7,8 @@ import { consumePendingFocus } from "../components/board/focusComposer";
 
 export function BoardPage() {
   // ⌘L / quick_capture 从别的页过来（focusComposer 留下的 sessionStorage 接力棒，§54.4 2026-09-05 追记）：
-  // 整页导航后由新文档在这里补上那一下聚焦。挂载时 composer 已在 DOM——AppShell 只在看板快照到了才渲染
-  // children，effect 又在子树提交之后才跑。
+  // 换页（D40 起 pushState 不重载，本组件随之挂载）后在这里补上那一下聚焦。挂载时 composer 已在 DOM——AppShell
+  // 只在看板快照到了才渲染 children，effect 又在子树提交之后才跑。
   useEffect(() => {
     consumePendingFocus();
   }, []);

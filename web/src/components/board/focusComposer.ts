@@ -7,9 +7,9 @@
 //     提案 composer 住在 `BoardMissingState`（§54.1 2026-09-05 追记 (b)，原生 Kanban.emptyState 的 KanbanComposer 同样收
 //     .focusCaptureField）——退到 `.shell-board-missing .lane-composer textarea`；两态不会同时在 DOM 里；
 //   - 光标到末尾（setSelectionRange），不 select() 全选：已有草稿时再按 ⌘L 只是把光标交回去，下一键不许覆盖草稿；
-//   - 不在看板页：先在 sessionStorage 留标记再整页导航回看板（route.navigate = location.assign，当前文档随之丢弃，
-//     壳又只推一次命令），新文档的 BoardPage 挂载时消费标记补上那一下聚焦——原生 ⌘L 只前置窗口不换页，web 多走一步
-//     是因为看板之外的页原生里根本没有 composer。
+//   - 不在看板页：先在 sessionStorage 留标记再 route.navigate 回看板（D40 起是 pushState 换页、不重载；此前是
+//     location.assign 整页导航——标记走 sessionStorage 两种情况都接得住，壳又只推一次命令），BoardPage 挂载时消费标记
+//     补上那一下聚焦——原生 ⌘L 只前置窗口不换页，web 多走一步是因为看板之外的页原生里根本没有 composer。
 import { buildAppUrl, navigate, readPage } from "../../route";
 
 /** sessionStorage 键：离开非看板页去快速捕获时留下的「到了看板先聚焦 composer」接力棒（一次性，读到即删） */

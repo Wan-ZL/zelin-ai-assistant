@@ -85,6 +85,38 @@ func run() {
         check(false, "stateJSON produced parseable JSON")
     }
 
+    // ---- 2b. shell → page command event detail (§61.6; D40 open_page) ----
+    print("[2b] commandJSON (zai-shell-command detail):")
+    if let json = ShellBridge.commandJSON("quick_capture"),
+       let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
+        check(obj["command"] as? String == "quick_capture" && obj.count == 1, "quick_capture → {command} only (old vocabulary unchanged)")
+    } else {
+        check(false, "commandJSON(quick_capture) produced parseable JSON")
+    }
+    if let json = ShellBridge.commandJSON("open_page", args: ["page": "settings", "anchor": "live_captions"]),
+       let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
+        check(obj["command"] as? String == "open_page", "open_page → command key")
+        check(obj["page"] as? String == "settings" && obj["anchor"] as? String == "live_captions",
+              "open_page carries page + anchor verbatim (web app.tsx shellPageUrl reads these keys)")
+    } else {
+        check(false, "commandJSON(open_page) produced parseable JSON")
+    }
+    if let json = ShellBridge.commandJSON("open_page", args: ["page": "about", "command": "quick_capture"]),
+       let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
+        check(obj["command"] as? String == "open_page", "args cannot overwrite the command key")
+    } else {
+        check(false, "commandJSON with a rogue command arg still parses")
+    }
+    // the dispatched event is cancelable and the script evaluates to "was it handled" (page preventDefault → dispatchEvent false)
+    if let script = ShellBridge.commandScript("open_page", args: ["page": "about"]) {
+        check(script.hasPrefix("!window.dispatchEvent(new CustomEvent('zai-shell-command'"),
+              "commandScript dispatches zai-shell-command and evaluates to the handled flag")
+        check(script.contains("cancelable: true") && script.contains("\"page\":\"about\""),
+              "commandScript event is cancelable and carries the detail")
+    } else {
+        check(false, "commandScript produced a script")
+    }
+
     // ---- 3. request vocabulary: getState / rejections ----
     print("[3] request dispatch:")
     if let state = try? bridge.handle(["method": "getState"]) {

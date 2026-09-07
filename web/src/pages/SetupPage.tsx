@@ -37,7 +37,7 @@ import { applyVaultChoice, VaultStep, type VaultChoice } from "../components/set
 import { useI18n, type Language } from "../i18n";
 import { buildAppUrl, navigate } from "../route";
 import { hasShellBridge } from "../shellBridge";
-import { refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, saveSettingsSection, setLanguage, setSetup, useAppState } from "../store";
+import { refreshBoard, refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, saveSettingsSection, setLanguage, setSetup, useAppState } from "../store";
 import { markTelemetryConsentShown, trackEvent } from "../telemetry";
 
 export const STEPS = ["welcome", "engine", "permissions", "recording", "vault", "credentials", "finale"] as const;
@@ -181,12 +181,16 @@ export function SetupPage() {
       const receipt = await postSetupStep("complete");
       setSetup(receipt.setup);
       // D49：「完成」= consent surface 已呈现过（第 3 步渲染披露块）→ 请 server write-once 落 state/telemetry_consent_shown，
-      // 上传端的 consent 门自此放行；D48：wizard_complete（原生 SetupWizard.swift:615）。两者永不 reject；等它们落地再整页导航
-      //（离开文档会打断在飞的 fetch），本地 server 毫秒级、且刚回了 complete——但最多等 TELEMETRY_FLUSH_MS：telemetry 不许
-      // 把「完成」卡住（fetch 自带 keepalive，超时后请求仍在飞）
+      // 上传端的 consent 门自此放行；D48：wizard_complete（原生 SetupWizard.swift:615）。两者永不 reject；等它们落地再换页
+      //（D40 前是整页导航、离开文档会打断在飞的 fetch；pushState 换页不丢文档，这一等只是让回执先于换页落地），本地 server
+      // 毫秒级、且刚回了 complete——但最多等 TELEMETRY_FLUSH_MS：telemetry 不许把「完成」卡住（fetch 自带 keepalive，超时后请求仍在飞）
       const sideEffects = Promise.all([markTelemetryConsentShown(), trackEvent("wizard_complete")]);
       await Promise.race([sideEffects, new Promise<void>((resolve) => window.setTimeout(resolve, TELEMETRY_FLUSH_MS))]);
       navigate(buildAppUrl(window.location.href, "board", null));
+      // D40 换页不重载：向导期间可能刚生成了首份 dashboard.json（终章「立即生成一次」）——回看板时把 App 启动那一拉
+      // （很可能是 404 缺文件）换成新鲜快照，不等下一条 SSE
+      void refreshBoard();
+      void refreshHealth();
     } catch (err) {
       setNote(errorMessage(err));
       setBusy(false);

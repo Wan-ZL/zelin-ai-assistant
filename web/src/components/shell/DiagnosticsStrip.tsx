@@ -16,7 +16,7 @@
 import { useEffect, useState } from "react";
 import { fetchRadarAgents, postRadarReinstall } from "../../api";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, DEPS_ANCHOR, readPage, type AppPage } from "../../route";
+import { buildAppUrl, DEPS_ANCHOR, readPage, useRoute, type AppPage } from "../../route";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../../shellBridge";
 import { useAppState } from "../../store";
 import type { RadarAgentStatus, RadarSourceHealth } from "../../types";
@@ -318,9 +318,10 @@ export function DiagnosticsStrip() {
   const shellState = useShellState();
   const [dismissed, setDismissed] = useState(() => readMap(DISMISS_KEY));
   const [agents, reinstall, reinstalling] = useRadarAgents();
+  const page = readPage(useRoute()); // 只在看板页渲染（D40 换页不重载：从路由订阅里读；hook 必须在任何 early return 之前）
 
   if (!board || boardError != null || connection === "reconnecting") return null;
-  if (readPage(window.location.search) !== "board") return null;
+  if (page !== "board") return null;
 
   const rec = hasShellBridge() ? shellState?.recording ?? null : null;
   const now = Date.now();
