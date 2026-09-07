@@ -177,7 +177,8 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
                      "ark_model", "font_size", "opacity"]
     PERMISSION_KEYS = ["screen", "microphone", "notifications",
                        "vault"]   # §68.13 笔记库（Documents）授权（原生 PermissionsModel.vault）
-    TOP_KEYS = ["launch_at_login", "hotkey"]
+    TOP_KEYS = ["launch_at_login", "hotkey",
+                "launch_at_login_available"]   # §28 追记 D39（向导终章「登录时自动启动」行的可用判据）
     METHODS = ["getState", "setRecording", "restartRecording",
                "openScreenRecordingSettings", "setCaptions", "setLanguage",
                # §68.13

@@ -7,8 +7,11 @@
 //   4 屏幕记录（一次性同意块 / 实时状态行，同权限体检页）
 //   5 笔记放在哪里（当前生效的笔记库根 / 普通 Markdown 文件夹；「下一步」时 diff-write obsidian_raw）
 //   6 可选：Slack / Gmail 凭证（SecretRow 经 server 写 0600）
-//   7 最后检查（六行健康 + 每个红行一颗修复按钮）→ 「完成」写 state/setup_done.json；再也不弹，设置 → 关于 可重跑。
-//     完成同时：请 server 落 telemetry consent 标记（§15 D49）+ 发 wizard_complete（§16 D48），见 telemetry.ts。
+//   7 最后检查（六行健康 + 每个红行一颗修复按钮 + 「登录时自动启动」默认勾选行）→ 「完成」写 state/setup_done.json；
+//     再也不弹，设置 → 关于 可重跑。
+//     完成同时：先按勾选经桥 `setLaunchAtLogin` 注册登录项（§28 追记 D39；壳报正式安装才提供，失败原句留在本步、不放行；
+//     首跑默认勾选、表过态后重跑预填壳真相——localStorage 一次性标记 launchAtLoginDefaultApplied，原生同名），
+//     再请 server 落 telemetry consent 标记（§15 D49）+ 发 wizard_complete（§16 D48），见 telemetry.ts。
 // 新机器 / 空环境：config.yaml 缺席或三把主凭证一把都没有（且没写过完成标记）时，看板开在这里而不是空看板
 // （app.tsx 按 GET /api/setup 的 needed 判定跳转）。幂等：每步预填当前真值、跳过不清数据；中途关掉下次还会回来
 // （标记只在最后一步写）。页脚 = 原生 footer：进度点 · 第 N / 7 步 · 上一步 / 下一步 / 完成。
@@ -33,10 +36,11 @@ import { SecretRow } from "../components/settings/SecretRow";
 import { errorMessage } from "../components/settings/useToast";
 import { EngineStep, useEngineDetector } from "../components/setup/EngineStep";
 import { FinaleStep } from "../components/setup/FinaleStep";
+import { applyLaunchAtLoginChoice, defaultLaunchAtLogin, LaunchAtLoginChoice, launchAtLoginOffer, markLaunchAtLoginDefaultApplied } from "../components/setup/LaunchAtLoginChoice";
 import { applyVaultChoice, VaultStep, type VaultChoice } from "../components/setup/VaultStep";
 import { useI18n, type Language } from "../i18n";
 import { buildAppUrl, navigate } from "../route";
-import { hasShellBridge } from "../shellBridge";
+import { hasShellBridge, useShellState } from "../shellBridge";
 import { refreshBoard, refreshHealth, refreshPermissions, refreshSecrets, refreshSetup, saveSettingsSection, setLanguage, setSetup, useAppState } from "../store";
 import { markTelemetryConsentShown, trackEvent } from "../telemetry";
 
@@ -101,9 +105,14 @@ export function SetupPage() {
   const [note, setNote] = useState<string | null>(null);
   const [vaultChoice, setVaultChoice] = useState<VaultChoice | null>(null);
   const [vaultError, setVaultError] = useState<string | null>(null);
+  // 终章「登录时自动启动」（D39）：null = 用户没碰过复选框 → 默认值随壳快照派生（首跑勾选；表过态后 = 壳的当前真相，
+  // defaultLaunchAtLogin）；是否真能动手由壳的 launch_at_login_available 决定（launchAtLoginOffer）
+  const [launchAtLoginChoice, setLaunchAtLoginChoice] = useState<boolean | null>(null);
   const detector = useEngineDetector();
   const present = hasShellBridge();
+  const shell = useShellState();
   const { detect } = detector;
+  const launchAtLogin = launchAtLoginChoice ?? defaultLaunchAtLogin(shell);
 
   useEffect(() => {
     void refreshSetup();
@@ -177,6 +186,19 @@ export function SetupPage() {
     if (busy) return;
     setBusy(true);
     setNote(null);
+    // D39：登录项先落地、再写完成标记——桥拒绝（SMAppService 报错）时原句留在本步、不放行，用户可取消勾选再点一次；
+    // 壳不在场 / 不是正式安装 = 行禁用，这里什么都不做（diff-write：勾选与壳真相一致也不打桥）
+    const offer = launchAtLoginOffer(present, shell, text);
+    if (offer.available && shell) {
+      const err = await applyLaunchAtLoginChoice(launchAtLogin, shell, text);
+      if (err) {
+        setNote(err);
+        setBusy(false);
+        return;
+      }
+      // 表过态（原生 launchAtLoginDefaultApplied）：之后重跑向导，行预填壳的真相而不是再默认勾选——关掉过的不会被重新注册
+      markLaunchAtLoginDefaultApplied();
+    }
     try {
       const receipt = await postSetupStep("complete");
       setSetup(receipt.setup);
@@ -320,7 +342,12 @@ export function SetupPage() {
           </>
         )}
 
-        {step === "finale" && <FinaleStep engine={detector.engine} engineChecking={detector.checking} goEngine={() => setStepAndSync("engine")} />}
+        {step === "finale" && (
+          <>
+            <FinaleStep engine={detector.engine} engineChecking={detector.checking} goEngine={() => setStepAndSync("engine")} />
+            <LaunchAtLoginChoice checked={launchAtLogin} onChange={setLaunchAtLoginChoice} shell={shell} />
+          </>
+        )}
 
         {note && <p className="settings-helper" role="status">{note}</p>}
       </section>

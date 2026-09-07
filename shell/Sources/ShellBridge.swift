@@ -185,6 +185,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             "captions": captions,
             "permissions": permissions,
             "launch_at_login": LaunchAtLogin.isEnabled,
+            // §28 追记 add-only（D39）：向导终章「登录时自动启动」行能不能提供——壳是 /Applications（或
+            // ~/Applications）里的正式安装 ∧ 有 bundle id；开发版 / bare binary 为 false，页面把行禁用并说明原因
+            "launch_at_login_available": LaunchAtLogin.isAvailable,
             "hotkey": QuickCaptureHotkey.label,
             "language": LanguageStore.shared.lang,
         ]
