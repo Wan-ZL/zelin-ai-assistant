@@ -9,6 +9,9 @@
 // 原生 契约一 / Store.boardApprovals）；徽章数字 = counts 真实总数，
 // 过滤生效时显示「命中/总数」。列头「?」说明文案来自 server 目录（Lane.tsx）。
 // 列是审批状态机的投影——没有拖拽换状态，一切转移都是卡上的显式按钮动词（§0.8）。
+// 滚动模型（D42，§54.4 2026-09-06 追记；原生 Kanban.swift 横向 ScrollView 里每列各一个纵向 ScrollView）：
+// 本组件 = `.board-main` 这条横排（只横向滚，board.css），每列的 `.column-list` 各自纵向滚（Lane.tsx）——列头与
+// 列顶输入框钉在列顶；一屏高的页壳 `.board-page` 与看板底部的多选操作条在 pages/BoardPage。
 import { sortCards, type SortOrder } from "../../cardSort";
 import { useI18n } from "../../i18n";
 import { useAppState } from "../../store";
@@ -27,7 +30,6 @@ import { ProposalCard } from "./ProposalCard";
 import { ProposalsTriageButton } from "./ProposalsTriageButton";
 import { ReviewCard } from "./ReviewCard";
 import { RunningCard } from "./RunningCard";
-import { SelectionBar } from "./SelectionBar";
 
 /** 提案列排序（原生 visibleApprovals）：processing 占位卡保持在顶、不参与排序；其余按偏好，deadline 模式可用 */
 export function orderProposals(cards: ApprovalCard[], order: SortOrder): ApprovalCard[] {
@@ -158,8 +160,7 @@ export function BoardLanes() {
       </Lane>
 
       <ArchiveStrip />
-      {/* §21 多选操作条（selectionMode 才渲染；入口「选择」在 FilterBar） */}
-      <SelectionBar />
+      {/* §21 多选操作条自 D42 起住 pages/BoardPage（.board-page 的末位、横贯看板底部），不进这条横排 */}
     </div>
   );
 }

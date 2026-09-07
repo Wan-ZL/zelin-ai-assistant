@@ -6,26 +6,33 @@
 
 /* —— 布局骨架（§54.4：跟原生 MainWindow——左侧 sidebar 通高，右侧顶栏 + 内容）—— */
 /* min-width：看板是桌面工具，窄于原生窗口下限 720（--native-layout-window-min-width）时交给横向滚动而不是挤压 */
+/* 壳 = 窗口（D42，§54.4 2026-09-06 追记）：高度钉死一屏（原生窗口从不整体滚动），文档不滚——
+   页面内容在 .shell-main 里滚；看板页更进一步，每列的卡片列表各自滚（board.css .column-list），
+   列头与列顶输入框钉在列顶、横向滚动留在看板层。顶栏 / 横幅 / 导航栏因此永远在场，不再随文档滚走。 */
 .shell {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  min-height: 100vh;
+  height: 100vh;
   min-width: var(--native-layout-window-min-width);
 }
 
 .shell-body {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
+/* 非看板页（设置 / 回收站 / 永久性完成 / 会议纪要…）的滚动容器；看板页里 .board-main 吃满它（flex: 1 + min-height: 0），
+   自己不滚——横向归 .board-main、纵向归每列 */
 .shell-main {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: auto;
 }
 
 /* 换页后的程序化聚焦（route.focusPageRoot）与 WebKit 点击非交互内容时落到最近 tabindex 祖先的焦点：主区不画焦点环 */
@@ -35,11 +42,10 @@
 
 /* —— 左侧导航栏（NavRail；原生 sidebar 逐字镜像：底 primary 3%、行 hover primary 6%、选中 accent 18%、
    圆角 6、行内 padding 6/8、图标 16、文字 13 regular、标题 14 semibold；收起 = 48pt 图标条，展开默认 200pt）—— */
+/* 壳钉一屏高之后导航栏随 .shell 通高（align-items: stretch），不再需要 sticky 钉住——那是文档整体滚动时代的遗物；
+   relative 只为给拖宽把手（absolute）当容器 */
 .rail {
-  position: sticky;
-  top: 0;
-  align-self: flex-start;
-  height: 100vh;
+  position: relative;
   flex: 0 0 auto;
   width: var(--native-layout-rail-default-width);
   display: flex;
@@ -154,7 +160,7 @@
   outline-offset: 1px;
 }
 
-/* 原生 dragHandle：分隔线内侧 8pt 的隐形抓取带（rail 是 sticky 定位，absolute 子元素以它为容器） */
+/* 原生 dragHandle：分隔线内侧 8pt 的隐形抓取带（rail 是 relative 定位，absolute 子元素以它为容器） */
 .rail-resize-handle {
   position: absolute;
   top: 0;
@@ -183,8 +189,8 @@
    只看顶栏宽、不看左翼内容，所以左翼变长（陈旧新鲜度 + 回滚部署 + 设备标签能多出 ~400px）时
    由左翼的设备标签 / 新鲜度 / 部署小字省略号收场，槽位里的控件一个不裁。 */
 .shell-header {
-  position: sticky;
-  top: 0;
+  /* 顶栏在滚动容器（.shell-main）之外、天然常驻，不再 sticky；relative + z-index 保住原来的层叠上下文（下拉菜单压过内容） */
+  position: relative;
   z-index: 20;
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(max-content, 1fr) auto;

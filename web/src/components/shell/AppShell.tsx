@@ -224,8 +224,10 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
         <MaintenanceBanner />
         {/* §48 诊断条：录制 / Gmail / Slack 这条路断了 + 一颗修复按钮（原生 kanban header 的 DiagnosticsStrip） */}
         <DiagnosticsStrip />
-        {/* tabIndex=-1：pushState 换页后焦点掉到 body 时 route.focusPageRoot 把焦点放到这里（读屏器报到主区、Tab 从新页起步，D40） */}
-        <main className="shell-main" tabIndex={-1}>{content}</main>
+        {/* tabIndex=-1：pushState 换页后焦点掉到 body 时 route.focusPageRoot 把焦点放到这里（读屏器报到主区、Tab 从新页起步，D40）。
+            data-scroll-memory：D42 起文档不滚、非看板页在这里滚（shell.css overflow: auto）——换页时 route.rememberScroll / restoreScroll
+            按页记还原它的位置，第一次到的页归零（这个 <main> 跨页常驻，不归零就把上一页滚到的位置带进新页） */}
+        <main className="shell-main" tabIndex={-1} data-scroll-memory="shell-main">{content}</main>
       </div>
     </div>
   );

@@ -2,6 +2,9 @@
 // 列说明 = 原生 SectionHeader 的 ? 图标（Cards.swift）：常显、点击开气泡、hover 走 title——
 // 文案来自 server-owned 目录 GET /api/lanes（store.lanes，按 UI 语言取 zh/en；防腐 #10），
 // 目录未到时不渲染「?」（client 端不内联第二份文案）。
+// 滚动（D42，§54.4 2026-09-06 追记；原生 Kanban.swift column：VStack { header; ScrollView(.vertical) { cards } }）：
+// 只有 `.column-list` 是滚动容器（board.css overflow-y: auto），列头 / 输入框槽位 / 「仅显示最近 N 条」是它的
+// 兄弟节点、钉在列里不随卡滚走；卡多了在列内滚，列与列互不牵动。键盘焦点落到列外的卡上时由浏览器把这一列滚过去。
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { useAppState } from "../../store";
@@ -84,7 +87,8 @@ export function Lane({ title, slug, countLabel, colorToken, composer, capNote, e
         <span className="lane-count">{countLabel}</span>
       </header>
       {composer}
-      <div className="column-list">
+      {/* data-scroll-memory：换页再回看板时这一列滚到哪还原到哪（route.rememberScroll / restoreScroll，D40；同文档内的记忆，不持久化） */}
+      <div className="column-list" data-scroll-memory={`lane:${slug}`}>
         {isEmpty ? <p className="column-empty">{emptyText ?? text("空", "Empty")}</p> : children}
       </div>
       {capNote && <p className="column-cap-note">{capNote}</p>}

@@ -411,7 +411,9 @@
   background: var(--surface);
   border-radius: 10px;
   box-shadow: var(--card-shadow);
-  scroll-margin-top: 64px; /* ?anchor= / #settings-<id> 滚到某区时留出顶栏（sticky 52px + 过滤条）的高度 */
+  /* ?anchor= / #settings-<id> 滚到某区时的顶边距：D42（§54.4 2026-09-06 追记）起页面在 .shell-main 里滚、顶栏在滚动容器之外
+     永不盖住内容，只留与页面顶内边距同宽的 20px（此前 64px 是给 sticky 顶栏让位的） */
+  scroll-margin-top: 20px;
 }
 
 /* ?anchor= / #settings-<id> 深链落地后的高亮（2.5s；SettingsPage 写 data-anchored——React 不管的属性，壳的 className 随 expand 重渲不会抹掉它） */
