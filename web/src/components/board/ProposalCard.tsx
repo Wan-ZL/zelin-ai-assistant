@@ -14,7 +14,7 @@ import { displayId } from "../../cardId";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
 import { cardAction, costLine, deadlinePhrase, effectiveTier, hardnessLabel, moneyOf, tierHint, useSubmit, pendingNote } from "./boardActions";
-import { CardHead, CardSurface, DetailsToggle, MergeStateChip, useDetailViewed } from "./cardChrome";
+import { CardHead, CardSurface, DetailsToggle, MergeStateChip, SessionHitChip, useDetailViewed } from "./cardChrome";
 import { cardHeadline } from "./cardHeadline";
 import { DodFace } from "./DodFace";
 import { ForkDialog } from "./ForkDialog";
@@ -120,6 +120,8 @@ export function ProposalCard({ card }: ProposalCardProps) {
       <div className="card-badges">
         {/* 合并态角标（合并分析中… / 合并中…）——原生 cardOverlay 压在卡右上；web 放章行首 */}
         <MergeStateChip cardId={card.id} />
+        {/* §37.2 会话层：只靠会话正文命中当前搜索词（原生 badgeRow 的 SessionHitBadge，Cards.swift:1222） */}
+        <SessionHitChip row={card} />
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板）。
             原生 tierLine：「T1 · 一键可批」——tier 与大白话各一个节点；未知 tier 只剩「未分级」 */}
         <span className="chip chip-purple">

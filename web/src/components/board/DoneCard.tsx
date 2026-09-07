@@ -10,7 +10,7 @@
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
 import { cardAction, useSubmit, pendingNote } from "./boardActions";
-import { CardHead, CardSurface, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
+import { CardHead, CardSurface, DetailsToggle, RelativeTime, RepoChip, SessionHitChip } from "./cardChrome";
 import { stateLabel } from "./RunningCard";
 import { AssessmentSummaryLine } from "./VerdictChip";
 
@@ -28,6 +28,8 @@ export function DoneCard({ row }: DoneCardProps) {
     <CardSurface cardId={row.id} label={`${text("已完成", "Done")} · ${title}`} selectable>
       <CardHead card={row} title={title} leading={<span className="card-dot is-done" aria-hidden="true" />} />
       <div className="card-badges">
+        {/* §37.2 会话层「命中会话」（原生 completed 行也是 TaskRow，Kanban.swift:495 传 sessionHit） */}
+        <SessionHitChip row={row} />
         {/* 原生 completed 行：状态章 已交付（绿 accent）· 验收于 <相对> · repo 章 */}
         <span className="chip chip-success">{stateLabel(row.state === "done" ? "delivered" : row.state, text)}</span>
         <RepoChip path={row.cwd} />

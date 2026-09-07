@@ -23,6 +23,7 @@ import {
   fetchModelsSettings,
   fetchRecapSettings,
   fetchPermissions,
+  fetchSearchIndex,
   fetchSecrets,
   fetchSettingsCatalog,
   fetchSettingsSection,
@@ -48,9 +49,11 @@ import { navigate, readCardId } from "./route";
 import { readExpandedSections, toggledSections, writeExpandedSections } from "./settingsFolds";
 import {
   EMPTY_CARD_FILTERS,
+  normalizeSessionIndex,
   readCardFilters,
   writeCardFilters,
   type CardFilters,
+  type SessionIndex,
 } from "./taskFilters";
 import type {
   AboutInfo,
@@ -104,6 +107,10 @@ export interface AppState {
   detailViewedIds: ReadonlySet<string>;
   language: Language;             // UI 语言（D37 §15：真源 = server general.language；首帧 ?lang= 覆写 > localStorage 缓存 > 浏览器，hydrateLanguage 随后对齐）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
+  /** §37.2 会话内容层（D45）：GET /api/search-index 的归一化缓存 {card_id → 归一化正文} + ETag。null = 还没拉过——
+   *  第一次非空搜索才懒加载（原生 Store.reloadSearchIndexIfNeeded），之后每次搜索开始 / 每版看板落地都条件 GET 重验
+   *  （304 零传输）；层缺席（文件不在 → server 200 空表 / 拒读 / 读失败）= 空表，字段搜索照常，永不报错 */
+  sessionIndex: SessionIndex | null;
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
   dailyLoop: DailyLoopSettings | null; // GET /api/settings/daily-loop 最近快照（§70 设置页「每日整理」）
@@ -212,6 +219,7 @@ const initialState: AppState = {
   detailViewedIds: new Set<string>(),
   language: detectInitialLanguage(),
   filters: EMPTY_CARD_FILTERS,
+  sessionIndex: null,
   models: null,
   claudeCodeDefault: null,
   dailyLoop: null,
@@ -353,6 +361,8 @@ export function refreshBoard(): Promise<void> {
       // 只认 generated_at 变化：同版重拉（断线重连）不多打一次；首版落地不拉——selectCard 自己的那一拉正在路上 / 刚落地
       const selected = state.selectedCardId;
       if (selected && previous && previous.generated_at !== board.generated_at) followSelectedCardDetail(selected);
+      // §37.2 会话层：搜索开着就跟着每版看板重验一次索引（条件 GET，没变 304；原生按 ~10 s tick 的 (mtime,size) 重验）
+      if (hasSearch(state.filters)) void refreshSessionIndex();
     } catch (error) {
       if (isBoardMissingError(error)) {
         // 原生 Store.refresh 的缺文件分支（dashboard = nil / missing = true / loadError = nil）：快照一并清——
@@ -497,12 +507,56 @@ export async function hydrateLanguage(): Promise<void> {
 
 /** 深链进场：从当前 URL 水合过滤器（FilterBar 挂载时调一次；之后的换页 / 后退前进由 syncRouteFromUrl 跟） */
 export function initFiltersFromUrl() {
-  setState({ filters: readCardFilters(window.location.search) });
+  applyFilters(readCardFilters(window.location.search));
 }
 
 function sameFilters(a: CardFilters, b: CardFilters): boolean {
   return a.deadline === b.deadline && a.reraisedOnly === b.reraisedOnly && a.search === b.search
     && a.tiers.length === b.tiers.length && a.tiers.every((tier, i) => tier === b.tiers[i]);
+}
+
+const hasSearch = (filters: CardFilters): boolean => filters.search.trim() !== "";
+
+/** 过滤器落 store 的唯一落点：搜索从空变非空（键入第一个字 / `?q=` 深链 / 后退带回一版搜索词）= 会话层的懒加载 / 重验时机
+ *  （原生 hitInfo 在有查询时才 reloadSearchIndexIfNeeded）。第一次拉全量，之后条件 GET（304 零传输）。 */
+function applyFilters(filters: CardFilters) {
+  const began = hasSearch(filters) && !hasSearch(state.filters);
+  setState({ filters });
+  if (began) void refreshSessionIndex();
+}
+
+// ----- §37.2 会话内容层（D45；原生 Store.reloadSearchIndexIfNeeded + searchIndexNorm） ----------------------------- #
+
+let sessionIndexRequest: Promise<void> | null = null; // 并发重验合并成一个在途请求
+let sessionIndexSeq = 0; // resetStoreForTests 一变，在途请求的回执作废（detailFollowSeq 同款）
+
+/** 空层（缺席 / 拒读 / 读失败）：有了它就不再算「还没拉过」，下次搜索开始 / 看板落地再重验 */
+const ABSENT_SESSION_INDEX: SessionIndex = { etag: null, texts: {} };
+
+const isAbsentIndex = (index: SessionIndex | null): boolean =>
+  index !== null && index.etag === null && Object.keys(index.texts).length === 0;
+
+/** 条件 GET /api/search-index：304 → 缓存不动；200 → 归一化一次落 sessionIndex（正文只在这里归一化，不按键归一化）；
+ *  缺席（200 空表）/ 断网 / 坏体 → 空层（字段搜索照常，永不报错）。导出给判例与别的回流路径。 */
+export function refreshSessionIndex(): Promise<void> {
+  if (sessionIndexRequest) return sessionIndexRequest;
+  const seq = sessionIndexSeq;
+  const etag = state.sessionIndex?.etag ?? null;
+  sessionIndexRequest = fetchSearchIndex(etag).then(
+    (result) => {
+      if (result === null || seq !== sessionIndexSeq) return; // 304：带去的 ETag 仍有效 / 回执已作废
+      const next: SessionIndex = { etag: result.etag, texts: normalizeSessionIndex(result.snapshot.entries) };
+      // 缺席 → 缺席（404 → 404）不换对象：免得每版看板都让全部卡片重渲染一遍
+      if (isAbsentIndex(next) && isAbsentIndex(state.sessionIndex)) return;
+      setState({ sessionIndex: next });
+    },
+    () => {
+      if (seq === sessionIndexSeq && state.sessionIndex === null) setState({ sessionIndex: ABSENT_SESSION_INDEX });
+    },
+  ).finally(() => {
+    if (seq === sessionIndexSeq) sessionIndexRequest = null;
+  });
+  return sessionIndexRequest;
 }
 
 /** D40 客户端路由（§49 / §54.4 2026-09-06 追记）：`route.navigate` / popstate 之后把 URL 里**不进历史栈**的两样东西同步回
@@ -512,7 +566,7 @@ function sameFilters(a: CardFilters, b: CardFilters): boolean {
 export function syncRouteFromUrl(): void {
   const search = window.location.search;
   const filters = readCardFilters(search);
-  if (!sameFilters(filters, state.filters)) setState({ filters });
+  if (!sameFilters(filters, state.filters)) applyFilters(filters);
   const cardId = readCardId(search);
   if (cardId !== state.selectedCardId) selectCard(cardId);
 }
@@ -520,7 +574,7 @@ export function syncRouteFromUrl(): void {
 /** 改过滤器（部分更新）并同步 URL（replaceState，不进历史栈） */
 export function setFilters(patch: Partial<CardFilters>) {
   const filters = { ...state.filters, ...patch };
-  setState({ filters });
+  applyFilters(filters);
   writeCardFilters(filters);
 }
 
@@ -918,6 +972,8 @@ export function resetStoreForTests() {
     pageErrors: {},
   };
   boardRequest = null;
+  sessionIndexRequest = null;
+  sessionIndexSeq += 1;
   detailFollowSeq = 0;
   pageRequests.clear();
   diagnosticsLang = null;

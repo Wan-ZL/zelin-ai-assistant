@@ -3,9 +3,13 @@
 ``state/search_index.json`` maps ``{card_id: {"updated_at": ISO, "text": str}}``
 where ``text`` is the tail-capped main-thread user+assistant plain text of the
 card's session transcript (``executor.transcript_plain_text``). The Mac app
-lazy-loads it as the LAST board-search match layer (hits get a 「命中会话」
-badge); it is deliberately Mac-local and NEVER part of dashboard.json — the
-E2E board payload must not grow by megabytes of transcripts.
+lazy-loaded it as the LAST board-search match layer (hits get a 「命中会话」
+badge); since D45 (§37.2 2026-09-07 追记) the web board reads the same file
+through the server's read-only projection ``GET /api/search-index``
+(server/search_index_source.py — ETag/304 on (mtime, size), size cap; actd
+stays the only writer). It is deliberately local and NEVER part of
+dashboard.json — the E2E board payload must not grow by megabytes of
+transcripts.
 
 Update discipline: actd refreshes an entry ONLY at the existing settle/harvest/
 reconcile touchpoints (zero new LLM calls, zero new transcript scans in the hot

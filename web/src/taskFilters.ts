@@ -7,7 +7,8 @@
 // 跨分区匹配语义（保守实现，见 §0.9——投影各分区形状异构，契约未钦点统一语义）：
 //   一个维度只约束「结构上携带该字段」的行——running/completed 行没有 tier，
 //   选 tier=T2 时它们**保持可见**（过滤器绝不隐藏它读不懂的行）；search 例外，作用于全部行
-//   （词表 + 归一化 AND 匹配 = CONTRACT §37.2，见下方 ⌘F 一节）。
+//   （词表 + 归一化 AND 匹配 = CONTRACT §37.2，见下方 ⌘F 一节；第三层 = 会话正文，D45，调用方从 store.sessionIndex
+//   取这张卡的归一化正文传进来——六列行有、回收站 / 封存行没有，与原生 Store 一致）。
 //   识别提案形行：`tier` 为字符串（dashboard.py 只给 needs_approval 行发 tier）；
 //   提案形行缺 `reraised` 字段 = false（会被「只看回锅」滤掉）。
 //   提案列的 processing 占位行（raising / 捕获中）不被搜索词藏起（chips 照常）——那是 BoardLanes.pick
@@ -136,15 +137,52 @@ export function searchHaystack(row: Record<string, unknown>): string[] {
   return parts.map(normalizeSearchText).filter(Boolean);
 }
 
-/** §37.2：每个查询词都得命中至少一个归一化字段；空查询直通。 */
-export function matchesCardSearch(row: Record<string, unknown>, search: string): boolean {
-  const terms = searchTerms(search);
-  if (!terms.length) return true;
-  const haystack = searchHaystack(row);
-  return terms.every((t) => haystack.some((field) => field.includes(t)));
+// ----- §37.2 会话内容层（LAST layer；D45；原生 Store.hitInfo / sessionNormText） ------------------------------ #
+// state/search_index.json 经 GET /api/search-index 到 store（store.sessionIndex），正文在落地时**归一化一次**
+//（原生 searchIndexNorm「stored NORMALIZED once per (re)load — never re-normalized per keystroke」），
+// 这里的 sessionText 参数因此永远是归一化后的正文；没有条目 = 该层对这张卡缺席。
+
+/** 归一化后的会话索引：card_id → normalizeSearchText(text)；etag = server 的重验戳（下次条件 GET 带回） */
+export interface SessionIndex {
+  etag: string | null;
+  texts: Readonly<Record<string, string>>;
 }
 
-export function matchesCardFilters(row: Record<string, unknown>, filters: CardFilters): boolean {
+/** server 投影的 entries → 归一化文本表（空文本丢掉——空字符串对任何词都不命中，留着只占内存） */
+export function normalizeSessionIndex(entries: Record<string, unknown>): Record<string, string> {
+  const texts: Record<string, string> = {};
+  for (const [id, text] of Object.entries(entries)) {
+    if (typeof text !== "string") continue;
+    const norm = normalizeSearchText(text);
+    if (norm) texts[id] = norm;
+  }
+  return texts;
+}
+
+/** 一张卡对当前查询的两层判定（原生 `(hit, sessionOnly)`）：`sessionOnly` = 命中、但**仅靠行字段不命中**——「命中会话」章的诚实条件 */
+export interface SearchHit {
+  hit: boolean;
+  sessionOnly: boolean;
+}
+
+/** §37.2 跨层合并 AND：每个查询词可由行字段**或**会话文本满足（"推荐信 chen" 命中标题含推荐信、只有会话里提过 chen 的卡）；
+ *  空查询直通；没有会话文本 = 只有字段一层。 */
+export function searchHit(row: Record<string, unknown>, search: string, sessionText?: string): SearchHit {
+  const terms = searchTerms(search);
+  if (!terms.length) return { hit: true, sessionOnly: false };
+  const haystack = searchHaystack(row);
+  const fieldHit = terms.every((t) => haystack.some((field) => field.includes(t)));
+  if (fieldHit || !sessionText) return { hit: fieldHit, sessionOnly: false };
+  const hit = terms.every((t) => sessionText.includes(t) || haystack.some((field) => field.includes(t)));
+  return { hit, sessionOnly: hit };
+}
+
+/** §37.2：每个查询词都得命中至少一个归一化字段（或会话文本，给了的话）；空查询直通。 */
+export function matchesCardSearch(row: Record<string, unknown>, search: string, sessionText?: string): boolean {
+  return searchHit(row, search, sessionText).hit;
+}
+
+export function matchesCardFilters(row: Record<string, unknown>, filters: CardFilters, sessionText?: string): boolean {
   const isProposalShaped = typeof row.tier === "string"; // dashboard.py 只给提案行发 tier
 
   if (filters.tiers.length && typeof row.tier === "string" && !filters.tiers.includes(row.tier)) {
@@ -160,5 +198,5 @@ export function matchesCardFilters(row: Record<string, unknown>, filters: CardFi
   }
   if (filters.reraisedOnly && isProposalShaped && row.reraised !== true) return false;
 
-  return matchesCardSearch(row, filters.search);
+  return matchesCardSearch(row, filters.search, sessionText);
 }

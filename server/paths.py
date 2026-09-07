@@ -29,6 +29,12 @@ def dashboard_path(home: Path) -> Path:
     return home / "state" / "dashboard.json"
 
 
+def search_index_path(home: Path) -> Path:
+    # §37.2 会话内容层：act/lib/search_index.INDEX_PATH（STATE_DIR / search_index.json；actd 写、
+    # server/search_index_source.py 只读投影给 GET /api/search-index，D45）
+    return home / "state" / "search_index.json"
+
+
 def registry_dir(home: Path) -> Path:
     return home / "act" / "registry"
 

@@ -9,7 +9,7 @@
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { DebtCard } from "../../types";
 import { cardAction, hardnessLabel, pendingNote, useSubmit } from "./boardActions";
-import { CardHead, CardSurface, DetailsToggle } from "./cardChrome";
+import { CardHead, CardSurface, DetailsToggle, SessionHitChip } from "./cardChrome";
 import { cardHeadline } from "./cardHeadline";
 
 interface DebtCardItemProps {
@@ -27,6 +27,8 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
       {/* 摘要里的 URL 可点（原生 Cards.swift:2028 linkified）；v0.21 契约七：潜在任务卡也可多选参与合并（Kanban.swift:337-339） */}
       <CardHead card={item} title={headline} leading={<span className="card-dot is-backlog" aria-hidden="true" />} linkify />
       <div className="card-badges">
+        {/* §37.2 会话层「命中会话」（原生 DebtRow 章行首位，Cards.swift:2034） */}
+        <SessionHitChip row={item} />
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
         {hardness && <span className={item.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardness}</span>}
       </div>
