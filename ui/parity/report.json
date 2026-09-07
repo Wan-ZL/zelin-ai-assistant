@@ -1,7 +1,7 @@
 {
   "counts": {
-    "PENDING": 10,
-    "PRESENT": 832,
+    "PENDING": 7,
+    "PRESENT": 835,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -632,8 +632,8 @@
     "control:settings.telemetry:option:detailed-default": "PRESENT",
     "control:settings.telemetry:toggle:product-improvement-on-by-default-event-metadata": "PRESENT",
     "control:settings.telemetry:toggle:upload-the-text-i-type-to-know-me-better-off-by": "PRESENT",
-    "control:settings.voice:button:generate-from-my-messages": "PENDING",
-    "control:settings.voice:button:generating": "PENDING",
+    "control:settings.voice:button:generate-from-my-messages": "PRESENT",
+    "control:settings.voice:button:generating": "PRESENT",
     "control:settings.voice:button:open-profile": "PRESENT",
     "control:settings.voice:label:in-effect": "PRESENT",
     "control:settings.voice:toggle:voice-injection-default-on": "PRESENT",
@@ -652,7 +652,7 @@
     "control:settings:label:enter-a-number-0-e-g-5": "PRESENT",
     "control:settings:label:enter-a-number-0-e-g-50": "PRESENT",
     "control:settings:label:failed-to-enable-launch-at-login": "PRESENT",
-    "control:settings:label:generated": "PENDING",
+    "control:settings:label:generated": "PRESENT",
     "control:settings:label:no-matching-settings": "PRESENT",
     "control:settings:label:no-profile-nothing-injected": "PRESENT",
     "control:settings:label:saved": "PRESENT",
