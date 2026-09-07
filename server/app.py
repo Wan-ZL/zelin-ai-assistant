@@ -304,34 +304,30 @@ class Handler(BaseHTTPRequestHandler):
     def _body_length(self, limit: int = MAX_BODY_BYTES) -> int:
         """Content-Length 闸（``_content_length``）的 Handler 半边：400 / 413 时 body
         一字未读——残字节留在 keep-alive 上会被当成下一条请求行（400 + 断连，客户端
-        看到的是 BrokenPipe 而不是 envelope）。所以拒绝前先 **lingering close**：把
-        已在路上的 body 读掉丢弃（最多 ``limit`` 字节、最多 ``LINGER_SECONDS``——
-        只发头不发体的客户端不会把连接卡到 15s），再经 ``_reject`` 关连接。裁决本身
-        仍只看 Content-Length：超限的体不解析、不落盘。"""
+        看到的是 BrokenPipe 而不是 envelope）。所以 413 拒绝前先 **lingering close**：
+        把已在路上的 body 读掉丢弃（体确定 > ``limit``，读前 ``limit`` 字节即够；最多
+        ``LINGER_SECONDS``——只发头不发体的客户端不会把连接卡到 15s），再经 ``_reject``
+        关连接（400 = 头缺失 / 非数，长度未知，不读）。裁决本身仍只看 Content-Length：
+        超限的体不解析、不落盘。"""
         try:
             return _content_length(self.headers.get("Content-Length"), limit)
         except ApiError as err:
-            self._discard_body(limit)
+            if err.status == 413:
+                self._discard_body(limit)
             self._reject(err)
             raise  # unreachable（_reject 必抛）；让类型检查看到出口
 
-    def _discard_body(self, cap: int) -> None:
-        """读掉并丢弃 ≤ ``cap`` 字节的请求体（Content-Length 缺失 / 非数 → 什么都不读）。"""
-        try:
-            remaining = min(int(self.headers.get("Content-Length") or 0), cap)
-        except ValueError:
-            return
-        if remaining <= 0:
-            return
+    def _discard_body(self, count: int) -> None:
+        """读掉并丢弃 ``count`` 字节的请求体；超时 / 客户端半路挂断就到此为止。"""
         self.connection.settimeout(LINGER_SECONDS)
         try:
-            while remaining > 0:
-                chunk = self.rfile.read(min(remaining, 1 << 16))
+            while count > 0:
+                chunk = self.rfile.read(min(count, 1 << 16))
                 if not chunk:
-                    break
-                remaining -= len(chunk)
+                    break  # 客户端已关写端：没有更多了
+                count -= len(chunk)
         except OSError:
-            pass  # 客户端不发体 / 半路挂断：能读多少算多少，照常回 envelope
+            pass  # 客户端不发体（超时）/ 连接重置：能读多少算多少，照常回 envelope
 
     def _read_json_body(self) -> dict:
         raw = self.rfile.read(self._body_length())

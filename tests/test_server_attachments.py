@@ -21,6 +21,7 @@ import http.client
 import json
 import os
 import re
+import socket
 import stat
 import tempfile
 import unittest
@@ -198,6 +199,24 @@ class GatesTestCase(_AttachmentsHome, unittest.TestCase):
             conn.close()
         self._assert_rejected(resp.status, obj, 413, "INVALID_FIELD")
         self.assertEqual(obj["error"]["details"]["limit"], attachments.MAX_BYTES)
+
+    def test_oversize_client_that_half_closes_early_still_gets_the_413(self):
+        """声称 8MiB+1、只发了一小段就关写端：lingering close 读到 EOF 即停（不等超时），
+        413 envelope 照常写回。"""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            conn.putrequest("POST", attachments.ROUTE)
+            for k, v in auth_headers(self.port, content_type=attachments.CONTENT_TYPE).items():
+                conn.putheader(k, v)
+            conn.putheader("Content-Length", str(attachments.MAX_BYTES + 1))
+            conn.endheaders()
+            conn.send(attachments.PNG_MAGIC + b"\x00" * 4096)
+            conn.sock.shutdown(socket.SHUT_WR)  # 半关：server 的 read 返回 b""
+            resp = conn.getresponse()
+            obj = json.loads(resp.read().decode("utf-8"))
+        finally:
+            conn.close()
+        self._assert_rejected(resp.status, obj, 413, "INVALID_FIELD")
 
     def test_put_is_not_a_route(self):
         status, _h, data = http_request(
