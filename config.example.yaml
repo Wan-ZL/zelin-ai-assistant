@@ -135,12 +135,15 @@ registry:                              # 数据层真源（CONTRACT §53，owner
 #   port: 47820                        # 回环端口（1..65535，默认 47820）。install.sh 渲进 ZAI_PORT；改动需重跑 bash install.sh
 #                                      # 壳 app 缺 env 时按同一默认连；非默认端口要同步 defaults write com.zelin.ai-board serverPort <N>（或重跑 install.sh 盖进 app）
 
-# models:                              # 模型选择（CONTRACT §59，owner 决策 D22）——两把旋钮，都默认 follow
+# models:                              # 模型选择（CONTRACT §59，owner 决策 D22 + D53）——三把旋钮
 #   dispatch: follow                   # 「手」：claude --bg 派工 agent 用哪个模型。follow = 不传 --model，继承 Claude Code 全局默认（~/.claude/settings.json 的 model）
 #   pipeline: follow                   # 「脑」：各处 headless claude -p（雷达提取/分诊/判官/问答/digest）用哪个模型。同上
 #                                      # 显式值请用 canonical id：claude-fable-5 / claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5-20251001
 #                                      # 别名/后缀（[1m]、-eap…）随时可能下线——下线那天派工会静默全败；doctor 对显式值做一次活探针
-#                                      # web 设置页「模型」写 state/settings_overrides.json 的 models_dispatch / models_pipeline，优先级高于本块；改动下一次调用即生效，无需重启
+#   fallback: "claude-opus-5[1m]"      # 「回退」（D53）：主模型不可用时 claude 在本次会话里切到的模型——每次 headless -p / --bg 都带 `--fallback-model <id>`，
+#                                      # 且 Opus id 时同时钉 ANTHROPIC_DEFAULT_OPUS_MODEL（CLI 自己的 `opus` 别名也指向它，旧一代 Opus 永不登场）。
+#                                      # 默认就是 Opus 5 的 1M 形（与 owner ~/.claude/settings.json 的 fallbackModel 同一字面）；off = 不传旗标（CLI 自己的回退复活，doctor 那行不再软化 WARN）
+#                                      # web 设置页「模型」写 state/settings_overrides.json 的 models_dispatch / models_pipeline / models_fallback，优先级高于本块；改动下一次调用即生效，无需重启
 
 # card_summary:                        # 待验收卡的 AI 一句话摘要 + 完成度评语（CONTRACT §64，issue #128）
 #   enabled: true                      # 默认开。每张待验收卡内容变化（新一轮交付/打回/编辑）时一次 headless claude -p（models.pipeline）

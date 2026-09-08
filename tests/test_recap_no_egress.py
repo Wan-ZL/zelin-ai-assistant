@@ -30,7 +30,10 @@ from act.lib import recap_text as rt
 KEY = fx.KEY
 MIN = 60.0
 
-PINNED_TAIL = ["--output-format", "text", "--tools", "", "--strict-mcp-config",
+# D53: the fallback pair rides right behind --output-format (and behind
+# --model when the pipeline knob is explicit), ahead of the no-egress tail.
+FB = ["--fallback-model", config.DEFAULT_MODEL_FALLBACK]
+PINNED_TAIL = ["--output-format", "text", *FB, "--tools", "", "--strict-mcp-config",
                "--mcp-config", '{"mcpServers":{}}']
 
 
@@ -92,7 +95,7 @@ class NoEgressTestCase(unittest.TestCase):
         self._closed_round()
         argv = self.rec.calls[0][0]
         self.assertEqual(argv[3:], ["--output-format", "text", "--model", "claude-haiku-4-5-20251001",
-                                    "--tools", "", "--strict-mcp-config",
+                                    *FB, "--tools", "", "--strict-mcp-config",
                                     "--mcp-config", '{"mcpServers":{}}'])
 
     def test_toggle_off_never_reaches_the_slack_module(self):

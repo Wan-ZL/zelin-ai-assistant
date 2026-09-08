@@ -125,7 +125,9 @@ class DraftFlowTestCase(unittest.TestCase):
         self.assertEqual(len(self.rec.draft_calls), 1)
         argv, kwargs = self.rec.draft_calls[0]
         self.assertEqual(argv[0:2], ["claude", "-p"])
-        self.assertEqual(argv[3:], ["--output-format", "text", "--allowedTools",
+        self.assertEqual(argv[3:], ["--output-format", "text",
+                                    "--fallback-model", config.DEFAULT_MODEL_FALLBACK,   # D53
+                                    "--allowedTools",
                                     "mcp__slack__slack_send_message_draft,mcp__slack__slack_search_users"])
         self.assertTrue(sd.allowlist_is_sealed(argv))
         self.assertNotIn("--dangerously-skip-permissions", argv)

@@ -74,7 +74,9 @@ class ModelsGetTestCase(_ServerCase):
         self.assertEqual(obj["pipeline"], "follow")
         self.assertEqual(obj["follow"], "follow")
         self.assertEqual(obj["canonical"], list(settings_mod.CANONICAL_MODELS))
-        self.assertEqual(obj["source"], {"dispatch": "default", "pipeline": "default"})
+        # D53: the third knob rides in the same snapshot (tests/test_server_settings_fallback.py)
+        self.assertEqual(obj["source"], {"dispatch": "default", "pipeline": "default",
+                                         "fallback": "default"})
         self.assertEqual(obj["warnings"], [])
 
     def test_layering_override_over_config_over_default(self):
@@ -83,7 +85,8 @@ class ModelsGetTestCase(_ServerCase):
         _s, obj = get_json(self.port, "/api/settings/models")
         self.assertEqual(obj["dispatch"], "claude-sonnet-5")
         self.assertEqual(obj["pipeline"], "claude-fable-5-1[1m]")
-        self.assertEqual(obj["source"], {"dispatch": "config", "pipeline": "override"})
+        self.assertEqual(obj["source"], {"dispatch": "config", "pipeline": "override",
+                                         "fallback": "default"})
         self.assertEqual(len(obj["warnings"]), 1)
         self.assertIn("claude-fable-5-1[1m]", obj["warnings"][0])
 

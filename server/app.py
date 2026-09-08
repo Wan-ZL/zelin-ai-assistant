@@ -27,7 +27,8 @@
   GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
   （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
   GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
-  GET /api/setup/engine + POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
+  GET /api/setup/engine + GET /api/setup/vaults（Obsidian 已登记的库，§68.5 追记 D51）+
+  POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话：入队 state/terminal_queue 给壳，§68.7）、POST /api/repair/actd（横幅一键修复）。
 - 语气档案区（§68.1 追记）：GET /api/voice（当前生效行）+ GET /api/voice/generate-status（「从我的消息生成/更新档案」
@@ -54,9 +55,14 @@
   （唯一的**二进制体**路由：Content-Type 闸认 image/png、自带 8MiB 上限，
   ``_POST_RAW_ROUTES``），落 state/attachments/<uuid>-1.png 回绝对路径，
   server/attachments.py；其余四闸逐字同款。
+- 会话内容搜索层（§37.2 第三条，D45）：GET /api/search-index = actd 维护的
+  state/search_index.json 的只读投影 {entries: {card_id: text}, truncated}，
+  ETag/304（If-None-Match，本面唯一的条件 GET——JSON 表路由发不了 304，所以与
+  /api/board 一样是 _route_api_get 里的显式分支）、size cap、缺席 = 200 空表
+  （层缺席不是错误，宪法第 11 条），server/search_index_source.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§10bis（贴图 images 字段与上传面）、§59（设置面）、
+localhost 例外的法源）、§10bis（贴图 images 字段与上传面）、§37.2（会话内容搜索层）、§59（设置面）、
 §62（素材库）、§63（会议 recap）、§67（skill 商店：GET/POST /api/skills，写者是
 act/lib/skills.py）、§68（parity 面）、§70（每日整理设置面）。
 """
@@ -80,9 +86,9 @@ from server import (about, ai_fix_launch, analytics_ingest, attachments,
                     inbox_writer, ingest_run, lanes, maintainer_launch,
                     material_box, mcp_servers, notify_catalog, paths,
                     permissions, radars, recaps, repair, screenpipe_disk,
-                    secrets_store,
-                    security, self_improve_lane, settings, settings_catalog,
-                    setup, slack_directory, slack_manifest, sync_pairing,
+                    search_index_source, secrets_store, security,
+                    self_improve_lane, settings, settings_catalog, setup,
+                    slack_directory, slack_manifest, sync_pairing,
                     telemetry_consent,
                     terminal_launch, uninstall_launch, voice_profile)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
@@ -144,6 +150,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _send_not_modified(self, extra: Optional[dict] = None) -> None:
+        """304：无体，**不发 Content-Type / Content-Length**（RFC 9110 §8.6——304 上的 Content-Length
+        只许等于 200 会发的体长，发 0 是错的；客户端本就知道 304 没体）；安全头 + ETag / Cache-Control 照发。"""
+        self.send_response(304)
+        self._emit_security_headers()
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
 
     def _send_json(self, status: int, obj: dict) -> None:
         body = json.dumps(obj, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -254,6 +269,14 @@ class Handler(BaseHTTPRequestHandler):
                              {"Cache-Control": "no-store"})
         elif path == "/api/events":
             self._serve_events(ctx.hub)
+        elif path == "/api/search-index":
+            # §37.2 会话内容层（D45）：条件 GET——304 走不了 _send_json 的表路由；query 一律忽略
+            status, body, extra = search_index_source.response(
+                ctx.home, self.headers.get("If-None-Match"))
+            if status == 304:
+                self._send_not_modified(extra)
+            else:
+                self._send_bytes(status, body, search_index_source.CONTENT_TYPE, extra)
         else:
             # 纯 JSON 读面（health / 设置面 / 目录 / 诊断…）——表驱动：精确表先，前缀表后
             handler = _lookup(_GET_JSON_ROUTES, _GET_PREFIX_ROUTES, path)
@@ -610,6 +633,9 @@ _GET_JSON_ROUTES = {
     # §68.5 首次运行向导（engine = 原生 EngineDetector：claude CLI + 认证梯子）
     "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
     "/api/setup/engine": lambda ctx, query: setup.engine_snapshot(ctx.home),
+    # §68.5 追记 D51：Obsidian 自己登记过的库（~/Library/Application Support/obsidian/obsidian.json；
+    # 只读、只回仍存在的目录；缺席 / 坏文件 → 空列表，永不 500）
+    "/api/setup/vaults": lambda ctx, query: setup.vaults_snapshot(),
     # §68.6 关于 + 更新
     "/api/about": lambda ctx, query: about.snapshot(ctx.home),
     # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）

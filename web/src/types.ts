@@ -297,7 +297,10 @@ export interface TrashRow {
  * last_incident（上一次回滚判决「<ts> <status>: <detail>」，healthy 状态下仍在 =
  * 回滚被拒后没人看过，直到下一次 deployed 才清）。2026-09-03 add-only：
  * behind_main / behind_main_why（上一次部署停在 origin/main head 之前的最新绿 commit，
- * head 的 CI 还没绿 / 红了 / 已中毒；部署到 head 或 up_to_date 时清掉）。
+ * head 的 CI 还没绿 / 红了 / 已中毒；部署到 head 或 up_to_date 时清掉）。2026-09-07
+ * add-only（§56.3 会话闸门）：status `deferred` + deferred_reason（sessions_running |
+ * roster_unknown）/ deferred_sessions（挡住部署的活会话数）/ deferred_since（本轮
+ * 延后首次的时间戳——顶栏按它算「已 X 小时」）。
  */
 export interface DeployState {
   status?: string;
@@ -314,6 +317,9 @@ export interface DeployState {
   last_incident?: string;
   behind_main?: string;
   behind_main_why?: string;
+  deferred_reason?: string;
+  deferred_sessions?: string;
+  deferred_since?: string;
   [key: string]: unknown;
 }
 
@@ -503,14 +509,18 @@ export interface HealthSnapshot {
   [key: string]: unknown;
 }
 
-/** GET/PUT /api/settings/models（CONTRACT §59，D22）：server/settings.py models_snapshot 的 wire 形逐字镜像。
- *  dispatch/pipeline = "follow" 或显式模型 id；canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告 */
+/** GET/PUT /api/settings/models（CONTRACT §59，D22 + D53）：server/settings.py models_snapshot 的 wire 形逐字镜像。
+ *  dispatch/pipeline = "follow" 或显式模型 id；fallback（D53）= "off" 或模型 id（headless 调用的 --fallback-model）；
+ *  off / fallback_default = server 给的哨兵与出厂值；canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告 */
 export interface ModelsSettings {
   dispatch: string;
   pipeline: string;
+  fallback: string;
   follow: string;
+  off: string;
+  fallback_default: string;
   canonical: string[];
-  source: { dispatch?: string; pipeline?: string; [key: string]: unknown };
+  source: { dispatch?: string; pipeline?: string; fallback?: string; [key: string]: unknown };
   warnings: string[];
   [key: string]: unknown;
 }
@@ -1021,6 +1031,15 @@ export interface LogTail {
   [key: string]: unknown;
 }
 
+// ----- §37.2 会话内容搜索层（D45）：GET /api/search-index 的投影 ----- #
+export interface SearchIndexSnapshot {
+  /** card_id → 会话正文（actd 维护的 state/search_index.json 每条的 text，server 尾裁；原文，未归一化） */
+  entries: Record<string, string>;
+  /** server 因 size cap 拒读了文件（entries 为空、层诚实缺席） */
+  truncated: boolean;
+  [key: string]: unknown;
+}
+
 // ----- §68.5 首次运行向导 ----- #
 export interface SetupSnapshot {
   needed: boolean;
@@ -1048,6 +1067,17 @@ export interface SetupEngine {
   auth: EngineAuth | string | null;
   auth_sources: Record<string, boolean>;
   ready: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /api/setup/vaults（§68.5 追记 D51；原生 ObsidianVaults.registered）：Obsidian 自己登记过、路径仍是目录的库 */
+export interface SetupVault {
+  name: string;
+  path: string;
+  [key: string]: unknown;
+}
+export interface SetupVaults {
+  vaults: SetupVault[];
   [key: string]: unknown;
 }
 

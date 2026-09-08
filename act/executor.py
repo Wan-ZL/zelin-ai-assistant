@@ -21,8 +21,9 @@ Run standalone: ``python -m act.executor <req_id>``.
 Law pointers: §4 dispatch / storm brake / auto-resume, §7 target_kind + repo
 bootstrap, §10 契约 C delivery harvesting, §11 rework, §15 output format,
 §33 chat delivery, §37.1 CARD TITLE tiers, §39.2 safe window, §44.3 briefings,
-§46 stop confirmation, §59 single LLM boundary (argv via act/llm.py), §60
-display ids. Transcript reading lives in act/lib/transcripts.py (lib layer);
+§46 stop confirmation, §56.3 session gate (``live_session_count`` — the roster
+count scripts/auto-deploy.sh defers on), §59 single LLM boundary (argv via
+act/llm.py), §60 display ids. Transcript reading lives in act/lib/transcripts.py (lib layer);
 the ``_transcript_info`` / ``transcript_plain_text`` names here are aliases
 kept as the test seams they always were.
 """
@@ -303,7 +304,7 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
         capture_output=True,
         text=True,
         timeout=120,
-        env=llm.runner_env(),
+        env=llm.runner_env(cfg),
     )
 
 
@@ -837,7 +838,7 @@ def _run_resume(cfg: config.Config, req: Requirement, sid: str, target: Path,
         capture_output=True,
         text=True,
         timeout=120,
-        env=llm.runner_env(),
+        env=llm.runner_env(cfg),
     )
 
 
@@ -1166,6 +1167,42 @@ def _agent_info(sid: str) -> dict:
     """
     info = _agent_info_strict(sid)
     return info if info is not None else {}
+
+
+# §56.3 会话闸门：roster 里「有活进程的后台会话」计数。claude 只在 worker 进程
+# 活着时才打印 `pid`（dashboard._norm_agent 同一约定），所以 pid 就是「一次
+# actd 重启可能打断的进程」这个谓词本身——state 是 UI 分类（working / done /
+# blocked…），一个 done 但进程还活着、owner 正 attach 着看的 worker 同样会被打断
+# （live 2026-09-07 P-029 f40f2001 的形状），roster 也不暴露 attached。
+# `kind == interactive`（owner 终端里的 claude）不算：它不在守护进程树里、也不归
+# actd 管，算进去会让部署在 owner 开着任何终端会话时永远等下去。
+_INTERACTIVE_KIND = "interactive"
+
+
+def _is_live_background(a) -> bool:
+    """A roster entry an actd restart could interrupt: a dict with a live
+    ``pid`` that is not the owner's own interactive terminal session."""
+    if not isinstance(a, dict) or not a.get("pid"):
+        return False
+    return str(a.get("kind") or "") != _INTERACTIVE_KIND
+
+
+def live_session_count() -> Optional[int]:
+    """How many background sessions the roster shows with a LIVE process.
+
+    Strict like :func:`_agent_info_strict`: ``None`` when the roster cannot be
+    read at all (claude missing / timed out / non-zero / unparseable JSON), so
+    a fail-closed caller — scripts/auto-deploy.sh's session gate (§56.3) —
+    can tell "no sessions" (0) from "cannot tell" (None). Same reader as every
+    other roster site here (``_roster_query`` → ``_parse_roster`` →
+    ``_unwrap_roster``): no second parser."""
+    proc = _roster_query()
+    if proc is None or proc.returncode != 0:
+        return None
+    data = _parse_roster(proc.stdout)
+    if data is None:
+        return None
+    return sum(1 for a in _unwrap_roster(data) if _is_live_background(a))
 
 
 def stop_session(session_id: str, info: Optional[dict] = None) -> bool:

@@ -34,6 +34,7 @@ import type {
   ModelsSettings,
   RecapMarkReceipt,
   RecapSettings,
+  SearchIndexSnapshot,
   SkillsSnapshot,
   PermissionsSnapshot,
   RadarAgentsSnapshot,
@@ -55,6 +56,7 @@ import type {
   SetupEngine,
   SetupReceipt,
   SetupSnapshot,
+  SetupVaults,
   TerminalReceipt,
   UpdateCheckResult,
   WebAnalyticsEvent,
@@ -193,6 +195,45 @@ export function fetchHealth(signal?: AbortSignal): Promise<HealthSnapshot> {
   return request<HealthSnapshot>("/api/health", { signal });
 }
 
+/** `fetchSearchIndex` 的结果：`null` = 304（带去的 ETag 仍有效，缓存不动）；否则新快照 + server 的 ETag（文件缺席 = server 回 200 空表且不带 ETag → etag null） */
+export type SearchIndexFetch = { etag: string | null; snapshot: SearchIndexSnapshot } | null;
+
+/** 缺席 / 拒读时的空层（§37.2「索引缺失 = 该层静默缺席」） */
+export const EMPTY_SEARCH_INDEX: SearchIndexSnapshot = { entries: {}, truncated: false };
+
+/**
+ * GET /api/search-index — §37.2 会话内容层（D45）：actd 维护的 state/search_index.json 的 server 只读投影
+ * `{entries: {card_id: text}, truncated}`。**条件 GET**：带上次的 ETag（`If-None-Match`）→ 304 = 没变（返回 null，
+ * 调用方留着缓存）；文件缺席 = server 照样 200、空 `entries`、无 ETag（§49：层缺席不是错误）。不走 request()：它把非 2xx
+ * 一律当失败，而 304 在这条路上是正常答案；404 也按空快照收（防御：这条路上「没有这一层」永远不该变成错误）。其余失败（断网 / 5xx / 坏 JSON）合成 READ_FAILED 抛出，调用方静默——字段搜索照常，层缺席不报错。
+ * token-light 读路径（§49），不重试（每次搜索开始 / 每版看板落地都会再重验一次）。
+ */
+export async function fetchSearchIndex(etag: string | null = null, signal?: AbortSignal): Promise<SearchIndexFetch> {
+  const headers = new Headers();
+  if (etag) headers.set("If-None-Match", etag);
+  let response: Response;
+  try {
+    response = await fetch(resolveApiUrl("/api/search-index"), { headers, signal });
+  } catch (error) {
+    if ((error as { name?: unknown } | null)?.name === "AbortError") throw error; // 调用方的取消不是读失败（DOMException 可能不是本 realm 的 Error）
+    throw new ApiError(0, { error: { code: "READ_FAILED", message: apiText("会话索引暂时读不到。", "The session index is temporarily unavailable."), details: { method: "GET", failure: "network" } } });
+  }
+  if (response.status === 304) return null;
+  if (response.status === 404) return { etag: null, snapshot: EMPTY_SEARCH_INDEX }; // 防御：层缺席永不当错误
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok) throw new ApiError(response.status, (body ?? {}) as ApiErrorBody);
+  const doc = body as Partial<SearchIndexSnapshot> | null;
+  if (!doc || typeof doc !== "object" || typeof doc.entries !== "object" || doc.entries === null) {
+    throw new ApiError(response.status, { error: { code: "READ_FAILED", message: apiText(`服务端响应不是合法 JSON（${response.status}）`, `The server response is not valid JSON (${response.status})`), details: { method: "GET", failure: "invalid-json" } } });
+  }
+  return { etag: response.headers.get("ETag"), snapshot: { ...doc, entries: doc.entries, truncated: doc.truncated === true } };
+}
+
 /**
  * POST /api/actions — 写 inbox 动作。body 形状 = live CONTRACT §3 现有动词清单，
  * 由动作发起组件逐字段构造；本函数不校验、不补字段（多一个字段 server 会 400 UNKNOWN_FIELD）。
@@ -260,16 +301,19 @@ export function deliverableUrl(cardId: string, name: string): string {
   return resolveApiUrl(`/files/deliverables/${encodeURIComponent(cardId)}/${encodeURIComponent(name)}`);
 }
 
-/** GET /api/settings/models — 两把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §59） */
+/** GET /api/settings/models — 三把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §59，D22 + D53） */
 export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { signal });
 }
 
+/** PUT /api/settings/models 的 body：dispatch / pipeline = "follow" 或模型 id；fallback（D53）= "off" 或模型 id */
+export type ModelsPatch = { dispatch?: string; pipeline?: string; fallback?: string };
+
 /**
  * PUT /api/settings/models — 保存旋钮（写请求：四闸同 POST，api.ts 自动带 token）。
- * body 只许 dispatch / pipeline 两键（server UNKNOWN_FIELD 零容忍）；值 = "follow" 或模型 id。
+ * body 只许 dispatch / pipeline / fallback 三键（server UNKNOWN_FIELD 零容忍）。
  */
-export function putModelsSettings(body: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
+export function putModelsSettings(body: ModelsPatch): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
 }
 
@@ -443,6 +487,11 @@ export function fetchSetupEngine(signal?: AbortSignal): Promise<SetupEngine> {
 /** POST /api/setup/seed-dashboard — 首次数据「立即生成一次」（python -m act.lib.dashboard） */
 export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
   return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/setup/vaults — Obsidian 自己登记过的库（obsidian.json；只回仍存在的目录；没装 Obsidian → 空列表；§68.5 追记 D51） */
+export function fetchSetupVaults(signal?: AbortSignal): Promise<SetupVaults> {
+  return request<SetupVaults>("/api/setup/vaults", { signal });
 }
 
 export type RevealTarget = "config" | "skill" | "voice_profile" | "mcp_user" | "mcp_project";

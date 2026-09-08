@@ -8,7 +8,7 @@
 //     雷达 skip_reason 词表 × doctor 全绿 / 没回 渲染几遍；录制页另按 引擎没在录 / TCC 收回 / ffmpeg 缺失 / 崩了 与
 //     手动触发 成功 / 失败 / 持锁跳过 渲染几遍；关于页另按 没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开
 //     渲染几遍；看板另有「server 拒绝」一遍（接管 / 让 AI 修 / capture / 斜杠命令的失败句）与诊断条 agent_missing
-//     两遍）+ 把每颗按钮点一遍收集弹窗文案（看板：先把每张卡的「展开详情 ▸」各点一下——D34 起它开的是右侧详情
+//     两遍、「只有会话正文命中搜索词」一遍（§37.2 第三层的「命中会话」紫章，D45））+ 把每颗按钮点一遍收集弹窗文案（看板：先把每张卡的「展开详情 ▸」各点一下——D34 起它开的是右侧详情
 //     侧栏，原生详情槽的积木住那里（D43 起「怎样算办完」/「验收清单」卡面也有紧凑形），每开一张等详情落地收一遍；
 //     再进多选态勾上每张卡、操作条的弹窗逐点收并提交、
 //     退出多选（多选态里卡的动作行是死的——原生 tap catcher，§54.1 追记）、卡上开弹窗的动词逐点收、
@@ -142,6 +142,8 @@ vi.mock("./api", async (importOriginal) => {
     fetchSecrets: vi.fn(),
     fetchSetup: vi.fn(),
     fetchSetupEngine: vi.fn(),
+    // 向导第 5 步的 Obsidian 登记库列表（D51）：demo 机器上一座库——「Obsidian vault」行连同当前 / 自定义两行一起渲染
+    fetchSetupVaults: vi.fn().mockResolvedValue({ vaults: [{ name: "Obsidian Vault", path: "/Users/demo/Documents/Obsidian Vault" }] }),
     fetchPermissions: vi.fn(),
     fetchAbout: vi.fn(),
     fetchDiagnostics: vi.fn(),
@@ -159,6 +161,8 @@ vi.mock("./api", async (importOriginal) => {
     // §68.1 追记 Slack 目录：默认一条频道 + 两个人（勾选表与「筛选…」才渲染）；变体遍里换成 ok:false
     fetchSlackDirectory: vi.fn().mockResolvedValue({ ok: true, fetched_at: "2026-09-02T11:00:00Z", channels: [{ id: "C1", name: "eng" }], users: [{ id: "U1", name: "sam.rivera", real_name: "Sam Rivera" }, { id: "U2", name: "lee", real_name: "" }] }),
     fetchMaterials: vi.fn().mockResolvedValue({ items: [], status: "open", counts: { open: 0, total: 0 } }),
+    // §37.2 会话内容层（D45）：默认层缺席（server 200 空表 → 空快照）；renderSessionSearchVariant 那一遍换成带一条会话正文的索引
+    fetchSearchIndex: vi.fn().mockResolvedValue({ etag: null, snapshot: { entries: {}, truncated: false } }),
     fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, languages: ["auto", "zh", "en"], source: {} }),
     // §68.15 同步 / 配对：开着、有码（1×1 PNG 占位）；pair / disable 隔一个 macrotask 再回（忙态句先落 DOM）
     fetchSync: vi.fn().mockResolvedValue({ enabled: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: "demo-mac", default_label: "demo-mac", qr_png_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" }),
@@ -332,9 +336,12 @@ const health: HealthSnapshot = {
 const models: ModelsSettings = {
   dispatch: "follow",
   pipeline: "claude-opus-5",
+  fallback: "claude-opus-5[1m]",
   follow: "follow",
+  off: "off",
+  fallback_default: "claude-opus-5[1m]",
   canonical: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
-  source: { dispatch: "default", pipeline: "override" },
+  source: { dispatch: "default", pipeline: "override", fallback: "default" },
   warnings: [],
 };
 const ccDefault: ClaudeCodeDefault = {
@@ -1060,6 +1067,27 @@ async function renderBoardRejectVariant(language: Language) {
   vi.mocked(postAttachment).mockResolvedValue({ ok: true, path: "/Users/demo/zai/state/attachments/demo-1.png", bytes: 7 });
 }
 
+/** §37.2 会话内容层（D45）：一遍「只有会话正文命中搜索词」——索引里给六列各一张卡一段正文、搜一个卡面上没有的词，
+ *  六种卡的「命中会话」紫章（原生 SessionHitBadge）在提案 / 运行中 / 需输入 / 待验收 / 阶段性完成 / 潜在任务上都渲染到 */
+async function renderSessionSearchVariant(language: Language) {
+  const { fetchSearchIndex } = await import("./api");
+  const token = "zzsessiononly";
+  const entries: Record<string, string> = {};
+  for (const lane of ["needs_approval", "running", "needs_input", "review", "completed", "debt"] as const) {
+    const first = (demoBoard as unknown as Record<string, Array<{ id: string }>>)[lane]?.find((row) => !("processing" in row && row.processing));
+    if (first) entries[first.id] = `transcript mentions ${token} once`;
+  }
+  vi.mocked(fetchSearchIndex).mockResolvedValue({ etag: '"1-2"', snapshot: { entries, truncated: false } });
+  const pool = found[language].board;
+  // `?q=` 深链进场：FilterBar 挂载时 initFiltersFromUrl → 搜索从空变非空 = 懒加载索引（store.refreshSessionIndex → mock）
+  mount(language, "board", `?q=${token}`);
+  await settle(pool);
+  collectLabels(document.body, pool);
+  cleanup();
+  setFilters({ search: "" });
+  vi.mocked(fetchSearchIndex).mockResolvedValue({ etag: null, snapshot: { entries: {}, truncated: false } });
+}
+
 /** header 录制 / 字幕控件（原生 RecordingMenuButton）在几套壳状态下：打开菜单收状态行 + 修法项
  *  （打开系统设置 → 屏幕录制 / 安装 ffmpeg… / 引擎首次下载中…），再点「重启录制引擎」收 3 s 的「重启中…」 */
 async function renderHeaderVariants(language: Language) {
@@ -1229,6 +1257,7 @@ beforeAll(async () => {
     await renderAboutVariants(language);
     await renderHeaderVariants(language);
     await renderSettingsVariants(language);
+    await renderSessionSearchVariant(language);
   }
   // 七个面 × 两种语言 × 若干状态变体：几十次整页渲染（单机 ~12 s），远超 vitest 默认 10 s 的 hook 预算
 }, 120_000);

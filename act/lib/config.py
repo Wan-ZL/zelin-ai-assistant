@@ -2,8 +2,9 @@
 
 契约：CONTRACT §15（`state/settings_overrides.json` 最后合并、只碰点名的键）+
 §16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
-§53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮）+
-§63（recap 旋钮）+ §64（card_summary）+ §70（daily_loop 块）。
+§53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
+D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
+§70（daily_loop 块）。
 
 Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
@@ -147,6 +148,15 @@ CANONICAL_MODELS: tuple = (
 # 模型 id 的形状闸（不是词表）：字母数字开头，之后允许 . _ - [ ] ，≤64 字符。
 # 只防 argv 注入面上的垃圾（空白/控制字符/引号），不猜模型名的未来拼法。
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
+# §59 第三把旋钮 `models.fallback`（D53，2026-09-07）：主模型（--model 或 Claude Code
+# 全局默认）拿不到时 claude 切到的模型——act/llm.py 给每个 headless -p / --bg 站点
+# 追加 `--fallback-model <id>`。owner 原话「fable 5.1 用不了的使用 claude code 默认
+# 使用了 opus 4.8 这个老模型。能否去掉这个 4.8 这个老模型」→ 出厂值就是 Opus 5
+# 的 1M 别名，与 owner ~/.claude/settings.json 的 fallbackModel 同一字面；"off" =
+# 不传旗标（CLI 自己的回退——4.8——重新登场，所以 doctor 那时不再软化 WARN）。
+# 不是 MODEL_MODES 的成员：llm.run(mode=) 不接受 "fallback"，它是横切旗标不是站点。
+MODEL_FALLBACK_OFF: str = "off"
+DEFAULT_MODEL_FALLBACK: str = "claude-opus-5[1m]"
 
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
@@ -259,6 +269,9 @@ class Config:
     # 形状坏（空白/控制字符）回落 follow——宁可跟随全局，不可把垃圾塞进 argv。
     models_dispatch: str = MODEL_FOLLOW
     models_pipeline: str = MODEL_FOLLOW
+    # §59 D53：`--fallback-model` 的值；"off" = 不传。坏形状回落出厂值（宁可回退到
+    # Opus 5，不可把垃圾塞进 argv、也不可静默掉回 CLI 自己的 4.8）。
+    models_fallback: str = DEFAULT_MODEL_FALLBACK
 
     # §64 待验收卡 AI 摘要 + 完成度评语（config.yaml `card_summary.enabled`，
     # overrides 扁平键 `card_summary_enabled`）。默认开；关 = 只停派新判官。
@@ -634,6 +647,40 @@ def _model_or(value, default: str) -> str:
         return default
 
 
+def coerce_fallback_model(value) -> str:
+    """§59 D53 `models.fallback` 归一：None/空白 → 出厂值 DEFAULT_MODEL_FALLBACK；
+    "off"（大小写不敏感）**或布尔 False** → "off"（YAML 1.1 把裸 `off` 读成 False——
+    config.yaml 里按文档写 `fallback: off` 必须真的关掉，而不是被当垃圾吞成出厂值）；
+    形状合法的 id 原样；其余（含 True）→ ValueError（调用方按「坏值 = 保留原生效值」
+    处理：yaml 路径经 _fallback_or 吞成出厂值，overrides 路径 per-entry 跳过）。
+    与 coerce_model 的差别只有哨兵词与空值的落点。"""
+    if value is None:
+        return DEFAULT_MODEL_FALLBACK
+    if value is False:
+        return MODEL_FALLBACK_OFF
+    if not isinstance(value, str):
+        raise ValueError(f"not a model id: {value!r}")
+    return _coerce_fallback_str(value.strip())
+
+
+def _coerce_fallback_str(s: str) -> str:
+    """coerce_fallback_model 的字符串半边：空 → 出厂值；"off" → off；形状闸。"""
+    if not s:
+        return DEFAULT_MODEL_FALLBACK
+    if s.lower() == MODEL_FALLBACK_OFF:
+        return MODEL_FALLBACK_OFF
+    if not MODEL_ID_RE.match(s):
+        raise ValueError(f"not a model id: {s!r}")
+    return s
+
+
+def _fallback_or(value, default: str) -> str:
+    try:
+        return coerce_fallback_model(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def model_is_canonical(value) -> bool:
     """UI/doctor 的 WARN 判据：显式值是否在 CANONICAL_MODELS 表内。"follow"
     不是模型 id，按 True（没有可警告的东西）。"""
@@ -847,6 +894,10 @@ def _apply_models_voice(cfg: Config, data: dict) -> None:
         if _mode in models_blk:
             setattr(cfg, f"models_{_mode}",
                     _model_or(models_blk.get(_mode), MODEL_FOLLOW))
+    # D53 第三把：`models.fallback`，坏形状回落出厂值（不是 off——配错字不该
+    # 让 CLI 自己的 4.8 回退悄悄复活）。
+    if "fallback" in models_blk:
+        cfg.models_fallback = _fallback_or(models_blk.get("fallback"), DEFAULT_MODEL_FALLBACK)
     voice = _dict_or(data.get("voice"))
     cfg.voice_enabled = _bool_or(
         voice.get("enabled", cfg.voice_enabled), cfg.voice_enabled
@@ -1206,6 +1257,10 @@ _OVERRIDE_FIELDS: dict = {
     # → per-entry skip, the effective value stays.
     "models_dispatch": coerce_model,
     "models_pipeline": coerce_model,
+    # §59 D53 (§15 add-only): the third knob — `--fallback-model` id or "off";
+    # same diff-write path as the two above (equal to the effective default
+    # `claude-opus-5[1m]` deletes the key). Bad shapes raise → per-entry skip.
+    "models_fallback": coerce_fallback_model,
     # §63 会议 recap：web Settings「会议纪要」经 server/recaps.py diff-write 这三个
     # 扁平键；slack_draft 出厂 false（草稿投递是 opt-in，发送永远是人）。
     "recap_enabled": _coerce_bool,
