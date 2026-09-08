@@ -1,5 +1,6 @@
 """Post-install diagnostics — ``python3 -m act.doctor`` (CONTRACT §25 行目录 +
-机器输出；§59 模型旋钮两行；§55 / §56 的 TCC 行由探针家族实现)。
+机器输出；§59 模型旋钮两行 + D53 回退模型入 `claude code model` 行；§55 / §56 的
+TCC 行由探针家族实现)。
 
 Every failure mode a fresh install has hit is SILENT: a launchd agent that
 loads but never spawns, TCC blocking cron off the vault, a missing API key
@@ -266,26 +267,48 @@ def _model_knobs(cfg) -> dict:
     return {mode: llm.model_for(mode, cfg) for mode in llm.MODES}
 
 
-def _knob_text(knobs: dict) -> str:
-    return " · ".join("%s: %s" % (mode, knobs[mode] or "follow") for mode in llm.MODES)
+def _knob_text(knobs: dict, fallback: Optional[str] = None) -> str:
+    """``dispatch: … · pipeline: … · fallback: <id>|off`` — the fallback (D53)
+    is always named so the row says which model the daemon will land on."""
+    parts = ["%s: %s" % (mode, knobs[mode] or "follow") for mode in llm.MODES]
+    parts.append("fallback: %s" % (fallback or llm.FALLBACK_OFF))
+    return " · ".join(parts)
 
 
 def _check_claude_code_model(probes: Probes):
     """One row, file reads only (rides under --fast too): the Claude Code global
-    default every follow-mode call inherits, plus where the two knobs point.
+    default every follow-mode call inherits, plus where the two knobs point and
+    which ``--fallback-model`` (D53) rides along.
     Never FAIL — this row informs; §56's rollback verdict must not turn on it.
-    WARN when a knob follows a NON-canonical global default: that is exactly
-    the 2026 EAP-alias retirement that broke every dispatch silently."""
+    WARN when a knob follows a NON-canonical global default **and** the
+    fallback cannot catch it — off, or itself a non-canonical alias/suffix
+    (same rule as ``server/settings.py::fallback_warning``): that is exactly
+    the 2026 EAP-alias retirement that broke every dispatch silently. With the
+    D53 default or a canonical fallback on, the alias retiring means the CLI
+    switches to the named fallback for the rest of the session (Claude Code
+    ≥ 2.1.152 for -p; ≥ 2.1.166 for interactive / --bg; truth = Claude Code
+    CHANGELOG) — the row stays OK and names it."""
+    cfg = config.load_config()
     info = probes.claude_code_settings() or {}
-    knobs = _model_knobs(config.load_config())
-    knob_text = _knob_text(knobs)
+    knobs = _model_knobs(cfg)
+    fallback = llm.fallback_model(cfg)
+    knob_text = _knob_text(knobs, fallback)
     if info.get("exists") and not info.get("parseable"):
         return _unparseable_settings_row(knob_text)
     global_model = info.get("model")
     following = _following_modes(knobs)
     if _alias_risk(global_model, following):
-        return _noncanonical_default_row(global_model, following, knob_text)
+        return _alias_risk_row(global_model, following, fallback, knob_text)
     return _default_ok_row(global_model, knob_text)
+
+
+def _alias_risk_row(global_model: str, following: list, fallback: Optional[str],
+                    knob_text: str) -> CheckResult:
+    """A knob follows a non-canonical global default: OK naming the fallback
+    when it is a real net (D53 default or canonical id), WARN otherwise."""
+    if fallback and llm.fallback_is_canonical(fallback):
+        return _noncanonical_with_fallback_row(global_model, following, fallback, knob_text)
+    return _noncanonical_default_row(global_model, following, fallback, knob_text)
 
 
 def _following_modes(knobs: dict) -> list:
@@ -312,14 +335,38 @@ def _unparseable_settings_row(knob_text: str) -> CheckResult:
               "fix that file by hand (Claude Code reads it too)"))
 
 
-def _noncanonical_default_row(global_model: str, following: list, knob_text: str) -> CheckResult:
+def _noncanonical_default_row(global_model: str, following: list, fallback: Optional[str],
+                              knob_text: str) -> CheckResult:
+    """WARN: a knob follows a non-canonical global default and the fallback is
+    no net — ``None`` = off; a non-None value here is itself a non-canonical
+    alias/suffix (``llm.fallback_is_canonical`` said no), which can retire the
+    same day as the primary."""
+    if fallback:
+        why = _pick("且回退 `%s` 也不是 canonical id", "and the fallback `%s` is not a canonical id either") % fallback
+        way_out = _pick("或给「回退模型」选一个 canonical id", "or pick a canonical id for the fallback model")
+    else:
+        why = _pick("且回退已关", "and the fallback is off")
+        way_out = _pick("或把「回退模型」打开", "or turn the fallback model back on")
     return CheckResult(
         "claude code model", WARN,
-        _pick("全局默认 `%s` 不是 canonical id，%s 跟随它——别名/后缀下线那天这些调用会静默全败（%s）",
-              "global default `%s` is not a canonical id and %s follow it - the day the alias/suffix retires those calls fail silently (%s)")
-        % (global_model, "/".join(following), knob_text),
-        _pick("设置页「模型」→「设为 <canonical id>」改全局默认，或给旋钮选一个显式 canonical id",
-              "Settings > Models > \"Set to <canonical id>\" for the global default, or pick an explicit canonical id per knob"))
+        _pick("全局默认 `%s` 不是 canonical id，%s 跟随它，%s——别名/后缀下线那天这些调用会静默全败（%s）",
+              "global default `%s` is not a canonical id, %s follow it %s - the day the alias/suffix retires those calls fail silently (%s)")
+        % (global_model, "/".join(following), why, knob_text),
+        _pick("设置页「模型」→「设为 <canonical id>」改全局默认、给旋钮选一个显式 canonical id，%s",
+              "Settings > Models > \"Set to <canonical id>\" for the global default, pick an explicit canonical id per knob, %s") % way_out)
+
+
+def _noncanonical_with_fallback_row(global_model: str, following: list, fallback: str,
+                                    knob_text: str) -> CheckResult:
+    """D53: the alias may still retire, but every headless launch carries
+    ``--fallback-model <fallback>`` and that fallback is the D53 default or a
+    canonical id — the session lands there instead of dying (or drifting to
+    the CLI's own Opus 4.8). Informational OK, fallback named."""
+    return CheckResult(
+        "claude code model", OK,
+        _pick("全局默认 `%s` 不是 canonical id，%s 跟随它；它不可用时 headless 调用回退到 %s（%s）",
+              "global default `%s` is not a canonical id and %s follow it; when it is unavailable headless calls fall back to %s (%s)")
+        % (global_model, "/".join(following), fallback, knob_text))
 
 
 def _model_failed_row(name: str, mode: str, model: str, rc: int, out) -> CheckResult:
@@ -350,7 +397,7 @@ def _model_row(probes: Probes, cfg, mode: str, model: Optional[str], probed: dic
         return CheckResult(name, WARN, _pick("%s — 跳过（未找到 claude CLI）",
                                              "%s - skipped (claude CLI not found)") % model)
     if model not in probed:
-        probed[model] = probes.run(llm.probe_argv(model, cfg), env=llm.runner_env(),
+        probed[model] = probes.run(llm.probe_argv(model, cfg), env=llm.runner_env(cfg),
                                    timeout=_MODEL_PROBE_TIMEOUT)
     rc, out = probed[model]
     if rc == 0:

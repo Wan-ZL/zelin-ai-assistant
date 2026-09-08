@@ -2,17 +2,19 @@
 
 Two things, both stdlib (+ optional PyYAML for reading config.yaml):
 
-1. **The two model knobs** ``models.dispatch`` / ``models.pipeline``.
-   ``GET /api/settings/models`` reports the *effective* value of each knob
-   (settings_overrides.json flat key ``models_<mode>`` → config.yaml
-   ``models.<mode>`` → default ``follow``) plus the canonical id list the UI
+1. **The model knobs** ``models.dispatch`` / ``models.pipeline`` (D22) and
+   the third one, ``models.fallback`` (D53, 2026-09-07: the ``--fallback-model``
+   every headless launch carries; ``off`` = no flag; default
+   ``claude-opus-5[1m]``). ``GET /api/settings/models`` reports the *effective*
+   value of each knob (settings_overrides.json flat key ``models_<mode>`` →
+   config.yaml ``models.<mode>`` → default) plus the canonical id list the UI
    renders as its dropdown (rule 10: the catalog is server-owned, the web
    mirrors wire keys verbatim). ``PUT /api/settings/models`` validates and
    **diff-writes** ``state/settings_overrides.json`` exactly the way the Mac
    app did (§15 v0.14 保存语义): a value equal to the config.yaml/default
    effective value DELETES the override key, a different one writes it; every
    other key in the file is preserved byte-for-byte as JSON. The pipeline
-   (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same two keys.
+   (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same three keys.
 
 3. **The daily self-improvement loop's knobs** (CONTRACT §70, D10) —
    ``GET/PUT /api/settings/daily-loop``: ``enabled`` / ``time`` (local HH:MM)
@@ -82,6 +84,13 @@ CANONICAL_MODELS = (
     "claude-haiku-4-5-20251001",
 )
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
+# D53 third knob (mirror of config.MODEL_FALLBACK_OFF / DEFAULT_MODEL_FALLBACK):
+# not a MODEL_MODES member — its sentinel is "off", its default an explicit id.
+MODEL_FALLBACK = "fallback"
+MODEL_FALLBACK_OFF = "off"
+DEFAULT_MODEL_FALLBACK = "claude-opus-5[1m]"
+# every knob PUT /api/settings/models accepts (the two modes + the fallback)
+MODEL_KNOBS = MODEL_MODES + (MODEL_FALLBACK,)
 
 # settings_overrides.json flat keys the pipeline reads (config._OVERRIDE_FIELDS)
 OVERRIDE_KEY = "models_%s"
@@ -132,6 +141,41 @@ def coerce_model(value) -> str:
     return s
 
 
+def coerce_fallback_model(value) -> str:
+    """Mirror of config.coerce_fallback_model (D53): None / blank → the default
+    id; "off" (any case) or a boolean False → "off" (YAML 1.1 reads a bare
+    ``off`` as False); a well-formed id stays as typed; anything else raises
+    ValueError with a plain-language reason."""
+    if value is None:
+        return DEFAULT_MODEL_FALLBACK
+    if value is False:
+        return MODEL_FALLBACK_OFF
+    if not isinstance(value, str):
+        raise ValueError("模型必须是字符串 / model must be a string")
+    return _coerce_fallback_str(value.strip())
+
+
+def _coerce_fallback_str(s: str) -> str:
+    """String half of coerce_fallback_model: blank → default; "off" → off; id shape gate."""
+    if not s:
+        return DEFAULT_MODEL_FALLBACK
+    if s.lower() == MODEL_FALLBACK_OFF:
+        return MODEL_FALLBACK_OFF
+    if not MODEL_ID_RE.match(s):
+        raise ValueError(
+            "模型 id 只能含字母数字和 . _ - [ ]，≤64 字符，不能有空格；off = 关闭回退 / "
+            "a model id is letters, digits and . _ - [ ] only, ≤64 chars, no spaces; off = no fallback")
+    return s
+
+
+def coerce_knob(knob: str, value) -> str:
+    """One entry point for every knob PUT accepts: modes → coerce_model,
+    fallback → coerce_fallback_model."""
+    if knob == MODEL_FALLBACK:
+        return coerce_fallback_model(value)
+    return coerce_model(value)
+
+
 def is_canonical(value: str) -> bool:
     return value == MODEL_FOLLOW or value in CANONICAL_MODELS
 
@@ -144,6 +188,19 @@ def noncanonical_warning(mode: str, value: str) -> Optional[str]:
             "下线那天这些调用会静默全败 / %s uses the non-canonical model id \"%s\" - "
             "aliases/suffixes ([1m], -eap...) can disappear any day and every call "
             "would then fail silently" % (mode, value, mode, value))
+
+
+def fallback_warning(value: str) -> Optional[str]:
+    """D53: the fallback knob's warning. None for off, the product default
+    (``claude-opus-5[1m]`` is the D53 decision — warning about it would be
+    noise) and canonical ids; a free-text alias gets a sentence that says what
+    actually breaks: only the fallback path, not every call."""
+    if value in (MODEL_FALLBACK_OFF, DEFAULT_MODEL_FALLBACK) or value in CANONICAL_MODELS:
+        return None
+    return ("fallback 用了非 canonical 的模型 id「%s」——别名/后缀下线那天，主模型不可用时的"
+            "回退也会失败 / fallback uses the non-canonical model id \"%s\" - the day the "
+            "alias/suffix retires, the fallback itself fails when the primary is unavailable"
+            % (value, value))
 
 
 # --------------------------------------------------------------------------- #
@@ -354,6 +411,25 @@ def _coerce_or_follow(value) -> str:
         return MODEL_FOLLOW
 
 
+def _coerce_or_default_fallback(value) -> str:
+    """coerce_fallback_model with a bad shape reading as the default id
+    (mirror of config._fallback_or: a typo must not resurrect the CLI's own
+    fallback)."""
+    try:
+        return coerce_fallback_model(value)
+    except ValueError:
+        return DEFAULT_MODEL_FALLBACK
+
+
+def _knob_default(knob: str) -> str:
+    return DEFAULT_MODEL_FALLBACK if knob == MODEL_FALLBACK else MODEL_FOLLOW
+
+
+def _lenient_knob(knob: str, value) -> str:
+    return (_coerce_or_default_fallback(value) if knob == MODEL_FALLBACK
+            else _coerce_or_follow(value))
+
+
 def config_yaml_doc(home: Path) -> dict:
     """config.yaml as a dict; {} when PyYAML / the file / the shape is absent
     (shared by the per-section settings modules: recaps, display)."""
@@ -367,16 +443,16 @@ def config_yaml_doc(home: Path) -> dict:
 
 
 def _config_models(home: Path) -> "tuple[dict, dict]":
-    """(values, present): config.yaml ``models:`` block coerced per mode (bad
-    shape → follow) + which modes the file actually spells (``source`` label).
-    PyYAML absent / file absent / bad yaml → all follow, none present (the
-    pipeline degrades the same way)."""
+    """(values, present): config.yaml ``models:`` block coerced per knob (bad
+    shape → follow, or the default id for ``fallback``) + which knobs the file
+    actually spells (``source`` label). PyYAML absent / file absent / bad yaml
+    → all defaults, none present (the pipeline degrades the same way)."""
     blk = _models_block(home) or {}
-    values = {mode: MODEL_FOLLOW for mode in MODEL_MODES}
-    present = {mode: mode in blk for mode in MODEL_MODES}
-    for mode in MODEL_MODES:
-        if present[mode]:
-            values[mode] = _coerce_or_follow(blk.get(mode))
+    values = {knob: _knob_default(knob) for knob in MODEL_KNOBS}
+    present = {knob: knob in blk for knob in MODEL_KNOBS}
+    for knob in MODEL_KNOBS:
+        if present[knob]:
+            values[knob] = _lenient_knob(knob, blk.get(knob))
     return values, present
 
 
@@ -384,34 +460,39 @@ def models_snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``ModelsSettings`` mirrors verbatim)::
 
         {"dispatch": "<id>|follow", "pipeline": "<id>|follow",
-         "follow": "follow", "canonical": [...],
-         "source": {"dispatch": "override|config|default", ...},
+         "fallback": "<id>|off",                       # D53, add-only
+         "follow": "follow", "off": "off",
+         "fallback_default": "claude-opus-5[1m]",     # D53, add-only
+         "canonical": [...],
+         "source": {"dispatch": "override|config|default", "pipeline": ..., "fallback": ...},
          "warnings": ["...plain sentence per non-canonical knob..."]}
     """
     overrides = read_overrides(home)
     base, present = _config_models(home)
-    out: dict = {"follow": MODEL_FOLLOW, "canonical": list(CANONICAL_MODELS),
-                 "source": {}, "warnings": []}
-    for mode in MODEL_MODES:
-        value, source = _effective_knob(mode, base, present, overrides)
-        out[mode] = value
-        out["source"][mode] = source
-        warning = noncanonical_warning(mode, value)
+    out: dict = {"follow": MODEL_FOLLOW, "off": MODEL_FALLBACK_OFF,
+                 "fallback_default": DEFAULT_MODEL_FALLBACK,
+                 "canonical": list(CANONICAL_MODELS), "source": {}, "warnings": []}
+    for knob in MODEL_KNOBS:
+        value, source = _effective_knob(knob, base, present, overrides)
+        out[knob] = value
+        out["source"][knob] = source
+        warning = (fallback_warning(value) if knob == MODEL_FALLBACK
+                   else noncanonical_warning(knob, value))
         if warning:
             out["warnings"].append(warning)
     return out
 
 
-def _effective_knob(mode: str, base: dict, present: dict, overrides: dict) -> "tuple[str, str]":
+def _effective_knob(knob: str, base: dict, present: dict, overrides: dict) -> "tuple[str, str]":
     """(value, source) for one knob: a well-formed override wins; a malformed
     override is skipped (the pipeline skips it too); else config.yaml / default."""
-    raw = overrides.get(OVERRIDE_KEY % mode)
+    raw = overrides.get(OVERRIDE_KEY % knob)
     if raw is not None:
         try:
-            return coerce_model(raw), "override"
+            return coerce_knob(knob, raw), "override"
         except ValueError:
             pass
-    return base[mode], ("config" if present[mode] else "default")
+    return base[knob], ("config" if present[knob] else "default")
 
 
 # --------------------------------------------------------------------------- #
@@ -426,10 +507,10 @@ def atomic_write_json(p: Path, doc: dict) -> None:
 
 
 def update_models(home: Path, payload: dict) -> dict:
-    """Validate ``{"dispatch"?: str, "pipeline"?: str}`` and diff-write the
-    override keys. Unknown keys → 400 UNKNOWN_FIELD; a malformed id → 400
-    INVALID_FIELD with the plain-language reason (the web toasts it). Returns
-    the fresh :func:`models_snapshot`."""
+    """Validate ``{"dispatch"?: str, "pipeline"?: str, "fallback"?: str}`` and
+    diff-write the override keys. Unknown keys → 400 UNKNOWN_FIELD; a
+    malformed id → 400 INVALID_FIELD with the plain-language reason (the web
+    toasts it). Returns the fresh :func:`models_snapshot`."""
     wanted = _wanted_models(payload)
     base, _present = _config_models(home)
     _diff_write(home, wanted, base, OVERRIDE_KEY)
@@ -437,10 +518,10 @@ def update_models(home: Path, payload: dict) -> dict:
 
 
 def _wanted_models(payload: dict) -> dict:
-    """{mode: coerced id} for the modes the payload names; a malformed id →
+    """{knob: coerced value} for the knobs the payload names; a malformed id →
     400 INVALID_FIELD carrying the plain-language reason."""
-    return _validated(payload, MODEL_MODES, lambda _mode, v: coerce_model(v),
-                      "nothing to save: give dispatch and/or pipeline")
+    return _validated(payload, MODEL_KNOBS, coerce_knob,
+                      "nothing to save: give dispatch, pipeline and/or fallback")
 
 
 # --------------------------------------------------------------------------- #

@@ -40,6 +40,7 @@ import {
   putModelsSettings,
   putRecapSettings,
   putSettingsSection,
+  type ModelsPatch,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { forceMergeLanded } from "./components/board/pendingSettle";
@@ -635,7 +636,7 @@ export async function refreshSettings(): Promise<void> {
 }
 
 /** 保存旋钮（PUT，server 校验 + diff-write）；成功以 server 回执替换快照，失败原样抛给页面 toast */
-export async function saveModels(patch: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
+export async function saveModels(patch: ModelsPatch): Promise<ModelsSettings> {
   const models = await putModelsSettings(patch);
   setState({ models });
   return models;

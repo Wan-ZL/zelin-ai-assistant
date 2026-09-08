@@ -598,16 +598,17 @@ def _store2_tick() -> None:
 # one pass + loop
 # --------------------------------------------------------------------------- #
 def _refresh_model_knobs(cfg: config.Config) -> None:
-    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次，
-    web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立进程，
-    本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这几个
-    字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮同一刷新点。"""
+    """§59（D22 + D53）：把三把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass
+    一次，web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立
+    进程，本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这
+    几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮同一刷新点。"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
         return
     cfg.models_dispatch = fresh.models_dispatch
     cfg.models_pipeline = fresh.models_pipeline
+    cfg.models_fallback = fresh.models_fallback   # D53 第三把（--fallback-model）
     for knob in daily_loop.LIVE_KNOBS:
         setattr(cfg, knob, getattr(fresh, knob))
 

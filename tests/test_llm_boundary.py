@@ -2,13 +2,19 @@
 
 Pins, per call site, that routing through ``llm.run`` / ``llm.dispatch_argv``
 changed NOTHING while both knobs follow: the argv every headless site hands to
-``subprocess.run`` is byte-identical to its pre-§59 literal (binary resolution
-patched to the bare ``"claude"`` so the pin reads like the old code), and so
-are the kwargs (timeout / env / neutral cwd / stdin piping). Then flips the
-pipeline knob through ``state/settings_overrides.json`` (the web's write path)
-and asserts every site — separate-process sites read config fresh — gains
-exactly ``--model <id>`` right behind ``--output-format text`` and nothing
-else moves. The dispatch knob rides ``executor._bg_base_cmd`` the same way.
+``subprocess.run`` is its pre-§59 literal plus exactly the two D53 tokens
+``--fallback-model claude-opus-5[1m]`` (binary resolution patched to the bare
+``"claude"`` so the pin reads like the old code), and so are the kwargs
+(timeout / env / neutral cwd / stdin piping). Then flips the pipeline knob
+through ``state/settings_overrides.json`` (the web's write path) and asserts
+every site — separate-process sites read config fresh — gains exactly
+``--model <id>`` right behind ``--output-format text`` and nothing else
+moves. The dispatch knob rides ``executor._bg_base_cmd`` the same way.
+
+D53 (2026-09-07) deliberately re-pinned every literal here: the default
+fallback knob puts ``--fallback-model claude-opus-5[1m]`` right behind the
+model flag on every ``-p`` and ``--bg`` site. ``models_fallback: off`` gives
+the pre-D53 argv back byte for byte (tests/test_llm_fallback_argv.py).
 
 ``subprocess.run`` is faked (recorder) — no claude is ever spawned (the
 tests/__init__.py guard would refuse anyway). Sandbox AIASSISTANT_HOME.
@@ -29,6 +35,9 @@ from act.lib import config, quick_capture
 
 STATE = str(config.STATE_DIR)
 OPUS = "claude-opus-5"
+# D53: the two tokens every headless launch carries while the fallback knob
+# sits on its default
+FB = ["--fallback-model", config.DEFAULT_MODEL_FALLBACK]
 
 
 class _Recorder:
@@ -95,25 +104,25 @@ class ModelForTestCase(_Sandbox):
 class BuildArgvTestCase(_Sandbox):
     def test_arg_shape_follow(self):
         self.assertEqual(llm.build_argv("P", cfg=config.Config()),
-                         ["claude", "-p", "P", "--output-format", "text"])
+                         ["claude", "-p", "P", "--output-format", "text", *FB])
 
     def test_arg_shape_with_model_sits_behind_output_format(self):
         cfg = config.Config()
         cfg.models_pipeline = OPUS
         self.assertEqual(
             llm.build_argv("P", cfg=cfg, extra_argv=["--allowedTools", "X"]),
-            ["claude", "-p", "P", "--output-format", "text", "--model", OPUS,
+            ["claude", "-p", "P", "--output-format", "text", "--model", OPUS, *FB,
              "--allowedTools", "X"])
 
     def test_arg_last_keeps_prompt_at_the_end(self):
         cfg = config.Config()
         cfg.models_pipeline = OPUS
         self.assertEqual(llm.build_argv("P", prompt_via="arg_last", cfg=cfg),
-                         ["claude", "-p", "--output-format", "text", "--model", OPUS, "P"])
+                         ["claude", "-p", "--output-format", "text", "--model", OPUS, *FB, "P"])
 
     def test_stdin_shape_has_no_prompt_in_argv(self):
         self.assertEqual(llm.build_argv("P", prompt_via="stdin", cfg=config.Config()),
-                         ["claude", "-p", "--output-format", "text"])
+                         ["claude", "-p", "--output-format", "text", *FB])
 
     def test_unknown_prompt_via_rejected(self):
         with self.assertRaises(ValueError):
@@ -122,12 +131,12 @@ class BuildArgvTestCase(_Sandbox):
     def test_dispatch_argv_follow_and_explicit(self):
         cfg = config.Config()
         self.assertEqual(llm.dispatch_argv(cfg),
-                         ["claude", "--bg", "--dangerously-skip-permissions"])
+                         ["claude", "--bg", "--dangerously-skip-permissions", *FB])
         cfg.models_dispatch = OPUS
         self.assertEqual(llm.dispatch_argv(cfg),
-                         ["claude", "--bg", "--dangerously-skip-permissions", "--model", OPUS])
+                         ["claude", "--bg", "--dangerously-skip-permissions", "--model", OPUS, *FB])
         cfg.skip_permissions = False
-        self.assertEqual(llm.dispatch_argv(cfg), ["claude", "--bg", "--model", OPUS])
+        self.assertEqual(llm.dispatch_argv(cfg), ["claude", "--bg", "--model", OPUS, *FB])
 
     def test_pipeline_knob_never_leaks_into_dispatch(self):
         cfg = config.Config()
@@ -146,7 +155,7 @@ class RunSeamTestCase(_Sandbox):
         proc = llm.run("P", runner=rec, timeout=42, cwd="/tmp/x", cfg=config.Config())
         self.assertEqual(proc.returncode, 0)
         argv, kw = rec.calls[0]
-        self.assertEqual(argv, ["claude", "-p", "P", "--output-format", "text"])
+        self.assertEqual(argv, ["claude", "-p", "P", "--output-format", "text", *FB])
         self.assertEqual(kw, {"capture_output": True, "text": True, "timeout": 42,
                               "env": {"ENV": "x"}, "cwd": "/tmp/x"})
 
@@ -155,7 +164,7 @@ class RunSeamTestCase(_Sandbox):
         llm.run("key sk-ant-api03-abcdefghijklmnop here", runner=rec, timeout=1,
                 prompt_via="stdin", cfg=config.Config())
         argv, kw = rec.calls[0]
-        self.assertEqual(argv, ["claude", "-p", "--output-format", "text"])
+        self.assertEqual(argv, ["claude", "-p", "--output-format", "text", *FB])
         self.assertNotIn("sk-ant-api03", kw["input"])
         self.assertIn("[脱敏]", kw["input"])
 
@@ -170,42 +179,44 @@ class RunSeamTestCase(_Sandbox):
 # per-site pins — argv byte-identical to the pre-§59 literals while following
 # --------------------------------------------------------------------------- #
 class PerSiteUnchangedArgvTestCase(_Sandbox):
-    """Each entry: (site runner, expected argv, expected kwargs besides env)."""
+    """Each entry: (site runner, expected argv, expected kwargs besides env).
+    The literals are the pre-§59 shapes plus the D53 ``*FB`` pair right behind
+    ``--output-format text``."""
 
     def _sites(self):
         return [
             ("analyze", analyze._default_runner,
-             ["claude", "-p", "P", "--output-format", "text",
+             ["claude", "-p", "P", "--output-format", "text", *FB,
               "--allowedTools", analyze._EXPAND_ALLOWED_TOOLS],
              {"timeout": 420}),
             ("radar_slack.extractor", radar_slack._default_extractor,
-             ["claude", "-p", "--output-format", "text"],
+             ["claude", "-p", "--output-format", "text", *FB],
              {"timeout": 180, "cwd": STATE, "input": "P"}),
             ("radar_slack.mcp", radar_slack._default_mcp_runner,
-             ["claude", "-p", "P", "--output-format", "text",
+             ["claude", "-p", "P", "--output-format", "text", *FB,
               "--allowedTools", radar_slack._MCP_ALLOWED_TOOLS],
              {"timeout": 300}),
             ("radar_gmail", radar_gmail._default_extractor,
-             ["claude", "-p", "--output-format", "text"],
+             ["claude", "-p", "--output-format", "text", *FB],
              {"timeout": 180, "cwd": STATE, "input": "P"}),
             ("golden_eval", golden_eval._default_extractor,
-             ["claude", "-p", "--output-format", "text"],
+             ["claude", "-p", "--output-format", "text", *FB],
              {"timeout": 180, "cwd": STATE, "input": "P"}),
             ("voice_gen", voice_gen._default_runner,
-             ["claude", "-p", "P", "--output-format", "text",
+             ["claude", "-p", "P", "--output-format", "text", *FB,
               "--allowedTools", voice_gen._MCP_ALLOWED_TOOLS],
              {"timeout": voice_gen.TIMEOUT_S}),
             ("ask", ask._default_runner,
-             ["claude", "-p", "P", "--output-format", "text"],
+             ["claude", "-p", "P", "--output-format", "text", *FB],
              {"timeout": ask.ASK_TIMEOUT, "cwd": STATE}),
             ("merge_review", merge_review._default_runner,
-             ["claude", "-p", "P", "--output-format", "text"],
+             ["claude", "-p", "P", "--output-format", "text", *FB],
              {"timeout": merge_review.CLAUDE_TIMEOUT, "cwd": STATE}),
             ("weekly_digest", weekly_digest._run_claude,
-             ["claude", "-p", "--output-format", "text", "P"],
+             ["claude", "-p", "--output-format", "text", *FB, "P"],
              {"timeout": 420, "cwd": STATE}),
             ("quick_capture", quick_capture._default_extractor,
-             ["claude", "-p", "--output-format", "text", "P"],
+             ["claude", "-p", "--output-format", "text", *FB, "P"],
              {"timeout": 300, "cwd": STATE}),
         ]
 
@@ -227,8 +238,8 @@ class PerSiteUnchangedArgvTestCase(_Sandbox):
         with mock.patch("subprocess.run", rec):
             radar._run_extract("note body")
         argv, kw = rec.calls[0]
-        self.assertEqual(argv[:4], ["claude", "-p", "--output-format", "text"])
-        self.assertEqual(len(argv), 5)
+        self.assertEqual(argv[:6], ["claude", "-p", "--output-format", "text", *FB])
+        self.assertEqual(len(argv), 7)
         self.assertIn("note body", argv[-1])          # prompt stays LAST (radar_scrub pin)
         self.assertEqual(kw["timeout"], 600)
         self.assertEqual(kw["cwd"], STATE)
@@ -266,17 +277,17 @@ class ExecutorDispatchArgvTestCase(_Sandbox):
             executor._default_runner("prompt text", Path("/tmp"), name="R-1 · t", cfg=cfg)
         return captured["cmd"]
 
-    def test_follow_argv_is_the_pre_57_literal(self):
+    def test_follow_argv_is_the_pre_57_literal_plus_fallback(self):
         self.assertEqual(self._launch_argv(config.Config()),
-                         ["claude", "--bg", "--dangerously-skip-permissions",
+                         ["claude", "--bg", "--dangerously-skip-permissions", *FB,
                           "--name", "R-1 · t", "prompt text"])
 
-    def test_explicit_dispatch_knob_adds_model_before_name(self):
+    def test_explicit_dispatch_knob_adds_model_before_fallback_and_name(self):
         cfg = config.Config()
         cfg.models_dispatch = OPUS
         self.assertEqual(self._launch_argv(cfg),
                          ["claude", "--bg", "--dangerously-skip-permissions",
-                          "--model", OPUS, "--name", "R-1 · t", "prompt text"])
+                          "--model", OPUS, *FB, "--name", "R-1 · t", "prompt text"])
 
     def test_bg_base_cmd_is_the_boundary(self):
         cfg = config.Config()

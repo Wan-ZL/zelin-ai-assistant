@@ -336,9 +336,12 @@ const health: HealthSnapshot = {
 const models: ModelsSettings = {
   dispatch: "follow",
   pipeline: "claude-opus-5",
+  fallback: "claude-opus-5[1m]",
   follow: "follow",
+  off: "off",
+  fallback_default: "claude-opus-5[1m]",
   canonical: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
-  source: { dispatch: "default", pipeline: "override" },
+  source: { dispatch: "default", pipeline: "override", fallback: "default" },
   warnings: [],
 };
 const ccDefault: ClaudeCodeDefault = {

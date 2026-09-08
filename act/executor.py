@@ -304,7 +304,7 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
         capture_output=True,
         text=True,
         timeout=120,
-        env=llm.runner_env(),
+        env=llm.runner_env(cfg),
     )
 
 
@@ -838,7 +838,7 @@ def _run_resume(cfg: config.Config, req: Requirement, sid: str, target: Path,
         capture_output=True,
         text=True,
         timeout=120,
-        env=llm.runner_env(),
+        env=llm.runner_env(cfg),
     )
 
 

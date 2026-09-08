@@ -1,35 +1,42 @@
-// 一把模型旋钮的控件（§59）：<select>（跟随 / canonical ids / 自定义…）+ 自定义时的文本框。
-// 值的三态：FOLLOW（server 的 follow 哨兵）| canonical id | 自由文本（server 照收，附整句 WARN）。
-// 纯受控组件：不碰 store，不发请求；父组件（ModelsSection）持有草稿并统一 PUT。
+// 一把模型旋钮的控件（§59）：<select>（哨兵 / canonical ids / 自定义…）+ 自定义时的文本框。
+// 值的三态：哨兵（dispatch / pipeline 是 server 的 follow；fallback（D53）是 off）| canonical id | 自由文本
+// （server 照收，附整句 WARN）。纯受控组件：不碰 store，不发请求；父组件（ModelsSection）持有草稿并统一 PUT。
 import { useI18n } from "../../i18n";
 
 export const CUSTOM_CHOICE = "__custom__";
 
 export interface ModelKnobProps {
-  /** wire 键名（dispatch | pipeline），也是 select 的可访问名前缀 */
+  /** wire 键名（dispatch | pipeline | fallback），也是 select 的可访问名前缀 */
   mode: string;
   label: string;
-  /** 一句话解释这把旋钮管什么（"手" vs "脑"） */
+  /** 一句话解释这把旋钮管什么（"手" / "脑" / "回退"） */
   helper: string;
-  /** 当前草稿值："follow" | 模型 id */
+  /** 当前草稿值：哨兵 | 模型 id */
   value: string;
+  /** 哨兵值（server 的 follow / off） */
   follow: string;
   canonical: string[];
-  /** follow 选项里显示的全局默认（null = 未设置） */
+  /** follow 选项里显示的全局默认（null = 未设置）；sentinelLabel 给了时不用 */
   globalDefault: string | null;
+  /** D53：哨兵不是 follow 时的选项文案（fallback 的「关闭回退」） */
+  sentinelLabel?: string;
+  /** D53：排在 canonical 之前、带「（默认）」标注的出厂值（fallback 的 claude-opus-5[1m] 不在 canonical 表里） */
+  defaultChoice?: string;
   isCustom: boolean;
   onChoose: (choice: string) => void;
   onCustomText: (text: string) => void;
 }
 
 export function ModelKnob({
-  mode, label, helper, value, follow, canonical, globalDefault, isCustom, onChoose, onCustomText,
+  mode, label, helper, value, follow, canonical, globalDefault, sentinelLabel, defaultChoice,
+  isCustom, onChoose, onCustomText,
 }: ModelKnobProps) {
   const { text } = useI18n();
   const selectValue = isCustom ? CUSTOM_CHOICE : value;
-  const followLabel = globalDefault
+  const followLabel = sentinelLabel ?? (globalDefault
     ? text(`跟随 Claude Code 全局（当前 ${globalDefault}）`, `Follow Claude Code default (now ${globalDefault})`)
-    : text("跟随 Claude Code 全局（未设置 → CLI 内置默认）", "Follow Claude Code default (unset → CLI built-in)");
+    : text("跟随 Claude Code 全局（未设置 → CLI 内置默认）", "Follow Claude Code default (unset → CLI built-in)"));
+  const showDefaultChoice = defaultChoice !== undefined && !canonical.includes(defaultChoice);
 
   return (
     <div className="settings-knob">
@@ -42,6 +49,9 @@ export function ModelKnob({
           onChange={(event) => onChoose(event.target.value)}
         >
           <option value={follow}>{followLabel}</option>
+          {showDefaultChoice && (
+            <option value={defaultChoice}>{text(`${defaultChoice}（默认）`, `${defaultChoice} (default)`)}</option>
+          )}
           {canonical.map((id) => (
             <option key={id} value={id}>{id}</option>
           ))}

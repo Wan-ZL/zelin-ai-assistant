@@ -63,7 +63,8 @@ class ConfigModelsTestCase(_Home):
     def test_models_not_a_mapping_is_all_follow_none_present(self):
         self._cfg("models: 3\n")
         values, present = settings._config_models(self.home)
-        self.assertEqual(set(values.values()), {settings.MODEL_FOLLOW})
+        self.assertEqual(values, {"dispatch": settings.MODEL_FOLLOW, "pipeline": settings.MODEL_FOLLOW,
+                                  "fallback": settings.DEFAULT_MODEL_FALLBACK})   # D53 third knob
         self.assertFalse(any(present.values()))
 
     def test_bad_yaml_and_missing_file_degrade(self):
