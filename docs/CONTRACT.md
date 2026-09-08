@@ -3285,6 +3285,14 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
 
 # v0.47 additions（源开关归一 + 源死亡告警）
 
+### 47.5 iCloud 驱逐（dataless）note：「还没在本机」不是毒 note（2026-09-08，R-202，add-only）
+
+- **事故**：Obsidian vault 住在 iCloud Drive（`~/Documents/Obsidian Vault`），「优化 Mac 存储」把冷 note 驱逐成 dataless 占位（`st_flags & SF_DATALESS`，实测 600/614 篇处于此态）；cron 语境下 `read_text` 报 `[Errno 11] Resource deadlock avoided`（EDEADLK——文件提供者没能就地物化）。老代码把它当 `unreadable note` 烧满 `FAILED_MAX_ATTEMPTS` 进 `gave_up` + §40 诊断卡（2026-08-16/18/20 三篇 screenpipe note），而文件本身完好，`brctl download` 一秒即可拉回。
+- **读前探测 + 催下载**：`_read_note_text` 先查 `_is_dataless`（无 `st_flags` 的平台 / stat 失败一律 False），驱逐态 → `brctl download <path>`（best-effort，命令缺失/超时全吞）后最多等 `DATALESS_DOWNLOAD_WAIT_S`（3s）占位位清掉再读；读到 EDEADLK 同样按驱逐态再催一次重读。其余 OSError / 非 UTF-8 照旧走 `unreadable note` 台账老路。
+- **台账 `deferred` 态（add-only 字段）**：仍不可读 → 错误串以 `DEFERRED_PREFIX`（`note not local yet (iCloud dataless)`）开头进 `state/radar_failed.json`，`_record_failure` **不扣 attempts**、`deferred=True`、永不 `gave_up`、不铸 §40 卡；marker 照常越过它（accounted，水位语义 v2 不变），下轮 cron 重试（每轮成本 = 一次 stat + 一次 brctl，不烧 claude）。deferred 不进 `any_failed`/systemic 账——它不是提取故障，独自成 pass 也不许钉住 marker、health 不记 `extract_failed`；拉回本机后正常提取即销案，之后真失败从 0 起扣额度。
+- **一次性迁移**：`_load_failed_queue` 把 `gave_up=True` 且 `last_error` 含 `Resource deadlock avoided` 的老案底改判 `deferred`（attempts 归零）——下一轮 pass 重排、读到即销案；gmail `poison message` 等其他 gave_up 不受影响。已经铸出的 §40 诊断卡不回收（路径 dedup 保证不再重铸）。
+- 判例：`tests/test_radar_dataless_note.py`。
+
 ## 48. 源开关真源（`act/lib/sources.py`）+ 关闭真静默 + liveness 告警（add-only）
 
 **动机（2026-08-07 审计）**：「一个源开没开」曾有四套并存判据——
