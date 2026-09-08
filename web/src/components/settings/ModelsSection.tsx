@@ -1,8 +1,9 @@
-// 设置页 section「模型」（CONTRACT §59，owner 决策 D22）。
-// 两把旋钮：dispatch（「手」——claude --bg 派工 agent）与 pipeline（「脑」——雷达提取/分诊/判官/问答
-// 的 headless claude -p）。每把 = 跟随 Claude Code 全局 | canonical id | 自定义。
+// 设置页 section「模型」（CONTRACT §59，owner 决策 D22 + D53）。
+// 三把旋钮：dispatch（「手」——claude --bg 派工 agent）与 pipeline（「脑」——雷达提取/分诊/判官/问答
+// 的 headless claude -p），每把 = 跟随 Claude Code 全局 | canonical id | 自定义；fallback（D53，「回退」——
+// 主模型不可用时每次 headless 调用带的 --fallback-model），= 关闭 | 出厂值 claude-opus-5[1m] | canonical id | 自定义。
 // 数据经 store（refreshSettings/saveModels/setClaudeCodeDefaultModel）；这里只存草稿 + toast 这类瞬态。
-// 保存 = 一次 PUT 两键；server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。
+// 保存 = 一次 PUT 三键；server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
 import { useI18n } from "../../i18n";
@@ -15,9 +16,31 @@ import {
 import { ClaudeCodeDefaultRow } from "./ClaudeCodeDefaultRow";
 import { CUSTOM_CHOICE, ModelKnob } from "./ModelKnob";
 
-const MODES = ["dispatch", "pipeline"] as const;
+const MODES = ["dispatch", "pipeline", "fallback"] as const;
 type Mode = (typeof MODES)[number];
 type Draft = Record<Mode, { value: string; isCustom: boolean }>;
+
+interface KnobSnapshot {
+  dispatch: string;
+  pipeline: string;
+  fallback: string;
+  follow: string;
+  off: string;
+  fallback_default: string;
+  canonical: string[];
+}
+
+/** 每把旋钮的哨兵：两把 D22 旋钮是 follow，fallback 是 off */
+function sentinelOf(models: KnobSnapshot, mode: Mode): string {
+  return mode === "fallback" ? models.off : models.follow;
+}
+
+/** 下拉里的固定选项（哨兵与「自定义…」之外）：fallback 多一个出厂值 */
+function isFixedChoice(models: KnobSnapshot, mode: Mode, value: string): boolean {
+  if (value === sentinelOf(models, mode)) return true;
+  if (mode === "fallback" && value === models.fallback_default) return true;
+  return models.canonical.includes(value);
+}
 
 const TOAST_MS = 6000;
 
@@ -26,12 +49,12 @@ interface Toast {
   message: string;
 }
 
-function draftFrom(models: { dispatch: string; pipeline: string; follow: string; canonical: string[] }): Draft {
-  const one = (value: string) => ({
-    value,
-    isCustom: value !== models.follow && !models.canonical.includes(value),
+function draftFrom(models: KnobSnapshot): Draft {
+  const one = (mode: Mode) => ({
+    value: models[mode],
+    isCustom: !isFixedChoice(models, mode, models[mode]),
   });
-  return { dispatch: one(models.dispatch), pipeline: one(models.pipeline) };
+  return { dispatch: one("dispatch"), pipeline: one("pipeline"), fallback: one("fallback") };
 }
 
 export function ModelsSection() {
@@ -93,7 +116,7 @@ export function ModelsSection() {
     const entry = draft[mode];
     if (!entry.isCustom) return entry.value;
     const typed = entry.value.trim();
-    return typed || follow;
+    return typed || sentinelOf(models, mode);
   };
   const isDirty = MODES.some((mode) => effective(mode) !== models[mode]);
 
@@ -101,7 +124,11 @@ export function ModelsSection() {
     setSaving(true);
     setToast(null);
     try {
-      const saved = await saveModels({ dispatch: effective("dispatch"), pipeline: effective("pipeline") });
+      const saved = await saveModels({
+        dispatch: effective("dispatch"),
+        pipeline: effective("pipeline"),
+        fallback: effective("fallback"),
+      });
       const warn = saved.warnings.length ? ` · ${saved.warnings.join(" ")}` : "";
       setToast({
         kind: "ok",
@@ -137,8 +164,8 @@ export function ModelsSection() {
       <h3 id="settings-models-title" className="settings-section-title">{text("模型", "Models")}</h3>
       <p className="settings-helper">
         {text(
-          "两把旋钮。「手」= 派出去干活的 agent；「脑」= 管线里的判断（雷达提取、分诊、并入判官、问答、摘要）。默认都跟随 Claude Code 全局默认，即不传 --model。",
-          "Two knobs. \"Hands\" = the agents dispatched to do the work; \"brain\" = the pipeline's judgment calls (radar extraction, triage, merge judge, ask, digests). Both follow the Claude Code global default unless set, i.e. no --model is passed.",
+          "三把旋钮。「手」= 派出去干活的 agent；「脑」= 管线里的判断（雷达提取、分诊、并入判官、问答、摘要）——这两把默认都跟随 Claude Code 全局默认，即不传 --model。「回退」= 主模型不可用时切到哪个模型（每次调用带 --fallback-model），默认 Opus 5。",
+          "Three knobs. \"Hands\" = the agents dispatched to do the work; \"brain\" = the pipeline's judgment calls (radar extraction, triage, merge judge, ask, digests) — both follow the Claude Code global default unless set, i.e. no --model is passed. \"Fallback\" = the model every call switches to when the primary is unavailable (--fallback-model), Opus 5 by default.",
         )}
       </p>
 
@@ -171,6 +198,23 @@ export function ModelsSection() {
         isCustom={draft.pipeline.isCustom}
         onChoose={(choice) => choose("pipeline", choice)}
         onCustomText={(value) => customText("pipeline", value)}
+      />
+      <ModelKnob
+        mode="fallback"
+        label={text("回退模型", "Fallback model")}
+        helper={text(
+          "主模型（全局默认或上面两把旋钮）拿不到时，claude 在本次会话里切到这个模型；不设则用 Claude Code 自己的回退（旧一代 Opus）。关闭 = 不传 --fallback-model。",
+          "When the primary model (the global default or a knob above) is unavailable, claude switches to this model for the session; unset, Claude Code falls back on its own (an older Opus). Off = no --fallback-model is passed.",
+        )}
+        value={draft.fallback.value}
+        follow={models.off}
+        canonical={models.canonical}
+        globalDefault={globalDefault}
+        sentinelLabel={text("关闭回退（主模型不可用时直接失败）", "No fallback (fail when the primary is unavailable)")}
+        defaultChoice={models.fallback_default}
+        isCustom={draft.fallback.isCustom}
+        onChoose={(choice) => choose("fallback", choice)}
+        onCustomText={(value) => customText("fallback", value)}
       />
 
       {models.warnings.length > 0 && !isDirty && (

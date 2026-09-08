@@ -4,6 +4,7 @@
 //   3) server 校验失败（400 INVALID_FIELD）的整句原文以 toast(role=alert) 显示，不吞；
 //   4) 自定义 = 自由文本 + 别名下线警告；非 canonical 保存后回显 server 的 warnings；
 //   5) 「设为 <id>」走确认弹窗 → POST 只带 model → toast 含备份路径。
+// D53（2026-09-07）起快照多一把 fallback 旋钮，保存是一次 PUT 三键（第三把的行为见 ModelsSection.fallback.test.tsx）。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -35,9 +36,12 @@ function snapshot(over: Partial<ModelsSettings> = {}): ModelsSettings {
   return {
     dispatch: "follow",
     pipeline: "follow",
+    fallback: "claude-opus-5[1m]",
     follow: "follow",
+    off: "off",
+    fallback_default: "claude-opus-5[1m]",
     canonical: CANONICAL,
-    source: { dispatch: "default", pipeline: "default" },
+    source: { dispatch: "default", pipeline: "default", fallback: "default" },
     warnings: [],
     ...over,
   };
@@ -97,9 +101,9 @@ describe("ModelsSection", () => {
     expect(screen.getByText(/is not a canonical id/)).toBeTruthy();
   });
 
-  it("save PUTs both knobs with zero extra fields and toasts 'no restart needed'", async () => {
+  it("save PUTs the three knobs with zero extra fields and toasts 'no restart needed'", async () => {
     vi.mocked(putModelsSettings).mockResolvedValue(snapshot({ dispatch: "claude-opus-5",
-      source: { dispatch: "override", pipeline: "default" } }));
+      source: { dispatch: "override", pipeline: "default", fallback: "default" } }));
     renderSection();
     const dispatch = (await screen.findByLabelText("Dispatch agents (hands)")) as HTMLSelectElement;
     fireEvent.change(dispatch, { target: { value: "claude-opus-5" } });
@@ -110,8 +114,8 @@ describe("ModelsSection", () => {
     await screen.findByText(/Saved — applies to the next call, no restart needed/);
     expect(putModelsSettings).toHaveBeenCalledTimes(1);
     const body = vi.mocked(putModelsSettings).mock.calls[0][0];
-    expect(body).toEqual({ dispatch: "claude-opus-5", pipeline: "follow" });
-    expect(Object.keys(body)).toHaveLength(2);
+    expect(body).toEqual({ dispatch: "claude-opus-5", pipeline: "follow", fallback: "claude-opus-5[1m]" });
+    expect(Object.keys(body)).toHaveLength(3);
     // draft re-aligned to the server receipt: nothing dirty anymore
     await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true));
   });
@@ -144,7 +148,7 @@ describe("ModelsSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByRole("status");
-    expect(vi.mocked(putModelsSettings).mock.calls[0][0]).toEqual({ dispatch: "claude-opus-5-eap", pipeline: "follow" });
+    expect(vi.mocked(putModelsSettings).mock.calls[0][0]).toEqual({ dispatch: "claude-opus-5-eap", pipeline: "follow", fallback: "claude-opus-5[1m]" });
     // the section keeps the select on Custom with the id in the box, and echoes the server warning
     await waitFor(() => expect((screen.getByLabelText("Dispatch agents (hands)") as HTMLSelectElement).value).toBe("__custom__"));
     expect(screen.getAllByText(warning).length).toBeGreaterThan(0);

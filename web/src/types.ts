@@ -509,14 +509,18 @@ export interface HealthSnapshot {
   [key: string]: unknown;
 }
 
-/** GET/PUT /api/settings/models（CONTRACT §59，D22）：server/settings.py models_snapshot 的 wire 形逐字镜像。
- *  dispatch/pipeline = "follow" 或显式模型 id；canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告 */
+/** GET/PUT /api/settings/models（CONTRACT §59，D22 + D53）：server/settings.py models_snapshot 的 wire 形逐字镜像。
+ *  dispatch/pipeline = "follow" 或显式模型 id；fallback（D53）= "off" 或模型 id（headless 调用的 --fallback-model）；
+ *  off / fallback_default = server 给的哨兵与出厂值；canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告 */
 export interface ModelsSettings {
   dispatch: string;
   pipeline: string;
+  fallback: string;
   follow: string;
+  off: string;
+  fallback_default: string;
   canonical: string[];
-  source: { dispatch?: string; pipeline?: string; [key: string]: unknown };
+  source: { dispatch?: string; pipeline?: string; fallback?: string; [key: string]: unknown };
   warnings: string[];
   [key: string]: unknown;
 }

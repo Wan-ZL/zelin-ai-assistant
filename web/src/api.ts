@@ -300,16 +300,19 @@ export function deliverableUrl(cardId: string, name: string): string {
   return resolveApiUrl(`/files/deliverables/${encodeURIComponent(cardId)}/${encodeURIComponent(name)}`);
 }
 
-/** GET /api/settings/models — 两把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §59） */
+/** GET /api/settings/models — 三把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §59，D22 + D53） */
 export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { signal });
 }
 
+/** PUT /api/settings/models 的 body：dispatch / pipeline = "follow" 或模型 id；fallback（D53）= "off" 或模型 id */
+export type ModelsPatch = { dispatch?: string; pipeline?: string; fallback?: string };
+
 /**
  * PUT /api/settings/models — 保存旋钮（写请求：四闸同 POST，api.ts 自动带 token）。
- * body 只许 dispatch / pipeline 两键（server UNKNOWN_FIELD 零容忍）；值 = "follow" 或模型 id。
+ * body 只许 dispatch / pipeline / fallback 三键（server UNKNOWN_FIELD 零容忍）。
  */
-export function putModelsSettings(body: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
+export function putModelsSettings(body: ModelsPatch): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
 }
 

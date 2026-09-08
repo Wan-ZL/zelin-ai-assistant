@@ -192,6 +192,8 @@ approved 的需求：
 
 **2026-09-02 追记（§65.2 出网封锁）**：sources 全为 `self_improve` 且未声明 `needs_mcp` 的卡，**四个发射点**（dispatch / resume / rework / brief，共用 `executor._bg_base_cmd(cfg, req)`）的 argv 在模型旗标之后、`--name` 之前追加 `llm.NO_MCP_ARGV` = `--strict-mcp-config --mcp-config {"mcpServers":{}}`——用户级 Slack/Gmail MCP 对该会话不存在（resume/rework 同样带，派发关掉的面永不被复活）；其它卡 argv 逐字节不变（`llm.dispatch_argv(cfg, no_mcp=False)` 默认）。prompt 多一段 `## SELF-IMPROVE LANE`（分支名 / 只准草稿 PR / 受保护路径清单 / 无 MCP / 不发 PR 评论），`execution.self_improve = {branch, egress: "none"|"mcp", lane: bool}` 随成功派发落账。判例 tests/test_self_improve_argv.py。
 
+**2026-09-07 追记（§59.7，owner 决策 D53）**：四个发射点的 argv 在模型旗标之后、`NO_MCP_ARGV` / `--name` 之前追加 `--fallback-model <id>`（默认 `claude-opus-5[1m]`；`models.fallback: off` 时不追加，argv 回到本追记之前的形状）：`[<claude>, "--bg", ("--dangerously-skip-permissions")?, ("--model", <id>)?, ("--fallback-model", <id>)?, (NO_MCP_ARGV)?, "--name", <name>, ("--resume", <sid>)?, <prompt>]`。子进程 env 在回退是 Opus id 时多一个 `ANTHROPIC_DEFAULT_OPUS_MODEL=<id>`（`llm.runner_env(cfg)`）。上文 §65.2 追记「紧跟模型旗标」自此读作「紧跟 `--model` 与 `--fallback-model` 两组旗标」。判例 tests/test_llm_fallback_argv.py。
+
 ### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
 
 派发失败（claude 非零退出 / 子进程错误 / 拿不到 session id）的卡**留在
@@ -486,6 +488,12 @@ silently ignored」跳过）。**写入方自此多一个**：web 设置页经 `
 /api/settings/models`（server/settings.py）按 v0.14 diff-write 语义写这两个键
 ——与 Mac app 写其它键的方式同款；两个写者写不同的键，互不覆盖（server 读改写
 整份文件时保留其余键原样）。
+
+**§15 2026-09-07 追记（add-only，§59.7 / owner 决策 D53）**：overrides 允许列表新增第三个模型扁平键
+`models_fallback`（语义 = config.yaml `models.fallback` 逐字一致；值 `"off"` 或模型 id，归一化 =
+`config.coerce_fallback_model`：None / 空白 → 出厂值 `claude-opus-5[1m]`，布尔 False → `off`，坏形状按
+「wrong types are silently ignored」跳过）。写者仍是 web 设置页经 `PUT /api/settings/models`（第三键
+`fallback`），diff-write 同款：等于 config.yaml / 出厂 effective 值 → 删键。
 
 **§15 v0.48.x 追记（add-only，§68：设置页整体搬到 web，server 是 overrides 的 web 侧写者）**：
 原生 Settings.swift 的 20 个区在 web 设置页（`?page=settings`）的落点见 §68.1；凡是
@@ -5266,6 +5274,20 @@ server 不 import act（§49）：`server/settings.py` **手抄** `MODEL_FOLLOW`
 - 不给 `--model` 之外的任何 claude 参数开旋钮（effort / fallback-model 等另案）。
 - 启动 / 部署 / 任何自动路径**永不写** `~/.claude/settings.json`；唯一写者是 owner 在设置页点确认后的 `POST /api/claude-code/default-model`。
 - `silent_merge.JUDGE_RUNNER`（module-global 注入缝存量违反）不在本节拆——它的判官 `merge_review._default_runner` 已经过 `llm.run`，拆缝是纯测试基建改造，另案。
+
+### 59.7 追记（2026-09-07，add-only；owner 决策 D53）——第三把旋钮 `models.fallback`：headless 调用自带 `--fallback-model`，默认 Opus 5（1M），旧一代 Opus 永不登场
+
+owner 原话（2026-09-07）：「fable 5.1 用不了的使用 claude code 默认使用了 opus 4.8 这个老模型。能否去掉这个 4.8 这个老模型」→「你就把 claude code 的 backup 模型问题解决就行」。事实（Claude Code 文档 model-config#fallback-models / cli-reference）：`--fallback-model <m1>,<m2>` 在交互、`-p`、`--bg` 三种形态下都有效，按序尝试，别名与完整 id 皆收；自 v2.1.157 起主模型找不到时 Claude Code 在**本次会话余下时间**切到回退模型；`ANTHROPIC_DEFAULT_OPUS_MODEL` 决定 CLI 的 `opus` 别名解析到谁。owner 的 `~/.claude/settings.json` 已由 lead 手工写入 `fallbackModel: ["claude-opus-5[1m]"]` 与 env `ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-5[1m]`（不在本 PR 内）；本节让守护进程侧**显式、可移植**——新装机不靠个人设置也同样行为。上文 59.6 「不给 `--model` 之外的任何 claude 参数开旋钮（effort / fallback-model 等另案）」自本条起对 `fallback-model` 失效（effort 仍另案）。
+
+- **旋钮**：config.yaml `models.fallback`（`config.example.yaml` 注释块；出厂值 = 字面 `claude-opus-5[1m]`，与 owner settings.json 同一拼法）；overrides 扁平键 `models_fallback`（§15 本日追记）；优先级 overrides → yaml → 出厂值。值域：`off`（大小写不敏感；**布尔 False 也算 off**——YAML 1.1 把裸 `off` 读成 False，按文档写 `fallback: off` 必须真的关掉）或形状合法的 id（`MODEL_ID_RE`）。坏形状：yaml 路径回落**出厂值**（不是 off——配错字不该让 CLI 自己的回退悄悄复活）；overrides 路径 per-entry 跳过、保留生效值；`llm.fallback_model(cfg)` 对 cfg 上的垃圾同样回落出厂值。`config.coerce_fallback_model` 是唯一归一化函数；`config.MODEL_FALLBACK_OFF` / `config.DEFAULT_MODEL_FALLBACK` 是常量真源。**不是 `MODEL_MODES` 成员**（`llm.run(mode=)` 不接受 `fallback`——它是横切旗标不是站点），`MODEL_MODES` 仍 `("dispatch", "pipeline")`。
+- **argv 形状**（`act/llm.py` 唯一拼写处）：`build_argv` = `[<claude>, "-p", <prompt>?, "--output-format", <fmt>, ("--model", <id>)?, ("--fallback-model", <id>)?, *extra_argv, <prompt if arg_last>]`；`dispatch_argv` = `[<claude>, "--bg", ("--dangerously-skip-permissions")?, ("--model", <id>)?, ("--fallback-model", <id>)?, (NO_MCP_ARGV)?]`，调用方再接 `--name` / `--resume` / prompt。固定头的顺序法条：`--output-format` → `--model` → `--fallback-model` → （--bg 独有）`NO_MCP_ARGV` → 变尾（`extra_argv` / `--name` / `--resume` / prompt）——变尾可能以 variadic 选项（`--allowedTools` / `--mcp-config`）开头，固定旗标一律排在它前面（§4 / §65 追记同日）。**不变量修订**：上文 59.1 「两把旋钮都 follow 时每个 site 的 argv 与 v0.48.10 逐字节相同」自本条起读作「…相同 **+ 两个 token `--fallback-model claude-opus-5[1m]`**」；`models.fallback: off` 时回到逐字节相同。`probe_argv`（doctor 活探针）**刻意不带**回退：探针问的是「这个 id 答不答」，带回退会把 FAIL 行要报的那次不可用遮掉。
+- **env pin**：`llm.runner_env(cfg=None)`（add-only 参数，旧调用点照旧；None = 现读 `load_config()`）在回退开着**且** id 以 `claude-opus` 开头时额外设 `ANTHROPIC_DEFAULT_OPUS_MODEL=<fallback>`（覆盖继承值——launchd plist / 登录 shell 可能带着 CLI 的旧别名）：`--fallback-model` 只管我们在 argv 上拼的那次切换，会话内 CLI 仍会自己解析 `opus` 别名（子 agent、`opusplan`、resume 会话里敲的 `/model opus`、CLI 自带的未知模型回退），而那个别名正是 owner 要退役的 Opus 4.8——钉到同一个 id 让 CLI 伸手够到的每一个 Opus 都是同一个 Opus。非 Opus 回退（如 Sonnet）不动这个变量（把 `opus` 钉成 Sonnet 是谎话）；`off` 也不动。`DISABLE_AUTOUPDATER=1`（§55 第五幕）与 §19 凭证解析零变化。`llm.run` / executor 四个发射点 / doctor 探针都把自己的 `cfg` 传进去；`radar_slack._probe_slack_mcp`（`claude mcp list`）不带 cfg、现读。
+- **生效时机**：同 59.2——独立进程 site 每次现读；actd `_refresh_model_knobs` 每 pass 刷三个字段（`models_fallback` 加入），无需重启。
+- **doctor**（59.3 修订）：`claude code model` 行的 knob 文本恒带第三段 `fallback: <id>|off`（守护进程会落到哪个模型必须能在一行里看见）。「全局默认非 canonical 且至少一把旋钮跟随它」的 WARN **只在回退 `off` 时保留**（detail 多一句「且回退已关」，fix 多一条出口「把『回退模型』打开」）；回退开着 → **OK**，detail 形如「全局默认 `X` 不是 canonical id，dispatch/pipeline 跟随它；它不可用时 headless 调用回退到 <fallback>（…）」——别名下线那天会话落在回退模型上而不是死掉或漂到 4.8，行照旧永不 FAIL。`model dispatch` / `model pipeline` 探针行不变（argv 无回退、env 带 pin）。
+- **server**（59.4 修订，wire add-only）：`GET/PUT /api/settings/models` 快照多 `"fallback": "<id>|off"`、`"off": "off"`、`"fallback_default": "claude-opus-5[1m]"`、`source.fallback`；PUT body 第三键 `fallback`（`"off"` / 空白 = 出厂值 / id），diff-write 同款（等于 yaml/出厂 effective → 删键）。warning：`fallback` 的非 canonical 值走**回退专用句**（「…主模型不可用时的回退也会失败」——只坏回退路径，不是每次调用），出厂值与 `off` 不出 warning（对出厂值告警是噪音，D53 就是它）。server **手抄** `MODEL_FALLBACK_OFF` / `DEFAULT_MODEL_FALLBACK` / `coerce_fallback_model`，`tests/test_server_settings_fallback.py::MirrorTestCase` 钉漂移（含 False 在内的 coerce 真值表）。
+- **web**（59.5 修订）：section「模型」第三把 `<select>`「回退模型」复用 `ModelKnob`（同一控件，无第二套机制）：选项顺序 关闭回退（哨兵 = server 的 `off`）→ `claude-opus-5[1m]（默认）`（`fallback_default` 不在 canonical 表时单列）→ canonical ids → 自定义…；出厂值是固定选项不算自定义（不弹别名警告）；自定义框留空 = `off`（与两把 D22 旋钮「留空 = follow」同一规则）；「保存」= 一次 PUT **三键**；section 说明句改为「三把旋钮…」。`ModelKnob` add-only props `sentinelLabel` / `defaultChoice`。
+- **边界**：`ingest/process-screenpipe.sh` 的 headless claude 不在 `act/llm.py` 边界上（shell 直起），本条不给它加旗标——它继承 owner settings.json 的 `fallbackModel`；要收编另案。不改任何 site 的 prompt / 超时 / cwd / `--allowedTools`。
+- **判例**（防腐 #7，新文件）：`tests/test_config_fallback_knob.py`（常量 / 归一真值表含 False / yaml 裸 off 与引号 off / on 是垃圾回出厂 / overrides 优先与跳过 / 允许列表）、`tests/test_llm_fallback_argv.py`（-p 三种 prompt_via + extra_argv 位置 / json 格式 / off 逐字节回到 D53 前 / 垃圾不进 argv / --bg 带与不带 NO_MCP、skip_permissions 关 / executor 发射点 `--name` 与 prompt 仍在尾 / probe 无回退 / actd 刷新）、`tests/test_llm_fallback_env.py`（pin 的四态：默认 / 显式 Opus / off 不动继承值 / 非 Opus 不撒谎；覆盖继承的旧 Opus；cfg None 现读；`llm.run` 与 doctor 探针收到的 env）、`tests/test_doctor_fallback_row.py`（行恒带 fallback 段 / 别名 + 默认回退 → OK 点名 / 别名 + off → WARN 且 fix 提回退 / 永不 FAIL / --fast 在）、`tests/test_server_settings_fallback.py`（GET add-only 键 / 三层优先级 / 回退专用 warning / PUT off·默认删键·等于 yaml 删键·三键同车·空白 = 出厂 / 400 点名字段 / 管线读回 / 镜像）、web `ModelsSection.fallback.test.tsx`。**有意重钉的既有判例**（argv 多两个 token）：`test_llm_boundary.py` 全部逐 site 字面、`test_self_improve_argv.py::test_no_mcp_rides_after_the_model_and_fallback_flags`、`test_recap_no_egress.py` `PINNED_TAIL`、`test_recap_slack_draft_allowlist.py` argv 尾、`test_doctor_models.py::test_following_a_non_canonical_alias_warns_never_fails`（改为 off 下验证）、`test_server_settings_edges.py` / `test_server_settings_models.py`（`source` 多 `fallback` 键）、web `ModelsSection.test.tsx`（PUT 三键）与 `parity.test.tsx` fixture。`tests/test_executor_prompt_golden.py` 的 prompt golden **零变化**（它钉的是 prompt 正文，不含 argv）。
 
 ## 60. 两段式卡片编号：`P-` 主键出生即定，`R-` 工作编号批准才发（v0.48.15；owner 决策 D21，issue #127）
 

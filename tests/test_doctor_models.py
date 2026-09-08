@@ -69,6 +69,9 @@ class ClaudeCodeModelRowTestCase(_Overrides):
         self.assertIn("claude-fable-5", r.detail)
 
     def test_following_a_non_canonical_alias_warns_never_fails(self):
+        # D53: the WARN survives only with the fallback knob off — with the
+        # default fallback the row is OK and names it (tests/test_doctor_fallback_row.py)
+        self._knobs(models_fallback="off")
         cc = {"model": "claude-fable-5-1[1m]", "exists": True, "parseable": True}
         r = doctor._check_claude_code_model(_probes(claude_code=cc))
         self.assertEqual(r.status, doctor.WARN)

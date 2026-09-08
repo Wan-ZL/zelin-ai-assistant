@@ -21,6 +21,7 @@ from act.lib import config, registry, self_improve
 from act.lib.registry import Requirement, State
 
 NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+FB = ["--fallback-model", config.DEFAULT_MODEL_FALLBACK]   # D53：模型旗标与 NO_MCP 之间
 FULL_SID = "aaaa1111-0000-4000-8000-000000000001"
 
 
@@ -36,11 +37,11 @@ class LlmBoundaryTestCase(unittest.TestCase):
         self.assertEqual(llm.dispatch_argv(cfg, no_mcp=True), base + NO_MCP)
         self.assertEqual(list(llm.NO_MCP_ARGV), NO_MCP)
 
-    def test_no_mcp_rides_after_the_model_flag(self):
+    def test_no_mcp_rides_after_the_model_and_fallback_flags(self):
         cfg = config.Config()
         cfg.models_dispatch = "claude-opus-5"
         argv = llm.dispatch_argv(cfg, no_mcp=True)
-        self.assertEqual(argv[-5:], ["--model", "claude-opus-5"] + NO_MCP)
+        self.assertEqual(argv[-7:], ["--model", "claude-opus-5"] + FB + NO_MCP)
 
     def test_skip_permissions_off_still_appends_no_mcp(self):
         cfg = config.Config()
