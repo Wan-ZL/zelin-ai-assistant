@@ -40,7 +40,10 @@ per_mutant_timeout_seconds = 60
 "act/lib/transcripts.py" = ["tests/test_transcript_reading_edges.py", "tests/test_harvest_delivery.py", "tests/test_harvest_card_title.py", "tests/test_audit_harvest.py", "tests/test_search_index.py", "tests/test_resume.py", "tests/test_dashboard.py"]
 # §67 skill 商店：状态判定 / 自定义永不被碰 / 决策优先于默认——一个存活体 = 商店覆盖了 owner 的副本。
 "act/lib/skills.py" = ["tests/test_skills_store.py"]
-"act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]
+# R-292（2026-09-08，夜报 116 体 51% 杀伤）：两份早就存在的判例从没进靶区——test_store2_store_helpers.py
+# （verb 表 / 审计行 / 行参数装配）与 test_two_stage_card_ids.py（schema v1→v2 升级梯子）；余下的体钉在
+# test_store2_mutation_kills.py（等价体理由也记在它的 docstring）。
+"act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py", "tests/test_store2_store_helpers.py", "tests/test_two_stage_card_ids.py", "tests/test_store2_mutation_kills.py"]
 # §70 每日自我改进循环（P5）——它替 owner 动卡（合成 / 进回收站）并铸提案，宪法第 1/2/10/11 条都在这里执法。
 "act/lib/maintenance.py" = ["tests/test_daily_loop_dedup_merge.py", "tests/test_daily_loop_stale_rules.py"]
 "act/lib/daily_loop.py" = ["tests/test_daily_loop_run.py", "tests/test_daily_loop_proposals.py"]
