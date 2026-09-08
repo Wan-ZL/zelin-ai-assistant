@@ -1,10 +1,13 @@
 """doctor ``claude code model`` row with the fallback knob (CONTRACT §59 D53).
 
 - The row always names the fallback the daemon will use (``fallback: <id>|off``).
-- Following a NON-canonical global default WARNs only while the fallback is
-  ``off``; with a fallback on the row is OK and says which model headless calls
-  land on when the alias retires (Claude Code ≥ 2.1.157 switches for the rest
-  of the session).
+- Following a NON-canonical global default WARNs while the fallback is ``off``
+  **or** itself a non-canonical alias/suffix (same rule as
+  ``server/settings.py::fallback_warning``: only the D53 default and canonical
+  ids count); with such a fallback on the row is OK and says which model
+  headless calls land on when the alias retires (Claude Code ≥ 2.1.152
+  switches for the rest of the session on -p; ≥ 2.1.166 honours the flag in
+  interactive / --bg sessions; truth = Claude Code CHANGELOG).
 - Still never FAIL (§56's rollback verdict must not turn on it); the
   unparsable-settings WARN and the canonical-default OK are unchanged.
 
@@ -94,6 +97,32 @@ class AliasRiskSoftenedTestCase(_Overrides):
         r = doctor._check_claude_code_model(_probes(_cc()))
         self.assertEqual(r.status, doctor.OK)
         self.assertIn("claude-opus-5", r.detail)
+
+    def test_following_alias_with_noncanonical_fallback_still_warns(self):
+        # the net is itself an alias/suffix — same state the settings page warns
+        # about (server fallback_warning); the doctor must not read it as OK
+        self._knobs(models_fallback="claude-opus-5-eap")
+        r = doctor._check_claude_code_model(_probes(_cc()))
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn(ALIAS, r.detail)
+        self.assertIn("claude-opus-5-eap", r.detail)
+        self.assertIn("fallback: claude-opus-5-eap", r.detail)
+        self.assertTrue(r.fix)
+        self.assertTrue("canonical id" in r.fix)
+
+    def test_fallback_equal_to_the_retiring_alias_is_no_net(self):
+        self._knobs(models_fallback=ALIAS)
+        r = doctor._check_claude_code_model(_probes(_cc()))
+        self.assertEqual(r.status, doctor.WARN)
+
+    def test_doctor_and_server_agree_on_which_fallbacks_soften(self):
+        from server import settings as srv
+        for fb in (DEFAULT, "claude-opus-5", "claude-sonnet-5", "claude-opus-5-eap", ALIAS, "claude-opus-5[1m]-x"):
+            with self.subTest(fallback=fb):
+                self._knobs(models_fallback=fb)
+                r = doctor._check_claude_code_model(_probes(_cc()))
+                softened = r.status == doctor.OK
+                self.assertEqual(softened, srv.fallback_warning(fb) is None)
 
     def test_no_knob_following_needs_no_softening(self):
         self._knobs(models_dispatch="claude-opus-5", models_pipeline="claude-sonnet-5",

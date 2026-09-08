@@ -1,7 +1,8 @@
 // 设置页 section「模型」（CONTRACT §59，owner 决策 D22 + D53）。
 // 三把旋钮：dispatch（「手」——claude --bg 派工 agent）与 pipeline（「脑」——雷达提取/分诊/判官/问答
 // 的 headless claude -p），每把 = 跟随 Claude Code 全局 | canonical id | 自定义；fallback（D53，「回退」——
-// 主模型不可用时每次 headless 调用带的 --fallback-model），= 关闭 | 出厂值 claude-opus-5[1m] | canonical id | 自定义。
+// 主模型不可用时每次 headless 调用带的 --fallback-model），= 关闭 | 出厂值 claude-opus-5[1m] | canonical id | 自定义
+// （自定义框留空 = 出厂值，不是 off——off 只经「关闭回退」显式选项）。
 // 数据经 store（refreshSettings/saveModels/setClaudeCodeDefaultModel）；这里只存草稿 + toast 这类瞬态。
 // 保存 = 一次 PUT 三键；server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。
 import { useEffect, useState } from "react";
@@ -33,6 +34,12 @@ interface KnobSnapshot {
 /** 每把旋钮的哨兵：两把 D22 旋钮是 follow，fallback 是 off */
 function sentinelOf(models: KnobSnapshot, mode: Mode): string {
   return mode === "fallback" ? models.off : models.follow;
+}
+
+/** 自定义框留空的落点：D22 旋钮回到 follow；fallback 回到出厂值——与 server「空白 = 出厂值」同一规则，
+ *  留空是漏填不是决定，不该让 CLI 自己的回退悄悄复活；off 只经「关闭回退」那个显式选项到达 */
+function blankCustomOf(models: KnobSnapshot, mode: Mode): string {
+  return mode === "fallback" ? models.fallback_default : models.follow;
 }
 
 /** 下拉里的固定选项（哨兵与「自定义…」之外）：fallback 多一个出厂值 */
@@ -116,7 +123,7 @@ export function ModelsSection() {
     const entry = draft[mode];
     if (!entry.isCustom) return entry.value;
     const typed = entry.value.trim();
-    return typed || sentinelOf(models, mode);
+    return typed || blankCustomOf(models, mode);
   };
   const isDirty = MODES.some((mode) => effective(mode) !== models[mode]);
 

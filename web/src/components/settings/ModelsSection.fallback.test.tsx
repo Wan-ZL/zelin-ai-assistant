@@ -2,7 +2,7 @@
 //   1) 从 server 快照水合：哨兵是 off（文案「关闭回退」）、出厂值 claude-opus-5[1m] 以「（默认）」单列在 canonical 之前，
 //      默认值不算自定义（不弹别名警告）；
 //   2) 选「关闭回退」→ PUT 带 fallback: "off"，两把 D22 旋钮原样同车；选 canonical id / 自定义 → PUT 带那个 id；
-//   3) 自定义框留空 = 回到 off（哨兵），与两把 D22 旋钮「留空 = follow」同一规则；
+//   3) 自定义框留空 = 出厂值（与 server「空白 = 出厂值」同一规则；留空不该悄悄关掉回退，off 只经「关闭回退」显式选项）；
 //   4) server 给的 fallback 专用 warning 原句回显；server 400 的整句以 alert toast 显示。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -141,14 +141,42 @@ describe("ModelsSection — fallback knob (D53)", () => {
     expect(screen.getAllByText(warning).length).toBeGreaterThan(0);
   });
 
-  it("custom with an empty box means off (the knob's sentinel), never an empty --fallback-model", async () => {
+  it("custom with an empty box means the product default, never off and never an empty --fallback-model", async () => {
+    // hydrated on off: picking 自定义… and leaving the box blank must NOT silently keep the
+    // fallback off — blank reads as the default (same rule as the server's "blank = default")
     vi.mocked(fetchModelsSettings).mockResolvedValue(snapshot({ fallback: "off" }));
+    vi.mocked(putModelsSettings).mockResolvedValue(snapshot());
+    renderSection();
+    const select = await fallbackSelect();
+    fireEvent.change(select, { target: { value: "__custom__" } });
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await screen.findByRole("status");
+    expect(vi.mocked(putModelsSettings).mock.calls[0][0].fallback).toBe(DEFAULT);
+  });
+
+  it("custom with an empty box while already on the default is not a change", async () => {
     renderSection();
     const select = await fallbackSelect();
     fireEvent.change(select, { target: { value: "claude-sonnet-5" } });
     fireEvent.change(select, { target: { value: "__custom__" } });
-    // nothing typed → effective off → equals the server value → not dirty
+    // nothing typed → effective default → equals the server value → not dirty
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("off is reachable only through the explicit 'No fallback' option", async () => {
+    vi.mocked(putModelsSettings).mockResolvedValue(snapshot({ fallback: "off" }));
+    renderSection();
+    const select = await fallbackSelect();
+    fireEvent.change(select, { target: { value: "__custom__" } });
+    fireEvent.change(screen.getByLabelText("Fallback model custom model id"), { target: { value: "   " } });
+    // whitespace-only custom text is blank → default → still equal to the server → not dirty
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Fallback model"), { target: { value: "off" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("status");
+    expect(vi.mocked(putModelsSettings).mock.calls[0][0].fallback).toBe("off");
   });
 
   it("the D22 knobs do not change their follow sentinel", async () => {

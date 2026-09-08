@@ -33,11 +33,14 @@ not available, Claude Code silently switches to *its* fallback, which is the
 CLI's built-in Opus alias (Opus 4.8 at the time of writing). The owner's
 words: 「fable 5.1 用不了的使用 claude code 默认使用了 opus 4.8 这个老模型。
 能否去掉这个 4.8 这个老模型」. ``--fallback-model`` takes a comma-separated
-list tried in order and works for interactive, ``-p`` and ``--bg`` alike;
-since Claude Code v2.1.157 the switch is for the rest of the session. The
-daemon spells the fallback itself so a fresh install behaves the same as the
-owner's machine (whose ``~/.claude/settings.json`` already pins
-``fallbackModel``) instead of relying on personal settings.
+list tried in order and works for interactive, ``-p`` and ``--bg`` alike
+(truth = Claude Code CHANGELOG: 2.1.152 — a not-found primary switches to
+the configured fallback for the rest of the session; 2.1.166 — the flag is
+honoured in interactive sessions too, which is what the ``--bg`` sites lean
+on, plus the ``fallbackModel`` setting). The daemon spells the fallback itself
+so a fresh install behaves the same as the owner's machine (whose
+``~/.claude/settings.json`` already pins ``fallbackModel``) instead of
+relying on personal settings.
 
 Per-site behaviour that must stay put stays at the site: timeouts, the
 prompt's position in argv (``prompt_via``: ``"arg"`` right after ``-p`` —
@@ -184,6 +187,15 @@ def fallback_model(cfg: Optional[config.Config] = None) -> Optional[str]:
 
 def is_canonical(model: Optional[str]) -> bool:
     return config.model_is_canonical(model)
+
+
+def fallback_is_canonical(fallback: Optional[str]) -> bool:
+    """D53: does the fallback count as a real safety net — the product default
+    ``claude-opus-5[1m]`` (the D53 decision itself; warning about it is noise)
+    or a canonical id. The doctor softens the alias-retirement WARN only when
+    this holds; ``server/settings.py::fallback_warning`` hand-copies the same
+    rule (``tests/test_server_settings_fallback.py::MirrorTestCase``)."""
+    return fallback == DEFAULT_FALLBACK or is_canonical(fallback)
 
 
 # --------------------------------------------------------------------------- #
