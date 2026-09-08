@@ -1,0 +1,2 @@
+type: fixed
+- **雷达不再对 iCloud 驱逐的 note 放弃（§47.5，R-202）**：Obsidian vault 住在 iCloud Drive 时，「优化 Mac 存储」会把冷 note 驱逐成 dataless 占位，cron 语境下读它报 `[Errno 11] Resource deadlock avoided`；老雷达把它当毒 note 烧满 5 次重试进 `gave_up` 并铸放弃诊断卡（2026-08 三篇 screenpipe note）。现在读前探测 `SF_DATALESS`、`brctl download` 催一把再读，读到 EDEADLK 同样催一次；仍不在本机的 note 记 `deferred`（不扣重试额度、永不放弃、不铸卡、不算提取故障），下轮再来。`radar_failed.json` 里老的 EDEADLK 放弃案底加载时自动改判 deferred，下一轮拉回即销案。

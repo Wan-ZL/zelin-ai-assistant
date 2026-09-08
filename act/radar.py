@@ -24,6 +24,7 @@ Run: ``python -m act.radar`` (or ``python -m act.radar --once``).
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -49,11 +50,23 @@ MARKER_PATH_NAME = "radar.marker"
 # interleave (2026-07-08 storm). flock is per-open-fd, auto-released on exit.
 LOCK_PATH_NAME = "radar.lock"
 # 失败 note 重试台账（state/radar_failed.json）：path -> {mtime, attempts,
-# last_error, gave_up}。水位语义 v2 的另一半，见 scan() docstring。
+# last_error, gave_up, deferred?}。水位语义 v2 的另一半，见 scan() docstring。
 FAILED_QUEUE_NAME = "radar_failed.json"
 # 每轮 cron（30 min）重试一次，超过次数上限就放弃并留案底（gave_up=True，
 # skipped+analytics 都有记录）——毒 note 不再无限重烧 claude，也绝不静默消失。
 FAILED_MAX_ATTEMPTS = 5
+
+# §47.5 iCloud 驱逐（dataless）note：Obsidian vault 住在 iCloud Drive 时，「优化
+# Mac 存储」会把冷 note 驱逐成 dataless 占位；cron/launchd 语境下 read_text 报
+# EDEADLK（"[Errno 11] Resource deadlock avoided"——2026-08 三篇 screenpipe note
+# 各烧满 5 次进 gave_up，实测 600/614 篇 note 处于驱逐态）。这不是毒 note，是
+# 「还没在本机」：先 `brctl download` 催一把再读；仍不可读 → 台账记 deferred
+# （不扣 attempts、永不 gave_up），下轮 cron 再来。st_flags 位 truth =
+# <sys/stat.h> SF_DATALESS；stat.SF_DATALESS 只在 py3.13+，daemon 跑 /usr/bin/python3。
+SF_DATALESS = 0x40000000
+DATALESS_DOWNLOAD_WAIT_S = 3.0
+DEFERRED_PREFIX = "note not local yet (iCloud dataless)"
+_DEFERRED_LEGACY_MARK = "Resource deadlock avoided"
 
 # §47.1 瞬时失败（transient）同 pass 退避重试：网络类（DNS/连接/claude API 抖动）
 # 与外部 SIGTERM（exit 143）几秒内通常自愈——生产台账里 9.4% 的提取轮失败绝大
@@ -171,7 +184,15 @@ def _load_failed_queue() -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {k: v for k, v in data.items() if isinstance(v, dict)}
+    return {k: _migrate_deferred(v) for k, v in data.items() if isinstance(v, dict)}
+
+
+def _migrate_deferred(entry: dict) -> dict:
+    """§47.5 一次性迁移：老代码把 EDEADLK 当毒 note 烧满额度 gave_up 的案底，
+    改判 deferred 并归零 attempts——下轮 pass 重试，brctl 拉回本机即销案。"""
+    if entry.get("gave_up") and _DEFERRED_LEGACY_MARK in str(entry.get("last_error") or ""):
+        entry = dict(entry, attempts=0, gave_up=False, deferred=True)
+    return entry
 
 
 def _save_failed_queue(queue: dict) -> None:
@@ -199,11 +220,19 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
     entry = queue.get(key)
     if not isinstance(entry, dict) or entry.get("mtime") != mtime:
         entry = {"mtime": mtime, "attempts": 0}
-    entry["attempts"] = int(entry.get("attempts") or 0) + 1
+    deferred = _is_deferred_error(error)
+    if not deferred:
+        entry["attempts"] = int(entry.get("attempts") or 0) + 1
     entry["last_error"] = error[:200]
     entry["gave_up"] = entry["attempts"] >= FAILED_MAX_ATTEMPTS
+    entry["deferred"] = deferred  # add-only（§47.5）：等 iCloud，不是毒 note
     queue[key] = entry
     return entry
+
+
+def _is_deferred_error(error: str) -> bool:
+    """§47.5：note 还没在本机（iCloud dataless / EDEADLK）——不扣重试额度。"""
+    return str(error or "").startswith(DEFERRED_PREFIX)
 
 
 def _is_transient_error(error: str) -> bool:
@@ -221,7 +250,7 @@ def _is_note_level_error(error: str) -> bool:
     timing out at 3am must burn its own retry budget (2026-07-22 review)."""
     e = str(error or "")
     return (e.startswith(("unparseable extraction", "unreadable note",
-                          "filing failed"))
+                          "filing failed", DEFERRED_PREFIX))
             or "TimeoutExpired" in e)
 
 
@@ -1036,6 +1065,8 @@ def _scan_note(note: Path, mtime: float, cfg: config.Config, summary: dict,
         return
     summary["skipped"].append(error)
     entry = _record_failure(book.failed, note, mtime, error)
+    if entry.get("deferred"):
+        return  # §47.5：等 iCloud 不是提取故障——不进 health/systemic 账
     book.any_failed = True
     book.errors.append(error)
     if entry["gave_up"]:
@@ -1138,6 +1169,64 @@ def _target_open(ref: str) -> bool:
 
 
 
+class _NotLocalYet(OSError):
+    """§47.5：note 是 iCloud dataless 占位且本轮没能拉回本机。"""
+
+
+def _is_dataless(note: Path) -> bool:
+    """macOS `st_flags & SF_DATALESS`（iCloud 已驱逐、本地只剩占位）；无
+    st_flags 的平台 / stat 失败一律 False（交给 read 去报真实错误）。"""
+    try:
+        return bool(getattr(note.stat(), "st_flags", 0) & SF_DATALESS)
+    except OSError:
+        return False
+
+
+def _brctl_download(note: Path) -> None:
+    """催 iCloud 把占位拉回本机（`brctl download` 异步返回）。best-effort：
+    命令缺失/失败都吞掉——后面的 read 会给出真实判决。"""
+    try:
+        subprocess.run(["brctl", "download", str(note)], check=False,
+                       capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _materialize(note: Path) -> bool:
+    """§47.5：dataless note → brctl download，最多等 DATALESS_DOWNLOAD_WAIT_S
+    直到占位位清掉。返回是否已在本机。"""
+    _brctl_download(note)
+    deadline = time.monotonic() + DATALESS_DOWNLOAD_WAIT_S
+    while _is_dataless(note):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+    return True
+
+
+def _read_note_text(note: Path) -> str:
+    """读 note 正文；iCloud 驱逐态先拉回本机，读到 EDEADLK 也按驱逐态再拉一次。
+    仍不可读 → _NotLocalYet（进台账 deferred）；其余错误原样抛给调用方。"""
+    if _is_dataless(note) and not _materialize(note):
+        raise _NotLocalYet("still dataless after brctl download")
+    text = _read_or_deadlock(note)
+    if text is None and _materialize(note):
+        text = _read_or_deadlock(note)
+    if text is None:
+        raise _NotLocalYet("EDEADLK on read; still dataless after brctl download")
+    return text
+
+
+def _read_or_deadlock(note: Path) -> Optional[str]:
+    """UTF-8 正文，或 None（= EDEADLK，iCloud 占位没能就地物化）。"""
+    try:
+        return note.read_text(encoding="utf-8")
+    except OSError as e:
+        if e.errno == errno.EDEADLK:
+            return None
+        raise
+
+
 def _process_note(note: Path, cfg: config.Config, summary: dict,
                   runner, triager) -> Optional[str]:
     """处理一篇 note：读取 -> 提取 -> 逐项 triage 落库。原地累加 ``summary``
@@ -1145,7 +1234,9 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
     台账）。任何失败都只属于这一篇 note，绝不外溢崩掉整个 pass。"""
     from act.lib import quick_capture  # lazy: analyze->executor chain stays acyclic
     try:
-        text = note.read_text(encoding="utf-8")
+        text = _read_note_text(note)
+    except _NotLocalYet as e:
+        return f"{DEFERRED_PREFIX}: {note.name}: {e}"
     except (OSError, UnicodeDecodeError) as e:
         # UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的
         # note 曾让整个 pass 崩掉、marker/health 全部停摆。
