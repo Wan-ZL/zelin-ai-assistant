@@ -8,10 +8,10 @@
 #                                 # config.yaml server.port this way, CONTRACT §54)
 #
 # Conventions mirror mac/build.sh (swiftc + hand-assembled bundle + plutil lint
-# + codesign)。差异点：ad-hoc 签名（P4 过渡期；稳定证书随 Mac-retire 清单 0.9
-# 一起决定；壳不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，
+# + codesign)。差异点：签名与 mac/build.sh 同一稳定证书（缺证书才 ad-hoc；#316）；
+# 壳不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，
 # 壳只连接），且 codesign 用 --deep（bundle 里只有一个 Mach-O，没有 Sparkle
-# 嵌套结构要保护）。注意 ad-hoc 签名 = 每次重建后 TCC 屏幕录制授权失效
+# 嵌套结构要保护）。ad-hoc 签名 = 每次重建后 TCC 屏幕录制授权失效，所以只作缺证书时的退路
 # （docs/TROUBLESHOOTING.md「换壳后的 TCC 重授权」）。
 # 不 quit / 不 relaunch / 不装到 /Applications：安装动作归 install.sh 的 `ui` 步
 # （§56.5 的 relaunch 规则住在那里）。
@@ -191,9 +191,22 @@ fi
 # lint the staged plist too（plutil -replace 之后再验一次）
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
-# --- codesign: ad-hoc（preview shell，无需稳定身份；--deep 安全——无嵌套 bundle）---
-echo "==> Ad-hoc codesigning"
-codesign --force --deep -s - "$APP_DIR" \
+# --- codesign: prefer the stable self-signed identity (same one mac/build.sh uses) so the
+# shell's TCC grants (Screen Recording / Microphone / Accessibility) SURVIVE reinstalls.
+# Ad-hoc ("-") identity = the binary's cdhash, which changes on every build: after each
+# install.sh macOS treats the shell as a new app, the System Settings toggle still reads
+# "on" for the old build, and every capture attempt re-prompts (#316). --deep is safe
+# here — the bundle has a single Mach-O and no nested bundles.
+SIGN_ID="Zelin AI Engineer Dev"
+# No `-v`: the identity is a self-signed cert that is NOT trusted, and `-v` hides
+# untrusted identities. Trust is irrelevant to codesign + TCC persistence.
+if security find-identity -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+    echo "==> Codesigning with '$SIGN_ID' (stable identity, TCC-safe)"
+else
+    SIGN_ID="-"
+    echo "==> Ad-hoc codesigning (identity missing — TCC grants will reset on reinstall)"
+fi
+codesign --force --deep -s "$SIGN_ID" "$APP_DIR" \
     || echo "WARN: codesign failed (app may still run after Gatekeeper prompt)."
 
 echo ""
