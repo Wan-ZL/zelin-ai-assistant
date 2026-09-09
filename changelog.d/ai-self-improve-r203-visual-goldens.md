@@ -1,0 +1,3 @@
+type: fixed
+- **视觉基线 golden 重拍到 main 的现状（§66.4，CI job「Web visual (playwright)」由红回绿）**：上一次重拍是 2026-09-05（`834d0e55`，main @ f297b9b），此后落地的 UI 决策没有一次带上 golden——看板页 D36（单击不再有「在终端接管」，复制路径搬进详情侧栏）、D41（输入框的附件回形针）、D43（提案面亮 DoD、待验收面亮 ☐ 验收清单），设置页 D44 / D45 / D47 / D51 / D53（分区开合、⌘F 会话搜索、语气档案生成、笔记库登记行、headless fallback model）。四张 golden（看板 / 设置 × light / dark）因此在 main 上红了四天而背后是四个已批的决策，不是回归。本轮按 §66.4 追记的唯一合法路径重拍：工作流「Refresh visual goldens」在与判卷同一个 `macos-latest` 镜像上 `--update-snapshots=all`，同一次 run 里原样再比一次（runner 复现自己的输出），artifact 覆盖 `web/e2e/__screenshots__/`。回收站两张零变化。
+- **§66.4 的容差写成了字面量**（防腐十条第 5 条）：正文的「`maxDiffPixelRatio` 2%」与 `web/playwright.config.ts` 的真值（0.002）差一个数量级、遮罩也少列一处，改为指针（truth = 配置与 spec 本身）。
