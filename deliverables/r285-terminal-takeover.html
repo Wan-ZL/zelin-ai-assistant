@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-285 · 终端接管重做（issue #216）</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 15px; line-height: 1.6; max-width: 900px; margin: 32px auto; padding: 0 20px; color: #1d1d1f; }
+  h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 28px; }
+  .card { border-left: 4px solid #999; padding: 10px 14px; margin: 12px 0; background: #f7f7f8; border-radius: 6px; }
+  .good { border-color: #2e9e4f; } .warn { border-color: #d89c00; } .info { border-color: #2f6fd6; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: #eee; padding: 1px 4px; border-radius: 3px; }
+  pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; } td, th { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; } th { background: #f0f0f0; }
+</style>
+</head>
+<body>
+<h1>R-285 · 终端接管重做：壳侧 Apple Events、砍按钮、双击手势（issue #216）</h1>
+
+<div class="card info">
+  <p><strong>TL;DR</strong> server 不再往 <code>$TMPDIR</code> 写一次性 <code>.command</code> 再 <code>open -a</code>（macOS 26 每次都弹 "Allow Ghostty to execute …?"）。现在 <code>POST /api/terminal</code> 只把请求入队到 <code>state/terminal_queue/</code>，Dock 里的壳按 1 s 节拍消费、经 Apple Events 在 Ghostty / Terminal / iTerm2 开新窗口；自动化授权按（壳, 终端）只弹一次。卡面「在终端接管」按钮删除，指令行改为「单击复制指令 · 双击在终端接管」，双击整卡即接管；壳没在跑或非 macOS 时双击降级为复制指令 + 一句提示。</p>
+  <p>PR：<a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/246">https://github.com/Wan-ZL/zelin-ai-assistant/pull/246</a>（draft，Closes #216）· 分支 <code>ai/self-improve/R-285</code></p>
+</div>
+
+<h2>验收标准逐条对照（DEFINITION OF DONE）</h2>
+<table>
+  <tr><th>#</th><th>标准</th><th>状态</th><th>证据</th></tr>
+  <tr><td>1</td><td>PR 描述含 <code>Closes #216</code></td><td>✅</td><td>PR 正文第一行即 <code>Closes #216</code>。</td></tr>
+  <tr><td>2</td><td>CI 全绿</td><td>✅（7 项 required 全绿）</td><td>ci macOS / Lint / Tests 3.9 / Tests 3.x / Web tests / QA gates / Version pins 全 pass（run 33963902018）。informational 的 Web visual (playwright) 红——它在 main 上本来就红（最近两次成功 main run 的 visual job 都 failure，六张 goldens 自 9/4 后未重拍）；本 PR 只额外改变 board 两张（少一颗按钮、指令行文案）。未在本 PR 重拍（darwin 渲染 ≠ linux goldens，且会烘进 main 上的无关变化），建议在 main 上统一重拍一次。</td></tr>
+</table>
+
+<h2>CONTRACT 必答三问</h2>
+<ul>
+  <li><strong>触及哪些 §</strong>：§49（error codes 加 <code>SHELL_UNAVAILABLE</code> 503）、§54.1 第 3 / 11 项追记（指令行文案、双击接管、Enter 归详情、无会话 no-op、501/503 降级）、§68.7 追记（server 入队 + 壳 Apple Events；<code>.command</code> 通道 tombstone；三条通道共用 <code>enqueue</code>）、§68.13 追记（TerminalRelay + ShellHeartbeat）。</li>
+  <li><strong>§0 宪法</strong>：registry 单写者不受影响（server 只写 <code>state/terminal_queue</code>，与 §28 notify_queue 同性质的自有目录）；字段 add-only——回执保留 <code>command_file</code> 键（值改为队列条目路径）并加 <code>queue_id</code>；LLM 不涉及；屏幕不发起卡片不涉及。没有打破任何一条。</li>
+  <li><strong>已存在的机制</strong>：队列形制照抄 §28 通知中继（原子 <code>.json.tmp</code> + rename、写侧清扫、壳 tick 消费、过期不启动）；TerminalLauncher 直接移植退役的 <code>mac/Sources/TerminalLauncher.swift</code>（Ghostty 1.3.1 实战验证过的 AppleScript 形式，含 zsh -lc + PATH 兜底）；终端偏好 <code>terminal_app</code> 继续住 §68.1 overrides，壳只读（§61.3 SettingsIO 读侧）。</li>
+</ul>
+
+<h2>改了什么</h2>
+<h3>server</h3>
+<ul>
+  <li><code>server/terminal_launch.py</code> 重写：<code>launch</code> = 校验 → 推导命令（不变，绝不接受客户端文本）→ <code>require_shell</code>（<code>state/shell.heartbeat</code> mtime 15 s 内，否则 503 <code>SHELL_UNAVAILABLE</code>，不入队）→ <code>enqueue</code>（条目 <code>{id, kind, command, shell_line, cwd, created_at, card_id?}</code>，写侧清扫 60 s 以外含 .tmp 尸体，写不进去 500）。<code>write_command_file</code> / <code>open_command_file</code> / <code>_default_opener</code> / <code>resolve_terminal</code> 等 tombstone。</li>
+  <li><code>maintainer_launch.py</code> / <code>uninstall_launch.py</code>：同一条队列通道（kind <code>maintainer</code> / <code>uninstall</code>），503 / 500 的 details 仍带手动命令。</li>
+  <li><code>server/paths.py</code> 加 <code>terminal_queue_dir</code> / <code>shell_heartbeat_path</code>；<code>server/errors.py</code> 加 <code>ShellUnavailableError</code>。</li>
+</ul>
+<h3>壳（shell/）</h3>
+<ul>
+  <li>新 <code>TerminalLauncher.swift</code>（mac/ 移植；唯一改动 = 终端偏好读 overrides <code>terminal_app</code>，<code>resolve(setting:installed:)</code> 与 server 旧规则同款；<code>runner</code> 注入缝）。</li>
+  <li>新 <code>TerminalRelay.swift</code>：1 s tick <code>drain()</code>（过期未启动即删、坏形删并记日志、按 created_at 升序先删文件再 launch）；<code>ShellHeartbeat.beat()</code> 随 5 s 引擎 tick（起跑立即一次），退出时删心跳让 server 立刻转 503。</li>
+  <li><code>main.swift</code> 接两个 tick；<code>Info.plist</code> 加 <code>NSAppleEventsUsageDescription</code>。桥词表零改动。</li>
+</ul>
+<h3>web</h3>
+<ul>
+  <li><code>TerminalButton</code> 删除（运行卡 / 待验收卡）。<code>CardSurface</code> 新 prop <code>takeoverCmd</code>：非空时 <code>onDoubleClick</code> → <code>useTerminalTakeover</code>（新 <code>terminalTakeover.ts</code>）。Enter 仍开详情；卡内按钮 / 输入框上的双击归它们自己，指令行例外；无会话的卡双击 no-op；在途去重。</li>
+  <li>回执：成功「已在终端打开」3 s；被拒「打开终端失败 · 原句」红字；501 / 503 同一条降级 = 复制指令 + 「无法直接打开终端 · 已复制指令，粘贴到终端即可接管」6 s。指令行文案「单击复制指令 · 双击在终端接管」。</li>
+</ul>
+<h3>文档 / 账本</h3>
+<ul>
+  <li>CONTRACT §49 / §54.1 / §68.7 / §68.13 追记；<code>docs/design/vnext2-plan.md</code> D36 行；<code>docs/design/progress/2026-09-05-terminal-takeover-shell.md</code>；<code>changelog.d/feat-terminal-takeover-shell.md</code>；TROUBLESHOOTING 新节「双击卡片在终端接管」。</li>
+  <li>§66 parity：<code>PREF_OWNER.terminalApp</code> 理由改述，<code>ui/parity/native-inventory.json</code> 重生成（只差那一句）；两句回执 id 照判，渲染面换成卡尾 status 行；两本账本零改动。</li>
+</ul>
+
+<h2>本地门证据</h2>
+<div class="card good">
+<pre>python3 -m compileall -q act server scripts            → OK
+ruff check .                                            → All checks passed!
+python3 -m unittest discover -s tests                   → Ran 5882 tests · 唯一失败 = integration.test_auto_deploy_script
+                                                          test_write_state_mirror_failure_logs_the_cause，本机 Py3.14 彩色异常造成的
+                                                          已知本地假红（PYTHON_COLORS=0 单跑 OK）；与本 PR 无关
+bash shell/tests/run.sh                                 → ALL PASS（含新第 6 节 TerminalLauncher + TerminalRelay 断言）
+bash shell/build.sh                                     → DONE（bundle 装配 + ad-hoc 签名）
+cd web && npx tsc --noEmit                              → 0 errors
+cd web && npx vitest run                                → 84 files · 1422 passed · 4 skipped
+bash scripts/qa/run_gates.sh                            → qa-gates OK（complexity 0 · crap 0 · coverage 97.09% ≥ 83.5% · deps OK ·
+                                                          hygiene OK · ui-parity PRESENT 830 / PENDING 15 / MISSING 0 / STALE 0）
+python3 scripts/ci/changelog_fragments.py check         → ok (31)
+python3 scripts/ci/progress_log.py check                → ok (50)</pre>
+</div>
+
+<h2>owner 要亲手做的一件事</h2>
+<div class="card warn">
+  <p>部署后第一次双击卡片，macOS 会弹「"Zelin's AI Assistant" 想要控制 "Ghostty"」——点允许一次即可，此后不再弹（授权按壳的签名身份记，ad-hoc 重签后可能要再点一次，与屏幕录制同一根因；TROUBLESHOOTING 新节有步骤）。</p>
+</div>
+
+<h2>没做 / 边界</h2>
+<ul>
+  <li><code>act/ai_fix.py</code>（让 AI 修）的 <code>.command</code> 用途按 issue 原文另行裁定，本 PR 不动。</li>
+  <li>阶段性完成（done）卡有 <code>copy_cmd</code> 但双击不接管——沿用旧按钮的覆盖范围（运行中 + 待验收）；要放开只需给 <code>DoneCard</code> 传 <code>takeoverCmd</code>。</li>
+  <li>真机 Ghostty 端到端（双击 → 终端窗口出现）未在本会话验证：headless 环境里没有壳在跑；AppleScript 三形是 mac/ 版实战验证过的原文，harness 钉了逐字。</li>
+</ul>
+</body>
+</html>

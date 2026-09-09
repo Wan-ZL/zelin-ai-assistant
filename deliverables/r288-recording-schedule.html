@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-288 · 录制日程（issue #27）交付报告</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif; font-size: 15px; line-height: 1.6; color: #1d1d1f; background: #f5f5f7; margin: 0; padding: 32px 20px 64px; }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 32px 0 10px; }
+  .sub { color: #6e6e73; margin: 0 0 20px; }
+  .card { background: #fff; border-radius: 10px; padding: 14px 18px; margin: 12px 0; border-left: 5px solid #8e8e93; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .good { border-left-color: #34c759; } .warn { border-left-color: #ffcc00; } .bad { border-left-color: #ff3b30; } .info { border-left-color: #007aff; } .teach { border-left-color: #af52de; }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  ul { margin: 6px 0; padding-left: 22px; } li { margin: 3px 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  code { background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  pre { background: #1d1d1f; color: #f5f5f7; padding: 12px 14px; border-radius: 8px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e5ea; vertical-align: top; }
+  th { color: #6e6e73; font-weight: 600; }
+  nav a { margin-right: 14px; color: #007aff; text-decoration: none; font-size: 14px; }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>R-288 · 录制日程：只在设定时间录制（issue #27）</h1>
+<p class="sub">self-improve lane · 分支 <code>ai/self-improve/R-288</code> · <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/268">draft PR #268</a> against <code>main</code> · CI 11/11 pass · 2026-09-06</p>
+<nav><a href="#tldr">TL;DR</a><a href="#design">设计</a><a href="#surfaces">面</a><a href="#dod">验收对照</a><a href="#evidence">证据</a><a href="#files">文件</a><a href="#notes">备注</a></nav>
+
+<section id="tldr" class="card good">
+<h3>TL;DR</h3>
+<ul>
+  <li>设置 → 录制区多了「<strong>仅在设定时间录制</strong> / Record only between…」：开关 + 起止时刻 + 星期勾选（默认 09:00–19:00 周一至周五，支持跨午夜）。<strong>默认关 = 现状一字不改</strong>。</li>
+  <li>开了以后壳在窗外把 screenpipe 引擎停掉、到点自动拉起；启动 / 睡醒 / 改日程当场判。<code>recordingMode</code> 本身不动——「按日程暂停」是派生状态，不是第四种模式。</li>
+  <li>顶栏录制按钮多一个与「关」「未在录制」都不同的状态词「<strong>按日程暂停</strong>」（accent 色）；录制页 / 权限体检 / 向导终章同一判据，暂停不算故障。</li>
+  <li>门长在新文件 <code>shell/Sources/RecordingSchedule.swift</code>，冻结的 <code>Recording.swift</code> 一个字节没动（§61.3 判例仍绿）。</li>
+  <li>本地四道门 + QA 门全绿（见下）。CONTRACT 新增 <strong>§61.7</strong>，§15 追记。</li>
+</ul>
+</section>
+
+<h2 id="design">设计：门在冻结引擎外面</h2>
+<div class="card teach">
+<h3>为什么不改 Recording.swift</h3>
+<p>它是 mac/ 冻结规范的逐字节副本（D3 + §61.3，<code>tests/test_shell_engine_mirror.py</code> 执法）。日程只借它三样公开的东西——<code>mode</code>、<code>applyMode()</code>（stop → start）、pgrep / pkill——全部经缝注入，harness 绝不真 pkill。</p>
+<svg viewBox="0 0 860 210" width="100%" height="210" role="img" aria-label="执法点与边界示意">
+  <rect x="10" y="20" width="200" height="60" rx="8" fill="#e8f0fe" stroke="#007aff"/><text x="110" y="45" text-anchor="middle">RecordingSchedule</text><text x="110" y="65" text-anchor="middle" fill="#6e6e73">spec + enforce()</text>
+  <rect x="330" y="20" width="200" height="60" rx="8" fill="#f0f0f2" stroke="#8e8e93"/><text x="430" y="45" text-anchor="middle">RecordingController</text><text x="430" y="65" text-anchor="middle" fill="#6e6e73">冻结副本，零改动</text>
+  <rect x="650" y="20" width="200" height="60" rx="8" fill="#fff4e5" stroke="#ff9500"/><text x="750" y="45" text-anchor="middle">screenpipe 进程</text><text x="750" y="65" text-anchor="middle" fill="#6e6e73">pgrep / pkill</text>
+  <line x1="210" y1="50" x2="330" y2="50" stroke="#007aff" stroke-width="2" marker-end="url(#a)"/><text x="270" y="42" text-anchor="middle" fill="#007aff">applyMode()</text>
+  <line x1="530" y1="50" x2="650" y2="50" stroke="#ff9500" stroke-width="2" marker-end="url(#a)"/><text x="590" y="42" text-anchor="middle" fill="#ff9500">spawn / kill</text>
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#555"/></marker></defs>
+  <g transform="translate(10,110)">
+    <text x="0" y="12" fill="#6e6e73">四个执法点：</text>
+    <rect x="90" y="0" width="150" height="26" rx="6" fill="#fff" stroke="#c7c7cc"/><text x="165" y="18" text-anchor="middle">启动（窗外跳过 autostart）</text>
+    <rect x="250" y="0" width="110" height="26" rx="6" fill="#fff" stroke="#c7c7cc"/><text x="305" y="18" text-anchor="middle">5 s tick</text>
+    <rect x="370" y="0" width="170" height="26" rx="6" fill="#fff" stroke="#c7c7cc"/><text x="455" y="18" text-anchor="middle">didWakeNotification</text>
+    <rect x="550" y="0" width="200" height="26" rx="6" fill="#fff" stroke="#c7c7cc"/><text x="650" y="18" text-anchor="middle">setRecordingSchedule（改即判）</text>
+  </g>
+  <g transform="translate(10,160)">
+    <text x="0" y="12" fill="#6e6e73">边界语义：</text>
+    <text x="90" y="12">active → paused：<tspan font-weight="600">立刻 pkill</tspan>　·　paused → active：<tspan font-weight="600">applyMode() 一次</tspan>（不每拍拉 = 无重启风暴）　·　暂停中被复活：<tspan font-weight="600">3 拍宽限</tspan>再停</text>
+  </g>
+</svg>
+</div>
+<div class="card warn">
+<h3>⭐ 唯一的取舍：3 拍宽限（≈10–15 s 残余帧）</h3>
+<p>冻结引擎的 <code>applyMode</code> 在 spawn 后 0.5 s + 7.5 s 里还在「慢死亡观察」；那时被 pkill 会被它读成「新模式没起来」并<strong>回滚到上一个模式、弹「已退回…」</strong>——那是日程造成的假回滚。所以暂停期间若引擎被别的路径拉起（TCC 自愈、owner 在窗外点了模式 / 重启），要连续 3 拍看见它在跑才停。边界跨越、醒来、刚开日程那一拍不受此限，立刻停。代价写进了 §61.7。</p>
+</div>
+<div class="card info">
+<h3>快照与方法（§61.1 add-only）</h3>
+<pre>recording.schedule = {"enabled": false, "start": "09:00", "end": "19:00", "days": [2,3,4,5,6], "paused": false}
+// paused ⇒ recording.diagnosis = null, recording.log_tail = ""   （故意停不是故障）
+
+setRecordingSchedule {enabled?: bool, start?: "HH:MM", end?: "HH:MM", days?: [int 1…7]}
+// 全部可选、至少一键；合并后整份校验（含 start ≠ end）；任一坏值 → INVALID_ARGS，零写入、零执法</pre>
+<p>偏好键（壳 UserDefaults，与 <code>recordingMode</code> 同域）：<code>recordingScheduleEnabled</code> / <code>recordingScheduleStart</code> / <code>recordingScheduleEnd</code> / <code>recordingScheduleDays</code>。坏值逐键回落默认；start == end 回落默认窗口；坏日程恒「在窗内」（宁多录，绝不停死）。</p>
+</div>
+
+<h2 id="surfaces">面：三个非录制态必须可区分</h2>
+<table>
+<tr><th>状态</th><th>词</th><th>颜色</th><th>含义</th></tr>
+<tr><td>mode off</td><td>关 / Off</td><td>次级文字色</td><td>owner 没开录制</td></tr>
+<tr><td>开着没录上</td><td>未在录制 / Not recording</td><td>橙（警告）</td><td>故障：权限 / ffmpeg / Node / 崩了（死因照 §61.2）</td></tr>
+<tr><td><strong>日程窗外</strong></td><td><strong>按日程暂停 / Paused by schedule</strong></td><td><strong>accent</strong>（<code>is-sched</code>）</td><td>故意停着，到点自动恢复；菜单说日程本身；「重启」禁用</td></tr>
+</table>
+<div class="card info">
+<h3>落点</h3>
+<ul>
+  <li><strong>顶栏</strong> <code>RecordingControl</code>：第三态词 + 菜单说明行「按日程暂停中——只在 09:00–19:00 · 周一至周五 录制，到点自动恢复」；三态单选照常可点（改 mode，日程不动）。</li>
+  <li><strong>设置 → 录制</strong> <code>RecordingScheduleBlock</code>：开关 / 星期即改即发，时刻失焦或回车才发，每次只发改动的键；至少留一天（页面先拦）；桥 reject 原文照印 + 时刻回滚；老壳（UNKNOWN_METHOD）退成说明句。</li>
+  <li><strong>录制与数据接入页</strong>：状态词 + 日程句，权限 / 死因分支不出（壳已把 diagnosis 置 null）。</li>
+  <li><strong>权限体检 consent 行 / 向导终章</strong>：暂停 = 中性行，不算失败。向导<strong>没加</strong>日程步（issue 标 optional；默认关的功能不该在首次运行多问一步）。</li>
+</ul>
+</div>
+
+<h2 id="dod">DEFINITION OF DONE 逐条对照</h2>
+<table>
+<tr><th>#</th><th>条目</th><th>状态</th><th>证据</th></tr>
+<tr><td>1</td><td>PR 描述含 Closes #27</td><td>✅</td><td>PR 正文首行 <code>Closes #27</code>；commit message 第二行同样</td></tr>
+<tr><td>2</td><td>CI 全绿</td><td>✅</td><td>PR #268 全部 11 项 check pass：ci（macOS swift）13m30s、Web tests 2m34s、Web visual 3m41s、QA gates 6m35s、Tests py3.9 / py3.x、Lint、Version pins untouched、Changed paths、Contract reminder、qlty</td></tr>
+</table>
+<table style="margin-top:10px">
+<tr><th>issue #27 验收</th><th>状态</th></tr>
+<tr><td>Schedule toggle + time range in Settings, default off (always record)</td><td>✅ <code>RecordingSection.tsx</code> → <code>RecordingScheduleBlock</code></td></tr>
+<tr><td>Engine stops/starts at boundaries incl. sleep/wake edges</td><td>✅ tick + <code>didWakeNotification</code> + 启动 + 改日程（harness [7] 钉边界）</td></tr>
+<tr><td>Status copy distinguishes scheduled-pause from manual-off and from failure</td><td>✅ 关 / 未在录制 / 按日程暂停，三色三词（vitest 钉）</td></tr>
+</table>
+
+<h2 id="evidence">证据（本地门）</h2>
+<div class="card good">
+<ul>
+  <li><code>bash shell/tests/run.sh</code>：typecheck + BridgeHarness / PolicyHarness / MenuHarness <strong>ALL PASS</strong>（新增 [7]/[7b] 日程段：窗口数学含跨午夜与周六→周日回绕、坏值恒在窗内；边界 / 3 拍宽限 / 醒来立停 / 无重启风暴 / 关日程即恢复 / 逐键回落；桥词表与 all-or-nothing；paused ⇒ diagnosis null）。</li>
+  <li><code>cd web && npm run typecheck && npm run build && npx vitest run</code>：<strong>168 files / 2153 tests passed</strong>（新增 <code>shellBridgeSchedule.test.ts</code>、<code>RecordingSection.schedule.test.tsx</code>，<code>ShellControls.test.tsx</code> +1）。</li>
+  <li><code>python3 -m unittest discover -s tests</code>：<strong>OK</strong>（新增 <code>tests/test_shell_recording_schedule.py</code>；<code>test_shell_engine_mirror.py</code> 逐字节判例仍绿）。</li>
+  <li><code>ruff check .</code> 全过；<code>compileall</code> ok；<code>scripts/qa/hygiene.py</code> OK；<code>scripts/qa/depgraph.py</code> OK；<code>scripts/qa/ledger_diff.py --base origin/main</code> 0 findings；<code>scripts/ci/changelog_fragments.py check</code> ok。</li>
+  <li><code>bash scripts/qa/run_gates.sh</code>（tmp venv 装 coverage）：<strong>exit 0</strong> — complexity 0 violation、CRAP 0、coverage-floor 97.13% vs 83.5%、deps OK、hygiene OK、ui-parity PRESENT 830 / MISSING(new) 0。首跑 exit 1 是本机 Python 3.14 彩色 traceback 让 <code>integration.test_auto_deploy_script</code> 一条断言失配（<code>NO_COLOR=1</code> 后单跑 OK），与本 PR 无关、CI ubuntu 不受影响。</li>
+</ul>
+</div>
+<div class="card info">
+<h3>测试过程中修过的两处</h3>
+<ul>
+  <li>harness 首跑 10 处 FAIL：控制器用 <code>Calendar.current</code>（PT）算窗口，harness 造的是 UTC 日期。加了 <code>RecordingSchedule.calendar</code> 缝，harness 注入 UTC 公历——顺手让「本机时区」也成了可注入项。</li>
+  <li>vitest 「坏时刻回滚」：jsdom 的 <code>&lt;input type="time"&gt;</code> 把乱写清成 ""，受控输入在 state 拨回同一个值时 React 不重写 DOM。改成回滚时 <code>key</code> 重挂两个时刻输入，语义不变、跨 React / jsdom / WebKit 确定。</li>
+</ul>
+</div>
+
+<h2 id="files">文件（绝对路径，worktree）</h2>
+<div class="card">
+<p>worktree：<code>/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r288-recording-schedule</code></p>
+<ul>
+  <li><strong>新增</strong>：<code>shell/Sources/RecordingSchedule.swift</code>、<code>web/src/components/shell/recordingSchedule.ts</code>、<code>web/src/shellBridgeSchedule.test.ts</code>、<code>web/src/components/settings/RecordingSection.schedule.test.tsx</code>、<code>tests/test_shell_recording_schedule.py</code>、<code>changelog.d/feat-recording-schedule.md</code>、<code>docs/design/progress/2026-09-06-recording-schedule.md</code></li>
+  <li><strong>修改</strong>：<code>shell/Sources/ShellBridge.swift</code>（订阅 + 快照 + <code>setRecordingSchedule</code>）、<code>shell/Sources/main.swift</code>（启动门 + tick + 醒来观察者）、<code>shell/tests/BridgeHarness.swift</code>、<code>web/src/shellBridge.ts</code>、<code>web/src/components/shell/RecordingControl.tsx</code>、<code>web/src/components/settings/RecordingSection.tsx</code>、<code>web/src/pages/IngestPage.tsx</code>、<code>web/src/components/permissions/RecordingConsentSection.tsx</code>、<code>web/src/components/setup/FinaleStep.tsx</code>、<code>web/src/components/shell/ShellControls.test.tsx</code>、<code>web/src/parity.test.tsx</code>、<code>web/src/styles/shell.css</code>、<code>web/src/components/settings/settings.css</code>、<code>docs/CONTRACT.md</code>（§61.7 新增、§15 追记）</li>
+  <li><strong>未动</strong>：<code>shell/Sources/Recording.swift</code>、<code>mac/</code>、受保护路径（policy.py / self_improve.py / llm.py / workflows / install.sh / auto-deploy.sh）</li>
+</ul>
+</div>
+
+<h2 id="notes">备注给 owner</h2>
+<div class="card warn">
+<ul>
+  <li><strong>真机没跑</strong>：边界行为由缝注入的 harness 钉，真壳里的 pkill / applyMode 路径本身是冻结引擎既有代码；建议合并部署后在窗外时段看一眼 <code>~/.screenpipe/engine.log</code> 的 <code>schedule pause / resume / autostart skipped</code> 三种面包屑。</li>
+  <li><strong>vnext2-plan §5.5</strong> 把 #27 列在「随 P4 re-home 之后再 scope」——录制控制已进壳 + web（§61 v0.48.19），前置条件成立，所以本轮直接做了；进度行在 <code>docs/design/progress/</code>（§8 表冻结不改）。issue 上的 <code>mac-retire</code> 标签合并后可摘。</li>
+  <li>Visual goldens 未动：visual spec 在无桥浏览器里跑，顶栏录制控件与日程块都不渲。</li>
+</ul>
+</div>
+</main>
+</body>
+</html>

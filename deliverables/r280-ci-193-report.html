@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-280 · 修红 CI：PR #193</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 15px; line-height: 1.6; max-width: 900px; margin: 32px auto; padding: 0 20px; color: #1d1d1f; background: #fafafa; }
+  h1 { font-size: 24px; margin-bottom: 4px; }
+  h2 { font-size: 18px; margin-top: 32px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  .card { background: #fff; border-left: 4px solid #999; border-radius: 6px; padding: 12px 16px; margin: 12px 0; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .good { border-left-color: #2e9e5b; } .warn { border-left-color: #d9a400; } .bad { border-left-color: #c94040; } .info { border-left-color: #3b7dd8; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: #f0f0f2; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; } th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #f4f4f6; }
+  nav a { margin-right: 14px; font-size: 14px; }
+  .muted { color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>R-280 · 修红 CI：PR #193</h1>
+<p class="muted">2026-09-04 · 自我改进通道 · 分支 <code>ai/self-improve/R-280</code> · 草稿 PR <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/214">#214</a></p>
+<nav><a href="#tldr">TL;DR</a><a href="#evidence">证据</a><a href="#fix">改了什么</a><a href="#gates">本地门</a><a href="#dod">验收对照</a><a href="#side">顺带看到的</a></nav>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="card good">
+  <p><strong>PR #193 没有需要修的东西。</strong>它的 7 项 required check 全绿。红的是 <code>Web visual (playwright)</code>，一个 <code>continue-on-error</code> 的 informational job，不在 ruleset 的 required 集合里，而且它在 main 自己身上也一直红。</p>
+  <p><strong>真问题在每日循环。</strong>它只看 <code>statusCheckRollup</code>，rollup 不分 required 与 informational，于是把 #193 铸成了这张卡。本轮修的是这个检测逻辑：rollup 红只作预筛，再问一次 <code>gh pr checks --required</code>，只有 required 里有 fail 才铸卡。</p>
+  <p>dependabot 分支 <code>dependabot/github_actions/actions/setup-python-7.0.0</code> 没有被改动。</p>
+</div>
+
+<h2 id="evidence">证据</h2>
+<table>
+  <tr><th>观察</th><th>命令 / 来源</th><th>结果</th></tr>
+  <tr><td>#193 的 required check</td><td><code>gh pr checks 193 --required --json name,bucket</code></td><td>7 项全 pass：ci · Lint · Tests 3.9 · Tests 3.x · Web tests · QA gates · Version pins untouched</td></tr>
+  <tr><td>ruleset 的 required 集合</td><td><code>gh api repos/Wan-ZL/zelin-ai-assistant/rules/branches/main</code></td><td>同上 7 项；Web visual 不在其中</td></tr>
+  <tr><td>Web visual 的性质</td><td><code>.github/workflows/ci.yml</code> web-visual job</td><td><code>continue-on-error: true</code>，注释写明「出生 informational」；PR 的 <code>mergeStateStatus</code> 为 UNSTABLE 而非 BLOCKED</td></tr>
+  <tr><td>Web visual 在 main 上</td><td>run 33726802135（9/3 07:11）、33742023337（9/3 10:01）、33932766407（9/4，#212 重拍 golden 之后）</td><td>三次的 web-visual job 都是 failure；最新一次六张 golden 1–3% 像素差，另 headerLayout tight·en / tight·zh 各 1</td></tr>
+  <tr><td>diff 的形状</td><td>run 33734067162 的 <code>web-visual</code> artifact，board-light-diff.png / settings-light-diff.png</td><td>整页所有文字边缘都是红点，没有任何区域性内容差异 → runner 侧字形抗锯齿漂移，不是 UI 变化</td></tr>
+  <tr><td>#193 与 main 的距离</td><td><code>git rev-list --left-right --count origin/main...&lt;dependabot 分支&gt;</code></td><td>落后 32 个 commit，PR 本身只改两个 workflow 里的 setup-python 版本行</td></tr>
+  <tr><td>每日循环的判定逻辑</td><td><code>act/lib/loop_inputs.py</code> <code>_ci_red</code></td><td>rollup 里任一 FAILURE/TIMED_OUT/CANCELLED 即铸 <code>pr_red</code>，不看 required；§65.5 的跟进卡 <code>red_required_checks</code> 却已经用 <code>--required</code></td></tr>
+</table>
+
+<h2 id="fix">改了什么（PR #214）</h2>
+<div class="card info">
+  <ul>
+    <li><code>act/lib/loop_inputs.py</code>：新增 <code>_red_required_checks(gh, repo, number)</code>，调 <code>gh pr checks &lt;n&gt; -R &lt;repo&gt; --required --json name,bucket</code>，返回 bucket=fail 的名字；<code>_pr_detail_signals</code> 只在 rollup 有红时多花这一次 gh，且只有 required 真红才铸 <code>pr_red:&lt;n&gt;</code>。红的名字写进卡的 summary / plan / DoD。<code>--required</code> 拿不到（旧 gh 退出 1、超时）= 不铸。</li>
+    <li><code>tests/test_daily_loop_inputs.py::PrSignalsTestCase</code>：四条判例——#193 形状（rollup 红 + required 全 pass → 不铸）、<code>pr checks</code> 不可用 → 不铸、required 真红 → 铸且带名字与正确 argv、rollup 全绿不多问 gh。</li>
+    <li><code>docs/CONTRACT.md</code> §70 ⑪ 同步修法，记 2026-09-04 判例。</li>
+    <li><code>changelog.d/fix-loop-pr-red-required-only.md</code>（type: fixed）。</li>
+  </ul>
+  <p class="muted">三问：触及 §70 ⑪；宪法第 11 条（解析失败不崩、fail-closed）与 D5「必须绿 = required」，未打破；已存在机制 = §65.5 <code>red_required_checks</code>，本 PR 对齐它。</p>
+</div>
+<div class="card warn">
+  <p><strong>超出原 Plan 的部分，明说。</strong>卡的 Plan 写的是「在 dependabot 分支上最小修复」。证据显示 #193 无可修之处，改 dependabot 分支只会白白触发一轮 CI 且 Web visual 仍红（main 也红）。所以我没有动那条分支，转而修了铸出这张卡的检测逻辑。这是否算合理的替代交付，由 owner 在 PR #214 上定。</p>
+</div>
+
+<h2 id="gates">本地门</h2>
+<table>
+  <tr><th>门</th><th>结果</th></tr>
+  <tr><td><code>python3 -m unittest tests.test_daily_loop_inputs</code></td><td>22 tests OK</td></tr>
+  <tr><td><code>python3 -m unittest tests.test_daily_loop_proposals</code></td><td>13 tests OK</td></tr>
+  <tr><td><code>unittest discover -s tests</code>（全量）</td><td>5835 tests，1 failure：<code>tests/integration/test_auto_deploy_script.py::test_write_state_mirror_failure_logs_the_cause</code>。与本 PR 无关：本机 Python 3.14 把 ANSI 颜色码写进异常文本，<code>PYTHON_COLORS=0</code> 重跑该文件 93/93 OK；CI 用 ubuntu 3.9 / 3.x</td></tr>
+  <tr><td><code>ruff check</code></td><td>All checks passed</td></tr>
+  <tr><td><code>python3 -m compileall act ingest</code></td><td>OK</td></tr>
+  <tr><td><code>scripts/qa/complexity.py</code> / <code>hygiene.py</code> / <code>depgraph.py</code></td><td>0 violations / OK / OK</td></tr>
+  <tr><td><code>scripts/qa/ledger_diff.py --base origin/main</code></td><td>0 findings</td></tr>
+  <tr><td><code>scripts/ci/changelog_fragments.py check</code></td><td>ok (21)</td></tr>
+  <tr><td><code>scripts/qa/run_gates.sh</code></td><td>本机未装 coverage.py，提前退出；CRAP / coverage floor 只在 CI canonical 环境判卷</td></tr>
+</table>
+
+<h2 id="dod">DEFINITION OF DONE 对照</h2>
+<div class="card good">
+  <p><strong>1. PR #193 required checks 全绿</strong> —— 成立，且在本轮开始前就成立（<code>gh pr checks 193 --required</code> 7/7 pass）。红的那项不是 required check。</p>
+</div>
+
+<h2 id="side">顺带看到的（不在本轮处理）</h2>
+<div class="card warn">
+  <ul>
+    <li><strong>PR 分支自动跟随 main 没在工作。</strong>§56.6 的 <code>update-pr-branches.yml</code> 应在每次 push main 时把 main 合进在飞的非草稿 PR，但 #193 落后 32 个 commit。vnext2-plan 2026-09-02 那行写着「待 owner：创建 PAT 存为 repo secret」（<code>PR_AUTOUPDATE_TOKEN</code>），大概率还没配。</li>
+    <li><strong>Web visual 在 main 上持续红。</strong>#211 / #212 刚重拍的 golden 在下一跑就 fail，diff 是整页文字边缘 → runner 字形渲染不确定，重拍治不了。可能的出路：<code>maxDiffPixelRatio</code> 阈值，或 golden 从 CI artifact 取而不是本机截。§66.4，归 owner 决定。</li>
+    <li><strong>本机 <code>gh</code> 登录的是 ZelinPostman，不是 collaborator。</strong><code>gh pr create</code> 直接失败（must be a collaborator）；本轮用 <code>config/secrets/github-wanzl-pat.txt</code> 作 <code>GH_TOKEN</code> 建 PR。§65.3 核验用 gh 读公开 repo，不受影响。</li>
+    <li><strong>本机 Python 3.14 彩色异常文本</strong>让 <code>test_write_state_mirror_failure_logs_the_cause</code> 在默认环境下失败（见上）。</li>
+  </ul>
+</div>
+</body>
+</html>

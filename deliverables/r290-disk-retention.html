@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-290 · issue #28 录制数据磁盘占用与保留期 — 交付报告</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif; font-size: 15px; line-height: 1.6; color: #1d1d1f; max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; background: #fafafa; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 32px 0 10px; padding-bottom: 4px; border-bottom: 1px solid #e3e3e3; }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  .meta { color: #666; font-size: 13px; }
+  .card { background: #fff; border-radius: 8px; padding: 14px 18px; margin: 12px 0; border-left: 5px solid #8e8e93; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .card.good { border-left-color: #34c759; } .card.warn { border-left-color: #ffcc00; } .card.bad { border-left-color: #ff3b30; } .card.info { border-left-color: #007aff; } .card.teach { border-left-color: #af52de; }
+  .card h3 { margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid #e3e3e3; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f7; }
+  code, pre { font-family: "SF Mono", Menlo, monospace; font-size: 13px; }
+  code { background: #f2f2f7; padding: 1px 5px; border-radius: 4px; }
+  pre { background: #f2f2f7; padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+  ul { padding-left: 22px; } li { margin: 3px 0; }
+  .ok { color: #1c8a3a; font-weight: 600; } .pending { color: #b26a00; font-weight: 600; }
+  nav a { margin-right: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>R-290 · issue #28：录制数据磁盘占用与保留期</h1>
+<p class="meta">2026-09-07 · branch <code>ai/self-improve/R-290</code> · draft PR <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/291">#291</a> · CONTRACT 新 §71 + §18 追记</p>
+<nav>
+  <a href="#tldr">TL;DR</a><a href="#dod">验收对照</a><a href="#what">做了什么</a><a href="#law">CONTRACT 三问</a><a href="#evidence">证据</a><a href="#verify">真机怎么验</a><a href="#limits">边界与后续</a><a href="#files">文件清单</a>
+</nav>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="card good">
+  <p>设置页新增<strong>「录制数据与磁盘 / Recording data &amp; disk」</strong>区（紧跟录制区）：当前占用（总 + 数据库 / 备份 / 日志 / 媒体 + 数据库内可复用空间）、每月增长估算（附依据）、最早 / 最新数据、上次清理回执、备份文件告示、刷新。数据来自新的只读端点 <code>GET /api/screenpipe/disk</code>，扫目录与只读问 sqlite 都在 server 后台线程，<strong>设置页渲染路径零磁盘 IO</strong>。</p>
+  <p>新旋钮<strong>录制数据保留天数</strong>（<code>recording.retention_days</code> / override <code>screenpipe_retention_days</code>），<strong>默认 0 = 永久保留 = 现状不变</strong>。设了 N ≥ 1，30 分钟 cron 链的 <code>ingest/screenpipe-cleanup.sh</code> 会调 <code>act/lib/screenpipe_retention.py</code>，只删「早于 N 天 <em>且</em> 已导出进 vault」的 OCR / 音频转写行，分批、带时间预算、不 VACUUM，回执落 <code>state/screenpipe_retention.json</code>，任何失败只进回执、链不断。</p>
+</div>
+<div class="card warn">
+  <h3>⭐ 一个与代码无关的发现</h3>
+  <p>本机 <code>~/.screenpipe</code> 共 43 GB，其中 <strong>33 GB 是 2026-06-04 留下的旧备份 <code>db.sqlite.bak-20260604</code></strong>，活库 db.sqlite 只有 10.7 GB。新界面会把这个文件列出来（名字 + 大小），但按宪法第 2 条<strong>不提供删除按钮</strong>——不再需要的话请在访达里亲手删。</p>
+</div>
+
+<h2 id="dod">DEFINITION OF DONE 逐条对照</h2>
+<table>
+  <tr><th>条目</th><th>状态</th><th>证据</th></tr>
+  <tr><td>1. PR 描述含 <code>Closes #28</code></td><td class="ok">✓</td><td><code>gh pr view 291 --json body</code> 首行即 <code>Closes #28</code>；draft、base=main、head=<code>ai/self-improve/R-290</code></td></tr>
+  <tr><td>2. CI 全绿</td><td class="ok" id="ci-row">✓（7 项 required）</td><td>head <code>7267270</code>：ci · Lint · QA gates · Tests 3.9 · Tests 3.x · Version pins · Web tests 全 pass。informational 的 <strong>Web visual (playwright)</strong> 红：settings 两张是本 PR 的新折叠区（~3% 像素，符合预期）；board 两张（~5%）本 PR 未碰，且该 job 在 main 最新一次 CI（run 34112553693）本就红——goldens 未动，留给 owner 从 CI <code>web-visual</code> artifact 有意更新。</td></tr>
+</table>
+<h3>issue #28 的验收标准</h3>
+<table>
+  <tr><th>Acceptance criteria</th><th>落点</th></tr>
+  <tr><td>Live size + monthly estimate visible in Settings</td><td>设置 → 「录制数据与磁盘」区 <code>StorageStatus</code>：当前占用 / 每月增长（首日只有「按全部录制历史平均」，样本斜率要等 ≥ 1 天两次采样）</td></tr>
+  <tr><td>Retention days configurable in-UI, honored by the prune job</td><td>同一区的目录字段「录制数据保留天数」→ <code>state/settings_overrides.json</code>；cron 链 cleanup 步读同一个 config 层值（判例 <code>test_run_reads_retention_from_config_layer</code>）</td></tr>
+  <tr><td>No blocking IO on the settings render path</td><td>GET 返回缓存 / computing 空壳，后台线程扫描；判例把 <code>scan</code> 打成 AssertionError 证明 GET 路径调不到它</td></tr>
+</table>
+
+<h2 id="what">做了什么</h2>
+<div class="card info">
+  <h3>1. 度量：<code>server/screenpipe_disk.py</code> + <code>GET /api/screenpipe/disk</code></h3>
+  <ul>
+    <li>缓存 TTL 600 s；首次 <code>state: "computing"</code>，后台算完 <code>ready</code>，后台失败 <code>error</code> 并释放 in-flight；<code>?refresh=1</code> 只在没在算时再起一个。</li>
+    <li>扫描按类归并 db / backup / log / media / other，不跟符号链接；db.sqlite 只读 URI 问 <code>page_size × freelist_count</code>（= 清理后可复用字节）与首末 frame 时间戳，锁住 / 坏库进 <code>db_error</code>。</li>
+    <li>增长估算：样本文件 <code>state/screenpipe_disk_samples.json</code>（间隔 ≥ 6 h、帽 240 条），最近 30 天首末样本跨度 ≥ 1 天给斜率（<code>basis: samples</code>）；不够退到 db 字节 ÷ 录制天数（<code>basis: lifetime</code>）；都没有 → <code>null</code>，界面说「样本不足」。</li>
+  </ul>
+</div>
+<div class="card info">
+  <h3>2. 保留期：<code>act/lib/screenpipe_retention.py</code>（stdlib sqlite3）</h3>
+  <ul>
+    <li>删 <code>frames</code>（连带 <code>ocr_text</code>、<code>elements</code>）与 <code>audio_transcriptions</code> 里 <code>timestamp &lt; now − N 天</code> ∧ <code>id ≤ export_markers/last_*_id</code> 的行；未导出的一行不碰，标记缺席一行不删。</li>
+    <li>每笔 2000 条、<code>busy_timeout</code> 30 s、单轮预算 120 s（用尽即停，回执 <code>budget_exhausted</code>，下一轮接着）；不 VACUUM。</li>
+    <li>CLI：<code>python3 -m act.lib.screenpipe_retention [--dry-run] [--days N] [--db PATH]</code>，stdout 一行 JSON；永不抛。</li>
+    <li>挂点：<code>ingest/screenpipe-cleanup.sh</code>（cron 链第二步）多跑这一条；crontab 行本体（<code>install.sh</code>）未动。</li>
+  </ul>
+</div>
+<div class="card info">
+  <h3>3. 设置面：<code>web/src/components/settings/StorageStatus.tsx</code> + 目录 <code>storage</code> 区</h3>
+  <ul>
+    <li><code>SettingsPage.SETTINGS_TOC</code> 新条目 <code>storage</code>（默认折叠，与其它非常用区一致）；fold 内 = <code>CatalogSection sectionId="storage"</code>，lead 槽渲 <code>StorageStatus</code>。</li>
+    <li>computing / refreshing 期间每 1.5 s 轮询、上限 40 次；拉取失败只显示一句 alert；备份文件告示 <code>role=status</code>。</li>
+    <li>保留天数字段文案 server-owned（help 写明「已导出进笔记库」「不 VACUUM：文件不立刻缩小」「原始 jpg / mp4 一小时后照旧删」）。</li>
+  </ul>
+</div>
+
+<h2 id="law">CONTRACT 必答三问</h2>
+<div class="card teach">
+  <ol>
+    <li><strong>触及哪些 §</strong>：新增 <strong>§71</strong>（71.1 度量端点 / 71.2 保留期与清理 / 71.3 设置面）；<strong>§18 追记</strong>（cleanup 步多一件事）；§68.1 通用目录新增 <code>storage</code> 区（复用 diff-write）；§49 新只读路由。</li>
+    <li><strong>§0 宪法</strong>：第 2 条「绝无不可恢复的自动删除」——默认关；开了只删导出标记之前的行，它们的文本已在 vault <code>2 - raw</code>，那份笔记就是回程票 → <strong>不修宪</strong>（§71.2 写明）。第 3 条：<code>computing / error / db_error</code> 如实报、估算依据随数字投影。第 7 条：stdlib only。第 9 条：只读 localhost、零上传。第 11 条：模块异常进回执 + <code>|| true</code>，后台线程失败落 <code>state: error</code>。</li>
+    <li><strong>既有机制</strong>：settings catalog（int 校验 / diff-write / server-owned 文案）、<code>doctor_run</code> 的 TTL 缓存形状、<code>export_markers</code>（已导出边界）、<code>screenpipe-cleanup.sh</code>（挂点）。未动受保护路径。</li>
+  </ol>
+</div>
+
+<h2 id="evidence">证据（本地门）</h2>
+<table>
+  <tr><th>门</th><th>结果</th></tr>
+  <tr><td><code>python3 -m compileall act ingest</code></td><td class="ok">OK</td></tr>
+  <tr><td>全量 <code>unittest discover -s tests</code></td><td class="ok">Ran 6329 tests · OK (skipped=47)</td></tr>
+  <tr><td>新判例</td><td class="ok">tests/test_screenpipe_retention.py 15 · tests/test_server_screenpipe_disk.py 20 · StorageStatus.test.tsx 7</td></tr>
+  <tr><td><code>ruff check</code> · <code>shellcheck ingest/screenpipe-cleanup.sh</code></td><td class="ok">All checks passed · 0 findings</td></tr>
+  <tr><td>web <code>tsc --noEmit</code> · <code>vitest run</code></td><td class="ok">typecheck 0 errors · 202 files / 2412 tests passed</td></tr>
+  <tr><td><code>scripts/qa/run_gates.sh</code>（tmp venv coverage）</td><td class="ok">complexity 0 违例（首跑 4 条新违例 → 拆函数后清零）· coverage floor 97.08% vs 83.5% · deps OK · hygiene OK · ui-parity 846 gated / MISSING 0 · CRAP 见下行</td></tr>
+  <tr><td>CRAP（darwin 上为 advisory，CI linux 判）</td><td class="ok" id="crap-row">0 违例（首跑 5 条新违例 → 拆函数 + 补 <code>_parse_ts</code> 判例后清零）；复跑 <code>run_gates.sh</code> 六道门全 OK，coverage 6330 tests OK</td></tr>
+  <tr><td><code>changelog_fragments.py check</code> · <code>progress_log.py check</code> · <code>ledger_diff.py --base origin/main</code></td><td class="ok">ok (86) · ok (104) · 0 findings</td></tr>
+</table>
+<div class="card warn">
+  <h3>本机唯一一条假红</h3>
+  <p>首轮全量 unittest 中 <code>integration/test_auto_deploy_script::test_write_state_mirror_failure_logs_the_cause</code> 失败，原因是本 shell 环境 <code>FORCE_COLOR=3</code> 让 Python 3.14 给 traceback 上了 ANSI 色，与本 PR 无关；<code>PYTHON_COLORS=0</code> 下复跑通过，coverage 那一轮（无色）6329 全绿。</p>
+</div>
+
+<h2 id="verify">真机怎么验</h2>
+<div class="card info">
+  <ol>
+    <li>合并部署后打开设置 → 「录制数据与磁盘」区：几秒内应从「统计中…」变成「43 GB」量级的数字，并列出 <code>db.sqlite.bak-20260604（33 GB）</code>。</li>
+    <li>先 dry-run 看会删多少：</li>
+  </ol>
+  <pre>cd /Users/zelin/Projects/zelin-ai-assistant &amp;&amp; python3 -m act.lib.screenpipe_retention --dry-run --days 90</pre>
+  <ol start="3">
+    <li>满意再在设置页把「录制数据保留天数」填 90（或别的数）并保存；下一轮 30 分钟 cron 之后，「上次清理」一行会显示删了多少帧 / 条转写；文件大小不会立刻缩，「可复用空间」会涨。</li>
+    <li>回执原文：<code>cat state/screenpipe_retention.json</code>。</li>
+  </ol>
+</div>
+
+<h2 id="limits">边界与后续</h2>
+<ul>
+  <li>本机 launchd 的 a11y 日清 <code>~/.local/bin/screenpipe-prune-a11y.sh</code> 不在 repo，本 PR 不动它（CONTRACT §55 提到的 plist 照旧）。</li>
+  <li>不 VACUUM：要真正缩小文件需停引擎后手跑 <code>sqlite3 ~/.screenpipe/db.sqlite 'VACUUM;'</code>。</li>
+  <li>增长斜率首日不可用（只有全程平均），第二天起有 ≥ 1 天跨度的两次采样后自动切换。</li>
+  <li><code>storage</code> 区默认折叠；若希望首屏可见，改 <code>web/src/settingsFolds.ts</code> 的默认展开集即可（本 PR 未动，折叠集判例会随之调整）。</li>
+</ul>
+
+<h2 id="files">文件清单（绝对路径，worktree）</h2>
+<pre>/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/act/lib/screenpipe_retention.py          新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/server/screenpipe_disk.py                 新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/web/src/components/settings/StorageStatus.tsx       新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/web/src/components/settings/StorageStatus.test.tsx  新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/tests/test_screenpipe_retention.py        新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/tests/test_server_screenpipe_disk.py      新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/changelog.d/r290-disk-retention.md        新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/docs/design/progress/2026-09-07-r290-disk-retention.md  新
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/act/lib/config.py                         改（字段 + yaml applier + override 白名单）
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/server/settings_catalog.py                改（storage 区）
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/server/app.py                             改（路由）
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/ingest/screenpipe-cleanup.sh              改（第二件事）
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/web/src/pages/SettingsPage.tsx            改（TOC + fold）
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/web/src/api.ts · web/src/types.ts        改
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/ui/parity/fixtures/settings.json          重铸
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/docs/CONTRACT.md                          §71 新增 + §18 追记
+/Users/zelin/Projects/zelin-ai-assistant/.claude/worktrees/r290-disk-retention/config.example.yaml                       recording.retention_days 注释</pre>
+<p class="meta">PR: <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/291">https://github.com/Wan-ZL/zelin-ai-assistant/pull/291</a> · BRANCH: ai/self-improve/R-290</p>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-284 · 修红 CI：PR #197 vite 6 → 8</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif; font-size: 15px; line-height: 1.6; max-width: 900px; margin: 32px auto; padding: 0 20px; color: #1f2328; background: #fff; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  h2 { font-size: 17px; margin-top: 28px; border-bottom: 1px solid #d0d7de; padding-bottom: 4px; }
+  .card { border-left: 4px solid #8250df; background: #f6f8fa; padding: 12px 16px; margin: 14px 0; border-radius: 4px; }
+  .good { border-left-color: #1a7f37; }
+  .warn { border-left-color: #bf8700; }
+  .info { border-left-color: #0969da; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; font-size: 14px; }
+  th { background: #f6f8fa; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: #eff1f3; padding: 1px 4px; border-radius: 3px; }
+  pre { background: #f6f8fa; padding: 10px 12px; overflow-x: auto; border-radius: 4px; font-size: 13px; }
+  .muted { color: #57606a; }
+</style>
+</head>
+<body>
+<h1>R-284 · 修红 CI：PR #197（vite 6.4.3 → 8.2.2）</h1>
+<p class="muted">2026-09-05 · self-improve lane · 分支 <code>ai/self-improve/R-284</code></p>
+
+<div class="card good">
+<p><strong>TL;DR</strong>：PR #197 的两项 required 红是同一个根因，<code>npm ci</code> ERESOLVE。<code>@vitejs/plugin-react</code> 4.x 的 peer range 不含 vite 8。在 #197 的分支上把 plugin-react 抬到 6.1.1 并重生成 lockfile 之后，7 项 required check 全部 pass。另开 draft PR 给 dependabot 加 vite 工具链分组，防下次复发。</p>
+</div>
+
+<h2 id="dod">DEFINITION OF DONE 逐条对照</h2>
+<table>
+<tr><th>条目</th><th>结果</th><th>证据</th></tr>
+<tr><td>1. PR #197 required checks 全绿</td><td><strong>达成</strong></td><td>run 33961042208：ci / Lint / Tests 3.9 / Tests 3.x / Version pins / Web tests / QA gates 全部 pass（<code>gh pr checks 197 --required</code>）</td></tr>
+</table>
+
+<h2 id="root-cause">根因</h2>
+<ul>
+<li>dependabot 只抬了 <code>vite</code>（^6.0.5 → ^8.2.2），<code>@vitejs/plugin-react</code> 仍在 ^4.3.4。</li>
+<li>plugin-react 4.7.0 的 peer 是 <code>vite ^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0</code>，npm ci 在 CI 上报 ERESOLVE。</li>
+<li>「Web tests」在 Install dependencies 步死掉，「QA gates」在 Install web dependencies 步死掉（其 <code>[ui-parity]</code> 门要跑 vitest）。测试本身一条没跑。</li>
+<li>plugin-react 6.x 的 peer 是 <code>vite ^8.0.0</code>，另外三个 peer（oxc-transform-react / @rolldown/plugin-babel / babel-plugin-react-compiler）全部 optional。vitest 4.1.11 与 @vitest/mocker 的 peer 已含 ^8。</li>
+</ul>
+
+<h2 id="changes">改了什么</h2>
+<div class="card info">
+<p><strong>1. #197 分支 <code>dependabot/npm_and_yarn/web/vite-8.2.2</code>，commit <code>b5f411d</code></strong></p>
+<ul>
+<li><code>web/package.json</code>：<code>@vitejs/plugin-react</code> ^4.3.4 → ^6.1.1</li>
+<li><code>web/package-lock.json</code>：<code>npm install</code> 重生成，<code>npm ci</code> 本地校验通过</li>
+</ul>
+<p>本地 vite 8.2.2 验证：<code>npm run typecheck</code> rc 0；<code>npm run build</code> 成功（142 modules）；<code>vitest run</code> 58 files，1238 passed，4 skipped。</p>
+</div>
+<div class="card info">
+<p><strong>2. 本 PR 分支 <code>ai/self-improve/R-284</code>（从 origin/main 切出）</strong></p>
+<ul>
+<li><code>.github/dependabot.yml</code>：npm 面新增 <code>groups.vite-toolchain</code>（patterns：vite、@vitejs/*、vitest、@vitest/*），附注释说明 #197 的判例</li>
+<li><code>changelog.d/fix-dependabot-vite-toolchain-group.md</code>：type fixed，一条 bullet</li>
+</ul>
+</div>
+
+<h2 id="checks">PR #197 required checks 修前 / 修后</h2>
+<table>
+<tr><th>required check</th><th>修前 run 33734131282</th><th>修后 run 33961042208</th></tr>
+<tr><td>ci</td><td>pass</td><td>pass</td></tr>
+<tr><td>Lint (shellcheck + ruff)</td><td>pass</td><td>pass</td></tr>
+<tr><td>Tests on ubuntu (Python 3.9)</td><td>pass</td><td>pass</td></tr>
+<tr><td>Tests on ubuntu (Python 3.x)</td><td>pass</td><td>pass</td></tr>
+<tr><td>Version pins untouched</td><td>pass</td><td>pass</td></tr>
+<tr><td>Web tests (build + vitest)</td><td><strong>fail</strong>（ERESOLVE）</td><td>pass（1m28s）</td></tr>
+<tr><td>QA gates</td><td><strong>fail</strong>（ERESOLVE）</td><td>pass（6m24s）</td></tr>
+</table>
+<p class="muted">Web visual (playwright) 不在 required 集合里，main 上也红（#214 已记录），本卡不动它。</p>
+
+<h2 id="gates">本地门（ai/self-improve/R-284 分支）</h2>
+<ul>
+<li><code>ruff check .</code>：All checks passed</li>
+<li><code>python3 -m compileall act server scripts</code>：OK</li>
+<li><code>scripts/qa/run_gates.sh</code>：unittest 5880 tests OK（skipped 47）；complexity OK、crap OK（darwin 上 advisory）、coverage-floor 97.10% vs 83.5% OK、deps OK、hygiene OK、ui-parity 849 gated / MISSING 0 OK。总判决 <code>qa-gates: OK</code></li>
+<li><code>scripts/ci/changelog_fragments.py check</code>：ok</li>
+<li>dependabot.yml 经 PyYAML 解析通过；版本 pin 零改动</li>
+</ul>
+
+<h2 id="notes">顺带看到的（未处理）</h2>
+<ul>
+<li>vite 8 build 提示主 chunk 500.23 kB 超过 500 kB 告警线。只是 warning。</li>
+<li>jsdom 30.0.1 的 engines 字段不含 Node 25（本机版本）。CI 用 Node 22，不受影响。</li>
+<li>#197 被人推了 commit 之后 dependabot 不再自动 rebase 它。合并由 GitHub 做 merge 即可。</li>
+<li>本机 <code>scripts/qa/run_gates.sh</code> 需要 coverage 包，系统 python3 没装。本轮用临时 venv 跑，未改机器。</li>
+</ul>
+
+<h2 id="links">链接</h2>
+<ul>
+<li>PR #197：<a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/197">https://github.com/Wan-ZL/zelin-ai-assistant/pull/197</a></li>
+<li>本卡 draft PR：<a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/245">https://github.com/Wan-ZL/zelin-ai-assistant/pull/245</a>（draft）</li>
+<li>修后 CI run：<a href="https://github.com/Wan-ZL/zelin-ai-assistant/actions/runs/33961042208">https://github.com/Wan-ZL/zelin-ai-assistant/actions/runs/33961042208</a></li>
+</ul>
+</body>
+</html>
