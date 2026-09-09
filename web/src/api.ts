@@ -40,6 +40,7 @@ import type {
   RadarAgentsSnapshot,
   RadarReinstallReceipt,
   RepairReceipt,
+  ScreenpipeDisk,
   SecretStatus,
   SecretVerifyResult,
   SlackDirectory,
@@ -592,6 +593,12 @@ export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileSta
 /** GET /api/voice/generate-status — 「从我的消息生成/更新档案」的回执（§68.1 追记 D47；按钮本身 = postAction voice_generate） */
 export function fetchVoiceGenerateStatus(signal?: AbortSignal): Promise<VoiceGenStatus> {
   return request<VoiceGenStatus>("/api/voice/generate-status", { signal });
+}
+
+/** GET /api/screenpipe/disk[?refresh=1] — 录制数据磁盘占用快照（§71.1）：立刻回缓存（首次 computing），扫目录在 server 后台线程；
+ *  refresh=1 让 server 起一次重算（GET 本身仍不阻塞） */
+export function fetchScreenpipeDisk(refresh = false, signal?: AbortSignal): Promise<ScreenpipeDisk> {
+  return request<ScreenpipeDisk>(refresh ? "/api/screenpipe/disk?refresh=1" : "/api/screenpipe/disk", { signal });
 }
 
 /** GET /api/slack/directory[?refresh=1][&lang=zh|en] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记）；

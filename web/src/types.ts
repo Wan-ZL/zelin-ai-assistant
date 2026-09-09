@@ -800,6 +800,56 @@ export interface VoiceProfileStatus {
   [key: string]: unknown;
 }
 
+/** GET /api/screenpipe/disk（§71.1，issue #28）：录制数据磁盘占用快照。`state` computing = 首次、后台还在扫（数字全 null）；
+ *  ready = 缓存快照；error = 后台算失败（`error`）。字节全是十进制原值，web 自己格式化。`growth.basis` samples = 按最近样本斜率、
+ *  lifetime = db 字节 ÷ 最早 frame 至今天数、null = 样本不足；`last_prune` = act/lib/screenpipe_retention.py 的回执原样。 */
+export interface ScreenpipeDiskGrowth {
+  bytes_per_month: number | null;
+  basis: "samples" | "lifetime" | null | string;
+  span_days: number | null;
+  samples: number;
+}
+
+export interface ScreenpipePruneReceipt {
+  ran_at?: string;
+  retention_days?: number;
+  cutoff?: string | null;
+  skipped?: string | null;
+  deleted_frames?: number;
+  deleted_audio?: number;
+  eligible_frames?: number;
+  eligible_audio?: number;
+  budget_exhausted?: boolean;
+  dry_run?: boolean;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ScreenpipeDisk {
+  state: "computing" | "ready" | "error" | string;
+  computed_at: string | null;
+  refreshing: boolean;
+  root: string;
+  root_exists: boolean;
+  total_bytes: number | null;
+  db_bytes: number | null;
+  backup_bytes: number | null;
+  log_bytes: number | null;
+  media_bytes: number | null;
+  other_bytes: number | null;
+  file_count: number | null;
+  backups: Array<{ name: string; bytes: number }>;
+  db_reclaimable_bytes: number | null;
+  oldest_frame_ts: string | null;
+  newest_frame_ts: string | null;
+  db_error: string | null;
+  growth: ScreenpipeDiskGrowth;
+  retention_days: number;
+  last_prune: ScreenpipePruneReceipt | null;
+  error?: string;
+  [key: string]: unknown;
+}
+
 /** GET /api/voice/generate-status（§68.1 追记 D47）：「从我的消息生成/更新档案」最近一次 job（state/voice_gen/job.json，
  *  actd 写 running、act.voice_gen --job 写 done / failed）；lost = running 却超过 15 分钟没回执（server 算） */
 export interface VoiceGenJob {

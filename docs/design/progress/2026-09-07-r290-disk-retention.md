@@ -1,0 +1,5 @@
+pr: `ai/self-improve/R-290`（issue #28）
+phase: P4（mac-retire：retention UI re-home 到 web）；自动草稿 PR 通道（§65）
+law: §71（新增）/ §18 追记 / §68.1 storage 区
+
+做了什么 — issue #28「Disk retention: surface screenpipe data usage and retention controls」。owner 机器实测 `~/.screenpipe` 43 GB（db.sqlite 10.7 GB + 一份 6/4 的 33 GB 旧备份），此前界面上没有任何地方说它占了多少盘、留多久。三件事：① `server/screenpipe_disk.py` + `GET /api/screenpipe/disk`：缓存快照立刻回、扫目录与只读问 sqlite（freelist / 首末 frame）在后台线程，增长估算样本优先（`state/screenpipe_disk_samples.json` 带帽）、全程平均兜底、都没有就说「样本不足」而不是 0；备份文件只报不删。② `act/lib/screenpipe_retention.py` + `recording.retention_days`（设置页 `screenpipe_retention_days`，默认 0 = 永久保留 = 现状不变）：cron 链 `screenpipe-cleanup.sh` 第二件事，删「已导出进 vault（`export_markers`）且早于 N 天」的 frames / ocr_text / elements / audio_transcriptions 行，分批 + 时间预算、不 VACUUM，回执 `state/screenpipe_retention.json`，失败只进回执。**不修宪**：删的是 vault 里已有副本的引擎缓存行，未导出的一行不碰。③ web 设置页「录制数据与磁盘」区 = `CatalogSection storage` + `StorageStatus` lead（computing 期间轮询、上限 40 次；拉取失败一句 alert 不炸）。判例 34 条 python + 7 条 vitest；parity 两本账本零改动、fixture 重铸。
