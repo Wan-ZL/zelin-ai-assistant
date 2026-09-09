@@ -5,6 +5,7 @@ lock ``state/radar.lock``), §40 (give-up diagnostic card), §45 (provenance
 birth gate — 屏幕不发起卡片), §47 (transient retry / parse-failure degrade
 card / retry ledger), §48 (source switch + 关闭真静默), §15 (obsidian
 radar_health, cron-only writer).
+§47.5 (note 读取的环境类瞬时失败：同 pass 重读 / 放宽额度 / 复活闸).
 
 This module covers the Obsidian raw source. For each ``.md`` file newer than
 the last marker (STATE/radar.marker) — plus the notes queued for retry in
@@ -24,6 +25,7 @@ Run: ``python -m act.radar`` (or ``python -m act.radar --once``).
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -70,6 +72,33 @@ _TRANSIENT_PATTERNS = (
     # SIGTERM 的两种上报形态：shell 包装 = exit 143（128+15）；subprocess
     # 直接拿到信号 = returncode -15（_run_extract 的 RuntimeError 文本）。
     "timed out", "network", "exit 143", "exit -15",
+)
+
+# §47.5 note 读取的环境类瞬时失败：vault 住在 iCloud 同步的 ~/Documents 下时，
+# 一个被云端 evict 成 dataless 的 note 在不许触发下载的语境里 open() 直接返回
+# EDEADLK（"Resource deadlock avoided"，2026-08 生产台账里三篇 screenpipe note
+# 就是这样连续 5 轮不可读、被判 gave_up，而它们今天用同一段代码读得好好的）。
+# 这类错误按 errno 认领（结构化，比 strerror 文本可靠）：同 pass 短退避重读，
+# 仍不行才进台账，且用单独放宽的额度——环境抖动不该烧掉毒 note 的 5 次预算。
+_TRANSIENT_READ_ERRNOS = frozenset(
+    e for e in (getattr(errno, name, None) for name in
+                ("EDEADLK", "EAGAIN", "EWOULDBLOCK", "EBUSY", "EINTR",
+                 "ENOTCONN", "ETIMEDOUT", "ENETDOWN", "EHOSTDOWN", "ENODATA"))
+    if e is not None)
+NOTE_READ_MAX_RETRIES = 2
+NOTE_READ_BACKOFF_S = 0.5
+# 环境类不可读的独立额度（30 min 一轮 -> ~10 小时）：iCloud 把文件放回来
+# 通常几分钟，5 轮（2.5h）在 Mac 睡眠/离线时太短；但仍有上限——真的永久
+# 读不了的 note 必须最终留痕（宪法第 11 条：放弃要留痕）。
+FAILED_MAX_ATTEMPTS_TRANSIENT_READ = 20
+# 错误字符串里的机器标记（新条目）；本标记出生前写下的历史案底按 strerror
+# 文本认领，两条路都通向同一个分类函数 _is_transient_read_error。
+TRANSIENT_READ_MARK = "transient read error"
+_TRANSIENT_READ_STRERRORS = (
+    "Resource deadlock avoided", "Resource temporarily unavailable",
+    "Device or resource busy", "Interrupted system call",
+    "Socket is not connected", "Transport endpoint is not connected",
+    "Operation timed out", "No data available",
 )
 
 # v0.42: parameterized on cfg.owner_name ({owner} slots, substituted in
@@ -201,9 +230,15 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
         entry = {"mtime": mtime, "attempts": 0}
     entry["attempts"] = int(entry.get("attempts") or 0) + 1
     entry["last_error"] = error[:200]
-    entry["gave_up"] = entry["attempts"] >= FAILED_MAX_ATTEMPTS
+    entry["gave_up"] = entry["attempts"] >= _max_attempts_for(error)
     queue[key] = entry
     return entry
+
+
+def _max_attempts_for(error: str) -> int:
+    """§47.5：环境类不可读（iCloud dataless / 锁竞争）走放宽额度，其余照旧 5 次。"""
+    return (FAILED_MAX_ATTEMPTS_TRANSIENT_READ if _is_transient_read_error(error)
+            else FAILED_MAX_ATTEMPTS)
 
 
 def _is_transient_error(error: str) -> bool:
@@ -212,6 +247,20 @@ def _is_transient_error(error: str) -> bool:
     claude 或多等一轮 cron，两边都无害。"""
     e = str(error or "")
     return any(p in e for p in _TRANSIENT_PATTERNS)
+
+
+def _is_transient_read_error(error: Optional[str]) -> bool:
+    """§47.5：这条 ``unreadable note`` 是不是**环境**在挡路（云端 dataless、
+    别的进程持锁、网络卷抖动），而不是这篇 note 本身坏了（非 UTF-8、权限、
+    EISDIR）。新条目带 TRANSIENT_READ_MARK 标记；本标记出生前写下的历史案底
+    按 strerror 文本认领——判错的代价不对称：多给几轮重试 vs. 静默丢一篇
+    笔记，所以宁可认领。"""
+    e = str(error or "")
+    if not e.startswith("unreadable note"):
+        return False    # 只认领读取失败：提取/落库那两类各有自己的额度语义
+    if TRANSIENT_READ_MARK in e:
+        return True
+    return any(m in e for m in _TRANSIENT_READ_STRERRORS)
 
 
 def _is_note_level_error(error: str) -> bool:
@@ -858,6 +907,10 @@ def scan(runner=None, triager=None) -> dict:
     重试一次（_extract_with_retry）才进台账；解析失败（unparseable）同 pass 重
     新提取一次，仍失败则降级成低置信卡兜住原文（file_parse_degraded_card），
     note 记 accounted 不进台账——只有降级卡本身落库失败才退回台账老路。
+    §47.5：读 note 撞上**环境**类 errno（云端 dataless 的 EDEADLK 等）先同
+    pass 退避重读（_read_note_text），仍不行按放宽额度进台账，且既有的环境类
+    gave_up 案底每轮载入时复活一次（_rearm_transient_read_giveups）——
+    「gave_up + mtime 未变 = 永久跳过」不许把一篇几分钟后就能读的 note 判死。
 
     为什么不再让失败 note 钉死 marker（旧语义）——旧语义自相矛盾：
     ① 失败 note 与更早成功的 note 共享同一 mtime 时，marker 已被成功者推到
@@ -915,6 +968,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     failed = _load_failed_queue()
     md_files = _collect_md_files(root, summary)
     _reconcile_failed(failed, md_files)
+    _rearm_transient_read_giveups(failed, summary)
     book = _PassBook(marker, failed)
 
     for note, mtime in md_files:
@@ -986,6 +1040,37 @@ def _reconcile_failed(failed: dict, md_files: list[tuple[Path, float]]) -> None:
             continue
         if key not in existing and not Path(key).exists():
             failed.pop(key)
+
+
+def _rearm_candidate(key: str, entry: dict) -> bool:
+    """这条案底该不该复活：环境类不可读、已放弃、还没复活过。
+    ``gmail:uid:*`` 是 radar_gmail 的毒邮件案底（见 _reconcile_failed），
+    obsidian 侧一律不碰。"""
+    return (not key.startswith("gmail:uid:")
+            and bool(entry.get("gave_up")) and not entry.get("rearmed")
+            and _is_transient_read_error(entry.get("last_error")))
+
+
+def _rearm_transient_read_giveups(failed: dict, summary: dict) -> list[str]:
+    """§47.5 复活闸：环境类不可读（_is_transient_read_error）的 ``gave_up``
+    案底重新上膛一次。
+
+    为什么必须有这一步：``gave_up=True`` 且 mtime 未变的条目被 ``_is_due``
+    **永久**跳过——环境挡路的那 5 轮过去后，文件几分钟后就读得动了也再没有
+    任何一轮会去读它（2026-08 的三篇 screenpipe note 正是如此，§40 诊断卡看
+    着像「留痕」，实际是静默丢失穿了件外套）。add-only 字段 ``rearmed`` 保证
+    只复活一次：真的永久读不了的 note 第二次烧完额度就老老实实留在案底，
+    宪法第 11 条的「放弃要留痕」不被绕开。返回被复活的键（判例用）。"""
+    rearmed = [k for k, e in failed.items() if _rearm_candidate(k, e)]
+    for key in rearmed:
+        failed[key].update(attempts=0, gave_up=False, rearmed=True)
+    if rearmed:
+        summary["skipped"].append(
+            f"re-armed {len(rearmed)} given-up note(s) whose last error was "
+            "environmental (transient read) — one more full retry budget")
+        analytics.log_event("radar_ledger_rearm", source="obsidian",
+                            notes=len(rearmed))
+    return rearmed
 
 
 class _PassBook:
@@ -1138,18 +1223,49 @@ def _target_open(ref: str) -> bool:
 
 
 
+def _read_note_text(note: Path) -> tuple[Optional[str], Optional[str]]:
+    """读一篇 note 的正文；返回 ``(text, None)`` 或 ``(None, 错误描述)``。
+
+    UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的 note 曾让
+    整个 pass 崩掉、marker/health 全部停摆，所以两类都在这里收口。
+
+    §47.5：errno 属 _TRANSIENT_READ_ERRNOS 的失败是**环境**在挡路（云端
+    dataless 的 note 在不许触发下载的语境里返回 EDEADLK 是首例），同 pass 内
+    退避 NOTE_READ_BACKOFF_S 重读至多 NOTE_READ_MAX_RETRIES 次——第一次 open
+    本身常常就把下载踢起来了，第二次即成功。重试耗尽才回错误串，且串里带
+    TRANSIENT_READ_MARK + errno 名，让台账那头能按类给额度（_max_attempts_for）
+    并在放弃后还认得出这案底该重新上膛（_rearm_transient_read_giveups）。
+    analytics 只带元数据（宪法第 9 条）：note 文件名是用户笔记标题，不进
+    可上传 props。"""
+    for attempt in range(NOTE_READ_MAX_RETRIES + 1):
+        try:
+            return note.read_text(encoding="utf-8"), None
+        except UnicodeDecodeError as e:
+            return None, f"unreadable note {note.name}: {e}"
+        except OSError as e:
+            code = errno.errorcode.get(e.errno, str(e.errno))
+            if e.errno not in _TRANSIENT_READ_ERRNOS:
+                return None, f"unreadable note {note.name}: {e}"
+            if attempt >= NOTE_READ_MAX_RETRIES:
+                return None, (f"unreadable note {note.name}: "
+                              f"{TRANSIENT_READ_MARK} ({code}): {e}")
+            analytics.log_event("radar_note_read_retry", source="obsidian",
+                                attempt=attempt + 1, err=code)
+            time.sleep(NOTE_READ_BACKOFF_S)
+    # 循环正常走完不可能到这里（每条分支都 return）；只有把重试数配成负数
+    # 才会——按「没读到」处理，绝不抛（宪法第 11 条：失败不外溢）。
+    return None, f"unreadable note {note.name}: no read attempted"
+
+
 def _process_note(note: Path, cfg: config.Config, summary: dict,
                   runner, triager) -> Optional[str]:
     """处理一篇 note：读取 -> 提取 -> 逐项 triage 落库。原地累加 ``summary``
     的 extracted/reconciled/cards；返回 None（成功）或一条错误描述（进重试
     台账）。任何失败都只属于这一篇 note，绝不外溢崩掉整个 pass。"""
     from act.lib import quick_capture  # lazy: analyze->executor chain stays acyclic
-    try:
-        text = note.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        # UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的
-        # note 曾让整个 pass 崩掉、marker/health 全部停摆。
-        return f"unreadable note {note.name}: {e}"
+    text, error = _read_note_text(note)
+    if error is not None:
+        return error
     if _already_degraded(note, summary):
         return None
     return _extract_and_file(quick_capture, note, text, cfg, summary, runner, triager)
