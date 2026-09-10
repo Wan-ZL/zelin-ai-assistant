@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-205`（PR #NNN；self_improve lane 草稿 PR，修的是 PR #292 的红）
+pr: `ai/self-improve/R-205`（PR #321；self_improve lane 草稿 PR，修的是 PR #292 的红）
 phase: 横切（CI 卫生；D5/D12「皇上只看绿的」）
 law: —（判例改动，无法条变动）
 
