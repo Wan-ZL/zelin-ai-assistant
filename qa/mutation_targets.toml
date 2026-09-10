@@ -118,7 +118,10 @@ per_mutant_timeout_seconds = 60
 "act/lib/slack_setup.py" = ["tests/test_slack_setup_rows_and_cli.py", "tests/test_slack_setup.py"]
 "act/lib/update_check.py" = ["tests/test_update_check_helpers.py", "tests/test_update_check.py"]
 "act/lib/match_corpus.py" = ["tests/test_match_corpus_helpers.py", "tests/test_match_corpus.py", "tests/test_auto_merge_scan_edges.py"]
-"act/lib/qr.py" = ["tests/test_qr_golden.py", "tests/test_qr_penalty_and_masks.py", "tests/test_qr.py"]
+# R-206：首轮 1,198 体只有 44–62% 杀伤，存活体的 78% 是 `_EC_TABLE` / `_ALIGN_POS`
+# 里从未被走到的格子（golden 只编 6 个 payload）。补的判例按「表 / 掩码选择 /
+# PNG 容器 / 全 version 扫」四层，都进映射——不进映射夜报永远复述已被杀死的体。
+"act/lib/qr.py" = ["tests/test_qr_golden.py", "tests/test_qr_penalty_and_masks.py", "tests/test_qr.py", "tests/test_qr_tables.py", "tests/test_qr_mask_selection.py", "tests/test_qr_png_bytes.py", "tests/test_qr_version_sweep.py"]
 "act/lib/fold_receipts.py" = ["tests/test_fold_receipts_file_edges.py", "tests/test_fold_receipts.py"]
 "act/lib/feedback.py" = ["tests/test_feedback_snapshot_and_retry_gate.py", "tests/test_feedback.py", "tests/test_feedback_sync.py"]
 "act/lib/feedback_sync.py" = ["tests/test_feedback_sync_helpers.py", "tests/test_feedback_sync.py"]
