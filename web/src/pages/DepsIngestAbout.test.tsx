@@ -255,9 +255,11 @@ describe("AboutSection（原生 updateSection / updateStatus / confirmUninstall�
     renderEn(<AboutSection />);
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall…" }));
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall in Terminal…" }));
+    // ModalDialog 挂载后在 useEffect 里 showModal()：DOM 里先有 <dialog> 后有 open。findByText 不看可见性，
+    // 命中时对话框可能还没 open（jsdom 里 dialog:not([open]) 是 display:none，不进无障碍树）——按角色取按钮必须等。
     expect(await screen.findByText("Uninstall script not found")).toBeTruthy();
     expect(screen.getByText("Run this in Terminal yourself: cd /r && bash uninstall.sh")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    fireEvent.click(await screen.findByRole("button", { name: "OK" }));
     vi.mocked(postUninstallTerminal).mockRejectedValue(new ApiError(500, { error: { code: "INTERNAL_ERROR", message: "could not open Terminal: boom", details: { command: "cd /r && bash uninstall.sh" } } }));
     fireEvent.click(screen.getByRole("button", { name: "Uninstall…" }));
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall in Terminal…" }));
