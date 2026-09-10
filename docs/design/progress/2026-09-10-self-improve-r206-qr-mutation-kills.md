@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-206`（PR #NNN；self_improve lane 草稿 PR）
+pr: `ai/self-improve/R-206`（PR #322；self_improve lane 草稿 PR）
 phase: P5 → P3 闭环（§57 夜间变异存活体 → §70 循环铸卡 → §65 lane 出 PR；R2.3.2「先补测试网」）
 law: §41（QR 编码器行为，无改动）/ §57 靶区映射（`qa/mutation_targets.toml` 增四个判例文件）
 
