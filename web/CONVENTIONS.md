@@ -5,7 +5,7 @@
 - `src/pages/PascalCase.tsx` = 页面级组件（`BoardPage.tsx`，A6 重写内容但保留文件名/导出名；回收站页 `TrashPage.tsx`）。
 - `src/components/PascalCase.tsx` = 可复用组件（卡片/列/抽屉/弹窗/chips）。fork 来的 `MarkdownDocument.tsx`、`TaskPropertyPicker.tsx` 也放这里，保持原文件名以便 NOTICE 对账。
 - `src/styles/tokens.css` = 唯一 token 源（A9 的动画/组件样式放 `src/styles/` 下新文件，import 进 main.tsx；只允许引用 tokens.css 里已有变量，不造新色值）。
-- 测试与被测模块同目录同名：`foo.test.ts(x)`。vitest 环境 jsdom，显式 `import { describe, it, expect, vi } from "vitest"`（未开 globals）。
+- 测试与被测模块同目录同名：`foo.test.ts(x)`。vitest 环境 jsdom，显式 `import { describe, it, expect, vi } from "vitest"`（未开 globals）。**判例环境没有网络**（防腐 #7）：`src/vitest.setup.ts`（`vite.config.ts` `test.setupFiles`）把 `globalThis.fetch` 换成不开 socket、立刻拒绝的桩——会碰 api.ts 的判例用 `vi.mock("./api", …)` 盖住用到的函数，要真响应形状就 `vi.stubGlobal("fetch", …)`；没 mock 住的调用走断网路径（`READ_FAILED`），不会真打 localhost。
 - 单文件 <300 行（契约 §2.2 预算）。
 
 ## Props 风格
