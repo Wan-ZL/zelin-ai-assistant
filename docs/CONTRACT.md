@@ -3281,6 +3281,52 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   `web/src/components/shell/PipelineBanner.test.tsx`。
 
 **§47.4 追记（2026-09-05，add-only；parity 批次 `pipeline-repair-verdict-copy`，gap `health-stalled-copy-asserts-process-alive` / `diagnostics-setup-banner-manual-command-no-copy`）——读者 3 的 `stalled` 正文只说已知的**：读者 2 只 stat 三个文件、不问 launchctl（上文原话），一个崩了 / 被 bootout 的 actd 留下的 `state/actd.heartbeat` 与一个卡在 `time.sleep` 的活进程在 `/api/health` 里长得一模一样——web 横幅此前的「actd 进程还活着，但已 N 分钟没有心跳」断言了谁也没查过的事（宪法第 3 条）。自本条起 `stalled` 正文 = 「后台服务已 N 分钟没有心跳（最后阶段：<phase>）——卡在原地或已停止，卡片不会动。」/ "No heartbeat for N min (last phase: <phase>) — stuck or stopped; cards will not move."（原生 Freshness.swift `.dead` 句同样只报数据多久没更新，不作活性断言）；标题「后台服务卡住了」与 kickstart 修法不变。进程活性判断仍只属读者 1（doctor `actd_stalled`，有 launchctl）——server 不因此长出探针。**修法命令出句入行**：`stalled` / `stale` 正文不再把 `launchctl kickstart -k …` 揉进句子；三个说话的 verdict 的动作行都带同一条可复制的「手动命令：<cmd>」（`web/src/components/chrome/CopyLine.tsx`，原生 Cards.swift `CopyPathLine` 的 web 版：label 独占节点 + `<code>` + 「复制」→「已复制」1.5 s + `role=status` 播报；与详情侧栏 `CmdLine` / `CopyChip` 同形，那两颗是卡片详情的积木、不外借）。`stale` 句仍指名 `bash install.sh`。判例：`PipelineBanner.test.tsx`（正文不含「还活着」/ "alive"、不含 `launchctl`）、`PipelineBanner.repair.test.tsx`（三态都有该行、chip 写剪贴板）、`chrome/CopyLine.test.tsx`。
+### 47.5 note 读取的环境类瞬时失败（`transient read error`，2026-09-09）
+
+**事故**：生产台账 `state/radar_failed.json` 里三篇 screenpipe note 连续 5 轮
+报 `unreadable note …: [Errno 11] Resource deadlock avoided`（EDEADLK），随后
+`gave_up=True` + 三张 §40 诊断卡。而同一段代码今天读这三个文件读得好好的——
+故障从来不在 note 里：vault 住在 iCloud 同步的 `~/Documents` 下，一个被云端
+evict 成 dataless 的文件在不许触发下载的语境里 `open()` 直接返回 EDEADLK。
+`_process_note` 把**所有** `OSError` 一律折成永久的 note 级失败，5 轮（2.5 h）
+额度烧完就判死；更要命的是 `_is_due` 对「`gave_up` 且 mtime 未变」的条目**永久**
+跳过——文件几分钟后就能读了也再没有任何一轮会去读它。诊断卡看着像「留痕」，
+实际是静默丢失穿了件外套（宪法第 11 条）。
+
+- **认领**：`_TRANSIENT_READ_ERRNOS`（EDEADLK / EAGAIN / EWOULDBLOCK / EBUSY /
+  EINTR / ENOTCONN / ETIMEDOUT / ENETDOWN / EHOSTDOWN / ENODATA，按 `errno`
+  号认领——比 strerror 文本可靠）= **环境**在挡路；非 UTF-8（UnicodeDecodeError）、
+  权限、EISDIR 等仍是这篇 note 本身坏了，语义与额度全不变。
+- **errno 名逐字稳定**（`_errno_name`）：`errno.errorcode` 对同值别名给的是
+  最后注册的那个名字——同一个 dataless 错误在 macOS 上叫 `EDEADLK`、在 Linux
+  上叫 `EDEADLOCK`（EAGAIN/EWOULDBLOCK 同理）。错误串是跨机器读的台账字段，
+  名字从 `_TRANSIENT_READ_ERRNO_ORDER` 逐字派生（表内靠前的名字赢别名），
+  `errno.errorcode` 只当表外兜底。
+- **同 pass 退避重读**（`_read_note_text`）：`NOTE_READ_BACKOFF_S`（0.5 s）×
+  至多 `NOTE_READ_MAX_RETRIES`（2）次——第一次 `open()` 本身常常就把下载踢
+  起来了，第二次即成功。analytics `radar_note_read_retry{attempt, err}`：只带
+  元数据与 errno 名，note 文件名不进可上传 props（宪法第 9 条）。
+- **独立额度**：重试耗尽后错误串带机器标记 `transient read error (<ERRNO>)`，
+  台账按类给额度——`FAILED_MAX_ATTEMPTS_TRANSIENT_READ`（20，≈10 h 的 30 min
+  cron）而非 `FAILED_MAX_ATTEMPTS`（5）。仍**有**上限：真的永久读不了的 note
+  必须最终留痕。分类函数 `_is_transient_read_error` 同时认领本标记出生前写下
+  的历史案底（按 strerror 文本），且**只认领 `unreadable note …` 这一类串**
+  ——提取失败 / 落库失败各有自己的额度语义，字面撞上也不放行。判错的代价
+  不对称：多给几轮重试 vs. 静默丢一篇笔记。
+- **复活闸**（`_rearm_transient_read_giveups`，每 pass 载入台账后跑）：环境类
+  的 `gave_up` 案底重新上膛一次（`attempts=0`、`gave_up=False`、**add-only**
+  字段 `rearmed: true`）。`rearmed` 保证只复活一次——第二次烧完额度就老实留在
+  案底，「放弃要留痕」不被绕开。留痕：summary `skipped` 一行 + analytics
+  `radar_ledger_rearm{notes}`（只有条数，无文件名）。`gmail:uid:*` 键跳过（那是
+  radar_gmail 的案底，见 `_reconcile_failed`）。
+- **已铸的 §40 诊断卡不由雷达销**：状态转移只有 actd 发出（§44.7 a），雷达没有
+  trash 一张卡的权力。note 复活成功后旧诊断卡留在备选由 owner 处置；卡的路径
+  dedup 是「任何状态」，所以它也不会因为再次放弃而重复铸卡。
+- 判例：`tests/test_radar_note_read_transient.py`（errno 分类、同 pass 重读成功、
+  重试耗尽后进台账且带标记、errno 名不随平台漂、20 次额度、复活闸只开一次、
+  非 UTF-8 语义不变）。
+
+
 ---
 
 # v0.47 additions（源开关归一 + 源死亡告警）
