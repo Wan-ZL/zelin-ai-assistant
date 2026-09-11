@@ -548,6 +548,8 @@ ffmpeg 缺失 = 安装 ffmpeg + 「装好了，重启引擎」；崩了 / 死了
 
 **§15 §70 追记（add-only，每日循环旋钮）**：overrides 允许列表新增五个扁平键 `daily_loop_enabled`（bool）/ `daily_loop_time`（本地 `HH:MM`，`3:30` 归一为 `03:30`）/ `daily_loop_max_proposals_per_day` / `daily_loop_stale_days` / `daily_loop_trash_retention_days`（非负 int；负数/bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `daily_loop.*` 逐字一致（yaml 路径宽容：坏值回默认、负数按 0）。写入方 = web 设置页「每日整理」经 `PUT /api/settings/daily-loop`（server/settings.py，diff-write 同 §59 模型旋钮）。actd **每 pass 现读**这五个字段到启动冻结的 cfg 上（`_refresh_model_knobs`——§59 两把模型旋钮的同一刷新点，`daily_loop.LIVE_KNOBS`），保存后下一个 pass 生效、无需重启。
 
+**§15 §71 追记（add-only，录制保留期）**：overrides 允许列表新增一个扁平键 `recording_media_retention_minutes`（int，夹取进 [5, 365×24×60]；bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `recording.media_retention_minutes` 逐字一致（yaml 路径宽容：坏值回默认 60）。写入方 = web 设置页「录制」区的磁盘块经 `PUT /api/settings/storage`（server/storage.py，diff-write 同 §59 模型旋钮）；读取方 = cron 链里的 `ingest/screenpipe-cleanup.sh`（经 `python3 -m act.lib.config --print-value`，下一轮生效、无需重启）。详见 §71。
+
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
 = 打开/聚焦主窗口**（原 ⌥+click 直达主窗口的旧路径行为不变地并入）；右键
@@ -3659,6 +3661,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   {model}`（四闸；只改 `model` 键、先备份 `settings.json.bak-<UTC ts>`、其余键
   与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §59.4。
 - **§70 追加（每日循环设置面，add-only）**：`GET /api/settings/daily-loop`（五把旋钮的 effective 值 + 每字段 `source` ∈ override|config|default；token-light）、`PUT /api/settings/daily-loop {enabled?, time?, max_proposals_per_day?, stale_days?, trash_retention_days?}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状坏 400 `INVALID_FIELD` 整句人话、diff-write `state/settings_overrides.json` 的 `daily_loop_*` 扁平键；文件不可解析 409 `CONFLICT`）。PUT 路由自此表驱动（`_PUT_JSON_ROUTES`，与 GET/POST 同款）。形状见 §70.5。
+- **§71 追加（磁盘占用与保留期面，add-only）**：`GET /api/settings/storage`（占用分项 + 增长估计 + 保留期 effective 值与 `source` + prune 回执投影；token-light；`?refresh=1` 强制重扫；**du 在后台线程，读面永不走目录树**）、`PUT /api/settings/storage {media_retention_minutes}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、垃圾 400 `INVALID_FIELD` 整句人话、diff-write `state/settings_overrides.json` 的 `recording_media_retention_minutes` 扁平键）。形状见 §71.3。
 - **v0.48.x 追加（§54 web 看板 parity，add-only）**：`GET /api/lanes`（列说明
   文案的 **server-owned 目录**：`{"lanes":[{slug, help:{zh,en}}…]}`，slug =
   dashboard 分区名，顺序 = 看板从左到右；文案单源 `server/lanes.py`，来源
@@ -6105,3 +6108,38 @@ owner 原话（D33）：「你说的把 5 降到 2，我可以接受；第三点
 - **投影（§2 `maintenance`，add-only）**：`last_result` 五个计数照旧恒在，**新增** `advisories`（同上列表；每字段 `str`，坏形状整行丢，≤ 20）。web `MaintenanceBanner`：advisories 非空时同一行右侧多一个「系统自检 N 条」按钮（`aria-expanded`），点开在横幅下方列出每条 `kind` / `text` / 「首见 <first_seen>」（三列：kind 与日期列不缩不折，只有中间的说明文字换行）；三计数全零而 advisories 非空也渲染（否则这些行没人看得见），此时文案是「今日整理：看板无变动」而不是「合并 0、清理 0（可撤销）、提案 0」；「回收站可恢复」链接只在 `merged + trashed > 0`（合并也把旧卡送进回收站）时出现——不许诺一次没发生过的撤销；**仍不弹系统通知**（D10）、不新增 inbox 动词。client `MaintenanceAdvisory` 逐字镜像 wire key（防腐 #10）。判例 `MaintenanceBanner.test.tsx`（DOM）、`web/e2e/maintenanceBanner.spec.ts`（真浏览器量展开态：日期一行、横幅不溢出，1280 / 820 宽 × zh / en）。
 - **默认额度**：`daily_loop.max_proposals_per_day` 默认 **5 → 2**（truth = `config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS`；`server/settings.py DAILY_LOOP_DEFAULTS` 手抄同值，§49，`test_server_paths_mirror` 钉漂移；`config.example.yaml` 同步）。已写过 override 的机器不受影响（override > config > default 的层次不变，§15 追记）；`GET /api/settings/daily-loop` 对未改过的机器报 `2` / `source: default`。§70.3「默认 5」与 §70.4 的旧字面量自本条起失效。
 - **不变的**：§70.1–70.2 维护半边一字不动；CARD_KINDS 的铸卡形状（§70.3 铸卡段）、`kind_taken` / `gh_title` / `dedup` / `cap` 四个 skip 语义不变；§70.6 边界照旧。advisory 只是「不铸卡」，不是「不读」——读取器、阈值、`inputs` 计数与 §70.3 ①–⑧ 的定义全部保留，日后要把某一类升回可铸卡只需把 kind 挪回 CARD_KINDS（并在本节追记）。
+
+## 71. 录制数据的磁盘占用与保留期（issue #28；D3 退役后落在 web 设置页）
+
+owner 开的 issue #28（onboarding 设计评审）：「screenpipe data grows unbounded from the user's perspective — nothing in the UI shows how much disk it uses or how long data is kept, so the first signal is a full disk a month later. A prune job exists but is invisible and not user-configurable.」issue 的处置说明（2026-09-02 sweep）把它归给 web 设置页替代原生面的那一轮（D3：原生不加新功能）——本节就是那一轮的法条。执法：`server/storage.py`（读面 + 旋钮）、`ingest/screenpipe-cleanup.sh`（prune 本人 + 回执）、`act/lib/config.py`（保留期真源 + `--print-value` 消费面）、`web/src/components/settings/StorageSection.tsx`（录制区内的磁盘块）。
+
+### 71.1 保留期真源与三层读
+
+- 键 = `recording.media_retention_minutes`（config.yaml）/ `recording_media_retention_minutes`（`state/settings_overrides.json` 扁平键，§15.3 allowlist add-only）。语义 = **原始媒体**（`~/.screenpipe/data` 里的 `*.jpg` / `*.mp4`）的最长寿命，分钟。
+- 默认 **60**（truth = `config.DEFAULT_MEDIA_RETENTION_MINUTES`）；夹取区间 **[5, 365×24×60]**（truth = `config.MIN_MEDIA_RETENTION_MINUTES` / `MAX_MEDIA_RETENTION_MINUTES`）。**夹取而不是报错**：用户输 1（「马上删」）时给他安全的最小值，比让这把旋钮静默失效诚实；比 5 分钟更短会削到同一轮 cron 里正在导出的那批帧。
+- 三层优先级与其余旋钮一致（override → config.yaml → 默认）；yaml 路径宽容（坏值回默认），overrides 路径严格（坏值 per-entry 跳过，生效值不变）。
+- **本键永不碰 `db.sqlite`**：OCR 文本与音频转写按天只有几十 KB、按年只有几十 MB，几个 GB 全在媒体上。「媒体删、文本永久留」是默认，也是这把旋钮唯一的作用域。要动文本索引得另立法条。
+
+### 71.2 prune 本人（`ingest/screenpipe-cleanup.sh`）与它的回执
+
+- 位置不变：30 分钟 cron 链的中段（`screenpipe-export.sh && screenpipe-cleanup.sh && process-screenpipe.sh`）。保留期经 `python3 -m act.lib.config --print-value recording_media_retention_minutes` 读同一层（web 改了旋钮**下一轮**生效，无需重启）；解析不出数就用 60——cron 消费方必须拿到能直接喂给 `find` 的值（与 `--print-path` 同一条「silent-on-error 打默认值」纪律）。
+- **永远 `exit 0`**：链子是 `&&` 串的，prune 的毛病不许吞掉这一轮 ingest。
+- 真相走回执而不是退出码：`state/screenpipe_prune.json`（原子写，单文件定长，无增长面）= `{ts, state, retention_minutes, deleted_files, deleted_bytes, data_dir}`，`state ∈ ok | no_data_dir | unreadable`。**停掉的 prune 与「没东西可删」的 prune 从外面看一模一样**，而前一种会永久性地让盘涨——所以「目录在但进不去」（TCC / 权限）单独记 `unreadable`，不与「删了 0 个」混为一谈。
+- server 只读这个文件、永不写（§44 单写者精神）。`stale` = 距 `ts` 超过 **3 小时**（truth = `storage.PRUNE_STALE_S`；正常每 30 分钟一轮）；文件缺席 / 坏 JSON / 坏时间戳 → `state:"never"` + `stale:true`。
+
+### 71.3 占用与增长（`GET /api/settings/storage`）
+
+- **渲染路径上零阻塞 IO**（issue 的验收标准，本节红线）：`du` 在 server 的**后台线程**里走（`spawn` 注入缝，判例绝不起真线程），GET 永远立刻返回。缓存里没有结果 → `usage.state:"scanning"`（web 轮询，最多 30 次 × 2 s）；有结果但过 `storage.SCAN_TTL_S`（600 s）→ **先回旧值**（`stale:true`）再后台刷新；`?refresh=1` 强制重扫。扫描自带帽：最多 `storage.WALK_FILE_CAP` 个文件，超了 `truncated:true` 并如实说这个数偏小；不跟符号链接。
+- `usage.bytes` 按类分（`media` / `index`（`db.sqlite*`）/ `other` / `total`）。分类是**功能性的**：media 是保留期削的那一半，index 是永久留的那一半，两个数不分开就说不清这把旋钮到底在管什么。
+- `growth` = `{basis, days, bytes_per_month}` 或 `null`。`basis:"samples"` = `state/storage_samples.json` 首尾两点的净增（台账 `{samples: [[ts, total_bytes], …]}`，**≤ 60 条、彼此至少 1 小时**，满了丢最旧——防腐 #4「出生即带帽」；不足 1 小时的新采样改写最后一条，刷十次页面不该挤掉十天历史）；跨度不足 6 小时就退回 `basis:"lifetime"`（目录 `st_birthtime` / `st_ctime` 至今的平均）；两者都说不出来 → `null`，**UI 就不说这句**（宪法第 11 条：没观察到就不说）。净增为负（刚缩短了保留期）算 0，不报负增长。
+- wire 形 = `{media_retention_minutes, source: override|config|default, bounds:{min,max,default}, usage:{state: scanning|ready|missing|error, dir, bytes|null, files|null, truncated, scanned_at, scan_seconds, stale, scanning[, error]}, growth|null, prune:{ran_at, state, deleted_files, deleted_bytes, retention_minutes, age_seconds, stale}}`；web `StorageSettings` 逐字镜像（防腐 #10）。
+- `PUT /api/settings/storage {media_retention_minutes}`：四闸同 POST；字段白名单 400 `UNKNOWN_FIELD`、垃圾 400 `INVALID_FIELD`（整句人话）、其余走 diff-write（等于 config/默认的生效值 → 删键），回最新 snapshot。
+- server 不 import act（§49）：默认值 / 上下限 / 夹取规则在 `server/storage.py` **手抄**，`tests/test_server_paths_mirror.py::StorageSettingsMirrorTestCase` 钉漂移。
+
+### 71.4 面（web）
+
+设置页「录制」区内、录制三态与日程之后多一块 `StorageSection`（不另起一区——「录多少」与「留多少」是同一个话题；也**不经壳桥**：磁盘是 server 侧的事实，浏览器里打开的看板照样看得见，与录制控制那半边「只在 app 里可控」的限制无关）。四行：占用分项（总计 / 媒体 / 文本索引 / 其它）· 「约 X/月」（`growth` 为 null 时整行不渲染）· 上次 prune 回执句（`never` / `stale` / `unreadable` 进 warning 档，`role=alert`）· 保留期数字框 + 「保存」+「重新统计」。保存后的回执句点明「下一轮清理（每 30 分钟一轮）生效」。
+
+### 71.5 边界（明确不做）
+
+不删、不压缩 `db.sqlite`（那是录制引擎自己的库，本软件只读它）；不自动按「磁盘快满了」调保留期（不替用户做删数据的决定）；不给 prune 另起 launchd 任务（`ingest/launchd/com.zelin.screenpipe-prune.plist` 指向一个不在本仓库的 a11y 脚本，与本节的 cron 链 prune 无关，本节不动它）；不在向导里加这一屏（issue 的 optional 项，留给下一轮）。

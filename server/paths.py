@@ -147,8 +147,12 @@ def user_log_dir() -> Path:
 
 def screenpipe_dir() -> Path:
     # §15.2：录制引擎的数据目录（db.sqlite 的 mtime = 「最近写入」；engine.log = 引擎日志，
-    # 与 shell/Sources/Recording.swift engineLogPath 同一路径）
-    return Path.home() / ".screenpipe"
+    # 与 shell/Sources/Recording.swift engineLogPath 同一路径）。
+    # §71：`$ZAI_SCREENPIPE_DIR` 是**测试缝**（磁盘占用扫描绝不许在判例里走这台机器真实的录制
+    # 目录——几十万个文件，结果还随机器不同；tests/test_server_settings_storage.py 与
+    # tests/test_storage_usage.py 各自把它指到 tmp）；生产里没人设它，就是 ~/.screenpipe。
+    override = os.environ.get("ZAI_SCREENPIPE_DIR")
+    return Path(override) if override else Path.home() / ".screenpipe"
 
 
 def actd_log_path(home: Path) -> Path:

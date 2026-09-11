@@ -38,6 +38,7 @@ import { RecapSection } from "../components/settings/RecapSection";
 import { SkillsSection } from "../components/settings/SkillsSection";
 import { RecordingSection } from "../components/settings/RecordingSection";
 import { SettingsFold } from "../components/settings/SettingsFold";
+import { StorageSection } from "../components/settings/StorageSection";
 import { MaintainerExtras } from "../components/settings/MaintainerExtras";
 import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
@@ -293,7 +294,9 @@ export function SettingsPage() {
       {/* D30 依赖检查：原生 DepsView 整段（快速行 / 雷达健康 / 诊断 + web 自有的活性 / 部署 / 安装回执 / 日志）折进设置页 */}
       <Fold id="deps" isForced={searchActive}><DepsSection /></Fold>
       <Fold id="notifications" isForced={searchActive}><CatalogSection sectionId="notifications" /></Fold>
-      <Fold id="recording" isForced={searchActive}><RecordingSection /></Fold>
+      {/* §71 录制区里多一块磁盘：占用（按类分）/ 每月增长估计 / 保留期旋钮 / 上次 prune 回执（issue #28）。
+          放在录制区内而不是另起一区——「录多少」与「留多少」是同一个话题；数据自己拉（server 后台扫描）。 */}
+      <Fold id="recording" isForced={searchActive}><RecordingSection /><StorageSection /></Fold>
       <Fold id="live_captions" isForced={searchActive}><CaptionsSection /></Fold>
       <Fold id="obsidian" isForced={searchActive}><ObsidianSection /></Fold>
       <Fold id="credentials" isForced={searchActive}><CredentialsSection /></Fold>

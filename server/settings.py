@@ -264,7 +264,7 @@ def _lenient_daily_loop(field: str, value, default):
 def _config_daily_loop(home: Path) -> "tuple[dict, dict]":
     """(values, present) from config.yaml ``daily_loop:``; absent/bad = defaults."""
     values, present = dict(DAILY_LOOP_DEFAULTS), {f: False for f in DAILY_LOOP_FIELDS}
-    blk = _config_block(home, "daily_loop")
+    blk = config_block(home, "daily_loop")
     for field in DAILY_LOOP_FIELDS:
         if field in blk:
             present[field] = True
@@ -272,7 +272,10 @@ def _config_daily_loop(home: Path) -> "tuple[dict, dict]":
     return values, present
 
 
-def _config_block(home: Path, name: str) -> dict:
+def config_block(home: Path, name: str) -> dict:
+    """config.yaml 顶层块 ``name`` → dict（缺席 / 坏 YAML / 无 PyYAML = {}）。
+    public：server/storage.py 读 ``recording:`` 块走同一把（防腐 #2——跨模块
+    引用 _私名 = 当场升 public）。"""
     if yaml is None:
         return {}
     try:

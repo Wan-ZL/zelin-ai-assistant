@@ -140,6 +140,24 @@ class TelemetryRedactionTestCase(unittest.TestCase):
         cfg = _load("recording:\n  ignored_apps: Zoom\n")
         self.assertEqual(cfg.recording_ignored_apps, config.Config().recording_ignored_apps)
 
+    def test_media_retention_minutes(self):
+        """§71：yaml 路径宽容——好值照收、越界夹取、坏值回落 60、缺席不动。"""
+        self.assertEqual(_load("recording:\n  media_retention_minutes: 180\n"
+                               ).recording_media_retention_minutes, 180)
+        self.assertEqual(_load("recording:\n  media_retention_minutes: 1\n"
+                               ).recording_media_retention_minutes,
+                         config.MIN_MEDIA_RETENTION_MINUTES)
+        self.assertEqual(_load("recording:\n  media_retention_minutes: 99999999\n"
+                               ).recording_media_retention_minutes,
+                         config.MAX_MEDIA_RETENTION_MINUTES)
+        for junk in ("soon", "true", "[]"):
+            self.assertEqual(_load("recording:\n  media_retention_minutes: %s\n" % junk
+                                   ).recording_media_retention_minutes,
+                             config.DEFAULT_MEDIA_RETENTION_MINUTES)
+        self.assertEqual(_load("recording:\n  ignored_apps: []\n"
+                               ).recording_media_retention_minutes,
+                         config.DEFAULT_MEDIA_RETENTION_MINUTES)
+
 
 class MiscBlocksTestCase(unittest.TestCase):
     def test_switch_blocks(self):
