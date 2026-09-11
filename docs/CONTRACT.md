@@ -3297,6 +3297,11 @@ evict 成 dataless 的文件在不许触发下载的语境里 `open()` 直接返
   EINTR / ENOTCONN / ETIMEDOUT / ENETDOWN / EHOSTDOWN / ENODATA，按 `errno`
   号认领——比 strerror 文本可靠）= **环境**在挡路；非 UTF-8（UnicodeDecodeError）、
   权限、EISDIR 等仍是这篇 note 本身坏了，语义与额度全不变。
+- **errno 名逐字稳定**（`_errno_name`）：`errno.errorcode` 对同值别名给的是
+  最后注册的那个名字——同一个 dataless 错误在 macOS 上叫 `EDEADLK`、在 Linux
+  上叫 `EDEADLOCK`（EAGAIN/EWOULDBLOCK 同理）。错误串是跨机器读的台账字段，
+  名字从 `_TRANSIENT_READ_ERRNO_ORDER` 逐字派生（表内靠前的名字赢别名），
+  `errno.errorcode` 只当表外兜底。
 - **同 pass 退避重读**（`_read_note_text`）：`NOTE_READ_BACKOFF_S`（0.5 s）×
   至多 `NOTE_READ_MAX_RETRIES`（2）次——第一次 `open()` 本身常常就把下载踢
   起来了，第二次即成功。analytics `radar_note_read_retry{attempt, err}`：只带
@@ -3318,7 +3323,8 @@ evict 成 dataless 的文件在不许触发下载的语境里 `open()` 直接返
   trash 一张卡的权力。note 复活成功后旧诊断卡留在备选由 owner 处置；卡的路径
   dedup 是「任何状态」，所以它也不会因为再次放弃而重复铸卡。
 - 判例：`tests/test_radar_note_read_transient.py`（errno 分类、同 pass 重读成功、
-  重试耗尽后进台账且带标记、20 次额度、复活闸只开一次、非 UTF-8 语义不变）。
+  重试耗尽后进台账且带标记、errno 名不随平台漂、20 次额度、复活闸只开一次、
+  非 UTF-8 语义不变）。
 
 
 ---

@@ -43,6 +43,17 @@ class TransientReadClassificationTestCase(unittest.TestCase):
         self.assertFalse(radar._is_transient_read_error(
             "claude -p failed on a.md: OSError: [Errno 60] Operation timed out"))
 
+    def test_the_errno_name_does_not_drift_across_platforms(self):
+        """errno.errorcode 对同值别名给最后注册的名字：Linux 上 EDEADLK(35) 会
+        报成 'EDEADLOCK'、EAGAIN(11) 报成 'EWOULDBLOCK'。机器标记是跨机器读的
+        台账字段，必须逐字稳定（§47.5）。"""
+        self.assertEqual(radar._errno_name(errno.EDEADLK), "EDEADLK")
+        self.assertEqual(radar._errno_name(errno.EAGAIN), "EAGAIN")
+        self.assertEqual(radar._errno_name(errno.EWOULDBLOCK), "EAGAIN")
+        # 表外的 errno 仍按 errorcode 兜底，没有号就回字面数字
+        self.assertEqual(radar._errno_name(errno.EACCES), "EACCES")
+        self.assertEqual(radar._errno_name(None), "None")
+
     def test_the_attempt_cap_is_per_class(self):
         self.assertEqual(
             radar._max_attempts_for("unreadable note a.md: [Errno 11] "

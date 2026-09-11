@@ -80,11 +80,19 @@ _TRANSIENT_PATTERNS = (
 # 就是这样连续 5 轮不可读、被判 gave_up，而它们今天用同一段代码读得好好的）。
 # 这类错误按 errno 认领（结构化，比 strerror 文本可靠）：同 pass 短退避重读，
 # 仍不行才进台账，且用单独放宽的额度——环境抖动不该烧掉毒 note 的 5 次预算。
-_TRANSIENT_READ_ERRNOS = frozenset(
-    e for e in (getattr(errno, name, None) for name in
-                ("EDEADLK", "EAGAIN", "EWOULDBLOCK", "EBUSY", "EINTR",
-                 "ENOTCONN", "ETIMEDOUT", "ENETDOWN", "EHOSTDOWN", "ENODATA"))
-    if e is not None)
+# 名字顺序即优先级：同一个 errno 号在不同平台有别名（Linux 上 EDEADLK ==
+# EDEADLOCK == 35、EAGAIN == EWOULDBLOCK == 11），而 errno.errorcode 给的是
+# **最后**注册的那个名字——Linux 上 errorcode[35] 是 'EDEADLOCK'，macOS 上
+# errorcode[11] 是 'EDEADLK'。机器标记不许随平台漂（台账要跨机器读），所以
+# 名字从本表逐字派生，errno.errorcode 只当兜底。
+_TRANSIENT_READ_ERRNO_ORDER = (
+    "EDEADLK", "EAGAIN", "EWOULDBLOCK", "EBUSY", "EINTR",
+    "ENOTCONN", "ETIMEDOUT", "ENETDOWN", "EHOSTDOWN", "ENODATA")
+# reversed：靠前的名字覆盖靠后的别名，EDEADLK 赢 EDEADLOCK、EAGAIN 赢 EWOULDBLOCK
+_TRANSIENT_READ_ERRNO_NAMES = {
+    getattr(errno, name): name
+    for name in reversed(_TRANSIENT_READ_ERRNO_ORDER) if hasattr(errno, name)}
+_TRANSIENT_READ_ERRNOS = frozenset(_TRANSIENT_READ_ERRNO_NAMES)
 NOTE_READ_MAX_RETRIES = 2
 NOTE_READ_BACKOFF_S = 0.5
 # 环境类不可读的独立额度（30 min 一轮 -> ~10 小时）：iCloud 把文件放回来
@@ -247,6 +255,17 @@ def _is_transient_error(error: str) -> bool:
     claude 或多等一轮 cron，两边都无害。"""
     e = str(error or "")
     return any(p in e for p in _TRANSIENT_PATTERNS)
+
+
+def _errno_name(code: Optional[int]) -> str:
+    """errno 号 -> 平台稳定的名字（§47.5）。
+
+    errno.errorcode 对同值别名给的是最后注册的那个名字，于是同一个「云端
+    dataless」错误在 macOS 上叫 EDEADLK、在 Linux 上叫 EDEADLOCK。错误串是
+    机器可读的台账字段（_is_transient_read_error / 运维 grep 都读它），不许
+    随平台漂，所以先查 _TRANSIENT_READ_ERRNO_NAMES，查不到才退回 errorcode。"""
+    name = _TRANSIENT_READ_ERRNO_NAMES.get(code)
+    return name or errno.errorcode.get(code, str(code))
 
 
 def _is_transient_read_error(error: Optional[str]) -> bool:
@@ -1243,7 +1262,7 @@ def _read_note_text(note: Path) -> tuple[Optional[str], Optional[str]]:
         except UnicodeDecodeError as e:
             return None, f"unreadable note {note.name}: {e}"
         except OSError as e:
-            code = errno.errorcode.get(e.errno, str(e.errno))
+            code = _errno_name(e.errno)
             if e.errno not in _TRANSIENT_READ_ERRNOS:
                 return None, f"unreadable note {note.name}: {e}"
             if attempt >= NOTE_READ_MAX_RETRIES:
