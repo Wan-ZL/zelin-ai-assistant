@@ -551,6 +551,61 @@ export interface DailyLoopSettings {
 export type DailyLoopPatch = Partial<Pick<DailyLoopSettings,
   "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days">>;
 
+/** GET /api/settings/storage 的 usage 块（CONTRACT §71）：du 在 server 的后台线程里跑，
+ *  state = scanning（还没有结果，轮询）| ready | missing（目录不在，从没录过）| error。
+ *  bytes 按类分：media（帧 / 音频片段，prune 削的那一半）· index（db.sqlite*，文本与转写）· other。 */
+export interface StorageUsage {
+  state: "scanning" | "ready" | "missing" | "error";
+  dir: string;
+  bytes: { media: number; index: number; other: number; total: number } | null;
+  files: { media: number; index: number; other: number } | null;
+  truncated: boolean;
+  scanned_at: string | null;
+  scan_seconds: number | null;
+  stale: boolean;
+  scanning: boolean;
+  error?: string;
+  [key: string]: unknown;
+}
+
+/** 增长估计（§71）：basis = samples（state/storage_samples.json 首尾两点）| lifetime（目录建立至今平均）；
+ *  说不出来时整块为 null——UI 就不说这句，不编。 */
+export interface StorageGrowth {
+  basis: "samples" | "lifetime";
+  days: number;
+  bytes_per_month: number;
+  [key: string]: unknown;
+}
+
+/** prune 回执的投影（§71）：ingest/screenpipe-cleanup.sh 每轮写 state/screenpipe_prune.json。
+ *  state = ok | no_data_dir | unreadable | unknown | never；stale = 超过 3 小时没回执（= 停了）。 */
+export interface StoragePrune {
+  ran_at: string | null;
+  state: "ok" | "no_data_dir" | "unreadable" | "unknown" | "never";
+  deleted_files: number | null;
+  deleted_bytes: number | null;
+  retention_minutes: number | null;
+  age_seconds: number | null;
+  stale: boolean;
+  [key: string]: unknown;
+}
+
+/** GET/PUT /api/settings/storage（CONTRACT §71，issue #28）：server/storage.py snapshot 的 wire 形逐字镜像。 */
+export interface StorageSettings {
+  media_retention_minutes: number;
+  source: string;
+  bounds: { min: number; max: number; default: number };
+  usage: StorageUsage;
+  growth: StorageGrowth | null;
+  prune: StoragePrune;
+  [key: string]: unknown;
+}
+
+/** PUT /api/settings/storage 的 body：只有这一个键 */
+export interface StoragePatch {
+  media_retention_minutes: number;
+}
+
 /** POST /api/claude-code/default-model 的回执（只改 model 键；backup = 改前副本路径，文件原本不存在时为 null） */
 export interface ClaudeCodeDefaultWrite {
   model: string;

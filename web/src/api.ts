@@ -43,6 +43,8 @@ import type {
   SecretStatus,
   SecretVerifyResult,
   SlackDirectory,
+  StoragePatch,
+  StorageSettings,
   SyncDisableReceipt,
   SyncPairReceipt,
   SyncStatus,
@@ -324,6 +326,17 @@ export function fetchDailyLoopSettings(signal?: AbortSignal): Promise<DailyLoopS
 /** PUT /api/settings/daily-loop — 保存旋钮子集（写请求：四闸同 POST；server 校验 + diff-write） */
 export function putDailyLoopSettings(body: DailyLoopPatch): Promise<DailyLoopSettings> {
   return request<DailyLoopSettings>("/api/settings/daily-loop", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/settings/storage — 录制数据的占用 / 增长估计 / 保留期 / prune 回执（CONTRACT §71）。
+ *  refresh = 强制重扫（server 仍在后台线程里走目录树，这个 GET 从不阻塞）。 */
+export function fetchStorageSettings(refresh = false, signal?: AbortSignal): Promise<StorageSettings> {
+  return request<StorageSettings>(`/api/settings/storage${refresh ? "?refresh=1" : ""}`, { signal });
+}
+
+/** PUT /api/settings/storage — 保存媒体保留分钟数（写请求：四闸同 POST；server 夹取 + diff-write） */
+export function putStorageSettings(body: StoragePatch): Promise<StorageSettings> {
+  return request<StorageSettings>("/api/settings/storage", { method: "PUT", body: JSON.stringify(body) });
 }
 
 /** GET /api/claude-code/default-model — follow 模式继承的 Claude Code 全局默认 */

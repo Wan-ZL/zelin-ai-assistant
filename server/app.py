@@ -41,6 +41,9 @@
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 - 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
   diff-write 语义），server/settings.py。
+- 磁盘占用与保留期（§71，issue #28）：GET /api/settings/storage（占用分项 +
+  增长估计 + prune 回执；du 在后台线程，读面永不走目录树）/ PUT（媒体保留
+  分钟数，同一 diff-write 语义），server/storage.py。
 - 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
   三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
 - 后台雷达行（§48.7）：GET /api/radars（launchd 已加载 / 模板间隔）、POST
@@ -88,7 +91,7 @@ from server import (about, ai_fix_launch, analytics_ingest, attachments,
                     permissions, radars, recaps, repair, search_index_source,
                     secrets_store, security, self_improve_lane, settings,
                     settings_catalog, setup, slack_directory, slack_manifest,
-                    sync_pairing, telemetry_consent,
+                    storage, sync_pairing, telemetry_consent,
                     terminal_launch, uninstall_launch, voice_profile)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
@@ -600,6 +603,11 @@ _GET_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
     # §70 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
     "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
+    # §71 录制数据的磁盘占用 / 增长估计 / 保留期 / prune 回执（issue #28）。
+    # du 在后台线程里跑：这个 GET 永不走目录树（渲染路径零阻塞 IO），
+    # 没有缓存结果就回 state:"scanning" 让 web 轮询；?refresh=1 强制重扫。
+    "/api/settings/storage": lambda ctx, query: storage.snapshot(
+        ctx.home, refresh=_flag(query, "refresh")),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
@@ -739,6 +747,8 @@ _PUT_JSON_ROUTES = {
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
     # §70 每日自我改进循环的五把旋钮（同一 diff-write 语义）
     "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
+    # §71 录制媒体保留分钟数（同一 diff-write 语义；prune 脚本下一轮读同一层）
+    "/api/settings/storage": lambda ctx, payload: storage.update(ctx.home, payload),
     # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义；server 是这三个键的唯一读写者）
     "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
 }

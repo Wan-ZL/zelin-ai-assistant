@@ -87,6 +87,13 @@ DEFAULT_IGNORED_APPS: list = [
     "Incognito",         # Chrome/Edge incognito windows (window-title match)
 ]
 
+# §71 磁盘保留期：原始媒体（帧 / 音频片段）的最长寿命，分钟。出厂 60；
+# 下限 5 分钟（cron 链每 30 分钟跑一轮，更短会削到正在导出的那批帧）、
+# 上限 1 年（再长等于没有保留期，且 find 的参数该保持人话范围）。
+DEFAULT_MEDIA_RETENTION_MINUTES = 60
+MIN_MEDIA_RETENTION_MINUTES = 5
+MAX_MEDIA_RETENTION_MINUTES = 365 * 24 * 60
+
 # Telemetry defaults (docs/TELEMETRY.md) — anonymous usage analytics upload is
 # ON by default (like VS Code) and points at the maintainer's Supabase project.
 # The publishable key is DESIGNED to be public (RLS allows INSERT only — it can
@@ -339,6 +346,12 @@ class Config:
     recording_ignored_apps: list = field(
         default_factory=lambda: list(DEFAULT_IGNORED_APPS)
     )
+    # 原始帧 / 音频片段在 ~/.screenpipe/data 里活多久（§71）——cron 链里
+    # ingest/screenpipe-cleanup.sh 的 `find -mmin +N`。出厂 60 分钟（导出在
+    # 同一轮的前一步跑完，再老的帧只占盘）；OCR 文本与转写留在 db.sqlite，
+    # 本键不碰。下限 MIN_MEDIA_RETENTION_MINUTES：比它更短会削到正在导出的
+    # 那一批帧上。
+    recording_media_retention_minutes: int = DEFAULT_MEDIA_RETENTION_MINUTES
 
     # local pre-send redaction (opt-in)
     redaction_enabled: bool = False
@@ -592,6 +605,18 @@ def _nonneg_int(value) -> int:
     if n < 0:
         raise ValueError(f"negative count: {value!r}")
     return n
+
+
+def coerce_retention_minutes(value) -> int:
+    """§71 `recording.media_retention_minutes` 的严格路径：整数、夹在
+    [MIN_MEDIA_RETENTION_MINUTES, MAX_MEDIA_RETENTION_MINUTES] 之间；垃圾
+    ValueError（overrides per-entry 跳过、yaml 路径回落默认）。夹取而不是
+    报错——用户把 1 当「马上删」输进来时，给他一个安全的最小值比让这把
+    旋钮静默失效诚实。server/storage.py 镜像同一条规则（判例钉住）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"not a retention: {value!r}")
+    n = int(value)
+    return max(MIN_MEDIA_RETENTION_MINUTES, min(MAX_MEDIA_RETENTION_MINUTES, n))
 
 
 def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
@@ -906,6 +931,13 @@ def _apply_recording(cfg: Config, data: dict) -> None:
         cfg.recording_ignored_apps = [
             str(a).strip() for a in apps if a is not None and str(a).strip()
         ]
+    # §71：坏值回落出厂值——prune 脚本拿到的必须是能直接喂给 find 的数
+    if "media_retention_minutes" in recording:
+        try:
+            cfg.recording_media_retention_minutes = coerce_retention_minutes(
+                recording.get("media_retention_minutes"))
+        except (TypeError, ValueError):
+            cfg.recording_media_retention_minutes = DEFAULT_MEDIA_RETENTION_MINUTES
 
 
 def _apply_telemetry(cfg: Config, data: dict) -> None:
@@ -1265,6 +1297,10 @@ _OVERRIDE_FIELDS: dict = {
     "daily_loop_max_proposals_per_day": _nonneg_int,
     "daily_loop_stale_days": _nonneg_int,
     "daily_loop_trash_retention_days": _nonneg_int,
+    # §71：录制媒体保留分钟数——web 设置页「录制 · 磁盘占用」经
+    # server/storage.py diff-write 这一个扁平键；prune 脚本经
+    # `--print-value` 读同一层。
+    "recording_media_retention_minutes": coerce_retention_minutes,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }
@@ -1609,6 +1645,13 @@ _CLI_PATH_KEYS: tuple = (
 )
 
 
+# 标量设置的 shell 消费面（`--print-value`）：key → 加载失败时打的出厂值。
+# §71：ingest/screenpipe-cleanup.sh 读保留分钟数（web 改了旋钮下一轮即生效）。
+_CLI_VALUE_KEYS: dict = {
+    "recording_media_retention_minutes": DEFAULT_MEDIA_RETENTION_MINUTES,
+}
+
+
 def _cli_default_path(key: str) -> str:
     vault = Path(DEFAULT_OBSIDIAN_VAULT).expanduser()
     if key == "obsidian_raw":
@@ -1616,21 +1659,44 @@ def _cli_default_path(key: str) -> str:
     return str(vault / _OBSIDIAN_DIR_NAMES[key])
 
 
+def _print_value(key: str) -> int:
+    """`--print-value <key>`（§71）：一个标量设置的生效值（overrides →
+    config.yaml → 默认，与守护进程同一层）打到 stdout 给 shell 消费方。
+    与 --print-path 同一条纪律：任何加载失败都打默认值，绝不 traceback、
+    绝不空行——cron 里的 prune 脚本拿它当 find 的参数。"""
+    try:
+        value = getattr(load_config(), key)
+    except Exception:  # noqa: BLE001 — silent-on-error: print the default
+        value = None
+    if value is None:
+        value = _CLI_VALUE_KEYS[key]
+    print(value)
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
         prog="python3 -m act.lib.config",
-        description="Print a resolved config path for shell consumers.",
+        description="Print a resolved config path/value for shell consumers.",
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--print-path",
-        required=True,
         choices=_CLI_PATH_KEYS,
         metavar="KEY",
         help="config key to resolve: %s" % ", ".join(_CLI_PATH_KEYS),
     )
+    group.add_argument(
+        "--print-value",
+        choices=tuple(_CLI_VALUE_KEYS),
+        metavar="KEY",
+        help="scalar setting to print: %s" % ", ".join(_CLI_VALUE_KEYS),
+    )
     args = parser.parse_args(argv)
+    if args.print_value:
+        return _print_value(args.print_value)
     try:
         value = getattr(load_config(), args.print_path)
     except Exception:  # noqa: BLE001 — silent-on-error: print the default

@@ -1110,3 +1110,18 @@
   font-size: calc(10.5px * var(--text-scale));
   overflow-wrap: anywhere;
 }
+
+/* §71 录制区的磁盘块：占用分项列表不带项目符号（是数据行不是清单），总计那行与正文同字号 */
+.storage-breakdown {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.storage-breakdown li[data-kind="total"] {
+  color: var(--text-primary);
+}

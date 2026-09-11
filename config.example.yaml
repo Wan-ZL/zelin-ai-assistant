@@ -117,6 +117,12 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
     - Keychain Access
     - Private Browsing                 # Safari 无痕窗口（按窗口标题匹配）
     - Incognito                        # Chrome/Edge 无痕窗口（按窗口标题匹配）
+  media_retention_minutes: 60          # 原始帧 / 音频片段在 ~/.screenpipe/data 里活多久，分钟（CONTRACT §71）。
+                                       # 30 分钟的 cron 链里 ingest/screenpipe-cleanup.sh 按它删；导出在同一轮的
+                                       # 前一步跑完，再老的帧只占盘。夹取进 [5, 365*24*60]。**不碰 db.sqlite**：
+                                       # OCR 文本与音频转写永久保留（每天几十 KB），几个 GB 全在媒体上。
+                                       # 设置页「录制」区里有同一把旋钮（改了下一轮生效，无需重启），
+                                       # 那里还看得见当前占用、每月增长估计与上次清理的回执。
 
 trash:
   retention_days: 60                   # 回收站保留天数；超期且未标永久的硬删。设 0 = 永不自动清

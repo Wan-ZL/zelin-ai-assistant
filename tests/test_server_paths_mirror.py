@@ -21,6 +21,7 @@ from server import inbox_writer as server_inbox
 from server import paths
 from server import recaps as server_recaps
 from server import settings as server_settings
+from server import storage as server_storage
 
 HOME = Path("/tmp/zai-paths-pin")
 
@@ -184,6 +185,35 @@ class DailyLoopSettingsMirrorTestCase(unittest.TestCase):
                     except (TypeError, ValueError):
                         b = ("err", None)
                     self.assertEqual(a, b)
+
+
+class StorageSettingsMirrorTestCase(unittest.TestCase):
+    """§71：server/storage.py 手抄的保留期常量与夹取规则与 act/lib/config.py 逐字一致。"""
+
+    def test_bounds_and_key_mirror_config(self):
+        self.assertEqual(server_storage.DEFAULT_RETENTION_MINUTES,
+                         config.DEFAULT_MEDIA_RETENTION_MINUTES)
+        self.assertEqual(server_storage.MIN_RETENTION_MINUTES,
+                         config.MIN_MEDIA_RETENTION_MINUTES)
+        self.assertEqual(server_storage.MAX_RETENTION_MINUTES,
+                         config.MAX_MEDIA_RETENTION_MINUTES)
+        self.assertEqual(config.Config().recording_media_retention_minutes,
+                         server_storage.DEFAULT_RETENTION_MINUTES)
+        self.assertIn(server_storage.RETENTION_OVERRIDE_KEY, config._OVERRIDE_FIELDS)
+
+    def test_coercers_agree_on_a_table(self):
+        for value in (60, 1, 5, 0, -30, 10 ** 9, "90", " 90 ", 90.0, True, None, "soon", [], {}):
+            with self.subTest(value=value):
+                try:
+                    a = ("ok", config._OVERRIDE_FIELDS[
+                        server_storage.RETENTION_OVERRIDE_KEY](value))
+                except (TypeError, ValueError):
+                    a = ("err", None)
+                try:
+                    b = ("ok", server_storage.coerce_retention(value))
+                except (TypeError, ValueError):
+                    b = ("err", None)
+                self.assertEqual(a, b)
 
 
 if __name__ == "__main__":
