@@ -68,6 +68,10 @@ CHECKS = {
               "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)"},
     "session_id": {"zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。",
                    "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape."},
+    # §28 追记（issue #29）安静时段的两个端点；词法 = server.settings.CLOCK_TIME_RE
+    # （act/lib/config.coerce_clock_time 同一正则，tests/test_server_paths_mirror.py 钉）。
+    "clock_time": {"zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。",
+                   "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30."},
 }
 
 # 一个 check 不止一句时的分句（add-only）：kind → {reason → 双语句}；checker 返回的 reason 在表里就用那句，否则用
@@ -176,6 +180,30 @@ SECTIONS: tuple = (
                choices=("off", "banner", "sound"),
                help_zh="卡片进入「待验收」时的系统通知：关 / 横幅 / 横幅+声音（默认）。其余通知不受影响。",
                help_en="System notification when a card reaches In review: off / banner / banner + sound (default). Other notifications are unaffected."),
+            # §28 追记（issue #29）分类开关：三把都默认开（新装机行为不变）。
+            # 「完成」一类的开关就是上面那三档，不另立第二把。
+            _f("notify_proposals", "bool", "新提案通知", "New-proposal alerts", default=True,
+               help_zh="雷达 / 捕获铸出新卡等你审批时（含回锅、含一次性批量汇总）。关掉不影响卡片本身，只是不弹横幅——看板上照样在等。",
+               help_en="When a radar or a capture files a new card for your approval (including returned cards and the batched \"N new cards\" summary). Turning it off changes nothing about the cards themselves — they still wait on the board, you just get no banner."),
+            _f("notify_needs_input", "bool", "任务停下来时通知", "Needs-input alerts", default=True,
+               help_zh="会话停在等你一句话时：受阻收割进「待验收」、反复中断暂停自动救活、派发连续失败后停止重试。",
+               help_en="When a session stops and waits on you: a blocked session harvested into In review, auto-recovery paused after repeated crashes, dispatch giving up after a streak of failures."),
+            _f("notify_failures", "bool", "失败通知", "Failure alerts", default=True,
+               help_zh="需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且**不受安静时段管**——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。",
+               help_en="Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and **quiet hours do not silence it** — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here."),
+            # 安静时段：写方不入队（不是攒着早上再弹）——§28 的 10 分钟 stale
+            # 清扫让「压到早上」没法兑现；help 文案诚实写明这一点。
+            _f("quiet_hours_enabled", "bool", "安静时段", "Quiet hours", default=False,
+               help_zh="开启后，下面的时段内不弹任何横幅（失败通知除外）。这一段时间的通知是**丢掉**不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。",
+               help_en="While on, no banner is posted inside the window below (failure alerts excepted). Notifications in that window are **dropped, not held until morning**: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up."),
+            _f("quiet_hours_start", "string", "安静时段开始", "Quiet hours start", default="22:00",
+               check="clock_time", placeholder=("22:00", "22:00"),
+               help_zh="24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。",
+               help_en="24-hour HH:MM, local time. A start later than the end wraps past midnight (e.g. 22:00 → 08:00)."),
+            _f("quiet_hours_end", "string", "安静时段结束", "Quiet hours end", default="08:00",
+               check="clock_time", placeholder=("08:00", "08:00"),
+               help_zh="24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。",
+               help_en="24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off."),
         ],
         help_zh="系统通知由看板 app（壳）投递（§28）；app 没开就没有系统通知。通知权限见「权限体检」。",
         help_en="System notifications are posted by the board app (§28); no app running = no banners. Permission status: Permissions checkup.",
@@ -705,6 +733,7 @@ def session_id_problem(text: str) -> Optional[str]:
 _CHECKERS: "dict[str, Callable[[str], Optional[str]]]" = {
     "email": lambda text: None if looks_like_email(text) else "shape",
     "session_id": session_id_problem,
+    "clock_time": lambda text: None if settings.CLOCK_TIME_RE.match(text.strip()) else "shape",
 }
 
 

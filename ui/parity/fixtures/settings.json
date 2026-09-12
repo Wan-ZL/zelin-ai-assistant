@@ -149,6 +149,140 @@
             "zh": ""
           },
           "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "When a radar or a capture files a new card for your approval (including returned cards and the batched \"N new cards\" summary). Turning it off changes nothing about the cards themselves — they still wait on the board, you just get no banner.",
+            "zh": "雷达 / 捕获铸出新卡等你审批时（含回锅、含一次性批量汇总）。关掉不影响卡片本身，只是不弹横幅——看板上照样在等。"
+          },
+          "key": "notify_proposals",
+          "kind": "bool",
+          "label": {
+            "en": "New-proposal alerts",
+            "zh": "新提案通知"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "When a session stops and waits on you: a blocked session harvested into In review, auto-recovery paused after repeated crashes, dispatch giving up after a streak of failures.",
+            "zh": "会话停在等你一句话时：受阻收割进「待验收」、反复中断暂停自动救活、派发连续失败后停止重试。"
+          },
+          "key": "notify_needs_input",
+          "kind": "bool",
+          "label": {
+            "en": "Needs-input alerts",
+            "zh": "任务停下来时通知"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and **quiet hours do not silence it** — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here.",
+            "zh": "需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且**不受安静时段管**——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。"
+          },
+          "key": "notify_failures",
+          "kind": "bool",
+          "label": {
+            "en": "Failure alerts",
+            "zh": "失败通知"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": false,
+          "effective": false,
+          "help": {
+            "en": "While on, no banner is posted inside the window below (failure alerts excepted). Notifications in that window are **dropped, not held until morning**: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up.",
+            "zh": "开启后，下面的时段内不弹任何横幅（失败通知除外）。这一段时间的通知是**丢掉**不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。"
+          },
+          "key": "quiet_hours_enabled",
+          "kind": "bool",
+          "label": {
+            "en": "Quiet hours",
+            "zh": "安静时段"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "check": {
+            "kind": "clock_time",
+            "message": {
+              "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30.",
+              "zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。"
+            }
+          },
+          "choices": null,
+          "default": "22:00",
+          "effective": "22:00",
+          "help": {
+            "en": "24-hour HH:MM, local time. A start later than the end wraps past midnight (e.g. 22:00 → 08:00).",
+            "zh": "24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。"
+          },
+          "key": "quiet_hours_start",
+          "kind": "string",
+          "label": {
+            "en": "Quiet hours start",
+            "zh": "安静时段开始"
+          },
+          "placeholder": {
+            "en": "22:00",
+            "zh": "22:00"
+          },
+          "source": "default"
+        },
+        {
+          "check": {
+            "kind": "clock_time",
+            "message": {
+              "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30.",
+              "zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。"
+            }
+          },
+          "choices": null,
+          "default": "08:00",
+          "effective": "08:00",
+          "help": {
+            "en": "24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off.",
+            "zh": "24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。"
+          },
+          "key": "quiet_hours_end",
+          "kind": "string",
+          "label": {
+            "en": "Quiet hours end",
+            "zh": "安静时段结束"
+          },
+          "placeholder": {
+            "en": "08:00",
+            "zh": "08:00"
+          },
+          "source": "default"
         }
       ],
       "help": {

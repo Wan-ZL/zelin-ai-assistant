@@ -78,7 +78,7 @@ def _new_card_msgs(p_na: dict, c_na: dict) -> list:
         if item.get("reraised"):
             t, b = notify.msg_reraised(item.get("title", rid),
                                        item.get("reraised_note") or "")
-            msgs.append((t, b, rid, None))
+            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
         elif not _from_weekly_digest(item):   # digest cards: announced by the digest itself
             fresh.append((rid, item))
     msgs.extend(_fresh_card_msgs(fresh))
@@ -88,11 +88,11 @@ def _new_card_msgs(p_na: dict, c_na: dict) -> list:
 def _fresh_card_msgs(fresh: list) -> list:
     if len(fresh) > NEW_CARD_BATCH_ABOVE:
         t, b = notify.msg_new_cards_batch(len(fresh))
-        return [(t, b, None, None)]
+        return [(t, b, None, notify.KIND_PROPOSAL)]
     msgs = []
     for rid, item in fresh:
         t, b = notify.msg_new_card(item.get("title", rid))
-        msgs.append((t, b, rid, None))
+        msgs.append((t, b, rid, notify.KIND_PROPOSAL))
     return msgs
 
 
@@ -120,7 +120,7 @@ def _review_ready_msgs(p_run: dict, p_rev: dict, c_rev: dict) -> list:
     for rid, item in c_rev.items():
         if _fresh_delivery(rid, item, p_run, p_rev):
             t, b = notify.msg_review_ready(item.get("name") or rid)
-            msgs.append((t, b, rid, "review_ready"))
+            msgs.append((t, b, rid, notify.KIND_REVIEW_READY))
     return msgs
 
 

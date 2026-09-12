@@ -241,6 +241,15 @@ class Config:
     # v0.46 完成提醒 (off|banner|sound)。App(NotifyRelay) 是唯一读者——管线只
     # 负责给 review_ready 队列条目打 kind；键收进 overrides 白名单以便记账。
     review_notify: str = "sound"
+    # §28 追记（issue #29）通知偏好：安静时段 + 分类开关。唯一读者 =
+    # act/lib/notify.suppression_reason（抑制在写方，理由见那里）。出厂值 =
+    # 本改动前的行为（安静时段关、三类全开），所以新装机一字不变。
+    quiet_hours_enabled: bool = False
+    quiet_hours_start: str = "22:00"    # 本地 HH:MM；跨午夜合法
+    quiet_hours_end: str = "08:00"
+    notify_proposals: bool = True       # 新卡待审批 / 批量 / 回锅
+    notify_needs_input: bool = True     # 任务停下来了，等人一句话
+    notify_failures: bool = True        # 需重新登录 / 雷达停摆 / 派发失败（穿透安静时段）
     # §68.7 终端应用 (auto|ghostty|terminal|iterm2)。server/terminal_launch 是唯一读者
     # （web 「在终端打开（接管会话）/ 开发会话 / 卸载」都经它 open -a）；键收进白名单以便记账。
     terminal_app: str = DEFAULT_TERMINAL_APP
@@ -1203,6 +1212,14 @@ _OVERRIDE_FIELDS: dict = {
     "slack_enabled": _coerce_bool,
     "obsidian_enabled": _coerce_bool,
     "review_notify": str,
+    # §28 追记（issue #29）：通知偏好六把。两个 HH:MM 端点用 §70 同一个
+    # coerce_clock_time，坏值 → ValueError → per-entry 跳过（保留出厂值）。
+    "quiet_hours_enabled": _coerce_bool,
+    "quiet_hours_start": coerce_clock_time,
+    "quiet_hours_end": coerce_clock_time,
+    "notify_proposals": _coerce_bool,
+    "notify_needs_input": _coerce_bool,
+    "notify_failures": _coerce_bool,
     "terminal_app": _coerce_terminal_app,
     "weekly_digest_enabled": _coerce_bool,
     # §17 (D19): digest cadence — the Settings UI writes this flat key
