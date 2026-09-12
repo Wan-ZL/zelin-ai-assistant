@@ -140,8 +140,12 @@ class BundleAndBuildTestCase(unittest.TestCase):
         for fw in ["AVFoundation", "ScreenCaptureKit", "UserNotifications", "WebKit", "SwiftUI",
                    "ServiceManagement", "Carbon"]:
             self.assertIn("-framework %s" % fw, build)
-        # ad-hoc signing stays (task constraint) — no stable identity yet
-        self.assertIn("codesign --force --deep -s -", build)
+        # §54.2（2026-09-12 修正）：稳定证书优先，缺证书才回落 ad-hoc——
+        # ad-hoc 的 cdhash 每次构建都变，装一次掉一次屏幕录制授权（#316）
+        self.assertIn('SIGN_ID="Zelin AI Engineer Dev"', build)
+        self.assertIn('security find-identity -p codesigning', build)
+        self.assertIn('SIGN_ID="-"', build)
+        self.assertIn('codesign --force --deep -s "$SIGN_ID"', build)
         # §68.13 helper CLIs ride in the shell bundle (vault-sync-helper / framegrab)
         self.assertIn('VAULTSYNC_SRC="$HELPERS_DIR/VaultSyncHelper.swift"', build)
         self.assertIn('FRAMEGRAB_SRC="$HELPERS_DIR/framegrab.swift"', build)

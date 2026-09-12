@@ -28,7 +28,7 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 1. 屏幕录制:点菜单里的「打开系统设置 → 屏幕录制」(或 系统设置 → 隐私与安全性 → 屏幕录制),给 **Zelin's AI Assistant** 打开开关(列表里同名的还有旧菜单栏 app——它的条目在旧 app 重新构建后会显示为 "Zelin's AI Assistant (old)";分不清时看哪一条是新出现的,或先 `tccutil reset ScreenCapture com.zelin.ai-board` 再开一次开关,重新出现的那条就是壳)。壳每 5 s 探一次授权,授权一生效引擎自动重启(与原生 app 同一自愈路径,通知「录制已就绪」)。
 2. 麦克风:系统提示直接点允许;拒绝了就到 系统设置 → 隐私与安全性 → 麦克风 打开 **Zelin's AI Assistant**(同上,认新出现的那条),再把「实时字幕」关一次开一次。
-3. 壳目前仍是 ad-hoc 签名(P4 过渡期):每次重新 `bash shell/build.sh` 装机后屏幕录制授权会像上一节一样失效——`tccutil reset ScreenCapture com.zelin.ai-board` 后重新打开开关即可。稳定证书随 Mac-retire 清单一起落地后不再需要。
+3. 壳自 2026-09-12 起用**稳定的自签证书**签名(`Zelin AI Engineer Dev`,与 `mac/build.sh` 同一张;`shell/build.sh` 在 keychain 里认出它就用,认不出才回落 ad-hoc 并在构建日志里说明),所以重新 `bash shell/build.sh` 装机**不再**掉屏幕录制授权。**一次性过渡**:从 ad-hoc 换到稳定身份那一次,屏幕录制 / 麦克风 / 自动化会各再弹一次——按上面 1、2 两步做一遍(需要的话先 `tccutil reset ScreenCapture com.zelin.ai-board`),之后所有更新都不再弹。证书没装的机器(`security find-identity -p codesigning` 里看不到这个名字)照旧是 ad-hoc:跑一次 `bash mac/scripts/make-signing-cert.sh` 生成并导入即可。
 4. 两个 app 同时在跑时(旧 app 已改名 "Zelin's AI Assistant (old)" 备用,§54),谁最后切换模式谁持有 screenpipe 子进程——不必同时开着;只保留壳在跑即可。
 5. **通知与 Documents(P4 起,CONTRACT §68.13)**:系统通知改由壳投递(§28 中继消费者搬进壳)——第一次会弹「通知」授权提示;拒绝了就到 系统设置 → 通知 → **Zelin's AI Assistant** 打开。壳 bundle 现在也带一份 vault-sync-helper(`Zelin's AI Assistant.app/Contents/MacOS/vault-sync-helper`);`ingest/vault-sync.sh` 仍**先找旧 app "(old)"**(它已持有 Documents 授权),旧 app 不在(新机器)才用壳的那份——那时 ~/Documents 的授权按壳的身份记一次:cron 的下一轮 ingest 会照旧回落 direct 模式直到授权到位——在看板 **设置 → 权限体检**(`?page=permissions`)按步骤给壳授权,或在 Finder 里把 `Zelin's AI Assistant.app` 拖进 系统设置 → 隐私与安全性 → 文件与文件夹 / 完全磁盘访问。这一页同时列出后台 python / claude / node 需要的「完全磁盘访问」真实路径(可复制),D20 家族的授权都在那里一次做完。
 
@@ -38,7 +38,7 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **症状 A**：在看板里双击一张执行中 / 待验收的卡，macOS 弹出「"Zelin's AI Assistant" 想要控制 "Ghostty"（或 Terminal / iTerm2）」的自动化授权提示。
 
-**原因**：预期行为。开终端的动作现在由壳经 Apple Events 完成（CONTRACT §68.7 2026-09-05 追记）；授权按（壳, 终端）这一对记在 系统设置 → 隐私与安全性 → 自动化 里。点「允许」即可；拒绝了就到那里给 **Zelin's AI Assistant** 下面的对应终端打开开关。**多久弹一次取决于壳的签名**：壳目前是 ad-hoc 签名（`shell/build.sh`，TCC 记的是每次构建都变的 cdhash），而 `install.sh` 每次自动部署都重建壳——所以**每个新版本部署后第一次双击会再弹一次**，不是终身一次；与屏幕录制授权同一根因（上文「换壳后的 TCC 重授权」），稳定签名证书落地（Mac-retire 清单 0.9）后才是一次性。之前每次双击都弹的 "Allow Ghostty to execute …?" 是 server 写时间戳 `.command` 文件的老通道，已退役——现在最多是每个版本一次。
+**原因**：预期行为。开终端的动作现在由壳经 Apple Events 完成（CONTRACT §68.7 2026-09-05 追记）；授权按（壳, 终端）这一对记在 系统设置 → 隐私与安全性 → 自动化 里。点「允许」即可；拒绝了就到那里给 **Zelin's AI Assistant** 下面的对应终端打开开关。**多久弹一次取决于壳的签名**：壳自 2026-09-12 起用稳定的自签证书签名（`shell/build.sh`，见上文「换壳后的 TCC 重授权」第 3 条），签名指纹跨版本不变——所以这个提示**点一次「允许」就是终身一次**，`install.sh` 再怎么重建壳也不会重弹。只有证书没装、壳回落 ad-hoc 的机器才会每个新版本再弹一次（TCC 记的是每次构建都变的 cdhash）。之前每次双击都弹的 "Allow Ghostty to execute …?" 是 server 写时间戳 `.command` 文件的老通道，已退役。
 
 **症状 B**：双击后卡上出现「无法直接打开终端 · 已复制指令，粘贴到终端即可接管」，终端没有打开。
 
