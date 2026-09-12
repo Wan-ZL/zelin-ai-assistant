@@ -149,7 +149,7 @@ def _flag_guard(d: Daemon, req, suspicious: list) -> None:
     append_note(req, f"[§34bis 护栏] 清理会话期间 registry 出现非 actd 写入：{shown}"
                      " —— 会话按律只读，请核查")
     notify.notify(*notify.msg_registry_guard(req.title or req.id, shown),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_FAILURE)
     analytics.log_event("triage_registry_guard", req=req.id,
                         files=len(suspicious))
     d.log(f"guard: {req.id} registry snapshot mismatch: {shown}")

@@ -279,7 +279,8 @@ def drop_steers(d: Daemon, req: Requirement, pend: list, reason: str, why: str) 
     绝不静默蒸发。``why`` 是 analytics 的机读原因（metadata only）。"""
     steer.drop_trace(req, pend, reason)
     registry.save(req)
-    notify.notify("追加指令未送达", f"{req.title or req.id}：{reason}", req=req.id)
+    notify.notify("追加指令未送达", f"{req.title or req.id}：{reason}", req=req.id,
+                  kind=notify.KIND_FAILURE)
     analytics.log_event("steer_dropped", req=req.id, n=len(pend), reason=why)
     d.log(f"steer: {req.id} dropped {len(pend)} steer(s) — {reason}")
 
@@ -463,7 +464,7 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
                       "blocked, harvested to review",
                       interrupted_reason="blocked", agent=agent)
     notify.notify(*notify.msg_review_interrupted(req.title or req.id),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_NEEDS_INPUT)
     resume_notified.discard(req.id)
 
 
@@ -512,7 +513,7 @@ def _drop_undelivered_steers(d: Daemon, req: Requirement) -> None:
     if pend:
         steer.drop_trace(req, pend, "会话已完成进入待验收，追加指令未及送达")
         notify.notify("追加指令未送达（任务已完成）",
-                      req.title or req.id, req=req.id)
+                      req.title or req.id, req=req.id, kind=notify.KIND_FAILURE)
         analytics.log_event("steer_dropped", req=req.id,
                             n=len(pend), reason="done")
 
@@ -584,7 +585,7 @@ def _storm_degrade(d: Daemon, req: Requirement, ex: dict, sid, storm_n: int) -> 
                       f"resume storm ({storm_n} revivals)",
                       interrupted_reason="resume_storm")
     notify.notify(*notify.msg_resume_storm(req.title or req.id, storm_n),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_NEEDS_INPUT)
     analytics.log_event("resume_storm_degraded", req=req.id, n=storm_n)
 
 
@@ -598,7 +599,7 @@ def _exhaust_after_failures(d: Daemon, req: Requirement, ex: dict, sid) -> None:
                       interrupted_reason="resume_exhausted")
     # §5 v0.14 copy: bilingual + names the exact card buttons to press
     notify.notify(*notify.msg_auto_resume_exhausted(req.title or req.id),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_NEEDS_INPUT)
     analytics.log_event("auto_resume_exhausted", req=req.id)
 
 

@@ -12,7 +12,9 @@
   带插值的句子另给 ``slots``（每个占位的取值词表，同样与壳 L() 逐字——回滚句的模式名 / 死因，
   2026-09-03 add-only）。
 - ``kinds`` —— §28 队列条目的 ``kind`` 词表：``review_ready``（完成提醒，受 ``review_notify``
-  三档控制）、``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
+  三档控制）、``proposal`` / ``needs_input`` / ``failure``（issue #29 的分类开关，偏好键
+  ``notify_proposals`` / ``notify_needs_input`` / ``notify_failures``；抑制在写方而不在壳，
+  见 act/lib/notify.suppression_reason）、``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
   新卡待审批 / 任务停下 / 派发失败 / 雷达停摆 / 需重新登录……文案住 act/lib/notify.py 的
   msg_* 构造器，按 UI 语言即时生成，不在此重复）。
 
@@ -80,6 +82,21 @@ KINDS: tuple = (
      "help": {"zh": "卡片进入「待验收」时（act/lib/notify.msg_review_ready）；受「通知 · 任务完成提醒」三档控制：关 / 横幅 / 横幅+声音。",
               "en": "When a card reaches In review (act/lib/notify.msg_review_ready); governed by the Notifications · Task-done alert knob: off / banner / banner + sound."},
      "preference": "review_notify"},
+    {"kind": "proposal",
+     "title": {"zh": "新提案提醒", "en": "New-proposal alert"},
+     "help": {"zh": "雷达 / 捕获铸出新卡等审批时（含回锅与 §40 批量汇总）；受「通知 · 新提案通知」开关与安静时段控制。",
+              "en": "When a radar or capture files a new card for approval (including returned cards and the §40 batch summary); governed by the Notifications · New-proposal alerts switch and by quiet hours."},
+     "preference": "notify_proposals"},
+    {"kind": "needs_input",
+     "title": {"zh": "任务停下来了", "en": "Needs-input alert"},
+     "help": {"zh": "会话停在等一句话时（受阻收割 / 反复中断暂停救活 / 派发停止重试）；受「通知 · 任务停下来时通知」开关与安静时段控制。",
+              "en": "When a session stops and waits on you (blocked-session harvest / auto-recovery paused / dispatch stopped retrying); governed by the Notifications · Needs-input alerts switch and by quiet hours."},
+     "preference": "notify_needs_input"},
+    {"kind": "failure",
+     "title": {"zh": "失败提醒", "en": "Failure alert"},
+     "help": {"zh": "需要重新登录 / 雷达停摆 / 派发失败 / 会话没停住 / registry 护栏；受「通知 · 失败通知」开关控制（默认开），**不受安静时段管**。",
+              "en": "Login needed again / a radar gone quiet / dispatch failed / a session that would not stop / the registry guard; governed by the Notifications · Failure alerts switch (on by default) and **never silenced by quiet hours**."},
+     "preference": "notify_failures"},
     {"kind": "recap_ready",
      "title": {"zh": "会议纪要已生成", "en": "Meeting recap ready"},
      "help": {"zh": "会后 recap 落地时（§63；正文不进通知，点击打开看板）。",
@@ -87,8 +104,8 @@ KINDS: tuple = (
      "preference": None},
     {"kind": "general",
      "title": {"zh": "其余守护进程通知", "en": "Other daemon notifications"},
-     "help": {"zh": "新卡待审批 / 任务停下来了 / 派发失败或已停止重试 / 雷达停摆 / 需要重新登录 / 自我改进通道事件——文案由 act/lib/notify.py 按界面语言即时生成。",
-              "en": "New card awaiting approval / a task stopped / launch failed or stopped retrying / a radar went quiet / login needed again / self-improve lane events — copy is generated per UI language by act/lib/notify.py."},
+     "help": {"zh": "没落进上面四类的其余守护进程通知：自动恢复中（无需操作）/ 免批派发的观察模式通知 / 自我改进通道事件 / 简报——文案由 act/lib/notify.py 按界面语言即时生成。没有分类开关，但同样守安静时段。",
+              "en": "Every daemon notification outside the four categories above: auto-recovery in progress (nothing to do) / observation-mode auto-dispatch / self-improve lane events / digests — copy is generated per UI language by act/lib/notify.py. No category switch, but quiet hours still applies."},
      "preference": None},
 )
 

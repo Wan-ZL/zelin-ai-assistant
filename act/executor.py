@@ -691,14 +691,17 @@ def _record_launch_failure(req: Requirement, ex: dict, cfg: config.Config,
     if halted:
         analytics.log_event("dispatch_halted", req=req.id, failure_id=fid,
                             attempts=attempts + 1, streak=streak)
+        # §28 分类（issue #29）：停止重试把卡停在「需输入」列等人重新批准。
         notify.notify(*notify.msg_dispatch_halted(
-            _card_label(req), streak, failures.user_message(fid)), req=req.id)
+            _card_label(req), streak, failures.user_message(fid)), req=req.id,
+            kind=notify.KIND_NEEDS_INPUT)
         raise DispatchHalted(err[:500])
     if attempts == 0:  # once per failure streak, not on every retry
         # classified reason in the notification body — "任务派发失败" with
         # zero clue left the 2026-07-08 outdated-claude loop undiagnosed
         notify.notify(*notify.msg_dispatch_failed(
-            _card_label(req), failures.user_message(fid)), req=req.id)
+            _card_label(req), failures.user_message(fid)), req=req.id,
+            kind=notify.KIND_FAILURE)
     raise DispatchError(err[:500])
 
 

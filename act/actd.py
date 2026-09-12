@@ -705,15 +705,16 @@ def _alerts_phase(prev_dash: Optional[dict], dash: dict, auth_notified: set,
                   radar_dead_notified: Optional[set], interval: Optional[int]) -> None:
     for title, body, rid, kind in detect_transitions(prev_dash, dash):
         notify.notify(title, body, req=rid, kind=kind)
+    # §28 分类（issue #29）：凭证失效与源死亡都是失败类——默认开且穿透安静时段。
     for title, body in _check_auth_failures(auth_notified):
-        notify.notify(title, body)
+        notify.notify(title, body, kind=notify.KIND_FAILURE)
     # §48 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
     # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
     # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
     for title, body in _check_radar_liveness(
             radar_dead_notified if radar_dead_notified is not None else set(),
             interval=interval):
-        notify.notify(title, body)
+        notify.notify(title, body, kind=notify.KIND_FAILURE)
 
 
 def run_once(
