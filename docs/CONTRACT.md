@@ -4618,7 +4618,16 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
   WebKit（引擎所需，与 `mac/build.sh` 同一组）；CI `ci` job 跑 `shell/build.sh`
   + `shell/tests/run.sh`（§61.5）。ad-hoc 签名在 P4 过渡期保留——代价是每次重建
   后屏幕录制授权失效（TROUBLESHOOTING「换壳后的 TCC 重授权」）；稳定证书随
-  Mac-retire 清单 0.9（bundle 身份）一起决定。
+  Mac-retire 清单 0.9（bundle 身份）一起决定。【**2026-09-12 修正**（#316）：
+  上句的「ad-hoc 保留」自此**作废**——壳与 `mac/build.sh` 用同一条稳定身份
+  `Zelin AI Engineer Dev`（`security find-identity -p codesigning` 认出即用；
+  **不加 `-v`**，那张自签证书不受信任、`-v` 会把它藏起来，而信任与 codesign /
+  TCC 持久化无关），认不出才回落 `SIGN_ID="-"` 并在构建日志里说明授权会掉。
+  `--deep` 在壳这边安全：bundle 里只有一个 Mach-O，没有 mac/ 那样的 Sparkle
+  嵌套结构要逐个签。判例 `tests/test_shell_engine_mirror.py`
+  `test_build_script_compiles_every_shell_source_with_engine_frameworks`。
+  **一次性过渡**：身份从 ad-hoc 换成 self-signed，屏幕录制 / 麦克风 / 自动化
+  会各再弹一次；之后重建不再掉。Mac-retire 清单 0.9 只剩 bundle 身份本身。】
 - **Swift 测试靶**：`shell/tests/run.sh`（§61.5，v0.48.19 起）钉 `zaiShell` 桥的
   wire 词表与 LegacyPrefs 种子规则；54.2 的连接序仍无自动判例，以手动检查验收，
   步骤见 CONTRIBUTING.md「board shell 手动检查」。
