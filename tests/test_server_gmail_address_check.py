@@ -93,8 +93,12 @@ class GmailAddressCheckTestCase(unittest.TestCase):
             self.assertNotIn("check", self._field(gmail, key))
         _s, everything = get_json(self.port, "/api/settings")
         checked = [(s["id"], f["key"]) for s in everything["sections"] for f in s["fields"] if "check" in f]
-        # session_id 的 check 归 §68.7 追记（tests/test_server_maintainer_session_id_check.py）
-        self.assertEqual(checked, [("gmail", "gmail_address"), ("maintainer", "maintainer_session_id")])
+        # session_id 的 check 归 §68.7 追记（tests/test_server_maintainer_session_id_check.py）；
+        # 两个 clock_time 归 §28 追记（issue #29 安静时段，tests/test_notify_preferences.py）。
+        self.assertEqual(checked, [("notifications", "quiet_hours_start"),
+                                   ("notifications", "quiet_hours_end"),
+                                   ("gmail", "gmail_address"),
+                                   ("maintainer", "maintainer_session_id")])
 
     def test_check_sentence_is_the_native_one_verbatim(self):
         # 原生 SettingsGmail.swift validateAddress 的两句逐字（§66.2 copy：server-owned，web 只取键）

@@ -13,6 +13,12 @@ identity/icon instead of Script Editor) and deletes the file. There is NO
 fallback by owner decision (2026-07-10): app closed = no native notification
 (the app auto-starts at login, so running is the normal state).
 
+§28 追记（issue #29）通知偏好：安静时段 + 分类开关。分类 = 队列条目的
+``kind``；抑制发生在**写方**（这里），不在 §28 的 drain —— 队列有 10 分钟
+stale 清扫，「压到早上再弹」在那之下是谎话（被压住的条目会先老死）。写方
+不入队 = 队列的 stale / burst / 消费即删三条语义一个字不动。见下方
+``suppression_reason``。
+
 v0.21 removed the phone mirror (iMessage transport + Slack self-DM
 notification/approval): the Mac app is now the sole approval surface. Slack
 self-DM remains a one-way quick-capture inbox (see act/radar_slack.py) — the
@@ -41,11 +47,123 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
     Never raises — a failed notification must not break the daemon loop.
     ``req`` (an R-xxx id, optional) is accepted for caller compatibility but is
     no longer used (v0.21 removed the phone mirror / reaction-approval surface).
-    ``kind`` (add-only, v0.46) rides into the queue entry so the app relay can
-    apply per-event user preferences (today: "review_ready" ↔ the 完成提醒
-    三档开关 off/banner/sound); entries without kind behave exactly as before.
+    ``kind`` (add-only, v0.46) names the notification's category: it rides into
+    the queue entry so the app relay can apply presentation preferences
+    ("review_ready" ↔ the 完成提醒 三档开关 off/banner/sound), and it is what
+    the writer-side preference gate below judges (安静时段 + 分类开关, issue
+    #29). An entry without a kind has no category switch of its own, but quiet
+    hours still applies to it.
+
+    Returns whether the notification was handed to the consumer. A deliberate
+    **True** for one suppressed by the user's preferences: that is not a
+    failure — the only False means "could not hand it over" (an unwritable
+    queue dir, which scripts/auto-deploy.sh reports as such).
     """
+    if _suppressed(kind):
+        return True
     return _native_notify(title, body, subtitle, kind=kind)
+
+
+# --------------------------------------------------------------------------- #
+# §28 通知偏好（issue #29）—— 安静时段 + 分类开关
+# --------------------------------------------------------------------------- #
+# 分类 = 队列条目的 ``kind``（§28 v0.46 add-only 键）。issue #29 的四组：
+# 提案 / 完成 / 需输入 / 失败。「完成」一类的开关**不在这里**——`review_notify`
+# 三档（关 / 横幅 / 横幅+声音）由消费方（壳 NotifyRelay）执法，逐字不动。
+#
+# 为什么抑制在写方而不是 §28 的 drain：队列有 10 分钟 stale 清扫
+# （STALE_AFTER_S），「压到早上再弹」在这个机制下是谎话——被压住的条目会先
+# 老死。所以安静时段 = **写方不入队**：队列的 stale / burst / 消费即删三条
+# 语义一个字不动，§28 的 staleness 保证不被触碰。附带两个好处：非 darwin
+# 的 notify-send 路径同样受偏好管；shell/Sources/NotifyRelay.swift 得以继续是
+# mac/ 冻结件的逐字副本（§28 v0.48.x，判例 tests/test_shell_engine_mirror.py）。
+# 职责切分自此是：**抑制归写方（Python），呈现（横幅 / 声音）归消费方（壳）**。
+KIND_PROPOSAL = "proposal"          # 新卡待审批 / 批量 / 回锅
+KIND_REVIEW_READY = "review_ready"  # 交付进待验收（v0.46 就有）
+KIND_NEEDS_INPUT = "needs_input"    # 任务停下来了 / 反复中断 / 停止重试，等人一句话
+KIND_FAILURE = "failure"            # 需重新登录 / 雷达停摆 / 派发失败 / 会话没停住
+
+# 分类 → overrides 扁键（布尔，全部默认开：新装机行为与本改动前逐字一致）。
+CATEGORY_PREFERENCE = {
+    KIND_PROPOSAL: "notify_proposals",
+    KIND_NEEDS_INPUT: "notify_needs_input",
+    KIND_FAILURE: "notify_failures",
+}
+
+# 失败类穿透安静时段：夜里凭证过期 / 雷达停摆同样要当场知道（issue #29
+# 「failures probably not silenceable by default」——开关仍在、默认开，只是
+# 安静时段管不着它；要静音失败得显式关掉 notify_failures）。
+QUIET_HOURS_EXEMPT = frozenset({KIND_FAILURE})
+
+
+def _minute_of_day(hhmm) -> Optional[int]:
+    """``"HH:MM"`` → 当日分钟数；坏值 None（调用方据此把安静时段当关——
+    fail-open：配错一个字不许把所有通知静音）。词法单源 = §70 的
+    ``config.coerce_clock_time``（server/settings.py 镜像同一正则）。"""
+    from act.lib import config as _config
+    try:
+        text = _config.coerce_clock_time(hhmm)
+    except (TypeError, ValueError):
+        return None
+    hours, minutes = text.split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+def in_quiet_hours(start, end, minute_of_day: int) -> bool:
+    """半开区间 ``[start, end)`` 是否盖住当日第 ``minute_of_day`` 分钟。
+
+    跨午夜（典型的 22:00 → 08:00）算两段；``start == end``（零长窗）或任一
+    端坏值 = 关。纯函数，判例直接钉它。"""
+    a, b = _minute_of_day(start), _minute_of_day(end)
+    if a is None or b is None or a == b:
+        return False
+    if a < b:
+        return a <= minute_of_day < b
+    return minute_of_day >= a or minute_of_day < b
+
+
+def _category_off(kind, cfg) -> bool:
+    """本类的分类开关被显式关掉了（没登记开关的 kind 恒为 False）。"""
+    preference = CATEGORY_PREFERENCE.get(kind or "")
+    return preference is not None and not bool(getattr(cfg, preference, True))
+
+
+def _quiet_now(kind, cfg, now) -> bool:
+    """当下落在安静时段里且本类不豁免（失败类穿透）。"""
+    if kind in QUIET_HOURS_EXEMPT or not bool(getattr(cfg, "quiet_hours_enabled", False)):
+        return False
+    local = now if now is not None else time.localtime()
+    return in_quiet_hours(getattr(cfg, "quiet_hours_start", ""),
+                          getattr(cfg, "quiet_hours_end", ""),
+                          local.tm_hour * 60 + local.tm_min)
+
+
+def suppression_reason(kind, cfg, now=None) -> Optional[str]:
+    """本条通知该被吃掉的原因词（``"category"`` / ``"quiet_hours"``），None = 照发。
+
+    ``cfg`` = ``act.lib.config.Config``（注入缝）；``now`` = ``time.struct_time``
+    本地时间（注入缝，缺省现读）。判序：分类开关先（关掉 = 任何时候都不发），
+    再是安静时段（失败类豁免）。没登记在 ``CATEGORY_PREFERENCE`` 的 kind
+    （``recap_ready`` / 无 kind 的其余守护进程通知）没有分类开关，但同样守安静时段
+    ——「晚上不弹横幅」就是这个意思。"""
+    if _category_off(kind, cfg):
+        return "category"
+    if _quiet_now(kind, cfg, now):
+        return "quiet_hours"
+    return None
+
+
+def _suppressed(kind) -> bool:
+    """现读一次偏好并判本条是否被吃掉。
+
+    现读（不吃启动时冻结的 cfg）：用户在设置页翻完开关应该立即生效，
+    与 §48 雷达巡检同款；通知是稀事件，一次盘读不心疼。读配置出任何
+    意外一律**照发**（fail-open：丢一条通知比吞一条通知贵）。"""
+    try:
+        from act.lib import config as _config
+        return suppression_reason(kind, _config.load_config()) is not None
+    except Exception:  # noqa: BLE001 - a notification must never break a caller
+        return False
 
 
 # --------------------------------------------------------------------------- #

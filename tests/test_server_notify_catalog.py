@@ -20,7 +20,7 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
 from act import recap
-from act.lib import failures
+from act.lib import failures, notify
 from server import notify_catalog as nc
 from tests.test_server_common import get_json, http_request, start_server
 
@@ -121,6 +121,12 @@ class ShellMirrorTestCase(unittest.TestCase):
         self.assertIn("general", names)
         review = next(k for k in nc.KINDS if k["kind"] == "review_ready")
         self.assertEqual(review["preference"], "review_notify")   # §28 v0.46 三档偏好键
+        # §28 追记（issue #29）：写方打的三个分类 kind 各自登记着它的偏好键，
+        # 且与 act/lib/notify.CATEGORY_PREFERENCE 逐字一致（壳不读目录，目录是规格）。
+        for kind, preference in notify.CATEGORY_PREFERENCE.items():
+            with self.subTest(kind=kind):
+                entry = next(k for k in nc.KINDS if k["kind"] == kind)
+                self.assertEqual(entry["preference"], preference)
 
     def test_template_helpers(self):
         self.assertEqual(nc.fragments("还有 {n} 条通知"), ["还有 ", " 条通知"])
