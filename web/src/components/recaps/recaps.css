@@ -177,6 +177,31 @@
   font: var(--type-composer);
 }
 
+/* §63.5 纠正备注预检：格式做不到的诉求就地摊开（issue #296） */
+.recap-note-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--warning-soft-quiet);
+  color: var(--text-secondary);
+  font: var(--type-composer-hint);
+}
+
+.recap-note-conflicts-head {
+  margin: 0;
+  color: var(--warning);
+}
+
+.recap-note-conflicts-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .recap-meta {
   display: flex;
   flex-direction: column;
