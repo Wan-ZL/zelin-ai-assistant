@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  PENDING_TIMEOUT_MS, appLabel, badgesFor, generationPhase, groupByDay, isGenerating, pickLanguage, recapBody,
-  rowLabel, slackDraftLabel,
+  PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, appLabel, badgesFor, generationPhase, groupByDay, isGenerating, pickLanguage,
+  recapBody, rowLabel, slackDraftLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -76,21 +76,28 @@ describe("recapText", () => {
     expect(generationPhase(row({ generate_request: stale }), undefined, T)).toBe("lost");
     expect(generationPhase(row({ generate_request: { ...stale, state: "noop", note: "launch_failed" } }), undefined, T)).toBe("noop");
     expect(generationPhase(row({ generate_request: { ...stale, state: "done" } }), undefined, T)).toBe("idle");
-    // 兜底：排队十分钟没人接手就别再装忙
-    expect(generationPhase(row(), pending, T + PENDING_TIMEOUT_MS)).toBe("queued");
+    // 90 s 没人接手 → unclaimed（按钮解锁、一句人话）；十分钟退场
+    expect(generationPhase(row(), pending, T + PICKUP_TIMEOUT_MS)).toBe("queued");
+    expect(generationPhase(row(), pending, T + PICKUP_TIMEOUT_MS + 1)).toBe("unclaimed");
+    expect(generationPhase(row(), pending, T + PENDING_TIMEOUT_MS)).toBe("unclaimed");
     expect(generationPhase(row(), pending, T + PENDING_TIMEOUT_MS + 1)).toBe("idle");
+    // unclaimed 期间新回执 / 新版本照样接管
+    expect(generationPhase(row({ generate_request: running }), pending, T + PICKUP_TIMEOUT_MS + 1)).toBe("running");
+    expect(generationPhase(row({ version: 2 }), pending, T + PICKUP_TIMEOUT_MS + 1)).toBe("idle");
     expect(isGenerating("queued") && isGenerating("running")).toBe(true);
-    expect(isGenerating("lost") || isGenerating("noop") || isGenerating("idle")).toBe(false);
+    expect(isGenerating("unclaimed") || isGenerating("lost") || isGenerating("noop") || isGenerating("idle")).toBe(false);
   });
 
-  it("generation badges lead the row: 生成中 / 生成未落地 / 生成未启动", () => {
+  it("generation badges lead the row: 生成中 / 后台未接手 / 生成未落地 / 生成未启动", () => {
     const ids = (r: RecapRow, phase: Parameters<typeof badgesFor>[1]) => badgesFor(r, phase).map((b) => b.id);
     expect(ids(row(), "queued")).toEqual(["generating", "new"]);
     expect(ids(row({ version: 2 }), "running")).toEqual(["generating", "new", "updated"]);
+    expect(ids(row(), "unclaimed")).toEqual(["unclaimed", "new"]);
     expect(ids(row(), "lost")).toEqual(["lost", "new"]);
     expect(ids(row(), "noop")).toEqual(["noop", "new"]);
     expect(ids(row(), "idle")).toEqual(["new"]);
     expect(badgesFor(row(), "running")[0]).toMatchObject({ zh: "生成中", en: "Generating", tone: "info" });
+    expect(badgesFor(row(), "unclaimed")[0]).toMatchObject({ zh: "后台未接手", en: "Not picked up", tone: "warning" });
     expect(badgesFor(row(), "lost")[0]).toMatchObject({ tone: "warning" });
   });
 

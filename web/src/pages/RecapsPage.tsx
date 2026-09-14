@@ -44,8 +44,9 @@ export function RecapsPage() {
   const selected = rows.find((row) => row.key === selectedKey) ?? rows[0] ?? null;
   const phases = phasesFor(rows, recapPending, Date.now());
   const anyGenerating = Object.values(phases).some(isGenerating);
-  // 乐观「排队中」的收尾：actd 回执接管 / 新版本落地 / 兜底超时 / 行消失 → 本地表里这一键退场
-  const settled = Object.keys(recapPending).filter((key) => phases[key] !== "queued");
+  // 乐观「排队中」的收尾：actd 回执接管 / 新版本落地 / 10 分钟退场 / 行消失 → 本地表里这一键退场
+  // （unclaimed 仍留着——「后台未接手」那句要靠它显示，直到新回执 / 新版本 / 再按一次覆盖）
+  const settled = Object.keys(recapPending).filter((key) => phases[key] !== "queued" && phases[key] !== "unclaimed");
   const settledKey = settled.join("\n");
 
   useEffect(() => {

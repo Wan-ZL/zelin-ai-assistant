@@ -68,14 +68,17 @@ export interface Badge {
 
 /**
  * §63.8 行的生成态（issue #297）：
- *   queued  = 本地刚按下、actd 还没回执（乐观，≤ 10 分钟兜底）；
- *   running = actd 回执 running，新版本还没落地；
+ *   queued    = 本地刚按下、actd 还没回执（乐观）；
+ *   unclaimed = 按下 90 s 仍无回执也无新版本——actd 大概没在跑（按钮解锁、一句人话；10 分钟后退场）；
+ *   running   = actd 回执 running，新版本还没落地；
  *   lost / noop = actd 回执说丢了 / 没起；idle = 没在生成（含 done）。
  * server 回执只要比按下时看到的新就以它为准；本地 pending 只填 actd 还没接手的那几秒。
  */
-export type GenerationPhase = "idle" | "queued" | "running" | "lost" | "noop";
+export type GenerationPhase = "idle" | "queued" | "unclaimed" | "running" | "lost" | "noop";
 
-/** 乐观「排队中」的兜底时长（与 daemon 侧 recap_requests.LOST_AFTER_S 同款 10 分钟） */
+/** 没人接手的判线：actd pass 是 10 s，90 s 与 VoiceGenerate / §48.7「立即测试一轮」同款 */
+export const PICKUP_TIMEOUT_MS = 90_000;
+/** 乐观「排队中」的退场线（与 daemon 侧 recap_requests.LOST_AFTER_S 同款 10 分钟） */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
 
 export function generationPhase(row: RecapRow, pending: RecapPending | undefined, now: number): GenerationPhase {
@@ -89,20 +92,22 @@ export function generationPhase(row: RecapRow, pending: RecapPending | undefined
   }
   if (!pending) return "idle";
   if ((row.version ?? 0) > pending.version) return "idle";   // 新版本已落地
-  if (now - pending.at > PENDING_TIMEOUT_MS) return "idle";   // 兜底：别永远排队
-  return "queued";
+  const age = now - pending.at;
+  if (age > PENDING_TIMEOUT_MS) return "idle";                // 退场：别永远挂着
+  return age > PICKUP_TIMEOUT_MS ? "unclaimed" : "queued";
 }
 
-/** 生成态是否还在等结果（行上「生成中」+ 面板状态行 + 按钮禁用 + 5 s 补拉） */
+/** 生成态是否还在等结果（行上「生成中」+ 面板状态行 + 按钮禁用 + 5 s 补拉）；unclaimed 不算——按钮要能再按 */
 export function isGenerating(phase: GenerationPhase): boolean {
   return phase === "queued" || phase === "running";
 }
 
-/** 行 badge（issue #129 §3 词表 + §63.8 生成中 / 生成未落地 / 生成未启动）：
+/** 行 badge（issue #129 §3 词表 + §63.8 生成中 / 后台未接手 / 生成未落地 / 生成未启动）：
  *  进行中 / 新 / 已复制 / 已发送 / 已更新 / 转写不全 / 需复核 / 无音频 / 生成失败 */
 export function badgesFor(row: RecapRow, phase: GenerationPhase = "idle"): Badge[] {
   const out: Badge[] = [];
   if (isGenerating(phase)) out.push({ id: "generating", zh: "生成中", en: "Generating", tone: "info" });
+  else if (phase === "unclaimed") out.push({ id: "unclaimed", zh: "后台未接手", en: "Not picked up", tone: "warning" });
   else if (phase === "lost") out.push({ id: "lost", zh: "生成未落地", en: "Generation lost", tone: "warning" });
   else if (phase === "noop") out.push({ id: "noop", zh: "生成未启动", en: "Did not start", tone: "warning" });
   if (row.status === "open") out.push({ id: "open", zh: "进行中", en: "In progress", tone: "info" });

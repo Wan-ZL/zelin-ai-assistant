@@ -3,7 +3,8 @@
 // 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记；重新生成 / 投草稿走 inbox 特形动作
 // （recap_generate / recap_slack_draft，字段逐字按 §63，多一个键 server 400）。
 // §63.8（issue #297）：重新生成排队后面板不再装死——状态行说「排队中 / 正在生成」、两颗生成按钮禁用，
-// 新版本随 board 回流落地时闪一句「已更新到第 N 版」；actd 回执 lost / noop 各一句人话。
+// 新版本随 board 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没人接手说
+// 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
@@ -50,22 +51,34 @@ export interface RecapDetailProps {
 type Panel = null | "note" | "slack";
 type Text = (zh: string, en: string) => string;
 
-/** §63.8 生成态的一句话（idle 不说话；done 由正文与「已更新到第 N 版」体现） */
+/** §63.8 生成态的一句话（idle 不说话；done 由正文与 landedNote 的闪句体现） */
 export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Text): string | null {
   switch (phase) {
     case "queued":
       return text("已排队，等待后台接手…", "Queued, waiting for the daemon to pick it up…");
+    case "unclaimed":
+      return text("后台 90 秒没有接手：actd 可能没在跑（看「依赖检查」区的管线活性）。可以再试一次。", "Nothing picked this up in 90 s: actd may not be running (see Pipeline liveness under Dependency check). You can try again.");
     case "running":
       return isOpen
         ? text("正在生成阶段稿，落地后这里自动更新（通常 1–3 分钟）。", "Generating the partial recap. It lands here by itself (usually 1–3 min).")
         : text("正在重新生成，新版本落地后这里自动更新（通常 1–3 分钟）。", "Regenerating. The new version lands here by itself (usually 1–3 min).");
     case "lost":
-      return text("上次生成没有落地：超过 10 分钟没写出新版本（看 state/recap.log）。可以再试一次。", "The last generation never landed: no new version for over 10 minutes (see state/recap.log). You can try again.");
+      return text("上次生成没有落地：超过 10 分钟没写出新版本——后台进程崩了或模型调用失败（看 state/recap.log）。可以再试一次。", "The last generation never landed: no new version for over 10 minutes. The process crashed or the model call failed (see state/recap.log). You can try again.");
     case "noop":
       return text("上次生成没起来：后台进程启动失败（看 state/actd.log）。可以再试一次。", "The last generation did not start: the background process failed to launch (see state/actd.log). You can try again.");
     default:
       return null;
   }
+}
+
+/** 新版本落地那一下的闪句：有正文 = 已更新到第 N 版；没正文按 quality 说清为什么（失败不许穿成功的衣） */
+export function landedNote(row: RecapRow, text: Text): string {
+  const version = row.version ?? 0;
+  if (row.en && row.en.length) return text(`已更新到第 ${version} 版`, `Updated to version ${version}`);
+  const why = row.quality === "no_audio" ? text("无音频", "no audio")
+    : row.quality === "thin_transcript" ? text("转写不全", "thin transcript")
+    : text("生成失败", "generation failed");
+  return text(`第 ${version} 版没有正文（${why}）`, `Version ${version} landed with no text (${why})`);
 }
 
 export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps) {
@@ -89,11 +102,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
 
   useEffect(() => {
     const version = row.version ?? 0;
-    if (seen.current.key === row.key && version > seen.current.version) {
-      setFlash(text(`已更新到第 ${version} 版`, `Updated to version ${version}`));
-    }
+    if (seen.current.key === row.key && version > seen.current.version) setFlash(landedNote(row, text));
     seen.current = { key: row.key, version };
-  }, [row.key, row.version, text]);
+  }, [row, text]);
 
   useEffect(() => {
     if (!flash) return;

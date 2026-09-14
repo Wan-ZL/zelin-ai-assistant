@@ -135,8 +135,11 @@ class ProjectionTestCase(SandboxCase):
 
 class StoreProjectionTestCase(SandboxCase):
     def test_rows_carry_generate_request_add_only(self):
+        # store.projection() 读真钟（不可注入 now），所以这里全程用真钟算相对时间
+        wall = _dt.datetime.now(_dt.timezone.utc)
         rec = store.new_record(self._session(), KEY, rs.CLOSED)
-        rec.update({"en": ["Decided: x"], "zh": ["定了：x"], "version": 1, "generated_at": _ago(hours=1)})
+        rec.update({"en": ["Decided: x"], "zh": ["定了：x"], "version": 1,
+                    "generated_at": _iso(wall - _dt.timedelta(hours=1))})
         store.save_recap(rec)
         other = "meeting:2026-08-31T1600-zoom"
         state = store.new_state({"frames": 1, "audio": 1}, "now")
@@ -145,15 +148,22 @@ class StoreProjectionTestCase(SandboxCase):
         rows = {r["key"]: r for r in store.projection()}
         self.assertIsNone(rows[KEY]["generate_request"])          # 没请求过 = null，键恒在
         self.assertIsNone(rows[other]["generate_request"])
-        requests.record(KEY, "running", now=_dt.datetime.now(_dt.timezone.utc))
-        requests.record(other, "running", now=_dt.datetime.now(_dt.timezone.utc))
+        requests.record(KEY, "running", requested_at=_iso(wall), now=wall)
+        requests.record(other, "running", requested_at=_iso(wall), now=wall)
         rows = {r["key"]: r for r in store.projection()}
         self.assertEqual(rows[KEY]["generate_request"]["state"], "running")     # 文件的 generated_at 更早
         self.assertEqual(rows[other]["generate_request"]["state"], "running")   # OPEN 行还没有文件
-        rec["generated_at"] = _iso(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=1))
+        rec["generated_at"] = _iso(wall + _dt.timedelta(seconds=1))
         rec["version"] = 2
         store.save_recap(rec)
         self.assertEqual({r["key"]: r for r in store.projection()}[KEY]["generate_request"]["state"], "done")
+        # lost / noop 也走同一条投影路
+        requests.record(other, "running", requested_at=_iso(wall - _dt.timedelta(minutes=11)), now=wall)
+        requests.record(KEY, "noop", requested_at=_iso(wall), now=wall)
+        rows = {r["key"]: r for r in store.projection()}
+        self.assertEqual(rows[other]["generate_request"]["state"], "lost")
+        self.assertEqual((rows[KEY]["generate_request"]["state"], rows[KEY]["generate_request"]["note"]),
+                         ("noop", "launch_failed"))
 
     def test_corrupt_ledger_never_breaks_the_projection_or_the_dashboard(self):
         store.save_recap(store.new_record(self._session(), KEY, rs.CLOSED))
@@ -184,23 +194,28 @@ class ActdTestCase(SandboxCase):
         path.write_text(json.dumps(dict(decision, ts="2026-09-14T00:00:00Z")), encoding="utf-8")
         return path
 
-    def test_recap_generate_records_running_before_the_subprocess_can_write(self):
-        stamps = []
+    def test_recap_generate_stamps_requested_at_before_launch_and_records_after(self):
+        STAMP = "2026-09-14T12:00:00Z"
+        events = []
         real_launch = detached.launch
 
+        def iso_now(now=None):
+            events.append("stamp")
+            return STAMP
+
         def launch(argv, log_name, label, log=None):
-            stamps.append(("launch", requests.load()))   # 台账在起子进程那一刻还是空的……
+            events.append(("launch", requests.load()))   # 台账在起子进程那一刻还是空的（起完才记 running / noop）
             return real_launch(argv, log_name, label, log)
 
-        with mock.patch.object(detached, "launch", launch):
+        with mock.patch.object(requests, "iso_now", iso_now), mock.patch.object(detached, "launch", launch):
             rc = actd._DETACHED_ACTIONS["recap_generate"]({"action": "recap_generate", "meeting_key": KEY})
         self.assertEqual(rc, "running")
         self.assertEqual(self.spawned, [(["act.recap", "--generate", KEY], "recap.log")])
+        # §63.8 done 判据的根：requested_at 在起子进程之前取——子进程自己的 generated_at 只会 ≥ 它
+        self.assertEqual([e if isinstance(e, str) else e[0] for e in events], ["stamp", "launch"])
+        self.assertEqual(events[1][1], {})
         rec = requests.load()[KEY]
-        self.assertEqual((rec["launch"], rec["note"]), ("running", None))
-        # ……但 requested_at 是起子进程之前取的：子进程的 generated_at 只会 ≥ 它
-        self.assertLessEqual(rec["requested_at"], requests.iso_now())
-        self.assertEqual(stamps[0][1], {})
+        self.assertEqual((rec["launch"], rec["note"], rec["requested_at"]), ("running", None, STAMP))
 
     def test_launch_failure_is_recorded_as_noop(self):
         with mock.patch.object(detached, "spawn", side_effect=OSError("no fork")):
@@ -226,13 +241,17 @@ class ActdTestCase(SandboxCase):
 
 
 class _Runner:
-    """llm.run's runner seam: a fixed good reply, never a real model."""
+    """llm.run's runner seam: a fixed good reply, never a real model; ``fail_after`` = 从第 N 次
+    调用起 claude 非零退出（模拟登录过期 / 限流）。"""
 
-    def __init__(self):
+    def __init__(self, fail_after=None):
         self.calls = []
+        self.fail_after = fail_after
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
+        if self.fail_after is not None and len(self.calls) > self.fail_after:
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Not logged in")
         return subprocess.CompletedProcess(argv, 0, stdout=fx.good_output(), stderr="")
 
 
@@ -273,6 +292,25 @@ class EndToEndTestCase(SandboxCase):
         self.assertEqual(row["version"], 2)
         # 同一秒落笔也算 done（秒级 ISO-Z，>=）
         self.assertEqual(requests.projection(fx.KEY, requested_at, now=later)["state"], "done")
+
+    def test_model_call_error_crashes_without_landing_so_the_receipt_goes_lost_not_done(self):
+        # §63.8 诚实条款：claude 非零退出（登录过期 / 限流）时 generate() 不捕获、不落笔——好的 v1 正文
+        # 留在面板上、原因只进 recap.log；回执 running 到 10 分钟后转 lost，绝不伪装 done / generation_failed
+        rec = self._closed_recap()
+        self.runner.fail_after = len(self.runner.calls)
+        request_ts = fx.T0 + 3600
+        requested_at = rs.iso_utc(request_ts)
+        requests.record(fx.KEY, "running", requested_at=requested_at,
+                        now=_dt.datetime.fromtimestamp(request_ts, _dt.timezone.utc))
+        with self.assertRaises(Exception):
+            recap.generate(fx.KEY, note="fix it", now=request_ts + 5, conn=self.conn, runner=self.runner, cfg=self.cfg)
+        after = store.load_recap(fx.KEY)
+        self.assertEqual((after["version"], after["quality"], after["en"], after["generated_at"]),
+                         (1, rec["quality"], rec["en"], rec["generated_at"]))
+        soon = _dt.datetime.fromtimestamp(request_ts + 6, _dt.timezone.utc)
+        late = _dt.datetime.fromtimestamp(request_ts + requests.LOST_AFTER_S + 1, _dt.timezone.utc)
+        self.assertEqual(requests.projection(fx.KEY, after["generated_at"], now=soon)["state"], "running")
+        self.assertEqual(requests.projection(fx.KEY, after["generated_at"], now=late)["state"], "lost")
 
 
 if __name__ == "__main__":

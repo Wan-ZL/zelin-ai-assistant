@@ -9,10 +9,12 @@ issue #297：按「重新生成」只换来一条 toast，新版本落地前后�
   写时剪掉超过 :data:`TTL_S` 的旧条、只留最新 :data:`CAP` 条（防腐 #4：出生即有界）。
 - 投影 ``recaps[].generate_request``（add-only；无请求 / 过了 TTL = null）：
   ``{"requested_at", "state": running|done|noop|lost, "note"}``。``done`` ⇔ recap 文件的
-  ``generated_at`` ≥ ``requested_at``（子进程落笔了——版本 +1 一定伴随新 generated_at，
-  generation_failed 也落笔）；``running`` = 起了还没落笔；``lost`` = 超过
-  :data:`LOST_AFTER_S` 仍无落笔（崩在 import / 被杀 / 锁等超时——诚实说丢了，不永远
-  「生成中」）；``noop`` = 没起。纯磁盘真值函数：dashboard 一次性构建同样算得出。
+  ``generated_at`` ≥ ``requested_at``（子进程落笔了——版本 +1 一定伴随新 generated_at；
+  模型输出两次解析不出 JSON 落成 generation_failed 也算落笔）；``running`` = 起了还没落笔；
+  ``lost`` = 超过 :data:`LOST_AFTER_S` 仍无落笔（崩在 import / 被杀 / 锁等超时 / **模型调用
+  本身出错**——claude 非零退出或超时时 ``act.recap.generate`` 不捕获、整次运行 crash 不落笔，
+  原因只在 state/recap.log——诚实说丢了，不永远「生成中」）；``noop`` = 没起。
+  纯磁盘真值函数：dashboard 一次性构建同样算得出。
 
 actd 在 **起子进程之前** 取 ``requested_at``（:func:`iso_now`），子进程的 ``generated_at``
 取自它自己的启动时刻，同一台机器同一口钟、同为秒级 ISO-Z，字典序 = 时间序。
@@ -28,8 +30,9 @@ from typing import Optional
 from act.lib import config
 
 REQUESTS_PATH: Path = config.STATE_DIR / "recap_requests.json"
-# 子进程起了却迟迟没落笔：一次生成 = 锁等待（≤ LOCK_WAIT_S 120 s）+ 模型调用（≤ LLM_TIMEOUT_S 240 s
-# × 重试一次）——10 分钟之外仍无新版本，按丢了处理（与 radar_rounds.LOST_AFTER_S 同款）
+# 子进程起了却迟迟没落笔：一次成功的生成 = 锁等待（≤ LOCK_WAIT_S 120 s）+ 模型调用（≤ LLM_TIMEOUT_S
+# 240 s × 重试一次）——10 分钟之外仍无新版本，按丢了处理（与 radar_rounds.LOST_AFTER_S 同款）。
+# crash 掉的运行（模型非零退出 / 超时 / 未知 key）不落笔，也在这条线之后才显 lost。
 LOST_AFTER_S = 10 * 60
 # 台账上界：一条请求最多活 24 h（之后投影回 null）、最多 60 条（= recap_store.PROJECTION_CAP）
 TTL_S = 24 * 3600
