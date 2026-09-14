@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-214`（R-214「修红 CI：PR #324 feat(storage): 设置页看得见 screenpipe 占了多少盘，保留期成为一把旋钮」；docs-only 孪生——真交付是推到 `ai/self-improve/R-208` 的 golden commit `a1354fd3`）
+pr: `ai/self-improve/R-214`（PR #330；R-214「修红 CI：PR #324 feat(storage): 设置页看得见 screenpipe 占了多少盘，保留期成为一把旋钮」；docs-only 孪生——真交付是推到 `ai/self-improve/R-208` 的 golden commit `a1354fd3`）
 phase: 横切（依赖维护；D5 / D12 每日循环「红 CI 是臣子的事」；§66.4 视觉基线；§70.3 ⑪ 判例 #324；§56.3 会话闸门）
 law: —（无新 §、无修法；§66.4、§70.3 ⑪ 追记二、§56.3 已覆盖本例）
 
