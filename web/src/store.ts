@@ -74,6 +74,7 @@ import type {
   MaterialsList,
   McpList,
   ModelsSettings,
+  RecapRow,
   RecapSettings,
   SkillsSnapshot,
   PermissionsSnapshot,
@@ -124,6 +125,7 @@ export interface AppState {
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
+  recapPending: Record<string, RecapPending>; // 「重新生成 / 现在生成」按下后到 actd 回执（generate_request）落地前的乐观「排队中」（§63.8）
   displaySettings: DisplaySettings | null; // GET /api/settings/display（§54.1 第 12 项：字号 / 字重 / 描边；到达即落 <html> data-*）
   skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§67 设置页「Skills」）
   skillsError: string | null;     // 设置页 Skills 读失败的用户可读文案（成功后清空；切换失败由页面 toast）
@@ -168,6 +170,13 @@ export interface AppState {
 export interface RecapMark {
   copied_at?: string | null;
   sent_at?: string | null;
+}
+
+/** §63.8 乐观「排队中」：按下时看到的版本号与回执 requested_at（新版本或新回执落地即结束）+ 按下时刻（10 分钟兜底） */
+export interface RecapPending {
+  version: number;
+  requested_at: string | null;
+  at: number;
 }
 
 const LANGUAGE_STORAGE_KEY = "zai.lang";
@@ -233,6 +242,7 @@ const initialState: AppState = {
   lanes: null,
   recapSettings: null,
   recapMarks: {},
+  recapPending: {},
   displaySettings: null,
   skills: null,
   skillsError: null,
@@ -723,6 +733,19 @@ export async function saveRecapSettings(
 export async function markRecap(key: string, mark: "copied" | "sent", on = true): Promise<void> {
   const receipt = await postRecapMark(key, mark, on);
   setState({ recapMarks: { ...state.recapMarks, [key]: { copied_at: receipt.copied_at, sent_at: receipt.sent_at } } });
+}
+
+/** 「重新生成 / 现在生成」inbox 写成功后：记下按下时看到的版本与回执，行随即显示「生成中」（§63.8；board 回流带新版本 / 新回执即结束） */
+export function markRecapPending(row: RecapRow, now = Date.now()) {
+  const pending: RecapPending = { version: row.version ?? 0, requested_at: row.generate_request?.requested_at ?? null, at: now };
+  setState({ recapPending: { ...state.recapPending, [row.key]: pending } });
+}
+
+/** 乐观「排队中」结束（新版本落地 / actd 回执接管 / 兜底超时）：把这一键从本地表里拿掉 */
+export function clearRecapPending(key: string) {
+  if (!(key in state.recapPending)) return;
+  const { [key]: _gone, ...rest } = state.recapPending;
+  setState({ recapPending: rest });
 }
 
 // ----- 显示偏好（§54.1 第 12 项） ------------------------------------------- #

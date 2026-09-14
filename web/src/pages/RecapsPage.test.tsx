@@ -163,4 +163,79 @@ describe("RecapsPage", () => {
     await renderPage([]);
     expect(screen.getByText(/No recaps yet/)).toBeTruthy();
   });
+
+  // ----- §63.8 / issue #297：排队后面板不装死 -------------------------------------------------- //
+
+  let reflows = 0;
+  /** 模拟一次 SSE 后的看板回流：新 generated_at、给定的 recaps[] */
+  async function reflow(recaps: RecapRow[]) {
+    reflows += 1;
+    vi.mocked(fetchBoard).mockResolvedValue({ ...seedBoard(recaps), generated_at: `2026-09-14T00:01:${String(reflows).padStart(2, "0")}Z` });
+    await refreshBoard();
+  }
+
+  it("regenerate shows Generating on the row and panel until the new version lands, then flashes the version", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({ action: "recap_generate", meeting_key: KEY }));
+    // 乐观排队：行 badge + 状态行 + 生成按钮禁用，纠正备注面板收起
+    await screen.findByText("Generating");
+    expect(screen.getByText(/Queued, waiting for the daemon/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Generating…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText(/Correction note/)).toBeNull();
+    // 看板回流但版本没变（actd 还没接手）→ 仍在排队
+    await reflow([recap()]);
+    expect(screen.getByText("Generating")).toBeTruthy();
+    // actd 回执 running → 状态行换成「正在重新生成」
+    await reflow([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } })]);
+    await waitFor(() => expect(screen.getByText(/Regenerating\. The new version lands here by itself/)).toBeTruthy());
+    expect(screen.getByText("Generating")).toBeTruthy();
+    // 新版本落地（done）→ badge 退场、正文换新、闪「Updated to version 2」、按钮恢复
+    const en2 = ["Decided: the run moves to Tuesday", ...EN.slice(1)];
+    await reflow([recap({ version: 2, quality: "needs_review", en: en2,
+      generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "done", note: null } })]);
+    await waitFor(() => expect(screen.queryByText("Generating")).toBeNull());
+    expect(screen.getByText(/Decided: the run moves to Tuesday/)).toBeTruthy();
+    expect(screen.getByText("Updated to version 2")).toBeTruthy();
+    expect(screen.getByText("Updated")).toBeTruthy();
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate…" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Queued, waiting/)).toBeNull();
+    expect(getState().recapPending).toEqual({});
+  });
+
+  it("a running receipt from the daemon shows Generating even without a local click (page reload)", async () => {
+    await renderPage([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } })]);
+    expect(screen.getByText("Generating")).toBeTruthy();
+    expect(screen.getByText(/Regenerating\. The new version lands here/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Generating…" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("lost and noop receipts explain themselves and leave the button usable", async () => {
+    await renderPage([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "lost", note: null } })]);
+    expect(screen.getByText("Generation lost")).toBeTruthy();
+    expect(screen.getByText(/never landed: no new version for over 10 minutes/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate…" }) as HTMLButtonElement).disabled).toBe(false);
+    cleanup();
+    resetStoreForTests();
+    await renderPage([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "noop", note: "launch_failed" } })]);
+    expect(screen.getByText("Did not start")).toBeTruthy();
+    expect(screen.getByText(/failed to launch/)).toBeTruthy();
+  });
+
+  it("Generate now on an open meeting queues and shows the partial wording once the daemon is running", async () => {
+    const open = recap({ status: "open", en: null, zh: null, quality: null, version: 0 });
+    await renderPage([open]);
+    fireEvent.click(screen.getByRole("button", { name: "Generate now" }));
+    await screen.findByText("Generating");
+    expect(screen.getByText(/Queued, waiting/)).toBeTruthy();
+    await reflow([{ ...open, generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } }]);
+    await waitFor(() => expect(screen.getByText(/Generating the partial recap/)).toBeTruthy());
+    await reflow([recap({ status: "open", partial: true, version: 1,
+      generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "done", note: null } })]);
+    await waitFor(() => expect(screen.queryByText("Generating")).toBeNull());
+    expect(screen.getByText("Updated to version 1")).toBeTruthy();
+    expect(screen.getByText("Partial")).toBeTruthy();
+  });
 });

@@ -17,9 +17,12 @@ Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
 
 Writers: ``act/recap.py`` (cron `--once` and the actd-spawned `--generate` /
 `--slack-draft` runs, serialized by the flock) owns sessions.json and
-recaps/; ``server/recaps.py`` owns marks.json. The daemon only READS:
-:func:`attach` adds the add-only top-level ``recaps[]`` to dashboard.json
-(history stripped, newest first, capped) — the web 会议纪要 page's data.
+recaps/; ``server/recaps.py`` owns marks.json. The daemon only READS this
+directory: :func:`attach` adds the add-only top-level ``recaps[]`` to
+dashboard.json (history stripped, newest first, capped) — the web 会议纪要
+page's data. The one thing actd writes lives OUTSIDE it: the §63.8 generate
+request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
+projected per row as ``generate_request``.
 
 Retention: recaps older than `recap.retention_days` (default 90) are pruned
 on every cron round (防腐 #4: every new file family is born with a cap).
@@ -32,7 +35,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from act.lib import config, recap_sessions
+from act.lib import config, recap_requests, recap_sessions
 
 KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 # Slack conversation ids: C… channel, D… DM, G… private group (uppercase alnum)
@@ -257,23 +260,27 @@ def load_marks() -> dict:
 # --------------------------------------------------------------------------- #
 # projection — dashboard.json top-level `recaps[]` (add-only)
 # --------------------------------------------------------------------------- #
-def _row(rec: dict, marks: dict) -> dict:
+def _row(rec: dict, marks: dict, requests: Optional[dict] = None) -> dict:
     row = {k: v for k, v in rec.items() if k != "history"}
     row["history_count"] = len(rec.get("history") or [])
     mark = _dict(marks.get(rec.get("key")))
     row["copied_at"] = mark.get("copied_at")
     row["sent_at"] = mark.get("sent_at")
+    # §63.8 add-only：「重新生成 / 现在生成」回执（actd 台账 × 本文件的 generated_at；无请求 = None）
+    row["generate_request"] = recap_requests.projection(rec.get("key"), rec.get("generated_at"),
+                                                        requests if requests is not None else {})
     return row
 
 
 def projection(limit: int = PROJECTION_CAP) -> list:
     """Stored recaps + OPEN sessions (from sessions.json) not yet having a file
     (a partial 现在生成 wins over the bare OPEN row), newest first, capped;
-    history stripped, local marks merged in."""
+    history stripped, local marks and the §63.8 generate receipts merged in."""
     marks = load_marks()
-    rows = {r["key"]: _row(r, marks) for r in list_recaps()}
+    requests = recap_requests.load()
+    rows = {r["key"]: _row(r, marks, requests) for r in list_recaps()}
     for o in open_rows(load_state() or {}):
-        rows.setdefault(o["key"], _row(o, marks))
+        rows.setdefault(o["key"], _row(o, marks, requests))
     return sorted(rows.values(), key=_start_ts, reverse=True)[:limit]
 
 

@@ -1,16 +1,17 @@
 // 会议纪要页左列（CONTRACT §63 / issue #129 §3）：按日分组的行 = `12:56–13:16 · Zoom · 20 min` + badge。
-// 纯受控：选中态由 RecapsPage 持有；不发请求。
+// 纯受控：选中态由 RecapsPage 持有；不发请求。生成态（§63.8 生成中 / 生成未落地）由页面算好按 key 传入。
 import { useI18n } from "../../i18n";
 import type { RecapRow } from "../../types";
-import { badgesFor, groupByDay, rowLabel } from "./recapText";
+import { badgesFor, groupByDay, rowLabel, type GenerationPhase } from "./recapText";
 
 export interface RecapListProps {
   rows: RecapRow[];
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  phases?: Record<string, GenerationPhase>;
 }
 
-export function RecapList({ rows, selectedKey, onSelect }: RecapListProps) {
+export function RecapList({ rows, selectedKey, onSelect, phases = {} }: RecapListProps) {
   const { language } = useI18n();
   const groups = groupByDay(rows);
   return (
@@ -31,7 +32,7 @@ export function RecapList({ rows, selectedKey, onSelect }: RecapListProps) {
                   >
                     <span className="recap-row-label">{rowLabel(row)}</span>
                     <span className="recap-row-badges">
-                      {badgesFor(row).map((badge) => (
+                      {badgesFor(row, phases[row.key] ?? "idle").map((badge) => (
                         <span key={badge.id} className={`chip chip-${badge.tone === "quiet" ? "outline" : badge.tone}`}>
                           {language === "zh" ? badge.zh : badge.en}
                         </span>

@@ -399,7 +399,8 @@ export interface FoldReceipt {
  * §63 会议 recap 行（dashboard.json 顶层 recaps[] 的元素 = act/lib/recap_store 投影，
  * wire key 逐字镜像）。status open = 进行中（无正文）；en/zh = 5 行纯文本（null =
  * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at = server
- * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执。
+ * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执；
+ * generate_request = §63.8 「重新生成」回执（行上「生成中」的真源）。
  */
 export interface RecapRow {
   key: string;
@@ -428,6 +429,20 @@ export interface RecapRow {
     at?: string | null;
     [key: string]: unknown;
   } | null;
+  /** §63.8 「重新生成 / 现在生成」回执（add-only；没请求过 / 过了 TTL = null；老 daemon 无此键） */
+  generate_request?: RecapGenerateRequest | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.8 生成请求回执（act/lib/recap_requests.projection 的 wire 形逐字镜像；与 §48.7 test_round 同形）：
+ * running = actd 起了子进程、新版本还没落地；done = 文件的 generated_at ≥ requested_at；
+ * lost = 超过 10 分钟仍无新版本；noop = 子进程没起来（note = launch_failed）。
+ */
+export interface RecapGenerateRequest {
+  requested_at: string;
+  state: "running" | "done" | "noop" | "lost" | string;
+  note: string | null;
   [key: string]: unknown;
 }
 
