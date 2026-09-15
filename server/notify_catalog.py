@@ -14,7 +14,8 @@
 - ``kinds`` —— §28 队列条目的 ``kind`` 词表：``review_ready``（完成提醒，受 ``review_notify``
   三档控制）、``proposal`` / ``needs_input`` / ``failure``（issue #29 的分类开关，偏好键
   ``notify_proposals`` / ``notify_needs_input`` / ``notify_failures``；抑制在写方而不在壳，
-  见 act/lib/notify.suppression_reason）、``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
+  见 act/lib/notify.suppression_reason）、``receipt``（手动按钮的回执，无分类开关、不受安静时段管——
+  词表 truth = ``act/lib/notify.QUIET_HOURS_EXEMPT``）、``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
   新卡待审批 / 任务停下 / 派发失败 / 雷达停摆 / 需重新登录……文案住 act/lib/notify.py 的
   msg_* 构造器，按 UI 语言即时生成，不在此重复）。
 
@@ -94,9 +95,14 @@ KINDS: tuple = (
      "preference": "notify_needs_input"},
     {"kind": "failure",
      "title": {"zh": "失败提醒", "en": "Failure alert"},
-     "help": {"zh": "需要重新登录 / 雷达停摆 / 派发失败 / 会话没停住 / registry 护栏；受「通知 · 失败通知」开关控制（默认开），**不受安静时段管**。",
-              "en": "Login needed again / a radar gone quiet / dispatch failed / a session that would not stop / the registry guard; governed by the Notifications · Failure alerts switch (on by default) and **never silenced by quiet hours**."},
+     "help": {"zh": "需要重新登录 / 雷达停摆 / 派发失败 / 会话没停住 / registry 护栏；受「通知 · 失败通知」开关控制（默认开），不受安静时段管。",
+              "en": "Login needed again / a radar gone quiet / dispatch failed / a session that would not stop / the registry guard; governed by the Notifications · Failure alerts switch (on by default) and never silenced by quiet hours."},
      "preference": "notify_failures"},
+    {"kind": "receipt",
+     "title": {"zh": "手动操作的回执", "en": "Receipt for something you pressed"},
+     "help": {"zh": "你刚按下的按钮的回音（今日唯一一处：设置 · 每周摘要的「现在生成一份」——运行是分离的，成功 / 没数据 / 失败三条都回这里）；没有分类开关，也不受安静时段管：按了就一定响。",
+              "en": "The answer to a button you just pressed (today the only one is Settings · Weekly digest \"Generate now\" — the run detaches, and all three outcomes (generated / no data / failed) come back here); no category switch and quiet hours never applies: you pressed it, so it rings."},
+     "preference": None},
     {"kind": "recap_ready",
      "title": {"zh": "会议纪要已生成", "en": "Meeting recap ready"},
      "help": {"zh": "会后 recap 落地时（§63；正文不进通知，点击打开看板）。",

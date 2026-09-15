@@ -82,6 +82,7 @@ KIND_PROPOSAL = "proposal"          # 新卡待审批 / 批量 / 回锅
 KIND_REVIEW_READY = "review_ready"  # 交付进待验收（v0.46 就有）
 KIND_NEEDS_INPUT = "needs_input"    # 任务停下来了 / 反复中断 / 停止重试，等人一句话
 KIND_FAILURE = "failure"            # 需重新登录 / 雷达停摆 / 派发失败 / 会话没停住
+KIND_RECEIPT = "receipt"            # 用户刚按下的按钮的回执（人醒着，按钮承诺了要响）
 
 # 分类 → overrides 扁键（布尔，全部默认开：新装机行为与本改动前逐字一致）。
 CATEGORY_PREFERENCE = {
@@ -93,7 +94,13 @@ CATEGORY_PREFERENCE = {
 # 失败类穿透安静时段：夜里凭证过期 / 雷达停摆同样要当场知道（issue #29
 # 「failures probably not silenceable by default」——开关仍在、默认开，只是
 # 安静时段管不着它；要静音失败得显式关掉 notify_failures）。
-QUIET_HOURS_EXEMPT = frozenset({KIND_FAILURE})
+#
+# ``receipt`` 同样穿透，理由不同：它是**用户刚按下的按钮**的回执（今天唯一的
+# 一处是设置页「现在生成一份」→ act/weekly_digest 的 --now 三条出口）。按钮的
+# 回执句逐字镜像原生、写着「完成后会弹通知」，而那次运行是 detached 的——回执
+# 被吃掉，按钮就等于坏的。安静时段管的是**没人要**的横幅，不是 30 秒前的一次
+# 按键；同理它也不该有分类开关（不登记在 CATEGORY_PREFERENCE）：按了就一定响。
+QUIET_HOURS_EXEMPT = frozenset({KIND_FAILURE, KIND_RECEIPT})
 
 
 def _minute_of_day(hhmm) -> Optional[int]:
@@ -129,7 +136,7 @@ def _category_off(kind, cfg) -> bool:
 
 
 def _quiet_now(kind, cfg, now) -> bool:
-    """当下落在安静时段里且本类不豁免（失败类穿透）。"""
+    """当下落在安静时段里且本类不豁免（失败类 / 手动回执穿透）。"""
     if kind in QUIET_HOURS_EXEMPT or not bool(getattr(cfg, "quiet_hours_enabled", False)):
         return False
     local = now if now is not None else time.localtime()
@@ -143,7 +150,8 @@ def suppression_reason(kind, cfg, now=None) -> Optional[str]:
 
     ``cfg`` = ``act.lib.config.Config``（注入缝）；``now`` = ``time.struct_time``
     本地时间（注入缝，缺省现读）。判序：分类开关先（关掉 = 任何时候都不发），
-    再是安静时段（失败类豁免）。没登记在 ``CATEGORY_PREFERENCE`` 的 kind
+    再是安静时段（``QUIET_HOURS_EXEMPT`` 豁免：失败类与手动按钮的回执）。
+    没登记在 ``CATEGORY_PREFERENCE`` 的 kind
     （``recap_ready`` / 无 kind 的其余守护进程通知）没有分类开关，但同样守安静时段
     ——「晚上不弹横幅」就是这个意思。"""
     if _category_off(kind, cfg):

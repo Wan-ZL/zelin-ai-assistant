@@ -193,16 +193,16 @@ SECTIONS: tuple = (
                help_zh="会话停在等你一句话时：受阻收割进「待验收」、反复中断暂停自动救活、派发连续失败后停止重试。",
                help_en="When a session stops and waits on you: a blocked session harvested into In review, auto-recovery paused after repeated crashes, dispatch giving up after a streak of failures."),
             _f("notify_failures", "bool", "失败通知", "Failure alerts", default=True,
-               help_zh="需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且**不受安静时段管**——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。",
-               help_en="Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and **quiet hours do not silence it** — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here."),
+               help_zh="需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且不受安静时段管——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。",
+               help_en="Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and quiet hours do not silence it — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here."),
             # 安静时段：写方不入队（不是攒着早上再弹）——§28 的 10 分钟 stale
             # 清扫让「压到早上」没法兑现；help 文案诚实写明这一点，并点名 §70
             # 每日循环的出厂时刻（03:30，truth = act/lib/config.DEFAULT_DAILY_LOOP_TIME，
             # 判例 tests/test_server_notify_preferences_settings.py 对着它比）正落在
             # 出厂窗内——最大的一处交互，不写出来就是骗人。
             _f("quiet_hours_enabled", "bool", "安静时段", "Quiet hours", default=False,
-               help_zh="开启后，下面的时段内不弹任何横幅（失败通知除外）。这一段时间的通知是**丢掉**不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。",
-               help_en="While on, no banner is posted inside the window below (failure alerts excepted). Notifications in that window are **dropped, not held until morning**: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board."),
+               help_zh="开启后，下面的时段内不弹任何横幅（失败通知除外）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。",
+               help_en="While on, no banner is posted inside the window below (failure alerts excepted). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board."),
             _f("quiet_hours_start", "string", "安静时段开始", "Quiet hours start", default="22:00",
                check="clock_time", placeholder=("22:00", "22:00"),
                help_zh="24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。",
