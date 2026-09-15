@@ -23,7 +23,10 @@ per_mutant_timeout_seconds = 60
 "act/lib/auto_merge.py" = ["tests/test_auto_merge.py", "tests/test_auto_merge_scan_edges.py"]
 "act/lib/near_dupe.py" = ["tests/test_auto_merge.py", "tests/test_auto_merge_scan_edges.py", "tests/test_silent_merge.py"]
 "act/lib/failures.py" = ["tests/test_failures.py", "tests/test_failures_ui_lang.py"]
-"act/lib/notify.py" = ["tests/test_notify_relay.py", "tests/test_audit_notify_auth.py", "tests/test_notify_queue_sweep_edges.py", "tests/test_notify_message_builders.py"]
+# 这一行的四个文件都早于 issue #29 的偏好闸门（安静时段 + 分类开关）——夜报 39 个存活体全落在
+# 那一节里，因为钉它的判例（test_notify_preferences.py）从来没进过映射。两个文件补进来：
+# 主干判例 + 端点/分钟折算/getattr 缺省/真 bool 四类的补测（test_notify_mutation_kills_train.py）。
+"act/lib/notify.py" = ["tests/test_notify_relay.py", "tests/test_audit_notify_auth.py", "tests/test_notify_queue_sweep_edges.py", "tests/test_notify_message_builders.py", "tests/test_notify_preferences.py", "tests/test_notify_mutation_kills_train.py"]
 "act/lib/heartbeat.py" = ["tests/test_actd_heartbeat.py"]
 "act/lib/provenance.py" = ["tests/test_provenance.py"]
 # P3b (refactor/p3b-rest)：registry 门面的映射从 6 个文件放宽到钉住每条法条的判例——首轮 551 体只有
