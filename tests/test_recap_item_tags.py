@@ -213,6 +213,27 @@ class AssignTestCase(unittest.TestCase):
         self.assertEqual(doc["en"][0]["tags"], ["D1"])
         self.assertEqual(doc["zh"][0]["tags"], [])            # 对不上就不瞎挂
 
+    def test_an_item_with_nothing_left_to_compare_gets_a_fresh_number(self):
+        """归一形是空的（一条只有标点的条目）——相似度比不出东西，分数 0，于是发新号。
+
+        错挂比不挂贵得多：把 D1 挂到一条与它毫无关系的条目上，会让几个月后的一次
+        引用指向另一条承诺（§63.12 要治的正是这个）。"""
+        first, seq = rt.assign_tags(payload([sections(["Ann owns the data mix"])]))
+        self.assertEqual(first["en"][0]["tags"], ["D1"])
+        second, seq2 = rt.assign_tags(payload([sections(["……"])]), first, seq)
+        self.assertEqual(second["en"][0]["tags"], ["D2"])
+        self.assertEqual(seq2, {"D": 2})
+
+    def test_a_language_with_fewer_sections_only_gets_tags_where_it_lines_up(self):
+        """zh 少一节（§63.10 的「同节同序」没成立，needs_review 也会说这件事）——
+        对得上的那几位照挂，越界的那一位不瞎挂（位置是这里唯一的连接）。"""
+        doc, seq = rt.assign_tags(payload([sections(["a"]),
+                                           sections(["b"], key="open", modality="open")],
+                                          [sections(["甲"])]))
+        self.assertEqual([sec["tags"] for sec in doc["en"]], [["D1"], ["O1"]])
+        self.assertEqual([sec["tags"] for sec in doc["zh"]], [["D1"]])
+        self.assertEqual(seq, {"D": 1, "O": 1})
+
     def test_a_hand_mangled_payload_comes_back_untouched(self):
         for bad in ({"en": [], "zh": []}, {"en": [7], "zh": [7]}, {"en": None, "zh": None}):
             out, seq = rt.assign_tags(bad, None, {"D": 2})

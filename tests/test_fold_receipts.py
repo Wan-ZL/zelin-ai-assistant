@@ -17,11 +17,12 @@ import json
 import time
 import unittest
 import uuid
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
 from act import actd
-from act.lib import config, dashboard, fold_receipts, quick_capture, registry
+from act.lib import config, dashboard, fold_receipts, policy, quick_capture, registry
 from act.lib.registry import Requirement, State
 
 
@@ -293,6 +294,20 @@ class RadarFoldReceiptTestCase(unittest.TestCase):
         # 并入本身照常发生（回执静默不等于并入静默）
         folded = registry.load(target.id)
         self.assertIn("[radar] 周报管线又挂了", folded.notes or "")
+
+    def test_a_broken_channel_judgement_writes_nothing_and_never_breaks_the_fold(self):
+        """判据单源（`policy.channel_class`）自己出问题时判不出「用户刚敲的」——
+        fail-closed 落 EXTERNAL：不出回执、不建目录，而 fold 本身照常完成
+        （回执是观测面，不许连坐数据落盘；宪法第 11 条）。"""
+        target = self._target()
+        child = Requirement(id="R-998", title="用户自己投进来的一条",
+                            sources=[{"who": "zelin", "channel": "quick_capture",
+                                      "date": "2026-08-07", "quote": "又挂了"}])
+        with mock.patch.object(policy, "channel_class", side_effect=RuntimeError("表坏了")):
+            self.assertIsNone(fold_receipts.record(target.id, "quick_capture", "又挂了"))
+            quick_capture._fold_into(target, child, "又挂了")
+        self.assertEqual(list(config.FOLD_RECEIPTS_DIR.glob("*.json")), [])
+        self.assertIn("又挂了", registry.load(target.id).notes or "")
 
     def test_autonomous_channels_write_nothing_at_all(self):
         # 写入端闸：radar / 每日整理 / 会议 / slack 一律 None，目录里不留文件

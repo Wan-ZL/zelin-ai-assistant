@@ -96,6 +96,28 @@ class DeriveTestCase(unittest.TestCase):
         # 「截止：未定但周五确认」不是填充值（§63.10 的同一条判据）——照旧问
         self.assertIn("dl", self.ids(lines_record(deadline="Deadline: none set but confirmed Friday")))
 
+    def test_a_split_line_whose_label_is_gone_is_read_as_one_whole_body(self):
+        """标签对不上 = 整行当正文（模型漏了标签的那一版、手改过的记录都算）——
+        那一行里的承诺照旧一条条问得出来，不是静默吞掉一整行分工。"""
+        self.assertEqual(ri.split_subjects(lines_record(split="Ann: eval; Zelin: papers")),
+                         ["Ann: eval", "Zelin: papers"])
+        # 中文标签也认（owner 手改成中文的那一版）
+        self.assertEqual(ri.split_subjects(lines_record(split="分工：Ann: eval")),
+                         ["Ann: eval"])
+
+    def test_an_empty_slot_between_two_semicolons_is_not_a_commitment(self):
+        """分号切出来的空条目不算一条（模板要求 `owner: item` 对，分号是分隔符）。"""
+        self.assertEqual(
+            ri.split_subjects(lines_record(split="Split: ; Ann: eval ;; not assigned")),
+            ["Ann: eval"])
+
+    def test_something_that_is_not_a_record_has_no_split_at_all(self):
+        """投影行 / 手改坏的文件都会走到这里（`split_subjects` 是 CLI 与投影共用的
+        那一支）：不是表 = 一条都问不出，永不抛。"""
+        for rec in (None, "not a record", 7, [], {"shape": "lines"}):
+            with self.subTest(rec=rec):
+                self.assertEqual(ri.split_subjects(rec), [])
+
     def test_the_sendable_shape_asks_about_its_split_section(self):
         questions = ri.derive(sections_record(), has_priors=True)
         self.assertEqual([q["subject"] for q in questions if q["kind"] == ri.KIND_SPLIT],
@@ -172,6 +194,18 @@ class PromptTestCase(unittest.TestCase):
         self.assertNotIn("Ann", block)                      # 条目原文一个字都不在指令里
         self.assertIsNone(ri.prompt_block([]))
         self.assertIsNone(ri.prompt_block(["bogus=drop"]))  # 畸形 = 这一段根本不进 prompt
+
+    def test_an_option_the_instruction_table_has_no_line_for_is_skipped(self):
+        """两张 add-only 闭表是同一件事的两半（`OPTIONS` = 问得出什么，
+        `_INSTRUCTIONS` = 那句指令）。真加一条选项时两半一起加；万一只加了一半，
+        那条答案被**静默跳过**，其余答案照常进 prompt——既不写出一句空指令，也不
+        崩掉这一版生成（宪法第 11 条）。"""
+        drifted = {ri.KIND_PRIOR: ("compare", "drop", "postpone")}
+        with mock.patch.dict(ri.OPTIONS, drifted):
+            block = ri.prompt_block(["prior=postpone", "aud=send"])
+            self.assertIsNone(ri.prompt_block(["prior=postpone"]))
+        self.assertIn("sent to the other party", block)
+        self.assertNotIn("postpone", block)
 
     def test_the_items_the_answers_name_ride_in_the_untrusted_fence(self):
         rec = lines_record()

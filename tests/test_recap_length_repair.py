@@ -120,6 +120,17 @@ class RepairLengthsTestCase(unittest.TestCase):
         fixed, repairs = rt.repair_lengths(rec)
         self.assertEqual((repairs, fixed["en"][0]), ([], rec["en"][0]))
 
+    def test_a_line_with_no_word_boundary_at_all_is_left_alone(self):
+        """整行只有一个 token（模型把一串东西连成了一个 200 字符的长词）：按词边界
+        回退连一个字符都剪不掉，剪完仍然超帽——于是整轮不修，落 needs_review 交给
+        人看一眼，而不是把一行仍然超长的正文当成「已修好」写回记录。"""
+        rec = _clean()
+        rec["en"][0] = "Decided:" + "a" * 200
+        self.assertEqual([f["code"] for f in rt.validate_detail(rec)], ["line_too_long"])
+        fixed, repairs = rt.repair_lengths(rec)
+        self.assertEqual((repairs, fixed["en"][0]), ([], rec["en"][0]))
+        self.assertTrue(rt.validate(fixed))
+
     def test_a_clean_recap_is_untouched(self):
         rec = _clean()
         fixed, repairs = rt.repair_lengths(rec)

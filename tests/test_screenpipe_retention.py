@@ -198,6 +198,50 @@ class RunTestCase(unittest.TestCase):
         self.assertIn("DatabaseError", receipt["error"])
         self.assertTrue((self.state / ret.RECEIPT_NAME).exists())
 
+    def test_the_default_db_path_is_the_engine_s_own(self):
+        """`--db` 缺席时（cron 那一形）指向引擎自己的库。**只读这一个纯函数**——
+        判例绝不拿默认路径真跑一轮：owner 机器上那个库是真的（本文件的纪律）。"""
+        self.assertEqual(ret.default_db_path(), Path.home() / ".screenpipe" / "db.sqlite")
+
+    def test_a_receipt_that_cannot_be_written_only_adds_a_line_to_itself(self):
+        """回执落不下去（state/ 的位置被占成了文件、只读卷、盘满）= 回执里多一句，
+        清理本身照旧算完、stdout 那份仍然完整（§0 第 11 条）。"""
+        self._marker("last_frame_id", "3")
+        blocked = self.root / "state-is-a-file"
+        blocked.write_text("x", encoding="utf-8")
+        receipt = ret.run(db_path=self.db, state_dir=blocked, days=7, now=NOW)
+        self.assertEqual(receipt["deleted_frames"], 2)        # 删照删
+        self.assertIn("receipt_write_failed", receipt["error"])
+
+    def test_a_db_that_cannot_be_stat_ed_after_the_prune_reports_a_null_size(self):
+        """清理跑完那一下 `stat` 失败（库被引擎挪走、外置卷掉线——一轮最长 120 s，
+        这是真会发生的窗口）= `db_bytes_after` 诚实为 null，而不是 0，也不是崩。"""
+        self._marker("last_frame_id", "3")
+        db, real_stat, real_marker, armed = self.db, Path.stat, ret.read_marker, []
+
+        def spy_marker(*args, **kwargs):
+            """清理已经开跑了（标记是 prune 的入参）——之后那次 stat 才该失败。
+
+            不按调用次数计数：`Path.is_file` 在哪些版本上走 `Path.stat` 是会变的
+            （3.9 走、3.14 不走），而「库在清理途中没了」这件事与版本无关。"""
+            armed.append(1)
+            return real_marker(*args, **kwargs)
+
+        def flaky_stat(self, *args, **kwargs):
+            if armed and str(self) == str(db):
+                raised.append(1)
+                raise OSError("EIO")
+            return real_stat(self, *args, **kwargs)
+
+        raised = []
+        with mock.patch.object(ret, "read_marker", spy_marker), \
+                mock.patch.object(Path, "stat", flaky_stat):
+            receipt = ret.run(db_path=db, state_dir=self.state, days=7, now=NOW)
+        self.assertTrue(raised)          # 那一下 stat 真的失败过（否则本判例是空的）
+        self.assertIsNone(receipt["error"])
+        self.assertEqual(receipt["deleted_frames"], 2)
+        self.assertIsNone(receipt["db_bytes_after"])
+
     def test_cli_prints_one_json_line(self):
         self._marker("last_frame_id", "3")
         buf = io.StringIO()

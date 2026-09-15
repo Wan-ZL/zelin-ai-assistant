@@ -7,6 +7,7 @@ freelist 与首末 frame，坏库进 ``db_error`` 不炸；增长估算样本优
 真 server 随机端口（tests/test_server_common.py）；小目录 + 小 sqlite 全在临时目录里。
 """
 import json
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -77,6 +78,33 @@ class ScanTestCase(unittest.TestCase):
         self.assertEqual(out["oldest_frame_ts"], "2026-01-01T00:00:00.000000+00:00")
         self.assertEqual(out["newest_frame_ts"], "2026-01-03T00:00:00.000000+00:00")
         self.assertIsInstance(out["db_reclaimable_bytes"], int)
+
+    def test_a_file_that_cannot_be_stat_ed_is_skipped_rather_than_counted_as_zero(self):
+        """扫到一半读不到某个文件（引擎刚把日志轮换掉、权限、卷掉线）= 跳过它：
+        不计进 `file_count`、不给它的 kind 加 0——占用是给人看的数字（§0 第 3 条）。"""
+        real_lstat, missing = os.lstat, str(self.root / "engine.log")
+
+        def flaky_lstat(path, *args, **kwargs):
+            if str(path) == missing:
+                raise OSError("EIO")
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(os, "lstat", flaky_lstat):
+            out = disk.scan(self.root)
+        self.assertEqual(out["sizes"]["log"], 0)
+        self.assertEqual(out["file_count"], 4)          # 5 个文件里跳掉了那一个
+        self.assertEqual(out["total_bytes"], sum(out["sizes"].values()))
+
+    def test_a_db_that_cannot_even_be_opened_lands_in_db_error(self):
+        """只读 URI 连不上（权限、卷掉线、sqlite 不认那个 URI）——进 `db_error`，
+        其余数字全是 null；`GET /api/screenpipe/disk` 不许因此 500。"""
+        boom = sqlite3.OperationalError("unable to open database file")
+        with mock.patch.object(disk.sqlite3, "connect", side_effect=boom):
+            out = disk.db_stats(self.root / "db.sqlite")
+        self.assertEqual(out["db_error"], "unable to open database file")
+        self.assertIsNone(out["db_reclaimable_bytes"])
+        self.assertIsNone(out["oldest_frame_ts"])
+        self.assertIsNone(out["newest_frame_ts"])
 
     def test_db_stats_is_honest_about_missing_or_broken_db(self):
         self.assertEqual(disk.db_stats(self.root / "nope.sqlite")["db_error"], "no_db")
@@ -259,6 +287,27 @@ class SnapshotTestCase(unittest.TestCase):
         got = disk.snapshot(self.home, now=NOW, spawn=lambda fn: None)
         self.assertEqual(got["retention_days"], 14)
         self.assertEqual(got["last_prune"], {"ran_at": "x", "deleted_frames": 7})
+
+    def test_a_settings_catalog_that_blows_up_falls_back_to_the_factory_values(self):
+        """目录（settings_catalog）读不出来不该让整张磁盘快照失败：DB 保留期回落 0
+        （= 永久保留，出厂值）、媒体那一把回落出厂值，快照本身照旧交得出去。"""
+        with mock.patch.object(disk.settings_catalog, "effective_value",
+                               side_effect=RuntimeError("目录坏了")):
+            got = disk.snapshot(self.home, now=NOW, spawn=lambda fn: None)
+            self.assertEqual(disk.retention_days(self.home), 0)
+        self.assertEqual(got["retention_days"], 0)
+        self.assertEqual(got["media_retention_minutes"], disk.MEDIA_RETENTION_DEFAULT)
+
+    def test_a_samples_file_that_cannot_be_written_still_yields_a_snapshot(self):
+        """样本文件写不进去（state/ 的位置被占成了文件、只读卷、盘满）= 咽下去：
+        这一次的快照仍然完整，只是下一次的增长估算少一个样本点（观测面不连坐）。"""
+        home = Path(self.tmp.name) / "blocked-home"
+        home.mkdir()
+        (home / "state").write_text("这不是目录", encoding="utf-8")
+        snap = disk.compute(home, now=NOW)
+        self.assertEqual(snap["state"], "ready")
+        self.assertEqual(snap["total_bytes"], disk.scan(self.root)["total_bytes"])
+        self.assertFalse((home / "state").is_dir())     # 一个样本点都没落下去
 
     def test_receipt_name_mirrors_act(self):
         self.assertEqual(disk.RECEIPT_NAME, act_ret.RECEIPT_NAME)

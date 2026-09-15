@@ -13,8 +13,10 @@ train PR 的 CI（Tests on ubuntu 3.9，head 0619da32）真红过一次：
 - 三个后台模块都有同一道缝，且 `reset_*_for_tests()` 先 join 再清场。
 「join 之后没有任何写落地」那一条拿真的临时目录钉在 tests/test_server_screenpipe_disk.py。
 """
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
@@ -83,6 +85,28 @@ class SeamIsWiredEverywhereTestCase(unittest.TestCase):
             with self.subTest(module=mod.__name__):
                 self.assertIsInstance(mod._THREADS, background_jobs.Threads)
                 self.assertTrue(mod.join_jobs_for_tests(0.5))
+
+    def test_the_ingest_default_spawn_hands_the_work_to_the_tracked_table(self):
+        """路由判例平时把 `_default_spawn` 换成同步 spawn（时序要确定），所以**默认
+        那条路自己**要有一条判例：它必须把脚本交给 `_THREADS` 起的那种线程。
+
+        否则 §68.4 的有界 join 等的是一张空表，而真正在往 home 里写的那个线程谁也
+        等不到——CI 那次 `Errno 39 Directory not empty` 就是这个形状。脚本不真跑：
+        `runner` 是注入的假件（仓规：unit 层禁真 subprocess）。"""
+        ingest_run.reset_jobs_for_tests()
+        self.addCleanup(ingest_run.reset_jobs_for_tests)
+        home = Path(tempfile.mkdtemp(prefix="zai-ingest-seam-"))
+        seen = []
+
+        def runner(_argv, _env, _cwd, _timeout_s):
+            seen.append(threading.current_thread().name)
+            return 0, "exported 1 file", ""
+
+        started = ingest_run.export_now(home, {}, runner=runner)
+        self.assertTrue(ingest_run.join_jobs_for_tests(10.0))
+        self.assertEqual(seen, ["zai-ingest-run"])      # 线程名 = 子系统 slug（防腐 #9）
+        job = ingest_run.job_status(started["job"])
+        self.assertEqual((job["state"], job["ok"], job["rc"]), ("done", True, 0))
 
     def test_the_reset_seams_join_before_they_clear(self):
         """`reset_*_for_tests()` 自己先 join——判例只需把它的 addCleanup 排在临时目录之后（LIFO）。"""

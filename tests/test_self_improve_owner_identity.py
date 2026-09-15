@@ -215,6 +215,17 @@ class SettingsKnobTestCase(unittest.TestCase):
         self.assertEqual(policy.self_improve_config(frozen)["owner_logins"], [])
         self.assertEqual(policy.self_improve_config(frozen)["tick_minutes"], 5)
 
+    def test_a_raw_block_that_is_not_a_table_stands_the_refresh_down(self):
+        """`config.yaml` 手改成一个列表（或别的非表文档）时 `cfg.raw` 不是 dict——
+        §65.8 的现读原地返回：不给它造一个 `self_improve:` 块、不崩 pass，而同一个
+        刷新点上其余的旋钮照常落地（宪法第 11 条：坏配置只影响它自己那一半）。"""
+        frozen = config.Config(raw=[])
+        self._write({"self_improve": {"owner_logins": ["Wan-ZL"]},
+                     "approval_mention_escalation": 0})
+        actd._refresh_model_knobs(frozen)
+        self.assertEqual(frozen.raw, [])                       # 一个键都没被塞进去
+        self.assertEqual(frozen.approval_mention_escalation, 0)  # 其余旋钮照旧现读
+
     def test_catalog_row_is_the_second_developer_row(self):
         section = next(s for s in settings_catalog.SECTIONS if s["id"] == "maintainer")
         row = section["fields"][1]

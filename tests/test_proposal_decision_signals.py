@@ -206,6 +206,17 @@ class SettlementTransitionsTestCase(unittest.TestCase):
         self.assertEqual(msgs[0][2], "P-023")
         self.assertEqual(msgs[0][3], notify.KIND_PROPOSAL)
 
+    def test_a_hand_mangled_repeated_count_reads_as_zero_instead_of_crashing(self):
+        """`repeated` 是投影上的一个数字位，而盘面是文件：手改过的卡、升级前写下的
+        行里什么都可能有。文案里诚实写 0，绝不让一次通知扫描把整个 pass 带下水
+        （宪法第 11 条；同一条纪律钉在 LLM 输出逐字段消毒上）。"""
+        for bad in ("many", {"n": 3}, [3], None):
+            with self.subTest(repeated=bad):
+                msgs = alerts.detect_transitions(
+                    _snap(repeated=bad), _snap(repeated=bad, mention_escalated=True))
+                self.assertEqual(len(msgs), 1)
+                self.assertIn("0", msgs[0][0])
+
     def test_a_brand_new_card_does_not_double_up(self):
         """出生即带信号的新卡只响 §40 的新卡通知，不再多响三声。"""
         titles = self._titles({"needs_approval": [], "running": [], "review": []},

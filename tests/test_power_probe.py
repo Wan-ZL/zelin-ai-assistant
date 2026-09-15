@@ -204,6 +204,20 @@ class ProbeDisciplineTestCase(unittest.TestCase):
         self.assertFalse(power.probe_enabled())
         self.assertEqual(power.read_power(runner=AWAKE_RUNNER), {})
 
+    def test_a_probe_that_raises_is_an_empty_reading_not_a_dead_pass(self):
+        """探针抛异常 = 空读数 = unknown（宪法第 11 条）：派发闸拿到的是「不知道」，
+        而 `require_awake` 的既有语义（unknown 不算醒着）自己决定放不放行。
+
+        缓存也记下这个 unknown——否则每个 pass 都要再被这只坏探针炸一次。"""
+        power.reset_probe_memo()
+        self.addCleanup(power.reset_probe_memo)
+
+        def boom():
+            raise OSError("ioreg: command not found")
+        self.assertEqual(power.current_verdict(probe=boom, now=10.0, wall=10.0),
+                         power.UNKNOWN)
+        self.assertEqual(power.observed_verdict(now=10.0, wall=10.0), power.UNKNOWN)
+
     def test_memo_answers_within_the_window_then_re_probes(self):
         power.reset_probe_memo()
         self.addCleanup(power.reset_probe_memo)
