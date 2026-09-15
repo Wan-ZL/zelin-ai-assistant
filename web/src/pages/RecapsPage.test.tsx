@@ -8,11 +8,12 @@
 //   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）；
 //   6) 三栏 活跃 / 已归档 / 已忽略：标记已发送即归档、忽略 / 恢复一颗按钮，默认只看活跃（§63.5 追记，issue #301）；
 //   7) 「上一版」= GET /api/recaps/history 的两版并排 + 逐行改动 + 一颗回退（inbox recap_revert），
+//      回退在途时面板留一条回执（排队中 / 90 s 后「actd 可能没在跑」）、帽满时说清回退会挤掉最早一版，
 //      正文下方五颗引用 chip 复制 `2026-08-31 Zoom #D`（§63.9，issue #300）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchRecapHistory, fetchRecapSettings, postAction, postRecapMark } from "../api";
-import { PICKUP_TIMEOUT_MS } from "../components/recaps/recapText";
+import { PICKUP_TIMEOUT_MS, REVERT_POLL_MS } from "../components/recaps/recapText";
 import { LanguageContext } from "../i18n";
 import { getState, refreshBoard, resetStoreForTests } from "../store";
 import type { Board, RecapHistory, RecapLaneTotals, RecapRow, RecapSettings } from "../types";
@@ -306,6 +307,63 @@ describe("RecapsPage", () => {
     await reflow([stored({ version: 3, reverted_from: 1, en: V1_EN })]);
     await waitFor(() => expect(screen.getByText("Updated to version 3 (restored from version 1)")).toBeTruthy());
     expect(screen.getByText(/restored from version 1 \(the replaced text is in history/)).toBeTruthy();
+  });
+
+  it("a queued revert keeps saying so, polls, and falls back to the actd line after 90 s", async () => {
+    // 回退没有 daemon 台账（§63.8 只记生成），所以这条本地回执是「它到底发生了没有」的唯一信号：
+    // 闪一句就消失、之后面板装死，正是 issue #297 在生成那一侧要消灭的事。
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert to this version" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalled());
+    const queued = await screen.findByText(/Revert to version 1 is queued, waiting for the daemon/);
+    expect(queued.getAttribute("data-revert-phase")).toBe("queued");
+    // 排队中每 5 s 补拉一次看板（SSE 掉线时的保险，与 §63.8 同款）
+    const before = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(REVERT_POLL_MS); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(before + 1);
+    // 4 s 后闪句消失，回执行仍在（面板不装死）
+    expect(screen.queryByText("Revert to version 1 queued")).toBeNull();
+    expect(screen.getByText(/is queued, waiting for the daemon/)).toBeTruthy();
+    // 90 s 没落地 → 与 §63.8 unclaimed 逐字同一句，补拉停
+    await act(async () => { await vi.advanceTimersByTimeAsync(PICKUP_TIMEOUT_MS); });
+    expect(screen.getByText(/Nothing picked this up in 90 s: actd may not be running/)).toBeTruthy();
+    const polls = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(REVERT_POLL_MS * 3); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(polls);
+  });
+
+  it("the queued revert receipt ends when the reverted version lands", async () => {
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert to this version" }));
+    await screen.findByText(/is queued, waiting for the daemon/);
+    await reflow([stored({ version: 3, reverted_from: 1, en: V1_EN })]);
+    await waitFor(() => expect(screen.queryByText(/is queued, waiting for the daemon/)).toBeNull());
+    expect(screen.getByText("Updated to version 3 (restored from version 1)")).toBeTruthy();
+  });
+
+  it("says that a revert on a full history ages the oldest version out", async () => {
+    // act/recap._push_history 在满帽时挤掉最早那一条：回退**也**会花掉一个回退目标
+    // （判例 tests/test_recap_revert.py），面板不许只把老化归因于「下一次生成」
+    const entries = [5, 4, 3, 2, 1].map((version) => ({
+      version, generated_at: `2026-08-31T20:0${version}:00Z`, partial: false,
+      quality: "ok" as const, en: V1_EN, zh: ZH }));
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history({ entries }));
+    await renderPage([stored({ version: 6 })]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    expect(await screen.findByText(/a revert pushes the current text into history first/)).toBeTruthy();
+    expect(screen.getByText(/that pushes the oldest stored version out/)).toBeTruthy();
+    expect(screen.getByText(/History is already full at 5/)).toBeTruthy();
+    // 还没满的时候不吓人（默认 fixture 只有一条）
+    cleanup();
+    resetStoreForTests();
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history());
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    expect(await screen.findByText(/Only the last 5 versions are kept/)).toBeTruthy();
+    expect(screen.queryByText(/History is already full/)).toBeNull();
   });
 
   it("no stored version means no entry point, and an empty history says so", async () => {

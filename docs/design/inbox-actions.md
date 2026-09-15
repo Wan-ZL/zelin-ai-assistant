@@ -383,7 +383,7 @@ direct-run 变体（golden `capture-run`）：
   "version" : 2
 }
 ```
-`version` = 要恢复的那一版的版本号，**整数**（1..`_RECAP_VERSION_MAX`，truth = `server/inbox_writer.py`；`true` / `"2"` / `2.0` 一律 400——bool 是 int 子类，这一条是判例钉死的）。本动作是 inbox 里**第一个带整数值的动作**：`mac_json_bytes` 的值类型表因此多一支（NSJSONSerialization 与 Python 对 Int 都印裸十进制，字节形一致），golden 逐字节验证过。actd 走 `_DETACHED_ACTIONS` → `python -m act.recap --revert <key> --to-version <n>`：持 `state/recap/.lock`，把当前正文压进 history、把那一版的正文写成 version + 1（`reverted_from` add-only）——**非破坏**，回退本身也能被回退。这一版不存在 / key 不认识 = 诚实 noop（`recap_store.inbox_argv` 只查形状，存不存在由持锁的写者判，原因进 `state/recap.log`）。为什么不让 server 直接改文件：`act/recap.py` 是 `state/recap/recaps/` 的唯一写者（CONTRACT §63.6），server 侧只有只读的 `GET /api/recaps/history`。golden：`recap_revert`。
+`version` = 要恢复的那一版的版本号，**整数**（1..`_RECAP_VERSION_MAX`，truth = `server/inbox_writer.py`；`true` / `"2"` / `2.0` 一律 400——bool 是 int 子类，这一条是判例钉死的）。本动作是 inbox 里**第一个带整数值的动作**：`mac_json_bytes` 的值类型表因此多一支（NSJSONSerialization 与 Python 对 Int 都印裸十进制，字节形一致），golden 逐字节验证过。actd 走 `_DETACHED_ACTIONS` → `python -m act.recap --revert <key> --to-version <n>`：持 `state/recap/.lock`，把当前正文压进 history、把那一版的正文写成 version + 1（`reverted_from` add-only）——**非破坏**，回退本身也能被回退。这一版不存在 / key 不认识 = 诚实 noop（`recap_store.inbox_argv` 只查形状，存不存在由持锁的写者判，原因进 `state/recap.log`）。为什么不让 server 直接改文件：`act/recap.py` 是 `state/recap/recaps/` 的唯一写者（CONTRACT §63.6），server 侧只有只读的 `GET /api/recaps/history`。**本动作不写任何 daemon 回执**（不进 §63.8 的 `generate_request` 台账：回退不是一次生成），所以「它到底发生了没有」由面板自己的乐观回执回答——排队中一直说话 + 每 5 s 补拉，90 s 没落地就落回 §63.8 那句「actd 可能没在跑」（CONTRACT §63.9）。golden：`recap_revert`。
 
 ### 3.9 import_claude_sessions（§22，无 `id`）
 ```json

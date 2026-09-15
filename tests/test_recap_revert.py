@@ -6,6 +6,8 @@
 （§63.9 之前入库的条目没有这个键 → 需复核，永不伪造 ok）、``note`` / ``problems`` /
 ``repairs`` 清空；这一版不存在 / key 不认识 = 诚实 None 且文件一字不动；inbox
 ``recap_revert`` 经 actd 的 detached 表分离起子进程（server 永不写纪要文件，§63.6）。
+帽的代价也钉在这里：``history`` 已经满 ``HISTORY_CAP`` 条时，回退把当前正文压进历史
+**会挤掉最早那一版**（一个回退目标就此老化），面板的文案照这条判例说话。
 时钟是注入的，绝不起真 claude（本路径根本不调模型）。
 """
 import json
@@ -64,6 +66,18 @@ class RevertCase(unittest.TestCase):
         store.save_recap(rec)
         return rec
 
+    def _full_record(self) -> dict:
+        """history 恰好满 ``HISTORY_CAP`` 条（第 1..N 版），当前是第 N+1 版。"""
+        rec = self._record()
+        cap = recap.HISTORY_CAP
+        rec["history"] = [{"version": n, "generated_at": "2026-08-31T20:%02d:00Z" % n,
+                           "en": ["%s (v%d)" % (line, n) for line in V1_EN], "zh": list(V1_ZH),
+                           "partial": False, "quality": store.QUALITY_OK}
+                          for n in range(1, cap + 1)]
+        rec.update({"version": cap + 1, "en": list(V2_EN), "zh": list(V2_ZH)})
+        store.save_recap(rec)
+        return rec
+
 
 class RevertBehaviourTestCase(RevertCase):
     def test_revert_restores_the_stored_text_as_a_new_version(self):
@@ -84,6 +98,20 @@ class RevertBehaviourTestCase(RevertCase):
         self.assertEqual(versions, [1, 2])
         pushed = rec["history"][1]
         self.assertEqual((pushed["en"], pushed["quality"]), (V2_EN, store.QUALITY_OK))
+
+    def test_a_revert_on_a_full_history_ages_out_the_oldest_stored_version(self):
+        """帽满时回退**也**会老化掉一版：当前正文压进 history 就挤掉最早那一条，
+        那一版之后再也回不去——面板必须说这件事（`RecapDetail` 的「历史已经满 N 版了」）。"""
+        cap = recap.HISTORY_CAP
+        self._full_record()
+        self.assertIsNotNone(recap.revert(KEY, 3, now=T1))
+        rec = store.load_recap(KEY)
+        # 第 1 版被挤掉，刚被换下来的第 N+1 版排在最后；条数仍是帽
+        self.assertEqual([e["version"] for e in rec["history"]], list(range(2, cap + 2)))
+        self.assertEqual(len(rec["history"]), cap)
+        # 老化掉的那一版就是一个消失了的回退目标（投影句柄也不再列它）
+        self.assertIsNone(recap.revert(KEY, 1, now=T1 + 60))
+        self.assertNotIn(1, [h["version"] for h in store.history_versions(store.load_recap(KEY))])
 
     def test_a_revert_is_itself_revertible(self):
         self._record()

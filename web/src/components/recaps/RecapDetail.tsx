@@ -12,20 +12,25 @@
 // 这条路上，看板投影只带标量句柄 history_versions），当前版与选中的旧版并排、逐行标出改动（纯字符串比较，
 // 零模型），一颗「回退到这一版」= inbox recap_revert（server 永不写纪要文件，§63.6）；正文下方五颗引用 chip
 // 复制 `2026-08-31 Zoom #D`（行位置即身份，粘出去的五行一字不变；逐条 id D1 / A2 等 #303 的多条目格式）。
+// 回退没有 daemon 台账（它不是一次生成），所以面板自己记一条乐观回执：排队中一直说话并每 5 s 补拉，
+// 90 s 没落地就落回 §63.8 那句「actd 可能没在跑」——闪一句就消失、之后面板装死是这一条要消灭的事。
+// 帽的诚实口径：`_push_history` 在历史满 5 版时会挤掉最早那一版，所以回退**也**会老化掉一个回退目标——
+// 面板照直说，不许只把老化归因于「下一次生成」。
 // §63.5 追记（issue #301）：CLOSED 行多一颗「忽略 / 恢复」（POST /api/recaps/mark dismissed，与
 // 「标记已发送」同一个 toggle 机制）——不需要记录的会议不必被迫标成「已发送」才能离开活跃列表；
 // 忽略过的行脚注说明它会先被删掉、按「恢复」即撤销。OPEN 行不给这颗按钮（会还没开完，无从判断）。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchRecapHistory, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
-import { markRecap, markRecapPending } from "../../store";
+import { markRecap, markRecapPending, refreshBoard } from "../../store";
 import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
 import { copyText } from "../detail/copyText";
 import { noteConflicts, type NoteConflictId } from "./noteCheck";
 import {
   changedLines, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, problemLabel, recapBody,
-  recapClipboardText, recapHeader, recapProblems, recapRepairs, repairLabel, slackDraftLabel,
-  versionLabel, type GenerationPhase,
+  recapClipboardText, recapHeader, recapProblems, recapRepairs, repairLabel, REVERT_POLL_MS,
+  revertPhase, slackDraftLabel, versionLabel, type GenerationPhase, type RevertPending,
+  type RevertPhase,
 } from "./recapText";
 
 const NOTE_MAX = 500;
@@ -89,6 +94,17 @@ export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Te
     default:
       return null;
   }
+}
+
+/** §63.9 回退的回执行（idle 不说话；落地由 landedNote 的闪句 + 脚注体现）。
+ *  「没人接手」那一句**直接复用 §63.8 的 unclaimed 文案**——同一件事（actd 没在跑 / 起不来 /
+ *  锁等超时）只有一句话，不起第二套说法。 */
+export function revertNote(phase: RevertPhase, version: number, text: Text): string | null {
+  if (phase === "queued") {
+    return text(`已排队回退到第 ${version} 版，等待后台接手…（当前这一版会先存进历史，可以再回退回来）`,
+                `Revert to version ${version} is queued, waiting for the daemon… (the current text is pushed into history first, so this is undoable)`);
+  }
+  return phase === "unclaimed" ? generationNote("unclaimed", false, text) : null;
 }
 
 /** 新版本落地那一下的闪句：有正文 = 已更新到第 N 版（§63.9 回退落地时点明搬自第几版）；
@@ -173,6 +189,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const [history, setHistory] = useState<RecapHistory | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [picked, setPicked] = useState<number | null>(null);
+  // §63.9：排队中的回退（daemon 侧没有台账——面板自己的最小乐观回执）+ 逼渲染的秒表
+  const [revertPending, setRevertPending] = useState<RevertPending | null>(null);
+  const [, setRevertTick] = useState(0);
   // 上一次渲染看到的 {key, version}：同一行版本号涨了 = 新版本落地，闪一句
   const seen = useRef<{ key: string; version: number }>({ key: row.key, version: row.version ?? 0 });
 
@@ -185,6 +204,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     setHistory(null);
     setHistoryError(null);
     setPicked(null);
+    setRevertPending(null);
   }, [row.key, settings?.default_language, ui]);
 
   useEffect(() => {
@@ -228,6 +248,25 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
   const progress = generationNote(phase, isOpen, text);
+  // §63.9 回退的回执：每次渲染现算（与 §63.8 页面侧同一口径），落地 / 退场即自己结束
+  const reverting = revertPhase(row, revertPending, Date.now());
+  const revertProgress = revertNote(reverting, revertPending?.version ?? 0, text);
+
+  // 排队中每 5 s 补拉一次看板（SSE 掉线时的保险，与 §63.8 同款）并逼一次渲染——90 s 那条判线
+  // 必须自己会到，不能等下一次 board 回流；unclaimed / 落地后就停（不在途时零请求）
+  useEffect(() => {
+    if (reverting !== "queued") return;
+    const timer = setInterval(() => {
+      setRevertTick((n) => n + 1);
+      void refreshBoard();
+    }, REVERT_POLL_MS);
+    return () => clearInterval(timer);
+  }, [reverting]);
+
+  // 落地 / 10 分钟退场：把这条本地回执收掉（unclaimed 仍留着——那句话要靠它显示）
+  useEffect(() => {
+    if (revertPending && reverting === "idle") setRevertPending(null);
+  }, [reverting, revertPending]);
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -277,11 +316,15 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   });
   const slackDraft = () => run(text("已排队投到 Slack 草稿", "Slack draft queued"), () =>
     postAction({ action: "recap_slack_draft", meeting_key: row.key, channel_id: channel.trim() }));
-  // §63.9 回退 = inbox recap_revert（server 永不写纪要文件，§63.6）；非破坏——当前正文先进 history
+  // §63.9 回退 = inbox recap_revert（server 永不写纪要文件，§63.6）；非破坏——当前正文先进 history。
+  // 闪句只说「已排队」——「落地后自动更新」那句承诺改由上面那条**留在面板上**的回执行兑现：
+  // 排队中一直说话，90 s 没落地就说「actd 可能没在跑」，不再闪一下就装死。
   const revert = (version: number) => run(
-    text(`已排队回退到第 ${version} 版，落地后这里自动更新（当前这一版会存进历史，可以再回退回来）`,
-         `Revert to version ${version} queued; this panel updates when it lands (the current text is kept in history, so this is undoable)`),
-    () => postAction({ action: "recap_revert", meeting_key: row.key, version }),
+    text(`已排队回退到第 ${version} 版`, `Revert to version ${version} queued`),
+    async () => {
+      await postAction({ action: "recap_revert", meeting_key: row.key, version });
+      setRevertPending({ version, base: row.version ?? 0, at: Date.now() });
+    },
   );
   // §63.9 一行的引用串（`2026-08-31 Zoom #D`）：复制正文一字不变，引用是另一次复制
   const copyCitation = (index: number) => run(text("已复制引用", "Citation copied"), async () => {
@@ -312,6 +355,14 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
       {progress && (
         <p className={`recap-progress${generating ? " is-busy" : " is-warning"}`} role="status" data-phase={phase}>
           {progress}
+        </p>
+      )}
+
+      {/* §63.9 回退的回执行：面板收起后仍在（回退没有 daemon 台账，这是唯一的「它到底有没有发生」） */}
+      {revertProgress && (
+        <p className={`recap-progress${reverting === "queued" ? " is-busy" : " is-warning"}`}
+           role="status" data-revert-phase={reverting}>
+          {revertProgress}
         </p>
       )}
 
@@ -457,12 +508,21 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
                 language={language}
                 text={text}
               />
+              {/* 帽的诚实口径：回退**也**是一次「把当前正文压进历史」，历史满了就同样挤掉最早那一版
+                  （act/recap._push_history 的 `[-(HISTORY_CAP - 1):]`）——不许只把老化归因于下一次生成 */}
               <p className="recap-hint">
-                {text(`只保留最近 ${history.history_cap} 版；更早的会在下一次生成时老化掉。回退不会删掉任何东西——当前这一版会先存进历史。`,
-                      `Only the last ${history.history_cap} versions are kept; older ones age out on the next generation. Reverting deletes nothing: the current text is pushed into history first.`)}
+                {text(`只保留最近 ${history.history_cap} 版：回退会先把当前这一版存进历史（所以能再回退回来），历史已满 ${history.history_cap} 版时最早的那一版会因此老化掉；下一次生成同理。`,
+                      `Only the last ${history.history_cap} versions are kept: a revert pushes the current text into history first (so it can be undone), and once history is full at ${history.history_cap} that pushes the oldest stored version out; a regeneration does the same.`)}
               </p>
+              {history.entries.length >= history.history_cap && (
+                <p className="recap-hint is-warning">
+                  {text(`历史已经满 ${history.history_cap} 版了：下一次回退（或生成）会挤掉最早的那一版，它之后就回不去了。`,
+                        `History is already full at ${history.history_cap}: the next revert (or regeneration) pushes the oldest stored version out, and it cannot be restored after that.`)}
+                </p>
+              )}
               <div className="recap-panel-actions">
-                <button type="button" className="btn btn-primary" disabled={busy || picked === null}
+                <button type="button" className="btn btn-primary"
+                        disabled={busy || picked === null || reverting === "queued"}
                         onClick={() => picked !== null && void revert(picked)}>
                   {text("回退到这一版", "Revert to this version")}
                 </button>

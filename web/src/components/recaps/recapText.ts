@@ -1,7 +1,7 @@
 // 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9）：行标签、按日分组、badge 词表、
 // 语言选择、复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
 // §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）、
-// §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题与两版逐行差异。
+// §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题、两版逐行差异与回退的回执态判定。
 // 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
@@ -105,6 +105,37 @@ export function generationPhase(row: RecapRow, pending: RecapPending | undefined
 export function isGenerating(phase: GenerationPhase): boolean {
   return phase === "queued" || phase === "running";
 }
+
+/**
+ * §63.9（issue #300）**回退的回执**。回退是 detached inbox 动作，daemon 侧**没有**台账
+ * （`recap_revert` 不进 §63.8 的 `generate_request`：回退不是一次生成，行上不该出现「生成中」），
+ * 所以面板自己记一条最小乐观回执——按下时记 `{version, base, at}`：
+ *   queued    = 已排队、新版本还没落地（面板一句「排队中」+ 每 `REVERT_POLL_MS` 补拉一次看板）；
+ *   unclaimed = 按下 90 s 仍没有新版本（actd 没在跑 / 子进程起不来 / 锁等超时都长这样）——
+ *               与 §63.8 **同一条判线、同一句**「actd 可能没在跑…可以再试一次」；
+ *   idle      = 版本号涨了（回退落地）/ 10 分钟退场。
+ * 两个时限与 §63.8 共用常量，绝不另起第二套。
+ */
+export type RevertPhase = "idle" | "queued" | "unclaimed";
+
+export interface RevertPending {
+  /** 要回到的那一版（文案说「回退到第 N 版」用） */
+  version: number;
+  /** 按下时看到的当前版本号：涨了 = 这次回退（或任何一次落地）已经到了 */
+  base: number;
+  at: number;
+}
+
+export function revertPhase(row: RecapRow, pending: RevertPending | null, now: number): RevertPhase {
+  if (!pending) return "idle";
+  if ((row.version ?? 0) > pending.base) return "idle";       // 新版本已落地
+  const age = now - pending.at;
+  if (age > PENDING_TIMEOUT_MS) return "idle";                // 退场：别永远挂着
+  return age > PICKUP_TIMEOUT_MS ? "unclaimed" : "queued";
+}
+
+/** 回退在途时面板自己的补拉间隔——与 §63.8 页面侧 `GENERATING_POLL_MS` 同一个 5 s 口径（判例钉两者相等） */
+export const REVERT_POLL_MS = 5000;
 
 /** 行 badge（issue #129 §3 词表 + §63.8 生成中 / 后台未接手 / 生成未落地 / 生成未启动
  *  + §63.5 追记 issue #301 已忽略）：

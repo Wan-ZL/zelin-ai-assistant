@@ -196,6 +196,11 @@
   font: var(--type-composer-hint);
 }
 
+/* §63.9：帽已经满了那一句（下一次回退会挤掉最早的一版）——提示里唯一一句警告色 */
+.recap-hint.is-warning {
+  color: var(--warning);
+}
+
 .recap-textarea {
   width: 100%;
   min-height: 72px;

@@ -1,14 +1,14 @@
 // 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行 +
 // §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge；
 // §63.3 追记 校验原因与自动修剪的双语文案（issue #298）；§63.5 追记 三栏判定与已忽略 badge（issue #301）；
-// §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异（issue #300）。
+// §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异、回退回执的三态（issue #300）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, appLabel, badgesFor, changedLines,
-  generationPhase, groupByDay, isGenerating, laneCounts, lineCitation, pickLanguage, problemLabel, recapBody,
-  recapClipboardText, recapHeader, recapLane, recapProblems, recapRepairs, repairLabel, rowLabel, slackDraftLabel,
-  versionLabel,
+  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, REVERT_POLL_MS, appLabel,
+  badgesFor, changedLines, generationPhase, groupByDay, isGenerating, laneCounts, lineCitation, pickLanguage,
+  problemLabel, recapBody, recapClipboardText, recapHeader, recapLane, recapProblems, recapRepairs, repairLabel,
+  revertPhase, rowLabel, slackDraftLabel, versionLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -255,5 +255,23 @@ describe("recapText", () => {
     expect(versionLabel({ version: 1, generated_at: null, partial: true }, text)).toBe("Version 1 (partial)");
     const zh = (zhText: string, _en: string) => zhText;
     expect(versionLabel({ version: 1, generated_at: null, partial: true }, zh)).toBe("第 1 版（阶段稿）");
+  });
+
+  it("keeps a local receipt for a queued revert, because the daemon keeps none", () => {
+    // 回退不进 §63.8 台账（判例 tests/test_recap_revert.py），所以面板只有这条乐观回执可依
+    const at = 5_000;
+    const pending = { version: 1, base: 2, at };
+    const stored = row({ version: 2 });
+    expect(revertPhase(stored, null, at)).toBe("idle");                       // 没按过 = 不说话
+    expect(revertPhase(stored, pending, at + 1_000)).toBe("queued");
+    expect(revertPhase(stored, pending, at + PICKUP_TIMEOUT_MS)).toBe("queued");
+    // 90 s 没有新版本 = actd 没在跑 / 起不来 / 锁等超时——与 §63.8 同一条判线
+    expect(revertPhase(stored, pending, at + PICKUP_TIMEOUT_MS + 1)).toBe("unclaimed");
+    expect(revertPhase(stored, pending, at + PENDING_TIMEOUT_MS + 1)).toBe("idle");   // 10 分钟退场
+    // 版本号涨了 = 落地（闪句与脚注接手），回退本身也可能落地成任何一版
+    expect(revertPhase(row({ version: 3 }), pending, at + 1_000)).toBe("idle");
+    expect(revertPhase(row({ version: 0 }), { version: 1, base: 0, at }, at + 1_000)).toBe("queued");
+    // 面板补拉与页面补拉同一个口径，不另起第二套时限
+    expect(REVERT_POLL_MS).toBe(5_000);
   });
 });
