@@ -58,6 +58,10 @@ os.environ.setdefault("AIASSISTANT_DAILY_LOOP", "0")
 # （判决恒 unknown = fail-open，派发行为与本条法之前逐字相同）；探针自己的判例
 # 注入 runner / probe，走同一段解析。
 os.environ.setdefault("AIASSISTANT_POWER_PROBE", "0")
+# §75 worktree 回收：sweep / release 会真的跑 `git worktree remove` + `git branch -d`。
+# 套件里默认关掉（两个出口空转，回执记 skipped: disabled）；本条法自己的判例注入
+# 假 git runner——注入了就照跑，忘了注入的判例是空转而不是删开发者机器上的 worktree。
+os.environ.setdefault("AIASSISTANT_WORKTREE_SWEEP", "0")
 
 
 # --------------------------------------------------------------------------- #

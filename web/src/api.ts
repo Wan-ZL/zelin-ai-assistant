@@ -61,6 +61,8 @@ import type {
   UpdateCheckResult,
   UpdateInstallReceipt,
   WebAnalyticsEvent,
+  WorktreeCleanup,
+  WorktreeInventory,
 } from "./types";
 
 interface ApiErrorBody {
@@ -621,6 +623,20 @@ export function postUninstallTerminal(): Promise<TerminalReceipt> {
 /** POST /api/maintainer/terminal — 开发者区「在终端打开开发会话」：cd <repo> && claude [--resume]，参数由 server 读设置（§68.1） */
 export function postMaintainerTerminal(): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/maintainer/terminal", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/worktrees[?refresh=1] — 开发者区 `.claude/worktrees/` 清点（§75.4）：立刻回缓存（首次 computing），
+ *  扫目录 + du 在 server 后台线程；refresh=1 让 server 重算一次 */
+export function fetchWorktrees(refresh = false, signal?: AbortSignal): Promise<WorktreeInventory> {
+  return request<WorktreeInventory>(refresh ? "/api/worktrees?refresh=1" : "/api/worktrees", { signal });
+}
+
+/** POST /api/worktrees/cleanup — 开发者区「清理」（§75.4）：`dry_run` 只报会删谁，一个字节都不动 */
+export function postWorktreesCleanup(dryRun = false): Promise<WorktreeCleanup> {
+  return request<WorktreeCleanup>("/api/worktrees/cleanup", {
+    method: "POST",
+    body: JSON.stringify(dryRun ? { dry_run: true } : {}),
+  });
 }
 
 /** GET /api/radars — Slack / Gmail 后台雷达 agent 的 launchd 状态（§48.7；token-light GET） */
