@@ -2,6 +2,12 @@
 
 - ThreadingHTTPServer，**硬编码 bind 127.0.0.1**（宪法：本地优先，新增网络面
   仅 localhost）；端口 env ``ZAI_PORT`` 默认 47820。
+- 日志噪音闸（§54.2 追记，issue #314）：`_Server.handle_error` 只吞三个连接类
+  异常（客户端关 tab / 刷新时的 reset，抛在 Handler 之前）、其余照打全栈；
+  `log_message` 行首带本地 ISO 时间戳；`log_request` 把 `/api/board` 与
+  `/api/health` 按 `(path, 状态码)` 分桶、5 分钟窗口采样（状态码一变立刻写，
+  被吃掉的条数随下一行报出来，`ZAI_LOG_POLLS=1` 关采样）。日志只减噪、永不
+  删（§55 审计 L3）。
 - error envelope 统一 ``{"error":{"code","message","details"}}``（errors.py）。
 - POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（reveal 在
   本层校验，actions 的字段闸门归 inbox_writer/G1）。
@@ -64,7 +70,8 @@
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§10bis（贴图 images 字段与上传面）、§37.2（会话内容搜索层）、§59（设置面）、
 §62（素材库）、§63（会议 recap）、§67（skill 商店：GET/POST /api/skills，写者是
-act/lib/skills.py）、§68（parity 面）、§70（每日整理设置面）。
+act/lib/skills.py）、§68（parity 面）、§70（每日整理设置面）、§54.2（server 生命
+周期与本进程的访问日志纪律）。
 """
 from __future__ import annotations
 
@@ -74,6 +81,8 @@ import mimetypes
 import os
 import queue
 import sys
+import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -110,6 +119,80 @@ _PLACEHOLDER_HTML = (b"<!doctype html><meta charset='utf-8'>"
                      b"<p>server is up. <code>web/dist</code> not built yet "
                      b"&mdash; run <code>cd web && npm run build</code>.</p>"
                      b"<p><a href='/api/board'>/api/board</a></p>")
+
+# 访问日志的噪音闸（§54.2 追记 2026-09-14）：日志只减噪、永不删（§55 审计 L3）。
+# 客户端关 tab / 刷新时 keep-alive 连接被 reset——异常发生在 handle_one_request
+# 读请求行时，在 Handler 之前，_dispatch 的 except 够不着它。
+_QUIET_CONN_ERRORS = (BrokenPipeError, ConnectionResetError,
+                      ConnectionAbortedError)
+# 看板每 5s 轮询这两条；按 (path, 状态码) 分桶采样，其余路径一律照写
+_POLL_PATHS = ("/api/board", "/api/health")
+_POLL_WINDOW_SECONDS = 300.0
+_LOG_POLLS_ENV = "ZAI_LOG_POLLS"  # =1 → 关掉采样（逐条写，排障用的 debug 档）
+
+
+class _PollSampler:
+    """轮询端点的访问日志采样器：每个 ``(path, code)`` 每 ``window`` 秒最多一行。
+
+    分桶键含状态码，所以**状态一变立刻写**（新桶 = 没有 last_ts；状态变化是信
+    号，不是噪音），只有同 path 同码的重复才被掐掉——「同一条轮询路径反复返回
+    同一个错误」和「反复返回 200」是同一种洪水（owner 那份日志里 1549 行一模
+    一样的 `/api/board 404`）。被吃掉的条数记在 ``(last_ts, suppressed)`` 里，
+    随下一条真写出去的行报出来——日志从此不说谎（没有静默丢弃）。桶数有界：
+    ``len(_POLL_PATHS) × 见过的状态码``，几十条上限，不会长。线程安全：
+    ThreadingHTTPServer 每连接一个线程。"""
+
+    def __init__(self, window: float = _POLL_WINDOW_SECONDS) -> None:
+        self.window = window
+        self._lock = threading.Lock()
+        self._seen: "dict[tuple[str, int], tuple[float, int]]" = {}
+
+    def decide(self, path: str, code: int, now: float) -> "tuple[bool, int]":
+        """→ ``(emit, suppressed)``；``emit=False`` = 这条被采样掉。"""
+        key = (path, code)
+        with self._lock:
+            last, suppressed = self._seen.get(key, (None, 0))
+            if last is not None and now - last < self.window:
+                self._seen[key] = (last, suppressed + 1)
+                return (False, 0)
+            self._seen[key] = (now, 0)
+            return (True, suppressed)
+
+
+_POLL_SAMPLER = _PollSampler()
+
+
+def _log_polls_verbatim(env: "dict[str, str] | None" = None) -> bool:
+    """``ZAI_LOG_POLLS=1`` → 轮询也逐条写（采样关闭）。"""
+    raw = (env if env is not None else os.environ).get(_LOG_POLLS_ENV, "")
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _status_int(code) -> Optional[int]:
+    """访问日志的状态码 → ``int``；形状不明（``"-"`` / None）→ None。"""
+    try:
+        return int(getattr(code, "value", code))
+    except (TypeError, ValueError):
+        return None
+
+
+def _quiet_candidate(path: str, code) -> bool:
+    """这条访问日志该不该过采样器：轮询路径 + 认得出的状态码就算。
+
+    非 2xx 也进闸——采样器按 ``(path, code)`` 分桶，状态一变立刻写，掐掉的只是
+    「同一条轮询路径反复返回同一个码」（含反复 404）。状态码形状不明的行不进
+    闸，逐条写。"""
+    return path in _POLL_PATHS and _status_int(code) is not None
+
+
+def _access_line(address: str, text: str, now: "float | None" = None) -> str:
+    """一行访问日志：``<本地 ISO 时间戳> <client> - <text>``（自带换行）。
+
+    BaseHTTPRequestHandler 的 `log_date_time_string` 不带年也不带时区，对不上
+    「我 14:34 点了哪个按钮、server 收到了什么」；这里换成可排序、跨时区可读
+    的一种形状（`2026-09-14T14:34:05-0400`）。"""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now))
+    return "%s %s - %s\n" % (stamp, address, text)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -429,8 +512,27 @@ class Handler(BaseHTTPRequestHandler):
                          {"Cache-Control": _static_cache(target)})
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
-        # 保留一行式访问日志到 stderr；SSE 心跳不经此处，噪音可控
-        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+        # 一行式访问日志到 stderr，行首带本地 ISO 时间戳（§54.2 追记）；本方法
+        # 是这条行的唯一写者，SSE 心跳不经此处，噪音可控
+        sys.stderr.write(_access_line(self.address_string(), fmt % args))
+
+    def log_request(self, code="-", size="-") -> None:
+        """访问日志的采样闸（§54.2 追记）：轮询端点同 path 同码每 5 分钟一行。
+
+        状态码一变立刻写（状态变化 = 信号）；非轮询路径、以及 ``ZAI_LOG_POLLS=1``
+        一律逐条写——被采样掉的条数由下一条真写出去的行报出来。"""
+        suffix = ""
+        path = (getattr(self, "path", "") or "").split("?", 1)[0]
+        if not _log_polls_verbatim() and _quiet_candidate(path, code):
+            emit, suppressed = _POLL_SAMPLER.decide(
+                path, _status_int(code), time.time())
+            if not emit:
+                return
+            if suppressed:
+                suffix = " (+%d suppressed in the last %ds)" % (
+                    suppressed, int(_POLL_SAMPLER.window))
+        self.log_message('"%s" %s %s%s', self.requestline,
+                         str(getattr(code, "value", code)), str(size), suffix)
 
 
 # --------------------------------------------------------------------------- #
@@ -763,6 +865,21 @@ class _Context:
         self.allowed_origins = allowed_origins
 
 
+class _Server(ThreadingHTTPServer):
+    """ThreadingHTTPServer + 连接类异常静默（§54.2 追记 2026-09-14）。
+
+    浏览器关 tab / 刷新时 keep-alive 连接被 reset，异常在 `handle_one_request`
+    读请求行时抛出——Handler 的 `_dispatch` 够不着它，socketserver 的默认
+    `handle_error` 于是往 server.launchd.log 里打整段 traceback（live 机器上
+    101 段，issue #314）。只吞三个连接类异常，其余照打全栈——静掉的是噪音，
+    不是真崩溃。"""
+
+    def handle_error(self, request, client_address) -> None:
+        if isinstance(sys.exc_info()[1], _QUIET_CONN_ERRORS):
+            return  # 客户端提前挂断——正常噪音（Handler._dispatch 同一判据）
+        super().handle_error(request, client_address)
+
+
 def make_server(port: Optional[int] = None,
                 home: "str | Path | None" = None,
                 static_dir: Optional[Path] = None,
@@ -775,7 +892,7 @@ def make_server(port: Optional[int] = None,
     # token 读不出也写不进（OSError）= fail-closed：宁可起不来，不裸奔
     token = security.load_or_create_token(resolved_home)
     hub = EventHub()
-    httpd = ThreadingHTTPServer((BIND_HOST, port), Handler)
+    httpd = _Server((BIND_HOST, port), Handler)
     bound_port = httpd.server_address[1]  # port=0 时这里才是真端口
     httpd.ctx = _Context(resolved_home, hub,  # type: ignore[attr-defined]
                          static_dir or paths.web_dist_dir(),

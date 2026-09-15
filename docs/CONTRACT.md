@@ -4586,6 +4586,41 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
   开头「§54 名字互换追记」——壳 = "Zelin's AI Assistant" / `Zelin's AI Assistant.app`，
   旧 app = "Zelin's AI Assistant (old)"，两个 bundle id 都不动。**
 
+**2026-09-14 追记（add-only，issue #314 / D54）：`server.launchd.log` 的噪音闸。**
+本节上文只禁了 EADDRINUSE 那一种 traceback 洪水；live 机器上的 1.9 MB 日志里有
+**101 段**同一个 `ConnectionResetError`——浏览器关 tab / 刷新时 keep-alive 连接被
+reset，异常抛在 `handle_one_request` 读请求行时（在 Handler 之前），`Handler._dispatch`
+的 `except (BrokenPipeError, ConnectionResetError)` 够不着它，socketserver 的默认
+`handle_error` 于是照打全栈。同一份日志的请求行还没有时间戳，对不上「我 14:34 点
+了哪个按钮」。自本追记起三条不变式（实现 `server/app.py`，判例
+`tests/test_server_log_noise.py`）：
+
+- **`make_server` 起的是 `server.app._Server`**（`ThreadingHTTPServer` 子类）：
+  `handle_error` 只在 `sys.exc_info()[1]` 是 `BrokenPipeError` /
+  `ConnectionResetError` / `ConnectionAbortedError` 时静默返回，**其余异常一律
+  `super().handle_error()` 打完整 traceback**——静的是噪音，不是真崩溃；永不用
+  空泛的 `except Exception` 兜（那会把真事故藏进沉默里）。
+- **访问日志行首带本地 ISO 时间戳**（`2026-09-14T14:34:05-0400`，`Handler.
+  log_message` 经 `_access_line`，它是这条行的唯一写者）——`BaseHTTPRequestHandler`
+  自带的 `log_date_time_string` 不带年也不带时区，跨时区读不了。
+- **轮询端点采样，分桶键 = `(path, 状态码)`**：`Handler.log_request` 对
+  `_POLL_PATHS`（`/api/board`、`/api/health`，query 不算数）的每条访问行过一个
+  进程级采样器（`_PollSampler`，`threading.Lock` +
+  `{(path, code): (last_ts, suppressed)}`，窗口 300 s）；**只有同 path 同码的重复
+  才被掐掉**，被吃掉的条数随窗口后第一条真写出去的行报出来
+  （`… 200 4096 (+57 suppressed in the last 300s)`）——**日志不做静默丢弃**。
+  **状态码一变立刻写**（新桶没有 `last_ts`；状态变化是信号，不是噪音）。非 2xx
+  同样进闸：「同一条轮询路径反复返回同一个错误」和「反复返回 200」是同一种洪水
+  ——owner 那份 11518 行的 `server.launchd.log` 里有 **1549 行一模一样的
+  `GET /api/board 404`**（13.4% 的行、全部 `/api/board` 行的 27%，连续横跨 5578–
+  10731 行 = 持续期而非一次性 burst），只掐 2xx 等于放过它；采样后这个错误每窗口
+  仍有一行且带被吃掉的条数，看得见、还多了「持续了多久」。状态码形状不明的行
+  （`"-"` / None）不进闸，逐条写；非轮询路径逐条写；env `ZAI_LOG_POLLS=1`（真值
+  `1|true|yes|on`）关掉采样，即本节要求的「debug 档」。
+- **日志仍不删**：server 永不写第二份日志、永不删 / 轮转任何日志（§55 审计 L3、
+  §68.4 `GET /api/logs/{name}` 同款纪律）——本追记只减产生噪音的量，既有的 1.9 MB
+  由 owner 自行处置。
+
 ### 54.3 配置解析与构建（原 §54 正文，v0.48.18 按 54.2 修订处已标注）
 
 - **配置解析（启动期一次性，全部只读）**：PORT = env `ZAI_PORT` → defaults
@@ -5539,7 +5574,8 @@ owner 原话：「会议结束后自动出一份 5 行的 recap，我只做一�
 
 ### 63.5 面：web 会议纪要页、Settings、inbox 特形、dashboard 投影
 
-- **主展示面 = web 看板 `?page=recaps`**（D3：Mac app 不加功能）。左列表按日分组，行 = `12:56–13:16 · Zoom · 20 min` + badge（进行中 / 新 / 已复制 / 已发送 / 已更新 / 阶段稿 / 转写不全 / 需复核 / 无音频 / 生成失败）；右详情 segmented 中文 | English（两版同产、切换即时；默认语言 `recap.default_language: auto|zh|en`，auto 跟随 UI 语言），按钮：**复制**（剪贴板 + `POST /api/recaps/mark copied`）、**标记已发送**（本地 flag，不进 inbox，无控制流读它）、**重新生成**（≤ 500 字纠正备注 → inbox `recap_generate`）、OPEN 行**现在生成**（`partial: true`）、开关开着时**投到 Slack 草稿**（选会话 → inbox `recap_slack_draft`）。非 Slack 对手方：正文 5 行纯文本，粘到 email / Teams / 微信 / Confluence 一致。
+- **主展示面 = web 看板 `?page=recaps`**（D3：Mac app 不加功能）。左列表按日分组，行 = `12:56–13:16 · Zoom · 20 min` + badge（进行中 / 新 / 已复制 / 已发送 / 已更新 / 阶段稿 / 转写不全 / 需复核 / 无音频 / 生成失败）；右详情 segmented 中文 | English（两版同产、切换即时；默认语言 `recap.default_language: auto|zh|en`，auto 跟随 UI 语言），按钮：**复制**（剪贴板 + `POST /api/recaps/mark copied`）、**标记已发送**（本地 flag，不进 inbox，无控制流读它）、**重新生成**（≤ 500 字纠正备注 → inbox `recap_generate`；**提交前确定性预检**，见下条）、OPEN 行**现在生成**（`partial: true`）、开关开着时**投到 Slack 草稿**（选会话 → inbox `recap_slack_draft`）。非 Slack 对手方：正文 5 行纯文本，粘到 email / Teams / 微信 / Confluence 一致。
+- **纠正备注的预检（issue #296，2026-09-13 追加）**：备注是自由文本，但 §63.3 的模板是硬闸——「把没内容的那行删掉」「写详细一点」这类诉求 `recap_text.validate` 永远不可能满足，而旧版把它们照单收下、排队、几分钟后默默退回一份 `needs_review`，人看到的只有一句「已排队重新生成」。自此备注一边打字一边过一道**确定性预检**（`web/src/components/recaps/noteCheck.ts` 的 `noteConflicts(note)`，纯正则、零模型、零请求、同文本恒同结果），命中的诉求分六类、按固定序去重列出：`drop_line` / `add_line`（恰好五行）、`more_detail`（每行长度硬帽）、`relabel`（标签文字与顺序固定）、`language_count`（中英两版一次产出、都存）、`formatting`（禁 markdown / emoji / 链接 / 时间戳 / 引号）。命中时面板就地摊开每条「为什么做不到」，主按钮改口成「仍要重新生成 / Regenerate anyway」，按下去照旧把**原样**备注送进 inbox（预检只说话、不改写、不拦截——备注里可满足的那半仍然要送到），成功 toast 也换成「已排队重新生成——上面标出的部分格式做不到，不会变」。**wire 零新增**：`recap_generate` 的字段、server 与 actd 侧逐字不变，这一条纯粹是页面在排队前把话说清楚。**这是固定词表上的尽力预检，不是判定器**：词表命中才说话，说不出的诉求照旧原样进模型——漏报只退回旧行为（几分钟后的 `needs_review`），误报才是真伤（预检一吵就没人看它）。误报因此被三层挡着：（1）**逐句判定**——一句里的「把张三从分工那行去掉」不会染上隔壁那句的「把那行删掉」；（2）**命中表**要求动词与「行 / 标签」名词同句且贴近，中文「行」只认**白名单**——被指示词 / 量词 / 序数带着的才是纪要的一行（那行 / 这行 / 整行 / 某行 / 该行 / 空行 / 第五行 / 最后一行），且后面不许再跟内容名词的头字，所以行动项 / 行程 / 行业 / 行为 / 行政 / 行文 / 执行 / 银行 / 进行 / 可行一概不是一行（前字黑名单挡不住「行」当头字的词，这条是判例钉死的教训）；英文「动词 → line」之间不许夹介词（from / in / on / of / out of / around / above…）或 keep / leave（`remove Alice from the Split line`、`remove the quotes around the decision line` 都是可满足的诉求，不是删行），但**连词照过**——`remove the Deadline and Split lines` 是两行一起删，动词到 `line` 的间距留到 32 字符，装得下最长的标签 `Changed since last plan`；（3）**守卫表**收极性与「删他物」——「把张三从分工那行去掉」（宾语提到动词前面）、「去掉那行的时间戳 / 引号 / 链接 / 日期」（删的正是校验本来就在禁的那个东西）、要求去掉格式、少写细节、删掉某语言里的错字、「时间戳写错了」，全是可满足的方向或删他物，一律不算命中；句尾的语气词与客套话（「那行删掉就好 / 算了 / 谢谢」）不算「另一个宾语」，照旧是删行。判例两边都钉：命中表（含「那行 / 那条 / 整行 / 第五行」这些裸形、句尾语气词、英文连词与最长标签都必须照旧可达），以及零误伤表——普通事实纠正、「行」当头字的整族词，加上后两层每一类的反例。面板**不是 live region**（内容随每个按键重算，`role="status"` 会让读屏在打字中途反复念整张表）：它挂在 textarea 的 `aria-describedby` 上，需要时可达。判例 `web/src/components/recaps/noteCheck.test.ts`、`web/src/pages/RecapsPage.test.tsx`。
 - **Settings section「会议纪要」**：`enabled`（默认开）、`default_language`、`slack_draft_enabled`（默认关，文案写明发送键仍在人手里）；三把旋钮 = config.yaml `recap:` 块 + overrides 扁平键（`config._OVERRIDE_FIELDS`：`recap_enabled` / `recap_default_language` / `recap_slack_draft_enabled`），server 面 `GET/PUT /api/settings/recap`（§49，`server/recaps.py`），diff-write 语义同 §59。其余调参（gap / quiet / 上限 / 应用表 / targets / retention / db_path）只在 config.yaml `recap:` 块（`config.example.yaml` 有注释全集）。
 - **inbox 特形动作**（docs/design/inbox-actions.md §3.10 / §3.11；golden `recap_generate[-note|-partial]` / `recap_slack_draft`）：`recap_generate {meeting_key, note?, partial?}`（note ≤ 500，partial 只认字面 true）与 `recap_slack_draft {meeting_key, channel_id}`；无卡片级 id。actd 侧走 detached 特形表 `_DETACHED_ACTIONS`（与 `weekly_digest_now` 同款，`act/lib/detached.py` 抽出的 `python -m …` 分离启动）→ `python -m act.recap --generate <key> [--note …] [--partial]` / `--slack-draft <key> --channel-id <C…>`；畸形（key / note / channel 形状）= 诚实 `noop`（`recap_store.inbox_argv`），actd 永不猜。
 - **dashboard.json 顶层 `recaps[]`（add-only）**：`recap_store.attach(dash)`——OPEN 会话 + 已出稿 recap 的投影（同 key 以文件为准），newest first、cap `PROJECTION_CAP`（60）、`history` 剥掉只留 `history_count`、server-owned marks 并入 `copied_at` / `sent_at`。任何失败 = 键缺席，看板不为 recap 文件而死。Swift decodeIfPresent 忽略它（D3 不加功能）。

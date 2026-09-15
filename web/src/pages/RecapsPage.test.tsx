@@ -2,6 +2,7 @@
 //   1) 行从 board.recaps 渲染、按日分组、默认选中第一行、进行中行无正文；
 //   2) 复制 = 剪贴板写入 + POST /api/recaps/mark copied（唯一出口）；
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
+//      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
 //   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -105,6 +106,32 @@ describe("RecapsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({
       action: "recap_generate", meeting_key: KEY, note: "deadline is Friday" }));
+  });
+
+  it("a note the five-line format cannot honor is called out before anything is queued", async () => {
+    // issue #296：删一行 + 写详细，两条都是结构上做不到的；面板必须在排队前说清楚。
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    const box = screen.getByLabelText(/Correction note/);
+    fireEvent.change(box, { target: { value: "Omit the Open line and write the rest in more detail." } });
+    expect(screen.getByText(/cannot honor these/)).toBeTruthy();
+    expect(screen.getByText(/A line cannot be dropped/)).toBeTruthy();
+    expect(screen.getByText(/More detail does not fit/)).toBeTruthy();
+    expect(postAction).not.toHaveBeenCalled();          // 打字不排队，说明不是事后补的
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate anyway" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY,
+      note: "Omit the Open line and write the rest in more detail." }));
+    await waitFor(() => expect(screen.getByText(/cannot be honored and will not change/)).toBeTruthy());
+  });
+
+  it("an ordinary correction keeps the plain button and the plain success line", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    fireEvent.change(screen.getByLabelText(/Correction note/), { target: { value: "deadline is Friday" } });
+    expect(screen.queryByText(/cannot honor these/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(screen.getByText("Regeneration queued")).toBeTruthy());
   });
 
   it("an open meeting offers Generate now (partial) and no copy", async () => {
