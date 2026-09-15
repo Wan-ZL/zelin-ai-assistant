@@ -4637,10 +4637,10 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
   `AIASSISTANT_UI_BUDGET`（默认 600 s）烧光 → `UI_SHELL_STATUS=fail` → 自动部署失败。
   成法：codesign 跑在自算的墙钟里（`ZAI_CODESIGN_BUDGET_S`，默认 60 s；macOS 没有
   `timeout(1)`，形制照抄 install.sh 的 `ui_run_with_timeout`），**超时（124）或失败都
-  回落 `-s -` 重签一次并 WARN**——掉一次授权远好过红一次部署。判例
+  回落 `-s -` 重签一次并 WARN**——掉一次授权远好过红一次部署。判例三处：
   `tests/test_shell_engine_mirror.py`
-  `test_build_script_compiles_every_shell_source_with_engine_frameworks`（编译面）与
-  `tests/test_shell_build_codesign_identity.py`（签名面的契约）与
+  `test_build_script_compiles_every_shell_source_with_engine_frameworks`（编译面）、
+  `tests/test_shell_build_codesign_identity.py`（签名面的契约）、
   `tests/integration/test_shell_build_codesign_budget.py`（真 bash + 假 security / 假 codesign
   跑一遍 hang → 超时 → ad-hoc 重签）。决策台账 D54。
   **一次性过渡**：身份从 ad-hoc 换成 self-signed，屏幕录制 / 麦克风 / 自动化 /
