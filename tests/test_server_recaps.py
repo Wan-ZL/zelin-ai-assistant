@@ -5,8 +5,11 @@ POST /api/recaps/mark, and the two inbox special forms through POST /api/actions
   ``slack_draft_enabled`` is false out of the box; PUT diff-writes the flat
   keys (equal-to-effective deletes the key, other keys preserved), unknown
   field / bad value → 400.
-- marks: a server-owned file no control flow reads; key shape and mark
-  vocabulary fail closed; ``on: false`` clears the stamp.
+- marks: the server-owned filing axis (§63.5 追记 2026-09-15, issue #301 —
+  the old 「无控制流读它」clause is retired: ``sent_at`` / ``dismissed_at``
+  decide the projection budget and the dismissed retention window in
+  recap_store, and nothing else); key shape and mark vocabulary fail closed;
+  ``on: false`` clears the stamp (「恢复」).
 - inbox forms: meeting_key shape, note ≤ 500, partial only ``true``,
   channel_id shape; unknown fields 400; files land with ``via: web``.
 Real server on a random port (tests/test_server_common.py); stdlib client.
@@ -144,10 +147,29 @@ class MarksTestCase(_Case):
         self.assertIsNone(body["sent_at"])
         self.assertTrue(body["copied_at"])
 
+    def test_dismiss_then_restore(self):
+        """§63.5 追记（issue #301）：忽略 = 第三个 mark，回执带三个时间戳，`on: false` 恢复。"""
+        status, body = post_json(self.port, "/api/recaps/mark", {"key": KEY, "mark": "dismissed"})
+        self.assertEqual(status, 200)
+        self.assertTrue(body["dismissed_at"].endswith("Z"))
+        self.assertIsNone(body["sent_at"])
+        self.assertEqual(set(self.marks()[KEY]), {"dismissed_at"})
+        # 忽略与已发送互不覆盖（两个原因各自一个戳）
+        status, body = post_json(self.port, "/api/recaps/mark", {"key": KEY, "mark": "sent"})
+        self.assertTrue(body["sent_at"])
+        self.assertTrue(body["dismissed_at"])
+        status, body = post_json(self.port, "/api/recaps/mark", {"key": KEY, "mark": "dismissed", "on": False})
+        self.assertIsNone(body["dismissed_at"])
+        self.assertTrue(body["sent_at"])
+        self.assertEqual(set(self.marks()[KEY]), {"dismissed_at", "sent_at"})
+
     def test_validation(self):
         for payload, code in (
             ({"key": "R-101", "mark": "copied"}, "INVALID_FIELD"),
             ({"key": KEY, "mark": "forwarded"}, "INVALID_FIELD"),
+            ({"key": KEY, "mark": "archived"}, "INVALID_FIELD"),   # 归档是 sent 派生的，不是一个 mark
+            ({"key": KEY, "mark": "dismissed", "on": "yes"}, "INVALID_FIELD"),
+            ({"key": KEY, "mark": "dismissed", "reason": "no notes"}, "UNKNOWN_FIELD"),
             ({"key": KEY, "mark": "sent", "on": "yes"}, "INVALID_FIELD"),
             ({"key": KEY, "mark": "sent", "channel": "C1"}, "UNKNOWN_FIELD"),
             ({"mark": "sent"}, "INVALID_FIELD"),

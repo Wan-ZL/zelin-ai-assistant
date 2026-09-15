@@ -5,14 +5,15 @@
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
 //      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
 //   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}；
-//   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）。
+//   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）；
+//   6) 三栏 活跃 / 已归档 / 已忽略：标记已发送即归档、忽略 / 恢复一颗按钮，默认只看活跃（§63.5 追记，issue #301）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchRecapSettings, postAction, postRecapMark } from "../api";
 import { PICKUP_TIMEOUT_MS } from "../components/recaps/recapText";
 import { LanguageContext } from "../i18n";
 import { getState, refreshBoard, resetStoreForTests } from "../store";
-import type { Board, RecapRow, RecapSettings } from "../types";
+import type { Board, RecapLaneTotals, RecapRow, RecapSettings } from "../types";
 import { GENERATING_POLL_MS, RecapsPage } from "./RecapsPage";
 
 vi.mock("../api", async (importOriginal) => {
@@ -43,14 +44,17 @@ function settings(over: Partial<RecapSettings> = {}): RecapSettings {
     languages: ["auto", "zh", "en"], source: {}, ...over };
 }
 
-function seedBoard(recaps: RecapRow[]): Board {
-  return { generated_at: "2026-09-01T00:00:00Z", counts: {}, needs_approval: [], running: [],
+function seedBoard(recaps: RecapRow[], recapCounts?: RecapLaneTotals): Board {
+  const board = { generated_at: "2026-09-01T00:00:00Z", counts: {}, needs_approval: [], running: [],
     needs_input: [], review: [], completed: [], debt: [], trash: [], recaps } as unknown as Board;
+  // recap_counts 缺席 = 老 daemon（页面就不说「另有 N 条」，也不给计数加 `+`）
+  return recapCounts ? ({ ...board, recap_counts: recapCounts } as unknown as Board) : board;
 }
 
-async function renderPage(recaps: RecapRow[], over: Partial<RecapSettings> = {}) {
+async function renderPage(recaps: RecapRow[], over: Partial<RecapSettings> = {},
+                          recapCounts?: RecapLaneTotals) {
   vi.mocked(fetchRecapSettings).mockResolvedValue(settings(over));
-  vi.mocked(fetchBoard).mockResolvedValue(seedBoard(recaps));
+  vi.mocked(fetchBoard).mockResolvedValue(seedBoard(recaps, recapCounts));
   await refreshBoard();   // store 只经 action 改：board 从 mock 的 fetchBoard 回流
   const view = render(
     <LanguageContext.Provider value="en">
@@ -69,6 +73,7 @@ beforeEach(() => {
   vi.mocked(postRecapMark).mockReset().mockImplementation(async (key, mark, on = true) => ({
     ok: true, key, copied_at: mark === "copied" && on ? "2026-09-01T00:00:00Z" : null,
     sent_at: mark === "sent" && on ? "2026-09-01T00:00:01Z" : null,
+    dismissed_at: mark === "dismissed" && on ? "2026-09-01T00:00:02Z" : null,
   }));
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
 });
@@ -107,7 +112,56 @@ describe("RecapsPage", () => {
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mark as sent" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "sent", true));
-    await waitFor(() => expect(screen.getByText("Sent")).toBeTruthy());
+    // §63.5 追记（issue #301）：标记已发送 = 归档——行离开活跃栏，在「已归档」里带 Sent badge
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active 0" })).toBeTruthy());
+    expect(screen.getByText(/back in the active list|filed under Archived/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 1" }));
+    expect(screen.getByRole("button", { name: /Zoom · 20 min/ })).toBeTruthy();
+    expect(screen.getByText("Sent")).toBeTruthy();
+  });
+
+  it("dismiss files a recap under Dismissed and Restore brings it back", async () => {
+    // issue #301：不想要的那场会不必被迫标成「已发送」才能离开列表，而且这一步可逆
+    await renderPage([recap()]);
+    expect(screen.getByRole("tab", { name: "Active 1" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "dismissed", true));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Dismissed 1" })).toBeTruthy());
+    expect(screen.getByRole("tab", { name: "Active 0" })).toBeTruthy();
+    // 刚忽略的那一行留在右侧：脚注说清它会更早被删，撤销就在同一颗按钮上
+    expect(screen.getByText(/deleted earlier than the others/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 1" }));
+    expect(screen.getByText("Dismissed")).toBeTruthy();                      // 行 badge
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "dismissed", false));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active 1" })).toBeTruthy());
+  });
+
+  it("an open meeting cannot be dismissed", async () => {
+    // 会还开着：无从判断这场会要不要纪要，也不该让一个标记删掉之后才落地的正文
+    await renderPage([recap({ status: "open", en: null, zh: null, quality: null })]);
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
+  it("an empty lane says why it is empty instead of showing nothing", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 0" }));
+    expect(screen.getByText(/Nothing dismissed yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 0" }));
+    expect(screen.getByText(/Nothing archived yet/)).toBeTruthy();
+  });
+
+  it("a lane whose cap cut rows says how many are missing instead of swallowing them", async () => {
+    // issue #301 review：两份预算只是提高了门槛——`recap_counts` 报真实总数，栏里说出差额，
+    // 计数带 `+`（上限可以是硬的，界面不许悄悄少东西；硬删仍只由 §63.3 的保留窗执行）
+    await renderPage([recap({ sent_at: "2026-09-01T00:00:00Z" })], {},
+                     { active: 7, archived: 61, dismissed: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 1+" }));
+    expect(screen.getByText(/60 older recap\(s\) are not listed in this lane/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Active 0+" }));
+    expect(screen.getByText(/7 older recap\(s\) are not listed in this lane/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 0" }));    // 没被切 = 不说话
+    expect(screen.queryByText(/are not listed in this lane/)).toBeNull();
   });
 
   it("regenerate posts recap_generate with an optional note and nothing else", async () => {

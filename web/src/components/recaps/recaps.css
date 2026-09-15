@@ -124,6 +124,12 @@
   color: var(--on-accent);
 }
 
+/* §63.5 追记（issue #301）分栏过滤器 活跃 / 已归档 / 已忽略：复用详情的 segmented 壳，
+   只在页面纵向流里靠左自占一行——不另造第二套 segmented 样式 */
+.recap-filter {
+  align-self: flex-start;
+}
+
 .recap-body {
   margin: 0;
   padding: 12px 14px;
@@ -137,6 +143,13 @@
 }
 
 .recap-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font: var(--type-lane-help);
+}
+
+/* §63.5 追记（issue #301）投影预算切掉几行时那一句披露（同 .recap-empty 的说明体，不抢眼但在场） */
+.recap-capped {
   margin: 0;
   color: var(--text-tertiary);
   font: var(--type-lane-help);

@@ -727,5 +727,10 @@
     "version": "0.48.99",
     "status": "deployed"
   },
-  "recaps": []
+  "recaps": [],
+  "recap_counts": {
+    "active": 0,
+    "archived": 0,
+    "dismissed": 0
+  }
 }

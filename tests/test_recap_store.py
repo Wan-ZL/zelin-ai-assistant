@@ -1,7 +1,10 @@
 """§63 recap store: settings from config, the inbox special-form argv, the
-add-only ``recaps[]`` board projection with server-owned marks, and the actd
-detached spawn table (act/lib/recap_store.py, act/lib/detached.py, act/actd.py).
+add-only ``recaps[]`` board projection with server-owned marks, the §63.5 追记
+filing axis (已归档 / 已忽略 budgets + the dismissed retention window) and the
+actd detached spawn table (act/lib/recap_store.py, act/lib/detached.py,
+act/actd.py).
 """
+import datetime as _dt
 import json
 import tempfile
 import unittest
@@ -18,6 +21,11 @@ from act.lib import recap_store as store
 KEY = "meeting:2026-08-31T1256-zoom"
 
 
+def _iso(ts: float) -> str:
+    """server/recaps._iso_now 的形（秒级 ISO-Z）——marks.json 里的时间戳长这样。"""
+    return _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class SettingsTestCase(unittest.TestCase):
     def test_defaults_from_a_bare_config(self):
         st = store.settings(config.Config())
@@ -26,6 +34,7 @@ class SettingsTestCase(unittest.TestCase):
         self.assertFalse(st["slack_draft_enabled"])          # default OFF (owner)
         self.assertEqual(st["slack_targets"], {})
         self.assertEqual((st["max_per_run"], st["max_per_day"], st["retention_days"]), (2, 8, 90))
+        self.assertEqual(st["dismissed_retention_days"], 14)     # §63.3 追记：已忽略的短窗
         self.assertIsNone(st["db_path"])
         self.assertIsInstance(st["options"], rs.Options)
 
@@ -33,7 +42,8 @@ class SettingsTestCase(unittest.TestCase):
         cfg = config.Config(raw={"recap": {
             "enabled": "false", "default_language": "EN", "slack_draft": {"enabled": "yes",
             "targets": {"Zoom": "C0123456789", "teams": "not-an-id", "meet": 12}},
-            "max_per_run": "3", "max_per_day": 0, "retention_days": "x", "db_path": " /tmp/x.sqlite "}})
+            "max_per_run": "3", "max_per_day": 0, "retention_days": "x",
+            "dismissed_retention_days": 0, "db_path": " /tmp/x.sqlite "}})
         config._apply_recap_block(cfg, cfg.raw)
         st = store.settings(cfg)
         self.assertFalse(st["enabled"])
@@ -41,6 +51,7 @@ class SettingsTestCase(unittest.TestCase):
         self.assertTrue(st["slack_draft_enabled"])
         self.assertEqual(st["slack_targets"], {"zoom": "C0123456789"})
         self.assertEqual((st["max_per_run"], st["max_per_day"], st["retention_days"]), (3, 1, 90))
+        self.assertEqual(st["dismissed_retention_days"], 1)      # 0 / 坏值 → 下限 1 天，永不「立刻删」
         self.assertEqual(st["db_path"], "/tmp/x.sqlite")
 
     def test_override_fields_are_registered_with_coercions(self):
@@ -135,6 +146,7 @@ class ProjectionTestCase(unittest.TestCase):
         self.assertEqual(closed["status"], "closed")                 # the file wins over the OPEN row
         self.assertEqual(closed["copied_at"], "2026-09-01T00:00:00Z")
         self.assertIsNone(closed["sent_at"])
+        self.assertIsNone(closed["dismissed_at"])                # §63.5 追记：键恒在，没忽略过 = None
         self.assertNotIn("history", closed)
         self.assertEqual(closed["history_count"], 1)
         self.assertEqual(rows[0]["status"], "open")
@@ -148,6 +160,97 @@ class ProjectionTestCase(unittest.TestCase):
         self.assertEqual(len(rows), store.PROJECTION_CAP)
         starts = [r["start"] for r in rows]
         self.assertEqual(starts, sorted(starts, reverse=True))
+
+    def test_filed_rows_get_their_own_projection_budget(self):
+        """§63.5 追记（issue #301）：归档 / 忽略的行有独立预算——填满活跃预算之后，
+        已归档的那几张仍然在投影里（不然「已归档」栏会在保留期之前静默丢行）。"""
+        base = 1756600000.0
+        for i in range(store.PROJECTION_CAP + 3):
+            key = "meeting:2026-08-%02dT%02d00-zoom" % (1 + i // 24, i % 24)
+            store.save_recap(store.new_record(self._session(start=base + i * 3600), key, rs.CLOSED))
+        oldest = [r["key"] for r in store.list_recaps()][-3:]     # 本来会被 cap 切掉的三张
+        store._write_json(store.marks_path(), {
+            oldest[0]: {"sent_at": "2026-09-01T00:00:00Z"},
+            oldest[1]: {"dismissed_at": "2026-09-01T00:00:00Z"},
+        })
+        rows = store.projection()
+        keys = [r["key"] for r in rows]
+        self.assertIn(oldest[0], keys)                            # 已归档：自己的预算里
+        self.assertIn(oldest[1], keys)                            # 已忽略：同上
+        self.assertNotIn(oldest[2], keys)                         # 没标记过：仍按活跃预算被切
+        self.assertEqual(len([r for r in rows if not store.filed(r)]), store.PROJECTION_CAP)
+        starts = [r["start"] for r in rows]
+        self.assertEqual(starts, sorted(starts, reverse=True))    # 两份预算合起来仍 newest first
+
+    def test_filed_budget_goes_to_the_rows_filed_most_recently(self):
+        """§63.5 追记（issue #301）：filed 预算按「被归档 / 忽略的时刻」取，不按会议 start——
+        把一场**老**会议归档时，filed 栏里已经有满额更新的行，它也必须留在投影里，
+        否则那一行连同它的「取消已发送」一起从页面上消失（撤销无从可撤）。"""
+        base = 1756600000.0
+        for i in range(store.FILED_PROJECTION_CAP):
+            key = "meeting:2026-08-%02dT%02d00-zoom" % (1 + i // 24, i % 24)
+            store.save_recap(store.new_record(self._session(start=base + i * 3600), key, rs.CLOSED))
+        old = "meeting:2026-07-01T0900-zoom"
+        store.save_recap(store.new_record(self._session(start=base - 40 * 86400), old, rs.CLOSED))
+        marks = {r["key"]: {"sent_at": _iso(base + 100000.0)} for r in store.list_recaps()
+                 if r["key"] != old}
+        marks[old] = {"sent_at": _iso(base + 200000.0)}           # 刚刚按下的那一行
+        store._write_json(store.marks_path(), marks)
+        rows = store.projection()
+        self.assertIn(old, [r["key"] for r in rows])              # 刚归档的老会议还在
+        self.assertEqual(len([r for r in rows if store.filed(r)]), store.FILED_PROJECTION_CAP)
+
+    def test_recap_counts_keep_the_true_totals_the_caps_cut_down(self):
+        """§63.5 追记（issue #301）：`recap_counts` 是切预算之前的真实总数（照 §2
+        counts.completed 的先例）——行可以被上限切掉，计数不许跟着缩水，页面据此说出
+        「另有 N 条更早的没列在这一栏」。"""
+        base = 1756600000.0
+        for i in range(store.PROJECTION_CAP + 5):
+            key = "meeting:2026-08-%02dT%02d00-zoom" % (1 + i // 24, i % 24)
+            store.save_recap(store.new_record(self._session(start=base + i * 3600), key, rs.CLOSED))
+        filed_keys = [r["key"] for r in store.list_recaps()][:2]
+        store._write_json(store.marks_path(), {
+            filed_keys[0]: {"sent_at": _iso(base)},
+            filed_keys[1]: {"dismissed_at": _iso(base)},
+        })
+        dash = store.attach({"counts": {}})
+        self.assertEqual(dash["recap_counts"],
+                         {"active": store.PROJECTION_CAP + 3, "archived": 1, "dismissed": 1})
+        active_rows = [r for r in dash["recaps"] if not store.filed(r)]
+        self.assertEqual(len(active_rows), store.PROJECTION_CAP)   # 行被切了，计数没被切
+        self.assertEqual(store.lane_counts([]), {"active": 0, "archived": 0, "dismissed": 0})
+
+    def test_dismissed_recaps_are_pruned_on_their_own_window(self):
+        """§63.3 追记（issue #301）：忽略满 dismissed_days 就删，同龄没忽略的照旧活到 90 天。"""
+        now = 1756669000.0
+        keys = ("meeting:2026-08-20T1200-zoom", "meeting:2026-08-21T1200-zoom",
+                "meeting:2026-08-22T1200-zoom")
+        for i, key in enumerate(keys):
+            store.save_recap(store.new_record(self._session(start=now - (30 - i) * 86400), key, rs.CLOSED))
+        store._write_json(store.marks_path(), {
+            keys[0]: {"dismissed_at": _iso(now - 15 * 86400)},    # 15 天前忽略 → 过窗
+            keys[1]: {"dismissed_at": _iso(now - 3 * 86400)},     # 3 天前忽略 → 还在窗内
+        })
+        self.assertEqual(store.prune(now, retention_days=90, dismissed_days=14), 1)
+        self.assertEqual(sorted(r["key"] for r in store.list_recaps()), sorted(keys[1:]))
+
+    def test_prune_never_deletes_extra_on_marks_it_cannot_use(self):
+        """坏 marks / 没传窗口 / OPEN 行 = fail open：一个读不出的 server 文件永不多删一份纪要。"""
+        now = 1756669000.0
+        closed = "meeting:2026-08-20T1200-zoom"
+        open_rec = "meeting:2026-08-21T1200-zoom"
+        store.save_recap(store.new_record(self._session(start=now - 20 * 86400), closed, rs.CLOSED))
+        store.save_recap(store.new_record(self._session(start=now - 20 * 86400), open_rec, rs.OPEN))
+        store.marks_path().write_text("{not json", encoding="utf-8")
+        self.assertEqual(store.prune(now, retention_days=90, dismissed_days=14), 0)
+        store._write_json(store.marks_path(), {
+            closed: {"dismissed_at": _iso(now - 15 * 86400)},
+            open_rec: {"dismissed_at": _iso(now - 15 * 86400)},
+        })
+        self.assertEqual(store.prune(now, retention_days=90), 0)          # 没传窗口 = 旧行为
+        self.assertEqual(store.prune(now, retention_days=90, dismissed_days=14), 1)
+        # 会还开着的那一行不许因为一个忽略标记消失（标记可能是关会之前按下的）
+        self.assertEqual([r["key"] for r in store.list_recaps()], [open_rec])
 
     def test_priors_and_intervals_and_prune(self):
         base = 1756669000.0

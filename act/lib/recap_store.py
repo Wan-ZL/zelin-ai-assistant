@@ -11,14 +11,25 @@ Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
                          recipient, no channel: nothing downstream can dispatch
                          or send it (tests/test_recap_no_egress.py pins the
                          absent keys)
-    marks.json           server-owned local flags {key: {copied_at, sent_at}}
-                         (web 「复制」/「标记已发送」); read here only for the
-                         projection — no control flow anywhere reads a mark
+    marks.json           server-owned local flags
+                         {key: {copied_at, sent_at, dismissed_at}}
+                         (web 「复制」/「标记已发送」/「忽略」); read here for
+                         the projection, for the 活跃 / 已归档 / 已忽略 budgets
+                         and for the dismissed retention window
+
+§63.5 追记（2026-09-15，issue #301）：旧法条那句「无控制流读它 / no control
+flow anywhere reads a mark」**自此失效**。marks 参与**恰好两处**判决——
+:func:`projection` / :func:`lane_counts` 的分栏（filed 行不再挤掉活跃行，被切掉的
+如实报数）与 :func:`prune` 的
+已忽略保留窗——两处都只决定「这份笔记还在不在这台机器上」；marks 仍永不进
+registry、永不触发发送 / 派发 / 卡片状态机，`server/recaps.py` 仍是它唯一的
+写者（act 只读，读不动 = fail-open，只剩 90 天兜底）。
 
 Writers: ``act/recap.py`` (cron `--once` and the actd-spawned `--generate` /
 `--slack-draft` runs, serialized by the flock) owns sessions.json and
 recaps/; ``server/recaps.py`` owns marks.json. The daemon only READS this
-directory: :func:`attach` adds the add-only top-level ``recaps[]`` to
+directory: :func:`attach` adds the add-only top-level ``recaps[]`` plus
+``recap_counts`` (the true per-lane totals the caps cut down to; §2 兄弟字段) to
 dashboard.json (history stripped, newest first, capped) — the web 会议纪要
 page's data. The one thing actd writes lives OUTSIDE it: the §63.8 generate
 request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
@@ -27,7 +38,9 @@ projected per row as ``generate_request``. The §63.3 追记 ``problems`` /
 the lines) and reach the wire through :func:`_row` like every other field.
 
 Retention: recaps older than `recap.retention_days` (default 90) are pruned
-on every cron round (防腐 #4: every new file family is born with a cap).
+on every cron round (防腐 #4: every new file family is born with a cap);
+dismissed ones go earlier, on `recap.dismissed_retention_days` counted from
+the dismissal (§63.3 追记 2026-09-15).
 """
 from __future__ import annotations
 
@@ -44,10 +57,16 @@ KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 CHANNEL_ID_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
 
 PROJECTION_CAP = 60
+# §63.5 追记（issue #301）：已归档 / 已忽略 自己的预算——归档一行永不挤掉活跃的一行；
+# 两个上限切掉多少，`recap_counts`（:func:`lane_counts`）如实报出来，页面照着说
+FILED_PROJECTION_CAP = 60
+# 栏 slug（add-only 词表；web RECAP_LANES 与 dashboard.json `recap_counts` 的键逐字同源）
+RECAP_LANES: tuple = ("active", "archived", "dismissed")
 LATE_SLICE_WINDOW_S = 48 * 3600
 PRIOR_DAYS = 14
 PRIOR_LIMIT = 3
 DEFAULT_RETENTION_DAYS = 90
+DEFAULT_DISMISSED_RETENTION_DAYS = 14
 DEFAULT_MAX_PER_RUN = 2
 DEFAULT_MAX_PER_DAY = 8
 LANGUAGES: tuple = ("auto", "zh", "en")
@@ -149,6 +168,9 @@ def settings(cfg: Optional[config.Config] = None) -> dict:
         "max_per_run": max(1, recap_sessions.int_or(blk.get("max_per_run"), DEFAULT_MAX_PER_RUN)),
         "max_per_day": max(1, recap_sessions.int_or(blk.get("max_per_day"), DEFAULT_MAX_PER_DAY)),
         "retention_days": max(1, recap_sessions.int_or(blk.get("retention_days"), DEFAULT_RETENTION_DAYS)),
+        # §63.3 追记（issue #301）：已忽略的那份走自己的短窗，从忽略那一刻算
+        "dismissed_retention_days": max(1, recap_sessions.int_or(
+            blk.get("dismissed_retention_days"), DEFAULT_DISMISSED_RETENTION_DAYS)),
         "db_path": str(blk.get("db_path") or "").strip() or None,
     }
 
@@ -243,12 +265,33 @@ def priors_for(start_ts: float, timezone: str) -> list:
     return out[:PRIOR_LIMIT]
 
 
-def prune(now: float, retention_days: int) -> int:
-    """Delete recaps whose start is older than the retention; returns count."""
+def _dismissed_expired(rec: dict, marks: dict, cutoff: float) -> bool:
+    """这份被忽略的 CLOSED 纪要过了短窗吗？没 marks（读不动 / 没传窗口）、OPEN 行、
+    时间戳解析不出 = False——fail open，多删一份纪要比留一份贵得多。"""
+    if not marks or rec.get("status") != recap_sessions.CLOSED:
+        return False
+    at = recap_sessions.parse_ts(_dict(marks.get(rec.get("key"))).get("dismissed_at"))
+    return at is not None and at <= cutoff
+
+
+def prune(now: float, retention_days: int, dismissed_days: Optional[int] = None) -> int:
+    """Delete recaps past their retention; returns count.
+
+    Two windows, whichever comes first (§63.3 追记 2026-09-15，issue #301):
+    the 90-day backstop on the meeting's own start (unchanged, applies to
+    everything), and — when ``dismissed_days`` is given — ``dismissed_days``
+    counted from the moment the recap was 忽略 (marks.json ``dismissed_at``,
+    server-owned; read-only here). Only CLOSED recaps take the short window:
+    a mark stamped while a meeting is still OPEN must never delete the text
+    that lands afterwards. Unreadable / hand-mangled marks = **fail open**
+    (no short window at all), never an extra deletion.
+    """
     cutoff = now - retention_days * 86400
+    marks = load_marks() if dismissed_days else {}
+    dismissed_cutoff = now - max(1, int(dismissed_days or 1)) * 86400
     removed = 0
     for rec in list_recaps():
-        if _start_ts(rec) < cutoff:
+        if _start_ts(rec) < cutoff or _dismissed_expired(rec, marks, dismissed_cutoff):
             recap_path(rec["key"]).unlink(missing_ok=True)
             removed += 1
     return removed
@@ -270,22 +313,79 @@ def _row(rec: dict, marks: dict, requests: Optional[dict] = None) -> dict:
     mark = _dict(marks.get(rec.get("key")))
     row["copied_at"] = mark.get("copied_at")
     row["sent_at"] = mark.get("sent_at")
+    # §63.5 追记 add-only（issue #301）：已忽略的时刻（无 = None，键恒在）
+    row["dismissed_at"] = mark.get("dismissed_at")
     # §63.8 add-only：「重新生成 / 现在生成」回执（actd 台账 × 本文件的 generated_at；无请求 = None）
     row["generate_request"] = recap_requests.projection(rec.get("key"), rec.get("generated_at"),
                                                         requests if requests is not None else {})
     return row
 
 
-def projection(limit: int = PROJECTION_CAP) -> list:
-    """Stored recaps + OPEN sessions (from sessions.json) not yet having a file
-    (a partial 现在生成 wins over the bare OPEN row), newest first, capped;
-    history stripped, local marks and the §63.8 generate receipts merged in."""
+def filed(row: dict) -> bool:
+    """已归档（`sent_at`，标记已发送派生）或已忽略（`dismissed_at`）= 离开活跃栏的行
+    （§63.5 追记，issue #301）。"""
+    return bool(row.get("sent_at") or row.get("dismissed_at"))
+
+
+def lane(row: dict) -> str:
+    """这一行落在哪一栏（§63.5 追记，issue #301；`web/.../recapText.recapLane` 逐字镜像）：
+    已忽略优先于已归档——它是「这场会不需要纪要」的判决，不是「已经发出去了」。"""
+    if row.get("dismissed_at"):
+        return "dismissed"
+    if row.get("sent_at"):
+        return "archived"
+    return "active"
+
+
+def _filed_ts(row: dict) -> float:
+    """被归档 / 忽略的时刻（两个戳取晚的；解析不出 = 回落到会议 start）。filed 预算按它
+    取最近的，不按会议 start——刚按下的那一行必须还在投影里，撤销才有东西可撤。"""
+    stamps = [recap_sessions.parse_ts(row.get("dismissed_at")),
+              recap_sessions.parse_ts(row.get("sent_at"))]
+    known = [t for t in stamps if t is not None]
+    return max(known) if known else _start_ts(row)
+
+
+def all_rows() -> list:
+    """全部投影行（**未切预算**），newest first：已出稿 recap + sessions.json 里还没有文件的
+    OPEN 会话（同 key 以文件为准——一份 partial 的「现在生成」盖过裸 OPEN 行），history 剥掉、
+    server-owned marks 与 §63.8 生成回执并入。:func:`projection` 与 :func:`lane_counts` 的
+    共同上游（一次读盘两用）。"""
     marks = load_marks()
     requests = recap_requests.load()
     rows = {r["key"]: _row(r, marks, requests) for r in list_recaps()}
     for o in open_rows(load_state() or {}):
         rows.setdefault(o["key"], _row(o, marks, requests))
-    return sorted(rows.values(), key=_start_ts, reverse=True)[:limit]
+    return sorted(rows.values(), key=_start_ts, reverse=True)
+
+
+def lane_counts(rows: Optional[list] = None) -> dict:
+    """三栏的**真实**总数（切预算之前算，空栏也有键），照 §2 `counts.completed` 的先例：
+    行可以被上限切掉，计数不许跟着缩水——页面据此说出「另有 N 条更早的没列出来」
+    （§63.5 追记，issue #301；宪法第 3 条：界面不许悄悄少东西）。"""
+    rows = all_rows() if rows is None else rows
+    out = {name: 0 for name in RECAP_LANES}
+    for row in rows:
+        out[lane(row)] += 1
+    return out
+
+
+def projection(limit: int = PROJECTION_CAP, filed_limit: int = FILED_PROJECTION_CAP,
+               rows: Optional[list] = None) -> list:
+    """:func:`all_rows` 切两份预算后的 `recaps[]`，合并后仍 newest first。
+
+    Two budgets, not one (§63.5 追记，issue #301): the active rows get
+    ``limit`` and the filed ones (已归档 / 已忽略) get ``filed_limit`` — filing
+    a recap away must never push a live one off the page. The filed budget goes
+    to the **most recently filed** rows (:func:`_filed_ts`), not to the newest
+    meetings: archiving an old recap must keep it on the page so the one-click
+    「取消已发送」undo still has a row to act on. Whatever the caps do cut is
+    disclosed, not swallowed — :func:`lane_counts` keeps the true totals.
+    """
+    ordered = all_rows() if rows is None else rows
+    active = [r for r in ordered if not filed(r)][:limit]
+    filed_rows = sorted([r for r in ordered if filed(r)], key=_filed_ts, reverse=True)[:filed_limit]
+    return sorted(active + filed_rows, key=_start_ts, reverse=True)
 
 
 def open_rows(state: dict) -> list:
@@ -295,10 +395,16 @@ def open_rows(state: dict) -> list:
 
 
 def attach(dash: dict) -> dict:
-    """Set ``dash["recaps"]`` (add-only; a failure leaves the key absent —
-    the board must never die for a recap file)."""
+    """Set ``dash["recaps"]`` and ``dash["recap_counts"]`` (both add-only; a
+    failure leaves the key absent — the board must never die for a recap file).
+
+    ``recap_counts`` = the true per-lane totals before the caps cut anything
+    (§63.5 追记 2026-09-15, issue #301), so the page can say how many older
+    recaps it is not listing instead of silently losing them."""
     try:
-        dash["recaps"] = projection()
+        rows = all_rows()
+        dash["recaps"] = projection(rows=rows)
+        dash["recap_counts"] = lane_counts(rows)
     except Exception:  # noqa: BLE001 - projection is best-effort
         pass
     return dash

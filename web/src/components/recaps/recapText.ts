@@ -1,5 +1,6 @@
 // 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
-// 复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案。
+// 复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
+// §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）。
 // 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
@@ -104,8 +105,9 @@ export function isGenerating(phase: GenerationPhase): boolean {
   return phase === "queued" || phase === "running";
 }
 
-/** 行 badge（issue #129 §3 词表 + §63.8 生成中 / 后台未接手 / 生成未落地 / 生成未启动）：
- *  进行中 / 新 / 已复制 / 已发送 / 已更新 / 转写不全 / 需复核 / 无音频 / 生成失败 */
+/** 行 badge（issue #129 §3 词表 + §63.8 生成中 / 后台未接手 / 生成未落地 / 生成未启动
+ *  + §63.5 追记 issue #301 已忽略）：
+ *  进行中 / 新 / 已复制 / 已发送 / 已忽略 / 已更新 / 转写不全 / 需复核 / 无音频 / 生成失败 */
 export function badgesFor(row: RecapRow, phase: GenerationPhase = "idle"): Badge[] {
   const out: Badge[] = [];
   if (isGenerating(phase)) out.push({ id: "generating", zh: "生成中", en: "Generating", tone: "info" });
@@ -114,7 +116,8 @@ export function badgesFor(row: RecapRow, phase: GenerationPhase = "idle"): Badge
   else if (phase === "noop") out.push({ id: "noop", zh: "生成未启动", en: "Did not start", tone: "warning" });
   if (row.status === "open") out.push({ id: "open", zh: "进行中", en: "In progress", tone: "info" });
   if (row.partial && row.en) out.push({ id: "partial", zh: "阶段稿", en: "Partial", tone: "quiet" });
-  if (row.sent_at) out.push({ id: "sent", zh: "已发送", en: "Sent", tone: "success" });
+  if (row.dismissed_at) out.push({ id: "dismissed", zh: "已忽略", en: "Dismissed", tone: "quiet" });
+  else if (row.sent_at) out.push({ id: "sent", zh: "已发送", en: "Sent", tone: "success" });
   else if (row.copied_at) out.push({ id: "copied", zh: "已复制", en: "Copied", tone: "quiet" });
   else if (row.en && row.status === "closed") out.push({ id: "new", zh: "新", en: "New", tone: "accent" });
   if ((row.version ?? 0) > 1 && row.en) out.push({ id: "updated", zh: "已更新", en: "Updated", tone: "info" });
@@ -134,6 +137,35 @@ export function badgesFor(row: RecapRow, phase: GenerationPhase = "idle"): Badge
     default:
       break;
   }
+  return out;
+}
+
+/**
+ * §63.5 追记（issue #301）一行落在哪一栏：
+ *   archived  = `sent_at`（标记已发送派生，无新存储态；取消标记即回到活跃）；
+ *   dismissed = `dismissed_at`（「忽略」标记；daemon 按自己的短保留期删，「恢复」撤销）；
+ *   active    = 其余（含 OPEN 行）。
+ * 已忽略优先于已归档：它是「这场会不需要纪要」的判决，不是「已经发出去了」。
+ */
+export type RecapLane = "active" | "archived" | "dismissed";
+
+export function recapLane(row: RecapRow): RecapLane {
+  if (row.dismissed_at) return "dismissed";
+  if (row.sent_at) return "archived";
+  return "active";
+}
+
+/** 三栏的顺序与双语标题（页面 segmented 过滤器读它；文案仍走唯一的双语机制 text(zh,en)） */
+export const RECAP_LANES: { id: RecapLane; zh: string; en: string }[] = [
+  { id: "active", zh: "活跃", en: "Active" },
+  { id: "archived", zh: "已归档", en: "Archived" },
+  { id: "dismissed", zh: "已忽略", en: "Dismissed" },
+];
+
+/** 每栏的行数（空栏也有键——过滤器上的 0 要显示出来） */
+export function laneCounts(rows: RecapRow[]): Record<RecapLane, number> {
+  const out: Record<RecapLane, number> = { active: 0, archived: 0, dismissed: 0 };
+  for (const row of rows) out[recapLane(row)] += 1;
   return out;
 }
 

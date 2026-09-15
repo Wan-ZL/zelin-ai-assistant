@@ -402,6 +402,8 @@ export interface Board {
   maintenance?: Maintenance;
   /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
   recaps?: RecapRow[];
+  /** §63.5 追记（issue #301）三栏的**真实**总数（add-only；老 daemon 缺席 = 整键不在） */
+  recap_counts?: RecapLaneTotals;
   /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
@@ -426,9 +428,12 @@ export interface FoldReceipt {
 /**
  * §63 会议 recap 行（dashboard.json 顶层 recaps[] 的元素 = act/lib/recap_store 投影，
  * wire key 逐字镜像）。status open = 进行中（无正文）；en/zh = 5 行纯文本（null =
- * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at = server
- * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执；
+ * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at /
+ * dismissed_at = server 本地标记（marks.json）；slack_draft = §63.4 草稿投递回执；
  * generate_request = §63.8 「重新生成」回执（行上「生成中」的真源）。
+ * §63.5 追记（issue #301）：旧注「无控制流读它」自此失效——sent_at（= 已归档，派生，
+ * 取消标记即回到活跃）与 dismissed_at 决定行落在哪一栏，并在 daemon 侧决定已忽略的
+ * 保留期；marks 仍不进 registry、不触发任何发送 / 派发 / 卡片状态机。
  */
 export interface RecapRow {
   key: string;
@@ -451,6 +456,8 @@ export interface RecapRow {
   history_count?: number;
   copied_at?: string | null;
   sent_at?: string | null;
+  /** §63.5 追记 已忽略的时刻（add-only；没忽略过 = null，老 daemon 无此键）——与 sent_at 一起决定分栏 */
+  dismissed_at?: string | null;
   slack_draft?: {
     status: string;
     channel_link?: string | null;
@@ -538,12 +545,30 @@ export interface DisplaySettingsPatch {
   stroke?: string;
 }
 
+/** POST /api/recaps/mark 的 mark 词表（server MARKS 逐字镜像，add-only；dismissed = §63.5 追记 issue #301） */
+export type RecapMarkKind = "copied" | "sent" | "dismissed";
+
+/**
+ * §63.5 追记（issue #301）dashboard.json 顶层 `recap_counts`：三栏各自的**真实**总数，
+ * 在 `recaps[]` 被两份预算切之前算（act/lib/recap_store.lane_counts）。键 = 栏 slug
+ * （`recap_store.RECAP_LANES` 逐字镜像）。页面拿它减掉实际收到的行数，说出「另有 N 条
+ * 更早的没列在这一栏」——上限是硬上限，但不许悄悄少东西（宪法第 3 条）。
+ */
+export interface RecapLaneTotals {
+  active?: number;
+  archived?: number;
+  dismissed?: number;
+  [key: string]: unknown;
+}
+
 /** POST /api/recaps/mark 回执 */
 export interface RecapMarkReceipt {
   ok: boolean;
   key: string;
   copied_at: string | null;
   sent_at: string | null;
+  /** §63.5 追记（issue #301）：老 server 无此键 */
+  dismissed_at?: string | null;
   [key: string]: unknown;
 }
 

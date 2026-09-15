@@ -17,7 +17,9 @@ its own PID lock — no new daemon, no crontab change). One round:
      deterministic validator with one retry then the §63.3 追记 length repair,
      ``state/recap/recaps/<key>.json``, a notification (reasons and trims ride
      on the record); OPEN → listed as 进行中, no model call;
-  6. prune recaps past retention, save the cursor/buffer.
+  6. prune recaps past retention — the 90-day backstop on the meeting start
+     plus the §63.3 追记 short window on 已忽略 (marks.json `dismissed_at`) —
+     save the cursor/buffer.
 
 Nothing here can send: the recap is not a card (no registry, no dispatch), the
 JSON has no recipient / channel field, and the only exit is the clipboard on
@@ -426,7 +428,7 @@ def _round(conn, state: dict, st: dict, runner, cfg, now: float, summary: dict) 
     state["events"] = sessions.merge_buckets(keep)
     state["open"] = open_rows
     summary["open"] = len(open_rows)
-    summary["pruned"] = store.prune(now, st["retention_days"])
+    summary["pruned"] = store.prune(now, st["retention_days"], st["dismissed_retention_days"])
 
 
 def _run_locked(conn, st: dict, runner, cfg, now: float, summary: dict) -> None:

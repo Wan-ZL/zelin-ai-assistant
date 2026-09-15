@@ -12,11 +12,18 @@ server.settings.config_yaml_doc, which degrades to {} without PyYAML):
    → config.yaml ``recap:`` block → default; PUT diff-writes the flat keys with
    the §15 semantics server/settings.py already implements for the model knobs.
 
-2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」write
-   ``state/recap/marks.json`` ``{key: {copied_at, sent_at}}``. This file is
-   server-owned (act/recap.py never writes it; act/lib/recap_store.py only
-   reads it into the ``recaps[]`` projection) and **no control flow reads a
-   mark** — it is a badge, not a state transition.
+2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」/「忽略」
+   write ``state/recap/marks.json``
+   ``{key: {copied_at, sent_at, dismissed_at}}``. This file is server-owned
+   (act/recap.py never writes it; act/lib/recap_store.py only reads it).
+   §63.5 追记（2026-09-15，issue #301）retires the old clause «**no control
+   flow reads a mark** — it is a badge, not a state transition»: ``sent_at``
+   (= 已归档, derived — un-marking restores) and ``dismissed_at`` now decide
+   exactly two things, both in ``recap_store``, both read-only there — which
+   projection budget a row spends (活跃 / 已归档 / 已忽略) and when a dismissed
+   recap is pruned (`recap.dismissed_retention_days`). A mark still never
+   enters the registry and never triggers a send / dispatch / card
+   transition; this endpoint is still the only writer of the file.
 
 server/ does not import act (§49): the key shape, the language vocabulary and
 the override key names are mirrored from act/lib/recap_store.py /
@@ -42,7 +49,8 @@ OVERRIDE_KEYS = {"enabled": "recap_enabled",
                  "default_language": "recap_default_language",
                  "slack_draft_enabled": "recap_slack_draft_enabled"}
 DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False}
-MARKS: tuple = ("copied", "sent")
+# §63.5 追记（issue #301）：dismissed = 「忽略」（add-only 词表，永不改写已有值）
+MARKS: tuple = ("copied", "sent", "dismissed")
 
 _BOOL_TRUE = ("true", "yes", "on", "1")
 _BOOL_FALSE = ("false", "no", "off", "0")
@@ -203,7 +211,7 @@ def _require_key(payload: dict) -> str:
 def _require_mark(payload: dict) -> "tuple[str, bool]":
     which = payload.get("mark")
     if which not in MARKS:
-        raise InvalidFieldError("mark must be copied or sent", {"field": "mark"})
+        raise InvalidFieldError("mark must be one of %s" % ", ".join(MARKS), {"field": "mark"})
     on = payload.get("on", True)
     if not isinstance(on, bool):
         raise InvalidFieldError("on must be a boolean", {"field": "on"})
@@ -211,9 +219,10 @@ def _require_mark(payload: dict) -> "tuple[str, bool]":
 
 
 def mark(home: Path, payload: dict) -> dict:
-    """``{"key": "meeting:…", "mark": "copied"|"sent", "on": bool?}`` →
-    ``{"ok": true, "key", "copied_at", "sent_at"}``. ``on`` defaults to true;
-    false clears the stamp (「标记已发送」is a toggle)."""
+    """``{"key": "meeting:…", "mark": "copied"|"sent"|"dismissed", "on": bool?}``
+    → ``{"ok": true, "key", "copied_at", "sent_at", "dismissed_at"}``. ``on``
+    defaults to true; false clears the stamp (「标记已发送」/「忽略」are
+    toggles — un-marking is the 恢复 out of 已归档 / 已忽略)."""
     _reject_unknown(payload, ("key", "mark", "on"))
     key = _require_key(payload)
     which, on = _require_mark(payload)
@@ -223,4 +232,4 @@ def mark(home: Path, payload: dict) -> dict:
     marks[key] = entry
     settings.atomic_write_json(marks_path(home), marks)
     return {"ok": True, "key": key, "copied_at": entry.get("copied_at"),
-            "sent_at": entry.get("sent_at")}
+            "sent_at": entry.get("sent_at"), "dismissed_at": entry.get("dismissed_at")}

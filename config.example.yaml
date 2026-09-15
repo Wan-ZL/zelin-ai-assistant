@@ -220,6 +220,7 @@ recap:                                 # 会议 recap（CONTRACT §63，issue #1
   # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
   # max_per_day: 8                      # 每个本地日上限
   # retention_days: 90                  # recaps/<key>.json 保留天数
+  # dismissed_retention_days: 14        # 页面上按过「忽略」的那份保留天数（从忽略那一刻算，下限 1；§63.5「已忽略」栏，按「恢复」即撤销）
   # db_path: ~/.screenpipe/db.sqlite    # 引擎 DB 位置（默认即此）
   slack_draft:                         # §63.4 可选：把 recap 放进你自己 Slack 的「Drafts & Sent」（草稿，不发送）
     enabled: false                     # 【默认关】走用户级 Slack MCP 白名单 slack_send_message_draft；发送键仍在你手里（overrides 键 recap_slack_draft_enabled）

@@ -32,6 +32,7 @@ import type {
   LogTail,
   McpList,
   ModelsSettings,
+  RecapMarkKind,
   RecapMarkReceipt,
   RecapSettings,
   SearchIndexSnapshot,
@@ -380,8 +381,12 @@ export function putDisplaySettings(body: DisplaySettingsPatch): Promise<DisplayS
   return request<DisplaySettings>("/api/settings/display", { method: "PUT", body: JSON.stringify(body) });
 }
 
-/** POST /api/recaps/mark — 「复制」/「标记已发送」本地标记（server 独写 marks.json；无控制流读它） */
-export function postRecapMark(key: string, mark: "copied" | "sent", on = true): Promise<RecapMarkReceipt> {
+/**
+ * POST /api/recaps/mark — 「复制」/「标记已发送」/「忽略」本地标记（server 独写 marks.json）。
+ * §63.5 追记（issue #301）：旧注「无控制流读它」失效——sent_at / dismissed_at 决定分栏与已忽略的
+ * 保留期；仍不进 registry、不触发发送 / 派发 / 卡片状态机。`on: false` 清戳 = 恢复。
+ */
+export function postRecapMark(key: string, mark: RecapMarkKind, on = true): Promise<RecapMarkReceipt> {
   return request<RecapMarkReceipt>("/api/recaps/mark", {
     method: "POST",
     body: JSON.stringify({ key, mark, on }),
