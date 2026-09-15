@@ -9,6 +9,7 @@ number → 输入框、list → 逗号分隔输入框），新增一个旋钮 = 
 section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.json 的 control:settings.*，
 §66.2）：区按原生分（general / notifications / obsidian / slack / gmail / telemetry / digest /
 approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
+开发者区第一行 `self_improve_enabled` 是 web 才有的一把（原生没有；§65.1 / issue #307 / D54）：自动改进本软件的通道总开关，默认关。
 
 读：``GET /api/settings`` 全目录 + 每 field 的 effective 值与来源
 （override / config / default，三层与 ``act/lib/config._apply_settings_overrides``
@@ -349,6 +350,14 @@ SECTIONS: tuple = (
     _section(
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
+            # §65.1（issue #307 / D54）：自动改进本软件的通道总开关，**默认关**——开发者区的第一行。
+            # 落点 config.yaml `self_improve.enabled`，override 扁平键 `self_improve_enabled`（act/lib/config.py 同名字段）。
+            _f("self_improve_enabled", "bool",
+               "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）",
+               "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
+               default=False, config=("self_improve", "enabled"),
+               help_zh="维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并铸 🤖 提案卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡（已在待验收列的卡原地不动）。",
+               help_en="Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 proposal cards, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled, and no new cards are filed (cards already waiting for acceptance stay put)."),
             # 两行的 placeholder 动态（DYNAMIC_PLACEHOLDERS，§68.7 追记）：原生 SettingsMaintainer 的灰字是**生效默认**——
             # 仓库路径 = config.yaml maintainer.repo_path（~ 展开）否则本 checkout（maintainer_launch.resolve 用的同一条）；
             # 会话 id = config.yaml maintainer.session_id，没设才是下面这行示例。

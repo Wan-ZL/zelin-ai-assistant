@@ -205,7 +205,8 @@ def autodispatch_config(cfg: object) -> dict:
 # self_improve 配置（config.yaml `self_improve:` 块，全 add-only；§65）
 # --------------------------------------------------------------------------- #
 SELF_IMPROVE_DEFAULTS: dict = {
-    "enabled": True,        # 通道总开关：false = self_improve 卡照旧人工审批
+    "enabled": False,       # 通道总开关（#307 / D54 起**默认关**）：false = self_improve
+                            # 卡照旧人工审批、每日循环不读 GitHub、§65.5 巡检不巡
     "repo_path": "",        # "" = 安装根（config.HOME）；比对用 realpath
     "tick_minutes": 60,     # PR 跟进巡检（owner 评论 / 红 CI / 合并 / 关闭）间隔
     "owner_logins": [],     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
@@ -223,12 +224,23 @@ def _str_list(value: object) -> list:
     return [str(x).strip() for x in value if str(x).strip()]
 
 
+def _lane_enabled(cfg: object, block: dict) -> bool:
+    """总开关的三层：cfg 属性（yaml + overrides 合并后）> raw 块 > 默认（关）。"""
+    attr = getattr(cfg, "self_improve_enabled", None)
+    if isinstance(attr, bool):
+        return attr
+    return bool(block.get("enabled", SELF_IMPROVE_DEFAULTS["enabled"]))
+
+
 def self_improve_config(cfg: object) -> dict:
     """读 `self_improve:` 块，脏值逐键回退默认（宪法第 11 条口径）——通道配置
-    的唯一读取点（同 autodispatch_config 的纪律）。"""
+    的唯一读取点（同 autodispatch_config 的纪律）。**总开关另有一层**（§65.1，
+    #307 / D54）：`cfg.self_improve_enabled` 是真 bool 时以它为准——那一路已经把
+    yaml 块与 `settings_overrides.json`（设置页「开发者」区）按 §15 的层次合并过，
+    raw 块只是它的上游；裸 dict / 没有该属性的假 cfg 仍走 raw 块（默认 = 关）。"""
     block = _raw_block(cfg, "self_improve")
     out = dict(SELF_IMPROVE_DEFAULTS)
-    out["enabled"] = bool(block.get("enabled", out["enabled"]))
+    out["enabled"] = _lane_enabled(cfg, block)
     out["repo_path"] = _str_or(block.get("repo_path"), "")
     minutes = _int(block.get("tick_minutes"))
     out["tick_minutes"] = (minutes if minutes is not None and minutes >= 1
@@ -295,7 +307,7 @@ def channel_class_key(channel: object) -> str:
 #                       （D9 取消预算天花板；旧卡上残留的 token 由 actd 在下一
 #                       pass 按「解除即清」清掉，不再产生）
 #   ok:self_improve   — 放行，且走的是 §65 lane（actd 据此选文案/通知）
-#   self_improve:disabled      — self_improve.enabled=false（常态，不上卡）
+#   self_improve:disabled      — self_improve.enabled=false（**出厂默认**，常态，不上卡）
 #   self_improve:paused        — 通道被敏感路径护栏挂起（§65.4），等 owner 清
 #   self_improve:needs_mcp     — 卡声明 needs_mcp：只能走 owner 亲批路径
 #   self_improve:repo_mismatch — target_repo 的 realpath 不是本仓库（D7）

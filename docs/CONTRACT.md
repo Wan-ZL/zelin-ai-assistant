@@ -170,6 +170,9 @@ YAML 载体：一条需求一个文件。状态机：
 - `review[]` 行加 `delivery`（object，仅 self_improve 卡携带 = `execution.delivery` 原样：`verified`(bool) / `reason`(str|null，词表见 §65.3) / `branch` / `pr_number` / `pr_url` / `pr_draft` / `pr_state` / `base` / `head_sha` / `changed_files`(int) / `sensitive_paths`([str]) / `checked_at` / `label`?）；核验未过的行同时带既有的 `interrupted: true`（`interrupted_reason` 词表加值 `delivery_unverified`），detect_transitions 因此不发「AI 已交付草稿」（`on_harvest` 已发 `msg_self_improve_unverified`）。web 渲染 PR 章（通过 = 绿章链接 `PR #n · draft`；未过 = 红章 `PR 未核验：<reason>`）。
 - 顶层 `self_improve`（object，**恒在**，§2 兄弟字段同 `deploy_state` 的加法约定）：`{enabled, paused, paused_reason, paused_pr, paused_pr_url, paused_paths[], paused_at}`——通道开关 + 敏感路径护栏的暂停状态（`state/self_improve/lane.json` 的低频子集；巡检时间戳一类高频值**不**进看板，免触发 syncd 板快照上传）。web 顶部横幅 `SelfImproveBanner` 在 `paused` 时说话并给「恢复通道」（`POST /api/self-improve/resume`）。
 
+**§2 §65.1 追记（2026-09-14，issue #307 / owner 决策 D54；形状不变、默认值变）**：顶层 `self_improve.enabled` 的**出厂值 true → false**（`self_improve.board_view` 读的是同一把总开关，见 §65.1）。wire 形状、键名、键序一字不动，变的只是「什么都没配的机器」上这一位的值——`tests/fixtures/dashboard_golden.json` 因此以 `REGEN_DASHBOARD_GOLDEN=1` 重铸（唯一 diff = `self_improve.enabled: true → false`）。客户端读法不变（`SelfImproveBanner` 只看 `paused`）。
+
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -547,6 +550,8 @@ ffmpeg 缺失 = 安装 ffmpeg + 「装好了，重启引擎」；崩了 / 死了
 无 web 落点；这两个 UserDefaults 键成为无读者的历史键。
 
 **§15 §70 追记（add-only，每日循环旋钮）**：overrides 允许列表新增五个扁平键 `daily_loop_enabled`（bool）/ `daily_loop_time`（本地 `HH:MM`，`3:30` 归一为 `03:30`）/ `daily_loop_max_proposals_per_day` / `daily_loop_stale_days` / `daily_loop_trash_retention_days`（非负 int；负数/bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `daily_loop.*` 逐字一致（yaml 路径宽容：坏值回默认、负数按 0）。写入方 = web 设置页「每日整理」经 `PUT /api/settings/daily-loop`（server/settings.py，diff-write 同 §59 模型旋钮）。actd **每 pass 现读**这五个字段到启动冻结的 cfg 上（`_refresh_model_knobs`——§59 两把模型旋钮的同一刷新点，`daily_loop.LIVE_KNOBS`），保存后下一个 pass 生效、无需重启。
+
+**§15.3 §65.1 追记（add-only，2026-09-14，issue #307 / owner 决策 D54）——自动改进本软件的总开关进设置页**：overrides 允许列表新增一个扁平键 `self_improve_enabled`（bool；坏形状按「wrong types are silently ignored」跳过），语义 = config.yaml `self_improve.enabled` 逐字一致，**出厂 false**。写入方 = web 设置页「开发者」区的**第一行**（`server/settings_catalog.py` 的 `maintainer` section 第一个 field，键 / 落点 / 默认值三者与 `act/lib/config.Config.self_improve_enabled` 逐字镜像，`tests/test_server_settings_catalog.py` 钉漂移），经通用 `PUT /api/settings/maintainer` diff-write——没有第二套写入面。actd **每 pass 现读**这个字段到启动冻结的 cfg 上（`_refresh_model_knobs`，与 §59 的模型旋钮 / §70 的五把循环旋钮同一刷新点），保存后下一个 pass 生效、无需重启。`self_improve:` 块的其余四键（`repo_path` / `tick_minutes` / `owner_logins` / `github_repo`）**不**进 overrides，仍由 `policy.self_improve_config` 现读 config.yaml。
 
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
@@ -5680,6 +5685,14 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 - **身份**（D8）：agent 用机器上既有的 `gh auth` 身份 = owner 本人；没有第二个账号、没有 PAT。推论：owner login 下的 PR 评论一律视为 owner 的话（65.5），所以 prompt 明令 lane 会话**不发 PR 评论**。
 - **无预算**（D9）：lane 卡不看 `cost_estimate_usd`（`cost:unknown` 不适用）；`max_concurrent` 照常排队。
 
+**§65.1 追记（2026-09-14，add-only，issue #307 / owner 决策 D54）——通道总开关出厂关，且设置页有面**：`self_improve.enabled` 的默认值 **true → false**（truth = `act/lib/policy.SELF_IMPROVE_DEFAULTS` + `act/lib/config.Config.self_improve_enabled`；`config.example.yaml` 同步）。理由见 D54：这是开发者 / 维护者功能，此前默认对所有安装开着、设置页里又找不到任何开关。自本条起：
+
+- **总开关的三层**：出厂默认（关）< config.yaml `self_improve.enabled` < `state/settings_overrides.json` 的扁平键 `self_improve_enabled`（§15.3 追记）。`policy.self_improve_config(cfg)` 仍是通道配置的唯一读取点，但 `enabled` 这一键多一层：`cfg.self_improve_enabled` 是真 bool 时以它为准（那一路已按 §15 合并过 yaml + overrides），裸 dict / 没有该属性的 cfg 才回落 raw 块 —— 两条路的默认都是**关**（fail-closed，宪法第 11 条）。配置里没有这个键的既有安装升级上来 = 关。
+- **关着时不做的三件事**：① §51 第二条 lane 报 `self_improve:disabled`（既有 token，常态回落、不上卡）；② §70 每日循环的 `issues` / `prs` / `mutation` 三个读取器一个都不跑（§70.3 追记，零 gh 调用），因此**不再铸新的 🤖 卡**；③ §65.5 巡检直接 `{"skipped": "disabled"}`，连节流时钟都不推进、`tick_hook` 不出声（与「没到点」同样安静——出厂默认不该每 pass 往日志写一行）。
+- **关着时照样做的两件事**（它们只看写死的 channel，比准入更严）：§65.3 收割时刻的 gh 交付核验、§65.2 的出网封锁 / prompt 段。已经在飞的 lane 卡因此不会因为关开关而被当成「没核验」，但**也不会再被对账**：待验收列里那些卡的 owner 合并 / 关闭在开关重新打开之前不会被巡检看到（卡原地不动，不续派、不再铸跟进卡）——这是本条有意的取舍（issue #307 第 4 条），维护者把开关打开后下一 pass 接着巡。
+- **面**：设置页「开发者」区第一行「自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）」（§15.3 追记）；看板顶层 `self_improve.enabled` 照旧映它（§2 追记，golden 重铸）。actd 每 pass 现读，改完不用重启。
+- 判例：`tests/test_self_improve_channel_switch.py`（三层配置 / 三个读取器 off / 巡检 skip / lane token / actd 现读 / 目录行）；既有 `tests/test_policy_self_improve_lane.py`、`test_self_improve_followups.py`、`test_self_improve_actd_wire.py`、`test_self_improve_sensitive_pause.py`、`test_daily_loop_run.py`、`test_policy_admission_matrix.py` 的 cfg 夹具改为**显式打开**通道（它们钉的是通道开着时的行为，判决一字未改）。
+
 ### 65.2 会话边界（派发时刻）
 
 - argv：`executor._bg_base_cmd(cfg, req)` → `llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))`；`egress_locked` = channel 全为 self_improve ∧ 未声明 `needs_mcp`。四个发射点同款（dispatch / resume / rework / brief），位置见 §4 追记。**只看写死的 channel，不看 lane 开关 / 仓库是否匹配**——封锁比准入更严。
@@ -6156,9 +6169,13 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
 
 **§70.3 ⑩ 追记（2026-09-05，add-only）——owner 的 tracker 分诊标签先于作者与「do it」**：⑩ 原文只看作者与评论，完全不读 `labels`，于是 2026-09-04 把 owner 自己开、但已在 docs/design/vnext2-plan.md §5.1 / §5.5 分诊为 `素材库-idea`（「产品 idea → 素材库，落地后迁入并关」）的 #23 铸成了卡并开出 PR #213（被 owner 按住）。自此 `gh issue list --json` 带 `labels`，读取器**先**看标签再走 D18：开放 issue 的 `labels[].name` 命中 `EXCLUDED_ISSUE_LABELS`（truth = `act/lib/loop_inputs.py` 的模块级元组：`素材库-idea` / `needs-owner` / `wontfix` / `invalid` / `duplicate` / `decision-needed` / `proposal` / `mac-retire`——§5.5 的七枚 label 去掉可铸卡的 `loop-seed` 与 `owner-decided`，加 GitHub 默认的三枚「不做」标签）任一个 = **永不成 `issue:<n>` 信号**，不论作者是谁、评论里有没有「do it」（owner 想让它动 = 去掉标签，标签就是 owner 在 tracker 上留下的分诊结论）；匹配**逐字、区分大小写**（`Wontfix` / `wontfix ` 都不算——不猜 owner 的意思）；这类 issue 出一行 §70.3 ⑩ 已有的非卡对象 `Summary`（kind **`issue_parked`**，text 带 issue 号、标题与命中的标签名，ref = issue url），**不花**「do it」评论额度（不为它多调一次 `gh issue view`）；标题**仍进** `titles`——它还开着，`gh_title` 同题去重语义不变；机器人报告 issue 的过滤（`_is_report_issue`）在它之前，不变。审计行 `skipped` 新增计数键 **`label_parked`**（add-only；= 本轮 `issue_parked` 摘要行数，`loop_inputs.parked_count`），`summaries[]` 逐条可见是哪张、哪枚标签；`select_signals` 与四个既有 skip 语义、`inputs.issues` 计数（仍只数成 Signal 的）一字不动。§70.6「不给他人的 issue 铸卡（D18）」自本条起补一句：不给 owner 已分诊为不做 / 待定 / 素材的 issue 铸卡。判例 `tests/test_daily_loop_issue_labels.py`。
 
+**§70.3 追记（2026-09-14，add-only，issue #307 / owner 决策 D54）——GitHub 半边挂在 §65.1 的通道总开关下**：`self_improve.enabled` 关着（**出厂默认**）时，`collect_signals` 的三个 GitHub 读取器（truth = `daily_loop.GITHUB_READERS` = `mutation` / `issues` / `prs`）**一个都不跑**——零 gh 子进程、零网络，`inputs.<name>` 记字面量 `"off"`（`daily_loop.READER_OFF`；与坏读取器的 `"unavailable: <Err>"` 和正常的整数计数三态可辨，审计行 / plan 报告一眼看得出是关着而不是坏了），`gh_titles` 因此为空、§70.3 的 gh 同题去重自然退化为不去重（没有可比的标题）。**维护半边（§70.1–70.2）与其余读取器（registry / analytics / radar_failed / write_storm / actd_log / install_report / launchd_logs / doctor / materials）一字不动**——每日整理不是维护者功能，看板去重与过时清扫照常。开关开着时行为与本条之前逐字节相同。CLI `plan` 走同一把开关。判例 `tests/test_self_improve_channel_switch.py::DailyLoopReadersTestCase`。
+
 ### 70.4 配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）
 
 `daily_loop.enabled`（默认 true）/ `daily_loop.time`（本地 `HH:MM`，默认 `03:30`，`coerce_clock_time` 归一，坏值回默认）/ `daily_loop.max_proposals_per_day`（默认 5）/ `daily_loop.stale_days`（默认 45）/ `daily_loop.trash_retention_days`（默认 90）；三个整数 yaml 路径负数按 0。overrides 扁平键与 web 写入面见 §15 追记；actd 每 pass 现读（`daily_loop.LIVE_KNOBS`）。
+
+**§70.4 追记（2026-09-14，issue #307 / owner 决策 D54）**：`daily_loop:` 块五把旋钮一字不动；提案半边的 GitHub 读取器另受 `self_improve.enabled`（§65.1，**出厂 false**）节制——两把开关是与的关系：`daily_loop.enabled` 关 = 整轮不跑（含维护半边），`self_improve.enabled` 关 = 只有 GitHub 三个读取器不跑。真源见 §65.1 / `act/lib/config.Config.self_improve_enabled`。
 
 ### 70.5 面（投影 / web / server）
 

@@ -56,7 +56,9 @@ class _Sandbox(unittest.TestCase):
         daily_loop.log_path().unlink(missing_ok=True)
         from act.lib import loop_inputs
         loop_inputs.materials_path().unlink(missing_ok=True)
-        self.cfg = config.Config()
+        # §65.1 的通道总开关开着：本文件钉的是「循环跑起来」的行为（含 GitHub 读取器）；
+        # 关着时的判决在 tests/test_self_improve_channel_switch.py（#307 / D54）
+        self.cfg = config.Config(self_improve_enabled=True)
 
 
 class TickTestCase(_Sandbox):

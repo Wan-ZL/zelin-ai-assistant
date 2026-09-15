@@ -5,6 +5,12 @@ lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论
 （修宪：本通道人从起点审批移到终点验收）/ §2（review 行 `delivery`、顶层
 `self_improve` 投影）/ §4（派发 argv 的 MCP 封锁，argv 本体拼在 act/llm.py）。
 
+**总开关**（§65.1，issue #307 / D54）：`self_improve.enabled` 出厂 **false**——这是
+开发者 / 维护者功能，默认对所有安装关着（设置页「开发者」区那一行是唯一的面）。
+关着时 :func:`tick` 直接 `{"skipped": "disabled"}`、§51 的 lane 不免批、每日循环不读
+GitHub；**收割时刻的核验（§65.3）与出网封锁（§65.2）不受它影响**——那两条只看写死
+的 channel，比准入更严。
+
 管的是「通道的机械部分」——Uncle Bob 那条「agent 说做完了不算，工具说 OK 才算」
 （vnext2-plan §2.9）：
 
@@ -541,13 +547,14 @@ def harvest_hook(req: Requirement, ex: dict,
 
 def tick_hook(cfg: object, log: Optional[Callable[[str], None]] = None) -> None:
     """actd 每 pass 的一行钩子（§65.5）：自身节流；绝不崩 pass；gh 不可用只在
-    真跑的那一轮记一行。"""
+    真跑的那一轮记一行。通道关着（§65.1 默认态）与「没到点」同样**不出声**——
+    出厂默认不该每 pass 往日志里写一行。"""
     try:
         summary = tick(cfg, log=log)
     except Exception as e:  # noqa: BLE001 - 巡检绝不反杀主循环
         _emit(log, f"self_improve tick FAILED: {e}")
         return
-    if summary.get("skipped") not in (None, "not_due"):
+    if summary.get("skipped") not in (None, "not_due", "disabled"):
         _emit(log, f"self_improve: tick skipped ({summary['skipped']})")
 
 
@@ -964,8 +971,15 @@ def tick(cfg: object = None, *, gh: Optional[GhRunner] = None,
          log: Optional[Callable[[str], None]] = None, force: bool = False) -> dict:
     """§65.5 巡检（actd 每 pass 调，自身按 `self_improve.tick_minutes` 节流）。
     零 lane 卡时零 gh 调用；gh 不可用 = 本轮跳过并照常推进 last_tick_at
-    （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。"""
+    （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。
+
+    §65.1 总开关关着（`self_improve.enabled`，#307 / D54 起默认关）= `{"skipped":
+    "disabled"}`，节流时钟都不碰：在飞的 lane 卡就地冻在待验收列（不再对账 owner
+    的合并 / 关闭、不再铸跟进卡），维护者把开关打开后下一 pass 接着巡。**收割时刻
+    的交付核验（§65.3）与出网封锁（§65.2）不在本闸下**——它们只看写死的 channel。"""
     now = now or _utcnow()
+    if not policy.self_improve_config(cfg)["enabled"]:
+        return {"skipped": "disabled"}
     st = load_state()
     if not tick_due(st, cfg, now, force):
         return {"skipped": "not_due"}
