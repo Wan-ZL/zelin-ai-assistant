@@ -1672,7 +1672,7 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
     # §56 / §70 add-only 顶层键 deploy_state / maintenance（同 device_label 的加法约定：文件缺失或读不了 = 整键不存在）
     deploy_state.attach(dash)
     daily_loop.attach(dash, cfg)
-    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
+    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[] + recap_counts（会议 recap，不是卡）
 
 
 def build_dashboard(

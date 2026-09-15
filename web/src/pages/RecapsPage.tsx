@@ -6,6 +6,8 @@
 // 在生成，就每 5 s 补拉一次 /api/board（SSE 之外的保险，新版本落地即停），版本号变了面板自然换内容。
 // §63.5 追记（issue #301）：三栏 活跃 / 已归档（sent_at 派生）/ 已忽略（dismissed_at），默认只看活跃；
 // 刚被归档 / 忽略的那一行**留在右侧**（带着 toast 与撤销按钮）、只离开左列——不然人按下去什么反馈都没有。
+// 同一条追记的诚实口径：投影每栏有上限，被切掉的行数由 board.recap_counts（真实总数）减出来，
+// 计数带 `+`、栏里多一句「另有 N 条更早的没列出来」——上限可以是硬的，界面不许悄悄少东西。
 import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
@@ -19,7 +21,7 @@ import {
 import { useI18n } from "../i18n";
 import { buildAppUrl } from "../route";
 import { clearRecapPending, refreshBoard, refreshRecapSettings, useAppState, type RecapMark, type RecapPending } from "../store";
-import type { RecapRow } from "../types";
+import type { RecapLaneTotals, RecapRow } from "../types";
 
 /** 生成中的补拉间隔：actd pass 是 10 s，一半足够及时；不在生成时零请求 */
 export const GENERATING_POLL_MS = 5000;
@@ -38,6 +40,23 @@ function phasesFor(rows: RecapRow[], pending: Record<string, RecapPending>, now:
   const out: Record<string, GenerationPhase> = {};
   for (const row of rows) out[row.key] = generationPhase(row, pending[row.key], now);
   return out;
+}
+
+/**
+ * 某一栏被投影预算切掉了多少行（§63.5 追记 issue #301）：server 报的真实总数
+ * `board.recap_counts` 减掉它**实际发来**的行数。两边都是 server 数据——不拿本地乐观
+ * 标记后的行数去减（那会在刚按下「忽略」的一瞬间算出一个假的差额），也不在这里写死上限
+ * （防腐 #10：分栏组成是 server 数据，不是 client 代码）。老 daemon 无此键 = 0，不说话。
+ */
+function hiddenByCap(totals: RecapLaneTotals | undefined, shipped: Record<RecapLane, number>, id: RecapLane): number {
+  const total = totals?.[id];
+  return typeof total === "number" ? Math.max(0, total - shipped[id]) : 0;
+}
+
+/** 被切掉的那几条去哪了：还在磁盘上，直到保留期到（硬删只由 §63.3 的两道保留窗执行） */
+function cappedLine(hidden: number, text: (zh: string, en: string) => string): string {
+  return text(`另有 ${hidden} 条更早的纪要没列在这一栏（每栏有行数上限）——它们仍在磁盘上，直到保留期到。`,
+              `${hidden} older recap(s) are not listed in this lane (each lane is capped); they are still on disk until retention.`);
 }
 
 /** 某一栏空着时那一句（整页空另有开场文案；这里说的是「这一栏」为什么空） */
@@ -63,8 +82,16 @@ export function RecapsPage() {
     void refreshRecapSettings();
   }, []);
 
-  const rows = withMarks(Array.isArray(board?.recaps) ? board.recaps : [], recapMarks);
+  const shippedRows = Array.isArray(board?.recaps) ? board.recaps : [];
+  const rows = withMarks(shippedRows, recapMarks);
   const counts = laneCounts(rows);
+  // 预算切掉的行数按**server 发来的**那一份算（乐观标记只影响显示的计数，不影响「被切掉多少」）
+  const shipped = laneCounts(shippedRows);
+  const hidden = RECAP_LANES.reduce((acc, entry) => {
+    acc[entry.id] = hiddenByCap(board?.recap_counts, shipped, entry.id);
+    return acc;
+  }, {} as Record<RecapLane, number>);
+  const totalHidden = RECAP_LANES.reduce((sum, entry) => sum + hidden[entry.id], 0);
   const visible = rows.filter((row) => recapLane(row) === lane);
   // 选中的行按 key 在**全集**里找：刚归档 / 忽略的那一行不会从右侧被抽走（左列已经不再列它）
   const selected = rows.find((row) => row.key === selectedKey) ?? visible[0] ?? null;
@@ -100,7 +127,7 @@ export function RecapsPage() {
       </a>
       <div className="trash-page-head">
         <h2 className="trash-page-title">{text("会议纪要", "Meeting recaps")}</h2>
-        <span className="trash-page-count">{rows.length}</span>
+        <span className="trash-page-count">{`${rows.length}${totalHidden > 0 ? "+" : ""}`}</span>
       </div>
       <p className="settings-helper">
         {text(
@@ -129,10 +156,11 @@ export function RecapsPage() {
                 className={`recap-segment${lane === entry.id ? " is-active" : ""}`}
                 onClick={() => { setLane(entry.id); setSelectedKey(null); }}
               >
-                {`${language === "zh" ? entry.zh : entry.en} ${counts[entry.id]}`}
+                {`${language === "zh" ? entry.zh : entry.en} ${counts[entry.id]}${hidden[entry.id] > 0 ? "+" : ""}`}
               </button>
             ))}
           </div>
+          {hidden[lane] > 0 && <p className="recap-capped">{cappedLine(hidden[lane], text)}</p>}
           {visible.length === 0 && <p className="recap-empty">{emptyLaneLine(lane, text)}</p>}
           <div className="recaps-layout">
             <RecapList rows={visible} selectedKey={selected?.key ?? null} onSelect={setSelectedKey} phases={phases} />

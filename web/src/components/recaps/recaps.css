@@ -148,6 +148,13 @@
   font: var(--type-lane-help);
 }
 
+/* §63.5 追记（issue #301）投影预算切掉几行时那一句披露（同 .recap-empty 的说明体，不抢眼但在场） */
+.recap-capped {
+  margin: 0;
+  color: var(--text-tertiary);
+  font: var(--type-lane-help);
+}
+
 /* §63.8 生成态状态行：排队 / 正在生成 = info 底；lost / noop = warning 底 */
 .recap-progress {
   margin: 0;

@@ -402,6 +402,8 @@ export interface Board {
   maintenance?: Maintenance;
   /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
   recaps?: RecapRow[];
+  /** §63.5 追记（issue #301）三栏的**真实**总数（add-only；老 daemon 缺席 = 整键不在） */
+  recap_counts?: RecapLaneTotals;
   /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
@@ -545,6 +547,19 @@ export interface DisplaySettingsPatch {
 
 /** POST /api/recaps/mark 的 mark 词表（server MARKS 逐字镜像，add-only；dismissed = §63.5 追记 issue #301） */
 export type RecapMarkKind = "copied" | "sent" | "dismissed";
+
+/**
+ * §63.5 追记（issue #301）dashboard.json 顶层 `recap_counts`：三栏各自的**真实**总数，
+ * 在 `recaps[]` 被两份预算切之前算（act/lib/recap_store.lane_counts）。键 = 栏 slug
+ * （`recap_store.RECAP_LANES` 逐字镜像）。页面拿它减掉实际收到的行数，说出「另有 N 条
+ * 更早的没列在这一栏」——上限是硬上限，但不许悄悄少东西（宪法第 3 条）。
+ */
+export interface RecapLaneTotals {
+  active?: number;
+  archived?: number;
+  dismissed?: number;
+  [key: string]: unknown;
+}
 
 /** POST /api/recaps/mark 回执 */
 export interface RecapMarkReceipt {

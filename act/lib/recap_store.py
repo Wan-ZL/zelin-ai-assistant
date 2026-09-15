@@ -19,7 +19,8 @@ Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
 
 §63.5 追记（2026-09-15，issue #301）：旧法条那句「无控制流读它 / no control
 flow anywhere reads a mark」**自此失效**。marks 参与**恰好两处**判决——
-:func:`projection` 的分栏预算（filed 行不再挤掉活跃行）与 :func:`prune` 的
+:func:`projection` / :func:`lane_counts` 的分栏（filed 行不再挤掉活跃行，被切掉的
+如实报数）与 :func:`prune` 的
 已忽略保留窗——两处都只决定「这份笔记还在不在这台机器上」；marks 仍永不进
 registry、永不触发发送 / 派发 / 卡片状态机，`server/recaps.py` 仍是它唯一的
 写者（act 只读，读不动 = fail-open，只剩 90 天兜底）。
@@ -27,7 +28,8 @@ registry、永不触发发送 / 派发 / 卡片状态机，`server/recaps.py` �
 Writers: ``act/recap.py`` (cron `--once` and the actd-spawned `--generate` /
 `--slack-draft` runs, serialized by the flock) owns sessions.json and
 recaps/; ``server/recaps.py`` owns marks.json. The daemon only READS this
-directory: :func:`attach` adds the add-only top-level ``recaps[]`` to
+directory: :func:`attach` adds the add-only top-level ``recaps[]`` plus
+``recap_counts`` (the true per-lane totals the caps cut down to; §2 兄弟字段) to
 dashboard.json (history stripped, newest first, capped) — the web 会议纪要
 page's data. The one thing actd writes lives OUTSIDE it: the §63.8 generate
 request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
@@ -55,8 +57,11 @@ KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 CHANNEL_ID_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
 
 PROJECTION_CAP = 60
-# §63.5 追记（issue #301）：已归档 / 已忽略 自己的预算——归档一行永不挤掉活跃的一行
+# §63.5 追记（issue #301）：已归档 / 已忽略 自己的预算——归档一行永不挤掉活跃的一行；
+# 两个上限切掉多少，`recap_counts`（:func:`lane_counts`）如实报出来，页面照着说
 FILED_PROJECTION_CAP = 60
+# 栏 slug（add-only 词表；web RECAP_LANES 与 dashboard.json `recap_counts` 的键逐字同源）
+RECAP_LANES: tuple = ("active", "archived", "dismissed")
 LATE_SLICE_WINDOW_S = 48 * 3600
 PRIOR_DAYS = 14
 PRIOR_LIMIT = 3
@@ -322,24 +327,65 @@ def filed(row: dict) -> bool:
     return bool(row.get("sent_at") or row.get("dismissed_at"))
 
 
-def projection(limit: int = PROJECTION_CAP, filed_limit: int = FILED_PROJECTION_CAP) -> list:
-    """Stored recaps + OPEN sessions (from sessions.json) not yet having a file
-    (a partial 现在生成 wins over the bare OPEN row), newest first, capped;
-    history stripped, local marks and the §63.8 generate receipts merged in.
+def lane(row: dict) -> str:
+    """这一行落在哪一栏（§63.5 追记，issue #301；`web/.../recapText.recapLane` 逐字镜像）：
+    已忽略优先于已归档——它是「这场会不需要纪要」的判决，不是「已经发出去了」。"""
+    if row.get("dismissed_at"):
+        return "dismissed"
+    if row.get("sent_at"):
+        return "archived"
+    return "active"
 
-    Two budgets, not one (§63.5 追记，issue #301): the active rows get
-    ``limit`` and the filed ones (已归档 / 已忽略) get ``filed_limit`` — filing
-    a recap away must never push a live one off the page, and 已归档 must not
-    silently lose rows long before the retention deletes them.
-    """
+
+def _filed_ts(row: dict) -> float:
+    """被归档 / 忽略的时刻（两个戳取晚的；解析不出 = 回落到会议 start）。filed 预算按它
+    取最近的，不按会议 start——刚按下的那一行必须还在投影里，撤销才有东西可撤。"""
+    stamps = [recap_sessions.parse_ts(row.get("dismissed_at")),
+              recap_sessions.parse_ts(row.get("sent_at"))]
+    known = [t for t in stamps if t is not None]
+    return max(known) if known else _start_ts(row)
+
+
+def all_rows() -> list:
+    """全部投影行（**未切预算**），newest first：已出稿 recap + sessions.json 里还没有文件的
+    OPEN 会话（同 key 以文件为准——一份 partial 的「现在生成」盖过裸 OPEN 行），history 剥掉、
+    server-owned marks 与 §63.8 生成回执并入。:func:`projection` 与 :func:`lane_counts` 的
+    共同上游（一次读盘两用）。"""
     marks = load_marks()
     requests = recap_requests.load()
     rows = {r["key"]: _row(r, marks, requests) for r in list_recaps()}
     for o in open_rows(load_state() or {}):
         rows.setdefault(o["key"], _row(o, marks, requests))
-    ordered = sorted(rows.values(), key=_start_ts, reverse=True)
-    kept = [r for r in ordered if not filed(r)][:limit] + [r for r in ordered if filed(r)][:filed_limit]
-    return sorted(kept, key=_start_ts, reverse=True)
+    return sorted(rows.values(), key=_start_ts, reverse=True)
+
+
+def lane_counts(rows: Optional[list] = None) -> dict:
+    """三栏的**真实**总数（切预算之前算，空栏也有键），照 §2 `counts.completed` 的先例：
+    行可以被上限切掉，计数不许跟着缩水——页面据此说出「另有 N 条更早的没列出来」
+    （§63.5 追记，issue #301；宪法第 3 条：界面不许悄悄少东西）。"""
+    rows = all_rows() if rows is None else rows
+    out = {name: 0 for name in RECAP_LANES}
+    for row in rows:
+        out[lane(row)] += 1
+    return out
+
+
+def projection(limit: int = PROJECTION_CAP, filed_limit: int = FILED_PROJECTION_CAP,
+               rows: Optional[list] = None) -> list:
+    """:func:`all_rows` 切两份预算后的 `recaps[]`，合并后仍 newest first。
+
+    Two budgets, not one (§63.5 追记，issue #301): the active rows get
+    ``limit`` and the filed ones (已归档 / 已忽略) get ``filed_limit`` — filing
+    a recap away must never push a live one off the page. The filed budget goes
+    to the **most recently filed** rows (:func:`_filed_ts`), not to the newest
+    meetings: archiving an old recap must keep it on the page so the one-click
+    「取消已发送」undo still has a row to act on. Whatever the caps do cut is
+    disclosed, not swallowed — :func:`lane_counts` keeps the true totals.
+    """
+    ordered = all_rows() if rows is None else rows
+    active = [r for r in ordered if not filed(r)][:limit]
+    filed_rows = sorted([r for r in ordered if filed(r)], key=_filed_ts, reverse=True)[:filed_limit]
+    return sorted(active + filed_rows, key=_start_ts, reverse=True)
 
 
 def open_rows(state: dict) -> list:
@@ -349,10 +395,16 @@ def open_rows(state: dict) -> list:
 
 
 def attach(dash: dict) -> dict:
-    """Set ``dash["recaps"]`` (add-only; a failure leaves the key absent —
-    the board must never die for a recap file)."""
+    """Set ``dash["recaps"]`` and ``dash["recap_counts"]`` (both add-only; a
+    failure leaves the key absent — the board must never die for a recap file).
+
+    ``recap_counts`` = the true per-lane totals before the caps cut anything
+    (§63.5 追记 2026-09-15, issue #301), so the page can say how many older
+    recaps it is not listing instead of silently losing them."""
     try:
-        dash["recaps"] = projection()
+        rows = all_rows()
+        dash["recaps"] = projection(rows=rows)
+        dash["recap_counts"] = lane_counts(rows)
     except Exception:  # noqa: BLE001 - projection is best-effort
         pass
     return dash

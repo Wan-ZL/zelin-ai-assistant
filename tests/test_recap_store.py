@@ -182,6 +182,44 @@ class ProjectionTestCase(unittest.TestCase):
         starts = [r["start"] for r in rows]
         self.assertEqual(starts, sorted(starts, reverse=True))    # 两份预算合起来仍 newest first
 
+    def test_filed_budget_goes_to_the_rows_filed_most_recently(self):
+        """§63.5 追记（issue #301）：filed 预算按「被归档 / 忽略的时刻」取，不按会议 start——
+        把一场**老**会议归档时，filed 栏里已经有满额更新的行，它也必须留在投影里，
+        否则那一行连同它的「取消已发送」一起从页面上消失（撤销无从可撤）。"""
+        base = 1756600000.0
+        for i in range(store.FILED_PROJECTION_CAP):
+            key = "meeting:2026-08-%02dT%02d00-zoom" % (1 + i // 24, i % 24)
+            store.save_recap(store.new_record(self._session(start=base + i * 3600), key, rs.CLOSED))
+        old = "meeting:2026-07-01T0900-zoom"
+        store.save_recap(store.new_record(self._session(start=base - 40 * 86400), old, rs.CLOSED))
+        marks = {r["key"]: {"sent_at": _iso(base + 100000.0)} for r in store.list_recaps()
+                 if r["key"] != old}
+        marks[old] = {"sent_at": _iso(base + 200000.0)}           # 刚刚按下的那一行
+        store._write_json(store.marks_path(), marks)
+        rows = store.projection()
+        self.assertIn(old, [r["key"] for r in rows])              # 刚归档的老会议还在
+        self.assertEqual(len([r for r in rows if store.filed(r)]), store.FILED_PROJECTION_CAP)
+
+    def test_recap_counts_keep_the_true_totals_the_caps_cut_down(self):
+        """§63.5 追记（issue #301）：`recap_counts` 是切预算之前的真实总数（照 §2
+        counts.completed 的先例）——行可以被上限切掉，计数不许跟着缩水，页面据此说出
+        「另有 N 条更早的没列在这一栏」。"""
+        base = 1756600000.0
+        for i in range(store.PROJECTION_CAP + 5):
+            key = "meeting:2026-08-%02dT%02d00-zoom" % (1 + i // 24, i % 24)
+            store.save_recap(store.new_record(self._session(start=base + i * 3600), key, rs.CLOSED))
+        filed_keys = [r["key"] for r in store.list_recaps()][:2]
+        store._write_json(store.marks_path(), {
+            filed_keys[0]: {"sent_at": _iso(base)},
+            filed_keys[1]: {"dismissed_at": _iso(base)},
+        })
+        dash = store.attach({"counts": {}})
+        self.assertEqual(dash["recap_counts"],
+                         {"active": store.PROJECTION_CAP + 3, "archived": 1, "dismissed": 1})
+        active_rows = [r for r in dash["recaps"] if not store.filed(r)]
+        self.assertEqual(len(active_rows), store.PROJECTION_CAP)   # 行被切了，计数没被切
+        self.assertEqual(store.lane_counts([]), {"active": 0, "archived": 0, "dismissed": 0})
+
     def test_dismissed_recaps_are_pruned_on_their_own_window(self):
         """§63.3 追记（issue #301）：忽略满 dismissed_days 就删，同龄没忽略的照旧活到 90 天。"""
         now = 1756669000.0
