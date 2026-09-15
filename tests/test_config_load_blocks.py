@@ -189,7 +189,7 @@ class MiscBlocksTestCase(unittest.TestCase):
                                  "_apply_recording", "_apply_telemetry", "_apply_redaction",
                                  "_apply_switch_blocks", "_apply_maintainer_feedback",
                                  "_apply_language_format_features",
-                                 "_apply_self_improve_block"])   # §65.1（#307 / D54）追加在队尾
+                                 "_apply_self_improve_block"])   # §65.1（#307 / D55）追加在队尾
 
     def test_bool_word_and_channel_entry(self):
         self.assertTrue(config._bool_word(" ON "))

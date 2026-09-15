@@ -5,10 +5,11 @@ lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论
 （修宪：本通道人从起点审批移到终点验收）/ §2（review 行 `delivery`、顶层
 `self_improve` 投影）/ §4（派发 argv 的 MCP 封锁，argv 本体拼在 act/llm.py）。
 
-**总开关**（§65.1，issue #307 / D54）：`self_improve.enabled` 出厂 **false**——这是
+**总开关**（§65.1，issue #307 / D55）：`self_improve.enabled` 出厂 **false**——这是
 开发者 / 维护者功能，默认对所有安装关着（设置页「开发者」区那一行是唯一的面）。
 关着时 :func:`tick` 直接 `{"skipped": "disabled"}`、§51 的 lane 不免批、每日循环不读
-GitHub；**收割时刻的核验（§65.3）与出网封锁（§65.2）不受它影响**——那两条只看写死
+GitHub，且已存在的卡不再被自动推进（:func:`frozen_in_flight`，issue #307 第 4 条）；
+**收割时刻的核验（§65.3）与出网封锁（§65.2）不受它影响**——那两条只看写死
 的 channel，比准入更严。
 
 管的是「通道的机械部分」——Uncle Bob 那条「agent 说做完了不算，工具说 OK 才算」
@@ -152,6 +153,21 @@ def is_lane_card(card: object, cfg: object = None) -> bool:
 def egress_locked(card: object) -> bool:
     """§65.2：self_improve 卡且未声明 needs_mcp → 四个发射点 argv 带 NO_MCP_ARGV。"""
     return is_self_improve(card) and not bool(_field(card, "needs_mcp"))
+
+
+def channel_off(cfg: object = None) -> bool:
+    """§65.1 总开关关着（#307 / D55 起是出厂默认）——通道各闸共用的一句判定。"""
+    return not policy.self_improve_config(cfg)["enabled"]
+
+
+def frozen_in_flight(card: object, cfg: object = None) -> bool:
+    """§65.1 + issue #307 第 4 条「关闭开关时至少不再续派」：通道关着时这张卡
+    不再被**自动**推进——免批批准还没派出的不派（退回待审批，见
+    actd/dispatch.py），已在跑但 agent 死了的不自动续命（见 actd/reconcile.py）。
+    判据只看写死的 channel（同 :func:`egress_locked`，与仓库是否匹配无关）；
+    owner 亲手批准 / 亲手打回的动作不在本闸下（那是显式动作，由调用方区分），
+    收割、§65.3 核验、§65.2 出网封锁同样不在（比准入更严）。"""
+    return is_self_improve(card) and channel_off(cfg)
 
 
 def pr_source(card: object) -> Optional[dict]:
@@ -973,7 +989,7 @@ def tick(cfg: object = None, *, gh: Optional[GhRunner] = None,
     零 lane 卡时零 gh 调用；gh 不可用 = 本轮跳过并照常推进 last_tick_at
     （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。
 
-    §65.1 总开关关着（`self_improve.enabled`，#307 / D54 起默认关）= `{"skipped":
+    §65.1 总开关关着（`self_improve.enabled`，#307 / D55 起默认关）= `{"skipped":
     "disabled"}`，节流时钟都不碰：在飞的 lane 卡就地冻在待验收列（不再对账 owner
     的合并 / 关闭、不再铸跟进卡），维护者把开关打开后下一 pass 接着巡。**收割时刻
     的交付核验（§65.3）与出网封锁（§65.2）不在本闸下**——它们只看写死的 channel。"""

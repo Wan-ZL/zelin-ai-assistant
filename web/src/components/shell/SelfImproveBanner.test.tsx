@@ -52,6 +52,10 @@ describe("describeSelfImprove", () => {
     expect(describeSelfImprove(undefined, en)).toBeNull();
     expect(describeSelfImprove({ enabled: true, paused: false }, en)).toBeNull();
     expect(describeSelfImprove({ enabled: false, paused: false }, en)).toBeNull();
+    // §65.1（#307 / D55）：通道关着时连暂停横幅都不出——巡检不跑，
+    // 「处理该 PR 后自动恢复」那条出口是死的，横幅只会永久挂着催一条
+    // 用户刚关掉的通道。
+    expect(describeSelfImprove({ ...paused, enabled: false }, en)).toBeNull();
   });
 
   it("names the PR, the protected paths and both exits when paused", () => {
@@ -78,6 +82,10 @@ describe("<SelfImproveBanner>", () => {
     await refreshBoard();
     expect(screen.queryByRole("alert")).toBeNull();
     fetchBoardMock.mockResolvedValue(board({ enabled: true, paused: false }));
+    await refreshBoard();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // 关着的通道 + 残留的暂停状态（§65.1 出厂默认关）：横幅闭嘴
+    fetchBoardMock.mockResolvedValue(board({ ...paused, enabled: false }));
     await refreshBoard();
     expect(screen.queryByRole("alert")).toBeNull();
   });

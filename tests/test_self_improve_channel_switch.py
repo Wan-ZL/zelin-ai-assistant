@@ -1,11 +1,13 @@
 """「自动改进本软件」通道的总开关（CONTRACT §65.1 / §70.3 / §70.4 / §15.3；issue
-#307，owner 决策 D54）：`self_improve.enabled` **出厂 false**，一把开关关掉整条
+#307，owner 决策 D55）：`self_improve.enabled` **出厂 false**，一把开关关掉整条
 「本软件自己改自己」的链路。
 
 钉的行为：
 
 * 三层配置（默认关 > config.yaml `self_improve.enabled` > `settings_overrides.json`
   的扁平键 `self_improve_enabled`）——设置页「开发者」区那一行写的就是最后一层；
+* `config.example.yaml` **不钉这个键**（模板被逐字复制成 config.yaml，钉值 = 给每台
+  新装机塞一个用户没做过的显式选择）；照模板生成的 config.yaml 读出来是关；
 * 关着时每日循环的 `issues` / `prs` / `mutation` 三个读取器**一个都不跑**（零 gh
   调用，`inputs` 里各记 `"off"`），因此不铸 🤖 卡；维护半边与其余读取器照常；
 * 关着时 §65.5 巡检直接 `{"skipped": "disabled"}`，连节流时钟都不推进、钩子不出声；
@@ -29,6 +31,7 @@ from act.lib import config, daily_loop, loop_inputs, policy, registry, self_impr
 from act.lib.registry import Requirement, State
 from server import settings_catalog
 
+REPO_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.yaml"
 TZ = _dt.timezone(_dt.timedelta(hours=-7))
 NOW = _dt.datetime(2026, 9, 2, 3, 31, tzinfo=TZ)
 UTC_NOW = _dt.datetime(2026, 9, 2, 10, 0, tzinfo=_dt.timezone.utc)
@@ -93,6 +96,19 @@ class ConfigLayeringTestCase(unittest.TestCase):
         # 坏形状 = 整条 override 跳过，保留 yaml 层（§15「wrong types are ignored」）
         kept = _load("self_improve:\n  enabled: true\n", {"self_improve_enabled": 7})
         self.assertTrue(kept.self_improve_enabled)
+
+    def test_the_shipped_template_does_not_pin_the_key(self):
+        """模板被 install.sh / setup / App 逐字复制成 config.yaml——在里面钉死
+        一个值 = 每台新装机都带着用户没做过的「显式选择」（2026-09-02 到 09-14
+        的 `enabled: true` 就是这么上去的）。照着模板生成的 config.yaml 必须是
+        **关**，且这一行只能以注释形态存在（§65.1 追记）。"""
+        text = REPO_EXAMPLE.read_text(encoding="utf-8")
+        self.assertFalse(_load(text).self_improve_enabled)
+        block = text.split("\nself_improve:\n", 1)[1].split("\n\n", 1)[0]
+        live = [ln for ln in block.splitlines()
+                if ln.strip().startswith("enabled:")]
+        self.assertEqual(live, [], "config.example.yaml 不许钉 self_improve.enabled")
+        self.assertIn("# enabled:", block)    # 但要留着这行文档
 
     def test_the_block_s_other_keys_still_come_from_raw_yaml(self):
         cfg = _load("self_improve:\n  enabled: true\n  tick_minutes: 5\n  github_repo: o/r\n")

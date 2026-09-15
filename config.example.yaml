@@ -77,9 +77,13 @@ autodispatch:
 # 通道会话跑在 `--strict-mcp-config --mcp-config {}` 下（无 Slack/Gmail MCP）。
 # 用 owner 自己的 gh 身份（D8）、无预算（D9）。全部键可省略（缺省如下）。
 self_improve:
-  enabled: false                       # 通道总开关，**出厂关**（#307 / D54：维护者功能，不该默认对所有安装开着）；
-                                       # true = 每日循环读 issue/红 CI/变异报告铸 🤖 卡 + 通道免批派发 + §65.5 巡检。
-                                       # false 时核验/出网封锁仍生效（它们只看写死的 channel）。设置页「开发者」区可开关。
+  # 通道总开关，**出厂关**（#307 / D55：维护者功能，不该默认对所有安装开着）。
+  # 这一行**故意注释掉**：模板是 install.sh / 设置向导 / App 逐字复制成 config.yaml 的，
+  # 在这里钉死一个值 = 每台新装机都带着一个用户从没做过的「显式选择」（2026-09-02 到
+  # 09-14 之间装的机器就是这么带上 `enabled: true` 的）。没有这个键 = 跟随出厂默认（关）。
+  # true = 每日循环读 issue/红 CI/变异报告铸 🤖 卡 + 通道免批派发 + §65.5 巡检；
+  # 关着时核验/出网封锁仍生效（它们只看写死的 channel）。开关的面在设置页「开发者」区。
+  # enabled: true
   repo_path: ""                        # 唯一放行的仓库；"" = 安装根（AIASSISTANT_HOME），比对用 realpath
   tick_minutes: 60                     # PR 巡检间隔：owner 合并=验收 / 关闭=拒绝 / 评论·红 CI → 跟进卡
   owner_logins: []                     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）

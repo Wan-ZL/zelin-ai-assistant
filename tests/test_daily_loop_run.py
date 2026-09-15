@@ -57,7 +57,7 @@ class _Sandbox(unittest.TestCase):
         from act.lib import loop_inputs
         loop_inputs.materials_path().unlink(missing_ok=True)
         # §65.1 的通道总开关开着：本文件钉的是「循环跑起来」的行为（含 GitHub 读取器）；
-        # 关着时的判决在 tests/test_self_improve_channel_switch.py（#307 / D54）
+        # 关着时的判决在 tests/test_self_improve_channel_switch.py（#307 / D55）
         self.cfg = config.Config(self_improve_enabled=True)
 
 

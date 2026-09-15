@@ -335,7 +335,7 @@ class Config:
     daily_loop_trash_retention_days: int = 90
 
     # §65.1 自动改进本软件的通道总开关（config.yaml `self_improve.enabled`；issue
-    # #307 / D54）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
+    # #307 / D55）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
     # 每日循环不跑 issues/prs/mutation 三个 GitHub 读取器、§65.5 巡检不巡、§51 第二
     # 条 lane 不免批派发；打开它的唯一面 = 设置页「开发者」区（扁平 override 键同名）。
     self_improve_enabled: bool = False
@@ -1280,7 +1280,7 @@ _OVERRIDE_FIELDS: dict = {
     "daily_loop_max_proposals_per_day": _nonneg_int,
     "daily_loop_stale_days": _nonneg_int,
     "daily_loop_trash_retention_days": _nonneg_int,
-    # §65.1 (#307 / D54): 自动改进本软件的通道总开关——设置页「开发者」区经
+    # §65.1 (#307 / D55): 自动改进本软件的通道总开关——设置页「开发者」区经
     # PUT /api/settings/maintainer 写这个扁平键（diff-write 同款；默认 false）。
     "self_improve_enabled": _coerce_bool,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
