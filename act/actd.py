@@ -624,7 +624,8 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     进程，本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这
     几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮与 §65.1 的通道
     总开关（`self_improve_enabled`，#307 / D57）同一刷新点——设置页「开发者」区一关，
-    下一 pass 就不再读 GitHub、不再巡检、不再免批派发，无需重启守护进程。"""
+    下一 pass 就不再读 GitHub、不再巡检、不再免批派发，无需重启守护进程；§65.5 的
+    `self_improve.owner_logins`（#310）也在这里现读（`_refresh_owner_logins`）。"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
@@ -635,6 +636,26 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     for knob in daily_loop.LIVE_KNOBS:
         setattr(cfg, knob, getattr(fresh, knob))
     cfg.self_improve_enabled = fresh.self_improve_enabled   # §65.1（#307 / D57）
+    _refresh_owner_logins(cfg, fresh)                       # §65.5（#310）
+
+
+def _refresh_owner_logins(cfg: config.Config, fresh: config.Config) -> None:
+    """§65.8 追记（issue #310）：`self_improve:` 块**只有 `owner_logins` 一键**
+    每 pass 现读（设置页「开发者」区改完下一 pass 生效）；`repo_path` /
+    `tick_minutes` / `github_repo` 仍随 actd 启动冻结。盘上没有这一键 = 删掉内存
+    里的旧值（设置页清空列表 = diff-write 删键，不删就还认着被撤销的 login）。"""
+    if not isinstance(cfg.raw, dict):
+        return
+    block = cfg.raw.get("self_improve")
+    if not isinstance(block, dict):
+        block = {}
+        cfg.raw["self_improve"] = block
+    source = fresh.raw.get("self_improve") if isinstance(fresh.raw, dict) else None
+    logins = source.get("owner_logins") if isinstance(source, dict) else None
+    if logins is None:
+        block.pop("owner_logins", None)
+    else:
+        block["owner_logins"] = logins
 
 
 def _early_dashboard(cfg: config.Config) -> None:

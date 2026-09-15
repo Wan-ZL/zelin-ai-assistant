@@ -89,7 +89,10 @@ self_improve:
   # enabled: true
   repo_path: ""                        # 唯一放行的仓库；"" = 安装根（AIASSISTANT_HOME），比对用 realpath
   tick_minutes: 60                     # PR 巡检间隔：owner 合并=验收 / 关闭=拒绝 / 评论·红 CI → 跟进卡
-  owner_logins: []                     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
+  owner_logins: []                     # 额外算作 owner 的 GitHub login；仓库 slug 的 owner 与 gh 当前身份恒在集合里
+                                       # （#310：gh 登的是工作号、PR 是个人号合的 → 仓库 owner 才是最不该漏的那个）。
+                                       # 大小写不敏感；设置页「开发者」区可改（override 层压过这里，改完下一轮巡检生效）。
+                                       # 换了 gh 登录身份：`python3 -m act.lib.self_improve --forget-owner` 清掉缓存的 login
   github_repo: ""                      # 通道仓库的 owner/repo；"" = 首次使用时 gh repo view 取并缓存进 lane.json，此后所有 gh pr 调用带 -R
 
 execution:

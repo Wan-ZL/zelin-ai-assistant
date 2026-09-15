@@ -559,6 +559,8 @@ ffmpeg 缺失 = 安装 ffmpeg + 「装好了，重启引擎」；崩了 / 死了
 
 **§15.3 §65.1 追记（add-only，2026-09-14，issue #307 / owner 决策 D57）——自动改进本软件的总开关进设置页**：overrides 允许列表新增一个扁平键 `self_improve_enabled`（bool；坏形状按「wrong types are silently ignored」跳过），语义 = config.yaml `self_improve.enabled` 逐字一致，**出厂 false**。写入方 = web 设置页「开发者」区的**第一行**（`server/settings_catalog.py` 的 `maintainer` section 第一个 field，键 / 落点 / 默认值三者与 `act/lib/config.Config.self_improve_enabled` 逐字镜像，`tests/test_server_settings_catalog.py` 钉漂移），经通用 `PUT /api/settings/maintainer` diff-write——没有第二套写入面。actd **每 pass 现读**这个字段到启动冻结的 cfg 上（`_refresh_model_knobs`，与 §59 的模型旋钮 / §70 的五把循环旋钮同一刷新点），保存后下一个 pass 生效、无需重启。`self_improve:` 块的其余四键（`repo_path` / `tick_minutes` / `owner_logins` / `github_repo`）**不**进 overrides，仍由 `policy.self_improve_config` 现读 config.yaml。
 
+**§15.3 §65.5 追记（add-only，2026-09-14，issue #310）——「谁算 owner」的第三份来源进设置页**：overrides 允许列表新增**一个嵌套块** `self_improve`，且**只有 `owner_logins` 一键**（字串表；扁平点号拼法 `self_improve.owner_logins` 同义，`act/lib/config._OVERRIDE_HANDLERS` 两个键都登记——该表按**精确键**分派，只登记块名的话扁平拼法会掉进 `_override_scalar` 被静默丢掉）。语义 = config.yaml `self_improve.owner_logins` 逐字一致（清洗同 `watch_people`：去空白、丢空项与非字串），落点是 `cfg.raw["self_improve"]["owner_logins"]`——`policy.self_improve_config` 的读取点，不新开 Config 字段。**通道总开关不在此列**：`self_improve.enabled` 的唯一 override 拼法仍是扁平键 `self_improve_enabled`（§65.1 追记「没有第二套写入面」），嵌套块里写 `enabled` 不是键、静默无效；块里其余三键（`repo_path` / `tick_minutes` / `github_repo`）照旧不进 overrides。写入方 = web 设置页「开发者」区的**第二行**（`server/settings_catalog.py` `maintainer` section 第二个 field，`kind: list`、默认空表、`config=("self_improve", "owner_logins")`、`override="self_improve.owner_logins"`；默认值真源 = `act/lib/policy.SELF_IMPROVE_DEFAULTS`，`tests/test_server_settings_catalog.py` 钉漂移），经通用 `PUT /api/settings/maintainer` diff-write，落盘形是嵌套的 `{"self_improve": {"owner_logins": [...]}}`（同 telemetry / features 的嵌套拼法），清空列表 = 删键。actd **每 pass 现读**这一键到启动冻结的 cfg 上（`_refresh_owner_logins`，挂在 §59 `_refresh_model_knobs` 同一刷新点），保存后下一轮巡检生效、无需重启；§65.8「通道配置随 actd 启动冻结」自此**只剩块里其余三键**。判例 `tests/test_self_improve_owner_identity.py`、`tests/test_config_overrides_dispatch.py`、`tests/test_server_settings_catalog.py`。
+
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
 = 打开/聚焦主窗口**（原 ⌥+click 直达主窗口的旧路径行为不变地并入）；右键
@@ -5806,6 +5808,14 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 
 **§65.5 追记（2026-09-05，add-only）——`--json` 形态的退出码**：上文「该命令有失败时自身退出 1」只对无 `--json` 的人读形态成立；带 `--json` 时 gh 的 exporter 先于 SilentError / PendingError 返回，required check 有红仍退出 0（cli/cli `pkg/cmd/pr/checks/checks.go`，v2.50–v2.86 实测）；非 0 只剩「该 PR 的 base 没有 required check」（rc 1）与旧 gh 不认 `--json` 的用法错误。读侧 `ok_codes=(0,1,8)` 因此只是防御性超集，判红的唯一依据是 `bucket`。§70.3 ⑪ 追记二的 `pr_red` 走同一条命令、同一结论。
 
+**§65.5 追记（2026-09-14，add-only，issue #310）——owner 集合 = 仓库 owner ∪ gh 身份 ∪ 配置，比对大小写不敏感；集合外的人处理只记一次**：上文两处「owner login 集合」的定义（`gh api user` 的 login ∪ `self_improve.owner_logins`）**漏掉了仓库自己的 owner**。live 实证（2026-09-09 起每小时 7 行 `by someone other than the owner`，R-280 / R-281 / R-282 / R-284 / R-285 五张卡从 9/5 起挂在待验收列不动）：这台机器的 `gh auth` 登的是工作号，PR 是仓库 owner 的个人号合的，于是 owner 自己的合并被判成「别人干的」，卡永不结算。自本条起：
+
+- **owner 集合**（truth = `act/lib/self_improve._owner_logins`）= `{仓库 slug 的 owner}` ∪ `{gh 当前身份}` ∪ `{配置 self_improve.owner_logins}`。slug owner = §65.3 已 pin 的仓库身份的前半段（`_cached_slug` > config `github_repo` > lane.json 缓存），**零额外 gh 调用**——巡检每轮本来就先解析 slug，拿不到 slug 就直接 `repo_unknown` 不动任何卡。gh 身份仍缓存进 lane.json `owner_login`（D8 不变）。
+- **大小写不敏感**：集合与 actor / 评论作者一律 `lower()` 后比对（GitHub login 本身大小写不敏感，`ZelinPostman` 与 `zelinPostman` 是同一个人）。影响三处：合并/关闭的判定（`_handled_by_owner`）、跟进卡的评论筛选（`owner_comments`）、§65.4 暂停的自动清除（同一把尺）。**加宽的两个后果是有意的**：仓库 owner 在 lane PR 上的评论自此也能铸跟进卡（§65.5 原意就是「owner 的评论 = 下一轮任务」），被标记 PR 由仓库 owner 处理自此也会自动恢复通道（§65.4 出口①）。协作者 / 机器人 / 未知 actor 仍不是 owner。
+- **非 owner 处理只记一次**（issue #310 第 3 条）：`state/self_improve/lane.json` 新增 add-only 键 `foreign`（§65.7 追记），`{"<pr>": {state, actor, at, card}}`。同一 PR 的同一 actor + 同一状态**只在第一次**写一行日志（`self_improve: <card> PR #<n> <STATE> by someone other than the owner (@<actor>) — card left as is`）并在卡上补一条 note 标 `[<date> PR <state>] @<actor> 处理（不在 owner 集合）——卡未结算`（`registry.save`，**状态不变**、拒绝记忆不写、summary 不计——「卡不动」一字未改，只是不再每个 tick 刷屏）；actor 或状态变了再记一次。台账出生即带帽（`FOREIGN_CAP` = 200，超了按 `at` 丢最旧的；防腐 #4）。
+- **重置口**：`python3 -m act.lib.self_improve --forget-owner` 清掉 lane.json 里缓存的 `owner_login`（换 gh 登录身份之后用；下一轮巡检重问一次 `gh api user`，其余键不动）。设置页那一行见 §15.3 追记。
+- 判例 `tests/test_self_improve_owner_identity.py`；既有 `tests/test_self_improve_followups.py` 的「协作者合并 / 机器人关闭卡不动」判决一字未改（`collaborator` / `github-actions[bot]` 不在任何一份 owner 集合里）。
+
 ### 65.6 跟进卡（producer 硬编码的形状）
 
 `Requirement(id=next_id(), title="跟进 PR #<n>：<k> 条 owner 评论 / <m> 项红检查", type="self-improvement", tier="T1", status=card_sent, hardness="soft", sources=[{who: <owner login>|"ci", channel: "self_improve", date, ref: "pr:<n>", quote: <评论原文时间序拼接 + "red required checks: …"，1500 字封顶>, pr_number, pr_url, head, head_sha}], summary, plan=[checkout PR 分支 / 逐条用改动回应评论 / 让 required check 变绿 / 本地门跑过再 push 同一分支], definition_of_done=[…], target_repo=repo_path, target_kind="existing", delivery_mode="repo")`，`origin_trust` 按 sources 盖章（proposed）。**owner 评论原文只进 `quote`**——build_prompt 把 sources 整块过 `sanitize.fence_untrusted`（宪法第 5 条），标题 / plan / DoD 全是不含评论文字的骨架；`pr_number / head / head_sha` 是 65.3 核验跟进交付的坐标。铸出即 card_sent，下一 pass 经 §51 lane 免批派发；通知 `msg_self_improve_followup(n, k, m)`。
@@ -5816,6 +5826,8 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 - `state/self_improve/rejected.jsonl`：append-only，256 KiB 自压缩保尾。
 - 都不进 repo（`state/` gitignore）；dashboard 只投影 65.4 的低频子集（§2）。
 
+**§65.7 追记（2026-09-14，add-only，issue #310）**：lane.json 的键表新增 `foreign`（`{"<pr>": {state, actor, at, card}}`，§65.5 追记的一次性台账）——`TICK_KEYS` 同步加它（truth = `act/lib/self_improve.TICK_KEYS`），仍然只在巡检末尾锁内提交自己这几个键，与 server 的暂停/恢复写者互不覆盖。条数帽 `FOREIGN_CAP` = 200（超了按 `at` 丢最旧的；防腐 #4「出生即带帽」——一张 PR 一条，正常机器一辈子也到不了）。手改坏的条目按缺席处理（再记一次，不抛）。
+
 ### 65.8 不做 / 边界
 
 - 不为 lane 卡开第五类出身；不把 `type` / `target_repo` 当判据；不给别的仓库开通道（D7）；不设预算（D9）；不用第二个 GitHub 身份（D8）。
@@ -5823,6 +5835,8 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 - 跟进只盯 lane 自己的 PR（有 `delivery.pr_number` 的待验收 self_improve 卡）；owner 在其它 PR 上的评论不铸卡。
 - 通道配置（`self_improve:` 块）随 actd 启动冻结（同 `autodispatch:`）；设置页开关随 P4 设置页另案。每日循环的提案 producer、`is_rejected` 的消费、proposal 的 fingerprint 去重范围随 P5 主体立法。
 - `docs/PRIVACY.md`「审批是安全边界」一句改写为两条 lane 各自的边界声明（本 PR 同车）；`SECURITY.md` 指针随动。
+
+**§65.8 追记（2026-09-14，add-only，issue #307 / #310）——上一条「随 actd 启动冻结」与「设置页开关另案」两处失效**：`self_improve:` 块今天有**两键**不冻结、且都有设置页的面——`enabled`（§65.1 追记 / #307 / D57，扁平 override 键 `self_improve_enabled`）与 `owner_logins`（§15.3 §65.5 追记 / #310，嵌套 override 块），两者都由 actd 每 pass 从磁盘现读到启动冻结的 cfg 上（`_refresh_model_knobs` → `_refresh_owner_logins`，§59 的同一刷新点），保存后下一 pass / 下一轮巡检生效、无需重启。**其余三键**（`repo_path` / `tick_minutes` / `github_repo`）照旧随 actd 启动冻结、照旧只读 config.yaml、照旧没有设置页的面——改它们仍要重启守护进程。本节其余边界一字不动。
 
 ## 66. UI 对齐契约：原生清单 = 终版规格，机器判卷（2026-09-02；owner 决策 D3 的执法面，P4 前置）
 
