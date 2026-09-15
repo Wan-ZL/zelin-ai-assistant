@@ -258,6 +258,9 @@ export interface ReviewCard {
   display_title?: string;
   /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
   assessment?: CardAssessment | null;
+  /** §2 追记 / D74：来源全为 self_improve 的机器卡（🤖）；人卡与老 server 的行**整键缺席**，
+   *  列头「隐藏 🤖」因此只藏带这个键的行（taskFilters 的跨分区语义） */
+  self_improve?: boolean;
   [key: string]: unknown;
 }
 
@@ -703,13 +706,16 @@ export interface DailyLoopSettings {
   max_proposals_per_day: number;
   stale_days: number;
   trash_retention_days: number;
+  /** §70.2 追记 / D74：待验收列闲置多少天算过时（先一条汇总通知，下一轮归档）；0 = 关 */
+  review_stale_days: number;
   source: { [key: string]: unknown };
   [key: string]: unknown;
 }
 
-/** PUT /api/settings/daily-loop 的 body：五键任意子集 */
+/** PUT /api/settings/daily-loop 的 body：六键任意子集 */
 export type DailyLoopPatch = Partial<Pick<DailyLoopSettings,
-  "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days">>;
+  "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days"
+  | "review_stale_days">>;
 
 /** POST /api/claude-code/default-model 的回执（只改 model 键；backup = 改前副本路径，文件原本不存在时为 null） */
 export interface ClaudeCodeDefaultWrite {

@@ -195,7 +195,7 @@ def _push_history(rec: dict) -> None:
     one lie this feature must not tell. Entries written before this key exists
     fall back to 需复核 on revert (act/recap._entry_quality).
 
-    §63.6 追记 2026-09-15 修正（R-216 / D74）: the entry also carries the
+    §63.6 追记 2026-09-15 修正（R-216 / D75）: the entry also carries the
     version's own ``repairs`` (add-only) — a trim is a birth fact of that text
     exactly like ``quality``, and it cannot be recomputed later (the trimmed
     line validates clean), so a revert that lost it would present machine-cut
@@ -564,7 +564,7 @@ def _restored_problems(rec: dict) -> list:
     behind 需复核 (an ``ok`` version validated clean at birth or after its trim;
     a reason list under an ``ok`` badge would contradict it). A 需复核 badge
     with no reason is the very state issue #298 was filed about (§63.6 追记
-    2026-09-15 修正, R-216 / D74). Non-string lines in a hand-edited entry =
+    2026-09-15 修正, R-216 / D75). Non-string lines in a hand-edited entry =
     empty ledger, never a crashed revert (宪法第 11 条)."""
     if rec.get("quality") != store.QUALITY_NEEDS_REVIEW:
         return []

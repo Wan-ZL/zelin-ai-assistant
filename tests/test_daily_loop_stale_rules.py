@@ -5,6 +5,8 @@ preset、user_titled、未来 deadline、同簇有 approved/executing/review 兄
 ≥3（只挡 idle）、活动时间解析不了 = 不动。回收站 reason `stale:<rule>`，
 prev_status 完整；循环卡的保留期 = daily_loop.trash_retention_days（默认 90），
 purge_at 投影与 purge_due 同一判决；trash.retention_days = 0 总开关。
+待验收列的第五条规则 review_stale（D74，两阶段）住 tests/test_review_stale_sweep.py——
+本文件钉的是「四条老规则只认提案 / 潜在任务两列」这一半。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
@@ -58,6 +60,8 @@ class StaleVerdictTestCase(unittest.TestCase):
         self.assertIsNone(self.verdict(_card("P-2", age=90, preset="proposals_triage")))
         self.assertIsNone(self.verdict(_card("P-3", age=90, deadline=(TODAY + _dt.timedelta(days=3)).isoformat())))
         self.assertIsNone(self.verdict(_card("P-4", age=90, repeated_mentions=3)))
+        # D74 起待验收列也被扫，但**只**过 review_stale 一条规则，而 self.verdict
+        # 不给 review_days（= 那条规则关着）——这四条仍是「四条老规则只认两列」。
         for st in (State.APPROVED.value, State.EXECUTING.value, State.REVIEW.value, State.DELIVERED.value):
             self.assertIsNone(self.verdict(_card("P-5", age=90, status=st)))
 
@@ -124,9 +128,13 @@ class SweepStaleTestCase(unittest.TestCase):
         restored = registry.restore(registry.load("P-2"))
         self.assertEqual(restored.status, State.CARD_SENT.value)
 
-    def test_sweep_never_touches_running_or_review(self):
+    def test_sweep_never_touches_running_or_a_fresh_review_card(self):
+        """D10 的「running / 待验收不碰」自 D74（issue #312）起只保留 running 半边：
+        待验收卡在 `review_stale_days` 之内照旧不动，超期的走 §70.2 追记的两阶段闸
+        （先一条汇总通知、下一轮才归档——判例 tests/test_review_stale_sweep.py）。"""
         registry.save(_card("P-1", age=90, status=State.EXECUTING.value))
-        registry.save(_card("P-2", age=90, status=State.REVIEW.value))
+        registry.save(_card("P-2", age=90, status=State.DELIVERED.value))
+        registry.save(_card("P-3", age=3, status=State.REVIEW.value))
         self.assertEqual(maintenance.sweep_stale(self.cfg, today=TODAY), [])
 
 

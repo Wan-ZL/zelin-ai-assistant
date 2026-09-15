@@ -25,6 +25,11 @@ issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 
 - 铸卡走 `registry.merge_or_new`（同题折叠、§50 盖章），channel 恒
   `self_improve`（代码硬编码 = write-locked，policy.CHANNEL_CLASS → proposed，
   照旧人批；P6 通道的准入只认这个 channel + 物理 repo 路径）。
+- **待验收列的两阶段老化**（§70.2 追记 / D74，issue #312）：维护阶段在过时清扫之后
+  多跑一次 `maintenance.sweep_review_notices`——够久没动的待验收卡盖一枚 add-only 执行
+  戳并由**整轮一条**汇总通知点名（§70.6 追记；一卡一条在 owner 的真板上是 19 条横幅），
+  真正的归档发生在下一轮（`stale:review_stale` 落进 `trashed[]`）。审计行 add-only 键
+  `review_notices`。
 - 每次运行落一行 JSON 审计（`state/daily_loop.jsonl`，logcap 1 MB）；投影
   `state/daily_loop.json` → dashboard add-only 顶层键 `maintenance`
   （web 顶部横幅「今日整理：合并 N、清理 M（可撤销）」，不弹系统通知——D10
@@ -65,9 +70,10 @@ ADVISORIES_CAP = 20     # last_result.advisories 上限（D33；横幅可展开�
 # 任何走真 actd.run_once 的判例都不会在沙箱里跑起整轮循环（真 gh / doctor 子进程）。
 DISABLE_ENV = "AIASSISTANT_DAILY_LOOP"
 
-# actd 每 pass 从磁盘现读到冻结 cfg 上的五把旋钮（§59 _refresh_model_knobs 同一刷新点）
+# actd 每 pass 从磁盘现读到冻结 cfg 上的六把旋钮（§59 _refresh_model_knobs 同一刷新点）
 LIVE_KNOBS = ("daily_loop_enabled", "daily_loop_time", "daily_loop_max_proposals_per_day",
-              "daily_loop_stale_days", "daily_loop_trash_retention_days")
+              "daily_loop_stale_days", "daily_loop_trash_retention_days",
+              "daily_loop_review_stale_days")
 
 PHASE_IDLE = "idle"
 PHASE_DEDUP = "dedup"
@@ -448,7 +454,12 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
     _set_phase(state, PHASE_DEDUP, interval, started_at=_iso(now))
     merges = _phase(lambda: maintenance.dedup_lanes(cfg), errors, "dedup", [])
     _set_phase(state, PHASE_STALE, interval)
-    trashed = _phase(lambda: maintenance.sweep_stale(cfg, today=now.date()), errors, "stale_sweep", [])
+    trashed = _phase(lambda: maintenance.sweep_stale(cfg, today=now.date(), now=now),
+                     errors, "stale_sweep", [])
+    # D74 第一阶段：够久没动的待验收卡盖戳 + 本轮一条汇总通知（归档发生在下一轮）。
+    # 放在 sweep_stale 之后：刚被归档的卡已不在待验收列，不会又被点名一次。
+    review_notices = _phase(lambda: maintenance.sweep_review_notices(cfg, today=now.date(), now=now),
+                            errors, "review_notice", [])
     _set_phase(state, PHASE_WORKTREES, interval)
     swept = _phase(lambda: worktrees.sweep(cfg, git=git, beat=lambda: heartbeat.beat(
         f"daily_loop:{PHASE_WORKTREES}", interval)), errors, "worktree_sweep", {"removed": []})
@@ -466,11 +477,13 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
                last_run_day=now.date().isoformat(), last_result=result)
     _append_log({"ts": _iso(now), "day": now.date().isoformat(),
                  "duration_s": round(time.time() - started, 1), "merges": merges,
-                 "trashed": trashed, "worktrees": swept, "proposals": proposed["filed"],
+                 "trashed": trashed, "review_notices": review_notices,   # D74 add-only
+                 "worktrees": swept, "proposals": proposed["filed"],
                  "skipped": proposed["skipped"], "summaries": proposed["summaries"],
                  "advisories": proposed["advisories"],
                  "inputs": proposed["inputs"], "errors": errors})
-    return dict(result, merges=merges, trashed_cards=trashed, filed=filed, worktree_sweep=swept)
+    return dict(result, merges=merges, trashed_cards=trashed, filed=filed,
+                worktree_sweep=swept, review_notices=review_notices)
 
 
 def tick(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,
@@ -557,6 +570,9 @@ def plan(cfg, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None)
         "due": due(cfg, load_state(), now),
         "clusters": clusters,
         "stale": [x for x in _stale_plan(cfg, reqs, now.date()) if x["id"] not in clustered],
+        # D74：本轮会被「明天归档」通知点名的待验收卡（只读；真盖戳在 actd 的 pass 里）
+        "review_notices": [r.id for r in maintenance.review_notice_candidates(
+            cfg, today=now.date(), reqs=reqs)],
         "signals": [{"kind": s.kind, "fingerprint": s.fingerprint, "title": s.title}
                     for s in collected["signals"]],
         "advisories": [{"kind": s.kind, "text": s.text} for s in collected["advisories"]],
@@ -567,7 +583,9 @@ def plan(cfg, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None)
 
 def _stale_plan(cfg, reqs: list, today: _dt.date) -> list:
     stale_days = int(getattr(cfg, "daily_loop_stale_days", 0) or 0)
-    verdicts = ((r.id, maintenance.stale_verdict(r, reqs, today, stale_days)) for r in reqs)
+    review_days = int(getattr(cfg, "daily_loop_review_stale_days", 0) or 0)
+    verdicts = ((r.id, maintenance.stale_verdict(r, reqs, today, stale_days, review_days))
+                for r in reqs)
     return [{"id": rid, "rule": rule} for rid, rule in verdicts if rule]
 
 

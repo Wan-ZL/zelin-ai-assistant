@@ -21,13 +21,13 @@ afterEach(() => {
 });
 
 describe("store.syncRouteFromUrl", () => {
-  it("过滤器跟 URL：后退带回 ?q= / tier= / deadline= / reraised=；没有 = 清空", () => {
-    window.history.replaceState(null, "", "/?page=settings&q=foo&tier=T1,T2&deadline=soon&reraised=1");
+  it("过滤器跟 URL：后退带回 ?q= / tier= / deadline= / reraised= / bot=hide；没有 = 清空", () => {
+    window.history.replaceState(null, "", "/?page=settings&q=foo&tier=T1,T2&deadline=soon&reraised=1&bot=hide");
     syncRouteFromUrl();
-    expect(getState().filters).toEqual({ tiers: ["T1", "T2"], deadline: "soon", reraisedOnly: true, search: "foo" });
+    expect(getState().filters).toEqual({ tiers: ["T1", "T2"], deadline: "soon", reraisedOnly: true, hideBot: true, search: "foo" });
     window.history.replaceState(null, "", "/?page=trash");
     syncRouteFromUrl();
-    expect(getState().filters).toEqual({ tiers: [], deadline: "all", reraisedOnly: false, search: "" });
+    expect(getState().filters).toEqual({ tiers: [], deadline: "all", reraisedOnly: false, hideBot: false, search: "" });
   });
 
   it("?card= 跟 URL：有 → 选中并拉详情；换页链接不带 card → 关抽屉；同一张不重拉", () => {

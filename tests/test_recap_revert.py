@@ -253,7 +253,7 @@ TRIM = [{"lang": "en", "line": 1, "over": 6, "removed": 8}]
 
 
 class RevertReasonsTestCase(RevertCase):
-    """§63.6 追记 2026-09-15 修正（R-216 / D74）：回退不再把台账清成空白——`problems` 对搬回来的
+    """§63.6 追记 2026-09-15 修正（R-216 / D75）：回退不再把台账清成空白——`problems` 对搬回来的
     正文重算（仅 needs_review），`repairs` 从条目自己的 add-only 键带回。一个没有原因的 needs_review
     badge 正是 issue #298 立案的那个状态；剪过的正文以 ok 示人而没有回执，与 §63.3「修剪永远露在面上」相抵。"""
 
