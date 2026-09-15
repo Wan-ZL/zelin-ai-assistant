@@ -193,12 +193,19 @@ def _push_history(rec: dict) -> None:
     ``quality`` (add-only) — a revert has to restore the badge the text was
     born with, and guessing ``ok`` for an entry that was 需复核 would be the
     one lie this feature must not tell. Entries written before this key exists
-    fall back to 需复核 on revert (act/recap._entry_quality)."""
+    fall back to 需复核 on revert (act/recap._entry_quality).
+
+    §63.6 追记 2026-09-15 修正（R-216 / D74）: the entry also carries the
+    version's own ``repairs`` (add-only) — a trim is a birth fact of that text
+    exactly like ``quality``, and it cannot be recomputed later (the trimmed
+    line validates clean), so a revert that lost it would present machine-cut
+    text as untouched (§63.3 追记「修剪永远露在面上」). ``problems`` stay out:
+    the revert recomputes them over the restored text instead."""
     if not rec.get("en"):
         return
     entry = {"version": rec.get("version"), "generated_at": rec.get("generated_at"),
              "en": rec["en"], "zh": rec["zh"], "partial": bool(rec.get("partial")),
-             "quality": rec.get("quality")}
+             "quality": rec.get("quality"), "repairs": list(rec.get("repairs") or [])}
     rec["history"] = (rec.get("history") or [])[-(HISTORY_CAP - 1):] + [entry]
 
 
@@ -551,15 +558,40 @@ def _entry_quality(entry: dict) -> str:
     return quality if quality in store.QUALITIES else store.QUALITY_NEEDS_REVIEW
 
 
+def _restored_problems(rec: dict) -> list:
+    """The §63.3 追记 findings for the text a revert just put on the record —
+    computed over those lines, never copied from another version, and only
+    behind 需复核 (an ``ok`` version validated clean at birth or after its trim;
+    a reason list under an ``ok`` badge would contradict it). A 需复核 badge
+    with no reason is the very state issue #298 was filed about (§63.6 追记
+    2026-09-15 修正, R-216 / D74). Non-string lines in a hand-edited entry =
+    empty ledger, never a crashed revert (宪法第 11 条)."""
+    if rec.get("quality") != store.QUALITY_NEEDS_REVIEW:
+        return []
+    lines = {"en": rec.get("en") or [], "zh": rec.get("zh") or []}
+    if not all(isinstance(s, str) for lang in lines.values() for s in lang):
+        return []
+    return text.validate_detail(lines)
+
+
+def _entry_repairs(entry: dict) -> list:
+    """The trims the restored version was born with (add-only entry key, §63.6
+    追记 2026-09-15 修正); entries from before the key — or junk — restore none."""
+    repairs = entry.get("repairs")
+    return [r for r in repairs if isinstance(r, dict)] if isinstance(repairs, list) else []
+
+
 def _apply_history_entry(rec: dict, entry: dict, now: float) -> None:
     """Non-destructive revert (§63.9): the CURRENT text goes into history first,
     then the chosen entry's text becomes version + 1 with a fresh
     ``generated_at``. Nothing is overwritten, so a revert is itself revertible.
 
-    ``problems`` / ``repairs`` are cleared (history entries never carried them —
-    §63.6 追记; an empty ledger is honest, the previous version's findings are
-    not) and ``note`` too (the correction note belonged to a generation that is
-    no longer what the record says)."""
+    ``note`` is cleared (the correction note belonged to a generation that is
+    no longer what the record says). ``problems`` are recomputed over the
+    restored text (:func:`_restored_problems`) and ``repairs`` come back from
+    the entry's own add-only key (:func:`_entry_repairs`) — §63.6 追记
+    2026-09-15 修正: an empty ledger was only honest as long as the reason was
+    unknowable; for the text now on the record it is not."""
     _push_history(rec)
     rec["version"] = int(rec.get("version") or 0) + 1
     rec["generated_at"] = _iso(now)
@@ -568,8 +600,8 @@ def _apply_history_entry(rec: dict, entry: dict, now: float) -> None:
     rec["zh"] = list(entry["zh"]) if isinstance(entry.get("zh"), list) else None
     rec["quality"] = _entry_quality(entry)
     rec["note"] = None
-    rec["problems"] = []
-    rec["repairs"] = []
+    rec["problems"] = _restored_problems(rec)
+    rec["repairs"] = _entry_repairs(entry)
     # add-only：这一版的正文是从第几版搬回来的（面板据它说「由第 N 版回退而来」）
     rec["reverted_from"] = int(entry["version"])
 
