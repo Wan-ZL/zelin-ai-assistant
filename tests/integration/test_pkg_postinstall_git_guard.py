@@ -21,9 +21,13 @@ resurrected untracked, actd restarted with stale code):
             (`~/Projects -> /Volumes/Storage/Server/Projects`, the live shape);
   seeds     an empty destination exactly as before — payload copied,
             `install.sh --pkg-postinstall` run;
-  fail-closed  the guard missing from the payload = refuse, not proceed;
+  fail-closed  the guard missing from the payload = refuse, not proceed, and a
+            destination that cannot be resolved (unenterable directory on the
+            way) = refuse too — an unprovable path is a dirty path (§74.1);
   §74.2     `install.sh --pkg-postinstall` refuses a checkout by itself (the
-            second lock, for payloads built before the guard existed).
+            second lock: defence in depth for hand / automation / future
+            callers of the flag, NOT for pre-guard payloads — those ship and
+            run their own guard-free install.sh, §74.4 边界).
 
 Lives in tests/integration/ (防腐 #7: real subprocesses only here; single-file
 budget BUDGET_SECONDS — a handful of sub-second bash runs).
@@ -227,10 +231,52 @@ class PostinstallGitGuardTestCase(unittest.TestCase):
                       self.install_log.read_text(encoding="utf-8"))
 
 
+@unittest.skipIf(_WIN, "the guard is a macOS/Linux bash script")
+@unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0,
+                 "root walks through a 0000 directory, so there is nothing to fail on")
+class GuardUnresolvableDestinationTestCase(unittest.TestCase):
+    """§74.1 fail-closed — a destination that cannot be resolved is REFUSED.
+
+    `cd … && pwd -P` yields an empty string when some directory on the way is
+    not enterable (mode 000, a mount that never came up). Treating that empty
+    string as "the resolved ancestor" produces a bogus `/dest`-shaped path that
+    is of course inside no checkout — i.e. the guard would wave through a
+    destination that really does live in one.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="pkg-guard-resolve-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _run(self, dest: Path):
+        return subprocess.run(["bash", str(REPO / GUARD_REL), str(dest)],
+                              capture_output=True, text=True, timeout=60,
+                              stdin=subprocess.DEVNULL)
+
+    def test_an_unenterable_ancestor_inside_a_checkout_is_refused(self):
+        checkout = self.tmp / "repo"
+        (checkout / ".git").mkdir(parents=True)
+        locked = checkout / "locked"
+        locked.mkdir()
+        # before: the same path resolves and is refused as a checkout
+        self.assertEqual(self._run(locked / "dest").returncode, 3)
+
+        locked.chmod(0o000)
+        self.addCleanup(locked.chmod, 0o755)    # runs before the rmtree cleanup
+        proc = self._run(locked / "dest")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("cannot be resolved", proc.stderr)
+        self.assertEqual(proc.stdout, "")       # no checkout root to report
+
+
 @unittest.skipIf(_WIN, "install.sh is a macOS/Linux bash script")
 class InstallShSecondLockTestCase(unittest.TestCase):
-    """§74.2 — the .pkg is the only caller of --pkg-postinstall, and an old
-    payload (built before the guard) ships its own install.sh: refuse there too."""
+    """§74.2 — defence in depth for `--pkg-postinstall`: the flag refuses a git
+    working tree on its own, so a hand / automation invocation inside a checkout
+    (or any future caller) is stopped even if the postinstall gate is bypassed
+    or edited out. It does NOT cover a payload built before the guard: such a
+    payload rsyncs its own guard-free install.sh over $DEST first and then runs
+    THAT one (§74.4 边界)."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="pkg-guard-install-"))

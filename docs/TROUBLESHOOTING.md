@@ -301,7 +301,10 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 2. 被盖的 tracked 文件:`git checkout -- <路径…>`(确定整批都是被盖的才 `git checkout -- .`)。
 3. 残留的 untracked 旧源码:逐个核对「今天的代码里还有没有人 import 它」,确认是遗骸再删——`git clean -n` 先看一遍,**永远不要**直接 `git clean -fdx`(它会连 `state/` 与本机配置一起清掉)。
 4. 恢复之后自动部署会自己从 `refused_dirty` 走出来;等不及就 `bash scripts/auto-deploy.sh --force` 跑一轮。
-5. **彻底断掉复发**(owner 的手,§74.4 不代拍):要么把 `/Applications/Zelin's AI Assistant (old).app` 删掉(D3 说了等你明确下令才删),要么至少别再启动它——它每次启动都会去检查更新。
+5. **今天就关窗**(两条命令,现在就能跑,不用等下一个 release):守卫与终止版 feed 都是**随下一个产物**才生效的——此刻 `/releases/latest/download/appcast.xml` 仍是当前最新 tag 那份**上了膛的**单条目 feed(指向一个守卫出生之前的 .pkg),而已装的 `(old).app` 里 `SUEnableAutomaticChecks` / `SUAutomaticallyUpdate` 仍是 true。所以:
+   - **把线上那份 appcast 现在就换成终止版**(零 `<item>` 的那份 XML,取自 `release.yml` 的生成步):`gh release upload <当前 latest tag> appcast.xml --clobber`(或者干脆 `gh release delete-asset <tag> appcast.xml`——代价是客户端每天拿一次 404 并记成「链路坏了」,所以首选 --clobber)。
+   - **就地把那台机器上的自动更新关掉**:`defaults write com.zelin.ai-engineer SUAutomaticallyUpdate -bool false && defaults write com.zelin.ai-engineer SUEnableAutomaticChecks -bool false`。偏好住在 `~/Library/Preferences/`,**不在**签名封条内(封条内的 Info.plist 一个字节都不许动,§54),Sparkle 读用户默认值优先于 Info.plist——这一条立刻生效、可逆(`defaults delete` 还原)。
+6. **彻底断掉复发**(owner 的手,§74.4 不代拍):要么把 `/Applications/Zelin's AI Assistant (old).app` 删掉(D3 说了等你明确下令才删),要么至少别再启动它——它每次启动都会去检查更新。
 
 ## 版本号不对:doctor `version` 行 WARN、看板顶栏 / `python3 -c "import act; print(act.__version__)"` 报的不是 tag(2026-09-02 切到 tag 真源之后)
 

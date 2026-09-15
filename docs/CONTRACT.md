@@ -5127,6 +5127,8 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 **merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。**追记二（2026-09-02，§56.8）**：Windows 套件与 qlty 已从 pull_request 搬到 `ci-nightly.yml`（schedule + dispatch），bot review 改为 `review:ai` 标签按需触发；pull_request 上只剩 contract reminder 一个非 required job，`ci` 与 `Web tests` 在 PR 上按路径 filter 决定做多少事（merge_group / push 恒全量）——required 集合与 job 名一字不改。
 
+**§56.2 追记（2026-09-15，add-only；issue #333 / §74.3）——「四个产物自报的都是 tag」少了一个：appcast 从此不自报版本**。上文第一条枚举的是「此后每个产物（Info.plist、.pkg、appcast、便携包）自报的都是 tag」。§74.3 把发布的 `appcast.xml` 换成**零 `<item>` 的终止版 feed** 之后，那份 XML 里**根本没有 `sparkle:version`**——它不再自报任何版本，因为它不再提供任何可安装的东西（不是「报错了」，是「无可报」）。另外三个产物（Info.plist / .pkg / 便携包）的盖章一字不改，`scripts/version_stamp.py --version <X.Y.Z> --write --ios` 与其后的 `act.__version__ == X.Y.Z` 复核也一字不改。**Latest 判定那一条继续成立而且更要紧**：`/releases/latest/download/appcast.xml` 跟着 Latest 标记走，所以最新的那个 release 必须**永远**带着终止版 feed——一个旧 release 的武装 feed 重新变成 latest 就等于重新给退役 app 上膛（§74.3 的隐含要求）。`update_check`（读 `/releases/latest` 的 tag）不经过 appcast，不受影响。
+
 ### 56.3 部署 job：owner Mac 每 10 分钟跟随 origin/main
 
 launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtLoad false`、无 KeepAlive；`SoftResourceLimits.NumberOfFiles 8192`——与其余模板同款，§55 资源上限），`ProgramArguments = <§55 渲染的解释器> -m act.auto_deploy`——**argv0 必须是那个 launchd 可行的 python**（§55 两道闸门 + `tests/test_launchd_render.py` 的「argv0 含 python」判例 + doctor `launchd python` 探针都建立在这个前提上），python 启动器再 spawn `bash scripts/auto-deploy.sh` 并把自己以 `AIASSISTANT_PYTHON` 交给脚本（子进程的 TCC responsible process 是它）。路径纪律照 §55：WorkingDirectory=`$HOME`、日志 `~/Library/Logs/zelin-ai-assistant/autodeploy.launchd.log`、repo 只出现在环境变量里。
@@ -6448,6 +6450,7 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 
 - **形制**：`bash mac/scripts/pkg_dest_guard.sh <destination>`。退出码 **0** = 安全（可以写）· **3** = 拒绝（stdout 一行 = 那棵 checkout 的根，stderr 是给人看的说明 + 修法）· **2** = 用法错误。两个调用者共用这一份脚本——判据只有一处实现，postinstall 与 install.sh 不许各写一套（防腐 #9 的同源精神）。
 - **先解析再判**：路径里每一条符号链接都用 `cd … && pwd -P` 逐层解开（macOS 的 `/usr/bin/realpath` 来得很晚，而 postinstall 跑在一条最小 PATH 上），目的地**还不存在**时把不存在的尾巴原样接回解析出的祖先——「还没建出来的目的地」也要判得动。2026-09-07 的入口正是一条符号链接，只看字面路径的守卫在真实形状上等于没装。
+- **解析不动 = 拒**（fail-closed 的第一层，2026-09-15 评审补上）：`cd` 进不去某一级（权限 000 的中间目录、没挂上来的卷、解析途中路径被换掉）时命令替换只给出空串；**不许**把空串当成「解析出来的祖先」——那会拼出一条 `/dest` 式的假路径，它当然不在任何工作树里，于是守卫放行一个其实住在 checkout 里的目的地（放行 = 那次 rsync 照常发生）。解析失败一律 **exit 3**、stdout 空（没有 checkout 根可报）。判据是「能不能**证明**它在工作树外」，不是「有没有找到 `.git`」。
 - **`.git` 是目录还是文件都算**：普通 clone 是目录，worktree / submodule 是一个指向 gitdir 的文件。
 - **一直往上走到 `/`，不止于 `$HOME`**：事故里的 checkout 根本不在 `$HOME` 下（`/Volumes/Storage/Server/Projects/zelin-ai-assistant`）。**代价写明**：把 `$HOME` 本身做成仓库的机器（dotfiles 玩法）上，.pkg 的 per-user 播种会被拒——这是有意的，往任何一棵工作树里 rsync 一整条管线都会把它弄脏，而那台机器仍可以手跑 `install.sh`。
 - **fail-closed**：调用方把**任何**非 0 都当拒绝——包括守卫本身缺席时 `bash` 的 127。「证不明目的地是干净的就不许动它」是安装器唯一安全的默认值（宪法第 11 条的安装器版：坏输入 / 缺文件不许升级成破坏）。
@@ -6455,9 +6458,9 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 ### 74.2 两处闸：postinstall 在 rsync 之前，`install.sh --pkg-postinstall` 在副作用之前
 
 - **postinstall（`mac/package.sh` 的 heredoc）**：算出 `DEST` 之后、`mkdir -p` 与 `rsync` 之前问一次守卫。命中 = **整段 per-user setup 跳过**——不建目录、不 rsync、不跑 `install.sh`、不重启任何守护进程、不 `open` 旧 app；三行 stderr 进 `/var/log/install.log`，点名那棵 checkout 与修法（`cd <checkout> && git pull && bash install.sh`）。**退出码仍是 0**：两个 payload（/Applications 的 bundle 与 /Library 的母本）确实装好了，让 Installer 报「安装失败」只会诱使用户再装一次，什么都修不好——形状与既有的「没有 console user」分支逐字同款（既有机制优先）。
-- **`install.sh --pkg-postinstall`（第二把锁）**：在 flag 解析之后、任何副作用之前，用同一个守卫判 `$REPO_ROOT`；命中 = **exit 3**，stdout 零输出、`$HOME` 下零文件、不写 §23 报告。它防的是**守卫出生之前打出来的旧 .pkg 载荷**——那种载荷会把自己那份旧 `install.sh` 一起 rsync 进来，再在一棵刚被它回退过的树上配置并重启守护进程。
+- **`install.sh --pkg-postinstall`（第二把锁，defence in depth）**：在 flag 解析之后、任何副作用之前，用同一个守卫判 `$REPO_ROOT`；命中 = **exit 3**，stdout 零输出、`$HOME` 下零文件、不写 §23 报告。**它防的是这把闸日后被绕开**：postinstall 那道门被谁编辑掉、有人在一棵工作树里手敲 `--pkg-postinstall`、或者将来多出第二个调用者——任何一种都还能在这里被拦住。**它防不了「守卫出生之前打出来的旧 .pkg 载荷」**（诚实划界，§74.4 重述）：那种载荷的 postinstall 先把自己那份**无守卫的** `install.sh` 连同旧代码 rsync 进 `$DEST`（真正的伤害就发生在这一步、发生在本锁之前），随后执行的是它自己拷过去的那一份——今天写下的这几行那时根本不在被执行的文件里。
 - **只有 pkg 路径被禁**：交互模式与 `--non-interactive`（自动部署，§56）在 checkout 里跑是它们的本职，一字不受本条影响。
-- **判例** `tests/integration/test_pkg_postinstall_git_guard.py`：真 bash、真 rsync、真守卫；postinstall 的文本**逐字**从 `mac/package.sh` 的 `POSTINSTALL` heredoc 里取出（只重写 `MASTER=` 一行指向临时载荷，且那一行的字面被断言钉住），系统工具（stat / dscl / sudo / id / launchctl / open）全是记 argv 的桩，PATH 够不到 `/usr/bin`。四件事被钉死：目的地是 checkout → 拒且字节不变；经符号链接进 checkout（live 形状）→ 拒；守卫从载荷里消失 → 拒（不是放行）；空目的地 → 照旧播种并跑 `install.sh --pkg-postinstall`。
+- **判例** `tests/integration/test_pkg_postinstall_git_guard.py`：真 bash、真 rsync、真守卫；postinstall 的文本**逐字**从 `mac/package.sh` 的 `POSTINSTALL` heredoc 里取出（只重写 `MASTER=` 一行指向临时载荷，且那一行的字面被断言钉住），系统工具（stat / dscl / sudo / id / launchctl / open）全是记 argv 的桩，PATH 够不到 `/usr/bin`。五件事被钉死：目的地是 checkout → 拒且字节不变；经符号链接进 checkout（live 形状）→ 拒；守卫从载荷里消失 → 拒（不是放行）；目的地路上有一级 `cd` 不进去（mode 000）→ 拒（§74.1 解析不动那条；以 root 跑时跳过——root 进得去）；空目的地 → 照旧播种并跑 `install.sh --pkg-postinstall`。
 
 ### 74.3 退役 app 不再被喂：终止版 appcast + 出厂 disarm
 
@@ -6467,6 +6470,7 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 - **随之下线的**：`sign_update` 的 EdDSA 签名步，以及它的前置门「Verify Sparkle key matches the baked SUPublicEDKey」——没有 enclosure 可签，留着只会让一次 secret 轮换无缘无故拦下一次发版。`scripts/sparkle_pubkey.py` 与 `mac/Frameworks/bin/sign_update`（`mac/scripts/fetch-sparkle.sh` 仍照常 vendor，旧 app 还链着这个 framework）**保留**：重新武装这条 feed = 恢复带 `<enclosure>` 的 `<item>` + 重新签名 + 把那道门装回去，三步都指得出工具。
 - **`mac/Info.plist`**：`SUEnableAutomaticChecks` / `SUAutomaticallyUpdate` 出厂改为 `false`（**下一次构建**旧 bundle 时才生效）；`SUFeedURL` / `SUPublicEDKey` 一字不动——手点「检查更新…」时读到的仍是一份解析得动的真 feed、结论在本地做出（没有可安装的条目），而不是一次 404 网络错误。**已装的 bundle 一个字节不改**——Info.plist 在代码签名封条之内，`plutil` 一改 TCC 授权就名存实亡（§54 同款理由）；治那一台已装 bundle 的正是终止版 feed。
 - **隐含要求**：最新的那个 release **永远**带着终止版 appcast——`/releases/latest/download/` 跟着 Latest 标记走，一个旧 release 的武装 feed 绝不许重新变成 latest（release.yml 的 Latest 判定按 tag 列表算，§56.2，本条不改它）。
+- **生效时机诚实说 + 今天就能关的窗（ops，不在代码射程内）**：本节改的是**下一个** release 的产物；**此刻**线上 `/releases/latest/download/appcast.xml` 仍是当前最新 tag 那份上了膛的单条目 feed（指向一个守卫出生之前的 .pkg），已装的 `(old).app` 两把自动开关也仍是 true——在下一个 release 之前启动它，2026-09-07 会逐字节重演。关掉这扇窗的是两个人手动作，写在 `docs/TROUBLESHOOTING.md`「整棵 checkout 莫名回退」第 5 步：(1) `gh release upload <当前 latest tag> appcast.xml --clobber` 把线上那份资产**现在就**换成零条目的终止版；(2) `defaults write com.zelin.ai-engineer SUAutomaticallyUpdate -bool false`（连同 `SUEnableAutomaticChecks`）——偏好住在 `~/Library/Preferences/`、**不在**签名封条内，Sparkle 读用户默认值优先于 Info.plist，所以这一条立刻生效且可逆，与「已装 bundle 一个字节不改」不冲突。
 
 ### 74.4 边界（明确不做）
 
@@ -6475,3 +6479,4 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 - **不给 rsync 加 `--delete`**：那会删掉用户目录里所有非载荷文件，比现在的病更凶；`rsync -a` 会留下过时文件这件事，由「只往空的 / 非 checkout 的目的地播种」承担。
 - **不动已装的 `(old).app`、不自动删任何 bundle**：D3 是「等我明确让你删你再删」。本节只保证它**够不着**新的 .pkg；删不删是 owner 的手。
 - **不碰 fresh-install 路径**：空目的地的行为与本条之前逐字节相同（判例钉住），两个 payload、pkgbuild 的 identifier 与版本、`install.sh` 其余每一步都一字不动。
+- **管不了已经打出去的旧 .pkg**（射程诚实说）：本节的两把闸都住在**载荷自己**里——老载荷的 postinstall 不问守卫（它那份还没有），它的 rsync 会把自己那份无守卫的 `install.sh` 一起盖进 `$DEST`，然后跑的正是那一份。`rsync --exclude 'install.sh'` **也不够**：伤害是那一整次 rsync（232 个 tracked 文件），保住一个 install.sh 只会留下一棵旧代码 + 新 install.sh 的混合树。唯一治得了老载荷的是**不让它被取到**——§74.3 的终止版 feed（以及 owner 手里那张删 `(old).app` 的牌）。任何「第二把锁能挡住老载荷」的说法都是假的，不许再写进文档或注释。
