@@ -52,7 +52,7 @@ describe("describeSelfImprove", () => {
     expect(describeSelfImprove(undefined, en)).toBeNull();
     expect(describeSelfImprove({ enabled: true, paused: false }, en)).toBeNull();
     expect(describeSelfImprove({ enabled: false, paused: false }, en)).toBeNull();
-    // §65.1（#307 / D55）：通道关着时连暂停横幅都不出——巡检不跑，
+    // §65.1（#307 / D56）：通道关着时连暂停横幅都不出——巡检不跑，
     // 「处理该 PR 后自动恢复」那条出口是死的，横幅只会永久挂着催一条
     // 用户刚关掉的通道。
     expect(describeSelfImprove({ ...paused, enabled: false }, en)).toBeNull();

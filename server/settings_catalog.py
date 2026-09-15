@@ -9,7 +9,7 @@ number → 输入框、list → 逗号分隔输入框），新增一个旋钮 = 
 section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.json 的 control:settings.*，
 §66.2）：区按原生分（general / notifications / obsidian / slack / gmail / telemetry / digest /
 approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
-开发者区第一行 `self_improve_enabled` 是 web 才有的一把（原生没有；§65.1 / issue #307 / D55）：自动改进本软件的通道总开关，默认关。
+开发者区第一行 `self_improve_enabled` 是 web 才有的一把（原生没有；§65.1 / issue #307 / D56）：自动改进本软件的通道总开关，默认关。
 
 读：``GET /api/settings`` 全目录 + 每 field 的 effective 值与来源
 （override / config / default，三层与 ``act/lib/config._apply_settings_overrides``
@@ -350,7 +350,7 @@ SECTIONS: tuple = (
     _section(
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
-            # §65.1（issue #307 / D55）：自动改进本软件的通道总开关，**默认关**——开发者区的第一行。
+            # §65.1（issue #307 / D56）：自动改进本软件的通道总开关，**默认关**——开发者区的第一行。
             # 落点 config.yaml `self_improve.enabled`，override 扁平键 `self_improve_enabled`（act/lib/config.py 同名字段）。
             _f("self_improve_enabled", "bool",
                "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）",

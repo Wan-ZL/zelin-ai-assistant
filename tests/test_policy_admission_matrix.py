@@ -70,7 +70,7 @@ LANE = {"open": False, "paused": True}
 
 
 def _cfg(auto=None, si=None, **attrs):
-    """`si` 块照 `config._apply_self_improve_block` 搬到属性上（#307 / D55 起总开关
+    """`si` 块照 `config._apply_self_improve_block` 搬到属性上（#307 / D56 起总开关
     出厂关，而这张矩阵钉的是通道开着时的判决——`si-off` 那一行仍是显式关的）。"""
     raw = {}
     if auto is not None:

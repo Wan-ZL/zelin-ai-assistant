@@ -1,5 +1,5 @@
 """「自动改进本软件」通道的总开关（CONTRACT §65.1 / §70.3 / §70.4 / §15.3；issue
-#307，owner 决策 D55）：`self_improve.enabled` **出厂 false**，一把开关关掉整条
+#307，owner 决策 D56）：`self_improve.enabled` **出厂 false**，一把开关关掉整条
 「本软件自己改自己」的链路。
 
 钉的行为：

@@ -50,7 +50,7 @@ class TickBase(unittest.TestCase):
         _clean()
         self.notify = mock.patch.object(notify, "notify").start()
         self.addCleanup(mock.patch.stopall)
-        # 通道开着（§65.1 的总开关 #307 / D55 起出厂关；关着的判决在
+        # 通道开着（§65.1 的总开关 #307 / D56 起出厂关；关着的判决在
         # tests/test_self_improve_channel_switch.py）
         self.cfg = config.Config(self_improve_enabled=True)
 

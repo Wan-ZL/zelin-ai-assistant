@@ -205,7 +205,7 @@ def autodispatch_config(cfg: object) -> dict:
 # self_improve 配置（config.yaml `self_improve:` 块，全 add-only；§65）
 # --------------------------------------------------------------------------- #
 SELF_IMPROVE_DEFAULTS: dict = {
-    "enabled": False,       # 通道总开关（#307 / D55 起**默认关**）：false = self_improve
+    "enabled": False,       # 通道总开关（#307 / D56 起**默认关**）：false = self_improve
                             # 卡照旧人工审批、每日循环不读 GitHub、§65.5 巡检不巡
     "repo_path": "",        # "" = 安装根（config.HOME）；比对用 realpath
     "tick_minutes": 60,     # PR 跟进巡检（owner 评论 / 红 CI / 合并 / 关闭）间隔
@@ -235,7 +235,7 @@ def _lane_enabled(cfg: object, block: dict) -> bool:
 def self_improve_config(cfg: object) -> dict:
     """读 `self_improve:` 块，脏值逐键回退默认（宪法第 11 条口径）——通道配置
     的唯一读取点（同 autodispatch_config 的纪律）。**总开关另有一层**（§65.1，
-    #307 / D55）：`cfg.self_improve_enabled` 是真 bool 时以它为准——那一路已经把
+    #307 / D56）：`cfg.self_improve_enabled` 是真 bool 时以它为准——那一路已经把
     yaml 块与 `settings_overrides.json`（设置页「开发者」区）按 §15 的层次合并过，
     raw 块只是它的上游；裸 dict / 没有该属性的假 cfg 仍走 raw 块（默认 = 关）。"""
     block = _raw_block(cfg, "self_improve")

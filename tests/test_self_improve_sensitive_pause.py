@@ -29,7 +29,7 @@ BRANCH = "ai/self-improve/R-900"
 
 
 def _on():
-    """通道开着的 cfg——§65.1 的总开关 #307 / D55 起出厂是**关**的，而本文件钉的是
+    """通道开着的 cfg——§65.1 的总开关 #307 / D56 起出厂是**关**的，而本文件钉的是
     护栏（开着才谈得上暂停）。关着的判决在 tests/test_self_improve_channel_switch.py。"""
     return config.Config(self_improve_enabled=True)
 
@@ -156,7 +156,7 @@ class PauseVisibilityAndClearTestCase(unittest.TestCase):
         self_improve.pause("sensitive_paths", pr_number=5, pr_url="u5", paths=["act/llm.py"],
                            card="P-1")
         with mock.patch("act.lib.dashboard._run_claude_agents", return_value=[]):
-            dash = build_dashboard(cfg=config.Config())   # 出厂默认：enabled=false（#307 / D55）
+            dash = build_dashboard(cfg=config.Config())   # 出厂默认：enabled=false（#307 / D56）
         view = dash["self_improve"]
         self.assertFalse(view["enabled"])
         self.assertTrue(view["paused"])

@@ -31,7 +31,7 @@ def _EXISTS(_p):
 
 def _cfg(si=None, **attrs):
     """真 load_config 的形状：yaml `self_improve:` 块 + 已合并进属性的总开关。
-    #307 / D55 起 `enabled` 出厂 **false**，而本文件钉的是「通道开着时的准入」——
+    #307 / D56 起 `enabled` 出厂 **false**，而本文件钉的是「通道开着时的准入」——
     所以 helper 照 `config._apply_self_improve_block` 的语义把块里的 enabled
     （缺省 = 开）搬到属性上，只有显式关的判例才是关的。"""
     raw = {"self_improve": si} if si is not None else {}
@@ -219,7 +219,7 @@ class VocabularyTestCase(unittest.TestCase):
         si = policy.self_improve_config(Config(raw={"self_improve": {"github_repo": " Wan-ZL/x "}}))
         self.assertEqual(si["github_repo"], "Wan-ZL/x")
         self.assertEqual(policy.self_improve_config(None), policy.SELF_IMPROVE_DEFAULTS)
-        # #307 / D55：出厂默认关——块坏掉 / 没有属性的 cfg 一律回落到关（fail-closed）
+        # #307 / D56：出厂默认关——块坏掉 / 没有属性的 cfg 一律回落到关（fail-closed）
         self.assertFalse(policy.SELF_IMPROVE_DEFAULTS["enabled"])
         self.assertEqual(policy.self_improve_config({"self_improve": "junk"})["enabled"], False)
         self.assertEqual(policy.self_improve_config({"self_improve": {"enabled": True}})["enabled"],

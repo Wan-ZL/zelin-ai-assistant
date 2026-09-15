@@ -14,7 +14,7 @@ issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 
 
 - **只在 actd 里跑**（:func:`tick` 由 act/actd.py 每 pass 调；本模块的 CLI
   只出计划报告、零写入）——状态转移单写者不变（§0 第 1 条）。
-- **GitHub 半边挂在 §65.1 的总开关下**（`self_improve.enabled`，#307 / D55 起默认
+- **GitHub 半边挂在 §65.1 的总开关下**（`self_improve.enabled`，#307 / D56 起默认
   **关**）：关着时 `issues` / `prs` / `mutation` 三个读取器一个都不跑（零 gh 调用，
   `inputs` 里记 `"off"`），因此不铸 🤖 卡；维护半边（去重 / 过时清扫）与其余读取器
   照常——每日整理不是维护者功能。
@@ -274,7 +274,7 @@ def file_proposals(chosen: list, today: str, repo_path: str) -> list:
 # signal collection（每个读取器单独隔离）
 # --------------------------------------------------------------------------- #
 def github_enabled(cfg) -> bool:
-    """§65.1 总开关（#307 / D55，默认关）：GitHub 读取器要不要跑。真源 =
+    """§65.1 总开关（#307 / D56，默认关）：GitHub 读取器要不要跑。真源 =
     `cfg.self_improve_enabled`（config.yaml `self_improve.enabled` + §15 overrides
     合并后的值，actd 每 pass 现读）；属性不在 = 关（fail-closed，宪法第 11 条）。"""
     return bool(getattr(cfg, "self_improve_enabled", False))
@@ -295,7 +295,7 @@ def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
     自检类已按 D33 转成 `advisories`（Summary，按原 priority 排）。`inputs.<name>`
     仍数读取器给出的全部信号——两类都算，看得见每个读取器活着。
 
-    ``github=False``（§65.1 通道关着，#307 / D55）= :data:`GITHUB_READERS` 三个读取器
+    ``github=False``（§65.1 通道关着，#307 / D56）= :data:`GITHUB_READERS` 三个读取器
     一个都不跑、**零 gh 调用**，`inputs` 里各记一行 :data:`READER_OFF`（看得见是关着
     而不是坏了）；维护半边与其余读取器一字不动，`gh_titles` 自然空。"""
     gh = _beating_gh(gh, interval)

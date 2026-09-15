@@ -1,5 +1,5 @@
 """通道关掉之后，**已经存在**的 self_improve 卡不再被自动推进（CONTRACT §65.1
-追记；issue #307 第 4 条「关闭开关时至少不再续派」，owner 决策 D55）。
+追记；issue #307 第 4 条「关闭开关时至少不再续派」，owner 决策 D56）。
 
 钉的行为（开关本身的三层配置 / 读取器 / 巡检住 test_self_improve_channel_switch.py）：
 

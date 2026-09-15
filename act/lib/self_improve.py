@@ -5,7 +5,7 @@ lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论
 （修宪：本通道人从起点审批移到终点验收）/ §2（review 行 `delivery`、顶层
 `self_improve` 投影）/ §4（派发 argv 的 MCP 封锁，argv 本体拼在 act/llm.py）。
 
-**总开关**（§65.1，issue #307 / D55）：`self_improve.enabled` 出厂 **false**——这是
+**总开关**（§65.1，issue #307 / D56）：`self_improve.enabled` 出厂 **false**——这是
 开发者 / 维护者功能，默认对所有安装关着（设置页「开发者」区那一行是唯一的面）。
 关着时 :func:`tick` 直接 `{"skipped": "disabled"}`、§51 的 lane 不免批、每日循环不读
 GitHub，且已存在的卡不再被自动推进（:func:`frozen_in_flight`，issue #307 第 4 条）；
@@ -156,7 +156,7 @@ def egress_locked(card: object) -> bool:
 
 
 def channel_off(cfg: object = None) -> bool:
-    """§65.1 总开关关着（#307 / D55 起是出厂默认）——通道各闸共用的一句判定。"""
+    """§65.1 总开关关着（#307 / D56 起是出厂默认）——通道各闸共用的一句判定。"""
     return not policy.self_improve_config(cfg)["enabled"]
 
 
@@ -989,7 +989,7 @@ def tick(cfg: object = None, *, gh: Optional[GhRunner] = None,
     零 lane 卡时零 gh 调用；gh 不可用 = 本轮跳过并照常推进 last_tick_at
     （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。
 
-    §65.1 总开关关着（`self_improve.enabled`，#307 / D55 起默认关）= `{"skipped":
+    §65.1 总开关关着（`self_improve.enabled`，#307 / D56 起默认关）= `{"skipped":
     "disabled"}`，节流时钟都不碰：在飞的 lane 卡就地冻在待验收列（不再对账 owner
     的合并 / 关闭、不再铸跟进卡），维护者把开关打开后下一 pass 接着巡。**收割时刻
     的交付核验（§65.3）与出网封锁（§65.2）不在本闸下**——它们只看写死的 channel。"""

@@ -612,7 +612,7 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     一次，web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立
     进程，本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这
     几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮与 §65.1 的通道
-    总开关（`self_improve_enabled`，#307 / D55）同一刷新点——设置页「开发者」区一关，
+    总开关（`self_improve_enabled`，#307 / D56）同一刷新点——设置页「开发者」区一关，
     下一 pass 就不再读 GitHub、不再巡检、不再免批派发，无需重启守护进程。"""
     try:
         fresh = config.load_config()
@@ -623,7 +623,7 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     cfg.models_fallback = fresh.models_fallback   # D53 第三把（--fallback-model）
     for knob in daily_loop.LIVE_KNOBS:
         setattr(cfg, knob, getattr(fresh, knob))
-    cfg.self_improve_enabled = fresh.self_improve_enabled   # §65.1（#307 / D55）
+    cfg.self_improve_enabled = fresh.self_improve_enabled   # §65.1（#307 / D56）
 
 
 def _early_dashboard(cfg: config.Config) -> None:
