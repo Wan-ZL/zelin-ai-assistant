@@ -183,7 +183,7 @@ class StaticServingTestCase(unittest.TestCase):
         self.assertIn(b"__ZAI_TOKEN__", body)
 
     def test_webmanifest_is_served_as_manifest_json(self):
-        # §71：安装清单的 wire 类型是法条常量——发错类型浏览器就装不上
+        # §73：安装清单的 wire 类型是法条常量——发错类型浏览器就装不上
         status, headers, body = http_request(self.port, "GET", "/manifest.webmanifest")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "application/manifest+json")
@@ -233,7 +233,7 @@ class StaticHelpersTestCase(unittest.TestCase):
     def test_ctype_falls_back_to_octet_stream(self):
         self.assertEqual(app_mod._static_ctype(Path("blob.unknownext")),
                          "application/octet-stream")
-        # §71 的钉死表先于宿主机 mimetypes（Windows 注册表 / /etc/mime.types 能改写它）
+        # §73 的钉死表先于宿主机 mimetypes（Windows 注册表 / /etc/mime.types 能改写它）
         with mock.patch.object(app_mod.mimetypes, "guess_type",
                                return_value=("application/octet-stream", None)):
             self.assertEqual(app_mod._static_ctype(Path("manifest.webmanifest")),

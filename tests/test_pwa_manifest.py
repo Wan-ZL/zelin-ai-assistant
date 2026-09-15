@@ -1,4 +1,4 @@
-"""PWA 安装清单 + 生成的图标（docs/CONTRACT.md §71）。
+"""PWA 安装清单 + 生成的图标（docs/CONTRACT.md §73）。
 
 四件事钉在这里：index.html 挂着 `<link rel="manifest">`；清单的 `name` 与
 `<title>` 逐字相同；主题色/背景色逐字取自 `ui/tokens/native-tokens.json` 的

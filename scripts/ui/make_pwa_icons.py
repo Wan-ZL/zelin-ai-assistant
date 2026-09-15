@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""web/public 的 PWA 图标生成器（docs/CONTRACT.md §71）。
+"""web/public 的 PWA 图标生成器（docs/CONTRACT.md §73）。
 
 安装清单（`web/public/manifest.webmanifest`）要的 192 / 512 位图不手绘：形状真源
 是同目录的 `favicon.svg`（G7 自写资产），这里只把它的 `<rect>` 几何栅格化成
@@ -9,7 +9,7 @@
 私名**，那支是 QR 专用的灰度写者）。抗锯齿 = 每个输出像素 4 条子扫描线 × 精确的
 水平交叠率，圆角按圆弧解析求交，颜色按文档顺序 src-over 预乘合成。
 
-「重跑零 diff」的口径是**像素**不是字节（§71）：deflate 的字节流取决于本机 zlib
+「重跑零 diff」的口径是**像素**不是字节（§73）：deflate 的字节流取决于本机 zlib
 构建（macOS 与 linux runner 的 libz 版本不同，zlib-ng 更是另一套），字节相等会
 让门在别人的机器上莫名其妙地红；契约是图片内容，所以 `--check` 比 IHDR + 解压后
 的扫描线。判例 tests/test_pwa_manifest.py。

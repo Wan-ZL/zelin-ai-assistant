@@ -3848,7 +3848,7 @@ test_server_sse.py；envelope 形状由 tests/test_server_common.py 的
 `auth_headers`/`post_json` 默认走 owner 合法面，拒绝路径判例集中在
 test_server_auth.py）。
 
-**2026-09-14 追记（add-only，`feat/pwa-manifest`）——静态面的 content-type 钉死表**：`_static_ctype` 在问 `mimetypes` 之前先查模块级常量表 `_STATIC_CTYPES`（truth = `server/app.py`；今天只有一条 `.webmanifest` → `application/manifest+json`），理由与安装清单一起立法在 §71.3——`mimetypes` 读宿主机的注册表 / `/etc/mime.types`，这条 wire 类型是法条不是本机配置。静态面其余行为（目录回落 index、SPA 深链、token 只注入 index.html、`/assets/` 长缓存、`../` 穿越 404）一字不动；判例 tests/test_server_request_plumbing.py。
+**2026-09-14 追记（add-only，`feat/pwa-manifest`）——静态面的 content-type 钉死表**：`_static_ctype` 在问 `mimetypes` 之前先查模块级常量表 `_STATIC_CTYPES`（truth = `server/app.py`；今天只有一条 `.webmanifest` → `application/manifest+json`），理由与安装清单一起立法在 §73.3——`mimetypes` 读宿主机的注册表 / `/etc/mime.types`，这条 wire 类型是法条不是本机配置。静态面其余行为（目录回落 index、SPA 深链、token 只注入 index.html、`/assets/` 长缓存、`../` 穿越 404）一字不动；判例 tests/test_server_request_plumbing.py。
 
 ## 50. 卡片出身信任矩阵（origin_trust + effective tier + ingress 落款）
 
@@ -6183,11 +6183,11 @@ owner 原话（D33）：「你说的把 5 降到 2，我可以接受；第三点
 - **默认额度**：`daily_loop.max_proposals_per_day` 默认 **5 → 2**（truth = `config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS`；`server/settings.py DAILY_LOOP_DEFAULTS` 手抄同值，§49，`test_server_paths_mirror` 钉漂移；`config.example.yaml` 同步）。已写过 override 的机器不受影响（override > config > default 的层次不变，§15 追记）；`GET /api/settings/daily-loop` 对未改过的机器报 `2` / `source: default`。§70.3「默认 5」与 §70.4 的旧字面量自本条起失效。
 - **不变的**：§70.1–70.2 维护半边一字不动；CARD_KINDS 的铸卡形状（§70.3 铸卡段）、`kind_taken` / `gh_title` / `dedup` / `cap` 四个 skip 语义不变；§70.6 边界照旧。advisory 只是「不铸卡」，不是「不读」——读取器、阈值、`inputs` 计数与 §70.3 ①–⑧ 的定义全部保留，日后要把某一类升回可铸卡只需把 kind 挪回 CARD_KINDS（并在本节追记）。
 
-## 71. 装成 app：PWA 安装清单（`web/public/manifest.webmanifest` + 生成的图标；issue #90 的第 3 形，owner 决策 **D56**）
+## 73. 装成 app：PWA 安装清单（`web/public/manifest.webmanifest` + 生成的图标；issue #90 的第 3 形，owner 决策 **D61**）
 
 issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要不要一个真的壳：Tauri/Electron 套壳、打包启动器、或者 PWA 清单。已批的答案只有最便宜的那一形——`docs/design/vnext2-plan.md` §5.1「#90 Windows 只走 PWA」、§5.5「技术上只做 PWA manifest」。本节把它立法：**零新进程、零新 UI 代码库**，Edge / Chrome / Safari 读一份清单就能把这块看板装成独立窗口（无地址栏、开始菜单 / Dock 里有图标）。执法：`web/public/manifest.webmanifest`、`web/index.html` 的 `<link rel="manifest">`、`scripts/ui/make_pwa_icons.py`、`server/app.py` 的 `_STATIC_CTYPES`；判例 `tests/test_pwa_manifest.py`、`tests/test_server_request_plumbing.py`。
 
-### 71.1 清单（truth = `web/public/manifest.webmanifest`）
+### 73.1 清单（truth = `web/public/manifest.webmanifest`）
 
 - `name` 与 `web/index.html` 的页面标题**逐字相同**（判例钉等号——装出来的窗口名与浏览器标签名是同一个产品）；`short_name` = `AI Assistant`。
 - `start_url` = `scope` = **`./`**：路由只用 query、文档恒在根、vite `base: "./"`——相对值让清单跟着宿主与端口走（`ZAI_PORT` 变了也不失效），绝不写死 `127.0.0.1:<port>`。
@@ -6196,16 +6196,16 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 - `icons[]` 三张：`./favicon.svg`（`sizes: "any"`）、`./icon-192.png`、`./icon-512.png`（`type` / `sizes` 逐字，判例比 PNG 的 IHDR 真实宽高与 8-bit RGBA）。`purpose` 一律缺省（= `any`）：maskable 要求标志缩进安全区，这个标志没有为它重画——**宁可不声明也不说谎**（宪法第 3 条的资产版）。
 - 位置：清单与图标住 `web/public/`，vite build 原样拷进 `web/dist`，由 server 的静态面托管（§49）；非 HTML 静态资源不注入 instance token（§49 auth model 不变）。
 
-### 71.2 图标 = favicon 的函数（`scripts/ui/make_pwa_icons.py`）
+### 73.2 图标 = favicon 的函数（`scripts/ui/make_pwa_icons.py`）
 
 - 形状真源是 `web/public/favicon.svg`（G7 自写资产）：脚本只读它的 `<rect>` 几何，栅格化成 8-bit RGBA PNG（纯 stdlib：`zlib` + `struct` 写 PNG 块，与 `act/lib/qr.py` 同款技术但**不 import 它的私名**——那支是 QR 专用的灰度写者；抗锯齿 = 每像素 4 条子扫描线 × 精确水平交叠，圆角按圆弧解析求交，颜色按文档顺序预乘 src-over）。改标志 = 改 svg 再 `--write` 重跑，两者永不各说各话。
 - 手柄 `--write | --check`，与 `scripts/ui/parity_fixture.py` 同一副（§66.2 的 fixture 纪律）。**「重跑零 diff」的口径是像素不是字节**：deflate 的字节流取决于本机 zlib 构建（macOS 的 libz、linux runner 的 libz、zlib-ng 各不相同），按字节比会让门在别人的机器上无故变红；所以 `--check` 与判例比 IHDR + 解压后的扫描线，另钉「同进程内两次栅格化字节相等」（生成器自身的确定性）。
 
-### 71.3 wire 类型钉死（`server/app.py` `_STATIC_CTYPES`，§49 追记的正文）
+### 73.3 wire 类型钉死（`server/app.py` `_STATIC_CTYPES`，§49 追记的正文）
 
 `.webmanifest` → `application/manifest+json`，先于 `mimetypes.guess_type`。理由**不是**「stdlib 不认」（CPython 3.9 起内置表就有这一条），而是 **`mimetypes` 是宿主配置**：Windows 上 `mimetypes.init()` 读注册表、POSIX 上读 `/etc/mime.types`，两条路都经 `add_type` 改写内置映射。清单一旦发成 `octet-stream` 或 `text/plain`，浏览器就不认它，**「安装」按钮静默消失**（没有报错、没有日志——正是最难查的那类坏）。表里没有的扩展名照旧走 `mimetypes`；`.js` / `.css` / `.svg` 的同类宿主风险不在本节范围内（真出事再单独立法，不预支）。
 
-### 71.4 边界（明确不做）
+### 73.4 边界（明确不做）
 
 - 不装 service worker、不做离线缓存：数据源是本机 server，离线时没有可看的东西，缓存只会让人看见过期的看板（宪法第 3 条）。
 - 不引 Electron / Tauri / WinUI：#90 的第 1、2 两形未批；macOS 上的答案已经是 §54 的薄壳。
