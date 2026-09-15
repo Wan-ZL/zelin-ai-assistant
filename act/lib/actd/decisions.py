@@ -124,6 +124,10 @@ def _approve(d: Daemon, req: Requirement, inp: _Input) -> str:
     if et.forced_expand and not (req.plan or req.definition_of_done):
         return _approve_forced_expand(d, req, et)
     req.set_status(State.APPROVED)
+    # §76.1：批准 = owner 看着那条「疑似已完成」的提示仍然要做这件事，猜测就地
+    # 作废——留着它，日后「退回提案」/ 评论重批把卡送回提案列时会带着旧绿章和
+    # 那颗一键回来（PR #349 评审）。提示只活在未投入的那一轮里。
+    req.completion_hint = None
     # approval timestamp (add-only bookkeeping, like accepted_at) — lets
     # the dispatch event report wait_s (approve -> launch latency).
     ex = dict(req.execution or {})

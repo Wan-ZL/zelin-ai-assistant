@@ -44,6 +44,7 @@ Slack 原生路径 / Slack MCP 兜底路径 (act/radar_slack.py) 和 Obsidian �
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
 import subprocess
 from typing import Callable, Optional
@@ -368,6 +369,10 @@ _TRIAGE_BAR = (
     "-> ignore。\n"
     "- 与清单里任何一条相关（含已交付 delivered / 已合并 merged 的既往卡）-> 一律 "
     "relates_to，绝不 new_proposal 发孤立新卡。\n"
+    "- relates_to 时另判一次 completed（§76 结算信号）：新证据是否表明**这张卡描述"
+    "的事已经发生**（repo 已经存在、命名已经切换、Slack 里已宣布做完）。只有证据"
+    '直说"已经做完/已经上线/已经改好"才 completed=true；计划、承诺、进行中、'
+    "只是又被提起一次，全都是 false。拿不准填 false。\n"
 )
 
 
@@ -407,7 +412,8 @@ def build_triage_prompt(desc: str, cfg: Optional[config.Config] = None) -> str:
         "   （high=现在就需要行动/决策，进提案列；low=真实但不紧急，进潜在任务/Backlog）\n"
         "2) 与清单里某条相关（后续/进展/重述/补充）->\n"
         '   {"action": "relates_to", "req": "<清单里的卡片 id，原样照抄>", "note": "它补充了什么",\n'
-        f'    "needs_action": true|false（现在是否需要 {owner} 新的行动或决策）}}\n'
+        f'    "needs_action": true|false（现在是否需要 {owner} 新的行动或决策），\n'
+        '    "completed": true|false（这张卡描述的事是否已经被做完了，拿不准填 false）}\n'
         '3) 纯信息 / 闲聊 / 已解决 -> {"action": "ignore", "reason": "为什么"}\n'
     )
 
@@ -452,9 +458,91 @@ def _needs_action(decision: dict, *, default: bool) -> bool:
     return bool(v)
 
 
+def _completed(decision: dict) -> bool:
+    """Coerce the triage LLM's ``completed`` (§76) into a real bool.
+
+    Mirrors :func:`_needs_action` lexically but is **fail-closed**: missing /
+    None / garbage -> False. The two defaults differ on purpose — a missing
+    ``needs_action`` must not lose an actionable follow-up (never-lose), while
+    a missing ``completed`` must not put 「疑似已完成」 on a card nobody
+    claimed was done (an LLM completion claim can simply be wrong; §76).
+    """
+    v = (decision or {}).get("completed")
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "yes", "1")
+    return v is True
+
+
+# §76 完成信号只盖在「还没人投入」的两列上：detected（备选）与 card_sent
+# （提案）。approved 之后的卡由会话/验收自己的出口收尾，一条 LLM 的猜测不许
+# 在上面留提示（也不许改 status——那永远是 owner 的一次点击）。
+_HINT_STATES = (registry.State.DETECTED.value, registry.State.CARD_SENT.value)
+# note 上限：卡上一句话够用，防止把整段屏幕 OCR 拖进 registry / 看板。
+HINT_NOTE_CAP = 200
+
+
+def _iso_now() -> str:
+    """§76 completion_hint 的盖章时刻（registry 的 ISO 形，投影侧转 epoch）。"""
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _channel_of(source) -> str:
+    """一条 source 的 channel（非 dict / 空值 -> ""，截 40）。"""
+    if not isinstance(source, dict):
+        return ""
+    return str(source.get("channel") or "").strip()[:40]
+
+
+def _hint_channel(child: Optional["registry.Requirement"]) -> str:
+    """完成证据的真实来路 = 子候选 sources 里最后一条的 channel（D64 的口径：
+    通道是内容的出身，不是执行者的字面量）；读不出回落 ``"radar"``。"""
+    for s in reversed(list(getattr(child, "sources", None) or [])):
+        chan = _channel_of(s)
+        if chan:
+            return chan
+    return "radar"
+
+
+def _stamp_completion_hint(target: "registry.Requirement",
+                           child: Optional["registry.Requirement"],
+                           note: str) -> None:
+    """§76.1：在 detected/card_sent 卡上盖 add-only ``completion_hint``。
+
+    只写这一个字段——status / repeated_mentions / sources 一律不动（fold 本身
+    已经把证据落进卡里）。同一张卡被反复命中时**最新一次覆盖**（用户看的是
+    「最近一条证据说它做完了」），`at` 是盖章时刻。
+    """
+    if str(target.status) not in _HINT_STATES:
+        return
+    target.completion_hint = {
+        "at": _iso_now(),
+        "note": " ".join(str(note or "").split())[:HINT_NOTE_CAP],
+        "channel": _hint_channel(child),
+    }
+    analytics.log_event("card_completion_hint", req=target.id,
+                        channel=target.completion_hint["channel"])
+
+
+def _maybe_stamp_completion_hint(target, child, note: str, completed: bool) -> None:
+    """§76.1 盖章的守门人：不是「已完成」判决就什么都不做；盖章失败被吞掉，
+    fold 照常完成——提示是观测面，不许连坐数据落盘（宪法第 11 条）。"""
+    if not completed:
+        return
+    try:
+        _stamp_completion_hint(target, child, note)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _fold_into(target: "registry.Requirement", child: Optional["registry.Requirement"],
-               note: str = "") -> None:
-    """Fold a radar hit into an existing card: note + deduped sources + mentions."""
+               note: str = "", *, completed: bool = False) -> None:
+    """Fold a radar hit into an existing card: note + deduped sources + mentions.
+
+    ``completed``（§76，add-only kwarg）= triage 判「这张卡描述的事已经做完了」
+    → 顺手盖一个 ``completion_hint``。**闸门中立**（§45 一字不动）：盖提示既不
+    铸卡也不改 status，屏幕来源（CORROBORATE）照样可以佐证「这件事已经发生」
+    ——那正是 issue #313 里 P-023 的形态；能变状态的只有 owner 的一次点击。
+    """
     # §38: timestamped fold line, deduped on the note text — the radar's
     # failed-note retry queue re-folds the same hit on every retry, and an
     # identical note must not accumulate ("retry is harmless" invariant).
@@ -464,6 +552,9 @@ def _fold_into(target: "registry.Requirement", child: Optional["registry.Require
     target.sources = merged
     if added:
         target.repeated_mentions = int(target.repeated_mentions or 1) + added
+    # §76：证据说「这事已经做完了」→ 同一次落盘顺手盖提示（fold 的其余动作
+    # 一字不动：证据永不因为它被丢掉）。
+    _maybe_stamp_completion_hint(target, child, note, completed)
     registry.save(target)
     # §44.6 看板回执：静默并入不许无声——best-effort，绝不打断 fold。
     # note 只进回执的内容键散列（radar 重试重放同键不重发），不落盘。
@@ -626,7 +717,7 @@ def _relate_to_resolved(decision: dict, req, target, note: str, gate, promote_ok
             analytics.log_event("radar_triage", action=kind, req=saved.id, parent=target.id)
             return kind, saved
         return None                       # dead-end -> caller re-cards
-    _fold_into(target, req, note)
+    _fold_into(target, req, note, completed=_completed(decision))
     analytics.log_event("radar_triage", action="relates_to", req=target.id)
     return "folded", target
 
@@ -634,7 +725,7 @@ def _relate_to_resolved(decision: dict, req, target, note: str, gate, promote_ok
 def _fold_into_open(decision: dict, req, target, note: str, gate, promote_ok: bool):
     """Fold into an open card; an act-now fold into a DETECTED card promotes it
     to card_sent (统一口径) unless the §45 gate withholds promotion."""
-    _fold_into(target, req, note)
+    _fold_into(target, req, note, completed=_completed(decision))
     if target.status == registry.State.DETECTED.value and (
             _needs_action(decision, default=False)
             or req.status == registry.State.CARD_SENT.value):

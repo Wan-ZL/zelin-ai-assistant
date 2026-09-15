@@ -6,7 +6,8 @@ CONTRACT §40（新卡批量通知 ≥3 张合一条；digest 铸的卡由 diges
 §11 + §30 + §46.3（待验收就绪通知：from_review 回流与 #119 中断收割不发）/
 §48 + §48.2 + §48.3（开着的源死了要响、关掉的源全静默、无基线兜底、睡醒宽限）/
 §28（通知偏好：两道失败扫描的 ``suppressed`` 形参——失败类被静音时照跑、
-不花 anti-nag 台账）。
+不花 anti-nag 台账）/ §76.3（提案结算信号的三条一次性翻面升级：疑似已完成 /
+截止未批 / 被提 N 次仍未处理）。
 """
 from __future__ import annotations
 
@@ -37,8 +38,9 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list:
 
     req_id is None for the §40 batched new-cards entry (it names no single
     card); every other class carries the card id. kind (v0.46, add-only) tags
-    the transition class for per-event user preferences — today only
-    "review_ready" (the 完成提醒 off/banner/sound switch); the rest ride None."""
+    the transition class for per-event user preferences — "review_ready" (the
+    完成提醒 off/banner/sound switch) and "proposal" (new cards, 回锅, and the
+    §76.3 settlement escalations)."""
     if prev is None:
         return []
     p_na, c_na = by_id(prev.get("needs_approval", [])), by_id(curr.get("needs_approval", []))
@@ -47,6 +49,7 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list:
     # 3-tuples (title, body, req); req is carried for caller compatibility (the
     # phone ✅-reaction approval surface was removed in v0.21 — Mac app only).
     msgs = _new_card_msgs(p_na, c_na)
+    msgs.extend(_settlement_msgs(p_na, c_na))
     msgs.extend(_review_ready_msgs(p_run, p_rev, c_rev))
     # 「executing -> blocked」的需输入通知类：retired v0.48.8（#119）。受阻
     # 会话不再投影「需输入」，msg_needs_input 随之退役；仍会出现在
@@ -96,6 +99,47 @@ def _fresh_card_msgs(fresh: list) -> list:
         t, b = notify.msg_new_card(item.get("title", rid))
         msgs.append((t, b, rid, notify.KIND_PROPOSAL))
     return msgs
+
+
+def _settlement_msgs(p_na: dict, c_na: dict) -> list:
+    """§76.3 三条结算升级：每条都是 false→true 的**一次性**翻面。
+
+    只看**两个快照里都在**的提案行（新卡由 §40 的新卡通知负责；一张出生即带
+    信号的卡不许在新卡通知之外再响第二声）。翻面判据 = 上一版为假 / 缺席、这一
+    版为真——之后每个 pass 的 dashboard 里信号恒为真，却再也不会响：投影是
+    幂等的，通知不是。actd 重启（prev=None）整轮不发（`detect_transitions`
+    的既有约定），所以「重启即重播」不会发生。三条都用 `KIND_PROPOSAL`——它们
+    催的是同一件事：这张提案该被拍一下了。
+    """
+    msgs: list = []
+    for rid, item in c_na.items():
+        prev = p_na.get(rid)
+        if prev is None:
+            continue
+        name = item.get("title", rid)
+        if _flipped(prev, item, "completion_hint"):
+            t, b = notify.msg_completion_hint(name)
+            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
+        if _flipped(prev, item, "decision_due"):
+            t, b = notify.msg_deadline_due(name)
+            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
+        if _flipped(prev, item, "mention_escalated"):
+            t, b = notify.msg_repeated_unhandled(name, _repeated(item))
+            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
+    return msgs
+
+
+def _flipped(prev: dict, curr: dict, key: str) -> bool:
+    """`key` 从假/缺席翻成真（旧 dashboard 没有这些键 = 假，升级后第一个 pass
+    照常翻一次面并响一次——这是诚实的「第一次看见」，不是重播）。"""
+    return bool(curr.get(key)) and not bool(prev.get(key))
+
+
+def _repeated(item: dict) -> int:
+    try:
+        return int(item.get("repeated") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _fresh_delivery(rid, item: dict, p_run: dict, p_rev: dict) -> bool:

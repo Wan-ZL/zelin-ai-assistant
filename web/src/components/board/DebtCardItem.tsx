@@ -3,6 +3,8 @@
 //   研究并提议（raise → AI 扩写成提案）· 删除（trash → 回收站，可恢复，不弹确认）·
 //   永久完成（封存，不再提示）（archive → 永久性完成书立条，可逆不弹确认；原生住右键菜单——
 //   web 没有右键惯例，做成动作行里安静的第三颗）。
+// §76.2（issue #313）：备选卡也会被雷达盖「疑似已完成」——绿章 + 证据一句，出口用卡上既有的
+//   「永久完成（封存）」/「删除」两颗（不开新动词）；状态永远没变过，拍板是 owner 的一次点击。
 // 卡面：摘要标题（§37 摘要优先链 cardHeadline = 原生 item.displaySummary，Cards.swift:2028；URL 可点 = 原生 linkified）+ type / 难度 章
 //   （原生 hardnessLabel：hard → 较难 红 / soft → 常规 灰 / 其它原样，Cards.swift:2036-2039）；
 //   技术标题 + 💬 需求来自 住右侧详情侧栏（「展开详情 ▸」打开，D34）。
@@ -21,6 +23,9 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
   const { pending, pendingAction, error, submit } = useSubmit();
   const headline = cardHeadline(item) || item.title;
   const hardness = hardnessLabel(item.hardness, text);
+  // §76.2 疑似已完成：wire 形 {at, note, channel}，非对象一律当缺席（server 已消毒过一遍）
+  const hint = item.completion_hint && typeof item.completion_hint === "object" ? item.completion_hint : null;
+  const hintNote = typeof hint?.note === "string" ? hint.note : "";
 
   return (
     <CardSurface cardId={item.id} label={`${text("潜在任务", "Backlog")} · ${headline}`} selectable>
@@ -31,7 +36,24 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
         <SessionHitChip row={item} />
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
         {hardness && <span className={item.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardness}</span>}
+        {/* §76.2 疑似已完成：雷达扫到「这件事已经发生」的证据——章只说提示，状态一个字没改 */}
+        {hint && (
+          <span
+            className="chip chip-success"
+            title={text("雷达在新证据里看到这件事已经发生；状态没有变，怎么处理由你点", "The radar saw evidence this already happened; nothing changed status — the call is yours")}
+          >
+            {text("✅ 疑似已完成", "✅ Looks already done")}
+          </span>
+        )}
       </div>
+      {/* §76.2 证据一句 + 指向卡上既有的两个出口（封存 / 删除）——不给备选卡开第二套动词 */}
+      {hint && hintNote && (
+        <p className="card-line is-success is-body">
+          <span className="card-detail-label">{text("✅ 证据: ", "✅ Evidence: ")}</span>
+          <span>{hintNote}</span>
+          <span>{text("（真做完了就「永久完成（封存）」，不用做了就「删除」）", " (if it really is done, seal it with “Done for good”; if it is moot, delete it)")}</span>
+        </p>
+      )}
       {pending ? (
         <p className="card-pending-note">
           {pendingAction === "raise"

@@ -624,7 +624,8 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     进程，本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这
     几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮与 §65.1 的通道
     总开关（`self_improve_enabled`，#307 / D57）与 §44.6 的并入回执开关
-    （`fold_receipt_notices`，#308 / D64）同一刷新点——设置页「开发者」区一关，
+    （`fold_receipt_notices`，#308 / D64）与 §76.2 的升级阈值
+    （`approval_mention_escalation`，#313 / D70）同一刷新点——设置页「开发者」区一关，
     下一 pass 就不再读 GitHub、不再巡检、不再免批派发，无需重启守护进程；§65.5 的
     `self_improve.owner_logins`（#310）也在这里现读（`_refresh_owner_logins`）。"""
     try:
@@ -640,6 +641,9 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     # §44.6 追记（#308 / D64）：并入回执开关同一刷新点——设置页一关，下一 pass
     # 写出的 dashboard 里 fold_receipts 就空了，无需重启。
     cfg.fold_receipt_notices = fresh.fold_receipt_notices
+    # §76.2（#313 / D70）：被提 N 次的升级阈值同一刷新点——设置页改完（或调成
+    # 0 关掉）下一 pass 的投影就按新阈值算，不必重启守护进程。
+    cfg.approval_mention_escalation = fresh.approval_mention_escalation
     _refresh_owner_logins(cfg, fresh)                       # §65.5（#310）
 
 

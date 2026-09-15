@@ -140,6 +140,11 @@ OPTIONAL_ORDER = [
     # 旧卡主键列表；旧卡进回收站（reason `daily-merge: 并入 <new>`）、可恢复。
     # 只在合成卡上出现；空列表整键省略。
     "merged_from",
+    # §76（issue #313）结算信号之一「疑似已完成」：dict
+    # {at, note(≤200), channel}，由雷达 fold 在 triage 判 completed=true 时盖在
+    # detected/card_sent 卡上。**只是提示**，永不改 status、不参与匹配/去重/
+    # re-raise（§64 assessment 的先例）；归档 / 记为已交付仍只由 owner 点。
+    "completion_hint",
 ]
 
 # from_dict 归一为 str 的标量键（手写 YAML 的无引号数字会被 PyYAML 读成 int）
@@ -257,6 +262,8 @@ class Requirement:
     # §70 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
     # 主键）。None/[] = 不是合成卡。
     merged_from: Optional[list] = None
+    # §76「疑似已完成」提示（见 OPTIONAL_ORDER 注）。None = 没有完成信号。
+    completion_hint: Optional[dict] = None
 
     # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
     needs_mcp: bool = False
