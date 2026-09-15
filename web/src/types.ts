@@ -460,11 +460,16 @@ export interface RecapProblem {
   [key: string]: unknown;
 }
 
-/** §63.3 追记 一行被自动修剪的回执（永远展示——悄悄剪字就是对粘出去的正文说谎） */
+/**
+ * §63.3 追记 一行被自动修剪的回执（永远展示——悄悄剪字就是对粘出去的正文说谎）：
+ * `over` = 原来超出上限多少，`removed` = 行尾**真正被删掉**多少字符（英文按词边界
+ * 回退，所以 removed ≥ over）——面板说的是 removed，说 over 会低报这一刀。
+ */
 export interface RecapRepair {
   lang: string;
   line: number;
   over: number;
+  removed?: number | null;
   [key: string]: unknown;
 }
 

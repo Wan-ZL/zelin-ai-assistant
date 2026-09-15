@@ -2,10 +2,12 @@
 instead of landing as 需复核, and every trim is on the record.
 
 `recap_text.repair_lengths` is deliberately narrow and all-or-nothing: it fires
-only when every remaining finding is `line_too_long` and every overrun fits in
-MAX_TRIM_EN / MAX_TRIM_ZH; it never eats a label or drops a line below
-MIN_BODY_CHARS; and it reports one `{lang, line, over}` row per trimmed line so
-the panel can never show silently edited text. The structured findings behind a
+only when every remaining finding is `line_too_long` and every line reaches its
+cap by DELETING at most MAX_TRIM_EN / MAX_TRIM_ZH characters (the budget bounds
+the cut, not the overrun — an EN line goes back by whole words); it never eats a
+label or drops a line below MIN_BODY_CHARS; and it reports one
+`{lang, line, over, removed}` row per trimmed line so the panel can never show
+silently edited text, nor understate the cut. The structured findings behind a
 real 需复核 (`validate_detail`) are what the record persists.
 """
 import unittest
@@ -33,7 +35,7 @@ class RepairLengthsTestCase(unittest.TestCase):
         self.assertEqual((len(rec["en"][0]), _over(rec, "en", 1)), (146, 6))
         fixed, repairs = rt.repair_lengths(rec)
         self.assertEqual(rt.validate(fixed), [])
-        self.assertEqual(repairs, [{"lang": "en", "line": 1, "over": 6}])
+        self.assertEqual(repairs, [{"lang": "en", "line": 1, "over": 6, "removed": 8}])
         self.assertLessEqual(len(fixed["en"][0]), rt.MAX_CHARS_EN)
         self.assertTrue(fixed["en"][0].startswith(rt.LABELS_EN[0]))
         self.assertEqual(fixed["en"][1:], rec["en"][1:])         # 别的行一字不动
@@ -55,7 +57,7 @@ class RepairLengthsTestCase(unittest.TestCase):
         over = _over(rec, "zh", 3)
         self.assertEqual(over, 11)                                # ≤ MAX_TRIM_ZH
         fixed, repairs = rt.repair_lengths(rec)
-        self.assertEqual(repairs, [{"lang": "zh", "line": 3, "over": over}])
+        self.assertEqual(repairs, [{"lang": "zh", "line": 3, "over": over, "removed": over}])
         self.assertEqual(len(fixed["zh"][2]), rt.MAX_CHARS_ZH)    # 中文按字剪，不找词边界
         self.assertTrue(rec["zh"][2].startswith(fixed["zh"][2]))  # 只从行尾剪
         self.assertTrue(fixed["zh"][2].startswith(rt.LABELS_ZH[2]))
@@ -90,6 +92,25 @@ class RepairLengthsTestCase(unittest.TestCase):
                 fixed, repairs = rt.repair_lengths(rec)
                 self.assertEqual(repairs, [])
                 self.assertEqual(fixed["en"][4], rec["en"][4])    # 长的那行也不剪：全有或全无
+
+    def test_a_small_overrun_behind_a_long_trailing_token_is_not_repaired(self):
+        # 预算量的是**删掉的量**：超出 3 个字符，但唯一的词边界切口要丢掉 39 个字符
+        # （一整句话），那不是「一次格式手滑」——原样退回交给人
+        rec = _clean()
+        rec["en"][0] = "Decided: " + "ok " * 32 + "irreversible_commitment_to_the_new_mix"
+        self.assertEqual((len(rec["en"][0]), _over(rec, "en", 1)), (143, 3))
+        fixed, repairs = rt.repair_lengths(rec)
+        self.assertEqual((repairs, fixed["en"][0]), ([], rec["en"][0]))
+        self.assertTrue(rt.validate(fixed))                       # 走 needs_review + 逐行原因
+
+    def test_every_receipt_states_how_many_characters_were_removed(self):
+        rec = _clean()
+        rec["en"][4] = "Open: " + " ".join(["alpha"] * 20) + ", whether the second cluster is funded"
+        fixed, repairs = rt.repair_lengths(rec)
+        removed = len(rec["en"][4]) - len(fixed["en"][4])
+        self.assertEqual(repairs[0]["removed"], removed)
+        self.assertGreater(removed, repairs[0]["over"])            # 词边界回退删得比超出量多
+        self.assertLessEqual(removed, rt.MAX_TRIM_EN)              # 且从不超过预算
 
     def test_a_line_that_cannot_lose_the_characters_is_left_alone(self):
         # 标签之后只剩一个巨长 token：剪了就只剩标签，不许剪

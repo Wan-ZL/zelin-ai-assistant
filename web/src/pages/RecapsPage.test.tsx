@@ -184,9 +184,10 @@ describe("RecapsPage", () => {
   });
 
   it("a line trimmed on the way in is stated, never silently pasted", async () => {
-    await renderPage([recap({ repairs: [{ lang: "en", line: 1, over: 6 }] })]);
+    await renderPage([recap({ repairs: [{ lang: "en", line: 1, over: 6, removed: 8 }] })]);
     expect(screen.queryByText("Needs review")).toBeNull();                 // 修好了就是 ok
-    expect(screen.getByText("Trimmed English line 1 automatically (it was 6 characters over)")).toBeTruthy();
+    expect(screen.getByText(
+      "Trimmed English line 1 automatically: 8 characters off the end (it was 6 over the cap)")).toBeTruthy();
   });
 
   it("empty board shows the onboarding line", async () => {

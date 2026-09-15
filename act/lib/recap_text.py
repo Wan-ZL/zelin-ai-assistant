@@ -22,10 +22,15 @@ structured finding per violation ({code, lang, line, limit, over, text}) —
 :func:`validate` is its ``text`` column, byte for byte, because those strings
 are what the retry quotes back. :func:`repair_lengths` is the deterministic
 last chance before 需复核: when every remaining finding is `line_too_long`
-and each overrun fits in :data:`MAX_TRIM_EN` / :data:`MAX_TRIM_ZH`, the
-offending lines are trimmed back to the cap (EN by trailing whitespace
-tokens, 中文 by trailing characters; never into the label, never below
-:data:`MIN_BODY_CHARS`) and the recap lands ok with the trims on the record.
+and every line can be brought inside its cap by deleting at most
+:data:`MAX_TRIM_EN` / :data:`MAX_TRIM_ZH` characters, the offending lines are
+trimmed back to the cap (EN by trailing whitespace tokens, 中文 by trailing
+characters; never into the label, never below :data:`MIN_BODY_CHARS`) and the
+recap lands ok with the trims on the record. The budget bounds the characters
+actually **deleted**, not the overrun — an EN line goes back by whole words,
+so a 3-character overrun hiding behind a 39-character trailing token is not a
+formatting slip and goes to 需复核 untouched; each receipt states its
+``removed`` count next to the overrun (§63.3 追记 2026-09-15).
 
 The generation argv is the no-egress shape pinned by
 tests/test_recap_no_egress.py: :data:`NO_EGRESS_ARGV` rides behind the model
@@ -46,7 +51,8 @@ LABELS_ZH: tuple = ("定了：", "分工：", "截止：", "较上次变化：",
 LINE_COUNT = 5
 MAX_CHARS_EN = 140
 MAX_CHARS_ZH = 60
-# §63.3 追记：一行超出上限多少以内还算「确定性可修」——再多就是内容问题，交给人
+# §63.3 追记：一行**真正被删掉**多少字符以内还算「确定性可修」——再多就是内容问题，交给人
+# （量的是删掉的量，不是超出量：英文按词边界回退，一次可能吃掉一个长 token）
 MAX_TRIM_EN = 28
 MAX_TRIM_ZH = 12
 # 修剪后标签之外至少要留这么多字符，否则这行不值得留（整轮修剪作废）
@@ -267,12 +273,16 @@ def _trimmed_body(line: str, max_chars: int, lang: str) -> str:
     return " ".join(tokens)
 
 
-def _trim_line(line: str, label: str, max_chars: int, lang: str) -> Optional[str]:
+def _trim_line(line: str, label: str, max_chars: int, max_trim: int, lang: str) -> Optional[str]:
     """One over-long line back inside the cap (:func:`_trimmed_body`), then the
-    trailing punctuation the cut left behind. None = cannot be trimmed without
-    eating the label or dropping below :data:`MIN_BODY_CHARS` (the caller then
-    repairs nothing)."""
+    trailing punctuation the cut left behind. None = cannot be trimmed within
+    the budget (``max_trim`` bounds the characters **deleted**, which is what
+    the owner meant by 「几个字符」——英文按词边界回退，超出 3 个字符也可能要
+    删掉一个 39 字符的尾 token) or without eating the label / dropping below
+    :data:`MIN_BODY_CHARS` (the caller then repairs nothing)."""
     out = _trimmed_body(line, max_chars, lang).rstrip(_TRAILING_PUNCT)
+    if len(line) - len(out) > max_trim:
+        return None
     body_left = len(out) - len(label)
     if len(out) > max_chars or not out.startswith(label) or body_left < MIN_BODY_CHARS:
         return None
@@ -285,30 +295,35 @@ def _length_only(findings: list) -> bool:
 
 
 def _repair_line(lines: dict, finding: dict) -> Optional[dict]:
-    """One `line_too_long` finding trimmed in place → its ``{lang, line, over}``
-    receipt; None = 这行不该剪（超出过大，或剪了就吃到标签）。"""
+    """One `line_too_long` finding trimmed in place → its
+    ``{lang, line, over, removed}`` receipt (``removed`` ≥ ``over``: that is the
+    number the panel states); None = 这行不该剪（要删的字符超预算，或剪了就吃到
+    标签）。删掉的量封顶也就封住了超出量——removed ≥ over 恒成立。"""
     labels, max_chars, max_trim = _TRIM_RULES[finding["lang"]]
-    lang, over, idx = finding["lang"], int(finding["over"]), int(finding["line"]) - 1
-    if over > max_trim:
-        return None
-    trimmed = _trim_line(lines[lang][idx], labels[idx], max_chars, lang)
+    lang, idx = finding["lang"], int(finding["line"]) - 1
+    line = lines[lang][idx]
+    trimmed = _trim_line(line, labels[idx], max_chars, max_trim, lang)
     if trimmed is None:
         return None
     lines[lang][idx] = trimmed
-    return {"lang": lang, "line": idx + 1, "over": over}
+    return {"lang": lang, "line": idx + 1, "over": int(finding["over"]),
+            "removed": len(line) - len(trimmed)}
 
 
 def repair_lengths(recap: dict) -> "tuple[dict, list]":
     """``(recap, repairs)`` — a length-only failure trimmed back to the caps.
 
     All or nothing, and only for the narrow case the owner named: every
-    remaining finding is ``line_too_long`` and every overrun fits in
-    :data:`MAX_TRIM_EN` / :data:`MAX_TRIM_ZH`. Anything else (a label, reported
-    speech, a link, an overrun too big to be a formatting slip, a line that
-    cannot lose those characters without eating its label) returns the recap
-    untouched and ``[]`` — the caller falls back to 需复核 with the findings.
-    ``repairs`` = ``[{lang, line, over}]``, one row per trimmed line; the panel
-    always shows them (a silent trim would be a lie about the pasted text)."""
+    remaining finding is ``line_too_long`` and every offending line reaches its
+    cap by **deleting** at most :data:`MAX_TRIM_EN` / :data:`MAX_TRIM_ZH`
+    characters. Anything else (a label, reported speech, a link, a cut too big
+    to be a formatting slip — including a small overrun whose only word-boundary
+    cut would drop a whole clause — a line that cannot lose those characters
+    without eating its label) returns the recap untouched and ``[]`` — the
+    caller falls back to 需复核 with the findings. ``repairs`` =
+    ``[{lang, line, over, removed}]``, one row per trimmed line; the panel
+    always shows them, ``removed`` included (a silent trim — or one reported as
+    smaller than it was — would be a lie about the pasted text)."""
     findings = validate_detail(recap)
     if not _length_only(findings):
         return recap, []

@@ -220,11 +220,19 @@ export function problemLabel(problem: RecapProblem, text: Bilingual): string {
   }
 }
 
-/** §63.3 追记 一行自动修剪的人话——剪过就一定说出来，粘出去的正文不许有暗改 */
+/**
+ * §63.3 追记 一行自动修剪的人话——剪过就一定说出来，粘出去的正文不许有暗改。
+ * 说的是**真正剪掉的字符数**（`removed`），超出量只做括注：英文按词边界回退，
+ * 只报 over 会把一刀说小（老 daemon 无此键 → 退回只说超出量）。
+ */
 export function repairLabel(repair: RecapRepair, text: Bilingual): string {
   const at = where(repair.lang, repair.line, text);
-  return text(`已自动修剪${at}（原来超出 ${repair.over} 个字符）`,
-              `Trimmed ${at} automatically (it was ${repair.over} characters over)`);
+  if (typeof repair.removed !== "number") {
+    return text(`已自动修剪${at}（原来超出 ${repair.over} 个字符）`,
+                `Trimmed ${at} automatically (it was ${repair.over} characters over)`);
+  }
+  return text(`已自动修剪${at}：剪掉行尾 ${repair.removed} 个字符（原来超出 ${repair.over} 个）`,
+              `Trimmed ${at} automatically: ${repair.removed} characters off the end (it was ${repair.over} over the cap)`);
 }
 
 /** §63.4 草稿回执文案（wire status 词表 add-only；未知值按字符串兜底） */

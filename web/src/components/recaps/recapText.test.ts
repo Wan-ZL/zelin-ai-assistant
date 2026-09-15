@@ -163,8 +163,13 @@ describe("recapText", () => {
   it("always says which line was trimmed (§63.3 追记)", () => {
     const en = (_zh: string, text: string) => text;
     const zh = (text: string, _en: string) => text;
+    // 说的是真正剪掉的量（`removed`），超出量括注：词边界回退删得比超出量多
+    expect(repairLabel({ lang: "en", line: 1, over: 6, removed: 8 }, en))
+      .toBe("Trimmed English line 1 automatically: 8 characters off the end (it was 6 over the cap)");
+    expect(repairLabel({ lang: "zh", line: 3, over: 2, removed: 2 }, zh))
+      .toBe("已自动修剪中文第 3 行：剪掉行尾 2 个字符（原来超出 2 个）");
+    // 老 daemon 的行没有 `removed`（add-only）→ 退回只说超出量，绝不显示 undefined
     expect(repairLabel({ lang: "en", line: 1, over: 6 }, en)).toBe("Trimmed English line 1 automatically (it was 6 characters over)");
-    expect(repairLabel({ lang: "zh", line: 3, over: 2 }, zh)).toBe("已自动修剪中文第 3 行（原来超出 2 个字符）");
   });
 
   it("wire rows that are not findings are dropped, never rendered", () => {
@@ -173,7 +178,7 @@ describe("recapText", () => {
     expect(recapProblems(row({ problems: "oops" as unknown as [] }))).toEqual([]);
     const good = { code: "line_too_long", lang: "en", line: 1, limit: 140, over: 6 };
     expect(recapProblems(row({ problems: [good, null, { lang: "en" }, 7] as unknown as [] }))).toEqual([good]);
-    const trim = { lang: "en", line: 1, over: 6 };
+    const trim = { lang: "en", line: 1, over: 6, removed: 8 };
     expect(recapRepairs(row({ repairs: [trim, { lang: "en" }, null] as unknown as [] }))).toEqual([trim]);
     expect(recapRepairs(row())).toEqual([]);
   });

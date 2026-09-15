@@ -228,7 +228,7 @@ class GenerationQualityTestCase(RecapCase):
         self.assertEqual(len(self.runner.calls), 2)               # 修剪在重试之后，不抢模型的机会
         self.assertEqual(rec["quality"], "ok")
         self.assertEqual(rec["problems"], [])
-        self.assertEqual(rec["repairs"], [{"lang": "en", "line": 1, "over": 6}])
+        self.assertEqual(rec["repairs"], [{"lang": "en", "line": 1, "over": 6, "removed": 8}])
         self.assertLessEqual(len(rec["en"][0]), 140)
         self.assertTrue(rec["en"][0].startswith("Decided: the training run moves"))
         self.assertEqual(rec["zh"][0], "定了：训练从周一起改用新数据配比")
