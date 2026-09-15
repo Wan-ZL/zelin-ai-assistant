@@ -1,8 +1,10 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.8）：行标签、按日分组、badge 词表、语言选择、复制正文、
-// 「重新生成」的生成态判定。无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
+// 复制正文与它的表头、「重新生成」的生成态判定。无 React、无 fetch——vitest node 环境可直测。
+// wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
 import type { RecapRow } from "../../types";
+import { WEEKDAYS } from "../shell/recordingSchedule";
 
 /** 会议应用 slug（server 定，act/lib/recap_sessions.DEFAULT_MEETING_RULES）→ 显示名 */
 const APP_LABELS: Record<string, string> = {
@@ -140,10 +142,32 @@ export function pickLanguage(defaultLanguage: string | undefined, ui: Language):
   return defaultLanguage === "zh" || defaultLanguage === "en" ? defaultLanguage : ui;
 }
 
-/** 复制正文 = 该语言 5 行、换行连接、不加任何别的东西（issue #129 §4） */
+/** 复制正文 = 该语言 5 行、换行连接、不加任何别的东西（issue #129 §4）；`<pre>` 显示的也是它 */
 export function recapBody(row: RecapRow, language: Language): string {
   const lines = language === "zh" ? row.zh : row.en;
   return (lines ?? []).join("\n");
+}
+
+/** 表头的星期：复用 §61.7 录制日程的 WEEKDAYS 表（id = getDay()+1），不另起第二套双语星期词表 */
+function weekdayParens(iso: string, language: Language): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  const day = WEEKDAYS.find((d) => d.id === t.getDay() + 1);
+  if (!day) return "";
+  return language === "zh" ? `（周${day.zh}）` : `(${day.en})`;
+}
+
+/** 表头（issue #299）：`2026-08-31 (Mon) 12:56–13:16 · Zoom · 20 min`；中文是 `2026-08-31（周一） …`
+ *  ——全角括号自带空白，前面不补半角空格。start 坏了 = `? --:--–--:-- · …`（无星期括号），恒不抛 */
+export function recapHeader(row: RecapRow, language: Language): string {
+  const wd = weekdayParens(row.start, language);
+  const gap = language === "zh" ? "" : " ";
+  return `${dayKey(row.start)}${wd ? gap + wd : ""} ${rowLabel(row)}`;
+}
+
+/** 剪贴板文本 = 一行表头 + 5 行正文（§63.5 追记）；存储与 Slack 草稿正文仍恰是 5 行 */
+export function recapClipboardText(row: RecapRow, language: Language): string {
+  return `${recapHeader(row, language)}\n${recapBody(row, language)}`;
 }
 
 /** §63.4 草稿回执文案（wire status 词表 add-only；未知值按字符串兜底） */

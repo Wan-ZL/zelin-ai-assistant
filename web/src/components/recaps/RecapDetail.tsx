@@ -1,6 +1,7 @@
 // 会议纪要页右侧详情（CONTRACT §63 / issue #129 §3）：segmented 中文 | English、5 行正文、
 // 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」/ 开关开着时「投到 Slack 草稿」。
-// 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记；重新生成 / 投草稿走 inbox 特形动作
+// 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记（§63.5 追记：写出去的是「一行表头 + 5 行正文」，
+// 表头与 h3 同一个 recapHeader(row, language)——所见即所复制；存储仍恰是 5 行）；重新生成 / 投草稿走 inbox 特形动作
 // （recap_generate / recap_slack_draft，字段逐字按 §63，多一个键 server 400）。
 // §63.8（issue #297）：重新生成排队后面板不再装死——状态行说「排队中 / 正在生成」、两颗生成按钮禁用，
 // 新版本随 board 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没人接手说
@@ -12,7 +13,9 @@ import { markRecap, markRecapPending } from "../../store";
 import type { RecapRow, RecapSettings } from "../../types";
 import { copyText } from "../detail/copyText";
 import { noteConflicts, type NoteConflictId } from "./noteCheck";
-import { isGenerating, pickLanguage, recapBody, rowLabel, slackDraftLabel, type GenerationPhase } from "./recapText";
+import {
+  isGenerating, pickLanguage, recapBody, recapClipboardText, recapHeader, slackDraftLabel, type GenerationPhase,
+} from "./recapText";
 
 const NOTE_MAX = 500;
 const CHANNEL_RE = /^[CDG][A-Z0-9]{6,20}$/;
@@ -132,7 +135,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   }
 
   const copy = () => run(text("已复制到剪贴板", "Copied to clipboard"), async () => {
-    const ok = await copyText(body);
+    const ok = await copyText(recapClipboardText(row, language));
     if (!ok) throw new Error(text("复制失败", "Copy failed"));
     await markRecap(row.key, "copied", true);
   });
@@ -163,7 +166,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   return (
     <article className="recap-detail" aria-live="polite">
       <header className="recap-detail-head">
-        <h3 className="recap-detail-title">{rowLabel(row)}</h3>
+        <h3 className="recap-detail-title">{recapHeader(row, language)}</h3>
         <div className="recap-segmented" role="tablist" aria-label={text("语言", "Language")}>
           {(["zh", "en"] as Language[]).map((lang) => (
             <button

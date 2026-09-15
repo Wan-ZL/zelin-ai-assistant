@@ -1,10 +1,10 @@
-// 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行；
-// §63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge。
+// 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行 +
+// §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
   PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, appLabel, badgesFor, generationPhase, groupByDay, isGenerating, pickLanguage,
-  recapBody, rowLabel, slackDraftLabel,
+  recapBody, recapClipboardText, recapHeader, rowLabel, slackDraftLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -112,6 +112,27 @@ describe("recapText", () => {
     expect(recapBody(row(), "en")).toBe("Decided: x\nSplit: y\nDeadline: z\nChanged since last plan: none recorded\nOpen: none");
     expect(recapBody(row(), "zh").split("\n").length).toBe(5);
     expect(recapBody(row({ en: null }), "en")).toBe("");
+  });
+
+  it("the copy header carries the local date and weekday, and the clipboard is header + the same five lines", () => {
+    // 本地时间字面量（无 Z）：日期与星期不随 TZ 漂——2026-08-31 是周一。
+    const local = row({ start: "2026-08-31T12:56:00", end: "2026-08-31T13:16:00" });
+    expect(recapHeader(local, "en")).toBe("2026-08-31 (Mon) 12:56–13:16 · Zoom · 20 min");
+    expect(recapHeader(local, "zh")).toBe("2026-08-31（周一） 12:56–13:16 · Zoom · 20 min");
+    // 周日 = WEEKDAYS id 1（getDay()+1），表末那一行不能漏
+    expect(recapHeader(row({ start: "2026-08-30T09:00:00", end: "2026-08-30T09:20:00" }), "en")).toContain("(Sun)");
+    expect(recapHeader(row({ start: "2026-08-30T09:00:00", end: "2026-08-30T09:20:00" }), "zh")).toContain("（周日）");
+    // start 坏了：日期位 `?`、不带星期括号、不抛
+    const broken = recapHeader(row({ start: "garbage", end: "garbage" }), "en");
+    expect(broken).toBe("? --:--–--:-- · Zoom · 20 min");
+    expect(broken).not.toContain("(");
+
+    const clipboard = recapClipboardText(local, "en");
+    const lines = clipboard.split("\n");
+    expect(lines.length).toBe(6);
+    expect(lines[0]).toBe(recapHeader(local, "en"));
+    expect(lines.slice(1).join("\n")).toBe(recapBody(local, "en"));    // 正文逐字节不动
+    expect(recapClipboardText(local, "zh").split("\n").slice(1).join("\n")).toBe(recapBody(local, "zh"));
   });
 
   it("slack draft receipt copy", () => {
