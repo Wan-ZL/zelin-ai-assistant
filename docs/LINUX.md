@@ -36,6 +36,12 @@ bash install-linux.sh          # renders + enables the systemd user units, runs 
 bash install-linux.sh --check  # re-run diagnostics anytime (python -m act.doctor)
 ```
 
+The tarball carries `server/` and `web/` **plus a prebuilt `web/dist`** (the
+release workflow runs `npm ci && npm run build` before packaging), so the board
+works on this path with no Node installed at all —
+`http://127.0.0.1:<port>/`. Only a git checkout has to build it by hand.
+`tests/test_portable_bundle_ships_the_board.py` pins that file set.
+
 **Option B — clone the repo** (for contributors / to track `main`):
 
 ```bash
@@ -83,12 +89,12 @@ journalctl --user -u zelin-actd -f
 journalctl --user -u zelin-server -f
 ```
 
-The board itself is a build product: run `cd web && npm ci && npm run build`
-once (the installer does not run npm), then open
-`http://127.0.0.1:<port>/`. Until `web/dist` exists the root path serves a
-placeholder page; the `/api/*` routes work either way. In Chrome/Edge the
-address-bar install icon installs it as a standalone window (the PWA manifest,
-CONTRACT §73).
+The board itself is a build product. The **release tarball ships it prebuilt**;
+in a **git checkout** run `cd web && npm ci && npm run build` once (the
+installer does not run npm), then open `http://127.0.0.1:<port>/`. Until
+`web/dist` exists the root path serves a placeholder page; the `/api/*` routes
+work either way. In Chrome/Edge the address-bar install icon installs it as a
+standalone window (the PWA manifest, CONTRACT §73).
 
 **The retired `zelin-webui.service`.** Until 2026-09-14 Linux also ran
 `act/webui.py` as a second, older board on a second port with its own token
@@ -96,6 +102,15 @@ file. Owner decision **D67** retired that unit alongside the Windows `webui`
 task: one board, one port, one token model on all three platforms.
 `python3 -m act.webui` still exists in the tree as a hand-run fallback; nothing
 starts it for you any more.
+
+Deleting the unit template is not enough on a machine that already has it —
+the unit stays `enable`d with `Restart=always` until someone disables it. So
+`install-linux.sh` **retires** it (`RETIRED_UNITS`): `systemctl --user disable
+--now` + `rm` the unit file + `daemon-reload`, then asks systemd again and
+shouts if it survived — the `launchd_retire` discipline of CONTRACT §55, whose
+case history is an agent that ran 51 days unseen. Any other `zelin-*` unit with
+no template in `act/systemd/` is reported (never auto-removed) by the new
+`systemd orphans` row in `python3 -m act.doctor`.
 
 On a headless server, enable lingering so the `--user` units run without an
 active login: `sudo loginctl enable-linger "$USER"` (install-linux.sh attempts

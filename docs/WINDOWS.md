@@ -38,6 +38,12 @@ powershell -ExecutionPolicy Bypass -File install.ps1          # renders + regist
 powershell -ExecutionPolicy Bypass -File install.ps1 --check  # re-run diagnostics anytime (python -m act.doctor)
 ```
 
+The bundle carries `server\` and `web\` **plus a prebuilt `web\dist`** (the
+release workflow runs `npm ci && npm run build` before packaging), so the board
+works on this path with no Node installed at all —
+`http://127.0.0.1:<port>/`. Only a git checkout has to build it by hand.
+`tests/test_portable_bundle_ships_the_board.py` pins that file set.
+
 **Option B — clone the repo** (for contributors / to track `main`):
 
 ```powershell
@@ -109,8 +115,9 @@ that reads `state\dashboard.json` and writes approvals into `state\inbox\`
 gates in `server/security.py` (Host allow-list, Origin allow-list, forced
 `application/json`, per-install token in `state\server.token`).
 
-The React board it serves is a build product, so build it once (this is the
-same honest gap Linux carries — no npm step runs inside the installer):
+The React board it serves is a build product. The **release bundle ships it
+prebuilt** (`web\dist` is in the zip); in a **git checkout** build it once (no
+npm step runs inside the installer — the same honest gap Linux carries):
 
 ```powershell
 cd web
@@ -136,6 +143,15 @@ could never serve the React board or its manifest. Owner decision **D67**
 retired that task (and its Linux `zelin-webui.service` twin): one board, one
 port, one token model on all three platforms. `python -m act.webui` still
 exists in the tree as a hand-run fallback; nothing starts it for you any more.
+
+Deleting the XML template is not enough on a machine that already has the task
+— Task Scheduler keeps it registered with its `LogonTrigger` forever. So
+`install.ps1` **unregisters** `\ZelinAIAssistant\webui` (its `$RetiredLeaves`
+list), then asks `Get-ScheduledTask` again and shouts if it survived — the
+`launchd_retire` discipline of CONTRACT §55, whose case history is an agent
+that ran 51 days unseen. Anything else under `\ZelinAIAssistant\` with no
+template in `act\tasksched\` is reported (never auto-removed) by the new
+`scheduled task orphans` row in `python -m act.doctor`.
 
 ## Deferred on v1
 

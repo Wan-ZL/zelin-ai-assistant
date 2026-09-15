@@ -15,8 +15,10 @@ What it does:
      (best-effort NTFS ACL lockdown; NTFS has no chmod 0600)
   3. create state\ and state\inbox\ + seed state\dashboard.json
   4. render act\tasksched\*.xml (via `python -m act.lib.taskscheduler`) into a
-     staging dir, then Register-ScheduledTask each under \ZelinAIAssistant\ and
-     start the resident tasks (actd + server), then probe the board port
+     staging dir, UNREGISTER the tasks whose template is gone (§55: remove +
+     prove it is gone, or shout), then Register-ScheduledTask each under
+     \ZelinAIAssistant\ and start the resident tasks (actd + server), then
+     probe the board port
   5. run the post-install diagnostics (python -m act.doctor)
 
 Run from anywhere (it locates the repo root via its own path):
@@ -236,6 +238,38 @@ if ($rendered -ne 0) {
     exit 1
 }
 Write-Ok "rendered task XML into $Staging"
+
+# §55 retirement discipline (the Windows twin of install.sh's launchd_retire):
+# deleting the XML template does NOT remove an already-registered task - it
+# stays in \ZelinAIAssistant\ with its LogonTrigger and keeps starting the old
+# act/webui.py forever (its own port 8787, its own state\webui.token, its own
+# state\inbox\ write path). That is exactly the 2026-08-31 imessageradar
+# pathology (51 days unseen), so: unregister + ASK AGAIN + shout if it survived.
+# Only this explicit list is ever removed; unknown \ZelinAIAssistant\ tasks are
+# reported by act.doctor's `scheduled task orphans` row, never auto-killed.
+$RetiredLeaves = @('webui')   # retired 2026-09-14 (CONTRACT §49 追记 / D67)
+$RetireFailed = 0
+foreach ($leaf in $RetiredLeaves) {
+    if (-not (Get-ScheduledTask -TaskPath $TaskFolder -TaskName $leaf -ErrorAction SilentlyContinue)) {
+        continue
+    }
+    try {
+        Stop-ScheduledTask -TaskPath $TaskFolder -TaskName $leaf -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskPath $TaskFolder -TaskName $leaf -Confirm:$false -ErrorAction Stop
+    } catch {
+        Write-Warn2 "could not unregister $TaskFolder$leaf : $($_.Exception.Message)"
+    }
+    if (Get-ScheduledTask -TaskPath $TaskFolder -TaskName $leaf -ErrorAction SilentlyContinue) {
+        Write-Err2 "retired task $TaskFolder$leaf is STILL registered - it keeps starting the old board at logon on its own port and token"
+        Write-Info "  fix: Unregister-ScheduledTask -TaskPath '$TaskFolder' -TaskName $leaf -Confirm:`$false"
+        $RetireFailed++
+    } else {
+        Write-Ok "retired $TaskFolder$leaf (the board server is the one UI now)"
+    }
+}
+if ($RetireFailed -ne 0) {
+    Write-Warn2 "$RetireFailed retired task(s) survived - two boards, two ports, two token files until they are gone"
+}
 
 # Resident tasks started right after registration. 'webui' retired 2026-09-14
 # (CONTRACT §49 追记 / owner decision D67): the board server is the one UI.

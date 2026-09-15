@@ -13,9 +13,10 @@
 #   2. config.example.yaml -> config.yaml + config/runtime.json + secrets dir 0700
 #   3. create state/ and state/inbox/ + seed state/dashboard.json
 #   4. render act/systemd/*.service|*.timer (via `python3 -m act.lib.systemd`)
-#      into ~/.config/systemd/user, then `systemctl --user enable --now` the
-#      resident services (actd + the board server, CONTRACT §49/§54) and the
-#      radar/digest timers
+#      into ~/.config/systemd/user, RETIRE the units whose template is gone
+#      (§55: disable --now + rm + prove it is gone, or say so loudly), then
+#      `systemctl --user enable --now` the resident services (actd + the board
+#      server, CONTRACT §49/§54) and the radar/digest timers
 #   5. run the post-install diagnostics (python3 -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
@@ -36,6 +37,14 @@ ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
 info() { printf "  [info] %s\n" "$1"; }
 err()  { printf "  [ERR ] %s\n" "$1" >&2; }
+
+# §55 退役自证：systemd 或磁盘上是否还知道这个 unit（0 = 还在）。两个面都问，
+# 因为 `list-units` 只列「已载入内存」的，而 ~/.config/systemd/user 里剩下的
+# 文件会在下一次 daemon-reload / 登录时把它复活。
+systemd_unit_known() {   # $1 = unit 文件名
+    [ -e "$UNIT_DIR/$1" ] && return 0
+    systemctl --user list-units --all --no-legend "$1" 2>/dev/null | grep -q -- "$1"
+}
 
 # The pinned daemon interpreter (config/runtime.json "python"), or a plain
 # python3 fallback. Empty string when nothing usable is found.
@@ -224,6 +233,35 @@ else
     if ! systemctl --user daemon-reload >/dev/null 2>&1; then
         warn "systemctl --user daemon-reload failed — no user bus?"
         info "on a headless server enable it: sudo loginctl enable-linger \"$USER\", then re-run"
+    fi
+
+    # §55 退役纪律（install.sh 的 launchd_retire 的 Linux 孪生）：模板删了，已装
+    # 的 unit 不会自己消失——它带着 Restart=always 留在 enable 状态里继续跑（旧
+    # webui 于是继续占 8787、继续用自己的 state/webui.token 与 state/inbox/ 写
+    # 路径）。2026-08-31 的 imessageradar 就是这样跑了 51 天没人看见，所以这里
+    # 必须 disable + 删文件 + **再问一次**，还在就大声报。RETIRED_UNITS 是显式
+    # 授权名单，不认识的 unit 不归我们杀（那些只在 doctor 的 `systemd orphans`
+    # 行里报告，§55 同一条法条）。
+    RETIRED_UNITS=(
+        "zelin-webui.service"   # retired 2026-09-14（§49 追记 / owner 决策 D67）
+    )
+    RETIRE_FAILED=0
+    for unit in "${RETIRED_UNITS[@]}"; do
+        systemd_unit_known "$unit" || continue
+        systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+        rm -f "$UNIT_DIR/$unit"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+        systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
+        if systemd_unit_known "$unit"; then
+            err "retired unit $unit is STILL there after disable + rm"
+            info "  fix: systemctl --user disable --now $unit; rm -f $UNIT_DIR/$unit; systemctl --user daemon-reload"
+            RETIRE_FAILED=$((RETIRE_FAILED + 1))
+        else
+            ok "retired $unit (the board server is the one UI now)"
+        fi
+    done
+    if [ "$RETIRE_FAILED" -ne 0 ]; then
+        warn "$RETIRE_FAILED retired unit(s) survived — the old webui keeps serving its own board on its own port with its own token until it is gone"
     fi
 
     # Enable + start the RESIDENT services and the timers (the oneshot radar/

@@ -201,6 +201,23 @@ jobs:
           EOF
           echo "generated terminal appcast.xml:"; cat mac/build/appcast.xml
 
+      - name: Set up Node (the portable bundles carry a prebuilt web/dist)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Build the board (web/ -> web/dist)
+        # CONTRACT §49 追记 (owner 决策 D67): the board served by `python -m
+        # server` is the ONE UI on macOS / Linux / Windows, and the portable
+        # bundles now ship server/ + web/ — so web/dist must exist before
+        # package-portable.sh copies the tree. Without it the documented primary
+        # install (docs/WINDOWS.md / docs/LINUX.md "Option A — download the
+        # release bundle") lands on the "dist not built yet" placeholder page.
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       - name: Package portable Linux + Windows bundles
         # Windows/Linux are pure Python (no compiled binary), so each "installer"
         # is a self-contained source archive + the platform install script. Emits

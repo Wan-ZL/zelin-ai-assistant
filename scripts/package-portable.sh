@@ -38,12 +38,24 @@ VERSION="${TAG#v}"
 DIST="$REPO_ROOT/dist"
 mkdir -p "$DIST"
 
-# The file set every portable bundle needs to run the headless pipeline.
+# The file set every portable bundle needs to run the headless pipeline AND
+# its UI. `server` + `web` are load-bearing since 2026-09-14 (CONTRACT §49
+# 追记 / owner 决策 D67): the board served by `python -m server` is the one UI
+# on all three platforms, so install-linux.sh / install.ps1 register
+# zelin-server.service / \ZelinAIAssistant\server — without these two dirs the
+# task can only die with ModuleNotFoundError and the bundle has NO UI at all.
+# release.yml runs `npm ci && npm run build` before this script, so `web/dist`
+# rides along prebuilt and a bundle install needs no npm; `web/`'s sources ship
+# too so the docs' `cd web && npm run build` has a directory to rebuild in.
+# `webui` stays for the hand-run `python -m act.webui` fallback (nothing
+# auto-starts it any more).
 # EXCLUDES the Swift app (mac/ ios/ shared/), .git/, .github/, .claude/,
 # tests/, supabase/ — none appear here.
 COMMON=(
   act
   ingest
+  server
+  web
   webui
   config
   config.example.yaml
@@ -70,6 +82,16 @@ scrub() {
   if [ -d "$dir/act/registry" ]; then
     find "$dir/act/registry" -name 'R-*.yaml' ! -name 'R-000-example.yaml' -delete 2>/dev/null || true
   fi
+  # web/ ships its sources + the prebuilt dist, never its installed deps (the
+  # tar copy above already excludes node_modules; this is the belt) nor its test
+  # material (the bundle mirrors the "tests/ does not ship" rule;
+  # tsconfig.build.json already excludes both, so `npm run build` still works in
+  # the unpacked tree — and web/src/parity.test.tsx reads ui/parity/ from the
+  # repo root, which no bundle has).
+  rm -rf "$dir/web/node_modules" "$dir/web/e2e" "$dir/web/playwright.config.ts" 2>/dev/null || true
+  if [ -d "$dir/web/src" ]; then
+    find "$dir/web/src" \( -name '*.test.ts' -o -name '*.test.tsx' \) -delete 2>/dev/null || true
+  fi
 }
 
 # Build one bundle. $1 = platform label, $2 = extra platform script, $3 = format.
@@ -80,7 +102,15 @@ build_bundle() {
   stage="$parent/ZelinAIAssistant-${TAG}"
   mkdir -p "$stage"
 
-  cp -R "${COMMON[@]}" "$stage"/
+  # web/ goes through tar so a live checkout's web/node_modules (131 MB after
+  # `npm ci`) is never copied at all; everything else is a plain cp -R.
+  local plain=()
+  local item
+  for item in "${COMMON[@]}"; do
+    [ "$item" = "web" ] || plain+=("$item")
+  done
+  cp -R "${plain[@]}" "$stage"/
+  tar -cf - --exclude 'node_modules' web | ( cd "$stage" && tar -xf - )
   cp "$script" "$stage"/
   scrub "$stage"
   python3 scripts/version_stamp.py --version "$VERSION" --stamp-into "$stage" >/dev/null

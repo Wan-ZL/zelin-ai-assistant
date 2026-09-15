@@ -1174,7 +1174,13 @@ WARN；其他厂商前缀永不算）。**v0.48.11 追加（§59）**：`claude 
 注入缝，测试绝不读开发者的真 `~/.claude/settings.json`。**v0.48.20 追加（§56.4）**：
 `launchd volume access`（darwin，紧随 `launchd claude`；读 HOME 镜像与
 `autodeploy.launchd.log`，`Probes.deploy_mirror_read` / `Probes.launchd_log_mtime`
-注入缝，测试绝不读开发者的真镜像）。
+注入缝，测试绝不读开发者的真镜像）。**2026-09-14 追加（§55 本日追记 / D67）**：
+`systemd orphans`（Linux）与 `scheduled task orphans`（Windows）——act/systemd /
+act/tasksched 已无模板、却还在服务管理器里的 job；在跑 → FAIL，只剩文件 / 仅
+registered → WARN，干净 → OK。两行**无 failure id**（`launchd_orphan` 的文案是
+macOS 专属的，理由见 §55 本日追记），所以 `--fresh-install` 分桶按状态走
+（OK → wired / FAIL → broken / WARN → notes），`act/lib/fresh_install.py` 的两张
+表不动。文件面经 `Probes.installed_user_units` 注入缝。
 
 **dashboard.json 新字段**（全部 optional，Swift `decodeIfPresent`；原始错误文本
 字段不变，分类 id 只是伴随）：
@@ -3922,6 +3928,8 @@ test_server_auth.py）。
 - **Windows 接线补齐**：新增 `act/tasksched/zelin-server.xml`（注册为 `\ZelinAIAssistant\server`），是 `act/systemd/zelin-server.service` 与 `act/launchd/com.zelin.aiassistant.server.plist` 的 Windows 镜像——常驻形状与 actd 同款（LogonTrigger + RestartOnFailure + `IgnoreNew` + `ExecutionTimeLimit PT0S`），动作是 `powershell -Command` 里设 `AIASSISTANT_HOME` / `ZAI_PORT` / PATH 前置 claude 目录，再 `-m server`。`act/lib/taskscheduler.py` 因此长出第四个占位符 `@ZAI_PORT@` + `DEFAULT_ZAI_PORT`（`"47820"`，**镜像**而非 import `server/app.py`——act 永不 import server）+ `--zai-port` 手柄，与 `act/lib/systemd.py` 逐字同构；`install.ps1` 读 `config.yaml` `server.port`（探不到 fail-open 回默认）渲染进去、`$ResidentLeaves` 换成 `@('actd','server')`、注册完探一次 `GET /api/health`、并打印 `cd web; npm ci; npm run build` 提示（与 install-linux.sh 同款诚实口径：装机脚本不跑 npm）。
 - **Windows 的 UI 归属改判**：`docs/WINDOWS.md` 原来写「`act/webui.py` 就是 Windows 的 UI」，自本日起是这块看板 + §73 的 PWA 清单（Edge/Chrome 装成独立窗口）。理由：`act/webui.py` 的静态面是两条写死的白名单（`/app.js`、`/style.css`），它**永远**发不出 `web/dist`，也发不出 §73.4 那份清单——Windows 上「装成 app」在 webui 拓扑下不是没做，是做不到。
 - **Tombstone（防腐 #6；退的是两处服务接线，不是 § 号）**：`act/systemd/zelin-webui.service`（retired 2026-09-14，并入本节 = `zelin-server.service`）、`act/tasksched/zelin-webui.xml`（retired 2026-09-14，并入本节 = `zelin-server.xml`）。`install-linux.sh` 的 `ENABLE_UNITS` 与 `install.ps1` 的 `$ResidentLeaves` 同 PR 划掉 webui；`act/lib/checks/core.py` 的 `SYSTEMD_RESIDENT` 缩成 `(zelin-actd.service, zelin-server.service)`；doctor 的两套期望集都是从模板目录 glob 出来的，所以 Windows 多一行 `server`、Linux/Windows 各少一行 `webui` 是文件删除的自然结果，不是第二处真源。判例：tests/test_taskscheduler_render.py（`server` 的常驻形状 / `-m server` / 只有它带 `ZAI_PORT` / `webui` 模板不许回来）、tests/test_systemd_render.py、tests/test_doctor.py。
+- **退役必须落到"已经装过的那台机器"上（§55 本日追记的另一半）**：删模板只影响**新装**——Task Scheduler 里那条 `\ZelinAIAssistant\webui` 仍带 LogonTrigger、systemd 里那个 `zelin-webui.service` 仍 `enable`d + `Restart=always`，于是每一台**既有**安装升级后正是本节要消灭的「两块看板 / 两个端口 / 两套 token」。所以 `install.ps1` 的 `$RetiredLeaves` 与 `install-linux.sh` 的 `RETIRED_UNITS` 显式卸它、卸完**再问一次**、还在就大声报（`launchd_retire` 的逐条孪生），doctor 另加 `systemd orphans` / `scheduled task orphans` 两行让活下来的 job 可见——细则与判例见 §55 本日追记。
+- **便携包必须自带这块看板（§56.2 的发布资产）**：`scripts/package-portable.sh` 的 `COMMON` 加入 `server` 与 `web`（`webui` 留作手跑回落），`.github/workflows/release.yml` 在打包**之前** `npm ci && npm run build`——于是 zip / tar.gz 里那份 `web/dist` 是预构建的真产物。此前的文件集里两者皆无，而 docs/{WINDOWS,LINUX}.md 把「下载 release 包」写成主装路径：本节把 server 任务立成唯一 UI 之后，那条路径会装出一个只会 `ModuleNotFoundError` 的任务 + 零 UI。`web/` 只发源码与产物，不发 `node_modules`、不发测试材料（`web/e2e`、`web/src/**/*.test.ts(x)`——后者读仓库根的 `ui/parity/`，包里没有）。判例 `tests/test_portable_bundle_ships_the_board.py`。
 - **`act/webui.py` 模块本身不删**：§41 的 W18 远程直跑闸门、§50 的 `via:"remote"` 落款判据仍以它为判例主体（tests/test_webui*.py 一组判例文件钉着这些行为），且「它随原生 Mac app 一起退役」是 D3 那一车的活（docs/design/progress/2026-09-14-server-log-noise.md 已有此裁决）。本节只退**服务接线**：没有任何 service manager 再自动拉起它，`python3 -m act.webui` 仍可手跑。
 - **诚实条款（宪法第 3 条）**：Windows 这一半是**渲染 / 单测级**验证——本仓库没有 Windows 机器，`Register-ScheduledTask` 真实加载、端口真绑、Edge 的安装按钮都记在 docs/WINDOWS.md「Needs a real Windows machine」里，由 issue #90 的作者在真机上复核。
 - **不动的**：`server/` 的 bind 常量、四道闸、token 模型、envelope 词表、路由全集一字未改——Windows 得到的就是 macOS/Linux 已经在跑的那一个 server，不是第二种拓扑（宪法第 1 条零触动、第 9 条 loopback 例外照旧）。
@@ -5101,6 +5109,14 @@ label，孤儿结构性不可见。自本节起：
   `state/*.launchd.log` 是取证材料，删除是 owner 手动动作。
 - 判例：`tests/test_install_launchd_retire.py`（真跑 install.sh 函数 + 假
   launchctl）、`tests/test_doctor.py` 孤儿组。
+
+**2026-09-14 追记（add-only，`feat/windows-server-board`；owner 决策 D67）——退役自证与孤儿可见扩到另外两个服务管理器**：`zelin-webui.service` / `\ZelinAIAssistant\webui` 退役时暴露出本节此前只立了 launchd 的法。删模板**不卸任何已装的 job**，而 doctor 的 Linux/Windows 期望集合是 glob 模板目录得来的（`services.systemd_units` / `services.scheduled_tasks`）——于是「删了模板」= 那个 job 从期望集合里**消失**、却在用户机器上照跑（webui 带 `Restart=always` / LogonTrigger，继续占自己的端口、自己的 `state/webui.token`、自己的 `state/inbox/` 写路径）。这就是 imessageradar 那 51 天的同一个病，只换了服务管理器。自本日起三面对齐：
+
+- `install-linux.sh` 的 `RETIRED_UNITS`（`launchd_retire` 的 Linux 孪生）：`systemctl --user disable --now` + 删 `$UNIT_DIR` 下的 unit 文件 + `daemon-reload` + `reset-failed`，然后**再问一次**（`systemd_unit_known`：`list-units --all` 与文件面都查），还在 → `[ERR ]` + 手动命令 + 一条说清后果的 warn。排在 `ENABLE_UNITS` 循环之前。
+- `install.ps1` 的 `$RetiredLeaves`（Windows 孪生）：`Stop-ScheduledTask` + `Unregister-ScheduledTask -Confirm:$false`，然后 `Get-ScheduledTask` **再问一次**，还在 → `Write-Err2` + 手动命令。排在注册循环之前。
+- doctor 两行新探针（`act/lib/checks/services.py`）：`systemd orphans`（带 `zelin-` 前缀、act/systemd 已无模板——此刻 `active/activating/reloading/failed` → FAIL，只剩 unit 文件或已载入但 dead → WARN，下次 `daemon-reload` / 登录复活）与 `scheduled task orphans`（`\ZelinAIAssistant\` 下、act/tasksched 已无模板——`Status=Running` → FAIL，其余仍带 LogonTrigger → WARN）。与 launchd 面同规矩：只**报告**，从不自动卸（显式授权名单只住在两个装机脚本里）；别人的前缀（`docker.service` / `\Microsoft\Windows\…`）永不算。文件面经 `Probes.installed_user_units` 注入（`~/.config/systemd/user` 的 `zelin-*`，与 install-linux.sh 同一个 `XDG_CONFIG_HOME` 表达式）。
+- 这两行**不带 §25 failure id**：`launchd_orphan` 的文案是 macOS 专属的（"still loaded in launchd"），而新立一个 id 要同 PR 改 `mac/Sources/Doctor.swift` 的镜像表（D3 冻结件）；按 §25 的立法精神（分类少而准，认不出就回落原文 + 「让 AI 修」）留空，行名 + detail + fix 自带修法。
+- 判例：`tests/test_doctor_service_orphans.py`（六个 Linux 形 + 五个 Windows 形）、`tests/test_installers_board_server_is_the_ui.py`（两个脚本的退役块形状：移除 → 再问 → 大声报，且排在 enable/register 之前）。
 
 ---
 
@@ -6559,7 +6575,7 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 
 ### 73.5 覆盖面追记（2026-09-14，`feat/windows-server-board`；issue #90 的另一半，owner 决策 **D67**）
 
-上一条「覆盖面诚实说」写于「Windows 还没有 server 常驻任务」的那一天，**自本日起作废**（add-only：原句留档，以本节为准）。`act/tasksched/zelin-server.xml` 落地、`install.ps1` 的 `$ResidentLeaves` 换成 `actd` + `server`、`\ZelinAIAssistant\webui` 任务与 `zelin-webui.service` 同 PR 退役（tombstone 在 §49 本日追记里），所以这份清单现在**三平台全覆盖**——macOS / Linux / Windows 发的是同一个 `server/`、同一份 `web/dist`、同一份 `manifest.webmanifest`，也就是同一个安装体验。
+上一条「覆盖面诚实说」写于「Windows 还没有 server 常驻任务」的那一天，**自本日起作废**（add-only：原句留档，以本节为准）。`act/tasksched/zelin-server.xml` 落地、`install.ps1` 的 `$ResidentLeaves` 换成 `actd` + `server`、`\ZelinAIAssistant\webui` 任务与 `zelin-webui.service` 同 PR 退役（tombstone 在 §49 本日追记里），所以这份清单现在**三平台全覆盖**——macOS / Linux / Windows 发的是同一个 `server/`、同一份 `web/dist`、同一份 `manifest.webmanifest`，也就是同一个安装体验。这句话对**便携包那条路径**同样成立，前提是 §49 本日追记的最后一条：`scripts/package-portable.sh` 的文件集带上 `server/` + `web/`，release.yml 打包前先 `npm run build`——否则 zip 里没有 `web/dist`，「安装清单」连发都发不出来。
 
 §73.1–§73.4 的清单字段、图标生成、content-type 与边界**一字未改**。特别澄清 §73.4 的「不新增端口与 launchd / Task Scheduler 任务」：那句说的是**这份清单本身不带来**新进程/新端口，而 D67 新增的 Windows `server` 任务是把 macOS/Linux 早已常驻的那个 server 补到第三个平台（同一个端口 `ZAI_PORT`、同一套 token），不是为清单而生的第二个进程——两者不冲突。
 
