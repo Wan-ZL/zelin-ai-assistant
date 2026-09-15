@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from server import paths, settings_catalog
+from server import background_jobs, paths, settings_catalog
 
 CACHE_TTL_S = 600.0
 SAMPLE_MIN_GAP_S = 6 * 3600.0
@@ -337,8 +337,11 @@ def _placeholder(root: Path) -> dict:
             "growth": {"bytes_per_month": None, "basis": None, "span_days": None, "samples": 0}}
 
 
+_THREADS = background_jobs.Threads("screenpipe-disk")
+
+
 def _spawn_thread(fn: Callable[[], None]) -> None:
-    threading.Thread(target=fn, name="screenpipe-disk", daemon=True).start()
+    _THREADS.spawn(fn)
 
 
 def _finish(key: str, result: dict, now: float) -> None:
@@ -382,6 +385,17 @@ def snapshot(home: Path, *, refresh: bool = False, now: Optional[float] = None,
     return base
 
 
+def join_jobs_for_tests(timeout: float = background_jobs.JOIN_TIMEOUT_S) -> bool:
+    """§72.1 的测试缝：等在飞的后台算落地（有界；``False`` = 到点还有活的）。"""
+    return _THREADS.join(timeout)
+
+
 def reset_cache_for_tests() -> None:
+    """清场 = **先等在飞的后台算落地**再清缓存。不等的话 `_job` 会在判例
+    `tempfile.TemporaryDirectory` 的 `rmtree` 脚下往 `state/` 里写样本文件
+    （CI 2026-09-15：``OSError: [Errno 39] Directory not empty: 'state'``）；
+    先 join 后清也保证晚到的 `_finish` 不会把缓存再填回去。判例要把这一下的
+    ``addCleanup`` 排在临时目录那一下**之后**登记（cleanup 是 LIFO）。"""
+    join_jobs_for_tests()
     with _lock:
         _cache.clear()

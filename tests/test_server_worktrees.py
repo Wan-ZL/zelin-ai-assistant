@@ -36,7 +36,6 @@ SWEEP = {"ok": True, "dry_run": False, "removed": [{"path": "/r/.claude/worktree
 class WorktreeEndpointTestCase(unittest.TestCase):
     def setUp(self):
         inv.reset_cache_for_tests()
-        self.addCleanup(inv.reset_cache_for_tests)
         self.tmp = tempfile.TemporaryDirectory(prefix="zai-worktrees-")
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
@@ -55,6 +54,10 @@ class WorktreeEndpointTestCase(unittest.TestCase):
         patched = mock.patch.object(inv.subproc, "default_runner", runner)
         patched.start()
         self.addCleanup(patched.stop)
+        # cleanup 是 LIFO：这一下登记在临时目录 / patcher **之后**，所以它先跑——GET 起的后台
+        # 清点线程要先 join 掉，否则 patcher 一 stop 它就拿回真 runner 去起真子进程，而它的
+        # 临时 home 可能已经被 rmtree 了（同 §72.1，CI 2026-09-15 的 Errno 39）。
+        self.addCleanup(inv.reset_cache_for_tests)
         _httpd, self.port = start_server(self, self.home)
 
     # -- GET ----------------------------------------------------------------- #

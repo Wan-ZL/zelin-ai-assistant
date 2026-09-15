@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from server import subproc
+from server import background_jobs, subproc
 from server.errors import UnknownFieldError
 
 INVENTORY_TIMEOUT_S = 180
@@ -55,8 +55,11 @@ def placeholder() -> dict:
             "removable": None, "bytes": None, "bytes_partial": False, "truncated": False}
 
 
+_THREADS = background_jobs.Threads("worktrees-inventory")
+
+
 def _spawn_thread(fn: Callable[[], None]) -> None:
-    threading.Thread(target=fn, name="worktrees-inventory", daemon=True).start()
+    _THREADS.spawn(fn)
 
 
 def _finish(key: str, result: dict, now: float) -> None:
@@ -123,6 +126,16 @@ def cleanup(home: Path, payload: dict, *, runner=None) -> dict:
     return doc
 
 
+def join_jobs_for_tests(timeout: float = background_jobs.JOIN_TIMEOUT_S) -> bool:
+    """§75.4 的测试缝：等在飞的后台清点落地（有界；``False`` = 到点还有活的）。"""
+    return _THREADS.join(timeout)
+
+
 def reset_cache_for_tests() -> None:
+    """清场 = **先等在飞的后台清点落地**再清缓存：判例的 `mock.patch` 一 stop，还活着的
+    `_job` 就会拿回真 runner 去起 `python -m act.lib.worktrees` 这个真子进程，而它的临时
+    home 可能已经被 `rmtree` 掉了（同 `screenpipe_disk`，CI 2026-09-15 的 Errno 39）。
+    判例要把这一下的 ``addCleanup`` 排在临时目录 / patcher 那几下**之后**登记（LIFO）。"""
+    join_jobs_for_tests()
     with _lock:
         _cache.clear()
