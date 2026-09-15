@@ -1,0 +1,2 @@
+type: added
+- **看板可以「装成 app」了**：web 面新增 PWA 安装清单（`web/public/manifest.webmanifest` + 从 favicon.svg 栅格化的 192 / 512 图标），Edge / Chrome / Safari 可以把本机看板装成独立窗口——无地址栏，开始菜单 / Dock 里有图标，零新进程、零离线缓存。server 把 `.webmanifest` 的 content-type 钉成 `application/manifest+json`（不再取决于宿主机的 `mimetypes` 表：注册表或 `/etc/mime.types` 一改，浏览器就会静默不给「安装」按钮）。清单只对 `server/` 托管的看板生效（今天是 macOS / Linux）——issue #90 的 Windows 常驻 server 任务那一半仍待 owner 决策。（CONTRACT §71）

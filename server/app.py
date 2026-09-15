@@ -594,7 +594,16 @@ def _static_target(dist: Path, path: str) -> Optional[Path]:
     return _pick_file(target, real_dist, rel, path)
 
 
+# 契约常量优先于宿主机的 mimetypes 表（§71）：`mimetypes` 读 Windows 注册表与
+# /etc/mime.types，两者都能改写内置映射——PWA 安装清单发错类型就装不上，而这条
+# wire 类型是法条不是本机配置。表里没有的扩展名照旧走 mimetypes。
+_STATIC_CTYPES = {".webmanifest": "application/manifest+json"}
+
+
 def _static_ctype(target: Path) -> str:
+    pinned = _STATIC_CTYPES.get(target.suffix.lower())
+    if pinned:
+        return pinned
     return mimetypes.guess_type(target.name)[0] or "application/octet-stream"
 
 
