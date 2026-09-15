@@ -1,5 +1,9 @@
 """Render the Windows Task Scheduler XML templates (Windows service wiring).
 
+CONTRACT §25（doctor 的 schtasks 家族读这里的任务名）/ §49（`server` 任务托管
+的看板 = Windows 的 UI，2026-09-14 追记）/ §54（`ZAI_PORT` 与 launchd/systemd
+同源）/ §55（模板路径纪律）。
+
 The templates in ``act/tasksched/*.xml`` are the Windows mirror of
 ``act/systemd/*.service|*.timer`` (themselves the mirror of
 ``act/launchd/*.plist``): each carries the same small set of ``@TOKEN@``
@@ -13,8 +17,9 @@ dir and then ``Register-ScheduledTask``s each into the ``\\ZelinAIAssistant\\``
 folder on a real Windows box; the render itself needs nothing but stdlib and is
 fully unit-tested here on macOS/CI.
 
-Placeholders (all three are absolute, filled from the same values install.ps1
-computes, exactly the way install.sh/install-linux.sh fill the plists/units):
+Placeholders (the three paths are absolute, filled from the same values
+install.ps1 computes, exactly the way install.sh/install-linux.sh fill the
+plists/units; the port mirrors act/lib/systemd.py's ``@ZAI_PORT@``):
 
   @PYTHON@          the daemon interpreter (config/runtime.json "python")
   @REPO_ROOT@       the checkout root  (WorkingDirectory / AIASSISTANT_HOME)
@@ -25,9 +30,11 @@ computes, exactly the way install.sh/install-linux.sh fill the plists/units):
                     AIASSISTANT_HOME + PATH then invokes the interpreter (this is
                     the #3 port risk — mirror of the systemd PATH guard; it needs
                     a real Windows box to validate, see docs/WINDOWS.md).
+  @ZAI_PORT@        loopback port of the board server (config.yaml
+                    ``server.port``, default 47820 = server/app.py DEFAULT_PORT)
 
 Task naming: rendered files are ``zelin-<leaf>.xml``; install.ps1 registers each
-as ``\\ZelinAIAssistant\\<leaf>`` (leaf = ``actd`` / ``webui`` / ``gmail-radar``
+as ``\\ZelinAIAssistant\\<leaf>`` (leaf = ``actd`` / ``server`` / ``gmail-radar``
 / ...). act.doctor's schtasks branch filters ``schtasks /query`` output to that
 prefix and derives the expected set from the same template dir.
 """
@@ -47,8 +54,11 @@ TASK_DIR = Path(__file__).resolve().parent.parent / "tasksched"
 TOKEN_PYTHON = "@PYTHON@"  # nosec B105 - template placeholder, not a secret
 TOKEN_REPO_ROOT = "@REPO_ROOT@"  # nosec B105 - template placeholder, not a secret
 TOKEN_CLAUDE_BIN_DIR = "@CLAUDE_BIN_DIR@"  # nosec B105 - template placeholder, not a secret
+TOKEN_ZAI_PORT = "@ZAI_PORT@"  # nosec B105 - template placeholder, not a secret
+# server/app.py DEFAULT_PORT — mirrored, not imported (act never imports server)
+DEFAULT_ZAI_PORT = "47820"
 
-_TOKENS = (TOKEN_PYTHON, TOKEN_REPO_ROOT, TOKEN_CLAUDE_BIN_DIR)
+_TOKENS = (TOKEN_PYTHON, TOKEN_REPO_ROOT, TOKEN_CLAUDE_BIN_DIR, TOKEN_ZAI_PORT)
 
 # Task Scheduler folder every task is registered under (install.ps1 -TaskPath,
 # doctor's schtasks filter). schtasks reports full names as "\ZelinAIAssistant\<leaf>".
@@ -68,7 +78,7 @@ def full_task_name(filename: str) -> str:
 
 
 def render(template_text: str, python: str, repo_root: str,
-           claude_bin_dir: str) -> str:
+           claude_bin_dir: str, zai_port: str = DEFAULT_ZAI_PORT) -> str:
     """Substitute the @TOKEN@ placeholders. Pure string op, no I/O.
 
     Every token is replaced; the result must contain no leftover ``@...@``
@@ -81,6 +91,7 @@ def render(template_text: str, python: str, repo_root: str,
         TOKEN_PYTHON: python,
         TOKEN_REPO_ROOT: repo_root,
         TOKEN_CLAUDE_BIN_DIR: claude_bin_dir,
+        TOKEN_ZAI_PORT: str(zai_port),
     }
     out = template_text
     for token, value in subs.items():
@@ -94,11 +105,12 @@ def task_templates(task_dir: Path = TASK_DIR) -> List[Path]:
 
 
 def render_all(python: str, repo_root: str, claude_bin_dir: str,
-               task_dir: Path = TASK_DIR) -> Dict[str, str]:
+               task_dir: Path = TASK_DIR,
+               zai_port: str = DEFAULT_ZAI_PORT) -> Dict[str, str]:
     """Map task filename -> rendered XML for every template on disk."""
     return {
         p.name: render(p.read_text(encoding="utf-8"),
-                       python, repo_root, claude_bin_dir)
+                       python, repo_root, claude_bin_dir, zai_port)
         for p in task_templates(task_dir)
     }
 
@@ -114,11 +126,14 @@ def main(argv: List[str] = None) -> int:
                     help="dir of the login-shell claude (first on task PATH)")
     ap.add_argument("--out", required=True,
                     help="output dir for the rendered .xml (a staging dir)")
+    ap.add_argument("--zai-port", default=DEFAULT_ZAI_PORT,
+                    help="board server loopback port (config.yaml server.port)")
     args = ap.parse_args(argv)
 
     out_dir = Path(args.out).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
-    rendered = render_all(args.python, args.repo_root, args.claude_bin_dir)
+    rendered = render_all(args.python, args.repo_root, args.claude_bin_dir,
+                          zai_port=args.zai_port)
     for name, text in rendered.items():
         (out_dir / name).write_text(text, encoding="utf-8")
         print(name)

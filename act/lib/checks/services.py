@@ -1,13 +1,21 @@
-"""doctor 探针家族：launchd 之外的服务管理器镜像（CONTRACT §25；docs/LINUX.md
-systemd --user；docs/WINDOWS.md Task Scheduler）。
+"""doctor 探针家族：launchd 之外的服务管理器镜像（CONTRACT §25；§49 看板 server
+是三平台唯一的 UI；§55 退役自证与孤儿可见；docs/LINUX.md systemd --user；
+docs/WINDOWS.md Task Scheduler）。
 
 行：每个 unit / task 一行（short name）——actd 是常驻守护（缺席 / 失败 FAIL），
 雷达与 digest 由 timer / repetition 驱动，只 WARN。文本来源 = OS seam
 ``platform.service_list_text()``（``systemctl --user list-units`` /
 ``schtasks /query /fo LIST /v``），经 ``Probes.launchctl_list`` 注入。
+
+期望集合都是从模板目录 glob 出来的，所以删一个模板 = 那个 job 从期望集合里
+消失——但它在用户机器上仍 enable / registered 着。`systemd orphans` /
+`scheduled task orphans` 两行是 §55 的 off-macOS 孪生，专门把这种「已退役却还
+在跑」重新变成看得见的。
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import List
 
 from act.lib import config, taskscheduler
@@ -185,3 +193,140 @@ def check_scheduled_tasks(probes):
             "git -C '%s' checkout act/tasksched" % config.HOME)
     table = parse_schtasks(probes.launchctl_list())
     return [_task_row(full, table) for full in tasks]
+
+
+# --------------------------------------------------------------------------- #
+# §55 退役自证的 off-macOS 孪生（launchd.check_orphans 的两个镜像）
+# --------------------------------------------------------------------------- #
+UNIT_PREFIX = "zelin-"
+# systemd ACTIVE 值里「此刻在耗资源」的那几个（failed = 正在崩循环）
+_LIVE_ACTIVE = ("active", "activating", "reloading", "failed")
+
+
+def user_unit_dir() -> Path:
+    """``~/.config/systemd/user`` —— install-linux.sh 渲染 unit 的地方（同一个
+    ``XDG_CONFIG_HOME`` 表达式，两处不许分叉）。"""
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "systemd" / "user"
+
+
+def installed_user_units() -> List[str]:
+    """文件面：user unit 目录里带 ``zelin-`` 前缀的 unit 文件名（读不到 = 空）。"""
+    try:
+        return sorted(p.name for p in user_unit_dir().glob(UNIT_PREFIX + "*"))
+    except OSError:  # noqa: BLE001 - 探针不许崩
+        return []
+
+
+def _templated_units() -> set:
+    try:
+        return {p.name for p in (config.HOME / "act" / "systemd").iterdir()}
+    except OSError:  # noqa: BLE001 - 探针不许崩
+        return set()
+
+
+def _orphan_units(table: dict, known: set) -> tuple:
+    """(此刻活着的, 已载入但 dead 的) —— 两组都是「模板没了却还在」的 unit。"""
+    live: List[str] = []
+    idle: List[str] = []
+    for unit in sorted(table):
+        if unit.startswith(UNIT_PREFIX) and unit not in known:
+            (live if table[unit][0] in _LIVE_ACTIVE else idle).append(unit)
+    return live, idle
+
+
+def _unit_retire_fix(units: List[str]) -> str:
+    unit_dir = user_unit_dir()
+    return "bash install-linux.sh  # retires them; or by hand: " + "; ".join(
+        "systemctl --user disable --now %s && rm -f %s" % (u, unit_dir / u)
+        for u in units)
+
+
+def check_systemd_orphans(probes):
+    """§55 孤儿行的 Linux 孪生：带 ``zelin-`` 前缀、act/systemd 里已无模板的 unit。
+
+    ``systemd_units()`` 的期望集合是 glob 模板目录得来的，所以删一个模板会让那个
+    unit 从期望集合里**消失**——而它在用户机器上仍 `enable`d、仍 `Restart=always`
+    地跑（2026-08-31 审计：v0.21 删掉的 imessageradar agent 又跑了 51 天没人看
+    见）。两个面都扫：``systemctl --user list-units --all`` 里此刻活着的 → FAIL，
+    只剩 unit 文件 / 已载入但 dead 的 → WARN（daemon-reload 或下次登录复活）。
+    """
+    known = _templated_units()
+    live, idle = _orphan_units(_systemd_table(probes.launchctl_list()), known)
+    seen = set(live) | set(idle)
+    on_disk = [u for u in probes.installed_user_units()
+               if u not in known and u not in seen]
+    if live:
+        return CheckResult(
+            "systemd orphans", FAIL,
+            "retired unit(s) still running under systemd --user (no template in "
+            "act/systemd any more): %s - each keeps serving its own board on its "
+            "own port with its own token, and logging, forever" % ", ".join(live),
+            _unit_retire_fix(live))
+    if idle or on_disk:
+        return CheckResult(
+            "systemd orphans", WARN,
+            "retired unit(s) still known to systemd --user or left in %s (not "
+            "running now, but a daemon-reload or the next login brings them back): "
+            "%s" % (user_unit_dir(), ", ".join(idle + on_disk)),
+            _unit_retire_fix(idle + on_disk))
+    return CheckResult("systemd orphans", OK,
+                       "no retired unit left enabled or in %s" % user_unit_dir())
+
+
+def _templated_tasks() -> set:
+    try:
+        return {taskscheduler.full_task_name(p.name)
+                for p in (config.HOME / "act" / "tasksched").glob("*.xml")}
+    except OSError:  # noqa: BLE001 - 探针不许崩
+        return set()
+
+
+def _orphan_tasks(table: dict, known: set) -> tuple:
+    """(此刻 Running 的, 仅 registered 的) —— 两组都是「模板没了却还在」的任务。"""
+    running: List[str] = []
+    registered: List[str] = []
+    for full in sorted(table):
+        if full.startswith(taskscheduler.TASK_PATH_PREFIX) and full not in known:
+            (running if table[full].get("Status") == "Running"
+             else registered).append(full)
+    return running, registered
+
+
+def _task_retire_fix(tasks: List[str]) -> str:
+    return ("powershell -ExecutionPolicy Bypass -File install.ps1  # unregisters "
+            "them; or by hand: " + "; ".join(
+                "Unregister-ScheduledTask -TaskPath '%s' -TaskName %s -Confirm:$false"
+                % (taskscheduler.TASK_PATH_PREFIX, t.rsplit("\\", 1)[-1])
+                for t in tasks))
+
+
+def check_task_orphans(probes):
+    """§55 孤儿行的 Windows 孪生：``\\ZelinAIAssistant\\`` 下、act/tasksched 里已无
+    模板的任务。
+
+    与 Linux 同理（期望集合 glob 模板目录 → 删模板等于结构性失明）。schtasks 的
+    ``Status`` 是 Running 的 → FAIL（此刻在跑）；Ready / Disabled 的仍带
+    LogonTrigger，下次登录就回来 → WARN。只**报告**，从不自动注销：显式授权名单
+    住在 install.ps1 的 ``$RetiredLeaves`` 里。
+    """
+    known = _templated_tasks()
+    running, registered = _orphan_tasks(parse_schtasks(probes.launchctl_list()),
+                                        known)
+    if running:
+        return CheckResult(
+            "scheduled task orphans", FAIL,
+            "retired task(s) RUNNING under Task Scheduler (no template in "
+            "act/tasksched any more): %s - each keeps serving its own board on its "
+            "own port with its own token, and logging, forever" % ", ".join(running),
+            _task_retire_fix(running))
+    if registered:
+        return CheckResult(
+            "scheduled task orphans", WARN,
+            "retired task(s) still registered under %s (not running right now, but "
+            "their LogonTrigger starts them again at the next logon): %s"
+            % (taskscheduler.TASK_PATH_PREFIX, ", ".join(registered)),
+            _task_retire_fix(registered))
+    return CheckResult("scheduled task orphans", OK,
+                       "no retired task left under %s"
+                       % taskscheduler.TASK_PATH_PREFIX)
