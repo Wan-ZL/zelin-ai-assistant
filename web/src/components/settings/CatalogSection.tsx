@@ -16,7 +16,7 @@ import { useI18n } from "../../i18n";
 import { refreshSettingsCatalog, saveSettingsSection, useAppState } from "../../store";
 import type { SettingsSection } from "../../types";
 import { pickText } from "./catalogText";
-import { isGated, isValidNumberDraft, passesCheck, type Draft } from "./draftRules";
+import { isGated, isValidNumberValue, passesCheck, type Draft } from "./draftRules";
 import { FieldControl } from "./FieldControl";
 import { errorMessage, useToast } from "./useToast";
 
@@ -67,7 +67,7 @@ export function invalidKeys(section: SettingsSection, draft: Draft): string[] {
   return section.fields
     .filter((field) => {
       const value = draft[field.key];
-      if (field.kind === "number" || field.kind === "int") return value !== field.effective && !isValidNumberDraft(field.kind, value);
+      if (field.kind === "number" || field.kind === "int") return value !== field.effective && !isValidNumberValue(field, value);
       if (field.kind === "string" && field.check) {
         return String(value ?? "").trim() !== String(field.effective ?? "").trim() && !passesCheck(field, value);
       }

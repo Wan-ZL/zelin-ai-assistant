@@ -12,7 +12,7 @@ import { LanguageContext } from "../../i18n";
 import { resetStoreForTests, saveSettingsSection } from "../../store";
 import type { SettingsCatalog, SettingsField, SettingsSection } from "../../types";
 import { CatalogSection, invalidKeys, mergeDraft } from "./CatalogSection";
-import { isGated, isValidNumberDraft } from "./draftRules";
+import { isGated, isValidNumberDraft, isValidNumberValue, outOfBounds } from "./draftRules";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -262,6 +262,22 @@ describe("invalid number drafts block Save (d)", () => {
     const stored = { ...s, fields: s.fields.map((f) => (f.key === "trash_retention_days" ? { ...f, effective: -5, source: "config" as const } : f)) };
     expect(invalidKeys(stored, { skip_permissions: true, show_cost_above_usd: 5, trash_retention_days: -5 })).toEqual([]);
     expect(invalidKeys(stored, { skip_permissions: true, show_cost_above_usd: 5, trash_retention_days: -3 })).toEqual(["trash_retention_days"]);
+  });
+
+  it("bounds (§72.4): a draft outside the server range is invalid and never clamped", () => {
+    const knob = field({ key: "screenpipe_media_retention_minutes", kind: "int", default: 60, effective: 60,
+      bounds: { min: 5, max: 525600 } });
+    expect(outOfBounds(knob, 60)).toBe(false);
+    expect(outOfBounds(knob, 5)).toBe(false);          // 端点合法
+    expect(outOfBounds(knob, 4)).toBe(true);
+    expect(outOfBounds(knob, 525601)).toBe(true);
+    expect(isValidNumberValue(knob, 4)).toBe(false);   // 「保存」不放行，PUT 里也没有它
+    expect(isValidNumberValue(knob, 120)).toBe(true);
+    // 没有 bounds 的字段一切照旧
+    expect(outOfBounds(field({ key: "trash_retention_days", kind: "int" }), 9_999_999)).toBe(false);
+    const section: SettingsSection = { id: "storage", title: bilingual("", ""), help: bilingual("", ""), fields: [knob] };
+    expect(invalidKeys(section, { screenpipe_media_retention_minutes: 4 })).toEqual(["screenpipe_media_retention_minutes"]);
+    expect(invalidKeys(section, { screenpipe_media_retention_minutes: 120 })).toEqual([]);
   });
 
   it("an already-invalid effective from config.yaml does not lock Save for the rest of the section", async () => {

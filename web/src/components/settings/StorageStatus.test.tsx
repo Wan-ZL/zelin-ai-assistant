@@ -1,11 +1,12 @@
-// 「录制数据与磁盘」状态行（CONTRACT §72.1；issue #28）：GET /api/screenpipe/disk 的 computing → ready 轮询、数字格式化、
-// 增长估算的依据句、上次清理回执的一句话、备份文件告示（只报不删）、刷新按钮 = ?refresh=1、拉取失败只显示一句不炸。
+// 「录制数据与磁盘」状态行（CONTRACT §72.1 / §72.4；issue #28）：GET /api/screenpipe/disk 的 computing → ready 轮询、数字格式化、
+// 增长估算的依据句、上次清理回执的一句话、上次媒体清理（停了 / 读不到 = 报警）、备份文件告示（只报不删）、
+// 刷新按钮 = ?refresh=1、拉取失败只显示一句不炸。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchScreenpipeDisk } from "../../api";
 import { LanguageContext } from "../../i18n";
 import type { ScreenpipeDisk } from "../../types";
-import { dayOf, formatBytes, growthText, pruneText, StorageStatus } from "./StorageStatus";
+import { dayOf, formatBytes, growthText, mediaPruneText, pruneText, StorageStatus } from "./StorageStatus";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -74,6 +75,24 @@ describe("formatting helpers", () => {
       .toBe("2026-09-07 04:00 UTC failed: DatabaseError: locked");
     expect(pruneText({ ran_at: "2026-09-07T04:00:12Z", skipped: "no_db" }, text)).toBe("2026-09-07 04:00 UTC skipped (no_db)");
   });
+
+  it("mediaPruneText separates a stopped prune from one that found nothing", () => {
+    const base = { retention_minutes: 60, data_dir: "/Users/demo/.screenpipe/data" };
+    expect(mediaPruneText(undefined, text)).toEqual({ line: "Not run yet", warn: false });
+    expect(mediaPruneText({ ...base, state: "never", ts: null, deleted_files: null, deleted_bytes: null, age_seconds: null, stale: true }, text))
+      .toEqual({ line: "No receipt yet — the cleanup may not be running", warn: true });
+    // 跑了、一个都没删：这是**正常**，不报警
+    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 600, stale: false }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB)", warn: false });
+    // 同样「删了 0 个」，但三小时没动静：会悄悄涨盘，必须报警并说出多久没跑
+    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 14_400, stale: true }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); nothing for 4 hours (it should run every 30 minutes)", warn: true });
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: false }, text).warn).toBe(true);
+    expect(mediaPruneText({ ...base, state: "no_data_dir", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: false }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC no recording data folder yet", warn: false });
+    expect(mediaPruneText({ ...base, state: "ok", ts: "whenever", deleted_files: 1, deleted_bytes: 2_000, age_seconds: null, stale: true }, text).line)
+      .toBe("whenever deleted 1 media file(s) (2 KB); the receipt timestamp could not be read");
+  });
 });
 
 describe("StorageStatus", () => {
@@ -108,6 +127,23 @@ describe("StorageStatus", () => {
     await waitFor(() => expect(screen.getByText("Re-measuring…")).toBeTruthy());
     expect(vi.mocked(fetchScreenpipeDisk).mock.calls).toEqual([[false], [true]]);
     expect(screen.getByTestId("storage-total").textContent).toBe("43 GB"); // 旧数字照旧可读
+  });
+
+  it("a stopped media prune is called out with an alert, a fresh one is just a line", async () => {
+    const prune = { state: "ok", ts: "2026-09-14T04:00:12Z", retention_minutes: 60, deleted_files: 0,
+      deleted_bytes: 0, data_dir: "/Users/demo/.screenpipe/data", age_seconds: 14_400, stale: true };
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_retention_minutes: 60, media_prune: prune });
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("storage-media-prune").textContent)
+      .toBe("2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); nothing for 4 hours (it should run every 30 minutes)"));
+    expect(screen.getAllByRole("alert").map((el) => el.textContent))
+      .toContain("Raw jpg / mp4 are only deleted by this cleanup round; while it is stopped, the disk keeps growing.");
+    cleanup();
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_prune: { ...prune, age_seconds: 600, stale: false, deleted_files: 12, deleted_bytes: 3_400_000 } });
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("storage-media-prune").textContent)
+      .toBe("2026-09-14 04:00 UTC deleted 12 media file(s) (3 MB)"));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("a failed fetch shows one plain error line instead of crashing", async () => {

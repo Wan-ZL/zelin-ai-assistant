@@ -5,7 +5,9 @@
 §53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
 D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
 §70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关；
-§65.5 的 `self_improve.owner_logins` 是 overrides 能碰的第二键）。
+§65.5 的 `self_improve.owner_logins` 是 overrides 能碰的第二键）+
+§72（录制数据保留期：`recording.retention_days` 的 DB 天数与 §72.4
+`recording.media_retention_minutes` 的媒体分钟数，后者经 `--print-value` 给 cron 消费）。
 
 Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
@@ -87,6 +89,15 @@ DEFAULT_IGNORED_APPS: list = [
     "Private Browsing",  # Safari private windows (window-title match)
     "Incognito",         # Chrome/Edge incognito windows (window-title match)
 ]
+
+# §72.4 原始媒体（帧 / 音频片段）的保留期，分钟：cron 链第二步
+# ingest/screenpipe-cleanup.sh 的 `find -mmin +N`。出厂 60 = 现状一字不变；
+# 下限 5 分钟（链每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧）、
+# 上限 1 年（再长等于没有保留期）。区间外 = 坏值（yaml 回落默认、override
+# 整条跳过）——绝不悄悄夹到边界上：文件里写着的数必须就是 cron 用的数。
+DEFAULT_MEDIA_RETENTION_MINUTES: int = 60
+MIN_MEDIA_RETENTION_MINUTES: int = 5
+MAX_MEDIA_RETENTION_MINUTES: int = 365 * 24 * 60
 
 # Telemetry defaults (docs/TELEMETRY.md) — anonymous usage analytics upload is
 # ON by default (like VS Code) and points at the maintainer's Supabase project.
@@ -360,6 +371,10 @@ class Config:
     # （act/lib/screenpipe_retention.py）。config.yaml 落点 recording.retention_days，
     # 设置页 override 扁平键 screenpipe_retention_days。
     screenpipe_retention_days: int = 0
+    # §72.4 原始 jpg / mp4 在 ~/.screenpipe/data 里活多久（分钟）：cleanup 步的
+    # `find -mmin +N`。config.yaml 落点 recording.media_retention_minutes，设置页
+    # override 扁平键 screenpipe_media_retention_minutes；区间见上面三个常量。
+    screenpipe_media_retention_minutes: int = DEFAULT_MEDIA_RETENTION_MINUTES
 
     # local pre-send redaction (opt-in)
     redaction_enabled: bool = False
@@ -613,6 +628,20 @@ def _nonneg_int(value) -> int:
     if n < 0:
         raise ValueError(f"negative count: {value!r}")
     return n
+
+
+def coerce_media_retention_minutes(value) -> int:
+    """§72.4 `recording.media_retention_minutes`：整数且落在
+    [MIN_MEDIA_RETENTION_MINUTES, MAX_MEDIA_RETENTION_MINUTES] 内，否则 ValueError
+    （overrides 路径整条跳过、yaml 路径回落 60）。**不夹取**——夹取会让设置页
+    显示的数与 cron 真用的数不是一个（server/settings_catalog.py 的 bounds 闸
+    在写入那一侧拦同一个区间，判例钉住两侧同一条规则）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError("not a retention: %r" % (value,))
+    minutes = int(value)
+    if not MIN_MEDIA_RETENTION_MINUTES <= minutes <= MAX_MEDIA_RETENTION_MINUTES:
+        raise ValueError("retention out of range: %r" % (value,))
+    return minutes
 
 
 def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
@@ -935,10 +964,23 @@ def _apply_recording(cfg: Config, data: dict) -> None:
         cfg.recording_ignored_apps = [
             str(a).strip() for a in apps if a is not None and str(a).strip()
         ]
-    # §72：坏值 / 负数按「未设」= 永久保留（宽容读，与 daily_loop 数字键同款）
+    _apply_recording_retention(cfg, recording)
+
+
+def _apply_recording_retention(cfg: Config, recording: dict) -> None:
+    """§72 两把保留期旋钮的 yaml 层（宽容读：坏值 / 越界按「未设」）。独立函数——
+    `_apply_recording` 的圈复杂度账本只剩一格。"""
+    # §72.2：坏值 / 负数按「未设」= 永久保留（与 daily_loop 数字键同款）
     days = _int_or(recording.get("retention_days", cfg.screenpipe_retention_days),
                    cfg.screenpipe_retention_days)
     cfg.screenpipe_retention_days = days if days >= 0 else cfg.screenpipe_retention_days
+    # §72.4：区间外 / 坏值按「未设」= 出厂 60
+    if "media_retention_minutes" in recording:
+        try:
+            cfg.screenpipe_media_retention_minutes = coerce_media_retention_minutes(
+                recording.get("media_retention_minutes"))
+        except (TypeError, ValueError):
+            cfg.screenpipe_media_retention_minutes = DEFAULT_MEDIA_RETENTION_MINUTES
 
 
 def _apply_telemetry(cfg: Config, data: dict) -> None:
@@ -1255,6 +1297,8 @@ _OVERRIDE_FIELDS: dict = {
     "trash_retention_days": int,
     # §72 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
     "screenpipe_retention_days": int,
+    # §72.4 原始媒体保留分钟数（同一区；cleanup 步经 --print-value 读同一层）
+    "screenpipe_media_retention_minutes": coerce_media_retention_minutes,
     "language": _coerce_language,
     "default_output_format": _coerce_output_format,
     "redaction_enabled": _coerce_bool,
@@ -1694,6 +1738,26 @@ _CLI_PATH_KEYS: tuple = (
 )
 
 
+# 标量设置的 shell 消费面（`--print-value`）：key → 读不出来时打的出厂值。
+# §72.4：ingest/screenpipe-cleanup.sh 读媒体保留分钟数（设置页改完下一轮 cron 即生效）。
+_CLI_VALUE_KEYS: dict = {
+    "screenpipe_media_retention_minutes": DEFAULT_MEDIA_RETENTION_MINUTES,
+}
+
+
+def _print_value(key: str) -> int:
+    """`--print-value <key>`：一个标量设置的生效值（overrides → config.yaml → 默认，
+    与守护进程同一层）打到 stdout 给 shell 消费方。与 `--print-path` 同一条纪律——
+    任何加载失败都打出厂值，绝不 traceback、绝不空行：cron 里的 prune 脚本拿它当
+    `find` 的参数。"""
+    try:
+        value = getattr(load_config(), key)
+    except Exception:  # noqa: BLE001 — silent-on-error: print the default
+        value = None
+    print(_CLI_VALUE_KEYS[key] if value is None else value)
+    return 0
+
+
 def _cli_default_path(key: str) -> str:
     vault = Path(DEFAULT_OBSIDIAN_VAULT).expanduser()
     if key == "obsidian_raw":
@@ -1706,16 +1770,24 @@ def main(argv: Optional[list] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="python3 -m act.lib.config",
-        description="Print a resolved config path for shell consumers.",
+        description="Print a resolved config path/value for shell consumers.",
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--print-path",
-        required=True,
         choices=_CLI_PATH_KEYS,
         metavar="KEY",
         help="config key to resolve: %s" % ", ".join(_CLI_PATH_KEYS),
     )
+    group.add_argument(
+        "--print-value",
+        choices=tuple(_CLI_VALUE_KEYS),
+        metavar="KEY",
+        help="scalar setting to print: %s" % ", ".join(_CLI_VALUE_KEYS),
+    )
     args = parser.parse_args(argv)
+    if args.print_value:
+        return _print_value(args.print_value)
     try:
         value = getattr(load_config(), args.print_path)
     except Exception:  # noqa: BLE001 — silent-on-error: print the default

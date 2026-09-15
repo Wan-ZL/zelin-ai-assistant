@@ -744,6 +744,9 @@ export interface SettingsField {
    *  （kind 词表今日 `email` / `session_id` / `clock_time`，后者是 §28 追记 2026-09-12 的安静时段两端）；
    *  `reasons`（add-only，§68.7 追记）= 多句的 kind 按 reason 分句（session_id：`leading_hyphen`），没对上的 reason 用 `message`；老 server 缺席 */
   check?: { kind: "email" | "session_id" | "clock_time" | string; message: BilingualText; reasons?: Record<string, BilingualText> };
+  /** add-only（§72.4）：数字旋钮的合法闭区间（今日 `screenpipe_media_retention_minutes`）——输入框的 min / max 与
+   *  「保存」闸都按它判，与 server 的 `out_of_bounds` 同一条规则（越界 PUT 400，不夹取）；老 server 缺席 */
+  bounds?: { min: number; max: number };
   [key: string]: unknown;
 }
 
@@ -846,6 +849,21 @@ export interface ScreenpipePruneReceipt {
   [key: string]: unknown;
 }
 
+/** §72.4：`ingest/screenpipe-cleanup.sh` 每轮写的媒体清理回执 `state/screenpipe_prune.json` 的投影。
+ *  `state` ok = 跑完（可能删了 0 个）/ no_data_dir = 还没录过 / unreadable = 目录在但进不去（权限，真失败）/
+ *  never = 回执缺席或坏形；`stale` = 距 `ts` 超过 server 的 PRUNE_STALE_S（链本该 30 分钟一轮）。 */
+export interface ScreenpipeMediaPrune {
+  state: "ok" | "no_data_dir" | "unreadable" | "never" | string;
+  ts: string | null;
+  retention_minutes: number | null;
+  deleted_files: number | null;
+  deleted_bytes: number | null;
+  data_dir: string | null;
+  age_seconds: number | null;
+  stale: boolean;
+  [key: string]: unknown;
+}
+
 export interface ScreenpipeDisk {
   state: "computing" | "ready" | "error" | string;
   computed_at: string | null;
@@ -867,6 +885,9 @@ export interface ScreenpipeDisk {
   growth: ScreenpipeDiskGrowth;
   retention_days: number;
   last_prune: ScreenpipePruneReceipt | null;
+  /** add-only（§72.4）：媒体保留分钟数的 effective 值与上一轮媒体清理的回执；老 server 缺席 */
+  media_retention_minutes?: number;
+  media_prune?: ScreenpipeMediaPrune;
   error?: string;
   [key: string]: unknown;
 }

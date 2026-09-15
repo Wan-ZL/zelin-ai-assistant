@@ -10,6 +10,8 @@
 //     → `charset`；原生同款不设长度帽——字符句只说字符）；clock_time = `settings.CLOCK_TIME_RE`（§28 追记 2026-09-12 安静时段
 //     两端；与 §70 每日循环同一个 HH:MM 词法，只有 `shape` 一句）；不合格的 reason 对上目录 `check.reasons` 就显示那句，否则 `check.message`；
 //     空值 = 清键，server 也不查（归一归 server：`9:30` 这样的合格草稿照发，PUT 回来就是 `09:30`）。
+// (4) 带 `bounds` 的数字字段（§72.4；今日 screenpipe_media_retention_minutes）——server `out_of_bounds` 的逐字镜像：
+//     闭区间外的草稿挡「保存」并从 PUT 里剔除（server 越界是 400，不夹取——文件里的数必须就是 cron 真用的数）。
 import type { SettingsField } from "../../types";
 
 export type Draft = Record<string, unknown>;
@@ -18,6 +20,18 @@ export type Draft = Record<string, unknown>;
 export function isValidNumberDraft(kind: string, value: unknown): boolean {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return false;
   return kind !== "int" || Number.isInteger(value);
+}
+
+/** server `out_of_bounds` 的逐字镜像（§72.4）：field.bounds 闭区间外 = true；没登记区间的字段恒 false */
+export function outOfBounds(field: SettingsField, value: unknown): boolean {
+  const bounds = field.bounds;
+  if (!bounds || typeof value !== "number" || !Number.isFinite(value)) return false;
+  return value < bounds.min || value > bounds.max;
+}
+
+/** 数字草稿最终是否合法：kind 规则 ∧ 在 bounds 内（越界的草稿挡「保存」，与 server 的 400 同一条规则） */
+export function isValidNumberValue(field: SettingsField, value: unknown): boolean {
+  return isValidNumberDraft(field.kind, value) && !outOfBounds(field, value);
 }
 
 /** server `looks_like_email` 的逐字镜像（原生 validateAddress） */
