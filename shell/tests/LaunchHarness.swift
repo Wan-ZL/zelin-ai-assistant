@@ -21,6 +21,12 @@
 // [7] pins LaunchAtLogin.isInstalledBundle — the D39 predicate behind the snapshot key
 // `launch_at_login_available` (the wizard finale offers 「登录时自动启动」 only for a bundle
 // installed under /Applications or ~/Applications; CONTRACT §28 追记).
+//
+// [8]/[9] pin EngineOwnership (CONTRACT §61.8, issue #318): the launch/exit verdicts about
+// who owns the running screenpipe engine, and the two effectful entry points driven through
+// recorded seams — the harness never runs a real pgrep/pkill (same rule as the §61.7 schedule
+// gate). [8] is the pure truth table, [9] the call sequences (log breadcrumb → pkill → poll,
+// TERM→KILL escalation on exit, and the two "do nothing" paths).
 
 import Foundation
 
@@ -153,6 +159,142 @@ func run() {
     check(!installed("/tmp/Zelin's AI Assistant.app", home: ""),
           "empty home does not widen the rule to a bare `/Applications/` suffix match")
     check(!installed(""), "empty path → not available")
+
+    checkEngineOwnershipVerdicts()
+    checkEngineOwnershipEffects()
+}
+
+// ---- 8. §61.8 engine ownership — the pure verdicts (every cell) ---- //
+func checkEngineOwnershipVerdicts() {
+    print("[8] EngineOwnership verdicts:")
+    typealias V = EngineOwnership.LaunchVerdict
+    func decide(_ alive: Bool, _ legacy: Bool) -> V {
+        EngineOwnership.decideAtLaunch(engineAlive: alive, legacyAppRunning: legacy)
+    }
+    check(decide(false, false) == V.idle, "no engine at launch → idle (autostart unchanged)")
+    check(decide(false, true) == V.idle, "no engine, legacy app running → still idle (nothing to decide)")
+    check(decide(true, false) == V.reclaim,
+          "engine alive, no legacy app → reclaim (a fresh shell spawned nothing, so it is not ours)")
+    check(decide(true, true) == V.legacyOwns,
+          "engine alive while ZelinAIEngineer runs → legacyOwns (§54 frozen app owns its own engine)")
+    check(EngineOwnership.legacyExecName == "ZelinAIEngineer",
+          "the legacy guard uses the frozen app's CFBundleExecutable verbatim (§54)")
+    check(EngineOwnership.stopAtExit(spawned: true),
+          "we spawned the engine → quitting stops it (§15 追记: quitting the app stops recording)")
+    check(!EngineOwnership.stopAtExit(spawned: false),
+          "we spawned nothing → never kill an engine we merely saw (lifecycle honesty)")
+    check(EngineOwnership.exitBudget <= 2.0,
+          "the willTerminate budget stays well inside macOS's ~5 s (\(EngineOwnership.exitBudget)s)")
+    check(EngineOwnership.pollStep > 0, "a non-positive poll step would spin forever")
+}
+
+// ---- 9. §61.8 engine ownership — the effects, through recorded seams ---- //
+func checkEngineOwnershipEffects() {
+    print("[9] EngineOwnership effects (fake pgrep/pkill — nothing is ever signalled):")
+
+    // one recorder per scenario: `alive` is the fake pgrep's answer, mutated by the fake pkill
+    final class Rec {
+        var calls: [String] = []
+        var engineAlive: Bool
+        var legacyAlive: Bool
+        var spawned: Bool
+        /// how many `killEngine` calls it takes before the fake engine dies (huge = never)
+        var diesAfterKills: Int
+        private var kills = 0
+        init(engineAlive: Bool, legacyAlive: Bool = false, spawned: Bool = false, diesAfterKills: Int = 1) {
+            self.engineAlive = engineAlive
+            self.legacyAlive = legacyAlive
+            self.spawned = spawned
+            self.diesAfterKills = diesAfterKills
+        }
+        func install() {
+            EngineOwnership.engineRunning = { [self] in calls.append("pgrep engine"); return engineAlive }
+            EngineOwnership.legacyAppRunning = { [self] in calls.append("pgrep legacy"); return legacyAlive }
+            EngineOwnership.engineSpawnedByUs = { [self] in spawned }
+            EngineOwnership.killEngine = { [self] signal in
+                calls.append("pkill \(signal)")
+                kills += 1
+                if kills >= diesAfterKills { engineAlive = false }
+            }
+            EngineOwnership.logLine = { [self] line in calls.append("log \(line)") }
+            EngineOwnership.pause = { [self] _ in calls.append("sleep") }
+        }
+    }
+    /// Between scenarios the seams are left INERT, never restored to the real
+    /// pgrep/pkill: a stray call from anywhere in this harness must not be able to
+    /// signal a real process on the developer's machine (§61.7 harness rule).
+    func disarmSeams() {
+        EngineOwnership.engineRunning = { false }
+        EngineOwnership.legacyAppRunning = { false }
+        EngineOwnership.engineSpawnedByUs = { false }
+        EngineOwnership.killEngine = { _ in }
+        EngineOwnership.logLine = { _ in }
+        EngineOwnership.pause = { _ in }
+    }
+    /// run `body` against a fresh recorder, then disarm
+    func scenario(_ rec: Rec, _ body: () -> Void) -> [String] {
+        rec.install()
+        body()
+        disarmSeams()
+        return rec.calls
+    }
+
+    // (a) nothing running at launch: one probe, zero kills, zero noise in engine.log
+    var calls = scenario(Rec(engineAlive: false)) { EngineOwnership.reclaimAtLaunch() }
+    check(calls == ["pgrep engine"],
+          "idle launch: one pgrep, no pkill, no log line — got \(calls)")
+
+    // (b) the orphan: breadcrumb → pkill -TERM → poll → "done"
+    calls = scenario(Rec(engineAlive: true)) { EngineOwnership.reclaimAtLaunch() }
+    check(calls.contains("pkill -TERM"), "orphan launch: the engine is signalled — got \(calls)")
+    check(!calls.contains("pkill -KILL"),
+          "the launch reclaim never escalates to SIGKILL (§15 contract stop recipe is TERM)")
+    check(calls.first == "pgrep engine" && calls[1] == "pgrep legacy",
+          "the legacy guard is consulted before anything is killed — got \(calls)")
+    check(calls.firstIndex(of: "log reclaim orphan engine: this shell spawned nothing yet")
+            .map { $0 < calls.firstIndex(of: "pkill -TERM")! } ?? false,
+          "the breadcrumb lands in engine.log BEFORE the kill (a crash mid-reclaim still explains itself)")
+    check(calls.last == "log reclaim orphan engine: done",
+          "a verified reclaim says so — got \(String(describing: calls.last))")
+
+    // (c) the orphan survives: bounded polling, honest log, never an infinite loop
+    let stubborn = Rec(engineAlive: true, diesAfterKills: 99)
+    calls = scenario(stubborn) { EngineOwnership.reclaimAtLaunch() }
+    check(calls.last == "log reclaim orphan engine: still alive after 2s",
+          "an unkillable orphan is reported, not pretended away — got \(String(describing: calls.last))")
+    let sleeps = calls.filter { $0 == "sleep" }.count
+    check(sleeps <= Int(EngineOwnership.reclaimBudget / EngineOwnership.pollStep) + 1,
+          "the poll is bounded by reclaimBudget (\(sleeps) sleeps)")
+
+    // (d) the frozen legacy app is in charge: hands off (§54)
+    calls = scenario(Rec(engineAlive: true, legacyAlive: true)) { EngineOwnership.reclaimAtLaunch() }
+    check(!calls.contains(where: { $0.hasPrefix("pkill") }),
+          "legacy app running → not one signal is sent — got \(calls)")
+    check(calls.last == "log reclaim skipped: ZelinAIEngineer is running and owns its own engine",
+          "and the skip is written down — got \(String(describing: calls.last))")
+
+    // (e) quit, engine ours and well behaved: TERM only
+    calls = scenario(Rec(engineAlive: true, spawned: true)) { EngineOwnership.stopAtExit() }
+    check(calls.contains("pkill -TERM") && !calls.contains("pkill -KILL"),
+          "a well-behaved engine dies on TERM — got \(calls)")
+    check(calls.first == "log stop engine on quit: this shell spawned it",
+          "the quit path leaves a breadcrumb too — got \(calls)")
+    check(!calls.contains("pgrep legacy"),
+          "the exit path never consults the legacy app: `spawned` already proves ownership")
+
+    // (f) quit, engine ignores TERM: exactly one escalation to KILL
+    calls = scenario(Rec(engineAlive: true, spawned: true, diesAfterKills: 2)) {
+        EngineOwnership.stopAtExit()
+    }
+    check(calls.filter { $0 == "pkill -TERM" }.count == 1
+            && calls.filter { $0 == "pkill -KILL" }.count == 1,
+          "TERM then exactly one KILL — got \(calls)")
+    check(calls.firstIndex(of: "pkill -TERM")! < calls.firstIndex(of: "pkill -KILL")!,
+          "TERM before KILL")
+
+    // (g) quit, engine is somebody else's: not a single probe of it
+    calls = scenario(Rec(engineAlive: true, spawned: false)) { EngineOwnership.stopAtExit() }
+    check(calls.isEmpty, "we spawned nothing → the quit path does nothing at all — got \(calls)")
 }
 
 run()
