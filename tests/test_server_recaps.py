@@ -60,16 +60,25 @@ class SettingsTestCase(_Case):
         self.assertEqual(snap["default_language"], "auto")
         self.assertEqual(snap["slack_draft_enabled"], False)
         self.assertEqual(snap["languages"], ["auto", "zh", "en"])
+        # §63.10 只读的第四格：出厂 = 快速五行（面板拿它当形状选择器的初值）
+        self.assertEqual(snap["default_shape"], "lines")
         self.assertEqual(snap["source"], {"enabled": "default", "default_language": "default",
-                                          "slack_draft_enabled": "default"})
+                                          "slack_draft_enabled": "default",
+                                          "default_shape": "default"})
 
     def test_config_yaml_layer(self):
         write_text(self.home / "config.yaml",
-                   "recap:\n  enabled: false\n  default_language: zh\n  slack_draft:\n    enabled: 'true'\n")
+                   "recap:\n  enabled: false\n  default_language: zh\n  default_shape: sections\n"
+                   "  slack_draft:\n    enabled: 'true'\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
         self.assertEqual((snap["enabled"], snap["default_language"], snap["slack_draft_enabled"]),
                          (False, "zh", True))
+        # §63.10：形状也是 config.yaml 层的一格（PUT 不收它——管线没有对应的 overrides 扁平键）
+        self.assertEqual(snap["default_shape"], "sections")
         self.assertEqual(set(snap["source"].values()), {"config"})
+        write_text(self.home / "config.yaml", "recap:\n  default_shape: klingon\n")
+        _s, snap = get_json(self.port, "/api/settings/recap")
+        self.assertEqual(snap["default_shape"], "lines")   # 认不出的值回落到出厂形，不 500
         write_text(self.home / "config.yaml", "recap: [not, a, map]\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
         self.assertEqual(snap["slack_draft_enabled"], False)
@@ -101,6 +110,11 @@ class SettingsTestCase(_Case):
 
     def test_put_rejects_unknown_fields_bad_values_and_empty(self):
         status, body = put_json(self.port, "/api/settings/recap", {"targets": {}})
+        self.assertEqual(status, 400)
+        assert_envelope(self, body, "UNKNOWN_FIELD")
+        # §63.10：`default_shape` GET 得到、PUT 写不进——它只住 config.yaml，
+        # 写进 settings_overrides.json 的话管线根本不读，那个开关会是一颗假按钮
+        status, body = put_json(self.port, "/api/settings/recap", {"default_shape": "sections"})
         self.assertEqual(status, 400)
         assert_envelope(self, body, "UNKNOWN_FIELD")
         status, body = put_json(self.port, "/api/settings/recap", {"default_language": "fr"})

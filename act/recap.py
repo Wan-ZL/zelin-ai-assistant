@@ -366,18 +366,23 @@ def _draft_body(rec: dict, st: dict, cfg) -> str:
     """草稿正文 = 那一语言粘出去的那份（§63.10 两种形状同一条路）；那一版缺这门
     语言就退到另一门——空草稿比一份英文草稿差得多。"""
     lang = _draft_language(st, cfg)
-    return copy_body(rec, lang) or copy_body(rec, "en" if lang == "zh" else "zh")
+    body = copy_body(rec, lang) or copy_body(rec, "en" if lang == "zh" else "zh")
+    return body if body.strip() else ""
 
 
 def post_slack_draft(rec: dict, channel_id: str, st: dict, runner, cfg, now: float) -> dict:
     """Whitelisted call → ``rec["slack_draft"]`` receipt. Disabled toggle or a
-    recap without text short-circuits without any model call."""
+    recap without text short-circuits without any model call.
+
+    §63.10：「有正文」= ``store.has_text`` **且**渲染出来的那份非空。两道判据同源
+    （两边都是 `recap_text.render_*`），第二道是兜底：一份正文渲染成空串的纪要
+    宁可诚实地 ``failed``，也不许把一个空正文送进模型、把一份空草稿放进人的草稿箱。"""
+    body = _draft_body(rec, st, cfg) if st["slack_draft_enabled"] and store.has_text(rec) else ""
     if not st["slack_draft_enabled"]:
         receipt = {"status": slack_draft.STATUS_DISABLED, "channel_link": None}
-    elif not store.has_text(rec):
+    elif not body:
         receipt = {"status": slack_draft.STATUS_FAILED, "channel_link": None}
     else:
-        body = _draft_body(rec, st, cfg)
         try:
             raw = _call_model(slack_draft.build_prompt(channel_id, body), runner, cfg,
                               slack_draft.ALLOWLIST_ARGV, DRAFT_TIMEOUT_S)
@@ -462,7 +467,11 @@ def _generate_closed(session: sessions.Session, key: str, conn, st: dict, runner
         _log("generation failed for %s (%d/%d): %s" % (key, n, MAX_GENERATION_FAILURES, exc))
         if n < MAX_GENERATION_FAILURES:
             return False
-        _apply_lines(rec, None, store.QUALITY_FAILED, None, False, now)
+        # §63.10：放弃的那一版也带着**解析出来的**形状落地——不传就回落到参数默认的
+        # 五行形，于是一次超时能把一份选定的可发送长版永久打回五行（`record_shape`
+        # 的第二级读的就是记录上这个键），而且没有任何一句话说过这件事
+        _apply_lines(rec, None, store.QUALITY_FAILED, None, False, now,
+                     shape=record_shape(rec, st))
     state["failures"].pop(key, None)
     _auto_draft(rec, st, runner, cfg, now)
     store.save_recap(rec)

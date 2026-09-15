@@ -32,7 +32,8 @@ import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../
 import { copyText } from "../detail/copyText";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import {
-  changedLines, hasRecapText, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, problemLabel,
+  changedLines, hasRecapText, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, pickShape,
+  problemLabel,
   recapBody, recapClipboardText, recapHeader, recapProblems, recapRepairs, recapShape, RECAP_SHAPES,
   repairLabel, REVERT_POLL_MS, revertPhase, slackDraftLabel, versionLabel, type GenerationPhase,
   type RecapShape, type RevertPending, type RevertPhase,
@@ -202,8 +203,8 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const [language, setLanguage] = useState<Language>(pickLanguage(settings?.default_language, ui));
   const [panel, setPanel] = useState<Panel>(null);
   const [note, setNote] = useState("");
-  // §63.10 下一次生成用哪种形状（默认 = 这一份现在的形状；切行时复位）
-  const [pickedShape, setPickedShape] = useState<RecapShape>(recapShape(row));
+  // §63.10 下一次生成用哪种形状（默认 = 这一份现在的形状 > 配置的出厂形状；切行时复位）
+  const [pickedShape, setPickedShape] = useState<RecapShape>(pickShape(row, settings?.default_shape));
   const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -222,13 +223,15 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     setLanguage(pickLanguage(settings?.default_language, ui));
     setPanel(null);
     setNote("");
-    setPickedShape(recapShape(row));
+    setPickedShape(pickShape(row, settings?.default_shape));
     setFlash(null);
     setHistory(null);
     setHistoryError(null);
     setPicked(null);
     setRevertPending(null);
-  }, [row.key, settings?.default_language, ui]);
+    // 设置是异步拉来的（挂载时一次）：`default_shape` 落地也要重播一次初值，
+    // 否则一行还没出过稿时选择器会停在「快速五行」，而配置说的是可发送长版
+  }, [row.key, settings?.default_language, settings?.default_shape, ui]);
 
   useEffect(() => {
     const version = row.version ?? 0;

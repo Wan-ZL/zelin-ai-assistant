@@ -213,6 +213,18 @@ export function recapShape(row: RecapRow): RecapShape {
   return row.shape === "sections" ? "sections" : "lines";
 }
 
+/**
+ * §63.10 形状选择器的初值 = **这一份出过稿的形状 > 配置的出厂形状**
+ * （`act/recap.record_shape` 那条优先级链去掉按钮那一级的镜像）。
+ * 只用 `recapShape(row)` 会让还没出过稿 / 本 PR 之前生成的每一行都默认「快速五行」，
+ * 而面板每次都把选中的形状随请求送出去——于是「重新生成」一按就替配置做了主，
+ * 而且因为形状会落到记录上，`recap.default_shape: sections` 再也回不来。
+ */
+export function pickShape(row: RecapRow, defaultShape?: string): RecapShape {
+  if (row.shape === "sections" || row.shape === "lines") return row.shape;
+  return defaultShape === "sections" ? "sections" : "lines";
+}
+
 /** 形状选择器的两项（文案仍走唯一的双语机制 text(zh, en)） */
 export const RECAP_SHAPES: { id: RecapShape; zh: string; en: string; hint_zh: string; hint_en: string }[] = [
   { id: "lines", zh: "快速五行", en: "Quick five lines",
@@ -233,10 +245,12 @@ export function recapSections(row: RecapRow, language: Language): RecapSection[]
 /**
  * §63.10 这一行有没有正文——**两种形状都算**（`act/lib/recap_store.has_text` 的镜像）。
  * 只看 `en` 会让一份可发送长版在 badge、按钮、脚注里处处被当成「没出稿」。
+ * 长版这一支问的是 daemon 渲染好的正文非不非空（不是 `sections_en` 列表非不非空）：
+ * 「空」在这个系统里是**一个**判据，否则这里会给一个空 `<pre>` 配一颗可用的复制键。
  */
 export function hasRecapText(row: RecapRow): boolean {
   if (Array.isArray(row.en) && row.en.length) return true;
-  return Array.isArray(row.sections_en) && row.sections_en.length > 0;
+  return Boolean(recapBody(row, "en").trim());
 }
 
 /** 详情默认语言：recap.default_language auto 跟随 UI 语言 */

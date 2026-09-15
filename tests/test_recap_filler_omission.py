@@ -31,6 +31,10 @@ FULL_EN = ["Decided: the run moves to the new mix", "Split: Ann owns the eval",
 FULL_ZH = ["定了：训练改用新配比", "分工：评测归 Ann", "截止：未定", "较上次变化：无记录", "待定：无"]
 
 
+def _never_called(argv, **kwargs):
+    raise AssertionError("no model call may happen for a recap without a body: %r" % (argv,))
+
+
 class LinesTestCase(unittest.TestCase):
     def test_the_template_fillers_are_dropped_in_both_languages(self):
         self.assertEqual(rt.render(FULL_EN).split("\n"), FULL_EN[:2])
@@ -93,6 +97,43 @@ class SectionsTestCase(unittest.TestCase):
                          ["Decided:", "1. a", "2. b", "", "Open:", "3. c"])
         self.assertTrue(rt.is_filler_item("None."))
         self.assertFalse(rt.is_filler_item("none of the vendors replied"))
+
+    def test_an_all_filler_sections_recap_renders_whole_like_the_five_lines(self):
+        """一条都不剩时长版也照原样出——`render` 的那条最后款对两种形状同时成立。
+
+        不这样的话「空」在系统里有两个判据：`has_text` 说有正文、渲染说空串，
+        于是通知说「已生成」、面板给一个空 `<pre>` 配一颗可用的复制键、
+        Slack 草稿把空正文送进模型，而这三件事没有一件说得出为什么。"""
+        secs = [{"key": "decided", "modality": "decided", "items": ["none"]},
+                {"key": "open", "modality": "open", "items": ["无"]}]
+        self.assertEqual(rt.render_sections(secs, "en").split("\n"),
+                         ["Decided:", "1. none", "", "Open:", "2. 无"])
+        # 模型整节回了空 items（validate 的 `section_empty`，重试再失败 = 需复核但仍可复制）
+        self.assertEqual(rt.render_sections([{"key": "open", "modality": "open", "items": []}], "en"),
+                         "Open:")
+        # 真的没有节 / 不是节的东西：空串（`has_text` 据此说「这份没出稿」）
+        self.assertEqual(rt.render_sections([], "en"), "")
+        self.assertEqual(rt.render_sections([1, "x"], "en"), "")
+
+    def test_an_all_filler_sections_recap_is_never_announced_as_text(self):
+        """「有正文吗」只有一个判据：`has_text` 与渲染出来的那份必须同时成立。"""
+        secs = [{"key": "open", "modality": "open", "items": ["无"]}]
+        rec = {"shape": "sections", "en": None, "zh": None, "sections_en": secs, "sections_zh": secs}
+        recap._write_copy_bodies(rec)
+        self.assertEqual(rec["copy_en"], recap.copy_body(rec, "en"))
+        self.assertTrue(rec["copy_en"])                    # 照原样出 = 仍是可复制的一份
+        self.assertTrue(store.has_text(rec))
+        # 渲染不出任何东西的那一种（手改坏的文件）：一处都不许说它有正文
+        mangled = {"shape": "sections", "en": None, "zh": None, "sections_en": [1, 2],
+                   "sections_zh": [1, 2]}
+        recap._write_copy_bodies(mangled)
+        self.assertIsNone(mangled["copy_en"])
+        self.assertFalse(store.has_text(mangled))
+        self.assertIsNone(store._version_handle(dict(mangled, version=1)))
+        st = dict(store.settings(config.Config(raw={"recap": {}})), slack_draft_enabled=True)
+        receipt = recap.post_slack_draft(mangled, "C0123456789", st, _never_called,
+                                         config.Config(), 0.0)
+        self.assertEqual(receipt["status"], "failed")      # 空草稿比一句诚实的 failed 差得多
 
 
 class EndToEndTestCase(unittest.TestCase):

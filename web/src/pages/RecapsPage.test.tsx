@@ -9,6 +9,7 @@
 //   6) 三栏 活跃 / 已归档 / 已忽略：标记已发送即归档、忽略 / 恢复一颗按钮，默认只看活跃（§63.5 追记，issue #301）；
 //   7) §63.10（issue #303）：可发送长版的正文照 daemon 渲染好的 copy_* 显示（所见即所复制）、
 //      不给按位置的引用 chip；「重新生成」面板的形状选择器把 shape 一并送进 inbox，
+//      选择器的初值 = 这一行的形状 > 设置里的 `default_shape`（没出过稿的行不许替配置做主），
 //      备注预检随形状收口并在五行形下指路长版；
 //   8) 「上一版」= GET /api/recaps/history 的两版并排 + 逐行改动 + 一颗回退（inbox recap_revert），
 //      回退在途时面板留一条回执（排队中 / 90 s 后「actd 可能没在跑」）、帽满时说清回退会挤掉最早一版，
@@ -64,7 +65,7 @@ function sectionsRecap(over: Partial<RecapRow> = {}): RecapRow {
 
 function settings(over: Partial<RecapSettings> = {}): RecapSettings {
   return { enabled: true, default_language: "auto", slack_draft_enabled: false,
-    languages: ["auto", "zh", "en"], source: {}, ...over };
+    default_shape: "lines", languages: ["auto", "zh", "en"], source: {}, ...over };
 }
 
 function seedBoard(recaps: RecapRow[], recapCounts?: RecapLaneTotals): Board {
@@ -600,6 +601,18 @@ describe("RecapsPage", () => {
     expect(screen.queryByText(/A line cannot be dropped/)).toBeNull();
     expect(screen.queryByText(/cannot honor these/)).toBeNull();
     expect(screen.getByRole("button", { name: "Regenerate" })).toBeTruthy();   // 不再改口成「仍要重新生成」
+  });
+
+  it("a row that has never been generated follows the configured default shape", async () => {
+    // 本 PR 之前生成的行 / 还没出过稿的行都没有 `shape` 键。选择器只看行的话，
+    // 「重新生成」会替 `recap.default_shape: sections` 做主，而且那个五行形会被
+    // 写死到记录上（`record_shape` 的第二级），配置从此再也回不来。
+    await renderPage([recap()], { default_shape: "sections" });
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    expect(screen.getByRole("radio", { name: "Sendable long form" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "sections" }));
   });
 
   it("a recap already in the long shape defaults the picker to it", async () => {

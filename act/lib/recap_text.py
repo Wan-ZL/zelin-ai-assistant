@@ -652,6 +652,33 @@ def _title_of(sec: dict, lang: str) -> str:
     return _section_title(str(sec.get("key") or ""), str(sec.get("modality") or ""), lang)
 
 
+def _sections_of(sections) -> list:
+    """像样的节（手改坏的文件里不是 dict 的东西渲染不出节）。"""
+    return [sec for sec in (sections or []) if isinstance(sec, dict)]
+
+
+def _kept_pairs(sections) -> list:
+    """``[(节, 留下的条目)]``——填充值剔掉，一条不剩的节整节略掉。"""
+    pairs = [(sec, _kept_items(sec)) for sec in _sections_of(sections)]
+    return [pair for pair in pairs if pair[1]]
+
+
+def _whole_pairs(sections) -> list:
+    """``[(节, 全部条目)]``——「一节都不剩」时的回落：标题照留，哪怕这一节空着。"""
+    return [(sec, [str(item) for item in (sec.get("items") or [])])
+            for sec in _sections_of(sections)]
+
+
+def _numbered(pairs: list, lang: str) -> list:
+    """``[(节, 条目)]`` → 渲染好的节块，编号**跨节连续**。"""
+    blocks, n = [], 0
+    for sec, items in pairs:
+        rows = ["%d. %s" % (n + i + 1, item) for i, item in enumerate(items)]
+        n += len(items)
+        blocks.append("\n".join([_title_of(sec, lang)] + rows))
+    return blocks
+
+
 def render_sections(sections: list, lang: str = "en") -> str:
     """The sendable document (§63.10): section title + modality suffix + the
     items, **numbered continuously across sections** (issue #332: the form the
@@ -661,17 +688,14 @@ def render_sections(sections: list, lang: str = "en") -> str:
     strings stay markup-free, so the `_MARKUP` ban still holds over everything
     it wrote. Sections whose items are all filler (:func:`is_filler_item`) are
     dropped whole, which is the same promise :func:`render` keeps for the five
-    lines. Nothing here can fail on a hand-mangled file: unknown keys render
-    themselves."""
-    blocks, n = [], 0
-    for sec in sections or []:
-        items = _kept_items(sec)
-        if not items:
-            continue
-        rows = ["%d. %s" % (n + i + 1, item) for i, item in enumerate(items)]
-        n += len(items)
-        blocks.append("\n".join([_title_of(sec, lang)] + rows))
-    return "\n\n".join(blocks)
+    lines — **including its last clause**: when nothing survives the filtering
+    (every item is filler, or every section came back with an empty ``items``
+    behind 需复核) the sections are rendered as they came, because an empty
+    body that the record still calls text is a worse lie than a filler line
+    (and `recap_store.has_text` would announce it, the panel would show an
+    empty `<pre>`, the Slack draft would carry ""). Nothing here can fail on a
+    hand-mangled file: unknown keys render themselves, non-sections drop out."""
+    return "\n\n".join(_numbered(_kept_pairs(sections) or _whole_pairs(sections), lang))
 
 
 def render_for(shape: str, payload, lang: str = "en") -> str:

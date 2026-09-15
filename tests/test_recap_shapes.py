@@ -305,6 +305,26 @@ class RecordTestCase(unittest.TestCase):
         self.assertEqual(rec["repairs"], [])              # 长度修剪是五行形自己的动作
         self.assertTrue(rec["copy_en"])                   # 仍可复制（判决是「读一遍再粘」）
 
+    def test_giving_up_after_n_failures_keeps_the_shape(self):
+        """连炸 N 轮 = 放弃，但那一版仍带着**解析出来的形状**（粘性的下半边）。
+
+        放弃那一处不传 shape 就回落到参数默认的五行形：#332 的 4,493 词转写连着
+        超时三轮之后，一份配置成可发送长版的纪要会被永久打回五行——`record_shape`
+        的第二级读的正是记录上这个键，此后每一次重新生成（包括从看板按下的那一次）
+        都出五行，而没有任何一句话说得出为什么。"""
+        def boom(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="timed out")
+        for i in range(recap.MAX_GENERATION_FAILURES):
+            recap.run_once(now=fx.T0 + (34 + i) * MIN, conn=self.conn, runner=boom, cfg=self.cfg)
+        rec = store.load_recap(KEY)
+        self.assertEqual((rec["quality"], rec["shape"]), (store.QUALITY_FAILED, "sections"))
+        self.assertIsNone(rec["copy_en"])                 # 放弃 = 没有正文，两种形状都一样
+        self.assertFalse(store.has_text(rec))
+        # 之后不带形状的重新生成仍然出可发送长版（配置说的是它，失败没有资格改这件事）
+        self.assertEqual(recap.record_shape(rec, store.settings(self.cfg)), "sections")
+        recap.generate(KEY, now=fx.T0 + 60 * MIN, conn=self.conn, runner=self._runner, cfg=self.cfg)
+        self.assertEqual(store.load_recap(KEY)["shape"], "sections")
+
     def test_the_inbox_form_only_accepts_the_two_literals(self):
         base = {"action": "recap_generate", "meeting_key": KEY}
         self.assertEqual(store.inbox_argv(dict(base, shape="sections")),

@@ -343,12 +343,21 @@ def has_lines(value) -> bool:
 
 def has_text(rec) -> bool:
     """这份记录（或一条 history 条目）有没有可复制的正文——**两种形状都算**
-    （§63.10）：五行形看 ``en``，可发送长版看 ``sections_en``。凡是「有正文吗」的
-    判决都走这里（history 入库、Slack 草稿闸、通知、投影句柄、回退目标），
-    否则一份 sections 纪要会在每一处都被当成「没出稿」。"""
+    （§63.10）：五行形看 ``en``，可发送长版看 ``sections_en`` **渲染出来那份非空**。
+    凡是「有正文吗」的判决都走这里（history 入库、Slack 草稿闸、通知、投影句柄、
+    回退目标），否则一份 sections 纪要会在每一处都被当成「没出稿」。
+
+    长版这一支为什么要渲染一遍而不是只看列表非空：「空」在这个系统里必须是**一个**
+    判据。手改坏的 `sections_en`（一列数字）渲染不出任何东西，只看列表非空会让
+    通知说「已生成」、面板给一个空 `<pre>` 配一颗可用的复制键、Slack 草稿正文是
+    空串——而 server 的 `_shaped_entries`（看 ``en`` / ``copy_en``）又把同一条
+    history 条目丢掉，面板于是数得出一版却打不开它。"""
     if not isinstance(rec, dict):
         return False
-    return has_lines(rec.get("en")) or has_lines(rec.get("sections_en"))
+    if has_lines(rec.get("en")):
+        return True
+    sections = rec.get("sections_en")
+    return has_lines(sections) and bool(recap_text.render_sections(sections, "en"))
 
 
 def _is_version(value) -> bool:

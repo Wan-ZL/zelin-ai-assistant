@@ -11,6 +11,9 @@ server.settings.config_yaml_doc, which degrades to {} without PyYAML):
    (``recap_enabled`` / ``recap_default_language`` / ``recap_slack_draft_enabled``)
    → config.yaml ``recap:`` block → default; PUT diff-writes the flat keys with
    the §15 semantics server/settings.py already implements for the model knobs.
+   §63.10 adds a fourth, **read-only** value on the same GET: ``default_shape``
+   (``lines`` | ``sections``, config.yaml only — the pipeline has no override
+   flat key for it), which the 会议纪要 panel seeds its shape picker from.
 
 2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」/「忽略」
    write ``state/recap/marks.json``
@@ -60,7 +63,11 @@ SHAPES: tuple = ("lines", "sections")
 OVERRIDE_KEYS = {"enabled": "recap_enabled",
                  "default_language": "recap_default_language",
                  "slack_draft_enabled": "recap_slack_draft_enabled"}
-DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False}
+# §63.10：`default_shape` 在 DEFAULTS 里但**不在** OVERRIDE_KEYS 里——它只住 config.yaml
+# 的 recap 块（act/lib/recap_store.settings 读的就是那里，没有 overrides 扁平键），
+# 所以它是**只读**的一格：GET 照层报给面板（面板拿它当形状选择器的初值），PUT 仍只认三把旋钮
+DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False,
+            "default_shape": SHAPES[0]}
 # §63.5 追记（issue #301）：dismissed = 「忽略」（add-only 词表，永不改写已有值）
 MARKS: tuple = ("copied", "sent", "dismissed")
 # §63.9（issue #300）GET /api/recaps/history 的读门与上限
@@ -120,8 +127,17 @@ def coerce_language(value) -> str:
     return v
 
 
+def coerce_shape(value) -> str:
+    """§63.10 出稿形状：两个字面量之外一律 ValueError（调用方回落到默认形，
+    与 act 侧 `recap_text.normalize_shape` 对一个手改坏的值的结论一致）。"""
+    v = str(value or "").strip().lower()
+    if v not in SHAPES:
+        raise ValueError("default_shape must be one of %s" % ", ".join(SHAPES))
+    return v
+
+
 _COERCE = {"enabled": coerce_bool, "default_language": coerce_language,
-           "slack_draft_enabled": coerce_bool}
+           "slack_draft_enabled": coerce_bool, "default_shape": coerce_shape}
 
 
 def _coerce_or(field: str, value, default):
@@ -139,7 +155,7 @@ def _config_block(home: Path) -> dict:
     spells (slack_draft.enabled flattened); {} when absent / unreadable."""
     blk = settings.config_yaml_doc(home).get("recap")
     blk = blk if isinstance(blk, dict) else {}
-    out = {k: blk[k] for k in ("enabled", "default_language") if k in blk}
+    out = {k: blk[k] for k in ("enabled", "default_language", "default_shape") if k in blk}
     draft = blk.get("slack_draft")
     if isinstance(draft, dict) and "enabled" in draft:
         out["slack_draft_enabled"] = draft["enabled"]
@@ -161,9 +177,13 @@ def snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``RecapSettings`` mirrors verbatim)::
 
         {"enabled": bool, "default_language": "auto|zh|en",
-         "slack_draft_enabled": bool, "languages": [...],
+         "slack_draft_enabled": bool, "default_shape": "lines|sections",
+         "languages": [...],
          "source": {"enabled": "override|config|default", ...}}
-    """
+
+    §63.10：``default_shape`` 是**只读**的一格（config.yaml 层，无 overrides 扁平键）——
+    面板拿它当形状选择器的初值，否则「重新生成」会替配置做主，把每一份老纪要
+    永久盖成五行形。"""
     overrides = settings.read_overrides(home)
     values, source = _base_values(home)
     for field, key in OVERRIDE_KEYS.items():

@@ -608,6 +608,8 @@ export interface RecapSettings {
   enabled: boolean;
   default_language: "auto" | "zh" | "en" | string;
   slack_draft_enabled: boolean;
+  /** §63.10 出厂形状（只读：config.yaml 层，PUT 仍只认三把旋钮）——形状选择器的初值 */
+  default_shape: "lines" | "sections" | string;
   languages: string[];
   source: { [key: string]: unknown };
   [key: string]: unknown;

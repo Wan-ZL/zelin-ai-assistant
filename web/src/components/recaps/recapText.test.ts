@@ -8,7 +8,7 @@ import type { RecapRow } from "../../types";
 import {
   LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, RECAP_SHAPES, REVERT_POLL_MS,
   appLabel, badgesFor, changedLines, generationPhase, groupByDay, hasRecapText, isGenerating, laneCounts,
-  lineCitation, pickLanguage, problemLabel, recapBody, recapClipboardText, recapHeader, recapLane,
+  lineCitation, pickLanguage, pickShape, problemLabel, recapBody, recapClipboardText, recapHeader, recapLane,
   recapProblems, recapRepairs, recapSections, recapShape, repairLabel, revertPhase, rowLabel, slackDraftLabel,
   versionLabel,
 } from "./recapText";
@@ -314,11 +314,27 @@ describe("recapText", () => {
     expect(hasRecapText(row())).toBe(true);
     expect(hasRecapText(row({ en: null, zh: null }))).toBe(false);
     expect(hasRecapText(row({ en: null, zh: null, sections_en: [] }))).toBe(false);
+    // 「空」只有一个判据：节在、渲染出来的正文不在 = 没出稿（否则是一颗复制得到
+    // 空字符串的按钮 + 一个空 `<pre>`，而 badge 说「已生成」）
+    expect(hasRecapText(sectionsRow({ copy_en: null, copy_zh: null }))).toBe(false);
     // badge 不许因为 en 是空的就把一份可发送长版说成「没出稿」
     expect(badgesFor(sectionsRow()).map((b) => b.id)).toEqual(["new"]);
     expect(badgesFor(sectionsRow({ version: 3, partial: true })).map((b) => b.id))
       .toEqual(["partial", "new", "updated"]);
     expect(RECAP_SHAPES.map((s) => s.id)).toEqual(["lines", "sections"]);
+  });
+
+  it("seeds the picker from the row, then from the configured default shape", () => {
+    // 出过稿的那一份自己说了算（配置改不动它——粘性在 act/recap.record_shape 那条链上）
+    expect(pickShape(sectionsRow(), "lines")).toBe("sections");
+    expect(pickShape(row({ shape: "lines" }), "sections")).toBe("lines");
+    // 还没出过稿 / 本 PR 之前生成的行没有 shape 键：这时候听配置的
+    const legacy = row();
+    expect(pickShape(legacy, "sections")).toBe("sections");
+    expect(pickShape(legacy, "lines")).toBe("lines");
+    // 设置还没拉回来 / 配置被手改坏 = 五行形（与 act 侧的回落同一个结论）
+    expect(pickShape(legacy, undefined)).toBe("lines");
+    expect(pickShape(legacy, "garbage")).toBe("lines");
   });
 
   it("only keeps well-formed sections off the wire", () => {
