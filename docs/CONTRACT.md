@@ -4586,6 +4586,34 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
   开头「§54 名字互换追记」——壳 = "Zelin's AI Assistant" / `Zelin's AI Assistant.app`，
   旧 app = "Zelin's AI Assistant (old)"，两个 bundle id 都不动。**
 
+**2026-09-14 追记（add-only，issue #314 / D54）：`server.launchd.log` 的噪音闸。**
+本节上文只禁了 EADDRINUSE 那一种 traceback 洪水；live 机器上的 1.9 MB 日志里有
+**101 段**同一个 `ConnectionResetError`——浏览器关 tab / 刷新时 keep-alive 连接被
+reset，异常抛在 `handle_one_request` 读请求行时（在 Handler 之前），`Handler._dispatch`
+的 `except (BrokenPipeError, ConnectionResetError)` 够不着它，socketserver 的默认
+`handle_error` 于是照打全栈。同一份日志的请求行还没有时间戳，对不上「我 14:34 点
+了哪个按钮」。自本追记起三条不变式（实现 `server/app.py`，判例
+`tests/test_server_log_noise.py`）：
+
+- **`make_server` 起的是 `server.app._Server`**（`ThreadingHTTPServer` 子类）：
+  `handle_error` 只在 `sys.exc_info()[1]` 是 `BrokenPipeError` /
+  `ConnectionResetError` / `ConnectionAbortedError` 时静默返回，**其余异常一律
+  `super().handle_error()` 打完整 traceback**——静的是噪音，不是真崩溃；永不用
+  空泛的 `except Exception` 兜（那会把真事故藏进沉默里）。
+- **访问日志行首带本地 ISO 时间戳**（`2026-09-14T14:34:05-0400`，`Handler.
+  log_message` 经 `_access_line`，它是这条行的唯一写者）——`BaseHTTPRequestHandler`
+  自带的 `log_date_time_string` 不带年也不带时区，跨时区读不了。
+- **轮询端点采样**：`Handler.log_request` 对 `_POLL_PATHS`（`/api/board`、
+  `/api/health`，query 不算数）的 **2xx/304** 过一个进程级采样器
+  （`_PollSampler`，`threading.Lock` + `{path: (last_ts, suppressed)}`，窗口
+  300 s）；同一 path 在窗口内的后续请求不写行，被吃掉的条数随窗口后第一条真写
+  出去的行报出来（`… 200 4096 (+57 suppressed in the last 300s)`）——**日志不做
+  静默丢弃**。非轮询路径与任何非 2xx/304 一律逐条写；env `ZAI_LOG_POLLS=1`（真值
+  `1|true|yes|on`）关掉采样，即本节要求的「debug 档」。
+- **日志仍不删**：server 永不写第二份日志、永不删 / 轮转任何日志（§55 审计 L3、
+  §68.4 `GET /api/logs/{name}` 同款纪律）——本追记只减产生噪音的量，既有的 1.9 MB
+  由 owner 自行处置。
+
 ### 54.3 配置解析与构建（原 §54 正文，v0.48.18 按 54.2 修订处已标注）
 
 - **配置解析（启动期一次性，全部只读）**：PORT = env `ZAI_PORT` → defaults

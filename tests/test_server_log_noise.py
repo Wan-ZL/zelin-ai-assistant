@@ -1,0 +1,233 @@
+"""server.launchd.log 的噪音闸（CONTRACT §54.2 追记 2026-09-14，issue #314）。
+
+三条法条各自的判例：(1) `_Server.handle_error` 只吞三个连接类异常、其余照打
+全栈；(2) 访问日志行首带本地 ISO 时间戳；(3) `/api/board` / `/api/health` 的
+2xx/304 按窗口采样，被吃掉的条数随下一行报出来，`ZAI_LOG_POLLS=1` 关采样。
+
+注意：tests/test_server_common.py 在 import 期把 `Handler.log_message` 换成
+no-op（进程内全局），所以本文件一律直接练模块级纯函数与 handler 方法本身，
+不经真请求——发不发那一行是这里唯一要证的事。
+"""
+import http
+import io
+import os
+import re
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from http.server import ThreadingHTTPServer
+from unittest import mock
+
+from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
+
+from server import app
+
+# 2026-09-14T14:34:05-0400 / …+0000（`%z` 在 UTC runner 上也一定有偏移）
+ISO_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4} ")
+
+
+def _handler(path, requestline=None):
+    """不跑 __init__ 的 Handler + 收行的假 log_message（实例属性盖过类属性）。"""
+    handler = app.Handler.__new__(app.Handler)
+    handler.path = path
+    handler.requestline = requestline or "GET %s HTTP/1.1" % path
+    lines = []
+    handler.log_message = lambda fmt, *args: lines.append(fmt % args)
+    return handler, lines
+
+
+def _raise_into_handle_error(exc):
+    """在 except 块里调 handle_error（它读 sys.exc_info()），回 (stdout, stderr)。"""
+    server = app._Server.__new__(app._Server)  # 不 bind 端口
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        raise exc
+    except BaseException:
+        with redirect_stdout(out), redirect_stderr(err):
+            server.handle_error(None, ("127.0.0.1", 53728))
+    return out.getvalue(), err.getvalue()
+
+
+class ServerClassTestCase(unittest.TestCase):
+    """make_server 起的就是带 handle_error 的那个子类。"""
+
+    def test_make_server_returns_quiet_server(self):
+        home = tempfile.mkdtemp(prefix="zai-log-noise-home-")
+        httpd = app.make_server(port=0, home=home, start_watcher=False)
+        self.addCleanup(httpd.server_close)
+        self.assertIsInstance(httpd, app._Server)
+        self.assertIsInstance(httpd, ThreadingHTTPServer)
+
+
+class HandleErrorTestCase(unittest.TestCase):
+    """连接类异常静默；其余异常的全栈一个字不少。"""
+
+    def test_connection_errors_are_silent(self):
+        for exc in (ConnectionResetError(54, "Connection reset by peer"),
+                    BrokenPipeError(32, "Broken pipe"),
+                    ConnectionAbortedError(53, "Software caused abort")):
+            with self.subTest(exc=type(exc).__name__):
+                out, err = _raise_into_handle_error(exc)
+                self.assertEqual(out, "")
+                self.assertEqual(err, "")
+
+    def test_real_exception_still_prints_traceback(self):
+        out, err = _raise_into_handle_error(ValueError("boom"))
+        both = out + err
+        self.assertIn("ValueError", both)
+        self.assertIn("boom", both)
+        self.assertIn("Traceback", both)
+
+    def test_quiet_classes_are_exactly_three(self):
+        # 只吞连接类——别的 OSError（磁盘满、EMFILE）仍要炸出来
+        self.assertEqual(app._QUIET_CONN_ERRORS,
+                         (BrokenPipeError, ConnectionResetError,
+                          ConnectionAbortedError))
+        out, err = _raise_into_handle_error(OSError(24, "Too many open files"))
+        self.assertIn("OSError", out + err)
+
+
+class AccessLineTestCase(unittest.TestCase):
+    """访问日志行首的本地 ISO 时间戳（原来只有 `127.0.0.1 - …`）。"""
+
+    def test_line_starts_with_iso_stamp(self):
+        line = app._access_line("127.0.0.1", '"GET /api/board HTTP/1.1" 200 12')
+        self.assertRegex(line, ISO_STAMP)
+        self.assertTrue(line.endswith(
+            '127.0.0.1 - "GET /api/board HTTP/1.1" 200 12\n'))
+
+    def test_stamp_follows_the_injected_clock(self):
+        line = app._access_line("127.0.0.1", "x", now=1757865245.0)
+        self.assertTrue(line.startswith("2025-09-14T"), line)
+
+
+class PollSamplerTestCase(unittest.TestCase):
+    """窗口 / 计数 / 每路径独立（注入时钟，绝不 sleep）。"""
+
+    def test_window_and_suppressed_count(self):
+        sampler = app._PollSampler(window=300.0)
+        self.assertEqual(sampler.decide("/api/board", 1000.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/board", 1100.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/board", 1200.0), (False, 0))
+        # 窗口一到，下一条写出去并把吃掉的两条报出来
+        self.assertEqual(sampler.decide("/api/board", 1301.0), (True, 2))
+        self.assertEqual(sampler.decide("/api/board", 1302.0), (False, 0))
+
+    def test_paths_are_independent(self):
+        sampler = app._PollSampler(window=300.0)
+        self.assertEqual(sampler.decide("/api/board", 0.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/health", 0.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/board", 1.0), (False, 0))
+
+    def test_default_window_is_five_minutes(self):
+        self.assertEqual(app._POLL_WINDOW_SECONDS, 300.0)
+        self.assertEqual(app._POLL_SAMPLER.window, 300.0)
+        self.assertEqual(app._POLL_PATHS, ("/api/board", "/api/health"))
+
+
+class QuietCandidateTestCase(unittest.TestCase):
+    """哪条访问日志算「轮询噪音」。"""
+
+    def test_truth_table(self):
+        cases = [
+            ("/api/board", 200, True),
+            ("/api/health", 304, True),
+            ("/api/board", http.HTTPStatus.OK, True),
+            ("/api/board", 500, False),      # 错误永远写
+            ("/api/board", 404, False),
+            ("/api/board", "-", False),      # 形状不明 → 写
+            ("/api/board", None, False),
+            ("/api/cards/R-1", 200, False),  # 非轮询路径永远写
+            ("/", 200, False),
+        ]
+        for path, code, expected in cases:
+            with self.subTest(path=path, code=code):
+                self.assertIs(app._quiet_candidate(path, code), expected)
+
+
+class LogRequestTestCase(unittest.TestCase):
+    """采样闸装在 log_request 上：行的形状、后缀、逐条写的三种情形。"""
+
+    def setUp(self):
+        patcher = mock.patch.object(app, "_POLL_SAMPLER",
+                                    app._PollSampler(window=300.0))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        env = mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop(app._LOG_POLLS_ENV, None)
+
+    def test_first_poll_logs_then_repeats_are_dropped(self):
+        handler, lines = _handler("/api/board")
+        with mock.patch.object(app.time, "time", side_effect=[10.0, 11.0, 12.0]):
+            for _ in range(3):
+                handler.log_request(200, 4096)
+        self.assertEqual(lines, ['"GET /api/board HTTP/1.1" 200 4096'])
+
+    def test_suppressed_count_rides_the_next_line(self):
+        handler, lines = _handler("/api/board")
+        with mock.patch.object(app.time, "time",
+                               side_effect=[10.0, 11.0, 12.0, 400.0]):
+            for _ in range(4):
+                handler.log_request(200, 1)
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[1],
+                         '"GET /api/board HTTP/1.1" 200 1'
+                         ' (+2 suppressed in the last 300s)')
+
+    def test_query_string_does_not_dodge_the_sampler(self):
+        handler, lines = _handler("/api/board?since=7",
+                                  requestline="GET /api/board?since=7 HTTP/1.1")
+        with mock.patch.object(app.time, "time", side_effect=[10.0, 11.0]):
+            handler.log_request(200, 1)
+            handler.log_request(200, 1)
+        self.assertEqual(len(lines), 1)
+
+    def test_non_2xx_always_logs(self):
+        handler, lines = _handler("/api/board")
+        with mock.patch.object(app.time, "time", return_value=10.0):
+            handler.log_request(200, 1)
+            handler.log_request(500, 1)
+            handler.log_request(500, 1)
+        self.assertEqual(len(lines), 3)
+
+    def test_non_poll_path_always_logs(self):
+        handler, lines = _handler("/api/actions",
+                                  requestline="POST /api/actions HTTP/1.1")
+        with mock.patch.object(app.time, "time", return_value=10.0):
+            handler.log_request(200, 1)
+            handler.log_request(200, 1)
+        self.assertEqual(lines, ['"POST /api/actions HTTP/1.1" 200 1'] * 2)
+
+    def test_env_knob_disables_sampling(self):
+        handler, lines = _handler("/api/health")
+        with mock.patch.dict(os.environ, {app._LOG_POLLS_ENV: "1"}):
+            for _ in range(3):
+                handler.log_request(200, 1)
+        self.assertEqual(len(lines), 3)
+
+    def test_http_status_enum_is_rendered_as_a_number(self):
+        handler, lines = _handler("/api/cards/R-1",
+                                  requestline="GET /api/cards/R-1 HTTP/1.1")
+        handler.log_request(http.HTTPStatus.NOT_FOUND, "-")
+        self.assertEqual(lines, ['"GET /api/cards/R-1 HTTP/1.1" 404 -'])
+
+
+class LogPollsEnvTestCase(unittest.TestCase):
+    """ZAI_LOG_POLLS 的取值口径（缺省 = 采样开着）。"""
+
+    def test_truthy_and_falsy(self):
+        for raw, expected in (("1", True), ("true", True), ("YES", True),
+                              ("on", True), (" 1 ", True),
+                              ("0", False), ("", False), ("no", False)):
+            with self.subTest(raw=raw):
+                self.assertIs(app._log_polls_verbatim({app._LOG_POLLS_ENV: raw}),
+                              expected)
+
+    def test_absent_means_sampling_stays_on(self):
+        self.assertFalse(app._log_polls_verbatim({}))
+
+
+if __name__ == "__main__":
+    unittest.main()
