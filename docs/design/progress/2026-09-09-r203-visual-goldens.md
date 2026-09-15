@@ -14,4 +14,7 @@ law: §66.4（容差 / 遮罩的字面量改指针——正文一处 + `web/e2e/
 
 **顺手一针（本 PR 现在唯一的交付）**：§66.4 第一条把容差写成了字面量「`maxDiffPixelRatio` 2%」，而 `web/playwright.config.ts` 的真值是 `0.002`（0.2%，`c7ef8524` 收紧过一次），遮罩也少列了 `.settings-global-path` 一处；同一个差十倍的字面量还活在 `web/e2e/visual.spec.ts` 头部注释第 2 行（「2% 像素差以内算同一张」）——而改成指针之后 §66.4 正是让读者去读那个文件，落地那儿再学一遍 2% 等于白改。两处一起按防腐十条第 5 条改成指针（容差 truth = `web/playwright.config.ts`，遮罩 truth = spec 的 `mask`），免得下一个 session 按 2% 估「这点差异应该能过」。
 
-**没做什么**：不动 spec 的断言 / 截图名 / 遮罩表（只改了头部注释那一行字面量，零像素影响，不需要重拍）、不动阈值、不动 `visual-goldens.yml`（protected path），不在本地 `visual:update`（产出的 png 按 §66.4 不许提交），不把这个 job 升成必需检查（那是另一条决策，出生 informational 的理由还在），不动 main 现有的五张 PNG。
+**没做什么**：不动 spec 的断言 / 截图名 / 遮罩表（只改了头部注释那一行字面量，零像素影响，不需要重拍）、不动阈值、不动 `visual-goldens.yml`（protected path），不在本地 `visual:update`（产出的 png 按 §66.4 不许提交），不把这个 job 升成必需检查（那是另一条决策，出生 informational 的理由还在），不动 main 现有的五张 PNG，也不修下一段那条与本 PR 无关的 flake。
+
+
+**本 PR 之后「Web visual (playwright)」仍有一格红，但不是 golden——给下一个 session 省一轮**：六张截图比对现在全过（main 那套 PNG 是 09-14 拍的，#320 带进来的），红的是同一条 job 里另一个 spec 的 flake——`e2e/headerLayout.spec.ts:142`「tight：搜索框展开着，点「筛选」/「提建议」一下就开」的 `expect(getByRole("dialog")).toHaveCount(0)` 拿到 1。**它在 main 上一模一样地红**（main @ `f04cc3d6`，run 34916809318 的 job 104218234159，同一行同一条断言），本 PR 的跑（run 34919987768）只是复现了它；#328 也记过一次（当时判为 flake）。所以这一格与本 PR 无关、也不是 §66.4 的债，本 PR 不在一个文档 PR 里顺手改别的 spec 的时序（防腐十条第 7 条：一个 behavior 一个文件）——它是 main 上一条独立的 flake / 时序缺陷，该由它自己的卡修。daily_loop 若为此再铸 `pr_red`，结论先看这一段：required 七项全绿，红的是 informational job 里的这条 flake。
