@@ -115,7 +115,9 @@ per_mutant_timeout_seconds = 60
 "act/lib/repos.py" = ["tests/test_repos_inventory.py"]
 "act/lib/sources.py" = ["tests/test_sources_liveness_signal.py", "tests/test_sources.py"]
 "act/lib/secrets.py" = ["tests/test_secrets_token_line.py", "tests/test_secrets.py", "tests/test_server_secrets.py"]
-"act/lib/platform.py" = ["tests/test_platform_argv_builders.py", "tests/test_platform.py", "tests/test_platform_seam.py"]
+# §71.1 的三个电源探针（3e783390）住在这个模块里，判例却分在 tests/test_power_probe.py ——
+# 它一直不在这一行里，整族解析因此在夜报上「存活」。映射补齐 + 新判例 test_platform_mutation_kills_train。
+"act/lib/platform.py" = ["tests/test_platform_argv_builders.py", "tests/test_platform.py", "tests/test_platform_seam.py", "tests/test_power_probe.py", "tests/test_platform_mutation_kills_train.py"]
 "act/lib/search_index.py" = ["tests/test_search_index_edges.py", "tests/test_search_index.py"]
 "act/lib/steer.py" = ["tests/test_steer_ledger_helpers.py", "tests/test_steer.py", "tests/test_steer_relay.py"]
 "act/lib/slack_setup.py" = ["tests/test_slack_setup_rows_and_cli.py", "tests/test_slack_setup.py"]
