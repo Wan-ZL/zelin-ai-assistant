@@ -196,3 +196,5 @@ bash uninstall.sh --purge
 ## 附：.pkg 安装包（旧路线，仍可用）
 
 [GitHub Releases](https://github.com/Wan-ZL/zelin-ai-assistant/releases) 里的 `ZelinAIAssistant-<tag>.pkg` 装的是**旧的菜单栏 app**（现名 `Zelin's AI Assistant (old).app`，D3 退役中，保留到 owner 明确下令删除；产品名 `Zelin's AI Assistant.app` 归看板壳）+ 管线母本，postinstall 跑 `install.sh --pkg-postinstall`。未签名，Gatekeeper 会拦：右键 → 打开；若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。新机器请用上面的一条命令。
+
+**它不会写进你的开发 checkout**（CONTRACT §74）：postinstall 播种 `~/Projects/zelin-ai-assistant` 之前先判一次——目的地解析掉符号链接之后若落在一棵 git 工作树里，整段 per-user 安装跳过（不拷贝、不配置、不重启守护进程），`/var/log/install.log` 里点名那棵 checkout 并让你去那里 `git pull` + 手跑 `bash install.sh`。旧菜单栏 app 的 Sparkle 自动更新也已经断粮（发布的 appcast 是永远答「已是最新」的终止版 feed），起因见 issue #333 与 `docs/TROUBLESHOOTING.md`「整棵 checkout 莫名回退到一个旧版本」。
