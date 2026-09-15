@@ -195,7 +195,11 @@ class ActdTestCase(SandboxCase):
         return path
 
     def test_recap_generate_stamps_requested_at_before_launch_and_records_after(self):
-        STAMP = "2026-09-14T12:00:00Z"
+        # 这个戳必须是**新鲜的**：`requests.record` 写时按 TTL_S（24 h）剪台账，所以写死一个
+        # 字面时刻的判例会在那个时刻满 24 h 的当天开始 KeyError（`2026-09-14T12:00:00Z`
+        # 就这么在 2026-09-15T12:00Z 之后集体红的）。本例要钉的是「mock 的戳被逐字记下」，
+        # 与它具体是哪一秒无关，所以用真 now 按同一格式现取一个。
+        STAMP = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         events = []
         real_launch = detached.launch
 
