@@ -1,6 +1,7 @@
-// 设置页 section「会议纪要」（CONTRACT §63，issue #129 拍板）。三把旋钮：
+// 设置页 section「会议纪要」（CONTRACT §63，issue #129 拍板）。四把旋钮：
 //   enabled（会后自动出稿）、default_language（auto/zh/en）、slack_draft_enabled（**默认关**——
-//   开了以后 recap 作为草稿进你自己 Slack 的「Drafts & Sent」，发送键仍在人手里）。
+//   开了以后 recap 作为草稿进你自己 Slack 的「Drafts & Sent」，发送键仍在人手里）、
+//   copy_header（**默认开**，§63.5 追记 / issue #299：复制时带一行日期 + 星期 + 时段 + 应用 + 时长）。
 // 数据经 store（refreshRecapSettings/saveRecapSettings）；这里只存草稿 + toast 瞬态。
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
@@ -12,12 +13,14 @@ interface Draft {
   enabled: boolean;
   default_language: string;
   slack_draft_enabled: boolean;
+  copy_header: boolean;
 }
 
 const TOAST_MS = 6000;
 
 function draftFrom(s: RecapSettings): Draft {
-  return { enabled: s.enabled, default_language: s.default_language, slack_draft_enabled: s.slack_draft_enabled };
+  return { enabled: s.enabled, default_language: s.default_language,
+    slack_draft_enabled: s.slack_draft_enabled, copy_header: s.copy_header };
 }
 
 export function RecapSection() {
@@ -53,7 +56,8 @@ export function RecapSection() {
 
   const isDirty = draft.enabled !== recapSettings.enabled
     || draft.default_language !== recapSettings.default_language
-    || draft.slack_draft_enabled !== recapSettings.slack_draft_enabled;
+    || draft.slack_draft_enabled !== recapSettings.slack_draft_enabled
+    || draft.copy_header !== recapSettings.copy_header;
 
   async function save() {
     if (!draft) return;
@@ -61,7 +65,10 @@ export function RecapSection() {
     setToast(null);
     try {
       await saveRecapSettings(draft);
-      setToast({ kind: "ok", message: text("已保存，下一轮 cron 生效。", "Saved — applies on the next cron round.") });
+      // 复制抬头是页面自己拼的，存完立刻生效；另外三把要等下一轮 cron——回执别把两种时机说成一种
+      setToast({ kind: "ok", message: text(
+        "已保存。复制抬头立即生效，其余三把下一轮 cron 生效。",
+        "Saved — the copy header applies right away, the other three on the next cron round.") });
     } catch (error) {
       setToast({ kind: "error", message: error instanceof ApiError ? error.message : String(error) });
     } finally {
@@ -107,6 +114,21 @@ export function RecapSection() {
         </div>
         <p className="settings-helper">{text("中英两版每次同时产出，这里只决定详情页先显示哪一版。", "Both languages are always produced; this only picks which one the page shows first.")}</p>
       </div>
+
+      <label className="settings-check">
+        <input
+          type="checkbox"
+          checked={draft.copy_header}
+          onChange={(event) => setDraft({ ...draft, copy_header: event.target.checked })}
+        />
+        <span>{text("复制时带上日期与时间那一行", "Include the date and time line when copying")}</span>
+      </label>
+      <p className="settings-helper">
+        {text(
+          "开着时复制出来的第一行是 `2026-03-04（周三）14:07–14:48 · Zoom · 41 min`，后面才是五行正文——粘到别处的人能看出这是哪场会。时间是录制采集到的原值，不向整点取整；这一行跟着详情页的语言切换。关掉 = 回到只有五行。",
+          "With this on, the copied text starts with `2026-03-04 (Wed) 14:07–14:48 · Zoom · 41 min` and the five lines follow, so whoever reads the paste can tell which meeting it was. The times are as captured by the recording, not rounded to the scheduled hour, and the line follows the language tabs on the detail page. Off = the five lines alone.",
+        )}
+      </p>
 
       <label className="settings-check">
         <input

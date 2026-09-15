@@ -1,6 +1,7 @@
 // 会议纪要页行为（CONTRACT §63 / issue #129 §3）：
 //   1) 行从 board.recaps 渲染、按日分组、默认选中第一行、进行中行无正文；
-//   2) 复制 = 剪贴板写入 + POST /api/recaps/mark copied（唯一出口）；
+//   2) 复制 = 剪贴板写入 + POST /api/recaps/mark copied（唯一出口）；粘出去的是抬头一行 + 5 行
+//      正文（§63.5 追记 / issue #299），抬头与面板标题逐字相同、跟着语言切换，`copy_header` 关掉回到 5 行；
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
 //      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
 //   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}。
@@ -37,8 +38,16 @@ function recap(over: Partial<RecapRow> = {}): RecapRow {
 }
 
 function settings(over: Partial<RecapSettings> = {}): RecapSettings {
-  return { enabled: true, default_language: "auto", slack_draft_enabled: false,
+  // copy_header 出厂 true（§63.5 追记）——复制时带一行日期抬头
+  return { enabled: true, default_language: "auto", slack_draft_enabled: false, copy_header: true,
     languages: ["auto", "zh", "en"], source: {}, ...over };
+}
+
+/** 详情面板标题（列表里每个日分组也是 h3，按 role 取会撞车——按类名取详情那一个） */
+function detailTitle(view: { container: HTMLElement }): string {
+  const node = view.container.querySelector(".recap-detail-title");
+  if (!node) throw new Error("no recap detail title rendered");
+  return node.textContent ?? "";
 }
 
 function seedBoard(recaps: RecapRow[]): Board {
@@ -90,15 +99,58 @@ describe("RecapsPage", () => {
     expect(screen.getByText(/定了：训练周一开始/)).toBeTruthy();
   });
 
-  it("copy writes the five lines to the clipboard and marks copied", async () => {
-    await renderPage([recap()]);
+  it("copy writes the date header plus the five lines and marks copied (§63.5 / issue #299)", async () => {
+    const view = await renderPage([recap()]);
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(EN.join("\n"));
+    const pasted = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    const [head, ...rest] = pasted.split("\n");
+    expect(head).toMatch(/^\d{4}-\d{2}-\d{2} \((Sun|Mon|Tue|Wed|Thu|Fri|Sat)\) \d{2}:\d{2}–\d{2}:\d{2} · Zoom · 20 min$/);
+    expect(rest).toEqual(EN);
+    expect(detailTitle(view)).toBe(head);      // 抬头 = 面板标题逐字（所见即所粘）
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mark as sent" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "sent", true));
     await waitFor(() => expect(screen.getByText("Sent")).toBeTruthy());
+  });
+
+  it("copy_header off returns the clipboard to the five lines alone (§63.5)", async () => {
+    const view = await renderPage([recap()], { copy_header: false });
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(EN.join("\n"));
+    // 标题照旧带日期——关掉的只是剪贴板那一份
+    expect(detailTitle(view)).toMatch(/^\d{4}-\d{2}-\d{2} \((Sun|Mon|Tue|Wed|Thu|Fri|Sat)\) /);
+  });
+
+  it("the header is on while the settings snapshot is still missing (§63.5)", async () => {
+    // 快照没到（GET 挂了）→ settings=null，`copy_header !== false` 按开算：抬头照旧进剪贴板
+    vi.mocked(fetchRecapSettings).mockRejectedValue(new Error("offline"));
+    vi.mocked(fetchBoard).mockResolvedValue(seedBoard([recap()]));
+    await refreshBoard();
+    render(
+      <LanguageContext.Provider value="en">
+        <RecapsPage />
+      </LanguageContext.Provider>,
+    );
+    await waitFor(() => expect(getState().recapSettings).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
+    const pasted = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    expect(pasted.split("\n").length).toBe(6);
+    expect(pasted.split("\n").slice(1)).toEqual(EN);
+  });
+
+  it("the header follows the language tabs (§63.5)", async () => {
+    const view = await renderPage([recap()]);
+    expect(detailTitle(view)).toMatch(/^\d{4}-\d{2}-\d{2} \((Sun|Mon|Tue|Wed|Thu|Fri|Sat)\) /);
+    fireEvent.click(screen.getByRole("tab", { name: "中文" }));
+    expect(detailTitle(view)).toMatch(/^\d{4}-\d{2}-\d{2}（周[日一二三四五六]）/);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
+    const pasted = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    expect(pasted.split("\n").slice(1)).toEqual(ZH);
+    expect(pasted.split("\n")[0]).toBe(detailTitle(view));
   });
 
   it("regenerate posts recap_generate with an optional note and nothing else", async () => {

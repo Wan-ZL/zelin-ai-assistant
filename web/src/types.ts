@@ -451,6 +451,8 @@ export interface RecapSettings {
   enabled: boolean;
   default_language: "auto" | "zh" | "en" | string;
   slack_draft_enabled: boolean;
+  /** §63.5 追记（issue #299）：复制时在 5 行正文前加一行日期 + 星期 + 时段 + 应用 + 时长；默认 true */
+  copy_header: boolean;
   languages: string[];
   source: { [key: string]: unknown };
   [key: string]: unknown;

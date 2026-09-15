@@ -163,7 +163,7 @@ vi.mock("./api", async (importOriginal) => {
     fetchMaterials: vi.fn().mockResolvedValue({ items: [], status: "open", counts: { open: 0, total: 0 } }),
     // §37.2 会话内容层（D45）：默认层缺席（server 200 空表 → 空快照）；renderSessionSearchVariant 那一遍换成带一条会话正文的索引
     fetchSearchIndex: vi.fn().mockResolvedValue({ etag: null, snapshot: { entries: {}, truncated: false } }),
-    fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, languages: ["auto", "zh", "en"], source: {} }),
+    fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, copy_header: true, languages: ["auto", "zh", "en"], source: {} }),
     // §68.15 同步 / 配对：开着、有码（1×1 PNG 占位）；pair / disable 隔一个 macrotask 再回（忙态句先落 DOM）
     fetchSync: vi.fn().mockResolvedValue({ enabled: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: "demo-mac", default_label: "demo-mac", qr_png_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" }),
     postSyncPair: vi.fn((label?: string) => new Promise((resolve) => setTimeout(() => resolve({ ok: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: label ?? "demo-mac", registered: true, qr_png_base64: null }), 0))),

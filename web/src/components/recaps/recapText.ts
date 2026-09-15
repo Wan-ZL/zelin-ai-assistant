@@ -1,5 +1,6 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.8）：行标签、按日分组、badge 词表、语言选择、复制正文、
-// 「重新生成」的生成态判定。无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
+// 正文与抬头一行（`recapHeader` / `recapClipboardText`，issue #299）、「重新生成」的生成态判定。
+// 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
 import type { RecapRow } from "../../types";
@@ -140,10 +141,46 @@ export function pickLanguage(defaultLanguage: string | undefined, ui: Language):
   return defaultLanguage === "zh" || defaultLanguage === "en" ? defaultLanguage : ui;
 }
 
-/** 复制正文 = 该语言 5 行、换行连接、不加任何别的东西（issue #129 §4） */
+/** 正文 = 该语言 5 行、换行连接、不加任何别的东西（issue #129 §4）。抬头一行由
+ *  `recapHeader` 单独给，剪贴板的那一份走 `recapClipboardText`（§63.5 追记）。 */
 export function recapBody(row: RecapRow, language: Language): string {
   const lines = language === "zh" ? row.zh : row.en;
   return (lines ?? []).join("\n");
+}
+
+// 星期名写死两张表，**不**走 `Intl` / `toLocaleDateString`：Node 与浏览器的 ICU 数据
+// 不一致（精简版 Node 只有 en-US），判例会随运行环境漂。周日起，与 `Date.getDay()` 同序。
+const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS_ZH = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+/** 日期 + 星期（本机时区，与 `dayKey` 同一天）：`2026-03-04 (Wed)` / `2026-03-04（周三）`。
+ *  解析不出 = 空串（不写 `? (?)`——调用方据此退回不带日期的标签）。 */
+export function dayLabel(iso: string, language: Language): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  const day = dayKey(iso);
+  return language === "zh"
+    ? `${day}（${WEEKDAYS_ZH[t.getDay()]}）`
+    : `${day} (${WEEKDAYS_EN[t.getDay()]})`;
+}
+
+/** 抬头一行（§63.5 追记，issue #299）：`2026-03-04 (Wed) 14:07–14:48 · Zoom · 41 min`。
+ *  时间是**采集到的原值**（不向下取整到整点）——粘出去的是记录，不是日程。
+ *  start 解析不出 → 退回 `rowLabel`（它自己已退化成 `--:--`），绝不多出一个 `?`。 */
+export function recapHeader(row: RecapRow, language: Language): string {
+  const day = dayLabel(row.start, language);
+  const label = rowLabel(row);
+  if (!day) return label;
+  return language === "zh" ? `${day}${label}` : `${day} ${label}`;
+}
+
+/** 剪贴板那一份（§63.5 追记）= 抬头一行 + 该语言 5 行；`copy_header: false` 回到只有 5 行。
+ *  没有正文 = 空串——光一行抬头不是纪要（复制键本来也只在有正文时出现）。 */
+export function recapClipboardText(row: RecapRow, language: Language, withHeader: boolean): string {
+  const body = recapBody(row, language);
+  if (!body) return "";
+  const header = withHeader ? recapHeader(row, language) : "";
+  return header ? `${header}\n${body}` : body;
 }
 
 /** §63.4 草稿回执文案（wire status 词表 add-only；未知值按字符串兜底） */

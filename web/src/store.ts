@@ -123,7 +123,7 @@ export interface AppState {
   sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
   expandedSettingsSections: ReadonlySet<string>; // 设置页展开着的区（D44；镜像原生 settings.expandedSections；localStorage 持久化，settingsFolds.ts）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
-  recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
+  recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关 / 复制抬头）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
   recapPending: Record<string, RecapPending>; // 「重新生成 / 现在生成」按下后到 actd 回执（generate_request）落地前的乐观「排队中」（§63.8）
   displaySettings: DisplaySettings | null; // GET /api/settings/display（§54.1 第 12 项：字号 / 字重 / 描边；到达即落 <html> data-*）
@@ -709,7 +709,7 @@ export async function dismissMaterial(id: string): Promise<MaterialItem> {
 
 // ----- 会议纪要（§63） ------------------------------------------------------- #
 
-/** 拉 recap 三把旋钮（页面与设置 section 共用）；读失败落 settingsError */
+/** 拉 recap 四把旋钮（页面与设置 section 共用）；读失败落 settingsError */
 export async function refreshRecapSettings(): Promise<void> {
   try {
     const recapSettings = await fetchRecapSettings();
@@ -722,7 +722,7 @@ export async function refreshRecapSettings(): Promise<void> {
 
 /** 保存 recap 旋钮（PUT，server diff-write）；成功以 server 回执替换快照 */
 export async function saveRecapSettings(
-  patch: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
+  patch: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean; copy_header?: boolean },
 ): Promise<RecapSettings> {
   const recapSettings = await putRecapSettings(patch);
   setState({ recapSettings });

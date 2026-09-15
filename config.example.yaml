@@ -178,6 +178,9 @@ recap:                                 # 会议 recap（CONTRACT §63，issue #1
                                        # 确定性判会议 session，CLOSED 后出 5 行 copy-only 纪要（中英同产）到 state/recap/。不是卡，无发送路径。
   enabled: true                        # 关 = 整条静默（Settings「会议纪要」同一开关；overrides 扁平键 recap_enabled）
   default_language: auto               # auto | zh | en——详情页先显示哪一版（overrides 键 recap_default_language）
+  copy_header: true                    # 复制时在 5 行正文前加一行 `2026-03-04 (Wed) 14:07–14:48 · Zoom · 41 min`
+                                       #   （§63.5 追记 / issue #299；关 = 回到只有 5 行。时间是采集到的原值，不取整；
+                                       #   随详情页语言切换。overrides 键 recap_copy_header）
   # ---- 确定性 session 判定（数字 = 分钟；坏值回默认） ----
   # gap_minutes: 5                      # 静默超过即切 session（与 ingest SKILL 一致）
   # quiet_minutes: 5                    # 距最后事件 ≥ 此值且区间内无 pending 转写 → CLOSED

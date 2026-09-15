@@ -1,10 +1,11 @@
-// 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行；
-// §63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge。
+// 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、正文只含 5 行；
+// §63.5 追记（issue #299）抬头一行与剪贴板那一份；§63.8 生成态判定（server 回执
+// generate_request × 本地乐观 pending）与它的 badge。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, appLabel, badgesFor, generationPhase, groupByDay, isGenerating, pickLanguage,
-  recapBody, rowLabel, slackDraftLabel,
+  PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, appLabel, badgesFor, dayLabel, generationPhase, groupByDay, isGenerating,
+  pickLanguage, recapBody, recapClipboardText, recapHeader, rowLabel, slackDraftLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -112,6 +113,57 @@ describe("recapText", () => {
     expect(recapBody(row(), "en")).toBe("Decided: x\nSplit: y\nDeadline: z\nChanged since last plan: none recorded\nOpen: none");
     expect(recapBody(row(), "zh").split("\n").length).toBe(5);
     expect(recapBody(row({ en: null }), "en")).toBe("");
+  });
+
+  // 判例与时区无关：用本地时间构造 ISO，再按本地时间格式化——两头同一个时区就抵消掉了。
+  // 2026-03-04 是周三（也是 issue #299 举的那天），且离任何 DST 跳变都远。
+  const localIso = (y: number, m: number, d: number, hh: number, mm: number) =>
+    new Date(y, m - 1, d, hh, mm).toISOString();
+
+  it("day label carries the weekday, localized, and stays silent on garbage (§63.5)", () => {
+    const wed = localIso(2026, 3, 4, 14, 7);
+    expect(dayLabel(wed, "en")).toBe("2026-03-04 (Wed)");
+    expect(dayLabel(wed, "zh")).toBe("2026-03-04（周三）");
+    // 七天连着走一遍，两张表都走：星期表与 Date.getDay() 同序（周日起），不靠 Intl。
+    // 2026-03-01 是周日——中英各钉七个名字，少钉一边就漏掉那张表的错序（判例本身的旧漏洞）
+    const week = (lang: "zh" | "en") =>
+      [...Array(7)].map((_x, i) => dayLabel(localIso(2026, 3, 1 + i, 12, 0), lang).replace(/^[\d-]+ ?[（(](.+)[）)]$/, "$1"));
+    expect(week("en")).toEqual(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+    expect(week("zh")).toEqual(["周日", "周一", "周二", "周三", "周四", "周五", "周六"]);
+    expect(dayLabel("garbage", "en")).toBe("");
+    expect(dayLabel("garbage", "zh")).toBe("");
+  });
+
+  it("header = date + weekday + the row label, times as captured (§63.5 / issue #299)", () => {
+    const r = row({ start: localIso(2026, 3, 4, 14, 7), end: localIso(2026, 3, 4, 14, 48), duration_min: 41 });
+    expect(recapHeader(r, "en")).toBe("2026-03-04 (Wed) 14:07–14:48 · Zoom · 41 min");
+    expect(recapHeader(r, "zh")).toBe("2026-03-04（周三）14:07–14:48 · Zoom · 41 min");
+    // 采集到的 14:07 原样出现——不向下取整到 14:00
+    expect(recapHeader(r, "en")).toContain("14:07");
+    // 同一天两场会的抬头必须不同（issue #299：两份粘出去分不出是哪场）
+    const later = row({ start: localIso(2026, 3, 4, 16, 30), end: localIso(2026, 3, 4, 17, 0), duration_min: 30 });
+    expect(recapHeader(later, "en")).not.toBe(recapHeader(r, "en"));
+    // start 解析不出 → 退回行标签，不多出一个 "?"
+    const broken = row({ start: "garbage", end: "garbage" });
+    expect(recapHeader(broken, "en")).toBe(rowLabel(broken));
+    expect(recapHeader(broken, "en")).not.toContain("?");
+  });
+
+  it("clipboard text = header + the five lines; the knob off gives the five alone (§63.5)", () => {
+    const r = row({ start: localIso(2026, 3, 4, 14, 7), end: localIso(2026, 3, 4, 14, 48), duration_min: 41 });
+    const withHeader = recapClipboardText(r, "en", true);
+    expect(withHeader.split("\n").length).toBe(6);
+    expect(withHeader.split("\n")[0]).toBe("2026-03-04 (Wed) 14:07–14:48 · Zoom · 41 min");
+    expect(withHeader.slice(withHeader.indexOf("\n") + 1)).toBe(recapBody(r, "en"));
+    expect(recapClipboardText(r, "en", false)).toBe(recapBody(r, "en"));
+    expect(recapClipboardText(r, "zh", true).split("\n")[0]).toBe("2026-03-04（周三）14:07–14:48 · Zoom · 41 min");
+    // 没正文 = 空串（光一行抬头不是纪要），两种开关值都一样
+    expect(recapClipboardText(row({ en: null }), "en", true)).toBe("");
+    expect(recapClipboardText(row({ en: null }), "en", false)).toBe("");
+    // start 坏掉但正文在：抬头退回行标签，剪贴板照旧是 6 行，不空
+    const broken = recapClipboardText(row({ start: "garbage", end: "garbage" }), "en", true);
+    expect(broken.split("\n").length).toBe(6);
+    expect(broken.split("\n")[0]).toContain("--:--");
   });
 
   it("slack draft receipt copy", () => {

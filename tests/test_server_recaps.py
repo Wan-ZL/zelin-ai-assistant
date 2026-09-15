@@ -2,9 +2,9 @@
 POST /api/recaps/mark, and the two inbox special forms through POST /api/actions.
 
 - settings: effective values layered overrides → config.yaml → default;
-  ``slack_draft_enabled`` is false out of the box; PUT diff-writes the flat
-  keys (equal-to-effective deletes the key, other keys preserved), unknown
-  field / bad value → 400.
+  ``slack_draft_enabled`` is false out of the box and ``copy_header`` true
+  (§63.5 追记 / issue #299); PUT diff-writes the flat keys (equal-to-effective
+  deletes the key, other keys preserved), unknown field / bad value → 400.
 - marks: a server-owned file no control flow reads; key shape and mark
   vocabulary fail closed; ``on: false`` clears the stamp.
 - inbox forms: meeting_key shape, note ≤ 500, partial only ``true``,
@@ -49,20 +49,24 @@ class SettingsTestCase(_Case):
         self.assertEqual(snap["enabled"], True)
         self.assertEqual(snap["default_language"], "auto")
         self.assertEqual(snap["slack_draft_enabled"], False)
+        # §63.5 追记（issue #299）：复制抬头出厂 **开**——粘出去的第一行说清是哪场会
+        self.assertEqual(snap["copy_header"], True)
         self.assertEqual(snap["languages"], ["auto", "zh", "en"])
         self.assertEqual(snap["source"], {"enabled": "default", "default_language": "default",
-                                          "slack_draft_enabled": "default"})
+                                          "slack_draft_enabled": "default", "copy_header": "default"})
 
     def test_config_yaml_layer(self):
         write_text(self.home / "config.yaml",
-                   "recap:\n  enabled: false\n  default_language: zh\n  slack_draft:\n    enabled: 'true'\n")
+                   "recap:\n  enabled: false\n  default_language: zh\n  copy_header: false\n"
+                   "  slack_draft:\n    enabled: 'true'\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
-        self.assertEqual((snap["enabled"], snap["default_language"], snap["slack_draft_enabled"]),
-                         (False, "zh", True))
+        self.assertEqual((snap["enabled"], snap["default_language"], snap["slack_draft_enabled"],
+                          snap["copy_header"]), (False, "zh", True, False))
         self.assertEqual(set(snap["source"].values()), {"config"})
         write_text(self.home / "config.yaml", "recap: [not, a, map]\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
         self.assertEqual(snap["slack_draft_enabled"], False)
+        self.assertEqual(snap["copy_header"], True)
 
     def test_put_diff_writes_and_preserves_other_keys(self):
         write_text(self.home / "state" / "settings_overrides.json",
@@ -81,6 +85,16 @@ class SettingsTestCase(_Case):
         self.assertEqual(snap["slack_draft_enabled"], False)
         self.assertNotIn("recap_slack_draft_enabled", self.overrides())
         self.assertEqual(snap["source"]["slack_draft_enabled"], "default")
+
+    def test_put_copy_header_off_diff_writes_the_flat_key(self):
+        """§63.5 追记：关掉复制抬头 → override 落 false；回到 true 删键（diff-write 同款）。"""
+        _s, snap = put_json(self.port, "/api/settings/recap", {"copy_header": False})
+        self.assertEqual(snap["copy_header"], False)
+        self.assertEqual(snap["source"]["copy_header"], "override")
+        self.assertIs(self.overrides()["recap_copy_header"], False)
+        _s, snap = put_json(self.port, "/api/settings/recap", {"copy_header": "yes"})
+        self.assertEqual(snap["copy_header"], True)
+        self.assertNotIn("recap_copy_header", self.overrides())
 
     def test_bad_override_entry_is_skipped(self):
         write_text(self.home / "state" / "settings_overrides.json",

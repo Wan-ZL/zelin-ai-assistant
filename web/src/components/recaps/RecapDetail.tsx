@@ -2,6 +2,8 @@
 // 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」/ 开关开着时「投到 Slack 草稿」。
 // 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记；重新生成 / 投草稿走 inbox 特形动作
 // （recap_generate / recap_slack_draft，字段逐字按 §63，多一个键 server 400）。
+// §63.5 追记（issue #299）：抬头一行（日期 + 星期 + 时段 + 应用 + 时长）既是面板标题，也是复制时
+// 正文前面那一行——所见即所粘；`copy_header` 关掉只影响剪贴板，标题照旧带日期。
 // §63.8（issue #297）：重新生成排队后面板不再装死——状态行说「排队中 / 正在生成」、两颗生成按钮禁用，
 // 新版本随 board 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没人接手说
 // 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
@@ -12,7 +14,9 @@ import { markRecap, markRecapPending } from "../../store";
 import type { RecapRow, RecapSettings } from "../../types";
 import { copyText } from "../detail/copyText";
 import { noteConflicts, type NoteConflictId } from "./noteCheck";
-import { isGenerating, pickLanguage, recapBody, rowLabel, slackDraftLabel, type GenerationPhase } from "./recapText";
+import {
+  isGenerating, pickLanguage, recapBody, recapClipboardText, recapHeader, slackDraftLabel, type GenerationPhase,
+} from "./recapText";
 
 const NOTE_MAX = 500;
 const CHANNEL_RE = /^[CDG][A-Z0-9]{6,20}$/;
@@ -113,6 +117,10 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   }, [flash]);
 
   const body = recapBody(row, language);
+  // 抬头跟随语言切换；`copy_header` 缺席（快照还没到）按开算——默认就是带抬头
+  const header = recapHeader(row, language);
+  const copyHeader = settings?.copy_header !== false;
+  const clipboard = recapClipboardText(row, language, copyHeader);
   const hasText = Boolean(row.en && row.en.length);
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
@@ -132,7 +140,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   }
 
   const copy = () => run(text("已复制到剪贴板", "Copied to clipboard"), async () => {
-    const ok = await copyText(body);
+    const ok = await copyText(clipboard);
     if (!ok) throw new Error(text("复制失败", "Copy failed"));
     await markRecap(row.key, "copied", true);
   });
@@ -163,7 +171,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   return (
     <article className="recap-detail" aria-live="polite">
       <header className="recap-detail-head">
-        <h3 className="recap-detail-title">{rowLabel(row)}</h3>
+        <h3 className="recap-detail-title">{header}</h3>
         <div className="recap-segmented" role="tablist" aria-label={text("语言", "Language")}>
           {(["zh", "en"] as Language[]).map((lang) => (
             <button

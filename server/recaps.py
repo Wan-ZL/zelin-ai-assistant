@@ -3,14 +3,18 @@
 Two small things, both stdlib (config.yaml is read through
 server.settings.config_yaml_doc, which degrades to {} without PyYAML):
 
-1. **Recap settings** ``GET/PUT /api/settings/recap`` — the three knobs the
-   pipeline reads (act/lib/config.py): ``enabled`` (default true),
-   ``default_language`` (auto | zh | en), ``slack_draft_enabled`` (**default
-   false**: a CLOSED recap is placed as a Slack *draft*, the send button stays
-   the owner's). Effective value = settings_overrides.json flat key
-   (``recap_enabled`` / ``recap_default_language`` / ``recap_slack_draft_enabled``)
-   → config.yaml ``recap:`` block → default; PUT diff-writes the flat keys with
-   the §15 semantics server/settings.py already implements for the model knobs.
+1. **Recap settings** ``GET/PUT /api/settings/recap`` — four knobs
+   (act/lib/config.py): ``enabled`` (default true), ``default_language``
+   (auto | zh | en), ``slack_draft_enabled`` (**default false**: a CLOSED recap
+   is placed as a Slack *draft*, the send button stays the owner's) and
+   ``copy_header`` (default **true**, §63.5 / issue #299: the copied text
+   carries one leading date + weekday + time-window + app + duration line; the
+   Python pipeline never reads this one — the web detail panel composes it).
+   Effective value = settings_overrides.json flat key (``recap_enabled`` /
+   ``recap_default_language`` / ``recap_slack_draft_enabled`` /
+   ``recap_copy_header``) → config.yaml ``recap:`` block → default; PUT
+   diff-writes the flat keys with the §15 semantics server/settings.py already
+   implements for the model knobs.
 
 2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」write
    ``state/recap/marks.json`` ``{key: {copied_at, sent_at}}``. This file is
@@ -40,8 +44,10 @@ LANGUAGES: tuple = ("auto", "zh", "en")
 # wire key → settings_overrides.json flat key (config._OVERRIDE_FIELDS)
 OVERRIDE_KEYS = {"enabled": "recap_enabled",
                  "default_language": "recap_default_language",
-                 "slack_draft_enabled": "recap_slack_draft_enabled"}
-DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False}
+                 "slack_draft_enabled": "recap_slack_draft_enabled",
+                 "copy_header": "recap_copy_header"}
+DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False,
+            "copy_header": True}
 MARKS: tuple = ("copied", "sent")
 
 _BOOL_TRUE = ("true", "yes", "on", "1")
@@ -81,7 +87,7 @@ def coerce_language(value) -> str:
 
 
 _COERCE = {"enabled": coerce_bool, "default_language": coerce_language,
-           "slack_draft_enabled": coerce_bool}
+           "slack_draft_enabled": coerce_bool, "copy_header": coerce_bool}
 
 
 def _coerce_or(field: str, value, default):
@@ -99,7 +105,7 @@ def _config_block(home: Path) -> dict:
     spells (slack_draft.enabled flattened); {} when absent / unreadable."""
     blk = settings.config_yaml_doc(home).get("recap")
     blk = blk if isinstance(blk, dict) else {}
-    out = {k: blk[k] for k in ("enabled", "default_language") if k in blk}
+    out = {k: blk[k] for k in ("enabled", "default_language", "copy_header") if k in blk}
     draft = blk.get("slack_draft")
     if isinstance(draft, dict) and "enabled" in draft:
         out["slack_draft_enabled"] = draft["enabled"]
@@ -121,7 +127,7 @@ def snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``RecapSettings`` mirrors verbatim)::
 
         {"enabled": bool, "default_language": "auto|zh|en",
-         "slack_draft_enabled": bool, "languages": [...],
+         "slack_draft_enabled": bool, "copy_header": bool, "languages": [...],
          "source": {"enabled": "override|config|default", ...}}
     """
     overrides = settings.read_overrides(home)
@@ -150,7 +156,7 @@ def _reject_unknown(payload: dict, allowed) -> None:
 
 
 def _wanted(payload: dict) -> dict:
-    """The validated subset of the three knobs the PUT carries."""
+    """The validated subset of the four knobs the PUT carries."""
     _reject_unknown(payload, OVERRIDE_KEYS)
     if not payload:
         raise InvalidFieldError("nothing to save")
@@ -166,7 +172,7 @@ def _wanted(payload: dict) -> dict:
 
 
 def update(home: Path, payload: dict) -> dict:
-    """Validate ``{enabled?, default_language?, slack_draft_enabled?}`` and
+    """Validate ``{enabled?, default_language?, slack_draft_enabled?, copy_header?}`` and
     diff-write the flat override keys (value == config/default → key deleted).
     Unknown keys → 400 UNKNOWN_FIELD; a bad value → 400 INVALID_FIELD."""
     wanted = _wanted(payload)

@@ -389,14 +389,18 @@ class Config:
     # `python3 -m act.ask` (exit 2) and the app's Ask page input.
     ask_enabled: bool = True
 
-    # 会议 recap（§63，issue #129）：三把 Settings 可改的旋钮（config.yaml `recap:`
+    # 会议 recap（§63，issue #129）：四把 Settings 可改的旋钮（config.yaml `recap:`
     # 块 + overrides 扁平键 recap_enabled / recap_default_language /
-    # recap_slack_draft_enabled）。slack_draft **默认关**——开了也只投草稿，
-    # 发送键在人手里；其余调参（gap/quiet/上限/应用表）留在 cfg.raw["recap"]，
-    # 由 act/lib/recap_store.settings 读取。
+    # recap_slack_draft_enabled / recap_copy_header）。slack_draft **默认关**——
+    # 开了也只投草稿，发送键在人手里；其余调参（gap/quiet/上限/应用表）留在
+    # cfg.raw["recap"]，由 act/lib/recap_store.settings 读取。
     recap_enabled: bool = True
     recap_default_language: str = "auto"   # auto | zh | en（auto 跟随 language）
     recap_slack_draft_enabled: bool = False
+    # §63.5 追记（issue #299）：复制时在 5 行正文前面加一行日期 + 星期 + 时段 + 应用 +
+    # 时长。**Python 管线不读这把旋钮**——抬头是 web 详情页拼的（唯一出口是剪贴板），
+    # 字段住这里只为了让 §15 的 override 白名单盖住页面的写入（同 maintainer_* 两把）。
+    recap_copy_header: bool = True
 
     # 设置「开发者 · 维护会话」— the one-click claude session over THIS
     # software's own repo (App 设置区 diff-write; None = the app falls back
@@ -557,11 +561,13 @@ def _coerce_recap_language(value) -> str:
 
 
 def _apply_recap_block(cfg: "Config", data: dict) -> None:
-    """§63 config.yaml `recap:` 块的三把旋钮（坏值保留默认；调参留在 cfg.raw）。"""
+    """§63 config.yaml `recap:` 块的四把旋钮（坏值保留默认；调参留在 cfg.raw）。"""
     blk = _dict_or(data.get("recap"))
     cfg.recap_enabled = _bool_or(blk.get("enabled", cfg.recap_enabled), cfg.recap_enabled)
     cfg.recap_default_language = _coerce_recap_language(
         blk.get("default_language", cfg.recap_default_language))
+    cfg.recap_copy_header = _bool_or(
+        blk.get("copy_header", cfg.recap_copy_header), cfg.recap_copy_header)
     draft = _dict_or(blk.get("slack_draft"))
     cfg.recap_slack_draft_enabled = _bool_or(
         draft.get("enabled", cfg.recap_slack_draft_enabled), cfg.recap_slack_draft_enabled)
@@ -972,7 +978,7 @@ def _apply_switch_blocks(cfg: Config, data: dict) -> None:
     cfg.ask_enabled = _bool_or(
         ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
     )
-    _apply_recap_block(cfg, data)   # §63 会议 recap 的三把旋钮
+    _apply_recap_block(cfg, data)   # §63 会议 recap 的四把旋钮
 
 
 def _nonblank(value) -> Optional[str]:
@@ -1250,11 +1256,13 @@ _OVERRIDE_FIELDS: dict = {
     # same diff-write path as the two above (equal to the effective default
     # `claude-opus-5[1m]` deletes the key). Bad shapes raise → per-entry skip.
     "models_fallback": coerce_fallback_model,
-    # §63 会议 recap：web Settings「会议纪要」经 server/recaps.py diff-write 这三个
-    # 扁平键；slack_draft 出厂 false（草稿投递是 opt-in，发送永远是人）。
+    # §63 会议 recap：web Settings「会议纪要」经 server/recaps.py diff-write 这四个
+    # 扁平键；slack_draft 出厂 false（草稿投递是 opt-in，发送永远是人），
+    # copy_header 出厂 true（§63.5 追记 / issue #299：复制时带日期抬头）。
     "recap_enabled": _coerce_bool,
     "recap_default_language": _coerce_recap_language,
     "recap_slack_draft_enabled": _coerce_bool,
+    "recap_copy_header": _coerce_bool,
     # §64 (#128): 待验收卡 AI 摘要 + 完成度评语开关（diff-write 同款；默认 true）。
     "card_summary_enabled": _coerce_bool,
     # §70 (D10): the daily self-improvement loop's knobs — web Settings「每日

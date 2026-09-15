@@ -1,5 +1,6 @@
-// 设置页「会议纪要」section（CONTRACT §63）：三把旋钮从 server 快照水合；Slack 草稿开关默认关；
-// 保存 = 一次 PUT 三键、零多余字段；server 400 的整句以 toast(role=alert) 显示。
+// 设置页「会议纪要」section（CONTRACT §63）：四把旋钮从 server 快照水合；Slack 草稿开关默认关、
+// 复制抬头默认开（§63.5 追记 / issue #299）；保存 = 一次 PUT 四键、零多余字段；
+// server 400 的整句以 toast(role=alert) 显示。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchRecapSettings, putRecapSettings } from "../../api";
@@ -14,7 +15,7 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 function snapshot(over: Partial<RecapSettings> = {}): RecapSettings {
-  return { enabled: true, default_language: "auto", slack_draft_enabled: false,
+  return { enabled: true, default_language: "auto", slack_draft_enabled: false, copy_header: true,
     languages: ["auto", "zh", "en"], source: { enabled: "default" }, ...over };
 }
 
@@ -37,24 +38,35 @@ afterEach(() => {
 });
 
 describe("RecapSection", () => {
-  it("hydrates from the server snapshot with the Slack draft toggle off", async () => {
+  it("hydrates from the server snapshot with the Slack draft toggle off and the copy header on", async () => {
     renderSection();
     const draft = await screen.findByLabelText(/Place the recap in my Slack drafts/);
     expect((draft as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText(/Generate a recap after each meeting/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/Include the date and time line when copying/) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Default language") as HTMLSelectElement).value).toBe("auto");
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("saves exactly the three knobs and shows the receipt", async () => {
+  it("saves exactly the four knobs and shows the receipt", async () => {
     vi.mocked(putRecapSettings).mockResolvedValue(snapshot({ slack_draft_enabled: true, default_language: "en" }));
     renderSection();
     fireEvent.click(await screen.findByLabelText(/Place the recap in my Slack drafts/));
     fireEvent.change(screen.getByLabelText("Default language"), { target: { value: "en" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(putRecapSettings).toHaveBeenCalledWith({
-      enabled: true, default_language: "en", slack_draft_enabled: true }));
+      enabled: true, default_language: "en", slack_draft_enabled: true, copy_header: true }));
     expect((await screen.findByRole("status")).textContent).toContain("Saved");
+  });
+
+  it("turning the copy header off is dirty and reaches the server as false (§63.5)", async () => {
+    vi.mocked(putRecapSettings).mockResolvedValue(snapshot({ copy_header: false }));
+    renderSection();
+    fireEvent.click(await screen.findByLabelText(/Include the date and time line when copying/));
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(putRecapSettings).toHaveBeenCalledWith({
+      enabled: true, default_language: "auto", slack_draft_enabled: false, copy_header: false }));
   });
 
   it("shows the server's rejection verbatim", async () => {

@@ -1,5 +1,5 @@
 // 会议纪要页（CONTRACT §63；?page=recaps 深链，顶栏入口）。数据源 = board.recaps（dashboard.json
-// 顶层 add-only recaps[]，SSE 回流），本地标记（recapMarks）乐观覆盖；三把旋钮经 refreshRecapSettings。
+// 顶层 add-only recaps[]，SSE 回流），本地标记（recapMarks）乐观覆盖；四把旋钮经 refreshRecapSettings。
 // 页面骨架：返回链接 + 标题 + 左列表 / 右详情。业务态只有「选中的 key」——放本地 useState（纯瞬态）。
 // §63.8（issue #297）：每行的生成态 = server 回执 generate_request × 本地乐观 recapPending；只要还有行
 // 在生成，就每 5 s 补拉一次 /api/board（SSE 之外的保险，新版本落地即停），版本号变了面板自然换内容。
@@ -72,8 +72,8 @@ export function RecapsPage() {
       </div>
       <p className="settings-helper">
         {text(
-          "会议结束后 5–35 分钟自动出稿，5 行纯文本，复制即用。不会自动发给任何人。",
-          "A 5-line plain-text recap lands 5–35 minutes after each meeting. Copy and paste; nothing is ever sent for you.",
+          "会议结束后 5–35 分钟自动出稿，5 行纯文本，复制即用——复制出来还带一行日期与时段的抬头（设置里可关）。不会自动发给任何人。",
+          "A 5-line plain-text recap lands 5–35 minutes after each meeting. Copy and paste; what you copy also carries one date and time header line (switchable off in Settings). Nothing is ever sent for you.",
         )}
         {recapSettings && !recapSettings.enabled && (
           <> {text("（会议纪要已在设置里关闭）", "(Meeting recaps are turned off in Settings)")}</>

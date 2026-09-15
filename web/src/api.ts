@@ -355,14 +355,14 @@ export function postMaterialDismiss(id: string): Promise<MaterialItem> {
   return request<MaterialItem>("/api/materials/dismiss", { method: "POST", body: JSON.stringify({ id }) });
 }
 
-/** GET /api/settings/recap — 会议 recap 三把旋钮的 effective 值（CONTRACT §63） */
+/** GET /api/settings/recap — 会议 recap 四把旋钮的 effective 值（CONTRACT §63） */
 export function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
   return request<RecapSettings>("/api/settings/recap", { signal });
 }
 
-/** PUT /api/settings/recap — 只许 enabled / default_language / slack_draft_enabled 三键（server 零容忍） */
+/** PUT /api/settings/recap — 只许 enabled / default_language / slack_draft_enabled / copy_header 四键（server 零容忍） */
 export function putRecapSettings(
-  body: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
+  body: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean; copy_header?: boolean },
 ): Promise<RecapSettings> {
   return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
 }

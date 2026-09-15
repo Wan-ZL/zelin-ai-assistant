@@ -132,7 +132,8 @@ class RecapMirrorTestCase(unittest.TestCase):
         cfg = config.Config()
         self.assertEqual(server_recaps.DEFAULTS, {
             "enabled": cfg.recap_enabled, "default_language": cfg.recap_default_language,
-            "slack_draft_enabled": cfg.recap_slack_draft_enabled})
+            "slack_draft_enabled": cfg.recap_slack_draft_enabled,
+            "copy_header": cfg.recap_copy_header})
         for key in server_recaps.OVERRIDE_KEYS.values():
             self.assertIn(key, config._OVERRIDE_FIELDS)
 

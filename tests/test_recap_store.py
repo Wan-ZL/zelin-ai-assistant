@@ -31,7 +31,8 @@ class SettingsTestCase(unittest.TestCase):
 
     def test_yaml_block_and_overrides_reach_the_knobs(self):
         cfg = config.Config(raw={"recap": {
-            "enabled": "false", "default_language": "EN", "slack_draft": {"enabled": "yes",
+            "enabled": "false", "default_language": "EN", "copy_header": "no",
+            "slack_draft": {"enabled": "yes",
             "targets": {"Zoom": "C0123456789", "teams": "not-an-id", "meet": 12}},
             "max_per_run": "3", "max_per_day": 0, "retention_days": "x", "db_path": " /tmp/x.sqlite "}})
         config._apply_recap_block(cfg, cfg.raw)
@@ -39,13 +40,20 @@ class SettingsTestCase(unittest.TestCase):
         self.assertFalse(st["enabled"])
         self.assertEqual(st["default_language"], "en")
         self.assertTrue(st["slack_draft_enabled"])
+        # copy_header 只给 web 面（抬头是详情页拼的），不进 store.settings 的管线视图
+        self.assertFalse(cfg.recap_copy_header)
+        self.assertNotIn("copy_header", st)
         self.assertEqual(st["slack_targets"], {"zoom": "C0123456789"})
         self.assertEqual((st["max_per_run"], st["max_per_day"], st["retention_days"]), (3, 1, 90))
         self.assertEqual(st["db_path"], "/tmp/x.sqlite")
 
     def test_override_fields_are_registered_with_coercions(self):
-        for key in ("recap_enabled", "recap_default_language", "recap_slack_draft_enabled"):
+        for key in ("recap_enabled", "recap_default_language", "recap_slack_draft_enabled",
+                    "recap_copy_header"):
             self.assertIn(key, config._OVERRIDE_FIELDS)
+        # §63.5 追记（issue #299）：复制抬头出厂开，config.yaml 的坏值不许把它关掉
+        self.assertTrue(config.Config().recap_copy_header)
+        self.assertFalse(config._OVERRIDE_FIELDS["recap_copy_header"]("off"))
         self.assertEqual(config._OVERRIDE_FIELDS["recap_default_language"]("ZH"), "zh")
         self.assertEqual(config._OVERRIDE_FIELDS["recap_default_language"]("klingon"), "auto")
         self.assertFalse(config._OVERRIDE_FIELDS["recap_slack_draft_enabled"]("false"))
@@ -55,6 +63,7 @@ class SettingsTestCase(unittest.TestCase):
         cfg = config.Config(raw={"recap": "nonsense"})
         config._apply_recap_block(cfg, cfg.raw)
         self.assertTrue(cfg.recap_enabled)
+        self.assertTrue(cfg.recap_copy_header)
         self.assertEqual(store.settings(cfg)["options"].gap_s, 300)
 
 

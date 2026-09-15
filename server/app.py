@@ -26,7 +26,7 @@
   起 act.ai_fix 的 Terminal 修复会话，server/ai_fix_launch.py）。
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
   POST /api/materials/dismiss（server/material_box.py，存储在 act/lib/materials.py）。
-- 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
+- 会议 recap 面（§63）：GET/PUT /api/settings/recap（四把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
 - 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
   GET /api/settings（目录）+ GET/PUT /api/settings/{section}（server/settings_catalog.py）、
@@ -710,7 +710,7 @@ _GET_JSON_ROUTES = {
     "/api/notifications": lambda ctx, query: notify_catalog.catalog(),
     # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
     "/api/materials/list": lambda ctx, query: material_box.list_items(ctx.home, query),
-    # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
+    # §63 会议 recap 四把旋钮（enabled / default_language / slack_draft_enabled / copy_header）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
     # custom / foreign）；token-light GET，写面在 POST /api/skills

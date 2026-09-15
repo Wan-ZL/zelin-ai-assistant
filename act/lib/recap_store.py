@@ -134,8 +134,11 @@ def slack_targets(raw) -> dict:
 
 
 def settings(cfg: Optional[config.Config] = None) -> dict:
-    """Effective recap settings: the three flat knobs (config.py, Settings
-    overridable) + the tuning block read verbatim from config.yaml."""
+    """Effective recap settings for the pipeline: the three flat knobs it
+    actually reads (config.py, Settings overridable) + the tuning block read
+    verbatim from config.yaml. The fourth Settings knob ``recap_copy_header``
+    (§63.5 追记 / issue #299) is deliberately absent — the copy header is
+    composed by the web detail panel, no pipeline code reads it."""
     cfg = cfg or config.load_config()
     blk = _dict(_dict(cfg.raw).get("recap"))
     return {
