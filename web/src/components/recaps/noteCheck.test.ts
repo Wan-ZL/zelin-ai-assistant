@@ -1,7 +1,9 @@
-// 纠正备注预检的判例（CONTRACT §63.5 / issue #296）：五行契约做不到的诉求必须在排队前被认出来，
-// 而普通的事实纠正（截止日期错了、owner 认错人了）必须一条都不误伤——误报会把预检变成噪音。
+// 纠正备注预检的判例（CONTRACT §63.5 / §63.10 / issue #296 / #303）：这一份纪要的格式做不到的
+// 诉求必须在排队前被认出来，而普通的事实纠正（截止日期错了、owner 认错人了）必须一条都不误伤
+// ——误报会把预检变成噪音。判定按**形状**收口：可发送长版删得掉一节、写得长一点，
+// 对它说「做不到」就是那句错的拒绝。
 import { describe, expect, it } from "vitest";
-import { NOTE_CONFLICT_ORDER, noteConflicts } from "./noteCheck";
+import { fixableByLongShape, NOTE_CONFLICT_ORDER, noteConflicts, SHAPE_IMPOSSIBLE } from "./noteCheck";
 
 describe("noteConflicts", () => {
   it("says nothing about an empty or whitespace-only note", () => {
@@ -175,5 +177,28 @@ describe("noteConflicts", () => {
     expect(noteConflicts("OMIT THE OPEN LINE")).toEqual(["drop_line"]);
     expect(noteConflicts("omit the open line")).toEqual(["drop_line"]);
     expect(noteConflicts("More Detail Please")).toEqual(["more_detail"]);
+  });
+  // ------------------------------------------------------------------ §63.10
+  it("stops calling the sendable shape's satisfiable asks impossible", () => {
+    const note = "较上次变化没内容就把那行删掉，其余几行写详细一点。";
+    expect(noteConflicts(note)).toEqual(["drop_line", "more_detail"]);      // 五行形：照旧两条
+    expect(noteConflicts(note, "sections")).toEqual([]);                    // 长版：这两件事做得到
+    expect(noteConflicts("Omit the Open line and add one more section.", "sections")).toEqual([]);
+    // 长版**仍然**做不到的三类：分节名是闭表、中英两版一次产出、格式禁项照旧
+    expect(noteConflicts("Rename the Decided heading.", "sections")).toEqual(["relabel"]);
+    expect(noteConflicts("去掉英文版。", "sections")).toEqual(["language_count"]);
+    expect(noteConflicts("加粗一下 owner 的名字。", "sections")).toEqual(["formatting"]);
+    expect(SHAPE_IMPOSSIBLE.sections).toEqual(["relabel", "language_count", "formatting"]);
+    expect(SHAPE_IMPOSSIBLE.lines).toEqual(NOTE_CONFLICT_ORDER);
+    // 形状缺省 / 认不出 = 五行形（老调用方的行为一字不变）
+    expect(noteConflicts(note, "garbage")).toEqual(["drop_line", "more_detail"]);
+  });
+
+  it("knows which of the hits the long shape would fix (the panel points there)", () => {
+    expect(fixableByLongShape(["drop_line", "formatting"])).toBe(true);
+    expect(fixableByLongShape(["more_detail"])).toBe(true);
+    expect(fixableByLongShape(["add_line"])).toBe(true);
+    expect(fixableByLongShape(["relabel", "language_count", "formatting"])).toBe(false);
+    expect(fixableByLongShape([])).toBe(false);
   });
 });

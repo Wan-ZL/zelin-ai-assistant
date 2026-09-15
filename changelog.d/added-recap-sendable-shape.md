@@ -1,0 +1,2 @@
+type: added
+- Meeting recaps can now be generated in a second shape — a sendable long form with sections, a modality per section (decided / proposed / floated / open) and continuously numbered items — picked per recap in the Regenerate panel; both shapes now omit the parts the template itself fills in as empty, so a meeting that set no deadline no longer pastes a "none set" line (CONTRACT §63.10, issue #303).

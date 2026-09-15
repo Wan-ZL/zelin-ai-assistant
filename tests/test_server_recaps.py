@@ -216,9 +216,12 @@ class HistoryTestCase(_Case):
         status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
         self.assertEqual(status, 200)
         self.assertEqual(body["key"], KEY)
+        # §63.10 追记（issue #303）add-only：shape 与两语言粘出去的正文 copy_*
+        # （老 daemon 写的记录没有这三个键 → 五行形 + null，键恒在）
         self.assertEqual(body["current"], {"version": 2, "generated_at": "2026-08-31T20:40:00Z",
                                            "partial": False, "quality": "ok",
-                                           "en": ["Decided: b"], "zh": ["定了：b"]})
+                                           "en": ["Decided: b"], "zh": ["定了：b"],
+                                           "shape": "lines", "copy_en": None, "copy_zh": None})
         self.assertEqual(len(body["entries"]), 1)
         self.assertEqual(body["entries"][0]["version"], 1)
         self.assertEqual(body["entries"][0]["quality"], "needs_review")

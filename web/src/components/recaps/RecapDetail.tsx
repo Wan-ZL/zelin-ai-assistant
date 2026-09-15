@@ -1,4 +1,4 @@
-// 会议纪要页右侧详情（CONTRACT §63 / issue #129 §3）：segmented 中文 | English、5 行正文、
+// 会议纪要页右侧详情（CONTRACT §63 / §63.10 / issue #129 §3）：segmented 中文 | English、正文、
 // 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」/ 开关开着时「投到 Slack 草稿」。
 // 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记（§63.5 追记：写出去的是「一行表头 + 5 行正文」，
 // 表头与 h3 同一个 recapHeader(row, language)——所见即所复制；存储仍恰是 5 行）；重新生成 / 投草稿走 inbox 特形动作
@@ -19,18 +19,23 @@
 // §63.5 追记（issue #301）：CLOSED 行多一颗「忽略 / 恢复」（POST /api/recaps/mark dismissed，与
 // 「标记已发送」同一个 toggle 机制）——不需要记录的会议不必被迫标成「已发送」才能离开活跃列表；
 // 忽略过的行脚注说明它会先被删掉、按「恢复」即撤销。OPEN 行不给这颗按钮（会还没开完，无从判断）。
+// §63.10（issue #303）：正文显示的是 daemon 渲染好的 `copy_*`（空的那几行 / 那几节已略掉，
+// 可发送长版还带节标题与跨节连续编号）——所见即所复制，渲染只有 act/lib/recap_text 一处。
+// 「重新生成」面板多一个形状选择器（快速五行 / 可发送长版），按下时把 `shape` 一并送进
+// inbox recap_generate；备注预检因此也按形状收口（可发送长版删得掉一节、写得长一点，
+// 再说「做不到」就是错的那句拒绝），命中五行专属那几类时多一句「换成可发送长版就能办到」。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchRecapHistory, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
 import { markRecap, markRecapPending, refreshBoard } from "../../store";
 import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
 import { copyText } from "../detail/copyText";
-import { noteConflicts, type NoteConflictId } from "./noteCheck";
+import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import {
-  changedLines, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, problemLabel, recapBody,
-  recapClipboardText, recapHeader, recapProblems, recapRepairs, repairLabel, REVERT_POLL_MS,
-  revertPhase, slackDraftLabel, versionLabel, type GenerationPhase, type RevertPending,
-  type RevertPhase,
+  changedLines, hasRecapText, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, problemLabel,
+  recapBody, recapClipboardText, recapHeader, recapProblems, recapRepairs, recapShape, RECAP_SHAPES,
+  repairLabel, REVERT_POLL_MS, revertPhase, slackDraftLabel, versionLabel, type GenerationPhase,
+  type RecapShape, type RevertPending, type RevertPhase,
 } from "./recapText";
 
 const NOTE_MAX = 500;
@@ -50,6 +55,8 @@ const CONFLICT_LINES: Record<NoteConflictId, (text: Bilingual) => string> = {
   more_detail: (text) =>
     text("写不了更详细：每行有硬性长度上限，超了会被校验判成「需复核」。",
          "More detail does not fit: every line has a hard length cap, and going over it gets the recap flagged needs review."),
+  // 注：drop_line / add_line / more_detail 只在「快速五行」下才是做不到的——可发送长版
+  // 能删掉一节、多一节、写长一点（§63.10）。面板据 fixableByLongShape 多说一句指路。
   relabel: (text) =>
     text("改不了标签：五个标签的文字与顺序是固定的。",
          "The labels cannot change: their wording and their order are fixed."),
@@ -61,6 +68,12 @@ const CONFLICT_LINES: Record<NoteConflictId, (text: Bilingual) => string> = {
          "Formatting cannot be added: bold, bullets, emoji, links, timestamps and quotation marks are all rejected by the validator."),
 };
 
+/** §63.10 选中形状的那一句说明（词表在 recapText.RECAP_SHAPES，文案仍走唯一的 text(zh, en)） */
+function shapeHint(shape: RecapShape, text: Text): string {
+  const option = RECAP_SHAPES.find((entry) => entry.id === shape);
+  return option ? text(option.hint_zh, option.hint_en) : "";
+}
+
 export interface RecapDetailProps {
   row: RecapRow;
   settings: RecapSettings | null;
@@ -70,10 +83,17 @@ export interface RecapDetailProps {
 type Panel = null | "note" | "slack" | "history";
 type Text = (zh: string, en: string) => string;
 
-/** §63.9 一版的正文（选中语言）——`RecapVersion.en/zh` 恒是数组（server 侧滤过非字符串项） */
+/**
+ * §63.9 一版的正文（选中语言）——`RecapVersion.en/zh` 恒是数组（server 侧滤过非字符串项）。
+ * §63.10：可发送长版的那一版 `en` / `zh` 是空的，正文在渲染好的 `copy_*` 里——按行切开即可，
+ * 两版逐行比对（纯字符串比较）因此对两种形状是同一条路。
+ */
 function versionLines(entry: RecapVersion | null, language: Language): string[] {
   if (!entry) return [];
-  return language === "zh" ? entry.zh : entry.en;
+  const lines = language === "zh" ? entry.zh : entry.en;
+  if (lines && lines.length) return lines;
+  const body = language === "zh" ? entry.copy_zh : entry.copy_en;
+  return typeof body === "string" && body.trim() ? body.split("\n") : [];
 }
 
 /** §63.8 生成态的一句话（idle 不说话；done 由正文与 landedNote 的闪句体现） */
@@ -112,7 +132,7 @@ export function revertNote(phase: RevertPhase, version: number, text: Text): str
 export function landedNote(row: RecapRow, text: Text): string {
   const version = row.version ?? 0;
   const from = typeof row.reverted_from === "number" ? row.reverted_from : null;
-  if (row.en && row.en.length) {
+  if (hasRecapText(row)) {
     return from !== null
       ? text(`已更新到第 ${version} 版（回退自第 ${from} 版）`, `Updated to version ${version} (restored from version ${from})`)
       : text(`已更新到第 ${version} 版`, `Updated to version ${version}`);
@@ -182,6 +202,8 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const [language, setLanguage] = useState<Language>(pickLanguage(settings?.default_language, ui));
   const [panel, setPanel] = useState<Panel>(null);
   const [note, setNote] = useState("");
+  // §63.10 下一次生成用哪种形状（默认 = 这一份现在的形状；切行时复位）
+  const [pickedShape, setPickedShape] = useState<RecapShape>(recapShape(row));
   const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -200,6 +222,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     setLanguage(pickLanguage(settings?.default_language, ui));
     setPanel(null);
     setNote("");
+    setPickedShape(recapShape(row));
     setFlash(null);
     setHistory(null);
     setHistoryError(null);
@@ -240,11 +263,12 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   }, [landedVersion, historyOpen, row.key]);
 
   const body = recapBody(row, language);
+  const shape = recapShape(row);
   // §63.9 有几版可看（老 daemon 没这个键 = 不给入口；有键就逐项都能回退）
   const storedVersions = (row.history_versions ?? []).length;
   const problems = recapProblems(row);
   const repairs = recapRepairs(row);
-  const hasText = Boolean(row.en && row.en.length);
+  const hasText = hasRecapText(row);      // §63.10：可发送长版的正文在 sections_en / copy_en
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
   const progress = generationNote(phase, isOpen, text);
@@ -297,15 +321,19 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
                      : text("已忽略，放进「已忽略」", "Dismissed and filed under Dismissed"),
     () => markRecap(row.key, "dismissed", !row.dismissed_at),
   );
-  // §63.5 预检：备注命中五行契约做不到的诉求 → 逐条摊开，按钮改口，toast 不再假装全做到了
-  const conflicts = noteConflicts(note);
+  // §63.5 预检：备注命中**这一形状**做不到的诉求 → 逐条摊开，按钮改口，toast 不再假装全做到了
+  // （§63.10：判定按选中的形状算——选了可发送长版，「删掉那一节」就不再是一句拒绝）
+  const conflicts = noteConflicts(note, pickedShape);
+  // 五行专属的那几类（删一行 / 加一行 / 写详细）在长版里做得到——多一句指路，而不是只拒绝
+  const longShapeHelps = pickedShape === "lines" && fixableByLongShape(conflicts);
   const regenerate = () => run(
     conflicts.length
       ? text("已排队重新生成——上面标出的部分格式做不到，不会变",
              "Regeneration queued — the flagged parts cannot be honored and will not change")
       : text("已排队重新生成，落地后这里自动更新", "Regeneration queued; this panel updates when it lands"),
     async () => {
-      const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key };
+      const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key,
+                                                 shape: pickedShape };
       if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
       await postAction(payload);
       markRecapPending(row);
@@ -369,8 +397,17 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
       {hasText ? (
         <>
           <pre className="recap-body">{body}</pre>
+          {/* §63.10：可发送长版的条目每次重新生成都会整批换掉，位置不再是身份——不给一个
+              下一版就变的引用，照直说一句它要等跨版稳定的逐条 id（#300 的后半）。 */}
+          {shape === "sections" && (
+            <p className="recap-hint">
+              {text("这一份是可发送长版：条目编号只在这一版里成立，逐条引用要等跨版稳定的条目 id。",
+                    "This is the sendable long form: the item numbers hold for this version only — per-item citations need stable item ids first.")}
+            </p>
+          )}
           {/* §63.9 行级引用：五行的位置就是身份（标签文字与顺序固定），每行一颗 chip 复制
-              `2026-08-31 Zoom #D`——粘出去的五行正文一字不变。逐条 id（D1 / A2）等 #303。 */}
+              `2026-08-31 Zoom #D`——粘出去的五行正文一字不变。 */}
+          {shape === "lines" && (
           <div className="recap-cite" role="group" aria-label={text("复制行引用", "Copy a line citation")}>
             <span className="recap-cite-lead">{text("引用：", "Cite:")}</span>
             {LINE_TAG_LABELS.map((entry, index) => (
@@ -388,6 +425,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
               </button>
             ))}
           </div>
+          )}
         </>
       ) : (
         <p className="recap-empty">
@@ -437,6 +475,28 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
 
       {panel === "note" && !generating && (
         <div className="recap-panel">
+          {/* §63.10 形状选择器：这一次生成出哪一种文档。默认 = 这一份现在的形状（选过一次
+              就粘着它，晚到切片的自动重生成也不会把它变回五行）。 */}
+          <div className="recap-shape">
+            <span className="recap-panel-label" id="recap-shape-label">
+              {text("这一份生成成：", "Generate this recap as:")}
+            </span>
+            <div className="recap-segmented" role="radiogroup" aria-labelledby="recap-shape-label">
+              {RECAP_SHAPES.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={pickedShape === option.id}
+                  className={`recap-segment${pickedShape === option.id ? " is-active" : ""}`}
+                  onClick={() => setPickedShape(option.id)}
+                >
+                  {text(option.zh, option.en)}
+                </button>
+              ))}
+            </div>
+            <p className="recap-hint">{shapeHint(pickedShape, text)}</p>
+          </div>
           <label className="recap-panel-label" htmlFor="recap-note">
             {text("纠正备注（可选，≤500 字）：告诉模型哪里说错了", "Correction note (optional, ≤500 chars): what to fix")}
           </label>
@@ -453,12 +513,22 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
           {conflicts.length > 0 && (
             <div className="recap-note-conflicts" id="recap-note-conflicts">
               <p className="recap-note-conflicts-head">
-                {text("这几件事五行格式做不到，重新生成也不会变：",
-                      "The five-line format cannot honor these; regenerating will not change them:")}
+                {pickedShape === "sections"
+                  ? text("这几件事可发送长版也做不到，重新生成也不会变：",
+                         "The long form cannot honor these either; regenerating will not change them:")
+                  : text("这几件事五行格式做不到，重新生成也不会变：",
+                         "The five-line format cannot honor these; regenerating will not change them:")}
               </p>
               <ul className="recap-note-conflicts-list">
                 {conflicts.map((id) => <li key={id}>{CONFLICT_LINES[id](text)}</li>)}
               </ul>
+              {/* §63.10：五行做不到的那几件事，长版做得到——指路，而不是只留一句拒绝 */}
+              {longShapeHelps && (
+                <p className="recap-hint">
+                  {text("其中删掉 / 增加一节、写得更详细，「可发送长版」做得到——在上面切成它再生成。",
+                        "Dropping or adding a section and going into more detail do work in the sendable long form — switch to it above and regenerate.")}
+                </p>
+              )}
             </div>
           )}
           <div className="recap-panel-actions">

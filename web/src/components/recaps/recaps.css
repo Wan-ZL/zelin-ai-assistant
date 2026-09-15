@@ -365,3 +365,15 @@
 }
 
 .recap-history-text { min-width: 0; }
+
+/* §63.10（issue #303）「重新生成」面板顶上的形状选择器：快速五行 / 可发送长版 +
+   选中那一项的一句说明（segmented 壳复用 .recap-segmented，不另起一套） */
+.recap-shape {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recap-shape .recap-hint {
+  margin: 0;
+}

@@ -203,7 +203,7 @@ ui:                                    # 看板显示偏好（CONTRACT §54.1 �
     stroke: normal                     #   thin | normal | thick —— 描边 1px / 1.5px / 2px（系统「增强对比度」再加一档）
 
 recap:                                 # 会议 recap（CONTRACT §63，issue #129）：挂在 30 分钟 screenpipe cron 链上，只读 ~/.screenpipe/db.sqlite，
-                                       # 确定性判会议 session，CLOSED 后出 5 行 copy-only 纪要（中英同产）到 state/recap/。不是卡，无发送路径。
+                                       # 确定性判会议 session，CLOSED 后出 copy-only 纪要（中英同产；五行或分节两种形状，§63.10）到 state/recap/。不是卡，无发送路径。
   enabled: true                        # 关 = 整条静默（Settings「会议纪要」同一开关；overrides 扁平键 recap_enabled）
   default_language: auto               # auto | zh | en——详情页先显示哪一版（overrides 键 recap_default_language）
   # ---- 确定性 session 判定（数字 = 分钟；坏值回默认） ----
@@ -218,6 +218,9 @@ recap:                                 # 会议 recap（CONTRACT §63，issue #1
   # meeting_windows:                    # 追加会议应用规则（默认表：Zoom / Microsoft Teams / Webex / FaceTime / meet.google.com / Slack+Huddle）
   #   - {slug: gather, app: Gather}     #   每条 slug + ≥1 个大小写不敏感的子串匹配器（app / window / url）
   # ---- 出稿 ----
+  # default_shape: lines                # §63.10 出厂形状：lines = 快速五行（自用便签）｜ sections = 可发送长版
+  #                                     #   （分节 + 每节语气 decided/proposed/floated/open + 跨节连续编号）；
+  #                                     #   单份纪要可在页面上逐次改选，之后的重生成沿用它选的那一种
   # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
   # max_per_day: 8                      # 每个本地日上限
   # retention_days: 90                  # recaps/<key>.json 保留天数
