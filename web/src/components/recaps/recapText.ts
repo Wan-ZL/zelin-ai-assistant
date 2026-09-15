@@ -1,11 +1,12 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9 / §63.10）：行标签、按日分组、badge 词表、
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9 / §63.10 / §63.11）：行标签、按日分组、badge 词表、
 // 语言选择、复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
 // §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）、
-// §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题、两版逐行差异与回退的回执态判定。
+// §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题、两版逐行差异与回退的回执态判定、
+// §63.11（issue #302）意图问答的词表与答案拼装 + 「转写原版 / 我记录的版本」两版切换的正文。
 // 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
-import type { RecapProblem, RecapRepair, RecapRow, RecapSection } from "../../types";
+import type { RecapProblem, RecapQuestion, RecapRepair, RecapRow, RecapSection } from "../../types";
 import { WEEKDAYS } from "../shell/recordingSchedule";
 
 /** 会议应用 slug（server 定，act/lib/recap_sessions.DEFAULT_MEETING_RULES）→ 显示名 */
@@ -234,6 +235,101 @@ export const RECAP_SHAPES: { id: RecapShape; zh: string; en: string; hint_zh: st
     hint_en: "Sections and numbered items, each section tagged decided / proposed / floated / open — the one you send." },
 ];
 
+/**
+ * §63.11（issue #302）意图问答的纯逻辑。**组成来自 wire**（`recaps[].questions`，
+ * daemon 从这一版正文自己推出来的），这里只做三件事：滤掉手改坏的行、把 owner 点过的
+ * 选项拼成 wire 形的 `answers`、给两版切换取正文。问法与选项文案走页面同一套
+ * `text(zh, en)`（下面两张词表，add-only；词表外原样显示 wire 值）。
+ */
+export const RECAP_ANSWERS_MAX = 12;
+
+export function recapQuestions(row: RecapRow): RecapQuestion[] {
+  const rows = Array.isArray(row.questions) ? row.questions : [];
+  return rows.filter((q): q is RecapQuestion =>
+    Boolean(q) && typeof q === "object" && typeof (q as RecapQuestion).id === "string"
+    && Array.isArray((q as RecapQuestion).options) && (q as RecapQuestion).options.length > 0);
+}
+
+/** 一类问题怎么问（`kind` 词表逐字镜像 `act/lib/recap_intent.OPTIONS` 的键） */
+export const RECAP_QUESTION_KINDS: Record<string, { zh: string; en: string }> = {
+  split: { zh: "这条分工要留在纪要里吗？写在纸上就是一份责任。",
+           en: "Keep this commitment on the record? An item on the record is an obligation." },
+  deadline: { zh: "要把截止日期记下来吗？",
+              en: "Record the deadline?" },
+  others: { zh: "要记下对方的要求、归属与进度吗？",
+            en: "Record the other party's requirements, ownership and status?" },
+  detail: { zh: "要写到研究级细节与保留说法，还是停在决定与行动层面？",
+            en: "Include research-level detail and hedges, or stop at decision and action level?" },
+  audience: { zh: "这一份是发给别人，还是自己看？两者要的语气与对冲不一样。",
+              en: "Is this recap for sending to someone, or for your own memory? They want different registers." },
+  own: { zh: "里面提到的那个项目 / 工作流，你想认领吗？",
+         en: "That project or workstream — do you want to own it?" },
+  prior: { zh: "要和上一份纪要对比吗？",
+           en: "Compare against the prior recap?" },
+};
+
+/** 一个选项的按钮文案（选项词表同源；未知值原样显示——add-only 词表纪律） */
+export const RECAP_ANSWER_LABELS: Record<string, { zh: string; en: string }> = {
+  keep: { zh: "留着", en: "Keep" },
+  drop: { zh: "删掉", en: "Drop" },
+  propose: { zh: "改成提议", en: "As a proposal" },
+  send: { zh: "发给别人", en: "For sending" },
+  self: { zh: "自己看", en: "For myself" },
+  own: { zh: "我认领", en: "I own it" },
+  decline: { zh: "不是我的", en: "Not mine" },
+  compare: { zh: "对比", en: "Compare" },
+};
+
+export function questionLabel(question: RecapQuestion, text: Bilingual): string {
+  const wording = RECAP_QUESTION_KINDS[question.kind];
+  return wording ? text(wording.zh, wording.en) : question.kind;
+}
+
+export function answerLabel(option: string, text: Bilingual): string {
+  const wording = RECAP_ANSWER_LABELS[option];
+  return wording ? text(wording.zh, wording.en) : option;
+}
+
+/**
+ * owner 点过的选项 → wire 形 `["split1=drop", …]`。**只带点过的那几条**：没答过的问题
+ * 不发一个编出来的答案（默认值会变成一句 owner 从没说过的指令）。顺序按 wire 上的问题
+ * 顺序，帽 `RECAP_ANSWERS_MAX`（= daemon 侧的 `MAX_ANSWERS`）。
+ */
+export function answersFor(questions: RecapQuestion[], picks: Record<string, string>): string[] {
+  return questions
+    .filter((q) => typeof picks[q.id] === "string" && q.options.includes(picks[q.id]))
+    .map((q) => `${q.id}=${picks[q.id]}`)
+    .slice(0, RECAP_ANSWERS_MAX);
+}
+
+/**
+ * §63.11 「转写原版」的正文（`baseline.copy_*`，daemon 出稿时渲染好的那一份）。
+ * 那一版缺这门语言就退到另一门——空 `<pre>` 配一颗可用的复制键比一份英文正文差得多
+ * （与 daemon 侧 Slack 草稿正文的同一条口径）。
+ */
+export function baselineBody(row: RecapRow, language: Language): string {
+  const baseline = row.baseline;
+  if (!baseline || typeof baseline !== "object") return "";
+  const asked = language === "zh" ? baseline.copy_zh : baseline.copy_en;
+  const other = language === "zh" ? baseline.copy_en : baseline.copy_zh;
+  if (typeof asked === "string" && asked.trim()) return asked;
+  return typeof other === "string" ? other : "";
+}
+
+/** 有没有一份「转写原版」可切——**两门语言任一**有正文即可（切换在语言之上） */
+export function hasBaseline(row: RecapRow): boolean {
+  return Boolean(baselineBody(row, "en").trim() || baselineBody(row, "zh").trim());
+}
+
+/** §63.11 视图：current = 我记录的版本（记录上这一版）｜baseline = 转写原版 */
+export type RecapView = "current" | "baseline";
+
+/** 两版切换的两项（文案仍走唯一的双语机制 text(zh, en)） */
+export const RECAP_VIEWS: { id: RecapView; zh: string; en: string }[] = [
+  { id: "baseline", zh: "转写原版", en: "What the transcript said" },
+  { id: "current", zh: "我记录的版本", en: "What I chose to record" },
+];
+
 /** §63.10 这一版的分节正文（手改坏的 wire 上什么都可能有——只留像样的节） */
 export function recapSections(row: RecapRow, language: Language): RecapSection[] {
   const raw = language === "zh" ? row.sections_zh : row.sections_en;
@@ -288,9 +384,16 @@ export function recapHeader(row: RecapRow, language: Language): string {
   return `${dayKey(row.start)}${wd ? gap + wd : ""} ${rowLabel(row)}`;
 }
 
-/** 剪贴板文本 = 一行表头 + 5 行正文（§63.5 追记）；存储与 Slack 草稿正文仍恰是 5 行 */
-export function recapClipboardText(row: RecapRow, language: Language): string {
-  return `${recapHeader(row, language)}\n${recapBody(row, language)}`;
+/** §63.11 面板上**正在看的那一份**正文（切到「转写原版」= 第一版渲染好的那份） */
+export function recapViewBody(row: RecapRow, view: RecapView, language: Language): string {
+  return view === "baseline" ? baselineBody(row, language) : recapBody(row, language);
+}
+
+/** 剪贴板文本 = 一行表头 + 正文（§63.5 追记）；`view`（§63.11）默认是记录上这一版
+ *  ——复制永远等于**屏幕上那一份**，两版切换因此不需要第二条复制路径 */
+export function recapClipboardText(row: RecapRow, language: Language,
+                                   view: RecapView = "current"): string {
+  return `${recapHeader(row, language)}\n${recapViewBody(row, view, language)}`;
 }
 
 type Bilingual = (zh: string, en: string) => string;

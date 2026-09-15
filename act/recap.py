@@ -1,4 +1,4 @@
-"""act/recap.py — meeting recaps: deterministic sessions in, a copy-only note out (CONTRACT §63 / §63.10).
+"""act/recap.py — meeting recaps: deterministic sessions in, a copy-only note out (CONTRACT §63 / §63.10 / §63.11).
 
 Hangs off the existing 30-minute screenpipe cron chain
 (``ingest/process-screenpipe.sh`` runs ``python -m act.recap --once`` before
@@ -37,8 +37,16 @@ the notification, the Slack draft body, the 「较上次变化」 anchor for the
 meeting) asks ``recap_store.has_text`` / :func:`copy_body`, so a sections recap
 is never silently treated as a recap that never landed.
 
+§63.11 (issue #302): a regeneration can also carry the owner's **answers** to
+the questions ``act/lib/recap_intent.py`` derives from the version on the
+record (``--answers '["split1=drop","aud=send"]'``). The answers reach the
+model as instructions (numbers only; the items they name ride in the UNTRUSTED
+fence), ``prior=drop`` is executed deterministically rather than asked for, and
+the version they replace is kept forever as the record's ``baseline`` — the
+history cap would otherwise evict the first version on the fifth regeneration.
+
 Other entry points (spawned detached by actd for the inbox special forms):
-``--generate <key> [--note …] [--partial]``, ``--slack-draft <key>
+``--generate <key> [--note …] [--partial] [--shape …] [--answers …]``, ``--slack-draft <key>
 --channel-id <C…>`` and ``--revert <key> --to-version <n>`` (§63.9: a stored
 version's text becomes version + 1 — no model call, and this module stays the
 only writer of ``recaps/``, the server never touches a recap file). All runs
@@ -49,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import os
 import sys
 import time
@@ -64,6 +73,7 @@ from act.lib import (
     logcap,
     notify,
 )
+from act.lib import recap_intent as intent
 from act.lib import recap_sessions as sessions
 from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
@@ -160,13 +170,19 @@ _SHAPE_MISS = {
 }
 
 
-def _attempt(args: dict, runner, cfg, problems: Optional[list] = None) -> "tuple[Optional[dict], list]":
+def _attempt(args: dict, runner, cfg, problems: Optional[list] = None,
+             drop_prior: bool = False) -> "tuple[Optional[dict], list]":
     shape = text.normalize_shape(args.get("shape"))
     raw = _call_model(text.build_prompt(problems=problems, **args), runner, cfg,
                       text.NO_EGRESS_ARGV, LLM_TIMEOUT_S)
     parsed = text.parse_for(shape, raw)
     if parsed is None:
         return None, [_SHAPE_MISS[shape]]
+    # §63.11：`prior=drop` **在校验之前**落地——那一行 / 那一节我们要自己覆盖掉，
+    # 所以判决与重试引回的问题都该是**真正落地的那份文本**的问题，而不是一段
+    # 马上被替掉的散文的问题（问题行与存下来的正文对不上就是一条假回执）
+    if drop_prior:
+        parsed = text.drop_prior(shape, parsed)
     return parsed, text.validate_for(shape, parsed)
 
 
@@ -188,16 +204,19 @@ def _after_retry(best: Optional[dict], shape: str) -> "tuple[Optional[dict], str
     return best, store.QUALITY_NEEDS_REVIEW, text.validate_detail(best), []
 
 
-def generate_lines(args: dict, runner, cfg) -> "tuple[Optional[dict], str, list, list]":
+def generate_lines(args: dict, runner, cfg,
+                   drop_prior: bool = False) -> "tuple[Optional[dict], str, list, list]":
     """``(lines, quality, problems, repairs)`` — one call, one retry with the
     violations quoted back, then the §63.3 追记 deterministic repair: a failure
     that is nothing but a few characters over a cap is trimmed back instead of
     costing a round trip or a human (issue #298). Still failing = 需复核 with
-    the structured findings on the record — the owner can copy and fix by hand."""
-    parsed, problems = _attempt(args, runner, cfg)
+    the structured findings on the record — the owner can copy and fix by hand.
+    ``drop_prior`` (§63.11) is the owner's ``prior=drop`` answer, applied to
+    every attempt deterministically instead of being asked for."""
+    parsed, problems = _attempt(args, runner, cfg, drop_prior=drop_prior)
     if not problems:
         return parsed, store.QUALITY_OK, [], []
-    retry, problems = _attempt(args, runner, cfg, problems)
+    retry, problems = _attempt(args, runner, cfg, problems, drop_prior=drop_prior)
     if not problems:
         return retry, store.QUALITY_OK, [], []
     return _after_retry(retry or parsed, text.normalize_shape(args.get("shape")))
@@ -231,7 +250,26 @@ def _push_history(rec: dict) -> None:
              "quality": rec.get("quality"), "shape": text.normalize_shape(rec.get("shape")),
              "sections_en": rec.get("sections_en"), "sections_zh": rec.get("sections_zh"),
              "copy_en": rec.get("copy_en"), "copy_zh": rec.get("copy_zh")}
+    _capture_baseline(rec)
     rec["history"] = (rec.get("history") or [])[-(HISTORY_CAP - 1):] + [entry]
+
+
+def _capture_baseline(rec: dict) -> None:
+    """§63.11（issue #302）：`baseline` = **我们见过的第一版**的可粘正文，只写一次。
+
+    为什么不靠 `history[]`：帽是 :data:`HISTORY_CAP` 版，第五次重新生成就把第一版
+    挤出去了（面板自己都这么说，§63.9），而「转写原版」是这一条 issue 的另一半——
+    第二版按 owner 的答案出，第一版必须**永久**留着才对照得出「转写说了什么 /
+    我选择记下什么」。写的是渲染好的 `copy_*`（粘出去的那一份，所见即所复制），
+    不是 `en` / `zh` 的原始数组：切换要的就是那两段正文，存第二种结构只会漂移。
+    出生时机是**这一版即将被替掉**的那一刻，所以本节之前生成的老记录也能拿到一份
+    诚实的 baseline（它那一版从来没有被任何答案 steer 过）。"""
+    if rec.get("baseline") is not None:
+        return
+    rec["baseline"] = {"version": rec.get("version"), "generated_at": rec.get("generated_at"),
+                       "shape": text.normalize_shape(rec.get("shape")),
+                       "copy_en": copy_body(rec, "en") or None,
+                       "copy_zh": copy_body(rec, "zh") or None}
 
 
 def copy_body(rec: dict, lang: str) -> str:
@@ -271,14 +309,17 @@ def _set_payload(rec: dict, lines: Optional[dict], shape: str) -> None:
 
 def _apply_lines(rec: dict, lines: Optional[dict], quality: str, note: Optional[str],
                  partial: bool, now: float, problems: Optional[list] = None,
-                 repairs: Optional[list] = None, shape: str = text.DEFAULT_SHAPE) -> None:
+                 repairs: Optional[list] = None, shape: str = text.DEFAULT_SHAPE,
+                 answers: Optional[list] = None) -> None:
     """Version bump with the new (or absent) lines. ``problems`` / ``repairs``
     are the §63.3 追记 add-only receipts (structured findings behind 需复核 and
     the length trims applied before it) — always rewritten, so a clean new
     version clears the previous one's reasons. ``reverted_from`` (§63.9) is
     rewritten to None for the same reason: a freshly generated version is not
     a restored one, and a stale handle would make the panel say「回退自第 N 版」
-    about text the model just wrote."""
+    about text the model just wrote. ``intent`` (§63.11) is rewritten every
+    version too — the answers belong to the generation that produced THIS text,
+    and no answers = None (never the previous version's answer sheet)."""
     _push_history(rec)
     rec["version"] = int(rec.get("version") or 0) + 1
     rec["generated_at"] = _iso(now)
@@ -289,6 +330,8 @@ def _apply_lines(rec: dict, lines: Optional[dict], quality: str, note: Optional[
     rec["problems"] = list(problems or [])
     rec["repairs"] = list(repairs or [])
     rec["reverted_from"] = None
+    rec["intent"] = ({"answers": list(answers), "at": _iso(now), "version": rec["version"]}
+                     if answers else None)
 
 
 def record_shape(rec: dict, st: dict, shape: Optional[str] = None) -> str:
@@ -301,14 +344,27 @@ def record_shape(rec: dict, st: dict, shape: Optional[str] = None) -> str:
     return text.DEFAULT_SHAPE
 
 
+def _intent_args(rec: dict, answers: list) -> dict:
+    """§63.11：答案 → `build_prompt` 的两个可选块。**在正文被替掉之前算**——
+    `split<n>` 指的是记录上**这一版**的第 n 条分工，答案是对着它答的。"""
+    if not answers:
+        return {}
+    return {"intent": intent.prompt_block(answers),
+            "baseline": intent.baseline_block(intent.split_subjects(rec), copy_body(rec, "en"))}
+
+
 def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
                 note: Optional[str] = None, partial: bool = False,
-                shape: Optional[str] = None) -> dict:
+                shape: Optional[str] = None, answers: Optional[list] = None) -> dict:
     """Read the transcript for the record's interval and (re)generate its
     text in place, in the shape :func:`record_shape` resolves (§63.10).
+    ``answers`` (§63.11) are the owner's picks on the questions derived from the
+    version currently on the record — malformed ones are dropped whole
+    (``recap_intent.clean_answers``), never half-applied.
     Thin / silent meetings never reach the model."""
     tz = st["options"].timezone
     shape = record_shape(rec, st, shape)
+    answers = intent.clean_answers(answers)
     start, end = sessions.parse_ts(rec["start"]) or 0.0, sessions.parse_ts(rec["end"]) or 0.0
     transcript = sessions.transcript_between(conn, start, end)
     words = text.transcript_words(transcript)
@@ -323,9 +379,12 @@ def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
                 "voice_profile": voice_profile_text(), "note": note, "partial": partial,
                 "shape": shape,
                 "meta": {"when": _when(rec, tz), "app": rec["app"],
-                         "duration_min": rec["duration_min"]}}
-        lines, quality, problems, repairs = generate_lines(args, runner, cfg)
-    _apply_lines(rec, lines, quality, note, partial, now, problems, repairs, shape=shape)
+                         "duration_min": rec["duration_min"]},
+                **_intent_args(rec, answers)}
+        lines, quality, problems, repairs = generate_lines(args, runner, cfg,
+                                                           drop_prior=intent.drops_prior(answers))
+    _apply_lines(rec, lines, quality, note, partial, now, problems, repairs, shape=shape,
+                 answers=answers)
     return rec
 
 
@@ -613,20 +672,23 @@ def _target_record(key: str) -> Optional[dict]:
 
 def generate(key: str, note: Optional[str] = None, partial: bool = False,
              now: Optional[float] = None, conn=None, runner=None, cfg=None,
-             shape: Optional[str] = None) -> Optional[dict]:
+             shape: Optional[str] = None, answers: Optional[list] = None) -> Optional[dict]:
     """「重新生成」(CLOSED, with the owner's note) / 「现在生成」(OPEN, partial);
-    ``shape`` (§63.10) is the 快速五行 / 可发送长版 pick, sticky on the record."""
+    ``shape`` (§63.10) is the 快速五行 / 可发送长版 pick, sticky on the record;
+    ``answers`` (§63.11) are the owner's answers to the intent questions — the
+    second version is generated from them and the first stays as ``baseline``."""
     cfg, st, now = _boot(cfg, now)
     rec = _target_record(key)
     if rec is None:
         return None
     partial = bool(partial) or rec.get("status") == sessions.OPEN
     _with_db(conn, st, lambda c: fill_record(rec, c, st, runner, cfg, now, note=note,
-                                             partial=partial, shape=shape))
+                                             partial=partial, shape=shape, answers=answers))
     store.save_recap(rec)
     _announce(rec, st)
-    _log("generate %s: v%s %s partial=%s shape=%s"
-         % (key, rec["version"], rec["quality"], partial, rec.get("shape")))
+    _log("generate %s: v%s %s partial=%s shape=%s answers=%d"
+         % (key, rec["version"], rec["quality"], partial, rec.get("shape"),
+            len((rec.get("intent") or {}).get("answers") or [])))
     return rec
 
 
@@ -745,10 +807,25 @@ def _ok(result) -> int:
     return 0 if result else 1
 
 
+def _cli_answers(raw) -> list:
+    """``--answers '["split1=drop"]'`` → 答案表；坏 JSON / 词表外 = ``[]``（这一次
+    照没有答案出稿，理由进日志——一个畸形的答案表绝不静默改写这份纪要，宪法第 11 条）。"""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = None
+    answers = intent.clean_answers(parsed)
+    if not answers:
+        _log("generate: ignoring malformed --answers %r" % (str(raw)[:120],))
+    return answers
+
+
 def _dispatch(args) -> int:
     if args.generate:
         return _ok(generate(args.generate, note=args.note, partial=args.partial,
-                            shape=args.shape))
+                            shape=args.shape, answers=_cli_answers(args.answers)))
     if args.slack_draft:
         return _ok(slack_draft_for(args.slack_draft, args.channel_id))
     if args.revert:
@@ -766,6 +843,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--partial", action="store_true", help="OPEN session: recap so far")
     ap.add_argument("--shape", choices=list(text.SHAPES), default=None,
                     help="output shape for --generate (default: the record's, then config)")
+    ap.add_argument("--answers", default="",
+                    help='§63.11 intent answers for --generate, compact JSON: \'["split1=drop"]\'')
     ap.add_argument("--slack-draft", metavar="KEY", help="place the recap as a Slack draft")
     ap.add_argument("--channel-id", default="", help="Slack conversation id for --slack-draft")
     ap.add_argument("--revert", metavar="KEY", help="restore a stored version (§63.9)")

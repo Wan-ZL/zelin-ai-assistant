@@ -17,8 +17,10 @@ three inbox special forms through POST /api/actions.
   fail-open: absent / corrupt / oversize = 200 empty layer, never 500 / 404;
   a bad key is the one 400 — the client never names a path.
 - inbox forms: meeting_key shape, note ≤ 500, partial only ``true``,
-  channel_id shape, ``recap_revert`` version = a real integer ≥ 1; unknown
-  fields 400; files land with ``via: web``.
+  channel_id shape, ``recap_revert`` version = a real integer ≥ 1, §63.11
+  ``answers`` = 1..12 distinct ``id=value`` strings (a list of strings, because
+  the byte serializer has no nested-object branch); unknown fields 400; files
+  land with ``via: web``.
 Real server on a random port (tests/test_server_common.py); stdlib client.
 """
 import json
@@ -306,6 +308,30 @@ class InboxFormsTestCase(_Case):
         self.assertEqual(rec["meeting_key"], KEY)
         self.assertEqual((rec["note"], rec["partial"], rec["via"]), ("fix", True, "web"))
         self.assertNotIn("channel_id", rec)
+
+    def test_recap_generate_carries_the_intent_answers(self):
+        """§63.11（issue #302）：答案是**字符串列表**（golden `recap_generate-intent` 钉字节形）。"""
+        answers = ["split1=drop", "aud=send"]
+        status, _body = post_json(self.port, "/api/actions",
+                                  {"action": "recap_generate", "meeting_key": KEY,
+                                   "answers": answers})
+        self.assertEqual(status, 200)
+        raw = self._files()[0].read_bytes().decode("utf-8")
+        self.assertIn('"answers" : [\n    "split1=drop",\n    "aud=send"\n  ]', raw)
+        rec = json.loads(raw)
+        self.assertEqual((rec["answers"], rec["via"]), (answers, "web"))
+
+    def test_recap_generate_answers_fail_closed(self):
+        for answers in ([], "split1=drop", [1], ["split1"], ["Split1=drop"], ["aud=send too"],
+                        ["split1=drop", "split1=keep"], ["aud=send"] * 13, [["split1=drop"]],
+                        [{"split1": "drop"}]):
+            with self.subTest(answers=answers):
+                status, body = post_json(self.port, "/api/actions",
+                                         {"action": "recap_generate", "meeting_key": KEY,
+                                          "answers": answers})
+                self.assertEqual(status, 400)
+                assert_envelope(self, body, "INVALID_FIELD")
+        self.assertEqual(self._files(), [])
 
     def test_recap_slack_draft_lands(self):
         status, _body = post_json(self.port, "/api/actions",

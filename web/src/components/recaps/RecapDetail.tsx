@@ -1,4 +1,4 @@
-// 会议纪要页右侧详情（CONTRACT §63 / §63.10 / issue #129 §3）：segmented 中文 | English、正文、
+// 会议纪要页右侧详情（CONTRACT §63 / §63.10 / §63.11 / issue #129 §3）：segmented 中文 | English、正文、
 // 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」/ 开关开着时「投到 Slack 草稿」。
 // 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记（§63.5 追记：写出去的是「一行表头 + 5 行正文」，
 // 表头与 h3 同一个 recapHeader(row, language)——所见即所复制；存储仍恰是 5 行）；重新生成 / 投草稿走 inbox 特形动作
@@ -24,6 +24,10 @@
 // 「重新生成」面板多一个形状选择器（快速五行 / 可发送长版），按下时把 `shape` 一并送进
 // inbox recap_generate；备注预检因此也按形状收口（可发送长版删得掉一节、写得长一点，
 // 再说「做不到」就是错的那句拒绝），命中五行专属那几类时多一句「换成可发送长版就能办到」。
+// §63.11（issue #302）：同一个面板里多一组**意图问答**（问题由 daemon 从这一版正文推出来，
+// 走 wire 的 `row.questions`；client 不造问题、没点过的问题不发答案），按下时把点过的
+// `answers` 一并送出；正文上方多一排「转写原版 | 我记录的版本」——`row.baseline` 在时才出现，
+// 复制跟着切换走（`recapClipboardText(row, language, view)`，所见即所复制不因两版并存失效）。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchRecapHistory, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
@@ -31,12 +35,15 @@ import { markRecap, markRecapPending, refreshBoard } from "../../store";
 import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
 import { copyText } from "../detail/copyText";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
+import { RecapIntentPanel } from "./RecapIntent";
 import {
-  changedLines, hasRecapText, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, pickShape,
+  answersFor, changedLines, hasBaseline, hasRecapText, isGenerating, lineCitation, LINE_TAG_LABELS,
+  pickLanguage, pickShape,
   problemLabel,
-  recapBody, recapClipboardText, recapHeader, recapProblems, recapRepairs, recapShape, RECAP_SHAPES,
+  recapClipboardText, recapHeader, recapProblems, recapQuestions, recapRepairs, recapShape,
+  recapViewBody, RECAP_SHAPES, RECAP_VIEWS,
   repairLabel, REVERT_POLL_MS, revertPhase, slackDraftLabel, versionLabel, type GenerationPhase,
-  type RecapShape, type RevertPending, type RevertPhase,
+  type RecapShape, type RecapView, type RevertPending, type RevertPhase,
 } from "./recapText";
 
 const NOTE_MAX = 500;
@@ -205,6 +212,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const [note, setNote] = useState("");
   // §63.10 下一次生成用哪种形状（默认 = 这一份现在的形状 > 配置的出厂形状；切行时复位）
   const [pickedShape, setPickedShape] = useState<RecapShape>(pickShape(row, settings?.default_shape));
+  // §63.11 意图问答：owner 点过的答案（没点过的问题不在表里 = 不发答案）+ 正在看哪一版
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [view, setView] = useState<RecapView>("current");
   const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -224,6 +234,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     setPanel(null);
     setNote("");
     setPickedShape(pickShape(row, settings?.default_shape));
+    // §63.11：答案与两版切换都不跨行（另一场会的答案套在这一份上就是一次静默改写）
+    setPicks({});
+    setView("current");
     setFlash(null);
     setHistory(null);
     setHistoryError(null);
@@ -265,8 +278,12 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     if (historyOpen) void loadHistory();
   }, [landedVersion, historyOpen, row.key]);
 
-  const body = recapBody(row, language);
+  // §63.11：正文 = **正在看的那一版**（复制走同一个函数，所见即所复制不因两版切换失效）
+  const body = recapViewBody(row, view, language);
   const shape = recapShape(row);
+  const questions = recapQuestions(row);
+  const baselineReady = hasBaseline(row);
+  const viewingBaseline = view === "baseline" && baselineReady;
   // §63.9 有几版可看（老 daemon 没这个键 = 不给入口；有键就逐项都能回退）
   const storedVersions = (row.history_versions ?? []).length;
   const problems = recapProblems(row);
@@ -309,7 +326,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   }
 
   const copy = () => run(text("已复制到剪贴板", "Copied to clipboard"), async () => {
-    const ok = await copyText(recapClipboardText(row, language));
+    const ok = await copyText(recapClipboardText(row, language, view));
     if (!ok) throw new Error(text("复制失败", "Copy failed"));
     await markRecap(row.key, "copied", true);
   });
@@ -338,6 +355,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
       const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key,
                                                  shape: pickedShape };
       if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
+      // §63.11：只带**点过**的答案（一条也没点 = 键不在，wire 与旧行为一字不差）
+      const answers = answersFor(questions, picks);
+      if (answers.length) payload.answers = answers;
       await postAction(payload);
       markRecapPending(row);
     });
@@ -399,10 +419,36 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
 
       {hasText ? (
         <>
+          {/* §63.11（issue #302）：第一版是转写说了什么，这一版是我选择记下什么——两版并存可切，
+              复制跟着切换走（`recapClipboardText(row, language, view)`）。`baseline` 只在
+              第二版落地之后才有，所以只生成过一次的纪要看不到这排按钮。 */}
+          {baselineReady && (
+            <div className="recap-segmented" role="tablist"
+                 aria-label={text("看哪一版", "Which version to read")}>
+              {RECAP_VIEWS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === option.id}
+                  className={`recap-segment${view === option.id ? " is-active" : ""}`}
+                  onClick={() => setView(option.id)}
+                >
+                  {text(option.zh, option.en)}
+                </button>
+              ))}
+            </div>
+          )}
           <pre className="recap-body">{body}</pre>
+          {viewingBaseline && (
+            <p className="recap-hint">
+              {text(`这是第 ${row.baseline?.version ?? 1} 版（转写原样出的那一份，不会再变）；复制的就是上面这一份。`,
+                    `This is version ${row.baseline?.version ?? 1} — the one straight from the transcript, frozen. Copy takes exactly what you see.`)}
+            </p>
+          )}
           {/* §63.10：可发送长版的条目每次重新生成都会整批换掉，位置不再是身份——不给一个
               下一版就变的引用，照直说一句它要等跨版稳定的逐条 id（#300 的后半）。 */}
-          {shape === "sections" && (
+          {shape === "sections" && !viewingBaseline && (
             <p className="recap-hint">
               {text("这一份是可发送长版：条目编号只在这一版里成立，逐条引用要等跨版稳定的条目 id。",
                     "This is the sendable long form: the item numbers hold for this version only — per-item citations need stable item ids first.")}
@@ -410,7 +456,8 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
           )}
           {/* §63.9 行级引用：五行的位置就是身份（标签文字与顺序固定），每行一颗 chip 复制
               `2026-08-31 Zoom #D`——粘出去的五行正文一字不变。 */}
-          {shape === "lines" && (
+          {/* 看着「转写原版」时不给引用 chip：引用串不带版本号，挂在另一版的正文旁边就说不清引的是哪一版 */}
+          {shape === "lines" && !viewingBaseline && (
           <div className="recap-cite" role="group" aria-label={text("复制行引用", "Copy a line citation")}>
             <span className="recap-cite-lead">{text("引用：", "Cite:")}</span>
             {LINE_TAG_LABELS.map((entry, index) => (
@@ -500,6 +547,15 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
             </div>
             <p className="recap-hint">{shapeHint(pickedShape, text)}</p>
           </div>
+          {/* §63.11 意图问答：与形状选择器同一处——这里就是「下一次生成长什么样」的唯一入口
+              （D75 的原话），不为几个问题再立第二个面板。 */}
+          <RecapIntentPanel questions={questions} picks={picks} text={text} disabled={busy}
+                            onPick={(id, option) => setPicks((prev) => {
+                              const next = { ...prev };
+                              if (next[id] === option) delete next[id];   // 再点一次 = 取消这个答案
+                              else next[id] = option;
+                              return next;
+                            })} />
           <label className="recap-panel-label" htmlFor="recap-note">
             {text("纠正备注（可选，≤500 字）：告诉模型哪里说错了", "Correction note (optional, ≤500 chars): what to fix")}
           </label>
@@ -671,6 +727,13 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
           </span>
         )}
         {row.note && <span className="recap-meta-item">{text("上次备注：", "Last note: ")}{row.note}</span>}
+        {/* §63.11：这一版是按几个答案出的（回执属于产出这版正文的那一次生成） */}
+        {(row.intent?.answers?.length ?? 0) > 0 && (
+          <span className="recap-meta-item">
+            {text(`这一版按你回答的 ${row.intent?.answers?.length} 个问题生成。`,
+                  `This version was generated from the ${row.intent?.answers?.length} question(s) you answered.`)}
+          </span>
+        )}
         <span className="recap-meta-item">{text("同室第三人声和系统回声可能混入，粘贴前必读。", "Third-party voices and system echo may leak in — read before pasting.")}</span>
       </footer>
 

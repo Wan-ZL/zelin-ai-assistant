@@ -3,13 +3,17 @@
 // §63.3 追记 校验原因与自动修剪的双语文案（issue #298）；§63.5 追记 三栏判定与已忽略 badge（issue #301）；
 // §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异、回退回执的三态（issue #300）；
 // §63.10 两种形状：正文读 daemon 渲染好的 copy_*、可发送长版的「有正文吗」看 sections_en（issue #303）。
+// §63.11 意图问答的词表与答案拼装、「转写原版 / 我记录的版本」两版正文与复制（issue #302）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, RECAP_SHAPES, REVERT_POLL_MS,
-  appLabel, badgesFor, changedLines, generationPhase, groupByDay, hasRecapText, isGenerating, laneCounts,
-  lineCitation, pickLanguage, pickShape, problemLabel, recapBody, recapClipboardText, recapHeader, recapLane,
-  recapProblems, recapRepairs, recapSections, recapShape, repairLabel, revertPhase, rowLabel, slackDraftLabel,
+  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_ANSWERS_MAX, RECAP_LANES,
+  RECAP_SHAPES, RECAP_VIEWS, REVERT_POLL_MS,
+  answerLabel, answersFor, appLabel, badgesFor, baselineBody, changedLines, generationPhase, groupByDay,
+  hasBaseline, hasRecapText, isGenerating, laneCounts,
+  lineCitation, pickLanguage, pickShape, problemLabel, questionLabel, recapBody, recapClipboardText,
+  recapHeader, recapLane, recapProblems, recapQuestions, recapRepairs, recapSections, recapShape,
+  recapViewBody, repairLabel, revertPhase, rowLabel, slackDraftLabel,
   versionLabel,
 } from "./recapText";
 
@@ -354,5 +358,67 @@ describe("recapText", () => {
     expect(problemLabel({ code: "item_numbered", lang: "zh", line: 2 }, zh)).toContain("第 2 条");
     expect(problemLabel({ code: "section_mismatch", lang: null, line: null }, en)).toMatch(/must match/);
     expect(problemLabel({ code: "item_count", lang: "en", line: null, limit: 24 }, en)).toMatch(/24 items/);
+  });
+
+  // ------------------------------------------------------------------ §63.11
+  it("only keeps well-formed intent questions off the wire", () => {
+    const asked = row({ questions: [
+      { id: "split1", kind: "split", options: ["keep", "drop", "propose"], subject: "Ann: eval" },
+      { id: "aud", kind: "audience", options: ["send", "self"], subject: null },
+      { id: "broken", kind: "split", options: [] },
+      { id: 7, kind: "split", options: ["keep"] },
+      null, "nope",
+    ] as never });
+    expect(recapQuestions(asked).map((q) => q.id)).toEqual(["split1", "aud"]);
+    expect(recapQuestions(row())).toEqual([]);            // 老 daemon 无此键 = 不问
+  });
+
+  it("sends only the answers the owner actually picked", () => {
+    const questions = recapQuestions(row({ questions: [
+      { id: "split1", kind: "split", options: ["keep", "drop", "propose"], subject: "Ann: eval" },
+      { id: "dl", kind: "deadline", options: ["keep", "drop"], subject: null },
+      { id: "aud", kind: "audience", options: ["send", "self"], subject: null },
+    ] as never }));
+    expect(answersFor(questions, {})).toEqual([]);        // 没点过 = 不发（不编默认值）
+    expect(answersFor(questions, { aud: "send", split1: "drop" }))
+      .toEqual(["split1=drop", "aud=send"]);              // 顺序跟 wire 上的问题顺序
+    // 闭表之外的值不发（手改过的 state / 老词表都可能这样）
+    expect(answersFor(questions, { split1: "burn", dl: "drop" })).toEqual(["dl=drop"]);
+    const many: Record<string, string> = {};
+    const big = recapQuestions(row({ questions: Array.from({ length: 20 }, (_u, i) => (
+      { id: `split${i}`, kind: "split", options: ["keep", "drop"], subject: null })) as never }));
+    for (const q of big) many[q.id] = "drop";
+    expect(answersFor(big, many).length).toBe(RECAP_ANSWERS_MAX);   // = daemon 侧 MAX_ANSWERS
+  });
+
+  it("asks each kind in both languages and falls back to the wire value", () => {
+    const zh = (a: string, _b: string) => a;
+    const en = (_a: string, b: string) => b;
+    expect(questionLabel({ id: "split1", kind: "split", options: [] }, en)).toMatch(/obligation/);
+    expect(questionLabel({ id: "own", kind: "own", options: [] }, zh)).toContain("认领");
+    expect(questionLabel({ id: "x", kind: "brand_new", options: [] }, en)).toBe("brand_new");
+    expect(answerLabel("propose", en)).toBe("As a proposal");
+    expect(answerLabel("drop", zh)).toBe("删掉");
+    expect(answerLabel("brand_new", zh)).toBe("brand_new");
+  });
+
+  it("switches between the transcript's version and the recorded one, and copy follows", () => {
+    const withBaseline = row({ version: 2, baseline: { version: 1, generated_at: "2026-08-31T20:20:00Z",
+      shape: "lines", copy_en: "Decided: Ann owns the data mix", copy_zh: "定了：数据配比归 Ann" } });
+    expect(hasBaseline(row())).toBe(false);               // 只生成过一次 = 没有原版可切
+    expect(hasBaseline(withBaseline)).toBe(true);
+    expect(baselineBody(withBaseline, "zh")).toBe("定了：数据配比归 Ann");
+    expect(recapViewBody(withBaseline, "current", "en")).toBe(recapBody(withBaseline, "en"));
+    expect(recapViewBody(withBaseline, "baseline", "en")).toBe("Decided: Ann owns the data mix");
+    // 复制 = 屏幕上那一份（表头 + 正在看的正文）；默认仍是记录上这一版，老调用方不变
+    expect(recapClipboardText(withBaseline, "en", "baseline"))
+      .toBe(`${recapHeader(withBaseline, "en")}\nDecided: Ann owns the data mix`);
+    expect(recapClipboardText(withBaseline, "en")).toBe(recapClipboardText(withBaseline, "en", "current"));
+    // 那一版缺这门语言就退到另一门（空 <pre> 配一颗可用的复制键比一份英文正文差得多）
+    const enOnly = row({ baseline: { version: 1, copy_en: "Decided: only English", copy_zh: null } });
+    expect(baselineBody(enOnly, "zh")).toBe("Decided: only English");
+    expect(hasBaseline(row({ baseline: { version: 1, copy_en: "  ", copy_zh: null } }))).toBe(false);
+    expect(hasBaseline(row({ baseline: 7 as never }))).toBe(false);
+    expect(RECAP_VIEWS.map((v) => v.id)).toEqual(["baseline", "current"]);
   });
 });
