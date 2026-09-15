@@ -122,11 +122,11 @@ describe("/open vocabulary — superset of the native five pages", () => {
     });
   }
 
-  it("web-only pages stay accepted (trash / archive / permissions / diagnostics / setup)", async () => {
-    for (const page of ["trash", "archive", "permissions", "diagnostics", "setup"]) {
+  it("web-only pages stay accepted (trash / archive / permissions / diagnostics / setup / skills)", async () => {
+    for (const page of ["trash", "archive", "permissions", "diagnostics", "setup", "skills"]) {
       expect((await runSlashCommand(`/open ${page}`, en)).handled).toBe(true);
     }
-    expect(navigate).toHaveBeenCalledTimes(5);
+    expect(navigate).toHaveBeenCalledTimes(6);
   });
 
   it("/open ask (retired with D29) is 未识别, not a navigation", async () => {
@@ -137,8 +137,8 @@ describe("/open vocabulary — superset of the native five pages", () => {
 
 describe("hintLine — one line, same vocabulary as the usage strings", () => {
   it("lists the native words first, in native order, then the web-only pages", () => {
-    expect(hintLine(zh)).toBe("命令：/rec off|screen|audio|screen_audio · /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup · /lang zh|en");
-    expect(hintLine(en)).toBe("Commands: /rec off|screen|audio|screen_audio · /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup · /lang zh|en");
+    expect(hintLine(zh)).toBe("命令：/rec off|screen|audio|screen_audio · /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup|skills · /lang zh|en");
+    expect(hintLine(en)).toBe("Commands: /rec off|screen|audio|screen_audio · /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup|skills · /lang zh|en");
   });
 
   it("every /open word in the hint is accepted, and the usage string is the same list", async () => {

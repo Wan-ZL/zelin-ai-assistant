@@ -6,7 +6,7 @@
 //   /rec off|screen|audio|screen_audio → 壳桥 setRecording（audio = 原生词，映到壳的 screen_audio；无桥时如实说只在 app 里可用）
 //   /lang zh|en                        → store.chooseLanguage（D37 §15：UI 立刻切 + 摘掉一次性的 ?lang= + PUT general.language，
 //                                          与顶栏切换同一把开关；原生 Store.swift `/lang` 读-合并-写 language override 的 web 版）
-//   /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup → route.navigate 换页
+//   /open board|deps|ingest|settings|about|trash|archive|permissions|diagnostics|setup|skills → route.navigate 换页
 //     （D40 起 pushState 不重载；原生五页在前、web 独有页在后；deps / diagnostics 自 D30 起都落设置页的依赖检查区）
 // 动词与参数都不分大小写（原生 `parts[1].lowercased()`）。纯逻辑放这里便于 vitest；LaneComposer 只做接线。
 import type { Language } from "../../i18n";
@@ -56,7 +56,8 @@ export function pushHistory(entry: string): string[] {
 
 /** `/open` 词表：原生 MainSection 五页（Store.swift `sections`，顺序同原生 hintLine）在前，web 独有页在后——
  *  是原生词表的超集（§54.1）。用法句与 "/" 提示行都从这里派生，没有第二份词表。 */
-const PAGES: readonly AppPage[] = ["board", "deps", "ingest", "settings", "about", "trash", "archive", "permissions", "diagnostics", "setup"];
+const PAGES: readonly AppPage[] = ["board", "deps", "ingest", "settings", "about", "trash", "archive", "permissions", "diagnostics", "setup",
+  "skills"];
 /** 壳桥 setRecording 认的 mode（§61.1） */
 const REC_MODES = ["off", "screen", "screen_audio"] as const;
 type RecMode = (typeof REC_MODES)[number];

@@ -2,7 +2,8 @@
 //   · rail「设置」→ 设置页、URL ?page=settings、document.title 跟页，**文档没有重载**（window 上放的标记还在；整页导航会把它清掉）；
 //   · 「← 返回看板」→ 看板列直接在（快照还在 store 里），不闪「正在加载看板…」，标记仍在；
 //   · 浏览器后退 / 前进（popstate）→ 页跟 URL 走、标记仍在；
-//   · ⌘点 rail 项不拦（浏览器手势归浏览器：这里只验 href 仍是完整深链、能在新文档里直达）。
+//   · ⌘点 rail 项不拦（浏览器手势归浏览器：这里只验 href 仍是完整深链、能在新文档里直达）；
+//   · rail「技能」→ 技能页（D78）、设置页原处那一行入口 → 同一页，文档仍不重载。
 // 数据 = demo initial 场景（demoServer.ts 起随机端口的真 server）。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
@@ -78,6 +79,28 @@ test("浏览器后退 / 前进走 popstate：页跟 URL，文档仍不重载", a
   await page.goForward();
   await expect(page).toHaveURL(/[?&]page=trash(&|$)/);
   await expect(page).toHaveTitle(/— 回收站$/);
+  expect(await marker(page)).toBe("alive");
+});
+
+test("rail「技能」→ 技能页（D78）；设置页那一行入口也到同一页，全程不重载", async ({ page }) => {
+  await openBoard(page);
+
+  await page.locator('[data-rail-extra="skills"]').click();
+  await expect(page).toHaveURL(/[?&]page=skills(&|$)/);
+  await expect(page.locator(".skills-page .trash-page-title")).toHaveText("技能");
+  await expect(page).toHaveTitle(/— 技能$/);
+  await expect(page.locator('[data-rail-extra="skills"]')).toHaveAttribute("aria-current", "page");
+  // 页面正文就是原设置页那一区（同一个组件）：区标题与「刷新」在
+  await expect(page.locator(".skills-page #settings-skills-title")).toHaveText("Skills（Claude Code 技能）");
+  expect(await marker(page)).toBe("alive");
+
+  // 设置页留下的一行入口：点它回到技能页（同一个文档）
+  await page.locator('[data-rail-item="settings"]').click();
+  await expect(page.locator(".settings-page-title")).toHaveText("设置");
+  await page.locator('.settings-fold[data-section="skills"] .settings-fold-toggle').click();
+  await page.locator('.settings-fold[data-section="skills"] a.btn').click();
+  await expect(page).toHaveURL(/[?&]page=skills(&|$)/);
+  await expect(page.locator(".skills-page .trash-page-title")).toHaveText("技能");
   expect(await marker(page)).toBe("alive");
 });
 

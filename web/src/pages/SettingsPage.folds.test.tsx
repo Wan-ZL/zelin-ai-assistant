@@ -158,6 +158,13 @@ describe("settings folds — deep links and the TOC force-expand and remember", 
     expect(window.location.hash).toBe("");
   });
 
+  it("?anchor=skills (pre-D78 deep link) redirects to the skills page instead of expanding the pointer row", async () => {
+    await renderSettings("/?page=settings&anchor=skills");
+    expect(window.location.search).toBe("?page=skills"); // 改道（replace：后退不回到「设置页 + 锚点」那一条）
+    expect(stored()).toBeNull();                          // 不展开、不记忆——区里只剩一行入口
+    expect(isClosed("skills")).toBe(true);
+  });
+
   it("a collapsed target keeps its flash even though expanding it re-renders the shell's className (catalog still pending)", async () => {
     vi.mocked(fetchSettingsCatalog).mockReturnValue(new Promise(() => undefined)); // 目录永不到：只有挂载那一次 effect
     window.history.replaceState(null, "", "/?page=settings&anchor=gmail");
