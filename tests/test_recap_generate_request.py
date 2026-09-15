@@ -195,7 +195,10 @@ class ActdTestCase(SandboxCase):
         return path
 
     def test_recap_generate_stamps_requested_at_before_launch_and_records_after(self):
-        STAMP = "2026-09-14T12:00:00Z"
+        # 戳必须贴着**真实**此刻取：`record()` 不带 now → 按真实时钟剪 TTL_S 条，
+        # 写死的 2026-09-14T12:00:00Z 只在那天之后 24 小时内活着（这条判例
+        # 2026-09-15 就因此变红——测试不许有保质期）。
+        STAMP = _iso(_dt.datetime.now(_dt.timezone.utc))
         events = []
         real_launch = detached.launch
 
