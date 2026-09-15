@@ -126,6 +126,12 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
   # （分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）。设置页「录制数据与磁盘」区同一把旋钮（override 键
   # screenpipe_retention_days）；磁盘占用与每月增长估算也在那一区看。
   # retention_days: 0
+  # media_retention_minutes（CONTRACT §72.4，issue #28）：原始 jpg / mp4 在 ~/.screenpipe/data 里活多久，分钟。
+  # 出厂 60（= 历来的写死值，现状不变）；同一条 cleanup 链按它删媒体，**不碰 db.sqlite 里的文本行**（那是
+  # retention_days 管的另一把）。区间 [5, 525600]（= 1 年）；区间外或写坏了按未设 = 60。设置页「录制数据与磁盘」
+  # 区同一把旋钮（override 键 screenpipe_media_retention_minutes），改完下一轮 cron 生效、无需重启；
+  # 每轮的回执（删了几个文件几字节 / 目录读不到）在同一区的「上次媒体清理」行里看。
+  # media_retention_minutes: 60
   ignored_apps:
     - 1Password
     - Bitwarden

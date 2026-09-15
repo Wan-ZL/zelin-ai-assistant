@@ -297,8 +297,8 @@ export function SettingsPage() {
       <Fold id="deps" isForced={searchActive}><DepsSection /></Fold>
       <Fold id="notifications" isForced={searchActive}><CatalogSection sectionId="notifications" /></Fold>
       <Fold id="recording" isForced={searchActive}><RecordingSection /></Fold>
-      {/* §72 录制数据与磁盘（issue #28）：占用 / 增长 / 上次清理 状态行（StorageStatus，GET /api/screenpipe/disk 非阻塞快照）
-          + 目录字段 screenpipe_retention_days（保留天数，0 = 永久保留） */}
+      {/* §72 录制数据与磁盘（issue #28）：占用 / 增长 / 上次清理 / 上次媒体清理 状态行（StorageStatus，GET /api/screenpipe/disk 非阻塞快照）
+          + 两个目录字段 screenpipe_retention_days（DB 保留天数，0 = 永久保留）与 screenpipe_media_retention_minutes（媒体保留分钟数，§72.4） */}
       <Fold id="storage" isForced={searchActive}><CatalogSection sectionId="storage" lead={<StorageStatus />} /></Fold>
       <Fold id="live_captions" isForced={searchActive}><CaptionsSection /></Fold>
       <Fold id="obsidian" isForced={searchActive}><ObsidianSection /></Fold>

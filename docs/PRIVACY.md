@@ -337,8 +337,8 @@
 
 | 数据 | 位置 | 保留 |
 |------|------|------|
-| 屏幕截图 / 音频媒体 | `~/.screenpipe/data/` | **60 分钟后删除**（`ingest/screenpipe-cleanup.sh`,每 30 分钟跑;引擎本身另有 `--retention-days 1`） |
-| 屏幕文本 + 音频转写 | `~/.screenpipe/db.sqlite` | 永久（不自动清理） |
+| 屏幕截图 / 音频媒体 | `~/.screenpipe/data/` | `recording.media_retention_minutes` 后删除（出厂 60 分钟;设置页「录制数据与磁盘」区可改,CONTRACT §72.4;`ingest/screenpipe-cleanup.sh`,每 30 分钟跑;引擎本身另有 `--retention-days 1`）——每轮留一条回执 `state/screenpipe_prune.json`,设置页显示上次什么时候跑的 |
+| 屏幕文本 + 音频转写 | `~/.screenpipe/db.sqlite` | `recording.retention_days`(出厂 0 = 永久保留;设为 N ≥ 1 则删「已导出进笔记库且早于 N 天」的行,CONTRACT §72.2) |
 | 导出/加工后的 note | Obsidian vault | 永久（你的 vault,你管理） |
 | Slack 附件下载 | `state/media/<ts>/` | 不自动清理 |
 | 回收站卡片 | 注册表 trashed 状态 | `trash.retention_days`（默认 60 天）后硬删 |

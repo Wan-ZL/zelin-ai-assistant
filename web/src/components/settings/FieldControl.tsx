@@ -20,7 +20,7 @@ import { useI18n, type Language } from "../../i18n";
 import type { SettingsField } from "../../types";
 import { VAULT_RAW_KEY } from "../../vaultPaths";
 import { pickText } from "./catalogText";
-import { checkReason, isValidNumberDraft } from "./draftRules";
+import { checkReason, isValidNumberValue } from "./draftRules";
 import { FolderActions, FolderPicker, VaultRootField } from "./FolderControls";
 
 export interface FieldControlProps {
@@ -54,6 +54,12 @@ export function checkSentence(field: SettingsField | undefined, details: unknown
 /** 数字框的校验句（原生每个数字字段各有一句；web 按 kind + key 取，示例数 = 目录 default） */
 export function numberHint(field: SettingsField, text: (zh: string, en: string) => string): string {
   const example = typeof field.default === "number" ? String(field.default) : "5";
+  if (field.bounds) {
+    // §72.4 带区间的旋钮：说清区间，别只说「≥ 0」——越界 server 400 而不是夹取
+    const { min, max } = field.bounds;
+    return text(`请输入 ${min} 到 ${max} 之间的整数，如 ${example}`,
+      `Enter a whole number between ${min} and ${max}, e.g. ${example}`);
+  }
   if (field.kind === "int") {
     if (field.key === "trash_retention_days") {
       return text("请输入整数天数，如 60（0 = 永不自动清）", "Enter a whole number of days, e.g. 60 (0 = never auto-purge)");
@@ -140,7 +146,7 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
     );
   } else if (field.kind === "number" || field.kind === "int") {
     // 原生 numberField：解析失败红字提示、写 NOTHING——非法草稿由 CatalogSection 挡「保存」并剔出 PUT（draftRules）
-    const invalid = !isValidNumberDraft(field.kind, value);
+    const invalid = !isValidNumberValue(field, value);
     control = (
       <>
         <input
@@ -148,7 +154,8 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
           type="number"
           className="settings-input is-number"
           step={field.kind === "int" ? 1 : "any"}
-          min={0}
+          min={field.bounds ? field.bounds.min : 0}
+          max={field.bounds ? field.bounds.max : undefined}
           value={typeof value === "number" ? value : ""}
           disabled={off}
           aria-invalid={invalid || undefined}

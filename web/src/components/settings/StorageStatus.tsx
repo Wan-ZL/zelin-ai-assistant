@@ -2,12 +2,16 @@
 // 日志 / 媒体）、可复用空间（freelist）、每月增长估算（依据随数字一起说：按最近样本 / 按全部历史平均 / 样本不足）、最早最新数据、
 // 上次清理回执。server 的 GET 永不阻塞：首次回 computing 空壳、后台扫完才有数字——这里在 computing / refreshing 期间每
 // POLL_INTERVAL_MS 轮询一次（上限 POLL_MAX 次，之后停在「统计中」而不是无限打）。「刷新」= ?refresh=1，让 server 重算一次。
-// 保留天数本身是目录字段 screenpipe_retention_days（CatalogSection 渲）；本组件只读不写。备份文件只报路径与大小、不给删除按钮
+// 另有「上次媒体清理」一行（§72.4）：cron 链每轮写的 state/screenpipe_prune.json 的投影——删了几个文件几字节、
+// 目录读不到（unreadable）、没扫完（partial）、或者根本没跑过 / 太久没有一轮干净跑完（stale，按 server 的
+// last_ok_ts 算）。never / unreadable / stale 进 warning 档（role=alert）：清理停了与没东西可删
+// 从外面看一模一样，而前一种会一直涨盘。多久没跑完那句话的小时数按 server 给的 ok_age_seconds 说，web 不复刻阈值。
+// 两把保留期旋钮本身是目录字段 screenpipe_retention_days / screenpipe_media_retention_minutes（CatalogSection 渲）；本组件只读不写。备份文件只报路径与大小、不给删除按钮
 // （§0 第 2 条：不可恢复的删除留给用户亲手做）。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchScreenpipeDisk } from "../../api";
 import { useI18n } from "../../i18n";
-import type { ScreenpipeDisk, ScreenpipeDiskGrowth, ScreenpipePruneReceipt } from "../../types";
+import type { ScreenpipeDisk, ScreenpipeDiskGrowth, ScreenpipeMediaPrune, ScreenpipePruneReceipt } from "../../types";
 import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;
@@ -58,6 +62,49 @@ export function pruneText(receipt: ScreenpipePruneReceipt | null, text: Text): s
   const audio = receipt.deleted_audio ?? 0;
   const tail = receipt.budget_exhausted ? text("；本轮时间预算用尽，下一轮继续", "; time budget used up, continues next round") : "";
   return text(`${when} 删除 ${frames} 帧 / ${audio} 条转写${tail}`, `${when} deleted ${frames} frames / ${audio} transcripts${tail}`);
+}
+
+/** 太久没有一轮干净跑完时补的半句：小时数按 server 算的 ok_age_seconds 说（阈值 truth = server 的
+ *  PRUNE_STALE_S，web 不复刻它）。ok_age_seconds = null 分两种：从来没成功过、与上次成功的时间戳读不出来。 */
+function staleSuffix(prune: ScreenpipeMediaPrune, text: Text): string {
+  const age = prune.ok_age_seconds;
+  if (age === null || age === undefined) {
+    return prune.last_ok_ts
+      ? text("；上次跑完的时间戳读不出来", "; the last successful round's timestamp could not be read")
+      : text("；没有任何一轮干净跑完的记录", "; no clean round on record");
+  }
+  const hours = Math.floor(age / 3600);
+  return text(`；已经 ${hours} 小时没有一轮干净跑完了（本该 30 分钟一轮）`,
+    `; no clean round for ${hours} hours (it should run every 30 minutes)`);
+}
+
+/** 「上次媒体清理」的一句话（§72.4 回执）；第二个返回值 = 要不要报警（停了 / 读不到 = 会悄悄涨盘）。
+ *  `partial`（没扫完）只在连着几小时都没有一轮干净跑完时才报警——一次扫描撞上引擎正在删帧不是毛病。 */
+export function mediaPruneText(prune: ScreenpipeMediaPrune | undefined, text: Text): { line: string; warn: boolean } {
+  if (!prune) return { line: text("尚未运行", "Not run yet"), warn: false };
+  const when = prune.ts ? `${dayOf(prune.ts)}${prune.ts.length >= 16 ? ` ${prune.ts.slice(11, 16)} UTC` : ""}` : "";
+  const gap = prune.stale ? staleSuffix(prune, text) : "";
+  if (prune.state === "never") {
+    return { line: text("没有回执——清理可能没在跑", "No receipt yet — the cleanup may not be running"), warn: true };
+  }
+  if (prune.state === "unreadable") {
+    return { line: text(`${when} 录制数据目录读不到（权限），一个文件都没删${gap}`,
+      `${when} the recording data folder could not be read (permissions); nothing was deleted${gap}`), warn: true };
+  }
+  if (prune.state === "no_data_dir") {
+    return { line: text(`${when} 还没有录制数据目录`, `${when} no recording data folder yet`), warn: false };
+  }
+  const files = prune.deleted_files ?? 0;
+  const deleted = text(`删除 ${files} 个媒体文件（${formatBytes(prune.deleted_bytes)}）`,
+    `deleted ${files} media file(s) (${formatBytes(prune.deleted_bytes)})`);
+  if (prune.state === "partial") {
+    return {
+      line: text(`${when} 这一轮没扫完（有子目录读不到，或文件正在变动），只${deleted}${gap}`,
+        `${when} the round did not finish scanning (a subfolder could not be read, or files changed under it); only ${deleted}${gap}`),
+      warn: prune.stale,
+    };
+  }
+  return { line: `${when} ${deleted}${gap}`, warn: prune.stale };
 }
 
 function abbreviateHome(path: string): string {
@@ -131,6 +178,7 @@ export function StorageStatus() {
     `数据库 ${formatBytes(disk.db_bytes)} · 备份 ${formatBytes(disk.backup_bytes)} · 日志 ${formatBytes(disk.log_bytes)} · 媒体 ${formatBytes(disk.media_bytes)}`,
     `database ${formatBytes(disk.db_bytes)} · backups ${formatBytes(disk.backup_bytes)} · logs ${formatBytes(disk.log_bytes)} · media ${formatBytes(disk.media_bytes)}`);
   const reclaimable = !computing && disk.db_reclaimable_bytes !== null && disk.db_reclaimable_bytes > 0 ? disk.db_reclaimable_bytes : null;
+  const mediaPrune = mediaPruneText(disk.media_prune, text);
 
   return (
     <div className="storage-status">
@@ -170,6 +218,20 @@ export function StorageStatus() {
           {text(`最早数据 ${dayOf(disk.oldest_frame_ts)} · 最新 ${dayOf(disk.newest_frame_ts)}`,
             `oldest ${dayOf(disk.oldest_frame_ts)} · newest ${dayOf(disk.newest_frame_ts)}`)}
         </p>
+      </div>
+      <div className="settings-field is-string">
+        <div className="settings-field-head">
+          <span className="settings-knob-label">{text("上次媒体清理", "Last media prune")}</span>
+          <span className={`settings-source-chip${mediaPrune.warn ? " is-warning" : ""}`} data-testid="storage-media-prune">
+            {mediaPrune.line}
+          </span>
+        </div>
+        {mediaPrune.warn && (
+          <p className="settings-warning" role="alert">
+            {text("原始 jpg / mp4 只有这一轮清理会删；它停着盘就一直涨。",
+              "Raw jpg / mp4 are only deleted by this cleanup round; while it is stopped, the disk keeps growing.")}
+          </p>
+        )}
       </div>
       <div className="settings-field is-string">
         <div className="settings-field-head">

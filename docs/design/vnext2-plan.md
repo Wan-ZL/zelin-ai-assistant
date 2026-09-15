@@ -190,7 +190,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + numbered sections; truth f
 | **SOLVE NOW** | #119 retire needs-input;#89 dispatch failure unactionable | #119 必须落在 store2 接线之前(否则把死态迁进 SQLite);#89 不是历史 bug 而是正在发生的风暴——**本 PR(PR-A)止血 + 诚实归因**:`claude_blind` 分类 + doctor `launchd claude` 探针 + 风暴刹车 + 心跳 + 孤儿探测;真修法(TCC 授权 / 搬 repo / GUI app 托管)在 owner 手里,见 D20。 |
 | **LOOP**(喂给每日循环当 seed) | #37 telemetry 裸 stderr 上传;#19 social-preview 图;#18 demo_seed `--english`(seed #1);#16 ingest smoke test(`tests/integration/` 首住户);#15 pin Xcode;#11 卡上披露建 repo(`egress[]`);#8 a11y(改指 web,`vitest-axe`);#90 Windows 只走 PWA | 全部自包含、可验证,正好用来 prove 自动 PR 管线。 |
 | **CLOSE** | #26(被 LOOP 取代);#22(milestone 1 done);#17(Swift test infra 已在 + mac 退役);#13(shell 已是新身份);#10(archive 已做,v0.48);#9(前提消失);#7(前提消失);#23(素材库落地后关) | 一次性 close/relabel;15/22 issue 52 天零活动、无 milestone,不清理则 loop 每天重读 Mac 视角的死 issue。 |
-| **IGNORE**(blocked / meta) | #29 quiet hours;#28 retention UI;#27 recording schedule;#20 Usage Insights bot(keep pinned,是 LOOP 输入源);#23(产品 idea → 素材库) | 通知 relay / 录制控制 / 设置页都随 Mac 退役 re-home 之后再 scope。 |
+| **IGNORE**(blocked / meta) | #29 quiet hours;#28 retention UI;#27 recording schedule;#20 Usage Insights bot(keep pinned,是 LOOP 输入源);#23(产品 idea → 素材库) | 通知 relay / 录制控制 / 设置页都随 Mac 退役 re-home 之后再 scope。**2026-09-14 更新:三张已 re-home,本行只剩历史**——#27 → CONTRACT §61.7(a1a26cef,已关);#29 → §28 安静时段追记(PR #326);#28 → §72(PR #291 立占用快照与 DB 保留期)+ §72.4(媒体保留期旋钮与清理回执)。 |
 
 另有 12 个 open PR(#121 本计划、#102 bundled skills、#108–#117 dependabot majors)——main 保护前第一批过门,majors 不许 loop 盲合。
 
@@ -240,7 +240,7 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 | #7 capture_id | 留开,`mac-retire` | 全仓零 `capture_id`;症状只在 `mac/Sources/PendingSweep.swift` 的乐观占位,web `LaneComposer` 无 ghost;P4 若加 optimistic echo 再以 add-only 复活 |
 | #18 #19 #15 #16 #11 #8 #37 | `loop-seed` | 自包含、可验证,P5/P6 首批 seed(顺序见 §5.3 E) |
 | #90 Windows shell(Carol929) | `needs-owner` | 非 owner 作者 → D18 摘要制;技术上只做 PWA manifest |
-| #29 #28 #27 quiet hours / retention UI / recording schedule | `mac-retire` | 通知 relay / 设置页 / 录制控制随 P4 re-home 到 web+shell 后再 scope |
+| #29 #28 #27 quiet hours / retention UI / recording schedule | `mac-retire` | 通知 relay / 设置页 / 录制控制随 P4 re-home 到 web+shell 后再 scope。**2026-09-14:三张都已 re-home**（§61.7 / §28 追记 / §72 + §72.4）——`mac-retire` 标签在这三张上已无意义,落地时摘掉,否则每日循环会继续把它们当「park 住的」重新铸卡 |
 | #23 commitments ledger | `素材库-idea` | 产品想法非缺陷,素材库(§2.5)落地后迁入并关 |
 | #20 Usage Insights(bot,pinned) | 不动 | 每日循环输入源(R2.4.2) |
 | #129 会议 recap | `owner-decided` | owner 拍板 → 本文 P5b 行 |

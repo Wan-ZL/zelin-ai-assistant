@@ -24,6 +24,9 @@ general.language——D37 §15 追记：语言的唯一开关，显式选择必�
 顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
 雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
 ``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
+数字字段可带 ``bounds``（闭区间 ``(min, max)``，§72.4 的 ``screenpipe_media_retention_minutes``）：PUT 越界 400（区间进 details），
+读到的越界值按缺席落到下一层——与 ``act/lib/config`` 的同名 coercer（越界抛 ValueError）同一条规则，
+保证「设置页显示的数 == 管线真用的数」；投影 add-only ``bounds{min,max}``，web 的 min / max 与「保存」闸逐字镜像。
 字段可带 ``check``（词表 truth = ``settings_catalog.CHECKS`` / ``_CHECKERS``，今日为 ``email`` /
 ``session_id`` / ``clock_time``）：server 400 + 目录投影双语句，web 镜像同一条规则（``web/src/components/settings/draftRules.ts``
 的 ``checkReason`` 逐条对应，不合格 = aria-invalid + 就地那句 + 「保存」不放行）；一个 check 不止一句时
@@ -104,13 +107,17 @@ def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
        config: "tuple | None" = None, choices: "tuple | None" = None,
        help_zh: str = "", help_en: str = "", override: Optional[str] = None,
        write: str = "diff", placeholder: "tuple | None" = None,
-       path: Optional[str] = None, check: Optional[str] = None) -> dict:
+       path: Optional[str] = None, check: Optional[str] = None,
+       bounds: "tuple | None" = None) -> dict:
     """一条 field 描述（目录内部形；对外投影去掉 config/override/write 三个内部键）。
     ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。
     ``path``（add-only；今日词表 ``"dir"``）= 这是一个目录字段：投影多带 ``path`` 与 ``path_exists``
     （effective 值展开 ``~`` 后是不是目录；空值 → null），web 据此渲染 选择… / 打开 / 创建 与
     「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。
-    ``check``（add-only；词表 = ``CHECKS`` 的键）= 值的形状校验：PUT 不合格 400，投影多带 ``check`` 供 web 镜像。"""
+    ``check``（add-only；词表 = ``CHECKS`` 的键）= 值的形状校验：PUT 不合格 400，投影多带 ``check`` 供 web 镜像。
+    ``bounds``（add-only，§72.4；数字 field 的闭区间 ``(min, max)``）= 这把旋钮的合法区间：PUT 越界 400，
+    **读**的时候越界值按缺席处理（落到下一层）——act/lib/config 的同名 coercer 对越界值抛 ValueError（override
+    整条跳过、yaml 回默认），两侧必须是同一条规则，否则设置页显示的数不是 cron 真用的那个。"""
     zh_ph, en_ph = placeholder or ("", "")
     if check is not None and check not in CHECKS:
         raise ValueError("unknown check kind: %s" % check)
@@ -118,7 +125,7 @@ def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
             "help": {"zh": help_zh, "en": help_en}, "default": default,
             "choices": list(choices) if choices else None, "config": config,
             "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph},
-            "path": path, "check": check}
+            "path": path, "check": check, "bounds": bounds}
 
 
 def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
@@ -230,11 +237,20 @@ SECTIONS: tuple = (
             # 磁盘占用 / 增长估算 / 上次清理回执不是旋钮，走 GET /api/screenpipe/disk（web StorageStatus 渲在这一区的 lead 槽）。
             _f("screenpipe_retention_days", "int", "录制数据保留天数", "Recording data retention (days)", default=0,
                config=("recording", "retention_days"),
-               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 一小时后照旧删，与此无关。",
-               help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are still deleted after one hour regardless."),
+               # 「一小时」曾是这句里的字面量；它成了旋钮之后只能指路（防腐 #5），zh / en 两句说同一件事
+               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 按下面那把「原始媒体保留分钟数」删，与此无关。",
+               help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are deleted on their own schedule below."),
+            # §72.4（issue #28）：原始 jpg / mp4 的保留期。历来写死 60 分钟，现在是一把旋钮——
+            # 同一条 cleanup 链读它（`--print-value`），改完下一轮 cron 生效、无需重启。区间外 400
+            # 而不是夹取：文件里写着的数必须就是 cron 用的数（act coerce_media_retention_minutes 同规则）。
+            _f("screenpipe_media_retention_minutes", "int", "原始媒体保留分钟数", "Raw media retention (minutes)",
+               default=60, config=("recording", "media_retention_minutes"),
+               bounds=(5, 365 * 24 * 60),
+               help_zh="截图与音频片段（~/.screenpipe/data 里的 jpg / mp4）在本机留多少分钟——OCR 文本与转写此前已经导出，删的只是原始媒体。默认 60；最短 5 分钟（整理每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧），最长 525600（一年）。改完下一轮整理生效，无需重启。",
+               help_en="How many minutes raw screenshots and audio chunks (the jpg / mp4 files under ~/.screenpipe/data) stay on this machine — their OCR text and transcripts are already exported, so only the raw media goes. Default 60; minimum 5 (the tidy runs every 30 minutes, and anything shorter cuts into the frames being exported in the same round), maximum 525600 (one year). Takes effect on the next tidy, no restart."),
         ],
-        help_zh="录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite；这里看它占了多少盘、每月长多少，并给它一个保留期。",
-        help_en="The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever; see how much disk it takes, how fast it grows, and give it a retention window.",
+        help_zh="录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite，原始 jpg / mp4 攒在 ~/.screenpipe/data；这里看它们占了多少盘、每月长多少，并各给一个保留期。",
+        help_en="The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever and raw jpg / mp4 under ~/.screenpipe/data; see how much disk they take, how fast they grow, and give each a retention window.",
     ),
     _section(
         "obsidian", "笔记库", "Notes vault",
@@ -618,10 +634,19 @@ _COERCERS = {
 
 
 def coerce(field: dict, value):
-    """按 field.kind 归一一个来自文件的值；归一失败 → None（调用方视为缺席）。"""
+    """按 field.kind 归一一个来自文件的值；归一失败 / 越界（``bounds``）→ None（调用方视为缺席）。"""
     if value is None:
         return None
-    return _COERCERS[field["kind"]](field, value)
+    got = _COERCERS[field["kind"]](field, value)
+    return None if got is not None and out_of_bounds(field, got) else got
+
+
+def out_of_bounds(field: dict, value) -> bool:
+    """``bounds`` 闭区间外 = True（没登记区间的 field 恒 False）。公开名：写闸与读归一同用一把。"""
+    low_high = field.get("bounds")
+    if low_high is None or not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    return not (low_high[0] <= value <= low_high[1])
 
 
 def base_effective(field: dict, config_doc: dict) -> "tuple[Any, str]":
@@ -684,6 +709,10 @@ def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
     if field.get("check"):
         # add-only（§68.1 追记）：web 保存前镜像同一条形状校验、显示同一句 server-owned 文案
         out["check"] = check_projection(field["check"])
+    if field.get("bounds"):
+        # add-only（§72.4）：数字旋钮的合法闭区间——web 的 min / max 与「保存」闸镜像同一对数
+        low, high = field["bounds"]
+        out["bounds"] = {"min": low, "max": high}
     return out
 
 
@@ -740,6 +769,12 @@ def _validate_enum(field: dict, value, key: str) -> str:
 
 def _validate_number(field: dict, value, key: str):
     got = _coerce_number(value, field["kind"] == "int")
+    if got is not None and out_of_bounds(field, got):
+        # §72.4：越界不夹取——夹取会让文件里的数与管线真用的数不是一个（act 侧对越界值
+        # 抛 ValueError = 整条跳过）。区间比「非负」更具体，所以先说这一句（负数也走这里）。
+        low, high = field["bounds"]
+        raise InvalidFieldError("%s must be between %s and %s" % (key, low, high),
+                                {"field": key, "min": low, "max": high})
     if got is None or got < 0:
         raise InvalidFieldError("%s must be a non-negative %s" % (
             key, "integer" if field["kind"] == "int" else "number"), {"field": key})

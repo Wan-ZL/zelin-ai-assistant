@@ -1,14 +1,18 @@
-"""act/lib/config.py CLI — ``--print-path`` used by the ingest scripts (P1-6).
+"""act/lib/config.py CLI — ``--print-path`` / ``--print-value`` used by the ingest scripts
+(P1-6；``--print-value`` = CONTRACT §72.4 的媒体保留分钟数，screenpipe-cleanup.sh 的消费面).
 
 Runs the module as a subprocess exactly the way the shell scripts do, with a
 per-test sandboxed AIASSISTANT_HOME so the real config.yaml is never read.
 """
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from act.lib import config
 
@@ -98,6 +102,41 @@ class ConfigCliTestCase(unittest.TestCase):
         proc = self._run()
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "")
+
+    # -- --print-value（§72.4 媒体保留分钟数：cron 拿它当 find 的参数） ---------- #
+    def test_print_value_without_config_is_the_factory_default(self):
+        proc = self._run("--print-value", "screenpipe_media_retention_minutes")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), str(config.DEFAULT_MEDIA_RETENTION_MINUTES))
+
+    def test_print_value_reads_config_then_overrides(self):
+        self._write_yaml("recording:\n  media_retention_minutes: 600\n")
+        self.assertEqual(self._run("--print-value", "screenpipe_media_retention_minutes").stdout.strip(), "600")
+        (self.home / "state").mkdir(exist_ok=True)
+        (self.home / "state" / "settings_overrides.json").write_text(
+            '{"screenpipe_media_retention_minutes": 120}', encoding="utf-8")
+        self.assertEqual(self._run("--print-value", "screenpipe_media_retention_minutes").stdout.strip(), "120")
+
+    def test_print_value_is_silent_on_error(self):
+        self._write_yaml("recording: [\n")      # 坏 YAML：cron 仍要拿到一个能用的数
+        proc = self._run("--print-value", "screenpipe_media_retention_minutes")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), str(config.DEFAULT_MEDIA_RETENTION_MINUTES))
+        self.assertEqual(proc.stderr, "")
+
+    def test_print_value_unknown_key_fails_and_the_two_flags_are_exclusive(self):
+        self.assertNotEqual(self._run("--print-value", "not_a_key").returncode, 0)
+        both = self._run("--print-path", "obsidian_raw", "--print-value", "screenpipe_media_retention_minutes")
+        self.assertNotEqual(both.returncode, 0)
+
+    def test_print_value_in_process_falls_back_when_the_config_layer_blows_up(self):
+        # 进程内跑同一条路径：load_config 整个炸了（坏权限 / 坏 YAML 之外的任何意外）也要打出厂值、退出 0
+        buf = io.StringIO()
+        with mock.patch.object(config, "load_config", side_effect=RuntimeError("boom")), \
+             contextlib.redirect_stdout(buf):
+            rc = config.main(["--print-value", "screenpipe_media_retention_minutes"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().strip(), str(config.DEFAULT_MEDIA_RETENTION_MINUTES))
 
 
 if __name__ == "__main__":

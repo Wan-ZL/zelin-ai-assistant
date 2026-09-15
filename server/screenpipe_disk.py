@@ -15,8 +15,16 @@ issue #28：screenpipe 的数据在用户眼里无界增长——界面上没有
   **不提供删除按钮**（§0 第 2 条：不可恢复的删除留给用户在访达里亲手做）。
 - ``retention_days`` = 目录 storage 区的 effective 值；``last_prune`` = act/lib/screenpipe_retention.py 的回执
   ``state/screenpipe_retention.json`` 原样投影（缺席 = null）。
+- **§72.4 媒体那一半**：``media_retention_minutes`` = 同一区的 effective 值（cron 链的 ``find -mmin``），
+  ``media_prune`` = ``ingest/screenpipe-cleanup.sh`` 每轮写的回执 ``state/screenpipe_prune.json`` 的投影——
+  原样字段 + server 算的 ``age_seconds``（上一次尝试的岁数）/ ``ok_age_seconds`` / ``stale``
+  （按回执里的 ``last_ok_ts`` = **上次干净跑完**算，> ``PRUNE_STALE_S``；链本该 30 分钟一轮）。回执缺席 / 坏形
+  = ``state: "never"`` + ``stale: true``：**停掉的清理与「没东西可删」的清理从外面看一模一样**，而前一种会一直涨盘
+  （§0 第 3 条：宁可报「没跑过」也不报一次干净的空转）。按 ``last_ok_ts`` 而不是 ``ts`` 算新鲜度，是因为
+  每 30 分钟失败一次的清理会把 ``ts`` 一直刷新——按它算就永远「刚跑过」，而没有一个文件被删掉。
 
-server/ 不 import act（§49）：回执文件名与 act 侧 ``RECEIPT_NAME`` 逐字镜像，判例 tests/test_server_screenpipe_disk.py 钉。
+server/ 不 import act（§49）：两个回执文件名（act 的 ``RECEIPT_NAME`` / 脚本的 ``screenpipe_prune.json``）与
+媒体保留期的出厂值都是手抄，判例 tests/test_server_screenpipe_disk.py、tests/test_screenpipe_media_prune_projection.py 钉。
 """
 from __future__ import annotations
 
@@ -39,6 +47,9 @@ SAMPLE_WINDOW_S = 30 * 86400.0
 MONTH_S = 30 * 86400.0
 DB_TIMEOUT_S = 2.0
 RECEIPT_NAME = "screenpipe_retention.json"       # act/lib/screenpipe_retention.RECEIPT_NAME 的镜像
+PRUNE_RECEIPT_NAME = "screenpipe_prune.json"     # ingest/screenpipe-cleanup.sh 的媒体回执（§72.4，逐字镜像）
+PRUNE_STALE_S = 3 * 3600.0                       # 链每 30 分钟一轮；超过这个岁数 = 清理停了（§72.4）
+MEDIA_RETENTION_DEFAULT = 60                     # act/lib/config.DEFAULT_MEDIA_RETENTION_MINUTES 的手抄（server 不 import act，§49）
 SAMPLES_NAME = "screenpipe_disk_samples.json"
 BACKUP_LIST_CAP = 5
 
@@ -236,6 +247,67 @@ def retention_days(home: Path) -> int:
         return 0
 
 
+def media_retention_minutes(home: Path) -> int:
+    """§72.4 媒体保留分钟数的 effective 值（目录 storage 区；读不出来 = 出厂 60）。"""
+    try:
+        return int(settings_catalog.effective_value(home, "storage", "screenpipe_media_retention_minutes")
+                   or MEDIA_RETENTION_DEFAULT)
+    except Exception:  # noqa: BLE001 — 同上：目录的毛病不该炸掉整张快照
+        return MEDIA_RETENTION_DEFAULT
+
+
+def _prune_doc(home: Path) -> Optional[dict]:
+    try:
+        doc = json.loads((home / "state" / PRUNE_RECEIPT_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def media_prune(home: Path, now: float) -> dict:
+    """§72.4 媒体清理回执的投影：脚本写的字段原样带出，另算 ``age_seconds`` / ``ok_age_seconds`` / ``stale``。
+
+    回执缺席 / 坏 JSON / 坏时间戳 → ``state: "never"`` + ``stale: true``：**「清理停了」与「没东西可删」
+    从外面看一模一样**，而前一种会一直涨盘——所以宁可报「没跑过」也不报一次干净的空转（宪法第 3 条）。
+    脚本自己的 ``unreadable``（目录在但进不去）/ ``partial``（没扫完）也各是独立的 state，同样不与
+    「删了 0 个」混为一谈。
+
+    ``stale`` 按**上次干净跑完**（``last_ok_ts``）算，不按上一次尝试（``ts``）算：每 30 分钟失败一次的
+    清理会把 ``ts`` 一直刷新，按它算就永远「新鲜」，而盘一直在涨。``age_seconds`` 仍是上一次尝试的岁数。"""
+    doc = _prune_doc(home)
+    out = {"state": "never", "ts": None, "retention_minutes": None, "deleted_files": None,
+           "deleted_bytes": None, "data_dir": None, "last_ok_ts": None,
+           "age_seconds": None, "ok_age_seconds": None, "stale": True}
+    if doc is None:
+        return out
+    out.update({key: doc.get(key) for key in ("state", "ts", "retention_minutes", "deleted_files",
+                                              "deleted_bytes", "data_dir", "last_ok_ts")})
+    if not isinstance(out["state"], str) or not out["state"]:
+        out["state"] = "never"
+    out["last_ok_ts"] = _last_ok_ts(out)
+    out["age_seconds"] = _age_seconds(out["ts"], now)
+    ok_age = _age_seconds(out["last_ok_ts"], now)
+    out["ok_age_seconds"] = ok_age
+    out["stale"] = ok_age is None or ok_age > PRUNE_STALE_S
+    return out
+
+
+def _last_ok_ts(out: dict) -> Optional[str]:
+    """上次**干净跑完**的时刻：回执里的 ``last_ok_ts``（脚本每个 ok 轮次刷新、其余轮次原样带下去）。
+    升级前写的回执没有这一键——它自己是 ``ok`` 的话，它的 ``ts`` 就是一次成功；其余 state
+    （``unreadable`` / ``partial`` / ``no_data_dir``）无从得知，按「没成功过」算：不知道就别报新鲜（宪法第 3 条）。"""
+    raw = out.get("last_ok_ts")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    return out["ts"] if out["state"] == "ok" and isinstance(out["ts"], str) else None
+
+
+def _age_seconds(ts, now: float) -> Optional[float]:
+    """回执时间戳到现在多少秒；坏形 / 缺席 = None（= 当成过期）。未来时间戳按 0（时钟跳变不算新鲜到负）。"""
+    stamp = _parse_ts(ts)
+    return None if stamp is None else max(0.0, round(now - stamp, 3))
+
+
 def compute(home: Path, root: Optional[Path] = None, now: Optional[float] = None) -> dict:
     """同步算一份完整快照（后台线程 / 判例直接调）。副作用：样本文件追加一条。"""
     now = time.time() if now is None else now
@@ -305,7 +377,8 @@ def snapshot(home: Path, *, refresh: bool = False, now: Optional[float] = None,
     if start:
         spawn(lambda: _job(home, key, now))
     base = dict(cached) if cached is not None else _placeholder(paths.screenpipe_dir())
-    base.update({"refreshing": inflight, "retention_days": retention_days(home), "last_prune": last_prune(home)})
+    base.update({"refreshing": inflight, "retention_days": retention_days(home), "last_prune": last_prune(home),
+                 "media_retention_minutes": media_retention_minutes(home), "media_prune": media_prune(home, now)})
     return base
 
 
