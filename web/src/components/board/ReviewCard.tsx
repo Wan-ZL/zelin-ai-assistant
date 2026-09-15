@@ -4,6 +4,7 @@
 //   复制成稿（final_draft 非空时：detail/copyText（Clipboard API → execCommand 兜底）+ 1.5s「已复制 ✓」回执；
 //   两条路都失败 → 按钮旁一句「复制失败」短注 4s，不再静默吞掉，原生 Cards.swift:1803-1815；纯客户端）。
 // 卡面（原生 ReviewRow 收起态的 meta 行）：会话有新活动（青）· repo 章 · 耗时 <dispatched→review> ·
+//   其中 N 电脑睡眠（§71.2，slept_seconds 非空才出——「耗时 4 小时 52 分」数的是墙上时间）·
 //   已等待验收 <review→now，自驱走表> · §64 AI 评语章（建议验收/需继续做/需要拍板，点看理由）·
 //   一句话（§64 AI 白话摘要优先；判官没评 / 内容已变时回落 delivered_summary、再回落审批时 summary——原生
 //   ReviewRow 永远给一句交付说明，Cards.swift:1832-1854；单行截断，hover 全文，同 DoneCard）·
@@ -18,7 +19,7 @@ import { useI18n } from "../../i18n";
 import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
 import { copyText } from "../detail/copyText";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
-import { CardHead, CardSurface, CopiedAnnouncer, DetailsToggle, DurationText, MergeStateChip, RepoChip, SessionHitChip } from "./cardChrome";
+import { CardHead, CardSurface, CopiedAnnouncer, DetailsToggle, DurationText, MergeStateChip, RepoChip, SessionHitChip, SleepNote } from "./cardChrome";
 import { DodFace } from "./DodFace";
 import { TextDialog } from "./TextDialog";
 import { AssessmentSummaryLine, VerdictChip } from "./VerdictChip";
@@ -93,6 +94,8 @@ export function ReviewCard({ card }: ReviewCardProps) {
         <DeliveryChip delivery={card.delivery} />
         <RepoChip path={card.cwd} />
         <DurationText from={card.dispatched_at} to={card.review_at} prefix={text("耗时 ", "took ")} />
+        {/* §71.2：「耗时」数的是墙上时间——电脑睡掉的那几小时必须当着面说出来 */}
+        <SleepNote seconds={card.slept_seconds} />
         <DurationText from={card.review_at} prefix={text("已等待验收 ", "in review ")} />
         <VerdictChip assessment={card.assessment} />
       </div>

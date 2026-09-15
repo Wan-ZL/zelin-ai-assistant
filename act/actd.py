@@ -60,6 +60,7 @@ from act.lib import (
     logcap,
     maintenance,
     notify,
+    power as _power,
     radar_rounds,
     recap_requests,
     recap_store,
@@ -447,6 +448,14 @@ def _rearm_dispatch(ex: dict) -> dict:
     return _dispatch.rearm_dispatch(_ctx(), ex)
 
 
+def _power_sample() -> int:
+    """§71.2：每 pass 顶部量一次真实挂起时长（wall − monotonic），> 5 分钟就
+    把秒数记到在跑的卡上（`execution.slept_seconds` / `sleep_interrupted`）——
+    卡面的「耗时」因此能诚实地说「其中 N 小时电脑睡眠」，§71.3 的一次性重试
+    也只认这个测量值作证据。"""
+    return _power.sample_pass(_ctx())
+
+
 def auto_dispatch_pass(cfg: config.Config) -> int:
     return _dispatch.auto_dispatch_pass(_ctx(), cfg)
 
@@ -736,6 +745,7 @@ def run_once(
 ) -> dict:
     config.ensure_state_dirs()
     _refresh_model_knobs(cfg)   # §59：模型旋钮改动下一 pass 生效，无需重启
+    _power_sample()  # §71.2：本 pass 相对上一 pass 的挂起时长 → 在跑卡的睡眠账
     # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
     # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
     heartbeat.beat("store2", interval)

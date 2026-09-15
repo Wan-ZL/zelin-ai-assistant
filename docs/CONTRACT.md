@@ -162,6 +162,10 @@ YAML 载体：一条需求一个文件。状态机：
 
 **§70.7 追记（D33，2026-09-04，add-only）**：`last_result` 新增第六键 `advisories` = `list[{kind, text, ref, fingerprint, first_seen}]`（≤ 20 行、每字段 `str`、坏形状整行丢；五个计数照旧恒在）。横幅渲染条件放宽为「三数非全零 **或** advisories 非空」——三数全零时文案是「今日整理：看板无变动」而不是三个 0；「回收站可恢复」链接只在 `merged + trashed > 0` 时出现。全文见 §70.7。
 
+**§71 新增（睡眠感知派发的投影面，全部 add-only optional）**：
+- `running[]` 的 queued 项的 `queued_reason` 词表加 `{kind: "asleep"}`（§71.1 —— 派发闸按住了**整个 pass**，不是某一张卡；与 `dispatch_error` 照旧独立并存）。投影**只说观察到的**：builder 读 `power.observed_verdict()` 的进程内 memo（派发闸每 pass 先跑，缓存恒新鲜），从不为了画一个 chip 起探针子进程——没观察过 = 整键不出。
+- `running[]` / `review[]` 行加 `slept_seconds`(int 秒，§71.2 —— 这一轮耗时里电脑睡掉的秒数；**非正 = 整键不出**)。`dispatched_at` / `review_at` 的语义与口径**不变**（仍是墙上时间），客户端在「耗时」旁边加一句「其中 N 电脑睡眠」。
+
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
 **2026-09-07 追记（§55 第五幕 追记 2026-09-07 的投影面；值形**不变**）**：`running[]` / `review[]` / `completed[]` 行的 `copy_cmd` 第一个词**保持裸 `claude`**（三种形 `claude attach <short>` / `claude --resume <sid>` / `cd '<cwd>' && claude --resume <sid>` 照旧；`act/lib/dashboard.TAKEOVER_CLAUDE` 一处拼写）。这是决定不是疏漏：`--bg` worker 跑的是 Claude Code per-user daemon 的 binary、随登录 shell 走，不是派发用的稳定副本；写副本路径进来会在两次部署之间的滞后窗口里让旧客户端去接新 worker（证据与规则见 §55 第五幕 追记 2026-09-07；判例 `tests/test_dashboard_copy_cmd_bare_claude.py`——副本 / pin 都在时仍是裸词）。客户端逐字复制/执行，不解析。
@@ -193,6 +197,8 @@ approved 的需求：
 **2026-09-02 追记（§65.2 出网封锁）**：sources 全为 `self_improve` 且未声明 `needs_mcp` 的卡，**四个发射点**（dispatch / resume / rework / brief，共用 `executor._bg_base_cmd(cfg, req)`）的 argv 在模型旗标之后、`--name` 之前追加 `llm.NO_MCP_ARGV` = `--strict-mcp-config --mcp-config {"mcpServers":{}}`——用户级 Slack/Gmail MCP 对该会话不存在（resume/rework 同样带，派发关掉的面永不被复活）；其它卡 argv 逐字节不变（`llm.dispatch_argv(cfg, no_mcp=False)` 默认）。prompt 多一段 `## SELF-IMPROVE LANE`（分支名 / 只准草稿 PR / 受保护路径清单 / 无 MCP / 不发 PR 评论），`execution.self_improve = {branch, egress: "none"|"mcp", lane: bool}` 随成功派发落账。判例 tests/test_self_improve_argv.py。
 
 **2026-09-07 追记（§59.7，owner 决策 D53）**：四个发射点的 argv 在模型旗标之后、`NO_MCP_ARGV` / `--name` 之前追加 `--fallback-model <id>`（默认 `claude-opus-5[1m]`；`models.fallback: off` 时不追加，argv 回到本追记之前的形状）：`[<claude>, "--bg", ("--dangerously-skip-permissions")?, ("--model", <id>)?, ("--fallback-model", <id>)?, (NO_MCP_ARGV)?, "--name", <name>, ("--resume", <sid>)?, <prompt>]`。子进程 env 在回退是 Opus id 时多一个 `ANTHROPIC_DEFAULT_OPUS_MODEL=<id>`（`llm.runner_env(cfg)`）。上文 §65.2 追记「紧跟模型旗标」自此读作「紧跟 `--model` 与 `--fallback-model` 两组旗标」。判例 tests/test_llm_fallback_argv.py。
+
+**2026-09-14 追记（§71.1，issue #311）——派发前先问机器醒着吗**：`dispatch_approved` 在动第一张 approved 卡之前**懒算一次**本机电源判决（`power.machine_asleep(cfg)`，60 s memo）；判决是 `asleep` 时本 pass 的 approved 卡一张都不派——不写卡、不动 `execution`、不留 note，只在判决变化时一行日志，卡留在合并运行列的 queued 子状态（chip「等电脑醒来」）。`unknown`（探不到）与 `autodispatch.require_awake=false` 时本节以上全部行为逐字不变。派发 argv、prompt、失败台账、§4.1 风暴刹车一字未动。全文见 §71.1。
 
 ### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
 
@@ -3107,6 +3113,15 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   tests/test_reconcile.py（blocked 收割 / briefing 优先 / 放弃即收割 / 历史
   迁移）、tests/test_resume_storm.py。以下原文保留作历史。
 
+**2026-09-14 追记（§71.3，issue #311，add-only）——收割前多一道「是不是电脑睡着
+害的」**：第一条（roster blocked 的 executing 卡）的优先序末尾、收割之前插入
+**一次性睡眠重试**：卡上带 §71.2 **实测**的 `execution.sleep_interrupted` 且
+`sleep_retry_used` 未立 → `executor.resume`（同 sid、同上下文、不追加 prompt），
+卡留 executing、notes 留 `[睡眠打断]` 痕、`sleep_retry_used` 在 resume **之前**
+落盘（晚写会让崩在中间的卡每 pass 重烧一次钱）。第二次被打断、或没有那面旗的
+受阻会话（agent 真的在提问），照本节原文收割进待验收——`interrupted_reason`
+词表、通知文案、resume 风暴 / 连续 5 败两条出口全部一字不动。全文见 §71.3。
+
 
 - **§2 add-only 修订**：needs_input 分区除「executing × roster blocked」外，
   新收「executing × `resume_exhausted` × 会话无活 pid（且无 done）」的
@@ -4016,8 +4031,10 @@ T-26 追认合法）必须磁盘已存在；⑥ 成本：估价缺失即拒（`c
 刷屏；解除即清 token——投影诚实）；`origin:*` / `disabled` 两类**常态**原因
 不上卡不留痕（逐卡留痕即噪音，宪法第 10 条口径），且会清掉既有过期 token。
 
-**queued 子状态原因词表（M1.c + M8.3 C-2 终裁；v0.48.7 去 budget）**：内部
-token = `dependency`（有未完结依赖卡）｜`concurrency`，优先级 dependency >
+**queued 子状态原因词表（M1.c + M8.3 C-2 终裁；v0.48.7 去 budget；**2026-09-14
+追记（§71.1，add-only）加 `machine_asleep`**）**：内部
+token = `dependency`（有未完结依赖卡）｜`machine_asleep`（§71.1 派发闸按住了整个
+pass：这台机器在睡）｜`concurrency`，优先级 dependency > machine_asleep >
 concurrency（chip 只有一个位置，报最「粘」的阻塞）；`None` = 无阻塞（纯粹没
 轮到 / 派发失败在退避——后者归 `dispatch_error`/`dispatch_error_id`，两族
 独立并存、生产端不得混写）。**wire canonical = 结构化形**（§2 v0.48 字段块）：
@@ -4036,9 +4053,17 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
 自动派发发一条通知（宪法第 10 条：自动化替 owner 做的事必须可见）。
 
 **config（add-only，`config.example.yaml` `autodispatch:` 块）**：
-`enabled`(true) / `max_concurrent`(3) / `notify`(true)；脏值逐键回退默认
-（宪法第 11 条口径），`policy.autodispatch_config(cfg)` 是唯一读取点；
-`daily_budget_usd` retired v0.48.7（D9），出现即忽略。
+`enabled`(true) / `max_concurrent`(3) / `notify`(true) / `require_awake`(true，
+**2026-09-14 追记 §71.1**：机器不在清醒态时本 pass 不派发；探不到 = 按醒着)；
+脏值逐键回退默认（宪法第 11 条口径），`policy.autodispatch_config(cfg)` 是唯一
+读取点；`daily_budget_usd` retired v0.48.7（D9），出现即忽略。
+
+**2026-09-14 追记（§71.1，issue #311）——「并发是唯一的排队原因」自此失效**：
+上面「并发上限……是**唯一**的排队原因」一句改读作「并发与机器睡眠是两个排队
+原因」。`machine_asleep` 与 `concurrency` 的区别：前者按住**整个 pass**（本机不在
+清醒态，派一张就是烧一次钱换零产出——issue #311 实证三张卡 $2–3/张、零交付），
+后者只按住超出槽位的那几张。资格闸（`may_auto_dispatch`）零改动：睡眠从来不是
+资格问题。
 
 **判例**：tests/test_policy_ceilings.py（全部 token 逐条 + 文字确认线是唯一
 金额闸 + 任意估价/任意当日累计放行 + 升级前残留 token 解除即清 + token 换因
@@ -6158,6 +6183,8 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
 
 ### 70.4 配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）
 
+**2026-09-14 追记（§71 / owner 决策 D56，issue #311）**：`daily_loop.time` 的默认值**仍是 03:30**——issue #311 的第 4 条诉求（「每日循环的时间点对笔记本用户不合适，默认应改到用户活跃时段」）由 §71.1 的派发闸满足而不是改钟点：凌晨跑的是维护（去重 / 过时清理 / 铸提案），不花钱、不需要机器醒着、也不该和 owner 白天用机器抢资源；真正不能在睡梦里发生的是**派发**，那已经跟着机器状态走（醒来的第一个 tick 就派）。本节其余字面量不变。
+
 `daily_loop.enabled`（默认 true）/ `daily_loop.time`（本地 `HH:MM`，默认 `03:30`，`coerce_clock_time` 归一，坏值回默认）/ `daily_loop.max_proposals_per_day`（默认 5）/ `daily_loop.stale_days`（默认 45）/ `daily_loop.trash_retention_days`（默认 90）；三个整数 yaml 路径负数按 0。overrides 扁平键与 web 写入面见 §15 追记；actd 每 pass 现读（`daily_loop.LIVE_KNOBS`）。
 
 ### 70.5 面（投影 / web / server）
@@ -6180,3 +6207,36 @@ owner 原话（D33）：「你说的把 5 降到 2，我可以接受；第三点
 - **投影（§2 `maintenance`，add-only）**：`last_result` 五个计数照旧恒在，**新增** `advisories`（同上列表；每字段 `str`，坏形状整行丢，≤ 20）。web `MaintenanceBanner`：advisories 非空时同一行右侧多一个「系统自检 N 条」按钮（`aria-expanded`），点开在横幅下方列出每条 `kind` / `text` / 「首见 <first_seen>」（三列：kind 与日期列不缩不折，只有中间的说明文字换行）；三计数全零而 advisories 非空也渲染（否则这些行没人看得见），此时文案是「今日整理：看板无变动」而不是「合并 0、清理 0（可撤销）、提案 0」；「回收站可恢复」链接只在 `merged + trashed > 0`（合并也把旧卡送进回收站）时出现——不许诺一次没发生过的撤销；**仍不弹系统通知**（D10）、不新增 inbox 动词。client `MaintenanceAdvisory` 逐字镜像 wire key（防腐 #10）。判例 `MaintenanceBanner.test.tsx`（DOM）、`web/e2e/maintenanceBanner.spec.ts`（真浏览器量展开态：日期一行、横幅不溢出，1280 / 820 宽 × zh / en）。
 - **默认额度**：`daily_loop.max_proposals_per_day` 默认 **5 → 2**（truth = `config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS`；`server/settings.py DAILY_LOOP_DEFAULTS` 手抄同值，§49，`test_server_paths_mirror` 钉漂移；`config.example.yaml` 同步）。已写过 override 的机器不受影响（override > config > default 的层次不变，§15 追记）；`GET /api/settings/daily-loop` 对未改过的机器报 `2` / `source: default`。§70.3「默认 5」与 §70.4 的旧字面量自本条起失效。
 - **不变的**：§70.1–70.2 维护半边一字不动；CARD_KINDS 的铸卡形状（§70.3 铸卡段）、`kind_taken` / `gh_title` / `dedup` / `cap` 四个 skip 语义不变；§70.6 边界照旧。advisory 只是「不铸卡」，不是「不读」——读取器、阈值、`inputs` 计数与 §70.3 ①–⑧ 的定义全部保留，日后要把某一类升回可铸卡只需把 kind 挪回 CARD_KINDS（并在本节追记）。
+
+## 71. 睡眠感知派发：机器在睡时不派卡、耗时不算睡眠、被睡眠打断的会话重试一次（issue #311；owner 决策 D56）
+
+owner 原话（issue #311，2026-09-09）：「派发前检查机器状态：显示器熄灭 / 系统即将睡眠 / 合盖时不派发（`pmset -g` 或 IOKit 的 idle / display state），推迟到唤醒后的第一个 tick。」「被睡眠打断的会话不算『需要人拍板』：自动原地重试一次（同一分支、同一 prompt），重试仍失败才上待验收列。」「耗时不计睡眠时间，或在卡上明确标『其中 N 小时电脑睡眠』。」
+
+事故形态（2026-09-09 actd.log，issue #311）：04:10 的维护唤醒里免批通道批了三张 self_improve 卡、派发闸照常派出去，三个会话在睡眠里挂了 2.5–5 小时，各花 $2–3，transcript 末尾是 `API Error: Your computer went to sleep mid-response`，最后全部以 `delivery.reason = pr_missing` / `changed_files = 0` / `interrupted_reason = delivery_unverified` 的姿态堆进待验收列。三件事各归一款：派发闸（71.1）、诚实耗时（71.2）、一次性重试（71.3）。
+
+**不改的**：`daily_loop.time` 仍是 03:30（§70.4 不动）——D56 的取舍是**派发跟着机器走，不跟着钟点走**：凌晨的维护（去重 / 过时清理 / 铸提案）不花钱也不需要机器醒着，把它挪到白天只会和 owner 抢机器；真正不该在睡梦里发生的是**派发**，而那由 71.1 按住。§51 的天花板、免批通道、并发上限、§4 风暴刹车全部一字不动。
+
+### 71.1 派发闸：`machine_asleep`（探不到 = 按醒着）
+
+- **探针（`act/lib/platform.py` 的第四件事，docs/PORTING.md 同步）**：`power_state()` 读 `pmset -g powerstate IOPMrootDomain` 的 `(当前档, 最高档)`；`power_capabilities()` 读 `ioreg -n IOPMrootDomain -r -d 1` 的 `System Capabilities` 位图（CPU 0x1 / Graphics 0x2 / Audio 0x4 / Network 0x8）与 `IOPMUserIsActive`；`power_assertions()` 读 `pmset -g assertions` **系统级那一块**的计数（只用 `UserIsActive` / `PreventUserIdleDisplaySleep`；逐进程明细含进程名与用户文案，永不进读数、永不落盘）。非 darwin 且未注入 runner = 不起子进程；命令缺席 / 格式漂移 / 异常一律「没答案」（None / `{}`），绝不 raise、绝不猜。
+- **被否掉的判据（tombstone，别再回去试）**：`pmset -g powerstate IODisplayWrangler` 在 Apple Silicon 上打印 `Internal failure: Failed to get power state information` 并 **exit 0**（IODisplayWrangler 没有 IOPowerManagement 字典），`ioreg -r -k AppleClamshellState -d 4` 零行。两条都恒等于「探不到」，建在它们上面的闸在 owner 那台 MacBook（arm64 / macOS 26.5.2，正是报这张 issue 的机器）上永远不会响。**验收规则**：本节的探针形状由**真机输出**钉死——`tests/fixtures/power/*.txt` 是 2026-09-14 在同款 arm64 机器上逐字节抓下来的四份输出（含上面两条死判据的空答案），判例 `tests/test_power_probe.py` 喂的就是它们。日后改判据必须同样先抓真机输出再改法条。
+- **判决（`act/lib/power.py::verdict`，纯函数，三值）**：`state < max_state` → **asleep**（主判据，arm64 实测活着：满醒 4/4，dark wake / 正在睡下去低于上限）；主判据没答案时看 `capabilities` 缺 Graphics 位 → asleep（dark wake 屏幕没亮）；两条都没答案 → **unknown**。`IOPMUserIsActive` 或 assertion `UserIsActive` / `PreventUserIdleDisplaySleep` 非零 = **有人摁着这台机器醒着**，压过 capabilities 那条兜底（24h 醒着、只是显示器睡了的台式 Mac 绝不被闸饿死）——但**压不过主判据**（合盖睡着时 Amphetamine 一类的 assertion 仍挂着，那不叫醒着）。
+- **闸（`act/lib/actd/dispatch.py` 的 `_PassGate`）**：`dispatch_approved` 里**懒算一次**（没有待派发卡的 pass 一个子进程都不起；60 s memo `power.MEMO_SECONDS`），asleep 时**本 pass 全部 approved 卡一张都不派**——不写卡、不留 note、不动 `execution`、不打点，只在**判决变化**时写一行 `power: machine <verdict>` 日志（每 pass 一行会把 actd.log 刷满）。醒来的第一个 tick 照常派发（闸是排队不是拒绝）。
+- **fail-open + 可见性**：`unknown` → 照常派发（宁可多派一张也不让自动派发在一台探不出状态的机器上静默饿死），但那一行日志明说 `probe unreadable — dispatching anyway`——一个永远解析不出的探针不许把整条闸变成**没人看得见的 no-op**（本节的审查焦点）。进程级总闸 `AIASSISTANT_POWER_PROBE=0`（同 §55 / §70 的 belt-and-braces）= 不探测、判决恒 unknown；测试套件默认设它。
+- **旋钮（add-only，§51 的 `autodispatch:` 块）**：`require_awake`（默认 true，`policy.AUTODISPATCH_DEFAULTS` + `config.example.yaml`；脏值按 `bool()` 收敛，同 enabled / notify）。false = 闸整个关掉、连探针都不问，派发行为与本节之前逐字相同。
+- **排队词表（§51 追记，add-only）**：`policy.QUEUED_REASONS` = `("dependency", "machine_asleep", "concurrency")`，位置即优先级（依赖最粘 > 等机器醒 > 并发最快松动）；快照键 `machine_asleep`（bool，缺键 = 跳过该项检查，policy 不做 I/O、不自己探电源）。投影 `dashboard._queued_reason_view` → `{kind: "asleep"}`（§2 追记）；**投影只说观察到的**——`power.observed_verdict()` 只读 memo，绝不为画一个 chip 再起三个探针子进程（没观察过 = 没 chip）。web `steer.ts` 两形同表翻译成「等电脑醒来」/「waiting for the Mac to wake」（开放枚举，未知 kind 照旧原文降级）。
+
+### 71.2 诚实耗时：`slept_seconds` / `sleep_interrupted`
+
+- **采样**：`act/lib/power.py::sample_suspension` 在 `actd.run_once` **顶部**每 pass 量一次真实挂起时长 = wall 前进量 − monotonic 前进量（macOS 的 monotonic 睡眠期间停摆）。算术与 `alerts._suspended_seconds` 相同，**基线各用各的**（`power.SUSPEND_STATE` 自有 dict，绝不读写 `alerts.WAKE_STATE`——§48 单采样者不变式，两个采样者共用一份基线会互相吃掉对方的跳变）。首次采样 / 时钟回拨 → 0。
+- **落账**：挂起 > `SLEEP_GAP_SECONDS`（300 s）才写（门槛以下一次写盘都不发生）——给每张 `status=executing` 且有 `session_id` 的卡累加 add-only `execution.slept_seconds`（int 秒，坏值从 0 起算）并置 `execution.sleep_interrupted = true`。写者是 actd 主循环（§44 单写者不变）。
+- **投影（§2 追记，add-only）**：`running[]` / `review[]`（含 §30 attach 回流行）多一个 `slept_seconds`（int 秒，**非正 = 整键不出**）。web 待验收卡在「耗时 4 小时 52 分」旁边多一句「其中 4 小时 50 分 电脑睡眠」（`cardChrome.SleepNote`，en: `4h 50m of it asleep`；0 / 负数 / 非数字一个字都不多）。**「耗时」本身不改口径**——它数的仍是 dispatched_at→review_at 的墙上时间（issue #311 给的两个选项里取「明确标注」那个：减掉睡眠时间会让两处口径打架，而 owner 要的是看得懂）。
+
+### 71.3 一次性原地重试：被睡眠打断 ≠ 需要人拍板
+
+- **位置**：`reconcile._handle_blocked` 的收割前一步——顺序是 §44.3 briefing 注入 → §44.3-S steer flush → **§71.3 睡眠重试** → #119 收割进待验收（既有优先级一字不动）。
+- **判据**：`execution.sleep_interrupted`（§71.2 **实测**的挂起证据，不是猜的）且 `execution.sleep_retry_used` 未立。命中 → `executor.resume(req, cfg)`（同一个 session、同一段上下文，不追加 prompt），卡留 executing，notes 留一行 `[睡眠打断] …已自动原地重试一次`。
+- **上限一次**：`execution.sleep_retry_used`（add-only bool）**写在 resume 之前**并落盘——resume 自己会重写 execution，标记晚写会让崩在中间的卡每个 pass 重试一次（重复烧钱）。第二次被打断照旧按 #119 收割进待验收（`interrupted_reason` 词表不变）。resume 抛异常只记日志，上限照样消费。
+- **为什么要证据**：重试会再花一次钱。一个真的在提问的受阻会话没有那面旗，永远走不到这条路（§46.3 的三条「不再救活」出口与 §46 风暴降级全部不变）。analytics `sleep_retry`（metadata only：req + ok）。
+
+**判例**：`tests/test_power_probe.py`（真机 fixture 解析 + 判决表 + 两条死判据的 tombstone + memo + 旋钮）、`tests/test_dispatch_sleep_gate.py`（asleep 不派不写卡 / 醒来照派 / unknown fail-open / 旋钮关 / 每 pass 只探一次 / 空闲 pass 零探测 / 判决变化只记一行 / queued_reason chip）、`tests/test_sleep_accounting.py`（wall−mono 算术 / 长 pass 不误判 / 门槛 / 只落在跑的卡 / 累加 / 投影 / 不碰 WAKE_STATE）、`tests/test_sleep_retry.py`（重试一次 / 第二次收割 / 无证据不重试 / briefing 优先 / 失败不崩 / 标记先落盘）、web `ReviewCard.sleep.test.tsx` / `RunningCard.sleepChip.test.tsx`。

@@ -5,7 +5,8 @@ CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119�
 救活的会话按 stop_to_review 收割进待验收，不再挂「需输入」）/ §16（auto_resume
 双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis（收割时比对快照）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
-/ §46（resume 风暴降级 + 确认式停止）/ §65.3（self_improve 收割核验）。
+/ §46（resume 风暴降级 + 确认式停止）/ §65.3（self_improve 收割核验）/
+§71.3（被睡眠打断的会话收割前原地重试一次）。
 """
 from __future__ import annotations
 
@@ -443,15 +444,7 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
     transcript while the board said 需输入."""
     if not ex.get("done") and d.promote_if_delivered(req, ex, sid):
         return
-    # §44.3: a blocked session is the safe injection window — flush
-    # any queued silent-merge briefings (stop-idle-then-resume; the
-    # resumed session un-blocks as a bonus). 注入队列非空时先注入——
-    # briefing/steer 本身就可能让会话继续推进，不急着收割。
-    if _flush_briefings(d, req, ex, cfg):
-        return
-    if steer.pending_steers(req):
-        # §44.3-S 安全窗口①：blocked 时 flush steer 不打断工作。
-        flush_steers(d, req, cfg)
+    if _another_move_left(d, req, ex, cfg):
         return
     # §13/§46.3 v0.48.8（#119）：没有任何待注入的内容、会话又不再
     # 推进 —— 按既有 stop_to_review 收割路径落待验收：停 agent、
@@ -465,6 +458,53 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
     notify.notify(*notify.msg_review_interrupted(req.title or req.id),
                   req=req.id)
     resume_notified.discard(req.id)
+
+
+def _another_move_left(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
+    """收割之前还剩的三条出路，顺序即优先级（任一条走通 = 本 pass 不收割）：
+
+    ① §44.3 briefing 注入——blocked 是安全注入窗口，flush 掉排队的静默并入
+       简报（stop-idle-then-resume，会话顺带 un-block）；注入队列非空时先注入，
+       briefing/steer 本身就可能让会话继续推进，不急着收割。
+    ② §44.3-S 安全窗口①：blocked 时 flush steer 不打断工作。
+    ③ §71.3：这次中断是电脑睡着造成的——原地重试一次再说。
+    """
+    if _flush_briefings(d, req, ex, cfg):
+        return True
+    if steer.pending_steers(req):
+        flush_steers(d, req, cfg)
+        return True
+    return sleep_retry(d, req, ex, cfg)
+
+
+def sleep_retry(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
+    """§71.3 一次性原地重试：被**实测的**睡眠打断过的会话，收割前用同一个
+    session / 同一段上下文再拉起一次（`executor.resume`，无新 prompt）。
+
+    证据只认 `execution.sleep_interrupted`——它由 §71.2 的 wall−monotonic 挂起
+    测量写下，不是猜的：一个真的在问问题的受阻会话没有这面旗，永远走不到这里
+    （RISK：重试会再花一次钱，所以证据必须是测量值）。上限一次（`sleep_retry_used`
+    add-only，写在 resume 之前——executor.resume 自己会落盘，标记必须先在
+    execution 里就位，否则崩在中间会让这张卡每 pass 重试一次）。第二次被打断
+    照旧收割进待验收（本函数返回 False）。绝不抛。
+    """
+    if not ex.get("sleep_interrupted") or ex.get("sleep_retry_used"):
+        return False
+    if d.executor is None:
+        return False
+    ex["sleep_retry_used"] = True
+    req.execution = ex
+    append_note(req, "[睡眠打断] 电脑睡着时会话被切断，已自动原地重试一次"
+                     "（同一会话、同一上下文）")
+    registry.save(req)
+    try:
+        ok = d.executor.resume(req, cfg)
+    except Exception as e:  # noqa: BLE001 - 重试失败只记账，下 pass 照常收割
+        d.log(f"reconcile: {req.id} sleep retry FAILED: {e}")
+        return True
+    d.log(f"reconcile: {req.id} sleep-interrupted -> resumed once (ok={ok})")
+    analytics.log_event("sleep_retry", req=req.id, ok=bool(ok))
+    return True
 
 
 def _flush_briefings(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:

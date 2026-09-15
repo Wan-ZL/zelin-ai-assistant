@@ -1,16 +1,17 @@
 """OS seam — the generic OS-specific effects behind one thin choke point.
 
 契约：CONTRACT §5（macOS 通知）/ §25（doctor 的 service 列表来源）/ §28（通知中继
-的原生落点 `notify_user`）；移植清单 docs/PORTING.md。
+的原生落点 `notify_user`）/ §71.1（机器电源状态探针）；移植清单 docs/PORTING.md。
 
-Exactly three concerns in the python tree are generic enough to port (the
+Exactly four concerns in the python tree are generic enough to port (the
 full audit lives in docs/PORTING.md): firing a user notification, opening a
-path with the system file handler, and listing the user's background
-services. The darwin implementations delegate to the exact commands this
-codebase always ran (osascript / open / launchctl); linux gets the cheap
-honest equivalent where one exists (notify-send, xdg-open) and a truthful
-empty result where none does yet; windows uses the OS that is always present
-(PowerShell toast, schtasks, os.startfile) with no pip dependency.
+path with the system file handler, listing the user's background services,
+and reading this machine's power state (§71.1 —— the fourth concern, added
+2026-09-14). The darwin implementations delegate to the exact commands this
+codebase always ran (osascript / open / launchctl / pmset+ioreg); linux gets
+the cheap honest equivalent where one exists (notify-send, xdg-open) and a
+truthful empty result where none does yet; windows uses the OS that is always
+present (PowerShell toast, schtasks, os.startfile) with no pip dependency.
 
 NOT here on purpose:
   - anything already portable: claude / git / gh subprocess calls.
@@ -22,9 +23,10 @@ had). ``runner`` is the injectable subprocess runner used by tests.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 Runner = Callable[[List[str], float], "subprocess.CompletedProcess"]
 
@@ -185,3 +187,87 @@ def _service_list_argv() -> Optional[List[str]]:
         return ["systemctl", "--user", "list-units", "--type=service,timer",
                 "--all", "--no-legend", "--no-pager"]
     return None
+
+
+# --------------------------------------------------------------------------- #
+# 第四件事：机器电源状态（§71.1）
+# --------------------------------------------------------------------------- #
+# 判据只用 **Apple Silicon 上实测活着** 的两条命令（fixture tests/fixtures/power/
+# 的真实输出，2026-09-14 采自 owner 同款机器：arm64 / macOS 26.5.2）：
+#   pmset -g powerstate IOPMrootDomain  -> "IOPMrootDomain  4  4  ON"
+#   ioreg -n IOPMrootDomain -r -d 1     -> "System Capabilities" / "IOPMUserIsActive"
+#   pmset -g assertions                 -> 系统级 assertion 计数块
+# 被否掉的旧判据（写在这里当 tombstone，别再回去试）：`pmset -g powerstate
+# IODisplayWrangler` 在 arm64 上打印 "Internal failure: Failed to get power state
+# information" 并 **exit 0**（IODisplayWrangler 没有 IOPowerManagement 字典），
+# `ioreg -r -k AppleClamshellState -d 4` 零行——两条都恒等于「探不到」，拿它们
+# 做闸等于让整条 §71.1 成为 no-op。
+_PMSET_ROW_RE = re.compile(r"^IOPMrootDomain\s+(\d+)\s+(\d+)\b", re.MULTILINE)
+_CAPABILITIES_RE = re.compile(r'"System Capabilities"\s*=\s*(\d+)')
+_USER_ACTIVE_RE = re.compile(r'"IOPMUserIsActive"\s*=\s*(Yes|No)')
+_ASSERTION_ROW_RE = re.compile(r"^\s+([A-Za-z][A-Za-z0-9]*)\s+(\d+)\s*$", re.MULTILINE)
+_ASSERTION_HEAD = "Assertion status system-wide:"
+_ASSERTION_TAIL = "Listed by owning process:"
+
+
+def _probe_text(argv: List[str], runner: Optional[Runner], timeout: float = 5) -> str:
+    """One power probe's combined output; "" on any surprise. NEVER raises.
+
+    非 darwin 上**不起子进程**（探针无意义）——但注入了 ``runner`` 时照跑：
+    判例在 linux CI 上也要走同一段解析（测试注入真机 fixture 文本）。
+    """
+    if runner is None and not is_darwin():
+        return ""
+    try:
+        return _combined_output((runner or _run)(argv, timeout))
+    except Exception:  # noqa: BLE001 - a power probe must never break a caller
+        return ""
+
+
+def power_state(runner: Optional[Runner] = None) -> Optional[tuple]:
+    """IOPMrootDomain 的 ``(当前电源档, 最高电源档)``；探不到 → None。
+
+    darwin: ``pmset -g powerstate IOPMrootDomain``（表头一行 + 数据行
+    ``IOPMrootDomain 4 4 ON``）。清醒 = 当前档 == 最高档；dark wake / 正在
+    睡下去 = 当前档 < 最高档。非 darwin / 命令缺席 / 格式漂移 → None
+    （「探不到」不是「睡着了」，§71.1 fail-open）。
+    """
+    m = _PMSET_ROW_RE.search(_probe_text(
+        ["pmset", "-g", "powerstate", "IOPMrootDomain"], runner))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def power_capabilities(runner: Optional[Runner] = None) -> Dict[str, object]:
+    """IOPMrootDomain 的系统能力位与「用户在用」标记；探不到的键整键不出。
+
+    darwin: ``ioreg -n IOPMrootDomain -r -d 1``。返回 `{"capabilities": int,
+    "user_active": bool}`——`capabilities` 是 System Capabilities 位图
+    （CPU 0x1 / Graphics 0x2 / Audio 0x4 / Network 0x8，满醒 = 15，dark wake
+    没有 Graphics 位），`user_active` = `IOPMUserIsActive`。
+    """
+    text = _probe_text(["ioreg", "-n", "IOPMrootDomain", "-r", "-d", "1"], runner)
+    out: Dict[str, object] = {}
+    caps = _CAPABILITIES_RE.search(text)
+    if caps:
+        out["capabilities"] = int(caps.group(1))
+    active = _USER_ACTIVE_RE.search(text)
+    if active:
+        out["user_active"] = active.group(1) == "Yes"
+    return out
+
+
+def power_assertions(runner: Optional[Runner] = None) -> Dict[str, int]:
+    """``pmset -g assertions`` 的系统级 assertion 计数（`{}` = 探不到）。
+
+    只读 "Assertion status system-wide:" 那一块（到 "Listed by owning process:"
+    为止）——逐进程明细里有进程名与用户文案，不进任何判据也不落盘。
+    §71.1 只用两个键：`UserIsActive` / `PreventUserIdleDisplaySleep`（任一
+    非零 = 有人/有东西正把这台机器摁醒着）。
+    """
+    text = _probe_text(["pmset", "-g", "assertions"], runner)
+    head = text.find(_ASSERTION_HEAD)
+    if head < 0:
+        return {}
+    tail = text.find(_ASSERTION_TAIL, head)
+    block = text[head:tail] if tail > head else text[head:]
+    return {m.group(1): int(m.group(2)) for m in _ASSERTION_ROW_RE.finditer(block)}

@@ -53,6 +53,11 @@ os.environ["PROCESS_SCREENPIPE_LOG"] = os.path.join(TMP_HOME, "screenpipe-auto.l
 # 真 run_once 的判例都会在本地时间 ≥ 03:30 时把整轮循环跑起来（真 gh、真 doctor
 # 子进程）。默认关掉；循环自己的判例显式打开（AIASSISTANT_DAILY_LOOP=1）。
 os.environ.setdefault("AIASSISTANT_DAILY_LOOP", "0")
+# §71.1 电源探针（pmset / ioreg）：派发闸每 pass 问一次「这台机器醒着吗」。开发者
+# 的 Mac 上那是三个真子进程、真机器状态——套件里既不该起也不该信。默认关掉
+# （判决恒 unknown = fail-open，派发行为与本条法之前逐字相同）；探针自己的判例
+# 注入 runner / probe，走同一段解析。
+os.environ.setdefault("AIASSISTANT_POWER_PROBE", "0")
 
 
 # --------------------------------------------------------------------------- #

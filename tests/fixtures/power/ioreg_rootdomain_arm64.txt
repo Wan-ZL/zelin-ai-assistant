@@ -1,0 +1,24 @@
++-o IOPMrootDomain  <class IOPMrootDomain, id 0x100000296, registered, matched, active, busy 0 (15742 ms), retain 200>
+    {
+      "IOSleepSupported" = Yes
+      "SleepDisabled" = No
+      "Standby Enabled" = No
+      "DriverPMAssertionsDetailed" = ({"Assertions"=1,"ModifiedTime"=7670122158211258254,"Owner"="com.apple.pci.hostBridge.preventSleep","RegistryEntryID"=0,"CreatedTime"=0,"Level"=0,"ID"=500},{"Assertions"=1,"ModifiedTime"=7670122158211281069,"Owner"="com.apple.pci.hostBridge.preventSleep","RegistryEntryID"=0,"CreatedTime"=0,"Level"=0,"ID"=501},{"Assertions"=1,"ModifiedTime"=7670122158211214779,"Owner"="com.apple.pci.hostBridge.preventSleep","RegistryEntryID"=0,"CreatedTime"=0,"Level"=0,"ID"=502},{"Assertions"=1,"ModifiedTime"=7679782707890968978,"Owner"="com.apple.pci.hostBridge.preventSleep","RegistryEntryID"=0,"CreatedTime"=0,"Level"=0,"ID"=503},{"Assertions"=1,"ModifiedTime"=0,"Owner"="AppleHPMARMSPMI","RegistryEntryID"=4294968922,"CreatedTime"=0,"Level"=0,"ID"=504},{"Assertions"=1,"ModifiedTime"=0,"Owner"="AppleHPMARMSPMI","RegistryEntryID"=4294969252,"CreatedTime"=0,"Level"=0,"ID"=531},{"Assertions"=1,"ModifiedTime"=0,"Owner"="AppleHPMARMSPMI","RegistryEntryID"=4294969377,"CreatedTime"=7670122136736314798,"Level"=0,"ID"=532},{"Assertions"=32,"ModifiedTime"=7670122136736369186,"Owner"="acio0","RegistryEntryID"=4294968259,"CreatedTime"=7670122136736369095,"Level"=0,"ID"=546},{"Assertions"=1,"ModifiedTime"=0,"Owner"="IOThunderboltControllerType5","RegistryEntryID"=4294969550,"CreatedTime"=7670122136736369832,"Level"=0,"ID"=547},{"Assertions"=32,"ModifiedTime"=7670122136736410613,"Owner"="acio1","RegistryEntryID"=4294968053,"CreatedTime"=7670122136736410584,"Level"=0,"ID"=548},{"Assertions"=1,"ModifiedTime"=0,"Owner"="IOThunderboltControllerType5","RegistryEntryID"=4294969637,"CreatedTime"=7670122136736411223,"Level"=0,"ID"=549},{"Assertions"=32,"ModifiedTime"=7670122136736432226,"Owner"="acio3","RegistryEntryID"=4294968062,"CreatedTime"=7670122136736432208,"Level"=0,"ID"=550},{"Assertions"=1,"ModifiedTime"=0,"Owner"="IOThunderboltControllerType5","RegistryEntryID"=4294969711,"CreatedTime"=7670122136736434589,"Level"=0,"ID"=551},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.00100000","RegistryEntryID"=4294969860,"CreatedTime"=7670122141031606379,"Level"=255,"ID"=554},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.00200000","RegistryEntryID"=4294969862,"CreatedTime"=7670122141031610153,"Level"=255,"ID"=555},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.00140000","RegistryEntryID"=4294970047,"CreatedTime"=7670122145326322183,"Level"=255,"ID"=558},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.00240000","RegistryEntryID"=4294970059,"CreatedTime"=7670122145326366777,"Level"=255,"ID"=560},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.00210000","RegistryEntryID"=4294970121,"CreatedTime"=7670122153915816575,"Level"=255,"ID"=564},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.01100000","RegistryEntryID"=4294970150,"CreatedTime"=7670122158211114818,"Level"=255,"ID"=565},{"Assertions"=256,"ModifiedTime"=7679782716481314340,"Owner"="en1","RegistryEntryID"=4294970875,"CreatedTime"=7670122201160590327,"Level"=255,"ID"=567},{"Assertions"=4,"ModifiedTime"=0,"Owner"="com.apple.usb.externaldevice.03100000","RegistryEntryID"=4303941686,"CreatedTime"=7685181348638333991,"Level"=255,"ID"=1259})
+      "System Capabilities" = 15
+      "IOPowerManagement" = {"ChildrenPowerState"=0,"DevicePowerState"=4,"CurrentPowerState"=4,"CapabilityFlags"=2,"MaxPowerState"=4}
+      "SystemPowerProfileOverrideDict" = {}
+      "Supported Features" = {"WakeByCalendarDate"=33095687,"MaintenanceWakeCalendarDate"=33161223,"SleepServiceWakeCalendarKey"=33226759,"PowerByCalendarDate"=33292295,"PowerRelativeToShutdown"=33423367,"WakeOnMagicPacket"=(33488901,33554439),"Automatic Restart On Power Connect"=33030149,"WakeRelativeToSleep"=33357831,"AdaptiveDimming"=32833543,"TimeZoneOffsetSeconds"=32899079,"Automatic Restart On Power Loss"=32964613}
+      "IOUserClientClass" = "RootDomainUserClient"
+      "IOGeneralInterest" = "IOCommand is not serializable"
+      "IOPriorityPowerStateInterest" = "IOCommand is not serializable"
+      "IOHibernateState" = <00000000>
+      "IOAppPowerStateInterest" = "IOCommand is not serializable"
+      "IOPMSystemSleepType" = 7
+      "BootSessionUUID" = "9B4AF6B6-1472-430A-B22B-A35051E2C63A"
+      "Wake Type" = "UserActivity Assertion"
+      "DestroyFVKeyOnStandby" = No
+      "IOPMUserIsActive" = Yes
+      "DriverPMAssertions" = 260
+    }
+    
+

@@ -22,7 +22,7 @@ import { createContext, useContext, useEffect, useRef, useState, type KeyboardEv
 import { postAiFix } from "../../api";
 import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
-import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
+import { absoluteLabel, duration, durationSeconds, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
 import { searchHit } from "../../taskFilters";
 import { openCardDetail } from "./boardActions";
 import { Linkified } from "./Linkified";
@@ -260,6 +260,26 @@ export function DurationText({ from, to, prefix = "" }: { from: unknown; to?: un
     <span className="card-meta-text" title={title}>
       {prefix ? <span className="card-meta-prefix">{prefix}</span> : null}
       <span>{label}</span>
+    </span>
+  );
+}
+
+/**
+ * §71.2 诚实耗时的注脚：「耗时 4 小时 52 分」旁边那句「其中 4 小时电脑睡眠」。
+ * wire key `slept_seconds` 逐字镜像（防腐 #10）；缺席 / 非正 / 坏值 → 不渲染
+ * （没睡过的卡卡面一个字都不多）。
+ */
+export function SleepNote({ seconds, prefix }: { seconds: unknown; prefix?: string }) {
+  const { text } = useI18n();
+  // > 0 才说话：server 端 `_opt` 对 0 整键不出，客户端对残留的 0 / 负数 / 非数字
+  // 同样闭嘴（「其中 0 秒电脑睡眠」是噪音不是诚实）。
+  const positive = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
+  const label = positive ? durationSeconds(seconds, text) : null;
+  if (!label) return null;
+  return (
+    <span className="card-meta-text">
+      {prefix ? <span className="card-meta-prefix">{prefix}</span> : null}
+      <span>{text(`其中 ${label} 电脑睡眠`, `${label} of it asleep`)}</span>
     </span>
   );
 }

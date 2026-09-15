@@ -84,7 +84,8 @@ export interface EgressRow {
  * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
  * docs/CONTRACT.md §51（可能缺席，也可能是纯字符串——UI 经 steer.ts 双兼容
  * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id=前置卡主键）/
- * concurrency（等并发位）；waiting_budget retired v0.48.7（D9）。
+ * concurrency（等并发位）/ asleep（§71.1 等电脑醒来）；waiting_budget retired
+ * v0.48.7（D9）。
  */
 export interface QueuedReason {
   kind: string;
@@ -137,6 +138,8 @@ export interface TaskRow {
   cwd?: string;
   started_at?: number;
   dispatched_at?: number;
+  /** §71.2 这一轮至今电脑睡掉的秒数（缺席 = 没睡过） */
+  slept_seconds?: number;
   accepted_at?: number;
   summary?: string;
   plan?: string[];
@@ -213,6 +216,8 @@ export interface ReviewCard {
   log?: string;
   dispatched_at?: number;
   review_at?: number;
+  /** §71.2 这一轮耗时里电脑睡掉的秒数（缺席 = 没睡过；卡面「其中 N 小时电脑睡眠」） */
+  slept_seconds?: number;
   delivery_mode: "chat" | "repo" | string;
   /** 原生 ReviewRow meta 行：cwd basename 章 / 会话有新活动；copy_cmd = 双击整卡接管的「有没有会话」判据 + 详情侧栏「复制接管指令」的正文（D36：卡面不再渲染指令行） */
   cwd?: string;

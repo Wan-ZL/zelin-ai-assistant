@@ -51,9 +51,10 @@ export function steerStatusLabel(status: unknown, text: Text): string {
 /**
  * queued_reason → 单行标签（「排队中 · 等 R-xx / 等并发位」chip 与详情行共用）。
  * 双词表兼容（canonical 由 integrator 终裁，见 §M6.2）：
- * - 结构化形 {kind, detail?, blocking_id?}，kind = waiting_card / concurrency
+ * - 结构化形 {kind, detail?, blocking_id?}，kind = waiting_card / asleep / concurrency
  *   （demo_seed QUEUED_REASON_KINDS 对齐）；
- * - 扁平 token 形（act/lib/policy.py QUEUED_REASONS：dependency / concurrency）
+ * - 扁平 token 形（act/lib/policy.py QUEUED_REASONS：dependency / machine_asleep /
+ *   concurrency）
  *   ——M1.c 的 dashboard 投影直出形，同表翻译；
  * - 未知 kind/token 按 detail/原文原样展示（开放枚举不崩渲染）；解析不出 → null。
  *   waiting_budget / budget retired v0.48.7（CONTRACT §51，owner decision D9）：
@@ -81,6 +82,10 @@ export function queuedReasonLabel(value: unknown, text: Text): string | null {
     case "waiting_card":
     case "dependency":
       return text(`等 ${blocking ?? "前置卡"}`, `waiting on ${blocking ?? "another card"}`);
+    case "asleep":
+    case "machine_asleep":
+      // §71.1：电脑在睡（dark wake / 合盖）——派发闸按住整个 pass，醒来第一个 tick 就派
+      return text("等电脑醒来", "waiting for the Mac to wake");
     case "concurrency":
       return text("等并发位", "waiting on a run slot");
     default:
