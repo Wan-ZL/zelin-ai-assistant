@@ -250,6 +250,9 @@ class RevertDetachedSpawnTestCase(unittest.TestCase):
 LONG_EN = ["Decided: the training run moves to the new data mix from Monday and the evaluation "
            "harness is reused verbatim for every weekly training review until the quarter closes"] + V1_EN[1:]
 TRIM = [{"lang": "en", "line": 1, "over": 6, "removed": 8}]
+SEC_EN = [{"key": "decided", "modality": "decided", "items": ["Ann owns the data mix from Monday"]}]
+SEC_ZH = [{"key": "decided", "modality": "decided", "items": ["数据配比自周一起归 Ann"]}]
+LONG_SEC_EN = [{"key": "decided", "modality": "decided", "items": ["the data mix " * 30]}]
 
 
 class RevertReasonsTestCase(RevertCase):
@@ -312,6 +315,25 @@ class RevertReasonsTestCase(RevertCase):
         self.assertIsNotNone(recap.revert(KEY, 1, now=T1))
         rec = store.load_recap(KEY)
         self.assertEqual((rec["version"], rec["problems"]), (3, []))
+
+    def test_a_restored_long_version_is_judged_in_its_own_shape(self):
+        # §63.10：搬回来的是可发送长版，台账就走 validate_sections_detail——五行的尺子量不了分节
+        self._record_with(self._entry(en=None, zh=None, sections_en=LONG_SEC_EN, sections_zh=SEC_ZH,
+                                      quality=store.QUALITY_NEEDS_REVIEW))
+        recap.revert(KEY, 1, now=T1)
+        rec = store.load_recap(KEY)
+        self.assertEqual(rec["shape"], text.SHAPE_SECTIONS)
+        self.assertEqual([p["code"] for p in rec["problems"]], ["item_too_long"])
+        self.assertEqual(rec["problems"],
+                         text.validate_sections_detail({"en": LONG_SEC_EN, "zh": SEC_ZH}))
+
+    def test_a_hand_mangled_section_list_leaves_an_empty_ledger(self):
+        # 宪法第 11 条：节结构坏掉 = 空台账，回退照样落地（与「非字符串行」同一条判例）
+        self._record_with(self._entry(en=None, zh=None, sections_en=[{"key": "decided"}],
+                                      sections_zh=SEC_ZH, quality=store.QUALITY_NEEDS_REVIEW))
+        self.assertIsNotNone(recap.revert(KEY, 1, now=T1))
+        rec = store.load_recap(KEY)
+        self.assertEqual((rec["shape"], rec["problems"]), (text.SHAPE_SECTIONS, []))
 
     def test_revert_to_a_trimmed_version_brings_its_receipt_back(self):
         self._record_with(self._entry(repairs=list(TRIM)))

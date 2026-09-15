@@ -728,6 +728,19 @@ def _entry_quality(entry: dict) -> str:
     return quality if quality in store.QUALITIES else store.QUALITY_NEEDS_REVIEW
 
 
+def _sections_body(rec: dict) -> Optional[dict]:
+    """§63.10 长版的两语正文，形制照 :func:`recap_text.validate_sections_detail`
+    要的那一份；手改过的条目里节结构坏掉 = None（上面读成空台账，不是崩掉的回退）。"""
+    body = {"en": rec.get("sections_en"), "zh": rec.get("sections_zh")}
+    return body if all(text.sections_wellformed(v) for v in body.values() if v) else None
+
+
+def _lines_body(rec: dict) -> Optional[dict]:
+    """五行形的两语正文；哪一行不是字符串 = None（同上，坏正文不判、也不抛）。"""
+    body = {"en": rec.get("en") or [], "zh": rec.get("zh") or []}
+    return body if all(isinstance(line, str) for lines in body.values() for line in lines) else None
+
+
 def _restored_problems(rec: dict) -> list:
     """The §63.3 追记 findings for the text a revert just put on the record —
     computed over those lines **in their own shape** (§63.10: the sendable long
@@ -741,15 +754,8 @@ def _restored_problems(rec: dict) -> list:
     if rec.get("quality") != store.QUALITY_NEEDS_REVIEW:
         return []
     shape = text.normalize_shape(rec.get("shape"))
-    if shape == text.SHAPE_SECTIONS:
-        body = {"en": rec.get("sections_en"), "zh": rec.get("sections_zh")}
-        if not all(text.sections_wellformed(v) for v in body.values() if v):
-            return []
-    else:
-        body = {"en": rec.get("en") or [], "zh": rec.get("zh") or []}
-        if not all(isinstance(line, str) for lines in body.values() for line in lines):
-            return []
-    return text.validate_detail_for(shape, body)
+    body = _sections_body(rec) if shape == text.SHAPE_SECTIONS else _lines_body(rec)
+    return [] if body is None else text.validate_detail_for(shape, body)
 
 
 def _entry_repairs(entry: dict) -> list:
