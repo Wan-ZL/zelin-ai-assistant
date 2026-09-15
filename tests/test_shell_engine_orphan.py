@@ -64,7 +64,7 @@ class FrozenEngineUntouchedTestCase(unittest.TestCase):
                      "static var logLine:", "static var pause:"):
             with self.subTest(seam=seam):
                 self.assertIn(seam, self.ownership)
-        # 默认实现直连冻结引擎的三样公开面
+        # 默认实现直连冻结引擎的公开面（pgrep 那一样在这里，凭据那一样在下一条）
         self.assertIn("RecordingController.isEngineRunning()", self.ownership)
 
     def test_the_exit_credential_is_liveness_not_history(self):
