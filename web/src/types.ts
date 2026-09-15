@@ -1063,6 +1063,13 @@ export interface AboutInfo {
   update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
   /** §68.6 追记（add-only）：updates.check_enabled 的 effective 值（override → config → true）；旧 server 缺席 = 当 true */
   check_enabled?: boolean;
+  /**
+   * §68.6 追记（2026-09-14，add-only，issue #309）：上一轮 scripts/auto-deploy.sh 的判决——
+   * 与 board.deploy_state **同一个 wire 形**（DeployState），但由 server 在**请求时现读文件**，
+   * 不是 actd 的看板投影（actd 死了 / launchd 被 TCC 拦着时投影本身就是陈的，而这一行要回答的
+   * 恰是「更新链路还活着吗」）。null / 缺席 = 这台机器没有自动部署的记录（旧 server 同样缺席）。
+   */
+  deploy_state?: DeployState | null;
   [key: string]: unknown;
 }
 
@@ -1150,6 +1157,18 @@ export interface AttachmentReceipt {
   path: string;
   bytes: number;
   [key: string]: unknown;
+}
+
+/**
+ * POST /api/update/install 回执（§68.6 追记 2026-09-14，issue #309）：kickstart 之外 add-only 带上
+ * **上一轮**自动部署的判决——页面据此决定能不能说「几分钟后版本会变」（`deferred` 会再延后一轮、
+ * 中毒家族整族不许承诺）。`deploy_failed_sha` = 上一轮记下的 `failed_sha`（记得下的时候才有）：
+ * server 在 kickstart 那一刻现读，比一进页拉的 about 快照新。旧 server 缺席 = 空串。
+ */
+export interface UpdateInstallReceipt extends RepairReceipt {
+  deploy_status?: string;
+  deploy_detail?: string;
+  deploy_failed_sha?: string;
 }
 
 /** POST /api/repair/actd 回执（§68.8）：action = "kickstart"（已加载）| "reinstall"（未加载 → install.sh，D50；此时另带 loaded） */

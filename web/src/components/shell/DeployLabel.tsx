@@ -13,11 +13,16 @@
 // 两种情况不许被 deferred 遮住（review of #284，与 doctor 行同判）：`reason` 里带着
 // install_incomplete 的 token（修补被延后——机器没在跑它 checkout 的代码）→ 警告色 +
 // 「安装未完成，」前缀；`last_incident` 在案 → 警告色 + 「上次回滚判决待处理」、title 挂判决。
+// §56.1 追记（2026-09-14，#309）：小字里的版本只写 tag（`v1.0.23`），`X.Y.Z+N` 的 `+N`
+// （本地领先 tag 的提交数——生产机上数的是 ingest 的数据 commit）降级进 title 的
+// 「本地领先 N 个提交，未发版」。`statusLabel` / `deferredLabel` / 两个状态集合导出给
+// 「关于」页的「一键更新」复用（§68.6 追记：同一套状态词，不许两处各判一次）。
 // 相对时间与 FreshnessLabel 共用 relativeAge，60s tick 自驱重算。计算住 useDeployLabel（HeaderBar 调一次：
 // full / compact 渲染成小字，tight 折进连接点的 tooltip，§49 追记 2026-09-04）；DeployLabel 只管渲染。
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { useAppState } from "../../store";
+import { aheadNote, releaseVersion } from "../../version";
 import { parseGeneratedAt, relativeAge } from "./FreshnessLabel";
 
 const TICK_MS = 60_000;
@@ -25,10 +30,19 @@ const HEALTHY = new Set(["deployed", "up_to_date"]);
 const DEFERRED = "deferred";
 const DEFER_WARN_HOURS = 6;
 
+/** 提前 kickstart 也清不掉的状态（镜像 act/lib/deploy_state.py BLOCKING，那是唯一真源）：
+ *  下一轮自动部署会以同样的理由再拒一次——「关于」页据此禁用「一键更新」并说清原因（§68.6 追记，#309）。 */
+export const BLOCKING_STATUSES = new Set(["refused_branch", "refused_dirty", "blocked_tcc"]);
+/** 倒下的那一轮：kickstart 照跑，但上一轮既然是这几个状态之一，「几分钟后版本会变」就不许再说
+ *  （镜像 act/lib/deploy_state.py POISONED）。记下了 `failed_sha` 的那些轮次更硬——那个 sha 在
+ *  main 挪窝或 `--force` 之前不会被重试；没记下 sha 的（分叉 checkout 的 ff-only 失败等）同样不承诺。 */
+export const POISONED_STATUSES = new Set(["failed", "rolled_back", "rollback_failed", "ci_failed"]);
+
 const DEFER_OWN_REASONS = new Set(["sessions_running", "roster_unknown"]);
 
-/** 「新版本已就绪，等待 N 个会话结束或验收后更新[（已 X 小时）]」+ 是否已过警告线 + 是否是被延后的修补。 */
-function deferredLabel(
+/** 「新版本已就绪，等待 N 个会话结束或验收后更新[（已 X 小时）]」+ 是否已过警告线 + 是否是被延后的修补。
+ *  关于页的「一键更新」也用它——kickstart 不带 --force，会话还在就会原样再延后一轮（§68.6 追记，#309）。 */
+export function deferredLabel(
   state: { deferred_sessions?: unknown; deferred_since?: unknown; reason?: unknown },
   now: number,
   text: (zh: string, en: string) => string,
@@ -50,7 +64,7 @@ function deferredLabel(
   return { label, overdue, repair };
 }
 
-function statusLabel(status: string, text: (zh: string, en: string) => string): string {
+export function statusLabel(status: string, text: (zh: string, en: string) => string): string {
   switch (status) {
     case "rolled_back":
       return text("已回滚", "rolled back");
@@ -105,7 +119,8 @@ export function useDeployLabel(): DeployLabelState | null {
   const incident = typeof state.last_incident === "string" ? state.last_incident : "";
   const healthy = HEALTHY.has(status);
   const deferred = status === DEFERRED ? deferredLabel(state, now, text) : null;
-  const parts = [`v${version}`];
+  // §56.1 追记：顶栏也只显示 tag，`+N` 进 title（`+92` 数的是本地数据 commit，不是版本）
+  const parts = [`v${releaseVersion(version)}`];
   const deployedAt = parseGeneratedAt(state.last_deployed);
   if (deployedAt != null) {
     const age = relativeAge(Math.max(0, (now - deployedAt) / 1000), text);
@@ -115,9 +130,11 @@ export function useDeployLabel(): DeployLabelState | null {
   else if (!healthy) parts.push(statusLabel(status, text));
   if ((healthy || deferred) && incident) parts.push(text("上次回滚判决待处理", "unresolved rollback verdict"));
   const detail = typeof state.detail === "string" ? state.detail : "";
+  const ahead = aheadNote(version, text);
+  const title = (healthy || deferred) && incident ? incident : detail;
   return {
     label: parts.join(" · "),
-    title: (healthy || deferred) && incident ? incident : detail,
+    title: [title, ahead].filter(Boolean).join(" · "),
     warn: deferred ? deferred.overdue || deferred.repair || Boolean(incident) : !healthy || Boolean(incident),
   };
 }
