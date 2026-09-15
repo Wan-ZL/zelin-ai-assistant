@@ -5,7 +5,8 @@
   - 每把的 default 与 act.lib.config.Config 逐字一致（server/ 不 import act，
     目录是镜像——默认值走样 = 设置页显示的「出厂值」是假的）；
   - 安静时段两端带 `check: clock_time`：坏值 400 INVALID_FIELD 且 overrides 不落，
-    好值 diff-write（等于出厂值就删键）；
+    好值归一后 diff-write（`9:30` → `09:30`——落盘拼法必须与 act/lib/config 读到的
+    逐字一致；等于出厂值就删键）；
   - 三把分类开关与失败类的文案说明（issue #29 验收第 3 条：文案得解释每一类是什么）。
 """
 import json
@@ -92,6 +93,18 @@ class NotificationPreferencesSettingsTestCase(unittest.TestCase):
         self.assertIn("10 minutes", help_text["en"])
         self.assertIn("dropped, not held until morning", help_text["en"])
 
+    def test_quiet_hours_help_names_the_daily_loop_collision(self):
+        """§70 的出厂 03:30 正落在出厂窗（22:00 → 08:00）里——最大的一处交互，文案必须点名。"""
+        _s, section = get_json(self.port, SECTION)
+        help_text = self._field(section, "quiet_hours_enabled")["help"]
+        loop_time = act_config.DEFAULT_DAILY_LOOP_TIME     # 单源：写死的字面量会跟着它走样
+        self.assertIn(loop_time, help_text["zh"])
+        self.assertIn(loop_time, help_text["en"])
+        for lang in ("zh", "en"):
+            with self.subTest(lang=lang):
+                self.assertIn(self._field(section, "quiet_hours_start")["default"], help_text[lang])
+                self.assertIn(self._field(section, "quiet_hours_end")["default"], help_text[lang])
+
     def test_failure_help_says_quiet_hours_do_not_silence_it(self):
         _s, section = get_json(self.port, SECTION)
         help_text = self._field(section, "notify_failures")["help"]
@@ -132,6 +145,19 @@ class NotificationPreferencesSettingsTestCase(unittest.TestCase):
         self.assertEqual(self._overrides(), {"quiet_hours_start": "23:30"})
         # diff-write：写回出厂值 = 删键
         status, _obj = put_json(self.port, SECTION, {"quiet_hours_start": "22:00"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self._overrides(), {})
+
+    def test_a_one_digit_hour_is_normalized_before_it_is_stored(self):
+        """落盘拼法 = act/lib/config.coerce_clock_time 归一后的那个字串（`9:30` → `09:30`）——
+        否则 overrides 文件与守护进程读到的是同一时刻的两种写法，diff-write 也对不上。"""
+        status, obj = put_json(self.port, SECTION, {"quiet_hours_end": "9:30"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self._field(obj, "quiet_hours_end")["effective"], "09:30")
+        self.assertEqual(self._overrides(), {"quiet_hours_end": "09:30"})
+        self.assertEqual(act_config.coerce_clock_time("9:30"), "09:30")
+        # 归一后等于出厂值同样算 diff-write 的「回到出厂」→ 删键
+        status, _obj = put_json(self.port, SECTION, {"quiet_hours_end": "8:00"})
         self.assertEqual(status, 200)
         self.assertEqual(self._overrides(), {})
 

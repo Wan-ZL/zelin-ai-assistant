@@ -111,10 +111,14 @@ class SuppressionReasonTestCase(unittest.TestCase):
         self.assertIsNone(notify.suppression_reason(notify.KIND_PROPOSAL, cfg, now=_at(12)))
 
     def test_clock_defaults_to_now_when_not_injected(self):
-        cfg = _cfg(quiet_hours_enabled=True, quiet_hours_start="00:00", quiet_hours_end="23:59")
-        # 23:59 之外的那一分钟很难撞上；无论本机几点，这个窗覆盖除一分钟外的全天
-        reason = notify.suppression_reason(notify.KIND_PROPOSAL, cfg)
-        self.assertIn(reason, ("quiet_hours", None))
+        """``now=None`` 走 time.localtime()——把那把钟钉死，两个方向各判一次
+        （「无论本机几点都对」的写法等于没判：它接受任何答案）。"""
+        cfg = _cfg(quiet_hours_enabled=True, quiet_hours_start="22:00", quiet_hours_end="08:00")
+        with mock.patch.object(notify.time, "localtime", return_value=_at(2, 30)) as clock:
+            self.assertEqual(notify.suppression_reason(notify.KIND_PROPOSAL, cfg), "quiet_hours")
+        clock.assert_called_once_with()
+        with mock.patch.object(notify.time, "localtime", return_value=_at(9, 0)):
+            self.assertIsNone(notify.suppression_reason(notify.KIND_PROPOSAL, cfg))
 
 
 class OverridesTestCase(unittest.TestCase):

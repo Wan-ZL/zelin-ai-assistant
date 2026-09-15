@@ -59,7 +59,7 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
     failure — the only False means "could not hand it over" (an unwritable
     queue dir, which scripts/auto-deploy.sh reports as such).
     """
-    if _suppressed(kind):
+    if suppressed_now(kind):
         return True
     return _native_notify(title, body, subtitle, kind=kind)
 
@@ -153,12 +153,17 @@ def suppression_reason(kind, cfg, now=None) -> Optional[str]:
     return None
 
 
-def _suppressed(kind) -> bool:
-    """现读一次偏好并判本条是否被吃掉。
+def suppressed_now(kind) -> bool:
+    """现读一次偏好并判本类此刻是否被吃掉。
 
     现读（不吃启动时冻结的 cfg）：用户在设置页翻完开关应该立即生效，
     与 §48 雷达巡检同款；通知是稀事件，一次盘读不心疼。读配置出任何
-    意外一律**照发**（fail-open：丢一条通知比吞一条通知贵）。"""
+    意外一律**照发**（fail-open：丢一条通知比吞一条通知贵）。
+
+    公开名（防腐 #2）：``act/actd._alerts_phase`` 在巡检前问同一个问题——
+    失败类此刻被静音时，两道扫描照跑（§48 的僵尸 health 清理 / 恢复出账 /
+    无基线首见台账都住在扫描里），但 anti-nag 台账不许被花掉，否则开关翻
+    回来时那条告警再也不会重报（§28 追记 2026-09-12）。"""
     try:
         from act.lib import config as _config
         return suppression_reason(kind, _config.load_config()) is not None

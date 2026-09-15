@@ -512,8 +512,8 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list:
     return _alerts.detect_transitions(prev, curr)
 
 
-def _check_auth_failures(notified: set) -> list:
-    return _alerts.check_auth_failures(notified)
+def _check_auth_failures(notified: set, suppressed: bool = False) -> list:
+    return _alerts.check_auth_failures(notified, suppressed=suppressed)
 
 
 def _wake_grace(cfg: config.Config, wall: float, interval: Optional[int] = None,
@@ -523,9 +523,11 @@ def _wake_grace(cfg: config.Config, wall: float, interval: Optional[int] = None,
 
 def _check_radar_liveness(notified: set, now: Optional[_dt.datetime] = None,
                           interval: Optional[int] = None, mono: Optional[float] = None,
-                          missing_since: Optional[dict] = None) -> list:
+                          missing_since: Optional[dict] = None,
+                          suppressed: bool = False) -> list:
     return _alerts.check_radar_liveness(_ctx(), notified, now=now, interval=interval,
-                                        mono=mono, missing_since=missing_since)
+                                        mono=mono, missing_since=missing_since,
+                                        suppressed=suppressed)
 
 
 # --------------------------------------------------------------------------- #
@@ -716,14 +718,18 @@ def _alerts_phase(prev_dash: Optional[dict], dash: dict, auth_notified: set,
     for title, body, rid, kind in detect_transitions(prev_dash, dash):
         notify.notify(title, body, req=rid, kind=kind)
     # §28 分类（issue #29）：凭证失效与源死亡都是失败类——默认开且穿透安静时段。
-    for title, body in _check_auth_failures(auth_notified):
+    # 用户真把「失败通知」关掉时两道扫描**照跑**（僵尸 health 清理、恢复出账、
+    # 无基线首见台账都住在扫描里），只是不花 anti-nag 台账：开关翻回来的那一
+    # pass 要能重报，而不是被一条没人看见的通知吃掉。现读一次（与巡检同款）。
+    failures_muted = notify.suppressed_now(notify.KIND_FAILURE)
+    for title, body in _check_auth_failures(auth_notified, suppressed=failures_muted):
         notify.notify(title, body, kind=notify.KIND_FAILURE)
     # §48 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
     # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
     # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
     for title, body in _check_radar_liveness(
             radar_dead_notified if radar_dead_notified is not None else set(),
-            interval=interval):
+            interval=interval, suppressed=failures_muted):
         notify.notify(title, body, kind=notify.KIND_FAILURE)
 
 

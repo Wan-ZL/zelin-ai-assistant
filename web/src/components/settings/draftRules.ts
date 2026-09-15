@@ -4,11 +4,12 @@
 // (2) 跨字段联动禁用——原生 telemetry 组：level 在 enabled 关时禁用，capture_input 在 enabled 关或 level ≠ detailed
 //     时禁用（Settings.swift `.disabled(!telemetryEnabled)` / `.disabled(!telemetryEnabled || telemetryLevel != "detailed")`）；
 //     只禁不改值（原生 persistTelemetry 切 level 也不动 capture_input 的存值）。按草稿判，不按 effective——用户看到的就是它。
-// (3) 带 `check` 的 string 字段（§68.1 追记；词表 email / session_id）——server 同一条规则的逐字镜像：email = `looks_like_email`
+// (3) 带 `check` 的 string 字段（§68.1 追记；词表 email / session_id / clock_time）——server 同一条规则的逐字镜像：email = `looks_like_email`
 //     （原生 SettingsGmail.validateAddress：恰好一个 @、本地部分非空、域名含 . 且不以 . 起止、无空白）；session_id = `session_id_problem`
 //     （原生 SettingsMaintainer.validateSessionID，§68.7 追记：以 - 开头 → reason `leading_hyphen`，其余不合 [A-Za-z0-9][A-Za-z0-9-]*
-//     → `charset`；原生同款不设长度帽——字符句只说字符）；不合格的 reason 对上目录 `check.reasons` 就显示那句，否则 `check.message`；
-//     空值 = 清键，server 也不查。
+//     → `charset`；原生同款不设长度帽——字符句只说字符）；clock_time = `settings.CLOCK_TIME_RE`（§28 追记 2026-09-12 安静时段
+//     两端；与 §70 每日循环同一个 HH:MM 词法，只有 `shape` 一句）；不合格的 reason 对上目录 `check.reasons` 就显示那句，否则 `check.message`；
+//     空值 = 清键，server 也不查（归一归 server：`9:30` 这样的合格草稿照发，PUT 回来就是 `09:30`）。
 import type { SettingsField } from "../../types";
 
 export type Draft = Record<string, unknown>;
@@ -39,13 +40,22 @@ export function sessionIdProblem(raw: string): string | null {
   return SESSION_ID_RE.test(s) ? null : "charset";
 }
 
+/** server `settings.CLOCK_TIME_RE` 的逐字镜像（act/lib/config 同一正则）：24 小时 HH:MM，小时允许一位 */
+const CLOCK_TIME_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+
+/** 草稿是否是合格的 HH:MM（两端 trim 后判，与 server `run_check` 同款） */
+export function looksLikeClockTime(raw: string): boolean {
+  return CLOCK_TIME_RE.test(raw.trim());
+}
+
 /** 草稿值不合 field.check 时的 reason 词（server 同一词表）；无 check / 未知 kind / 空值（= 清键）/ 合格 → null */
 export function checkReason(field: SettingsField, value: unknown): string | null {
   const kind = field.check?.kind;
-  if (kind !== "email" && kind !== "session_id") return null;
+  if (kind !== "email" && kind !== "session_id" && kind !== "clock_time") return null;
   const draft = typeof value === "string" ? value.trim() : "";
   if (!draft) return null;
   if (kind === "email") return looksLikeEmail(draft) ? null : "shape";
+  if (kind === "clock_time") return looksLikeClockTime(draft) ? null : "shape";
   return sessionIdProblem(draft);
 }
 
