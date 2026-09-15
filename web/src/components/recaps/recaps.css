@@ -230,6 +230,20 @@
 
 .recap-meta a { color: var(--accent); }
 
+/* §63.3 追记：needs_review 的逐条原因 / 自动修剪台账（脚注里的一张小清单） */
+.recap-reasons {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--warning);
+}
+
+.recap-reasons.is-repair {
+  color: var(--text-secondary);
+}
+
 .recap-flash {
   align-self: flex-start;
   padding: 4px 10px;

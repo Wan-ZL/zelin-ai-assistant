@@ -1,10 +1,12 @@
 // 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行 +
-// §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge。
+// §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge；
+// §63.3 追记 校验原因与自动修剪的双语文案（issue #298）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
   PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, appLabel, badgesFor, generationPhase, groupByDay, isGenerating, pickLanguage,
-  recapBody, recapClipboardText, recapHeader, rowLabel, slackDraftLabel,
+  problemLabel, recapBody, recapClipboardText, recapHeader, recapProblems, recapRepairs, repairLabel, rowLabel,
+  slackDraftLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -133,6 +135,52 @@ describe("recapText", () => {
     expect(lines[0]).toBe(recapHeader(local, "en"));
     expect(lines.slice(1).join("\n")).toBe(recapBody(local, "en"));    // 正文逐字节不动
     expect(recapClipboardText(local, "zh").split("\n").slice(1).join("\n")).toBe(recapBody(local, "zh"));
+  });
+
+  it("names the language, the line and the overrun behind needs_review (§63.3 追记)", () => {
+    const en = (_zh: string, text: string) => text;
+    const zh = (text: string, _en: string) => text;
+    expect(problemLabel({ code: "line_too_long", lang: "en", line: 1, limit: 140, over: 6 }, en))
+      .toBe("English line 1: 6 characters over the 140-character cap");
+    expect(problemLabel({ code: "line_too_long", lang: "zh", line: 3, limit: 60, over: 4 }, zh))
+      .toBe("中文第 3 行：超出上限 4 个字符（上限 60）");
+    expect(problemLabel({ code: "label_mismatch", lang: "en", line: 2 }, en)).toContain("English line 2: wrong label");
+    expect(problemLabel({ code: "reported_speech", lang: "zh", line: 1 }, en)).toContain("Chinese line 1: reported speech");
+    // 整语言级的禁项没有行号 → 只说语言，不编一个行号出来
+    expect(problemLabel({ code: "timestamp", lang: "en", line: null }, en)).toBe("English: contains a timestamp");
+    expect(problemLabel({ code: "link", lang: "zh" }, zh)).toBe("中文：有链接");
+    expect(problemLabel({ code: "quotes", lang: "en" }, en)).toBe("English: contains quotation marks");
+    expect(problemLabel({ code: "markup", lang: "en" }, en)).toBe("English: contains markdown formatting");
+    expect(problemLabel({ code: "emoji", lang: "en" }, en)).toBe("English: contains emoji");
+    expect(problemLabel({ code: "mention", lang: "en" }, en)).toBe("English: contains an @mention");
+    expect(problemLabel({ code: "line_count", limit: 5 }, en)).toBe("Each language must have exactly five lines");
+    // 词表外的新 code（daemon 先行、页面后跟）→ 原样显示它给的那句，绝不显示一行空白
+    expect(problemLabel({ code: "future_rule", lang: "en", line: 4, text: "en line 4 broke a new rule" }, en))
+      .toBe("en line 4 broke a new rule");
+    expect(problemLabel({ code: "future_rule" }, en)).toBe("future_rule");
+  });
+
+  it("always says which line was trimmed (§63.3 追记)", () => {
+    const en = (_zh: string, text: string) => text;
+    const zh = (text: string, _en: string) => text;
+    // 说的是真正剪掉的量（`removed`），超出量括注：词边界回退删得比超出量多
+    expect(repairLabel({ lang: "en", line: 1, over: 6, removed: 8 }, en))
+      .toBe("Trimmed English line 1 automatically: 8 characters off the end (it was 6 over the cap)");
+    expect(repairLabel({ lang: "zh", line: 3, over: 2, removed: 2 }, zh))
+      .toBe("已自动修剪中文第 3 行：剪掉行尾 2 个字符（原来超出 2 个）");
+    // 老 daemon 的行没有 `removed`（add-only）→ 退回只说超出量，绝不显示 undefined
+    expect(repairLabel({ lang: "en", line: 1, over: 6 }, en)).toBe("Trimmed English line 1 automatically (it was 6 characters over)");
+  });
+
+  it("wire rows that are not findings are dropped, never rendered", () => {
+    expect(recapProblems(row())).toEqual([]);                               // 老 daemon：键缺席
+    expect(recapProblems(row({ problems: null }))).toEqual([]);
+    expect(recapProblems(row({ problems: "oops" as unknown as [] }))).toEqual([]);
+    const good = { code: "line_too_long", lang: "en", line: 1, limit: 140, over: 6 };
+    expect(recapProblems(row({ problems: [good, null, { lang: "en" }, 7] as unknown as [] }))).toEqual([good]);
+    const trim = { lang: "en", line: 1, over: 6, removed: 8 };
+    expect(recapRepairs(row({ repairs: [trim, { lang: "en" }, null] as unknown as [] }))).toEqual([trim]);
+    expect(recapRepairs(row())).toEqual([]);
   });
 
   it("slack draft receipt copy", () => {

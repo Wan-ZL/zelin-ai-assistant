@@ -6,6 +6,8 @@
 // §63.8（issue #297）：重新生成排队后面板不再装死——状态行说「排队中 / 正在生成」、两颗生成按钮禁用，
 // 新版本随 board 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没人接手说
 // 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
+// §63.3 追记（issue #298）：needs_review 不再只有一句「校验未通过」——脚注按 wire 的结构化 problems[]
+// 逐条说清语言 + 行号 + 超出量（纠正备注可以照着写），落地前被自动修剪的行按 repairs[] 一并摊开。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
@@ -14,7 +16,8 @@ import type { RecapRow, RecapSettings } from "../../types";
 import { copyText } from "../detail/copyText";
 import { noteConflicts, type NoteConflictId } from "./noteCheck";
 import {
-  isGenerating, pickLanguage, recapBody, recapClipboardText, recapHeader, slackDraftLabel, type GenerationPhase,
+  isGenerating, pickLanguage, problemLabel, recapBody, recapClipboardText, recapHeader, recapProblems,
+  recapRepairs, repairLabel, slackDraftLabel, type GenerationPhase,
 } from "./recapText";
 
 const NOTE_MAX = 500;
@@ -116,6 +119,8 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   }, [flash]);
 
   const body = recapBody(row, language);
+  const problems = recapProblems(row);
+  const repairs = recapRepairs(row);
   const hasText = Boolean(row.en && row.en.length);
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
@@ -296,6 +301,20 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
         )}
         {row.quality === "needs_review" && (
           <span className="recap-meta-item">{text("校验未通过，粘贴前请通读一遍。", "Validator flagged this text; read it before pasting.")}</span>
+        )}
+        {problems.length > 0 && (
+          <ul className="recap-reasons">
+            {problems.map((problem, i) => (
+              <li key={`${problem.code}-${problem.lang ?? ""}-${problem.line ?? ""}-${i}`}>{problemLabel(problem, text)}</li>
+            ))}
+          </ul>
+        )}
+        {repairs.length > 0 && (
+          <ul className="recap-reasons is-repair">
+            {repairs.map((repair, i) => (
+              <li key={`${repair.lang}-${repair.line}-${i}`}>{repairLabel(repair, text)}</li>
+            ))}
+          </ul>
         )}
         {(row.version ?? 0) > 1 && (
           <span className="recap-meta-item">{text(`第 ${row.version} 版`, `Version ${row.version}`)}</span>

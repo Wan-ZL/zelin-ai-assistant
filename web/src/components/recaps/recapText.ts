@@ -1,9 +1,9 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
-// 复制正文与它的表头、「重新生成」的生成态判定。无 React、无 fetch——vitest node 环境可直测。
-// wire 字段来自 dashboard.json 顶层 recaps[]。
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
+// 复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案。
+// 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
-import type { RecapRow } from "../../types";
+import type { RecapProblem, RecapRepair, RecapRow } from "../../types";
 import { WEEKDAYS } from "../shell/recordingSchedule";
 
 /** 会议应用 slug（server 定，act/lib/recap_sessions.DEFAULT_MEETING_RULES）→ 显示名 */
@@ -168,6 +168,71 @@ export function recapHeader(row: RecapRow, language: Language): string {
 /** 剪贴板文本 = 一行表头 + 5 行正文（§63.5 追记）；存储与 Slack 草稿正文仍恰是 5 行 */
 export function recapClipboardText(row: RecapRow, language: Language): string {
   return `${recapHeader(row, language)}\n${recapBody(row, language)}`;
+}
+
+type Bilingual = (zh: string, en: string) => string;
+
+/** §63.3 追记：wire 上的发现行（老 daemon 无此键、手改过的文件可能是任意东西）——只留像样的对象 */
+export function recapProblems(row: RecapRow): RecapProblem[] {
+  const rows = Array.isArray(row.problems) ? row.problems : [];
+  return rows.filter((p): p is RecapProblem => Boolean(p) && typeof p === "object" && typeof p.code === "string");
+}
+
+/** 同上，修剪台账：一行修剪必须有语言与行号才说得出话 */
+export function recapRepairs(row: RecapRow): RecapRepair[] {
+  const rows = Array.isArray(row.repairs) ? row.repairs : [];
+  return rows.filter((r): r is RecapRepair => Boolean(r) && typeof r === "object" && typeof r.line === "number");
+}
+
+/** 「英文第 3 行」/「English line 3」；整语言级的禁项没有行号（daemon 给 null）= 只说语言 */
+function where(lang: unknown, line: unknown, text: Bilingual): string {
+  const name = lang === "zh" ? text("中文", "Chinese") : lang === "en" ? text("英文", "English") : text("正文", "The text");
+  return typeof line === "number" ? text(`${name}第 ${line} 行`, `${name} line ${line}`) : name;
+}
+
+/** §63.3 追记 一条校验原因的人话（code 词表 add-only；词表外的新 code 原样显示 daemon 那句英文） */
+export function problemLabel(problem: RecapProblem, text: Bilingual): string {
+  const at = where(problem.lang, problem.line, text);
+  switch (problem.code) {
+    case "line_count":
+      return text("两版都必须恰好五行", "Each language must have exactly five lines");
+    case "label_mismatch":
+      return text(`${at}：标签不对（五个标签的文字与顺序是固定的）`, `${at}: wrong label (their wording and order are fixed)`);
+    case "line_too_long":
+      return text(`${at}：超出上限 ${problem.over ?? "?"} 个字符（上限 ${problem.limit ?? "?"}）`,
+                  `${at}: ${problem.over ?? "?"} characters over the ${problem.limit ?? "?"}-character cap`);
+    case "reported_speech":
+      return text(`${at}：转述（said / mentioned / 说 / 提到）`, `${at}: reported speech (said / mentioned / 说 / 提到)`);
+    case "timestamp":
+      return text(`${at}：有时间戳`, `${at}: contains a timestamp`);
+    case "link":
+      return text(`${at}：有链接`, `${at}: contains a link`);
+    case "quotes":
+      return text(`${at}：有引号`, `${at}: contains quotation marks`);
+    case "markup":
+      return text(`${at}：有 markdown 格式`, `${at}: contains markdown formatting`);
+    case "emoji":
+      return text(`${at}：有 emoji`, `${at}: contains emoji`);
+    case "mention":
+      return text(`${at}：有 @ 提及`, `${at}: contains an @mention`);
+    default:
+      return problem.text || problem.code;
+  }
+}
+
+/**
+ * §63.3 追记 一行自动修剪的人话——剪过就一定说出来，粘出去的正文不许有暗改。
+ * 说的是**真正剪掉的字符数**（`removed`），超出量只做括注：英文按词边界回退，
+ * 只报 over 会把一刀说小（老 daemon 无此键 → 退回只说超出量）。
+ */
+export function repairLabel(repair: RecapRepair, text: Bilingual): string {
+  const at = where(repair.lang, repair.line, text);
+  if (typeof repair.removed !== "number") {
+    return text(`已自动修剪${at}（原来超出 ${repair.over} 个字符）`,
+                `Trimmed ${at} automatically (it was ${repair.over} characters over)`);
+  }
+  return text(`已自动修剪${at}：剪掉行尾 ${repair.removed} 个字符（原来超出 ${repair.over} 个）`,
+              `Trimmed ${at} automatically: ${repair.removed} characters off the end (it was ${repair.over} over the cap)`);
 }
 
 /** §63.4 草稿回执文案（wire status 词表 add-only；未知值按字符串兜底） */

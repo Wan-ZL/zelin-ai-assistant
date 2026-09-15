@@ -14,8 +14,9 @@ its own PID lock — no new daemon, no crontab change). One round:
      CLOSED (quiet ≥ 5 min + no pending transcript, forced at 120 min);
   5. CLOSED + eligible → one sealed model call (argv pinned by
      tests/test_recap_no_egress.py: ``--tools ""``, no MCP servers), a
-     deterministic validator with one retry, ``state/recap/recaps/<key>.json``,
-     a notification; OPEN → listed as 进行中, no model call;
+     deterministic validator with one retry then the §63.3 追记 length repair,
+     ``state/recap/recaps/<key>.json``, a notification (reasons and trims ride
+     on the record); OPEN → listed as 进行中, no model call;
   6. prune recaps past retention, save the cursor/buffer.
 
 Nothing here can send: the recap is not a card (no registry, no dispatch), the
@@ -146,17 +147,31 @@ def _attempt(args: dict, runner, cfg, problems: Optional[list] = None) -> "tuple
     return parsed, text.validate(parsed)
 
 
-def generate_lines(args: dict, runner, cfg) -> "tuple[Optional[dict], str]":
-    """One call, one retry with the violations quoted back; the second failure
-    is still stored (需复核) — the owner can copy and fix by hand."""
+def _after_retry(best: Optional[dict]) -> "tuple[Optional[dict], str, list, list]":
+    """The retry also failed: try the §63.3 追记 deterministic length repair, and
+    failing that store the model's OWN version (never half-trimmed text) with the
+    structured findings behind 需复核."""
+    if best is None:
+        return None, store.QUALITY_FAILED, [], []   # 两次都不是 JSON：无正文可复核
+    repaired, repairs = text.repair_lengths(best)
+    if repairs and not text.validate_detail(repaired):
+        return repaired, store.QUALITY_OK, [], repairs
+    return best, store.QUALITY_NEEDS_REVIEW, text.validate_detail(best), []
+
+
+def generate_lines(args: dict, runner, cfg) -> "tuple[Optional[dict], str, list, list]":
+    """``(lines, quality, problems, repairs)`` — one call, one retry with the
+    violations quoted back, then the §63.3 追记 deterministic repair: a failure
+    that is nothing but a few characters over a cap is trimmed back instead of
+    costing a round trip or a human (issue #298). Still failing = 需复核 with
+    the structured findings on the record — the owner can copy and fix by hand."""
     parsed, problems = _attempt(args, runner, cfg)
     if not problems:
-        return parsed, store.QUALITY_OK
+        return parsed, store.QUALITY_OK, [], []
     retry, problems = _attempt(args, runner, cfg, problems)
     if not problems:
-        return retry, store.QUALITY_OK
-    best = retry or parsed
-    return best, (store.QUALITY_NEEDS_REVIEW if best else store.QUALITY_FAILED)
+        return retry, store.QUALITY_OK, [], []
+    return _after_retry(retry or parsed)
 
 
 def _when(rec: dict, tz: str) -> str:
@@ -176,8 +191,12 @@ def _push_history(rec: dict) -> None:
 
 
 def _apply_lines(rec: dict, lines: Optional[dict], quality: str, note: Optional[str],
-                 partial: bool, now: float) -> None:
-    """Version bump with the new (or absent) lines."""
+                 partial: bool, now: float, problems: Optional[list] = None,
+                 repairs: Optional[list] = None) -> None:
+    """Version bump with the new (or absent) lines. ``problems`` / ``repairs``
+    are the §63.3 追记 add-only receipts (structured findings behind 需复核 and
+    the length trims applied before it) — always rewritten, so a clean new
+    version clears the previous one's reasons."""
     _push_history(rec)
     rec["version"] = int(rec.get("version") or 0) + 1
     rec["generated_at"] = _iso(now)
@@ -186,6 +205,8 @@ def _apply_lines(rec: dict, lines: Optional[dict], quality: str, note: Optional[
     rec["quality"] = quality
     rec["en"] = lines["en"] if lines else None
     rec["zh"] = lines["zh"] if lines else None
+    rec["problems"] = list(problems or [])
+    rec["repairs"] = list(repairs or [])
 
 
 def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
@@ -197,6 +218,7 @@ def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
     transcript = sessions.transcript_between(conn, start, end)
     words = text.transcript_words(transcript)
     rec["transcript_words"] = words
+    problems, repairs = [], []
     if words == 0:
         lines, quality = None, store.QUALITY_NO_AUDIO
     elif words < text.MIN_TRANSCRIPT_WORDS:
@@ -206,8 +228,8 @@ def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
                 "voice_profile": voice_profile_text(), "note": note, "partial": partial,
                 "meta": {"when": _when(rec, tz), "app": rec["app"],
                          "duration_min": rec["duration_min"]}}
-        lines, quality = generate_lines(args, runner, cfg)
-    _apply_lines(rec, lines, quality, note, partial, now)
+        lines, quality, problems, repairs = generate_lines(args, runner, cfg)
+    _apply_lines(rec, lines, quality, note, partial, now, problems, repairs)
     return rec
 
 
