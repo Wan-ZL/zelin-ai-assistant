@@ -13,10 +13,13 @@
 // launch, and macOS 26 asks "Allow Ghostty to execute …?" for every one of
 // them — a unique filename has nothing to remember. Apple Events are
 // remembered per (this app, target terminal) pair, keyed on this app's code
-// signature: one Automation consent per SIGNATURE — while shell/build.sh
-// signs ad-hoc (cdhash requirement, new on every rebuild = every auto-deploy)
-// the prompt returns once per released version; a stable signing identity
-// makes it truly one-time (CONTRACT §68.7 追记 (b)). Info.plist carries
+// signature: one Automation consent per SIGNATURE — since 2026-09-12
+// shell/build.sh signs with the stable self-signed identity, so the
+// requirement no longer changes between builds and the consent is truly
+// one-time; only on a machine without that cert (shell falls back to
+// ad-hoc, cdhash requirement, new on every rebuild = every auto-deploy)
+// does the prompt return once per released version (CONTRACT §68.7 追记 (b)
+// + its 2026-09-12 修正, §54.2). Info.plist carries
 // NSAppleEventsUsageDescription for it.
 //
 // Mechanisms (plain Apple Events per app — no Accessibility hacks):

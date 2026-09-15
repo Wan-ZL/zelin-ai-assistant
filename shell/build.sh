@@ -8,10 +8,12 @@
 #                                 # config.yaml server.port this way, CONTRACT §54)
 #
 # Conventions mirror mac/build.sh (swiftc + hand-assembled bundle + plutil lint
-# + codesign)。差异点：签名与 mac/build.sh 同一稳定证书（缺证书才 ad-hoc；#316）；
-# 壳不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，
-# 壳只连接），且 codesign 用 --deep（bundle 里只有一个 Mach-O，没有 Sparkle
-# 嵌套结构要保护）。ad-hoc 签名 = 每次重建后 TCC 屏幕录制授权失效，所以只作缺证书时的退路
+# + codesign)。差异点：签名与 mac/build.sh 同一张稳定自签证书（缺证书 / 签不动才回落
+# ad-hoc；#316，§54.2 2026-09-12 修正），且 codesign 用 --deep——bundle 里除主 Mach-O
+# 还有 §68.13 的 vault-sync-helper / framegrab 两个可执行，--deep 让它们与壳同一身份；
+# 安全的原因是这里没有 mac/ 那样的 Sparkle 嵌套 bundle 需要 inside-out 逐个签。
+# （壳自己不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，壳只连接。）
+# ad-hoc 签名 = 每次重建后 TCC 屏幕录制授权失效，所以只作退路
 # （docs/TROUBLESHOOTING.md「换壳后的 TCC 重授权」）。
 # 不 quit / 不 relaunch / 不装到 /Applications：安装动作归 install.sh 的 `ui` 步
 # （§56.5 的 relaunch 规则住在那里）。
@@ -192,11 +194,14 @@ fi
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
 # --- codesign: prefer the stable self-signed identity (same one mac/build.sh uses) so the
-# shell's TCC grants (Screen Recording / Microphone / Accessibility) SURVIVE reinstalls.
-# Ad-hoc ("-") identity = the binary's cdhash, which changes on every build: after each
-# install.sh macOS treats the shell as a new app, the System Settings toggle still reads
-# "on" for the old build, and every capture attempt re-prompts (#316). --deep is safe
-# here — the bundle has a single Mach-O and no nested bundles.
+# shell's TCC grants (Screen Recording / Microphone / Automation / Documents) SURVIVE
+# reinstalls. Ad-hoc ("-") identity = the binary's cdhash, which changes on every build:
+# after each install.sh macOS treats the shell as a new app, the System Settings toggle
+# still reads "on" for the old build, and every capture attempt re-prompts (#316).
+# --deep is REQUIRED, not decoration: Contents/MacOS also holds the §68.13 helpers
+# vault-sync-helper and framegrab, and --deep is what signs them with the same identity.
+# It is safe here only because there is no Sparkle-style nested bundle needing inside-out
+# signing (that is why mac/build.sh must NOT use it).
 SIGN_ID="Zelin AI Engineer Dev"
 # No `-v`: the identity is a self-signed cert that is NOT trusted, and `-v` hides
 # untrusted identities. Trust is irrelevant to codesign + TCC persistence.
@@ -206,7 +211,54 @@ else
     SIGN_ID="-"
     echo "==> Ad-hoc codesigning (identity missing — TCC grants will reset on reinstall)"
 fi
-codesign --force --deep -s "$SIGN_ID" "$APP_DIR" \
+
+# Bounded + fall back（§54.2 2026-09-12 修正）：install.sh 的 `ui` 步在 launchd 下跑本脚本，
+# 没有人能点对话框。用 keychain 里的私钥签名**可能**弹一次 GUI 授权框——
+# mac/scripts/make-signing-cert.sh 的 `security set-key-partition-list`（那把钥匙的 ACL：
+# `-T /usr/bin/codesign`）是**可跳过**的一步，跳过了的机器上 codesign 就停在那个框上等一个
+# 不存在的人。`|| echo WARN` 接得住失败、接不住 hang：hang 会把 ui 步的 AIASSISTANT_UI_BUDGET
+# （默认 600 s）整份烧光 → UI_SHELL_STATUS=fail → 自动部署失败。macOS 没有 timeout(1)，
+# 所以照 install.sh ui_run_with_timeout 的形自己算墙钟，超时 / 失败都回落 ad-hoc——
+# 授权掉一次远好过部署红一次。
+CODESIGN_BUDGET_S="${ZAI_CODESIGN_BUDGET_S:-60}"
+
+run_with_budget() {   # $1=seconds, rest=command；0 = ok，124 = timeout，其余 = 原始退出码
+    local limit="$1"; shift
+    "$@" &
+    local pid=$!
+    local ticks=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ $((ticks / 4)) -ge "$limit" ]; then
+            pkill -TERM -P "$pid" 2>/dev/null
+            kill -TERM "$pid" 2>/dev/null
+            sleep 1
+            pkill -KILL -P "$pid" 2>/dev/null
+            kill -KILL "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            return 124
+        fi
+        sleep 0.25
+        ticks=$((ticks + 1))
+    done
+    wait "$pid"
+}
+
+SIGN_RC=0
+run_with_budget "$CODESIGN_BUDGET_S" codesign --force --deep -s "$SIGN_ID" "$APP_DIR" || SIGN_RC=$?
+if [ "$SIGN_RC" -ne 0 ] && [ "$SIGN_ID" != "-" ]; then
+    if [ "$SIGN_RC" -eq 124 ]; then
+        echo "WARN: codesign with '$SIGN_ID' hung past ${CODESIGN_BUDGET_S}s — a keychain prompt"
+        echo "      nobody can click? Run 'bash mac/scripts/make-signing-cert.sh' once so the key's"
+        echo "      partition list lets /usr/bin/codesign use it non-interactively."
+    else
+        echo "WARN: codesign with '$SIGN_ID' failed (exit $SIGN_RC)."
+    fi
+    echo "      Falling back to ad-hoc — TCC grants will reset on the next reinstall (#316)."
+    SIGN_ID="-"
+    SIGN_RC=0
+    run_with_budget "$CODESIGN_BUDGET_S" codesign --force --deep -s "$SIGN_ID" "$APP_DIR" || SIGN_RC=$?
+fi
+[ "$SIGN_RC" -eq 0 ] \
     || echo "WARN: codesign failed (app may still run after Gatekeeper prompt)."
 
 echo ""
