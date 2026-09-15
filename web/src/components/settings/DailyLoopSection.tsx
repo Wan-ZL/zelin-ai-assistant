@@ -1,5 +1,6 @@
 // 设置页 section「每日整理」（CONTRACT §70，owner 决策 D10）。
-// 五把旋钮：开关 / 解锁时刻（本地 HH:MM）/ 每天最多几张 🤖 提案（默认 2，D33）/ 过时天数 / 循环卡回收站保留天数。
+// 六把旋钮：开关 / 解锁时刻（本地 HH:MM）/ 每天最多几张 🤖 提案（默认 2，D33）/ 过时天数 /
+// 循环卡回收站保留天数 / 待验收列的老化天数（默认 14，D74 —— §70.2 追记）。
 // 数据经 store（refreshDailyLoop / saveDailyLoop）；这里只存草稿 + toast。保存 = 一次 PUT 改动过的键；
 // server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。下一个 actd pass 生效，无需重启。
 import { useEffect, useState } from "react";
@@ -9,7 +10,8 @@ import { refreshDailyLoop, saveDailyLoop, useAppState } from "../../store";
 import type { DailyLoopPatch, DailyLoopSettings } from "../../types";
 
 const TOAST_MS = 6000;
-const NUMERIC_FIELDS = ["max_proposals_per_day", "stale_days", "trash_retention_days"] as const;
+const NUMERIC_FIELDS = ["max_proposals_per_day", "stale_days", "trash_retention_days",
+  "review_stale_days"] as const;
 type NumericField = (typeof NUMERIC_FIELDS)[number];
 
 interface Draft {
@@ -18,6 +20,7 @@ interface Draft {
   max_proposals_per_day: string;
   stale_days: string;
   trash_retention_days: string;
+  review_stale_days: string;
 }
 
 interface Toast {
@@ -32,6 +35,7 @@ function draftFrom(s: DailyLoopSettings): Draft {
     max_proposals_per_day: String(s.max_proposals_per_day),
     stale_days: String(s.stale_days),
     trash_retention_days: String(s.trash_retention_days),
+    review_stale_days: String(s.review_stale_days),
   };
 }
 
@@ -130,8 +134,8 @@ export function DailyLoopSection() {
       <h3 id="settings-daily-loop-title" className="settings-section-title">{title}</h3>
       <p className="settings-helper">
         {text(
-          "每天固定时刻，后台服务先整理看板（提案列与潜在任务列：同主题多卡合成一张新卡、过时卡进回收站——都可撤销），再从日志、doctor、GitHub issue / PR 和素材库里挑最多 N 条改进，铸成 🤖 提案卡等你审批。运行中 / 待验收 / 已交付的卡永不被碰。",
-          "Once a day the daemon first tidies the board (proposal + backlog lanes: same-topic cards become one new card, stale cards go to the trash — all undoable), then reads logs, doctor, GitHub issues / PRs and the materials box and drafts at most N improvement proposals as 🤖 cards for your approval. Running / review / delivered cards are never touched.",
+          "每天固定时刻，后台服务先整理看板（提案列与潜在任务列：同主题多卡合成一张新卡、过时卡进回收站——都可撤销），再从日志、doctor、GitHub issue / PR 和素材库里挑最多 N 条改进，铸成 🤖 提案卡等你审批。待验收列只做一件事：躺太久的卡先通知你一次、第二天收进回收站（可恢复）。运行中 / 已交付的卡永不被碰。",
+          "Once a day the daemon first tidies the board (proposal + backlog lanes: same-topic cards become one new card, stale cards go to the trash — all undoable), then reads logs, doctor, GitHub issues / PRs and the materials box and drafts at most N improvement proposals as 🤖 cards for your approval. In the Review lane it does one thing only: cards that sat too long get one notification, then move to the trash — restorable — the next day. Running / delivered cards are never touched.",
         )}
       </p>
 
@@ -175,6 +179,10 @@ export function DailyLoopSection() {
       {numeric("trash_retention_days",
         text("自动清理的卡在回收站保留几天", "Days auto-cleaned cards stay in the trash"),
         text("默认 90，比手动删除的 60 天更长——你没亲眼看过它们进回收站。", "Default 90 — longer than the 60 days for manual deletes; you never saw these go in."))}
+      {numeric("review_stale_days",
+        text("待验收的卡多少天没动算过时", "Days a card can sit in Review before it ages out"),
+        text("默认 14。到期先给你发一条通知（一轮一条，不是一卡一条），第二天才收进回收站（可恢复）；你改过名的卡永不被碰。0 = 关掉这条规则。",
+          "Default 14. You get one notification first (one per run, not one per card); the cards move to the trash — restorable — the next day. Cards you renamed are never touched. 0 = rule off."))}
 
       <div className="settings-actions">
         <button type="button" className="btn btn-primary" disabled={!isDirty || isSaving} onClick={() => void save()}>

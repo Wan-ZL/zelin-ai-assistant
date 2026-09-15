@@ -1,7 +1,8 @@
 // 看板装配（BUILD-CONTRACT §2.2 列序 + 原生 Kanban.swift 的两根书立条；列名 / 空列文案逐字镜像原生，§54.4）：
 //   潜在任务（BacklogStrip 左侧折叠条，经 renderCard 缝注入 DebtCardItem）|
 //   提案（顶部 propose 捕获框）| 运行中（合并列：needs_input blocked 卡最前 →
-//   running 分区 queued/working 混排，顶部 direct-run 框）| 待验收 | 阶段性完成 |
+//   running 分区 queued/working 混排，顶部 direct-run 框）| 待验收（列头 ReviewLaneTools：
+//   隐藏 🤖 / 选中全部建议验收 / 选中全部中断收割，D74）| 阶段性完成 |
 //   永久性完成（ArchiveStrip 右侧折叠条——原生 v0.33 的第二根书立条）。
 // 全部列消费全局过滤 chips + ⌘F 搜索（taskFilters.matchesCardFilters，G4 与 BacklogStrip
 // 同一条规则；§37.2 词表 + 归一化 AND + 会话正文第三层——store.sessionIndex 按 id 取这张卡的归一化正文传进匹配函数，
@@ -31,6 +32,7 @@ import { MergeSuggestionCard } from "./MergeSuggestionCard";
 import { ProposalCard } from "./ProposalCard";
 import { ProposalsTriageButton } from "./ProposalsTriageButton";
 import { ReviewCard } from "./ReviewCard";
+import { ReviewLaneTools } from "./ReviewLaneTools";
 import { RunningCard } from "./RunningCard";
 
 /** 提案列排序（原生 visibleApprovals）：processing 占位卡保持在顶、不参与排序；其余按偏好，deadline 模式可用 */
@@ -136,6 +138,7 @@ export function BoardLanes() {
         slug="review"
         countLabel={label(review.length, counts["review"] ?? board.review.length)}
         colorToken="--status-review"
+        composer={<ReviewLaneTools visible={review} all={board.review} />}
         isEmpty={review.length === 0}
         emptyText={emptyText(text("没有等你验收的交付", "No drafts waiting for your review"))}
       >

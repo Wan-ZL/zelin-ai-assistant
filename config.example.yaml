@@ -181,6 +181,7 @@ daily_loop:                            # 每日自我改进循环（CONTRACT §7
   max_proposals_per_day: 2             # 每天新开 🤖 提案卡上限（web 设置页可改；0 = 只维护不提案）。D33（2026-09-04）从 5 降到 2：自检类信号（派发卡死 / doctor 红灯 / 日志刷屏……）不再铸卡、只进看板横幅「系统自检」，剩下的 GitHub issue·PR 与素材一天两张够审
   stale_days: 45                       # 提案列 / 潜在任务列的卡无任何活动超过 N 天 → 回收站（stale:idle）；带未来 deadline / 用户改过名 / 提及 ≥3 次 / 同簇有在跑的卡 一律不动
   trash_retention_days: 90             # 循环自动扔进回收站的卡（stale:* / daily-merge:*）保留多久再硬删——比手动 trash 的 60 天更长；trash.retention_days = 0 时整体关闭
+  review_stale_days: 14                # 待验收列的老化（CONTRACT §70.2 追记 / D74）：闲置 N 天的待验收卡先收到一条汇总通知「明天归档」，下一轮进回收站（stale:review_stale，可恢复）；你改过名的卡永不被碰；0 = 关掉这条规则
                                        # web 设置页「每日整理」写 state/settings_overrides.json 的 daily_loop_* 扁平键，优先级高于本块；下一个 pass 生效
 
 remote:

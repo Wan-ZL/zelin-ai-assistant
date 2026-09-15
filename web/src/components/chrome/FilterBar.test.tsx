@@ -82,7 +82,7 @@ describe("FilterBar", () => {
     window.history.replaceState(null, "", "/?tier=T1&q=readme&reraised=1&type=engineering&channel=slack");
     render(<FilterBar />);
     const { filters } = getState();
-    expect(filters).toEqual({ tiers: ["T1"], deadline: "all", reraisedOnly: true, search: "readme" });
+    expect(filters).toEqual({ tiers: ["T1"], deadline: "all", reraisedOnly: true, hideBot: false, search: "readme" });
     expect(screen.getByRole("button", { name: "Filter by tier" }).textContent).toContain("T1");
 
     fireEvent.click(screen.getByRole("button", { name: "Filter by tier" }));

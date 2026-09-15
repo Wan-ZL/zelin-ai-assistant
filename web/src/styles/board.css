@@ -934,6 +934,26 @@ a.chip:hover { text-decoration: underline; }
   padding: 2px 8px;
 }
 
+/* ----- 待验收列头的批量工具（D73，issue #312）：与提案列「✦ 清理积压」同一槽、同一字级 --- */
+.lane-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 6px;
+}
+
+.lane-tool-button {
+  font: var(--type-composer-hint);
+  padding: 2px 8px;
+}
+
+/* 隐藏 🤖 是**开着的**时候要一眼看得出来（aria-pressed 的视觉对应物） */
+.lane-tool-button.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
 /* ----- §44.6 并入回执（原生 NoticeRow kind .info，绿色，提案列顶一行可关掉） ---------------- */
 .fold-receipts {
   list-style: none;

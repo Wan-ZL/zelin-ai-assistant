@@ -498,8 +498,14 @@ function clickAll(buttons: Iterable<HTMLButtonElement>, pool?: Set<string>) {
 const OPENS_DIALOG = /拒绝|Reject|修改|Comment|打回|Send Back|停止|Stop|提建议|feedback|改名|Rename|强制合并|Force-merge|仍然合并|Merge anyway|评论|回答|Answer|清理积压|Clean up|不需要执行|No need to run|退回|Discard|选择|Select/;
 /** 词表的误伤：FilterBar 的「退出选择」命中 选择 却是退出多选态——点它会把整条操作条卸掉 */
 const NOT_AN_OPENER = /^(退出选择|Done)$/;
+/** 同一类误伤：待验收列头的「选中全部…」（ReviewLaneTools，D74）命中 `Select` 却不开任何弹窗——
+ *  它只是带着一批 id 切进多选态，而多选态里卡上的动作行整排是死的（§54.1 追记），先点它
+ *  rotateSubmits 就再也走不到「打回…」「停止…」那几句 pending 文案。多选态由 store 切，同
+ *  FilterBar 的「选择」不点。三颗列头工具的文案照常由 collectLabels 收（不靠点击）。 */
+const LANE_TOOL_CLASS = "lane-tool-button";
 /** 开弹窗的按钮 = 动词命中词表，或组件自己用 aria-haspopup="dialog" 标了（T2 卡的「批准」开的是 typed-confirm） */
 const opensDialog = (b: HTMLButtonElement) => {
+  if (b.classList.contains(LANE_TOOL_CLASS)) return false;
   const label = normalize(b.textContent);
   return !NOT_AN_OPENER.test(label) && (OPENS_DIALOG.test(label) || b.getAttribute("aria-haspopup") === "dialog");
 };

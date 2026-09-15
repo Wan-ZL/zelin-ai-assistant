@@ -1485,6 +1485,10 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
         # §65.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
         **_opt("delivery", _delivery_view(ex)),
+        # §2 追记 / D74（issue #312）：这一行是机器卡（来源全为 self_improve）——
+        # 待验收列头的「隐藏 🤖」只约束**带**这个键的行（非 self_improve 卡整键不出，
+        # 过滤器绝不隐藏它读不懂的行）。判据单源 = policy.is_self_improve_sources。
+        **_opt("self_improve", policy.is_self_improve_sources(req.sources) or None),
     }
 
 

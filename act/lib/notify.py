@@ -83,6 +83,7 @@ KIND_REVIEW_READY = "review_ready"  # 交付进待验收（v0.46 就有）
 KIND_NEEDS_INPUT = "needs_input"    # 任务停下来了 / 反复中断 / 停止重试，等人一句话
 KIND_FAILURE = "failure"            # 需重新登录 / 雷达停摆 / 派发失败 / 会话没停住
 KIND_RECEIPT = "receipt"            # 用户刚按下的按钮的回执（人醒着，按钮承诺了要响）
+KIND_REVIEW_STALE = "review_stale"  # 待验收卡「明天归档」的最后一次告知（整轮一条，§70.2 追记二）
 
 # 分类 → overrides 扁键（布尔，全部默认开：新装机行为与本改动前逐字一致）。
 CATEGORY_PREFERENCE = {
@@ -100,7 +101,15 @@ CATEGORY_PREFERENCE = {
 # 回执句逐字镜像原生、写着「完成后会弹通知」，而那次运行是 detached 的——回执
 # 被吃掉，按钮就等于坏的。安静时段管的是**没人要**的横幅，不是 30 秒前的一次
 # 按键；同理它也不该有分类开关（不登记在 CATEGORY_PREFERENCE）：按了就一定响。
-QUIET_HOURS_EXEMPT = frozenset({KIND_FAILURE, KIND_RECEIPT})
+#
+# ``review_stale`` 穿透，理由是第三种：它是**这张卡明天从眼前消失之前**唯一的一次
+# 告知（§70.2 追记二的两阶段闸门），而发它的每日整理出厂就在 **03:30** 跑——正落在
+# 出厂安静窗 22:00–08:00 里。守安静时段 = 任何勾上「安静时段」的安装上，「归档前发
+# 一次通知」（issue #312 原话）**永远**不成立，卡照样被收走。它一轮只发一条汇总
+# （§70.6 追记）、后果不可逆感受，够资格穿透（宪法第 10 条「打扰要有资格」）；同
+# ``receipt`` 也不登记分类开关——要完全不被它打扰就把 `daily_loop.review_stale_days`
+# 设成 0（规则整条关掉，卡也不再被归档）。
+QUIET_HOURS_EXEMPT = frozenset({KIND_FAILURE, KIND_RECEIPT, KIND_REVIEW_STALE})
 
 
 def _minute_of_day(hhmm) -> Optional[int]:
@@ -136,7 +145,7 @@ def _category_off(kind, cfg) -> bool:
 
 
 def _quiet_now(kind, cfg, now) -> bool:
-    """当下落在安静时段里且本类不豁免（失败类 / 手动回执穿透）。"""
+    """当下落在安静时段里且本类不豁免（失败类 / 手动回执 / 归档前的告知穿透）。"""
     if kind in QUIET_HOURS_EXEMPT or not bool(getattr(cfg, "quiet_hours_enabled", False)):
         return False
     local = now if now is not None else time.localtime()
@@ -150,7 +159,8 @@ def suppression_reason(kind, cfg, now=None) -> Optional[str]:
 
     ``cfg`` = ``act.lib.config.Config``（注入缝）；``now`` = ``time.struct_time``
     本地时间（注入缝，缺省现读）。判序：分类开关先（关掉 = 任何时候都不发），
-    再是安静时段（``QUIET_HOURS_EXEMPT`` 豁免：失败类与手动按钮的回执）。
+    再是安静时段（``QUIET_HOURS_EXEMPT`` 豁免：失败类、手动按钮的回执、
+    待验收卡归档前的最后一次告知）。
     没登记在 ``CATEGORY_PREFERENCE`` 的 kind
     （``recap_ready`` / 无 kind 的其余守护进程通知）没有分类开关，但同样守安静时段
     ——「晚上不弹横幅」就是这个意思。"""
@@ -383,6 +393,19 @@ def msg_repeated_unhandled(title: str, n: int) -> tuple[str, str]:
                   f"This came up {n} times and is still unhandled"),
             _pick(f"{title} —— 打开看板批准、暂缓或拒绝它",
                   f"{title} — open the board to approve, defer or reject it"))
+
+
+def msg_review_stale(n: int, days: int) -> tuple[str, str]:
+    """§70.2 追记 / D74：待验收列的老化通知——**整轮一条**，不是一卡一条。
+
+    owner 的板上有 19 张待验收卡；一卡一条横幅在 03:30 一次性弹 19 次，正是
+    §70.6「不弹系统通知」当初要挡的事（宪法第 10 条「打扰要有资格」）。所以这
+    一句只说数量、天数与「明天归档、可恢复」，具体是哪几张去看板上看。"""
+    return (_pick(f"{n} 张待验收卡要归档了", f"{n} cards in review are about to be archived"),
+            _pick(f"它们已经 {days} 天没动——明天这一轮会收进回收站（可恢复）。"
+                  "现在去看板「待验收」列验收或打回",
+                  f"They have been idle for {days} days — tomorrow's pass moves them to the "
+                  "trash (restorable). Open the board's Review column to accept or send back"))
 
 
 def msg_review_ready(title: str) -> tuple[str, str]:

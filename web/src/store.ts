@@ -915,6 +915,12 @@ export function clearSelection() {
   setState({ selectedIds: new Set<string>() });
 }
 
+/** §21 追记（D74）：带着一批 id 进多选态——待验收列头的「选中全部…」两颗按钮唯一的入口。
+ *  只是**预选**：批量动作仍要人在操作条上按一次、并在确认弹窗里看完这批卡的清单。 */
+export function beginSelection(cardIds: Iterable<string>) {
+  setState({ selectionMode: true, selectedIds: new Set<string>(cardIds) });
+}
+
 // ----- v0.33 两条书立条的展开态（原生 Store.backlogStripExpanded / archiveStripExpanded；§54.1 追记） ------------ #
 // 只有这两个 setter 写旗：书立条头的开合按钮、useSubmit 的强制展开。不进 URL、不进 localStorage。
 
