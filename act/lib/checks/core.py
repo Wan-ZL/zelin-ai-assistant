@@ -38,7 +38,9 @@ SERVER_UNIT = board_server.UNIT                # §54 board server (Linux mirror
 ACTD_TASK = taskscheduler.TASK_PATH_PREFIX + "actd"  # schtasks TaskName (Windows)
 # Resident systemd services doctor expects up (the rest are timer-driven
 # oneshots that are correctly inactive between fires — the timer is the signal).
-SYSTEMD_RESIDENT = ("zelin-actd.service", "zelin-webui.service", SERVER_UNIT)
+# zelin-webui.service retired 2026-09-14 (§49 追记, owner 决策 D67): the board
+# server is the UI on every platform, so there is nothing else to keep resident.
+SYSTEMD_RESIDENT = ("zelin-actd.service", SERVER_UNIT)
 LABEL_PREFIX = "com.zelin.aiassistant."
 
 PROBE_TIMEOUT = 90  # ceiling for the live claude call

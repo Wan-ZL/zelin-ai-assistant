@@ -2,9 +2,10 @@
 # One-click installer for Zelin's AI Assistant on LINUX (v1 beta).
 #
 # The Linux mirror of install.sh. Linux v1 ships the headless core + systemd
-# user units + the local web dashboard (the Linux UI) + Slack self-DM capture +
-# notify-send desktop notifications. See docs/LINUX.md for exactly what works
-# and what is DEFERRED (the Mac SwiftUI app; the screenpipe screen-ingest chain).
+# user units + the board server (`python3 -m server`, CONTRACT §49 — the React
+# board IS the Linux UI since 2026-09-14) + Slack self-DM capture + notify-send
+# desktop notifications. See docs/LINUX.md for exactly what works and what is
+# DEFERRED (the Mac SwiftUI app; the screenpipe screen-ingest chain).
 #
 # What it does:
 #   1. dependency checks (python3 + PyYAML required; claude required for
@@ -13,8 +14,8 @@
 #   3. create state/ and state/inbox/ + seed state/dashboard.json
 #   4. render act/systemd/*.service|*.timer (via `python3 -m act.lib.systemd`)
 #      into ~/.config/systemd/user, then `systemctl --user enable --now` the
-#      resident services (actd + webui + the board server, CONTRACT §54) and
-#      the radar/digest timers
+#      resident services (actd + the board server, CONTRACT §49/§54) and the
+#      radar/digest timers
 #   5. run the post-install diagnostics (python3 -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
@@ -190,7 +191,7 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 4. systemd user units (actd + web dashboard + board server + radar/digest timers)"
+echo "==> 4. systemd user units (actd + board server + radar/digest timers)"
 # §54 board server port (config.yaml server.port, default 47820) — rendered into
 # zelin-server.service as ZAI_PORT; fail-open to the default on probe trouble.
 SERVER_PORT="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -c '
@@ -202,9 +203,8 @@ except Exception:
 case "$SERVER_PORT" in ''|*[!0-9]*) SERVER_PORT=47820 ;; esac
 if ! command -v systemctl >/dev/null 2>&1; then
     warn "systemctl not found — no systemd user session on this box."
-    info "run the daemon + dashboard + board server directly instead:"
+    info "run the daemon + board server directly instead:"
     info "  AIASSISTANT_HOME=$REPO_ROOT $RUNTIME_PY -m act.actd &"
-    info "  AIASSISTANT_HOME=$REPO_ROOT $RUNTIME_PY -m act.webui &"
     info "  AIASSISTANT_HOME=$REPO_ROOT ZAI_PORT=$SERVER_PORT $RUNTIME_PY -m server &"
 else
     mkdir -p "$UNIT_DIR"
@@ -228,9 +228,10 @@ else
 
     # Enable + start the RESIDENT services and the timers (the oneshot radar/
     # digest .service units are timer-driven, so they are NOT enabled directly).
+    # zelin-webui.service retired 2026-09-14 (CONTRACT §49 追记 / owner
+    # decision D67): the board server is the one UI on every platform.
     ENABLE_UNITS=(
         "zelin-actd.service"
-        "zelin-webui.service"
         "zelin-server.service"
         "zelin-gmail-radar.timer"
         "zelin-slack-radar.timer"
@@ -257,8 +258,8 @@ else
     fi
 
     if [ "$ENABLE_FAILED" -eq 0 ]; then
-        ok "web dashboard: journalctl --user -u zelin-webui  (prints the http://127.0.0.1:PORT URL)"
         ok "board server (web/dist, needs 'cd web && npm ci && npm run build'): http://127.0.0.1:$SERVER_PORT/"
+        ok "logs: journalctl --user -u zelin-server -f"
     fi
 fi
 
@@ -282,13 +283,15 @@ cat <<EOF
  1. Edit config.yaml (Slack IDs, watched people, source paths).
  2. Anthropic API key -> config/secrets/anthropic-api-key.txt (chmod 600).
     A systemd --user session has no Keychain, so a file-form key is required.
- 3. Open the web dashboard (the Linux UI): find its URL with
-      journalctl --user -u zelin-webui
-    then open http://127.0.0.1:<port> in a browser on this machine. It reads
-    state/dashboard.json and writes approvals to state/inbox/ (CONTRACT §3/§10).
+ 3. Build the board once, then open it (the Linux UI):
+      cd web && npm ci && npm run build
+      http://127.0.0.1:$SERVER_PORT/
+    It reads state/dashboard.json and writes approvals to state/inbox/
+    (CONTRACT §3/§10). In Chrome/Edge the address-bar install icon gives you a
+    standalone window (the PWA manifest, CONTRACT §73) — no extra process.
  4. Phone / always-on channel = Slack self-DM quick capture (works today).
  5. Manage the units:
-      systemctl --user status  zelin-actd.service zelin-webui.service
+      systemctl --user status  zelin-actd.service zelin-server.service
       systemctl --user list-timers 'zelin-*'
       journalctl --user -u zelin-actd -f
  6. Anything off later? Re-run diagnostics anytime: bash install-linux.sh --check

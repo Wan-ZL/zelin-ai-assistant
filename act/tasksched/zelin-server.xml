@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TEMPLATE: rendered by install.ps1 (see act/lib/taskscheduler.py), registered
+     as \ZelinAIAssistant\server. Do not import this file as-is.
+
+     server — the board server (server/, CONTRACT §49 / §54), the Windows mirror
+     of act/systemd/zelin-server.service and
+     act/launchd/com.zelin.aiassistant.server.plist. Serves web/dist on
+     http://127.0.0.1:@ZAI_PORT@/ plus the /api/* routes the React board uses.
+     Since 2026-09-14 (§49 追记, owner 决策 D67) this IS the Windows UI — the
+     retired \ZelinAIAssistant\webui task is gone, so there is one board, one
+     port and one token model on all three platforms. `web/dist` still needs a
+     one-off `cd web; npm ci; npm run build` (same honest gap Linux carries);
+     until then "/" serves the placeholder page.
+
+     Resident like actd (LogonTrigger + RestartOnFailure + IgnoreNew) so it
+     auto-starts at logon and stays up; a busy port makes it exit after one
+     short line (no traceback per restart cycle).
+
+     SECURITY: server/ binds 127.0.0.1 ONLY (hard-coded, §49) and gates every
+     write with the four-gate model in server/security.py (Host allow-list,
+     Origin allow-list, forced application/json, per-install token in
+     state\server.token). This task adds nothing network-facing.
+
+     PATH / env: Task Scheduler has no per-task environment, so the action is a
+     `powershell -Command` that prepends @CLAUDE_BIN_DIR@ to PATH, sets
+     AIASSISTANT_HOME and exports ZAI_PORT before invoking the pinned
+     interpreter — the Windows mirror of the unit's Environment= lines. -->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Zelin AI Assistant — board server (web/dist + /api, §49; the Windows UI)</Description>
+    <URI>\ZelinAIAssistant\server</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -Command "$env:AIASSISTANT_HOME='@REPO_ROOT@'; $env:ZAI_PORT='@ZAI_PORT@'; $env:PATH='@CLAUDE_BIN_DIR@;'+$env:PATH; &amp; '@PYTHON@' -m server"</Arguments>
+      <WorkingDirectory>@REPO_ROOT@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

@@ -2,10 +2,11 @@
 One-click installer for Zelin's AI Assistant on WINDOWS (v1 beta).
 
 The Windows mirror of install.sh / install-linux.sh. Windows v1 ships the
-headless core + Task Scheduler tasks + the local web dashboard (the Windows UI)
-+ Slack self-DM capture + native toast notifications. See docs/WINDOWS.md for
-exactly what works, what is DEFERRED (the Mac SwiftUI app; the screenpipe
-screen-ingest chain), and what still needs a real Windows machine to validate.
+headless core + Task Scheduler tasks + the board server (`python -m server`,
+CONTRACT §49 — the React board IS the Windows UI since 2026-09-14) + Slack
+self-DM capture + native toast notifications. See docs/WINDOWS.md for exactly
+what works, what is DEFERRED (the Mac SwiftUI app; the screenpipe screen-ingest
+chain), and what still needs a real Windows machine to validate.
 
 What it does:
   1. dependency checks (python + PyYAML required; claude required for
@@ -15,7 +16,7 @@ What it does:
   3. create state\ and state\inbox\ + seed state\dashboard.json
   4. render act\tasksched\*.xml (via `python -m act.lib.taskscheduler`) into a
      staging dir, then Register-ScheduledTask each under \ZelinAIAssistant\ and
-     start the resident tasks (actd + webui)
+     start the resident tasks (actd + server), then probe the board port
   5. run the post-install diagnostics (python -m act.doctor)
 
 Run from anywhere (it locates the repo root via its own path):
@@ -205,15 +206,29 @@ if (-not (Test-Path $Dashboard)) {
 
 # ---------------------------------------------------------------------------
 Write-Host ''
-Write-Host '==> 4. Task Scheduler tasks (actd + web dashboard + radar/digest)'
+Write-Host '==> 4. Task Scheduler tasks (actd + board server + radar/digest)'
 $Staging = Join-Path $env:TEMP 'zelin-tasksched'
 New-Item -ItemType Directory -Force -Path $Staging | Out-Null
 $env:AIASSISTANT_HOME = $RepoRoot
 Push-Location $RepoRoot
+
+# §54 board server port (config.yaml server.port, default 47820) - rendered into
+# zelin-server.xml as ZAI_PORT; fail-open to the default on probe trouble (the
+# mirror of install-linux.sh's SERVER_PORT block).
+$ServerPort = '47820'
+try {
+    $probed = (& $RuntimePy -c 'from act.lib import config
+try:
+    print(int(config.load_config().server_port))
+except Exception:
+    print(config.DEFAULT_SERVER_PORT)' 2>$null | Select-Object -Last 1)
+    if ($LASTEXITCODE -eq 0 -and $probed -match '^[0-9]+$') { $ServerPort = $probed.Trim() }
+} catch { }
+
 # act.lib.taskscheduler is the single source of truth for the @TOKEN@
 # substitution (unit-tested in CI), so there is no drift between "what install
 # registers" and "what CI validated".
-& $RuntimePy -m act.lib.taskscheduler --python $RuntimePy --repo-root $RepoRoot --claude-bin-dir $ClaudeBinDir --out $Staging | Out-Null
+& $RuntimePy -m act.lib.taskscheduler --python $RuntimePy --repo-root $RepoRoot --claude-bin-dir $ClaudeBinDir --zai-port $ServerPort --out $Staging | Out-Null
 $rendered = $LASTEXITCODE
 Pop-Location
 if ($rendered -ne 0) {
@@ -222,7 +237,9 @@ if ($rendered -ne 0) {
 }
 Write-Ok "rendered task XML into $Staging"
 
-$ResidentLeaves = @('actd', 'webui')
+# Resident tasks started right after registration. 'webui' retired 2026-09-14
+# (CONTRACT §49 追记 / owner decision D67): the board server is the one UI.
+$ResidentLeaves = @('actd', 'server')
 $RegisterFailed = 0
 foreach ($xml in Get-ChildItem -Path $Staging -Filter '*.xml' | Sort-Object Name) {
     $leaf = $xml.BaseName -replace '^zelin-', ''
@@ -245,7 +262,22 @@ foreach ($xml in Get-ChildItem -Path $Staging -Filter '*.xml' | Sort-Object Name
     }
 }
 if ($RegisterFailed -eq 0) {
-    Write-Ok 'web dashboard: the webui task prints its http://127.0.0.1:<port> URL to its stdout log'
+    Write-Ok "board (web\dist, needs 'cd web; npm ci; npm run build'): http://127.0.0.1:$ServerPort/"
+    # Probe the port the way act.doctor's board-server row does on macOS/Linux:
+    # a registered task proves nothing bound - only /api/health answering does.
+    $Probed = $false
+    foreach ($attempt in 1..5) {
+        try {
+            $resp = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$ServerPort/api/health"
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) { $Probed = $true; break }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    if ($Probed) {
+        Write-Ok "board server answering on http://127.0.0.1:$ServerPort/api/health"
+    } else {
+        Write-Warn2 "nothing answers on http://127.0.0.1:$ServerPort/api/health yet - check: Get-ScheduledTask -TaskPath '\ZelinAIAssistant\' -TaskName server"
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -269,10 +301,13 @@ Write-Host @"
  1. Edit config.yaml (Slack IDs, watched people, source paths).
  2. Anthropic API key -> config\secrets\anthropic-api-key.txt.
     A Task Scheduler session has no Keychain, so a file-form key is required.
- 3. Open the web dashboard (the Windows UI): the webui task logs its
-      http://127.0.0.1:<port>
-    URL; open that in a browser on this machine. It reads state\dashboard.json
-    and writes approvals to state\inbox\ (CONTRACT §3/§10).
+ 3. Build the board once, then open it (the Windows UI):
+      cd web; npm ci; npm run build
+      http://127.0.0.1:$ServerPort/
+    It reads state\dashboard.json and writes approvals to state\inbox\
+    (CONTRACT §3/§10). In Edge/Chrome use the address-bar install icon
+    ("Install Zelin's AI Assistant") for a standalone window with a Start menu
+    entry - that is the PWA manifest from CONTRACT §73, no extra process.
  4. Phone / always-on channel = Slack self-DM quick capture (works today).
  5. Manage the tasks:
       Get-ScheduledTask -TaskPath '\ZelinAIAssistant\'

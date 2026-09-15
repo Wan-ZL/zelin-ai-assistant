@@ -3917,6 +3917,15 @@ test_server_auth.py）。
 
 **2026-09-14 追记（add-only，`feat/pwa-manifest`）——静态面的 content-type 钉死表**：`_static_ctype` 在问 `mimetypes` 之前先查模块级常量表 `_STATIC_CTYPES`（truth = `server/app.py`；今天只有一条 `.webmanifest` → `application/manifest+json`），理由与安装清单一起立法在 §73.3——`mimetypes` 读宿主机的注册表 / `/etc/mime.types`，这条 wire 类型是法条不是本机配置。静态面其余行为（目录回落 index、SPA 深链、token 只注入 index.html、`/assets/` 长缓存、`../` 穿越 404）一字不动；判例 tests/test_server_request_plumbing.py。
 
+**2026-09-14 追记（add-only，`feat/windows-server-board`；issue #90 的另一半，owner 决策 D67）——`server/` 托管的这块看板是 macOS / Linux / Windows 三平台**唯一**的 UI，旧的 `act/webui.py` 服务接线退役**：
+
+- **Windows 接线补齐**：新增 `act/tasksched/zelin-server.xml`（注册为 `\ZelinAIAssistant\server`），是 `act/systemd/zelin-server.service` 与 `act/launchd/com.zelin.aiassistant.server.plist` 的 Windows 镜像——常驻形状与 actd 同款（LogonTrigger + RestartOnFailure + `IgnoreNew` + `ExecutionTimeLimit PT0S`），动作是 `powershell -Command` 里设 `AIASSISTANT_HOME` / `ZAI_PORT` / PATH 前置 claude 目录，再 `-m server`。`act/lib/taskscheduler.py` 因此长出第四个占位符 `@ZAI_PORT@` + `DEFAULT_ZAI_PORT`（`"47820"`，**镜像**而非 import `server/app.py`——act 永不 import server）+ `--zai-port` 手柄，与 `act/lib/systemd.py` 逐字同构；`install.ps1` 读 `config.yaml` `server.port`（探不到 fail-open 回默认）渲染进去、`$ResidentLeaves` 换成 `@('actd','server')`、注册完探一次 `GET /api/health`、并打印 `cd web; npm ci; npm run build` 提示（与 install-linux.sh 同款诚实口径：装机脚本不跑 npm）。
+- **Windows 的 UI 归属改判**：`docs/WINDOWS.md` 原来写「`act/webui.py` 就是 Windows 的 UI」，自本日起是这块看板 + §73 的 PWA 清单（Edge/Chrome 装成独立窗口）。理由：`act/webui.py` 的静态面是两条写死的白名单（`/app.js`、`/style.css`），它**永远**发不出 `web/dist`，也发不出 §73.4 那份清单——Windows 上「装成 app」在 webui 拓扑下不是没做，是做不到。
+- **Tombstone（防腐 #6；退的是两处服务接线，不是 § 号）**：`act/systemd/zelin-webui.service`（retired 2026-09-14，并入本节 = `zelin-server.service`）、`act/tasksched/zelin-webui.xml`（retired 2026-09-14，并入本节 = `zelin-server.xml`）。`install-linux.sh` 的 `ENABLE_UNITS` 与 `install.ps1` 的 `$ResidentLeaves` 同 PR 划掉 webui；`act/lib/checks/core.py` 的 `SYSTEMD_RESIDENT` 缩成 `(zelin-actd.service, zelin-server.service)`；doctor 的两套期望集都是从模板目录 glob 出来的，所以 Windows 多一行 `server`、Linux/Windows 各少一行 `webui` 是文件删除的自然结果，不是第二处真源。判例：tests/test_taskscheduler_render.py（`server` 的常驻形状 / `-m server` / 只有它带 `ZAI_PORT` / `webui` 模板不许回来）、tests/test_systemd_render.py、tests/test_doctor.py。
+- **`act/webui.py` 模块本身不删**：§41 的 W18 远程直跑闸门、§50 的 `via:"remote"` 落款判据仍以它为判例主体（tests/test_webui*.py 一组判例文件钉着这些行为），且「它随原生 Mac app 一起退役」是 D3 那一车的活（docs/design/progress/2026-09-14-server-log-noise.md 已有此裁决）。本节只退**服务接线**：没有任何 service manager 再自动拉起它，`python3 -m act.webui` 仍可手跑。
+- **诚实条款（宪法第 3 条）**：Windows 这一半是**渲染 / 单测级**验证——本仓库没有 Windows 机器，`Register-ScheduledTask` 真实加载、端口真绑、Edge 的安装按钮都记在 docs/WINDOWS.md「Needs a real Windows machine」里，由 issue #90 的作者在真机上复核。
+- **不动的**：`server/` 的 bind 常量、四道闸、token 模型、envelope 词表、路由全集一字未改——Windows 得到的就是 macOS/Linux 已经在跑的那一个 server，不是第二种拓扑（宪法第 1 条零触动、第 9 条 loopback 例外照旧）。
+
 ## 50. 卡片出身信任矩阵（origin_trust + effective tier + ingress 落款）
 
 **四类出身（locked，M8.3 C-1 终裁四值为 canonical）**：`hand`（用户手打：
@@ -6548,6 +6557,13 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 - 不做托盘图标、不改任何进程拓扑、不新增端口与 launchd / Task Scheduler 任务。
 - **覆盖面诚实说**：这份清单只对 `server/` 托管的那块看板生效——今天是 macOS 与 Linux（`act/launchd/com.zelin.aiassistant.server.plist` / `install-linux.sh` 的 `zelin-server.service`）。Windows 的 `install.ps1` 还没有 server 常驻任务，那边的 UI 仍是 `act/webui.py`（它的静态白名单只发两个文件，发不出这份清单），所以「在 Windows 上装成 app」要等 webui 退役 + Windows server 任务那一车（#90 的另一半，仍挂 `needs-owner`，本节不预判它的拓扑）。
 
+### 73.5 覆盖面追记（2026-09-14，`feat/windows-server-board`；issue #90 的另一半，owner 决策 **D67**）
+
+上一条「覆盖面诚实说」写于「Windows 还没有 server 常驻任务」的那一天，**自本日起作废**（add-only：原句留档，以本节为准）。`act/tasksched/zelin-server.xml` 落地、`install.ps1` 的 `$ResidentLeaves` 换成 `actd` + `server`、`\ZelinAIAssistant\webui` 任务与 `zelin-webui.service` 同 PR 退役（tombstone 在 §49 本日追记里），所以这份清单现在**三平台全覆盖**——macOS / Linux / Windows 发的是同一个 `server/`、同一份 `web/dist`、同一份 `manifest.webmanifest`，也就是同一个安装体验。
+
+§73.1–§73.4 的清单字段、图标生成、content-type 与边界**一字未改**。特别澄清 §73.4 的「不新增端口与 launchd / Task Scheduler 任务」：那句说的是**这份清单本身不带来**新进程/新端口，而 D67 新增的 Windows `server` 任务是把 macOS/Linux 早已常驻的那个 server 补到第三个平台（同一个端口 `ZAI_PORT`、同一套 token），不是为清单而生的第二个进程——两者不冲突。
+
+**诚实边界**：Windows 半边是渲染 / 单测级验证（本仓库没有 Windows 机器），「Edge 的安装按钮真的出现、装出来的窗口真的能用」在 docs/WINDOWS.md「Needs a real Windows machine」里等真机复核。
 ## 74. 一个 .pkg 永不写进 git checkout（issue #333；2026-09-07 live 事故的根因；owner 决策 **D65**）
 
 **判例先行**：2026-09-07 21:59 PDT，`/Applications/Zelin's AI Assistant (old).app` 里那套仍在服役的 Sparkle（D3「冻结但留着」的那一半）自己下载并安装了 **v1.0.14** 的 .pkg。它的 postinstall 把 root 属主的管线母本 `rsync -a`（无 `--delete`、无任何目的地判据）进 `~/Projects/zelin-ai-assistant`——而 `~/Projects` 是一条指向 `/Volumes/Storage/Server/Projects` 的符号链接，那底下的 `zelin-ai-assistant` 就是 **live 开发 checkout**。后果三层：232 个 tracked 文件被改写成**更旧**的 tag 的字节（mtime 齐刷刷是 v1.0.14 的 commit 时间——`git archive` 盖的章经 `rsync -a` 原样带过来）；18 个上游早已删掉的源码文件作为 untracked、未 gitignore 的文件复活（其中 `web/src/pages/AskPage.tsx` import 的函数在 main 的 `api.ts` 里根本不存在 → install.sh 的 `ui` 步 `tsc` 必红 → 每次部署回滚）；postinstall 随后重启 actd，把 #214 早已修好的 `_ci_red` 旧判法钉回内存，于是 09-08 起每天铸一张 `pr_red` 卡，其中**四张是假的**（#282 / #291 / #320 / #324——铸卡时七项 required check 全绿，唯一的红是 informational 的 `Web visual`），四轮 agent（R-201 / R-203 / R-211 / R-214）各烧掉一个 session 重新发现同一个非 bug。自动部署从此 `refused_dirty`，`last_deployed` 冻在 09-07 11:09Z。取证链（installer 日志、pkgutil 收据、mtime/ctime 指纹）见 `docs/design/progress/2026-09-14-r214-pr324-informational-red.md`（PR #330 诊断到根因，并明说把修法留给「另一张卡」= 本节）。
