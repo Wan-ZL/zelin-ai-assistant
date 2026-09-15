@@ -178,11 +178,14 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
             id="recap-note"
             className="recap-textarea"
             maxLength={NOTE_MAX}
+            aria-describedby={conflicts.length ? "recap-note-conflicts" : undefined}
             value={note}
             onChange={(event) => setNote(event.target.value)}
           />
+          {/* 不是 live region：内容随每个按键重算，role="status" 会让读屏在打字中途反复念整张表；
+              挂在 textarea 的 aria-describedby 上 = 需要时可达，不追着人念（§63.5）。 */}
           {conflicts.length > 0 && (
-            <div className="recap-note-conflicts" role="status">
+            <div className="recap-note-conflicts" id="recap-note-conflicts">
               <p className="recap-note-conflicts-head">
                 {text("这几件事五行格式做不到，重新生成也不会变：",
                       "The five-line format cannot honor these; regenerating will not change them:")}
