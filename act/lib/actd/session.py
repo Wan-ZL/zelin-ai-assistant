@@ -55,7 +55,8 @@ def _record_stop_failure(d: Daemon, req: Requirement, ex: dict, sid, detail) -> 
     ex["stop_failed_error"] = str(detail)[:300] or "stop failed"
     append_note(req, f"[stop-failed] 停止会话 {sid} 失败（重试后进程仍存活），"
                      f"可能仍在后台运行——请在终端 `claude stop` 手动停止")
-    notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id)
+    notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id,
+                  kind=notify.KIND_FAILURE)
     # TELEMETRY 红线（issue #37）：事件只带 req + 分类 id，原文（会话 UUID、
     # PID）一个字节都不出机——全量 detail 只进本机台账（stop_failed_error/notes）。
     analytics.log_event("stop_failed", req=req.id,

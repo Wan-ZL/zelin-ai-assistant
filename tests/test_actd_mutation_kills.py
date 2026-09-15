@@ -104,14 +104,14 @@ class AlertsKillsTest(Base):
         self.assertEqual([m[2] for m in actd.detect_transitions(_na(), two)], ["R-1", "R-2"])
         batched = actd.detect_transitions(_na(), three)
         self.assertEqual(len(batched), 1)
-        self.assertEqual(batched[0][2:], (None, None))
+        self.assertEqual(batched[0][2:], (None, actd.notify.KIND_PROPOSAL))
         self.assertIn("3", batched[0][0] + batched[0][1])
 
     def test_reraised_card_without_a_note(self):
         with mock.patch.object(actd.notify, "msg_reraised", return_value=("t", "b")) as msg:
             msgs = actd.detect_transitions(_na(), _na({"id": "R-9", "title": "回锅", "reraised": True}))
         msg.assert_called_once_with("回锅", "")
-        self.assertEqual(msgs, [("t", "b", "R-9", None)])
+        self.assertEqual(msgs, [("t", "b", "R-9", actd.notify.KIND_PROPOSAL)])
 
     def test_suspended_time_is_wall_minus_mono(self):
         cfg = config.Config()

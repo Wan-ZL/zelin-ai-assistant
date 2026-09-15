@@ -9,7 +9,9 @@
 // `disabled` = 同 section 其它草稿值把这一格禁掉（原生 telemetry 组的 `.disabled(...)`，规则在 draftRules.isGated）；
 // 数字框的校验句按 kind：number 用原生 commitShowCost / commitConfirmAbove 的通式（示例数 = 目录 default），
 // int 的 trash_retention_days 用原生 commitTrashDays 的整句（Settings.swift:1727），其它 int 用整数通式。
-// 带 `check`（§68.1 追记；词表 email / session_id）的 string 字段：保存前镜像 server 的同一条形状规则（draftRules.checkReason），
+// 带 `check`（§68.1 追记；词表 email / session_id / clock_time——后者是 §28 追记 2026-09-12 安静时段的两个
+// 端点，框仍是 text：浏览器的 time 控件根本送不出坏值，镜像那一条就成了死代码）的 string 字段：
+// 保存前镜像 server 的同一条形状规则（draftRules.checkReason），
 // 不合格 = aria-invalid + server-owned 的那句（原生 SettingsGmail.validateAddress 在 saveAddress 里拦；SettingsMaintainer.validateSessionID
 // 在 saveSessionID 里拦——首连字符与字符白名单各一句，按 reason 取目录 `check.reasons`），CatalogSection 据此不放行「保存」。
 // 「Obsidian Vault 位置」（`obsidian_raw`，§68.1 追记 vault 根）是目录字段里的特例：草稿 / PUT 仍是 raw 目录 `<根>/2 - raw`，

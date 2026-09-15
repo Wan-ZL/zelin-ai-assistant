@@ -4,7 +4,9 @@ liveness patrol with its sleep/wake grace.
 
 CONTRACT §40（新卡批量通知 ≥3 张合一条；digest 铸的卡由 digest 自己宣布）/
 §11 + §30 + §46.3（待验收就绪通知：from_review 回流与 #119 中断收割不发）/
-§48 + §48.2 + §48.3（开着的源死了要响、关掉的源全静默、无基线兜底、睡醒宽限）。
+§48 + §48.2 + §48.3（开着的源死了要响、关掉的源全静默、无基线兜底、睡醒宽限）/
+§28（通知偏好：两道失败扫描的 ``suppressed`` 形参——失败类被静音时照跑、
+不花 anti-nag 台账）。
 """
 from __future__ import annotations
 
@@ -78,7 +80,7 @@ def _new_card_msgs(p_na: dict, c_na: dict) -> list:
         if item.get("reraised"):
             t, b = notify.msg_reraised(item.get("title", rid),
                                        item.get("reraised_note") or "")
-            msgs.append((t, b, rid, None))
+            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
         elif not _from_weekly_digest(item):   # digest cards: announced by the digest itself
             fresh.append((rid, item))
     msgs.extend(_fresh_card_msgs(fresh))
@@ -88,11 +90,11 @@ def _new_card_msgs(p_na: dict, c_na: dict) -> list:
 def _fresh_card_msgs(fresh: list) -> list:
     if len(fresh) > NEW_CARD_BATCH_ABOVE:
         t, b = notify.msg_new_cards_batch(len(fresh))
-        return [(t, b, None, None)]
+        return [(t, b, None, notify.KIND_PROPOSAL)]
     msgs = []
     for rid, item in fresh:
         t, b = notify.msg_new_card(item.get("title", rid))
-        msgs.append((t, b, rid, None))
+        msgs.append((t, b, rid, notify.KIND_PROPOSAL))
     return msgs
 
 
@@ -120,7 +122,7 @@ def _review_ready_msgs(p_run: dict, p_rev: dict, c_rev: dict) -> list:
     for rid, item in c_rev.items():
         if _fresh_delivery(rid, item, p_run, p_rev):
             t, b = notify.msg_review_ready(item.get("name") or rid)
-            msgs.append((t, b, rid, "review_ready"))
+            msgs.append((t, b, rid, notify.KIND_REVIEW_READY))
     return msgs
 
 
@@ -140,13 +142,19 @@ def _executing_log_text(req, notified: set) -> Optional[str]:
         return None
 
 
-def check_auth_failures(notified: set) -> list:
-    """Scan executing items' logs for credential failures (notify once each)."""
+def check_auth_failures(notified: set, suppressed: bool = False) -> list:
+    """Scan executing items' logs for credential failures (notify once each).
+
+    ``suppressed``（§28 追记 2026-09-12，issue #29）= 失败类此刻被用户的开关
+    静音。扫描照跑（返回的消息仍交给 notify，由写方吃掉），但 anti-nag 台账
+    **不落笔**：一条没人看见的通知不许把台账花掉，否则开关翻回来时这张卡的
+    凭证告警在本进程余生里都不会再响。"""
     msgs: list = []
     for req in load_all():
         text = _executing_log_text(req, notified)
         if text is not None and notify.detect_auth_failure(text):
-            notified.add(req.id)
+            if not suppressed:
+                notified.add(req.id)
             msgs.append(notify.msg_auth(req.title or "claude"))
     return msgs
 
@@ -239,7 +247,7 @@ def _source_dead(src: str, entry, now: _dt.datetime, missing_since: dict) -> boo
 
 
 def _judge_source(cfg: config.Config, src: str, entry, now: _dt.datetime, graced: bool,
-                  notified: set, missing_since: dict) -> list:
+                  notified: set, missing_since: dict, suppressed: bool = False) -> list:
     """One source's verdict this pass → [] or [one radar-dead message]."""
     if not sources.enabled(cfg, src):
         # 关着：清残留条目（条目不存在时 no-op、不写文件），出账。
@@ -258,15 +266,25 @@ def _judge_source(cfg: config.Config, src: str, entry, now: _dt.datetime, graced
         return []
     if src in notified:
         return []
-    # 告警落笔前复核 enabled（TOCTOU 收窄）：巡检开头读的
-    # cfg 与 notify 之间用户可能刚关掉本源——关掉的源全
-    # 静默是 §48.2 的硬承诺，宁可多读一次盘也不发这条。
-    # 复核只走「即将告警」的罕见分支（源死亡 + 未在台账），
-    # 稳态零额外 IO；关了就本 pass 静默，残留 health 条目
-    # 留给下一 pass 的清理分支收尾。
+    return _raise_radar_death(src, notified, suppressed)
+
+
+def _raise_radar_death(src: str, notified: set, suppressed: bool) -> list:
+    """已判定死亡、且不在 anti-nag 台账里的源 → [] 或 [一条源死亡通知]。
+
+    告警落笔前复核 enabled（TOCTOU 收窄）：巡检开头读的 cfg 与 notify 之间
+    用户可能刚关掉本源——关掉的源全静默是 §48.2 的硬承诺，宁可多读一次盘
+    也不发这条。复核只走「即将告警」的罕见分支（源死亡 + 未在台账），稳态零
+    额外 IO；关了就本 pass 静默，残留 health 条目留给下一 pass 的清理分支收尾。
+
+    ``suppressed``（§28 追记 2026-09-12）：失败类被用户的开关静音时不落 anti-nag
+    台账——本 pass 的清理 / 出账 / 无基线记账已经在 ``_judge_source`` 里做完，只有
+    「报过了」这一笔不许记，否则用户把失败通知翻回来时这个源的死亡告警在本
+    进程余生里都不会再响。"""
     if not sources.enabled(config.load_config(), src):
         return []
-    notified.add(src)
+    if not suppressed:
+        notified.add(src)
     hours = sources.LIVENESS_THRESHOLDS[src] // 3600
     return [notify.msg_radar_dead(src, hours)]
 
@@ -275,7 +293,8 @@ def check_radar_liveness(d: Daemon, notified: set,
                          now: Optional[_dt.datetime] = None,
                          interval: Optional[int] = None,
                          mono: Optional[float] = None,
-                         missing_since: Optional[dict] = None) -> list:
+                         missing_since: Optional[dict] = None,
+                         suppressed: bool = False) -> list:
     """§48 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
 
     配置**每次调用现读**（load_config 自身防崩）——actd 启动时冻结的 cfg 在
@@ -292,6 +311,10 @@ def check_radar_liveness(d: Daemon, notified: set,
     记录）。**无基线兜底**：开着却从无 health 时间戳的源记首见时刻
     （``NO_BASELINE_SINCE``），持续无基线超同一阈值也按死亡告警——覆盖
     「plist 写成但 launchctl load 失败、雷达从未落笔」的安装死角。
+    ``suppressed``（§28 追记 2026-09-12，issue #29）= 失败类此刻被用户的开关静音：
+    **巡检照跑**（关着的源的僵尸 health 清理、恢复出账、无基线首见台账全在这条
+    路径上，跳过扫描会让它们在开关关着期间停摆、开关翻回来时无基线时钟还从头
+    起算），只是 anti-nag 台账不落笔，开关翻回来那一 pass 就能重报。
     ``now`` / ``mono`` / ``missing_since`` 是测试注入缝。Never raises。
     """
     msgs: list = []
@@ -305,7 +328,7 @@ def check_radar_liveness(d: Daemon, notified: set,
         data = radar_health.load_radar_health()
         for src in sources.SOURCES:
             msgs.extend(_judge_source(cfg, src, data.get(src), now, graced,
-                                      notified, missing_since))
+                                      notified, missing_since, suppressed))
     except Exception as e:  # noqa: BLE001 - 巡检绝不干掉主循环
         d.log(f"radar liveness check FAILED: {e}")
     return msgs

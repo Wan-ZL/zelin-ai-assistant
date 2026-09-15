@@ -399,13 +399,17 @@ PY
 # write_state: the live EPERM window was invisible from this log). notify()
 # itself never raises — a swallowed queue-write failure only returns False —
 # so map False to exit 1 with a hint, or that loss would be silent here too.
-notify() { # $1=title $2=body
+# $3 = §28 的 kind（issue #29 分类）：部署告警一律 `failure` —— 安静时段静音的是
+# 提案 / 需输入，半夜回滚失败必须穿透（设置页的「失败通知」文案就是这么承诺的）。
+# 省略 / 空 = 无 kind（`general`：成功行不该在夜里把人叫醒）。"$3" 恒带引号，两参
+# 调用方下它是空串而不是缺席，sys.argv[3] 永远在。
+notify() { # $1=title $2=body $3=kind（可省）
     _nerr="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
         "$PY" -c 'import sys
 from act.lib import notify
-if not notify.notify(sys.argv[1], sys.argv[2]):
+if not notify.notify(sys.argv[1], sys.argv[2], kind=sys.argv[3] or None):
     sys.stderr.write("notify.notify returned False (state/notify_queue unwritable?)\n")
-    sys.exit(1)' "$1" "$2") 2>&1 >/dev/null )" \
+    sys.exit(1)' "$1" "$2" "${3:-}") 2>&1 >/dev/null )" \
         || log "notify failed (non-fatal): $1 — $(printf '%s' "$_nerr" | tail -n 1)"
 }
 
@@ -663,7 +667,8 @@ sha_is_poisoned() { # $1=sha → 0 when $1 is in the ledger (either key: a pre-l
 # have been told about it under the head-only gate had a run caught it).
 notify_ci_red() { # $1=sha $2="<check> <conclusion>"
     notify "main 的 CI 红了，未部署 / auto-deploy: main CI red" \
-           "origin/$BRANCH $(short "$1") 的 $2；未部署，等下一个绿的提交（或 bash scripts/auto-deploy.sh --force）"
+           "origin/$BRANCH $(short "$1") 的 $2；未部署，等下一个绿的提交（或 bash scripts/auto-deploy.sh --force）" \
+           failure
 }
 
 # The deploy target when origin/main's head is NOT green (§56.3 step 3
@@ -1074,7 +1079,8 @@ notify_tcc_once_daily() { # $1=body
     _today="$(date -u +%Y-%m-%d)"
     [ "$(read_state tcc_notified_day)" = "$_today" ] && return 0
     write_state "tcc_notified_day=$_today"
-    notify "自动部署被 macOS 挡住 / auto-deploy blocked (Full Disk Access)" "$1"
+    notify "自动部署被 macOS 挡住 / auto-deploy blocked (Full Disk Access)" "$1" \
+           failure
 }
 
 # Tracked CONTENT changes (mode-only flips ignored: install.sh's own `chmod +x`
@@ -1321,7 +1327,8 @@ rollback() { # $1=PREV $2=reason $3=the sha that failed  → 0 rolled back, 1 re
         # ${_s2why} braced: bash 3.2 would swallow the first byte of the
         # following fullwidth paren into the variable name (set -u abort).
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
-               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 账本前进了或状态不明（${_s2why}）—— 回退代码可能让账本落在读不了它的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT"
+               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 账本前进了或状态不明（${_s2why}）—— 回退代码可能让账本落在读不了它的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT" \
+               failure
         restart_actd
         return 1
     fi
@@ -1350,7 +1357,8 @@ rollback() { # $1=PREV $2=reason $3=the sha that failed  → 0 rolled back, 1 re
         log "rollback REFUSED — $_why; checkout left at ${_head_now:-unknown}"
         write_rollback_state "rollback_failed" "rollback refused ($_why): $2" "${POISON[@]}"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
-               "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
+               "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT" \
+               failure
         restart_actd
         return 1
     fi
@@ -1358,7 +1366,8 @@ rollback() { # $1=PREV $2=reason $3=the sha that failed  → 0 rolled back, 1 re
         log "git reset --hard $1 FAILED — checkout left at ${_head_now:-unknown}"
         write_rollback_state "rollback_failed" "git reset --hard failed: $2" "${POISON[@]}"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
-               "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)"
+               "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)" \
+               failure
         restart_actd
         return 1
     fi
@@ -1369,12 +1378,14 @@ rollback() { # $1=PREV $2=reason $3=the sha that failed  → 0 rolled back, 1 re
         write_rollback_state "rollback_failed" "rolled back to $(short "$1") but install.sh exited $_rc: $2" \
                              "${POISON[@]}" "head=$1" "version=$(repo_version)"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
-               "已退回 $(short "$1") 但 install.sh 退出码 ${_rc}；请手动 bash install.sh ($2)"
+               "已退回 $(short "$1") 但 install.sh 退出码 ${_rc}；请手动 bash install.sh ($2)" \
+               failure
         return 1
     fi
     write_rollback_state "rolled_back" "$2" "${POISON[@]}" "head=$1" "prev=$1" "version=$(repo_version)"
     notify "自动部署已回滚 / auto-deploy rolled back to $(short "$1")" \
-           "$2 —— 已重装旧版；$(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交"
+           "$2 —— 已重装旧版；$(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交" \
+           failure
     return 0
 }
 
@@ -1466,7 +1477,8 @@ verify_running() { # $1=sha (HEAD == origin/main)
                             "detail=$_why; HEAD $(short "$1") failed CI (${_ci#failure }) — install.sh not re-run on a red sha; wait for a green commit or --force"
                 if [ "$(read_state notified_sha)" != "$1" ]; then
                     notify "自动部署未完成：HEAD 的 CI 红了 / auto-deploy: install incomplete, CI red" \
-                           "checkout 在 $(short "$1")（v${_version:-?}）但机器没跑起来（${_why}）；该 sha 的 CI 红了，不会在红 sha 上重跑 install.sh——等下一个绿提交，或 bash scripts/auto-deploy.sh --force"
+                           "checkout 在 $(short "$1")（v${_version:-?}）但机器没跑起来（${_why}）；该 sha 的 CI 红了，不会在红 sha 上重跑 install.sh——等下一个绿提交，或 bash scripts/auto-deploy.sh --force" \
+                           failure
                     write_state "notified_sha=$1"
                 fi
                 return 0 ;;
@@ -1546,7 +1558,8 @@ poison_incomplete() { # $1=sha $2=version $3=reason $4=detail
                 "reason=$3" "incomplete_sha=$1" "detail=$4"
     [ "$(read_state incomplete_notified_sha)" = "$1" ] && return 0
     notify "自动部署未完成 / auto-deploy: install incomplete" \
-           "v${2:-?} 已 checkout 但没有跑起来（$4）；该 sha 的 install.sh 重跑次数已用完（${INCOMPLETE_LIMIT}），已停止重试——请手动 bash install.sh 或 bash scripts/auto-deploy.sh --force"
+           "v${2:-?} 已 checkout 但没有跑起来（$4）；该 sha 的 install.sh 重跑次数已用完（${INCOMPLETE_LIMIT}），已停止重试——请手动 bash install.sh 或 bash scripts/auto-deploy.sh --force" \
+           failure
     write_state "incomplete_notified_sha=$1"
 }
 
@@ -1702,7 +1715,8 @@ main() {
                         "detail=CI gate: $REMOTE is not a github.com remote; set AUTODEPLOY_CI_REPO=owner/repo"
             if [ "$(read_state notified_sha)" != "$TARGET" ]; then
                 notify "自动部署无法验 CI / auto-deploy: cannot verify CI" \
-                       "origin/$BRANCH $(short "$TARGET") 待部署，但 $REMOTE 不是 github.com 远端，无法查 CI；请设 AUTODEPLOY_CI_REPO"
+                       "origin/$BRANCH $(short "$TARGET") 待部署，但 $REMOTE 不是 github.com 远端，无法查 CI；请设 AUTODEPLOY_CI_REPO" \
+                       failure
                 write_state "notified_sha=$TARGET"
             fi
             exit 0
@@ -1765,7 +1779,8 @@ main() {
                     "version=$(repo_version)" "detail=dirty tracked files: $_files"
         if [ "$(read_state notified_sha)" != "$DEPLOY" ]; then
             notify "自动部署暂停：工作树有改动 / auto-deploy refused: dirty tree" \
-                   "$(short "$DEPLOY") 待部署，但 $REPO_ROOT 有未提交改动：${_files}—— commit/stash 后自动继续"
+                   "$(short "$DEPLOY") 待部署，但 $REPO_ROOT 有未提交改动：${_files}—— commit/stash 后自动继续" \
+                   failure
             write_state "notified_sha=$DEPLOY"
         fi
         exit 0
@@ -1783,7 +1798,8 @@ main() {
                     "version=$(repo_version)" "detail=git merge --ff-only $(short "$DEPLOY") failed"
         if [ "$(read_state notified_sha)" != "$DEPLOY" ]; then
             notify "自动部署失败：无法 fast-forward / auto-deploy: cannot fast-forward" \
-                   "本地 $BRANCH 与 origin/$BRANCH 分叉；请在 $REPO_ROOT 手动处理"
+                   "本地 $BRANCH 与 origin/$BRANCH 分叉；请在 $REPO_ROOT 手动处理" \
+                   failure
             write_state "notified_sha=$DEPLOY"
         fi
         exit 0

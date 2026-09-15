@@ -63,10 +63,10 @@ _TABLE = [
     ("_sweep_attachment_dirs", housekeeping, "sweep_attachment_dirs", (123.0,), {}, True),
     ("gc_attachments", housekeeping, "gc_attachments", (), {}, True),
     ("detect_transitions", alerts, "detect_transitions", ({"a": 1}, {"b": 2}), {}, False),
-    ("_check_auth_failures", alerts, "check_auth_failures", (set(),), {}, False),
+    ("_check_auth_failures", alerts, "check_auth_failures", (set(),), {"suppressed": True}, False),
     ("_wake_grace", alerts, "wake_grace", ("cfg", 1.0, 5, 2.0), {}, False),
     ("_check_radar_liveness", alerts, "check_radar_liveness", (set(),),
-     {"now": "n", "interval": 5, "mono": 1.0, "missing_since": {}}, True),
+     {"now": "n", "interval": 5, "mono": 1.0, "missing_since": {}, "suppressed": True}, True),
 ]
 
 
