@@ -4,7 +4,8 @@
 //      + POST /api/recaps/mark copied（唯一出口）；
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
 //      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
-//   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}。
+//   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}；
+//   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchRecapSettings, postAction, postRecapMark } from "../api";
@@ -168,6 +169,24 @@ describe("RecapsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Place draft" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({
       action: "recap_slack_draft", meeting_key: KEY, channel_id: "D0ABCDEF12" }));
+  });
+
+  it("needs_review lists the reason per line so a correction note can target it", async () => {
+    await renderPage([recap({
+      quality: "needs_review",
+      problems: [{ code: "line_too_long", lang: "en", line: 1, limit: 140, over: 6 },
+                 { code: "timestamp", lang: "zh", line: null, limit: null, over: null }],
+    })]);
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect(screen.getByText(/Validator flagged this text/)).toBeTruthy();
+    expect(screen.getByText("English line 1: 6 characters over the 140-character cap")).toBeTruthy();
+    expect(screen.getByText("Chinese: contains a timestamp")).toBeTruthy();
+  });
+
+  it("a line trimmed on the way in is stated, never silently pasted", async () => {
+    await renderPage([recap({ repairs: [{ lang: "en", line: 1, over: 6 }] })]);
+    expect(screen.queryByText("Needs review")).toBeNull();                 // 修好了就是 ok
+    expect(screen.getByText("Trimmed English line 1 automatically (it was 6 characters over)")).toBeTruthy();
   });
 
   it("empty board shows the onboarding line", async () => {

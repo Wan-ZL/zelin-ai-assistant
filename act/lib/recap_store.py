@@ -22,7 +22,9 @@ directory: :func:`attach` adds the add-only top-level ``recaps[]`` to
 dashboard.json (history stripped, newest first, capped) — the web 会议纪要
 page's data. The one thing actd writes lives OUTSIDE it: the §63.8 generate
 request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
-projected per row as ``generate_request``.
+projected per row as ``generate_request``. The §63.3 追记 ``problems`` /
+``repairs`` rows ride on the recap file itself (act/recap.py writes them with
+the lines) and reach the wire through :func:`_row` like every other field.
 
 Retention: recaps older than `recap.retention_days` (default 90) are pruned
 on every cron round (防腐 #4: every new file family is born with a cap).
@@ -186,6 +188,8 @@ def new_record(session: recap_sessions.Session, key: str, status: str) -> dict:
         "status": status, "version": 0, "partial": False, "generated_at": None,
         "en": None, "zh": None, "quality": None, "transcript_words": 0,
         "note": None, "history": [], "slack_draft": None,
+        # §63.3 追记（add-only）：needs_review 的结构化原因与落地前的长度修剪台账
+        "problems": [], "repairs": [],
     }
 
 

@@ -88,6 +88,17 @@ class ValidateTestCase(unittest.TestCase):
                 rec["en"][idx] = line
                 self.assertTrue(any(name in p for p in rt.validate(rec)), rt.validate(rec))
 
+    def test_validate_is_exactly_the_text_column_of_validate_detail(self):
+        # §63.3 追记：结构化发现是同一道闸的另一列——validate() 的字节永不改（重试 prompt 引它）
+        rec = _clean()
+        rec["en"][0] = "Open: " + "x" * 150
+        rec["zh"][0] = "定了：他提到训练要改"
+        rec["en"][4] = "Open: see https://example.com"
+        self.assertEqual(rt.validate(rec), [f["text"] for f in rt.validate_detail(rec)])
+        short = {"en": ["a"] * 4, "zh": ["b"] * 5}
+        self.assertEqual(rt.validate(short), [f["text"] for f in rt.validate_detail(short)])
+        self.assertEqual(rt.validate_detail(short)[0]["code"], "line_count")
+
     def test_apostrophes_and_chinese_punctuation_are_fine(self):
         rec = _clean()
         rec["en"][0] = "Decided: the team's run moves to Monday's mix"

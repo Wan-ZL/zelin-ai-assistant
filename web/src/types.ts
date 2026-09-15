@@ -436,6 +436,35 @@ export interface RecapRow {
   } | null;
   /** §63.8 「重新生成 / 现在生成」回执（add-only；没请求过 / 过了 TTL = null；老 daemon 无此键） */
   generate_request?: RecapGenerateRequest | null;
+  /** §63.3 追记 校验未通过的结构化原因（add-only；clean = []；老 daemon 无此键）——永不含正文 */
+  problems?: RecapProblem[] | null;
+  /** §63.3 追记 落地前的确定性长度修剪台账（add-only；没修过 = []） */
+  repairs?: RecapRepair[] | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.3 追记 校验发现（`recap_text.validate_detail` 的 wire 形逐字镜像；issue #298）：
+ * `code` ∈ line_count | label_mismatch | line_too_long | reported_speech | timestamp |
+ * link | quotes | markup | emoji | mention（add-only；未知 code 页面退回 `text`）；
+ * 整语言级的禁项（时间戳 / 链接 / 引号 / markdown / emoji / @）没有行号，`line` = null；
+ * `limit` / `over` 只有 line_too_long 与 line_count 填。`text` = 喂回模型的那句英文原文。
+ */
+export interface RecapProblem {
+  code: string;
+  lang?: string | null;
+  line?: number | null;
+  limit?: number | null;
+  over?: number | null;
+  text?: string | null;
+  [key: string]: unknown;
+}
+
+/** §63.3 追记 一行被自动修剪的回执（永远展示——悄悄剪字就是对粘出去的正文说谎） */
+export interface RecapRepair {
+  lang: string;
+  line: number;
+  over: number;
   [key: string]: unknown;
 }
 
