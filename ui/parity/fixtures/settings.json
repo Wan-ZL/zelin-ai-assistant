@@ -283,6 +283,26 @@
             "zh": "08:00"
           },
           "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "When something you captured is merged into an existing card (no new card filed), a green notice appears atop the proposals lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its “Folded ×N” chip. Repeat merges into the same card collapse into one line (×N).",
+            "zh": "你自己捕获的一句话被并进已有卡（没有建新卡）时，提案列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。"
+          },
+          "key": "fold_receipt_notices",
+          "kind": "bool",
+          "label": {
+            "en": "Silent-merge receipts",
+            "zh": "静默并入回执"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
         }
       ],
       "help": {

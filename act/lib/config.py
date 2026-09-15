@@ -251,6 +251,10 @@ class Config:
     notify_proposals: bool = True       # 新卡待审批 / 批量 / 回锅
     notify_needs_input: bool = True     # 任务停下来了，等人一句话
     notify_failures: bool = True        # 需重新登录 / 雷达停摆 / 派发失败（穿透安静时段）
+    # §44.6 追记（issue #308）：提案列顶那排绿色「刚才的输入已并入 …」的总开关。
+    # 唯一读者 = dashboard._fold_receipts（关掉 = 顶层键投空列，键本身恒在）。
+    # 出厂 True = 本改动前的行为（自动通道的回执已由通道闸挡在写入端）。
+    fold_receipt_notices: bool = True
     # §68.7 终端应用 (auto|ghostty|terminal|iterm2)。server/terminal_launch 是唯一读者
     # （web 「在终端打开（接管会话）/ 开发会话 / 卸载」都经它 open -a）；键收进白名单以便记账。
     terminal_app: str = DEFAULT_TERMINAL_APP
@@ -1245,6 +1249,7 @@ _OVERRIDE_FIELDS: dict = {
     "notify_proposals": _coerce_bool,
     "notify_needs_input": _coerce_bool,
     "notify_failures": _coerce_bool,
+    "fold_receipt_notices": _coerce_bool,   # §44.6 追记（issue #308）
     "terminal_app": _coerce_terminal_app,
     "weekly_digest_enabled": _coerce_bool,
     # §17 (D19): digest cadence — the Settings UI writes this flat key

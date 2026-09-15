@@ -299,6 +299,24 @@ class ConfigMirrorTestCase(unittest.TestCase):
                 else:
                     self.assertEqual(field["default"], expected)
 
+    def test_fold_receipt_switch_mirrors_the_dashboard_reader(self):
+        """§44.6 追记（issue #308）：并入回执开关住在「通知」区，键 / 默认值与
+        act/lib/config.Config 逐字镜像，文案说明它只管用户自己的输入。"""
+        by_key = {f["key"]: f for f in self._fields()}
+        field = by_key["fold_receipt_notices"]
+        self.assertEqual(field["kind"], "bool")
+        self.assertIs(field["default"], True)
+        self.assertIs(act_config.Config().fold_receipt_notices, True)
+        self.assertIn("fold_receipt_notices", act_config._OVERRIDE_FIELDS)
+        self.assertEqual(field["label"], {"zh": "静默并入回执",
+                                          "en": "Silent-merge receipts"})
+        self.assertIn("雷达", field["help"]["zh"])
+        self.assertIn("radar", field["help"]["en"])
+        section = next(sec for sec in catalog.SECTIONS
+                       if any(f["key"] == "fold_receipt_notices"
+                              for f in sec["fields"]))
+        self.assertEqual(section["id"], "notifications")
+
     def test_enum_choices_mirror_config_vocabularies(self):
         by_key = {f["key"]: f for f in self._fields()}
         self.assertEqual(tuple(by_key["digest_frequency"]["choices"]), act_config.DIGEST_FREQUENCIES)

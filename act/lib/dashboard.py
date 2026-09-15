@@ -783,15 +783,22 @@ def _steers_view(req: Requirement) -> list:
 # --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
-def _fold_receipts() -> list[dict]:
+def _fold_receipts(cfg: Optional[config.Config] = None) -> list[dict]:
     """§44.6 并入回执投影（never raises）。
 
     回执文件只存 channel + 目标卡 id（隐私红线：dashboard 整包上云，被并入
     内容原文不得出机）——投影文案所需的主卡显示名在这里由 registry 现查
     （``title`` = §37 display_title 链，本就已随卡片行进 dashboard，不是
     新增外泄面）；目标卡已消失（归档/回收）则留空，App 端只报 R-xxx。
+    ``count``（§44.6 追记，issue #308：同一张卡在 TTL 窗口内的多次并入合成
+    一行）由 :func:`act.lib.fold_receipts.load_recent` 带过来，这里原样转发。
+
+    ``cfg.fold_receipt_notices`` 关掉 → 整列为空（顶层键本身恒在，add-only
+    契约不变）。``cfg`` 省略 = 按开着投（0 参调用者与既有判例不变）。
     """
     from act.lib import fold_receipts, registry
+    if cfg is not None and not getattr(cfg, "fold_receipt_notices", True):
+        return []
     out: list[dict] = []
     for e in fold_receipts.load_recent():
         title = ""
@@ -1589,9 +1596,11 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),
         # §44.6 静默并入回执 — add-only 顶层键（decodeIfPresent 向后兼容）：
-        # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
-        # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
-        "fold_receipts": _fold_receipts(),
+        # 用户通道（quick / quick_capture）的 fold 发生时留在
+        # state/fold_receipts/ 的短暂回执，App 端渲染为一行可消失的
+        # 「已并入 R-xxx」提示；自动通道不出回执、设置里可整体关掉
+        # （§44.6 追记，issue #308）。
+        "fold_receipts": _fold_receipts(cfg),
         # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
         # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
         "radar_sources": _radar_sources(cfg),
