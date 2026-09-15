@@ -1,8 +1,8 @@
 """inbox — (a) drain ``state/inbox/*.json`` decision files, one terminal
 disposition per file (CONTRACT §5.4 ack ledger / §10 inbox action set / §22
 session import / §29 feedback / §33 boundary doctrine / §34 direct-run capture /
-§34bis preset capture / §37 set_title / §38 split_note / §53.5 actor wall /
-T-28 ingress 落款).
+§34bis preset capture / §37 set_title / §38 split_note / §44.6 fold 回执 /
+§53.5 actor wall / T-28 ingress 落款).
 
 Robust: a poison file (bad JSON, non-object, wrong field types, a guard
 regression deep in the apply path) must end terminally for THAT file only —
@@ -560,8 +560,13 @@ def _capture_proposal(d: Daemon, req: Requirement, t: str, images, channel: str)
         # §44.6：capture 静默并入必须留看板回执——卡片转圈后"消失"而文本
         # 不知去向，是 8-07 事故的另一半。best-effort，绝不打断 fold。
         # 原话 t 只进内容键散列，不落盘（隐私红线：dashboard 整包上云）。
+        # §44.6 追记（issue #308）：通道传**真实 ingress**（T-28 的
+        # ingress_channel，与本卡 sources[0].channel 同一个值），不写死
+        # quick_capture——agent/remote 投递的 capture 是 PROPOSED 级，
+        # 用户一个字都没敲，「刚才的输入已并入」对他不成立；闸住在
+        # fold_receipts.record 里，这里只负责报真话。
         from act.lib import fold_receipts
-        fold_receipts.record(saved.id, "quick_capture", t)
+        fold_receipts.record(saved.id, channel, t)
     if saved.status == State.DETECTED.value:
         saved.set_status(State.RAISING)
         d.save(saved)

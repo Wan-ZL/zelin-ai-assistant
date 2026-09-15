@@ -7,6 +7,10 @@
 被 syncd 整包上云同步，capture 原话（可能含密钥/本机路径）不得出机。投影所需
 的主卡显示名由 dashboard 投影时从 registry 现查补齐。
 
+§44.6 追记（issue #308）：回执只属于**用户自己投进来的**通道（policy 的 HAND 类
+= quick / quick_capture）——雷达 / 每日整理的自动并入一条不写、旧盘面上的也不投影；
+同一张卡在 TTL 窗口内的多次并入合成一行带 count；设置里可整体关掉。
+
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no LLM.
 """
 import json
@@ -66,8 +70,8 @@ class FoldReceiptsLedgerTestCase(unittest.TestCase):
         # 内容键去重：radar failed-note 重试队列对同一条目反复 re-fold ——
         # TTL 窗口内同键不重发、id 不变（Swift seen-set 不会重复弹提示）。
         now = time.time()
-        p1 = fold_receipts.record("R-001", "radar", "同一条目", now=now)
-        p2 = fold_receipts.record("R-001", "radar", "同一条目", now=now + 5)
+        p1 = fold_receipts.record("R-001", "quick", "同一条目", now=now)
+        p2 = fold_receipts.record("R-001", "quick", "同一条目", now=now + 5)
         self.assertEqual(p1, p2)
         got = fold_receipts.load_recent(now=now + 5)
         self.assertEqual(len(got), 1)
@@ -75,31 +79,37 @@ class FoldReceiptsLedgerTestCase(unittest.TestCase):
 
     def test_different_content_or_target_gets_own_receipt(self):
         now = time.time()
-        fold_receipts.record("R-001", "radar", "条目甲", now=now)
-        fold_receipts.record("R-001", "radar", "条目乙", now=now)
-        fold_receipts.record("R-002", "radar", "条目甲", now=now)
-        self.assertEqual(len(fold_receipts.load_recent(now=now)), 3)
+        fold_receipts.record("R-001", "quick", "条目甲", now=now)
+        fold_receipts.record("R-001", "quick", "条目乙", now=now)
+        fold_receipts.record("R-002", "quick", "条目甲", now=now)
+        # 台账层三条（内容键各不相同）……
+        self.assertEqual(
+            len(list(config.FOLD_RECEIPTS_DIR.glob("*.json"))), 3)
+        # ……投影层两行（R-001 的两条合成一行，§44.6 追记 issue #308）
+        rows = fold_receipts.load_recent(now=now)
+        self.assertEqual({(r["req"], r["count"]) for r in rows},
+                         {("R-001", 2), ("R-002", 1)})
 
     def test_same_content_after_ttl_expiry_records_again(self):
         old = time.time() - fold_receipts.TTL_S - 5
-        p1 = fold_receipts.record("R-001", "radar", "同一条目", now=old)
+        p1 = fold_receipts.record("R-001", "quick", "同一条目", now=old)
         import os
         os.utime(p1, (old, old))    # 让清扫看见真实的过期 mtime
-        p2 = fold_receipts.record("R-001", "radar", "同一条目")
+        p2 = fold_receipts.record("R-001", "quick", "同一条目")
         self.assertIsNotNone(p2)
         got = fold_receipts.load_recent()
         self.assertEqual(len(got), 1)   # 旧的被扫、新的可见
 
     def test_expired_receipts_leave_projection_and_get_swept(self):
         old = time.time() - fold_receipts.TTL_S - 5
-        fold_receipts.record("R-001", "radar", "x", now=old)
+        fold_receipts.record("R-001", "quick", "x", now=old)
         # 过期条目不进投影
         self.assertEqual(fold_receipts.load_recent(), [])
         # 下一次 record 顺手清扫过期兄弟（mtime 是真实写入时刻，先补旧）
         for p in config.FOLD_RECEIPTS_DIR.glob("*.json"):
             import os
             os.utime(p, (old, old))
-        fold_receipts.record("R-002", "radar", "y")
+        fold_receipts.record("R-002", "quick", "y")
         stems = {json.loads(p.read_text(encoding="utf-8"))["req"]
                  for p in config.FOLD_RECEIPTS_DIR.glob("*.json")}
         self.assertEqual(stems, {"R-002"})
@@ -107,7 +117,7 @@ class FoldReceiptsLedgerTestCase(unittest.TestCase):
     def test_projection_caps_and_sorts_newest_first(self):
         now = time.time()
         for i in range(fold_receipts.PROJECTION_CAP + 3):
-            fold_receipts.record(f"R-{i:03d}", "radar", "x", now=now + i)
+            fold_receipts.record(f"R-{i:03d}", "quick", "x", now=now + i)
         got = fold_receipts.load_recent(now=now + 20)
         self.assertEqual(len(got), fold_receipts.PROJECTION_CAP)
         ats = [e["at"] for e in got]
@@ -128,7 +138,7 @@ class FoldReceiptsLedgerTestCase(unittest.TestCase):
         # 但多余字段被忽略——原文即便躺在旧盘面上也不再出机。
         config.FOLD_RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
         legacy = {"id": "legacy1", "req": "R-009", "title": "旧标题",
-                  "channel": "radar", "text": "旧原文摘要",
+                  "channel": "quick_capture", "text": "旧原文摘要",
                   "at": int(time.time())}
         (config.FOLD_RECEIPTS_DIR / "legacy1.json").write_text(
             json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
@@ -151,19 +161,25 @@ class CaptureFoldReceiptTestCase(unittest.TestCase):
     def setUp(self):
         _clear_dirs()
 
-    def _write_capture(self, text):
+    def _write_capture(self, text, via=None):
         payload = {"action": "capture", "text": text,
                    "ts": "2026-08-07T00:00:00Z"}
+        if via is not None:
+            payload["via"] = via          # T-28 ingress 落款（缺 via = Mac 文件）
         (config.INBOX_DIR / f"capture-{uuid.uuid4()}.json").write_text(
             json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    def test_plain_capture_fold_emits_board_receipt(self):
-        text = "把周报数据整理成一页摘要发出去"
+    def _seed_card(self, text):
         existing = Requirement(id=registry.next_id(), title=text,
                                status=State.CARD_SENT.value,
                                sources=[{"who": "zelin", "channel": "quick_capture",
                                          "date": "2026-08-06", "quote": text}])
         registry.save(existing)
+        return existing
+
+    def test_plain_capture_fold_emits_board_receipt(self):
+        text = "把周报数据整理成一页摘要发出去"
+        existing = self._seed_card(text)
 
         self._write_capture(text)
         actd.process_inbox()
@@ -185,11 +201,44 @@ class CaptureFoldReceiptTestCase(unittest.TestCase):
 
     def test_receipt_title_empty_when_target_card_gone(self):
         # 目标卡投影前消失（归档/回收）→ title 空串，App 端只报 R-xxx
-        fold_receipts.record("R-404", "radar", "目标卡不在了")
+        fold_receipts.record("R-404", "quick", "目标卡不在了")
         dash = dashboard.build_dashboard(reqs=[], agents=[], cfg=config.Config(),
                                          archived=[])
         self.assertEqual(len(dash["fold_receipts"]), 1)
         self.assertEqual(dash["fold_receipts"][0]["title"], "")
+
+    def test_web_ingress_capture_fold_still_emits_receipt(self):
+        # via:"web" = 本机看板，同为 owner ingress → channel 仍是 quick_capture
+        text = "看板里敲进去的一句撞上了已有卡"
+        existing = self._seed_card(text)
+        self._write_capture(text, via="web")
+        actd.process_inbox()
+        got = fold_receipts.load_recent()
+        self.assertEqual([(e["req"], e["channel"]) for e in got],
+                         [(existing.id, "quick_capture")])
+
+    def test_non_owner_ingress_capture_fold_emits_no_receipt(self):
+        # §44.6 追记（issue #308）：agent/remote 投递的 capture 落 PROPOSED 级
+        # 捕获通道（policy.CHANNEL_CLASS）——用户一个字都没敲，「刚才的输入已
+        # 并入」对他不成立。回执通道必须是真实 ingress，不是写死的 quick_capture。
+        for via, channel in (("agent", "agent_capture"),
+                             ("remote", "remote_capture"),
+                             (17, "remote_capture")):      # 畸形 via fail-closed
+            with self.subTest(via=via):
+                _clear_dirs()
+                text = f"{via} 投进来的一句撞上了已有卡"
+                existing = self._seed_card(text)
+                self._write_capture(text, via=via)
+                actd.process_inbox()
+                # 静默并入照旧发生（没建新卡），出身章盖的就是这个通道……
+                folded = [r for r in registry.load_all() if r.title == text]
+                self.assertEqual([r.id for r in folded], [existing.id])
+                self.assertIn(channel,
+                              [s.get("channel") for s in (folded[0].sources or [])])
+                # ……但看板上一条回执都没有，目录里也不留文件
+                self.assertEqual(fold_receipts.load_recent(), [])
+                self.assertEqual(
+                    list(config.FOLD_RECEIPTS_DIR.glob("*.json")), [])
 
     def test_plain_capture_new_card_emits_no_receipt(self):
         self._write_capture("一句全新的话不产生回执")
@@ -215,42 +264,107 @@ class CaptureFoldReceiptTestCase(unittest.TestCase):
 
 
 class RadarFoldReceiptTestCase(unittest.TestCase):
-    """radar 通道的 fold choke point（_fold_into）也留回执。"""
+    """radar 通道的 fold choke point（_fold_into）照常调 record，但不出回执。
+
+    §44.6 追记（issue #308）：「刚才的输入」指用户刚敲进去的 capture——雷达并入
+    的是它自己扫到的内容，用户什么都没做，这条提示对使用者没有可执行的意义。
+    可见面仍在：目标卡的 §38 折叠记录 + §44.5「已并入×N」章。
+    """
 
     def setUp(self):
         _clear_dirs()
 
-    def test_fold_into_emits_receipt(self):
+    def _target(self):
         target = Requirement(id=registry.next_id(), title="修好周报管线",
                              status=State.CARD_SENT.value,
                              sources=[{"who": "zelin", "channel": "meeting",
                                        "date": "2026-08-06", "quote": "修好周报管线"}])
         registry.save(target)
+        return target
+
+    def test_fold_into_emits_no_receipt_but_keeps_the_fold_note(self):
+        target = self._target()
         child = Requirement(id="R-999", title="周报管线又挂了",
                             sources=[{"who": "zelin", "channel": "slack",
                                       "date": "2026-08-07", "quote": "又挂了"}])
         quick_capture._fold_into(target, child, "周报管线又挂了")
-        got = fold_receipts.load_recent()
-        self.assertEqual(len(got), 1)
-        self.assertEqual(got[0]["req"], target.id)
-        self.assertEqual(got[0]["channel"], "radar")
-        # 隐私红线：note 原文不落盘、不进投影
-        raw = (config.FOLD_RECEIPTS_DIR / (got[0]["id"] + ".json")).read_text(
-            encoding="utf-8")
-        self.assertNotIn("周报管线又挂了", raw)
+        self.assertEqual(fold_receipts.load_recent(), [])
+        self.assertEqual(list(config.FOLD_RECEIPTS_DIR.glob("*.json")), [])
+        # 并入本身照常发生（回执静默不等于并入静默）
+        folded = registry.load(target.id)
+        self.assertIn("[radar] 周报管线又挂了", folded.notes or "")
 
-    def test_radar_retry_refold_emits_one_receipt(self):
-        # failed-note 重试队列对同一条目反复 re-fold（§38 note 去重挡住备注，
-        # 回执按内容键去重挡住假「刚刚并入」——P2 review）
-        target = Requirement(id=registry.next_id(), title="修好周报管线",
-                             status=State.CARD_SENT.value,
-                             sources=[{"who": "zelin", "channel": "meeting",
-                                       "date": "2026-08-06", "quote": "修好周报管线"}])
-        registry.save(target)
-        child = Requirement(id="R-999", title="周报管线又挂了", sources=[])
-        quick_capture._fold_into(target, child, "周报管线又挂了")
-        quick_capture._fold_into(target, child, "周报管线又挂了")
+    def test_autonomous_channels_write_nothing_at_all(self):
+        # 写入端闸：radar / 每日整理 / 会议 / slack 一律 None，目录里不留文件
+        for channel in ("radar", "daily_loop", "meeting", "slack", "", None):
+            with self.subTest(channel=channel):
+                self.assertIsNone(fold_receipts.record("R-001", channel, "x"))
+        self.assertEqual(list(config.FOLD_RECEIPTS_DIR.glob("*.json")), [])
+
+    def test_legacy_radar_file_on_disk_is_not_projected(self):
+        # 升级前的 actd 已经写下的自动通道回执：读时再滤一次，不该升级后还弹
+        config.FOLD_RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        (config.FOLD_RECEIPTS_DIR / "old-radar.json").write_text(
+            json.dumps({"id": "old-radar", "req": "R-008", "channel": "radar",
+                        "at": int(time.time())}), encoding="utf-8")
+        self.assertEqual(fold_receipts.load_recent(), [])
+
+
+class FoldReceiptGroupingTestCase(unittest.TestCase):
+    """§44.6 追记（issue #308）：同一张卡的多次并入合成一行 + count。"""
+
+    def setUp(self):
+        _clear_dirs()
+
+    def test_two_folds_into_one_card_make_one_row_with_count_two(self):
+        now = time.time()
+        fold_receipts.record("R-008", "quick", "第一条", now=now)
+        fold_receipts.record("R-008", "quick", "第二条", now=now + 7)
+        got = fold_receipts.load_recent(now=now + 7)
+        self.assertEqual(len(got), 1)
+        self.assertEqual((got[0]["req"], got[0]["count"]), ("R-008", 2))
+        # 簇代表 = 最新的那条（id 仍是一条真实存在的回执文件名）
+        self.assertEqual(got[0]["at"], int(now + 7))
+        self.assertTrue(
+            (config.FOLD_RECEIPTS_DIR / (got[0]["id"] + ".json")).exists())
+
+    def test_single_fold_counts_one(self):
+        now = time.time()
+        fold_receipts.record("R-008", "quick", "只有一条", now=now)
+        self.assertEqual(fold_receipts.load_recent(now=now)[0]["count"], 1)
+
+    def test_projection_cap_counts_groups_not_entries(self):
+        now = time.time()
+        for i in range(fold_receipts.PROJECTION_CAP + 3):
+            fold_receipts.record(f"R-{i:03d}", "quick", "甲", now=now + i)
+            fold_receipts.record(f"R-{i:03d}", "quick", "乙", now=now + i)
+        got = fold_receipts.load_recent(now=now + 30)
+        self.assertEqual(len(got), fold_receipts.PROJECTION_CAP)
+        self.assertEqual({e["count"] for e in got}, {2})
+
+
+class FoldReceiptSwitchTestCase(unittest.TestCase):
+    """§44.6 追记（issue #308）：设置 · 通知「静默并入回执」整体关掉。"""
+
+    def setUp(self):
+        _clear_dirs()
+
+    def test_toggle_off_empties_the_projection_but_keeps_the_key(self):
+        fold_receipts.record("R-007", "quick", "并进来的一句话")
+        cfg = config.Config()
+        self.assertEqual(len(dashboard._fold_receipts(cfg)), 1)
+        cfg.fold_receipt_notices = False
+        self.assertEqual(dashboard._fold_receipts(cfg), [])
+        dash = dashboard.build_dashboard(reqs=[], agents=[], cfg=cfg,
+                                         archived=[])
+        self.assertEqual(dash["fold_receipts"], [])       # 键恒在、列为空
+        # 台账本身不受影响（开关是投影面的，不是写入端的）
         self.assertEqual(len(fold_receipts.load_recent()), 1)
+
+    def test_default_is_on_and_no_cfg_means_on(self):
+        self.assertTrue(config.Config().fold_receipt_notices)
+        fold_receipts.record("R-007", "quick", "并进来的一句话")
+        self.assertEqual(len(dashboard._fold_receipts()), 1)
 
 
 class SelfDMFoldReceiptTestCase(unittest.TestCase):

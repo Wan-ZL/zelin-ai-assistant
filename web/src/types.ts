@@ -397,6 +397,8 @@ export interface FoldReceipt {
   title: string;
   channel: string;
   at: number;
+  /** §44.6 追记（#308）：同一张卡在 TTL 窗口内的并入次数（add-only；老 server 缺席 = 1，不渲染 ×N） */
+  count?: number;
   [key: string]: unknown;
 }
 

@@ -145,10 +145,12 @@ class ExecuteTestCase(unittest.TestCase):
         """TLA+ 反例（docs/design/SilentMerge.tla, FixEnabled=FALSE）的判例：
         actd 死在 save(primary) 之后、trash(secondary) 之前 -> job 文件仍是
         judged -> 重启重跑 execute。计数绝不能翻倍，trash 半程要补完。"""
+        # 副卡出身 = 手打（§44.6 追记 issue #308：回执只对用户通道出，本条钉的
+        # 是 crash-retry 的幂等，所以副卡必须是会出回执的那一类）
         primary = _seed("R-001", DUP_A, sources=[
             {"who": "a", "channel": "slack", "date": "2026-07-16", "quote": "x"}])
         secondary = _seed("R-002", DUP_B, sources=[
-            {"who": "b", "channel": "gmail", "date": "2026-07-17", "quote": "y"}])
+            {"who": "b", "channel": "quick", "date": "2026-07-17", "quote": "y"}])
         # 模拟 crash：第一跑在 trash 落盘前死掉（save(primary) 已落）
         real_trash = registry.trash
         def dying_trash(req, reason):
@@ -179,7 +181,7 @@ class ExecuteTestCase(unittest.TestCase):
                     if e.get("req") == "R-001"]
         self.assertEqual(len(receipts), 1)
         # 同键重放（record 直接重放 == retry 分支再进一次）不产生第二条
-        fold_receipts.record("R-001", "radar",
+        fold_receipts.record("R-001", "quick",
                              "静默并入 R-002「R-002」：补充了预算数字")
         receipts = [e for e in fold_receipts.load_recent()
                     if e.get("req") == "R-001"]
@@ -215,8 +217,8 @@ class ExecuteTestCase(unittest.TestCase):
         会落空——fold 计数与回执都不许翻倍。"""
         primary = _seed("R-001", DUP_A, sources=[
             {"who": "a", "channel": "slack", "date": "2026-07-16", "quote": "x"}])
-        secondary = _seed("R-002", DUP_B, sources=[
-            {"who": "b", "channel": "gmail", "date": "2026-07-17", "quote": "y"}])
+        secondary = _seed("R-002", DUP_B, sources=[      # 手打出身 → 会出回执
+            {"who": "b", "channel": "quick", "date": "2026-07-17", "quote": "y"}])
         self._crash_mid_execute(primary, secondary)
         # 重启 pass 早段改写了副卡标题（analyze/用户改名的最小模拟）
         s_mid = registry.load("R-002")
@@ -331,7 +333,8 @@ class ExecuteTestCase(unittest.TestCase):
         self._isolate_analytics()
         # 第一跑死在 log_event（trash 已落盘）——ok 事件与回执都没来得及留
         primary = _seed("R-001", DUP_A)
-        secondary = _seed("R-002", DUP_B)
+        secondary = _seed("R-002", DUP_B, sources=[      # 手打出身 → 会出回执
+            {"who": "b", "channel": "quick", "date": "2026-07-17", "quote": "y"}])
         real_log = analytics.log_event
         def dying_log(event, **fields):
             raise RuntimeError("simulated crash after trash, before log_event")

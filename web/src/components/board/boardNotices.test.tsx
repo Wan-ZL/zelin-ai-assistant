@@ -63,6 +63,24 @@ describe("FoldReceiptNotices（§44.6）", () => {
     expect(container.innerHTML).toBe("");
   });
 
+  // §44.6 追记（#308）：server 把同一张卡的多次并入合成一行 + count
+  it("count > 1 → 第四个节点「 ×N」；count 1 / 缺席 → 三节点不变", async () => {
+    await load(board({ fold_receipts: [{ ...receipt, count: 4 }] }));
+    const { container } = wrap(<FoldReceiptNotices />);
+    expect(container.querySelector(".fold-receipt-count")?.textContent).toBe(" ×4");
+    expect(container.querySelectorAll(".fold-receipt-text > span")).toHaveLength(4);
+    expect(screen.getByText("（没有建新卡）")).toBeTruthy();   // 前三节点逐字不变
+    cleanup();
+    await load(board({ fold_receipts: [{ ...receipt, count: 1 }] }));
+    const one = wrap(<FoldReceiptNotices />);
+    expect(one.container.querySelectorAll(".fold-receipt-text > span")).toHaveLength(3);
+    expect(one.container.querySelector(".fold-receipt-count")).toBeNull();
+    cleanup();
+    await load(board({ fold_receipts: [receipt] }));   // 老 server：没有这个键
+    const none = wrap(<FoldReceiptNotices />);
+    expect(none.container.querySelectorAll(".fold-receipt-text > span")).toHaveLength(3);
+  });
+
   it("× 关掉 → sessionStorage 记 id，重挂不再弹", async () => {
     await load(board({ fold_receipts: [receipt] }));
     wrap(<FoldReceiptNotices />);

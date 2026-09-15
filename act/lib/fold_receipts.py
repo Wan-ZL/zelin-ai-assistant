@@ -26,6 +26,17 @@ radar cron 与 actd 都可能是 fold 的执行者）：
 
 [run] 通道（capture mode:"run"）与本台账无关：§34 修订后它彻底不做判重并入，
 一律新卡直接开跑——新卡出现在运行中列本身就是回执。
+
+**§44.6 追记（issue #308）：回执只属于用户自己投进来的东西。**
+
+- **用户通道闸**：`record` 只对 `policy.CHANNEL_CLASS` 判为 HAND 的通道
+  （quick / quick_capture）落回执；radar / daily_loop 这类自动通道的并入
+  一条不写（它们的可见面 = 目标卡的 §38 折叠记录 + §44.5「已并入×N」章 +
+  §70 每日整理横幅）。词表不另立第二张表——单源就是 policy 那张。
+  `load_recent` 读时再滤一次，旧 actd 已经落盘的自动通道回执也不投影。
+- **按目标卡合簇**：同一张卡在 TTL 窗口内被并入多次只出一行，`count` =
+  簇内条目数（add-only 字段），`id`/`at` 取簇内最新的那条；`PROJECTION_CAP`
+  自此数的是簇不是条目。
 """
 from __future__ import annotations
 
@@ -59,6 +70,22 @@ def _content_key(req_id: str, channel: str, note: str) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:32]
 
 
+def _is_user_channel(channel: object) -> bool:
+    """这条并入是**用户自己投进来的东西**被折走吗？（§44.6 追记，issue #308）
+
+    判据单源 = :data:`act.lib.policy.CHANNEL_CLASS` 的 HAND 类（quick /
+    quick_capture）——不另立第二张白名单表（防腐十条第 9 条）。表里没有的
+    通道（radar / daily_loop / meeting / slack …）一律 fail-closed 落
+    EXTERNAL，即「不是用户刚才敲的」，不出回执。policy 出问题也不打断
+    fold：判不了就当不是用户通道（宪法 11，回执是尽力而为的观测面）。
+    """
+    try:
+        from act.lib import policy
+        return policy.channel_class(channel) == policy.HAND
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def record(req_id: str, channel: str, note: str = "",
            now: Optional[float] = None) -> Optional[Path]:
     """落一条并入回执（原子写 .tmp→rename + 过期清扫 + 内容键去重）。绝不 raise。
@@ -67,9 +94,15 @@ def record(req_id: str, channel: str, note: str = "",
     （quick_capture / quick / radar）；``note`` = 被并入内容——**只用于
     内容键散列，永不落盘**（隐私红线：dashboard 会整包上云）。
 
+    ``channel`` 不是用户通道（:func:`_is_user_channel`）→ 直接 None：不建
+    目录、不写文件、不清扫。所有 fold 执行点照旧无条件调本函数，闸只有
+    这一处（§44.6 追记，issue #308）。
+
     TTL 窗口内同键已有回执 → 返回既有文件、不重写（不刷新 ``at``，Swift
     seen-set 的 id 不变 → 不重复弹提示）。
     """
+    if not _is_user_channel(channel):
+        return None
     try:
         qdir = _dir()
         qdir.mkdir(parents=True, exist_ok=True)
@@ -105,20 +138,43 @@ def _write_entry(qdir: Path, rid: str, entry: dict) -> None:
 
 
 def load_recent(now: Optional[float] = None) -> list[dict]:
-    """TTL 内的回执，按 ``at`` 降序、cap :data:`PROJECTION_CAP`。绝不 raise。
+    """TTL 内的回执，按目标卡合簇后按 ``at`` 降序、cap :data:`PROJECTION_CAP`
+    **簇**。绝不 raise。
 
     坏文件/坏形状直接跳过（dashboard 投影的"损坏条目跳过"既有约定）。旧格式
     文件多出的 ``title``/``text`` 字段一律忽略（向后兼容 + 隐私红线：原文
-    即便躺在旧盘面上也不再进投影）。
+    即便躺在旧盘面上也不再进投影）。非用户通道的条目也在这里滤掉——旧 actd
+    落盘的 radar/daily_loop 回执不该在升级后还弹（§44.6 追记，issue #308）。
     """
     cutoff = (now if now is not None else time.time()) - TTL_S
     try:
         paths = list(_dir().glob("*.json"))
     except OSError:
         return []
-    out = [row for row in (_recent_row(p, cutoff) for p in paths) if row is not None]
-    out.sort(key=lambda e: e["at"], reverse=True)
+    rows = [row for row in (_recent_row(p, cutoff) for p in paths)
+            if row is not None and _is_user_channel(row["channel"])]
+    out = _group_by_target(rows)
+    out.sort(key=lambda e: (e["at"], e["id"]), reverse=True)
     return out[:PROJECTION_CAP]
+
+
+def _group_by_target(rows: list) -> list:
+    """按目标卡合簇（§44.6 追记，issue #308）：同一张卡在 TTL 窗口内被并入
+    多次只出一行——「已并入 P-008」平铺四条是 issue #308 的第二宗罪。
+
+    簇代表 = 簇内最新的那条（``id``/``at``/``channel`` 跟着它走，前端 seen-set
+    的键因此仍是一条真实存在的回执 id）；add-only ``count`` = 簇内条目数。
+    先按 ``(at, id)`` 排序再折叠，结果与 glob 的目录序无关（确定性）。
+    """
+    groups: dict = {}
+    for row in sorted(rows, key=lambda e: (e["at"], e["id"])):
+        cur = groups.get(row["req"])
+        if cur is None:
+            groups[row["req"]] = dict(row, count=1)
+        else:
+            cur.update(id=row["id"], at=row["at"], channel=row["channel"],
+                       count=cur["count"] + 1)
+    return list(groups.values())
 
 
 def _read_entry(p: Path) -> Optional[dict]:

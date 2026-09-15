@@ -476,10 +476,30 @@ def _trashed_by_this_merge(secondary: registry.Requirement, my_reason: str) -> b
             and str(secondary.trash_reason or "") == my_reason)
 
 
-def _record_receipt(primary_id: str, applied: str) -> None:
-    """§44.6 看板回执（record 自带 TTL 同键去重，重放无害）。"""
+def _receipt_channel(secondary: registry.Requirement) -> str:
+    """回执通道 = **被折走那张卡的真出身**，不是「静默并入这条路」的名字
+    （§44.6 追记，issue #308）。
+
+    §44.6 的回执自此只对用户通道（`policy` 的 HAND 类）出——而本模块此前
+    一律写死 "radar"，于是 owner 刚敲进来、还躺在 card_sent 的卡被折进主卡
+    时（§44.4 只要求副卡是 LIGHT 状态，不问出身）会一声不响地消失，正是
+    §44.6 当初要堵的 8-07 黑洞。判据用 `policy.CHANNEL_CLASS`（单源），
+    聚合取 **any**：只要有一条来源是用户手打的，这张卡里就有用户自己敲过的
+    字，折走它必须留回执（与 §50 `classify_origin` 的「最不信任者定卡」取向
+    相反——那问的是「能不能信它」，这里问的是「用户有没有敲过」）。
+    """
+    from act.lib import policy
+    sources = secondary.sources if isinstance(secondary.sources, list) else []
+    hand = any(policy.channel_class(s.get("channel")) == policy.HAND
+               for s in sources if isinstance(s, dict))
+    return "quick" if hand else "radar"
+
+
+def _record_receipt(primary_id: str, applied: str,
+                    secondary: registry.Requirement) -> None:
+    """§44.6 看板回执（record 自带 TTL 同键去重，重放无害；通道 = 副卡出身）。"""
     from act.lib import fold_receipts
-    fold_receipts.record(primary_id, "radar", applied)
+    fold_receipts.record(primary_id, _receipt_channel(secondary), applied)
 
 
 def _converge_trashed(primary: registry.Requirement,
@@ -492,7 +512,7 @@ def _converge_trashed(primary: registry.Requirement,
     if not _merge_event_logged(primary.id, secondary.id):
         analytics.log_event("silent_merge", primary=primary.id,
                             secondary=secondary.id, outcome="ok_retry")
-    _record_receipt(primary.id, applied)
+    _record_receipt(primary.id, applied, secondary)
     return True
 
 
@@ -522,7 +542,7 @@ def _converge_complete(primary: registry.Requirement,
     # §44.6 回执：补完路径的合并同样发生了——不留回执用户就看不到这次
     # 并入。回执用第一跑落盘的原 note 文本 → 内容键与成功路径同键，
     # TTL 内去重保证只一条（标题漂移时新拼的 note 会另开内容键，不能用）。
-    _record_receipt(primary.id, applied)
+    _record_receipt(primary.id, applied, secondary)
     return True
 
 
@@ -628,7 +648,7 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
                         secondary=secondary.id, outcome="ok")
     # §44.6 看板回执：§44.1 的跨卡静默并入同样要在看板留一行可消失的痕
     # （§44.5 的「已并入×N」chip 是累计数，回执补"刚刚发生了什么"）。
-    _record_receipt(primary.id, note)
+    _record_receipt(primary.id, note, secondary)
     return True
 
 

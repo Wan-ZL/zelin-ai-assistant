@@ -213,6 +213,11 @@ SECTIONS: tuple = (
                check="clock_time", placeholder=("08:00", "08:00"),
                help_zh="24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。",
                help_en="24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off."),
+            # §44.6 追记（issue #308 / D64）：提案列顶那排绿色回执的总开关。自动
+            # 通道（雷达 / 每日整理）本就不再出回执，这把只管剩下的用户通道。
+            _f("fold_receipt_notices", "bool", "静默并入回执", "Silent-merge receipts", default=True,
+               help_zh="你自己捕获的一句话被并进已有卡（没有建新卡）时，提案列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。",
+               help_en="When something you captured is merged into an existing card (no new card filed), a green notice appears atop the proposals lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its \u201cFolded \u00d7N\u201d chip. Repeat merges into the same card collapse into one line (\u00d7N)."),
         ],
         help_zh="系统通知由看板 app（壳）投递（§28）；app 没开就没有系统通知。通知权限见「权限体检」。",
         help_en="System notifications are posted by the board app (§28); no app running = no banners. Permission status: Permissions checkup.",

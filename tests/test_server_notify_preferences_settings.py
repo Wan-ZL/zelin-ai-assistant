@@ -54,7 +54,8 @@ class NotificationPreferencesSettingsTestCase(unittest.TestCase):
         self.assertEqual([f["key"] for f in section["fields"]],
                          ["review_notify", "notify_proposals", "notify_needs_input",
                           "notify_failures", "quiet_hours_enabled",
-                          "quiet_hours_start", "quiet_hours_end"])
+                          "quiet_hours_start", "quiet_hours_end",
+                          "fold_receipt_notices"])
 
     def test_defaults_mirror_the_config_dataclass(self):
         """出厂值单源 = act/lib/config.Config；目录只是它的 server 侧镜像。"""
