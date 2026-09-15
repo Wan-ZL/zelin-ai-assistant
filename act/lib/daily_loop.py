@@ -1,8 +1,9 @@
-"""daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §70；R2.4；owner D10/D12/D18）。
+"""daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §70；§75 第三个维护阶段；R2.4；owner D10/D12/D18）。
 
 一句话：每天固定时段（`daily_loop.time`，默认 03:30 本地）在 actd 的 pass 里
 跑一次——**先**整理看板（act/lib/maintenance：提案列 + 潜在任务列去重合成、
-过时卡进回收站），**再**从日志台账 / analytics / doctor / 夜间变异报告 / GitHub
+过时卡进回收站），**再**回收磁盘（act/lib/worktrees：已合并 / 已删枝 / 过时的
+`.claude/worktrees/`，§75），**最后**从日志台账 / analytics / doctor / 夜间变异报告 / GitHub
 issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 ≤
 `max_proposals_per_day`（默认 truth = config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS）张
 🤖 提案卡进正常审批闸门。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
@@ -41,7 +42,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import config, heartbeat, logcap, loop_inputs, maintenance, registry
+from act.lib import config, heartbeat, logcap, loop_inputs, maintenance, registry, worktrees
 from act.lib.registry import Requirement, State
 
 SOURCE_CHANNEL = "self_improve"      # policy.CHANNEL_CLASS 同款字面量（write-locked）
@@ -71,6 +72,7 @@ LIVE_KNOBS = ("daily_loop_enabled", "daily_loop_time", "daily_loop_max_proposals
 PHASE_IDLE = "idle"
 PHASE_DEDUP = "dedup"
 PHASE_STALE = "stale_sweep"
+PHASE_WORKTREES = "worktree_sweep"       # §75：过时 / 已合并的 .claude/worktrees/ 回收
 PHASE_PROPOSALS = "proposals"
 GITHUB_KINDS = ("issue", "pr_red", "pr_comment", "mutation")
 # §65.1 自动改进本软件的通道关着时不跑的三个读取器（零 gh 调用）；`inputs.<name>` 记 READER_OFF
@@ -436,8 +438,9 @@ def _mark_materials(signals: list, filed: list) -> dict:
 
 
 def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,
-        doctor: Optional[Callable] = None, interval=None) -> dict:
-    """一次完整运行：dedup → stale sweep → proposals；写投影与审计行。永不 raise。"""
+        doctor: Optional[Callable] = None, interval=None, git: Optional[Callable] = None) -> dict:
+    """一次完整运行：dedup → stale sweep → worktree sweep（§75）→ proposals；
+    写投影与审计行。永不 raise。"""
     now = now or local_now()
     started = time.time()
     state = load_state()
@@ -446,27 +449,33 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
     merges = _phase(lambda: maintenance.dedup_lanes(cfg), errors, "dedup", [])
     _set_phase(state, PHASE_STALE, interval)
     trashed = _phase(lambda: maintenance.sweep_stale(cfg, today=now.date()), errors, "stale_sweep", [])
+    _set_phase(state, PHASE_WORKTREES, interval)
+    swept = _phase(lambda: worktrees.sweep(cfg, git=git, beat=lambda: heartbeat.beat(
+        f"daily_loop:{PHASE_WORKTREES}", interval)), errors, "worktree_sweep", {"removed": []})
     _set_phase(state, PHASE_PROPOSALS, interval)
     proposed = _phase(lambda: _propose(cfg, now, gh or loop_inputs.default_gh, doctor, state, interval),
                       errors, "proposals", {"filed": [], "skipped": {}, "summaries": [],
                                             "advisories": [], "inputs": {}})
     filed = [row for row in proposed["filed"] if "id" in row]
+    removed = swept.get("removed") or []
     result = {"merged": len(merges), "trashed": len(trashed), "proposals": len(filed),
               "summaries": len(proposed["summaries"]), "errors": errors,
+              "worktrees": len(removed),                     # §75 add-only
               "advisories": proposed["advisories"]}          # D33 add-only
     _set_phase(state, PHASE_IDLE, interval, last_run_at=_iso(now),
                last_run_day=now.date().isoformat(), last_result=result)
     _append_log({"ts": _iso(now), "day": now.date().isoformat(),
                  "duration_s": round(time.time() - started, 1), "merges": merges,
-                 "trashed": trashed, "proposals": proposed["filed"],
+                 "trashed": trashed, "worktrees": swept, "proposals": proposed["filed"],
                  "skipped": proposed["skipped"], "summaries": proposed["summaries"],
                  "advisories": proposed["advisories"],
                  "inputs": proposed["inputs"], "errors": errors})
-    return dict(result, merges=merges, trashed_cards=trashed, filed=filed)
+    return dict(result, merges=merges, trashed_cards=trashed, filed=filed, worktree_sweep=swept)
 
 
 def tick(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,
-         doctor: Optional[Callable] = None, interval=None) -> Optional[dict]:
+         doctor: Optional[Callable] = None, interval=None,
+         git: Optional[Callable] = None) -> Optional[dict]:
     """actd 每 pass 调一次：到点且今天没跑 → run；否则一次 stat 级开销。永不 raise。"""
     try:
         if os.environ.get(DISABLE_ENV) == "0":
@@ -474,7 +483,7 @@ def tick(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = No
         now = now or local_now()
         if not due(cfg, load_state(), now):
             return None
-        return run(cfg, now=now, gh=gh, doctor=doctor, interval=interval)
+        return run(cfg, now=now, gh=gh, doctor=doctor, interval=interval, git=git)
     except Exception:  # noqa: BLE001 - 循环绝不反杀主循环
         return None
 
@@ -492,7 +501,8 @@ ADVISORY_WIRE_KEYS = ("kind", "text", "ref", "fingerprint", "first_seen")
 
 def _result_ints(raw) -> dict:
     src = raw if isinstance(raw, dict) else {}
-    out = {k: int(src.get(k) or 0) for k in ("merged", "trashed", "proposals", "summaries")}
+    out = {k: int(src.get(k) or 0)
+           for k in ("merged", "trashed", "proposals", "summaries", "worktrees")}
     out["errors"] = len(src.get("errors") or [])
     out["advisories"] = _advisories_wire(src.get("advisories"))
     return out

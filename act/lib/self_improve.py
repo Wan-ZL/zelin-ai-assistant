@@ -25,7 +25,9 @@ GitHub，且已存在的卡不再被自动推进（:func:`frozen_in_flight`，is
 - **PR 跟进**（§65.5，D12）：巡检待验收 lane 卡的 PR——owner 评论 / 红 required
   check → 铸一张 `self_improve` 跟进卡（一 PR 一天一张、只认 owner login）；
   owner 合并 = 验收（review→delivered）；owner 关闭 = 拒绝（回收站 + 拒绝记忆
-  `rejected.jsonl`，封顶）。**owner 集合**（§65.5 追记，issue #310）= 仓库 slug
+  `rejected.jsonl`，封顶）。**结算即释放**（§75 / §65.5 追记，issue #315）：两条
+  出口落账后各调一次 `worktrees.release`——删掉这张卡自己的 `.claude/worktrees/`
+  目录与本地分支，best-effort，失败只记日志。**owner 集合**（§65.5 追记，issue #310）= 仓库 slug
   的 owner ∪ gh 当前身份 ∪ 配置 `owner_logins`，大小写不敏感；集合外的人合并 /
   关闭只在 lane.json `foreign` 台账上记**一次**（一行日志 + 一条卡 note）。
 - **出网封锁**（§65.2）：:func:`egress_locked` 告诉 executor 这张卡的四个发射点
@@ -54,7 +56,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import config, logcap, notify, policy, registry
+from act.lib import config, logcap, notify, policy, registry, worktrees
 from act.lib.registry import Requirement, State
 
 try:
@@ -1014,10 +1016,23 @@ def _settle_card(req: Requirement, pr: dict, cwd: str, cfg: object, gh: GhRunner
         _accept_merged(req, pr, now)
         summary["accepted"].append(req.id)
         _emit(log, f"self_improve: {req.id} PR merged by owner → delivered")
+        _release_worktree(req, cfg, log)
     else:
         _reject_closed(req, pr, now)
         summary["rejected"].append(req.id)
         _emit(log, f"self_improve: {req.id} PR closed by owner → trashed + rejection memory")
+        _release_worktree(req, cfg, log)
+
+
+def _release_worktree(req: Requirement, cfg: object,
+                      log: Optional[Callable[[str], None]]) -> None:
+    """结算即释放（§75 / §65.5 追记）：卡落账后删掉它自己的 worktree 与本地分支。
+    best-effort——`worktrees.release` 自己吞异常，这里再兜一层：清扫失败绝不许
+    把「PR 已合并 = 验收」这条落账带下水（宪法第 11 条）。"""
+    try:
+        worktrees.release(req, cfg, log=log)
+    except Exception as exc:  # noqa: BLE001 - 清扫失败只记日志
+        _emit(log, f"self_improve: {req.id} worktree release failed: {type(exc).__name__}: {exc}")
 
 
 def _tick_cards(cfg: object, gh: GhRunner, st: dict, now: _dt.datetime,

@@ -234,8 +234,9 @@ class ProjectionTestCase(_Sandbox):
         self.assertIsInstance(m["next_run_at"], int)
         self.assertGreater(m["next_run_at"], m["last_run_at"])
         self.assertEqual(set(m["last_result"]), {"merged", "trashed", "proposals", "summaries", "errors",
-                                                 "advisories"})
+                                                 "worktrees", "advisories"})
         self.assertEqual(m["last_result"]["errors"], 0)
+        self.assertEqual(m["last_result"]["worktrees"], 0)   # §75 add-only 计数
         self.assertEqual(m["last_result"]["advisories"], [])
 
     def test_projection_carries_advisories_verbatim(self):

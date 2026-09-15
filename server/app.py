@@ -42,7 +42,9 @@
   server/voice_profile.py。
 - Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
   关于页 POST /api/uninstall/terminal（入队「在终端跑 uninstall.sh」给壳，server/uninstall_launch.py）；
-  开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
+  开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）；
+  开发者区 GET /api/worktrees[?refresh=1] + POST /api/worktrees/cleanup {dry_run?}（§75.4：
+  `.claude/worktrees/` 清点与一键回收，判决在 act/lib/worktrees.py，server/worktree_inventory.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 - 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
@@ -99,7 +101,8 @@ from server import (about, ai_fix_launch, analytics_ingest, attachments,
                     self_improve_lane, settings, settings_catalog, setup,
                     slack_directory, slack_manifest, sync_pairing,
                     telemetry_consent,
-                    terminal_launch, uninstall_launch, voice_profile)
+                    terminal_launch, uninstall_launch, voice_profile,
+                    worktree_inventory)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -767,6 +770,8 @@ _GET_JSON_ROUTES = {
     "/api/failures": lambda ctx, query: failure_catalog.catalog(),
     # §72.1 录制数据磁盘占用：缓存快照立刻回（首次 computing），扫目录 / 问 sqlite 在后台线程；?refresh=1 强制重算
     "/api/screenpipe/disk": lambda ctx, query: screenpipe_disk.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    # §75.4 开发者区 worktree 清点：同一套「立刻回缓存、后台线程重算」形制（du 可能要几十秒）
+    "/api/worktrees": lambda ctx, query: worktree_inventory.snapshot(ctx.home, refresh=_flag(query, "refresh")),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -813,6 +818,8 @@ _POST_JSON_ROUTES = {
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
     "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
+    # §75.4 开发者区「清理 worktree」：判决与执行都在 act.lib.worktrees（{"dry_run": true} = 只报会删谁）
+    "/api/worktrees/cleanup": lambda ctx, payload: worktree_inventory.cleanup(ctx.home, payload),
     # §48.7 「重新安装」后台雷达：install.sh 自己的渲染器 + launchctl（server 不写 plist）
     "/api/radars/reinstall": lambda ctx, payload: radars.reinstall(ctx.home, payload),
     # §68.1 目录字段「打开」/「创建」：路径 = 已保存的 effective 值，客户端只传 key

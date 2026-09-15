@@ -933,6 +933,78 @@ export interface ScreenpipeDisk {
   [key: string]: unknown;
 }
 
+/** GET /api/worktrees[?refresh=1]（§75.4，issue #315）：`.claude/worktrees/` 的清点。`state` computing = 首次、后台还在扫
+ *  （数字全 null）；ready = 缓存快照；error = 后台算失败。`bytes` = 托管根目录 du 之和，量不到 = null + `bytes_partial`
+ *  （不虚报 0）。`verdict` remove = 本轮会被清掉、reason 是理由（merged / gone / stale）；keep 的 reason 是守卫名
+ *  （main / missing / locked / live / dirty / unpushed / active / budget / cap）——两份词表 truth = act/lib/worktrees.py。 */
+export interface WorktreeRow {
+  path: string;
+  name: string;
+  branch: string;
+  head: string;
+  locked: boolean;
+  exists: boolean;
+  age_days: number | null;
+  live: boolean;
+  dirty: boolean | null;
+  verdict: "keep" | "remove" | string;
+  reason: string;
+}
+
+export interface WorktreeRepo {
+  repo: string;
+  root: string;
+  registered: number;
+  managed: number;
+  removable: number;
+  truncated: boolean;
+  rows: WorktreeRow[];
+  bytes?: number | null;
+  error: string | null;
+}
+
+export interface WorktreeInventory {
+  state?: "computing" | "ready" | "error" | string;
+  ok: boolean;
+  scanned_at: string | null;
+  repos: WorktreeRepo[];
+  worktrees: number | null;
+  removable: number | null;
+  bytes: number | null;
+  bytes_partial: boolean;
+  truncated: boolean;
+  refreshing?: boolean;
+  stale_days?: number;
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/worktrees/cleanup（§75.4）：`{}` = 真扫、`{"dry_run": true}` = 只报会删谁；回执 = act/lib/worktrees.sweep 的原文。 */
+export interface WorktreeRemoval {
+  path: string;
+  branch: string;
+  reason: string;
+  removed?: boolean;
+  branch_deleted: boolean;
+  error: string | null;
+}
+
+export interface WorktreeCleanup {
+  ok: boolean;
+  dry_run?: boolean;
+  swept_at?: string;
+  removed: WorktreeRemoval[];
+  failed?: WorktreeRemoval[];
+  skipped?: Record<string, number>;
+  worktrees?: number;
+  removable?: number;
+  truncated?: boolean;
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
 /** GET /api/voice/generate-status（§68.1 追记 D47）：「从我的消息生成/更新档案」最近一次 job（state/voice_gen/job.json，
  *  actd 写 running、act.voice_gen --job 写 done / failed）；lost = running 却超过 15 分钟没回执（server 算） */
 export interface VoiceGenJob {
