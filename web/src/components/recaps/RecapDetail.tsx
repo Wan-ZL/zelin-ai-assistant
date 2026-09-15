@@ -8,10 +8,36 @@ import { useI18n, type Language } from "../../i18n";
 import { markRecap } from "../../store";
 import type { RecapRow, RecapSettings } from "../../types";
 import { copyText } from "../detail/copyText";
+import { noteConflicts, type NoteConflictId } from "./noteCheck";
 import { pickLanguage, recapBody, rowLabel, slackDraftLabel } from "./recapText";
 
 const NOTE_MAX = 500;
 const CHANNEL_RE = /^[CDG][A-Z0-9]{6,20}$/;
+
+type Bilingual = (zh: string, en: string) => string;
+
+/** §63.5 预检文案：一条诉求一句「为什么做不到」，说的是格式的硬约束，不是模型的脾气。
+ *  Record 而非 switch——漏掉一类新 id 是编译错误，不是一条空行。 */
+const CONFLICT_LINES: Record<NoteConflictId, (text: Bilingual) => string> = {
+  drop_line: (text) =>
+    text("删不掉某一行：纪要恒是这五行，每行都带标签；没内容的那行只会写「无」。",
+         "A line cannot be dropped: the recap is always these five labelled lines; an empty one comes back as none."),
+  add_line: (text) =>
+    text("加不了新的一行：只有这五行，多出来的内容只能并进其中一行。",
+         "A line cannot be added: there are only these five; anything extra has to fold into one of them."),
+  more_detail: (text) =>
+    text("写不了更详细：每行有硬性长度上限，超了会被校验判成「需复核」。",
+         "More detail does not fit: every line has a hard length cap, and going over it gets the recap flagged needs review."),
+  relabel: (text) =>
+    text("改不了标签：五个标签的文字与顺序是固定的。",
+         "The labels cannot change: their wording and their order are fixed."),
+  language_count: (text) =>
+    text("改不了语言：中英两版一次产出、都会存下来，上面的切换按钮选看哪版。",
+         "The languages cannot change: Chinese and English are always both produced and stored; the tabs above pick which one you read."),
+  formatting: (text) =>
+    text("加不了格式：加粗、项目符号、emoji、链接、时间戳、引号都会被校验拦下。",
+         "Formatting cannot be added: bold, bullets, emoji, links, timestamps and quotation marks are all rejected by the validator."),
+};
 
 export interface RecapDetailProps {
   row: RecapRow;
@@ -69,11 +95,18 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
     row.sent_at ? text("已取消「已发送」", "Sent mark cleared") : text("已标记为已发送", "Marked as sent"),
     () => markRecap(row.key, "sent", !row.sent_at),
   );
-  const regenerate = () => run(text("已排队重新生成，稍后刷新", "Regeneration queued"), () => {
-    const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key };
-    if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
-    return postAction(payload);
-  });
+  // §63.5 预检：备注命中五行契约做不到的诉求 → 逐条摊开，按钮改口，toast 不再假装全做到了
+  const conflicts = noteConflicts(note);
+  const regenerate = () => run(
+    conflicts.length
+      ? text("已排队重新生成——上面标出的部分格式做不到，不会变",
+             "Regeneration queued — the flagged parts cannot be honored and will not change")
+      : text("已排队重新生成，稍后刷新", "Regeneration queued"),
+    () => {
+      const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key };
+      if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
+      return postAction(payload);
+    });
   const generateNow = () => run(text("已排队生成阶段稿", "Partial recap queued"), () =>
     postAction({ action: "recap_generate", meeting_key: row.key, partial: true }));
   const slackDraft = () => run(text("已排队投到 Slack 草稿", "Slack draft queued"), () =>
@@ -145,12 +178,26 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
             id="recap-note"
             className="recap-textarea"
             maxLength={NOTE_MAX}
+            aria-describedby={conflicts.length ? "recap-note-conflicts" : undefined}
             value={note}
             onChange={(event) => setNote(event.target.value)}
           />
+          {/* 不是 live region：内容随每个按键重算，role="status" 会让读屏在打字中途反复念整张表；
+              挂在 textarea 的 aria-describedby 上 = 需要时可达，不追着人念（§63.5）。 */}
+          {conflicts.length > 0 && (
+            <div className="recap-note-conflicts" id="recap-note-conflicts">
+              <p className="recap-note-conflicts-head">
+                {text("这几件事五行格式做不到，重新生成也不会变：",
+                      "The five-line format cannot honor these; regenerating will not change them:")}
+              </p>
+              <ul className="recap-note-conflicts-list">
+                {conflicts.map((id) => <li key={id}>{CONFLICT_LINES[id](text)}</li>)}
+              </ul>
+            </div>
+          )}
           <div className="recap-panel-actions">
             <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void regenerate()}>
-              {text("重新生成", "Regenerate")}
+              {conflicts.length ? text("仍要重新生成", "Regenerate anyway") : text("重新生成", "Regenerate")}
             </button>
             <span className="recap-hint">{note.length}/{NOTE_MAX}</span>
           </div>
