@@ -258,7 +258,7 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 
 **症状**:关于页的「一键更新」按钮**灰的**,下面一行写着「更新链路断着:不在 main,部署暂停 — HEAD is on 'release', not main」(或「工作树有改动,部署暂停」);顶栏部署小字同一句;`cat state/deploy_state.json` 是 `status: refused_branch` / `refused_dirty`;`tail ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 每 10 分钟一行 `HEAD is not on main (got 'release') — refusing to touch this checkout`。上游早就修好的 bug 到不了这台机器——2026-09-05 → 09-09 实录:**539 次**拒绝,机器卡在 v1.0.23 而 main 已到 v1.0.98。
 
-**原因**:自动部署**只在 `main` 上、只用 `merge --ff-only` 运作**,且拒绝碰有改动的 tracked 文件(§56.5 首条 + §56.3 第 4 步)。D54 明确**不做**「以最新 tag 为目标 + rebase 本地 commit」的部署模型:那要让后台任务在 live checkout 上重写历史。`AUTODEPLOY_BRANCH=release` **不是**解法——脚本把 `origin/$BRANCH` 当目标并要求本地能 ff 到它,本地 `release` 带数据 commit、与 `origin/release` 分叉,落到的是「fast-forward … impossible (local BRANCH diverged?) — refusing」。
+**原因**:自动部署**只在 `main` 上、只用 `merge --ff-only` 运作**,且拒绝碰有改动的 tracked 文件(§56.5 首条 + §56.3 第 4 步)。D55 明确**不做**「以最新 tag 为目标 + rebase 本地 commit」的部署模型:那要让后台任务在 live checkout 上重写历史。`AUTODEPLOY_BRANCH=release` **不是**解法——脚本把 `origin/$BRANCH` 当目标并要求本地能 ff 到它,本地 `release` 带数据 commit、与 `origin/release` 分叉,落到的是「fast-forward … impossible (local BRANCH diverged?) — refusing」。
 
 **根治**(长期):把工作数据 commit 挪出代码 checkout,让生产机回到 `main`——之后自动部署自己恢复,不需要任何手工动作。
 

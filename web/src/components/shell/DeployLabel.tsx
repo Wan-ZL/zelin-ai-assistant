@@ -33,8 +33,9 @@ const DEFER_WARN_HOURS = 6;
 /** 提前 kickstart 也清不掉的状态（镜像 act/lib/deploy_state.py BLOCKING，那是唯一真源）：
  *  下一轮自动部署会以同样的理由再拒一次——「关于」页据此禁用「一键更新」并说清原因（§68.6 追记，#309）。 */
 export const BLOCKING_STATUSES = new Set(["refused_branch", "refused_dirty", "blocked_tcc"]);
-/** 中毒的 sha：kickstart 照跑，但那个 sha 在 main 挪窝或 --force 之前不会被重试
- *  （镜像 act/lib/deploy_state.py POISONED）。 */
+/** 倒下的那一轮：kickstart 照跑，但上一轮既然是这几个状态之一，「几分钟后版本会变」就不许再说
+ *  （镜像 act/lib/deploy_state.py POISONED）。记下了 `failed_sha` 的那些轮次更硬——那个 sha 在
+ *  main 挪窝或 `--force` 之前不会被重试；没记下 sha 的（分叉 checkout 的 ff-only 失败等）同样不承诺。 */
 export const POISONED_STATUSES = new Set(["failed", "rolled_back", "rollback_failed", "ci_failed"]);
 
 const DEFER_OWN_REASONS = new Set(["sessions_running", "roster_unknown"]);

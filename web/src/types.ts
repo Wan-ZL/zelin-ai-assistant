@@ -1147,11 +1147,13 @@ export interface AttachmentReceipt {
 /**
  * POST /api/update/install 回执（§68.6 追记 2026-09-14，issue #309）：kickstart 之外 add-only 带上
  * **上一轮**自动部署的判决——页面据此决定能不能说「几分钟后版本会变」（`deferred` 会再延后一轮、
- * 中毒的 sha 本轮不重试）。旧 server 缺席 = 两个空串。
+ * 中毒家族整族不许承诺）。`deploy_failed_sha` = 上一轮记下的 `failed_sha`（记得下的时候才有）：
+ * server 在 kickstart 那一刻现读，比一进页拉的 about 快照新。旧 server 缺席 = 空串。
  */
 export interface UpdateInstallReceipt extends RepairReceipt {
   deploy_status?: string;
   deploy_detail?: string;
+  deploy_failed_sha?: string;
 }
 
 /** POST /api/repair/actd 回执（§68.8）：action = "kickstart"（已加载）| "reinstall"（未加载 → install.sh，D50；此时另带 loaded） */

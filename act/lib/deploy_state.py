@@ -39,7 +39,11 @@ is not running its checkout) and a ``last_incident`` on file (#135 rule).
 §68.6 追记 (2026-09-14, issue #309): the same status vocabulary now also
 decides what the About page's「一键更新」may promise — :data:`BLOCKING` (an
 early kickstart cannot clear it: the next run refuses for the same reason)
-and :data:`POISONED` (the run happens but the failed sha is not retried).
+and :data:`POISONED` (the run happens, but the whole family loses the "the
+version changes in a few minutes" promise — with a known ``failed_sha``
+because that sha is not retried, without one because four of the five
+``status=failed`` writers record none and the first of them, a diverged
+checkout, is permanent).
 ``server/about.py`` reads this module at request time and reuses
 :func:`auto_deploy_fix` so the remediation sentence has one source.
 """
@@ -104,9 +108,12 @@ HEALTHY = frozenset({"deployed", "up_to_date"})
 BLOCKING = frozenset({"refused_branch", "refused_dirty", "blocked_tcc"})
 
 # 同一条追记的另一半：这些状态下 kickstart 照跑（下一轮真的会重新判），但
-# 「几分钟后版本会变」仍是谎——中毒的 sha 在 main 挪窝或 `--force` 之前
-# 永不重试（scripts/auto-deploy.sh `sha_is_poisoned`）。web 用它把成功承诺
-# 换成「上一轮 …；本轮不会重试该 sha」。
+# 「几分钟后版本会变」仍是谎——记下了 `failed_sha` 的那些轮次里那个 sha 在 main
+# 挪窝或 `--force` 之前永不重试（scripts/auto-deploy.sh `sha_is_poisoned`）；
+# 没记下 sha 的那些（`status=failed` 的五个写点里有四个不附 sha：分叉 checkout 的
+# ff-only 失败、卷探针失败、symbolic-ref 读不动、认不出 GitHub 远端）同样不许承诺
+# ——分叉是永久态。web 因此按**整族**降级（§68.6 追记第 4 条，2026-09-14 复审）：
+# 有 sha 说「本轮不会重试该 sha」，没 sha 说「很可能同样倒在那里」+ 日志在哪。
 POISONED = frozenset({"failed", "rolled_back", "rollback_failed", "ci_failed"})
 
 # §56.4 open vocabulary, v0.48.20 additions: `install_incomplete` (HEAD is at

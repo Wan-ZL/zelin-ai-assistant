@@ -31,8 +31,10 @@
   提前一轮也清不掉，下一轮会以同样的理由再拒）→ **不 kickstart**，409 ``deploy_refused``
   带 ``deploy_status`` / ``deploy_detail`` / ``fix``（``deploy_state.auto_deploy_fix``，与
   doctor 行同一句）；其余状态照旧 kickstart，回执 add-only 带上一轮的 ``deploy_status`` /
-  ``deploy_detail``，页面据此把「已触发」换成诚实的一句（`deferred` 会再次延后、中毒的 sha
-  本轮不重试）。``state_reader`` 参数注入缝（防腐 #3：绝不 module-global）。
+  ``deploy_detail`` / ``deploy_failed_sha``，页面据此把「已触发」换成诚实的一句（`deferred`
+  会再次延后；``deploy_state.POISONED`` 整族都不再承诺版本会变——``scripts/auto-deploy.sh`` 的
+  五个 `status=failed` 写点里只有两个记得下 `failed_sha`，ff-only 失败的分叉 checkout 恰恰是
+  没有 sha 的那一路，而分叉是永久态）。``state_reader`` 参数注入缝（防腐 #3：绝不 module-global）。
 """
 from __future__ import annotations
 
@@ -184,4 +186,7 @@ def install_now(payload: dict, runner: Optional[repair.Runner] = None,
         raise ApiError("launchctl kickstart exited %d: %s" % (rc, out.strip()[-300:]),
                        {"label": AUTODEPLOY_LABEL, "rc": rc})
     return {"ok": True, "label": AUTODEPLOY_LABEL, "action": "kickstart",
-            "deploy_status": _prev(state, "status"), "deploy_detail": _prev(state, "detail")}
+            "deploy_status": _prev(state, "status"), "deploy_detail": _prev(state, "detail"),
+            # 上一轮记下的中毒 sha（记得下的时候才有）：现读的这一份比页面一进来拉的 about 快照新，
+            # 页面据它说「该 sha 在 main 挪窝之前不会被重试」而不必信任陈旧的快照
+            "deploy_failed_sha": _prev(state, "failed_sha")}

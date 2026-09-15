@@ -14,8 +14,9 @@
 // state/deploy_state.json，不是看板投影）。上一轮的状态属于 BLOCKING（refused_branch / refused_dirty / blocked_tcc——提前
 // kickstart 一轮也是同样的拒绝）→ 按钮禁用 + 一行「更新链路断着：<状态> — <原文>」+ 怎么修；真点下去时 server 也不 kickstart，
 // 409 details.reason="deploy_refused" 走同一行文案，**绝不**打开 release 页、**绝不**说「已触发」。kickstart 真发生时回执带
-// 上一轮的 deploy_status/deploy_detail：deferred → 说清会话散了才更新（kickstart 不带 --force，会再延后一轮）、中毒的 sha
-// （failed / rolled_back / rollback_failed / ci_failed + failed_sha）→ 说清本轮不会重试它。状态词与两个集合一律复用
+// 上一轮的 deploy_status/deploy_detail/deploy_failed_sha：deferred → 说清会话散了才更新（kickstart 不带 --force，会再延后
+// 一轮）、中毒家族（failed / rolled_back / rollback_failed / ci_failed）→ 整族都不许承诺版本会变，记得下 sha 的说「该 sha 在
+// main 挪窝之前不会被重试」，没 sha 的（ff-only 失败的分叉 checkout 等）说「很可能同样倒在那里」。状态词与两个集合一律复用
 // components/shell/DeployLabel（顶栏与本页永不各判一次）。版本行按 §56.1 追记只显示 tag，`+N` 降级成一句辅助说明。
 // 「卸载…」= 原生 confirmUninstall：确认弹窗（正文逐字原生 informativeText：会做的三件事 + 默认保留什么）→
 // POST /api/uninstall/terminal 在 Terminal 跑 uninstall.sh（脚本自己再问；server 不删任何东西）；脚本缺席（404）→
@@ -125,6 +126,13 @@ function pick(state: DeployState | null | undefined, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/** 回执里的上一轮判决（server 在 kickstart 那一刻现读出来的）——比 about 快照新：
+ *  页面载入之后才倒下的那一轮，快照里根本没有。缺席（旧 server）→ 空串，回落到快照。 */
+function fromReceipt(receipt: UpdateInstallReceipt | null, key: string): string {
+  const value = receipt?.[key];
+  return typeof value === "string" ? value : "";
+}
+
 /** 拒绝原文一行：「更新链路断着：<状态> — <detail>」。一进页（about.deploy_state）与 409
  *  （details.deploy_status / deploy_detail）共用同一句——两条路说的话必须逐字一样。 */
 export function refusalLine(status: string, detail: string, text: Text): string {
@@ -164,7 +172,7 @@ export function installNote(receipt: UpdateInstallReceipt | null, state: DeployS
                             now: number, text: Text): string {
   const triggered = text("已触发自动部署——几分钟后这里的版本会变；部署后 doctor 变红会自动回滚。",
                          "Auto-deploy triggered — the version here changes in a few minutes; a red doctor after deploy rolls back automatically.");
-  const status = typeof receipt?.deploy_status === "string" ? receipt.deploy_status : "";
+  const status = fromReceipt(receipt, "deploy_status");
   if (!status || status === "deployed" || status === "up_to_date") return triggered;
   const label = statusLabel(status, text);
   if (status === "deferred") {
@@ -173,10 +181,20 @@ export function installNote(receipt: UpdateInstallReceipt | null, state: DeployS
     return text(`已触发一轮自动部署，但上一轮还在等：${waiting}。会话散了这里的版本才会变；等不及就在 repo 里跑 bash scripts/auto-deploy.sh --force（它会打断这些会话）。`,
                 `Auto-deploy was triggered, but the last round is still waiting: ${waiting}. The version here changes once those sessions end; in a hurry, run bash scripts/auto-deploy.sh --force in the repo (it interrupts them).`);
   }
-  const poisoned = POISONED_STATUSES.has(status) ? pick(state, "failed_sha") : "";
-  if (poisoned) {
-    return text(`已触发一轮自动部署，但上一轮是「${label}」：${poisoned.slice(0, 7)} 在 main 挪窝之前不会被重试——要现在重试请在 repo 里跑 bash scripts/auto-deploy.sh --force。`,
-                `Auto-deploy was triggered, but the last round ended "${label}": ${poisoned.slice(0, 7)} is not retried until main moves — to retry it now, run bash scripts/auto-deploy.sh --force in the repo.`);
+  if (POISONED_STATUSES.has(status)) {
+    // 中毒家族一律不许再承诺「版本会变」——`failed` 只在 scripts/auto-deploy.sh 的五个写点里
+    // 有两个记得下 failed_sha；ff-only 失败（分叉的 checkout，正是 #309 那台机器）、卷探针、
+    // symbolic-ref 读不动、认不出 GitHub 远端这四个写的是**没有 sha 的 failed**，而分叉是
+    // 永久态：靠 sha 在不在来决定说不说谎，等于把同一句假话留给了最该说真话的那一路。
+    const sha = fromReceipt(receipt, "deploy_failed_sha") || pick(state, "failed_sha");
+    if (sha) {
+      return text(`已触发一轮自动部署，但上一轮是「${label}」：${sha.slice(0, 7)} 在 main 挪窝之前不会被重试——要现在重试请在 repo 里跑 bash scripts/auto-deploy.sh --force。`,
+                  `Auto-deploy was triggered, but the last round ended "${label}": ${sha.slice(0, 7)} is not retried until main moves — to retry it now, run bash scripts/auto-deploy.sh --force in the repo.`);
+    }
+    const detail = fromReceipt(receipt, "deploy_detail") || pick(state, "detail");
+    const why = detail ? text(`：${detail}`, `: ${detail}`) : "";
+    return text(`已触发一轮自动部署，但上一轮是「${label}」${why}——这一轮很可能同样倒在那里，版本变了才算数；先 tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log 看它为什么倒下。`,
+                `Auto-deploy was triggered, but the last round ended "${label}"${why} — this round may well end the same way; only a changed version means it worked. Start with tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log.`);
   }
   return `${triggered}${text(`（上一轮：${label}。）`, ` (last round: ${label}.)`)}`;
 }
