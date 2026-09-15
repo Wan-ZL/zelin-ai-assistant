@@ -17,9 +17,11 @@ issue #28：screenpipe 的数据在用户眼里无界增长——界面上没有
   ``state/screenpipe_retention.json`` 原样投影（缺席 = null）。
 - **§72.4 媒体那一半**：``media_retention_minutes`` = 同一区的 effective 值（cron 链的 ``find -mmin``），
   ``media_prune`` = ``ingest/screenpipe-cleanup.sh`` 每轮写的回执 ``state/screenpipe_prune.json`` 的投影——
-  原样字段 + server 算的 ``age_seconds`` / ``stale``（> ``PRUNE_STALE_S``，链本该 30 分钟一轮）。回执缺席 / 坏形
+  原样字段 + server 算的 ``age_seconds``（上一次尝试的岁数）/ ``ok_age_seconds`` / ``stale``
+  （按回执里的 ``last_ok_ts`` = **上次干净跑完**算，> ``PRUNE_STALE_S``；链本该 30 分钟一轮）。回执缺席 / 坏形
   = ``state: "never"`` + ``stale: true``：**停掉的清理与「没东西可删」的清理从外面看一模一样**，而前一种会一直涨盘
-  （§0 第 3 条：宁可报「没跑过」也不报一次干净的空转）。
+  （§0 第 3 条：宁可报「没跑过」也不报一次干净的空转）。按 ``last_ok_ts`` 而不是 ``ts`` 算新鲜度，是因为
+  每 30 分钟失败一次的清理会把 ``ts`` 一直刷新——按它算就永远「刚跑过」，而没有一个文件被删掉。
 
 server/ 不 import act（§49）：两个回执文件名（act 的 ``RECEIPT_NAME`` / 脚本的 ``screenpipe_prune.json``）与
 媒体保留期的出厂值都是手抄，判例 tests/test_server_screenpipe_disk.py、tests/test_screenpipe_media_prune_projection.py 钉。
@@ -263,24 +265,41 @@ def _prune_doc(home: Path) -> Optional[dict]:
 
 
 def media_prune(home: Path, now: float) -> dict:
-    """§72.4 媒体清理回执的投影：脚本写的字段原样带出，另算 ``age_seconds`` 与 ``stale``。
+    """§72.4 媒体清理回执的投影：脚本写的字段原样带出，另算 ``age_seconds`` / ``ok_age_seconds`` / ``stale``。
 
     回执缺席 / 坏 JSON / 坏时间戳 → ``state: "never"`` + ``stale: true``：**「清理停了」与「没东西可删」
     从外面看一模一样**，而前一种会一直涨盘——所以宁可报「没跑过」也不报一次干净的空转（宪法第 3 条）。
-    脚本自己的 ``unreadable``（目录在但进不去）也是一个独立的 state，同样不与「删了 0 个」混为一谈。"""
+    脚本自己的 ``unreadable``（目录在但进不去）/ ``partial``（没扫完）也各是独立的 state，同样不与
+    「删了 0 个」混为一谈。
+
+    ``stale`` 按**上次干净跑完**（``last_ok_ts``）算，不按上一次尝试（``ts``）算：每 30 分钟失败一次的
+    清理会把 ``ts`` 一直刷新，按它算就永远「新鲜」，而盘一直在涨。``age_seconds`` 仍是上一次尝试的岁数。"""
     doc = _prune_doc(home)
     out = {"state": "never", "ts": None, "retention_minutes": None, "deleted_files": None,
-           "deleted_bytes": None, "data_dir": None, "age_seconds": None, "stale": True}
+           "deleted_bytes": None, "data_dir": None, "last_ok_ts": None,
+           "age_seconds": None, "ok_age_seconds": None, "stale": True}
     if doc is None:
         return out
     out.update({key: doc.get(key) for key in ("state", "ts", "retention_minutes", "deleted_files",
-                                              "deleted_bytes", "data_dir")})
+                                              "deleted_bytes", "data_dir", "last_ok_ts")})
     if not isinstance(out["state"], str) or not out["state"]:
         out["state"] = "never"
-    age = _age_seconds(out["ts"], now)
-    out["age_seconds"] = age
-    out["stale"] = age is None or age > PRUNE_STALE_S
+    out["last_ok_ts"] = _last_ok_ts(out)
+    out["age_seconds"] = _age_seconds(out["ts"], now)
+    ok_age = _age_seconds(out["last_ok_ts"], now)
+    out["ok_age_seconds"] = ok_age
+    out["stale"] = ok_age is None or ok_age > PRUNE_STALE_S
     return out
+
+
+def _last_ok_ts(out: dict) -> Optional[str]:
+    """上次**干净跑完**的时刻：回执里的 ``last_ok_ts``（脚本每个 ok 轮次刷新、其余轮次原样带下去）。
+    升级前写的回执没有这一键——它自己是 ``ok`` 的话，它的 ``ts`` 就是一次成功；其余 state
+    （``unreadable`` / ``partial`` / ``no_data_dir``）无从得知，按「没成功过」算：不知道就别报新鲜（宪法第 3 条）。"""
+    raw = out.get("last_ok_ts")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    return out["ts"] if out["state"] == "ok" and isinstance(out["ts"], str) else None
 
 
 def _age_seconds(ts, now: float) -> Optional[float]:

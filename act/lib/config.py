@@ -635,9 +635,17 @@ def coerce_media_retention_minutes(value) -> int:
     [MIN_MEDIA_RETENTION_MINUTES, MAX_MEDIA_RETENTION_MINUTES] 内，否则 ValueError
     （overrides 路径整条跳过、yaml 路径回落 60）。**不夹取**——夹取会让设置页
     显示的数与 cron 真用的数不是一个（server/settings_catalog.py 的 bounds 闸
-    在写入那一侧拦同一个区间，判例钉住两侧同一条规则）。"""
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+    在写入那一侧拦同一个区间，判例钉住两侧同一条规则）。
+
+    收什么形状也必须与目录那一侧**逐字同一条规则**（`_coerce_number(value, integer=True)`
+    → `_finite_number`）：只收非 bool 的 `int` 与整值 `float`；字串（yaml 里写成
+    `"120"`）、非整值 float（`90.5`）、inf / nan 都是坏值。两边收的形状不同 =
+    同一份 config.yaml 在设置页上显示 60、在 cron 里却按 120 删文件，正是
+    本节立法要防的那件事（判例 tests/test_screenpipe_media_retention_knob.py 两侧同钉）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("not a retention: %r" % (value,))
+    if isinstance(value, float) and not value.is_integer():   # 非整值 / inf / nan
+        raise ValueError("not a whole number of minutes: %r" % (value,))
     minutes = int(value)
     if not MIN_MEDIA_RETENTION_MINUTES <= minutes <= MAX_MEDIA_RETENTION_MINUTES:
         raise ValueError("retention out of range: %r" % (value,))

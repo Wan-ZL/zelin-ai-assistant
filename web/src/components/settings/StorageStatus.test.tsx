@@ -77,21 +77,32 @@ describe("formatting helpers", () => {
   });
 
   it("mediaPruneText separates a stopped prune from one that found nothing", () => {
-    const base = { retention_minutes: 60, data_dir: "/Users/demo/.screenpipe/data" };
+    const base = { retention_minutes: 60, data_dir: "/Users/demo/.screenpipe/data", last_ok_ts: null, ok_age_seconds: null };
     expect(mediaPruneText(undefined, text)).toEqual({ line: "Not run yet", warn: false });
     expect(mediaPruneText({ ...base, state: "never", ts: null, deleted_files: null, deleted_bytes: null, age_seconds: null, stale: true }, text))
       .toEqual({ line: "No receipt yet — the cleanup may not be running", warn: true });
     // 跑了、一个都没删：这是**正常**，不报警
-    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 600, stale: false }, text))
+    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 600, last_ok_ts: "2026-09-14T04:00:12Z", ok_age_seconds: 600, stale: false }, text))
       .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB)", warn: false });
-    // 同样「删了 0 个」，但三小时没动静：会悄悄涨盘，必须报警并说出多久没跑
-    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 14_400, stale: true }, text))
-      .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); nothing for 4 hours (it should run every 30 minutes)", warn: true });
-    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: false }, text).warn).toBe(true);
-    expect(mediaPruneText({ ...base, state: "no_data_dir", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: false }, text))
+    // 同样「删了 0 个」，但三小时没有一轮干净跑完：会悄悄涨盘，必须报警并说出多久
+    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 14_400, last_ok_ts: "2026-09-14T04:00:12Z", ok_age_seconds: 14_400, stale: true }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); no clean round for 4 hours (it should run every 30 minutes)", warn: true });
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, last_ok_ts: "2026-09-14T03:30:00Z", ok_age_seconds: 1_800, stale: false }, text).warn).toBe(true);
+    // 每半小时失败一次：`ts` 一直是「刚刚」，但六小时没删过东西——这句话必须说出那个缺口
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T10:00:00Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, last_ok_ts: "2026-09-14T04:00:00Z", ok_age_seconds: 21_600, stale: true }, text))
+      .toEqual({ line: "2026-09-14 10:00 UTC the recording data folder could not be read (permissions); nothing was deleted; no clean round for 6 hours (it should run every 30 minutes)", warn: true });
+    // 一次都没干净跑完过（脚本写 last_ok_ts: null）
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T10:00:00Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: true }, text).line)
+      .toBe("2026-09-14 10:00 UTC the recording data folder could not be read (permissions); nothing was deleted; no clean round on record");
+    // partial = 没扫完（子目录读不到 / 文件在变动）：删掉的是真的，但不算干净的一轮；
+    // 十分钟前刚有一轮干净的 → 一次撞车不报警
+    expect(mediaPruneText({ ...base, state: "partial", ts: "2026-09-14T10:00:00Z", deleted_files: 3, deleted_bytes: 900_000, age_seconds: 60, last_ok_ts: "2026-09-14T09:50:00Z", ok_age_seconds: 600, stale: false }, text))
+      .toEqual({ line: "2026-09-14 10:00 UTC the round did not finish scanning (a subfolder could not be read, or files changed under it); only deleted 3 media file(s) (900 KB)", warn: false });
+    expect(mediaPruneText({ ...base, state: "partial", ts: "2026-09-14T10:00:00Z", deleted_files: 3, deleted_bytes: 900_000, age_seconds: 60, ok_age_seconds: null, stale: true }, text).warn).toBe(true);
+    expect(mediaPruneText({ ...base, state: "no_data_dir", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: true }, text))
       .toEqual({ line: "2026-09-14 04:00 UTC no recording data folder yet", warn: false });
-    expect(mediaPruneText({ ...base, state: "ok", ts: "whenever", deleted_files: 1, deleted_bytes: 2_000, age_seconds: null, stale: true }, text).line)
-      .toBe("whenever deleted 1 media file(s) (2 KB); the receipt timestamp could not be read");
+    expect(mediaPruneText({ ...base, state: "ok", ts: "whenever", deleted_files: 1, deleted_bytes: 2_000, age_seconds: null, last_ok_ts: "whenever", ok_age_seconds: null, stale: true }, text).line)
+      .toBe("whenever deleted 1 media file(s) (2 KB); the last successful round's timestamp could not be read");
   });
 });
 
@@ -131,15 +142,16 @@ describe("StorageStatus", () => {
 
   it("a stopped media prune is called out with an alert, a fresh one is just a line", async () => {
     const prune = { state: "ok", ts: "2026-09-14T04:00:12Z", retention_minutes: 60, deleted_files: 0,
-      deleted_bytes: 0, data_dir: "/Users/demo/.screenpipe/data", age_seconds: 14_400, stale: true };
+      deleted_bytes: 0, data_dir: "/Users/demo/.screenpipe/data", last_ok_ts: "2026-09-14T04:00:12Z",
+      age_seconds: 14_400, ok_age_seconds: 14_400, stale: true };
     vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_retention_minutes: 60, media_prune: prune });
     renderEn();
     await waitFor(() => expect(screen.getByTestId("storage-media-prune").textContent)
-      .toBe("2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); nothing for 4 hours (it should run every 30 minutes)"));
+      .toBe("2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); no clean round for 4 hours (it should run every 30 minutes)"));
     expect(screen.getAllByRole("alert").map((el) => el.textContent))
       .toContain("Raw jpg / mp4 are only deleted by this cleanup round; while it is stopped, the disk keeps growing.");
     cleanup();
-    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_prune: { ...prune, age_seconds: 600, stale: false, deleted_files: 12, deleted_bytes: 3_400_000 } });
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_prune: { ...prune, age_seconds: 600, ok_age_seconds: 600, stale: false, deleted_files: 12, deleted_bytes: 3_400_000 } });
     renderEn();
     await waitFor(() => expect(screen.getByTestId("storage-media-prune").textContent)
       .toBe("2026-09-14 04:00 UTC deleted 12 media file(s) (3 MB)"));

@@ -728,8 +728,9 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 **issue #28 第二程追记（2026-09-14，add-only；§72.4）——同一步的第一件事（删媒体）也长出了旋钮与回执**：
 「一小时」不再是脚本里的字面量，而是 `recording.media_retention_minutes`（设置页 storage 区
 `screenpipe_media_retention_minutes`，出厂 60 = 现状不变），脚本经 `python3 -m act.lib.config --print-value` 读同一层；
-每轮写一条回执 `state/screenpipe_prune.json`（`ok | no_data_dir | unreadable` + 删了几个文件几字节），
-`GET /api/screenpipe/disk` 投影它并算 `stale`。crontab 行本体（`install.sh` `INGEST_CHAIN`）仍不改；
+每轮写一条回执 `state/screenpipe_prune.json`（`ok | partial | no_data_dir | unreadable` + 删了几个文件几字节
++ `last_ok_ts` = 上次干净跑完那一刻，失败的轮次原样带下去），
+`GET /api/screenpipe/disk` 投影它并按 `last_ok_ts` 算 `stale`。crontab 行本体（`install.sh` `INGEST_CHAIN`）仍不改；
 脚本**永远 exit 0** 的老规矩不变——「清理停了」这件事走回执，不走退出码。细则与判例见 §72.4。
 
 ## 19. 凭证与 secrets（跨组件契约，两侧逐字一致）
@@ -6397,6 +6398,11 @@ owner 原话（issue #311，2026-09-09）：「派发前检查机器状态：显
   桩成 reject，本区照样渲染。
 - 保留天数本身是目录字段（server-owned 文案，防腐 #10；help 句写明「已导出进笔记库」「不 VACUUM：文件不立刻缩小」「原始 jpg / mp4
   一小时后照旧删」）；web 零自有文案写这把旋钮。
+- **§72.4 追记（2026-09-14，add-only）——help 句里的「一小时」改成指路**：`screenpipe_retention_days` 的 help 句此前
+  zh / en 两边都写着「原始 jpg / mp4 一小时后照旧删」。一小时成了旋钮（§72.4）之后这是个会过时的手写字面量（防腐 #5），
+  两句**同时**改为指向同一区的「原始媒体保留分钟数 / Raw media retention (minutes)」——目录是 server-owned 的
+  双语文案，zh / en 必须说同一件事（只改一边 = 中文用户读到的是已经不成立的旧规则）。`ui/parity/fixtures/settings.json`
+  随目录重铸（`scripts/ui/parity_fixture.py --write`）。
 - §66 parity：原生 Settings.swift 没有这一区，清单无对应 control，两本账本零改动；`ui/parity/fixtures/settings.json`
   随目录重铸（`scripts/ui/parity_fixture.py --write`，`tests/test_ui_parity_fixture.py` 钉新鲜）。
 
@@ -6416,6 +6422,11 @@ owner 原话（issue #311，2026-09-09）：「派发前检查机器状态：显
   overrides 路径整条跳过、`PUT /api/settings/storage` 400 `INVALID_FIELD`（details 带 `min` / `max`）——夹取会让设置页
   显示的数与 cron 真用的数不是同一个，而这把旋钮管的是删数据。下限的理由是链本身：cleanup 与 export 同在 30 分钟一轮的
   `&&` 链里，比 MIN 更短会削到同一轮正在导出的那批帧。
+  **两侧收的形状也必须逐字同一条规则**：`act/lib/config.coerce_media_retention_minutes` 与目录的 int coercer
+  （`server/settings_catalog._coerce_number(..., integer=True)` → `_finite_number`）都只收**非 bool 的 `int` 与整值
+  `float`**；字串（yaml 里写成 `"120"`）、非整值 float（`90.5`）、inf / nan 一律是坏值。有一侧宽一点，同一份 config.yaml
+  就会让设置页显示 60、cron 按 120 删文件——这正是本节「不夹取」要防的那件事，判例
+  `tests/test_screenpipe_media_retention_knob.py` 拿同一个文件同时喂两侧、比同一个数。
 - **目录侧的通用机制（§68.1 add-only）**：field 可带 `bounds`（闭区间），投影 add-only `bounds{min,max}`；写闸越界 400，
   读归一把越界值当缺席（落到下一层，与 act 的 coercer 同一条规则）。web `SettingsField.bounds` 逐字镜像（防腐 #10），
   输入框的 min / max 与「保存」闸都按它判（`draftRules.outOfBounds` = server `out_of_bounds` 的镜像）。
@@ -6423,19 +6434,34 @@ owner 原话（issue #311，2026-09-09）：「派发前检查机器状态：显
 - **脚本怎么读**：`python3 -m act.lib.config --print-value screenpipe_media_retention_minutes`（`--print-path` 的同族，
   同一条「silent-on-error 打出厂值」纪律：cron 消费方必须拿到能直接喂给 `find` 的数）。设置页改完**下一轮 cron 生效，无需重启**。
 - **回执 `state/screenpipe_prune.json`**（覆盖写 + 原子 rename，单文件无增长——防腐 #4 出生即带帽）：
-  `{ts, state, retention_minutes, deleted_files, deleted_bytes, data_dir}`，`state` 词表 `ok | no_data_dir | unreadable`。
-  「目录在但进不去」（TCC / 权限）**单列 `unreadable`，绝不与「删了 0 个」混为一谈**。脚本**永远 exit 0**（链是 `&&` 串的，
-  清理的毛病不许吞掉这一轮 ingest）——真相走回执而不是退出码。两个 env 缝 `ZAI_SCREENPIPE_DATA_DIR` /
-  `ZAI_SCREENPIPE_PRUNE_RECEIPT` 只为判例（生产里没人设）；§72.2 的 db 步跟着同一个数据目录走（`--db <数据目录的父>/db.sqlite`），
-  判例因此永不打开这台机器真实的库。
+  `{ts, state, retention_minutes, deleted_files, deleted_bytes, data_dir, last_ok_ts}`，`state` 词表
+  **`ok | partial | no_data_dir | unreadable`**。
+  - 「目录在但进不去」（TCC / 权限）**单列 `unreadable`，绝不与「删了 0 个」混为一谈**。
+  - **枚举本身失败单列 `partial`**：`find` 的退出码**必须捕获**（清单落临时文件，不许用 `< <(find …)` 那种
+    把退出码丢掉的写法）——顶层目录读得到、里面某个子目录读不到（真实布局是 `~/.screenpipe/data/data/<日期>/`）时
+    find 退出非零而那个子树一个文件都没被枚举到；把它报成 `ok, deleted 0` 等于「那些旧文件永远留着，而界面一片绿」。
+    `partial` 里删掉的那些是真的（计数照记），但**这一轮不算干净**。
+  - **`last_ok_ts` = 上次干净跑完（`ok`）那一刻**，`ok` 轮次刷新它、其余轮次把上一份回执里的值**原样带下去**
+    （一次 `unreadable` / `partial` 不许把它擦掉；一轮都没成功过 = JSON `null`）。没有这一键的话，每 30 分钟失败一次的
+    清理会把 `ts` 一直刷新、从外面看永远「刚跑过」，而一个文件都没删掉——issue #28 评论里那条验收标准
+    （「prune 要记下上次成功那一次，并说出缺口有多大」）正是冲着这个来的。读上一份回执 = **只读**，
+    写仍然是这一个脚本一家（§44 单写者精神）。
+  - 脚本**永远 exit 0**（链是 `&&` 串的，清理的毛病不许吞掉这一轮 ingest）——真相走回执而不是退出码。两个 env 缝
+    `ZAI_SCREENPIPE_DATA_DIR` / `ZAI_SCREENPIPE_PRUNE_RECEIPT` 只为判例（生产里没人设）；§72.2 的 db 步跟着同一个
+    数据目录走（`--db <数据目录的父>/db.sqlite`），判例因此永不打开这台机器真实的库。
 - **投影（§72.1 快照 add-only 两键）**：`media_retention_minutes`（目录 effective 值）与 `media_prune` =
-  回执原样字段 + server 算的 `age_seconds` / `stale`（`> PRUNE_STALE_S`，truth = `server/screenpipe_disk.py`；链本该 30 分钟一轮）。
+  回执原样字段 + server 算的 `age_seconds`（上一次**尝试**的岁数）/ `ok_age_seconds` / `stale`。
+  **`stale` 按 `last_ok_ts` 算**（`ok_age_seconds > PRUNE_STALE_S`，truth = `server/screenpipe_disk.py`；链本该 30 分钟一轮）
+  **而不是按上一次尝试算**——按 `ts` 算，一台每轮都失败的机器会永远显示「刚跑过」。
   回执缺席 / 坏 JSON / 坏时间戳 / 空 state → `state: "never"` + `stale: true`：**停掉的清理与「跑了但没东西可删」从外面看一模一样**，
-  而前一种会永久地让盘涨——宁可报「没跑过」也不报一次干净的空转（宪法第 3 条）。server 只读这个文件、永不写（§44 单写者精神）。
-  回执文件名与保留分钟数的出厂值在 server 侧是**手抄**（§49 不 import act），判例钉住两侧逐字一致。
-- **面（§72.3 add-only 一行）**：storage 区多一行「上次媒体清理 / Last media prune」——删了几个文件几字节；`never` / `stale` /
-  `unreadable` 进 warning 档并多一句 `role=alert`（「它停着盘就一直涨」）。多久没跑按 server 给的 `age_seconds` 说，
-  web 不复刻阈值。
+  而前一种会永久地让盘涨——宁可报「没跑过」也不报一次干净的空转（宪法第 3 条）。升级前写的老回执没有 `last_ok_ts`：
+  它自己是 `ok` 就拿它的 `ts` 当那次成功，其余 state 按「没成功过」算（不知道就别报新鲜）。
+  server 只读这个文件、永不写（§44 单写者精神）。回执文件名与保留分钟数的出厂值在 server 侧是**手抄**（§49 不 import act），
+  判例钉住两侧逐字一致。
+- **面（§72.3 add-only 一行）**：storage 区多一行「上次媒体清理 / Last media prune」——删了几个文件几字节；`never` /
+  `unreadable` / `stale` 进 warning 档并多一句 `role=alert`（「它停着盘就一直涨」）。`partial` 自己**只**在 `stale` 时报警：
+  一次扫描撞上引擎正在删帧不是毛病，连着几小时没有一轮干净跑完才是。缺口那半句（「已经 N 小时没有一轮干净跑完」）按
+  server 给的 `ok_age_seconds` 说，web 不复刻阈值。
 - **实测背景（别再把它写反）**：2026-09-14 owner 机器 `~/.screenpipe` 8.7 GB 里 **db.sqlite 占 9,097,404,416 B，`data/` 是 0 B**——
   媒体那一半平时就接近零，正因为这个 prune 一直在跑。所以本追记的价值不在「省下几个 GB」，而在
   ① 窗口可调（录制多的机器想留久一点 / 硬盘紧的想更短）；② **它停掉时看得见**。任何文档不得再写「几个 GB 全在媒体上」

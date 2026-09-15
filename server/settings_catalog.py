@@ -232,7 +232,8 @@ SECTIONS: tuple = (
             # 磁盘占用 / 增长估算 / 上次清理回执不是旋钮，走 GET /api/screenpipe/disk（web StorageStatus 渲在这一区的 lead 槽）。
             _f("screenpipe_retention_days", "int", "录制数据保留天数", "Recording data retention (days)", default=0,
                config=("recording", "retention_days"),
-               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 一小时后照旧删，与此无关。",
+               # 「一小时」曾是这句里的字面量；它成了旋钮之后只能指路（防腐 #5），zh / en 两句说同一件事
+               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 按下面那把「原始媒体保留分钟数」删，与此无关。",
                help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are deleted on their own schedule below."),
             # §72.4（issue #28）：原始 jpg / mp4 的保留期。历来写死 60 分钟，现在是一把旋钮——
             # 同一条 cleanup 链读它（`--print-value`），改完下一轮 cron 生效、无需重启。区间外 400

@@ -10,4 +10,6 @@ law: §72.4 / §72.5（新增小节，无新顶层 §）+ §18 / §15.3 / §68.1
 
 **判例** — 新 `tests/integration/test_screenpipe_cleanup.py`（真 bash、真文件、90 s 预算、两个 env 缝；删旧留新 / 三态回执 / override 压 yaml / 永远 exit 0）、`tests/test_screenpipe_media_retention_knob.py`（三层 + 区间 + 目录 bounds 与 act 逐字同一对数）、`tests/test_screenpipe_media_prune_projection.py`（staleness 与「跑了但没东西可删 ≠ 停了」；GET 路径把 `scan` / `db_stats` 桩成会抛，证明零阻塞 IO）、`tests/test_config_cli.py` 加 `--print-value` 五条、vitest 两处（`mediaPruneText` 各状态 + 停跑那一行的 alert；`bounds` 的草稿闸）。
 
+**review 之后补的三处（同一个 PR）** — ① `find` 的退出码**不再丢掉**：清单落临时文件再遍历（`< <(find …)` 会把退出码吞掉），顶层读得到而某个子目录读不到时（真实布局 `~/.screenpipe/data/data/<日期>/`）那个子树一个文件都没被枚举到——以前报 `ok, deleted 0`，现在报新 state `partial`，判例里那个埋在 `chmod 000` 子目录下的旧 jpg 还在，回执没撒谎。② 回执多一键 `last_ok_ts` = **上次干净跑完**那一刻，失败的轮次原样带下去；`stale` 改按它算（不是按上一次尝试）——不然每 30 分钟失败一次的清理会把 `ts` 一直刷新、界面永远显示「刚跑过」而盘一直涨，issue 评论那条验收标准（「记下上次成功那一次，说出缺口有多大」）就只兑现了一半。③ `act` 侧的 coercer 收紧到与目录侧 `_finite_number` **逐字同一条规则**（不再收 `"120"` 这种字串、不再把 `90.5` 截成 90）——两侧宽窄不一样，同一份 config.yaml 就会让设置页显示 60 而 cron 按 120 删文件，正是「不夹取」那一条要防的事；判例现在拿同一个文件同时喂两侧。顺手把 `screenpipe_retention_days` 的 zh help 句里那个写死的「一小时」改成指向新旋钮（en 那半句本来就改了，zh 漏了 = 中文用户读到已经不成立的规则；§72.3 追记 + fixture 重铸）。
+
 **没做（§72.5 写明）** — 不删备份、不 VACUUM、不按「盘快满了」自动改保留期、不给清理另起 launchd 任务、不动引擎自己的 `--retention-days`、不进首次运行向导、不为 `stale` 发系统通知（宪法第 10 条）。

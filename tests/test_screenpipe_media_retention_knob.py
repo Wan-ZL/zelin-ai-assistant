@@ -8,7 +8,11 @@
 - server 目录（§68.1）的 `bounds` 与 act 的区间**逐字同一对数**，越界 PUT 400（不夹取）、
   合法值 diff-write 落同一个扁平键，等于生效值即删键；
 - 目录读到的越界值（有人手改 config.yaml）按缺席落到下一层——设置页显示的数
-  必须就是 cron 真用的那个数。
+  必须就是 cron 真用的那个数；
+- **收什么形状两侧也必须一样**：`"120"`（yaml 里写成字串）、`90.5`（非整值）在两侧都是坏值。
+  只要有一侧宽一点，同一份 config.yaml 就会让设置页显示 60、cron 按 120 删文件——
+  正是 §72.4「不夹取」那一条要防的事。同一个文件同时喂给 act 的 `load_config()` 与目录的
+  `effective_value()`，两侧读出同一个数才算过。
 """
 import json
 import tempfile
@@ -42,7 +46,10 @@ class ActLayerTestCase(unittest.TestCase):
         self.assertEqual(cfg.screenpipe_media_retention_minutes, 240)
 
     def test_yaml_out_of_range_or_garbage_falls_back_to_the_default(self):
-        for bad in (1, 0, -5, act_config.MAX_MEDIA_RETENTION_MINUTES + 1, "soon", None, True):
+        # "120" / 90.5 / 120.7 都在这里：目录侧的 int coercer（_finite_number）也拒绝它们，
+        # 两侧收的形状必须一样，否则同一份 config.yaml 在两侧读出两个数
+        for bad in (1, 0, -5, act_config.MAX_MEDIA_RETENTION_MINUTES + 1, "soon", None, True,
+                    "120", "60", 90.5, 120.7, float("nan"), float("inf")):
             with self.subTest(bad=bad):
                 cfg = act_config.Config()
                 cfg.screenpipe_media_retention_minutes = 240      # 前一轮的值也不许留下
@@ -51,7 +58,8 @@ class ActLayerTestCase(unittest.TestCase):
 
     def test_override_layer_wins_and_bad_entries_are_skipped_one_by_one(self):
         self.assertIn(FIELD_KEY, act_config._OVERRIDE_FIELDS)
-        for value, expected in ((30, 30), (2, 60), (525601, 60), ("nope", 60), (True, 60)):
+        for value, expected in ((30, 30), (30.0, 30), (2, 60), (525601, 60), ("nope", 60),
+                                ("120", 60), (90.5, 60), (True, 60)):
             with self.subTest(value=value):
                 cfg = act_config.Config()
                 with mock.patch.object(act_config, "_read_overrides", return_value={FIELD_KEY: value}):
@@ -99,10 +107,31 @@ class CatalogMirrorTestCase(unittest.TestCase):
                 self.assertEqual(caught.exception.details.get("min"), act_config.MIN_MEDIA_RETENTION_MINUTES)
                 self.assertNotIn(FIELD_KEY, self.overrides())
 
+    def write_yaml(self, raw: str) -> None:
+        (self.home / "config.yaml").write_text(
+            "recording:\n  media_retention_minutes: %s\n" % raw, encoding="utf-8")
+
+    def act_effective(self):
+        """同一份 config.yaml 经 act 的三层读出来的生效值（守护进程 / cron 用的那个数）。
+        两个路径常量是 import 时定的，所以按 test_ask.py 的先例就地指到本 case 的临时 home。"""
+        with mock.patch.object(act_config, "CONFIG_PATH", self.home / "config.yaml"), \
+             mock.patch.object(act_config, "SETTINGS_OVERRIDES_PATH",
+                               self.home / "state" / "settings_overrides.json"):
+            return act_config.load_config().screenpipe_media_retention_minutes
+
+    def test_a_legal_file_value_reads_the_same_on_both_sides(self):
+        self.write_yaml("240")
+        self.assertEqual(self.act_effective(), 240)
+        self.assertEqual(catalog.effective_value(self.home, "storage", FIELD_KEY), 240)
+
     def test_an_out_of_range_file_value_reads_as_absent(self):
-        # 有人手改 config.yaml 写了 1 分钟：act 回落 60，目录也必须报 60（同一个数）
-        (self.home / "config.yaml").write_text("recording:\n  media_retention_minutes: 1\n", encoding="utf-8")
-        self.assertEqual(catalog.effective_value(self.home, "storage", FIELD_KEY), 60)
+        # 有人手改 config.yaml：越界的 1 分钟、字串 "120"、非整值 90.5 / 120.7 都是坏值——
+        # act 回落 60，目录也必须报 60。两侧读出同一个数才叫「设置页显示的数 == cron 真用的数」。
+        for raw in ("1", "0", "-5", "525601", '"120"', "'60'", "90.5", "120.7", "soon", "true"):
+            with self.subTest(raw=raw):
+                self.write_yaml(raw)
+                self.assertEqual(self.act_effective(), 60)
+                self.assertEqual(catalog.effective_value(self.home, "storage", FIELD_KEY), 60)
 
 
 if __name__ == "__main__":
