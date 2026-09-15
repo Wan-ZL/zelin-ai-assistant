@@ -180,6 +180,8 @@ export interface TaskRow {
   last_error_id?: string | null;
   dispatch_error_id?: string | null;
   agent_name?: string | null;
+  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（CLI 改不了运行中会话的名字，下次 resume 才跟上） */
+  agent_name_stale?: boolean;
   question?: string | null;
   display_title?: string;
   former_titles?: string[];
@@ -243,6 +245,8 @@ export interface ReviewCard {
   session_active?: boolean;
   summary?: string | null;
   agent_name?: string | null;
+  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（下次 resume 才跟上） */
+  agent_name_stale?: boolean;
   display_title?: string;
   /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
   assessment?: CardAssessment | null;

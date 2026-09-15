@@ -48,9 +48,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
-                     policy, power, radar_health, radar_rounds, recap_store, risk, secrets,
-                     self_improve, sources, steer, titles, transcripts)
+from act.lib import (card_summary, config, daily_loop, deploy_state, dispatch_prompt, failures,
+                     maintenance, policy, power, radar_health, radar_rounds, recap_store, risk,
+                     secrets, self_improve, sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -1276,6 +1276,7 @@ class _Session:
     short_id: Any
     copy_cmd: Optional[str]
     agent_name: Any
+    agent_name_stale: bool
     agent: dict   # roster record or {} (agent not found yet)
 
 
@@ -1326,9 +1327,21 @@ def _roster_agent(ex: dict, ctx: _Ctx) -> dict:
 
 
 def _session_name(req: Requirement, a: dict) -> str:
-    """prefer the requirement title: claude uses the (huge) injected prompt
-    as the agent "name", which is useless to display."""
-    return _s(req.title or a.get("name") or req.id)
+    """卡片此刻的显示名（§37.1 那条链，恒非空）——roster 的 ``name`` 只是回落：
+    claude 把（巨大的）注入 prompt 当 agent "name" 用，显示出来毫无用处。
+    改名后的卡在运行中/待验收/已完成列里也必须叫新名字（此前是冻结 title）。"""
+    return _s(_display_title(req) or a.get("name") or req.id)
+
+
+def _agent_name_stale(req: Requirement, a: dict) -> bool:
+    """roster 上这条会话的名字已经跟不上卡名了吗（§37.1 追记）。
+
+    True = 会话在册且它的名字 != 此刻 dispatch/resume 会给的名字
+    （`dispatch_prompt.session_name`，单源）。CLI 没有运行中改名的动作
+    （只有启动期 `-n/--name`），所以这是个诚实的「下次 resume 才跟上」信号，
+    web 详情面据此在「claude agents 列表名」下面给一行说明。"""
+    live = _s(a.get("name"))
+    return bool(live) and live != dispatch_prompt.session_name(req)
 
 
 def _session_cwd(req: Requirement, a: dict, cfg: config.Config) -> str:
@@ -1350,6 +1363,7 @@ def _session_for(req: Requirement, ex: dict, ctx: _Ctx) -> _Session:
         short_id=short_id,
         copy_cmd=_copy_cmd(a, short_id, resume_sid),
         agent_name=a.get("name"),
+        agent_name_stale=_agent_name_stale(req, a),
         agent=a,
     )
 
@@ -1364,6 +1378,7 @@ def _delivered_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "state": "delivered",
         "cwd": sx.cwd,
         "summary": req.summary or None,
@@ -1393,6 +1408,7 @@ def _from_review_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "cwd": sx.cwd,
         "state": "working",
         # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字符串必须归一，
@@ -1436,6 +1452,7 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "state": "review",
         "cwd": sx.cwd,
         "delivered_summary": ex.get("delivered_summary"),
@@ -1472,6 +1489,7 @@ def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "cwd": sx.cwd,
         "state": "working" if sx.state in _RUNNING_STATES else sx.state,
         # epoch 归一，理由同 §30 from_review 分支（Swift Int?）。

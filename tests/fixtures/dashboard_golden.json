@@ -233,6 +233,7 @@
       "short_id": "c895e960",
       "copy_cmd": "claude attach c895e960",
       "agent_name": "huge prompt",
+      "agent_name_stale": true,
       "cwd": "/tmp/wt-220",
       "state": "working",
       "started_at": 1788339660,
