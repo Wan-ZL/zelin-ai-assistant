@@ -105,6 +105,25 @@ class WorktreeEndpointTestCase(unittest.TestCase):
         self.assertIsNone(got["bytes"])
         self.assertEqual(got["repos"], [])
 
+    def test_a_runner_that_raises_lands_as_state_error_with_the_whole_shape(self):
+        """后台线程里的**异常**（子进程起不起来这一层：OSError / 超时的裸抛）与
+        「跑完了但没给 JSON」走同一个出口：整份形状 + `state: "error"` + 一句原因。
+
+        线程里漏出去的异常没有任何人接得住——它会让缓存永远停在 `inflight`，页面
+        从此一直转圈（§0 第 11 条在后台线程上的形状）。"""
+        def boom(_argv, _env, _cwd, _timeout_s):
+            raise OSError("python3 not found")
+
+        inv.snapshot(self.home, spawn=lambda fn: fn(), runner=boom)
+        got = inv.snapshot(self.home, spawn=lambda fn: fn(), runner=boom)
+        self.assertEqual(got["state"], "error")
+        self.assertFalse(got["ok"])
+        self.assertIn("OSError: python3 not found", got["error"])
+        for key in inv.placeholder():
+            self.assertIn(key, got)
+        self.assertIsNone(got["worktrees"])
+        self.assertFalse(got["refreshing"])            # 在飞标记放开了，不会永远转圈
+
     # -- POST ---------------------------------------------------------------- #
     def test_cleanup_runs_the_sweep_and_returns_the_receipt(self):
         self.out = json.dumps(SWEEP)

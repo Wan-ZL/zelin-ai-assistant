@@ -195,6 +195,35 @@ class CompletionHintTestCase(unittest.TestCase):
         self.assertEqual(len(hint["note"]), quick_capture.HINT_NOTE_CAP)
         self.assertEqual(hint["channel"], "radar")
 
+    def test_a_source_row_that_is_not_a_table_falls_back_to_radar(self):
+        """`sources` 是盘上的 YAML：手改过的文件里那一条可能是个裸字符串。读不出
+        channel 的条目跳过（不是崩、也不是把 `str(...)` 出来的垃圾写成 channel），
+        一条都读不出就回落 `radar`（D64 的口径：通道是内容的出身）。"""
+        self._target()
+        evidence = self._evidence()
+        evidence.sources = ["屏幕上看到 Compass 已经上线", 7]
+        quick_capture.apply_triage(self._decision(completed=True), evidence, self.cfg)
+        self.assertEqual(registry.load("P-023").completion_hint["channel"], "radar")
+
+    def test_a_stamping_failure_never_takes_the_fold_down_with_it(self):
+        """盖章这一步自己炸了 = 吞掉，fold 照常落盘（一个提示不许连坐数据）。
+
+        §76.1 的提示是**观测面**，而 fold 是数据：备注 / sources / 被提数都必须
+        照常落下去（宪法第 11 条）。这里让盖章时刻那一下抛（时钟 / 时区库出问题的
+        形状），因为它是盖章路上最早的一步——提示整块因此写不出来。"""
+        self._target()
+        with mock.patch.object(quick_capture, "_iso_now",
+                               side_effect=OSError("时钟读不出来")):
+            kind, _target = quick_capture.apply_triage(
+                self._decision(completed=True), self._evidence(), self.cfg)
+        self.assertEqual(kind, "folded")
+        saved = registry.load("P-023")
+        self.assertEqual(saved.status, "card_sent")
+        self.assertIsNone(saved.completion_hint)               # 提示没写出来
+        self.assertIn("rename 已经做完了", saved.notes or "")    # 证据一条没丢
+        self.assertEqual(len(saved.sources), 1)
+        self.assertEqual(saved.repeated_mentions, 4)
+
     def test_hint_survives_a_yaml_round_trip(self):
         self._target()
         quick_capture.apply_triage(self._decision(completed=True),

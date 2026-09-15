@@ -329,6 +329,13 @@ class RecordTestCase(unittest.TestCase):
         recap.generate(KEY, now=fx.T0 + 60 * MIN, conn=self.conn, runner=self._runner, cfg=self.cfg)
         self.assertEqual(store.load_recap(KEY)["shape"], "sections")
 
+    def test_the_shape_falls_back_to_five_lines_when_all_three_levels_miss(self):
+        """§63.10 的优先级链：按钮 > 记录上的那一版 > 配置。三级全落空（按钮没传、
+        记录上那个键被手改成了认不出的值、配置里也没有）= 出厂五行形，不抛。"""
+        self.assertEqual(recap.record_shape({"shape": "klingon"}, {}), rt.DEFAULT_SHAPE)
+        self.assertEqual(recap.record_shape({}, {"default_shape": None}, "garbage"),
+                         rt.DEFAULT_SHAPE)
+
     def test_the_inbox_form_only_accepts_the_two_literals(self):
         base = {"action": "recap_generate", "meeting_key": KEY}
         self.assertEqual(store.inbox_argv(dict(base, shape="sections")),

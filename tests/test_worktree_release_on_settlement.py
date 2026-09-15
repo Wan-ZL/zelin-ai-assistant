@@ -63,6 +63,41 @@ class ReleaseOnSettlementTestCase(unittest.TestCase):
         self.assertEqual(got["removed"], [])
         self.assertEqual(got["skipped"], [{"path": path, "reason": "dirty"}])
 
+    def test_a_card_without_a_lane_branch_only_looks_at_its_session_cwd(self):
+        """卡上没有 `self_improve.branch`（手改 / 老卡 / 分支还没建）= 不查登记表。
+
+        分支名是「这张卡自己的」唯一判据；没有它就只剩 transcript 记下的会话 cwd
+        这一条线索，而按分支名去 `git worktree list` 里捞是无源之举——多删的风险
+        全在这一步（§75 的安全边界：宁可少删一条）。"""
+        path = self.tree.add("session-only")
+        git = FakeGit(self.tree.repo, [], remotes=["origin/main"])
+        card = Requirement(id="P-8", title="没有分支名的卡", type="self-improvement",
+                           tier="T1", status="review",
+                           execution={"session_id": "aaaa1111"})
+        got = worktrees.release(card, self.cfg, git=git, resolve=lambda _s: Path(path))
+        self.assertEqual(got["branch"], "")
+        self.assertEqual([r["path"] for r in got["removed"]], [path])
+        self.assertEqual(git.branches_deleted, [])          # 没有分支名 = 不删分支
+        self.assertFalse(any(c[0][:2] == ("worktree", "list") for c in git.calls))
+
+    def test_the_release_is_logged_with_its_counts_and_its_error(self):
+        """§65.5 的落账要能在日志里对账：删了几条、跳过几条、出错没有。"""
+        path = self.tree.add("logged")
+        git = FakeGit(self.tree.repo, [{"path": path, "branch": BRANCH, "head": "sha-l"}])
+        lines = []
+        worktrees.release(_card(), self.cfg, git=git, log=lines.append,
+                          resolve=lambda _s: None)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("P-7 worktree release removed=1 skipped=0", lines[0])
+        self.assertNotIn("error=", lines[0])
+
+        def boom(_args, _cwd):
+            raise RuntimeError("git exploded")
+        lines = []
+        worktrees.release(_card(), self.cfg, git=boom, log=lines.append,
+                          resolve=lambda _s: None)
+        self.assertIn("error=RuntimeError: git exploded", lines[0])
+
     def test_a_blowing_up_git_is_recorded_not_raised(self):
         def boom(_args, _cwd):
             raise RuntimeError("git exploded")

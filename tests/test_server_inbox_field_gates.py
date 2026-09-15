@@ -9,6 +9,7 @@ import_claude_sessions 空表，以及 Mac 字节形序列化的每种值类型�
 """
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -147,6 +148,36 @@ class AllowedFieldsTestCase(unittest.TestCase):
         with self.assertRaises(UnknownFieldError) as cm:
             iw._reject_unknown_fields("approve", {"action": "approve", "z": 1, "a": 2})
         self.assertEqual(cm.exception.details, {"fields": ["a", "z"]})
+
+
+class RecapShapeGateTestCase(_Home):
+    """§63.10「可发送长版 / 快速五行」：形状只有两个字面量。
+
+    缺席 ≠ 出厂值：那是「记录上一次用的形状」（粘性由持锁的写者判，server 不猜）。
+    所以认不出的值必须当场 400 —— 让一个猜不出的字符串进 inbox，写者就只能替
+    owner 猜一份文档的用途。"""
+
+    KEY = "meeting:2026-08-31T1256-zoom"
+
+    def _written(self) -> list:
+        return [json.loads(p.read_text(encoding="utf-8")) for p in self._inbox_files()]
+
+    def test_only_the_two_literals_are_a_shape(self):
+        for bad in ("klingon", "LINES", "", 7, None, ["lines"]):
+            with self.subTest(shape=bad):
+                self._rejects({"action": "recap_generate", "meeting_key": self.KEY,
+                               "shape": bad}, "shape must be lines or sections")
+
+    def test_the_two_literals_land_verbatim(self):
+        for good in ("lines", "sections"):
+            self._write({"action": "recap_generate", "meeting_key": self.KEY,
+                         "shape": good})
+        self.assertEqual(sorted(rec["shape"] for rec in self._written()),
+                         ["lines", "sections"])
+
+    def test_an_absent_shape_is_not_a_key_at_all(self):
+        self._write({"action": "recap_generate", "meeting_key": self.KEY})
+        self.assertNotIn("shape", self._written()[0])
 
 
 class MacJsonBytesTestCase(unittest.TestCase):

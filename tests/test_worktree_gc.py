@@ -146,6 +146,50 @@ class WorktreeGcTestCase(unittest.TestCase):
         self.assertFalse(got["removed"][0]["branch_deleted"])
         self.assertEqual(git.branches_deleted, [])
 
+    def test_a_detached_worktree_loses_its_directory_and_no_branch_is_touched(self):
+        # detached = 没有分支名：分支侧的两个理由（merged / gone）都判不出来，年龄那条
+        # 照旧管得着；删完也没有分支可删——`git branch -d ""` 一次都不许发出去
+        entry = self._entry("detached", branch="", age_days=worktrees.STALE_DAYS + 1)
+        git = FakeGit(self.tree.repo, [entry], remotes=["origin/main"])
+        got = self._sweep(git)
+        self.assertEqual([r["reason"] for r in got["removed"]], ["stale"])
+        self.assertFalse(got["removed"][0]["branch_deleted"])
+        self.assertEqual(git.branches_deleted, [])
+        self.assertFalse(any(c[0][:2] == ("branch", "-d") for c in git.calls))
+
+    def test_a_fresh_detached_worktree_is_not_a_candidate_at_all(self):
+        entry = self._entry("detached-new", branch="", age_days=1.0)
+        git = FakeGit(self.tree.repo, [entry], remotes=["origin/main"])
+        got = self._sweep(git)
+        self.assertEqual(got["removed"], [])
+        self.assertEqual(got["skipped"].get("active"), 1)
+
+    def test_a_remove_that_git_refuses_lands_in_failed_with_the_git_tail(self):
+        # 目录还在（`worktree remove` 没成功）= 分支绝不动：删分支是删目录成功之后的事
+        entry = self._entry("stubborn", branch="feat/stubborn")
+        git = FakeGit(self.tree.repo, [entry], remotes=["origin/main"],
+                      fail={"worktree remove"})
+        got = self._sweep(git)
+        self.assertEqual(got["removed"], [])
+        self.assertEqual([r["path"] for r in got["failed"]], [entry["path"]])
+        self.assertTrue(got["failed"][0]["error"].startswith("worktree remove rc=1"))
+        self.assertFalse(got["failed"][0]["removed"])
+        self.assertEqual(git.branches_deleted, [])
+
+    def test_prune_never_fires_when_the_registry_listing_came_back_empty(self):
+        """登记表是空的（`worktree list` rc 0 却一条都没有）= 闸的输入不存在，一枪不开。
+
+        `prune` 是仓库全局的：不知道有哪些登记的时候「有没有外面的幽灵」恒为否，
+        fail-open 会让 owner 那 142 个手工 worktree 的登记在零核对之下被注销。"""
+        calls = []
+
+        def git(args, cwd):
+            calls.append((tuple(args), cwd))
+            return 0, ""
+        self.assertEqual(worktrees.prune(git, self.tree.repo, self.tree.root, []),
+                         "skipped:unknown")
+        self.assertEqual(calls, [])
+
     def test_a_branch_that_git_refuses_to_delete_leaves_the_worktree_removed(self):
         entry = self._entry("keepbranch", branch="feat/keep")
         git = FakeGit(self.tree.repo, [entry], remotes=["origin/main"],

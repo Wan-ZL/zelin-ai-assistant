@@ -198,6 +198,41 @@ class RunTestCase(unittest.TestCase):
         self.assertIn("DatabaseError", receipt["error"])
         self.assertTrue((self.state / ret.RECEIPT_NAME).exists())
 
+    def test_the_default_db_path_is_the_engine_s_own(self):
+        """`--db` 缺席时（cron 那一形）指向引擎自己的库。**只读这一个纯函数**——
+        判例绝不拿默认路径真跑一轮：owner 机器上那个库是真的（本文件的纪律）。"""
+        self.assertEqual(ret.default_db_path(), Path.home() / ".screenpipe" / "db.sqlite")
+
+    def test_a_receipt_that_cannot_be_written_only_adds_a_line_to_itself(self):
+        """回执落不下去（state/ 的位置被占成了文件、只读卷、盘满）= 回执里多一句，
+        清理本身照旧算完、stdout 那份仍然完整（§0 第 11 条）。"""
+        self._marker("last_frame_id", "3")
+        blocked = self.root / "state-is-a-file"
+        blocked.write_text("x", encoding="utf-8")
+        receipt = ret.run(db_path=self.db, state_dir=blocked, days=7, now=NOW)
+        self.assertEqual(receipt["deleted_frames"], 2)        # 删照删
+        self.assertIn("receipt_write_failed", receipt["error"])
+
+    def test_a_db_that_cannot_be_stat_ed_after_the_prune_reports_a_null_size(self):
+        """清理跑完那一下 `stat` 失败（库被引擎挪走、外置卷掉线——一轮最长 120 s，
+        这是真会发生的窗口）= `db_bytes_after` 诚实为 null，而不是 0，也不是崩。"""
+        self._marker("last_frame_id", "3")
+        db, real_stat, seen = self.db, Path.stat, []
+
+        def flaky_stat(self, *args, **kwargs):
+            """同一个库文件的第二次 stat（prune 之后那一次）失败。"""
+            if str(self) == str(db):
+                seen.append(1)
+                if len(seen) > 1:
+                    raise OSError("EIO")
+            return real_stat(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "stat", flaky_stat):
+            receipt = ret.run(db_path=db, state_dir=self.state, days=7, now=NOW)
+        self.assertIsNone(receipt["error"])
+        self.assertEqual(receipt["deleted_frames"], 2)
+        self.assertIsNone(receipt["db_bytes_after"])
+
     def test_cli_prints_one_json_line(self):
         self._marker("last_frame_id", "3")
         buf = io.StringIO()

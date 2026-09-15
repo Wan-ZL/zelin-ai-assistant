@@ -18,6 +18,7 @@ from unittest import mock
 
 from act import doctor
 from act.lib import config
+from act.lib.checks import services
 
 
 def _systemctl(rows):
@@ -105,6 +106,15 @@ class SystemdOrphansTestCase(_HomeWithTemplates):
             doctor._check_systemd_orphans(self._probes(_systemctl(rows))).status,
             doctor.OK)
 
+    def test_a_unit_dir_that_cannot_be_listed_reports_no_files(self):
+        """文件面探针读不出目录（权限 / EIO / 卷掉线）= 空表，不抛（探针不许崩）。
+
+        这一支是 doctor.Probes 的出厂实现，所以它的失败形状归 §55 这一行管：给不出
+        文件面证据时只靠 systemd 那一面判，而不是让 `doctor` 整份报告炸掉。"""
+        self.assertIs(doctor.Probes().installed_user_units, services.installed_user_units)
+        with mock.patch.object(Path, "glob", side_effect=OSError("EIO")):
+            self.assertEqual(services.installed_user_units(), [])
+
     def test_the_row_rides_the_linux_check_list(self):
         with mock.patch("sys.platform", "linux"):
             names = [f.__name__ for f in doctor._checks_for_platform()]
@@ -146,6 +156,17 @@ class ScheduledTaskOrphansTestCase(_HomeWithTemplates):
         self.assertEqual(
             doctor._check_task_orphans(self._probes(_schtasks(rows))).status,
             doctor.OK)
+
+    def test_a_template_dir_that_cannot_be_listed_leaves_the_expectation_empty(self):
+        """模板目录读不出来 = 期望集合为空（探针不许崩，宪法第 11 条）。
+
+        后果是**诚实的过度报告**：还在跑的任务都成了「模板没了却还在」，于是这一行
+        报 FAIL 让人来看一眼——而不是静默 OK（那才是 §55 要治的结构性失明）。"""
+        rows = {"\\ZelinAIAssistant\\actd": "Running"}
+        with mock.patch.object(Path, "glob", side_effect=OSError("EIO")):
+            r = doctor._check_task_orphans(self._probes(_schtasks(rows)))
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("\\ZelinAIAssistant\\actd", r.detail)
 
     def test_the_row_rides_the_windows_check_list(self):
         with mock.patch("sys.platform", "win32"):
