@@ -504,6 +504,10 @@ UI_BUNDLE_ID="com.zelin.ai-board"
 UI_EXEC_NAME="ZelinAIBoard"             # CFBundleExecutable → pgrep/pkill -x
 UI_LEGACY_APP_NAME="Zelin's AI Assistant (old)"   # the frozen menu-bar app (D3, R2.2.4)
 UI_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"       # CONTRACT §12 — deliberately unchanged
+UI_LEGACY_EXEC_NAME="ZelinAIEngineer"   # the frozen app's CFBundleExecutable (§54) — it owns its own engine
+# §61.8 orphan sweep: the §15 contract engine predicate, verbatim the shell's
+# RecordingController.enginePattern (the [r] class keeps pgrep/pkill from matching their own argv).
+UI_ENGINE_PATTERN="screenpipe.*[r]ecord"
 UI_PREVIOUS_APP_NAME="Zelin AI Board"   # the shell's folder name before the swap (≤ v0.48.29)
 UI_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam
 UI_BUDGET_S="${AIASSISTANT_UI_BUDGET:-600}"
@@ -812,6 +816,29 @@ install_shell_app() {
     fi
 }
 
+# §61.8 孤儿引擎扫除（issue #318）：screenpipe 归壳所有——**没有壳在跑却有引擎在跑**
+# 就是孤儿（上一个壳崩了、或被 SIGKILL 掉，`applicationWillTerminate` 根本没跑过）。
+# 它 ppid=1 继续录屏，TCC 的责任方还是那个已经不存在的壳身份（#316 重置授权后每帧都
+# 弹系统授权框）。壳还活着 = 不碰（它自己的退出路径 / 下次启动的回收管它）；§54 冻结
+# 的原生 app 在班 = 不碰（那是它自己的引擎）。永不致命：扫不掉只 warn。
+ui_sweep_orphan_engine() {
+    [ "$(uname -s)" = "Darwin" ] || return 0
+    if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then return 0; fi
+    if pgrep -x "$UI_LEGACY_EXEC_NAME" >/dev/null 2>&1; then return 0; fi
+    if ! pgrep -f "$UI_ENGINE_PATTERN" >/dev/null 2>&1; then return 0; fi
+    info "ui: no board shell is running but a screenpipe engine is — reclaiming the orphan ($1)"
+    pkill -f "$UI_ENGINE_PATTERN" 2>/dev/null || true
+    for _ in 1 2 3 4; do
+        pgrep -f "$UI_ENGINE_PATTERN" >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+    if pgrep -f "$UI_ENGINE_PATTERN" >/dev/null 2>&1; then
+        warn "ui: the orphan screenpipe engine is still running — stop it by hand: pkill -f 'screenpipe.*record'"
+    else
+        ok "ui: reclaimed the orphan screenpipe engine"
+    fi
+}
+
 install_ui() {
     if [ "$PKG_POSTINSTALL" -eq 1 ]; then
         echo "==> 4b. board UI (web/dist + shell app) — skipped (.pkg mode)"
@@ -821,6 +848,8 @@ install_ui() {
     echo "==> 4b. board UI (web/dist + shell app)"
     ui_log_begin
     _ui_t0="$(ui_now)"
+    # 先扫孤儿再构建：引擎录到什么时候不该取决于 npm ci 跑多久（预算 600 s）。
+    ui_sweep_orphan_engine "install.sh ui step"
     install_web_ui
     install_shell_app
     _ui_s=$(( $(ui_now) - _ui_t0 ))
@@ -839,8 +868,10 @@ install_ui() {
 # §56.5 relaunch rule: only the auto-deploy path (--non-interactive), only when
 # this run installed a new shell bundle AND the app is running, and only AFTER
 # step 5 reloaded the server agent. SIGTERM → the shell's DispatchSource turns
-# it into a regular NSApp.terminate (it spawned nothing to clean up: the server
-# is launchd's). `open -g` relaunches without stealing focus, and `--args
+# it into a regular NSApp.terminate, i.e. applicationWillTerminate runs: the
+# server is launchd's, but since §61.8 the shell DOES stop the screenpipe engine
+# it spawned there (before that it leaked it as a ppid=1 orphan — issue #318).
+# `open -g` relaunches without stealing focus, and `--args
 # --background` tells the shell itself not to order its window front or activate
 # (D38, shell LaunchPolicy): `-g` alone only asks LaunchServices not to switch —
 # a window the owner had closed would still reappear. Interactive runs leave a
@@ -855,7 +886,14 @@ relaunch_shell_app() {
         pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || break
         sleep 0.5
     done
-    pkill -KILL -x "$UI_EXEC_NAME" 2>/dev/null || true
+    # §61.8：SIGTERM 送不走它才 KILL（此前这一发是无条件的）——KILL 之后
+    # applicationWillTerminate 没跑过，旧壳拉起的 screenpipe 当场成孤儿，就地扫掉，
+    # 不必等新壳启动那一下的回收（新壳起不来时那一下根本不会发生）。
+    if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
+        pkill -KILL -x "$UI_EXEC_NAME" 2>/dev/null || true
+        sleep 0.5
+        ui_sweep_orphan_engine "shell app SIGKILLed — willTerminate never ran"
+    fi
     if open -g "$UI_APP_PATH" --args --background 2>/dev/null; then
         ok "ui: relaunched the shell app on the new build (server agent reloaded first)"
     else

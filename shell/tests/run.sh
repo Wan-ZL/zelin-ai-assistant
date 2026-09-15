@@ -13,7 +13,10 @@
 #       equivalents, actions; ⌥⌘S retired) that AppDelegate installs verbatim;
 #   [8/9]+[9/9] compile + run LaunchHarness.swift the same way — pins the
 #       launch-source policy of D38 (§56.5 / §61 追记: `--background` argv or a
-#       login-item launch builds the window without ordering it front).
+#       login-item launch builds the window without ordering it front) and,
+#       in its own sections [8]/[9], the §61.8 engine-ownership verdicts
+#       (orphan reclaim at launch / stop-what-we-spawned at exit) through
+#       recorded seams — the harness never runs a real pgrep or pkill.
 # Mirrors ios/tests/captions/run.sh: plain swiftc, no Xcode project, any
 # failed assertion exits non-zero.
 #
@@ -72,7 +75,7 @@ compile_harness MenuHarness
 echo "==> [7/9] Run menu assertions (AIASSISTANT_HOME sandboxed)"
 AIASSISTANT_HOME="$WORK/home" "$WORK/MenuHarness/MenuHarness"
 
-echo "==> [8/9] Compile launch harness (launch-source policy, D38)"
+echo "==> [8/9] Compile launch harness (launch-source policy D38 + engine ownership §61.8)"
 compile_harness LaunchHarness
 
 echo "==> [9/9] Run launch assertions (AIASSISTANT_HOME sandboxed)"
