@@ -1,6 +1,7 @@
 // 会议纪要页行为（CONTRACT §63 / issue #129 §3）：
 //   1) 行从 board.recaps 渲染、按日分组、默认选中第一行、进行中行无正文；
-//   2) 复制 = 剪贴板写入 + POST /api/recaps/mark copied（唯一出口）；
+//   2) 复制 = 剪贴板写入（§63.5 追记：一行日期表头 + 5 行正文，表头与面板 h3 同一份）
+//      + POST /api/recaps/mark copied（唯一出口）；
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
 //      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
 //   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}。
@@ -90,11 +91,18 @@ describe("RecapsPage", () => {
     expect(screen.getByText(/定了：训练周一开始/)).toBeTruthy();
   });
 
-  it("copy writes the five lines to the clipboard and marks copied", async () => {
+  it("copy writes the date header plus the five lines to the clipboard and marks copied", async () => {
     await renderPage([recap()]);
+    // §63.5 追记（issue #299）：面板标题就是复制出去的第一行——所见即所复制
+    const heading = screen.getByRole("heading", { level: 3, name: /^\d{4}-\d{2}-\d{2} \(\w{3}\) / });
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(EN.join("\n"));
+    const written = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    const lines = written.split("\n");
+    expect(lines.length).toBe(6);
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2} \(\w{3}\) \d{2}:\d{2}–\d{2}:\d{2} · Zoom · 20 min$/);
+    expect(lines[0]).toBe(heading.textContent);
+    expect(lines.slice(1)).toEqual(EN);              // 正文仍是 server 存的那 5 行，一字不改
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mark as sent" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "sent", true));
