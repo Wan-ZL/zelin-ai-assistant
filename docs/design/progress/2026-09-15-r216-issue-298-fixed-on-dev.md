@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-216`（PR #TBD；R-216「issue #298：needs_review 说不出原因、只差几个字符也不自动修」；docs-only 孪生——真交付是已合进 `dev` 的 #345（D63）与本轮复核后的修正 #354（D74，base `dev`））
+pr: `ai/self-improve/R-216`（PR #355；R-216「issue #298：needs_review 说不出原因、只差几个字符也不自动修」；docs-only 孪生——真交付是已合进 `dev` 的 #345（D63）与本轮复核后的修正 #354（D74，base `dev`））
 phase: 会议纪要（§63；D63 / D73 → D74）+ 横切（§65 自我改进通道：卡铸自一个 `dev` 上已修、`main` 上未到的 issue）
 law: —（本分支无修法；#345 的 §63.3 / §63.5 / §63.6 追记与 #354 的三处修正都在 `dev` 上）
 
