@@ -4,7 +4,8 @@
 §16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
 §53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
 D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
-§70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关）。
+§70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关；
+§65.5 的 `self_improve.owner_logins` 是 overrides 能碰的第二键）。
 
 Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
@@ -1342,9 +1343,15 @@ def _clean_slack_channels(value: list) -> list:
     return [c for c in map(_clean_slack_channel, value) if c is not None]
 
 
-def _clean_watch_people(value: list) -> list:
+def _clean_str_list(value: list) -> list:
+    """字串表的清洗（去空白、丢空项与非字串）——watch_people 与
+    `self_improve.owner_logins`（§15.3 §65.5 追记）共用一把。"""
     return [str(v).strip() for v in value
             if isinstance(v, (str, int)) and str(v).strip()]
+
+
+def _clean_watch_people(value: list) -> list:
+    return _clean_str_list(value)
 
 
 def _read_overrides() -> Optional[dict]:
@@ -1565,6 +1572,33 @@ def _override_watch_people(cfg: Config, value, _nested: dict) -> None:
         cfg.watch_people = _clean_watch_people(value)
 
 
+def _set_self_improve_owner_logins(cfg: Config, value: list) -> None:
+    """落回 `cfg.raw["self_improve"]`——`policy.self_improve_config` 从 raw 现读
+    这一键（§15.3 §65.5 追记，issue #310）。空表 = 显式的「没有额外 login」。"""
+    block = cfg.raw.get("self_improve")
+    if not isinstance(block, dict):
+        block = {}
+        cfg.raw["self_improve"] = block
+    block["owner_logins"] = _clean_str_list(value)
+
+
+def _override_self_improve(cfg: Config, value, _nested: dict) -> None:
+    """nested form mirroring config.yaml self_improve —— 设置页「开发者」区的
+    list 字段就写这个形（`{"self_improve": {"owner_logins": [...]}}`）。**只认
+    `owner_logins` 一键**：总开关的唯一 override 拼法仍是扁平的
+    `self_improve_enabled`（§65.1 追记「没有第二套写入面」），其余三键不进
+    overrides（§65.8）。"""
+    if isinstance(value, dict) and isinstance(value.get("owner_logins"), list):
+        _set_self_improve_owner_logins(cfg, value["owner_logins"])
+
+
+def _override_self_improve_owner_logins(cfg: Config, value, _nested: dict) -> None:
+    """flat form: `{"self_improve.owner_logins": ["Wan-ZL"]}`（手写 overrides 的
+    拼法；嵌套形优先，同 telemetry 的两拼法）。"""
+    if isinstance(value, list):
+        _set_self_improve_owner_logins(cfg, value)
+
+
 # exact-key overrides → handler(cfg, value, nested_feats); prefix families and
 # scalar fields are resolved in _apply_override.
 _OVERRIDE_HANDLERS = {
@@ -1578,6 +1612,11 @@ _OVERRIDE_HANDLERS = {
     "telemetry.capture_input": _override_telemetry_capture_input,
     "slack_channels": _override_slack_channels,
     "watch_people": _override_watch_people,
+    # §15.3 §65.5 追记（issue #310）：两拼法都登记——`_apply_override` 按**精确
+    # 键**分派，只登记 "self_improve" 的话扁平点号键会掉进 `_override_scalar`
+    # 被静默丢掉（"self_improve.owner_logins" 不是 _OVERRIDE_FIELDS 的键）。
+    "self_improve": _override_self_improve,
+    "self_improve.owner_logins": _override_self_improve_owner_logins,
 }
 
 

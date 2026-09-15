@@ -1128,6 +1128,26 @@
         },
         {
           "choices": null,
+          "default": [],
+          "effective": [],
+          "help": {
+            "en": "The self-improvement lane only counts YOUR actions: you merge a PR = accepted, you close it = rejected, your comments = the next round of work. Two identities count out of the box — the account in the first half of the repo slug, and whichever account gh is logged in as on this machine (they differ when the repo is on a personal account and gh is logged in with a work one). Add further logins here. Case-insensitive. Takes effect on the next poll, no restart.",
+            "zh": "自动改进通道只把「你」的动作当数：你合并 PR = 验收，你关闭 = 拒绝，你的评论 = 下一轮任务。出厂就认两个身份——仓库地址前半段那个账号，以及这台机器上 gh 当前登录的账号；两者不同（个人号开仓库、工作号登 gh）时都算你本人。这里填第三个、第四个。大小写不敏感。改完下一轮巡检生效，不用重启。"
+          },
+          "key": "self_improve_owner_logins",
+          "kind": "list",
+          "label": {
+            "en": "Extra GitHub logins that count as you (comma-separated)",
+            "zh": "额外算作我本人的 GitHub 用户名（逗号分隔）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
           "default": "",
           "effective": "",
           "help": {
