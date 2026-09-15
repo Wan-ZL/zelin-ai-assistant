@@ -196,6 +196,10 @@ describe("recapText", () => {
       .toBe("已自动修剪中文第 3 行：剪掉行尾 2 个字符（原来超出 2 个）");
     // 老 daemon 的行没有 `removed`（add-only）→ 退回只说超出量，绝不显示 undefined
     expect(repairLabel({ lang: "en", line: 1, over: 6 }, en)).toBe("Trimmed English line 1 automatically (it was 6 characters over)");
+    // §63.5 追记 2026-09-15 修正：连 `over` 都缺的行（过滤器本会拦下）两个分支也不许说 undefined
+    const noOver = { lang: "en", line: 1 } as unknown as Parameters<typeof repairLabel>[0];
+    expect(repairLabel(noOver, en)).toBe("Trimmed English line 1 automatically (it was ? characters over)");
+    expect(repairLabel({ ...noOver, removed: 8 }, en)).not.toContain("undefined");
   });
 
   it("wire rows that are not findings are dropped, never rendered", () => {
@@ -207,6 +211,13 @@ describe("recapText", () => {
     const trim = { lang: "en", line: 1, over: 6, removed: 8 };
     expect(recapRepairs(row({ repairs: [trim, { lang: "en" }, null] as unknown as [] }))).toEqual([trim]);
     expect(recapRepairs(row())).toEqual([]);
+    // §63.5 追记 2026-09-15 修正（R-216 复核）：过滤器收口到法条承诺的形状
+    const textOnly = { code: "", text: "en: a rule the page does not know yet" };
+    expect(recapProblems(row({ problems: [{ code: "" }, textOnly] as unknown as [] }))).toEqual([textOnly]);   // 空 code 空 text = 一行空白，滤掉
+    expect(recapProblems(row({ problems: [{ code: "future_rule", text: { oops: 1 } }] as unknown as [] }))).toEqual([]);  // 对象 text 会让看板崩
+    expect(recapProblems(row({ problems: [{ code: "emoji", lang: "en", line: null, limit: null, over: null, text: "en: emoji not allowed" }] }))).toHaveLength(1);  // 整语言级禁项的 null 都合法
+    const noRemoved = { lang: "en", line: 1, over: 6 };
+    expect(recapRepairs(row({ repairs: [{ line: 1 }, { lang: "en", line: 1 }, noRemoved] as unknown as [] }))).toEqual([noRemoved]);
   });
 
   it("slack draft receipt copy", () => {

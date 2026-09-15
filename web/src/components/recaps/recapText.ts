@@ -458,16 +458,24 @@ export function versionLabel(entry: { version: number; generated_at?: string | n
   return stamp ? `${head}${partial} · ${stamp}` : `${head}${partial}`;
 }
 
-/** §63.3 追记：wire 上的发现行（老 daemon 无此键、手改过的文件可能是任意东西）——只留像样的对象 */
+/**
+ * §63.3 追记：wire 上的发现行（老 daemon 无此键、手改过的文件可能是任意东西）——只留说得出话的对象：
+ * `code` 非空（或至少 `text` 非空——词表外的 code 靠它兜底，§63.5 追记「永不显示一行空白」），
+ * `text` 若在必须是字符串（一个对象进了 JSX 会让整块看板崩掉，宪法第 11 条）。
+ */
 export function recapProblems(row: RecapRow): RecapProblem[] {
   const rows = Array.isArray(row.problems) ? row.problems : [];
-  return rows.filter((p): p is RecapProblem => Boolean(p) && typeof p === "object" && typeof p.code === "string");
+  return rows.filter((p): p is RecapProblem =>
+    Boolean(p) && typeof p === "object" && typeof p.code === "string"
+    && (p.text == null || typeof p.text === "string") && (p.code !== "" || Boolean(p.text)));
 }
 
-/** 同上，修剪台账：一行修剪必须有语言与行号才说得出话 */
+/** 同上，修剪台账：一行修剪必须有语言、行号与超出量三个数才说得出话（`removed` 是后来的 add-only 键，可缺） */
 export function recapRepairs(row: RecapRow): RecapRepair[] {
   const rows = Array.isArray(row.repairs) ? row.repairs : [];
-  return rows.filter((r): r is RecapRepair => Boolean(r) && typeof r === "object" && typeof r.line === "number");
+  return rows.filter((r): r is RecapRepair =>
+    Boolean(r) && typeof r === "object" && typeof r.lang === "string"
+    && typeof r.line === "number" && typeof r.over === "number");
 }
 
 /** 「英文第 3 行」/「English line 3」；整语言级的禁项没有行号（daemon 给 null）= 只说语言 */
@@ -538,12 +546,13 @@ export function problemLabel(problem: RecapProblem, text: Bilingual): string {
  */
 export function repairLabel(repair: RecapRepair, text: Bilingual): string {
   const at = where(repair.lang, repair.line, text);
+  const over = repair.over ?? "?";     // 过滤器已要求它是数字；直接调用方传来缺键的行也永不显示 undefined
   if (typeof repair.removed !== "number") {
-    return text(`已自动修剪${at}（原来超出 ${repair.over} 个字符）`,
-                `Trimmed ${at} automatically (it was ${repair.over} characters over)`);
+    return text(`已自动修剪${at}（原来超出 ${over} 个字符）`,
+                `Trimmed ${at} automatically (it was ${over} characters over)`);
   }
-  return text(`已自动修剪${at}：剪掉行尾 ${repair.removed} 个字符（原来超出 ${repair.over} 个）`,
-              `Trimmed ${at} automatically: ${repair.removed} characters off the end (it was ${repair.over} over the cap)`);
+  return text(`已自动修剪${at}：剪掉行尾 ${repair.removed} 个字符（原来超出 ${over} 个）`,
+              `Trimmed ${at} automatically: ${repair.removed} characters off the end (it was ${over} over the cap)`);
 }
 
 /** §63.4 草稿回执文案（wire status 词表 add-only；未知值按字符串兜底） */

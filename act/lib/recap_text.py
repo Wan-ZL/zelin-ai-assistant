@@ -527,6 +527,14 @@ def validate_sections_detail(recap: dict) -> list:
     return out
 
 
+def sections_wellformed(value) -> bool:
+    """这堆东西够不够格进 :func:`validate_sections_detail`——它按 :func:`_one_section`
+    的结构取键（`key` / `modality` / `items[str]`），手改过的记录里什么都可能有。
+    §63.6 追记 2026-09-15 修正的重算据此选「空台账」而不是崩掉的回退（宪法第 11 条）；
+    「结构对不对」在本模块只有这一个定义（防腐 #9）。"""
+    return _sections_list(value) is not None
+
+
 def validate_sections(recap: dict) -> list:
     """:func:`validate_sections_detail` 的 ``text`` 列（重试时原样喂回模型）。"""
     return [f["text"] for f in validate_sections_detail(recap)]
