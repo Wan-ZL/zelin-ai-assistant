@@ -20,8 +20,12 @@ Owner 决策 D10（docs/design/vnext2-plan.md）：
 `review_stale` 判过时：闲置 ≥ `daily_loop.review_stale_days`（默认 14，0 = 关）的
 待验收卡先盖一枚 add-only 执行戳 `review_stale_notified_at`（**不在**
 :data:`_EXECUTION_STAMPS` 里——它不是活动，盖了也不该把闲置天数清零），并由本轮
-**一条**汇总通知（§70.6 追记）告知；下一轮该戳满 20 小时才进回收站
-（`stale:review_stale`，prev_status=review，照循环卡的 90 天保留期可恢复）。
+**一条**汇总通知（§70.6 追记，kind `review_stale` 穿透安静时段）告知；下一轮该戳满
+20 小时才进回收站（`stale:review_stale`，prev_status=review，照循环卡的 90 天保留
+期可恢复）。那枚戳**只对「我们说话之后没再动过」的卡算数**：戳比 `last_activity`
+旧（打回→重新交付回到待验收、owner 从回收站捞回来——`registry.restore` 盖
+`restored_at`）就当没盖过，重新走第一阶段，否则一张卡一生只被通知一次、第二轮起
+无声归档。
 待验收卡**只**过这一条规则：deadline_passed / diagnostic_expired / superseded /
 idle 四条仍只认提案与潜在任务两列，否则 7 天的 deadline 规则会绕过这道两阶段闸。
 
@@ -134,7 +138,11 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-_EXECUTION_STAMPS = ("approved_at", "dispatched_at", "review_at", "reraised_at", "accepted_at")
+# 算「最近一次活动」的执行戳。`restored_at`（D74）是 owner 从回收站捞回一张卡的时刻：
+# 捞回来 = 他亲手说了「这张还要」，那一下必须重置闲置时钟，否则 §70.2 追记二的第二阶段
+# 会在第二天原地再归档一次（`registry.restore` 只清回收站字段，卡上的时间一个都没变新）。
+_EXECUTION_STAMPS = ("approved_at", "dispatched_at", "review_at", "reraised_at", "accepted_at",
+                     "restored_at")
 
 
 def _activity_candidates(req: Requirement) -> list:
@@ -335,8 +343,14 @@ def _idle_rule(req: Requirement, idle: int, stale_days: int) -> Optional[str]:
 # 待验收列的两阶段老化（D74 / §70.2 追记；issue #312）
 # --------------------------------------------------------------------------- #
 def _notice_state(req: Requirement) -> "tuple[str, Optional[_dt.datetime]]":
-    """待验收老化戳的三态：``("none", None)`` 还没通知过 / ``("set", <when>)``
-    通知过且时刻可解析 / ``("bad", None)`` 戳在但解析不了。
+    """待验收老化戳的三态：``("none", None)`` 还没通知过（或**通知过但那之后卡又被
+    动过**）/ ``("set", <when>)`` 通知过且此后没动静 / ``("bad", None)`` 戳在但
+    解析不了。
+
+    **戳是相对最近一次活动的，不是绝对的**（§70.2 追记二第 4 条）：戳比
+    :func:`last_activity` 旧 = 我们说完之后这张卡又动过（打回→重新交付回到待验收、
+    owner 从回收站捞回来），那枚戳对这一轮老化不算数，必须重新走第一阶段。少了这
+    一句，一张卡一生只被通知一次——第二轮起直接无声归档，两阶段闸门只在头一轮成立。
 
     ``bad`` 既不重新通知也不归档——「拿不准就不动」（§70.2）：重盖一次戳会把
     20 小时的闸门永远重置，而拿一个读不懂的时刻去归档是猜。"""
@@ -344,7 +358,12 @@ def _notice_state(req: Requirement) -> "tuple[str, Optional[_dt.datetime]]":
     if raw in (None, ""):
         return "none", None
     when = parse_when(raw)
-    return ("bad", None) if when is None else ("set", when)
+    if when is None:
+        return "bad", None
+    last = last_activity(req)
+    if last is not None and last >= when:
+        return "none", None
+    return "set", when
 
 
 def review_stale_due(idle: Optional[int], review_days: int) -> bool:
@@ -424,7 +443,8 @@ def sweep_stale(cfg: config.Config, today: Optional[_dt.date] = None,
 
 def _needs_review_notice(req: Requirement, reqs: list, today: _dt.date,
                          review_days: int) -> bool:
-    """第一阶段的候选：待验收、没被保护罩挡住、闲置够久、还没盖过通知戳。"""
+    """第一阶段的候选：待验收、没被保护罩挡住、闲置够久、还没盖过通知戳（戳被此后的
+    活动作废 = 按没盖过算，见 :func:`_notice_state`）。"""
     if str(req.status) != State.REVIEW.value or _protected(req, reqs, today):
         return False
     if not review_stale_due(_idle_days(req, today), review_days):
@@ -463,11 +483,14 @@ def _stamp_notice(req: Requirement, now: _dt.datetime) -> Optional[dict]:
 
 
 def _announce_review_stale(count: int, review_days: int, notifier) -> None:
-    """整轮**一条**汇总通知（§70.6 追记）。不打 kind = §28 目录里的 `general`：
-    不新增分类，安静时段照旧管得着它。永不 raise。"""
+    """整轮**一条**汇总通知（§70.6 追记）。kind = :data:`notify.KIND_REVIEW_STALE`，
+    在 `notify.QUIET_HOURS_EXEMPT` 里（§28 追记）：每日整理出厂 03:30 跑，正落在出厂
+    安静窗 22:00–08:00 内——守安静时段就等于「归档前发一次通知」在任何开了安静时段的
+    安装上永远不成立。一天一条、且后果是卡明天从眼前消失，够资格穿透（宪法第 10 条）。
+    永不 raise。"""
     title, body = notify.msg_review_stale(count, review_days)
     try:
-        (notifier or notify.notify)(title, body)
+        (notifier or notify.notify)(title, body, kind=notify.KIND_REVIEW_STALE)
     except Exception:  # noqa: BLE001 - 通知绝不崩循环
         pass
 

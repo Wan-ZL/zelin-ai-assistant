@@ -337,6 +337,8 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 - **§70 追记（add-only；`trash_reason` 词表扩展 + 分级保留期）**：每日整理循环（actd 内运行，system actor）写两族新 reason——`daily-merge: 并入 <new id>`（同题多卡合成一张新卡后，旧卡进回收站；新卡主键在 reason 里，新卡 `merged_from[]` 反向列出旧卡）与 `stale:<rule>`（rule ∈ `deadline_passed` / `diagnostic_expired` / `superseded` / `idle`，词表见 §70.2）。两族卡 **`prev_status` 完整、restore 语义不变**；保留期改由 `maintenance.retention_days(req, cfg)` 按卡判决：这两族 = `daily_loop.trash_retention_days`（默认 **90**——owner 没亲眼看过它们进回收站，比手动 trash 的 60 天更长），其余 = `trash.retention_days`；`trash.retention_days <= 0` 仍是总开关（关掉后循环卡也不清）。`actd.purge_trash` 与 §40.5 `purge_at` 投影经**同一个**判决（`maintenance.purge_due` / `maintenance.purge_at`），倒计时永不许诺一次不会发生的删除。存量的 ~40 张 owner 手动 trash 的卡不受本条影响（它们按 owner 自己设的 60 天走）；想留作参考请在回收站页对每张按「永久保存」（pin），或临时抬高 `trash.retention_days`。
 
+- **§9 追记（2026-09-15，add-only；issue #312 / owner 决策 **D74**）——恢复 = 一次活动，落一枚 `execution.restored_at`**：`registry.restore` 在清掉三个回收站字段（`trashed_at` / `prev_status` / `trash_reason`）之外，同时盖 add-only 执行戳 `execution.restored_at`（ISO UTC）。原因：restore 之前**不会让卡上任何时间变新**，所以在 `maintenance.last_activity` 眼里一张刚被 owner 捞回来的卡与它被扔掉时一样陈旧——§70.2 追记二的 `review_stale`（以及两列的 `idle` / `deadline_passed`）会在下一轮原地把它再扔一次，「恢复」变成一个第二天自动撤销的按钮（宪法第 2 条可撤销名存实亡）。这枚戳**登记在** `maintenance._EXECUTION_STAMPS` 里（与 `review_stale_notified_at` 刻意不登记正相反：捞回来是 owner 亲手的动作，而通知只是我们自己说了句话），于是闲置时钟从恢复那一刻重新起算。`restore` 的状态语义（回 `prev_status`，缺失回 `detected`）、单写者（只有 actd 的 inbox pass 调它，§0 第 1 条）、trash 侧的 `trash_reason` 词表一字不动；投影不发这个键（web 无面）。判例 `tests/test_review_stale_sweep.py::TheStampIsRearmedByLaterActivityTestCase`。
+
 ## 10. inbox 动作全集（app → actd）
 `approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
 
@@ -354,6 +356,8 @@ debt item 新增 `summary`（同上，大白话）。
 > 各自的 § 里，本段一并点名——本节首段的动词清单自 v0.48 起以 `server/inbox_writer.ALLOWED_ACTIONS` 为机器真源。
 
 **动词判决表 golden（P3b，add-only）**：`tests/test_actd_decision_table.py` 以 `tests/fixtures/actd_decision_table.json` 钉住本节 16 个卡级动词 + 1 个未知动词 × 11 种盘上状态（4 种另带活 session）× 有/无 comment（approve 另加外部出身，W17）的判决——§5.4 ack、落后状态、execution 增删键、notes 尾巴（日期掩码）、plan 是否变——再加 comment / raise / accept / rework 对 `expected_status` 命中 / 别名 / 过期 × owner / agent ingress 的第二张表（共 900 例，协作者是合作式假 executor / analyze，表钉的是 actd 自己的动词逻辑）。任何动词语义变化必须同 PR 用 `REGEN_DECISION_TABLE=1` 重铸并在本节落字；golden 变了而本节没动 = 审查 blocker。表由重构前的 `act/actd.py` 铸出，重构后逐例相等。
+
+**§10 追记（2026-09-15，add-only；issue #312 / owner 决策 **D74**）——`restore` 多落一枚 `execution.restored_at`**：`restore` 的判决除清三个回收站字段外，现在还盖一枚 ISO UTC 的 `execution.restored_at`（理由与全文见 §9 追记：捞回来 = 一次活动，否则每日整理下一轮就把 owner 刚捞回来的卡再扔一次）。动词词表、允许的状态（仍只对 `trashed` 生效，非 trashed 照旧 `noop`）、ack 词表、落后状态一个字不变；变的只有判决表里 `verb=restore|status=trashed|*` 两例的 `ex_added`（`[]` → `["restored_at"]`），已用 `REGEN_DECISION_TABLE=1` 同 PR 重铸 `tests/fixtures/actd_decision_table.json`。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -853,7 +857,7 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 
 **analytics**：`merge_review_requested{n}`（actd）、`merge_suggestion_done{verdict,confidence}`（分析子进程）；apply/dismiss 由 app 侧 `card_action` 自动覆盖。**追加（add-only）**：actd 侧确定性 apply 落地点补 `merge_apply{suggestion,verdict,outcome}`（`outcome=ok|fail`——`card_action` 只记录意图，apply 失败此前 telemetry 不可见；连点/迟到的 no-op 分支不打点，不算使用量）。
 
-**§21 追记二（2026-09-15，add-only；issue #312 / owner 决策 D74）——多选条长出待验收列的两颗批量键**：`批量验收 (N)` / `批量丢弃 (N)`，资格 = 选中集 ∩ `board.review`（`SelectionBar.reviewBatchable`，与既有 `batchable()` 同形：不在这一列的 id 一律不算，绝不替人猜别的列该怎么处置）。**零新 inbox 动词**——逐卡一条既有的 §3 四键形 `accept` / `trash`（`server/inbox_writer.CARD_VERBS` 早已收着这两个词，`review→delivered`（user）与 `review→trashed`（user/system）也早在 store2 白名单里，本条不改 schema、不改 `act/lib/actd/decisions.py`）。两颗键各自先开一个确认弹窗，**逐条列出 `<id> <标题>`**（镜像批量批准 / 拒绝的同一形；验收那句另写明「AI 的『建议验收』只是建议——上面这份清单是你自己的那一次确认」，丢弃那句写明「进回收站（可恢复）」）。没有 T2 那样的跳过：验收与丢弃都不是审批闸，`typed-confirm`（§50 W17）管的是**开工**不是**收工**。全部成功才清空选择（`run()` 既有语义不变）；任何一条失败 = 留着选择 + 露出 server 的整句错误。入口除 FilterBar 的「选择」外，多了待验收列头的两颗「选中全部…」（§64.6 追记 / §70.5 追记）。判例 `web/src/components/board/SelectionBar.reviewBatch.test.tsx`。
+**§21 追记二（2026-09-15，add-only；issue #312 / owner 决策 D74）——多选条长出待验收列的三颗批量键**：`批量验收 (N)` / `批量打回 (N)` / `批量丢弃 (N)`（顺序与色相 = 卡面三动词一比一：绿验收 · 橙打回 · 红丢弃），资格 = 选中集 ∩ `board.review`（`SelectionBar.reviewBatchable`，与既有 `batchable()` 同形：不在这一列的 id 一律不算，绝不替人猜别的列该怎么处置）。**零新 inbox 动词**——逐卡一条既有的 §3 四键形 `accept` / `rework` / `trash`（`server/inbox_writer.CARD_VERBS` 早已收着这三个词，`review→delivered`（user）/ `review→executing`（user，rework）/ `review→trashed`（user/system）也早在 store2 白名单里，本条不改 schema、不改 `act/lib/actd/decisions.py`）。三颗键各自先开一个弹窗，都**逐条列出 `<id> <标题>`**（镜像批量批准 / 拒绝的同一形；验收那句另写明「AI 的『建议验收』只是建议——上面这份清单是你自己的那一次确认」，丢弃那句写明「进回收站（可恢复）」）。**打回那颗的弹窗就是反馈输入框**（卡面 `ReviewCard` 的同一个 `TextDialog`，`allowEmpty`）：同一句反馈逐卡送回各自的会话，正文明说这一点——一句话要送给 N 份不同的草稿，人得看着名单决定；留空 = 每张各自对照**自己**的 `definition_of_done` 自查（`REWORK_EMPTY_FALLBACK`，客户端字面量，与卡面逐字同一句，actd 不做此替换）。issue #312 第 2 条原话「多选后批量验收 / 打回」因此逐字兑现，没有留下一个未申报的缺口。没有 T2 那样的跳过：验收与丢弃都不是审批闸，`typed-confirm`（§50 W17）管的是**开工**不是**收工**。全部成功才清空选择（`run()` 既有语义不变）；任何一条失败 = 留着选择 + 露出 server 的整句错误。入口除 FilterBar 的「选择」外，多了待验收列头的两颗「选中全部…」（§64.6 追记 / §70.5 追记）。判例 `web/src/components/board/SelectionBar.reviewBatch.test.tsx`。
 
 ### 21bis. 强制合并 merge_force（v0.31，add-only）
 
@@ -6239,7 +6243,7 @@ Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`�
 
 ### 68.12 多选与批量
 
-见 §54.1 第 11 项与 §21 追记二（待验收列的两颗批量键）。store 持 `selectionMode` / `selectedIds`（会话内瞬态）；退出选择即清空。批量批准的 T2 跳过是**硬规则**：typed-confirm（§50 W17 生效档）只能逐卡在提案卡上完成，操作条的提示如实列出被跳过的 id。**2026-09-04 追记**：顶栏 compact / tight 档（§49 同日追记，D31）「选择」入口住「筛选」popover 的页脚，点它切进多选并关面板；full 档仍在条上——同一把 `setSelectionMode`，判例 `FilterBar.test.tsx`。
+见 §54.1 第 11 项与 §21 追记二（待验收列的三颗批量键）。store 持 `selectionMode` / `selectedIds`（会话内瞬态）；退出选择即清空。批量批准的 T2 跳过是**硬规则**：typed-confirm（§50 W17 生效档）只能逐卡在提案卡上完成，操作条的提示如实列出被跳过的 id。**2026-09-04 追记**：顶栏 compact / tight 档（§49 同日追记，D31）「选择」入口住「筛选」popover 的页脚，点它切进多选并关面板；full 档仍在条上——同一把 `setSelectionMode`，判例 `FilterBar.test.tsx`。
 
 ### 68.13 壳的其余原生残留（R2.2.3；`shell/Sources/ShellSystem.swift` + `NotifyRelay.swift` + `shell/Helpers/`）
 
@@ -6418,11 +6422,14 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
 
 判决本身是两阶段，**先说再做**（issue #312 原话「归档前发一次通知」）：
 
-1. **第一阶段（`maintenance.sweep_review_notices`）**：闲置 ≥ `daily_loop.review_stale_days`（默认 **14**，0 = 关）且**还没盖过戳**的待验收卡，盖一枚 add-only 执行戳 `execution.review_stale_notified_at`（ISO UTC）。这枚戳**刻意不在** `maintenance._EXECUTION_STAMPS` 里——它不是活动，算进 `last_activity` 会把闲置天数清零，第二阶段就永远到不了。本轮**一条**汇总通知（见 §70.6 追记）。
+1. **第一阶段（`maintenance.sweep_review_notices`）**：闲置 ≥ `daily_loop.review_stale_days`（默认 **14**，0 = 关）且**戳不算数**（还没盖过，或盖过但此后卡又被动过——见第 4 条）的待验收卡，盖一枚 add-only 执行戳 `execution.review_stale_notified_at`（ISO UTC）。这枚戳**刻意不在** `maintenance._EXECUTION_STAMPS` 里——它不是活动，算进 `last_activity` 会把闲置天数清零，第二阶段就永远到不了。本轮**一条**汇总通知（见 §70.6 追记）。
 2. **第二阶段（下一轮的 `sweep_stale`）**：戳满 `maintenance.REVIEW_NOTICE_MIN_HOURS`（**20 小时**——循环一天跑一次，20 < 24 保证「今天通知、明天归档」不被时钟漂移吃掉）→ `registry.trash(req, "stale:review_stale")`：`prev_status = review` 完整、恢复即回待验收、保留期走循环卡的 90 天（§9 / §40.5 追记不变）。
 3. **拿不准就不动**：戳在但解析不了 = 既不重盖（重盖会把 20 小时闸门永远重置）也不归档（时刻读不懂就是猜）；闲置时间解析不了照旧不动。
+4. **戳是相对最近一次活动的，不是一生一次的**（`maintenance._notice_state`）：戳**比 `last_activity(req)` 旧** = 我们说完之后这张卡又动过，那枚戳对这一轮老化**不算数**，第一阶段重新走（重盖 + 重新进本轮那条汇总通知），第二阶段要等**新**戳满 20 小时。少了这一条，「先说再做」只在一张卡的**头一个**老化周期成立：戳一旦盖上就再没人清它，于是打回重做→重新交付回到待验收、或 owner 从回收站捞回来之后，同一张卡在下一次闲置满 N 天时**零通知**直接进回收站。两条边界各有判例：
+   - **打回轮回**：`review_at` 被新一轮交付刷新（`_EXECUTION_STAMPS` 里本就有它）→ 戳自动过期。
+   - **恢复**：`registry.restore` 只清回收站字段，卡上没有任何时间会变新，所以它同 PR **盖一枚 add-only 执行戳 `execution.restored_at`**（ISO UTC）并把它登记进 `maintenance._EXECUTION_STAMPS`——捞回来 = owner 亲手说「这张还要」，那一下既让旧戳过期，也把整个 `review_stale_days` 窗口重新起算（§9 追记）。否则「恢复即回待验收」在第二天就被同一条规则无声撤销，宪法第 2 条（可撤销）名存实亡。
 
-`sweep_stale` 的返回行形 `{id, rule, display_id}` 一字不变，所以 `rule: "review_stale"` 直接落进 `daily_loop` 审计行的 `trashed[]`（issue #312 第 1 条诉求逐字兑现）；第一阶段另有 add-only 审计键 `review_notices`（`[{id, display_id, title}]`，只进 `state/daily_loop.jsonl` 与 CLI `--plan`，**不进** §2 的 `maintenance` 投影——横幅的五个计数与 D33 的 advisories 一字不动）。`stale_verdict` 的签名 add-only 加两个有缺省的参数（`review_days=0` / `now=None`），缺省 = 这条规则关着，旧调用方行为逐字不变。判例 `tests/test_review_stale_sweep.py`（两阶段、戳不重置闲置、坏戳不动、五道保护罩、线程孪生不再互保、恢复回 review、审计行认得出 rule）；`tests/test_daily_loop_stale_rules.py::test_sweep_never_touches_running_or_a_fresh_review_card`（原 `test_sweep_never_touches_running_or_review`）**收窄而非删除**：running 半边与「窗口之内的待验收卡照旧不动」仍是判例。
+`sweep_stale` 的返回行形 `{id, rule, display_id}` 一字不变，所以 `rule: "review_stale"` 直接落进 `daily_loop` 审计行的 `trashed[]`（issue #312 第 1 条诉求逐字兑现）；第一阶段另有 add-only 审计键 `review_notices`（`[{id, display_id, title}]`，只进 `state/daily_loop.jsonl` 与 CLI `--plan`，**不进** §2 的 `maintenance` 投影——横幅的五个计数与 D33 的 advisories 一字不动）。`stale_verdict` 的签名 add-only 加两个有缺省的参数（`review_days=0` / `now=None`），缺省 = 这条规则关着，旧调用方行为逐字不变。判例 `tests/test_review_stale_sweep.py`（两阶段、戳不重置闲置、坏戳不动、五道保护罩、线程孪生不再互保、恢复回 review、**打回轮回重新通知**、**恢复后连两轮不动且窗口从恢复起算**、审计行认得出 rule）；`tests/test_daily_loop_stale_rules.py::test_sweep_never_touches_running_or_a_fresh_review_card`（原 `test_sweep_never_touches_running_or_review`）**收窄而非删除**：running 半边与「窗口之内的待验收卡照旧不动」仍是判例。
 
 ### 70.3 提案半边（`act/lib/loop_inputs.py` + `daily_loop._propose`）
 
@@ -6464,8 +6471,8 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
 **§70.6 追记（2026-09-15，add-only；issue #312 / owner 决策 D74）——「不弹系统通知」开一个口子，只开一条缝**。本节第一条边界（D10 的设计判断：整理的可见面是看板顶部那一行横幅）在 §70.2 追记二这里必须让路：待验收卡被归档是**不可逆感受**的事（卡从眼前消失），而横幅只在人打开看板时才存在——「归档前发一次通知」是 issue #312 的原话，也是这条规则能立的前提。开口子的形状被钉死成三条，越出任何一条都要再修一次法：
 
 - **整轮一条，不是一卡一条**。owner 的待验收列有 19 张；一卡一条在 03:30 一次性弹 19 条横幅，正是宪法第 10 条「打扰要有资格」当初要挡的事，也正是本节写下这条边界的理由。文案只说数量、天数与「明天归档（可恢复）」（`notify.msg_review_stale(n, days)`），具体是哪几张回看板看——一条通知里塞 19 个标题同样是噪音。
-- **不新增 §28 分类**。这条通知**不打 `kind`** = 目录里的 `general`（`server/notify_catalog.py` 零改动，`ui/parity` 清单零改动）：它没有自己的分类开关，但**照旧守安静时段**——同 §76.3 复用既有 kind 的先例，不为一条新通知立一套新偏好。
-- **闸门是戳，不是横幅**。通知发不出去（安静时段吃掉 / 队列写不了 / 壳没开）**不回滚**那枚 `review_stale_notified_at`，第二天照常归档。理由是诚实：两阶段承诺的是「先给你 20 小时」，不是「先让你看见」；而归档本身可恢复 90 天、横幅上有「清理 M（可撤销）」。要完全不被打扰又不被归档的人把 `review_stale_days` 设成 0（§70.4 追记二）。
+- **一枚新 kind，但不新增一把开关，且必须穿透安静时段**（`notify.KIND_REVIEW_STALE = "review_stale"`，登记进 `notify.QUIET_HOURS_EXEMPT` 与 `server/notify_catalog.KINDS`（`preference: None`）；`ui/parity` 清单零改动——清单是按**原生**有哪些通知列的，这一条是 web/守护侧的加法）。**为什么不能像最初写的那样「不打 kind、照旧守安静时段」**：发它的每日整理出厂就在 **03:30** 跑（truth = `act/lib/config.DEFAULT_DAILY_LOOP_TIME`），正落在出厂安静窗 `quiet_hours_start` → `quiet_hours_end`（22:00 → 08:00）**正中**；而下一条说了闸门是戳不是横幅。两条叠起来 = 任何勾上「安静时段」的安装上，横幅每一轮都被写方吃掉、卡照样第二天被归档——issue #312 的「归档前发一次通知」在那种（一个复选框就到达的）配置下**永远**不成立，这一整节的口子也就白开了。它一轮只发**一条**、后果是卡从眼前消失，够资格穿透（宪法第 10 条「打扰要有资格」的正面用法，同 `failure` / `receipt` 的两条先例）。**不给它分类开关**（不登记 `notify.CATEGORY_PREFERENCE`）：能关掉「被告知」而留着「被归档」的开关是个陷阱——要安静就把 `review_stale_days` 设成 0，规则整条关掉、卡也不再被收走。判例 `tests/test_review_stale_notice_pierces_quiet_hours.py`（出厂时刻真在出厂窗里、窗内五个钟点照发、无 kind 的同一时刻被吃掉作对照、写方真打了这个 kind、目录登记且 help 是纯文本）。
+- **闸门是戳，不是横幅**。通知发不出去（队列写不了 / 壳没开 / 分类开关——上一条已经把**安静时段**这条最大的常态从名单里拿掉了）**不回滚**那枚 `review_stale_notified_at`，第二天照常归档。理由是诚实：两阶段承诺的是「先给你 20 小时」，不是「先让你看见」；而归档本身可恢复 90 天、横幅上有「清理 M（可撤销）」。要完全不被打扰又不被归档的人把 `review_stale_days` 设成 0（§70.4 追记二）。
 
 本节其余边界一字不动：整理的**其余**阶段（去重 / 四条老规则的过时清扫 / 提案）**仍不弹任何系统通知**。
 

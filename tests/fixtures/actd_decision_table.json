@@ -5437,7 +5437,9 @@
  },
  "verb=restore|status=trashed|sources=hand|comment=none": {
   "ack": "running",
-  "ex_added": [],
+  "ex_added": [
+   "restored_at"
+  ],
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
@@ -5445,7 +5447,9 @@
  },
  "verb=restore|status=trashed|sources=hand|comment=text": {
   "ack": "running",
-  "ex_added": [],
+  "ex_added": [
+   "restored_at"
+  ],
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,

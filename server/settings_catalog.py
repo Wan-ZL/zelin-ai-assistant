@@ -211,8 +211,8 @@ SECTIONS: tuple = (
             # 判例 tests/test_server_notify_preferences_settings.py 对着它比）正落在
             # 出厂窗内——最大的一处交互，不写出来就是骗人。
             _f("quiet_hours_enabled", "bool", "安静时段", "Quiet hours", default=False,
-               help_zh="开启后，下面的时段内不弹任何横幅（失败通知除外）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。",
-               help_en="While on, no banner is posted inside the window below (failure alerts excepted). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board."),
+               help_zh="开启后，下面的时段内不弹任何横幅（三类除外：失败通知、你刚按下的按钮的回执、待验收卡归档前的最后一次告知）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。",
+               help_en="While on, no banner is posted inside the window below (three exceptions: failure alerts, the receipt for a button you just pressed, and the last call before a card in review is archived). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board."),
             _f("quiet_hours_start", "string", "安静时段开始", "Quiet hours start", default="22:00",
                check="clock_time", placeholder=("22:00", "22:00"),
                help_zh="24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。",

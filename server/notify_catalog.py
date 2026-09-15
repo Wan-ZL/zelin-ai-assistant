@@ -15,7 +15,9 @@
   三档控制）、``proposal`` / ``needs_input`` / ``failure``（issue #29 的分类开关，偏好键
   ``notify_proposals`` / ``notify_needs_input`` / ``notify_failures``；抑制在写方而不在壳，
   见 act/lib/notify.suppression_reason）、``receipt``（手动按钮的回执，无分类开关、不受安静时段管——
-  词表 truth = ``act/lib/notify.QUIET_HOURS_EXEMPT``）、``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
+  词表 truth = ``act/lib/notify.QUIET_HOURS_EXEMPT``）、``review_stale``（待验收卡归档前的最后一次告知，
+  §70.2 追记二；同样无分类开关、不受安静时段管——每日整理出厂 03:30 就在安静窗里）、
+  ``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
   新卡待审批 / 任务停下 / 派发失败 / 雷达停摆 / 需重新登录……文案住 act/lib/notify.py 的
   msg_* 构造器，按 UI 语言即时生成，不在此重复）。
 
@@ -102,6 +104,11 @@ KINDS: tuple = (
      "title": {"zh": "手动操作的回执", "en": "Receipt for something you pressed"},
      "help": {"zh": "你刚按下的按钮的回音（今日唯一一处：设置 · 每周摘要的「现在生成一份」——运行是分离的，成功 / 没数据 / 失败三条都回这里）；没有分类开关，也不受安静时段管：按了就一定响。",
               "en": "The answer to a button you just pressed (today the only one is Settings · Weekly digest \"Generate now\" — the run detaches, and all three outcomes (generated / no data / failed) come back here); no category switch and quiet hours never applies: you pressed it, so it rings."},
+     "preference": None},
+    {"kind": "review_stale",
+     "title": {"zh": "归档前的最后一次告知", "en": "Last call before archiving"},
+     "help": {"zh": "待验收卡闲置到设置 · 每日整理的「待验收的卡多少天没动算过时」（出厂 14 天）时，整轮一条汇总：「N 张待验收卡要归档了」（act/lib/notify.msg_review_stale）——下一轮才收进回收站（可恢复）。没有分类开关，也不受安静时段管：每日整理出厂在 03:30 跑，正落在出厂安静窗里，守安静时段就等于永远不告知、卡照样被收走。要一条都不收就把那把旋钮设成 0（规则整条关掉）。",
+              "en": "When a card has sat in review past Settings · Daily tidy-up “Days a card can sit in Review before it ages out” (14 out of the box), one summary per pass: “N cards in review are about to be archived” (act/lib/notify.msg_review_stale) — the next pass is what moves them to the trash (restorable). No category switch and quiet hours never applies: the daily tidy-up runs at 03:30 out of the box, inside the default quiet window, so honouring quiet hours would mean never being told while the cards go anyway. Set that knob to 0 to turn the rule off entirely."},
      "preference": None},
     {"kind": "recap_ready",
      "title": {"zh": "会议纪要已生成", "en": "Meeting recap ready"},

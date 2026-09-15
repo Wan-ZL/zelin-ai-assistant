@@ -5,6 +5,9 @@
 天数不因此清零。第二遍（戳满 20 小时）：`registry.trash(req, "stale:review_stale")`
 ——prev_status=review、可恢复、循环卡 90 天保留期。待验收卡**只**见这一条规则：
 deadline_passed / diagnostic_expired / superseded / idle 仍只认提案与潜在任务两列。
+戳**只对「说完之后没再动过」的卡算数**（§70.2 追记二第 4 条）：打回→重新交付回到
+待验收、或 owner 从回收站捞回来（`registry.restore` 盖 `restored_at`）之后，那枚旧
+戳作废，老化从第一阶段重新走——否则一张卡一生只被通知一次，第二轮起无声归档。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
@@ -146,6 +149,59 @@ class TwoPassTestCase(_Case):
         notifier = _Notifier()
         self.assertEqual([r["id"] for r in maintenance.sweep_review_notices(self.cfg, notifier=notifier)],
                          ["P-1"])
+        self.assertEqual(len(notifier.calls), 1)
+
+
+class TheStampIsRearmedByLaterActivityTestCase(_Case):
+    """第二轮起也必须「先说再做」：戳比最近活动旧 = 当没盖过（§70.2 追记二第 4 条）。"""
+
+    def test_a_reworked_card_gets_a_fresh_notice_before_the_next_archive(self):
+        """30 天前盖过戳 → 打回重做 → 20 天前重新交付回到待验收（戳之后的活动）：
+        这一轮只许重新盖戳 + 通知，再下一轮才轮到归档。"""
+        # age=20 → review_at 与来源日期都在 20 天前；戳比它们老 10 天
+        registry.save(_review("P-1", age=20, notified=NOW - _dt.timedelta(days=30)))
+
+        self.assertEqual(self.sweep(), [])              # 旧戳不算数 → 不归档
+        notifier = _Notifier()
+        self.assertEqual([r["id"] for r in self.notices(notifier)], ["P-1"])
+        self.assertEqual(len(notifier.calls), 1)        # 说了第二次
+        fresh = registry.load("P-1").execution[maintenance.REVIEW_NOTICE_STAMP]
+        self.assertEqual(fresh, _iso(NOW))
+
+        later = NOW + _dt.timedelta(hours=21)           # 新戳满 20 小时的那一轮
+        self.assertEqual([r["id"] for r in self.sweep(now=later,
+                                                      today=later.date())], ["P-1"])
+
+    def test_a_restored_card_is_not_re_trashed_by_the_next_two_passes(self):
+        """恢复即回待验收（宪法第 2 条）——捞回来算 owner 的活动，整个窗口重新起算。
+        少了这一条，`restore` 在第二天就被同一条规则无声撤销。"""
+        registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
+        self.assertEqual([r["id"] for r in self.sweep()], ["P-1"])
+        restored = registry.restore(registry.load("P-1"))
+        self.assertEqual(restored.status, State.REVIEW.value)
+        self.assertTrue(restored.execution.get("restored_at"))   # 捞回来 = 活动
+        self.assertIn("restored_at", maintenance._EXECUTION_STAMPS)
+
+        for day in (1, 2):
+            later = NOW + _dt.timedelta(days=day)
+            notifier = _Notifier()
+            with self.subTest(day=day):
+                self.assertEqual(self.notices(notifier, now=later, today=later.date()), [])
+                self.assertEqual(notifier.calls, [])
+                self.assertEqual(self.sweep(now=later, today=later.date()), [])
+                self.assertEqual(registry.load("P-1").status, State.REVIEW.value)
+
+    def test_the_window_restarts_from_the_restore_not_from_the_old_stamp(self):
+        """满窗之后才又轮到第一阶段——而且仍然是先通知，不是直接归档。"""
+        registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
+        self.sweep()
+        registry.restore(registry.load("P-1"))
+
+        later = NOW + _dt.timedelta(days=15)
+        notifier = _Notifier()
+        self.assertEqual(self.sweep(now=later, today=later.date()), [])
+        self.assertEqual([r["id"] for r in self.notices(notifier, now=later,
+                                                        today=later.date())], ["P-1"])
         self.assertEqual(len(notifier.calls), 1)
 
 

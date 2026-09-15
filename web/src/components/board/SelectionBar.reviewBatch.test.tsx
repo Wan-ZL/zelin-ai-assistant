@@ -1,13 +1,15 @@
-// §21 追记 / D74（issue #312）：多选条的待验收两颗键——批量验收 / 批量丢弃。
-// 钉三件事：(1) 资格只认待验收列（同一份选中集里的提案卡不会被顺手验收）；
+// §21 追记 / D74（issue #312）：多选条的待验收三颗键——批量验收 / 批量打回 / 批量丢弃。
+// 钉四件事：(1) 资格只认待验收列（同一份选中集里的提案卡不会被顺手验收）；
 // (2) 确认弹窗逐条列出 id + 标题——「一键」给的是一次点击，不是一次盲签（§64.6 追记）；
-// (3) 提交 = 逐卡一条 §3 四键形 inbox 动作（accept / trash），不发任何批量形。
+// (3) 提交 = 逐卡一条 §3 四键形 inbox 动作（accept / rework / trash），不发任何批量形；
+// (4) 打回的一句反馈逐卡送回各自的会话，留空 = 客户端换成 REWORK_EMPTY_FALLBACK（同卡面）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, postAction } from "../../api";
 import { LanguageContext } from "../../i18n";
 import { getState, refreshBoard, resetStoreForTests, setSelectionMode, toggleSelected } from "../../store";
 import type { Board } from "../../types";
+import { REWORK_EMPTY_FALLBACK } from "./boardActions";
 import { SelectionBar, reviewBatchable } from "./SelectionBar";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -98,10 +100,49 @@ describe("SelectionBar 的待验收批量键", () => {
     expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({ action: "trash", comment: null, id: "R-246" });
   });
 
-  it("选中集里没有待验收卡时两颗键都是死的", () => {
+  it("批量打回发的是 rework：一句反馈逐卡送回，弹窗先列清单并说明这一点", async () => {
+    toggleSelected("R-245");
+    toggleSelected("R-246");
     toggleSelected("P-9");
     renderBar();
-    expect((screen.getByRole("button", { name: "批量验收 (0)" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "批量丢弃 (0)" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "批量打回 (2)" }));
+    const body = screen.getByText(/R-245 整理推荐信/);
+    expect(body.textContent).toContain("R-246 改简历");
+    expect(body.textContent).not.toContain("P-9");
+    expect(body.textContent).toContain("同一句反馈");
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "格式不对" } });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "打回" }).at(-1)!);
+    });
+    await waitFor(() => expect(postAction).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(postAction).mock.calls.map((c) => c[0])).toEqual([
+      { action: "rework", comment: "格式不对", id: "R-245" },
+      { action: "rework", comment: "格式不对", id: "R-246" },
+    ]);
+    expect(getState().selectedIds.size).toBe(0);
+  });
+
+  it("打回留空 = 每张各自按验收标准自查（客户端字面量，与卡面同一句）", async () => {
+    toggleSelected("R-246");
+    renderBar();
+
+    fireEvent.click(screen.getByRole("button", { name: "批量打回 (1)" }));
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "打回" }).at(-1)!);
+    });
+    await waitFor(() => expect(postAction).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({
+      action: "rework", comment: REWORK_EMPTY_FALLBACK, id: "R-246",
+    });
+  });
+
+  it("选中集里没有待验收卡时三颗键都是死的", () => {
+    toggleSelected("P-9");
+    renderBar();
+    for (const name of ["批量验收 (0)", "批量打回 (0)", "批量丢弃 (0)"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
   });
 });
