@@ -58,6 +58,7 @@ import type {
   SetupVaults,
   TerminalReceipt,
   UpdateCheckResult,
+  UpdateInstallReceipt,
   WebAnalyticsEvent,
 } from "./types";
 
@@ -517,9 +518,10 @@ export function postUpdateCheck(): Promise<UpdateCheckResult> {
   return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: JSON.stringify({}) });
 }
 
-/** POST /api/update/install — 关于页「新版本 v… 可用 — 一键更新」：提前 kickstart §56 自动部署 agent（未加载 → 409） */
-export function postUpdateInstall(): Promise<RepairReceipt> {
-  return request<RepairReceipt>("/api/update/install", { method: "POST", body: JSON.stringify({}) });
+/** POST /api/update/install — 关于页「新版本 v… 可用 — 一键更新」：提前 kickstart §56 自动部署 agent
+ *  （未加载 → 409；上一轮的判决 kickstart 也清不掉 → 409 details.reason="deploy_refused"，§68.6 追记 #309） */
+export function postUpdateInstall(): Promise<UpdateInstallReceipt> {
+  return request<UpdateInstallReceipt>("/api/update/install", { method: "POST", body: JSON.stringify({}) });
 }
 
 /** POST /api/ingest/export — 录制页「立即导出」= bash ingest/screenpipe-export.sh（后台跑，回 job id） */

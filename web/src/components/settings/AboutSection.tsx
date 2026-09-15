@@ -10,6 +10,13 @@
 // 行按快照重推（原生 onChange(dashboard.update_available) → reload() 重写全部字段，finish() 的回执不再压着行）。
 // 「重新运行初始设置」（删 setup 标记；原生放在设置 → 通用「初始设置向导」行）；壳在场时多出登录时启动（SMAppService，
 // 经桥）、全局快速捕获快捷键提示、系统通知权限状态。挂在 ?page=about（左侧导航栏「关于」，AboutPage）。
+// §68.6 追记（2026-09-14，issue #309）——「一键更新」不许报假成功：about 快照 add-only 带 deploy_state（server 请求时现读
+// state/deploy_state.json，不是看板投影）。上一轮的状态属于 BLOCKING（refused_branch / refused_dirty / blocked_tcc——提前
+// kickstart 一轮也是同样的拒绝）→ 按钮禁用 + 一行「更新链路断着：<状态> — <原文>」+ 怎么修；真点下去时 server 也不 kickstart，
+// 409 details.reason="deploy_refused" 走同一行文案，**绝不**打开 release 页、**绝不**说「已触发」。kickstart 真发生时回执带
+// 上一轮的 deploy_status/deploy_detail：deferred → 说清会话散了才更新（kickstart 不带 --force，会再延后一轮）、中毒的 sha
+// （failed / rolled_back / rollback_failed / ci_failed + failed_sha）→ 说清本轮不会重试它。状态词与两个集合一律复用
+// components/shell/DeployLabel（顶栏与本页永不各判一次）。版本行按 §56.1 追记只显示 tag，`+N` 降级成一句辅助说明。
 // 「卸载…」= 原生 confirmUninstall：确认弹窗（正文逐字原生 informativeText：会做的三件事 + 默认保留什么）→
 // POST /api/uninstall/terminal 在 Terminal 跑 uninstall.sh（脚本自己再问；server 不删任何东西）；脚本缺席（404）→
 // 「找不到卸载脚本」、Terminal 打不开 →「无法打开 Terminal」，两个弹窗都附「请手动在 Terminal 里运行：<server 给的命令>」+「好」。
@@ -21,8 +28,10 @@ import { useI18n } from "../../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../../route";
 import { hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshAbout, setSetup, useAppState } from "../../store";
-import type { AboutInfo, Board, UpdateCheckResult } from "../../types";
+import type { AboutInfo, Board, DeployState, UpdateCheckResult, UpdateInstallReceipt } from "../../types";
+import { aheadNote, releaseVersion } from "../../version";
 import { RelativeTime } from "../board/cardChrome";
+import { BLOCKING_STATUSES, POISONED_STATUSES, deferredLabel, statusLabel } from "../shell/DeployLabel";
 import { LaunchAtLoginRow } from "./LaunchAtLoginRow";
 import { errorMessage } from "./useToast";
 
@@ -109,6 +118,69 @@ function UpdateStatus({ view, checking }: { view: UpdateView; checking: boolean 
   return <span className={cls}>{text("尚未检查过。", "Not checked yet.")}</span>;
 }
 
+// ----- §68.6 追记（#309）：自动部署的判决 → 「一键更新」的话术（纯函数，判例直接调） ----- #
+
+function pick(state: DeployState | null | undefined, key: string): string {
+  const value = state?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+/** 拒绝原文一行：「更新链路断着：<状态> — <detail>」。一进页（about.deploy_state）与 409
+ *  （details.deploy_status / deploy_detail）共用同一句——两条路说的话必须逐字一样。 */
+export function refusalLine(status: string, detail: string, text: Text): string {
+  const tail = detail ? ` — ${detail}` : "";
+  return text(`更新链路断着：${statusLabel(status, text)}${tail}`,
+              `The update path is broken: ${statusLabel(status, text)}${tail}`);
+}
+
+/** 怎么修：提前跑一轮也是同样的结果，所以先修上面那件事（stale 状态的出口也在这句里——
+ *  刚把工作树清干净的人不必等 10 分钟，`--force` 立刻生效）。 */
+export function refusalFix(text: Text): string {
+  return text("提前跑一轮也是同样的拒绝。先把上面这件事修好，然后等下一轮自动部署（每 10 分钟一轮），或在 repo 里跑 bash scripts/auto-deploy.sh --force。",
+              "Installing now hits the same refusal. Fix what that line names, then wait for the next auto-deploy round (every 10 min) or run bash scripts/auto-deploy.sh --force in the repo.");
+}
+
+/** 一进页就知道的闸门：上一轮的状态 kickstart 清不掉 → 按钮禁用 + 上面两句。其余 → null。 */
+export function deployGate(state: DeployState | null | undefined, text: Text): { line: string; fix: string } | null {
+  const status = pick(state, "status");
+  if (!status || !BLOCKING_STATUSES.has(status)) return null;
+  return { line: refusalLine(status, pick(state, "detail"), text), fix: refusalFix(text) };
+}
+
+/** 409 是不是「这一轮必然被拒」（§68.6 追记 #309 的 details.reason）——不是则回 null，
+ *  旧 server 的 409（agent 未加载）照旧走 release 页兜底。 */
+export function refusalDetails(err: unknown): { status: string; detail: string } | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const details = err.details && typeof err.details === "object" ? err.details as Record<string, unknown> : {};
+  if (details.reason !== "deploy_refused") return null;
+  return {
+    status: typeof details.deploy_status === "string" ? details.deploy_status : "",
+    detail: typeof details.deploy_detail === "string" ? details.deploy_detail : "",
+  };
+}
+
+/** kickstart 真发生了之后那句话：能不能承诺「几分钟后版本会变」由**上一轮**的状态决定。 */
+export function installNote(receipt: UpdateInstallReceipt | null, state: DeployState | null | undefined,
+                            now: number, text: Text): string {
+  const triggered = text("已触发自动部署——几分钟后这里的版本会变；部署后 doctor 变红会自动回滚。",
+                         "Auto-deploy triggered — the version here changes in a few minutes; a red doctor after deploy rolls back automatically.");
+  const status = typeof receipt?.deploy_status === "string" ? receipt.deploy_status : "";
+  if (!status || status === "deployed" || status === "up_to_date") return triggered;
+  const label = statusLabel(status, text);
+  if (status === "deferred") {
+    // kickstart 不带 --force，会话闸门（§56.3）原样再判一次——会话还在就再延后一轮
+    const waiting = deferredLabel(state ?? {}, now, text).label;
+    return text(`已触发一轮自动部署，但上一轮还在等：${waiting}。会话散了这里的版本才会变；等不及就在 repo 里跑 bash scripts/auto-deploy.sh --force（它会打断这些会话）。`,
+                `Auto-deploy was triggered, but the last round is still waiting: ${waiting}. The version here changes once those sessions end; in a hurry, run bash scripts/auto-deploy.sh --force in the repo (it interrupts them).`);
+  }
+  const poisoned = POISONED_STATUSES.has(status) ? pick(state, "failed_sha") : "";
+  if (poisoned) {
+    return text(`已触发一轮自动部署，但上一轮是「${label}」：${poisoned.slice(0, 7)} 在 main 挪窝之前不会被重试——要现在重试请在 repo 里跑 bash scripts/auto-deploy.sh --force。`,
+                `Auto-deploy was triggered, but the last round ended "${label}": ${poisoned.slice(0, 7)} is not retried until main moves — to retry it now, run bash scripts/auto-deploy.sh --force in the repo.`);
+  }
+  return `${triggered}${text(`（上一轮：${label}。）`, ` (last round: ${label}.)`)}`;
+}
+
 /** 原生 confirmUninstall 的 informativeText 逐字（Pages.swift）：会做的三件事 + 默认保留什么；第三条点名壳 bundle
  *  「Zelin's AI Assistant.app」（uninstall.sh 第 4 步删的就是它；退役的菜单栏 app 已不是产品）。uninstall.sh 在 Terminal 里
  *  逐条再显示一遍并再确认一次——这里只是让用户在点之前就知道。 */
@@ -169,15 +241,20 @@ export function AboutSection() {
     }
   }
 
-  // 原生 triggerUpdate：新架构 = 提前跑一轮 §56 自动部署；agent 不在（409）→ 原生非 Sparkle 兜底：打开 release 页
+  // 原生 triggerUpdate：新架构 = 提前跑一轮 §56 自动部署；agent 不在（409）→ 原生非 Sparkle 兜底：打开 release 页。
+  // §68.6 追记（#309）：server 判定这一轮必然被拒（409 deploy_refused）→ 说拒绝原文，不开 release 页、不说「已触发」。
   async function installNow(url: string | null) {
     setBusy("install");
     setNote(null);
     try {
-      await postUpdateInstall();
-      setNote(text("已触发自动部署——几分钟后这里的版本会变；部署后 doctor 变红会自动回滚。", "Auto-deploy triggered — the version here changes in a few minutes; a red doctor after deploy rolls back automatically."));
+      const receipt = await postUpdateInstall();
+      setNote(installNote(receipt, about?.deploy_state, Date.now(), text));
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && url) {
+      const refused = refusalDetails(err);
+      if (refused) {
+        setNote(`${refusalLine(refused.status, refused.detail, text)} ${refusalFix(text)}`);
+        await refreshAbout();   // 拒绝的状态刚被 server 现读出来——让按钮也跟着灰掉
+      } else if (err instanceof ApiError && err.status === 409 && url) {
         window.open(url, "_blank", "noopener");
         setNote(text("这台机器不走自动部署——已打开 release 页，请手动下载安装。", "This machine is not auto-deployed — the release page is open; install it by hand."));
       } else {
@@ -223,6 +300,9 @@ export function AboutSection() {
   const view = about ? updateView(about, last) : null;
   // 原生 .disabled(upd.checking || upd.cooldown || !upd.enabled)
   const checkDisabled = busy === "check" || busy === "install" || cooldownUntil > 0 || view?.enabled === false;
+  // §68.6 追记（#309）：上一轮的判决 kickstart 清不掉 → 一进页就禁用「一键更新」并说清原因
+  const gate = deployGate(about?.deploy_state, text);
+  const ahead = about ? aheadNote(about.version, text) : null;
 
   return (
     <section className="settings-section" id="settings-about" aria-labelledby="settings-about-title">
@@ -231,16 +311,28 @@ export function AboutSection() {
       {about && view && (
         <dl className="settings-meta">
           <div><dt>{text("应用", "App")}</dt><dd>Zelin's AI Assistant</dd></div>
-          <div><dt>{text("版本", "Version")}</dt><dd><code>{about.version}</code></dd></div>
+          <div>
+            <dt>{text("版本", "Version")}</dt>
+            <dd>
+              <code>v{releaseVersion(about.version)}</code>
+              {ahead && <span className="settings-helper">{ahead}</span>}
+            </dd>
+          </div>
           <div>
             <dt>{text("更新", "Update")}</dt>
             <dd className="settings-update">
               {view.updateAvailable && view.latest && (
-                <button type="button" className="btn btn-primary" disabled={busy === "install" || busy === "check"} onClick={() => void installNow(view.url)}>
+                <button type="button" className="btn btn-primary" disabled={busy === "install" || busy === "check" || gate !== null} onClick={() => void installNow(view.url)}>
                   {text(`新版本 v${view.latest} 可用 — 一键更新`, `Update v${view.latest} available — install now`)}
                 </button>
               )}
               <UpdateStatus view={view} checking={busy === "check"} />
+              {gate && (
+                <span className="settings-update-line is-warning" role="status">
+                  <span>{gate.line}</span>
+                  <span className="settings-helper">{gate.fix}</span>
+                </span>
+              )}
               <span className="settings-actions">
                 <button type="button" className="btn" title={text("检查更新", "Check for updates")} disabled={checkDisabled} onClick={() => void checkNow()}>{text("立即检查", "Check now")}</button>
                 {view.url && <a className="settings-link" href={view.url} target="_blank" rel="noreferrer">{text("打开 release 页", "Open the release page")}</a>}

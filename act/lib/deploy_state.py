@@ -35,6 +35,13 @@ continuous deferral, then WARNs — the deploy never ends a session itself.
 Two things override that OK (§56.3 会话闸门追记, review of #284): a deferred
 REPAIR (``reason`` still carries the install_incomplete tokens — the machine
 is not running its checkout) and a ``last_incident`` on file (#135 rule).
+
+§68.6 追记 (2026-09-14, issue #309): the same status vocabulary now also
+decides what the About page's「一键更新」may promise — :data:`BLOCKING` (an
+early kickstart cannot clear it: the next run refuses for the same reason)
+and :data:`POISONED` (the run happens but the failed sha is not retried).
+``server/about.py`` reads this module at request time and reuses
+:func:`auto_deploy_fix` so the remediation sentence has one source.
 """
 from __future__ import annotations
 
@@ -87,6 +94,20 @@ MIRROR_FIELDS = FIELDS + ("trigger", "interpreter", "volume", "repo", "denied_pa
 
 # Outcomes that mean "nothing needs a human" — everything else is a WARN row.
 HEALTHY = frozenset({"deployed", "up_to_date"})
+
+# §68.6 追记（2026-09-14，issue #309）：一个提前 kickstart **清不掉**的状态集——
+# 下一轮会以完全相同的理由再拒一次，所以「关于」页的「一键更新」在这些状态下
+# 既不 kickstart 也不许说「已触发」（生产机上 `refused_branch` 连拒 539 次，
+# 按钮却两次报成功）。判据只看状态词，修法由 :func:`auto_deploy_fix` 给。
+# 这不是 "needs a human" 的全集（`failed` / `ci_failed` 也要人看，但它们下一轮
+# 真的会重问一次 CI，kickstart 有意义）——只是「按下去必然无事发生」的那几个。
+BLOCKING = frozenset({"refused_branch", "refused_dirty", "blocked_tcc"})
+
+# 同一条追记的另一半：这些状态下 kickstart 照跑（下一轮真的会重新判），但
+# 「几分钟后版本会变」仍是谎——中毒的 sha 在 main 挪窝或 `--force` 之前
+# 永不重试（scripts/auto-deploy.sh `sha_is_poisoned`）。web 用它把成功承诺
+# 换成「上一轮 …；本轮不会重试该 sha」。
+POISONED = frozenset({"failed", "rolled_back", "rollback_failed", "ci_failed"})
 
 # §56.4 open vocabulary, v0.48.20 additions: `install_incomplete` (HEAD is at
 # origin/main but install_report / heartbeat disagree — install.sh re-run),
@@ -345,8 +366,9 @@ def volume_access_row(verdict: dict, interp: str, repo: str) -> dict:
                 % MIRROR_PATH)
 
 
-def _auto_deploy_fix(status: str) -> str:
-    """WARN 行的修法按状态词分三种（§56.4）。"""
+def auto_deploy_fix(status: str) -> str:
+    """WARN 行的修法按状态词分三种（§56.4）。doctor 行与 server 的 409
+    `deploy_refused`（§68.6 追记）共用同一句——修法只有一个真源。"""
     if status == BLOCKED_TCC:
         # 探针在第一次 git 调用前就拒了——修法是授权，不是 --force；精确的
         # 解释器路径与证据在 `launchd volume access` 行
@@ -533,7 +555,7 @@ def auto_deploy_row(state: dict, now: Optional[float] = None) -> dict:
     if status == DEFERRED:
         return _deferred_row(state, time.time() if now is None else now)
     if status not in HEALTHY:
-        return _row("warn", _auto_deploy_warn_detail(state), _auto_deploy_fix(status))
+        return _row("warn", _auto_deploy_warn_detail(state), auto_deploy_fix(status))
     incident = state.get("last_incident", "")
     if not incident:
         return _row("ok", _auto_deploy_ok_detail(state))

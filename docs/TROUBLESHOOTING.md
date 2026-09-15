@@ -254,6 +254,27 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 
 **升级本身被拒(`StoreError: SCHEMA_SNAPSHOT_FAILED`)**:新代码拍不下升级前快照(磁盘满、`state/` 不可写、外置卷瞬态 EPERM)就**不**踏出单向门——DB 留在旧版本,新旧代码都还能开它,下一次开库自动重试;排除写入障碍即可,不需要手动干预数据。
 
+## 生产 checkout 不在 main / 工作树脏:自动部署每 10 分钟拒一次,「一键更新」按钮灰着(issue #309,CONTRACT §56.5 追记 / §68.6 追记)
+
+**症状**:关于页的「一键更新」按钮**灰的**,下面一行写着「更新链路断着:不在 main,部署暂停 — HEAD is on 'release', not main」(或「工作树有改动,部署暂停」);顶栏部署小字同一句;`cat state/deploy_state.json` 是 `status: refused_branch` / `refused_dirty`;`tail ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 每 10 分钟一行 `HEAD is not on main (got 'release') — refusing to touch this checkout`。上游早就修好的 bug 到不了这台机器——2026-09-05 → 09-09 实录:**539 次**拒绝,机器卡在 v1.0.23 而 main 已到 v1.0.98。
+
+**原因**:自动部署**只在 `main` 上、只用 `merge --ff-only` 运作**,且拒绝碰有改动的 tracked 文件(§56.5 首条 + §56.3 第 4 步)。D54 明确**不做**「以最新 tag 为目标 + rebase 本地 commit」的部署模型:那要让后台任务在 live checkout 上重写历史。`AUTODEPLOY_BRANCH=release` **不是**解法——脚本把 `origin/$BRANCH` 当目标并要求本地能 ff 到它,本地 `release` 带数据 commit、与 `origin/release` 分叉,落到的是「fast-forward … impossible (local BRANCH diverged?) — refusing」。
+
+**根治**(长期):把工作数据 commit 挪出代码 checkout,让生产机回到 `main`——之后自动部署自己恢复,不需要任何手工动作。
+
+**手工升级 SOP**(owner 2026-09-09 亲手走过一次,`release` 分支形态;每一步都在 repo 根跑):
+
+1. **先备份两样东西**:`git branch backup/release-pre-vX.Y.Z`(升级前的 `release` 原样留一个分支)+ 卡片账本 `cp state/store2.db ~/Downloads/zaa-pre-vX.Y.Z-store2-<MMDD>.db`(§53 真源;YAML 后端则备份 `act/registry/`)。
+2. `git fetch --tags --force origin`(`--force`:本机一个与 origin 同名不同指的旧 tag 会让 `fetch --tags` 以 rc 1 拒绝)。
+3. `git rebase vX.Y.Z release` —— 把 `release` 上的本地数据 commit 重放到新 tag 上。09-09 实录:102 个数据 commit、13 个文件、**零冲突**。冲突了就 `git rebase --abort` 回到第 1 步的备份分支,别硬解。
+4. `bash install.sh` —— 手动装(**不是** `--non-interactive`):它会重盖 `act/_version.py`、重渲 launchd、重建 web/dist 与壳。09-09 实录结果:`1.0.98+102`(`+102` = 那 102 个数据 commit,§56.1 追记:它不会出现在关于页的版本行里)。
+5. `python3 -m act.doctor` 验收。09-09 实录:35 ok / 3 warn / 0 fail。
+6. 用完删掉备份分支(`git branch -D backup/release-pre-vX.Y.Z`)之前,先在新版本上跑够一天。
+
+**`refused_dirty` 的那一半**:`git status --porcelain` 看是哪些 tracked 文件脏了。是真改动 → commit 或 revert;是运行时数据落进了 tracked 路径 → 那是 bug,开 issue(数据不该住在 tracked 文件里)。清干净之后**不必等 10 分钟**:`bash scripts/auto-deploy.sh --force` 立刻跑一轮。
+
+**别做**:不要把「一键更新」当解法——`refused_branch` / `refused_dirty` / `blocked_tcc` 三种状态下 server **根本不会** kickstart(409 `deploy_refused`),它提前跑一轮也只是让脚本以同样的理由再拒一次。这正是 #309 修掉的那个谎:修之前按钮会说「已触发自动部署——几分钟后这里的版本会变」。
+
 ## 版本号不对:doctor `version` 行 WARN、看板顶栏 / `python3 -c "import act; print(act.__version__)"` 报的不是 tag(2026-09-02 切到 tag 真源之后)
 
 版本的真源是 main 上的 git tag(CONTRACT §56.1),**没有任何文件里写着版本**。`act.__version__` 按 `act/_version.py`(生成文件、git-ignored)→ `git describe` → `act/__init__.py` 的烘焙回落行解析;守护进程只读 stamp。三种症状:

@@ -22,14 +22,26 @@
   server 不重造部署逻辑）。不带 ``-k``：正在部署的那轮不许被打断。agent 未加载（.pkg 装法 /
   features.auto_deploy 关着 / 不是 git checkout）→ 409，页面退回原生非 Sparkle 的兜底：打开
   release 页手动装；非 darwin 501。``runner`` 注入缝。
+- **§68.6 追记（2026-09-14，issue #309）——诚实的拒绝**：生产机的 checkout 常驻 `release`
+  分支，`scripts/auto-deploy.sh` 从 2026-09-05 起每 10 分钟拒一次（`refused_branch`，539 次），
+  而「一键更新」照样 kickstart 完就回 ``{"ok": true}``、页面照样说「已触发自动部署——几分钟后
+  版本会变」。自本条起：``snapshot()`` add-only 带上 ``deploy_state``（**请求时现读文件**，
+  不是看板投影——actd 死了 / TCC 拦着的时候投影本身就是陈的），``install_now`` 先读后动：
+  状态在 ``deploy_state.BLOCKING``（`refused_branch` / `refused_dirty` / `blocked_tcc`——
+  提前一轮也清不掉，下一轮会以同样的理由再拒）→ **不 kickstart**，409 ``deploy_refused``
+  带 ``deploy_status`` / ``deploy_detail`` / ``fix``（``deploy_state.auto_deploy_fix``，与
+  doctor 行同一句）；其余状态照旧 kickstart，回执 add-only 带上一轮的 ``deploy_status`` /
+  ``deploy_detail``，页面据此把「已触发」换成诚实的一句（`deferred` 会再次延后、中毒的 sha
+  本轮不重试）。``state_reader`` 参数注入缝（防腐 #3：绝不 module-global）。
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+from act.lib import deploy_state          # 依赖方向：server → act.lib（§58.3 规则 3）
 from server import paths, repair, settings_catalog, subproc
 from server.errors import ApiError, ConflictError, NotImplementedError501, UnknownFieldError
 
@@ -75,8 +87,25 @@ def check_enabled(home: Path) -> bool:
     return value is not False
 
 
-def snapshot(home: Path) -> dict:
-    """``GET /api/about``。"""
+StateReader = Callable[[], Optional[dict]]
+
+
+def read_deploy_state(state_reader: Optional[StateReader] = None) -> Optional[dict]:
+    """上一轮自动部署的判决（§56.4 的 sanitized 形，与 dashboard `deploy_state` 逐字同一把
+    reader、同一套键）。**现读文件**而不是读看板投影：投影由 actd 每 pass 写，actd 死了
+    或 launchd 任务被 TCC 拦着时投影正是陈的那一份，而这里要回答的恰恰是「更新链路还活着吗」。
+    读不到 / 坏文件 → None（宪法第 11 条：关于页不因它 500）。"""
+    reader = state_reader or deploy_state.read
+    try:
+        state = reader()
+    except Exception:  # noqa: BLE001 - 部署判决答不上来不许拖垮「关于」页
+        return None
+    return state if isinstance(state, dict) and state else None
+
+
+def snapshot(home: Path, state_reader: Optional[StateReader] = None) -> dict:
+    """``GET /api/about``。``deploy_state`` 是 §68.6 追记的 add-only 键（缺席 = 这台机器
+    没有自动部署的记录）。"""
     board = _read_json(paths.dashboard_path(home)) or {}
     update = board.get("update_available")
     return {
@@ -86,6 +115,7 @@ def snapshot(home: Path) -> dict:
         "update_available": update if isinstance(update, dict) else None,
         "update_check": update_check_public(home),
         "check_enabled": check_enabled(home),
+        "deploy_state": read_deploy_state(state_reader),
     }
 
 
@@ -116,14 +146,42 @@ def _require_autodeploy_loaded(run: repair.Runner) -> None:
             {"label": AUTODEPLOY_LABEL, "fix": "bash install.sh (git checkout with features.auto_deploy on)"})
 
 
+def _prev(state: Optional[dict], key: str) -> str:
+    """上一轮判决里的一个字串字段（缺席 / 非字串 → 空串；reader 已消毒过，这里只兜形状）。"""
+    value = (state or {}).get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _refuse_if_blocked(state: Optional[dict]) -> None:
+    """§68.6 追记（#309）：上一轮的判决属于 ``deploy_state.BLOCKING`` → 提前一轮也无事发生
+    （下一轮会以同样的理由再拒），所以**不 kickstart**，409 把拒绝原文交给页面。"""
+    status = _prev(state, "status")
+    if status not in deploy_state.BLOCKING:
+        return
+    detail = _prev(state, "detail")
+    raise ConflictError(
+        "auto-deploy last ended '%s': %s - an early kickstart would refuse for the same reason"
+        % (status, detail or "no detail recorded"),
+        {"reason": "deploy_refused", "deploy_status": status, "deploy_detail": detail,
+         "fix": deploy_state.auto_deploy_fix(status), "label": AUTODEPLOY_LABEL})
+
+
 def install_now(payload: dict, runner: Optional[repair.Runner] = None,
-                platform: Optional[str] = None) -> dict:
-    """``POST /api/update/install {}``：kickstart 自动部署 agent（D17）；未加载 409、非 darwin 501。"""
+                platform: Optional[str] = None,
+                state_reader: Optional[StateReader] = None) -> dict:
+    """``POST /api/update/install {}``：kickstart 自动部署 agent（D17）；未加载 409、非 darwin 501。
+    §68.6 追记（#309）：先读 deploy_state——BLOCKING 的状态直接 409 ``deploy_refused``（零
+    kickstart），其余状态的回执带上一轮的 ``deploy_status`` / ``deploy_detail``，页面据此决定
+    能不能说「几分钟后版本会变」。"""
     _install_gate(payload, platform)
+    state = read_deploy_state(state_reader)
     run = runner or repair.default_runner
+    # 先问「这台机器走不走自动部署」（不走 → 原生兜底：release 页），再问「这一轮值不值得起」
     _require_autodeploy_loaded(run)
+    _refuse_if_blocked(state)
     rc, out = run(["/bin/launchctl", "kickstart", "%s/%s" % (repair.domain(), AUTODEPLOY_LABEL)])
     if rc != 0:
         raise ApiError("launchctl kickstart exited %d: %s" % (rc, out.strip()[-300:]),
                        {"label": AUTODEPLOY_LABEL, "rc": rc})
-    return {"ok": True, "label": AUTODEPLOY_LABEL, "action": "kickstart"}
+    return {"ok": True, "label": AUTODEPLOY_LABEL, "action": "kickstart",
+            "deploy_status": _prev(state, "status"), "deploy_detail": _prev(state, "detail")}

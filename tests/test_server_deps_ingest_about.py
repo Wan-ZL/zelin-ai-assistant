@@ -220,7 +220,9 @@ class UpdateInstallTestCase(_ServerCase):
     def test_kickstart_without_minus_k_when_loaded(self):
         run, seen = self._runner(loaded=True)
         receipt = about.install_now({}, runner=run, platform="darwin")
-        self.assertEqual(receipt, {"ok": True, "label": about.AUTODEPLOY_LABEL, "action": "kickstart"})
+        # §68.6 追记（#309）：回执 add-only 多了上一轮的 deploy_status / deploy_detail（没有记录 = 空串）
+        self.assertEqual(receipt, {"ok": True, "label": about.AUTODEPLOY_LABEL, "action": "kickstart",
+                                   "deploy_status": "", "deploy_detail": ""})
         self.assertEqual(seen[1][:3], ["/bin/launchctl", "kickstart", seen[1][2]])
         self.assertNotIn("-k", seen[1])
         self.assertTrue(seen[1][2].endswith("/" + about.AUTODEPLOY_LABEL))
