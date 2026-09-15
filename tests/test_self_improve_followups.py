@@ -50,7 +50,9 @@ class TickBase(unittest.TestCase):
         _clean()
         self.notify = mock.patch.object(notify, "notify").start()
         self.addCleanup(mock.patch.stopall)
-        self.cfg = config.Config()
+        # 通道开着（§65.1 的总开关 #307 / D57 起出厂关；关着的判决在
+        # tests/test_self_improve_channel_switch.py）
+        self.cfg = config.Config(self_improve_enabled=True)
 
     def _tick(self, gh, now=NOW, **kw):
         return self_improve.tick(self.cfg, gh=gh, now=now, force=True, **kw)
@@ -239,7 +241,8 @@ class FollowupTestCase(TickBase):
 
     def test_extra_owner_logins_from_config(self):
         _review_card()
-        self.cfg = config.Config(raw={"self_improve": {"owner_logins": ["elenvo-ai"]}})
+        self.cfg = config.Config(raw={"self_improve": {"owner_logins": ["elenvo-ai"]}},
+                                 self_improve_enabled=True)
         gh = FakeGh({123: pr_doc(branch=BRANCH)},
                     comments={123: [_comment("from the other account", login="elenvo-ai")]})
         self.assertEqual(len(self._tick(gh)["followups"]), 1)
@@ -260,7 +263,8 @@ class ThrottleAndAvailabilityTestCase(TickBase):
                          {"skipped": "not_due"})
         self.assertNotIn("skipped", self_improve.tick(
             self.cfg, gh=gh, now=NOW + _dt.timedelta(minutes=60)))
-        cfg = config.Config(raw={"self_improve": {"tick_minutes": 5}})
+        cfg = config.Config(raw={"self_improve": {"tick_minutes": 5}},
+                            self_improve_enabled=True)
         self.assertNotIn("skipped", self_improve.tick(
             cfg, gh=gh, now=NOW + _dt.timedelta(minutes=66)))
 

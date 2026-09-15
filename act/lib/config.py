@@ -4,7 +4,7 @@
 §16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
 §53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
 D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
-§70（daily_loop 块）。
+§70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关）。
 
 Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
@@ -334,6 +334,12 @@ class Config:
     daily_loop_stale_days: int = 45
     daily_loop_trash_retention_days: int = 90
 
+    # §65.1 自动改进本软件的通道总开关（config.yaml `self_improve.enabled`；issue
+    # #307 / D57）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
+    # 每日循环不跑 issues/prs/mutation 三个 GitHub 读取器、§65.5 巡检不巡、§51 第二
+    # 条 lane 不免批派发；打开它的唯一面 = 设置页「开发者」区（扁平 override 键同名）。
+    self_improve_enabled: bool = False
+
     # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
     # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
     recording_ignored_apps: list = field(
@@ -603,6 +609,14 @@ def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
     for key in ("max_proposals_per_day", "stale_days", "trash_retention_days"):
         attr = f"daily_loop_{key}"
         setattr(cfg, attr, max(0, _int_or(blk.get(key), getattr(cfg, attr))))
+
+
+def _apply_self_improve_block(cfg: "Config", data: dict) -> None:
+    """§65.1 config.yaml `self_improve:` 块的总开关 → cfg（坏值/缺键保留默认 = 关）。
+    块里其余键（repo_path / tick_minutes / owner_logins / github_repo）仍由
+    `policy.self_improve_config` 现读 raw——只有总开关要走 overrides 层（设置页）。"""
+    blk = _dict_or(data.get("self_improve"))
+    cfg.self_improve_enabled = _bool_or(blk.get("enabled"), cfg.self_improve_enabled)
 
 
 def _server_port_from(data: dict) -> int:
@@ -1036,6 +1050,7 @@ _BLOCK_APPLIERS = (
     _apply_switch_blocks,
     _apply_maintainer_feedback,
     _apply_language_format_features,
+    _apply_self_improve_block,          # §65.1
 )
 
 
@@ -1265,6 +1280,9 @@ _OVERRIDE_FIELDS: dict = {
     "daily_loop_max_proposals_per_day": _nonneg_int,
     "daily_loop_stale_days": _nonneg_int,
     "daily_loop_trash_retention_days": _nonneg_int,
+    # §65.1 (#307 / D57): 自动改进本软件的通道总开关——设置页「开发者」区经
+    # PUT /api/settings/maintainer 写这个扁平键（diff-write 同款；默认 false）。
+    "self_improve_enabled": _coerce_bool,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }

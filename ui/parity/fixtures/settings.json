@@ -941,6 +941,26 @@
       "fields": [
         {
           "choices": null,
+          "default": false,
+          "effective": false,
+          "help": {
+            "en": "Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 proposal cards, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the approval column, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once.",
+            "zh": "维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并铸 🤖 提案卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回待审批列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。"
+          },
+          "key": "self_improve_enabled",
+          "kind": "bool",
+          "label": {
+            "en": "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
+            "zh": "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
           "default": "",
           "effective": "",
           "help": {

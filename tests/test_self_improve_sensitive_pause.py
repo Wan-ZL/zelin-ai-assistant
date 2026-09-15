@@ -28,6 +28,12 @@ from server import self_improve_lane as server_lane
 BRANCH = "ai/self-improve/R-900"
 
 
+def _on():
+    """通道开着的 cfg——§65.1 的总开关 #307 / D57 起出厂是**关**的，而本文件钉的是
+    护栏（开着才谈得上暂停）。关着的判决在 tests/test_self_improve_channel_switch.py。"""
+    return config.Config(self_improve_enabled=True)
+
+
 def _clean():
     config.ensure_state_dirs()
     for p in config.REGISTRY_DIR.glob("*.yaml"):
@@ -113,7 +119,7 @@ class PauseOnHarvestTestCase(unittest.TestCase):
         self_improve.pause("sensitive_paths", pr_number=1, pr_url="u", paths=["install.sh"])
         card = lane_card("P-8", status=State.CARD_SENT.value, execution=None)
         registry.save(card)
-        n = actd.auto_dispatch_pass(config.Config())
+        n = actd.auto_dispatch_pass(_on())
         self.assertEqual(n, 0)
         req = registry.load("P-8")
         self.assertEqual(req.status, State.CARD_SENT.value)
@@ -121,7 +127,7 @@ class PauseOnHarvestTestCase(unittest.TestCase):
         self.assertIn("self_improve:paused", req.notes)
         # 解除 → 下一 pass 放行，token 清掉
         self_improve.clear_pause()
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 1)
+        self.assertEqual(actd.auto_dispatch_pass(_on()), 1)
         req = registry.load("P-8")
         self.assertEqual(req.status, State.APPROVED.value)
         self.assertNotIn("auto_dispatch_block", req.execution)
@@ -143,14 +149,14 @@ class PauseVisibilityAndClearTestCase(unittest.TestCase):
 
     def test_dashboard_top_level_key_reflects_pause(self):
         with mock.patch("act.lib.dashboard._run_claude_agents", return_value=[]):
-            dash = build_dashboard(cfg=config.Config())
+            dash = build_dashboard(cfg=_on())
         self.assertEqual(dash["self_improve"], {
             "enabled": True, "paused": False, "paused_reason": None, "paused_pr": None,
             "paused_pr_url": None, "paused_paths": [], "paused_at": None})
         self_improve.pause("sensitive_paths", pr_number=5, pr_url="u5", paths=["act/llm.py"],
                            card="P-1")
         with mock.patch("act.lib.dashboard._run_claude_agents", return_value=[]):
-            dash = build_dashboard(cfg=config.Config(raw={"self_improve": {"enabled": False}}))
+            dash = build_dashboard(cfg=config.Config())   # 出厂默认：enabled=false（#307 / D57）
         view = dash["self_improve"]
         self.assertFalse(view["enabled"])
         self.assertTrue(view["paused"])
@@ -172,14 +178,14 @@ class PauseVisibilityAndClearTestCase(unittest.TestCase):
     def test_tick_auto_clears_when_flagged_pr_is_handled_by_owner(self):
         self_improve.pause("sensitive_paths", pr_number=5, pr_url="u5", paths=["act/llm.py"])
         gh = FakeGh({5: pr_doc(5, branch=BRANCH, state="OPEN")})
-        self_improve.tick(config.Config(), gh=gh, force=True)
+        self_improve.tick(_on(), gh=gh, force=True)
         self.assertTrue(self_improve.lane_paused())           # 还开着 → 继续暂停
         gh.prs[5] = pr_doc(5, branch=BRANCH, state="MERGED", merged_by="somebody-else")
-        summary = self_improve.tick(config.Config(), gh=gh, force=True)
+        summary = self_improve.tick(_on(), gh=gh, force=True)
         self.assertFalse(summary["resumed"])                  # 不是 owner 合的 → 不清
         self.assertTrue(self_improve.lane_paused())
         gh.prs[5] = pr_doc(5, branch=BRANCH, state="MERGED")  # owner 合的
-        summary = self_improve.tick(config.Config(), gh=gh, force=True)
+        summary = self_improve.tick(_on(), gh=gh, force=True)
         self.assertTrue(summary["resumed"])
         st = self_improve.load_state()
         self.assertFalse(st["paused"])
@@ -188,10 +194,10 @@ class PauseVisibilityAndClearTestCase(unittest.TestCase):
     def test_tick_does_not_clear_when_a_bot_closed_the_flagged_pr(self):
         self_improve.pause("sensitive_paths", pr_number=5, pr_url="u5", paths=["act/llm.py"])
         gh = FakeGh({5: pr_doc(5, branch=BRANCH, state="CLOSED")}, closers={5: ["dependabot[bot]"]})
-        self.assertFalse(self_improve.tick(config.Config(), gh=gh, force=True)["resumed"])
+        self.assertFalse(self_improve.tick(_on(), gh=gh, force=True)["resumed"])
         self.assertTrue(self_improve.lane_paused())
         gh.closers[5] = ["dependabot[bot]", "Wan-ZL"]        # 最后一次关闭是 owner
-        self.assertTrue(self_improve.tick(config.Config(), gh=gh, force=True)["resumed"])
+        self.assertTrue(self_improve.tick(_on(), gh=gh, force=True)["resumed"])
 
     def test_update_state_touches_only_named_keys(self):
         # 两个进程各写各的键：server 恢复端点不许覆盖 actd 同一时刻写的暂停

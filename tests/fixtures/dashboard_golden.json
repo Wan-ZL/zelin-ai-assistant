@@ -653,7 +653,7 @@
     }
   },
   "self_improve": {
-    "enabled": true,
+    "enabled": false,
     "paused": false,
     "paused_reason": null,
     "paused_pr": null,

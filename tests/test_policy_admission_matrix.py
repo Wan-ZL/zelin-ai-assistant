@@ -70,12 +70,15 @@ LANE = {"open": False, "paused": True}
 
 
 def _cfg(auto=None, si=None, **attrs):
+    """`si` 块照 `config._apply_self_improve_block` 搬到属性上（#307 / D57 起总开关
+    出厂关，而这张矩阵钉的是通道开着时的判决——`si-off` 那一行仍是显式关的）。"""
     raw = {}
     if auto is not None:
         raw["autodispatch"] = auto
     if si is not None:
         raw["self_improve"] = si
     cfg = Config(raw=raw)
+    cfg.self_improve_enabled = bool(si.get("enabled", True)) if isinstance(si, dict) else True
     for k, v in attrs.items():
         setattr(cfg, k, v)
     return cfg

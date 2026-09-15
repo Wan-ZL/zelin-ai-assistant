@@ -5,7 +5,8 @@ CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119�
 救活的会话按 stop_to_review 收割进待验收，不再挂「需输入」）/ §16（auto_resume
 双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis（收割时比对快照）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
-/ §46（resume 风暴降级 + 确认式停止）/ §65.3（self_improve 收割核验）。
+/ §46（resume 风暴降级 + 确认式停止）/ §65.1（通道总开关关着 = 不给 self_improve
+卡自动续命）/ §65.3（self_improve 收割核验）。
 """
 from __future__ import annotations
 
@@ -421,6 +422,13 @@ def _reconcile_one(d: Daemon, req: Requirement, cfg: config.Config, agents: dict
         return 0
     if ex.get("done"):
         _promote_if_missed(req)
+        return 0
+    if self_improve.frozen_in_flight(req, cfg):
+        # §65.1（issue #307 第 4 条）：通道关着时死掉的 self_improve 会话**不自动
+        # 续命**——「在电脑睡眠时被中断」正是 owner 点名的那条路。卡原地留在运行
+        # 中（不改状态、不写卡、不打日志：出厂默认不该每 pass 出声），维护者把开关
+        # 打开后下一 pass 照常救活。收割（done / blocked 两条路）与 §65.3 核验不在
+        # 本闸下——已经跑完的活该被收下。
         return 0
     return _revive_dead(d, req, ex, sid, cfg, resume_notified)
 
