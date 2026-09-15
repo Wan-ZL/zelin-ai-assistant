@@ -53,6 +53,7 @@ import { IngestPage } from "./pages/IngestPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPage, STEPS as SETUP_STEPS } from "./pages/SetupPage";
+import { SkillsPage } from "./pages/SkillsPage";
 import { TrashPage } from "./pages/TrashPage";
 import { applyShellState, resetShellBridgeForTests, type ShellState } from "./shellBridge";
 import {
@@ -236,6 +237,8 @@ const LANGUAGES: Language[] = ["zh", "en"];
 // 首帧要在 store 还没有 permissions 快照时渲染一次，「检测中…」这类瞬态词才收得到。
 // 原生 deps 页（+ Doctor.swift 的对症动词）D30 起住设置页的「依赖检查」区——两个 screen 都判在 settings 面上；
 // 原生 ask 页 D29 退役（清单 SCREEN_OWNER / CONTROL_OWNER 标 retired，不进这里）。
+// 原生 settings.skills 区 D78 起住 web 自有的技能页（?page=skills）——它不是新的判卷面：技能页与设置页一起
+// 渲进 settings 面的池里（见下方 PAGES.settings），`settings.skills` 仍按 settings 面判。
 const SURFACES = ["board", "trash", "settings", "about", "ingest", "setup", "permissions"] as const;
 type Surface = (typeof SURFACES)[number];
 const SCREEN_SURFACE: Array<[prefix: string, surface: Surface]> = [
@@ -680,7 +683,9 @@ function clickEverything(root: ParentNode, pool: Set<string>, searches = false, 
 const PAGES: Record<Surface, () => ReactElement> = {
   board: () => <BoardPage />,
   trash: () => <TrashPage />,
-  settings: () => <SettingsPage />,
+  // 设置面 = 设置页 + 技能页（D78）：原生 `screen:settings.skills` 的控件自此渲染在技能页上（设置页只剩一行入口），
+  // 而原生那一区的新建表单词（保存 / 取消）仍由设置页的其它区提供——两页同属「原生设置页」这一面，渲进同一个池
+  settings: () => <><SettingsPage /><SkillsPage /></>,
   about: () => <AboutPage />,
   ingest: () => <IngestPage />,
   setup: () => <SetupPage />,

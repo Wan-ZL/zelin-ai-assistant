@@ -1,7 +1,7 @@
 // 窗口 / 标签页标题（CONTRACT §54.1 追记）：镜像原生 MainWindow.installTitleSink——
 // `"Zelin's AI Assistant — " + section.title`，随当前页与 UI 语言变（Mission Control / 窗口切换器里能认出在哪一页）。
 // 页标签 = 原生 MainSection.title 逐字（任务台 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于）；
-// web 自有页取该页自己的抬头（会议纪要沿用导航栏的词）；依赖检查两个旧深链渲染的是设置页（D30）→ 「设置」。
+// web 自有页取该页自己的抬头（会议纪要与技能沿用导航栏的词）；依赖检查两个旧深链渲染的是设置页（D30）→ 「设置」。
 // 只是一张表 + 两个纯函数：不读 store、不碰 document——AppShell 负责写 document.title；壳（shell/）经 WKWebView.title
 // KVO 把它抬成窗口标题（另一批次）。NavRail 日后可改读本表（现在两处字面相同，判例钉住不漂）。
 import type { AppPage } from "../../route";
@@ -17,6 +17,7 @@ export const PAGE_LABELS: Readonly<Record<AppPage, { readonly zh: string; readon
   board: { zh: "任务台", en: "Workbench" },
   recaps: { zh: "会议纪要", en: "Recaps" },
   ingest: { zh: "录制与数据接入", en: "Recording & Data Sources" },
+  skills: { zh: "技能", en: "Skills" },
   trash: { zh: "回收站", en: "Trash" },
   archive: { zh: "永久性完成", en: "Done for good" },
   settings: SETTINGS,

@@ -163,10 +163,10 @@ describe("App — 换页不重载（D40）", () => {
     expect(document.title).toMatch(/— (任务台|Workbench)$/);
   });
 
-  it("⌘6 → 设置页、⌘1 → 看板，同样不重载", async () => {
+  it("⌘7 → 设置页、⌘1 → 看板，同样不重载（栏上八项连续重编，技能占 ⌘4——D78）", async () => {
     await renderBoard();
     act(() => {
-      fireEvent.keyDown(window, { key: "6", metaKey: true });
+      fireEvent.keyDown(window, { key: "7", metaKey: true });
     });
     expect(window.location.search).toBe("?page=settings");
     await waitFor(() => expect(document.querySelector(".settings-page")).toBeTruthy());

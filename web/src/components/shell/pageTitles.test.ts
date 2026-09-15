@@ -12,6 +12,7 @@ const en = getI18n("en").text;
 /** route.ts 的合法页全集（表必须覆盖每一个——漏一页 tsc 先红，这里再钉一次运行时形状） */
 const ALL_PAGES: readonly AppPage[] = [
   "board", "trash", "styleguide", "settings", "recaps", "archive", "permissions", "diagnostics", "setup", "deps", "ingest", "about",
+  "skills",
 ];
 
 describe("pageTitles", () => {
@@ -45,6 +46,8 @@ describe("pageTitles", () => {
     expect(pageTitle("trash", zh)).toBe("Zelin's AI Assistant — 回收站");
     expect(pageTitle("settings", en)).toBe("Zelin's AI Assistant — Settings");
     expect(pageTitle("recaps", zh)).toBe("Zelin's AI Assistant — 会议纪要");
+    expect(pageTitle("skills", zh)).toBe("Zelin's AI Assistant — 技能"); // web 自有页（D78）
+    expect(pageTitle("skills", en)).toBe("Zelin's AI Assistant — Skills");
     expect(pageTitle("setup", en)).toBe("Zelin's AI Assistant — Setup");
   });
 });

@@ -7,7 +7,8 @@
 // 依赖检查（原生 rail 页 DepsView，D30 2026-09-04 owner「合并到 setting里面」）紧跟通用区——它管的是这台机器能不能跑，
 // 与通用区的「初始设置向导 / 权限体检」两行同一话题。已退役：菜单栏（D3）；
 // 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
-// （?page=about），不再重复。
+// （?page=about），不再重复。Skills 自 D78（2026-09-15）起也是 sidebar 页（?page=skills）：本页的 skills 区只剩一行入口
+// （SkillsPointerSection），`?anchor=skills` / `#settings-skills` 旧深链到达即改道到那一页。
 // web 自有区另有 录制数据与磁盘（§72，issue #28：磁盘占用 / 增长估算 / 保留天数，紧跟录制区）。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
 // 搜索框（原生 Settings.swift SettingsSearchField + matches()，§54.4 / §68.1 追记）：干草 = 目录标题 zh+en + server 目录该区的
@@ -36,7 +37,7 @@ import { GeneralExtras } from "../components/settings/GeneralExtras";
 import { GmailSection } from "../components/settings/GmailSection";
 import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
-import { SkillsSection } from "../components/settings/SkillsSection";
+import { SkillsPointerSection } from "../components/settings/SkillsSection";
 import { RecordingSection } from "../components/settings/RecordingSection";
 import { SettingsFold } from "../components/settings/SettingsFold";
 import { MaintainerExtras } from "../components/settings/MaintainerExtras";
@@ -49,7 +50,7 @@ import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceGenerate } from "../components/settings/VoiceGenerate";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
-import { buildAppUrl, navigate, readSettingsAnchor, useRoute, withoutSettingsAnchor } from "../route";
+import { buildAppUrl, navigate, readSettingsAnchor, SKILLS_ANCHOR, useRoute, withoutSettingsAnchor } from "../route";
 import { expandSettingsSection, toggleSettingsSection, useAppState } from "../store";
 import type { SecretsStatus, SettingsCatalog } from "../types";
 
@@ -244,6 +245,12 @@ export function SettingsPage() {
     if (!pending) return undefined;
     const stripped = withoutSettingsAnchor(window.location.href);
     if (stripped.href !== window.location.href) navigate(stripped, true);
+    // D78：Skills 自此是独立页——旧深链 `?anchor=skills` / `#settings-skills`（壳菜单 / 书签 / 外部链接）到达即改道，
+    // 不留在设置页的入口行上（replace：不在历史栈里留一条「设置页 + 锚点」，后退回去又被重放一次）
+    if (pending.id === SKILLS_ANCHOR) {
+      navigate(buildAppUrl(window.location.href, "skills", null), true);
+      return undefined;
+    }
     if (SETTINGS_TOC.some((entry) => entry.id === pending.id)) expandSettingsSection(pending.id);
     const el = scrollToFold(pending.id);
     if (!el) return undefined;
@@ -306,7 +313,8 @@ export function SettingsPage() {
       <Fold id="slack" isForced={searchActive}><SlackSection /></Fold>
       <Fold id="gmail" isForced={searchActive}><GmailSection /></Fold>
       <Fold id="claude_import" isForced={searchActive}><ClaudeImportSection /></Fold>
-      <Fold id="skills" isForced={searchActive}><SkillsSection /></Fold>
+      {/* D78：Skills 区搬成左侧导航栏的「技能」页（?page=skills）——这里只剩一行入口，区与目录条目原位留着 */}
+      <Fold id="skills" isForced={searchActive}><SkillsPointerSection /></Fold>
       <Fold id="mcp" isForced={searchActive}><McpSection /></Fold>
       <Fold id="sync" isForced={searchActive}><SyncSection /></Fold>
       <Fold id="approval" isForced={searchActive}><CatalogSection sectionId="approval" /></Fold>
