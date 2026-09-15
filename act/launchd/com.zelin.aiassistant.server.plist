@@ -14,7 +14,7 @@
   responsible process for everything it spawns, and the shell bundle holds no
   Full Disk Access grant (ad-hoc signed back then - a grant would not even stick
   across builds; the shell has signed with a stable identity since 2026-09-12,
-  s54.2, but it still holds no disk grant), so on a repo living on an external
+  s54.3, but it still holds no disk grant), so on a repo living on an external
   volume the child could not read the checkout and died with
   "No module named server". The daemon interpreter
   install.sh pins here has cleared the s55 launchd viability probe: it is the

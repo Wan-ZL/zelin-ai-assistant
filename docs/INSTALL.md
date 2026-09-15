@@ -137,7 +137,7 @@ bash install.sh --check --fresh-install    # 剩下要你做的事
 
 ### 首次启动看板（Gatekeeper）
 
-自己构建的壳 app 用本机的稳定自签证书 `Zelin AI Engineer Dev` 签（没装证书才回落 ad-hoc；`bash mac/scripts/make-signing-cert.sh` 生成一次，签名跨版本不变 = TCC 授权不掉，CONTRACT §54.2），两种情况下本机 `open` 都不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
+自己构建的壳 app 用本机的稳定自签证书 `Zelin AI Engineer Dev` 签（没装证书才回落 ad-hoc；`bash mac/scripts/make-signing-cert.sh` 生成一次，签名跨版本不变 = TCC 授权不掉，CONTRACT §54.3），两种情况下本机 `open` 都不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
 
 > ✅ **预期状态**：Dock 里出现 "Zelin's AI Assistant"，窗口顶部新鲜度标签显示看板数据 ≤10 秒前生成——说明 actd 活着、契约两端接通。若显示橙色「后台服务没在运行」：`launchctl list | grep actd`、`tail ~/Library/Logs/zelin-ai-assistant/actd.launchd.log`，并对照 TROUBLESHOOTING。
 

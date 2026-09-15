@@ -7,7 +7,7 @@ docstring 里「不需要任何自动化授权」的断言被现实推翻。现�
 过期条目），壳（``shell/Sources/TerminalRelay.swift``）按节拍消费队列、经 Apple Events
 （``shell/Sources/TerminalLauncher.swift``，老版 mac/ 实战验证过的那份）在 Ghostty / iTerm2 /
 Terminal 新开窗口跑命令。自动化授权按（壳, 终端）这一对记忆——TCC 以壳的签名 requirement 为键：壳自 2026-09-12 起用稳定自签身份
-（`shell/build.sh`，§54.2 修正），requirement 跨版本不变，所以**点一次「允许」就是终身一次**；只有证书没装、
+（`shell/build.sh`，§54.3「构建」条 2026-09-12 修正），requirement 跨版本不变，所以**点一次「允许」就是终身一次**；只有证书没装、
 壳回落 ad-hoc 的机器才每次重建（= 每次自动部署）后首次双击再弹一次（§68.7 追记 (b) 与同节 2026-09-12 修正）。
 
 **命令永远由 server 从投影行推导，绝不接受客户端文本**（``copy_cmd``，其次

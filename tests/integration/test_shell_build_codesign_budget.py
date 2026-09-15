@@ -1,4 +1,4 @@
-"""shell/build.sh 的 codesign 有界回落——真 bash 跑一遍（CONTRACT §54.2 2026-09-12 修正）。
+"""shell/build.sh 的 codesign 有界回落——真 bash 跑一遍（CONTRACT §54.3「构建」条 2026-09-12 修正）。
 
 住在 tests/integration/（防腐 #7：真 subprocess 只许住这里；单文件预算见 BUDGET_SECONDS）。
 

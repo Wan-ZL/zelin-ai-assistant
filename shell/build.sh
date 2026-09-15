@@ -9,7 +9,7 @@
 #
 # Conventions mirror mac/build.sh (swiftc + hand-assembled bundle + plutil lint
 # + codesign)。差异点：签名与 mac/build.sh 同一张稳定自签证书（缺证书 / 签不动才回落
-# ad-hoc；#316，§54.2 2026-09-12 修正），且 codesign 用 --deep——bundle 里除主 Mach-O
+# ad-hoc；#316，§54.3 2026-09-12 修正），且 codesign 用 --deep——bundle 里除主 Mach-O
 # 还有 §68.13 的 vault-sync-helper / framegrab 两个可执行，--deep 让它们与壳同一身份；
 # 安全的原因是这里没有 mac/ 那样的 Sparkle 嵌套 bundle 需要 inside-out 逐个签。
 # （壳自己不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，壳只连接。）
@@ -212,7 +212,7 @@ else
     echo "==> Ad-hoc codesigning (identity missing — TCC grants will reset on reinstall)"
 fi
 
-# Bounded + fall back（§54.2 2026-09-12 修正）：install.sh 的 `ui` 步在 launchd 下跑本脚本，
+# Bounded + fall back（§54.3 2026-09-12 修正）：install.sh 的 `ui` 步在 launchd 下跑本脚本，
 # 没有人能点对话框。用 keychain 里的私钥签名**可能**弹一次 GUI 授权框——
 # mac/scripts/make-signing-cert.sh 的 `security set-key-partition-list`（那把钥匙的 ACL：
 # `-T /usr/bin/codesign`）是**可跳过**的一步，跳过了的机器上 codesign 就停在那个框上等一个

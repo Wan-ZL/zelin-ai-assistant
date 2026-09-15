@@ -19,7 +19,7 @@
 // one-time; only on a machine without that cert (shell falls back to
 // ad-hoc, cdhash requirement, new on every rebuild = every auto-deploy)
 // does the prompt return once per released version (CONTRACT §68.7 追记 (b)
-// + its 2026-09-12 修正, §54.2). Info.plist carries
+// + its 2026-09-12 修正 in §54.3「构建」). Info.plist carries
 // NSAppleEventsUsageDescription for it.
 //
 // Mechanisms (plain Apple Events per app — no Accessibility hacks):

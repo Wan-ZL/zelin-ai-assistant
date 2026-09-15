@@ -1,4 +1,4 @@
-"""shell/build.sh 的签名契约（CONTRACT §54.2 2026-09-12 修正，issue #316）。
+"""shell/build.sh 的签名契约（CONTRACT §54.3「构建」条 2026-09-12 修正，issue #316）。
 
 壳 app 的 TCC 授权（屏幕录制 / 麦克风 / 自动化 / ~/Documents 笔记库）按代码签名的
 designated requirement 记账。ad-hoc（`-s -`）的 requirement = 二进制 cdhash，每次构建
