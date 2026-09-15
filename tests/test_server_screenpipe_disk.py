@@ -7,8 +7,10 @@ freelist 与首末 frame，坏库进 ``db_error`` 不炸；增长估算样本优
 真 server 随机端口（tests/test_server_common.py）；小目录 + 小 sqlite 全在临时目录里。
 """
 import json
+import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -156,7 +158,6 @@ class SnapshotTestCase(unittest.TestCase):
 
     def setUp(self):
         disk.reset_cache_for_tests()
-        self.addCleanup(disk.reset_cache_for_tests)
         self.tmp = tempfile.TemporaryDirectory(prefix="zai-disk-snap-")
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
@@ -166,6 +167,9 @@ class SnapshotTestCase(unittest.TestCase):
         patcher = mock.patch.object(paths, "screenpipe_dir", return_value=self.root)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # cleanup 是 LIFO：这一下登记在临时目录与 patcher **之后**，所以它先跑——
+        # 先 join 掉在飞的后台算，再让 rmtree 去走 state/（CI 2026-09-15 的 Errno 39）。
+        self.addCleanup(disk.reset_cache_for_tests)
 
     def test_first_call_is_a_computing_placeholder_and_schedules_exactly_one_job(self):
         jobs = []
@@ -214,6 +218,31 @@ class SnapshotTestCase(unittest.TestCase):
         self.assertIn("boom", got["error"])
         self.assertFalse(got["refreshing"])
 
+    def test_reset_joins_the_in_flight_job_so_nothing_writes_after_teardown(self):
+        """根因判例（train PR 的 CI，Tests on ubuntu 3.9 / head 0619da32）：后台线程还在往临时 home 的
+        `state/` 里写样本文件，`TemporaryDirectory` 的 rmtree 已经在走同一个目录——
+        ``OSError: [Errno 39] Directory not empty: 'state'``。`reset_cache_for_tests()` 现在先 join，
+        它回来之后那个线程必然已经落地，拆 home 撞不上任何写（不 sleep、不 ignore_cleanup_errors）。"""
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        marker = self.home / "state" / "late_write.json"
+
+        def blocked_compute(home, now=None):
+            gate.wait(10.0)                                    # 闸不开就一直占着这个临时 home
+            (Path(home) / "state" / "late_write.json").write_text("{}", encoding="utf-8")
+            return {"state": "ready"}
+
+        with mock.patch.object(disk, "compute", blocked_compute):
+            disk.snapshot(self.home, now=NOW)                  # 默认 spawn = 真线程
+            self.assertFalse(disk.join_jobs_for_tests(0.05))   # 有界 join 回 False = 它真的还在飞
+            self.assertFalse(marker.exists())
+            gate.set()
+            disk.reset_cache_for_tests()                       # 这一下必须等它把那一笔写完
+            self.assertTrue(marker.exists())
+        self.assertTrue(disk.join_jobs_for_tests(0.01))        # 表空了
+        shutil.rmtree(self.home)                               # 此刻拆 home：没有任何线程还会碰它
+        self.assertFalse(marker.exists())
+
     def test_missing_root_is_ready_with_zeros(self):
         with mock.patch.object(paths, "screenpipe_dir", return_value=self.root / "absent"):
             snap = disk.compute(self.home, now=NOW)
@@ -238,7 +267,6 @@ class SnapshotTestCase(unittest.TestCase):
 class EndpointTestCase(unittest.TestCase):
     def setUp(self):
         disk.reset_cache_for_tests()
-        self.addCleanup(disk.reset_cache_for_tests)
         self.tmp = tempfile.TemporaryDirectory(prefix="zai-disk-http-")
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
@@ -248,6 +276,10 @@ class EndpointTestCase(unittest.TestCase):
         patcher = mock.patch.object(paths, "screenpipe_dir", return_value=self.root)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # cleanup 是 LIFO，登记顺序 = 拆机顺序的倒序：server shutdown → join 后台算 →
+        # patcher.stop → rmtree 临时目录。这一条 GET 起的后台线程会往 home/state/ 写样本文件，
+        # 不先 join 就会在 rmtree 脚下写（CI ubuntu 3.9：Errno 39 Directory not empty: 'state'）。
+        self.addCleanup(disk.reset_cache_for_tests)
         _httpd, self.port = start_server(self, self.home)
 
     def test_get_returns_immediately_then_becomes_ready(self):
