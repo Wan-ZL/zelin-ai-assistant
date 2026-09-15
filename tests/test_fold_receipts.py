@@ -161,19 +161,25 @@ class CaptureFoldReceiptTestCase(unittest.TestCase):
     def setUp(self):
         _clear_dirs()
 
-    def _write_capture(self, text):
+    def _write_capture(self, text, via=None):
         payload = {"action": "capture", "text": text,
                    "ts": "2026-08-07T00:00:00Z"}
+        if via is not None:
+            payload["via"] = via          # T-28 ingress 落款（缺 via = Mac 文件）
         (config.INBOX_DIR / f"capture-{uuid.uuid4()}.json").write_text(
             json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    def test_plain_capture_fold_emits_board_receipt(self):
-        text = "把周报数据整理成一页摘要发出去"
+    def _seed_card(self, text):
         existing = Requirement(id=registry.next_id(), title=text,
                                status=State.CARD_SENT.value,
                                sources=[{"who": "zelin", "channel": "quick_capture",
                                          "date": "2026-08-06", "quote": text}])
         registry.save(existing)
+        return existing
+
+    def test_plain_capture_fold_emits_board_receipt(self):
+        text = "把周报数据整理成一页摘要发出去"
+        existing = self._seed_card(text)
 
         self._write_capture(text)
         actd.process_inbox()
@@ -200,6 +206,39 @@ class CaptureFoldReceiptTestCase(unittest.TestCase):
                                          archived=[])
         self.assertEqual(len(dash["fold_receipts"]), 1)
         self.assertEqual(dash["fold_receipts"][0]["title"], "")
+
+    def test_web_ingress_capture_fold_still_emits_receipt(self):
+        # via:"web" = 本机看板，同为 owner ingress → channel 仍是 quick_capture
+        text = "看板里敲进去的一句撞上了已有卡"
+        existing = self._seed_card(text)
+        self._write_capture(text, via="web")
+        actd.process_inbox()
+        got = fold_receipts.load_recent()
+        self.assertEqual([(e["req"], e["channel"]) for e in got],
+                         [(existing.id, "quick_capture")])
+
+    def test_non_owner_ingress_capture_fold_emits_no_receipt(self):
+        # §44.6 追记（issue #308）：agent/remote 投递的 capture 落 PROPOSED 级
+        # 捕获通道（policy.CHANNEL_CLASS）——用户一个字都没敲，「刚才的输入已
+        # 并入」对他不成立。回执通道必须是真实 ingress，不是写死的 quick_capture。
+        for via, channel in (("agent", "agent_capture"),
+                             ("remote", "remote_capture"),
+                             (17, "remote_capture")):      # 畸形 via fail-closed
+            with self.subTest(via=via):
+                _clear_dirs()
+                text = f"{via} 投进来的一句撞上了已有卡"
+                existing = self._seed_card(text)
+                self._write_capture(text, via=via)
+                actd.process_inbox()
+                # 静默并入照旧发生（没建新卡），出身章盖的就是这个通道……
+                folded = [r for r in registry.load_all() if r.title == text]
+                self.assertEqual([r.id for r in folded], [existing.id])
+                self.assertIn(channel,
+                              [s.get("channel") for s in (folded[0].sources or [])])
+                # ……但看板上一条回执都没有，目录里也不留文件
+                self.assertEqual(fold_receipts.load_recent(), [])
+                self.assertEqual(
+                    list(config.FOLD_RECEIPTS_DIR.glob("*.json")), [])
 
     def test_plain_capture_new_card_emits_no_receipt(self):
         self._write_capture("一句全新的话不产生回执")
