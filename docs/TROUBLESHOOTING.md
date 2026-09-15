@@ -287,6 +287,25 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 
 **别做**:不要把「一键更新」当解法——`refused_branch` / `refused_dirty` / `blocked_tcc` 三种状态下 server **根本不会** kickstart(409 `deploy_refused`),它提前跑一轮也只是让脚本以同样的理由再拒一次。这正是 #309 修掉的那个谎:修之前按钮会说「已触发自动部署——几分钟后这里的版本会变」。
 
+## 整棵 checkout 莫名回退到一个旧版本:一批 tracked 文件同时"被改",还多出一堆没人写过的旧源码(issue #333,CONTRACT §74)
+
+**症状**:`git status` 里几十上百个 tracked 文件同时脏了,`git diff` 显示它们变成了**更旧**的某个 tag 的内容;`ls -lT` 看这批文件的 mtime 齐刷刷是同一秒(= 那个 tag 的 commit 时间,`git archive` 盖的章),ctime 齐刷刷是另一个同一分钟;同一批还多出十几个 untracked、**没被 .gitignore 掉**的旧源码文件(它们 import 的函数在今天的代码里已经不存在,于是 `npm run build` / `tsc` 必红、自动部署每轮回滚);`state/deploy_state.json` 从那一刻起 `refused_dirty`;`launchctl list | grep actd` 的 pid 是那一分钟起的新进程。2026-09-07 实录:232 个文件回退到 v1.0.14、18 个残留文件、四张假 `pr_red` 卡烧掉四个 agent session。
+
+**原因**:一个 **.pkg 装进了你的开发 checkout**。安装器的 postinstall 会把载荷 `rsync` 进 `~/Projects/zelin-ai-assistant`——如果那条路径(或它的某一级)是指向 checkout 的符号链接,载荷就直接盖在工作树上,然后重启守护进程。发起者通常不是你:`/Applications/Zelin's AI Assistant (old).app`(D3 退役中的旧菜单栏 app)里的 Sparkle 自动检查更新并静默安装 .pkg。**这条路已经堵了**(CONTRACT §74):新 .pkg 的 postinstall 与 `install.sh --pkg-postinstall` 都会先判目的地是不是工作树,是就整段跳过并在 `/var/log/install.log` 里点名;发布的 appcast 也换成了永远答「已是最新」的终止版 feed。**但已经装在你机器上的那个旧 bundle 仍带着旧 Info.plist**(自动更新开着),它要到下一次 release 之后才读到终止版 feed。
+
+**确认是不是它**:`grep -i 'Autoupdate\|installer' /var/log/install.log | tail -40`(Current Path 指向 `…(old).app/Contents/Frameworks/Sparkle.framework/…/Autoupdate` = 就是它)、`pkgutil --pkg-info com.zelin.aiassistant.pipeline`(install-time + 版本 = 被装进来的那一版)。
+
+**收拾现场**(在 repo 根,逐条确认再跑):
+
+1. `git status --porcelain` 存一份下来:`git status --porcelain > ~/Downloads/reverted-$(date +%m%d).txt`——分清哪些是你自己的改动,哪些是被盖的。
+2. 被盖的 tracked 文件:`git checkout -- <路径…>`(确定整批都是被盖的才 `git checkout -- .`)。
+3. 残留的 untracked 旧源码:逐个核对「今天的代码里还有没有人 import 它」,确认是遗骸再删——`git clean -n` 先看一遍,**永远不要**直接 `git clean -fdx`(它会连 `state/` 与本机配置一起清掉)。
+4. 恢复之后自动部署会自己从 `refused_dirty` 走出来;等不及就 `bash scripts/auto-deploy.sh --force` 跑一轮。
+5. **今天就关窗**(两条命令,现在就能跑,不用等下一个 release):守卫与终止版 feed 都是**随下一个产物**才生效的——此刻 `/releases/latest/download/appcast.xml` 仍是当前最新 tag 那份**上了膛的**单条目 feed(指向一个守卫出生之前的 .pkg),而已装的 `(old).app` 里 `SUEnableAutomaticChecks` / `SUAutomaticallyUpdate` 仍是 true。所以:
+   - **把线上那份 appcast 现在就换成终止版**(零 `<item>` 的那份 XML,取自 `release.yml` 的生成步):`gh release upload <当前 latest tag> appcast.xml --clobber`(或者干脆 `gh release delete-asset <tag> appcast.xml`——代价是客户端每天拿一次 404 并记成「链路坏了」,所以首选 --clobber)。
+   - **就地把那台机器上的自动更新关掉**:`defaults write com.zelin.ai-engineer SUAutomaticallyUpdate -bool false && defaults write com.zelin.ai-engineer SUEnableAutomaticChecks -bool false`。偏好住在 `~/Library/Preferences/`,**不在**签名封条内(封条内的 Info.plist 一个字节都不许动,§54),Sparkle 读用户默认值优先于 Info.plist——这一条立刻生效、可逆(`defaults delete` 还原)。
+6. **彻底断掉复发**(owner 的手,§74.4 不代拍):要么把 `/Applications/Zelin's AI Assistant (old).app` 删掉(D3 说了等你明确下令才删),要么至少别再启动它——它每次启动都会去检查更新。
+
 ## 版本号不对:doctor `version` 行 WARN、看板顶栏 / `python3 -c "import act; print(act.__version__)"` 报的不是 tag(2026-09-02 切到 tag 真源之后)
 
 版本的真源是 main 上的 git tag(CONTRACT §56.1),**没有任何文件里写着版本**。`act.__version__` 按 `act/_version.py`(生成文件、git-ignored)→ `git describe` → `act/__init__.py` 的烘焙回落行解析;守护进程只读 stamp。三种症状:

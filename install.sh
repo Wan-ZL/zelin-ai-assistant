@@ -44,6 +44,10 @@
 #   (actd + radars per config — without them the product is inert) and the
 #   ingest cron chain. Every run (both modes) ends by writing
 #   state/install_report.json (CONTRACT §23) with what actually happened.
+#   REFUSES a git checkout (CONTRACT §74.2, exit 3, nothing touched): this
+#   flag only ever runs on a .pkg-seeded copy, and a .pkg never writes into a
+#   working tree (2026-09-07 incident, issue #333). The other modes are
+#   unaffected — they are meant to run inside a checkout.
 #
 # --check: run the post-install doctor (python -m act.doctor) and exit with
 #   the number of failing checks. Installs/changes nothing.
@@ -326,6 +330,22 @@ for _arg in "$@"; do
             exit 2 ;;
     esac
 done
+
+# CONTRACT §74.2 —— 第二把锁（defence in depth）：`--pkg-postinstall` 今天的
+# 唯一调用者是 .pkg 的 postinstall，而它已经在 rsync 之前用同一个守卫拒过 git
+# checkout；这里再拒一次，防的是**这把闸日后被谁绕开**——postinstall 那道门被
+# 编辑掉、有人在一棵工作树里手敲这个 flag、或者将来多出第二个调用者。
+# **它防不了「守卫出生之前打出来的旧 .pkg 载荷」**：那种载荷先把自己那份无守卫
+# 的 install.sh 连同旧代码 rsync 进 $DEST（伤害就发生在这一步），再执行的正是
+# 它自己拷过去的那一份——这里这几行那时根本不在文件里（§74.4 边界）。
+# 命中即**什么都不做**：不拷配置、不建 state、不装 launchd、不写 crontab、不写
+# §23 报告。交互模式与 `--non-interactive`（自动部署）**不**受本条约束——它们
+# 本来就该在 checkout 里跑。
+if [ "$PKG_POSTINSTALL" -eq 1 ] && ! bash "$REPO_ROOT/mac/scripts/pkg_dest_guard.sh" "$REPO_ROOT" >/dev/null; then
+    echo "install.sh --pkg-postinstall: refusing to configure a git checkout — nothing changed (CONTRACT §74)." >&2
+    echo "install.sh --pkg-postinstall: run 'bash install.sh' in that checkout yourself." >&2
+    exit 3
+fi
 
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }

@@ -68,33 +68,6 @@ jobs:
           fi
           echo "stamped act/_version.py = ${VERSION} (runner-only)"
 
-      - name: Verify Sparkle key matches the baked SUPublicEDKey
-        # Integrity gate — the appcast step below signs the .pkg with the
-        # SPARKLE_ED_PRIVATE_KEY secret, but every installed app only accepts
-        # enclosures matching the SUPublicEDKey hardcoded in mac/Info.plist.
-        # Nothing else checks they are a pair: a rotated secret (or a fork's
-        # own secret) still produces a fully green release whose updates every
-        # client then silently discards — users just never move off the old
-        # version. Fail here, before the expensive build. The derivation
-        # helper (scripts/sparkle_pubkey.py) is validated against Sparkle's
-        # own sign_update; the secret only crosses via env + stdin, never argv.
-        env:
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
-            echo "::error::SPARKLE_ED_PRIVATE_KEY secret missing — auto-update assets cannot be signed (set the secret, or drop the Sparkle steps in a fork)"
-            exit 1
-          fi
-          python3 -m pip install --user cryptography || python3 -m pip install --user --break-system-packages cryptography
-          BAKED="$(plutil -extract SUPublicEDKey raw -o - mac/Info.plist)"
-          DERIVED="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | python3 scripts/sparkle_pubkey.py)"
-          if [ "$DERIVED" != "$BAKED" ]; then
-            echo "::error::SPARKLE_ED_PRIVATE_KEY does not derive the SUPublicEDKey baked into mac/Info.plist (derived ${DERIVED}, baked ${BAKED}) — shipped apps would silently reject this release's auto-update"
-            exit 1
-          fi
-          echo "Sparkle key preflight OK — secret derives the baked SUPublicEDKey (${BAKED})"
-
       - name: Select pinned Xcode
         # Same pin as ci.yml (issue #15): .github/xcode-version via
         # scripts/ci/select_xcode.sh — the release build of a commit resolves
@@ -168,7 +141,9 @@ jobs:
       - name: Vendor Sparkle (framework + tools)
         # Download + verify (SHA-256) + vendor Sparkle.framework and its bin/ tools
         # into mac/Frameworks/ (gitignored). MUST run before the build so build.sh
-        # links + embeds + signs the framework and the appcast step can sign_update.
+        # links + embeds + signs the framework (the frozen legacy app still links
+        # it). Nothing signs an appcast enclosure any more — the feed is terminal,
+        # CONTRACT §74.3 — but bin/sign_update is what re-arming it would need.
         run: bash mac/scripts/fetch-sparkle.sh
 
       - name: Build macOS app
@@ -196,50 +171,35 @@ jobs:
           VERSION="$(python3 -c 'import act; print(act.__version__)')"
           mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
 
-      - name: EdDSA-sign the .pkg and generate appcast.xml
-        # Sparkle integrity: EdDSA-sign the .pkg with the maintainer's private key
-        # (GitHub secret; never in the repo) and emit a single-item appcast.xml
-        # whose enclosure is the .pkg (installationType="package" — updates the
-        # whole product, app + pipeline, no drift). Guarded on the secret so a fork
-        # without it fails loudly rather than shipping an unusable feed.
-        env:
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+      - name: Generate the terminal appcast.xml (the legacy Sparkle feed is retired)
+        # CONTRACT §74.3 — the retired menu-bar app (com.zelin.ai-engineer, D3)
+        # is the ONLY client of this feed, and on 2026-09-07 it used it: Sparkle
+        # fetched v1.0.14's .pkg and installed it unattended, and that payload's
+        # postinstall rsynced an older tag over the live checkout (issue #333).
+        # The feed therefore carries NO items any more: a well-formed channel
+        # with zero <item>s is what "you are up to date, forever" looks like to
+        # Sparkle — quieter and more deterministic than dropping the asset
+        # (which leaves /releases/latest/download/appcast.xml a 404 the client
+        # re-fetches every day). Nothing is EdDSA-signed because nothing is
+        # offered, so the SUPublicEDKey preflight went with it. Re-arming the
+        # feed = restore an <item> with an <enclosure>, sign it with
+        # mac/Frameworks/bin/sign_update, and put that preflight back
+        # (scripts/sparkle_pubkey.py is kept for exactly that). The .pkg itself
+        # is still built, attested, checksummed and attached to the release — a
+        # human can still download it and run it by hand.
         run: |
           set -euo pipefail
-          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
-            echo "::error::SPARKLE_ED_PRIVATE_KEY secret missing — auto-update assets not produced"; exit 1
-          fi
-          TAG="${GITHUB_REF_NAME}"                      # e.g. v0.23.0
-          VER="${TAG#v}"                                # 0.23.0  (== CFBundleVersion)
-          PKG="mac/build/ZelinAIAssistant-${TAG}.pkg"
-          KEYFILE="$RUNNER_TEMP/sparkle_ed_priv"
-          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEYFILE"
-
-          # sign_update prints:  sparkle:edSignature="…" length="…"
-          SIGATTR="$(mac/Frameworks/bin/sign_update "$PKG" -f "$KEYFILE")"
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ZelinAIAssistant-${TAG}.pkg"
-
           cat > mac/build/appcast.xml <<EOF
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
             <channel>
-              <title>Zelin's AI Assistant</title>
-              <item>
-                <title>${VER}</title>
-                <sparkle:version>${VER}</sparkle:version>
-                <sparkle:shortVersionString>${VER}</sparkle:shortVersionString>
-                <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
-                <sparkle:releaseNotesLink>https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}</sparkle:releaseNotesLink>
-                <pubDate>$(date -u +"%a, %d %b %Y %H:%M:%S +0000")</pubDate>
-                <enclosure url="${URL}"
-                           sparkle:installationType="package"
-                           ${SIGATTR}
-                           type="application/octet-stream" />
-              </item>
+              <title>Zelin's AI Assistant (retired feed)</title>
+              <link>https://github.com/${GITHUB_REPOSITORY}/releases/latest</link>
+              <description>This Sparkle feed is retired and intentionally carries no items: the legacy menu-bar app never auto-installs a .pkg again (CONTRACT 74.3). Update by running install.sh in your checkout, or download the .pkg from the release page and run it yourself.</description>
             </channel>
           </rss>
           EOF
-          echo "generated appcast.xml:"; cat mac/build/appcast.xml
+          echo "generated terminal appcast.xml:"; cat mac/build/appcast.xml
 
       - name: Package portable Linux + Windows bundles
         # Windows/Linux are pure Python (no compiled binary), so each "installer"
@@ -357,8 +317,11 @@ jobs:
 
           NOTES
           cat /tmp/release-body.md /tmp/release-notes.md > /tmp/release-full.md
-          # "Latest" is what Sparkle (SUFeedURL …/releases/latest/download/
-          # appcast.xml) and update_check (/releases/latest) follow. Merge =
+          # "Latest" is what update_check (/releases/latest) follows, and it is
+          # where the legacy app's SUFeedURL (…/releases/latest/download/
+          # appcast.xml) lands — which is why the newest release must always
+          # carry the TERMINAL appcast (§74.3): an older release's armed feed
+          # must never become "latest" again. Merge =
           # release means back-to-back merges run this workflow in parallel and
           # finish in any order — decide from the tag list, never from who
           # finishes last (a lower tag must not eclipse a higher one). API
@@ -380,7 +343,5 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/sign-cert.p12" 2>/dev/null || true
-          # never leave the decoded Sparkle EdDSA private key on the runner
-          rm -f "$RUNNER_TEMP/sparkle_ed_priv" 2>/dev/null || true
           # restore the default user keychain search list
           security list-keychains -d user -s login.keychain-db 2>/dev/null || true
