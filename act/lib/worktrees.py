@@ -18,16 +18,25 @@ owner 的生产 checkout 2026-09-09 攒到 30 个、写这条法时 190+，`git 
 `missing` / `locked`（`git worktree list` 报 locked）/ `live`（路径 = 某张
 approved·executing·review 卡的会话 cwd，`transcripts.transcript_info`）/ `dirty`
 （`git status --porcelain` 非空，读不到也算脏）/ `unpushed`（`git rev-list --count
-HEAD --not --remotes` > 0 = 有只存在于本地的提交）。够格删的三个理由：`merged`
-（分支已并进远端默认分支）/ `gone`（分支在 origin 上已不存在且本地无独有提交 = 合并后
+HEAD --not --remotes` > 0 = 有只存在于本地的提交，**期限内**才留，见下）。够格删的三个
+理由：`merged`（分支已并进远端默认分支）/ `gone`（分支在 origin 上已不存在 = 合并后
 删枝）/ `stale`（目录 :data:`STALE_DAYS` 天没动过）；三者都另加 :data:`MIN_AGE_DAYS`
 天的地板——刚建出来、还没提交过东西的 worktree 在「分支不在 origin 上」这一条上恒真，
 没有地板就会误删正在起跑的会话。
 
-**为什么 `prune` 有闸**：`git worktree prune` 是**仓库全局**的，会顺手注销任何「gitdir
-指向的目录当下不存在」的登记——owner 机器上还有 142 个手工 worktree 挂在另一个目录树
-下，那棵树一旦临时不在（外置卷没挂上）就会被一次 prune 全部注销。所以只有在**每一条
-登记的路径都还在**时才 prune，否则回执记 `skipped:missing_paths`。
+**`unpushed` 是延期不是否决**：有只存在于本地的提交时，目录的年龄门槛从
+:data:`MIN_AGE_DAYS` 抬到 :data:`STALE_DAYS`（owner 那条「14 天且无未提交改动」），过了
+这道线照删，但**那条分支连问都不问**（回执 `kept_branch: "unpushed"`、`branch_deleted:
+false`）。删目录从来丢不了提交——分支引用住在主 repo 的 `.git` 里，`worktree remove`
+不碰它，一句 `git worktree add <path> <branch>` 就能把工作树再长回来。不加期限的否决
+会把一整类 worktree 永久钉在盘上（正是 issue #315 要治的病）。
+
+**为什么 `prune` 有闸、闸又只拦一半**：`git worktree prune` 是**仓库全局**的，会注销任何
+「gitdir 指向的目录当下不存在」的登记——owner 机器上还有 142 个手工 worktree 挂在另一个
+目录树下，那棵树一旦临时不在（外置卷没挂上）就会被一次 prune 全部注销。所以判据是
+**会被注销的那些登记是不是全落在托管根之内**：全在 = 照 prune（托管根下的幽灵登记正是
+本模块要收的），有一条在外面 = 整轮跳过记 `skipped:missing_paths`；登记表这一刻读不出来
+= 一枪不开，记 `skipped:unknown`（不知道清单时那道闸等于不存在）。
 
 CLI（零写入的那三形是给人看的诊断口）：
 
@@ -379,7 +388,7 @@ def _row(entry: dict, now: float, live: set) -> dict:
     return {"path": path, "name": os.path.basename(path.rstrip(os.sep)),
             "branch": str(entry.get("branch") or ""), "head": str(entry.get("head") or ""),
             "locked": bool(entry.get("locked")), "exists": exists, "age_days": age,
-            "live": _real(path) in live, "dirty": None,
+            "live": _real(path) in live, "dirty": None, "kept_branch": None,
             "verdict": "keep", "reason": "active"}
 
 
@@ -412,27 +421,42 @@ def _judge_cheap(row: dict, entry: dict, root: str, merged: set, refs: set,
     return reason
 
 
-def _judge_costly(row: dict, git: GitRunner, repo: str, reason: str) -> None:
-    """贵那一半（每条两个 git 子进程）：脏 / 有本地独有提交 → 留下。"""
+def _judge_costly(row: dict, git: GitRunner, repo: str, reason: str, days: int) -> None:
+    """贵那一半（每条两个 git 子进程）。脏 = 留下（那可能是唯一一份）。有只存在于本地的
+    提交 = **分支永不删**，而目录的年龄门槛从 :data:`MIN_AGE_DAYS` 抬到 ``days``
+    （`STALE_DAYS` 那把尺，即 owner 那条「mtime 超过 14 天且无未提交改动」）——删目录
+    从来不会丢提交（分支引用住在主 repo 的 `.git` 里，`worktree remove` 不碰它），
+    所以这一条是**延期**不是否决：不加期限的否决会把一整类 worktree 永久钉在盘上。"""
     row["dirty"] = is_dirty(git, row["path"])
     if row["dirty"]:
         row["reason"] = "dirty"
         return
     if unpushed(git, repo, row["head"]):
-        row["reason"] = "unpushed"
-        return
+        row["kept_branch"] = "unpushed"
+        if (row["age_days"] or 0.0) < days:
+            row["reason"] = "unpushed"
+            return
     row.update({"verdict": "remove", "reason": reason})
 
 
 # --------------------------------------------------------------------------- #
 # 清点一个 repo
 # --------------------------------------------------------------------------- #
-def _scan_env(git, repo, now, live, days, budget_s, clock) -> dict:
+def _scan_env(git, repo, now, live, days, budget_s, clock, beat) -> dict:
     """一次扫描的只读上下文（默认值在这里落定，判决只读它）。"""
     return {"git": git or default_git, "repo": str(repo), "root": managed_root(repo),
             "now": time.time() if now is None else now,
             "live": set() if live is None else live, "days": days, "clock": clock,
-            "deadline": clock() + max(0.0, budget_s)}
+            "deadline": clock() + max(0.0, budget_s), "beat": beat}
+
+
+def _beat(beat: Optional[Callable[[], None]]) -> None:
+    """心跳打一下（§47.4）：**每判一条、每删一条**各一下，不是每个 root 一下——现实里
+    root 只有一个（通道 repo），而一轮分类要跑到 :data:`SCAN_BUDGET_S`、一轮删除要删掉
+    几十份带 `web/node_modules` 的完整 checkout，中间不打心跳就会被 `/api/health` 与
+    `act/doctor.py` 误判成 `actd_stalled`（阈值 max(3×interval, 90) 秒）。"""
+    if beat:
+        beat()
 
 
 def _judge_one(env: dict, row: dict, reason: str) -> bool:
@@ -440,13 +464,14 @@ def _judge_one(env: dict, row: dict, reason: str) -> bool:
     if env["clock"]() >= env["deadline"]:
         row["reason"] = "budget"
         return True
-    _judge_costly(row, env["git"], env["repo"], reason)
+    _judge_costly(row, env["git"], env["repo"], reason, env["days"])
     return False
 
 
 def _classify(env: dict, entries: list, merged: set, refs: set) -> "tuple[list, bool]":
     rows, truncated = [], False
     for entry in entries:
+        _beat(env["beat"])
         row = _row(entry, env["now"], env["live"])
         reason = _judge_cheap(row, entry, env["root"], merged, refs, env["days"])
         if reason is not None:
@@ -470,9 +495,10 @@ def _totals(env: dict, rows: list, truncated: bool) -> dict:
 
 def survey(repo: str, *, git: Optional[GitRunner] = None, now: Optional[float] = None,
            live: Optional[set] = None, days: int = STALE_DAYS,
-           budget_s: float = SCAN_BUDGET_S, clock: Callable[[], float] = time.monotonic) -> dict:
+           budget_s: float = SCAN_BUDGET_S, clock: Callable[[], float] = time.monotonic,
+           beat: Optional[Callable[[], None]] = None) -> dict:
     """一个 repo 的清点 + 判决（零写入）。永不抛：git 不可用 = `error` 非空、rows 空。"""
-    env = _scan_env(git, repo, now, live, days, budget_s, clock)
+    env = _scan_env(git, repo, now, live, days, budget_s, clock, beat)
     entries, error = registered(env["git"], env["repo"])
     if error:
         return _empty_survey(env["repo"], env["root"], error)
@@ -486,10 +512,22 @@ def survey(repo: str, *, git: Optional[GitRunner] = None, now: Optional[float] =
 # --------------------------------------------------------------------------- #
 # 执行：prune → remove → branch -d
 # --------------------------------------------------------------------------- #
-def prune(git: GitRunner, repo: str, entries: list) -> str:
-    """`git worktree prune`，**有闸**：它是仓库全局的，任何一条登记路径当下不在
-    （外置卷没挂上）就整轮跳过——不许一次 prune 注销别处 140 个手工 worktree。"""
-    if any(not os.path.isdir(str(e.get("path") or "")) for e in entries):
+def _would_be_pruned(entry: dict) -> bool:
+    """这条登记当下指不到目录 = 一次 `git worktree prune` 就会注销它。"""
+    return bool(entry.get("prunable")) or not os.path.isdir(str(entry.get("path") or ""))
+
+
+def prune(git: GitRunner, repo: str, root: str, entries: list) -> str:
+    """`git worktree prune`，**有闸，且闸只拦该拦的**：prune 是仓库全局的，会注销
+    **任何**指不到目录的登记——owner 机器上那 142 个手工 worktree 挂在别的目录树下，
+    那棵树一旦临时不在（外置卷没挂上），一次 prune 就把它们的登记全注销了。所以判据是
+    「**会被注销的**那些登记是不是全落在托管根之内」：全在 = 照 prune（托管根下的幽灵
+    正是本节要收的东西，若连它们都拦，prune 这条腿就只在无事可做时才动），有一条在外面
+    = 整轮跳过记 `skipped:missing_paths`。**登记表读不出来（空）= 一枪不开**，记
+    `skipped:unknown`——不知道有哪些登记的时候，这道闸等于不存在（fail-closed）。"""
+    if not entries:
+        return "skipped:unknown"
+    if any(_would_be_pruned(e) and not under(root, e.get("path")) for e in entries):
         return "skipped:missing_paths"
     rc, _out = git(["worktree", "prune"], repo)
     return "ok" if rc == 0 else "failed"
@@ -497,17 +535,20 @@ def prune(git: GitRunner, repo: str, entries: list) -> str:
 
 def _removal(row: dict, removed: bool, branch_deleted: bool, error: Optional[str]) -> dict:
     return {"path": row["path"], "branch": row["branch"], "reason": row["reason"],
-            "removed": removed, "branch_deleted": branch_deleted, "error": error}
+            "removed": removed, "branch_deleted": branch_deleted,
+            "kept_branch": str(row.get("kept_branch") or "") or None, "error": error}
 
 
 def remove_one(git: GitRunner, repo: str, row: dict) -> dict:
     """一条：`git worktree remove`（**永不 --force**）→ 成功再 `git branch -d`
-    （**永不 -D**：`-d` 拒绝就是「这条分支还有没落地的提交」，那是信息不是障碍）。"""
+    （**永不 -D**：`-d` 拒绝就是「这条分支还有没落地的提交」，那是信息不是障碍）。
+    `kept_branch` 非空（有只存在于本地的提交）= 这一枪连问都不问，分支原地留着。"""
     rc, out = git(["worktree", "remove", row["path"]], repo)
     if rc != 0:
         return _removal(row, False, False,
                         ("worktree remove rc=%s %s" % (rc, str(out or "").strip()))[:200])
-    return _removal(row, True, _delete_branch(git, repo, row["branch"]), None)
+    keep = bool(row.get("kept_branch"))
+    return _removal(row, True, False if keep else _delete_branch(git, repo, row["branch"]), None)
 
 
 def _delete_branch(git: GitRunner, repo: str, branch: str) -> bool:
@@ -549,17 +590,21 @@ def _merge_survey(receipt: dict, found: dict) -> None:
         _bump(receipt["skipped"], reason, n)
 
 
-def _execute(receipt: dict, repo: str, git: GitRunner, doomed: list) -> None:
-    entries, _err = registered(git, repo)
-    receipt["pruned"][repo] = prune(git, repo, entries)
+def _execute(receipt: dict, repo: str, root: str, git: GitRunner, doomed: list,
+             beat: Optional[Callable[[], None]]) -> None:
+    """prune（有闸）在前、逐条 remove 在后。登记表这一刻读不出来 = prune 一枪不开
+    （`skipped:unknown`）：清单未知时那道闸拦不住任何东西。"""
+    entries, err = registered(git, repo)
+    receipt["pruned"][repo] = "skipped:unknown" if err else prune(git, repo, root, entries)
     for row in doomed:
+        _beat(beat)
         done = remove_one(git, repo, row)
         (receipt["removed"] if done["removed"] else receipt["failed"]).append(done)
 
 
 def _sweep_repo(receipt: dict, repo: str, plan: dict) -> None:
     found = survey(repo, git=plan["git"], now=plan["now"], live=plan["live"],
-                   days=plan["days"], budget_s=plan["budget_s"])
+                   days=plan["days"], budget_s=plan["budget_s"], beat=plan["beat"])
     _merge_survey(receipt, found)
     if found["error"]:
         receipt["ok"] = False
@@ -570,13 +615,12 @@ def _sweep_repo(receipt: dict, repo: str, plan: dict) -> None:
     if plan["dry_run"]:
         receipt["removed"] += [_removal(r, False, False, None) for r in doomed[:budget]]
         return
-    _execute(receipt, str(repo), plan["git"], doomed[:budget])
+    _execute(receipt, str(repo), found["root"], plan["git"], doomed[:budget], plan["beat"])
 
 
 def _sweep_roots(receipt: dict, cfg: object, cards: list, plan: dict) -> None:
     for repo in roots(cfg, cards):
-        if plan["beat"]:
-            plan["beat"]()
+        _beat(plan["beat"])
         _sweep_repo(receipt, repo, plan)
         plan["budget"] = plan["limit"] - len(receipt["removed"])
 

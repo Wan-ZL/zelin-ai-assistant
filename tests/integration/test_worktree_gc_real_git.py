@@ -1,9 +1,11 @@
 """§75 的判决对着**真 git** 跑一遍（tests/integration/，防腐 #7：真 IO 只许住这里）。
 
 单元层的 `FakeGit` 钉的是判决与顺序，钉不住「我们递给 git 的 argv 与解析它 stdout 的
-口径是对的」——`git worktree list --porcelain` 的行文法、`branch --merged` 的输出形状、
-`rev-list --count <sha> --not --remotes` 的语义、`worktree remove` 拒绝脏树、`branch -d`
-拒绝没并进去的分支，这些只有真 git 能作证。本文件因此每条判例建一个真 repo（一个
+口径是对的」——`git worktree list --porcelain` 的行文法（含目录没了那条的 `prunable`）、
+`branch --merged` 的输出形状、`rev-list --count <sha> --not --remotes` 的语义、
+`worktree remove` 拒绝脏树、`worktree prune` 到底注销了谁、`worktree remove` **不**碰分支
+引用（删掉目录之后 `git worktree add <path> <branch>` 能原样长回来），这些只有真 git
+能作证。本文件因此每条判例建一个真 repo（一个
 「远端」裸库 + 一个工作副本）、真的 `git worktree add` 出三条，然后跑 `survey` / `sweep`。
 
 每条判例各起一个 repo：`survey` 会在候选上跑 `git status`，而那一下会刷新 gitdir 的
@@ -104,6 +106,11 @@ class RealGitTestCase(unittest.TestCase):
         return worktrees.sweep(self.cfg, git=worktrees.default_git, reqs=[], live=set(),
                                now=time.time(), **kw)
 
+    @staticmethod
+    def _by_name(receipt) -> dict:
+        """回执里的删除行按 worktree 名索引（真 git 的登记顺序不保证等于建的顺序）。"""
+        return {os.path.basename(row["path"]): row for row in receipt["removed"]}
+
     def test_porcelain_parsing_and_the_age_floor_agree_with_real_git(self):
         rows = {r["name"]: r for r in
                 worktrees.survey(self.repo, now=time.time(), live=set())["rows"]}
@@ -113,34 +120,55 @@ class RealGitTestCase(unittest.TestCase):
         self.assertEqual({r["verdict"] for r in rows.values()}, {"keep"})
         self.assertEqual({r["reason"] for r in rows.values()}, {"active"})
 
-    def test_a_stale_clean_worktree_goes_while_dirty_and_unpushed_stay(self):
+    def test_stale_worktrees_go_dirty_stays_and_an_unpushed_branch_outlives_its_worktree(self):
         self._age_them_all()
         got = self._sweep()
-        self.assertEqual([r["path"] for r in got["removed"]], [os.path.join(self.root, "gone")])
-        self.assertTrue(got["removed"][0]["branch_deleted"])
+        rows = self._by_name(got)
+        self.assertEqual(set(rows), {"gone", "ahead"})
+        self.assertTrue(rows["gone"]["branch_deleted"])
         self.assertFalse(os.path.isdir(os.path.join(self.root, "gone")))
         self.assertTrue(os.path.isdir(os.path.join(self.root, "dirty")))
-        self.assertTrue(os.path.isdir(os.path.join(self.root, "ahead")))
+        self.assertFalse(os.path.isdir(os.path.join(self.root, "ahead")))
         self.assertEqual(got["skipped"].get("dirty"), 1)
-        self.assertEqual(got["skipped"].get("unpushed"), 1)
         self.assertEqual(got["pruned"][self.repo], "ok")
         self.assertNotIn("feat/gone", _git(self.repo, "branch", "--list"))
+        # 目录没了，提交没丢：真 git 上分支引用照旧在主 repo 的 .git 里
+        self.assertEqual(rows["ahead"]["kept_branch"], "unpushed")
+        self.assertFalse(rows["ahead"]["branch_deleted"])
         self.assertIn("feat/ahead", _git(self.repo, "branch", "--list"))
+        self.assertIn("local only", _git(self.repo, "log", "-1", "--format=%s", "feat/ahead"))
+
+    def test_a_worktree_removed_by_hand_can_be_added_back_from_its_branch(self):
+        self._age_them_all()
+        self._sweep()
+        back = os.path.join(self.root, "ahead-again")
+        _git(self.repo, "worktree", "add", back, "feat/ahead")
+        self.assertTrue(os.path.isfile(os.path.join(back, "local.txt")))
 
     def test_a_dry_run_over_the_same_tree_removes_nothing(self):
         self._age_them_all()
         got = self._sweep(dry_run=True)
-        self.assertEqual([r["path"] for r in got["removed"]], [os.path.join(self.root, "gone")])
+        self.assertEqual(set(self._by_name(got)), {"gone", "ahead"})
         self.assertTrue(os.path.isdir(os.path.join(self.root, "gone")))
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "ahead")))
         self.assertIn("feat/gone", _git(self.repo, "branch", "--list"))
 
-    def test_prune_is_skipped_when_a_registered_worktree_directory_is_gone(self):
+    def test_a_ghost_registration_under_the_managed_root_is_pruned(self):
         self._age_them_all()
-        shutil.rmtree(os.path.join(self.root, "ahead"))       # 手工删掉目录，登记还在
+        shutil.rmtree(os.path.join(self.root, "dirty"))       # 手工删掉目录，登记还在
+        got = self._sweep()
+        self.assertEqual(got["pruned"][self.repo], "ok")
+        self.assertEqual(got["skipped"].get("missing"), 1)
+        self.assertNotIn("dirty", _git(self.repo, "worktree", "list"))
+
+    def test_a_missing_registration_outside_the_managed_root_disables_prune(self):
+        self._age_them_all()
+        outside = os.path.join(self.base, "hand-made")        # owner 那 142 个的形态
+        _git(self.repo, "worktree", "add", "-b", "feat/outside", outside, "main")
+        shutil.rmtree(outside)
         got = self._sweep()
         self.assertEqual(got["pruned"][self.repo], "skipped:missing_paths")
-        self.assertIn("worktrees", _git(self.repo, "worktree", "list"))
-        self.assertEqual(got["skipped"].get("missing"), 1)
+        self.assertIn("hand-made", _git(self.repo, "worktree", "list"))
 
 
 if __name__ == "__main__":

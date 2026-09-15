@@ -947,6 +947,8 @@ export interface WorktreeRow {
   age_days: number | null;
   live: boolean;
   dirty: boolean | null;
+  /** 非 null = 这条的本地分支无论如何都留着，值是理由（目前只有 "unpushed"） */
+  kept_branch: string | null;
   verdict: "keep" | "remove" | string;
   reason: string;
 }
@@ -987,6 +989,8 @@ export interface WorktreeRemoval {
   reason: string;
   removed?: boolean;
   branch_deleted: boolean;
+  /** 非 null = 目录删了但分支特意留着，值是理由（"unpushed" = 有只存在于本地的提交） */
+  kept_branch?: string | null;
   error: string | null;
 }
 

@@ -23,6 +23,11 @@ const computing: WorktreeInventory = {
   ...ready, state: "computing", scanned_at: null, refreshing: true, worktrees: null,
   removable: null, bytes: null,
 };
+// server 那边子进程没起来 / 没给 JSON：整份形状还在，数字位是 null（server/worktree_inventory._job）
+const failed: WorktreeInventory = {
+  ...computing, state: "error", ok: false, refreshing: false,
+  error: "worktrees_failed", message: "Traceback: boom",
+};
 
 function renderEn() {
   return render(<LanguageContext.Provider value="en"><WorktreeStatus /></LanguageContext.Provider>);
@@ -44,6 +49,14 @@ describe("cleanupText", () => {
       { path: "/b", branch: "", reason: "stale", branch_deleted: false, error: null },
     ], failed: [], skipped: { dirty: 2, live: 1 } }, text))
       .toBe("Removed 2 worktrees and 1 local branches; kept 3 (dirty / locked / in flight / unpushed)");
+  });
+
+  it("says which branches were kept on purpose", () => {
+    expect(cleanupText({ ok: true, removed: [
+      { path: "/a", branch: "work/a", reason: "stale", branch_deleted: false,
+        kept_branch: "unpushed", error: null },
+    ], failed: [], skipped: {} }, text))
+      .toContain("1 branches kept: local-only commits");
   });
 
   it("counts the ones git refused", () => {
@@ -106,6 +119,15 @@ describe("WorktreeStatus", () => {
     vi.mocked(fetchWorktrees).mockRejectedValue(new Error("offline"));
     renderEn();
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("offline"));
+  });
+
+  it("never renders undefined when the server could not measure at all", async () => {
+    vi.mocked(fetchWorktrees).mockResolvedValue(failed);
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("worktree-count").textContent).toBe("Unknown"));
+    expect(screen.getByTestId("worktree-status").textContent).not.toContain("undefined");
+    expect(screen.getByRole("alert").textContent).toContain("worktrees_failed");
+    expect(screen.getByRole("button", { name: "Clean up" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("admits when the size could not be measured in full", async () => {

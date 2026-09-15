@@ -5,8 +5,10 @@ issue #315：生产 checkout 攒了 190+ 个 worktree，没有任何一处代码
 卡指着的、有只存在于本地的提交的，一条都不许碰；够格删的三个理由（分支已并进远端
 默认分支 / 分支在 origin 上已不存在 / 目录 STALE_DAYS 天没动过）另加一层年龄地板，
 免得刚建出来还没提交过东西的 worktree 在「分支不在 origin 上」这一条上被误删。
-执行顺序：`git worktree prune`（且只在每条登记路径都还在时）→ `git worktree remove`
-（永不 `--force`）→ `git branch -d`（永不 `-D`）。
+执行顺序：`git worktree prune`（闸只拦「会被注销的登记里有落在托管根**之外**的」，
+登记表读不出来则一枪不开）→ `git worktree remove`（永不 `--force`）→ `git branch -d`
+（永不 `-D`）。「有只存在于本地的提交」是**延期**不是否决：目录的年龄门槛抬到
+`STALE_DAYS`，过了照删，而那条分支永远留着（`kept_branch: "unpushed"`）。
 """
 import os
 import time
@@ -63,7 +65,8 @@ class WorktreeGcTestCase(unittest.TestCase):
         dirty = self._entry("dirty", branch="a/dirty")
         locked = self._entry("locked", branch="a/locked", locked=True)
         live = self._entry("live", branch="a/live")
-        ahead = self._entry("ahead", branch="a/ahead")
+        # 有本地独有提交的这条还没过 STALE_DAYS——那期限之内它照旧原地不动
+        ahead = self._entry("ahead", branch="a/ahead", age_days=worktrees.STALE_DAYS - 1)
         git = FakeGit(self.tree.repo, [dirty, locked, live, ahead], remotes=["origin/main"],
                       dirty={dirty["path"]}, ahead={"sha-ahead": 3})
         got = self._sweep(git, live={live["path"]})
@@ -101,14 +104,47 @@ class WorktreeGcTestCase(unittest.TestCase):
                         shapes.index(("worktree", "remove", entry["path"])))
         self.assertFalse(any("--force" in s or "-D" in s for s in shapes))
 
-    def test_prune_is_skipped_when_a_registered_path_is_missing(self):
+    def test_a_ghost_registration_under_the_managed_root_is_what_prune_is_for(self):
+        # 目录被手删、登记还在：这正是 prune 要收的东西，闸不该拦它（否则 prune 只在
+        # 无事可做时才跑，issue #315 Expected 第 2 条的 prune 那条腿就是死的）
         entry = self._entry("here", branch="feat/here")
         ghost = {"path": self.tree.root + "/vanished", "branch": "feat/ghost", "head": "sha-ghost"}
         git = FakeGit(self.tree.repo, [entry, ghost], remotes=["origin/main"])
         got = self._sweep(git)
+        self.assertEqual(got["pruned"][self.tree.repo], "ok")
+        self.assertEqual(git.pruned, 1)
+        self.assertEqual(got["skipped"].get("missing"), 1)
+
+    def test_prune_is_skipped_when_a_missing_registration_lies_outside_the_managed_root(self):
+        # owner 那 142 个手工 worktree 的形态：登记指向别的目录树，那棵树临时不在
+        entry = self._entry("here", branch="feat/here")
+        ghost = {"path": self.tree.base + "/elsewhere/gone", "branch": "feat/hand-made",
+                 "head": "sha-hand"}
+        git = FakeGit(self.tree.repo, [entry, ghost], remotes=["origin/main"])
+        got = self._sweep(git)
         self.assertEqual(got["pruned"][self.tree.repo], "skipped:missing_paths")
         self.assertEqual(git.pruned, 0)
-        self.assertEqual(got["skipped"].get("missing"), 1)
+
+    def test_a_listing_that_fails_before_the_execution_leaves_prune_unfired(self):
+        # 闸的输入没了就不许开枪：空登记表里「有没有外面的幽灵」恒为否，fail-open 会让
+        # 一次仓库全局 prune 在零核对之下跑起来
+        entry = self._entry("here", branch="feat/here")
+        git = FakeGit(self.tree.repo, [entry], remotes=["origin/main"], list_fails_after=1)
+        got = self._sweep(git)
+        self.assertEqual(got["pruned"][self.tree.repo], "skipped:unknown")
+        self.assertEqual(git.pruned, 0)
+
+    def test_an_unpushed_branch_keeps_its_branch_but_loses_its_worktree_once_stale(self):
+        # 守卫有期限：过了 STALE_DAYS，目录照清（可再生），分支连问都不问（提交不可再生）
+        entry = self._entry("ahead-old", branch="a/ahead-old",
+                            age_days=worktrees.STALE_DAYS + 1)
+        git = FakeGit(self.tree.repo, [entry], remotes=["origin/main"],
+                      ahead={"sha-ahead-old": 2})
+        got = self._sweep(git)
+        self.assertEqual(git.removed, [entry["path"]])
+        self.assertEqual(got["removed"][0]["kept_branch"], "unpushed")
+        self.assertFalse(got["removed"][0]["branch_deleted"])
+        self.assertEqual(git.branches_deleted, [])
 
     def test_a_branch_that_git_refuses_to_delete_leaves_the_worktree_removed(self):
         entry = self._entry("keepbranch", branch="feat/keep")

@@ -37,11 +37,15 @@ _cache: dict = {}    # str(home) -> {"snapshot": dict|None, "computed_at": float
 
 
 def _run(home: Path, args: list, timeout_s: int, runner) -> dict:
+    """子进程的一行 JSON；没给 JSON = `state: "error"` 的失败壳（不抛、不 500）。
+    `state` 这个键让调用方分得清「子进程没起来」与「清点跑完了但 ok:false」——
+    后者是一份完整快照，前者什么数字都没有。"""
     rc, out, err = subproc.run_module(home, MODULE, args, timeout_s=timeout_s, runner=runner)
     doc = subproc.parse_json_output(out)
     if doc is None:
         tail = subproc.tail(err or out) or ("worktrees exited %s" % rc)
-        return {"ok": False, "error": "no_python" if rc == 127 else "worktrees_failed",
+        return {"ok": False, "state": "error",
+                "error": "no_python" if rc == 127 else "worktrees_failed",
                 "message": tail}
     return doc
 
@@ -62,8 +66,13 @@ def _finish(key: str, result: dict, now: float) -> None:
 
 
 def _job(home: Path, key: str, now: float, runner) -> None:
+    """后台线程：算完落缓存。子进程失败的那一支**补满 `placeholder()` 的全部键**再落
+    （`worktrees: null` 而不是键根本不在）并留着 `state: "error"`——前端逐字镜像 wire
+    键，少一个键就会在数字位上渲染出 `undefined`（防腐 #10；同 screenpipe_disk._job）。"""
     try:
-        result = dict(_run(home, ["--json"], INVENTORY_TIMEOUT_S, runner), state="ready")
+        doc = _run(home, ["--json"], INVENTORY_TIMEOUT_S, runner)
+        result = (dict(placeholder(), **doc) if doc.get("state") == "error"
+                  else dict(doc, state="ready"))
     except Exception as exc:  # noqa: BLE001 - 后台线程里的任何失败都要落成 state=error
         result = dict(placeholder(), state="error", ok=False,
                       error="%s: %s" % (type(exc).__name__, exc))

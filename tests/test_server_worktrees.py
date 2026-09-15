@@ -4,7 +4,8 @@
 `server/subproc.run_module` 起 ``python -m act.lib.worktrees``，本判例钉的是那层薄壳：
 GET 首次回 `state: "computing"` 的空壳（扫目录 + du 在后台线程，GET 路径零子进程）、
 算完转 ready、`?refresh=1` 才重算；POST 走 `--sweep`（`{"dry_run": true}` → `--dry-run`）、
-认不出的字段 400、跑完让缓存作废；子进程没给 JSON = `ok:false` 而不是 500。
+认不出的字段 400、跑完让缓存作废；子进程没给 JSON = `ok:false` + `state: "error"` 且
+**补满整份形状**（`worktrees: null` 而不是键根本不在）而不是 500。
 
 `subproc` 的 runner 经注入替换——测试绝不真起子进程、绝不真删任何 worktree。
 """
@@ -87,6 +88,19 @@ class WorktreeEndpointTestCase(unittest.TestCase):
         got = inv.snapshot(self.home, spawn=lambda fn: fn())
         self.assertFalse(got["ok"])
         self.assertEqual(got["error"], "worktrees_failed")
+
+    def test_a_failed_inventory_still_carries_the_whole_shape_and_says_error(self):
+        # 少一个键 = 前端在数字位上渲染 undefined（防腐 #10：client 逐字镜像 wire 键）
+        self.out = "boom"
+        inv.snapshot(self.home, spawn=lambda fn: fn())
+        got = inv.snapshot(self.home, spawn=lambda fn: fn())
+        self.assertEqual(got["state"], "error")
+        for key in inv.placeholder():
+            self.assertIn(key, got)
+        self.assertIsNone(got["worktrees"])
+        self.assertIsNone(got["removable"])
+        self.assertIsNone(got["bytes"])
+        self.assertEqual(got["repos"], [])
 
     # -- POST ---------------------------------------------------------------- #
     def test_cleanup_runs_the_sweep_and_returns_the_receipt(self):

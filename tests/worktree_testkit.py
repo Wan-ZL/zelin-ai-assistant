@@ -44,7 +44,7 @@ class FakeGit:
 
     def __init__(self, repo, entries=(), *, merged=(), remotes=("origin/main",),
                  dirty=(), ahead=None, default_ref="origin/main", fail=(),
-                 undeletable=()):
+                 undeletable=(), list_fails_after=None):
         self.repo = repo
         self.entries = [dict(e) for e in entries]
         self.merged = set(merged)
@@ -54,6 +54,9 @@ class FakeGit:
         self.default_ref = default_ref
         self.fail = set(fail)
         self.undeletable = set(undeletable)
+        # 第几次之后的 `worktree list` 报 rc=1（执行前那次重新清点失败的形态）
+        self.list_fails_after = list_fails_after
+        self.lists = 0
         self.calls: list = []
         self.removed: list = []
         self.branches_deleted: list = []
@@ -69,6 +72,9 @@ class FakeGit:
 
     # -- readers ------------------------------------------------------------ #
     def _worktree_list(self, _args, _cwd):
+        self.lists += 1
+        if self.list_fails_after is not None and self.lists > self.list_fails_after:
+            return 1, ""
         lines = ["worktree %s" % self.repo, "HEAD " + "0" * 40, "branch refs/heads/main", ""]
         for e in self.entries:
             lines.append("worktree %s" % e["path"])

@@ -1,8 +1,9 @@
 // 开发者区的「隔离工作树（worktree）」行（CONTRACT §75.4；issue #315）：GET /api/worktrees 的快照——条数、占用、
 // 本轮可清理几条，加一颗「清理」按钮（POST /api/worktrees/cleanup）。server 的 GET 永不阻塞：首次回 computing 空壳、
 // 后台扫完才有数字，这里在 computing / refreshing 期间轮询（上限 POLL_MAX 次，之后停在「统计中」而不是无限打）。
-// 判决全在 server（act/lib/worktrees.py）：脏的、锁着的、还有在飞的卡指着的、有只存在于本地的提交的，一条都不删——
-// 页面只逐字复述回执，不自己算该删谁（防腐 #10）。字节格式化复用 StorageStatus 的 formatBytes，不另立一套。
+// 判决全在 server（act/lib/worktrees.py）：脏的、锁着的、还有在飞的卡指着的，一条都不删；有只存在于本地的提交的，
+// 目录过了 stale_days 才清且分支一定留着——页面只逐字复述回执，不自己算该删谁（防腐 #10）。字节格式化复用
+// StorageStatus 的 formatBytes，不另立一套。server 失败的快照（state: "error"）里数字位是 null，照样不许渲染成 undefined。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWorktrees, postWorktreesCleanup } from "../../api";
 import { useI18n } from "../../i18n";
@@ -24,11 +25,15 @@ export function cleanupText(receipt: WorktreeCleanup, text: (zh: string, en: str
   }
   const removed = receipt.removed?.length ?? 0;
   const branches = receipt.removed?.filter((r) => r.branch_deleted).length ?? 0;
+  const keptBranches = receipt.removed?.filter((r) => r.kept_branch).length ?? 0;
   const failed = receipt.failed?.length ?? 0;
   const kept = Object.values(receipt.skipped ?? {}).reduce((a, b) => a + b, 0);
   const tail = failed > 0 ? text(`，${failed} 条删不掉`, `, ${failed} could not be removed`) : "";
-  return text(`已清理 ${removed} 个 worktree、${branches} 条本地分支${tail}；保留 ${kept} 条（脏 / 锁定 / 在飞 / 有未推送提交）`,
-    `Removed ${removed} worktrees and ${branches} local branches${tail}; kept ${kept} (dirty / locked / in flight / unpushed)`);
+  const branchTail = keptBranches > 0
+    ? text(`（另有 ${keptBranches} 条分支因有未推送提交留着）`, ` (${keptBranches} branches kept: local-only commits)`)
+    : "";
+  return text(`已清理 ${removed} 个 worktree、${branches} 条本地分支${branchTail}${tail}；保留 ${kept} 条（脏 / 锁定 / 在飞 / 有未推送提交）`,
+    `Removed ${removed} worktrees and ${branches} local branches${branchTail}${tail}; kept ${kept} (dirty / locked / in flight / unpushed)`);
 }
 
 export function WorktreeStatus() {
@@ -95,7 +100,10 @@ export function WorktreeStatus() {
   }
   const computing = snap.state === "computing";
   const measuring = text("统计中…", "Measuring…");
-  const count = computing || snap.worktrees === null ? measuring
+  // 没有数字的时候不编一个：还在算就说「统计中」，算失败了（state: "error"，server 那边
+  // 子进程没起来 / 没给 JSON）就说「未知」——§0 第 3 条，且绝不把 undefined 渲染进数字位。
+  const unknown = computing ? measuring : text("未知", "Unknown");
+  const count = computing || typeof snap.worktrees !== "number" ? unknown
     : text(`${snap.worktrees} 个 · ${formatBytes(snap.bytes)}${snap.bytes_partial ? text("（占用未能测全）", " (size partly unmeasured)") : ""}`,
       `${snap.worktrees} · ${formatBytes(snap.bytes)}${snap.bytes_partial ? text("（占用未能测全）", " (size partly unmeasured)") : ""}`);
   const removable = snap.removable ?? 0;
@@ -114,11 +122,13 @@ export function WorktreeStatus() {
           {text("刷新", "Refresh")}
         </button>
       </div>
-      <p className="settings-helper">
-        {computing ? measuring : text(
-          `本轮可清理 ${removable} 个（分支已在 origin 合并 / 删除，或 ${snap.stale_days ?? 14} 天没动过且没有未提交改动）。脏的、锁定的、还有在飞的卡指着的一律保留。`,
-          `${removable} can be reclaimed now (branch merged or deleted on origin, or untouched for ${snap.stale_days ?? 14} days with no uncommitted changes). Dirty, locked and in-flight ones are always kept.`)}
-      </p>
+      {snap.state !== "error" && (
+        <p className="settings-helper">
+          {computing ? measuring : text(
+            `本轮可清理 ${removable} 个（分支已在 origin 合并 / 删除，或 ${snap.stale_days ?? 14} 天没动过且没有未提交改动）。脏的、锁定的、还有在飞的卡指着的一律保留；有只存在于本地的提交的，目录过了 ${snap.stale_days ?? 14} 天照清，分支一定留着。`,
+            `${removable} can be reclaimed now (branch merged or deleted on origin, or untouched for ${snap.stale_days ?? 14} days with no uncommitted changes). Dirty, locked and in-flight ones are always kept; a worktree whose branch has local-only commits is reclaimed after ${snap.stale_days ?? 14} days but its branch is always kept.`)}
+        </p>
+      )}
       {snap.truncated && (
         <p className="settings-helper">{text("条数太多，本轮只判到时间预算为止——再点一次继续。", "Too many to classify in one pass — click again to continue.")}</p>
       )}
