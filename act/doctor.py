@@ -45,7 +45,8 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from act import llm
-from act.lib import board_server, config, deploy_state, fresh_install, heartbeat, platform
+from act.lib import (board_server, config, deploy_state, fresh_install, heartbeat,
+                     platform, power)
 from act.lib import version as version_lib
 from act.lib.checks import core, cron, environment, launchd, pipeline, services
 from act.lib.checks.core import FAIL, OK, WARN, CheckResult
@@ -132,6 +133,9 @@ class Probes:
     # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
     launchd_log_mtime: Callable[[str], Optional[float]] = launchd.launchd_log_mtime
     version_status: Callable[[], dict] = version_lib.status_probe  # §56.1 stamp vs describe；tests 注入（沙箱非 git）
+    # §71.1 电源读数（`power probe` 行）：默认实现自带总闸 `AIASSISTANT_POWER_PROBE`
+    # 与「非 darwin 不起子进程」，套件里因此天然 hermetic（读数恒空 → unknown）
+    power_reading: Callable[[], dict] = power.read_power
 
 
 # --------------------------------------------------------------------------- #
@@ -245,6 +249,10 @@ def _check_obsidian(probes: Probes):
 
 def _check_screenpipe(probes: Probes):
     return environment.check_screenpipe(probes)
+
+
+def _check_power(probes: Probes):
+    return environment.check_power(probes)
 
 
 def _check_npx(probes: Probes):
@@ -441,7 +449,7 @@ def _service_checks() -> "tuple[list, list]":
         return ([_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
                  _check_launchd_claude, _check_launchd_volume_access,
                  _check_launchd_orphans, _check_cron],
-                [_check_screenpipe, _check_npx])
+                [_check_screenpipe, _check_npx, _check_power])
     if platform.is_windows():
         return [_check_scheduled_tasks], []
     return [_check_systemd], []

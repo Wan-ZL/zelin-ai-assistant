@@ -427,8 +427,11 @@ def _reconcile_one(d: Daemon, req: Requirement, cfg: config.Config, agents: dict
 
 
 def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_notified: set) -> None:
+    dirty = ex.pop("sleep_interrupted", None) is not None   # §71.3 证据保鲜（见下）
     if ex.get("resume_attempts"):            # recovered — reset backoff
         ex["resume_attempts"] = 0
+        dirty = True
+    if dirty:
         req.execution = ex
         registry.save(req)
     resume_notified.discard(req.id)
@@ -477,9 +480,25 @@ def _another_move_left(d: Daemon, req: Requirement, ex: dict, cfg: config.Config
     return sleep_retry(d, req, ex, cfg)
 
 
+def _harvested_nothing(ex: dict) -> bool:
+    """这一轮收割没收到任何交付物（`final_draft` 空）。
+
+    §71.3 第二道门的判据：被睡眠切断的会话典型形态是 transcript 末尾一句
+    `API Error: Your computer went to sleep mid-response`——agent 进程已退出
+    （roster 说 done），FINAL DRAFT 从来没写出来。真交付过的会话不许被重试
+    （它已经把活干完了，再 resume 只是白烧一次钱）。
+    """
+    return not str(ex.get("final_draft") or "").strip()
+
+
 def sleep_retry(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
     """§71.3 一次性原地重试：被**实测的**睡眠打断过的会话，收割前用同一个
     session / 同一段上下文再拉起一次（`executor.resume`，无新 prompt）。
+
+    两个入口共用本函数（2026-09-14 review 修正：只挂在 blocked 分支上会漏掉
+    #311 的真实形态——睡眠切断的 agent 进程**直接退出**，roster 报 done）：
+    ① `_another_move_left`（roster blocked，收割前的最后一步）；
+    ② `_handle_done`（roster done 且这轮收割空手，见 `_harvested_nothing`）。
 
     证据只认 `execution.sleep_interrupted`——它由 §71.2 的 wall−monotonic 挂起
     测量写下，不是猜的：一个真的在问问题的受阻会话没有这面旗，永远走不到这里
@@ -520,13 +539,17 @@ def _flush_briefings(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) 
 def _handle_done(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_notified: set) -> None:
     if ex.get("done"):
         return
-    ex["done"] = True                    # mark finished so a later purge isn't mistaken for a crash
-    ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
     # 收割交付物：transcript 最后一条 assistant 消息 -> delivered_summary
     # （chat 模式还有 FINAL DRAFT 全文）。收割失败绝不阻塞提升。
+    # **先收割再判 done**（§71.3 第二道门，2026-09-14 review 修正）：收到了什么
+    # 正是「该不该重试」的判据，`done` 一旦立起来这张卡就再也回不到 executing。
     err = harvest_into(d, req, ex, sid)
     if err is not None:
         d.log(f"reconcile: harvest_delivery {req.id} failed: {err}")
+    if _harvested_nothing(ex) and sleep_retry(d, req, ex, cfg):
+        return
+    ex["done"] = True                    # mark finished so a later purge isn't mistaken for a crash
+    ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
     # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
     check_triage_registry_guard(d, req, ex)
     self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验

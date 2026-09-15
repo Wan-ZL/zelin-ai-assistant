@@ -1,12 +1,14 @@
 """doctor 探针家族：工具链 / 配置 / 凭证 / 目录（CONTRACT §25；§19 凭证顺序；
-§18 cron 之外的 macOS 录制依赖）。
+§18 cron 之外的 macOS 录制依赖；§71.1 电源探针可读性）。
 
 行：``AIASSISTANT_HOME`` / ``version`` / ``claude CLI`` / ``stable claude`` +
 ``daemon claude``（§55 第五幕；判决逻辑在 act/lib/claude_bin.py）/ ``daemon python`` /
 ``config.yaml`` / ``anthropic key`` / ``state dirs`` / ``obsidian vault`` /
 ``screenpipe db`` / ``node/npx`` / ``gh CLI`` / ``claude auth``（唯一花钱的
 活探针，非 --fast）。默认探针实现 ``installed_actd_path_env`` /
-``login_shell_claude`` 也住这里（Probes 的缺省值）。
+``login_shell_claude`` 也住这里（Probes 的缺省值）。``power probe``（§71.1）
+是同一张表上的一行：派发闸读的那三个探针在这台机器上到底答不答得出来——
+探不出来时闸是 fail-open 的 no-op，那件事必须有人说出来。
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import claude_bin, config, failures, platform, secrets
+from act.lib import claude_bin, config, failures, platform, power, secrets
 from act.lib import version as version_lib
 from act.lib.checks.core import (ACTD_LABEL, ACTD_UNIT, FAIL, OK, PROBE_TIMEOUT,
                                  WARN, CheckResult, installer, pick, row_from, run)
@@ -359,6 +361,34 @@ def check_screenpipe(probes):
         ).with_failure("engine_dead")
     return CheckResult("screenpipe db", OK,
                        "recording data fresh (last write %d min ago)" % int(age // 60))
+
+
+def check_power(probes):
+    """§71.1 电源探针行：`awake` / `asleep` = 闸读得到；读不到 = WARN 说清楚。
+
+    派发闸对 `unknown` 是 fail-open 的（宁可多派一张也不饿死自动派发），所以
+    一个永远解析不出的探针会让整条 §71.1 变成**没人看得见的 no-op**——doctor
+    这一行就是那个「看得见」（宪法第 3 条：诚实的健康报告）。行本身不写盘、
+    不看 actd 的进程内 memo，问的是「这台机器现在答不答得出来」。
+    """
+    answer = power.verdict(probes.power_reading())
+    if answer == power.UNKNOWN:
+        return CheckResult(
+            "power probe", WARN,
+            pick("读不出本机电源状态（pmset / ioreg 都没答案）——派发闸按 §71.1 "
+                 "fail-open 照常派发，等于没有闸",
+                 "cannot read this machine's power state (no answer from pmset / "
+                 "ioreg) - the dispatch gate fails open (§71.1), i.e. no gate"),
+            pick("手工看一眼 `pmset -g powerstate IOPMrootDomain` 与 "
+                 "`ioreg -n IOPMrootDomain -r -d 1`；确认这台机器就是探不出来，"
+                 "就把 config.yaml 的 autodispatch.require_awake 设成 false",
+                 "run `pmset -g powerstate IOPMrootDomain` and `ioreg -n "
+                 "IOPMrootDomain -r -d 1` by hand; if this machine truly cannot "
+                 "answer, set autodispatch.require_awake: false in config.yaml"))
+    return CheckResult("power probe", OK,
+                       pick("本机现在是 %s（派发闸 §71.1 读的就是这个判决）",
+                            "machine reads as %s (the §71.1 dispatch gate's verdict)")
+                       % answer)
 
 
 def check_npx(probes):

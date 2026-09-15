@@ -94,6 +94,32 @@ class CreditSleepTestCase(unittest.TestCase):
         power.credit_sleep(actd._ctx(), 900.0)
         self.assertEqual(registry.load("R-8205").execution["slept_seconds"], 900)
 
+    def test_a_measured_suspension_invalidates_the_power_verdict_memo(self):
+        """量到一次真实挂起 = 睡前那个电源判决作废（§71.1 的第二道护栏）。
+
+        否则 04:10 的 dark wake 里派发闸会复用 23:59 的 `awake`——monotonic 在
+        睡眠期间停摆，60 s 的缓存窗口根本没走完（2026-09-14 review 修正）。
+        """
+        _mk("R-8207")
+        power.reset_probe_memo()
+        self.addCleanup(power.reset_probe_memo)
+        power.current_verdict(probe=lambda: {"state": 4, "max_state": 4},
+                              now=100.0, wall=1000.0)
+        self.assertEqual(power.observed_verdict(now=100.0, wall=1000.0), power.AWAKE)
+        power.sample_suspension(wall=1000.0, mono=10.0)
+        power.sample_pass(actd._ctx(), wall=1000.0 + 7200, mono=20.0)
+        self.assertIsNone(power.observed_verdict(now=100.0, wall=1000.0))
+
+    def test_a_long_pass_leaves_the_memo_alone(self):
+        # 门槛以下（两个时钟同步前进）什么都不作废：闸照旧一分钟问一次
+        power.reset_probe_memo()
+        self.addCleanup(power.reset_probe_memo)
+        power.current_verdict(probe=lambda: {"state": 4, "max_state": 4},
+                              now=100.0, wall=1000.0)
+        power.sample_suspension(wall=1000.0, mono=10.0)
+        power.sample_pass(actd._ctx(), wall=1060.0, mono=70.0)
+        self.assertEqual(power.observed_verdict(now=100.0, wall=1000.0), power.AWAKE)
+
     def test_accounting_never_raises(self):
         _mk("R-8206")
         with mock.patch.object(power, "sample_suspension", side_effect=OSError("boom")):

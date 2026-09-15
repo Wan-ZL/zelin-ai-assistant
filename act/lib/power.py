@@ -40,8 +40,10 @@ SLEEP_GAP_SECONDS = 300.0
 # 默认设它——没有哪条判例该在开发者的 Mac 上真起 pmset/ioreg。
 PROBE_ENV = "AIASSISTANT_POWER_PROBE"
 
-# 本进程的判决缓存（不是注入缝——注入缝是每个函数的 `probe=` 参数，防腐 #3）
-_MEMO: Dict[str, object] = {"at": None, "verdict": None}
+# 本进程的判决缓存（不是注入缝——注入缝是每个函数的 `probe=` 参数，防腐 #3）。
+# **两个时钟都记**：monotonic 睡眠期间停摆（§71.2 的采样正建在这个事实上），
+# 只看它会让睡前那次判决在醒来后的第一个 pass 仍算「新鲜」。
+_MEMO: Dict[str, object] = {"at": None, "wall": None, "verdict": None}
 # §71.2 挂起采样的自有基线（wall / monotonic 各一份）
 SUSPEND_STATE: Dict[str, Optional[float]] = {"last_wall": None, "last_mono": None}
 
@@ -71,16 +73,21 @@ def read_power(runner=None) -> dict:
 
 
 def held_awake(reading: dict) -> bool:
-    """有人/有东西正把这台机器摁醒着（`IOPMUserIsActive` 或 assertion
-    `UserIsActive` / `PreventUserIdleDisplaySleep` 非零）——这是「显示器睡了但
-    机器 24h 醒着的台式 Mac」不被闸饿死的那道护栏。"""
+    """有人正把这台机器摁醒着（`IOPMUserIsActive` 或 assertion `UserIsActive`
+    非零）——这是「显示器睡了但机器 24h 醒着的台式 Mac」不被闸饿死的那道护栏。
+
+    **`PreventUserIdleDisplaySleep` 不算证据**（2026-09-14 review 修正，
+    tombstone 别再加回来）：真机 fixture `pmset_assertions_arm64.txt` 里它恒
+    等于 1（Amphetamine 常驻），把它算进来等于在 owner 那台 MacBook 上让本函数
+    恒真——闸再也响不了，#311 原地复发。它说的是「别让显示器空闲睡」，不是
+    「这台机器醒着」：合盖睡着时这条 assertion 照样挂着（§71.1 正文原话）。
+    """
     if reading.get("user_active"):
         return True
     assertions = reading.get("assertions")
     if not isinstance(assertions, dict):
         return False
-    return any(_positive(assertions.get(key))
-               for key in ("UserIsActive", "PreventUserIdleDisplaySleep"))
+    return _positive(assertions.get("UserIsActive"))
 
 
 def _positive(value: object) -> bool:
@@ -96,42 +103,71 @@ def _root_verdict(reading: dict) -> Optional[str]:
     return ASLEEP if state < ceiling else AWAKE
 
 
-def _capability_verdict(reading: dict) -> str:
-    """兜底判据：System Capabilities 缺 Graphics 位 = dark wake（屏幕没亮，
-    机器是被维护唤醒叫起来的）。`held_awake` 压过它——显示器睡着但有人在用的
-    机器照常派发。两条都没答案 = unknown。"""
+def _capability_verdict(reading: dict) -> Optional[str]:
+    """第二条判据（**与主判据并列，不是兜底**）：System Capabilities 缺 Graphics
+    位 = dark wake（屏幕没亮，机器是被维护唤醒叫起来的）。`held_awake` 只压过
+    **这一条**——显示器睡着但有人在用的机器照常派发。没有 capabilities = None。
+    """
     caps = reading.get("capabilities")
     if not isinstance(caps, int):
-        return AWAKE if held_awake(reading) else UNKNOWN
+        return None
     if caps & GRAPHICS_BIT or held_awake(reading):
         return AWAKE
     return ASLEEP
 
 
 def verdict(reading: object) -> str:
-    """读数 → `awake` | `asleep` | `unknown`（纯函数，垃圾输入 → unknown）。"""
+    """读数 → `awake` | `asleep` | `unknown`（纯函数，垃圾输入 → unknown）。
+
+    两条判据**都算**，任意一条说 asleep 就是 asleep（2026-09-14 review 修正）：
+    原来的 `_root_verdict(reading) or _capability_verdict(reading)` 让主判据一
+    有答案就短路，而 IOPMrootDomain 在 dark wake 里照样报满档（真机 fixture 就
+    是 `4 4 ON`）——缺 Graphics 位那条判据因此在**探得出电源档的机器上永远够不
+    着**，正好是报 #311 的那台。代价（自觉接受，§71.1 追记）：显示器睡着、没人
+    摁着的台式 Mac 会被判 asleep 而排队，`autodispatch.require_awake=false` 是
+    它的出口，卡只是排队不是被拒。
+    """
     if not isinstance(reading, dict):
         return UNKNOWN
-    return _root_verdict(reading) or _capability_verdict(reading)
+    calls = (_root_verdict(reading), _capability_verdict(reading))
+    if ASLEEP in calls:
+        return ASLEEP
+    return AWAKE if AWAKE in calls else UNKNOWN
 
 
 def reset_probe_memo() -> None:
-    """清掉本进程的判决缓存（判例之间互不串味；生产侧无人调用）。"""
-    _MEMO.update({"at": None, "verdict": None})
+    """清掉本进程的判决缓存（判例之间互不串味；生产侧由 `sample_pass` 在量到
+    一次真实挂起时调用——机器睡过一觉，睡前那个判决就作废了）。"""
+    _MEMO.update({"at": None, "wall": None, "verdict": None})
 
 
-def current_verdict(probe: Optional[Probe] = None, now: Optional[float] = None) -> str:
+def _memo_fresh(now: float, wall: float) -> bool:
+    """缓存还新鲜吗——**两个时钟都要新鲜**（任一过期 / 回拨 = 重新探）。
+
+    单看 monotonic 会漏掉整场睡眠：23:59 探出 awake，合盖睡 5 小时，04:10 的
+    dark wake 里 monotonic 才走了 10 s，缓存「新鲜」，闸拿着睡前的判决把卡派
+    进一台睡着的机器——#311 原样复发（2026-09-14 review 修正）。
+    """
+    at, at_wall = _MEMO.get("at"), _MEMO.get("wall")
+    if not (isinstance(at, float) and isinstance(at_wall, float)):
+        return False
+    return 0 <= now - at < MEMO_SECONDS and 0 <= wall - at_wall < MEMO_SECONDS
+
+
+def current_verdict(probe: Optional[Probe] = None, now: Optional[float] = None,
+                    wall: Optional[float] = None) -> str:
     """本机现在的判决（`MEMO_SECONDS` 缓存窗口内复用上一次的答案）。
 
-    `probe` = 零参注入缝（默认 `read_power`）；`now` = monotonic 读数注入缝。
-    探针抛异常 = 空读数 = unknown（宪法第 11 条：探针坏了不许崩 pass）。
+    `probe` = 零参注入缝（默认 `read_power`）；`now` / `wall` = monotonic / 墙上
+    时钟的读数注入缝。探针抛异常 = 空读数 = unknown（宪法第 11 条：探针坏了不
+    许崩 pass）。
     """
     now = time.monotonic() if now is None else now
-    at = _MEMO.get("at")
-    if isinstance(at, float) and 0 <= now - at < MEMO_SECONDS:
+    wall = time.time() if wall is None else wall
+    if _memo_fresh(now, wall):
         return str(_MEMO.get("verdict") or UNKNOWN)
     answer = verdict(_read(probe))
-    _MEMO.update({"at": float(now), "verdict": answer})
+    _MEMO.update({"at": float(now), "wall": float(wall), "verdict": answer})
     return answer
 
 
@@ -142,17 +178,19 @@ def _read(probe: Optional[Probe]) -> dict:
         return {}
 
 
-def observed_verdict(now: Optional[float] = None) -> Optional[str]:
+def observed_verdict(now: Optional[float] = None,
+                     wall: Optional[float] = None) -> Optional[str]:
     """本进程**最近一次观察到**的判决，不探测；从未观察过 / 已过期 → None。
 
     投影侧（dashboard）专用：看板只说观察到的事（宪法第 3 条），绝不为了画一个
-    chip 再起三个子进程——派发闸每 pass 先跑，缓存恒是新鲜的。
+    chip 再起三个子进程——派发闸每 pass 先跑，缓存恒是新鲜的。新鲜判据与
+    `current_verdict` 同一把（`_memo_fresh`，两个时钟）：睡前的判决不许在醒来
+    之后还挂在看板上。
     """
     now = time.monotonic() if now is None else now
-    at = _MEMO.get("at")
-    if isinstance(at, float) and 0 <= now - at < MEMO_SECONDS:
-        return str(_MEMO.get("verdict") or UNKNOWN)
-    return None
+    wall = time.time() if wall is None else wall
+    return (str(_MEMO.get("verdict") or UNKNOWN)
+            if _memo_fresh(now, wall) else None)
 
 
 def require_awake(cfg: object) -> bool:
@@ -231,9 +269,17 @@ def _int_or_zero(value: object) -> int:
 
 
 def sample_pass(d, wall: Optional[float] = None, mono: Optional[float] = None) -> int:
-    """actd.run_once 顶部的一次采样 + 落账（§71.2）。绝不抛。"""
+    """actd.run_once 顶部的一次采样 + 落账（§71.2）。绝不抛。
+
+    量到一次真实挂起 = 这台机器刚睡过一觉：顺手作废电源判决缓存（§71.1），
+    否则本 pass 的派发闸会拿睡前的 `awake` 当新鲜答案用（memo 的另一半护栏在
+    `_memo_fresh` 的墙上时钟；两道各自独立成立）。
+    """
     try:
-        return credit_sleep(d, sample_suspension(wall, mono))
+        slept = sample_suspension(wall, mono)
+        if slept >= SLEEP_GAP_SECONDS:
+            reset_probe_memo()
+        return credit_sleep(d, slept)
     except Exception as e:  # noqa: BLE001 - bookkeeping must never kill the pass
         d.log(f"power: sleep accounting FAILED: {e}")
         return 0
