@@ -217,18 +217,27 @@ class RunTestCase(unittest.TestCase):
         """清理跑完那一下 `stat` 失败（库被引擎挪走、外置卷掉线——一轮最长 120 s，
         这是真会发生的窗口）= `db_bytes_after` 诚实为 null，而不是 0，也不是崩。"""
         self._marker("last_frame_id", "3")
-        db, real_stat, seen = self.db, Path.stat, []
+        db, real_stat, real_marker, armed = self.db, Path.stat, ret.read_marker, []
+
+        def spy_marker(*args, **kwargs):
+            """清理已经开跑了（标记是 prune 的入参）——之后那次 stat 才该失败。
+
+            不按调用次数计数：`Path.is_file` 在哪些版本上走 `Path.stat` 是会变的
+            （3.9 走、3.14 不走），而「库在清理途中没了」这件事与版本无关。"""
+            armed.append(1)
+            return real_marker(*args, **kwargs)
 
         def flaky_stat(self, *args, **kwargs):
-            """同一个库文件的第二次 stat（prune 之后那一次）失败。"""
-            if str(self) == str(db):
-                seen.append(1)
-                if len(seen) > 1:
-                    raise OSError("EIO")
+            if armed and str(self) == str(db):
+                raised.append(1)
+                raise OSError("EIO")
             return real_stat(self, *args, **kwargs)
 
-        with mock.patch.object(Path, "stat", flaky_stat):
+        raised = []
+        with mock.patch.object(ret, "read_marker", spy_marker), \
+                mock.patch.object(Path, "stat", flaky_stat):
             receipt = ret.run(db_path=db, state_dir=self.state, days=7, now=NOW)
+        self.assertTrue(raised)          # 那一下 stat 真的失败过（否则本判例是空的）
         self.assertIsNone(receipt["error"])
         self.assertEqual(receipt["deleted_frames"], 2)
         self.assertIsNone(receipt["db_bytes_after"])
