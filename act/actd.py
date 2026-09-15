@@ -61,6 +61,7 @@ from act.lib import (
     maintenance,
     notify,
     radar_rounds,
+    recap_requests,
     recap_store,
     registry,  # noqa: F401 - surface: tests patch ``actd.registry.load`` (module attr)
     self_improve,
@@ -238,12 +239,21 @@ def _spawn_weekly_digest(_decision: Optional[dict] = None) -> str:
 
 def _spawn_recap(decision: dict) -> str:
     """§63 ``recap_generate`` / ``recap_slack_draft`` → ``act.recap <argv>`` detached;
-    malformed (bad key / note / channel id) = honest noop — the store validates."""
+    malformed (bad key / note / channel id) = honest noop — the store validates.
+    ``recap_generate`` also lands in the §63.8 request ledger (running / noop) so the
+    recap row can say 生成中 until the new version's ``generated_at`` overtakes it."""
     argv = recap_store.inbox_argv(decision)
     if argv is None:
         _log(f"inbox: {decision.get('action')} malformed — dropped")
         return detached.NOOP
-    return detached.launch(["act.recap"] + argv, "recap.log", str(decision.get("action")), _log)
+    action = str(decision.get("action"))
+    if action != "recap_generate":
+        return detached.launch(["act.recap"] + argv, "recap.log", action, _log)
+    # 先取 requested_at 再起子进程：子进程落笔的 generated_at 必须不早于它（§63.8 done 判据）
+    requested_at = recap_requests.iso_now()
+    result = detached.launch(["act.recap"] + argv, "recap.log", action, _log)
+    recap_requests.record(decision["meeting_key"], result, requested_at)
+    return result
 
 
 _DETACHED_ACTIONS = {  # late-bound lambdas: tests patch the module attribute

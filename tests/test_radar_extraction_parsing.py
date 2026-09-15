@@ -134,6 +134,10 @@ class ErrorClassTestCase(unittest.TestCase):
         self.assertTrue(radar._is_note_level_error("unparseable extraction on a.md"))
         self.assertTrue(radar._is_note_level_error("unreadable note a.md: boom"))
         self.assertTrue(radar._is_note_level_error("filing failed on a.md: X"))
+        # §47.5：等 iCloud 的 note 独自成 pass 时不许被判 systemic（否则它的
+        # attempts 每轮被回滚，永远走不到放弃留痕那一步）
+        self.assertTrue(radar._is_note_level_error(
+            f"{radar.DEFERRED_PREFIX}: a.md: still dataless"))
         self.assertTrue(radar._is_note_level_error("claude -p failed on a.md: TimeoutExpired: x"))
         self.assertFalse(radar._is_note_level_error("claude -p failed on a.md: RuntimeError: exit 1"))
         self.assertFalse(radar._is_note_level_error(None))

@@ -399,7 +399,8 @@ export interface FoldReceipt {
  * §63 会议 recap 行（dashboard.json 顶层 recaps[] 的元素 = act/lib/recap_store 投影，
  * wire key 逐字镜像）。status open = 进行中（无正文）；en/zh = 5 行纯文本（null =
  * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at = server
- * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执。
+ * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执；
+ * generate_request = §63.8 「重新生成」回执（行上「生成中」的真源）。
  */
 export interface RecapRow {
   key: string;
@@ -428,6 +429,20 @@ export interface RecapRow {
     at?: string | null;
     [key: string]: unknown;
   } | null;
+  /** §63.8 「重新生成 / 现在生成」回执（add-only；没请求过 / 过了 TTL = null；老 daemon 无此键） */
+  generate_request?: RecapGenerateRequest | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.8 生成请求回执（act/lib/recap_requests.projection 的 wire 形逐字镜像；与 §48.7 test_round 同形）：
+ * running = actd 起了子进程、新版本还没落地；done = 文件的 generated_at ≥ requested_at；
+ * lost = 超过 10 分钟仍无新版本；noop = 子进程没起来（note = launch_failed）。
+ */
+export interface RecapGenerateRequest {
+  requested_at: string;
+  state: "running" | "done" | "noop" | "lost" | string;
+  note: string | null;
   [key: string]: unknown;
 }
 
@@ -1048,6 +1063,13 @@ export interface AboutInfo {
   update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
   /** §68.6 追记（add-only）：updates.check_enabled 的 effective 值（override → config → true）；旧 server 缺席 = 当 true */
   check_enabled?: boolean;
+  /**
+   * §68.6 追记（2026-09-14，add-only，issue #309）：上一轮 scripts/auto-deploy.sh 的判决——
+   * 与 board.deploy_state **同一个 wire 形**（DeployState），但由 server 在**请求时现读文件**，
+   * 不是 actd 的看板投影（actd 死了 / launchd 被 TCC 拦着时投影本身就是陈的，而这一行要回答的
+   * 恰是「更新链路还活着吗」）。null / 缺席 = 这台机器没有自动部署的记录（旧 server 同样缺席）。
+   */
+  deploy_state?: DeployState | null;
   [key: string]: unknown;
 }
 
@@ -1135,6 +1157,18 @@ export interface AttachmentReceipt {
   path: string;
   bytes: number;
   [key: string]: unknown;
+}
+
+/**
+ * POST /api/update/install 回执（§68.6 追记 2026-09-14，issue #309）：kickstart 之外 add-only 带上
+ * **上一轮**自动部署的判决——页面据此决定能不能说「几分钟后版本会变」（`deferred` 会再延后一轮、
+ * 中毒家族整族不许承诺）。`deploy_failed_sha` = 上一轮记下的 `failed_sha`（记得下的时候才有）：
+ * server 在 kickstart 那一刻现读，比一进页拉的 about 快照新。旧 server 缺席 = 空串。
+ */
+export interface UpdateInstallReceipt extends RepairReceipt {
+  deploy_status?: string;
+  deploy_detail?: string;
+  deploy_failed_sha?: string;
 }
 
 /** POST /api/repair/actd 回执（§68.8）：action = "kickstart"（已加载）| "reinstall"（未加载 → install.sh，D50；此时另带 loaded） */

@@ -139,6 +139,20 @@ describe("HeaderBar", () => {
     expect(label.getAttribute("title")).toBe("deployed 1111111 -> abcdef0");
   });
 
+  it("§56.1 追记（#309）：`X.Y.Z+N` 只显示 tag，`+N` 降级进 title", async () => {
+    // 生产机的 deploy_state 写着 1.0.23+92——92 数的是 release 分支上 ingest 的数据 commit，
+    // 对用户没有意义，而且与 about 说的数不一样；顶栏只说 tag。
+    await seedBoard(10, {
+      status: "refused_branch",
+      version: "1.0.23+92",
+      detail: "HEAD is on 'release', not main",
+    });
+    renderHeader("zh");
+    const label = screen.getByText("v1.0.23 · 不在 main，部署暂停");
+    expect(label.className).toBe("shell-deploy is-warn");
+    expect(label.getAttribute("title")).toBe("HEAD is on 'release', not main · 本地领先 92 个提交，未发版");
+  });
+
   it("§56 部署状态：rolled_back → 点名状态 + 警告 class；中文文案镜像", async () => {
     const lastDeployed = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
     const state: DeployState = {

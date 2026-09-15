@@ -2,14 +2,16 @@
 //   1) 行从 board.recaps 渲染、按日分组、默认选中第一行、进行中行无正文；
 //   2) 复制 = 剪贴板写入 + POST /api/recaps/mark copied（唯一出口）；
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
+//      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
 //   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}。
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchRecapSettings, postAction, postRecapMark } from "../api";
+import { PICKUP_TIMEOUT_MS } from "../components/recaps/recapText";
 import { LanguageContext } from "../i18n";
 import { getState, refreshBoard, resetStoreForTests } from "../store";
 import type { Board, RecapRow, RecapSettings } from "../types";
-import { RecapsPage } from "./RecapsPage";
+import { GENERATING_POLL_MS, RecapsPage } from "./RecapsPage";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -72,6 +74,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("RecapsPage", () => {
@@ -107,6 +110,33 @@ describe("RecapsPage", () => {
       action: "recap_generate", meeting_key: KEY, note: "deadline is Friday" }));
   });
 
+  it("a note the five-line format cannot honor is called out before anything is queued", async () => {
+    // issue #296：删一行 + 写详细，两条都是结构上做不到的；面板必须在排队前说清楚。
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    const box = screen.getByLabelText(/Correction note/);
+    fireEvent.change(box, { target: { value: "Omit the Open line and write the rest in more detail." } });
+    expect(screen.getByText(/cannot honor these/)).toBeTruthy();
+    expect(screen.getByText(/A line cannot be dropped/)).toBeTruthy();
+    expect(screen.getByText(/More detail does not fit/)).toBeTruthy();
+    expect(postAction).not.toHaveBeenCalled();          // 打字不排队，说明不是事后补的
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate anyway" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY,
+      note: "Omit the Open line and write the rest in more detail." }));
+    await waitFor(() => expect(screen.getByText(/cannot be honored and will not change/)).toBeTruthy());
+  });
+
+  it("an ordinary correction keeps the plain button and the plain success line", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    fireEvent.change(screen.getByLabelText(/Correction note/), { target: { value: "deadline is Friday" } });
+    expect(screen.queryByText(/cannot honor these/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    // §63.8 后普通成功文案多了一句「落地后自动更新」；关键是它不带预检的那句警告
+    await waitFor(() => expect(screen.getByText("Regeneration queued; this panel updates when it lands")).toBeTruthy());
+  });
+
   it("an open meeting offers Generate now (partial) and no copy", async () => {
     await renderPage([recap({ status: "open", en: null, zh: null, quality: null })]);
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
@@ -135,5 +165,143 @@ describe("RecapsPage", () => {
   it("empty board shows the onboarding line", async () => {
     await renderPage([]);
     expect(screen.getByText(/No recaps yet/)).toBeTruthy();
+  });
+
+  // ----- §63.8 / issue #297：排队后面板不装死 -------------------------------------------------- //
+
+  let reflows = 0;
+  /** 模拟一次 SSE 后的看板回流：新 generated_at、给定的 recaps[] */
+  async function reflow(recaps: RecapRow[]) {
+    reflows += 1;
+    vi.mocked(fetchBoard).mockResolvedValue({ ...seedBoard(recaps), generated_at: `2026-09-14T00:01:${String(reflows).padStart(2, "0")}Z` });
+    await refreshBoard();
+  }
+
+  it("regenerate shows Generating on the row and panel until the new version lands, then flashes the version", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({ action: "recap_generate", meeting_key: KEY }));
+    // 乐观排队：行 badge + 状态行 + 生成按钮禁用，纠正备注面板收起
+    await screen.findByText("Generating");
+    expect(screen.getByText(/Queued, waiting for the daemon/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Generating…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText(/Correction note/)).toBeNull();
+    // 看板回流但版本没变（actd 还没接手）→ 仍在排队
+    await reflow([recap()]);
+    expect(screen.getByText("Generating")).toBeTruthy();
+    // actd 回执 running → 状态行换成「正在重新生成」
+    await reflow([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } })]);
+    await waitFor(() => expect(screen.getByText(/Regenerating\. The new version lands here by itself/)).toBeTruthy());
+    expect(screen.getByText("Generating")).toBeTruthy();
+    // 新版本落地（done）→ badge 退场、正文换新、闪「Updated to version 2」、按钮恢复
+    const en2 = ["Decided: the run moves to Tuesday", ...EN.slice(1)];
+    await reflow([recap({ version: 2, quality: "needs_review", en: en2,
+      generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "done", note: null } })]);
+    await waitFor(() => expect(screen.queryByText("Generating")).toBeNull());
+    expect(screen.getByText(/Decided: the run moves to Tuesday/)).toBeTruthy();
+    expect(screen.getByText("Updated to version 2")).toBeTruthy();
+    expect(screen.getByText("Updated")).toBeTruthy();
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate…" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Queued, waiting/)).toBeNull();
+    expect(getState().recapPending).toEqual({});
+  });
+
+  it("a running receipt from the daemon shows Generating even without a local click (page reload)", async () => {
+    await renderPage([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } })]);
+    expect(screen.getByText("Generating")).toBeTruthy();
+    expect(screen.getByText(/Regenerating\. The new version lands here/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Generating…" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("lost and noop receipts explain themselves and leave the button usable", async () => {
+    await renderPage([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "lost", note: null } })]);
+    expect(screen.getByText("Generation lost")).toBeTruthy();
+    expect(screen.getByText(/never landed: no new version for over 10 minutes/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate…" }) as HTMLButtonElement).disabled).toBe(false);
+    cleanup();
+    resetStoreForTests();
+    await renderPage([recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "noop", note: "launch_failed" } })]);
+    expect(screen.getByText("Did not start")).toBeTruthy();
+    expect(screen.getByText(/failed to launch/)).toBeTruthy();
+  });
+
+  it("Generate now on an open meeting queues and shows the partial wording once the daemon is running", async () => {
+    const open = recap({ status: "open", en: null, zh: null, quality: null, version: 0 });
+    await renderPage([open]);
+    fireEvent.click(screen.getByRole("button", { name: "Generate now" }));
+    await screen.findByText("Generating");
+    expect(screen.getByText(/Queued, waiting/)).toBeTruthy();
+    await reflow([{ ...open, generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } }]);
+    await waitFor(() => expect(screen.getByText(/Generating the partial recap/)).toBeTruthy());
+    await reflow([recap({ status: "open", partial: true, version: 1,
+      generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "done", note: null } })]);
+    await waitFor(() => expect(screen.queryByText("Generating")).toBeNull());
+    expect(screen.getByText("Updated to version 1")).toBeTruthy();
+    expect(screen.getByText("Partial")).toBeTruthy();
+  });
+
+  it("a regeneration that lands with no text is announced as a failure, never as an update", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await screen.findByText("Generating");
+    await reflow([recap({ version: 2, quality: "generation_failed", en: null, zh: null,
+      generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "done", note: null } })]);
+    await waitFor(() => expect(screen.queryByText("Generating")).toBeNull());
+    expect(screen.getByText("Version 2 landed with no text (generation failed)")).toBeTruthy();
+    expect(screen.queryByText(/Updated to version/)).toBeNull();
+    expect(screen.getByText("Generation failed")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate…" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("polls the board every GENERATING_POLL_MS only while a row is generating, and stops when the version lands", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const running = recap({ generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "running", note: null } });
+    await renderPage([running]);
+    expect(screen.getByText("Generating")).toBeTruthy();
+    const before = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(GENERATING_POLL_MS); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(before + 1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(GENERATING_POLL_MS); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(before + 2);
+    // 下一次补拉带回新版本 → 生成中退场 → 补拉停
+    vi.mocked(fetchBoard).mockResolvedValue({ ...seedBoard([recap({ version: 2,
+      generate_request: { requested_at: "2026-09-14T00:00:05Z", state: "done", note: null } })]), generated_at: "2026-09-14T00:02:00Z" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(GENERATING_POLL_MS); });
+    expect(screen.queryByText("Generating")).toBeNull();
+    const settled = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(GENERATING_POLL_MS * 3); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(settled);
+  });
+
+  it("does not poll at all when nothing is generating", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderPage([recap()]);
+    const before = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(GENERATING_POLL_MS * 3); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(before);
+  });
+
+  it("after 90 s without a receipt the row says Not picked up and the button unlocks; a late receipt still takes over", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await screen.findByText("Generating");
+    await act(async () => { await vi.advanceTimersByTimeAsync(PICKUP_TIMEOUT_MS + GENERATING_POLL_MS); });
+    expect(screen.getByText("Not picked up")).toBeTruthy();
+    expect(screen.getByText(/Nothing picked this up in 90 s: actd may not be running/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate…" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(Object.keys(getState().recapPending)).toEqual([KEY]);   // 留着，这句话靠它显示
+    const polls = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(GENERATING_POLL_MS * 3); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(polls);   // unclaimed 不补拉
+    // actd 终于接手：新回执 running → 又是生成中
+    await reflow([recap({ generate_request: { requested_at: "2026-09-14T00:03:00Z", state: "running", note: null } })]);
+    await screen.findByText("Generating");
+    expect(screen.queryByText("Not picked up")).toBeNull();
+    expect(getState().recapPending).toEqual({});
   });
 });

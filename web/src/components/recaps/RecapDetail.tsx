@@ -2,25 +2,86 @@
 // 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」/ 开关开着时「投到 Slack 草稿」。
 // 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记；重新生成 / 投草稿走 inbox 特形动作
 // （recap_generate / recap_slack_draft，字段逐字按 §63，多一个键 server 400）。
-import { useEffect, useState } from "react";
+// §63.8（issue #297）：重新生成排队后面板不再装死——状态行说「排队中 / 正在生成」、两颗生成按钮禁用，
+// 新版本随 board 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没人接手说
+// 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
+import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
-import { markRecap } from "../../store";
+import { markRecap, markRecapPending } from "../../store";
 import type { RecapRow, RecapSettings } from "../../types";
 import { copyText } from "../detail/copyText";
-import { pickLanguage, recapBody, rowLabel, slackDraftLabel } from "./recapText";
+import { noteConflicts, type NoteConflictId } from "./noteCheck";
+import { isGenerating, pickLanguage, recapBody, rowLabel, slackDraftLabel, type GenerationPhase } from "./recapText";
 
 const NOTE_MAX = 500;
 const CHANNEL_RE = /^[CDG][A-Z0-9]{6,20}$/;
 
+type Bilingual = (zh: string, en: string) => string;
+
+/** §63.5 预检文案：一条诉求一句「为什么做不到」，说的是格式的硬约束，不是模型的脾气。
+ *  Record 而非 switch——漏掉一类新 id 是编译错误，不是一条空行。 */
+const CONFLICT_LINES: Record<NoteConflictId, (text: Bilingual) => string> = {
+  drop_line: (text) =>
+    text("删不掉某一行：纪要恒是这五行，每行都带标签；没内容的那行只会写「无」。",
+         "A line cannot be dropped: the recap is always these five labelled lines; an empty one comes back as none."),
+  add_line: (text) =>
+    text("加不了新的一行：只有这五行，多出来的内容只能并进其中一行。",
+         "A line cannot be added: there are only these five; anything extra has to fold into one of them."),
+  more_detail: (text) =>
+    text("写不了更详细：每行有硬性长度上限，超了会被校验判成「需复核」。",
+         "More detail does not fit: every line has a hard length cap, and going over it gets the recap flagged needs review."),
+  relabel: (text) =>
+    text("改不了标签：五个标签的文字与顺序是固定的。",
+         "The labels cannot change: their wording and their order are fixed."),
+  language_count: (text) =>
+    text("改不了语言：中英两版一次产出、都会存下来，上面的切换按钮选看哪版。",
+         "The languages cannot change: Chinese and English are always both produced and stored; the tabs above pick which one you read."),
+  formatting: (text) =>
+    text("加不了格式：加粗、项目符号、emoji、链接、时间戳、引号都会被校验拦下。",
+         "Formatting cannot be added: bold, bullets, emoji, links, timestamps and quotation marks are all rejected by the validator."),
+};
+
 export interface RecapDetailProps {
   row: RecapRow;
   settings: RecapSettings | null;
+  phase?: GenerationPhase;
 }
 
 type Panel = null | "note" | "slack";
+type Text = (zh: string, en: string) => string;
 
-export function RecapDetail({ row, settings }: RecapDetailProps) {
+/** §63.8 生成态的一句话（idle 不说话；done 由正文与 landedNote 的闪句体现） */
+export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Text): string | null {
+  switch (phase) {
+    case "queued":
+      return text("已排队，等待后台接手…", "Queued, waiting for the daemon to pick it up…");
+    case "unclaimed":
+      return text("后台 90 秒没有接手：actd 可能没在跑（看「依赖检查」区的管线活性）。可以再试一次。", "Nothing picked this up in 90 s: actd may not be running (see Pipeline liveness under Dependency check). You can try again.");
+    case "running":
+      return isOpen
+        ? text("正在生成阶段稿，落地后这里自动更新（通常 1–3 分钟）。", "Generating the partial recap. It lands here by itself (usually 1–3 min).")
+        : text("正在重新生成，新版本落地后这里自动更新（通常 1–3 分钟）。", "Regenerating. The new version lands here by itself (usually 1–3 min).");
+    case "lost":
+      return text("上次生成没有落地：超过 10 分钟没写出新版本——后台进程崩了或模型调用失败（看 state/recap.log）。可以再试一次。", "The last generation never landed: no new version for over 10 minutes. The process crashed or the model call failed (see state/recap.log). You can try again.");
+    case "noop":
+      return text("上次生成没起来：后台进程启动失败（看 state/actd.log）。可以再试一次。", "The last generation did not start: the background process failed to launch (see state/actd.log). You can try again.");
+    default:
+      return null;
+  }
+}
+
+/** 新版本落地那一下的闪句：有正文 = 已更新到第 N 版；没正文按 quality 说清为什么（失败不许穿成功的衣） */
+export function landedNote(row: RecapRow, text: Text): string {
+  const version = row.version ?? 0;
+  if (row.en && row.en.length) return text(`已更新到第 ${version} 版`, `Updated to version ${version}`);
+  const why = row.quality === "no_audio" ? text("无音频", "no audio")
+    : row.quality === "thin_transcript" ? text("转写不全", "thin transcript")
+    : text("生成失败", "generation failed");
+  return text(`第 ${version} 版没有正文（${why}）`, `Version ${version} landed with no text (${why})`);
+}
+
+export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps) {
   const { text, language: ui } = useI18n();
   const [language, setLanguage] = useState<Language>(pickLanguage(settings?.default_language, ui));
   const [panel, setPanel] = useState<Panel>(null);
@@ -28,6 +89,8 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
   const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // 上一次渲染看到的 {key, version}：同一行版本号涨了 = 新版本落地，闪一句
+  const seen = useRef<{ key: string; version: number }>({ key: row.key, version: row.version ?? 0 });
 
   // 切行 / 语言设置变化 → 语言与面板复位（草稿备注不跨行）
   useEffect(() => {
@@ -38,6 +101,12 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
   }, [row.key, settings?.default_language, ui]);
 
   useEffect(() => {
+    const version = row.version ?? 0;
+    if (seen.current.key === row.key && version > seen.current.version) setFlash(landedNote(row, text));
+    seen.current = { key: row.key, version };
+  }, [row, text]);
+
+  useEffect(() => {
     if (!flash) return;
     const timer = setTimeout(() => setFlash(null), 4000);
     return () => clearTimeout(timer);
@@ -46,6 +115,8 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
   const body = recapBody(row, language);
   const hasText = Boolean(row.en && row.en.length);
   const isOpen = row.status === "open";
+  const generating = isGenerating(phase);
+  const progress = generationNote(phase, isOpen, text);
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -69,13 +140,23 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
     row.sent_at ? text("已取消「已发送」", "Sent mark cleared") : text("已标记为已发送", "Marked as sent"),
     () => markRecap(row.key, "sent", !row.sent_at),
   );
-  const regenerate = () => run(text("已排队重新生成，稍后刷新", "Regeneration queued"), () => {
-    const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key };
-    if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
-    return postAction(payload);
+  // §63.5 预检：备注命中五行契约做不到的诉求 → 逐条摊开，按钮改口，toast 不再假装全做到了
+  const conflicts = noteConflicts(note);
+  const regenerate = () => run(
+    conflicts.length
+      ? text("已排队重新生成——上面标出的部分格式做不到，不会变",
+             "Regeneration queued — the flagged parts cannot be honored and will not change")
+      : text("已排队重新生成，落地后这里自动更新", "Regeneration queued; this panel updates when it lands"),
+    async () => {
+      const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key };
+      if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
+      await postAction(payload);
+      markRecapPending(row);
+    });
+  const generateNow = () => run(text("已排队生成阶段稿，落地后这里自动更新", "Partial recap queued; this panel updates when it lands"), async () => {
+    await postAction({ action: "recap_generate", meeting_key: row.key, partial: true });
+    markRecapPending(row);
   });
-  const generateNow = () => run(text("已排队生成阶段稿", "Partial recap queued"), () =>
-    postAction({ action: "recap_generate", meeting_key: row.key, partial: true }));
   const slackDraft = () => run(text("已排队投到 Slack 草稿", "Slack draft queued"), () =>
     postAction({ action: "recap_slack_draft", meeting_key: row.key, channel_id: channel.trim() }));
 
@@ -99,6 +180,12 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
         </div>
       </header>
 
+      {progress && (
+        <p className={`recap-progress${generating ? " is-busy" : " is-warning"}`} role="status" data-phase={phase}>
+          {progress}
+        </p>
+      )}
+
       {hasText ? (
         <pre className="recap-body">{body}</pre>
       ) : (
@@ -121,12 +208,12 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
           </button>
         )}
         {isOpen ? (
-          <button type="button" className="btn" disabled={busy} onClick={() => void generateNow()}>
-            {text("现在生成", "Generate now")}
+          <button type="button" className="btn" disabled={busy || generating} onClick={() => void generateNow()}>
+            {generating ? text("生成中…", "Generating…") : text("现在生成", "Generate now")}
           </button>
         ) : (
-          <button type="button" className="btn" disabled={busy} onClick={() => setPanel(panel === "note" ? null : "note")}>
-            {text("重新生成…", "Regenerate…")}
+          <button type="button" className="btn" disabled={busy || generating} onClick={() => setPanel(panel === "note" ? null : "note")}>
+            {generating ? text("生成中…", "Generating…") : text("重新生成…", "Regenerate…")}
           </button>
         )}
         {settings?.slack_draft_enabled && hasText && !isOpen && (
@@ -136,7 +223,7 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
         )}
       </div>
 
-      {panel === "note" && (
+      {panel === "note" && !generating && (
         <div className="recap-panel">
           <label className="recap-panel-label" htmlFor="recap-note">
             {text("纠正备注（可选，≤500 字）：告诉模型哪里说错了", "Correction note (optional, ≤500 chars): what to fix")}
@@ -145,12 +232,26 @@ export function RecapDetail({ row, settings }: RecapDetailProps) {
             id="recap-note"
             className="recap-textarea"
             maxLength={NOTE_MAX}
+            aria-describedby={conflicts.length ? "recap-note-conflicts" : undefined}
             value={note}
             onChange={(event) => setNote(event.target.value)}
           />
+          {/* 不是 live region：内容随每个按键重算，role="status" 会让读屏在打字中途反复念整张表；
+              挂在 textarea 的 aria-describedby 上 = 需要时可达，不追着人念（§63.5）。 */}
+          {conflicts.length > 0 && (
+            <div className="recap-note-conflicts" id="recap-note-conflicts">
+              <p className="recap-note-conflicts-head">
+                {text("这几件事五行格式做不到，重新生成也不会变：",
+                      "The five-line format cannot honor these; regenerating will not change them:")}
+              </p>
+              <ul className="recap-note-conflicts-list">
+                {conflicts.map((id) => <li key={id}>{CONFLICT_LINES[id](text)}</li>)}
+              </ul>
+            </div>
+          )}
           <div className="recap-panel-actions">
             <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void regenerate()}>
-              {text("重新生成", "Regenerate")}
+              {conflicts.length ? text("仍要重新生成", "Regenerate anyway") : text("重新生成", "Regenerate")}
             </button>
             <span className="recap-hint">{note.length}/{NOTE_MAX}</span>
           </div>
