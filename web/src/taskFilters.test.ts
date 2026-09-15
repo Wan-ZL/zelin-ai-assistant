@@ -15,6 +15,7 @@ const FULL: CardFilters = {
   tiers: ["T1", "T2"],
   deadline: "soon",
   reraisedOnly: true,
+  hideBot: true,
   search: "readme",
 };
 
@@ -56,7 +57,7 @@ describe("URL 序列化", () => {
 describe("计数与切换", () => {
   it("cardFilterCount 数激活维度", () => {
     expect(cardFilterCount(EMPTY_CARD_FILTERS)).toBe(0);
-    expect(cardFilterCount(FULL)).toBe(4);
+    expect(cardFilterCount(FULL)).toBe(5);   // tier / deadline / 回锅 / 隐藏🤖(D74) / 搜索
   });
 
   it("toggleFilterValue 开关成员", () => {
@@ -102,6 +103,18 @@ describe("匹配语义", () => {
     expect(matchesCardFilters(proposal, f({ reraisedOnly: true }))).toBe(false);
     expect(matchesCardFilters({ ...proposal, reraised: true }, f({ reraisedOnly: true }))).toBe(true);
     expect(matchesCardFilters(runningRow, f({ reraisedOnly: true }))).toBe(true);
+  });
+
+  it("D74 hideBot：只藏 self_improve === true 的行；缺席这个键的行照常可见", () => {
+    const bot = { id: "R-4", name: "🤖 修 CI", self_improve: true };
+    expect(matchesCardFilters(bot, f({ hideBot: true }))).toBe(false);
+    expect(matchesCardFilters(bot, f({ hideBot: false }))).toBe(true);
+    // 人卡 / 老 server 的行没有这个键 = 这一维读不懂它 → 保持可见
+    expect(matchesCardFilters({ id: "R-5", name: "整理推荐信" }, f({ hideBot: true }))).toBe(true);
+    expect(matchesCardFilters(runningRow, f({ hideBot: true }))).toBe(true);
+    expect(matchesCardFilters(proposal, f({ hideBot: true }))).toBe(true);
+    // 非 true 的垃圾值不算机器卡（wire 只发 true 或整键缺席）
+    expect(matchesCardFilters({ id: "R-6", self_improve: "yes" }, f({ hideBot: true }))).toBe(true);
   });
 
   it("search 作用于全部行：id/title/name/summary + sources 文本，大小写不敏感", () => {

@@ -385,6 +385,19 @@ def msg_repeated_unhandled(title: str, n: int) -> tuple[str, str]:
                   f"{title} — open the board to approve, defer or reject it"))
 
 
+def msg_review_stale(n: int, days: int) -> tuple[str, str]:
+    """§70.2 追记 / D74：待验收列的老化通知——**整轮一条**，不是一卡一条。
+
+    owner 的板上有 19 张待验收卡；一卡一条横幅在 03:30 一次性弹 19 次，正是
+    §70.6「不弹系统通知」当初要挡的事（宪法第 10 条「打扰要有资格」）。所以这
+    一句只说数量、天数与「明天归档、可恢复」，具体是哪几张去看板上看。"""
+    return (_pick(f"{n} 张待验收卡要归档了", f"{n} cards in review are about to be archived"),
+            _pick(f"它们已经 {days} 天没动——明天这一轮会收进回收站（可恢复）。"
+                  "现在去看板「待验收」列验收或打回",
+                  f"They have been idle for {days} days — tomorrow's pass moves them to the "
+                  "trash (restorable). Open the board's Review column to accept or send back"))
+
+
 def msg_review_ready(title: str) -> tuple[str, str]:
     """executing -> review: the draft is ready for Zelin's ✓/↩︎."""
     return (_pick("待验收：AI 已交付草稿", "Ready for review: draft delivered"),

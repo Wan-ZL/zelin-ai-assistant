@@ -1,20 +1,25 @@
 // 多选操作条（原生 Kanban.swift「选择」态的底部 bar，§21 / §21bis / §68.12）：selectionMode 下
 // 常驻底部：已选 N · 请求合并建议（merge_review，≥2）· 强制合并（merge_force + 主卡弹窗）·
 // 批量批准 / 批量拒绝（只对提案列的卡；T2 卡跳过——typed-confirm 不能批量绕过，§0.8 / §50 W17）·
+// 批量验收 / 批量丢弃（只对待验收列的卡，§21 追记 / D74；两者都先过逐条列清单的确认弹窗）·
 // 清空 · 退出。每个批量动作 = 逐卡一条 inbox 动作（§3 四键形，server 零容忍不接受批量形）。
-// 入口「选择」按钮在 FilterBar；本条只在 selectionMode 渲染。
+// 入口「选择」按钮在 FilterBar，或待验收列头的两颗「选中全部…」（ReviewLaneTools，D74）；
+// 本条只在 selectionMode 渲染。
 import { useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { clearSelection, markForceMerging, setSelectionMode, useAppState } from "../../store";
-import type { ApprovalCard } from "../../types";
+import type { ApprovalCard, ReviewCard } from "../../types";
 import { cardAction, describeActionError, effectiveTier } from "./boardActions";
 import { FeedbackDialog } from "./FeedbackDialog";
 import { ForceMergeDialog, forceMergeBody } from "./ForceMergeDialog";
 import { titlesFor } from "./MergeSuggestionCard";
 import { ModalDialog } from "./ModalDialog";
 
-type Confirm = "none" | "force" | "approve" | "reject" | "feedback";
+type Confirm = "none" | "force" | "approve" | "reject" | "feedback" | "accept" | "discard";
+
+/** 待验收列的批量动词（§21 追记 / D74） */
+type ReviewVerb = "accept" | "trash";
 
 /** 批量批准 / 拒绝的资格：只有提案列真实卡（processing 占位不算）；T2（含 W17 生效 T2）批准跳过 */
 export function batchable(ids: ReadonlySet<string>, proposals: ApprovalCard[], verb: "approve" | "reject"): { ok: string[]; skippedT2: string[] } {
@@ -26,6 +31,14 @@ export function batchable(ids: ReadonlySet<string>, proposals: ApprovalCard[], v
     else ok.push(card.id);
   }
   return { ok, skippedT2 };
+}
+
+/** 批量验收 / 批量丢弃的资格：只有待验收列真实卡（§21 追记 / D74）。
+ *  与 batchable() 同形：选中集里不在这一列的 id 一律不算，绝不替人猜别的列该怎么处置。
+ *  没有 T2 那样的跳过——验收与丢弃都不是审批闸，`review→delivered` / `review→trashed`
+ *  两条转移在 store2 白名单里早已对 user 放行（act/lib/store2/schema.sql）。 */
+export function reviewBatchable(ids: ReadonlySet<string>, review: ReviewCard[]): string[] {
+  return review.filter((row) => ids.has(row.id)).map((row) => row.id);
 }
 
 export function SelectionBar() {
@@ -41,6 +54,9 @@ export function SelectionBar() {
   const titles = titlesFor(ids, board as unknown as Record<string, unknown> | null);
   const approve = batchable(selectedIds, proposals, "approve");
   const reject = batchable(selectedIds, proposals, "reject");
+  // §21 追记 / D74：待验收列的两颗批量键（同一份选中集，各自只认自己那一列的卡）
+  const reviewIds = reviewBatchable(selectedIds, board?.review ?? []);
+  const reviewVerb: ReviewVerb = confirm === "discard" ? "trash" : "accept";
 
   /** 逐条 POST；全部成功才回执 + 清选择。返回「全部成功」——调用方据此决定要不要挂本地章 */
   async function run(bodies: Array<Record<string, unknown>>, done: string): Promise<boolean> {
@@ -82,6 +98,13 @@ export function SelectionBar() {
       <button type="button" className="btn btn-danger" disabled={busy || reject.ok.length === 0} onClick={() => setConfirm("reject")}>
         {text(`批量拒绝 (${reject.ok.length})`, `Reject (${reject.ok.length})`)}
       </button>
+      {/* §21 追记 / D74：待验收列的批量验收 / 批量丢弃——确认弹窗逐条列 id + 标题 */}
+      <button type="button" className="btn btn-success" disabled={busy || reviewIds.length === 0} onClick={() => setConfirm("accept")}>
+        {text(`批量验收 (${reviewIds.length})`, `Accept (${reviewIds.length})`)}
+      </button>
+      <button type="button" className="btn btn-danger" disabled={busy || reviewIds.length === 0} onClick={() => setConfirm("discard")}>
+        {text(`批量丢弃 (${reviewIds.length})`, `Discard (${reviewIds.length})`)}
+      </button>
       {/* §29 targeted 提建议（原生多选条同位）：ids = 选中卡 */}
       <button type="button" className="btn" disabled={busy || ids.length === 0} onClick={() => setConfirm("feedback")}>
         {text(`提建议 (${ids.length})`, `Send feedback (${ids.length})`)}
@@ -103,6 +126,30 @@ export function SelectionBar() {
             });
           }}
           onCancel={() => setConfirm("none")} />
+      )}
+      {(confirm === "accept" || confirm === "discard") && (
+        <ModalDialog
+          title={confirm === "accept"
+            ? text(`验收 ${reviewIds.length} 张交付？`, `Accept ${reviewIds.length} deliveries?`)
+            : text(`丢弃 ${reviewIds.length} 张交付？`, `Discard ${reviewIds.length} deliveries?`)}
+          onCancel={() => setConfirm("none")}
+        >
+          <p className="dialog-body">
+            {reviewIds.map((id) => `${id} ${titles[id] ?? ""}`).join("\n")}
+            {confirm === "accept"
+              ? text("\n\n验收 = 这几张的交付你认了，进「阶段性完成」。AI 的「建议验收」只是建议——上面这份清单是你自己的那一次确认。",
+                "\n\nAccept = you take these deliveries; they move to Done for now. The AI's “Looks done” is only advice — the list above is your own confirmation.")
+              : text("\n\n丢弃 = 这几张不要了，进回收站（可恢复）。", "\n\nDiscard = you don't want these; they go to Trash (restorable).")}
+          </p>
+          <div className="dialog-actions">
+            <button type="button" className="btn" onClick={() => setConfirm("none")}>{text("取消", "Cancel")}</button>
+            <button type="button" className={`btn ${confirm === "accept" ? "btn-success" : "btn-danger"}`}
+              onClick={() => void run(reviewIds.map((id) => cardAction(id, reviewVerb)),
+                confirm === "accept" ? text("已批量提交验收", "Acceptances submitted") : text("已批量提交丢弃", "Discards submitted"))}>
+              {confirm === "accept" ? text("验收", "Accept") : text("丢弃", "Discard")}
+            </button>
+          </div>
+        </ModalDialog>
       )}
       {(confirm === "approve" || confirm === "reject") && (
         <ModalDialog

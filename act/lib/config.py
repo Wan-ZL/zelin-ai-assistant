@@ -365,6 +365,9 @@ class Config:
     daily_loop_max_proposals_per_day: int = DEFAULT_DAILY_LOOP_MAX_PROPOSALS
     daily_loop_stale_days: int = 45
     daily_loop_trash_retention_days: int = 90
+    # §70.2 追记 / D74（issue #312）：待验收列的老化天数——闲置 N 天的待验收卡
+    # 先收到一条汇总通知，下一轮进回收站（可恢复）。0 = 关掉这条规则。
+    daily_loop_review_stale_days: int = 14
 
     # §65.1 自动改进本软件的通道总开关（config.yaml `self_improve.enabled`；issue
     # #307 / D57）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
@@ -669,7 +672,8 @@ def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
     blk = _dict_or(data.get("daily_loop"))
     cfg.daily_loop_enabled = _bool_or(blk.get("enabled"), cfg.daily_loop_enabled)
     cfg.daily_loop_time = _clock_or(blk.get("time"), cfg.daily_loop_time)
-    for key in ("max_proposals_per_day", "stale_days", "trash_retention_days"):
+    for key in ("max_proposals_per_day", "stale_days", "trash_retention_days",
+                "review_stale_days"):
         attr = f"daily_loop_{key}"
         setattr(cfg, attr, max(0, _int_or(blk.get(key), getattr(cfg, attr))))
 
@@ -1383,6 +1387,7 @@ _OVERRIDE_FIELDS: dict = {
     "daily_loop_max_proposals_per_day": _nonneg_int,
     "daily_loop_stale_days": _nonneg_int,
     "daily_loop_trash_retention_days": _nonneg_int,
+    "daily_loop_review_stale_days": _nonneg_int,
     # §65.1 (#307 / D57): 自动改进本软件的通道总开关——设置页「开发者」区经
     # PUT /api/settings/maintainer 写这个扁平键（diff-write 同款；默认 false）。
     "self_improve_enabled": _coerce_bool,
