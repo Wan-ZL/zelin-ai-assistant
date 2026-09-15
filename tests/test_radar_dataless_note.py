@@ -68,9 +68,11 @@ class _DatalessBase(RadarScanBase):
 
     def _obsidian_health(self):
         """radar_health 只有 cron 语境才写（_owns_health）——这几条判例要看
-        账，所以自己戴上那顶帽子。"""
+        账，所以自己戴上那顶帽子。key 探针也钉住：没有 key 的机器（CI）会把
+        失败报成 `no_api_key`，那是 §15 的另一条法条，不是本节要钉的。"""
         os.environ["AIASSISTANT_CRON"] = "1"
         self.addCleanup(lambda: os.environ.pop("AIASSISTANT_CRON", None))
+        self._patch(radar, "_has_anthropic_key", lambda: True)
         self.addCleanup(lambda: radar_health.HEALTH_PATH.exists()
                         and radar_health.HEALTH_PATH.unlink())
         return lambda: json.loads(
@@ -112,7 +114,7 @@ class DeadlockReadTestCase(_DatalessBase):
 
         self.assertEqual(self.downloads, [str(note)])
         self.assertEqual(summary["extracted"], 1)
-        self.assertEqual(self._queue(), {})             # 读到了 = 没案底
+        self.assertEqual(self._queue(), {})             # 读到了，没留案底
 
     def _downloader_that_delivers(self):
         def download(note):
@@ -177,7 +179,7 @@ class WaitBudgetTestCase(_DatalessBase):
         budget = radar._WaitBudget(2)
         self.assertEqual([budget.take() for _ in range(4)],
                          [True, True, False, False])
-        self.assertTrue(radar._may_wait(None))   # 没有预算对象 = 不受限
+        self.assertTrue(radar._may_wait(None))   # 没有预算对象时不受限
 
 
 class DeferredLedgerTestCase(_DatalessBase):
