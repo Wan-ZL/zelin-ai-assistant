@@ -17,8 +17,10 @@ Before picking anything up, check the in-progress list — several items already
   ("this feature is unused", "this step keeps failing") — the new-install guard is already written.
 - **Swift strict-concurrency migration** — move the Mac app onto Swift 6 strict concurrency before
   the toolchain default flips make it urgent.
-- **Developer ID signing & notarization** — a stable signing identity so upgrades stop resetting TCC
-  permissions (today's ad-hoc signature changes every build; users right-click → Open).
+- **Developer ID signing & notarization** — the local self-signed identity already keeps TCC grants
+  across upgrades (`mac/build.sh` + `shell/build.sh`, 2026-09-12); what is left is a real Apple
+  Developer ID plus notarization so a downloaded copy stops needing right-click → Open, and so
+  machines without the local cert stop falling back to ad-hoc.
 
 ## Next
 

@@ -448,12 +448,19 @@ install_mac_app() {
 # Combined step status: any fail → fail; else any ok → ok; else skipped_tcc
 # if the web half was TCC-refused; else skipped.
 # Missing toolchain is `skipped` + a warn, NEVER a deploy failure (mirror of
-# the `app` precedent, §56.5). Never prompts: ad-hoc codesign needs no
-# keychain, npm runs with CI=1 --no-audit --no-fund. Each half runs under a
-# wall-clock budget (AIASSISTANT_UI_BUDGET, default 600 s per command) so a
-# hung npm cannot eat the auto-deploy watchdog (1800 s); durations are logged
-# and land in the report detail. Output goes to ui-build.log (capped), the
-# tail is echoed on failure.
+# the `app` precedent, §56.5). Never prompts: npm runs with CI=1 --no-audit
+# --no-fund, and shell/build.sh's codesign uses the stable identity whose key
+# ACL already allows /usr/bin/codesign non-interactively (`-T /usr/bin/codesign`
+# + `security set-key-partition-list`, mac/scripts/make-signing-cert.sh). That
+# partition-list step is SKIPPABLE in that script, so on a machine where the
+# owner skipped it codesign would block on a GUI prompt nobody can click —
+# shell/build.sh therefore runs codesign under its own wall clock and falls
+# back to ad-hoc on timeout rather than burning this step's budget (§54.3
+# 2026-09-12 修正). Each half runs under a wall-clock budget
+# (AIASSISTANT_UI_BUDGET, default 600 s per command) so a hung npm cannot eat
+# the auto-deploy watchdog (1800 s); durations are logged and land in the
+# report detail. Output goes to ui-build.log (capped), the tail is echoed on
+# failure.
 #
 # The name swap (owner 2026-09-02; §54): the shell takes the product name, the
 # legacy menu-bar app becomes "Zelin's AI Assistant (old)". Bundles are told
@@ -756,7 +763,7 @@ install_shell_app() {
     fi
     # Stage-then-swap (mac/build.sh precedent): a failed copy must never leave
     # a half-bundle in place; the rm+mv window is near-instant. ditto keeps
-    # the ad-hoc signature intact (cp -R can perturb it).
+    # the signature intact (cp -R can perturb it).
     _staged="$_dest_dir/.$UI_APP_NAME.app.staged"
     rm -rf "$_staged"
     if ! ditto "$_src" "$_staged" >> "$UI_LOG" 2>&1; then

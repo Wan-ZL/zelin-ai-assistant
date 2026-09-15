@@ -116,7 +116,7 @@ bash scripts/dev-preview.sh --real
 bash shell/build.sh && open "shell/build/Zelin's AI Assistant.app"   # connects to the running server
 ```
 
-Building the web UI needs Node.js LTS — `dev-preview.sh` runs `npm install && npm run build` automatically when `web/dist` is missing; `install.sh` does the same (`npm ci` only when the lockfile changed) and skips the UI with a warning when node or swiftc is absent. The app shell is ad-hoc signed: building it yourself needs no Apple developer account; a copy downloaded from the internet needs a one-time right-click → Open (Gatekeeper).
+Building the web UI needs Node.js LTS — `dev-preview.sh` runs `npm install && npm run build` automatically when `web/dist` is missing; `install.sh` does the same (`npm ci` only when the lockfile changed) and skips the UI with a warning when node or swiftc is absent. The app shell is signed with a stable self-signed identity (`Zelin AI Engineer Dev`, from `mac/scripts/make-signing-cert.sh`) when that cert is in your keychain, and ad-hoc otherwise — either way building it yourself needs no Apple developer account; a copy downloaded from the internet needs a one-time right-click → Open (Gatekeeper).
 
 ## Requirements
 

@@ -23,8 +23,9 @@
 // 本文件只挂到 NSApp、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
-// 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
-// 签名，授权也不会跟着 build 走）——repo 在外置卷上时子进程读不到 checkout，
+// 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（当时还是
+// ad-hoc 签名，授权连 build 都跨不过去；2026-09-12 起换稳定身份，§54.3 修正——但壳
+// 依旧不持有磁盘授权，本条结论不变）——repo 在外置卷上时子进程读不到 checkout，
 // 以 "No module named server" 死掉。launchd 用的是 §55 探针验过的守护解释器。
 // 壳保留 spawn 兜底，但**只在探活失败且 launchd 没加载该 label 时**才 spawn——
 // 两个 server 绝不能抢同一个端口（launchd 那份会 crash-loop，doctor 报 FAIL）。
