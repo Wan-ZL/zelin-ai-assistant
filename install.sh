@@ -456,11 +456,11 @@ install_mac_app() {
 # owner skipped it codesign would block on a GUI prompt nobody can click —
 # shell/build.sh therefore runs codesign under its own wall clock and falls
 # back to ad-hoc on timeout rather than burning this step's budget (§54.2
-# 2026-09-12 修正). Each half runs under a
-# wall-clock budget (AIASSISTANT_UI_BUDGET, default 600 s per command) so a
-# hung npm cannot eat the auto-deploy watchdog (1800 s); durations are logged
-# and land in the report detail. Output goes to ui-build.log (capped), the
-# tail is echoed on failure.
+# 2026-09-12 修正). Each half runs under a wall-clock budget
+# (AIASSISTANT_UI_BUDGET, default 600 s per command) so a hung npm cannot eat
+# the auto-deploy watchdog (1800 s); durations are logged and land in the
+# report detail. Output goes to ui-build.log (capped), the tail is echoed on
+# failure.
 #
 # The name swap (owner 2026-09-02; §54): the shell takes the product name, the
 # legacy menu-bar app becomes "Zelin's AI Assistant (old)". Bundles are told
