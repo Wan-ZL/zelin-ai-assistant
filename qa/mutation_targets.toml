@@ -150,9 +150,13 @@ per_mutant_timeout_seconds = 60
 "act/lib/checks/services.py" = []
 "act/lib/dashboard.py" = ["tests/test_actd_wire.py", "tests/test_auto_merge.py", "tests/test_executor_briefing_window.py", "tests/test_less_cards_prompts.py", "tests/test_recap_store.py", "tests/test_self_improve_actd_wire.py", "tests/test_self_improve_sensitive_pause.py", "tests/test_server_doctor_status_vocabulary.py", "tests/test_server_permissions_setup.py", "tests/test_sources.py", "tests/test_steer_relay.py"]
 "act/lib/power.py" = ["tests/test_doctor_power_row.py", "tests/test_power_probe.py"]
-"act/lib/recap_intent.py" = ["tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_server_paths_mirror.py"]
+# §63.11 / §63.12 的问答闸门：夜报的存活体全落在「畸形输入这一步答什么」与上 wire 的那个帽上
+# ——主干判例（test_recap_intent.py）喂的一直是形状正确的记录，补测住 test_recap_intent_mutation_kills_train.py。
+"act/lib/recap_intent.py" = ["tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_server_paths_mirror.py", "tests/test_recap_intent_mutation_kills_train.py"]
 "act/lib/recap_store.py" = ["tests/test_recap_filler_omission.py", "tests/test_recap_generate_request.py", "tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_recap_no_egress.py", "tests/test_recap_revert.py", "tests/test_recap_runner.py", "tests/test_recap_shapes.py", "tests/test_recap_slack_draft_allowlist.py", "tests/test_recap_store.py"]
-"act/lib/recap_text.py" = ["tests/test_recap_filler_omission.py", "tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_recap_length_repair.py", "tests/test_recap_no_egress.py", "tests/test_recap_revert.py", "tests/test_recap_shapes.py", "tests/test_recap_validate.py"]
+# §63.3 / §63.10 / §63.12 的模板与闸门：存活体是出厂数字（修剪预算 / 最短转写 / 序号帽）、
+# 区间闭端（240 字符 / 6 节 / 24 条 / 0.72）与手改坏记录那几条路——补测住 test_recap_text_mutation_kills_train.py。
+"act/lib/recap_text.py" = ["tests/test_recap_filler_omission.py", "tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_recap_length_repair.py", "tests/test_recap_no_egress.py", "tests/test_recap_revert.py", "tests/test_recap_shapes.py", "tests/test_recap_validate.py", "tests/test_recap_text_mutation_kills_train.py"]
 "act/lib/screenpipe_retention.py" = ["tests/test_screenpipe_retention.py", "tests/test_server_screenpipe_disk.py"]
 "act/lib/self_improve.py" = ["tests/test_dashboard_review_self_improve_flag.py", "tests/test_policy_self_improve_lane.py", "tests/test_self_improve_actd_wire.py", "tests/test_self_improve_argv.py", "tests/test_self_improve_channel_switch.py", "tests/test_self_improve_followups.py", "tests/test_self_improve_frozen_in_flight.py", "tests/test_self_improve_owner_identity.py", "tests/test_self_improve_sensitive_pause.py", "tests/test_self_improve_verify.py"]
 "act/lib/taskscheduler.py" = ["tests/test_taskscheduler_render.py"]
