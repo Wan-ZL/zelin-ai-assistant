@@ -21,6 +21,27 @@ describe("noteConflicts", () => {
     expect(noteConflicts("把那行删掉。")).toEqual(["drop_line"]);
     expect(noteConflicts("待定那条整个删掉。")).toEqual(["drop_line"]);
     expect(noteConflicts("不要第四行。")).toEqual(["drop_line"]);
+    // 句尾的语气词与客套话不是「另一个宾语」：这些照旧是在删那一行。
+    const stillDrops = [
+      "那行删掉就好。",
+      "那行删掉就行。",
+      "那条删掉就行。",
+      "那行删掉算了。",
+      "那行整个删掉算了。",
+      "把那一行删掉谢谢。",
+      "把那行去掉吧谢谢。",
+      "第五行删掉就可以。",
+      "那行去掉比较好。",
+      "那行删掉，谢谢。",
+      // 英文侧：连词串起来的两行一起删，以及最长的那个标签（Changed since last plan，
+      // 动词与 line 之间 29 个字符）——把间距收太紧会让 issue #296 的原话够不着。
+      "Remove the Deadline and Split lines.",
+      "Drop the Open and Changed lines.",
+      "Drop the Changed since last plan line.",
+      "Get rid of the Changed since last plan line.",
+      "Omit the Changed since last plan line.",
+    ];
+    for (const note of stillDrops) expect([note, noteConflicts(note)]).toEqual([note, ["drop_line"]]);
   });
 
   it("catches an extra line, relabelling, a language count change and banned formatting", () => {
@@ -62,7 +83,7 @@ describe("noteConflicts", () => {
 
   it("does not answer a removal of other content as a removal of the line", () => {
     // 删的是行里的内容 / 名字 / 那段，行还在——这些都是可满足的诉求。
-    // 中文侧还有一层：裸「行」是执行 / 银行 / 进行 / 可行 的尾字，不是纪要的一行。
+    // 中文侧还有一层：「行」得由指示词 / 量词 / 序数带着才是纪要的一行，别的都不是。
     const innocent = [
       "不要写执行细节，只写结论。",
       "去掉关于银行账户的内容。",
@@ -73,7 +94,42 @@ describe("noteConflicts", () => {
       "待定那行里的预算条目去掉，那是另一场会。",
       "Remove Alice from the Split line.",
       "Drop me from the Split line, I only observed.",
+      "Remove the quotes around the decision line.",
       "把待定那行的占位删了，留着标签就行。",
+      // 宾语提到动词前面（「把 X 从某行去掉」）——英文镜像早就挡住了，中文得一样。
+      "把张三从分工那行去掉。",
+      "把 Alice 从分工那行去掉。",
+      "张三从那行去掉。",
+      // 「那行的 <校验本来就在禁的东西>」：删的是那个东西，行还在。
+      "去掉那行的时间戳。",
+      "把那行的引号去掉。",
+      "去掉那行的 emoji。",
+      "那行的链接删掉。",
+      "把待定那行的日期去掉。",
+      "去掉那行的标点。",
+    ];
+    for (const note of innocent) expect([note, noteConflicts(note)]).toEqual([note, []]);
+  });
+
+  it("does not read a bare 行 inside an ordinary word as a recap line", () => {
+    // 「行」当头字的词（行动项 / 行程 / 行业 / 行为 / 行政 / 行文）用黑名单前字根本挡不住,
+    // 而「不用写行动项」是会议纪要备注里最可能出现的一句——词表因此收成白名单。
+    const innocent = [
+      "不用写行动项。",
+      "去掉行动项。",
+      "行动项那部分不用写。",
+      "删掉行程安排。",
+      "去掉行业背景那段。",
+      "不要写行为描述。",
+      "去掉行政方面的内容。",
+      "别写行文风格的意见。",
+      "去掉排行的部分。",
+      "删掉修行的比喻。",
+      "去掉通行做法。",
+      "别写现行流程。",
+      "去掉言行不一那段。",
+      "不用写品行评价。",
+      "别写德行的部分。",
     ];
     for (const note of innocent) expect([note, noteConflicts(note)]).toEqual([note, []]);
   });
@@ -84,6 +140,7 @@ describe("noteConflicts", () => {
       .toEqual(["drop_line"]);
     expect(noteConflicts("把那行删掉，另外分工那行去掉张三。")).toEqual(["drop_line"]);
     expect(noteConflicts("省略掉那条关于薪资的内容，待定那行整个删掉。")).toEqual(["drop_line"]);
+    expect(noteConflicts("把张三从分工那行去掉，待定那行整个删掉。")).toEqual(["drop_line"]);
     // issue #296 的原话就带着「没内容」三个字——守卫的名词表刻意不含它。
     expect(noteConflicts("那行没内容就删掉。")).toEqual(["drop_line"]);
   });
