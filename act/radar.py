@@ -3,7 +3,8 @@
 CONTRACT: §18 (the cron ingest chain that runs this pass), §17 (whole-pass
 lock ``state/radar.lock``), §40 (give-up diagnostic card), §45 (provenance
 birth gate — 屏幕不发起卡片), §47 (transient retry / parse-failure degrade
-card / retry ledger), §48 (source switch + 关闭真静默), §15 (obsidian
+card / retry ledger), §47.5 (iCloud 驱逐的 note = 还没在本机：brctl 催下载 /
+deferred 放宽额度 / 复活闸), §48 (source switch + 关闭真静默), §15 (obsidian
 radar_health, cron-only writer).
 
 This module covers the Obsidian raw source. For each ``.md`` file newer than
@@ -24,6 +25,7 @@ Run: ``python -m act.radar`` (or ``python -m act.radar --once``).
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -49,11 +51,40 @@ MARKER_PATH_NAME = "radar.marker"
 # interleave (2026-07-08 storm). flock is per-open-fd, auto-released on exit.
 LOCK_PATH_NAME = "radar.lock"
 # 失败 note 重试台账（state/radar_failed.json）：path -> {mtime, attempts,
-# last_error, gave_up}。水位语义 v2 的另一半，见 scan() docstring。
+# last_error, gave_up, deferred?}。水位语义 v2 的另一半，见 scan() docstring。
 FAILED_QUEUE_NAME = "radar_failed.json"
 # 每轮 cron（30 min）重试一次，超过次数上限就放弃并留案底（gave_up=True，
 # skipped+analytics 都有记录）——毒 note 不再无限重烧 claude，也绝不静默消失。
 FAILED_MAX_ATTEMPTS = 5
+
+# §47.5 iCloud 驱逐（dataless）note：Obsidian vault 住在 iCloud Drive 时，「优化
+# Mac 存储」会把冷 note 驱逐成 dataless 占位；cron/launchd 语境下 read_text 报
+# EDEADLK（"[Errno 11] Resource deadlock avoided"——2026-08 三篇 screenpipe note
+# 各烧满 5 次进 gave_up，实测 600/614 篇 note 处于驱逐态）。这不是毒 note，是
+# 「还没在本机」：先 `brctl download` 催一把再读；仍不可读 → 台账记 deferred
+# （放宽额度、不进 health 账），下轮 cron 再来。st_flags 位 truth =
+# <sys/stat.h> SF_DATALESS；stat.SF_DATALESS 只在 py3.13+，daemon 跑 /usr/bin/python3。
+SF_DATALESS = 0x40000000
+DATALESS_DOWNLOAD_WAIT_S = 3.0
+DATALESS_POLL_S = 0.2
+# 每轮 pass 最多几篇 note 可以「等下载」：整轮 pass 持着 state/radar.lock，
+# 600 篇驱逐态逐篇等 3s 会把一轮拖成半小时（radar_gmail 写同一本台账前只
+# 等 5×0.2s，久了就无锁写＝丢更新）。超额的 note 只催一把 brctl（异步）就
+# 进 deferred——下轮 cron 再来，那时多半已经在本机了。
+DATALESS_WAIT_MAX_NOTES = 5
+# 催下载（brctl）本身也进同一本预算：健康时 `brctl download` 异步、几毫秒
+# 返回，600 篇也催得完；bird 卡死时每篇要烧满 DATALESS_BRCTL_TIMEOUT_S——
+# 而那正是 note 读不出来的那个状态。所以整轮花在 iCloud 上的时间封顶
+# DATALESS_PASS_BUDGET_S，用完的 note 这轮既不催也不等，直接 deferred。
+# 超时从 30s 砍到 5s：健康的 brctl 立刻返回，30s 的那种已经是守护进程卡死。
+DATALESS_PASS_BUDGET_S = 60.0
+DATALESS_BRCTL_TIMEOUT_S = 5
+DEFERRED_PREFIX = "note not local yet (iCloud dataless)"
+_DEFERRED_LEGACY_MARK = "Resource deadlock avoided"
+# deferred 的独立额度（30 min 一轮 -> ~10 小时）：iCloud 把文件放回来通常几
+# 分钟，5 轮（2.5h）在 Mac 睡眠/离线时太短；但仍**有**上限——真的永远拉不
+# 回来的 note 必须最终留痕（宪法第 11 条：放弃要留痕）。
+FAILED_MAX_ATTEMPTS_DEFERRED = 20
 
 # §47.1 瞬时失败（transient）同 pass 退避重试：网络类（DNS/连接/claude API 抖动）
 # 与外部 SIGTERM（exit 143）几秒内通常自愈——生产台账里 9.4% 的提取轮失败绝大
@@ -198,12 +229,37 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
     key = str(note)
     entry = queue.get(key)
     if not isinstance(entry, dict) or entry.get("mtime") != mtime:
+        # 重置的是额度，不是身份：``prev_refs``（换根搬家的老 key，§47.5）是
+        # §40 卡的 dedup 身份之一，跟着重置丢掉就会重复铸卡。
+        refs = entry.get("prev_refs") if isinstance(entry, dict) else None
         entry = {"mtime": mtime, "attempts": 0}
+        if refs:
+            entry["prev_refs"] = refs
     entry["attempts"] = int(entry.get("attempts") or 0) + 1
     entry["last_error"] = error[:200]
-    entry["gave_up"] = entry["attempts"] >= FAILED_MAX_ATTEMPTS
+    entry["gave_up"] = entry["attempts"] >= _max_attempts_for(error)
+    entry["deferred"] = _is_deferred_error(error)  # add-only（§47.5）
     queue[key] = entry
     return entry
+
+
+def _max_attempts_for(error: str) -> int:
+    """§47.5：「还没在本机」（iCloud 驱逐）按 FAILED_MAX_ATTEMPTS_DEFERRED 给
+    额度，其余照旧 5 次。等云端不该烧毒 note 的预算，但也**必须**有终点：
+    额度耗尽照常 gave_up + §40 卡，放弃要留痕（宪法第 11 条）。"""
+    return (FAILED_MAX_ATTEMPTS_DEFERRED if _is_deferred_error(error)
+            else FAILED_MAX_ATTEMPTS)
+
+
+def _is_deferred_error(error: Optional[str]) -> bool:
+    """§47.5：这条案底是「note 还没在本机」（iCloud 驱逐）还是这篇 note 本身
+    坏了（非 UTF-8 / 权限 / EISDIR）。新条目带 DEFERRED_PREFIX；本前缀出生前
+    写下的历史案底按 strerror 文本认领，且**只认领 `unreadable note …` 这一类
+    串**——提取失败 / 落库失败各有自己的额度语义，字面撞上也不放行。判错的
+    代价不对称：多给几轮重试 vs. 静默丢一篇笔记，所以宁可认领。"""
+    e = str(error or "")
+    return (e.startswith(DEFERRED_PREFIX)
+            or (e.startswith("unreadable note") and _DEFERRED_LEGACY_MARK in e))
 
 
 def _is_transient_error(error: str) -> bool:
@@ -221,7 +277,7 @@ def _is_note_level_error(error: str) -> bool:
     timing out at 3am must burn its own retry budget (2026-07-22 review)."""
     e = str(error or "")
     return (e.startswith(("unparseable extraction", "unreadable note",
-                          "filing failed"))
+                          "filing failed", DEFERRED_PREFIX))
             or "TimeoutExpired" in e)
 
 
@@ -241,15 +297,19 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
 
     Dedup by note path (any status, incl. trashed/archived): one note = at
     most one card, ever — a re-give-up after the user edits the note (mtime
-    reset) must not re-file, or the honesty fix becomes a nag. Never raises;
-    filing goes through registry.upsert, NOT merge_or_new (no LLM matching —
-    identity is the path). Returns the card, or None (dup / filing failed).
-    Copy is bilingual via failures.pick (§15 single language switch) — safe
-    because the dedup identity is the source ref, never the title.
+    reset) must not re-file, or the honesty fix becomes a nag. §47.5 adds the
+    paths the ledger entry carried BEFORE a re-key (``prev_refs``) to that
+    identity: a vault-root change (mirror mode) moves the entry onto a new
+    key, and dedup on the new path alone would mint a SECOND card for the
+    very same note. Never raises; filing goes through registry.upsert, NOT
+    merge_or_new (no LLM matching — identity is the path). Returns the card,
+    or None (dup / filing failed). Copy is bilingual via failures.pick (§15
+    single language switch) — safe because the dedup identity is the source
+    ref, never the title.
     """
     try:
         ref = str(note)
-        if _has_source_ref(GIVE_UP_CHANNEL, ref):
+        if _has_source_ref(GIVE_UP_CHANNEL, *_card_refs(note, entry)):
             return None  # already filed for this note — never re-file
         saved = registry.upsert(_give_up_requirement(note, entry, ref))
         analytics.log_event("radar_give_up_card", note=note.name, req=saved.id)
@@ -258,16 +318,25 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
         return None
 
 
+def _card_refs(note: Path, entry: dict) -> list[str]:
+    """§47.5：这篇 note 的全部卡片身份 = 当前路径 + 换根前的老 key
+    （``prev_refs``，`_rekey_one` 搬家时追加的 add-only 字段）。"""
+    prev = [r for r in (entry.get("prev_refs") or []) if isinstance(r, str)]
+    return [str(note), *prev]
+
+
 def _owns_ref(r: Requirement, channel: str, ref: str) -> bool:
     """A card whose sources carry the (channel, ref) dedup identity."""
     return any(isinstance(s, dict) and s.get("channel") == channel
                and s.get("ref") == ref for s in (r.sources or []))
 
 
-def _has_source_ref(channel: str, ref: str) -> bool:
-    """Any card at all (incl. trashed/archived) already owns this identity."""
+def _has_source_ref(channel: str, *refs: str) -> bool:
+    """Any card at all (incl. trashed/archived) already owns one of these
+    identities（一次载入比对全部 ref，registry 只读一遍）。"""
     return any(_owns_ref(r, channel, ref)
-               for r in registry.load_all(include_archived=True))
+               for r in registry.load_all(include_archived=True)
+               for ref in refs)
 
 
 def _give_up_requirement(note: Path, entry: dict, ref: str) -> Requirement:
@@ -915,6 +984,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     failed = _load_failed_queue()
     md_files = _collect_md_files(root, summary)
     _reconcile_failed(failed, md_files)
+    _rearm_deferred_giveups(failed, summary, md_files)
     book = _PassBook(marker, failed)
 
     for note, mtime in md_files:
@@ -988,6 +1058,95 @@ def _reconcile_failed(failed: dict, md_files: list[tuple[Path, float]]) -> None:
             failed.pop(key)
 
 
+def _rearm_deferred_giveups(failed: dict, summary: dict,
+                            md_files: list[tuple[Path, float]]) -> list[str]:
+    """§47.5 复活闸：上次死在「还没在本机」上的 ``gave_up`` 案底重新上膛一次
+    （``attempts=0``、``gave_up=False``、add-only 字段 ``rearmed=True``）。
+
+    为什么必须有这一步：``gave_up=True`` 且 mtime 未变的条目被 ``_is_due``
+    **永久**跳过——iCloud 把文件放回来之后也再没有任何一轮会去读它（2026-08
+    那三篇 screenpipe note 正是如此：§40 诊断卡看着像「留痕」，实际是静默丢失
+    穿了件外套，宪法第 11 条）。``rearmed`` 保证只复活一次：真的永远拉不回来
+    的 note 第二次烧完额度就老实留在案底。
+
+    只复活本轮 ``md_files`` 里的 key：vault 根换过之后（mirror 模式，
+    ``config.effective_obsidian_raw``）老 key 指向真 vault 路径，本轮根本不会
+    读它——把它翻成 ``gave_up=False`` 等于**抹掉留痕却不重读**（案底连
+    ``loop_inputs`` 的 gave_up 过滤都不进了）。够得着的同名 note 由
+    ``_rekey_stale_giveups`` 先把案底搬过来，搬不动的留 ``gave_up`` 原样留痕。
+    ``gmail:uid:*`` 天然不在 md_files 里（那是 radar_gmail 的案底）。
+    返回被复活的键（判例用）。"""
+    reachable = {str(p) for p, _ in md_files}
+    _rekey_stale_giveups(failed, summary, md_files, reachable)
+    rearmed = [k for k, e in failed.items() if _rearm_candidate(k, e, reachable)]
+    for key in rearmed:
+        failed[key].update(attempts=0, gave_up=False, rearmed=True)
+    if rearmed:
+        summary["skipped"].append(
+            f"re-armed {len(rearmed)} given-up note(s) that were waiting on "
+            "iCloud — one more full retry budget")
+        analytics.log_event("radar_ledger_rearm", source="obsidian",
+                            notes=len(rearmed))
+    return rearmed
+
+
+def _rearm_candidate(key: str, entry: dict, reachable: set) -> bool:
+    """这条案底该不该复活：本轮读得到、已放弃、死在「还没在本机」上、
+    还没复活过。"""
+    return (key in reachable and bool(entry.get("gave_up"))
+            and not entry.get("rearmed")
+            and _is_deferred_error(entry.get("last_error")))
+
+
+def _rekey_stale_giveups(failed: dict, summary: dict,
+                         md_files: list[tuple[Path, float]],
+                         reachable: set) -> None:
+    """§47.5：vault 根换过之后（mirror 模式下 effective root 是
+    ``state/vault-mirror/2 - raw``，而老案底的 key 是真 vault 路径）那条案底
+    既读不到也复活不了。本轮同名 note 存在且它自己没有案底时，把案底搬到新
+    key 上（随后复活闸放行，note 真的会被重读）；搬不动的留 ``gave_up=True``
+    原样留痕，并报一行数——一篇读不到的 note 不许静默消失。"""
+    by_name = {p.name: str(p) for p, _ in md_files}
+    stale = [k for k, e in failed.items() if _rekey_candidate(k, e, reachable)]
+    moved = [k for k in stale if _rekey_one(failed, k, by_name)]
+    _note_rekeyed(summary, len(moved), len(stale) - len(moved))
+
+
+def _rekey_candidate(key: str, entry: dict, reachable: set) -> bool:
+    """本轮够不着、但死在「还没在本机」上的放弃案底（换根的遗留）。"""
+    return (key not in reachable and not key.startswith("gmail:uid:")
+            and bool(entry.get("gave_up"))
+            and _is_deferred_error(entry.get("last_error")))
+
+
+def _rekey_one(failed: dict, key: str, by_name: dict) -> bool:
+    """把一条案底搬到本轮同名 note 的 key 上（目标已有案底就不动它）。
+
+    老 key 记进 add-only 的 ``prev_refs`` 一起搬走：§40 卡的 dedup 身份是
+    note 的**全路径**，不带着老身份走，这条案底复活后再烧完额度就会给同一
+    篇 note 铸第二张诊断卡（一篇 note 永远只有一张——见 file_give_up_card）。
+    """
+    target = by_name.get(Path(key).name)
+    if target is None or target in failed:
+        return False
+    entry = failed.pop(key)
+    refs = [r for r in (entry.get("prev_refs") or []) if isinstance(r, str)]
+    entry["prev_refs"] = refs + ([key] if key not in refs else [])
+    failed[target] = entry
+    return True
+
+
+def _note_rekeyed(summary: dict, moved: int, stuck: int) -> None:
+    if moved:
+        summary["skipped"].append(
+            f"re-keyed {moved} waiting-on-iCloud ledger entry(ies) onto the "
+            "current vault root")
+    if stuck:
+        summary["skipped"].append(
+            f"{stuck} given-up ledger entry(ies) point outside the current "
+            "vault root — trace kept, not retried")
+
+
 class _PassBook:
     """本轮 pass 的账（_scan_locked 的循环状态）：marker 水位、重试台账、
     systemic 判定所需的计数与待铸的 §40 give-up 卡。
@@ -1010,6 +1169,10 @@ class _PassBook:
         self.errors: list[str] = []  # error strings this pass (systemic triage)
         self.succeeded = 0
         self.gave_up: list[tuple[Path, dict]] = []
+        self.deferred = 0        # §47.5：本轮「还没在本机」的 note 数（analytics）
+        # §47.5：本轮花在 iCloud 上的额度——几篇可以等下载 + 催与等的总时长
+        # （每轮读一次模块常量）
+        self.waits = _WaitBudget(DATALESS_WAIT_MAX_NOTES)
 
 
 def _is_due(entry: Optional[dict], mtime: float, marker: float) -> bool:
@@ -1025,7 +1188,7 @@ def _scan_note(note: Path, mtime: float, cfg: config.Config, summary: dict,
     """One note through _process_note, its outcome booked: success clears its
     ledger entry; failure records it (and queues the §40 give-up card)."""
     degraded_before = summary.get("parse_degraded", 0)
-    error = _process_note(note, cfg, summary, runner, triager)
+    error = _process_note(note, cfg, summary, runner, triager, book.waits)
     if error is None:
         # §47.2：降级 accounted 不算「真正成功」——降级只证明 claude 跑了
         # （exit 0），不证明提取通道健康；一轮全是降级/失败照样够格判
@@ -1036,6 +1199,12 @@ def _scan_note(note: Path, mtime: float, cfg: config.Config, summary: dict,
         return
     summary["skipped"].append(error)
     entry = _record_failure(book.failed, note, mtime, error)
+    if entry.get("deferred"):
+        book.deferred += 1
+        if not entry["gave_up"]:
+            # §47.5：等 iCloud 不是提取故障——额度没烧完前不进 health/systemic
+            # 账（marker 照常越过它，下轮由台账重排）。烧完了就照常放弃留痕。
+            return
     book.any_failed = True
     book.errors.append(error)
     if entry["gave_up"]:
@@ -1088,6 +1257,9 @@ def _finish_pass(book: _PassBook, summary: dict,
     analytics.log_event("radar_scan", source="obsidian",
                         files=summary.get("files_scanned"),
                         new_cards=summary.get("cards"),
+                        # §47.5：等 iCloud 的 note 数——只有条数，无文件名
+                        # （宪法第 9 条）。health 说 ok 时，诚实账在这里。
+                        deferred=book.deferred,
                         secs=round(time.monotonic() - scan_started, 1))
     _pass_health(md_files, book.any_failed, summary)
 
@@ -1138,14 +1310,129 @@ def _target_open(ref: str) -> bool:
 
 
 
+class _NotLocalYet(OSError):
+    """§47.5：note 是 iCloud dataless 占位且本轮没能拉回本机。"""
+
+
+class _WaitBudget:
+    """§47.5：本轮 pass 在 iCloud 上的额度——几篇 note 可以「等下载」
+    （DATALESS_WAIT_MAX_NOTES），以及**催 + 等**一共最多花多少秒
+    （DATALESS_PASS_BUDGET_S）。
+
+    整个 pass 持着 state/radar.lock（§17），实测 600/614 篇 note 处于驱逐态——
+    逐篇等 DATALESS_DOWNLOAD_WAIT_S 会把一轮 backfill 拖成半小时，而
+    radar_gmail 抢同一本台账的锁只等 5×0.2s，等不到就无锁写（丢更新）。
+    光封篇数不够：真正贵的是 `brctl download` 本身——bird 卡死时每篇要烧满
+    DATALESS_BRCTL_TIMEOUT_S，而那正是 note 读不出来的那个状态。所以时间也
+    封顶：额度用完的 note 这轮既不催也不等，直接 deferred，下轮 cron 再来
+    （代价是一轮 30 min 的延迟，换回不把锁攥死）。``clock`` 是注入缝，判例
+    用假时钟走完一轮预算，不真等。"""
+
+    def __init__(self, notes: int, seconds: Optional[float] = None,
+                 clock=time.monotonic):
+        self.left = int(notes)
+        self._clock = clock
+        budget = DATALESS_PASS_BUDGET_S if seconds is None else seconds
+        self.deadline = clock() + float(budget)
+
+    def take(self) -> bool:
+        """再给一篇 note「等下载」的名额（篇数与时间双封顶）。"""
+        if self.left <= 0 or self.exhausted():
+            return False
+        self.left -= 1
+        return True
+
+    def exhausted(self) -> bool:
+        """本轮花在 iCloud 上的时间用完了（催与等共用这一本）。"""
+        return self._clock() >= self.deadline
+
+
+def _is_dataless(note: Path) -> bool:
+    """macOS `st_flags & SF_DATALESS`（iCloud 已驱逐、本地只剩占位）；无
+    st_flags 的平台 / stat 失败一律 False（交给 read 去报真实错误）。"""
+    try:
+        return bool(getattr(note.stat(), "st_flags", 0) & SF_DATALESS)
+    except OSError:
+        return False
+
+
+def _brctl_download(note: Path) -> None:
+    """催 iCloud 把占位拉回本机（`brctl download` 异步返回）。best-effort：
+    命令缺失/失败都吞掉——后面的 read 会给出真实判决。"""
+    try:
+        subprocess.run(["brctl", "download", str(note)], check=False,
+                       capture_output=True, timeout=DATALESS_BRCTL_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _materialize(note: Path, waits: Optional[_WaitBudget] = None) -> None:
+    """§47.5：催 iCloud 把 dataless 占位拉回本机（催与等都从本轮预算里扣——
+    见 _WaitBudget；预算用光就直接回，这轮既不催也不等）。
+
+    **不返回判决**：占位位清没清由调用方那次真读说了算。`brctl download` 是
+    异步的，位往往还挂着文件却已经读得动了——探针替 read 投否决票，正是
+    「催了也不读」那个 bug。"""
+    if not _may_nudge(waits):
+        return
+    _brctl_download(note)
+    if not _may_wait(waits):
+        return
+    deadline = time.monotonic() + DATALESS_DOWNLOAD_WAIT_S
+    while _is_dataless(note) and time.monotonic() < deadline:
+        time.sleep(DATALESS_POLL_S)
+
+
+def _read_note_text(note: Path, waits: Optional[_WaitBudget] = None) -> str:
+    """读 note 正文。iCloud 驱逐态（stat 报 SF_DATALESS，或读出来就是 EDEADLK
+    ——占位没能就地物化）先 `brctl download` 催一把再读一次；仍不在本机 →
+    _NotLocalYet（进台账 deferred）。其余 OSError / 非 UTF-8 原样抛给调用方走
+    `unreadable note` 老路。每篇 note 至多催一次、至多多读一次。
+
+    探针只决定「要不要先催一把」，**永不替 read 投否决票**：催完照样读一次
+    （`brctl download` 异步返回，SF_DATALESS 常常还挂着，而同一个语境里
+    read_text 可能就地物化成功）。坏语境下那次读依旧是 EDEADLK，什么也没
+    多花；读得到的 note 却不会再被白白判成 deferred。"""
+    text = None if _is_dataless(note) else _read_or_deadlock(note)
+    if text is not None:
+        return text
+    _materialize(note, waits)
+    text = _read_or_deadlock(note)
+    if text is None:
+        raise _NotLocalYet("still dataless after brctl download")
+    return text
+
+
+def _may_wait(waits: Optional[_WaitBudget]) -> bool:
+    """本轮还能不能为这篇 note 等下载（没有预算对象 = 不受限，单测/直调）。"""
+    return waits is None or waits.take()
+
+
+def _may_nudge(waits: Optional[_WaitBudget]) -> bool:
+    """本轮还能不能为这篇 note 催下载（时间预算没花完；没有预算对象 = 不受限）。"""
+    return waits is None or not waits.exhausted()
+
+
+def _read_or_deadlock(note: Path) -> Optional[str]:
+    """UTF-8 正文，或 None（= EDEADLK，iCloud 占位没能就地物化）。"""
+    try:
+        return note.read_text(encoding="utf-8")
+    except OSError as e:
+        if e.errno == errno.EDEADLK:
+            return None
+        raise
+
+
 def _process_note(note: Path, cfg: config.Config, summary: dict,
-                  runner, triager) -> Optional[str]:
+                  runner, triager, waits: Optional[_WaitBudget] = None) -> Optional[str]:
     """处理一篇 note：读取 -> 提取 -> 逐项 triage 落库。原地累加 ``summary``
     的 extracted/reconciled/cards；返回 None（成功）或一条错误描述（进重试
     台账）。任何失败都只属于这一篇 note，绝不外溢崩掉整个 pass。"""
     from act.lib import quick_capture  # lazy: analyze->executor chain stays acyclic
     try:
-        text = note.read_text(encoding="utf-8")
+        text = _read_note_text(note, waits)
+    except _NotLocalYet as e:
+        return f"{DEFERRED_PREFIX}: {note.name}: {e}"
     except (OSError, UnicodeDecodeError) as e:
         # UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的
         # note 曾让整个 pass 崩掉、marker/health 全部停摆。
