@@ -8,14 +8,21 @@ charged the retry budget five times and gave up on each. Pinned here:
 - dataless probe / EDEADLK on read → one ``brctl download`` nudge → re-read
   → filed normally (the materialisation is what actually cures it: re-opening
   the same placeholder in the same no-download context deadlocks again);
+- the probe never vetoes the read: ``brctl download`` returns asynchronously,
+  so SF_DATALESS often lingers on a file that reads fine — the nudge is
+  followed by a real read attempt either way;
 - a note that stays dataless is booked ``deferred``: the wider
   ``FAILED_MAX_ATTEMPTS_DEFERRED`` budget instead of the poison one, no §40
   card and ``radar_health`` stays ok while it waits, the marker advances, a
-  lone deferred note is not a systemic failure, the next pass retries it;
+  lone deferred note is not a systemic failure (it burns its whole budget
+  alone and still ends in one §40 card, never in a voided pass), the next
+  pass retries it;
 - the wait is bounded — a note that never comes back still gives up with the
   §40 trace the constitution (#11) requires, and health says so;
-- only ``DATALESS_WAIT_MAX_NOTES`` notes per pass may sleep on the download
-  (the whole pass holds state/radar.lock);
+- the per-pass iCloud budget bounds both halves (the whole pass holds
+  state/radar.lock): only ``DATALESS_WAIT_MAX_NOTES`` notes may sleep on the
+  download, and a wedged download daemon cannot burn more than
+  ``DATALESS_PASS_BUDGET_S`` on ``brctl`` calls;
 - the ``brctl`` call is best-effort (missing binary swallowed) and the
   dataless probe answers False for ordinary / missing files.
 
@@ -42,19 +49,43 @@ from act.lib import radar_health, registry
 
 
 class _DatalessBase(RadarScanBase):
+    """驱逐态是两件事，判例里也分开：``dataless`` = SF_DATALESS 位挂着，
+    ``deadlocked`` = 读它就 EDEADLK。真·cron 语境下的驱逐 note 两样都占
+    （``_evict``），但位挂着却读得动是常态——`brctl download` 异步返回，位
+    往往还没清。"""
+
     def setUp(self):
         super().setUp()
         self.downloads: list = []
-        self.dataless: set = set()   # note paths currently "evicted"
+        self.dataless: set = set()     # SF_DATALESS 位挂着的 note
+        self.deadlocked: set = set()   # 读它就 EDEADLK（cron 语境的驱逐态）
         self._patch(radar, "DATALESS_DOWNLOAD_WAIT_S", 0)
         self._patch(radar, "_brctl_download",
                     lambda note: self.downloads.append(str(note)))
         self._patch(radar, "_is_dataless", lambda note: str(note) in self.dataless)
+        real_read = Path.read_text
+
+        def read_text(this, *a, **kw):
+            if str(this) in self.deadlocked:
+                raise OSError(errno.EDEADLK, "Resource deadlock avoided")
+            return real_read(this, *a, **kw)
+
+        self._patch(Path, "read_text", read_text)
 
     def _patch(self, target, name, value):
         patcher = mock.patch.object(target, name, value)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def _evict(self, note):
+        """iCloud 把这篇 note 驱逐了：位挂着，而且 cron 语境下读不出来。"""
+        self.dataless.add(str(note))
+        self.deadlocked.add(str(note))
+
+    def _restore(self):
+        """iCloud 把文件放回来了。"""
+        self.dataless.clear()
+        self.deadlocked.clear()
 
     def _companion(self, i):
         return self._note(f"ok-{i}.md", f"ok {i}", BASE + 10 * (i + 1))
@@ -106,7 +137,7 @@ class DeadlockReadTestCase(_DatalessBase):
         """生产路径：stat 报驱逐 → brctl 把文件拉回来 → 这一轮就读到了。
         （#305 只重开 open()：cron 语境下物化是关的，重开还是 EDEADLK。）"""
         note = self._note("evicted.md", "Boss: decide the venue", BASE)
-        self.dataless.add(str(note))
+        self._evict(note)
         self._patch(radar, "_brctl_download", self._downloader_that_delivers())
 
         summary = radar.scan(
@@ -120,7 +151,23 @@ class DeadlockReadTestCase(_DatalessBase):
         def download(note):
             self.downloads.append(str(note))
             self.dataless.discard(str(note))   # iCloud 把文件放回来了
+            self.deadlocked.discard(str(note))
         return download
+
+    def test_a_lingering_dataless_flag_never_vetoes_the_read(self):
+        """`brctl download` 异步返回：SF_DATALESS 位常常还挂着，文件却已经
+        读得动了。探针只决定催不催，**不替 read 投否决票**——旧代码在这里
+        一次 read_text 都不发，把一篇读得到的 note 直接判成 deferred。"""
+        note = self._note("evicted.md", "Boss: decide the venue", BASE)
+        self.dataless.add(str(note))    # 位一直挂着，读却没问题
+
+        summary = radar.scan(
+            runner=lambda t: json.dumps([_item("Decide the venue")]))
+
+        self.assertEqual(self.downloads, [str(note)])   # 催了一把
+        self.assertEqual(summary["extracted"], 1)       # 也真的读了
+        self.assertEqual(self._queue(), {})
+        self.assertFalse(any(radar.DEFERRED_PREFIX in s for s in summary["skipped"]))
 
     def test_edeadlk_that_persists_after_the_nudge_is_deferred(self):
         note = self._note("evicted.md", "content", BASE)
@@ -165,27 +212,59 @@ class WaitBudgetTestCase(_DatalessBase):
         只催一把 brctl 就进 deferred，下轮再来。"""
         self._patch(radar, "DATALESS_WAIT_MAX_NOTES", 2)
         waited: list = []
-        self._patch(radar, "_materialize",
-                    lambda note, wait=True: waited.append(wait) or False)
+
+        def materialize(note, waits=None):
+            waited.append(radar._may_wait(waits))
+
+        self._patch(radar, "_materialize", materialize)
         for i in range(4):
-            note = self._note(f"evicted-{i}.md", "content", BASE + i)
-            self.dataless.add(str(note))
+            self._evict(self._note(f"evicted-{i}.md", "content", BASE + i))
 
         radar.scan(runner=lambda t: "[]")
 
         self.assertEqual(waited, [True, True, False, False])
 
+    def test_a_wedged_download_daemon_cannot_hold_the_pass_lock(self):
+        """催 brctl 也进同一本预算：bird 卡死时每篇要烧满超时，而整轮 pass
+        攥着 state/radar.lock（§17）——预算花完的 note 这轮既不催也不等，
+        直接 deferred，下轮 cron 再来。只封篇数封不住这一头。"""
+        clock = {"now": 0.0}
+        real_budget = radar._WaitBudget
+        self._patch(radar, "_WaitBudget",
+                    lambda notes: real_budget(notes, seconds=20.0,
+                                              clock=lambda: clock["now"]))
+
+        def wedged(note):                       # 每篇烧满 brctl 的超时
+            self.downloads.append(str(note))
+            clock["now"] += radar.DATALESS_BRCTL_TIMEOUT_S
+
+        self._patch(radar, "_brctl_download", wedged)
+        for i in range(10):
+            self._evict(self._note(f"evicted-{i}.md", "content", BASE + i))
+
+        summary = radar.scan(runner=lambda t: "[]")
+
+        self.assertEqual(len(self.downloads), 4)    # 20s / 5s，其余一把也不催
+        self.assertEqual(len(self._queue()), 10)    # 但十篇都留了 deferred 案底
+        self.assertEqual(sum(s.startswith(radar.DEFERRED_PREFIX)
+                             for s in summary["skipped"]), 10)
+
     def test_the_budget_hands_out_exactly_its_allowance(self):
         budget = radar._WaitBudget(2)
         self.assertEqual([budget.take() for _ in range(4)],
                          [True, True, False, False])
-        self.assertTrue(radar._may_wait(None))   # 没有预算对象时不受限
+        self.assertTrue(radar._may_wait(None))    # 没有预算对象时不受限
+        self.assertTrue(radar._may_nudge(None))
+        spent = radar._WaitBudget(5, seconds=0)   # 时间预算先用完
+        self.assertTrue(spent.exhausted())
+        self.assertFalse(spent.take())            # 篇数还剩，照样不给
+        self.assertFalse(radar._may_nudge(spent))
 
 
 class DeferredLedgerTestCase(_DatalessBase):
     def test_a_waiting_note_keeps_the_wider_budget_and_healthy_books(self):
         note = self._note("evicted.md", "content", BASE)
-        self.dataless.add(str(note))
+        self._evict(note)
         calls = []
         obsidian = self._obsidian_health()
 
@@ -221,7 +300,7 @@ class DeferredLedgerTestCase(_DatalessBase):
         """宪法第 11 条：放弃要留痕。等 iCloud 的额度宽，但**有终点**——
         烧完了照常 gave_up + §40 卡 + health 说话。"""
         note = self._note("evicted.md", "content", BASE)
-        self.dataless.add(str(note))
+        self._evict(note)
         obsidian = self._obsidian_health()
 
         for i in range(radar.FAILED_MAX_ATTEMPTS_DEFERRED):
@@ -234,6 +313,25 @@ class DeferredLedgerTestCase(_DatalessBase):
         self.assertTrue(any("giving up" in s for s in summary["skipped"]))
         self.assertEqual(len(self._gave_up_cards()), 1)
         self.assertEqual(obsidian()["skip_reason"], "extract_failed")
+
+    def test_a_lone_waiting_note_gives_up_instead_of_voiding_the_pass(self):
+        """夜里只有这一篇 note 的 pass：它烧完自己的额度，照常 gave_up + 一张
+        §40 卡。**不许**被判 systemic——那会把 attempts 整轮回滚（`failed_before`
+        还原），这篇 note 就永远到不了留痕那一步（宪法第 11 条）。
+        `_is_note_level_error` 的 DEFERRED_PREFIX 分支钉在这里。"""
+        note = self._note("evicted.md", "content", BASE)
+        self._evict(note)                       # 全程只有这一篇，没有陪跑的
+
+        for i in range(radar.FAILED_MAX_ATTEMPTS_DEFERRED):
+            summary = radar.scan(runner=lambda t: "[]")
+            self.assertEqual(summary["files_scanned"], 1, f"pass {i}")
+            self.assertFalse(any("systemic extraction failure" in s
+                                 for s in summary["skipped"]), f"pass {i}")
+
+        entry = self._queue()[str(note)]
+        self.assertEqual(entry["attempts"], radar.FAILED_MAX_ATTEMPTS_DEFERRED)
+        self.assertTrue(entry["gave_up"])       # 账没被 systemic 回滚掉
+        self.assertEqual(len(self._gave_up_cards()), 1)
 
     def test_the_attempt_cap_is_per_class(self):
         deferred = f"{radar.DEFERRED_PREFIX}: a.md: still dataless"
@@ -259,11 +357,11 @@ class DeferredLedgerTestCase(_DatalessBase):
 
     def test_deferred_note_is_retried_and_cleared_once_local(self):
         note = self._note("evicted.md", "Boss: decide the venue", BASE)
-        self.dataless.add(str(note))
+        self._evict(note)
         radar.scan(runner=lambda t: "[]")
         self.assertIn(str(note), self._queue())
 
-        self.dataless.clear()                          # iCloud 拉回来了
+        self._restore()                                # iCloud 拉回来了
         summary = radar.scan(runner=lambda t: json.dumps([_item("Decide the venue")]))
         self.assertEqual(summary["files_scanned"], 1)
         self.assertEqual(summary["extracted"], 1)
@@ -273,9 +371,9 @@ class DeferredLedgerTestCase(_DatalessBase):
         """同一条案底的 attempts 是共用的，上限按**当前**错误的类别算：
         等云端等久了的 note 一旦真坏，立刻留痕而不是再宽限 5 轮。"""
         note = self._note("evicted.md", "poison", BASE)
-        self.dataless.add(str(note))
+        self._evict(note)
         radar.scan(runner=lambda t: "[]")
-        self.dataless.clear()
+        self._restore()
         self._companion(0)
 
         def runner(text):

@@ -10,7 +10,9 @@ cron 会去读它们——§40 诊断卡看着像「留痕」，实际是静默�
   烧完额度就老实留在案底；
 - 只复活**本轮读得到**的 key：换根（vault-mirror）之后的遗留案底翻成
   ``gave_up=False`` 却永不重读 = 抹掉留痕，比不复活更糟；
-- 换根遗留的案底按同名 note 搬到当前根上，搬完真的被重读、销案。
+- 换根遗留的案底按同名 note 搬到当前根上，搬完真的被重读、销案；
+- 搬家带着卡片身份走（add-only ``prev_refs``）：§40 的 dedup 认的是 note 全
+  路径，换了根再烧完额度不许给同一篇 note 铸第二张诊断卡。
 
 读取路径（dataless 探针 + brctl 催下载）的判例在
 tests/test_radar_dataless_note.py。
@@ -25,7 +27,7 @@ from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act impor
 from tests.test_radar import BASE, RadarScanBase
 
 from act import radar
-from act.lib import config
+from act.lib import config, registry
 
 LEGACY = ("unreadable note 2026-08-18-screenpipe-0019.md: "
           "[Errno 11] Resource deadlock avoided")
@@ -119,6 +121,27 @@ class RearmGateTestCase(unittest.TestCase):
         self.assertFalse(ledger[str(mirrored)]["gave_up"])
         self.assertTrue(any("re-keyed" in s for s in summary["skipped"]))
 
+    def test_a_re_key_carries_the_old_card_identity_along(self):
+        """搬家把老 key 记进 add-only 的 ``prev_refs``：§40 卡的 dedup 身份是
+        note 全路径，丢了老身份 = 同一篇 note 第二次放弃时多铸一张卡。"""
+        ledger = self._stuck()
+        mirrored = Path("/state/vault-mirror/2 - raw/"
+                        "2026-08-18-screenpipe-0019.md")
+        self._rearm(ledger, md_files=[(mirrored, BASE)])
+        self.assertEqual(ledger[str(mirrored)]["prev_refs"], [self.KEY])
+
+    def test_an_edit_resets_the_budget_but_not_the_card_identity(self):
+        """用户改了 note（mtime 变）值得满额重试，但身份不跟着重置——
+        否则改一次就能让同一篇 note 再铸一张 §40 卡。"""
+        key = "/state/vault-mirror/2 - raw/cloudy.md"
+        queue = {key: {"mtime": BASE, "attempts": 3, "gave_up": False,
+                       "prev_refs": ["/vault/2 - raw/cloudy.md"],
+                       "last_error": LEGACY}}
+        entry = radar._record_failure(queue, Path(key), BASE + 5,
+                                      f"{radar.DEFERRED_PREFIX}: cloudy.md: x")
+        self.assertEqual(entry["attempts"], 1)
+        self.assertEqual(entry["prev_refs"], ["/vault/2 - raw/cloudy.md"])
+
     def test_re_keying_never_clobbers_a_live_entry(self):
         mirrored = Path("/state/vault-mirror/2 - raw/"
                         "2026-08-18-screenpipe-0019.md")
@@ -130,6 +153,31 @@ class RearmGateTestCase(unittest.TestCase):
         self.assertEqual(rearmed, [])
         self.assertEqual(ledger[str(mirrored)]["attempts"], 1)   # 没被覆盖
         self.assertTrue(ledger[self.KEY]["gave_up"])             # 老案底留痕
+
+
+class GiveUpCardIdentityTestCase(RadarScanBase):
+    """§40「一篇 note 最多一张卡，永远」——换根搬家 + 复活之后也算数。"""
+
+    KEY = "/vault/2 - raw/2026-08-18-screenpipe-0019.md"
+
+    def _cards(self):
+        return [r for r in registry.load_all(include_archived=True)
+                if (r.sources or [{}])[0].get("channel") == radar.GIVE_UP_CHANNEL]
+
+    def test_a_second_give_up_after_a_re_key_files_no_second_card(self):
+        entry = {"mtime": BASE, "attempts": radar.FAILED_MAX_ATTEMPTS_DEFERRED,
+                 "gave_up": True, "last_error": LEGACY}
+        self.assertIsNotNone(radar.file_give_up_card(Path(self.KEY), entry))
+
+        ledger = {self.KEY: entry}
+        mirrored = str(config.STATE_DIR / "vault-mirror" / "2 - raw"
+                       / Path(self.KEY).name)
+        self.assertTrue(radar._rekey_one(ledger, self.KEY,
+                                         {Path(self.KEY).name: mirrored}))
+        # 复活 -> 再烧完一轮宽额度 -> 又一次 gave_up，这次 key 是 mirror 根
+        again = ledger[mirrored]
+        self.assertIsNone(radar.file_give_up_card(Path(mirrored), again))
+        self.assertEqual(len(self._cards()), 1)
 
 
 class RearmPassTestCase(RadarScanBase):

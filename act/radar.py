@@ -72,7 +72,13 @@ DATALESS_POLL_S = 0.2
 # 等 5×0.2s，久了就无锁写＝丢更新）。超额的 note 只催一把 brctl（异步）就
 # 进 deferred——下轮 cron 再来，那时多半已经在本机了。
 DATALESS_WAIT_MAX_NOTES = 5
-DATALESS_BRCTL_TIMEOUT_S = 30
+# 催下载（brctl）本身也进同一本预算：健康时 `brctl download` 异步、几毫秒
+# 返回，600 篇也催得完；bird 卡死时每篇要烧满 DATALESS_BRCTL_TIMEOUT_S——
+# 而那正是 note 读不出来的那个状态。所以整轮花在 iCloud 上的时间封顶
+# DATALESS_PASS_BUDGET_S，用完的 note 这轮既不催也不等，直接 deferred。
+# 超时从 30s 砍到 5s：健康的 brctl 立刻返回，30s 的那种已经是守护进程卡死。
+DATALESS_PASS_BUDGET_S = 60.0
+DATALESS_BRCTL_TIMEOUT_S = 5
 DEFERRED_PREFIX = "note not local yet (iCloud dataless)"
 _DEFERRED_LEGACY_MARK = "Resource deadlock avoided"
 # deferred 的独立额度（30 min 一轮 -> ~10 小时）：iCloud 把文件放回来通常几
@@ -223,7 +229,12 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
     key = str(note)
     entry = queue.get(key)
     if not isinstance(entry, dict) or entry.get("mtime") != mtime:
+        # 重置的是额度，不是身份：``prev_refs``（换根搬家的老 key，§47.5）是
+        # §40 卡的 dedup 身份之一，跟着重置丢掉就会重复铸卡。
+        refs = entry.get("prev_refs") if isinstance(entry, dict) else None
         entry = {"mtime": mtime, "attempts": 0}
+        if refs:
+            entry["prev_refs"] = refs
     entry["attempts"] = int(entry.get("attempts") or 0) + 1
     entry["last_error"] = error[:200]
     entry["gave_up"] = entry["attempts"] >= _max_attempts_for(error)
@@ -286,15 +297,19 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
 
     Dedup by note path (any status, incl. trashed/archived): one note = at
     most one card, ever — a re-give-up after the user edits the note (mtime
-    reset) must not re-file, or the honesty fix becomes a nag. Never raises;
-    filing goes through registry.upsert, NOT merge_or_new (no LLM matching —
-    identity is the path). Returns the card, or None (dup / filing failed).
-    Copy is bilingual via failures.pick (§15 single language switch) — safe
-    because the dedup identity is the source ref, never the title.
+    reset) must not re-file, or the honesty fix becomes a nag. §47.5 adds the
+    paths the ledger entry carried BEFORE a re-key (``prev_refs``) to that
+    identity: a vault-root change (mirror mode) moves the entry onto a new
+    key, and dedup on the new path alone would mint a SECOND card for the
+    very same note. Never raises; filing goes through registry.upsert, NOT
+    merge_or_new (no LLM matching — identity is the path). Returns the card,
+    or None (dup / filing failed). Copy is bilingual via failures.pick (§15
+    single language switch) — safe because the dedup identity is the source
+    ref, never the title.
     """
     try:
         ref = str(note)
-        if _has_source_ref(GIVE_UP_CHANNEL, ref):
+        if _has_source_ref(GIVE_UP_CHANNEL, *_card_refs(note, entry)):
             return None  # already filed for this note — never re-file
         saved = registry.upsert(_give_up_requirement(note, entry, ref))
         analytics.log_event("radar_give_up_card", note=note.name, req=saved.id)
@@ -303,16 +318,25 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
         return None
 
 
+def _card_refs(note: Path, entry: dict) -> list[str]:
+    """§47.5：这篇 note 的全部卡片身份 = 当前路径 + 换根前的老 key
+    （``prev_refs``，`_rekey_one` 搬家时追加的 add-only 字段）。"""
+    prev = [r for r in (entry.get("prev_refs") or []) if isinstance(r, str)]
+    return [str(note), *prev]
+
+
 def _owns_ref(r: Requirement, channel: str, ref: str) -> bool:
     """A card whose sources carry the (channel, ref) dedup identity."""
     return any(isinstance(s, dict) and s.get("channel") == channel
                and s.get("ref") == ref for s in (r.sources or []))
 
 
-def _has_source_ref(channel: str, ref: str) -> bool:
-    """Any card at all (incl. trashed/archived) already owns this identity."""
+def _has_source_ref(channel: str, *refs: str) -> bool:
+    """Any card at all (incl. trashed/archived) already owns one of these
+    identities（一次载入比对全部 ref，registry 只读一遍）。"""
     return any(_owns_ref(r, channel, ref)
-               for r in registry.load_all(include_archived=True))
+               for r in registry.load_all(include_archived=True)
+               for ref in refs)
 
 
 def _give_up_requirement(note: Path, entry: dict, ref: str) -> Requirement:
@@ -1096,11 +1120,19 @@ def _rekey_candidate(key: str, entry: dict, reachable: set) -> bool:
 
 
 def _rekey_one(failed: dict, key: str, by_name: dict) -> bool:
-    """把一条案底搬到本轮同名 note 的 key 上（目标已有案底就不动它）。"""
+    """把一条案底搬到本轮同名 note 的 key 上（目标已有案底就不动它）。
+
+    老 key 记进 add-only 的 ``prev_refs`` 一起搬走：§40 卡的 dedup 身份是
+    note 的**全路径**，不带着老身份走，这条案底复活后再烧完额度就会给同一
+    篇 note 铸第二张诊断卡（一篇 note 永远只有一张——见 file_give_up_card）。
+    """
     target = by_name.get(Path(key).name)
     if target is None or target in failed:
         return False
-    failed[target] = failed.pop(key)
+    entry = failed.pop(key)
+    refs = [r for r in (entry.get("prev_refs") or []) if isinstance(r, str)]
+    entry["prev_refs"] = refs + ([key] if key not in refs else [])
+    failed[target] = entry
     return True
 
 
@@ -1138,7 +1170,8 @@ class _PassBook:
         self.succeeded = 0
         self.gave_up: list[tuple[Path, dict]] = []
         self.deferred = 0        # §47.5：本轮「还没在本机」的 note 数（analytics）
-        # §47.5：本轮允许「等下载」的 note 额度（每轮读一次模块常量）
+        # §47.5：本轮花在 iCloud 上的额度——几篇可以等下载 + 催与等的总时长
+        # （每轮读一次模块常量）
         self.waits = _WaitBudget(DATALESS_WAIT_MAX_NOTES)
 
 
@@ -1282,22 +1315,36 @@ class _NotLocalYet(OSError):
 
 
 class _WaitBudget:
-    """§47.5：本轮 pass 还允许几篇 note「等下载」（DATALESS_WAIT_MAX_NOTES）。
+    """§47.5：本轮 pass 在 iCloud 上的额度——几篇 note 可以「等下载」
+    （DATALESS_WAIT_MAX_NOTES），以及**催 + 等**一共最多花多少秒
+    （DATALESS_PASS_BUDGET_S）。
 
     整个 pass 持着 state/radar.lock（§17），实测 600/614 篇 note 处于驱逐态——
     逐篇等 DATALESS_DOWNLOAD_WAIT_S 会把一轮 backfill 拖成半小时，而
     radar_gmail 抢同一本台账的锁只等 5×0.2s，等不到就无锁写（丢更新）。
-    超额的 note 只催一把 brctl 就进 deferred：下轮 cron 再来，代价是一轮
-    30 min 的延迟，换回不把锁攥死。"""
+    光封篇数不够：真正贵的是 `brctl download` 本身——bird 卡死时每篇要烧满
+    DATALESS_BRCTL_TIMEOUT_S，而那正是 note 读不出来的那个状态。所以时间也
+    封顶：额度用完的 note 这轮既不催也不等，直接 deferred，下轮 cron 再来
+    （代价是一轮 30 min 的延迟，换回不把锁攥死）。``clock`` 是注入缝，判例
+    用假时钟走完一轮预算，不真等。"""
 
-    def __init__(self, notes: int):
+    def __init__(self, notes: int, seconds: Optional[float] = None,
+                 clock=time.monotonic):
         self.left = int(notes)
+        self._clock = clock
+        budget = DATALESS_PASS_BUDGET_S if seconds is None else seconds
+        self.deadline = clock() + float(budget)
 
     def take(self) -> bool:
-        if self.left <= 0:
+        """再给一篇 note「等下载」的名额（篇数与时间双封顶）。"""
+        if self.left <= 0 or self.exhausted():
             return False
         self.left -= 1
         return True
+
+    def exhausted(self) -> bool:
+        """本轮花在 iCloud 上的时间用完了（催与等共用这一本）。"""
+        return self._clock() >= self.deadline
 
 
 def _is_dataless(note: Path) -> bool:
@@ -1319,29 +1366,38 @@ def _brctl_download(note: Path) -> None:
         pass
 
 
-def _materialize(note: Path, wait: bool = True) -> bool:
-    """§47.5：催 iCloud 把 dataless 占位拉回本机。``wait`` 时最多等
-    DATALESS_DOWNLOAD_WAIT_S 直到占位位清掉，否则只 re-stat 一次就回
-    （本轮额度用光——见 _WaitBudget）。返回是否已在本机。"""
+def _materialize(note: Path, waits: Optional[_WaitBudget] = None) -> None:
+    """§47.5：催 iCloud 把 dataless 占位拉回本机（催与等都从本轮预算里扣——
+    见 _WaitBudget；预算用光就直接回，这轮既不催也不等）。
+
+    **不返回判决**：占位位清没清由调用方那次真读说了算。`brctl download` 是
+    异步的，位往往还挂着文件却已经读得动了——探针替 read 投否决票，正是
+    「催了也不读」那个 bug。"""
+    if not _may_nudge(waits):
+        return
     _brctl_download(note)
-    deadline = time.monotonic() + (DATALESS_DOWNLOAD_WAIT_S if wait else 0.0)
-    while _is_dataless(note):
-        if time.monotonic() >= deadline:
-            return False
+    if not _may_wait(waits):
+        return
+    deadline = time.monotonic() + DATALESS_DOWNLOAD_WAIT_S
+    while _is_dataless(note) and time.monotonic() < deadline:
         time.sleep(DATALESS_POLL_S)
-    return True
 
 
 def _read_note_text(note: Path, waits: Optional[_WaitBudget] = None) -> str:
     """读 note 正文。iCloud 驱逐态（stat 报 SF_DATALESS，或读出来就是 EDEADLK
     ——占位没能就地物化）先 `brctl download` 催一把再读一次；仍不在本机 →
     _NotLocalYet（进台账 deferred）。其余 OSError / 非 UTF-8 原样抛给调用方走
-    `unreadable note` 老路。每篇 note 至多催一次、至多多读一次。"""
+    `unreadable note` 老路。每篇 note 至多催一次、至多多读一次。
+
+    探针只决定「要不要先催一把」，**永不替 read 投否决票**：催完照样读一次
+    （`brctl download` 异步返回，SF_DATALESS 常常还挂着，而同一个语境里
+    read_text 可能就地物化成功）。坏语境下那次读依旧是 EDEADLK，什么也没
+    多花；读得到的 note 却不会再被白白判成 deferred。"""
     text = None if _is_dataless(note) else _read_or_deadlock(note)
     if text is not None:
         return text
-    if _materialize(note, _may_wait(waits)):
-        text = _read_or_deadlock(note)
+    _materialize(note, waits)
+    text = _read_or_deadlock(note)
     if text is None:
         raise _NotLocalYet("still dataless after brctl download")
     return text
@@ -1350,6 +1406,11 @@ def _read_note_text(note: Path, waits: Optional[_WaitBudget] = None) -> str:
 def _may_wait(waits: Optional[_WaitBudget]) -> bool:
     """本轮还能不能为这篇 note 等下载（没有预算对象 = 不受限，单测/直调）。"""
     return waits is None or waits.take()
+
+
+def _may_nudge(waits: Optional[_WaitBudget]) -> bool:
+    """本轮还能不能为这篇 note 催下载（时间预算没花完；没有预算对象 = 不受限）。"""
+    return waits is None or not waits.exhausted()
 
 
 def _read_or_deadlock(note: Path) -> Optional[str]:
