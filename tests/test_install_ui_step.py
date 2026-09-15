@@ -714,12 +714,14 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertFalse(any(c.startswith("pkill -f") for c in calls), calls)
 
     def test_relaunch_is_a_no_op_when_nothing_was_installed(self):
-        # toolchain absent → nothing installed → even a running app is left alone
-        # (the one call is the §61.8 sweep's "is the shell running?" probe, which
-        # answers yes and stops there)
+        # toolchain absent → nothing installed → even a running app is left alone.
+        # On macOS the one call is the §61.8 sweep's "is the shell running?" probe,
+        # which answers yes and stops there; off macOS the sweep returns at its own
+        # `uname -s` guard, so the honest expectation there is zero calls at all
+        # (this test is the non-Darwin cell too — it must stay green on tests-linux).
         self.running_flag.write_text("", encoding="utf-8")
         self._run(non_interactive=1, relaunch=True)
-        self.assertEqual(self._calls(), ["pgrep -x ZelinAIBoard"])
+        self.assertEqual(self._calls(), ["pgrep -x ZelinAIBoard"] if _DARWIN else [])
 
 
 if __name__ == "__main__":

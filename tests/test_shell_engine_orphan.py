@@ -8,6 +8,8 @@
 - 回收长在 `shell/Sources/EngineOwnership.swift` 的**外面**：`Recording.swift` 仍是 mac/
   冻结副本（逐字节判例在 test_shell_engine_mirror.py，这里是本节的近身一句），新模块
   只经缝借它三样公开的东西，且 pkill 的模式**逐字复用** `RecordingController.enginePattern`；
+- 退出凭据是**活性不是历史**（`engineProcess?.isRunning == true`，绝不是 `!= nil`——冻结的
+  `Recording.swift` 只赋一次值、从不置回 nil，判例连这一点一起钉），退出路径也有 §54 守卫；
 - main.swift 的接线顺序 = §61.8 的全部要点：回收在后台 → 完成回调 hop 回 MainActor →
   日程执法 → autostart → 才装 5 s tick；`applicationWillTerminate` 第一句是 stopAtExit；
 - install.sh 的三个常量与壳逐字互镜（`UI_ENGINE_PATTERN` / `UI_LEGACY_EXEC_NAME` /
@@ -64,7 +66,26 @@ class FrozenEngineUntouchedTestCase(unittest.TestCase):
                 self.assertIn(seam, self.ownership)
         # 默认实现直连冻结引擎的三样公开面
         self.assertIn("RecordingController.isEngineRunning()", self.ownership)
-        self.assertIn("RecordingController.engineProcess != nil", self.ownership)
+
+    def test_the_exit_credential_is_liveness_not_history(self):
+        # `Recording.swift` 只在 startEngineBlocking 里给 engineProcess 赋一次值、从不置回
+        # nil，所以 `!= nil` 是「这个壳曾经起过引擎」的终身通行证：日程停过 / 切 off /
+        # 引擎崩过之后，退出路径会拿它去 pkill -f 一台外人的引擎（§54 冻结原生 app 那台
+        # 就在射程里）。凭据必须是活性。行为判例 = LaunchHarness [9](h)/(i)。
+        self.assertIn("RecordingController.engineProcess?.isRunning == true", self.ownership)
+        self.assertNotIn("RecordingController.engineProcess != nil", self.ownership,
+                         "an engine handle that is merely non-nil proves nothing (issue #318 review)")
+        assigns = re.findall(r"^\s*engineProcess = ", self.engine, flags=re.M)
+        self.assertEqual(len(assigns), 1,
+                         "Recording.swift still assigns engineProcess exactly once and never "
+                         "clears it — that is why the credential must read isRunning")
+        # 退出路径也让 §54 那个冻结 app 的引擎（`pkill -f` 分不清归属）
+        stop = self.ownership[self.ownership.index("static func stopAtExit() {"):]
+        stop = stop[:stop.index("\n    }")]
+        self.assertIn("legacyAppRunning()", stop,
+                      "the exit path mirrors the launch path's §54 guard before it fires")
+        self.assertLess(stop.index("legacyAppRunning()"), stop.index('killEngine("-TERM")'),
+                        "the guard must be consulted before any signal")
 
     def test_legacy_guard_names_the_frozen_app_executable(self):
         self.assertIn('static let legacyExecName = "ZelinAIEngineer"', self.ownership)
@@ -197,12 +218,26 @@ class ContractTestCase(unittest.TestCase):
                       "§56.5's relaunch rule needs the cross-reference")
 
     def test_the_decision_row_quotes_the_issue(self):
+        # D 号按「origin/dev 上最大 D + 1」现铸，rebase 时可能被别的 PR 占掉而要改号——
+        # 所以判例按**内容**找那一行（issue #318 + 本模块），再要求那个号在表里唯一、
+        # 且 CONTRACT 的三处引用与它一致。改号不再需要改判例。
         plan = _read(REPO_ROOT / "docs" / "design" / "vnext2-plan.md")
-        rows = [ln for ln in plan.splitlines() if ln.startswith("| D62 |")]
-        self.assertEqual(len(rows), 1, "exactly one D62 row")
-        self.assertIn("Claude 按 owner 授权代拍", rows[0])
-        self.assertIn("issue #318", rows[0])
-        self.assertIn("不要静默认领", rows[0], "the delegation quote is the issue's Expected, verbatim")
+        rows = [ln for ln in plan.splitlines()
+                if re.match(r"^\| D\d+ \|", ln) and "issue #318" in ln
+                and "EngineOwnership.swift" in ln]
+        self.assertEqual(len(rows), 1, "exactly one decision row owns issue #318")
+        row = rows[0]
+        self.assertIn("Claude 按 owner 授权代拍", row)
+        self.assertIn("不要静默认领", row, "the delegation quote is the issue's Expected, verbatim")
+        d = re.match(r"^\| (D\d+) \|", row).group(1)
+        same = [ln for ln in plan.splitlines() if ln.startswith("| %s |" % d)]
+        self.assertEqual(len(same), 1, "%s is minted twice — renumber (max D on dev + 1)" % d)
+        self.assertIn("owner 决策 **%s**" % d, self.contract,
+                      "§61.8's heading must cite the same decision row")
+        self.assertEqual(self.contract.count("issue #318，§61.8 引擎归属；owner 决策 %s" % d), 1,
+                         "the §15 追记 must cite the same decision row")
+        self.assertEqual(self.contract.count("issue #318 / 决策 %s" % d), 1,
+                         "the §56.5 追记 must cite the same decision row")
 
 
 if __name__ == "__main__":

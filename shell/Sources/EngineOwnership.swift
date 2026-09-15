@@ -7,19 +7,29 @@
 // 为什么长在这里而不是 Recording.swift：那份文件是 mac/ 冻结规范的逐字节副本（§61.3，
 // tests/test_shell_engine_mirror.py 执法）。本模块照 §61.7 `RecordingSchedule.swift` 的先例
 // 站在它外面，只借它三样公开的东西——`enginePattern`（§15 契约停法的那个模式，逐字复用、
-// 绝不另写一个）、`isEngineRunning()`（pgrep）、`engineProcess`（我们自己 spawn 的凭据）——
+// 绝不另写一个）、`isEngineRunning()`（pgrep）、`engineProcess`（我们 spawn 的那台的句柄）——
 // 全部经缝注入，harness 绝不真 pgrep / pkill。
 //
 // 两个判决（纯函数，判例 shell/tests/LaunchHarness.swift [8]/[9]）：
 //   启动：新壳进程的 `engineProcess` 必然是 nil ⇒ 此刻还活着的引擎**按定义不是我们的**
 //         → 先回收再让 autostart 看世界。唯一例外 = §54 那个冻结的原生 app 在班（它自己
 //         拉自己的引擎，一根手指不碰）。
-//   退出：只停我们自己 spawn 的那一台（main.swift 的「生命周期诚实原则」同款）。
+//   退出：只停我们自己 spawn 的、**并且此刻还活着的**那一台（main.swift 的「生命周期诚实
+//         原则」同款）。凭据是活性不是历史：`engineProcess?.isRunning == true`。
+//         `Recording.swift` 从不把 `engineProcess` 置回 nil（只在 spawn 时赋一次值），
+//         所以 `!= nil` 会变成「这个壳曾经起过引擎」的终身通行证——§61.7 日程停过 /
+//         owner 切 off / 引擎自己崩过之后，退出路径会拿着这张过期凭据去 pkill 一台
+//         外人的引擎。recipe 结尾是 `exec npx screenpipe record …`，所以我们握着的
+//         那个 `Process` **就是**引擎本身，`isRunning` 是精确的。
+//         第二道保险与启动路径同款：§54 冻结原生 app 在班时退出路径也不开火——
+//         `pkill -f <pattern>` 分不清是谁的引擎，会连它那台一起带走。
 //
 // 诚实边界（issue #318 Expected 第 1 条只兑现两条退出路径）：**崩溃**（SIGKILL / 闪退）
 // 时 `applicationWillTerminate` 根本不跑，引擎会一直录到下一次壳启动的回收那一刻——
 // 没有 pid 文件、没有进程组托管，本条不假装覆盖它。install.sh 的 `ui` 步另有一次扫除
 // （壳没在跑却有引擎 = 孤儿），把这个窗口从「到下次开 app 为止」缩到「到下次部署为止」。
+// 第二个缺口：§54 冻结原生 app 在班时，启动与退出两条路都让手——我们自己的引擎会漏停，
+// 等下一次没有它在班的启动才被回收。§54 的不碰它是硬规矩，漏停只是慢一点。
 
 import Foundation
 
@@ -44,8 +54,9 @@ enum EngineOwnership {
         return legacyAppRunning ? .legacyOwns : .reclaim
     }
 
-    /// 退出判决：只有我们自己 spawn 过引擎（`engineProcess != nil`）才在退出路径上停它。
-    /// 对一台我们仅仅「看见」的引擎绝不动手——那可能是原生 app 的、或 owner 手工起的。
+    /// 退出判决：只有**我们 spawn 的那台此刻还活着**（`engineProcess?.isRunning == true`）
+    /// 才在退出路径上停它。对一台我们仅仅「看见」的引擎绝不动手——那可能是原生 app 的、
+    /// 或 owner 手工起的、或我们那台死掉之后别人补上的。
     static func stopAtExit(spawned: Bool) -> Bool { spawned }
 
     // MARK: - 常量
@@ -67,9 +78,13 @@ enum EngineOwnership {
     nonisolated(unsafe) static var legacyAppRunning: () -> Bool = {
         Shell.run("/usr/bin/pgrep", ["-x", legacyExecName]).0 == 0
     }
-    nonisolated(unsafe) static var engineSpawnedByUs: () -> Bool = {
-        RecordingController.engineProcess != nil
+    /// 「我们那台引擎此刻还活着吗」。**活性，不是历史**：`Recording.swift` 只在 spawn 时
+    /// 赋一次 `engineProcess`、从不置回 nil，`!= nil` 因此是终身通行证（判例 [9](i) 直接
+    /// 钉这个默认实现，所以它有名字——缝被注入过之后也够得着）。
+    nonisolated(unsafe) static let defaultEngineSpawnedByUs: () -> Bool = {
+        RecordingController.engineProcess?.isRunning == true
     }
+    nonisolated(unsafe) static var engineSpawnedByUs: () -> Bool = EngineOwnership.defaultEngineSpawnedByUs
     /// `signal` ∈ `"-TERM"` | `"-KILL"`；模式逐字借冻结引擎的 `enginePattern`
     /// （§15 契约停法 `pkill -f '<engine>'`——`[r]` 字符类让它不匹配自己的 argv）。
     nonisolated(unsafe) static var killEngine: (String) -> Void = { signal in
@@ -113,7 +128,15 @@ enum EngineOwnership {
     /// 退出回收：`pkill -TERM` → 等 ≤ `exitBudget` → 还在就 `pkill -KILL`。同步、有界。
     static func stopAtExit() {
         guard stopAtExit(spawned: engineSpawnedByUs()) else { return }
-        logLine("stop engine on quit: this shell spawned it")
+        // 与启动路径同一道守卫（§54）：`pkill -f <pattern>` 分不清引擎的归属，冻结原生 app
+        // 在班时开火会连它那台一起带走。宁可漏停我们自己的（下次启动的回收 / `ui` 步的
+        // 扫除兜底），也绝不碰它的——代价如实写在 §61.8 的诚实边界里。
+        if legacyAppRunning() {
+            logLine("stop engine on quit skipped: \(legacyExecName) is running — "
+                    + "pkill -f would take its engine down too")
+            return
+        }
+        logLine("stop engine on quit: this shell spawned it and it is still alive")
         killEngine("-TERM")
         if !waitUntilGone(exitBudget) { killEngine("-KILL") }
     }

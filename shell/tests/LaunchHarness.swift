@@ -26,7 +26,9 @@
 // who owns the running screenpipe engine, and the two effectful entry points driven through
 // recorded seams — the harness never runs a real pgrep/pkill (same rule as the §61.7 schedule
 // gate). [8] is the pure truth table, [9] the call sequences (log breadcrumb → pkill → poll,
-// TERM→KILL escalation on exit, and the two "do nothing" paths).
+// TERM→KILL escalation on exit, the "do nothing" paths, and — cell (i), against the default
+// seam — that the exit credential is our engine's LIVENESS, never "this shell once spawned one":
+// `Recording.swift` never puts `engineProcess` back to nil.
 
 import Foundation
 
@@ -277,10 +279,11 @@ func checkEngineOwnershipEffects() {
     calls = scenario(Rec(engineAlive: true, spawned: true)) { EngineOwnership.stopAtExit() }
     check(calls.contains("pkill -TERM") && !calls.contains("pkill -KILL"),
           "a well-behaved engine dies on TERM — got \(calls)")
-    check(calls.first == "log stop engine on quit: this shell spawned it",
+    check(calls.first == "pgrep legacy",
+          "the §54 guard is consulted BEFORE the exit path fires: `pkill -f` cannot tell "
+            + "whose engine it is, so the frozen app being in charge means hands off — got \(calls)")
+    check(calls[1] == "log stop engine on quit: this shell spawned it and it is still alive",
           "the quit path leaves a breadcrumb too — got \(calls)")
-    check(!calls.contains("pgrep legacy"),
-          "the exit path never consults the legacy app: `spawned` already proves ownership")
 
     // (f) quit, engine ignores TERM: exactly one escalation to KILL
     calls = scenario(Rec(engineAlive: true, spawned: true, diesAfterKills: 2)) {
@@ -295,6 +298,34 @@ func checkEngineOwnershipEffects() {
     // (g) quit, engine is somebody else's: not a single probe of it
     calls = scenario(Rec(engineAlive: true, spawned: false)) { EngineOwnership.stopAtExit() }
     check(calls.isEmpty, "we spawned nothing → the quit path does nothing at all — got \(calls)")
+
+    // (h) quit while the §54 frozen app is in charge: our own engine is left running
+    //     rather than risking its engine (`pkill -f` hits both) — the leak is §61.8's
+    //     second honest boundary, the next launch without it in charge reclaims ours.
+    calls = scenario(Rec(engineAlive: true, legacyAlive: true, spawned: true)) {
+        EngineOwnership.stopAtExit()
+    }
+    check(!calls.contains(where: { $0.hasPrefix("pkill") }),
+          "legacy app in charge at quit → not one signal, even though the engine is ours — got \(calls)")
+    check(calls.last == "log stop engine on quit skipped: ZelinAIEngineer is running — "
+            + "pkill -f would take its engine down too",
+          "and the skipped stop is written down, not silently dropped — got \(String(describing: calls.last))")
+
+    // (i) THE credential itself (default seam, no recorder installed): ownership is
+    //     LIVENESS, not history. `Recording.swift` assigns `engineProcess` once in
+    //     startEngineBlocking and never puts it back to nil, so a `!= nil` credential
+    //     would survive our engine's death (§61.7 schedule stop / mode=off / a crash)
+    //     and make the exit path pkill whatever foreign engine is alive at quit time —
+    //     including the frozen app's. A Process that was never launched has the same
+    //     `isRunning == false` as one that exited, and costs no subprocess here.
+    disarmSeams()
+    RecordingController.engineProcess = nil
+    check(EngineOwnership.defaultEngineSpawnedByUs() == false,
+          "no engine handle at all → we own nothing")
+    RecordingController.engineProcess = Process()   // 非 nil 但没在跑（= 起过又死了）
+    check(EngineOwnership.defaultEngineSpawnedByUs() == false,
+          "a dead engine handle must NOT be a lifetime licence to pkill by pattern")
+    RecordingController.engineProcess = nil
 }
 
 run()
