@@ -3281,17 +3281,24 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   `web/src/components/shell/PipelineBanner.test.tsx`。
 
 **§47.4 追记（2026-09-05，add-only；parity 批次 `pipeline-repair-verdict-copy`，gap `health-stalled-copy-asserts-process-alive` / `diagnostics-setup-banner-manual-command-no-copy`）——读者 3 的 `stalled` 正文只说已知的**：读者 2 只 stat 三个文件、不问 launchctl（上文原话），一个崩了 / 被 bootout 的 actd 留下的 `state/actd.heartbeat` 与一个卡在 `time.sleep` 的活进程在 `/api/health` 里长得一模一样——web 横幅此前的「actd 进程还活着，但已 N 分钟没有心跳」断言了谁也没查过的事（宪法第 3 条）。自本条起 `stalled` 正文 = 「后台服务已 N 分钟没有心跳（最后阶段：<phase>）——卡在原地或已停止，卡片不会动。」/ "No heartbeat for N min (last phase: <phase>) — stuck or stopped; cards will not move."（原生 Freshness.swift `.dead` 句同样只报数据多久没更新，不作活性断言）；标题「后台服务卡住了」与 kickstart 修法不变。进程活性判断仍只属读者 1（doctor `actd_stalled`，有 launchctl）——server 不因此长出探针。**修法命令出句入行**：`stalled` / `stale` 正文不再把 `launchctl kickstart -k …` 揉进句子；三个说话的 verdict 的动作行都带同一条可复制的「手动命令：<cmd>」（`web/src/components/chrome/CopyLine.tsx`，原生 Cards.swift `CopyPathLine` 的 web 版：label 独占节点 + `<code>` + 「复制」→「已复制」1.5 s + `role=status` 播报；与详情侧栏 `CmdLine` / `CopyChip` 同形，那两颗是卡片详情的积木、不外借）。`stale` 句仍指名 `bash install.sh`。判例：`PipelineBanner.test.tsx`（正文不含「还活着」/ "alive"、不含 `launchctl`）、`PipelineBanner.repair.test.tsx`（三态都有该行、chip 写剪贴板）、`chrome/CopyLine.test.tsx`。
+
+### 47.5 iCloud 驱逐（dataless）note：「还没在本机」不是毒 note（2026-09-14，R-202/R-204，add-only）
+
+**事故（两半，缺一半都治不好）**：Obsidian vault 住在 iCloud Drive（`~/Documents/Obsidian Vault`），「优化 Mac 存储」把冷 note 驱逐成 dataless 占位（`st_flags & SF_DATALESS`，实测 600/614 篇处于此态）；cron/launchd 语境不许触发下载，`read_text` 直接报 `[Errno 11] Resource deadlock avoided`（EDEADLK）。① `_process_note` 把**所有** `OSError` 折成同一句永久的 note 级错误，环境抖动与「非 UTF-8 的毒 note」共用那点额度，烧满 `FAILED_MAX_ATTEMPTS` 就 `gave_up` + §40 诊断卡（2026-08-16/18/20 三篇 screenpipe note）。② 更要命的是 `_is_due` 对「`gave_up` 且 mtime 未变」的条目**永久**跳过——额度烧完之后，文件几分钟后就读得动了，也再没有任何一轮 cron 会去读它；§40 卡看着像「留痕」，实际是静默丢失穿了件外套（宪法第 11 条）。而文件本身完好，`brctl download` 一秒即可拉回。
+
+- **读前探测 + 催下载（治因的那一刀）**：`_read_note_text` 先查 `_is_dataless`（`st_flags & SF_DATALESS`；无 `st_flags` 的平台 / stat 失败一律 False），驱逐态 → `brctl download <path>`（best-effort，命令缺失/超时/非零退出全吞）后再读；读出来是 EDEADLK 的（stat 没报驱逐、或刚拉回又被换走）同样催一次再读。每篇 note 每轮至多催一次、至多多读一次。**只重开 `open()` 不算治**：cron 语境下的物化是关的，重开一次还是 EDEADLK。其余 OSError（权限 / EISDIR）与非 UTF-8 照旧走 `unreadable note` 台账老路，语义与额度全不变。
+- **等下载有每轮上限**：整轮 pass 攥着 `state/radar.lock`（§17），而 radar_gmail 抢同一本台账只等一小会儿就无锁写——所以一轮里最多 `DATALESS_WAIT_MAX_NOTES` 篇 note 可以等 `DATALESS_DOWNLOAD_WAIT_S`（常量 truth = `act/radar.py`），超额的只催一把 brctl 就进 deferred，下轮 cron 再来。600 篇驱逐态的 backfill 不许把一轮拖成半小时。
+- **台账 `deferred` 态（add-only 字段）**：仍不在本机 → 错误串以 `DEFERRED_PREFIX`（`note not local yet (iCloud dataless)`）开头进 `state/radar_failed.json`，`_record_failure` 记 `deferred=True`。它**不进 health/systemic 账**——等 iCloud 不是提取故障，独自成 pass 也不判 systemic、不钉 marker（水位语义 v2 不变）、health 不记 `extract_failed`；每轮成本 = 一次 stat + 一次 brctl，不烧 claude。诚实账走 analytics：`radar_scan{deferred}` 只带条数，无文件名（宪法第 9 条）。拉回本机后正常提取即销案。
+- **额度按类给，但**必须**有终点**：`_max_attempts_for(error)` 给这一类 `FAILED_MAX_ATTEMPTS_DEFERRED`（truth = `act/radar.py`，≈10 h 的 30 min cron）而不是毒 note 的 `FAILED_MAX_ATTEMPTS`——iCloud 放回文件常要几分钟到几小时，5 轮在 Mac 睡眠/离线时太短。烧完照常 `gave_up` + §40 卡 + health `extract_failed`：真的永远拉不回来的 note 必须最终留痕（宪法第 11 条），无界的 deferred 等于静默吞掉一篇笔记。`attempts` 是同一条案底共用的计数，上限按**当前**错误的类别算——等久了的 note 一旦真坏，立刻留痕而不是再宽限一轮。
+- **复活闸 `_rearm_deferred_giveups`（每轮载入台账后跑）**：死在这一类上的 `gave_up` 案底重新上膛**一次**（`attempts=0`、`gave_up=False`、add-only 字段 `rearmed: true`）——这是「`gave_up` + mtime 未变 = 永久跳过」那条链此前唯一缺的出口。`rearmed` 保证只复活一次：第二次烧完额度就老实留在案底。留痕：summary `skipped` 一行 + analytics `radar_ledger_rearm{notes}`（只有条数）。分类函数 `_is_deferred_error` **只认领 `unreadable note …` / `DEFERRED_PREFIX` 这两类串**（历史案底按 strerror 文本 `Resource deadlock avoided` 认领）——提取失败 / 落库失败各有自己的额度语义，字面撞上也不放行。
+- **复活闸只认本轮读得到的 key**：候选必须在本轮 `md_files` 里。换根之后（mirror 模式，`config.effective_obsidian_raw` 指向 `state/vault-mirror/2 - raw`，而老案底的 key 是真 vault 路径）那条案底本轮根本不会被读——把它翻成 `gave_up=False` 等于**抹掉留痕却不重读**（`loop_inputs` 只看 `gave_up`），比不复活更糟。换根遗留的案底由 `_rekey_stale_giveups` 先按同名 note 搬到当前根的 key 上（目标已有案底就不动），搬完才由复活闸放行、真的被重读；搬不动的留 `gave_up=True` 原样留痕并报一行数。`gmail:uid:*` 天然不在 `md_files` 里（那是 radar_gmail 的案底，见 `_reconcile_failed`）。
+- **错误串里不许出现 `errno.errorcode` 派生的名字**：同一个号在不同平台有别名，`errno.errorcode` 给的是**最后**注册的那个——同一个 dataless 失败在 macOS 上叫 `EDEADLK`、在 Linux 上叫 `EDEADLOCK`（`EAGAIN`/`EWOULDBLOCK` 同理）。台账是跨机器读的机器字段：本节的标记是固定字面量 `DEFERRED_PREFIX`，谁以后要往台账里写符号名，名字必须从自己声明的表逐字派生（R-207 的判例血泪）。
+- **已铸的 §40 诊断卡不由雷达销**：状态转移只有 actd 发出（§44.7 a），雷达没有 trash 一张卡的权力。note 复活成功后旧卡留在备选由 owner 处置；卡的路径 dedup 是「任何状态」，所以也不会重复铸卡。
+- 判例：`tests/test_radar_dataless_note.py`（探针/催下载/非 UTF-8 语义不变/等下载额度/deferred 的宽额度与 health ok/烧完额度仍留痕/局部损坏的案底不崩 pass）、`tests/test_radar_ledger_rearm.py`（认领范围、只复活一次、本轮读不到的 key 不复活、换根案底搬家后被重读）。
+
 ---
 
 # v0.47 additions（源开关归一 + 源死亡告警）
-
-### 47.5 iCloud 驱逐（dataless）note：「还没在本机」不是毒 note（2026-09-08，R-202，add-only）
-
-- **事故**：Obsidian vault 住在 iCloud Drive（`~/Documents/Obsidian Vault`），「优化 Mac 存储」把冷 note 驱逐成 dataless 占位（`st_flags & SF_DATALESS`，实测 600/614 篇处于此态）；cron 语境下 `read_text` 报 `[Errno 11] Resource deadlock avoided`（EDEADLK——文件提供者没能就地物化）。老代码把它当 `unreadable note` 烧满 `FAILED_MAX_ATTEMPTS` 进 `gave_up` + §40 诊断卡（2026-08-16/18/20 三篇 screenpipe note），而文件本身完好，`brctl download` 一秒即可拉回。
-- **读前探测 + 催下载**：`_read_note_text` 先查 `_is_dataless`（无 `st_flags` 的平台 / stat 失败一律 False），驱逐态 → `brctl download <path>`（best-effort，命令缺失/超时全吞）后最多等 `DATALESS_DOWNLOAD_WAIT_S`（3s）占位位清掉再读；读到 EDEADLK 同样按驱逐态再催一次重读。其余 OSError / 非 UTF-8 照旧走 `unreadable note` 台账老路。
-- **台账 `deferred` 态（add-only 字段）**：仍不可读 → 错误串以 `DEFERRED_PREFIX`（`note not local yet (iCloud dataless)`）开头进 `state/radar_failed.json`，`_record_failure` **不扣 attempts**、`deferred=True`、永不 `gave_up`、不铸 §40 卡；marker 照常越过它（accounted，水位语义 v2 不变），下轮 cron 重试（每轮成本 = 一次 stat + 一次 brctl，不烧 claude）。deferred 不进 `any_failed`/systemic 账——它不是提取故障，独自成 pass 也不许钉住 marker、health 不记 `extract_failed`；拉回本机后正常提取即销案，之后真失败从 0 起扣额度。
-- **一次性迁移**：`_load_failed_queue` 把 `gave_up=True` 且 `last_error` 含 `Resource deadlock avoided` 的老案底改判 `deferred`（attempts 归零）——下一轮 pass 重排、读到即销案；gmail `poison message` 等其他 gave_up 不受影响。已经铸出的 §40 诊断卡不回收（路径 dedup 保证不再重铸）。
-- 判例：`tests/test_radar_dataless_note.py`。
 
 ## 48. 源开关真源（`act/lib/sources.py`）+ 关闭真静默 + liveness 告警（add-only）
 

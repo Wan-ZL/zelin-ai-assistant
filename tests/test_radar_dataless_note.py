@@ -5,20 +5,29 @@ vault were evicted to dataless placeholders; ``read_text`` under the cron
 chain raised ``[Errno 11] Resource deadlock avoided`` (EDEADLK), the radar
 charged the retry budget five times and gave up on each. Pinned here:
 
-- EDEADLK on read → one ``brctl download`` nudge → re-read → filed normally;
-- a note that stays dataless is booked ``deferred`` (attempts untouched,
-  never ``gave_up``, no §40 card), the marker still advances, a lone
-  deferred note is not a systemic failure, and the next pass retries it;
-- legacy gave_up entries carrying the EDEADLK text are migrated to deferred
-  on load so they get retried and cleared;
+- dataless probe / EDEADLK on read → one ``brctl download`` nudge → re-read
+  → filed normally (the materialisation is what actually cures it: re-opening
+  the same placeholder in the same no-download context deadlocks again);
+- a note that stays dataless is booked ``deferred``: the wider
+  ``FAILED_MAX_ATTEMPTS_DEFERRED`` budget instead of the poison one, no §40
+  card and ``radar_health`` stays ok while it waits, the marker advances, a
+  lone deferred note is not a systemic failure, the next pass retries it;
+- the wait is bounded — a note that never comes back still gives up with the
+  §40 trace the constitution (#11) requires, and health says so;
+- only ``DATALESS_WAIT_MAX_NOTES`` notes per pass may sleep on the download
+  (the whole pass holds state/radar.lock);
 - the ``brctl`` call is best-effort (missing binary swallowed) and the
   dataless probe answers False for ordinary / missing files.
+
+The ledger re-arm gate that reopens a stuck give-up lives in
+tests/test_radar_ledger_rearm.py.
 
 No real ``brctl`` runs: the download seam is patched (unit layer, no
 subprocess).
 """
 import errno
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -29,7 +38,7 @@ from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act impor
 from tests.test_radar import BASE, RadarScanBase, _item
 
 from act import radar
-from act.lib import registry
+from act.lib import radar_health, registry
 
 
 class _DatalessBase(RadarScanBase):
@@ -52,6 +61,20 @@ class _DatalessBase(RadarScanBase):
 
     def _queue(self):
         return radar._load_failed_queue()
+
+    def _gave_up_cards(self):
+        return [r for r in registry.load_all()
+                if (r.sources or [{}])[0].get("channel") == radar.GIVE_UP_CHANNEL]
+
+    def _obsidian_health(self):
+        """radar_health 只有 cron 语境才写（_owns_health）——这几条判例要看
+        账，所以自己戴上那顶帽子。"""
+        os.environ["AIASSISTANT_CRON"] = "1"
+        self.addCleanup(lambda: os.environ.pop("AIASSISTANT_CRON", None))
+        self.addCleanup(lambda: radar_health.HEALTH_PATH.exists()
+                        and radar_health.HEALTH_PATH.unlink())
+        return lambda: json.loads(
+            radar_health.HEALTH_PATH.read_text(encoding="utf-8"))["obsidian"]
 
 
 class DeadlockReadTestCase(_DatalessBase):
@@ -77,6 +100,26 @@ class DeadlockReadTestCase(_DatalessBase):
         self.assertEqual(radar._read_marker(), BASE)
         self.assertFalse(any(radar.DEFERRED_PREFIX in s for s in summary["skipped"]))
 
+    def test_a_dataless_note_is_materialized_before_the_read(self):
+        """生产路径：stat 报驱逐 → brctl 把文件拉回来 → 这一轮就读到了。
+        （#305 只重开 open()：cron 语境下物化是关的，重开还是 EDEADLK。）"""
+        note = self._note("evicted.md", "Boss: decide the venue", BASE)
+        self.dataless.add(str(note))
+        self._patch(radar, "_brctl_download", self._downloader_that_delivers())
+
+        summary = radar.scan(
+            runner=lambda t: json.dumps([_item("Decide the venue")]))
+
+        self.assertEqual(self.downloads, [str(note)])
+        self.assertEqual(summary["extracted"], 1)
+        self.assertEqual(self._queue(), {})             # 读到了 = 没案底
+
+    def _downloader_that_delivers(self):
+        def download(note):
+            self.downloads.append(str(note))
+            self.dataless.discard(str(note))   # iCloud 把文件放回来了
+        return download
+
     def test_edeadlk_that_persists_after_the_nudge_is_deferred(self):
         note = self._note("evicted.md", "content", BASE)
 
@@ -100,12 +143,49 @@ class DeadlockReadTestCase(_DatalessBase):
         self.assertEqual(ctx.exception.errno, errno.EACCES)
         self.assertEqual(self.downloads, [])            # no pointless nudge
 
+    def test_non_utf8_semantics_unchanged(self):
+        note = self.raw / "binary.md"
+        note.write_bytes(b"\xff\xfe not utf8")
+        os.utime(note, (BASE, BASE))
+        summary = radar.scan(runner=lambda t: "[]")
+
+        error = self._queue()[str(note)]["last_error"]
+        self.assertTrue(error.startswith("unreadable note binary.md:"))
+        self.assertFalse(radar._is_deferred_error(error))   # 毒 note，不是等云端
+        self.assertEqual(self._queue()[str(note)]["attempts"], 1)
+        self.assertEqual(self.downloads, [])
+        self.assertTrue(any("unreadable note" in s for s in summary["skipped"]))
+
+
+class WaitBudgetTestCase(_DatalessBase):
+    def test_only_a_few_notes_per_pass_may_sleep_on_the_download(self):
+        """整轮 pass 持着 state/radar.lock：等下载的 note 数有上限，超额的
+        只催一把 brctl 就进 deferred，下轮再来。"""
+        self._patch(radar, "DATALESS_WAIT_MAX_NOTES", 2)
+        waited: list = []
+        self._patch(radar, "_materialize",
+                    lambda note, wait=True: waited.append(wait) or False)
+        for i in range(4):
+            note = self._note(f"evicted-{i}.md", "content", BASE + i)
+            self.dataless.add(str(note))
+
+        radar.scan(runner=lambda t: "[]")
+
+        self.assertEqual(waited, [True, True, False, False])
+
+    def test_the_budget_hands_out_exactly_its_allowance(self):
+        budget = radar._WaitBudget(2)
+        self.assertEqual([budget.take() for _ in range(4)],
+                         [True, True, False, False])
+        self.assertTrue(radar._may_wait(None))   # 没有预算对象 = 不受限
+
 
 class DeferredLedgerTestCase(_DatalessBase):
-    def test_note_that_stays_dataless_never_burns_budget_or_gives_up(self):
+    def test_a_waiting_note_keeps_the_wider_budget_and_healthy_books(self):
         note = self._note("evicted.md", "content", BASE)
         self.dataless.add(str(note))
         calls = []
+        obsidian = self._obsidian_health()
 
         def runner(text):
             calls.append(text)
@@ -116,7 +196,9 @@ class DeferredLedgerTestCase(_DatalessBase):
         self.assertEqual(radar._read_marker(), BASE)
         self.assertTrue(any(s.startswith(radar.DEFERRED_PREFIX)
                             for s in summary["skipped"]))
-        # 远超单 note 额度的轮数
+        self.assertTrue(obsidian()["last_ok"])          # 等 iCloud ≠ extract_failed
+        self.assertIsNone(obsidian()["skip_reason"])
+        # 远超毒 note 的 5 次额度
         for i in range(radar.FAILED_MAX_ATTEMPTS + 2):
             self._companion(i)
             summary = radar.scan(runner=runner)
@@ -124,16 +206,54 @@ class DeferredLedgerTestCase(_DatalessBase):
 
         entry = self._queue()[str(note)]
         self.assertTrue(entry["deferred"])
-        self.assertFalse(entry["gave_up"])
-        self.assertEqual(entry["attempts"], 0)
+        self.assertFalse(entry["gave_up"])              # 旧代码在第 5 轮判死
+        self.assertGreater(entry["attempts"], radar.FAILED_MAX_ATTEMPTS)
         self.assertTrue(entry["last_error"].startswith(radar.DEFERRED_PREFIX))
         self.assertFalse(any("giving up" in s for s in summary["skipped"]))
         self.assertEqual(len(self.downloads), radar.FAILED_MAX_ATTEMPTS + 3)
         self.assertFalse(any("content" in c for c in calls))   # 没读到就不烧 claude
-        # 没有 §40 放弃诊断卡
-        self.assertFalse(any(
-            (r.sources or [{}])[0].get("channel") == radar.GIVE_UP_CHANNEL
-            for r in registry.load_all()))
+        self.assertEqual(self._gave_up_cards(), [])
+        self.assertIsNone(obsidian()["skip_reason"])
+
+    def test_a_note_that_never_comes_back_still_gives_up_with_a_trace(self):
+        """宪法第 11 条：放弃要留痕。等 iCloud 的额度宽，但**有终点**——
+        烧完了照常 gave_up + §40 卡 + health 说话。"""
+        note = self._note("evicted.md", "content", BASE)
+        self.dataless.add(str(note))
+        obsidian = self._obsidian_health()
+
+        for i in range(radar.FAILED_MAX_ATTEMPTS_DEFERRED):
+            self._companion(i)              # 部分失败 -> 不判 systemic
+            summary = radar.scan(runner=lambda t: "[]")
+
+        entry = self._queue()[str(note)]
+        self.assertEqual(entry["attempts"], radar.FAILED_MAX_ATTEMPTS_DEFERRED)
+        self.assertTrue(entry["gave_up"])
+        self.assertTrue(any("giving up" in s for s in summary["skipped"]))
+        self.assertEqual(len(self._gave_up_cards()), 1)
+        self.assertEqual(obsidian()["skip_reason"], "extract_failed")
+
+    def test_the_attempt_cap_is_per_class(self):
+        deferred = f"{radar.DEFERRED_PREFIX}: a.md: still dataless"
+        legacy = ("unreadable note a.md: [Errno 11] Resource deadlock avoided")
+        self.assertEqual(radar._max_attempts_for(deferred),
+                         radar.FAILED_MAX_ATTEMPTS_DEFERRED)
+        self.assertEqual(radar._max_attempts_for(legacy),
+                         radar.FAILED_MAX_ATTEMPTS_DEFERRED)
+        self.assertEqual(radar._max_attempts_for("unparseable extraction on a.md"),
+                         radar.FAILED_MAX_ATTEMPTS)
+        self.assertGreater(radar.FAILED_MAX_ATTEMPTS_DEFERRED,
+                           radar.FAILED_MAX_ATTEMPTS)
+
+    def test_a_partial_ledger_entry_never_crashes_the_pass(self):
+        """台账被截断/手改成没有 attempts 的形状时也只影响这一篇 note
+        （_record_failure 绝不 KeyError——模块 docstring 承诺扛得住）。"""
+        note = self._note("evicted.md", "content", BASE)
+        queue = {str(note): {"mtime": BASE}}
+        entry = radar._record_failure(
+            queue, note, BASE, f"{radar.DEFERRED_PREFIX}: evicted.md: x")
+        self.assertEqual(entry["attempts"], 1)
+        self.assertFalse(entry["gave_up"])
 
     def test_deferred_note_is_retried_and_cleared_once_local(self):
         note = self._note("evicted.md", "Boss: decide the venue", BASE)
@@ -147,7 +267,9 @@ class DeferredLedgerTestCase(_DatalessBase):
         self.assertEqual(summary["extracted"], 1)
         self.assertEqual(self._queue(), {})
 
-    def test_deferred_then_real_failure_charges_budget_from_zero(self):
+    def test_a_real_failure_after_the_wait_is_capped_by_the_poison_budget(self):
+        """同一条案底的 attempts 是共用的，上限按**当前**错误的类别算：
+        等云端等久了的 note 一旦真坏，立刻留痕而不是再宽限 5 轮。"""
         note = self._note("evicted.md", "poison", BASE)
         self.dataless.add(str(note))
         radar.scan(runner=lambda t: "[]")
@@ -161,37 +283,11 @@ class DeferredLedgerTestCase(_DatalessBase):
 
         radar.scan(runner=runner)
         entry = self._queue()[str(note)]
-        self.assertEqual(entry["attempts"], 1)
+        self.assertEqual(entry["attempts"], 2)
         self.assertFalse(entry["deferred"])
         self.assertFalse(entry["gave_up"])
-
-
-class LegacyMigrationTestCase(_DatalessBase):
-    def test_legacy_edeadlk_gave_up_entry_is_reopened_and_cleared(self):
-        # 老代码留下的案底形状（live radar_failed.json 2026-09-08 原样）
-        note = self._note("2026-08-16-screenpipe-1252.md", "Boss: fix the map", BASE)
-        radar._write_marker(BASE + 100)               # 早已扫过它
-        radar._save_failed_queue({str(note): {
-            "mtime": BASE, "attempts": 5, "gave_up": True,
-            "last_error": ("unreadable note 2026-08-16-screenpipe-1252.md: "
-                           "[Errno 11] Resource deadlock avoided")}})
-
-        loaded = radar._load_failed_queue()[str(note)]
-        self.assertTrue(loaded["deferred"])
-        self.assertFalse(loaded["gave_up"])
-        self.assertEqual(loaded["attempts"], 0)
-
-        summary = radar.scan(runner=lambda t: json.dumps([_item("Fix the map")]))
-        self.assertEqual(summary["files_scanned"], 1)   # 重新排上队
-        self.assertEqual(self._queue(), {})              # 读到了 → 销案
-
-    def test_unrelated_gave_up_entries_are_left_alone(self):
-        radar._save_failed_queue({"gmail:uid:7": {
-            "mtime": 7.0, "attempts": 4, "gave_up": True,
-            "last_error": "poison message (unparseable headers)"}})
-        entry = radar._load_failed_queue()["gmail:uid:7"]
-        self.assertTrue(entry["gave_up"])
-        self.assertNotIn("deferred", entry)
+        self.assertEqual(radar._max_attempts_for(entry["last_error"]),
+                         radar.FAILED_MAX_ATTEMPTS)
 
 
 class ProbeAndNudgeTestCase(unittest.TestCase):
