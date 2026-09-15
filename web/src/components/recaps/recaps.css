@@ -142,6 +142,24 @@
   font: var(--type-lane-help);
 }
 
+/* §63.8 生成态状态行：排队 / 正在生成 = info 底；lost / noop = warning 底 */
+.recap-progress {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font: var(--type-card-meta);
+}
+
+.recap-progress.is-busy {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.recap-progress.is-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .recap-actions,
 .recap-panel-actions {
   display: flex;
