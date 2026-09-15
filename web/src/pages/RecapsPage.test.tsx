@@ -11,7 +11,10 @@
 //      不给按位置的引用 chip；「重新生成」面板的形状选择器把 shape 一并送进 inbox，
 //      选择器的初值 = 这一行的形状 > 设置里的 `default_shape`（没出过稿的行不许替配置做主），
 //      备注预检随形状收口并在五行形下指路长版；
-//   8) 「上一版」= GET /api/recaps/history 的两版并排 + 逐行改动 + 一颗回退（inbox recap_revert），
+//   8) §63.11（issue #302）：「重新生成」面板里的意图问答（问题逐字来自 wire 的 row.questions，
+//      点过的答案才随 recap_generate 送出、再点一次取消）、正文上方「转写原版 | 我记录的版本」
+//      两版切换（row.baseline 在时才有）且复制跟着切换走；
+//   9) 「上一版」= GET /api/recaps/history 的两版并排 + 逐行改动 + 一颗回退（inbox recap_revert），
 //      回退在途时面板留一条回执（排队中 / 90 s 后「actd 可能没在跑」）、帽满时说清回退会挤掉最早一版，
 //      正文下方五颗引用 chip 复制 `2026-08-31 Zoom #D`（§63.9，issue #300）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -622,5 +625,66 @@ describe("RecapsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({
       action: "recap_generate", meeting_key: KEY, shape: "sections" }));
+  });
+
+  // ------------------------------------------------------------------ §63.11
+  it("asks the questions the daemon derived and sends only the picked answers", async () => {
+    await renderPage([recap({ questions: [
+      { id: "split1", kind: "split", options: ["keep", "drop", "propose"], subject: "Ann: ships the eval" },
+      { id: "aud", kind: "audience", options: ["send", "self"], subject: null },
+    ] })]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    // 问法按 kind 查表，逐条那一问带着上一版的原话
+    expect(screen.getByText(/Keep this commitment on the record/)).toBeTruthy();
+    expect(screen.getByText("Ann: ships the eval")).toBeTruthy();
+    expect(screen.getByText(/Is this recap for sending to someone/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Drop" }));
+    fireEvent.click(screen.getByRole("radio", { name: "For sending" }));
+    expect(screen.getByText(/2 answered/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "lines",
+      answers: ["split1=drop", "aud=send"] }));
+  });
+
+  it("un-picks an answer when the same option is pressed again", async () => {
+    // 没答过的问题不许被当成答过：默认值会变成一句 owner 从没说过的指令
+    await renderPage([recap({ questions: [
+      { id: "dl", kind: "deadline", options: ["keep", "drop"], subject: null },
+    ] })]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    const drop = screen.getByRole("radio", { name: "Drop" });
+    fireEvent.click(drop);
+    expect(drop.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(drop);
+    expect(drop.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText(/You can regenerate without answering/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "lines" }));
+  });
+
+  it("keeps the first version switchable and copies whichever one is on screen", async () => {
+    const baseline = { version: 1, generated_at: "2026-08-31T20:20:00Z", shape: "lines",
+                       copy_en: "Decided: Ann owns the data mix", copy_zh: "定了：数据配比归 Ann" };
+    await renderPage([recap({ version: 2, baseline })]);
+    const first = screen.getByRole("tab", { name: "What the transcript said" });
+    expect(screen.getByRole("tab", { name: "What I chose to record" }).getAttribute("aria-selected"))
+      .toBe("true");
+    fireEvent.click(first);
+    expect(first.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Decided: Ann owns the data mix")).toBeTruthy();
+    expect(screen.getByText(/the one straight from the transcript, frozen/)).toBeTruthy();
+    // 引用 chip 不挂在另一版旁边（引用串不带版本号）
+    expect(screen.queryByRole("button", { name: /Copy citation/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
+    const written = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    expect(written.split("\n").slice(1)).toEqual(["Decided: Ann owns the data mix"]);
+  });
+
+  it("offers no version switch until a second version exists", async () => {
+    await renderPage([recap()]);
+    expect(screen.queryByRole("tab", { name: "What the transcript said" })).toBeNull();
   });
 });

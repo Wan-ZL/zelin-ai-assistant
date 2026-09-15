@@ -15,7 +15,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
 from act import actd, doctor, llm, recap
 from act.lib import config, heartbeat, registry
-from act.lib import recap_store, recap_text
+from act.lib import recap_intent, recap_store, recap_text
 from server import health as server_health
 from server import inbox_writer as server_inbox
 from server import paths
@@ -151,6 +151,18 @@ class RecapMirrorTestCase(unittest.TestCase):
         self.assertEqual(server_recaps.SHAPES, recap_text.SHAPES)
         # `_version_shape` / DEFAULTS 拿 SHAPES[0] 当兜底形状 = act 侧的默认形
         self.assertEqual(server_recaps.SHAPES[0], recap_text.DEFAULT_SHAPE)
+
+    def test_answer_shape_mirrors_the_daemon(self):
+        """§63.11：`answers` 的一条形状与条数上限在两侧各有一份手抄——必须逐字一致。
+
+        server 不 import act（§49），所以它只查形状；id 与选项的**闭表**只住 daemon 侧
+        （`recap_intent.answers_ok`，词表外 = 诚实 noop）。没有这道 pin，daemon 侧改一
+        次正则（比如以后允许两位数的 id 后缀）之后 `POST /api/actions` 会 400 掉一组
+        完全合法的答案，而全量测试一片绿。"""
+        self.assertEqual(server_inbox._RECAP_ANSWER_RE.pattern, recap_intent.ANSWER_RE.pattern)
+        self.assertEqual(server_inbox._RECAP_ANSWERS_MAX, recap_intent.MAX_ANSWERS)
+        # 问出来的每一条都必须答得上去（面板不许给一个送不出去的答案格）
+        self.assertLessEqual(recap_intent.MAX_QUESTIONS, server_inbox._RECAP_ANSWERS_MAX)
 
     def test_marks_path_mirror(self):
         with mock.patch.object(config, "STATE_DIR", HOME / "state"):
