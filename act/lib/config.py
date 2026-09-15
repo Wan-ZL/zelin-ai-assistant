@@ -131,6 +131,9 @@ CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 # 不再铸卡后剩下的都是 GitHub 面与素材，一天两张够审、也不会把提案列刷成一排 🤖。
 # server/settings.py DAILY_LOOP_DEFAULTS 手抄同值（§49，判例 test_server_paths_mirror）。
 DEFAULT_DAILY_LOOP_MAX_PROPOSALS: int = 2
+# §76.2（issue #313）提案被提够多少次算「被提了这么多次还没人处理」。issue 原文
+# 举的数就是 5（P-008 被提 ×23 一次升级都没有）。0 或负 = 关掉升级（计数照常累加）。
+DEFAULT_MENTION_ESCALATION: int = 5
 # §53 数据层后端（D2）：auto = 激活标记在则 SQLite 为真源（默认，首跑自动迁移）；
 # yaml / sqlite = 强制指定（yaml 是回滚开关，保留一个版本）。真解析在
 # registry.backend()——这里只是配置词表。
@@ -306,6 +309,10 @@ class Config:
     poll_interval_seconds: int = 10
     show_cost_above_usd: float = 5.0
     require_text_confirm_above_usd: float = 50.0
+    # §76.2（issue #313）被提 N 次仍未处理的升级阈值（config.yaml
+    # `approval.mention_escalation`）。`repeated >= 阈值` 的提案卡投影
+    # `mention_escalated: true` 并（首次翻真时）响一次通知；**0 或负 = 关**。
+    approval_mention_escalation: int = DEFAULT_MENTION_ESCALATION
 
     # execution
     default_target_repo: str = "~/Projects/your-workbench"
@@ -880,6 +887,12 @@ def _apply_approval(cfg: Config, data: dict) -> None:
         thresholds.get("require_text_confirm_above_usd", cfg.require_text_confirm_above_usd),
         cfg.require_text_confirm_above_usd,
     )
+    # §76.2 升级阈值：坏形状（非数字 / 字符串）回落出厂值——配错一个字不许把
+    # 「被提 N 次仍未处理」这条唯一的升级路悄悄关掉（fail-open 到出厂行为）。
+    cfg.approval_mention_escalation = _int_or(
+        approval.get("mention_escalation", cfg.approval_mention_escalation),
+        cfg.approval_mention_escalation,
+    )
 
 
 def _apply_execution(cfg: Config, data: dict) -> None:
@@ -1307,6 +1320,10 @@ _OVERRIDE_FIELDS: dict = {
     "digest_frequency": _coerce_digest_frequency,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
+    # §76.2（issue #313）被提 N 次仍未处理的升级阈值——设置页「审批 / 成本」区经
+    # PUT /api/settings/approval 写这个扁平键（diff-write 同款；0 = 关掉升级）。
+    # 负数 / 垃圾值 → ValueError → 该条 override 整条跳过（保留出厂值）。
+    "approval_mention_escalation": _nonneg_int,
     "trash_retention_days": int,
     # §72 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
     "screenpipe_retention_days": int,

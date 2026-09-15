@@ -358,6 +358,33 @@ def msg_reraised(title: str, note: str = "") -> tuple[str, str]:
                   f"{title}{extra} — open the menu-bar panel to re-approve (✅ / ❌)"))
 
 
+def msg_completion_hint(title: str) -> tuple[str, str]:
+    """§76.3 疑似已完成：雷达扫到的新证据说这张提案描述的事已经被做完了。
+
+    文案指向卡上那两颗一键（记为已交付 / 不做）——**状态没有变**，提示是提示，
+    拍板仍是 owner 的一次点击（§76.1）。"""
+    return (_pick("这张提案好像已经做完了", "This proposal looks already done"),
+            _pick(f"{title} —— 新证据显示这件事已经发生。打开看板：「已办完（记为已交付）」"
+                  "或「不做」",
+                  f"{title} — new evidence says it already happened. Open the board: "
+                  "“Already done (mark delivered)” or “Won't do”"))
+
+
+def msg_deadline_due(title: str) -> tuple[str, str]:
+    """§76.3 截止日到了还没批准：不再让「今天截止」无声地变成「已过期」。"""
+    return (_pick("提案到截止日了，还没批准", "A proposal hit its deadline unapproved"),
+            _pick(f"{title} —— 现在做个决定：批准 / 暂缓 / 拒绝",
+                  f"{title} — decide now: approve / defer / reject"))
+
+
+def msg_repeated_unhandled(title: str, n: int) -> tuple[str, str]:
+    """§76.3 被提 N 次仍未处理：一次性升级，不再只是默默把计数加一。"""
+    return (_pick(f"这件事被提了 {n} 次，仍未处理",
+                  f"This came up {n} times and is still unhandled"),
+            _pick(f"{title} —— 打开看板批准、暂缓或拒绝它",
+                  f"{title} — open the board to approve, defer or reject it"))
+
+
 def msg_review_ready(title: str) -> tuple[str, str]:
     """executing -> review: the draft is ready for Zelin's ✓/↩︎."""
     return (_pick("待验收：AI 已交付草稿", "Ready for review: draft delivered"),

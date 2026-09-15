@@ -57,6 +57,12 @@ export interface ApprovalCard {
   capture_id?: string;
   /** §44 静默并入次数（0 = 从未）——原生「已并入×N」紫章 */
   silent_merged?: number;
+  /** §76.2 结算信号：截止日已到（days_left ≤ 0）仍挂在提案列 → 卡面出决策提示 */
+  decision_due?: boolean;
+  /** §76.2 结算信号：被提 ≥ approval.mention_escalation 次仍未处理 → 被提×N 章转红「仍未处理」 */
+  mention_escalated?: boolean;
+  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号；状态永远没变过） */
+  completion_hint?: CompletionHint;
   /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
   cost_state?: string;
   /** §37 展示名 / 曾用名——提案是摘要优先面：卡面标题走 cardHeadline（钦定名 > summary > display_title > title），
@@ -65,6 +71,18 @@ export interface ApprovalCard {
   /** §37 用户钦定标记（server 只在为真时发键）：为真时 display_title 压过 summary 成为卡面标题 */
   user_titled?: boolean;
   former_titles?: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * 「疑似已完成」证据（needs_approval 项 `completion_hint`，CONTRACT §76.2 issue #313）。
+ * 字段逐字镜像 wire：at = epoch 秒（缺失 null）、note = 证据一句话、channel = 证据来路。
+ * 它**只是提示**：卡的 status 没有变过，归档 / 记为已交付仍是 owner 的一次点击。
+ */
+export interface CompletionHint {
+  at?: number | null;
+  note?: string;
+  channel?: string;
   [key: string]: unknown;
 }
 
@@ -245,6 +263,9 @@ export interface DebtCard {
   type?: string;
   sources?: CardSource[];
   summary?: string;
+  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号）。备选卡的出口是
+   *  「永久完成（封存）」/「删除」——状态永远没变过，拍板仍是 owner 的一次点击 */
+  completion_hint?: CompletionHint;
   /** §37 摘要优先面（原生 DebtRow displaySummary）：卡面标题走 cardHeadline */
   display_title?: string;
   user_titled?: boolean;

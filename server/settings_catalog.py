@@ -11,6 +11,7 @@ section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.j
 approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
 开发者区前两行是 web 才有的（原生没有）：`self_improve_enabled`（§65.1 / issue #307 / D57）自动改进本软件的通道总开关，默认关；
 `self_improve_owner_logins`（§65.5 / issue #310）额外算作 owner 本人的 GitHub login，默认空表（仓库 owner 与 gh 当前身份恒在集合里）。
+「审批 / 成本」区的 `approval_mention_escalation`（§76.2 / issue #313）也是 web 才有的一行：提案被提够多少次仍未处理就升级（0 = 关），actd 每 pass 现读。
 
 读：``GET /api/settings`` 全目录 + 每 field 的 effective 值与来源
 （override / config / default，三层与 ``act/lib/config._apply_settings_overrides``
@@ -380,6 +381,14 @@ SECTIONS: tuple = (
                config=("approval", "cost_thresholds", "require_text_confirm_above_usd"),
                help_zh="高于此值升 T2：批准要输入确认词。请输入不小于 0 的数字，如 50。",
                help_en="Above this the card is T2: approval needs a typed confirmation. Enter a number ≥ 0, e.g. 50."),
+            # §76.2（issue #313）：被提 N 次仍未处理的升级阈值。默认值真源 =
+            # act/lib/config.DEFAULT_MENTION_ESCALATION（server 不 import act，
+            # 逐字相等由 tests/test_proposal_decision_signals.py 钉住）。
+            _f("approval_mention_escalation", "int", "被提 N 次仍未处理（升级阈值）",
+               "Raised N times, still unhandled (escalate at)", default=5,
+               config=("approval", "mention_escalation"),
+               help_zh="同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
+               help_en="When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
             _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=60,
                config=("trash", "retention_days"),
                help_zh="超期且未标永久的卡硬删；0 = 永不自动清。", help_en="Unpinned cards older than this are purged; 0 = never."),

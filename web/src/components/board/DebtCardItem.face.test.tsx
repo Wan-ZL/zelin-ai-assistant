@@ -59,3 +59,21 @@ describe("DebtCardItem hardness chip (native hardnessLabel)", () => {
     expect(screen.getByText("常规").className).toBe("chip");
   });
 });
+
+describe("DebtCardItem §76.2 completion_hint (issue #313)", () => {
+  it("有提示 → 绿章 + 证据一句，出口仍是卡上既有的三颗动词（不开新动作）", () => {
+    render(<DebtCardItem item={item({ completion_hint: { at: 1788948000, note: "Compass repo 已建", channel: "meeting" } })} />);
+    expect(screen.getByText("✅ Looks already done").className).toBe("chip chip-success");
+    expect(screen.getByText("Compass repo 已建")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Done for good (seal, stop suggesting)" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /mark delivered/ })).toBeNull();
+  });
+
+  it("缺席 / 空壳 → 章与证据行都不渲染", () => {
+    const { unmount } = render(<DebtCardItem item={item()} />);
+    expect(screen.queryByText("✅ Looks already done")).toBeNull();
+    unmount();
+    render(<DebtCardItem item={item({ completion_hint: { at: null, note: "" } })} />);
+    expect(screen.queryByText(/✅ Evidence/)).toBeNull();
+  });
+});

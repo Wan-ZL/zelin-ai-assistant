@@ -24,6 +24,12 @@ projection, never rewritten server-side (§44 single writer).
 观察值，绝不自己探），运行中/待验收行多一个 ``slept_seconds``（§71.2 —— 这一轮
 里电脑睡掉的秒数，卡面据此说「其中 N 小时电脑睡眠」）。
 
+§76.2 的投影面（add-only）：提案行多三个结算信号——``decision_due``（截止日已到
+仍未批准）、``mention_escalated``（被提 ≥ ``approval.mention_escalation`` 次）与
+``completion_hint``（雷达盖的「疑似已完成」证据，``at`` 转 epoch int）。三个都是
+**只读判据**，本模块不改任何卡片状态（§76.1 的红线：结算动作永远是 owner 的一次
+点击）。
+
 ``copy_cmd`` (§2 / §6 / §68.7 takeover) deliberately starts with a bare
 ``claude`` (§55 第五幕 追记 2026-09-07): a ``--bg`` worker runs the binary of
 Claude Code's per-user daemon, which follows the login shell's claude — NOT
@@ -553,6 +559,42 @@ def _capture_id(req: Requirement) -> Optional[str]:
     return None
 
 
+def _decision_due(req: Requirement) -> bool:
+    """§76.2 决策到点：截止日已到或已过（`days_left <= 0`）而卡还挂在提案列。
+
+    无 deadline / 坏 deadline = False（拿不准不催人）。这是**投影**，不是状态：
+    §70.2 的 `stale:deadline_passed` 静默清扫一字不动，它只是让「今天截止」不再
+    无声地变成「已过期」。"""
+    left = days_left(req.deadline)
+    return left is not None and left <= 0
+
+
+def _mention_escalated(req: Requirement, cfg: config.Config) -> bool:
+    """§76.2 被提够多次仍未处理：`repeated >= approval.mention_escalation`
+    （默认 5，0/负 = 关）。计数本身照旧累加（§44.4 / §70.2 都读它），升级只是
+    读同一个数的第二个判据。"""
+    threshold = _int_or(getattr(cfg, "approval_mention_escalation", 0), 0)
+    return threshold > 0 and _repeated(req) >= threshold
+
+
+def _completion_hint_view(req: Requirement) -> Optional[dict]:
+    """§76.2 `completion_hint` 的 wire 形：`{at(epoch int|null), note, channel}`。
+
+    卡上没有提示、或提示不是 dict（手写/迁移脏值）= None → 整键省略。note 在
+    盖章时已截到 §76.1 的上限，投影只做类型归一，不再截第二次。"""
+    hint = getattr(req, "completion_hint", None)
+    if not isinstance(hint, dict):
+        return None
+    view = {"at": _epoch(hint.get("at")),
+            "note": _s(hint.get("note")),
+            "channel": _s(hint.get("channel"))}
+    # 空壳（`{}` / 全空字段）什么也没说——整键省略，客户端不许拿空壳去猜
+    # （同 §64 assessment 的读侧语义）。
+    if view["at"] is None and not view["note"]:
+        return None
+    return view
+
+
 def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
     """The add-only tail of a needs_approval (card_sent) row. Every key here is
     optional/add-only:
@@ -566,7 +608,13 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
     - ``egress`` (§7, issue #11): what leaves the machine on approval — always
       a list, ``[]`` = nothing;
     - ``capture_id`` (§10, issue #7): inbox stem of the birth capture, omitted
-      when the card was not born from one."""
+      when the card was not born from one;
+    - ``decision_due`` / ``mention_escalated`` (§76.2, issue #313): the two
+      settlement signals computed at projection time (bools, always present —
+      they are derived, so there is no "unknown" to omit);
+    - ``completion_hint`` (§76.2): the stored 疑似已完成 evidence, omitted when
+      the card has none. **None of the three changes status** — they are what
+      turns a silent board row into a decision the owner can see."""
     return {
         "reraised": bool(ex.get("reraised_at")),
         "reraised_note": str(ex.get("reraised_note") or ""),
@@ -574,6 +622,9 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
         **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
         "egress": _egress_view(req, cfg),
         **_opt("capture_id", _capture_id(req)),
+        "decision_due": _decision_due(req),
+        "mention_escalated": _mention_escalated(req, cfg),
+        **_opt("completion_hint", _completion_hint_view(req)),
     }
 
 
@@ -1114,6 +1165,12 @@ def _detected_row(req: Requirement, ctx: _Ctx) -> dict:
         "hardness": req.hardness,
         "type": req.type,
         "sources": _source_view(req, ctx.cfg),
+        # §76.2：备选卡也会被盖「疑似已完成」（§76.1 的盖章状态含 detected），
+        # 所以债务列同样要能看见那条证据——潜在任务卡的出口（封存 / 删除）本来
+        # 就在卡上，缺的只是「它可能已经不用做了」这一句（PR #349 评审）。
+        # 提案列的两个派生 bool 不来这一列：备选卡没有 deadline 决策面，
+        # 「被提×N」也不在这张卡面上（§66.2 原生 DebtRow 逐字镜像）。
+        **_opt("completion_hint", _completion_hint_view(req)),
     }
 
 

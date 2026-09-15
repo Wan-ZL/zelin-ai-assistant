@@ -1691,6 +1691,10 @@ def _reraise(parent: Requirement, new_req: Requirement, sources: Optional[list],
         parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
         parent.summary = (f"{parent.summary} · 新增:{note}").strip()
     parent.execution = _reraised_execution(parent.execution, note)
+    # §76.1：回锅 = 新的一轮诉求，上一轮盖的「疑似已完成」是过期证据——不清
+    # 掉的话这张卡会带着两周前的绿章和那颗「已办完 · 记为已交付」一键回到提案
+    # 列（PR #349 评审抓到）。提示只描述**当前**这一轮，所以随轮次一起归零。
+    parent.completion_hint = None
     parent.set_status(State.DETECTED if cap_detected else State.CARD_SENT)
     return upsert(parent)
 

@@ -53,6 +53,10 @@ approval:
   cost_thresholds:
     show_cost_above_usd: 5             # 低于此值卡片不显示成本
     require_text_confirm_above_usd: 50 # 高于此值升 T2，需文字确认
+  mention_escalation: 5                # CONTRACT §76.2：提案被提 ≥N 次仍未处理 → 卡面转红章
+                                       # 「仍未处理」+ 一次性通知（只响一次）；0 = 关掉升级
+                                       # （被提×N 的计数照常累加）。默认值 truth =
+                                       # act/lib/config.DEFAULT_MENTION_ESCALATION
 
 # 审批只在 Mac App 里做（v0.21 起）。iMessage 通道与 Slack 的手机审批角色都已移除；
 # Slack self-DM 仍保留为「给自己发一条 = 快速建卡」的手机端捕获入口（见 docs/SLACK_SETUP.md）。
