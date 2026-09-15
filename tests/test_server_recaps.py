@@ -1,5 +1,6 @@
-"""server/ recap face (CONTRACT §63; §49 routes): GET/PUT /api/settings/recap,
-POST /api/recaps/mark, and the two inbox special forms through POST /api/actions.
+"""server/ recap face (CONTRACT §63 / §63.9; §49 routes): GET/PUT
+/api/settings/recap, POST /api/recaps/mark, GET /api/recaps/history and the
+three inbox special forms through POST /api/actions.
 
 - settings: effective values layered overrides → config.yaml → default;
   ``slack_draft_enabled`` is false out of the box; PUT diff-writes the flat
@@ -10,8 +11,14 @@ POST /api/recaps/mark, and the two inbox special forms through POST /api/actions
   decide the projection budget and the dismissed retention window in
   recap_store, and nothing else); key shape and mark vocabulary fail closed;
   ``on: false`` clears the stamp (「恢复」).
+- history (§63.9, issue #300): the stored versions **with their text** — the
+  one place the earlier text is readable (the board projection carries only
+  scalar handles). Read-only (the server never writes a recap file, §63.6),
+  fail-open: absent / corrupt / oversize = 200 empty layer, never 500 / 404;
+  a bad key is the one 400 — the client never names a path.
 - inbox forms: meeting_key shape, note ≤ 500, partial only ``true``,
-  channel_id shape; unknown fields 400; files land with ``via: web``.
+  channel_id shape, ``recap_revert`` version = a real integer ≥ 1; unknown
+  fields 400; files land with ``via: web``.
 Real server on a random port (tests/test_server_common.py); stdlib client.
 """
 import json
@@ -189,6 +196,86 @@ class MarksTestCase(_Case):
         self.assertIn(KEY, self.marks())
 
 
+class HistoryTestCase(_Case):
+    """§63.9（issue #300）GET /api/recaps/history?key=：存着的每一版 + 正文，只读、fail-open。"""
+
+    def _write_recap(self, doc: dict, key: str = KEY) -> Path:
+        path = self.home / "state" / "recap" / "recaps" / (key.replace(":", "_") + ".json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def _doc(self) -> dict:
+        return {"key": KEY, "version": 2, "generated_at": "2026-08-31T20:40:00Z", "partial": False,
+                "quality": "ok", "en": ["Decided: b"], "zh": ["定了：b"],
+                "history": [{"version": 1, "generated_at": "2026-08-31T20:20:00Z", "partial": False,
+                             "quality": "needs_review", "en": ["Decided: a"], "zh": ["定了：a"]}]}
+
+    def test_current_and_entries_carry_the_text(self):
+        self._write_recap(self._doc())
+        status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["key"], KEY)
+        self.assertEqual(body["current"], {"version": 2, "generated_at": "2026-08-31T20:40:00Z",
+                                           "partial": False, "quality": "ok",
+                                           "en": ["Decided: b"], "zh": ["定了：b"]})
+        self.assertEqual(len(body["entries"]), 1)
+        self.assertEqual(body["entries"][0]["version"], 1)
+        self.assertEqual(body["entries"][0]["quality"], "needs_review")
+        self.assertEqual(body["entries"][0]["en"], ["Decided: a"])
+        self.assertEqual((body["history_cap"], body["truncated"]), (5, False))
+
+    def test_entries_are_newest_first_and_textless_ones_are_dropped(self):
+        doc = self._doc()
+        doc["history"] = [
+            {"version": 1, "en": ["Decided: a"], "zh": []},
+            {"version": 2, "en": None},                                   # 无正文 = 回退不了，不列
+            {"version": 3, "en": ["Decided: c"], "generated_at": 7, "quality": 9, "partial": 1},
+        ]
+        self._write_recap(doc)
+        _status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual([e["version"] for e in body["entries"]], [3, 1])
+        # 手改坏的值逐字段消毒（数字 generated_at / quality、非 bool partial 都真实出现过）
+        self.assertEqual((body["entries"][0]["generated_at"], body["entries"][0]["quality"]), (None, None))
+        self.assertIs(body["entries"][0]["partial"], True)
+
+    def test_an_absent_file_is_an_empty_layer_never_404(self):
+        # 新装机 / 还没出过稿 / 已过保留期：页面对这三者一条路 = 没有上一版可看
+        status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"key": KEY, "current": None, "entries": [],
+                                "history_cap": 5, "truncated": False})
+
+    def test_a_corrupt_or_non_object_file_is_an_empty_layer_never_500(self):
+        path = self._write_recap({"key": KEY})
+        path.write_text("{oops", encoding="utf-8")
+        status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual((status, body["current"], body["entries"]), (200, None, []))
+        path.write_text("[1, 2]", encoding="utf-8")
+        status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual((status, body["current"], body["entries"]), (200, None, []))
+
+    def test_an_oversize_file_is_not_read_at_all(self):
+        self._write_recap({"key": KEY, "en": ["x" * 40], "history": [], "pad": "y" * 3_000_000})
+        status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual((status, body["current"], body["truncated"]), (200, None, True))
+
+    def test_the_key_is_the_one_400_and_the_client_never_names_a_path(self):
+        for query in ("", "?key=", "?key=R-101", "?key=meeting:../../etc/passwd",
+                      "?key=" + KEY + "/x"):
+            with self.subTest(query=query):
+                status, body = get_json(self.port, "/api/recaps/history" + query)
+                self.assertEqual(status, 400)
+                assert_envelope(self, body, "INVALID_FIELD")
+
+    def test_a_recap_file_is_never_written_by_the_server(self):
+        """§63.6 写者分工：这条路只读——回退走 inbox recap_revert → actd → act.recap。"""
+        path = self._write_recap(self._doc())
+        before = path.read_bytes()
+        get_json(self.port, "/api/recaps/history?key=" + KEY)
+        self.assertEqual(path.read_bytes(), before)
+
+
 class InboxFormsTestCase(_Case):
     def _files(self):
         return sorted((self.home / "state" / "inbox").glob("*.json"))
@@ -209,6 +296,35 @@ class InboxFormsTestCase(_Case):
         self.assertEqual(status, 200)
         rec = json.loads(self._files()[0].read_text(encoding="utf-8"))
         self.assertEqual(rec["channel_id"], "D0ABCDEF12")
+
+    def test_recap_revert_lands_with_an_integer_version(self):
+        """§63.9（issue #300）：第一个带整数值的 inbox 动作——字节形多一支值类型（golden 钉死）。"""
+        status, body = post_json(self.port, "/api/actions",
+                                 {"action": "recap_revert", "meeting_key": KEY, "version": 2})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["action"], "recap_revert")
+        raw = self._files()[0].read_bytes().decode("utf-8")
+        self.assertIn('"version" : 2', raw)          # 裸十进制，不是 "2"
+        rec = json.loads(raw)
+        self.assertEqual((rec["meeting_key"], rec["version"], rec["via"]), (KEY, 2, "web"))
+
+    def test_recap_revert_validation_fails_closed(self):
+        for payload, code in (
+            ({"action": "recap_revert", "meeting_key": KEY}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": 0}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": -1}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": True}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": "2"}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": 2.0}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": 10 ** 9}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": "R-1", "version": 2}, "INVALID_FIELD"),
+            ({"action": "recap_revert", "meeting_key": KEY, "version": 2, "note": "x"}, "UNKNOWN_FIELD"),
+        ):
+            with self.subTest(payload=payload):
+                status, body = post_json(self.port, "/api/actions", payload)
+                self.assertEqual(status, 400)
+                assert_envelope(self, body, code)
+        self.assertEqual(self._files(), [])
 
     def test_validation_fails_closed(self):
         cases = (

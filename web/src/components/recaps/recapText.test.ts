@@ -1,12 +1,14 @@
 // 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行 +
 // §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge；
-// §63.3 追记 校验原因与自动修剪的双语文案（issue #298）；§63.5 追记 三栏判定与已忽略 badge（issue #301）。
+// §63.3 追记 校验原因与自动修剪的双语文案（issue #298）；§63.5 追记 三栏判定与已忽略 badge（issue #301）；
+// §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异（issue #300）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, appLabel, badgesFor, generationPhase, groupByDay, isGenerating,
-  laneCounts, pickLanguage, problemLabel, recapBody, recapClipboardText, recapHeader, recapLane, recapProblems,
-  recapRepairs, repairLabel, rowLabel, slackDraftLabel,
+  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, appLabel, badgesFor, changedLines,
+  generationPhase, groupByDay, isGenerating, laneCounts, lineCitation, pickLanguage, problemLabel, recapBody,
+  recapClipboardText, recapHeader, recapLane, recapProblems, recapRepairs, repairLabel, rowLabel, slackDraftLabel,
+  versionLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -210,5 +212,48 @@ describe("recapText", () => {
     const counts = laneCounts([row(), row({ sent_at: "a" }), row({ dismissed_at: "b" }), row({ sent_at: "c" })]);
     expect(counts).toEqual({ active: 1, archived: 2, dismissed: 1 });
     expect(laneCounts([])).toEqual({ active: 0, archived: 0, dismissed: 0 });
+  });
+
+  // ----- §63.9（issue #300）：行级引用、版本标题、两版逐行差异 --------------------------------- //
+
+  it("cites a line by its fixed position: date, app and the section tag", () => {
+    expect(LINE_TAGS).toEqual(["D", "S", "L", "C", "O"]);
+    expect(LINE_TAG_LABELS.map((entry) => entry.tag)).toEqual(LINE_TAGS);
+    expect(LINE_TAG_LABELS[3].en).toBe("Changed since last plan");   // 标签文字与 §63.3 的模板逐字同源
+    expect(lineCitation(row(), 0)).toMatch(/^\d{4}-\d{2}-\d{2} Zoom #D$/);
+    expect(lineCitation(row(), 4)).toMatch(/ Zoom #O$/);
+    expect(lineCitation(row({ app: "slack-huddle" }), 1)).toMatch(/ Slack Huddle #S$/);
+    expect(lineCitation(row({ start: "garbage" }), 0)).toBe("? Zoom #D");   // 坏 start 恒不抛
+    expect(lineCitation(row(), 5)).toBe("");                                // 五行之外没有 chip
+  });
+
+  it("the citation never touches the copied body", () => {
+    // §63.9 的硬约束：粘出去的 5 行正文逐字节不变（引用是另一次复制）
+    const r = row();
+    expect(recapBody(r, "en").split("\n")).toEqual(r.en);
+    expect(recapClipboardText(r, "en").split("\n").slice(1)).toEqual(r.en);
+    expect(recapBody(r, "en")).not.toContain("#D");
+  });
+
+  it("compares two versions line by line, with no model and no request", () => {
+    const now = ["Decided: a", "Split: not assigned", "Deadline: none"];
+    const then = ["Decided: a", "Split: Ann, Bo", "Deadline: none"];
+    expect(changedLines(now, then)).toEqual([false, true, false]);
+    expect(changedLines(now, now)).toEqual([false, false, false]);
+    expect(changedLines([], [])).toEqual([]);
+    // 长度不同按位置比（缺的一侧当空串）——手改坏的文件不许让面板崩
+    expect(changedLines(["a"], ["a", "b"])).toEqual([false, true]);
+    expect(changedLines(["a", "b"], [])).toEqual([true, true]);
+  });
+
+  it("titles a stored version with its number, its partial flag and its stamp", () => {
+    const text = (_zh: string, en: string) => en;
+    expect(versionLabel({ version: 2, generated_at: "2026-08-31T19:56:00Z" }, text))
+      .toMatch(/^Version 2 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(versionLabel({ version: 3, generated_at: null }, text)).toBe("Version 3");
+    expect(versionLabel({ version: 3, generated_at: "garbage" }, text)).toBe("Version 3");
+    expect(versionLabel({ version: 1, generated_at: null, partial: true }, text)).toBe("Version 1 (partial)");
+    const zh = (zhText: string, _en: string) => zhText;
+    expect(versionLabel({ version: 1, generated_at: null, partial: true }, zh)).toBe("第 1 版（阶段稿）");
   });
 });

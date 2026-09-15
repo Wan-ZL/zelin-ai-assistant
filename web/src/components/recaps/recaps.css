@@ -265,3 +265,98 @@
   color: var(--accent);
   font: var(--type-card-meta-strong);
 }
+
+/* §63.9（issue #300）行级引用 chip：正文下方一排 `#D` / `#S` / …，按一下复制
+   `2026-08-31 Zoom #D`——引用是另一次复制，正文那五行一字不变 */
+.recap-cite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.recap-cite-lead {
+  color: var(--text-tertiary);
+  font: var(--type-composer-hint);
+}
+
+.recap-cite-chip {
+  appearance: none;
+  padding: 1px 7px;
+  border: var(--stroke-w) solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.recap-cite-chip:hover { background: var(--surface-hover); }
+.recap-cite-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.recap-cite-chip:disabled { cursor: default; opacity: 0.5; }
+
+/* §63.9 上一版面板：版本 segmented + 两列并排 + 逐行改动标记 */
+.recap-history-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recap-history-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .recap-history-cols { grid-template-columns: 1fr; }
+}
+
+.recap-history-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.recap-history-col-title {
+  margin: 0;
+  font: var(--type-lane-title);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-history-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recap-history-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  font: var(--type-card-body);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.recap-history-line.is-changed {
+  background: var(--warning-soft-quiet);
+}
+
+.recap-history-mark {
+  flex: none;
+  color: var(--warning);
+  font: var(--type-card-meta-strong);
+}
+
+.recap-history-text { min-width: 0; }

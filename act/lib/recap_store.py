@@ -30,7 +30,8 @@ Writers: ``act/recap.py`` (cron `--once` and the actd-spawned `--generate` /
 recaps/; ``server/recaps.py`` owns marks.json. The daemon only READS this
 directory: :func:`attach` adds the add-only top-level ``recaps[]`` plus
 ``recap_counts`` (the true per-lane totals the caps cut down to; §2 兄弟字段) to
-dashboard.json (history stripped, newest first, capped) — the web 会议纪要
+dashboard.json (history text stripped — only the §63.9 scalar handles
+``history_versions`` ride along, newest first, capped) — the web 会议纪要
 page's data. The one thing actd writes lives OUTSIDE it: the §63.8 generate
 request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
 projected per row as ``generate_request``. The §63.3 追记 ``problems`` /
@@ -77,6 +78,9 @@ QUALITY_NEEDS_REVIEW = "needs_review"
 QUALITY_THIN = "thin_transcript"
 QUALITY_NO_AUDIO = "no_audio"
 QUALITY_FAILED = "generation_failed"
+# 同一份词表的 tuple 形（add-only，顺序无语义）——§63.9 回退读 history 条目上那个键时
+# 拿它判「这是不是一个我们认得的值」，认不出就按 needs_review 兜（永不伪造 ok）
+QUALITIES: tuple = (QUALITY_OK, QUALITY_NEEDS_REVIEW, QUALITY_THIN, QUALITY_NO_AUDIO, QUALITY_FAILED)
 
 
 # --------------------------------------------------------------------------- #
@@ -212,6 +216,8 @@ def new_record(session: recap_sessions.Session, key: str, status: str) -> dict:
         "note": None, "history": [], "slack_draft": None,
         # §63.3 追记（add-only）：needs_review 的结构化原因与落地前的长度修剪台账
         "problems": [], "repairs": [],
+        # §63.9 追记（add-only）：这一版的正文回退自第几版（生成出来的版本 = None）
+        "reverted_from": None,
     }
 
 
@@ -307,9 +313,51 @@ def load_marks() -> dict:
 # --------------------------------------------------------------------------- #
 # projection — dashboard.json top-level `recaps[]` (add-only)
 # --------------------------------------------------------------------------- #
+def has_lines(value) -> bool:
+    """5 行正文在不在（非空 list）——§63.9 的投影句柄与回退用**同一个**判据，
+    否则面板会列出一个点下去回退不了的版本。"""
+    return isinstance(value, list) and bool(value)
+
+
+def _is_version(value) -> bool:
+    """真整数的版本号（bool 是 int 子类——手改过的 wire 上 `true` 真出现过）。"""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _iso_or_none(value):
+    return value if isinstance(value, str) else None
+
+
+def _version_handle(entry) -> Optional[dict]:
+    """一条 history 条目 → 标量句柄 ``{version, generated_at, partial}``，或 None
+    （非 dict / 版本号不是真整数 / 没有正文——那三种都不是「能回退到的一版」）。"""
+    if not isinstance(entry, dict):
+        return None
+    if not _is_version(entry.get("version")) or not has_lines(entry.get("en")):
+        return None
+    return {"version": entry["version"], "generated_at": _iso_or_none(entry.get("generated_at")),
+            "partial": bool(entry.get("partial"))}
+
+
+def history_versions(rec: dict) -> list:
+    """``history[]`` → ``[{version, generated_at, partial}]``，oldest first（§63.9，issue #300）。
+
+    **只发标量**：正文一个字都不进这一层。60 行 × 5 条 history × 两语言 × 5 行会把
+    10 s 一轮的看板轮询撑成几百 KB，而「上一版长什么样」是点开面板那一下才需要的东西
+    ——正文由 ``GET /api/recaps/history?key=…`` 单份按需读（§49 追记）。
+    只列**回退得到的**条目：面板上能点的每一项都必须真能回退，手改坏的 / 无正文的
+    条目静默跳过（``history_count`` 仍是原始条数，两个数可以不等 = 诚实）。
+    """
+    handles = [_version_handle(entry) for entry in (rec.get("history") or [])]
+    return [handle for handle in handles if handle is not None]
+
+
 def _row(rec: dict, marks: dict, requests: Optional[dict] = None) -> dict:
     row = {k: v for k, v in rec.items() if k != "history"}
     row["history_count"] = len(rec.get("history") or [])
+    # §63.9 add-only（issue #300）：存着的每一版有个句柄（版本号 + 时刻 + 阶段稿旗）——
+    # 「已更新」badge 以前是条死路，现在面板据它列出可看 / 可回退的版本
+    row["history_versions"] = history_versions(rec)
     mark = _dict(marks.get(rec.get("key")))
     row["copied_at"] = mark.get("copied_at")
     row["sent_at"] = mark.get("sent_at")
@@ -432,15 +480,27 @@ def _slack_draft_argv(decision: dict) -> Optional[list]:
     return ["--slack-draft", decision["meeting_key"], "--channel-id", channel]
 
 
-_INBOX_BUILDERS = {"recap_generate": _generate_argv, "recap_slack_draft": _slack_draft_argv}
+def _revert_argv(decision: dict) -> Optional[list]:
+    """§63.9（issue #300）：``recap_revert {meeting_key, version}`` → ``--revert KEY
+    --to-version N``。version 必须是 ≥ 1 的真整数（bool 不算——wire 上 `true` 曾经
+    真的出现过）；这里不查这一版存不存在，那是持锁的写者的事（act/recap.revert）。"""
+    version = decision.get("version")
+    if not _is_version(version) or version < 1:
+        return None
+    return ["--revert", decision["meeting_key"], "--to-version", str(version)]
+
+
+_INBOX_BUILDERS = {"recap_generate": _generate_argv, "recap_slack_draft": _slack_draft_argv,
+                   "recap_revert": _revert_argv}
 INBOX_ACTIONS = frozenset(_INBOX_BUILDERS)
 
 
 def inbox_argv(decision) -> Optional[list]:
     """``recap_generate {meeting_key, note?, partial?}`` / ``recap_slack_draft
-    {meeting_key, channel_id}`` → argv tail, or None when malformed (actd
-    acks noop). Neither form carries a recipient: the channel_id of a draft
-    names the owner's own Slack draft box target, never a send."""
+    {meeting_key, channel_id}`` / ``recap_revert {meeting_key, version}`` → argv
+    tail, or None when malformed (actd acks noop). None of the three carries a
+    recipient: the channel_id of a draft names the owner's own Slack draft box
+    target, never a send."""
     if not isinstance(decision, dict) or not valid_key(decision.get("meeting_key")):
         return None
     builder = _INBOX_BUILDERS.get(str(decision.get("action")))

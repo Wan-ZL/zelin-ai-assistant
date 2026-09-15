@@ -239,8 +239,9 @@ def _spawn_weekly_digest(_decision: Optional[dict] = None) -> str:
 
 
 def _spawn_recap(decision: dict) -> str:
-    """§63 ``recap_generate`` / ``recap_slack_draft`` → ``act.recap <argv>`` detached;
-    malformed (bad key / note / channel id) = honest noop — the store validates.
+    """§63 ``recap_generate`` / ``recap_slack_draft`` / §63.9 ``recap_revert`` →
+    ``act.recap <argv>`` detached; malformed (bad key / note / channel id /
+    version) = honest noop — the store validates.
     ``recap_generate`` also lands in the §63.8 request ledger (running / noop) so the
     recap row can say 生成中 until the new version's ``generated_at`` overtakes it."""
     argv = recap_store.inbox_argv(decision)
@@ -261,6 +262,7 @@ _DETACHED_ACTIONS = {  # late-bound lambdas: tests patch the module attribute
     "weekly_digest_now": lambda decision: _spawn_weekly_digest(),
     "recap_generate": lambda decision: _spawn_recap(decision),
     "recap_slack_draft": lambda decision: _spawn_recap(decision),
+    "recap_revert": lambda decision: _spawn_recap(decision),  # §63.9 回退到存着的某一版（issue #300）
     "radar_test_round": lambda decision: radar_rounds.request(decision, _log),  # §48.7 立即测试一轮
     "voice_generate": lambda decision: voice_job.request(decision, _log),  # §68.1 追记 从我的消息生成/更新档案（D47）
 }

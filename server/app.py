@@ -27,7 +27,8 @@
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
   POST /api/materials/dismiss（server/material_box.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
-  /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+  /api/recaps/mark（「复制」/「标记已发送」本地标记）、GET /api/recaps/history?key=
+  （§63.9 存着的每一版 + 正文；只读，缺席 / 坏文件 = 200 空层），server/recaps.py。
 - 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
   GET /api/settings（目录）+ GET/PUT /api/settings/{section}（server/settings_catalog.py）、
   GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
@@ -725,6 +726,9 @@ _GET_JSON_ROUTES = {
     "/api/materials/list": lambda ctx, query: material_box.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+    # §63.9 上一版（issue #300）：单份纪要存着的每一版 + 正文（?key=…；正文只走这条路，
+    # 不进 10 s 一轮的看板投影）。只读——回退走 inbox recap_revert（act 独写 recaps/，§63.6）
+    "/api/recaps/history": lambda ctx, query: recaps.history(ctx.home, query),
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
     # custom / foreign）；token-light GET，写面在 POST /api/skills
     "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),

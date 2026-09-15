@@ -1,6 +1,7 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
-// 复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
-// §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）。
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9）：行标签、按日分组、badge 词表、
+// 语言选择、复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
+// §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）、
+// §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题与两版逐行差异。
 // 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
@@ -203,6 +204,64 @@ export function recapClipboardText(row: RecapRow, language: Language): string {
 }
 
 type Bilingual = (zh: string, en: string) => string;
+
+/**
+ * §63.9（issue #300）**行级引用标签** D / S / L / C / O：五行的标签文字与顺序是固定的
+ * （`act/lib/recap_text.LABELS_EN` / `LABELS_ZH`，§63.3 的硬闸），所以**位置本身就是身份**
+ * ——不需要在 wire 上给每行发一个 id 就能把一行citable。粘出去的五行正文一字不变
+ * （引用串是另一次复制，chip 各自一颗）。
+ * 逐项 id 的 `D1` / `A2` / `O3` 形（一行里的第几条）要等 #303 的多条目格式，本版不伪造。
+ */
+export const LINE_TAGS: string[] = ["D", "S", "L", "C", "O"];
+
+/** 五个标签的双语名（chip 的可达名用；文案仍走唯一的 text(zh, en) 机制） */
+export const LINE_TAG_LABELS: { tag: string; zh: string; en: string }[] = [
+  { tag: "D", zh: "定了", en: "Decided" },
+  { tag: "S", zh: "分工", en: "Split" },
+  { tag: "L", zh: "截止", en: "Deadline" },
+  { tag: "C", zh: "较上次变化", en: "Changed since last plan" },
+  { tag: "O", zh: "待定", en: "Open" },
+];
+
+/**
+ * 一行的引用串 `2026-08-31 Zoom #D`：日期（本机时区，与左列日分组 / 复制表头同一口径）
+ * + 会议应用 + 行标签。五行之外 = 空串（手改坏的文件不给 chip）。
+ * **纯展示层**：不是 wire 字段，也不进 `recapBody()` / `recapClipboardText()`。
+ */
+export function lineCitation(row: RecapRow, index: number): string {
+  const tag = LINE_TAGS[index];
+  if (!tag) return "";
+  return `${dayKey(row.start)} ${appLabel(row.app)} #${tag}`;
+}
+
+/**
+ * §63.9 两版逐行比：`true` = 这一行变了。**纯字符串比较，零模型、零请求、同输入恒同结果**
+ * （§63.5 预检的同一条纪律）。长度不同按位置比（缺的一侧当空串）——正常两版都恰是五行。
+ */
+export function changedLines(current: string[], previous: string[]): boolean[] {
+  const out: boolean[] = [];
+  for (let i = 0; i < Math.max(current.length, previous.length); i += 1) {
+    out.push((current[i] ?? "") !== (previous[i] ?? ""));
+  }
+  return out;
+}
+
+/** `2026-08-31 12:56`（本机时区）；坏 / 缺时间戳 = 空串，永不显示 Invalid Date */
+function stampLabel(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  return `${dayKey(iso)} ${hhmm(iso)}`;
+}
+
+/** §63.9 版本选择器一项的标题：`第 2 版（阶段稿） · 2026-08-31 12:56` */
+export function versionLabel(entry: { version: number; generated_at?: string | null; partial?: boolean },
+                            text: Bilingual): string {
+  const head = text(`第 ${entry.version} 版`, `Version ${entry.version}`);
+  const partial = entry.partial ? text("（阶段稿）", " (partial)") : "";
+  const stamp = stampLabel(entry.generated_at);
+  return stamp ? `${head}${partial} · ${stamp}` : `${head}${partial}`;
+}
 
 /** §63.3 追记：wire 上的发现行（老 daemon 无此键、手改过的文件可能是任意东西）——只留像样的对象 */
 export function recapProblems(row: RecapRow): RecapProblem[] {

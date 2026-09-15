@@ -28,9 +28,12 @@ default off) is a second, whitelisted call (act/lib/recap_slack_draft.py)
 that puts the text in the owner's own draft box — sending stays manual.
 
 Other entry points (spawned detached by actd for the inbox special forms):
-``--generate <key> [--note …] [--partial]`` and ``--slack-draft <key>
---channel-id <C…>``. All runs serialize on a flock; the cron round gives up
-immediately when another run holds it.
+``--generate <key> [--note …] [--partial]``, ``--slack-draft <key>
+--channel-id <C…>`` and ``--revert <key> --to-version <n>`` (§63.9: a stored
+version's text becomes version + 1 — no model call, and this module stays the
+only writer of ``recaps/``, the server never touches a recap file). All runs
+serialize on a flock; the cron round gives up immediately when another run
+holds it.
 """
 from __future__ import annotations
 
@@ -184,11 +187,18 @@ def _when(rec: dict, tz: str) -> str:
 
 
 def _push_history(rec: dict) -> None:
-    """The previous text (if any) moves into history, capped at HISTORY_CAP."""
+    """The previous text (if any) moves into history, capped at HISTORY_CAP.
+
+    §63.9 追记（issue #300）: the entry also carries the version's own
+    ``quality`` (add-only) — a revert has to restore the badge the text was
+    born with, and guessing ``ok`` for an entry that was 需复核 would be the
+    one lie this feature must not tell. Entries written before this key exists
+    fall back to 需复核 on revert (act/recap._entry_quality)."""
     if not rec.get("en"):
         return
     entry = {"version": rec.get("version"), "generated_at": rec.get("generated_at"),
-             "en": rec["en"], "zh": rec["zh"], "partial": bool(rec.get("partial"))}
+             "en": rec["en"], "zh": rec["zh"], "partial": bool(rec.get("partial")),
+             "quality": rec.get("quality")}
     rec["history"] = (rec.get("history") or [])[-(HISTORY_CAP - 1):] + [entry]
 
 
@@ -198,7 +208,10 @@ def _apply_lines(rec: dict, lines: Optional[dict], quality: str, note: Optional[
     """Version bump with the new (or absent) lines. ``problems`` / ``repairs``
     are the §63.3 追记 add-only receipts (structured findings behind 需复核 and
     the length trims applied before it) — always rewritten, so a clean new
-    version clears the previous one's reasons."""
+    version clears the previous one's reasons. ``reverted_from`` (§63.9) is
+    rewritten to None for the same reason: a freshly generated version is not
+    a restored one, and a stale handle would make the panel say「回退自第 N 版」
+    about text the model just wrote."""
     _push_history(rec)
     rec["version"] = int(rec.get("version") or 0) + 1
     rec["generated_at"] = _iso(now)
@@ -209,6 +222,7 @@ def _apply_lines(rec: dict, lines: Optional[dict], quality: str, note: Optional[
     rec["zh"] = lines["zh"] if lines else None
     rec["problems"] = list(problems or [])
     rec["repairs"] = list(repairs or [])
+    rec["reverted_from"] = None
 
 
 def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
@@ -515,6 +529,81 @@ def generate(key: str, note: Optional[str] = None, partial: bool = False,
     return rec
 
 
+def _restorable(entry: dict, version: int) -> bool:
+    """Is this entry version ``version`` **with** text? (An entry without ``en``
+    is not a version anyone can go back to; same predicate as the projection
+    handles — ``recap_store.has_lines``.)"""
+    return entry.get("version") == version and store.has_lines(entry.get("en"))
+
+
+def _history_entry(rec: dict, version: int) -> Optional[dict]:
+    """The stored version ``version`` (newest entry wins on a duplicate), else None."""
+    matches = [entry for entry in (rec.get("history") or [])
+               if isinstance(entry, dict) and _restorable(entry, version)]
+    return matches[-1] if matches else None
+
+
+def _entry_quality(entry: dict) -> str:
+    """The badge the restored text was born with; an unknown / absent value
+    (entries written before §63.9 added the key) becomes 需复核 — never a
+    fabricated ``ok``. 「粘贴前请通读一遍」is the safe direction to be wrong in."""
+    quality = entry.get("quality")
+    return quality if quality in store.QUALITIES else store.QUALITY_NEEDS_REVIEW
+
+
+def _apply_history_entry(rec: dict, entry: dict, now: float) -> None:
+    """Non-destructive revert (§63.9): the CURRENT text goes into history first,
+    then the chosen entry's text becomes version + 1 with a fresh
+    ``generated_at``. Nothing is overwritten, so a revert is itself revertible.
+
+    ``problems`` / ``repairs`` are cleared (history entries never carried them —
+    §63.6 追记; an empty ledger is honest, the previous version's findings are
+    not) and ``note`` too (the correction note belonged to a generation that is
+    no longer what the record says)."""
+    _push_history(rec)
+    rec["version"] = int(rec.get("version") or 0) + 1
+    rec["generated_at"] = _iso(now)
+    rec["partial"] = bool(entry.get("partial"))
+    rec["en"] = list(entry["en"])
+    rec["zh"] = list(entry["zh"]) if isinstance(entry.get("zh"), list) else None
+    rec["quality"] = _entry_quality(entry)
+    rec["note"] = None
+    rec["problems"] = []
+    rec["repairs"] = []
+    # add-only：这一版的正文是从第几版搬回来的（面板据它说「由第 N 版回退而来」）
+    rec["reverted_from"] = int(entry["version"])
+
+
+def revert(key: str, to_version, now: Optional[float] = None) -> Optional[dict]:
+    """「回退到这一版」(§63.9, issue #300) — copy a stored version's text back
+    onto the record as a new version. No model call, no network, no config: the
+    data is already on disk (so no ``runner`` / ``cfg`` seam either). Unknown
+    key / no such stored version = honest None (the caller exits 1 and the
+    reason is in state/recap.log); the record is never touched on a miss."""
+    now = time.time() if now is None else float(now)
+    rec = store.load_recap(key)
+    if rec is None:
+        _log("revert: unknown key %s" % key)
+        return None
+    try:
+        version = int(to_version)
+    except (TypeError, ValueError):
+        _log("revert %s: bad target version %r" % (key, to_version))
+        return None
+    entry = _history_entry(rec, version)
+    if entry is None:
+        _log("revert %s: no stored version %s (stored: %s)"
+             % (key, version, [h["version"] for h in store.history_versions(rec)]))
+        return None
+    _apply_history_entry(rec, entry, now)
+    store.save_recap(rec)
+    # 元数据（宪法第 9 条：正文永不进 analytics）
+    analytics.log_event("recap_reverted", app=rec.get("app"), version=rec.get("version"),
+                        reverted_from=rec.get("reverted_from"), quality=rec.get("quality"))
+    _log("revert %s: v%s restores v%s (%s)" % (key, rec["version"], version, rec["quality"]))
+    return rec
+
+
 def slack_draft_for(key: str, channel_id: str, now: Optional[float] = None,
                     runner=None, cfg=None) -> Optional[dict]:
     """「投到 Slack 草稿」with an explicit conversation pick."""
@@ -532,11 +621,18 @@ def slack_draft_for(key: str, channel_id: str, now: Optional[float] = None,
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
+def _ok(result) -> int:
+    """按钮入口的退出码：None（未知 key / 畸形 / 这一版不存在）= 1，其余 0。"""
+    return 0 if result else 1
+
+
 def _dispatch(args) -> int:
     if args.generate:
-        return 0 if generate(args.generate, note=args.note, partial=args.partial) else 1
+        return _ok(generate(args.generate, note=args.note, partial=args.partial))
     if args.slack_draft:
-        return 0 if slack_draft_for(args.slack_draft, args.channel_id) else 1
+        return _ok(slack_draft_for(args.slack_draft, args.channel_id))
+    if args.revert:
+        return _ok(revert(args.revert, args.to_version))
     summary = run_once()
     print("recap: %s" % summary)
     return 0
@@ -550,8 +646,10 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--partial", action="store_true", help="OPEN session: recap so far")
     ap.add_argument("--slack-draft", metavar="KEY", help="place the recap as a Slack draft")
     ap.add_argument("--channel-id", default="", help="Slack conversation id for --slack-draft")
+    ap.add_argument("--revert", metavar="KEY", help="restore a stored version (§63.9)")
+    ap.add_argument("--to-version", type=int, default=0, help="stored version for --revert")
     args = ap.parse_args(argv)
-    wait = 0.0 if not (args.generate or args.slack_draft) else LOCK_WAIT_S
+    wait = 0.0 if not (args.generate or args.slack_draft or args.revert) else LOCK_WAIT_S
     try:
         with Lock(wait) as ok:
             if not ok:

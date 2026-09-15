@@ -466,6 +466,11 @@ export interface RecapRow {
   audio_rows?: number;
   note?: string | null;
   history_count?: number;
+  /** §63.9 存着的每一版的句柄（add-only，只有标量；老 daemon 无此键 = 不给「上一版」入口）——
+   *  正文不在这里，点开面板才经 `GET /api/recaps/history?key=` 单独读 */
+  history_versions?: RecapVersionHandle[] | null;
+  /** §63.9 这一版的正文是从第几版回退回来的（add-only；没回退过 = 键不在） */
+  reverted_from?: number | null;
   copied_at?: string | null;
   sent_at?: string | null;
   /** §63.5 追记 已忽略的时刻（add-only；没忽略过 = null，老 daemon 无此键）——与 sent_at 一起决定分栏 */
@@ -524,6 +529,47 @@ export interface RecapGenerateRequest {
   requested_at: string;
   state: "running" | "done" | "noop" | "lost" | string;
   note: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.9（issue #300）投影行里一版的**句柄**（`act/lib/recap_store.history_versions` 的 wire 形
+ * 逐字镜像）：只有标量，正文永不进看板投影（60 行 × 5 版 × 两语言会把 10 s 一轮的轮询撑爆）。
+ * 列出来的每一项都有正文 = 都能回退（无正文的 history 条目 daemon 侧就滤掉了）。
+ */
+export interface RecapVersionHandle {
+  version: number;
+  generated_at?: string | null;
+  partial?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.9 一版的完整形（`GET /api/recaps/history` 的 `current` 与 `entries[]` 同形；
+ * server/recaps.py `_version_shape` 逐字镜像）：`en` / `zh` 恒是数组（缺席 = []），
+ * `quality` 在 §63.9 之前入库的 history 条目上是 null（那一版的校验结论没存下来）。
+ */
+export interface RecapVersion {
+  version: number;
+  generated_at: string | null;
+  partial: boolean;
+  quality: string | null;
+  en: string[];
+  zh: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * GET /api/recaps/history?key=…（§63.9）：单份纪要存着的每一版 + 正文。`entries` newest first
+ * （第一项 = 上一版），`history_cap` = daemon 侧只留几版（更早的老化掉——面板照它说话），
+ * `truncated` = 文件超过读门没被读（层缺席不是错误，宪法第 11 条）。
+ */
+export interface RecapHistory {
+  key: string;
+  current: RecapVersion | null;
+  entries: RecapVersion[];
+  history_cap: number;
+  truncated: boolean;
   [key: string]: unknown;
 }
 
