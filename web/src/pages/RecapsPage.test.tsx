@@ -133,7 +133,8 @@ describe("RecapsPage", () => {
     fireEvent.change(screen.getByLabelText(/Correction note/), { target: { value: "deadline is Friday" } });
     expect(screen.queryByText(/cannot honor these/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
-    await waitFor(() => expect(screen.getByText("Regeneration queued")).toBeTruthy());
+    // §63.8 后普通成功文案多了一句「落地后自动更新」；关键是它不带预检的那句警告
+    await waitFor(() => expect(screen.getByText("Regeneration queued; this panel updates when it lands")).toBeTruthy());
   });
 
   it("an open meeting offers Generate now (partial) and no copy", async () => {
