@@ -128,8 +128,18 @@ class TestAutodispatchConfig(unittest.TestCase):
     def test_explicit_values(self):
         got = policy.autodispatch_config(_cfg(auto={
             "enabled": False, "max_concurrent": 1, "notify": False}))
-        self.assertEqual(got, {"enabled": False,
-                               "max_concurrent": 1, "notify": False})
+        # require_awake（§71.1，add-only）没写就是默认 true——老 config 的三键
+        # 语义逐字不变，新键只是多一把默认开着的闸。
+        self.assertEqual(got, {"enabled": False, "max_concurrent": 1,
+                               "notify": False, "require_awake": True})
+
+    def test_require_awake_knob(self):
+        # §71.1：机器状态闸的旋钮，脏值按 bool() 收敛（同 enabled / notify）
+        self.assertTrue(policy.autodispatch_config(_cfg(auto={}))["require_awake"])
+        self.assertFalse(policy.autodispatch_config(
+            _cfg(auto={"require_awake": False}))["require_awake"])
+        self.assertTrue(policy.autodispatch_config(
+            _cfg(auto={"require_awake": "yes"}))["require_awake"])
 
     def test_garbage_values_fall_back_per_key(self):
         got = policy.autodispatch_config(_cfg(auto={
@@ -272,7 +282,23 @@ class TestQueuedReason(unittest.TestCase):
         self.assertIsNone(
             policy.queued_reason(_hand_card(cost_estimate_usd=2.0), st))
         self.assertNotIn("budget", policy.QUEUED_REASONS)
-        self.assertEqual(policy.QUEUED_REASONS, ("dependency", "concurrency"))
+        # 词表 add-only：machine_asleep 由 §71.1 加入（位置即优先级），
+        # 退役的 budget 永不复用。
+        self.assertEqual(policy.QUEUED_REASONS,
+                         ("dependency", "machine_asleep", "concurrency"))
+
+    def test_machine_asleep_between_dependency_and_concurrency(self):
+        # §71.1：闸按住整个 pass 时 chip 说「等电脑醒来」；依赖更「粘」排在前面，
+        # 并发最快松动排在后面。
+        card = _hand_card()
+        self.assertEqual(policy.queued_reason(card, {"machine_asleep": True}),
+                         "machine_asleep")
+        self.assertEqual(policy.queued_reason(
+            card, {"machine_asleep": True, "blocked_by": ["R-1"]}), "dependency")
+        self.assertEqual(policy.queued_reason(
+            card, {"machine_asleep": True, "running": 3, "max_concurrent": 3}),
+            "machine_asleep")
+        self.assertIsNone(policy.queued_reason(card, {"machine_asleep": False}))
 
     def test_concurrency(self):
         st = {"running": 3, "max_concurrent": 3}

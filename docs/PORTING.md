@@ -38,13 +38,22 @@ is the contract a port implements; everything else in `act/` is plain Python.
 | `notify_user(title, body, subtitle=None)` | native user notification; best-effort, never raises | `osascript` `display notification` | `notify-send` (desktop) | PowerShell WinRT toast (wired; no pip dep — see WINDOWS.md) |
 | `open_path(path)` | open a path with the system handler / file manager; never raises | `open`(1) | `xdg-open` | `os.startfile` (wired) |
 | `service_list_text()` | raw user-service table for `act.doctor` | `launchctl list` | `systemctl --user list-units --type=service,timer` (wired; doctor parses it — see LINUX.md) | `schtasks /query /fo LIST /v` (wired; doctor parses it — see WINDOWS.md) |
+| `power_state()` / `power_capabilities()` / `power_assertions()` | is this machine awake? — the §71.1 auto-dispatch gate; every one returns "no answer" (None / `{}`) rather than a guess | `pmset -g powerstate IOPMrootDomain` + `ioreg -n IOPMrootDomain -r -d 1` + `pmset -g assertions` | — (no answer → the gate fails open, dispatch behaves exactly as before §71) | — (same) |
 
 Rules for touching the seam:
 - keep it thin — no classes, no plugin registry, one function per concern;
 - every function is best-effort and never raises (a failed notification must
   not kill the daemon loop);
 - darwin-only-by-nature features do **not** get seam functions — they guard
-  with `is_darwin()` and skip with a classified reason.
+  with `is_darwin()` and skip with a classified reason;
+- a probe that cannot answer must say **"no answer"**, never a default: the
+  §71.1 power gate treats `None`/`{}` as "assume awake" (fail-open), so a
+  port that leaves the three power functions unimplemented keeps exactly the
+  pre-§71 dispatch behaviour. Implementing them on linux/windows means
+  answering "is the machine in a low-power / dark-wake state right now" from
+  whatever the OS really exposes (`/sys/power/state` + logind idle hints,
+  `GetSystemPowerStatus` / `SetThreadExecutionState` reporting) — do not port
+  the macOS command strings.
 
 ## Service-manager equivalents
 

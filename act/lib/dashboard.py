@@ -19,6 +19,11 @@ the §48.4 意愿信号 (switch touched in settings_overrides / §19 credential
 present) that gate the setup-class cards — computed here, in the actd
 projection, never rewritten server-side (§44 single writer).
 
+§71 的投影面（add-only）：排队卡的 ``queued_reason`` 多一个 ``{kind:"asleep"}``
+（§71.1 —— 派发闸按住了整个 pass，本模块只读 ``power.observed_verdict()`` 的
+观察值，绝不自己探），运行中/待验收行多一个 ``slept_seconds``（§71.2 —— 这一轮
+里电脑睡掉的秒数，卡面据此说「其中 N 小时电脑睡眠」）。
+
 ``copy_cmd`` (§2 / §6 / §68.7 takeover) deliberately starts with a bare
 ``claude`` (§55 第五幕 追记 2026-09-07): a ``--bg`` worker runs the binary of
 Claude Code's per-user daemon, which follows the login shell's claude — NOT
@@ -38,7 +43,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
-                     policy, radar_health, radar_rounds, recap_store, risk, secrets,
+                     policy, power, radar_health, radar_rounds, recap_store, risk, secrets,
                      self_improve, sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
@@ -277,6 +282,12 @@ def _opt(key: str, value: Any) -> dict:
     按这个来，§50 origin_trust / §51 auto_dispatch_block / §M6.1 steers 同款）。
     """
     return {key: value} if value else {}
+
+
+def _slept(ex: dict) -> int:
+    """§71.2 诚实耗时：`execution.slept_seconds`（这一轮里电脑睡掉的秒数）。
+    非正 / 坏值 → 0 = 整键不出（`_opt` 的 add-only 读侧语义）。"""
+    return max(0, _int_or(ex.get("slept_seconds"), 0))
 
 
 def _int_or(v: Any, default: int) -> int:
@@ -731,11 +742,13 @@ def _first_blocking(state: dict) -> Any:
 
 def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
     """M1.c token → 结构化 wire 形（M8.3 C-2 终裁为 canonical）：
-    dependency → {kind: waiting_card, blocking_id}｜concurrency → {kind:
-    concurrency}。None = 无阻塞（纯粹没轮到/派发失败退避——后者由
-    dispatch_error 独立表达，不混写）。`waiting_budget` retired v0.48.7（D9），
-    kind 值永不复用。"""
+    dependency → {kind: waiting_card, blocking_id}｜machine_asleep → {kind:
+    asleep}（§71.1）｜concurrency → {kind: concurrency}。None = 无阻塞（纯粹没
+    轮到/派发失败退避——后者由 dispatch_error 独立表达，不混写）。
+    `waiting_budget` retired v0.48.7（D9），kind 值永不复用。"""
     token = policy.queued_reason(req, state)
+    if token == "machine_asleep":
+        return {"kind": "asleep"}
     if token == "dependency":
         first = _first_blocking(state)
         out = {"kind": "waiting_card"}
@@ -1327,6 +1340,8 @@ def _from_review_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "dod": _dod(req),
         "log": ex.get("log"),
         "dispatched_at": _epoch(ex.get("dispatched_at")),
+        # §71.2 add-only：耗时里有多少是电脑在睡（卡面「其中 N 小时电脑睡眠」）
+        **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
         "last_error": None,
         "last_error_id": None,
@@ -1366,6 +1381,8 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         "log": ex.get("log"),
         "dispatched_at": _epoch(ex.get("dispatched_at")),
         "review_at": _epoch(ex.get("review_at")),
+        # §71.2 add-only：dispatched_at→review_at 的耗时里有多少是电脑在睡
+        **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
         "session_active": sx.state in _RUNNING_STATES,
         # #119 add-only：这行是「中断收割」而非正常交付（受阻/放弃救活被收进
@@ -1400,6 +1417,8 @@ def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "dod": _dod(req),
         "log": ex.get("log"),
         "dispatched_at": _epoch(ex.get("dispatched_at")),
+        # §71.2 add-only：这一轮至今电脑睡掉的秒数
+        **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
         "last_error": ex.get("last_error"),
         "last_error_id": failures.classify(ex.get("last_error")),
@@ -1614,7 +1633,10 @@ def build_dashboard(
         cfg=cfg,
         agent_idx=_index_agents(agents),
         snap={"running": _live_session_count(reqs),
-              "max_concurrent": policy.autodispatch_config(cfg)["max_concurrent"]},
+              "max_concurrent": policy.autodispatch_config(cfg)["max_concurrent"],
+              # §71.1：只报**本进程观察到**的判决（派发闸每 pass 先跑，缓存恒新鲜）
+              # ——投影侧绝不为了画一个 chip 再起三个探针子进程。
+              "machine_asleep": power.observed_verdict() == power.ASLEEP},
     )
     # archive() crash-mid-move 残件去重：archive/ 副本已落盘、active 目录里的
     # 同 id 原件还没删掉时，视 active 残件为"已迁移"跳过——否则同一张卡同时

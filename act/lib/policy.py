@@ -1,6 +1,7 @@
 """policy — origin trust matrix + auto-dispatch ceilings（v-next 信任矩阵，纯函数）.
 
-契约：docs/CONTRACT.md §50（信任矩阵）/ §51（自动派发天花板 + queued 词表）。
+契约：docs/CONTRACT.md §50（信任矩阵）/ §51（自动派发天花板 + queued 词表）/
+§71.1（睡眠感知派发：`autodispatch.require_awake` 旋钮 + `machine_asleep` 排队原因）。
 
 Owner 拍板（2026-08-30，见 docs/design/vnext-amendments.md 的修宪草案）：
 
@@ -154,8 +155,11 @@ AUTODISPATCH_DEFAULTS: dict = {
     "enabled": True,            # 总开关：关掉 = 全部回人工审批
     "max_concurrent": 3,        # 自动派发并发上限（超出 -> queued: concurrency）
     "notify": True,             # 观察模式：每次自动派发发一条通知
+    "require_awake": True,      # §71.1：机器不在清醒态就不派发（探不到 = 按醒着）
     # daily_budget_usd — retired v0.48.7（D9）：旧 config 里残留的键被静默忽略。
 }
+# 逐键 bool 收敛的键（脏值一律 bool() —— 与历史行为逐字相同）
+_AUTODISPATCH_BOOL_KEYS = ("enabled", "notify", "require_awake")
 
 
 def _num(value: object) -> Optional[float]:
@@ -191,13 +195,12 @@ def autodispatch_config(cfg: object) -> dict:
     配置永远解析出一个完整合法的块，绝不 raise（宪法第 11 条口径）。"""
     block = _raw_block(cfg, "autodispatch")
     out = dict(AUTODISPATCH_DEFAULTS)
-    if "enabled" in block:
-        out["enabled"] = bool(block["enabled"])
+    for key in _AUTODISPATCH_BOOL_KEYS:
+        if key in block:
+            out[key] = bool(block[key])
     cap = _int(block.get("max_concurrent"))
     if cap is not None and cap >= 1:
         out["max_concurrent"] = cap
-    if "notify" in block:
-        out["notify"] = bool(block["notify"])
     return out
 
 
@@ -473,27 +476,33 @@ def may_auto_dispatch(
 # queued_reason — 合并运行列 queued 子状态的原因 chip（locked 词表）
 # --------------------------------------------------------------------------- #
 # "budget" retired v0.48.7（D9）——词表 tombstone，token 永不复用。
-QUEUED_REASONS = ("dependency", "concurrency")
+# "machine_asleep" 加入 v0.48.x（§71.1）——add-only，位置即优先级。
+QUEUED_REASONS = ("dependency", "machine_asleep", "concurrency")
 
 
 def queued_reason(card: object, state: object) -> Optional[str]:
-    """approved-未派发卡的排队原因 -> {dependency, concurrency} 或 None
-    （无阻塞，纯粹还没轮到/上次派发失败在退避）。
+    """approved-未派发卡的排队原因 -> {dependency, machine_asleep, concurrency}
+    或 None（无阻塞，纯粹还没轮到/上次派发失败在退避）。
 
     ``state`` 是调用方（actd/dashboard 投影）算好的快照 dict，键全部可选，
-    缺键 = 跳过该项检查（policy 不做 I/O，不自己数并发）：
+    缺键 = 跳过该项检查（policy 不做 I/O，不自己数并发、也不自己探电源）：
       blocked_by        — 非空（list/str）= 有未完结的依赖卡 -> dependency
+      machine_asleep    — 真 = §71.1 闸按住了本 pass 的全部派发 -> machine_asleep
       running + max_concurrent       — 在跑数达上限 -> concurrency
-    优先级 dependency > concurrency：chip 只有一个位置，报最「粘」的阻塞
-    （依赖不随时间自愈；并发最快松动）。旧快照里残留的 today_spend /
-    daily_budget_usd 键不认、不 raise（D9 之后没有「等预算」这回事）。
-    全函数：垃圾 state/card 只会让检查被跳过，绝不 raise。
+    优先级 dependency > machine_asleep > concurrency：chip 只有一个位置，报最
+    「粘」的阻塞（依赖不随时间自愈；机器醒来要等人；并发最快松动）。旧快照里
+    残留的 today_spend / daily_budget_usd 键不认、不 raise（D9 之后没有「等预算」
+    这回事）。全函数：垃圾 state/card 只会让检查被跳过，绝不 raise。
     """
     st = state if isinstance(state, dict) else {}
     if st.get("blocked_by"):
         return "dependency"
+    if st.get("machine_asleep"):
+        return "machine_asleep"
+    return "concurrency" if _at_concurrency_cap(st) else None
+
+
+def _at_concurrency_cap(st: dict) -> bool:
     running = _int(st.get("running"))
     cap = _int(st.get("max_concurrent"))
-    if running is not None and cap is not None and running >= cap:
-        return "concurrency"
-    return None
+    return running is not None and cap is not None and running >= cap

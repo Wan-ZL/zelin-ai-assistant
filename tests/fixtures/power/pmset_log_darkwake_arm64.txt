@@ -1,0 +1,4 @@
+2026-09-13 23:58:27 -0700 Assertions          	Summary- [System: PrevIdle PrevDisp DeclUser SysAct IntPrevDisp NetAcc kCPU kDisp] Using AC          
+2026-09-14 04:13:14 -0700 Assertions          	Summary- [System: PrevIdle] Using AC          
+2026-09-14 05:13:07 -0700 Assertions          	PID 110(powerd) Created InternalPreventSleep "Holding in darkwake for up to 20 seconds to query model for inactivity prediction" 00:00:00  id:0x0xd00009f6c [System: PrevIdle SRPrevSleep kCPU]          
+2026-09-14 05:13:07 -0700 Assertions          	PID 110(powerd) Released InternalPreventSleep "Holding in darkwake for up to 20 seconds to query model for inactivity prediction" 00:00:00  id:0x0xd00009f6c [System: PrevIdle]          

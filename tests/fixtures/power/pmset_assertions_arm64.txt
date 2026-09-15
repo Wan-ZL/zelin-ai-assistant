@@ -1,0 +1,32 @@
+2026-09-14 18:27:17 -0700 
+Assertion status system-wide:
+   BackgroundTask                 0
+   ApplePushServiceTask           0
+   UserIsActive                   0
+   PreventUserIdleDisplaySleep    1
+   SoftwareUpdateTask             0
+   PreventSystemSleep             0
+   ExternalMedia                  1
+   PreventUserIdleSystemSleep     1
+   NetworkClientActive            0
+Listed by owning process:
+   pid 67193(Amphetamine): [0x0036c559000181cb] 01:51:26 PreventUserIdleSystemSleep named: "Amphetamine (Single-Use - System)"  
+   pid 67193(Amphetamine): [0x0036c559000581cc] 01:51:26 PreventUserIdleDisplaySleep named: "Amphetamine (Single-Use - Display)"  
+   pid 70241(caffeinate): [0x0036df30000184c6] 00:01:11 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 229 secs Action=TimeoutActionRelease
+   pid 60308(Claude): [0x0035b3f1000192c4] 21:17:59 NoIdleSleepAssertion named: "Electron"  
+   pid 110(powerd): [0x0036c5320001813e] 01:52:05 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 110(powerd): [0x0000001200088068] 998:55:51 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 94529(AddressBookSourceSync): [0x0036df69000184c8] 00:00:14 PreventUserIdleSystemSleep named: "Address Book Source Sync"  
+	Timeout will fire in 1785 secs Action=TimeoutActionTurnOff
+Kernel Assertions: 0x104=USB,MAGICWAKE
+   id=554  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.00100000 owner=USB2.0 Hub
+   id=555  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.00200000 owner=USB3.1 Hub
+   id=558  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.00140000 owner=USB2.1 Hub
+   id=560  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.00240000 owner=USB3.1 Hub
+   id=564  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.00210000 owner=Raycue SSD Enclosure
+   id=565  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.01100000 owner=Insta360 Link 2
+   id=567  level=255 0x100=MAGICWAKE creat=  mod= description=en1 owner=IOSkywalkNetworkBSDClient
+   id=1259  level=255 0x4=USB creat= description=com.apple.usb.externaldevice.03100000 owner=USB2.1 Hub
