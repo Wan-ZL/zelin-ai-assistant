@@ -464,6 +464,15 @@ export interface RecapRow {
   zh?: string[] | null;
   /** ok | needs_review | thin_transcript | no_audio | generation_failed | null */
   quality?: string | null;
+  /** §63.10 这一版用的出稿形状：lines = 五行 | sections = 可发送长版（老 daemon 无此键 = lines） */
+  shape?: string | null;
+  /** §63.10 可发送长版的分节正文（五行形 = null；wire 逐字镜像 act/lib/recap_text） */
+  sections_en?: RecapSection[] | null;
+  sections_zh?: RecapSection[] | null;
+  /** §63.10 **粘出去的那一份**（daemon 渲染好的：空的部分已略掉、分节稿已编号）——
+   *  老 daemon 无此键 = 页面退回把 en/zh 直接换行拼起来 */
+  copy_en?: string | null;
+  copy_zh?: string | null;
   transcript_words?: number;
   frames?: number;
   audio_rows?: number;
@@ -490,6 +499,19 @@ export interface RecapRow {
   problems?: RecapProblem[] | null;
   /** §63.3 追记 落地前的确定性长度修剪台账（add-only；没修过 = []） */
   repairs?: RecapRepair[] | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.10 可发送长版的一节（issue #303；`act/lib/recap_text` 的 `{key, modality, items}` 逐字镜像）：
+ * `key` ∈ decided | split | proposed | deadline | changed | open，`modality` ∈ decided | proposed |
+ * floated | open（一节一个语气——决定与提议因此在纸面上长得不一样）。条目的编号**不在数据里**：
+ * 它由 daemon 渲染 `copy_*` 时跨节连续加上（issue #332 实测的粘贴形）。
+ */
+export interface RecapSection {
+  key: string;
+  modality: string;
+  items: string[];
   [key: string]: unknown;
 }
 
@@ -559,6 +581,11 @@ export interface RecapVersion {
   quality: string | null;
   en: string[];
   zh: string[];
+  /** §63.10 add-only：那一版的形状与**粘出去的那份正文**（可发送长版的 en/zh 是空的，
+   *  两版对照因此读 copy_*；老条目没有这两个键 = lines + null） */
+  shape: string;
+  copy_en: string | null;
+  copy_zh: string | null;
   [key: string]: unknown;
 }
 
@@ -581,6 +608,8 @@ export interface RecapSettings {
   enabled: boolean;
   default_language: "auto" | "zh" | "en" | string;
   slack_draft_enabled: boolean;
+  /** §63.10 出厂形状（只读：config.yaml 层，PUT 仍只认三把旋钮）——形状选择器的初值 */
+  default_shape: "lines" | "sections" | string;
   languages: string[];
   source: { [key: string]: unknown };
   [key: string]: unknown;

@@ -342,7 +342,7 @@ direct-run 变体（golden `capture-run`）：
   "ts" : "2026-08-30T12:00:00Z"
 }
 ```
-可选键：`note`（owner 纠正备注，1..500 字符，非空字符串）与 `partial`（**只认字面 `true`**——OPEN 行的「现在生成」）。`meeting_key` 形状 `^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$`（镜像 `act/lib/recap_store.KEY_RE`）。**不带任何会话 / 收件人字段**（§63 五层无发送路径的第 4 层）。golden：`recap_generate`、`recap_generate-note`、`recap_generate-partial`。actd 侧回执（CONTRACT §63.8，issue #297）：起子进程前先取 `requested_at`，`detached.launch` 返回后把 running / noop 记进台账 `state/recap_requests.json`（actd 单写者），dashboard `recaps[]` 行的 add-only `generate_request {requested_at, state running|done|noop|lost, note}` 由它与文件的 `generated_at` 算出——web 据此显示「生成中」直到新版本落地；本动作的字段与 golden 不变。
+可选键：`note`（owner 纠正备注，1..500 字符，非空字符串）、`partial`（**只认字面 `true`**——OPEN 行的「现在生成」）与 `shape`（CONTRACT §63.10，issue #303：**只认字面 `lines` / `sections`**——快速五行 / 可发送长版；缺席 = 这份纪要上一次用的形状，再退到 config `recap.default_shape`。词表镜像 `act/lib/recap_text.SHAPES`，别的值一律 400，actd 侧 `recap_store.inbox_argv` 再查一遍形状、认不出 = 诚实 noop）。`meeting_key` 形状 `^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$`（镜像 `act/lib/recap_store.KEY_RE`）。**不带任何会话 / 收件人字段**（§63 五层无发送路径的第 4 层）。golden：`recap_generate`、`recap_generate-note`、`recap_generate-partial`、`recap_generate-shape`。actd 侧回执（CONTRACT §63.8，issue #297）：起子进程前先取 `requested_at`，`detached.launch` 返回后把 running / noop 记进台账 `state/recap_requests.json`（actd 单写者），dashboard `recaps[]` 行的 add-only `generate_request {requested_at, state running|done|noop|lost, note}` 由它与文件的 `generated_at` 算出——web 据此显示「生成中」直到新版本落地；本动作的字段与 golden 不变。
 
 ### 3.11 recap_slack_draft（§63.4，无 `id`）
 ```json

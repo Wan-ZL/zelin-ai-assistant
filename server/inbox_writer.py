@@ -63,7 +63,8 @@ _SPECIAL_FIELDS = {
     "import_claude_sessions": ({"session_ids"}, set()),
     # §63 会议 recap：无卡片级 id，meeting_key 是 recap 键；两者都不带 recipient
     # ——recap_slack_draft 的 channel_id 是 owner 自己草稿箱的会话，不是发送目标
-    "recap_generate": ({"meeting_key"}, {"note", "partial"}),
+    # §63.10（issue #303）：shape = 快速五行 / 可发送长版，逐字面量（缺席 = 这份纪要上一次的形状）
+    "recap_generate": ({"meeting_key"}, {"note", "partial", "shape"}),
     "recap_slack_draft": ({"meeting_key", "channel_id"}, set()),
     # §63.9「回退到这一版」（issue #300）：version = 存着的那一版的版本号（整数）
     "recap_revert": ({"meeting_key", "version"}, set()),
@@ -338,6 +339,8 @@ def _build_import_sessions(payload: dict) -> dict:
 _RECAP_KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 _SLACK_CHANNEL_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
 _RECAP_NOTE_MAX = 500
+# §63.10 出稿形状（镜像 act/lib/recap_text.SHAPES；tests/test_server_paths_mirror.py 钉漂移）
+_RECAP_SHAPES = ("lines", "sections")
 # §63.9 回退目标的版本号上限（存的 history 只有 5 条——这只是个理智闸，
 # 不让一个天文数字的整数被序列化进 inbox 文件；真正「这一版存不存在」由持锁的写者判）
 _RECAP_VERSION_MAX = 99_999
@@ -350,8 +353,18 @@ def _require_recap_key(payload: dict) -> str:
     return key
 
 
+def _put_recap_shape(payload: dict, rec: dict) -> None:
+    """§63.10「可发送长版 / 快速五行」：只认两个字面量（缺席 = 记录上一次用的形状）。"""
+    if "shape" not in payload:
+        return
+    if payload.get("shape") not in _RECAP_SHAPES:
+        raise InvalidFieldError("shape must be %s" % " or ".join(_RECAP_SHAPES), {"field": "shape"})
+    rec["shape"] = payload["shape"]
+
+
 def _build_recap_generate(payload: dict) -> dict:
     # §63「重新生成」（note = ≤500 字纠正备注）/「现在生成」（partial:true，OPEN 行）
+    # §63.10「重新生成成可发送长版」（shape = lines | sections）
     rec = {"action": "recap_generate", "meeting_key": _require_recap_key(payload)}
     if "note" in payload:
         note = _require_str(payload.get("note"), "note")
@@ -362,6 +375,7 @@ def _build_recap_generate(payload: dict) -> dict:
         if payload["partial"] is not True:
             raise InvalidFieldError("partial is only true", {"field": "partial"})
         rec["partial"] = True
+    _put_recap_shape(payload, rec)
     return rec
 
 

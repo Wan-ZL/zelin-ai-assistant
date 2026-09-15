@@ -1,14 +1,16 @@
 // 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行 +
 // §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge；
 // §63.3 追记 校验原因与自动修剪的双语文案（issue #298）；§63.5 追记 三栏判定与已忽略 badge（issue #301）；
-// §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异、回退回执的三态（issue #300）。
+// §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异、回退回执的三态（issue #300）；
+// §63.10 两种形状：正文读 daemon 渲染好的 copy_*、可发送长版的「有正文吗」看 sections_en（issue #303）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, REVERT_POLL_MS, appLabel,
-  badgesFor, changedLines, generationPhase, groupByDay, isGenerating, laneCounts, lineCitation, pickLanguage,
-  problemLabel, recapBody, recapClipboardText, recapHeader, recapLane, recapProblems, recapRepairs, repairLabel,
-  revertPhase, rowLabel, slackDraftLabel, versionLabel,
+  LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, RECAP_SHAPES, REVERT_POLL_MS,
+  appLabel, badgesFor, changedLines, generationPhase, groupByDay, hasRecapText, isGenerating, laneCounts,
+  lineCitation, pickLanguage, pickShape, problemLabel, recapBody, recapClipboardText, recapHeader, recapLane,
+  recapProblems, recapRepairs, recapSections, recapShape, repairLabel, revertPhase, rowLabel, slackDraftLabel,
+  versionLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -25,6 +27,22 @@ function row(over: Partial<RecapRow> = {}): RecapRow {
     zh: ["定了：x", "分工：y", "截止：z", "较上次变化：无记录", "待定：无"],
     ...over,
   };
+}
+
+/** §63.10 一份可发送长版的行：en / zh 是空的，正文在 sections_* 与渲染好的 copy_* 里 */
+function sectionsRow(over: Partial<RecapRow> = {}): RecapRow {
+  return row({
+    shape: "sections",
+    en: null,
+    zh: null,
+    sections_en: [{ key: "decided", modality: "decided", items: ["Ann owns the data mix"] },
+                  { key: "proposed", modality: "proposed", items: ["Ship behind a flag", "Re-run the eval"] }],
+    sections_zh: [{ key: "decided", modality: "decided", items: ["数据配比归 Ann"] },
+                  { key: "proposed", modality: "proposed", items: ["先挂开关上线", "重跑一次评测"] }],
+    copy_en: "Decided:\n1. Ann owns the data mix\n\nProposed:\n2. Ship behind a flag\n3. Re-run the eval",
+    copy_zh: "定了：\n1. 数据配比归 Ann\n\n提议：\n2. 先挂开关上线\n3. 重跑一次评测",
+    ...over,
+  });
 }
 
 describe("recapText", () => {
@@ -273,5 +291,68 @@ describe("recapText", () => {
     expect(revertPhase(row({ version: 0 }), { version: 1, base: 0, at }, at + 1_000)).toBe("queued");
     // 面板补拉与页面补拉同一个口径，不另起第二套时限
     expect(REVERT_POLL_MS).toBe(5_000);
+  });
+  // ------------------------------------------------------------------ §63.10
+  it("reads the body daemon rendered (copy_*) and falls back to the five lines", () => {
+    // 所见即所复制：空的那几行已经在 daemon 侧略掉，client 不再实现第二套略行规则
+    expect(recapBody(row({ copy_en: "Decided: x\nSplit: y" }), "en")).toBe("Decided: x\nSplit: y");
+    expect(recapBody(sectionsRow(), "en")).toContain("2. Ship behind a flag");
+    expect(recapBody(sectionsRow(), "zh")).toContain("提议：");
+    // 老 daemon 没有这个键（空串也算没有）= 旧行为一字不变
+    expect(recapBody(row({ copy_en: "  " }), "en")).toBe(row().en!.join("\n"));
+    expect(recapBody(row(), "en")).toBe(row().en!.join("\n"));
+    // 剪贴板仍是「一行表头 + 正文」，表头与 h3 同一份
+    expect(recapClipboardText(sectionsRow(), "en").split("\n").slice(1).join("\n"))
+      .toBe(recapBody(sectionsRow(), "en"));
+  });
+
+  it("knows a sendable recap has text, and which shape a row is", () => {
+    expect(recapShape(row())).toBe("lines");
+    expect(recapShape(sectionsRow())).toBe("sections");
+    expect(recapShape(row({ shape: "garbage" }))).toBe("lines");   // 认不出 = 五行形
+    expect(hasRecapText(sectionsRow())).toBe(true);
+    expect(hasRecapText(row())).toBe(true);
+    expect(hasRecapText(row({ en: null, zh: null }))).toBe(false);
+    expect(hasRecapText(row({ en: null, zh: null, sections_en: [] }))).toBe(false);
+    // 「空」只有一个判据：节在、渲染出来的正文不在 = 没出稿（否则是一颗复制得到
+    // 空字符串的按钮 + 一个空 `<pre>`，而 badge 说「已生成」）
+    expect(hasRecapText(sectionsRow({ copy_en: null, copy_zh: null }))).toBe(false);
+    // badge 不许因为 en 是空的就把一份可发送长版说成「没出稿」
+    expect(badgesFor(sectionsRow()).map((b) => b.id)).toEqual(["new"]);
+    expect(badgesFor(sectionsRow({ version: 3, partial: true })).map((b) => b.id))
+      .toEqual(["partial", "new", "updated"]);
+    expect(RECAP_SHAPES.map((s) => s.id)).toEqual(["lines", "sections"]);
+  });
+
+  it("seeds the picker from the row, then from the configured default shape", () => {
+    // 出过稿的那一份自己说了算（配置改不动它——粘性在 act/recap.record_shape 那条链上）
+    expect(pickShape(sectionsRow(), "lines")).toBe("sections");
+    expect(pickShape(row({ shape: "lines" }), "sections")).toBe("lines");
+    // 还没出过稿 / 本 PR 之前生成的行没有 shape 键：这时候听配置的
+    const legacy = row();
+    expect(pickShape(legacy, "sections")).toBe("sections");
+    expect(pickShape(legacy, "lines")).toBe("lines");
+    // 设置还没拉回来 / 配置被手改坏 = 五行形（与 act 侧的回落同一个结论）
+    expect(pickShape(legacy, undefined)).toBe("lines");
+    expect(pickShape(legacy, "garbage")).toBe("lines");
+  });
+
+  it("only keeps well-formed sections off the wire", () => {
+    expect(recapSections(sectionsRow(), "en").map((sec) => sec.key)).toEqual(["decided", "proposed"]);
+    const dirty = sectionsRow({ sections_en: [null, 7, { key: "decided" }, { key: "open", modality: "open", items: [] }] as never });
+    expect(recapSections(dirty, "en").map((sec) => sec.key)).toEqual(["open"]);
+    expect(recapSections(row(), "en")).toEqual([]);
+  });
+
+  it("says the sendable shape's validator findings in both languages", () => {
+    const zh = (a: string, b: string) => a;
+    const en = (a: string, b: string) => b;
+    expect(problemLabel({ code: "section_key", lang: "en", line: null }, en)).toMatch(/unknown section/);
+    expect(problemLabel({ code: "section_modality", lang: "zh", line: null }, zh)).toContain("语气");
+    expect(problemLabel({ code: "item_too_long", lang: "en", line: 3, limit: 240, over: 12 }, en))
+      .toBe("English: item 3 is 12 characters over the 240-character cap");
+    expect(problemLabel({ code: "item_numbered", lang: "zh", line: 2 }, zh)).toContain("第 2 条");
+    expect(problemLabel({ code: "section_mismatch", lang: null, line: null }, en)).toMatch(/must match/);
+    expect(problemLabel({ code: "item_count", lang: "en", line: null, limit: 24 }, en)).toMatch(/24 items/);
   });
 });

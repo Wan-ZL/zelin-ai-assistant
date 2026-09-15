@@ -1,4 +1,4 @@
-"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9).
+"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9 / §63.10).
 
 Three small things, all stdlib (config.yaml is read through
 server.settings.config_yaml_doc, which degrades to {} without PyYAML):
@@ -11,6 +11,9 @@ server.settings.config_yaml_doc, which degrades to {} without PyYAML):
    (``recap_enabled`` / ``recap_default_language`` / ``recap_slack_draft_enabled``)
    → config.yaml ``recap:`` block → default; PUT diff-writes the flat keys with
    the §15 semantics server/settings.py already implements for the model knobs.
+   §63.10 adds a fourth, **read-only** value on the same GET: ``default_shape``
+   (``lines`` | ``sections``, config.yaml only — the pipeline has no override
+   flat key for it), which the 会议纪要 panel seeds its shape picker from.
 
 2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」/「忽略」
    write ``state/recap/marks.json``
@@ -54,11 +57,17 @@ from server.errors import InvalidFieldError, UnknownFieldError
 KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 # act/lib/config.RECAP_LANGUAGES
 LANGUAGES: tuple = ("auto", "zh", "en")
+# act/lib/recap_text.SHAPES（§63.10；未知值按第一个 = 五行形兜）
+SHAPES: tuple = ("lines", "sections")
 # wire key → settings_overrides.json flat key (config._OVERRIDE_FIELDS)
 OVERRIDE_KEYS = {"enabled": "recap_enabled",
                  "default_language": "recap_default_language",
                  "slack_draft_enabled": "recap_slack_draft_enabled"}
-DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False}
+# §63.10：`default_shape` 在 DEFAULTS 里但**不在** OVERRIDE_KEYS 里——它只住 config.yaml
+# 的 recap 块（act/lib/recap_store.settings 读的就是那里，没有 overrides 扁平键），
+# 所以它是**只读**的一格：GET 照层报给面板（面板拿它当形状选择器的初值），PUT 仍只认三把旋钮
+DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False,
+            "default_shape": SHAPES[0]}
 # §63.5 追记（issue #301）：dismissed = 「忽略」（add-only 词表，永不改写已有值）
 MARKS: tuple = ("copied", "sent", "dismissed")
 # §63.9（issue #300）GET /api/recaps/history 的读门与上限
@@ -118,8 +127,17 @@ def coerce_language(value) -> str:
     return v
 
 
+def coerce_shape(value) -> str:
+    """§63.10 出稿形状：两个字面量之外一律 ValueError（调用方回落到默认形，
+    与 act 侧 `recap_text.normalize_shape` 对一个手改坏的值的结论一致）。"""
+    v = str(value or "").strip().lower()
+    if v not in SHAPES:
+        raise ValueError("default_shape must be one of %s" % ", ".join(SHAPES))
+    return v
+
+
 _COERCE = {"enabled": coerce_bool, "default_language": coerce_language,
-           "slack_draft_enabled": coerce_bool}
+           "slack_draft_enabled": coerce_bool, "default_shape": coerce_shape}
 
 
 def _coerce_or(field: str, value, default):
@@ -137,7 +155,7 @@ def _config_block(home: Path) -> dict:
     spells (slack_draft.enabled flattened); {} when absent / unreadable."""
     blk = settings.config_yaml_doc(home).get("recap")
     blk = blk if isinstance(blk, dict) else {}
-    out = {k: blk[k] for k in ("enabled", "default_language") if k in blk}
+    out = {k: blk[k] for k in ("enabled", "default_language", "default_shape") if k in blk}
     draft = blk.get("slack_draft")
     if isinstance(draft, dict) and "enabled" in draft:
         out["slack_draft_enabled"] = draft["enabled"]
@@ -159,9 +177,13 @@ def snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``RecapSettings`` mirrors verbatim)::
 
         {"enabled": bool, "default_language": "auto|zh|en",
-         "slack_draft_enabled": bool, "languages": [...],
+         "slack_draft_enabled": bool, "default_shape": "lines|sections",
+         "languages": [...],
          "source": {"enabled": "override|config|default", ...}}
-    """
+
+    §63.10：``default_shape`` 是**只读**的一格（config.yaml 层，无 overrides 扁平键）——
+    面板拿它当形状选择器的初值，否则「重新生成」会替配置做主，把每一份老纪要
+    永久盖成五行形。"""
     overrides = settings.read_overrides(home)
     values, source = _base_values(home)
     for field, key in OVERRIDE_KEYS.items():
@@ -260,16 +282,28 @@ def _lines(value) -> list:
     return [line for line in _list(value) if isinstance(line, str)]
 
 
+def _text_or_none(value):
+    """粘出去的那份正文，只收非空字符串（数字 / dict 都是手改过的文件里见过的）。"""
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _version_shape(entry: dict) -> dict:
     """一版（当前记录或一条 history 条目）→ 固定形，键恒在。``version`` 解析不出 = 0
     （那一项前端不给回退按钮），``quality`` 只放字符串（history 条目在 §63.9 之前
-    没有这个键 = null，面板照此说「这一版的校验结论没有存下来」）。"""
+    没有这个键 = null，面板照此说「这一版的校验结论没有存下来」）。
+
+    §63.10 追记（issue #303）add-only：``shape`` 与两语言的 ``copy_*``（daemon 出稿时
+    渲染好的那份正文）。可发送长版的 ``en`` / ``zh`` 是空的，两版对照因此读 ``copy_*``
+    ——server 只搬运，**永不自己拼正文**（渲染单点在 act/lib/recap_text.py）。"""
     version = entry.get("version")
     return {"version": int(version) if isinstance(version, int) and not isinstance(version, bool) else 0,
             "generated_at": entry.get("generated_at") if isinstance(entry.get("generated_at"), str) else None,
             "partial": bool(entry.get("partial")),
             "quality": entry.get("quality") if isinstance(entry.get("quality"), str) else None,
-            "en": _lines(entry.get("en")), "zh": _lines(entry.get("zh"))}
+            "en": _lines(entry.get("en")), "zh": _lines(entry.get("zh")),
+            "shape": entry.get("shape") if entry.get("shape") in SHAPES else SHAPES[0],
+            "copy_en": _text_or_none(entry.get("copy_en")),
+            "copy_zh": _text_or_none(entry.get("copy_zh"))}
 
 
 def _empty_history(key: str) -> dict:
@@ -297,10 +331,11 @@ def _read_doc(path: Path) -> "tuple[Optional[dict], bool]":
 def _shaped_entries(doc: dict) -> list:
     """``history[]`` → **newest first** 的完整形，条数按 :data:`ENTRIES_CAP` 截；
     只留有正文的条目（面板上每一项都必须真能回退，判据同
-    ``act/lib/recap_store.has_lines``）。"""
+    ``act/lib/recap_store.has_text``：五行形看 ``en``，§63.10 可发送长版看
+    渲染好的 ``copy_en``）。"""
     shaped = [_version_shape(entry) for entry in reversed(_list(doc.get("history")))
               if isinstance(entry, dict)][:ENTRIES_CAP]
-    return [entry for entry in shaped if entry["en"]]
+    return [entry for entry in shaped if entry["en"] or entry["copy_en"]]
 
 
 def history(home: Path, query: dict) -> dict:
@@ -310,7 +345,8 @@ def history(home: Path, query: dict) -> dict:
     Wire shape (``web/src/types.ts`` ``RecapHistory`` mirrors verbatim)::
 
         {"key": "meeting:…",
-         "current":  {version, generated_at, partial, quality, en[], zh[]} | null,
+         "current":  {version, generated_at, partial, quality, en[], zh[],
+                      shape, copy_en, copy_zh} | null,
          "entries": [ …the same shape, newest first… ],
          "history_cap": 5, "truncated": false}
 
