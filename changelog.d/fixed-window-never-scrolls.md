@@ -1,0 +1,2 @@
+type: fixed
+- The window itself never scrolls again: pages scroll inside the main area only, so the settings page stops after its last section instead of leaving a blank band below it, and the sidebar's grey background always spans the full window height. The viewport height now has a single source (`html, body, #root`), and anything that overflows the shell — a stack of banners taller than one screen, for example — is clipped there instead of turning the document into a second scroll container (CONTRACT §54.4 2026-09-15 追记, issue #359).

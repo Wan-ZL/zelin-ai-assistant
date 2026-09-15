@@ -9,20 +9,29 @@
 /* 壳 = 窗口（D42，§54.4 2026-09-06 追记）：高度钉死一屏（原生窗口从不整体滚动），文档不滚——
    页面内容在 .shell-main 里滚；看板页更进一步，每列的卡片列表各自滚（board.css .column-list），
    列头与列顶输入框钉在列顶、横向滚动留在看板层。顶栏 / 横幅 / 导航栏因此永远在场，不再随文档滚走。 */
+/* 高度接 tokens.css 的 html / body / #root 百分比链（2026-09-15 追记，issue #359）：此前这里写死
+   `height: 100vh`，与 `#root { min-height: 100vh }` 各说各话——文档因此还能自己滚一截（导航栏灰底
+   随壳滚出窗口、内容下方一大片空白）。视口高的真源自此只有 html 一处，壳只跟着它 100%。 */
 .shell {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  height: 100vh;
+  height: 100%;
   min-width: var(--native-layout-window-min-width);
 }
 
+/* overflow: clip（2026-09-15 追记，issue #359）：横幅（§47.4 / §65.4 / §70 / §48）是压不扁的 flex 项
+   （min-height: auto），摞起来高过一屏时会从壳里漏出去、让**文档**变成第二个滚动容器——那正是
+   「滚到底还能接着滚 + 导航栏灰底只剩上面一截」的成因。溢出在这里夹掉：窗口从不整体滚动（D42）。
+   clip 而不是 hidden：hidden 会把这里变成滚动容器（程序滚动 / 聚焦时的 scrollIntoView 能把顶栏推走），
+   clip 只裁不滚——壳里永远没有第二个可滚的盒子。 */
 .shell-body {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: clip;
 }
 
 /* 非看板页（设置 / 回收站 / 永久性完成 / 会议纪要…）的滚动容器；看板页里 .board-main 吃满它（flex: 1 + min-height: 0），

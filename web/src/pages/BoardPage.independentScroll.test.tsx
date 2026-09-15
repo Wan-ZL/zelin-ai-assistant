@@ -135,9 +135,11 @@ describe("board DOM: only .column-list scrolls; header / composer / cap note are
 });
 
 describe("stylesheet pins (shell.css / board.css / chrome.css)", () => {
-  it("壳钉一屏高（height: 100vh，不再 min-height）；.shell-main 是非看板页的滚动容器", () => {
+  // 壳的一屏高自 2026-09-15 追记（issue #359）起由 tokens.css 的 html/body/#root 百分比链给，
+  // 这里只钉「壳跟着它、不再自己写 min-height」；链本身与文档不滚的执法归 styles/windowNeverScrolls.test.ts
+  it("壳钉一屏高（height: 100%，跟 #root 的百分比链，不再 min-height）；.shell-main 是非看板页的滚动容器", () => {
     const shell = ruleBody(shellCss, ".shell")!;
-    expect(shell).toContain("height: 100vh");
+    expect(shell).toContain("height: 100%");
     expect(shell).not.toContain("min-height: 100vh");
     const body = ruleBody(shellCss, ".shell-body")!;
     expect(body).toContain("min-height: 0");
