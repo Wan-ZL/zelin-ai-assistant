@@ -4,13 +4,15 @@
 // §63.9 行级引用标签 D/S/L/C/O、版本标题、两版逐行差异、回退回执的三态（issue #300）；
 // §63.10 两种形状：正文读 daemon 渲染好的 copy_*、可发送长版的「有正文吗」看 sections_en（issue #303）。
 // §63.11 意图问答的词表与答案拼装、「转写原版 / 我记录的版本」两版正文与复制（issue #302）。
+// §63.12 逐条标签：行首标签的读出、正文里的标签表、逐条引用串、按标签的两版差异（issue #300 的后半）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
   LINE_TAGS, LINE_TAG_LABELS, PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_ANSWERS_MAX, RECAP_LANES,
   RECAP_SHAPES, RECAP_VIEWS, REVERT_POLL_MS,
-  answerLabel, answersFor, appLabel, badgesFor, baselineBody, changedLines, generationPhase, groupByDay,
-  hasBaseline, hasRecapText, isGenerating, laneCounts,
+  answerLabel, answersFor, appLabel, badgesFor, baselineBody, bodyTags, changedItems, changedLines,
+  generationPhase, groupByDay,
+  hasBaseline, hasRecapText, isGenerating, itemCitation, itemTag, laneCounts,
   lineCitation, pickLanguage, pickShape, problemLabel, questionLabel, recapBody, recapClipboardText,
   recapHeader, recapLane, recapProblems, recapQuestions, recapRepairs, recapSections, recapShape,
   recapViewBody, repairLabel, revertPhase, rowLabel, slackDraftLabel,
@@ -33,18 +35,22 @@ function row(over: Partial<RecapRow> = {}): RecapRow {
   };
 }
 
-/** §63.10 一份可发送长版的行：en / zh 是空的，正文在 sections_* 与渲染好的 copy_* 里 */
+/** §63.10 / §63.12 一份可发送长版的行：en / zh 是空的，正文在 sections_* 与渲染好的
+ *  copy_* 里，每一条前面是它自己的跨版稳定标签（daemon 派发，`tags` 与 items 逐位对齐） */
 function sectionsRow(over: Partial<RecapRow> = {}): RecapRow {
   return row({
     shape: "sections",
     en: null,
     zh: null,
-    sections_en: [{ key: "decided", modality: "decided", items: ["Ann owns the data mix"] },
-                  { key: "proposed", modality: "proposed", items: ["Ship behind a flag", "Re-run the eval"] }],
-    sections_zh: [{ key: "decided", modality: "decided", items: ["数据配比归 Ann"] },
-                  { key: "proposed", modality: "proposed", items: ["先挂开关上线", "重跑一次评测"] }],
-    copy_en: "Decided:\n1. Ann owns the data mix\n\nProposed:\n2. Ship behind a flag\n3. Re-run the eval",
-    copy_zh: "定了：\n1. 数据配比归 Ann\n\n提议：\n2. 先挂开关上线\n3. 重跑一次评测",
+    sections_en: [{ key: "decided", modality: "decided", items: ["Ann owns the data mix"], tags: ["D1"] },
+                  { key: "proposed", modality: "proposed",
+                    items: ["Ship behind a flag", "Re-run the eval"], tags: ["P1", "P2"] }],
+    sections_zh: [{ key: "decided", modality: "decided", items: ["数据配比归 Ann"], tags: ["D1"] },
+                  { key: "proposed", modality: "proposed",
+                    items: ["先挂开关上线", "重跑一次评测"], tags: ["P1", "P2"] }],
+    copy_en: "Decided:\nD1. Ann owns the data mix\n\nProposed:\nP1. Ship behind a flag\nP2. Re-run the eval",
+    copy_zh: "定了：\nD1. 数据配比归 Ann\n\n提议：\nP1. 先挂开关上线\nP2. 重跑一次评测",
+    tag_seq: { D: 1, P: 2 },
     ...over,
   });
 }
@@ -279,6 +285,51 @@ describe("recapText", () => {
     expect(changedLines(["a", "b"], [])).toEqual([true, true]);
   });
 
+  // ----- §63.12（issue #300 的后半）：逐条标签、按标签的差异、逐条引用 ------------------------ //
+
+  it("reads the stable tag off a rendered item line, and nothing else", () => {
+    expect(itemTag("D1. Ann owns the data mix")).toBe("D1");
+    expect(itemTag("P12. a later one")).toBe("P12");
+    expect(itemTag("Decided:")).toBe("");                 // 节标题不是条目
+    expect(itemTag("1. an untagged item")).toBe("");       // §63.10 的连续编号回落
+    expect(itemTag("A1. not one of the letters")).toBe("");
+    expect(itemTag("D1.no space")).toBe("");
+    expect(itemTag("")).toBe("");
+    // 组成来自**正文**（所见即所引用），渲染顺序、去重
+    expect(bodyTags(sectionsRow().copy_en as string)).toEqual(["D1", "P1", "P2"]);
+    expect(bodyTags("Decided:\n1. untagged")).toEqual([]);
+    expect(bodyTags("")).toEqual([]);
+  });
+
+  it("cites one item by its stable tag, and never touches the pasted body", () => {
+    const r = sectionsRow();
+    expect(itemCitation(r, "D1")).toMatch(/^\d{4}-\d{2}-\d{2} Zoom #D1$/);
+    expect(itemCitation(row({ app: "slack-huddle" }), "S2")).toMatch(/ Slack Huddle #S2$/);
+    expect(itemCitation(r, "")).toBe("");
+    // 粘出去的那一份一字不变：标签本来就在正文里，引用串是另一次复制
+    expect(recapBody(r, "en")).toBe(r.copy_en);
+    expect(recapClipboardText(r, "en").split("\n").slice(1).join("\n")).toBe(r.copy_en);
+    expect(recapBody(r, "en")).not.toContain("#D1");
+  });
+
+  it("compares two sendable versions by tag, so a moved item is changed and not new", () => {
+    const then = ["Decided:", "D1. Ann owns the data mix", "P1. Ship behind a flag"];
+    // 上面插了一条：位置比会把后面每一行都判成变了，按标签比只判真变了的那条
+    const now = ["Decided:", "D2. Bo owns the eval", "D1. Ann now owns the data mix",
+                 "P1. Ship behind a flag"];
+    expect(changedItems(now, then)).toEqual([false, true, true, false]);
+    expect(changedLines(now, then)).toEqual([false, true, true, true]);   // §63.9 的位置比（五行形仍是它）
+    // 反方向 = 旧那一列的标记（上一版有、这一版没有的条目也说得出「不一样」）
+    expect(changedItems(then, now)).toEqual([false, true, false]);
+    expect(changedItems(now, now)).toEqual([false, false, false, false]);
+    expect(changedItems([], [])).toEqual([]);
+    // 没有标签的行（老记录的条目）回落到「对面那一版里出现过吗」
+    expect(changedItems(["1. a", "2. b"], ["1. a"])).toEqual([false, true]);
+    // 节之间的空行是 render_sections 加的结构，永不算变
+    expect(changedItems(["Decided:", "D1. a", "", "Open:"], ["Decided:", "D1. a"]))
+      .toEqual([false, false, false, true]);
+  });
+
   it("titles a stored version with its number, its partial flag and its stamp", () => {
     const text = (_zh: string, en: string) => en;
     expect(versionLabel({ version: 2, generated_at: "2026-08-31T19:56:00Z" }, text))
@@ -311,7 +362,7 @@ describe("recapText", () => {
   it("reads the body daemon rendered (copy_*) and falls back to the five lines", () => {
     // 所见即所复制：空的那几行已经在 daemon 侧略掉，client 不再实现第二套略行规则
     expect(recapBody(row({ copy_en: "Decided: x\nSplit: y" }), "en")).toBe("Decided: x\nSplit: y");
-    expect(recapBody(sectionsRow(), "en")).toContain("2. Ship behind a flag");
+    expect(recapBody(sectionsRow(), "en")).toContain("P1. Ship behind a flag");
     expect(recapBody(sectionsRow(), "zh")).toContain("提议：");
     // 老 daemon 没有这个键（空串也算没有）= 旧行为一字不变
     expect(recapBody(row({ copy_en: "  " }), "en")).toBe(row().en!.join("\n"));

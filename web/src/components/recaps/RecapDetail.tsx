@@ -24,6 +24,9 @@
 // 「重新生成」面板多一个形状选择器（快速五行 / 可发送长版），按下时把 `shape` 一并送进
 // inbox recap_generate；备注预检因此也按形状收口（可发送长版删得掉一节、写得长一点，
 // 再说「做不到」就是错的那句拒绝），命中五行专属那几类时多一句「换成可发送长版就能办到」。
+// §63.12（issue #300 的后半）：可发送长版的每一条带一个跨版稳定的标签（`D1. …`，daemon 派发、
+// 渲染进 `copy_*`）——正文下方因此给逐条引用 chip（`2026-08-31 Zoom #D1`，正文一字不变），
+// 两版对照按标签比（移动 / 改写过的条目是「改」不是「新」），§63.10 那句「编号只在这一版里成立」作废。
 // §63.11（issue #302）：同一个面板里多一组**意图问答**（问题由 daemon 从这一版正文推出来，
 // 走 wire 的 `row.questions`；client 不造问题、没点过的问题不发答案），按下时把点过的
 // `answers` 一并送出；正文上方多一排「转写原版 | 我记录的版本」——`row.baseline` 在时才出现，
@@ -37,7 +40,8 @@ import { copyText } from "../detail/copyText";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import { RecapIntentPanel } from "./RecapIntent";
 import {
-  answersFor, changedLines, hasBaseline, hasRecapText, isGenerating, lineCitation, LINE_TAG_LABELS,
+  answersFor, bodyTags, changedItems, changedLines, hasBaseline, hasRecapText, isGenerating,
+  itemCitation, lineCitation, LINE_TAG_LABELS,
   pickLanguage, pickShape,
   problemLabel,
   recapClipboardText, recapHeader, recapProblems, recapQuestions, recapRepairs, recapShape,
@@ -166,9 +170,14 @@ export interface RecapDiffProps {
 export function RecapDiff({ current, previous, language, text }: RecapDiffProps) {
   const now = versionLines(current, language);
   const then = versionLines(previous, language);
-  const changed = changedLines(now, then);
+  // §63.12：可发送长版按**标签**比（移动 / 改写过的条目是「改」不是「新」）；五行形照旧
+  // 按位置比（位置就是它的身份，§63.9）。两种形状都是纯字符串比较、零模型、零请求。
+  const byTag = current?.shape === "sections";
+  const changed = byTag ? changedItems(now, then) : changedLines(now, then);
+  const changedThen = byTag ? changedItems(then, now) : changed;
   const rows = Array.from({ length: Math.max(now.length, then.length) }, (_unused, i) => i);
-  const changedCount = changed.filter(Boolean).length;
+  // 两列的标记取并集来数（按标签比时一条只在旧版里的条目只标在左边，不数它就少说了一行）
+  const changedCount = rows.filter((i) => changed[i] || changedThen[i]).length;
   return (
     <div className="recap-history-diff">
       <p className="recap-hint">
@@ -178,7 +187,8 @@ export function RecapDiff({ current, previous, language, text }: RecapDiffProps)
                  `${changedCount} line(s) differ (marked changed below).`)}
       </p>
       <div className="recap-history-cols">
-        {([["previous", then], ["current", now]] as const).map(([side, lines]) => (
+        {([["previous", then, changedThen], ["current", now, changed]] as const).map(
+          ([side, lines, marks]) => (
           <section key={side} className="recap-history-col" aria-label={side === "current"
             ? text("当前版本", "Current version") : text("选中的旧版本", "The stored version")}>
             <h4 className="recap-history-col-title">
@@ -188,8 +198,8 @@ export function RecapDiff({ current, previous, language, text }: RecapDiffProps)
             </h4>
             <ol className="recap-history-lines">
               {rows.map((i) => (
-                <li key={i} className={`recap-history-line${changed[i] ? " is-changed" : ""}`}>
-                  {changed[i] && (
+                <li key={i} className={`recap-history-line${marks[i] ? " is-changed" : ""}`}>
+                  {marks[i] && (
                     <span className="recap-history-mark" aria-label={text("这一行不一样", "This line differs")}>
                       {text("改", "changed")}
                     </span>
@@ -284,6 +294,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const questions = recapQuestions(row);
   const baselineReady = hasBaseline(row);
   const viewingBaseline = view === "baseline" && baselineReady;
+  // §63.12 正文里出现过的逐条标签（渲染顺序）——引用 chip 的组成来自**正文**，
+  // 不是 client 自己按 sections 拼的第二套编号（防腐 #10）
+  const itemTags = bodyTags(body);
   // §63.9 有几版可看（老 daemon 没这个键 = 不给入口；有键就逐项都能回退）
   const storedVersions = (row.history_versions ?? []).length;
   const problems = recapProblems(row);
@@ -382,6 +395,11 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     const ok = await copyText(lineCitation(row, index));
     if (!ok) throw new Error(text("复制失败", "Copy failed"));
   });
+  // §63.12 一条的引用串（`2026-08-31 Zoom #D1`）：同一条路，只是身份换成跨版稳定的标签
+  const copyItemCitation = (tag: string) => run(text("已复制引用", "Citation copied"), async () => {
+    const ok = await copyText(itemCitation(row, tag));
+    if (!ok) throw new Error(text("复制失败", "Copy failed"));
+  });
 
   return (
     <article className="recap-detail" aria-live="polite">
@@ -446,13 +464,35 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
                     `This is version ${row.baseline?.version ?? 1} — the one straight from the transcript, frozen. Copy takes exactly what you see.`)}
             </p>
           )}
-          {/* §63.10：可发送长版的条目每次重新生成都会整批换掉，位置不再是身份——不给一个
-              下一版就变的引用，照直说一句它要等跨版稳定的逐条 id（#300 的后半）。 */}
+          {/* §63.12（issue #300 的后半）：条目标签跨版稳定——重新生成保留同一条的标签，
+              只有新条目才拿新号，被删掉的那个号永不再发给别人。§63.10 那句「编号只在这一版里
+              成立」自此作废（它当时是真的：那一版的编号是位置）。 */}
           {shape === "sections" && !viewingBaseline && (
             <p className="recap-hint">
-              {text("这一份是可发送长版：条目编号只在这一版里成立，逐条引用要等跨版稳定的条目 id。",
-                    "This is the sendable long form: the item numbers hold for this version only — per-item citations need stable item ids first.")}
+              {text("这一份是可发送长版：条目前面的标签（D1 / S2…）跨版稳定——重新生成保留同一条的标签，新条目才拿新的，删掉的号不会再发给别人。",
+                    "This is the sendable long form: the tag in front of an item (D1 / S2…) is stable across versions — a regeneration keeps an item's tag, only a new commitment gets a new one, and a dropped number is never handed to something else.")}
             </p>
+          )}
+          {/* §63.12 逐条引用：标签本来就在粘出去的那一份里，chip 只是把引用串整理成一次复制
+              （`2026-08-31 Zoom #D1`）。正文一字不变。 */}
+          {shape === "sections" && !viewingBaseline && itemTags.length > 0 && (
+          <div className="recap-cite" role="group" aria-label={text("复制逐条引用", "Copy an item citation")}>
+            <span className="recap-cite-lead">{text("引用：", "Cite:")}</span>
+            {itemTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className="recap-cite-chip"
+                disabled={busy}
+                title={itemCitation(row, tag)}
+                aria-label={text(`复制引用 ${itemCitation(row, tag)}`,
+                                 `Copy citation ${itemCitation(row, tag)}`)}
+                onClick={() => void copyItemCitation(tag)}
+              >
+                {`#${tag}`}
+              </button>
+            ))}
+          </div>
           )}
           {/* §63.9 行级引用：五行的位置就是身份（标签文字与顺序固定），每行一颗 chip 复制
               `2026-08-31 Zoom #D`——粘出去的五行正文一字不变。 */}

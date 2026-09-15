@@ -51,17 +51,19 @@ function recap(over: Partial<RecapRow> = {}): RecapRow {
 }
 
 /** §63.10 一份可发送长版：en/zh 空着，正文在 sections_* 与 daemon 渲染好的 copy_* 里 */
-const SECTIONS_EN = "Decided:\n1. The run moves to Monday\n\nProposed (proposed):\n2. Ship behind a flag";
+// §63.12：条目前面是它自己的跨版稳定标签（daemon 派发、渲染进 copy_*），不再是位置编号
+const SECTIONS_EN = "Decided:\nD1. The run moves to Monday\n\nProposed (proposed):\nP1. Ship behind a flag";
 
 function sectionsRecap(over: Partial<RecapRow> = {}): RecapRow {
   return recap({
     shape: "sections", en: null, zh: null,
-    sections_en: [{ key: "decided", modality: "decided", items: ["The run moves to Monday"] },
-                  { key: "proposed", modality: "proposed", items: ["Ship behind a flag"] }],
-    sections_zh: [{ key: "decided", modality: "decided", items: ["训练周一开始"] },
-                  { key: "proposed", modality: "proposed", items: ["先挂开关上线"] }],
+    sections_en: [{ key: "decided", modality: "decided", items: ["The run moves to Monday"], tags: ["D1"] },
+                  { key: "proposed", modality: "proposed", items: ["Ship behind a flag"], tags: ["P1"] }],
+    sections_zh: [{ key: "decided", modality: "decided", items: ["训练周一开始"], tags: ["D1"] },
+                  { key: "proposed", modality: "proposed", items: ["先挂开关上线"], tags: ["P1"] }],
     copy_en: SECTIONS_EN,
-    copy_zh: "定了：\n1. 训练周一开始\n\n提议：\n2. 先挂开关上线",
+    copy_zh: "定了：\nD1. 训练周一开始\n\n提议：\nP1. 先挂开关上线",
+    tag_seq: { D: 1, P: 1 },
     ...over,
   });
 }
@@ -567,16 +569,55 @@ describe("RecapsPage", () => {
     expect(getState().recapPending).toEqual({});
   });
   // ------------------------------------------------------------------ §63.10
-  it("shows a sendable recap as the document that will be pasted, with no positional citations", async () => {
+  it("shows a sendable recap as the document that will be pasted, with per-item citations", async () => {
     await renderPage([sectionsRecap()]);
-    // 正文 = daemon 渲染好的那一份（节标题 + 跨节连续编号 + 语气后缀），一字不改
+    // 正文 = daemon 渲染好的那一份（节标题 + 逐条标签 + 语气后缀），一字不改
     expect(screen.getByText(SECTIONS_EN, { collapseWhitespace: false })).toBeTruthy();
     // 行 badge 不许把它说成「没出稿」，复制 / 标记已发送照常在
     expect(screen.getByText("New")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
-    // 五颗按位置的引用 chip 不出现（条目每次重生成整批换掉），并且照直说一句为什么
-    expect(screen.queryByRole("button", { name: /Copy citation/ })).toBeNull();
-    expect(screen.getByText(/the item numbers hold for this version only/)).toBeTruthy();
+    // §63.12：标签跨版稳定 → 逐条引用 chip 出现（组成来自正文），五行形那五颗不出现
+    expect(screen.queryByRole("button", { name: /Copy citation .* #D$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Copy citation .* #D1$/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Copy citation .* #P1$/ })).toBeTruthy();
+    expect(screen.getByText(/the tag in front of an item \(D1 \/ S2…\) is stable across versions/))
+      .toBeTruthy();
+  });
+
+  // ------------------------------------------------------------------ §63.12
+  it("copies one item's citation without touching the pasted body", async () => {
+    const clip = () => vi.mocked(navigator.clipboard.writeText);
+    await renderPage([sectionsRecap()]);
+    fireEvent.click(screen.getByRole("button", { name: /Copy citation .* #P1$/ }));
+    await waitFor(() => expect(clip().mock.calls.length).toBe(1));
+    expect(clip().mock.calls[0][0]).toMatch(/^\d{4}-\d{2}-\d{2} Zoom #P1$/);
+    // 正文那一次复制仍然是表头 + 粘出去的那一份（引用串不掺进去）
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(clip().mock.calls.length).toBe(2));
+    const pasted = clip().mock.calls[1][0] as string;
+    expect(pasted.split("\n").slice(1).join("\n")).toBe(SECTIONS_EN);
+    expect(pasted).not.toContain("#P1");
+  });
+
+  it("the two-version diff keys on the tags, so an unchanged item is not marked changed", async () => {
+    const v1 = { version: 1, generated_at: "2026-08-31T20:20:00Z", partial: false, quality: "ok",
+                 en: [], zh: [], shape: "sections",
+                 copy_en: "Decided:\nD1. The run moves to Monday",
+                 copy_zh: "定了：\nD1. 训练周一开始" };
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history({
+      current: { ...v1, version: 2, generated_at: "2026-08-31T20:40:00Z", copy_en: SECTIONS_EN,
+                 copy_zh: "定了：\nD1. 训练周一开始\n\n提议：\nP1. 先挂开关上线" },
+      entries: [v1],
+    }));
+    await renderPage([sectionsRecap({
+      version: 2,
+      history_versions: [{ version: 1, generated_at: "2026-08-31T20:20:00Z", partial: false }],
+    })]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    await waitFor(() => expect(fetchRecapHistory).toHaveBeenCalledWith(KEY));
+    // 这一版多了一节：D1 那一条一字未改 → 不标「改」；只有新出现的两行才标
+    expect(await screen.findByText(/2 line\(s\) differ/)).toBeTruthy();
+    expect(screen.getAllByText("changed").length).toBe(2);
   });
 
   it("the regenerate panel picks a shape and sends it with the request", async () => {

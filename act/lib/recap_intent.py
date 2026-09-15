@@ -1,4 +1,4 @@
-"""act/lib/recap_intent.py — 出稿之前先问一句「这份纪要是干什么用的」（CONTRACT §63.11；§63.3 / §63.6 / §63.10 追记）。
+"""act/lib/recap_intent.py — 出稿之前先问一句「这份纪要是干什么用的」（CONTRACT §63.11 / §63.12；§63.3 / §63.6 / §63.10 追记）。
 
 第一版照旧按转写出（§63.3 / §63.10 一个字符没动），然后**从那一版自己身上**
 推导出一组问题摆在它旁边；owner 答完，第二版按答案重出，而第一版作为
@@ -20,6 +20,8 @@ wire（``recaps[].questions``，projection-only）；**问法**是 web 的 `text
 kind         选项                            从哪儿来
 ===========  ==============================  ==========================================
 split        keep / drop / propose           `Split:` 行（或长版 split 节）逐条，帽 6 条
+item         keep / drop / propose           §63.12 的**标签形**（`s2` = S2 那一条）；`derive`
+                                             不出这一类，它是引用进得来的那条路
 deadline     keep / drop                     `Deadline:` 行非填充值时才问
 others       keep / drop                     #332 实测第二高频的删除类：对方的要求 / 归属 / 进度
 detail       keep / drop                     #332 第三类：研究级细节与保留说法
@@ -32,6 +34,11 @@ prior        compare / drop                  只有真存在上一份纪要时�
 inbox 的字节序列化器（`server/inbox_writer._dump_value`）只认 null / bool / 数字 /
 字符串 / 列表，而 37 份 golden 里没有一处嵌套对象——把 dict 塞上 wire 会当场
 TypeError，而扩写序列化器要连带重钉全部 golden 的字节形（本轮不做）。
+
+§63.12 追记（add-only）：答案的 id 除了位置形 ``split<n>`` 还认**标签形** ``s2``
+（= 那一份纪要里 S2 那一条，标签的小写形——`ANSWER_RE` 与 server 侧的镜像因此一个
+字符没动）。位置形仍是面板默认送出去的那一种；标签形是「按引用指一条」进得来的路
+（§63.12 的标签跨版稳定，位置不是）。
 
 答案里的 ``split<n>`` 指的是**上一版的第 n 条分工**，条目原文只在**围栏里**出现
 （`prompt_block` 只写编号与动作，`baseline_block` 把编号表与上一版正文一起交给
@@ -53,6 +60,11 @@ from act.lib import recap_text
 # 词表（两张 add-only 闭表）与上限
 # --------------------------------------------------------------------------- #
 KIND_SPLIT = "split"
+# §63.12（issue #300 的后半）：**按标签**指一条（`s2=drop`），而不是按位置指第 n 条分工。
+# 选项与 `split` 同三个——问的是同一件事（这一条留 / 删 / 改成提议），只是身份换成了
+# 跨版稳定的那一个。今天没有任何一条 `derive` 出来的问题是这一类：面送的仍是位置形
+# （wire 默认不变），标签形是**引用**进得来的那条路（CLI / 以后的逐条自由文本）
+KIND_ITEM = "item"
 KIND_DEADLINE = "deadline"
 KIND_OTHERS = "others"
 KIND_DETAIL = "detail"
@@ -63,6 +75,7 @@ KIND_PRIOR = "prior"
 # kind → 选项（闭表，顺序即展示顺序；第一项不是「默认」——没答过的问题不发答案）
 OPTIONS: dict = {
     KIND_SPLIT: ("keep", "drop", "propose"),
+    KIND_ITEM: ("keep", "drop", "propose"),
     KIND_DEADLINE: ("keep", "drop"),
     KIND_OTHERS: ("keep", "drop"),
     KIND_DETAIL: ("keep", "drop"),
@@ -90,6 +103,10 @@ MAX_SUBJECT_CHARS = 160
 # tests/test_server_paths_mirror.py 钉漂移）
 ID_RE = re.compile(r"^[a-z]{1,8}\d{0,2}$")
 ANSWER_RE = re.compile(r"^[a-z]{1,8}\d{0,2}=[a-z_]{1,12}$")
+# §63.12：按标签指一条的 id = **标签的小写形**（`D1` → `d1`）。小写是因为
+# `ANSWER_RE`（以及 server 侧逐字镜像的 `_RECAP_ANSWER_RE`）只认小写 + 最多两位数字
+# ——形状正则、golden 的字节形、`_RECAP_ANSWERS_MAX` 因此一个字符都没动（add-only）
+TAG_ID_RE = re.compile(r"^[%s][1-9]\d?$" % "".join(recap_text.TAG_LETTERS).lower())
 
 # 五行形里这两行的位置（§63.3 的标签顺序是硬闸，位置即身份——§63.9 的同一条依据）
 SPLIT_LINE = 1
@@ -111,16 +128,31 @@ def _fixed_kinds() -> dict:
 FIXED_IDS: dict = _fixed_kinds()
 
 
+def _split_kind(answer_id: str) -> Optional[str]:
+    """位置形 `split<n>`（1..:data:`MAX_SPLIT_QUESTIONS`）；`split` 开头但号不对 = 认不出。"""
+    tail = answer_id[len(SPLIT_PREFIX):]
+    if tail.isdigit() and 1 <= int(tail) <= MAX_SPLIT_QUESTIONS:
+        return KIND_SPLIT
+    return None
+
+
 def kind_of(answer_id) -> Optional[str]:
-    """一个答案 id 属于哪一类；认不出 = None（= 整条请求畸形，actd 诚实 noop）。"""
+    """一个答案 id 属于哪一类；认不出 = None（= 整条请求畸形，actd 诚实 noop）。
+
+    §63.12 追记（add-only）：闭表之外还认**标签形**（`s2` = 那一份纪要里的 S2 那一条，
+    §63.12 的跨版稳定身份）。位置形 `split<n>` 一个字符没动，仍是面板送出去的那一种。"""
     if not (isinstance(answer_id, str) and ID_RE.match(answer_id)):
         return None
     if answer_id.startswith(SPLIT_PREFIX):
-        tail = answer_id[len(SPLIT_PREFIX):]
-        if tail.isdigit() and 1 <= int(tail) <= MAX_SPLIT_QUESTIONS:
-            return KIND_SPLIT
-        return None
-    return FIXED_IDS.get(answer_id)
+        return _split_kind(answer_id)
+    if answer_id in FIXED_IDS:
+        return FIXED_IDS[answer_id]
+    return KIND_ITEM if TAG_ID_RE.match(answer_id) else None
+
+
+def item_tag(answer_id) -> str:
+    """标签形的 id → 它指的那个标签（`s2` → `S2`）；不是标签形 = 空串（§63.12）。"""
+    return str(answer_id).upper() if TAG_ID_RE.match(str(answer_id or "")) else ""
 
 
 # --------------------------------------------------------------------------- #
@@ -271,6 +303,11 @@ _INSTRUCTIONS: dict = {
     (KIND_SPLIT, "drop"): "Item %s: drop it entirely — it must not appear in any line or section.",
     (KIND_SPLIT, "propose"): ("Item %s: it is not agreed — record it as something the owner puts "
                               "forward, not as a decision (the Open line, or the proposed section)."),
+    # §63.12：按标签指的那一条（`Item D1` 就是围栏里带着 `[D1]` 前缀的那一条）
+    (KIND_ITEM, "keep"): "Item %s: keep it, with its owner when the previous version named one.",
+    (KIND_ITEM, "drop"): "Item %s: drop it entirely — it must not appear in any line or section.",
+    (KIND_ITEM, "propose"): ("Item %s: it is not agreed — record it as something the owner puts "
+                             "forward, not as a decision (the proposed section, or the Open line)."),
     (KIND_DEADLINE, "keep"): "Deadline: keep the date as it was spoken.",
     (KIND_DEADLINE, "drop"): "Deadline: the owner does not want one on the record — write the empty form.",
     (KIND_OTHERS, "keep"): "Record the other party's requirements, ownership and status.",
@@ -292,11 +329,15 @@ _INSTRUCTIONS: dict = {
 
 
 def _instruction(answer_id: str, picked: str) -> Optional[str]:
+    """一条答案 → 那句指令。逐条的两类各自带自己的**标识**：位置形写编号（围栏里
+    编号表的第 n 行），§63.12 的标签形写标签（围栏里带 `[D1]` 前缀的那一条）。"""
     kind = kind_of(answer_id)
     line = _INSTRUCTIONS.get((kind, picked)) if kind else None
     if line is None:
         return None
-    return line % answer_id[len(SPLIT_PREFIX):] if kind == KIND_SPLIT else line
+    if kind == KIND_SPLIT:
+        return line % answer_id[len(SPLIT_PREFIX):]
+    return line % item_tag(answer_id) if kind == KIND_ITEM else line
 
 
 def prompt_block(answers) -> Optional[str]:
