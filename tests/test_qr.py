@@ -12,6 +12,7 @@ import unittest
 from tests import TMP_HOME  # noqa: F401 - sandboxes AIASSISTANT_HOME first
 
 from act.lib import qr
+from tests import qr_testkit as kit
 
 
 def _finder_ok(m, ox, oy):
@@ -58,93 +59,16 @@ class QrMatrixTestCase(unittest.TestCase):
 
     def test_reed_solomon_syndromes_are_zero(self):
         # Independent proof the EC codewords are valid: re-read the codewords
-        # from the produced matrix (unmasking via the format bits) and confirm
-        # every block's Reed-Solomon syndromes vanish.
-        from act.lib.qr import (_EC_LEVELS, _EC_TABLE, _GF_EXP, _Matrix,
-                                _gf_mul)
-
+        # from the produced matrix (unmasking via the format bits, see
+        # tests/qr_testkit.py) and confirm every block's Reed-Solomon
+        # syndromes vanish.
         ec = "M"
         m = qr.qr_matrix(self.SAMPLE, ec)
-        n = len(m)
-        ver = (n - 17) // 4
-        fun = _Matrix(ver)
-        fun.draw_function_patterns()
-        # recover mask from the top-left format copy
-        order = [(8, 0), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (8, 7), (8, 8),
-                 (7, 8), (5, 8), (4, 8), (3, 8), (2, 8), (1, 8), (0, 8)]
-        fbits = 0
-        for i, (x, y) in enumerate(order):
-            fbits |= (1 if m[y][x] else 0) << i
-        fbits ^= 0x5412
-        mask = (fbits >> 10) & 7
-
-        def masked(x, y):
-            if mask == 0:
-                return (x + y) % 2 == 0
-            if mask == 1:
-                return y % 2 == 0
-            if mask == 2:
-                return x % 3 == 0
-            if mask == 3:
-                return (x + y) % 3 == 0
-            if mask == 4:
-                return (y // 2 + x // 3) % 2 == 0
-            if mask == 5:
-                return (x * y) % 2 + (x * y) % 3 == 0
-            if mask == 6:
-                return ((x * y) % 2 + (x * y) % 3) % 2 == 0
-            return ((x + y) % 2 + (x * y) % 3) % 2 == 0
-
-        grid = [[m[y][x] for x in range(n)] for y in range(n)]
-        for y in range(n):
-            for x in range(n):
-                if not fun.fun[y][x] and masked(x, y):
-                    grid[y][x] = not grid[y][x]
-
-        bits = []
-        col = n - 1
-        while col > 0:
-            if col == 6:
-                col = 5
-            for ri in range(n):
-                for c in range(2):
-                    x = col - c
-                    up = ((col + 1) & 2) == 0
-                    yy = (n - 1 - ri) if up else ri
-                    if not fun.fun[yy][x]:
-                        bits.append(1 if grid[yy][x] else 0)
-            col -= 2
-        cwbits = bits[: (len(bits) // 8) * 8]
-        allcw = [int("".join(map(str, cwbits[i:i + 8])), 2) for i in range(0, len(cwbits), 8)]
-
-        ecpb, g1, g1d, g2, g2d = _EC_TABLE[ver][_EC_LEVELS.index(ec)]
-        blocks_len = [g1d] * g1 + [g2d] * g2
-        nblocks = g1 + g2
-        total_data = sum(blocks_len)
-        data_cw = allcw[:total_data]
-        ec_cw = allcw[total_data:total_data + ecpb * nblocks]
-
-        dblocks = [[] for _ in range(nblocks)]
-        idx = 0
-        for i in range(max(blocks_len)):
-            for b in range(nblocks):
-                if i < blocks_len[b]:
-                    dblocks[b].append(data_cw[idx])
-                    idx += 1
-        eblocks = [[] for _ in range(nblocks)]
-        idx = 0
-        for i in range(ecpb):
-            for b in range(nblocks):
-                eblocks[b].append(ec_cw[idx])
-                idx += 1
-
-        for b in range(nblocks):
-            full = dblocks[b] + eblocks[b]
-            for s in range(ecpb):
-                acc = 0
-                for c in full:
-                    acc = _gf_mul(acc, _GF_EXP[s]) ^ c
-                self.assertEqual(acc, 0, f"block {b} syndrome {s} nonzero")
+        version = (len(m) - 17) // 4
+        blocks, ecpb = kit.deinterleave(kit.read_codewords(m), version, ec)
+        for b, block in enumerate(blocks):
+            self.assertEqual(kit.syndromes(block, ecpb), [0] * ecpb,
+                             f"block {b} has a nonzero syndrome")
 
     def test_capacity_overflow_raises(self):
         with self.assertRaises(ValueError):
