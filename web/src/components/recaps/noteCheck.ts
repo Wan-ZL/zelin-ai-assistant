@@ -1,5 +1,5 @@
-// 纠正备注的确定性预检（CONTRACT §63.5 / issue #296）：五行契约结构上做不到的诉求，
-// 在排队之前就说清楚，而不是让 recap_text.validate 在几分钟后默默退回一份 needs_review。
+// 纠正备注的确定性预检（CONTRACT §63.5 / §63.10 / issue #296 / #303）：这一份纪要的格式
+// 结构上做不到的诉求，在排队之前就说清楚，而不是让校验在几分钟后默默退回一份 needs_review。
 // 纯逻辑、无 React、无 fetch——vitest node 环境可直测；这里只出 id，文案在 RecapDetail 里
 // 走页面同一套 text(zh, en)（防腐 #10：不另起第二套双语机制）。
 //
@@ -9,6 +9,11 @@
 //   relabel               → 标签文字与顺序固定
 //   language_count        → en + zh 一次产出，两版都存
 //   formatting            → 禁 markdown / emoji / 链接 / 时间戳 / 引号
+//
+// §63.10（issue #303）：判定**按形状**收口。上面六类说的是五行契约的硬闸；可发送长版
+// （sections）里「删掉那一节」「写详细一点」「多一节」都是做得到的，再对它们说「做不到」
+// 就成了**错的**那句拒绝——预检一吵就没人看它。所以 `noteConflicts(note, shape)` 只留
+// 那一形状真正做不到的几类（见 SHAPE_IMPOSSIBLE），命中表与守卫表一字不改。
 //
 // 这是固定词表上的尽力预检，不是判定器：漏报只退回旧行为（几分钟后的 needs_review），
 // 误报才是真伤（预检一吵就没人看它）。判定因此分三层：
@@ -29,6 +34,17 @@ export type NoteConflictId =
 export const NOTE_CONFLICT_ORDER: NoteConflictId[] = [
   "drop_line", "add_line", "more_detail", "relabel", "language_count", "formatting",
 ];
+
+/**
+ * §63.10：每种出稿形状**真正**做不到的那几类。
+ *   lines    = 六类全在（恰好五行、固定标签、硬长度帽）；
+ *   sections = 只剩三类——分节名是闭表（relabel）、中英两版一次产出（language_count）、
+ *              格式禁项照旧（formatting）。删掉一节 / 多一节 / 写长一点，可发送长版做得到。
+ */
+export const SHAPE_IMPOSSIBLE: Record<string, NoteConflictId[]> = {
+  lines: NOTE_CONFLICT_ORDER,
+  sections: ["relabel", "language_count", "formatting"],
+};
 
 /** 逐句切分：中英标点 + 换行 + 破折号。切分只让命中变少，不会凭空多出一条。 */
 const CLAUSE_SPLIT = /[。；！？、，,;!?.\n—–]+/;
@@ -153,12 +169,24 @@ function hits(id: NoteConflictId, clause: string): boolean {
 }
 
 /**
- * 备注里结构上无法满足的诉求（固定顺序、去重）。空备注 = 空表。
- * 判定只看备注文本，不调模型、不发请求——同一段文本永远得同一个答案。
+ * 备注里**这一形状**结构上无法满足的诉求（固定顺序、去重）。空备注 = 空表；
+ * `shape` 缺省 = 五行形（老调用方与老记录的行为一字不变）。
+ * 判定只看备注文本，不调模型、不发请求——同一段文本 + 同一形状永远得同一个答案。
  */
-export function noteConflicts(note: string): NoteConflictId[] {
+export function noteConflicts(note: string, shape: string = "lines"): NoteConflictId[] {
   const text = String(note ?? "").toLowerCase();
   if (!text.trim()) return [];
+  const allowed = SHAPE_IMPOSSIBLE[shape] ?? SHAPE_IMPOSSIBLE.lines;
   const clauses = text.split(CLAUSE_SPLIT).filter((clause) => clause.trim());
-  return NOTE_CONFLICT_ORDER.filter((id) => clauses.some((clause) => hits(id, clause)));
+  return NOTE_CONFLICT_ORDER.filter((id) => allowed.includes(id)
+    && clauses.some((clause) => hits(id, clause)));
+}
+
+/**
+ * §63.10：命中的这几条里，有没有「换成可发送长版就能办到」的（五行形专属的三类）。
+ * 面板据它多说一句「可发送长版做得到——在下面切形状」，而不是只留一句拒绝。
+ */
+export function fixableByLongShape(ids: NoteConflictId[]): boolean {
+  const impossible = SHAPE_IMPOSSIBLE.sections;
+  return ids.some((id) => !impossible.includes(id));
 }

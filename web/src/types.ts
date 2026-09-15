@@ -464,6 +464,15 @@ export interface RecapRow {
   zh?: string[] | null;
   /** ok | needs_review | thin_transcript | no_audio | generation_failed | null */
   quality?: string | null;
+  /** §63.10 这一版用的出稿形状：lines = 五行 | sections = 可发送长版（老 daemon 无此键 = lines） */
+  shape?: string | null;
+  /** §63.10 可发送长版的分节正文（五行形 = null；wire 逐字镜像 act/lib/recap_text） */
+  sections_en?: RecapSection[] | null;
+  sections_zh?: RecapSection[] | null;
+  /** §63.10 **粘出去的那一份**（daemon 渲染好的：空的部分已略掉、分节稿已编号）——
+   *  老 daemon 无此键 = 页面退回把 en/zh 直接换行拼起来 */
+  copy_en?: string | null;
+  copy_zh?: string | null;
   transcript_words?: number;
   frames?: number;
   audio_rows?: number;
@@ -490,6 +499,62 @@ export interface RecapRow {
   problems?: RecapProblem[] | null;
   /** §63.3 追记 落地前的确定性长度修剪台账（add-only；没修过 = []） */
   repairs?: RecapRepair[] | null;
+  /** §63.11 这一份纪要该被问的意图问题（add-only，**投影现算不落盘**；老 daemon 无此键 = 不问） */
+  questions?: RecapQuestion[] | null;
+  /** §63.11 我们见过的第一版的可粘正文（add-only，只写一次；没有第二版过 = null） */
+  baseline?: RecapBaseline | null;
+  /** §63.11 这一版是按哪组答案出的（add-only，每版重写；没答案 = null） */
+  intent?: RecapIntent | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.11（issue #302）一条意图问题（`act/lib/recap_intent.derive` 的 wire 形逐字镜像）：
+ * `kind` ∈ split | deadline | others | detail | audience | own | prior（add-only 闭表），
+ * `options` = 那一类的选项（同样闭表），`subject` 只有逐条的那几个有正文（上一版里的原话）。
+ * **问题的组成是 server 数据，不是 client 代码**（防腐 #10）；问法由 `text(zh, en)` 按
+ * `kind` / 选项值查表。
+ */
+export interface RecapQuestion {
+  id: string;
+  kind: string;
+  options: string[];
+  subject?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.11 「转写原版」= 我们见过的**第一版**的可粘正文（`act/recap._capture_baseline`）：
+ * history 的帽是 5 版，第一版早晚被挤掉，而这一条 issue 的正题就是两版并存可切。
+ * 存的是渲染好的 `copy_*`（粘出去的那一份），不是 `en` / `zh` 的原始数组。
+ */
+export interface RecapBaseline {
+  version: number;
+  generated_at?: string | null;
+  shape?: string | null;
+  copy_en?: string | null;
+  copy_zh?: string | null;
+  [key: string]: unknown;
+}
+
+/** §63.11 这一版的意图回执：`answers` = 送出去的那组 `id=value`（wire 逐字镜像） */
+export interface RecapIntent {
+  answers: string[];
+  at?: string | null;
+  version?: number | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.10 可发送长版的一节（issue #303；`act/lib/recap_text` 的 `{key, modality, items}` 逐字镜像）：
+ * `key` ∈ decided | split | proposed | deadline | changed | open，`modality` ∈ decided | proposed |
+ * floated | open（一节一个语气——决定与提议因此在纸面上长得不一样）。条目的编号**不在数据里**：
+ * 它由 daemon 渲染 `copy_*` 时跨节连续加上（issue #332 实测的粘贴形）。
+ */
+export interface RecapSection {
+  key: string;
+  modality: string;
+  items: string[];
   [key: string]: unknown;
 }
 
@@ -559,6 +624,11 @@ export interface RecapVersion {
   quality: string | null;
   en: string[];
   zh: string[];
+  /** §63.10 add-only：那一版的形状与**粘出去的那份正文**（可发送长版的 en/zh 是空的，
+   *  两版对照因此读 copy_*；老条目没有这两个键 = lines + null） */
+  shape: string;
+  copy_en: string | null;
+  copy_zh: string | null;
   [key: string]: unknown;
 }
 
@@ -581,6 +651,8 @@ export interface RecapSettings {
   enabled: boolean;
   default_language: "auto" | "zh" | "en" | string;
   slack_draft_enabled: boolean;
+  /** §63.10 出厂形状（只读：config.yaml 层，PUT 仍只认三把旋钮）——形状选择器的初值 */
+  default_shape: "lines" | "sections" | string;
   languages: string[];
   source: { [key: string]: unknown };
   [key: string]: unknown;

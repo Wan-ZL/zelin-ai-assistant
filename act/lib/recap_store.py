@@ -1,4 +1,4 @@
-"""act/lib/recap_store.py — ``state/recap/`` on disk + the add-only board projection (CONTRACT §63).
+"""act/lib/recap_store.py — ``state/recap/`` on disk + the add-only board projection (CONTRACT §63 / §63.10 / §63.11).
 
 Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
 
@@ -32,7 +32,9 @@ directory: :func:`attach` adds the add-only top-level ``recaps[]`` plus
 ``recap_counts`` (the true per-lane totals the caps cut down to; §2 兄弟字段) to
 dashboard.json (history text stripped — only the §63.9 scalar handles
 ``history_versions`` ride along, newest first, capped) — the web 会议纪要
-page's data. The one thing actd writes lives OUTSIDE it: the §63.8 generate
+page's data; the §63.11 ``questions`` (the intent questions this recap's own
+text implies) are computed **in the projection** and never stored — a question
+set on disk would drift from the text it was derived from. The one thing actd writes lives OUTSIDE it: the §63.8 generate
 request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
 projected per row as ``generate_request``. The §63.3 追记 ``problems`` /
 ``repairs`` rows ride on the recap file itself (act/recap.py writes them with
@@ -51,7 +53,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from act.lib import config, recap_requests, recap_sessions
+from act.lib import config, recap_intent, recap_requests, recap_sessions, recap_text
 
 KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 # Slack conversation ids: C… channel, D… DM, G… private group (uppercase alnum)
@@ -166,6 +168,9 @@ def settings(cfg: Optional[config.Config] = None) -> dict:
     return {
         "enabled": bool(getattr(cfg, "recap_enabled", True)),
         "default_language": str(getattr(cfg, "recap_default_language", "auto")),
+        # §63.10（issue #303）：出厂形状（`lines` = 快速五行）；单份纪要的形状由按钮传下来的
+        # `--shape` 覆盖，认不出的值一律回落到默认形（recap_text.normalize_shape）
+        "default_shape": recap_text.normalize_shape(blk.get("default_shape")),
         "slack_draft_enabled": bool(getattr(cfg, "recap_slack_draft_enabled", False)),
         "slack_targets": slack_targets(_dict(blk.get("slack_draft")).get("targets")),
         "options": recap_sessions.Options.from_mapping(blk),
@@ -213,7 +218,18 @@ def new_record(session: recap_sessions.Session, key: str, status: str) -> dict:
         "frames": int(session.frames), "audio_rows": int(session.audio_rows),
         "status": status, "version": 0, "partial": False, "generated_at": None,
         "en": None, "zh": None, "quality": None, "transcript_words": 0,
+        # §63.10 追记（add-only）：这一版是哪种形状出的稿 + 可发送长版的分节正文 +
+        # 两语言**粘出去的那份**（空的部分已略掉；缺席 = 老记录，页面回落到 en/zh 直接拼）。
+        # 出生即 None（不是 "lines"）：还没出过稿的记录不该替配置 `recap.default_shape`
+        # 做主——形状由第一次出稿写死（act/recap.record_shape 的那条优先级链）
+        "shape": None, "sections_en": None, "sections_zh": None,
+        "copy_en": None, "copy_zh": None,
         "note": None, "history": [], "slack_draft": None,
+        # §63.11 追记（add-only，issue #302）：`baseline` = **我们见过的第一版**的可粘正文
+        # （`{version, generated_at, shape, copy_en, copy_zh}`，只写一次、永不覆盖——
+        # history 的帽是 5 版，第一版早晚会被挤掉，而「转写原版」必须一直在）；
+        # `intent` = 这一版是按哪组答案出的（`{answers, at, version}`，每版重写、没答案 = None）
+        "baseline": None, "intent": None,
         # §63.3 追记（add-only）：needs_review 的结构化原因与落地前的长度修剪台账
         "problems": [], "repairs": [],
         # §63.9 追记（add-only）：这一版的正文回退自第几版（生成出来的版本 = None）
@@ -258,16 +274,29 @@ def closed_intervals(now: float, within_s: float = LATE_SLICE_WINDOW_S) -> list:
     return out
 
 
+def prior_lines(rec: dict) -> list:
+    """一份旧纪要喂回 prompt 时的英文行（§63.10）：五行形直接给那五行，可发送长版给
+    **渲染出来的那份文档**按行切开——两种形状都能给下一场会的「较上次变化」定锚，
+    否则一份 sections 纪要会在下一次生成里消失得无影无踪。"""
+    if has_lines(rec.get("en")):
+        return list(rec["en"])
+    body = rec.get("copy_en")
+    if not isinstance(body, str) or not body.strip():
+        body = recap_text.render_sections(rec.get("sections_en") or [], "en")
+    return [line for line in body.split("\n") if line.strip()]
+
+
 def priors_for(start_ts: float, timezone: str) -> list:
     """≤ 3 earlier CLOSED recaps with text within 14 days, newest first —
-    the 'Changed since last plan' reference: [{"date", "en"}]."""
+    the 'Changed since last plan' reference: [{"date", "en"}]（正文按
+    :func:`prior_lines` 取，两种形状都在里面）。"""
     lo = start_ts - PRIOR_DAYS * 86400
     out = []
     for rec in list_recaps():
         s = _start_ts(rec)
-        if rec.get("en") and rec.get("status") == recap_sessions.CLOSED and lo <= s < start_ts:
+        if has_text(rec) and rec.get("status") == recap_sessions.CLOSED and lo <= s < start_ts:
             out.append({"date": recap_sessions.local_dt(s, timezone).strftime("%Y-%m-%d"),
-                        "en": list(rec["en"])})
+                        "en": prior_lines(rec)})
     return out[:PRIOR_LIMIT]
 
 
@@ -319,6 +348,24 @@ def has_lines(value) -> bool:
     return isinstance(value, list) and bool(value)
 
 
+def has_text(rec) -> bool:
+    """这份记录（或一条 history 条目）有没有可复制的正文——**两种形状都算**
+    （§63.10）：五行形看 ``en``，可发送长版看 ``sections_en`` **渲染出来那份非空**。
+    凡是「有正文吗」的判决都走这里（history 入库、Slack 草稿闸、通知、投影句柄、
+    回退目标），否则一份 sections 纪要会在每一处都被当成「没出稿」。
+
+    长版这一支为什么要渲染一遍而不是只看列表非空：「空」在这个系统里必须是**一个**
+    判据。手改坏的 `sections_en`（一列数字）渲染不出任何东西，只看列表非空会让
+    通知说「已生成」、面板给一个空 `<pre>` 配一颗可用的复制键、Slack 草稿正文是
+    空串——而 server 的 `_shaped_entries`（看 ``en`` / ``copy_en``）又把同一条
+    history 条目丢掉，面板于是数得出一版却打不开它。
+
+    §63.11 追记：实现搬到 `recap_text.has_body`（渲染器那一处）——本函数仍是这条判决的
+    公开名与法条引用点，同层的 `recap_intent` 问的也是同一个判据（lib 内不起第二套
+    「空」的定义；`recap_store` 不能被 `recap_intent` 反过来 import，那是一个环）。"""
+    return recap_text.has_body(rec)
+
+
 def _is_version(value) -> bool:
     """真整数的版本号（bool 是 int 子类——手改过的 wire 上 `true` 真出现过）。"""
     return isinstance(value, int) and not isinstance(value, bool)
@@ -333,7 +380,7 @@ def _version_handle(entry) -> Optional[dict]:
     （非 dict / 版本号不是真整数 / 没有正文——那三种都不是「能回退到的一版」）。"""
     if not isinstance(entry, dict):
         return None
-    if not _is_version(entry.get("version")) or not has_lines(entry.get("en")):
+    if not _is_version(entry.get("version")) or not has_text(entry):
         return None
     return {"version": entry["version"], "generated_at": _iso_or_none(entry.get("generated_at")),
             "partial": bool(entry.get("partial"))}
@@ -394,17 +441,37 @@ def _filed_ts(row: dict) -> float:
     return max(known) if known else _start_ts(row)
 
 
+def _has_prior(row: dict, starts: list) -> bool:
+    """这一行之前 14 天内有没有另一份**有正文的** CLOSED 纪要——判据与
+    :func:`priors_for` 的窗口逐字同源（§63.11 的 `prior` 问题只在真有上一份时才问）。
+    算在已经读进内存的行上，不为每一行再扫一遍磁盘（60 行 × 一次全目录读 = O(n²) 读盘）。"""
+    start = _start_ts(row)
+    lo = start - PRIOR_DAYS * 86400
+    return any(lo <= ts < start for ts in starts)
+
+
+def _with_questions(rows: list) -> list:
+    """§63.11 add-only、**projection-only** 的 `questions`：这一份纪要该被问的问题
+    （`recap_intent.derive`，纯规则、零模型）。投影层算、不落盘——问题是那一版正文的
+    函数，存一份就会和正文漂移；web 只渲染 wire 上的这份数据（防腐 #10）。"""
+    starts = [_start_ts(row) for row in rows
+              if has_text(row) and row.get("status") == recap_sessions.CLOSED]
+    for row in rows:
+        row["questions"] = recap_intent.derive(row, _has_prior(row, starts))
+    return rows
+
+
 def all_rows() -> list:
     """全部投影行（**未切预算**），newest first：已出稿 recap + sessions.json 里还没有文件的
     OPEN 会话（同 key 以文件为准——一份 partial 的「现在生成」盖过裸 OPEN 行），history 剥掉、
-    server-owned marks 与 §63.8 生成回执并入。:func:`projection` 与 :func:`lane_counts` 的
-    共同上游（一次读盘两用）。"""
+    server-owned marks 与 §63.8 生成回执并入、§63.11 的 `questions` 现算。:func:`projection`
+    与 :func:`lane_counts` 的共同上游（一次读盘两用）。"""
     marks = load_marks()
     requests = recap_requests.load()
     rows = {r["key"]: _row(r, marks, requests) for r in list_recaps()}
     for o in open_rows(load_state() or {}):
         rows.setdefault(o["key"], _row(o, marks, requests))
-    return sorted(rows.values(), key=_start_ts, reverse=True)
+    return _with_questions(sorted(rows.values(), key=_start_ts, reverse=True))
 
 
 def lane_counts(rows: Optional[list] = None) -> dict:
@@ -461,16 +528,44 @@ def attach(dash: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # inbox special forms → `python -m act.recap` argv tail (actd spawns detached)
 # --------------------------------------------------------------------------- #
-def _generate_argv(decision: dict) -> Optional[list]:
-    argv = ["--generate", decision["meeting_key"]]
+def _note_argv(decision: dict) -> Optional[list]:
+    """`--note …` 或空（没带）；畸形（非字符串 / 超 500 字）= None = 整条 noop。"""
     note = decision.get("note")
-    if note is not None:
-        if not isinstance(note, str) or len(note) > 500:
-            return None
-        argv += ["--note", note]
-    if decision.get("partial") is True:
-        argv.append("--partial")
-    return argv
+    if note is None:
+        return []
+    if not isinstance(note, str) or len(note) > 500:
+        return None
+    return ["--note", note]
+
+
+def _shape_argv(decision: dict) -> Optional[list]:
+    """§63.10（issue #303）：形状只认字面量 lines / sections——别的值 = 畸形 = noop
+    （actd 永不猜；缺席 = 这份纪要上一次用的形状，由持锁的写者决定）。"""
+    shape = decision.get("shape")
+    if shape is None:
+        return []
+    return ["--shape", shape] if shape in recap_text.SHAPES else None
+
+
+def _answers_argv(decision: dict) -> Optional[list]:
+    """§63.11（issue #302）：`answers` 是**字符串列表**（`["split1=drop", "aud=send"]`，
+    形状与词表 truth = `recap_intent.answers_ok`）→ `--answers <紧凑 JSON>`。
+    一条认不出 = 整条 noop：半组答案会悄悄按另一种意图重写这份纪要。"""
+    answers = decision.get("answers")
+    if answers is None:
+        return []
+    if not recap_intent.answers_ok(answers):
+        return None
+    return ["--answers", json.dumps(list(answers), ensure_ascii=False, separators=(",", ":"))]
+
+
+def _generate_argv(decision: dict) -> Optional[list]:
+    note, shape = _note_argv(decision), _shape_argv(decision)
+    answers = _answers_argv(decision)
+    if note is None or shape is None or answers is None:
+        return None
+    partial = ["--partial"] if decision.get("partial") is True else []
+    return ["--generate", decision["meeting_key"]] + note + partial + shape + answers
 
 
 def _slack_draft_argv(decision: dict) -> Optional[list]:
@@ -496,7 +591,7 @@ INBOX_ACTIONS = frozenset(_INBOX_BUILDERS)
 
 
 def inbox_argv(decision) -> Optional[list]:
-    """``recap_generate {meeting_key, note?, partial?}`` / ``recap_slack_draft
+    """``recap_generate {meeting_key, note?, partial?, shape?, answers?}`` / ``recap_slack_draft
     {meeting_key, channel_id}`` / ``recap_revert {meeting_key, version}`` → argv
     tail, or None when malformed (actd acks noop). None of the three carries a
     recipient: the channel_id of a draft names the owner's own Slack draft box

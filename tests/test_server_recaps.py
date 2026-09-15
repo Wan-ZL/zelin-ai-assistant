@@ -17,8 +17,10 @@ three inbox special forms through POST /api/actions.
   fail-open: absent / corrupt / oversize = 200 empty layer, never 500 / 404;
   a bad key is the one 400 — the client never names a path.
 - inbox forms: meeting_key shape, note ≤ 500, partial only ``true``,
-  channel_id shape, ``recap_revert`` version = a real integer ≥ 1; unknown
-  fields 400; files land with ``via: web``.
+  channel_id shape, ``recap_revert`` version = a real integer ≥ 1, §63.11
+  ``answers`` = 1..12 distinct ``id=value`` strings (a list of strings, because
+  the byte serializer has no nested-object branch); unknown fields 400; files
+  land with ``via: web``.
 Real server on a random port (tests/test_server_common.py); stdlib client.
 """
 import json
@@ -60,16 +62,25 @@ class SettingsTestCase(_Case):
         self.assertEqual(snap["default_language"], "auto")
         self.assertEqual(snap["slack_draft_enabled"], False)
         self.assertEqual(snap["languages"], ["auto", "zh", "en"])
+        # §63.10 只读的第四格：出厂 = 快速五行（面板拿它当形状选择器的初值）
+        self.assertEqual(snap["default_shape"], "lines")
         self.assertEqual(snap["source"], {"enabled": "default", "default_language": "default",
-                                          "slack_draft_enabled": "default"})
+                                          "slack_draft_enabled": "default",
+                                          "default_shape": "default"})
 
     def test_config_yaml_layer(self):
         write_text(self.home / "config.yaml",
-                   "recap:\n  enabled: false\n  default_language: zh\n  slack_draft:\n    enabled: 'true'\n")
+                   "recap:\n  enabled: false\n  default_language: zh\n  default_shape: sections\n"
+                   "  slack_draft:\n    enabled: 'true'\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
         self.assertEqual((snap["enabled"], snap["default_language"], snap["slack_draft_enabled"]),
                          (False, "zh", True))
+        # §63.10：形状也是 config.yaml 层的一格（PUT 不收它——管线没有对应的 overrides 扁平键）
+        self.assertEqual(snap["default_shape"], "sections")
         self.assertEqual(set(snap["source"].values()), {"config"})
+        write_text(self.home / "config.yaml", "recap:\n  default_shape: klingon\n")
+        _s, snap = get_json(self.port, "/api/settings/recap")
+        self.assertEqual(snap["default_shape"], "lines")   # 认不出的值回落到出厂形，不 500
         write_text(self.home / "config.yaml", "recap: [not, a, map]\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
         self.assertEqual(snap["slack_draft_enabled"], False)
@@ -101,6 +112,11 @@ class SettingsTestCase(_Case):
 
     def test_put_rejects_unknown_fields_bad_values_and_empty(self):
         status, body = put_json(self.port, "/api/settings/recap", {"targets": {}})
+        self.assertEqual(status, 400)
+        assert_envelope(self, body, "UNKNOWN_FIELD")
+        # §63.10：`default_shape` GET 得到、PUT 写不进——它只住 config.yaml，
+        # 写进 settings_overrides.json 的话管线根本不读，那个开关会是一颗假按钮
+        status, body = put_json(self.port, "/api/settings/recap", {"default_shape": "sections"})
         self.assertEqual(status, 400)
         assert_envelope(self, body, "UNKNOWN_FIELD")
         status, body = put_json(self.port, "/api/settings/recap", {"default_language": "fr"})
@@ -216,9 +232,12 @@ class HistoryTestCase(_Case):
         status, body = get_json(self.port, "/api/recaps/history?key=" + KEY)
         self.assertEqual(status, 200)
         self.assertEqual(body["key"], KEY)
+        # §63.10 追记（issue #303）add-only：shape 与两语言粘出去的正文 copy_*
+        # （老 daemon 写的记录没有这三个键 → 五行形 + null，键恒在）
         self.assertEqual(body["current"], {"version": 2, "generated_at": "2026-08-31T20:40:00Z",
                                            "partial": False, "quality": "ok",
-                                           "en": ["Decided: b"], "zh": ["定了：b"]})
+                                           "en": ["Decided: b"], "zh": ["定了：b"],
+                                           "shape": "lines", "copy_en": None, "copy_zh": None})
         self.assertEqual(len(body["entries"]), 1)
         self.assertEqual(body["entries"][0]["version"], 1)
         self.assertEqual(body["entries"][0]["quality"], "needs_review")
@@ -289,6 +308,30 @@ class InboxFormsTestCase(_Case):
         self.assertEqual(rec["meeting_key"], KEY)
         self.assertEqual((rec["note"], rec["partial"], rec["via"]), ("fix", True, "web"))
         self.assertNotIn("channel_id", rec)
+
+    def test_recap_generate_carries_the_intent_answers(self):
+        """§63.11（issue #302）：答案是**字符串列表**（golden `recap_generate-intent` 钉字节形）。"""
+        answers = ["split1=drop", "aud=send"]
+        status, _body = post_json(self.port, "/api/actions",
+                                  {"action": "recap_generate", "meeting_key": KEY,
+                                   "answers": answers})
+        self.assertEqual(status, 200)
+        raw = self._files()[0].read_bytes().decode("utf-8")
+        self.assertIn('"answers" : [\n    "split1=drop",\n    "aud=send"\n  ]', raw)
+        rec = json.loads(raw)
+        self.assertEqual((rec["answers"], rec["via"]), (answers, "web"))
+
+    def test_recap_generate_answers_fail_closed(self):
+        for answers in ([], "split1=drop", [1], ["split1"], ["Split1=drop"], ["aud=send too"],
+                        ["split1=drop", "split1=keep"], ["aud=send"] * 13, [["split1=drop"]],
+                        [{"split1": "drop"}]):
+            with self.subTest(answers=answers):
+                status, body = post_json(self.port, "/api/actions",
+                                         {"action": "recap_generate", "meeting_key": KEY,
+                                          "answers": answers})
+                self.assertEqual(status, 400)
+                assert_envelope(self, body, "INVALID_FIELD")
+        self.assertEqual(self._files(), [])
 
     def test_recap_slack_draft_lands(self):
         status, _body = post_json(self.port, "/api/actions",

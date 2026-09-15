@@ -15,7 +15,7 @@ vi.mock("../../api", async (importOriginal) => {
 
 function snapshot(over: Partial<RecapSettings> = {}): RecapSettings {
   return { enabled: true, default_language: "auto", slack_draft_enabled: false,
-    languages: ["auto", "zh", "en"], source: { enabled: "default" }, ...over };
+    default_shape: "lines", languages: ["auto", "zh", "en"], source: { enabled: "default" }, ...over };
 }
 
 function renderSection() {

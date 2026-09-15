@@ -15,7 +15,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
 from act import actd, doctor, llm, recap
 from act.lib import config, heartbeat, registry
-from act.lib import recap_store
+from act.lib import recap_intent, recap_store, recap_text
 from server import health as server_health
 from server import inbox_writer as server_inbox
 from server import paths
@@ -120,7 +120,7 @@ class ModelSettingsMirrorTestCase(unittest.TestCase):
 
 class RecapMirrorTestCase(unittest.TestCase):
     """§63：server/recaps.py 与 server/inbox_writer.py 手抄的 recap 键形、语言词表、
-    override 键名、marks 路径与 bool 归一必须与 act 侧逐字一致。"""
+    §63.10 形状词表、override 键名、marks 路径与 bool 归一必须与 act 侧逐字一致。"""
 
     def test_key_and_channel_shapes(self):
         self.assertEqual(server_recaps.KEY_RE.pattern, recap_store.KEY_RE.pattern)
@@ -133,9 +133,36 @@ class RecapMirrorTestCase(unittest.TestCase):
         cfg = config.Config()
         self.assertEqual(server_recaps.DEFAULTS, {
             "enabled": cfg.recap_enabled, "default_language": cfg.recap_default_language,
-            "slack_draft_enabled": cfg.recap_slack_draft_enabled})
+            "slack_draft_enabled": cfg.recap_slack_draft_enabled,
+            # §63.10：出厂形状与 act 侧同一个字面量（config.yaml 层，无 overrides 扁平键）
+            "default_shape": recap_text.DEFAULT_SHAPE})
         for key in server_recaps.OVERRIDE_KEYS.values():
             self.assertIn(key, config._OVERRIDE_FIELDS)
+        # 只读的那一格永不进 PUT 的白名单——写进 overrides 的键管线根本不读
+        self.assertNotIn("default_shape", server_recaps.OVERRIDE_KEYS)
+
+    def test_shape_vocabulary_mirrors_the_daemon(self):
+        """§63.10：两个 server 模块各手抄了一份形状词表——第三个字面量出现时必须红。
+
+        没有这道 pin，`recap_text.SHAPES` 加一个形状（或换掉第一个）之后
+        `POST /api/actions` 会 400 掉那个新形状、`_version_shape` 会把每一条老
+        history 条目标成错的形状，而全量测试一片绿。"""
+        self.assertEqual(server_inbox._RECAP_SHAPES, recap_text.SHAPES)
+        self.assertEqual(server_recaps.SHAPES, recap_text.SHAPES)
+        # `_version_shape` / DEFAULTS 拿 SHAPES[0] 当兜底形状 = act 侧的默认形
+        self.assertEqual(server_recaps.SHAPES[0], recap_text.DEFAULT_SHAPE)
+
+    def test_answer_shape_mirrors_the_daemon(self):
+        """§63.11：`answers` 的一条形状与条数上限在两侧各有一份手抄——必须逐字一致。
+
+        server 不 import act（§49），所以它只查形状；id 与选项的**闭表**只住 daemon 侧
+        （`recap_intent.answers_ok`，词表外 = 诚实 noop）。没有这道 pin，daemon 侧改一
+        次正则（比如以后允许两位数的 id 后缀）之后 `POST /api/actions` 会 400 掉一组
+        完全合法的答案，而全量测试一片绿。"""
+        self.assertEqual(server_inbox._RECAP_ANSWER_RE.pattern, recap_intent.ANSWER_RE.pattern)
+        self.assertEqual(server_inbox._RECAP_ANSWERS_MAX, recap_intent.MAX_ANSWERS)
+        # 问出来的每一条都必须答得上去（面板不许给一个送不出去的答案格）
+        self.assertLessEqual(recap_intent.MAX_QUESTIONS, server_inbox._RECAP_ANSWERS_MAX)
 
     def test_marks_path_mirror(self):
         with mock.patch.object(config, "STATE_DIR", HOME / "state"):

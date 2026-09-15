@@ -365,3 +365,60 @@
 }
 
 .recap-history-text { min-width: 0; }
+
+/* §63.10（issue #303）「重新生成」面板顶上的形状选择器：快速五行 / 可发送长版 +
+   选中那一项的一句说明（segmented 壳复用 .recap-segmented，不另起一套） */
+.recap-shape {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recap-shape .recap-hint {
+  margin: 0;
+}
+
+/* §63.11（issue #302）「重新生成」面板里的意图问答：一问一行，右边是那一类的选项
+   （segmented 壳继续复用 .recap-segmented，不另起一套按钮） */
+.recap-intent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recap-intent-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recap-intent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.recap-intent-ask {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-secondary);
+  font: var(--type-composer-hint);
+}
+
+/* 上一版里的原话（逐条分工那几问）——是数据不是文案，所以用引述体 */
+.recap-intent-subject {
+  color: var(--text-primary);
+  font-style: normal;
+  font: var(--type-card-meta-strong);
+}
+
+.recap-intent .recap-hint {
+  margin: 0;
+}
