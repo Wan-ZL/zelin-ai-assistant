@@ -328,6 +328,7 @@ _WAKE_GRACE_SECONDS = _alerts.WAKE_GRACE_SECONDS
 _wake_state = _alerts.WAKE_STATE                # shared dict: tests mutate it in place
 _no_baseline_since = _alerts.NO_BASELINE_SINCE  # shared dict: tests clear it in place
 _HARVEST_PROBE_AT = _reconcile.HARVEST_PROBE_AT  # shared dict: tests clear / patch.dict it
+_TITLE_PROBE_AT = _reconcile.TITLE_PROBE_AT      # §37.1 追记：活会话改名探针的台账
 _HARVEST_PROBE_INTERVAL_S = _reconcile.HARVEST_PROBE_INTERVAL_S
 RESUME_STORM_THRESHOLD = _reconcile.RESUME_STORM_THRESHOLD
 RESUME_STORM_WINDOW_S = _reconcile.RESUME_STORM_WINDOW_S

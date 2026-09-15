@@ -1329,7 +1329,10 @@ def _roster_agent(ex: dict, ctx: _Ctx) -> dict:
 def _session_name(req: Requirement, a: dict) -> str:
     """卡片此刻的显示名（§37.1 那条链，恒非空）——roster 的 ``name`` 只是回落：
     claude 把（巨大的）注入 prompt 当 agent "name" 用，显示出来毫无用处。
-    改名后的卡在运行中/待验收/已完成列里也必须叫新名字（此前是冻结 title）。"""
+    改名后的卡在运行中/待验收/已完成列里也必须叫新名字（此前是冻结 title）。
+
+    冻结 `title` 因此不再由 `name` 捎带——四个会话行改发自己的 ``title`` 键
+    （§2 追记），否则 §37.2 的搜索词表会在这三条 lane 上掉一维。"""
     return _s(_display_title(req) or a.get("name") or req.id)
 
 
@@ -1339,7 +1342,11 @@ def _agent_name_stale(req: Requirement, a: dict) -> bool:
     True = 会话在册且它的名字 != 此刻 dispatch/resume 会给的名字
     （`dispatch_prompt.session_name`，单源）。CLI 没有运行中改名的动作
     （只有启动期 `-n/--name`），所以这是个诚实的「下次 resume 才跟上」信号，
-    web 详情面据此在「claude agents 列表名」下面给一行说明。"""
+    web 详情面据此在「claude agents 列表名」下面给一行说明。
+
+    **只发给还能再 resume 的行**（运行中 / 待验收 / 待验收回流）：已验收卡
+    （`_delivered_row`）不会再有下一次 resume，那行上「下次恢复会话时才跟上」
+    就成了永不兑现的承诺（宪法第 3 条诚实），所以那个行构造不带这个键。"""
     live = _s(a.get("name"))
     return bool(live) and live != dispatch_prompt.session_name(req)
 
@@ -1373,12 +1380,15 @@ def _delivered_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     return {
         "id": _s(req.id),
         "name": sx.name,
+        # §2 追记：冻结 title 自带一个键（`name` 现在是活标题，不再捎带它）——
+        # §37.2 的搜索词表里「冻结 title」那一维靠它。已验收行不带
+        # `agent_name_stale`：这条会话不会再 resume（见 _agent_name_stale）。
+        "title": _s(req.title),
         **_title_fields(req),
         "session_id": sx.resume_sid,
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
-        **_opt("agent_name_stale", sx.agent_name_stale),
         "state": "delivered",
         "cwd": sx.cwd,
         "summary": req.summary or None,
@@ -1403,6 +1413,7 @@ def _from_review_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     return {
         "id": _s(req.id),
         "name": sx.name,
+        "title": _s(req.title),   # §2 追记：冻结 title（`name` = 活标题）
         **_title_fields(req),
         "session_id": sx.resume_sid,
         "short_id": sx.short_id,
@@ -1445,6 +1456,7 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
     return {
         "id": _s(req.id),
         "name": sx.name,
+        "title": _s(req.title),   # §2 追记：冻结 title（`name` = 活标题）
         "summary": req.summary or None,
         **_title_fields(req),
         "dod": _dod(req),
@@ -1484,6 +1496,7 @@ def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     return {
         "id": _s(req.id),
         "name": sx.name,
+        "title": _s(req.title),   # §2 追记：冻结 title（`name` = 活标题）
         **_title_fields(req),
         "session_id": sx.resume_sid,
         "short_id": sx.short_id,

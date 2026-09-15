@@ -11,9 +11,12 @@ claude 的 `--name` 就该是新名字，看板行也该叫新名字——此前
     清洗/截断/空名回落编号照旧；
   * 两个 `--name` 落点（dispatch 的 runner、`_run_resume` 的 argv）拿到的
     是同一个新名字；
-  * dashboard 会话行的 `name` = 卡此刻的显示名；
+  * dashboard 会话行的 `name` = 卡此刻的显示名，而**冻结 title 改发自己的
+    `title` 键**——`name` 不再捎带它，§37.2 的搜索词表不许因此掉一维；
   * `agent_name_stale`：roster 上那条会话的名字与「此刻该叫什么」不一致时
-    才发键（CLI 改不了运行中会话的名字，只能等下一次 resume）。
+    才发键（CLI 改不了运行中会话的名字，只能等下一次 resume），且**只发给
+    还能再 resume 的行**——已验收行不发，那上面「下次 resume 才跟上」是一句
+    永不兑现的承诺。
 """
 import subprocess
 import unittest
@@ -106,6 +109,63 @@ class DashboardSessionNameTestCase(unittest.TestCase):
         req = _req(display_title="改过名的卡")
         self.assertFalse(dashboard._agent_name_stale(req, {}))
         self.assertFalse(dashboard._agent_name_stale(req, {"name": ""}))
+
+
+class SessionRowFrozenTitleTestCase(unittest.TestCase):
+    """四个会话行仍把冻结 `title` 发上 wire（§2 追记 + §37.2 搜索词表）。
+
+    `name` 从冻结 title 改成活标题之后，「用户最初那句原话」在 运行中 / 待验收 /
+    已完成 三条 lane 上就没有别的载体了（`former_titles` 只记**上一个
+    display_title**，首次改名时它是空的），搜不到 = 用户按自己记得的话搜不到
+    自己的卡。所以这三条 lane 的四个行构造各自发一个 `title` 键。
+    """
+
+    FROZEN = "帮我把 401k rollover 的手续走完"
+
+    def _req(self) -> Requirement:
+        return Requirement(id="R-510", title=self.FROZEN, display_title="整理转存材料",
+                           execution={"session_id": "sid-9"})
+
+    def _sx(self, roster_name: str = "") -> dashboard._Session:
+        req = self._req()
+        a = {"name": roster_name} if roster_name else {}
+        return dashboard._Session(
+            name=dashboard._session_name(req, a), cwd="/tmp/wt", state="working",
+            resume_sid="sid-9", short_id="sid-9", copy_cmd=None,
+            agent_name=a.get("name"),
+            agent_name_stale=dashboard._agent_name_stale(req, a), agent=a)
+
+    def _rows(self) -> dict:
+        req, sx, ex = self._req(), self._sx(), {}
+        return {
+            "running": dashboard._running_row(req, ex, sx),
+            "from_review": dashboard._from_review_row(req, ex, sx),
+            "review": dashboard._review_row(req, ex, sx, config.Config()),
+            "delivered": dashboard._delivered_row(req, ex, sx),
+        }
+
+    def test_every_session_row_carries_the_frozen_title(self):
+        for lane, row in self._rows().items():
+            with self.subTest(lane=lane):
+                self.assertEqual(row["title"], self.FROZEN)
+                self.assertEqual(row["name"], "整理转存材料")
+
+    def test_the_original_words_are_searchable_on_the_row(self):
+        """§37.2 词表是逐字段搜的——原话必须在这一行的某个键里。"""
+        for lane, row in self._rows().items():
+            with self.subTest(lane=lane):
+                self.assertTrue(any("401k rollover" in str(v) for v in row.values()))
+
+    def test_stale_flag_skips_the_delivered_row(self):
+        """已验收卡不会再 resume——那一行不发这个键（宪法第 3 条：不许空口承诺）。"""
+        req, ex, sx = self._req(), {}, self._sx(roster_name="R-510 · 老名字")
+        self.assertTrue(sx.agent_name_stale)
+        self.assertNotIn("agent_name_stale", dashboard._delivered_row(req, ex, sx))
+        for lane, row in (("running", dashboard._running_row(req, ex, sx)),
+                          ("from_review", dashboard._from_review_row(req, ex, sx)),
+                          ("review", dashboard._review_row(req, ex, sx, config.Config()))):
+            with self.subTest(lane=lane):
+                self.assertTrue(row["agent_name_stale"])
 
 
 if __name__ == "__main__":

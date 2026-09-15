@@ -45,6 +45,15 @@ describe("§37.1 追记 — claude agents 列表名的过时提示", () => {
     expect(screen.queryByText(EN)).toBeNull();
   });
 
+  it("已验收卡上根本收不到这个键（server 不发）——那行承诺永不兑现，所以不该出现", () => {
+    // server 侧的判例在 tests/test_session_name_follows_card_title.py（`_delivered_row`
+    // 不带 `agent_name_stale`）；这里钉客户端那一半：键缺席 = 一个字都不说
+    const completed: CardDetail = { ...running, lane: "completed", state: "delivered" };
+    show(completed);
+    expect(screen.queryByText(EN)).toBeNull();
+    expect(screen.queryByText(ZH)).toBeNull();
+  });
+
   it("这个键不落「其他字段」兜底区", () => {
     show({ ...running, agent_name_stale: true });
     expect(screen.queryByText("agent_name_stale")).toBeNull();

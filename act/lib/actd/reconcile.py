@@ -44,6 +44,13 @@ RESUME_HISTORY_CAP = 10             # resume_history 保留最近 N 条，防无
 HARVEST_PROBE_AT: dict = {}
 HARVEST_PROBE_INTERVAL_S = 120.0
 
+# §37.1 追记的中途改名探针（活着的会话）用**自己**的节流台账，同一个 120 s
+# 间隔。不与 HARVEST_PROBE_AT 共用是有原因的：共用会让一条刚从 working/idle
+# 掉进 blocked 的会话的 FINAL DRAFT 提升被上一次改名读推迟最多 120 s，而推迟
+# 期间 `_another_move_left` 可能先把卡按「会话受阻」收进待验收——比晚 120 s
+# 更糟。代价是活会话每 120 s 多读一次本地 transcript 尾（无 LLM 调用）。
+TITLE_PROBE_AT: dict = {}
+
 
 def _now_utc() -> _dt.datetime:
     return _dt.datetime.now(_dt.timezone.utc)
@@ -155,17 +162,23 @@ def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
 # --------------------------------------------------------------------------- #
 # FINAL DRAFT probe（§11 chat 交付的强完成信号）
 # --------------------------------------------------------------------------- #
-def _probe_throttled(sid) -> bool:
-    """One transcript probe per session per HARVEST_PROBE_INTERVAL_S; stamps the probe."""
+def _probe_throttled(sid, at: Optional[dict] = None) -> bool:
+    """One transcript probe per session per HARVEST_PROBE_INTERVAL_S; stamps the probe.
+
+    ``at`` = 用哪一本节流台账（缺省 HARVEST_PROBE_AT = 交付提升那条路；
+    TITLE_PROBE_AT = §37.1 追记里活会话的改名探针，两本分开的理由写在
+    TITLE_PROBE_AT 上面）。
+    """
+    ledger = HARVEST_PROBE_AT if at is None else at
     now = time.monotonic()
     # None sentinel, NOT 0.0: monotonic() counts from boot, so on a freshly
     # started machine `now - 0.0 < interval` is TRUE for the first minutes —
     # a 0.0 default swallowed the very first probe (surfaced on CI runners,
     # whose uptime is seconds; a just-rebooted Mac would hit it too).
-    last = HARVEST_PROBE_AT.get(str(sid))
+    last = ledger.get(str(sid))
     if last is not None and now - last < HARVEST_PROBE_INTERVAL_S:
         return True
-    HARVEST_PROBE_AT[str(sid)] = now
+    ledger[str(sid)] = now
     return False
 
 
@@ -469,6 +482,23 @@ def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_n
         req.execution = ex
         registry.save(req)
     resume_notified.discard(req.id)
+    _probe_title_alive(d, req, sid)
+
+
+def _probe_title_alive(d: Daemon, req: Requirement, sid) -> None:
+    """§37.1 追记：**活着的**会话（working / idle）中途改名的唯一触点。
+
+    issue #331 点名的场景是「用户 attach 进去聊很久的交互式长会话」——那种会话
+    的 roster class 恒为 ``live``，走的就是 ``_note_alive`` 这一条，既不受阻也不
+    交付，所以挂在 ``promote_if_delivered`` 上的那个探针永远探不到它。这里按
+    TITLE_PROBE_AT 的 120 s 节流读一次 transcript 尾，只做改名、不动状态机、
+    不提升（提升仍然只在 blocked / done / dead 那三条既有路上判 FINAL DRAFT）。
+    """
+    if d.executor is None:
+        return
+    if _probe_throttled(sid, TITLE_PROBE_AT):
+        return
+    _apply_probe_title(d, req, _probe_harvest(d, sid))
 
 
 def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,

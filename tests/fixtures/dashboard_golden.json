@@ -226,6 +226,7 @@
     {
       "id": "R-220",
       "name": "执行中·有 pid",
+      "title": "执行中·有 pid",
       "display_title": "执行中·有 pid",
       "display_id": "R-220",
       "id_kind": "work",
@@ -254,6 +255,7 @@
     {
       "id": "R-221",
       "name": "执行中·无 agent",
+      "title": "执行中·无 agent",
       "display_title": "执行中·无 agent",
       "display_id": "R-221",
       "id_kind": "work",
@@ -276,6 +278,7 @@
     {
       "id": "R-222",
       "name": "执行中·无 session",
+      "title": "执行中·无 session",
       "display_title": "执行中·无 session",
       "display_id": "R-222",
       "id_kind": "work",
@@ -298,6 +301,7 @@
     {
       "id": "R-231",
       "name": "待验收·又在干",
+      "title": "待验收·又在干",
       "display_title": "待验收·又在干",
       "display_id": "R-231",
       "id_kind": "work",
@@ -364,6 +368,7 @@
     {
       "id": "R-223",
       "name": "执行中·agent done",
+      "title": "执行中·agent done",
       "summary": null,
       "display_title": "执行中·agent done",
       "display_id": "R-223",
@@ -388,6 +393,7 @@
     {
       "id": "R-230",
       "name": "待验收·闲",
+      "title": "待验收·闲",
       "summary": "概述",
       "display_title": "待验收·闲",
       "display_id": "R-230",
@@ -430,6 +436,7 @@
     {
       "id": "R-232",
       "name": "已验收·新",
+      "title": "已验收·新",
       "display_title": "已验收·新",
       "display_id": "R-232",
       "id_kind": "work",
@@ -447,6 +454,7 @@
     {
       "id": "R-233",
       "name": "已验收·旧",
+      "title": "已验收·旧",
       "display_title": "已验收·旧",
       "display_id": "R-233",
       "id_kind": "work",
