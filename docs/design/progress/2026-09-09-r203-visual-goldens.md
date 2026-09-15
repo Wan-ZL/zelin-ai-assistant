@@ -1,0 +1,20 @@
+pr: `ai/self-improve/R-203`（PR #304；self-improve 车道，卡 R-203「修红 CI：PR #291」；起因 = daily_loop 2026-09-09 看见开放 PR 上有红）
+phase: 横切（CI 卫生；§66.4 视觉基线）
+law: §66.4（容差 / 遮罩的字面量改指针——正文一处 + `web/e2e/visual.spec.ts` 头部注释一处；重拍流程本身零修订，本轮是照它走的第一次「非 UI PR 补拍」）
+
+**红在哪**：PR #291（`ai/self-improve/R-290`，screenpipe 磁盘用量 + 保留天数）的检查里只有一条红——informational 的「Web visual (playwright)」，四张 golden 不匹配（看板 / 设置 × light / dark，回收站两张绿）。查 main 自己的 CI 发现同样四张在 main 上也红（run 34201803207、34118772176 …，自 2026-09-05 那次重拍之后一路红），所以这不是 #291 弄坏的，是 main 的 golden 欠了债、#291 只是被它绊住。
+
+**债从哪来**：上一次 golden 出自 `834d0e55`（2026-09-05，main @ f297b9b）。此后落地的 UI 决策没有一个带上重拍——比对 diff 三件套（artifact `web-visual` 的 expected / actual / diff）逐项对上：看板面上多出的「怎样算办完 / 验收清单——逐条对照」是 D43（`beae42f1`），卡面少掉的「在终端接管」是 D36（`ad47d87c`），输入框右侧新出的回形针是 D41（`31bd352a`）；设置页多出的分区与行是 D44 / D45 / D47 / D51 / D53（分区开合、⌘F 会话搜索、语气档案生成、Obsidian 登记库、headless fallback model）。即：**四张 golden 的漂移背后是四五个已批的决策**，不是回归——CONTRIBUTING「Visual baselines」要求「先看 diff 再更新」，这一步是看完 diff 才动的。
+
+**怎么修**：按 §66.4 2026-09-05 追记的唯一合法路径——golden 只出自 `.github/workflows/visual-goldens.yml`，绝不出自任何一台 Mac（笔记本的文字光栅化与 `macos-latest` 不同，每个 CJK 字形都会「回归」）。本轮 `workflow_dispatch` 跑了两次：`ref=main`（run 34340759446）为 main 重拍出一套，`ref=ai/self-improve/R-290`（run 34340900799）拍出 #291 分支上那套（它的设置页多一块「磁盘与保留」，golden 得从它自己的树里出）。两次的 capture 之后都紧跟同一 runner 的 verify——runner 必须复现自己的输出，verify 绿才允许提交。
+
+**分工最后落成了什么样（2026-09-14 rebase 时改写）**：本 PR 开着的四天里三条兄弟分支各拍了一次 runner golden，撞车规则因此换了两轮，最终事实是——① #291（`ai/self-improve/R-290`）的那套（run 34340900799）当时就推到了它自己分支，它的「Web visual (playwright)」随之转绿；② #324（`ai/self-improve/R-208`）由 #330 把本 PR 这套 PNG 逐字节拷了过去（commit `a1354fd3`，run 34836954668 绿），所以 #324 与本 PR 零二进制冲突；③ **main 的那套最后是 #320 带进来的**（dependabot `@playwright/test` 1.62.1 → 1.63.0，非 draft、11/11 绿，merge `9a3cb0a5`、PNG commit `2d2024e5`，字节出自 #328 在 run 34786075970 的 capture），本 PR rebase 到 main 后按「取 main 一侧」解掉 `board-dark` / `board-light` / `settings-light` / `trash-light` 四张（`settings-dark` / `trash-dark` 两边逐字节相同，不冲突；**本轮那套 run 34340759446 的 capture 因此一张都没进 main**），**于是它自身不再带任何 PNG**，只剩 §66.4 的字面量改指针这一半；④ #328（R-211）是本 PR 的像素孪生，按它自己 PR 里的建议关掉。
+
+**三套 capture 差多少——为什么「取哪一侧」都安全**：#328 在同一条 runner 上按三个日期各实拍一次（2026-09-09 镜像 `20260831.0337.3`、09-12、09-14 镜像 `20260907.0351.1`），三次互比最大差 **0.005%**——「镜像漂移自己把 golden 弄红」的假设站不住。本 PR 这套与 main 现在这套（#328 的字节）用 playwright 自己的 comparator（`playwright-core` 的 `getComparator("image/png")`，`threshold` 0.1，就是判 CI 的那段代码）逐张比，最大 **0.0516%**；#330 另按 #324 的实拍量过同一批，board 两张 0.025% / 0.018%、settings 两张 0 px。差的像素全落在 `scripts/demo_seed.py` 的「截止 2026-09-XX」chip 上（deadline = now + N，日期末位随拍摄日走、`days_left` 不变，spec 没遮它）——有界的日历漂移。三个数都比 `maxDiffPixelRatio` 的 0.2% 低一个数量级以上，所以四张冲突取哪一侧都不会把 job 重新弄红。
+
+**顺手一针（本 PR 现在唯一的交付）**：§66.4 第一条把容差写成了字面量「`maxDiffPixelRatio` 2%」，而 `web/playwright.config.ts` 的真值是 `0.002`（0.2%，`c7ef8524` 收紧过一次），遮罩也少列了 `.settings-global-path` 一处；同一个差十倍的字面量还活在 `web/e2e/visual.spec.ts` 头部注释第 2 行（「2% 像素差以内算同一张」）——而改成指针之后 §66.4 正是让读者去读那个文件，落地那儿再学一遍 2% 等于白改。两处一起按防腐十条第 5 条改成指针（容差 truth = `web/playwright.config.ts`，遮罩 truth = spec 的 `mask`），免得下一个 session 按 2% 估「这点差异应该能过」。
+
+**没做什么**：不动 spec 的断言 / 截图名 / 遮罩表（只改了头部注释那一行字面量，零像素影响，不需要重拍）、不动阈值、不动 `visual-goldens.yml`（protected path），不在本地 `visual:update`（产出的 png 按 §66.4 不许提交），不把这个 job 升成必需检查（那是另一条决策，出生 informational 的理由还在），不动 main 现有的六张 PNG，也不修下一段那条与本 PR 无关的 flake。
+
+
+**「Web visual (playwright)」中途红过一格，但不是 golden——给下一个 session 省一轮**：六张截图比对现在全过（main 那套 PNG 是 09-14 拍的，#320 带进来的），红的是同一条 job 里另一个 spec 的 flake——`e2e/headerLayout.spec.ts:142`「tight：搜索框展开着，点「筛选」/「提建议」一下就开」的 `expect(getByRole("dialog")).toHaveCount(0)` 拿到 1。**它在 main 上一模一样地红**（main @ `f04cc3d6`，run 34916809318 的 job 104218234159，同一行同一条断言），本 PR 的跑（run 34919987768）只是复现了它；#328 也记过一次（当时判为 flake）。**下一次跑（run 34925111893，head `852ff6c9`）同一条断言就没再红，全 11 格绿——flake 判定坐实，不是本 PR 的债。**所以这一格与本 PR 无关、也不是 §66.4 的债，本 PR 不在一个文档 PR 里顺手改别的 spec 的时序（防腐十条第 7 条：一个 behavior 一个文件）——它是 main 上一条独立的 flake / 时序缺陷，该由它自己的卡修。daily_loop 若为此再铸 `pr_red`，结论先看这一段：required 七项全绿，红的是 informational job 里的这条 flake。
