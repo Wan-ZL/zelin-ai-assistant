@@ -74,6 +74,7 @@ import type {
   MaterialsList,
   McpList,
   ModelsSettings,
+  RecapMarkKind,
   RecapRow,
   RecapSettings,
   SkillsSnapshot,
@@ -124,7 +125,7 @@ export interface AppState {
   expandedSettingsSections: ReadonlySet<string>; // 设置页展开着的区（D44；镜像原生 settings.expandedSections；localStorage 持久化，settingsFolds.ts）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
-  recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
+  recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」/「忽略」的乐观本地回执（等下一次 board 回流覆盖）
   recapPending: Record<string, RecapPending>; // 「重新生成 / 现在生成」按下后到 actd 回执（generate_request）落地前的乐观「排队中」（§63.8）
   displaySettings: DisplaySettings | null; // GET /api/settings/display（§54.1 第 12 项：字号 / 字重 / 描边；到达即落 <html> data-*）
   skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§67 设置页「Skills」）
@@ -166,10 +167,11 @@ export interface AppState {
   archiveStripExpanded: boolean;
 }
 
-/** §63 本地标记（server marks.json 的镜像片段） */
+/** §63 本地标记（server marks.json 的镜像片段；dismissed_at = §63.5 追记 issue #301） */
 export interface RecapMark {
   copied_at?: string | null;
   sent_at?: string | null;
+  dismissed_at?: string | null;
 }
 
 /** §63.8 乐观「排队中」：按下时看到的版本号与回执 requested_at（新版本或新回执落地即结束）+ 按下时刻（10 分钟兜底） */
@@ -729,10 +731,14 @@ export async function saveRecapSettings(
   return recapSettings;
 }
 
-/** 「复制」/「标记已发送」：POST 本地标记并乐观记住回执（board 回流时以 server 投影为准） */
-export async function markRecap(key: string, mark: "copied" | "sent", on = true): Promise<void> {
+/**
+ * 「复制」/「标记已发送」/「忽略」：POST 本地标记并乐观记住回执（board 回流时以 server 投影为准）。
+ * §63.5 追记（issue #301）：sent_at → 已归档、dismissed_at → 已忽略，两者都靠 `on: false` 恢复。
+ */
+export async function markRecap(key: string, mark: RecapMarkKind, on = true): Promise<void> {
   const receipt = await postRecapMark(key, mark, on);
-  setState({ recapMarks: { ...state.recapMarks, [key]: { copied_at: receipt.copied_at, sent_at: receipt.sent_at } } });
+  setState({ recapMarks: { ...state.recapMarks, [key]: {
+    copied_at: receipt.copied_at, sent_at: receipt.sent_at, dismissed_at: receipt.dismissed_at ?? null } } });
 }
 
 /** 「重新生成 / 现在生成」inbox 写成功后：记下按下时看到的版本与回执，行随即显示「生成中」（§63.8；board 回流带新版本 / 新回执即结束） */

@@ -5,7 +5,8 @@
 //   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
 //      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
 //   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}；
-//   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）。
+//   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）；
+//   6) 三栏 活跃 / 已归档 / 已忽略：标记已发送即归档、忽略 / 恢复一颗按钮，默认只看活跃（§63.5 追记，issue #301）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchRecapSettings, postAction, postRecapMark } from "../api";
@@ -69,6 +70,7 @@ beforeEach(() => {
   vi.mocked(postRecapMark).mockReset().mockImplementation(async (key, mark, on = true) => ({
     ok: true, key, copied_at: mark === "copied" && on ? "2026-09-01T00:00:00Z" : null,
     sent_at: mark === "sent" && on ? "2026-09-01T00:00:01Z" : null,
+    dismissed_at: mark === "dismissed" && on ? "2026-09-01T00:00:02Z" : null,
   }));
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
 });
@@ -107,7 +109,43 @@ describe("RecapsPage", () => {
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mark as sent" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "sent", true));
-    await waitFor(() => expect(screen.getByText("Sent")).toBeTruthy());
+    // §63.5 追记（issue #301）：标记已发送 = 归档——行离开活跃栏，在「已归档」里带 Sent badge
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active 0" })).toBeTruthy());
+    expect(screen.getByText(/back in the active list|filed under Archived/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 1" }));
+    expect(screen.getByRole("button", { name: /Zoom · 20 min/ })).toBeTruthy();
+    expect(screen.getByText("Sent")).toBeTruthy();
+  });
+
+  it("dismiss files a recap under Dismissed and Restore brings it back", async () => {
+    // issue #301：不想要的那场会不必被迫标成「已发送」才能离开列表，而且这一步可逆
+    await renderPage([recap()]);
+    expect(screen.getByRole("tab", { name: "Active 1" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "dismissed", true));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Dismissed 1" })).toBeTruthy());
+    expect(screen.getByRole("tab", { name: "Active 0" })).toBeTruthy();
+    // 刚忽略的那一行留在右侧：脚注说清它会更早被删，撤销就在同一颗按钮上
+    expect(screen.getByText(/deleted earlier than the others/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 1" }));
+    expect(screen.getByText("Dismissed")).toBeTruthy();                      // 行 badge
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "dismissed", false));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active 1" })).toBeTruthy());
+  });
+
+  it("an open meeting cannot be dismissed", async () => {
+    // 会还开着：无从判断这场会要不要纪要，也不该让一个标记删掉之后才落地的正文
+    await renderPage([recap({ status: "open", en: null, zh: null, quality: null })]);
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
+  it("an empty lane says why it is empty instead of showing nothing", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 0" }));
+    expect(screen.getByText(/Nothing dismissed yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 0" }));
+    expect(screen.getByText(/Nothing archived yet/)).toBeTruthy();
   });
 
   it("regenerate posts recap_generate with an optional note and nothing else", async () => {

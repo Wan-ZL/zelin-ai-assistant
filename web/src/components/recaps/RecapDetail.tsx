@@ -8,6 +8,9 @@
 // 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
 // §63.3 追记（issue #298）：needs_review 不再只有一句「校验未通过」——脚注按 wire 的结构化 problems[]
 // 逐条说清语言 + 行号 + 超出量（纠正备注可以照着写），落地前被自动修剪的行按 repairs[] 一并摊开。
+// §63.5 追记（issue #301）：CLOSED 行多一颗「忽略 / 恢复」（POST /api/recaps/mark dismissed，与
+// 「标记已发送」同一个 toggle 机制）——不需要记录的会议不必被迫标成「已发送」才能离开活跃列表；
+// 忽略过的行脚注说明它会先被删掉、按「恢复」即撤销。OPEN 行不给这颗按钮（会还没开完，无从判断）。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
@@ -145,8 +148,15 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     await markRecap(row.key, "copied", true);
   });
   const toggleSent = () => run(
-    row.sent_at ? text("已取消「已发送」", "Sent mark cleared") : text("已标记为已发送", "Marked as sent"),
+    row.sent_at ? text("已取消「已发送」，回到活跃列表", "Sent mark cleared; back in the active list")
+                : text("已标记为已发送，归档到「已归档」", "Marked as sent and filed under Archived"),
     () => markRecap(row.key, "sent", !row.sent_at),
+  );
+  // §63.5 追记：忽略 = 放进「已忽略」并按自己的短保留期先删（恢复撤销它）；不是 registry 回收站（recap 不是卡）
+  const toggleDismissed = () => run(
+    row.dismissed_at ? text("已恢复到活跃列表", "Restored to the active list")
+                     : text("已忽略，放进「已忽略」", "Dismissed and filed under Dismissed"),
+    () => markRecap(row.key, "dismissed", !row.dismissed_at),
   );
   // §63.5 预检：备注命中五行契约做不到的诉求 → 逐条摊开，按钮改口，toast 不再假装全做到了
   const conflicts = noteConflicts(note);
@@ -213,6 +223,11 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
         {hasText && !isOpen && (
           <button type="button" className="btn" disabled={busy} onClick={() => void toggleSent()}>
             {row.sent_at ? text("取消已发送", "Unmark sent") : text("标记已发送", "Mark as sent")}
+          </button>
+        )}
+        {!isOpen && (
+          <button type="button" className="btn" disabled={busy} onClick={() => void toggleDismissed()}>
+            {row.dismissed_at ? text("恢复", "Restore") : text("忽略", "Dismiss")}
           </button>
         )}
         {isOpen ? (
@@ -297,6 +312,12 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
                 <a href={row.slack_draft.channel_link} target="_blank" rel="noreferrer">{text("打开会话", "Open conversation")}</a>
               </>
             )}
+          </span>
+        )}
+        {row.dismissed_at && (
+          <span className="recap-meta-item">
+            {text("已忽略：会比其他纪要更早被自动删除；按「恢复」撤销。",
+                  "Dismissed: it is deleted earlier than the others. Press Restore to undo.")}
           </span>
         )}
         {row.quality === "needs_review" && (

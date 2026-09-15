@@ -1,12 +1,12 @@
 // 会议纪要页纯逻辑（§63）：行标签、按日分组、badge 词表、语言选择、复制正文只含 5 行 +
 // §63.5 追记的一行表头（issue #299）；§63.8 生成态判定（server 回执 generate_request × 本地乐观 pending）与它的 badge；
-// §63.3 追记 校验原因与自动修剪的双语文案（issue #298）。
+// §63.3 追记 校验原因与自动修剪的双语文案（issue #298）；§63.5 追记 三栏判定与已忽略 badge（issue #301）。
 import { describe, expect, it } from "vitest";
 import type { RecapRow } from "../../types";
 import {
-  PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, appLabel, badgesFor, generationPhase, groupByDay, isGenerating, pickLanguage,
-  problemLabel, recapBody, recapClipboardText, recapHeader, recapProblems, recapRepairs, repairLabel, rowLabel,
-  slackDraftLabel,
+  PENDING_TIMEOUT_MS, PICKUP_TIMEOUT_MS, RECAP_LANES, appLabel, badgesFor, generationPhase, groupByDay, isGenerating,
+  laneCounts, pickLanguage, problemLabel, recapBody, recapClipboardText, recapHeader, recapLane, recapProblems,
+  recapRepairs, repairLabel, rowLabel, slackDraftLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -49,6 +49,8 @@ describe("recapText", () => {
     expect(ids(row())).toEqual(["new"]);
     expect(ids(row({ copied_at: "2026-09-01T00:00:00Z" }))).toEqual(["copied"]);
     expect(ids(row({ copied_at: "x", sent_at: "y" }))).toEqual(["sent"]);
+    // §63.5 追记（issue #301）：已忽略盖过已发送 / 已复制 / 新——它是「这场会不需要纪要」的判决
+    expect(ids(row({ copied_at: "x", sent_at: "y", dismissed_at: "z" }))).toEqual(["dismissed"]);
     expect(ids(row({ version: 2 }))).toEqual(["new", "updated"]);
     expect(ids(row({ status: "open", en: null, zh: null, quality: null }))).toEqual(["open"]);
     expect(ids(row({ status: "open", partial: true }))).toEqual(["open", "partial"]);
@@ -190,5 +192,23 @@ describe("recapText", () => {
     expect(slackDraftLabel("no_target", text)).toBe("No draft: no target conversation");
     expect(slackDraftLabel("weird", text)).toBe("weird");
     expect(slackDraftLabel(undefined, text)).toBe("");
+  });
+
+  // ----- §63.5 追记（issue #301）：一条纪要落在哪一栏 ------------------------------------------ //
+
+  it("files a recap by its two marks: dismissed beats archived, archived is derived from sent", () => {
+    expect(recapLane(row())).toBe("active");
+    expect(recapLane(row({ status: "open", en: null, zh: null }))).toBe("active");
+    expect(recapLane(row({ copied_at: "2026-09-01T00:00:00Z" }))).toBe("active");   // 复制过不算归档
+    expect(recapLane(row({ sent_at: "2026-09-01T00:00:00Z" }))).toBe("archived");
+    expect(recapLane(row({ sent_at: null }))).toBe("active");                       // 取消标记即恢复
+    expect(recapLane(row({ sent_at: "a", dismissed_at: "b" }))).toBe("dismissed");
+    expect(RECAP_LANES.map((lane) => lane.id)).toEqual(["active", "archived", "dismissed"]);
+  });
+
+  it("counts every lane, including the empty ones", () => {
+    const counts = laneCounts([row(), row({ sent_at: "a" }), row({ dismissed_at: "b" }), row({ sent_at: "c" })]);
+    expect(counts).toEqual({ active: 1, archived: 2, dismissed: 1 });
+    expect(laneCounts([])).toEqual({ active: 0, archived: 0, dismissed: 0 });
   });
 });
