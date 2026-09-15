@@ -182,7 +182,7 @@ v0.48.20 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(�
 
 **原因**:浏览器关 tab / 刷新时 keep-alive 连接被 reset,异常抛在 `handle_one_request` 读请求行时——在 Handler 之前,socketserver 的默认 `handle_error` 直接打整段 traceback。旧版的访问日志行也没有时间戳。
 
-**修复**:升级到带 CONTRACT §54.2 2026-09-14 追记的版本(`bash install.sh --non-interactive` 之后 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`)。之后连接类异常静默、其余异常仍打完整 traceback;行首带本地 ISO 时间戳;`/api/board` 与 `/api/health` 的 2xx/304 每 5 分钟最多一行,被采样掉的条数写在下一行末尾(`… 200 4096 (+57 suppressed in the last 300s)`)。
+**修复**:升级到带 CONTRACT §54.2 2026-09-14 追记的版本(`bash install.sh --non-interactive` 之后 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`)。之后连接类异常静默、其余异常仍打完整 traceback;行首带本地 ISO 时间戳;`/api/board` 与 `/api/health` 的访问行按 (path, 状态码) 分桶,同一路径同一状态码每 5 分钟最多一行,被采样掉的条数写在下一行末尾(`… 200 4096 (+57 suppressed in the last 300s)`)——状态码一变立刻写一行(200 → 404 不会被延迟),所以「看板一直 404」这种持续故障照样看得见,只是不再一秒一行地灌。
 
 **排障时要逐条看轮询**:给 server agent 加 env `ZAI_LOG_POLLS=1`(`launchctl setenv` 对已加载的 job 无效——改 `~/Library/LaunchAgents/com.zelin.aiassistant.server.plist` 的 `EnvironmentVariables` 加一行,然后 `launchctl bootout` + `bootstrap`,或直接前台跑 `ZAI_LOG_POLLS=1 python3 -m server`),采样即关闭、每条请求都写。查完记得改回去(plist 的真源是 `act/launchd/` 模板,重跑 `install.sh` 会覆盖你手改的那份)。
 

@@ -4603,12 +4603,19 @@ reset，异常抛在 `handle_one_request` 读请求行时（在 Handler 之前�
 - **访问日志行首带本地 ISO 时间戳**（`2026-09-14T14:34:05-0400`，`Handler.
   log_message` 经 `_access_line`，它是这条行的唯一写者）——`BaseHTTPRequestHandler`
   自带的 `log_date_time_string` 不带年也不带时区，跨时区读不了。
-- **轮询端点采样**：`Handler.log_request` 对 `_POLL_PATHS`（`/api/board`、
-  `/api/health`，query 不算数）的 **2xx/304** 过一个进程级采样器
-  （`_PollSampler`，`threading.Lock` + `{path: (last_ts, suppressed)}`，窗口
-  300 s）；同一 path 在窗口内的后续请求不写行，被吃掉的条数随窗口后第一条真写
-  出去的行报出来（`… 200 4096 (+57 suppressed in the last 300s)`）——**日志不做
-  静默丢弃**。非轮询路径与任何非 2xx/304 一律逐条写；env `ZAI_LOG_POLLS=1`（真值
+- **轮询端点采样，分桶键 = `(path, 状态码)`**：`Handler.log_request` 对
+  `_POLL_PATHS`（`/api/board`、`/api/health`，query 不算数）的每条访问行过一个
+  进程级采样器（`_PollSampler`，`threading.Lock` +
+  `{(path, code): (last_ts, suppressed)}`，窗口 300 s）；**只有同 path 同码的重复
+  才被掐掉**，被吃掉的条数随窗口后第一条真写出去的行报出来
+  （`… 200 4096 (+57 suppressed in the last 300s)`）——**日志不做静默丢弃**。
+  **状态码一变立刻写**（新桶没有 `last_ts`；状态变化是信号，不是噪音）。非 2xx
+  同样进闸：「同一条轮询路径反复返回同一个错误」和「反复返回 200」是同一种洪水
+  ——owner 那份 11518 行的 `server.launchd.log` 里有 **1549 行一模一样的
+  `GET /api/board 404`**（13.4% 的行、全部 `/api/board` 行的 27%，连续横跨 5578–
+  10731 行 = 持续期而非一次性 burst），只掐 2xx 等于放过它；采样后这个错误每窗口
+  仍有一行且带被吃掉的条数，看得见、还多了「持续了多久」。状态码形状不明的行
+  （`"-"` / None）不进闸，逐条写；非轮询路径逐条写；env `ZAI_LOG_POLLS=1`（真值
   `1|true|yes|on`）关掉采样，即本节要求的「debug 档」。
 - **日志仍不删**：server 永不写第二份日志、永不删 / 轮转任何日志（§55 审计 L3、
   §68.4 `GET /api/logs/{name}` 同款纪律）——本追记只减产生噪音的量，既有的 1.9 MB

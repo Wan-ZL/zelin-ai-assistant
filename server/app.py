@@ -5,8 +5,9 @@
 - 日志噪音闸（§54.2 追记，issue #314）：`_Server.handle_error` 只吞三个连接类
   异常（客户端关 tab / 刷新时的 reset，抛在 Handler 之前）、其余照打全栈；
   `log_message` 行首带本地 ISO 时间戳；`log_request` 把 `/api/board` 与
-  `/api/health` 的 2xx/304 按 5 分钟窗口采样（被吃掉的条数随下一行报出来，
-  `ZAI_LOG_POLLS=1` 关采样）。日志只减噪、永不删（§55 审计 L3）。
+  `/api/health` 按 `(path, 状态码)` 分桶、5 分钟窗口采样（状态码一变立刻写，
+  被吃掉的条数随下一行报出来，`ZAI_LOG_POLLS=1` 关采样）。日志只减噪、永不
+  删（§55 审计 L3）。
 - error envelope 统一 ``{"error":{"code","message","details"}}``（errors.py）。
 - POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（reveal 在
   本层校验，actions 的字段闸门归 inbox_writer/G1）。
@@ -124,32 +125,37 @@ _PLACEHOLDER_HTML = (b"<!doctype html><meta charset='utf-8'>"
 # 读请求行时，在 Handler 之前，_dispatch 的 except 够不着它。
 _QUIET_CONN_ERRORS = (BrokenPipeError, ConnectionResetError,
                       ConnectionAbortedError)
-# 看板每 5s 轮询这两条；2xx/304 按窗口采样，其余路径与非 2xx 一律照写
+# 看板每 5s 轮询这两条；按 (path, 状态码) 分桶采样，其余路径一律照写
 _POLL_PATHS = ("/api/board", "/api/health")
 _POLL_WINDOW_SECONDS = 300.0
 _LOG_POLLS_ENV = "ZAI_LOG_POLLS"  # =1 → 关掉采样（逐条写，排障用的 debug 档）
 
 
 class _PollSampler:
-    """轮询端点的访问日志采样器：每个 path 每 ``window`` 秒最多一行。
+    """轮询端点的访问日志采样器：每个 ``(path, code)`` 每 ``window`` 秒最多一行。
 
-    被吃掉的条数记在 ``(last_ts, suppressed)`` 里，随下一条真写出去的行报出来
-    ——日志从此不说谎（没有静默丢弃）。线程安全：ThreadingHTTPServer 每连接
-    一个线程。"""
+    分桶键含状态码，所以**状态一变立刻写**（新桶 = 没有 last_ts；状态变化是信
+    号，不是噪音），只有同 path 同码的重复才被掐掉——「同一条轮询路径反复返回
+    同一个错误」和「反复返回 200」是同一种洪水（owner 那份日志里 1549 行一模
+    一样的 `/api/board 404`）。被吃掉的条数记在 ``(last_ts, suppressed)`` 里，
+    随下一条真写出去的行报出来——日志从此不说谎（没有静默丢弃）。桶数有界：
+    ``len(_POLL_PATHS) × 见过的状态码``，几十条上限，不会长。线程安全：
+    ThreadingHTTPServer 每连接一个线程。"""
 
     def __init__(self, window: float = _POLL_WINDOW_SECONDS) -> None:
         self.window = window
         self._lock = threading.Lock()
-        self._seen: "dict[str, tuple[float, int]]" = {}
+        self._seen: "dict[tuple[str, int], tuple[float, int]]" = {}
 
-    def decide(self, path: str, now: float) -> "tuple[bool, int]":
+    def decide(self, path: str, code: int, now: float) -> "tuple[bool, int]":
         """→ ``(emit, suppressed)``；``emit=False`` = 这条被采样掉。"""
+        key = (path, code)
         with self._lock:
-            last, suppressed = self._seen.get(path, (None, 0))
+            last, suppressed = self._seen.get(key, (None, 0))
             if last is not None and now - last < self.window:
-                self._seen[path] = (last, suppressed + 1)
+                self._seen[key] = (last, suppressed + 1)
                 return (False, 0)
-            self._seen[path] = (now, 0)
+            self._seen[key] = (now, 0)
             return (True, suppressed)
 
 
@@ -162,15 +168,21 @@ def _log_polls_verbatim(env: "dict[str, str] | None" = None) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _quiet_candidate(path: str, code) -> bool:
-    """这条访问日志该不该过采样器：轮询路径 + 2xx/304 才算噪音。"""
-    if path not in _POLL_PATHS:
-        return False
+def _status_int(code) -> Optional[int]:
+    """访问日志的状态码 → ``int``；形状不明（``"-"`` / None）→ None。"""
     try:
-        status = int(getattr(code, "value", code))
+        return int(getattr(code, "value", code))
     except (TypeError, ValueError):
-        return False
-    return 200 <= status < 300 or status == 304
+        return None
+
+
+def _quiet_candidate(path: str, code) -> bool:
+    """这条访问日志该不该过采样器：轮询路径 + 认得出的状态码就算。
+
+    非 2xx 也进闸——采样器按 ``(path, code)`` 分桶，状态一变立刻写，掐掉的只是
+    「同一条轮询路径反复返回同一个码」（含反复 404）。状态码形状不明的行不进
+    闸，逐条写。"""
+    return path in _POLL_PATHS and _status_int(code) is not None
 
 
 def _access_line(address: str, text: str, now: "float | None" = None) -> str:
@@ -505,14 +517,15 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write(_access_line(self.address_string(), fmt % args))
 
     def log_request(self, code="-", size="-") -> None:
-        """访问日志的采样闸（§54.2 追记）：轮询端点的 2xx/304 每 5 分钟一行。
+        """访问日志的采样闸（§54.2 追记）：轮询端点同 path 同码每 5 分钟一行。
 
-        非轮询路径、任何非 2xx/304、以及 ``ZAI_LOG_POLLS=1`` 一律逐条写——被
-        采样掉的条数由下一条真写出去的行报出来。"""
+        状态码一变立刻写（状态变化 = 信号）；非轮询路径、以及 ``ZAI_LOG_POLLS=1``
+        一律逐条写——被采样掉的条数由下一条真写出去的行报出来。"""
         suffix = ""
         path = (getattr(self, "path", "") or "").split("?", 1)[0]
         if not _log_polls_verbatim() and _quiet_candidate(path, code):
-            emit, suppressed = _POLL_SAMPLER.decide(path, time.time())
+            emit, suppressed = _POLL_SAMPLER.decide(
+                path, _status_int(code), time.time())
             if not emit:
                 return
             if suppressed:
