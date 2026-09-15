@@ -13,13 +13,14 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
-from act import actd, doctor, llm
+from act import actd, doctor, llm, recap
 from act.lib import config, heartbeat, registry
 from act.lib import recap_store
 from server import health as server_health
 from server import inbox_writer as server_inbox
 from server import paths
 from server import recaps as server_recaps
+from server.errors import InvalidFieldError
 from server import settings as server_settings
 
 HOME = Path("/tmp/zai-paths-pin")
@@ -139,6 +140,22 @@ class RecapMirrorTestCase(unittest.TestCase):
     def test_marks_path_mirror(self):
         with mock.patch.object(config, "STATE_DIR", HOME / "state"):
             self.assertEqual(server_recaps.marks_path(HOME), recap_store.marks_path())
+
+    def test_recap_file_path_mirror(self):
+        """§63.9：GET /api/recaps/history 读的那个文件名与 act 侧逐字同一个（key 的 ':' → '_'）。"""
+        key = "meeting:2026-08-31T1256-zoom"
+        with mock.patch.object(config, "STATE_DIR", HOME / "state"):
+            self.assertEqual(server_recaps.recap_file_path(HOME, key), recap_store.recap_path(key))
+
+    def test_recap_file_path_refuses_a_key_that_is_not_a_key(self):
+        # 客户端永不指名路径：KEY_RE 之外一律 400，路径根本不被拼出来
+        for key in (None, "", "R-101", "meeting:../../etc/passwd", "meeting:2026-08-31T1256-zoom/x"):
+            with self.subTest(key=key):
+                with self.assertRaises(InvalidFieldError):
+                    server_recaps.recap_file_path(HOME, key)
+
+    def test_history_cap_mirrors_the_daemon(self):
+        self.assertEqual(server_recaps.HISTORY_CAP, recap.HISTORY_CAP)
 
     def test_coerce_bool_agrees_on_a_table(self):
         table = (True, False, 0, 1, "true", "FALSE", " on ", "off", "yes", "no", 2, 1.0, "maybe", None, [])

@@ -65,6 +65,8 @@ _SPECIAL_FIELDS = {
     # ——recap_slack_draft 的 channel_id 是 owner 自己草稿箱的会话，不是发送目标
     "recap_generate": ({"meeting_key"}, {"note", "partial"}),
     "recap_slack_draft": ({"meeting_key", "channel_id"}, set()),
+    # §63.9「回退到这一版」（issue #300）：version = 存着的那一版的版本号（整数）
+    "recap_revert": ({"meeting_key", "version"}, set()),
     # §48.7 设置页「立即测试一轮」：source ∈ gmail|slack；actd 分离起 act.radar_<src> --once
     "radar_test_round": ({"source"}, set()),
     # §68.1 追记 语气档案「从我的消息生成/更新档案」（D47）：无字段；actd 分离起 act.voice_gen --job
@@ -127,6 +129,11 @@ def _dump_value(v, key_indent: int) -> str:
         return _dump_str(v)
     if isinstance(v, list):
         return _dump_list(v, key_indent)
+    # 整数（§63.9 `recap_revert.version` 起是第四种值类型）：NSJSONSerialization 与
+    # Python 对 Int 都印裸十进制，字节形一致。True/False 是 int 子类，但上面的
+    # `is` 判定已经把两个字面量截走了，到这里只可能是真整数。
+    if isinstance(v, int):
+        return str(v)
     raise TypeError(f"unsupported inbox value type: {type(v).__name__}")
 
 
@@ -331,6 +338,9 @@ def _build_import_sessions(payload: dict) -> dict:
 _RECAP_KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 _SLACK_CHANNEL_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
 _RECAP_NOTE_MAX = 500
+# §63.9 回退目标的版本号上限（存的 history 只有 5 条——这只是个理智闸，
+# 不让一个天文数字的整数被序列化进 inbox 文件；真正「这一版存不存在」由持锁的写者判）
+_RECAP_VERSION_MAX = 99_999
 
 
 def _require_recap_key(payload: dict) -> str:
@@ -365,6 +375,18 @@ def _build_recap_slack_draft(payload: dict) -> dict:
             "channel_id": channel}
 
 
+def _build_recap_revert(payload: dict) -> dict:
+    # §63.9「回退到这一版」：version 必须是 1.._RECAP_VERSION_MAX 的真整数
+    # （bool 是 int 子类——`true` 绝不能当成第 1 版；浮点同样拒，wire 上只有整数版本号）
+    version = payload.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) \
+            or not (1 <= version <= _RECAP_VERSION_MAX):
+        raise InvalidFieldError(f"version must be an integer 1..{_RECAP_VERSION_MAX}",
+                                {"field": "version"})
+    return {"action": "recap_revert", "meeting_key": _require_recap_key(payload),
+            "version": version}
+
+
 # §48.7 有「立即测试一轮」的源（镜像 act/lib/radar_rounds.SOURCES；obsidian 走 cron 链，原生也无此键）
 _RADAR_ROUND_SOURCES = frozenset({"gmail", "slack"})
 
@@ -387,6 +409,7 @@ _SPECIAL_BUILDERS = {
     "import_claude_sessions": _build_import_sessions,
     "recap_generate": _build_recap_generate,
     "recap_slack_draft": _build_recap_slack_draft,
+    "recap_revert": _build_recap_revert,
     "radar_test_round": _build_radar_test_round,
     "voice_generate": lambda payload: {"action": "voice_generate"},
 }

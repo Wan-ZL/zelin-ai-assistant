@@ -1,6 +1,6 @@
-"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63).
+"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9).
 
-Two small things, both stdlib (config.yaml is read through
+Three small things, all stdlib (config.yaml is read through
 server.settings.config_yaml_doc, which degrades to {} without PyYAML):
 
 1. **Recap settings** ``GET/PUT /api/settings/recap`` — the three knobs the
@@ -25,6 +25,15 @@ server.settings.config_yaml_doc, which degrades to {} without PyYAML):
    enters the registry and never triggers a send / dispatch / card
    transition; this endpoint is still the only writer of the file.
 
+3. **Stored versions** ``GET /api/recaps/history?key=…`` (§63.9, issue #300) —
+   the earlier text, which the board projection deliberately does not carry
+   (``recaps[]`` keeps only the §63.9 scalar handles ``history_versions``, so a
+   10-second board poll never hauls 60 × 5 × 2 recap bodies). **Read-only**:
+   the revert the panel offers goes inbox ``recap_revert`` → actd →
+   ``python -m act.recap --revert``, because ``act/recap.py`` is the only
+   writer of ``state/recap/recaps/`` (§63.6) and this process must never write
+   a recap file.
+
 server/ does not import act (§49): the key shape, the language vocabulary and
 the override key names are mirrored from act/lib/recap_store.py /
 act/lib/config.py and pinned by tests/test_server_paths_mirror.py.
@@ -35,6 +44,7 @@ import datetime as _dt
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 from server import settings
 from server.errors import InvalidFieldError, UnknownFieldError
@@ -51,6 +61,13 @@ OVERRIDE_KEYS = {"enabled": "recap_enabled",
 DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False}
 # §63.5 追记（issue #301）：dismissed = 「忽略」（add-only 词表，永不改写已有值）
 MARKS: tuple = ("copied", "sent", "dismissed")
+# §63.9（issue #300）GET /api/recaps/history 的读门与上限
+# mirrors act/recap.HISTORY_CAP —— 面板照它说「只留最近 5 版，更早的会老化掉」
+HISTORY_CAP = 5
+# 一份纪要文件（5 条 history × 两语言 × 5 行）是几 KB：超过这个就不是纪要了，不读、不解析
+MAX_FILE_BYTES = 2 * 1024 * 1024
+# 手改坏的文件可能有任意多条；投影不为它无界（防腐 #4 的精神：读面也有帽）
+ENTRIES_CAP = 20
 
 _BOOL_TRUE = ("true", "yes", "on", "1")
 _BOOL_FALSE = ("false", "no", "off", "0")
@@ -59,6 +76,19 @@ _BOOL_FALSE = ("false", "no", "off", "0")
 def marks_path(home: Path) -> Path:
     # mirrors act/lib/recap_store.marks_path (STATE_DIR / recap / marks.json)
     return home / "state" / "recap" / "marks.json"
+
+
+def recap_file_path(home: Path, key: str) -> Path:
+    """mirrors act/lib/recap_store.recap_path (``recaps/<key with ':' → '_'>.json``).
+
+    **Read-only here** (§63.6: ``act/recap.py`` is the only writer of that
+    directory). The client never names a path: ``key`` must have passed
+    :data:`KEY_RE` first, which leaves nothing but
+    ``meeting_<date>T<hhmm>-<slug>`` — no separator, no dot segment, no room
+    for a traversal."""
+    if not (isinstance(key, str) and KEY_RE.match(key)):
+        raise InvalidFieldError("key must be a recap key", {"field": "key"})
+    return home / "state" / "recap" / "recaps" / (key.replace(":", "_") + ".json")
 
 
 def _iso_now() -> str:
@@ -216,6 +246,90 @@ def _require_mark(payload: dict) -> "tuple[str, bool]":
     if not isinstance(on, bool):
         raise InvalidFieldError("on must be a boolean", {"field": "on"})
     return which, on
+
+
+# --------------------------------------------------------------------------- #
+# history: GET /api/recaps/history?key=… (§63.9)
+# --------------------------------------------------------------------------- #
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _lines(value) -> list:
+    """5 行纯文本 → 只留字符串项（手改坏的文件里什么都可能有；数字 title 真出现过）。"""
+    return [line for line in _list(value) if isinstance(line, str)]
+
+
+def _version_shape(entry: dict) -> dict:
+    """一版（当前记录或一条 history 条目）→ 固定形，键恒在。``version`` 解析不出 = 0
+    （那一项前端不给回退按钮），``quality`` 只放字符串（history 条目在 §63.9 之前
+    没有这个键 = null，面板照此说「这一版的校验结论没有存下来」）。"""
+    version = entry.get("version")
+    return {"version": int(version) if isinstance(version, int) and not isinstance(version, bool) else 0,
+            "generated_at": entry.get("generated_at") if isinstance(entry.get("generated_at"), str) else None,
+            "partial": bool(entry.get("partial")),
+            "quality": entry.get("quality") if isinstance(entry.get("quality"), str) else None,
+            "en": _lines(entry.get("en")), "zh": _lines(entry.get("zh"))}
+
+
+def _empty_history(key: str) -> dict:
+    """层缺席（文件不在 / 坏文件 / 超读门）的空投影——页面对三者一条路：没有上一版可看。"""
+    return {"key": key, "current": None, "entries": [], "history_cap": HISTORY_CAP,
+            "truncated": False}
+
+
+def _read_doc(path: Path) -> "tuple[Optional[dict], bool]":
+    """``(顶层 dict, truncated)``：缺席 / 坏 JSON / 顶层不是 dict → ``(None, False)``；
+    超过 :data:`MAX_FILE_BYTES` → ``(None, True)``（**不读、不解析**）。永不抛。"""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None, False                  # 还没出过稿 / 已过保留期：空层，不是错误
+    if size > MAX_FILE_BYTES:
+        return None, True
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, False
+    return (doc if isinstance(doc, dict) else None), False
+
+
+def _shaped_entries(doc: dict) -> list:
+    """``history[]`` → **newest first** 的完整形，条数按 :data:`ENTRIES_CAP` 截；
+    只留有正文的条目（面板上每一项都必须真能回退，判据同
+    ``act/lib/recap_store.has_lines``）。"""
+    shaped = [_version_shape(entry) for entry in reversed(_list(doc.get("history")))
+              if isinstance(entry, dict)][:ENTRIES_CAP]
+    return [entry for entry in shaped if entry["en"]]
+
+
+def history(home: Path, query: dict) -> dict:
+    """``GET /api/recaps/history?key=…`` (§63.9, issue #300) — one recap's stored
+    versions **with their text**, the one place the earlier text is readable.
+
+    Wire shape (``web/src/types.ts`` ``RecapHistory`` mirrors verbatim)::
+
+        {"key": "meeting:…",
+         "current":  {version, generated_at, partial, quality, en[], zh[]} | null,
+         "entries": [ …the same shape, newest first… ],
+         "history_cap": 5, "truncated": false}
+
+    Read-only and fail-open, mirroring ``server/search_index_source.py``: a
+    missing / corrupt / non-object file is **200 with an empty projection**
+    (宪法第 11 条 — a layer being absent is not an error, and a 404 would need
+    the page to grow a second story for the same outcome); over
+    :data:`MAX_FILE_BYTES` the file is not read at all →
+    ``truncated: true``. Never 500. A bad / missing ``key`` is the one 400:
+    that is the client naming something it is not allowed to name."""
+    key = _require_key({"key": (query or {}).get("key")})
+    doc, truncated = _read_doc(recap_file_path(home, key))
+    out = _empty_history(key)
+    out["truncated"] = truncated
+    if doc is None:
+        return out
+    out["current"] = _version_shape(doc)
+    out["entries"] = _shaped_entries(doc)
+    return out
 
 
 def mark(home: Path, payload: dict) -> dict:

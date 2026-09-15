@@ -8,19 +8,29 @@
 // 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
 // §63.3 追记（issue #298）：needs_review 不再只有一句「校验未通过」——脚注按 wire 的结构化 problems[]
 // 逐条说清语言 + 行号 + 超出量（纠正备注可以照着写），落地前被自动修剪的行按 repairs[] 一并摊开。
+// §63.9（issue #300）：「上一版…」打开版本面板——`GET /api/recaps/history?key=` 读存着的每一版（正文只在
+// 这条路上，看板投影只带标量句柄 history_versions），当前版与选中的旧版并排、逐行标出改动（纯字符串比较，
+// 零模型），一颗「回退到这一版」= inbox recap_revert（server 永不写纪要文件，§63.6）；正文下方五颗引用 chip
+// 复制 `2026-08-31 Zoom #D`（行位置即身份，粘出去的五行一字不变；逐条 id D1 / A2 等 #303 的多条目格式）。
+// 回退没有 daemon 台账（它不是一次生成），所以面板自己记一条乐观回执：排队中一直说话并每 5 s 补拉，
+// 90 s 没落地就落回 §63.8 那句「actd 可能没在跑」——闪一句就消失、之后面板装死是这一条要消灭的事。
+// 帽的诚实口径：`_push_history` 在历史满 5 版时会挤掉最早那一版，所以回退**也**会老化掉一个回退目标——
+// 面板照直说，不许只把老化归因于「下一次生成」。
 // §63.5 追记（issue #301）：CLOSED 行多一颗「忽略 / 恢复」（POST /api/recaps/mark dismissed，与
 // 「标记已发送」同一个 toggle 机制）——不需要记录的会议不必被迫标成「已发送」才能离开活跃列表；
 // 忽略过的行脚注说明它会先被删掉、按「恢复」即撤销。OPEN 行不给这颗按钮（会还没开完，无从判断）。
 import { useEffect, useRef, useState } from "react";
-import { ApiError, postAction } from "../../api";
+import { ApiError, fetchRecapHistory, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
-import { markRecap, markRecapPending } from "../../store";
-import type { RecapRow, RecapSettings } from "../../types";
+import { markRecap, markRecapPending, refreshBoard } from "../../store";
+import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
 import { copyText } from "../detail/copyText";
 import { noteConflicts, type NoteConflictId } from "./noteCheck";
 import {
-  isGenerating, pickLanguage, problemLabel, recapBody, recapClipboardText, recapHeader, recapProblems,
-  recapRepairs, repairLabel, slackDraftLabel, type GenerationPhase,
+  changedLines, isGenerating, lineCitation, LINE_TAG_LABELS, pickLanguage, problemLabel, recapBody,
+  recapClipboardText, recapHeader, recapProblems, recapRepairs, repairLabel, REVERT_POLL_MS,
+  revertPhase, slackDraftLabel, versionLabel, type GenerationPhase, type RevertPending,
+  type RevertPhase,
 } from "./recapText";
 
 const NOTE_MAX = 500;
@@ -57,8 +67,14 @@ export interface RecapDetailProps {
   phase?: GenerationPhase;
 }
 
-type Panel = null | "note" | "slack";
+type Panel = null | "note" | "slack" | "history";
 type Text = (zh: string, en: string) => string;
+
+/** §63.9 一版的正文（选中语言）——`RecapVersion.en/zh` 恒是数组（server 侧滤过非字符串项） */
+function versionLines(entry: RecapVersion | null, language: Language): string[] {
+  if (!entry) return [];
+  return language === "zh" ? entry.zh : entry.en;
+}
 
 /** §63.8 生成态的一句话（idle 不说话；done 由正文与 landedNote 的闪句体现） */
 export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Text): string | null {
@@ -80,14 +96,85 @@ export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Te
   }
 }
 
-/** 新版本落地那一下的闪句：有正文 = 已更新到第 N 版；没正文按 quality 说清为什么（失败不许穿成功的衣） */
+/** §63.9 回退的回执行（idle 不说话；落地由 landedNote 的闪句 + 脚注体现）。
+ *  「没人接手」那一句**直接复用 §63.8 的 unclaimed 文案**——同一件事（actd 没在跑 / 起不来 /
+ *  锁等超时）只有一句话，不起第二套说法。 */
+export function revertNote(phase: RevertPhase, version: number, text: Text): string | null {
+  if (phase === "queued") {
+    return text(`已排队回退到第 ${version} 版，等待后台接手…（当前这一版会先存进历史，可以再回退回来）`,
+                `Revert to version ${version} is queued, waiting for the daemon… (the current text is pushed into history first, so this is undoable)`);
+  }
+  return phase === "unclaimed" ? generationNote("unclaimed", false, text) : null;
+}
+
+/** 新版本落地那一下的闪句：有正文 = 已更新到第 N 版（§63.9 回退落地时点明搬自第几版）；
+ *  没正文按 quality 说清为什么（失败不许穿成功的衣） */
 export function landedNote(row: RecapRow, text: Text): string {
   const version = row.version ?? 0;
-  if (row.en && row.en.length) return text(`已更新到第 ${version} 版`, `Updated to version ${version}`);
+  const from = typeof row.reverted_from === "number" ? row.reverted_from : null;
+  if (row.en && row.en.length) {
+    return from !== null
+      ? text(`已更新到第 ${version} 版（回退自第 ${from} 版）`, `Updated to version ${version} (restored from version ${from})`)
+      : text(`已更新到第 ${version} 版`, `Updated to version ${version}`);
+  }
   const why = row.quality === "no_audio" ? text("无音频", "no audio")
     : row.quality === "thin_transcript" ? text("转写不全", "thin transcript")
     : text("生成失败", "generation failed");
   return text(`第 ${version} 版没有正文（${why}）`, `Version ${version} landed with no text (${why})`);
+}
+
+export interface RecapDiffProps {
+  current: RecapVersion | null;
+  previous: RecapVersion | null;
+  language: Language;
+  text: Text;
+}
+
+/**
+ * §63.9 当前版 × 选中的旧版并排，逐行标出变没变（`changedLines`：纯字符串比较，零模型）。
+ * 两列都逐行渲染（不是 `<pre>`）——改动标记必须挂在行上才说得出「哪一行不一样」；
+ * 可复制的正文仍然只有上面那个 `<pre>`（所见即所复制的那一份，一字不变）。
+ */
+export function RecapDiff({ current, previous, language, text }: RecapDiffProps) {
+  const now = versionLines(current, language);
+  const then = versionLines(previous, language);
+  const changed = changedLines(now, then);
+  const rows = Array.from({ length: Math.max(now.length, then.length) }, (_unused, i) => i);
+  const changedCount = changed.filter(Boolean).length;
+  return (
+    <div className="recap-history-diff">
+      <p className="recap-hint">
+        {changedCount === 0
+          ? text("这两版的正文逐行相同。", "The two versions are identical line by line.")
+          : text(`有 ${changedCount} 行不一样（标了「改」的那几行）。`,
+                 `${changedCount} line(s) differ (marked changed below).`)}
+      </p>
+      <div className="recap-history-cols">
+        {([["previous", then], ["current", now]] as const).map(([side, lines]) => (
+          <section key={side} className="recap-history-col" aria-label={side === "current"
+            ? text("当前版本", "Current version") : text("选中的旧版本", "The stored version")}>
+            <h4 className="recap-history-col-title">
+              {side === "current"
+                ? text(`当前（第 ${current?.version ?? 0} 版）`, `Current (version ${current?.version ?? 0})`)
+                : text(`第 ${previous?.version ?? 0} 版`, `Version ${previous?.version ?? 0}`)}
+            </h4>
+            <ol className="recap-history-lines">
+              {rows.map((i) => (
+                <li key={i} className={`recap-history-line${changed[i] ? " is-changed" : ""}`}>
+                  {changed[i] && (
+                    <span className="recap-history-mark" aria-label={text("这一行不一样", "This line differs")}>
+                      {text("改", "changed")}
+                    </span>
+                  )}
+                  <span className="recap-history-text">{lines[i] ?? ""}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps) {
@@ -98,15 +185,26 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // §63.9：存着的每一版（点开「上一版」才拉；正文不在看板投影里）+ 选中的那一版
+  const [history, setHistory] = useState<RecapHistory | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [picked, setPicked] = useState<number | null>(null);
+  // §63.9：排队中的回退（daemon 侧没有台账——面板自己的最小乐观回执）+ 逼渲染的秒表
+  const [revertPending, setRevertPending] = useState<RevertPending | null>(null);
+  const [, setRevertTick] = useState(0);
   // 上一次渲染看到的 {key, version}：同一行版本号涨了 = 新版本落地，闪一句
   const seen = useRef<{ key: string; version: number }>({ key: row.key, version: row.version ?? 0 });
 
-  // 切行 / 语言设置变化 → 语言与面板复位（草稿备注不跨行）
+  // 切行 / 语言设置变化 → 语言与面板复位（草稿备注不跨行；上一版的快照也不跨行）
   useEffect(() => {
     setLanguage(pickLanguage(settings?.default_language, ui));
     setPanel(null);
     setNote("");
     setFlash(null);
+    setHistory(null);
+    setHistoryError(null);
+    setPicked(null);
+    setRevertPending(null);
   }, [row.key, settings?.default_language, ui]);
 
   useEffect(() => {
@@ -121,13 +219,54 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     return () => clearTimeout(timer);
   }, [flash]);
 
+  // §63.9：拉这份纪要存着的每一版（只读端点；失败只让这个面板说话，不动正文）
+  async function loadHistory() {
+    setHistoryError(null);
+    try {
+      const snapshot = await fetchRecapHistory(row.key);
+      setHistory(snapshot);
+      setPicked(snapshot.entries[0]?.version ?? null);
+    } catch (error) {
+      setHistory(null);
+      setHistoryError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
+  // 新版本落地（含刚回退出来的那一版）时把快照重新拉一遍——面板开着就不许显示上一轮的对照
+  const landedVersion = row.version ?? 0;
+  const historyOpen = panel === "history";
+  useEffect(() => {
+    if (historyOpen) void loadHistory();
+  }, [landedVersion, historyOpen, row.key]);
+
   const body = recapBody(row, language);
+  // §63.9 有几版可看（老 daemon 没这个键 = 不给入口；有键就逐项都能回退）
+  const storedVersions = (row.history_versions ?? []).length;
   const problems = recapProblems(row);
   const repairs = recapRepairs(row);
   const hasText = Boolean(row.en && row.en.length);
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
   const progress = generationNote(phase, isOpen, text);
+  // §63.9 回退的回执：每次渲染现算（与 §63.8 页面侧同一口径），落地 / 退场即自己结束
+  const reverting = revertPhase(row, revertPending, Date.now());
+  const revertProgress = revertNote(reverting, revertPending?.version ?? 0, text);
+
+  // 排队中每 5 s 补拉一次看板（SSE 掉线时的保险，与 §63.8 同款）并逼一次渲染——90 s 那条判线
+  // 必须自己会到，不能等下一次 board 回流；unclaimed / 落地后就停（不在途时零请求）
+  useEffect(() => {
+    if (reverting !== "queued") return;
+    const timer = setInterval(() => {
+      setRevertTick((n) => n + 1);
+      void refreshBoard();
+    }, REVERT_POLL_MS);
+    return () => clearInterval(timer);
+  }, [reverting]);
+
+  // 落地 / 10 分钟退场：把这条本地回执收掉（unclaimed 仍留着——那句话要靠它显示）
+  useEffect(() => {
+    if (revertPending && reverting === "idle") setRevertPending(null);
+  }, [reverting, revertPending]);
 
   async function run(label: string, action: () => Promise<unknown>) {
     setBusy(true);
@@ -177,6 +316,21 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   });
   const slackDraft = () => run(text("已排队投到 Slack 草稿", "Slack draft queued"), () =>
     postAction({ action: "recap_slack_draft", meeting_key: row.key, channel_id: channel.trim() }));
+  // §63.9 回退 = inbox recap_revert（server 永不写纪要文件，§63.6）；非破坏——当前正文先进 history。
+  // 闪句只说「已排队」——「落地后自动更新」那句承诺改由上面那条**留在面板上**的回执行兑现：
+  // 排队中一直说话，90 s 没落地就说「actd 可能没在跑」，不再闪一下就装死。
+  const revert = (version: number) => run(
+    text(`已排队回退到第 ${version} 版`, `Revert to version ${version} queued`),
+    async () => {
+      await postAction({ action: "recap_revert", meeting_key: row.key, version });
+      setRevertPending({ version, base: row.version ?? 0, at: Date.now() });
+    },
+  );
+  // §63.9 一行的引用串（`2026-08-31 Zoom #D`）：复制正文一字不变，引用是另一次复制
+  const copyCitation = (index: number) => run(text("已复制引用", "Citation copied"), async () => {
+    const ok = await copyText(lineCitation(row, index));
+    if (!ok) throw new Error(text("复制失败", "Copy failed"));
+  });
 
   return (
     <article className="recap-detail" aria-live="polite">
@@ -204,8 +358,37 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
         </p>
       )}
 
+      {/* §63.9 回退的回执行：面板收起后仍在（回退没有 daemon 台账，这是唯一的「它到底有没有发生」） */}
+      {revertProgress && (
+        <p className={`recap-progress${reverting === "queued" ? " is-busy" : " is-warning"}`}
+           role="status" data-revert-phase={reverting}>
+          {revertProgress}
+        </p>
+      )}
+
       {hasText ? (
-        <pre className="recap-body">{body}</pre>
+        <>
+          <pre className="recap-body">{body}</pre>
+          {/* §63.9 行级引用：五行的位置就是身份（标签文字与顺序固定），每行一颗 chip 复制
+              `2026-08-31 Zoom #D`——粘出去的五行正文一字不变。逐条 id（D1 / A2）等 #303。 */}
+          <div className="recap-cite" role="group" aria-label={text("复制行引用", "Copy a line citation")}>
+            <span className="recap-cite-lead">{text("引用：", "Cite:")}</span>
+            {LINE_TAG_LABELS.map((entry, index) => (
+              <button
+                key={entry.tag}
+                type="button"
+                className="recap-cite-chip"
+                disabled={busy}
+                title={lineCitation(row, index)}
+                aria-label={text(`复制引用 ${lineCitation(row, index)}（${entry.zh}）`,
+                                 `Copy citation ${lineCitation(row, index)} (${entry.en})`)}
+                onClick={() => void copyCitation(index)}
+              >
+                {`#${entry.tag}`}
+              </button>
+            ))}
+          </div>
+        </>
       ) : (
         <p className="recap-empty">
           {isOpen
@@ -228,6 +411,12 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
         {!isOpen && (
           <button type="button" className="btn" disabled={busy} onClick={() => void toggleDismissed()}>
             {row.dismissed_at ? text("恢复", "Restore") : text("忽略", "Dismiss")}
+          </button>
+        )}
+        {storedVersions > 0 && (
+          <button type="button" className="btn" disabled={busy}
+                  onClick={() => setPanel(panel === "history" ? null : "history")}>
+            {text("上一版…", "Previous version…")}
           </button>
         )}
         {isOpen ? (
@@ -278,6 +467,68 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
             </button>
             <span className="recap-hint">{note.length}/{NOTE_MAX}</span>
           </div>
+        </div>
+      )}
+
+      {panel === "history" && (
+        <div className="recap-panel">
+          {historyError && <p className="recap-hint">{historyError}</p>}
+          {!history && !historyError && <p className="recap-hint">{text("读取中…", "Loading…")}</p>}
+          {history && history.truncated && (
+            <p className="recap-hint">
+              {text("这份纪要的文件太大，没有读取（上一版无法显示）。",
+                    "This recap's file is too large to read, so earlier versions cannot be shown.")}
+            </p>
+          )}
+          {history && !history.truncated && history.entries.length === 0 && (
+            <p className="recap-hint">
+              {text("没有存下来的上一版（这一份只生成过一次，或更早的版本已经老化掉了）。",
+                    "No earlier version is stored (this recap was generated once, or the older ones have aged out).")}
+            </p>
+          )}
+          {history && history.entries.length > 0 && (
+            <>
+              <div className="recap-segmented" role="tablist" aria-label={text("存着的版本", "Stored versions")}>
+                {history.entries.map((entry) => (
+                  <button
+                    key={entry.version}
+                    type="button"
+                    role="tab"
+                    aria-selected={picked === entry.version}
+                    className={`recap-segment${picked === entry.version ? " is-active" : ""}`}
+                    onClick={() => setPicked(entry.version)}
+                  >
+                    {versionLabel(entry, text)}
+                  </button>
+                ))}
+              </div>
+              <RecapDiff
+                current={history.current}
+                previous={history.entries.find((entry) => entry.version === picked) ?? null}
+                language={language}
+                text={text}
+              />
+              {/* 帽的诚实口径：回退**也**是一次「把当前正文压进历史」，历史满了就同样挤掉最早那一版
+                  （act/recap._push_history 的 `[-(HISTORY_CAP - 1):]`）——不许只把老化归因于下一次生成 */}
+              <p className="recap-hint">
+                {text(`只保留最近 ${history.history_cap} 版：回退会先把当前这一版存进历史（所以能再回退回来），历史已满 ${history.history_cap} 版时最早的那一版会因此老化掉；下一次生成同理。`,
+                      `Only the last ${history.history_cap} versions are kept: a revert pushes the current text into history first (so it can be undone), and once history is full at ${history.history_cap} that pushes the oldest stored version out; a regeneration does the same.`)}
+              </p>
+              {history.entries.length >= history.history_cap && (
+                <p className="recap-hint is-warning">
+                  {text(`历史已经满 ${history.history_cap} 版了：下一次回退（或生成）会挤掉最早的那一版，它之后就回不去了。`,
+                        `History is already full at ${history.history_cap}: the next revert (or regeneration) pushes the oldest stored version out, and it cannot be restored after that.`)}
+                </p>
+              )}
+              <div className="recap-panel-actions">
+                <button type="button" className="btn btn-primary"
+                        disabled={busy || picked === null || reverting === "queued"}
+                        onClick={() => picked !== null && void revert(picked)}>
+                  {text("回退到这一版", "Revert to this version")}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -339,6 +590,12 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
         )}
         {(row.version ?? 0) > 1 && (
           <span className="recap-meta-item">{text(`第 ${row.version} 版`, `Version ${row.version}`)}</span>
+        )}
+        {typeof row.reverted_from === "number" && (
+          <span className="recap-meta-item">
+            {text(`这一版回退自第 ${row.reverted_from} 版（原正文已存进历史，可以再回退回来）。`,
+                  `This version was restored from version ${row.reverted_from} (the replaced text is in history, so it can be restored back).`)}
+          </span>
         )}
         {row.note && <span className="recap-meta-item">{text("上次备注：", "Last note: ")}{row.note}</span>}
         <span className="recap-meta-item">{text("同室第三人声和系统回声可能混入，粘贴前必读。", "Third-party voices and system echo may leak in — read before pasting.")}</span>

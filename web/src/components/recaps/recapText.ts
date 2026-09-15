@@ -1,6 +1,7 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8）：行标签、按日分组、badge 词表、语言选择、
-// 复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
-// §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）。
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9）：行标签、按日分组、badge 词表、
+// 语言选择、复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
+// §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）、
+// §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题、两版逐行差异与回退的回执态判定。
 // 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
@@ -105,6 +106,37 @@ export function isGenerating(phase: GenerationPhase): boolean {
   return phase === "queued" || phase === "running";
 }
 
+/**
+ * §63.9（issue #300）**回退的回执**。回退是 detached inbox 动作，daemon 侧**没有**台账
+ * （`recap_revert` 不进 §63.8 的 `generate_request`：回退不是一次生成，行上不该出现「生成中」），
+ * 所以面板自己记一条最小乐观回执——按下时记 `{version, base, at}`：
+ *   queued    = 已排队、新版本还没落地（面板一句「排队中」+ 每 `REVERT_POLL_MS` 补拉一次看板）；
+ *   unclaimed = 按下 90 s 仍没有新版本（actd 没在跑 / 子进程起不来 / 锁等超时都长这样）——
+ *               与 §63.8 **同一条判线、同一句**「actd 可能没在跑…可以再试一次」；
+ *   idle      = 版本号涨了（回退落地）/ 10 分钟退场。
+ * 两个时限与 §63.8 共用常量，绝不另起第二套。
+ */
+export type RevertPhase = "idle" | "queued" | "unclaimed";
+
+export interface RevertPending {
+  /** 要回到的那一版（文案说「回退到第 N 版」用） */
+  version: number;
+  /** 按下时看到的当前版本号：涨了 = 这次回退（或任何一次落地）已经到了 */
+  base: number;
+  at: number;
+}
+
+export function revertPhase(row: RecapRow, pending: RevertPending | null, now: number): RevertPhase {
+  if (!pending) return "idle";
+  if ((row.version ?? 0) > pending.base) return "idle";       // 新版本已落地
+  const age = now - pending.at;
+  if (age > PENDING_TIMEOUT_MS) return "idle";                // 退场：别永远挂着
+  return age > PICKUP_TIMEOUT_MS ? "unclaimed" : "queued";
+}
+
+/** 回退在途时面板自己的补拉间隔——与 §63.8 页面侧 `GENERATING_POLL_MS` 同一个 5 s 口径（判例钉两者相等） */
+export const REVERT_POLL_MS = 5000;
+
 /** 行 badge（issue #129 §3 词表 + §63.8 生成中 / 后台未接手 / 生成未落地 / 生成未启动
  *  + §63.5 追记 issue #301 已忽略）：
  *  进行中 / 新 / 已复制 / 已发送 / 已忽略 / 已更新 / 转写不全 / 需复核 / 无音频 / 生成失败 */
@@ -203,6 +235,64 @@ export function recapClipboardText(row: RecapRow, language: Language): string {
 }
 
 type Bilingual = (zh: string, en: string) => string;
+
+/**
+ * §63.9（issue #300）**行级引用标签** D / S / L / C / O：五行的标签文字与顺序是固定的
+ * （`act/lib/recap_text.LABELS_EN` / `LABELS_ZH`，§63.3 的硬闸），所以**位置本身就是身份**
+ * ——不需要在 wire 上给每行发一个 id 就能把一行citable。粘出去的五行正文一字不变
+ * （引用串是另一次复制，chip 各自一颗）。
+ * 逐项 id 的 `D1` / `A2` / `O3` 形（一行里的第几条）要等 #303 的多条目格式，本版不伪造。
+ */
+export const LINE_TAGS: string[] = ["D", "S", "L", "C", "O"];
+
+/** 五个标签的双语名（chip 的可达名用；文案仍走唯一的 text(zh, en) 机制） */
+export const LINE_TAG_LABELS: { tag: string; zh: string; en: string }[] = [
+  { tag: "D", zh: "定了", en: "Decided" },
+  { tag: "S", zh: "分工", en: "Split" },
+  { tag: "L", zh: "截止", en: "Deadline" },
+  { tag: "C", zh: "较上次变化", en: "Changed since last plan" },
+  { tag: "O", zh: "待定", en: "Open" },
+];
+
+/**
+ * 一行的引用串 `2026-08-31 Zoom #D`：日期（本机时区，与左列日分组 / 复制表头同一口径）
+ * + 会议应用 + 行标签。五行之外 = 空串（手改坏的文件不给 chip）。
+ * **纯展示层**：不是 wire 字段，也不进 `recapBody()` / `recapClipboardText()`。
+ */
+export function lineCitation(row: RecapRow, index: number): string {
+  const tag = LINE_TAGS[index];
+  if (!tag) return "";
+  return `${dayKey(row.start)} ${appLabel(row.app)} #${tag}`;
+}
+
+/**
+ * §63.9 两版逐行比：`true` = 这一行变了。**纯字符串比较，零模型、零请求、同输入恒同结果**
+ * （§63.5 预检的同一条纪律）。长度不同按位置比（缺的一侧当空串）——正常两版都恰是五行。
+ */
+export function changedLines(current: string[], previous: string[]): boolean[] {
+  const out: boolean[] = [];
+  for (let i = 0; i < Math.max(current.length, previous.length); i += 1) {
+    out.push((current[i] ?? "") !== (previous[i] ?? ""));
+  }
+  return out;
+}
+
+/** `2026-08-31 12:56`（本机时区）；坏 / 缺时间戳 = 空串，永不显示 Invalid Date */
+function stampLabel(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  return `${dayKey(iso)} ${hhmm(iso)}`;
+}
+
+/** §63.9 版本选择器一项的标题：`第 2 版（阶段稿） · 2026-08-31 12:56` */
+export function versionLabel(entry: { version: number; generated_at?: string | null; partial?: boolean },
+                            text: Bilingual): string {
+  const head = text(`第 ${entry.version} 版`, `Version ${entry.version}`);
+  const partial = entry.partial ? text("（阶段稿）", " (partial)") : "";
+  const stamp = stampLabel(entry.generated_at);
+  return stamp ? `${head}${partial} · ${stamp}` : `${head}${partial}`;
+}
 
 /** §63.3 追记：wire 上的发现行（老 daemon 无此键、手改过的文件可能是任意东西）——只留像样的对象 */
 export function recapProblems(row: RecapRow): RecapProblem[] {

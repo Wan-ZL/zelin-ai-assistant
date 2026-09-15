@@ -32,6 +32,7 @@ import type {
   LogTail,
   McpList,
   ModelsSettings,
+  RecapHistory,
   RecapMarkKind,
   RecapMarkReceipt,
   RecapSettings,
@@ -369,6 +370,15 @@ export function putRecapSettings(
   body: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
 ): Promise<RecapSettings> {
   return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/**
+ * GET /api/recaps/history?key= — 这份纪要存着的每一版 + 正文（CONTRACT §63.9，issue #300）。
+ * 正文只走这一条路（看板投影只带标量句柄 `history_versions`）；只读——回退是
+ * `postAction({action:"recap_revert"})`，因为 recap 文件的唯一写者是 act/recap.py（§63.6）。
+ */
+export function fetchRecapHistory(key: string, signal?: AbortSignal): Promise<RecapHistory> {
+  return request<RecapHistory>(`/api/recaps/history?key=${encodeURIComponent(key)}`, { signal });
 }
 
 /** GET /api/settings/display — 显示偏好三把旋钮的 effective 值 + 词表（CONTRACT §54.1 第 12 项） */
