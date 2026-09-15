@@ -138,7 +138,10 @@ class ValidatorTestCase(unittest.TestCase):
 
 
 class RenderTestCase(unittest.TestCase):
-    """渲染：节标题 + 语气后缀 + **跨节连续编号**（issue #332 实测的粘贴形）。"""
+    """渲染：节标题 + 语气后缀 + **跨节连续编号**（issue #332 实测的粘贴形）。
+
+    §63.12 之后连续编号是**没有标签的条目**的回落（解析出来的 payload 还没派过标签，
+    所以这里看到的正是那一支）；带标签那一支的判例住 tests/test_recap_item_tags.py。"""
 
     def test_titles_numbering_and_the_modality_suffix(self):
         doc = rt.parse_sections(fx.good_sections_output())
@@ -222,7 +225,8 @@ class RecordTestCase(unittest.TestCase):
         # copy_* = 粘出去的那一份（渲染只在 recap_text 一处，页面照着显示）
         self.assertEqual(rec["copy_en"], rt.render_sections(rec["sections_en"], "en"))
         self.assertEqual(rec["copy_zh"], rt.render_sections(rec["sections_zh"], "zh"))
-        self.assertIn("1. Ann owns the data mix from Monday", rec["copy_en"])
+        # §63.12：编号换成了那一条自己的跨版稳定标签（D1），不再是位置编号
+        self.assertIn("D1. Ann owns the data mix from Monday", rec["copy_en"])
         # 通知与 badge 不许把它说成没出稿
         self.assertTrue(self.notified)
         self.assertTrue(store.has_text(rec))
@@ -277,7 +281,7 @@ class RecordTestCase(unittest.TestCase):
         # 3) 下一场会的「较上次变化」拿得到它（旧 priors_for 只看 en = 静默消失）
         priors = store.priors_for(fx.T0 + 86400, "America/Los_Angeles")
         self.assertEqual(len(priors), 1)
-        self.assertIn("1. Ann owns the data mix from Monday", "\n".join(priors[0]["en"]))
+        self.assertIn("D1. Ann owns the data mix from Monday", "\n".join(priors[0]["en"]))
 
     def test_a_stored_sections_version_can_be_reverted_to(self):
         self.closed_round()

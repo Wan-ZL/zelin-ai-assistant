@@ -1,8 +1,9 @@
-// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9 / §63.10 / §63.11）：行标签、按日分组、badge 词表、
+// 会议纪要页的纯逻辑（CONTRACT §63 / §63.3 / §63.5 / §63.8 / §63.9 / §63.10 / §63.11 / §63.12）：行标签、按日分组、badge 词表、
 // 语言选择、复制正文与它的表头、「重新生成」的生成态判定、§63.3 追记的校验原因与自动修剪文案、
 // §63.5 追记（issue #301）的三栏判定（活跃 / 已归档 / 已忽略）、
 // §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题、两版逐行差异与回退的回执态判定、
-// §63.11（issue #302）意图问答的词表与答案拼装 + 「转写原版 / 我记录的版本」两版切换的正文。
+// §63.11（issue #302）意图问答的词表与答案拼装 + 「转写原版 / 我记录的版本」两版切换的正文、
+// §63.12（issue #300 的后半）可发送长版的逐条标签：行首标签的读出、按标签的两版差异、逐条引用串。
 // 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
@@ -403,9 +404,9 @@ type Bilingual = (zh: string, en: string) => string;
  * （`act/lib/recap_text.LABELS_EN` / `LABELS_ZH`，§63.3 的硬闸），所以**位置本身就是身份**
  * ——不需要在 wire 上给每行发一个 id 就能把一行citable。粘出去的五行正文一字不变
  * （引用串是另一次复制，chip 各自一颗）。
- * 逐项 id 的 `D1` / `A2` / `O3` 形要等**跨版稳定**的逐条 id（#300 的后半，#332 说明它得存在
- * 内部、粘出去的仍是连续编号）——§63.10 的可发送长版给了多条目格式，但一次重新生成会把条目
- * 整批换掉，所以那一形的正文下方不给引用 chip（见 `RecapDetail`），不伪造一个下一版就变的引用。
+ * §63.12 追记（#300 的后半已落地）：可发送长版的逐条 `D1` / `S2` 形**现在存在**且跨版稳定
+ * （daemon 派发、渲染进正文），所以那一形的引用 chip 由 `bodyTags` / `itemCitation` 给出——
+ * 本表仍然只管五行形（它没有条目，身份是位置）。
  */
 export const LINE_TAGS: string[] = ["D", "S", "L", "C", "O"];
 
@@ -439,6 +440,66 @@ export function changedLines(current: string[], previous: string[]): boolean[] {
     out.push((current[i] ?? "") !== (previous[i] ?? ""));
   }
   return out;
+}
+
+/**
+ * §63.12 一条渲染出来的条目行前面那个**跨版稳定的标签**（`D1. …` → `D1`）——节标题与
+ * 没有标签的条目（本节之前生成的老记录）= 空串。字母表逐字镜像
+ * `act/lib/recap_text.SECTION_LETTERS`（D/S/P/L/C/O）。
+ */
+const ITEM_TAG_LINE = /^([DSPLCO][1-9]\d?)\.\s/;
+
+export function itemTag(line: string): string {
+  const hit = ITEM_TAG_LINE.exec(line ?? "");
+  return hit ? hit[1] : "";
+}
+
+/**
+ * §63.12 可发送长版的两版逐行比——**按标签**而不是按位置：一条被移动 / 改写过的条目
+ * 因此显示成「改」而不是「新」（位置比会把插入一条之后的每一行都判成变了）。
+ * 仍然是纯字符串比较、零模型、零请求（§63.9 的同一条纪律）。
+ * 没有标签的行（节标题、老记录的条目）回落到「这一行在对面那一版里出现过吗」——
+ * 标题不会因为上面插了一节就被说成变了。`current` 里有、`previous` 里没有那个标签 = 新 = 变了。
+ * 节与节之间的空行是**结构**（`render_sections` 加的），永不算变。
+ */
+export function changedItems(current: string[], previous: string[]): boolean[] {
+  const byTag = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const line of previous) {
+    const tag = itemTag(line);
+    if (tag && !byTag.has(tag)) byTag.set(tag, line);
+    seen.add(line);
+  }
+  return current.map((line) => {
+    if (!(line ?? "").trim()) return false;          // 节之间的空行是结构，不是内容
+    const tag = itemTag(line);
+    if (!tag) return !seen.has(line);
+    const before = byTag.get(tag);
+    return before === undefined || before !== line;
+  });
+}
+
+/**
+ * §63.12 一份渲染好的正文里出现过的标签（渲染顺序，去重）——面板据它给逐条引用 chip。
+ * 正文本身一个字符不改：标签本来就**在**粘出去的那一份里（`D1. …`），chip 只是把
+ * 引用串整理成一次复制。
+ */
+export function bodyTags(body: string): string[] {
+  const out: string[] = [];
+  for (const line of (body ?? "").split("\n")) {
+    const tag = itemTag(line);
+    if (tag && !out.includes(tag)) out.push(tag);
+  }
+  return out;
+}
+
+/**
+ * §63.12 一条的引用串 `2026-08-31 Zoom #D1`（日期 / 应用与 §63.9 的行引用逐字同源）。
+ * 空标签 = 空串。**纯展示层**：不进 `recapBody()` / `recapClipboardText()`。
+ */
+export function itemCitation(row: RecapRow, tag: string): string {
+  if (!tag) return "";
+  return `${dayKey(row.start)} ${appLabel(row.app)} #${tag}`;
 }
 
 /** `2026-08-31 12:56`（本机时区）；坏 / 缺时间戳 = 空串，永不显示 Invalid Date */

@@ -505,6 +505,9 @@ export interface RecapRow {
   baseline?: RecapBaseline | null;
   /** §63.11 这一版是按哪组答案出的（add-only，每版重写；没答案 = null） */
   intent?: RecapIntent | null;
+  /** §63.12 这个 key 的逐条标签计数器 `{字母: 发到第几号}`（add-only，单调、永不复用）——
+   *  页面不读它（标签本身在正文与 `sections_*[].tags` 里），镜像它只为不撒谎 */
+  tag_seq?: Record<string, number> | null;
   [key: string]: unknown;
 }
 
@@ -549,12 +552,16 @@ export interface RecapIntent {
  * §63.10 可发送长版的一节（issue #303；`act/lib/recap_text` 的 `{key, modality, items}` 逐字镜像）：
  * `key` ∈ decided | split | proposed | deadline | changed | open，`modality` ∈ decided | proposed |
  * floated | open（一节一个语气——决定与提议因此在纸面上长得不一样）。条目的编号**不在数据里**：
- * 它由 daemon 渲染 `copy_*` 时跨节连续加上（issue #332 实测的粘贴形）。
+ * 它由 daemon 渲染 `copy_*` 时加上——§63.12 之后是那一条自己的**跨版稳定标签**
+ * （`tags[i]`，`D1` / `S2`），没有标签的条目才回落到 §63.10 的跨节连续编号。
  */
 export interface RecapSection {
   key: string;
   modality: string;
   items: string[];
+  /** §63.12 逐条标签（add-only，与 `items` 逐位对齐；老记录无此键 = 渲染回落到连续编号）——
+   *  daemon 派发，模型永不是作者（`act/lib/recap_text.assign_tags`） */
+  tags?: string[] | null;
   [key: string]: unknown;
 }
 

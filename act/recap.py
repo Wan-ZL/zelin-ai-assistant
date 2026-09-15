@@ -1,4 +1,4 @@
-"""act/recap.py — meeting recaps: deterministic sessions in, a copy-only note out (CONTRACT §63 / §63.10 / §63.11).
+"""act/recap.py — meeting recaps: deterministic sessions in, a copy-only note out (CONTRACT §63 / §63.10 / §63.11 / §63.12).
 
 Hangs off the existing 30-minute screenpipe cron chain
 (``ingest/process-screenpipe.sh`` runs ``python -m act.recap --once`` before
@@ -44,6 +44,15 @@ model as instructions (numbers only; the items they name ride in the UNTRUSTED
 fence), ``prior=drop`` is executed deterministically rather than asked for, and
 the version they replace is kept forever as the record's ``baseline`` — the
 history cap would otherwise evict the first version on the fifth regeneration.
+
+§63.12 (issue #300 的后半): every item of the sendable shape carries a stable
+section-scoped tag (`D1` / `S2`) that survives a regeneration, so a commitment
+can be cited later. The previous version's tagged items ride into the prompt
+inside the UNTRUSTED fence (:func:`_tag_args`) and the model is asked to keep a
+tag on the same commitment — but the tag is decided **here**
+(:func:`_tagged` → ``recap_text.assign_tags``): an unknown / duplicate /
+foreign claim is discarded and re-assigned, and the per-letter counter on the
+record (``tag_seq``) never goes back, so a tag is never reused inside one key.
 
 Other entry points (spawned detached by actd for the inbox special forms):
 ``--generate <key> [--note …] [--partial] [--shape …] [--answers …]``, ``--slack-draft <key>
@@ -352,6 +361,33 @@ def record_shape(rec: dict, st: dict, shape: Optional[str] = None) -> str:
     return text.DEFAULT_SHAPE
 
 
+def _previous_sections(rec: dict) -> dict:
+    """记录上**这一版**的分节正文（§63.12 标签的来源；`_push_history` 马上要把它压进历史）。"""
+    return {"en": rec.get("sections_en") or [], "zh": rec.get("sections_zh") or []}
+
+
+def _tag_args(rec: dict, shape: str) -> dict:
+    """§63.12：上一版的条目连同标签，进 `build_prompt` 的 UNTRUSTED 围栏（缺 = 这一块
+    根本不进 prompt）。只对可发送长版成立——五行形没有条目，它的身份是位置（§63.9）。"""
+    if shape != text.SHAPE_SECTIONS:
+        return {}
+    block = text.tagged_items_block(rec.get("sections_en"))
+    return {"tagged": block} if block else {}
+
+
+def _tagged(rec: dict, lines, shape: str):
+    """§63.12：给可发送长版的每一条派标签，并把这个 key 的计数器推到新的高水位。
+
+    **标签在这里定下来，不在模型那边**（`text.assign_tags`：模型报的每一个都要过闸，
+    丢掉的按相似度回挂，剩下的发新号）。五行形与没出正文的那几种原样退回。计数器写在
+    记录上而不在版本里：它是这个 key 的台账，回退 / 换形状都不许让它回头。"""
+    if lines is None or shape != text.SHAPE_SECTIONS:
+        return lines
+    tagged, seq = text.assign_tags(lines, _previous_sections(rec), rec.get("tag_seq"))
+    rec["tag_seq"] = seq
+    return tagged
+
+
 def _intent_args(rec: dict, answers: list) -> dict:
     """§63.11：答案 → `build_prompt` 的两个可选块。**在正文被替掉之前算**——
     `split<n>` 指的是记录上**这一版**的第 n 条分工，答案是对着它答的。"""
@@ -368,7 +404,10 @@ def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
     text in place, in the shape :func:`record_shape` resolves (§63.10).
     ``answers`` (§63.11) are the owner's picks on the questions derived from the
     version currently on the record — malformed ones are dropped whole
-    (``recap_intent.clean_answers``), never half-applied.
+    (``recap_intent.clean_answers``), never half-applied. §63.12: the sendable
+    shape's items come back with their **stable tags** — the previous version's
+    tagged items ride in the prompt's untrusted fence (:func:`_tag_args`) and
+    the final tags are decided here, on the storage side (:func:`_tagged`).
     Thin / silent meetings never reach the model."""
     tz = st["options"].timezone
     shape = record_shape(rec, st, shape)
@@ -388,9 +427,10 @@ def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
                 "shape": shape,
                 "meta": {"when": _when(rec, tz), "app": rec["app"],
                          "duration_min": rec["duration_min"]},
-                **_intent_args(rec, answers)}
+                **_tag_args(rec, shape), **_intent_args(rec, answers)}
         lines, quality, problems, repairs = generate_lines(args, runner, cfg,
                                                            drop_prior=intent.drops_prior(answers))
+        lines = _tagged(rec, lines, shape)
     _apply_lines(rec, lines, quality, note, partial, now, problems, repairs, shape=shape,
                  answers=answers)
     return rec

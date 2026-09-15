@@ -1,4 +1,4 @@
-"""act/lib/recap_store.py — ``state/recap/`` on disk + the add-only board projection (CONTRACT §63 / §63.10 / §63.11).
+"""act/lib/recap_store.py — ``state/recap/`` on disk + the add-only board projection (CONTRACT §63 / §63.10 / §63.11 / §63.12).
 
 Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
 
@@ -39,6 +39,12 @@ request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
 projected per row as ``generate_request``. The §63.3 追记 ``problems`` /
 ``repairs`` rows ride on the recap file itself (act/recap.py writes them with
 the lines) and reach the wire through :func:`_row` like every other field.
+
+§63.12 追记（issue #300 的后半）：可发送长版的每一条带一个跨版稳定的节内标签
+（`D1` / `S2`），它住在 `sections_*` 每一节的 add-only ``tags``（与 ``items`` 逐位
+对齐，投影原样搬运）；这个 key 发到第几号记在记录的 add-only ``tag_seq`` 上
+（单调、永不复用，因此**不进** ``history[]`` 条目——它是 key 的台账，不是某一版的正文）。
+派发与判决全在 `act/recap.py` / `act/lib/recap_text.assign_tags`（本模块只搬运）。
 
 Retention: recaps older than `recap.retention_days` (default 90) are pruned
 on every cron round (防腐 #4: every new file family is born with a cap);
@@ -230,6 +236,11 @@ def new_record(session: recap_sessions.Session, key: str, status: str) -> dict:
         # history 的帽是 5 版，第一版早晚会被挤掉，而「转写原版」必须一直在）；
         # `intent` = 这一版是按哪组答案出的（`{answers, at, version}`，每版重写、没答案 = None）
         "baseline": None, "intent": None,
+        # §63.12 追记（add-only，issue #300 的后半）：这个 key 的逐条标签计数器
+        # `{字母: 已经发到第几号}`（D/S/P/L/C/O，truth = `recap_text.SECTION_LETTERS`）。
+        # **单调、永不回退、永不复用**——一条被删掉的条目的标签不会再发给别人；它是这个
+        # key 的台账而不是某一版的正文，所以不进 `history[]` 条目，回退也不让它回头
+        "tag_seq": {},
         # §63.3 追记（add-only）：needs_review 的结构化原因与落地前的长度修剪台账
         "problems": [], "repairs": [],
         # §63.9 追记（add-only）：这一版的正文回退自第几版（生成出来的版本 = None）
