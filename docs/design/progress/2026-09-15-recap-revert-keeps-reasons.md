@@ -1,4 +1,4 @@
-pr: `fix/recap-revert-keeps-reasons`（PR #TBD；R-216 对 #345 复核后的修正，base `dev`）
+pr: `fix/recap-revert-keeps-reasons`（PR #354；R-216 对 #345 复核后的修正，base `dev`）
 phase: 会议纪要（§63；D63 需复核必带原因 / D73 回退 → D74 修正）
 law: §63.5 / §63.6 / §63.9 追记各一条 2026-09-15 修正（add-only，不开新 §）
 
