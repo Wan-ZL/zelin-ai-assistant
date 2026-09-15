@@ -94,6 +94,20 @@ describe("§37.2 词表：display_title / former_titles / notes_text / plan / do
     }
   });
 
+  it("会话行改了名，原话仍可搜（§2 追记：`name` = 活标题，冻结 title 自带一个键）", () => {
+    // server 的 running / 待验收 / 已完成 四个行构造（dashboard.py `_running_row` 一族）：
+    // `name` 是卡此刻的显示名，冻结 title 走自己的 `title` 键——用户按自己最初那句话
+    // 搜，必须还能搜到这张卡（首次改名时 former_titles 是空的，指不上它）
+    const renamedRunning = {
+      id: "R-510", name: "整理转存材料", title: "帮我把 401k rollover 的手续走完",
+      display_title: "整理转存材料", state: "working", agent_name: "R-510 · 老名字",
+    };
+    expect(matchesCardSearch(renamedRunning, "401k")).toBe(true);
+    expect(matchesCardSearch(renamedRunning, "rollover 手续")).toBe(true);
+    expect(matchesCardSearch(renamedRunning, "转存")).toBe(true);
+    expect(searchHaystack(renamedRunning)).toContain("帮我把401krollover的手续走完");
+  });
+
   it("searchHaystack：每个非空字段一条、已归一化；非字符串值静默跳过", () => {
     const hay = searchHaystack({ id: "R-1", title: "EB-1A", plan: ["A b", 3, null], processing: true, cost_usd: 1.5 });
     expect(hay).toEqual(["r1", "eb1a", "ab"]);

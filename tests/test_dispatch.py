@@ -289,8 +289,10 @@ class ParseSessionIdTestCase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# session_name — title 清洗：换行/路径分隔符/控制字符不进 --name
+# session_name — 名字清洗：换行/路径分隔符/控制字符不进 --name
 # (agent name 会被 claude 用作 <target>/.claude/worktrees/<name> 和分支名)
+# 名字取哪个字段（§37.1 活标题那条链，不再是冻结 title）归
+# tests/test_session_name_follows_card_title.py；这里只钉清洗与截断。
 # --------------------------------------------------------------------------- #
 class SessionNameSanitizeTestCase(unittest.TestCase):
     def test_newlines_and_path_separators_collapse_to_spaces(self):
@@ -307,6 +309,8 @@ class SessionNameSanitizeTestCase(unittest.TestCase):
     def test_plain_title_and_truncation_unchanged(self):
         req = Requirement(id="R-1", title="正常标题 with spaces")
         self.assertEqual(executor.session_name(req), "R-1 · 正常标题 with spaces")
+        # 超长纯文本：先过 §37.1 的 sanitize（截 48 + …），再过本函数的 48 字
+        # 硬帽——省略号正好被切掉，结果与「裸截 48」逐字节相同（re-pin）。
         long = Requirement(id="R-2", title="t" * 100)
         self.assertEqual(executor.session_name(long), "R-2 · " + "t" * 48)
         self.assertEqual(executor.session_name(Requirement(id="R-3", title="")),

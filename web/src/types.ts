@@ -142,7 +142,10 @@ export interface CardAssessment {
 /** 运行中/需输入/已完成 分区项（running 混入 state="queued" 的排队项，无 session_id） */
 export interface TaskRow {
   id: string;
+  /** §37 会话行的名字 = 卡此刻的显示名（server `_session_name`，不是冻结 title） */
   name: string;
+  /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
+  title?: string;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
   work_id?: string | null;
   /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
@@ -180,6 +183,9 @@ export interface TaskRow {
   last_error_id?: string | null;
   dispatch_error_id?: string | null;
   agent_name?: string | null;
+  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（CLI 改不了运行中会话的名字，下次 resume 才跟上）——
+   *  只发给还能再 resume 的行；已验收行（completed）不发这个键 */
+  agent_name_stale?: boolean;
   question?: string | null;
   display_title?: string;
   former_titles?: string[];
@@ -217,7 +223,10 @@ export interface SelfImproveState {
 /** 待验收卡（review 分区项） */
 export interface ReviewCard {
   id: string;
+  /** §37 会话行的名字 = 卡此刻的显示名（server `_session_name`，不是冻结 title） */
   name: string;
+  /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
+  title?: string;
   /** §65.3 self_improve 卡才有：草稿 PR 核验结果 */
   delivery?: Delivery;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
@@ -243,6 +252,9 @@ export interface ReviewCard {
   session_active?: boolean;
   summary?: string | null;
   agent_name?: string | null;
+  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（下次 resume 才跟上）——
+   *  只发给还能再 resume 的行；已验收行（completed）不发这个键 */
+  agent_name_stale?: boolean;
   display_title?: string;
   /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
   assessment?: CardAssessment | null;

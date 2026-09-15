@@ -15,7 +15,8 @@ import datetime as _dt
 import time
 from typing import Optional
 
-from act.lib import analytics, config, notify, registry, self_improve, steer
+from act.lib import (analytics, config, dispatch_prompt, notify, registry, self_improve,
+                     steer)
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
                                   update_search_index)
@@ -42,6 +43,13 @@ RESUME_HISTORY_CAP = 10             # resume_history 保留最近 N 条，防无
 # every 10 s pass. Process-local is fine — actd is a resident daemon.
 HARVEST_PROBE_AT: dict = {}
 HARVEST_PROBE_INTERVAL_S = 120.0
+
+# §37.1 追记的中途改名探针（活着的会话）用**自己**的节流台账，同一个 120 s
+# 间隔。不与 HARVEST_PROBE_AT 共用是有原因的：共用会让一条刚从 working/idle
+# 掉进 blocked 的会话的 FINAL DRAFT 提升被上一次改名读推迟最多 120 s，而推迟
+# 期间 `_another_move_left` 可能先把卡按「会话受阻」收进待验收——比晚 120 s
+# 更糟。代价是活会话每 120 s 多读一次本地 transcript 尾（无 LLM 调用）。
+TITLE_PROBE_AT: dict = {}
 
 
 def _now_utc() -> _dt.datetime:
@@ -154,17 +162,23 @@ def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
 # --------------------------------------------------------------------------- #
 # FINAL DRAFT probe（§11 chat 交付的强完成信号）
 # --------------------------------------------------------------------------- #
-def _probe_throttled(sid) -> bool:
-    """One transcript probe per session per HARVEST_PROBE_INTERVAL_S; stamps the probe."""
+def _probe_throttled(sid, at: Optional[dict] = None) -> bool:
+    """One transcript probe per session per HARVEST_PROBE_INTERVAL_S; stamps the probe.
+
+    ``at`` = 用哪一本节流台账（缺省 HARVEST_PROBE_AT = 交付提升那条路；
+    TITLE_PROBE_AT = §37.1 追记里活会话的改名探针，两本分开的理由写在
+    TITLE_PROBE_AT 上面）。
+    """
+    ledger = HARVEST_PROBE_AT if at is None else at
     now = time.monotonic()
     # None sentinel, NOT 0.0: monotonic() counts from boot, so on a freshly
     # started machine `now - 0.0 < interval` is TRUE for the first minutes —
     # a 0.0 default swallowed the very first probe (surfaced on CI runners,
     # whose uptime is seconds; a just-rebooted Mac would hit it too).
-    last = HARVEST_PROBE_AT.get(str(sid))
+    last = ledger.get(str(sid))
     if last is not None and now - last < HARVEST_PROBE_INTERVAL_S:
         return True
-    HARVEST_PROBE_AT[str(sid)] = now
+    ledger[str(sid)] = now
     return False
 
 
@@ -188,9 +202,23 @@ def promote_if_delivered(d: Daemon, req, ex: dict, sid) -> bool:
         return False
     harvested = _probe_harvest(d, sid)
     if not str(harvested.get("final_draft") or "").strip():
+        _apply_probe_title(d, req, harvested)
         return False
     _promote_delivered(d, req, ex, sid, harvested)
     return True
+
+
+def _apply_probe_title(d: Daemon, req, harvested: dict) -> None:
+    """§37.1 追记：会话还没交付，但这次探针的 transcript 里已经带了新的
+    ``CARD TITLE:`` 行 —— 当场应用。交互式长会话没有轮次边界（用户 attach
+    进去聊很久），卡名不该等到交付才跟上聊天内容。
+
+    收割/落笔仍是既有那一套（``apply_harvest_title`` → 唯一落笔点
+    ``registry.set_display_title``：user_titled 钦定优先、same-value no-op、
+    掩码拒收），所以每 120 s 一次的探针只在真改名时写一次盘。§44 单写者：
+    这里是 actd 主循环。"""
+    if apply_harvest_title(d, req, harvested):
+        registry.save(req)
 
 
 def _promote_delivered(d: Daemon, req, ex: dict, sid, harvested: dict) -> None:
@@ -342,8 +370,18 @@ def _stop_for_steer(d: Daemon, req: Requirement, sid) -> bool:
     return True
 
 
+def _steer_prompt(req: Requirement, pend: list) -> str:
+    """steer 批 + §37.1 的显示名重审句（``title_line``）。
+
+    steer 是交互式长会话唯一可靠的「有事发生」回流点：借这趟车把每轮必审的
+    CARD TITLE 请求也带进去，卡名就不必等到下一个轮次边界才跟上。分档单源仍是
+    ``dispatch_prompt.rework_title_line``（user_titled 钦定卡 → "" → 与从前逐
+    字节相同），现值按 DATA 过 ``sanitize.fence_untrusted`` 围栏。"""
+    return steer.build_steer_prompt(pend, title_line=dispatch_prompt.rework_title_line(req))
+
+
 def _deliver_steers(d: Daemon, req: Requirement, cfg: config.Config, pend: list) -> None:
-    ok = d.executor.resume(req, cfg, prompt=steer.build_steer_prompt(pend))
+    ok = d.executor.resume(req, cfg, prompt=_steer_prompt(req, pend))
     if ok:
         steer.mark_delivered(req, pend)
         registry.save(req)
@@ -444,6 +482,23 @@ def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_n
         req.execution = ex
         registry.save(req)
     resume_notified.discard(req.id)
+    _probe_title_alive(d, req, sid)
+
+
+def _probe_title_alive(d: Daemon, req: Requirement, sid) -> None:
+    """§37.1 追记：**活着的**会话（working / idle）中途改名的唯一触点。
+
+    issue #331 点名的场景是「用户 attach 进去聊很久的交互式长会话」——那种会话
+    的 roster class 恒为 ``live``，走的就是 ``_note_alive`` 这一条，既不受阻也不
+    交付，所以挂在 ``promote_if_delivered`` 上的那个探针永远探不到它。这里按
+    TITLE_PROBE_AT 的 120 s 节流读一次 transcript 尾，只做改名、不动状态机、
+    不提升（提升仍然只在 blocked / done / dead 那三条既有路上判 FINAL DRAFT）。
+    """
+    if d.executor is None:
+        return
+    if _probe_throttled(sid, TITLE_PROBE_AT):
+        return
+    _apply_probe_title(d, req, _probe_harvest(d, sid))
 
 
 def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
@@ -735,7 +790,7 @@ def _resume_with_steers(d: Daemon, req: Requirement, cfg: config.Config) -> bool
     # 无 steer 时不带 prompt 形参——裸 resume 路径与从前逐字节
     # 相同（add-only 纪律：老注入缝/老 mock 一概不受扰动）。
     if pend:
-        ok = d.executor.resume(req, cfg, prompt=steer.build_steer_prompt(pend))
+        ok = d.executor.resume(req, cfg, prompt=_steer_prompt(req, pend))
         _settle_steers(d, req, pend, ok)
         return ok
     return d.executor.resume(req, cfg)

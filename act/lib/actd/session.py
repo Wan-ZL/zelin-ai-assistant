@@ -97,18 +97,24 @@ def _stop_if_available(d: Daemon, req: Requirement, ex: dict, sid, why: str) -> 
     return d.stop_session_tracked(req, ex, sid, why)
 
 
-def apply_harvest_title(d: Daemon, req: Requirement, harvested: dict) -> None:
-    """§37: apply a harvested ``CARD TITLE:`` line at the same promotion points
-    where delivered_summary lands (round boundaries only). Best-effort; a
-    user-pinned title wins inside set_display_title. Caller saves ``req``."""
+def apply_harvest_title(d: Daemon, req: Requirement, harvested: dict) -> bool:
+    """§37: apply a harvested ``CARD TITLE:`` line at the promotion points where
+    delivered_summary lands, plus the §37.1 追记 mid-round probe. Best-effort; a
+    user-pinned title wins inside set_display_title. Caller saves ``req``.
+
+    Returns True IFF the name really changed (add-only 返回值；既有调用点照旧
+    忽略它并无条件 save)——交付前的中途改名只在真改了名时才落盘，同名重复
+    每 120 s 一次的探针不许把注册表写穿。"""
     from act.lib import registry
     try:
         t = (harvested or {}).get("card_title")
         if t and registry.set_display_title(req, t):
             d.log(f"inbox/reconcile: {req.id} display title refreshed from "
                   f"CARD TITLE line: {str(t)[:64]!r}")
+            return True
     except Exception as e:  # noqa: BLE001 - titles must never block delivery
         d.log(f"harvest title apply failed for {getattr(req, 'id', '?')}: {e}")
+    return False
 
 
 def update_search_index(d: Daemon, card_id, session_id) -> None:
