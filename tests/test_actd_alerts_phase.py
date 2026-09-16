@@ -64,21 +64,23 @@ class AuthFailureScanTest(unittest.TestCase):
 class AlertsPhaseFanOutTest(unittest.TestCase):
     def test_every_detector_message_reaches_notify_with_its_shape(self):
         with mock.patch.object(actd, "detect_transitions",
-                               return_value=[("新卡", "body", "R-1", None),
+                               return_value=[("新卡", "body", "R-1", "proposal"),
                                              ("待验收", "body2", "R-2", "review_ready")]), \
                 mock.patch.object(actd, "_check_auth_failures", return_value=[("登录", "again")]), \
                 mock.patch.object(actd, "_check_radar_liveness", return_value=[("雷达", "dead")]) as live, \
-                mock.patch.object(actd.notify, "notify") as notify:
+                mock.patch.object(actd.notify, "notify") as notify, \
+                mock.patch.object(actd.notify, "suppressed_now", return_value=False):
             actd._alerts_phase({"a": 1}, {"b": 2}, set(), None, interval=30)
+        # §28 追记（issue #29）：凭证失效与源死亡带 kind="failure"（穿透安静时段）。
         self.assertEqual(notify.call_args_list, [
-            mock.call("新卡", "body", req="R-1", kind=None),
+            mock.call("新卡", "body", req="R-1", kind="proposal"),
             mock.call("待验收", "body2", req="R-2", kind="review_ready"),
-            mock.call("登录", "again"),
-            mock.call("雷达", "dead"),
+            mock.call("登录", "again", kind="failure"),
+            mock.call("雷达", "dead", kind="failure"),
         ])
         # a missing anti-nag set is replaced by a fresh one, interval passed through
         self.assertEqual(live.call_args.args[0], set())
-        self.assertEqual(live.call_args.kwargs, {"interval": 30})
+        self.assertEqual(live.call_args.kwargs, {"interval": 30, "suppressed": False})
 
 
 if __name__ == "__main__":

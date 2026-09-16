@@ -45,20 +45,29 @@
 	<string>「屏幕 + 音频」录制模式需要麦克风来转录会议与语音，数据只存本地 ~/.screenpipe。</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>双击卡片上的 claude 命令时，需要控制所选终端（Ghostty / Terminal / iTerm2）来新开窗口运行它。</string>
-	<!-- Sparkle auto-update (EdDSA-signed, package-based). The appcast is hosted
-	     on the newest GitHub Release via the stable /releases/latest/download
-	     redirect (no GitHub Pages, no commit-back to main). NOTE: the app and the
-	     Python pipeline ship in lockstep and BOTH live in the .pkg, so the appcast
-	     enclosure is the .pkg (installationType="package"), not the .app-only .zip. -->
+	<!-- Sparkle auto-update — DISARMED (CONTRACT §74.3; D3 froze this bundle,
+	     issue #333). It used to fetch an EdDSA-signed .pkg from the newest GitHub
+	     Release and install it unattended; on 2026-09-07 it did exactly that with
+	     an OLDER release, and that payload's postinstall rsynced tag v1.0.14 over
+	     the live checkout (232 tracked files reverted, actd restarted). Frozen
+	     must mean inert, so both automatic switches are false here and the
+	     published feed itself carries no items (release.yml). SUFeedURL and
+	     SUPublicEDKey stay so a hand-driven 「检查更新」 still parses a real,
+	     well-formed feed and decides locally that there is nothing to install,
+	     instead of failing on a 404 — and so re-arming this is a two-line
+	     change rather than an archaeology dig.
+	     ALREADY-INSTALLED bundles keep the old 「true」 values: their Info.plist is
+	     inside the code-signing seal and must never be edited (§54) — the terminal
+	     feed is what disarms those. -->
 	<key>SUFeedURL</key>
 	<string>https://github.com/Wan-ZL/zelin-ai-assistant/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>VAVks5YGb78Nt7ntPLx3CxXLZ3cLUaopWsQfJXZBFmI=</string>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>SUAutomaticallyUpdate</key>
-	<true/>
+	<false/>
 </dict>
 </plist>

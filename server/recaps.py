@@ -1,6 +1,6 @@
-"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63).
+"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9 / §63.10).
 
-Two small things, both stdlib (config.yaml is read through
+Three small things, all stdlib (config.yaml is read through
 server.settings.config_yaml_doc, which degrades to {} without PyYAML):
 
 1. **Recap settings** ``GET/PUT /api/settings/recap`` — the three knobs the
@@ -11,12 +11,31 @@ server.settings.config_yaml_doc, which degrades to {} without PyYAML):
    (``recap_enabled`` / ``recap_default_language`` / ``recap_slack_draft_enabled``)
    → config.yaml ``recap:`` block → default; PUT diff-writes the flat keys with
    the §15 semantics server/settings.py already implements for the model knobs.
+   §63.10 adds a fourth, **read-only** value on the same GET: ``default_shape``
+   (``lines`` | ``sections``, config.yaml only — the pipeline has no override
+   flat key for it), which the 会议纪要 panel seeds its shape picker from.
 
-2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」write
-   ``state/recap/marks.json`` ``{key: {copied_at, sent_at}}``. This file is
-   server-owned (act/recap.py never writes it; act/lib/recap_store.py only
-   reads it into the ``recaps[]`` projection) and **no control flow reads a
-   mark** — it is a badge, not a state transition.
+2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」/「忽略」
+   write ``state/recap/marks.json``
+   ``{key: {copied_at, sent_at, dismissed_at}}``. This file is server-owned
+   (act/recap.py never writes it; act/lib/recap_store.py only reads it).
+   §63.5 追记（2026-09-15，issue #301）retires the old clause «**no control
+   flow reads a mark** — it is a badge, not a state transition»: ``sent_at``
+   (= 已归档, derived — un-marking restores) and ``dismissed_at`` now decide
+   exactly two things, both in ``recap_store``, both read-only there — which
+   projection budget a row spends (活跃 / 已归档 / 已忽略) and when a dismissed
+   recap is pruned (`recap.dismissed_retention_days`). A mark still never
+   enters the registry and never triggers a send / dispatch / card
+   transition; this endpoint is still the only writer of the file.
+
+3. **Stored versions** ``GET /api/recaps/history?key=…`` (§63.9, issue #300) —
+   the earlier text, which the board projection deliberately does not carry
+   (``recaps[]`` keeps only the §63.9 scalar handles ``history_versions``, so a
+   10-second board poll never hauls 60 × 5 × 2 recap bodies). **Read-only**:
+   the revert the panel offers goes inbox ``recap_revert`` → actd →
+   ``python -m act.recap --revert``, because ``act/recap.py`` is the only
+   writer of ``state/recap/recaps/`` (§63.6) and this process must never write
+   a recap file.
 
 server/ does not import act (§49): the key shape, the language vocabulary and
 the override key names are mirrored from act/lib/recap_store.py /
@@ -28,6 +47,7 @@ import datetime as _dt
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 from server import settings
 from server.errors import InvalidFieldError, UnknownFieldError
@@ -37,12 +57,26 @@ from server.errors import InvalidFieldError, UnknownFieldError
 KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 # act/lib/config.RECAP_LANGUAGES
 LANGUAGES: tuple = ("auto", "zh", "en")
+# act/lib/recap_text.SHAPES（§63.10；未知值按第一个 = 五行形兜）
+SHAPES: tuple = ("lines", "sections")
 # wire key → settings_overrides.json flat key (config._OVERRIDE_FIELDS)
 OVERRIDE_KEYS = {"enabled": "recap_enabled",
                  "default_language": "recap_default_language",
                  "slack_draft_enabled": "recap_slack_draft_enabled"}
-DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False}
-MARKS: tuple = ("copied", "sent")
+# §63.10：`default_shape` 在 DEFAULTS 里但**不在** OVERRIDE_KEYS 里——它只住 config.yaml
+# 的 recap 块（act/lib/recap_store.settings 读的就是那里，没有 overrides 扁平键），
+# 所以它是**只读**的一格：GET 照层报给面板（面板拿它当形状选择器的初值），PUT 仍只认三把旋钮
+DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False,
+            "default_shape": SHAPES[0]}
+# §63.5 追记（issue #301）：dismissed = 「忽略」（add-only 词表，永不改写已有值）
+MARKS: tuple = ("copied", "sent", "dismissed")
+# §63.9（issue #300）GET /api/recaps/history 的读门与上限
+# mirrors act/recap.HISTORY_CAP —— 面板照它说「只留最近 5 版，更早的会老化掉」
+HISTORY_CAP = 5
+# 一份纪要文件（5 条 history × 两语言 × 5 行）是几 KB：超过这个就不是纪要了，不读、不解析
+MAX_FILE_BYTES = 2 * 1024 * 1024
+# 手改坏的文件可能有任意多条；投影不为它无界（防腐 #4 的精神：读面也有帽）
+ENTRIES_CAP = 20
 
 _BOOL_TRUE = ("true", "yes", "on", "1")
 _BOOL_FALSE = ("false", "no", "off", "0")
@@ -51,6 +85,19 @@ _BOOL_FALSE = ("false", "no", "off", "0")
 def marks_path(home: Path) -> Path:
     # mirrors act/lib/recap_store.marks_path (STATE_DIR / recap / marks.json)
     return home / "state" / "recap" / "marks.json"
+
+
+def recap_file_path(home: Path, key: str) -> Path:
+    """mirrors act/lib/recap_store.recap_path (``recaps/<key with ':' → '_'>.json``).
+
+    **Read-only here** (§63.6: ``act/recap.py`` is the only writer of that
+    directory). The client never names a path: ``key`` must have passed
+    :data:`KEY_RE` first, which leaves nothing but
+    ``meeting_<date>T<hhmm>-<slug>`` — no separator, no dot segment, no room
+    for a traversal."""
+    if not (isinstance(key, str) and KEY_RE.match(key)):
+        raise InvalidFieldError("key must be a recap key", {"field": "key"})
+    return home / "state" / "recap" / "recaps" / (key.replace(":", "_") + ".json")
 
 
 def _iso_now() -> str:
@@ -80,8 +127,17 @@ def coerce_language(value) -> str:
     return v
 
 
+def coerce_shape(value) -> str:
+    """§63.10 出稿形状：两个字面量之外一律 ValueError（调用方回落到默认形，
+    与 act 侧 `recap_text.normalize_shape` 对一个手改坏的值的结论一致）。"""
+    v = str(value or "").strip().lower()
+    if v not in SHAPES:
+        raise ValueError("default_shape must be one of %s" % ", ".join(SHAPES))
+    return v
+
+
 _COERCE = {"enabled": coerce_bool, "default_language": coerce_language,
-           "slack_draft_enabled": coerce_bool}
+           "slack_draft_enabled": coerce_bool, "default_shape": coerce_shape}
 
 
 def _coerce_or(field: str, value, default):
@@ -99,7 +155,7 @@ def _config_block(home: Path) -> dict:
     spells (slack_draft.enabled flattened); {} when absent / unreadable."""
     blk = settings.config_yaml_doc(home).get("recap")
     blk = blk if isinstance(blk, dict) else {}
-    out = {k: blk[k] for k in ("enabled", "default_language") if k in blk}
+    out = {k: blk[k] for k in ("enabled", "default_language", "default_shape") if k in blk}
     draft = blk.get("slack_draft")
     if isinstance(draft, dict) and "enabled" in draft:
         out["slack_draft_enabled"] = draft["enabled"]
@@ -121,9 +177,13 @@ def snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``RecapSettings`` mirrors verbatim)::
 
         {"enabled": bool, "default_language": "auto|zh|en",
-         "slack_draft_enabled": bool, "languages": [...],
+         "slack_draft_enabled": bool, "default_shape": "lines|sections",
+         "languages": [...],
          "source": {"enabled": "override|config|default", ...}}
-    """
+
+    §63.10：``default_shape`` 是**只读**的一格（config.yaml 层，无 overrides 扁平键）——
+    面板拿它当形状选择器的初值，否则「重新生成」会替配置做主，把每一份老纪要
+    永久盖成五行形。"""
     overrides = settings.read_overrides(home)
     values, source = _base_values(home)
     for field, key in OVERRIDE_KEYS.items():
@@ -203,17 +263,116 @@ def _require_key(payload: dict) -> str:
 def _require_mark(payload: dict) -> "tuple[str, bool]":
     which = payload.get("mark")
     if which not in MARKS:
-        raise InvalidFieldError("mark must be copied or sent", {"field": "mark"})
+        raise InvalidFieldError("mark must be one of %s" % ", ".join(MARKS), {"field": "mark"})
     on = payload.get("on", True)
     if not isinstance(on, bool):
         raise InvalidFieldError("on must be a boolean", {"field": "on"})
     return which, on
 
 
+# --------------------------------------------------------------------------- #
+# history: GET /api/recaps/history?key=… (§63.9)
+# --------------------------------------------------------------------------- #
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _lines(value) -> list:
+    """5 行纯文本 → 只留字符串项（手改坏的文件里什么都可能有；数字 title 真出现过）。"""
+    return [line for line in _list(value) if isinstance(line, str)]
+
+
+def _text_or_none(value):
+    """粘出去的那份正文，只收非空字符串（数字 / dict 都是手改过的文件里见过的）。"""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _version_shape(entry: dict) -> dict:
+    """一版（当前记录或一条 history 条目）→ 固定形，键恒在。``version`` 解析不出 = 0
+    （那一项前端不给回退按钮），``quality`` 只放字符串（history 条目在 §63.9 之前
+    没有这个键 = null，面板照此说「这一版的校验结论没有存下来」）。
+
+    §63.10 追记（issue #303）add-only：``shape`` 与两语言的 ``copy_*``（daemon 出稿时
+    渲染好的那份正文）。可发送长版的 ``en`` / ``zh`` 是空的，两版对照因此读 ``copy_*``
+    ——server 只搬运，**永不自己拼正文**（渲染单点在 act/lib/recap_text.py）。"""
+    version = entry.get("version")
+    return {"version": int(version) if isinstance(version, int) and not isinstance(version, bool) else 0,
+            "generated_at": entry.get("generated_at") if isinstance(entry.get("generated_at"), str) else None,
+            "partial": bool(entry.get("partial")),
+            "quality": entry.get("quality") if isinstance(entry.get("quality"), str) else None,
+            "en": _lines(entry.get("en")), "zh": _lines(entry.get("zh")),
+            "shape": entry.get("shape") if entry.get("shape") in SHAPES else SHAPES[0],
+            "copy_en": _text_or_none(entry.get("copy_en")),
+            "copy_zh": _text_or_none(entry.get("copy_zh"))}
+
+
+def _empty_history(key: str) -> dict:
+    """层缺席（文件不在 / 坏文件 / 超读门）的空投影——页面对三者一条路：没有上一版可看。"""
+    return {"key": key, "current": None, "entries": [], "history_cap": HISTORY_CAP,
+            "truncated": False}
+
+
+def _read_doc(path: Path) -> "tuple[Optional[dict], bool]":
+    """``(顶层 dict, truncated)``：缺席 / 坏 JSON / 顶层不是 dict → ``(None, False)``；
+    超过 :data:`MAX_FILE_BYTES` → ``(None, True)``（**不读、不解析**）。永不抛。"""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None, False                  # 还没出过稿 / 已过保留期：空层，不是错误
+    if size > MAX_FILE_BYTES:
+        return None, True
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, False
+    return (doc if isinstance(doc, dict) else None), False
+
+
+def _shaped_entries(doc: dict) -> list:
+    """``history[]`` → **newest first** 的完整形，条数按 :data:`ENTRIES_CAP` 截；
+    只留有正文的条目（面板上每一项都必须真能回退，判据同
+    ``act/lib/recap_store.has_text``：五行形看 ``en``，§63.10 可发送长版看
+    渲染好的 ``copy_en``）。"""
+    shaped = [_version_shape(entry) for entry in reversed(_list(doc.get("history")))
+              if isinstance(entry, dict)][:ENTRIES_CAP]
+    return [entry for entry in shaped if entry["en"] or entry["copy_en"]]
+
+
+def history(home: Path, query: dict) -> dict:
+    """``GET /api/recaps/history?key=…`` (§63.9, issue #300) — one recap's stored
+    versions **with their text**, the one place the earlier text is readable.
+
+    Wire shape (``web/src/types.ts`` ``RecapHistory`` mirrors verbatim)::
+
+        {"key": "meeting:…",
+         "current":  {version, generated_at, partial, quality, en[], zh[],
+                      shape, copy_en, copy_zh} | null,
+         "entries": [ …the same shape, newest first… ],
+         "history_cap": 5, "truncated": false}
+
+    Read-only and fail-open, mirroring ``server/search_index_source.py``: a
+    missing / corrupt / non-object file is **200 with an empty projection**
+    (宪法第 11 条 — a layer being absent is not an error, and a 404 would need
+    the page to grow a second story for the same outcome); over
+    :data:`MAX_FILE_BYTES` the file is not read at all →
+    ``truncated: true``. Never 500. A bad / missing ``key`` is the one 400:
+    that is the client naming something it is not allowed to name."""
+    key = _require_key({"key": (query or {}).get("key")})
+    doc, truncated = _read_doc(recap_file_path(home, key))
+    out = _empty_history(key)
+    out["truncated"] = truncated
+    if doc is None:
+        return out
+    out["current"] = _version_shape(doc)
+    out["entries"] = _shaped_entries(doc)
+    return out
+
+
 def mark(home: Path, payload: dict) -> dict:
-    """``{"key": "meeting:…", "mark": "copied"|"sent", "on": bool?}`` →
-    ``{"ok": true, "key", "copied_at", "sent_at"}``. ``on`` defaults to true;
-    false clears the stamp (「标记已发送」is a toggle)."""
+    """``{"key": "meeting:…", "mark": "copied"|"sent"|"dismissed", "on": bool?}``
+    → ``{"ok": true, "key", "copied_at", "sent_at", "dismissed_at"}``. ``on``
+    defaults to true; false clears the stamp (「标记已发送」/「忽略」are
+    toggles — un-marking is the 恢复 out of 已归档 / 已忽略)."""
     _reject_unknown(payload, ("key", "mark", "on"))
     key = _require_key(payload)
     which, on = _require_mark(payload)
@@ -223,4 +382,4 @@ def mark(home: Path, payload: dict) -> dict:
     marks[key] = entry
     settings.atomic_write_json(marks_path(home), marks)
     return {"ok": True, "key": key, "copied_at": entry.get("copied_at"),
-            "sent_at": entry.get("sent_at")}
+            "sent_at": entry.get("sent_at"), "dismissed_at": entry.get("dismissed_at")}

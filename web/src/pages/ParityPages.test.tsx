@@ -331,7 +331,7 @@ describe("RepairButton", () => {
 
 describe("route + app helpers", () => {
   it("knows the new pages and the anchor param; ?page=ask (D29 退役) falls back to the board", () => {
-    for (const page of ["archive", "permissions", "diagnostics", "setup", "deps", "ingest", "about"]) expect(readPage(`?page=${page}`)).toBe(page);
+    for (const page of ["archive", "permissions", "diagnostics", "setup", "deps", "ingest", "about", "skills"]) expect(readPage(`?page=${page}`)).toBe(page);
     expect(readPage("?page=ask")).toBe("board");
     expect(readAnchor("?page=settings&anchor=live_captions")).toBe("live_captions");
     expect(readAnchor("?anchor=<script>")).toBeNull();

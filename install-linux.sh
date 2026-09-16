@@ -2,9 +2,10 @@
 # One-click installer for Zelin's AI Assistant on LINUX (v1 beta).
 #
 # The Linux mirror of install.sh. Linux v1 ships the headless core + systemd
-# user units + the local web dashboard (the Linux UI) + Slack self-DM capture +
-# notify-send desktop notifications. See docs/LINUX.md for exactly what works
-# and what is DEFERRED (the Mac SwiftUI app; the screenpipe screen-ingest chain).
+# user units + the board server (`python3 -m server`, CONTRACT §49 — the React
+# board IS the Linux UI since 2026-09-14) + Slack self-DM capture + notify-send
+# desktop notifications. See docs/LINUX.md for exactly what works and what is
+# DEFERRED (the Mac SwiftUI app; the screenpipe screen-ingest chain).
 #
 # What it does:
 #   1. dependency checks (python3 + PyYAML required; claude required for
@@ -12,9 +13,10 @@
 #   2. config.example.yaml -> config.yaml + config/runtime.json + secrets dir 0700
 #   3. create state/ and state/inbox/ + seed state/dashboard.json
 #   4. render act/systemd/*.service|*.timer (via `python3 -m act.lib.systemd`)
-#      into ~/.config/systemd/user, then `systemctl --user enable --now` the
-#      resident services (actd + webui + the board server, CONTRACT §54) and
-#      the radar/digest timers
+#      into ~/.config/systemd/user, RETIRE the units whose template is gone
+#      (§55: disable --now + rm + prove it is gone, or say so loudly), then
+#      `systemctl --user enable --now` the resident services (actd + the board
+#      server, CONTRACT §49/§54) and the radar/digest timers
 #   5. run the post-install diagnostics (python3 -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
@@ -35,6 +37,14 @@ ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
 info() { printf "  [info] %s\n" "$1"; }
 err()  { printf "  [ERR ] %s\n" "$1" >&2; }
+
+# §55 退役自证：systemd 或磁盘上是否还知道这个 unit（0 = 还在）。两个面都问，
+# 因为 `list-units` 只列「已载入内存」的，而 ~/.config/systemd/user 里剩下的
+# 文件会在下一次 daemon-reload / 登录时把它复活。
+systemd_unit_known() {   # $1 = unit 文件名
+    [ -e "$UNIT_DIR/$1" ] && return 0
+    systemctl --user list-units --all --no-legend "$1" 2>/dev/null | grep -q -- "$1"
+}
 
 # The pinned daemon interpreter (config/runtime.json "python"), or a plain
 # python3 fallback. Empty string when nothing usable is found.
@@ -190,7 +200,7 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 4. systemd user units (actd + web dashboard + board server + radar/digest timers)"
+echo "==> 4. systemd user units (actd + board server + radar/digest timers)"
 # §54 board server port (config.yaml server.port, default 47820) — rendered into
 # zelin-server.service as ZAI_PORT; fail-open to the default on probe trouble.
 SERVER_PORT="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -c '
@@ -202,9 +212,8 @@ except Exception:
 case "$SERVER_PORT" in ''|*[!0-9]*) SERVER_PORT=47820 ;; esac
 if ! command -v systemctl >/dev/null 2>&1; then
     warn "systemctl not found — no systemd user session on this box."
-    info "run the daemon + dashboard + board server directly instead:"
+    info "run the daemon + board server directly instead:"
     info "  AIASSISTANT_HOME=$REPO_ROOT $RUNTIME_PY -m act.actd &"
-    info "  AIASSISTANT_HOME=$REPO_ROOT $RUNTIME_PY -m act.webui &"
     info "  AIASSISTANT_HOME=$REPO_ROOT ZAI_PORT=$SERVER_PORT $RUNTIME_PY -m server &"
 else
     mkdir -p "$UNIT_DIR"
@@ -226,11 +235,41 @@ else
         info "on a headless server enable it: sudo loginctl enable-linger \"$USER\", then re-run"
     fi
 
+    # §55 退役纪律（install.sh 的 launchd_retire 的 Linux 孪生）：模板删了，已装
+    # 的 unit 不会自己消失——它带着 Restart=always 留在 enable 状态里继续跑（旧
+    # webui 于是继续占 8787、继续用自己的 state/webui.token 与 state/inbox/ 写
+    # 路径）。2026-08-31 的 imessageradar 就是这样跑了 51 天没人看见，所以这里
+    # 必须 disable + 删文件 + **再问一次**，还在就大声报。RETIRED_UNITS 是显式
+    # 授权名单，不认识的 unit 不归我们杀（那些只在 doctor 的 `systemd orphans`
+    # 行里报告，§55 同一条法条）。
+    RETIRED_UNITS=(
+        "zelin-webui.service"   # retired 2026-09-14（§49 追记 / owner 决策 D67）
+    )
+    RETIRE_FAILED=0
+    for unit in "${RETIRED_UNITS[@]}"; do
+        systemd_unit_known "$unit" || continue
+        systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+        rm -f "$UNIT_DIR/$unit"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+        systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
+        if systemd_unit_known "$unit"; then
+            err "retired unit $unit is STILL there after disable + rm"
+            info "  fix: systemctl --user disable --now $unit; rm -f $UNIT_DIR/$unit; systemctl --user daemon-reload"
+            RETIRE_FAILED=$((RETIRE_FAILED + 1))
+        else
+            ok "retired $unit (the board server is the one UI now)"
+        fi
+    done
+    if [ "$RETIRE_FAILED" -ne 0 ]; then
+        warn "$RETIRE_FAILED retired unit(s) survived — the old webui keeps serving its own board on its own port with its own token until it is gone"
+    fi
+
     # Enable + start the RESIDENT services and the timers (the oneshot radar/
     # digest .service units are timer-driven, so they are NOT enabled directly).
+    # zelin-webui.service retired 2026-09-14 (CONTRACT §49 追记 / owner
+    # decision D67): the board server is the one UI on every platform.
     ENABLE_UNITS=(
         "zelin-actd.service"
-        "zelin-webui.service"
         "zelin-server.service"
         "zelin-gmail-radar.timer"
         "zelin-slack-radar.timer"
@@ -257,8 +296,8 @@ else
     fi
 
     if [ "$ENABLE_FAILED" -eq 0 ]; then
-        ok "web dashboard: journalctl --user -u zelin-webui  (prints the http://127.0.0.1:PORT URL)"
         ok "board server (web/dist, needs 'cd web && npm ci && npm run build'): http://127.0.0.1:$SERVER_PORT/"
+        ok "logs: journalctl --user -u zelin-server -f"
     fi
 fi
 
@@ -282,13 +321,15 @@ cat <<EOF
  1. Edit config.yaml (Slack IDs, watched people, source paths).
  2. Anthropic API key -> config/secrets/anthropic-api-key.txt (chmod 600).
     A systemd --user session has no Keychain, so a file-form key is required.
- 3. Open the web dashboard (the Linux UI): find its URL with
-      journalctl --user -u zelin-webui
-    then open http://127.0.0.1:<port> in a browser on this machine. It reads
-    state/dashboard.json and writes approvals to state/inbox/ (CONTRACT §3/§10).
+ 3. Build the board once, then open it (the Linux UI):
+      cd web && npm ci && npm run build
+      http://127.0.0.1:$SERVER_PORT/
+    It reads state/dashboard.json and writes approvals to state/inbox/
+    (CONTRACT §3/§10). In Chrome/Edge the address-bar install icon gives you a
+    standalone window (the PWA manifest, CONTRACT §73) — no extra process.
  4. Phone / always-on channel = Slack self-DM quick capture (works today).
  5. Manage the units:
-      systemctl --user status  zelin-actd.service zelin-webui.service
+      systemctl --user status  zelin-actd.service zelin-server.service
       systemctl --user list-timers 'zelin-*'
       journalctl --user -u zelin-actd -f
  6. Anything off later? Re-run diagnostics anytime: bash install-linux.sh --check

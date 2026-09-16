@@ -132,7 +132,8 @@ class AuditRowTestCase(unittest.TestCase):
         # 非 owner、无标签、没人说「do it」→ D18 `issue_nonowner` 摘要，与 parked 同住 summaries
         nonowner = {"number": 90, "title": "please add a dark mode toggle", "body": "b",
                     "author": {"login": "Carol929"}, "url": "u90", "labels": []}
-        result = daily_loop.run(config.Config(), now=NOW, gh=_fake_gh([PARKED, other, nonowner]),
+        result = daily_loop.run(config.Config(self_improve_enabled=True),   # §65.1 通道开着
+                                now=NOW, gh=_fake_gh([PARKED, other, nonowner]),
                                 doctor=lambda: "[]")
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["proposals"], 1)

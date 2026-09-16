@@ -342,7 +342,7 @@ direct-run 变体（golden `capture-run`）：
   "ts" : "2026-08-30T12:00:00Z"
 }
 ```
-可选键：`note`（owner 纠正备注，1..500 字符，非空字符串）与 `partial`（**只认字面 `true`**——OPEN 行的「现在生成」）。`meeting_key` 形状 `^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$`（镜像 `act/lib/recap_store.KEY_RE`）。**不带任何会话 / 收件人字段**（§63 五层无发送路径的第 4 层）。golden：`recap_generate`、`recap_generate-note`、`recap_generate-partial`。actd 侧回执（CONTRACT §63.8，issue #297）：起子进程前先取 `requested_at`，`detached.launch` 返回后把 running / noop 记进台账 `state/recap_requests.json`（actd 单写者），dashboard `recaps[]` 行的 add-only `generate_request {requested_at, state running|done|noop|lost, note}` 由它与文件的 `generated_at` 算出——web 据此显示「生成中」直到新版本落地；本动作的字段与 golden 不变。
+可选键：`note`（owner 纠正备注，1..500 字符，非空字符串）、`partial`（**只认字面 `true`**——OPEN 行的「现在生成」）与 `shape`（CONTRACT §63.10，issue #303：**只认字面 `lines` / `sections`**——快速五行 / 可发送长版；缺席 = 这份纪要上一次用的形状，再退到 config `recap.default_shape`。词表镜像 `act/lib/recap_text.SHAPES`，别的值一律 400，actd 侧 `recap_store.inbox_argv` 再查一遍形状、认不出 = 诚实 noop）。`meeting_key` 形状 `^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$`（镜像 `act/lib/recap_store.KEY_RE`）。**不带任何会话 / 收件人字段**（§63 五层无发送路径的第 4 层）。另一个可选键 `answers`（CONTRACT §63.11，issue #302）：意图问答的答案，**字符串列表** `["split1=drop", "aud=send"]` —— 1..12 条、每条 `^[a-z]{1,8}\d{0,2}=[a-z_]{1,12}$`、id 不重复，**全有或全无**（一条不合形 = 400；id 与选项的闭表住 daemon 侧 `act/lib/recap_intent.answers_ok`，词表外 = `inbox_argv` 诚实 noop）。**为什么是列表而不是对象**：§4 的字节形只有 null / bool / 整数 / 字符串 / 列表五支，全部 golden 里一处嵌套对象都没有。actd 侧 `recap_store.inbox_argv` 把它转成 `--answers <紧凑 JSON>`。golden：`recap_generate`、`recap_generate-note`、`recap_generate-partial`、`recap_generate-shape`、`recap_generate-intent`。 **§63.12 追记（issue #300 的后半，add-only，字段与 golden 的字节形不变）**：`answers` 的 id 除了位置形 `split<n>` 还认**标签形** `s2`（= 那一份纪要里 S2 那一条的小写形，§63.12 的跨版稳定节内标签；新 `kind` = `item`，选项与 `split` 同 keep / drop / propose）。小写形本来就落在 `^[a-z]{1,8}\d{0,2}=[a-z_]{1,12}$` 之内，所以**这条正则、条数上限、全部 golden 的字节形一个字符没动**；id 与选项的闭表照旧只住 daemon 侧（`act/lib/recap_intent.kind_of`，词表外 = `inbox_argv` 诚实 noop）。面板送出去的仍是位置形（`derive()` 不出标签形问题）。actd 侧回执（CONTRACT §63.8，issue #297）：起子进程前先取 `requested_at`，`detached.launch` 返回后把 running / noop 记进台账 `state/recap_requests.json`（actd 单写者），dashboard `recaps[]` 行的 add-only `generate_request {requested_at, state running|done|noop|lost, note}` 由它与文件的 `generated_at` 算出——web 据此显示「生成中」直到新版本落地；本动作的字段与 golden 不变。
 
 ### 3.11 recap_slack_draft（§63.4，无 `id`）
 ```json
@@ -373,6 +373,17 @@ direct-run 变体（golden `capture-run`）：
 }
 ```
 设置页语气档案区「从我的消息生成/更新档案」（原生 Settings.swift runVoiceGen 在 app 进程里同步跑几分钟的 `python -m act.voice_gen`；web 没有进程可挂）。actd 走 `_DETACHED_ACTIONS` → `act/lib/voice_job.request`：没有正在跑的一份才分离起 `python -m act.voice_gen --job`（一份在跑 = noop，原生 `guard !voiceGenRunning`），spawn 前写 `state/voice_gen/job.json` `{status:"running", started_at}`，子进程跑完自己写 `done` / `failed`（+ `message` / `error` / `profile_path`）；web 经 `GET /api/voice/generate-status` 轮询（`lost` = running 超过 15 分钟没回执）。golden：`voice_generate`。
+
+### 3.14 recap_revert（§63.9，无 `id`；web-only 特形）
+```json
+{
+  "action" : "recap_revert",
+  "meeting_key" : "meeting:2026-08-31T1256-zoom",
+  "ts" : "2026-08-30T12:00:00Z",
+  "version" : 2
+}
+```
+`version` = 要恢复的那一版的版本号，**整数**（1..`_RECAP_VERSION_MAX`，truth = `server/inbox_writer.py`；`true` / `"2"` / `2.0` 一律 400——bool 是 int 子类，这一条是判例钉死的）。本动作是 inbox 里**第一个带整数值的动作**：`mac_json_bytes` 的值类型表因此多一支（NSJSONSerialization 与 Python 对 Int 都印裸十进制，字节形一致），golden 逐字节验证过。actd 走 `_DETACHED_ACTIONS` → `python -m act.recap --revert <key> --to-version <n>`：持 `state/recap/.lock`，把当前正文压进 history、把那一版的正文写成 version + 1（`reverted_from` add-only）——**非破坏**，回退本身也能被回退。这一版不存在 / key 不认识 = 诚实 noop（`recap_store.inbox_argv` 只查形状，存不存在由持锁的写者判，原因进 `state/recap.log`）。为什么不让 server 直接改文件：`act/recap.py` 是 `state/recap/recaps/` 的唯一写者（CONTRACT §63.6），server 侧只有只读的 `GET /api/recaps/history`。**本动作不写任何 daemon 回执**（不进 §63.8 的 `generate_request` 台账：回退不是一次生成），所以「它到底发生了没有」由面板自己的乐观回执回答——排队中一直说话 + 每 5 s 补拉，90 s 没落地就落回 §63.8 那句「actd 可能没在跑」（CONTRACT §63.9）。golden：`recap_revert`。
 
 ### 3.9 import_claude_sessions（§22，无 `id`）
 ```json
@@ -407,7 +418,7 @@ def mac_json_bytes(obj: dict) -> bytes:
 
 ## 5. golden fixtures（`tests/fixtures/inbox/`）
 
-37 个 `<verb>[-variant].golden.json`：31 个由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`；另 6 个 web-only 特形（Mac 端没有对应 inbox 动作——D3 不加功能）由 `server.inbox_writer.mac_json_bytes` 按同一字节规则生成：`recap_generate`(+`-note`,`-partial`) / `recap_slack_draft`（§63）/ `radar_test_round`（§48.7；原生的「立即测试一轮」是 launchctl kickstart，web 走 inbox）/ `voice_generate`（§68.1 追记 D47；原生的「从我的消息生成/更新档案」是 app 进程内同步 Process，web 走 inbox → actd 分离起）。
+`<verb>[-variant].golden.json`（条数 truth = `tests/fixtures/inbox/` 本身，判例 `tests/test_server_actions.py` 逐个 glob）：31 个由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`；其余 web-only 特形（Mac 端没有对应 inbox 动作——D3 不加功能）由 `server.inbox_writer.mac_json_bytes` 按同一字节规则生成：`recap_generate`(+`-note`,`-partial`) / `recap_slack_draft`（§63）/ `recap_revert`（§63.9）/ `radar_test_round`（§48.7；原生的「立即测试一轮」是 launchctl kickstart，web 走 inbox）/ `voice_generate`（§68.1 追记 D47；原生的「从我的消息生成/更新档案」是 app 进程内同步 Process，web 走 inbox → actd 分离起）。
 
 G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server 产物的 `ts` 值替换为 `2026-08-30T12:00:00Z` 后**逐字节比较**；`images`/附图路径含 tmpdir 时同样先做值替换（golden 用 `/tmp/zai-demo/...` 占位）。替换只许动 JSON 值、不许 reserialize——reserialize 会洗掉 `\/` 与空数组渲染，测试就失去牙齿。
 

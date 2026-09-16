@@ -10,6 +10,9 @@ microseconds.
 
 Time base: T0 = 2026-08-31 19:56:00 UTC = 12:56 America/Los_Angeles (PDT) —
 the meeting from issue #129 (``meeting:2026-08-31T1256-zoom``).
+
+:func:`good_output` / :func:`good_sections_output` are validator-clean model
+replies for the two §63.10 shapes (五行 / 可发送长版).
 """
 from __future__ import annotations
 
@@ -109,6 +112,21 @@ def add_pending_chunk(conn: sqlite3.Connection, ts: float) -> int:
 def settle_chunk(conn: sqlite3.Connection, chunk_id: int, status: str = "transcribed") -> None:
     conn.execute("UPDATE audio_chunks SET transcription_status = ? WHERE id = ?", (status, chunk_id))
     conn.commit()
+
+
+def good_sections_output(extra_items: int = 0) -> str:
+    """§63.10 一份校验干净的**可发送长版**回复（同样裹在代码围栏里）。
+    ``extra_items`` 往第一节里再塞几条，用来撞条目上限。"""
+    import json
+    en_items = ["Ann owns the data mix from Monday"] + ["Extra commitment %d" % i
+                                                        for i in range(extra_items)]
+    zh_items = ["数据配比自周一起归 Ann"] + ["额外事项 %d" % i for i in range(extra_items)]
+    en = [{"key": "decided", "modality": "decided", "items": en_items},
+          {"key": "proposed", "modality": "proposed",
+           "items": ["Exit criteria: the eval clears the current baseline"]}]
+    zh = [{"key": "decided", "modality": "decided", "items": zh_items},
+          {"key": "proposed", "modality": "proposed", "items": ["结项标准：评测超过当前基线"]}]
+    return "```json\n" + json.dumps({"en": en, "zh": zh}, ensure_ascii=False) + "\n```"
 
 
 def good_output(en_tail: str = "", zh_tail: str = "") -> str:

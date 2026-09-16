@@ -1,16 +1,29 @@
 // 会议纪要页行为（CONTRACT §63 / issue #129 §3）：
 //   1) 行从 board.recaps 渲染、按日分组、默认选中第一行、进行中行无正文；
-//   2) 复制 = 剪贴板写入 + POST /api/recaps/mark copied（唯一出口）；
-//   3) 重新生成 → inbox recap_generate（note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
+//   2) 复制 = 剪贴板写入（§63.5 追记：一行日期表头 + 5 行正文，表头与面板 h3 同一份）
+//      + POST /api/recaps/mark copied（唯一出口）；
+//   3) 重新生成 → inbox recap_generate（shape 恒在、note 可选，零多余字段）；OPEN 行「现在生成」→ partial:true；
 //      备注命中五行契约做不到的诉求 → 面板逐条说明、按钮改口、toast 不再假装全做到了（issue #296）；
-//   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}。
+//   4) 「投到 Slack 草稿」只在开关开着时出现，走 recap_slack_draft {meeting_key, channel_id}；
+//   5) needs_review 的原因逐条摊在脚注里、自动修剪过的行也说出来（§63.3 追记，issue #298）；
+//   6) 三栏 活跃 / 已归档 / 已忽略：标记已发送即归档、忽略 / 恢复一颗按钮，默认只看活跃（§63.5 追记，issue #301）；
+//   7) §63.10（issue #303）：可发送长版的正文照 daemon 渲染好的 copy_* 显示（所见即所复制）、
+//      不给按位置的引用 chip；「重新生成」面板的形状选择器把 shape 一并送进 inbox，
+//      选择器的初值 = 这一行的形状 > 设置里的 `default_shape`（没出过稿的行不许替配置做主），
+//      备注预检随形状收口并在五行形下指路长版；
+//   8) §63.11（issue #302）：「重新生成」面板里的意图问答（问题逐字来自 wire 的 row.questions，
+//      点过的答案才随 recap_generate 送出、再点一次取消）、正文上方「转写原版 | 我记录的版本」
+//      两版切换（row.baseline 在时才有）且复制跟着切换走；
+//   9) 「上一版」= GET /api/recaps/history 的两版并排 + 逐行改动 + 一颗回退（inbox recap_revert），
+//      回退在途时面板留一条回执（排队中 / 90 s 后「actd 可能没在跑」）、帽满时说清回退会挤掉最早一版，
+//      正文下方五颗引用 chip 复制 `2026-08-31 Zoom #D`（§63.9，issue #300）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBoard, fetchRecapSettings, postAction, postRecapMark } from "../api";
-import { PICKUP_TIMEOUT_MS } from "../components/recaps/recapText";
+import { fetchBoard, fetchRecapHistory, fetchRecapSettings, postAction, postRecapMark } from "../api";
+import { PICKUP_TIMEOUT_MS, REVERT_POLL_MS } from "../components/recaps/recapText";
 import { LanguageContext } from "../i18n";
 import { getState, refreshBoard, resetStoreForTests } from "../store";
-import type { Board, RecapRow, RecapSettings } from "../types";
+import type { Board, RecapHistory, RecapLaneTotals, RecapRow, RecapSettings } from "../types";
 import { GENERATING_POLL_MS, RecapsPage } from "./RecapsPage";
 
 vi.mock("../api", async (importOriginal) => {
@@ -18,6 +31,7 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     fetchBoard: vi.fn(),
+    fetchRecapHistory: vi.fn(),
     fetchRecapSettings: vi.fn(),
     postAction: vi.fn(),
     postRecapMark: vi.fn(),
@@ -36,19 +50,40 @@ function recap(over: Partial<RecapRow> = {}): RecapRow {
   };
 }
 
+/** §63.10 一份可发送长版：en/zh 空着，正文在 sections_* 与 daemon 渲染好的 copy_* 里 */
+// §63.12：条目前面是它自己的跨版稳定标签（daemon 派发、渲染进 copy_*），不再是位置编号
+const SECTIONS_EN = "Decided:\nD1. The run moves to Monday\n\nProposed (proposed):\nP1. Ship behind a flag";
+
+function sectionsRecap(over: Partial<RecapRow> = {}): RecapRow {
+  return recap({
+    shape: "sections", en: null, zh: null,
+    sections_en: [{ key: "decided", modality: "decided", items: ["The run moves to Monday"], tags: ["D1"] },
+                  { key: "proposed", modality: "proposed", items: ["Ship behind a flag"], tags: ["P1"] }],
+    sections_zh: [{ key: "decided", modality: "decided", items: ["训练周一开始"], tags: ["D1"] },
+                  { key: "proposed", modality: "proposed", items: ["先挂开关上线"], tags: ["P1"] }],
+    copy_en: SECTIONS_EN,
+    copy_zh: "定了：\nD1. 训练周一开始\n\n提议：\nP1. 先挂开关上线",
+    tag_seq: { D: 1, P: 1 },
+    ...over,
+  });
+}
+
 function settings(over: Partial<RecapSettings> = {}): RecapSettings {
   return { enabled: true, default_language: "auto", slack_draft_enabled: false,
-    languages: ["auto", "zh", "en"], source: {}, ...over };
+    default_shape: "lines", languages: ["auto", "zh", "en"], source: {}, ...over };
 }
 
-function seedBoard(recaps: RecapRow[]): Board {
-  return { generated_at: "2026-09-01T00:00:00Z", counts: {}, needs_approval: [], running: [],
+function seedBoard(recaps: RecapRow[], recapCounts?: RecapLaneTotals): Board {
+  const board = { generated_at: "2026-09-01T00:00:00Z", counts: {}, needs_approval: [], running: [],
     needs_input: [], review: [], completed: [], debt: [], trash: [], recaps } as unknown as Board;
+  // recap_counts 缺席 = 老 daemon（页面就不说「另有 N 条」，也不给计数加 `+`）
+  return recapCounts ? ({ ...board, recap_counts: recapCounts } as unknown as Board) : board;
 }
 
-async function renderPage(recaps: RecapRow[], over: Partial<RecapSettings> = {}) {
+async function renderPage(recaps: RecapRow[], over: Partial<RecapSettings> = {},
+                          recapCounts?: RecapLaneTotals) {
   vi.mocked(fetchRecapSettings).mockResolvedValue(settings(over));
-  vi.mocked(fetchBoard).mockResolvedValue(seedBoard(recaps));
+  vi.mocked(fetchBoard).mockResolvedValue(seedBoard(recaps, recapCounts));
   await refreshBoard();   // store 只经 action 改：board 从 mock 的 fetchBoard 回流
   const view = render(
     <LanguageContext.Provider value="en">
@@ -59,14 +94,34 @@ async function renderPage(recaps: RecapRow[], over: Partial<RecapSettings> = {})
   return view;
 }
 
+const V1_EN = ["Decided: Ann owns the data mix", "Split: Ann, Bo", "Deadline: Monday",
+  "Changed since last plan: none recorded", "Open: none"];
+
+/** §63.9 `GET /api/recaps/history` 的形：current + entries（newest first）+ 帽 */
+function history(over: Partial<RecapHistory> = {}): RecapHistory {
+  return {
+    key: KEY,
+    // §63.10 add-only：每一版都带形状与渲染好的 copy_*（五行形 = 正文仍读 en/zh）
+    current: { version: 2, generated_at: "2026-08-31T20:40:00Z", partial: false, quality: "ok",
+               en: EN, zh: ZH, shape: "lines", copy_en: null, copy_zh: null },
+    entries: [{ version: 1, generated_at: "2026-08-31T20:20:00Z", partial: false, quality: "ok",
+                en: V1_EN, zh: ZH, shape: "lines", copy_en: null, copy_zh: null }],
+    history_cap: 5,
+    truncated: false,
+    ...over,
+  };
+}
+
 beforeEach(() => {
   resetStoreForTests();
   vi.mocked(fetchBoard).mockReset();
+  vi.mocked(fetchRecapHistory).mockReset().mockResolvedValue(history());
   vi.mocked(fetchRecapSettings).mockReset();
   vi.mocked(postAction).mockReset().mockResolvedValue({ ok: true });
   vi.mocked(postRecapMark).mockReset().mockImplementation(async (key, mark, on = true) => ({
     ok: true, key, copied_at: mark === "copied" && on ? "2026-09-01T00:00:00Z" : null,
     sent_at: mark === "sent" && on ? "2026-09-01T00:00:01Z" : null,
+    dismissed_at: mark === "dismissed" && on ? "2026-09-01T00:00:02Z" : null,
   }));
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
 });
@@ -90,24 +145,81 @@ describe("RecapsPage", () => {
     expect(screen.getByText(/定了：训练周一开始/)).toBeTruthy();
   });
 
-  it("copy writes the five lines to the clipboard and marks copied", async () => {
+  it("copy writes the date header plus the five lines to the clipboard and marks copied", async () => {
     await renderPage([recap()]);
+    // §63.5 追记（issue #299）：面板标题就是复制出去的第一行——所见即所复制
+    const heading = screen.getByRole("heading", { level: 3, name: /^\d{4}-\d{2}-\d{2} \(\w{3}\) / });
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(EN.join("\n"));
+    const written = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    const lines = written.split("\n");
+    expect(lines.length).toBe(6);
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2} \(\w{3}\) \d{2}:\d{2}–\d{2}:\d{2} · Zoom · 20 min$/);
+    expect(lines[0]).toBe(heading.textContent);
+    expect(lines.slice(1)).toEqual(EN);              // 正文仍是 server 存的那 5 行，一字不改
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Mark as sent" }));
     await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "sent", true));
-    await waitFor(() => expect(screen.getByText("Sent")).toBeTruthy());
+    // §63.5 追记（issue #301）：标记已发送 = 归档——行离开活跃栏，在「已归档」里带 Sent badge
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active 0" })).toBeTruthy());
+    expect(screen.getByText(/back in the active list|filed under Archived/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 1" }));
+    expect(screen.getByRole("button", { name: /Zoom · 20 min/ })).toBeTruthy();
+    expect(screen.getByText("Sent")).toBeTruthy();
   });
 
-  it("regenerate posts recap_generate with an optional note and nothing else", async () => {
+  it("dismiss files a recap under Dismissed and Restore brings it back", async () => {
+    // issue #301：不想要的那场会不必被迫标成「已发送」才能离开列表，而且这一步可逆
+    await renderPage([recap()]);
+    expect(screen.getByRole("tab", { name: "Active 1" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "dismissed", true));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Dismissed 1" })).toBeTruthy());
+    expect(screen.getByRole("tab", { name: "Active 0" })).toBeTruthy();
+    // 刚忽略的那一行留在右侧：脚注说清它会更早被删，撤销就在同一颗按钮上
+    expect(screen.getByText(/deleted earlier than the others/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 1" }));
+    expect(screen.getByText("Dismissed")).toBeTruthy();                      // 行 badge
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "dismissed", false));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active 1" })).toBeTruthy());
+  });
+
+  it("an open meeting cannot be dismissed", async () => {
+    // 会还开着：无从判断这场会要不要纪要，也不该让一个标记删掉之后才落地的正文
+    await renderPage([recap({ status: "open", en: null, zh: null, quality: null })]);
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
+  it("an empty lane says why it is empty instead of showing nothing", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 0" }));
+    expect(screen.getByText(/Nothing dismissed yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 0" }));
+    expect(screen.getByText(/Nothing archived yet/)).toBeTruthy();
+  });
+
+  it("a lane whose cap cut rows says how many are missing instead of swallowing them", async () => {
+    // issue #301 review：两份预算只是提高了门槛——`recap_counts` 报真实总数，栏里说出差额，
+    // 计数带 `+`（上限可以是硬的，界面不许悄悄少东西；硬删仍只由 §63.3 的保留窗执行）
+    await renderPage([recap({ sent_at: "2026-09-01T00:00:00Z" })], {},
+                     { active: 7, archived: 61, dismissed: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Archived 1+" }));
+    expect(screen.getByText(/60 older recap\(s\) are not listed in this lane/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Active 0+" }));
+    expect(screen.getByText(/7 older recap\(s\) are not listed in this lane/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Dismissed 0" }));    // 没被切 = 不说话
+    expect(screen.queryByText(/are not listed in this lane/)).toBeNull();
+  });
+
+  it("regenerate posts recap_generate with the picked shape, an optional note and nothing else", async () => {
+    // §63.10：形状恒随请求走（面板上选的那一个就是要生成的那一个，不靠 daemon 猜）
     await renderPage([recap()]);
     fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
     fireEvent.change(screen.getByLabelText(/Correction note/), { target: { value: "deadline is Friday" } });
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({
-      action: "recap_generate", meeting_key: KEY, note: "deadline is Friday" }));
+      action: "recap_generate", meeting_key: KEY, shape: "lines", note: "deadline is Friday" }));
   });
 
   it("a note the five-line format cannot honor is called out before anything is queued", async () => {
@@ -122,7 +234,7 @@ describe("RecapsPage", () => {
     expect(postAction).not.toHaveBeenCalled();          // 打字不排队，说明不是事后补的
     fireEvent.click(screen.getByRole("button", { name: "Regenerate anyway" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({
-      action: "recap_generate", meeting_key: KEY,
+      action: "recap_generate", meeting_key: KEY, shape: "lines",
       note: "Omit the Open line and write the rest in more detail." }));
     await waitFor(() => expect(screen.getByText(/cannot be honored and will not change/)).toBeTruthy());
   });
@@ -162,9 +274,160 @@ describe("RecapsPage", () => {
       action: "recap_slack_draft", meeting_key: KEY, channel_id: "D0ABCDEF12" }));
   });
 
+  it("needs_review lists the reason per line so a correction note can target it", async () => {
+    await renderPage([recap({
+      quality: "needs_review",
+      problems: [{ code: "line_too_long", lang: "en", line: 1, limit: 140, over: 6 },
+                 { code: "timestamp", lang: "zh", line: null, limit: null, over: null }],
+    })]);
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect(screen.getByText(/Validator flagged this text/)).toBeTruthy();
+    expect(screen.getByText("English line 1: 6 characters over the 140-character cap")).toBeTruthy();
+    expect(screen.getByText("Chinese: contains a timestamp")).toBeTruthy();
+  });
+
+  it("a line trimmed on the way in is stated, never silently pasted", async () => {
+    await renderPage([recap({ repairs: [{ lang: "en", line: 1, over: 6, removed: 8 }] })]);
+    expect(screen.queryByText("Needs review")).toBeNull();                 // 修好了就是 ok
+    expect(screen.getByText(
+      "Trimmed English line 1 automatically: 8 characters off the end (it was 6 over the cap)")).toBeTruthy();
+  });
+
   it("empty board shows the onboarding line", async () => {
     await renderPage([]);
     expect(screen.getByText(/No recaps yet/)).toBeTruthy();
+  });
+
+  // ----- §63.9 / issue #300：上一版看得见、回得去，每行可被引用 -------------------------------- //
+
+  const stored = (over: Partial<RecapRow> = {}) => recap({
+    version: 2,
+    history_versions: [{ version: 1, generated_at: "2026-08-31T20:20:00Z", partial: false }],
+    ...over,
+  });
+
+  it("shows the previous version side by side with the current one and marks the lines that differ", async () => {
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    await waitFor(() => expect(fetchRecapHistory).toHaveBeenCalledWith(KEY));
+    // 版本选择器 + 两列 + 逐行「改」标记（第 1、2、3 行不同，后两行相同）
+    expect(await screen.findByRole("tab", { name: /^Version 1 · / })).toBeTruthy();
+    expect(screen.getByText(/Decided: Ann owns the data mix/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 4, name: "Current (version 2)" })).toBeTruthy();
+    expect(screen.getByText(/3 line\(s\) differ/)).toBeTruthy();
+    expect(screen.getAllByText("changed").length).toBe(6);       // 3 行 × 两列
+    // HISTORY_CAP 是 server 给的（client 不写死上限）：老版本会老化掉，这句必须在
+    expect(screen.getByText(/Only the last 5 versions are kept/)).toBeTruthy();
+  });
+
+  it("revert posts recap_revert with the picked version and promises it is undoable", async () => {
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert to this version" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_revert", meeting_key: KEY, version: 1 }));
+    await waitFor(() => expect(screen.getByText(/Revert to version 1 queued/)).toBeTruthy());
+  });
+
+  it("a landed revert says where the text came from, in the flash and in the footnote", async () => {
+    await renderPage([stored()]);
+    await reflow([stored({ version: 3, reverted_from: 1, en: V1_EN })]);
+    await waitFor(() => expect(screen.getByText("Updated to version 3 (restored from version 1)")).toBeTruthy());
+    expect(screen.getByText(/restored from version 1 \(the replaced text is in history/)).toBeTruthy();
+  });
+
+  it("a queued revert keeps saying so, polls, and falls back to the actd line after 90 s", async () => {
+    // 回退没有 daemon 台账（§63.8 只记生成），所以这条本地回执是「它到底发生了没有」的唯一信号：
+    // 闪一句就消失、之后面板装死，正是 issue #297 在生成那一侧要消灭的事。
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert to this version" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalled());
+    const queued = await screen.findByText(/Revert to version 1 is queued, waiting for the daemon/);
+    expect(queued.getAttribute("data-revert-phase")).toBe("queued");
+    // 排队中每 5 s 补拉一次看板（SSE 掉线时的保险，与 §63.8 同款）
+    const before = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(REVERT_POLL_MS); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(before + 1);
+    // 4 s 后闪句消失，回执行仍在（面板不装死）
+    expect(screen.queryByText("Revert to version 1 queued")).toBeNull();
+    expect(screen.getByText(/is queued, waiting for the daemon/)).toBeTruthy();
+    // 90 s 没落地 → 与 §63.8 unclaimed 逐字同一句，补拉停
+    await act(async () => { await vi.advanceTimersByTimeAsync(PICKUP_TIMEOUT_MS); });
+    expect(screen.getByText(/Nothing picked this up in 90 s: actd may not be running/)).toBeTruthy();
+    const polls = vi.mocked(fetchBoard).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(REVERT_POLL_MS * 3); });
+    expect(vi.mocked(fetchBoard).mock.calls.length).toBe(polls);
+  });
+
+  it("the queued revert receipt ends when the reverted version lands", async () => {
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert to this version" }));
+    await screen.findByText(/is queued, waiting for the daemon/);
+    await reflow([stored({ version: 3, reverted_from: 1, en: V1_EN })]);
+    await waitFor(() => expect(screen.queryByText(/is queued, waiting for the daemon/)).toBeNull());
+    expect(screen.getByText("Updated to version 3 (restored from version 1)")).toBeTruthy();
+  });
+
+  it("says that a revert on a full history ages the oldest version out", async () => {
+    // act/recap._push_history 在满帽时挤掉最早那一条：回退**也**会花掉一个回退目标
+    // （判例 tests/test_recap_revert.py），面板不许只把老化归因于「下一次生成」
+    const entries = [5, 4, 3, 2, 1].map((version) => ({
+      version, generated_at: `2026-08-31T20:0${version}:00Z`, partial: false,
+      quality: "ok" as const, en: V1_EN, zh: ZH,
+      shape: "lines", copy_en: null, copy_zh: null }));
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history({ entries }));
+    await renderPage([stored({ version: 6 })]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    expect(await screen.findByText(/a revert pushes the current text into history first/)).toBeTruthy();
+    expect(screen.getByText(/that pushes the oldest stored version out/)).toBeTruthy();
+    expect(screen.getByText(/History is already full at 5/)).toBeTruthy();
+    // 还没满的时候不吓人（默认 fixture 只有一条）
+    cleanup();
+    resetStoreForTests();
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history());
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    expect(await screen.findByText(/Only the last 5 versions are kept/)).toBeTruthy();
+    expect(screen.queryByText(/History is already full/)).toBeNull();
+  });
+
+  it("no stored version means no entry point, and an empty history says so", async () => {
+    await renderPage([recap()]);                                  // 老 daemon / 只生成过一次
+    expect(screen.queryByRole("button", { name: "Previous version…" })).toBeNull();
+    expect(fetchRecapHistory).not.toHaveBeenCalled();
+    cleanup();
+    resetStoreForTests();
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history({ entries: [] }));
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    expect(await screen.findByText(/No earlier version is stored/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Revert to this version" })).toBeNull();
+  });
+
+  it("an unreadable history file is admitted, not faked", async () => {
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history({ current: null, entries: [], truncated: true }));
+    await renderPage([stored()]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    expect(await screen.findByText(/file is too large to read/)).toBeTruthy();
+  });
+
+  it("each line has a citation chip and copying one never touches the five-line body", async () => {
+    await renderPage([recap()]);
+    const chips = screen.getAllByRole("button", { name: /^Copy citation / });
+    expect(chips.length).toBe(5);
+    expect(chips[0].textContent).toBe("#D");
+    expect(chips[4].textContent).toBe("#O");
+    fireEvent.click(chips[0]);
+    await waitFor(() => expect(vi.mocked(navigator.clipboard.writeText).mock.calls.length).toBe(1));
+    expect(vi.mocked(navigator.clipboard.writeText).mock.calls[0][0]).toMatch(/^\d{4}-\d{2}-\d{2} Zoom #D$/);
+    // 正文那一份没被动过（复制正文仍是表头 + server 存的五行）
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
+    const body = vi.mocked(navigator.clipboard.writeText).mock.calls[1][0];
+    expect(body.split("\n").slice(1)).toEqual(EN);
   });
 
   // ----- §63.8 / issue #297：排队后面板不装死 -------------------------------------------------- //
@@ -181,7 +444,8 @@ describe("RecapsPage", () => {
     await renderPage([recap()]);
     fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
     fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
-    await waitFor(() => expect(postAction).toHaveBeenCalledWith({ action: "recap_generate", meeting_key: KEY }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "lines" }));
     // 乐观排队：行 badge + 状态行 + 生成按钮禁用，纠正备注面板收起
     await screen.findByText("Generating");
     expect(screen.getByText(/Queued, waiting for the daemon/)).toBeTruthy();
@@ -303,5 +567,165 @@ describe("RecapsPage", () => {
     await screen.findByText("Generating");
     expect(screen.queryByText("Not picked up")).toBeNull();
     expect(getState().recapPending).toEqual({});
+  });
+  // ------------------------------------------------------------------ §63.10
+  it("shows a sendable recap as the document that will be pasted, with per-item citations", async () => {
+    await renderPage([sectionsRecap()]);
+    // 正文 = daemon 渲染好的那一份（节标题 + 逐条标签 + 语气后缀），一字不改
+    expect(screen.getByText(SECTIONS_EN, { collapseWhitespace: false })).toBeTruthy();
+    // 行 badge 不许把它说成「没出稿」，复制 / 标记已发送照常在
+    expect(screen.getByText("New")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
+    // §63.12：标签跨版稳定 → 逐条引用 chip 出现（组成来自正文），五行形那五颗不出现
+    expect(screen.queryByRole("button", { name: /Copy citation .* #D$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Copy citation .* #D1$/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Copy citation .* #P1$/ })).toBeTruthy();
+    expect(screen.getByText(/the tag in front of an item \(D1 \/ S2…\) is stable across versions/))
+      .toBeTruthy();
+  });
+
+  // ------------------------------------------------------------------ §63.12
+  it("copies one item's citation without touching the pasted body", async () => {
+    const clip = () => vi.mocked(navigator.clipboard.writeText);
+    await renderPage([sectionsRecap()]);
+    fireEvent.click(screen.getByRole("button", { name: /Copy citation .* #P1$/ }));
+    await waitFor(() => expect(clip().mock.calls.length).toBe(1));
+    expect(clip().mock.calls[0][0]).toMatch(/^\d{4}-\d{2}-\d{2} Zoom #P1$/);
+    // 正文那一次复制仍然是表头 + 粘出去的那一份（引用串不掺进去）
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(clip().mock.calls.length).toBe(2));
+    const pasted = clip().mock.calls[1][0] as string;
+    expect(pasted.split("\n").slice(1).join("\n")).toBe(SECTIONS_EN);
+    expect(pasted).not.toContain("#P1");
+  });
+
+  it("the two-version diff keys on the tags, so an unchanged item is not marked changed", async () => {
+    const v1 = { version: 1, generated_at: "2026-08-31T20:20:00Z", partial: false, quality: "ok",
+                 en: [], zh: [], shape: "sections",
+                 copy_en: "Decided:\nD1. The run moves to Monday",
+                 copy_zh: "定了：\nD1. 训练周一开始" };
+    vi.mocked(fetchRecapHistory).mockResolvedValue(history({
+      current: { ...v1, version: 2, generated_at: "2026-08-31T20:40:00Z", copy_en: SECTIONS_EN,
+                 copy_zh: "定了：\nD1. 训练周一开始\n\n提议：\nP1. 先挂开关上线" },
+      entries: [v1],
+    }));
+    await renderPage([sectionsRecap({
+      version: 2,
+      history_versions: [{ version: 1, generated_at: "2026-08-31T20:20:00Z", partial: false }],
+    })]);
+    fireEvent.click(screen.getByRole("button", { name: "Previous version…" }));
+    await waitFor(() => expect(fetchRecapHistory).toHaveBeenCalledWith(KEY));
+    // 这一版多了一节：D1 那一条一字未改 → 不标「改」；只有新出现的两行才标
+    expect(await screen.findByText(/2 line\(s\) differ/)).toBeTruthy();
+    expect(screen.getAllByText("changed").length).toBe(2);
+  });
+
+  it("the regenerate panel picks a shape and sends it with the request", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    const longForm = screen.getByRole("radio", { name: "Sendable long form" });
+    expect(screen.getByRole("radio", { name: "Quick five lines" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(longForm);
+    expect(longForm.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText(/Sections and numbered items/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "sections" }));
+  });
+
+  it("stops refusing what the long shape can do, and points at it while the five lines cannot", async () => {
+    await renderPage([recap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    const box = screen.getByLabelText(/Correction note/);
+    fireEvent.change(box, { target: { value: "Omit the Open line and write the rest in more detail." } });
+    expect(screen.getByText(/A line cannot be dropped/)).toBeTruthy();
+    // 指路：这几件事换成长版就能办到（issue #303 的正题）
+    expect(screen.getByText(/switch to it above and regenerate/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Sendable long form" }));
+    expect(screen.queryByText(/A line cannot be dropped/)).toBeNull();
+    expect(screen.queryByText(/cannot honor these/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Regenerate" })).toBeTruthy();   // 不再改口成「仍要重新生成」
+  });
+
+  it("a row that has never been generated follows the configured default shape", async () => {
+    // 本 PR 之前生成的行 / 还没出过稿的行都没有 `shape` 键。选择器只看行的话，
+    // 「重新生成」会替 `recap.default_shape: sections` 做主，而且那个五行形会被
+    // 写死到记录上（`record_shape` 的第二级），配置从此再也回不来。
+    await renderPage([recap()], { default_shape: "sections" });
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    expect(screen.getByRole("radio", { name: "Sendable long form" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "sections" }));
+  });
+
+  it("a recap already in the long shape defaults the picker to it", async () => {
+    await renderPage([sectionsRecap()]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    expect(screen.getByRole("radio", { name: "Sendable long form" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "sections" }));
+  });
+
+  // ------------------------------------------------------------------ §63.11
+  it("asks the questions the daemon derived and sends only the picked answers", async () => {
+    await renderPage([recap({ questions: [
+      { id: "split1", kind: "split", options: ["keep", "drop", "propose"], subject: "Ann: ships the eval" },
+      { id: "aud", kind: "audience", options: ["send", "self"], subject: null },
+    ] })]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    // 问法按 kind 查表，逐条那一问带着上一版的原话
+    expect(screen.getByText(/Keep this commitment on the record/)).toBeTruthy();
+    expect(screen.getByText("Ann: ships the eval")).toBeTruthy();
+    expect(screen.getByText(/Is this recap for sending to someone/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Drop" }));
+    fireEvent.click(screen.getByRole("radio", { name: "For sending" }));
+    expect(screen.getByText(/2 answered/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "lines",
+      answers: ["split1=drop", "aud=send"] }));
+  });
+
+  it("un-picks an answer when the same option is pressed again", async () => {
+    // 没答过的问题不许被当成答过：默认值会变成一句 owner 从没说过的指令
+    await renderPage([recap({ questions: [
+      { id: "dl", kind: "deadline", options: ["keep", "drop"], subject: null },
+    ] })]);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate…" }));
+    const drop = screen.getByRole("radio", { name: "Drop" });
+    fireEvent.click(drop);
+    expect(drop.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(drop);
+    expect(drop.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText(/You can regenerate without answering/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledWith({
+      action: "recap_generate", meeting_key: KEY, shape: "lines" }));
+  });
+
+  it("keeps the first version switchable and copies whichever one is on screen", async () => {
+    const baseline = { version: 1, generated_at: "2026-08-31T20:20:00Z", shape: "lines",
+                       copy_en: "Decided: Ann owns the data mix", copy_zh: "定了：数据配比归 Ann" };
+    await renderPage([recap({ version: 2, baseline })]);
+    const first = screen.getByRole("tab", { name: "What the transcript said" });
+    expect(screen.getByRole("tab", { name: "What I chose to record" }).getAttribute("aria-selected"))
+      .toBe("true");
+    fireEvent.click(first);
+    expect(first.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Decided: Ann owns the data mix")).toBeTruthy();
+    expect(screen.getByText(/the one straight from the transcript, frozen/)).toBeTruthy();
+    // 引用 chip 不挂在另一版旁边（引用串不带版本号）
+    expect(screen.queryByRole("button", { name: /Copy citation/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalledWith(KEY, "copied", true));
+    const written = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
+    expect(written.split("\n").slice(1)).toEqual(["Decided: Ann owns the data mix"]);
+  });
+
+  it("offers no version switch until a second version exists", async () => {
+    await renderPage([recap()]);
+    expect(screen.queryByRole("tab", { name: "What the transcript said" })).toBeNull();
   });
 });

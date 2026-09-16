@@ -55,7 +55,8 @@ def _record_stop_failure(d: Daemon, req: Requirement, ex: dict, sid, detail) -> 
     ex["stop_failed_error"] = str(detail)[:300] or "stop failed"
     append_note(req, f"[stop-failed] 停止会话 {sid} 失败（重试后进程仍存活），"
                      f"可能仍在后台运行——请在终端 `claude stop` 手动停止")
-    notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id)
+    notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id,
+                  kind=notify.KIND_FAILURE)
     # TELEMETRY 红线（issue #37）：事件只带 req + 分类 id，原文（会话 UUID、
     # PID）一个字节都不出机——全量 detail 只进本机台账（stop_failed_error/notes）。
     analytics.log_event("stop_failed", req=req.id,
@@ -96,18 +97,24 @@ def _stop_if_available(d: Daemon, req: Requirement, ex: dict, sid, why: str) -> 
     return d.stop_session_tracked(req, ex, sid, why)
 
 
-def apply_harvest_title(d: Daemon, req: Requirement, harvested: dict) -> None:
-    """§37: apply a harvested ``CARD TITLE:`` line at the same promotion points
-    where delivered_summary lands (round boundaries only). Best-effort; a
-    user-pinned title wins inside set_display_title. Caller saves ``req``."""
+def apply_harvest_title(d: Daemon, req: Requirement, harvested: dict) -> bool:
+    """§37: apply a harvested ``CARD TITLE:`` line at the promotion points where
+    delivered_summary lands, plus the §37.1 追记 mid-round probe. Best-effort; a
+    user-pinned title wins inside set_display_title. Caller saves ``req``.
+
+    Returns True IFF the name really changed (add-only 返回值；既有调用点照旧
+    忽略它并无条件 save)——交付前的中途改名只在真改了名时才落盘，同名重复
+    每 120 s 一次的探针不许把注册表写穿。"""
     from act.lib import registry
     try:
         t = (harvested or {}).get("card_title")
         if t and registry.set_display_title(req, t):
             d.log(f"inbox/reconcile: {req.id} display title refreshed from "
                   f"CARD TITLE line: {str(t)[:64]!r}")
+            return True
     except Exception as e:  # noqa: BLE001 - titles must never block delivery
         d.log(f"harvest title apply failed for {getattr(req, 'id', '?')}: {e}")
+    return False
 
 
 def update_search_index(d: Daemon, card_id, session_id) -> None:

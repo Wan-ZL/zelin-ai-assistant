@@ -2,6 +2,7 @@
 // （tray.full / record.circle / trash / archivebox / gearshape / info.circle + 折叠钮 sidebar.leading；
 // questionmark.bubble / checklist 随 D29 / D30 的两页一起从栏上撤下）。16×16 线稿、currentColor、
 // aria-hidden——文字在 NavRail 里。
+// web 自有页的图标同一套画法（同 viewBox / 同笔宽）：text.bubble = 会议纪要（D32）、puzzlepiece.extension = 技能（D78）。
 import type { ReactNode } from "react";
 
 interface IconProps {
@@ -86,6 +87,15 @@ export function SidebarLeadingIcon() {
     <Icon>
       <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
       <path d="M9 4.5v15" />
+    </Icon>
+  );
+}
+
+/** puzzlepiece.extension — 技能（web 自有页，不在原生八页里；D78 起 Skills 商店自己一页） */
+export function SkillIcon() {
+  return (
+    <Icon>
+      <path d="M9.8 6v-.7a2.2 2.2 0 0 1 4.4 0V6h2.3A1.5 1.5 0 0 1 18 7.5v10A1.5 1.5 0 0 1 16.5 19h-9A1.5 1.5 0 0 1 6 17.5v-2.3h.7a2.2 2.2 0 0 0 0-4.4H6V7.5A1.5 1.5 0 0 1 7.5 6Z" />
     </Icon>
   );
 }

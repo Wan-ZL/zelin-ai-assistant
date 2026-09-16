@@ -1,6 +1,7 @@
 """policy — origin trust matrix + auto-dispatch ceilings（v-next 信任矩阵，纯函数）.
 
-契约：docs/CONTRACT.md §50（信任矩阵）/ §51（自动派发天花板 + queued 词表）。
+契约：docs/CONTRACT.md §50（信任矩阵）/ §51（自动派发天花板 + queued 词表）/
+§71.1（睡眠感知派发：`autodispatch.require_awake` 旋钮 + `machine_asleep` 排队原因）。
 
 Owner 拍板（2026-08-30，见 docs/design/vnext-amendments.md 的修宪草案）：
 
@@ -154,8 +155,11 @@ AUTODISPATCH_DEFAULTS: dict = {
     "enabled": True,            # 总开关：关掉 = 全部回人工审批
     "max_concurrent": 3,        # 自动派发并发上限（超出 -> queued: concurrency）
     "notify": True,             # 观察模式：每次自动派发发一条通知
+    "require_awake": True,      # §71.1：机器不在清醒态就不派发（探不到 = 按醒着）
     # daily_budget_usd — retired v0.48.7（D9）：旧 config 里残留的键被静默忽略。
 }
+# 逐键 bool 收敛的键（脏值一律 bool() —— 与历史行为逐字相同）
+_AUTODISPATCH_BOOL_KEYS = ("enabled", "notify", "require_awake")
 
 
 def _num(value: object) -> Optional[float]:
@@ -191,13 +195,12 @@ def autodispatch_config(cfg: object) -> dict:
     配置永远解析出一个完整合法的块，绝不 raise（宪法第 11 条口径）。"""
     block = _raw_block(cfg, "autodispatch")
     out = dict(AUTODISPATCH_DEFAULTS)
-    if "enabled" in block:
-        out["enabled"] = bool(block["enabled"])
+    for key in _AUTODISPATCH_BOOL_KEYS:
+        if key in block:
+            out[key] = bool(block[key])
     cap = _int(block.get("max_concurrent"))
     if cap is not None and cap >= 1:
         out["max_concurrent"] = cap
-    if "notify" in block:
-        out["notify"] = bool(block["notify"])
     return out
 
 
@@ -205,7 +208,8 @@ def autodispatch_config(cfg: object) -> dict:
 # self_improve 配置（config.yaml `self_improve:` 块，全 add-only；§65）
 # --------------------------------------------------------------------------- #
 SELF_IMPROVE_DEFAULTS: dict = {
-    "enabled": True,        # 通道总开关：false = self_improve 卡照旧人工审批
+    "enabled": False,       # 通道总开关（#307 / D57 起**默认关**）：false = self_improve
+                            # 卡照旧人工审批、每日循环不读 GitHub、§65.5 巡检不巡
     "repo_path": "",        # "" = 安装根（config.HOME）；比对用 realpath
     "tick_minutes": 60,     # PR 跟进巡检（owner 评论 / 红 CI / 合并 / 关闭）间隔
     "owner_logins": [],     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
@@ -223,12 +227,23 @@ def _str_list(value: object) -> list:
     return [str(x).strip() for x in value if str(x).strip()]
 
 
+def _lane_enabled(cfg: object, block: dict) -> bool:
+    """总开关的三层：cfg 属性（yaml + overrides 合并后）> raw 块 > 默认（关）。"""
+    attr = getattr(cfg, "self_improve_enabled", None)
+    if isinstance(attr, bool):
+        return attr
+    return bool(block.get("enabled", SELF_IMPROVE_DEFAULTS["enabled"]))
+
+
 def self_improve_config(cfg: object) -> dict:
     """读 `self_improve:` 块，脏值逐键回退默认（宪法第 11 条口径）——通道配置
-    的唯一读取点（同 autodispatch_config 的纪律）。"""
+    的唯一读取点（同 autodispatch_config 的纪律）。**总开关另有一层**（§65.1，
+    #307 / D57）：`cfg.self_improve_enabled` 是真 bool 时以它为准——那一路已经把
+    yaml 块与 `settings_overrides.json`（设置页「开发者」区）按 §15 的层次合并过，
+    raw 块只是它的上游；裸 dict / 没有该属性的假 cfg 仍走 raw 块（默认 = 关）。"""
     block = _raw_block(cfg, "self_improve")
     out = dict(SELF_IMPROVE_DEFAULTS)
-    out["enabled"] = bool(block.get("enabled", out["enabled"]))
+    out["enabled"] = _lane_enabled(cfg, block)
     out["repo_path"] = _str_or(block.get("repo_path"), "")
     minutes = _int(block.get("tick_minutes"))
     out["tick_minutes"] = (minutes if minutes is not None and minutes >= 1
@@ -295,7 +310,7 @@ def channel_class_key(channel: object) -> str:
 #                       （D9 取消预算天花板；旧卡上残留的 token 由 actd 在下一
 #                       pass 按「解除即清」清掉，不再产生）
 #   ok:self_improve   — 放行，且走的是 §65 lane（actd 据此选文案/通知）
-#   self_improve:disabled      — self_improve.enabled=false（常态，不上卡）
+#   self_improve:disabled      — self_improve.enabled=false（**出厂默认**，常态，不上卡）
 #   self_improve:paused        — 通道被敏感路径护栏挂起（§65.4），等 owner 清
 #   self_improve:needs_mcp     — 卡声明 needs_mcp：只能走 owner 亲批路径
 #   self_improve:repo_mismatch — target_repo 的 realpath 不是本仓库（D7）
@@ -461,27 +476,33 @@ def may_auto_dispatch(
 # queued_reason — 合并运行列 queued 子状态的原因 chip（locked 词表）
 # --------------------------------------------------------------------------- #
 # "budget" retired v0.48.7（D9）——词表 tombstone，token 永不复用。
-QUEUED_REASONS = ("dependency", "concurrency")
+# "machine_asleep" 加入 v0.48.x（§71.1）——add-only，位置即优先级。
+QUEUED_REASONS = ("dependency", "machine_asleep", "concurrency")
 
 
 def queued_reason(card: object, state: object) -> Optional[str]:
-    """approved-未派发卡的排队原因 -> {dependency, concurrency} 或 None
-    （无阻塞，纯粹还没轮到/上次派发失败在退避）。
+    """approved-未派发卡的排队原因 -> {dependency, machine_asleep, concurrency}
+    或 None（无阻塞，纯粹还没轮到/上次派发失败在退避）。
 
     ``state`` 是调用方（actd/dashboard 投影）算好的快照 dict，键全部可选，
-    缺键 = 跳过该项检查（policy 不做 I/O，不自己数并发）：
+    缺键 = 跳过该项检查（policy 不做 I/O，不自己数并发、也不自己探电源）：
       blocked_by        — 非空（list/str）= 有未完结的依赖卡 -> dependency
+      machine_asleep    — 真 = §71.1 闸按住了本 pass 的全部派发 -> machine_asleep
       running + max_concurrent       — 在跑数达上限 -> concurrency
-    优先级 dependency > concurrency：chip 只有一个位置，报最「粘」的阻塞
-    （依赖不随时间自愈；并发最快松动）。旧快照里残留的 today_spend /
-    daily_budget_usd 键不认、不 raise（D9 之后没有「等预算」这回事）。
-    全函数：垃圾 state/card 只会让检查被跳过，绝不 raise。
+    优先级 dependency > machine_asleep > concurrency：chip 只有一个位置，报最
+    「粘」的阻塞（依赖不随时间自愈；机器醒来要等人；并发最快松动）。旧快照里
+    残留的 today_spend / daily_budget_usd 键不认、不 raise（D9 之后没有「等预算」
+    这回事）。全函数：垃圾 state/card 只会让检查被跳过，绝不 raise。
     """
     st = state if isinstance(state, dict) else {}
     if st.get("blocked_by"):
         return "dependency"
+    if st.get("machine_asleep"):
+        return "machine_asleep"
+    return "concurrency" if _at_concurrency_cap(st) else None
+
+
+def _at_concurrency_cap(st: dict) -> bool:
     running = _int(st.get("running"))
     cap = _int(st.get("max_concurrent"))
-    if running is not None and cap is not None and running >= cap:
-        return "concurrency"
-    return None
+    return running is not None and cap is not None and running >= cap

@@ -30,6 +30,12 @@ _SAMPLES = {
     "msg_auth": (("Slack",), "Slack"),
     "msg_reraised": (("整理推荐信", "新邮件"), "新邮件"),
     "msg_review_ready": (("整理推荐信",), "整理推荐信"),
+    # §70.2 追记 / D74：待验收列老化的**整轮一条**汇总通知（没有卡名，只有数量与天数）
+    "msg_review_stale": ((19, 14), "19"),
+    # §76.3 提案结算信号的三条一次性升级
+    "msg_completion_hint": (("整理推荐信",), "整理推荐信"),
+    "msg_deadline_due": (("整理推荐信",), "整理推荐信"),
+    "msg_repeated_unhandled": (("整理推荐信", 23), "23"),
     "msg_dispatch_failed": (("整理推荐信", "claude 没装好"), "claude 没装好"),
     "msg_dispatch_halted": (("整理推荐信", 5, "claude 没装好"), "5"),
     "msg_resuming": (("整理推荐信",), "整理推荐信"),

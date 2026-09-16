@@ -101,7 +101,8 @@ describe("AppShell · 读看板快照的页（回收站 / 永久性完成 / 会�
     fetchHealthMock.mockReset();
     fetchRecapSettingsMock.mockReset();
     fetchRecapSettingsMock.mockResolvedValue({
-      enabled: true, default_language: "auto", slack_draft_enabled: false, languages: ["auto", "zh", "en"], source: {},
+      enabled: true, default_language: "auto", slack_draft_enabled: false, default_shape: "lines",
+      languages: ["auto", "zh", "en"], source: {},
     });
   });
 

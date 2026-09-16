@@ -36,7 +36,11 @@ exit QUIETLY (no log line, no analytics event) — 24 fires a day against a
 default-off switch must not become the next ``radar_skip`` (audit L4).
 ``--now`` (the Settings "现在生成一份" button via the ``weekly_digest_now``
 inbox action) bypasses the schedule gate but NOT the enabled switch, and a
-disabled forced run does say so.
+disabled forced run does say so. Its three receipts (no data / failed /
+generated) carry the §28 ``receipt`` kind so quiet hours cannot swallow the
+answer to a button press — the button's own sentence promises a banner and
+the failure path files no card at all. A *scheduled* run's success notice
+stays kind-less (``general``): nobody is waiting on it at 3am.
 
 Run: ``python -m act.weekly_digest [--now]``.
 """
@@ -344,7 +348,8 @@ def _no_data(cfg: config.Config, force: bool, summary: dict) -> dict:
             _lang(cfg,
                   f"近 {WINDOW_DAYS} 天没有新的 ingest 数据，先让录制/ingest 跑起来。",
                   f"No ingest data in the last {WINDOW_DAYS} days — "
-                  "start recording/ingest first."))
+                  "start recording/ingest first."),
+            kind=notify.KIND_RECEIPT)
     return _skip(summary, "no_data",
                  f"weekly digest: no ingest data in the last {WINDOW_DAYS} "
                  "days — skipping (nothing to digest, no claude call)")
@@ -359,6 +364,11 @@ def _fail(summary: dict, cfg: config.Config, force: bool, reason: str,
     # loud skip. Scheduled runs stay print+analytics only, mirroring the
     # no-data gate — a failed Monday never advances the marker, so due()
     # keeps firing hourly and an unconditional notify would ping all day.
+    #
+    # §28 追记（issue #29）：手动运行的三条回执打 ``receipt``（穿透安静时段、
+    # 没有分类开关）——按钮的回执句承诺了「完成后会弹通知」，而这条路上**不铸卡**，
+    # 通知被安静时段吃掉 = 按下去什么都没发生。不用 ``failure`` 是因为
+    # ``notify_failures`` 管的是守护进程自己发起的告警，不该把一次按键的回音也关掉。
     summary["ok"] = False
     summary["error"] = error
     print(f"weekly digest: {error}")
@@ -368,7 +378,8 @@ def _fail(summary: dict, cfg: config.Config, force: bool, reason: str,
             _lang(cfg, "本周摘要生成失败", "Weekly digest failed"),
             _lang(cfg,
                   f"{zh_cause}——可在设置页「现在生成一份」重试。",
-                  f"{en_cause} — retry from Settings (\"Generate now\")."))
+                  f"{en_cause} — retry from Settings (\"Generate now\")."),
+            kind=notify.KIND_RECEIPT)
     return summary
 
 
@@ -415,11 +426,14 @@ def _generate(cfg: config.Config, force: bool, runner, notes: list,
                         "last_ingest_mtime": newest_mtime}, summary)
     # D19: no automation proposals ride along anymore — the body must not
     # promise cards that were never filed (§40 honest receipts).
+    # 手动运行（force）= 按钮的回执，打 ``receipt`` 穿透安静时段；**排定**的那次
+    # 没人在等，仍是无 kind 的 general，夜里照旧被安静时段静音（卡片在看板上等）。
     notify.notify(
         _lang(cfg, "本周摘要已生成", "Weekly digest ready"),
         _lang(cfg,
               "去「待验收」看看这周的回顾。",
-              "Review this week's recap in the Review lane."))
+              "Review this week's recap in the Review lane."),
+        kind=notify.KIND_RECEIPT if force else None)
     # `suggestions` stays in the event as an add-only field (always 0).
     analytics.log_event("weekly_digest_generated", notes=len(notes), suggestions=0)
     print(f"weekly digest: generated {digest_card.id} from {len(notes)} notes")

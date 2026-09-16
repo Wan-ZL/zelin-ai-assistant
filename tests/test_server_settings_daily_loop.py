@@ -1,6 +1,7 @@
 """server/ settings face for the daily loop knobs (CONTRACT §70, D10; §49 routes).
 
-- GET /api/settings/daily-loop: effective five knobs + per-field source.
+- GET /api/settings/daily-loop: effective six knobs + per-field source
+  (``review_stale_days`` is the 6th — §70.2 追记 / D74, issue #312).
 - PUT /api/settings/daily-loop: four write gates (same as POST), field whitelist,
   shape validation (bool / HH:MM / non-negative int) with plain-language 400s,
   diff-write into state/settings_overrides.json (equal-to-effective deletes the
@@ -51,9 +52,11 @@ class DailyLoopGetTestCase(_ServerCase):
         status, obj = get_json(self.port, "/api/settings/daily-loop")
         self.assertEqual(status, 200)
         self.assertEqual({k: obj[k] for k in ("enabled", "time", "max_proposals_per_day",
-                                              "stale_days", "trash_retention_days")},
+                                              "stale_days", "trash_retention_days",
+                                              "review_stale_days")},
                          {"enabled": True, "time": "03:30", "max_proposals_per_day": 2,     # D33: 5 → 2
-                          "stale_days": 45, "trash_retention_days": 90})
+                          "stale_days": 45, "trash_retention_days": 90,
+                          "review_stale_days": 14})                                          # D74
         self.assertEqual(set(obj["source"].values()), {"default"})
 
     def test_layering_override_over_config_over_default(self):
@@ -128,6 +131,19 @@ class DailyLoopPutTestCase(_ServerCase):
         self.assertEqual(cfg.daily_loop_stale_days, 10)
         self.assertEqual(cfg.daily_loop_trash_retention_days, 120)
         self.assertEqual(cfg.daily_loop_max_proposals_per_day, 2)      # untouched → D33 default
+
+    def test_the_review_stale_knob_round_trips(self):
+        """D74 第六把旋钮：写得进 overrides、读得回管线、0 = 关掉那条规则。"""
+        _s, obj = put_json(self.port, "/api/settings/daily-loop", {"review_stale_days": 0})
+        self.assertEqual(obj["review_stale_days"], 0)
+        self.assertEqual(obj["source"]["review_stale_days"], "override")
+        self.assertEqual(self._overrides(), {"daily_loop_review_stale_days": 0})
+        status, err = put_json(self.port, "/api/settings/daily-loop", {"review_stale_days": -1})
+        self.assertEqual((status, err["error"]["details"]["field"]), (400, "review_stale_days"))
+        with mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", self.overrides_path), \
+                mock.patch.object(config, "CONFIG_PATH", self.home / "config.yaml"), \
+                mock.patch.object(config, "CONFIG_EXAMPLE_PATH", self.home / "nope.yaml"):
+            self.assertEqual(config.load_config().daily_loop_review_stale_days, 0)
 
 
 if __name__ == "__main__":

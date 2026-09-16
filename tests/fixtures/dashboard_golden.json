@@ -1,12 +1,12 @@
 {
   "generated_at": "2026-09-02T12:00:00Z",
   "counts": {
-    "needs_approval": 3,
+    "needs_approval": 4,
     "running": 6,
     "needs_input": 2,
     "review": 2,
     "completed": 3,
-    "debt": 1,
+    "debt": 2,
     "trash": 4,
     "archived": 3
   },
@@ -75,7 +75,9 @@
       "origin_trust": "external",
       "auto_dispatch_block": "risk:T2",
       "egress": [],
-      "capture_id": "capture-0001"
+      "capture_id": "capture-0001",
+      "decision_due": false,
+      "mention_escalated": false
     },
     {
       "id": "P-202",
@@ -118,7 +120,50 @@
           "target": "here",
           "visibility": "private"
         }
-      ]
+      ],
+      "decision_due": false,
+      "mention_escalated": false
+    },
+    {
+      "id": "P-209",
+      "title": "把 Strawberry 改名 Compass",
+      "summary": "同步 repo、slides 与文档",
+      "display_title": "把 Strawberry 改名 Compass",
+      "display_id": "P-209",
+      "id_kind": "proposal",
+      "target_repo": "/golden/workbench",
+      "target_name": "workbench",
+      "target_kind": "existing",
+      "tier": "T1",
+      "tier_hint": "一键可批",
+      "effective_tier": "T1",
+      "hardness": "soft",
+      "deadline": "2026-08-20",
+      "days_left": -13,
+      "repeated": 23,
+      "silent_merged": 0,
+      "cost_usd": null,
+      "show_cost": false,
+      "cost_state": "unknown",
+      "green_sign": false,
+      "disagreement": null,
+      "improvement_of": null,
+      "sources": [],
+      "plan": [],
+      "outputs": [],
+      "dod": [],
+      "processing": false,
+      "delivery_mode": "chat",
+      "reraised": false,
+      "reraised_note": "",
+      "egress": [],
+      "decision_due": true,
+      "mention_escalated": true,
+      "completion_hint": {
+        "at": 1788948000,
+        "note": "Compass repo 已建、slides 已改",
+        "channel": "meeting"
+      }
     },
     {
       "id": "P-203",
@@ -181,6 +226,7 @@
     {
       "id": "R-220",
       "name": "执行中·有 pid",
+      "title": "执行中·有 pid",
       "display_title": "执行中·有 pid",
       "display_id": "R-220",
       "id_kind": "work",
@@ -188,6 +234,7 @@
       "short_id": "c895e960",
       "copy_cmd": "claude attach c895e960",
       "agent_name": "huge prompt",
+      "agent_name_stale": true,
       "cwd": "/tmp/wt-220",
       "state": "working",
       "started_at": 1788339660,
@@ -208,6 +255,7 @@
     {
       "id": "R-221",
       "name": "执行中·无 agent",
+      "title": "执行中·无 agent",
       "display_title": "执行中·无 agent",
       "display_id": "R-221",
       "id_kind": "work",
@@ -230,6 +278,7 @@
     {
       "id": "R-222",
       "name": "执行中·无 session",
+      "title": "执行中·无 session",
       "display_title": "执行中·无 session",
       "display_id": "R-222",
       "id_kind": "work",
@@ -252,6 +301,7 @@
     {
       "id": "R-231",
       "name": "待验收·又在干",
+      "title": "待验收·又在干",
       "display_title": "待验收·又在干",
       "display_id": "R-231",
       "id_kind": "work",
@@ -318,6 +368,7 @@
     {
       "id": "R-223",
       "name": "执行中·agent done",
+      "title": "执行中·agent done",
       "summary": null,
       "display_title": "执行中·agent done",
       "display_id": "R-223",
@@ -342,6 +393,7 @@
     {
       "id": "R-230",
       "name": "待验收·闲",
+      "title": "待验收·闲",
       "summary": "概述",
       "display_title": "待验收·闲",
       "display_id": "R-230",
@@ -384,6 +436,7 @@
     {
       "id": "R-232",
       "name": "已验收·新",
+      "title": "已验收·新",
       "display_title": "已验收·新",
       "display_id": "R-232",
       "id_kind": "work",
@@ -401,6 +454,7 @@
     {
       "id": "R-233",
       "name": "已验收·旧",
+      "title": "已验收·旧",
       "display_title": "已验收·旧",
       "display_id": "R-233",
       "id_kind": "work",
@@ -434,6 +488,22 @@
           "quote": "请看附件"
         }
       ]
+    },
+    {
+      "id": "P-210",
+      "title": "备选·疑似已完成",
+      "summary": "备选·疑似已完成",
+      "display_title": "备选·疑似已完成",
+      "display_id": "P-210",
+      "id_kind": "proposal",
+      "hardness": "soft",
+      "type": "dev",
+      "sources": [],
+      "completion_hint": {
+        "at": 1788948000,
+        "note": "对账脚本已经在跑了",
+        "channel": "screen"
+      }
     }
   ],
   "trash": [
@@ -653,7 +723,7 @@
     }
   },
   "self_improve": {
-    "enabled": true,
+    "enabled": false,
     "paused": false,
     "paused_reason": null,
     "paused_pr": null,
@@ -666,5 +736,10 @@
     "version": "0.48.99",
     "status": "deployed"
   },
-  "recaps": []
+  "recaps": [],
+  "recap_counts": {
+    "active": 0,
+    "archived": 0,
+    "dismissed": 0
+  }
 }

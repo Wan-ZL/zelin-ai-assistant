@@ -13,8 +13,10 @@ dismissed / corrupt / non-dict / bad groups), radar_sources with a stale
 enabled source and the §48.4 intent / secret_present signals (switch touched
 vs credential present vs neither), §7 egress[] (repo-delivery card bootstrapping a missing dir
 vs chat delivery), §10 capture_id (birth source row + proposal key), the §63 ``recaps[]``
-top-level key (empty store) and the §64 ``assessment`` block (fresh on a
-review card, stale-hash on a delivered card → omitted). Byte-for-byte: key ORDER inside every row is part of the wire
+top-level key (empty store), the §64 ``assessment`` block (fresh on a
+review card, stale-hash on a delivered card → omitted) and the §76.2
+settlement signals (all three true on one proposal, all three false/absent on
+another). Byte-for-byte: key ORDER inside every row is part of the wire
 contract the Swift/web decoders were written against, so ``json.dumps`` with
 ``sort_keys=False`` is compared as text, not as a re-parsed dict.
 
@@ -69,12 +71,25 @@ def _active_cards() -> list:
              cost_estimate_usd="cheap", repeated_mentions="abc",
              target_repo="~/definitely/not/here", execution="corrupt-string",
              plan=["a", "b"], deadline="not-a-date"),
+        # §76.2 三个结算信号一起为真的提案（issue #313 的 P-023 / P-008 形态）：
+        # 截止日已过 13 天、被提 23 次、卡上盖着「疑似已完成」的证据。
+        _req(id="P-209", title="把 Strawberry 改名 Compass", status="card_sent",
+             tier="T1", summary="同步 repo、slides 与文档", deadline="2026-08-20",
+             repeated_mentions=23, delivery_mode="chat",
+             completion_hint={"at": "2026-09-09T10:00:00Z",
+                              "note": "Compass repo 已建、slides 已改",
+                              "channel": "meeting"}),
         _req(id="P-203", title="研究中", status="raising", tier="T2",
              summary="", origin_trust="hand"),
         _req(id="P-204", title="潜在任务", status="detected", type="dev",
              hardness="soft", sources=[{"who": "bob", "channel": "gmail",
                                         "date": _dt.date(2026, 8, 30),
                                         "quote": "请看附件"}]),
+        # §76.2：备选卡也会被盖提示，债务列因此也投影 completion_hint
+        # （提案列那两个派生 bool 不下来——备选卡没有那两个面）。
+        _req(id="P-210", title="备选·疑似已完成", status="detected", type="dev",
+             completion_hint={"at": "2026-09-09T10:00:00Z",
+                              "note": "对账脚本已经在跑了", "channel": "screen"}),
         _req(id="P-205", title="回收站·可清", status="trashed",
              prev_status="detected", trashed_at="2026-08-01T10:00:00Z",
              trash_reason="stale", permanent=False, type="dev"),
@@ -339,6 +354,21 @@ class DashboardGoldenTestCase(unittest.TestCase):
         self.assertEqual(by_id["P-201"]["capture_id"], "capture-0001")
         self.assertEqual(by_id["P-201"]["sources"][0]["capture_id"], "capture-0001")
         self.assertNotIn("capture_id", by_id["P-202"])
+        # §76.2 结算信号：P-209 三个全真（at 是 epoch int），P-201 三个全假/缺席
+        self.assertEqual(
+            (by_id["P-209"]["decision_due"], by_id["P-209"]["mention_escalated"]),
+            (True, True))
+        self.assertIsInstance(by_id["P-209"]["completion_hint"]["at"], int)
+        self.assertEqual(
+            (by_id["P-201"]["decision_due"], by_id["P-201"]["mention_escalated"]),
+            (False, False))
+        self.assertNotIn("completion_hint", by_id["P-201"])
+        # §76.2 债务列同款：P-210 带提示（备选卡也会被盖），P-204 不带；
+        # 两个派生 bool 不下到这一列
+        debt = {row["id"]: row for row in dash["debt"]}
+        self.assertEqual(debt["P-210"]["completion_hint"]["note"], "对账脚本已经在跑了")
+        self.assertNotIn("decision_due", debt["P-210"])
+        self.assertNotIn("completion_hint", debt["P-204"])
 
 
 if __name__ == "__main__":

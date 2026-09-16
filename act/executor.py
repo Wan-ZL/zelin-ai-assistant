@@ -53,6 +53,10 @@ _card_title_tier = dispatch_prompt.card_title_tier
 _current_display_name = dispatch_prompt.current_display_name
 _delivery_mode = dispatch_prompt.delivery_mode
 _resolve_target = dispatch_prompt.resolve_target
+# §60.4 的「bg 会话名 = executor.session_name」照旧从这里可见；实现搬进
+# act/lib/dispatch_prompt.py，因为 dashboard（act/lib，不许 import 入口模块，
+# 防腐 #2）要用同一个函数判「roster 上那条会话的名字是不是已经过时」。
+session_name = dispatch_prompt.session_name
 
 # accept several shapes claude might print the session id in.
 # real `claude --bg` prints:  "backgrounded · e88561e5"  (verified 2026-07-06),
@@ -245,22 +249,6 @@ def dispatch_error_class(err: Optional[str]) -> str:
     (pids, timestamps) must still trip the brake, and a genuinely flapping
     cause is still a storm."""
     return failures.classify(err) or "unclassified"
-
-
-def session_name(req: Requirement) -> str:
-    """Readable display name for the bg session — shows up in `claude agents`
-    so Zelin can correlate list entries with assistant cards at a glance.
-
-    卡片 title 是 LLM/用户产物，可能含换行、路径分隔符、控制字符——而 agent
-    name 会被 claude 用作 worktree 目录/分支名的一部分
-    (<target>/.claude/worktrees/<name>)，合法性必须在本侧保证，不押注下游
-    CLI 的内部清洗：路径分隔符和控制字符统一折叠成单个空格。argv 数组传参
-    本身无 shell 注入面，这里只管名字的文件系统/git 合法性。"""
-    title = (req.title or "").strip()
-    title = re.sub(r"[\\/\x00-\x1f\x7f]+", " ", title)   # newlines, / \, ctrl chars
-    title = re.sub(r"\s+", " ", title).strip()
-    rid = display_id(req)          # §60：工作编号（legacy 卡回落主键）
-    return f"{rid} · {title[:48]}" if title else rid
 
 
 def _claude_bin(cfg: Optional[config.Config] = None) -> str:
@@ -691,14 +679,17 @@ def _record_launch_failure(req: Requirement, ex: dict, cfg: config.Config,
     if halted:
         analytics.log_event("dispatch_halted", req=req.id, failure_id=fid,
                             attempts=attempts + 1, streak=streak)
+        # §28 分类（issue #29）：停止重试把卡停在「需输入」列等人重新批准。
         notify.notify(*notify.msg_dispatch_halted(
-            _card_label(req), streak, failures.user_message(fid)), req=req.id)
+            _card_label(req), streak, failures.user_message(fid)), req=req.id,
+            kind=notify.KIND_NEEDS_INPUT)
         raise DispatchHalted(err[:500])
     if attempts == 0:  # once per failure streak, not on every retry
         # classified reason in the notification body — "任务派发失败" with
         # zero clue left the 2026-07-08 outdated-claude loop undiagnosed
         notify.notify(*notify.msg_dispatch_failed(
-            _card_label(req), failures.user_message(fid)), req=req.id)
+            _card_label(req), failures.user_message(fid)), req=req.id,
+            kind=notify.KIND_FAILURE)
     raise DispatchError(err[:500])
 
 

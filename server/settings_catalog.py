@@ -9,6 +9,9 @@ number → 输入框、list → 逗号分隔输入框），新增一个旋钮 = 
 section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.json 的 control:settings.*，
 §66.2）：区按原生分（general / notifications / obsidian / slack / gmail / telemetry / digest /
 approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
+开发者区前两行是 web 才有的（原生没有）：`self_improve_enabled`（§65.1 / issue #307 / D57）自动改进本软件的通道总开关，默认关；
+`self_improve_owner_logins`（§65.5 / issue #310）额外算作 owner 本人的 GitHub login，默认空表（仓库 owner 与 gh 当前身份恒在集合里）。
+「审批 / 成本」区的 `approval_mention_escalation`（§76.2 / issue #313）也是 web 才有的一行：提案被提够多少次仍未处理就升级（0 = 关），actd 每 pass 现读。
 
 读：``GET /api/settings`` 全目录 + 每 field 的 effective 值与来源
 （override / config / default，三层与 ``act/lib/config._apply_settings_overrides``
@@ -22,9 +25,16 @@ general.language——D37 §15 追记：语言的唯一开关，显式选择必�
 顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
 雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
 ``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
-字段可带 ``check``（今日词表 ``email`` / ``session_id``）：server 400 + 目录投影双语句，web 镜像同一条规则；
-一个 check 不止一句时（session_id：以 ``-`` 开头另有一句）分句登记在 ``CHECK_REASONS``，投影 ``check.reasons``、
-400 的 details 带 ``reason``（§68.7 追记）。开发者区（maintainer）两行的 ``placeholder`` 是**动态**的（原生
+数字字段可带 ``bounds``（闭区间 ``(min, max)``，§72.4 的 ``screenpipe_media_retention_minutes``）：PUT 越界 400（区间进 details），
+读到的越界值按缺席落到下一层——与 ``act/lib/config`` 的同名 coercer（越界抛 ValueError）同一条规则，
+保证「设置页显示的数 == 管线真用的数」；投影 add-only ``bounds{min,max}``，web 的 min / max 与「保存」闸逐字镜像。
+字段可带 ``check``（词表 truth = ``settings_catalog.CHECKS`` / ``_CHECKERS``，今日为 ``email`` /
+``session_id`` / ``clock_time``）：server 400 + 目录投影双语句，web 镜像同一条规则（``web/src/components/settings/draftRules.ts``
+的 ``checkReason`` 逐条对应，不合格 = aria-invalid + 就地那句 + 「保存」不放行）；一个 check 不止一句时
+（session_id：以 ``-`` 开头另有一句）分句登记在 ``CHECK_REASONS``，投影 ``check.reasons``、
+400 的 details 带 ``reason``（§68.7 追记）。过闸后还要**归一**的 kind 登记在 ``_NORMALIZERS``
+（clock_time：``9:30`` → ``09:30``，§28 追记 2026-09-12）——落进 overrides 的拼法必须与
+``act/lib/config`` 读到的逐字一致，否则同一把旋钮在文件与守护进程里两种写法。开发者区（maintainer）两行的 ``placeholder`` 是**动态**的（原生
 SettingsMaintainer 的灰字 = 生效默认：仓库路径 = config.yaml maintainer.repo_path 否则本 checkout；会话 id =
 config.yaml maintainer.session_id，没设才是示例），section 投影另带 add-only ``terminal_app_name``（「会在 <终端> 中打开」）。
 help 文案是 server-owned 的**披露句**，不只是提示：slack / gmail 两区的区首导语、``gmail_fetch_command`` 的
@@ -68,6 +78,10 @@ CHECKS = {
               "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)"},
     "session_id": {"zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。",
                    "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape."},
+    # §28 追记（issue #29）安静时段的两个端点；词法 = server.settings.CLOCK_TIME_RE
+    # （act/lib/config.coerce_clock_time 同一正则，tests/test_server_paths_mirror.py 钉）。
+    "clock_time": {"zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。",
+                   "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30."},
 }
 
 # 一个 check 不止一句时的分句（add-only）：kind → {reason → 双语句}；checker 返回的 reason 在表里就用那句，否则用
@@ -94,13 +108,17 @@ def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
        config: "tuple | None" = None, choices: "tuple | None" = None,
        help_zh: str = "", help_en: str = "", override: Optional[str] = None,
        write: str = "diff", placeholder: "tuple | None" = None,
-       path: Optional[str] = None, check: Optional[str] = None) -> dict:
+       path: Optional[str] = None, check: Optional[str] = None,
+       bounds: "tuple | None" = None) -> dict:
     """一条 field 描述（目录内部形；对外投影去掉 config/override/write 三个内部键）。
     ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。
     ``path``（add-only；今日词表 ``"dir"``）= 这是一个目录字段：投影多带 ``path`` 与 ``path_exists``
     （effective 值展开 ``~`` 后是不是目录；空值 → null），web 据此渲染 选择… / 打开 / 创建 与
     「目录不存在」警告（原生 obsidianGroup / approvalGroup；§68.1）。
-    ``check``（add-only；词表 = ``CHECKS`` 的键）= 值的形状校验：PUT 不合格 400，投影多带 ``check`` 供 web 镜像。"""
+    ``check``（add-only；词表 = ``CHECKS`` 的键）= 值的形状校验：PUT 不合格 400，投影多带 ``check`` 供 web 镜像。
+    ``bounds``（add-only，§72.4；数字 field 的闭区间 ``(min, max)``）= 这把旋钮的合法区间：PUT 越界 400，
+    **读**的时候越界值按缺席处理（落到下一层）——act/lib/config 的同名 coercer 对越界值抛 ValueError（override
+    整条跳过、yaml 回默认），两侧必须是同一条规则，否则设置页显示的数不是 cron 真用的那个。"""
     zh_ph, en_ph = placeholder or ("", "")
     if check is not None and check not in CHECKS:
         raise ValueError("unknown check kind: %s" % check)
@@ -108,7 +126,7 @@ def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
             "help": {"zh": help_zh, "en": help_en}, "default": default,
             "choices": list(choices) if choices else None, "config": config,
             "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph},
-            "path": path, "check": check}
+            "path": path, "check": check, "bounds": bounds}
 
 
 def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
@@ -176,9 +194,64 @@ SECTIONS: tuple = (
                choices=("off", "banner", "sound"),
                help_zh="卡片进入「待验收」时的系统通知：关 / 横幅 / 横幅+声音（默认）。其余通知不受影响。",
                help_en="System notification when a card reaches In review: off / banner / banner + sound (default). Other notifications are unaffected."),
+            # §28 追记（issue #29）分类开关：三把都默认开（新装机行为不变）。
+            # 「完成」一类的开关就是上面那三档，不另立第二把。
+            _f("notify_proposals", "bool", "新提案通知", "New-proposal alerts", default=True,
+               help_zh="雷达 / 捕获铸出新卡等你审批时（含回锅、含一次性批量汇总）。关掉不影响卡片本身，只是不弹横幅——看板上照样在等。",
+               help_en="When a radar or a capture files a new card for your approval (including returned cards and the batched \"N new cards\" summary). Turning it off changes nothing about the cards themselves — they still wait on the board, you just get no banner."),
+            _f("notify_needs_input", "bool", "任务停下来时通知", "Needs-input alerts", default=True,
+               help_zh="会话停在等你一句话时：受阻收割进「待验收」、反复中断暂停自动救活、派发连续失败后停止重试。",
+               help_en="When a session stops and waits on you: a blocked session harvested into In review, auto-recovery paused after repeated crashes, dispatch giving up after a streak of failures."),
+            _f("notify_failures", "bool", "失败通知", "Failure alerts", default=True,
+               help_zh="需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且不受安静时段管——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。",
+               help_en="Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and quiet hours do not silence it — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here."),
+            # 安静时段：写方不入队（不是攒着早上再弹）——§28 的 10 分钟 stale
+            # 清扫让「压到早上」没法兑现；help 文案诚实写明这一点，并点名 §70
+            # 每日循环的出厂时刻（03:30，truth = act/lib/config.DEFAULT_DAILY_LOOP_TIME，
+            # 判例 tests/test_server_notify_preferences_settings.py 对着它比）正落在
+            # 出厂窗内——最大的一处交互，不写出来就是骗人。
+            _f("quiet_hours_enabled", "bool", "安静时段", "Quiet hours", default=False,
+               help_zh="开启后，下面的时段内不弹任何横幅（三类除外：失败通知、你刚按下的按钮的回执、待验收卡归档前的最后一次告知）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。",
+               help_en="While on, no banner is posted inside the window below (three exceptions: failure alerts, the receipt for a button you just pressed, and the last call before a card in review is archived). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board."),
+            _f("quiet_hours_start", "string", "安静时段开始", "Quiet hours start", default="22:00",
+               check="clock_time", placeholder=("22:00", "22:00"),
+               help_zh="24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。",
+               help_en="24-hour HH:MM, local time. A start later than the end wraps past midnight (e.g. 22:00 → 08:00)."),
+            _f("quiet_hours_end", "string", "安静时段结束", "Quiet hours end", default="08:00",
+               check="clock_time", placeholder=("08:00", "08:00"),
+               help_zh="24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。",
+               help_en="24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off."),
+            # §44.6 追记（issue #308 / D64）：提案列顶那排绿色回执的总开关。自动
+            # 通道（雷达 / 每日整理）本就不再出回执，这把只管剩下的用户通道。
+            _f("fold_receipt_notices", "bool", "静默并入回执", "Silent-merge receipts", default=True,
+               help_zh="你自己捕获的一句话被并进已有卡（没有建新卡）时，提案列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。",
+               help_en="When something you captured is merged into an existing card (no new card filed), a green notice appears atop the proposals lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its \u201cFolded \u00d7N\u201d chip. Repeat merges into the same card collapse into one line (\u00d7N)."),
         ],
         help_zh="系统通知由看板 app（壳）投递（§28）；app 没开就没有系统通知。通知权限见「权限体检」。",
         help_en="System notifications are posted by the board app (§28); no app running = no banners. Permission status: Permissions checkup.",
+    ),
+    _section(
+        "storage", "录制数据与磁盘", "Recording data & disk",
+        [
+            # §72.2（issue #28）：screenpipe DB 的保留期。0 = 永久保留 = 出厂默认（现状不变）；N ≥ 1 = cron 链的
+            # cleanup 步删「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行（act/lib/screenpipe_retention.py）。
+            # 磁盘占用 / 增长估算 / 上次清理回执不是旋钮，走 GET /api/screenpipe/disk（web StorageStatus 渲在这一区的 lead 槽）。
+            _f("screenpipe_retention_days", "int", "录制数据保留天数", "Recording data retention (days)", default=0,
+               config=("recording", "retention_days"),
+               # 「一小时」曾是这句里的字面量；它成了旋钮之后只能指路（防腐 #5），zh / en 两句说同一件事
+               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 按下面那把「原始媒体保留分钟数」删，与此无关。",
+               help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are deleted on their own schedule below."),
+            # §72.4（issue #28）：原始 jpg / mp4 的保留期。历来写死 60 分钟，现在是一把旋钮——
+            # 同一条 cleanup 链读它（`--print-value`），改完下一轮 cron 生效、无需重启。区间外 400
+            # 而不是夹取：文件里写着的数必须就是 cron 用的数（act coerce_media_retention_minutes 同规则）。
+            _f("screenpipe_media_retention_minutes", "int", "原始媒体保留分钟数", "Raw media retention (minutes)",
+               default=60, config=("recording", "media_retention_minutes"),
+               bounds=(5, 365 * 24 * 60),
+               help_zh="截图与音频片段（~/.screenpipe/data 里的 jpg / mp4）在本机留多少分钟——OCR 文本与转写此前已经导出，删的只是原始媒体。默认 60；最短 5 分钟（整理每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧），最长 525600（一年）。改完下一轮整理生效，无需重启。",
+               help_en="How many minutes raw screenshots and audio chunks (the jpg / mp4 files under ~/.screenpipe/data) stay on this machine — their OCR text and transcripts are already exported, so only the raw media goes. Default 60; minimum 5 (the tidy runs every 30 minutes, and anything shorter cuts into the frames being exported in the same round), maximum 525600 (one year). Takes effect on the next tidy, no restart."),
+        ],
+        help_zh="录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite，原始 jpg / mp4 攒在 ~/.screenpipe/data；这里看它们占了多少盘、每月长多少，并各给一个保留期。",
+        help_en="The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever and raw jpg / mp4 under ~/.screenpipe/data; see how much disk they take, how fast they grow, and give each a retention window.",
     ),
     _section(
         "obsidian", "笔记库", "Notes vault",
@@ -308,6 +381,14 @@ SECTIONS: tuple = (
                config=("approval", "cost_thresholds", "require_text_confirm_above_usd"),
                help_zh="高于此值升 T2：批准要输入确认词。请输入不小于 0 的数字，如 50。",
                help_en="Above this the card is T2: approval needs a typed confirmation. Enter a number ≥ 0, e.g. 50."),
+            # §76.2（issue #313）：被提 N 次仍未处理的升级阈值。默认值真源 =
+            # act/lib/config.DEFAULT_MENTION_ESCALATION（server 不 import act，
+            # 逐字相等由 tests/test_proposal_decision_signals.py 钉住）。
+            _f("approval_mention_escalation", "int", "被提 N 次仍未处理（升级阈值）",
+               "Raised N times, still unhandled (escalate at)", default=5,
+               config=("approval", "mention_escalation"),
+               help_zh="同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
+               help_en="When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
             _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=60,
                config=("trash", "retention_days"),
                help_zh="超期且未标永久的卡硬删；0 = 永不自动清。", help_en="Unpinned cards older than this are purged; 0 = never."),
@@ -349,6 +430,24 @@ SECTIONS: tuple = (
     _section(
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
+            # §65.1（issue #307 / D57）：自动改进本软件的通道总开关，**默认关**——开发者区的第一行。
+            # 落点 config.yaml `self_improve.enabled`，override 扁平键 `self_improve_enabled`（act/lib/config.py 同名字段）。
+            _f("self_improve_enabled", "bool",
+               "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）",
+               "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
+               default=False, config=("self_improve", "enabled"),
+               help_zh="维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并铸 🤖 提案卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回待审批列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。",
+               help_en="Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 proposal cards, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the approval column, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once."),
+            # §65.5 追记（issue #310）：通道把谁的合并 / 关闭 / 评论当作 owner 本人的动作。出厂就认仓库 owner 与
+            # 这台机器 gh 当前登录的身份；这一行是第三份来源。落点 config.yaml `self_improve.owner_logins`，override
+            # 写嵌套形 `{"self_improve": {"owner_logins": [...]}}`（act/lib/config.py `_OVERRIDE_HANDLERS` 两拼法都认）。
+            _f("self_improve_owner_logins", "list",
+               "额外算作我本人的 GitHub 用户名（逗号分隔）",
+               "Extra GitHub logins that count as you (comma-separated)",
+               default=[], config=("self_improve", "owner_logins"),
+               override="self_improve.owner_logins",
+               help_zh="自动改进通道只把「你」的动作当数：你合并 PR = 验收，你关闭 = 拒绝，你的评论 = 下一轮任务。出厂就认两个身份——仓库地址前半段那个账号，以及这台机器上 gh 当前登录的账号；两者不同（个人号开仓库、工作号登 gh）时都算你本人。这里填第三个、第四个。大小写不敏感。改完下一轮巡检生效，不用重启。",
+               help_en="The self-improvement lane only counts YOUR actions: you merge a PR = accepted, you close it = rejected, your comments = the next round of work. Two identities count out of the box — the account in the first half of the repo slug, and whichever account gh is logged in as on this machine (they differ when the repo is on a personal account and gh is logged in with a work one). Add further logins here. Case-insensitive. Takes effect on the next poll, no restart."),
             # 两行的 placeholder 动态（DYNAMIC_PLACEHOLDERS，§68.7 追记）：原生 SettingsMaintainer 的灰字是**生效默认**——
             # 仓库路径 = config.yaml maintainer.repo_path（~ 展开）否则本 checkout（maintainer_launch.resolve 用的同一条）；
             # 会话 id = config.yaml maintainer.session_id，没设才是下面这行示例。
@@ -544,10 +643,19 @@ _COERCERS = {
 
 
 def coerce(field: dict, value):
-    """按 field.kind 归一一个来自文件的值；归一失败 → None（调用方视为缺席）。"""
+    """按 field.kind 归一一个来自文件的值；归一失败 / 越界（``bounds``）→ None（调用方视为缺席）。"""
     if value is None:
         return None
-    return _COERCERS[field["kind"]](field, value)
+    got = _COERCERS[field["kind"]](field, value)
+    return None if got is not None and out_of_bounds(field, got) else got
+
+
+def out_of_bounds(field: dict, value) -> bool:
+    """``bounds`` 闭区间外 = True（没登记区间的 field 恒 False）。公开名：写闸与读归一同用一把。"""
+    low_high = field.get("bounds")
+    if low_high is None or not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    return not (low_high[0] <= value <= low_high[1])
 
 
 def base_effective(field: dict, config_doc: dict) -> "tuple[Any, str]":
@@ -610,6 +718,10 @@ def _project_field(field: dict, overrides: dict, config_doc: dict) -> dict:
     if field.get("check"):
         # add-only（§68.1 追记）：web 保存前镜像同一条形状校验、显示同一句 server-owned 文案
         out["check"] = check_projection(field["check"])
+    if field.get("bounds"):
+        # add-only（§72.4）：数字旋钮的合法闭区间——web 的 min / max 与「保存」闸镜像同一对数
+        low, high = field["bounds"]
+        out["bounds"] = {"min": low, "max": high}
     return out
 
 
@@ -666,6 +778,12 @@ def _validate_enum(field: dict, value, key: str) -> str:
 
 def _validate_number(field: dict, value, key: str):
     got = _coerce_number(value, field["kind"] == "int")
+    if got is not None and out_of_bounds(field, got):
+        # §72.4：越界不夹取——夹取会让文件里的数与管线真用的数不是一个（act 侧对越界值
+        # 抛 ValueError = 整条跳过）。区间比「非负」更具体，所以先说这一句（负数也走这里）。
+        low, high = field["bounds"]
+        raise InvalidFieldError("%s must be between %s and %s" % (key, low, high),
+                                {"field": key, "min": low, "max": high})
     if got is None or got < 0:
         raise InvalidFieldError("%s must be a non-negative %s" % (
             key, "integer" if field["kind"] == "int" else "number"), {"field": key})
@@ -705,7 +823,23 @@ def session_id_problem(text: str) -> Optional[str]:
 _CHECKERS: "dict[str, Callable[[str], Optional[str]]]" = {
     "email": lambda text: None if looks_like_email(text) else "shape",
     "session_id": session_id_problem,
+    "clock_time": lambda text: None if settings.CLOCK_TIME_RE.match(text.strip()) else "shape",
 }
+
+
+# check 过闸后的归一（add-only）：kind → normalizer。落盘拼法必须与 act/lib/config 读到的逐字一致——
+# `9:30` 与 `09:30` 是同一个时刻，但 diff-write 与守护进程各读各的字面量（§28 追记 2026-09-12）。
+_NORMALIZERS: "dict[str, Callable[[str], str]]" = {
+    "clock_time": settings.coerce_clock_time,   # 与 §70 每日循环端点同一把归一器
+}
+
+
+def normalize_check(field: dict, value: Optional[str]) -> Optional[str]:
+    """``check`` 过闸后的归一（空值 = 清键，不动）；没登记归一器的 kind 原样返回。"""
+    norm = _NORMALIZERS.get(field.get("check") or "")
+    if norm is None or value is None:
+        return value
+    return norm(value)
 
 
 def run_check(field: dict, value: Optional[str], key: str) -> None:
@@ -763,7 +897,7 @@ def validate(field: dict, value):
         return _validate_list(value, key)
     text = _validate_string(value, key)
     run_check(field, text, key)
-    return text
+    return normalize_check(field, text)
 
 
 def _drop_override(overrides: dict, field: dict) -> None:

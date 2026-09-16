@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
-from server import paths, subproc
+from server import background_jobs, paths, subproc
 from server.errors import NotFoundError, UnknownFieldError
 
 EXPORT_SCRIPT = "ingest/screenpipe-export.sh"
@@ -42,8 +42,11 @@ _lock = threading.Lock()
 _jobs: dict = {}            # job id -> record（见 job_status）
 
 
+_THREADS = background_jobs.Threads("zai-ingest-run")
+
+
 def _default_spawn(fn: Callable[[], None]) -> None:
-    threading.Thread(target=fn, name="zai-ingest-run", daemon=True).start()
+    _THREADS.spawn(fn)
 
 
 def _iso(now: float) -> str:
@@ -125,6 +128,15 @@ def job_status(job_id: str) -> dict:
         return dict(job)
 
 
+def join_jobs_for_tests(timeout: float = background_jobs.JOIN_TIMEOUT_S) -> bool:
+    """§68.4 的测试缝：等在飞的后台脚本线程落地（有界；``False`` = 到点还有活的）。"""
+    return _THREADS.join(timeout)
+
+
 def reset_jobs_for_tests() -> None:
+    """清场 = **先等在飞的后台脚本线程落地**再清 job 表——同 `screenpipe_disk`：还活着的线程
+    会在判例临时 home 被 `rmtree` 之后接着写它（CI 2026-09-15 的 Errno 39 是同一个根因）。
+    判例要把这一下的 ``addCleanup`` 排在临时目录那一下**之后**登记（LIFO）。"""
+    join_jobs_for_tests()
     with _lock:
         _jobs.clear()

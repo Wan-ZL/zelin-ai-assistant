@@ -1,4 +1,5 @@
-// 设置页 section「Skills」（CONTRACT §67，owner 决策 D13 / R2.7.2–R2.7.3）。
+// Skills 区（CONTRACT §67 / §67.5，owner 决策 D13 / R2.7.2–R2.7.3）。D78（2026-09-15）起它的落点是**技能页**
+// （`?page=skills`，pages/SkillsPage.tsx——同一个组件，不复制），设置页原处只剩 SkillsPointerSection 那一行入口。
 // 一行一个仓库 skill（skills/index.yaml）：名字 + 版本 + 描述 + 本机状态徽章 + 启用/停用开关。
 // 状态是 server 判的（enabled / disabled / copy / custom / foreign），client 只镜像 wire 键：
 //   enabled  = ~/.claude/skills/<name> 软链接指向仓库副本（开关：停用）
@@ -12,11 +13,16 @@
 import { useEffect, useState } from "react";
 import { ApiError, postRevealTarget } from "../../api";
 import { useI18n } from "../../i18n";
+import { buildAppUrl } from "../../route";
 import { refreshSkills, toggleSkill, useAppState } from "../../store";
 import type { SkillRow } from "../../types";
 import { errorMessage } from "./useToast";
 
 const TOAST_MS = 6000;
+
+/** 区标题（zh, en）——设置页的入口行与技能页共用同一对字面量，没有第二份
+ *  （§66.2 `screen:settings.skills` 探针读的就是它；原生 SettingsSectionDescriptor 逐字） */
+export const SKILLS_TITLE = ["Skills（Claude Code 技能）", "Skills (Claude Code)"] as const;
 
 interface Toast {
   kind: "ok" | "error";
@@ -79,7 +85,7 @@ export function SkillsSection() {
 
   return (
     <section className="settings-section" aria-labelledby="settings-skills-title">
-      <h3 id="settings-skills-title" className="settings-section-title">{text("Skills（Claude Code 技能）", "Skills (Claude Code)")}</h3>
+      <h3 id="settings-skills-title" className="settings-section-title">{text(...SKILLS_TITLE)}</h3>
       <p className="settings-helper">
         {text(
           "仓库自带的 skill 商店（skills/）。启用 = 在 ~/.claude/skills 放一个指向仓库副本的软链接——Claude Code 与派工 agent 真正读取的位置；另一台机器 git pull 后跑 scripts/skills_sync.sh 即同步。本地改过的副本标为「自定义」，商店永不覆盖。",
@@ -226,5 +232,31 @@ function lockedHint(row: SkillRow, text: Text): string {
   return text(
     `${row.path} 不是商店放的（指向别处的软链接或普通文件），请手动处理。`,
     `${row.path} was not placed by the store (a symlink elsewhere or a plain file); handle it by hand.`,
+  );
+}
+
+/**
+ * 设置页原「Skills」区位置留下的一行入口（D78）：区还在目录与设置搜索里（同一个 id `skills`、同一对标题字面量），
+ * 正文只剩一句指路 + 一条到技能页的链接（`<a href="?page=skills">`——左键由 route 的文档级委托拦成 pushState，
+ * ⌘点 / 复制链接照旧是完整深链）。`?anchor=skills` / `#settings-skills` 旧深链不落在这一行上：SettingsPage 见到
+ * 这个锚点直接改道到技能页。
+ */
+export function SkillsPointerSection() {
+  const { text } = useI18n();
+  return (
+    <section className="settings-section" aria-labelledby="settings-skills-moved-title">
+      <h3 id="settings-skills-moved-title" className="settings-section-title">{text(...SKILLS_TITLE)}</h3>
+      <p className="settings-helper">
+        {text(
+          "Skills 已搬到左侧导航栏的「技能」页——启用 / 停用、在 Finder 显示、版本与作用域都在那里。",
+          "Skills now lives in the sidebar under \"Skills\" — enable/disable, reveal in Finder, versions and scopes are all there.",
+        )}
+      </p>
+      <div className="settings-actions">
+        <a className="btn" href={buildAppUrl(window.location.href, "skills", null).toString()}>
+          {text("Skills 已搬到左侧「技能」页 →", "Skills moved to \"Skills\" in the sidebar →")}
+        </a>
+      </div>
+    </section>
   );
 }

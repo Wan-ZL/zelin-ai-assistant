@@ -30,8 +30,13 @@ def _EXISTS(_p):
 
 
 def _cfg(si=None, **attrs):
+    """真 load_config 的形状：yaml `self_improve:` 块 + 已合并进属性的总开关。
+    #307 / D57 起 `enabled` 出厂 **false**，而本文件钉的是「通道开着时的准入」——
+    所以 helper 照 `config._apply_self_improve_block` 的语义把块里的 enabled
+    （缺省 = 开）搬到属性上，只有显式关的判例才是关的。"""
     raw = {"self_improve": si} if si is not None else {}
     cfg = Config(raw=raw)
+    cfg.self_improve_enabled = bool(si.get("enabled", True)) if isinstance(si, dict) else True
     for k, v in attrs.items():
         setattr(cfg, k, v)
     return cfg
@@ -214,7 +219,16 @@ class VocabularyTestCase(unittest.TestCase):
         si = policy.self_improve_config(Config(raw={"self_improve": {"github_repo": " Wan-ZL/x "}}))
         self.assertEqual(si["github_repo"], "Wan-ZL/x")
         self.assertEqual(policy.self_improve_config(None), policy.SELF_IMPROVE_DEFAULTS)
-        self.assertEqual(policy.self_improve_config({"self_improve": "junk"})["enabled"], True)
+        # #307 / D57：出厂默认关——块坏掉 / 没有属性的 cfg 一律回落到关（fail-closed）
+        self.assertFalse(policy.SELF_IMPROVE_DEFAULTS["enabled"])
+        self.assertEqual(policy.self_improve_config({"self_improve": "junk"})["enabled"], False)
+        self.assertEqual(policy.self_improve_config({"self_improve": {"enabled": True}})["enabled"],
+                         True)
+        # 属性（yaml + overrides 合并后）压过 raw 块，两个方向都压
+        self.assertTrue(policy.self_improve_config(
+            _cfg(si={"enabled": False}, self_improve_enabled=True))["enabled"])
+        self.assertFalse(policy.self_improve_config(
+            _cfg(si={"enabled": True}, self_improve_enabled=False))["enabled"])
 
     def test_repo_path_defaults_to_install_root(self):
         self.assertEqual(policy.self_improve_repo_path(None), str(config.HOME))

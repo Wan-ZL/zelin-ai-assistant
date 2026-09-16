@@ -9,7 +9,9 @@ on a Linux box (docs/LINUX.md).
 
 Pinned facts the port depends on:
   * every @TOKEN@ placeholder is substituted (no leftovers);
-  * the resident actd/webui/server units carry Restart=always (KeepAlive equivalent);
+  * the resident actd/server units carry Restart=always (KeepAlive equivalent)
+    — zelin-webui.service retired 2026-09-14 (CONTRACT §49 追记 / D67: the board
+    server is the one UI), so the unit set must NOT grow it back;
   * the periodic radars/digest are timer-driven (Type=oneshot + a .timer);
   * the login-shell claude dir is FIRST on the unit PATH (the 2026-07-08 guard);
   * AIASSISTANT_HOME + WorkingDirectory point at the repo root.
@@ -54,8 +56,9 @@ class RenderTemplatesTestCase(unittest.TestCase):
         names = set(self.rendered)
         # resident services (§54: the board server joined in v0.48.18)
         self.assertIn("zelin-actd.service", names)
-        self.assertIn("zelin-webui.service", names)
         self.assertIn("zelin-server.service", names)
+        # retired 2026-09-14 (§49 追记 / D67) — one board, one port, one token
+        self.assertNotIn("zelin-webui.service", names)
         # a timer+service pair per periodic scan + the weekly digest
         for base in ("zelin-gmail-radar", "zelin-slack-radar",
                      "zelin-obsidian-radar", "zelin-weekly-digest"):
@@ -70,20 +73,21 @@ class RenderTemplatesTestCase(unittest.TestCase):
             self.assertNotIn("YOURUSERNAME", text, name)
 
     def test_resident_units_have_restart_always(self):
-        for name in ("zelin-actd.service", "zelin-webui.service", "zelin-server.service"):
+        for name in ("zelin-actd.service", "zelin-server.service"):
             text = self.rendered[name]
             self.assertIn("Restart=always", text, name)
             self.assertIn("Type=simple", text, name)
             self.assertIn("[Install]", text, name)
             self.assertIn("WantedBy=default.target", text, name)
 
-    def test_actd_and_webui_exec_the_right_modules(self):
+    def test_resident_units_exec_the_right_modules(self):
         self.assertIn("ExecStart=%s -m act.actd" % PY,
                       self.rendered["zelin-actd.service"])
-        self.assertIn("ExecStart=%s -m act.webui" % PY,
-                      self.rendered["zelin-webui.service"])
         self.assertIn("ExecStart=%s -m server" % PY,
                       self.rendered["zelin-server.service"])
+        # no unit anywhere still starts the retired dashboard (§49 追记 / D67)
+        for name, text in self.rendered.items():
+            self.assertNotIn("-m act.webui", text, name)
 
     def test_every_service_raises_the_soft_fd_limit_without_lowering_hard(self):
         # §55 mirror: raise the soft limit for headroom, keep the hard limit at

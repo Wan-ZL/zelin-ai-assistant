@@ -1,0 +1,375 @@
+"""server/screenpipe_disk.py — 录制数据磁盘占用快照（CONTRACT §72.1；路由 §49 ``GET /api/screenpipe/disk``；issue #28）。
+
+判例钉住：GET 路径永不扫目录 / 开 sqlite（首次回 computing 空壳、后台算完才 ready；同一时刻最多一个后台算；
+``?refresh=1`` 只在没在算时再起一个）；扫描按类归并（db / backup / log / media / other）且不跟符号链接；db 只读问
+freelist 与首末 frame，坏库进 ``db_error`` 不炸；增长估算样本优先（≥ 1 天跨度）、全程平均兜底、都没有 = null 并说明；
+样本文件带帽；``retention_days`` 走目录 effective、``last_prune`` 原样投影；回执文件名与 act 侧逐字镜像。
+真 server 随机端口（tests/test_server_common.py）；小目录 + 小 sqlite 全在临时目录里。
+"""
+import json
+import os
+import shutil
+import sqlite3
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.test_server_common import auth_headers, get_json, http_request, start_server
+
+from act.lib import screenpipe_retention as act_ret
+from server import paths
+from server import screenpipe_disk as disk
+
+NOW = 1_800_000_000.0
+DAY = 86400.0
+
+
+def make_root(root: Path, *, db_rows: int = 3) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "data").mkdir()
+    (root / "data" / "a.mp4").write_bytes(b"m" * 1000)
+    (root / "engine.log").write_bytes(b"l" * 300)
+    (root / "db.sqlite.bak-20260604").write_bytes(b"b" * 5000)
+    (root / "notes.txt").write_bytes(b"o" * 10)
+    conn = sqlite3.connect(str(root / "db.sqlite"))
+    conn.execute("CREATE TABLE frames (id INTEGER PRIMARY KEY, timestamp TIMESTAMP NOT NULL)")
+    for i in range(db_rows):
+        conn.execute("INSERT INTO frames(timestamp) VALUES (?)", ("2026-01-%02dT00:00:00.000000+00:00" % (i + 1),))
+    conn.commit()
+    conn.close()
+
+
+class ScanTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-disk-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / ".screenpipe"
+        make_root(self.root)
+
+    def test_classify(self):
+        self.assertEqual(disk.classify("", "db.sqlite"), "db")
+        self.assertEqual(disk.classify("", "db.sqlite-wal"), "db")
+        self.assertEqual(disk.classify("", "db.sqlite.bak-20260604"), "backup")
+        self.assertEqual(disk.classify("", "old.bak"), "backup")
+        self.assertEqual(disk.classify("", "screenpipe.2026-04-16.0.log"), "log")
+        self.assertEqual(disk.classify("data/2026", "x.mp4"), "media")
+        self.assertEqual(disk.classify("pipes", "y.json"), "other")
+
+    def test_scan_sums_by_kind_and_skips_symlinks(self):
+        (self.root / "link.log").symlink_to(self.root / "engine.log")
+        out = disk.scan(self.root)
+        sizes = out["sizes"]
+        self.assertEqual(sizes["media"], 1000)
+        self.assertEqual(sizes["log"], 300)       # 符号链接不计
+        self.assertEqual(sizes["backup"], 5000)
+        self.assertEqual(sizes["other"], 10)
+        self.assertGreater(sizes["db"], 0)
+        self.assertEqual(out["total_bytes"], sum(sizes.values()))
+        self.assertEqual(out["backups"], [{"name": "db.sqlite.bak-20260604", "bytes": 5000}])
+        self.assertEqual(out["file_count"], 5)
+
+    def test_db_stats_reads_freelist_and_frame_span(self):
+        out = disk.db_stats(self.root / "db.sqlite")
+        self.assertIsNone(out["db_error"])
+        self.assertEqual(out["oldest_frame_ts"], "2026-01-01T00:00:00.000000+00:00")
+        self.assertEqual(out["newest_frame_ts"], "2026-01-03T00:00:00.000000+00:00")
+        self.assertIsInstance(out["db_reclaimable_bytes"], int)
+
+    def test_a_file_that_cannot_be_stat_ed_is_skipped_rather_than_counted_as_zero(self):
+        """扫到一半读不到某个文件（引擎刚把日志轮换掉、权限、卷掉线）= 跳过它：
+        不计进 `file_count`、不给它的 kind 加 0——占用是给人看的数字（§0 第 3 条）。"""
+        real_lstat, missing = os.lstat, str(self.root / "engine.log")
+
+        def flaky_lstat(path, *args, **kwargs):
+            if str(path) == missing:
+                raise OSError("EIO")
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(os, "lstat", flaky_lstat):
+            out = disk.scan(self.root)
+        self.assertEqual(out["sizes"]["log"], 0)
+        self.assertEqual(out["file_count"], 4)          # 5 个文件里跳掉了那一个
+        self.assertEqual(out["total_bytes"], sum(out["sizes"].values()))
+
+    def test_a_db_that_cannot_even_be_opened_lands_in_db_error(self):
+        """只读 URI 连不上（权限、卷掉线、sqlite 不认那个 URI）——进 `db_error`，
+        其余数字全是 null；`GET /api/screenpipe/disk` 不许因此 500。"""
+        boom = sqlite3.OperationalError("unable to open database file")
+        with mock.patch.object(disk.sqlite3, "connect", side_effect=boom):
+            out = disk.db_stats(self.root / "db.sqlite")
+        self.assertEqual(out["db_error"], "unable to open database file")
+        self.assertIsNone(out["db_reclaimable_bytes"])
+        self.assertIsNone(out["oldest_frame_ts"])
+        self.assertIsNone(out["newest_frame_ts"])
+
+    def test_db_stats_is_honest_about_missing_or_broken_db(self):
+        self.assertEqual(disk.db_stats(self.root / "nope.sqlite")["db_error"], "no_db")
+        bad = self.root / "bad.sqlite"
+        bad.write_text("not a db", encoding="utf-8")
+        out = disk.db_stats(bad)
+        self.assertIsNotNone(out["db_error"])
+        self.assertIsNone(out["db_reclaimable_bytes"])
+
+
+class EstimateTestCase(unittest.TestCase):
+    def test_samples_slope_wins_when_span_is_at_least_a_day(self):
+        samples = [[NOW - 2 * DAY, 1_000], [NOW - DAY, 1_500], [NOW, 2_000]]
+        out = disk.estimate(samples, NOW, db_bytes=10, oldest_ts="2020-01-01T00:00:00+00:00")
+        self.assertEqual(out["basis"], "samples")
+        self.assertEqual(out["bytes_per_month"], 15_000)    # 1000 B / 2 d × 30 d
+        self.assertEqual(out["span_days"], 2.0)
+        self.assertEqual(out["samples"], 3)
+
+    def test_short_span_falls_back_to_lifetime_average(self):
+        samples = [[NOW - 3600, 1_000], [NOW, 2_000]]
+        oldest = "2026-01-01T00:00:00.000000+00:00"
+        import datetime as dt
+        since = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp()
+        now = since + 10 * DAY
+        out = disk.estimate(samples, now, db_bytes=3_000, oldest_ts=oldest)
+        self.assertEqual(out["basis"], "lifetime")
+        self.assertEqual(out["bytes_per_month"], 9_000)      # 3000 B / 10 d × 30 d
+        self.assertEqual(out["span_days"], 10.0)
+
+    def test_nothing_to_go_on_is_null_not_zero(self):
+        out = disk.estimate([], NOW, db_bytes=0, oldest_ts=None)
+        self.assertEqual(out, {"bytes_per_month": None, "basis": None, "span_days": None, "samples": 0})
+        out = disk.estimate([[NOW, 5]], NOW, db_bytes=5, oldest_ts="garbage")
+        self.assertIsNone(out["bytes_per_month"])
+
+    def test_old_samples_fall_out_of_the_window(self):
+        samples = [[NOW - 60 * DAY, 0], [NOW - 40 * DAY, 100], [NOW, 100]]
+        out = disk.estimate(samples, NOW, db_bytes=0, oldest_ts=None)
+        self.assertEqual(out["samples"], 1)
+        self.assertIsNone(out["bytes_per_month"])
+
+    def test_parse_ts_accepts_engine_shapes_and_rejects_garbage(self):
+        import datetime as dt
+        base = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp()
+        self.assertEqual(disk._parse_ts("2026-01-01T00:00:00.000000+00:00"), base)
+        self.assertEqual(disk._parse_ts("2026-01-01 00:00:00"), base)        # 空格分隔 + naive = UTC
+        self.assertEqual(disk._parse_ts("2026-01-01T00:00:00Z"), base)       # Z 后缀
+        self.assertIsNone(disk._parse_ts("garbage"))
+        self.assertIsNone(disk._parse_ts(""))
+        self.assertIsNone(disk._parse_ts(None))
+        self.assertIsNone(disk._parse_ts(42))
+
+    def test_append_sample_gap_and_cap(self):
+        samples = disk.append_sample([], NOW, 10)
+        self.assertEqual(samples, [[NOW, 10]])
+        self.assertIs(disk.append_sample(samples, NOW + 60, 20), samples)   # 间隔不足不记
+        grown = disk.append_sample(samples, NOW + disk.SAMPLE_MIN_GAP_S, 20)
+        self.assertEqual(len(grown), 2)
+        many = [[NOW - (disk.SAMPLE_CAP + 5 - i) * DAY, i] for i in range(disk.SAMPLE_CAP + 5)]
+        capped = disk.append_sample(many, NOW, 1)
+        self.assertEqual(len(capped), disk.SAMPLE_CAP)
+        self.assertEqual(capped[-1], [NOW, 1])
+
+    def test_samples_file_round_trip_tolerates_garbage(self):
+        with tempfile.TemporaryDirectory(prefix="zai-disk-s-") as tmp:
+            p = Path(tmp) / "state" / "s.json"
+            disk.save_samples(p, [[1.0, 2], [3.0, 4]])
+            self.assertEqual(disk.load_samples(p), [[1.0, 2], [3.0, 4]])
+            p.write_text('{"not": "a list"}', encoding="utf-8")
+            self.assertEqual(disk.load_samples(p), [])
+            p.write_text("[[1, 2], [3], \"x\", [5, 6]]", encoding="utf-8")
+            self.assertEqual(disk.load_samples(p), [[1.0, 2], [5.0, 6]])
+            self.assertEqual(disk.load_samples(p.parent / "missing.json"), [])
+
+
+class SnapshotTestCase(unittest.TestCase):
+    """snapshot()：GET 路径零扫描；后台 job 注入缝 ``spawn``。"""
+
+    def setUp(self):
+        disk.reset_cache_for_tests()
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-disk-snap-")
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "home"
+        (self.home / "state").mkdir(parents=True)
+        self.root = Path(self.tmp.name) / ".screenpipe"
+        make_root(self.root)
+        patcher = mock.patch.object(paths, "screenpipe_dir", return_value=self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # cleanup 是 LIFO：这一下登记在临时目录与 patcher **之后**，所以它先跑——
+        # 先 join 掉在飞的后台算，再让 rmtree 去走 state/（CI 2026-09-15 的 Errno 39）。
+        self.addCleanup(disk.reset_cache_for_tests)
+
+    def test_first_call_is_a_computing_placeholder_and_schedules_exactly_one_job(self):
+        jobs = []
+        with mock.patch.object(disk, "scan", side_effect=AssertionError("GET path must not scan")):
+            first = disk.snapshot(self.home, now=NOW, spawn=jobs.append)
+            second = disk.snapshot(self.home, now=NOW + 1, spawn=jobs.append)
+        self.assertEqual(first["state"], "computing")
+        self.assertTrue(first["refreshing"])
+        self.assertIsNone(first["total_bytes"])
+        self.assertEqual(first["retention_days"], 0)
+        self.assertIsNone(first["last_prune"])
+        self.assertEqual(second["state"], "computing")
+        self.assertEqual(len(jobs), 1)               # 在算就不再起第二个
+        jobs[0]()                                    # 后台算完
+        ready = disk.snapshot(self.home, now=NOW + 2, spawn=jobs.append)
+        self.assertEqual(ready["state"], "ready")
+        self.assertFalse(ready["refreshing"])
+        self.assertEqual(ready["backup_bytes"], 5000)
+        self.assertEqual(ready["media_bytes"], 1000)
+        self.assertEqual(ready["total_bytes"], ready["db_bytes"] + 5000 + 300 + 1000 + 10)
+        self.assertEqual(ready["oldest_frame_ts"], "2026-01-01T00:00:00.000000+00:00")
+        self.assertEqual(ready["growth"]["samples"], 1)
+        self.assertEqual(len(jobs), 1)               # 新鲜缓存不再起
+
+    def test_stale_or_refresh_schedules_again_but_never_twice_in_flight(self):
+        jobs = []
+        disk.snapshot(self.home, now=NOW, spawn=jobs.append)
+        jobs[0]()
+        disk.snapshot(self.home, now=NOW + disk.CACHE_TTL_S + 1, spawn=jobs.append)
+        self.assertEqual(len(jobs), 2)
+        got = disk.snapshot(self.home, now=NOW + disk.CACHE_TTL_S + 2, refresh=True, spawn=jobs.append)
+        self.assertEqual(len(jobs), 2)               # 已在算，refresh 不叠加
+        self.assertEqual(got["state"], "ready")      # 旧快照照旧可读
+        self.assertTrue(got["refreshing"])
+        jobs[1]()
+        disk.snapshot(self.home, now=NOW + disk.CACHE_TTL_S + 3, refresh=True, spawn=jobs.append)
+        self.assertEqual(len(jobs), 3)
+
+    def test_background_failure_becomes_state_error_and_releases_inflight(self):
+        jobs = []
+        disk.snapshot(self.home, now=NOW, spawn=jobs.append)
+        with mock.patch.object(disk, "compute", side_effect=RuntimeError("boom")):
+            jobs[0]()
+        got = disk.snapshot(self.home, now=NOW + 1, spawn=jobs.append)
+        self.assertEqual(got["state"], "error")
+        self.assertIn("boom", got["error"])
+        self.assertFalse(got["refreshing"])
+
+    def test_reset_joins_the_in_flight_job_so_nothing_writes_after_teardown(self):
+        """根因判例（train PR 的 CI，Tests on ubuntu 3.9 / head 0619da32）：后台线程还在往临时 home 的
+        `state/` 里写样本文件，`TemporaryDirectory` 的 rmtree 已经在走同一个目录——
+        ``OSError: [Errno 39] Directory not empty: 'state'``。`reset_cache_for_tests()` 现在先 join，
+        它回来之后那个线程必然已经落地，拆 home 撞不上任何写（不 sleep、不 ignore_cleanup_errors）。"""
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        marker = self.home / "state" / "late_write.json"
+
+        def blocked_compute(home, now=None):
+            gate.wait(10.0)                                    # 闸不开就一直占着这个临时 home
+            (Path(home) / "state" / "late_write.json").write_text("{}", encoding="utf-8")
+            return {"state": "ready"}
+
+        with mock.patch.object(disk, "compute", blocked_compute):
+            disk.snapshot(self.home, now=NOW)                  # 默认 spawn = 真线程
+            self.assertFalse(disk.join_jobs_for_tests(0.05))   # 有界 join 回 False = 它真的还在飞
+            self.assertFalse(marker.exists())
+            gate.set()
+            disk.reset_cache_for_tests()                       # 这一下必须等它把那一笔写完
+            self.assertTrue(marker.exists())
+        self.assertTrue(disk.join_jobs_for_tests(0.01))        # 表空了
+        shutil.rmtree(self.home)                               # 此刻拆 home：没有任何线程还会碰它
+        self.assertFalse(marker.exists())
+
+    def test_missing_root_is_ready_with_zeros(self):
+        with mock.patch.object(paths, "screenpipe_dir", return_value=self.root / "absent"):
+            snap = disk.compute(self.home, now=NOW)
+        self.assertEqual(snap["state"], "ready")
+        self.assertFalse(snap["root_exists"])
+        self.assertEqual(snap["total_bytes"], 0)
+        self.assertEqual(snap["db_error"], "no_db")
+
+    def test_retention_days_and_last_prune_come_from_settings_and_receipt(self):
+        (self.home / "state" / "settings_overrides.json").write_text(json.dumps({"screenpipe_retention_days": 14}),
+                                                                      encoding="utf-8")
+        (self.home / "state" / disk.RECEIPT_NAME).write_text(json.dumps({"ran_at": "x", "deleted_frames": 7}),
+                                                             encoding="utf-8")
+        got = disk.snapshot(self.home, now=NOW, spawn=lambda fn: None)
+        self.assertEqual(got["retention_days"], 14)
+        self.assertEqual(got["last_prune"], {"ran_at": "x", "deleted_frames": 7})
+
+    def test_a_settings_catalog_that_blows_up_falls_back_to_the_factory_values(self):
+        """目录（settings_catalog）读不出来不该让整张磁盘快照失败：DB 保留期回落 0
+        （= 永久保留，出厂值）、媒体那一把回落出厂值，快照本身照旧交得出去。"""
+        with mock.patch.object(disk.settings_catalog, "effective_value",
+                               side_effect=RuntimeError("目录坏了")):
+            got = disk.snapshot(self.home, now=NOW, spawn=lambda fn: None)
+            self.assertEqual(disk.retention_days(self.home), 0)
+        self.assertEqual(got["retention_days"], 0)
+        self.assertEqual(got["media_retention_minutes"], disk.MEDIA_RETENTION_DEFAULT)
+
+    def test_a_samples_file_that_cannot_be_written_still_yields_a_snapshot(self):
+        """样本文件写不进去（state/ 的位置被占成了文件、只读卷、盘满）= 咽下去：
+        这一次的快照仍然完整，只是下一次的增长估算少一个样本点（观测面不连坐）。"""
+        home = Path(self.tmp.name) / "blocked-home"
+        home.mkdir()
+        (home / "state").write_text("这不是目录", encoding="utf-8")
+        snap = disk.compute(home, now=NOW)
+        self.assertEqual(snap["state"], "ready")
+        self.assertEqual(snap["total_bytes"], disk.scan(self.root)["total_bytes"])
+        self.assertFalse((home / "state").is_dir())     # 一个样本点都没落下去
+
+    def test_receipt_name_mirrors_act(self):
+        self.assertEqual(disk.RECEIPT_NAME, act_ret.RECEIPT_NAME)
+
+
+class EndpointTestCase(unittest.TestCase):
+    def setUp(self):
+        disk.reset_cache_for_tests()
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-disk-http-")
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "home"
+        (self.home / "state").mkdir(parents=True)
+        self.root = Path(self.tmp.name) / ".screenpipe"
+        make_root(self.root)
+        patcher = mock.patch.object(paths, "screenpipe_dir", return_value=self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # cleanup 是 LIFO，登记顺序 = 拆机顺序的倒序：server shutdown → join 后台算 →
+        # patcher.stop → rmtree 临时目录。这一条 GET 起的后台线程会往 home/state/ 写样本文件，
+        # 不先 join 就会在 rmtree 脚下写（CI ubuntu 3.9：Errno 39 Directory not empty: 'state'）。
+        self.addCleanup(disk.reset_cache_for_tests)
+        _httpd, self.port = start_server(self, self.home)
+
+    def test_get_returns_immediately_then_becomes_ready(self):
+        status, first = get_json(self.port, "/api/screenpipe/disk")
+        self.assertEqual(status, 200)
+        self.assertIn(first["state"], ("computing", "ready"))
+        deadline = time.time() + 10
+        got = first
+        while got["state"] != "ready" and time.time() < deadline:
+            time.sleep(0.05)
+            _s, got = get_json(self.port, "/api/screenpipe/disk")
+        self.assertEqual(got["state"], "ready")
+        self.assertEqual(got["backup_bytes"], 5000)
+        self.assertEqual(got["backups"][0]["name"], "db.sqlite.bak-20260604")
+        self.assertIn("growth", got)
+        self.assertEqual(got["retention_days"], 0)
+        self.assertTrue((self.home / "state" / disk.SAMPLES_NAME).exists())
+
+    def test_get_is_token_light_and_write_methods_are_rejected(self):
+        status, _h, _b = http_request(self.port, "GET", "/api/screenpipe/disk")
+        self.assertEqual(status, 200)
+        status, _h, _b = http_request(self.port, "POST", "/api/screenpipe/disk", body=b"{}", headers=auth_headers(self.port))
+        self.assertIn(status, (404, 405))
+
+    def test_retention_field_is_in_the_catalog_and_round_trips(self):
+        status, section = get_json(self.port, "/api/settings/storage")
+        self.assertEqual(status, 200)
+        field = {f["key"]: f for f in section["fields"]}["screenpipe_retention_days"]
+        self.assertEqual((field["kind"], field["default"], field["effective"], field["source"]), ("int", 0, 0, "default"))
+        body = json.dumps({"screenpipe_retention_days": 30}).encode("utf-8")
+        status, _h, _b = http_request(self.port, "PUT", "/api/settings/storage", body=body, headers=auth_headers(self.port))
+        self.assertEqual(status, 200)
+        overrides = json.loads((self.home / "state" / "settings_overrides.json").read_text(encoding="utf-8"))
+        self.assertEqual(overrides["screenpipe_retention_days"], 30)
+        _s, snap = get_json(self.port, "/api/screenpipe/disk")
+        self.assertEqual(snap["retention_days"], 30)
+        status, _h, _b = http_request(self.port, "PUT", "/api/settings/storage",
+                                      body=json.dumps({"screenpipe_retention_days": -1}).encode("utf-8"),
+                                      headers=auth_headers(self.port))
+        self.assertEqual(status, 400)
+
+
+if __name__ == "__main__":
+    unittest.main()

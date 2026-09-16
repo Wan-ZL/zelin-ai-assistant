@@ -8,10 +8,12 @@ tests/test_executor_prompt_golden.py pins byte-for-byte, so every block keeps
 its wording and order. Law touched by the text: §4 sources fencing, §15
 default output format, §33 chat delivery, §37.1 CARD TITLE tiers (dispatch and
 rework share :func:`card_title_tier` — the single tier judgement), §44.3 the
-briefing prefix + fence, §60 display ids.
+briefing prefix + fence, §60 display ids / §60.4 bg 会话名（:func:`session_name`，
+命名单源与 CARD TITLE 现值同一条链，见 §37.1 追记）。
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -198,6 +200,28 @@ def _stored_display_title(req: Requirement) -> str:
     """The card's display_title in clip_title's normal form; "" when unset."""
     from act.lib import titles
     return titles.clip_title(str(getattr(req, "display_title", None) or "")) or ""
+
+
+def session_name(req: Requirement) -> str:
+    """bg 会话名（§60.4；`executor.session_name` 是本函数的别名）——
+    `<工作编号> · <卡片此刻的显示名截 48>`，空名回落纯编号。
+
+    名字取 :func:`current_display_name`（§37.1 活标题那条链：存量
+    `display_title` → `titles.sanitize_title(title)` → 冻结 `title`），**不是**
+    冻结 `title`：卡在看板上改了名，下一次 dispatch/resume 传的 `--name` 就跟着
+    换（防腐 #9 命名单源）。运行中的会话改不了名（CLI 只有启动期 `-n/--name`），
+    所以对齐时机 = 下一次 resume（§37.1 追记）。
+
+    显示名是 LLM/用户产物，可能含换行、路径分隔符、控制字符——而 agent name
+    会被 claude 用作 worktree 目录/分支名的一部分
+    (<target>/.claude/worktrees/<name>)，合法性必须在本侧保证，不押注下游
+    CLI 的内部清洗：路径分隔符和控制字符统一折叠成单个空格。argv 数组传参
+    本身无 shell 注入面，这里只管名字的文件系统/git 合法性。"""
+    title = current_display_name(req).strip()
+    title = re.sub(r"[\\/\x00-\x1f\x7f]+", " ", title)   # newlines, / \, ctrl chars
+    title = re.sub(r"\s+", " ", title).strip()
+    rid = display_id(req)          # §60：工作编号（legacy 卡回落主键）
+    return f"{rid} · {title[:48]}" if title else rid
 
 
 def fenced_current_name(req: Requirement) -> str:

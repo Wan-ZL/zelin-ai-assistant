@@ -650,11 +650,21 @@ def trash(req: Requirement, reason: str) -> Requirement:
 
 
 def restore(req: Requirement) -> Requirement:
-    """Restore a trashed requirement to its ``prev_status`` and clear trash fields."""
+    """Restore a trashed requirement to its ``prev_status`` and clear trash fields.
+
+    Also stamps ``execution.restored_at`` (add-only, D73 / CONTRACT §9 追记): pulling
+    a card back out of the bin is the owner saying "I still want this one", so it
+    counts as activity (``maintenance._EXECUTION_STAMPS``). Without it the nightly
+    loop would re-trash the card it was just told to keep — nothing else on the card
+    gets any newer when trash fields are cleared.
+    """
     req.set_status(req.prev_status or State.DETECTED.value)
     req.prev_status = None
     req.trashed_at = None
     req.trash_reason = None
+    ex = dict(req.execution) if isinstance(req.execution, dict) else {}
+    ex["restored_at"] = _iso_now()
+    req.execution = ex
     save(req)
     return req
 
@@ -1691,6 +1701,10 @@ def _reraise(parent: Requirement, new_req: Requirement, sources: Optional[list],
         parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
         parent.summary = (f"{parent.summary} · 新增:{note}").strip()
     parent.execution = _reraised_execution(parent.execution, note)
+    # §76.1：回锅 = 新的一轮诉求，上一轮盖的「疑似已完成」是过期证据——不清
+    # 掉的话这张卡会带着两周前的绿章和那颗「已办完 · 记为已交付」一键回到提案
+    # 列（PR #349 评审抓到）。提示只描述**当前**这一轮，所以随轮次一起归零。
+    parent.completion_hint = None
     parent.set_status(State.DETECTED if cap_detected else State.CARD_SENT)
     return upsert(parent)
 

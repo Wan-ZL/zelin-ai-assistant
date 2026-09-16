@@ -1234,8 +1234,11 @@ class DaemonClaudeCheckTestCase(unittest.TestCase):
         self.assertIn(str(stable), res.detail)
 
 
+# The resident services doctor expects up + every timer. zelin-webui.service
+# retired 2026-09-14 (CONTRACT §49 追记 / owner 决策 D67): the board server is
+# the one UI, so `server` is the second resident row on Linux.
 SYSTEMD_UNITS = [
-    "zelin-actd.service", "zelin-webui.service",
+    "zelin-actd.service", "zelin-server.service",
     "zelin-gmail-radar.timer", "zelin-slack-radar.timer",
     "zelin-obsidian-radar.timer", "zelin-weekly-digest.timer",
 ]
@@ -1273,7 +1276,7 @@ class SystemdDoctorTestCase(unittest.TestCase):
 
     def _healthy_rows(self):
         rows = {"zelin-actd.service": ("active", "running"),
-                "zelin-webui.service": ("active", "running"),
+                "zelin-server.service": ("active", "running"),
                 # a timer-driven oneshot .service is correctly inactive between
                 # fires — present in --all output but NOT in our expected list
                 "zelin-gmail-radar.service": ("inactive", "dead")}
@@ -1287,7 +1290,7 @@ class SystemdDoctorTestCase(unittest.TestCase):
         by = {r.name: r for r in results}
         self.assertEqual(by["actd"].status, doctor.OK)
         self.assertIn("active (running)", by["actd"].detail)
-        self.assertEqual(by["webui"].status, doctor.OK)
+        self.assertEqual(by["server"].status, doctor.OK)
         for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
             self.assertEqual(by[t].status, doctor.OK)
             self.assertIn("waiting", by[t].detail)
@@ -1321,7 +1324,7 @@ class SystemdDoctorTestCase(unittest.TestCase):
         self.assertEqual(by["actd"].status, doctor.FAIL)
         self.assertIn("not registered", by["actd"].detail)
         self.assertIn("install-linux.sh", by["actd"].fix)
-        self.assertEqual(by["webui"].status, doctor.WARN)
+        self.assertEqual(by["server"].status, doctor.WARN)
 
     def test_platform_composition_drops_macos_only_checks(self):
         names = {f.__name__ for f in doctor._checks_for_platform()}
@@ -1337,8 +1340,10 @@ class SystemdDoctorTestCase(unittest.TestCase):
 
 
 # Full \ZelinAIAssistant\ task names doctor expects, mirroring SYSTEMD_UNITS.
+# `webui` retired 2026-09-14 (CONTRACT §49 追记 / owner 决策 D67) and `server`
+# (act/tasksched/zelin-server.xml) took its place as the Windows UI.
 TASKS = [
-    "\\ZelinAIAssistant\\actd", "\\ZelinAIAssistant\\webui",
+    "\\ZelinAIAssistant\\actd", "\\ZelinAIAssistant\\server",
     "\\ZelinAIAssistant\\gmail-radar", "\\ZelinAIAssistant\\slack-radar",
     "\\ZelinAIAssistant\\obsidian-radar", "\\ZelinAIAssistant\\weekly-digest",
 ]
@@ -1384,7 +1389,7 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
 
     def _healthy_rows(self):
         rows = {"\\ZelinAIAssistant\\actd": ("Running", "Enabled"),
-                "\\ZelinAIAssistant\\webui": ("Running", "Enabled")}
+                "\\ZelinAIAssistant\\server": ("Running", "Enabled")}
         for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
             rows["\\ZelinAIAssistant\\" + t] = ("Ready", "Enabled")
         return rows
@@ -1397,7 +1402,7 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
             self._probes(_schtasks(rows)))}
         self.assertEqual(by["actd"].status, doctor.OK)
         self.assertIn("running", by["actd"].detail)
-        self.assertEqual(by["webui"].status, doctor.OK)
+        self.assertEqual(by["server"].status, doctor.OK)
         for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
             self.assertEqual(by[t].status, doctor.OK)
             self.assertIn("ready", by[t].detail)
@@ -1428,7 +1433,7 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
         by = {r.name: r for r in doctor._check_scheduled_tasks(self._probes(""))}
         self.assertEqual(by["actd"].status, doctor.FAIL)
         self.assertIn("not registered", by["actd"].detail)
-        self.assertEqual(by["webui"].status, doctor.WARN)
+        self.assertEqual(by["server"].status, doctor.WARN)
 
     def test_platform_composition_uses_tasks_not_launchd_or_systemd(self):
         names = {f.__name__ for f in doctor._checks_for_platform()}

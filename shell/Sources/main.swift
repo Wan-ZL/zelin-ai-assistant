@@ -23,8 +23,9 @@
 // 本文件只挂到 NSApp、做副作用。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
-// 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
-// 签名，授权也不会跟着 build 走）——repo 在外置卷上时子进程读不到 checkout，
+// 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（当时还是
+// ad-hoc 签名，授权连 build 都跨不过去；2026-09-12 起换稳定身份，§54.3 修正——但壳
+// 依旧不持有磁盘授权，本条结论不变）——repo 在外置卷上时子进程读不到 checkout，
 // 以 "No module named server" 死掉。launchd 用的是 §55 探针验过的守护解释器。
 // 壳保留 spawn 兜底，但**只在探活失败且 launchd 没加载该 label 时**才 spawn——
 // 两个 server 绝不能抢同一个端口（launchd 那份会 crash-loop，doctor 报 FAIL）。
@@ -386,6 +387,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 引擎落户壳后的启动序列（逐字对应 mac AppDelegate 的同名调用；P0-11：
     /// 无 recordingMode = 尚未 consent = off，autostart 自然不动）。
     private func startEngines() {
+        LiveCaptionsController.shared.restoreOnLaunch()
+        // 起跑即心跳一次：不然头 5 s 里双击卡片会被 server 判「壳没在跑」（503）
+        ShellHeartbeat.beat()
+        let relay = Timer(timeInterval: TerminalRelay.tickInterval, repeats: true) { _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    _ = TerminalRelay.drain()   // §68.7：消费 state/terminal_queue → Apple Events 开终端
+                }
+            }
+        }
+        RunLoop.main.add(relay, forMode: .common)
+        terminalTick = relay
+        // §61.8 引擎归属：这个壳进程刚出生，`RecordingController.engineProcess` 必然是 nil——
+        // 此刻还活着的 screenpipe 按定义不是我们的（上一个壳崩了 / 被 SIGKILL / install.sh 换过壳），
+        // 先在后台把它回收掉（pgrep / pkill 阻塞，绝不占主线程），**回收完**才放行录制那一半：
+        // autostart 的 pgrep 若先看见孤儿就会静默认领它（issue #318），5 s tick 若先装上，回收的
+        // 那一下 pkill 会掉进 §61.7 的反抖窗、被读成「新引擎没起来」→ 假回滚 + 系统通知。
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            EngineOwnership.reclaimAtLaunch()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self = self else { return }
+                    self.startRecordingAfterReclaim()
+                }
+            }
+        }
+    }
+
+    /// §61.8 回收完成后的下半段启动序列（顺序是本条的全部要点：回收 → 日程执法 →
+    /// autostart → 装 5 s tick）。
+    private func startRecordingAfterReclaim() {
         // §61.7 录制日程：窗外启动 = 引擎根本不起（autostart 跳过，`paused` 立刻为真，页面读到
         // 「按日程暂停」）；日程关着 / 窗内 = 原样 autostart。醒来那一拍另有观察者。
         let schedule = RecordingSchedule.active
@@ -398,7 +430,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         schedule.startObservingWake()
-        LiveCaptionsController.shared.restoreOnLaunch()
         let timer = Timer(timeInterval: 5.0, repeats: true) { _ in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -412,20 +443,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         RunLoop.main.add(timer, forMode: .common)
         engineTick = timer
-        // 起跑即心跳一次：不然头 5 s 里双击卡片会被 server 判「壳没在跑」（503）
-        ShellHeartbeat.beat()
-        let relay = Timer(timeInterval: TerminalRelay.tickInterval, repeats: true) { _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    _ = TerminalRelay.drain()   // §68.7：消费 state/terminal_queue → Apple Events 开终端
-                }
-            }
-        }
-        RunLoop.main.add(relay, forMode: .common)
-        terminalTick = relay
     }
 
     func applicationWillTerminate(_ note: Notification) {
+        // §61.8：先停引擎（只停我们自己 spawn 的那一台，≤1.5 s），再拆 tick——退出 app
+        // 就是停录制。崩溃 / SIGKILL 走不到这里，那条路由下次启动的回收兜底。
+        EngineOwnership.stopAtExit()
         engineTick?.invalidate()
         terminalTick?.invalidate()
         ShellHeartbeat.stop()   // 没有消费者了：server 立刻转 503，不等 15 s 过期

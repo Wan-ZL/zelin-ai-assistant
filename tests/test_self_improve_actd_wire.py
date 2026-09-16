@@ -44,7 +44,9 @@ class WireBase(unittest.TestCase):
         self.notify = mock.patch.object(actd.notify, "notify").start()
         self.addCleanup(mock.patch.stopall)
         self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
-        self.cfg = config.Config()
+        # 通道开着（§65.1 总开关 #307 / D57 起出厂关；关着的判决在
+        # tests/test_self_improve_channel_switch.py）
+        self.cfg = config.Config(self_improve_enabled=True)
 
     def _gh(self, prs=None, **kw):
         gh = FakeGh(prs if prs is not None else {123: pr_doc(branch=BRANCH)}, **kw)
@@ -84,7 +86,7 @@ class AutoDispatchWireTestCase(WireBase):
     def test_lane_disabled_is_routine_and_clears_stale_token(self):
         registry.save(lane_card(status=State.CARD_SENT.value,
                                 execution={"auto_dispatch_block": "self_improve:paused"}))
-        cfg = config.Config(raw={"self_improve": {"enabled": False}})
+        cfg = config.Config()          # 出厂默认：self_improve.enabled=false
         self.assertEqual(actd.auto_dispatch_pass(cfg), 0)
         req = registry.load("P-7")
         self.assertEqual(req.status, State.CARD_SENT.value)

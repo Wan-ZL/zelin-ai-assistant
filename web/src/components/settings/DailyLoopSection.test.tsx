@@ -1,5 +1,5 @@
 // 设置页「每日整理」section（CONTRACT §70，D10）：
-//   1) 五把旋钮从 server 快照水合；2) 保存 = 一次 PUT、只带改动键、数字原样交 server 校验；
+//   1) 六把旋钮从 server 快照水合（第六把 = review_stale_days，D74）；2) 保存 = 一次 PUT、只带改动键、数字原样交 server 校验；
 //   3) 400 的整句原文以 toast(role=alert) 显示；4) 读失败只红本 section。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,7 @@ function snapshot(over: Partial<DailyLoopSettings> = {}): DailyLoopSettings {
     max_proposals_per_day: 5,
     stale_days: 45,
     trash_retention_days: 90,
+    review_stale_days: 14,
     source: { enabled: "default", time: "default" },
     ...over,
   };
@@ -44,11 +45,13 @@ afterEach(cleanup);
 describe("diffPatch", () => {
   it("sends only the changed keys, numbers as numbers, junk verbatim for the server to reject", () => {
     const cur = snapshot();
-    const base = { enabled: true, time: "03:30", max_proposals_per_day: "5", stale_days: "45", trash_retention_days: "90" };
+    const base = { enabled: true, time: "03:30", max_proposals_per_day: "5", stale_days: "45", trash_retention_days: "90", review_stale_days: "14" };
     expect(diffPatch(base, cur)).toEqual({});
     expect(diffPatch({ ...base, enabled: false, max_proposals_per_day: "2" }, cur)).toEqual({ enabled: false, max_proposals_per_day: 2 });
     expect(diffPatch({ ...base, time: " 4:00 " }, cur)).toEqual({ time: "4:00" });
     expect(diffPatch({ ...base, stale_days: "abc" }, cur)).toEqual({ stale_days: "abc" });
+    // D74 第六把旋钮同一条路：0 = 关掉待验收老化，照样只带这一个键
+    expect(diffPatch({ ...base, review_stale_days: "0" }, cur)).toEqual({ review_stale_days: 0 });
   });
 });
 

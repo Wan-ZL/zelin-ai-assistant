@@ -167,6 +167,63 @@ describe("ProposalCard §60 two-stage ids (D21)", () => {
   });
 });
 
+describe("ProposalCard §76.2 settlement signals (issue #313)", () => {
+  it("completion_hint → 绿章 + 证据一句 + 两颗一键（done_external / reject，不开新动词）", () => {
+    const card = {
+      ...makeCard("T1"),
+      completion_hint: { at: 1788948000, note: "Compass repo 已建、slides 已改", channel: "meeting" },
+    };
+    render(<ProposalCard card={card} />);
+    expect(screen.getByText("✅ Looks already done")).toBeTruthy();
+    expect(screen.getByText("Compass repo 已建、slides 已改")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Already done · mark delivered" }));
+    expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({
+      action: "done_external",
+      comment: null,
+      id: "R-001",
+    });
+  });
+
+  it("疑似已完成的「不做」= reject（同四键形）；缺席时整组不渲染", () => {
+    const { unmount } = render(
+      <ProposalCard card={{ ...makeCard("T1"), completion_hint: { note: "已经上线了" } }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Won't do · to trash" }));
+    expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({
+      action: "reject",
+      comment: null,
+      id: "R-001",
+    });
+    unmount();
+    render(<ProposalCard card={makeCard("T1")} />);
+    expect(screen.queryByText("✅ Looks already done")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Already done · mark delivered" })).toBeNull();
+  });
+
+  it("decision_due → 点名三个出口的决策提示行；四颗决策键一颗都没多", () => {
+    const { unmount } = render(<ProposalCard card={{ ...makeCard("T1"), decision_due: true }} />);
+    expect(screen.getByText(/decide now: approve \/ defer \/ reject/)).toBeTruthy();
+    // 一个动词一颗键：提示行不复制按钮（strict 查询会在重复时炸）
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
+    unmount();
+    render(<ProposalCard card={makeCard("T1")} />);
+    expect(screen.queryByText(/decide now/)).toBeNull();
+  });
+
+  it("mention_escalated → 被提×N 章说出「仍未处理」；为假时保持安静档", () => {
+    const { unmount } = render(
+      <ProposalCard card={{ ...makeCard("T1"), repeated: 23, mention_escalated: true }} />,
+    );
+    const loud = screen.getByText("Raised ×23 · still unhandled");
+    expect(loud.className).toContain("chip-danger");
+    unmount();
+    render(<ProposalCard card={{ ...makeCard("T1"), repeated: 23 }} />);
+    const quiet = screen.getByText("Raised ×23");
+    expect(quiet.className).toContain("chip-quiet");
+  });
+});
+
 describe("ProposalCard §7 egress[] disclosure (issue #11)", () => {
   it("github_repo_create 行以后果语气渲染，带 target；空/缺席不渲染", () => {
     const card = {

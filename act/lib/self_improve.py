@@ -5,6 +5,13 @@ lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论
 （修宪：本通道人从起点审批移到终点验收）/ §2（review 行 `delivery`、顶层
 `self_improve` 投影）/ §4（派发 argv 的 MCP 封锁，argv 本体拼在 act/llm.py）。
 
+**总开关**（§65.1，issue #307 / D57）：`self_improve.enabled` 出厂 **false**——这是
+开发者 / 维护者功能，默认对所有安装关着（设置页「开发者」区那一行是唯一的面）。
+关着时 :func:`tick` 直接 `{"skipped": "disabled"}`、§51 的 lane 不免批、每日循环不读
+GitHub，且已存在的卡不再被自动推进（:func:`frozen_in_flight`，issue #307 第 4 条）；
+**收割时刻的核验（§65.3）与出网封锁（§65.2）不受它影响**——那两条只看写死
+的 channel，比准入更严。
+
 管的是「通道的机械部分」——Uncle Bob 那条「agent 说做完了不算，工具说 OK 才算」
 （vnext2-plan §2.9）：
 
@@ -18,7 +25,11 @@ lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论
 - **PR 跟进**（§65.5，D12）：巡检待验收 lane 卡的 PR——owner 评论 / 红 required
   check → 铸一张 `self_improve` 跟进卡（一 PR 一天一张、只认 owner login）；
   owner 合并 = 验收（review→delivered）；owner 关闭 = 拒绝（回收站 + 拒绝记忆
-  `rejected.jsonl`，封顶）。
+  `rejected.jsonl`，封顶）。**结算即释放**（§75 / §65.5 追记，issue #315）：两条
+  出口落账后各调一次 `worktrees.release`——删掉这张卡自己的 `.claude/worktrees/`
+  目录与本地分支，best-effort，失败只记日志。**owner 集合**（§65.5 追记，issue #310）= 仓库 slug
+  的 owner ∪ gh 当前身份 ∪ 配置 `owner_logins`，大小写不敏感；集合外的人合并 /
+  关闭只在 lane.json `foreign` 台账上记**一次**（一行日志 + 一条卡 note）。
 - **出网封锁**（§65.2）：:func:`egress_locked` 告诉 executor 这张卡的四个发射点
   都要带 `llm.NO_MCP_ARGV`（Slack/Gmail MCP 对会话不存在），除非卡显式声明
   `needs_mcp`——那样的卡只能走 owner 亲批（policy 拒 `self_improve:needs_mcp`）。
@@ -45,7 +56,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import config, logcap, notify, policy, registry
+from act.lib import config, logcap, notify, policy, registry, worktrees
 from act.lib.registry import Requirement, State
 
 try:
@@ -77,8 +88,11 @@ PR_FIELDS = ("number,url,state,isDraft,baseRefName,headRefName,headRefOid,"
 # lane.json 里「暂停」家族的键（clear_pause 清掉的集合；server/self_improve_lane.py 镜像）
 PAUSE_KEYS = ("paused_reason", "paused_pr", "paused_pr_url", "paused_paths", "paused_card")
 # 巡检结束时提交回盘的键（只动这些——并发的暂停/恢复写者互不覆盖）
-TICK_KEYS = ("last_tick_at", "owner_login", "repo_slug", "followups")
+TICK_KEYS = ("last_tick_at", "owner_login", "repo_slug", "followups", "foreign")
 REJECTED_CAP_BYTES = 256 * 1024
+# `foreign` 台账（§65.7 追记，issue #310）的条数帽：出生即带帽（防腐 #4），
+# 超了按 `at` 丢最旧的——一张 PR 一条，正常机器一辈子也到不了。
+FOREIGN_CAP = 200
 FOLLOWUP_QUOTE_CAP = 1500
 CARD_TYPE = "self-improvement"
 # 跟进卡在这些状态 = 这张 PR 已有人在跟，不再铸第二张
@@ -146,6 +160,21 @@ def is_lane_card(card: object, cfg: object = None) -> bool:
 def egress_locked(card: object) -> bool:
     """§65.2：self_improve 卡且未声明 needs_mcp → 四个发射点 argv 带 NO_MCP_ARGV。"""
     return is_self_improve(card) and not bool(_field(card, "needs_mcp"))
+
+
+def channel_off(cfg: object = None) -> bool:
+    """§65.1 总开关关着（#307 / D57 起是出厂默认）——通道各闸共用的一句判定。"""
+    return not policy.self_improve_config(cfg)["enabled"]
+
+
+def frozen_in_flight(card: object, cfg: object = None) -> bool:
+    """§65.1 + issue #307 第 4 条「关闭开关时至少不再续派」：通道关着时这张卡
+    不再被**自动**推进——免批批准还没派出的不派（退回待审批，见
+    actd/dispatch.py），已在跑但 agent 死了的不自动续命（见 actd/reconcile.py）。
+    判据只看写死的 channel（同 :func:`egress_locked`，与仓库是否匹配无关）；
+    owner 亲手批准 / 亲手打回的动作不在本闸下（那是显式动作，由调用方区分），
+    收割、§65.3 核验、§65.2 出网封锁同样不在（比准入更严）。"""
+    return is_self_improve(card) and channel_off(cfg)
 
 
 def pr_source(card: object) -> Optional[dict]:
@@ -541,13 +570,14 @@ def harvest_hook(req: Requirement, ex: dict,
 
 def tick_hook(cfg: object, log: Optional[Callable[[str], None]] = None) -> None:
     """actd 每 pass 的一行钩子（§65.5）：自身节流；绝不崩 pass；gh 不可用只在
-    真跑的那一轮记一行。"""
+    真跑的那一轮记一行。通道关着（§65.1 默认态）与「没到点」同样**不出声**——
+    出厂默认不该每 pass 往日志里写一行。"""
     try:
         summary = tick(cfg, log=log)
     except Exception as e:  # noqa: BLE001 - 巡检绝不反杀主循环
         _emit(log, f"self_improve tick FAILED: {e}")
         return
-    if summary.get("skipped") not in (None, "not_due"):
+    if summary.get("skipped") not in (None, "not_due", "disabled"):
         _emit(log, f"self_improve: tick skipped ({summary['skipped']})")
 
 
@@ -700,13 +730,28 @@ def _gh_login(gh: GhRunner, cwd: str) -> Optional[str]:
     return login if isinstance(login, str) and login else None
 
 
+def _slug_owner(cfg: object, st: dict) -> Optional[str]:
+    """仓库 slug 的 owner 段（`Wan-ZL/zelin-ai-assistant` → `Wan-ZL`）。零额外 gh
+    调用：`_tick_body` 每轮先解析 slug 并写进 ``st``（§65.3 的仓库身份 pin）。"""
+    slug = _cached_slug(st) or _known_slug(cfg, st) or ""
+    owner = slug.split("/")[0] if "/" in slug else ""
+    return owner or None
+
+
 def _owner_logins(gh: GhRunner, cwd: str, cfg: object, st: dict) -> set:
-    """gh 当前身份（D8：就是 owner）∪ 配置的额外 login；身份缓存进 lane.json。"""
+    """owner 集合，**全部小写**（GitHub login 大小写不敏感）：仓库 slug 的 owner
+    ∪ gh 当前身份（D8，缓存进 lane.json `owner_login`）∪ 配置的额外 login。
+
+    §65.5 追记（issue #310）：仓库 owner 是最不该漏的那一个——这台机器的 gh 登
+    的可能是工作号，而 PR 是个人号合的，旧定义把 owner 自己的合并判成「别人干
+    的」，卡永不结算。"""
     login = st.get("owner_login")
     login = login if isinstance(login, str) and login else _gh_login(gh, cwd)
     if login:
         st["owner_login"] = login
-    return set(filter(None, [login, *policy.self_improve_config(cfg)["owner_logins"]]))
+    logins = [_slug_owner(cfg, st), login,
+              *policy.self_improve_config(cfg)["owner_logins"]]
+    return {str(x).lower() for x in logins if x}
 
 
 def _comment_author(c: dict) -> Optional[str]:
@@ -751,16 +796,20 @@ def _pr_comment_rows(gh: GhRunner, cwd: str, number: int, slug: Optional[str]) -
 
 
 def _keep_comment(c: Optional[dict], logins: set, since: Optional[str]) -> bool:
-    return c is not None and c["login"] in logins and (since is None or c["at"] > since)
+    """``logins`` 已小写（owner_comments 归一过）——GitHub login 大小写不敏感。"""
+    return (c is not None and c["login"].lower() in logins
+            and (since is None or c["at"] > since))
 
 
 def owner_comments(gh: GhRunner, cwd: str, number: int, logins: set,
                    since: Optional[str] = None, slug: Optional[str] = None) -> list:
     """owner login 的评论（issue 评论 + review 正文 + 行内），时间晚于 ``since``，
-    按时间升序。GitHub 时间戳同格式 ISO-Z，字符串比较即时间比较。"""
+    按时间升序。GitHub 时间戳同格式 ISO-Z，字符串比较即时间比较。login 的比对
+    大小写不敏感（§65.5 追记，issue #310）。"""
+    wanted = {str(x).lower() for x in logins}
     rows = [_norm_comment(c) for c in _pr_comment_rows(gh, cwd, number, slug)
             if isinstance(c, dict)]
-    picked = [c for c in rows if _keep_comment(c, logins, since)]
+    picked = [c for c in rows if _keep_comment(c, wanted, since)]
     return sorted(picked, key=lambda c: c["at"])
 
 
@@ -889,15 +938,66 @@ def _closed_by(gh: GhRunner, cwd: str, number: int, slug: Optional[str]) -> Opti
     return closers[-1] if closers else None
 
 
-def _handled_by_owner(pr: dict, gh: GhRunner, cwd: str, cfg: object, st: dict) -> bool:
-    """合并/关闭只在 **owner 本人**动手时才算验收/拒绝：MERGED 看 `mergedBy`，
-    CLOSED 看最后一条 closed 事件的 actor（协作者/机器人的动作只记日志，卡不动；
-    Codex review P1）。"""
+def _handler_login(pr: dict, gh: GhRunner, cwd: str, st: dict) -> Optional[str]:
+    """处理这张 PR 的人：MERGED 看 `mergedBy`，CLOSED 看最后一条 closed 事件的
+    actor（`gh pr view` 不给 closedBy）。一张 PR 一轮只问一次。"""
     if pr.get("state") == "MERGED":
-        actor = _actor_login(pr.get("mergedBy"))
-    else:
-        actor = _closed_by(gh, cwd, int(pr["number"]), _cached_slug(st))
-    return actor is not None and actor in _owner_logins(gh, cwd, cfg, st)
+        return _actor_login(pr.get("mergedBy"))
+    return _closed_by(gh, cwd, int(pr["number"]), _cached_slug(st))
+
+
+def _is_owner(actor: Optional[str], gh: GhRunner, cwd: str, cfg: object, st: dict) -> bool:
+    return actor is not None and actor.lower() in _owner_logins(gh, cwd, cfg, st)
+
+
+def _handled_by_owner(pr: dict, gh: GhRunner, cwd: str, cfg: object, st: dict) -> bool:
+    """合并/关闭只在 **owner 本人**动手时才算验收/拒绝：协作者/机器人的动作只
+    记一次日志，卡不动（Codex review P1；owner 集合见 :func:`_owner_logins`）。"""
+    return _is_owner(_handler_login(pr, gh, cwd, st), gh, cwd, cfg, st)
+
+
+def _foreign_at(entry: object) -> str:
+    return str(entry.get("at") or "") if isinstance(entry, dict) else ""
+
+
+def _trim_foreign(ledger: dict) -> None:
+    """条数帽（FOREIGN_CAP）：超了按 ``at`` 丢最旧的（防腐 #4）。"""
+    excess = len(ledger) - FOREIGN_CAP
+    if excess <= 0:
+        return
+    for key in sorted(ledger, key=lambda k: _foreign_at(ledger[k]))[:excess]:
+        ledger.pop(key, None)
+
+
+def _foreign_seen(st: dict, number: int, state: object, actor: str, card: str,
+                  now: _dt.datetime) -> bool:
+    """非 owner 处理的一次性台账（lane.json `foreign`，§65.7 追记）：同一 PR 的
+    同一 actor + 同一状态只记一次；actor 或状态变了再记一次。"""
+    ledger = st.setdefault("foreign", {})
+    entry = ledger.get(str(number))
+    entry = entry if isinstance(entry, dict) else {}
+    if entry.get("actor") == actor and entry.get("state") == state:
+        return True
+    ledger[str(number)] = {"state": state, "actor": actor, "at": _iso(now), "card": card}
+    _trim_foreign(ledger)
+    return False
+
+
+def _settle_foreign(req: Requirement, pr: dict, state: object, actor: Optional[str],
+                    st: dict, now: _dt.datetime,
+                    log: Optional[Callable[[str], None]]) -> None:
+    """非 owner 的合并/关闭：卡照旧不动（§65.5），但**只记一次**——一行日志 +
+    卡上一条 note 标（issue #310 第 3 条：每个 tick 刷同一行日志是噪音不是信息）。"""
+    number = int(pr["number"])
+    who = actor or "unknown"
+    if _foreign_seen(st, number, state, who, req.id, now):
+        return
+    _emit(log, f"self_improve: {req.id} PR #{number} {state} by someone other "
+               f"than the owner (@{who}) — card left as is")
+    tag = (f"[{now.date().isoformat()} PR {str(state).lower()}] @{who} "
+           "处理（不在 owner 集合）——卡未结算")
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    registry.save(req)
 
 
 def _settle_card(req: Requirement, pr: dict, cwd: str, cfg: object, gh: GhRunner,
@@ -908,17 +1008,31 @@ def _settle_card(req: Requirement, pr: dict, cwd: str, cfg: object, gh: GhRunner
         card = _maybe_followup(req, pr, cwd, cfg, gh, st, now, log)
         if card is not None:
             summary["followups"].append(card.id)
-    elif not _handled_by_owner(pr, gh, cwd, cfg, st):
-        _emit(log, f"self_improve: {req.id} PR #{pr.get('number')} {state} by someone other "
-                   "than the owner — card left as is")
+        return
+    actor = _handler_login(pr, gh, cwd, st)
+    if not _is_owner(actor, gh, cwd, cfg, st):
+        _settle_foreign(req, pr, state, actor, st, now, log)
     elif state == "MERGED":
         _accept_merged(req, pr, now)
         summary["accepted"].append(req.id)
         _emit(log, f"self_improve: {req.id} PR merged by owner → delivered")
+        _release_worktree(req, cfg, log)
     else:
         _reject_closed(req, pr, now)
         summary["rejected"].append(req.id)
         _emit(log, f"self_improve: {req.id} PR closed by owner → trashed + rejection memory")
+        _release_worktree(req, cfg, log)
+
+
+def _release_worktree(req: Requirement, cfg: object,
+                      log: Optional[Callable[[str], None]]) -> None:
+    """结算即释放（§75 / §65.5 追记）：卡落账后删掉它自己的 worktree 与本地分支。
+    best-effort——`worktrees.release` 自己吞异常，这里再兜一层：清扫失败绝不许
+    把「PR 已合并 = 验收」这条落账带下水（宪法第 11 条）。"""
+    try:
+        worktrees.release(req, cfg, log=log)
+    except Exception as exc:  # noqa: BLE001 - 清扫失败只记日志
+        _emit(log, f"self_improve: {req.id} worktree release failed: {type(exc).__name__}: {exc}")
 
 
 def _tick_cards(cfg: object, gh: GhRunner, st: dict, now: _dt.datetime,
@@ -964,8 +1078,15 @@ def tick(cfg: object = None, *, gh: Optional[GhRunner] = None,
          log: Optional[Callable[[str], None]] = None, force: bool = False) -> dict:
     """§65.5 巡检（actd 每 pass 调，自身按 `self_improve.tick_minutes` 节流）。
     零 lane 卡时零 gh 调用；gh 不可用 = 本轮跳过并照常推进 last_tick_at
-    （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。"""
+    （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。
+
+    §65.1 总开关关着（`self_improve.enabled`，#307 / D57 起默认关）= `{"skipped":
+    "disabled"}`，节流时钟都不碰：在飞的 lane 卡就地冻在待验收列（不再对账 owner
+    的合并 / 关闭、不再铸跟进卡），维护者把开关打开后下一 pass 接着巡。**收割时刻
+    的交付核验（§65.3）与出网封锁（§65.2）不在本闸下**——它们只看写死的 channel。"""
     now = now or _utcnow()
+    if not policy.self_improve_config(cfg)["enabled"]:
+        return {"skipped": "disabled"}
     st = load_state()
     if not tick_due(st, cfg, now, force):
         return {"skipped": "not_due"}
@@ -1011,9 +1132,15 @@ def _main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(prog="act.lib.self_improve",
                                      description="self_improve lane state (CONTRACT §65)")
     parser.add_argument("--resume", action="store_true", help="clear the lane pause")
+    parser.add_argument("--forget-owner", action="store_true",
+                        help="drop the cached gh login from lane.json (re-read next tick)")
     args = parser.parse_args(argv)
     if args.resume:
         clear_pause("cli")
+    if args.forget_owner:
+        # §65.5 追记（issue #310）：换了 gh 登录身份之后的重置口——下一轮巡检
+        # 重新问一次 `gh api user`（仓库 owner 与配置的 login 本来就不经缓存）。
+        _update_state({}, drop=("owner_login",))
     print(json.dumps(board_view(config.load_config()), ensure_ascii=False, indent=2))
     return 0
 

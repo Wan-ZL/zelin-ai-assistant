@@ -2,8 +2,8 @@
 
 Three transition classes produce (title, body, req_id, kind) 4-tuples (the req
 id is what lets the Slack ✅-reaction approve the right R-id; kind tags the
-class for per-event preferences — "review_ready" for fresh deliveries, None
-everywhere else):
+class for per-event preferences — "review_ready" for fresh deliveries,
+"proposal" for new / re-raised / batched cards (§28 追记, issue #29)):
 
   ∅ -> needs_approval          "有新需求待审批"     (notify.msg_new_card)
   running -> review            "待验收：AI 已交付草稿"
@@ -60,7 +60,7 @@ class NewCardTestCase(unittest.TestCase):
         prev = _dash()
         curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_new_card("写周报"), "R-1", None)])
+                         [(*_new_card("写周报"), "R-1", notify.KIND_PROPOSAL)])
 
     def test_existing_card_stays_silent(self):
         prev = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
@@ -71,7 +71,7 @@ class NewCardTestCase(unittest.TestCase):
         prev = _dash()
         curr = _dash(needs_approval=[{"id": "R-1"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_new_card("R-1"), "R-1", None)])
+                         [(*_new_card("R-1"), "R-1", notify.KIND_PROPOSAL)])
 
 
 class ReviewTransitionTestCase(unittest.TestCase):
@@ -153,7 +153,7 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
         msgs = actd.detect_transitions(prev, curr)
         # #119：needs_input 类不再发声——只剩新卡与 review 两类
         self.assertEqual(set(msgs), {
-            (*_new_card("写周报"), "R-1", None),
+            (*_new_card("写周报"), "R-1", notify.KIND_PROPOSAL),
             (*_review_ready("任务二"), "R-2", "review_ready"),
         })
 
@@ -167,7 +167,7 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
         # prev written by an older build without some partitions
         msgs = actd.detect_transitions({}, _dash(
             needs_approval=[{"id": "R-1", "title": "写周报"}]))
-        self.assertEqual(msgs, [(*_new_card("写周报"), "R-1", None)])
+        self.assertEqual(msgs, [(*_new_card("写周报"), "R-1", notify.KIND_PROPOSAL)])
 
     def test_items_without_id_are_ignored(self):
         prev = _dash()

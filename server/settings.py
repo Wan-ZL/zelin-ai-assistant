@@ -18,7 +18,8 @@ Two things, both stdlib (+ optional PyYAML for reading config.yaml):
 
 3. **The daily self-improvement loop's knobs** (CONTRACT §70, D10) —
    ``GET/PUT /api/settings/daily-loop``: ``enabled`` / ``time`` (local HH:MM)
-   / ``max_proposals_per_day`` / ``stale_days`` / ``trash_retention_days``,
+   / ``max_proposals_per_day`` / ``stale_days`` / ``trash_retention_days``
+   / ``review_stale_days`` (D74, §70.2 追记),
    same layered read (override ``daily_loop_<field>`` → config.yaml
    ``daily_loop.<field>`` → default) and the same diff-write; the pipeline's
    ``config._OVERRIDE_FIELDS`` reads the identical flat keys and actd picks a
@@ -97,9 +98,10 @@ OVERRIDE_KEY = "models_%s"
 
 # ---- §70 daily loop knobs — mirrors of act/lib/config.py (drift-pinned) ---- #
 DAILY_LOOP_FIELDS = ("enabled", "time", "max_proposals_per_day", "stale_days",
-                     "trash_retention_days")
+                     "trash_retention_days", "review_stale_days")   # D74: 6th knob
 DAILY_LOOP_DEFAULTS = {"enabled": True, "time": "03:30", "max_proposals_per_day": 2,   # D33: 5 → 2
-                       "stale_days": 45, "trash_retention_days": 90}
+                       "stale_days": 45, "trash_retention_days": 90,
+                       "review_stale_days": 14}
 DAILY_LOOP_KEY = "daily_loop_%s"
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 _BOOL_WORDS = {"true": True, "yes": True, "on": True, "1": True,
@@ -241,7 +243,7 @@ def coerce_count(value) -> int:
 
 _DAILY_LOOP_COERCE = {"enabled": coerce_bool, "time": coerce_clock_time,
                       "max_proposals_per_day": coerce_count, "stale_days": coerce_count,
-                      "trash_retention_days": coerce_count}
+                      "trash_retention_days": coerce_count, "review_stale_days": coerce_count}
 
 
 def coerce_daily_loop(field: str, value):
@@ -287,7 +289,7 @@ def daily_loop_snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``DailyLoopSettings`` mirrors verbatim)::
 
         {"enabled": bool, "time": "HH:MM", "max_proposals_per_day": int,
-         "stale_days": int, "trash_retention_days": int,
+         "stale_days": int, "trash_retention_days": int, "review_stale_days": int,
          "source": {"<field>": "override|config|default", ...}}
     """
     overrides = read_overrides(home)

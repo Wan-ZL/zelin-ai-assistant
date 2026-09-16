@@ -3,7 +3,9 @@
 // 只在 paused 时出现：点名被标记的 PR（needs-owner-eyes）与触碰的受保护路径，给一个
 // 「恢复通道」按钮（POST /api/self-improve/resume → 下一 pass 免批派发继续）。owner 处理完
 // 该 PR（合并/关闭）actd 巡检也会自动清——两条出口都在文案里。enabled=false 不渲染
-// （那是配置，不是事故）。与 ErrorBanner 互斥：server 连不上时它闭嘴。
+// （那是配置，不是事故；§65.1 起通道**出厂就是关的**，而关着时巡检不跑 =「处理该 PR
+// 后自动恢复」这条出口也不通，横幅只会没完没了地催一条用户刚关掉的通道）。
+// 与 ErrorBanner 互斥：server 连不上时它闭嘴。
 import { useState } from "react";
 import { ApiError, postSelfImproveResume } from "../../api";
 import { useI18n } from "../../i18n";
@@ -15,7 +17,7 @@ export function describeSelfImprove(
   state: SelfImproveState | undefined,
   text: (zh: string, en: string) => string,
 ): { title: string; detail: string } | null {
-  if (!state || !state.paused) return null;
+  if (!state || !state.enabled || !state.paused) return null;
   const pr = state.paused_pr != null ? `#${state.paused_pr}` : text("（未知 PR）", "(unknown PR)");
   const paths = (state.paused_paths ?? []).join(", ") || text("受保护路径", "protected paths");
   return {

@@ -123,8 +123,10 @@ FIXTURE_INIT = ('"""fixture act: resolves like the real package (stamp -> git ta
                 '__version__ = "0.0.0"\n'
                 "__version__ = _version.resolve(__version__)\n")
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 420  # 89 runs of real bash+git; ~240 s on a 2024 Mac, 327 s seen on the macos-latest
-                      # CI leg after #174 + #176 landed together (2026-09-03) — budget follows the run count
+BUDGET_SECONDS = 600  # 94 runs of real bash+git after #326's deploy-alarm case; ~240 s on a 2024 Mac,
+                      # 327 s seen on the macos-latest CI leg (2026-09-03, 89 runs) and 457 s on 2026-09-16
+                      # (94 runs, two ci runs sharing the runner pool) — budget follows the run count, with
+                      # headroom for runner variance; a real runaway still trips it
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -366,13 +368,13 @@ print(json.dumps({"home": os.getcwd(), "checks": checks}))
 sys.exit(len(names))
 '''
 
-FAKE_NOTIFY = '''"""fake act.lib.notify: append title|body to FAKE_NOTIFY_LOG."""
+FAKE_NOTIFY = '''"""fake act.lib.notify: append title|body|kind to FAKE_NOTIFY_LOG."""
 import os
 def notify(title, body, subtitle=None, req=None, kind=None):
     path = os.environ.get("FAKE_NOTIFY_LOG")
     if path:
         with open(path, "a", encoding="utf-8") as fh:
-            fh.write("%s|%s\\n" % (title, body))
+            fh.write("%s|%s|%s\\n" % (title, body, kind or ""))
     return not os.environ.get("FAKE_NOTIFY_RETURN_FALSE")
 '''
 
@@ -622,6 +624,10 @@ class AutoDeployFixture(unittest.TestCase):
 
     def notifications(self):
         return self.notify_log.read_text(encoding="utf-8").splitlines() if self.notify_log.exists() else []
+
+    def notification_kinds(self):
+        """每条通知的 §28 ``kind``（空串 = 无 kind），按发出顺序。"""
+        return [line.rsplit("|", 1)[1] for line in self.notifications()]
 
     def ci_queries(self):
         """Every check-runs API call, in order: "<via> <url>" with via = gh |
@@ -1832,6 +1838,24 @@ class AutoDeployScriptTestCase(AutoDeployFixture):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("notify failed (non-fatal)", self.log_text())
         self.assertIn("returned False", self.log_text())
+
+    def test_alarms_carry_the_failure_kind_but_a_plain_deploy_does_not(self):
+        """§28 追记 2026-09-12（issue #29）：安静时段静音的是提案 / 需输入，
+        部署告警必须带 ``kind="failure"`` 才穿透——设置页的「失败通知不受安静
+        时段管」就是这么写的；成功行不带（半夜不该为一次顺利升级弹横幅）。"""
+        # 回滚：装完 doctor 红了、每次 settle 重试也红 → 一条「已回滚」告警
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "rolled_back")
+        self.assertIn("rolled back", self.notifications()[0])
+        self.assertEqual(self.notification_kinds(), ["failure"])
+        # 下一个绿提交正常部署：那一条无 kind（`general`，安静时段管得着）
+        target = self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.notification_kinds(), ["failure", ""])
 
     def test_install_timeout_counts_as_failure(self):
         self.push("0.48.4")

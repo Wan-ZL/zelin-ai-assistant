@@ -5,7 +5,9 @@ CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119�
 救活的会话按 stop_to_review 收割进待验收，不再挂「需输入」）/ §16（auto_resume
 双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis（收割时比对快照）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
-/ §46（resume 风暴降级 + 确认式停止）/ §65.3（self_improve 收割核验）。
+/ §46（resume 风暴降级 + 确认式停止）/ §65.1（通道总开关关着 = 不给 self_improve
+卡自动续命）/ §65.3（self_improve 收割核验）/ §71.3（被睡眠打断的会话收割前
+原地重试一次）。
 """
 from __future__ import annotations
 
@@ -13,7 +15,8 @@ import datetime as _dt
 import time
 from typing import Optional
 
-from act.lib import analytics, config, notify, registry, self_improve, steer
+from act.lib import (analytics, config, dispatch_prompt, notify, registry, self_improve,
+                     steer)
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
                                   update_search_index)
@@ -40,6 +43,13 @@ RESUME_HISTORY_CAP = 10             # resume_history 保留最近 N 条，防无
 # every 10 s pass. Process-local is fine — actd is a resident daemon.
 HARVEST_PROBE_AT: dict = {}
 HARVEST_PROBE_INTERVAL_S = 120.0
+
+# §37.1 追记的中途改名探针（活着的会话）用**自己**的节流台账，同一个 120 s
+# 间隔。不与 HARVEST_PROBE_AT 共用是有原因的：共用会让一条刚从 working/idle
+# 掉进 blocked 的会话的 FINAL DRAFT 提升被上一次改名读推迟最多 120 s，而推迟
+# 期间 `_another_move_left` 可能先把卡按「会话受阻」收进待验收——比晚 120 s
+# 更糟。代价是活会话每 120 s 多读一次本地 transcript 尾（无 LLM 调用）。
+TITLE_PROBE_AT: dict = {}
 
 
 def _now_utc() -> _dt.datetime:
@@ -152,17 +162,23 @@ def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
 # --------------------------------------------------------------------------- #
 # FINAL DRAFT probe（§11 chat 交付的强完成信号）
 # --------------------------------------------------------------------------- #
-def _probe_throttled(sid) -> bool:
-    """One transcript probe per session per HARVEST_PROBE_INTERVAL_S; stamps the probe."""
+def _probe_throttled(sid, at: Optional[dict] = None) -> bool:
+    """One transcript probe per session per HARVEST_PROBE_INTERVAL_S; stamps the probe.
+
+    ``at`` = 用哪一本节流台账（缺省 HARVEST_PROBE_AT = 交付提升那条路；
+    TITLE_PROBE_AT = §37.1 追记里活会话的改名探针，两本分开的理由写在
+    TITLE_PROBE_AT 上面）。
+    """
+    ledger = HARVEST_PROBE_AT if at is None else at
     now = time.monotonic()
     # None sentinel, NOT 0.0: monotonic() counts from boot, so on a freshly
     # started machine `now - 0.0 < interval` is TRUE for the first minutes —
     # a 0.0 default swallowed the very first probe (surfaced on CI runners,
     # whose uptime is seconds; a just-rebooted Mac would hit it too).
-    last = HARVEST_PROBE_AT.get(str(sid))
+    last = ledger.get(str(sid))
     if last is not None and now - last < HARVEST_PROBE_INTERVAL_S:
         return True
-    HARVEST_PROBE_AT[str(sid)] = now
+    ledger[str(sid)] = now
     return False
 
 
@@ -186,9 +202,23 @@ def promote_if_delivered(d: Daemon, req, ex: dict, sid) -> bool:
         return False
     harvested = _probe_harvest(d, sid)
     if not str(harvested.get("final_draft") or "").strip():
+        _apply_probe_title(d, req, harvested)
         return False
     _promote_delivered(d, req, ex, sid, harvested)
     return True
+
+
+def _apply_probe_title(d: Daemon, req, harvested: dict) -> None:
+    """§37.1 追记：会话还没交付，但这次探针的 transcript 里已经带了新的
+    ``CARD TITLE:`` 行 —— 当场应用。交互式长会话没有轮次边界（用户 attach
+    进去聊很久），卡名不该等到交付才跟上聊天内容。
+
+    收割/落笔仍是既有那一套（``apply_harvest_title`` → 唯一落笔点
+    ``registry.set_display_title``：user_titled 钦定优先、same-value no-op、
+    掩码拒收），所以每 120 s 一次的探针只在真改名时写一次盘。§44 单写者：
+    这里是 actd 主循环。"""
+    if apply_harvest_title(d, req, harvested):
+        registry.save(req)
 
 
 def _promote_delivered(d: Daemon, req, ex: dict, sid, harvested: dict) -> None:
@@ -279,7 +309,8 @@ def drop_steers(d: Daemon, req: Requirement, pend: list, reason: str, why: str) 
     绝不静默蒸发。``why`` 是 analytics 的机读原因（metadata only）。"""
     steer.drop_trace(req, pend, reason)
     registry.save(req)
-    notify.notify("追加指令未送达", f"{req.title or req.id}：{reason}", req=req.id)
+    notify.notify("追加指令未送达", f"{req.title or req.id}：{reason}", req=req.id,
+                  kind=notify.KIND_FAILURE)
     analytics.log_event("steer_dropped", req=req.id, n=len(pend), reason=why)
     d.log(f"steer: {req.id} dropped {len(pend)} steer(s) — {reason}")
 
@@ -339,8 +370,18 @@ def _stop_for_steer(d: Daemon, req: Requirement, sid) -> bool:
     return True
 
 
+def _steer_prompt(req: Requirement, pend: list) -> str:
+    """steer 批 + §37.1 的显示名重审句（``title_line``）。
+
+    steer 是交互式长会话唯一可靠的「有事发生」回流点：借这趟车把每轮必审的
+    CARD TITLE 请求也带进去，卡名就不必等到下一个轮次边界才跟上。分档单源仍是
+    ``dispatch_prompt.rework_title_line``（user_titled 钦定卡 → "" → 与从前逐
+    字节相同），现值按 DATA 过 ``sanitize.fence_untrusted`` 围栏。"""
+    return steer.build_steer_prompt(pend, title_line=dispatch_prompt.rework_title_line(req))
+
+
 def _deliver_steers(d: Daemon, req: Requirement, cfg: config.Config, pend: list) -> None:
-    ok = d.executor.resume(req, cfg, prompt=steer.build_steer_prompt(pend))
+    ok = d.executor.resume(req, cfg, prompt=_steer_prompt(req, pend))
     if ok:
         steer.mark_delivered(req, pend)
         registry.save(req)
@@ -422,15 +463,42 @@ def _reconcile_one(d: Daemon, req: Requirement, cfg: config.Config, agents: dict
     if ex.get("done"):
         _promote_if_missed(req)
         return 0
+    if self_improve.frozen_in_flight(req, cfg):
+        # §65.1（issue #307 第 4 条）：通道关着时死掉的 self_improve 会话**不自动
+        # 续命**——「在电脑睡眠时被中断」正是 owner 点名的那条路。卡原地留在运行
+        # 中（不改状态、不写卡、不打日志：出厂默认不该每 pass 出声），维护者把开关
+        # 打开后下一 pass 照常救活。收割（done / blocked 两条路）与 §65.3 核验不在
+        # 本闸下——已经跑完的活该被收下。
+        return 0
     return _revive_dead(d, req, ex, sid, cfg, resume_notified)
 
 
 def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_notified: set) -> None:
+    dirty = ex.pop("sleep_interrupted", None) is not None   # §71.3 证据保鲜（见下）
     if ex.get("resume_attempts"):            # recovered — reset backoff
         ex["resume_attempts"] = 0
+        dirty = True
+    if dirty:
         req.execution = ex
         registry.save(req)
     resume_notified.discard(req.id)
+    _probe_title_alive(d, req, sid)
+
+
+def _probe_title_alive(d: Daemon, req: Requirement, sid) -> None:
+    """§37.1 追记：**活着的**会话（working / idle）中途改名的唯一触点。
+
+    issue #331 点名的场景是「用户 attach 进去聊很久的交互式长会话」——那种会话
+    的 roster class 恒为 ``live``，走的就是 ``_note_alive`` 这一条，既不受阻也不
+    交付，所以挂在 ``promote_if_delivered`` 上的那个探针永远探不到它。这里按
+    TITLE_PROBE_AT 的 120 s 节流读一次 transcript 尾，只做改名、不动状态机、
+    不提升（提升仍然只在 blocked / done / dead 那三条既有路上判 FINAL DRAFT）。
+    """
+    if d.executor is None:
+        return
+    if _probe_throttled(sid, TITLE_PROBE_AT):
+        return
+    _apply_probe_title(d, req, _probe_harvest(d, sid))
 
 
 def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
@@ -443,15 +511,7 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
     transcript while the board said 需输入."""
     if not ex.get("done") and d.promote_if_delivered(req, ex, sid):
         return
-    # §44.3: a blocked session is the safe injection window — flush
-    # any queued silent-merge briefings (stop-idle-then-resume; the
-    # resumed session un-blocks as a bonus). 注入队列非空时先注入——
-    # briefing/steer 本身就可能让会话继续推进，不急着收割。
-    if _flush_briefings(d, req, ex, cfg):
-        return
-    if steer.pending_steers(req):
-        # §44.3-S 安全窗口①：blocked 时 flush steer 不打断工作。
-        flush_steers(d, req, cfg)
+    if _another_move_left(d, req, ex, cfg):
         return
     # §13/§46.3 v0.48.8（#119）：没有任何待注入的内容、会话又不再
     # 推进 —— 按既有 stop_to_review 收割路径落待验收：停 agent、
@@ -463,8 +523,71 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
                       "blocked, harvested to review",
                       interrupted_reason="blocked", agent=agent)
     notify.notify(*notify.msg_review_interrupted(req.title or req.id),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_NEEDS_INPUT)
     resume_notified.discard(req.id)
+
+
+def _another_move_left(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
+    """收割之前还剩的三条出路，顺序即优先级（任一条走通 = 本 pass 不收割）：
+
+    ① §44.3 briefing 注入——blocked 是安全注入窗口，flush 掉排队的静默并入
+       简报（stop-idle-then-resume，会话顺带 un-block）；注入队列非空时先注入，
+       briefing/steer 本身就可能让会话继续推进，不急着收割。
+    ② §44.3-S 安全窗口①：blocked 时 flush steer 不打断工作。
+    ③ §71.3：这次中断是电脑睡着造成的——原地重试一次再说。
+    """
+    if _flush_briefings(d, req, ex, cfg):
+        return True
+    if steer.pending_steers(req):
+        flush_steers(d, req, cfg)
+        return True
+    return sleep_retry(d, req, ex, cfg)
+
+
+def _harvested_nothing(ex: dict) -> bool:
+    """这一轮收割没收到任何交付物（`final_draft` 空）。
+
+    §71.3 第二道门的判据：被睡眠切断的会话典型形态是 transcript 末尾一句
+    `API Error: Your computer went to sleep mid-response`——agent 进程已退出
+    （roster 说 done），FINAL DRAFT 从来没写出来。真交付过的会话不许被重试
+    （它已经把活干完了，再 resume 只是白烧一次钱）。
+    """
+    return not str(ex.get("final_draft") or "").strip()
+
+
+def sleep_retry(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
+    """§71.3 一次性原地重试：被**实测的**睡眠打断过的会话，收割前用同一个
+    session / 同一段上下文再拉起一次（`executor.resume`，无新 prompt）。
+
+    两个入口共用本函数（2026-09-14 review 修正：只挂在 blocked 分支上会漏掉
+    #311 的真实形态——睡眠切断的 agent 进程**直接退出**，roster 报 done）：
+    ① `_another_move_left`（roster blocked，收割前的最后一步）；
+    ② `_handle_done`（roster done 且这轮收割空手，见 `_harvested_nothing`）。
+
+    证据只认 `execution.sleep_interrupted`——它由 §71.2 的 wall−monotonic 挂起
+    测量写下，不是猜的：一个真的在问问题的受阻会话没有这面旗，永远走不到这里
+    （RISK：重试会再花一次钱，所以证据必须是测量值）。上限一次（`sleep_retry_used`
+    add-only，写在 resume 之前——executor.resume 自己会落盘，标记必须先在
+    execution 里就位，否则崩在中间会让这张卡每 pass 重试一次）。第二次被打断
+    照旧收割进待验收（本函数返回 False）。绝不抛。
+    """
+    if not ex.get("sleep_interrupted") or ex.get("sleep_retry_used"):
+        return False
+    if d.executor is None:
+        return False
+    ex["sleep_retry_used"] = True
+    req.execution = ex
+    append_note(req, "[睡眠打断] 电脑睡着时会话被切断，已自动原地重试一次"
+                     "（同一会话、同一上下文）")
+    registry.save(req)
+    try:
+        ok = d.executor.resume(req, cfg)
+    except Exception as e:  # noqa: BLE001 - 重试失败只记账，下 pass 照常收割
+        d.log(f"reconcile: {req.id} sleep retry FAILED: {e}")
+        return True
+    d.log(f"reconcile: {req.id} sleep-interrupted -> resumed once (ok={ok})")
+    analytics.log_event("sleep_retry", req=req.id, ok=bool(ok))
+    return True
 
 
 def _flush_briefings(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
@@ -480,13 +603,17 @@ def _flush_briefings(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) 
 def _handle_done(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_notified: set) -> None:
     if ex.get("done"):
         return
-    ex["done"] = True                    # mark finished so a later purge isn't mistaken for a crash
-    ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
     # 收割交付物：transcript 最后一条 assistant 消息 -> delivered_summary
     # （chat 模式还有 FINAL DRAFT 全文）。收割失败绝不阻塞提升。
+    # **先收割再判 done**（§71.3 第二道门，2026-09-14 review 修正）：收到了什么
+    # 正是「该不该重试」的判据，`done` 一旦立起来这张卡就再也回不到 executing。
     err = harvest_into(d, req, ex, sid)
     if err is not None:
         d.log(f"reconcile: harvest_delivery {req.id} failed: {err}")
+    if _harvested_nothing(ex) and sleep_retry(d, req, ex, cfg):
+        return
+    ex["done"] = True                    # mark finished so a later purge isn't mistaken for a crash
+    ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
     # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
     check_triage_registry_guard(d, req, ex)
     self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
@@ -512,7 +639,7 @@ def _drop_undelivered_steers(d: Daemon, req: Requirement) -> None:
     if pend:
         steer.drop_trace(req, pend, "会话已完成进入待验收，追加指令未及送达")
         notify.notify("追加指令未送达（任务已完成）",
-                      req.title or req.id, req=req.id)
+                      req.title or req.id, req=req.id, kind=notify.KIND_FAILURE)
         analytics.log_event("steer_dropped", req=req.id,
                             n=len(pend), reason="done")
 
@@ -584,7 +711,7 @@ def _storm_degrade(d: Daemon, req: Requirement, ex: dict, sid, storm_n: int) -> 
                       f"resume storm ({storm_n} revivals)",
                       interrupted_reason="resume_storm")
     notify.notify(*notify.msg_resume_storm(req.title or req.id, storm_n),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_NEEDS_INPUT)
     analytics.log_event("resume_storm_degraded", req=req.id, n=storm_n)
 
 
@@ -598,7 +725,7 @@ def _exhaust_after_failures(d: Daemon, req: Requirement, ex: dict, sid) -> None:
                       interrupted_reason="resume_exhausted")
     # §5 v0.14 copy: bilingual + names the exact card buttons to press
     notify.notify(*notify.msg_auto_resume_exhausted(req.title or req.id),
-                  req=req.id)
+                  req=req.id, kind=notify.KIND_NEEDS_INPUT)
     analytics.log_event("auto_resume_exhausted", req=req.id)
 
 
@@ -663,7 +790,7 @@ def _resume_with_steers(d: Daemon, req: Requirement, cfg: config.Config) -> bool
     # 无 steer 时不带 prompt 形参——裸 resume 路径与从前逐字节
     # 相同（add-only 纪律：老注入缝/老 mock 一概不受扰动）。
     if pend:
-        ok = d.executor.resume(req, cfg, prompt=steer.build_steer_prompt(pend))
+        ok = d.executor.resume(req, cfg, prompt=_steer_prompt(req, pend))
         _settle_steers(d, req, pend, ok)
         return ok
     return d.executor.resume(req, cfg)

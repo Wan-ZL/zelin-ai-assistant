@@ -149,6 +149,160 @@
             "zh": ""
           },
           "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "When a radar or a capture files a new card for your approval (including returned cards and the batched \"N new cards\" summary). Turning it off changes nothing about the cards themselves — they still wait on the board, you just get no banner.",
+            "zh": "雷达 / 捕获铸出新卡等你审批时（含回锅、含一次性批量汇总）。关掉不影响卡片本身，只是不弹横幅——看板上照样在等。"
+          },
+          "key": "notify_proposals",
+          "kind": "bool",
+          "label": {
+            "en": "New-proposal alerts",
+            "zh": "新提案通知"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "When a session stops and waits on you: a blocked session harvested into In review, auto-recovery paused after repeated crashes, dispatch giving up after a streak of failures.",
+            "zh": "会话停在等你一句话时：受阻收割进「待验收」、反复中断暂停自动救活、派发连续失败后停止重试。"
+          },
+          "key": "notify_needs_input",
+          "kind": "bool",
+          "label": {
+            "en": "Needs-input alerts",
+            "zh": "任务停下来时通知"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and quiet hours do not silence it — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here.",
+            "zh": "需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且不受安静时段管——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。"
+          },
+          "key": "notify_failures",
+          "kind": "bool",
+          "label": {
+            "en": "Failure alerts",
+            "zh": "失败通知"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": false,
+          "effective": false,
+          "help": {
+            "en": "While on, no banner is posted inside the window below (three exceptions: failure alerts, the receipt for a button you just pressed, and the last call before a card in review is archived). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board.",
+            "zh": "开启后，下面的时段内不弹任何横幅（三类除外：失败通知、你刚按下的按钮的回执、待验收卡归档前的最后一次告知）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。"
+          },
+          "key": "quiet_hours_enabled",
+          "kind": "bool",
+          "label": {
+            "en": "Quiet hours",
+            "zh": "安静时段"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "check": {
+            "kind": "clock_time",
+            "message": {
+              "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30.",
+              "zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。"
+            }
+          },
+          "choices": null,
+          "default": "22:00",
+          "effective": "22:00",
+          "help": {
+            "en": "24-hour HH:MM, local time. A start later than the end wraps past midnight (e.g. 22:00 → 08:00).",
+            "zh": "24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。"
+          },
+          "key": "quiet_hours_start",
+          "kind": "string",
+          "label": {
+            "en": "Quiet hours start",
+            "zh": "安静时段开始"
+          },
+          "placeholder": {
+            "en": "22:00",
+            "zh": "22:00"
+          },
+          "source": "default"
+        },
+        {
+          "check": {
+            "kind": "clock_time",
+            "message": {
+              "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30.",
+              "zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。"
+            }
+          },
+          "choices": null,
+          "default": "08:00",
+          "effective": "08:00",
+          "help": {
+            "en": "24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off.",
+            "zh": "24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。"
+          },
+          "key": "quiet_hours_end",
+          "kind": "string",
+          "label": {
+            "en": "Quiet hours end",
+            "zh": "安静时段结束"
+          },
+          "placeholder": {
+            "en": "08:00",
+            "zh": "08:00"
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "When something you captured is merged into an existing card (no new card filed), a green notice appears atop the proposals lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its “Folded ×N” chip. Repeat merges into the same card collapse into one line (×N).",
+            "zh": "你自己捕获的一句话被并进已有卡（没有建新卡）时，提案列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。"
+          },
+          "key": "fold_receipt_notices",
+          "kind": "bool",
+          "label": {
+            "en": "Silent-merge receipts",
+            "zh": "静默并入回执"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
         }
       ],
       "help": {
@@ -159,6 +313,63 @@
       "title": {
         "en": "Notifications",
         "zh": "通知"
+      }
+    },
+    {
+      "fields": [
+        {
+          "choices": null,
+          "default": 0,
+          "effective": 0,
+          "help": {
+            "en": "Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are deleted on their own schedule below.",
+            "zh": "早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 按下面那把「原始媒体保留分钟数」删，与此无关。"
+          },
+          "key": "screenpipe_retention_days",
+          "kind": "int",
+          "label": {
+            "en": "Recording data retention (days)",
+            "zh": "录制数据保留天数"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "bounds": {
+            "max": 525600,
+            "min": 5
+          },
+          "choices": null,
+          "default": 60,
+          "effective": 60,
+          "help": {
+            "en": "How many minutes raw screenshots and audio chunks (the jpg / mp4 files under ~/.screenpipe/data) stay on this machine — their OCR text and transcripts are already exported, so only the raw media goes. Default 60; minimum 5 (the tidy runs every 30 minutes, and anything shorter cuts into the frames being exported in the same round), maximum 525600 (one year). Takes effect on the next tidy, no restart.",
+            "zh": "截图与音频片段（~/.screenpipe/data 里的 jpg / mp4）在本机留多少分钟——OCR 文本与转写此前已经导出，删的只是原始媒体。默认 60；最短 5 分钟（整理每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧），最长 525600（一年）。改完下一轮整理生效，无需重启。"
+          },
+          "key": "screenpipe_media_retention_minutes",
+          "kind": "int",
+          "label": {
+            "en": "Raw media retention (minutes)",
+            "zh": "原始媒体保留分钟数"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        }
+      ],
+      "help": {
+        "en": "The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever and raw jpg / mp4 under ~/.screenpipe/data; see how much disk they take, how fast they grow, and give each a retention window.",
+        "zh": "录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite，原始 jpg / mp4 攒在 ~/.screenpipe/data；这里看它们占了多少盘、每月长多少，并各给一个保留期。"
+      },
+      "id": "storage",
+      "title": {
+        "en": "Recording data & disk",
+        "zh": "录制数据与磁盘"
       }
     },
     {
@@ -629,6 +840,26 @@
         },
         {
           "choices": null,
+          "default": 5,
+          "effective": 5,
+          "help": {
+            "en": "When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates.",
+            "zh": "同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。"
+          },
+          "key": "approval_mention_escalation",
+          "kind": "int",
+          "label": {
+            "en": "Raised N times, still unhandled (escalate at)",
+            "zh": "被提 N 次仍未处理（升级阈值）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
           "default": 60,
           "effective": 60,
           "help": {
@@ -939,6 +1170,46 @@
     },
     {
       "fields": [
+        {
+          "choices": null,
+          "default": false,
+          "effective": false,
+          "help": {
+            "en": "Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 proposal cards, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the approval column, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once.",
+            "zh": "维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并铸 🤖 提案卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回待审批列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。"
+          },
+          "key": "self_improve_enabled",
+          "kind": "bool",
+          "label": {
+            "en": "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
+            "zh": "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": [],
+          "effective": [],
+          "help": {
+            "en": "The self-improvement lane only counts YOUR actions: you merge a PR = accepted, you close it = rejected, your comments = the next round of work. Two identities count out of the box — the account in the first half of the repo slug, and whichever account gh is logged in as on this machine (they differ when the repo is on a personal account and gh is logged in with a work one). Add further logins here. Case-insensitive. Takes effect on the next poll, no restart.",
+            "zh": "自动改进通道只把「你」的动作当数：你合并 PR = 验收，你关闭 = 拒绝，你的评论 = 下一轮任务。出厂就认两个身份——仓库地址前半段那个账号，以及这台机器上 gh 当前登录的账号；两者不同（个人号开仓库、工作号登 gh）时都算你本人。这里填第三个、第四个。大小写不敏感。改完下一轮巡检生效，不用重启。"
+          },
+          "key": "self_improve_owner_logins",
+          "kind": "list",
+          "label": {
+            "en": "Extra GitHub logins that count as you (comma-separated)",
+            "zh": "额外算作我本人的 GitHub 用户名（逗号分隔）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
         {
           "choices": null,
           "default": "",

@@ -140,8 +140,9 @@ class BundleAndBuildTestCase(unittest.TestCase):
         for fw in ["AVFoundation", "ScreenCaptureKit", "UserNotifications", "WebKit", "SwiftUI",
                    "ServiceManagement", "Carbon"]:
             self.assertIn("-framework %s" % fw, build)
-        # ad-hoc signing stays (task constraint) — no stable identity yet
-        self.assertIn("codesign --force --deep -s -", build)
+        # 签名（§54.3 2026-09-12 修正：稳定身份优先、有界、缺证书才回落 ad-hoc）
+        # 不在本文件——判例见 tests/test_shell_build_codesign_identity.py 与
+        # tests/integration/test_shell_build_codesign_budget.py
         # §68.13 helper CLIs ride in the shell bundle (vault-sync-helper / framegrab)
         self.assertIn('VAULTSYNC_SRC="$HELPERS_DIR/VaultSyncHelper.swift"', build)
         self.assertIn('FRAMEGRAB_SRC="$HELPERS_DIR/framegrab.swift"', build)

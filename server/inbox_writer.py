@@ -1,7 +1,7 @@
 """POST /api/actions → ``state/inbox/<uuid>.json``（G1 实现）。
 
-wire 真源 = ``docs/design/inbox-actions.md``（F3 提取稿）+ 33 个 golden
-fixtures（``tests/fixtures/inbox/``）。字节形状逐字复刻 Mac
+wire 真源 = ``docs/design/inbox-actions.md``（F3 提取稿）+ golden fixtures
+（truth = ``tests/fixtures/inbox/*.golden.json``，一个动词 / 变体一份）。字节形状逐字复刻 Mac
 ``JSONSerialization [.prettyPrinted, .sortedKeys]``（`\\/` 转义、空数组三行、
 `" : "` 分隔、末尾无换行）——golden 逐字节等价，不止 JSON 语义等价。
 
@@ -63,8 +63,12 @@ _SPECIAL_FIELDS = {
     "import_claude_sessions": ({"session_ids"}, set()),
     # §63 会议 recap：无卡片级 id，meeting_key 是 recap 键；两者都不带 recipient
     # ——recap_slack_draft 的 channel_id 是 owner 自己草稿箱的会话，不是发送目标
-    "recap_generate": ({"meeting_key"}, {"note", "partial"}),
+    # §63.10（issue #303）：shape = 快速五行 / 可发送长版，逐字面量（缺席 = 这份纪要上一次的形状）
+    # §63.11（issue #302）：answers = 意图问答的答案，**字符串列表** ["split1=drop", …]
+    "recap_generate": ({"meeting_key"}, {"note", "partial", "shape", "answers"}),
     "recap_slack_draft": ({"meeting_key", "channel_id"}, set()),
+    # §63.9「回退到这一版」（issue #300）：version = 存着的那一版的版本号（整数）
+    "recap_revert": ({"meeting_key", "version"}, set()),
     # §48.7 设置页「立即测试一轮」：source ∈ gmail|slack；actd 分离起 act.radar_<src> --once
     "radar_test_round": ({"source"}, set()),
     # §68.1 追记 语气档案「从我的消息生成/更新档案」（D47）：无字段；actd 分离起 act.voice_gen --job
@@ -127,6 +131,11 @@ def _dump_value(v, key_indent: int) -> str:
         return _dump_str(v)
     if isinstance(v, list):
         return _dump_list(v, key_indent)
+    # 整数（§63.9 `recap_revert.version` 起是第四种值类型）：NSJSONSerialization 与
+    # Python 对 Int 都印裸十进制，字节形一致。True/False 是 int 子类，但上面的
+    # `is` 判定已经把两个字面量截走了，到这里只可能是真整数。
+    if isinstance(v, int):
+        return str(v)
     raise TypeError(f"unsupported inbox value type: {type(v).__name__}")
 
 
@@ -331,6 +340,18 @@ def _build_import_sessions(payload: dict) -> dict:
 _RECAP_KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
 _SLACK_CHANNEL_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
 _RECAP_NOTE_MAX = 500
+# §63.10 出稿形状（镜像 act/lib/recap_text.SHAPES；tests/test_server_paths_mirror.py 钉漂移）
+_RECAP_SHAPES = ("lines", "sections")
+# §63.11 意图问答的一条答案（镜像 act/lib/recap_intent.ANSWER_RE；
+# tests/test_server_paths_mirror.py 钉漂移）。这里只查**形状**：id 与选项的闭表
+# 住 daemon 侧（`recap_intent.answers_ok`，词表外 = 诚实 noop），server 不 import act（§49），
+# 而把那两张表手抄第二份的代价是每加一条问题就多一处必然漂移的字面量
+_RECAP_ANSWER_RE = re.compile(r"^[a-z]{1,8}\d{0,2}=[a-z_]{1,12}$")
+# 答案条数上限（镜像 act/lib/recap_intent.MAX_ANSWERS = 问题总数上限——问出来的每条都答得上去）
+_RECAP_ANSWERS_MAX = 12
+# §63.9 回退目标的版本号上限（存的 history 只有 5 条——这只是个理智闸，
+# 不让一个天文数字的整数被序列化进 inbox 文件；真正「这一版存不存在」由持锁的写者判）
+_RECAP_VERSION_MAX = 99_999
 
 
 def _require_recap_key(payload: dict) -> str:
@@ -340,8 +361,45 @@ def _require_recap_key(payload: dict) -> str:
     return key
 
 
+def _put_recap_shape(payload: dict, rec: dict) -> None:
+    """§63.10「可发送长版 / 快速五行」：只认两个字面量（缺席 = 记录上一次用的形状）。"""
+    if "shape" not in payload:
+        return
+    if payload.get("shape") not in _RECAP_SHAPES:
+        raise InvalidFieldError("shape must be %s" % " or ".join(_RECAP_SHAPES), {"field": "shape"})
+    rec["shape"] = payload["shape"]
+
+
+def _bad_answers(answers) -> bool:
+    """形状闸：1.. `_RECAP_ANSWERS_MAX` 条 `id=value` 字符串、id 不重复。"""
+    if not (isinstance(answers, list) and 1 <= len(answers) <= _RECAP_ANSWERS_MAX):
+        return True
+    if not all(isinstance(a, str) and _RECAP_ANSWER_RE.match(a) for a in answers):
+        return True
+    ids = [a.split("=", 1)[0] for a in answers]
+    return len(set(ids)) != len(ids)
+
+
+def _put_recap_answers(payload: dict, rec: dict) -> None:
+    """§63.11「按我的答案再出一版」：答案是**字符串列表**（`["split1=drop", "aud=send"]`）。
+
+    为什么不是 dict：本模块的字节序列化器只认 null / bool / 整数 / 字符串 / 列表
+    （`_dump_value`），Mac 字节形里一处嵌套对象也没有——dict 进来会当场 TypeError。
+    """
+    if "answers" not in payload:
+        return
+    answers = payload.get("answers")
+    if _bad_answers(answers):
+        raise InvalidFieldError(
+            f"answers must be 1..{_RECAP_ANSWERS_MAX} distinct id=value strings",
+            {"field": "answers"})
+    rec["answers"] = list(answers)
+
+
 def _build_recap_generate(payload: dict) -> dict:
     # §63「重新生成」（note = ≤500 字纠正备注）/「现在生成」（partial:true，OPEN 行）
+    # §63.10「重新生成成可发送长版」（shape = lines | sections）
+    # §63.11「按我对这几个问题的答案再出一版」（answers = ["split1=drop", …]）
     rec = {"action": "recap_generate", "meeting_key": _require_recap_key(payload)}
     if "note" in payload:
         note = _require_str(payload.get("note"), "note")
@@ -352,6 +410,8 @@ def _build_recap_generate(payload: dict) -> dict:
         if payload["partial"] is not True:
             raise InvalidFieldError("partial is only true", {"field": "partial"})
         rec["partial"] = True
+    _put_recap_shape(payload, rec)
+    _put_recap_answers(payload, rec)
     return rec
 
 
@@ -363,6 +423,18 @@ def _build_recap_slack_draft(payload: dict) -> dict:
                                 {"field": "channel_id"})
     return {"action": "recap_slack_draft", "meeting_key": _require_recap_key(payload),
             "channel_id": channel}
+
+
+def _build_recap_revert(payload: dict) -> dict:
+    # §63.9「回退到这一版」：version 必须是 1.._RECAP_VERSION_MAX 的真整数
+    # （bool 是 int 子类——`true` 绝不能当成第 1 版；浮点同样拒，wire 上只有整数版本号）
+    version = payload.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) \
+            or not (1 <= version <= _RECAP_VERSION_MAX):
+        raise InvalidFieldError(f"version must be an integer 1..{_RECAP_VERSION_MAX}",
+                                {"field": "version"})
+    return {"action": "recap_revert", "meeting_key": _require_recap_key(payload),
+            "version": version}
 
 
 # §48.7 有「立即测试一轮」的源（镜像 act/lib/radar_rounds.SOURCES；obsidian 走 cron 链，原生也无此键）
@@ -387,6 +459,7 @@ _SPECIAL_BUILDERS = {
     "import_claude_sessions": _build_import_sessions,
     "recap_generate": _build_recap_generate,
     "recap_slack_draft": _build_recap_slack_draft,
+    "recap_revert": _build_recap_revert,
     "radar_test_round": _build_radar_test_round,
     "voice_generate": lambda payload: {"action": "voice_generate"},
 }

@@ -137,7 +137,7 @@ bash install.sh --check --fresh-install    # 剩下要你做的事
 
 ### 首次启动看板（Gatekeeper）
 
-自己构建的壳 app 是 ad-hoc 签名，本机 `open` 不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
+自己构建的壳 app 用本机的稳定自签证书 `Zelin AI Engineer Dev` 签（没装证书才回落 ad-hoc；`bash mac/scripts/make-signing-cert.sh` 生成一次，签名跨版本不变 = TCC 授权不掉，CONTRACT §54.3），两种情况下本机 `open` 都不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
 
 > ✅ **预期状态**：Dock 里出现 "Zelin's AI Assistant"，窗口顶部新鲜度标签显示看板数据 ≤10 秒前生成——说明 actd 活着、契约两端接通。若显示橙色「后台服务没在运行」：`launchctl list | grep actd`、`tail ~/Library/Logs/zelin-ai-assistant/actd.launchd.log`，并对照 TROUBLESHOOTING。
 
@@ -196,3 +196,5 @@ bash uninstall.sh --purge
 ## 附：.pkg 安装包（旧路线，仍可用）
 
 [GitHub Releases](https://github.com/Wan-ZL/zelin-ai-assistant/releases) 里的 `ZelinAIAssistant-<tag>.pkg` 装的是**旧的菜单栏 app**（现名 `Zelin's AI Assistant (old).app`，D3 退役中，保留到 owner 明确下令删除；产品名 `Zelin's AI Assistant.app` 归看板壳）+ 管线母本，postinstall 跑 `install.sh --pkg-postinstall`。未签名，Gatekeeper 会拦：右键 → 打开；若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。新机器请用上面的一条命令。
+
+**它不会写进你的开发 checkout**（CONTRACT §74）：postinstall 播种 `~/Projects/zelin-ai-assistant` 之前先判一次——目的地解析掉符号链接之后若落在一棵 git 工作树里，整段 per-user 安装跳过（不拷贝、不配置、不重启守护进程），`/var/log/install.log` 里点名那棵 checkout 并让你去那里 `git pull` + 手跑 `bash install.sh`。旧菜单栏 app 的 Sparkle 自动更新也已经断粮（发布的 appcast 是永远答「已是最新」的终止版 feed），起因见 issue #333 与 `docs/TROUBLESHOOTING.md`「整棵 checkout 莫名回退到一个旧版本」。

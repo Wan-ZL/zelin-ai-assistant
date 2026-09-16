@@ -2,6 +2,10 @@
 //   批准（T2 走 typed-confirm 弹窗，wire 不变）· 拒绝（fork：不想做 reject / 已办完
 //   done_external，§41）· 修改（comment 文本弹窗）· 暂缓（defer，提案→潜在任务）。
 // processing=true 的灰卡是 AI 研究中占位——只展示 sheen，不给决策按钮。
+// §76.2 三颗结算信号（issue #313，全是 server 算好的只读判据）：completion_hint → 绿章「疑似已完成」
+//   + 证据一句 + 两颗一键（done_external / reject，§10 既有动词）；decision_due → 红色决策提示行
+//   （三个动词的按钮就在下一排，不造第二套）；mention_escalated → 被提×N 章从 quiet 转 danger「仍未处理」。
+//   三个都不改状态：卡怎么走仍是 owner 点的（§76.1）。
 // 卡面（原生 ApprovalCardView.normalBody 收起态）：摘要 + 落点行（§7 target_kind）+ 章行
 //   + 怎样算办完（紧凑：前 3 条 + 「+N」，DodFace，D43——§11 批准即批准这份 DoD，原生 :1085 卡面常显）
 //   + 分歧 + 回锅注。技术标题 / 💰 费用 / 💬 需求来自 / 📋 要做什么 / 怎样算办完全文 住右侧详情侧栏
@@ -109,6 +113,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
     void submit(cardAction(card.id, action, comment));   // 动作回传永远送主键 id（§60）
   };
   const shownId = displayId(card);
+  // §76.2 疑似已完成证据：wire 形 {at, note, channel}，非对象一律当缺席（server 已消毒过一遍）
+  const hint = card.completion_hint && typeof card.completion_hint === "object" ? card.completion_hint : null;
+  const hintNote = typeof hint?.note === "string" ? hint.note : "";
 
   return (
     <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${headline}`} selectable>
@@ -159,13 +166,27 @@ export function ProposalCard({ card }: ProposalCardProps) {
           <span className={card.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardnessLabel(card.hardness, text)}</span>
         )}
         {typeof card.type === "string" && card.type && <span className="chip">{domainLabel(TYPE_LABELS, language, card.type)}</span>}
-        {/* 被提×N 是 lineage 计数——quiet 档，比状态 chip 安静 */}
+        {/* 被提×N 是 lineage 计数——quiet 档，比状态 chip 安静；
+            §76.2 mention_escalated（被提够多次仍没人处理）时转 danger 并说出「仍未处理」 */}
         {typeof card.repeated === "number" && card.repeated > 1 && (
           <span
-            className="chip chip-warning chip-quiet"
-            title={text(`这件事被提起过 ${card.repeated} 次，重述已合并进这张卡`, `This came up ${card.repeated} times — restatements were merged into this card`)}
+            className={card.mention_escalated ? "chip chip-danger" : "chip chip-warning chip-quiet"}
+            title={card.mention_escalated
+              ? text(`这件事被提起过 ${card.repeated} 次，一直没有批准、暂缓或拒绝`, `This came up ${card.repeated} times and was never approved, deferred or rejected`)
+              : text(`这件事被提起过 ${card.repeated} 次，重述已合并进这张卡`, `This came up ${card.repeated} times — restatements were merged into this card`)}
           >
-            {text(`被提×${card.repeated}`, `Raised ×${card.repeated}`)}
+            {card.mention_escalated
+              ? text(`被提×${card.repeated} · 仍未处理`, `Raised ×${card.repeated} · still unhandled`)
+              : text(`被提×${card.repeated}`, `Raised ×${card.repeated}`)}
+          </span>
+        )}
+        {/* §76.2 疑似已完成：雷达扫到「这件事已经发生」的证据——章只说提示，状态一个字没改 */}
+        {hint && (
+          <span
+            className="chip chip-success"
+            title={text("雷达在新证据里看到这件事已经发生；状态没有变，怎么处理由你点", "The radar saw evidence this already happened; nothing changed status — the call is yours")}
+          >
+            {text("✅ 疑似已完成", "✅ Looks already done")}
           </span>
         )}
         {/* §44 静默并入可见且可逆（原生紫章 已并入×N；拆回在详情抽屉的并入记录） */}
@@ -201,6 +222,30 @@ export function ProposalCard({ card }: ProposalCardProps) {
       )}
       {card.disagreement && (
         <p className="card-line is-warning is-body"><span className="card-detail-label">{text("⚠︎ 分歧: ", "⚠︎ Disagreement: ")}</span><span>{String(card.disagreement)}</span></p>
+      )}
+      {/* §76.2 疑似已完成的证据一句 + 两颗一键（§10 既有动词 done_external / reject，不开新动作）。
+          雷达的完成判断可能是错的——所以这里只给出口，不替用户拍板（§76.1）。 */}
+      {hint && hintNote && (
+        <p className="card-line is-success is-body">
+          <span className="card-detail-label">{text("✅ 证据: ", "✅ Evidence: ")}</span><span>{hintNote}</span>
+        </p>
+      )}
+      {/* §76.2 截止日已到仍未批准：不再让「今天截止」无声地变成「已过期」——点名三个出口，
+          按钮就在下一排（不另造第二套 批准/暂缓/拒绝，一个动词一颗键） */}
+      {card.decision_due && (
+        <p className="card-line is-danger is-body" role="note">
+          {text("⏰ 截止日已到，这张卡还没批准 —— 现在决定：批准 / 暂缓 / 拒绝", "⏰ Past its deadline and still unapproved — decide now: approve / defer / reject")}
+        </p>
+      )}
+      {hint && !pending && (
+        <div className="card-actions">
+          <button type="button" className="btn btn-success" onClick={() => decide("done_external")}>
+            {text("已办完 · 记为已交付", "Already done · mark delivered")}
+          </button>
+          <button type="button" className="btn btn-danger" onClick={() => decide("reject")}>
+            {text("不做 · 进回收站", "Won't do · to trash")}
+          </button>
+        </div>
       )}
       {pending ? (
         <p className="card-pending-note">{pendingNote(pendingAction, text)}</p>

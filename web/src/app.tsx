@@ -28,6 +28,7 @@ import { IngestPage } from "./pages/IngestPage";
 import { RecapsPage } from "./pages/RecapsPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SkillsPage } from "./pages/SkillsPage";
 import { isSetupSkipped, SetupPage } from "./pages/SetupPage";
 import { StyleguidePage } from "./pages/StyleguidePage";
 import { TrashPage } from "./pages/TrashPage";
@@ -69,6 +70,8 @@ function renderPage(page: AppPage) {
     case "diagnostics": case "deps": return <SettingsPage />;
     case "setup": return <SetupPage />;
     case "ingest": return <IngestPage />;
+    // 技能（D78）：原设置页「Skills」区搬成独立页，组件仍是 SkillsSection（§67.5）
+    case "skills": return <SkillsPage />;
     case "about": return <AboutPage />;
     default: return <BoardPage />;
   }

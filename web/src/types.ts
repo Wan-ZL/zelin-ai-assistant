@@ -57,6 +57,12 @@ export interface ApprovalCard {
   capture_id?: string;
   /** §44 静默并入次数（0 = 从未）——原生「已并入×N」紫章 */
   silent_merged?: number;
+  /** §76.2 结算信号：截止日已到（days_left ≤ 0）仍挂在提案列 → 卡面出决策提示 */
+  decision_due?: boolean;
+  /** §76.2 结算信号：被提 ≥ approval.mention_escalation 次仍未处理 → 被提×N 章转红「仍未处理」 */
+  mention_escalated?: boolean;
+  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号；状态永远没变过） */
+  completion_hint?: CompletionHint;
   /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
   cost_state?: string;
   /** §37 展示名 / 曾用名——提案是摘要优先面：卡面标题走 cardHeadline（钦定名 > summary > display_title > title），
@@ -65,6 +71,18 @@ export interface ApprovalCard {
   /** §37 用户钦定标记（server 只在为真时发键）：为真时 display_title 压过 summary 成为卡面标题 */
   user_titled?: boolean;
   former_titles?: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * 「疑似已完成」证据（needs_approval 项 `completion_hint`，CONTRACT §76.2 issue #313）。
+ * 字段逐字镜像 wire：at = epoch 秒（缺失 null）、note = 证据一句话、channel = 证据来路。
+ * 它**只是提示**：卡的 status 没有变过，归档 / 记为已交付仍是 owner 的一次点击。
+ */
+export interface CompletionHint {
+  at?: number | null;
+  note?: string;
+  channel?: string;
   [key: string]: unknown;
 }
 
@@ -84,7 +102,8 @@ export interface EgressRow {
  * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
  * docs/CONTRACT.md §51（可能缺席，也可能是纯字符串——UI 经 steer.ts 双兼容
  * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id=前置卡主键）/
- * concurrency（等并发位）；waiting_budget retired v0.48.7（D9）。
+ * concurrency（等并发位）/ asleep（§71.1 等电脑醒来）；waiting_budget retired
+ * v0.48.7（D9）。
  */
 export interface QueuedReason {
   kind: string;
@@ -123,7 +142,10 @@ export interface CardAssessment {
 /** 运行中/需输入/已完成 分区项（running 混入 state="queued" 的排队项，无 session_id） */
 export interface TaskRow {
   id: string;
+  /** §37 会话行的名字 = 卡此刻的显示名（server `_session_name`，不是冻结 title） */
   name: string;
+  /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
+  title?: string;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
   work_id?: string | null;
   /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
@@ -137,6 +159,8 @@ export interface TaskRow {
   cwd?: string;
   started_at?: number;
   dispatched_at?: number;
+  /** §71.2 这一轮至今电脑睡掉的秒数（缺席 = 没睡过） */
+  slept_seconds?: number;
   accepted_at?: number;
   summary?: string;
   plan?: string[];
@@ -159,6 +183,9 @@ export interface TaskRow {
   last_error_id?: string | null;
   dispatch_error_id?: string | null;
   agent_name?: string | null;
+  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（CLI 改不了运行中会话的名字，下次 resume 才跟上）——
+   *  只发给还能再 resume 的行；已验收行（completed）不发这个键 */
+  agent_name_stale?: boolean;
   question?: string | null;
   display_title?: string;
   former_titles?: string[];
@@ -196,7 +223,10 @@ export interface SelfImproveState {
 /** 待验收卡（review 分区项） */
 export interface ReviewCard {
   id: string;
+  /** §37 会话行的名字 = 卡此刻的显示名（server `_session_name`，不是冻结 title） */
   name: string;
+  /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
+  title?: string;
   /** §65.3 self_improve 卡才有：草稿 PR 核验结果 */
   delivery?: Delivery;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
@@ -213,6 +243,8 @@ export interface ReviewCard {
   log?: string;
   dispatched_at?: number;
   review_at?: number;
+  /** §71.2 这一轮耗时里电脑睡掉的秒数（缺席 = 没睡过；卡面「其中 N 小时电脑睡眠」） */
+  slept_seconds?: number;
   delivery_mode: "chat" | "repo" | string;
   /** 原生 ReviewRow meta 行：cwd basename 章 / 会话有新活动；copy_cmd = 双击整卡接管的「有没有会话」判据 + 详情侧栏「复制接管指令」的正文（D36：卡面不再渲染指令行） */
   cwd?: string;
@@ -220,9 +252,15 @@ export interface ReviewCard {
   session_active?: boolean;
   summary?: string | null;
   agent_name?: string | null;
+  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（下次 resume 才跟上）——
+   *  只发给还能再 resume 的行；已验收行（completed）不发这个键 */
+  agent_name_stale?: boolean;
   display_title?: string;
   /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
   assessment?: CardAssessment | null;
+  /** §2 追记 / D74：来源全为 self_improve 的机器卡（🤖）；人卡与老 server 的行**整键缺席**，
+   *  列头「隐藏 🤖」因此只藏带这个键的行（taskFilters 的跨分区语义） */
+  self_improve?: boolean;
   [key: string]: unknown;
 }
 
@@ -240,6 +278,9 @@ export interface DebtCard {
   type?: string;
   sources?: CardSource[];
   summary?: string;
+  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号）。备选卡的出口是
+   *  「永久完成（封存）」/「删除」——状态永远没变过，拍板仍是 owner 的一次点击 */
+  completion_hint?: CompletionHint;
   /** §37 摘要优先面（原生 DebtRow displaySummary）：卡面标题走 cardHeadline */
   display_title?: string;
   user_titled?: boolean;
@@ -376,6 +417,8 @@ export interface Board {
   maintenance?: Maintenance;
   /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
   recaps?: RecapRow[];
+  /** §63.5 追记（issue #301）三栏的**真实**总数（add-only；老 daemon 缺席 = 整键不在） */
+  recap_counts?: RecapLaneTotals;
   /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
@@ -392,15 +435,20 @@ export interface FoldReceipt {
   title: string;
   channel: string;
   at: number;
+  /** §44.6 追记（#308）：同一张卡在 TTL 窗口内的并入次数（add-only；老 server 缺席 = 1，不渲染 ×N） */
+  count?: number;
   [key: string]: unknown;
 }
 
 /**
  * §63 会议 recap 行（dashboard.json 顶层 recaps[] 的元素 = act/lib/recap_store 投影，
  * wire key 逐字镜像）。status open = 进行中（无正文）；en/zh = 5 行纯文本（null =
- * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at = server
- * 本地标记（marks.json，无控制流读它）；slack_draft = §63.4 草稿投递回执；
+ * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at /
+ * dismissed_at = server 本地标记（marks.json）；slack_draft = §63.4 草稿投递回执；
  * generate_request = §63.8 「重新生成」回执（行上「生成中」的真源）。
+ * §63.5 追记（issue #301）：旧注「无控制流读它」自此失效——sent_at（= 已归档，派生，
+ * 取消标记即回到活跃）与 dismissed_at 决定行落在哪一栏，并在 daemon 侧决定已忽略的
+ * 保留期；marks 仍不进 registry、不触发任何发送 / 派发 / 卡片状态机。
  */
 export interface RecapRow {
   key: string;
@@ -416,13 +464,29 @@ export interface RecapRow {
   zh?: string[] | null;
   /** ok | needs_review | thin_transcript | no_audio | generation_failed | null */
   quality?: string | null;
+  /** §63.10 这一版用的出稿形状：lines = 五行 | sections = 可发送长版（老 daemon 无此键 = lines） */
+  shape?: string | null;
+  /** §63.10 可发送长版的分节正文（五行形 = null；wire 逐字镜像 act/lib/recap_text） */
+  sections_en?: RecapSection[] | null;
+  sections_zh?: RecapSection[] | null;
+  /** §63.10 **粘出去的那一份**（daemon 渲染好的：空的部分已略掉、分节稿已编号）——
+   *  老 daemon 无此键 = 页面退回把 en/zh 直接换行拼起来 */
+  copy_en?: string | null;
+  copy_zh?: string | null;
   transcript_words?: number;
   frames?: number;
   audio_rows?: number;
   note?: string | null;
   history_count?: number;
+  /** §63.9 存着的每一版的句柄（add-only，只有标量；老 daemon 无此键 = 不给「上一版」入口）——
+   *  正文不在这里，点开面板才经 `GET /api/recaps/history?key=` 单独读 */
+  history_versions?: RecapVersionHandle[] | null;
+  /** §63.9 这一版的正文是从第几版回退回来的（add-only；没回退过 = 键不在） */
+  reverted_from?: number | null;
   copied_at?: string | null;
   sent_at?: string | null;
+  /** §63.5 追记 已忽略的时刻（add-only；没忽略过 = null，老 daemon 无此键）——与 sent_at 一起决定分栏 */
+  dismissed_at?: string | null;
   slack_draft?: {
     status: string;
     channel_link?: string | null;
@@ -431,6 +495,103 @@ export interface RecapRow {
   } | null;
   /** §63.8 「重新生成 / 现在生成」回执（add-only；没请求过 / 过了 TTL = null；老 daemon 无此键） */
   generate_request?: RecapGenerateRequest | null;
+  /** §63.3 追记 校验未通过的结构化原因（add-only；clean = []；老 daemon 无此键）——永不含正文 */
+  problems?: RecapProblem[] | null;
+  /** §63.3 追记 落地前的确定性长度修剪台账（add-only；没修过 = []） */
+  repairs?: RecapRepair[] | null;
+  /** §63.11 这一份纪要该被问的意图问题（add-only，**投影现算不落盘**；老 daemon 无此键 = 不问） */
+  questions?: RecapQuestion[] | null;
+  /** §63.11 我们见过的第一版的可粘正文（add-only，只写一次；没有第二版过 = null） */
+  baseline?: RecapBaseline | null;
+  /** §63.11 这一版是按哪组答案出的（add-only，每版重写；没答案 = null） */
+  intent?: RecapIntent | null;
+  /** §63.12 这个 key 的逐条标签计数器 `{字母: 发到第几号}`（add-only，单调、永不复用）——
+   *  页面不读它（标签本身在正文与 `sections_*[].tags` 里），镜像它只为不撒谎 */
+  tag_seq?: Record<string, number> | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.11（issue #302）一条意图问题（`act/lib/recap_intent.derive` 的 wire 形逐字镜像）：
+ * `kind` ∈ split | deadline | others | detail | audience | own | prior（add-only 闭表），
+ * `options` = 那一类的选项（同样闭表），`subject` 只有逐条的那几个有正文（上一版里的原话）。
+ * **问题的组成是 server 数据，不是 client 代码**（防腐 #10）；问法由 `text(zh, en)` 按
+ * `kind` / 选项值查表。
+ */
+export interface RecapQuestion {
+  id: string;
+  kind: string;
+  options: string[];
+  subject?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.11 「转写原版」= 我们见过的**第一版**的可粘正文（`act/recap._capture_baseline`）：
+ * history 的帽是 5 版，第一版早晚被挤掉，而这一条 issue 的正题就是两版并存可切。
+ * 存的是渲染好的 `copy_*`（粘出去的那一份），不是 `en` / `zh` 的原始数组。
+ */
+export interface RecapBaseline {
+  version: number;
+  generated_at?: string | null;
+  shape?: string | null;
+  copy_en?: string | null;
+  copy_zh?: string | null;
+  [key: string]: unknown;
+}
+
+/** §63.11 这一版的意图回执：`answers` = 送出去的那组 `id=value`（wire 逐字镜像） */
+export interface RecapIntent {
+  answers: string[];
+  at?: string | null;
+  version?: number | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.10 可发送长版的一节（issue #303；`act/lib/recap_text` 的 `{key, modality, items}` 逐字镜像）：
+ * `key` ∈ decided | split | proposed | deadline | changed | open，`modality` ∈ decided | proposed |
+ * floated | open（一节一个语气——决定与提议因此在纸面上长得不一样）。条目的编号**不在数据里**：
+ * 它由 daemon 渲染 `copy_*` 时加上——§63.12 之后是那一条自己的**跨版稳定标签**
+ * （`tags[i]`，`D1` / `S2`），没有标签的条目才回落到 §63.10 的跨节连续编号。
+ */
+export interface RecapSection {
+  key: string;
+  modality: string;
+  items: string[];
+  /** §63.12 逐条标签（add-only，与 `items` 逐位对齐；老记录无此键 = 渲染回落到连续编号）——
+   *  daemon 派发，模型永不是作者（`act/lib/recap_text.assign_tags`） */
+  tags?: string[] | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.3 追记 校验发现（`recap_text.validate_detail` 的 wire 形逐字镜像；issue #298）：
+ * `code` ∈ line_count | label_mismatch | line_too_long | reported_speech | timestamp |
+ * link | quotes | markup | emoji | mention（add-only；未知 code 页面退回 `text`）；
+ * 整语言级的禁项（时间戳 / 链接 / 引号 / markdown / emoji / @）没有行号，`line` = null；
+ * `limit` / `over` 只有 line_too_long 与 line_count 填。`text` = 喂回模型的那句英文原文。
+ */
+export interface RecapProblem {
+  code: string;
+  lang?: string | null;
+  line?: number | null;
+  limit?: number | null;
+  over?: number | null;
+  text?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.3 追记 一行被自动修剪的回执（永远展示——悄悄剪字就是对粘出去的正文说谎）：
+ * `over` = 原来超出上限多少，`removed` = 行尾**真正被删掉**多少字符（英文按词边界
+ * 回退，所以 removed ≥ over）——面板说的是 removed，说 over 会低报这一刀。
+ */
+export interface RecapRepair {
+  lang: string;
+  line: number;
+  over: number;
+  removed?: number | null;
   [key: string]: unknown;
 }
 
@@ -446,11 +607,59 @@ export interface RecapGenerateRequest {
   [key: string]: unknown;
 }
 
+/**
+ * §63.9（issue #300）投影行里一版的**句柄**（`act/lib/recap_store.history_versions` 的 wire 形
+ * 逐字镜像）：只有标量，正文永不进看板投影（60 行 × 5 版 × 两语言会把 10 s 一轮的轮询撑爆）。
+ * 列出来的每一项都有正文 = 都能回退（无正文的 history 条目 daemon 侧就滤掉了）。
+ */
+export interface RecapVersionHandle {
+  version: number;
+  generated_at?: string | null;
+  partial?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * §63.9 一版的完整形（`GET /api/recaps/history` 的 `current` 与 `entries[]` 同形；
+ * server/recaps.py `_version_shape` 逐字镜像）：`en` / `zh` 恒是数组（缺席 = []），
+ * `quality` 在 §63.9 之前入库的 history 条目上是 null（那一版的校验结论没存下来）。
+ */
+export interface RecapVersion {
+  version: number;
+  generated_at: string | null;
+  partial: boolean;
+  quality: string | null;
+  en: string[];
+  zh: string[];
+  /** §63.10 add-only：那一版的形状与**粘出去的那份正文**（可发送长版的 en/zh 是空的，
+   *  两版对照因此读 copy_*；老条目没有这两个键 = lines + null） */
+  shape: string;
+  copy_en: string | null;
+  copy_zh: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * GET /api/recaps/history?key=…（§63.9）：单份纪要存着的每一版 + 正文。`entries` newest first
+ * （第一项 = 上一版），`history_cap` = daemon 侧只留几版（更早的老化掉——面板照它说话），
+ * `truncated` = 文件超过读门没被读（层缺席不是错误，宪法第 11 条）。
+ */
+export interface RecapHistory {
+  key: string;
+  current: RecapVersion | null;
+  entries: RecapVersion[];
+  history_cap: number;
+  truncated: boolean;
+  [key: string]: unknown;
+}
+
 /** GET/PUT /api/settings/recap（§63）：server/recaps.py snapshot 的 wire 形逐字镜像 */
 export interface RecapSettings {
   enabled: boolean;
   default_language: "auto" | "zh" | "en" | string;
   slack_draft_enabled: boolean;
+  /** §63.10 出厂形状（只读：config.yaml 层，PUT 仍只认三把旋钮）——形状选择器的初值 */
+  default_shape: "lines" | "sections" | string;
   languages: string[];
   source: { [key: string]: unknown };
   [key: string]: unknown;
@@ -476,12 +685,30 @@ export interface DisplaySettingsPatch {
   stroke?: string;
 }
 
+/** POST /api/recaps/mark 的 mark 词表（server MARKS 逐字镜像，add-only；dismissed = §63.5 追记 issue #301） */
+export type RecapMarkKind = "copied" | "sent" | "dismissed";
+
+/**
+ * §63.5 追记（issue #301）dashboard.json 顶层 `recap_counts`：三栏各自的**真实**总数，
+ * 在 `recaps[]` 被两份预算切之前算（act/lib/recap_store.lane_counts）。键 = 栏 slug
+ * （`recap_store.RECAP_LANES` 逐字镜像）。页面拿它减掉实际收到的行数，说出「另有 N 条
+ * 更早的没列在这一栏」——上限是硬上限，但不许悄悄少东西（宪法第 3 条）。
+ */
+export interface RecapLaneTotals {
+  active?: number;
+  archived?: number;
+  dismissed?: number;
+  [key: string]: unknown;
+}
+
 /** POST /api/recaps/mark 回执 */
 export interface RecapMarkReceipt {
   ok: boolean;
   key: string;
   copied_at: string | null;
   sent_at: string | null;
+  /** §63.5 追记（issue #301）：老 server 无此键 */
+  dismissed_at?: string | null;
   [key: string]: unknown;
 }
 
@@ -558,13 +785,16 @@ export interface DailyLoopSettings {
   max_proposals_per_day: number;
   stale_days: number;
   trash_retention_days: number;
+  /** §70.2 追记 / D74：待验收列闲置多少天算过时（先一条汇总通知，下一轮归档）；0 = 关 */
+  review_stale_days: number;
   source: { [key: string]: unknown };
   [key: string]: unknown;
 }
 
-/** PUT /api/settings/daily-loop 的 body：五键任意子集 */
+/** PUT /api/settings/daily-loop 的 body：六键任意子集 */
 export type DailyLoopPatch = Partial<Pick<DailyLoopSettings,
-  "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days">>;
+  "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days"
+  | "review_stale_days">>;
 
 /** POST /api/claude-code/default-model 的回执（只改 model 键；backup = 改前副本路径，文件原本不存在时为 null） */
 export interface ClaudeCodeDefaultWrite {
@@ -735,9 +965,13 @@ export interface SettingsField {
   path?: "dir" | string;
   /** add-only：effective 值展开 ~ 后是不是目录；空值 null（无从判断）；老 server 缺席 */
   path_exists?: boolean | null;
-  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句（kind 词表今日 `email` / `session_id`）；
+  /** add-only（§68.1 追记）：值的形状校验——web 保存前镜像同一条规则、显示 server-owned 的同一句
+   *  （kind 词表今日 `email` / `session_id` / `clock_time`，后者是 §28 追记 2026-09-12 的安静时段两端）；
    *  `reasons`（add-only，§68.7 追记）= 多句的 kind 按 reason 分句（session_id：`leading_hyphen`），没对上的 reason 用 `message`；老 server 缺席 */
-  check?: { kind: "email" | "session_id" | string; message: BilingualText; reasons?: Record<string, BilingualText> };
+  check?: { kind: "email" | "session_id" | "clock_time" | string; message: BilingualText; reasons?: Record<string, BilingualText> };
+  /** add-only（§72.4）：数字旋钮的合法闭区间（今日 `screenpipe_media_retention_minutes`）——输入框的 min / max 与
+   *  「保存」闸都按它判，与 server 的 `out_of_bounds` 同一条规则（越界 PUT 400，不夹取）；老 server 缺席 */
+  bounds?: { min: number; max: number };
   [key: string]: unknown;
 }
 
@@ -812,6 +1046,155 @@ export interface VoiceProfileStatus {
   default_path: string;
   default_exists: boolean;
   effective_path: string | null;
+  [key: string]: unknown;
+}
+
+/** GET /api/screenpipe/disk（§72.1，issue #28）：录制数据磁盘占用快照。`state` computing = 首次、后台还在扫（数字全 null）；
+ *  ready = 缓存快照；error = 后台算失败（`error`）。字节全是十进制原值，web 自己格式化。`growth.basis` samples = 按最近样本斜率、
+ *  lifetime = db 字节 ÷ 最早 frame 至今天数、null = 样本不足；`last_prune` = act/lib/screenpipe_retention.py 的回执原样。 */
+export interface ScreenpipeDiskGrowth {
+  bytes_per_month: number | null;
+  basis: "samples" | "lifetime" | null | string;
+  span_days: number | null;
+  samples: number;
+}
+
+export interface ScreenpipePruneReceipt {
+  ran_at?: string;
+  retention_days?: number;
+  cutoff?: string | null;
+  skipped?: string | null;
+  deleted_frames?: number;
+  deleted_audio?: number;
+  eligible_frames?: number;
+  eligible_audio?: number;
+  budget_exhausted?: boolean;
+  dry_run?: boolean;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
+/** §72.4：`ingest/screenpipe-cleanup.sh` 每轮写的媒体清理回执 `state/screenpipe_prune.json` 的投影。
+ *  `state` ok = 干净跑完（可能删了 0 个）/ partial = 没扫完（子目录读不到 / 文件在扫的过程中变动）/
+ *  no_data_dir = 还没录过 / unreadable = 目录在但进不去（权限，真失败）/ never = 回执缺席或坏形。
+ *  `last_ok_ts` = 上次干净跑完的时刻（失败的轮次原样带下去，不擦掉）、`ok_age_seconds` = 距它多少秒；
+ *  `stale` 按 `ok_age_seconds` 超过 server 的 PRUNE_STALE_S 算（链本该 30 分钟一轮）——按上一次**尝试**
+ *  算会让每 30 分钟失败一次的清理永远显得新鲜。`age_seconds` 仍是上一次尝试的岁数。 */
+export interface ScreenpipeMediaPrune {
+  state: "ok" | "partial" | "no_data_dir" | "unreadable" | "never" | string;
+  ts: string | null;
+  retention_minutes: number | null;
+  deleted_files: number | null;
+  deleted_bytes: number | null;
+  data_dir: string | null;
+  last_ok_ts: string | null;
+  age_seconds: number | null;
+  ok_age_seconds: number | null;
+  stale: boolean;
+  [key: string]: unknown;
+}
+
+export interface ScreenpipeDisk {
+  state: "computing" | "ready" | "error" | string;
+  computed_at: string | null;
+  refreshing: boolean;
+  root: string;
+  root_exists: boolean;
+  total_bytes: number | null;
+  db_bytes: number | null;
+  backup_bytes: number | null;
+  log_bytes: number | null;
+  media_bytes: number | null;
+  other_bytes: number | null;
+  file_count: number | null;
+  backups: Array<{ name: string; bytes: number }>;
+  db_reclaimable_bytes: number | null;
+  oldest_frame_ts: string | null;
+  newest_frame_ts: string | null;
+  db_error: string | null;
+  growth: ScreenpipeDiskGrowth;
+  retention_days: number;
+  last_prune: ScreenpipePruneReceipt | null;
+  /** add-only（§72.4）：媒体保留分钟数的 effective 值与上一轮媒体清理的回执；老 server 缺席 */
+  media_retention_minutes?: number;
+  media_prune?: ScreenpipeMediaPrune;
+  error?: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/worktrees[?refresh=1]（§75.4，issue #315）：`.claude/worktrees/` 的清点。`state` computing = 首次、后台还在扫
+ *  （数字全 null）；ready = 缓存快照；error = 后台算失败。`bytes` = 托管根目录 du 之和，量不到 = null + `bytes_partial`
+ *  （不虚报 0）。`verdict` remove = 本轮会被清掉、reason 是理由（merged / gone / stale）；keep 的 reason 是守卫名
+ *  （main / missing / locked / live / dirty / unpushed / active / budget / cap）——两份词表 truth = act/lib/worktrees.py。 */
+export interface WorktreeRow {
+  path: string;
+  name: string;
+  branch: string;
+  head: string;
+  locked: boolean;
+  exists: boolean;
+  age_days: number | null;
+  live: boolean;
+  dirty: boolean | null;
+  /** 非 null = 这条的本地分支无论如何都留着，值是理由（目前只有 "unpushed"） */
+  kept_branch: string | null;
+  verdict: "keep" | "remove" | string;
+  reason: string;
+}
+
+export interface WorktreeRepo {
+  repo: string;
+  root: string;
+  registered: number;
+  managed: number;
+  removable: number;
+  truncated: boolean;
+  rows: WorktreeRow[];
+  bytes?: number | null;
+  error: string | null;
+}
+
+export interface WorktreeInventory {
+  state?: "computing" | "ready" | "error" | string;
+  ok: boolean;
+  scanned_at: string | null;
+  repos: WorktreeRepo[];
+  worktrees: number | null;
+  removable: number | null;
+  bytes: number | null;
+  bytes_partial: boolean;
+  truncated: boolean;
+  refreshing?: boolean;
+  stale_days?: number;
+  error?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/worktrees/cleanup（§75.4）：`{}` = 真扫、`{"dry_run": true}` = 只报会删谁；回执 = act/lib/worktrees.sweep 的原文。 */
+export interface WorktreeRemoval {
+  path: string;
+  branch: string;
+  reason: string;
+  removed?: boolean;
+  branch_deleted: boolean;
+  /** 非 null = 目录删了但分支特意留着，值是理由（"unpushed" = 有只存在于本地的提交） */
+  kept_branch?: string | null;
+  error: string | null;
+}
+
+export interface WorktreeCleanup {
+  ok: boolean;
+  dry_run?: boolean;
+  swept_at?: string;
+  removed: WorktreeRemoval[];
+  failed?: WorktreeRemoval[];
+  skipped?: Record<string, number>;
+  worktrees?: number;
+  removable?: number;
+  truncated?: boolean;
+  error?: string;
+  message?: string;
   [key: string]: unknown;
 }
 

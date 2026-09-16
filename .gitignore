@@ -26,6 +26,11 @@ promo/node_modules/
 promo/package.json
 promo/package-lock.json
 .coverage
+# Portable release bundles (scripts/package-portable.sh, CONTRACT §56.2) — the
+# built .zip / .tar.gz assets, produced on the release runner and uploaded to
+# the GitHub Release; never committed (防腐 #4: born gitignored).
+dist/
+
 # QA instrument outputs (mutation state/reports — CONTRACT §57; 防腐 #4:
 # data files are born gitignored, never inside a package)
 .qa/

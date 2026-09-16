@@ -152,6 +152,7 @@ class StaticServingTestCase(unittest.TestCase):
         (self.dist / "assets" / "app-abc123.js").write_text("1;", encoding="utf-8")
         (self.dist / "sub").mkdir()
         (self.dist / "sub" / "index.html").write_text("<p>sub</p>", encoding="utf-8")
+        (self.dist / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")
         httpd = app_mod.make_server(port=0, home=self.home, static_dir=self.dist,
                                     start_watcher=False)
         import threading
@@ -180,6 +181,14 @@ class StaticServingTestCase(unittest.TestCase):
         status, _h, body = http_request(self.port, "GET", "/cards/R-1")
         self.assertEqual(status, 200)
         self.assertIn(b"__ZAI_TOKEN__", body)
+
+    def test_webmanifest_is_served_as_manifest_json(self):
+        # §73：安装清单的 wire 类型是法条常量——发错类型浏览器就装不上
+        status, headers, body = http_request(self.port, "GET", "/manifest.webmanifest")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Content-Type"), "application/manifest+json")
+        self.assertEqual(body, b'{"name":"x"}')
+        self.assertNotIn(b"__ZAI_TOKEN__", body)
 
     def test_missing_file_with_extension_is_404(self):
         status, _h, body = http_request(self.port, "GET", "/missing.png")
@@ -224,6 +233,13 @@ class StaticHelpersTestCase(unittest.TestCase):
     def test_ctype_falls_back_to_octet_stream(self):
         self.assertEqual(app_mod._static_ctype(Path("blob.unknownext")),
                          "application/octet-stream")
+        # §73 的钉死表先于宿主机 mimetypes（Windows 注册表 / /etc/mime.types 能改写它）
+        with mock.patch.object(app_mod.mimetypes, "guess_type",
+                               return_value=("application/octet-stream", None)):
+            self.assertEqual(app_mod._static_ctype(Path("manifest.webmanifest")),
+                             "application/manifest+json")
+            self.assertEqual(app_mod._static_ctype(Path("MANIFEST.WEBMANIFEST")),
+                             "application/manifest+json")
         # 平台 mimetypes 表对 .js 给 text/javascript 或 application/javascript
         self.assertIn(app_mod._static_ctype(Path("a.js")),
                       ("text/javascript", "application/javascript"))

@@ -1,6 +1,6 @@
 // 过滤器序列化 + 客户端匹配。模式 fork 自 dashi web/src/taskFilters.ts（Apache-2.0，NOTICE 登记）：
 // URL query 即过滤器唯一持久化（readTaskFilters/writeTaskFilters 形制），replaceState 不进历史栈。
-// 维度 = tier / deadline / reraised(回锅) + ⌘F 搜索。BUILD-CONTRACT §2.2 原钦点还有 type / channel(渠道)
+// 维度 = tier / deadline / reraised(回锅) / hideBot(隐藏🤖，D74) + ⌘F 搜索。BUILD-CONTRACT §2.2 原钦点还有 type / channel(渠道)
 // 两维，2026-09-04 owner 决策 D28（docs/design/vnext2-plan.md）去掉：旧 URL 里的 `type=` / `channel=`
 // 容忍读取（忽略），下次写回时丢弃（LEGACY_PARAMS）。
 //
@@ -20,6 +20,9 @@ export interface CardFilters {
   tiers: string[];       // T0/T1/T2（多选，OR）
   deadline: DeadlineFilter;
   reraisedOnly: boolean; // 只看回锅（§re-raise 的 needs_approval.reraised）
+  /** 隐藏机器卡（§2 追记 / D74，issue #312）：只约束**带** `self_improve` 键的行——
+   *  人卡与老 server 的行缺这个键，按跨分区语义保持可见（过滤器绝不隐藏它读不懂的行）。 */
+  hideBot: boolean;
   search: string;        // ⌘F 全局搜索词
 }
 
@@ -27,6 +30,7 @@ export const EMPTY_CARD_FILTERS: CardFilters = {
   tiers: [],
   deadline: "all",
   reraisedOnly: false,
+  hideBot: false,
   search: "",
 };
 
@@ -48,6 +52,7 @@ export function readCardFilters(search: string): CardFilters {
     tiers: readList(params, "tier"),
     deadline: deadline && DEADLINE_VALUES.includes(deadline) ? deadline : "all",
     reraisedOnly: params.get("reraised") === "1",
+    hideBot: params.get("bot") === "hide",
     search: params.get("q") ?? "",
   };
 }
@@ -61,6 +66,7 @@ export function applyCardFilters(url: URL, filters: CardFilters): URL {
   setOrDelete("tier", filters.tiers.join(","));
   setOrDelete("deadline", filters.deadline === "all" ? "" : filters.deadline);
   setOrDelete("reraised", filters.reraisedOnly ? "1" : "");
+  setOrDelete("bot", filters.hideBot ? "hide" : "");
   setOrDelete("q", filters.search.trim());
   for (const key of LEGACY_PARAMS) url.searchParams.delete(key);
   return url;
@@ -76,6 +82,7 @@ export function cardFilterCount(filters: CardFilters): number {
   return Number(filters.tiers.length > 0)
     + Number(filters.deadline !== "all")
     + Number(filters.reraisedOnly)
+    + Number(filters.hideBot)
     + Number(Boolean(filters.search.trim()));
 }
 
@@ -197,6 +204,9 @@ export function matchesCardFilters(row: Record<string, unknown>, filters: CardFi
     if (filters.deadline === "overdue" && !(days !== null && days < 0)) return false;
   }
   if (filters.reraisedOnly && isProposalShaped && row.reraised !== true) return false;
+  // D74 隐藏 🤖：`self_improve` 只出现在机器卡的待验收行上（dashboard._review_row），
+  // 缺席 = 这一行读不懂这个维度 = 照常可见（人卡、其余泳道、老 server 都走这条）。
+  if (filters.hideBot && row.self_improve === true) return false;
 
   return matchesCardSearch(row, filters.search, sessionText);
 }

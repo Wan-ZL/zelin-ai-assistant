@@ -53,6 +53,7 @@ import { IngestPage } from "./pages/IngestPage";
 import { PermissionsPage } from "./pages/PermissionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPage, STEPS as SETUP_STEPS } from "./pages/SetupPage";
+import { SkillsPage } from "./pages/SkillsPage";
 import { TrashPage } from "./pages/TrashPage";
 import { applyShellState, resetShellBridgeForTests, type ShellState } from "./shellBridge";
 import {
@@ -163,7 +164,7 @@ vi.mock("./api", async (importOriginal) => {
     fetchMaterials: vi.fn().mockResolvedValue({ items: [], status: "open", counts: { open: 0, total: 0 } }),
     // §37.2 会话内容层（D45）：默认层缺席（server 200 空表 → 空快照）；renderSessionSearchVariant 那一遍换成带一条会话正文的索引
     fetchSearchIndex: vi.fn().mockResolvedValue({ etag: null, snapshot: { entries: {}, truncated: false } }),
-    fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, languages: ["auto", "zh", "en"], source: {} }),
+    fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, default_shape: "lines", languages: ["auto", "zh", "en"], source: {} }),
     // §68.15 同步 / 配对：开着、有码（1×1 PNG 占位）；pair / disable 隔一个 macrotask 再回（忙态句先落 DOM）
     fetchSync: vi.fn().mockResolvedValue({ enabled: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: "demo-mac", default_label: "demo-mac", qr_png_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" }),
     postSyncPair: vi.fn((label?: string) => new Promise((resolve) => setTimeout(() => resolve({ ok: true, channel_id: "3f9c1e2a-demo-4000-8000-000000000001", label: label ?? "demo-mac", registered: true, qr_png_base64: null }), 0))),
@@ -236,6 +237,8 @@ const LANGUAGES: Language[] = ["zh", "en"];
 // 首帧要在 store 还没有 permissions 快照时渲染一次，「检测中…」这类瞬态词才收得到。
 // 原生 deps 页（+ Doctor.swift 的对症动词）D30 起住设置页的「依赖检查」区——两个 screen 都判在 settings 面上；
 // 原生 ask 页 D29 退役（清单 SCREEN_OWNER / CONTROL_OWNER 标 retired，不进这里）。
+// 原生 settings.skills 区 D78 起住 web 自有的技能页（?page=skills）——它不是新的判卷面：技能页与设置页一起
+// 渲进 settings 面的池里（见下方 PAGES.settings），`settings.skills` 仍按 settings 面判。
 const SURFACES = ["board", "trash", "settings", "about", "ingest", "setup", "permissions"] as const;
 type Surface = (typeof SURFACES)[number];
 const SCREEN_SURFACE: Array<[prefix: string, surface: Surface]> = [
@@ -498,8 +501,14 @@ function clickAll(buttons: Iterable<HTMLButtonElement>, pool?: Set<string>) {
 const OPENS_DIALOG = /拒绝|Reject|修改|Comment|打回|Send Back|停止|Stop|提建议|feedback|改名|Rename|强制合并|Force-merge|仍然合并|Merge anyway|评论|回答|Answer|清理积压|Clean up|不需要执行|No need to run|退回|Discard|选择|Select/;
 /** 词表的误伤：FilterBar 的「退出选择」命中 选择 却是退出多选态——点它会把整条操作条卸掉 */
 const NOT_AN_OPENER = /^(退出选择|Done)$/;
+/** 同一类误伤：待验收列头的「选中全部…」（ReviewLaneTools，D74）命中 `Select` 却不开任何弹窗——
+ *  它只是带着一批 id 切进多选态，而多选态里卡上的动作行整排是死的（§54.1 追记），先点它
+ *  rotateSubmits 就再也走不到「打回…」「停止…」那几句 pending 文案。多选态由 store 切，同
+ *  FilterBar 的「选择」不点。三颗列头工具的文案照常由 collectLabels 收（不靠点击）。 */
+const LANE_TOOL_CLASS = "lane-tool-button";
 /** 开弹窗的按钮 = 动词命中词表，或组件自己用 aria-haspopup="dialog" 标了（T2 卡的「批准」开的是 typed-confirm） */
 const opensDialog = (b: HTMLButtonElement) => {
+  if (b.classList.contains(LANE_TOOL_CLASS)) return false;
   const label = normalize(b.textContent);
   return !NOT_AN_OPENER.test(label) && (OPENS_DIALOG.test(label) || b.getAttribute("aria-haspopup") === "dialog");
 };
@@ -674,7 +683,9 @@ function clickEverything(root: ParentNode, pool: Set<string>, searches = false, 
 const PAGES: Record<Surface, () => ReactElement> = {
   board: () => <BoardPage />,
   trash: () => <TrashPage />,
-  settings: () => <SettingsPage />,
+  // 设置面 = 设置页 + 技能页（D78）：原生 `screen:settings.skills` 的控件自此渲染在技能页上（设置页只剩一行入口），
+  // 而原生那一区的新建表单词（保存 / 取消）仍由设置页的其它区提供——两页同属「原生设置页」这一面，渲进同一个池
+  settings: () => <><SettingsPage /><SkillsPage /></>,
   about: () => <AboutPage />,
   ingest: () => <IngestPage />,
   setup: () => <SetupPage />,

@@ -53,6 +53,10 @@ approval:
   cost_thresholds:
     show_cost_above_usd: 5             # 低于此值卡片不显示成本
     require_text_confirm_above_usd: 50 # 高于此值升 T2，需文字确认
+  mention_escalation: 5                # CONTRACT §76.2：提案被提 ≥N 次仍未处理 → 卡面转红章
+                                       # 「仍未处理」+ 一次性通知（只响一次）；0 = 关掉升级
+                                       # （被提×N 的计数照常累加）。默认值 truth =
+                                       # act/lib/config.DEFAULT_MENTION_ESCALATION
 
 # 审批只在 Mac App 里做（v0.21 起）。iMessage 通道与 Slack 的手机审批角色都已移除；
 # Slack self-DM 仍保留为「给自己发一条 = 快速建卡」的手机端捕获入口（见 docs/SLACK_SETUP.md）。
@@ -67,6 +71,9 @@ autodispatch:
   enabled: true                        # 总开关；false = 信任矩阵只分类，所有卡回人工审批
   max_concurrent: 3                    # 自动派发并发上限；超出的卡留在「运行中」列 queued 子状态（原因 chip：concurrency）
   notify: true                         # 观察模式：每次自动派发都发一条通知；false = 只有看板留痕
+  require_awake: true                  # CONTRACT §71.1：机器不在清醒态（dark wake / 合盖睡着）时本 pass 一张卡都不派，
+                                       # 卡留「运行中」列排队（原因 chip：等电脑醒来），醒来的第一个 tick 就派；
+                                       # 探不到机器状态 = 当作醒着照常派发（fail-open）。false = 关掉这道闸
 
 # 自动草稿 PR 通道（CONTRACT §65；owner 决策 D7/D8/D9/D12）——第二条免批 lane，
 # **只给本仓库**：sources 全部是写死的 `self_improve` 渠道（每日循环提案 / PR 跟进卡）
@@ -77,10 +84,19 @@ autodispatch:
 # 通道会话跑在 `--strict-mcp-config --mcp-config {}` 下（无 Slack/Gmail MCP）。
 # 用 owner 自己的 gh 身份（D8）、无预算（D9）。全部键可省略（缺省如下）。
 self_improve:
-  enabled: true                        # 通道总开关；false = self_improve 卡照旧人工审批（核验/封锁仍生效）
+  # 通道总开关，**出厂关**（#307 / D57：维护者功能，不该默认对所有安装开着）。
+  # 这一行**故意注释掉**：模板是 install.sh / 设置向导 / App 逐字复制成 config.yaml 的，
+  # 在这里钉死一个值 = 每台新装机都带着一个用户从没做过的「显式选择」（2026-09-02 到
+  # 09-14 之间装的机器就是这么带上 `enabled: true` 的）。没有这个键 = 跟随出厂默认（关）。
+  # true = 每日循环读 issue/红 CI/变异报告铸 🤖 卡 + 通道免批派发 + §65.5 巡检；
+  # 关着时核验/出网封锁仍生效（它们只看写死的 channel）。开关的面在设置页「开发者」区。
+  # enabled: true
   repo_path: ""                        # 唯一放行的仓库；"" = 安装根（AIASSISTANT_HOME），比对用 realpath
   tick_minutes: 60                     # PR 巡检间隔：owner 合并=验收 / 关闭=拒绝 / 评论·红 CI → 跟进卡
-  owner_logins: []                     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
+  owner_logins: []                     # 额外算作 owner 的 GitHub login；仓库 slug 的 owner 与 gh 当前身份恒在集合里
+                                       # （#310：gh 登的是工作号、PR 是个人号合的 → 仓库 owner 才是最不该漏的那个）。
+                                       # 大小写不敏感；设置页「开发者」区可改（override 层压过这里，改完下一轮巡检生效）。
+                                       # 换了 gh 登录身份：`python3 -m act.lib.self_improve --forget-owner` 清掉缓存的 login
   github_repo: ""                      # 通道仓库的 owner/repo；"" = 首次使用时 gh repo view 取并缓存进 lane.json，此后所有 gh pr 调用带 -R
 
 execution:
@@ -109,6 +125,17 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
   # `Slack::#hr` 只排除 Slack 里标题含 #hr 的窗口，`::标题` 只按窗口标题匹配。
   # 设为 `ignored_apps: []` = 明确关闭此过滤（不推荐）。
   # 改动后重启录制引擎生效：菜单栏切一次录制模式，或重启 App。
+  # retention_days（CONTRACT §72.2，issue #28）：录制数据保留天数。0 = 永久保留（默认，现状不变）；N ≥ 1 =
+  # 30 分钟 cron 链的 cleanup 步删掉 ~/.screenpipe/db.sqlite 里「已导出进 vault 且早于 N 天」的 OCR / 音频转写行
+  # （分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）。设置页「录制数据与磁盘」区同一把旋钮（override 键
+  # screenpipe_retention_days）；磁盘占用与每月增长估算也在那一区看。
+  # retention_days: 0
+  # media_retention_minutes（CONTRACT §72.4，issue #28）：原始 jpg / mp4 在 ~/.screenpipe/data 里活多久，分钟。
+  # 出厂 60（= 历来的写死值，现状不变）；同一条 cleanup 链按它删媒体，**不碰 db.sqlite 里的文本行**（那是
+  # retention_days 管的另一把）。区间 [5, 525600]（= 1 年）；区间外或写坏了按未设 = 60。设置页「录制数据与磁盘」
+  # 区同一把旋钮（override 键 screenpipe_media_retention_minutes），改完下一轮 cron 生效、无需重启；
+  # 每轮的回执（删了几个文件几字节 / 目录读不到）在同一区的「上次媒体清理」行里看。
+  # media_retention_minutes: 60
   ignored_apps:
     - 1Password
     - Bitwarden
@@ -154,6 +181,7 @@ daily_loop:                            # 每日自我改进循环（CONTRACT §7
   max_proposals_per_day: 2             # 每天新开 🤖 提案卡上限（web 设置页可改；0 = 只维护不提案）。D33（2026-09-04）从 5 降到 2：自检类信号（派发卡死 / doctor 红灯 / 日志刷屏……）不再铸卡、只进看板横幅「系统自检」，剩下的 GitHub issue·PR 与素材一天两张够审
   stale_days: 45                       # 提案列 / 潜在任务列的卡无任何活动超过 N 天 → 回收站（stale:idle）；带未来 deadline / 用户改过名 / 提及 ≥3 次 / 同簇有在跑的卡 一律不动
   trash_retention_days: 90             # 循环自动扔进回收站的卡（stale:* / daily-merge:*）保留多久再硬删——比手动 trash 的 60 天更长；trash.retention_days = 0 时整体关闭
+  review_stale_days: 14                # 待验收列的老化（CONTRACT §70.2 追记 / D74）：闲置 N 天的待验收卡先收到一条汇总通知「明天归档」，下一轮进回收站（stale:review_stale，可恢复）；你改过名的卡永不被碰；0 = 关掉这条规则
                                        # web 设置页「每日整理」写 state/settings_overrides.json 的 daily_loop_* 扁平键，优先级高于本块；下一个 pass 生效
 
 remote:
@@ -175,7 +203,7 @@ ui:                                    # 看板显示偏好（CONTRACT §54.1 �
     stroke: normal                     #   thin | normal | thick —— 描边 1px / 1.5px / 2px（系统「增强对比度」再加一档）
 
 recap:                                 # 会议 recap（CONTRACT §63，issue #129）：挂在 30 分钟 screenpipe cron 链上，只读 ~/.screenpipe/db.sqlite，
-                                       # 确定性判会议 session，CLOSED 后出 5 行 copy-only 纪要（中英同产）到 state/recap/。不是卡，无发送路径。
+                                       # 确定性判会议 session，CLOSED 后出 copy-only 纪要（中英同产；五行或分节两种形状，§63.10）到 state/recap/。不是卡，无发送路径。
   enabled: true                        # 关 = 整条静默（Settings「会议纪要」同一开关；overrides 扁平键 recap_enabled）
   default_language: auto               # auto | zh | en——详情页先显示哪一版（overrides 键 recap_default_language）
   # ---- 确定性 session 判定（数字 = 分钟；坏值回默认） ----
@@ -190,9 +218,13 @@ recap:                                 # 会议 recap（CONTRACT §63，issue #1
   # meeting_windows:                    # 追加会议应用规则（默认表：Zoom / Microsoft Teams / Webex / FaceTime / meet.google.com / Slack+Huddle）
   #   - {slug: gather, app: Gather}     #   每条 slug + ≥1 个大小写不敏感的子串匹配器（app / window / url）
   # ---- 出稿 ----
+  # default_shape: lines                # §63.10 出厂形状：lines = 快速五行（自用便签）｜ sections = 可发送长版
+  #                                     #   （分节 + 每节语气 decided/proposed/floated/open + 跨节连续编号）；
+  #                                     #   单份纪要可在页面上逐次改选，之后的重生成沿用它选的那一种
   # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
   # max_per_day: 8                      # 每个本地日上限
   # retention_days: 90                  # recaps/<key>.json 保留天数
+  # dismissed_retention_days: 14        # 页面上按过「忽略」的那份保留天数（从忽略那一刻算，下限 1；§63.5「已忽略」栏，按「恢复」即撤销）
   # db_path: ~/.screenpipe/db.sqlite    # 引擎 DB 位置（默认即此）
   slack_draft:                         # §63.4 可选：把 recap 放进你自己 Slack 的「Drafts & Sent」（草稿，不发送）
     enabled: false                     # 【默认关】走用户级 Slack MCP 白名单 slack_send_message_draft；发送键仍在你手里（overrides 键 recap_slack_draft_enabled）

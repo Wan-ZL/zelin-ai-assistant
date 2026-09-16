@@ -124,6 +124,12 @@
   color: var(--on-accent);
 }
 
+/* §63.5 追记（issue #301）分栏过滤器 活跃 / 已归档 / 已忽略：复用详情的 segmented 壳，
+   只在页面纵向流里靠左自占一行——不另造第二套 segmented 样式 */
+.recap-filter {
+  align-self: flex-start;
+}
+
 .recap-body {
   margin: 0;
   padding: 12px 14px;
@@ -137,6 +143,13 @@
 }
 
 .recap-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font: var(--type-lane-help);
+}
+
+/* §63.5 追记（issue #301）投影预算切掉几行时那一句披露（同 .recap-empty 的说明体，不抢眼但在场） */
+.recap-capped {
   margin: 0;
   color: var(--text-tertiary);
   font: var(--type-lane-help);
@@ -181,6 +194,11 @@
 .recap-hint {
   color: var(--text-tertiary);
   font: var(--type-composer-hint);
+}
+
+/* §63.9：帽已经满了那一句（下一次回退会挤掉最早的一版）——提示里唯一一句警告色 */
+.recap-hint.is-warning {
+  color: var(--warning);
 }
 
 .recap-textarea {
@@ -230,6 +248,20 @@
 
 .recap-meta a { color: var(--accent); }
 
+/* §63.3 追记：needs_review 的逐条原因 / 自动修剪台账（脚注里的一张小清单） */
+.recap-reasons {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--warning);
+}
+
+.recap-reasons.is-repair {
+  color: var(--text-secondary);
+}
+
 .recap-flash {
   align-self: flex-start;
   padding: 4px 10px;
@@ -237,4 +269,156 @@
   background: var(--accent-soft);
   color: var(--accent);
   font: var(--type-card-meta-strong);
+}
+
+/* §63.9（issue #300）行级引用 chip：正文下方一排 `#D` / `#S` / …，按一下复制
+   `2026-08-31 Zoom #D`——引用是另一次复制，正文那五行一字不变 */
+.recap-cite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.recap-cite-lead {
+  color: var(--text-tertiary);
+  font: var(--type-composer-hint);
+}
+
+.recap-cite-chip {
+  appearance: none;
+  padding: 1px 7px;
+  border: var(--stroke-w) solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.recap-cite-chip:hover { background: var(--surface-hover); }
+.recap-cite-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.recap-cite-chip:disabled { cursor: default; opacity: 0.5; }
+
+/* §63.9 上一版面板：版本 segmented + 两列并排 + 逐行改动标记 */
+.recap-history-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recap-history-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .recap-history-cols { grid-template-columns: 1fr; }
+}
+
+.recap-history-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.recap-history-col-title {
+  margin: 0;
+  font: var(--type-lane-title);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.recap-history-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recap-history-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  font: var(--type-card-body);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.recap-history-line.is-changed {
+  background: var(--warning-soft-quiet);
+}
+
+.recap-history-mark {
+  flex: none;
+  color: var(--warning);
+  font: var(--type-card-meta-strong);
+}
+
+.recap-history-text { min-width: 0; }
+
+/* §63.10（issue #303）「重新生成」面板顶上的形状选择器：快速五行 / 可发送长版 +
+   选中那一项的一句说明（segmented 壳复用 .recap-segmented，不另起一套） */
+.recap-shape {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recap-shape .recap-hint {
+  margin: 0;
+}
+
+/* §63.11（issue #302）「重新生成」面板里的意图问答：一问一行，右边是那一类的选项
+   （segmented 壳继续复用 .recap-segmented，不另起一套按钮） */
+.recap-intent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recap-intent-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recap-intent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.recap-intent-ask {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-secondary);
+  font: var(--type-composer-hint);
+}
+
+/* 上一版里的原话（逐条分工那几问）——是数据不是文案，所以用引述体 */
+.recap-intent-subject {
+  color: var(--text-primary);
+  font-style: normal;
+  font: var(--type-card-meta-strong);
+}
+
+.recap-intent .recap-hint {
+  margin: 0;
 }

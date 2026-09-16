@@ -56,7 +56,9 @@ class _Sandbox(unittest.TestCase):
         daily_loop.log_path().unlink(missing_ok=True)
         from act.lib import loop_inputs
         loop_inputs.materials_path().unlink(missing_ok=True)
-        self.cfg = config.Config()
+        # §65.1 的通道总开关开着：本文件钉的是「循环跑起来」的行为（含 GitHub 读取器）；
+        # 关着时的判决在 tests/test_self_improve_channel_switch.py（#307 / D57）
+        self.cfg = config.Config(self_improve_enabled=True)
 
 
 class TickTestCase(_Sandbox):
@@ -232,8 +234,9 @@ class ProjectionTestCase(_Sandbox):
         self.assertIsInstance(m["next_run_at"], int)
         self.assertGreater(m["next_run_at"], m["last_run_at"])
         self.assertEqual(set(m["last_result"]), {"merged", "trashed", "proposals", "summaries", "errors",
-                                                 "advisories"})
+                                                 "worktrees", "advisories"})
         self.assertEqual(m["last_result"]["errors"], 0)
+        self.assertEqual(m["last_result"]["worktrees"], 0)   # §75 add-only 计数
         self.assertEqual(m["last_result"]["advisories"], [])
 
     def test_projection_carries_advisories_verbatim(self):

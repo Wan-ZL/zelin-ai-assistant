@@ -210,15 +210,22 @@ def _note_key(n: dict, body: str, stamp: str) -> str:
 # --------------------------------------------------------------------------- #
 # 投递（prompt 组装归这里；stop-idle-then-resume 管道归 executor/调用点）
 # --------------------------------------------------------------------------- #
-def build_steer_prompt(notes: list) -> str:
+def build_steer_prompt(notes: list, title_line: str = "") -> str:
     """整批待投递 steer → resume prompt。owner 亲打 = trusted，不围栏
     （briefing 的 fence_untrusted 是给外部内容的）；runner 侧 secrets scrub
-    照旧由投递管道负责。批内按入队顺序列点。"""
+    照旧由投递管道负责。批内按入队顺序列点。
+
+    ``title_line``（add-only 形参，§37.1 追记）：调用点给的显示名重审句——
+    转向之后卡名往往就过时了，这趟车顺带把 CARD TITLE 请求带进去。**句子在
+    调用点组装**（`dispatch_prompt.rework_title_line`：分档 + 现值围栏），本
+    模块保持 stdlib-only 的纯函数记账。空串 = 与从前逐字节相同。"""
     lines = "\n".join(f"- {n['text']}" for n in notes)
-    return (STEER_PREFIX + lines
-            + "\n\nThe lines above are a mid-flight course correction from "
-              "the OWNER for your CURRENT task. Apply them and continue — "
-              "this is not a new task and not a rework.")
+    tail = ("\n\nThe lines above are a mid-flight course correction from "
+            "the OWNER for your CURRENT task. Apply them and continue — "
+            "this is not a new task and not a rework.")
+    if title_line:
+        tail += "\n\n" + title_line
+    return STEER_PREFIX + lines + tail
 
 
 def _remove_pending(req, ex: dict, keys: set) -> None:

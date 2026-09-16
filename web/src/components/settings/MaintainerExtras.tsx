@@ -10,6 +10,7 @@
 // 可复制命令；400 路径不存在 → 「路径不存在」；
 // 400 会话 id 不合形状（details.check = session_id [+ reason]，启动前重检 config.yaml 里的 id）→ 目录 `check` 里的那句（server-owned，
 // 按 UI 语言取键，FieldControl.checkSentence）；其它错误原文。
+// 同区第二行 = <WorktreeStatus />（§75.4 / issue #315）：`.claude/worktrees/` 的条数、占用与一键清理。
 import { useState } from "react";
 import { ApiError, postMaintainerTerminal } from "../../api";
 import { useI18n } from "../../i18n";
@@ -17,6 +18,7 @@ import { useAppState } from "../../store";
 import { CopyLine } from "../chrome/CopyLine";
 import { checkSentence } from "./FieldControl";
 import { errorMessage } from "./useToast";
+import { WorktreeStatus } from "./WorktreeStatus";
 
 type Note =
   | { kind: "busy" }
@@ -92,6 +94,7 @@ export function MaintainerExtras() {
         </span>
       )}
       {note?.kind === "error" && <span className="settings-warning" role="alert">{note.message}</span>}
+      <WorktreeStatus />
     </div>
   );
 }

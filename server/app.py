@@ -27,7 +27,8 @@
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
   POST /api/materials/dismiss（server/material_box.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
-  /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+  /api/recaps/mark（「复制」/「标记已发送」本地标记）、GET /api/recaps/history?key=
+  （§63.9 存着的每一版 + 正文；只读，缺席 / 坏文件 = 200 空层），server/recaps.py。
 - 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
   GET /api/settings（目录）+ GET/PUT /api/settings/{section}（server/settings_catalog.py）、
   GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
@@ -42,7 +43,9 @@
   server/voice_profile.py。
 - Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
   关于页 POST /api/uninstall/terminal（入队「在终端跑 uninstall.sh」给壳，server/uninstall_launch.py）；
-  开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
+  开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）；
+  开发者区 GET /api/worktrees[?refresh=1] + POST /api/worktrees/cleanup {dry_run?}（§75.4：
+  `.claude/worktrees/` 清点与一键回收，判决在 act/lib/worktrees.py，server/worktree_inventory.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 - 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
@@ -94,11 +97,13 @@ from server import (about, ai_fix_launch, analytics_ingest, attachments,
                     doctor_run, failure_catalog, files, folders, health,
                     inbox_writer, ingest_run, lanes, maintainer_launch,
                     material_box, mcp_servers, notify_catalog, paths,
-                    permissions, radars, recaps, repair, search_index_source,
-                    secrets_store, security, self_improve_lane, settings,
-                    settings_catalog, setup, slack_directory, slack_manifest,
-                    sync_pairing, telemetry_consent,
-                    terminal_launch, uninstall_launch, voice_profile)
+                    permissions, radars, recaps, repair, screenpipe_disk,
+                    search_index_source, secrets_store, security,
+                    self_improve_lane, settings, settings_catalog, setup,
+                    slack_directory, slack_manifest, sync_pairing,
+                    telemetry_consent,
+                    terminal_launch, uninstall_launch, voice_profile,
+                    worktree_inventory)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -594,7 +599,16 @@ def _static_target(dist: Path, path: str) -> Optional[Path]:
     return _pick_file(target, real_dist, rel, path)
 
 
+# 契约常量优先于宿主机的 mimetypes 表（§73）：`mimetypes` 读 Windows 注册表与
+# /etc/mime.types，两者都能改写内置映射——PWA 安装清单发错类型就装不上，而这条
+# wire 类型是法条不是本机配置。表里没有的扩展名照旧走 mimetypes。
+_STATIC_CTYPES = {".webmanifest": "application/manifest+json"}
+
+
 def _static_ctype(target: Path) -> str:
+    pinned = _STATIC_CTYPES.get(target.suffix.lower())
+    if pinned:
+        return pinned
     return mimetypes.guess_type(target.name)[0] or "application/octet-stream"
 
 
@@ -712,6 +726,9 @@ _GET_JSON_ROUTES = {
     "/api/materials/list": lambda ctx, query: material_box.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+    # §63.9 上一版（issue #300）：单份纪要存着的每一版 + 正文（?key=…；正文只走这条路，
+    # 不进 10 s 一轮的看板投影）。只读——回退走 inbox recap_revert（act 独写 recaps/，§63.6）
+    "/api/recaps/history": lambda ctx, query: recaps.history(ctx.home, query),
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
     # custom / foreign）；token-light GET，写面在 POST /api/skills
     "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
@@ -755,6 +772,10 @@ _GET_JSON_ROUTES = {
     "/api/radars": lambda ctx, query: radars.snapshot(ctx.home),
     # §25 / §68.4 失败目录（原生 FailureCatalog.message 的 server-owned 投影；防腐 #10）
     "/api/failures": lambda ctx, query: failure_catalog.catalog(),
+    # §72.1 录制数据磁盘占用：缓存快照立刻回（首次 computing），扫目录 / 问 sqlite 在后台线程；?refresh=1 强制重算
+    "/api/screenpipe/disk": lambda ctx, query: screenpipe_disk.snapshot(ctx.home, refresh=_flag(query, "refresh")),
+    # §75.4 开发者区 worktree 清点：同一套「立刻回缓存、后台线程重算」形制（du 可能要几十秒）
+    "/api/worktrees": lambda ctx, query: worktree_inventory.snapshot(ctx.home, refresh=_flag(query, "refresh")),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -801,6 +822,8 @@ _POST_JSON_ROUTES = {
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
     "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
+    # §75.4 开发者区「清理 worktree」：判决与执行都在 act.lib.worktrees（{"dry_run": true} = 只报会删谁）
+    "/api/worktrees/cleanup": lambda ctx, payload: worktree_inventory.cleanup(ctx.home, payload),
     # §48.7 「重新安装」后台雷达：install.sh 自己的渲染器 + launchctl（server 不写 plist）
     "/api/radars/reinstall": lambda ctx, payload: radars.reinstall(ctx.home, payload),
     # §68.1 目录字段「打开」/「创建」：路径 = 已保存的 effective 值，客户端只传 key

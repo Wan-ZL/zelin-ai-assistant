@@ -17,6 +17,9 @@
 // 原因 = 链接点击与整卡复制手势冲突 :1829）——web 的详情侧栏没有整卡复制手势，这个约束不存在，所以摘要段
 // 在所有 lane 都走 Linkified，是**有意的一处扩展**（同一侧栏里步骤可点、摘要不可点才是怪的）。
 // 交付正文 / 怎样算办完 原生不 linkify（:1829 / DodListView），照抄边界。
+// 「claude agents 列表名」下面的灰字（§37.1 追记）是 web 独有的一行：原生时代会话名恒等于冻结 title、
+// 不存在「卡改了名会话没跟上」这回事；现在卡名跟着 display_title 走，而 CLI 改不了运行中会话的名字，
+// 所以 server 给 `agent_name_stale`、这里照实说一句（判据是 server 数据，防腐 #10）。
 import { useState, type ReactNode } from "react";
 import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
@@ -35,7 +38,7 @@ const KNOWN_KEYS = new Set([
   // §40 诚实成本三件套：cost_state 是 costText / moneyOf 读的「unknown」位，不是兜底区的杂项
   "cost_usd", "cost_estimate_usd", "cost_state", "show_cost", "green_sign", "green_sign_required", "processing",
   "summary", "plan", "dod", "definition_of_done", "outputs", "sources", "notes", "execution",
-  "copy_cmd", "log", "cwd", "target_repo", "session_id", "short_id", "agent_name",
+  "copy_cmd", "log", "cwd", "target_repo", "session_id", "short_id", "agent_name", "agent_name_stale",
   "started_at", "dispatched_at", "accepted_at", "review_at", "created", "updated", "trashed_at",
   "permanent", "disagreement", "improvement_of", "reraised", "reraised_note", "waiting_for",
   "last_error", "dispatch_error", "resume_exhausted", "delivered_summary", "final_draft",
@@ -243,6 +246,9 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   const cmd = resumeCommand(detail);
   const session = str(detail.short_id) ?? str(detail.session_id);
   const agent = str(detail.agent_name);
+  // §37.1 追记：server 说这条会话的名字已经跟不上卡名了（CLI 只有启动期 -n/--name，
+  // 改不了运行中的会话）——在「claude agents 列表名」下面照实说一句，别让人以为改名没生效
+  const agentNameStale = detail.agent_name_stale === true;
 
   const steers = parseSteers(detail.steers);
   const plan = strList(detail.plan);
@@ -411,6 +417,12 @@ export function DetailFields({ detail }: DetailFieldsProps) {
           <CmdLine label={text("日志：", "Log: ")} value={log} copy />
           <CmdLine label={text("会话 ID：", "Session ID: ")} value={session} />
           <CmdLine label={text("claude agents 列表名：", "claude agents list name: ")} value={agent} />
+          {agent && agentNameStale && (
+            <p className="zai-detail-dim">
+              {text("会话名下次恢复会话时才跟上（claude 改不了运行中会话的名字）",
+                    "The session name catches up at the next resume (claude cannot rename a live session)")}
+            </p>
+          )}
         </Section>
       )}
 

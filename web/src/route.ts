@@ -6,6 +6,8 @@
 // ?page=archive（永久性完成页）/ permissions（权限体检）/ setup（首次运行向导）= §68 P4 parity 页。
 // ?page=ingest（录制与数据接入）/ about（关于）= 左侧导航栏（§54.4，原生 MainSection）补齐的页；
 // rail slug ↔ page 的映射在 components/shell/NavRail.tsx。
+// ?page=skills = 技能页（Claude Code skill 商店 §67.5）：D78（2026-09-15）起从设置页的一区搬成左侧导航栏的独立页
+// （web 自有页，原生没有它）；设置页留一行入口，旧深链 `?page=settings&anchor=skills` 到达即改道到本页（SettingsPage）。
 // ?page=deps / diagnostics（依赖检查——原生 DepsView 的名字与更早的诊断页深链）：D30（2026-09-04）起依赖检查并入
 // 设置页的一区，两个值仍接受（URL 是 API，add-only），都渲染设置页并滚到 deps 区（readSettingsAnchor）。
 // ?page=ask（问问助手 §27）已随 D29 退役：不再是合法页，旧深链按「未知页」回落看板。
@@ -31,12 +33,16 @@ const ANCHOR_QUERY_PARAM = "anchor";
 const PAGE_SCOPED_PARAMS = [ANCHOR_QUERY_PARAM, "log", "step"] as const;
 
 export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps" | "archive" | "permissions" | "diagnostics" | "setup"
-  | "deps" | "ingest" | "about";
+  | "deps" | "ingest" | "about" | "skills";
 const PAGES: readonly AppPage[] = ["board", "trash", "styleguide", "settings", "recaps", "archive", "permissions", "diagnostics", "setup",
-  "deps", "ingest", "about"];
+  "deps", "ingest", "about", "skills"];
 
 /** 设置页「依赖检查」区的 section id（D30；`?page=deps` / `diagnostics` 旧深链都落到它） */
 export const DEPS_ANCHOR = "deps";
+
+/** Skills 的 section id：D78 起它是独立页（`?page=skills`），设置页上只剩一行入口——
+ *  `?anchor=skills` / `#settings-skills` 旧深链到达设置页即改道到技能页（SettingsPage 的锚点消费处） */
+export const SKILLS_ANCHOR = "skills";
 
 export function readCardId(search: string): string | null {
   // 保留大小写：id 由 SAFE_ID_RE 界定（允许小写），匹配按原样精确比对——不做 case 折叠

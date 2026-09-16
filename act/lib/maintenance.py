@@ -15,6 +15,20 @@ Owner 决策 D10（docs/design/vnext2-plan.md）：
   默认 90 vs 60）——owner 没亲眼看过它们进回收站；`purge_at` 投影与
   actd.purge_trash 经同一个 :func:`retention_days` 判决（§40.5 倒计时诚实）。
 
+**待验收列的老化（§70.2 追记，issue #312 / owner 决策 D74）**：D10 的「待验收不碰」
+自此只保留一半——待验收卡仍**不入簇**（永不被合并），但会被**唯一一条**规则
+`review_stale` 判过时：闲置 ≥ `daily_loop.review_stale_days`（默认 14，0 = 关）的
+待验收卡先盖一枚 add-only 执行戳 `review_stale_notified_at`（**不在**
+:data:`_EXECUTION_STAMPS` 里——它不是活动，盖了也不该把闲置天数清零），并由本轮
+**一条**汇总通知（§70.6 追记，kind `review_stale` 穿透安静时段）告知；下一轮该戳满
+20 小时才进回收站（`stale:review_stale`，prev_status=review，照循环卡的 90 天保留
+期可恢复）。那枚戳**只对「我们说话之后没再动过」的卡算数**：戳比 `last_activity`
+旧（打回→重新交付回到待验收、owner 从回收站捞回来——`registry.restore` 盖
+`restored_at`）就当没盖过，重新走第一阶段，否则一张卡一生只被通知一次、第二轮起
+无声归档。
+待验收卡**只**过这一条规则：deadline_passed / diagnostic_expired / superseded /
+idle 四条仍只认提案与潜在任务两列，否则 7 天的 deadline 规则会绕过这道两阶段闸。
+
 纯 act.lib：只 import stdlib + act.lib（§58.3）；写 registry 的入口只有
 actd 的 pass（act/lib/daily_loop.py 由 actd 调用），符合 §0 第 1 条单写者。
 """
@@ -26,11 +40,13 @@ import re
 from email.utils import parsedate_to_datetime
 from typing import Iterable, Optional
 
-from act.lib import auto_merge, config, fold_receipts, policy, registry
+from act.lib import auto_merge, config, fold_receipts, notify, policy, registry
 from act.lib.registry import Requirement, State
 
 # 维护只碰的两列（D10：提案 + 潜在任务）
 LANE_STATES = (State.DETECTED.value, State.CARD_SENT.value)
+# 过时清扫走到的全部列（D74：两列 + 待验收；待验收只过 review_stale 一条规则，见 _rules）
+SWEPT_STATES = LANE_STATES + (State.REVIEW.value,)
 # 「已投入」状态：同簇有这样的兄弟卡 = 事情还活着，不判过时
 INVESTED_STATES = (State.APPROVED.value, State.EXECUTING.value, State.REVIEW.value)
 # 「已完成」状态：同名卡在这里 = 本卡已被别处做掉（stale:superseded）
@@ -53,6 +69,13 @@ RULE_DEADLINE = "deadline_passed"
 RULE_DIAGNOSTIC = "diagnostic_expired"
 RULE_SUPERSEDED = "superseded"
 RULE_IDLE = "idle"
+RULE_REVIEW_STALE = "review_stale"      # D74：待验收列唯一的过时规则（两阶段）
+
+# 两阶段之间的最短间隔：第一遍盖戳 + 发汇总通知，戳满这么久的下一遍才归档。
+# 循环一天只跑一次，20 < 24 保证「今天通知、明天归档」不被时钟漂移吃掉。
+REVIEW_NOTICE_MIN_HOURS = 20
+# 盖在 execution 上的 add-only 戳（**故意不在 _EXECUTION_STAMPS 里**：它不是活动）
+REVIEW_NOTICE_STAMP = "review_stale_notified_at"
 
 _TS_SUFFIX_RE = re.compile(r"#\d+$")
 
@@ -115,7 +138,11 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-_EXECUTION_STAMPS = ("approved_at", "dispatched_at", "review_at", "reraised_at", "accepted_at")
+# 算「最近一次活动」的执行戳。`restored_at`（D74）是 owner 从回收站捞回一张卡的时刻：
+# 捞回来 = 他亲手说了「这张还要」，那一下必须重置闲置时钟，否则 §70.2 追记二的第二阶段
+# 会在第二天原地再归档一次（`registry.restore` 只清回收站字段，卡上的时间一个都没变新）。
+_EXECUTION_STAMPS = ("approved_at", "dispatched_at", "review_at", "reraised_at", "accepted_at",
+                     "restored_at")
 
 
 def _activity_candidates(req: Requirement) -> list:
@@ -228,8 +255,21 @@ def _same_cluster(a: Requirement, b: Requirement) -> bool:
     return _thread_root(a) == _thread_root(b) or _lineage(a, b)
 
 
+def _invested_states(status: str) -> tuple:
+    """本卡判「同簇有在跑的兄弟」时算数的状态集。
+
+    D74 的挖洞：待验收卡自己就在 :data:`INVESTED_STATES` 里，同一个 thread 上的
+    两张待验收卡会互相当成「兄弟还活着」——那样 `review_stale` 对线程孪生永远不
+    生效（owner 板上 22 天的 R-245 / R-246 恰是一对）。所以判一张待验收卡时，
+    保护罩只认 approved / executing 的兄弟；两列卡的保护罩一字不动。"""
+    if status == State.REVIEW.value:
+        return tuple(s for s in INVESTED_STATES if s != State.REVIEW.value)
+    return INVESTED_STATES
+
+
 def _has_invested_sibling(req: Requirement, reqs: Iterable[Requirement]) -> bool:
-    return any(r.id != req.id and str(r.status) in INVESTED_STATES and _same_cluster(req, r)
+    states = _invested_states(str(req.status))
+    return any(r.id != req.id and str(r.status) in states and _same_cluster(req, r)
                for r in reqs)
 
 
@@ -239,8 +279,9 @@ def _owner_invested(req: Requirement) -> bool:
 
 
 def _protected(req: Requirement, reqs: Iterable[Requirement], today: _dt.date) -> bool:
-    """永不判过时的卡：不在两列 / owner 碰过 / 未来 deadline / 同簇有在跑的兄弟。"""
-    if str(req.status) not in LANE_STATES or _owner_invested(req):
+    """永不判过时的卡：不在三列（两列 + 待验收，D74）/ owner 碰过 / 未来 deadline /
+    同簇有在跑的兄弟。"""
+    if str(req.status) not in SWEPT_STATES or _owner_invested(req):
         return True
     return _has_future_deadline(req, today) or _has_invested_sibling(req, reqs)
 
@@ -298,27 +339,80 @@ def _idle_rule(req: Requirement, idle: int, stale_days: int) -> Optional[str]:
     return RULE_IDLE if idle > stale_days else None
 
 
+# --------------------------------------------------------------------------- #
+# 待验收列的两阶段老化（D74 / §70.2 追记；issue #312）
+# --------------------------------------------------------------------------- #
+def _notice_state(req: Requirement) -> "tuple[str, Optional[_dt.datetime]]":
+    """待验收老化戳的三态：``("none", None)`` 还没通知过（或**通知过但那之后卡又被
+    动过**）/ ``("set", <when>)`` 通知过且此后没动静 / ``("bad", None)`` 戳在但
+    解析不了。
+
+    **戳是相对最近一次活动的，不是绝对的**（§70.2 追记二第 4 条）：戳比
+    :func:`last_activity` 旧 = 我们说完之后这张卡又动过（打回→重新交付回到待验收、
+    owner 从回收站捞回来），那枚戳对这一轮老化不算数，必须重新走第一阶段。少了这
+    一句，一张卡一生只被通知一次——第二轮起直接无声归档，两阶段闸门只在头一轮成立。
+
+    ``bad`` 既不重新通知也不归档——「拿不准就不动」（§70.2）：重盖一次戳会把
+    20 小时的闸门永远重置，而拿一个读不懂的时刻去归档是猜。"""
+    raw = _dict(req.execution).get(REVIEW_NOTICE_STAMP)
+    if raw in (None, ""):
+        return "none", None
+    when = parse_when(raw)
+    if when is None:
+        return "bad", None
+    last = last_activity(req)
+    if last is not None and last >= when:
+        return "none", None
+    return "set", when
+
+
+def review_stale_due(idle: Optional[int], review_days: int) -> bool:
+    """这张待验收卡闲置够久了（`review_stale_days <= 0` = 整条规则关掉）。"""
+    return review_days > 0 and idle is not None and idle >= review_days
+
+
+def _review_stale_rule(req: Requirement, idle: int, review_days: int,
+                       now: _dt.datetime) -> Optional[str]:
+    """第二阶段：闲置够久 **且** 通知戳已满 :data:`REVIEW_NOTICE_MIN_HOURS`。
+    第一阶段（盖戳 + 汇总通知）在 :func:`sweep_review_notices` 里。"""
+    if not review_stale_due(idle, review_days):
+        return None
+    state, stamped = _notice_state(req)
+    if state != "set":
+        return None
+    return RULE_REVIEW_STALE if now - stamped >= _dt.timedelta(hours=REVIEW_NOTICE_MIN_HOURS) else None
+
+
 def _rules(req: Requirement, reqs: list, today: _dt.date, idle: int,
-           stale_days: int) -> Optional[str]:
+           stale_days: int, review_days: int, now: _dt.datetime) -> Optional[str]:
+    """规则链按列分叉（D74）：待验收卡**只**见 review_stale——四条老规则仍绑在
+    :data:`LANE_STATES` 上，否则 7 天的 deadline_passed / superseded / 45 天的
+    idle 会绕过两阶段闸门，把待验收卡无声归档。"""
+    if str(req.status) == State.REVIEW.value:
+        return _review_stale_rule(req, idle, review_days, now)
     return (_deadline_rule(req, today, idle)
             or _diagnostic_rule(req, idle)
             or _superseded_rule(req, reqs)
             or _idle_rule(req, idle, stale_days))
 
 
-def stale_verdict(req: Requirement, reqs: list, today: _dt.date,
-                  stale_days: int) -> Optional[str]:
-    """过时规则 token（deadline_passed / diagnostic_expired / superseded / idle）
-    或 None（保留）。guards 先判；无可解析活动时间 = 拿不准 = None。"""
+def stale_verdict(req: Requirement, reqs: list, today: _dt.date, stale_days: int,
+                  review_days: int = 0, now: Optional[_dt.datetime] = None) -> Optional[str]:
+    """过时规则 token（deadline_passed / diagnostic_expired / superseded / idle /
+    review_stale）或 None（保留）。guards 先判；无可解析活动时间 = 拿不准 = None。
+    ``review_days`` / ``now`` 是 D74 待验收老化的参数（缺省 = 那条规则关着）。"""
     if _protected(req, reqs, today):
         return None
     idle = _idle_days(req, today)
-    return _rules(req, reqs, today, idle, stale_days) if idle is not None else None
+    if idle is None:
+        return None
+    return _rules(req, reqs, today, idle, stale_days, review_days,
+                  now or _dt.datetime.now(_dt.timezone.utc))
 
 
-def _safe_verdict(req, reqs, today, stale_days) -> Optional[str]:
+def _safe_verdict(req, reqs, today, stale_days, review_days, now) -> Optional[str]:
     try:
-        return stale_verdict(req, reqs, today, stale_days)
+        return stale_verdict(req, reqs, today, stale_days, review_days, now)
     except Exception:  # noqa: BLE001 - 坏字段 = 拿不准 = 不动
         return None
 
@@ -332,15 +426,90 @@ def _trash_stale(req: Requirement, rule: str) -> Optional[dict]:
 
 
 def sweep_stale(cfg: config.Config, today: Optional[_dt.date] = None,
-                reqs: Optional[list] = None) -> list:
-    """两列里的过时卡 → 回收站（reason `stale:<rule>`）。返回
-    ``[{"id", "rule", "display_id"}]``；单卡失败只丢那一张（宪法 11）。"""
+                reqs: Optional[list] = None, now: Optional[_dt.datetime] = None) -> list:
+    """三列里的过时卡 → 回收站（reason `stale:<rule>`）。返回
+    ``[{"id", "rule", "display_id"}]``；单卡失败只丢那一张（宪法 11）。
+    行形状与本函数的返回契约一字不变——D74 的 `review_stale` 因此直接落进
+    daily_loop 审计行的 `trashed[]` 里（issue #312 第 1 条诉求）。"""
     today = today or _dt.date.today()
+    now = now or _dt.datetime.now(_dt.timezone.utc)
     reqs = registry.load_all() if reqs is None else reqs
     stale_days = _int_attr(cfg, "daily_loop_stale_days")
-    verdicts = [(r, _safe_verdict(r, reqs, today, stale_days)) for r in reqs]
+    review_days = _int_attr(cfg, "daily_loop_review_stale_days")
+    verdicts = [(r, _safe_verdict(r, reqs, today, stale_days, review_days, now)) for r in reqs]
     results = [_trash_stale(r, rule) for r, rule in verdicts if rule is not None]
     return [x for x in results if x is not None]
+
+
+def _needs_review_notice(req: Requirement, reqs: list, today: _dt.date,
+                         review_days: int) -> bool:
+    """第一阶段的候选：待验收、没被保护罩挡住、闲置够久、还没盖过通知戳（戳被此后的
+    活动作废 = 按没盖过算，见 :func:`_notice_state`）。"""
+    if str(req.status) != State.REVIEW.value or _protected(req, reqs, today):
+        return False
+    if not review_stale_due(_idle_days(req, today), review_days):
+        return False
+    return _notice_state(req)[0] == "none"
+
+
+def _safe_needs_notice(req: Requirement, reqs: list, today: _dt.date,
+                       review_days: int) -> bool:
+    try:
+        return _needs_review_notice(req, reqs, today, review_days)
+    except Exception:  # noqa: BLE001 - 一张坏卡不许崩整轮
+        return False
+
+
+def review_notice_candidates(cfg: config.Config, today: Optional[_dt.date] = None,
+                             reqs: Optional[list] = None) -> list:
+    """本轮该被「明天归档」通知点名的待验收卡（纯读，CLI 的 --plan 也用它）。"""
+    today = today or _dt.date.today()
+    reqs = registry.load_all() if reqs is None else reqs
+    days = _int_attr(cfg, "daily_loop_review_stale_days")
+    return [r for r in reqs if _safe_needs_notice(r, reqs, today, days)]
+
+
+def _stamp_notice(req: Requirement, now: _dt.datetime) -> Optional[dict]:
+    """盖 add-only 执行戳并落盘；失败只丢这一张。"""
+    try:
+        ex = dict(_dict(req.execution))
+        ex[REVIEW_NOTICE_STAMP] = _iso_utc(now)
+        req.execution = ex
+        registry.save(req)
+    except Exception:  # noqa: BLE001 - 一张坏卡不许崩整轮
+        return None
+    return {"id": req.id, "display_id": registry.display_id(req),
+            "title": str(req.display_title or req.title or "")[:120]}
+
+
+def _announce_review_stale(count: int, review_days: int, notifier) -> None:
+    """整轮**一条**汇总通知（§70.6 追记）。kind = :data:`notify.KIND_REVIEW_STALE`，
+    在 `notify.QUIET_HOURS_EXEMPT` 里（§28 追记）：每日整理出厂 03:30 跑，正落在出厂
+    安静窗 22:00–08:00 内——守安静时段就等于「归档前发一次通知」在任何开了安静时段的
+    安装上永远不成立。一天一条、且后果是卡明天从眼前消失，够资格穿透（宪法第 10 条）。
+    永不 raise。"""
+    title, body = notify.msg_review_stale(count, review_days)
+    try:
+        (notifier or notify.notify)(title, body, kind=notify.KIND_REVIEW_STALE)
+    except Exception:  # noqa: BLE001 - 通知绝不崩循环
+        pass
+
+
+def sweep_review_notices(cfg: config.Config, today: Optional[_dt.date] = None,
+                         reqs: Optional[list] = None, now: Optional[_dt.datetime] = None,
+                         notifier=None) -> list:
+    """第一阶段：给够久没动的待验收卡盖戳，并发**一条**汇总通知（§70.6 追记）。
+
+    一卡一条横幅在 owner 的真板上是 19 条（宪法第 10 条「打扰要有资格」），所以
+    通知按轮汇总：「N 张待验收卡 M 天没动，明天归档（可恢复）」。``notifier`` 是
+    注入缝（防腐 #3：参数注入，绝不 module-global），缺省 :func:`notify.notify`。
+    通知发不出去不回滚戳——闸门是戳，不是横幅（§70.6 追记的取舍）。"""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    cards = review_notice_candidates(cfg, today=today, reqs=reqs)
+    rows = [x for x in (_stamp_notice(r, now) for r in cards) if x is not None]
+    if rows:
+        _announce_review_stale(len(rows), _int_attr(cfg, "daily_loop_review_stale_days"), notifier)
+    return rows
 
 
 # --------------------------------------------------------------------------- #

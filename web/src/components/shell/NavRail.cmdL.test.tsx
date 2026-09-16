@@ -80,9 +80,9 @@ describe("NavRail — ⌘L 聚焦捕获框", () => {
     expect(isFocusComposerShortcut(new KeyboardEvent("keydown", { key: "l", metaKey: true, ctrlKey: true }))).toBe(false);
   });
 
-  it("⌘1…⌘7 换页不受影响；⌥⌘S（原生折叠侧栏快捷键，已退役）什么都不做", () => {
+  it("⌘1…⌘8 换页不受影响；⌥⌘S（原生折叠侧栏快捷键，已退役）什么都不做", () => {
     renderRailWithBoard();
-    fireEvent.keyDown(window, { key: "4", metaKey: true });
+    fireEvent.keyDown(window, { key: "5", metaKey: true }); // D78：技能插在录制之后占 ⌘4，回收站起各后移一位
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(new URL(String(vi.mocked(navigate).mock.calls[0][0])).searchParams.get("page")).toBe("trash");
     fireEvent.keyDown(window, { key: "1", metaKey: true });

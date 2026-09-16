@@ -12,6 +12,11 @@
 # §18/§23) and finally launches the menu-bar app as the console user, so the
 # pkg route ends with a LIVE product, not an inert one.
 #
+# 但那条 per-user 路径先过 CONTRACT §74 的守卫（mac/scripts/pkg_dest_guard.sh）：
+# 目的地解析掉符号链接之后若落在一棵 git 工作树里，整段 per-user setup 跳过
+# ——不 rsync、不跑 install.sh、不重启守护进程、不启动 app（2026-09-07 事故，
+# issue #333）。
+#
 # Usage:  bash mac/package.sh
 # Needs:  the app already built (runs mac/build.sh itself if missing); no root.
 # Output: mac/build/ZelinAIAssistant-<version>.pkg
@@ -114,6 +119,23 @@ USER_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null \
     | sed 's/^NFSHomeDirectory: //')"
 [ -d "$USER_HOME" ] || USER_HOME="/Users/$CONSOLE_USER"
 DEST="$USER_HOME/Projects/zelin-ai-assistant"
+
+# CONTRACT §74 —— 一个 .pkg 永不写进 git checkout。守卫是载荷里的同一份脚本
+# （唯一实现，install.sh 的 --pkg-postinstall 再问一次），判据 = 目的地解析掉
+# 符号链接之后落不落在一棵工作树里。**fail-closed**：守卫本身缺席 / 报错
+# （非 0）一律当拒绝——证不明目的地是干净的就不许动它。
+# 判例 2026-09-07：退役的 Sparkle 壳自动装了 v1.0.14 的 .pkg，这一段顺着
+# `~/Projects` 这条符号链接把 232 个 tracked 文件回退到旧 tag、多留下 18 个
+# untracked 旧源码，再重启 actd 把过期代码钉进内存（issue #333）。
+GUARD="$MASTER/mac/scripts/pkg_dest_guard.sh"
+bash "$GUARD" "$DEST" >/dev/null
+GUARD_RC=$?
+if [ "$GUARD_RC" -ne 0 ]; then
+    echo "postinstall: $DEST is a git checkout (or the guard could not clear it — rc=$GUARD_RC)" >&2
+    echo "postinstall: skipped per-user setup — nothing copied, no daemon restarted, no app launched." >&2
+    echo "postinstall: update that checkout yourself: cd \"$DEST\" && git pull && bash install.sh" >&2
+    exit 0
+fi
 
 echo "postinstall: syncing pipeline -> $DEST (user: $CONSOLE_USER)"
 sudo -u "$CONSOLE_USER" -H mkdir -p "$DEST"

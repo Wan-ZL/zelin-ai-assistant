@@ -5,11 +5,13 @@ the marker and backfills nothing; an in-progress meeting is OPEN (no model
 call); the 13:00 OPEN and the 13:30 CLOSED rounds share one key; pending
 transcripts hold the close, the 120-min force overrides them; a late audio
 slice regenerates as version 2 with the old text in history; thin / silent
-meetings never reach the model; validator failures retry once then land as
-需复核; a crashing model call is retried across rounds and given up after
-three; per-run / per-day caps hold meetings for the next round; retention
-prunes; 「重新生成」carries the owner's note; 「现在生成」on an OPEN session
-is partial. The fake runner stands in for claude (tests never spawn it).
+meetings never reach the model; validator failures retry once, a length-only
+failure is then trimmed back to the cap (§63.3 追记) and anything else lands as
+需复核 with the structured reasons on the record; a crashing model call is
+retried across rounds and given up after three; per-run / per-day caps hold
+meetings for the next round; retention prunes; 「重新生成」carries the owner's
+note; 「现在生成」on an OPEN session is partial. The fake runner stands in for
+claude (tests never spawn it).
 """
 import json
 import subprocess
@@ -196,7 +198,7 @@ class GenerationQualityTestCase(RecapCase):
         self.assertEqual(thin["quality"], "thin_transcript")
         self.assertEqual(self.runner.calls, [])
 
-    def test_validator_failure_retries_once_then_needs_review(self):
+    def test_validator_failure_retries_once_then_needs_review_with_the_reasons(self):
         bad = fx.good_output(en_tail=" as Arash said")
         self.runner = FakeRunner(bad, bad)
         self.first_run()
@@ -207,6 +209,41 @@ class GenerationQualityTestCase(RecapCase):
         rec = store.load_recap(KEY)
         self.assertEqual(rec["quality"], "needs_review")
         self.assertTrue(rec["en"][0].endswith("as Arash said"))   # still copyable
+        # §63.3 追记（issue #298）：面板要说得出「为什么」——结构化原因落在记录上，正文不进去
+        self.assertEqual([(p["code"], p["lang"], p["line"]) for p in rec["problems"]],
+                         [("reported_speech", "en", 1)])
+        self.assertEqual(rec["problems"][0]["text"], "en line 1 uses reported speech")
+        self.assertEqual(rec["repairs"], [])
+        self.assertEqual(store.projection()[0]["problems"], rec["problems"])
+
+    def test_a_length_only_failure_is_trimmed_and_lands_ok_with_the_trim_on_record(self):
+        # #298 的真实那一例：英文第一行 146 字符，别处全干净——不该再花一次往返或一个人
+        tail = " and the evaluation harness is reused verbatim for the next weekly training reviews"
+        long_line = fx.good_output(en_tail=tail)
+        self.runner = FakeRunner(long_line, long_line)
+        self.first_run()
+        self.meeting()
+        self.run_once(fx.T0 + 34 * MIN)
+        rec = store.load_recap(KEY)
+        self.assertEqual(len(self.runner.calls), 2)               # 修剪在重试之后，不抢模型的机会
+        self.assertEqual(rec["quality"], "ok")
+        self.assertEqual(rec["problems"], [])
+        self.assertEqual(rec["repairs"], [{"lang": "en", "line": 1, "over": 6, "removed": 8}])
+        self.assertLessEqual(len(rec["en"][0]), 140)
+        self.assertTrue(rec["en"][0].startswith("Decided: the training run moves"))
+        self.assertEqual(rec["zh"][0], "定了：训练从周一起改用新数据配比")
+        self.assertEqual(len(self.notified), 1)                   # 有正文可复制 = 照旧通知
+
+    def test_a_clean_regeneration_clears_the_previous_version_reasons(self):
+        bad = fx.good_output(en_tail=" as Arash said")
+        self.runner = FakeRunner(bad, bad)
+        self.first_run()
+        self.meeting()
+        self.run_once(fx.T0 + 34 * MIN)
+        self.assertTrue(store.load_recap(KEY)["problems"])
+        self.runner = FakeRunner(fx.good_output())
+        rec = recap.generate(KEY, now=fx.T0 + 3600, conn=self.conn, runner=self.runner, cfg=self.cfg)
+        self.assertEqual((rec["quality"], rec["problems"], rec["repairs"]), ("ok", [], []))
 
     def test_retry_that_passes_is_ok(self):
         self.runner = FakeRunner(fx.good_output(en_tail=" as Arash said"), fx.good_output())

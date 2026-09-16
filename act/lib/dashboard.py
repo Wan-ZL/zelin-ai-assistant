@@ -19,6 +19,17 @@ the §48.4 意愿信号 (switch touched in settings_overrides / §19 credential
 present) that gate the setup-class cards — computed here, in the actd
 projection, never rewritten server-side (§44 single writer).
 
+§71 的投影面（add-only）：排队卡的 ``queued_reason`` 多一个 ``{kind:"asleep"}``
+（§71.1 —— 派发闸按住了整个 pass，本模块只读 ``power.observed_verdict()`` 的
+观察值，绝不自己探），运行中/待验收行多一个 ``slept_seconds``（§71.2 —— 这一轮
+里电脑睡掉的秒数，卡面据此说「其中 N 小时电脑睡眠」）。
+
+§76.2 的投影面（add-only）：提案行多三个结算信号——``decision_due``（截止日已到
+仍未批准）、``mention_escalated``（被提 ≥ ``approval.mention_escalation`` 次）与
+``completion_hint``（雷达盖的「疑似已完成」证据，``at`` 转 epoch int）。三个都是
+**只读判据**，本模块不改任何卡片状态（§76.1 的红线：结算动作永远是 owner 的一次
+点击）。
+
 ``copy_cmd`` (§2 / §6 / §68.7 takeover) deliberately starts with a bare
 ``claude`` (§55 第五幕 追记 2026-09-07): a ``--bg`` worker runs the binary of
 Claude Code's per-user daemon, which follows the login shell's claude — NOT
@@ -37,9 +48,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import (card_summary, config, daily_loop, deploy_state, failures, maintenance,
-                     policy, radar_health, radar_rounds, recap_store, risk, secrets,
-                     self_improve, sources, steer, titles, transcripts)
+from act.lib import (card_summary, config, daily_loop, deploy_state, dispatch_prompt, failures,
+                     maintenance, policy, power, radar_health, radar_rounds, recap_store, risk,
+                     secrets, self_improve, sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -277,6 +288,12 @@ def _opt(key: str, value: Any) -> dict:
     按这个来，§50 origin_trust / §51 auto_dispatch_block / §M6.1 steers 同款）。
     """
     return {key: value} if value else {}
+
+
+def _slept(ex: dict) -> int:
+    """§71.2 诚实耗时：`execution.slept_seconds`（这一轮里电脑睡掉的秒数）。
+    非正 / 坏值 → 0 = 整键不出（`_opt` 的 add-only 读侧语义）。"""
+    return max(0, _int_or(ex.get("slept_seconds"), 0))
 
 
 def _int_or(v: Any, default: int) -> int:
@@ -542,6 +559,42 @@ def _capture_id(req: Requirement) -> Optional[str]:
     return None
 
 
+def _decision_due(req: Requirement) -> bool:
+    """§76.2 决策到点：截止日已到或已过（`days_left <= 0`）而卡还挂在提案列。
+
+    无 deadline / 坏 deadline = False（拿不准不催人）。这是**投影**，不是状态：
+    §70.2 的 `stale:deadline_passed` 静默清扫一字不动，它只是让「今天截止」不再
+    无声地变成「已过期」。"""
+    left = days_left(req.deadline)
+    return left is not None and left <= 0
+
+
+def _mention_escalated(req: Requirement, cfg: config.Config) -> bool:
+    """§76.2 被提够多次仍未处理：`repeated >= approval.mention_escalation`
+    （默认 5，0/负 = 关）。计数本身照旧累加（§44.4 / §70.2 都读它），升级只是
+    读同一个数的第二个判据。"""
+    threshold = _int_or(getattr(cfg, "approval_mention_escalation", 0), 0)
+    return threshold > 0 and _repeated(req) >= threshold
+
+
+def _completion_hint_view(req: Requirement) -> Optional[dict]:
+    """§76.2 `completion_hint` 的 wire 形：`{at(epoch int|null), note, channel}`。
+
+    卡上没有提示、或提示不是 dict（手写/迁移脏值）= None → 整键省略。note 在
+    盖章时已截到 §76.1 的上限，投影只做类型归一，不再截第二次。"""
+    hint = getattr(req, "completion_hint", None)
+    if not isinstance(hint, dict):
+        return None
+    view = {"at": _epoch(hint.get("at")),
+            "note": _s(hint.get("note")),
+            "channel": _s(hint.get("channel"))}
+    # 空壳（`{}` / 全空字段）什么也没说——整键省略，客户端不许拿空壳去猜
+    # （同 §64 assessment 的读侧语义）。
+    if view["at"] is None and not view["note"]:
+        return None
+    return view
+
+
 def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
     """The add-only tail of a needs_approval (card_sent) row. Every key here is
     optional/add-only:
@@ -555,7 +608,13 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
     - ``egress`` (§7, issue #11): what leaves the machine on approval — always
       a list, ``[]`` = nothing;
     - ``capture_id`` (§10, issue #7): inbox stem of the birth capture, omitted
-      when the card was not born from one."""
+      when the card was not born from one;
+    - ``decision_due`` / ``mention_escalated`` (§76.2, issue #313): the two
+      settlement signals computed at projection time (bools, always present —
+      they are derived, so there is no "unknown" to omit);
+    - ``completion_hint`` (§76.2): the stored 疑似已完成 evidence, omitted when
+      the card has none. **None of the three changes status** — they are what
+      turns a silent board row into a decision the owner can see."""
     return {
         "reraised": bool(ex.get("reraised_at")),
         "reraised_note": str(ex.get("reraised_note") or ""),
@@ -563,6 +622,9 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
         **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
         "egress": _egress_view(req, cfg),
         **_opt("capture_id", _capture_id(req)),
+        "decision_due": _decision_due(req),
+        "mention_escalated": _mention_escalated(req, cfg),
+        **_opt("completion_hint", _completion_hint_view(req)),
     }
 
 
@@ -731,11 +793,13 @@ def _first_blocking(state: dict) -> Any:
 
 def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
     """M1.c token → 结构化 wire 形（M8.3 C-2 终裁为 canonical）：
-    dependency → {kind: waiting_card, blocking_id}｜concurrency → {kind:
-    concurrency}。None = 无阻塞（纯粹没轮到/派发失败退避——后者由
-    dispatch_error 独立表达，不混写）。`waiting_budget` retired v0.48.7（D9），
-    kind 值永不复用。"""
+    dependency → {kind: waiting_card, blocking_id}｜machine_asleep → {kind:
+    asleep}（§71.1）｜concurrency → {kind: concurrency}。None = 无阻塞（纯粹没
+    轮到/派发失败退避——后者由 dispatch_error 独立表达，不混写）。
+    `waiting_budget` retired v0.48.7（D9），kind 值永不复用。"""
     token = policy.queued_reason(req, state)
+    if token == "machine_asleep":
+        return {"kind": "asleep"}
     if token == "dependency":
         first = _first_blocking(state)
         out = {"kind": "waiting_card"}
@@ -770,15 +834,22 @@ def _steers_view(req: Requirement) -> list:
 # --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
-def _fold_receipts() -> list[dict]:
+def _fold_receipts(cfg: Optional[config.Config] = None) -> list[dict]:
     """§44.6 并入回执投影（never raises）。
 
     回执文件只存 channel + 目标卡 id（隐私红线：dashboard 整包上云，被并入
     内容原文不得出机）——投影文案所需的主卡显示名在这里由 registry 现查
     （``title`` = §37 display_title 链，本就已随卡片行进 dashboard，不是
     新增外泄面）；目标卡已消失（归档/回收）则留空，App 端只报 R-xxx。
+    ``count``（§44.6 追记，issue #308：同一张卡在 TTL 窗口内的多次并入合成
+    一行）由 :func:`act.lib.fold_receipts.load_recent` 带过来，这里原样转发。
+
+    ``cfg.fold_receipt_notices`` 关掉 → 整列为空（顶层键本身恒在，add-only
+    契约不变）。``cfg`` 省略 = 按开着投（0 参调用者与既有判例不变）。
     """
     from act.lib import fold_receipts, registry
+    if cfg is not None and not getattr(cfg, "fold_receipt_notices", True):
+        return []
     out: list[dict] = []
     for e in fold_receipts.load_recent():
         title = ""
@@ -1094,6 +1165,12 @@ def _detected_row(req: Requirement, ctx: _Ctx) -> dict:
         "hardness": req.hardness,
         "type": req.type,
         "sources": _source_view(req, ctx.cfg),
+        # §76.2：备选卡也会被盖「疑似已完成」（§76.1 的盖章状态含 detected），
+        # 所以债务列同样要能看见那条证据——潜在任务卡的出口（封存 / 删除）本来
+        # 就在卡上，缺的只是「它可能已经不用做了」这一句（PR #349 评审）。
+        # 提案列的两个派生 bool 不来这一列：备选卡没有 deadline 决策面，
+        # 「被提×N」也不在这张卡面上（§66.2 原生 DebtRow 逐字镜像）。
+        **_opt("completion_hint", _completion_hint_view(req)),
     }
 
 
@@ -1199,6 +1276,7 @@ class _Session:
     short_id: Any
     copy_cmd: Optional[str]
     agent_name: Any
+    agent_name_stale: bool
     agent: dict   # roster record or {} (agent not found yet)
 
 
@@ -1249,9 +1327,28 @@ def _roster_agent(ex: dict, ctx: _Ctx) -> dict:
 
 
 def _session_name(req: Requirement, a: dict) -> str:
-    """prefer the requirement title: claude uses the (huge) injected prompt
-    as the agent "name", which is useless to display."""
-    return _s(req.title or a.get("name") or req.id)
+    """卡片此刻的显示名（§37.1 那条链，恒非空）——roster 的 ``name`` 只是回落：
+    claude 把（巨大的）注入 prompt 当 agent "name" 用，显示出来毫无用处。
+    改名后的卡在运行中/待验收/已完成列里也必须叫新名字（此前是冻结 title）。
+
+    冻结 `title` 因此不再由 `name` 捎带——四个会话行改发自己的 ``title`` 键
+    （§2 追记），否则 §37.2 的搜索词表会在这三条 lane 上掉一维。"""
+    return _s(_display_title(req) or a.get("name") or req.id)
+
+
+def _agent_name_stale(req: Requirement, a: dict) -> bool:
+    """roster 上这条会话的名字已经跟不上卡名了吗（§37.1 追记）。
+
+    True = 会话在册且它的名字 != 此刻 dispatch/resume 会给的名字
+    （`dispatch_prompt.session_name`，单源）。CLI 没有运行中改名的动作
+    （只有启动期 `-n/--name`），所以这是个诚实的「下次 resume 才跟上」信号，
+    web 详情面据此在「claude agents 列表名」下面给一行说明。
+
+    **只发给还能再 resume 的行**（运行中 / 待验收 / 待验收回流）：已验收卡
+    （`_delivered_row`）不会再有下一次 resume，那行上「下次恢复会话时才跟上」
+    就成了永不兑现的承诺（宪法第 3 条诚实），所以那个行构造不带这个键。"""
+    live = _s(a.get("name"))
+    return bool(live) and live != dispatch_prompt.session_name(req)
 
 
 def _session_cwd(req: Requirement, a: dict, cfg: config.Config) -> str:
@@ -1273,6 +1370,7 @@ def _session_for(req: Requirement, ex: dict, ctx: _Ctx) -> _Session:
         short_id=short_id,
         copy_cmd=_copy_cmd(a, short_id, resume_sid),
         agent_name=a.get("name"),
+        agent_name_stale=_agent_name_stale(req, a),
         agent=a,
     )
 
@@ -1282,6 +1380,10 @@ def _delivered_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     return {
         "id": _s(req.id),
         "name": sx.name,
+        # §2 追记：冻结 title 自带一个键（`name` 现在是活标题，不再捎带它）——
+        # §37.2 的搜索词表里「冻结 title」那一维靠它。已验收行不带
+        # `agent_name_stale`：这条会话不会再 resume（见 _agent_name_stale）。
+        "title": _s(req.title),
         **_title_fields(req),
         "session_id": sx.resume_sid,
         "short_id": sx.short_id,
@@ -1311,11 +1413,13 @@ def _from_review_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     return {
         "id": _s(req.id),
         "name": sx.name,
+        "title": _s(req.title),   # §2 追记：冻结 title（`name` = 活标题）
         **_title_fields(req),
         "session_id": sx.resume_sid,
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "cwd": sx.cwd,
         "state": "working",
         # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字符串必须归一，
@@ -1327,6 +1431,8 @@ def _from_review_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "dod": _dod(req),
         "log": ex.get("log"),
         "dispatched_at": _epoch(ex.get("dispatched_at")),
+        # §71.2 add-only：耗时里有多少是电脑在睡（卡面「其中 N 小时电脑睡眠」）
+        **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
         "last_error": None,
         "last_error_id": None,
@@ -1350,6 +1456,7 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
     return {
         "id": _s(req.id),
         "name": sx.name,
+        "title": _s(req.title),   # §2 追记：冻结 title（`name` = 活标题）
         "summary": req.summary or None,
         **_title_fields(req),
         "dod": _dod(req),
@@ -1357,6 +1464,7 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "state": "review",
         "cwd": sx.cwd,
         "delivered_summary": ex.get("delivered_summary"),
@@ -1366,6 +1474,8 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         "log": ex.get("log"),
         "dispatched_at": _epoch(ex.get("dispatched_at")),
         "review_at": _epoch(ex.get("review_at")),
+        # §71.2 add-only：dispatched_at→review_at 的耗时里有多少是电脑在睡
+        **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
         "session_active": sx.state in _RUNNING_STATES,
         # #119 add-only：这行是「中断收割」而非正常交付（受阻/放弃救活被收进
@@ -1375,6 +1485,10 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
         # §65.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
         **_opt("delivery", _delivery_view(ex)),
+        # §2 追记 / D74（issue #312）：这一行是机器卡（来源全为 self_improve）——
+        # 待验收列头的「隐藏 🤖」只约束**带**这个键的行（非 self_improve 卡整键不出，
+        # 过滤器绝不隐藏它读不懂的行）。判据单源 = policy.is_self_improve_sources。
+        **_opt("self_improve", policy.is_self_improve_sources(req.sources) or None),
     }
 
 
@@ -1386,11 +1500,13 @@ def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     return {
         "id": _s(req.id),
         "name": sx.name,
+        "title": _s(req.title),   # §2 追记：冻结 title（`name` = 活标题）
         **_title_fields(req),
         "session_id": sx.resume_sid,
         "short_id": sx.short_id,
         "copy_cmd": sx.copy_cmd,
         "agent_name": sx.agent_name,
+        **_opt("agent_name_stale", sx.agent_name_stale),
         "cwd": sx.cwd,
         "state": "working" if sx.state in _RUNNING_STATES else sx.state,
         # epoch 归一，理由同 §30 from_review 分支（Swift Int?）。
@@ -1400,6 +1516,8 @@ def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
         "dod": _dod(req),
         "log": ex.get("log"),
         "dispatched_at": _epoch(ex.get("dispatched_at")),
+        # §71.2 add-only：这一轮至今电脑睡掉的秒数
+        **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
         "last_error": ex.get("last_error"),
         "last_error_id": failures.classify(ex.get("last_error")),
@@ -1570,9 +1688,11 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),
         # §44.6 静默并入回执 — add-only 顶层键（decodeIfPresent 向后兼容）：
-        # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
-        # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
-        "fold_receipts": _fold_receipts(),
+        # 用户通道（quick / quick_capture）的 fold 发生时留在
+        # state/fold_receipts/ 的短暂回执，App 端渲染为一行可消失的
+        # 「已并入 R-xxx」提示；自动通道不出回执、设置里可整体关掉
+        # （§44.6 追记，issue #308）。
+        "fold_receipts": _fold_receipts(cfg),
         # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
         # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
         "radar_sources": _radar_sources(cfg),
@@ -1587,7 +1707,7 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
     # §56 / §70 add-only 顶层键 deploy_state / maintenance（同 device_label 的加法约定：文件缺失或读不了 = 整键不存在）
     deploy_state.attach(dash)
     daily_loop.attach(dash, cfg)
-    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
+    return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[] + recap_counts（会议 recap，不是卡）
 
 
 def build_dashboard(
@@ -1614,7 +1734,10 @@ def build_dashboard(
         cfg=cfg,
         agent_idx=_index_agents(agents),
         snap={"running": _live_session_count(reqs),
-              "max_concurrent": policy.autodispatch_config(cfg)["max_concurrent"]},
+              "max_concurrent": policy.autodispatch_config(cfg)["max_concurrent"],
+              # §71.1：只报**本进程观察到**的判决（派发闸每 pass 先跑，缓存恒新鲜）
+              # ——投影侧绝不为了画一个 chip 再起三个探针子进程。
+              "machine_asleep": power.observed_verdict() == power.ASLEEP},
     )
     # archive() crash-mid-move 残件去重：archive/ 副本已落盘、active 目录里的
     # 同 id 原件还没删掉时，视 active 残件为"已迁移"跳过——否则同一张卡同时

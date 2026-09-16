@@ -36,7 +36,13 @@ export function sinceIso(iso: unknown, nowMs: number, text: Text): string | null
 export function duration(from: unknown, to: unknown, text: Text): string | null {
   if (typeof from !== "number" || typeof to !== "number") return null;
   if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to < from) return null;
-  const secs = Math.floor(to - from);
+  return durationSeconds(to - from, text);
+}
+
+/** 秒数 → 同一套紧凑时长档位（§71.2 卡面「其中 N 电脑睡眠」与 duration 共用一套文案） */
+export function durationSeconds(seconds: unknown, text: Text): string | null {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return null;
+  const secs = Math.floor(seconds);
   if (secs < 60) return text(`${secs}秒`, `${secs}s`);
   const mins = Math.floor(secs / 60);
   if (mins < 60) return text(`${mins}分钟`, `${mins}m`);

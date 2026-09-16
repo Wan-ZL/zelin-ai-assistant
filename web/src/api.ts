@@ -32,6 +32,8 @@ import type {
   LogTail,
   McpList,
   ModelsSettings,
+  RecapHistory,
+  RecapMarkKind,
   RecapMarkReceipt,
   RecapSettings,
   SearchIndexSnapshot,
@@ -40,6 +42,7 @@ import type {
   RadarAgentsSnapshot,
   RadarReinstallReceipt,
   RepairReceipt,
+  ScreenpipeDisk,
   SecretStatus,
   SecretVerifyResult,
   SlackDirectory,
@@ -60,6 +63,8 @@ import type {
   UpdateCheckResult,
   UpdateInstallReceipt,
   WebAnalyticsEvent,
+  WorktreeCleanup,
+  WorktreeInventory,
 } from "./types";
 
 interface ApiErrorBody {
@@ -367,6 +372,15 @@ export function putRecapSettings(
   return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
 }
 
+/**
+ * GET /api/recaps/history?key= — 这份纪要存着的每一版 + 正文（CONTRACT §63.9，issue #300）。
+ * 正文只走这一条路（看板投影只带标量句柄 `history_versions`）；只读——回退是
+ * `postAction({action:"recap_revert"})`，因为 recap 文件的唯一写者是 act/recap.py（§63.6）。
+ */
+export function fetchRecapHistory(key: string, signal?: AbortSignal): Promise<RecapHistory> {
+  return request<RecapHistory>(`/api/recaps/history?key=${encodeURIComponent(key)}`, { signal });
+}
+
 /** GET /api/settings/display — 显示偏好三把旋钮的 effective 值 + 词表（CONTRACT §54.1 第 12 项） */
 export function fetchDisplaySettings(signal?: AbortSignal): Promise<DisplaySettings> {
   return request<DisplaySettings>("/api/settings/display", { signal });
@@ -377,8 +391,12 @@ export function putDisplaySettings(body: DisplaySettingsPatch): Promise<DisplayS
   return request<DisplaySettings>("/api/settings/display", { method: "PUT", body: JSON.stringify(body) });
 }
 
-/** POST /api/recaps/mark — 「复制」/「标记已发送」本地标记（server 独写 marks.json；无控制流读它） */
-export function postRecapMark(key: string, mark: "copied" | "sent", on = true): Promise<RecapMarkReceipt> {
+/**
+ * POST /api/recaps/mark — 「复制」/「标记已发送」/「忽略」本地标记（server 独写 marks.json）。
+ * §63.5 追记（issue #301）：旧注「无控制流读它」失效——sent_at / dismissed_at 决定分栏与已忽略的
+ * 保留期；仍不进 registry、不触发发送 / 派发 / 卡片状态机。`on: false` 清戳 = 恢复。
+ */
+export function postRecapMark(key: string, mark: RecapMarkKind, on = true): Promise<RecapMarkReceipt> {
   return request<RecapMarkReceipt>("/api/recaps/mark", {
     method: "POST",
     body: JSON.stringify({ key, mark, on }),
@@ -596,6 +614,12 @@ export function fetchVoiceGenerateStatus(signal?: AbortSignal): Promise<VoiceGen
   return request<VoiceGenStatus>("/api/voice/generate-status", { signal });
 }
 
+/** GET /api/screenpipe/disk[?refresh=1] — 录制数据磁盘占用快照（§72.1）：立刻回缓存（首次 computing），扫目录在 server 后台线程；
+ *  refresh=1 让 server 起一次重算（GET 本身仍不阻塞） */
+export function fetchScreenpipeDisk(refresh = false, signal?: AbortSignal): Promise<ScreenpipeDisk> {
+  return request<ScreenpipeDisk>(refresh ? "/api/screenpipe/disk?refresh=1" : "/api/screenpipe/disk", { signal });
+}
+
 /** GET /api/slack/directory[?refresh=1][&lang=zh|en] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记）；
  *  lang = 当前 UI 语言（ok:false 的双语 message 随之——原生 SettingsSlack.fetchDirectory 的 AIASSISTANT_UI_LANG） */
 export function fetchSlackDirectory(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<SlackDirectory> {
@@ -614,6 +638,20 @@ export function postUninstallTerminal(): Promise<TerminalReceipt> {
 /** POST /api/maintainer/terminal — 开发者区「在终端打开开发会话」：cd <repo> && claude [--resume]，参数由 server 读设置（§68.1） */
 export function postMaintainerTerminal(): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/maintainer/terminal", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/worktrees[?refresh=1] — 开发者区 `.claude/worktrees/` 清点（§75.4）：立刻回缓存（首次 computing），
+ *  扫目录 + du 在 server 后台线程；refresh=1 让 server 重算一次 */
+export function fetchWorktrees(refresh = false, signal?: AbortSignal): Promise<WorktreeInventory> {
+  return request<WorktreeInventory>(refresh ? "/api/worktrees?refresh=1" : "/api/worktrees", { signal });
+}
+
+/** POST /api/worktrees/cleanup — 开发者区「清理」（§75.4）：`dry_run` 只报会删谁，一个字节都不动 */
+export function postWorktreesCleanup(dryRun = false): Promise<WorktreeCleanup> {
+  return request<WorktreeCleanup>("/api/worktrees/cleanup", {
+    method: "POST",
+    body: JSON.stringify(dryRun ? { dry_run: true } : {}),
+  });
 }
 
 /** GET /api/radars — Slack / Gmail 后台雷达 agent 的 launchd 状态（§48.7；token-light GET） */

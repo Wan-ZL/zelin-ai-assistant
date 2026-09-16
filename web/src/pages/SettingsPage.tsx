@@ -7,7 +7,9 @@
 // 依赖检查（原生 rail 页 DepsView，D30 2026-09-04 owner「合并到 setting里面」）紧跟通用区——它管的是这台机器能不能跑，
 // 与通用区的「初始设置向导 / 权限体检」两行同一话题。已退役：菜单栏（D3）；
 // 同步 / 配对 = SyncSection（§68.15：server 起 act.syncd --pair / --disable，二维码由 syncd 落盘）；「关于」是 sidebar 页
-// （?page=about），不再重复。
+// （?page=about），不再重复。Skills 自 D78（2026-09-15）起也是 sidebar 页（?page=skills）：本页的 skills 区只剩一行入口
+// （SkillsPointerSection），`?anchor=skills` / `#settings-skills` 旧深链到达即改道到那一页。
+// web 自有区另有 录制数据与磁盘（§72，issue #28：磁盘占用 / 增长估算 / 保留天数，紧跟录制区）。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
 // 搜索框（原生 Settings.swift SettingsSearchField + matches()，§54.4 / §68.1 追记）：干草 = 目录标题 zh+en + server 目录该区的
 // label / help zh+en（不看 UI 语言）+ 该区凭证行的双语 label + 渲染正文；查询按空白切 token、全部命中才算（AND）；
@@ -35,7 +37,7 @@ import { GeneralExtras } from "../components/settings/GeneralExtras";
 import { GmailSection } from "../components/settings/GmailSection";
 import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
-import { SkillsSection } from "../components/settings/SkillsSection";
+import { SkillsPointerSection } from "../components/settings/SkillsSection";
 import { RecordingSection } from "../components/settings/RecordingSection";
 import { SettingsFold } from "../components/settings/SettingsFold";
 import { MaintainerExtras } from "../components/settings/MaintainerExtras";
@@ -43,11 +45,12 @@ import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
 import { ObsidianSection } from "../components/settings/ObsidianSection";
 import { SlackSection } from "../components/settings/SlackSection";
+import { StorageStatus } from "../components/settings/StorageStatus";
 import { SyncSection } from "../components/settings/SyncSection";
 import { VoiceGenerate } from "../components/settings/VoiceGenerate";
 import { VoiceStatus } from "../components/settings/VoiceStatus";
 import { useI18n } from "../i18n";
-import { buildAppUrl, navigate, readSettingsAnchor, useRoute, withoutSettingsAnchor } from "../route";
+import { buildAppUrl, navigate, readSettingsAnchor, SKILLS_ANCHOR, useRoute, withoutSettingsAnchor } from "../route";
 import { expandSettingsSection, toggleSettingsSection, useAppState } from "../store";
 import type { SecretsStatus, SettingsCatalog } from "../types";
 
@@ -60,6 +63,7 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "deps", zh: "依赖检查", en: "Dependencies" },
   { id: "notifications", zh: "通知", en: "Notifications" },
   { id: "recording", zh: "录制", en: "Recording" },
+  { id: "storage", zh: "录制数据与磁盘", en: "Recording data & disk" },
   { id: "live_captions", zh: "实时字幕", en: "Live captions" },
   { id: "obsidian", zh: "笔记库", en: "Notes vault" },
   { id: "credentials", zh: "凭证（存本机 config/secrets/，保存后自动验证）", en: "Credentials (stored locally in config/secrets/; verified automatically on save)" },
@@ -241,6 +245,12 @@ export function SettingsPage() {
     if (!pending) return undefined;
     const stripped = withoutSettingsAnchor(window.location.href);
     if (stripped.href !== window.location.href) navigate(stripped, true);
+    // D78：Skills 自此是独立页——旧深链 `?anchor=skills` / `#settings-skills`（壳菜单 / 书签 / 外部链接）到达即改道，
+    // 不留在设置页的入口行上（replace：不在历史栈里留一条「设置页 + 锚点」，后退回去又被重放一次）
+    if (pending.id === SKILLS_ANCHOR) {
+      navigate(buildAppUrl(window.location.href, "skills", null), true);
+      return undefined;
+    }
     if (SETTINGS_TOC.some((entry) => entry.id === pending.id)) expandSettingsSection(pending.id);
     const el = scrollToFold(pending.id);
     if (!el) return undefined;
@@ -294,13 +304,17 @@ export function SettingsPage() {
       <Fold id="deps" isForced={searchActive}><DepsSection /></Fold>
       <Fold id="notifications" isForced={searchActive}><CatalogSection sectionId="notifications" /></Fold>
       <Fold id="recording" isForced={searchActive}><RecordingSection /></Fold>
+      {/* §72 录制数据与磁盘（issue #28）：占用 / 增长 / 上次清理 / 上次媒体清理 状态行（StorageStatus，GET /api/screenpipe/disk 非阻塞快照）
+          + 两个目录字段 screenpipe_retention_days（DB 保留天数，0 = 永久保留）与 screenpipe_media_retention_minutes（媒体保留分钟数，§72.4） */}
+      <Fold id="storage" isForced={searchActive}><CatalogSection sectionId="storage" lead={<StorageStatus />} /></Fold>
       <Fold id="live_captions" isForced={searchActive}><CaptionsSection /></Fold>
       <Fold id="obsidian" isForced={searchActive}><ObsidianSection /></Fold>
       <Fold id="credentials" isForced={searchActive}><CredentialsSection /></Fold>
       <Fold id="slack" isForced={searchActive}><SlackSection /></Fold>
       <Fold id="gmail" isForced={searchActive}><GmailSection /></Fold>
       <Fold id="claude_import" isForced={searchActive}><ClaudeImportSection /></Fold>
-      <Fold id="skills" isForced={searchActive}><SkillsSection /></Fold>
+      {/* D78：Skills 区搬成左侧导航栏的「技能」页（?page=skills）——这里只剩一行入口，区与目录条目原位留着 */}
+      <Fold id="skills" isForced={searchActive}><SkillsPointerSection /></Fold>
       <Fold id="mcp" isForced={searchActive}><McpSection /></Fold>
       <Fold id="sync" isForced={searchActive}><SyncSection /></Fold>
       <Fold id="approval" isForced={searchActive}><CatalogSection sectionId="approval" /></Fold>

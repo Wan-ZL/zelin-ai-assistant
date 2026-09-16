@@ -4,17 +4,21 @@ raising expansion.
 
 CONTRACT §4（派发失败台账 + §4.1 风暴刹车：进入 approved 的每条路径重新上膛）/
 §34bis（preset 清理卡起跑前拍 registry 快照）/ §51（免批通道 + queued 词表）/
-§65（self_improve lane）。当日花费台账 state/autodispatch_spend.json retired
-v0.48.7（owner decision D9）：没有预算就没有账要记。
+§65（self_improve lane）/ §65.1（通道总开关关着 = 免批批准过的 lane 卡退回待审批，
+不再派出）/ §71.1（睡眠感知派发：机器不在清醒态时本 pass 一张卡都不派）。当日
+花费台账 state/autodispatch_spend.json retired v0.48.7（owner decision D9）：
+没有预算就没有账要记。
 """
 from __future__ import annotations
 
 import datetime as _dt
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from act.lib import analytics, config, failures, notify, policy, registry, risk, self_improve
+from act.lib import (analytics, config, failures, notify, policy, power, registry, risk,
+                     self_improve)
 from act.lib.actd import triage_guard
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.registry import Requirement, State, load_all
@@ -137,22 +141,71 @@ def _live_count(reqs: list) -> int:
 
 
 def dispatch_approved(d: Daemon, cfg: config.Config) -> int:
-    count = 0
     ad = policy.autodispatch_config(cfg)
     reqs = load_all()
-    live = _live_count(reqs)
+    gate = _PassGate(d=d, cfg=cfg, live=_live_count(reqs),
+                     cap=int(ad["max_concurrent"]))
+    count = 0
     for req in reqs:
         if not _awaiting_dispatch(req):
             continue
-        if d.executor is None:
-            d.log(f"dispatch: executor unavailable, cannot dispatch {req.id}")
+        if _withdraw_frozen_lane(d, req, cfg):
             continue
-        if _held_this_pass(req, live, int(ad["max_concurrent"])):
+        if gate.holds(req):
             continue
         if _dispatch_one(d, req, cfg):
             count += 1
-            live += 1                    # 本 pass 内并发口径同步推进
+            gate.live += 1               # 本 pass 内并发口径同步推进
     return count
+
+
+def _withdraw_frozen_lane(d: Daemon, req: Requirement, cfg: config.Config) -> bool:
+    """§65.1（issue #307 第 4 条「关闭开关时至少不再续派」）：通道被关掉之后，
+    **policy 免批批准**（`execution.auto_dispatched`）但还没派出的 self_improve
+    卡不再起跑——退回待审批列（`auto_dispatched` 痕一并清掉，approved 那一刻的
+    资格判定已经过期），下一 pass 的资格闸照常报既有的 `self_improve:disabled`
+    （常态回落、不上卡），维护者把开关打开后它照常重新免批。
+
+    审查复现（#335 review）：`_held_this_pass` 让并发满时的 lane 卡留在 approved
+    排队（§51 queued），这些卡在关开关几 pass / 几小时之后仍会被派出去烧执行器
+    与 API 额度——开关只挡了「铸卡 / 批准」那一端。
+
+    **owner 亲手批准的 self_improve 卡不动**（没有 `auto_dispatched` 痕）：开关
+    管的是自动化，显式动作永远不被静默吞掉。True = 本卡已处理完，别再派。"""
+    ex = dict(req.execution or {})
+    if not (ex.get("auto_dispatched") and self_improve.frozen_in_flight(req, cfg)):
+        return False
+    ex.pop("auto_dispatched", None)
+    req.execution = ex
+    append_note(req, f"[{_dt.date.today().isoformat()} 通道已关] "
+                     "self_improve 免批派发撤回，卡退回待审批（§65.1）")
+    req.set_status(State.CARD_SENT)
+    d.save(req)
+    d.log(f"dispatch: {req.id} withdrawn (self_improve:disabled)")
+    return True
+
+
+@dataclass
+class _PassGate:
+    """本 pass 的派发闸（executor 缺席 / §71.1 机器在睡 / §4 刹车 / §51 并发）。
+
+    机器状态**懒算一次**：没有待派发卡的 pass 一个子进程都不起（探针 60 s
+    memo 见 act/lib/power.py），本 pass 内所有 approved 卡共用同一个判决——
+    半 pass 睡半 pass 醒会让「为什么这张派了那张没派」无法解释。
+    """
+    d: Daemon
+    cfg: config.Config
+    live: int
+    cap: int
+    asleep: Optional[bool] = None
+
+    def holds(self, req: Requirement) -> bool:
+        if self.d.executor is None:
+            self.d.log(f"dispatch: executor unavailable, cannot dispatch {req.id}")
+            return True
+        if self.asleep is None:
+            self.asleep = power.machine_asleep(self.cfg, log=self.d.log)
+        return bool(self.asleep) or _held_this_pass(req, self.live, self.cap)
 
 
 def _awaiting_dispatch(req: Requirement) -> bool:
@@ -167,7 +220,8 @@ def _held_this_pass(req: Requirement, live: int, cap: int) -> bool:
     「需输入」列等 owner 退回重批（approve 清台账）。§51 合并运行列 queued
     子状态：并发满 → 卡留 approved 排队（原因 chip 由 dashboard 的
     queued_reason 投影），槽位空出即派发。（auto 卡派发时刻的预算复核 retired
-    v0.48.7，D9：并发是唯一的排队原因。）"""
+    v0.48.7，D9；§71.1 起「机器在睡」是第二个排队原因，住在 _PassGate 里——
+    它按住的是**整个 pass**，不是某一张卡。）"""
     return bool((req.execution or {}).get("dispatch_halted")) or live >= cap
 
 

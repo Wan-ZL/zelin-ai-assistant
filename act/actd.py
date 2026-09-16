@@ -60,6 +60,7 @@ from act.lib import (
     logcap,
     maintenance,
     notify,
+    power as _power,
     radar_rounds,
     recap_requests,
     recap_store,
@@ -238,8 +239,9 @@ def _spawn_weekly_digest(_decision: Optional[dict] = None) -> str:
 
 
 def _spawn_recap(decision: dict) -> str:
-    """§63 ``recap_generate`` / ``recap_slack_draft`` → ``act.recap <argv>`` detached;
-    malformed (bad key / note / channel id) = honest noop — the store validates.
+    """§63 ``recap_generate`` / ``recap_slack_draft`` / §63.9 ``recap_revert`` →
+    ``act.recap <argv>`` detached; malformed (bad key / note / channel id /
+    version) = honest noop — the store validates.
     ``recap_generate`` also lands in the §63.8 request ledger (running / noop) so the
     recap row can say 生成中 until the new version's ``generated_at`` overtakes it."""
     argv = recap_store.inbox_argv(decision)
@@ -260,6 +262,7 @@ _DETACHED_ACTIONS = {  # late-bound lambdas: tests patch the module attribute
     "weekly_digest_now": lambda decision: _spawn_weekly_digest(),
     "recap_generate": lambda decision: _spawn_recap(decision),
     "recap_slack_draft": lambda decision: _spawn_recap(decision),
+    "recap_revert": lambda decision: _spawn_recap(decision),  # §63.9 回退到存着的某一版（issue #300）
     "radar_test_round": lambda decision: radar_rounds.request(decision, _log),  # §48.7 立即测试一轮
     "voice_generate": lambda decision: voice_job.request(decision, _log),  # §68.1 追记 从我的消息生成/更新档案（D47）
 }
@@ -327,6 +330,7 @@ _WAKE_GRACE_SECONDS = _alerts.WAKE_GRACE_SECONDS
 _wake_state = _alerts.WAKE_STATE                # shared dict: tests mutate it in place
 _no_baseline_since = _alerts.NO_BASELINE_SINCE  # shared dict: tests clear it in place
 _HARVEST_PROBE_AT = _reconcile.HARVEST_PROBE_AT  # shared dict: tests clear / patch.dict it
+_TITLE_PROBE_AT = _reconcile.TITLE_PROBE_AT      # §37.1 追记：活会话改名探针的台账
 _HARVEST_PROBE_INTERVAL_S = _reconcile.HARVEST_PROBE_INTERVAL_S
 RESUME_STORM_THRESHOLD = _reconcile.RESUME_STORM_THRESHOLD
 RESUME_STORM_WINDOW_S = _reconcile.RESUME_STORM_WINDOW_S
@@ -447,6 +451,14 @@ def _rearm_dispatch(ex: dict) -> dict:
     return _dispatch.rearm_dispatch(_ctx(), ex)
 
 
+def _power_sample() -> int:
+    """§71.2：每 pass 顶部量一次真实挂起时长（wall − monotonic），> 5 分钟就
+    把秒数记到在跑的卡上（`execution.slept_seconds` / `sleep_interrupted`）——
+    卡面的「耗时」因此能诚实地说「其中 N 小时电脑睡眠」，§71.3 的一次性重试
+    也只认这个测量值作证据。"""
+    return _power.sample_pass(_ctx())
+
+
 def auto_dispatch_pass(cfg: config.Config) -> int:
     return _dispatch.auto_dispatch_pass(_ctx(), cfg)
 
@@ -512,8 +524,8 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list:
     return _alerts.detect_transitions(prev, curr)
 
 
-def _check_auth_failures(notified: set) -> list:
-    return _alerts.check_auth_failures(notified)
+def _check_auth_failures(notified: set, suppressed: bool = False) -> list:
+    return _alerts.check_auth_failures(notified, suppressed=suppressed)
 
 
 def _wake_grace(cfg: config.Config, wall: float, interval: Optional[int] = None,
@@ -523,9 +535,11 @@ def _wake_grace(cfg: config.Config, wall: float, interval: Optional[int] = None,
 
 def _check_radar_liveness(notified: set, now: Optional[_dt.datetime] = None,
                           interval: Optional[int] = None, mono: Optional[float] = None,
-                          missing_since: Optional[dict] = None) -> list:
+                          missing_since: Optional[dict] = None,
+                          suppressed: bool = False) -> list:
     return _alerts.check_radar_liveness(_ctx(), notified, now=now, interval=interval,
-                                        mono=mono, missing_since=missing_since)
+                                        mono=mono, missing_since=missing_since,
+                                        suppressed=suppressed)
 
 
 # --------------------------------------------------------------------------- #
@@ -611,7 +625,12 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     """§59（D22 + D53）：把三把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass
     一次，web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立
     进程，本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这
-    几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮同一刷新点。"""
+    几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮与 §65.1 的通道
+    总开关（`self_improve_enabled`，#307 / D57）与 §44.6 的并入回执开关
+    （`fold_receipt_notices`，#308 / D64）与 §76.2 的升级阈值
+    （`approval_mention_escalation`，#313 / D70）同一刷新点——设置页「开发者」区一关，
+    下一 pass 就不再读 GitHub、不再巡检、不再免批派发，无需重启守护进程；§65.5 的
+    `self_improve.owner_logins`（#310）也在这里现读（`_refresh_owner_logins`）。"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
@@ -621,6 +640,33 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     cfg.models_fallback = fresh.models_fallback   # D53 第三把（--fallback-model）
     for knob in daily_loop.LIVE_KNOBS:
         setattr(cfg, knob, getattr(fresh, knob))
+    cfg.self_improve_enabled = fresh.self_improve_enabled   # §65.1（#307 / D57）
+    # §44.6 追记（#308 / D64）：并入回执开关同一刷新点——设置页一关，下一 pass
+    # 写出的 dashboard 里 fold_receipts 就空了，无需重启。
+    cfg.fold_receipt_notices = fresh.fold_receipt_notices
+    # §76.2（#313 / D70）：被提 N 次的升级阈值同一刷新点——设置页改完（或调成
+    # 0 关掉）下一 pass 的投影就按新阈值算，不必重启守护进程。
+    cfg.approval_mention_escalation = fresh.approval_mention_escalation
+    _refresh_owner_logins(cfg, fresh)                       # §65.5（#310）
+
+
+def _refresh_owner_logins(cfg: config.Config, fresh: config.Config) -> None:
+    """§65.8 追记（issue #310）：`self_improve:` 块**只有 `owner_logins` 一键**
+    每 pass 现读（设置页「开发者」区改完下一 pass 生效）；`repo_path` /
+    `tick_minutes` / `github_repo` 仍随 actd 启动冻结。盘上没有这一键 = 删掉内存
+    里的旧值（设置页清空列表 = diff-write 删键，不删就还认着被撤销的 login）。"""
+    if not isinstance(cfg.raw, dict):
+        return
+    block = cfg.raw.get("self_improve")
+    if not isinstance(block, dict):
+        block = {}
+        cfg.raw["self_improve"] = block
+    source = fresh.raw.get("self_improve") if isinstance(fresh.raw, dict) else None
+    logins = source.get("owner_logins") if isinstance(source, dict) else None
+    if logins is None:
+        block.pop("owner_logins", None)
+    else:
+        block["owner_logins"] = logins
 
 
 def _early_dashboard(cfg: config.Config) -> None:
@@ -715,15 +761,20 @@ def _alerts_phase(prev_dash: Optional[dict], dash: dict, auth_notified: set,
                   radar_dead_notified: Optional[set], interval: Optional[int]) -> None:
     for title, body, rid, kind in detect_transitions(prev_dash, dash):
         notify.notify(title, body, req=rid, kind=kind)
-    for title, body in _check_auth_failures(auth_notified):
-        notify.notify(title, body)
+    # §28 分类（issue #29）：凭证失效与源死亡都是失败类——默认开且穿透安静时段。
+    # 用户真把「失败通知」关掉时两道扫描**照跑**（僵尸 health 清理、恢复出账、
+    # 无基线首见台账都住在扫描里），只是不花 anti-nag 台账：开关翻回来的那一
+    # pass 要能重报，而不是被一条没人看见的通知吃掉。现读一次（与巡检同款）。
+    failures_muted = notify.suppressed_now(notify.KIND_FAILURE)
+    for title, body in _check_auth_failures(auth_notified, suppressed=failures_muted):
+        notify.notify(title, body, kind=notify.KIND_FAILURE)
     # §48 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
     # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
     # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
     for title, body in _check_radar_liveness(
             radar_dead_notified if radar_dead_notified is not None else set(),
-            interval=interval):
-        notify.notify(title, body)
+            interval=interval, suppressed=failures_muted):
+        notify.notify(title, body, kind=notify.KIND_FAILURE)
 
 
 def run_once(
@@ -736,6 +787,7 @@ def run_once(
 ) -> dict:
     config.ensure_state_dirs()
     _refresh_model_knobs(cfg)   # §59：模型旋钮改动下一 pass 生效，无需重启
+    _power_sample()  # §71.2：本 pass 相对上一 pass 的挂起时长 → 在跑卡的睡眠账
     # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
     # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
     heartbeat.beat("store2", interval)

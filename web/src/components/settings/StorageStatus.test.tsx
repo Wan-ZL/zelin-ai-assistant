@@ -1,0 +1,179 @@
+// 「录制数据与磁盘」状态行（CONTRACT §72.1 / §72.4；issue #28）：GET /api/screenpipe/disk 的 computing → ready 轮询、数字格式化、
+// 增长估算的依据句、上次清理回执的一句话、上次媒体清理（停了 / 读不到 = 报警）、备份文件告示（只报不删）、
+// 刷新按钮 = ?refresh=1、拉取失败只显示一句不炸。
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchScreenpipeDisk } from "../../api";
+import { LanguageContext } from "../../i18n";
+import type { ScreenpipeDisk } from "../../types";
+import { dayOf, formatBytes, growthText, mediaPruneText, pruneText, StorageStatus } from "./StorageStatus";
+
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return { ...actual, fetchScreenpipeDisk: vi.fn() };
+});
+
+const text = (zh: string, en: string) => en;
+
+const ready: ScreenpipeDisk = {
+  state: "ready", computed_at: "2026-09-07T10:00:00Z", refreshing: false, root: "/Users/demo/.screenpipe", root_exists: true,
+  total_bytes: 43_000_000_000, db_bytes: 10_700_000_000, backup_bytes: 32_000_000_000, log_bytes: 30_000_000, media_bytes: 0,
+  other_bytes: 600_000, file_count: 120, backups: [{ name: "db.sqlite.bak-20260604", bytes: 32_000_000_000 }],
+  db_reclaimable_bytes: 1_200_000_000, oldest_frame_ts: "2026-04-16T11:54:01.723008+00:00",
+  newest_frame_ts: "2026-09-05T03:04:12.820268+00:00", db_error: null,
+  growth: { bytes_per_month: 2_300_000_000, basis: "lifetime", span_days: 141.6, samples: 1 },
+  retention_days: 0, last_prune: null,
+};
+const computing: ScreenpipeDisk = {
+  ...ready, state: "computing", computed_at: null, refreshing: true, total_bytes: null, db_bytes: null, backup_bytes: null,
+  log_bytes: null, media_bytes: null, other_bytes: null, file_count: null, backups: [], db_reclaimable_bytes: null,
+  oldest_frame_ts: null, newest_frame_ts: null, growth: { bytes_per_month: null, basis: null, span_days: null, samples: 0 },
+};
+
+function renderEn() {
+  return render(<LanguageContext.Provider value="en"><StorageStatus /></LanguageContext.Provider>);
+}
+
+beforeEach(() => {
+  vi.mocked(fetchScreenpipeDisk).mockReset();
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+describe("formatting helpers", () => {
+  it("formatBytes uses decimal units and — for unknown", () => {
+    expect(formatBytes(null)).toBe("—");
+    expect(formatBytes(43_000_000_000)).toBe("43 GB");
+    expect(formatBytes(1_250_000_000)).toBe("1.3 GB");
+    expect(formatBytes(30_000_000)).toBe("30 MB");
+    expect(formatBytes(4_200)).toBe("4 KB");
+    expect(formatBytes(0)).toBe("0 KB");
+  });
+
+  it("growthText names its basis and says so when there is nothing to go on", () => {
+    expect(growthText({ bytes_per_month: 2_300_000_000, basis: "lifetime", span_days: 141.6, samples: 1 }, text))
+      .toBe("≈ 2.3 GB / month (average over all 141.6 recorded days)");
+    expect(growthText({ bytes_per_month: 900_000_000, basis: "samples", span_days: 3.5, samples: 9 }, text))
+      .toBe("≈ 900 MB / month (from the last 3.5 days of samples)");
+    expect(growthText({ bytes_per_month: -500_000_000, basis: "samples", span_days: 2, samples: 4 }, text))
+      .toBe("≈ −500 MB / month (from the last 2 days of samples)");
+    expect(growthText({ bytes_per_month: null, basis: null, span_days: null, samples: 1 }, text))
+      .toBe("Not enough samples yet (needs two measurements ≥ 1 day apart)");
+  });
+
+  it("dayOf and pruneText", () => {
+    expect(dayOf("2026-04-16T11:54:01.723008+00:00")).toBe("2026-04-16");
+    expect(dayOf(null)).toBe("—");
+    expect(pruneText(null, text)).toBe("Not run yet");
+    expect(pruneText({ ran_at: "2026-09-07T04:00:12Z", skipped: "retention_off" }, text))
+      .toBe("2026-09-07 04:00 UTC retention off (0 = keep forever), nothing deleted");
+    expect(pruneText({ ran_at: "2026-09-07T04:00:12Z", deleted_frames: 120, deleted_audio: 7, budget_exhausted: true }, text))
+      .toBe("2026-09-07 04:00 UTC deleted 120 frames / 7 transcripts; time budget used up, continues next round");
+    expect(pruneText({ ran_at: "2026-09-07T04:00:12Z", error: "DatabaseError: locked" }, text))
+      .toBe("2026-09-07 04:00 UTC failed: DatabaseError: locked");
+    expect(pruneText({ ran_at: "2026-09-07T04:00:12Z", skipped: "no_db" }, text)).toBe("2026-09-07 04:00 UTC skipped (no_db)");
+  });
+
+  it("mediaPruneText separates a stopped prune from one that found nothing", () => {
+    const base = { retention_minutes: 60, data_dir: "/Users/demo/.screenpipe/data", last_ok_ts: null, ok_age_seconds: null };
+    expect(mediaPruneText(undefined, text)).toEqual({ line: "Not run yet", warn: false });
+    expect(mediaPruneText({ ...base, state: "never", ts: null, deleted_files: null, deleted_bytes: null, age_seconds: null, stale: true }, text))
+      .toEqual({ line: "No receipt yet — the cleanup may not be running", warn: true });
+    // 跑了、一个都没删：这是**正常**，不报警
+    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 600, last_ok_ts: "2026-09-14T04:00:12Z", ok_age_seconds: 600, stale: false }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB)", warn: false });
+    // 同样「删了 0 个」，但三小时没有一轮干净跑完：会悄悄涨盘，必须报警并说出多久
+    expect(mediaPruneText({ ...base, state: "ok", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 14_400, last_ok_ts: "2026-09-14T04:00:12Z", ok_age_seconds: 14_400, stale: true }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); no clean round for 4 hours (it should run every 30 minutes)", warn: true });
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, last_ok_ts: "2026-09-14T03:30:00Z", ok_age_seconds: 1_800, stale: false }, text).warn).toBe(true);
+    // 每半小时失败一次：`ts` 一直是「刚刚」，但六小时没删过东西——这句话必须说出那个缺口
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T10:00:00Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, last_ok_ts: "2026-09-14T04:00:00Z", ok_age_seconds: 21_600, stale: true }, text))
+      .toEqual({ line: "2026-09-14 10:00 UTC the recording data folder could not be read (permissions); nothing was deleted; no clean round for 6 hours (it should run every 30 minutes)", warn: true });
+    // 一次都没干净跑完过（脚本写 last_ok_ts: null）
+    expect(mediaPruneText({ ...base, state: "unreadable", ts: "2026-09-14T10:00:00Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: true }, text).line)
+      .toBe("2026-09-14 10:00 UTC the recording data folder could not be read (permissions); nothing was deleted; no clean round on record");
+    // partial = 没扫完（子目录读不到 / 文件在变动）：删掉的是真的，但不算干净的一轮；
+    // 十分钟前刚有一轮干净的 → 一次撞车不报警
+    expect(mediaPruneText({ ...base, state: "partial", ts: "2026-09-14T10:00:00Z", deleted_files: 3, deleted_bytes: 900_000, age_seconds: 60, last_ok_ts: "2026-09-14T09:50:00Z", ok_age_seconds: 600, stale: false }, text))
+      .toEqual({ line: "2026-09-14 10:00 UTC the round did not finish scanning (a subfolder could not be read, or files changed under it); only deleted 3 media file(s) (900 KB)", warn: false });
+    expect(mediaPruneText({ ...base, state: "partial", ts: "2026-09-14T10:00:00Z", deleted_files: 3, deleted_bytes: 900_000, age_seconds: 60, ok_age_seconds: null, stale: true }, text).warn).toBe(true);
+    expect(mediaPruneText({ ...base, state: "no_data_dir", ts: "2026-09-14T04:00:12Z", deleted_files: 0, deleted_bytes: 0, age_seconds: 60, stale: true }, text))
+      .toEqual({ line: "2026-09-14 04:00 UTC no recording data folder yet", warn: false });
+    expect(mediaPruneText({ ...base, state: "ok", ts: "whenever", deleted_files: 1, deleted_bytes: 2_000, age_seconds: null, last_ok_ts: "whenever", ok_age_seconds: null, stale: true }, text).line)
+      .toBe("whenever deleted 1 media file(s) (2 KB); the last successful round's timestamp could not be read");
+  });
+});
+
+describe("StorageStatus", () => {
+  it("polls while the server is still measuring, then shows the numbers, the backup notice and the prune line", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValueOnce(computing).mockResolvedValueOnce(ready);
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("storage-total").textContent).toBe("Measuring…"));
+    expect((screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement).disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(1600);
+    await waitFor(() => expect(screen.getByTestId("storage-total").textContent).toBe("43 GB"));
+    expect(vi.mocked(fetchScreenpipeDisk).mock.calls).toEqual([[false], [false]]);
+    expect(screen.getByText("~/.screenpipe")).toBeTruthy();
+    expect(screen.getByText("database 11 GB · backups 32 GB · logs 30 MB · media 0 KB")).toBeTruthy();
+    expect(screen.getByText("of which 1.2 GB inside the database is reusable (pruned, waiting for new data)")).toBeTruthy();
+    expect(screen.getByTestId("storage-growth").textContent).toBe("≈ 2.3 GB / month (average over all 141.6 recorded days)");
+    expect(screen.getByText("oldest 2026-04-16 · newest 2026-09-05")).toBeTruthy();
+    expect(screen.getByTestId("storage-prune").textContent).toBe("Not run yet");
+    const notice = screen.getByRole("status");
+    expect(notice.textContent).toContain("Found 1 database backup file(s), 32 GB in total:");
+    expect(notice.textContent).toContain("db.sqlite.bak-20260604（32 GB）");
+    expect(notice.textContent).toContain("nothing here deletes them");
+    expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
+    expect((screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("refresh asks the server to recompute (?refresh=1) and shows the re-measuring hint while it runs", async () => {
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValueOnce(ready).mockResolvedValueOnce({ ...ready, refreshing: true });
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("storage-total").textContent).toBe("43 GB"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByText("Re-measuring…")).toBeTruthy());
+    expect(vi.mocked(fetchScreenpipeDisk).mock.calls).toEqual([[false], [true]]);
+    expect(screen.getByTestId("storage-total").textContent).toBe("43 GB"); // 旧数字照旧可读
+  });
+
+  it("a stopped media prune is called out with an alert, a fresh one is just a line", async () => {
+    const prune = { state: "ok", ts: "2026-09-14T04:00:12Z", retention_minutes: 60, deleted_files: 0,
+      deleted_bytes: 0, data_dir: "/Users/demo/.screenpipe/data", last_ok_ts: "2026-09-14T04:00:12Z",
+      age_seconds: 14_400, ok_age_seconds: 14_400, stale: true };
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_retention_minutes: 60, media_prune: prune });
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("storage-media-prune").textContent)
+      .toBe("2026-09-14 04:00 UTC deleted 0 media file(s) (0 KB); no clean round for 4 hours (it should run every 30 minutes)"));
+    expect(screen.getAllByRole("alert").map((el) => el.textContent))
+      .toContain("Raw jpg / mp4 are only deleted by this cleanup round; while it is stopped, the disk keeps growing.");
+    cleanup();
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, media_prune: { ...prune, age_seconds: 600, ok_age_seconds: 600, stale: false, deleted_files: 12, deleted_bytes: 3_400_000 } });
+    renderEn();
+    await waitFor(() => expect(screen.getByTestId("storage-media-prune").textContent)
+      .toBe("2026-09-14 04:00 UTC deleted 12 media file(s) (3 MB)"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a failed fetch shows one plain error line instead of crashing", async () => {
+    vi.mocked(fetchScreenpipeDisk).mockRejectedValue(new Error("fetchScreenpipeDisk: not stubbed here"));
+    renderEn();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("not stubbed here");
+  });
+
+  it("state=error from the background job and a broken db are both reported honestly", async () => {
+    vi.mocked(fetchScreenpipeDisk).mockResolvedValue({ ...ready, state: "error", error: "PermissionError: [Errno 13]", db_error: "database is locked",
+      backups: [], growth: { bytes_per_month: null, basis: null, span_days: null, samples: 0 } });
+    renderEn();
+    await waitFor(() => expect(screen.getAllByRole("alert").length).toBe(2));
+    const alerts = screen.getAllByRole("alert").map((el) => el.textContent);
+    expect(alerts).toContain("Measurement failed: PermissionError: [Errno 13]");
+    expect(alerts).toContain("Database could not be read: database is locked");
+    expect(screen.getByTestId("storage-growth").textContent).toBe("Not enough samples yet (needs two measurements ≥ 1 day apart)");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

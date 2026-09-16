@@ -4,7 +4,10 @@
 §16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
 §53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
 D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
-§70（daily_loop 块）。
+§70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关；
+§65.5 的 `self_improve.owner_logins` 是 overrides 能碰的第二键）+
+§72（录制数据保留期：`recording.retention_days` 的 DB 天数与 §72.4
+`recording.media_retention_minutes` 的媒体分钟数，后者经 `--print-value` 给 cron 消费）。
 
 Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
@@ -87,6 +90,15 @@ DEFAULT_IGNORED_APPS: list = [
     "Incognito",         # Chrome/Edge incognito windows (window-title match)
 ]
 
+# §72.4 原始媒体（帧 / 音频片段）的保留期，分钟：cron 链第二步
+# ingest/screenpipe-cleanup.sh 的 `find -mmin +N`。出厂 60 = 现状一字不变；
+# 下限 5 分钟（链每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧）、
+# 上限 1 年（再长等于没有保留期）。区间外 = 坏值（yaml 回落默认、override
+# 整条跳过）——绝不悄悄夹到边界上：文件里写着的数必须就是 cron 用的数。
+DEFAULT_MEDIA_RETENTION_MINUTES: int = 60
+MIN_MEDIA_RETENTION_MINUTES: int = 5
+MAX_MEDIA_RETENTION_MINUTES: int = 365 * 24 * 60
+
 # Telemetry defaults (docs/TELEMETRY.md) — anonymous usage analytics upload is
 # ON by default (like VS Code) and points at the maintainer's Supabase project.
 # The publishable key is DESIGNED to be public (RLS allows INSERT only — it can
@@ -119,6 +131,9 @@ CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 # 不再铸卡后剩下的都是 GitHub 面与素材，一天两张够审、也不会把提案列刷成一排 🤖。
 # server/settings.py DAILY_LOOP_DEFAULTS 手抄同值（§49，判例 test_server_paths_mirror）。
 DEFAULT_DAILY_LOOP_MAX_PROPOSALS: int = 2
+# §76.2（issue #313）提案被提够多少次算「被提了这么多次还没人处理」。issue 原文
+# 举的数就是 5（P-008 被提 ×23 一次升级都没有）。0 或负 = 关掉升级（计数照常累加）。
+DEFAULT_MENTION_ESCALATION: int = 5
 # §53 数据层后端（D2）：auto = 激活标记在则 SQLite 为真源（默认，首跑自动迁移）；
 # yaml / sqlite = 强制指定（yaml 是回滚开关，保留一个版本）。真解析在
 # registry.backend()——这里只是配置词表。
@@ -241,6 +256,19 @@ class Config:
     # v0.46 完成提醒 (off|banner|sound)。App(NotifyRelay) 是唯一读者——管线只
     # 负责给 review_ready 队列条目打 kind；键收进 overrides 白名单以便记账。
     review_notify: str = "sound"
+    # §28 追记（issue #29）通知偏好：安静时段 + 分类开关。唯一读者 =
+    # act/lib/notify.suppression_reason（抑制在写方，理由见那里）。出厂值 =
+    # 本改动前的行为（安静时段关、三类全开），所以新装机一字不变。
+    quiet_hours_enabled: bool = False
+    quiet_hours_start: str = "22:00"    # 本地 HH:MM；跨午夜合法
+    quiet_hours_end: str = "08:00"
+    notify_proposals: bool = True       # 新卡待审批 / 批量 / 回锅
+    notify_needs_input: bool = True     # 任务停下来了，等人一句话
+    notify_failures: bool = True        # 需重新登录 / 雷达停摆 / 派发失败（穿透安静时段）
+    # §44.6 追记（issue #308）：提案列顶那排绿色「刚才的输入已并入 …」的总开关。
+    # 唯一读者 = dashboard._fold_receipts（关掉 = 顶层键投空列，键本身恒在）。
+    # 出厂 True = 本改动前的行为（自动通道的回执已由通道闸挡在写入端）。
+    fold_receipt_notices: bool = True
     # §68.7 终端应用 (auto|ghostty|terminal|iterm2)。server/terminal_launch 是唯一读者
     # （web 「在终端打开（接管会话）/ 开发会话 / 卸载」都经它 open -a）；键收进白名单以便记账。
     terminal_app: str = DEFAULT_TERMINAL_APP
@@ -281,6 +309,10 @@ class Config:
     poll_interval_seconds: int = 10
     show_cost_above_usd: float = 5.0
     require_text_confirm_above_usd: float = 50.0
+    # §76.2（issue #313）被提 N 次仍未处理的升级阈值（config.yaml
+    # `approval.mention_escalation`）。`repeated >= 阈值` 的提案卡投影
+    # `mention_escalated: true` 并（首次翻真时）响一次通知；**0 或负 = 关**。
+    approval_mention_escalation: int = DEFAULT_MENTION_ESCALATION
 
     # execution
     default_target_repo: str = "~/Projects/your-workbench"
@@ -333,12 +365,30 @@ class Config:
     daily_loop_max_proposals_per_day: int = DEFAULT_DAILY_LOOP_MAX_PROPOSALS
     daily_loop_stale_days: int = 45
     daily_loop_trash_retention_days: int = 90
+    # §70.2 追记 / D74（issue #312）：待验收列的老化天数——闲置 N 天的待验收卡
+    # 先收到一条汇总通知，下一轮进回收站（可恢复）。0 = 关掉这条规则。
+    daily_loop_review_stale_days: int = 14
+
+    # §65.1 自动改进本软件的通道总开关（config.yaml `self_improve.enabled`；issue
+    # #307 / D57）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
+    # 每日循环不跑 issues/prs/mutation 三个 GitHub 读取器、§65.5 巡检不巡、§51 第二
+    # 条 lane 不免批派发；打开它的唯一面 = 设置页「开发者」区（扁平 override 键同名）。
+    self_improve_enabled: bool = False
 
     # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
     # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
     recording_ignored_apps: list = field(
         default_factory=lambda: list(DEFAULT_IGNORED_APPS)
     )
+    # §72 screenpipe DB 保留期（天）：0 = 永久保留（出厂默认 = 现状不变）；N ≥ 1 =
+    # cron 链的 cleanup 步删掉「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行
+    # （act/lib/screenpipe_retention.py）。config.yaml 落点 recording.retention_days，
+    # 设置页 override 扁平键 screenpipe_retention_days。
+    screenpipe_retention_days: int = 0
+    # §72.4 原始 jpg / mp4 在 ~/.screenpipe/data 里活多久（分钟）：cleanup 步的
+    # `find -mmin +N`。config.yaml 落点 recording.media_retention_minutes，设置页
+    # override 扁平键 screenpipe_media_retention_minutes；区间见上面三个常量。
+    screenpipe_media_retention_minutes: int = DEFAULT_MEDIA_RETENTION_MINUTES
 
     # local pre-send redaction (opt-in)
     redaction_enabled: bool = False
@@ -594,15 +644,46 @@ def _nonneg_int(value) -> int:
     return n
 
 
+def coerce_media_retention_minutes(value) -> int:
+    """§72.4 `recording.media_retention_minutes`：整数且落在
+    [MIN_MEDIA_RETENTION_MINUTES, MAX_MEDIA_RETENTION_MINUTES] 内，否则 ValueError
+    （overrides 路径整条跳过、yaml 路径回落 60）。**不夹取**——夹取会让设置页
+    显示的数与 cron 真用的数不是一个（server/settings_catalog.py 的 bounds 闸
+    在写入那一侧拦同一个区间，判例钉住两侧同一条规则）。
+
+    收什么形状也必须与目录那一侧**逐字同一条规则**（`_coerce_number(value, integer=True)`
+    → `_finite_number`）：只收非 bool 的 `int` 与整值 `float`；字串（yaml 里写成
+    `"120"`）、非整值 float（`90.5`）、inf / nan 都是坏值。两边收的形状不同 =
+    同一份 config.yaml 在设置页上显示 60、在 cron 里却按 120 删文件，正是
+    本节立法要防的那件事（判例 tests/test_screenpipe_media_retention_knob.py 两侧同钉）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("not a retention: %r" % (value,))
+    if isinstance(value, float) and not value.is_integer():   # 非整值 / inf / nan
+        raise ValueError("not a whole number of minutes: %r" % (value,))
+    minutes = int(value)
+    if not MIN_MEDIA_RETENTION_MINUTES <= minutes <= MAX_MEDIA_RETENTION_MINUTES:
+        raise ValueError("retention out of range: %r" % (value,))
+    return minutes
+
+
 def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
     """§70 config.yaml `daily_loop:` 块 → cfg（坏值保留默认；负数按 0 = 关）。
     独立函数：load_config 的圈复杂度账本已在上限之外，这里一条调用零分支。"""
     blk = _dict_or(data.get("daily_loop"))
     cfg.daily_loop_enabled = _bool_or(blk.get("enabled"), cfg.daily_loop_enabled)
     cfg.daily_loop_time = _clock_or(blk.get("time"), cfg.daily_loop_time)
-    for key in ("max_proposals_per_day", "stale_days", "trash_retention_days"):
+    for key in ("max_proposals_per_day", "stale_days", "trash_retention_days",
+                "review_stale_days"):
         attr = f"daily_loop_{key}"
         setattr(cfg, attr, max(0, _int_or(blk.get(key), getattr(cfg, attr))))
+
+
+def _apply_self_improve_block(cfg: "Config", data: dict) -> None:
+    """§65.1 config.yaml `self_improve:` 块的总开关 → cfg（坏值/缺键保留默认 = 关）。
+    块里其余键（repo_path / tick_minutes / owner_logins / github_repo）仍由
+    `policy.self_improve_config` 现读 raw——只有总开关要走 overrides 层（设置页）。"""
+    blk = _dict_or(data.get("self_improve"))
+    cfg.self_improve_enabled = _bool_or(blk.get("enabled"), cfg.self_improve_enabled)
 
 
 def _server_port_from(data: dict) -> int:
@@ -810,6 +891,12 @@ def _apply_approval(cfg: Config, data: dict) -> None:
         thresholds.get("require_text_confirm_above_usd", cfg.require_text_confirm_above_usd),
         cfg.require_text_confirm_above_usd,
     )
+    # §76.2 升级阈值：坏形状（非数字 / 字符串）回落出厂值——配错一个字不许把
+    # 「被提 N 次仍未处理」这条唯一的升级路悄悄关掉（fail-open 到出厂行为）。
+    cfg.approval_mention_escalation = _int_or(
+        approval.get("mention_escalation", cfg.approval_mention_escalation),
+        cfg.approval_mention_escalation,
+    )
 
 
 def _apply_execution(cfg: Config, data: dict) -> None:
@@ -906,6 +993,23 @@ def _apply_recording(cfg: Config, data: dict) -> None:
         cfg.recording_ignored_apps = [
             str(a).strip() for a in apps if a is not None and str(a).strip()
         ]
+    _apply_recording_retention(cfg, recording)
+
+
+def _apply_recording_retention(cfg: Config, recording: dict) -> None:
+    """§72 两把保留期旋钮的 yaml 层（宽容读：坏值 / 越界按「未设」）。独立函数——
+    `_apply_recording` 的圈复杂度账本只剩一格。"""
+    # §72.2：坏值 / 负数按「未设」= 永久保留（与 daily_loop 数字键同款）
+    days = _int_or(recording.get("retention_days", cfg.screenpipe_retention_days),
+                   cfg.screenpipe_retention_days)
+    cfg.screenpipe_retention_days = days if days >= 0 else cfg.screenpipe_retention_days
+    # §72.4：区间外 / 坏值按「未设」= 出厂 60
+    if "media_retention_minutes" in recording:
+        try:
+            cfg.screenpipe_media_retention_minutes = coerce_media_retention_minutes(
+                recording.get("media_retention_minutes"))
+        except (TypeError, ValueError):
+            cfg.screenpipe_media_retention_minutes = DEFAULT_MEDIA_RETENTION_MINUTES
 
 
 def _apply_telemetry(cfg: Config, data: dict) -> None:
@@ -1036,6 +1140,7 @@ _BLOCK_APPLIERS = (
     _apply_switch_blocks,
     _apply_maintainer_feedback,
     _apply_language_format_features,
+    _apply_self_improve_block,          # §65.1
 )
 
 
@@ -1203,6 +1308,15 @@ _OVERRIDE_FIELDS: dict = {
     "slack_enabled": _coerce_bool,
     "obsidian_enabled": _coerce_bool,
     "review_notify": str,
+    # §28 追记（issue #29）：通知偏好六把。两个 HH:MM 端点用 §70 同一个
+    # coerce_clock_time，坏值 → ValueError → per-entry 跳过（保留出厂值）。
+    "quiet_hours_enabled": _coerce_bool,
+    "quiet_hours_start": coerce_clock_time,
+    "quiet_hours_end": coerce_clock_time,
+    "notify_proposals": _coerce_bool,
+    "notify_needs_input": _coerce_bool,
+    "notify_failures": _coerce_bool,
+    "fold_receipt_notices": _coerce_bool,   # §44.6 追记（issue #308）
     "terminal_app": _coerce_terminal_app,
     "weekly_digest_enabled": _coerce_bool,
     # §17 (D19): digest cadence — the Settings UI writes this flat key
@@ -1210,7 +1324,15 @@ _OVERRIDE_FIELDS: dict = {
     "digest_frequency": _coerce_digest_frequency,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
+    # §76.2（issue #313）被提 N 次仍未处理的升级阈值——设置页「审批 / 成本」区经
+    # PUT /api/settings/approval 写这个扁平键（diff-write 同款；0 = 关掉升级）。
+    # 负数 / 垃圾值 → ValueError → 该条 override 整条跳过（保留出厂值）。
+    "approval_mention_escalation": _nonneg_int,
     "trash_retention_days": int,
+    # §72 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
+    "screenpipe_retention_days": int,
+    # §72.4 原始媒体保留分钟数（同一区；cleanup 步经 --print-value 读同一层）
+    "screenpipe_media_retention_minutes": coerce_media_retention_minutes,
     "language": _coerce_language,
     "default_output_format": _coerce_output_format,
     "redaction_enabled": _coerce_bool,
@@ -1265,6 +1387,10 @@ _OVERRIDE_FIELDS: dict = {
     "daily_loop_max_proposals_per_day": _nonneg_int,
     "daily_loop_stale_days": _nonneg_int,
     "daily_loop_trash_retention_days": _nonneg_int,
+    "daily_loop_review_stale_days": _nonneg_int,
+    # §65.1 (#307 / D57): 自动改进本软件的通道总开关——设置页「开发者」区经
+    # PUT /api/settings/maintainer 写这个扁平键（diff-write 同款；默认 false）。
+    "self_improve_enabled": _coerce_bool,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }
@@ -1296,9 +1422,15 @@ def _clean_slack_channels(value: list) -> list:
     return [c for c in map(_clean_slack_channel, value) if c is not None]
 
 
-def _clean_watch_people(value: list) -> list:
+def _clean_str_list(value: list) -> list:
+    """字串表的清洗（去空白、丢空项与非字串）——watch_people 与
+    `self_improve.owner_logins`（§15.3 §65.5 追记）共用一把。"""
     return [str(v).strip() for v in value
             if isinstance(v, (str, int)) and str(v).strip()]
+
+
+def _clean_watch_people(value: list) -> list:
+    return _clean_str_list(value)
 
 
 def _read_overrides() -> Optional[dict]:
@@ -1519,6 +1651,33 @@ def _override_watch_people(cfg: Config, value, _nested: dict) -> None:
         cfg.watch_people = _clean_watch_people(value)
 
 
+def _set_self_improve_owner_logins(cfg: Config, value: list) -> None:
+    """落回 `cfg.raw["self_improve"]`——`policy.self_improve_config` 从 raw 现读
+    这一键（§15.3 §65.5 追记，issue #310）。空表 = 显式的「没有额外 login」。"""
+    block = cfg.raw.get("self_improve")
+    if not isinstance(block, dict):
+        block = {}
+        cfg.raw["self_improve"] = block
+    block["owner_logins"] = _clean_str_list(value)
+
+
+def _override_self_improve(cfg: Config, value, _nested: dict) -> None:
+    """nested form mirroring config.yaml self_improve —— 设置页「开发者」区的
+    list 字段就写这个形（`{"self_improve": {"owner_logins": [...]}}`）。**只认
+    `owner_logins` 一键**：总开关的唯一 override 拼法仍是扁平的
+    `self_improve_enabled`（§65.1 追记「没有第二套写入面」），其余三键不进
+    overrides（§65.8）。"""
+    if isinstance(value, dict) and isinstance(value.get("owner_logins"), list):
+        _set_self_improve_owner_logins(cfg, value["owner_logins"])
+
+
+def _override_self_improve_owner_logins(cfg: Config, value, _nested: dict) -> None:
+    """flat form: `{"self_improve.owner_logins": ["Wan-ZL"]}`（手写 overrides 的
+    拼法；嵌套形优先，同 telemetry 的两拼法）。"""
+    if isinstance(value, list):
+        _set_self_improve_owner_logins(cfg, value)
+
+
 # exact-key overrides → handler(cfg, value, nested_feats); prefix families and
 # scalar fields are resolved in _apply_override.
 _OVERRIDE_HANDLERS = {
@@ -1532,6 +1691,11 @@ _OVERRIDE_HANDLERS = {
     "telemetry.capture_input": _override_telemetry_capture_input,
     "slack_channels": _override_slack_channels,
     "watch_people": _override_watch_people,
+    # §15.3 §65.5 追记（issue #310）：两拼法都登记——`_apply_override` 按**精确
+    # 键**分派，只登记 "self_improve" 的话扁平点号键会掉进 `_override_scalar`
+    # 被静默丢掉（"self_improve.owner_logins" 不是 _OVERRIDE_FIELDS 的键）。
+    "self_improve": _override_self_improve,
+    "self_improve.owner_logins": _override_self_improve_owner_logins,
 }
 
 
@@ -1609,6 +1773,26 @@ _CLI_PATH_KEYS: tuple = (
 )
 
 
+# 标量设置的 shell 消费面（`--print-value`）：key → 读不出来时打的出厂值。
+# §72.4：ingest/screenpipe-cleanup.sh 读媒体保留分钟数（设置页改完下一轮 cron 即生效）。
+_CLI_VALUE_KEYS: dict = {
+    "screenpipe_media_retention_minutes": DEFAULT_MEDIA_RETENTION_MINUTES,
+}
+
+
+def _print_value(key: str) -> int:
+    """`--print-value <key>`：一个标量设置的生效值（overrides → config.yaml → 默认，
+    与守护进程同一层）打到 stdout 给 shell 消费方。与 `--print-path` 同一条纪律——
+    任何加载失败都打出厂值，绝不 traceback、绝不空行：cron 里的 prune 脚本拿它当
+    `find` 的参数。"""
+    try:
+        value = getattr(load_config(), key)
+    except Exception:  # noqa: BLE001 — silent-on-error: print the default
+        value = None
+    print(_CLI_VALUE_KEYS[key] if value is None else value)
+    return 0
+
+
 def _cli_default_path(key: str) -> str:
     vault = Path(DEFAULT_OBSIDIAN_VAULT).expanduser()
     if key == "obsidian_raw":
@@ -1621,16 +1805,24 @@ def main(argv: Optional[list] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="python3 -m act.lib.config",
-        description="Print a resolved config path for shell consumers.",
+        description="Print a resolved config path/value for shell consumers.",
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--print-path",
-        required=True,
         choices=_CLI_PATH_KEYS,
         metavar="KEY",
         help="config key to resolve: %s" % ", ".join(_CLI_PATH_KEYS),
     )
+    group.add_argument(
+        "--print-value",
+        choices=tuple(_CLI_VALUE_KEYS),
+        metavar="KEY",
+        help="scalar setting to print: %s" % ", ".join(_CLI_VALUE_KEYS),
+    )
     args = parser.parse_args(argv)
+    if args.print_value:
+        return _print_value(args.print_value)
     try:
         value = getattr(load_config(), args.print_path)
     except Exception:  # noqa: BLE001 — silent-on-error: print the default

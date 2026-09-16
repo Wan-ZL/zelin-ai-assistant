@@ -1,0 +1,256 @@
+// 「录制数据与磁盘」区的状态行（CONTRACT §72.1；issue #28）：GET /api/screenpipe/disk 的快照——当前占用（总 / 数据库 / 备份 /
+// 日志 / 媒体）、可复用空间（freelist）、每月增长估算（依据随数字一起说：按最近样本 / 按全部历史平均 / 样本不足）、最早最新数据、
+// 上次清理回执。server 的 GET 永不阻塞：首次回 computing 空壳、后台扫完才有数字——这里在 computing / refreshing 期间每
+// POLL_INTERVAL_MS 轮询一次（上限 POLL_MAX 次，之后停在「统计中」而不是无限打）。「刷新」= ?refresh=1，让 server 重算一次。
+// 另有「上次媒体清理」一行（§72.4）：cron 链每轮写的 state/screenpipe_prune.json 的投影——删了几个文件几字节、
+// 目录读不到（unreadable）、没扫完（partial）、或者根本没跑过 / 太久没有一轮干净跑完（stale，按 server 的
+// last_ok_ts 算）。never / unreadable / stale 进 warning 档（role=alert）：清理停了与没东西可删
+// 从外面看一模一样，而前一种会一直涨盘。多久没跑完那句话的小时数按 server 给的 ok_age_seconds 说，web 不复刻阈值。
+// 两把保留期旋钮本身是目录字段 screenpipe_retention_days / screenpipe_media_retention_minutes（CatalogSection 渲）；本组件只读不写。备份文件只报路径与大小、不给删除按钮
+// （§0 第 2 条：不可恢复的删除留给用户亲手做）。
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchScreenpipeDisk } from "../../api";
+import { useI18n } from "../../i18n";
+import type { ScreenpipeDisk, ScreenpipeDiskGrowth, ScreenpipeMediaPrune, ScreenpipePruneReceipt } from "../../types";
+import { errorMessage } from "./useToast";
+
+type Text = (zh: string, en: string) => string;
+
+export const POLL_INTERVAL_MS = 1500;
+export const POLL_MAX = 40;
+
+/** 十进制单位（访达同款）：null → —；≥ 10 GB 取整、≥ 1 GB 一位小数、MB 取整、其余 KB */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(bytes >= 1e10 ? 0 : 1)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1e3))} KB`;
+}
+
+/** 「约 X GB / 月（依据）」；样本不足时把原因说出来而不是给 0 */
+export function growthText(growth: ScreenpipeDiskGrowth, text: Text): string {
+  if (growth.bytes_per_month === null) {
+    return text("样本不足（需要相隔 ≥ 1 天的两次统计）", "Not enough samples yet (needs two measurements ≥ 1 day apart)");
+  }
+  const amount = formatBytes(Math.abs(growth.bytes_per_month));
+  const sign = growth.bytes_per_month < 0 ? "−" : "";
+  const days = growth.span_days ?? "?";
+  const basis = growth.basis === "samples"
+    ? text(`按最近 ${days} 天采样`, `from the last ${days} days of samples`)
+    : text(`按全部 ${days} 天录制历史平均`, `average over all ${days} recorded days`);
+  return text(`约 ${sign}${amount} / 月（${basis}）`, `≈ ${sign}${amount} / month (${basis})`);
+}
+
+/** ISO 时间戳 → YYYY-MM-DD；null → —；坏形原样 */
+export function dayOf(ts: string | null | undefined): string {
+  if (!ts) return "—";
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(ts);
+  return m ? m[1] : ts;
+}
+
+/** 上次清理回执的一句话（act/lib/screenpipe_retention.py 的 receipt 形） */
+export function pruneText(receipt: ScreenpipePruneReceipt | null, text: Text): string {
+  if (!receipt) return text("尚未运行", "Not run yet");
+  const ranAt = receipt.ran_at ?? "";
+  const when = ranAt ? dayOf(ranAt) + (ranAt.length >= 16 ? ` ${ranAt.slice(11, 16)} UTC` : "") : "";
+  if (receipt.error) return text(`${when} 出错：${receipt.error}`, `${when} failed: ${receipt.error}`);
+  if (receipt.skipped === "retention_off") {
+    return text(`${when} 保留期关闭（0 = 永久保留），未删除`, `${when} retention off (0 = keep forever), nothing deleted`);
+  }
+  if (receipt.skipped) return text(`${when} 跳过（${receipt.skipped}）`, `${when} skipped (${receipt.skipped})`);
+  const frames = receipt.deleted_frames ?? 0;
+  const audio = receipt.deleted_audio ?? 0;
+  const tail = receipt.budget_exhausted ? text("；本轮时间预算用尽，下一轮继续", "; time budget used up, continues next round") : "";
+  return text(`${when} 删除 ${frames} 帧 / ${audio} 条转写${tail}`, `${when} deleted ${frames} frames / ${audio} transcripts${tail}`);
+}
+
+/** 太久没有一轮干净跑完时补的半句：小时数按 server 算的 ok_age_seconds 说（阈值 truth = server 的
+ *  PRUNE_STALE_S，web 不复刻它）。ok_age_seconds = null 分两种：从来没成功过、与上次成功的时间戳读不出来。 */
+function staleSuffix(prune: ScreenpipeMediaPrune, text: Text): string {
+  const age = prune.ok_age_seconds;
+  if (age === null || age === undefined) {
+    return prune.last_ok_ts
+      ? text("；上次跑完的时间戳读不出来", "; the last successful round's timestamp could not be read")
+      : text("；没有任何一轮干净跑完的记录", "; no clean round on record");
+  }
+  const hours = Math.floor(age / 3600);
+  return text(`；已经 ${hours} 小时没有一轮干净跑完了（本该 30 分钟一轮）`,
+    `; no clean round for ${hours} hours (it should run every 30 minutes)`);
+}
+
+/** 「上次媒体清理」的一句话（§72.4 回执）；第二个返回值 = 要不要报警（停了 / 读不到 = 会悄悄涨盘）。
+ *  `partial`（没扫完）只在连着几小时都没有一轮干净跑完时才报警——一次扫描撞上引擎正在删帧不是毛病。 */
+export function mediaPruneText(prune: ScreenpipeMediaPrune | undefined, text: Text): { line: string; warn: boolean } {
+  if (!prune) return { line: text("尚未运行", "Not run yet"), warn: false };
+  const when = prune.ts ? `${dayOf(prune.ts)}${prune.ts.length >= 16 ? ` ${prune.ts.slice(11, 16)} UTC` : ""}` : "";
+  const gap = prune.stale ? staleSuffix(prune, text) : "";
+  if (prune.state === "never") {
+    return { line: text("没有回执——清理可能没在跑", "No receipt yet — the cleanup may not be running"), warn: true };
+  }
+  if (prune.state === "unreadable") {
+    return { line: text(`${when} 录制数据目录读不到（权限），一个文件都没删${gap}`,
+      `${when} the recording data folder could not be read (permissions); nothing was deleted${gap}`), warn: true };
+  }
+  if (prune.state === "no_data_dir") {
+    return { line: text(`${when} 还没有录制数据目录`, `${when} no recording data folder yet`), warn: false };
+  }
+  const files = prune.deleted_files ?? 0;
+  const deleted = text(`删除 ${files} 个媒体文件（${formatBytes(prune.deleted_bytes)}）`,
+    `deleted ${files} media file(s) (${formatBytes(prune.deleted_bytes)})`);
+  if (prune.state === "partial") {
+    return {
+      line: text(`${when} 这一轮没扫完（有子目录读不到，或文件正在变动），只${deleted}${gap}`,
+        `${when} the round did not finish scanning (a subfolder could not be read, or files changed under it); only ${deleted}${gap}`),
+      warn: prune.stale,
+    };
+  }
+  return { line: `${when} ${deleted}${gap}`, warn: prune.stale };
+}
+
+function abbreviateHome(path: string): string {
+  const m = /^(\/Users\/[^/]+)(\/.*)?$/.exec(path);
+  return m ? `~${m[2] ?? ""}` : path;
+}
+
+function isPending(snap: ScreenpipeDisk): boolean {
+  return snap.state === "computing" || snap.refreshing === true;
+}
+
+export function StorageStatus() {
+  const { text } = useI18n();
+  const [disk, setDisk] = useState<ScreenpipeDisk | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const polls = useRef(0);
+  const timer = useRef<number | null>(null);
+  const alive = useRef(true);
+
+  const load = useCallback(async (refresh: boolean): Promise<ScreenpipeDisk | null> => {
+    setBusy(true);
+    try {
+      const snap = await fetchScreenpipeDisk(refresh);
+      if (!alive.current) return null;
+      setDisk(snap);
+      setError(null);
+      return snap;
+    } catch (err) {
+      if (alive.current) setError(errorMessage(err));
+      return null;
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }, []);
+
+  // 拉一次；server 还在算（computing / refreshing）就间隔轮询，直到 ready 或次数用尽
+  const poll = useCallback(async (refresh: boolean) => {
+    const snap = await load(refresh);
+    if (!snap || !alive.current) return;
+    if (isPending(snap) && polls.current < POLL_MAX) {
+      polls.current += 1;
+      timer.current = window.setTimeout(() => void poll(false), POLL_INTERVAL_MS);
+    }
+  }, [load]);
+
+  useEffect(() => {
+    alive.current = true;
+    void poll(false);
+    return () => {
+      alive.current = false;
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    };
+  }, [poll]);
+
+  function refresh() {
+    polls.current = 0;
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    void poll(true);
+  }
+
+  if (!disk) {
+    return error
+      ? <p className="settings-warning" role="alert">{error}</p>
+      : <p className="settings-helper">{text("统计中…", "Measuring…")}</p>;
+  }
+  const computing = disk.state === "computing";
+  const measuring = text("统计中…", "Measuring…");
+  const total = computing ? measuring : formatBytes(disk.total_bytes);
+  const breakdown = computing ? "" : text(
+    `数据库 ${formatBytes(disk.db_bytes)} · 备份 ${formatBytes(disk.backup_bytes)} · 日志 ${formatBytes(disk.log_bytes)} · 媒体 ${formatBytes(disk.media_bytes)}`,
+    `database ${formatBytes(disk.db_bytes)} · backups ${formatBytes(disk.backup_bytes)} · logs ${formatBytes(disk.log_bytes)} · media ${formatBytes(disk.media_bytes)}`);
+  const reclaimable = !computing && disk.db_reclaimable_bytes !== null && disk.db_reclaimable_bytes > 0 ? disk.db_reclaimable_bytes : null;
+  const mediaPrune = mediaPruneText(disk.media_prune, text);
+
+  return (
+    <div className="storage-status">
+      <div className="settings-field is-string">
+        <div className="settings-field-head">
+          <span className="settings-knob-label">{text("当前占用", "Disk usage")}</span>
+          <span className="settings-source-chip" data-testid="storage-total">{total}</span>
+          {disk.refreshing && !computing && <span className="settings-helper">{text("重新统计中…", "Re-measuring…")}</span>}
+        </div>
+        <div className="settings-knob-controls">
+          <code className="settings-global-path">{abbreviateHome(disk.root)}</code>
+          <button type="button" className="btn" disabled={busy || disk.refreshing} onClick={refresh}>{text("刷新", "Refresh")}</button>
+        </div>
+        {breakdown && <p className="settings-helper">{breakdown}</p>}
+        {reclaimable !== null && (
+          <p className="settings-helper">
+            {text(`其中数据库内可复用空间 ${formatBytes(reclaimable)}（已清理、等新数据填入）`,
+              `of which ${formatBytes(reclaimable)} inside the database is reusable (pruned, waiting for new data)`)}
+          </p>
+        )}
+        {disk.state === "error" && (
+          <p className="settings-warning" role="alert">{text(`统计失败：${disk.error ?? ""}`, `Measurement failed: ${disk.error ?? ""}`)}</p>
+        )}
+        {disk.db_error && disk.db_error !== "no_db" && (
+          <p className="settings-warning" role="alert">{text(`数据库未能读取：${disk.db_error}`, `Database could not be read: ${disk.db_error}`)}</p>
+        )}
+        {!disk.root_exists && (
+          <p className="settings-helper">{text("还没有录制数据目录（尚未录制过）", "No recording data directory yet (nothing recorded so far)")}</p>
+        )}
+      </div>
+      <div className="settings-field is-string">
+        <div className="settings-field-head">
+          <span className="settings-knob-label">{text("每月增长", "Monthly growth")}</span>
+          <span className="settings-source-chip" data-testid="storage-growth">{computing ? measuring : growthText(disk.growth, text)}</span>
+        </div>
+        <p className="settings-helper">
+          {text(`最早数据 ${dayOf(disk.oldest_frame_ts)} · 最新 ${dayOf(disk.newest_frame_ts)}`,
+            `oldest ${dayOf(disk.oldest_frame_ts)} · newest ${dayOf(disk.newest_frame_ts)}`)}
+        </p>
+      </div>
+      <div className="settings-field is-string">
+        <div className="settings-field-head">
+          <span className="settings-knob-label">{text("上次媒体清理", "Last media prune")}</span>
+          <span className={`settings-source-chip${mediaPrune.warn ? " is-warning" : ""}`} data-testid="storage-media-prune">
+            {mediaPrune.line}
+          </span>
+        </div>
+        {mediaPrune.warn && (
+          <p className="settings-warning" role="alert">
+            {text("原始 jpg / mp4 只有这一轮清理会删；它停着盘就一直涨。",
+              "Raw jpg / mp4 are only deleted by this cleanup round; while it is stopped, the disk keeps growing.")}
+          </p>
+        )}
+      </div>
+      <div className="settings-field is-string">
+        <div className="settings-field-head">
+          <span className="settings-knob-label">{text("上次清理", "Last prune")}</span>
+          <span className={`settings-source-chip${disk.last_prune?.error ? " is-warning" : ""}`} data-testid="storage-prune">
+            {pruneText(disk.last_prune, text)}
+          </span>
+        </div>
+      </div>
+      {disk.backups.length > 0 && (
+        <p className="settings-warning" role="status">
+          {text(`发现 ${disk.backups.length} 个数据库备份文件，共 ${formatBytes(disk.backup_bytes)}：`,
+            `Found ${disk.backups.length} database backup file(s), ${formatBytes(disk.backup_bytes)} in total:`)}
+          {" "}
+          {disk.backups.map((b) => `${b.name}（${formatBytes(b.bytes)}）`).join("、")}
+          {" "}
+          {text("不再需要的话可在访达里手动删除；这里不会自动删。", "Delete them by hand in Finder if no longer needed; nothing here deletes them.")}
+        </p>
+      )}
+    </div>
+  );
+}

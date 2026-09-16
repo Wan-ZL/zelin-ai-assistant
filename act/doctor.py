@@ -45,7 +45,8 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from act import llm
-from act.lib import board_server, config, deploy_state, fresh_install, heartbeat, platform
+from act.lib import (board_server, config, deploy_state, fresh_install, heartbeat,
+                     platform, power)
 from act.lib import version as version_lib
 from act.lib.checks import core, cron, environment, launchd, pipeline, services
 from act.lib.checks.core import FAIL, OK, WARN, CheckResult
@@ -114,6 +115,8 @@ class Probes:
     launchd_log_tail: Callable[[str], str] = launchd.launchd_log_tail
     # §55 孤儿探测：~/Library/LaunchAgents 里带前缀的 plist label（文件面）
     installed_agent_labels: Callable[[], List[str]] = launchd.installed_agent_labels
+    # §55 孤儿探测（Linux 文件面）：~/.config/systemd/user 里带 zelin- 前缀的 unit
+    installed_user_units: Callable[[], List[str]] = services.installed_user_units
     # §47.4 心跳：state/actd.heartbeat 的读取 + 进程探活（tests 注入保持 hermetic）
     heartbeat_read: Callable[[], Optional[dict]] = heartbeat.read
     pid_alive: Callable[[int], Optional[bool]] = pipeline.pid_alive
@@ -132,6 +135,9 @@ class Probes:
     # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
     launchd_log_mtime: Callable[[str], Optional[float]] = launchd.launchd_log_mtime
     version_status: Callable[[], dict] = version_lib.status_probe  # §56.1 stamp vs describe；tests 注入（沙箱非 git）
+    # §71.1 电源读数（`power probe` 行）：默认实现自带总闸 `AIASSISTANT_POWER_PROBE`
+    # 与「非 darwin 不起子进程」，套件里因此天然 hermetic（读数恒空 → unknown）
+    power_reading: Callable[[], dict] = power.read_power
 
 
 # --------------------------------------------------------------------------- #
@@ -203,8 +209,16 @@ def _check_systemd(probes: Probes):
     return services.check_systemd(probes)
 
 
+def _check_systemd_orphans(probes: Probes):
+    return services.check_systemd_orphans(probes)
+
+
 def _check_scheduled_tasks(probes: Probes):
     return services.check_scheduled_tasks(probes)
+
+
+def _check_task_orphans(probes: Probes):
+    return services.check_task_orphans(probes)
 
 
 def _check_cron(probes: Probes):
@@ -245,6 +259,10 @@ def _check_obsidian(probes: Probes):
 
 def _check_screenpipe(probes: Probes):
     return environment.check_screenpipe(probes)
+
+
+def _check_power(probes: Probes):
+    return environment.check_power(probes)
 
 
 def _check_npx(probes: Probes):
@@ -436,15 +454,17 @@ _CHECKS_COMMON_HEAD = [
 def _service_checks() -> "tuple[list, list]":
     """(middle, tail_extra) for this OS: launchd (macOS) <-> systemd (Linux)
     <-> Task Scheduler (Windows); the macOS-only screen-ingest checks ride
-    behind the shared tail."""
+    behind the shared tail. Every OS also gets its §55 orphan row (a retired
+    job whose template is gone is otherwise structurally invisible — the
+    expected sets are globbed from the template dirs)."""
     if platform.is_darwin():
         return ([_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
                  _check_launchd_claude, _check_launchd_volume_access,
                  _check_launchd_orphans, _check_cron],
-                [_check_screenpipe, _check_npx])
+                [_check_screenpipe, _check_npx, _check_power])
     if platform.is_windows():
-        return [_check_scheduled_tasks], []
-    return [_check_systemd], []
+        return [_check_scheduled_tasks, _check_task_orphans], []
+    return [_check_systemd, _check_systemd_orphans], []
 
 
 def _checks_for_platform() -> List:
