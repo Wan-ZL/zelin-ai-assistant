@@ -38,8 +38,9 @@ class UninstallDryRunTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _run(self, *args, stdin=subprocess.DEVNULL):
+    def _run(self, *args, stdin=subprocess.DEVNULL, env_extra=None):
         env = dict(os.environ, HOME=str(self.home))
+        env.update(env_extra or {})
         return subprocess.run(
             ["bash", str(self.home / "uninstall.sh"), *args],
             cwd=self.home, env=env, stdin=stdin,
@@ -59,6 +60,25 @@ class UninstallDryRunTestCase(unittest.TestCase):
         # ... and nothing was actually touched
         self.assertTrue(self.sentinel.exists())
         self.assertTrue(self.plist.exists())
+
+    def test_apps_dir_seam_keeps_the_real_applications_folder_out_of_the_plan(self):
+        # AIASSISTANT_UI_APPS_DIR (the seam install.sh already honours) must steer the
+        # bundle removal too — the QA coverage runner relies on it so a sandboxed
+        # uninstall never plans against the owner's real /Applications bundle.
+        apps = self.home / "Applications"
+        bundle = apps / "Zelin's AI Assistant.app" / "Contents"
+        bundle.mkdir(parents=True)
+        (bundle / "Info.plist").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+            '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            '<plist version="1.0"><dict><key>CFBundleIdentifier</key>'
+            '<string>com.zelin.ai-board</string></dict></plist>\n', encoding="utf-8")
+        proc = self._run("--dry-run", env_extra={"AIASSISTANT_UI_APPS_DIR": str(apps)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("remove: %s" % (apps / "Zelin's AI Assistant.app"), proc.stdout)
+        self.assertNotIn("remove: /Applications/", proc.stdout)
+        self.assertTrue((bundle / "Info.plist").exists())   # dry-run changed nothing
 
     def test_dry_run_keeps_user_data_out_of_the_plan_by_default(self):
         proc = self._run("--dry-run")

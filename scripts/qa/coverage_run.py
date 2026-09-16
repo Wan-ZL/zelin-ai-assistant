@@ -271,7 +271,18 @@ echo '{"result":"qa coverage stub","is_error":false}'
 exit 0
 """
 
-SHIMMED = ("launchctl", "open", "osascript", "crontab", "claude")
+# `pgrep` / `pkill` 也必须是假货：install.sh 用 `pgrep -x ZelinAIBoard` 决定要不要杀 + 重开
+# owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` / `pkill -f screenpipe`——
+# 这两条都不看 HOME。假货一律「没找到」（exit 1），install.sh 就走「壳没在跑」的分支。
+# 2026-09-15 实测：没有这两只假货，第一轮全量跑把 live 壳杀了两次。
+_ABSENT_BODY = """#!/bin/sh
+# QA shim (scripts/qa/coverage_run.py)：只记 argv，恒「没匹配到进程」——绝不碰 owner 的壳 / 引擎
+printf '%s %s\\n' "$(basename "$0")" "$*" >> "$ZAA_SHIM_LOG"
+exit 1
+"""
+
+SHIMMED = ("launchctl", "open", "osascript", "crontab", "claude", "pgrep", "pkill")
+ABSENT_SHIMS = ("pgrep", "pkill")
 
 
 class TempHomes:
@@ -293,22 +304,34 @@ class TempHomes:
 
 
 def write_shims(home, names=SHIMMED):
-    """<home>/.shims 里放假 launchctl/open/osascript/crontab/claude；返回 (dir, log)。"""
+    """<home>/.shims 里放假 launchctl/open/osascript/crontab/claude/pgrep/pkill；返回 (dir, log)。"""
     shim_dir = os.path.join(home, ".shims")
     os.makedirs(shim_dir, exist_ok=True)
     shim_log = os.path.join(home, "shims.log")
     for name in names:
         path = os.path.join(shim_dir, name)
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write(_CLAUDE_STUB if name == "claude" else _SHIM_BODY)
+            if name == "claude":
+                handle.write(_CLAUDE_STUB)
+            elif name in ABSENT_SHIMS:
+                handle.write(_ABSENT_BODY)
+            else:
+                handle.write(_SHIM_BODY)
         os.chmod(path, 0o755)
     return shim_dir, shim_log
 
 
 def shim_env(home, shim_dir, shim_log, extra=None):
-    """HOME=临时目录 + PATH 前缀假货 + 去掉 node/npm（install.sh 的 UI 步会自己跳过）。"""
+    """HOME=临时目录 + PATH 前缀假货 + 去掉 node/npm（install.sh 的 UI 步会自己跳过）。
+
+    `AIASSISTANT_UI_APPS_DIR` 指向临时 HOME 下的 Applications/：install.sh / uninstall.sh 对
+    壳 bundle 的安装与删除都只认这个 seam（默认 /Applications 是 owner 的真 app——
+    2026-09-15 第一轮全量跑没设它，把 live bundle 删了又装回一个 dev 构建，TCC 授权随
+    cdhash 一起丢）。
+    """
     env = {
         "HOME": home,
+        "AIASSISTANT_UI_APPS_DIR": os.path.join(home, "Applications"),
         "PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % shim_dir,
         # `python3 -m …` 的 PYTHONPATH 由各调用点给；这里只保证 HOME/PATH 两条红线
 
