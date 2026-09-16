@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R-301 · checks.py 变异存活体补测试</title>
+<style>
+  :root{
+    --ink:#1d2027; --dim:#5b6373; --line:#e3e6ec; --bg:#f7f8fa; --card:#fff;
+    --good:#1a7f45; --warn:#b07d11; --bad:#c0392b; --info:#1f6feb; --teach:#6b3fb5;
+    color-scheme: light;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+    padding: env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);
+  }
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 16px 64px}
+  h1{font-size:25px;line-height:1.3;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin:0 0 22px}
+  h2{font-size:19px;margin:34px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:20px 0 8px}
+  p{margin:9px 0}
+  code{
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+    background:#eef0f4;padding:1px 5px;border-radius:4px;
+  }
+  .card{
+    background:var(--card);border:1px solid var(--line);border-left:4px solid var(--info);
+    border-radius:8px;padding:14px 16px;margin:14px 0;
+  }
+  .card.good{border-left-color:var(--good)}
+  .card.warn{border-left-color:var(--warn)}
+  .card.bad{border-left-color:var(--bad)}
+  .card.teach{border-left-color:var(--teach)}
+  .card h3{margin-top:0}
+  .star{
+    background:#fffbea;border:1px solid #f0e2b0;border-radius:8px;padding:12px 15px;margin:14px 0;
+  }
+  nav{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 8px}
+  nav ul{margin:6px 0 0;padding-left:20px}
+  nav li{margin:3px 0}
+  a{color:var(--info)}
+  .twrap{overflow-x:auto;margin:14px 0}
+  table{border-collapse:collapse;width:100%;min-width:520px;background:var(--card);font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#eef1f6;font-weight:600}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace}
+  ul,ol{margin:9px 0;padding-left:22px}
+  li{margin:5px 0}
+  .kpis{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}
+  .kpi{
+    flex:1 1 150px;background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;
+  }
+  .kpi .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums}
+  .kpi .l{font-size:12px;color:var(--dim);margin-top:2px}
+  .kpi.good .v{color:var(--good)}
+  .kpi.warn .v{color:var(--warn)}
+  figure{margin:18px 0}
+  figcaption{font-size:12px;color:var(--dim);margin-top:6px}
+  svg{max-width:100%;height:auto;display:block}
+  .foot{color:var(--dim);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:12px}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>R-301 · <code>skills/test-code/scripts/checks.py</code> 变异存活体补测试</h1>
+<p class="sub">分支 <code>ai/self-improve/R-301</code> · 2026-09-16 · self-improve lane 草稿 PR · 生产代码零改动</p>
+
+<div class="card good">
+  <h3>TL;DR</h3>
+  <p>夜报里这个模块 839 个变异位点只有 <strong>51.8% 杀伤、404 个存活体</strong>。本轮把存活体降到 <strong>3 个</strong>（杀伤 99.6%），两条 DoD 都达成：存活体远超「砍一半」（门是 ≤ 202），覆盖率地板一寸没动（<code>ledger_diff</code> 零 finding）。剩下 3 个逐个用机器复核为等价变异体。</p>
+  <p>最便宜的一刀是靶区映射一行：<code>qa/mutation_targets.toml</code> 漏了两份<strong>早就存在</strong>的判例，补进去白得 21 体。这个形状<strong>连续第三次命中</strong>（R-287、R-292 同款），该当成判读存活体的固定第一步。</p>
+  <p><strong>诚实边界</strong>：401 个杀伤里有 <strong>154 个只值「改动检测」</strong>（<code>est</code> 88 + <code>phase</code> 同档间 66）——杀它们的是照现状抄的 golden 表，仓库里没有任何文档载这些数字。把那张表整个删掉的下界是存活 91、杀伤 89.2%，卡面那道门不依赖它。</p>
+</div>
+
+<nav>
+  <strong>目录</strong>
+  <ul>
+    <li><a href="#result">一、结果与三轮实测</a></li>
+    <li><a href="#credit">二、功劳怎么记：三档 oracle</a></li>
+    <li><a href="#files">三、四份新判例各钉什么</a></li>
+    <li><a href="#equiv">四、剩下 3 个等价变异体</a></li>
+    <li><a href="#owner">五、要 owner 拍板的三件事（本轮没改代码）</a></li>
+    <li><a href="#gates">六、门与证据</a></li>
+    <li><a href="#followup">七、没做的事与给下一轮的话</a></li>
+  </ul>
+</nav>
+
+<h2 id="result">一、结果与三轮实测</h2>
+
+<div class="kpis">
+  <div class="kpi good"><div class="v">404 → 3</div><div class="l">存活变异体</div></div>
+  <div class="kpi good"><div class="v">51.8% → 99.6%</div><div class="l">杀伤率（836/839）</div></div>
+  <div class="kpi"><div class="v">≤ 202</div><div class="l">DoD 的门（存活砍一半）</div></div>
+  <div class="kpi good"><div class="v">0</div><div class="l">ledger_diff finding（地板未降）</div></div>
+</div>
+
+<p>三轮都是 <code>scripts/qa/mutate.py --modules skills/test-code/scripts/checks.py --force</code>，位点集合与 <code>checks.py</code> 的 content_hash <code>322d706b…</code> 逐字相同（生产代码零改动，分母没变），base 里已杀的位点没有一个回退，零 timeout：</p>
+
+<div class="twrap">
+<table>
+  <thead><tr><th>轮次</th><th>映射的判例</th><th class="num">位点</th><th class="num">杀</th><th class="num">存活</th><th class="num">杀伤率</th></tr></thead>
+  <tbody>
+    <tr><td>baseline（夜报口径）</td><td>3 份</td><td class="num">839</td><td class="num">435</td><td class="num">404</td><td class="num">51.8%</td></tr>
+    <tr><td>只补既有判例映射</td><td>5 份</td><td class="num">839</td><td class="num">456</td><td class="num">383</td><td class="num">54.4%</td></tr>
+    <tr><td><strong>最终</strong>（+ 四份新判例）</td><td>9 份</td><td class="num">839</td><td class="num">836</td><td class="num"><strong>3</strong></td><td class="num"><strong>99.6%</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card warn">
+  <h3>两个数别混：杀伤率 ≠ 存活下降</h3>
+  <p>杀伤率 836/839 = <strong>99.6%</strong>；存活下降 (404−3)/404 = 99.3%。报告里只用前者，因为 runner 自己的 <code>report.json</code> 打的就是 <code>score 0.9964</code>。</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 900 150" role="img" aria-label="三轮存活体从 404 降到 383 再降到 3 的条形对比">
+  <text x="0" y="16" font-size="12" fill="#5b6373">存活变异体（839 个位点中）</text>
+  <g font-size="12">
+    <text x="0" y="46" fill="#1d2027">baseline</text>
+    <rect x="96" y="34" width="640" height="16" fill="#c0392b" rx="3"/>
+    <text x="748" y="46" fill="#1d2027" font-family="Menlo,monospace">404</text>
+
+    <text x="0" y="82" fill="#1d2027">+ 映射修正</text>
+    <rect x="96" y="70" width="607" height="16" fill="#b07d11" rx="3"/>
+    <text x="748" y="82" fill="#1d2027" font-family="Menlo,monospace">383</text>
+
+    <text x="0" y="118" fill="#1d2027">+ 四份新判例</text>
+    <rect x="96" y="106" width="6" height="16" fill="#1a7f45" rx="2"/>
+    <text x="748" y="118" fill="#1d2027" font-family="Menlo,monospace">3</text>
+  </g>
+  <line x1="96" y1="128" x2="736" y2="128" stroke="#e3e6ec"/>
+  <text x="96" y="144" font-size="11" fill="#5b6373">0</text>
+  <text x="700" y="144" font-size="11" fill="#5b6373">404</text>
+</svg>
+<figcaption>条长按存活体数等比。最后一轮的 3 个全部是机器复核过的等价变异体。</figcaption>
+</figure>
+
+<h2 id="credit">二、功劳怎么记：三档 oracle</h2>
+
+<p>404 个位点按「杀它的 oracle 从哪来」划成三档（93 + 157 + 154 = 404；157 里有 3 个就是那三个等价体、没被杀，所以杀掉 401）。这个划分由三个独立复核者各自实测，不是自评：</p>
+
+<div class="twrap">
+<table>
+  <thead><tr><th class="num">体数</th><th>档位</th><th>oracle 来自哪里</th><th>成色</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="num">93</td>
+      <td><strong>文档同源</strong><br><code>tier</code> 82 + <code>TIER_TIMEOUTS</code> 11</td>
+      <td><code>references/tiers.md</code> / <code>catalog.md</code> / <code>SKILL.md</code> / <code>triggers.md</code>，四份文档互为对照</td>
+      <td>真 drift detection——<strong>只改 markdown、不动代码</strong>，六到八个漂移场景全部转红，两个方向都拦</td>
+    </tr>
+    <tr>
+      <td class="num">157</td>
+      <td><strong>行为锚定</strong><br>派发完备性 42 · builder 闸门 45 · internal 算术 34 · plan 构造 35 · 菜单理由 1</td>
+      <td>派生的或独立来源：<code>timedelta(days=7)</code> 重算、RFC 3174 的 sha1 向量、tiers.md 的 CRAP 公式手算</td>
+      <td>最硬的一档，oracle 不是从源码抄的常数</td>
+    </tr>
+    <tr>
+      <td class="num">154</td>
+      <td><strong>只值改动检测</strong><br><code>est</code> 88 + <code>phase</code> 同档间 66</td>
+      <td>照现状抄的 golden 表，仓库里没有任何文档载这些数字</td>
+      <td>弱档，写在正文里不藏脚注</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card warn">
+  <h3>弱档的实测数据，以及一次自我翻案</h3>
+  <p><strong><code>est</code>（88 体）</strong>：把 <code>EST_GOLDEN</code> 那条断言停掉，88 体对 catalog_docs 全部存活；放到另外五份已映射判例面前，同样 0 杀 88 活。<code>SKILL.md</code> 只写了 <code>est_seconds</code> 这个<strong>键</strong>，逐层的秒数哪份文档都没写，<code>est</code> 也没有下游行为后果——它只是给人/AI 选档时看的。</p>
+  <p><strong><code>phase</code> 的 66 体</strong>：第一遍自评在这里判错过，值得记下来。线程派发是<strong>观测通道</strong>，<code>PHASE_GOLDEN</code> 才是 oracle，而这张表是照 CATALOG 抄的。区分性的消融是「保留线程派发断言、把期望值改成从 <code>checks.CATALOG</code> 现算」——这么跑 66 体全部存活，和把整条测试删掉一样。早一轮的消融只删了字段回读那段、期望值仍是 <code>PHASE_GOLDEN</code>，于是得出「照样全死」的错结论。判例 docstring 与进度文档都已改正。</p>
+  <p><strong>下界</strong>：只删 <code>EST_GOLDEN</code> 一张表，存活 91、杀伤 89.2%——卡面那道门（≤ 202）不依赖任何 golden 表。</p>
+</div>
+
+<div class="star">
+  <strong>⭐ 顺带修掉一处脆性</strong>：复核指出 <code>inline == PHASE_GOLDEN[2] + PHASE_GOLDEN[3]</code> 是<strong>有序</strong>比较，会把 CATALOG 的档内行序也钉住——而「phase 2 那几层谁先谁后」哪份文档都没定，两行位置互换这种纯装饰改动会假红。改成比集合，另用「派发出来的 phase 序列单调递增」钉真正成文的那条契约（2 全部早于 3）。改完 bucket A 复跑仍是 290 杀 0 活。
+</div>
+
+<h2 id="files">三、四份新判例各钉什么</h2>
+
+<p>共 1,558 行，全部零子进程、零网络，真 IO 只在 tmpdir 里。生产代码一个字没动。</p>
+
+<div class="card teach">
+  <h3><code>tests/test_skill_test_code_catalog_docs.py</code>（290 体）</h3>
+  <p>照姐妹 skill 的 <code>tests/test_skill_test_ui_catalog_docs.py</code> 做一遍——那份文件的存在本身就是这条路子被仓库认可的证据（防腐十条第 5 条「文档指针纪律」的机器执法）。<code>tier</code> 钉在三份文档的档表上互为对照；<code>TIER_TIMEOUTS</code> 钉在 tiers.md 与 SKILL.md 两处逐字同文的散文行「<code>档1 300 s · 档2 1800 s · 档3 3600 s · 档4 7200 s · 档5 none</code>」上，再穿过消费者 <code>run_ladder.timeout_for</code> 复核 54 层 × 5 档；<code>TRIGGER_CHECKS</code> 钉在 triggers.md 的加挂层列。</p>
+  <p><strong>2026-09-02 首轮把这 279 体整体归成「时间估计常数、等价体」，本轮判决那次归类判错了</strong>：<code>tier</code> 决定哪些层在哪一档被默认勾选，<code>phase</code> 决定 <code>run_all</code> 的并发与串行次序，<code>est</code> 是 detect.json 里 <code>menu[].est_seconds</code> 的值——一列都不是实现细节。</p>
+  <p>另有一处真发现：<code>docs_drift</code> 是<strong>双重身份</strong>层（既是档 5 扩展层、又是 <code>documented_behavior</code> 的加挂层，CATALOG 行上 <code>trigger=None</code>）。第一稿按「<code>tier is None</code> ⟺ 加挂层」这条干净法则写就红了；现在这个例外钉在 catalog.md 的 <code>5 (also by trigger)</code> 标记上，两边任一方漂移都会红。</p>
+</div>
+
+<div class="card teach">
+  <h3><code>tests/test_skill_test_code_builder_gates.py</code>（45 体）</h3>
+  <p>钉住 <code>_b_*</code> 构造器的两类闸门。<strong>「配置在 AND 工具在」</strong>：只给一半条件（配了但工具不在 PATH，以及反过来）必须拿到 <code>na</code>/<code>unavailable</code> 且不拼出任何 argv——这是模块 docstring「自制检查一律 fail closed」和 SKILL.md 三分法「not run」的成文含义。<strong><code>X or &lt;默认&gt;</code> 回落</strong>：配了源根扫源根、没配才退 <code>.</code>，两边 argv 逐字断言（命令形状 truth = <code>references/adapters.md</code>）。</p>
+</div>
+
+<div class="card teach">
+  <h3><code>tests/test_skill_test_code_internal_math.py</code>（34 体，31 杀 3 等价）</h3>
+  <p>钉住自制检查的算术与扫描器：CRAP 公式的指数与常数（输入挑得让指数 2/3/4 三者都不同）、<code>_span_cov</code> 行区间的闭端、<code>check_diff_coverage</code> 的 <code>measured - len(uncovered)</code> 符号、ledger key 的 10 位宽度（写进 baseline 再读回必须还对得上，这是持久格式契约）、<code>_tally_survivors</code> 的缺键默认（喂一份真缺 key 的 report dict 才会读到默认值）、<code>.gitignore</code> 注释剥离在 <code>a#b#c</code> 这类两分隔符行上的行为。</p>
+</div>
+
+<div class="card teach">
+  <h3><code>tests/test_skill_test_code_plan_plumbing.py</code>（35 体）</h3>
+  <p>钉住 argv 与步骤构造：<code>_cmd</code> 的 <code>tool or argv[0]</code> 两种情形、每个换下标的位点都用<strong>首尾元素互异</strong>的输入（<code>schemes[0]</code> 给两个 scheme、<code>_py_test_argv(ctx)[2:]</code> 断言整条 argv）、<code>reruns=1</code> 这类默认实参靠步骤条数而不是「没抛异常」来观测、各栈就绪判定（<code>_js_ready</code> 缺 npx 或缺任一 bin 都得 unavailable）。</p>
+</div>
+
+<h2 id="equiv">四、剩下 3 个等价变异体</h2>
+
+<p>逐个用机器复核过，不是「看着像」：把变异真施加到模块上、与原模块在一大片可观测面上对拍，逐字相同。</p>
+
+<div class="twrap">
+<table>
+  <thead><tr><th>位点</th><th>变异</th><th>为什么等价</th><th>机器证据</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>int_plus1@556:30</code></td>
+      <td><code>split("#", 1)[0]</code> → <code>split("#", 2)[0]</code></td>
+      <td>只有下标 <code>[0]</code> 被消费，而任何 <code>maxsplit ≥ 1</code> 的 <code>[0]</code> 都是第一个分隔符之前那段——变异后的 maxsplit 经 <code>[0]</code> 不可达。对任意输入串可证。</td>
+      <td>227 份 <code>.gitignore</code> fixture（<code>a#b#c</code>、<code>p/q#r#s#t</code>、<code>a##b</code>、裸注释、通配符行的单行与两两/三三组合）对拍 <code>_ignored_literals</code> 结果集合：IDENTICAL</td>
+    </tr>
+    <tr>
+      <td><code>return_none@438:8</code></td>
+      <td><code>_unpinned</code> 的 <code>return False</code> → <code>None</code></td>
+      <td>全仓 grep 只有一个消费点 <code>checks.py:447 if match and _unpinned(...)</code>，布尔语境下二者不可分。只有断言返回类型才杀得掉，那是钉 Python 而不是钉产品行为。</td>
+      <td>392 条 <code>uses:</code> 语料（8 前缀 × 12 ref + 8×6×6 双 <code>@</code> + 39/40/41 位 hex + 大写 hex + 空 ref + 无 <code>@</code>）对拍 <code>bool()</code>、<code>_pin_violations</code> 的 dict、整个 <code>check_actions_sha_pin</code>：IDENTICAL</td>
+    </tr>
+    <tr>
+      <td><code>return_none@572:12</code></td>
+      <td><code>dangling</code> 闭包的 <code>return False</code> → <code>None</code></td>
+      <td>同上：唯一消费点 <code>checks.py:579 if path and dangling(path)</code>，闭包从外部不可达。</td>
+      <td>14 条路径语料对拍 <code>_drift_scanner</code> 输出 dict 与整个 <code>check_docs_drift</code>：IDENTICAL</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="owner">五、要 owner 拍板的三件事（本轮没改代码）</h2>
+
+<p>补判例过程中查出两处真缺陷加一个设计问题。<strong>按「只修测试网」的范围一个都没改</strong>——判例钉的是<em>今天的行为</em>，所以修任何一条都会故意把相应断言变红，修的时候要一起改。</p>
+
+<div class="card bad">
+  <h3>1. 缺工具被报成项目失败（三处）</h3>
+  <p><code>_e2e_for_pkg</code>（<code>checks.py:998</code>）、<code>_b_perf_budget</code>（<code>:1174</code>）、<code>_b_bundle_size</code>（<code>:1323</code>）都只查 package.json 里有没有那个 script，<strong>不查 <code>npm</code> 在不在 PATH</strong>；同一个文件里的 <code>_npm_audit_steps</code>（<code>:1128</code>）查了——<strong>所以这是不一致，不是取舍</strong>。</p>
+  <p>实测（<code>tools={}</code>，一个 package 同时声明三个 script）：三处都给 <code>kind="cmd"</code>，argv 分别是 <code>['npm','run','test:e2e']</code> / <code>['npm','run','bench']</code> / <code>['npm','run','size']</code>，而同一个 ctx 上的 <code>dependency_audit</code> 正确地给 <code>kind="unavailable"</code>。</p>
+  <p><strong>后果</strong>：没装 node/npm 的机器上，这三层把一条必然 ENOENT 的命令交给 runner，结果记成 <strong>RED（项目坏了）而不是 UNAVAILABLE（工具没装）</strong>——破的是 skill 的头号契约，报告里那个三分「not run」划分。</p>
+  <p><strong>一行修法</strong>：照 <code>_npm_audit_steps</code> 的样子在这三个分支前加 <code>_tool(ctx, "npm")</code> 闸门，不过则 <code>_unavailable("npm not on PATH")</code>。同类但更轻：几个走 npx 的 JS 构造器（knip / jscpd / api-extractor / license-checker / stryker）只确认了本地 <code>node_modules/.bin</code> 里有那个 bin，没过 <code>_b_ts_typecheck</code> / <code>_b_js_lint</code> 用的 <code>_js_ready(...)</code> 那道 npx 闸门。</p>
+</div>
+
+<div class="card bad">
+  <h3>2. <code>docs_drift</code> 的目录级 <code>.gitignore</code> 条目不豁免目录内文件</h3>
+  <p><code>_ignored_literals</code>（<code>:552-558</code>）特意把目录条目 <code>build/</code> 的斜杠剥掉、收成字面量 <code>"build"</code>（<code>.rstrip("/")</code> 就是为这个），但 <code>dangling</code>（<code>:570-573</code>）只比整条路径和 basename，<strong>从不比路径前缀</strong>。于是那个 <code>.rstrip("/")</code> 对每个目录条目都是白做的——这正是「本意要覆盖被忽略目录下的文件、前缀匹配漏了」的证据，函数自己的 docstring 也是这么写的。</p>
+  <p>实测（tracked = <code>{build/keep.md, docs/a.md, .gitignore}</code>，<code>.gitignore</code> = <code>build/\ngen\n</code>，<code>docs/a.md</code> 里 backtick 了 <code>build/out.py</code>）：<code>check_docs_drift</code> 给 <code>fail</code>、<code>details.new = ['docs/a.md::build/out.py']</code>，应为 <code>pass</code>。</p>
+  <p><strong>为什么一直没被发现</strong>：那个被忽略的目录还得自己含至少一个 tracked 文件，因为 <code>dangling</code> 先要求 <code>path.split("/")[0] in top_dirs</code>，而 <code>top_dirs</code> 是从 tracked 列表派生的。影响面：任何 gitignore 掉构建输出目录、又在文档里提到里面某个文件的仓库，<code>docs_drift</code> 假红（经 <code>TRIGGER_CHECKS</code>，<code>documented_behavior</code> 触发器上也假红）。</p>
+</div>
+
+<div class="card warn">
+  <h3>3. 设计问题：<code>_span_cov</code> 是 fail-<em>open</em>，和成文规则冲突</h3>
+  <p><code>_span_cov</code>（<code>:711-712</code>）在函数区间内一条 coverage 数据都没有时返回 <code>1.0</code>，于是 coverage.py 没测到任何行的函数拿到<strong>最好</strong>的 CRAP 分。实测：CC=6 的函数、coverage.json 条目 <code>executed_lines: []</code> + <code>missing_lines: []</code> → CRAP 6.0，过 30.0 的门；同一个函数按「全未覆盖」算是 42.0，会红。</p>
+  <p>这是 fail-<strong>open</strong>，而模块 docstring 写的是「自制检查一律 fail closed（读不到 = fail，不是 pass）」。很可能是故意的（避免对 coverage 没插桩的文件假红），所以本轮只把现状写进判例、没当缺陷提。<strong>请定</strong>：「没有行数据」该算 <code>cov=0.0</code>、还是进 <code>errors</code>、还是保持现状并给 docstring 那句话加个例外。</p>
+</div>
+
+<h2 id="gates">六、门与证据</h2>
+
+<div class="twrap">
+<table>
+  <thead><tr><th>门</th><th>结果</th></tr></thead>
+  <tbody>
+    <tr><td><code>python3 -m compileall act ingest</code></td><td>exit 0</td></tr>
+    <tr><td><code>AIASSISTANT_HOME=$(mktemp -d) PYTHON_COLORS=0 python3 -m unittest discover -s tests</code></td><td><strong>Ran 7814 tests, exit 0</strong></td></tr>
+    <tr><td><code>ruff check</code> 四份新判例</td><td>All checks passed</td></tr>
+    <tr><td><code>scripts/qa/hygiene.py --check</code></td><td>OK</td></tr>
+    <tr><td><code>scripts/qa/depgraph.py --check</code></td><td>OK</td></tr>
+    <tr><td><code>scripts/qa/ledger_diff.py --base origin/main</code></td><td><strong>0 finding</strong> = DoD 第 2 条（地板不降）</td></tr>
+    <tr><td><code>scripts/ci/changelog_fragments.py check</code> / <code>progress_log.py check</code></td><td>ok / ok</td></tr>
+    <tr><td><code>scripts/qa/mutate.py --modules … --force</code></td><td>839 位点，836 杀 3 活（99.6%）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+  <h3>两条测量口径上的话</h3>
+  <p><strong><code>PYTHON_COLORS=0</code> 是本机必需</strong>：不加会有一个<em>与本轮无关的既有</em>假红 <code>tests/integration/test_auto_deploy_script.py::test_write_state_mirror_failure_logs_the_cause</code>——Python 3.14 的彩色 traceback 把它 grep 的 <code>IsADirectoryError</code> 切成了带转义序列的串。CI 的 ubuntu 环境不上色，不受影响。</p>
+  <p><strong>夜报口径与全量口径一致</strong>：这个模块夜报本来就 839/839 跑满，没有 R-292 那种「只跑了半张地图」的问题，所以「减半」不是对半张地图算的。</p>
+</div>
+
+<h2 id="followup">七、没做的事与给下一轮的话</h2>
+
+<div class="card warn">
+  <h3>刻意没做：把 <code>_ctx</code> 合并进 testkit</h3>
+  <p>复核指出 <code>_ctx</code> 现在在这一族判例里有 <strong>5 个定义、4 种互不兼容的签名</strong>，其中 <code>internal_math.py:41</code> 与既有 <code>test_skill_test_code_checks.py:25</code> <strong>逐字节相同</strong>；而 <code>plan_plumbing.py:28</code> 把 <code>files</code> 放在第一位，于是 <code>_ctx('/repo', ['a.py'])</code> 在不同文件里含义不同。</p>
+  <p><strong>本轮没动</strong>：合并要改一份<em>既有的、已映射</em>判例文件（<code>test_skill_test_code_checks.py</code>），属于把「补测试网」这张卡扩成重构，而且 401 个杀伤是针对现在这版文件验过的。留给 owner 定要不要单开一张卡。每个文件的 <code>_ctx</code> 都是模块局部、各自内部一致，坑只在「把一条测试从一个文件拷到另一个文件」时才咬人。</p>
+</div>
+
+<div class="star">
+  <strong>⭐ 给下一个 session 的两条</strong>
+  <ol>
+    <li>判读存活体的第一步永远是 <code>ls tests | grep &lt;module&gt;</code> 对照 toml 映射——<strong>三次三中</strong>（R-287 <code>silent_merge</code>、R-292 <code>store2/store.py</code>、本轮 <code>checks.py</code>），本轮白得 21 体。</li>
+    <li>判「数据表常数 = 等价体」之前先找它的真源：本轮 279 体里 93 体在四份 markdown 里明写着，88 体确实没有任何文档载（那就老实写成 characterization table 并说明它只值改动检测），<strong>一个都不是等价体</strong>。</li>
+  </ol>
+</div>
+
+<p class="foot">
+R-301 · self-improve lane · 分支 <code>ai/self-improve/R-301</code>，草稿 PR，未合并。<br>
+判例与文档：<code>tests/test_skill_test_code_{catalog_docs,builder_gates,internal_math,plan_plumbing}.py</code> ·
+<code>qa/mutation_targets.toml</code> · <code>changelog.d/ai-self-improve-r301.md</code> ·
+<code>docs/design/progress/2026-09-16-self-improve-r301-checks-mutation-kills.md</code>
+</p>
+
+</div>
+</body>
+</html>
