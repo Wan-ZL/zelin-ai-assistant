@@ -75,12 +75,30 @@ class FakeTools:
         return self._server, None if self._server else "no server in this test"
 
 
+# 本文件建过的每个临时 HOME 台账：tearDownModule 一并删（跑完 /tmp 不许留渣）
+_HOMES = []
+
+
+def temp_homes():
+    homes = cr.TempHomes()
+    _HOMES.append(homes)
+    return homes
+
+
+def temp_home(slug):
+    return temp_homes().make(slug)
+
+
+def tearDownModule():
+    for homes in _HOMES:
+        homes.cleanup()
+    _HOMES.clear()
+
+
 def ctx_for(shell=None, http=None, server=None, playwright=(None, None)):
     tools = FakeTools(playwright=playwright)
     tools._server = server
-    homes = cr.TempHomes()
-    ctx = cr.FlowCtx(tools, shell, http, homes, Opts())
-    return ctx
+    return cr.FlowCtx(tools, shell, http, temp_homes(), Opts())
 
 
 class Opts:
@@ -107,7 +125,7 @@ def _wipe_plists(env):
 
 class TempHomeDisciplineTestCase(unittest.TestCase):
     def test_temp_homes_live_in_tmp_and_are_deleted(self):
-        homes = cr.TempHomes()
+        homes = cr.TempHomes()          # 这条判例自己验删除，不进 _HOMES 台账
         home = homes.make("probe")
         self.assertTrue(home.startswith("/tmp/"), home)
         self.assertTrue(os.path.isdir(home))
@@ -116,9 +134,7 @@ class TempHomeDisciplineTestCase(unittest.TestCase):
         self.assertEqual(homes.paths, [])
 
     def test_shims_cover_every_world_touching_binary_and_are_executable(self):
-        homes = cr.TempHomes()
-        self.addCleanup(homes.cleanup)
-        home = homes.make("shim")
+        home = temp_home("shim")
         shim_dir, shim_log = cr.write_shims(home)
         for name in ("launchctl", "open", "osascript", "crontab", "claude"):
             path = os.path.join(shim_dir, name)
@@ -131,9 +147,7 @@ class TempHomeDisciplineTestCase(unittest.TestCase):
         self.assertEqual(env["ZAA_SHIM_LOG"], shim_log)
 
     def test_claude_stub_prints_a_canned_result_and_never_runs_the_real_agent(self):
-        homes = cr.TempHomes()
-        self.addCleanup(homes.cleanup)
-        home = homes.make("stub")
+        home = temp_home("stub")
         shim_dir, _log = cr.write_shims(home)
         text = Path(shim_dir, "claude").read_text(encoding="utf-8")
         self.assertIn("qa coverage stub", text)
@@ -217,7 +231,7 @@ class CardLifecycleTestCase(unittest.TestCase):
     def test_every_verb_must_be_accepted_and_the_lane_must_move(self):
         handler, state = self._handler()
         http = ScriptedHttp(handler)
-        home = cr.TempHomes().make("lifecycle")
+        home = temp_home("lifecycle")
         os.makedirs(os.path.join(home, "state", "inbox"), exist_ok=True)
         Path(home, "state", "inbox", "a.json").write_text("{}", encoding="utf-8")
 
@@ -237,7 +251,7 @@ class CardLifecycleTestCase(unittest.TestCase):
     def test_a_lane_that_never_moves_is_missing(self):
         handler, _state = self._handler()
         http = ScriptedHttp(handler)
-        home = cr.TempHomes().make("lifecycle-stuck")
+        home = temp_home("lifecycle-stuck")
         os.makedirs(os.path.join(home, "state", "inbox"), exist_ok=True)
         Path(home, "state", "inbox", "a.json").write_text("{}", encoding="utf-8")
         shell = ScriptedShell([(0, "actd once", None)])
