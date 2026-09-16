@@ -54,19 +54,23 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 PYTHON_CANDIDATES = ("/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3")
 
 
+def _can_import_yaml(path):
+    try:
+        return subprocess.run([path, "-c", "import yaml"], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _python_order(candidates):
+    return [path for path in (candidates or ((sys.executable,) + PYTHON_CANDIDATES)) if path]
+
+
 def resolve_python(candidates=None, probe=None):
     """第一个能 import yaml 的解释器（探不到 → sys.executable，诚实往下跑、报真错）。"""
-    def _can_yaml(path):
-        try:
-            return subprocess.run([path, "-c", "import yaml"], stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, timeout=30).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            return False
-
-    check = probe or _can_yaml
-    order = list(candidates or ((sys.executable,) + PYTHON_CANDIDATES))
-    for path in order:
-        if path and check(path):
+    check = probe or _can_import_yaml
+    for path in _python_order(candidates):
+        if check(path):
             return path
     return sys.executable or "python3"
 
@@ -135,6 +139,48 @@ def tail_line(text):
     return one_line(lines[-1]) if lines else "-"
 
 
+def json_tail(text):
+    """输出里第一个 `{` 起的 JSON（doctor / probe 的横幅在前面）；不是 JSON → None。"""
+    body = str(text or "")
+    start = body.find("{")
+    if start < 0:
+        return None
+    try:
+        return json.loads(body[start:])
+    except ValueError:
+        return None
+
+
+def walk_json(node, visit):
+    """递归遍历 JSON 树，每个 dict 交给 visit（board / doctor 两处共用）。"""
+    if isinstance(node, dict):
+        visit(node)
+        for value in node.values():
+            walk_json(value, visit)
+    elif isinstance(node, list):
+        for item in node:
+            walk_json(item, visit)
+
+
+def listed(node, key):
+    """`node[key]` 当列表读（缺席 / null → 空列表）。"""
+    return (node or {}).get(key) or []
+
+
+def csv_parts(arg):
+    """`a, b ,c` → ["a", "b", "c"]。"""
+    return [part.strip() for part in str(arg or "").split(",") if part.strip()]
+
+
+def combine(verdicts):
+    """多分句 → 一个 Verdict（全中才 PRESENT，证据合并成一行）。"""
+    evidence = one_line(" | ".join(v.evidence for v in verdicts))
+    bad = [v for v in verdicts if v.state != PRESENT]
+    if bad:
+        return Verdict(MISSING, bad[0].reason, evidence)
+    return Verdict(PRESENT, "-", evidence)
+
+
 def log(msg):
     sys.stderr.write("[coverage_run %s] %s\n" % (time.strftime("%H:%M:%S"), msg))
     sys.stderr.flush()
@@ -144,6 +190,13 @@ def log(msg):
 # 注入缝 1/3：子进程
 # --------------------------------------------------------------------------- #
 
+def _merged_env(env):
+    """os.environ + 调用方补充（值一律 str）。"""
+    full = dict(os.environ)
+    full.update({k: str(v) for k, v in (env or {}).items()})
+    return full
+
+
 class Shell:
     """真跑子进程（stdout+stderr 合并）。单元测试注入假货，绝不走这里。"""
 
@@ -151,20 +204,21 @@ class Shell:
         self.logdir = logdir
 
     def run(self, cmd, cwd=None, env=None, timeout=T_SHORT, log_name=None):
-        full_env = dict(os.environ)
-        if env:
-            full_env.update({k: str(v) for k, v in env.items()})
-        try:
-            done = subprocess.run(cmd, cwd=cwd or REPO_ROOT, env=full_env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True, errors="replace", timeout=timeout)
-            proc = Proc(done.returncode, done.stdout or "")
-        except subprocess.TimeoutExpired as exc:
-            proc = Proc(124, (exc.output or "") + "\nTIMEOUT after %ss" % timeout)
-        except OSError as exc:
-            proc = Proc(127, "cannot exec %s: %s" % (cmd[0], exc))
+        proc = self._exec(cmd, cwd, _merged_env(env), timeout)
         self._write_log(log_name, cmd, proc)
         return proc
+
+    @staticmethod
+    def _exec(cmd, cwd, env, timeout):
+        try:
+            done = subprocess.run(cmd, cwd=cwd or REPO_ROOT, env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, errors="replace", timeout=timeout)
+            return Proc(done.returncode, done.stdout or "")
+        except subprocess.TimeoutExpired as exc:
+            return Proc(124, (exc.output or "") + "\nTIMEOUT after %ss" % timeout)
+        except OSError as exc:
+            return Proc(127, "cannot exec %s: %s" % (cmd[0], exc))
 
     def _write_log(self, log_name, cmd, proc):
         if not (self.logdir and log_name):
@@ -297,11 +351,8 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def start_demo_server(homes, http, shell, scene="initial", logdir=None, python_bin=None,
-                      pythonpath=None):
-    """种 demo 数据 → 起 `python3 -m server` → 等 /api/board（web/e2e/demoServer.ts 同一条链）。"""
-    python_bin = python_bin or resolve_python()
-    pythonpath = pythonpath or python_path(yaml_site(python_bin))
+def _seed_home(homes, shell, python_bin, scene):
+    """demo 数据 + 向导完成标记 + config.yaml（种不出来 = 抛，不带半个 home 往下跑）。"""
     home = homes.make("srv")
     seed = shell.run([python_bin, os.path.join(REPO_ROOT, "scripts", "demo_seed.py"), home,
                       "--scene", scene], timeout=T_SHORT, log_name="demo_seed")
@@ -311,10 +362,43 @@ def start_demo_server(homes, http, shell, scene="initial", logdir=None, python_b
     # §68.5 首次运行判定：临时 home 没有 config.yaml → 整页换向导；写「向导已完成」标记
     with open(os.path.join(home, "state", "setup_done.json"), "w", encoding="utf-8") as handle:
         json.dump({"completed_at": "2026-09-02T12:00:00Z"}, handle)
+    _copy_example_config(home)
+    return home
+
+
+def _copy_example_config(home):
     example = os.path.join(REPO_ROOT, "config.example.yaml")
     target = os.path.join(home, "config.yaml")
     if os.path.exists(example) and not os.path.exists(target):
         shutil.copyfile(example, target)
+
+
+def _server_token(home):
+    path = os.path.join(home, "state", "server.token")
+    if not os.path.exists(path):
+        return ""
+    return _read(path).strip()
+
+
+def _wait_for_board(http, base_url, proc, out_path):
+    """等 /api/board 通（≤90 s；server 中途退出 = 抛，带上日志路径）。"""
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError("server exited early rc=%s (see %s)" % (proc.returncode, out_path))
+        if http.request("GET", base_url + "/api/board", timeout=5).status == 200:
+            return
+        time.sleep(0.2)
+    proc.terminate()
+    raise RuntimeError("server did not answer /api/board in 90 s (see %s)" % out_path)
+
+
+def start_demo_server(homes, http, shell, scene="initial", logdir=None, python_bin=None,
+                      pythonpath=None):
+    """种 demo 数据 → 起 `python3 -m server` → 等 /api/board（web/e2e/demoServer.ts 同一条链）。"""
+    python_bin = python_bin or resolve_python()
+    pythonpath = pythonpath or python_path(yaml_site(python_bin))
+    home = _seed_home(homes, shell, python_bin, scene)
     port = free_port()
     env = dict(os.environ)
     env.update({"HOME": home, "AIASSISTANT_HOME": home, "ZAI_PORT": str(port),
@@ -326,21 +410,9 @@ def start_demo_server(homes, http, shell, scene="initial", logdir=None, python_b
     proc = subprocess.Popen([python_bin, "-m", "server"], cwd=REPO_ROOT, env=env,
                             stdout=handle, stderr=subprocess.STDOUT)
     base_url = "http://127.0.0.1:%d" % port
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError("server exited early rc=%s (see %s)" % (proc.returncode, out_path))
-        if http.request("GET", base_url + "/api/board", timeout=5).status == 200:
-            token_file = os.path.join(home, "state", "server.token")
-            token = ""
-            if os.path.exists(token_file):
-                with open(token_file, encoding="utf-8") as tok:
-                    token = tok.read().strip()
-            log("demo server up on %s (home=%s)" % (base_url, home))
-            return DemoServer(base_url, home, token, proc)
-        time.sleep(0.2)
-    proc.terminate()
-    raise RuntimeError("server did not answer /api/board in 90 s (see %s)" % out_path)
+    _wait_for_board(http, base_url, proc, out_path)
+    log("demo server up on %s (home=%s)" % (base_url, home))
+    return DemoServer(base_url, home, _server_token(home), proc)
 
 
 # --------------------------------------------------------------------------- #
@@ -400,63 +472,83 @@ def module_of(dotted):
     return ".".join(keep)
 
 
+def _tally_case(stats, line):
+    """一行 `-v` 输出 → 记一笔（不是用例行则什么都不记）。"""
+    match = _VERBOSE_CASE.search(line.strip())
+    if not match:
+        return
+    module = module_of(match.group(1))
+    if not module:
+        return
+    ran, bad = stats.get(module, (0, 0))
+    stats[module] = (ran + 1, bad + (1 if _is_failure(match.group(2).strip()) else 0))
+
+
+def _is_failure(verdict):
+    return verdict.startswith("FAIL") or verdict.startswith("ERROR")
+
+
 def parse_unittest_verbose(text):
     """`python3 -m unittest -v` 输出 → {module: Hit}（一个 FAIL/ERROR 就判整模块不在）。"""
     stats = {}
     for line in str(text or "").splitlines():
-        match = _VERBOSE_CASE.search(line.strip())
-        if not match:
-            continue
-        module = module_of(match.group(1))
-        verdict = match.group(2).strip()
-        if not module:
-            continue
-        ran, bad = stats.get(module, (0, 0))
-        failed = verdict.startswith("FAIL") or verdict.startswith("ERROR")
-        stats[module] = (ran + 1, bad + (1 if failed else 0))
+        _tally_case(stats, line)
     return {mod: Hit(bad == 0, "%s: %d tests, %d failed" % (mod, ran, bad))
             for mod, (ran, bad) in stats.items()}
 
 
+def _spec_name(primary, fallback):
+    return os.path.basename(str(primary or fallback or ""))
+
+
+def _pw_status(test):
+    """一条 test 的最后一次结果状态（没有结果 = 空串）。"""
+    results = listed(test, "results")
+    if not results:
+        return ""
+    return str(results[-1].get("status") or "")
+
+
+def _pw_spec(spec_file, spec, out):
+    title = spec.get("title", "")
+    for test in listed(spec, "tests"):
+        status = _pw_status(test)
+        out[(spec_file, title)] = Hit(status == "passed", "playwright %s::%s %s" % (
+            spec_file, title, status or "no result"))
+
+
+def _pw_suite(suite, file_hint, out):
+    spec_file = _spec_name(suite.get("file"), file_hint)
+    for spec in listed(suite, "specs"):
+        _pw_spec(spec_file, spec, out)
+    for child in listed(suite, "suites"):
+        _pw_suite(child, spec_file, out)
+
+
 def parse_playwright_json(text):
     """playwright `--reporter=json` → {(spec file, title): Hit}。"""
+    doc = json_tail(text) or {}
     out = {}
-    try:
-        doc = json.loads(text or "{}")
-    except ValueError:
-        return out
-
-    def walk(suite, file_hint):
-        spec_file = suite.get("file") or file_hint
-        for spec in suite.get("specs", []) or []:
-            for test in spec.get("tests", []) or []:
-                results = test.get("results", []) or []
-                status = (results[-1].get("status") if results else "") or ""
-                title = spec.get("title", "")
-                ok = status == "passed" or spec.get("ok") is True and status != "failed"
-                out[(os.path.basename(spec_file or ""), title)] = Hit(
-                    ok, "playwright %s::%s %s" % (os.path.basename(spec_file or ""), title,
-                                                  status or "no result"))
-        for child in suite.get("suites", []) or []:
-            walk(child, spec_file)
-
-    for suite in doc.get("suites", []) or []:
-        walk(suite, suite.get("file"))
+    for suite in listed(doc, "suites"):
+        _pw_suite(suite, suite.get("file"), out)
     return out
+
+
+def _vitest_local_map(text):
+    """parity_check.py 用不了时的兜底解析（title → passed）。"""
+    doc = json_tail(text) or {}
+    mapping = {}
+    for suite in listed(doc, "testResults"):
+        for case in listed(suite, "assertionResults"):
+            mapping[case.get("title", "")] = case.get("status", "") == "passed"
+    return mapping
 
 
 def parse_vitest_parity(text):
     """vitest parity 报告 → {id: Hit}；优先复用 scripts/ui/parity_check.py 的映射。"""
     mapping = _parity_check_mapping(text)
     if mapping is None:
-        try:
-            doc = json.loads(text or "{}")
-        except ValueError:
-            return {}
-        mapping = {}
-        for suite in doc.get("testResults", []) or []:
-            for case in suite.get("assertionResults", []) or []:
-                mapping[case.get("title", "")] = case.get("status", "") == "passed"
+        mapping = _vitest_local_map(text)
     return {pid: Hit(bool(ok), "vitest parity %s %s" % (pid, "passed" if ok else "failed"))
             for pid, ok in mapping.items()}
 
@@ -476,22 +568,30 @@ def _parity_check_mapping(text):
         return None
 
 
+def _swift_hit(name, steps, last, rc):
+    """一个 harness 的判决：rc=0 且有它的步骤 = 在；rc≠0 按最后一个步骤定罪。"""
+    slug = name.replace("Harness", "").lower()
+    if rc != 0:
+        blamed = slug in last.lower()
+        return Hit(False, "shell/tests/run.sh rc=%s%s" % (
+            rc, " at %s" % one_line(last, 80) if blamed else ", %s not reached" % name))
+    seen = any(slug in step.lower() for step in steps)
+    if seen:
+        return Hit(True, "shell/tests/run.sh rc=0, %s exercised" % name)
+    return Hit(False, "run.sh rc=0 but no step mentions %s" % name)
+
+
 def parse_swift_run(text, rc, harnesses):
-    """`shell/tests/run.sh` 输出 → {harness: Hit}（rc=0 全过；否则按最后一个步骤定罪）。"""
+    """`shell/tests/run.sh` 输出 → {harness: Hit}。"""
     steps = [ln for ln in str(text or "").splitlines() if ln.startswith("==> [")]
     last = steps[-1] if steps else ""
-    out = {}
-    for name in harnesses:
-        slug = name.replace("Harness", "").lower()
-        if rc == 0:
-            seen = any(slug in step.lower() for step in steps)
-            out[name] = Hit(seen, "shell/tests/run.sh rc=0, %s exercised" % name
-                            if seen else "run.sh rc=0 but no step mentions %s" % name)
-        else:
-            blamed = slug in last.lower()
-            out[name] = Hit(False, "shell/tests/run.sh rc=%s%s" % (
-                rc, " at %s" % one_line(last, 80) if blamed else ", %s not reached" % name))
-    return out
+    return {name: _swift_hit(name, steps, last, rc) for name in harnesses}
+
+
+def _playwright_argv(specs):
+    """只跑清单引用到的 spec（空 = 全量）；仍是一次 `npx playwright test`。"""
+    return ["npx", "playwright", "test"] + ["e2e/" + spec for spec in sorted(specs)] + \
+           ["--reporter=json"]
 
 
 class Tools:
@@ -517,21 +617,29 @@ class Tools:
         if "unittest" in self._cache:
             return self._cache["unittest"]
         wanted = sorted(modules)
-        scope = self.opts.unittest_scope
-        if scope == "auto":
-            scope = "listed" if 0 < len(wanted) <= self.opts.unittest_listed_max else "discover"
-        if scope == "listed" and wanted:
-            cmd = [self.python, "-m", "unittest", "-v"] + wanted
-        else:
-            cmd = [self.python, "-m", "unittest", "discover", "-v", "-s", "tests", "-t", ".",
-                   "-p", "test_*.py"]
+        scope = self._unittest_scope(wanted)
         log("unittest (%s, %d modules requested) …" % (scope, len(wanted)))
-        proc = self.shell.run(cmd, cwd=REPO_ROOT, env={"PYTHONPATH": self.pythonpath},
+        proc = self.shell.run(self._unittest_cmd(scope, wanted), cwd=REPO_ROOT,
+                              env={"PYTHONPATH": self.pythonpath},
                               timeout=T_UNITTEST, log_name="unittest")
-        result = (parse_unittest_verbose(proc.out), None if proc.out.strip() else
-                  "unittest produced no output (rc=%s)" % proc.rc)
-        self._cache["unittest"] = result
-        return result
+        error = None if proc.out.strip() else "unittest produced no output (rc=%s)" % proc.rc
+        self._cache["unittest"] = (parse_unittest_verbose(proc.out), error)
+        return self._cache["unittest"]
+
+    def _unittest_scope(self, wanted):
+        """auto = 清单点名的模块 ≤ --unittest-listed-max 时只跑那些，否则 full discover。"""
+        scope = self.opts.unittest_scope
+        if scope != "auto":
+            return scope
+        if 0 < len(wanted) <= self.opts.unittest_listed_max:
+            return "listed"
+        return "discover"
+
+    def _unittest_cmd(self, scope, wanted):
+        if scope == "listed" and wanted:
+            return [self.python, "-m", "unittest", "-v"] + wanted
+        return [self.python, "-m", "unittest", "discover", "-v", "-s", "tests", "-t", ".",
+                "-p", "test_*.py"]
 
     # -- swift ------------------------------------------------------------- #
     def swift_map(self):
@@ -556,7 +664,7 @@ class Tools:
         if not os.path.isdir(os.path.join(web, "node_modules")):
             self._cache["parity"] = ({}, "web/node_modules absent — run npm ci in web/")
             return self._cache["parity"]
-        out_path = os.path.join(self.opts.logdir or tempfile.gettempdir(), "parity-vitest.json")
+        out_path = os.path.join(self._logdir(), "parity-vitest.json")
         log("vitest parity …")
         proc = self.shell.run(["npx", "vitest", "run", "src/parity.test.tsx", "--reporter=json",
                                "--outputFile=" + out_path], cwd=web, timeout=T_VITEST,
@@ -577,18 +685,18 @@ class Tools:
         if not os.path.isdir(os.path.join(web, "node_modules")):
             self._cache["playwright"] = ({}, "web/node_modules absent — run npm ci in web/")
             return self._cache["playwright"]
-        out_path = os.path.join(self.opts.logdir or tempfile.gettempdir(), "playwright.json")
+        out_path = os.path.join(self._logdir(), "playwright.json")
         log("playwright (%s) …" % (", ".join(sorted(specs)) or "all specs"))
-        argv = ["npx", "playwright", "test"] + ["e2e/" + s for s in sorted(specs)] + \
-               ["--reporter=json"]
-        proc = self.shell.run(argv, cwd=web,
+        proc = self.shell.run(_playwright_argv(specs), cwd=web,
                               env={"PLAYWRIGHT_JSON_OUTPUT_NAME": out_path},
                               timeout=T_PLAYWRIGHT, log_name="playwright")
-        text = _read(out_path) or proc.out
-        mapping = parse_playwright_json(text)
+        mapping = parse_playwright_json(_read(out_path) or proc.out)
         error = None if mapping else "playwright produced no parsable report (rc=%s)" % proc.rc
         self._cache["playwright"] = (mapping, error)
         return self._cache["playwright"]
+
+    def _logdir(self):
+        return self.opts.logdir or tempfile.gettempdir()
 
     # -- demo server ------------------------------------------------------- #
     def server(self):
@@ -619,6 +727,27 @@ def _read(path):
 # --------------------------------------------------------------------------- #
 
 _HTTP_RE = re.compile(r"^(?P<method>[A-Z]+)\s+(?P<path>\S+)(?P<rest>.*)$")
+# 需要 JSON 体 + token 的动词（server 的写闸：Origin → Content-Type → token，§49）
+_WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+
+
+_HTTP_TOKENS = {
+    "expect=": lambda spec, value: spec.__setitem__("expect", int(value)),
+    "contains=": lambda spec, value: spec.__setitem__("contains", value),
+    "body=@": lambda spec, value: spec.__setitem__("body", {"file": value}),
+    "body=": lambda spec, value: spec.__setitem__("body", {"inline": value}),
+}
+
+
+def _apply_http_token(spec, token):
+    """一个 proof token（`expect=200` / `noauth` / `contains=…` / `body=@f`）→ 写进 spec。"""
+    if token == "noauth":
+        spec["noauth"] = True
+        return
+    for prefix, setter in _HTTP_TOKENS.items():
+        if token.startswith(prefix):
+            setter(spec, token[len(prefix):])
+            return
 
 
 def parse_http_proof(arg):
@@ -629,43 +758,25 @@ def parse_http_proof(arg):
     spec = {"method": match.group("method"), "path": match.group("path"),
             "expect": 200, "noauth": False, "contains": None, "body": None}
     for token in match.group("rest").split():
-        if token == "noauth":
-            spec["noauth"] = True
-        elif token.startswith("expect="):
-            spec["expect"] = int(token.split("=", 1)[1])
-        elif token.startswith("contains="):
-            spec["contains"] = token.split("=", 1)[1]
-        elif token.startswith("body=@"):
-            spec["body"] = {"file": token.split("=@", 1)[1]}
-        elif token.startswith("body="):
-            spec["body"] = {"inline": token.split("=", 1)[1]}
+        _apply_http_token(spec, token)
     return spec
 
 
 def board_ids(http, server):
     """seeded board 上的卡片 id（{id} 占位符的解析源；按出现顺序去重）。"""
     resp = http.request("GET", server.base_url + "/api/board")
-    if resp.status != 200:
-        return []
-    try:
-        doc = json.loads(resp.text)
-    except ValueError:
+    doc = json_tail(resp.text) if resp.status == 200 else None
+    if doc is None:
         return []
     found, seen = [], set()
 
-    def walk(node):
-        if isinstance(node, dict):
-            ident = node.get("id")
-            if isinstance(ident, str) and ident and ident not in seen:
-                seen.add(ident)
-                found.append(ident)
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+    def visit(node):
+        ident = node.get("id")
+        if isinstance(ident, str) and ident and ident not in seen:
+            seen.add(ident)
+            found.append(ident)
 
-    walk(doc)
+    walk_json(doc, visit)
     return found
 
 
@@ -684,6 +795,33 @@ def http_body(spec):
     return text
 
 
+def _resolve_id(path, ids):
+    """`{id}` → seeded board 上的第一张卡；解析不了 → (None, 原因)。"""
+    if "{id}" not in path:
+        return path, None
+    if not ids:
+        return None, "no card id on the seeded board for {id}"
+    return path.replace("{id}", ids[0]), None
+
+
+def _request_headers(spec, server, body):
+    headers = {}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if not spec["noauth"] and server.token:
+        headers["X-Zai-Token"] = server.token
+    return headers
+
+
+def _judge_response(spec, resp, evidence):
+    if resp.status != spec["expect"]:
+        return Verdict(MISSING, "expected %s, got %s: %s" % (
+            spec["expect"], resp.status, one_line(resp.text, 90)), evidence)
+    if spec["contains"] and spec["contains"] not in resp.text:
+        return Verdict(MISSING, "response lacks %r" % spec["contains"], evidence)
+    return Verdict(PRESENT, "-", one_line(evidence))
+
+
 def run_http_proof(arg, http, server, ids):
     """一条 http: proof → Verdict。"""
     try:
@@ -691,25 +829,14 @@ def run_http_proof(arg, http, server, ids):
         body = http_body(spec)
     except ValueError as exc:
         return Verdict(MISSING, one_line(exc), "-")
-    path = spec["path"]
-    if "{id}" in path:
-        if not ids:
-            return Verdict(MISSING, "no card id on the seeded board for {id}", "-")
-        path = path.replace("{id}", ids[0])
-    headers = {}
-    if body is not None or spec["method"] in ("POST", "PUT", "PATCH", "DELETE"):
-        headers["Content-Type"] = "application/json"
-        body = body if body is not None else "{}"
-    if not spec["noauth"] and server.token:
-        headers["X-Zai-Token"] = server.token
-    resp = http.request(spec["method"], server.base_url + path, body=body, headers=headers)
-    evidence = "%s %s -> %s" % (spec["method"], path, resp.status)
-    if resp.status != spec["expect"]:
-        return Verdict(MISSING, "expected %s, got %s: %s" % (
-            spec["expect"], resp.status, one_line(resp.text, 90)), evidence)
-    if spec["contains"] and spec["contains"] not in resp.text:
-        return Verdict(MISSING, "response lacks %r" % spec["contains"], evidence)
-    return Verdict(PRESENT, "-", one_line(evidence))
+    path, error = _resolve_id(spec["path"], ids)
+    if error:
+        return Verdict(MISSING, error, "-")
+    if body is None and spec["method"] in _WRITE_METHODS:
+        body = "{}"
+    resp = http.request(spec["method"], server.base_url + path, body=body,
+                        headers=_request_headers(spec, server, body))
+    return _judge_response(spec, resp, "%s %s -> %s" % (spec["method"], path, resp.status))
 
 
 # --- settings: ------------------------------------------------------------- #
@@ -726,33 +853,55 @@ def load_sections():
     return settings_catalog.SECTIONS
 
 
-def non_default_value(field):
-    """一把旋钮的「非默认」探测值；None = 没有安全的非默认值。"""
-    kind, default = field.get("kind"), field.get("default")
-    if kind == "bool":
-        return not bool(default)
-    if kind == "enum":
-        for choice in field.get("choices") or []:
-            if choice != default:
-                return choice
-        return None
-    if kind in ("int", "number"):
-        low, high = (field.get("bounds") or (0, None))
-        base = default if isinstance(default, (int, float)) else 0
-        candidate = base + 1
-        if high is not None and candidate > high:
-            candidate = base - 1 if base - 1 >= (low or 0) else None
-        if candidate is not None and kind == "int":
-            candidate = int(candidate)
-        return candidate
-    if kind == "list":
-        return ["qa-coverage-probe"]
-    if kind == "string":
-        check = field.get("check")
-        if check:
-            return _CHECK_SAMPLES.get(check)
-        return (str(default or "") + "-qa-coverage-probe") or "qa-coverage-probe"
+def _nd_bool(field):
+    return not bool(field.get("default"))
+
+
+def _nd_enum(field):
+    return next((c for c in (field.get("choices") or []) if c != field.get("default")), None)
+
+
+def _bounds(field):
+    low, high = field.get("bounds") or (0, None)
+    return low or 0, high
+
+
+def _num_default(field):
+    got = field.get("default")
+    return got if isinstance(got, (int, float)) else 0
+
+
+def _as_kind(field, value):
+    return int(value) if field.get("kind") == "int" else value
+
+
+def _nd_number(field):
+    """默认值 ±1（受 bounds 约束；上下都出界 → None）。"""
+    low, high = _bounds(field)
+    base = _num_default(field)
+    if high is None or base + 1 <= high:
+        return _as_kind(field, base + 1)
+    if base - 1 >= low:
+        return _as_kind(field, base - 1)
     return None
+
+
+def _nd_string(field):
+    """带 `check` 的字符串用样例值（校验过不了就不是往返，是 400）；否则默认值加后缀。"""
+    check = field.get("check")
+    if check:
+        return _CHECK_SAMPLES.get(check)
+    return str(field.get("default") or "") + "-qa-coverage-probe"
+
+
+_NON_DEFAULT = {"bool": _nd_bool, "enum": _nd_enum, "int": _nd_number, "number": _nd_number,
+                "list": lambda field: ["qa-coverage-probe"], "string": _nd_string}
+
+
+def non_default_value(field):
+    """一把旋钮的「非默认」探测值；None = 没有安全的非默认值（诚实记 MISSING）。"""
+    maker = _NON_DEFAULT.get(field.get("kind"))
+    return maker(field) if maker else None
 
 
 def _put_section(http, server, section_id, payload):
@@ -801,20 +950,28 @@ def roundtrip_setting(http, server, section_id, key, field):
         section_id, key, probe))
 
 
-def run_settings_proof(arg, http, server):
-    section_id, _, key = arg.partition(".")
-    if not (section_id and key):
-        return Verdict(MISSING, "malformed settings proof %r" % arg, "-")
+def _lookup_field(section_id, key):
+    """(field, 原因)：目录里找 `<section>.<key>`，找不到就说清楚哪一层没有。"""
     try:
         sections = {s["id"]: s for s in load_sections()}
     except Exception as exc:
-        return Verdict(MISSING, "settings catalog unavailable: %s" % one_line(exc), "-")
+        return None, "settings catalog unavailable: %s" % one_line(exc)
     section = sections.get(section_id)
     if section is None:
-        return Verdict(MISSING, "unknown settings section %r" % section_id, "-")
+        return None, "unknown settings section %r" % section_id
     field = next((f for f in section["fields"] if f["key"] == key), None)
     if field is None:
-        return Verdict(MISSING, "section %s has no key %r" % (section_id, key), "-")
+        return None, "section %s has no key %r" % (section_id, key)
+    return field, None
+
+
+def run_settings_proof(arg, http, server):
+    section_id, _, key = arg.partition(".")
+    if not key:
+        return Verdict(MISSING, "malformed settings proof %r" % arg, "-")
+    field, error = _lookup_field(section_id, key)
+    if error:
+        return Verdict(MISSING, error, "-")
     return roundtrip_setting(http, server, section_id, key, field)
 
 
@@ -851,14 +1008,12 @@ def flow_install_fresh(ctx):
     # install.sh 的 AIASSISTANT_HOME 恒等于它自己所在的 checkout（这里 = 本 worktree），
     # 它会在 checkout 里现建 config.yaml / state/（两者 .gitignore 在列）——跑前记下
     # 有无，跑后把本次新建的删掉，工作树不留痕。
-    born = [p for p in (os.path.join(REPO_ROOT, "config.yaml"), os.path.join(REPO_ROOT, "state"))
-            if not os.path.exists(p)]
+    born = _checkout_born()
     proc = ctx.shell.run(["bash", os.path.join(REPO_ROOT, "install.sh"), "--non-interactive"],
                          cwd=REPO_ROOT, env=shim_env(home, shim_dir, shim_log),
                          timeout=T_FLOW, log_name="flow_install_fresh")
-    for path in born:
-        shutil.rmtree(path, ignore_errors=True) if os.path.isdir(path) else _unlink(path)
-    plists = sorted(glob.glob(os.path.join(home, "Library", "LaunchAgents", "*.plist")))
+    _drop_born(born)
+    plists = _plists(home)
     calls = one_line(_read(shim_log), 80)
     if proc.rc != 0:
         return Verdict(MISSING, "install.sh --non-interactive rc=%s: %s" % (
@@ -867,6 +1022,22 @@ def flow_install_fresh(ctx):
         return Verdict(MISSING, "no plist under %s/Library/LaunchAgents" % home, "shims: %s" % calls)
     labels = ", ".join(os.path.basename(p) for p in plists)
     return Verdict(PRESENT, "-", "install.sh rc=0, %d plist(s): %s" % (len(plists), labels))
+
+
+def _checkout_born():
+    """install.sh 会在 checkout 里现建 config.yaml / state/（都在 .gitignore 上）——
+    跑前记下哪些还不存在，跑后只删本次新建的那几个：工作树不留痕。"""
+    return [path for path in (os.path.join(REPO_ROOT, "config.yaml"),
+                              os.path.join(REPO_ROOT, "state"))
+            if not os.path.exists(path)]
+
+
+def _drop_born(born):
+    for path in born:
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            _unlink(path)
 
 
 def _unlink(path):
@@ -902,31 +1073,108 @@ def flow_doctor_clean(ctx):
 
 
 def _doctor_fails(text):
-    """doctor --json 输出里 status=fail 的检查名（形状防御：任何带 status 的 dict 列表）。"""
-    start = text.find("{")
-    if start < 0:
-        return []
-    try:
-        doc = json.loads(text[start:])
-    except ValueError:
+    """doctor --json 输出里 status=fail 的检查名（形状防御：任何带 status 的 dict）。"""
+    doc = json_tail(text)
+    if doc is None:
         return []
     names = []
 
-    def walk(node):
-        if isinstance(node, dict):
-            if str(node.get("status", "")).lower() in ("fail", "failed"):
-                names.append(str(node.get("name") or node.get("id") or "?"))
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+    def visit(node):
+        if str(node.get("status", "")).lower() in ("fail", "failed"):
+            names.append(str(node.get("name") or node.get("id") or "?"))
 
-    walk(doc)
+    walk_json(doc, visit)
     return names
 
 
 _LANE_VERBS = (("approve", None), ("stop_to_review", None), ("accept", None))
+
+
+_LIFECYCLE_VERBS = ("approve", "comment", "stop_to_review", "accept", "archive", "unarchive",
+                    "trash", "restore", "reject")
+
+
+def _write_headers(server):
+    """写请求的三闸头（§49：Content-Type + instance token；Origin 不发 = 不查）。"""
+    return {"Content-Type": "application/json", "X-Zai-Token": server.token}
+
+
+def post_action(http, server, payload):
+    """POST /api/actions（inbox 的唯一写口，§44 单写者：server 只落文件，actd 才改卡）。"""
+    return http.request("POST", server.base_url + "/api/actions", body=json.dumps(payload),
+                        headers=_write_headers(server))
+
+
+def _verb_payload(verb, card):
+    payload = {"action": verb, "id": card}
+    if verb == "comment":
+        payload["comment"] = "QA full-coverage probe"
+    return payload
+
+
+def _walk_verbs(ctx, server, card, steps):
+    """十个卡片动词逐个 POST；第一个非 200 → 原因串（None = 全过）。"""
+    for verb in _LIFECYCLE_VERBS:
+        resp = post_action(ctx.http, server, _verb_payload(verb, card))
+        if resp.status != 200:
+            return "%s %s -> %s %s" % (verb, card, resp.status, one_line(resp.text, 70))
+        steps.append("%s 200" % verb)
+    return None
+
+
+def _probe_card(http, server):
+    """走生命周期的那张卡（seeded board 上第一张 P-/R-/MS- 卡）。"""
+    ids = board_ids(http, server)
+    known = [ident for ident in ids if ident.startswith(("P-", "R-", "MS-"))]
+    if known:
+        return known[0]
+    return ids[0] if ids else None
+
+
+def _inbox_files(home):
+    """server 落下的 inbox 动作文件（§44 的回执面）。"""
+    direct = glob.glob(os.path.join(home, "state", "inbox", "*.json"))
+    if direct:
+        return direct
+    return glob.glob(os.path.join(home, "**", "inbox", "*.json"), recursive=True)
+
+
+def _capture_step(ctx, server, steps):
+    cap = post_action(ctx.http, server, {"action": "capture",
+                                         "text": "QA full-coverage lifecycle probe"})
+    if cap.status != 200:
+        return "capture -> %s %s" % (cap.status, one_line(cap.text, 80))
+    steps.append("capture 200")
+    return None
+
+
+def _actd_step(ctx, server, card, steps):
+    """一趟 actd --once 推闸门；车道没动 / actd 非 0 = 原因串。"""
+    moved = _actd_once(ctx, server, card)
+    steps.append(moved.evidence)
+    if moved.state != PRESENT:
+        return moved.reason
+    return None
+
+
+def _inbox_step(server, steps):
+    inbox = _inbox_files(server.home)
+    if not inbox:
+        return "no inbox action file landed under %s" % server.home
+    steps.append("%d inbox files" % len(inbox))
+    return None
+
+
+def _lifecycle_problem(ctx, server, steps):
+    """生命周期的第一个毛病（None = 每一步都过）。"""
+    problem = _capture_step(ctx, server, steps)
+    if problem:
+        return problem
+    card = _probe_card(ctx.http, server)
+    if card is None:
+        return "seeded board carries no card id"
+    return (_walk_verbs(ctx, server, card, steps) or _inbox_step(server, steps)
+            or _actd_step(ctx, server, card, steps))
 
 
 def flow_card_lifecycle(ctx):
@@ -937,43 +1185,9 @@ def flow_card_lifecycle(ctx):
     if missing:
         return missing
     steps = []
-    cap = ctx.http.request("POST", server.base_url + "/api/actions",
-                           body=json.dumps({"action": "capture",
-                                            "text": "QA full-coverage lifecycle probe"}),
-                           headers={"Content-Type": "application/json",
-                                    "X-Zai-Token": server.token})
-    if cap.status != 200:
-        return Verdict(MISSING, "capture -> %s %s" % (cap.status, one_line(cap.text, 80)), "-")
-    steps.append("capture 200")
-    ids = board_ids(ctx.http, server)
-    card = next((i for i in ids if i.startswith(("P-", "R-", "MS-"))), ids[0] if ids else None)
-    if card is None:
-        return Verdict(MISSING, "seeded board carries no card id", "; ".join(steps))
-    for verb in ("approve", "comment", "stop_to_review", "accept", "archive", "unarchive",
-                 "trash", "restore", "reject"):
-        payload = {"action": verb, "id": card}
-        if verb == "comment":
-            payload["comment"] = "QA full-coverage probe"
-        resp = ctx.http.request("POST", server.base_url + "/api/actions",
-                                body=json.dumps(payload),
-                                headers={"Content-Type": "application/json",
-                                         "X-Zai-Token": server.token})
-        if resp.status != 200:
-            return Verdict(MISSING, "%s %s -> %s %s" % (verb, card, resp.status,
-                                                        one_line(resp.text, 70)),
-                           "; ".join(steps))
-        steps.append("%s 200" % verb)
-    inbox = glob.glob(os.path.join(server.home, "state", "inbox", "*.json"))
-    if not inbox:
-        inbox = glob.glob(os.path.join(server.home, "**", "inbox", "*.json"), recursive=True)
-    if not inbox:
-        return Verdict(MISSING, "no inbox action file landed under %s" % server.home,
-                       "; ".join(steps))
-    steps.append("%d inbox files" % len(inbox))
-    moved = _actd_once(ctx, server, card)
-    steps.append(moved.evidence)
-    if moved.state != PRESENT:
-        return Verdict(MISSING, moved.reason, one_line("; ".join(steps)))
+    problem = _lifecycle_problem(ctx, server, steps)
+    if problem:
+        return Verdict(MISSING, problem, one_line("; ".join(steps)))
     return Verdict(PRESENT, "-", one_line("; ".join(steps)))
 
 
@@ -1011,6 +1225,11 @@ def _lane_of(http, server, card):
     return "absent"
 
 
+def _all_fields(sections):
+    """目录的每一格 → (section id, field)。"""
+    return [(section["id"], field) for section in sections for field in section["fields"]]
+
+
 def flow_settings_roundtrip_all(ctx):
     """settings_catalog.SECTIONS 的**每一个** field 都 PUT 非默认 → GET → 复位。"""
     server, missing = _need_server(ctx)
@@ -1021,16 +1240,68 @@ def flow_settings_roundtrip_all(ctx):
     except Exception as exc:
         return Verdict(MISSING, "settings catalog unavailable: %s" % one_line(exc), "-")
     total, bad = 0, []
-    for section in sections:
-        for field in section["fields"]:
-            total += 1
-            verdict = roundtrip_setting(ctx.http, server, section["id"], field["key"], field)
-            if verdict.state != PRESENT:
-                bad.append("%s.%s (%s)" % (section["id"], field["key"], verdict.reason))
+    for section_id, field in _all_fields(sections):
+        total += 1
+        verdict = roundtrip_setting(ctx.http, server, section_id, field["key"], field)
+        if verdict.state != PRESENT:
+            bad.append("%s.%s (%s)" % (section_id, field["key"], verdict.reason))
     evidence = "%d/%d settings fields round-tripped" % (total - len(bad), total)
     if bad:
         return Verdict(MISSING, one_line("; ".join(bad[:3])), evidence)
     return Verdict(PRESENT, "-", evidence)
+
+
+# §63 recap 键的字面形状（server/inbox_writer._RECAP_KEY_RE）：meeting:<ISO 日期>T<HHMM>-<slug>
+_RECAP_KEY = "meeting:2026-09-15T0930-qa-coverage-probe"
+
+
+def _recap_actions(key):
+    """§63 recap 的动作面：生成 / 重生成 / 出稿形状 / 意图问答的答案 / 回退 / Slack 草稿。"""
+    return [
+        ("generate", {"action": "recap_generate", "meeting_key": key}),
+        ("regenerate", {"action": "recap_generate", "meeting_key": key, "note": "again"}),
+        ("shape", {"action": "recap_generate", "meeting_key": key, "shape": "sections"}),
+        ("intent-qa", {"action": "recap_generate", "meeting_key": key,
+                       "answers": ["split1=drop"]}),
+        ("revert", {"action": "recap_revert", "meeting_key": key, "version": 1}),
+        ("archive", {"action": "recap_slack_draft", "meeting_key": key,
+                     "channel_id": "D0QAPROBE"}),
+    ]
+
+
+def _walk_recap_actions(ctx, server, key, steps):
+    for label, payload in _recap_actions(key):
+        resp = post_action(ctx.http, server, payload)
+        if resp.status != 200:
+            return "recap %s -> %s %s" % (label, resp.status, one_line(resp.text, 70))
+        steps.append("%s 200" % label)
+    return None
+
+
+def _recap_settings_roundtrip(ctx, server, steps):
+    """GET + PUT /api/settings/recap（三把旋钮的写口，§63）。"""
+    snap = ctx.http.request("GET", server.base_url + "/api/settings/recap")
+    if snap.status != 200:
+        return "GET /api/settings/recap -> %s" % snap.status
+    steps.append("settings/recap 200")
+    put = ctx.http.request("PUT", server.base_url + "/api/settings/recap",
+                           body=json.dumps({"enabled": True}), headers=_write_headers(server))
+    if put.status != 200:
+        return "PUT /api/settings/recap -> %s %s" % (put.status, one_line(put.text, 70))
+    steps.append("PUT settings/recap 200")
+    return None
+
+
+def _recap_history_shape(ctx, server, key, steps):
+    """§63.9 history 的 wire 形状：{key, current, entries[], history_cap, truncated}。"""
+    hist = ctx.http.request("GET", server.base_url + "/api/recaps/history?key=" + key)
+    if hist.status != 200:
+        return "GET /api/recaps/history -> %s" % hist.status
+    missing_keys = [k for k in ('"entries"', '"history_cap"') if k not in hist.text]
+    if missing_keys:
+        return "history lacks %s" % ", ".join(missing_keys)
+    steps.append("history 200 entries[]")
+    return None
 
 
 def flow_recaps(ctx):
@@ -1039,63 +1310,43 @@ def flow_recaps(ctx):
     if missing:
         return missing
     steps = []
-    snap = ctx.http.request("GET", server.base_url + "/api/settings/recap")
-    if snap.status != 200:
-        return Verdict(MISSING, "GET /api/settings/recap -> %s" % snap.status, "-")
-    steps.append("settings/recap 200")
-    put = ctx.http.request("PUT", server.base_url + "/api/settings/recap",
-                           body=json.dumps({"enabled": True}),
-                           headers={"Content-Type": "application/json",
-                                    "X-Zai-Token": server.token})
-    steps.append("PUT settings/recap %s" % put.status)
-    # §63 recap 键的字面形状（server/inbox_writer._RECAP_KEY_RE）：meeting:<ISO 日期>T<HHMM>-<slug>
-    key = "meeting:2026-09-15T0930-qa-coverage-probe"
-    actions = [
-        ("generate", {"action": "recap_generate", "meeting_key": key}),
-        ("regenerate", {"action": "recap_generate", "meeting_key": key, "note": "again"}),
-        ("shape", {"action": "recap_generate", "meeting_key": key, "shape": "sections"}),
-        ("intent-qa", {"action": "recap_generate", "meeting_key": key,
-                       "answers": ["split1=drop"]}),
-        ("revert", {"action": "recap_revert", "meeting_key": key, "version": 1}),
-        ("archive", {"action": "recap_slack_draft", "meeting_key": key, "channel_id": "D0QAPROBE"}),
-    ]
-    for label, payload in actions:
-        resp = ctx.http.request("POST", server.base_url + "/api/actions",
-                                body=json.dumps(payload),
-                                headers={"Content-Type": "application/json",
-                                         "X-Zai-Token": server.token})
-        if resp.status != 200:
-            return Verdict(MISSING, "recap %s -> %s %s" % (label, resp.status,
-                                                           one_line(resp.text, 70)),
-                           one_line("; ".join(steps)))
-        steps.append("%s 200" % label)
+    checks = (lambda: _recap_settings_roundtrip(ctx, server, steps),
+              lambda: _walk_recap_actions(ctx, server, _RECAP_KEY, steps),
+              lambda: _recap_mark(ctx, server, _RECAP_KEY, steps),
+              lambda: _recap_history_shape(ctx, server, _RECAP_KEY, steps))
+    for check in checks:
+        problem = check()
+        if problem:
+            return Verdict(MISSING, problem, one_line("; ".join(steps)))
+    return Verdict(PRESENT, "-", one_line("; ".join(steps)))
+
+
+def _recap_mark(ctx, server, key, steps):
+    """§63.5「忽略」= POST /api/recaps/mark {mark: dismissed}。"""
     mark = ctx.http.request("POST", server.base_url + "/api/recaps/mark",
                             body=json.dumps({"key": key, "mark": "dismissed"}),
-                            headers={"Content-Type": "application/json",
-                                     "X-Zai-Token": server.token})
+                            headers=_write_headers(server))
     if mark.status != 200:
-        return Verdict(MISSING, "POST /api/recaps/mark -> %s %s" % (mark.status,
-                                                                    one_line(mark.text, 70)),
-                       one_line("; ".join(steps)))
+        return "POST /api/recaps/mark -> %s %s" % (mark.status, one_line(mark.text, 70))
     steps.append("mark 200")
-    # §63.9 history 的 wire 形状：{key, current, entries[], history_cap, truncated}
-    hist = ctx.http.request("GET", server.base_url + "/api/recaps/history?key=" + key)
-    if hist.status != 200 or '"entries"' not in hist.text or '"history_cap"' not in hist.text:
-        return Verdict(MISSING, "GET /api/recaps/history -> %s (sections shape missing)" % hist.status,
-                       one_line("; ".join(steps)))
-    steps.append("history 200 entries[]")
-    if put.status != 200:
-        return Verdict(MISSING, "PUT /api/settings/recap -> %s" % put.status,
-                       one_line("; ".join(steps)))
-    return Verdict(PRESENT, "-", one_line("; ".join(steps)))
+    return None
 
 
 _PWA_ASSETS = (("/manifest.webmanifest", "manifest"), ("/icon-192.png", "png"),
                ("/icon-512.png", "png"))
 
 
+def _pwa_asset_problem(path, want, resp):
+    """一个 PWA 资源的毛病（None = 没毛病）。"""
+    if resp.status != 200:
+        return "GET %s -> %s" % (path, resp.status)
+    if want == "manifest":
+        return None if '"icons"' in resp.text else "manifest carries no icons[]"
+    return None if "PNG" in resp.text[:16] else "%s is not PNG payload" % path
+
+
 def flow_pwa(ctx):
-    """PWA 的三件套（manifest + 两个 icon）都 200，且 content-type 对。"""
+    """PWA 的三件套（manifest + 两个 icon）都 200，且负载类型对。"""
     server, missing = _need_server(ctx)
     if missing:
         return missing
@@ -1103,15 +1354,34 @@ def flow_pwa(ctx):
         return Verdict(MISSING, "web/dist absent — run `npm run build` in web/ first", "-")
     steps = []
     for path, want in _PWA_ASSETS:
-        resp = ctx.http.request("GET", server.base_url + path)
-        if resp.status != 200:
-            return Verdict(MISSING, "GET %s -> %s" % (path, resp.status), one_line("; ".join(steps)))
-        if want == "manifest" and '"icons"' not in resp.text:
-            return Verdict(MISSING, "manifest carries no icons[]", one_line("; ".join(steps)))
-        if want == "png" and not resp.text.startswith("\ufffdPNG") and "PNG" not in resp.text[:16]:
-            return Verdict(MISSING, "%s is not PNG payload" % path, one_line("; ".join(steps)))
+        problem = _pwa_asset_problem(path, want, ctx.http.request("GET", server.base_url + path))
+        if problem:
+            return Verdict(MISSING, problem, one_line("; ".join(steps)))
         steps.append("%s 200" % path)
     return Verdict(PRESENT, "-", one_line("; ".join(steps)))
+
+
+def _plists(home):
+    return sorted(glob.glob(os.path.join(home, "Library", "LaunchAgents", "*.plist")))
+
+
+def _run_installer(ctx, script, args, env):
+    return ctx.shell.run(["bash", os.path.join(REPO_ROOT, script)] + list(args),
+                         cwd=REPO_ROOT, env=env, timeout=T_FLOW,
+                         log_name="flow_uninstall_reinstall")
+
+
+def _uninstall_problem(first, rm, left, again, plists):
+    """三趟脚本 + 两次 plist 点数 → 第一个毛病（None = 往返成立）。"""
+    if first.rc != 0:
+        return "first install rc=%s: %s" % (first.rc, one_line(first.out, 90))
+    if rm.rc != 0:
+        return "uninstall.sh --yes rc=%s: %s" % (rm.rc, one_line(rm.out, 90))
+    if left:
+        return "uninstall left %d plist behind" % len(left)
+    if again.rc != 0 or not plists:
+        return "reinstall rc=%s, %d plist" % (again.rc, len(plists))
+    return None
 
 
 def flow_uninstall_reinstall(ctx):
@@ -1119,34 +1389,23 @@ def flow_uninstall_reinstall(ctx):
     home = ctx.homes.make("uninst")
     shim_dir, shim_log = write_shims(home)
     env = shim_env(home, shim_dir, shim_log)
-    born = [p for p in (os.path.join(REPO_ROOT, "config.yaml"), os.path.join(REPO_ROOT, "state"))
-            if not os.path.exists(p)]
-    first = ctx.shell.run(["bash", os.path.join(REPO_ROOT, "install.sh"), "--non-interactive"],
-                          cwd=REPO_ROOT, env=env, timeout=T_FLOW,
-                          log_name="flow_uninstall_reinstall")
-    rm = ctx.shell.run(["bash", os.path.join(REPO_ROOT, "uninstall.sh"), "--yes"],
-                       cwd=REPO_ROOT, env=env, timeout=T_FLOW,
-                       log_name="flow_uninstall_reinstall")
-    left = sorted(glob.glob(os.path.join(home, "Library", "LaunchAgents", "*.plist")))
-    again = ctx.shell.run(["bash", os.path.join(REPO_ROOT, "install.sh"), "--non-interactive"],
-                          cwd=REPO_ROOT, env=env, timeout=T_FLOW,
-                          log_name="flow_uninstall_reinstall")
-    for path in born:
-        shutil.rmtree(path, ignore_errors=True) if os.path.isdir(path) else _unlink(path)
-    plists = sorted(glob.glob(os.path.join(home, "Library", "LaunchAgents", "*.plist")))
+    born = _checkout_born()
+    first = _run_installer(ctx, "install.sh", ["--non-interactive"], env)
+    rm = _run_installer(ctx, "uninstall.sh", ["--yes"], env)
+    left = _plists(home)
+    again = _run_installer(ctx, "install.sh", ["--non-interactive"], env)
+    _drop_born(born)
+    plists = _plists(home)
     evidence = "install rc=%s, uninstall rc=%s (left %d plist), reinstall rc=%s (%d plist)" % (
         first.rc, rm.rc, len(left), again.rc, len(plists))
-    if first.rc != 0:
-        return Verdict(MISSING, "first install rc=%s: %s" % (first.rc, one_line(first.out, 90)),
-                       evidence)
-    if rm.rc != 0:
-        return Verdict(MISSING, "uninstall.sh --yes rc=%s: %s" % (rm.rc, one_line(rm.out, 90)),
-                       evidence)
-    if left:
-        return Verdict(MISSING, "uninstall left %d plist behind" % len(left), evidence)
-    if again.rc != 0 or not plists:
-        return Verdict(MISSING, "reinstall rc=%s, %d plist" % (again.rc, len(plists)), evidence)
+    problem = _uninstall_problem(first, rm, left, again, plists)
+    if problem:
+        return Verdict(MISSING, problem, evidence)
     return Verdict(PRESENT, "-", one_line(evidence))
+
+
+def _spec_hits(mapping, spec_file):
+    return {name: hit for (spec, name), hit in mapping.items() if spec == spec_file}
 
 
 def flow_pages_controls(ctx):
@@ -1154,10 +1413,10 @@ def flow_pages_controls(ctx):
     mapping, error = ctx.tools.playwright_map(ctx.pw_specs)
     if error and not mapping:
         return Verdict(MISSING, error, "-")
-    hits = [(key, hit) for key, hit in mapping.items() if key[0] == PAGES_SPEC]
+    hits = _spec_hits(mapping, PAGES_SPEC)
     if not hits:
         return Verdict(MISSING, "playwright report has no %s tests" % PAGES_SPEC, "-")
-    bad = [key[1] for key, hit in hits if not hit.ok]
+    bad = sorted(name for name, hit in hits.items() if not hit.ok)
     evidence = PAGES_SPEC + ": %d/%d tests passed" % (len(hits) - len(bad), len(hits))
     if bad:
         return Verdict(MISSING, one_line("failed: " + ", ".join(bad[:3])), evidence)
@@ -1191,6 +1450,37 @@ def _hit_verdict(mapping, error, key, kind, absent_reason):
     return Verdict(PRESENT, "-", one_line(hit.evidence))
 
 
+def _compile_title(title):
+    try:
+        return re.compile(title or ".")
+    except re.error:
+        return None
+
+
+def _pw_matches(mapping, want, pattern):
+    return [hit for (file_name, name), hit in mapping.items()
+            if file_name == want and pattern.search(name)]
+
+
+def playwright_verdict(mapping, spec, title):
+    """playwright map × `<spec>::<title regex>` → Verdict。"""
+    pattern = _compile_title(title)
+    if pattern is None:
+        return Verdict(MISSING, "bad title regex %r" % title, "-")
+    want = os.path.basename(spec.strip())
+    hits = _pw_matches(mapping, want, pattern)
+    if not hits:
+        return Verdict(MISSING, "playwright report has no %s::%s" % (want, title), "-")
+    bad = [hit for hit in hits if not hit.ok]
+    if bad:
+        return Verdict(MISSING, one_line(bad[0].evidence), one_line(bad[0].evidence))
+    return Verdict(PRESENT, "-", one_line(hits[0].evidence))
+
+
+def _log_slug(text):
+    return re.sub(r"\W+", "_", str(text))
+
+
 class Judge:
     """proof 分句 → Verdict（每个 kind 一个执行器；重工具从 Tools 拿 memoized map）。"""
 
@@ -1207,21 +1497,28 @@ class Judge:
         self._unittest_modules = set()
         self._pw_specs = set()
         self.flow_ctx = FlowCtx(tools, shell, http, homes, opts, self._pw_specs)
+        # kind → 执行器（唯一的分派表；未登记的 kind = MISSING unknown proof kind）
+        self._handlers = {"unittest": self._unittest, "swift": self._swift,
+                          "parity": self._parity, "playwright": self._playwright,
+                          "http": self._http, "settings": self._settings,
+                          "flow": self.flow, "axprobe": self.axprobe,
+                          "fixture": self.fixture}
 
-    # -- 预扫：unittest 的模块集合（一次跑全都要的模块）------------------- #
+    # -- 预扫：一次跑要覆盖的 unittest 模块 / playwright spec ------------- #
     def collect(self, rows):
         for row in rows:
-            if str(row.get("status")) == "waived":
-                continue
             for kind, arg in parse_proof(row.get("proof")):
-                if kind == "unittest":
-                    self._unittest_modules.update(m.strip() for m in arg.split(",") if m.strip())
-                elif kind == "playwright":
-                    spec = os.path.basename(arg.partition("::")[0].strip())
-                    if spec:
-                        self._pw_specs.add(spec)
-                elif kind == "flow" and arg == "pages_controls":
-                    self._pw_specs.add(PAGES_SPEC)
+                self._note(row, kind, arg)
+
+    def _note(self, row, kind, arg):
+        if str(row.get("status")) == "waived":
+            return
+        if kind == "unittest":
+            self._unittest_modules.update(csv_parts(arg))
+        elif kind == "playwright":
+            self._pw_specs.add(os.path.basename(arg.partition("::")[0].strip()))
+        elif kind == "flow" and arg == "pages_controls":
+            self._pw_specs.add(PAGES_SPEC)
 
     def ids(self, server):
         if self._ids is None:
@@ -1229,91 +1526,74 @@ class Judge:
         return self._ids
 
     def clause(self, kind, arg):
-        if kind == "unittest":
-            mapping, error = self.tools.unittest_map(self._unittest_modules)
-            parts = [m.strip() for m in arg.split(",") if m.strip()]
-            if not parts:
-                return Verdict(MISSING, "unittest proof lists no module", "-")
-            verdicts = [_hit_verdict(mapping, error, mod, kind,
-                                     "module %s did not run" % mod) for mod in parts]
-            bad = [v for v in verdicts if v.state != PRESENT]
-            if bad:
-                return bad[0]
-            return Verdict(PRESENT, "-", one_line("; ".join(v.evidence for v in verdicts)))
-        if kind == "swift":
-            mapping, error = self.tools.swift_map()
-            return _hit_verdict(mapping, error, arg, kind, "no harness named %s" % arg)
-        if kind == "parity":
-            mapping, error = self.tools.parity_map()
-            return _hit_verdict(mapping, error, arg, kind,
-                                "vitest report has no it() for %s" % arg)
-        if kind == "playwright":
-            return self._playwright(arg)
-        if kind == "http":
-            server, missing = _need_server(self.flow_ctx)
-            return missing or run_http_proof(arg, self.http, server, self.ids(server))
-        if kind == "settings":
-            server, missing = _need_server(self.flow_ctx)
-            return missing or run_settings_proof(arg, self.http, server)
-        if kind == "flow":
-            return self.flow(arg)
-        if kind == "axprobe":
-            return self.axprobe(arg)
-        if kind == "fixture":
-            return self.fixture(arg)
-        return Verdict(MISSING, "unknown proof kind %r" % kind, "-")
+        handler = self._handlers.get(kind)
+        if handler is None:
+            return Verdict(MISSING, "unknown proof kind %r" % kind, "-")
+        return handler(arg)
+
+    # -- 每个 kind 一个执行器 --------------------------------------------- #
+    def _unittest(self, arg):
+        mapping, error = self.tools.unittest_map(self._unittest_modules)
+        modules = csv_parts(arg)
+        if not modules:
+            return Verdict(MISSING, "unittest proof lists no module", "-")
+        return combine([_hit_verdict(mapping, error, mod, "unittest",
+                                     "module %s did not run" % mod) for mod in modules])
+
+    def _swift(self, arg):
+        mapping, error = self.tools.swift_map()
+        return _hit_verdict(mapping, error, arg, "swift", "no harness named %s" % arg)
+
+    def _parity(self, arg):
+        mapping, error = self.tools.parity_map()
+        return _hit_verdict(mapping, error, arg, "parity",
+                            "vitest report has no it() for %s" % arg)
 
     def _playwright(self, arg):
         spec, _, title = arg.partition("::")
         mapping, error = self.tools.playwright_map(self._pw_specs)
         if error and not mapping:
             return Verdict(MISSING, error, "-")
-        try:
-            pattern = re.compile(title or ".")
-        except re.error as exc:
-            return Verdict(MISSING, "bad title regex %r: %s" % (title, exc), "-")
-        want = os.path.basename(spec.strip())
-        hits = [hit for (file_name, name), hit in mapping.items()
-                if file_name == want and pattern.search(name)]
-        if not hits:
-            return Verdict(MISSING, "playwright report has no %s::%s" % (want, title), "-")
-        bad = [h for h in hits if not h.ok]
-        if bad:
-            return Verdict(MISSING, one_line(bad[0].evidence), one_line(bad[0].evidence))
-        return Verdict(PRESENT, "-", one_line(hits[0].evidence))
+        return playwright_verdict(mapping, spec, title)
+
+    def _http(self, arg):
+        server, missing = _need_server(self.flow_ctx)
+        if missing:
+            return missing
+        return run_http_proof(arg, self.http, server, self.ids(server))
+
+    def _settings(self, arg):
+        server, missing = _need_server(self.flow_ctx)
+        if missing:
+            return missing
+        return run_settings_proof(arg, self.http, server)
 
     def flow(self, name):
-        if name in self._flow_cache:
-            return self._flow_cache[name]
+        """一条 flow: 只跑一次（同名清单行共用判决）。"""
+        if name not in self._flow_cache:
+            self._flow_cache[name] = self._run_flow(name)
+        return self._flow_cache[name]
+
+    def _run_flow(self, name):
         func = FLOWS.get(name)
         if func is None:
-            verdict = Verdict(MISSING, "unknown flow %r" % name, "-")
-        else:
-            log("flow:%s …" % name)
-            try:
-                verdict = func(self.flow_ctx)
-            except Exception as exc:
-                verdict = Verdict(MISSING, "flow raised %s: %s" % (
-                    type(exc).__name__, one_line(exc, 120)), "-")
-        self._flow_cache[name] = verdict
-        return verdict
+            return Verdict(MISSING, "unknown flow %r" % name, "-")
+        log("flow:%s …" % name)
+        try:
+            return func(self.flow_ctx)
+        except Exception as exc:
+            return Verdict(MISSING, "flow raised %s: %s" % (
+                type(exc).__name__, one_line(exc, 120)), "-")
 
     def axprobe(self, probe):
-        script = os.path.join(REPO_ROOT, "scripts", "qa", "shell_ui_probe.py")
         if self.opts.skip_ax:
             return Verdict(MISSING, "skipped", "--skip-ax")
+        script = os.path.join(REPO_ROOT, "scripts", "qa", "shell_ui_probe.py")
         if not os.path.exists(script):
             return Verdict(MISSING, "probe script absent", "-")
         proc = self.shell.run([self.python, script, "--probe", probe, "--json"], cwd=REPO_ROOT,
-                              timeout=T_SHORT, log_name="axprobe_" + re.sub(r"\W+", "_", probe))
-        present, detail = _probe_json(proc.out)
-        if proc.rc != 0 and not present:
-            return Verdict(MISSING, "probe rc=%s: %s" % (proc.rc, one_line(proc.out, 90)),
-                           tail_line(proc.out))
-        if not present:
-            return Verdict(MISSING, one_line(detail or "probe reports present=false"),
-                           tail_line(proc.out))
-        return Verdict(PRESENT, "-", one_line(detail or tail_line(proc.out)))
+                              timeout=T_SHORT, log_name="axprobe_" + _log_slug(probe))
+        return _probe_verdict(proc)
 
     def fixture(self, slug):
         script = os.path.join(REPO_ROOT, "scripts", "qa", "fixtures_b", "%s.py" % slug)
@@ -1321,36 +1601,37 @@ class Judge:
             return Verdict(MISSING, "fixture script absent: scripts/qa/fixtures_b/%s.py" % slug, "-")
         proc = self.shell.run([self.python, script], cwd=REPO_ROOT,
                               env={"PYTHONPATH": self.pythonpath},
-                              timeout=T_FLOW, log_name="fixture_" + re.sub(r"\W+", "_", slug))
+                              timeout=T_FLOW, log_name="fixture_" + _log_slug(slug))
         if proc.rc != 0:
             return Verdict(MISSING, "fixture rc=%s" % proc.rc, tail_line(proc.out))
         return Verdict(PRESENT, "-", tail_line(proc.out))
 
     def row(self, row):
+        """一行清单 → Verdict（waived 行不跑任何东西，照抄 waive_reason）。"""
         if str(row.get("status")) == "waived":
             return Verdict(WAIVED, one_line(row.get("waive_reason") or "waived"), "-")
         clauses = parse_proof(row.get("proof"))
         if not clauses:
             return Verdict(MISSING, "no proof declared in inventory", "-")
-        evidences, first_bad = [], None
-        for kind, arg in clauses:
-            verdict = self.clause(kind, arg)
-            evidences.append(verdict.evidence)
-            if verdict.state != PRESENT and first_bad is None:
-                first_bad = verdict
-        if first_bad is not None:
-            return Verdict(MISSING, first_bad.reason, one_line(" | ".join(evidences)))
-        return Verdict(PRESENT, "-", one_line(" | ".join(evidences)))
+        return combine([self.clause(kind, arg) for kind, arg in clauses])
+
+
+def _probe_verdict(proc):
+    """AX 探针的 (rc, 输出) → Verdict（JSON 的 present 是真源，rc 只作补充证据）。"""
+    present, detail = _probe_json(proc.out)
+    if present:
+        return Verdict(PRESENT, "-", one_line(detail or tail_line(proc.out)))
+    if proc.rc != 0:
+        return Verdict(MISSING, "probe rc=%s: %s" % (proc.rc, one_line(proc.out, 90)),
+                       tail_line(proc.out))
+    return Verdict(MISSING, one_line(detail or "probe reports present=false"),
+                   tail_line(proc.out))
 
 
 def _probe_json(text):
     """shell_ui_probe.py 的 JSON → (present, detail)。"""
-    start = text.find("{")
-    if start < 0:
-        return False, ""
-    try:
-        doc = json.loads(text[start:])
-    except ValueError:
+    doc = json_tail(text)
+    if not isinstance(doc, dict):
         return False, ""
     detail = doc.get("evidence") or doc.get("detail") or doc.get("reason") or ""
     return bool(doc.get("present")), str(detail)
@@ -1360,21 +1641,26 @@ def _probe_json(text):
 # 报告 R
 # --------------------------------------------------------------------------- #
 
+_REPORT_FORMS = {
+    PRESENT: lambda ident, v: "%s PRESENT evidence=%s" % (ident, v.evidence or "-"),
+    WAIVED: lambda ident, v: "%s WAIVED reason=%s evidence=-" % (ident, v.reason or "waived"),
+    MISSING: lambda ident, v: "%s MISSING reason=%s evidence=%s" % (
+        ident, v.reason or "-", v.evidence or "-"),
+}
+
+
+def _report_line(ident, verdict):
+    return _REPORT_FORMS.get(verdict.state, _REPORT_FORMS[MISSING])(ident, verdict)
+
+
 def render_report(pairs):
     """[(row, Verdict)] → R 的全文（末三行 PRESENT=/MISSING=/WAIVED=）。"""
     lines, counts = [], {PRESENT: 0, MISSING: 0, WAIVED: 0}
     for row, verdict in pairs:
-        ident = str(row.get("id") or "?")
         counts[verdict.state] = counts.get(verdict.state, 0) + 1
-        if verdict.state == PRESENT:
-            lines.append("%s PRESENT evidence=%s" % (ident, verdict.evidence or "-"))
-        elif verdict.state == WAIVED:
-            lines.append("%s WAIVED reason=%s evidence=-" % (ident, verdict.reason or "waived"))
-        else:
-            lines.append("%s MISSING reason=%s evidence=%s" % (
-                ident, verdict.reason or "-", verdict.evidence or "-"))
-    for state in (PRESENT, MISSING, WAIVED):
-        lines.append("%s=%d" % (state, counts.get(state, 0)))
+        lines.append(_report_line(str(row.get("id") or "?"), verdict))
+    lines.extend("%s=%d" % (state, counts.get(state, 0))
+                 for state in (PRESENT, MISSING, WAIVED))
     return "\n".join(lines) + "\n", counts
 
 
@@ -1407,45 +1693,62 @@ def resolve_path(path):
     return path if os.path.isabs(path) else os.path.join(REPO_ROOT, path)
 
 
-def main(argv=None, shell=None, http=None, homes=None, server_factory=None, python_bin=None):
-    opts = build_parser().parse_args(argv)
-    opts.logdir = resolve_path(opts.logdir) if opts.logdir else None
+def _load_rows(opts):
+    """(rows, exit code)：清单缺席 / 读不动 → 2（诚实退出，不空跑）。"""
     inventory = resolve_path(opts.inventory)
     if not os.path.exists(inventory):
         sys.stderr.write(
             "coverage_run: inventory %s not found — run "
             "`python3 scripts/qa/coverage_inventory.py --write` first (or pass --inventory PATH)\n"
             % inventory)
-        return 2
+        return None, 2
     try:
         rows = load_inventory(inventory)
     except (OSError, ValueError) as exc:
         sys.stderr.write("coverage_run: unreadable inventory %s: %s\n" % (inventory, exc))
-        return 2
+        return None, 2
     if opts.only:
-        rows = [r for r in rows if str(r.get("id") or "").startswith(opts.only)]
-    if opts.logdir:
-        os.makedirs(opts.logdir, exist_ok=True)
+        rows = [row for row in rows if str(row.get("id") or "").startswith(opts.only)]
+    return rows, 0
 
+
+def _judge_all(judge, rows, cleanup):
+    """整跑的 trap 边界：无论怎么收场，临时 HOME 与子进程都清掉。"""
+    atexit.register(cleanup)
+    _install_signal_traps(cleanup)
+    try:
+        return [(row, judge.row(row)) for row in rows]
+    finally:
+        cleanup()
+        atexit.unregister(cleanup)
+
+
+def _assemble(opts, shell, http, homes, server_factory, python_bin):
+    """三个注入缝的组装（单元测试传假货进来，真跑用真 Shell / Http / demo server）。"""
     homes = homes or TempHomes()
     shell = shell or Shell(opts.logdir)
     http = http or Http()
     tools = Tools(shell, http, opts, homes, server_factory=server_factory, python_bin=python_bin)
-    judge = Judge(tools, shell, http, homes, opts)
+    return tools, Judge(tools, shell, http, homes, opts), homes
+
+
+def main(argv=None, shell=None, http=None, homes=None, server_factory=None, python_bin=None):
+    opts = build_parser().parse_args(argv)
+    opts.logdir = resolve_path(opts.logdir) if opts.logdir else None
+    rows, code = _load_rows(opts)
+    if rows is None:
+        return code
+    if opts.logdir:
+        os.makedirs(opts.logdir, exist_ok=True)
+    tools, judge, homes = _assemble(opts, shell, http, homes, server_factory, python_bin)
     judge.collect(rows)
 
     def cleanup():
         tools.stop()
         homes.cleanup()
 
-    atexit.register(cleanup)
-    _install_signal_traps(cleanup)
     started = time.time()
-    try:
-        pairs = [(row, judge.row(row)) for row in rows]
-    finally:
-        cleanup()
-        atexit.unregister(cleanup)
+    pairs = _judge_all(judge, rows, cleanup)
     text, counts = render_report(pairs)
     write_report(resolve_path(opts.report), text)
     sys.stdout.write(text)
