@@ -6480,101 +6480,101 @@
       "id": "parity:control:notifications:label:its-engine-failed-to-start",
       "source": "parity",
       "scenario": "native control control:notifications:label:its-engine-failed-to-start (引擎没能启动 / its engine failed to start) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:node-js-is-missing",
       "source": "parity",
       "scenario": "native control control:notifications:label:node-js-is-missing (缺 Node.js / Node.js is missing) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:off",
       "source": "parity",
       "scenario": "native control control:notifications:label:off (关 / Off) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:open-the-app-to-see-the-board",
       "source": "parity",
       "scenario": "native control control:notifications:label:open-the-app-to-see-the-board (打开 App 查看看板 / Open the app to see the board) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:overflow-count-more-notifications",
       "source": "parity",
       "scenario": "native control control:notifications:label:overflow-count-more-notifications (还有 {overflow.count} 条通知 / +{overflow.count} more notifications) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:recording-is-live",
       "source": "parity",
       "scenario": "native control control:notifications:label:recording-is-live (录制已就绪 / Recording is live) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:screen-audio",
       "source": "parity",
       "scenario": "native control control:notifications:label:screen-audio (屏幕 + 音频 / Screen + Audio) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:screen-audio-is-not-ready",
       "source": "parity",
       "scenario": "native control control:notifications:label:screen-audio-is-not-ready (还开不了「屏幕+音频」 / Screen + Audio is not ready) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:screen-only",
       "source": "parity",
       "scenario": "native control control:notifications:label:screen-only (仅屏幕 / Screen Only) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:notifications:label:screen-recording-permission-lost",
       "source": "parity",
       "scenario": "native control control:notifications:label:screen-recording-permission-lost (屏幕录制授权失效了 / Screen Recording permission lost) is on the web page",
-      "proof": "axprobe:notify_relay",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-owned system notice (server-owned catalog §66.2)"
+      "note": "server-owned notice catalog (§66.2)"
     },
     {
       "id": "parity:control:permissions:button:close",
@@ -10079,8 +10079,8 @@
     {
       "id": "parity:notification:general",
       "source": "parity",
-      "scenario": "system notification kind general is relayed",
-      "proof": "axprobe:notify_relay",
+      "scenario": "system notification kind general is in the catalog",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -10089,8 +10089,8 @@
     {
       "id": "parity:notification:review_ready",
       "source": "parity",
-      "scenario": "system notification kind review_ready is relayed",
-      "proof": "axprobe:notify_relay",
+      "scenario": "system notification kind review_ready is in the catalog",
+      "proof": "unittest:tests.test_server_notify_catalog",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -13320,11 +13320,11 @@
       "id": "shell:bridge.open-page",
       "source": "shell",
       "scenario": "the `open_page {page, anchor?}` command opens a board page",
-      "proof": "axprobe:menu_open_page && swift:BridgeHarness",
+      "proof": "swift:BridgeHarness",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": null
+      "note": "live probe axprobe:menu_open_page = 项[3] shell_ui_probe（§77.4）"
     },
     {
       "id": "shell:bridge.quick-capture",
@@ -13342,9 +13342,9 @@
       "scenario": "the Dock badge shows the pending count (nil at zero)",
       "proof": "axprobe:dock_badge",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "design-not-carried D79",
+      "note": "live-shell probe = 项[3]（§77.4，需 owner FDA 现场确认）"
     },
     {
       "id": "shell:hotkey.quick-capture",
@@ -13352,15 +13352,15 @@
       "scenario": "⌃⌥Space focuses the capture box (Carbon global hotkey)",
       "proof": "axprobe:hotkey_focus",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "design-not-carried D79",
+      "note": "live-shell probe = 项[3]（§77.4，需 owner FDA 现场确认）"
     },
     {
       "id": "shell:login-item.toggle",
       "source": "shell",
       "scenario": "the launch-at-login toggle registers / unregisters SMAppService",
-      "proof": "swift:LaunchHarness && swift:BridgeHarness",
+      "proof": "swift:BridgeHarness",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -13552,9 +13552,9 @@
       "scenario": "NotifyRelay drains the queue into system notifications",
       "proof": "axprobe:notify_relay",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "design-not-carried D79",
+      "note": "live-shell probe = 项[3]（§77.4，需 owner FDA 现场确认）"
     },
     {
       "id": "shell:shortcut.cmd-1",
@@ -13640,11 +13640,11 @@
       "id": "shell:terminal.takeover",
       "source": "shell",
       "scenario": "Apple Events hand a session over to the terminal",
-      "proof": "axprobe:terminal_takeover && swift:BridgeHarness",
+      "proof": "swift:BridgeHarness",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": null
+      "note": "live probe axprobe:terminal_takeover = 项[3] shell_ui_probe（§77.4）"
     }
   ]
 }

@@ -262,7 +262,9 @@ def _parity_control_proof(item, harnesses):
     if item.get("owner") == "web":
         return "parity:" + item["id"], None
     if item.get("probe") == "notify_catalog":
-        return "axprobe:notify_relay", "shell-owned system notice (server-owned catalog §66.2)"
+        # 静态通知文案 = server-owned catalog，判例确定性钉死（§66.2 / §77.4）；
+        # 活体 NotifyRelay 排空是项 [3] 的 axprobe:notify_relay，不混进确定性 A 档。
+        return "unittest:tests.test_server_notify_catalog", "server-owned notice catalog (§66.2)"
     pinned = harness_pinning(harnesses, item.get("en") or "")
     if pinned:
         return "swift:" + pinned, None
@@ -355,8 +357,8 @@ def _control_rows(inventory, harnesses):
 
 
 def _notification_rows(inventory):
-    return [_parity_row(item, "axprobe:notify_relay",
-                        "system notification kind %s is relayed" % (item.get("kind") or "general"))
+    return [_parity_row(item, "unittest:tests.test_server_notify_catalog",
+                        "system notification kind %s is in the catalog" % (item.get("kind") or "general"))
             for item in _gated(inventory["notifications"])]
 
 
@@ -719,8 +721,18 @@ def shell_rows(root):
              for item in inventory["rail"]["items"] if item.get("shortcut")]
     for slug, scenario, proof, literal in _SHELL_EXTRAS:
         pinned = harness_pinning(harnesses, literal)
-        rows.append(make_row("shell:" + slug, "shell", scenario,
-                             join_proofs(proof, ("swift:" + pinned) if pinned else "")))
+        if pinned:
+            # 确定性覆盖 = 钉着它的 harness；活体 axprobe 是项 [3]（§77.4）的现场确认
+            rows.append(make_row("shell:" + slug, "shell", scenario, "swift:" + pinned,
+                                 note=("live probe %s = 项[3] shell_ui_probe（§77.4）" % proof)
+                                 if proof.startswith("axprobe:") else None))
+        elif proof.startswith("axprobe:"):
+            # 纯活体壳探针，无确定性 harness：A 档不承载，记 waived（现场跑在项 [3]，需 owner FDA）
+            rows.append(make_row("shell:" + slug, "shell", scenario, proof,
+                                 status="waived", waive_reason="design-not-carried D79",
+                                 note="live-shell probe = 项[3]（§77.4，需 owner FDA 现场确认）"))
+        else:
+            rows.append(make_row("shell:" + slug, "shell", scenario, proof))
     return rows
 
 
