@@ -40,6 +40,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -239,6 +240,31 @@ class Shell:
 class Http:
     """loopback HTTP（urllib）。4xx/5xx 不抛，按状态码返回——proof 要判的就是状态码。"""
 
+    # 状态码在读 body 之前就已到手；body 只为 contains 判据服务。流式端点（SSE
+    # `/api/events`）的 body 永不结束，`resp.read()` 会把整轮挂死（2026-09-16 事故）——
+    # 所以 body 读取封顶且带硬墙钟：到点就放弃、返回已到手的部分，绝不阻塞。
+    BODY_CAP = 1 << 20   # 1 MiB：本地大 JSON（/api/board 全景）绰绰有余
+    READ_DEADLINE = 10.0  # s：本地 loopback 快，10 s 读不完即判流式/异常，放弃 body
+
+    def _read_capped(self, resp):
+        box = {}
+
+        def _pump():
+            try:
+                box["data"] = resp.read(self.BODY_CAP)
+            except Exception as exc:  # noqa: BLE001  (读失败按空 body 处理，状态码已知)
+                box["err"] = exc
+
+        worker = threading.Thread(target=_pump, daemon=True)
+        worker.start()
+        worker.join(self.READ_DEADLINE)
+        if worker.is_alive():          # 流式 / 卡住：放弃 body，解开阻塞的 socket
+            try:
+                resp.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return (box.get("data") or b"").decode("utf-8", "replace")
+
     def request(self, method, url, body=None, headers=None, timeout=30):
         data = body.encode("utf-8") if isinstance(body, str) else body
         req = urllib.request.Request(url, data=data, method=method)
@@ -246,9 +272,9 @@ class Http:
             req.add_header(key, value)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return Resp(resp.status, resp.read().decode("utf-8", "replace"))
+                return Resp(resp.status, self._read_capped(resp))
         except urllib.error.HTTPError as exc:
-            return Resp(exc.code, exc.read().decode("utf-8", "replace"))
+            return Resp(exc.code, self._read_capped(exc))
         except (urllib.error.URLError, OSError, ValueError) as exc:
             return Resp(0, "request failed: %s" % exc)
 
