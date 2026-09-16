@@ -720,7 +720,7 @@
       "id": "contract:§42",
       "source": "contract",
       "scenario": "v0.42.0 卡面大扫除（display-only + 一项 radar 提取范围变化）",
-      "proof": "",
+      "proof": "unittest:tests.test_radar_triage",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -10720,11 +10720,11 @@
       "id": "parity:setting:prefs:boardAnimations",
       "source": "parity",
       "scenario": "settings key boardAnimations (prefs store) is carried",
-      "proof": "",
+      "proof": "parity:setting:prefs:boardAnimations",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref, no server/vitest probe"
+      "note": "web localStorage pref pinned by a vitest it()"
     },
     {
       "id": "parity:setting:prefs:captionsAppleLocale",
@@ -10810,31 +10810,31 @@
       "id": "parity:setting:prefs:captureHistory",
       "source": "parity",
       "scenario": "settings key captureHistory (prefs store) is carried",
-      "proof": "",
+      "proof": "parity:setting:prefs:captureHistory",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref, no server/vitest probe"
+      "note": "web localStorage pref pinned by a vitest it()"
     },
     {
       "id": "parity:setting:prefs:cardSortOrder",
       "source": "parity",
       "scenario": "settings key cardSortOrder (prefs store) is carried",
-      "proof": "",
+      "proof": "parity:setting:prefs:cardSortOrder",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref, no server/vitest probe"
+      "note": "web localStorage pref pinned by a vitest it()"
     },
     {
       "id": "parity:setting:prefs:hasCompletedFirstRun",
       "source": "parity",
       "scenario": "settings key hasCompletedFirstRun (prefs store) is carried",
-      "proof": "",
+      "proof": "http:GET /api/setup expect=200 contains=\"done\"",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "server-side landing is not a settings-catalog key"
+      "note": "server-side landing setup_done.json, read back from the snapshot"
     },
     {
       "id": "parity:setting:prefs:lastActiveRecordingMode",
@@ -10860,11 +10860,11 @@
       "id": "parity:setting:prefs:mainSection",
       "source": "parity",
       "scenario": "settings key mainSection (prefs store) is carried",
-      "proof": "",
+      "proof": "parity:setting:prefs:mainSection",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref, no server/vitest probe"
+      "note": "web localStorage pref pinned by a vitest it()"
     },
     {
       "id": "parity:setting:prefs:recordingMode",
@@ -10890,21 +10890,21 @@
       "id": "parity:setting:prefs:sidebarCollapsed",
       "source": "parity",
       "scenario": "settings key sidebarCollapsed (prefs store) is carried",
-      "proof": "",
+      "proof": "parity:setting:prefs:sidebarCollapsed",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref, no server/vitest probe"
+      "note": "web localStorage pref pinned by a vitest it()"
     },
     {
       "id": "parity:setting:prefs:sidebarWidth",
       "source": "parity",
       "scenario": "settings key sidebarWidth (prefs store) is carried",
-      "proof": "",
+      "proof": "parity:setting:prefs:sidebarWidth",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref, no server/vitest probe"
+      "note": "web localStorage pref pinned by a vitest it()"
     },
     {
       "id": "parity:setting:prefs:terminalApp",
@@ -11590,7 +11590,7 @@
       "id": "route:GET /api/setup",
       "source": "routes",
       "scenario": "GET /api/setup is routed",
-      "proof": "http:GET /api/setup expect=200 && unittest:tests.test_server_permissions_setup,tests.test_server_setup_vaults,tests.test_shell_ui_probe",
+      "proof": "http:GET /api/setup expect=200 && unittest:tests.test_coverage_inventory,tests.test_server_permissions_setup,tests.test_server_setup_vaults,tests.test_shell_ui_probe",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -12540,7 +12540,7 @@
       "id": "route:PUT /api/settings/daily-loop#409",
       "source": "routes",
       "scenario": "PUT /api/settings/daily-loop reports a state conflict as 409",
-      "proof": "",
+      "proof": "unittest:tests.test_server_settings_daily_loop",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

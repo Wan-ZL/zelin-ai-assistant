@@ -269,26 +269,68 @@ def _parity_control_proof(item, harnesses):
     return "", "shell-owned control with no harness pin"
 
 
-def _parity_setting_fallback(item, harnesses):
-    """不在 server 设置目录里的键：壳持有的看 harness 有没有钉住它，其余留空（进 gaps）。"""
-    if item.get("probe") == "shell_source":
-        pinned = harness_pinning(harnesses, '"%s"' % item["key"])
-        if pinned:
-            return "swift:" + pinned, "shell-held UserDefaults key"
-        return "", "shell-held UserDefaults key with no harness pin"
-    if item.get("probe") == "server_source":
-        return "", "server-side landing is not a settings-catalog key"
+_PARITY_TEST_REL = os.path.join("web", "src", "parity.test.tsx")
+_PARITY_IT_RE = re.compile(r'it\("(setting:prefs:[A-Za-z0-9_]+)"')
+# probe=server_source 的键（概念搬到 server 侧的状态文件，§68.5）：落点文件 → 哪个快照露出它。
+# runner 的 http executor 只认 `contains=<不含空格的子串>`，所以直接找 JSON 里的键名字面量。
+_SERVER_LANDING_PROOF = {
+    "setup_done.json": 'http:GET /api/setup expect=200 contains="done"',
+}
+
+
+def parity_vitest_ids(root):
+    """web/src/parity.test.tsx 里以清单 id 为标题的 it()（`it("setting:prefs:<key>"` 形状）。
+
+    这些 it 驱动真控件写 localStorage 键再读回来；runner 一次 vitest 就把它们判了
+    （scripts/qa/coverage_run.py 的 `parity:` executor 复用 parity_check.control_presence）。"""
+    path = os.path.join(root, _PARITY_TEST_REL)
+    if not os.path.exists(path):
+        return frozenset()
+    return frozenset(_PARITY_IT_RE.findall(read_text(path)))
+
+
+def _shell_pref_proof(item, harnesses):
+    """壳持有的 UserDefaults 键：看哪个 harness 正文里逐字钉着它。"""
+    pinned = harness_pinning(harnesses, '"%s"' % item["key"])
+    if pinned:
+        return "swift:" + pinned, "shell-held UserDefaults key"
+    return "", "shell-held UserDefaults key with no harness pin"
+
+
+def _server_pref_proof(item):
+    """概念搬到 server 的键（probe=server_source）：落点文件 → 露出它的那个快照 GET。"""
+    landing = (item.get("landing") or "").strip('"')
+    proof = _SERVER_LANDING_PROOF.get(landing)
+    if proof:
+        return proof, "server-side landing %s, read back from the snapshot" % landing
+    return "", "server-side landing is not a settings-catalog key"
+
+
+def _web_pref_proof(item, vitest_ids):
+    """web 自有的 localStorage 偏好键：parity.test.tsx 里有没有同名 it() 驱动真控件往返。"""
+    if item["id"] in vitest_ids:
+        return "parity:" + item["id"], "web localStorage pref pinned by a vitest it()"
     return "", "web localStorage pref, no server/vitest probe"
 
 
-def _parity_setting_proof(item, key_sections, harnesses):
+def _parity_setting_fallback(item, harnesses, vitest_ids):
+    """不在 server 设置目录里的键：按清单的 probe 分派到三条兜底探针（都可能留空 → 进 gaps）。"""
+    probe = item.get("probe")
+    if probe == "shell_source":
+        return _shell_pref_proof(item, harnesses)
+    if probe == "server_source":
+        return _server_pref_proof(item)
+    return _web_pref_proof(item, vitest_ids)
+
+
+def _parity_setting_proof(item, key_sections, harnesses, vitest_ids):
     key = item["key"]
     if key in key_sections:
         return "settings:%s.%s" % (key_sections[key], key), None
     landing = (item.get("landing") or "").strip('"')
     if landing in key_sections:
         return "settings:%s.%s" % (key_sections[landing], landing), "landing key in the server catalog"
-    return _parity_setting_fallback(item, harnesses)
+    return _parity_setting_fallback(item, harnesses, vitest_ids)
 
 
 def _parity_row(item, proof, scenario, note=None):
@@ -349,10 +391,10 @@ def _theme_rows(inventory):
             for item in _gated(inventory["theme_layout"])]
 
 
-def _settings_key_rows(inventory, key_sections, harnesses):
+def _settings_key_rows(inventory, key_sections, harnesses, vitest_ids):
     rows = []
     for item in _gated(inventory["settings_keys"]):
-        proof, note = _parity_setting_proof(item, key_sections, harnesses)
+        proof, note = _parity_setting_proof(item, key_sections, harnesses, vitest_ids)
         rows.append(_parity_row(item, proof, "settings key %s (%s store) is carried"
                                 % (item["key"], item.get("store")), note))
     return rows
@@ -368,7 +410,7 @@ def parity_rows(root):
     rows += _rail_rows(inventory)
     rows += _lane_rows(inventory)
     rows += _screen_rows(inventory)
-    rows += _settings_key_rows(inventory, key_sections, harnesses)
+    rows += _settings_key_rows(inventory, key_sections, harnesses, parity_vitest_ids(root))
     rows += _shortcut_rows(inventory)
     rows += _theme_rows(inventory)
     return rows
