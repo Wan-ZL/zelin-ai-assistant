@@ -89,6 +89,33 @@ class _Repoint:
         self._saved = []
 
 
+def _restore_env(key: str, old) -> None:
+    if old is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = old
+
+
+@contextlib.contextmanager
+def env_patch(overrides: dict):
+    """临时环境变量（退出逐字还原——缺席的键还原成缺席）。"""
+    saved = {k: os.environ.get(k) for k in overrides}
+    os.environ.update(overrides)
+    try:
+        yield
+    finally:
+        for key, old in saved.items():
+            _restore_env(key, old)
+
+
+def _reset_store() -> None:
+    """registry 的进程内 Store 单例：换 home 前后各清一次（永不抛）。"""
+    try:
+        importlib.import_module("act.lib.registry").reset_store_cache()
+    except Exception:                                      # noqa: BLE001
+        pass
+
+
 @contextlib.contextmanager
 def sandbox(slug: str, env: dict = None):
     """一次性临时 home；``env`` 是本场景额外要设的环境变量（退出还原）。"""
@@ -97,26 +124,15 @@ def sandbox(slug: str, env: dict = None):
     for rel in ("state/inbox", "state/logs", "act/registry", "config/secrets"):
         (home / rel).mkdir(parents=True, exist_ok=True)
     repoint = _Repoint(home)
-    saved_env = {k: os.environ.get(k) for k in (["AIASSISTANT_HOME"] + list(env or {}))}
+    overrides = dict(env or {}, AIASSISTANT_HOME=str(home))
     try:
-        os.environ["AIASSISTANT_HOME"] = str(home)
-        for key, value in (env or {}).items():
-            os.environ[key] = value
-        repoint.apply()
-        registry = importlib.import_module("act.lib.registry")
-        registry.reset_store_cache()
-        yield home
+        with env_patch(overrides):
+            repoint.apply()
+            _reset_store()
+            yield home
     finally:
         repoint.undo()
-        for key, old in saved_env.items():
-            if old is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = old
-        try:
-            importlib.import_module("act.lib.registry").reset_store_cache()
-        except Exception:                                  # noqa: BLE001
-            pass
+        _reset_store()
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -203,6 +219,18 @@ class FakeLLM:
 def judge_runner():
     """§44.2 fold 判官的注入缝：恒判「不同」——本档场景钉的是闸门不是判官。"""
     return lambda prompt: proc('{"same_thing": false, "brief": "不同的事"}')
+
+
+def card_facts(card) -> dict:
+    """卡（或 None）→ ``{id, status, channel}``；缺席一律空串。
+
+    判据行里因此不再出现 ``bool(card) and …`` 这种分支（复杂度门 §58 的算法按
+    分支计数，一行一个 and 就够超线——事实取一次，断言只做等值比较）。
+    """
+    if card is None:
+        return {"id": "none", "status": "", "channel": ""}
+    first = (card.sources or [{}])[0] or {}
+    return {"id": card.id, "status": card.status, "channel": first.get("channel", "")}
 
 
 def check(conditions: list) -> "tuple[bool, str]":

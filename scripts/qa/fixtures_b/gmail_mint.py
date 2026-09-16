@@ -32,16 +32,16 @@ def scenario(_home):
                            decision={"action": "new_proposal", "confidence": "high"})
     n = _scan.gmail_scan(msg, llm)
     cards = registry.load_all()
-    card = cards[0] if cards else None
+    facts = _harness.card_facts(cards[0] if cards else None)
     ok, why = _harness.check([
         ("scan_returned_one", n == 1),
         ("one_card", len(cards) == 1),
-        ("status_card_sent", bool(card) and card.status == "card_sent"),
-        ("source_is_gmail", bool(card) and (card.sources or [{}])[0].get("channel") == "gmail"),
+        ("status_card_sent", facts["status"] == "card_sent"),
+        ("source_is_gmail", facts["channel"] == "gmail"),
         ("gate_consulted", len(llm.triage_calls) == 1),
     ])
-    evidence = (f"gmail uid={msg['uid']} → minted {card.id if card else 'none'} "
-                f"status={card.status if card else '-'} cards={len(cards)} {why}")
+    evidence = (f"gmail uid={msg['uid']} → minted {facts['id']} "
+                f"status={facts['status']} cards={len(cards)} {why}")
     return ok, evidence
 
 
