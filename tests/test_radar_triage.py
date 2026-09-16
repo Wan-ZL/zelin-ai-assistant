@@ -14,6 +14,12 @@ sandbox AIASSISTANT_HOME（tests/__init__.py）里。钉住的契约：
 (f) 原有路径回归：只注入 legacy runner（回 JSON 数组）时 triage 走兜底
     new_proposal，行为与三选一落地前完全一致（宁可多建，不丢候选）；
 (g) self-DM quick capture 的 relates_to 命中已交付卡 -> 同一 follow-up 机制。
+
+§42（v0.42.0 卡面大扫除）的那一项 python 管线行为也钉在这里（该节唯一的非渲染
+改动）：提取提示词的 {owner} 槽位以 cfg.owner_name 注入、语义放宽成「任何人对
+{owner} 的请求」，来源 `who` = 笔记名而不再虚构 "manager"——见
+test_extract_prompt_parameterized_on_owner_name /
+test_source_who_is_the_note_not_a_fabricated_manager。
 """
 import json
 import shutil
@@ -620,6 +626,41 @@ class ObsidianTriageTestCase(TriageBase):
         (req,) = registry.load_all()
         self.assertEqual(req.sources[0]["who"], "2026-07-09 sync")
         self.assertEqual(req.sources[0]["channel"], "meeting")
+
+    def test_extract_prompt_blank_owner_name_falls_back_to_zelin(self):
+        """§42 的 {owner} 槽位回落：cfg.owner_name 是空白 / null 时提取提示词不能
+        带着空名字（"requirement radar for ."）出门——`_extract_prompt` 的
+        `.strip() or "Zelin"` 兜回默认名，与 quick_capture.build_triage_prompt
+        同一惯用法。上一条判例只钉了「注入 Alex」这一半。"""
+        for owner_block in ('owner:\n  name: "   "\n', "owner:\n  name: null\n"):
+            with self.subTest(owner_block=owner_block):
+                config.CONFIG_PATH.write_text(
+                    f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n' + owner_block,
+                    encoding="utf-8")
+                prompt = radar._extract_prompt("note body")
+                self.assertIn("requirement radar for Zelin", prompt)
+                self.assertIn("asks directed at Zelin", prompt)
+                self.assertNotIn("radar for .", prompt)
+                self.assertNotIn("{owner}", prompt)
+
+    def test_triage_candidate_desc_names_the_note_as_who(self):
+        """§42：来源 `who` = 笔记名不只落在卡的 sources 上——它也拼进 quick_capture
+        的候选描述，是 triage LLM 输入的一部分（§42 原文「注意 who 拼进
+        quick_capture 的 candidate 描述，参与 triage LLM 输入」）。_item_desc 必须
+        把 note.stem 当 who、meeting 当 channel、文件名里的日期当 date 送进
+        candidate_desc；"manager" 一个字不许出现在 triage prompt 里。"""
+        self._note("2026-07-09 sync.md", "ship it")
+        runner = self._items({"title": "Ship the Q3 quarterly report", "type": "report",
+                              "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
+                              "cost_estimate_usd": None, "quote": "ship by July 20",
+                              "provenance": "audio", "speaker": "human"})
+        triager = _FakeLLM(decision={"action": "new_proposal"})
+        radar.scan(runner=runner, triager=triager)
+        (prompt,) = triager.triage_calls
+        self.assertIn("候选需求：Ship the Q3 quarterly report", prompt)
+        self.assertIn("原文引句：ship by July 20", prompt)
+        self.assertIn("来源：2026-07-09 sync · meeting · 2026-07-09", prompt)
+        self.assertNotIn("manager", prompt)
 
     def test_non_urgent_hard_deadline_item_parks_in_backlog(self):
         """urgent:false 的项即使 hard+deadline 也不进提案列（现在不需要行动）."""
