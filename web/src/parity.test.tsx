@@ -22,8 +22,8 @@
 // scripts/ui/parity_check.py 以 --reporter=json 跑本文件、按 it 标题读判决；两边读同两本账本，
 // 判决一致。双语都要命中（原生 L("zh","en") 是逐字规格，PR #143「逐字镜像」同理）。
 import type { ReactElement } from "react";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchAbout,
   fetchBoard,
@@ -45,6 +45,11 @@ import {
 } from "./api";
 import { AppShell } from "./components/shell/AppShell";
 import { FilterBar } from "./components/chrome/FilterBar";
+import { SORT_STORAGE_KEY, readSortOrder } from "./cardSort";
+import { HISTORY_KEY, readHistory } from "./components/board/composerCommands";
+import { LaneComposer } from "./components/board/LaneComposer";
+import { GeneralExtras, readBoardAnimations } from "./components/settings/GeneralExtras";
+import { NavRail, readCollapsed, readSidebarWidth, rememberMainSection, restoreMainSection } from "./components/shell/NavRail";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
 import { LanguageContext, type Language } from "./i18n";
 import { AboutPage } from "./pages/AboutPage";
@@ -1315,4 +1320,98 @@ describe("native → web control parity (ui/parity/native-inventory.json)", () =
       });
     }
   }
+});
+
+// 六把 web 自有的偏好键（清单 settings_keys 里 owner=web / store=prefs）：原生 UserDefaults 的同名
+// localStorage 键，没有 server 往返可判——一条 it() 一把键，驱动真控件（或 app.tsx 接的那两个持久化
+// 函数）写键，再从键里读回来。it 标题 = 清单 id，parity_check.py 的 control_presence 与
+// scripts/qa/coverage_inventory.py 的 `parity:` proof 都按标题读（§58 / §66.2）。
+describe("native → web localStorage prefs (ui/parity/native-inventory.json settings_keys, store=prefs)", () => {
+  beforeAll(() => {
+    // jsdom 没有 Pointer Capture（拖宽把手用它锁指针）——同 NavRail.collapseMotion.test.tsx 的桩
+    if (!HTMLElement.prototype.setPointerCapture) HTMLElement.prototype.setPointerCapture = () => {};
+  });
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/");
+    resetStoreForTests();
+  });
+  afterEach(cleanup);
+
+  const rail = () => render(
+    <LanguageContext.Provider value="en"><NavRail /></LanguageContext.Provider>,
+  );
+
+  it("setting:prefs:sidebarCollapsed", () => {
+    rail();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse/expand sidebar" }));
+    expect(window.localStorage.getItem("sidebarCollapsed")).toBe("true");
+    expect(readCollapsed()).toBe(true);
+    cleanup();
+    // 重开：收起态从键里读回来
+    rail();
+    expect(document.querySelector(".rail")?.classList.contains("is-collapsed")).toBe(true);
+  });
+
+  it("setting:prefs:sidebarWidth", () => {
+    rail();
+    const handle = screen.getByRole("separator", { name: "Drag to resize the sidebar" });
+    fireEvent.pointerDown(handle, { clientX: 200, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 260, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 260, pointerId: 1 });
+    expect(window.localStorage.getItem("sidebarWidth")).toBe("260");
+    expect(readSidebarWidth()).toBe(260);
+    cleanup();
+    rail();
+    expect(document.querySelector<HTMLElement>(".rail")?.style.width).toBe("260px");
+  });
+
+  it("setting:prefs:mainSection", () => {
+    // app.tsx:142 的换页副作用（原生 MainNav.section didSet）→ 键里记住 rail slug；冷启动读回它
+    rememberMainSection("trash");
+    expect(window.localStorage.getItem("mainSection")).toBe("trash");
+    expect(restoreMainSection("")).toBe("trash");
+  });
+
+  it("setting:prefs:cardSortOrder", () => {
+    const view = render(<LanguageContext.Provider value="en"><FilterBar /></LanguageContext.Provider>);
+    let select = view.container.querySelector<HTMLSelectElement>(".chrome-sort-select");
+    if (!select) {
+      fireEvent.click(view.container.querySelector<HTMLButtonElement>(".chrome-filter-button")!);
+      select = document.querySelector<HTMLSelectElement>(".chrome-sort-select");
+    }
+    fireEvent.change(select!, { target: { value: "oldest" } });
+    expect(window.localStorage.getItem(SORT_STORAGE_KEY)).toBe("oldest");
+    expect(readSortOrder()).toBe("oldest");
+  });
+
+  it("setting:prefs:boardAnimations", () => {
+    const view = render(<LanguageContext.Provider value="en"><GeneralExtras /></LanguageContext.Provider>);
+    const toggle = view.container.querySelector<HTMLInputElement>("#setting-general-boardAnimations")!;
+    expect(toggle.checked).toBe(true);            // 缺键 = 开（默认无属性，CSS 零成本）
+    fireEvent.click(toggle);
+    expect(window.localStorage.getItem("boardAnimations")).toBe("false");
+    expect(readBoardAnimations()).toBe(false);
+    expect(document.documentElement.dataset.boardAnimations).toBe("off");
+    delete document.documentElement.dataset.boardAnimations;
+  });
+
+  it("setting:prefs:captureHistory", async () => {
+    const view = render(
+      <LanguageContext.Provider value="en">
+        <LaneComposer placeholder="capture here" submitLabel="Capture" buildBody={(t) => ({ action: "capture", text: t })} />
+      </LanguageContext.Provider>,
+    );
+    const field = view.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    fireEvent.change(field, { target: { value: "/lang zh" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    });
+    expect(readHistory()).toEqual(["/lang zh"]);
+    expect(JSON.parse(window.localStorage.getItem(HISTORY_KEY)!)).toEqual(["/lang zh"]);
+    // ↑ 从键里读回来（原生 Composer historyIndex）
+    fireEvent.keyDown(field, { key: "ArrowUp" });
+    expect(field.value).toBe("/lang zh");
+  });
 });

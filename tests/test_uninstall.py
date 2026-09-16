@@ -76,8 +76,15 @@ class UninstallDryRunTestCase(unittest.TestCase):
             '<string>com.zelin.ai-board</string></dict></plist>\n', encoding="utf-8")
         proc = self._run("--dry-run", env_extra={"AIASSISTANT_UI_APPS_DIR": str(apps)})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("remove: %s" % (apps / "Zelin's AI Assistant.app"), proc.stdout)
+        # safety property, OS-independent: no plan line removes anything under the real
+        # /Applications (the seam steers every app path into the sandbox dir instead).
         self.assertNotIn("remove: /Applications/", proc.stdout)
+        # the seam path is what the plan reasons about — "would remove:" on macOS (plutil
+        # reads the bundle id), "left alone (unreadable)" on Linux CI (no plutil); either
+        # way the seam bundle path appears, and the real /Applications never does.
+        self.assertIn(str(apps / "Zelin's AI Assistant.app"), proc.stdout)
+        if shutil.which("plutil"):
+            self.assertIn("remove: %s" % (apps / "Zelin's AI Assistant.app"), proc.stdout)
         self.assertTrue((bundle / "Info.plist").exists())   # dry-run changed nothing
 
     def test_dry_run_keeps_user_data_out_of_the_plan_by_default(self):

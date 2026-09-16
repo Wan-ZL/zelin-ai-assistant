@@ -258,6 +258,15 @@ class VitestProbeTestCase(_RepoCase):
             "control:board:button:approve": True, "control:board:button:later": False,
             "control:board:label:gone": True})
 
+    def test_control_presence_also_reads_the_web_pref_key_titles(self):
+        """web 自有的 localStorage 偏好键（setting:prefs:*）在 parity.test.tsx 里也有同名 it()——
+        真控件写键 + 读回来比源码字面量探针强，在场即以它为准；壳/server 持有的键没有 it()，
+        仍走静态探针（不在这张映射里）。"""
+        results = {"setting:prefs:sidebarWidth": "passed", "setting:prefs:cardSortOrder": "failed",
+                   "setting:overrides:language": "passed", "native → web localStorage prefs": "passed"}
+        self.assertEqual(pc.control_presence(results, {}),
+                         {"setting:prefs:sidebarWidth": True, "setting:prefs:cardSortOrder": False})
+
     def test_missing_report_is_an_error_not_a_pass(self):
         def runner(web_dir, out_path):
             return 127

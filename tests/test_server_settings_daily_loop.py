@@ -7,6 +7,10 @@
   diff-write into state/settings_overrides.json (equal-to-effective deletes the
   key; other keys preserved), and the pipeline (config._OVERRIDE_FIELDS) reads
   exactly what the web wrote.
+- PUT /api/settings/daily-loop with an unreadable state/settings_overrides.json
+  (bad JSON / not an object / non-UTF-8 bytes) is 409 CONFLICT — never a 500 —
+  and leaves the file byte-for-byte alone (§59 read_overrides: never overwrite
+  what the owner had in there); GET reports the same conflict.
 
 Real server on a random port (tests/test_server_common.py); stdlib client.
 """
@@ -144,6 +148,33 @@ class DailyLoopPutTestCase(_ServerCase):
                 mock.patch.object(config, "CONFIG_PATH", self.home / "config.yaml"), \
                 mock.patch.object(config, "CONFIG_EXAMPLE_PATH", self.home / "nope.yaml"):
             self.assertEqual(config.load_config().daily_loop_review_stale_days, 0)
+
+
+class DailyLoopConflictTestCase(_ServerCase):
+    """坏掉的 state/settings_overrides.json：PUT /api/settings/daily-loop → 409，文件一个字节不动。"""
+
+    CORRUPT = (("bad json", b'{"daily_loop_enabled": tru'),
+               ("not an object", b'["daily_loop_enabled"]'),
+               ("non-utf8 bytes", b'{"daily_loop_enabled": \xff\xfe}'))
+
+    def test_put_on_an_unreadable_overrides_file_is_409(self):
+        for what, raw in self.CORRUPT:
+            with self.subTest(what):
+                self.overrides_path.write_bytes(raw)
+                status, obj = put_json(self.port, "/api/settings/daily-loop", {"enabled": False})
+                self.assertEqual(status, 409, what)
+                self.assertEqual(obj["error"]["code"], "CONFLICT")
+                self.assertIn("settings_overrides.json", obj["error"]["message"])
+                # 拒绝覆盖 = owner 手里那份原封不动（§59 read_overrides）
+                self.assertEqual(self.overrides_path.read_bytes(), raw)
+
+    def test_get_reports_the_same_conflict_instead_of_a_500(self):
+        """读面同一诊断：坏文件下 GET 也是 409 CONFLICT（同一句人话，不是 500）——
+        分层读的第一层就是这个文件，静默当它不存在会把「你的覆写没生效」藏起来。"""
+        self.overrides_path.write_bytes(b"{nope")
+        status, obj = get_json(self.port, "/api/settings/daily-loop")
+        self.assertEqual(status, 409)
+        self.assertEqual(obj["error"]["code"], "CONFLICT")
 
 
 if __name__ == "__main__":
