@@ -126,6 +126,8 @@ Building the board needs Node.js LTS; `scripts/dev-preview.sh` and `install.sh` 
 |---|---|
 | ![Settings: search, folded sections, recording data and disk](docs/images/settings-page-light.png) | ![The recycle bin, with inverse operations instead of a fake undo](docs/images/trash-recycle-bin-light.png) |
 | Settings — one searchable page, folded by area | The recycle bin — every deletion is reversible |
+| ![A card's detail drawer: what was delivered, the acceptance checklist, where the requirement came from, the session command](docs/images/card-detail-light.png) | ![Recording and data ingest: manual export / ingest triggers, source links, last activity](docs/images/ingest-recording-light.png) |
+| A card's detail drawer — delivery, acceptance checklist, provenance, session | Recording & data ingest — manual triggers and what each source last did (demo home, no engine attached) |
 
 ## Features
 
