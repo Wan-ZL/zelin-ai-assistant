@@ -136,15 +136,22 @@ class TempHomeDisciplineTestCase(unittest.TestCase):
     def test_shims_cover_every_world_touching_binary_and_are_executable(self):
         home = temp_home("shim")
         shim_dir, shim_log = cr.write_shims(home)
-        for name in ("launchctl", "open", "osascript", "crontab", "claude"):
+        for name in ("launchctl", "open", "osascript", "crontab", "claude", "pgrep", "pkill"):
             path = os.path.join(shim_dir, name)
             self.assertTrue(os.access(path, os.X_OK), name)
+        # pgrep / pkill 恒「没找到」：install.sh 才不会去杀 + 重开 owner 正在跑的壳
+        for name in ("pgrep", "pkill"):
+            text = Path(shim_dir, name).read_text(encoding="utf-8")
+            self.assertIn("exit 1", text, name)
+            self.assertNotIn("exit 0", text, name)
         env = cr.shim_env(home, shim_dir, shim_log)
         self.assertEqual(env["HOME"], home)
         self.assertTrue(env["PATH"].startswith(shim_dir + ":"))
         # node / npm 的目录故意不在 PATH 上：install.sh 的 UI 步会自己跳过（快且无副作用）
         self.assertNotIn("/opt/homebrew/bin", env["PATH"])
         self.assertEqual(env["ZAA_SHIM_LOG"], shim_log)
+        # 壳 bundle 的安装 / 删除都走临时 HOME 下的 Applications/，永不碰 /Applications
+        self.assertEqual(env["AIASSISTANT_UI_APPS_DIR"], os.path.join(home, "Applications"))
 
     def test_claude_stub_prints_a_canned_result_and_never_runs_the_real_agent(self):
         home = temp_home("stub")
