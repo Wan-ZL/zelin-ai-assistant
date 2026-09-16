@@ -147,11 +147,18 @@ per_mutant_timeout_seconds = 60
 "scripts/insights_report.py" = ["tests/test_insights_report_golden.py", "tests/test_insights_report.py"]
 
 # 2026-09-15 dev train：本轮新建/重写的模块补进靶区（§57；tier-5 定向变异用）。
-"act/lib/checks/core.py" = ["tests/test_doctor_default_probes.py"]
-"act/lib/checks/environment.py" = []
-"act/lib/checks/services.py" = []
+# doctor 探针家族三件（2026-09-15 补映射）：原来 core 只映射了默认探针那一份判例、
+# environment / services 干脆是空数组（全套件 fallback，夜里根本跑不完）——各家族的
+# 主干判例（test_doctor.py / 孤儿行 / 看板 server 行）本来就在，只是从没进过映射。
+# 新判例 *_mutation_kills_train.py 钉住健康基线走不到的那些分支（等价体理由写在各自
+# 的 docstring 里）。
+"act/lib/checks/core.py" = ["tests/test_doctor_default_probes.py", "tests/test_doctor.py", "tests/test_doctor_service_orphans.py", "tests/test_doctor_board_server.py", "tests/test_checks_core_mutation_kills_train.py"]
+"act/lib/checks/environment.py" = ["tests/test_doctor.py", "tests/test_doctor_default_probes.py", "tests/test_doctor_power_row.py", "tests/test_audit_doctor_key.py", "tests/test_checks_environment_mutation_kills_train.py"]
+"act/lib/checks/services.py" = ["tests/test_doctor.py", "tests/test_doctor_service_orphans.py", "tests/test_doctor_default_probes.py", "tests/test_doctor_board_server.py", "tests/test_checks_services_mutation_kills_train.py"]
 "act/lib/dashboard.py" = ["tests/test_actd_wire.py", "tests/test_auto_merge.py", "tests/test_executor_briefing_window.py", "tests/test_less_cards_prompts.py", "tests/test_recap_store.py", "tests/test_self_improve_actd_wire.py", "tests/test_self_improve_sensitive_pause.py", "tests/test_server_doctor_status_vocabulary.py", "tests/test_server_permissions_setup.py", "tests/test_sources.py", "tests/test_steer_relay.py"]
-"act/lib/power.py" = ["tests/test_doctor_power_row.py", "tests/test_power_probe.py"]
+# §71.1/§71.2 电源闸 + 睡眠记账：三份早就存在的判例（派发闸 / 睡眠落账 / 睡醒重试）
+# 从没进过映射——夜报里 §71.2 那半个模块因此整片存活。
+"act/lib/power.py" = ["tests/test_doctor_power_row.py", "tests/test_power_probe.py", "tests/test_dispatch_sleep_gate.py", "tests/test_sleep_accounting.py", "tests/test_sleep_retry.py", "tests/test_power_mutation_kills_train.py"]
 # §63.11 / §63.12 的问答闸门：夜报的存活体全落在「畸形输入这一步答什么」与上 wire 的那个帽上
 # ——主干判例（test_recap_intent.py）喂的一直是形状正确的记录，补测住 test_recap_intent_mutation_kills_train.py。
 "act/lib/recap_intent.py" = ["tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_server_paths_mirror.py", "tests/test_recap_intent_mutation_kills_train.py"]
@@ -161,7 +168,7 @@ per_mutant_timeout_seconds = 60
 "act/lib/recap_text.py" = ["tests/test_recap_filler_omission.py", "tests/test_recap_intent.py", "tests/test_recap_item_tags.py", "tests/test_recap_length_repair.py", "tests/test_recap_no_egress.py", "tests/test_recap_revert.py", "tests/test_recap_shapes.py", "tests/test_recap_validate.py", "tests/test_recap_text_mutation_kills_train.py"]
 "act/lib/screenpipe_retention.py" = ["tests/test_screenpipe_retention.py", "tests/test_server_screenpipe_disk.py"]
 "act/lib/self_improve.py" = ["tests/test_dashboard_review_self_improve_flag.py", "tests/test_policy_self_improve_lane.py", "tests/test_self_improve_actd_wire.py", "tests/test_self_improve_argv.py", "tests/test_self_improve_channel_switch.py", "tests/test_self_improve_followups.py", "tests/test_self_improve_frozen_in_flight.py", "tests/test_self_improve_owner_identity.py", "tests/test_self_improve_sensitive_pause.py", "tests/test_self_improve_verify.py"]
-"act/lib/taskscheduler.py" = ["tests/test_taskscheduler_render.py"]
+"act/lib/taskscheduler.py" = ["tests/test_taskscheduler_render.py", "tests/test_taskscheduler_mutation_kills_train.py"]
 "act/lib/worktrees.py" = ["tests/test_server_worktrees.py", "tests/test_worktree_cli.py"]
 "server/background_jobs.py" = ["tests/test_server_background_jobs.py"]
 "server/screenpipe_disk.py" = ["tests/test_screenpipe_media_prune_projection.py", "tests/test_server_screenpipe_disk.py"]
