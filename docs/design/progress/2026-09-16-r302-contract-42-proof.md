@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-302`（PR #TBD；R-302「issue #385：coverage: contract:§42 has no proof」；`dev` 上已由 b5bccbbf 修好，本分支是逐字节 backport 到 `main`）
+pr: `ai/self-improve/R-302`（PR #399；R-302「issue #385：coverage: contract:§42 has no proof」；`dev` 上已由 b5bccbbf 修好，本分支是逐字节 backport 到 `main`）
 phase: 横切（§58 QA 门与账本 / §77 全量覆盖测试体系——后者只在 `dev` 上）+ §65 自我改进通道
 law: —（无修法。只在 `tests/test_radar_triage.py` 的模块 docstring 里加一条指向 §42 的指针；行为零改动，CONTRACT 不动）
 
