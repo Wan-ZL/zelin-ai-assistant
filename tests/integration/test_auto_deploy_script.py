@@ -123,8 +123,10 @@ FIXTURE_INIT = ('"""fixture act: resolves like the real package (stamp -> git ta
                 '__version__ = "0.0.0"\n'
                 "__version__ = _version.resolve(__version__)\n")
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 420  # 89 runs of real bash+git; ~240 s on a 2024 Mac, 327 s seen on the macos-latest
-                      # CI leg after #174 + #176 landed together (2026-09-03) — budget follows the run count
+BUDGET_SECONDS = 600  # 94 runs of real bash+git after #326's deploy-alarm case; ~240 s on a 2024 Mac,
+                      # 327 s seen on the macos-latest CI leg (2026-09-03, 89 runs) and 457 s on 2026-09-16
+                      # (94 runs, two ci runs sharing the runner pool) — budget follows the run count, with
+                      # headroom for runner variance; a real runaway still trips it
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
