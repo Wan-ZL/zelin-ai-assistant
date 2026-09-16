@@ -1,4 +1,4 @@
-"""B 档场景 fixture 的冒烟判例（CONTRACT §58 QA 闸门）。
+"""B 档场景 fixture 的冒烟判例（CONTRACT §58 QA 闸门；§77.3 B 档 fixture）。
 
 清单真源 = ``qa/coverage_fixtures_b.json``（proof ``fixture:B-<nn>-<slug>``，
 runner 按 ``python3 scripts/qa/fixtures_b/<slug>.py`` 的退出码判 PRESENT）。这里

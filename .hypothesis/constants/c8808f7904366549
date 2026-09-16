@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/analytics.py
+# hypothesis_version: 6.141.1
+
+[5.0, 200, 500, '%Y-%m-%dT%H:%M:%SZ', '._', '[^A-Za-z0-9_.-]+', '_', 'a', 'analytics', 'config.Config', 'event', 'events.jsonl', 'features', 'features.analytics', 'first', 'ts', 'utf-8', 'v']

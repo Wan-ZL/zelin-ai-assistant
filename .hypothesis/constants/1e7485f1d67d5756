@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/ai_fix_launch.py
+# hypothesis_version: 6.141.1
+
+[120, 124, 127, 300, '\nerror: %s', ' (fix: %s)', '%s %s: %s%s', '--context-file', '--open', '-m', '.txt', 'AIASSISTANT_HOME', 'AIASSISTANT_UI_LANG', 'act.ai_fix', 'card not found', 'card_id', 'checks', 'command_file', 'darwin', 'detail', 'dispatch_error', 'display_title', 'doctor', 'en', 'fail', 'fields', 'fix', 'id', 'lang', 'last_error', 'name', 'ok', 'rc', 'source', 'status', 'title', 'tuple[int, str]', 'unknown field', 'utf-8', 'w', 'warn', 'zh']

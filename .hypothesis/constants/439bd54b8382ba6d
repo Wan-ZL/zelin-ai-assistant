@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/maintainer_launch.py
+# hypothesis_version: 6.141.1
+
+[' --resume %s', 'cd %s && %s', 'claude', 'command', 'command_file', 'cwd', 'darwin', 'fields', 'id', 'maintainer', 'maintainer_repo_path', 'ok', 'path', 'queue_id', 'terminal_app_name', 'tuple[Path, str]', 'unknown field']

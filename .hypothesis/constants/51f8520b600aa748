@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/silent_merge.py
+# hypothesis_version: 6.141.1
+
+[60.0, 300, ' · ', '%Y-%m-%dT%H:%M:%SZ', '+00:00', '-m', '.json.tmp', 'SM-', 'SM-*.json', 'Z', '__main__', 'ab', 'act.lib.silent_merge', 'brief', 'card vanished', 'channel', 'date', 'delivered_briefings', 'done', 'event', 'execute_failed', 'failed', 'finished_at', 'id', 'judge failed', 'judge timed out', 'judge_failed', 'judged', 'kind', 'merged', 'ok', 'ok_retry', 'outcome', 'pending', 'pending_briefings', 'primary', 'quick', 'quote', 'radar', 'requested_at', 'retry_aborted', 'returncode', 'same_thing', 'secondary', 'separate', 'silent_merge', 'silent_merge_count', 'skipped', 'split_into', 'state_moved', 'status', 'stdout', 'text', 'true', 'ts', 'utf-8', 'who', '{', '}', '无新增信息']

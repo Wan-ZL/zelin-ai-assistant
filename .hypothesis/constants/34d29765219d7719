@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/heartbeat.py
+# hypothesis_version: 6.141.1
+
+[0.0, '%Y-%m-%dT%H:%M:%SZ', '.tmp', 'actd.heartbeat', 'age_s', 'interval', 'phase', 'pid', 'stale_after_s', 'ts', 'utf-8', 'version']

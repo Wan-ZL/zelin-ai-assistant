@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/settings.py
+# hypothesis_version: 6.141.1
+
+['%02d:%s', '%Y%m%dT%H%M%SZ', '%s-%d', '.bak-%s', '.claude', '.tmp', '0', '03:30', '1', 'SKILL_UNKNOWN', 'action', 'backup', 'canonical', 'claude-fable-5', 'claude-opus-5', 'claude-opus-5[1m]', 'claude-sonnet-5', 'code', 'config', 'daily_loop', 'daily_loop_%s', 'default', 'disable', 'dispatch', 'enable', 'enabled', 'error', 'exists', 'fallback', 'fallback_default', 'false', 'field', 'fields', 'follow', 'model', 'models', 'models_%s', 'name', 'no', 'no such skill', 'off', 'on', 'override', 'parseable', 'path', 'pipeline', 'previous', 'review_stale_days', 'settings.json', 'source', 'stale_days', 'state', 'time', 'trash_retention_days', 'true', 'tuple[dict, dict]', 'tuple[str, str]', 'unknown field', 'utf-8', 'warnings', 'yes']

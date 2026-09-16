@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/slack_fold.py
+# hypothesis_version: 6.141.1
+
+['2026-09-14', 'B-02-slack-fold', 'R-900', 'T1', '__main__', 'action', 'card_sent', 'channel', 'comms', 'date', 'manager', 'needs_action', 'needs_reply', 'no_new_card', 'note', 'note_folded_in', 'permalink', 'plan', 'quote', 'relates_to', 'req', 'slack', 'status_unchanged', 'still_one_card', 'summary', 'tier', 'type', 'who']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/auto_deploy.py
+# hypothesis_version: 6.141.1
+
+['/bin/bash', 'AIASSISTANT_HOME', 'AIASSISTANT_PYTHON', '__main__', 'auto-deploy.sh', 'scripts']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/skills/test-ui/scripts/visual.py
+# hypothesis_version: 6.141.1
+
+[0.0, 0.2, 1.0, 100.0, 255.0, 255, 300, '%s-%s-dpr%s', ',', '--heatmap', '--mask', '--threshold', '--tolerance', '.png', 'CHANGED', 'PRESENT', '[^a-z0-9]+', '__main__', '_error', 'a', 'append', 'b', 'changed', 'changed_pct', 'changed_pixels', 'cmd', 'cols', 'count', 'dangling', 'diff', 'dimensions', 'dir', 'entries', 'error', 'grid', 'internal', 'item_status', 'manifest', 'manifest.json', 'mask = x,y,w,h', 'masked_ratio', 'max_changed_pct', 'max_mask_ratio', 'odiff', 'odiff.png', 'ok', 'over_mask_cap', 'pixel_tolerance', 'rb', 'reason', 'reasonless', 'regions', 'same', 'sha256', 'status', 'threshold', 'tiles', 'tool', 'total', 'unreviewed', 'wb']

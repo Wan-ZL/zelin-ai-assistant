@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/notify.py
+# hypothesis_version: 6.141.1
+
+[600.0, ', ', '.json', '.json.tmp', ':', 'Gmail', 'Login needed again', 'Obsidian', 'Slack', 'Task finished', 'body', 'category', 'created_at', 'failure', 'gmail', 'id', 'kind', 'needs_input', 'notify_failures', 'notify_needs_input', 'notify_proposals', 'obsidian', 'ok:self_improve', 'proposal', 'quiet_hours', 'quiet_hours_enabled', 'quiet_hours_end', 'quiet_hours_start', 'receipt', 'review_ready', 'review_stale', 'slack', 'subtitle', 'title', 'utf-8', '…', '任务停下来了，去看看它做到哪了', '任务完成', '任务派发失败（会自动重试）', '任务疑似中断，正在自动恢复', '会话没停住（可能仍在后台运行）', '回锅：你验收过的事来了新信息', '待验收：AI 已交付草稿', '提案到截止日了，还没批准', '有新需求待审批', '自动恢复已放弃（连续失败 5 次）', '自我改进通道：草稿 PR 未通过核验', '观察模式：手打卡已自动派发（免批）', '这张提案好像已经做完了', '需要重新登录']

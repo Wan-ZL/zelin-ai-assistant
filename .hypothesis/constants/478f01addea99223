@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/qa/ledger_diff.py
+# hypothesis_version: 6.141.1
+
+['#', '%s:%s', '--', '--base', '--name-only', '--report', '-r', 'DIR', 'FAIL', 'FLOOR: %s deleted', 'GROW: %s added %s', 'HEAD', 'LOOSEN: %s deleted', 'OK', '[%s].%s', '[ledger-diff] %s', '__main__', '_baseline.txt', 'complexity', 'coverage', 'crap', 'git', 'hygiene', 'ls-tree', 'max', 'max_class_lines', 'max_file_lines_py', 'max_file_lines_swift', 'max_function_lines', 'merge-base', 'qa', 'qa/', 'qa/gates.toml', 'r', 'ratchet_buffer', 'ratchet_trigger', 'replace', 'show', 'tolerance', 'utf-8']

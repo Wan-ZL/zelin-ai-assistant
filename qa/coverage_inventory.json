@@ -8,7 +8,7 @@
     "shell"
   ],
   "counts": {
-    "contract": 243,
+    "contract": 251,
     "fixtures_b": 15,
     "parity": 842,
     "routes": 162,
@@ -2571,6 +2571,86 @@
       "source": "contract",
       "scenario": "面（web 卡面）与边界",
       "proof": "unittest:tests.test_triage_completion_hint && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77",
+      "source": "contract",
+      "scenario": "全量覆盖测试体系：机器清点的场景表 + 可执行证据（§58 家族的第六件事；2026-09-16，owner 决策 **D79**）",
+      "proof": "unittest:tests.test_coverage_inventory,tests.test_coverage_run_flows,tests.test_coverage_run_report,tests.test_fixtures_b_smoke",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.1",
+      "source": "contract",
+      "scenario": "分母：清单与证据 DSL（truth = `scripts/qa/coverage_inventory.py` / `qa/coverage_inventory.json`）",
+      "proof": "unittest:tests.test_coverage_inventory",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.2",
+      "source": "contract",
+      "scenario": "跑者与三态报告（truth = `scripts/qa/full_coverage.sh` / `scripts/qa/coverage_run.py`）",
+      "proof": "unittest:tests.test_coverage_run_report",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.3",
+      "source": "contract",
+      "scenario": "B 档场景 fixture（truth = `scripts/qa/fixtures_b/` / `qa/coverage_fixtures_b.json`）",
+      "proof": "unittest:tests.test_fixtures_b_smoke",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.4",
+      "source": "contract",
+      "scenario": "壳 UI 的辅助功能探针（truth = `scripts/qa/shell_ui_probe.py`）",
+      "proof": "unittest:tests.test_shell_ui_probe_cli && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.5",
+      "source": "contract",
+      "scenario": "README 真实性审计（truth = `scripts/qa/readme_audit.py`）",
+      "proof": "unittest:tests.test_readme_audit_repo_readme",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.6",
+      "source": "contract",
+      "scenario": "演示视频管线（truth = `scripts/media/`）",
+      "proof": "unittest:tests.test_media_judge_summary",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§77.7",
+      "source": "contract",
+      "scenario": "覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）",
+      "proof": "unittest:tests.test_coverage_run_flows,tests.test_uninstall",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

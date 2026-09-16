@@ -1,4 +1,4 @@
-"""这个仓库自己的 README.md 必须零过期主张（docs/CONTRACT.md §58 / §66）。
+"""这个仓库自己的 README.md 必须零过期主张（docs/CONTRACT.md §58 / §66；§77.5 README 真实性审计）。
 
 判例的意义：README 是产品的第一面，而它历来是最容易和代码脱节的一页（退役的
 问问助手页、iMessage 通道、菜单栏 app、写死的旧版本号都曾挂在上面）。审计器

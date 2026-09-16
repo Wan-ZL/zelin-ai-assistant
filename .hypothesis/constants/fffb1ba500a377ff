@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/screenpipe_retention.py
+# hypothesis_version: 6.141.1
+
+[120.0, 1000.0, 2000, 30000, 86400, '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%SZ', '%s: %s', ',', '--days', '--db', '--dry-run', '.screenpipe', '.tmp', '?', '__main__', 'audio_marker', 'audio_transcriptions', 'batches', 'budget_exhausted', 'cutoff', 'db', 'db.sqlite', 'db_bytes_after', 'deleted_audio', 'deleted_frames', 'dry_run', 'duration_s', 'elements', 'eligible_audio', 'eligible_frames', 'error', 'export_markers', 'frame_marker', 'frames', 'last_audio_id', 'last_frame_id', 'no_db', 'ran_at', 'retention_days', 'retention_off', 'skipped', 'store_true', 'utf-8']

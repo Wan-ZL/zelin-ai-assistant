@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/qa/hygiene.py
+# hypothesis_version: 6.141.1
+
+[0.0, 1.0, '%s %s', '%s-lines:%s::%s', '--check', '--list', '--report', '--write-baseline', '.build', '.swift', '/', 'DIR', '__init__.py', '__main__', 'act', 'build', 'docstring:%s', 'file-lines:%s', 'func', 'gates.toml', 'hygiene', 'hygiene_baseline.txt', 'max_class_lines', 'max_file_lines_py', 'max_file_lines_swift', 'max_function_lines', 'qa', 'r', 'replace', 'server', 'shell', 'store_true', 'utf-8', '§\\s*\\d']

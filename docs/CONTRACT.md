@@ -6918,3 +6918,40 @@ owner 原话（issue #315 Expected 三条，2026-09-09）：「self_improve lane
 - 卡面（`ProposalCard.tsx`）：`completion_hint` → 绿章「✅ 疑似已完成」+ 证据一句（`✅ 证据: <note>`）+ 两颗一键**「已办完 · 记为已交付」（`done_external`）/「不做 · 进回收站」（`reject`）**——§10 既有动词，**不开新 inbox 动作**；`decision_due` → 红色决策提示行「截止日已到，这张卡还没批准 —— 现在决定：批准 / 暂缓 / 拒绝」，三个动词的按钮就在下一排（一个动词一颗键，绝不造第二套）；`mention_escalated` → 「被提×N」章从 quiet 转 danger 并说出「仍未处理」。文案走既有的 `text(zh, en)` 单源（防腐 #10）。
 - **明确偏离 issue 原文一处（D70 记录）**：issue 第 3 条要求「之后同源并入不再刷新计数」。**不做**——`repeated_mentions` 是 §44.4 静默并入、§70.2 主稿选择与 `_idle_rule` 的 mentions ≥ 3 保护共用的同一个数，冻结它会静默改掉三处不相关的行为。升级改为读同一个数的**第二个判据**（§76.2），计数照旧累加：被提第 24 次仍然如实记 24，只是卡面从第 5 次起就在喊「仍未处理」。
 - **不做**：不自动归档、不自动记为已交付、不自动删卡（本节红线）；不改 §70.2 的 `stale:deadline_passed` 静默清扫（它仍在 7+7 天后收走真正没人管的卡，`decision_due` 只是让那 14 天不再是沉默的）；不改 `_idle_rule` 的 mentions 保护；不给 `completion_hint` 开第二个写者（只有 §76.1 的 fold 路径写它，registry 单写者 §44 不变）；不把提示喂回任何匹配 / 去重 / re-raise 语料（`match_corpus` 不读它）。
+
+## 77. 全量覆盖测试体系：机器清点的场景表 + 可执行证据（§58 家族的第六件事；2026-09-16，owner 决策 **D79**）
+
+§58.1–§58.5 的五道门各量一把尺（复杂度 / CRAP / 覆盖率地板 / import 方向 / 卫生），但它们回答不了 owner 真正问的那个问题——「这个产品**能做的每一件事**，今天还成不成」。本节立第六件事：一份**机器清点出来的场景表**，每行配一条**可执行的证据**，加上把证据跑出来的跑者、B 档 fixture、壳 UI 探针，以及两件把「第一面」钉住的观测门（README 真实性、演示视频管线）。执法代码见各小节 truth 指针；本轮产出的覆盖报告是 `qa/coverage-report/report.md`（产物，git-ignored；真源永远是清单 + 一条命令）。
+
+### 77.1 分母：清单与证据 DSL（truth = `scripts/qa/coverage_inventory.py` / `qa/coverage_inventory.json`）
+
+- **真源与生成**：表 = `qa/coverage_inventory.json`（committed，按 id 排序、`indent=2`、尾换行、固定八键行形）。唯一写者 = `scripts/qa/coverage_inventory.py --write`；`--check` 陈旧即红；`--summary` 打一行 `INVENTORY scenarios=<n> missing_proof=<m> sources=contract,parity,routes,settings,shell`。**表是派生物、不是账本**：不许手改，改了下一次 `--check` 就抓。
+- **五个清点源**（id 前缀即源，add-only，永不重编号）：`contract:§N[.M]`（`docs/CONTRACT.md` 的节与小节）、`parity:<native id>`（`ui/parity/native-inventory.json` 的每个 gated 条目，§66.2 的 id 词表逐字复用）、`route:<METHOD> <path>[#<branch>]`（`server/app.py` 的精确表与前缀表，ast 解析不抄字面量）、`setting:<section>.<key>`（`server/settings_catalog.py` 的 `SECTIONS`）、`shell:<slug>`（`shell/Sources/*.swift` 的菜单表、全局快捷键、Dock 徽标、`open_page`、终端接管、通知转发、登录项）。B 档 fixture 行（`B-<nn>-<slug>`）由 `qa/coverage_fixtures_b.json` 提供，生成器在场即并。
+- **行的形状**（八键，add-only）：`id` / `source` / `scenario` / `proof` / `tier`（A = demo server 或判例确定性可判，B = fixture 驱动）/ `status`（`todo` | `waived`）/ `waive_reason`（只许 `tombstone` | `covered-by-<tests/path.py>` | `design-not-carried D<nn>`）/ `note`。
+- **证据 DSL**：`unittest:<模块,…>` · `parity:<id>` · `swift:<Harness>` · `axprobe:<probe>` · `http:<METHOD> <path> [noauth] expect=<code> [contains=<substr>]` · `settings:<section>.<key>` · `flow:<name>` · `fixture:<slug>`；多条以 ` && ` 串联，全中才算在。
+- **诚实条款（宪法第 3 条的本节落点）**：proof 编不出来就**留空并上报**——`missing_proof` 是门的第一公民计数，不许拿一条跑不出真判决的字符串充数；补的方式只有两条：补一条真判例，或按上面的词表 waive 并写明理由。本轮 18 条 no-proof 全部按这条收口成真证据（issue #385–#389），落地时 `missing_proof=0`。
+- **两条已成文的口径**：①§49 读面 token-light，GET 分支行是 `#noauth` **expect=200**，`#401` 只属 POST/PUT；②会真动东西的写路由由钉着该路径的判例判，runner 永不盲发。tombstone 判定只认「说自己退役」的节，正文提一句「改 tombstone」不算。
+
+### 77.2 跑者与三态报告（truth = `scripts/qa/full_coverage.sh` / `scripts/qa/coverage_run.py`）
+
+`bash scripts/qa/full_coverage.sh [--inventory PATH] [--logdir DIR] [--only PREFIX] [--skip-ax] [--no-web-build]` 读清单、按 proof 种类分组、每种重工具**整跑只跑一次**（结果 memoize 成 per-key map），产出 R——每行 `<id> PRESENT|MISSING|WAIVED reason=<…> evidence=<一行 ≤200 字符>`，末三行恰为 `PRESENT=<n>` / `MISSING=<n>` / `WAIVED=<n>`；`MISSING=0` → exit 0，否则 1，清单缺席 → exit 2（带重铸命令，宪法第 11 条：缺席不崩）。八条内建 `flow:` = `install_fresh` `doctor_clean` `card_lifecycle` `settings_roundtrip_all` `recaps` `pwa` `uninstall_reinstall` `pages_controls`。**沙箱纪律（本节红线，§77.7 展开）**：install.sh / uninstall.sh / doctor / actd / server 一律跑在 `mktemp -d /tmp/zaa-cov-*` 的临时 HOME 上，`launchctl` `open` `osascript` `crontab` `pgrep` `pkill` 一律 PATH 前缀假货，`claude` 是打印固定结果的 stub；整跑预算 ≤45 min。判例 `tests/test_coverage_run_report.py` / `tests/test_coverage_run_flows.py`（全注入假执行器，不起子进程、不联网）。
+
+### 77.3 B 档场景 fixture（truth = `scripts/qa/fixtures_b/` / `qa/coverage_fixtures_b.json`）
+
+全覆盖清单里判据是「整条链在一个干净世界里走一遍」的行走 B 档：一个场景一个可单跑脚本住 `scripts/qa/fixtures_b/<slug>.py`，清单真源 = `qa/coverage_fixtures_b.json`（≥12 条，行形同 §77.1）。契约六条（机器可查）：单跑 `main()` 回 0=PRESENT、stdout 最后一行是证据（≤200 字符）；自建 `/tmp` 一次性 home 收尾必删；零真实副作用（不 spawn claude、不起子进程、不出网，走既有注入缝）；异常收敛成 FAIL 不当结果；样本住 `tests/fixtures/coverage_b/`；清单与脚本一一对应，`tests/test_fixtures_b_smoke.py` 进程内执法。
+
+### 77.4 壳 UI 的辅助功能探针（truth = `scripts/qa/shell_ui_probe.py`）
+
+证据种类 `axprobe:<id>` 由本脚本执行：**只读壳自己的可观测量**，对准 owner 的真 app 与真 server（端口 47820，token 读 `<home>/state/server.token`，除唯一写探针外全是 GET / stat / AX 读属性）。`--summary` 末行逐字 `SHELL probes=<k> present=<k>`（不带 `--allow-enqueue` 时 k=4）；退出码 0 全 present / 1 有 MISSING / 2 用法错 / 3 BLOCKED。探针：`dock_badge`（Dock tile `AXStatusLabel` vs `/api/board` counts，口径 = web `badgeCount`）、`hotkey_focus`（⌃⌥Space → 壳前置 + 焦点是提案 composer，收尾还原前台）、`menu_open_page`（关于 / 设置 / 权限体检 → 窗口标题跟到那一页，收尾还原）、`notify_relay`（只读 `state/shell.heartbeat` 新鲜 + `/api/health`）、`terminal_takeover`（唯一写探针，只在 `--allow-enqueue`：`POST /api/terminal {card_id}` → 终端多一窗）。三条不变原则：辅助功能不绕行（未授权 → BLOCKED exit 3，交 owner 授权，禁任何替代路径）；前置不满足记 BLOCKED 不记 MISSING；只读与可还原。判例 `tests/test_shell_ui_probe.py` / `tests/test_shell_ui_probe_cli.py`（注入假 osascript + 假 HTTP）。
+
+### 77.5 README 真实性审计（truth = `scripts/qa/readme_audit.py`）
+
+README 是产品第一面，也最先腐烂。本节把「每条主张都可机械核验」立法：一条主张 = 一句散文 / bullet / 表格行 / 围栏命令行 / mermaid 节点 / 图文（`kind ∈ prose|bullet|table|code|diagram|media`），三轴机械判定——**路径轴**（反引号 / 链接 / html src 里像仓库路径的片段必须存在，运行时前缀白名单放行，散文 `a/b` 不当路径）、**退役轴**（问问助手 / Ask 页、iMessage、原生菜单栏 app UI、被当现行的 `mac/` 构建指令、≠ 当前 git tag 的版本字面量；tag 拿不到则整轴不判）、**标签轴**（引号里的 UI 文案必须出现在 §66 `owner=web` 条目或 `web/src` / `settings_catalog` 文案源）。`--summary` 逐字 `README claims=<n> stale=<m> images=<k>`；`--check` 有 stale 即 exit 1；`--render` 追加真浏览器渲染文本这一条更硬判据（后端 `scripts/qa/readme_render.mjs` 与 `web/e2e/demoServer.ts` 同链路）。截图只许真渲染（§66.4 visual-goldens），生成模型画的界面永不进 `docs/images/`。判例 `tests/test_readme_audit.py` / `tests/test_readme_audit_repo_readme.py`（本仓库 README 恒零 stale、截图 ≥4 张且是真 PNG）。本节出生是观测门，不进 7 个 required checks。
+
+### 77.6 演示视频管线（truth = `scripts/media/`）
+
+产品演示视频是一条可重跑的管线，不是一次性手艺活；成片与中间物**不进仓库**（防腐第 4 条），落在仓库外的媒体目录。分镜单源 = `scripts/media/shots.json`（storyboard / 旁白 / SRT / 录制脚本 / 剪辑长度全从它派生，禁第二份镜头表；单镜头 ≤15 s、全片 60–180 s）。**像素只许真 app**（宪法第 3 条影像版）：`record.mjs` 用 Playwright 驱动真 `python3 -m server` + demo 数据录屏，**永久禁止**生成模型画界面。对齐口径：`assemble.sh` 按计划时长裁剪，字幕 / 配音同一时间轴。评委席固定 `claude-fable-5-1` / `claude-opus-5`（Anthropic）+ `gpt-5.5`（OpenAI），**不得顶替、不得删席**；缺 key 的席记 `{seat, status:"BLOCKED", reason}`，不计入 seats 也不换模型补位（`kimi-k3` 席缺 `FIREWORKS_API_KEY` 即 BLOCKED）。五维各 0–2 满分 10（真实性 / 清晰 / 可读 / 节奏 / 无误导），及格 = 单席 ≥7，全片通过 = 三席至少两席及格，最多两轮。评委输出逐字段消毒（宪法第 11 条）。`judge_summary.py` 打印恰好一行 `JUDGES seats=<k> pass=<p> rounds=<r>`。key 只从环境读、永不打印落盘。判例 `tests/test_media_srt_timing.py` / `tests/test_media_judge_parsing.py` / `tests/test_media_judge_summary.py`。
+
+### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）
+
+覆盖跑者会真跑 install.sh / uninstall.sh，而这两条脚本的关键判定**不看 HOME**：install.sh 用 `pgrep -x ZelinAIBoard` 决定是否杀 + 重开 owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` 并从硬编码 `/Applications` 删 bundle。因此临时 HOME 之外还必须：`pgrep` / `pkill` 也是 PATH 前缀假货（恒「没匹配」exit 1，install.sh 走「壳没在跑」分支）；`AIASSISTANT_UI_APPS_DIR`（install.sh 既有的 test seam，uninstall.sh 本轮补齐同款）指向临时 HOME 下的 `Applications/`，让 bundle 的安装与删除都落在沙箱里。缺这两条，2026-09-16 的第一轮全量跑把 owner 的 live 壳杀了两次、并用一个 ad-hoc 签名的 dev 构建顶替了 `/Applications` 的稳定签名（#317）——ad-hoc cdhash 与 owner 授的 Full Disk Access 对不上，壳从此写不出 `state/shell.heartbeat`。判例 `tests/test_coverage_run_flows.py`（假货清单 + exit 码）、`tests/test_uninstall.py`（`--dry-run` 带 seam 只规划沙箱 bundle、绝不碰真 `/Applications`）。

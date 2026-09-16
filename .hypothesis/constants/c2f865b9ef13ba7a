@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/secrets.py
+# hypothesis_version: 6.141.1
+
+[384, 448, 'config', 'legacy_secret_path', 'secrets', 'slack-user-token.txt', 'utf-8']

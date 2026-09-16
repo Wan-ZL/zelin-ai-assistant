@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/e2e.py
+# hypothesis_version: 6.141.1
+
+[b'=', b'ZQR1', b'ZSYN', b'actd/action/v1', b'actd/board/v1', b'actd/label/v1', 384, 448, 4294967295, ',', '.key.tmp', '.tmp', ':', '=', '>I', 'ascii', 'blob too short', 'channel_id', 'device_id', 'epoch', 'k', 'key', 'label', 'label_enc', 'pairings', 'sync_device_id', 'utf-8', 'v', 'write_secret']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/card_summary.py
+# hypothesis_version: 6.141.1
+
+[60.0, 200, 240, 300, 3600, 4000, '### 交付报告（执行器收尾原话）', '### 卡片', '### 成稿 / 交付物', '%Y-%m-%dT%H:%M:%SZ', '*.json', '+00:00', '-m', '.json.tmp', 'Z', '\\s+', '_review_active', 'applied', 'assessment', 'assessment failed', 'at', 'card_assessed', 'card_id', 'card_summary', 'card_summary_enabled', 'definition_of_done', 'delivered_summary', 'delivery_mode', 'display_title', 'done', 'error', 'failed', 'final_draft', 'finished_at', 'interrupted_reason', 'last_rework_at', 'notes', 'pending', 'plan', 'reason', 'requested_at', 'result', 'returncode', 'review_at', 'rework_count', 'source_hash', 'spawned', 'status', 'stdout', 'summary', 'title', 'utf-8', 'verdict', 'verdict_reason', 'worker timed out', '{', '…', '建议验收', '计划:\n', '需继续做', '需要拍板', '（无）', '（未定义）']

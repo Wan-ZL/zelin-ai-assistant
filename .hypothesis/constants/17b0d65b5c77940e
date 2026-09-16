@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/actd.py
+# hypothesis_version: 6.141.1
+
+[300, '%Y-%m-%dT%H:%M:%SZ', '--interval', '--now', '--once', '.json.tmp', '__main__', 'a', 'act.recap', 'act.weekly_digest', 'actd', 'actd.log', 'action', 'action_id', 'applied.jsonl', 'cloud', 'consecutive_failures', 'dashboard', 'dispatch', 'failed', 'housekeeping', 'idle', 'inbox', 'last_error', 'loop_health.json', 'meeting_key', 'mode', 'one pass then exit', 'owner_logins', 'radar_test_round', 'recap.log', 'recap_generate', 'recap_revert', 'recap_slack_draft', 'reconcile', 'replace', 'result_status', 'self_improve', 'starting', 'store2', 'store_true', 'sync', 'sync.json', 'ts', 'updated_at', 'utf-8', 'voice_generate', 'weekly_digest.log', 'weekly_digest_now']

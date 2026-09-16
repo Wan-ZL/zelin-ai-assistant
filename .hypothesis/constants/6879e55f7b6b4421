@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/gmail_mint.py
+# hypothesis_version: 6.141.1
+
+['B-04-gmail-mint', 'T1', '__main__', 'action', 'card_sent', 'channel', 'comms', 'confidence', 'from', 'gate_consulted', 'gmail', 'high', 'message_id', 'needs_reply', 'new_proposal', 'one_card', 'plan', 'scan_returned_one', 'source_is_gmail', 'status', 'status_card_sent', 'subject', 'summary', 'tier', 'type', '起草回复']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/recaps.py
+# hypothesis_version: 6.141.1
+
+[1024, '%Y-%m-%dT%H:%M:%SZ', '%s_at', ', ', '.json', '0', '1', ':', '_', 'auto', 'config', 'copied', 'copied_at', 'copy_en', 'copy_zh', 'current', 'default', 'default_language', 'default_shape', 'dismissed', 'dismissed_at', 'en', 'enabled', 'entries', 'false', 'field', 'fields', 'generated_at', 'history', 'history_cap', 'key', 'languages', 'lines', 'mark', 'marks.json', 'no', 'not a boolean: %r', 'nothing to save', 'off', 'ok', 'on', 'on must be a boolean', 'override', 'partial', 'quality', 'recap', 'recap_enabled', 'recaps', 'sections', 'sent', 'sent_at', 'shape', 'slack_draft', 'slack_draft_enabled', 'source', 'state', 'true', 'truncated', 'tuple[dict, dict]', 'tuple[str, bool]', 'unknown field', 'utf-8', 'version', 'yes', 'zh']

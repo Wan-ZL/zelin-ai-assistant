@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/terminal_launch.py
+# hypothesis_version: 6.141.1
+
+[15.0, 60.0, 384, 448, '.app', '.json', '.json.tmp', '/', '/Applications', '; ', 'Ghostty', 'Terminal', 'auto', 'card not found', 'card_id', 'claude --resume %s', 'command', 'command_file', 'copy_cmd', 'created_at', 'cwd', 'darwin', 'fields', 'general', 'ghostty', 'heartbeat', 'iTerm', 'iTerm2', 'id', 'iterm2', 'kind', 'maintainer', 'ok', 'queue_dir', 'queue_id', 'session_id', 'shell_line', 'takeover', 'terminal', 'terminal_app', 'tuple[dict, Path]', 'tuple[dict, str]', 'uninstall', 'unknown field', 'utf-8', 'w', '~/Applications']
