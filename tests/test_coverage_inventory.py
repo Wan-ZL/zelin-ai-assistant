@@ -167,6 +167,47 @@ class MenuSpecTestCase(unittest.TestCase):
         self.assertEqual(ci.slugify("Settings…"), "settings")
 
 
+class PrefKeyProofTestCase(unittest.TestCase):
+    """清单 settings_keys 里不在 server 目录的键：web 自有的认 parity.test.tsx 的同名 it()，
+    搬到 server 的（probe=server_source）认落点文件对应的快照 GET（issues #387 / #389）。"""
+
+    def _pref(self, **extra):
+        item = {"id": "setting:prefs:sidebarWidth", "key": "sidebarWidth", "store": "prefs", "owner": "web"}
+        item.update(extra)
+        return item
+
+    def test_web_pref_with_a_vitest_it_gets_a_parity_proof(self):
+        proof, note = ci._parity_setting_proof(
+            self._pref(), {}, {}, frozenset({"setting:prefs:sidebarWidth"}))
+        self.assertEqual(proof, "parity:setting:prefs:sidebarWidth")
+        self.assertIn("vitest", note)
+
+    def test_web_pref_without_a_vitest_it_stays_empty(self):
+        proof, note = ci._parity_setting_proof(self._pref(), {}, {}, frozenset())
+        self.assertEqual(proof, "")
+        self.assertIn("no server/vitest probe", note)
+
+    def test_server_landing_gets_the_snapshot_http_proof(self):
+        proof, note = ci._parity_setting_proof(
+            self._pref(id="setting:prefs:hasCompletedFirstRun", key="hasCompletedFirstRun",
+                       owner="server", probe="server_source", landing="setup_done.json"),
+            {}, {}, frozenset())
+        self.assertEqual(proof, 'http:GET /api/setup expect=200 contains="done"')
+        self.assertIn("setup_done.json", note)
+
+    def test_an_unknown_server_landing_still_leaves_the_proof_empty(self):
+        proof, _note = ci._parity_setting_proof(
+            self._pref(probe="server_source", landing="nowhere.json"), {}, {}, frozenset())
+        self.assertEqual(proof, "")
+
+    def test_the_repo_parity_test_declares_the_six_web_prefs(self):
+        """真仓的 web/src/parity.test.tsx 里这六把键各有一条 it()（只读文件，不跑 vitest）。"""
+        found = ci.parity_vitest_ids(_ROOT)
+        for key in ("boardAnimations", "captureHistory", "cardSortOrder",
+                    "mainSection", "sidebarCollapsed", "sidebarWidth"):
+            self.assertIn("setting:prefs:" + key, found)
+
+
 class CommittedInventoryTestCase(unittest.TestCase):
     """committed 的 qa/coverage_inventory.json：形状 + 不陈旧（生成器只读文件，无子进程）。"""
 

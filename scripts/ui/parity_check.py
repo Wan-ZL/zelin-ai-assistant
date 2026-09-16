@@ -14,7 +14,9 @@
                 LANES 的 slug 顺序 = 原生顺序；lanes:rail-left/right 要求 BoardLanes.tsx
                 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 在之后
   setting:overrides:<k>   server/settings*.py 出现字面量 "<k>"（server 是 overrides 的写者，§59）
-  setting:prefs:<k>       web/src 出现字面量 "<k>"（localStorage 同名键）；清单 probe=shell_source 的
+  setting:prefs:<k>       web/src 出现字面量 "<k>"（localStorage 同名键）——web 自有的六把键另有
+                web/src/parity.test.tsx 里同名的 it()（驱动真控件写键再读回来），在场即以它的
+                pass/fail 为准（比字面量强）；清单 probe=shell_source 的
                 键（壳持有的 UserDefaults）→ shell/Sources 出现 "<k>"；probe=server_source 的键
                 （概念搬到 server）→ 清单 `landing` 字面量出现在 server/*.py
   notification:<kind>     server/notify_catalog.py 的 kind 词表登记了它（general = 无 kind）
@@ -287,6 +289,11 @@ def parse_vitest_report(text):
     return out
 
 
+# vitest 报告里认作清单 id 的 it 标题前缀：控件（control:）与 web 自有的 localStorage
+# 偏好键（setting:prefs:，一条 it() 一把键，比源码字面量探针强——真控件写键 + 读回来）
+_VITEST_ID_PREFIXES = ("control:", "setting:prefs:")
+
+
 def control_presence(results, pending):
     """it() 结果 → id → present。普通 it 断言「在」：passed = 在；`[pending]` it
     断言「不在」：failed = 其实在（→ STALE）。"""
@@ -294,7 +301,7 @@ def control_presence(results, pending):
     for title, status in results.items():
         if title.endswith(" [pending]"):
             presence[title[:-len(" [pending]")]] = status == "failed"
-        elif title.startswith("control:"):
+        elif title.startswith(_VITEST_ID_PREFIXES):
             presence[title] = status == "passed"
     return presence
 

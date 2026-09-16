@@ -14,6 +14,12 @@ sandbox AIASSISTANT_HOME（tests/__init__.py）里。钉住的契约：
 (f) 原有路径回归：只注入 legacy runner（回 JSON 数组）时 triage 走兜底
     new_proposal，行为与三选一落地前完全一致（宁可多建，不丢候选）；
 (g) self-DM quick capture 的 relates_to 命中已交付卡 -> 同一 follow-up 机制。
+
+§42（v0.42.0 卡面大扫除）的那一项 python 管线行为也钉在这里（该节唯一的非渲染
+改动）：提取提示词的 {owner} 槽位以 cfg.owner_name 注入、语义放宽成「任何人对
+{owner} 的请求」，来源 `who` = 笔记名而不再虚构 "manager"——见
+test_extract_prompt_parameterized_on_owner_name /
+test_source_who_is_the_note_not_a_fabricated_manager。
 """
 import json
 import shutil
