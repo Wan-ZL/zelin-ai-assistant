@@ -147,23 +147,34 @@ def _json_blob(text: str) -> str:
     return text[start:end + 1]
 
 
+def _sanitize_scores(raw: Any) -> Dict[str, int]:
+    """五维分数逐字段消毒：非数字即拒（bool 也算非数字——True 当 1 分那次事故成法），越界钳到 0–2。"""
+    if not isinstance(raw, dict):
+        raise ValueError("scores missing")
+    scores: Dict[str, int] = {}
+    for dim in DIMENSIONS:
+        value = raw.get(dim)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"score for {dim} is not a number: {value!r}")
+        scores[dim] = max(0, min(2, int(round(float(value)))))
+    return scores
+
+
+def _sanitize_fixes(raw: Any) -> List[str]:
+    """修改建议：非列表当空、空白条目丢掉、最多 5 条。"""
+    if not isinstance(raw, list):
+        return []
+    return [str(f).strip() for f in raw if str(f).strip()][:5]
+
+
 def parse_seat_payload(seat: str, text: str) -> Dict[str, Any]:
     """逐字段消毒成席位记录；分数钳到 0–2、total 按分项重算、verdict 由 total 判定。"""
     data = json.loads(_json_blob(text))
     if not isinstance(data, dict):
         raise ValueError("reply is not a JSON object")
-    raw_scores = data.get("scores")
-    if not isinstance(raw_scores, dict):
-        raise ValueError("scores missing")
-    scores: Dict[str, int] = {}
-    for dim in DIMENSIONS:
-        value = raw_scores.get(dim)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"score for {dim} is not a number: {value!r}")
-        scores[dim] = max(0, min(2, int(round(float(value)))))
+    scores = _sanitize_scores(data.get("scores"))
     total = sum(scores.values())
-    fixes_raw = data.get("fixes")
-    fixes = [str(f).strip() for f in fixes_raw if str(f).strip()][:5] if isinstance(fixes_raw, list) else []
+    fixes = _sanitize_fixes(data.get("fixes"))
     return {
         "seat": seat,
         "scores": scores,
@@ -233,6 +244,44 @@ def video_duration(video: Path) -> float:
     return float(out.stdout.strip())
 
 
+def _keys() -> tuple:
+    """两把 key 都得在——缺任何一把都是 BLOCKED，不许少一席凑合跑（评委席不得顶替或删席）。"""
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not anthropic_key or not openai_key:
+        raise SystemExit("ANTHROPIC_API_KEY / OPENAI_API_KEY absent → BLOCKED (no substitute seat)")
+    return anthropic_key, openai_key
+
+
+def prepare_materials(media: Path, video: Path, shots: List[Dict[str, Any]], work: Path,
+                      cap: int, openai_key: str) -> tuple:
+    """抽帧 + 转写 + 拼 prompt：每席收到的材料一模一样（独立打分的前提是同一份卷子）。"""
+    frames = extract_frames(video, work / "frames", shots, cap)
+    audio = extract_audio(video, work / "narration-zh.mp3")
+    transcript = transcribe(audio, openai_key)
+    (work / "transcript.zh.txt").write_text(transcript, encoding="utf-8")
+    prompt = build_prompt(
+        RUBRIC_PATH.read_text(encoding="utf-8"),
+        (media / "demo.zh.srt").read_text(encoding="utf-8"),
+        (media / "demo.en.srt").read_text(encoding="utf-8"),
+        transcript, video_duration(video), len(frames),
+    )
+    return frames, prompt
+
+
+def record_round(out: Path, rnd: int, frames: int, seats: List[Dict[str, Any]], verdict: Dict[str, Any]) -> None:
+    """把这一轮写进 judges.json（同号轮重跑 = 覆盖那一轮，别的轮不动）。"""
+    doc = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {"rounds": [], "blocked_seats": [BLOCKED_SEAT]}
+    doc["blocked_seats"] = [BLOCKED_SEAT]
+    doc["rounds"] = [r for r in doc.get("rounds", []) if r.get("round") != rnd]
+    # 注意键序：`seats` 是席位记录的**列表**（judges.json 的形状），计数走 active_seats / passing_seats——
+    # 别再用 **verdict 展开覆盖它（2026-09-15 写坏过一次：seats 变成了一个整数）
+    doc["rounds"].append({"round": rnd, "frames": frames, "active_seats": verdict["seats"],
+                          "passing_seats": verdict["pass"], "verdict": verdict["verdict"], "seats": seats})
+    doc["rounds"].sort(key=lambda r: r["round"])
+    out.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="judge the demo video with three independent seats")
     ap.add_argument("--media", required=True, help="M (artefact dir)")
@@ -244,37 +293,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     video = media / "demo.mp4"
     if not video.exists():
         raise SystemExit(f"{video} missing — run assemble.sh first")
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if not anthropic_key or not openai_key:
-        raise SystemExit("ANTHROPIC_API_KEY / OPENAI_API_KEY absent → BLOCKED (no substitute seat)")
+    anthropic_key, openai_key = _keys()
 
     data = shots_mod.load(args.shots)
     (media / "rubric.md").write_text(RUBRIC_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     work = media / "judge-work" / f"round{args.round}"
-    frames = extract_frames(video, work / "frames", data["shots"], args.cap)
-    audio = extract_audio(video, work / "narration-zh.mp3")
-    transcript = transcribe(audio, openai_key)
-    (work / "transcript.zh.txt").write_text(transcript, encoding="utf-8")
-    prompt = build_prompt(
-        RUBRIC_PATH.read_text(encoding="utf-8"),
-        (media / "demo.zh.srt").read_text(encoding="utf-8"),
-        (media / "demo.en.srt").read_text(encoding="utf-8"),
-        transcript, video_duration(video), len(frames),
-    )
+    frames, prompt = prepare_materials(media, video, data["shots"], work, args.cap, openai_key)
     seats = run_round(prompt, frames, anthropic_key, openai_key)
     verdict = round_verdict(seats)
 
     out = media / "judges.json"
-    doc = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {"rounds": [], "blocked_seats": [BLOCKED_SEAT]}
-    doc["blocked_seats"] = [BLOCKED_SEAT]
-    doc["rounds"] = [r for r in doc.get("rounds", []) if r.get("round") != args.round]
-    # 注意键序：`seats` 是席位记录的**列表**（judges.json 的形状），计数走 active_seats / passing_seats——
-    # 别再用 **verdict 展开覆盖它（2026-09-15 写坏过一次：seats 变成了一个整数）
-    doc["rounds"].append({"round": args.round, "frames": len(frames), "active_seats": verdict["seats"],
-                          "passing_seats": verdict["pass"], "verdict": verdict["verdict"], "seats": seats})
-    doc["rounds"].sort(key=lambda r: r["round"])
-    out.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    record_round(out, args.round, len(frames), seats, verdict)
     print(f"round={args.round} seats={verdict['seats']} pass={verdict['pass']} verdict={verdict['verdict']} → {out}")
     return 0 if verdict["verdict"] == "pass" else 1
 

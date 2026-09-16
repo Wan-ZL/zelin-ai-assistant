@@ -16,6 +16,18 @@ MIN_TOTAL_SECONDS = 60
 MAX_TOTAL_SECONDS = 180
 
 
+def _check_shot(shot: Dict[str, Any]) -> None:
+    """一个镜头的必填字段与时长上限。"""
+    for key in ("id", "seconds", "zh", "en"):
+        if not shot.get(key):
+            raise ValueError(f"shots.json: shot missing {key!r}: {shot.get('id')!r}")
+    seconds = shot["seconds"]
+    if not isinstance(seconds, int) or seconds <= 0:
+        raise ValueError(f"shots.json: {shot['id']}: seconds must be a positive int")
+    if seconds > MAX_SHOT_SECONDS:
+        raise ValueError(f"shots.json: {shot['id']}: {seconds}s > {MAX_SHOT_SECONDS}s cap")
+
+
 def load(path: Path | str | None = None) -> Dict[str, Any]:
     """读 shots.json；结构不合法即抛（分镜坏了不许静默出片）。"""
     data = json.loads(Path(path or DEFAULT_SHOTS).read_text(encoding="utf-8"))
@@ -23,13 +35,7 @@ def load(path: Path | str | None = None) -> Dict[str, Any]:
     if not isinstance(shots, list) or not shots:
         raise ValueError("shots.json: 'shots' must be a non-empty list")
     for shot in shots:
-        for key in ("id", "seconds", "zh", "en"):
-            if not shot.get(key):
-                raise ValueError(f"shots.json: shot missing {key!r}: {shot.get('id')!r}")
-        if not isinstance(shot["seconds"], int) or shot["seconds"] <= 0:
-            raise ValueError(f"shots.json: {shot['id']}: seconds must be a positive int")
-        if shot["seconds"] > MAX_SHOT_SECONDS:
-            raise ValueError(f"shots.json: {shot['id']}: {shot['seconds']}s > {MAX_SHOT_SECONDS}s cap")
+        _check_shot(shot)
     return data
 
 
