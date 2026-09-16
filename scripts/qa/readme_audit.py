@@ -125,33 +125,46 @@ def _is_noise(line):
     return re.match(r"^\|[\s\-:|]+\|$", stripped) is not None
 
 
+def _fence_language(stripped, fence):
+    """```开合：返回新的围栏状态（None = 已经出了围栏）。"""
+    if fence is not None:
+        return None
+    return stripped[3:].strip() or "sh"
+
+
+def _fenced_claims(stripped, fence):
+    """围栏内一行 → [(kind, text)]；mermaid 是画（diagram），其余当命令（code）。"""
+    if not stripped or stripped.startswith("#"):
+        return []
+    return [("diagram" if fence == "mermaid" else "code", stripped)]
+
+
+def _plain_claims(stripped):
+    """围栏外一行 → [(kind, text)]：bullet / table / media 各算一条，散文按句切。"""
+    if _is_noise(stripped):
+        return []
+    if re.match(r"^[-*]\s+", stripped):
+        return [("bullet", stripped)]
+    if stripped.startswith("|"):
+        return [("table", stripped)]
+    if "<img" in stripped or stripped.startswith("!["):
+        return [("media", stripped)]
+    return [("prose", sentence) for sentence in _split_sentences(stripped)]
+
+
 def extract_claims(text):
-    """README 正文 → Claim 列表（bullet / table / code / prose / media 五类）。"""
+    """README 正文 → Claim 列表（bullet / table / code / diagram / media / prose）。"""
     claims = []
     fence = None
     for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.rstrip()
-        if line.strip().startswith("```"):
-            fence = None if fence is not None else (line.strip()[3:].strip() or "sh")
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            fence = _fence_language(stripped, fence)
             continue
-        if fence is not None:
-            # mermaid 是画，不是命令：节点文本里的 `a/b` 不当路径断言（只过退役面）。
-            kind = "diagram" if fence == "mermaid" else "code"
-            if line.strip() and not line.strip().startswith("#"):
-                claims.append(Claim(len(claims) + 1, kind, lineno, line.strip()))
-            continue
-        if _is_noise(line):
-            continue
-        stripped = line.strip()
-        if re.match(r"^[-*]\s+", stripped):
-            claims.append(Claim(len(claims) + 1, "bullet", lineno, stripped))
-        elif stripped.startswith("|"):
-            claims.append(Claim(len(claims) + 1, "table", lineno, stripped))
-        elif "<img" in stripped or stripped.startswith("!["):
-            claims.append(Claim(len(claims) + 1, "media", lineno, stripped))
-        else:
-            for sentence in _split_sentences(stripped):
-                claims.append(Claim(len(claims) + 1, "prose", lineno, sentence))
+        pairs = (_fenced_claims(stripped, fence) if fence is not None
+                 else _plain_claims(stripped))
+        for kind, body in pairs:
+            claims.append(Claim(len(claims) + 1, kind, lineno, body))
     return claims
 
 
@@ -167,11 +180,8 @@ def _shell_tokens(text):
         return text.split()
 
 
-def _candidate_paths(text, kind="prose"):
-    """主张里长得像仓库路径的片段（inline code / md 链接 / html src|href / 命令行 token）。
-
-    自由散文里的 `a/b` 不当路径——「launchd/cron」「Slack/Gmail」是英文顿挫，
-    不是文件；真要断言一条路径，README 的写法一律是反引号或链接。"""
+def _raw_path_tokens(text, kind):
+    """可能是路径的原始片段：反引号里的命令 token、md 链接、html src|href。"""
     raw = []
     for match in _INLINE_CODE_RE.finditer(text):
         raw.extend(_shell_tokens(match.group(1)))
@@ -179,18 +189,28 @@ def _candidate_paths(text, kind="prose"):
     raw.extend(_HTML_REF_RE.findall(text))
     if kind == "code":
         raw.extend(_shell_tokens(text))
+    return raw
+
+
+def _looks_like_path(token):
+    """URL / 家目录 / 绝对路径不判；带斜杠或带已知扩展名的才当仓库路径。"""
+    if re.match(r"^(https?:|mailto:|#|\?|~|/|\$|\.\.)", token) or "://" in token:
+        return False
+    if "/" in token:
+        return True
+    return bool(_EXT_RE.search(token))
+
+
+def _candidate_paths(text, kind="prose"):
+    """主张里长得像仓库路径的片段。
+
+    自由散文里的 `a/b` 不当路径——「launchd/cron」「Slack/Gmail」是英文顿挫，
+    不是文件；真要断言一条路径，README 的写法一律是反引号或链接。"""
     out = []
-    for item in raw:
+    for item in _raw_path_tokens(text, kind):
         token = item.strip().strip("\"'`,;:。，、()[]").rstrip(".")
-        if not token or token in out:
-            continue
-        if re.match(r"^(https?:|mailto:|#|\?|~|/|\$|\.\.)", token) or "://" in token:
-            continue
-        if "/" not in token and not _EXT_RE.search(token):
-            continue
-        if token.startswith(("http", "www.")):
-            continue
-        out.append(token)
+        if token not in out and _looks_like_path(token):
+            out.append(token)
     return out
 
 
@@ -248,23 +268,53 @@ def current_tag(repo_root):
     return None
 
 
-def check_retired(claim, tag):
-    for pattern, reason in RETIRED_PATTERNS:
-        if pattern.search(claim.text):
-            claim.mark(reason)
+def _check_version_literals(claim, tag):
+    """版本字面量只许等于当前 tag；tag 拿不到（浅 clone / 无 tag）就不判。"""
     if not tag:
-        return  # 版本真源拿不到（浅 clone / 无 tag）时不判——宁可少判，不可乱判
+        return
     for match in _VERSION_RE.finditer(claim.text):
         literal = match.group(0)
         if literal == tag:
             continue
         claim.mark("version literal %s is not the current tag %s (§56.1: the tag "
-                   "is the only version truth)" % (literal, tag or "<unknown>"))
+                   "is the only version truth)" % (literal, tag))
+
+
+def check_retired(claim, tag):
+    for pattern, reason in RETIRED_PATTERNS:
+        if pattern.search(claim.text):
+            claim.mark(reason)
+    _check_version_literals(claim, tag)
 
 
 # --------------------------------------------------------------------------- #
 # 判据 3：UI 标签
 # --------------------------------------------------------------------------- #
+
+def _own_labels(node):
+    """一个 owner=web 条目自己的 en / zh 文案（其它 owner = 不是 web 渲染的字）。"""
+    if node.get("owner") != "web":
+        return []
+    out = []
+    for key in ("en", "zh"):
+        value = node.get(key)
+        if isinstance(value, str):
+            out.append(value)
+    return out
+
+
+def _walk_web_labels(node, out):
+    """§66 清单是任意深的 dict/list 树；沿树收所有 owner=web 的文案。"""
+    if isinstance(node, dict):
+        out.extend(_own_labels(node))
+        children = list(node.values())
+    elif isinstance(node, list):
+        children = node
+    else:
+        return
+    for child in children:
+        _walk_web_labels(child, out)
+
 
 def _inventory_labels(repo_root):
     path = os.path.join(repo_root, "ui", "parity", "native-inventory.json")
@@ -273,20 +323,7 @@ def _inventory_labels(repo_root):
     with open(path, "r", encoding="utf-8") as handle:
         data = json.load(handle)
     labels = []
-
-    def walk(node):
-        if isinstance(node, dict):
-            if node.get("owner") == "web":
-                for key in ("en", "zh"):
-                    if isinstance(node.get(key), str):
-                        labels.append(node[key])
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
-
-    walk(data)
+    _walk_web_labels(data, labels)
     return labels
 
 
@@ -315,17 +352,27 @@ def label_corpus(repo_root):
 _HTML_ATTR_RE = re.compile(r'\s[\w:-]+="[^"]*"')
 
 
+def _quoted_text(match):
+    for group in match.groups():
+        if group:
+            return group.strip()
+    return ""
+
+
+def _is_ui_label(label):
+    return bool(label) and not _NOT_A_LABEL_RE.search(label)
+
+
 def candidate_labels(text):
+    """主张里引号括起来、且处在 UI 语境里的文案（= 要去比对界面的标签）。"""
     if not _UI_CONTEXT_RE.search(text):
         return []
     # HTML 属性值（align="center"、width="760"）不是 UI 文案，先摘掉再找引号。
     text = _HTML_ATTR_RE.sub(" ", text)
     out = []
     for match in _QUOTED_RE.finditer(text):
-        label = next((g for g in match.groups() if g), "").strip()
-        if not label or _NOT_A_LABEL_RE.search(label):
-            continue
-        if label not in out:
+        label = _quoted_text(match)
+        if _is_ui_label(label) and label not in out:
             out.append(label)
     return out
 
@@ -428,11 +475,11 @@ def render_markdown(report, tag):
     return "\n".join(lines)
 
 
-def main(argv=None):
+def _build_parser():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", default=REPO_ROOT)
     parser.add_argument("--summary", action="store_true",
-                        help="print exactly one line: README claims=.. stale=.. images=..")
+                        help="print only the one-line summary (no stale detail)")
     parser.add_argument("--out", nargs="?", const=DEFAULT_OUT, default=None,
                         help="write the markdown table (default %s)" % DEFAULT_OUT)
     parser.add_argument("--check", action="store_true",
@@ -441,30 +488,50 @@ def main(argv=None):
                         help="also verify UI labels against a Playwright render")
     parser.add_argument("--tag", default=None, help="override the version truth")
     parser.add_argument("--json", action="store_true", help="dump claims as JSON")
-    args = parser.parse_args(argv)
+    return parser
 
-    repo_root = os.path.abspath(args.repo)
-    rendered = rendered_text(repo_root) if args.render else None
-    tag = args.tag or current_tag(repo_root)
-    report = audit(repo_root, tag=tag, rendered=rendered)
 
-    if args.out:
-        out_path = args.out if os.path.isabs(args.out) else os.path.join(
-            repo_root, args.out)
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as handle:
-            handle.write(render_markdown(report, tag))
+def _write_report(report, out, repo_root, tag):
+    out_path = out if os.path.isabs(out) else os.path.join(repo_root, out)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as handle:
+        handle.write(render_markdown(report, tag))
+
+
+def _print_stale(report):
+    for claim in report.stale:
+        print("STALE line %d: %s\n    %s" % (
+            claim.line, "; ".join(claim.reasons), claim.text[:160]),
+            file=sys.stderr)
+
+
+def _emit(report, args):
+    """stdout：--json 给 JSON，否则恒是那一行 summary；stale 明细走 stderr。"""
     if args.json:
         print(json.dumps([c.as_dict() for c in report.claims],
                          ensure_ascii=False, indent=2))
-    if args.summary or not (args.out or args.json):
-        print(report.summary())
-    if not args.summary and not args.json:
-        for claim in report.stale:
-            print("STALE line %d: %s\n    %s" % (
-                claim.line, "; ".join(claim.reasons), claim.text[:160]),
-                file=sys.stderr)
-    return 1 if (args.check and report.stale) else 0
+        return
+    print(report.summary())
+    if not args.summary:
+        _print_stale(report)
+
+
+def main(argv=None):
+    args = _build_parser().parse_args(argv)
+    repo_root = os.path.abspath(args.repo)
+    rendered = rendered_text(repo_root) if args.render else None
+    tag = args.tag if args.tag is not None else current_tag(repo_root)
+    report = audit(repo_root, tag=tag, rendered=rendered)
+    if args.out:
+        _write_report(report, args.out, repo_root, tag)
+    _emit(report, args)
+    return _exit_code(args, report)
+
+
+def _exit_code(args, report):
+    if args.check and report.stale:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
