@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/skills/test-code/scripts/complexity_min.py
+# hypothesis_version: 6.141.1
+
+[100, 1000, '%s %s = %s', '%s: %s', '%s:%s', '%s::%s', '+', '--baseline', '--json', '--max-cc', '--max-file-lines', '--max-func-lines', '--only', '--root', '--write-baseline', '.', '.py', '/', '<source>', 'DIR', 'ERROR %s: %s', 'FAIL', 'FILE', 'OK', '__main__', 'caps', 'cc', 'file-lines', 'file_lines', 'func-lines', 'functions', 'lengths', 'match_case', 'max_cc', 'max_file_lines', 'max_func_lines', 'new', 'note', 'ok', 'paths', 'r', 'stale', 'store_true', 'utf-8', 'violations', 'worse']

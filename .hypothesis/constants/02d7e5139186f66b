@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/merge.py
+# hypothesis_version: 6.141.1
+
+[200, '*.json', '-m', '; ', 'ab', 'act.merge_review', 'analysis timed out', 'analyzing', 'close_secondary', 'delivered_summary', 'dismissed', 'display_title', 'done', 'error', 'expires_at', 'fail', 'failed', 'final_draft', 'former_titles', 'group_results', 'groups', 'id', 'ids', 'independent', 'keep_separate', 'link_improvement', 'merge', 'merge-stop', 'merge_apply', 'merge_dismiss', 'merge_force', 'merged-review: 不再需要', 'merged_at', 'merged_deliverables', 'noop', 'ok', 'outcome', 'partition', 'primary', 'requested_at', 'running', 'session_id', 'skipped', 'status', 'title', 'unknown', 'utf-8', 'verdict', '；']

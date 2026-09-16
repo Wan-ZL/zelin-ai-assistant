@@ -1,4 +1,4 @@
-"""全覆盖跑者的八条 flow: 与临时 HOME 纪律（CONTRACT §58 QA 闸门）。
+"""全覆盖跑者的八条 flow: 与临时 HOME 纪律（CONTRACT §58 QA 闸门；§77.7 沙箱纪律）。
 
 判例（假 shell / 假 HTTP，绝不真跑 install.sh、不起 server、不联网）：
   - flow:install_fresh / flow:uninstall_reinstall：只认「exit 0 + plist 落在**临时**

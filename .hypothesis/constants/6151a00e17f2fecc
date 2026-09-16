@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/maintenance.py
+# hypothesis_version: 6.141.1
+
+[120, '#\\d+$', '%Y-%m-%dT%H:%M:%SZ', '+00:00', 'Z', '\\s+', 'accepted_at', 'approved_at', 'bad', 'channel', 'cost_estimate_usd', 'daily-merge:', 'daily-merge: 并入 ', 'daily_loop', 'date', 'deadline_passed', 'definition_of_done', 'diagnostic_expired', 'dispatched_at', 'display_id', 'from', 'hard', 'high', 'id', 'idle', 'improvement_of', 'new', 'none', 'plan', 'radar', 'radar-diagnostic', 'radar-parse-degraded', 'reraised_at', 'restored_at', 'review_at', 'review_stale', 'rule', 'sent_at', 'set', 'soft', 'stale:', 'superseded', 'target_repo', 'title', 'trash_retention_days', 'ts', '|']

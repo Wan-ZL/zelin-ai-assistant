@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/systemd.py
+# hypothesis_version: 6.141.1
+
+['--claude-bin-dir', '--out', '--python', '--repo-root', '--zai-port', '.service', '.timer', '47820', '@CLAUDE_BIN_DIR@', '@PYTHON@', '@REPO_ROOT@', '@ZAI_PORT@', '__main__', 'checkout root', 'systemd', 'utf-8']

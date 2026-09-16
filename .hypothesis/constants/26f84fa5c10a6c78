@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/taskscheduler.py
+# hypothesis_version: 6.141.1
+
+['--claude-bin-dir', '--out', '--python', '--repo-root', '--zai-port', '.xml', '47820', '@CLAUDE_BIN_DIR@', '@PYTHON@', '@REPO_ROOT@', '@ZAI_PORT@', 'ZelinAIAssistant', '\\', '__main__', 'checkout root', 'tasksched', 'utf-8', 'zelin-']

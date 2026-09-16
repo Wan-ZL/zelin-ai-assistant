@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/_scan.py
+# hypothesis_version: 6.141.1
+
+['JUDGE_RUNNER', 'U_ME', 'app-pw', 'get_app_password', 'get_token', 'ok', 'uid', 'user_id', 'verify_token', 'xoxp-fixture']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/gmail_fold.py
+# hypothesis_version: 6.141.1
+
+['2026-09-14', 'B-05-gmail-fold', 'R-901', '__main__', 'action', 'card_sent', 'channel', 'date', 'gmail', 'manager', 'needs_action', 'no_new_card', 'note', 'note_folded_in', 'quote', 'relates_to', 'req', 'status_unchanged', 'still_one_card', 'who']

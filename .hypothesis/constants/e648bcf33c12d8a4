@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/version.py
+# hypothesis_version: 6.141.1
+
+[420, '%d.%d.%d', '%s+%d', '--long', '--match', '--tags', '-C', '._version-', '.py', '/Applications', '0', '0.0.0', '0.0.0-dev', 'Applications', 'CFBundleIdentifier', 'Contents', 'Info.plist', '\\(#(\\d+)\\)\\s*$', '\\s+', '__init__.py', '_version.py', 'board app version', 'board_app', 'bundle_id', 'com.zelin.ai-board', 'computed', 'describe', 'fallback', 'git', 'ios/project.yml', 'major', 'minor', 'ok', 'patch', 'path', 'rb', 'release:major', 'release:minor', 'stamp', 'utf-8', 'v', 'v%s (%s)', 'v[0-9]*', 'version', 'w', 'warn']

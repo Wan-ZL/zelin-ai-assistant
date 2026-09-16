@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/checks/pipeline.py
+# hypothesis_version: 6.141.1
+
+['%Y-%m-%dT%H:%M:%SZ', ', ', ', pid %s', '-', '?', 'actd heartbeat', 'actd_stalled', 'activation', 'active', 'age_s', 'alive (pid %s)', 'auto-deploy', 'backup_dir', 'board server', 'board ui build', 'cards', 'cooldown', 'dashboard', 'dashboard_stale', 'db_missing', 'diff_total', 'export_last_run', 'generated_at', 'late_yaml_writes', 'marker', 'marker_present', 'name', 'never', 'phase', 'pid', 'reason', 'refused', 'state', 'steps', 'store2', 'store2_db_missing', 'store2_refused', 'ui', 'unavailable', 'utf-8', 'yaml_forced', '…', '删掉它并重启 actd（它会原子重写）', '（store2 标记在，回滚开关生效）']

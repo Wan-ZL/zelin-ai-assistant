@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/oneonone.py
+# hypothesis_version: 6.141.1
+
+['(\\d{4}-\\d{2}-\\d{2})', '- （无）', '[MANAGER-OWES]', '__main__', 'approved, queued', 'awaiting approval', 'awaiting review', 'backlog', 'date', 'delivered', 'dispatched_at', 'in progress', 'last_resume_at', 'last_rework_at', 'oneonone', 'oneonone_prep', 'raising', 'sent_at', 'utf-8', 'w', 'you', '•', '✅', '已交付', '已批准待派发', '待审批', '待验收', '提案生成中', '潜在任务', '进行中', '🏃', '👍', '📡', '📨', '🔍']

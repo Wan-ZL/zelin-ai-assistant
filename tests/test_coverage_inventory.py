@@ -1,4 +1,4 @@
-"""场景表生成器 scripts/qa/coverage_inventory.py 的判例（CONTRACT §58 QA 门 / §66.2 UI 清单）。
+"""场景表生成器 scripts/qa/coverage_inventory.py 的判例（CONTRACT §58 QA 门 / §66.2 UI 清单；§77.1 全覆盖清点）。
 
 只喂小字符串与临时文件：不起子进程、不碰网络、不写仓里任何账本。最后两条用真仓
 跑一遍生成器（纯文件读），把「committed 的 qa/coverage_inventory.json 陈旧了」钉成红灯。

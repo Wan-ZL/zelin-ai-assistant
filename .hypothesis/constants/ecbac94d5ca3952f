@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/checks/services.py
+# hypothesis_version: 6.141.1
+
+[' - cards never move', '%s failed to start', '*', '*.timer', '*.xml', ', ', '.', '.config', '.service', '.timer', ':', '; ', 'Disabled', 'Ready', 'Running', 'Scheduled Task State', 'Status', 'TaskName', 'XDG_CONFIG_HOME', '\\', 'act', 'activating', 'active', 'active (%s)', 'agent_unloaded', 'failed', 'registered (ready)', 'reloading', 'running', 'scheduled tasks', 'systemd', 'systemd orphans', 'systemd units', 'tasksched', 'unknown', 'user', 'zelin-', '●']

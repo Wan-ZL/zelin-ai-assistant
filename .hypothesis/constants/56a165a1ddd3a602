@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/errors.py
+# hypothesis_version: 6.141.1
+
+[400, 401, 403, 404, 409, 500, 501, 503, 'CONFLICT', 'FORBIDDEN', 'INTERNAL_ERROR', 'INVALID_FIELD', 'NOT_FOUND', 'NOT_IMPLEMENTED', 'SHELL_UNAVAILABLE', 'UNAUTHORIZED', 'UNKNOWN_FIELD', 'code', 'details', 'error', 'message']

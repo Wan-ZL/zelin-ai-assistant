@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/boardctl.py
+# hypothesis_version: 6.141.1
+
+[409, 47820, 65535, ', ', '--', '/', '/api/actions', '/api/board', '/api/cards/', 'AIASSISTANT_HOME', 'Accept', 'Content-Type', 'FILE_READ_FAILED', 'GET', 'INTERNAL_ERROR', 'INVALID_RESPONSE', 'POST', 'SERVICE_UNAVAILABLE', 'USAGE_ERROR', 'X-ZAI-Client', 'X-Zai-Token', 'ZAI_PORT', '__main__', 'action', 'actor', 'agent', 'application/json', 'archived', 'board', 'boardctl', 'body', 'body-file', 'capture', 'card', 'cards', 'cause', 'code', 'command', 'comment', 'completed', 'debt', 'details', 'empty option name', 'error', 'help', 'id', 'image', 'images', 'json', 'lane', 'message', 'needs_approval', 'needs_input', 'operands', 'options', 'reason', 'review', 'running', 'schemaVersion', 'server.token', 'state', 'str | None', 'text', 'text-file', 'trash', 'utf-8']

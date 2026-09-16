@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ci/progress_log.py
+# hypothesis_version: 6.141.1
+
+['%s: %s', '--plan', '.', '::error::%s/%s\n', '?', 'README.md', '\\|', '^## ', '^## 8\\.', '^([a-z]+):\\s*(.*)$', '__main__', 'body', 'check', 'cmd', 'date', 'dir', 'docs/design/progress', 'law', 'phase', 'pr', 'r', 'render', 'utf-8', '|']

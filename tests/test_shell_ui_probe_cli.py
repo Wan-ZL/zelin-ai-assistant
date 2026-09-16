@@ -1,4 +1,4 @@
-"""shell_ui_probe.py 的 CLI 契约：--list / --probe / --summary 的那一行与退出码（§58）。
+"""shell_ui_probe.py 的 CLI 契约：--list / --probe / --summary 的那一行与退出码（§58；§77.4 壳 UI 探针）。
 
 goal 逐字规定 summary 末行 `SHELL probes=<k> present=<k>`（k = 真跑了的探针，
 --summary 不带 --allow-enqueue 时是 4）；退出码 0 = 全 present、1 = 有 MISSING、

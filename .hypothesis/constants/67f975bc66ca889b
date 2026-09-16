@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/aging_22d.py
+# hypothesis_version: 6.141.1
+
+[2026, 'B-08-aging-22d', 'P-1', 'T09:00:00Z', '__main__', 'archived_after_20h', 'channel', 'date', 'id', 'meeting', 'q', 'quote', 'restorable', 'review_at', 'review_stale', 'rule', 'stale:review_stale', 'stamp_is_add_only', 'stamped_once', 'trashed_with_reason']

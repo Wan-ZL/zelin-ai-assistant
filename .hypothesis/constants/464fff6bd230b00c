@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/match_corpus.py
+# hypothesis_version: 6.141.1
+
+[0.0, 0.2, '-_.', '[._-]+', '[\u3040-ヿ㐀-䶿一-\u9fff]+', '^[\u3040-ヿ㐀-䶿一-\u9fff]+$', 'add', 'and', 'are', 'but', 'can', 'card', 'com', 'display_title', 'email', 'fix', 'for', 'from', 'gmail', 'has', 'have', 'htm', 'html', 'http', 'https', 'id', 'into', 'meeting', 'new', 'not', 'note', 'notes', 'org', 'php', 'quick', 'quote', 'radar', 'ref', 'slack', 'sources', 'summary', 'task', 'that', 'the', 'this', 'title', 'todo', 'update', 'updated', 'was', 'will', 'with', 'www', 'you', 'your', '一下', '一个', '一句', '一点', '一起', '不用', '不要', '东西', '之前', '之后', '事情', '什么', '今天', '他们', '以前', '以后', '但是', '你们', '可以', '可能', '因为', '大家', '如果', '就是', '已经', '帮我', '应该', '怎么', '我们', '我看', '或者', '所以', '时候', '明天', '昨天', '有点', '没有', '然后', '现在', '看一', '知道', '稍后', '给我', '脱敏', '觉得', '记一', '记得', '谢谢', '还是', '还有', '这个', '这张', '这条', '那个', '那张', '那条', '需要', '麻烦']

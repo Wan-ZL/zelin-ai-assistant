@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/doctor.py
+# hypothesis_version: 6.141.1
+
+[-120, '       fix: %s', ' · ', '%s %s: %s', '%s - live probe ok', '%s — 活探针 ok', '%s: %s', '--fast', '--fresh-install', '--json', '.screenpipe', '/', '[ ok ]', '[FAIL]', '[warn]', '_', '__main__', '_check_', 'action_id', 'as_json', 'checks', 'claude', 'claude code model', 'db.sqlite', 'detail', 'exists', 'exit_code', 'failure_id', 'fallback: %s', 'fix', 'follow', 'fresh', 'home', 'model', 'model %s', 'model_unavailable', 'name', 'no output', 'parseable', 'row_class', 'status', 'store_true', 'tuple[list, list]', '且回退已关', '全局默认 %s（%s）', '或把「回退模型」打开', '派工会全部失败', '雷达/分诊/判官/问答会全部失败']

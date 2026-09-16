@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/paths.py
+# hypothesis_version: 6.141.1
+
+['.screenpipe', 'AIASSISTANT_HOME', 'Library', 'Logs', 'act', 'actd.heartbeat', 'actd.log', 'archive', 'attachments', 'config', 'config.yaml', 'cron_probe.json', 'dashboard.json', 'dist', 'inbox', 'install_report.json', 'job.json', 'lane.json', 'loop_health.json', 'radar_health.json', 'registry', 'runtime.json', 'search_index.json', 'secrets', 'self_improve', 'setup_done.json', 'shell.heartbeat', 'state', 'store2.db', 'store2_truth.json', 'str | Path | None', 'terminal_queue', 'update_check.json', 'vault-mirror', 'vault_sync_mode', 'voice_gen', 'web', 'zelin-ai-assistant']

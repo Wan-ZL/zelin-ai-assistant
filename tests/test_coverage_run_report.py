@@ -1,4 +1,4 @@
-"""全覆盖跑者的 DSL 解析 + 三态报告 R（CONTRACT §58 QA 闸门）。
+"""全覆盖跑者的 DSL 解析 + 三态报告 R（CONTRACT §58 QA 闸门；§77.2 跑者与三态报告）。
 
 判例（全部用假执行器：不起子进程、不联网——防腐 #7 的 unit 层纪律）：
   - proof DSL：` && ` 串联、未知 kind、空 proof、waived 行；

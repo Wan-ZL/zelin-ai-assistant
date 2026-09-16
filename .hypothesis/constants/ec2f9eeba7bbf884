@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/slack_directory.py
+# hypothesis_version: 6.141.1
+
+[127, '--directory', '--refresh', 'AIASSISTANT_UI_LANG', 'act.lib.slack_setup', 'channels', 'directory exited %d', 'directory_failed', 'error', 'message', 'no_python', 'ok', 'users']

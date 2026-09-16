@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/worktree_inventory.py
+# hypothesis_version: 6.141.1
+
+[0.0, 300.0, 127, 180, 600, '%s: %s', '--dry-run', '--json', '--sweep', 'act.lib.worktrees', 'bytes', 'bytes_partial', 'computed_at', 'computing', 'dry_run', 'error', 'fields', 'inflight', 'message', 'no_python', 'ok', 'ready', 'refreshing', 'removable', 'removed', 'repos', 'scanned_at', 'snapshot', 'state', 'truncated', 'unknown field', 'worktrees', 'worktrees exited %s', 'worktrees-inventory', 'worktrees_failed']

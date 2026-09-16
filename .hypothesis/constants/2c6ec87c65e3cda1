@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/setup.py
+# hypothesis_version: 6.141.1
+
+['%Y-%m-%dT%H:%M:%SZ', '--version', '-s', '.claude', '.config', '.credentials.json', '.tmp', '.yaml.tmp', '/', '/usr/bin/security', 'ANTHROPIC_API_KEY', 'Application Support', 'Claude Code', 'Library', 'act.lib.dashboard', 'anthropic-key.txt', 'auth', 'auth_sources', 'cli_path', 'completed_at', 'config.example.yaml', 'config_exists', 'darwin', 'done', 'env_key', 'error', 'fields', 'home', 'legacy_file', 'list[dict]', 'name', 'needed', 'oauth', 'obsidian', 'obsidian.json', 'ok', 'path', 'protected_location', 'rc', 'ready', 'replace', 'secrets', 'secrets_file', 'setup', 'slack-user-token.txt', 'tuple[int, str]', 'unknown field', 'utf-8', 'vaults', 'version']

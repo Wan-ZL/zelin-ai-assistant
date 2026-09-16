@@ -1,4 +1,4 @@
-"""uninstall.sh safety contract.
+"""uninstall.sh safety contract（CONTRACT §77.7 覆盖跑者沙箱纪律：apps-dir seam）.
 
 The uninstaller is the most dangerous script after install.sh, so the tests
 pin its safety properties rather than its cosmetics: (a) --dry-run changes

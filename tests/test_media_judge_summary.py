@@ -1,4 +1,4 @@
-"""`judge_summary.py` 的那一行（CONTRACT §77 拟 demo 视频管线；QA 面 §58）。
+"""`judge_summary.py` 的那一行（CONTRACT §77.6 demo 视频管线；QA 面 §58）。
 
 验收命令 grep 的就是这一行，形状必须逐字不变：`JUDGES seats=<k> pass=<p> rounds=<r>`——
 k / p 取**最后一轮**（BLOCKED / ERROR 席不计入 k），r = 轮数。无网络，喂的是 judges.json 的 fixture。
