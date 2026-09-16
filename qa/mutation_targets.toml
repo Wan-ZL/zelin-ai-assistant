@@ -90,7 +90,9 @@ per_mutant_timeout_seconds = 60
 "skills/test-code/scripts/complexity_min.py" = ["tests/test_skill_test_code_complexity_min.py"]
 "skills/test-code/scripts/structure_check.py" = ["tests/test_skill_test_code_structure.py"]
 "skills/test-code/scripts/detect.py" = ["tests/test_skill_test_code_detect.py"]
-"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py"]
+# R-217（2026-09-15 夜报 404 存活 / 52%）：checks.py 的判例拆五个文件补进映射——plan 形状与 post hook、
+# 自制检查边界、第 1–4 档 builder、第 5 档 + 扩展圈 builder、CATALOG 数据表（tier/phase/est 对照 references/tiers.md）。
+"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py", "tests/test_skill_test_code_checks_mutation_kills_plans.py", "tests/test_skill_test_code_checks_mutation_kills_internal.py", "tests/test_skill_test_code_checks_mutation_kills_builders_t1_t4.py", "tests/test_skill_test_code_checks_mutation_kills_builders_t5_ext.py", "tests/test_skill_test_code_checks_mutation_kills_catalog.py"]
 "skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
 
 # test-ui skill（skills/test-ui；vnext2-plan R2.8，test-code 的姐妹）——同样每晚第 4 档。
