@@ -1,0 +1,3 @@
+
+      Driver ID  Current State  Max State  Current State Description
+IOPMrootDomain              1          4  OFF
