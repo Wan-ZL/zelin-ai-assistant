@@ -4,7 +4,7 @@
 // 全部经 zaiShell 桥打到壳里的 RecordingController / RecordingSchedule（screenpipe 是壳的直接子进程）。
 // 普通浏览器会话没有桥：如实说明「只在看板 app 里可控」，不装按钮。
 // 状态词 / 死因句复用 header RecordingControl 的同一张表（recordingStateWord / recordingDeadReason）。
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, schedulePaused, useShellState, type ShellRecordingSchedule } from "../../shellBridge";
 import { recordingDeadReason, recordingStateWord } from "../shell/RecordingControl";
@@ -124,7 +124,9 @@ export function RecordingScheduleBlock({ schedule }: { schedule: ShellRecordingS
   // 壳的真相到了（别的入口改了日程 / 拒绝回滚）→ 本地草稿跟着走
   useEffect(() => { if (s) setStart(s.start); }, [s?.start]);
   useEffect(() => { if (s) setEnd(s.end); }, [s?.end]);
-  useEffect(() => {
+  // layout effect（不是 passive effect）：重挂把带焦点的旧 <input> 卸掉的那一刻 activeElement 已经掉到 body，
+  // 焦点要在同一次 commit 里放回去——晚一拍就闪一下，判例也会撞见 body（CI 上 1/6 概率）
+  useLayoutEffect(() => {
     if (!refocus) return;
     document.getElementById(CLOCK_INPUT_ID[refocus])?.focus();
     setRefocus(null);
