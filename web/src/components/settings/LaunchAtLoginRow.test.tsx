@@ -43,7 +43,7 @@ describe("LaunchAtLoginRow", () => {
     applyShellState(state(false));
     postMessage.mockResolvedValue(state(true));
     renderEn(<LaunchAtLoginRow />);
-    const toggle = screen.getByRole("switch", { name: "Launch at login" }) as HTMLInputElement;
+    const toggle = screen.getByRole("switch", { name: "Launch at login (recommended: keep the menu-bar assistant resident)" }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     fireEvent.click(toggle);
     expect(postMessage).toHaveBeenCalledWith({ method: "setLaunchAtLogin", on: true });

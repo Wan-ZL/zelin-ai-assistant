@@ -319,9 +319,11 @@ export function SettingsPage() {
       <Fold id="sync" isForced={searchActive}><SyncSection /></Fold>
       <Fold id="approval" isForced={searchActive}><CatalogSection sectionId="approval" /></Fold>
       <Fold id="flags" isForced={searchActive}><CatalogSection sectionId="flags" /></Fold>
-      {/* 每周摘要：原生 SettingsWeeklyDigest 的顺序——开关 → 状态字 → 「现在生成一份」+ 回执句；状态摘要频率是 web 自有旋钮 */}
+      {/* 每周摘要：原生 SettingsWeeklyDigest 的顺序——开关 → 状态字 → 「现在生成一份」+ 回执句；状态摘要频率是 web 自有旋钮。
+          保存失败句用原生 saveEnabled 的 catch（SettingsWeeklyDigest.swift:82），不是通用的「保存设置失败: 」 */}
       <Fold id="digest" isForced={searchActive}>
-        <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <><DigestStatus /><DigestExtras /></> }} />
+        <CatalogSection sectionId="digest" saveFailedPrefix={text("保存失败，请再试一次：", "Save failed — try again: ")}
+          between={{ weekly_digest_enabled: <><DigestStatus /><DigestExtras /></> }} />
       </Fold>
       {/* 语气档案：原生 voiceGroup 的「当前生效」状态行 + 打开档案 在开关之前 */}
       <Fold id="voice" isForced={searchActive}><CatalogSection sectionId="voice" lead={<VoiceStatus />}><VoiceGenerate /></CatalogSection></Fold>
