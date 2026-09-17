@@ -544,9 +544,12 @@ _ABSENT_TAIL = {
     "/api/logs/": "__absent__.log",
     "/api/ingest/jobs/": "__absent__",
 }
-# 带必填 query 的精确 GET：§63.9 的 recap 历史必须点名 key（不点名 = 400）。`{recap}` 由
-# runner 从 demo 种子解析，同 `{id}`。
+# 带必填 query 的精确 GET：§63.9 的 recap 历史必须点名 key（不点名 / 不存在 = 400）。`{recap}`
+# 由 runner 从 demo 种子解析，同 `{id}`——但 server 没有 `/api/recaps` 列表路由、demo 种子也不
+# 种 recap，现场恒解析成 `__absent__`：http 片段只能证 400 那一支（wire 守卫），200 的快乐路径
+# 交给 `flow:recaps`（它自己生成一条纪要再读 history，`_recap_history_shape` 钉形）。
 _GET_QUERY = {"/api/recaps/history": "?key={recap}"}
+_GET_GUARD = {"/api/recaps/history": (400, "flow:recaps")}   # path → (现场可证的状态码, 证 200 路径的 flow)
 
 
 def _const_route_key(node, root):
@@ -673,7 +676,8 @@ def _get_http_proof(path, shown):
     tail = _ABSENT_TAIL.get(path)
     if tail:
         return "http:GET %s%s expect=404" % (path, tail)
-    return "http:GET %s%s expect=200" % (shown, _GET_QUERY.get(path, ""))
+    code = _GET_GUARD.get(path, (200, ""))[0]
+    return "http:GET %s%s expect=%d" % (shown, _GET_QUERY.get(path, ""), code)
 
 
 def _noauth(fragment):
@@ -694,7 +698,7 @@ def _route_proof(method, path, shown, texts):
     只有 401 分支走 http——四闸在读 body 之前就拒，安全。"""
     hits = unittest_proof(modules_citing(texts, path))
     if method == "GET":
-        return join_proofs(_get_http_proof(path, shown), hits)
+        return join_proofs(_get_http_proof(path, shown), _GET_GUARD.get(path, (0, ""))[1], hits)
     return hits
 
 
