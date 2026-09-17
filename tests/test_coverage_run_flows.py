@@ -14,6 +14,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -153,6 +154,71 @@ class TempHomeDisciplineTestCase(unittest.TestCase):
         # 壳 bundle 的安装 / 删除都走临时 HOME 下的 Applications/，永不碰 /Applications
         self.assertEqual(env["AIASSISTANT_UI_APPS_DIR"], os.path.join(home, "Applications"))
 
+    def test_crontab_shim_stores_the_table_inside_the_sandbox_home(self):
+        """install.sh 写进去的 ingest cron 行，doctor 的 `crontab -l` 要原样读回来——
+        台账只在沙箱 HOME 里（真 crontab 一个字节都不碰）。"""
+        home = temp_home("cron")
+        shim_dir, shim_log = cr.write_shims(home)
+        env = dict(os.environ)
+        env.update(cr.shim_env(home, shim_dir, shim_log))
+        crontab = os.path.join(shim_dir, "crontab")
+        empty = subprocess.run([crontab, "-l"], env=env, capture_output=True, text=True)
+        self.assertEqual(empty.returncode, 1)            # 真货的「no crontab for …」形制
+        line = "*/30 * * * * /bin/sh screenpipe-export.sh\n"
+        wrote = subprocess.run([crontab, "-"], input=line, env=env,
+                               capture_output=True, text=True)
+        self.assertEqual(wrote.returncode, 0, wrote.stderr)
+        back = subprocess.run([crontab, "-l"], env=env, capture_output=True, text=True)
+        self.assertEqual(back.returncode, 0, back.stderr)
+        self.assertIn("screenpipe-export.sh", back.stdout)
+        self.assertTrue(os.path.exists(os.path.join(home, ".qa-crontab.tab")))
+
+    def test_crontab_shim_also_takes_a_file_argument(self):
+        home = temp_home("cronfile")
+        shim_dir, shim_log = cr.write_shims(home)
+        env = dict(os.environ)
+        env.update(cr.shim_env(home, shim_dir, shim_log))
+        table = os.path.join(home, "wanted.tab")
+        Path(table).write_text("7 9 * * * act.digest\n", encoding="utf-8")
+        crontab = os.path.join(shim_dir, "crontab")
+        self.assertEqual(subprocess.run([crontab, table], env=env).returncode, 0)
+        back = subprocess.run([crontab, "-l"], env=env, capture_output=True, text=True)
+        self.assertIn("act.digest", back.stdout)
+
+    def test_launchctl_shim_answers_list_with_what_install_bootstrapped(self):
+        """doctor 的 agent 行读 `launchctl list`（三列 PID/Status/Label）——沙箱里
+        的台账只记 install.sh bootstrap 过的 label，真 gui domain 一个字节都不碰。"""
+        home = temp_home("launchd")
+        shim_dir, shim_log = cr.write_shims(home)
+        env = dict(os.environ)
+        env.update(cr.shim_env(home, shim_dir, shim_log))
+        launchctl = os.path.join(shim_dir, "launchctl")
+        plist = os.path.join(home, "com.zelin.aiassistant.actd.plist")
+        Path(plist).write_text("<plist/>", encoding="utf-8")
+        empty = subprocess.run([launchctl, "list"], env=env, capture_output=True, text=True)
+        self.assertNotIn("com.zelin.aiassistant.actd", empty.stdout)
+        subprocess.run([launchctl, "bootstrap", "gui/501", plist], env=env, check=True)
+        listed = subprocess.run([launchctl, "list"], env=env, capture_output=True, text=True)
+        row = [ln for ln in listed.stdout.splitlines()
+               if "com.zelin.aiassistant.actd" in ln][0]
+        self.assertEqual(row.split(), ["-", "0", "com.zelin.aiassistant.actd"])
+        subprocess.run([launchctl, "bootout", "gui/501/com.zelin.aiassistant.actd"],
+                       env=env, check=True)
+        gone = subprocess.run([launchctl, "list"], env=env, capture_output=True, text=True)
+        self.assertNotIn("com.zelin.aiassistant.actd", gone.stdout)
+
+    def test_the_demo_home_links_the_checkouts_skills_dir(self):
+        """skill 商店的 manifest 真源是 AIASSISTANT_HOME/skills——临时 home 没有它，
+        GET /api/skills 恒 409「index.yaml is unusable」（run4 的实测）。"""
+        home = temp_home("skills")
+        cr._link_skills(home)
+        link = os.path.join(home, "skills")
+        self.assertTrue(os.path.islink(link))
+        self.assertEqual(os.path.realpath(link), os.path.realpath(str(REPO / "skills")))
+        self.assertTrue(os.path.exists(os.path.join(link, "index.yaml")))
+        cr._link_skills(home)                      # 幂等：第二次不抛
+        self.assertTrue(os.path.islink(link))
+
     def test_claude_stub_prints_a_canned_result_and_never_runs_the_real_agent(self):
         home = temp_home("stub")
         shim_dir, _log = cr.write_shims(home)
@@ -202,19 +268,63 @@ class InstallFlowTestCase(unittest.TestCase):
 
 
 class DoctorFlowTestCase(unittest.TestCase):
+    """doctor 必须问 install.sh 刚装好的那套环境（coverage brief 第 2 节）：HOME=沙箱、
+    AIASSISTANT_HOME=checkout，且在删掉本次新建的 config.yaml/state 之前问。"""
+
     def test_doctor_clean_is_present_only_at_zero_fails(self):
         payload = json.dumps({"checks": [{"name": "deps", "status": "ok"}]})
-        shell = ScriptedShell([(0, "seeded", None), (0, payload, None)])
+        shell = ScriptedShell([(0, "install done", _plant_plist), (0, "", None),
+                               (0, payload, None)])
         verdict = cr.flow_doctor_clean(ctx_for(shell=shell))
         self.assertEqual(verdict.state, cr.PRESENT, verdict.reason)
         doctor = [c for c in shell.calls if "act.doctor" in " ".join(c["cmd"])][0]
         self.assertIn("--fast", doctor["cmd"])            # --fast = 不打模型探针（不联网、不用 key）
-        self.assertTrue(doctor["env"]["AIASSISTANT_HOME"].startswith("/tmp/"))
+        # AIASSISTANT_HOME = checkout（install.sh 自己就把它钉在这里，doctor 的
+        # AIASSISTANT_HOME / state dirs 两行问的都是 checkout 里的产物）
+        self.assertEqual(doctor["env"]["AIASSISTANT_HOME"], str(REPO))
+        # HOME 仍是 /tmp 的沙箱：home 指针、LaunchAgents、crontab 台账全在里面
+        self.assertTrue(doctor["env"]["HOME"].startswith("/tmp/"), doctor["env"]["HOME"])
+
+    def test_doctor_runs_install_first_in_its_own_sandbox(self):
+        payload = json.dumps({"checks": [{"name": "deps", "status": "ok"}]})
+        shell = ScriptedShell([(0, "install done", _plant_plist), (0, "", None),
+                               (0, payload, None)])
+        cr.flow_doctor_clean(ctx_for(shell=shell))
+        scripts = [c["cmd"][1].split("/")[-1] for c in shell.calls if c["cmd"][0] == "bash"]
+        self.assertEqual(scripts, ["install.sh"])
+        install = shell.calls[0]
+        self.assertIn("--non-interactive", install["cmd"])
+        doctor = [c for c in shell.calls if "act.doctor" in " ".join(c["cmd"])][0]
+        # 同一个沙箱 HOME：装的和问的是一套环境，不是两套
+        self.assertEqual(doctor["env"]["HOME"], install["env"]["HOME"])
+
+    def test_doctor_runs_the_daemons_boot_step_before_asking(self):
+        """install.sh 只建 state/ + state/inbox/；state/logs/ 的真源是
+        `config.ensure_state_dirs()`（真机上 actd 开机就建好，沙箱里 launchctl
+        是假货、actd 永不开机）——所以问 doctor 之前补这一步，不跑 actd 主循环。"""
+        payload = json.dumps({"checks": [{"name": "state dirs", "status": "ok"}]})
+        shell = ScriptedShell([(0, "install done", _plant_plist), (0, "", None),
+                               (0, payload, None)])
+        cr.flow_doctor_clean(ctx_for(shell=shell))
+        boot = shell.calls[1]
+        self.assertIn("ensure_state_dirs", " ".join(boot["cmd"]))
+        self.assertNotIn("act.actd", " ".join(boot["cmd"]))   # registry 单写者纪律
+        self.assertEqual(boot["env"]["AIASSISTANT_HOME"], str(REPO))
+        self.assertIn("act.doctor", " ".join(shell.calls[2]["cmd"]))
+
+    def test_doctor_is_missing_when_the_install_step_fails(self):
+        shell = ScriptedShell([(3, "boom: dependency missing", None)])
+        verdict = cr.flow_doctor_clean(ctx_for(shell=shell))
+        self.assertEqual(verdict.state, cr.MISSING)
+        self.assertIn("rc=3", verdict.reason)
+        self.assertNotIn("act.doctor", " ".join(
+            " ".join(call["cmd"]) for call in shell.calls))
 
     def test_doctor_fails_are_named_in_the_evidence(self):
         payload = json.dumps({"checks": [{"name": "cron ingest chain", "status": "fail"},
                                          {"name": "dashboard", "status": "fail"}]})
-        shell = ScriptedShell([(0, "seeded", None), (2, payload, None)])
+        shell = ScriptedShell([(0, "install done", _plant_plist), (0, "", None),
+                               (2, payload, None)])
         verdict = cr.flow_doctor_clean(ctx_for(shell=shell))
         self.assertEqual(verdict.state, cr.MISSING)
         self.assertIn("cron ingest chain", verdict.evidence)
