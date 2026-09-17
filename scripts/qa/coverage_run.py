@@ -40,7 +40,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import threading
 import sys
 import tempfile
 import time
@@ -244,26 +243,50 @@ class Http:
     # `/api/events`）的 body 永不结束，`resp.read()` 会把整轮挂死（2026-09-16 事故）——
     # 所以 body 读取封顶且带硬墙钟：到点就放弃、返回已到手的部分，绝不阻塞。
     BODY_CAP = 1 << 20   # 1 MiB：本地大 JSON（/api/board 全景）绰绰有余
-    READ_DEADLINE = 10.0  # s：本地 loopback 快，10 s 读不完即判流式/异常，放弃 body
+    READ_DEADLINE = 5.0  # s：整个 body 的墙钟；loopback 读不完即判流式，放弃余下 body
+
+    @staticmethod
+    def _socket_of(resp):
+        """HTTPResponse / HTTPError → 底层 socket（沿 .fp 往下找 .raw._sock；拿不到回 None）。"""
+        node = resp
+        for _ in range(3):
+            raw = getattr(getattr(node, "fp", None), "raw", None)
+            sock = getattr(raw, "_sock", None)
+            if sock is not None:
+                return sock
+            node = getattr(node, "fp", None)
+            if node is None:
+                break
+        return None
 
     def _read_capped(self, resp):
-        box = {}
+        """封顶 + 硬墙钟的 body 读取，**单线程**。
 
-        def _pump():
+        状态码在读 body 之前已到手，body 只为 contains 判据服务。流式端点（SSE
+        `/api/events`）的 body 永不结束：`read()` 会把整轮挂死；上一版另起线程读、到点
+        `resp.close()`，结果主线程死在 BufferedReader 的锁上（2026-09-16 卡了 12 h）。
+        现在：底层 socket 设超时（防静默流）、`read1` 每次只做一次 recv、墙钟封顶
+        （防 keepalive 刷屏），永不跨线程 close。"""
+        deadline = time.monotonic() + self.READ_DEADLINE
+        sock = self._socket_of(resp)
+        if sock is not None:
             try:
-                box["data"] = resp.read(self.BODY_CAP)
-            except Exception as exc:  # noqa: BLE001  (读失败按空 body 处理，状态码已知)
-                box["err"] = exc
-
-        worker = threading.Thread(target=_pump, daemon=True)
-        worker.start()
-        worker.join(self.READ_DEADLINE)
-        if worker.is_alive():          # 流式 / 卡住：放弃 body，解开阻塞的 socket
-            try:
-                resp.close()
-            except Exception:  # noqa: BLE001
+                sock.settimeout(self.READ_DEADLINE)
+            except OSError:
                 pass
-        return (box.get("data") or b"").decode("utf-8", "replace")
+        reader = (getattr(resp, "read1", None)
+                  or getattr(getattr(resp, "fp", None), "read1", None) or resp.read)
+        chunks, total = [], 0
+        try:
+            while total < self.BODY_CAP and time.monotonic() < deadline:
+                chunk = reader(min(65536, self.BODY_CAP - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+        except (socket.timeout, TimeoutError, OSError, ValueError):
+            pass   # 超时 / 断开：状态码已知，body 取已到手的部分
+        return b"".join(chunks).decode("utf-8", "replace")
 
     def request(self, method, url, body=None, headers=None, timeout=30):
         data = body.encode("utf-8") if isinstance(body, str) else body

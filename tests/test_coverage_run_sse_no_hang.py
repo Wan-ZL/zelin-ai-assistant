@@ -1,11 +1,11 @@
-"""覆盖跑者的 HTTP body 读取封顶 + 硬墙钟（CONTRACT §77.2 / §77.7）。
+"""覆盖跑者的 HTTP body 读取封顶 + 硬墙钟，单线程（CONTRACT §77.2 / §77.7）。
 
-2026-09-16 事故：`http:GET /api/events`（SSE 流）的 body 永不结束，`resp.read()`
-把整轮全覆盖跑挂死。判例钉住：`Http._read_capped` 对一个永不返回的 read 在
-`READ_DEADLINE` 内放弃、返回已到手的部分，绝不阻塞——状态码在读 body 之前已到手。
+2026-09-16 事故：`http:GET /api/events`（SSE 流）的 body 永不结束。第一版用
+`resp.read()` 直接挂死；第二版另起线程读、到点 `resp.close()`，主线程死在
+BufferedReader 的锁上（12 h）。判例钉住现在的形：`read1` 逐块 + 墙钟，永不返回的
+流在 `READ_DEADLINE` 内放弃并返回已到手的部分；正常 body 读满到 EOF。
 """
 import importlib.util
-import threading
 import time
 import unittest
 from pathlib import Path
@@ -24,48 +24,63 @@ def _load():
 cr = _load()
 
 
-class _BlockingResp:
-    """read() 永不返回（模拟 SSE 流）；close() 让阻塞的 read 抛错解开。"""
+class _StreamResp:
+    """read1() 永远有下一块（模拟 SSE keepalive 刷屏），永不 EOF。"""
 
     def __init__(self):
-        self._gate = threading.Event()
-        self.closed = False
+        self.calls = 0
 
-    def read(self, _n=-1):
-        self._gate.wait()          # 永不 set —— 永远阻塞，直到 close()
-        raise OSError("closed")
-
-    def close(self):
-        self.closed = True
-        self._gate.set()
-
-
-class _SlowResp:
-    """read() 睡一小会儿再返回一小段 body（正常快端点的样子）。"""
-
-    def read(self, _n=-1):
-        time.sleep(0.05)
-        return b'{"ok": true}'
+    def read1(self, _n=-1):
+        self.calls += 1
+        time.sleep(0.01)
+        return b": keepalive\n\n"
 
     def close(self):
         pass
 
 
+class _BodyResp:
+    """正常端点：两块 body 然后 EOF。"""
+
+    def __init__(self):
+        self._parts = [b'{"ok": ', b'true}', b""]
+
+    def read1(self, _n=-1):
+        return self._parts.pop(0)
+
+    def close(self):
+        pass
+
+
+class _LegacyResp:
+    """没有 read1 的对象（老 fp 形）：回落到 read()——真 read() 在 EOF 回 b""。"""
+
+    def __init__(self):
+        self._parts = [b"plain", b""]
+
+    def read(self, _n=-1):
+        return self._parts.pop(0)
+
+
 class SseNoHangTest(unittest.TestCase):
-    def test_streaming_body_is_abandoned_at_the_deadline(self):
+    def test_streaming_body_is_abandoned_at_the_deadline_without_threads(self):
         http = cr.Http()
-        http.READ_DEADLINE = 0.5      # 判例内把墙钟压短
-        resp = _BlockingResp()
+        http.READ_DEADLINE = 0.3
+        resp = _StreamResp()
         t0 = time.monotonic()
         text = http._read_capped(resp)
-        elapsed = time.monotonic() - t0
-        self.assertLess(elapsed, 3.0, "read_capped must not block on a streaming body")
-        self.assertEqual(text, "")
-        self.assertTrue(resp.closed, "the stuck socket must be closed to unblock it")
+        self.assertLess(time.monotonic() - t0, 2.0, "must stop at the wall clock, not hang")
+        self.assertIn("keepalive", text)          # 已到手的部分被保留
+        self.assertGreater(resp.calls, 1)          # 确实在逐块读，而不是一次 read()
 
-    def test_normal_body_is_read_in_full(self):
-        http = cr.Http()
-        self.assertEqual(http._read_capped(_SlowResp()), '{"ok": true}')
+    def test_normal_body_is_read_to_eof(self):
+        self.assertEqual(cr.Http()._read_capped(_BodyResp()), '{"ok": true}')
+
+    def test_object_without_read1_falls_back_to_read(self):
+        self.assertEqual(cr.Http()._read_capped(_LegacyResp()), "plain")
+
+    def test_socket_lookup_tolerates_fakes(self):
+        self.assertIsNone(cr.Http._socket_of(_BodyResp()))
 
 
 if __name__ == "__main__":
