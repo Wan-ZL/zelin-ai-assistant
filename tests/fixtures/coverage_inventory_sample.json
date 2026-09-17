@@ -1,0 +1,225 @@
+{
+  "note": "全覆盖跑者的开发用小清单（proof DSL 九种全齐 + waived + 空 proof + ` && ` 串联）。真清单 = qa/coverage_inventory.json（scripts/qa/coverage_inventory.py 生成）。",
+  "scenarios": [
+    {
+      "id": "B-01-sample-fixture",
+      "source": "fixtures",
+      "scenario": "B 档 fixture 脚本被跑起来（脚本缺席时诚实记 MISSING）",
+      "proof": "fixture:B-01-sample-fixture",
+      "tier": "B",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§45",
+      "source": "contract",
+      "scenario": "退役条款不铸场景（waived 行的形状）",
+      "proof": "unittest:tests.test_screen_never_mints",
+      "tier": "A",
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": null
+    },
+    {
+      "id": "contract:§58",
+      "source": "contract",
+      "scenario": "hygiene 阈值门有判例",
+      "proof": "unittest:tests.test_qa_hygiene_caps",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§66.2",
+      "source": "parity",
+      "scenario": "关于页的「关于」标签在 web 上存在",
+      "proof": "parity:control:about:label:about",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§99-no-proof",
+      "source": "contract",
+      "scenario": "还没有人给出证明的行（missing_proof 的形状）",
+      "proof": "",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:card_lifecycle",
+      "source": "routes",
+      "scenario": "卡片全生命周期（capture → triage → approve → dispatch → review → done/reject/archive/trash/restore）",
+      "proof": "flow:card_lifecycle",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:doctor_clean",
+      "source": "contract",
+      "scenario": "临时 home 上 doctor 零 FAIL",
+      "proof": "flow:doctor_clean",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:install_fresh",
+      "source": "contract",
+      "scenario": "install.sh 在临时 HOME 里从零装一遍（plist 落在临时 LaunchAgents）",
+      "proof": "flow:install_fresh",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:pages_controls",
+      "source": "parity",
+      "scenario": "左栏每一页都能打开、安全控件可点、零 console error",
+      "proof": "flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:pwa",
+      "source": "routes",
+      "scenario": "PWA manifest + 两个 icon 都 200 且类型正确",
+      "proof": "flow:pwa",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:recaps",
+      "source": "routes",
+      "scenario": "会议 recap 生成 / 重生成 / 回退 / 归档 / 意图问答 / history 形状",
+      "proof": "flow:recaps",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:settings_roundtrip_all",
+      "source": "settings",
+      "scenario": "settings_catalog 每一把旋钮 PUT 非默认 → GET → 复位",
+      "proof": "flow:settings_roundtrip_all",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "flow:uninstall_reinstall",
+      "source": "contract",
+      "scenario": "uninstall.sh --yes 卸干净（临时 HOME）再装回来，两趟都 exit 0",
+      "proof": "flow:uninstall_reinstall",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "playwright:pages",
+      "source": "parity",
+      "scenario": "左栏页面巡游（playwright: kind 的形状）",
+      "proof": "playwright:coverage.spec.ts::rail pages walk",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "route:GET /api/board",
+      "source": "routes",
+      "scenario": "GET /api/board 返回车道形看板",
+      "proof": "http:GET /api/board expect=200",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "route:GET /api/cards/{id}",
+      "source": "routes",
+      "scenario": "卡片详情（{id} 由 seeded board 解析）",
+      "proof": "http:GET /api/cards/{id} expect=200",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "route:GET /api/health",
+      "source": "routes",
+      "scenario": "健康快照（HTTP + 单元判例双证，` && ` 串联）",
+      "proof": "http:GET /api/health expect=200 && unittest:tests.test_server_lanes_catalog",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "route:GET /api/nope#404",
+      "source": "routes",
+      "scenario": "未知 /api 路径 404",
+      "proof": "http:GET /api/nope expect=404",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "route:POST /api/actions#401",
+      "source": "routes",
+      "scenario": "缺 token 的写请求 401",
+      "proof": "http:POST /api/actions noauth expect=401",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "setting:general.language",
+      "source": "settings",
+      "scenario": "界面语言旋钮往返",
+      "proof": "settings:general.language",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "shell:dock_badge",
+      "source": "shell",
+      "scenario": "Dock 角标（AX 探针；脚本缺席 = MISSING probe script absent）",
+      "proof": "axprobe:dock_badge",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "shell:menu",
+      "source": "shell",
+      "scenario": "主菜单表（MenuHarness）",
+      "proof": "swift:MenuHarness",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    }
+  ]
+}

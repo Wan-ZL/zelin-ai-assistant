@@ -3,6 +3,7 @@
 // ——开发版 / 非 app bundle 开不了（「无法开启登录时启动」，壳 reject 说 not an app bundle）、开失败（「开启登录时启动
 // 失败」）、关失败（「关闭登录时启动失败」）——正文 = 壳的原句，一颗「好」。通用区与关于页共用这一行（原生只在通用区；
 // web 的关于页也留一份是 §68.6 的落点）。浏览器里（无桥）整行不渲染。
+// 开关标签逐字原生（Settings.swift:462 的 Toggle 标签，推荐语在同一句里——§66.2 逐字镜像）。
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
@@ -44,7 +45,7 @@ export function LaunchAtLoginRow({ id = "launch-at-login", helper }: { id?: stri
   return (
     <div className="settings-field is-bool">
       <div className="settings-field-head">
-        <label className="settings-knob-label" htmlFor={id}>{text("登录时启动", "Launch at login")}</label>
+        <label className="settings-knob-label" htmlFor={id}>{text("登录时启动（推荐：菜单栏助手常驻）", "Launch at login (recommended: keep the menu-bar assistant resident)")}</label>
       </div>
       <div className="settings-knob-controls">
         <input id={id} type="checkbox" role="switch" className="settings-switch" checked={shell.launch_at_login} disabled={busy} onChange={(e) => void toggle(e.target.checked)} />

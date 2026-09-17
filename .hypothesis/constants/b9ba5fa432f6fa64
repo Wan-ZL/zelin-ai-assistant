@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/security.py
+# hypothesis_version: 6.141.1
+
+[b'</head>', 384, '/', '127.0.0.1', ':', ';', '<', 'O_NOFOLLOW', 'X-Zai-Token', '[', '[::1]', '\\u002f', '\\u003c', ']', '^[A-Za-z0-9_-]+$', 'application/json', 'localhost', 'posix', 'r', 'server.token', 'state', 'str | None', 'utf-8', 'w']

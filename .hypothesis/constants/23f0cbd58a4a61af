@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../version_stamp.py
+# hypothesis_version: 6.141.1
+
+['%s: %d pin(s) == %s', '+', '--check-pins', '--ios', '--quiet', '--repo-root', '--runtime', '--stamp-into', '--version', '--write', 'DIR', 'PYTHONIOENCODING', '__init__.py', '__main__', '_version.py', 'act', 'argv', 'nothing', 'stamped %s = %s (%s)', 'store_true', 'utf-8', 'v']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/sleep_dispatch_held.py
+# hypothesis_version: 6.141.1
+
+['1', 'R-8100', 'R-8101', '__main__', 'cards_still_approved', 'gate_wrote_nothing', 'max_state', 'nothing_dispatched', 'state', 'verdict_is_asleep']

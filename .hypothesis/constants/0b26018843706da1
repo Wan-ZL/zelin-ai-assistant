@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/qa/coverage_floor.py
+# hypothesis_version: 6.141.1
+
+[10.0, '--coverage-json', '--report', 'DIR', 'FAIL', 'OK', '__main__', 'coverage', 'coverage-floor', 'coverage_floor.txt', 'percent_covered', 'qa', 'r', 'ratchet_buffer', 'ratchet_trigger', 'totals', 'utf-8']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/golden_eval.py
+# hypothesis_version: 6.141.1
+
+[180, '%Y-%m-%dT%H:%M:%SZ', '.jsonl.tmp', 'NOISE', 'PENDING', 'REAL', '[', ']', '__main__', 'all', 'approved', 'archived', 'blocked', 'born', 'build', 'cards', 'cards.jsonl', 'channel', 'channel_api', 'classify', 'cmd', 'count', 'date', 'delivered', 'detected', 'executing', 'generated_at', 'golden', 'id', 'label', 'meeting', 'noise_blocked', 'noise_born', 'pending', 'prev_status', 'provenance', 'quote', 'real_blocked', 'real_born', 'report.json', 'review', 'score', 'speaker', 'status', 'stdin', 'stdout', 'title', 'total', 'trashed', 'utf-8', 'who']

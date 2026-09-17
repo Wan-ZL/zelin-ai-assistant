@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/radar_health.py
+# hypothesis_version: 6.141.1
+
+['%Y-%m-%dT%H:%M:%SZ', '.json.tmp', 'auth_failed', 'command_bad_output', 'command_failed', 'connect_failed', 'disabled', 'error', 'extract_failed', 'last_attempt', 'last_cards', 'last_ok', 'mcp_failed', 'mcp_not_configured', 'no_address', 'no_api_key', 'no_credentials', 'radar_health.json', 'radar_health.lock', 'skip_reason', 'utf-8', 'vault_empty', 'vault_missing', 'w']

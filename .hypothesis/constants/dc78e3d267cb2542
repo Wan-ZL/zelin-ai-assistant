@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/claude_bin.py
+# hypothesis_version: 6.141.1
+
+[1.0, 200, '%s (%s)%s', '%s（%s）%s', '--bg', '--help', '--version', 'claude', 'claude_blind', 'claude_cli_missing', 'claude_cli_outdated', 'daemon claude', 'detail', 'fail', 'failure_id', 'fix', 'launchd plist', 'no output', 'ok', 'scheduled task', 'stable claude', 'status', 'systemd unit', 'version unknown', 'warn', '——与登录 shell 同版本']

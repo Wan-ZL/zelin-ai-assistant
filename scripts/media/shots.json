@@ -1,0 +1,371 @@
+{
+  "title": {
+    "zh": "Zelin's AI Assistant 演示",
+    "en": "Zelin's AI Assistant demo"
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "shots": [
+    {
+      "id": "01-dashboard",
+      "seconds": 14,
+      "scene": "initial",
+      "url": "/",
+      "zh": "这是任务台。左边导航栏，中间是看板的几条泳道：提案等你批准、正在跑、待验收。所有数据来自本机，端口只听 127.0.0.1。",
+      "en": "This is the workbench. A nav rail on the left, and the board's lanes in the middle: proposals waiting for approval, work running, work waiting for review. Everything is served by a local process bound to 127.0.0.1.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "hover",
+          "selector": "article.task-card"
+        },
+        {
+          "do": "wait",
+          "ms": 2000
+        },
+        {
+          "do": "scroll",
+          "selector": ".column-list",
+          "by": 340
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "scroll",
+          "selector": ".column-list",
+          "by": -340
+        },
+        {
+          "do": "wait",
+          "ms": 2000
+        }
+      ]
+    },
+    {
+      "id": "02-capture",
+      "seconds": 12,
+      "scene": "initial",
+      "url": "/",
+      "zh": "捕获是一句话的事：在泳道顶上的输入框写下想做的事，回车交给 AI 去研究并提案。",
+      "en": "Capture is one sentence: type what you want into the composer at the top of a lane and hand it to the AI to research and propose.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 1500
+        },
+        {
+          "do": "click",
+          "placeholder": "一句话，AI 来研究并提案…"
+        },
+        {
+          "do": "type",
+          "placeholder": "一句话，AI 来研究并提案…",
+          "text": "把每周的会议纪要整理成一页周报",
+          "delay": 90
+        },
+        {
+          "do": "wait",
+          "ms": 3500
+        }
+      ]
+    },
+    {
+      "id": "03-triage",
+      "seconds": 13,
+      "scene": "initial",
+      "url": "/?card=P-103",
+      "zh": "捕获进来的一句话先过闸门：详情侧栏摊开来龙去脉、怎样算办完、风险等级——够格才成为一张等你批准的卡片。",
+      "en": "A captured sentence goes through a triage gate first: the detail drawer lays out the background, the definition of done and the risk tier before the card is put up for approval.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".zai-drawer-body",
+          "by": 300
+        },
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".zai-drawer-body",
+          "by": 300
+        },
+        {
+          "do": "wait",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "id": "04-approve",
+      "seconds": 13,
+      "scene": "initial",
+      "url": "/",
+      "zh": "批准是人的动作，不是模型的。四颗键：批准、暂缓、修改、拒绝；高风险的 T2 卡上没有一键批准，得先展开明细。批下去，卡就进入启动中。",
+      "en": "Approval is a human action, not the model's. Four verbs — approve, defer, amend, reject — and a high-risk T2 card has no one-click approve until you have opened its details. Approve, and the card moves to starting up.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 1500
+        },
+        {
+          "do": "into",
+          "selector": "article.task-card:has-text(\"P-101\")"
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "hover",
+          "selector": "article.task-card:has-text(\"P-101\")"
+        },
+        {
+          "do": "wait",
+          "ms": 1500
+        },
+        {
+          "do": "click",
+          "selector": "article.task-card:has-text(\"P-101\") button:has-text(\"批准\")"
+        },
+        {
+          "do": "wait",
+          "ms": 5000
+        }
+      ]
+    },
+    {
+      "id": "05-running",
+      "seconds": 13,
+      "scene": "running",
+      "url": "/?card=R-101",
+      "zh": "批准之后 headless agent 接手。卡上有实时进度，详情里可以随时捎一句话给正在跑的会话。",
+      "en": "Once approved, a headless agent takes over. The card shows live progress, and the detail drawer lets you steer the running session with a note at any time.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".zai-drawer-body",
+          "by": 350
+        },
+        {
+          "do": "wait",
+          "ms": 3500
+        },
+        {
+          "do": "scroll",
+          "selector": ".zai-drawer-body",
+          "by": 350
+        },
+        {
+          "do": "wait",
+          "ms": 3000
+        }
+      ]
+    },
+    {
+      "id": "06-review",
+      "seconds": 13,
+      "scene": "review",
+      "url": "/",
+      "zh": "跑完不等于完成。待验收泳道逐条对照验收标准，交付物就在卡里，验收通过才算结束。",
+      "en": "Finished running is not finished. The review lane checks the work against the definition of done, the deliverables sit inside the card, and only acceptance closes it.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "hover",
+          "selector": "article.task-card"
+        },
+        {
+          "do": "wait",
+          "ms": 2000
+        },
+        {
+          "do": "scroll",
+          "selector": ".column-list:last-of-type",
+          "by": 300
+        },
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".column-list:last-of-type",
+          "by": -300
+        },
+        {
+          "do": "wait",
+          "ms": 2000
+        }
+      ]
+    },
+    {
+      "id": "07-settings",
+      "seconds": 14,
+      "scene": "initial",
+      "url": "/?page=settings",
+      "zh": "设置页是一整套分区：模型、数据源、录制、依赖检查。右上角可以搜任意一项设置。",
+      "en": "The settings page is a set of sections: models, data sources, recording, dependency checks. The search box finds any single setting.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": 420
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": 420
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": -840
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        }
+      ]
+    },
+    {
+      "id": "08-skills",
+      "seconds": 11,
+      "scene": "initial",
+      "url": "/?page=skills",
+      "zh": "技能页是仓库里的 skill 清单：启用哪一条、本机有没有漂移，一眼看到。",
+      "en": "The skills page lists the skills that live in the repo: which ones are enabled, and whether the local copy has drifted.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": 340
+        },
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": -340
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        }
+      ]
+    },
+    {
+      "id": "09-recaps",
+      "seconds": 11,
+      "scene": "initial",
+      "url": "/?page=recaps",
+      "zh": "会议纪要页收的是录音转写出来的纪要——这台演示机上一条也没有，所以看到的是它的空态。",
+      "en": "The recaps page collects meeting notes transcribed from recorded audio. This demo machine has none, so what you see is its empty state.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": 300
+        },
+        {
+          "do": "wait",
+          "ms": 3000
+        },
+        {
+          "do": "scroll",
+          "selector": ".shell-main",
+          "by": -300
+        },
+        {
+          "do": "wait",
+          "ms": 2500
+        }
+      ]
+    },
+    {
+      "id": "10-pwa",
+      "seconds": 8,
+      "scene": "initial",
+      "url": "/manifest.webmanifest",
+      "zh": "看板自带一份 PWA 安装清单——浏览器读到它，就能把这块看板装成没有地址栏的独立窗口。",
+      "en": "The board ships a PWA manifest: a browser that reads it can install the board as a standalone window with no address bar.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 6500
+        }
+      ]
+    },
+    {
+      "id": "11-takeover",
+      "seconds": 12,
+      "scene": "running",
+      "url": "/",
+      "zh": "最后一手：双击正在跑的卡片，就在终端里接管那个会话。壳没在跑的时候降级成把接管指令复制给你。",
+      "en": "One last move: double-click a running card to take the session over in a terminal. With the menu-bar shell not running it degrades to copying the takeover command for you.",
+      "steps": [
+        {
+          "do": "wait",
+          "ms": 2000
+        },
+        {
+          "do": "into",
+          "selector": "article.task-card:has-text(\"R-107\")"
+        },
+        {
+          "do": "wait",
+          "ms": 1500
+        },
+        {
+          "do": "dblclick",
+          "selector": "article.task-card:has-text(\"R-107\")"
+        },
+        {
+          "do": "wait",
+          "ms": 5500
+        }
+      ]
+    }
+  ]
+}

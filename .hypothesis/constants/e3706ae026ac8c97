@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/card_summary_worker.py
+# hypothesis_version: 6.141.1
+
+[180, '__main__', 'card vanished', 'content changed', 'done', 'failed', 'pending', 'source_hash', 'status']

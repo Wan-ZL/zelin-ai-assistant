@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/skills/test-code/scripts/structure_check.py
+# hypothesis_version: 6.141.1
+
+[1.0, '%s.%s', '%s: %s', '.', '.py', '/', '>', '__init__', '__init__.py', '__main__', '__main__.py', '__name__', 'bin', 'caps', 'comps', 'conf.py', 'conftest.py', 'crowded-dir:%s', 'cycle:%s', 'depth:%s', 'dup-basename:%s', 'index', 'low', 'max_dir_depth', 'max_files_per_dir', 'mirror_ratio', 'on_stack', 'orphan:%s', 'python_modules', 'scripts', 'setup.py', 'stack', 'test_', 'tests-outside:%s', 'tools']

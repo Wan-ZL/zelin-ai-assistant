@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/steer.py
+# hypothesis_version: 6.141.1
+
+[200, 4000, '%Y-%m-%dT%H:%M:%SZ', 'OWNER UPDATE:\n', 'class', 'delivered_at', 'delivered_steers', 'key', 'last_steer_at', 'pending_steers', 'steer', 'steer_attempts', 'steer_count', 'steer_delivered', 'steer_pending', 'steer_queued', 'text', 'ts', 'utf-8', '…', '队列已满，被更新的指令挤出']

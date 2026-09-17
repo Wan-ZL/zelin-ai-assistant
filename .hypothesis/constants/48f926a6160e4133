@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/analytics_ingest.py
+# hypothesis_version: 6.141.1
+
+['allowed', 'boolean', 'event', 'fields', 'integer', 'logged', 'ok', 'unknown field', 'web', 'wizard_complete']

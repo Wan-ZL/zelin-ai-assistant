@@ -1,4 +1,4 @@
-"""uninstall.sh safety contract.
+"""uninstall.sh safety contract（CONTRACT §77.7 覆盖跑者沙箱纪律：apps-dir seam）.
 
 The uninstaller is the most dangerous script after install.sh, so the tests
 pin its safety properties rather than its cosmetics: (a) --dry-run changes
@@ -38,8 +38,9 @@ class UninstallDryRunTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _run(self, *args, stdin=subprocess.DEVNULL):
+    def _run(self, *args, stdin=subprocess.DEVNULL, env_extra=None):
         env = dict(os.environ, HOME=str(self.home))
+        env.update(env_extra or {})
         return subprocess.run(
             ["bash", str(self.home / "uninstall.sh"), *args],
             cwd=self.home, env=env, stdin=stdin,
@@ -59,6 +60,32 @@ class UninstallDryRunTestCase(unittest.TestCase):
         # ... and nothing was actually touched
         self.assertTrue(self.sentinel.exists())
         self.assertTrue(self.plist.exists())
+
+    def test_apps_dir_seam_keeps_the_real_applications_folder_out_of_the_plan(self):
+        # AIASSISTANT_UI_APPS_DIR (the seam install.sh already honours) must steer the
+        # bundle removal too — the QA coverage runner relies on it so a sandboxed
+        # uninstall never plans against the owner's real /Applications bundle.
+        apps = self.home / "Applications"
+        bundle = apps / "Zelin's AI Assistant.app" / "Contents"
+        bundle.mkdir(parents=True)
+        (bundle / "Info.plist").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+            '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            '<plist version="1.0"><dict><key>CFBundleIdentifier</key>'
+            '<string>com.zelin.ai-board</string></dict></plist>\n', encoding="utf-8")
+        proc = self._run("--dry-run", env_extra={"AIASSISTANT_UI_APPS_DIR": str(apps)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # safety property, OS-independent: no plan line removes anything under the real
+        # /Applications (the seam steers every app path into the sandbox dir instead).
+        self.assertNotIn("remove: /Applications/", proc.stdout)
+        # the seam path is what the plan reasons about — "would remove:" on macOS (plutil
+        # reads the bundle id), "left alone (unreadable)" on Linux CI (no plutil); either
+        # way the seam bundle path appears, and the real /Applications never does.
+        self.assertIn(str(apps / "Zelin's AI Assistant.app"), proc.stdout)
+        if shutil.which("plutil"):
+            self.assertIn("remove: %s" % (apps / "Zelin's AI Assistant.app"), proc.stdout)
+        self.assertTrue((bundle / "Info.plist").exists())   # dry-run changed nothing
 
     def test_dry_run_keeps_user_data_out_of_the_plan_by_default(self):
         proc = self._run("--dry-run")

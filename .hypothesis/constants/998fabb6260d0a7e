@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/checks/core.py
+# hypothesis_version: 6.141.1
+
+[124, 127, '*.plist', '-l', '.plist', 'CheckResult', 'LaunchAgents', 'Library', 'act', 'actd', 'config', 'crontab', 'detail', 'fail', 'failure_id', 'fix', 'install-linux.sh', 'install.ps1', 'install.sh', 'launchd', 'ok', 'python', 'runtime.json', 'status', 'timed out after %ss', 'utf-8', 'warn', 'zelin-actd.service']

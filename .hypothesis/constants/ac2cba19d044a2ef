@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ci/changelog_release_notes.py
+# hypothesis_version: 6.141.1
+
+['* ', '- ', '--fragments', '--previous', '--previous-fragments', '^## ', '^## \\[unreleased\\]', '^### ', '__main__', 'changelog', 'utf-8']

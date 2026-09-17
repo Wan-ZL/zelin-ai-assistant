@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/sse.py
+# hypothesis_version: 6.141.1
+
+[b': connected\n\n', b': keep-alive\n\n', 25.0, 'queue.Queue', 'set[queue.Queue]', 'utf-8']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/repair.py
+# hypothesis_version: 6.141.1
+
+[-400, -300, 120, 124, 127, '%s/%s', '--reinstall-agent', '-k', '/bin/launchctl', 'action', 'bash', 'bash %s', 'bash install.sh', 'command', 'darwin', 'fields', 'fix', 'getuid', 'gui/%d', 'install.sh', 'kickstart', 'label', 'loaded', 'ok', 'print', 'rc', 'reinstall', 'tuple[int, str]', 'unknown field']

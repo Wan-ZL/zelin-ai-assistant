@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/sanitize.py
+# hypothesis_version: 6.141.1
+
+['#', 'lit', 're', 're:', 'redaction', 'redaction_enabled', 'redaction_terms_file', 'utf-8', '|']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/secret_patterns.py
+# hypothesis_version: 6.141.1
+
+['AKIA[0-9A-Z]{16}', '[脱敏]', 'sk-[A-Za-z0-9]{20,}']

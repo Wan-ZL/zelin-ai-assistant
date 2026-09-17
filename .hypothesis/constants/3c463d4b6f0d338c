@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/transcripts.py
+# hypothesis_version: 6.141.1
+
+[50000, '-', 'assistant', 'content', 'cwd', 'image', 'isMeta', 'isSidechain', 'message', 'text', 'toolUseResult', 'tool_result', 'type', 'user', 'utf-8', '~/.claude/projects']

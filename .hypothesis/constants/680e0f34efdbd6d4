@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/analyze.py
+# hypothesis_version: 6.141.1
+
+[420, '"', '(no sources)', ',', '--allowedTools', '?', 'WebFetch', 'WebSearch', '\\', '__main__', 'card_sent', 'channel', 'chat', 'cost_estimate_usd', 'date', 'definition_of_done', 'delivery_mode', 'display_title', 'existing', 'new', 'plan', 'quick_capture', 'quote', 'raise', 'ref', 'repo', 'returncode', 'stdout', 'summary', 'target_kind', 'target_repo', '{', '}']

@@ -1,0 +1,4 @@
+# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/store2/hot.py
+# hypothesis_version: 6.141.1
+
+['T0', 'T1', 'T2', '\\d{4}-\\d{2}-\\d{2}\\Z', 'approved', 'archived', 'card_sent', 'channel', 'date', 'deadline', 'delivered', 'detected', 'executing', 'merged', 'merged_into', 'merged_into:', 'merged_into_id', 'origin_trust', 'prev_status', 'quote', 'raising', 'ref', 'rejected', 'review', 'sources', 'status', 'target_repo', 'tier', 'title', 'trashed', 'tuple[list, list]', 'type', 'who', 'work_id']
