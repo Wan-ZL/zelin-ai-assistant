@@ -29,7 +29,7 @@ function mountSwitch() {
   return view.container.querySelector<HTMLInputElement>("#setting-general-boardAnimations")!;
 }
 
-/** index.html <head> 里的行内 <script>（不带 src；主题 + 看板动画 + 显示偏好三个 IIFE）——先确认抠到的是那一段，再在 jsdom 里真跑一遍 */
+/** index.html <head> 里的行内 <script>（不带 src；两个 IIFE：主题 + 看板动画、显示偏好）——先确认抠到的是那一段，再在 jsdom 里真跑一遍 */
 function runBootScript() {
   const match = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/.exec(indexHtml);
   if (!match) throw new Error("index.html has no inline <script>");
