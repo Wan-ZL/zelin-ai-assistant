@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ci/version_pins_check.py
-# hypothesis_version: 6.141.1
-
-['+', '+++', '-', '---', '--latest-tag', '--legacy-base', '::error::', '::notice::', '?', 'CHANGELOG.md', 'MARKETING_VERSION', '^## \\[\\d+\\.\\d+\\.\\d+', '^(- |\\* |### )', '^\\+\\+\\+ b/(.+)$', '__main__', 'act/__init__.py', 'act/_version.py', 'store_true']

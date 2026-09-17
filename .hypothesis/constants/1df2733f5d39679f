@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/voice_job.py
-# hypothesis_version: 6.141.1
-
-[300, '%Y-%m-%dT%H:%M:%SZ', '--job', '.json.tmp', 'act.voice_gen', 'action', 'done', 'error', 'failed', 'finished_at', 'job.json', 'message', 'profile_path', 'running', 'started_at', 'status', 'utf-8', 'voice_gen', 'voice_gen/run.log', 'voice_generate']

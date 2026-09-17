@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/dispatch_prompt.py
-# hypothesis_version: 6.141.1
-
-['\n## ', '\n## Plan\n', '\n## Summary\n', '(no plan recorded)', '(no sources)', '?', '[\\\\/\\x00-\\x1f\\x7f]+', '[direct-run]', '\\s+', 'attachments', 'channel', 'chat', 'config', 'date', 'delivery_mode', 'display_title', 'forced', 'html', 'markdown', 'quote', 'recheck', 'ref', 'repo', 'training', 'user', 'user_titled', 'utf-8', 'voice-profile.md', 'voice_enabled', 'who']

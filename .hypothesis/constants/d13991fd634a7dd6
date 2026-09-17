@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/dispatch.py
-# hypothesis_version: 6.141.1
-
-[0.0, 300, ' (raise 展开失败，退回欠账)', 'DISPATCH_STREAK_KEYS', 'DispatchBackingOff', 'DispatchHalted', 'auto_dispatch', 'auto_dispatch_block', 'auto_dispatched', 'dispatch_crashed', 'dispatch_failed', 'dispatch_halted', 'last_error', 'last_error_at', 'max_concurrent', 'notify', 'origin:external', 'preset', 'raise_expanded', 'session_id']

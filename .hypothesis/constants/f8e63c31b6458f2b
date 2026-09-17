@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/ui_common.py
-# hypothesis_version: 6.141.1
-
-[120, ' = ', '"', '"""', '"((?:[^"\\\\]|\\\\.)*)"', '#', '(', '(\\w+)\\s*:\\s*$', '({', ')', ')}', '*/', '-', '..', '.swift', '/*', '//', ':', 'L(', 'Sources', '[', '\\', '\\"', '\\(', '\\\\', '\\bL\\(\\s*', '\\n', '\\s*,\\s*', '\\s*\\)', '\\t', ']', 'closure:', 'closure:label', 'func', 'item', 'label', 'mac', 'native-tokens.json', 'parity', 'pending.txt', 'r', 'tokens', 'ui', 'utf-8', 'w', 'waivers.txt', '{', '{%s}', '}']

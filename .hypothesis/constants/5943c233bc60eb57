@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/uninstall_launch.py
-# hypothesis_version: 6.141.1
-
-['bash %s', 'cd %s && bash %s', 'command', 'command_file', 'darwin', 'fields', 'id', 'ok', 'path', 'queue_id', 'tuple[dict, Path]', 'uninstall', 'uninstall.sh', 'unknown field']

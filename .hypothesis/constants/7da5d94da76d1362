@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/_power.py
-# hypothesis_version: 6.141.1
-
-['-d', '-g', '-n', '-r', '1', 'IOPMrootDomain', 'assertions', 'autodispatch', 'executor', 'ioreg', 'pmset', 'powerstate', 'read_power']

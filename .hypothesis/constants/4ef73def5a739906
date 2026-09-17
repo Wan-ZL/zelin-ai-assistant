@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/install_report.py
-# hypothesis_version: 6.141.1
-
-['%Y-%m-%dT%H:%M:%SZ', '--agents', '--mode', '--step', '--steps-stdin', '.', '.tmp', ':', '=', 'USER', '__main__', 'agents_loaded', 'append', 'detail', 'fail', 'generated_at', 'install_report.json', 'mode', 'name', 'ok', 'skipped', 'skipped_tcc', 'status', 'steps', 'store_true', 'unknown', 'unparsable step line', 'user', 'utf-8', 'version', 'w', 'warn']

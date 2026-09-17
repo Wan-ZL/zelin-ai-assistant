@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/about.py
-# hypothesis_version: 6.141.1
-
-[-300, '%s/%s', '--force', '/bin/launchctl', 'act.lib.update_check', 'action', 'check_enabled', 'checked_at', 'darwin', 'deploy_detail', 'deploy_failed_sha', 'deploy_refused', 'deploy_state', 'deploy_status', 'detail', 'error', 'failed_sha', 'fields', 'fix', 'general', 'home', 'kickstart', 'label', 'latest', 'no detail recorded', 'ok', 'pkg_asset_url', 'rc', 'reason', 'repo', 'status', 'unknown', 'unknown field', 'update_available', 'update_check', 'url', 'utf-8', 'version']

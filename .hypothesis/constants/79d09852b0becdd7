@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/feedback_sync.py
-# hypothesis_version: 6.141.1
-
-[100, 200, 422, 500, '%Y-%m-%dT%H:%M:%SZ', '*.json', '2022-11-28', 'Accept', 'Authorization', 'Bearer ', 'Content-Type', 'GET', 'POST', 'User-Agent', 'X-GitHub-Api-Version', 'application/json', 'body', 'code', 'feedback_sync', 'feedback_sync_repo', 'html_url', 'id', 'issue_number', 'issue_synced_at', 'issue_url', 'labels', 'last_sync_attempt_at', 'number', 'publish', 'pull_request', 'suggestion', 'sync_attempts', 'sync_error', 'text', 'title', 'utf-8', '…', '用户建议']

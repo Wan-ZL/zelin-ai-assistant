@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/sources.py
-# hypothesis_version: 6.141.1
-
-[3600, '%Y-%m-%dT%H:%M:%SZ', '--enabled', 'SOURCE', '__main__', 'act.lib.sources', 'feature', 'gmail', 'last_attempt', 'last_ok', 'obsidian', 'off', 'on', 'slack']

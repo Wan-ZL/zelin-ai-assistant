@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/alerts.py
-# hypothesis_version: 6.141.1
-
-[0.0, 300, 3600, 'channel', 'claude', 'completion_hint', 'decision_due', 'from_review', 'grace_until', 'id', 'interrupted', 'last_mono', 'last_pass', 'log', 'mention_escalated', 'name', 'needs_approval', 'repeated', 'reraised', 'reraised_note', 'review', 'running', 'sources', 'title', 'utf-8', 'weekly-digest']

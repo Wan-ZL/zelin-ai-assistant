@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/telemetry_upload.py
-# hypothesis_version: 6.141.1
-
-[b'\n', 120, 500, '.json.tmp', '.tmp', '/', 'Authorization', 'Bearer ', 'Content-Type', 'POST', 'Prefer', 'analytics_off', 'analytics_sync.json', 'apikey', 'app_version', 'application/json', 'batches', 'client_ts', 'consent_pending', 'device_id', 'disabled', 'error', 'error_type', 'event', 'files', 'malformed', 'no_key', 'ok', 'props', 'rb', 'return=minimal', 'sid', 'skipped', 'source', 'telemetry', 'telemetry.', 'telemetry:', 'telemetry_sync', 'ts', 'uploaded', 'utf-8', 'v']

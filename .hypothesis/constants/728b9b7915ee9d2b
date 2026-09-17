@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/doctor_run.py
-# hypothesis_version: 6.141.1
-
-[120, '%Y-%m-%dT%H:%M:%SZ', '--fast', '--json', 'AIASSISTANT_UI_LANG', 'act.doctor', 'checks', 'en', 'error', 'fail', 'fast', 'home', 'lang', 'ok', 'ran_at', 'rc', 'status', 'warn', 'zh']

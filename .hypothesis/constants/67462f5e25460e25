@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/inbox.py
-# hypothesis_version: 6.141.1
-
-[120, '*.json', 'T1', '[direct-run] 用户直接开跑', 'action', 'agent', 'agent_capture', 'approved_at', 'attachments', 'bad_json', 'board_seq', 'capture', 'capture_direct_run', 'channel', 'chat', 'comment', 'date', 'expected_status', 'feedback', 'folded', 'id', 'ids', 'images', 'inbox_capture', 'inbox_feedback', 'inbox_stem', 'merge_apply', 'merge_dismiss', 'merge_force', 'merge_review', 'mode', 'noop', 'note_ts', 'other', 'preset', 'primary', 'publish', 'quick_capture', 'quote', 'remote', 'remote_capture', 'run', 'running', 'session_ids', 'set_title', 'soft', 'split', 'split_into', 'split_note', 'text', 'title', 'ts', 'unknown', 'uploaded', 'user', 'utf-8', 'via', 'web', 'who', 'window_days', 'zelin']

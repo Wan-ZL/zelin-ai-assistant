@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/card_model.py
-# hypothesis_version: 6.141.1
-
-['Requirement', 'T1', '_', 'approved', 'archive_reason', 'archived', 'archived_at', 'assessment', 'card', 'card_sent', 'chat', 'completion_hint', 'cost_estimate_usd', 'deadline', 'definition_of_done', 'delivered', 'delivery_mode', 'detected', 'disagreement', 'display_title', 'executing', 'execution', 'former_titles', 'green_sign_required', 'hardness', 'id', 'improvement_of', 'merged', 'merged_from', 'merged_into', 'merged_into:', 'needs_mcp', 'notes', 'origin_trust', 'outputs', 'permanent', 'plan', 'preset', 'prev_status', 'raising', 'rejected', 'repeated_mentions', 'repo', 'review', 'silent_merge_count', 'soft', 'sources', 'split_from', 'status', 'summary', 'target_kind', 'target_repo', 'thread_id', 'thread_key', 'tier', 'title', 'trash_reason', 'trashed', 'trashed_at', 'type', 'user_titled', 'work_id']

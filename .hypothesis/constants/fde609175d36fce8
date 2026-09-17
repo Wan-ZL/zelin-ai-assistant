@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/radar_rounds.py
-# hypothesis_version: 6.141.1
-
-['%Y-%m-%dT%H:%M:%SZ', '--once', '.json.tmp', 'act.radar_gmail', 'act.radar_slack', 'disabled', 'done', 'gmail', 'last_attempt', 'launch', 'launch_failed', 'lost', 'noop', 'note', 'radar_test_round.log', 'requested_at', 'running', 'slack', 'source', 'state', 'utf-8']

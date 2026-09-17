@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/media_prune_60min.py
-# hypothesis_version: 6.141.1
-
-[600.0, 1800000000.0, 600, 345678, '%Y-%m-%dT%H:%M:%SZ', '.screenpipe', '__main__', 'age_seconds', 'data', 'data_dir', 'deleted_bytes', 'deleted_files', 'factory_window_is_60', 'last_ok_ts', 'never', 'no_receipt_is_never', 'ok', 'retention_minutes', 'stale', 'state', 'ts', 'utf-8']

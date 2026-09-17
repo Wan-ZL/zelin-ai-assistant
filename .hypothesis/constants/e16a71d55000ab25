@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/sync_pairing.py
-# hypothesis_version: 6.141.1
-
-[127, '--disable', '--json', '--label', '--pair', '.', 'act.syncd', 'ascii', 'channel_id', 'cloud', 'default_label', 'disable_failed', 'enabled', 'error', 'field', 'fields', 'label', 'label is too long', 'max', 'message', 'mode', 'no_python', 'ok', 'pair_failed', 'pairing-qr.png', 'qr_blob', 'qr_png_base64', 'registered', 'state', 'sync', 'sync.json', 'unknown field', 'utf-8', '这台 Mac']

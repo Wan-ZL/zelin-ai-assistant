@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/radars.py
-# hypothesis_version: 6.141.1
-
-[-400, 120, '--reinstall-agent', '.plist', 'LaunchAgents', 'Library', 'act', 'bash', 'bash install.sh', 'darwin', 'field', 'fields', 'fix', 'gmail', 'install.sh', 'interval_s', 'label', 'launchd', 'loaded', 'ok', 'plist_installed', 'radars', 'rc', 'slack', 'source', 'tuple[int, str]', 'unknown field', 'utf-8']

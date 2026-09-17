@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/diagnostics.py
-# hypothesis_version: 6.141.1
-
-[100, 200, 1000, 1024, '.', '1 - unprocessed', 'actd_log', 'activity', 'ai_fix_enabled', 'bad log name', 'cron_probe', 'db.sqlite', 'deploy_state', 'detail', 'doctor', 'error', 'generated_at', 'health', 'install_report', 'lines', 'lines must be >= 1', 'log not found', 'log unreadable', 'logs', 'mirror', 'mtime', 'name', 'ok', 'path', 'protected_path', 'radar_sources', 'rb', 'read_ok', 'readable', 'registry_backend', 'replace', 'screenpipe-auto.log', 'screenpipe_db', 'size', 'state', 'status', 'steps', 'truncated', 'ts', 'unprocessed', 'utf-8', 'version']
