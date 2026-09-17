@@ -383,5 +383,25 @@ class JudgementTestCase(_RepoCase):
         self.assertNotIn("## STALE", md)
 
 
+class WebPrefTitlesAreDeclaredTestCase(unittest.TestCase):
+    """§66.2 2026-09-17 追记的钉子：真仓清单里 owner=web / store=prefs 的每把键，web/src/parity.test.tsx 里都有一条
+    同名标题的 it()，且 control_presence 认这个标题。少一条即红——否则那把键静默退回源码字面量探针、门照绿。
+    只读两个文件，不跑 vitest。"""
+
+    _REPO_ROOT = os.path.dirname(os.path.dirname(_UI_DIR))
+
+    def test_every_web_pref_key_has_a_same_named_it(self):
+        inventory = uc.load_json(os.path.join(self._REPO_ROOT, "ui", "parity", "native-inventory.json"))
+        ids = sorted(item["id"] for item in inventory["settings_keys"]
+                     if item.get("gated") and item.get("owner") == "web" and item.get("store") == "prefs")
+        self.assertGreaterEqual(len(ids), 6)
+        text = uc.read_text(os.path.join(self._REPO_ROOT, "web", "src", "parity.test.tsx"))
+        for item_id in ids:
+            self.assertTrue('it("%s"' % item_id in text,
+                            "web/src/parity.test.tsx has no it(%r) — the key would fall back to the literal probe" % item_id)
+            self.assertEqual(pc.control_presence({item_id: "passed"}, {}), {item_id: True})
+            self.assertEqual(pc.control_presence({item_id: "failed"}, {}), {item_id: False})
+
+
 if __name__ == "__main__":
     unittest.main()
