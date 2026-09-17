@@ -15,10 +15,17 @@ goal 2026-09-15「全覆盖」的执行端。`qa/coverage_inventory.json` 的每
     MISSING=<n>
     WAIVED=<n>
 
+`http:` 的 proof token：`expect=` / `contains=` / `noauth` / `body=` / `body=@file` /
+`ctype=<mime>`（显式 Content-Type；写动词没带 body 时发空 bytes）。路径里的占位符
+`{id}`（board 第一张卡）、`{section}` `{log}` `{job}` `{recap}`（各自列表端点的第一项，
+truth = PLACEHOLDER_SOURCES）由跑者现场解析；列表是空的就换 `__absent__`，并在证据行
+里明说——绝不假装解析到了。
+
 纪律：
 - **绝不碰 live 数据**：demo server / install.sh / uninstall.sh / doctor 全部跑在
   `/tmp` 的临时 HOME 里，`launchctl` `open` `osascript` `crontab` 一律 PATH 前缀
-  假货（argv 只记账），收尾 trap 删干净（§58 的门只读、不改仓）。
+  假货（`crontab` / `launchctl` 两只**有状态**，台账在沙箱 HOME 内 —— 见
+  `scripts/qa/coverage_sandbox.py`），收尾 trap 删干净（§58 的门只读、不改仓）。
 - **注入缝走参数**：Shell / Http / demo-server 工厂三个 seam 都是构造参数，单元
   测试注入假执行器——不起子进程、不联网（防腐 #3：禁 module-global 注入缝）。
 - **退出码**：MISSING=0 → 0；有 MISSING → 1；清单缺席 → 2。
@@ -267,15 +274,28 @@ class Http:
         `resp.close()`，结果主线程死在 BufferedReader 的锁上（2026-09-16 卡了 12 h）。
         现在：底层 socket 设超时（防静默流）、`read1` 每次只做一次 recv、墙钟封顶
         （防 keepalive 刷屏），永不跨线程 close。"""
+        self._arm_timeout(resp)
         deadline = time.monotonic() + self.READ_DEADLINE
+        return self._drain(self._reader_of(resp), deadline).decode("utf-8", "replace")
+
+    def _arm_timeout(self, resp):
+        """底层 socket 设超时（防静默流把整轮挂死）；拿不到 socket 就算了。"""
         sock = self._socket_of(resp)
-        if sock is not None:
-            try:
-                sock.settimeout(self.READ_DEADLINE)
-            except OSError:
-                pass
-        reader = (getattr(resp, "read1", None)
-                  or getattr(getattr(resp, "fp", None), "read1", None) or resp.read)
+        if sock is None:
+            return
+        try:
+            sock.settimeout(self.READ_DEADLINE)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _reader_of(resp):
+        """一次只做一次 recv 的读法（read1 优先；没有就退回 read）。"""
+        return (getattr(resp, "read1", None)
+                or getattr(getattr(resp, "fp", None), "read1", None) or resp.read)
+
+    def _drain(self, reader, deadline):
+        """封顶 + 墙钟的单线程读循环（到点就放弃余下 body，永不跨线程 close）。"""
         chunks, total = [], 0
         try:
             while total < self.BODY_CAP and time.monotonic() < deadline:
@@ -286,7 +306,7 @@ class Http:
                 total += len(chunk)
         except (socket.timeout, TimeoutError, OSError, ValueError):
             pass   # 超时 / 断开：状态码已知，body 取已到手的部分
-        return b"".join(chunks).decode("utf-8", "replace")
+        return b"".join(chunks)
 
     def request(self, method, url, body=None, headers=None, timeout=30):
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -303,93 +323,12 @@ class Http:
 
 
 # --------------------------------------------------------------------------- #
-# 临时 HOME / PATH 前缀假货（install / uninstall / doctor / actd 用）
+# 临时 HOME / PATH 前缀假货 —— 同层 coverage_sandbox.py（本文件 ≤2000 行的拆分线）
 # --------------------------------------------------------------------------- #
 
-_SHIM_BODY = """#!/bin/sh
-# QA shim (scripts/qa/coverage_run.py)：只记 argv，绝不碰真 gui domain
-printf '%s %s\\n' "$(basename "$0")" "$*" >> "$ZAA_SHIM_LOG"
-exit 0
-"""
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from coverage_sandbox import TempHomes, shim_env, write_shims  # noqa: E402
 
-# stub `claude`：executor 的注入缝之外的兜底（brief §3 flow:card_lifecycle）——
-# 打印一行 canned 结果，永不联网、永不真跑 agent。
-_CLAUDE_STUB = """#!/bin/sh
-printf '%s %s\\n' claude "$*" >> "$ZAA_SHIM_LOG"
-echo '{"result":"qa coverage stub","is_error":false}'
-exit 0
-"""
-
-# `pgrep` / `pkill` 也必须是假货：install.sh 用 `pgrep -x ZelinAIBoard` 决定要不要杀 + 重开
-# owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` / `pkill -f screenpipe`——
-# 这两条都不看 HOME。假货一律「没找到」（exit 1），install.sh 就走「壳没在跑」的分支。
-# 2026-09-15 实测：没有这两只假货，第一轮全量跑把 live 壳杀了两次。
-_ABSENT_BODY = """#!/bin/sh
-# QA shim (scripts/qa/coverage_run.py)：只记 argv，恒「没匹配到进程」——绝不碰 owner 的壳 / 引擎
-printf '%s %s\\n' "$(basename "$0")" "$*" >> "$ZAA_SHIM_LOG"
-exit 1
-"""
-
-SHIMMED = ("launchctl", "open", "osascript", "crontab", "claude", "pgrep", "pkill")
-ABSENT_SHIMS = ("pgrep", "pkill")
-
-
-class TempHomes:
-    """/tmp 下的临时 HOME 台账（收尾一并删除；只删 /tmp 下的路径）。"""
-
-    def __init__(self):
-        self.paths = []
-
-    def make(self, slug):
-        path = tempfile.mkdtemp(prefix="zaa-cov-%s-" % slug, dir="/tmp")
-        self.paths.append(path)
-        return path
-
-    def cleanup(self):
-        for path in list(self.paths):
-            if path.startswith("/tmp/"):
-                shutil.rmtree(path, ignore_errors=True)
-            self.paths.remove(path)
-
-
-def write_shims(home, names=SHIMMED):
-    """<home>/.shims 里放假 launchctl/open/osascript/crontab/claude/pgrep/pkill；返回 (dir, log)。"""
-    shim_dir = os.path.join(home, ".shims")
-    os.makedirs(shim_dir, exist_ok=True)
-    shim_log = os.path.join(home, "shims.log")
-    for name in names:
-        path = os.path.join(shim_dir, name)
-        with open(path, "w", encoding="utf-8") as handle:
-            if name == "claude":
-                handle.write(_CLAUDE_STUB)
-            elif name in ABSENT_SHIMS:
-                handle.write(_ABSENT_BODY)
-            else:
-                handle.write(_SHIM_BODY)
-        os.chmod(path, 0o755)
-    return shim_dir, shim_log
-
-
-def shim_env(home, shim_dir, shim_log, extra=None):
-    """HOME=临时目录 + PATH 前缀假货 + 去掉 node/npm（install.sh 的 UI 步会自己跳过）。
-
-    `AIASSISTANT_UI_APPS_DIR` 指向临时 HOME 下的 Applications/：install.sh / uninstall.sh 对
-    壳 bundle 的安装与删除都只认这个 seam（默认 /Applications 是 owner 的真 app——
-    2026-09-15 第一轮全量跑没设它，把 live bundle 删了又装回一个 dev 构建，TCC 授权随
-    cdhash 一起丢）。
-    """
-    env = {
-        "HOME": home,
-        "AIASSISTANT_UI_APPS_DIR": os.path.join(home, "Applications"),
-        "PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % shim_dir,
-        # `python3 -m …` 的 PYTHONPATH 由各调用点给；这里只保证 HOME/PATH 两条红线
-
-        "ZAA_SHIM_LOG": shim_log,
-        "ZAI_NO_OPEN": "1",
-    }
-    if extra:
-        env.update(extra)
-    return env
 
 
 # --------------------------------------------------------------------------- #
@@ -435,7 +374,24 @@ def _seed_home(homes, shell, python_bin, scene):
     with open(os.path.join(home, "state", "setup_done.json"), "w", encoding="utf-8") as handle:
         json.dump({"completed_at": "2026-09-02T12:00:00Z"}, handle)
     _copy_example_config(home)
+    _link_skills(home)
     return home
+
+
+def _link_skills(home):
+    """demo home 里软链 checkout 的 `skills/`（§67 的 manifest 真源 = AIASSISTANT_HOME/skills）。
+
+    临时 home 里没有它，`GET /api/skills` 恒 409「index.yaml is unusable」——技能页
+    上就是一条假报错。写面（enable/disable）只写 `$HOME/.claude/skills` 与
+    `state/skills.json`，都在沙箱里，所以这条链只被读（scripts/media/record.mjs 同一手）。"""
+    src = os.path.join(REPO_ROOT, "skills")
+    dst = os.path.join(home, "skills")
+    if not os.path.isdir(src) or os.path.exists(dst):
+        return
+    try:
+        os.symlink(src, dst)
+    except OSError as exc:      # 软链建不起来不许毁掉整跑（技能页的 proof 会诚实记 MISSING）
+        log("skills symlink failed: %s" % exc)
 
 
 def _copy_example_config(home):
@@ -660,6 +616,31 @@ def parse_swift_run(text, rc, harnesses):
     return {name: _swift_hit(name, steps, last, rc) for name in harnesses}
 
 
+FIXTURES_DIR = os.path.join("scripts", "qa", "fixtures_b")
+# 清单 id 形如 `B-03-slack-poison-reject`，脚本却叫 `slack_poison_reject.py`——
+# 编号前缀由清单负责、文件名由 fixtures builder 负责，两边不必逐字相等。
+_B_PREFIX_RE = re.compile(r"^B-\d+-")
+
+
+def fixture_candidates(slug, note=None):
+    """一条 `fixture:<slug>` 的脚本候选（依次：清单行的 note、<slug>.py、去编号前缀 + '-'→'_'）。"""
+    candidates = [note] if note else []
+    candidates.append(os.path.join(FIXTURES_DIR, "%s.py" % slug))
+    bare = _B_PREFIX_RE.sub("", slug).replace("-", "_")
+    candidates.append(os.path.join(FIXTURES_DIR, "%s.py" % bare))
+    return [c for c in candidates if c]
+
+
+def resolve_fixture_script(slug, note=None, exists=None):
+    """候选里第一个真存在的脚本绝对路径；一个都不在 → None（调用方记 MISSING）。"""
+    check = exists or os.path.exists
+    for candidate in fixture_candidates(slug, note):
+        path = candidate if os.path.isabs(candidate) else os.path.join(REPO_ROOT, candidate)
+        if check(path):
+            return path
+    return None
+
+
 def _playwright_argv(specs):
     """只跑清单引用到的 spec（空 = 全量）；仍是一次 `npx playwright test`。"""
     return ["npx", "playwright", "test"] + ["e2e/" + spec for spec in sorted(specs)] + \
@@ -808,6 +789,9 @@ _HTTP_TOKENS = {
     "contains=": lambda spec, value: spec.__setitem__("contains", value),
     "body=@": lambda spec, value: spec.__setitem__("body", {"file": value}),
     "body=": lambda spec, value: spec.__setitem__("body", {"inline": value}),
+    # `ctype=<mime>`：显式 Content-Type（§49 写闸的第二道；`POST /api/attachments`
+    # 要 image/*，没有它 server 在查 token 之前就 415，401 分支永远测不到）
+    "ctype=": lambda spec, value: spec.__setitem__("ctype", value),
 }
 
 
@@ -823,12 +807,15 @@ def _apply_http_token(spec, token):
 
 
 def parse_http_proof(arg):
-    """`GET /api/board expect=200 noauth contains=lanes body=@f.json` → dict。"""
+    """`GET /api/board expect=200 noauth contains=lanes body=@f.json ctype=image/png` → dict。
+
+    未出现的 token 一律留默认值（`ctype=None` / `body=None`）——旧清单里的 proof
+    逐字不变地照旧跑（字段 add-only）。"""
     match = _HTTP_RE.match(arg.strip())
     if not match:
         raise ValueError("cannot parse http proof %r" % arg)
     spec = {"method": match.group("method"), "path": match.group("path"),
-            "expect": 200, "noauth": False, "contains": None, "body": None}
+            "expect": 200, "noauth": False, "contains": None, "body": None, "ctype": None}
     for token in match.group("rest").split():
         _apply_http_token(spec, token)
     return spec
@@ -876,9 +863,91 @@ def _resolve_id(path, ids):
     return path.replace("{id}", ids[0]), None
 
 
+ABSENT_VALUE = "__absent__"
+
+# 占位符 → (列表端点候选, 列表所在的键候选, 取名字的字段)。第一个给出非空列表的
+# 端点胜；一个都给不出 → ABSENT_VALUE（证据行里明说是替代值，绝不假装解析到了）。
+PLACEHOLDER_SOURCES = {
+    "{section}": (("/api/settings",), ("sections",), "id"),
+    # /api/logs 没有列表路由（server/app.py 只有前缀表 /api/logs/<name>），
+    # 白名单清单在 /api/diagnostics 的 logs[]（§68.4 诊断页同一份）
+    "{log}": (("/api/logs", "/api/diagnostics"), ("logs",), "name"),
+    "{job}": (("/api/ingest/jobs",), ("jobs", "entries"), "id"),
+    "{recap}": (("/api/recaps",), ("recaps", "entries", "keys"), "key"),
+}
+
+
+def _first_str(items, field):
+    """列表里第一个非空字符串（元素是 str 就取它，是 dict 就取 field）。"""
+    for item in items:
+        value = item if isinstance(item, str) else (item or {}).get(field)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _listing_first(doc, keys, field):
+    """列表端点的 JSON → 第一项的名字（键候选按序试；形状不对 → None）。"""
+    for key in keys:
+        node = doc.get(key) if isinstance(doc, dict) else None
+        value = _first_str(node, field) if isinstance(node, list) else None
+        if value:
+            return value
+    return None
+
+
+class Listings:
+    """列表端点 → 第一项（`{section}` / `{log}` / `{job}` / `{recap}` 的解析源）。
+
+    与 `{id}`（board 的第一张卡）同一口味：真问一次 server，取第一项，每个占位符
+    只问一次并 memoize。空列表 = 解析不到，调用方换 ABSENT_VALUE 并在证据里说明。"""
+
+    def __init__(self, http, server):
+        self.http = http
+        self.server = server
+        self._cache = {}
+
+    def first(self, name):
+        if name not in self._cache:
+            self._cache[name] = self._resolve(name)
+        return self._cache[name]
+
+    def _resolve(self, name):
+        paths, keys, field = PLACEHOLDER_SOURCES[name]
+        for path in paths:
+            doc = self._get(path)
+            value = _listing_first(doc, keys, field) if doc is not None else None
+            if value:
+                return value
+        return None
+
+    def _get(self, path):
+        headers = {"X-Zai-Token": self.server.token} if self.server.token else {}
+        resp = self.http.request("GET", self.server.base_url + path, headers=headers)
+        return json_tail(resp.text) if resp.status == 200 else None
+
+
+def resolve_placeholders(path, listings):
+    """路径里的列表型占位符 → 真名字；解析不到就换 `__absent__`。
+
+    返回 (path, notes)：notes 是给证据行用的说明（空列表 = 全都解析到了）。"""
+    notes = []
+    for name in PLACEHOLDER_SOURCES:
+        if name not in path:
+            continue
+        value = listings.first(name) if listings is not None else None
+        if not value:
+            value = ABSENT_VALUE
+            notes.append("%s unresolved (empty listing) -> %s" % (name, ABSENT_VALUE))
+        path = path.replace(name, value)
+    return path, notes
+
+
 def _request_headers(spec, server, body):
     headers = {}
-    if body is not None:
+    if spec.get("ctype"):
+        headers["Content-Type"] = spec["ctype"]
+    elif body is not None:
         headers["Content-Type"] = "application/json"
     if not spec["noauth"] and server.token:
         headers["X-Zai-Token"] = server.token
@@ -894,8 +963,15 @@ def _judge_response(spec, resp, evidence):
     return Verdict(PRESENT, "-", one_line(evidence))
 
 
-def run_http_proof(arg, http, server, ids):
-    """一条 http: proof → Verdict。"""
+def _http_request_body(spec):
+    """写动词没带 body 时的默认体：ctype= 显式声明了类型 → 空 bytes，否则 `{}`。"""
+    if spec["method"] not in _WRITE_METHODS:
+        return None
+    return "" if spec.get("ctype") else "{}"
+
+
+def run_http_proof(arg, http, server, ids, listings=None):
+    """一条 http: proof → Verdict（占位符先解析，再发一次请求）。"""
     try:
         spec = parse_http_proof(arg)
         body = http_body(spec)
@@ -904,11 +980,14 @@ def run_http_proof(arg, http, server, ids):
     path, error = _resolve_id(spec["path"], ids)
     if error:
         return Verdict(MISSING, error, "-")
-    if body is None and spec["method"] in _WRITE_METHODS:
-        body = "{}"
+    path, absent = resolve_placeholders(path, listings)
+    if body is None:
+        body = _http_request_body(spec)
     resp = http.request(spec["method"], server.base_url + path, body=body,
                         headers=_request_headers(spec, server, body))
-    return _judge_response(spec, resp, "%s %s -> %s" % (spec["method"], path, resp.status))
+    evidence = "%s %s -> %s%s" % (spec["method"], path, resp.status,
+                                  (" [%s]" % "; ".join(absent)) if absent else "")
+    return _judge_response(spec, resp, evidence)
 
 
 # --- settings: ------------------------------------------------------------- #
@@ -1073,35 +1152,48 @@ def _need_server(ctx):
     return server, None
 
 
-def flow_install_fresh(ctx):
-    """install.sh 在临时 HOME 里从零装一遍：exit 0 + plist 落在临时 LaunchAgents。"""
-    home = ctx.homes.make("install")
+Install = namedtuple("Install", "home shim_dir shim_log proc plists born")
+
+
+def run_install(ctx, slug, log_name):
+    """install.sh 在一个新的沙箱 HOME 里从零装一遍；返回台账（born 由调用方 _drop_born）。
+
+    install.sh 的 AIASSISTANT_HOME 恒等于它自己所在的 checkout（这里 = 本 worktree），
+    它会在 checkout 里现建 config.yaml / state/（两者 .gitignore 在列）——跑前记下
+    有无，调用方跑完把本次新建的删掉，工作树不留痕。"""
+    home = ctx.homes.make(slug)
     shim_dir, shim_log = write_shims(home)
-    # install.sh 的 AIASSISTANT_HOME 恒等于它自己所在的 checkout（这里 = 本 worktree），
-    # 它会在 checkout 里现建 config.yaml / state/（两者 .gitignore 在列）——跑前记下
-    # 有无，跑后把本次新建的删掉，工作树不留痕。
     born = _checkout_born()
     proc = ctx.shell.run(["bash", os.path.join(REPO_ROOT, "install.sh"), "--non-interactive"],
                          cwd=REPO_ROOT, env=shim_env(home, shim_dir, shim_log),
-                         timeout=T_FLOW, log_name="flow_install_fresh")
-    _drop_born(born)
-    plists = _plists(home)
-    calls = one_line(_read(shim_log), 80)
-    if proc.rc != 0:
+                         timeout=T_FLOW, log_name=log_name)
+    return Install(home, shim_dir, shim_log, proc, _plists(home), born)
+
+
+def flow_install_fresh(ctx):
+    """install.sh 在临时 HOME 里从零装一遍：exit 0 + plist 落在临时 LaunchAgents。"""
+    box = run_install(ctx, "install", "flow_install_fresh")
+    _drop_born(box.born)
+    calls = one_line(_read(box.shim_log), 80)
+    if box.proc.rc != 0:
         return Verdict(MISSING, "install.sh --non-interactive rc=%s: %s" % (
-            proc.rc, one_line(proc.out, 90)), "shims: %s" % calls)
-    if not plists:
-        return Verdict(MISSING, "no plist under %s/Library/LaunchAgents" % home, "shims: %s" % calls)
-    labels = ", ".join(os.path.basename(p) for p in plists)
-    return Verdict(PRESENT, "-", "install.sh rc=0, %d plist(s): %s" % (len(plists), labels))
+            box.proc.rc, one_line(box.proc.out, 90)), "shims: %s" % calls)
+    if not box.plists:
+        return Verdict(MISSING, "no plist under %s/Library/LaunchAgents" % box.home,
+                       "shims: %s" % calls)
+    labels = ", ".join(os.path.basename(p) for p in box.plists)
+    return Verdict(PRESENT, "-", "install.sh rc=0, %d plist(s): %s" % (len(box.plists), labels))
+
+
+CHECKOUT_BORN_CANDIDATES = ("config.yaml", "state", os.path.join("state", "inbox"),
+                            os.path.join("state", "logs"))
 
 
 def _checkout_born():
-    """install.sh 会在 checkout 里现建 config.yaml / state/（都在 .gitignore 上）——
-    跑前记下哪些还不存在，跑后只删本次新建的那几个：工作树不留痕。"""
-    return [path for path in (os.path.join(REPO_ROOT, "config.yaml"),
-                              os.path.join(REPO_ROOT, "state"))
-            if not os.path.exists(path)]
+    """install.sh / actd 开机会在 checkout 里现建 config.yaml 与 state/ 三件套（都在
+    .gitignore 上）——跑前记下哪些还不存在，跑后只删本次新建的那几个：工作树不留痕。"""
+    return [os.path.join(REPO_ROOT, rel) for rel in CHECKOUT_BORN_CANDIDATES
+            if not os.path.exists(os.path.join(REPO_ROOT, rel))]
 
 
 def _drop_born(born):
@@ -1120,20 +1212,49 @@ def _unlink(path):
 
 
 def flow_doctor_clean(ctx):
-    """`python3 -m act.doctor --fast --json` 在临时 HOME 里 fail=0（退出码 = FAIL 条数）。"""
-    home = ctx.homes.make("doctor")
-    example = os.path.join(REPO_ROOT, "config.example.yaml")
-    if os.path.exists(example):
-        shutil.copyfile(example, os.path.join(home, "config.yaml"))
-    # state/ 与 dashboard.json 用 demo 种子铺出来（doctor 的「state dirs」「dashboard」两检查
-    # 问的就是它们；没铺 = 判一个与被测行为无关的 FAIL）
-    ctx.shell.run([ctx.python, os.path.join(REPO_ROOT, "scripts", "demo_seed.py"), home],
-                  timeout=T_SHORT, log_name="flow_doctor_clean")
-    os.makedirs(os.path.join(home, "state"), exist_ok=True)
-    shim_dir, shim_log = write_shims(home)
+    """`act.doctor --fast --json` 在 **install.sh 刚装好的** 环境里 fail=0（spec §2）。
+
+    doctor 的三条检查问的就是 install.sh 的产物，所以必须问同一套环境，否则判的是
+    「临时 home 不是 clone」这类与被测行为无关的红（run4 的三条 FAIL）：
+      - `AIASSISTANT_HOME`：``config.HOME/install.sh`` 在不在 → HOME 指针必须指 checkout，
+        install.sh 自己就把 AIASSISTANT_HOME 钉在它所在的 checkout 上；
+      - `state dirs`：``<checkout>/state{,/inbox,/logs}`` 可写——install.sh 现建的那几个；
+      - `cron ingest chain`：``crontab -l`` 里的 §18 行——沙箱里的有状态 crontab 假货
+        存着 install.sh 刚写进去的内容（真 crontab 一个字节都不碰）。
+    所以：先在自己的沙箱 HOME 里跑一遍 install.sh，再用 HOME=沙箱 +
+    AIASSISTANT_HOME=REPO_ROOT 问 doctor，最后才删掉本次在 checkout 里新建的东西。"""
+    box = run_install(ctx, "doctor", "flow_doctor_clean_install")
+    try:
+        if box.proc.rc != 0:
+            return Verdict(MISSING, "install.sh (doctor sandbox) rc=%s: %s" % (
+                box.proc.rc, one_line(box.proc.out, 90)), "-")
+        return _doctor_verdict(ctx, box)
+    finally:
+        _drop_born(box.born)
+
+
+def _boot_state_dirs(ctx, box):
+    """launchd 的替身：install.sh 之后本该由 actd 开机跑的 `config.ensure_state_dirs()`。
+
+    install.sh 第 3 步只建 `state/` + `state/inbox/`；`state/logs/` 的真源是
+    `act/lib/config.ensure_state_dirs()`（STATE/INBOX/LOG 三件套），真机上
+    `launchctl bootstrap` 之后几秒 actd 就把它建好了，沙箱里 launchctl 是假货、
+    actd 永不开机，于是 doctor 的 `state dirs` 会为一件与被测行为无关的事红。
+    这里只补这一个开机步骤——**不跑 actd 主循环**（registry 单写者，§44）。"""
+    return ctx.shell.run(
+        [ctx.python, "-c", "from act.lib import config; config.ensure_state_dirs()"],
+        cwd=REPO_ROOT,
+        env=shim_env(box.home, box.shim_dir, box.shim_log,
+                     {"AIASSISTANT_HOME": REPO_ROOT, "PYTHONPATH": ctx.pythonpath}),
+        timeout=T_SHORT, log_name="flow_doctor_clean_state_dirs")
+
+
+def _doctor_verdict(ctx, box):
+    """刚装好的沙箱里问一次 doctor（HOME=沙箱，AIASSISTANT_HOME=checkout）→ Verdict。"""
+    _boot_state_dirs(ctx, box)
     proc = ctx.shell.run([ctx.python, "-m", "act.doctor", "--fast", "--json"], cwd=REPO_ROOT,
-                         env=shim_env(home, shim_dir, shim_log,
-                                      {"AIASSISTANT_HOME": home,
+                         env=shim_env(box.home, box.shim_dir, box.shim_log,
+                                      {"AIASSISTANT_HOME": REPO_ROOT,
                                        "PYTHONPATH": ctx.pythonpath}),
                          timeout=T_FLOW, log_name="flow_doctor_clean")
     fails = _doctor_fails(proc.out)
@@ -1553,6 +1674,16 @@ def _log_slug(text):
     return re.sub(r"\W+", "_", str(text))
 
 
+# 需要整行上下文（不只是 proof 的参数）的 kind：fixture: 要 row["note"] 找脚本
+ROW_AWARE_KINDS = ("fixture",)
+
+
+def _row_note(row):
+    """清单行的 note（非 dict / 空 → None）。fixture 脚本路径的第一候选。"""
+    note = row.get("note") if isinstance(row, dict) else None
+    return note.strip() if isinstance(note, str) and note.strip() else None
+
+
 class Judge:
     """proof 分句 → Verdict（每个 kind 一个执行器；重工具从 Tools 拿 memoized map）。"""
 
@@ -1566,6 +1697,7 @@ class Judge:
         self.opts = opts
         self._flow_cache = {}
         self._ids = None
+        self._listings = None
         self._unittest_modules = set()
         self._pw_specs = set()
         self.flow_ctx = FlowCtx(tools, shell, http, homes, opts, self._pw_specs)
@@ -1597,10 +1729,18 @@ class Judge:
             self._ids = board_ids(self.http, server)
         return self._ids
 
-    def clause(self, kind, arg):
+    def listings(self, server):
+        """列表型占位符的解析器（一个 server 一个，占位符各问一次）。"""
+        if self._listings is None:
+            self._listings = Listings(self.http, server)
+        return self._listings
+
+    def clause(self, kind, arg, row=None):
         handler = self._handlers.get(kind)
         if handler is None:
             return Verdict(MISSING, "unknown proof kind %r" % kind, "-")
+        if kind in ROW_AWARE_KINDS:
+            return handler(arg, row)
         return handler(arg)
 
     # -- 每个 kind 一个执行器 --------------------------------------------- #
@@ -1632,7 +1772,7 @@ class Judge:
         server, missing = _need_server(self.flow_ctx)
         if missing:
             return missing
-        return run_http_proof(arg, self.http, server, self.ids(server))
+        return run_http_proof(arg, self.http, server, self.ids(server), self.listings(server))
 
     def _settings(self, arg):
         server, missing = _need_server(self.flow_ctx)
@@ -1667,10 +1807,11 @@ class Judge:
                               timeout=T_SHORT, log_name="axprobe_" + _log_slug(probe))
         return _probe_verdict(proc)
 
-    def fixture(self, slug):
-        script = os.path.join(REPO_ROOT, "scripts", "qa", "fixtures_b", "%s.py" % slug)
-        if not os.path.exists(script):
-            return Verdict(MISSING, "fixture script absent: scripts/qa/fixtures_b/%s.py" % slug, "-")
+    def fixture(self, slug, row=None):
+        script = resolve_fixture_script(slug, _row_note(row))
+        if script is None:
+            return Verdict(MISSING, "fixture script absent: %s" % ", ".join(
+                fixture_candidates(slug, _row_note(row))), "-")
         proc = self.shell.run([self.python, script], cwd=REPO_ROOT,
                               env={"PYTHONPATH": self.pythonpath},
                               timeout=T_FLOW, log_name="fixture_" + _log_slug(slug))
@@ -1685,7 +1826,7 @@ class Judge:
         clauses = parse_proof(row.get("proof"))
         if not clauses:
             return Verdict(MISSING, "no proof declared in inventory", "-")
-        return combine([self.clause(kind, arg) for kind, arg in clauses])
+        return combine([self.clause(kind, arg, row) for kind, arg in clauses])
 
 
 def _probe_verdict(proc):
