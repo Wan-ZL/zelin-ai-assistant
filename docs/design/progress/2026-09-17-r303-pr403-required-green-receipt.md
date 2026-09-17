@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-303`（PR #PRNUM；R-303「修红 CI：PR #403 chore: Bump vite from 8.2.2 to 8.3.0 in /web in the vite-toolchain group」；同一颗炸弹的**第三张**孪生——真修复是 #402 的 `aa70e1fe`，由 R-220 cherry-pick 成 `8803d399` fast-forward 推上 #403 的 head；本分支带的是同一个 blob `daff9b9c`（对 #403 head 与 #406 逐字节相同）+ 本片段）
+pr: `ai/self-improve/R-303`（PR #408；R-303「修红 CI：PR #403 chore: Bump vite from 8.2.2 to 8.3.0 in /web in the vite-toolchain group」；同一颗炸弹的**第三张**孪生——真修复是 #402 的 `aa70e1fe`，由 R-220 cherry-pick 成 `8803d399` fast-forward 推上 #403 的 head；本分支带的是同一个 blob `daff9b9c`（对 #403 head 与 #406 逐字节相同）+ 本片段）
 phase: 横切（§65 自我改进通道：`pr_red` 卡；§58 QA 六门；D5 / D12「红 CI 是臣子的事」）
 law: —（无修法；test-only。§70.2 追记的两阶段老化与 §9 追记的 `restore` 盖 `restored_at` 一字未动）
 
