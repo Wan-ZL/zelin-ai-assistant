@@ -565,14 +565,25 @@ def badge_mismatch(badge: "int | None", expected: int) -> str:
     return "Dock badge %s != board count %d" % (badge, expected)
 
 
+_LS_NULL_TOKENS = ("kCFNULL", "[ NULL ]")
+
+
+def _ls_label(out: str) -> str:
+    match = re.search(r'"label"\s*=\s*"([^"]*)"', out)
+    return match.group(1) if match else "none"
+
+
+def _ls_null(out: str, label: str) -> bool:
+    return label in ("", "none") or any(tok in out for tok in _LS_NULL_TOKENS)
+
+
 def parse_ls_badge(out: str) -> "tuple[int | None, str, str]":
     """`lsappinfo … StatusLabel` 输出 → (徽章数, 原始标签, 问题说明)。
     `"StatusLabel"={ "label"="42" }` → 42；`kCFNULL` / `[ NULL ]` / 空 = 没徽章 = 0。"""
     if "StatusLabel" not in out:
         return None, out.strip()[:80], "LaunchServices has no StatusLabel (app not running?)"
-    match = re.search(r'"label"\s*=\s*"([^"]*)"', out)
-    label = match.group(1) if match else "none"
-    if label in ("", "none") or "kCFNULL" in out or "[ NULL ]" in out:
+    label = _ls_label(out)
+    if _ls_null(out, label):
         return 0, "none", ""
     if label.isdigit():
         return int(label), label, ""
@@ -597,23 +608,34 @@ def _settle_badge(env, badge: "int | None", expected: int) -> "tuple[int | None,
     return badge, label, problem
 
 
+LS_SOURCE = "LaunchServices StatusLabel (NSDockTile.badgeLabel)"
+AX_SOURCE = "AXStatusLabel of the Dock tile (fallback)"
+
+
+def _resolve_badge(env) -> "tuple[int | None, str, str, str, dict | None]":
+    """先问 LaunchServices；拿不到再回落 Dock 的 AX 树。回 (badge, label, problem, source, blocked)。"""
+    badge, label, problem = _ls_badge(env)
+    if badge is not None:
+        return badge, label, problem, LS_SOURCE, None
+    res = env.osascript(dock_badge_script())
+    fail = ax_result_or_blocked("dock_badge", res)
+    if fail:
+        return None, "", "", AX_SOURCE, fail
+    badge, label, problem = parse_badge(res.out)
+    return badge, label, problem, AX_SOURCE, None
+
+
 def probe_dock_badge(env, **_kw) -> dict:
     gate = live_shell_gate(env, "dock_badge")
     if gate:
         return gate
-    badge, label, problem = _ls_badge(env)
-    source = "LaunchServices StatusLabel (NSDockTile.badgeLabel)"
-    if badge is None:                       # LaunchServices 拿不到 → 回落 Dock 的 AX 树
-        res = env.osascript(dock_badge_script())
-        fail = ax_result_or_blocked("dock_badge", res)
-        if fail:
-            return fail
-        badge, label, problem = parse_badge(res.out)
-        source = "AXStatusLabel of the Dock tile (fallback)"
+    badge, label, problem, source, fail = _resolve_badge(env)
+    if fail:
+        return fail
     board = env.http("GET", "/api/board")
     expected, note = board_badge_expectation(board)
-    if source.startswith("LaunchServices"):
-        badge, label, problem = _settle_badge(env, badge, expected) if badge == 0 else (badge, label, problem)
+    if badge == 0 and source == LS_SOURCE:
+        badge, label, problem = _settle_badge(env, badge, expected)
     out = {"probe": "dock_badge", "present": badge == expected, "badge": badge,
            "badge_raw": label, "expected": expected, "board_status": board.status,
            "source": source}
