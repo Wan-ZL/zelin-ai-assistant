@@ -286,10 +286,12 @@ class RouteProofDialectTestCase(unittest.TestCase):
                          self._absent("ingest/jobs/", "", "404"))
 
     def test_required_query_is_named(self):
-        # recap 历史必须点名 key（不点名 = 400，不是 200）
+        # recap 历史必须点名 key；demo 现场 {recap} 恒 __absent__ → 只证 400 守卫那一支，
+        # 200 路径由 flow:recaps 证（见 _GET_GUARD）
         history = _API + "recaps/history"
         self.assertEqual(ci._get_http_proof(history, history),
-                         "http:GET %s?key={recap} expect=200" % history)
+                         "http:GET %s?key={recap} expect=400" % history)
+        self.assertIn("flow:recaps", ci._route_proof("GET", history, history, {}))
         board = _API + "board"
         self.assertEqual(ci._get_http_proof(board, board), "http:GET %s expect=200" % board)
 
