@@ -4,7 +4,8 @@
 // 这条主路 LaneComposer.test.tsx 与 LaneComposer.escHistory.test.tsx 早有）：
 //   1) 只有 v1.0 之前的旧键 zai.captureHistory → 新挂载的输入框 ↑ 照样翻出来，且顺手把历史搬到同名键、旧键删掉（一次性迁移）；
 //      挂载本身不读键（第一次 ↑ 才读）；
-//   2) 键里是坏 JSON → ↑ 不抛（window 的 error 事件一次都没有）、键不改写；下一次成功提交把它盖成合法的一条；
+//   2) 键里是坏 JSON → ↑ 不抛（处理器里逃出的异常 vitest 会记成 unhandled error、整文件红）、草稿留空、键不改写；
+//      下一次成功提交把它盖成合法的一条；
 //   3) 去重 + 封顶 20 走真提交：键里已有 20 条，再提交其中最旧的一条 → 它挪到最前、仍 20 条；再提交一条新的 → 最旧的掉出去、仍 20 条，
 //      ↑ 第一下翻出的就是刚提交的。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -63,16 +64,12 @@ describe("LaneComposer — captureHistory 读回", () => {
     expect(window.localStorage.getItem(LEGACY_HISTORY_KEY)).toBeNull();
   });
 
-  it("键里是坏 JSON → ↑ 不抛（window 收不到 error 事件）、键不改写；下一次成功提交把它盖成合法的一条", async () => {
+  it("键里是坏 JSON → ↑ 不抛、草稿留空、键不改写；下一次成功提交把它盖成合法的一条", async () => {
     window.localStorage.setItem(HISTORY_KEY, "not json");
-    // jsdom 把事件处理器里抛出的异常送到 window 的 error 事件（fireEvent 本身不会抛）——真崩就在这里露头
-    const onError = vi.fn((event: Event) => event.preventDefault());
-    window.addEventListener("error", onError);
     const { field, button } = mount();
+    // 处理器里逃出的异常不会从 fireEvent 抛出来，但 vitest 会把它记成 unhandled error 让整文件红——「不抛」由 runner 判
     fireEvent.keyDown(field, { key: "ArrowUp" });
-    window.removeEventListener("error", onError);
-    expect(onError).not.toHaveBeenCalled();
-    expect(field.value).toBe("");
+    expect(field.value).toBe(""); // 坏 JSON 不许漏成一条历史落进草稿
     expect(window.localStorage.getItem(HISTORY_KEY)).toBe("not json");
     await submit(field, button, "fresh start");
     expect(stored()).toEqual(["fresh start"]);

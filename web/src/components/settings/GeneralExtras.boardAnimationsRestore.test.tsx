@@ -1,5 +1,5 @@
-// 「看板动画」开关对 boardAnimations（CONTRACT §66.2 setting:prefs:boardAnimations；原生 Settings.swift 的 UserDefaults
-// 同名键——§43 原生 display-only 层、§54.4 2026-09-03 追记 web 落点、§68.14 追记「飞行层退役、开关不退役」）的**读回**：
+// 「看板动画」开关对 boardAnimations（CONTRACT §66.2 setting:prefs:boardAnimations；原生 Settings.swift / §43 的 UserDefaults
+// 同名键；web 落点 §54.4 2026-09-03 追记；§68.14 追记「飞行层退役、开关不退役」；本组件其余行 §68.6）的**读回**：
 // parity.test.tsx 同名 it() 钉「缺键 = 开 → 点一下 → 键 "false" + <html data-board-animations=off>」，这里钉另外三刀：
 //   1) 键里已是 "false" → 挂载的开关是关的（checked / aria-checked 都 false）；再点开 → 键 "true"、<html> 上的属性摘掉；重开读回开；
 //   2) 只认字面量 "false"（readBoardAnimations 是 `!== "false"`）："0" / "off" / "no" / "False" / 空串 都按开挂载，键不改写；
@@ -59,6 +59,7 @@ describe("GeneralExtras — boardAnimations 读回", () => {
     const toggle = mountSwitch();
     expect(toggle.checked).toBe(false);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(window.localStorage.getItem(KEY)).toBe("false"); // 挂载不改写键（开关状态是 useState 首帧读的，键被改写它也不会变）
     fireEvent.click(toggle);
     expect(toggle.checked).toBe(true);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
