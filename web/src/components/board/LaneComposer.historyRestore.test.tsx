@@ -1,8 +1,10 @@
-// 捕获框对 captureHistory（CONTRACT §66.2 setting:prefs:captureHistory；原生 Store.swift CaptureHistory 的 UserDefaults 同名键，
-// §41 2026-09-05 追记）的**读回**——走真控件，不走 composerCommands 的纯函数（那半边 composerCommands.test.ts 钉着）：
+// 捕获框对 captureHistory（CONTRACT §66.2 setting:prefs:captureHistory；原生 Store.swift CaptureHistory 的 UserDefaults 同名键——
+// §34 2026-09-05 追记：键名 / 最近 20 条去重；§54.4 2026-09-03 追记：旧键 zai.captureHistory 一次性迁移）的**读回**里
+// 既有判例没钉的那几刀——走真控件，不走 composerCommands 的纯函数（那半边 composerCommands.test.ts 钉着；键里有合法历史 → 挂载 → ↑ 翻出
+// 这条主路 LaneComposer.test.tsx 与 LaneComposer.escHistory.test.tsx 早有）：
 //   1) 只有 v1.0 之前的旧键 zai.captureHistory → 新挂载的输入框 ↑ 照样翻出来，且顺手把历史搬到同名键、旧键删掉（一次性迁移）；
 //      挂载本身不读键（第一次 ↑ 才读）；
-//   2) 键里是坏 JSON → ↑ 不崩、草稿不动、键不改写；下一次成功提交把它盖成合法的一条；
+//   2) 键里是坏 JSON → ↑ 不抛（window 的 error 事件一次都没有）、键不改写；下一次成功提交把它盖成合法的一条；
 //   3) 去重 + 封顶 20 走真提交：键里已有 20 条，再提交其中最旧的一条 → 它挪到最前、仍 20 条；再提交一条新的 → 最旧的掉出去、仍 20 条，
 //      ↑ 第一下翻出的就是刚提交的。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -61,10 +63,15 @@ describe("LaneComposer — captureHistory 读回", () => {
     expect(window.localStorage.getItem(LEGACY_HISTORY_KEY)).toBeNull();
   });
 
-  it("键里是坏 JSON → ↑ 不崩、草稿不动、键不改写；下一次成功提交把它盖成合法的一条", async () => {
+  it("键里是坏 JSON → ↑ 不抛（window 收不到 error 事件）、键不改写；下一次成功提交把它盖成合法的一条", async () => {
     window.localStorage.setItem(HISTORY_KEY, "not json");
+    // jsdom 把事件处理器里抛出的异常送到 window 的 error 事件（fireEvent 本身不会抛）——真崩就在这里露头
+    const onError = vi.fn((event: Event) => event.preventDefault());
+    window.addEventListener("error", onError);
     const { field, button } = mount();
     fireEvent.keyDown(field, { key: "ArrowUp" });
+    window.removeEventListener("error", onError);
+    expect(onError).not.toHaveBeenCalled();
     expect(field.value).toBe("");
     expect(window.localStorage.getItem(HISTORY_KEY)).toBe("not json");
     await submit(field, button, "fresh start");

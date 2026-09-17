@@ -1,16 +1,16 @@
 // 「看板动画」开关对 boardAnimations（CONTRACT §66.2 setting:prefs:boardAnimations；原生 Settings.swift 的 UserDefaults
-// 同名键；§54.4 / §68.6）的**读回**：parity.test.tsx 同名 it() 钉「缺键 = 开 → 点一下 → 键 "false" + <html data-board-animations=off>」，
-// 这里钉另外三刀：
+// 同名键——§43 原生 display-only 层、§54.4 2026-09-03 追记 web 落点、§68.14 追记「飞行层退役、开关不退役」）的**读回**：
+// parity.test.tsx 同名 it() 钉「缺键 = 开 → 点一下 → 键 "false" + <html data-board-animations=off>」，这里钉另外三刀：
 //   1) 键里已是 "false" → 挂载的开关是关的（checked / aria-checked 都 false）；再点开 → 键 "true"、<html> 上的属性摘掉；重开读回开；
 //   2) 只认字面量 "false"（readBoardAnimations 是 `!== "false"`）："0" / "off" / "no" / "False" / 空串 都按开挂载，键不改写；
 //   3) index.html 首帧脚本（比 React 早）：键 "false" → 首帧就写 data-board-animations="off"（避免闪一下动效）；缺键 / 其它值 → 不写。
-//      脚本从 index.html?raw 里抠出来在 jsdom 里真跑，不是字面量探针（tokens.test.ts 对主题那句是字面量）。
+//      脚本从 index.html?raw 里抠出来在 jsdom 里真跑（仓库自己的 checked-in 源，不是外来字串），不是字面量探针（tokens.test.ts 对主题那句是字面量）。
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import indexHtml from "../../../index.html?raw";
 import { LanguageContext } from "../../i18n";
 import { resetStoreForTests } from "../../store";
-import { GeneralExtras, readBoardAnimations } from "./GeneralExtras";
+import { GeneralExtras } from "./GeneralExtras";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -29,10 +29,11 @@ function mountSwitch() {
   return view.container.querySelector<HTMLInputElement>("#setting-general-boardAnimations")!;
 }
 
-/** index.html <head> 里第一段 <script>（主题 + 看板动画 + 显示偏好三个 IIFE）——在 jsdom 里真跑一遍 */
+/** index.html <head> 里的行内 <script>（不带 src；主题 + 看板动画 + 显示偏好三个 IIFE）——先确认抠到的是那一段，再在 jsdom 里真跑一遍 */
 function runBootScript() {
-  const match = /<script>([\s\S]*?)<\/script>/.exec(indexHtml);
+  const match = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/.exec(indexHtml);
   if (!match) throw new Error("index.html has no inline <script>");
+  expect(match[1]).toContain('localStorage.getItem("boardAnimations")'); // 看板动画那行搬家 / 改名 → 这里先红、说清是它
   new Function(match[1])();
 }
 
@@ -58,12 +59,10 @@ describe("GeneralExtras — boardAnimations 读回", () => {
     const toggle = mountSwitch();
     expect(toggle.checked).toBe(false);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(readBoardAnimations()).toBe(false);
     fireEvent.click(toggle);
     expect(toggle.checked).toBe(true);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     expect(window.localStorage.getItem(KEY)).toBe("true");
-    expect(readBoardAnimations()).toBe(true);
     expect(html().dataset.boardAnimations).toBeUndefined();
     cleanup();
     expect(mountSwitch().checked).toBe(true);
