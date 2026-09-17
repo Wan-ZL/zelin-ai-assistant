@@ -208,6 +208,108 @@ class PrefKeyProofTestCase(unittest.TestCase):
             self.assertIn("setting:prefs:" + key, found)
 
 
+_API = "/api/"   # 路由字面量分段拼（见 RouteProofDialectTestCase 的 docstring）
+
+WAIVERS_SAMPLE = """# ui/parity/waivers.txt —— 注释行，不是条目。
+control:a:label:one  #119 retired (CONTRACT §NN tombstone); no web landing  #119 / #126
+control:b:label:two  sheet hint — retired with #119 answer_input  #119 / #126
+control:c:label:three  D34 卡片详情只留侧栏一面  #217
+control:d:label:four  owner 还没拍过板  #999
+"""
+
+
+class ParityWaiverTestCase(unittest.TestCase):
+    """§66.2 的 ui/parity/waivers.txt：判卷面发 it.skip，清单必须记 waived 而不是假 MISSING。"""
+
+    def _ledger(self, tmp):
+        os.makedirs(os.path.join(tmp, "ui", "parity"))
+        with open(os.path.join(tmp, ci.WAIVERS_REL), "w", encoding="utf-8") as fh:
+            fh.write(WAIVERS_SAMPLE)
+        return ci.waiver_reasons(tmp)
+
+    def test_reason_vocabulary_is_the_allowed_three(self):
+        self.assertEqual(ci.waive_reason_for("D34 详情只留侧栏一面"), "design-not-carried D34")
+        self.assertEqual(ci.waive_reason_for("retired (CONTRACT §NN tombstone)"), ci.WAIVE_TOMBSTONE)
+        # 认不出出处 = None：发明一个 D 号比挂一条 MISSING 更坏
+        self.assertIsNone(ci.waive_reason_for("owner 还没拍过板"))
+        self.assertIsNone(ci.waive_reason_for(""))
+
+    def test_ledger_rows_map_and_inherit_by_issue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reasons = self._ledger(tmp)
+        self.assertEqual(reasons["control:a:label:one"], ci.WAIVE_TOMBSTONE)
+        # 同一个 #119 决策的第二个面：理由只写「retired with #119」，继承第一行的出处
+        self.assertEqual(reasons["control:b:label:two"], ci.WAIVE_TOMBSTONE)
+        self.assertEqual(reasons["control:c:label:three"], "design-not-carried D34")
+        # 谁都没写出处的 id 不入表 → 仍是 todo
+        self.assertNotIn("control:d:label:four", reasons)
+
+    def test_waived_control_row_keeps_its_parity_proof(self):
+        item = {"id": "control:a:label:one", "owner": "web", "gated": True, "zh": "一", "en": "one"}
+        rows = ci._control_rows({"controls": [item]}, {},
+                                {"control:a:label:one": ci.WAIVE_TOMBSTONE})
+        self.assertEqual(rows[0]["status"], "waived")
+        self.assertEqual(rows[0]["waive_reason"], ci.WAIVE_TOMBSTONE)
+        self.assertEqual(rows[0]["proof"], "parity:control:a:label:one")
+        self.assertIn("waivers.txt", rows[0]["note"])
+
+    def test_an_id_with_no_waiver_stays_todo(self):
+        item = {"id": "control:z:label:zed", "owner": "web", "gated": True, "zh": "", "en": ""}
+        rows = ci._control_rows({"controls": [item]}, {}, {})
+        self.assertEqual(rows[0]["status"], "todo")
+        self.assertIsNone(rows[0]["waive_reason"])
+
+    def test_the_repo_ledger_is_read_verbatim(self):
+        """真仓的 waivers.txt 四行都认得出出处（读文件，不跑 vitest）。"""
+        reasons = ci.waiver_reasons(_ROOT)
+        self.assertEqual(sorted(reasons), sorted(ci.parity_waivers(_ROOT)))
+        self.assertTrue(reasons)
+
+
+class RouteProofDialectTestCase(unittest.TestCase):
+    """route 行的两条口径：占位解析不出对象 → 打 404 那一支；写面 401 要带 Content-Type。
+
+    路由字面量在本文件里一律分段拼（`_API + "logs/"`）：整条路径出现在判例正文里，生成器的
+    `modules_citing` 会把这个模块当成「钉着那条路由的判例」，从而挤掉真正钉它的那几个模块。"""
+
+    def _absent(self, tail, shown, expect):
+        return "http:GET %s%s expect=%s" % (_API + tail, "__absent__" + shown, expect)
+
+    def test_placeholder_tails_prove_the_branch_the_demo_can_reach(self):
+        # demo 种子里没有这样的 section / log / job：快乐路径归 unittest，http 只留 404
+        self.assertEqual(ci._get_http_proof(_API + "settings/", _API + "settings/{section}"),
+                         self._absent("settings/", "", "404"))
+        # LOG_NAME_RE 先判形：不带 .log 的名字是 400 而不是 404
+        self.assertEqual(ci._get_http_proof(_API + "logs/", _API + "logs/{log}"),
+                         self._absent("logs/", ".log", "404"))
+        self.assertEqual(ci._get_http_proof(_API + "ingest/jobs/", _API + "ingest/jobs/{job}"),
+                         self._absent("ingest/jobs/", "", "404"))
+
+    def test_required_query_is_named(self):
+        # recap 历史必须点名 key（不点名 = 400，不是 200）
+        history = _API + "recaps/history"
+        self.assertEqual(ci._get_http_proof(history, history),
+                         "http:GET %s?key={recap} expect=200" % history)
+        board = _API + "board"
+        self.assertEqual(ci._get_http_proof(board, board), "http:GET %s expect=200" % board)
+
+    def test_noauth_variant_keeps_the_same_status(self):
+        for fragment, expected in (("expect=404", "noauth expect=404"),
+                                   ("?key={recap} expect=200", "?key={recap} noauth expect=200")):
+            self.assertEqual(ci._noauth("http:GET /x " + fragment), "http:GET /x " + expected)
+
+    def test_binary_body_routes_carry_their_content_type_into_the_401(self):
+        # Content-Type 闸排在 token 闸之前（server/app.py _check_write_auth）：不带 = 415
+        upload = _API + "attachments"
+        self.assertEqual(ci._write_401_fragment("POST", upload, "image/png"),
+                         "http:POST %s noauth ctype=image/png expect=401" % upload)
+        self.assertEqual(ci._write_401_fragment("PUT", upload, ""),
+                         "http:PUT %s noauth expect=401" % upload)
+
+    def test_media_types_come_from_the_app_table_not_a_hand_copy(self):
+        self.assertEqual(ci.raw_media_types(_ROOT), {_API + "attachments": "image/png"})
+
+
 class CommittedInventoryTestCase(unittest.TestCase):
     """committed 的 qa/coverage_inventory.json：形状 + 不陈旧（生成器只读文件，无子进程）。"""
 

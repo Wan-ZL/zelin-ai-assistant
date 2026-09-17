@@ -25,6 +25,7 @@ import type { ReactElement } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   fetchAbout,
   fetchBoard,
   fetchCard,
@@ -740,6 +741,19 @@ async function renderSetupSteps(language: Language, steps: readonly string[]) {
   }
 }
 
+/** 导入 Claude Code 工作区的预览折叠（原生 SettingsClaudeImport.swift:252-253）：候选超过预览上限时才有的
+ *  「显示全部 (N)」，点一下换「收起」，再点一下换回来——两句都收。必须排在 clickEverything 之前：那一轮会点
+ *  「导入所选」，候选列表清空后这颗按钮就不在 DOM 上了。 */
+function toggleClaudeImportPreview(root: ParentNode, pool: Set<string>) {
+  const button = Array.from(root.querySelectorAll<HTMLButtonElement>(".settings-section button"))
+    .find((b) => /^(显示全部|Show all)/.test(normalize(b.textContent)));
+  if (!button) return;
+  fireEvent.click(button);            // 展开 → 同一颗按钮换成「收起」
+  collectLabels(document.body, pool);
+  fireEvent.click(button);            // 收回 → 「显示全部 (N)」，clickEverything 那一轮就不会再翻它
+  collectLabels(document.body, pool);
+}
+
 async function renderSurface(language: Language, page: Surface) {
   const pool = found[language][page];
   if (page === "setup") {
@@ -759,6 +773,7 @@ async function renderSurface(language: Language, page: Surface) {
     clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".card-actions button")).filter((b) => /复制成稿|Copy final draft/.test(b.textContent ?? "")), pool);
     await settle(pool);
   }
+  if (page === "settings") toggleClaudeImportPreview(view.container, pool);
   clickEverything(view.container, pool, page !== "board", page === "ingest");
   await settle(pool);
   if (page === "board") {
@@ -1125,6 +1140,20 @@ async function renderHeaderVariants(language: Language) {
   useShellVariant("default");
 }
 
+/** 每周摘要区（原生 SettingsWeeklyDigest.saveEnabled 的 catch 自成一句）：拨 weekly_digest_enabled 再点**本区**的
+ *  「保存」——PUT 被拒那一遍收「保存失败，请再试一次：」+ 原句（SettingsWeeklyDigest.swift:82）。通用的
+ *  「保存设置失败: 」是别的区给的，两句不是一句。 */
+async function saveDigestSection(root: ParentNode, pool: Set<string>) {
+  const section = root.querySelector('[aria-labelledby="settings-digest-title"]');
+  const toggle = section?.querySelector<HTMLInputElement>("#setting-digest-weekly_digest_enabled");
+  if (!section || !toggle) return;
+  fireEvent.click(toggle);            // 草稿脏了，本区「保存」解禁
+  const save = Array.from(section.querySelectorAll<HTMLButtonElement>("button.btn-primary")).find((b) => !b.disabled);
+  if (save) fireEvent.click(save);
+  await settle(pool);
+  collectLabels(document.body, pool);
+}
+
 /** 设置页在几套 server / 壳回执下再渲染三遍——凭证行、Slack 目录、目录区保存、登录时启动的**失败 / 空态**词都收全：
  *  A（填字再点）：Anthropic 保存后自动验证失败（已保存，但验证失败：+ 章「验证失败」）、Ark 保存失败（保存失败: ）、
  *     Gmail 已保存但地址为空（已保存，但还没填 Gmail 地址——）、gmail 区 PUT 被拒（保存设置失败: ）、
@@ -1133,7 +1162,7 @@ async function renderHeaderVariants(language: Language) {
  *     Slack 目录起不来（找不到可用的 python（）、两源都没有健康记录（状态未知）、登录时启动 SMAppService 报错（开启登录时启动失败）；
  *  C（不填字）：Anthropic 验证通过 ✓。 */
 async function renderSettingsVariants(language: Language) {
-  const { fetchSlackDirectory, fetchVoiceProfile, putSecret, putSettingsSection, verifySecret } = await import("./api");
+  const { fetchSlackDirectory, fetchVoiceProfile, postMaintainerTerminal, putSecret, putSettingsSection, verifySecret } = await import("./api");
   const pool = found[language].settings;
   const voice = (privateExists: boolean, defaultExists: boolean) => ({
     enabled: true, private_path: "/Users/demo/zai/state/voice-profile.md", private_exists: privateExists,
@@ -1150,11 +1179,15 @@ async function renderSettingsVariants(language: Language) {
     name === "anthropic-api-key.txt" && !anthropicOk
       ? { ok: false, network: false, detail: "api.anthropic.com answered HTTP 401", extra: {} }
       : { ok: true, network: false, detail: "ok", extra: {} }), 0));
-  type Pass = { fill: boolean; anthropicOk: boolean; reject: string; directory: "ok" | "no_python"; sources: boolean; voice: [boolean, boolean]; voiceOff?: boolean };
+  type Pass = { fill: boolean; anthropicOk: boolean; reject: string; directory: "ok" | "no_python"; sources: boolean; voice: [boolean, boolean]; voiceOff?: boolean;
+    /** POST /api/maintainer/terminal 回 400「repo path does not exist」（原生 launchRow 的 repoPathExists == false 那支） */
+    maintainerMissing?: boolean;
+    /** 每周摘要区的 PUT 被拒（原生 saveEnabled 的 catch） */
+    digestSaveFails?: boolean };
   const passes: Pass[] = [
     { fill: true, anthropicOk: false, reject: "INVALID_ARGS: launch at login: not an app bundle", directory: "ok", sources: true, voice: [false, true] },
-    { fill: false, anthropicOk: false, reject: "INVALID_ARGS: launch at login: SMAppService: Operation not permitted", directory: "no_python", sources: false, voice: [false, false] },
-    { fill: false, anthropicOk: true, reject: "", directory: "ok", sources: true, voice: [true, true], voiceOff: true },
+    { fill: false, anthropicOk: false, reject: "INVALID_ARGS: launch at login: SMAppService: Operation not permitted", directory: "no_python", sources: false, voice: [false, false], maintainerMissing: true },
+    { fill: false, anthropicOk: true, reject: "", directory: "ok", sources: true, voice: [true, true], voiceOff: true, digestSaveFails: true },
   ];
   for (const pass of passes) {
     useShellVariant(pass.reject ? "login_off" : "default");
@@ -1165,9 +1198,13 @@ async function renderSettingsVariants(language: Language) {
     vi.mocked(putSecret).mockImplementation(((name: string) => (name === "volcano-ark-key.txt"
       ? Promise.reject(new Error("EACCES: config/secrets not writable"))
       : Promise.resolve({} as never))) as never);
-    vi.mocked(putSettingsSection).mockImplementation(((section: string) => (section === "gmail"
+    vi.mocked(putSettingsSection).mockImplementation(((section: string) => (section === "gmail" || (pass.digestSaveFails && section === "digest")
       ? Promise.reject(new Error("state/settings_overrides.json is not writable"))
       : Promise.resolve({} as never))) as never);
+    // 开发会话行：仓库路径不在 → server 400（InvalidFieldError("repo path does not exist")）→ 按钮旁「路径不存在」
+    vi.mocked(postMaintainerTerminal).mockImplementation(((() => (pass.maintainerMissing
+      ? Promise.reject(new ApiError(400, { error: { code: "INVALID_ARGS", message: "repo path does not exist", details: { path: "/Users/demo/gone" } } }))
+      : Promise.resolve({ ok: true, command: "cd /r && claude", command_file: "/tmp/m.command", cwd: "/r" })))) as never);
     vi.mocked(fetchSlackDirectory).mockResolvedValue(pass.directory === "ok"
       ? { ok: true, fetched_at: "2026-09-02T11:00:00Z", channels: [{ id: "C1", name: "eng" }], users: [{ id: "U1", name: "sam.rivera", real_name: "Sam Rivera" }] }
       : { ok: false, error: "no_python", message: "[Errno 2] No such file or directory: 'python3'", channels: [], users: [] });
@@ -1201,6 +1238,7 @@ async function renderSettingsVariants(language: Language) {
       await settle(pool);
       collectLabels(document.body, pool);
     }
+    if (pass.digestSaveFails) await saveDigestSection(view.container, pool);
     cleanup();
   }
   shellRejects = {};
@@ -1211,6 +1249,7 @@ async function renderSettingsVariants(language: Language) {
   await refreshBoard();
   vi.mocked(putSecret).mockResolvedValue({} as never);
   vi.mocked(putSettingsSection).mockResolvedValue({} as never);
+  vi.mocked(postMaintainerTerminal).mockResolvedValue({ ok: true, command: "cd /r && claude", command_file: "/tmp/m.command", cwd: "/r" } as never);
   vi.mocked(verifySecret).mockImplementation((() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, network: false, detail: "ok", extra: {} }), 0))) as never);
 }
 
@@ -1251,7 +1290,13 @@ beforeAll(async () => {
   vi.mocked(fetchFailures).mockResolvedValue(failureCatalog);
   vi.mocked(fetchIngestJob).mockImplementation(ingestJobs(0, 0));
   vi.mocked(fetchMcp).mockResolvedValue({ scopes: [{ scope: "user", path: "/Users/demo/.claude.json", exists: true, parseable: true, servers: [{ name: "slack", transport: "stdio", command: "npx", args: ["slack-mcp"], env_count: 1, incomplete: false }, { name: "broken", transport: "stdio", command: "", args: [], env_count: 0, incomplete: true }] }, { scope: "project", path: "/h/.mcp.json", exists: false, parseable: true, servers: [] }] } as never);
-  vi.mocked(fetchClaudeSessions).mockResolvedValue({ ok: true, window: 7, root: "/Users/demo/.claude/projects", candidates: [{ session_id: "abc12345-0000-4000-8000-000000000001", project: "example-bench", title: "修 flaky 测试", last_activity: "2026-09-01T10:00:00Z", ended_waiting_on_user: true, answered: false, session_mismatch: false }, { session_id: "abc12345-0000-4000-8000-000000000002", project: "inkweld", title: "问答", last_activity: "2026-08-30T10:00:00Z", ended_waiting_on_user: false, answered: true, session_mismatch: false }] } as never);
+  // 候选 9 条：前两条带状态章（等你回复 / 像已答完的问答），其余 7 条只为过 ClaudeImportSection 的预览上限 8——
+  // 原生「显示全部 (N)」/「收起」（SettingsClaudeImport.swift:252-253）只在超过上限时在场，不超就判不到
+  vi.mocked(fetchClaudeSessions).mockResolvedValue({ ok: true, window: 7, root: "/Users/demo/.claude/projects", candidates: [
+    { session_id: "abc12345-0000-4000-8000-000000000001", project: "example-bench", title: "修 flaky 测试", last_activity: "2026-09-01T10:00:00Z", ended_waiting_on_user: true, answered: false, session_mismatch: false },
+    { session_id: "abc12345-0000-4000-8000-000000000002", project: "inkweld", title: "问答", last_activity: "2026-08-30T10:00:00Z", ended_waiting_on_user: false, answered: true, session_mismatch: false },
+    ...Array.from({ length: 7 }, (_, i) => ({ session_id: `abc12345-0000-4000-8000-00000000010${i}`, project: "example-bench", title: `会话 ${i + 3}`, last_activity: "2026-08-29T10:00:00Z", ended_waiting_on_user: false, answered: false, session_mismatch: false })),
+  ] } as never);
   for (const language of LANGUAGES) {
     resetStoreForTests();
     resetShellBridgeForTests();
