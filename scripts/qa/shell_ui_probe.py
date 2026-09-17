@@ -7,7 +7,9 @@
   - `dock_badge`     Dock 图标徽章 = 等你动作的卡数（§15 v0.46 ②：提案 + 需输入 +
                      待验收；web `pushBadge` → 桥 `setBadge` → 壳 `DockBadge.set`，
                      §54.1 / §61.6）。观测量 = Dock 进程里该 app tile 的
-                     `AXStatusLabel`，比对 `GET /api/board` 的 counts。
+                     `NSDockTile.badgeLabel` 经 LaunchServices 发布（`lsappinfo … StatusLabel`），
+                     比对 `GET /api/board` 的 counts；Dock 进程的 `AXStatusLabel` 只作回落
+                     （2026-09-17 实测：徽章明明是 42，AX 仍回 missing value）。
   - `hotkey_focus`   全局 ⌃⌥Space = 聚焦提案列捕获框（§68.13，与菜单 显示 ▸ 聚焦
                      捕获框 ⌘L 同一条路 `focusCaptureField` → `quick_capture`）。
                      观测量 = 壳前置 + `AXFocusedUIElement` 是提案 composer 的
@@ -47,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -59,6 +62,9 @@ import urllib.request
 
 #: 壳可执行名（pgrep -x 键；truth = shell/build.sh EXEC_NAME）
 APP_PROCESS = "ZelinAIBoard"
+APP_BUNDLE_ID = "com.zelin.ai-board"     # CFBundleIdentifier（§54）——LaunchServices 按它查徽章
+BADGE_SETTLE_DELAY = 2.0                # s：徽标 0 而看板 >0 时重读的间隔（网页刚重拉看板）
+BADGE_SETTLE_TRIES = 3
 #: 壳显示名（Dock tile / app 菜单标题；truth = shell/Info.plist CFBundleDisplayName）
 APP_DISPLAY_NAME = "Zelin's AI Assistant"
 #: 看板 server 端口（truth = 壳 ShellConfig.port / server 默认）
@@ -224,6 +230,17 @@ class LiveEnv:
             proc = subprocess.run(["osascript", "-"], input=script, capture_output=True,
                                   text=True, timeout=self.timeout)
         except Exception as exc:  # osascript 缺失 / 超时
+            return OsaResult(127, "", "%s: %s" % (type(exc).__name__, exc))
+        return OsaResult(proc.returncode, proc.stdout, proc.stderr)
+
+    # --- LaunchServices（徽章真源）------------------------------------------
+    def lsappinfo(self, bundle_id: str = APP_BUNDLE_ID) -> OsaResult:
+        """`lsappinfo info -only StatusLabel -app <bundle id>`：NSDockTile.badgeLabel 的
+        发布面，不依赖 Dock 进程的 AX 树。"""
+        try:
+            proc = subprocess.run(["lsappinfo", "info", "-only", "StatusLabel", "-app", bundle_id],
+                                  capture_output=True, text=True, timeout=self.timeout)
+        except Exception as exc:  # lsappinfo 缺失 / 超时
             return OsaResult(127, "", "%s: %s" % (type(exc).__name__, exc))
         return OsaResult(proc.returncode, proc.stdout, proc.stderr)
 
@@ -548,20 +565,80 @@ def badge_mismatch(badge: "int | None", expected: int) -> str:
     return "Dock badge %s != board count %d" % (badge, expected)
 
 
+_LS_NULL_TOKENS = ("kCFNULL", "[ NULL ]")
+
+
+def _ls_label(out: str) -> str:
+    match = re.search(r'"label"\s*=\s*"([^"]*)"', out)
+    return match.group(1) if match else "none"
+
+
+def _ls_null(out: str, label: str) -> bool:
+    return label in ("", "none") or any(tok in out for tok in _LS_NULL_TOKENS)
+
+
+def parse_ls_badge(out: str) -> "tuple[int | None, str, str]":
+    """`lsappinfo … StatusLabel` 输出 → (徽章数, 原始标签, 问题说明)。
+    `"StatusLabel"={ "label"="42" }` → 42；`kCFNULL` / `[ NULL ]` / 空 = 没徽章 = 0。"""
+    if "StatusLabel" not in out:
+        return None, out.strip()[:80], "LaunchServices has no StatusLabel (app not running?)"
+    label = _ls_label(out)
+    if _ls_null(out, label):
+        return 0, "none", ""
+    if label.isdigit():
+        return int(label), label, ""
+    return None, label, "badge label %r is not a number" % label
+
+
+def _ls_badge(env) -> "tuple[int | None, str, str]":
+    res = env.lsappinfo(APP_BUNDLE_ID) if hasattr(env, "lsappinfo") else OsaResult(127, "", "no lsappinfo seam")
+    if res.rc != 0:
+        return None, res.err[:80], "lsappinfo rc=%d: %s" % (res.rc, res.err[:80])
+    return parse_ls_badge(res.out)
+
+
+def _settle_badge(env, badge: "int | None", expected: int) -> "tuple[int | None, str, str]":
+    """徽标读到 0 而看板 >0：网页可能刚重拉看板还没 push，隔 BADGE_SETTLE_DELAY 重读几次。"""
+    label, problem = ("none", "") if badge == 0 else ("", "")
+    for _ in range(BADGE_SETTLE_TRIES):
+        if badge != 0 or expected == 0:
+            break
+        time.sleep(BADGE_SETTLE_DELAY)
+        badge, label, problem = _ls_badge(env)
+    return badge, label, problem
+
+
+LS_SOURCE = "LaunchServices StatusLabel (NSDockTile.badgeLabel)"
+AX_SOURCE = "AXStatusLabel of the Dock tile (fallback)"
+
+
+def _resolve_badge(env) -> "tuple[int | None, str, str, str, dict | None]":
+    """先问 LaunchServices；拿不到再回落 Dock 的 AX 树。回 (badge, label, problem, source, blocked)。"""
+    badge, label, problem = _ls_badge(env)
+    if badge is not None:
+        return badge, label, problem, LS_SOURCE, None
+    res = env.osascript(dock_badge_script())
+    fail = ax_result_or_blocked("dock_badge", res)
+    if fail:
+        return None, "", "", AX_SOURCE, fail
+    badge, label, problem = parse_badge(res.out)
+    return badge, label, problem, AX_SOURCE, None
+
+
 def probe_dock_badge(env, **_kw) -> dict:
     gate = live_shell_gate(env, "dock_badge")
     if gate:
         return gate
-    res = env.osascript(dock_badge_script())
-    fail = ax_result_or_blocked("dock_badge", res)
+    badge, label, problem, source, fail = _resolve_badge(env)
     if fail:
         return fail
-    badge, label, problem = parse_badge(res.out)
     board = env.http("GET", "/api/board")
     expected, note = board_badge_expectation(board)
+    if badge == 0 and source == LS_SOURCE:
+        badge, label, problem = _settle_badge(env, badge, expected)
     out = {"probe": "dock_badge", "present": badge == expected, "badge": badge,
            "badge_raw": label, "expected": expected, "board_status": board.status,
-           "source": "AXStatusLabel of the Dock tile"}
+           "source": source}
     return attach(out, note=note, reason=problem or badge_mismatch(badge, expected))
 
 

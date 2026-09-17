@@ -18,7 +18,8 @@ import shell_ui_probe as probe  # noqa: E402
 class FakeEnv:
     """LiveEnv 的注入替身：osascript 按「脚本里出现的关键词」回放，HTTP 查表。"""
 
-    def __init__(self, osa=None, http=None, ages=None, entries=None, pgrep="58743"):
+    def __init__(self, osa=None, http=None, ages=None, entries=None, pgrep="58743", ls=None):
+        self._ls = ls or probe.OsaResult(127, "", "lsappinfo absent")
         self._osa = osa or {}
         self._http = http or {}
         self._ages = ages or {}
@@ -50,6 +51,9 @@ class FakeEnv:
 
     def pgrep(self, name):
         return self._pgrep
+
+    def lsappinfo(self, bundle_id=None):
+        return self._ls
 
 
 AX_OK = {probe.AX_ENABLED_SCRIPT: probe.OsaResult(0, "true")}
@@ -98,7 +102,11 @@ class AccessibilityGateTest(unittest.TestCase):
 
 
 class DockBadgeProbeTest(unittest.TestCase):
-    """§15 v0.46 ②：徽章 = 提案 + 需输入 + 待验收（web pushBadge → 壳 DockBadge）。"""
+    """§15 v0.46 ②：徽章 = 提案 + 需输入 + 待验收（web pushBadge → 壳 DockBadge）。
+    LaunchServices 拿不到时回落 AX（下面这些用例全部走回落路，行为与之前一致）。"""
+
+    def setUp(self):
+        probe.BADGE_SETTLE_DELAY = 0
 
     def _env(self, badge_out, board_res):
         return FakeEnv(osa=dict(AX_OK, **{"AXStatusLabel": probe.OsaResult(0, badge_out)}),
@@ -342,3 +350,50 @@ class TerminalTakeoverProbeTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class DockBadgeLaunchServicesTest(unittest.TestCase):
+    """2026-09-17 实测：徽章是 42 时 Dock 的 AXStatusLabel 仍回 missing value；
+    `lsappinfo … StatusLabel`（NSDockTile.badgeLabel 的发布面）才是真源，AX 只作回落。"""
+
+    def setUp(self):
+        probe.BADGE_SETTLE_DELAY = 0
+
+    def _env(self, ls_out, board_res, ax="badge:none"):
+        return FakeEnv(osa=dict(AX_OK, **{"AXStatusLabel": probe.OsaResult(0, ax)}),
+                       http={("GET", "/api/board"): board_res},
+                       ls=probe.OsaResult(0, ls_out))
+
+    def test_launchservices_label_beats_a_blind_ax_read(self):
+        out = probe.run_probe(self._env('"StatusLabel"={ "label"="42" }', board(
+            {"needs_approval": 20, "needs_input": 2, "review": 20})), "dock_badge")
+        self.assertTrue(out["present"])
+        self.assertEqual((out["badge"], out["badge_raw"]), (42, "42"))
+        self.assertTrue(out["source"].startswith("LaunchServices"))
+
+    def test_kcfnull_means_no_badge(self):
+        out = probe.run_probe(self._env('"StatusLabel"={ "label"=kCFNULL }', board({})), "dock_badge")
+        self.assertTrue(out["present"])
+        self.assertEqual(out["badge"], 0)
+
+    def test_null_bracket_means_no_badge(self):
+        out = probe.run_probe(self._env('"StatusLabel"=[ NULL ]', board({})), "dock_badge")
+        self.assertEqual(out["badge"], 0)
+
+    def test_no_statuslabel_falls_back_to_ax(self):
+        env = FakeEnv(osa=dict(AX_OK, **{"AXStatusLabel": probe.OsaResult(0, "badge:3")}),
+                      http={("GET", "/api/board"): board({"needs_approval": 3})},
+                      ls=probe.OsaResult(0, "(no such app)"))
+        out = probe.run_probe(env, "dock_badge")
+        self.assertTrue(out["present"])
+        self.assertIn("fallback", out["source"])
+
+    def test_zero_with_pending_board_settles_by_rereading(self):
+        env = self._env('"StatusLabel"={ "label"=kCFNULL }', board({"needs_approval": 4}))
+        # 第一次 0，之后真源变成 4（网页 push 到了）
+        seq = [probe.OsaResult(0, '"StatusLabel"={ "label"=kCFNULL }'),
+               probe.OsaResult(0, '"StatusLabel"={ "label"="4" }')]
+        env.lsappinfo = lambda bundle_id=None: seq.pop(0) if len(seq) > 1 else seq[0]
+        out = probe.run_probe(env, "dock_badge")
+        self.assertTrue(out["present"])
+        self.assertEqual(out["badge"], 4)
