@@ -7,6 +7,10 @@
   diff-write into state/settings_overrides.json (equal-to-effective deletes the
   key; other keys preserved), and the pipeline (config._OVERRIDE_FIELDS) reads
   exactly what the web wrote.
+- PUT /api/settings/daily-loop with an unreadable state/settings_overrides.json
+  (bad JSON / not an object / non-UTF-8 bytes) is 409 CONFLICT — never a 500 —
+  and leaves the file byte-for-byte alone (§59 read_overrides: never overwrite
+  what the owner had in there); GET reports the same conflict.
 
 Real server on a random port (tests/test_server_common.py); stdlib client.
 """
@@ -85,6 +89,58 @@ class DailyLoopGetTestCase(_ServerCase):
         self.assertEqual(status, 200)
 
 
+class DailyLoopOverridesEdgeTestCase(_ServerCase):
+    """R-219：坏文件 409 本体之外、走这条路由还没有判例的三条边——闸门顺序、目录冒充文件、只剩空白的文件。
+    （后两条的底层分支在 read_overrides 的单元层判例与别的设置面里已有钉法，走这条路由的没有；闸门顺序哪里都没有。
+    坏 JSON / 非 object / 非 UTF-8 → PUT 与 GET 409 的本体在文件末尾的 DailyLoopConflictTestCase；
+    为什么另起一类而不并进去，见 docs/design/progress/2026-09-16-r219-daily-loop-409-twin.md。）"""
+
+    def test_bad_payload_on_a_broken_file_is_400_not_409(self):
+        """闸门顺序（§70 追加原文的排列：字段白名单 400 → 形状 400 → diff-write → 文件坏 409）：
+        校验先于读盘。文件已经坏了、payload 也坏，web 拿到的是指名字段的 400 人话，不是 409——
+        否则用户先看到「文件坏了」、修完文件再被告知「时间格式不对」，两趟。文件照旧一个字节不动，
+        也不许留下 atomic_write 的 .tmp 尾巴（还没走到写那一步）。"""
+        raw = b'{"daily_loop_enabled": tru'
+        self.overrides_path.write_bytes(raw)
+        for payload, code, field in (({"time": "25:00"}, "INVALID_FIELD", "time"),
+                                     ({"nope": 1}, "UNKNOWN_FIELD", None),
+                                     ({}, "INVALID_FIELD", None)):
+            with self.subTest(payload=payload):
+                status, obj = put_json(self.port, "/api/settings/daily-loop", payload)
+                self.assertEqual(status, 400, payload)
+                self.assertEqual(obj["error"]["code"], code)
+                if field is not None:
+                    self.assertEqual(obj["error"]["details"]["field"], field)
+        self.assertEqual(self.overrides_path.read_bytes(), raw)
+        self.assertFalse(self.overrides_path.with_suffix(".json.tmp").exists())
+
+    def test_a_directory_at_the_path_is_409_naming_the_file(self):
+        """read_overrides 的 OSError 分支（§59：坏文件 = 409 不是 500）从这条路由也够得着：
+        目录冒充文件 → read_text 抛 IsADirectoryError / PermissionError（都是 OSError、不是
+        FileNotFoundError）→ PUT 与 GET 都 409 CONFLICT；details.path 指着那份文件，owner 照着去修。"""
+        self.overrides_path.mkdir()
+        status, obj = put_json(self.port, "/api/settings/daily-loop", {"enabled": False})
+        self.assertEqual(status, 409)
+        self.assertEqual(obj["error"]["code"], "CONFLICT")
+        self.assertEqual(obj["error"]["details"]["path"], str(self.overrides_path))
+        self.assertTrue(obj["error"]["details"]["error"])          # 底层 OSError 原话随行
+        self.assertTrue(self.overrides_path.is_dir())               # 没被换成文件
+        status, obj = get_json(self.port, "/api/settings/daily-loop")
+        self.assertEqual((status, obj["error"]["code"]), (409, "CONFLICT"))
+
+    def test_a_blank_file_is_not_a_conflict(self):
+        """只剩空白的 overrides 文件（owner `> state/settings_overrides.json` 清空过）= `{}`，
+        不是坏文件：PUT 200、写回的就是这一把键；GET 报 override。§59 的「坏文件 409」
+        只拦真解析不了的，别把清空过的文件当成锁把 web 关在外面。"""
+        self.overrides_path.write_bytes(b"  \n\t\n")
+        status, obj = put_json(self.port, "/api/settings/daily-loop", {"enabled": False})
+        self.assertEqual(status, 200)
+        self.assertEqual((obj["enabled"], obj["source"]["enabled"]), (False, "override"))
+        self.assertEqual(self._overrides(), {"daily_loop_enabled": False})
+        status, obj = get_json(self.port, "/api/settings/daily-loop")
+        self.assertEqual((status, obj["source"]["enabled"]), (200, "override"))
+
+
 class DailyLoopPutTestCase(_ServerCase):
     def test_put_writes_overrides_and_preserves_other_keys(self):
         write_text(self.overrides_path, json.dumps({"language": "en"}))
@@ -144,6 +200,33 @@ class DailyLoopPutTestCase(_ServerCase):
                 mock.patch.object(config, "CONFIG_PATH", self.home / "config.yaml"), \
                 mock.patch.object(config, "CONFIG_EXAMPLE_PATH", self.home / "nope.yaml"):
             self.assertEqual(config.load_config().daily_loop_review_stale_days, 0)
+
+
+class DailyLoopConflictTestCase(_ServerCase):
+    """坏掉的 state/settings_overrides.json：PUT /api/settings/daily-loop → 409，文件一个字节不动。"""
+
+    CORRUPT = (("bad json", b'{"daily_loop_enabled": tru'),
+               ("not an object", b'["daily_loop_enabled"]'),
+               ("non-utf8 bytes", b'{"daily_loop_enabled": \xff\xfe}'))
+
+    def test_put_on_an_unreadable_overrides_file_is_409(self):
+        for what, raw in self.CORRUPT:
+            with self.subTest(what):
+                self.overrides_path.write_bytes(raw)
+                status, obj = put_json(self.port, "/api/settings/daily-loop", {"enabled": False})
+                self.assertEqual(status, 409, what)
+                self.assertEqual(obj["error"]["code"], "CONFLICT")
+                self.assertIn("settings_overrides.json", obj["error"]["message"])
+                # 拒绝覆盖 = owner 手里那份原封不动（§59 read_overrides）
+                self.assertEqual(self.overrides_path.read_bytes(), raw)
+
+    def test_get_reports_the_same_conflict_instead_of_a_500(self):
+        """读面同一诊断：坏文件下 GET 也是 409 CONFLICT（同一句人话，不是 500）——
+        分层读的第一层就是这个文件，静默当它不存在会把「你的覆写没生效」藏起来。"""
+        self.overrides_path.write_bytes(b"{nope")
+        status, obj = get_json(self.port, "/api/settings/daily-loop")
+        self.assertEqual(status, 409)
+        self.assertEqual(obj["error"]["code"], "CONFLICT")
 
 
 if __name__ == "__main__":
