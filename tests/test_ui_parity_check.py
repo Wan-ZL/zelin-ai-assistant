@@ -258,6 +258,15 @@ class VitestProbeTestCase(_RepoCase):
             "control:board:button:approve": True, "control:board:button:later": False,
             "control:board:label:gone": True})
 
+    def test_control_presence_also_reads_the_web_pref_key_titles(self):
+        """web 自有的 localStorage 偏好键（setting:prefs:*）在 parity.test.tsx 里也有同名 it()——
+        真控件写键 + 读回来比源码字面量探针强，在场即以它为准；壳/server 持有的键没有 it()，
+        仍走静态探针（不在这张映射里）。"""
+        results = {"setting:prefs:sidebarWidth": "passed", "setting:prefs:cardSortOrder": "failed",
+                   "setting:overrides:language": "passed", "native → web localStorage prefs": "passed"}
+        self.assertEqual(pc.control_presence(results, {}),
+                         {"setting:prefs:sidebarWidth": True, "setting:prefs:cardSortOrder": False})
+
     def test_missing_report_is_an_error_not_a_pass(self):
         def runner(web_dir, out_path):
             return 127
@@ -372,6 +381,26 @@ class JudgementTestCase(_RepoCase):
         self.assertIn("| rail | 1 | 0 | 0 | 0 | 0 |", md)
         self.assertIn("## NEW", md)
         self.assertNotIn("## STALE", md)
+
+
+class WebPrefTitlesAreDeclaredTestCase(unittest.TestCase):
+    """§66.2 2026-09-17 追记的钉子：真仓清单里 owner=web / store=prefs 的每把键，web/src/parity.test.tsx 里都有一条
+    同名标题的 it()，且 control_presence 认这个标题。少一条即红——否则那把键静默退回源码字面量探针、门照绿。
+    只读两个文件，不跑 vitest。"""
+
+    _REPO_ROOT = os.path.dirname(os.path.dirname(_UI_DIR))
+
+    def test_every_web_pref_key_has_a_same_named_it(self):
+        inventory = uc.load_json(os.path.join(self._REPO_ROOT, "ui", "parity", "native-inventory.json"))
+        ids = sorted(item["id"] for item in inventory["settings_keys"]
+                     if item.get("gated") and item.get("owner") == "web" and item.get("store") == "prefs")
+        self.assertGreaterEqual(len(ids), 6)
+        text = uc.read_text(os.path.join(self._REPO_ROOT, "web", "src", "parity.test.tsx"))
+        for item_id in ids:
+            self.assertTrue('it("%s"' % item_id in text,
+                            "web/src/parity.test.tsx has no it(%r) — the key would fall back to the literal probe" % item_id)
+            self.assertEqual(pc.control_presence({item_id: "passed"}, {}), {item_id: True})
+            self.assertEqual(pc.control_presence({item_id: "failed"}, {}), {item_id: False})
 
 
 if __name__ == "__main__":

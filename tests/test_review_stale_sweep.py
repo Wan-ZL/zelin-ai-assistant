@@ -56,6 +56,14 @@ class _Notifier:
         return True
 
 
+def _restore_at(rid, when=NOW):
+    """registry.restore 用真时钟盖 ``restored_at``，而这个模块的时钟是写死的 NOW——戳也得是 NOW，
+    否则「恢复后 15 天满窗」那条在 NOW 的第二天（UTC）起必红（2026-09-17 第一次红：按日历日算闲置，
+    真 now 的日期每过一天就少一天）。只把戳钉回判例时钟，restore 本身照旧。"""
+    with mock.patch.object(registry, "_iso_now", return_value=_iso(when)):
+        return registry.restore(registry.load(rid))
+
+
 class _Case(unittest.TestCase):
     def setUp(self):
         config.ensure_state_dirs()
@@ -177,9 +185,9 @@ class TheStampIsRearmedByLaterActivityTestCase(_Case):
         少了这一条，`restore` 在第二天就被同一条规则无声撤销。"""
         registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
         self.assertEqual([r["id"] for r in self.sweep()], ["P-1"])
-        restored = registry.restore(registry.load("P-1"))
+        restored = _restore_at("P-1")
         self.assertEqual(restored.status, State.REVIEW.value)
-        self.assertTrue(restored.execution.get("restored_at"))   # 捞回来 = 活动
+        self.assertEqual(restored.execution.get("restored_at"), _iso(NOW))   # 捞回来 = 活动
         self.assertIn("restored_at", maintenance._EXECUTION_STAMPS)
 
         for day in (1, 2):
@@ -195,7 +203,7 @@ class TheStampIsRearmedByLaterActivityTestCase(_Case):
         """满窗之后才又轮到第一阶段——而且仍然是先通知，不是直接归档。"""
         registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
         self.sweep()
-        registry.restore(registry.load("P-1"))
+        _restore_at("P-1")
 
         later = NOW + _dt.timedelta(days=15)
         notifier = _Notifier()
