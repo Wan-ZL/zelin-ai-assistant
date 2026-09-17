@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/review_aging_batch_accept.py
-# hypothesis_version: 6.141.1
-
-['%Y-%m-%dT%H:%M:%SZ', 'P-1', 'P-2', 'P-3', '__main__', 'accept', 'accepted_at', 'accepted_at_recorded', 'action', 'all_delivered', 'all_three_stamped', 'comment', 'drain_applied_three', 'id', 'ts', 'utf-8']

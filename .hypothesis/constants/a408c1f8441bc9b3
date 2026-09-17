@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/qa/crap.py
-# hypothesis_version: 6.141.1
-
-[100, '%s::%s', '--check', '--coverage-json', '--list', '--report', '--top', '--write-baseline', '/', 'DIR', '__main__', 'crap', 'crap_baseline.txt', 'crap_report.md', 'executed_lines', 'files', 'max', 'missing_lines', 'qa', 'r', 'store_true', 'tolerance', 'utf-8', '|---|---|---|---|']

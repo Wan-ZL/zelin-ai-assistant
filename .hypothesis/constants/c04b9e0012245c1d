@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/recap_intent.py
-# hypothesis_version: 6.141.1
-
-[160, '\n- ', '%d. %s', '%s%d', '=', '[;；\\n]+', '^[%s][1-9]\\d?$', '^[a-z]{1,8}\\d{0,2}$', 'aud', 'audience', 'compare', 'deadline', 'decline', 'detail', 'dl', 'drop', 'en', 'id', 'item', 'items', 'keep', 'key', 'kind', 'not assigned', 'options', 'others', 'own', 'prior', 'propose', 'sections_en', 'self', 'send', 'shape', 'split', 'subject', '未分配']

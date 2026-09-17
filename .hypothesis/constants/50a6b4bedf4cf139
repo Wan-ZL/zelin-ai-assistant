@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/sleep_dispatch_release.py
-# hypothesis_version: 6.141.1
-
-['1', 'R-8100', 'R-8101', '__main__', 'max_state', 'state', 'verdict_is_awake']

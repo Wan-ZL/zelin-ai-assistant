@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/screenpipe_corroborate_only.py
-# hypothesis_version: 6.141.1
-
-[1760000000.0, 120, '2 - raw', '2026-09-14', 'Q3 rollout plan', 'R-902', 'T1', '__main__', 'action', 'card_sent', 'cards', 'channel', 'confidence', 'corroboration_landed', 'cost_estimate_usd', 'date', 'deadline', 'echo_blocked', 'echo_blocked_once', 'fold_not_blocked', 'hardness', 'high', 'human', 'manager', 'needs_action', 'new_proposal', 'no_card_from_screen', 'note', 'provenance', 'quote', 'relates_to', 'req', 'screen', 'slack', 'soft', 'speaker', 'status_not_promoted', 'still_one_card', 'tier', 'title', 'type', 'urgent', 'utf-8', 'vault', 'who', '屏幕上看到的一件新事，够不着卡']

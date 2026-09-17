@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/voice_gen.py
-# hypothesis_version: 6.141.1
-
-[120, 200, 300, 400, 600, '%Y%m%d-%H%M%S', '--allowedTools', '--job', '.tmp', '/', '\\n?```$', '^```[a-zA-Z]*\\n?', '__main__', '```', 'config', 'missing ', 'output too short', 'owner_name', 'returncode', 'stderr', 'stdout', 'store_true', 'utf-8', 'voice-profile.md', 'voice_gen', '全局铁律', '内容过短', '反面清单', '桶', '用户', '缺少 ']

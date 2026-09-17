@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/material_box.py
-# hypothesis_version: 6.141.1
-
-['%s must be a string', 'all', 'bad_transition', 'counts', 'dismissed', 'field', 'fields', 'full', 'id', 'items', 'not_found', 'note', 'open', 'reason', 'status', 'total', 'unknown field', 'url']

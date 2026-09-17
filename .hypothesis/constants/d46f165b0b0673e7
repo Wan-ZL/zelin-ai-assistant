@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/board_server.py
-# hypothesis_version: 6.141.1
-
-[2.0, -200, 200, 300, '%s; then bash %s', '0', '1', 'HTTP %d', 'board_server_down', 'detail', 'down', 'fail', 'failure_id', 'fix', 'launchd', 'no response', 'ok', 'probe disabled', 'skipped_tcc', 'state', 'status', 'systemd', 'text', 'ui_build_tcc_blocked', 'unavailable', 'warn', 'zelin-server.service', '●']

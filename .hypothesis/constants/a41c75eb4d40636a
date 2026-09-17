@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/claude_sessions.py
-# hypothesis_version: 6.141.1
-
-['--scan', '--window', 'candidates', 'error', 'ok', 'reason', 'scan exited %d', 'scan_failed', 'window']

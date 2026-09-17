@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/board_source.py
-# hypothesis_version: 6.141.1
-
-['*.yaml', 'R-000-example.yaml', 'ZAI_REGISTRY_BACKEND', 'archived', 'backend', 'card not found', 'completed', 'debt', 'dispatch_halted', 'id', 'invalid card id', 'lane', 'needs_approval', 'needs_input', 'path', 'queued', 'registry', 'review', 'running', 'sqlite', 'state', 'trash', 'utf-8', 'work_id', 'yaml']

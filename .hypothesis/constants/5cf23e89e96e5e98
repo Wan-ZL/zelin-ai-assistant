@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/slack_mint.py
-# hypothesis_version: 6.141.1
-
-['B-01-slack-mint', 'T1', '__main__', 'action', 'card_sent', 'channel', 'comms', 'confidence', 'gate_consulted', 'high', 'needs_reply', 'new_proposal', 'one_card', 'permalink', 'plan', 'scan_returned_one', 'slack', 'source_is_slack', 'status', 'status_card_sent', 'summary', 'tier', 'type', '回私信', '整理 Q3 数字']

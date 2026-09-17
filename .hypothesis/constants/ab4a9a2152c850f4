@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/daily_loop_0330_max2.py
-# hypothesis_version: 6.141.1
-
-[2.0, 2026, '2026-09-15', '__main__', 'budget_is_two', 'cap', 'channel', 'chose_at_most_budget', 'd1', 'ev', 'filed_exactly_budget', 'issue', 'last_run_day', 'locked_at_0329', 'material', 'mutation', 'once_a_day', 'p1', 'pr_comment', 'pr_red', 'rest_counted_as_cap', 'self_improve', 'unlocked_at_0330', 'why']

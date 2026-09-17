@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/decisions.py
-# hypothesis_version: 6.141.1
-
-['[W17]', '[deferred] 暂缓，入库', 'abort', 'abort_execution', 'aborted_at', 'aborted_session_id', 'accept', 'accepted_at', 'agent', 'approve', 'approved_at', 'archive', 'comment', 'defer', 'deleted', 'done', 'done_external', 'inbox_steer', 'noop', 'pin', 'raise', 'reject', 'rejected', 'remote', 'restore', 'revert_review', 'reverted_at', 'review_at', 'rework', 'running', 'session_id', 'stop_to_review', 'trash', 'unarchive', 'unknown', 'user']

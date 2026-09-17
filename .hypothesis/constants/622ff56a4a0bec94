@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/display.py
-# hypothesis_version: 6.141.1
-
-['%s must be one of %s', ', ', 'bold', 'config', 'default', 'display', 'field', 'fields', 'l', 'm', 'medium', 'normal', 'nothing to save', 'override', 'regular', 's', 'source', 'stroke', 'strokes', 'text_size', 'text_sizes', 'text_weight', 'text_weights', 'thick', 'thin', 'tuple[dict, dict]', 'ui', 'ui_display_%s', 'unknown field', 'xl']

@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/report.py
-# hypothesis_version: 6.141.1
-
-[0.5, 3600, '## 1 · 功能使用频次', '## 2 · 时段热力（本地时间）', '## 3 · 健康信号', '%Y-%m-%dT%H:%M:%SZ', '--days', '__main__', '_dt', 'auto_resume', 'dispatch', 'event', 'inbox_approve', 'inbox_reject', 'inbox_rework', 'inbox_trash', 'ok', 'report', 'req', 'resume_launch', 'review_promoted', 'ts', '█', '周一', '周三', '周二', '周五', '周六', '周四', '周日', '执行时长（派发→待验收，分钟）:', '（无 —— 健康）']

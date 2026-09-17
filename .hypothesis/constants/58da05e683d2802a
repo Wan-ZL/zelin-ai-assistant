@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/files.py
-# hypothesis_version: 6.141.1
-
-[100, 255, '\x00', '-R', '.', '/', 'Content-Disposition', 'SKILL.md', '\\', 'attachment', 'choices', 'config', 'config.example.yaml', 'config.yaml', 'could not ', 'cwd', 'darwin', 'deliverables', 'field', 'gif', 'htm', 'html', 'id', 'invalid card id', 'jpeg', 'jpg', 'markdown', 'mcp_', 'mcp_project', 'mcp_user', 'md', 'mode', 'name', 'no such skill', 'ok', 'open', 'openable', 'opened', 'path', 'png', 'project', 'reveal', 'revealed', 'sandbox', 'scope', 'skill', 'skills', 'target', 'target_repo', 'txt', 'unknown reveal mode', 'user', 'voice_profile', 'webp']

@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/reconcile.py
-# hypothesis_version: 6.141.1
-
-[120.0, 600, '+00:00', '3 次注入尝试失败', 'Z', '_review_active', 'absent', 'attempts', 'auto_resume', 'blocked', 'delivered_summary', 'dispatched_at', 'done', 'final_draft', 'interrupted_reason', 'last_resume_at', 'last_resume_ok', 'live', 'pending_briefings', 'pid', 'preset', 'reconcile', 'resume_attempts', 'resume_exhausted', 'resume_history', 'resume_storm', 'resume_storm_at', 'review_active', 'review_at', 'review_promoted', 'review_reharvested', 'session_id', 'sleep_interrupted', 'sleep_retry', 'sleep_retry_used', 'state', 'steer_delivered', 'steer_dropped', '会话已完成进入待验收，追加指令未及送达', '追加指令未送达', '追加指令未送达（任务已完成）']
