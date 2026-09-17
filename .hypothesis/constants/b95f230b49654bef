@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/voice_profile.py
-# hypothesis_version: 6.141.1
-
-['%Y-%m-%dT%H:%M:%SZ', 'config', 'default_exists', 'default_path', 'done', 'effective_path', 'enabled', 'error', 'failed', 'finished_at', 'job', 'lost', 'message', 'private_exists', 'private_path', 'profile_path', 'running', 'started_at', 'state', 'status', 'utf-8', 'voice', 'voice-profile.md', 'voice_enabled']

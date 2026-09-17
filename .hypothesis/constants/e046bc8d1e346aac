@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/llm.py
-# hypothesis_version: 6.141.1
-
-['--bg', '--fallback-model', '--max-turns', '--mcp-config', '--model', '--output-format', '--strict-mcp-config', '-p', '.claude', '1', 'ANTHROPIC_API_KEY', 'DISABLE_AUTOUPDATER', 'arg', 'arg_last', 'capture_output', 'claude-opus', 'cwd', 'dispatch', 'env', 'exists', 'input', 'model', 'models_fallback', 'ok', 'parseable', 'pipeline', 'settings.json', 'skip_permissions', 'stdin', 'text', 'timeout', 'utf-8', '{"mcpServers":{}}']

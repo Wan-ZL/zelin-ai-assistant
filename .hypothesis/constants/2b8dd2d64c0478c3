@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/terminal_enqueue_with_heartbeat.py
-# hypothesis_version: 6.141.1
-
-[200, '__main__', 'card_id', 'command', 'command_file', 'copy_cmd', 'exec ', 'id', 'kind', 'ok', 'ok_true', 'queue_id', 'shell_line', 'status_200', 'takeover', 'utf-8']

@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/qa/qa_common.py
-# hypothesis_version: 6.141.1
-
-[0.0, 1.0, '  %s: %s = %s%s', ' (baseline %s)', '"', '#', '%.1f', '%s %s', '%s#%d', '%s_verdict.txt', '(?:^|\\s)#', '-?\\d+$', '-?\\d+\\.\\d+$', '.', '..', '.py', '=', 'FAIL', 'NEW', 'OK', 'STALE', 'WORSE', '[', '[%s] %s', ']', '__pycache__', 'act', 'better', 'better(advisory)', 'class', 'false', 'func', 'gates.toml', 'gone', 'limbo', 'limbo(advisory)', 'linux', 'match_case', 'new', 'ok', 'qa', 'r', 'scripts', 'server', 'stale', 'true', 'utf-8', 'violations', 'w', 'worse']

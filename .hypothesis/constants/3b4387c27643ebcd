@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/checks/cron.py
-# hypothesis_version: 6.141.1
-
-[3600, '#', '%Y-%m-%dT%H:%M:%SZ', 'act.digest', 'bash install.sh', 'cron', 'cron digest', 'cron disk access', 'cron ingest chain', 'cron write access', 'cron_fda_blocked', 'cron_missing', 'cron_probe.json', 'cron_tcc_blocked', 'install_report.json', 'name', 'protected_path', 'read_ok', 'screenpipe-export.sh', 'skipped_tcc', 'status', 'steps', 'the vault', 'ts', 'utf-8', '还没有探针数据（cron 链尚未安装）']

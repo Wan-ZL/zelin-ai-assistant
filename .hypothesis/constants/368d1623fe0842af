@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/terminal_503_no_heartbeat.py
-# hypothesis_version: 6.141.1
-
-[503, 'SHELL_UNAVAILABLE', '__main__', 'details', 'error', 'heartbeat', 'nothing_enqueued', 'status_503']

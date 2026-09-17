@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/power.py
-# hypothesis_version: 6.141.1
-
-[0.0, 60.0, 300.0, '0', '1', 'UserIsActive', 'asleep', 'assertions', 'at', 'awake', 'capabilities', 'false', 'last_mono', 'last_wall', 'max_state', 'no', 'require_awake', 'session_id', 'sleep_interrupted', 'slept_seconds', 'state', 'unknown', 'user_active', 'verdict', 'wall']

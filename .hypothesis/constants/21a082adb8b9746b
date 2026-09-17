@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/server/health.py
-# hypothesis_version: 6.141.1
-
-[0.0, '%Y-%m-%dT%H:%M:%SZ', 'age_s', 'checked_at', 'consecutive_failures', 'dashboard', 'failing', 'generated_at', 'heartbeat', 'interval', 'last_error', 'loop_health', 'ok', 'phase', 'pid', 'stale', 'stale_after_s', 'stalled', 'unknown', 'utf-8', 'verdict']

@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/feedback.py
-# hypothesis_version: 6.141.1
-
-[200, 4000, ' + ', '%Y-%m-%dT%H:%M:%SZ', '*.json', '.tmp', '/', 'Authorization', 'Bearer ', 'Content-Type', 'MS-', 'POST', 'Prefer', 'apikey', 'app_version', 'application/json', 'cards', 'client_ts', 'device_id', 'event', 'feedback', 'id', 'ids', 'image_count', 'images', 'kind', 'merge suggestion: ', 'merge_suggestion', 'props', 'publish', 'requirement', 'return=minimal', 'source', 'status', 'text', 'title', 'ts', 'type', 'unknown', 'upload_attempts', 'upload_error', 'uploaded', 'uploaded_at', 'utf-8']

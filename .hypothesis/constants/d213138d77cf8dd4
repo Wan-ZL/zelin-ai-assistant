@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/../../scripts/qa/fixtures_b/_terminal.py
-# hypothesis_version: 6.141.1
-
-[1800000000.0, 200, '*.json', '2026-09-15T03:30:00Z', 'R-001', 'approved', 'card_id', 'completed', 'copy_cmd', 'cwd', 'darwin', 'dashboard.json', 'generated_at', 'id', 'pid=1\n', 'proposals', 'review', 'running', 'session_id', 'state', 'title', 'utf-8', '正在跑的一张卡']

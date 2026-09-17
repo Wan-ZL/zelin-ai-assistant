@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/housekeeping.py
-# hypothesis_version: 6.141.1
-
-[3600, '*.json', '*.yaml', 'R-000-example.yaml', 'accepted_at', 'approved_at', 'archive_after_days', 'attachments', 'auto', 'dispatched_at', 'execution', 'feedback', 'images', 'last_archive_sweep', 'reraised_at', 'review_at', 'utf-8']

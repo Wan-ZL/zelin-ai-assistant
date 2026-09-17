@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/platform.py
-# hypothesis_version: 6.141.1
-
-['"', "'", "''", '--all', '--no-legend', '--no-pager', '--type=service,timer', '--user', '-Command', '-NoProfile', '-NonInteractive', '-d', '-e', '-g', '-n', '-r', '/fo', '/query', '/v', '1', '@BODY@', '@TITLE@', 'IOPMrootDomain', 'LIST', 'Yes', '\\', '\\"', '\\\\', 'assertions', 'capabilities', 'darwin', 'ioreg', 'launchctl', 'linux', 'list', 'list-units', 'notify-send', 'open', 'osascript', 'pmset', 'powershell', 'powerstate', 'schtasks', 'systemctl', 'user_active', 'win', 'xdg-open']

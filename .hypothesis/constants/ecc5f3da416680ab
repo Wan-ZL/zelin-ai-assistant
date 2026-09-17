@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/ai_fix.py
-# hypothesis_version: 6.141.1
-
-['\n ZAIFIX_PROMPT_END\n', '\nZAIFIX_PROMPT_END\n', '%Y%m%d-%H%M%S', '--context-file', '--open', '.screenpipe', 'Chinese', 'English', 'Library', 'Logs', '__main__', 'actd.launchd.log', 'actd.log', 'engine.log', 'open_it', 'radar.cron.log', 'replace', 'state', 'state/actd.log', 'state/radar.cron.log', 'store_true', 'utf-8', 'zelin-ai-assistant', 'zh']

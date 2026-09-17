@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/scripts/ui/make_pwa_icons.py
-# hypothesis_version: 6.141.1
-
-[b'\x00\x00\x00\x00', b'IDAT', b'IEND', b'IHDR', b'\x89PNG\r\n\x1a\n', 0.0, 0.5, 1.0, 2.0, 255.0, 192, 255, 512, 4294967295, '#', '#000000', ', ', '--check', '--write', '..', '0', '>I', '>IIBBBBB', 'PNG without IHDR', '__main__', 'alpha', 'favicon.svg', 'fill', 'h', 'height', 'icon-%d.png', 'not a PNG', 'opacity', 'public', 'pwa icons are fresh', 'r', 'rb', 'rect', 'rgb', 'rx', 'store_true', 'viewBox', 'w', 'wb', 'web', 'width', 'wrote %s', 'x', 'y', '落盘（重跑覆盖）']

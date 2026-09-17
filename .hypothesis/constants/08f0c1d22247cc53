@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/recap_slack_draft.py
-# hypothesis_version: 6.141.1
-
-[',', '--', '--allowedTools', 'channel_link', 'chat_post', 'dangerously', 'disabled', 'draft_already_exists', 'failed', 'no_target', 'post_message', 'posted', 'reaction', 'schedule', 'status']

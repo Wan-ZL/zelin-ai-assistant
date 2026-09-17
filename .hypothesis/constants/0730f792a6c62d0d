@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/radar_claude_sessions.py
-# hypothesis_version: 6.141.1
-
-[100, 200, 240, 512, 600, 1024, '%Y-%m-%dT%H:%M:%SZ', '*.jsonl', '+00:00', '--all', '--once', '--scan', '--window', '.json.tmp', '/', '<[^<>\\n]{1,80}>', 'CLAUDE_CONFIG_DIR', 'DAYS', 'T1', 'Z', '\\s+', '__main__', 'aborted_session_id', 'ai-title', 'aiTitle', 'answered', 'assistant', 'candidates', 'channel', 'claude-code', 'claude_code', 'code', 'content', 'cwd', 'date', 'gist', 'imported', 'isMeta', 'isSidechain', 'last-prompt', 'lastPrompt', 'last_activity', 'message', 'no_claude_dir', 'ok', 'project', 'project_dir', 'projects', 'quote', 'r', 'radar_gate_override', 'radar_skip', 'rb', 'reason', 'ref', 'replace', 'reraised_session_id', 'root', 'sessionId', 'session_file', 'session_id', 'session_mismatch', 'soft', 'store_true', 'text', 'timestamp', 'title', 'type', 'user', 'utf-8', 'who', '~/.claude', '…']

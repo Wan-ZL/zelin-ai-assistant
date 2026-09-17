@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/actd/session.py
-# hypothesis_version: 6.141.1
-
-[300, 'aborted_session_id', 'card_title', 'delivered_summary', 'final_draft', 'inbox', 'session_id', 'stop failed', 'stop_failed', 'stop_failed_at', 'stop_failed_error']

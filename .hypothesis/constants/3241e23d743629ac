@@ -1,4 +1,0 @@
-# file: /Volumes/Storage/Server/Projects/zelin-ai-assistant/.claude/worktrees/qa-cov-dev/act/lib/recap_sessions.py
-# hypothesis_version: 6.141.1
-
-[0.0, 5.0, 60.0, 300.0, 600.0, 3600.0, 7200.0, 3600, 86400, 200000, '%Y-%m-%dT%H%M', '%Y-%m-%dT%H:%M:%SZ', '+00:00', '.screenpipe', '?mode=ro', 'America/Los_Angeles', 'Options', 'T', 'Z', 'app', 'audio', 'audio_only_sessions', 'closed', 'db.sqlite', 'facetime', 'force_close_minutes', 'frame', 'frames', 'gap_minutes', 'huddle', 'max_session_minutes', 'meet', 'meet.google.com', 'meeting:%s-%s', 'meeting_windows', 'microsoft teams', 'min_presence_frames', 'min_span_minutes', 'open', 'quiet_minutes', 'slack', 'slack-huddle', 'slug', 'teams', 'timezone', 'tuple[dict, list]', 'tuple[list, int]', 'url', 'webex', 'window', 'zoom']
