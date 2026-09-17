@@ -180,6 +180,15 @@ CONTROL_OWNER = {
     },
     # 原生「新建 skill」表单往 ~/.claude/skills/<name>/SKILL.md 写文件；§67 立法后仓库 = 商店、`skills/` 只有 git 写
     # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的 PR（§65 草稿 PR 通道），不是设置页表单。
+    # 依赖页 gh 行的 detail 文案 `which gh（登录 shell）` 是原生**自己的探针命令**（Pages.swift:198 →
+    # Shell.ok("which gh") 起 /bin/zsh -lc）：web 的依赖页把探测交给 server（GET /api/deps）、
+    # 显示 server 的 detail——照抄这句等于对用户说「web 也在你的登录 shell 里 which gh」，是假话。
+    # 同屏其它探针描述（npx…/claude executable…/CGPreflight…）本来就按 informational copy 走，这条是
+    # 抽取器把探针说明当成了控件（D79，2026-09-17 全覆盖收尾）。
+    "control:deps:label:which-gh-login-shell": {
+        "owner": "retired",
+        "reason": "原生探针命令的自述（which gh 在登录 shell 里），web 依赖页由 server 探测并显示 server detail，不照抄（§54.4 追记 D30 依赖检查并入设置页；D79）",
+    },
     "control:settings.skills:button:new-skill": {
         "owner": "retired",
         "reason": "仓库 = skill 商店，skills/ 只有 git 写；新 skill 走 PR，设置页不做编辑器（§67.1 / §67.5）",

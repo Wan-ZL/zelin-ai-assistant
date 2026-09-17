@@ -15,8 +15,17 @@
 
 证据 DSL（executor 见 scripts/qa/coverage_run.py）：
   unittest:<模块,模块> · parity:<id> · swift:<Harness> · axprobe:<probe> ·
-  http:<METHOD> <path> [noauth] expect=<code> [contains=<substr>] ·
+  http:<METHOD> <path> [noauth] [ctype=<media>] expect=<code> [contains=<substr>] ·
   settings:<section>.<key> · flow:<name> · fixture:<slug>；多条用 " && " 串联（全中才算在）。
+
+两条 route 侧的口径（demo 种子打不到的那一半，别把 http 行写成许不起的愿）：
+  * **占位解析不出真对象**（`/api/settings/{section}` · `/api/logs/{log}` ·
+    `/api/ingest/jobs/{job}`：demo 里没有这样的 section/log/job）→ 快乐路径交给钉着这条
+    路径字面量的 unittest（与写面同一口径，见 _route_proof），http 行只留 demo 真打得到的
+    那一支：`__absent__` → 404（`/api/logs/` 的占位带 `.log`，否则 LOG_NAME_RE 先给 400）。
+  * **写面 401 分支**：Content-Type 闸排在 token 闸之前（server/app.py `_check_write_auth`），
+    所以二进制体路由（`_POST_RAW_ROUTES`）的 401 行必须带 `ctype=<登记的 media type>`，
+    否则先撞 415。media type 从 app.py 的表里读，不手抄。
 
 用法：
     python3 scripts/qa/coverage_inventory.py --write     # 重铸 qa/coverage_inventory.json
@@ -41,6 +50,76 @@ SOURCES = ("contract", "parity", "routes", "settings", "shell")
 MAX_MODULES = 4
 
 WAIVE_TOMBSTONE = "tombstone"
+# §66.2 的「有意不搬到 web」账本（shrink-only）：这些 id 的 parity 判卷面发的是 it.skip，
+# 清单里必须记 waived，否则报告永远挂一条「vitest report has no it()」的假 MISSING。
+WAIVERS_REL = os.path.join("ui", "parity", "waivers.txt")
+_WAIVE_D_RE = re.compile(r"\bD(\d+)\b")
+_LEDGER_COLS_RE = re.compile(r"\s{2,}")
+_ISSUE_RE = re.compile(r"#(\d+)")
+
+
+def waive_reason_for(reason):
+    """账本理由原文 → 允许的 waive_reason（brief §2 的三选一），认不出来返回 None。
+
+    先认 `D<nn>`（vnext2 台账 / 归属表的决策号）→ `design-not-carried D<nn>`；再认理由里
+    点名的 CONTRACT tombstone → `tombstone`。**都没有就返回 None**——凭空发明一个 D 号
+    比挂一条 MISSING 更坏（那会把「没人拍过板」写成「拍过板」）。"""
+    text = reason or ""
+    design = _WAIVE_D_RE.search(text)
+    if design:
+        return "design-not-carried D%s" % design.group(1)
+    if "tombstone" in text:
+        return WAIVE_TOMBSTONE
+    return None
+
+
+def parity_waivers(root):
+    """ui/parity/waivers.txt → {inventory-id: 理由原文}（`#` 开头是注释；列以 2+ 空格分隔）。"""
+    path = os.path.join(root, WAIVERS_REL)
+    out = {}
+    if not os.path.exists(path):
+        return out
+    for raw in read_text(path).split("\n"):
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            cols = _LEDGER_COLS_RE.split(line)
+            out[cols[0]] = "  ".join(cols[1:])
+    return out
+
+
+def _issue_reasons(ledger):
+    """{issue 号: 已经认出来的 waive_reason}（账本顺序，先到的赢 → 与文件一样确定）。"""
+    out = {}
+    for reason in ledger.values():
+        mapped = waive_reason_for(reason)
+        for issue in _ISSUE_RE.findall(reason) if mapped else ():
+            out.setdefault(issue, mapped)
+    return out
+
+
+def _inherit_reason(reason, inherited):
+    """理由本身认不出来时：按它点名的 issue 号借同一本账本里已经认出来的那条。"""
+    for issue in _ISSUE_RE.findall(reason or ""):
+        if issue in inherited:
+            return inherited[issue]
+    return None
+
+
+def waiver_reasons(root):
+    """ui/parity/waivers.txt → {id: waive_reason}；认不出理由的 id **不入表**（仍是 todo）。
+
+    同一个退役决策常常有好几个面，而账本里只有第一行写全了出处（#119 那一批四行：第一行
+    点名 `CONTRACT §39 tombstone`，其余三行只写「retired with #119」）。所以认不出来的行按
+    它点名的 issue 号继承同一本账本里已经认出来的那条——不是发明 D 号，是把同一条决策的
+    四个面记成同一个理由；账本里真的谁都没写出处的 id 照样留 todo，由报告诚实地挂 MISSING。"""
+    ledger = parity_waivers(root)
+    inherited = _issue_reasons(ledger)
+    out = {}
+    for row_id, reason in ledger.items():
+        mapped = waive_reason_for(reason) or _inherit_reason(reason, inherited)
+        if mapped:
+            out[row_id] = mapped
+    return out
 
 
 def read_text(path):
@@ -347,12 +426,23 @@ def _bilingual(item):
     return "%s / %s" % (item.get("zh", ""), item.get("en", ""))
 
 
-def _control_rows(inventory, harnesses):
+def _apply_waiver(row, mapped):
+    """账本里记了「有意不搬」的那一行 → waived（理由认不出来的不在表里，原样留 todo）。"""
+    if mapped is None:
+        return row
+    row["status"] = "waived"
+    row["waive_reason"] = mapped
+    row["note"] = "ui/parity/waivers.txt (§66.2); parity 判卷面发 it.skip"
+    return row
+
+
+def _control_rows(inventory, harnesses, waivers):
     rows = []
     for item in _gated(inventory["controls"]):
         proof, note = _parity_control_proof(item, harnesses)
-        rows.append(_parity_row(item, proof, "native control %s (%s) is on the web page"
-                                % (item["id"], _bilingual(item)), note))
+        row = _parity_row(item, proof, "native control %s (%s) is on the web page"
+                          % (item["id"], _bilingual(item)), note)
+        rows.append(_apply_waiver(row, waivers.get(item["id"])))
     return rows
 
 
@@ -407,7 +497,7 @@ def parity_rows(root):
     inventory = load_json(os.path.join(root, "ui", "parity", "native-inventory.json"))
     harnesses = harness_index(root)
     key_sections = {key: section for section, key, _field in catalog_sections(root)}
-    rows = _control_rows(inventory, harnesses)
+    rows = _control_rows(inventory, harnesses, waiver_reasons(root))
     rows += _notification_rows(inventory)
     rows += _rail_rows(inventory)
     rows += _lane_rows(inventory)
@@ -446,6 +536,17 @@ _PREFIX_TAIL = {
     "/api/secrets/": "{name}",
 }
 _PREFIX_TAIL_POST = {"/api/secrets/": "{name}/verify"}
+# 占位解析不出真对象的前缀 GET（demo 种子里没有这样的 section/log/job）：http 行只留 demo
+# 真打得到的那一支——尾段给一个绝不存在的名字，看它是不是 404。`/api/logs/` 的占位必须带
+# `.log`：server/diagnostics.LOG_NAME_RE 先判形，形不对是 400 而不是 404。
+_ABSENT_TAIL = {
+    "/api/settings/": "__absent__",
+    "/api/logs/": "__absent__.log",
+    "/api/ingest/jobs/": "__absent__",
+}
+# 带必填 query 的精确 GET：§63.9 的 recap 历史必须点名 key（不点名 = 400）。`{recap}` 由
+# runner 从 demo 种子解析，同 `{id}`。
+_GET_QUERY = {"/api/recaps/history": "?key={recap}"}
 
 
 def _const_route_key(node, root):
@@ -515,6 +616,26 @@ def parse_route_tables(root):
     return out
 
 
+def _raw_media(value, root):
+    """`(attachments.CONTENT_TYPE, MAX_BYTES, fn)` 元组 → 第一位登记的 media type。"""
+    if isinstance(value, ast.Tuple) and value.elts:
+        return _const_route_key(value.elts[0], root)
+    return None
+
+
+def raw_media_types(root):
+    """server/app.py 的 `_POST_RAW_ROUTES` → {path: media type}（二进制体路由，§10bis 贴图）。"""
+    tree = ast.parse(read_text(os.path.join(root, "server", "app.py")))
+    table = _dict_assignments(tree, frozenset({"_POST_RAW_ROUTES"})).get("_POST_RAW_ROUTES")
+    out = {}
+    for key, value in zip(table.keys, table.values) if table else ():
+        path = _const_route_key(key, root)
+        media = _raw_media(value, root)
+        if path and media:
+            out[path] = media
+    return out
+
+
 def conflict_modules(root):
     """server/*.py 里真的 `raise ConflictError(` 的模块名集合（409 分支行的依据）。"""
     out = set()
@@ -546,26 +667,46 @@ def _shown_path(path, is_prefix):
     return path + _PREFIX_TAIL_POST.get(path, _PREFIX_TAIL.get(path, ""))
 
 
+def _get_http_proof(path, shown):
+    """一条 GET 的 http 片段：占位解析不出对象 → 打 `__absent__` 的 404 那一支；
+    必填 query 的路由点名带上（§63.9 的 `?key=`）；其余照旧是 200。"""
+    tail = _ABSENT_TAIL.get(path)
+    if tail:
+        return "http:GET %s%s expect=404" % (path, tail)
+    return "http:GET %s%s expect=200" % (shown, _GET_QUERY.get(path, ""))
+
+
+def _noauth(fragment):
+    """同一条 http 片段的「不带 token」版：§49 的 GET 是 token-light，status 应当一模一样。"""
+    return fragment.replace(" expect=", " noauth expect=", 1)
+
+
+def _write_401_fragment(method, shown, media):
+    """写面 401 行：二进制体路由要带上登记的 Content-Type，否则先撞 415（闸序见模块 docstring）。"""
+    return "http:%s %s noauth%s expect=401" % (
+        method, shown, (" ctype=%s" % media) if media else "")
+
+
 def _route_proof(method, path, shown, texts):
-    """正路由的 proof：读面直接打；写面交给钉住这条路径的 unittest。
+    """正路由的 proof：读面直接打；写面（以及占位解析不出对象的读面）交给钉住这条路径的 unittest。
 
     写面不在 runner 里盲发（`/api/setup/reset`、`/api/uninstall/terminal` 这类会动真家伙），
     只有 401 分支走 http——四闸在读 body 之前就拒，安全。"""
     hits = unittest_proof(modules_citing(texts, path))
     if method == "GET":
-        return join_proofs("http:GET %s expect=200" % shown, hits)
+        return join_proofs(_get_http_proof(path, shown), hits)
     return hits
 
 
-def _branch_rows(method, shown, row_id, path, texts, conflicted):
+def _branch_rows(method, shown, row_id, path, texts, conflicted, media=""):
     """一条路由的分支行：GET 的 token-light、写面的 401、以及会抛冲突的 409。"""
     out = []
     if method == "GET":
         out.append((("%s#noauth" % row_id), "GET %s stays token-light (§49)" % shown,
-                    "http:GET %s noauth expect=200" % shown))
+                    _noauth(_get_http_proof(path, shown))))
     else:
         out.append((("%s#401" % row_id), "%s %s without a token is 401" % (method, shown),
-                    "http:%s %s noauth expect=401" % (method, shown)))
+                    _write_401_fragment(method, shown, media)))
         if conflicted:
             hits = modules_citing(texts, path, extra=("409", "ConflictError", "CONFLICT"))
             out.append((("%s#409" % row_id), "%s %s reports a state conflict as 409" % (method, shown),
@@ -576,6 +717,7 @@ def _branch_rows(method, shown, row_id, path, texts, conflicted):
 def route_rows(root):
     """server/app.py 的路由表 + 手写的三条 GET + 分支行（#noauth / #401 / #409 / #404）。"""
     conflicts = conflict_modules(root)
+    media_types = raw_media_types(root)
     texts = test_texts(os.path.join(root, "tests"))
     triples = []
     for path, what, proof in _SPECIAL_GETS:
@@ -589,7 +731,8 @@ def route_rows(root):
         row_id = "route:%s %s" % (method, shown)
         triples.append((row_id, "%s %s is routed" % (method, shown),
                         _route_proof(method, path, shown, texts)))
-        triples.extend(_branch_rows(method, shown, row_id, path, texts, bool(modules & conflicts)))
+        triples.extend(_branch_rows(method, shown, row_id, path, texts,
+                                    bool(modules & conflicts), media_types.get(path, "")))
     triples.append(("route:GET /api/__unknown__#404", "an unknown /api path is 404",
                     "http:GET /api/__unknown__ expect=404"))
     seen, rows = set(), []
@@ -705,9 +848,8 @@ def _rail_shortcut_row(item, retired):
     if item.get("gated"):
         return make_row(slug, "shell", scenario, "flow:pages_controls",
                         note="MenuSpec deliberately omits ⌘1–⌘8 (web NavRail owns them)")
-    design = re.search(r"\bD(\d+)\b", (retired.get(item["slug"]) or {}).get("reason", ""))
     return make_row(slug, "shell", scenario, "flow:pages_controls", status="waived",
-                    waive_reason=("design-not-carried D%s" % design.group(1)) if design else None,
+                    waive_reason=waive_reason_for((retired.get(item["slug"]) or {}).get("reason", "")),
                     note="rail item retired")
 
 

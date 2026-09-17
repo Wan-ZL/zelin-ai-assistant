@@ -10,7 +10,7 @@
   "counts": {
     "contract": 251,
     "fixtures_b": 15,
-    "parity": 842,
+    "parity": 841,
     "routes": 162,
     "settings": 60,
     "shell": 33
@@ -3832,9 +3832,9 @@
       "scenario": "native control control:board.dialogs:alert-button:send#2 (发送 / Send) is on the web page",
       "proof": "parity:control:board.dialogs:alert-button:send#2",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "ui/parity/waivers.txt (§66.2); parity 判卷面发 it.skip"
     },
     {
       "id": "parity:control:board.dialogs:label:answer-the-ai-s-question",
@@ -3842,9 +3842,9 @@
       "scenario": "native control control:board.dialogs:label:answer-the-ai-s-question (💬 回答 AI 的问题 / 💬 Answer the AI's question) is on the web page",
       "proof": "parity:control:board.dialogs:label:answer-the-ai-s-question",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "ui/parity/waivers.txt (§66.2); parity 判卷面发 it.skip"
     },
     {
       "id": "parity:control:board.dialogs:label:comment-change-direction",
@@ -3922,9 +3922,9 @@
       "scenario": "native control control:board.dialogs:label:send-newline#2 (↩ 发送 · ⇧↩ 换行 / ↩ send · ⇧↩ newline) is on the web page",
       "proof": "parity:control:board.dialogs:label:send-newline#2",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "ui/parity/waivers.txt (§66.2); parity 判卷面发 it.skip"
     },
     {
       "id": "parity:control:board.dialogs:label:type-确认-or-go",
@@ -5022,9 +5022,9 @@
       "scenario": "native control control:board.running:label:sending-answer (回答发送中… / Sending answer…) is on the web page",
       "proof": "parity:control:board.running:label:sending-answer",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "ui/parity/waivers.txt (§66.2); parity 判卷面发 it.skip"
     },
     {
       "id": "parity:control:board.running:label:session-active",
@@ -5621,16 +5621,6 @@
       "source": "parity",
       "scenario": "native control control:deps:label:screen-recording-permission (屏幕录制权限 / Screen Recording permission) is on the web page",
       "proof": "parity:control:deps:label:screen-recording-permission",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "parity:control:deps:label:which-gh-login-shell",
-      "source": "parity",
-      "scenario": "native control control:deps:label:which-gh-login-shell (which gh（登录 shell） / which gh (login shell)) is on the web page",
-      "proof": "parity:control:deps:label:which-gh-login-shell",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11310,7 +11300,7 @@
       "id": "route:GET /api/ingest/jobs/{job}",
       "source": "routes",
       "scenario": "GET /api/ingest/jobs/{job} is routed",
-      "proof": "http:GET /api/ingest/jobs/{job} expect=200 && unittest:tests.test_coverage_run_proof_resolvers,tests.test_server_deps_ingest_about",
+      "proof": "http:GET /api/ingest/jobs/__absent__ expect=404 && unittest:tests.test_coverage_run_proof_resolvers,tests.test_server_deps_ingest_about",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11320,7 +11310,7 @@
       "id": "route:GET /api/ingest/jobs/{job}#noauth",
       "source": "routes",
       "scenario": "GET /api/ingest/jobs/{job} stays token-light (§49)",
-      "proof": "http:GET /api/ingest/jobs/{job} noauth expect=200",
+      "proof": "http:GET /api/ingest/jobs/__absent__ noauth expect=404",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11350,7 +11340,7 @@
       "id": "route:GET /api/logs/{log}",
       "source": "routes",
       "scenario": "GET /api/logs/{log} is routed",
-      "proof": "http:GET /api/logs/{log} expect=200 && unittest:tests.test_coverage_run_proof_resolvers,tests.test_server_deps_ingest_about,tests.test_server_diagnostics,tests.test_server_diagnostics_ingest_log",
+      "proof": "http:GET /api/logs/__absent__.log expect=404 && unittest:tests.test_coverage_run_proof_resolvers,tests.test_server_deps_ingest_about,tests.test_server_diagnostics,tests.test_server_diagnostics_ingest_log",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11360,7 +11350,7 @@
       "id": "route:GET /api/logs/{log}#noauth",
       "source": "routes",
       "scenario": "GET /api/logs/{log} stays token-light (§49)",
-      "proof": "http:GET /api/logs/{log} noauth expect=200",
+      "proof": "http:GET /api/logs/__absent__.log noauth expect=404",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11470,7 +11460,7 @@
       "id": "route:GET /api/recaps/history",
       "source": "routes",
       "scenario": "GET /api/recaps/history is routed",
-      "proof": "http:GET /api/recaps/history expect=200 && unittest:tests.test_coverage_run_flows,tests.test_coverage_run_proof_resolvers,tests.test_server_paths_mirror,tests.test_server_recaps",
+      "proof": "http:GET /api/recaps/history?key={recap} expect=200 && unittest:tests.test_coverage_run_flows,tests.test_coverage_run_proof_resolvers,tests.test_server_paths_mirror,tests.test_server_recaps",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11480,7 +11470,7 @@
       "id": "route:GET /api/recaps/history#noauth",
       "source": "routes",
       "scenario": "GET /api/recaps/history stays token-light (§49)",
-      "proof": "http:GET /api/recaps/history noauth expect=200",
+      "proof": "http:GET /api/recaps/history?key={recap} noauth expect=200",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11650,7 +11640,7 @@
       "id": "route:GET /api/settings/{section}",
       "source": "routes",
       "scenario": "GET /api/settings/{section} is routed",
-      "proof": "http:GET /api/settings/{section} expect=200 && unittest:tests.test_coverage_run_flows,tests.test_coverage_run_proof_resolvers,tests.test_server_display_settings,tests.test_server_gmail_address_check",
+      "proof": "http:GET /api/settings/__absent__ expect=404 && unittest:tests.test_coverage_run_flows,tests.test_coverage_run_proof_resolvers,tests.test_server_display_settings,tests.test_server_gmail_address_check",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11660,7 +11650,7 @@
       "id": "route:GET /api/settings/{section}#noauth",
       "source": "routes",
       "scenario": "GET /api/settings/{section} stays token-light (§49)",
-      "proof": "http:GET /api/settings/{section} noauth expect=200",
+      "proof": "http:GET /api/settings/__absent__ noauth expect=404",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11940,7 +11930,7 @@
       "id": "route:POST /api/attachments#401",
       "source": "routes",
       "scenario": "POST /api/attachments without a token is 401",
-      "proof": "http:POST /api/attachments noauth expect=401",
+      "proof": "http:POST /api/attachments noauth ctype=image/png expect=401",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
