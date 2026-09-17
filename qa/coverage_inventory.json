@@ -10,7 +10,7 @@
   "counts": {
     "contract": 251,
     "fixtures_b": 15,
-    "parity": 842,
+    "parity": 841,
     "routes": 162,
     "settings": 60,
     "shell": 33
@@ -5621,16 +5621,6 @@
       "source": "parity",
       "scenario": "native control control:deps:label:screen-recording-permission (屏幕录制权限 / Screen Recording permission) is on the web page",
       "proof": "parity:control:deps:label:screen-recording-permission",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "parity:control:deps:label:which-gh-login-shell",
-      "source": "parity",
-      "scenario": "native control control:deps:label:which-gh-login-shell (which gh（登录 shell） / which gh (login shell)) is on the web page",
-      "proof": "parity:control:deps:label:which-gh-login-shell",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

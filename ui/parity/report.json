@@ -1,6 +1,5 @@
 {
   "counts": {
-    "PENDING": 1,
     "PRESENT": 841,
     "WAIVED": 4
   },
@@ -301,7 +300,6 @@
     "control:deps:label:recording-engine": "PRESENT",
     "control:deps:label:reveal": "PRESENT",
     "control:deps:label:screen-recording-permission": "PRESENT",
-    "control:deps:label:which-gh-login-shell": "PENDING",
     "control:doctor:label:fix-now": "PRESENT",
     "control:doctor:label:grant": "PRESENT",
     "control:doctor:label:grant#2": "PRESENT",
@@ -857,7 +855,7 @@
   "not_gated": {
     "informational": 409,
     "os": 11,
-    "retired": 64,
+    "retired": 65,
     "shell": 70
   },
   "ok": true,
