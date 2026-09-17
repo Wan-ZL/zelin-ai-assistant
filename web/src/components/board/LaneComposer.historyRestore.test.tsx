@@ -73,21 +73,23 @@ describe("LaneComposer — captureHistory 读回", () => {
     expect(field.value).toBe("fresh start");
   });
 
-  it("去重 + 封顶 20 走真提交：最旧的一条再提交 → 挪到最前、仍 20；再来一条新的 → 最旧掉出、仍 20；↑ 先翻出刚提交的", async () => {
+  it("去重 + 封顶 20 走真提交：中间的一条再提交 → 挪到最前、不留副本、仍 20；再来一条新的 → 最旧掉出、仍 20；↑ 先翻出刚提交的", async () => {
     const seed = Array.from({ length: HISTORY_MAX }, (_, i) => `entry ${String(i + 1).padStart(2, "0")}`); // 01 最新 … 20 最旧
     window.localStorage.setItem(HISTORY_KEY, JSON.stringify(seed));
     const { field, button } = mount();
-    await submit(field, button, "entry 20");
-    expect(stored()).toEqual(["entry 20", ...seed.slice(0, HISTORY_MAX - 1)]);
+    // 挑中间一条（不是最旧的）：只靠封顶砍尾巴的实现会留下副本 / 变成 21 → 这里能分辨去重与封顶
+    await submit(field, button, "entry 05");
+    expect(stored()).toEqual(["entry 05", ...seed.filter((x) => x !== "entry 05")]);
     expect(stored()).toHaveLength(HISTORY_MAX);
+    expect(stored().filter((x) => x === "entry 05")).toHaveLength(1);
     await submit(field, button, "brand new");
-    expect(stored()).toEqual(["brand new", "entry 20", ...seed.slice(0, HISTORY_MAX - 2)]);
+    expect(stored()).toEqual(["brand new", "entry 05", ...seed.filter((x) => x !== "entry 05").slice(0, HISTORY_MAX - 2)]);
     expect(stored()).toHaveLength(HISTORY_MAX);
-    expect(stored()).not.toContain("entry 19");
+    expect(stored()).not.toContain("entry 20"); // 最旧的掉出去
     fireEvent.keyDown(field, { key: "ArrowUp" });
     expect(field.value).toBe("brand new");
     fireEvent.keyDown(field, { key: "ArrowUp" });
-    expect(field.value).toBe("entry 20");
+    expect(field.value).toBe("entry 05");
     expect(vi.mocked(postAction)).toHaveBeenCalledTimes(2);
   });
 });
