@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-001`（PR #426；R-001「修红 CI：PR #405 chore: Bump the react group in /web with 4 updates」；docs-only 收据——转绿的那一推不是本卡发的，见下）
+pr: `ai/self-improve/R-001`（PR #426；R-001「修红 CI：PR #405 chore: Bump the react group in /web with 4 updates」；**同一张卡由两个并行 session 交付，共用这一条分支**：本片段是收据一半，`e43e8ba3` 的时刻缝判例是孪生那一半——转绿的那一推也不是本片段发的，见下）
 phase: 横切（依赖维护；D5 / D12 每日循环「红 CI 是臣子的事」；§56.6 auto-update-branch；§65 自我改进通道；§70.3 ⑪ 判例 #405）
 law: —（无新 §、无修法；§70.2 追记的两阶段老化、§9 追记的 `restore` 盖 `restored_at` 一字未动）
 
@@ -30,4 +30,4 @@ law: —（无新 §、无修法；§70.2 追记的两阶段老化、§9 追记�
 
 （给下一个 session 的口径：本机跑全量套件时如果同时开着多个 agent，`rc=143` 是**机器被掐**不是判例红——别把它记成失败，也别拿它当「跑过了」。要么等机器空下来重跑，要么就认 CI 的那一腿。）
 
-**没做**：① **不重复推 #405**——孪生已经推了、CI 已经绿，再推一次只会多一个空 merge commit 和一次多余的 CI；② 不动 `.github/workflows/update-pr-branches.yml`（保护路径，且病在缺席的 secret 不在代码字节）；③ 不碰 `tests/test_review_stale_sweep.py` / `act/lib/registry.py`（main 已修，#406 / #408 / #424 三张还在等 owner，再加一版拼法只会制造相邻行冲突——R-303 片段已经为这条付过一次学费）；④ 不修 `headerLayout.spec.ts:142`（#425 在修，且是 informational）；⑤ 不修 main 的 macOS `ci` 红（另一张卡的范围）；⑥ 不碰 #403 / #404（#404 已绿；#403 要解真冲突，不是本卡的 DoD）；⑦ 不加 changelog fragment（本 PR 只是收据，没有面向用户的行为变化）。
+**没做**：① **不重复推 #405**——孪生已经推了、CI 已经绿，再推一次只会多一个空 merge commit 和一次多余的 CI；② 不动 `.github/workflows/update-pr-branches.yml`（保护路径，且病在缺席的 secret 不在代码字节）；③ 本片段不碰 `tests/test_review_stale_sweep.py` / `act/lib/registry.py`（main 已修，#406 / #408 / #424 三张还在等 owner，再加一版拼法只会制造相邻行冲突——R-303 片段已经为这条付过一次学费）。**注意这条只约束本片段，不约束整个 PR**：孪生的 `e43e8ba3` 在本分支上新增了 `tests/test_clock_injection_seams.py`（把 `registry.restore` 的 `now=` 缝本身钉住）并顺手把 `test_review_stale_sweep.py:180` 与 `scripts/qa/fixtures_b/aging_22d.py:57` 两处「注入时钟 + 真时钟混用」改成全注入——那是对根因更进一步的处置，本片段不撤销、不重写它；④ 不修 `headerLayout.spec.ts:142`（#425 在修，且是 informational）；⑤ 不修 main 的 macOS `ci` 红（另一张卡的范围）；⑥ 不碰 #403 / #404（#404 已绿；#403 要解真冲突，不是本卡的 DoD）；⑦ 不加 changelog fragment（本 PR 只是收据，没有面向用户的行为变化）。
