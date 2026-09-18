@@ -4,7 +4,8 @@
 //   1) 焦点还没进面板（activeElement = body）时按 ⎋，面板照样关——真浏览器里这是常态而不是边角：
 //      tight 档点「筛选」开面板的那一下，pointerdown 被 keepSearchFocus 拦下（按钮不拿焦点）、click 又把正
 //      聚焦的搜索框卸掉，焦点掉回 body；修复前这一下 ⎋ 谁都收不到（面板的 React 监听要 target 在面板里，
-//      FilterBar 的 window 监听因 panelOpen 让位），面板永久卡开；
+//      FilterBar 的 window 监听因 panelOpen 让位），**这一次按键被吞掉**，面板留在开着的状态——不是关不掉
+//      （帧落地后再按一下仍能关、点外面也能关），是这一下没关，而 e2e 只按一次；
 //   2) 打开面板即把焦点放进去——同步，不等下一帧（此前排在 requestAnimationFrame 里）；
 //   3) 让位四道门，按先后：IME 候选期间的 ⎋ 归输入法（§15 红线）→ 已被别人 preventDefault 的归先认领的人
 //      → 面板里开着 listbox 的归子弹层 → 上面压着模态（详情侧栏那类 aria-modal / 原生 <dialog open>）的归模态；
@@ -173,10 +174,13 @@ describe("FilterPopover ⎋ — 让位次序", () => {
     // 恒 false，所以 chip 开着时档位变窄，openChip 会留下来。下一次点「筛选」，面板与它里面的 listbox
     // 在同一次 commit 里出生——此时 React 的「子先于父」让 TaskPropertyPicker 的 window 监听排在本面板
     // 之前，「面板先挂载所以先跑」的假设反了。
-    // 诚实交代这条钉得到什么：jsdom 不做真浏览器在同一 target 的两个监听之间那次 microtask checkpoint，
-    // 所以这里 React 还没来得及把 listbox 摘掉，救场的仍是 querySelector 那道门。真正钉住「顺序反了也
-    // 不出事」的是上面那条 defaultPrevented 判例（浏览器里实测过顺序确实会反）。这条钉的是结果：这个
-    // 状态下一下 ⎋ 只许收一层。
+    // 诚实交代这条钉得到什么：按上面那条「子先于父」的前提，TaskPropertyPicker 的监听先注册也先跑、
+    // 进门就 preventDefault，所以本面板其实在第 ② 道门（defaultPrevented）就返回了，③ 的 querySelector
+    // 这一下根本没走到（真浏览器里同样如此——插桩量过：本面板的 handler 进门时 defaultPrevented 已为
+    // true）。这个状态下 ② 与 ③ 其实都成立（jsdom 不做真浏览器在同一 target 的两个监听之间那次
+    // microtask checkpoint，listbox 还没被摘掉），所以单删任何一道门这条都还是绿的——③ 由上面
+    // 「面板里开着 listbox」那条钉，不由本条钉。真正钉住「顺序反了也不出事」的是上面那条
+    // defaultPrevented 判例（浏览器里实测过顺序确实会反）。这条钉的是结果：这个状态下一下 ⎋ 只许收一层。
     const view = render(
       <HeaderDensityContext.Provider value="full">
         <FilterBar />

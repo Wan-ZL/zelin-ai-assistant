@@ -65,8 +65,10 @@ export function FilterPopover({ anchorRef, ariaLabel, onClose, children }: Filte
     // target 落在面板子树里才跑，而「面板开着」与「焦点在面板里」是两回事——tight 档点「筛选」开面板的
     // 那一下，pointerdown 被 keepSearchFocus 拦下（按钮不拿焦点）、click 又把正聚焦的搜索框卸掉，
     // activeElement 掉回 body；这一下 ⎋ 送到 body，面板的 React 监听收不到，FilterBar 的 window 监听又
-    // 因 panelOpen 让位（FilterBar.tsx「弹窗 / 筛选面板 / 详情侧栏开着时不插手」），于是没有任何人关它，
-    // 面板永久卡开。判据不该是焦点，而是「面板开着」——所以跟「点外面」「视口变化」一样挂全局。
+    // 因 panelOpen 让位（FilterBar.tsx「弹窗 / 筛选面板 / 详情侧栏开着时不插手」），于是没有任何人关它——
+    // **这一下按键整个被吞掉**，面板留在开着的状态（实测：帧落地后焦点已进面板，再按一下 ⎋ 仍能关，点面板
+    // 外也能关；所以不是「关不掉」，是「这一次没关」——e2e 只按一次，于是 5 s 内轮询 14 次都看见它开着）。
+    // 判据不该是焦点，而是「面板开着」——所以跟「点外面」「视口变化」一样挂全局。
     // 兄弟件 TaskPropertyPicker.closeFromEscape 早就是同一套 window 监听，这里跟它同法。
     // 冒泡相（非 capture）：列顶输入框 / 改名框靠 React 的 stopPropagation 把自己的 ⎋ 就地吃掉
     //（§34 追记 2026-09-05 的双保险之一），capture 会抢在它们前面，把那一半静默退役。
