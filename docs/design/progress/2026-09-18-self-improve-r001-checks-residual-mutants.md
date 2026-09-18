@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-001-checks-mutation`（PR #427；R-001「补测试：skills/test-code/scripts/checks.py 变异存活 404 体（杀伤 52%）」；**同一条夜报发现的第三张卡**，前两张是 R-217 / #391 与 R-301 / #401）
+pr: `ai/self-improve/R-001-checks-mutation`（PR #432；R-001「补测试：skills/test-code/scripts/checks.py 变异存活 404 体（杀伤 52%）」；**同一条夜报发现的第三张卡**，前两张是 R-217 / #391 与 R-301 / #401）
 phase: 横切（测试网；vnext2-plan R2.8 / R2.3.4 每日自我改进循环的 self_improve 通道）
 law: —（无新 §、无修法；§57「存活变异体 = 补测试提案、等价体记理由」与 §58 照旧执行）
 
