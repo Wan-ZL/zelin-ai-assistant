@@ -9,7 +9,9 @@ stall and it is retiring (D3); this endpoint is its replacement. Pinned:
   stale/missing dashboard → stale; no heartbeat + fresh dashboard → unknown
   (pre-v0.48.4 daemon still writing);
 - the threshold comes from the heartbeat body, never re-derived here;
-- torn/missing files never 500 — they read as absent.
+- torn/missing files never 500 — they read as absent;
+- a read DENIAL is a third thing (§47.4 追记 2026-09-18, issue #423): still 200,
+  still ``dashboard: null``, plus ``dashboard_error {path, errno, strerror}``.
 
 Real server on a random port (tests/test_server_common.py), tmp home per case.
 """
@@ -21,6 +23,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 from tests.test_server_common import (get_json, http_request, start_server,
@@ -121,6 +124,93 @@ class HealthSnapshotTestCase(unittest.TestCase):
         self.assertEqual(snap["verdict"], "ok")
         self.assertIsNone(snap["heartbeat"]["phase"])
         self.assertEqual(snap["heartbeat"]["stale_after_s"], 90)   # floor fallback
+
+
+class DashboardErrorTestCase(unittest.TestCase):
+    """``dashboard_error`` — 「没有看板」与「读不动看板」自此分得出来。
+
+    CONTRACT §47.4 追记 2026-09-18（issue #423）：``dashboard: null`` 同时覆盖
+    缺席 / 撕裂 / 读被拒三种，wire 上长得一模一样；这一键只把第三种分出来，
+    其余一切情况恒为 null，``dashboard: null`` 的含义一字不变。
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="zai-health-denial-"))
+        (self.home / "state").mkdir()
+        self.dash = self.home / "state" / "dashboard.json"
+        self.now = time.time()
+
+    def _snap(self):
+        return health.snapshot(self.home, now=self.now)
+
+    def test_a_good_board_reports_no_denial(self):
+        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
+        snap = self._snap()
+        self.assertIsNotNone(snap["dashboard"])
+        self.assertIsNone(snap["dashboard_error"])
+
+    def test_an_absent_board_reports_no_denial(self):
+        # 缺席不是拒绝：两个键都 null，verdict 阶梯照旧
+        snap = self._snap()
+        self.assertIsNone(snap["dashboard"])
+        self.assertIsNone(snap["dashboard_error"])
+        self.assertEqual(snap["verdict"], "stale")
+
+    def test_a_torn_json_body_reports_no_denial(self):
+        write_text(self.dash, "{torn")
+        snap = self._snap()
+        self.assertIsNone(snap["dashboard"])
+        self.assertIsNone(snap["dashboard_error"])
+
+    def test_a_non_utf8_body_is_absent_not_a_500(self):
+        """``UnicodeDecodeError`` 是 ``ValueError``、**不是** ``OSError``。
+
+        它必须与 ``json.loads`` 共用同一个 try——漏掉它，一份非 UTF-8 的看板会
+        让 ``snapshot()`` 抛出去、/api/health 变成 500（§49 路由行「永不 500」）。"""
+        self.dash.write_bytes(b'{"generated_at": "\xff\xfe"}')
+        snap = self._snap()                        # 不抛就是判例本身
+        self.assertIsNone(snap["dashboard"])
+        self.assertIsNone(snap["dashboard_error"])
+
+    def test_a_read_denial_reports_path_errno_and_strerror(self):
+        import errno as _errno
+        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
+        with mock.patch.object(
+                Path, "read_text",
+                side_effect=PermissionError(_errno.EPERM,
+                                            os.strerror(_errno.EPERM))):
+            snap = self._snap()
+        self.assertIsNone(snap["dashboard"])       # 既有键含义不变
+        self.assertEqual(snap["dashboard_error"]["errno"], _errno.EPERM)
+        self.assertEqual(snap["dashboard_error"]["path"], str(self.dash))
+        self.assertIsInstance(snap["dashboard_error"]["strerror"], str)
+
+    def test_the_verdict_vocabulary_does_not_grow_a_sixth_value(self):
+        """读被拒**不**长第六个 verdict——读者 3 的 ``default: return null`` 会让
+        新 verdict 一个横幅都不渲染，``repairActd`` 还会把每次修复都报成超时。"""
+        import errno as _errno
+        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
+        with mock.patch.object(
+                Path, "read_text",
+                side_effect=PermissionError(_errno.EACCES, "denied")):
+            snap = self._snap()
+        self.assertIn(snap["verdict"], ("stalled", "failing", "stale",
+                                        "unknown", "ok"))
+
+    def test_the_dashboard_is_read_exactly_once_per_snapshot(self):
+        """§47.4「它只 stat 三个文件」：新键不许换来第二次读。"""
+        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
+        real = Path.read_text
+        seen = []
+
+        def counting(self_path, *a, **kw):
+            if self_path == self.dash:
+                seen.append(str(self_path))
+            return real(self_path, *a, **kw)
+
+        with mock.patch.object(Path, "read_text", counting):
+            self._snap()
+        self.assertEqual(len(seen), 1)
 
 
 class HealthRouteTestCase(unittest.TestCase):

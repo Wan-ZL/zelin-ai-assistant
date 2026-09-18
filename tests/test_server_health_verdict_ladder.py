@@ -72,17 +72,29 @@ class DashboardViewTestCase(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp(prefix="zai-health-dash-"))
         (self.home / "state").mkdir()
 
-    def test_unparseable_generated_at_is_none(self):
-        paths.dashboard_path(self.home).write_text(json.dumps({"generated_at": "yesterday"}),
+    # ``_dashboard_view`` 自 2026-09-18（§47.4 追记 / issue #423）收**已读好的 body**
+    # 而不是 home——读与「读被拒」的分类都收进了 snapshot()，好让 dashboard.json
+    # 每次 /api/health 仍然只读一次。这两条钉的行为一字未变，只是入参换了形。
+    def _body(self, doc: dict) -> dict:
+        paths.dashboard_path(self.home).write_text(json.dumps(doc),
                                                    encoding="utf-8")
-        self.assertIsNone(health._dashboard_view(self.home, 0.0))
+        body, denial = health._read_json_or_denial(paths.dashboard_path(self.home))
+        self.assertIsNone(denial)
+        return body
+
+    def test_unparseable_generated_at_is_none(self):
+        self.assertIsNone(health._dashboard_view(
+            self._body({"generated_at": "yesterday"}), 0.0))
 
     def test_future_timestamp_clamps_age_to_zero(self):
-        paths.dashboard_path(self.home).write_text(
-            json.dumps({"generated_at": "2100-01-01T00:00:00Z"}), encoding="utf-8")
-        view = health._dashboard_view(self.home, 0.0)
+        view = health._dashboard_view(
+            self._body({"generated_at": "2100-01-01T00:00:00Z"}), 0.0)
         self.assertEqual(view["age_s"], 0.0)
         self.assertFalse(view["stale"])
+
+    def test_an_absent_body_is_none(self):
+        # snapshot() 对缺席 / 撕裂 / 读被拒都传 None 下来——三种都没有 generated_at
+        self.assertIsNone(health._dashboard_view(None, 0.0))
 
 
 if __name__ == "__main__":

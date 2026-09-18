@@ -6,7 +6,9 @@ NOT_FOUND / INTERNAL_ERROR / NOT_IMPLEMENTED（501 专用，reveal 非 darwin—
 add-only 正式收编，原 TODO(contract) 关闭）/ FORBIDDEN / UNAUTHORIZED
 （§49 auth model 的 Host/Origin 闸与 instance token 闸，add-only 收编）/
 CONFLICT（409，§59 设置写入遇到不可解析的目标文件——拒绝覆盖，add-only 收编）/
-SHELL_UNAVAILABLE（503，§68.7 2026-09-05：终端接管队列没有消费者——壳没在跑，add-only 收编）。
+SHELL_UNAVAILABLE（503，§68.7 2026-09-05：终端接管队列没有消费者——壳没在跑，add-only 收编）/
+BOARD_UNREADABLE（503，§49 追记 2026-09-18，issue #423：``state/dashboard.json`` 读不出来
+但不是缺席——errno 进 details，缺席仍走 NOT_FOUND，add-only 收编）。
 """
 from __future__ import annotations
 
@@ -81,3 +83,13 @@ class ShellUnavailableError(ApiError):
     issue #216）→ 503。页面据此降级：复制指令 + 提示，与非 darwin 501 同一条降级逻辑。"""
     status = 503
     code = "SHELL_UNAVAILABLE"
+
+
+class BoardUnreadableError(ApiError):
+    """``state/dashboard.json`` 读不出来，但**不是缺席**（EPERM / EACCES / EIO /
+    EISDIR / ELOOP…；§49 追记 2026-09-18，issue #423）→ 503。缺席仍是 404
+    ``NOT_FOUND``——把两者并成「找不到」正是本次要修的谎（宪法第 3 条：坏掉的
+    通道与没有数据严格区分）。``details`` 带 ``path`` + ``errno`` + ``strerror``，
+    errno 是这次读真正拿到的那个，server 不再探、不重试、不猜。"""
+    status = 503
+    code = "BOARD_UNREADABLE"

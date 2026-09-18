@@ -4,6 +4,9 @@
 - 六个 demo 场景（demo_seed --scene）逐一透传：响应 bytes 与 dashboard.json
   磁盘 bytes 完全一致（零改写），且 hero 卡 P-101 落在场景对应分区；
 - dashboard.json 缺席 → 404 NOT_FOUND envelope；未知 /api/* 路由 → 404；
+  **读不动**（不是缺席）→ 503 BOARD_UNREADABLE，派生的卡详情路由同样 503 而不是
+  改口说「查无此卡」（§49 追记 2026-09-18；errno 分类本体判例见
+  tests/test_server_board_read_denied.py）；
 - /api/cards/{id}：投影行字段 verbatim + ``lane`` + registry YAML add-only
   增补（投影已有键绝不被覆盖）；archive/ 优先于 active（crash 残留判例）；
   list 批次文件可命中；R-000-example.yaml 永不加载；
@@ -14,6 +17,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 from tests.test_server_common import (DEMO_SEED_PATH, SCENES, assert_envelope,
@@ -100,6 +104,31 @@ class BoardMissingTestCase(unittest.TestCase):
         status, obj = get_json(port, "/api/board")
         self.assertEqual(status, 404)
         assert_envelope(self, obj, "NOT_FOUND")
+
+
+@unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
+class DerivedRouteUnderReadDenialTestCase(unittest.TestCase):
+    """派生路由也说 503，不改口说「查无此卡」（§49 追记 2026-09-18，issue #423）。
+
+    卡详情经 ``_board_dict`` 读同一个投影文件。让它把 ``BoardUnreadableError``
+    吞掉会让这条路答「card not found」——同一类谎话的新版本，所以刻意让它穿透。
+    errno 分类本体的判例归 ``tests/test_server_board_read_denied.py``。
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-denied-"))
+        seed_scene(self.home, "initial")
+        _, self.port = start_server(self, self.home)
+
+    def test_card_detail_answers_503_not_404_when_the_board_cannot_be_read(self):
+        import errno as _errno
+        with mock.patch.object(
+                Path, "read_bytes",
+                side_effect=PermissionError(_errno.EACCES, "denied")):
+            status, obj = get_json(self.port, "/api/cards/" + HERO)
+        self.assertEqual(status, 503)
+        assert_envelope(self, obj, "BOARD_UNREADABLE")
+        self.assertEqual(obj["error"]["details"]["errno"], _errno.EACCES)
 
 
 @unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")

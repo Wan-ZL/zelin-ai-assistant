@@ -56,13 +56,21 @@ export function describeHealth(
     }
     case "stale": {
       const mins = health.dashboard ? minutes(health.dashboard.age_s) : null;
+      // §47.4 追记 2026-09-18（issue #423）：`dashboard == null` 此前一律说「看板从未生成」——文件在、只是读不动时
+      // 那是假话（server 没查过它在不在，只知道读被拒了）。errno 在场就照它说。这里**不新增分支**：那句话在看板页
+      // 由 §49 追记的 boardUnreadable 面负责，两条横幅说同一句 = 本节明令禁止的「同一信息双份」。
+      const denied = health.dashboard_error;
+      const zhAge = mins != null ? `看板数据 ${mins} 分钟没更新`
+        : denied ? `看板数据读不出来（errno ${denied.errno}）` : "看板从未生成";
+      const enAge = mins != null ? `Board data is ${mins} min old`
+        : denied ? `The board data can't be read (errno ${denied.errno})` : "The board was never generated";
       return {
         tone: "warning",
         title: text("后台服务没在运行", "Background service is not running"),
         // D50（§68.8 追记）：「启动后台服务」对未加载的 agent 会经 install.sh 重装 + 加载，终端里的 bash install.sh 只是备选
         detail: text(
-          `${mins == null ? "看板从未生成" : `看板数据 ${mins} 分钟没更新`}，也没有心跳。点「启动后台服务」原地拉起它（没装好会先重装）；或在终端跑 bash install.sh。`,
-          `${mins == null ? "The board was never generated" : `Board data is ${mins} min old`} and there is no heartbeat. "Start service" brings it up in place (reinstalling first if needed); or run bash install.sh in a terminal.`,
+          `${zhAge}，也没有心跳。点「启动后台服务」原地拉起它（没装好会先重装）；或在终端跑 bash install.sh。`,
+          `${enAge} and there is no heartbeat. "Start service" brings it up in place (reinstalling first if needed); or run bash install.sh in a terminal.`,
         ),
       };
     }

@@ -5,7 +5,9 @@
 //      board.trash / archived / recaps 同一份快照；原生 MainWindow.detail 的其余 section 从不依赖 store.dashboard，§54.1 追记）：
 //      首载 loading / 从未加载成功且离线（诚实空态+恢复路径——「拉不到」绝不渲染成「为空」）/ dashboard.json 不存在
 //      （server 在、文件不在：看板页 = 原生 PipelineEmptyStateView + 列顶 composer；三个列表页 = 空列表，原生
-//      `dashboard?.trash ?? []`）/ dashboard.json 解不出来且从未有过好快照（原生 loadError 那一行 + 重试，§49 追记
+//      `dashboard?.trash ?? []`）/ dashboard.json 在、但 server 读不动且从未有过好快照（§49 追记 2026-09-18，
+//      issue #423：那一行 + errno + 重启命令 + 重试，**不给「立即生成一次」**——它会覆盖最后一份好快照）
+//      / dashboard.json 解不出来且从未有过好快照（原生 loadError 那一行 + 重试，§49 追记
 //      `store-resilience-drawer`）/ 正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
 //   2. <html lang> 与 document.title 随语言与当前页同步（原生 installTitleSink：「Zelin's AI Assistant — <页>」，pageTitles.ts）；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
@@ -132,7 +134,7 @@ export function BoardMissingState() {
 
 export function AppShell({ searchSlot, children }: AppShellProps) {
   const { language, text } = useI18n();
-  const { board, boardError, boardMissing, boardDecodeError, boardLoading } = useAppState();
+  const { board, boardError, boardMissing, boardDecodeError, boardUnreadable, boardLoading } = useAppState();
   const page = readPage(useRoute()); // D40：换页不重载，页从路由订阅里来
   const isBoard = page === "board";
   const readsBoard = BOARD_FED_PAGES.has(page);
@@ -162,6 +164,28 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
     // server 在、dashboard.json 不在（404）：不是离线——看板页 = 原生 PipelineEmptyStateView + composer；
     // 回收站 / 永久性完成 / 会议纪要 = 空列表（原生 TrashPageView 读 `dashboard?.trash ?? []`，健康横幅照常说话）
     content = isBoard ? <BoardMissingState /> : children;
+  } else if (boardUnreadable) {
+    // 从未加载成功 + 文件在、server 读不动（503 BOARD_UNREADABLE，§49 追记 2026-09-18 / issue #423）：
+    // **绝不复用 BoardMissingState**——它给的「立即生成一次」会 POST /api/setup/seed-dashboard 拿一份可能零卡的
+    // 看板原子替换掉最后一份好快照（registry 对读不动的卡片文件静默跳过），在一台只是读不动的机器上那是数据丢失。
+    // 四个 BOARD_FED_PAGES 同此一态：读不动时把回收站 / 永久性完成 / 会议纪要渲染成空列表是同一句谎话。
+    content = (
+      <div className="shell-center">
+        <EmptyState
+          icon={<WarningIcon />}
+          title={boardUnreadable}
+          hint={text(
+            "文件在那里，但后台服务这个进程读不动它（权限 / I-O；上面的 errno 是这次读真正拿到的）。先重启看板服务：launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.server；读得动之后本页自动恢复。",
+            "The file is there, but this server process can't read it (permissions / I-O; the errno above is what this read actually got). Restart the board server first: launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.server — this page recovers once the read succeeds.",
+          )}
+          action={
+            <button type="button" className="shell-button" onClick={() => void refreshBoard()}>
+              {text("重试", "Retry")}
+            </button>
+          }
+        />
+      </div>
+    );
   } else if (boardDecodeError) {
     // 从未加载成功 + server 答了但 dashboard.json 解不出来（§49 追记 `store-resilience-drawer`）：原生 loadError 那一行
     // + 重试；不是离线（server 在跑），不借「连不上」说话——有旧快照时同一句话由 ErrorBanner 的 warning 变体说

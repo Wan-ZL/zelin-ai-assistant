@@ -87,6 +87,56 @@ describe("describeHealth", () => {
     expect(d?.detail).toContain("bash install.sh");
     expect(d?.detail).not.toContain("launchctl"); // 命令住可复制的「手动命令：」行，不在句子里
   });
+
+  // §47.4 追记 2026-09-18（issue #423）：dashboard == null 有两种原因，此前一律说「从未生成」
+  it("stale without a board says 'never generated' only when nobody was denied a read", () => {
+    const d = describeHealth(snap({ verdict: "stale", heartbeat: null, dashboard: null }), en);
+    expect(d?.detail).toContain("The board was never generated");
+  });
+
+  it("stale + a read denial says the board can't be read (with the errno), not 'never generated'", () => {
+    const d = describeHealth(
+      snap({
+        verdict: "stale",
+        heartbeat: null,
+        dashboard: null,
+        dashboard_error: { path: "/x/state/dashboard.json", errno: 1, strerror: "Operation not permitted" },
+      }),
+      en,
+    );
+    expect(d?.detail).toContain("can't be read");
+    expect(d?.detail).toContain("errno 1");
+    expect(d?.detail).not.toContain("never generated");   // 文件在，没人查过它在不在
+  });
+
+  it("a read denial NEVER outranks stalled / failing — those are the more urgent truths", () => {
+    const denial = { path: "/x", errno: 1, strerror: "Operation not permitted" };
+    const stalled = describeHealth(
+      snap({
+        verdict: "stalled",
+        heartbeat: { age_s: 3600, phase: "dispatch", pid: 1, interval: 10, stale_after_s: 90, stale: true },
+        dashboard: null,
+        dashboard_error: denial,
+      }),
+      en,
+    );
+    expect(stalled?.title).toBe("Background service is stuck");
+    const failing = describeHealth(
+      snap({ verdict: "failing", dashboard: null, dashboard_error: denial, loop_health: { consecutive_failures: 4, last_error: "boom" } }),
+      en,
+    );
+    expect(failing?.title).toBe("Background service crashes every pass");
+  });
+
+  it("does NOT grow a banner of its own for a read denial on an otherwise healthy pipeline", () => {
+    // 看板页那句话由 §49 追记 2026-09-18 的 boardUnreadable 面说；两条横幅说同一句 =
+    // §47.4 读者 3 明令禁止的「同一信息双份」
+    const d = describeHealth(
+      snap({ verdict: "ok", dashboard: null, dashboard_error: { path: "/x", errno: 1, strerror: "x" } }),
+      en,
+    );
+    expect(d).toBeNull();
+  });
 });
 
 describe("<PipelineBanner>", () => {

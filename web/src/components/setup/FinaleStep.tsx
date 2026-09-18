@@ -154,7 +154,10 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
       : { key: "daemon", state: "fail", name: text("后台服务", "Background service"), detail: text("没有运行——批准的卡片不会被执行", "Not running — approved cards won't execute"),
         fix: { label: fixingDaemon ? text("启动中…", "Starting…") : text("启动后台服务", "Start it"), onClick: repair.run } });
 
-  // 首次数据
+  // 首次数据。§47.4 追记 2026-09-18（issue #423）：dashboard == null 有两种原因，此前一律说「还没有」并给播种按钮——
+  // 文件在、只是读不动时那句是假话，而那颗按钮会拿一份**可能零卡**的看板原子替换掉最后一份好快照（registry 对读不动的
+  // 卡片文件是静默跳过），在一台只是读不动的机器上那是数据丢失。所以读被拒时说实话并**撤掉 fix**：播种治不了权限。
+  const dashDenied = health ? health.dashboard_error : null;
   rows.push(dashboard === undefined
     ? { key: "data", state: "checking", name: text("首次数据", "First data"), detail: text("检测中…", "Checking…") }
     : dashboard
@@ -162,8 +165,14 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
         detail: typeof dashboard.age_s === "number"
           ? <><span>{text("已生成(", "Generated (")}</span><RelativeTime epoch={Date.now() / 1000 - dashboard.age_s} /><span>)</span></>
           : text("已生成", "Generated") }
-      : { key: "data", state: "fail", name: text("首次数据", "First data"), detail: text("还没有——后台服务启动后约 10 秒自动生成", "Not yet — appears ~10 s after the background service starts"),
-        fix: { label: seeding ? text("生成中…", "Seeding…") : text("立即生成一次", "Generate now"), onClick: () => { if (!seeding) void seed(); } } });
+      : dashDenied
+        ? { key: "data", state: "fail", name: text("首次数据", "First data"),
+          detail: text(
+            `看板文件读不出来（errno ${dashDenied.errno}：${dashDenied.strerror ?? "?"}）——文件在那里，后台服务读不动它；生成一次治不了这个，先修权限`,
+            `The board file can't be read (errno ${dashDenied.errno}: ${dashDenied.strerror ?? "?"}) — the file is there but the service can't read it; seeding won't fix that, fix access first`,
+          ) }
+        : { key: "data", state: "fail", name: text("首次数据", "First data"), detail: text("还没有——后台服务启动后约 10 秒自动生成", "Not yet — appears ~10 s after the background service starts"),
+          fix: { label: seeding ? text("生成中…", "Seeding…") : text("立即生成一次", "Generate now"), onClick: () => { if (!seeding) void seed(); } } });
 
   // 定时任务磁盘权限（§25 cron FDA 探针，真相 = 真 cron 跑出来的 state/cron_probe.json）
   const cronName = text("定时任务磁盘权限", "Cron disk access");
