@@ -51,9 +51,8 @@ beforeEach(() => {
 });
 
 describe("isBoardUnreadableError", () => {
-  it("is a 503 BOARD_UNREADABLE (or a 503 whose envelope body did not parse) — and nothing else", () => {
+  it("is a 503 BOARD_UNREADABLE — and nothing else", () => {
     expect(isBoardUnreadableError(unreadable())).toBe(true);
-    expect(isBoardUnreadableError(unreadableWithBrokenEnvelope())).toBe(true);
     expect(isBoardUnreadableError(notFound())).toBe(false);
     expect(isBoardUnreadableError(readFailed())).toBe(false);
     expect(isBoardUnreadableError(invalidJson())).toBe(false);
@@ -64,6 +63,17 @@ describe("isBoardUnreadableError", () => {
   it("does NOT claim the board is unreadable for the surface's other 503 (SHELL_UNAVAILABLE, §68.7)", () => {
     // 裸 `status === 503` 会把「壳没在跑」说成「看板读不动」——正是本追记要修的那类谎话
     expect(isBoardUnreadableError(shellUnavailable())).toBe(false);
+  });
+
+  it("does NOT claim it for a 503 with no envelope at all (proxy / half-written response)", async () => {
+    // 那种 503 连 errno 都没有，说「看板文件读不出来」同样是没查就断言；
+    // 它继续落 boardError——对一个网关 503，「连不上」才是更近的真话
+    expect(isBoardUnreadableError(unreadableWithBrokenEnvelope())).toBe(false);
+    vi.mocked(fetchBoard).mockRejectedValueOnce(unreadableWithBrokenEnvelope());
+    await refreshBoard();
+    const s = getState();
+    expect(s.boardUnreadable).toBeNull();
+    expect(s.boardError).not.toBeNull();
   });
 });
 
@@ -104,29 +114,54 @@ describe("refreshBoard on a 503 BOARD_UNREADABLE", () => {
 });
 
 describe("the four board states are mutually exclusive — one sentence at a time", () => {
-  it("unreadable → missing → offline → decode → success each clears the other three", async () => {
+  // 每一次转移都**从 boardUnreadable 已置位的状态出发**：走一条 unreadable→A→unreadable→B… 的链，
+  // 顺着走一遍（unreadable→missing→offline→decode→success）会让后两步的 `toBeNull()` 在入口就已经是
+  // null，那两条断言永远不可能红——删掉对应的清理代码照样全绿（本轮 review 实测）。
+  async function enterUnreadable() {
     vi.mocked(fetchBoard).mockRejectedValueOnce(unreadable());
     await refreshBoard();
     expect(getState().boardUnreadable).not.toBeNull();
+  }
 
+  it("404 entered from unreadable clears boardUnreadable (and blanks the snapshot)", async () => {
+    await enterUnreadable();
     vi.mocked(fetchBoard).mockRejectedValueOnce(notFound());
     await refreshBoard();
-    expect(getState().boardMissing).toBe(true);
-    expect(getState().boardUnreadable).toBeNull();
+    const s = getState();
+    expect(s.boardMissing).toBe(true);
+    expect(s.boardUnreadable).toBeNull();
+    expect(s.boardError).toBeNull();
+    expect(s.boardDecodeError).toBeNull();
+  });
 
+  it("going offline from unreadable clears boardUnreadable", async () => {
+    await enterUnreadable();
     vi.mocked(fetchBoard).mockRejectedValueOnce(readFailed());
     await refreshBoard();
-    expect(getState().boardError).not.toBeNull();
-    expect(getState().boardUnreadable).toBeNull();
+    const s = getState();
+    expect(s.boardError).not.toBeNull();
+    expect(s.boardUnreadable).toBeNull();
+    expect(s.boardMissing).toBe(false);
+    expect(s.boardDecodeError).toBeNull();
+  });
 
+  it("a decode failure entered from unreadable clears boardUnreadable", async () => {
+    await enterUnreadable();
     vi.mocked(fetchBoard).mockRejectedValueOnce(invalidJson());
     await refreshBoard();
-    expect(getState().boardDecodeError).not.toBeNull();
-    expect(getState().boardUnreadable).toBeNull();
+    const s = getState();
+    expect(s.boardDecodeError).not.toBeNull();
+    expect(s.boardUnreadable).toBeNull();
+    expect(s.boardError).toBeNull();
+    expect(s.boardMissing).toBe(false);
+  });
 
+  it("a successful read entered from unreadable clears boardUnreadable", async () => {
+    await enterUnreadable();
     vi.mocked(fetchBoard).mockResolvedValueOnce(BOARD);
     await refreshBoard();
     const s = getState();
+    expect(s.board).toEqual(BOARD);
     expect([s.boardUnreadable, s.boardError, s.boardDecodeError]).toEqual([null, null, null]);
     expect(s.boardMissing).toBe(false);
   });

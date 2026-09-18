@@ -174,9 +174,12 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
         <EmptyState
           icon={<WarningIcon />}
           title={boardUnreadable}
+          // 只说已知的：那个 errno（标题里就是它）。**不说「文件在」**——server 那一侧刻意不断言存在
+          // （ELOOP / ENOTDIR / ENAMETOOLONG 那几路谁也没查过），客户端也不许替它断言。
+          // 修法命令不揉进句子（§47.4 追记 2026-09-05「修法命令出句入行」）：本态给的是「重试」。
           hint={text(
-            "文件在那里，但后台服务这个进程读不动它（权限 / I-O；上面的 errno 是这次读真正拿到的）。先重启看板服务：launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.server；读得动之后本页自动恢复。",
-            "The file is there, but this server process can't read it (permissions / I-O; the errno above is what this read actually got). Restart the board server first: launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.server — this page recovers once the read succeeds.",
+            "后台服务这个进程读不动看板文件（权限 / I-O 类；标题里的 errno 就是这次读真正拿到的）。修好访问权限后点「重试」，本页即恢复；设置 → 依赖检查里也能看到同一个 errno。",
+            "This server process could not read the board file (a permissions / I-O condition; the errno in the title is what this read actually got). Fix access, then hit Retry and this page recovers; the same errno is in Settings → Dependency check.",
           )}
           action={
             <button type="button" className="shell-button" onClick={() => void refreshBoard()}>
@@ -230,8 +233,11 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
     );
   }
 
-  // 看板页的「没写出数据」空态自带「启动后台服务」——健康横幅同一句话不说两遍（原生 .missing 归 PipelineEmptyStateView）
-  const pipelineBannerMuted = isBoard && !board && boardMissing;
+  // 看板页的「没写出数据」空态自带「启动后台服务」——健康横幅同一句话不说两遍（原生 .missing 归 PipelineEmptyStateView）。
+  // **读不动时也闭嘴**（§49 追记 2026-09-18）：`state/` 整个读不动时心跳也 stat 不到 → verdict `stale`，
+  // 横幅会同时说「后台服务没在运行」并给一颗「启动后台服务」——对一个权限问题那是**错的修法**，
+  // 而看板面已经带着 errno 在说真话了。这一条不限 isBoard：任何页上那颗按钮都指错方向。
+  const pipelineBannerMuted = boardUnreadable != null || (isBoard && !board && boardMissing);
 
   return (
     <div className="shell">

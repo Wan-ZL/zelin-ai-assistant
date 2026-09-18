@@ -158,6 +158,11 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   // 文件在、只是读不动时那句是假话，而那颗按钮会拿一份**可能零卡**的看板原子替换掉最后一份好快照（registry 对读不动的
   // 卡片文件是静默跳过），在一台只是读不动的机器上那是数据丢失。所以读被拒时说实话并**撤掉 fix**：播种治不了权限。
   const dashDenied = health ? health.dashboard_error : null;
+  // 已知的那一点：errno（没有就退到 strerror）。两者都缺 → 只说读不出来，不编数字
+  const dashDeniedWhy = dashDenied == null ? ""
+    : typeof dashDenied.errno === "number"
+      ? `errno ${dashDenied.errno}${dashDenied.strerror ? ": " + dashDenied.strerror : ""}`
+      : (dashDenied.strerror ?? "");
   rows.push(dashboard === undefined
     ? { key: "data", state: "checking", name: text("首次数据", "First data"), detail: text("检测中…", "Checking…") }
     : dashboard
@@ -166,10 +171,11 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
           ? <><span>{text("已生成(", "Generated (")}</span><RelativeTime epoch={Date.now() / 1000 - dashboard.age_s} /><span>)</span></>
           : text("已生成", "Generated") }
       : dashDenied
+        // errno 可能是 null（裸 OSError）→ 退到 strerror，永不渲染「errno null」；也不替 server 断言「文件在」
         ? { key: "data", state: "fail", name: text("首次数据", "First data"),
           detail: text(
-            `看板文件读不出来（errno ${dashDenied.errno}：${dashDenied.strerror ?? "?"}）——文件在那里，后台服务读不动它；生成一次治不了这个，先修权限`,
-            `The board file can't be read (errno ${dashDenied.errno}: ${dashDenied.strerror ?? "?"}) — the file is there but the service can't read it; seeding won't fix that, fix access first`,
+            `看板文件读不出来（${dashDeniedWhy}）——后台服务读不动它；生成一次治不了这个，先修访问权限`,
+            `The board file can't be read (${dashDeniedWhy}) — the service could not read it; seeding won't fix that, fix access first`,
           ) }
         : { key: "data", state: "fail", name: text("首次数据", "First data"), detail: text("还没有——后台服务启动后约 10 秒自动生成", "Not yet — appears ~10 s after the background service starts"),
           fix: { label: seeding ? text("生成中…", "Seeding…") : text("立即生成一次", "Generate now"), onClick: () => { if (!seeding) void seed(); } } });

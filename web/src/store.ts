@@ -313,13 +313,16 @@ export function isBoardDecodeError(error: unknown): boolean {
   return error instanceof ApiError && error.code === "READ_FAILED" && error.status >= 200 && error.status < 300;
 }
 
-/** `GET /api/board` 答 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18，issue #423）——文件在、server 读不动。
- *  `REQUEST_FAILED` 是 envelope 体自己解不出来时 api.request 的退化码（非 2xx 的非 JSON 体），同样算；
- *  **刻意不写成裸 `status === 503`**——本面另一枚 503 是 §68.7 的 `SHELL_UNAVAILABLE`，把它说成「看板读不动」
- *  就是本追记要修的那类谎话。导出供判例直测分类。 */
+/** `GET /api/board` 答 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18，issue #423）——server 读不动那个文件。
+ *  **只认这一个 code**，三条都是同一条理由（别做没查过的断言）：
+ *  - 裸 `status === 503` 会把 §68.7 的 `SHELL_UNAVAILABLE`（壳没在跑）说成「看板读不动」；
+ *  - envelope 体解不出来的 503（前面架了代理 / 半截响应，api.request 退化成 `REQUEST_FAILED`）**也不算**——
+ *    那种 503 连 errno 都没有，说「看板文件读不出来」同样是没查就断言；它继续落 `boardError`（「连不上」
+ *    对一个网关 503 才是更近的真话）。
+ *  导出供判例直测分类。 */
 export function isBoardUnreadableError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 503
-    && (error.code === "BOARD_UNREADABLE" || error.code === "REQUEST_FAILED");
+    && error.code === "BOARD_UNREADABLE";
 }
 
 /** 顶层形状校验（原生 `JSONDecoder().decode(Dashboard.self)` 的 web 版最小门）：必须是带字符串 `generated_at` 的对象。
@@ -368,13 +371,21 @@ function failBoardDecode(reason: string) {
   });
 }
 
-/** 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18）：文件在、读不动——**快照不动**（照 failBoardDecode 的韧性），
- *  一行 i18n 标题 + server 原句（带 errno / strerror）。另三态一并清掉：server 答了，既不是连不上、也不是文件不在、
- *  也不是内容坏了。 */
-function failBoardUnreadable(reason: string) {
+/** 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18）：读不动——**快照不动**（照 failBoardDecode 的韧性）。
+ *  句子由 **`details` 里的 errno / strerror** 拼，不是 server 那句 `message`：那句只说「see details.errno」，
+ *  照搬会让页面指着一个屏幕上根本没有的数字（本轮 review 抓到的原状）。errno 缺席（裸 OSError）→ 退到
+ *  strerror，再退到 server 原句——**永不渲染 `errno null`**。另三态一并清掉：server 答了，既不是连不上、
+ *  也不是文件不在、也不是内容坏了。 */
+function failBoardUnreadable(error: ApiError) {
   const { text } = getI18n(state.language);
+  const d = error.details as { errno?: number | null; strerror?: string | null } | undefined;
+  const errno = typeof d?.errno === "number" ? d.errno : null;
+  const why = typeof d?.strerror === "string" && d.strerror ? d.strerror : "";
+  const detail = errno != null
+    ? `errno ${errno}${why ? ": " + why : ""}`
+    : (why || error.message);
   setState({
-    boardUnreadable: text("看板文件读不出来: ", "The board file can't be read: ") + reason,
+    boardUnreadable: text("看板文件读不出来: ", "The board file can't be read: ") + detail,
     boardError: null,
     boardMissing: false,
     boardDecodeError: null,
@@ -419,7 +430,7 @@ export function refreshBoard(): Promise<void> {
       }
       // 读不动在断网之前判：503 是一次真回答，不是「拉不到」（§49 追记 2026-09-18）
       if (isBoardUnreadableError(error)) {
-        failBoardUnreadable((error as ApiError).message);
+        failBoardUnreadable(error as ApiError);
         return;
       }
       if (isBoardDecodeError(error)) {

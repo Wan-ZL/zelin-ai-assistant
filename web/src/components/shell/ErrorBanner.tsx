@@ -30,10 +30,12 @@ export function ErrorBanner() {
         "Reconnecting automatically — the board below is the last successfully loaded snapshot.",
       )
     : boardUnreadable
-      // 刻意不承诺自动重连：api.request 只重试**抛错**的 fetch，503 是一次真回答；看板也不轮询（只有 /api/health 轮）
+      // 刻意不承诺自动重连：api.request 只重试**抛错**的 fetch，503 是一次真回答；看板也不轮询（只有 /api/health 轮）。
+      // 也**不说「文件在」**（server 那侧刻意不断言存在），也**不说「点重试」**——本横幅没有按钮，
+      // 有快照时整页是正常看板；实际让它恢复的是下一次成功的读。
       ? text(
-          "下面显示的是最后一次成功加载的看板快照。文件在那里，只是这个进程读不动它——重启看板服务后点「重试」。",
-          "The board below is the last successfully loaded snapshot. The file is there; this process just can't read it — restart the board server, then retry.",
+          "下面显示的是最后一次成功加载的看板快照；后台服务这个进程读不动看板文件，修好访问权限后下一次读成功即恢复。",
+          "The board below is the last successfully loaded snapshot; this server process could not read the board file, and it recovers on the next successful read once access is fixed.",
         )
       : text(
           "下面显示的是最后一次成功加载的看板快照；后台服务下一次写出看板后自动恢复。",

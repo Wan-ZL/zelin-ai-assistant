@@ -172,30 +172,61 @@ class DashboardErrorTestCase(unittest.TestCase):
         self.assertIsNone(snap["dashboard"])
         self.assertIsNone(snap["dashboard_error"])
 
+    def _denied(self, exc: OSError):
+        """只拒 dashboard.json 那一次读，别把心跳与 loop_health 一起拒掉。
+
+        进程级 ``side_effect`` 会让三个文件一起读不到，于是 verdict 无论怎样都是
+        ``stale``——那样的 verdict 断言证不了任何东西（本轮 review 抓到的原状）。"""
+        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
+        real = Path.read_text
+
+        def only_dashboard(self_path, *a, **kw):
+            if self_path == self.dash:
+                raise exc
+            return real(self_path, *a, **kw)
+
+        with mock.patch.object(Path, "read_text", only_dashboard):
+            return health.snapshot(self.home, now=self.now)
+
     def test_a_read_denial_reports_path_errno_and_strerror(self):
         import errno as _errno
-        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
-        with mock.patch.object(
-                Path, "read_text",
-                side_effect=PermissionError(_errno.EPERM,
-                                            os.strerror(_errno.EPERM))):
-            snap = self._snap()
+        snap = self._denied(PermissionError(_errno.EPERM,
+                                            os.strerror(_errno.EPERM)))
         self.assertIsNone(snap["dashboard"])       # 既有键含义不变
         self.assertEqual(snap["dashboard_error"]["errno"], _errno.EPERM)
         self.assertEqual(snap["dashboard_error"]["path"], str(self.dash))
         self.assertIsInstance(snap["dashboard_error"]["strerror"], str)
 
-    def test_the_verdict_vocabulary_does_not_grow_a_sixth_value(self):
-        """读被拒**不**长第六个 verdict——读者 3 的 ``default: return null`` 会让
-        新 verdict 一个横幅都不渲染，``repairActd`` 还会把每次修复都报成超时。"""
+    def test_a_bare_oserror_is_a_denial_too_not_just_permissionerror(self):
+        """分界线是 ``OSError``，**不是** ``PermissionError``。
+
+        EIO / EISDIR / ELOOP 都是裸 ``OSError``（EISDIR 那枚是子类但也不是
+        ``PermissionError``）。把 except 收窄成 ``PermissionError`` 会让它们穿透
+        出去、``/api/health`` 变 500——而在加这条判例之前，那个收窄**一条判例都
+        不红**（本轮 review 实测 49 条全绿）。"""
         import errno as _errno
-        write_text(self.dash, json.dumps({"generated_at": _iso(self.now)}))
-        with mock.patch.object(
-                Path, "read_text",
-                side_effect=PermissionError(_errno.EACCES, "denied")):
-            snap = self._snap()
-        self.assertIn(snap["verdict"], ("stalled", "failing", "stale",
-                                        "unknown", "ok"))
+        for exc in (OSError(_errno.EIO, os.strerror(_errno.EIO)),
+                    IsADirectoryError(_errno.EISDIR, "is a directory"),
+                    OSError(_errno.ELOOP, os.strerror(_errno.ELOOP))):
+            with self.subTest(errno=exc.errno):
+                snap = self._denied(exc)           # 不抛出去就是判例的一半
+                self.assertEqual(snap["dashboard_error"]["errno"], exc.errno)
+                self.assertIsNone(snap["dashboard"])
+
+    def test_a_denial_alone_does_not_change_the_verdict(self):
+        """读被拒**不**长第六个 verdict，也不把一个活着的心跳说成别的。
+
+        读者 3 的 ``default: return null`` 会让新 verdict 一个横幅都不渲染，
+        ``repairActd`` 还会把每次一键修复都报成超时——所以这里钉**确切值** `ok`
+        （心跳新鲜、只有看板读不动），不是「在五个里面」那种恒真断言。"""
+        import errno as _errno
+        hb = self.home / "state" / "actd.heartbeat"
+        hb.write_text(json.dumps({"phase": "idle", "pid": 1, "interval": 10,
+                                  "stale_after_s": 90}), encoding="utf-8")
+        os.utime(hb, (self.now - 3, self.now - 3))
+        snap = self._denied(PermissionError(_errno.EACCES, "denied"))
+        self.assertEqual(snap["verdict"], "ok")
+        self.assertEqual(snap["dashboard_error"]["errno"], _errno.EACCES)
 
     def test_the_dashboard_is_read_exactly_once_per_snapshot(self):
         """§47.4「它只 stat 三个文件」：新键不许换来第二次读。"""

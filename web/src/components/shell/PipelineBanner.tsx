@@ -60,10 +60,17 @@ export function describeHealth(
       // 那是假话（server 没查过它在不在，只知道读被拒了）。errno 在场就照它说。这里**不新增分支**：那句话在看板页
       // 由 §49 追记的 boardUnreadable 面负责，两条横幅说同一句 = 本节明令禁止的「同一信息双份」。
       const denied = health.dashboard_error;
+      // errno 可能是 null（裸 OSError），别渲染成「errno null」——退到 strerror，再退到不带括号
+      const why = denied == null ? "" : typeof denied.errno === "number"
+        ? `（errno ${denied.errno}）`
+        : (denied.strerror ? `（${denied.strerror}）` : "");
+      const whyEn = denied == null ? "" : typeof denied.errno === "number"
+        ? ` (errno ${denied.errno})`
+        : (denied.strerror ? ` (${denied.strerror})` : "");
       const zhAge = mins != null ? `看板数据 ${mins} 分钟没更新`
-        : denied ? `看板数据读不出来（errno ${denied.errno}）` : "看板从未生成";
+        : denied ? `看板数据读不出来${why}` : "看板从未生成";
       const enAge = mins != null ? `Board data is ${mins} min old`
-        : denied ? `The board data can't be read (errno ${denied.errno})` : "The board was never generated";
+        : denied ? `The board data can't be read${whyEn}` : "The board was never generated";
       return {
         tone: "warning",
         title: text("后台服务没在运行", "Background service is not running"),

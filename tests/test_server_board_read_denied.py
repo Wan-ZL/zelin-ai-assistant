@@ -125,7 +125,9 @@ class ErrnoClassificationTestCase(unittest.TestCase):
         「在、但读不动」是一句没查就下的断言（宪法第 3 条），真相只有 errno。"""
         err = self._assert_denied(
             OSError(errno.ELOOP, os.strerror(errno.ELOOP)), errno.ELOOP)
-        for claim in ("exists", "is there", "present", "但文件在"):
+        # 消息是英文的，所以只用英文的断言词——中文 needle 在这里恒不命中，
+        # 那种「永远通不了也永远不红」的断言等于没写（本轮 review 抓到的原状）
+        for claim in ("exists", "is there", "is present", "still there"):
             self.assertNotIn(claim, err.message)
         self.assertIn("errno", err.message)
 
@@ -284,14 +286,61 @@ class ErrnoDiagnosticLineTestCase(unittest.TestCase):
         self.assertEqual(handler.sent[0][0], 503)
         self.assertEqual(handler.sent[0][1]["error"]["code"], "BOARD_UNREADABLE")
 
-    def test_the_access_log_sampler_is_a_separate_instance(self):
-        """诊断行的桶不许与访问日志的桶相撞（§54.2 的「桶数有界」仍对后者成立）。"""
-        self.assertIsNot(app._ERRNO_SAMPLER, app._POLL_SAMPLER)
+    def test_errno_none_is_written_as_a_question_mark_never_as_none(self):
+        """裸 ``OSError``（拿不到 errno）也要留一行——静默正是本 issue 的病。
+
+        而 ``strerror`` 为 None 时不许把字面 ``None`` 写进日志：读日志的人会在
+        「人类可读的原因」那一格看见一个 ``None``。"""
         handler = _FakeHandler()
+        bare = BoardUnreadableError(
+            "cannot read dashboard.json — see details.errno",
+            {"path": "/x/state/dashboard.json", "errno": None, "strerror": None})
         with mock.patch.object(app.time, "time", return_value=10.0):
-            handler._send_api_error(self._denial())
-        self.assertEqual(app._POLL_SAMPLER._seen.get(("errno:BOARD_UNREADABLE:13", 503)),
-                         None)
+            handler._send_api_error(bare)
+        self.assertEqual(len(handler.lines), 1)
+        self.assertIn("errno=?", handler.lines[0])
+        self.assertNotIn("None", handler.lines[0])
+        self.assertEqual(handler.sent[0][0], 503)
+
+    def test_verbatim_mode_reports_no_suppressed_count_but_loses_none(self):
+        """``ZAI_LOG_POLLS=1`` = 采样整个关掉：那时**不碰桶**。
+
+        没有东西在被压制，所以 verbatim 的行不带 suppressed 后缀；而旋钮打开之前
+        真被压住的那些条一条不丢——关回去之后的第一条把它们全报出来。日志从此
+        既不高报也不静默丢弃。"""
+        handler = _FakeHandler()
+        with mock.patch.object(app.time, "time",
+                               side_effect=[10.0, 11.0, 12.0, 13.0, 400.0]):
+            handler._send_api_error(self._denial())           # 首条，写
+            handler._send_api_error(self._denial())           # 窗内，真被压制 1
+            handler._send_api_error(self._denial())           # 窗内，真被压制 2
+            os.environ[app._LOG_POLLS_ENV] = "1"
+            handler._send_api_error(self._denial())           # verbatim，照写、不带后缀
+            os.environ.pop(app._LOG_POLLS_ENV, None)
+            handler._send_api_error(self._denial())           # 出窗，把那 2 条报出来
+        self.assertEqual(len(handler.lines), 3)
+        self.assertNotIn("suppressed", handler.lines[1])       # verbatim 那一行
+        self.assertIn("(+2 suppressed in the last 300s)", handler.lines[2])
+
+
+class SamplerIsolationTestCase(unittest.TestCase):
+    """诊断行的桶不许与访问日志的桶相撞（§54.2 的「桶数有界」仍对后者成立）。
+
+    刻意**不**在 setUp 里替换 ``_ERRNO_SAMPLER``——上面那组替换掉之后，
+    「两者不是同一个对象」就恒真了，连 ``_ERRNO_SAMPLER = _POLL_SAMPLER``
+    这种真事故也照样绿（本轮 review 实测）。"""
+
+    def test_the_two_samplers_are_distinct_module_globals(self):
+        self.assertIsNot(app._ERRNO_SAMPLER, app._POLL_SAMPLER)
+
+    def test_a_diagnostic_never_writes_into_the_access_log_buckets(self):
+        before = dict(app._POLL_SAMPLER._seen)
+        handler = _FakeHandler()
+        err = BoardUnreadableError("x", {"path": "/x", "errno": errno.EACCES,
+                                         "strerror": "denied"})
+        with mock.patch.object(app.time, "time", return_value=10.0):
+            handler._send_api_error(err)
+        self.assertEqual(dict(app._POLL_SAMPLER._seen), before)
 
 
 if __name__ == "__main__":

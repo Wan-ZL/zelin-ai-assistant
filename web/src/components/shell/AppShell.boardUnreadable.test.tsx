@@ -21,7 +21,9 @@ vi.mock("../../api", async (importOriginal) => {
 const fetchBoardMock = vi.mocked(fetchBoard);
 const fetchHealthMock = vi.mocked(fetchHealth);
 
-const UNREADABLE_LINE = "The board file can't be read: cannot read dashboard.json — see details.errno";
+// store 从 `details` 的 errno / strerror 拼这一句——**不是**照搬 server 那句「see details.errno」
+// （照搬会让页面指着一个屏幕上根本没有的数字，本轮 review 抓到的原状）
+const UNREADABLE_LINE = "The board file can't be read: errno 1: Operation not permitted";
 
 function makeBoard(): Board {
   return { generated_at: "2026-09-18T10:00:00Z", counts: {}, needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [] };
@@ -113,8 +115,58 @@ describe("AppShell · 看板文件读不动", () => {
 
     expect(screen.getByText("page-content")).toBeTruthy();   // 上一版看板仍是真话
     expect(screen.getByText(UNREADABLE_LINE)).toBeTruthy();
-    expect(screen.getByText(/this process just can't read it/)).toBeTruthy();
+    expect(screen.getByText(/could not read the board file/)).toBeTruthy();
     expect(screen.queryByText(/Reconnecting automatically/)).toBeNull();
+    // 有快照时本横幅没有按钮——别叫人「点重试」（review 抓到的原状）
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("the errno itself is on screen — the whole point of the issue", async () => {
+    fetchBoardMock.mockRejectedValue(unreadable());
+    await refreshBoard();
+    renderShell();
+    // 不是「see details.errno」那种指路，而是那个数字本身
+    expect(screen.getByText(/errno 1/)).toBeTruthy();
+    expect(screen.getByText(/Operation not permitted/)).toBeTruthy();
+    expect(screen.queryByText(/see details\.errno/)).toBeNull();
+  });
+
+  it("a denial whose details carry no errno degrades to the server sentence, never 'errno null'", async () => {
+    // 裸 OSError（拿不到号码）——server 仍诚实答 503 带 errno:null，客户端不许编一个数字
+    fetchBoardMock.mockRejectedValue(new ApiError(503, {
+      error: { code: "BOARD_UNREADABLE", message: "cannot read dashboard.json — see details.errno",
+               details: { path: "/x", errno: null, strerror: null } },
+    }));
+    await refreshBoard();
+    renderShell();
+    expect(screen.queryByText(/errno null/)).toBeNull();
+    expect(screen.getByText(/The board file can't be read/)).toBeTruthy();
+  });
+
+  it("neither surface claims the file exists — the server deliberately refused to assert that", async () => {
+    // ELOOP / ENOTDIR / ENAMETOOLONG 都落在 503 这一臂，那几路谁也没查过文件在不在
+    fetchBoardMock.mockRejectedValue(unreadable());
+    await refreshBoard();
+    renderShell();
+    expect(screen.queryByText(/The file is there/)).toBeNull();
+  });
+
+  it("the health banner stays quiet: its 'Start service' remedy is wrong for a permission problem", async () => {
+    // state/ 整个读不动时心跳也 stat 不到 → verdict stale，横幅会说「后台服务没在运行」+ 给一颗
+    // 「启动后台服务」——对一个权限问题那是错的修法，而看板面已经带着 errno 在说真话了
+    fetchHealthMock.mockResolvedValue({
+      ...okHealthWithDenial,
+      verdict: "stale",
+      heartbeat: null,
+    });
+    await refreshHealth();
+    fetchBoardMock.mockRejectedValue(unreadable());
+    await refreshBoard();
+    renderShell();
+    expect(screen.queryByText("Background service is not running")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start service" })).toBeNull();
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);   // 整页态自己说话，没有横幅
+    expect(screen.getByText(UNREADABLE_LINE)).toBeTruthy();
   });
 
   it("恰好一条 alert（同一句话不出现两遍）——健康快照带 dashboard_error 时也一样", async () => {
