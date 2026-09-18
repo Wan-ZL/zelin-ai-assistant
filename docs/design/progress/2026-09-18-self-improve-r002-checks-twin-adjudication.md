@@ -146,7 +146,7 @@ never carry these module names"，据此归成等价体。#401 的
    #401 的进度台账还自我翻案了一次（第一遍把 `phase` 那 66 体的消融做错，保留了 `PHASE_GOLDEN` 当期望值，
    正确消融后 66 体全存活），并据复核意见把 `inline == PHASE_GOLDEN[2] + PHASE_GOLDEN[3]` 这个**有序**
    断言改成比集合 —— 档内次序哪份文档都没定，原写法会让两行互换这种纯装饰改动假红。
-6. **归属行**：#391 的 PR 正文尾部带 `🤖 Generated with Claude Code`，与 owner 2026-07-29 立的
+6. **归属行**：#391 的 PR 正文尾部留了一行 AI 生成署名（Claude Code 的默认尾注），与 owner 2026-07-29 立的
    「PR / commit 一律不得出现 AI 归属」冲突；#401 没有。（只是一行，但既然要关一个，顺便记上。）
 
 唯一的反向考量：#391 的 438 判例。若 owner 想要那条不变量，它是 #401 合车后的两行 follow-up，

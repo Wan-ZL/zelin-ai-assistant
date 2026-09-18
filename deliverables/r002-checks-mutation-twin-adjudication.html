@@ -60,29 +60,31 @@
 
 <header>
   <h1>checks.py 变异存活体 404 体：两个孪生 PR 的实测仲裁</h1>
-  <div class="sub">卡 R-002 · 分支 <code>ai/self-improve/R-002</code> · 2026-09-18 ·
+  <div class="sub">卡 R-002 · 分支 <code>ai/self-improve/R-002-checks-mutation-twins</code> · draft PR <strong>#430</strong> · 2026-09-18 ·
   仲裁对象 = PR <strong>#401</strong>（<code>R-301</code>）vs PR <strong>#391</strong>（<code>R-217</code>）</div>
 </header>
 
 <div class="card warn">
   <h3>TL;DR</h3>
-  <p>这张卡是<strong>同一批 404 个存活体的第三张</strong>。原因不是有人偷懒 —— 是
-  <strong>前两张的 PR 都还没合车</strong>：main 的靶区映射没变 ⇒ 夜报每晚复述同一批存活体 ⇒
-  daily_loop 继续铸卡。所以本轮交付的不是第三套判例，而是一次<strong>实测仲裁</strong>。</p>
+  <p>这张卡是<strong>同一批 404 个存活体的第四张</strong>。原因不是有人偷懒 —— 是
+  <strong>前几张的 PR 都还没合车</strong>：main 的靶区映射没变 ⇒ 夜报每晚复述同一批存活体 ⇒
+  daily_loop 继续铸卡。所以本轮交付的不是第四套判例，而是一次<strong>实测仲裁</strong>。
+  （窗内另一个并发 session 独立收敛到了同一做法，开出 <strong>#429</strong> —— 它与本 PR
+  互为孪生，测试路径同样与 #401 逐字节一致；详见 <a href="#s10">§10</a>。）</p>
   <p>我写了个按 <code>site_id</code> 逐个施加变异体的探针（每 worker 一份独立 workspace），
   对三个分支跑同一批 404 体。<strong>控制组（current main）404 体全部存活、0 杀，夜报被逐字复现</strong>；
   两个 PR 的自报数字<strong>全部逐字验证</strong>，连留下的存活体身份都对得上 ——
   <strong>两份报告都诚实</strong>，杀伤只差 1 体（401 vs 400）。</p>
   <p>所以胜负不在杀伤数上，而在<a href="#s5b">一次前向兼容实测</a>：把那条已确诊缺陷的一行修法真打上去，
   <strong>#401 四份判例全绿，#391 有两条判例变红</strong> —— 后者把今天的错误行为钉死了。</p>
-  <p><strong>建议：合 #401，关 #391，关本 PR。</strong> 本分支的 hunk 与 #401 逐字节相同，所以
+  <p><strong>建议：合 #401；关 #391、#429 和本 PR。</strong> 本分支的 hunk 与 #401 逐字节相同，所以
   #401 一合，本 PR 的 diff 自动变空、直接关掉即可。</p>
 </div>
 
 <nav>
   <strong>目录</strong>
   <ol>
-    <li><a href="#s1">为什么会有第三张卡</a></li>
+    <li><a href="#s1">为什么会有第四张卡</a></li>
     <li><a href="#s2">判决的地基：三件先验事实（含一个 zsh 坑）</a></li>
     <li><a href="#s3">探针与控制组</a></li>
     <li><a href="#s4">实测对照</a></li>
@@ -92,16 +94,17 @@
     <li><a href="#s7">建议与处置命令</a></li>
     <li><a href="#s8">门与 DoD 逐条对照</a></li>
     <li><a href="#s9">带过来的三处待拍板缺陷</a></li>
+    <li><a href="#s10">超出本卡范围但你应该知道的：重复扇出与分支撞车</a></li>
   </ol>
 </nav>
 
-<h2 id="s1">1 · 为什么会有第三张卡</h2>
+<h2 id="s1">1 · 为什么会有第四张卡</h2>
 
 <p>夜报（artifact <code>mutation-report</code>，run <code>35232295853</code>，2026-09-17T15:00Z）把
 <code>skills/test-code/scripts/checks.py</code> 报成 <strong>839 位点 / 435 杀 / 404 活 / 51.8%</strong>，
 <code>executed = 839</code> —— 全量跑满，不存在「只跑了半张地图」的问题。</p>
 
-<p>按 R-304 立下的规矩，动手第一条命令是 <code>gh pr list --state open</code>。查到<strong>两个</strong>孪生：</p>
+<p>按 R-304 立下的规矩，动手第一条命令是 <code>gh pr list --state open</code>。当时查到<strong>两个</strong>孪生（窗内又多了第三个 #429，见 <a href="#s10">§10</a>）：</p>
 
 <table>
   <thead><tr><th>PR</th><th>分支</th><th>自报</th><th>形制</th><th>状态</th></tr></thead>
@@ -119,9 +122,9 @@
   <strong>⭐ 系统性结论</strong>：<code>mutate.py</code> 只在模块的 <em>content hash</em> 或
   <em>映射测试集 hash</em> 变化时作废缓存。两个 PR 都没合 ⇒ main 上两个 hash 都没变 ⇒
   夜报永远报同一批 404 ⇒ 循环永远铸卡。判「这张卡是不是重复劳动」，看的是
-  <strong>main 的靶区映射有没有变</strong>，不是看存活数变没变。同日
-  <code>.claude/worktrees/</code> 里还有一个 <code>ai/self-improve/R-8153</code>「checks-mutants」
-  停在 main HEAD 上 —— 第四张大概在路上。
+  <strong>main 的靶区映射有没有变</strong>，不是看存活数变没变。本轮开工时
+  <code>.claude/worktrees/</code> 里已有一个 <code>ai/self-improve/R-8153</code>「checks-mutants」
+  停在 main HEAD 上；窗内它果然开出了 <strong>#429</strong>，做法与本 PR 完全相同。
 </div>
 
 <h2 id="s2">2 · 判决的地基：三件先验事实</h2>
@@ -347,7 +350,7 @@ CONFLICT (content): Merge conflict in qa/mutation_targets.toml</pre>
       保留了 <code>PHASE_GOLDEN</code> 当期望值；正确消融后 66 体全存活），并据复核意见把
       <code>inline == PHASE_GOLDEN[2] + PHASE_GOLDEN[3]</code> 这个<strong>有序</strong>断言改成比集合 ——
       档内次序哪份文档都没定，原写法会让两行互换这种纯装饰改动假红。</li>
-    <li><strong>归属行</strong>：#391 的 PR 正文尾部带 <code>🤖 Generated with Claude Code</code>，
+    <li><strong>归属行</strong>：#391 的 PR 正文尾部留了一行 AI 生成署名（Claude Code 的默认尾注），
       与 owner 2026-07-29 立的「PR / commit 一律不得出现 AI 归属」冲突；#401 没有。
       <span class="muted">只是一行，但既然要关一个，顺便记上。</span></li>
   </ol>
@@ -358,15 +361,15 @@ CONFLICT (content): Merge conflict in qa/mutation_targets.toml</pre>
 gh pr ready 401 &amp;&amp; gh pr merge 401 --squash
 
 # 2) 关败者与本 PR（#401 一合，本 PR 的 diff 自动变空）
-gh pr close 391 --comment "superseded by #401; see deliverables/r002-checks-mutation-twin-adjudication.html"
-gh pr close &lt;本 PR 号&gt;
+gh pr close 391 && gh pr close 429 && gh pr close 430
 
 # 3) 让夜报重判（靶区映射一变，mutate.py 自动作废这个模块的旧账，不用手动清 state）
 #    下一夜的 mutation-nightly 会把 checks.py 报成 836/839</pre>
 
 <div class="star">
   <strong>⭐ 这条决定不做的后果是具体的</strong>：<code>Closes</code> 不触发、映射不变、夜报继续报 404、
-  daily_loop 继续为同一个模块铸卡。这已经是第三张；<code>R-8153</code> 的 worktree 已经在 main HEAD 上了。
+  daily_loop 继续为同一个模块铸卡。这已经是第四张，而且窗内 <code>R-8153</code> 又开出了 #429
+  —— 同一个洞至今八次独立尝试（<a href="#s10">§10</a>）。
 </div>
 
 <h2 id="s8">8 · 门与 DoD 逐条对照</h2>
@@ -434,8 +437,49 @@ gh pr close &lt;本 PR 号&gt;
   还是保持现状并给 docstring 加个例外。</p>
 </div>
 
+<h2 id="s10">10 · 超出本卡范围，但你应该知道的</h2>
+
+<div class="card bad">
+  <h3>同一个测试网洞，至今八次独立尝试<span class="tag b">循环扇出</span></h3>
+  <p><code>ListAgents</code> 在本轮窗内（2026-09-18 约 06:10 本地）显示
+  <strong>五个并发 session 在做同一批 404 个存活体</strong>，横跨三个卡号：
+  <code>R-002</code>（我）、<code>R-002</code>（另一个，早 28 分钟起）、<code>R-001</code>、
+  <code>R-8153</code> ×2。加上已开的 #391 / #401，以及窗内新开的
+  <strong>#429</strong>（<code>R-8153</code>）和本 PR，同一个洞被尝试了八次。</p>
+  <p>同一现象在别处也在发生：<strong>#425</strong>（<code>R-306</code>）与 <strong>#427</strong>
+  （<code>R-002</code>）是同一个 Filters-popover 修复的两份；<strong>#426</strong>
+  （<code>R-001</code>）与 <strong>#428</strong>（<code>R-8152</code>）是同一张
+  「#405 required checks 绿」回执的两份。</p>
+  <p>这不是判例质量问题，是循环的<strong>扇出与卡号分配</strong>问题：卡号被跨卡复用，
+  同一张卡又会被同时派给多个 session。</p>
+</div>
+
+<div class="card warn">
+  <h3>分支名撞车：本 PR 没用卡面指定的分支<span class="tag w">需知情</span></h3>
+  <p>卡面要求分支 <code>ai/self-improve/R-002</code>。但当我准备推送时，该分支上已经有
+  <strong>另一张同样拿到 R-002 卡号、内容完全无关</strong>的交付（Filters popover 的 Escape 修复，
+  已开 draft PR <strong>#427</strong>），而且仍在被活跃推送（窗内 head 从 <code>755e26e7</code>
+  变到 <code>05d7ec1b</code>）。<strong>我没有覆盖别人的交付</strong>，改推
+  <code>ai/self-improve/R-002-checks-mutation-twins</code>。</p>
+  <p>按 §65 的分支名验收，本卡大概会被 park —— 而这恰好是正确结果，因为本 PR 的建议本来就是
+  「合 #401、把包括本 PR 在内的其余几个关掉」。</p>
+</div>
+
+<div class="card good">
+  <h3>顺带复核：<code>coverage_inventory</code> 的 <code>§N</code> 登记<span class="tag g">实测安全</span></h3>
+  <p><code>qa/coverage_inventory.json</code> 的 <code>contract:§N</code> proof 行 =
+  <code>"unittest:" + ",".join(sorted(modules)[:4])</code>，而
+  <code>coverage_inventory.py</code> 把测试文件里<strong>任何位置</strong>的 <code>§N</code>
+  都算作登记（<code>read_text</code> 读整份文件）。本轮四份判例引了 §7 / §57 / §58，
+  所以我用它自己的 <code>citation_index</code> / <code>unittest_proof</code> 算过两遍：
+  那三节分别已有 <strong>11 / 30 / 41</strong> 个引用模块（去掉本轮的仍有 10 / 26 / 37），
+  远超 cap 4，且本轮模块名排序都落在前四名之后 ⇒ <strong>proof 字符串逐字未变</strong>，
+  <code>tests/test_coverage_inventory.py</code>（32 tests）实跑 <strong>OK</strong>。
+  #401 与 #429 同理安全。</p>
+</div>
+
 <footer>
-  R-002 · 分支 <code>ai/self-improve/R-002</code> · 交付物
+  R-002 · 分支 <code>ai/self-improve/R-002-checks-mutation-twins</code>（卡面那个已被无关卡占用）· 交付物
   <code>deliverables/r002-checks-mutation-twin-adjudication.html</code> ·
   仲裁全文与探针做法
   <code>docs/design/progress/2026-09-18-self-improve-r002-checks-twin-adjudication.md</code> ·
