@@ -452,6 +452,18 @@ traceback 上色，制造假红。</p>
   那一刻就开始跑，把<strong>在它之前跑的别的模块</strong>的耗时也记到自己账上。</p>
   <p>我逐个数过：<code>tests/integration/</code> 里用 <code>_T0</code> 的 14 个模块，
   <strong>13 个都在 <code>setUpModule</code> 里重置</strong>，只有它没有。</p>
+  <p><strong>而且正确写法在这个仓库里是有意为之、还写了注释的</strong>——所以那不是风格分歧，是漏了一处。
+  隔壁 <code>tests/integration/test_auto_deploy_defer_episode.py</code> 第 36–40 行：</p>
+  <pre><code>BUDGET_SECONDS = 150  # 13 runs of real bash+git: ~25 s on a 2024 Mac standalone; ~6x margin
+_T0 = [0.0]
+
+def setUpModule():
+    _T0[0] = time.monotonic()  # clocked from when THIS module runs, not from import</code></pre>
+  <p>最后那句注释正是 <code>test_auto_deploy_script.py</code> 缺的东西。
+  <span class="mono-sm">（顺带一条本轮的实证：本机跑全量时 <em>这个</em> 模块的
+  <code>tearDownModule</code> 也报错了——它 150 s 的预算、单独跑 ~25 s、6 倍余量，
+  在并发负载下照样被撑破。所以「预算被撑破」在本机只说明机器忙，不说明判例坏；
+  但那与上面的账是两件事：它算的是自己的时间，<code>test_auto_deploy_script.py</code> 算的是别人的。）</span></p>
   <pre><code>NO-RESET test_auto_deploy_script.py      &lt;-- 唯一一个
 RESETS   test_auto_deploy_defer_episode.py
 RESETS   test_auto_deploy_session_gate.py
