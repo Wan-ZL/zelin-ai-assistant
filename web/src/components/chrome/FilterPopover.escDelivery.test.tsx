@@ -6,8 +6,10 @@
 //      聚焦的搜索框卸掉，焦点掉回 body；修复前这一下 ⎋ 谁都收不到（面板的 React 监听要 target 在面板里，
 //      FilterBar 的 window 监听因 panelOpen 让位），面板永久卡开；
 //   2) 打开面板即把焦点放进去——同步，不等下一帧（此前排在 requestAnimationFrame 里）；
-//   3) 让位次序：面板里开着 listbox → ⎋ 归子弹层；上面压着模态（详情侧栏 / 原生 <dialog>）→ ⎋ 归模态；
-//      IME 候选期间的 ⎋ 归输入法（§15 红线）。
+//   3) 让位四道门，按先后：IME 候选期间的 ⎋ 归输入法（§15 红线）→ 已被别人 preventDefault 的归先认领的人
+//      → 面板里开着 listbox 的归子弹层 → 上面压着模态（详情侧栏那类 aria-modal / 原生 <dialog open>）的归模态；
+//      外加一条状态判例：面板与子弹层在同一次 commit 里出生时，一下 ⎋ 只许收一层。
+// ⎋ 一律从 document.body 或真实焦点元素派发，**不从 window 直派**——钉的是行为，不是监听挂在哪一层。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HeaderDensityContext, type HeaderDensity } from "../shell/headerDensity";
