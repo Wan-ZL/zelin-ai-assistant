@@ -1,0 +1,47 @@
+pr: `ai/self-improve/R-301`（self_improve lane 草稿 PR）
+phase: P5 → P3 闭环（§57 夜间变异存活体 → §70 循环铸卡 → §65 lane 出 PR；R2.3.4「先补测试网」）
+law: §57 靶区映射（`qa/mutation_targets.toml` 补两份既有判例 + 四份新判例）/ §58（test-code skill 读项目门，行为无改动）
+
+**做了什么**：夜报（pinned issue #150，2026-09-15 那轮）把 `skills/test-code/scripts/checks.py` 列成 test-code skill 里存活最多的模块——839 个位点跑满，**435 杀 404 活，杀伤 51.8%**。这是 skill 自己的第 4 档自测留下的欠账：2026-09-02 首轮判读把 `CATALOG` 数据表里的 `tier` / `phase` / `est` 三列整体归成「时间估计常数、等价变异体」，于是 279 个位点（全部存活体的 69%）从来没有判例罩过。本轮的判决是**那次归类判错了**：这三列没有一列是实现细节——`tier` 决定哪些层在哪一档被默认勾选（`default_checks` / `core_skipped`），`phase` 决定 `run_ladder.run_all` 的并发与串行次序，`est` 是 detect.json 里 `menu[].est_seconds` 这个 wire 字段的值，而 `tier` 与 `TIER_TIMEOUTS` 更是在四份文档里逐条写着的。404 个存活体逐个判读后，401 个补了判例，3 个用机器复核成等价体。
+
+**最便宜的一刀是靶区映射，一行，21 体**：`qa/mutation_targets.toml` 里这个模块只映射了三份判例，而 `tests/test_skill_test_code_run_ladder.py`（308 行）与 `tests/test_skill_test_code_detect.py`（252 行）**早就存在、都 `import checks` 并驱动它的 builder 与菜单**，从来没进靶区。补进映射：404 → 383（54.4%），零新代码。这是同一个形状连续第三次命中（R-287 的 `silent_merge` 漏 `test_silent_merge_jobs_edge.py`、R-292 的 `store2/store.py` 漏两份），已经该当成判读存活体的固定第一步。
+
+**四份新判例**（生产代码零改动，1,558 行，全部零子进程、真 IO 只在 tmpdir）：
+
+`tests/test_skill_test_code_catalog_docs.py` 照姐妹 skill 的 `tests/test_skill_test_ui_catalog_docs.py` 做一遍——那份文件的存在本身就是这条路子被仓库认可的证据（防腐十条第 5 条「文档指针纪律」的机器执法）。`tier` 钉在 `references/tiers.md` 的 `## 档 N` 表（核心圈）、`references/catalog.md` 扩展表的「档」列、`SKILL.md` 的档表三处，三份文档互为对照；`TIER_TIMEOUTS` 钉在 tiers.md 与 SKILL.md 两处逐字同文的散文行「Per-check timeouts: 档1 300 s · 档2 1800 s · 档3 3600 s · 档4 7200 s · 档5 none」上，再穿过消费者 `run_ladder.timeout_for` 复核 54 层 × 5 档；`TRIGGER_CHECKS` 钉在 `references/triggers.md` 的加挂层列。`phase` 哪份文档都不载，所以钉的是**可观测后果**：把 54 个真 id 的合成 internal plan 灌进 `run_ladder.run_all`，断言 phase 1 的层在线程池里跑（不在调用线程）、phase 2 全部早于 phase 3、phase 落在 {1,2,3} 之外的层会被 `run_all` 整个漏掉；另有两条完全不用 golden 的派生断言（internal 检查默认 phase 1，除非它消费 coverage.json；coverage 的消费者必须严格晚于生产者，两边都是跑出来找的，不是抄的）。
+
+`tests/test_skill_test_code_builder_gates.py` 钉住 `_b_*` 构造器的两类闸门：「配置在 **AND** 工具在」——只给一半条件（配了但工具不在 PATH，以及反过来）必须拿到 `na` / `unavailable` 且不拼出任何 argv，这是模块 docstring 里「自制检查一律 fail closed」和 SKILL.md 三分法「not run」的成文含义；`X or <默认>` 回落——配了源根扫源根、没配才退 `.`，两边的 argv 都逐字断言（命令形状 truth = `references/adapters.md`）。
+
+`tests/test_skill_test_code_internal_math.py` 钉住自制检查的算术与扫描器：CRAP 公式的指数与常数（`CC² × (1−cov)³ + CC`，取 2/3/4 三个指数都能分开的输入，公式 truth = tiers.md 档 2 表）、`_span_cov` 行区间的闭端、`check_diff_coverage` 的 `measured - len(uncovered)` 符号、ledger key 的 10 位宽度（写进 baseline 再读回必须还对得上，这是持久格式契约）、`_tally_survivors` 的缺键默认（喂一份真缺 key 的 report dict 才会读到默认值）、`.gitignore` 注释剥离在 `a#b#c` 这类两分隔符行上的行为、`[:12]` 的列表帽。
+
+`tests/test_skill_test_code_plan_plumbing.py` 钉住 argv 与步骤构造：`_cmd` 的 `tool or argv[0]` 两种情形、每个换下标的位点都用**首尾元素互异**的 argv（`schemes[0]` 给两个 scheme、`_py_test_argv(ctx)[2:]` 断言整条 argv）、`reruns=1` 这类默认实参靠步骤条数而不是靠「没抛异常」来观测、各栈就绪判定（`_js_ready` 缺 npx 或缺任一 bin 都得 unavailable）。
+
+**结果**：同一轮 839 个位点重跑，**存活 404 → 3，杀伤 51.8% → 99.6%**（`scripts/qa/mutate.py --modules skills/test-code/scripts/checks.py --force`；三轮的位点集合与 checks.py 的 content_hash `322d706b…` 逐字相同，生产代码零改动，base 里已杀的位点没有一个回退，零 timeout）。注意两个数不是一回事：杀伤率 836/839 = 99.6%，存活下降 (404−3)/404 = 99.3%。卡面 DoD「存活减半」的门是 ≤ 202。
+
+**这 401 体的功劳该怎么记（三个复核者各自独立实测；404 个位点按「杀它的 oracle 从哪来」划分成三档，93 + 157 + 154 = 404，其中 157 里有 3 个是下面那三个等价体、没被杀，所以杀掉的是 401）**：
+
+- **93 体 = 文档同源（oracle 是一份独立 markdown）**：`tier` 82 + `TIER_TIMEOUTS` 11。复核时**只改 markdown、不动 checks.py**，六到八个漂移场景全部转红（改 SKILL.md 的档 2 时限、改 tiers.md 的档 3 时限、删 tiers.md 的 `py_format` 行、把 catalog.md 的 `duplication` 从档 2 挪到档 3、从 tiers.md 的档 2 扩展行里删掉它、把「minutes」改成「seconds」），两个方向都拦得住，所以这一档是真的 drift detection 而不是自证。
+- **157 体 = 行为锚定（oracle 是派生的或独立来源，不是从源码抄的常数）**：`phase` 的派发完备性 42（phase 落到 0 或 4 会被 `run_all` 整轮漏掉）、菜单理由回落 1、builder 闸门 45、internal 算术 34（其中 3 个是等价体）、plan 构造 35。这一档里 `7 * 24 * 3600` 用 `datetime.timedelta(days=7)` 重新算、`_line_hash` 锚在 RFC 3174 的 sha1("abc") 向量加一次「写进 ledger 再读回」的往返、CRAP 的值按 tiers.md 的公式手算且输入挑得让指数 2/3/4 三者都不同。
+- **154 体 = 只有「照现状抄的 golden 表」能杀，即改动检测，不是行为防护**：`est` 88 + `phase` 的同档间改动 66。**这是本轮唯一的弱档，写在这里而不是藏在脚注里。**
+
+`est`（逐层时间估计秒数）实测两次：把 `EST_GOLDEN` 那条断言停掉，88 体对 catalog_docs 全部存活；把它们放到另外五份已映射判例（builder_gates / internal_math / plan_plumbing / run_ladder / detect）面前，同样 0 杀 88 活。仓库里没有任何文档载这些秒数（SKILL.md 只写了 `est_seconds` 这个**键**，catalog.md 里的 60/300/900 属于另一行 Google 的测试时限），`est` 也没有任何下游行为后果——它只是给人/AI 选档时看的。
+
+`phase` 那 66 体要说清一件事，因为第一遍的自评在这里判错过：线程派发是**观测通道**，`PHASE_GOLDEN` 才是 oracle，而这张表是照 CATALOG 抄的。区分性的消融是「保留线程派发断言、把期望值改成从 `checks.CATALOG` 现算」——这么跑，同档间（1↔2、2↔3）的 66 体全部存活，和把整条测试删掉的结果一样。早一轮的消融只删了字段回读那一段、期望值仍是 `PHASE_GOLDEN`，于是得出「66 体照样全死」的结论，那个结论是错的，本文与判例 docstring 都已改正。真正不靠这张表的只有上面那 42 体加两条无 golden 的派生断言。顺带按复核意见把 `inline == PHASE_GOLDEN[2] + PHASE_GOLDEN[3]` 这个**有序**比较改成比集合——档内次序（phase 2 那几层谁先谁后）哪份文档都没定，原写法会让两行位置互换这种纯装饰改动假红；「2 全部早于 3」才是成文契约，改用派发出来的 phase 序列单调递增来钉。改完 bucket A 复跑仍是 290 杀 0 活。
+
+把这 154 体整个折掉看下界：只删 `EST_GOLDEN` 一张表，存活 91、杀伤 89.2%——卡面「存活砍一半」那道门（≤ 202）不依赖任何 golden 表。
+
+另外那行映射（`run_ladder` + `detect` 两份既有判例）自己能杀 21 体（`TIER_TIMEOUTS` 8、`tier` 1、`phase` 8、plan 构造 4）；这 21 体分布在上面三档里、不是第四档，所以不进那个和。
+
+**剩下 3 个是等价变异体，逐个用机器复核过**，不是「看着像」：把变异真施加到模块上、与原模块在一大片可观测面上对拍，逐字相同。① `int_plus1@556:30`（`raw.split("#", 1)[0]` → `split("#", 2)[0]`）——只有下标 `[0]` 被消费，而任何 `maxsplit ≥ 1` 的 `[0]` 都是第一个分隔符之前那段，变异后的 maxsplit 经 `[0]` 不可达；对 227 份 `.gitignore` fixture（`a#b#c`、`p/q#r#s#t`、`a##b`、`#`、`##`、裸注释、通配符行的单行与两两/三三组合）对拍 `_ignored_literals` 的结果集合，IDENTICAL。② `return_none@438:8`（`_unpinned` 的 `./` / `docker://` 早退 `return False` → `None`）——全仓 grep 只有一个消费点 `checks.py:447 if match and _unpinned(...)`，布尔语境下 `None` 与 `False` 不可分；对 392 条 `uses:` 语料（8 前缀 × 12 ref，外加 8×6×6 的双 `@`、39/40/41 位 hex、大写 hex、空 ref、无 `@`）对拍 `bool()`、唯一调用者 `_pin_violations` 的 dict、以及整个 `check_actions_sha_pin` 的结果 dict，IDENTICAL。③ `return_none@572:12`（`dangling` 闭包同款）——唯一消费点 `checks.py:579 if path and dangling(path)`，闭包从外部不可达；对 14 条路径语料对拍 `_drift_scanner` 的输出 dict 与整个 `check_docs_drift` 的结果，IDENTICAL。这三个不该再补判例——为它们写测试等于去钉 Python 的返回类型而不是产品行为，反而挡住以后的重构。
+
+**顺手查出的真缺陷，本轮按「只修测试网」的范围一个都没改，等 owner 拍板**（判例钉的是**今天的行为**，所以修任何一条都会故意把相应断言变红，修的时候一起改）：
+
+1. **缺工具被报成项目失败（三处）**：`_e2e_for_pkg`（checks.py:998 的 `npm run test:e2e` 分支）、`_b_perf_budget`（:1174 的 `npm run bench`）、`_b_bundle_size`（:1323 的 `npm run size`）都只查 package.json 里有没有那个 script，**不查 `npm` 在不在 PATH**；同一个文件里的 `_npm_audit_steps`（:1128）查了（`if not _tool(ctx, "npm"): return []`）——所以这是不一致，不是取舍。实测（`tools={}`，一个 package 同时声明三个 script）：三处都给 `kind="cmd"`，argv 分别是 `['npm','run','test:e2e']` / `['npm','run','bench']` / `['npm','run','size']`，而同一个 ctx 上的 `dependency_audit` 正确地给 `kind="unavailable"`。后果：没装 node/npm 的机器上，这三层把一条必然 ENOENT 的命令交给 runner，结果记成 **RED（项目坏了）而不是 UNAVAILABLE（工具没装）**，破的是 skill 的头号契约——报告里那个三分「not run」划分（SKILL.md / `references/report-template.md`）。一行修法：照 `_npm_audit_steps` 的样子在这三个分支前加 `_tool(ctx, "npm")` 闸门，不过则 `_unavailable("npm not on PATH")`。同类但更轻：本轮几个走 npx 的 JS 构造器（knip / jscpd / api-extractor / license-checker / stryker）只确认了本地 `node_modules/.bin` 里有那个 bin，没过 `_b_ts_typecheck` / `_b_js_lint` 用的 `_js_ready(...)` 那道 npx 闸门。
+
+2. **`docs_drift` 的目录级 `.gitignore` 条目不豁免目录内文件**：`_ignored_literals`（:552-558）特意把目录条目 `build/` 的斜杠剥掉、收成字面量 `"build"`（`.rstrip("/")` 就是为这个），但 `dangling`（:570-573）只比整条路径和 basename——`if path in ignored or os.path.basename(path) in ignored`——**从不比路径前缀**。于是 `"build"` 只可能匹配到字面就叫 `build` 的 token（而 `_path_token` 本来就不收没有 `/` 的 token）或 basename 恰为 `build` 的文件，那个 `.rstrip("/")` 对每个目录条目都是白做的——这正是「本意要覆盖被忽略目录下的文件、前缀匹配漏了」的证据，函数自己的 docstring 也是这么写的（「`.gitignore` 里不带通配符的字面路径/文件名：文档提到它们 = 声明过的生成物，不算悬空」，而 `build/` 就是一条不带通配符的字面声明）。实测（tracked = `{build/keep.md, docs/a.md, .gitignore}`，`.gitignore` = `build/\ngen\n`，`docs/a.md` 里 backtick 了 `build/out.py`）：`check_docs_drift` 给 `fail`、`details.new = ['docs/a.md::build/out.py']`，应为 `pass`。触发条件解释了为什么一直没被发现：那个被忽略的目录还得**自己含至少一个 tracked 文件**，因为 `dangling` 先要求 `path.split("/")[0] in top_dirs`，而 `top_dirs` 是从 tracked 列表派生的——同一份 fixture 里 `gen/out.py` 没被标红是另一个原因，不是这个 bug 被绕过了。影响面：任何 gitignore 掉构建输出目录、又在文档里提到里面某个文件的仓库，`docs_drift` 假红（经 `TRIGGER_CHECKS`，`documented_behavior` 触发器上也会假红）。
+
+3. **设计问题，不算缺陷，但和成文规则冲突**：`_span_cov`（:711-712）在函数区间内一条 coverage 数据都没有时返回 `1.0`，于是 coverage.py 没测到任何行的函数拿到**最好**的 CRAP 分。实测：CC=6 的函数、coverage.json 条目 `executed_lines: []` + `missing_lines: []` → CRAP 6.0，过 30.0 的门；同一个函数按「全未覆盖」算是 42.0，会红。这是 fail-**open**，而模块 docstring 写的是「自制检查一律 fail closed（读不到 = fail，不是 pass）」。它很可能是故意的（避免对 coverage 没插桩的文件假红），所以本轮只把现状写进判例、没当缺陷提——请 owner 定：「没有行数据」应该算 `cov=0.0`、还是进 `errors`、还是保持现状并把 docstring 那句话加个例外。
+
+**门**：`python3 -m compileall act ingest`；`AIASSISTANT_HOME=$(mktemp -d) PYTHON_COLORS=0 python3 -m unittest discover -s tests` = **Ran 7814 tests, exit 0**（`PYTHON_COLORS=0` 是本机必需：不加会有一个**与本轮无关的既有**假红 `tests/integration/test_auto_deploy_script.py::test_write_state_mirror_failure_logs_the_cause`——Python 3.14 的彩色 traceback 把它 grep 的 `IsADirectoryError` 切成了带转义序列的串，CI 的 ubuntu 环境不上色所以不受影响）；`ruff check` 四份新判例全过；`scripts/qa/hygiene.py --check` OK / `depgraph.py --check` OK / `ledger_diff.py --base origin/main` **0 finding**（= DoD 第 2 条「覆盖率地板不降」：没动任何 baseline 文件、没加 ledger key、没降地板、没放松 `qa/gates.toml`）；`scripts/ci/changelog_fragments.py check` ok / `progress_log.py check` ok；`scripts/qa/mutate.py --modules skills/test-code/scripts/checks.py --force`（数字见上，三轮报告留在本轮 job tmp，夜报口径与全量口径一致——这个模块夜报本来就 839/839 跑满，没有「只跑了半张地图」的问题）。
+
+**给下一个 session 的两条**：判读存活体的第一步永远是 `ls tests | grep <module>` 对照 toml 映射（三次三中）；判「数据表常数 = 等价体」之前先找它的真源——本轮 279 体里有 93 体在四份 markdown 里写着，88 体确实没有任何文档载（那就老实写成 characterization table 并说明它只值改动检测），一个都不是等价体。
