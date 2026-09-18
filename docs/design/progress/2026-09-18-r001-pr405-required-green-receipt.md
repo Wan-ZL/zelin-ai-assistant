@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-001`（PR #PRNUM；R-001「修红 CI：PR #405 chore: Bump the react group in /web with 4 updates」；docs-only 收据——转绿的那一推不是本卡发的，见下）
+pr: `ai/self-improve/R-001`（PR #426；R-001「修红 CI：PR #405 chore: Bump the react group in /web with 4 updates」；docs-only 收据——转绿的那一推不是本卡发的，见下）
 phase: 横切（依赖维护；D5 / D12 每日循环「红 CI 是臣子的事」；§56.6 auto-update-branch；§65 自我改进通道；§70.3 ⑪ 判例 #405）
 law: —（无新 §、无修法；§70.2 追记的两阶段老化、§9 追记的 `restore` 盖 `restored_at` 一字未动）
 
