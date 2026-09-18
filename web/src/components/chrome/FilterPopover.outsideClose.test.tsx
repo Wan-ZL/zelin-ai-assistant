@@ -1,11 +1,13 @@
-// 「筛选」面板的另外两个关闭源与它们的守卫半边（§49 追记 2026-09-04 D31「⎋ / 点外面 / 视口变化 关闭」；issue #420 的孪生 R-222）。
+// 「筛选」面板从**外部**关闭的两个源与它们的守卫半边（§49 追记 2026-09-04 D31「⎋ / 点外面 / 视口变化 关闭」；issue #420 的孪生 R-222）。
 // D31 的五个动词里，「视口变化关闭」此前在 web/src 与 web/e2e 里一条判例都没有；「点外面」只钉了正路
 // （FilterBar.test.tsx 把 pointerdown 派到 document.body），守卫半边——点面板里、点「筛选」按钮本身**不**关——没人钉。
 // 这里补齐，且不依赖 #420 的修复（#425 / #427 没有碰 closeFromOutside / closeFromViewportChange）：
 //   1) window resize → 关；
 //   2) 面板外的 scroll（window 上 capture 监听）→ 关；面板**里**滚（listbox / 面板自身内容）→ 不关；
-//   3) pointerdown 落在面板里、落在「筛选」按钮上 → 不关（按钮自己的 click 才负责 toggle）。
-// jsdom 没有真布局，resize / scroll 都是派发事件、不是真的改视口——钉的是「这些事件来了面板怎么做」，不是几何。
+//   3) pointerdown 落在面板里、落在「筛选」按钮上 → 不关（按钮自己的 click 才负责 toggle）；落在 body 上 → 关。
+// 两个源合在一个文件里的理由：它们是同一个 effect 里挂在 window / document 上的同一组「面板之外发生了什么」监听，行为是
+// 「外部事件关面板、内部事件不关」这一件事的两面。jsdom 没有真布局，resize / scroll 都是派发事件、不是真的改视口——
+// 钉的是「这些事件来了面板怎么做」，不是几何。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HeaderDensityContext } from "../shell/headerDensity";
