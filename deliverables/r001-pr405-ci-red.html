@@ -84,9 +84,12 @@
   <code>PR_AUTOUPDATE_TOKEN</code> 就退化成 report-only。09-17 20:41Z 那次 run 的原话是
   <code>#405: behind by 59 — would update (report-only, no token)</code>。
   详见<a href="#notdone">「我没做的事」①</a>，那是本轮最该开下一张卡的地方。</p>
-  <p>所以本轮交付的是 <code>ad4f0b71</code> <strong>漏掉的那一半：判例</strong>。那次修复只改了调用点，
-  没有任何测试钉住注入缝本身——缝被删掉或被「收下但忽略」，仍然只会在某个未来的日期、
-  在一条看不出关系的老化判例上红一次。</p>
+  <p><strong>本轮交付很小，而且是刻意缩小的。</strong> 我先写了一个钉注入缝的新判例，
+  之后才发现 <strong>PR #424 早已做完同一件事、而且是超集</strong>，于是<strong>把自己那份删了</strong>——
+  一颗炸弹已经扇出至少六张卡，再多一个重复品只会让 owner 多读一遍。
+  剩下的是<strong>两行别人没覆盖的收尾</strong>（其中一处修好了一句<em>写在 QA fixture docstring 里、
+  但并不成立</em>的声明）<strong>加这份报告</strong>。详见<a href="#delivered">第四节</a>，
+  里面也给了 owner 收敛那六张卡的建议。</p>
 </div>
 
 <h2 id="dod">一、验收对照（DEFINITION OF DONE 逐条）</h2>
@@ -231,74 +234,75 @@ wall clock 2026-09-15  OK            wall clock 2026-09-19  FAILED</code></pre>
   <strong>01:37Z</strong> 落地——晚了 17 分钟。见下文<a href="#notdone">「我没做的事」③</a>。</p>
 </div>
 
-<h2 id="delivered">四、我交付了什么</h2>
+<h2 id="delivered">四、我交付了什么（以及我删掉了什么）</h2>
 
-<p>验收已经满足，所以本轮<strong>不碰任何产品行为</strong>。交付的是 <code>ad4f0b71</code> 漏掉的判例，
-外加两处同类调用点的收尾。三个文件，行为零变化。</p>
-
-<h3>1. 新判例 <code>tests/test_clock_injection_seams.py</code>（主交付物）</h3>
-
-<p><code>ad4f0b71</code> 补了缝、改了调用点，但<strong>没有任何测试钉住缝本身</strong>。
-缺的后果不是抽象的：缝被删掉，或者被改成「收下 <code>now=</code> 但忽略它」，套件今天照样全绿——
-要等到某个未来的日期，才会在 <code>test_review_stale_sweep</code> 上红一次，
-而那条判例的名字里没有一个字提到注入缝。新判例把它变成<strong>当场红、红在名字说得清的地方</strong>：</p>
-
-<table>
-  <thead><tr><th>判例</th><th>钉住的契约</th></tr></thead>
-  <tbody>
-    <tr><td><code>test_the_seam_exists_and_takes_a_clock</code></td><td><code>restore</code> 签名收 <code>now=</code>，且默认 <code>None</code>（= 可选，既有调用方不用改）</td></tr>
-    <tr><td><code>test_the_seam_decides_the_stamp</code></td><td>传进去的时刻<strong>真的</strong>成为 <code>execution.restored_at</code>，盘上那份也是它</td></tr>
-    <tr><td><code>test_an_aware_clock_is_normalised_to_utc</code></td><td>带偏移的时刻先折算成 UTC，不是把本地墙上时间抄进 <code>…Z</code></td></tr>
-    <tr><td><code>test_without_the_seam_the_default_is_still_the_wall_clock</code></td><td><code>ad4f0b71</code> 承诺的 “default unchanged = wall clock”</td></tr>
-  </tbody>
-</table>
-
-<p><strong>变异测试证明它真的能杀人</strong>（在 <code>git archive HEAD</code> 出来的一份隔离树里做，不污染工作树）：</p>
-
-<table>
-  <thead><tr><th>变异体</th><th>新判例的下场</th><th>被谁杀</th></tr></thead>
-  <tbody>
-    <tr><td>整体回滚 <code>ad4f0b71</code>（缝删掉，回到 <code>_iso_now()</code>）</td><td class="pass">杀死 3/4 红</td><td><code>TypeError: restore() got an unexpected keyword argument 'now'</code> + 签名判例</td></tr>
-    <tr><td>缝留着但<strong>忽略参数</strong>（最阴的那种回归）</td><td class="pass">杀死 2/4 红</td><td><code>'2026-09-18T12:54:51Z' != '2026-09-15T03:30:00Z'</code></td></tr>
-    <tr><td>去掉 UTC 归一（<code>now.strftime</code> 而非 <code>now.astimezone(utc).strftime</code>）</td><td class="pass">杀死 1/4 红</td><td><code>'2026-09-14T20:30:00Z' != '2026-09-15T03:30:00Z'</code></td></tr>
-  </tbody>
-</table>
-
-<div class="star">
-  <p><strong>⭐ 判例自己没有引入新的漂移。</strong> 我实测过 naive datetime 的下场：
-  <code>restore(req, now=datetime(2026,9,15,3,30))</code>（不带时区）经 <code>astimezone</code>
-  会按<strong>跑测试那台机器</strong>的时区折算——本机（PT）盖成 <code>10:30Z</code>，UTC 机器上盖成
-  <code>03:30Z</code>。钉这个行为等于新造一个同类炸弹，所以判例<strong>只用 aware datetime</strong>，
-  并在 docstring 里写明为什么故意不钉 naive。</p>
+<div class="card bad">
+  <h3>⚠️ 先说最重要的一件事：这颗炸弹已经扇出至少六张卡，我本来也在造重复品</h3>
+  <p>我先写完了一个新判例 <code>tests/test_clock_injection_seams.py</code>（4 条、三个变异体各自被杀），
+  <strong>之后才去查开着的 PR</strong>——而 <strong>PR #424（R-305）早已做完同一件事</strong>，
+  文件 <code>tests/test_registry_restore_clock.py</code>，而且是<strong>超集</strong>：
+  同样钉 <code>now=</code> 生效 / aware→UTC 归一 / 默认仍走真时钟，<em>另加</em>在
+  2020 / 2026 / 2099 三个纪元上各验一遍，也做了变异验证。我那 4 条里唯一它没有的是
+  <code>inspect.signature</code> 的签名断言，而它的行为判例本来就会因 <code>TypeError</code> 红——
+  净增量约等于零。</p>
+  <p><strong>所以我把自己的判例文件删了。</strong> 同一个 behavior 两个文件，是防腐 #7 明令要避免的，
+  以后任何重构都得改两处。<strong>owner 请留 #424，不要留我这版。</strong></p>
+  <p>教训（已写进我的记忆）：<strong>这类卡的第一条命令必须是
+  <code>gh pr list --state open</code>，不是 <code>gh run view --log-failed</code></strong>。
+  我这轮把顺序做反了，先造后查。</p>
 </div>
 
-<h3>2. 两处同类调用点收尾（各一行）</h3>
-<ul>
-  <li><code>tests/test_review_stale_sweep.py:180</code> — 同模块最后一处读真时钟的
-      <code>restore()</code>。改前它<strong>靠 idle 变成负数才过</strong>（真时钟戳在
-      <code>later</code> 之后 ⇒ idle = −2/−1），量的不是它 docstring 声称的「窗口重新起算」；
-      改后 idle = 1 和 2 天对 14 天窗口，判例说的就是它做的。
-      这个模块从此与真实日期无关。
-      <div class="mono-sm">注：它<strong>不会</strong>在未来某天变红（idle 只会更负），
-      但真日期 ≤ 2026-09-02 会红——时钟歪掉的 runner 或 RTC 不准的容器会踩到。</div></li>
-  <li><code>scripts/qa/fixtures_b/aging_22d.py:57</code> — 该 fixture 的 docstring 写着
-      「时钟全部注入（<code>today</code> / <code>now</code>），不依赖真实日期」，而第 57 行正是一处真时钟读取，
-      <strong>那句声明是假的</strong>。补上 <code>now=later</code> 让声明成真。</li>
-</ul>
+<h3>同一颗炸弹的卡与 PR 全景（给 owner 收敛用）</h3>
+<table>
+  <thead><tr><th>PR</th><th>卡</th><th>带的东西</th><th>我的建议</th></tr></thead>
+  <tbody>
+    <tr><td>#402</td><td>R-219</td><td>原修 <code>aa70e1fe</code>（09-16 18:15 PT）+ R-219 自己的判例，捆在一起</td><td class="na">可关</td></tr>
+    <tr><td>#406</td><td>R-220</td><td><code>aa70e1fe</code> 的 cherry-pick（blob <code>daff9b9c</code>）+ 片段</td><td class="na">可关</td></tr>
+    <tr><td>#408</td><td>R-303</td><td>同一个 blob <code>daff9b9c</code> + 一份非常详尽的全仓扫描片段</td><td class="na">可关（片段值得留档）</td></tr>
+    <tr><td><strong>#424</strong></td><td><strong>R-305</strong></td><td><strong>缝的判例（新文件、三纪元、变异验证）</strong></td><td class="pass">留这张</td></tr>
+    <tr><td>#426</td><td>R-001（本卡）</td><td>收据片段（孪生 session 写的）+ 本轮这两行 + 本报告</td><td class="warn">看下面</td></tr>
+  </tbody>
+</table>
+<p><strong>#402 / #406 / #408 带的是同一个 blob，而那是 <code>ad4f0b71</code> 之前的<em>另一种</em>修法</strong>
+（模块级 <code>_restore_at()</code> 去 <code>mock.patch</code> 掉 <code>registry._iso_now</code>，
+当时 <code>now=</code> 这条缝还不存在）。main 现在已经带着 <code>ad4f0b71</code> 的版本，
+所以那三张<strong>现在合进去只会在同一处撞内容冲突</strong>（#424 已实测三处）。</p>
 
-<h3>3. <code>changelog.d/ai-self-improve-r001-clock-seam-precedent.md</code></h3>
-<p>照 §56.7 一 PR 一 fragment（<code>type: fixed</code>），不碰 <code>CHANGELOG.md</code> 的
-<code>[Unreleased]</code>。</p>
+<h3>删完之后，本轮真正剩下的：两行 + 这份报告</h3>
+<p>都不与任何孪生重叠（我逐个查过 #402 / #406 / #408 / #424 的 <code>--name-only</code>，
+<strong>没有一张碰 <code>scripts/qa/</code></strong>）。行为零变化。</p>
+
+<ul>
+  <li><strong><code>scripts/qa/fixtures_b/aging_22d.py:57</code></strong>（唯一没人覆盖的一处）——
+      该 fixture 的 docstring 写着「时钟全部注入（<code>today</code> / <code>now</code>），<strong>不依赖真实日期</strong>」，
+      而第 57 行 <code>registry.restore(registry.load("P-1"))</code> 正是一处真时钟读取，
+      <strong>那句声明是假的</strong>。补 <code>now=later</code> 让声明成真。
+      跑过：<code>B-08-aging-22d PASS … checks=8</code>。</li>
+  <li><strong><code>tests/test_review_stale_sweep.py:180</code></strong>——本模块最后一处读真时钟的
+      <code>restore()</code>。#424 明确把它记为「已知隐患、刻意不改」（怕撞上面那三张的相邻行）。
+      我改了，用的是 <strong>main 自己的写法</strong>（<code>now=NOW</code>，即 <code>ad4f0b71</code> 在
+      198 行用的那把缝），不是那三张的 mock 写法。
+      <div class="mono-sm">诚实交代取舍：#424 不改它是为了避免与 #402/#406/#408 冲突；
+      但那三张本来就已经与 main 冲突、且建议关掉，所以这层顾虑已经很薄。
+      <strong>如果 owner 打算合那三张中的任何一张，请先丢掉我这一行</strong>——
+      它只是把一处潜在隐患补上，不值得换一次冲突。</div>
+      <div class="mono-sm">它<strong>不会</strong>在未来某天变红（真时钟戳让 idle 变负，只会更负）；
+      但真日期 ≤ 2026-09-02 会红——时钟歪掉的 runner / RTC 不准的容器会踩到。
+      改前它靠 idle = −2/−1 才过，量的不是它 docstring 声称的「窗口重新起算」；
+      改后 idle = 1 和 2 天对 14 天窗口。<strong>复跑原变异体（把 <code>restored_at</code>
+      从 <code>_EXECUTION_STAMPS</code> 删掉）仍然 2 红，杀伤力没下降。</strong></div></li>
+</ul>
 
 <div class="card info">
   <h3>CLAUDE.md 的三问</h3>
   <ol>
-    <li><strong>触及哪些 §</strong>：§9 追记（<code>restored_at</code>，D73）——字段与语义一字未改，本轮只补判例；
-        相关 §70.2 追记 / §70.6（两阶段老化）、§56.7（changelog fragment）、§58（QA fixture B-08）。<strong>无需修法</strong>：没有新行为。</li>
-    <li><strong>与 §0 宪法</strong>：第 11 条（一张坏卡不许弄坏一整轮）的测试侧对应物——
-        判例不许因为真实日期而说谎。没有任何一条被打破。</li>
-    <li><strong>已存在的机制</strong>：找过了。<code>grep -rln "faketime\|freeze_time\|TIME_TRAVEL\|calendar bomb\|日历炸弹" scripts .github tests docs</code>
-        零命中——<strong>三次事故之后仍然没有任何机器防线</strong>，所以这一条不是重复造轮子。</li>
+    <li><strong>触及哪些 §</strong>：§9 追记（<code>restored_at</code>，D73）——字段与语义一字未改；
+        §58（QA fixture B-08）。<strong>无需修法</strong>：没有新行为。</li>
+    <li><strong>与 §0 宪法</strong>：第 11 条的测试侧对应物——判例不许因为真实日期而说谎。没有一条被打破。</li>
+    <li><strong>已存在的机制</strong>：<span class="fail">这一问我这轮答错了顺序。</span>
+        我先 grep 了 <code>faketime|freeze_time|日历炸弹</code>（零命中，于是以为没人做过），
+        <strong>却没有先查开着的 PR</strong>——#424 就在那里。现在的答案是：
+        <strong>机制已经存在于 #424，本轮不再造。</strong></li>
   </ol>
 </div>
 
@@ -308,7 +312,6 @@ wall clock 2026-09-15  OK            wall clock 2026-09-19  FAILED</code></pre>
 <pre><code>$ python3 -m compileall -q act ingest                         # rc=0
 $ AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 $ ruff check .                                                 # All checks passed!
-$ python3 scripts/ci/changelog_fragments.py check               # changelog fragments: ok (127)
 $ python3 scripts/qa/fixtures_b/aging_22d.py
 B-08-aging-22d PASS review card idle 22d (threshold 14d): stamped+1 banner,
                archived at +21h rule=review_stale restorable checks=8
@@ -508,7 +511,7 @@ RESETS   test_bootstrap_script.py
 </ul>
 
 <p class="sub" style="margin-top:34px">
-分支 <code>ai/self-improve/R-001</code> · 改动三个文件（新增判例 + 两处一行收尾 + changelog fragment）· 产品行为零变化
+分支 <code>ai/self-improve/R-001</code>（PR #426，与孪生 session 共用）· 最终改动两个文件、各一行 + 本报告 · 主动删掉了与 #424 重复的判例文件 · 产品行为零变化
 </p>
 
 </div>
