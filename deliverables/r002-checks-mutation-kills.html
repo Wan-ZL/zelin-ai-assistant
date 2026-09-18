@@ -62,9 +62,9 @@
   <ul>
     <li><strong>两条 DoD 都满足</strong>：存活体 404 → <strong>3</strong>（门是 ≤ 202），覆盖率地板未降（<code>ledger_diff</code> 0 finding）。数字是我在本分支上<strong>独立复跑</strong>的，不是采信 PR 标题。</li>
     <li><strong>这张卡要的补网两天前就写完了</strong>，躺在没合的草稿 PR 里。本轮<strong>零新判例</strong>，逐字节采用 #401 的字节。</li>
-    <li>同一个夜报发现<strong>已铸四张卡</strong>（#391 / #401 / #429 / 本 PR），因为夜报对 <code>main</code> 跑，而补网只存在于未合的分支上。<strong>owner 要做的是挑一个合掉、关掉其余三个</strong>，不是再审一遍判例。</li>
+    <li>同一个夜报发现<strong>已产出五个 PR</strong>（#391 / #401 / #429 / #430 / 本 PR #431），因为夜报对 <code>main</code> 跑，而补网只存在于未合的分支上。<strong>owner 要做的是挑一个合掉、关掉其余四个</strong>，不是再审一遍判例。</li>
     <li>诚实分档：99.64% 这个数里有 154 个位点<strong>只值「改动检测」</strong>。两张 golden 表都折掉的下界是 <strong>81.3%</strong>。</li>
-    <li>🔴 <strong>两个 lane 缺陷</strong>比补网本身更值得看：同题卡被并发扇到六个 session；卡号跨发现重复，导致 <code>ai/self-improve/R-002</code> 这个分支名被一个<strong>无关的 web 修复</strong>（PR #427）占了。</li>
+    <li>🔴 <strong>两个 lane 缺陷</strong>比补网本身更值得看：同题卡被并发扇到五个并行 session（含本轮共处理 7 次）；卡号跨发现重复，导致 <code>ai/self-improve/R-002</code> 这个分支名被一个<strong>无关的 web 修复</strong>（PR #427）占了。</li>
     <li>🔴 <strong>四条未修的真缺陷</strong>等拍板，其中一条本轮新查出：<code>docs/CONTRACT.md</code>（1.44 MiB）超过 1 MiB 文本帽，被 <code>secret_scan</code> <strong>静默跳过</strong>。</li>
   </ul>
 </div>
@@ -72,7 +72,7 @@
 <nav>
   <ol>
     <li><a href="#dod">一 · DoD 逐条对照</a></li>
-    <li><a href="#why4">二 · 为什么同一个发现铸了四张卡</a></li>
+    <li><a href="#why4">二 · 为什么同一个发现产出五个 PR</a></li>
     <li><a href="#lane">三 · 两个 lane 缺陷</a></li>
     <li><a href="#honest">四 · 99.64% 有多少是真的</a></li>
     <li><a href="#pick">五 · 该合哪一个</a></li>
@@ -113,7 +113,7 @@ timeout=0        error=0       score=0.9964  complete=True</code></pre>
   <p>活下来的三个位点（<code>int_plus1@556:30</code> / <code>return_none@438:8</code> / <code>return_none@572:12</code>）与 #401 标成等价体的那三个<strong>逐字相同</strong>——没有出现 #401 没见过的新存活体。</p>
 </div>
 
-<h2 id="why4">二 · 为什么同一个发现铸了四张卡</h2>
+<h2 id="why4">二 · 为什么同一个发现产出五个 PR</h2>
 
 <p>夜间变异测试（pinned issue #150）跑的是 <code>main</code>。补网只存在于<strong>未合的分支</strong>上，所以 <code>main</code> 上的 <code>checks.py</code> 每晚都被重新判成同一个数字，<code>self_improve</code> 循环每晚据此铸一张新卡。</p>
 
@@ -122,20 +122,22 @@ timeout=0        error=0       score=0.9964  complete=True</code></pre>
   <tr><td>R-217</td><td>#391</td><td><code>ai/self-improve/R-217</code></td><td>09-16 06:24Z</td><td>5 份新判例 + toml（只映射自己那 5 份）</td><td><span class="tag good">全绿</span></td></tr>
   <tr><td>R-301</td><td>#401</td><td><code>ai/self-improve/R-301</code></td><td>09-16 13:09Z</td><td>4 份新判例 + toml（含两份<strong>既有</strong>判例）+ 文书齐全</td><td><span class="tag good">全绿</span></td></tr>
   <tr><td>R-8153</td><td>#429</td><td><code>ai/self-improve/R-8153</code></td><td>09-18 13:20Z</td><td>#401 的字节，零新判例</td><td><span class="tag warn">待跑</span></td></tr>
-  <tr><td>R-002</td><td>本 PR</td><td><code>…/R-002-checks-mutation</code></td><td>09-18</td><td>#401 的字节 + 本轮独立复核</td><td>见第七节</td></tr>
+  <tr><td>R-002</td><td>#430</td><td><code>…/R-002-checks-mutation-twins</code></td><td>09-18 13:24Z</td><td>#401 的字节（另一个 R-002 session）</td><td><span class="tag warn">待跑</span></td></tr>
+  <tr><td>R-002</td><td><strong>#431 本 PR</strong></td><td><code>…/R-002-checks-mutation</code></td><td>09-18 13:45Z</td><td>#401 的字节 + 本轮独立复核</td><td>见第七节</td></tr>
 </table>
 
 <div class="star">
   <p>⭐ <strong>「同一模块同一数字第 N 次铸卡」不是测试写坏了。</strong>存活数只会在 PR <strong>合进 <code>main</code></strong> 之后才掉。接这类卡的第一条命令应该是 <code>gh pr list --state open</code>。</p>
 </div>
 
-<p>四个 PR 的 toml 改动都落在 <code>qa/mutation_targets.toml:93</code> <strong>同一行</strong>，所以合掉任意一个，其余三个必然文本冲突。这其实是好事：它保证不会有人把两份重复的判例一起合进去。</p>
+<p>五个 PR 的 toml 改动都落在 <code>qa/mutation_targets.toml:93</code> <strong>同一行</strong>，所以合掉任意一个，其余四个必然文本冲突。这其实是好事：它保证不会有人把两份重复的判例一起合进去。</p>
 
 <h2 id="lane">三 · 两个 lane 缺陷</h2>
 
 <div class="card bad">
-  <h3>1. 同题卡被并发扇出到六个 session</h3>
-  <p>本轮 <code>ListAgents</code> 看到除本 session 外，还有 <code>R-002</code>、<code>R-001</code>、<code>R-8153</code> ×2 四个 session 挂着同一个「补测试：checks.py 变异存活」标题（连已收工的 R-217 / R-301 共六个）。它们各自独立跑同一套判读、各自开 PR，算力与 token 乘六。</p>
+  <h3>1. 同题卡被并发扇出到五个并行 session</h3>
+  <p>本轮 <code>ListAgents</code> 看到除本 session 外，还有 <code>R-002</code>、<code>R-001</code>、<code>R-8153</code> ×2 <strong>四个</strong> session 挂着同一个「补测试：checks.py 变异存活」标题 —— 连本 session 共 <strong>5 个并行</strong>，再加上已收工的 R-217 / R-301，同一个发现一共被处理了 <strong>7 次</strong>。它们各自独立跑同一套判读、各自开 PR，算力与 token 成倍消耗。</p>
+  <p>另一个 R-002 session（#430）撞上了同一个分支名冲突，也只能加后缀（<code>…-twins</code>）—— <strong>两个 session 独立地得出同一个结论，这本身就是 lane 缺陷的证据。</strong></p>
   <p>副作用已经实际发生过：并发期间共享 worktree 的 <code>checks.py</code> 被别的探针留下过未提交的注入变异体，谁在那棵树上 <code>git commit -a</code> 就会把变异体送进生产。本 PR 的树已逐项核过干净（<code>git diff origin/main -- checks.py</code> 空输出，reflog 无外来操作）。</p>
 </div>
 
@@ -214,7 +216,7 @@ TWIN 391 (origin/ai/self-improve/R-217)
 </div>
 
 <div class="card good">
-  <p><strong>建议</strong>：合 <strong>#401</strong>（或与它字节相同的 #429 / 本 PR 之一），关掉其余三个。合掉之后下一晚的夜报就不会再铸第五张卡。</p>
+  <p><strong>建议</strong>：合 <strong>#401</strong>（或与它字节相同的 #429 / #430 / 本 PR 之一），关掉其余四个。合掉之后下一晚的夜报就不会再铸下一张。</p>
   <p>本 PR 的五个路径与 #401、#429 <strong>逐字节相同</strong>（blob SHA 全等），所以三者在判例层面完全可互换；本 PR 额外带的是这份独立复核与 lane 缺陷记录。</p>
 </div>
 
@@ -264,14 +266,26 @@ TWIN 391 (origin/ai/self-improve/R-217)
   <tr><td><code>scripts/ci/changelog_fragments.py check</code></td><td><span class="tag good">ok (127)</span></td></tr>
   <tr><td><code>scripts/ci/progress_log.py check</code></td><td><span class="tag good">ok (125)</span></td></tr>
   <tr><td><code>scripts/qa/mutate.py --modules … --force</code></td><td><span class="tag good">839 / 836 killed / 3 survived / timeout 0</span></td></tr>
-  <tr><td>全套 <code>unittest discover -s tests</code>（7,800+ 条）</td><td><span class="tag bad">本机未完成 —— 判决交给 CI</span></td></tr>
+  <tr><td>单元/行为层全套（525 模块）</td><td><span class="tag good">Ran 7776 tests</span>，唯一失败是既有 README 假红</td></tr>
+  <tr><td>integration 层（22 模块）</td><td><span class="tag bad">本机未完成 —— 判决交给 CI</span></td></tr>
 </table>
 
+<div class="card good">
+  <h3>单元/行为层：7,776 条，唯一一条失败是既有假红</h3>
+  <pre><code>Ran 7776 tests in 349.791s
+
+FAIL: test_no_stale_claims
+  (tests.test_readme_audit_repo_readme.RepoReadmeIsCurrentTest)
+  line 13: version literal v1.0.114 is not the current tag v1.0.116
+           (§56.1: the tag is the only version truth)</code></pre>
+  <p><strong>与本轮无关</strong>：本 PR 不碰 <code>README.md</code>。证明法是在 job tmp 里开一棵指向 <code>origin/main</code> 的 detached worktree 跑同一个模块 —— <strong>逐字同样的失败</strong>（同一行、同一对版本号），而本轮那八个文件一个都不在那棵树上。</p>
+</div>
+
 <div class="card warn">
-  <h3>为什么全套没跑完（不谎报绿）</h3>
-  <p>两次尝试都在跑到第 1 / 第 13 个测试时 <strong><code>exit 144</code></strong> 被系统收割。本轮有六个 session 并发处理同题卡、十几个 agent 同时在跑，load 13–33（18 核）、swap 接近耗尽。</p>
-  <p>这是资源问题而不是判例问题，证据：同一台机器上把并发降下来之后，定向子集同样 217 条测试全绿，只是墙钟从 0.23 s 劣化到 139 s。</p>
-  <p><strong>判决看 PR 上的 <code>Tests on ubuntu (Python 3.9 / 3.x)</code> 两条腿。</strong>参考：#401 在安静机器上跑过同一套，报 <code>Ran 7814 tests, exit 0</code>；本 PR 的判例字节与它逐字节相同。</p>
+  <h3>integration 层为什么没跑完（不谎报绿）</h3>
+  <p>三次尝试都在第 1 / 第 13 个测试处 <strong><code>exit 144</code></strong> 被系统收割。本轮五个 session 并发处理同题卡、十几个 agent 同时在跑，load 13–51（18 核）、swap 接近耗尽。</p>
+  <p><strong>这是资源问题不是判例问题</strong>，证明法同上：在安静机器上那棵 pristine main 的树里跑 <code>integration/test_auto_deploy_defer_episode</code>，得 <code>Ran 5 tests in 131.089s OK exit 0</code>（它本身就慢 —— 5 个测试 131 秒，所以它是负载下最先被杀的那个）。</p>
+  <p><strong>这一层看 PR 上的 <code>Tests on ubuntu (Python 3.9 / 3.x)</code> 两条腿。</strong></p>
 </div>
 
 <div class="card">

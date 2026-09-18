@@ -1,31 +1,35 @@
-pr: `ai/self-improve/R-002`（self_improve lane 草稿 PR；#401 / #391 的第三个孪生）
+pr: `ai/self-improve/R-002-checks-mutation`（self_improve lane 草稿 PR #431；同一发现的第五个 PR）
 phase: P5 → P3 闭环（§57 夜间变异存活体 → §70 循环铸卡 → §65 lane 出 PR）
 law: §57 靶区映射（`qa/mutation_targets.toml`）/ §58（test-code skill 读项目门，行为无改动）
 
-**先说结论**：这张卡要的补网**两天前就写完了，躺在两个没合的草稿 PR 里**。R-002 没有第三次重写判例，
+**先说结论**：这张卡要的补网**两天前就写完了，躺在没合的草稿 PR 里**。R-002 没有再重写一遍判例，
 而是把 #401 的字节原样搬过来，逐字节校验过（`git diff origin/ai/self-improve/R-301 -- <5 个路径>` 空输出）。
-owner 要做的不是再审一遍判例，是**从三个 PR 里挑一个合掉**。
+owner 要做的不是再审一遍判例，是**从五个 PR 里挑一个合掉、关掉其余四个**。
 
-**为什么会有三张卡**：夜报（pinned issue #150）对着 `main` 跑。补网只存在于未合的分支上，
+**为什么会有五个 PR**：夜报（pinned issue #150）对着 `main` 跑。补网只存在于未合的分支上，
 所以 `main` 上的 `skills/test-code/scripts/checks.py` 每晚都被重新判成 839 位点 / 435 杀 / 404 活 / 51.8%，
-`self_improve` 循环每晚据此铸一张新卡。已经铸了三张：
+`self_improve` 循环每晚据此铸新卡。到目前为止同一个发现已经产出五个 PR：
 
 | 卡 | PR | 分支 | 开出时间 | 内容 | CI |
 |---|---|---|---|---|---|
 | R-217 | #391 | `ai/self-improve/R-217` | 2026-09-16 06:24Z | 5 份新判例 + toml 映射（只映射自己那 5 份） | 全绿 |
 | R-301 | #401 | `ai/self-improve/R-301` | 2026-09-16 13:09Z | 4 份新判例 + toml 映射（含两份**既有**判例）+ changelog + 进度文档 + 交付物 | 全绿 |
 | R-8153 | #429 | `ai/self-improve/R-8153` | 2026-09-18 13:20Z | #401 的字节，零新判例 | 待跑 |
-| R-002 | 本 PR | 见下（**不是** `ai/self-improve/R-002`） | 2026-09-18 | #401 的字节，零新判例 + 本轮复核 | 见下 |
+| R-002 | #430 | `…/R-002-checks-mutation-twins` | 2026-09-18 13:24Z | #401 的字节，零新判例（另一个 R-002 session） | 待跑 |
+| R-002 | **#431 本 PR** | `…/R-002-checks-mutation` | 2026-09-18 13:45Z | #401 的字节，零新判例 + 本轮独立复核 | 见「门」一节 |
 
-四个 PR 的 toml 改动落在**同一行**（`qa/mutation_targets.toml:93`），所以合掉任意一个，其余三个必然文本冲突。
-这不是坏事：它保证不会有人不小心把两份重复的判例一起合进去。合掉一个之后，其余三个直接关掉即可，
-下一晚的夜报就不会再铸第五张卡。
+五个 PR 的 toml 改动落在**同一行**（`qa/mutation_targets.toml:93`），所以合掉任意一个，其余四个必然文本冲突。
+这不是坏事：它保证不会有人不小心把两份重复的判例一起合进去。合掉一个之后，其余四个直接关掉即可，
+下一晚的夜报就不会再铸下一张。
 
 **🔴 两个 lane 缺陷，比补网本身更值得 owner 看一眼**：
 
-1. **同一个夜报发现被守护进程并发扇出到六个 session，卡号还互不相同。** 本轮 `ListAgents` 看到
-   除自己外还有 `R-002`、`R-001`、`R-8153` ×2 四个 session 挂着同一个「补测试：checks.py 变异存活」标题
-   （加上已收工的 R-217 / R-301 共六个）。它们各自独立跑同一套判读、各自开 PR，算力与 token 乘六。
+1. **同一个夜报发现被守护进程并发扇出到五个并行 session，卡号还互不相同。** 本轮 `ListAgents` 看到
+   除本 session 外，还有 `R-002`、`R-001`、`R-8153` ×2 **四个** session 挂着同一个
+   「补测试：checks.py 变异存活」标题——连本 session 共 **5 个并行**，再加上已收工的 R-217 / R-301,
+   同一个发现一共被处理了 **7 次**。它们各自独立跑同一套判读、各自开 PR，算力与 token 成倍消耗。
+   另一个 R-002 session（#430）撞上了同一个分支名冲突，也只能加后缀（`…-twins`）——
+   **两个 session 独立地得出同一个结论，这本身就是 lane 缺陷的证据。**
 2. **卡号跨发现重复，而 lane 契约按分支名找 PR。** 另一个 session 拿到的卡**也编号 R-002**，
    但内容是完全无关的 web Filters popover Escape 修复；它先占了分支名，于是
    `ai/self-improve/R-002` 现在指向 **PR #427**（`fix(web): close the Filters popover on Escape…`，
@@ -112,9 +116,9 @@ score=0.9964     complete=True  budget_hit=False
 `return False → None`，唯一消费点 `checks.py:447` 是布尔语境）；③ `return_none@572:12`（`dangling` 闭包同款，
 唯一消费点 `checks.py:579`）。为这三个写判例等于去钉 Python 的返回类型而不是产品行为。
 
-**三处仍在等 owner 拍板的真缺陷**（#401 查出、按「只修测试网」的范围没改；判例钉的是**今天的行为**，
-所以修任何一条都会故意把相应断言变红，要一起改）。**这三条随 #401 一起被搁了两天，本文重述一遍，
-免得 owner 挑了本 PR、关掉 #401 之后它们跟着丢掉**：
+**四条仍在等 owner 拍板的真缺陷**（前三条 #401 查出、第四条本轮新查出；按「只修测试网」的范围一条都没改，
+判例钉的是**今天的行为**，所以修任何一条都会故意把相应断言变红，要一起改）。**前三条随 #401 一起被搁了两天，
+本文重述一遍，免得 owner 挑了本 PR、关掉 #401 之后它们跟着丢掉**：
 
 1. **缺工具被报成项目失败。本轮复核把范围从三处扩到十处**（#401 只点了三处）：`checks.py` 里有
    **十个** `kind: "cmd"` / `"substituted"` 的 plan 直接 exec `npm` / `npx` 而从不问
@@ -162,14 +166,21 @@ score=0.9964     complete=True  budget_hit=False
 - `python3 -m compileall act ingest` → OK
 - `ruff check`（四份判例）→ All checks passed
 - 定向子集 `python3 -m unittest`（9 份映射判例）→ **Ran 217 tests, OK**，0.23 s
-- `AIASSISTANT_HOME=$(mktemp -d) PYTHON_COLORS=0 python3 -m unittest discover -s tests` →
-  🔴 **本机跑不完，如实记为「未完成」，判决交给 CI**。两次尝试都在跑到第 1 / 第 13 个测试时
-  **exit 144** 被系统收割：本轮有六个 session 并发处理同题卡、十几个 agent 同时在跑，
-  load 13–33（18 核）、swap 接近耗尽。同一台机器上把并发降下来之后，定向子集的墙钟从 0.23 s
-  劣化到 139 s（同样 217 条测试、同样全绿），可见这是资源问题而不是判例问题。
-  **不谎报绿**：全套 7,800+ 条的判决看 PR 上的 `Tests on ubuntu (Python 3.9 / 3.x)` 两条腿。
-  参考：#401 在安静机器上跑过同一套，报的是 `Ran 7814 tests, exit 0`；本 PR 的判例字节与它逐字节相同。
-  （`PYTHON_COLORS=0` 是本机必需：不加会有一个**与本轮无关的既有**假红
+- **单元/行为层全套**（525 个 `tests/test_*.py` 模块，不含 `tests/integration/`）→
+  **`Ran 7776 tests in 349.791s`，唯一一条失败且为既有假红**：
+  `tests.test_readme_audit_repo_readme.RepoReadmeIsCurrentTest.test_no_stale_claims`
+  —— README 第 13 行的版本字面量 `v1.0.114` 落后于当前 tag `v1.0.116`（§56.1：tag 是版本唯一真源）。
+  **与本轮无关**：本 PR 不碰 `README.md`。证明法是在 job tmp 里开一棵指向 `origin/main` 的
+  detached worktree 跑同一个模块——**逐字同样的失败**（同一行、同一对版本号），
+  而本轮那八个文件一个都不在那棵树上。
+- **integration 层**（22 个 `tests/integration/*.py`）→ ⚠️ **本机未能跑完，判决交给 CI**。
+  三次尝试都在第 1 / 第 13 个测试处 **exit 144** 被系统收割：本轮五个 session 并发处理同题卡、
+  十几个 agent 同时在跑，load 13–51（18 核）、swap 接近耗尽。
+  **这是资源问题不是判例问题**，证明法同上：在安静机器上那棵 pristine main 的树里跑
+  `integration/test_auto_deploy_defer_episode`，得 `Ran 5 tests in 131.089s OK exit 0`
+  （它本身就慢——5 个测试 131 秒，所以它是负载下最先被杀的那个）。
+  **不谎报绿**：这一层看 PR 上的 `Tests on ubuntu (Python 3.9 / 3.x)` 两条腿。
+  （`PYTHON_COLORS=0` 是本机必需：不加另有一个**与本轮无关的既有**假红
   `tests/integration/test_auto_deploy_script.py`，Python 3.14 的彩色 traceback 把它 grep 的字符串切开了）
 - 定向子集另在**高负载**下复跑一次以排除超时污染：`Ran 217 tests in 139.432s / OK`，
   而 `per_mutant_timeout_seconds = 60`。这条曾被复核者提为「超时被 `mutate.py` 记成杀伤 ⇒ 分数虚高」，
@@ -182,7 +193,7 @@ score=0.9964     complete=True  budget_hit=False
   `sites_total=839 executed=839 killed=836 survived=3 timeout=0 error=0 score=0.9964 complete=True`
   （报告与 state 全放本轮 job tmp，没碰 `.qa/`）
 
-**给下一个 session 的两条**：
+**给下一个 session 的三条**：
 
 1. 接「补测试：X 变异存活 N 体」卡的第一条命令是 `gh pr list --state open`。这张卡是同一个夜报发现的
    **第四次**铸卡；前三次的成品都在且 CI 全绿，重写第四份判例是纯浪费，还会造出第四套互相冲突的文件。
