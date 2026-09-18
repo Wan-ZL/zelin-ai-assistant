@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R-001 · checks.py 变异存活 404 → 2</title>
+<style>
+  :root{
+    --ink:#1d2129; --dim:#5c6570; --line:#e3e6ea; --bg:#f6f7f9; --card:#fff;
+    --good:#2e7d4f; --warn:#b8860b; --bad:#c0392b; --info:#2563a8; --teach:#6b46c1;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 80px;}
+  h1{font-size:25px;line-height:1.35;margin:0 0 6px;}
+  .sub{color:var(--dim);font-size:13.5px;margin:0 0 22px;}
+  h2{font-size:19px;margin:34px 0 12px;padding-top:10px;border-top:1px solid var(--line);}
+  h3{font-size:15.5px;margin:20px 0 8px;}
+  p{margin:10px 0;}
+  code{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+       background:#eef0f3;padding:1px 5px;border-radius:4px;}
+  .card{background:var(--card);border-radius:10px;padding:15px 18px;margin:14px 0;
+        border-left:4px solid var(--info);box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  .card.good{border-left-color:var(--good)} .card.warn{border-left-color:var(--warn)}
+  .card.bad{border-left-color:var(--bad)}  .card.teach{border-left-color:var(--teach)}
+  .card h3{margin-top:0}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top;}
+  th{background:#eef1f4;font-weight:600;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  tr.hi td{background:#eaf5ee;font-weight:600;}
+  .tw{overflow-x:auto;}
+  ul{margin:10px 0;padding-left:22px} li{margin:5px 0}
+  .nav a{display:inline-block;margin:0 14px 6px 0;font-size:13.5px;color:var(--info);}
+  .tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:99px;
+       background:#eef1f4;color:var(--dim);margin-left:6px;vertical-align:2px;}
+  .kbd{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);
+         color:var(--dim);font-size:12.5px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>R-001 · <code>skills/test-code/scripts/checks.py</code> 变异存活 404 → 2</h1>
+<p class="sub">2026-09-18 · 分支 <code>ai/self-improve/R-001-checks-mutation</code> · 草稿 PR <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/432">#432</a></p>
+
+<div class="card good">
+  <h3>TL;DR</h3>
+  <ul>
+    <li>同一条夜报发现现在有 <strong>6 张草稿 PR</strong>：#391、#401、#429、#430、#431，以及本轮的 #432。前五张都停在 3～4 个存活体。</li>
+    <li>本轮先做的不是第六套判例，而是<strong>独立复测</strong>：#401 与 #391 的自述都属实，而且<strong>互补</strong>——各自杀掉对方漏掉的变异体。</li>
+    <li>本分支 = 原样采纳 #401（逐字节）+ 补一份判例收走 #391 独有的那一刀 ⇒ <strong>837 / 839 killed，只剩 2 个可证等价体</strong>。六张里唯一到 2 的。</li>
+    <li><strong>诚实口径（三个数）</strong>：全口径 <strong>99.76%</strong>；golden 表全失效时的地板 <strong>81.4%</strong>（154 个杀伤 = 改动检测）；连文档 oracle 也拿掉的最保守地板 <strong>76.4%</strong>。</li>
+    <li><strong>建议：合本分支（#432），关掉 #391 / #401 / #429 / #430 / #431。</strong> 它们彼此合不了——与 #401 同名文件、且 <code>qa/mutation_targets.toml</code> 那一行实测会冲突。</li>
+  </ul>
+</div>
+
+<div class="card bad">
+  <h3>⚠️ 两件需要你裁决的事</h3>
+  <p><strong>① 分支名偏离了通道约定。</strong> self-improve 通道要求分支恰好叫 <code>ai/self-improve/R-001</code>，但那条分支今天已被<strong>另一张卡</strong>占用——它承载的是另一个 R-001（「修红 CI：PR #405」）的交付，已开 PR #426，今早 06:31 还在提交。卡号被回收复用，两张不同的卡撞了同一个 ID。推到那条分支会污染一份已交付的、内容无关的 PR，所以改名为 <code>ai/self-improve/R-001-checks-mutation</code>。<strong>守护进程按分支名核验时会判 <code>pr_branch_mismatch</code> 并把这张卡 park 给你——对这种撞号情形，park 正是应该发生的结果，但要你手工接管。</strong></p>
+  <p><strong>② 一条夜报发现 = 6 张草稿 PR、6 个 session。</strong> #391（R-217）、#401（R-301）、#429（R-8153）、#430 / #431（R-002 两张）、#432（本轮 R-001）。后四张都是「逐字节采用 #401」，说明每个 session 都独立走到了同一个结论——重复的不是判断，是<strong>铸卡</strong>。这是 R-303 记过的「一颗根因扇成 N 张卡」的又一次、也是迄今最严重的一次重演，值得在铸卡侧加语义查重。</p>
+</div>
+
+<p class="nav">
+  <a href="#measure">复测结果</a>
+  <a href="#honest">杀伤率要分三档</a>
+  <a href="#residual">两个残差的判决</a>
+  <a href="#dod">DoD 逐条</a>
+  <a href="#gates">本地门</a>
+  <a href="#method">方法与可复现</a>
+</p>
+
+<h2 id="measure">复测结果</h2>
+
+<p>卡面数字（<code>run=839 / killed=435 / survived=404</code>）来自 2026-09-17 夜跑。动手前第一件事是查孪生 PR，结果发现同一模块已经有两份草稿在做同一件事、而且<strong>谁也没验过它们的自述</strong>。所以本轮第一产出是复测。</p>
+
+<p>复核器自检先行：在 <code>origin/main</code> 的树上跑满 839 个位点，得 435 killed / 404 survived，<strong>与夜报存活集合逐 <code>site_id</code> 相等</strong>（不只是计数对上）——复核器才可信。</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th>树</th><th class="num">映射判例</th><th class="num">killed</th><th class="num">survived</th><th class="num">杀伤率</th></tr></thead>
+  <tbody>
+    <tr><td><code>origin/main</code>（夜报口径）</td><td class="num">3</td><td class="num">435</td><td class="num">404</td><td class="num">51.85%</td></tr>
+    <tr><td>只补靶区映射（+<code>run_ladder</code> +<code>detect</code>）</td><td class="num">5</td><td class="num">456</td><td class="num">383</td><td class="num">54.35%</td></tr>
+    <tr><td>#391（R-217）</td><td class="num">8</td><td class="num">835</td><td class="num">4</td><td class="num">99.52%</td></tr>
+    <tr><td>#401（R-301）</td><td class="num">9</td><td class="num">836</td><td class="num">3</td><td class="num">99.64%</td></tr>
+    <tr class="hi"><td><strong>本分支</strong></td><td class="num">10</td><td class="num">837</td><td class="num">2</td><td class="num">99.76%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+  <h3>关键发现：两份既有判例是互补的，不是重复的</h3>
+  <p>这是只有逐位点复测才看得出来的事：</p>
+  <ul>
+    <li><strong>#401 独有</strong>：杀掉 <code>sys.path.insert</code> 的下标（<code>int_minus1@28</code> / <code>int_plus1@28</code>），靠 <code>test_skill_scripts_dir_is_prepended_not_inserted_later</code>。</li>
+    <li><strong>#391 独有</strong>：杀掉 <code>_unpinned</code> 豁免分支的 <code>return False</code>（<code>return_none@438</code>）。</li>
+  </ul>
+  <p>所以本分支 = <strong>原样采纳 #401</strong>（四份判例逐字节相同，<code>git diff origin/ai/self-improve/R-301 -- &lt;这些路径&gt;</code> 为空）+ 它的靶区补映射 + 一份新判例收走 #391 那一刀。没有把 #391 的五份判例也搬进来——它与 #401 在同一批变异体上高度重叠，两套一起合只是往 <code>tests/</code> 塞 1,600 行重复判例。</p>
+</div>
+
+<h2 id="honest">杀伤率要分三档报</h2>
+
+<div class="card warn">
+  <p>99.76% 里有相当一部分是<strong>「改动检测」</strong>：判例把源里的常数抄成 golden 表，改一个数就红，但仓库里没有第二处载这个数——它防的是改动，不是行为。</p>
+  <p>正确的消融是<strong>保留观测通道、只把期望值换成从 <code>checks.CATALOG</code> / <code>checks.TIER_TIMEOUTS</code> 现算</strong>。删测试是错的消融，会把 oracle 和通道混为一谈。下表全部在<strong>本分支的 10 份判例</strong>上重测（不是 #401 的 9 份，两者不可混用）。</p>
+</div>
+
+<div class="tw">
+<table>
+  <thead><tr><th>消融（保留通道，只换 oracle）</th><th class="num">仍被杀 / 404</th></tr></thead>
+  <tbody>
+    <tr><td>只换四份 markdown 文档 oracle（<code>ab_docs</code>）</td><td class="num">360</td></tr>
+    <tr><td>只换 <code>PHASE_GOLDEN</code>（<code>ab_phase</code>）</td><td class="num">336</td></tr>
+    <tr><td>只换 <code>EST_GOLDEN</code>（<code>ab_est</code>）</td><td class="num">314</td></tr>
+    <tr class="hi"><td><strong>换 phase + est = golden 表全失效（<code>ab_both</code>）</strong></td><td class="num">248</td></tr>
+    <tr><td>全换，连文档 oracle 一起拿掉（<code>ab_all</code>）</td><td class="num">206</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>402 个新杀伤的正交分解（<code>ab_all &sube; ab_both &sube; ab_docs</code>，且 <code>ab_both &minus; ab_all</code> 与 <code>新增 &minus; ab_docs</code> 同为 42）：</p>
+<ul>
+  <li><strong>154 个（38%）只靠 golden 表</strong>（<code>PHASE_GOLDEN</code> / <code>EST_GOLDEN</code>）—— <code>est</code> 的秒数与 <code>phase</code> 的同档内挪动，仓库里确实没有第二处载它们。这一档只值「改动检测」。</li>
+  <li><strong>42 个（10%）靠四份 markdown 文档 oracle</strong>（真去解析 <code>references/tiers.md</code>、<code>catalog.md</code>、<code>SKILL.md</code>）—— 这些是<strong>真的第二处真源</strong>，按本节自己的判准<strong>不算</strong>改动检测。</li>
+  <li>其余 <strong>206 个</strong>是行为锚定。</li>
+</ul>
+
+<p><strong>所以有两档地板，别混为一谈：</strong>① golden 表全部失效时 = (435 + 248) / 839 = <strong>81.4%</strong>；② 连文档 oracle 也一并拿掉（这一步其实拿掉了合法的独立 oracle，是个过严的下界）= (435 + 206) / 839 = <strong>76.4%</strong>。要报的三个数是<strong>全口径 99.76% / golden 表地板 81.4% / 最保守地板 76.4%</strong>。本轮新增的那一刀（<code>@438</code>）在最强消融下仍成立（205 → 206），不依赖任何 golden 表。</p>
+
+<div class="card good">
+  <h3>前向兼容实测 —— 比杀伤数更能判判例成色</h3>
+  <p>把 #401 台账里那条<strong>已确诊缺陷</strong>的一行修法（三处 JS 分支补 <code>_tool(ctx, "npm")</code> 闸门）真打到 workspace 的 <code>checks.py</code> 上，再跑判例：谁红，谁就把<strong>今天的错误行为</strong>钉死了，判例从资产变负债。</p>
+  <p>本分支：修法前后都 <code>Ran 218 tests … OK</code> ⇒ <strong>前向兼容</strong>。并行 session 用同一脚本测出 <strong>#391 的 <code>..._builders_t5_ext.py</code> 在修法后两条 ERROR</strong>——这是不采纳 #391 那五份判例的另一条独立理由。</p>
+</div>
+
+<h2 id="residual">两个残差的判决</h2>
+
+<div class="card teach">
+  <h3><code>int_plus1@556:30#0</code> — 可证等价，永不可杀</h3>
+  <p><code>raw.split("#", 1)[0]</code> 的 maxsplit 1→2。<code>str.split(sep, k)[i]</code> 对任何 <code>i &lt; k</code> 都与 k 无关：左到右切，第 i 段是真的第 i 段，只有第 k 段（余段）随 k 变——而这里 <code>[0]</code> 只读第一段。</p>
+  <p><strong>353,982 条输入</strong>（长度 ≤6 的分隔符全排列穷举 + 随机含全码位 + 真 <code>.gitignore</code> 72 行）零差异。阳性对照：同一行的 <code>int_minus1@556:30#0</code>（1→0，真的会让注释不再被剥）在 200,533 条输入上报差异，<strong>且被两份判例都杀掉</strong>——说明这一行本身是被钉住的，存活的不是覆盖漏洞。</p>
+  <p class="kbd">⚠️ 方向性：只有「增大」等价，「减小」是真变异体。任何抑制规则都不能一刀切。</p>
+</div>
+
+<div class="card teach">
+  <h3><code>return_none@572:12#0</code> — 判等价，故意不杀</h3>
+  <p><code>_drift_scanner</code> 内嵌闭包 <code>dangling</code> 的 <code>return False</code> → <code>return None</code>。两个值都是假值，唯一消费点是布尔位置，经任何公共入口不可观测。</p>
+  <p>它<strong>技术上</strong>可以用 <code>fn.__closure__</code> 翻出来断言，但那样钉住的是「<code>dangling</code> 是个嵌套函数」这一实现结构——把它提成模块级函数或内联掉，行为一字不变而判例会红。<strong>这种判例比没有判例更坏</strong>（防腐 #7 的反面）。#391 独立地作了同一判断。</p>
+</div>
+
+<div class="card">
+  <h3><code>return_none@438:8#0</code> — 杀掉了，但明说它是类型契约</h3>
+  <p><code>_unpinned</code> 豁免分支返 False 还是 None，经 <code>check_actions_sha_pin</code> <strong>观测不到</strong>（同样两个假值、同样布尔位置）。钉它的理由是<strong>同一函数另一条出口 <code>not _SHA_RE.match(ref)</code> 返真布尔</strong>——两条出口类型不一致，今天无害，这个值一旦进 details / JSON 就立刻可观测。</p>
+  <p>判例 docstring 里<strong>明写这是类型契约而不是行为锚定</strong>，没有把它算进「行为防护」那一档。#391 独立地作了同一选择并同样标成「选定不变量」。</p>
+  <p>与 @572 的区别不是随意的：<code>_unpinned</code> 是模块级私名、有隐式接口可以钉；<code>dangling</code> 只活在 closure cell 里，根本没有接口。</p>
+</div>
+
+<h2 id="dod">DoD 逐条对照</h2>
+<div class="tw">
+<table>
+  <thead><tr><th>验收标准</th><th>结果</th><th>证据</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>存活体减半</td>
+      <td><strong>404 → 2</strong>（远超减半）</td>
+      <td>839 位点逐个复测；剩下两个都附等价证明</td>
+    </tr>
+    <tr>
+      <td>覆盖率地板不降</td>
+      <td><strong>不可能降</strong></td>
+      <td>地板 = <code>qa/coverage_floor.txt</code> 的 83.5，量的是 <code>act/</code> + <code>server/</code>（<code>run_coverage.sh:22</code> 的 <code>--source=act,server</code>），<code>skills/</code> 不在取值范围。实测而非推理：对「原有 5 份」与「5 份 + 新增 4 份」分别跑 coverage，两次都报 <code>No data was collected</code>、分母同为 29,124 条语句，贡献恰好 0。</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="gates">本地门</h2>
+<ul>
+  <li><code>python3 -m compileall -q act ingest</code> → exit 0</li>
+  <li><code>ruff check .</code> → All checks passed<span class="tag">本机 0.15.21 / CI 钉 0.15.20</span></li>
+  <li><code>scripts/ci/changelog_fragments.py check</code> → ok (127)</li>
+  <li><code>scripts/ci/progress_log.py check</code> → ok (125)</li>
+  <li><code>scripts/qa/ledger_diff.py --base origin/main</code> → 0 finding(s) / OK</li>
+  <li><strong>Python 3.9 腿</strong>（<code>/usr/bin/python3</code> = 3.9.6，CI 的下限）跑 10 份映射判例 → <code>Ran 218 tests … OK</code></li>
+</ul>
+
+<div class="card warn">
+  <h3>全量 <code>unittest discover</code> 照实记：本机 1 红 2 错，三条都与本分支无关</h3>
+  <p><code>Ran 8067 tests in 1127.684s</code> / <code>FAILED (failures=1, errors=2, skipped=51)</code>。逐条查过：</p>
+  <ul>
+    <li><code>test_readme_audit_repo_readme.test_no_stale_claims</code> —— README 第 13 行写 <code>v1.0.114</code>，本机 <code>version_stamp.py</code> 算出 <code>1.0.116+4</code>。<strong>本分支一个字节都没碰 README</strong>（<code>git diff origin/main...HEAD -- README.md</code> 为空），是本机 tag 状态造成的既有假红。</li>
+    <li><code>integration/test_auto_deploy_script</code> 与 <code>…_defer_episode</code> 的 <code>tearDownModule</code> —— 断言原文 <code>took 749s &gt; 600s budget</code>，是<strong>单文件时间预算</strong>被撞破，不是判例红；本轮自己同时开着复核 agent，负载把它拖过了线。</li>
+  </ul>
+  <p><strong>权威判决取 CI，而且比本机更强</strong>：本 PR 在当前 head <code>7b3d17e3</code> 上 7 项 required check 全绿（run 35357358640，整体 <code>success</code>）——<code>Tests on ubuntu (Python 3.9)</code> 7 m 0 s、<code>Tests on ubuntu (Python 3.x)</code> 6 m 27 s、<code>QA gates（含覆盖率地板）</code> 8 m 6 s。覆盖率地板本来就只在 CI 这个 canonical 环境下才算数（<code>run_gates.sh</code> 的 crap / coverage-floor 两门在 darwin 上被 <code>soften_off_canonical</code> 清零退出码）。</p>
+</div>
+
+<h2 id="method">方法与可复现</h2>
+<p>复核器按 <code>site_id</code> 逐个施加变异、只跑定向子集、每个变异体独立 workspace、<code>-f</code> failfast（对退出码中性）。判决语义逐字照抄 <code>scripts/qa/mutate.py::_execute_mutant</code>（<code>pass</code>→survived / <code>fail</code>→killed / <code>timeout</code>→timeout）。每体约 0.3–0.5 s，12 并发跑满 839 个位点 1–2.5 min——比整轮 <code>mutate.py</code> 快两个数量级。</p>
+
+<div class="card">
+  <h3>两条口径修正，给下一个 session</h3>
+  <ul>
+    <li><code>_module_score</code>（<code>mutate.py:739-745</code>）把 <code>timeout</code> 记在<strong>分子</strong>（killed 侧）。所以子集变慢只会让杀伤率<strong>虚高</strong>，不会虚低——每往靶区加一份判例就多一分这个风险。</li>
+    <li>本机<strong>有</strong> Python 3.9（<code>/usr/bin/python3</code> 3.9.6、<code>~/.local/bin/python3.9</code> 3.9.25）。CI 的 3.9 腿在本地可跑，别再写「本机只有 3.14、只能靠眼睛复核」。</li>
+  </ul>
+</div>
+
+<footer>
+  分支 <code>ai/self-improve/R-001-checks-mutation</code> · 草稿 PR
+  <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/432">#432</a> ·
+  进度文档 <code>docs/design/progress/2026-09-18-self-improve-r001-checks-residual-mutants.md</code>
+</footer>
+
+</div>
+</body>
+</html>
