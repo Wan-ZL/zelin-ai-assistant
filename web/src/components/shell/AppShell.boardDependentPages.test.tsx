@@ -1,7 +1,8 @@
 // AppShell 对「数据住在 /api/board 快照里」的页的分派（CONTRACT §54.1 追记 (a)；§0 第 3 条诚实）：
 // 回收站 / 永久性完成 / 会议纪要三页读的是 board.trash / board.archived / board.recaps——与看板本体同一份快照。
 //   - 首载中：三页跟看板一样是「正在加载看板…」，不许先闪一帧「回收站 0 / 回收站为空」；
-//   - 离线且从未有快照（网络 / 5xx）：三页跟看板一样是「连不上本地服务」+ 重试——不许把「拉不到」渲染成「为空」
+//   - 离线且从未有快照（网络 / 5xx，**503 `BOARD_UNREADABLE` 除外**——§49+§54.1 追记 2026-09-18 把它切成
+//     第四态，判例在 AppShell.boardUnreadable.test.tsx）：三页跟看板一样是「连不上本地服务」+ 重试——不许把「拉不到」渲染成「为空」
 //     （ErrorBanner 无快照不说话、PipelineBanner 离线时也拿不到 health，整页空态是唯一能说真话的地方）；
 //   - dashboard.json 不存在（404）：三页照常渲染（原生 TrashPageView 读 store.visibleTrash = dashboard?.trash ?? []，
 //     没有 dashboard 就是空列表），看板页独享 PipelineEmptyStateView，健康横幅在这三页照常说话；

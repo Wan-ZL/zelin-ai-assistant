@@ -200,11 +200,33 @@ def _access_line(address: str, text: str, now: "float | None" = None) -> str:
     return "%s %s - %s\n" % (stamp, address, text)
 
 
+def _error_note(err: ApiError) -> str:
+    """这次错误要挂在访问行尾的注记（§54.2 追记 2026-09-18，issue #423）。
+
+    只放 envelope ``details`` 的 ``errno`` / ``strerror`` 两项白名单——**不开
+    第二条日志通道**：errno 骑既有那一行出去，于是白拿 ``(path, 状态码)``
+    分桶与 300 s 窗口（「每 5 分钟报一次」正是采样器本来在做的事），仍然一个
+    写者、一份日志、一个抑制器（§54.2「server 永不写第二份日志」）。没有
+    errno 的错误（绝大多数）给空串，行形一字不变——``errno`` 为 null 时同样给空串：
+    往一行给人看的日志里写个 Python ``None`` 不增加任何信息，envelope 里那个
+    ``"errno": null`` 才是要它的人该读的地方。"""
+    details = err.details if isinstance(err.details, dict) else {}
+    if details.get("errno") is None:
+        return ""
+    return " errno=%s %s" % (details["errno"], details.get("strerror") or "-")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "zai-server/0.1"
     protocol_version = "HTTP/1.1"
     # slowloris 兜底：本地单用户，15s 足够（act/webui.py 同款）
     timeout = 15
+    # 这一条请求的访问行要带的错误注记（§54.2 追记 2026-09-18）。类属性兜底 +
+    # **写出即清**（见 log_request）：keep-alive 复用同一个 handler 实例，而基类的
+    # send_error（不认的动词、请求行太长、parse_request 失败）**不经 _dispatch**
+    # ——只在 _dispatch 开头清空的话，上一条 503 的 errno 会挂到下一条 501 上，
+    # 在这条追记唯一要它诚实的那行里做一次假归因。
+    _log_note = ""
 
     # ------------------------------------------------------------------ #
     # 基础发送
@@ -253,6 +275,9 @@ class Handler(BaseHTTPRequestHandler):
                          {"Cache-Control": "no-store"})
 
     def _send_api_error(self, err: ApiError) -> None:
+        # 先挂注记再发：send_response 在 _send_bytes 第一行就调 log_request，
+        # 那条行是本进程唯一的日志写者（§54.2），errno 只能搭它出去。
+        self._log_note = _error_note(err)
         self._send_json(err.status, err.envelope())
 
     # ------------------------------------------------------------------ #
@@ -271,6 +296,7 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("PUT")
 
     def _dispatch(self, method: str) -> None:
+        self._log_note = ""   # keep-alive 复用同一个 handler：上一条的注记不许串到下一条
         try:
             self._handle(method)
         except ApiError as err:
@@ -525,7 +551,14 @@ class Handler(BaseHTTPRequestHandler):
         """访问日志的采样闸（§54.2 追记）：轮询端点同 path 同码每 5 分钟一行。
 
         状态码一变立刻写（状态变化 = 信号）；非轮询路径、以及 ``ZAI_LOG_POLLS=1``
-        一律逐条写——被采样掉的条数由下一条真写出去的行报出来。"""
+        一律逐条写——被采样掉的条数由下一条真写出去的行报出来。
+
+        2026-09-18 追记（issue #423）：``_send_api_error`` 挂在 ``_log_note``
+        上的 errno 注记跟着这一行走——同一个写者、同一份日志、同一个抑制器，
+        不为「把 errno 打出来」另开通道。注记**取出即清**：基类的 ``send_error``
+        绕开 ``_dispatch``，keep-alive 上不清就会把上一条的 errno 挂到下一条
+        无关的状态码上。"""
+        note, self._log_note = self._log_note, ""
         suffix = ""
         path = (getattr(self, "path", "") or "").split("?", 1)[0]
         if not _log_polls_verbatim() and _quiet_candidate(path, code):
@@ -536,8 +569,9 @@ class Handler(BaseHTTPRequestHandler):
             if suppressed:
                 suffix = " (+%d suppressed in the last %ds)" % (
                     suppressed, int(_POLL_SAMPLER.window))
-        self.log_message('"%s" %s %s%s', self.requestline,
-                         str(getattr(code, "value", code)), str(size), suffix)
+        self.log_message('"%s" %s %s%s%s', self.requestline,
+                         str(getattr(code, "value", code)), str(size),
+                         note, suffix)
 
 
 # --------------------------------------------------------------------------- #

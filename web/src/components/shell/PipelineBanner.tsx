@@ -3,6 +3,8 @@
 // 数据源 = GET /api/health（store.health，app.tsx 每 30s 轮询 + SSE 重连后即刷）。
 // 三个要说话的 verdict：stalled（心跳停了——server 只 stat 文件、不探进程，卡死与已死都长这样）/
 // failing（连续崩 ≥3）/ stale（没心跳且看板过期 = 没在跑）。ok / unknown（老 daemon 仍在写看板）不渲染。
+// 例外（§47.4 追记 2026-09-18）：`stale` 遇上 health.unreadable.heartbeat 也不渲染——「没心跳文件」
+// 与「心跳文件读不了」是两件事，后者推不出前者。
 // 与 ErrorBanner 互斥：server 连不上时那条横幅说话，本条闭嘴（同一信息绝不双份）。
 // 修法命令不再揉进正文句子：三态都在动作行给同一条可复制的「手动命令：」（原生 CopyPathLine，§68.8）。
 import { useState } from "react";
@@ -26,6 +28,12 @@ export function describeHealth(
   health: HealthSnapshot,
   text: (zh: string, en: string) => string,
 ): { title: string; detail: string; tone: "danger" | "warning" } | null {
+  // §47.4 追记 2026-09-18（issue #423）：**从一个读不到的文件推出来的 verdict 不许断言**。
+  // `stale` 的全部依据是「没有心跳文件」，而这一次 server 明说的是「心跳文件读不了」——
+  // 那是两件事（宪法第 3 条）。此时横幅闭嘴：再说「后台服务没在运行」+「启动后台服务」，
+  // 既是没探过的断言，也会劝人去重启一个可能好端端在跑的服务。带 errno 的那句实话由
+  // AppShell 的整页空态 / ErrorBanner 去说。
+  if (health.verdict === "stale" && health.unreadable?.heartbeat != null) return null;
   switch (health.verdict) {
     case "stalled": {
       // 只说已知的：心跳多久没跳、最后停在哪一步。server 没探过进程（§47.4 读者 2），

@@ -6,7 +6,9 @@ NOT_FOUND / INTERNAL_ERROR / NOT_IMPLEMENTED（501 专用，reveal 非 darwin—
 add-only 正式收编，原 TODO(contract) 关闭）/ FORBIDDEN / UNAUTHORIZED
 （§49 auth model 的 Host/Origin 闸与 instance token 闸，add-only 收编）/
 CONFLICT（409，§59 设置写入遇到不可解析的目标文件——拒绝覆盖，add-only 收编）/
-SHELL_UNAVAILABLE（503，§68.7 2026-09-05：终端接管队列没有消费者——壳没在跑，add-only 收编）。
+SHELL_UNAVAILABLE（503，§68.7 2026-09-05：终端接管队列没有消费者——壳没在跑，add-only 收编）/
+BOARD_UNREADABLE（503，§49 2026-09-18 issue #423：dashboard.json 读不了、而且不是因为它不在
+——「坏掉的通道」不是「没有新数据」，add-only 收编）。
 """
 from __future__ import annotations
 
@@ -81,3 +83,16 @@ class ShellUnavailableError(ApiError):
     issue #216）→ 503。页面据此降级：复制指令 + 提示，与非 darwin 501 同一条降级逻辑。"""
     status = 503
     code = "SHELL_UNAVAILABLE"
+
+
+class BoardUnreadableError(ApiError):
+    """``state/dashboard.json`` 读不了，而且**不是**因为它不在（EACCES/EPERM/EIO…）
+    → 503（§49 追记 2026-09-18，issue #423）。与 404 ``NOT_FOUND``（ENOENT/ENOTDIR/
+    EISDIR）严格分开：宪法第 3 条要求「坏掉的通道」与「没有新数据」不说成同一句话。
+    ``details`` 带 ``path`` + ``errno`` + ``strerror``；页面据此保留上一版快照并说
+    真话，**不**降级成「连不上本地服务」，也不提「立即生成一次」（我们不知道那个
+    文件里有什么，重生成可能覆盖掉一份好数据）。本 code 只属 ``state/dashboard.json``
+    的这一次读——``GET /api/board``，以及经 ``board_source._board_dict`` 走到的
+    ``GET /api/cards/{id}``。"""
+    status = 503
+    code = "BOARD_UNREADABLE"

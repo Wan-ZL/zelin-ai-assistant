@@ -1,7 +1,8 @@
 // fetch 客户端 + 错误分类学。模式 fork 自 dashi web/src/api.ts（Apache-2.0，NOTICE 登记）：
 // ApiError{status,code,details} 统一封装 + GET 幂等重试（2 次退避）+ 网络失败合成码。
 // error envelope 契约（server/app.py）：{"error":{"code","message","details"}}，
-// server 端码：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / INTERNAL_ERROR；
+// server 端码：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / INTERNAL_ERROR /
+//   BOARD_UNREADABLE（503，§49 追记 2026-09-18：读不到 dashboard.json、而且不是因为它不在，details 带 errno）；
 // 客户端合成码：READ_FAILED（读失败，UI 静默重试）/ SERVICE_UNAVAILABLE（写失败，UI 明确报错）。
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
 import type {

@@ -6,7 +6,9 @@
 //      首载 loading / 从未加载成功且离线（诚实空态+恢复路径——「拉不到」绝不渲染成「为空」）/ dashboard.json 不存在
 //      （server 在、文件不在：看板页 = 原生 PipelineEmptyStateView + 列顶 composer；三个列表页 = 空列表，原生
 //      `dashboard?.trash ?? []`）/ dashboard.json 解不出来且从未有过好快照（原生 loadError 那一行 + 重试，§49 追记
-//      `store-resilience-drawer`）/ 正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
+//      `store-resilience-drawer`）/ dashboard.json 在但这个 server 进程读不了它（503 `BOARD_UNREADABLE`，§49 追记
+//      2026-09-18 / issue #423：同一行说真话 + 重试，**不**给「立即生成一次」——重建会覆盖那个文件，而我们不知道它里面有什么）/
+//      正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
 //   2. <html lang> 与 document.title 随语言与当前页同步（原生 installTitleSink：「Zelin's AI Assistant — <页>」，pageTitles.ts）；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
 //   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话；看板页的「没写出数据」空态
@@ -132,7 +134,7 @@ export function BoardMissingState() {
 
 export function AppShell({ searchSlot, children }: AppShellProps) {
   const { language, text } = useI18n();
-  const { board, boardError, boardMissing, boardDecodeError, boardLoading } = useAppState();
+  const { board, boardError, boardMissing, boardDecodeError, boardUnreadable, boardLoading } = useAppState();
   const page = readPage(useRoute()); // D40：换页不重载，页从路由订阅里来
   const isBoard = page === "board";
   const readsBoard = BOARD_FED_PAGES.has(page);
@@ -182,8 +184,35 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
         />
       </div>
     );
+  } else if (boardUnreadable) {
+    // 从未加载成功 + server 答了 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18，issue #423）：读不到
+    // dashboard.json，而且不是因为它不在。不是离线（server 刚答过话），也不是「还没写出数据」——所以
+    // 这一态刻意**不给「立即生成一次」**：`POST /api/setup/seed-dashboard` 会重建并覆盖那个文件，而我们
+    // 恰恰不知道它里面有什么。只说清原因（带 errno）+ 重试。
+    // 这里**不分 isBoard**（与上面的 boardMissing 分支相反，是刻意的）：404 说明文件真不在，回收站 /
+    // 永久性完成 / 会议纪要三页渲染成空列表就是真话；503 说明我们**不知道**里面有什么，渲染成「为空」
+    // 正是「拉不到不许渲染成为空」禁的那件事——所以四页一律走这张整页实话（离线分支同款）。
+    content = (
+      <div className="shell-center">
+        <EmptyState
+          icon={<WarningIcon />}
+          title={boardUnreadable}
+          hint={text(
+            "这不是「文件不存在」——读取返回的是另一种错误（权限 / 磁盘 / 卷的访问控制）。"
+            + "重启 server 可以试；/api/health 的 unreadable 块报的是同一个 errno。",
+            "This is not a missing file — the read failed with a different error (permissions, disk, or volume access control). "
+            + "Restarting the server is worth a try; /api/health's unreadable block reports the same errno.",
+          )}
+          action={
+            <button type="button" className="shell-button" onClick={() => void refreshBoard()}>
+              {text("重试", "Retry")}
+            </button>
+          }
+        />
+      </div>
+    );
   } else {
-    // 从未加载成功 + 读失败（网络 / 5xx）：诚实说明原因与恢复路径——「拉不到」不许渲染成「为空」
+    // 从未加载成功 + 读失败（网络 / 其余 5xx）：诚实说明原因与恢复路径——「拉不到」不许渲染成「为空」
     content = (
       <div className="shell-center">
         <EmptyState
