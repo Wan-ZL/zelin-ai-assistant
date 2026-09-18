@@ -194,7 +194,24 @@ timeout=0        error=0       score=0.9964  complete=True</code></pre>
   <tr><td>剩余存活体</td><td>4 体，其中 <code>sys.path.insert(0,…)</code> 的下标<strong>可观测</strong>（最多 2 个真洞）</td><td><strong>3 体，机器判定全是等价体（真洞 0）</strong></td></tr>
   <tr><td>§56.7 文书</td><td>缺 changelog + 进度文档两个 fragment</td><td>齐全</td></tr>
   <tr><td>弱档披露</td><td>把 <code>tier</code>/<code>phase</code>/<code>est</code> 当同一种东西钉，无分档说明</td><td>判例 docstring 里<strong>自己写明</strong>哪一档只值改动检测</td></tr>
+  <tr><td><strong>前向兼容（修缺陷 1 之后）</strong></td><td><span class="tag bad">FAILED (errors=2)</span> 两条判例把缺陷行为钉死了</td><td><span class="tag good">Ran 100 tests OK</span> 一行都不用动</td></tr>
 </table>
+
+<div class="card bad">
+  <h3>决定性的判别器：前向兼容实测</h3>
+  <p>把下面缺陷 1 的修法（<code>_npm_audit_steps</code> 已有的 <code>_tool(ctx,"npm")</code> 闸门）真打到 <code>_e2e_for_pkg</code> + <code>_b_perf_budget</code> + <code>_b_bundle_size</code> 三处，再跑两个孪生各自的判例：</p>
+  <pre><code>TWIN 401 (origin/ai/self-improve/R-301)
+  patched 3 sites   syntax OK
+  REAL_EXIT=0       Ran 100 tests in 0.304s      OK
+
+TWIN 391 (origin/ai/self-improve/R-217)
+  patched 3 sites   syntax OK
+  REAL_EXIT=1       Ran 96 tests in 0.067s       FAILED (errors=2)
+    ERROR: test_bundle_size_prefers_the_npm_script (…ApiBundleLicenseTestCase)
+    ERROR: test_npm_bench_script_is_the_js_path    (…PerfBudgetDeadCodeTestCase)</code></pre>
+  <p>#391 有两条判例把<strong>缺陷行为本身</strong>钉死了（它的 <code>fake_det</code> 默认 <code>tools: {}</code>，于是「缺 npm 仍返 cmd」成了断言）。结论：<strong>修缺陷 1 时 #401 一行判例都不用动，#391 必须改两条。</strong></p>
+  <p><strong>精度注记</strong>：只给 <code>_e2e_for_pkg</code> 打闸门时两个孪生都全绿 —— 那两条判例钉的是 <code>_b_bundle_size</code> / <code>_b_perf_budget</code>，所以这个判别器必须把三处都打上才显形。实验在 job tmp 的两棵 <code>git worktree add --detach</code> 里做，没有碰本分支或共享 checkout。</p>
+</div>
 
 <div class="card good">
   <p><strong>建议</strong>：合 <strong>#401</strong>（或与它字节相同的 #429 / 本 PR 之一），关掉其余三个。合掉之后下一晚的夜报就不会再铸第五张卡。</p>

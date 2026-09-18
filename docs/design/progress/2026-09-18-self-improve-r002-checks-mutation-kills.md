@@ -45,6 +45,16 @@ owner 要做的不是再审一遍判例，是**从三个 PR 里挑一个合掉**
   #391 只有判例和 toml，缺 §56.7 的两个 fragment。
 - #401 的判例 docstring 里**自己写明了哪一档是弱的**（见下「诚实分档」），#391 的 catalog 判例把
   `tier`/`phase`/`est` 三列当同一种东西对着 `references/tiers.md` 钉，没有分档说明。
+- 🔴 **决定性的一条：前向兼容实测。** 把下面缺陷 1 的修法（`_npm_audit_steps` 已有的
+  `_tool(ctx, "npm")` 闸门）真打到 `_e2e_for_pkg` + `_b_perf_budget` + `_b_bundle_size` 三处，
+  再跑两个孪生各自的判例：**#401 `Ran 100 tests OK`（exit 0），#391 `Ran 96 tests FAILED (errors=2)`（exit 1）**。
+  #391 有两条判例把**缺陷行为本身**钉死了（它的 `fake_det` 默认 `tools: {}`，于是「缺 npm 仍返 cmd」
+  成了断言）：`test_bundle_size_prefers_the_npm_script`（`ApiBundleLicenseTestCase`）与
+  `test_npm_bench_script_is_the_js_path`（`PerfBudgetDeadCodeTestCase`）。
+  也就是说：**修缺陷 1 时 #401 一行判例都不用动，#391 必须改两条。**
+  精度注记：只给 `_e2e_for_pkg` 打闸门时两个孪生都全绿——那两条判例钉的是
+  `_b_bundle_size` / `_b_perf_budget`，所以这个判别器必须把三处都打上才显形。
+  实验在 job tmp 的两棵 `git worktree add --detach` 里做，没有碰本分支或共享 checkout。
 
 **独立复测（不采信 PR 标题的数字）**：本分支上 `scripts/qa/mutate.py --modules skills/test-code/scripts/checks.py
 --force` 全量重跑，839 位点、`checks.py` 的 `content_hash` 与夜报同为 `322d706b…`（生产代码零改动，
