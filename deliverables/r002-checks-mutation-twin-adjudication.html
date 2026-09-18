@@ -302,10 +302,25 @@ survives  ... 其余八份全部 mutant=pass</pre>
   这一条比杀伤数差的 1 体重要得多。
 </div>
 
-<p class="muted">公平起见也说另一面：#401 确实钉了 <code>_span_cov</code> 无数据返回 <code>1.0</code>
-这个 fail-open 现状（<code>internal_math.py:93-101</code>），修那条设计问题会让它红 —— 但这是它台账里
-<strong>明写</strong>的「判例钉的是今天的行为，修任何一条都会故意把相应断言变红」，是披露过的，
-不是藏起来的；而且那条 owner 还没拍板要不要改。</p>
+<h3>对称检验：免得这个论证是单边的</h3>
+
+<p>#401 确实钉了 <code>_span_cov</code> 无数据返回 <code>1.0</code> 这个 fail-open 现状
+（<code>internal_math.py:93-101</code>）。那么反过来问：改<strong>那一条</strong>的时候谁红？
+同样实测（把 <code>if not known: return 1.0</code> 改成 <code>return 0.0</code>）：</p>
+
+<pre>### R-301 / #401 —— RED  tests/test_skill_test_code_internal_math.py                     （其余三份绿）
+### R-217 / #391 —— RED  tests/test_skill_test_code_checks_mutation_kills_internal.py   （其余四份绿）
+=> 两套都钉了这个 fail-open，各红一份文件。中性，无优劣。</pre>
+
+<p>（#391 的 <code>..._internal.py:296-300</code> 同样写着
+<code>assertEqual(checks._span_cov(1, 3, set(), set()), 1.0)</code>。）</p>
+
+<div class="card info">
+  <p style="margin:0">所以 #401 的前向兼容优势<strong>完全来自那条已确诊的缺陷</strong>（npm 闸门），
+  在那里是不对称的；在 <code>_span_cov</code> 这条<strong>尚未拍板的设计问题</strong>上两边一样。
+  另外 #401 那处是它台账里<strong>明写</strong>的「判例钉的是今天的行为，修任何一条都会故意把相应
+  断言变红」，披露过、不是藏起来的。</p>
+</div>
 
 <h2 id="s6">6 ·「两个都合」的代价（量过，不是猜的）</h2>
 
