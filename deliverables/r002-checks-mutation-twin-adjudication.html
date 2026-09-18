@@ -337,6 +337,16 @@ CONFLICT (content): Merge conflict in qa/mutation_targets.toml</pre>
 
 <h2 id="s7">7 · 建议与处置命令</h2>
 
+<div class="card info">
+  <h3>顺带：本分支的 CI 正好补上了 #401 缺的那份证据</h3>
+  <p>#401 的 CI 是 <strong>2026-09-16</strong> 跑的，而它的 merge-base 落后 current main
+  <strong>59 个 commit</strong> —— 它的 hunk 从没在今天的 main 上过过 CI。<strong>本分支就是那个实验</strong>：
+  同一批 hunk 逐字节搬到 current main 上、跑一次全新的 CI。所以即使你决定合 #401 而关掉本 PR，
+  本 PR 的 CI 结果仍是「#401 的 hunk 在今天的 main 上还能过」的证据。</p>
+  <p>三个 PR 现在都是 <code>mergeable=MERGEABLE</code> / <code>mergeStateStatus=CLEAN</code>
+  （逐个查过）⇒ main 没开 strict up-to-date 要求，#401 不需要先 rebase。</p>
+</div>
+
 <div class="card good">
   <h3>合 #401，关 #391，关本 PR</h3>
   <p>理由按权重：</p>

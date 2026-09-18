@@ -134,6 +134,16 @@ never carry these module names"，据此归成等价体。#401 的
 `est` 三列 —— 以后动一行 catalog 要改两个地方，而两套的 golden 表形状还不一样。合两个 = 双倍维护，
 换来的增量是 1 个位点（438）。
 
+## 顺带：本分支的 CI 正好补上了 #401 缺的那份证据
+
+#401 的 CI 是 **2026-09-16** 跑的，而它的 merge-base 落后 current main **59 个 commit** —— 它的 hunk
+从没在今天的 main 上过过 CI。**本分支就是那个实验**：同一批 hunk 逐字节搬到 current main 上、跑一次
+全新的 CI。所以即使 owner 决定合 #401 而关掉本 PR，本 PR 的 CI 结果仍是「#401 的 hunk 在今天的 main 上
+还能过」的证据。
+
+三个 PR 现在都是 `mergeable=MERGEABLE` / `mergeStateStatus=CLEAN`（逐个查过）⇒ main 没开 strict
+up-to-date 要求，#401 不需要先 rebase，`gh pr ready 401` 之后就能合。
+
 ## 建议（请 owner 拍板）
 
 **合 #401，关 #391，关本 PR。** 理由按权重：
