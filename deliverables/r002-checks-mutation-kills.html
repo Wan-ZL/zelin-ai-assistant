@@ -63,6 +63,9 @@
     <li><strong>两条 DoD 都满足</strong>：存活体 404 → <strong>3</strong>（门是 ≤ 202），覆盖率地板未降（<code>ledger_diff</code> 0 finding）。数字是我在本分支上<strong>独立复跑</strong>的，不是采信 PR 标题。</li>
     <li><strong>这张卡要的补网两天前就写完了</strong>，躺在没合的草稿 PR 里。本轮<strong>零新判例</strong>，逐字节采用 #401 的字节。</li>
     <li>同一个夜报发现<strong>已产出五个 PR</strong>（#391 / #401 / #429 / #430 / 本 PR #431），因为夜报对 <code>main</code> 跑，而补网只存在于未合的分支上。<strong>owner 要做的是挑一个合掉、关掉其余四个</strong>，不是再审一遍判例。</li>
+    <li><strong>挑哪个</strong>：合一个<strong>基于今天 main</strong> 的载体（#429 / #430 / #431）—— #401 / #391 的基线落后 main <strong>59 个 commit</strong>、CI 是 9/16 的。判例功劳仍属 #401，<strong>载体与著作权是两件事</strong>。</li>
+    <li>🔴 <strong>止住重铸要改生成器，不是改文档</strong>：<code>loop_inputs._mutation_signal</code> 每晚只挑存活最多的模块、fingerprint 不看 open PR。</li>
+    <li>⚠️ <strong>自我更正</strong>：三问第 3 条答漏了 <code>mutate.py</code> 的 <code>_skip_subtree</code> 与 CONTRACT P3a「常数 ±1 放过」条文。按列裁：<code>est</code> 88 体该 skip，<code>tier</code>+<code>phase</code> 124 体是真信号不能 skip。</li>
     <li>诚实分档：99.64% 这个数里有 154 个位点<strong>只值「改动检测」</strong>。两张 golden 表都折掉的下界是 <strong>81.3%</strong>。</li>
     <li>🔴 <strong>两个 lane 缺陷</strong>比补网本身更值得看：同题卡被并发扇到五个并行 session（含本轮共处理 7 次）；卡号跨发现重复，导致 <code>ai/self-improve/R-002</code> 这个分支名被一个<strong>无关的 web 修复</strong>（PR #427）占了。</li>
     <li>🔴 <strong>四条未修的真缺陷</strong>等拍板，其中一条本轮新查出：<code>docs/CONTRACT.md</code>（1.44 MiB）超过 1 MiB 文本帽，被 <code>secret_scan</code> <strong>静默跳过</strong>。</li>
@@ -216,8 +219,35 @@ TWIN 391 (origin/ai/self-improve/R-217)
 </div>
 
 <div class="card good">
-  <p><strong>建议</strong>：合 <strong>#401</strong>（或与它字节相同的 #429 / #430 / 本 PR 之一），关掉其余四个。合掉之后下一晚的夜报就不会再铸下一张。</p>
-  <p>本 PR 的五个路径与 #401、#429 <strong>逐字节相同</strong>（blob SHA 全等），所以三者在判例层面完全可互换；本 PR 额外带的是这份独立复核与 lane 缺陷记录。</p>
+  <h3>建议（已按 merge-base 实测修正）</h3>
+  <p><strong>合一个「基于今天 main」的载体</strong> —— #429 / #430 / 本 PR #431 之一 —— 关掉其余四个。判例的功劳仍属 #401（R-301）：<strong>载体与著作权是两件事。</strong></p>
+  <table>
+    <tr><th>分支</th><th>merge-base</th><th>落后 main</th></tr>
+    <tr><td><code>…/R-217</code>（#391）</td><td><code>f5edb5a1</code></td><td class="num"><strong>59 commit</strong></td></tr>
+    <tr><td><code>…/R-301</code>（#401）</td><td><code>f5edb5a1</code></td><td class="num"><strong>59 commit</strong></td></tr>
+    <tr><td><code>…/R-8153</code>（#429）</td><td><code>3c69fbfd</code></td><td class="num">0</td></tr>
+    <tr><td><code>…-twins</code>（#430）</td><td><code>3c69fbfd</code></td><td class="num">0</td></tr>
+    <tr><td><code>…-checks-mutation</code>（<strong>#431 本 PR</strong>）</td><td><code>3c69fbfd</code></td><td class="num">0</td></tr>
+  </table>
+  <p>#401 / #391 的 CI 是 9/16 跑的、基线落后 59 个 commit，所以它证明的是「这份 hunk 在 <strong>9/16 的</strong> main 上能过」。「在<strong>今天的</strong> main 上还能过」只有 #429 / #430 / #431 的 CI 能证明。判例字节三者全等（blob SHA 逐个相同），所以在判例层面完全可互换。</p>
+</div>
+
+<div class="card bad">
+  <h3>🔴 三问第 3 条答漏了一个既有机制（本 PR 第一版的自我更正）</h3>
+  <p><code>scripts/qa/mutate.py</code> 自带 <code>_skip_subtree</code>（:291-299），docstring 写「等价变异体高发区，<strong>§57 明文</strong>」；而 <code>docs/CONTRACT.md:5471</code>（2026-09-02 P3a 追记）明文写着「幸存体逐个判定 —— <strong>等价变异（常数 ±1、日志文案）放过</strong>」。</p>
+  <p>也就是说「整数常数 ±1 该不该补判例」法典里<strong>早有条文</strong>，而五个 PR、本轮六个审计 lens 全都没去搜它。</p>
+  <p><strong>正解要按列分开裁，不能整表一刀切</strong>（这同时更正「常数表 = 等价体」的整表结论）：</p>
+  <ul>
+    <li><code>est</code> 那 <strong>88 体</strong> —— 无文档真源、无下游行为后果 —— 是 <code>_skip_subtree</code> 加子句的<strong>正当候选</strong>；加了就该 bump <code>RUNNER_VERSION</code>、把它们从分母里移走，<code>EST_GOLDEN</code> 整张表随之可删。</li>
+    <li>但 <code>tier</code> <strong>82 体</strong>钉在四份 markdown 上、<code>phase</code> <strong>42 体</strong>靠 <code>run_ladder.run_all</code> 真派发可杀 —— 这 <strong>124 体是真信号</strong>，skip 掉等于自断覆盖。</li>
+  </ul>
+  <p>所以 P3a 那条是「识别等价变异体的<strong>启发式</strong>」，不是「对每个整数常量的<strong>裁决</strong>」。</p>
+</div>
+
+<div class="card bad">
+  <h3>🔴 孪生风暴的根在生成器，任何进度文档都拦不住下一张卡</h3>
+  <p><code>act/lib/loop_inputs.py</code> 的 <code>_mutation_signal</code>（:535-556）每晚只取<strong>存活最多的那一个</strong>模块（<code>sorted(..., key=lambda t: (-t[4], t[0]))[:1]</code>，门槛 <code>MUTATION_MIN_SURVIVORS</code>），fingerprint 仅为 <code>mutation:&lt;module&gt;</code>，<strong>完全不看有没有 open PR</strong>。</p>
+  <p>PR 不合 ⇒ 存活数不掉 ⇒ 每晚再选中同一个模块 ⇒ 再铸一张卡。要止住，得让它按 fingerprint 抑制已有 open PR 的信号 —— 这是 lane 侧一行改动，不是文档能解决的。</p>
 </div>
 
 <h2 id="defects">六 · 四条未修的真缺陷</h2>
@@ -289,9 +319,11 @@ FAIL: test_no_stale_claims
 </div>
 
 <div class="card">
-  <h3>一条被驳倒的复核 finding，值得记一笔</h3>
-  <p>复核者提过「定向子集 139 s 超过 <code>per_mutant_timeout_seconds = 60</code>，而 <code>mutate.py</code> 把超时记成杀伤 ⇒ 99.6% 是超时喂出来的虚高」。<strong>已被实测否掉</strong>：本轮 <code>report.json</code> 的 <code>timeout = 0</code>、<code>error = 0</code>，836 个杀伤里没有一个来自超时。安静机器上子集 0.23 s，对 60 s 有 260 倍余量，夜报又跑在专用 ubuntu runner 上。</p>
-  <p>这条留在这里是因为<strong>它本来是个好怀疑</strong>：如果哪天夜报在负载高的机器上跑，超时确实会把分数喂虚。<code>timeout</code> / <code>error</code> 两列要单独看，别只看 score。</p>
+  <h3>⚠️ 「超时喂高分数」这条复核 finding：机制是真的，只有本轮的实例是干净的</h3>
+  <p>复核者提过「定向子集 139 s 超过 <code>per_mutant_timeout_seconds = 60</code>，而 <code>mutate.py</code> 把超时记成杀伤 ⇒ 99.64% 是超时喂出来的虚高」。收尾核对后要把措辞收紧：</p>
+  <p><strong>机制确认存在</strong>。<code>_module_score</code>（<code>mutate.py:740-746</code>）的 docstring 明写「timeout 记 killed 侧」，公式就是 <code>(killed + timeout) / denominator</code> —— 负载下超时确实会把分数<strong>往上</strong>抬。</p>
+  <p><strong>本轮的实例是干净的</strong>：report 里 <code>timeout = 0</code>、<code>error = 0</code>，836 个杀伤里没有一个来自超时。安静机器上子集 0.23 s，对 60 s 有 260 倍余量，夜报又跑在专用 ubuntu runner 上。</p>
+  <p>所以结论不是「这条被驳倒了」，而是<strong>读任何变异分数都要连 <code>timeout</code> / <code>error</code> 两列一起读</strong>；自己跑探针要留足超时余量。</p>
 </div>
 
 <footer>

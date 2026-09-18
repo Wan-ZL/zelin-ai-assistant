@@ -193,6 +193,53 @@ score=0.9964     complete=True  budget_hit=False
   `sites_total=839 executed=839 killed=836 survived=3 timeout=0 error=0 score=0.9964 complete=True`
   （报告与 state 全放本轮 job tmp，没碰 `.qa/`）
 
+## 四条收尾更正（含对本文自己前面结论的更正）
+
+本轮与另一个 R-002 session（#430）交叉复核后，四件事需要更正或补上，全部由本 session 独立验证过：
+
+**1. 🔴 「该合 #401」要改成「该合一个基于今天 main 的载体」。** 实测 merge-base：
+
+| 分支 | merge-base | 落后 main |
+|---|---|---|
+| `…/R-217`（#391） | `f5edb5a1` | **59 commit** |
+| `…/R-301`（#401） | `f5edb5a1` | **59 commit** |
+| `…/R-8153`（#429） | `3c69fbfd` | 0 |
+| `…/R-002-checks-mutation-twins`（#430） | `3c69fbfd` | 0 |
+| `…/R-002-checks-mutation`（**本 PR #431**） | `3c69fbfd` | 0 |
+
+#401 / #391 的 CI 是 9/16 跑的、基线落后 59 个 commit，所以它证明的是「这份 hunk 在 9/16 的 main 上能过」。
+**「在今天的 main 上还能过」只有 #429 / #430 / #431 的 CI 能证明。** 判例的字节三者全等，
+所以**合基于今天 main 的那个载体**，判例的功劳仍属 #401（R-301）——载体与著作权是两件事。
+
+**2. 🔴 CLAUDE.md 必答三问第 3 条，本 PR 第一版答漏了一个既有机制。** `scripts/qa/mutate.py` 自带
+`_skip_subtree`（:291-299），docstring 写「等价变异体高发区，**§57 明文**」；而
+`docs/CONTRACT.md:5471`（2026-09-02 P3a 追记）明文写着「幸存体逐个判定——**等价变异（常数 ±1、
+日志文案）放过**」。也就是说「整数常数 ±1 该不该补判例」这件事法典里**早有条文**，
+而四个 PR、本轮六个审计 lens 全都没去搜它。
+
+正解要**按列分开裁，不能整表一刀切**（这同时也更正邻卡「常数表 = 等价体」的整表结论）：
+
+- `est` 那 **88 体**——无文档真源、无下游行为后果（#401 自己的消融已证，本轮复现）——
+  是 `_skip_subtree` 加子句的**正当候选**；加了就该 bump `RUNNER_VERSION`、把它们从分母里移走，
+  `EST_GOLDEN` 整张表随之可删。
+- 但 `tier` **82 体**钉在四份 markdown 上、`phase` **42 体**靠 `run_ladder.run_all` 的真派发可杀，
+  这 **124 体是真信号**，skip 掉等于自断覆盖。
+
+所以 P3a 那条是「识别等价变异体的启发式」，不是「对每个整数常量的裁决」。
+
+**3. 🔴 孪生风暴的根在生成器，任何进度文档都拦不住下一张卡。**
+`act/lib/loop_inputs.py` 的 `_mutation_signal`（:535-556）每晚只取**存活最多的那一个**模块
+（`sorted(..., key=lambda t: (-t[4], t[0]))[:1]`，门槛 `MUTATION_MIN_SURVIVORS`），
+fingerprint 仅为 `mutation:<module>`，**完全不看有没有 open PR**。
+PR 不合 ⇒ 存活数不掉 ⇒ 每晚再选中同一个模块 ⇒ 再铸一张卡。
+要止住，得让它按 fingerprint 抑制已有 open PR 的信号——这是 lane 侧一行改动，不是文档能解决的。
+
+**4. ⚠️ 上面「超时喂高分数」那条复核 finding 的措辞要收紧：机制是真的，只有本轮的实例是干净的。**
+`_module_score`（`mutate.py:740-746`）的 docstring 明写「timeout 记 killed 侧」，公式是
+`(killed + timeout) / denominator`——**所以负载下超时确实会把分数往上抬**。
+本轮之所以不受影响，是因为 report 里 `timeout = 0` / `error = 0`，不是因为机制不存在。
+结论：**读任何变异分数都要连 `timeout` / `error` 两列一起读**；自己跑探针要留足超时余量。
+
 **给下一个 session 的三条**：
 
 1. 接「补测试：X 变异存活 N 体」卡的第一条命令是 `gh pr list --state open`。这张卡是同一个夜报发现的
