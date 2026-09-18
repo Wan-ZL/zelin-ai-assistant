@@ -2670,7 +2670,7 @@
       "id": "contract:§9",
       "source": "contract",
       "scenario": "回收站（trash / recycle bin）",
-      "proof": "unittest:tests.test_actd_never_raise_paths,tests.test_daily_loop_dedup_merge,tests.test_registry_write_paths,tests.test_store2_cas",
+      "proof": "unittest:tests.test_actd_never_raise_paths,tests.test_daily_loop_dedup_merge,tests.test_registry_restore_clock,tests.test_registry_write_paths",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
