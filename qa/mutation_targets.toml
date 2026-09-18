@@ -96,7 +96,10 @@ per_mutant_timeout_seconds = 60
 # triggers.md 上，防腐 #5 的机器执法，对照姐妹 skill 的 test_skill_test_ui_catalog_docs.py）、
 # builder_gates（_b_* 的「配置在 AND 工具在」闸门与 `X or 默认` 回落）、internal_math（自制检查的算术与
 # fail-closed 扫描器）、plan_plumbing（argv / 步骤构造与各栈就绪判定）。
-"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py", "tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_detect.py", "tests/test_skill_test_code_catalog_docs.py", "tests/test_skill_test_code_builder_gates.py", "tests/test_skill_test_code_internal_math.py", "tests/test_skill_test_code_plan_plumbing.py"]
+# R-001（2026-09-18）：上面那批把 404 打到 3，独立复测坐实。checks_residual_mutants 收走最后一个
+# 可杀的（438 `_unpinned` 豁免分支的 return False——谓词的类型契约，不是行为锚定，理由写在该文件
+# docstring 里）。剩下的 556 / 572 两个是**可证等价体**，证明同样记在那份 docstring，别再补判例。
+"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py", "tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_detect.py", "tests/test_skill_test_code_catalog_docs.py", "tests/test_skill_test_code_builder_gates.py", "tests/test_skill_test_code_internal_math.py", "tests/test_skill_test_code_plan_plumbing.py", "tests/test_skill_test_code_checks_residual_mutants.py"]
 "skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
 
 # test-ui skill（skills/test-ui；vnext2-plan R2.8，test-code 的姐妹）——同样每晚第 4 档。
