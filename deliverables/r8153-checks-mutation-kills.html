@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R-8153 · checks.py 变异存活体 404 → 3</title>
+<style>
+  :root{
+    --ink:#1d2129; --muted:#5c6773; --line:#e3e8ef; --bg:#fafbfc; --card:#fff;
+    --good:#2e9e5b; --warn:#d99100; --bad:#d4443c; --info:#2f6fd0; --teach:#7a4fcf;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 20px 64px}
+  h1{font-size:26px;line-height:1.3;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 22px}
+  h2{font-size:20px;margin:34px 0 12px;padding-top:6px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:20px 0 8px}
+  p{margin:10px 0}
+  code{background:#f1f4f8;border-radius:4px;padding:1px 5px;font-size:13px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#f1f4f8;border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:10px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--info);
+    border-radius:8px;padding:14px 16px;margin:14px 0}
+  .card.good{border-left-color:var(--good)} .card.warn{border-left-color:var(--warn)}
+  .card.bad{border-left-color:var(--bad)} .card.teach{border-left-color:var(--teach)}
+  .card h3{margin-top:0}
+  .star{background:#fff8e6;border:1px solid #f0dca8;border-radius:8px;padding:12px 15px;margin:14px 0}
+  nav{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 8px}
+  nav a{color:var(--info);text-decoration:none;margin-right:16px;font-size:14px;white-space:nowrap}
+  nav a:hover{text-decoration:underline}
+  .tblwrap{overflow-x:auto;margin:12px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left}
+  th{background:#f4f7fa;font-weight:600}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.pick{background:#eaf7ef}
+  tr.pick td{font-weight:600}
+  ul{margin:10px 0;padding-left:22px} li{margin:5px 0}
+  .tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;
+    background:#eef2f7;color:var(--muted);margin-left:6px}
+  .tag.ok{background:#e6f5ec;color:#1d7a43} .tag.no{background:#fdeceb;color:#a8302a}
+  figure{margin:16px 0}
+  figcaption{font-size:13px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>R-8153 · <code>skills/test-code/scripts/checks.py</code> 变异存活体 404 → 3</h1>
+<p class="sub">self-improve lane 草稿 PR · 2026-09-18 · 分支 <code>ai/self-improve/R-8153</code></p>
+
+<nav>
+  <a href="#tldr">TL;DR</a>
+  <a href="#third">第三张孪生卡</a>
+  <a href="#measure">五组实测</a>
+  <a href="#sets">存活集合关系</a>
+  <a href="#equiv">等价性判定</a>
+  <a href="#dod">DoD 自检</a>
+  <a href="#gates">门</a>
+  <a href="#honest">诚实边界</a>
+  <a href="#collision">撞车记录</a>
+</nav>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="card good">
+  <h3>一句话</h3>
+  <p>这批存活体已经是<strong>第三张卡</strong>了——R-217（PR #391）和 R-301（PR #401）都已交草稿、CI 全绿、<strong>都没合</strong>，所以夜报三轮一直复述同一个 404。本轮按 owner 在 R-304 定的规矩<strong>不写第三套实现</strong>，逐字节采用 #401 的判例，另附一份自己在干净工作树上跑的五组对照实测来证明「选 #401」这个决定是有数的。</p>
+  <p><strong>结果：839 位点，存活 404 → 3，杀伤 51.8% → 99.6%，生产代码零改动，覆盖率地板未动（83.5）。</strong></p>
+</div>
+<div class="star">
+  <p>⭐ <strong>owner 只需要做一个动作</strong>：同题三张卡三个 PR（#391 / #401 / 本卡），内容<strong>不是三套而是一套</strong>——合任意一个，另外两个直接关。推荐合 #401 或本卡（判例部分逐字节相同，本卡多一份 changelog / 进度片段 / 本交付物）。<strong>只要有一个合进 main，夜报的 404 才会掉。</strong></p>
+</div>
+
+<h2 id="third">为什么第一个决定不是「怎么补测试」</h2>
+<p>夜报（pinned issue #150）连续三轮把这个模块报成 <strong>839 位点 / 435 杀 / 404 活 / 51.8%</strong>，循环据此铸了三张卡。开工第一条命令 <code>gh pr list --state open</code> 就撞见前两张的 PR 都还开着。</p>
+<div class="card info">
+  <p><strong>数字三轮不变，不等于前两轮白做。</strong>变异测试跑的是 <code>main</code>，而那两个 PR 都还是 draft——<strong>存活数要等 owner 合并才会动</strong>。把它当成「测试没写好」去重写第三遍，才是真的白做。</p>
+</div>
+<p>本轮采用 PR #401 的四份判例文件与 <code>qa/mutation_targets.toml</code> 那一行，五个 blob 与 <code>refs/pull/401/head</code> <strong>逐字节相同</strong>（<code>git rev-parse</code> 对拍全等），所以谁先合都不会打架。</p>
+
+<h2 id="measure">五组映射组合的实测（干净工作树，全量 <code>--force</code>）</h2>
+<p>没有照抄任何一方 PR 描述里的自报数。本轮写了一个分片并行验证器，import <code>scripts/qa/mutate.py</code> 的 <code>collect_sites_from_source</code> / <code>render_mutant</code> / <code>build_workspace</code> / <code>run_subset</code>，把 <code>--tests</code> 指定的文件<strong>自己拷进工作区</strong>——因此绕开了「新判例先 <code>git add</code>」和多 agent 抢 <code>git index.lock</code> 两个坑。每体 0.04–0.6 s，随机器负载浮动。</p>
+<div class="tblwrap">
+<table>
+  <thead><tr><th>映射组合</th><th class="num">判例文件</th><th class="num">杀</th><th class="num">活</th><th class="num">杀伤率</th><th class="num">timeout</th></tr></thead>
+  <tbody>
+    <tr><td><code>main</code>（现状三份）</td><td class="num">3</td><td class="num">435</td><td class="num">404</td><td class="num">51.8%</td><td class="num">0</td></tr>
+    <tr><td>只补靶区映射（+run_ladder +detect）</td><td class="num">5</td><td class="num">456</td><td class="num">383</td><td class="num">54.4%</td><td class="num">0</td></tr>
+    <tr class="pick"><td>#401 —— 本卡采用</td><td class="num">9</td><td class="num">836</td><td class="num">3</td><td class="num">99.6%</td><td class="num">0</td></tr>
+    <tr><td>#391</td><td class="num">8</td><td class="num">835</td><td class="num">4</td><td class="num">99.5%</td><td class="num">0</td></tr>
+    <tr><td>两者并集（参考，未采用）</td><td class="num">14</td><td class="num">837</td><td class="num">2</td><td class="num">99.8%</td><td class="num">0</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="card good">
+  <h3>三条可信度自检</h3>
+  <ul>
+    <li><strong>口径对齐</strong>：<code>main</code> 轮逐位点复现夜报的 <strong>435 / 404</strong>，说明分母和算子集合与夜报一致。</li>
+    <li><strong>没有超时虚高</strong>：五轮 <code>timeout</code> 与 <code>error</code> 全为 0。并行度不足以把超时误记成杀伤（这正是「过载让分数虚高」那个坑）。</li>
+    <li><strong>单调性 + 内部一致</strong>：只补映射的存活集合 ⊂ <code>main</code> 的；#401 的 ⊂ 只补映射的；并集轮实测的 2 体<strong>恰好等于</strong>两个孪生存活集合的交集。</li>
+  </ul>
+</div>
+<p>最便宜的一刀是<strong>靶区映射</strong>：<code>qa/mutation_targets.toml</code> 里这个模块漏了 <code>tests/test_skill_test_code_run_ladder.py</code> 与 <code>tests/test_skill_test_code_detect.py</code> 两份<strong>既有</strong>判例（两份都 <code>import checks</code> 并驱动它的 builder 与菜单）。只补映射、零新代码，<strong>404 → 383，白得 21 体</strong>。#391 的 toml 行里没有这两份。</p>
+
+<h2 id="sets">两个孪生的存活集合并非互相包含</h2>
+<p>这是两个 PR 描述里都没写的一点，也是「选哪个」的真正依据。</p>
+<figure>
+<svg viewBox="0 0 640 210" width="100%" height="210" role="img"
+     aria-label="集合图：#401 留 3 体、#391 留 4 体、交集 2 体、并集杀到只剩 2 体">
+  <ellipse cx="240" cy="105" rx="150" ry="78" fill="#2f6fd0" fill-opacity="0.10" stroke="#2f6fd0"/>
+  <ellipse cx="400" cy="105" rx="150" ry="78" fill="#d99100" fill-opacity="0.10" stroke="#d99100"/>
+  <text x="120" y="34" font-size="13" font-weight="600" fill="#2f6fd0">#401 存活 3</text>
+  <text x="470" y="34" font-size="13" font-weight="600" fill="#d99100">#391 存活 4</text>
+  <text x="132" y="100" font-size="12" fill="#1d2129">return_none</text>
+  <text x="132" y="116" font-size="12" fill="#1d2129">@438:8</text>
+  <text x="140" y="140" font-size="11" fill="#5c6773">#391 杀掉</text>
+  <text x="288" y="92" font-size="12" fill="#1d2129">int_plus1@556:30</text>
+  <text x="288" y="110" font-size="12" fill="#1d2129">return_none@572:12</text>
+  <text x="300" y="134" font-size="11" fill="#5c6773">两者都留活</text>
+  <text x="452" y="92" font-size="12" fill="#1d2129">int_plus1@28:16</text>
+  <text x="452" y="110" font-size="12" fill="#1d2129">int_minus1@28:16</text>
+  <text x="470" y="134" font-size="11" fill="#5c6773">#401 杀掉</text>
+</svg>
+<figcaption>交集 2 体 = 并集轮实测的 2 体。左右两瓣互不包含，所以「谁是超集」不能只看总数。</figcaption>
+</figure>
+<div class="star">
+  <p>⭐ <strong>体数只差 1，但质量差得更远。</strong>#401 剩下的 3 体<strong>全是等价变异体，真洞 0</strong>；#391 留活的 <code>sys.path.insert(0, …)</code> 下标那两体是<strong>可观测</strong>的（改前插位置会改 import 优先级），最多两个真洞。反过来，#391 多杀的那一体本身就是等价变异体——那一杀钉的是私有 helper 返回值的<strong>身份</strong>，属实现细节而非行为。</p>
+</div>
+
+<h2 id="equiv">剩余 3 体的等价性：机器判定，不靠肉眼</h2>
+<div class="card teach">
+  <h3>① <code>int_plus1@556:30</code> —— 可证等价</h3>
+  <pre>line = raw.split("#", 1)[0].strip().lstrip("/").rstrip("/")
+                      ↑ 变异成 2</pre>
+  <p>取 <code>[0]</code> 使 <code>maxsplit</code>（≥1）不可观测：<code>"a#b#c".split("#",1)[0]</code> 与 <code>split("#",2)[0]</code> 都是 <code>"a"</code>。用 <strong>200,584 条</strong>字符串语料（穷举小字母表组合 + 定种子 fuzz）对拍裸表达式与 556 行那句完整表达式，<strong>counterexample 0 条</strong>。</p>
+</div>
+<div class="card teach">
+  <h3>② <code>return_none@438:8</code> 与 <code>@572:12</code> —— 经唯一调用点不可分</h3>
+  <pre>_unpinned():  return False   → return None
+dangling():   return False   → return None</pre>
+  <p>全模块唯一消费点分别是 <code>447: if match and _unpinned(match.group(1)):</code> 与 <code>579: if path and dangling(path):</code>，<strong>都是纯布尔语境</strong>，而 <code>bool(False) == bool(None) == False</code>。要杀只能对私有 helper 的返回值做 <code>is False</code> 身份断言——那钉的是实现细节。本轮按规矩<strong>不加新 case</strong>，留给 owner 判断值不值。</p>
+</div>
+
+<h2 id="dod">DoD 自检（逐条对照）</h2>
+<div class="tblwrap">
+<table>
+  <thead><tr><th>验收标准</th><th>实测</th><th>结论</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>checks.py</code> 存活体减半</td>
+      <td>404 → <strong>3</strong>（门槛 ≤ 202），降幅 99.3%</td>
+      <td><span class="tag ok">PASS</span></td>
+    </tr>
+    <tr>
+      <td>覆盖率地板不降</td>
+      <td><code>qa/coverage_floor.txt</code>（83.5）与 <code>qa/gates.toml</code> <strong>未改动</strong>；<code>ledger_diff.py --base origin/main</code> 报 <code>0 finding(s)</code></td>
+      <td><span class="tag ok">PASS</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<p>只加判例、不改生产代码，行覆盖只会涨或平；地板按「未动」满足，而非靠上调来满足。</p>
+
+<h2 id="gates">门（本机，干净工作树）</h2>
+<div class="card good">
+<ul>
+  <li><code>python3 -m compileall act ingest</code> → <strong>OK</strong></li>
+  <li>四份采用的判例定向跑 → <strong>Ran 100 tests … OK</strong></li>
+  <li>两份新进映射的既有判例 → <strong>Ran 36 tests … OK</strong></li>
+  <li><code>ruff check .</code> → <strong>All checks passed!</strong></li>
+  <li><code>python3 -m unittest discover -s tests</code>（全套）→ 见 PR 描述的最终结果</li>
+  <li><code>scripts/ci/changelog_fragments.py check</code> → <strong>ok (127)</strong>；<code>progress_log.py check</code> → <strong>ok (125)</strong></li>
+  <li><code>scripts/qa/hygiene.py</code> → <strong>OK</strong>；<code>scripts/qa/depgraph.py</code> → <strong>OK</strong>（列出的都是 baseline 存量欠账）</li>
+  <li><code>scripts/qa/ledger_diff.py --base origin/main</code> → <strong>0 finding(s) / OK</strong></li>
+</ul>
+</div>
+<div class="card warn">
+  <p><strong>没跑的两道门，说清楚</strong>：Swift 的 <code>mac/build.sh</code> 与 <code>mac/LogicTests/test.sh</code> 本轮未跑——改动只含 <code>tests/**</code>、<code>qa/mutation_targets.toml</code> 与三份文档，CI 的 per-PR 路径过滤本就不在这些路径上起 macOS 腿。</p>
+</div>
+
+<h2 id="honest">诚实边界（原样保留 #401 查出的三条，本轮既没推翻也没粉饰）</h2>
+<div class="card warn">
+  <h3>① 401 体杀伤里有 154 体只是「改动检测」</h3>
+  <p><code>est</code> 88 体 + <code>phase</code> 同档间 66 体，靠的是<strong>照现状抄下来的 golden 表</strong>——仓库里没有任何文档载那些秒数。正确的消融是<strong>保留观测通道、只把期望值换成从源现算</strong>；这么跑那 66 体全存活。折掉整张表的下界是 <strong>存活 91 / 杀伤 89.2%</strong>。</p>
+  <p><strong>⚠️ 这一条的 154 / 88 / 66 / 91 / 89.2% 五个数字是 R-301 在 PR #401 里的消融实测，本轮直接承接、没有重新跑过</strong>（本轮跑的是上面那张五组映射对照表；独立复核的只有「剩余 3 体是等价变异体」）。照搬不重测的理由：判例是逐字节采用的，消融结论随判例一起成立；要推翻它得重跑一次 golden 表消融，超出本卡「不加新 case」的范围。原始出处是 <code>docs/design/progress/2026-09-16-self-improve-r301-checks-mutation-kills.md</code>。</p>
+  <p>好消息：卡面 DoD 的「存活减半」（≤ 202）<strong>不依赖任何 golden 表</strong>——即便按 89.2% 那条下界（存活 91）算也远远过线。</p>
+</div>
+<div class="card warn">
+  <h3>② 剩余 3 体是等价变异体</h3>
+  <p>理由与语料规模见上一节。真洞计数：<strong>0</strong>。</p>
+</div>
+<div class="card bad">
+  <h3>③ 三个真缺陷只标不修，等 owner 拍板</h3>
+  <ul>
+    <li><code>_e2e_for_pkg</code> / <code>_b_perf_budget</code> / <code>_b_bundle_size</code> 三处缺「<code>npm</code> 在 PATH」的闸门，会把「工具没装」报成「项目坏了」——<strong>破 skill 的三分「not run」契约</strong>。</li>
+    <li><code>docs_drift</code> 的目录级 <code>.gitignore</code> 条目不做前缀匹配，导致假红。</li>
+    <li><code>_span_cov</code> 无行数据时返回 <code>1.0</code> 是 <strong>fail-open</strong>，与模块 docstring 写的「一律 fail closed」冲突。</li>
+  </ul>
+  <p>判例钉的是<strong>今天的行为</strong>，修任何一条都会故意把相应断言变红，所以本轮范围仍是「只修测试网」，不夹带生产改动。</p>
+</div>
+
+<h2 id="collision">撞车记录（给下一个 session 的两条操作提醒）</h2>
+<div class="card bad">
+  <h3>同题卡被并发扇出到多个 session</h3>
+  <p>本轮 <code>ListAgents</code> 看到除本 session 外还有<strong>一个 <code>R-8153</code>、三个 <code>R-002</code>、两个 <code>R-001</code></strong> 都挂着同一个「补测试：checks.py 变异存活」标题，多个 session 同时在<strong>同一棵 worktree</strong> 里跑 <code>mutate.py</code> 与 <code>unittest discover</code>。</p>
+  <p>撞车的表现：<strong>自己的未跟踪文件被别人清掉、索引被别人 <code>git add</code> 过、<code>git checkout -B</code> 出现在 reflog 里</strong>。判据是 <code>git reflog --date=iso</code> 的时间戳对不上自己的操作。对策：把测量搬进自己 job tmp 下的独立 worktree（<code>git worktree add --detach</code>），别和别人抢同一个索引。</p>
+</div>
+<div class="card bad">
+  <h3>别人留下的探针会污染生产文件</h3>
+  <p>撞车期间共享 worktree 的 <code>skills/test-code/scripts/checks.py</code> 一度带着<strong>三个注入的变异体</strong>（<code>[:10]</code>→<code>[:9]</code>、<code>[:12]</code>→<code>[:13]</code>、<code>est 240</code>→<code>239</code>）躺在工作区里未提交。</p>
+  <p>本轮所有决策数字都在干净 worktree 上<strong>复跑过一遍</strong>（<code>main</code> 435/404、#401 836/3，两轮存活集合逐位点相同），确认没被污染。但如果那棵树上有人 <code>git commit -a</code>，三个变异体就会进生产代码。<strong>跑完变异实验后 <code>git status</code> 看一眼生产文件是不是干净的。</strong></p>
+</div>
+
+</div>
+</body>
+</html>
