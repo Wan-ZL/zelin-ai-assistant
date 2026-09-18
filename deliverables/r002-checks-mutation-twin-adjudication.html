@@ -77,8 +77,9 @@
   <strong>两份报告都诚实</strong>，杀伤只差 1 体（401 vs 400）。</p>
   <p>所以胜负不在杀伤数上，而在<a href="#s5b">一次前向兼容实测</a>：把那条已确诊缺陷的一行修法真打上去，
   <strong>#401 四份判例全绿，#391 有两条判例变红</strong> —— 后者把今天的错误行为钉死了。</p>
-  <p><strong>建议：合 #401；关 #391、#429 和本 PR。</strong> 本分支的 hunk 与 #401 逐字节相同，所以
-  #401 一合，本 PR 的 diff 自动变空、直接关掉即可。</p>
+  <p><strong>建议：合 #401 的那份 hunk，其余全关</strong> —— 但载体<strong>应当是基于今天 main 的那个</strong>
+  （#429 或本 PR，两者逐字节相同、CI 今天新跑），而不是落后 59 个 commit、CI 停在 9/16 的 #401 本身。
+  完整落地方案见 <a href="#s11">§11</a>。</p>
 </div>
 
 <nav>
@@ -95,6 +96,7 @@
     <li><a href="#s8">门与 DoD 逐条对照</a></li>
     <li><a href="#s9">带过来的三处待拍板缺陷</a></li>
     <li><a href="#s10">超出本卡范围但你应该知道的：重复扇出与分支撞车</a></li>
+    <li><a href="#s11"><strong>独立审计的判决，与它带来的三条修正</strong></a></li>
   </ol>
 </nav>
 
@@ -254,8 +256,29 @@
 survives  ... 其余八份全部 mutant=pass</pre>
 </div>
 
-<div class="card info">
-  <h3>line 438（#391 独杀）—— 两边都站得住，#391 更严，但不值一次合车</h3>
+<div class="card warn">
+  <h3>line 438（#391 独杀）—— 自我更正：不是哲学分歧，是 #401 自己文件里的一致性缺口<span class="tag w">已实测</span></h3>
+  <p><strong>我第一版把它写成「两种立场都站得住」，那个框法不准确。</strong>
+  采用物自己那份 <code>internal_math.py</code> 的 <code>ActionRefPinTestCase</code>（:246-254）
+  <strong>已经对 <code>_unpinned</code> 用了四次 <code>assertIs</code></strong> —— 也就是说这份文件
+  已经把 <code>assertIs</code> 选定为这个谓词的断言形式了；只是那四次打的是第二条 return 臂
+  （<code>return not _SHA_RE.match(ref)</code>，<code>not</code> 恒产出真 bool ⇒ 在「布尔性」上永不会失败），
+  而豁免臂那句裸 <code>return False</code>（:438）是这个形式<strong>唯一真正会咬到、却没被覆盖的那条臂</strong>。</p>
+  <pre>site return_none@438:8#0  = checks.py:438  `return False` -> `return None`
+  as adopted          baseline=pass  mutant=pass  -> SURVIVED
+  +2 assertIs lines   baseline=pass  mutant=fail  -> KILLED</pre>
+  <p>补法 = 给既有的 <code>ActionRefPinTestCase</code> 加两行
+  <code>assertIs(checks._unpinned("./.github/actions/local"), False)</code> /
+  <code>("docker://alpine:3")</code> ⇒ 存活 <strong>3 → 2</strong>（837/839），
+  <strong>采用集合成为 #391 的严格超集</strong>。本轮按「有孪生时一条新 case 都不加」没加它，
+  但它不再是「可选的嫁接」，而是合车后应当顺手补的两行。</p>
+  <p><code>return_none@572</code>（<code>dangling</code>）仍是真等价体，理由更硬：它是
+  <strong>闭包、模块外不可达</strong>，没有任何公共观测面。判这类体看「有没有可达的公共观测面」，
+  不只看「是不是布尔语境」。</p>
+</div>
+
+<div class="card muted-card" style="border-left-color:#5b6672">
+  <h3>（留档）第一版怎么写的</h3>
   <p>#401 用机器对拍判它等价：唯一消费点是 <code>checks.py:447 if match and _unpinned(...)</code>，
   布尔语境下 <code>None</code> 与 <code>False</code> 不可分；392 条 <code>uses:</code> 语料上
   <code>bool()</code> / <code>_pin_violations</code> / 整个 <code>check_actions_sha_pin</code>
@@ -419,9 +442,23 @@ gh pr close 391 && gh pr close 429 && gh pr close 430
       <td><span class="tag g">OK / OK</span> <span class="muted">（列出的违例全是 baseline 既有豁免）</span></td></tr>
     <tr><td><code>scripts/ci/changelog_fragments.py check</code> / <code>progress_log.py check</code></td>
       <td><span class="tag g">ok (127) / ok (125)</span></td></tr>
-    <tr><td>全套 <code>unittest discover -s tests</code></td>
-      <td>见 PR 正文 <span class="muted">（<code>PYTHON_COLORS=0</code> 是本机必需，否则
-      <code>tests/integration/test_auto_deploy_script.py</code> 有个与本轮无关的既有假红）</span></td></tr>
+    <tr><td>本机 <code>unittest discover -s tests</code>（含 integration）</td>
+      <td><span class="tag w">未跑完</span> 三次都卡在<strong>第一个</strong> integration 测试
+      <code>integration.test_auto_deploy_defer_episode</code> 上被收割（exit 143 / 144）。零输出是
+      stderr 块缓冲从未攒满，看着像「一个测试都没跑」。当时 load 30–40、swap 27.5-of-28.7 GB，
+      但邻卡在<strong>空载</strong>机器上同样三次 exit 144 ⇒ <strong>内存压力不是根因</strong>，
+      根因在那个 integration 测试本身。如实标未完成，权威证据指向 CI。</td></tr>
+    <tr><td>本机顶层 <code>tests/*.py</code> 全量（525 模块，排除 integration/）</td>
+      <td><strong>Ran 7776 tests, failures=1</strong> —— 唯一那条是
+      <code>test_readme_audit_repo_readme::test_no_stale_claims</code>：README 写
+      <code>v1.0.114</code> 而本机 tag 是 <code>v1.0.116</code>（§56.1 规定 tag 才是版本真源）。
+      本 PR 没碰 README，<strong>CI 的 3.x 腿把含这条在内的 8065 个测试全跑绿</strong>
+      ⇒ 本机独有的 tag 态假红。</td></tr>
+    <tr class="win"><td><strong>CI <code>Tests on ubuntu (Python 3.x)</code>（全套，权威）</strong></td>
+      <td><span class="tag g">8065 tests, pass</span></td></tr>
+    <tr><td>CI <code>Tests on ubuntu (Python 3.9)</code>（全套）</td>
+      <td>8065 tests，1 error = <code>AutoDeployScriptTestCase.setUp</code> 的真
+      <code>git clone</code>（复发 flake，见 §10）</td></tr>
     <tr><td>生产代码改动</td><td><span class="tag g">零</span> ——
       diff 只有 <code>qa/mutation_targets.toml</code> + 四份新判例 + 本交付物三件</td></tr>
   </tbody>
@@ -515,6 +552,8 @@ subprocess.CalledProcessError: Command '['git', …, 'clone', '-q', '/tmp/autode
   在 lane 的受保护路径清单里，改这条属于另一张卡）。<strong>建议单开一张卡</strong>：把
   <code>setUp</code> 那次 <code>git clone</code> 换成本地 <code>git init</code> + <code>git fetch</code>，
   或加重试与失败诊断 —— 现在连 stderr 都没打出来，两次命中都只能靠形状猜原因。</p>
+  <p><strong>✅ 重触发后的结果：全 11 项绿，含 <code>Tests on ubuntu (Python 3.9)</code>。</strong>
+  这把「它是 flake」从推断变成了实证：同一棵树（只多了文档）、同一个 job，一次红一次绿。</p>
   <p class="muted"><code>gh run rerun --failed</code> 在本机那把 PAT 下不可用
   （<code>Resource not accessible by personal access token</code>），所以重触发 CI 只能再推一个 commit。</p>
 </div>
@@ -531,6 +570,84 @@ subprocess.CalledProcessError: Command '['git', …, 'clone', '-q', '/tmp/autode
   <code>tests/test_coverage_inventory.py</code>（32 tests）实跑 <strong>OK</strong>。
   #401 与 #429 同理安全。</p>
 </div>
+
+<h2 id="s11">11 · 独立审计的判决，与它带来的三条修正</h2>
+
+<p>除上面这些实测外，本轮另跑了一个审计 Workflow：<strong>13 个 agent</strong>（6 个独立 lens +
+3 判官 + 3 反驳者），58 min，0 error。</p>
+
+<div class="card good">
+  <h3>判官三票全部落在「合 #401 的内容」<span class="tag g">与本报告一致</span></h3>
+  <p><code>merge-401-graft-from-391</code> 2 票、<code>merge-401-close-391</code> 1 票。
+  oracle lens 独立复核后确认 <strong>R-301 自报的 154 / 93 / 157 三档分法成立</strong>，
+  且误差方向对它自己不利（真正的改动检测约 157 而非 154）。反驳者还<strong>独立复现了
+  §4 那张对照表</strong>（401 / 400 / 399 共杀 / 并集 402 —— 并集恰等于两集合之并，可用来自检）。</p>
+</div>
+
+<div class="card warn">
+  <h3>但反驳存活只有 1/3 —— 两个反驳者提了实质的东西，逐条自己验过</h3>
+  <p><strong>修正一：合车载体也许不该是 #401 本身。</strong> #401 的 CI 是 2026-09-16 跑的、
+  merge-base 落后 current main <strong>59 个 commit</strong>；而 #429 与本 PR 携带
+  <strong>逐字节相同</strong>的五个路径、基于 current main、CI 是今天新跑的。
+  「要合这份 hunk」和「要合 #401 这个 artifact」是两件事。
+  <span class="muted">（我不替自己的 PR 说话：#429 与本 PR 等价，挑任一个都行，关键是载体应当基于今天的 main。）</span></p>
+
+  <p><strong>修正二：那 154 体有个零测试行的、更合法典的解法，四个 PR 一个都没评估过。</strong>
+  <code>scripts/qa/mutate.py</code> 自己就有 <code>_skip_subtree</code>（:291-299），docstring 写着
+  「整棵子树不铸 site 的规则（<strong>等价变异体高发区，§57 明文</strong>）」，现有三条子句 =
+  <code>__repr__</code> 函数体 / <code>__main__</code> 守卫 / logging 调用 —— <strong>没有数据表子句</strong>。
+  而 <code>docs/CONTRACT.md:5471</code>（2026-09-02 P3a 追记）明写「幸存体逐个判定 ——
+  <strong>等价变异（常数 ±1、日志文案）放过</strong>」。CLAUDE.md 必答三问第 3 条要求先搜这个，
+  四个 PR、六个 lens、三个判官都没做。</p>
+  <p>我做了，结论有分寸：<strong><code>est</code> 那 88 体该走 skip，不该写 golden 表</strong>
+  —— R-301 自己的消融已证明「仓库里没有任何文档载这些秒数，也没有任何下游行为后果」，
+  那它正是 <code>_skip_subtree</code> 的目标形状；加一条子句 + bump <code>RUNNER_VERSION</code>，
+  这 88 个位点<strong>从分母里消失</strong>，零测试行。<strong>但不能整张 <code>CATALOG</code> 一刀切</strong>
+  （反驳者原话是整张表）：<code>tier</code> 那 82 体钉在四份 markdown 上、<code>phase</code> 有 42 体靠
+  <code>run_ladder.run_all</code> 的真实派发可杀 —— 那 124 体是<strong>真信号</strong>，skip 掉等于自断覆盖。</p>
+  <p>所以准确的说法既不是「R-301 判错了」也不是「P3a 判错了」，而是：<strong>P3a 那条「常数 ±1 放过」是
+  识别等价体的启发式、不是对每个整数常量的裁决；这个模块要按列分开裁 —— <code>tier</code>/<code>phase</code>
+  判例化，<code>est</code> 走 runner skip。</strong></p>
+
+  <p><strong>修正三：孪生风暴的根在生成器，不在判例。</strong>
+  <code>act/lib/loop_inputs.py</code> 的 <code>_mutation_signal</code>（:535-556）每晚取
+  <strong>存活最多的那一个</strong>模块（<code>sorted(..., key=lambda t: (-t[4], t[0]))[:1]</code>），
+  fingerprint 只是 <code>mutation:&lt;module&gt;</code>。<strong>只要 PR 不合、存活数不掉，它每晚都会再选中
+  同一个模块</strong>；任何进度文档都拦不住第五张卡。要止住得改那一头：按 open PR 抑制同 fingerprint 的信号。</p>
+</div>
+
+<div class="card info">
+  <h3>一条值得记住的机制事实：这个分数会往上偏</h3>
+  <p><code>_module_score</code>（mutate.py:740-746）的 docstring 明写「<strong>timeout 记 killed 侧</strong>」，
+  公式是 <code>(killed + timeout) / denominator</code>。所以负载下的超时会把分数抬高。
+  本报告那四轮实测 <strong>timeout 全为 0</strong>，不受影响 —— 但读夜报分数时要一起看 <code>timeout</code> 计数。</p>
+</div>
+
+<div class="card warn">
+  <h3>反驳者验实的三处脆点（建议合车前处理）</h3>
+  <ul>
+    <li><code>catalog_docs.py</code> 的「档预算阶梯单调」不变量失败时<strong>不带 msg</strong>，
+      且退役两个 tier-3 core 层就会破（各档 est 和 = 255 / 990 / 1445 / 2410，退掉两个 600 使档 3 变 245）。</li>
+    <li>一处 <code>inspect.getsource(e["build"])</code> 去 grep 字面量 <code>_internal(</code>，
+      寄生在 <code>checks.py:72</code> 那个两行工厂上。</li>
+    <li><code>SKILL.md</code> 的切片按字面量 <code>references/catalog.md):</code> 与 <code>, plus</code> 切。</li>
+  </ul>
+  <p class="muted">三处都不影响本轮的杀伤判决，但会在将来变成假红。</p>
+</div>
+
+<h3>落地方案（经两个反驳者压过一轮后的版本）</h3>
+<ol>
+  <li><strong>合一个基于 current main 的载体</strong>（#429 或本 PR），而不是直接合落后 59 个 commit、
+    CI 停在 9/16 的 #401。判例的功劳不变，#401 是作者。</li>
+  <li>合完顺手补 <code>ActionRefPinTestCase</code> 那两行 <code>assertIs</code> → 存活 3 → 2（837/839）。</li>
+  <li><strong>单独开一张卡处理 <code>est</code> 那 88 体</strong>：给 <code>_skip_subtree</code> 加数据表子句 +
+    bump <code>RUNNER_VERSION</code>，然后 <code>EST_GOLDEN</code> 整张表可以删 —— 少 88 行 golden，
+    分数反而更诚实。<code>tier</code> / <code>phase</code> 不动。</li>
+  <li><strong>改生成器</strong>（<code>_mutation_signal</code>）：按 open PR 抑制同 fingerprint 的信号，
+    否则第五张卡今晚还会来。</li>
+  <li>合车前处理上面那三处脆点。</li>
+  <li>关掉 #391、以及 #429 / 本 PR 里没被选作载体的那个。</li>
+</ol>
 
 <footer>
   R-002 · 分支 <code>ai/self-improve/R-002-checks-mutation-twins</code>（卡面那个已被无关卡占用）· 交付物

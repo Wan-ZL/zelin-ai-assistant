@@ -1,8 +1,8 @@
-pr: `ai/self-improve/R-002`（self_improve lane 草稿 PR；同一批存活体的第三张卡）
+pr: `ai/self-improve/R-002-checks-mutation-twins`（draft PR #430；同一批存活体的第四张卡。卡面指定的 `ai/self-improve/R-002` 已被另一张同号但无关的卡占用，见文末）
 phase: P5 → P3 闭环（§57 夜间变异存活体 → §70 循环铸卡 → §65 lane 出 PR）；孪生仲裁，非新判例
 law: §57 靶区映射（`qa/mutation_targets.toml` hunk 与 PR #401 逐字节相同）/ §58（行为零改动）/ §65（lane 按分支名验收）
 
-**这张卡是第三张，动手第一条命令按 R-304 立的规矩查孪生，查到两张。** 夜报（artifact `mutation-report`，
+**这张卡是第四张（开工时是第三张），动手第一条命令按 R-304 立的规矩查孪生，当时查到两张。** 夜报（artifact `mutation-report`，
 run 35232295853，2026-09-17T15:00Z）把 `skills/test-code/scripts/checks.py` 报成 **839 位点 / 435 杀 /
 404 活 / 51.8%**，`executed = 839` —— 全量跑满，不存在 R-292 那种「只跑了半张地图」的问题。同一批 404 体
 已经有两个 open draft PR 各自独立做过：
@@ -14,9 +14,9 @@ run 35232295853，2026-09-17T15:00Z）把 `skills/test-code/scripts/checks.py` �
 
 两个都还是 draft、两个 CI 全绿、两个同一 merge-base（`f5edb5a1c2`，落后 main 59 个 commit）。
 **neither 合车 ⇒ main 的靶区映射没变 ⇒ mutate.py 的 state 照旧复用 ⇒ 夜报每晚复述同一批 404 ⇒
-daily_loop 继续铸卡。** 这就是第三张卡存在的全部原因（同日 `.claude/worktrees/` 里还有一个
-`ai/self-improve/R-8153`「checks-mutants」在 main HEAD 上，第四张大概在路上）。所以本轮交付的不是
-第三套判例，而是**一次实测仲裁 + 把胜者的 hunk 逐字节搬到本分支**。
+daily_loop 继续铸卡。** 这就是第三、第四张卡存在的全部原因（同日 `.claude/worktrees/` 里还有一个
+`ai/self-improve/R-8153`「checks-mutants」停在 main HEAD 上 —— 窗内它果然开出了 **#429**，做法与本 PR
+完全相同）。所以本轮交付的不是第四套判例，而是**一次实测仲裁 + 把胜者的 hunk 逐字节搬到本分支**。
 
 ## 判决的地基：三件先验事实，逐个核过
 
@@ -37,7 +37,9 @@ daily_loop 继续铸卡。** 这就是第三张卡存在的全部原因（同日
 写了 `probe_kills.py`（一次性，留在 job tmp，不进 repo）：import `scripts/qa/mutate.py` 的
 `collect_sites_from_source` / `render_mutant` / `build_workspace` / `run_subset`，按 site_id 逐个施加变异体，
 **每个 worker 一份独立 workspace**（8 个），所以能并行而不互相覆写目标文件；timeout 180 s 对 baseline
-0.7–1.3 s 留了两个数量级余量，全程 0 timeout、0 error（过载把超时记成 kill 会让分数虚高，这条是刻意防的）。
+0.7–1.3 s 留了两个数量级余量，全程 0 timeout、0 error。这条余量是刻意留的：`_module_score`
+（mutate.py:740-746）的 docstring 明写「**timeout 记 killed 侧**」、公式是 `(killed + timeout) / denominator`，
+所以负载下的超时会把分数往上抬 —— 本文的数字因 timeout 全为 0 而不受影响。
 
 **控制组先跑**：current main + 原三份映射判例，404 体 **全部存活、0 杀**。夜报被逐字复现，探针可信。
 
@@ -70,12 +72,43 @@ never carry these module names"，据此归成等价体。#401 的
 期望值取自 `tests/skill_test_code_testkit.py` 里独立算出的 `kit.SKILL_SCRIPTS`（不是从 checks.py 抄的）。
 本轮逐文件复核确认杀它的就是这一份判例，不是别处的偶然副作用。
 
-**line 438（#391 独杀）—— 两边都站得住，#391 更严，但不值一次合车。** #401 用机器对拍判它等价：
-唯一消费点是 `checks.py:447 if match and _unpinned(...)`，布尔语境下 `None` 与 `False` 不可分，
-392 条 `uses:` 语料上 `bool()` / `_pin_violations` / 整个 `check_actions_sha_pin` 的结果 IDENTICAL。
-#391 不反驳这个事实 —— 它的 docstring 明确承认「豁免分支的返回值只在真假位置被消费」，然后**选定**
-一条更强的不变量（「谓词只返真布尔」）用 `assertIs` 钉住。两种立场都成文、都诚实；差别是「钉产品行为」
-还是「钉声明的返回类型」。这是唯一值得从败者身上嫁接的东西，量级约两条断言。
+**line 438（#391 独杀）—— 自我更正：这不是两个孪生间的哲学分歧，是 #401 自己文件里的一致性缺口。**
+
+先说我第一版怎么写的（错的）：#401 用机器对拍判它等价（唯一消费点 `checks.py:447
+if match and _unpinned(...)`，布尔语境下 `None` 与 `False` 不可分，392 条 `uses:` 语料上结果
+IDENTICAL），#391 则**选定**一条更强的不变量用 `assertIs` 钉住，于是我写成「两种立场都站得住，
+差别是钉产品行为还是钉声明的返回类型」。
+
+**这个框法不准确。** 采用物自己那份 `tests/test_skill_test_code_internal_math.py` 的
+`ActionRefPinTestCase`（:246-254）**已经对 `_unpinned` 用了四次 `assertIs`** ——
+`assertIs(checks._unpinned("owner/repo@" + SHA40 + "@v1"), True)` 等等。也就是说这份文件
+**已经把 `assertIs` 选定为这个谓词的断言形式**了；只是那四次打的是第二条 return 臂
+（`return not _SHA_RE.match(ref)`，而 `not` 恒产出真 bool ⇒ 在「布尔性」上永不会失败，
+它们钉的是 pin/unpin 的**判定值**），而豁免臂那句裸 `return False`（:438）是这个形式
+**唯一真正会咬到、却没被覆盖的那条臂**。
+
+实测那两行（不改 repo，只在临时 workspace 里加）：
+
+```
+site return_none@438:8#0  = checks.py:438  `return False` -> `return None`
+  as adopted          baseline=pass  mutant=pass  -> SURVIVED
+  +2 assertIs lines   baseline=pass  mutant=fail  -> KILLED
+```
+
+补法就是给既有的 `ActionRefPinTestCase` 加两行：
+
+```python
+self.assertIs(checks._unpinned("./.github/actions/local"), False)
+self.assertIs(checks._unpinned("docker://alpine:3"), False)
+```
+
+⇒ 存活 **3 → 2**（836/839 → 837/839），**采用集合成为 #391 的严格超集**。
+本轮按「有孪生时一条新 case 都不加」没有加它（往同一个文件里塞会给 #401 / #429 造真冲突），
+但它现在不再是「可选的嫁接」，而是**合 #401 之后应当顺手补上的两行**。
+
+**`return_none@572:12`（`dangling`）则仍是真等价体，且理由比 438 硬**：它是**闭包，模块外根本不可达**，
+没有任何公共观测面。判这类体看「有没有可达的公共观测面」，不只看「是不是布尔语境」——
+438 有（`_unpinned` 是模块级函数、判例已在直接调它），572 没有。
 
 ## 决定性的那一刀：前向兼容实测（「修 bug 时谁会挡路」）
 
@@ -146,7 +179,7 @@ up-to-date 要求，#401 不需要先 rebase，`gh pr ready 401` 之后就能合
 
 ## 建议（请 owner 拍板）
 
-**合 #401，关 #391，关本 PR。** 理由按权重：
+**合 #401 的那份 hunk（载体见本节末的落地方案），其余全关。** 理由按权重：
 
 1. **前向兼容**（上一节的实测）：修那条已确诊的 npm 缺陷时，#401 零测试改动，#391 两条判例要手工改
    —— 一套判例把今天的错误行为钉死，价值是负的。这一条权重最高，因为它决定判例是资产还是负债。
@@ -169,8 +202,22 @@ up-to-date 要求，#401 不需要先 rebase，`gh pr ready 401` 之后就能合
 6. **归属行**：#391 的 PR 正文尾部留了一行 AI 生成署名（Claude Code 的默认尾注），与 owner 2026-07-29 立的
    「PR / commit 一律不得出现 AI 归属」冲突；#401 没有。（只是一行，但既然要关一个，顺便记上。）
 
-唯一的反向考量：#391 的 438 判例。若 owner 想要那条不变量，它是 #401 合车后的两行 follow-up，
-不必为它承担一次冲突合车。
+唯一的反向考量本身已被上面「line 438」那节更正掉：那两行不是从 #391 嫁接，而是补 #401 自己文件里的
+一致性缺口；补完，采用集合就是 #391 的严格超集。
+
+**落地方案（经审计 Workflow 两个反驳者压过一轮后的版本）**：
+
+1. **合一个基于 current main 的载体**（#429 或本 PR —— 两者逐字节相同、CI 今天新跑），而不是把落后
+   59 个 commit、CI 停在 9/16 的 #401 直接合。判例的功劳不变，#401 是作者。
+2. 合完顺手补 `ActionRefPinTestCase` 那两行 `assertIs` → 存活 3 → 2（837/839）。
+3. **单独开一张卡处理 `est` 那 88 体**：给 `mutate.py` 的 `_skip_subtree` 加数据表子句 + bump
+   `RUNNER_VERSION`，把「无文档真源 + 无行为后果」这一列从分母里移走，然后 `EST_GOLDEN` 整张表可以删
+   —— 少 88 行 golden，分数反而更诚实。`tier` / `phase` 不动（它们是真信号）。
+4. **改生成器**（`act/lib/loop_inputs.py:_mutation_signal`）：按 open PR 抑制同 fingerprint 的信号，
+   否则第五张卡今晚还会来。
+5. 合车前处理 #401 判例里那三处脆点（档预算阶梯的无 msg 断言、`inspect.getsource` grep 字面量、
+   `SKILL.md` 字面量切片）。
+6. 关掉 #391、以及 #429 / 本 PR 里没被选作载体的那个。
 
 **#401 带过来的三处待拍板缺陷本轮一个没碰**（判例钉的是今天的行为，修任何一条都会故意把相应断言变红）：
 `_e2e_for_pkg` / `_b_perf_budget` / `_b_bundle_size` 缺 npm 时报 RED 而非 UNAVAILABLE（同文件的
@@ -193,7 +240,10 @@ qa/mutation_targets.toml tests/test_skill_test_code_{catalog_docs,builder_gates,
 | `python3 -m compileall act ingest` | exit 0 |
 | `ruff check .`（miniconda 的 ruff；python3.14 没装） | All checks passed |
 | 四份判例 `ast.parse(feature_version=(3,9))` | 全过（CI 有 3.9 job） |
-| `AIASSISTANT_HOME=$(mktemp -d) PYTHON_COLORS=0 python3 -m unittest discover -s tests` | 见 PR 正文（`PYTHON_COLORS=0` 是本机必需，否则 `tests/integration/test_auto_deploy_script.py` 有个与本轮无关的既有假红） |
+| 本机 `unittest discover -s tests`（含 integration） | **未跑完**：三次都卡在**第一个** integration 测试 `integration.test_auto_deploy_defer_episode` 上被收割（exit 143 / 144）。零输出是 stderr 块缓冲从未攒满，看着像「一个测试都没跑」。当时 load 30–40、swap 27.5-of-28.7 GB，但邻卡在**空载**机器上同样三次 exit 144 ⇒ **内存压力不是根因**，根因在那个 integration 测试本身。如实标未完成，权威证据指向 CI。 |
+| 本机顶层 `tests/*.py` 全量（525 模块，排除 integration/） | **Ran 7776 tests, failures=1** —— 唯一那条是 `test_readme_audit_repo_readme::test_no_stale_claims`：README 写 `v1.0.114` 而本机 tag 是 `v1.0.116`（§56.1 规定 tag 才是版本真源）。本 PR 没碰 README，**CI 的 3.x 腿把含这条在内的 8065 个测试全跑绿** ⇒ 本机独有的 tag 态假红。 |
+| **CI `Tests on ubuntu (Python 3.x)`（全套，权威）** | **8065 tests, pass** |
+| CI `Tests on ubuntu (Python 3.9)`（全套） | 8065 tests，1 error = `AutoDeployScriptTestCase.setUp` 的真 `git clone`（复发 flake，见后文那节） |
 | `scripts/qa/hygiene.py --check` / `depgraph.py --check` | OK / OK（列出的违例全是 baseline 既有豁免） |
 | `scripts/qa/ledger_diff.py --base origin/main` | **0 finding** |
 | `qa/coverage_floor.txt` / `hygiene_baseline.txt` / `deps_baseline.txt` / `gates.toml` | 逐个 `git diff` 为空 = **DoD 2「覆盖率地板不降」**（没降地板、没加 ledger key、没放松阈值） |
@@ -237,6 +287,62 @@ subprocess.CalledProcessError: Command '['git', …, 'clone', '-q', '/tmp/autode
 `gh run rerun --failed` 在本机那把 PAT 下不可用（`Resource not accessible by personal access token`，
 与 2026-09-17 记下的 scope 收窄一致），所以重触发 CI 的办法是再推一个 commit —— 本节这段文字就是那个
 commit 的内容。
+
+**✅ 重触发后的结果：全 11 项绿，含 `Tests on ubuntu (Python 3.9)`。** 这把「它是 flake」从推断
+变成了实证：同一棵树（只多了文档），同一个 job，一次红一次绿。三次证据链完整 —— #429 同 hunk 绿、
+同 commit 的 3.x 绿、本分支重跑绿。
+
+## 独立审计 Workflow 的判决，以及它带来的三条修正
+
+本轮另跑了一个审计 Workflow（13 个 agent / 6 个 lens + 3 判官 + 3 反驳者，58 min，0 error）。
+**三个判官全部落在「合 #401 的内容」**（`merge-401-graft-from-391` 2 票 / `merge-401-close-391` 1 票），
+oracle lens 独立复核后确认 **R-301 自报的 154 / 93 / 157 三档分法成立**（且误差方向对它自己不利，
+真正的改动检测约 157 而非 154）。反驳者还**独立复现了本文那张对照表**（401 / 400 / 399 共杀 /
+并集 402 —— 并集恰等于两集合的交集补，可用来自检）。
+
+但**反驳存活只有 1/3**，两个反驳者提出的东西是实质的，逐条自己验过后如下 —— 它们不推翻「#401 的内容
+更好」，但**改变该怎么落地**：
+
+**修正一：合车载体也许不该是 #401 本身。** #401 的 CI 是 2026-09-16 跑的，merge-base 落后 current main
+**59 个 commit**；而 #429 与本 PR 携带**逐字节相同**的五个路径、基于 current main、CI 是今天新跑的。
+「要合这份 hunk」和「要合 #401 这个 artifact」是两件事。（我不替自己的 PR 说话：#429 与本 PR 等价，
+owner 挑任一个都行，关键是**载体应当是基于今天 main 的那个**。）
+
+**修正二：那 154 体有个零测试行的、更合法典的解法，四个 PR 一个都没评估过。**
+`scripts/qa/mutate.py` 自己就有 `_skip_subtree`（:291-299），docstring 写着「整棵子树不铸 site 的规则
+（**等价变异体高发区，§57 明文**）」，现有三条子句 = `__repr__` 函数体 / `__main__` 守卫 / logging 调用
+—— **没有数据表子句**。而 `docs/CONTRACT.md:5471`（2026-09-02 P3a 追记）明写「幸存体逐个判定 ——
+**等价变异（常数 ±1、日志文案）放过**」。
+
+CLAUDE.md 的必答三问第 3 条（「有没有已存在的机制做类似的事」）要求先搜一遍这个 —— 四个 PR、
+六个 lens、三个判官**都没做**。我做了，结论有分寸：
+
+- **`est` 那 88 体该走 skip，不该写 golden 表**。R-301 自己的消融已经证明它「仓库里没有任何文档载这些
+  秒数，也没有任何下游行为后果」；那它正是 `_skip_subtree` 的目标形状。加一条子句 + bump
+  `RUNNER_VERSION`（旧 state 作废重跑），这 88 个位点**从分母里消失**，零测试行，且与 §57 的成文口径一致。
+- **但不能整张 `CATALOG` 一刀切**（反驳者的原话是整张表）：`tier` 那 82 体钉在四份 markdown 上、
+  `phase` 有 42 体靠 `run_ladder.run_all` 的真实派发可杀 —— 那 124 体是**真信号**，skip 掉等于自断覆盖。
+  真正该 skip 的只有「无文档真源 + 无行为后果」那一列。
+
+所以准确的说法不是「R-301 判错了」也不是「P3a 判错了」，而是：**P3a 那条「常数 ±1 放过」是识别等价体的
+启发式，不是对每个整数常量的裁决；对这个模块要按列分开裁 —— `tier`/`phase` 判例化，`est` 走 runner skip。**
+
+**修正三：孪生风暴的根在生成器，不在判例。** `act/lib/loop_inputs.py` 的 `_mutation_signal`
+（:535-556）每晚取**存活最多的那一个**模块（`sorted(..., key=lambda t: (-t[4], t[0]))[:1]`，
+门槛 `MUTATION_MIN_SURVIVORS`），fingerprint 只是 `mutation:<module>`。**只要 PR 不合、存活数不掉，
+它每晚都会再选中同一个模块**；任何进度文档都拦不住第五张卡。要止住得改那一头：让它感知「这个模块的靶区
+映射已有 open PR 在改」，或按 open PR 抑制同 fingerprint 的信号。
+
+**另外一条值得记的机制事实**：`_module_score`（mutate.py:740-746）的 docstring 明写
+「**timeout 记 killed 侧**」，公式是 `(killed + timeout) / denominator`。所以负载下超时会把分数往上抬。
+本文那四轮实测 **timeout 全为 0**，所以这里报的数字没有被这个机制抬高 —— 但夜报在拥挤的 runner 上
+未必，读夜报分数时要一起看 `timeout` 计数。
+
+**反驳者还验实了 #401 判例里三处该在合车前处理的脆点**（我复核了它给的位置）：
+`catalog_docs.py` 的「档预算阶梯单调」不变量失败时不带 msg，且退役两个 tier-3 core 层就会破
+（各档 est 和 = 255 / 990 / 1445 / 2410，退掉两个 600 使档 3 变 245）；一处 `inspect.getsource(e["build"])`
+去 grep 字面量 `_internal(`，寄生在 `checks.py:72` 那个两行工厂上；`SKILL.md` 的切片按字面量
+`references/catalog.md):` 与 `, plus` 切。这三处都不影响本轮的杀伤判决，但会在将来变成假红。
 
 ## 给下一个 session 的三条
 
