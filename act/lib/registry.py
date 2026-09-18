@@ -649,7 +649,7 @@ def trash(req: Requirement, reason: str) -> Requirement:
     return req
 
 
-def restore(req: Requirement) -> Requirement:
+def restore(req: Requirement, now: Optional[_dt.datetime] = None) -> Requirement:
     """Restore a trashed requirement to its ``prev_status`` and clear trash fields.
 
     Also stamps ``execution.restored_at`` (add-only, D73 / CONTRACT §9 追记): pulling
@@ -657,13 +657,18 @@ def restore(req: Requirement) -> Requirement:
     counts as activity (``maintenance._EXECUTION_STAMPS``). Without it the nightly
     loop would re-trash the card it was just told to keep — nothing else on the card
     gets any newer when trash fields are cleared.
+
+    ``now`` is the injection seam for the stamp (default = the wall clock): the
+    stale-sweep tests measure a window from this stamp with an injected clock, and a
+    wall-clock stamp made ``test_review_stale_sweep`` turn red on 2026-09-17 by itself.
     """
     req.set_status(req.prev_status or State.DETECTED.value)
     req.prev_status = None
     req.trashed_at = None
     req.trash_reason = None
     ex = dict(req.execution) if isinstance(req.execution, dict) else {}
-    ex["restored_at"] = _iso_now()
+    ex["restored_at"] = (now.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                         if now is not None else _iso_now())
     req.execution = ex
     save(req)
     return req

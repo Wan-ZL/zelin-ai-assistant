@@ -14,7 +14,9 @@
 // the §61.7 schedule cases swap `RecordingSchedule.active` for one backed by
 // a throwaway UserDefaults suite and inject its now / mode / engine seams
 // (never pkill, never applyMode);
-// no UserDefaults.standard writes (LegacyPrefs gets injected suites).
+// no UserDefaults.standard writes (LegacyPrefs and the two permission flags
+// get injected suites — section [5c] pins the nine shell-held pref key
+// literals of §66.2).
 
 import Foundation
 
@@ -329,7 +331,90 @@ func run() {
     UserDefaults(suiteName: targetName + ".b")?.removePersistentDomain(forName: targetName + ".b")
 
     checkOverlayFrameSeed(target: target, source: source, targetName: targetName)
+    checkShellHeldPrefs()
     checkTerminalTakeover()
+}
+
+/// §66.2 setting:prefs:* —— 九把只有壳持有的 UserDefaults 键（六个字幕键、录制回滚键、
+/// 两个权限记账键）逐字钉住键名字面量：谁改了键名（或只改了一半），这一节当场红。
+/// 字幕六键与 lastActiveRecordingMode 住在 §61.3 冻结引擎文件里（Recording.swift /
+/// LiveCaptions.swift 逐字镜像 mac/，永不为测试开缝），所以壳这边钉的是真正会读写它们的
+/// 壳代码：LegacyPrefs 的迁移清单 + 搬运行为（ShellBridge.swift）。两把权限键是壳自己的，
+/// 走 PermissionsProbe 的注入 suite 跑真实读路径。清单侧的 proof = swift:BridgeHarness。
+@MainActor
+func checkShellHeldPrefs() {
+    print("[5c] shell-held UserDefaults prefs (captions / resume mode / permission flags):")
+    let stamp = String(Int(Date().timeIntervalSince1970 * 1000))
+
+    // ---- 迁移清单逐键：原生 app 里选过的字幕 / 回滚模式，第一次启动壳时照搬过来（§61.4）
+    let migrated = ["captionsAppleLocale", "captionsArkModel", "captionsEngine", "captionsSource",
+                    "captionsTranslate", "captionsTranslateDirection", "lastActiveRecordingMode"]
+    for key in migrated {
+        check(LegacyPrefs.keys.contains(key), "LegacyPrefs carries the \(key) key from the native domain")
+    }
+    check(!LegacyPrefs.keys.contains("screenPermissionRequested") && !LegacyPrefs.keys.contains("vaultAccessGranted"),
+          "TCC bookkeeping is never inherited — the shell bundle id earns its own grants")
+
+    let srcName = "zai.harness.prefs.src.\(stamp)"
+    let dstName = "zai.harness.prefs.dst.\(stamp)"
+    let src = UserDefaults(suiteName: srcName)!
+    let dst = UserDefaults(suiteName: dstName)!
+    defer {
+        src.removePersistentDomain(forName: srcName)
+        dst.removePersistentDomain(forName: dstName)
+    }
+    src.set("en", forKey: "captionsAppleLocale")
+    src.set("doubao-seed-1-6", forKey: "captionsArkModel")
+    src.set("doubao", forKey: "captionsEngine")
+    src.set("system", forKey: "captionsSource")
+    src.set(true, forKey: "captionsTranslate")
+    src.set("zh2en", forKey: "captionsTranslateDirection")
+    src.set("screen_audio", forKey: "lastActiveRecordingMode")
+    src.set(true, forKey: "screenPermissionRequested")   // must NOT travel
+    src.set(true, forKey: "vaultAccessGranted")          // must NOT travel
+    let carried = LegacyPrefs.seedFromNativeAppIfNeeded(target: dst, source: src).sorted()
+    check(carried == migrated, "every caption key + the resume mode travel, nothing else", "got \(carried)")
+    check(dst.string(forKey: "captionsAppleLocale") == "en", "captionsAppleLocale lands verbatim")
+    check(dst.string(forKey: "captionsArkModel") == "doubao-seed-1-6", "captionsArkModel lands verbatim")
+    check(dst.string(forKey: "captionsEngine") == "doubao", "captionsEngine lands verbatim")
+    check(dst.string(forKey: "captionsSource") == "system", "captionsSource lands verbatim")
+    check(dst.object(forKey: "captionsTranslate") != nil && dst.bool(forKey: "captionsTranslate"),
+          "captionsTranslate lands verbatim (bool, not a string)")
+    check(dst.string(forKey: "captionsTranslateDirection") == "zh2en", "captionsTranslateDirection lands verbatim")
+    check(dst.string(forKey: "lastActiveRecordingMode") == "screen_audio",
+          "lastActiveRecordingMode lands verbatim (the re-enable button restores the audio tier)")
+    check(["screen", "screen_audio"].contains(dst.string(forKey: "lastActiveRecordingMode") ?? ""),
+          "the seeded resume mode is one of the two live modes the button may restore")
+    check(dst.object(forKey: "screenPermissionRequested") == nil && dst.object(forKey: "vaultAccessGranted") == nil,
+          "permission flags stay behind in the native domain")
+
+    // 壳这边已经选过的字幕键永不被原生值覆盖（同一把键，shell-side choice wins）
+    let keepName = "zai.harness.prefs.keep.\(stamp)"
+    let keep = UserDefaults(suiteName: keepName)!
+    defer { keep.removePersistentDomain(forName: keepName) }
+    keep.set("apple", forKey: "captionsEngine")
+    let kept = LegacyPrefs.seedFromNativeAppIfNeeded(target: keep, source: src).sorted()
+    check(!kept.contains("captionsEngine") && keep.string(forKey: "captionsEngine") == "apple",
+          "a captionsEngine already chosen in the shell survives the seed", "got \(kept)")
+
+    // ---- screenPermissionRequested：系统提示每个 bundle id 只弹一次，之后只能深链面板
+    let flagName = "zai.harness.prefs.flags.\(stamp)"
+    let flags = UserDefaults(suiteName: flagName)!
+    defer { flags.removePersistentDomain(forName: flagName) }
+    check(PermissionsProbe.screenRequestedKey == "screenPermissionRequested", "screen-request key literal frozen")
+    check(PermissionsProbe.screenPromptPending(in: flags), "unset flag → the next click may raise the system prompt")
+    flags.set(true, forKey: "screenPermissionRequested")
+    check(!PermissionsProbe.screenPromptPending(in: flags), "flag set → deep-link the pane instead of prompting again")
+
+    // ---- vaultAccessGranted：一次 app 内成功授权的记账（被动探针的第二条证据）
+    check(PermissionsProbe.vaultGrantedKey == "vaultAccessGranted", "vault-granted key literal frozen")
+    check(!PermissionsProbe.vaultGranted(in: dst), "unset flag → not granted")
+    check(PermissionsProbe.probeVaultPassive(dst) == "unknown",
+          "no flag, no mirror marker → unknown (the probe never reads ~/Documents)")
+    dst.set(true, forKey: "vaultAccessGranted")
+    check(PermissionsProbe.vaultGranted(in: dst), "flag set → granted")
+    check(PermissionsProbe.probeVaultPassive(dst) == "granted",
+          "passive probe answers granted from the vaultAccessGranted key")
 }
 
 /// §61.1 追记 setRecording on:true = TCC 提示（缺才弹）→ setMode；on:false = setMode("off") 不碰 TCC；

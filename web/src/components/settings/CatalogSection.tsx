@@ -30,6 +30,10 @@ export interface CatalogSectionProps {
   lead?: ReactNode;
   /** 紧跟某个 field 之后的装饰槽（key = field.key；原生在字段之间夹步骤说明 / 凭证行时用） */
   between?: Record<string, ReactNode>;
+  /** 保存失败的前缀句（缺省 = 原生 SettingsGmail / SettingsSlack / SettingsMaintainer 的「保存设置失败: 」）。
+   *  原生每个区的 catch 自己出句：每周摘要那一区是「保存失败，请再试一次：」（SettingsWeeklyDigest.swift:82）——
+   *  逐字镜像要按区给（§66.2）。 */
+  saveFailedPrefix?: string;
   children?: ReactNode;
 }
 
@@ -91,7 +95,7 @@ export function mergeDraft(previous: Draft | null, previousBase: Draft | null, f
   return merged;
 }
 
-export function CatalogSection({ sectionId, titleOverride, only, lead, between, children }: CatalogSectionProps) {
+export function CatalogSection({ sectionId, titleOverride, only, lead, between, saveFailedPrefix, children }: CatalogSectionProps) {
   const { text, language } = useI18n();
   const { settingsCatalog, pageErrors } = useAppState();
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -172,7 +176,9 @@ export function CatalogSection({ sectionId, titleOverride, only, lead, between, 
       setToast({ kind: "ok", prefix: text("已保存 ", "Saved "), message: savedClock() });
     } catch (err) {
       // 原生 SettingsGmail / SettingsSlack / SettingsMaintainer 的 catch：「保存设置失败: 」+ 原句
-      setToast({ kind: "error", prefix: text("保存设置失败: ", "Failed to save settings: "), message: errorMessage(err) });
+      // （区自带前缀句时用它——原生每周摘要区的 catch 是另一句）
+      const prefix = saveFailedPrefix ?? text("保存设置失败: ", "Failed to save settings: ");
+      setToast({ kind: "error", prefix, message: errorMessage(err) });
     } finally {
       setSaving(false);
     }
