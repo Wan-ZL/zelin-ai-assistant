@@ -490,6 +490,35 @@ gh pr close 391 && gh pr close 429 && gh pr close 430
   「合 #401、把包括本 PR 在内的其余几个关掉」。</p>
 </div>
 
+<div class="card bad">
+  <h3><code>Tests on ubuntu (Python 3.9)</code> 有个复发的 flake，污染一条必需检查<span class="tag b">建议单开一张卡</span></h3>
+  <p>本 PR 第一轮 CI 的 3.9 job 红。逐字取日志后确认与本轮改动无关：</p>
+  <pre>Ran 8065 tests in 370.818s
+FAILED (errors=1, skipped=80)
+
+ERROR: test_install_timeout_counts_as_failure
+       (integration.test_auto_deploy_script.AutoDeployScriptTestCase)
+  File "tests/integration/test_auto_deploy_script.py", line 489, in setUp
+    _git(self.tmp, "clone", "-q", str(self.origin), str(self.live))
+subprocess.CalledProcessError: Command '['git', …, 'clone', '-q', '/tmp/autodeploy-…'</pre>
+  <p>8065 个测试只错 1 个，错在 <strong><code>setUp</code> 里那句真 <code>git clone</code></strong>，
+  而那个文件本 PR 一个字没动。三条互证：</p>
+  <ul>
+    <li><strong>#429 带着逐字节相同的四份判例 + 相同 toml hunk，3.9 job 是 <code>pass</code>。</strong></li>
+    <li>同一个 commit 上的 <code>Tests on ubuntu (Python 3.x)</code> 是 <code>pass</code>。</li>
+    <li><strong>#391 的 PR 正文 2026-09-16 记录过同一个 job、同一形状的错</strong>
+      （<code>git clone</code> exit 128，当时命中 <code>test_pre_existing_red_is_not_blamed_on_the_new_version</code>），
+      rerun 第二轮即绿。</li>
+  </ul>
+  <p>⇒ 复发 flake，两次都落在 <code>AutoDeployScriptTestCase.setUp</code> 的 <code>git clone</code>、
+  两次都在 3.9 job。它拦的是一条<strong>必需检查</strong>。本轮没修（<code>scripts/auto-deploy.sh</code>
+  在 lane 的受保护路径清单里，改这条属于另一张卡）。<strong>建议单开一张卡</strong>：把
+  <code>setUp</code> 那次 <code>git clone</code> 换成本地 <code>git init</code> + <code>git fetch</code>，
+  或加重试与失败诊断 —— 现在连 stderr 都没打出来，两次命中都只能靠形状猜原因。</p>
+  <p class="muted"><code>gh run rerun --failed</code> 在本机那把 PAT 下不可用
+  （<code>Resource not accessible by personal access token</code>），所以重触发 CI 只能再推一个 commit。</p>
+</div>
+
 <div class="card good">
   <h3>顺带复核：<code>coverage_inventory</code> 的 <code>§N</code> 登记<span class="tag g">实测安全</span></h3>
   <p><code>qa/coverage_inventory.json</code> 的 <code>contract:§N</code> proof 行 =

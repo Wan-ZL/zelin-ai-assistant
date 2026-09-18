@@ -200,6 +200,44 @@ qa/mutation_targets.toml tests/test_skill_test_code_{catalog_docs,builder_gates,
 | `scripts/ci/changelog_fragments.py check` / `progress_log.py check` | ok / ok |
 | 本分支 404 体实测 | 见 PR 正文的对照表 |
 
+## 顺手抓到的第四件事：`Tests on ubuntu (Python 3.9)` 有个真 flake（必需检查）
+
+本 PR 第一轮 CI 的 3.9 job **红**，逐字取日志后确认与本轮改动无关：
+
+```
+Ran 8065 tests in 370.818s
+FAILED (errors=1, skipped=80)
+
+ERROR: test_install_timeout_counts_as_failure
+       (integration.test_auto_deploy_script.AutoDeployScriptTestCase)
+Traceback (most recent call last):
+  File "tests/integration/test_auto_deploy_script.py", line 489, in setUp
+    _git(self.tmp, "clone", "-q", str(self.origin), str(self.live))
+  File "tests/integration/test_auto_deploy_script.py", line 414, in _git
+    return subprocess.run(
+subprocess.CalledProcessError: Command '['git', …, 'clone', '-q', '/tmp/autodeploy-…'
+```
+
+8065 个测试只错 1 个，错在 **`setUp` 里那句真 `git clone`**，而 `tests/integration/test_auto_deploy_script.py`
+本 PR 一个字没动。三条互证它不是本轮引入的：
+
+1. **#429 带着逐字节相同的四份判例 + 相同 toml hunk，它的 3.9 job 是 `pass`。**
+2. 同一个 commit 上的 `Tests on ubuntu (Python 3.x)` 是 `pass`（同样跑这四份文件）。
+3. **#391 的 PR 正文 2026-09-16 记录过同一个 job、同一形状的错**（`git clone` exit 128 inside the
+   runner's tmp dir，当时命中的是 `test_pre_existing_red_is_not_blamed_on_the_new_version`），
+   `gh run rerun --failed` 第二轮即绿。
+
+⇒ **这是一个复发的 flake，两次都落在 `AutoDeployScriptTestCase` 的 `setUp` 的 `git clone` 上，两次都在
+3.9 job**（3.x 没见过）。它污染的是一条**必需检查**，所以每次都会把一个本来该合的 PR 拦下来。
+本轮没修它：`scripts/auto-deploy.sh` 在 self-improve lane 的受保护路径清单里，而改这条 flake 属于
+另一张卡的范围。**建议单开一张卡**，方向是把 `setUp` 里那次 `git clone` 换成不走网络/不依赖 tmp 布局的
+本地 `git init` + `git fetch`，或给它加重试与失败诊断（现在的 `CalledProcessError` 连 stderr 都没打出来，
+所以两次命中都只能靠形状猜原因）。
+
+`gh run rerun --failed` 在本机那把 PAT 下不可用（`Resource not accessible by personal access token`，
+与 2026-09-17 记下的 scope 收窄一致），所以重触发 CI 的办法是再推一个 commit —— 本节这段文字就是那个
+commit 的内容。
+
 ## 给下一个 session 的三条
 
 1. **这一族卡的第一条命令是 `gh pr list --state open`，不是读 issue 正文**（R-304 立的规矩，本轮第二次兑现，
