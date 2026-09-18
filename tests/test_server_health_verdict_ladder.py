@@ -3,6 +3,11 @@
 test_server_health 走文件 + 真 server；这里把 _verdict 的五档按输入组合全部
 枚举（含「心跳新鲜但循环连崩」「无心跳 + 无看板」），并钉 _stale_after 的
 容错、_loop_health_view 对 bool / 负数 / 非 int 计数器的归零。
+
+2026-09-18（issue #423，§47.4 追记二）：三个 view 多收一个 ``unreadable`` 收集
+字典——本文件的四处直调因此多传一个 ``{}``，**断言与被钉的行为一字未变**。参数
+是必填而不是可选：每个读者都必须交代自己的读失败，忘了传就编译不过，而不是
+静默少报一处（那正是本轮要修的那种沉默）。
 """
 from __future__ import annotations
 
@@ -55,16 +60,16 @@ class LoopHealthViewTestCase(unittest.TestCase):
     def test_bad_counters_read_as_zero_without_error(self):
         for bad in (True, -1, "3", None, 2.5):
             self._write({"consecutive_failures": bad, "last_error": "x"})
-            view = health._loop_health_view(self.home)
+            view = health._loop_health_view(self.home, {})
             self.assertEqual(view, {"consecutive_failures": 0, "last_error": None}, bad)
 
     def test_positive_counter_carries_last_error(self):
         self._write({"consecutive_failures": 2, "last_error": "boom"})
-        self.assertEqual(health._loop_health_view(self.home),
+        self.assertEqual(health._loop_health_view(self.home, {}),
                          {"consecutive_failures": 2, "last_error": "boom"})
 
     def test_missing_file_is_zero(self):
-        self.assertEqual(health._loop_health_view(self.home)["consecutive_failures"], 0)
+        self.assertEqual(health._loop_health_view(self.home, {})["consecutive_failures"], 0)
 
 
 class DashboardViewTestCase(unittest.TestCase):
@@ -75,12 +80,12 @@ class DashboardViewTestCase(unittest.TestCase):
     def test_unparseable_generated_at_is_none(self):
         paths.dashboard_path(self.home).write_text(json.dumps({"generated_at": "yesterday"}),
                                                    encoding="utf-8")
-        self.assertIsNone(health._dashboard_view(self.home, 0.0))
+        self.assertIsNone(health._dashboard_view(self.home, 0.0, {}))
 
     def test_future_timestamp_clamps_age_to_zero(self):
         paths.dashboard_path(self.home).write_text(
             json.dumps({"generated_at": "2100-01-01T00:00:00Z"}), encoding="utf-8")
-        view = health._dashboard_view(self.home, 0.0)
+        view = health._dashboard_view(self.home, 0.0, {})
         self.assertEqual(view["age_s"], 0.0)
         self.assertFalse(view["stale"])
 

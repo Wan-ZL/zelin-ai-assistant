@@ -3,7 +3,9 @@
 三条法条各自的判例：(1) `_Server.handle_error` 只吞三个连接类异常、其余照打
 全栈；(2) 访问日志行首带本地 ISO 时间戳；(3) `/api/board` / `/api/health` 按
 `(path, 状态码)` 分桶采样——状态一变立刻写，同码重复才被掐且条数随下一行报
-出来，`ZAI_LOG_POLLS=1` 关采样。
+出来，`ZAI_LOG_POLLS=1` 关采样；(4) 2026-09-18 追记（issue #423）：带 errno
+的 envelope 把 `errno=<n> <strerror>` 挂在**同一行**尾巴上——不另开日志通道，
+于是白拿那套分桶与 300 s 窗口（「每 5 分钟报一次 errno」= 采样器本来的行为）。
 
 注意：tests/test_server_common.py 在 import 期把 `Handler.log_message` 换成
 no-op（进程内全局），所以本文件一律直接练模块级纯函数与 handler 方法本身，
@@ -22,6 +24,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
 from server import app
+from server.errors import BoardUnreadableError, NotFoundError
 
 # 2026-09-14T14:34:05-0400 / …+0000（`%z` 在 UTC runner 上也一定有偏移）
 ISO_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4} ")
@@ -35,6 +38,11 @@ def _handler(path, requestline=None):
     lines = []
     handler.log_message = lambda fmt, *args: lines.append(fmt % args)
     return handler, lines
+
+
+def _fresh_sampler():
+    """进程级 `_POLL_SAMPLER` 的桶会跨判例串台——每条判例换一只新的。"""
+    return mock.patch.object(app, "_POLL_SAMPLER", app._PollSampler(window=300.0))
 
 
 def _raise_into_handle_error(exc):
@@ -129,6 +137,9 @@ class PollSamplerTestCase(unittest.TestCase):
         self.assertEqual(sampler.decide("/api/board", 404, 2.0), (False, 0))
         self.assertEqual(sampler.decide("/api/board", 404, 3.0), (False, 0))
         self.assertEqual(sampler.decide("/api/board", 500, 4.0), (True, 0))
+        # issue #423 的那次翻转：404 → 503 是新桶，立刻写（errno 跟着这行出去）
+        self.assertEqual(sampler.decide("/api/board", 503, 5.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/board", 503, 6.0), (False, 0))
         # 窗口后的第一条 404 把吃掉的两条报出来（错误不会被藏起来）
         self.assertEqual(sampler.decide("/api/board", 404, 400.0), (True, 2))
 
@@ -252,6 +263,92 @@ class LogRequestTestCase(unittest.TestCase):
                                   requestline="GET /api/cards/R-1 HTTP/1.1")
         handler.log_request(http.HTTPStatus.NOT_FOUND, "-")
         self.assertEqual(lines, ['"GET /api/cards/R-1 HTTP/1.1" 404 -'])
+
+
+class ErrorNoteTestCase(unittest.TestCase):
+    """envelope 的 errno 挂在既有那一行上（§54.2 追记 2026-09-18，issue #423）。
+
+    「每 5 分钟一行」不另造抑制器：``_send_api_error`` 把注记放在
+    ``_log_note`` 上，``log_request`` 这个唯一写者原样带出去，于是它自动继承
+    ``(path, 状态码)`` 分桶与 300 s 窗口。"""
+
+    def test_errno_details_become_a_note(self):
+        err = BoardUnreadableError("nope", {"path": "/x", "errno": 1,
+                                            "strerror": "Operation not permitted"})
+        self.assertEqual(app._error_note(err), " errno=1 Operation not permitted")
+
+    def test_errors_without_an_errno_change_nothing(self):
+        self.assertEqual(app._error_note(NotFoundError("gone", {"path": "/x"})), "")
+        self.assertEqual(app._error_note(NotFoundError("gone")), "")
+
+    def test_a_null_errno_also_changes_nothing(self):
+        # 合成的无 errno OSError：往给人看的日志里写个 Python `None` 不增加信息，
+        # envelope 的 `"errno": null` 才是要它的人该读的地方
+        err = BoardUnreadableError("nope", {"errno": None, "strerror": None})
+        self.assertEqual(app._error_note(err), "")
+
+    def test_null_strerror_still_renders_the_errno(self):
+        err = BoardUnreadableError("nope", {"errno": 13, "strerror": None})
+        self.assertEqual(app._error_note(err), " errno=13 -")
+
+    def test_the_note_rides_the_access_line(self):
+        handler, lines = _handler("/api/board")
+        handler._log_note = " errno=1 Operation not permitted"
+        with _fresh_sampler(), mock.patch.object(app.time, "time",
+                                                 return_value=10.0):
+            handler.log_request(503, "-")
+        self.assertEqual(
+            lines,
+            ['"GET /api/board HTTP/1.1" 503 - errno=1 Operation not permitted'])
+
+    def test_the_note_rides_the_suppressed_count_too(self):
+        # 持续期里每窗口仍有一行，errno 与被吃掉的条数同时在场。每次循环重设注记
+        # 是**照实模拟**：真实链路里每条 503 响应各自经 _send_api_error 挂一次，
+        # 而写出即清（上一条判例）意味着注记不会从上一条飘过来。
+        handler, lines = _handler("/api/board")
+        with _fresh_sampler(), mock.patch.object(
+                app.time, "time", side_effect=[10.0, 11.0, 12.0, 400.0]):
+            for _ in range(4):
+                handler._log_note = " errno=1 Operation not permitted"
+                handler.log_request(503, "-")
+        self.assertEqual(lines[-1],
+                         '"GET /api/board HTTP/1.1" 503 - errno=1'
+                         ' Operation not permitted'
+                         ' (+2 suppressed in the last 300s)')
+
+    def test_a_bare_handler_has_no_note(self):
+        # 类属性兜底：_dispatch 之外的写行路径（基类 send_error、判例里的裸
+        # handler）拿到空串而不是 AttributeError
+        handler, lines = _handler("/api/board")
+        with _fresh_sampler(), mock.patch.object(app.time, "time",
+                                                 return_value=10.0):
+            handler.log_request(200, 4096)
+        self.assertEqual(lines, ['"GET /api/board HTTP/1.1" 200 4096'])
+
+    def test_the_note_is_consumed_by_the_line_that_writes_it(self):
+        # 基类的 send_error（不认的动词 / 请求行太长 / parse_request 失败）**不经
+        # _dispatch**，而 _send_api_error 设的是实例属性——只在 _dispatch 入口清，
+        # keep-alive 上第二条请求就会带着上一条的 errno 出去（实测：一个 501 顶着
+        # `errno=13 Permission denied`）。所以写出即清。
+        handler, lines = _handler("/api/board")
+        handler._log_note = " errno=13 Permission denied"
+        with _fresh_sampler(), mock.patch.object(app.time, "time",
+                                                 side_effect=[10.0, 11.0]):
+            handler.log_request(503, "-")
+            handler.requestline = "DELETE /api/board HTTP/1.1"
+            handler.log_request(501, "-")
+        self.assertEqual(lines, [
+            '"GET /api/board HTTP/1.1" 503 - errno=13 Permission denied',
+            '"DELETE /api/board HTTP/1.1" 501 -'])
+        self.assertEqual(handler._log_note, "")
+
+    def test_dispatch_clears_the_note_between_keep_alive_requests(self):
+        # 同一个 handler 实例连着服务两条请求：上一条的 errno 不许串到下一条
+        handler, _lines = _handler("/api/board")
+        handler._log_note = " errno=1 Operation not permitted"
+        handler._handle = lambda method: None
+        handler._dispatch("GET")
+        self.assertEqual(handler._log_note, "")
 
 
 class LogPollsEnvTestCase(unittest.TestCase):

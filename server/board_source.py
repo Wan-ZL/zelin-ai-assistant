@@ -1,6 +1,12 @@
 """看板数据源：/api/board 透传 + /api/cards/{id} 详情增补。
 
-- GET /api/board = ``state/dashboard.json`` 原样透传（bytes 级，零改写）。
+- GET /api/board = ``state/dashboard.json`` 原样透传（bytes 级，零改写）。读
+  失败按 errno 分两路（§49 追记 2026-09-18，issue #423）：文件不在 → 404
+  ``NOT_FOUND``；读不了、而且**不是因为它不在** → 503 ``BOARD_UNREADABLE``
+  带 errno（errno 能证的只有后半句——EACCES 下这个进程恰恰无从确认文件在不
+  在，所以任何一面都不许写成「文件在」）。这条
+  分流也顺着 ``_board_dict`` 走到 ``/api/cards/{id}``——读不了就说读不了，
+  不再借「card not found」/「dashboard.json not found」掩过去。
 - GET /api/cards/{id} = 投影行 + registry 真源只读增补（add-only 合并，
   绝不覆盖投影字段名）。``{id}`` 接受主键（P-/legacy R-）**或**工作编号
   （§60.3）：投影行按 ``id`` 或 ``work_id`` 命中，registry 增补同样两步查；
@@ -37,8 +43,8 @@ try:
 except Exception:  # pragma: no cover - 降级路径
     store2_readonly = None  # type: ignore[assignment]
 
-from server import paths
-from server.errors import InvalidFieldError, NotFoundError
+from server import paths, state_read
+from server.errors import BoardUnreadableError, InvalidFieldError, NotFoundError
 
 # webui.py _SAFE_ID_RE 同款保守 allow-list：无 ``.``/``/``/NUL，长度封顶——
 # id 直接参与 ``{id}.yaml`` 文件名拼接，必须防穿越。
@@ -55,13 +61,34 @@ _EXAMPLE_FILE = "R-000-example.yaml"
 # /api/board —— 原样透传
 # --------------------------------------------------------------------------- #
 def board_bytes(home: Path) -> bytes:
+    """``state/dashboard.json`` 的字节（§49 原样透传，零改写）。
+
+    两种失败严格分开（§0 宪法第 3 条；§49 追记 2026-09-18，issue #423）：
+    **文件不在**（ENOENT/ENOTDIR/EISDIR——HOME 指错、``state/`` 被写成普通
+    文件、``dashboard.json`` 是个目录）仍是 404 ``NOT_FOUND``，页面据此进
+    「后台服务还没写出数据」空态（§54.1）；**读不了、而且不是因为它不在**
+    （EACCES/EPERM/EIO…）是 503 ``BOARD_UNREADABLE``，``details`` 带真
+    ``errno``/``strerror``。原先一个光秃秃的 ``except OSError`` 把后者说成前
+    者，真 errno 于是在任何面上都看不见——那个错误映射把它藏了好几周。
+
+    措辞上**不写「文件在」**：errno 能证的只是「失败的不是『没有这个文件』」。
+    EACCES 打在父目录上时这个进程根本无从确认文件在不在，ELOOP / ENAMETOOLONG
+    下它更是真的不在——拿一个没探过的事实去修一个假断言，等于换一句谎。
+    """
     p = paths.dashboard_path(home)
     try:
         return p.read_bytes()
-    except OSError:
-        raise NotFoundError("dashboard.json not found — is actd (or the demo "
-                            "seeder) pointed at this AIASSISTANT_HOME?",
-                            {"path": str(p)})
+    except OSError as exc:
+        if state_read.is_absent(exc):
+            raise NotFoundError("dashboard.json not found — is actd (or the demo "
+                                "seeder) pointed at this AIASSISTANT_HOME?",
+                                {"path": str(p)})
+        details = {"path": str(p)}
+        details.update(state_read.failure_detail(exc))
+        raise BoardUnreadableError(
+            "dashboard.json could not be read by this server process "
+            "(the read failed with an error other than 'no such file')",
+            details)
 
 
 def _board_dict(home: Path) -> dict:
@@ -223,7 +250,9 @@ def is_executing(home: Path, card_id: str) -> bool:
     卡上的 owner comment 会被 actd 按 steer 类经 §44.3 briefing 机制转投递给
     活会话——app.py 据此在 POST /api/actions 响应里做 add-only 标注（inbox
     文件本体仍是 §3 comment 原形，一个字段都不加）。只读投影，任何异常按
-    False 兜底（fail-safe：宁可漏标 steer，不误标）。
+    False 兜底（fail-safe：宁可漏标 steer，不误标）——包括 ``board_bytes`` 的
+    404 ``NOT_FOUND`` 与 503 ``BoardUnreadableError``：这里答的是一个标注而不
+    是一句真相声明，读不到投影就不标，故意不把 503 顶到 POST 回执上。
     """
     try:
         lane, row = _projection_row(_board_dict(home), card_id)

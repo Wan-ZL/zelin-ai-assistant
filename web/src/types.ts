@@ -747,6 +747,11 @@ export interface HealthSnapshot {
   } | null;
   dashboard: { generated_at: string; age_s: number; stale: boolean } | null;
   loop_health: { consecutive_failures: number; last_error: string | null };
+  /** add-only（§47.4 追记 2026-09-18，issue #423）：读不出来的 state 文件 → `{<块名>: {errno, strerror}}`。
+   *  恒在，干净时 `{}`——所以「键不在」= 老 server，而不是「没问题」。三个块（heartbeat / dashboard /
+   *  loop_health）历来把 OSError 折成「缺席」，把「坏掉的通道」说成了「没有新数据」（宪法第 3 条）。
+   *  verdict 阶梯与 `dashboard` 的 null 语义都不因它改变。 */
+  unreadable?: Record<string, { errno: number | null; strerror: string | null }>;
   checked_at: string;
   [key: string]: unknown;
 }
