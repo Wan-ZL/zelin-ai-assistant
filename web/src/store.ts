@@ -100,6 +100,11 @@ export interface AppState {
    *  一行「读取 dashboard.json 失败: …」。与 boardError（连不上）/ boardMissing（文件不在）三态互斥：server 在跑、文件在，
    *  只是内容坏了——健康横幅照常说话，不许借离线文案说「连不上」 */
   boardDecodeError: string | null;
+  /** 2026-09-18 add-only（§49 追记，issue #423）：`GET /api/board` 答 503 `BOARD_UNREADABLE`——文件在、server 这个
+   *  进程读不动（EPERM / EACCES / EIO…；errno 在 server 原句里）。**旧快照留着**（与 404 相反：文件在，上一版看板仍是
+   *  管线写过什么的真话，照 boardDecodeError 的韧性先例）。四态互斥的第四态：离线 / 缺文件 / 解不出来 / 读不动——
+   *  绝不落 boardError（它的读者全把它读成「离线」，等于对着一台刚答过话的 server 说连不上，还会关掉四条横幅） */
+  boardUnreadable: string | null;
   boardLoading: boolean;          // 首载 true；SSE 触发的静默 refetch 不置位
   connection: ConnectionState;
   health: HealthSnapshot | null;  // GET /api/health 最近快照（§47.4；PipelineBanner 读）
@@ -222,6 +227,7 @@ const initialState: AppState = {
   boardError: null,
   boardMissing: false,
   boardDecodeError: null,
+  boardUnreadable: null,
   boardLoading: true,
   connection: "connecting",
   health: null,
@@ -307,6 +313,18 @@ export function isBoardDecodeError(error: unknown): boolean {
   return error instanceof ApiError && error.code === "READ_FAILED" && error.status >= 200 && error.status < 300;
 }
 
+/** `GET /api/board` 答 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18，issue #423）——server 读不动那个文件。
+ *  **只认这一个 code**，三条都是同一条理由（别做没查过的断言）：
+ *  - 裸 `status === 503` 会把 §68.7 的 `SHELL_UNAVAILABLE`（壳没在跑）说成「看板读不动」；
+ *  - envelope 体解不出来的 503（前面架了代理 / 半截响应，api.request 退化成 `REQUEST_FAILED`）**也不算**——
+ *    那种 503 连 errno 都没有，说「看板文件读不出来」同样是没查就断言；它继续落 `boardError`（「连不上」
+ *    对一个网关 503 才是更近的真话）。
+ *  导出供判例直测分类。 */
+export function isBoardUnreadableError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 503
+    && error.code === "BOARD_UNREADABLE";
+}
+
 /** 顶层形状校验（原生 `JSONDecoder().decode(Dashboard.self)` 的 web 版最小门）：必须是带字符串 `generated_at` 的对象。
  *  只验顶层——列级由 normalizeBoardShape 补齐、行级宽容留给各组件（wire add-only，前端绝不因新字段崩渲染）。
  *  返回不合格的原因（null = 合格）。 */
@@ -348,6 +366,29 @@ function failBoardDecode(reason: string) {
     boardDecodeError: text("读取 dashboard.json 失败: ", "Failed to read dashboard.json: ") + reason,
     boardError: null,
     boardMissing: false,
+    boardUnreadable: null,
+    boardLoading: false,
+  });
+}
+
+/** 503 `BOARD_UNREADABLE`（§49 追记 2026-09-18）：读不动——**快照不动**（照 failBoardDecode 的韧性）。
+ *  句子由 **`details` 里的 errno / strerror** 拼，不是 server 那句 `message`：那句只说「see details.errno」，
+ *  照搬会让页面指着一个屏幕上根本没有的数字（本轮 review 抓到的原状）。errno 缺席（裸 OSError）→ 退到
+ *  strerror，再退到 server 原句——**永不渲染 `errno null`**。另三态一并清掉：server 答了，既不是连不上、
+ *  也不是文件不在、也不是内容坏了。 */
+function failBoardUnreadable(error: ApiError) {
+  const { text } = getI18n(state.language);
+  const d = error.details as { errno?: number | null; strerror?: string | null } | undefined;
+  const errno = typeof d?.errno === "number" ? d.errno : null;
+  const why = typeof d?.strerror === "string" && d.strerror ? d.strerror : "";
+  const detail = errno != null
+    ? `errno ${errno}${why ? ": " + why : ""}`
+    : (why || error.message);
+  setState({
+    boardUnreadable: text("看板文件读不出来: ", "The board file can't be read: ") + detail,
+    boardError: null,
+    boardMissing: false,
+    boardDecodeError: null,
     boardLoading: false,
   });
 }
@@ -367,7 +408,8 @@ export function refreshBoard(): Promise<void> {
       const previous = state.board;
       // 「合并中…」章不看 generated_at：每一版快照都跑一遍 §21bis 谓词（副卡全部离开所有列才算落地）
       setState({
-        board, boardError: null, boardMissing: false, boardDecodeError: null, boardLoading: false,
+        board, boardError: null, boardMissing: false, boardDecodeError: null, boardUnreadable: null,
+        boardLoading: false,
         forceMergingIds: settledForceMerging(board),
       });
       // 侧栏开着 + 看板换版 → 详情跟上（原生 @Published dashboard 一发布，展开区从新快照重渲染，Store.swift:56-57）。
@@ -380,7 +422,15 @@ export function refreshBoard(): Promise<void> {
       if (isBoardMissingError(error)) {
         // 原生 Store.refresh 的缺文件分支（dashboard = nil / missing = true / loadError = nil）：快照一并清——
         // server 明说文件没了，留着旧快照再挂「连不上」横幅是两句谎话
-        setState({ board: null, boardError: null, boardMissing: true, boardDecodeError: null, boardLoading: false });
+        setState({
+          board: null, boardError: null, boardMissing: true, boardDecodeError: null,
+          boardUnreadable: null, boardLoading: false,
+        });
+        return;
+      }
+      // 读不动在断网之前判：503 是一次真回答，不是「拉不到」（§49 追记 2026-09-18）
+      if (isBoardUnreadableError(error)) {
+        failBoardUnreadable(error as ApiError);
         return;
       }
       if (isBoardDecodeError(error)) {
@@ -388,7 +438,10 @@ export function refreshBoard(): Promise<void> {
         return;
       }
       const message = error instanceof ApiError ? error.message : String(error);
-      setState({ boardError: message, boardMissing: false, boardDecodeError: null, boardLoading: false });
+      setState({
+        boardError: message, boardMissing: false, boardDecodeError: null,
+        boardUnreadable: null, boardLoading: false,
+      });
     } finally {
       boardRequest = null;
     }

@@ -54,7 +54,7 @@ def scenario(_home):
     later = NOW + _dt.timedelta(hours=21)
     archived = maintenance.sweep_stale(cfg, today=later.date(), now=later)
     trashed = registry.load("P-1")
-    restored = registry.restore(registry.load("P-1"))
+    restored = registry.restore(registry.load("P-1"), now=later)
     ok, why = _harness.check([
         ("stamped_once", [r["id"] for r in rows] == ["P-1"]),
         ("one_banner_for_the_round", len(notifier.calls) == 1),

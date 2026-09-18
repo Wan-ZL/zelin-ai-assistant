@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R-001 / issue #423 — 读不动的看板 ≠ 不存在的看板</title>
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #17191c; --dim: #5b6168; --line: #e3e6ea; --bg: #fbfbfc; --card: #fff;
+    --good: #1a7f42; --warn: #b07500; --bad: #c0392b; --info: #1f6feb; --teach: #7048c8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding-block: 32px; padding-left: 20px; padding-right: 20px; }
+  h1 { font-size: 27px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.01em; }
+  .sub { color: var(--dim); margin: 0 0 26px; font-size: 14px; }
+  h2 { font-size: 19px; margin: 34px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 15.5px; margin: 22px 0 8px; }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 0 0 12px; }
+  code { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #f1f3f5; padding: 1px 5px; border-radius: 4px; }
+  pre { background: #1c1f24; color: #e8eaed; padding: 14px 16px; border-radius: 8px;
+        overflow-x: auto; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .card { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--info);
+          border-radius: 8px; padding: 14px 18px; margin: 0 0 16px; }
+  .card.good { border-left-color: var(--good); }
+  .card.warn { border-left-color: var(--warn); }
+  .card.bad  { border-left-color: var(--bad); }
+  .card.teach { border-left-color: var(--teach); }
+  .card h3 { margin-top: 0; }
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 2px 8px;
+         border-radius: 20px; vertical-align: 2px; margin-left: 8px; }
+  .tag.good { background: #e6f4ea; color: var(--good); }
+  .tag.bad  { background: #fdecea; color: var(--bad); }
+  .tag.warn { background: #fdf3e0; color: var(--warn); }
+  .scroll { overflow-x: auto; margin: 0 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #f4f6f8; font-weight: 600; }
+  td.n { white-space: nowrap; }
+  .star { background: #f6f2ff; border: 1px solid #e0d6fb; border-left: 4px solid var(--teach);
+          border-radius: 8px; padding: 13px 17px; margin: 0 0 16px; }
+  .star strong:first-child { color: var(--teach); }
+  nav.toc { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+            padding: 12px 18px; margin: 0 0 26px; font-size: 14px; }
+  nav.toc ul { margin: 0; padding-left: 20px; }
+  nav.toc li { margin: 3px 0; }
+  a { color: var(--info); }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line);
+           color: var(--dim); font-size: 13px; }
+  svg { max-width: 100%; height: auto; display: block; margin: 6px 0 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>读不动的看板 ≠ 不存在的看板</h1>
+<p class="sub">R-001 · GitHub issue #423 · 分支 <code>ai/self-improve/R-001</code> · 草稿 PR
+<a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/426">#426</a> · 2026-09-18</p>
+
+<div class="card good">
+  <h3>TL;DR</h3>
+  <ul>
+    <li><strong>病灶</strong>：<code>board_bytes</code> 只有一个 <code>except OSError</code>，把一切读失败都说成「文件不在」。真正的 errno 从来没落过盘——所以那 1549 行被噪音闸压住的 <code>/api/board 404</code>，压住的是<strong>一句假话</strong>。</li>
+    <li><strong>已复现</strong>：mode-000 的文件与真的删掉那个文件，对每个客户端<strong>逐字节相同</strong>（status / code / message / details 四样全等）。</li>
+    <li><strong>已修</strong>：缺席 → 404（消息一字节未动）；其余 <code>OSError</code> → 503 <code>BOARD_UNREADABLE</code> 带 errno。<code>/api/health</code> 加 add-only 键 <code>dashboard_error</code>。看板页、向导、设置页、server 日志四处都拿得到那个数字。</li>
+    <li><strong>DoD</strong>：PR 正文含 <code>Closes #423</code> ✓；CI 七项 required <strong>全绿</strong>
+    （实际是全部 11 项都绿，含 informational 的 playwright）。</li>
+    <li><strong>交付后又跑了一轮对抗 review</strong>：26 条发现、17 条挺过反驳、全部已修——其中
+    「errno 根本没到屏幕上」这一条差点让整个 issue 白修（见第 6 节）。</li>
+    <li><strong>需要 owner 拍板一件事</strong>：卡号 <code>R-001</code> 被复用，这条分支上现在有三个 session 的交付挤在同一个 PR 里。</li>
+  </ul>
+</div>
+
+<nav class="toc">
+  <strong>目录</strong>
+  <ul>
+    <li><a href="#repro">1. 病灶与复现</a></li>
+    <li><a href="#fix">2. 改法与完整行为表</a></li>
+    <li><a href="#calls">3. 六个被 review 打回来才定的取舍</a></li>
+    <li><a href="#law">4. 法条改动（必答三问）</a></li>
+    <li><a href="#gates">5. 门与证据</a></li>
+    <li><a href="#review">6. 交付后又跑了一轮对抗 review，改了 17 处</a></li>
+    <li><a href="#honest">7. 诚实交代：没修的、既有的红</a></li>
+    <li><a href="#collision">8. 需要 owner 拍板：一个 PR，三张卡</a></li>
+  </ul>
+</nav>
+
+<h2 id="repro">1. 病灶与复现</h2>
+
+<p>issue 里的症状是：<code>GET /api/board</code> 起跑后 3 小时翻成 404
+<code>dashboard.json not found</code>，而 <code>state/dashboard.json</code> 就在那里（425 KB、
+<code>-rw-r--r-- zelin:staff</code>、无 ACL / xattr），同一个解释器在终端里读得动；
+<code>launchctl kickstart -k</code> 能修，到下次再翻。</p>
+
+<p>代码里的原因只有八行：</p>
+
+<pre><code>def board_bytes(home: Path) -&gt; bytes:
+    p = paths.dashboard_path(home)
+    try:
+        return p.read_bytes()
+    except OSError:                     # ← 一切读失败，一个出口
+        raise NotFoundError("dashboard.json not found — is actd (or the demo "
+                            "seeder) pointed at this AIASSISTANT_HOME?",
+                            {"path": str(p)})</code></pre>
+
+<p>为了不靠读代码猜，本轮先写了一份复现脚本，在同一个 HOME 上对照「文件在但 mode 000」
+与「文件真的删掉」两种情况：</p>
+
+<pre><code>--- file present, mode 000 (EACCES for a non-root user) ---
+exists: True  mode: 0o0
+board_bytes -&gt; 404 NOT_FOUND | dashboard.json not found — is actd … ? | {'path': '…/state/dashboard.json'}
+health dashboard block: None  verdict: stale
+
+--- file genuinely absent ---
+board_bytes -&gt; 404 NOT_FOUND | dashboard.json not found — is actd … ? | {'path': '…/state/dashboard.json'}
+health dashboard block: None  verdict: stale
+
+VERDICT: the two cases above are INDISTINGUISHABLE to every client.</code></pre>
+
+<div class="star">
+  <strong>⭐ 本轮最值钱的一条发现</strong>：§54.2 的日志噪音闸（2026-09-14）把那
+  <strong>1549 行一模一样的 <code>/api/board 404</code></strong> 当噪音整类收编，事后看那是对的——
+  但<strong>被它压住的那条消息本身是假的</strong>。闸没错；错的是没人让真正的 errno 落过盘。
+  所以本轮除了分类，还补了一条带 errno 的诊断行：下次翻掉，日志里就有那个数字。
+</div>
+
+<h2 id="fix">2. 改法与完整行为表</h2>
+
+<p>issue 的 fix proposal 有三项，第 1、2 项在本 PR 里，第 3 项（OS 层根因）不在。</p>
+
+<svg viewBox="0 0 900 250" role="img" aria-label="board_bytes 的读失败分类：FileNotFoundError 走 404，其余 OSError 走 503">
+  <rect x="8" y="98" width="150" height="54" rx="8" fill="#fff" stroke="#c9ced4"/>
+  <text x="83" y="120" font-size="13" text-anchor="middle" fill="#17191c">p.read_bytes()</text>
+  <text x="83" y="139" font-size="11" text-anchor="middle" fill="#5b6168">抛了 OSError</text>
+
+  <path d="M158 125 H 226" stroke="#9aa2ab" stroke-width="1.5" fill="none"/>
+  <polygon points="226,125 219,121 219,129" fill="#9aa2ab"/>
+
+  <rect x="228" y="92" width="196" height="66" rx="8" fill="#f6f2ff" stroke="#e0d6fb"/>
+  <text x="326" y="115" font-size="12.5" text-anchor="middle" fill="#7048c8">是 FileNotFoundError 吗？</text>
+  <text x="326" y="134" font-size="11" text-anchor="middle" fill="#5b6168">（分界线不是 PermissionError）</text>
+  <text x="326" y="150" font-size="10.5" text-anchor="middle" fill="#5b6168">EIO / ELOOP 是裸 OSError</text>
+
+  <path d="M424 112 H 500 V 56 H 566" stroke="#1a7f42" stroke-width="1.5" fill="none"/>
+  <polygon points="566,56 559,52 559,60" fill="#1a7f42"/>
+  <text x="470" y="80" font-size="11" fill="#1a7f42">是（ENOENT）</text>
+
+  <rect x="568" y="28" width="322" height="58" rx="8" fill="#e6f4ea" stroke="#b7e0c4"/>
+  <text x="729" y="50" font-size="13" text-anchor="middle" fill="#1a7f42">404 NOT_FOUND</text>
+  <text x="729" y="70" font-size="11" text-anchor="middle" fill="#3d6b4d">消息与 details.path 一字节未动</text>
+
+  <path d="M424 138 H 500 V 196 H 566" stroke="#b07500" stroke-width="1.5" fill="none"/>
+  <polygon points="566,196 559,192 559,200" fill="#b07500"/>
+  <text x="470" y="185" font-size="11" fill="#b07500">否</text>
+
+  <rect x="568" y="164" width="322" height="66" rx="8" fill="#fdf3e0" stroke="#f0dcb4"/>
+  <text x="729" y="186" font-size="13" text-anchor="middle" fill="#b07500">503 BOARD_UNREADABLE</text>
+  <text x="729" y="205" font-size="11" text-anchor="middle" fill="#7a5600">details = {path, errno, strerror}</text>
+  <text x="729" y="221" font-size="10.5" text-anchor="middle" fill="#7a5600">消息刻意不断言文件存在</text>
+</svg>
+
+<p>修完之后的完整行为表——下面每一行都是同一个脚本在本机跑出来的实测，不是设计意图：</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>输入</th><th><code>GET /api/board</code></th><th><code>GET /api/health</code></th></tr></thead>
+  <tbody>
+    <tr><td>可读</td><td class="n">200</td><td><code>dashboard</code> 块，<code>dashboard_error: null</code></td></tr>
+    <tr><td>叶子缺席</td><td class="n"><strong>404 NOT_FOUND</strong></td><td><code>dashboard: null</code>，<code>dashboard_error: null</code></td></tr>
+    <tr><td>父目录缺席</td><td class="n"><strong>404 NOT_FOUND</strong></td><td>同上</td></tr>
+    <tr><td>悬空软链</td><td class="n"><strong>404 NOT_FOUND</strong></td><td>同上</td></tr>
+    <tr><td>mode 000（EACCES 13）</td><td class="n"><strong>503</strong> errno=13</td><td><code>dashboard_error.errno = 13</code></td></tr>
+    <tr><td>路径是目录（EISDIR 21）</td><td class="n"><strong>503</strong> errno=21</td><td>errno=21</td></tr>
+    <tr><td>父目录是普通文件（ENOTDIR 20）</td><td class="n"><strong>503</strong> errno=20</td><td>errno=20</td></tr>
+    <tr><td>软链成环（ELOOP 62）</td><td class="n"><strong>503</strong> errno=62</td><td>errno=62</td></tr>
+    <tr><td>正文不是 JSON</td><td class="n">200（原样透传）</td><td><code>dashboard: null</code>，<code>dashboard_error: null</code></td></tr>
+    <tr><td>正文不是 UTF-8</td><td class="n">200</td><td>同上，<strong>不 500</strong></td></tr>
+    <tr><td>0 字节 / 顶层是数组</td><td class="n">200</td><td>同上</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>四处改动</h3>
+<ol>
+  <li><strong><code>board_bytes</code> 分类</strong>。分界线是 <code>FileNotFoundError</code> vs
+  <code>OSError</code>，<strong>不是</strong> <code>PermissionError</code>——本机实测 EPERM(1) / EACCES(13)
+  是 <code>PermissionError</code> 而 EIO(5) / ELOOP(62) / ENAMETOOLONG(63) 是裸 <code>OSError</code>，
+  按 <code>PermissionError</code> 分会把 I/O 错误漏回 404。</li>
+  <li><strong><code>/api/health</code> 加 add-only 顶层键 <code>dashboard_error</code></strong> =
+  <code>{path, errno, strerror}</code> 或 <code>null</code>。<code>dashboard: null</code> 的含义一字不变，
+  verdict 词表仍是五枚。<code>_dashboard_view</code> 改收<strong>已读好的 body</strong>，好让那个文件
+  每次 <code>/api/health</code> 仍然<strong>只读一次</strong>（判例钉住 read 次数 == 1）。</li>
+  <li><strong>errno 落一份到日志</strong>：<code>_send_api_error</code> 对 <code>details</code> 带
+  <code>errno</code> 的受控错误多写一行 <code>&lt;CODE&gt; errno=&lt;n&gt; &lt;strerror&gt; path=&lt;…&gt;</code>，
+  经 <code>Handler.log_message</code>（§54.2 的唯一 stderr 写者）与一个<strong>独立</strong>的
+  <code>_PollSampler</code> 实例（同一个类、同一条 300 s 窗）。</li>
+  <li><strong>客户端第四态 <code>boardUnreadable</code></strong>：无快照 → <code>AppShell</code> 整页态，
+  有快照 → <code>ErrorBanner</code> 第三个 warning 变体（<strong>快照不清</strong>）。向导终章「首份数据」
+  行报 errno 并<strong>撤掉「立即生成一次」</strong>。设置页诊断区多两个字段。</li>
+</ol>
+
+<h2 id="calls">3. 六个被 review 打回来才定的取舍</h2>
+
+<p>先出了一版实现计划，再让四个对抗 reviewer（法条 / CI 会不会绿 / 用户看到的是不是真话 / 边界
+情形）逐条去推翻它。下面六条全是被推翻之后改的。</p>
+
+<div class="card warn">
+  <h3>① <code>dashboard_error</code> 取顶层新键，不加第六个 verdict<span class="tag bad">原方案被否</span></h3>
+  <p>加 verdict 会<strong>静默失效</strong>：<code>PipelineBanner.describeHealth</code> 的
+  <code>default: return null</code> 让新 verdict 一个横幅都不渲染（比今天更差），
+  <code>repairActd.isRecovered</code>（<code>verdict === "ok" || "unknown"</code>）还会把每次一键修复
+  都报成 15 s 超时，而 <code>types.ts</code> 把 verdict 声明成 <code>| string</code>、tsc 一个都拦不住。
+  塞进 <code>dashboard</code> 块要让 <code>_dashboard_view</code> 在读被拒时返非 null，那会翻转
+  <code>_verdict</code> 并把向导「首份数据」行从红翻成<strong>绿色的谎话</strong>。</p>
+</div>
+
+<div class="card warn">
+  <h3>② <code>PipelineBanner</code> 刻意不长 <code>dashboard_error</code> 分支<span class="tag bad">原方案被否</span></h3>
+  <p>它和看板页的新面同源，两条 <code>role="alert"</code> 说同一句话正是 §47.4 读者 3 与
+  <code>ErrorBanner</code> 组件头注都明令禁止的「同一信息绝不双份」；插在 verdict switch 之前
+  还会盖掉 <code>stalled</code> / <code>failing</code> 这两条更急的真话。只改一处：<code>stale</code> 正文里
+  <code>dashboard == null</code> 此前一律说「看板从未生成」——读被拒时那是假话。判例把
+  <code>stalled + dashboard_error</code> 仍说「卡住了」钉死。</p>
+</div>
+
+<div class="card warn">
+  <h3>③ 判据不写成裸 <code>status === 503</code></h3>
+  <p>本面另一枚 503 是 §68.7 的 <code>SHELL_UNAVAILABLE</code>，把「壳没在跑」说成「看板读不动」
+  是同一类谎话。判据 = <code>503 ∧ (BOARD_UNREADABLE ∨ REQUEST_FAILED)</code>，后者覆盖 envelope 体
+  自己都解不出来时的退化码。判例带一条 <code>SHELL_UNAVAILABLE</code> 反例。</p>
+</div>
+
+<div class="card warn">
+  <h3>④ 不落 <code>boardError</code></h3>
+  <p>它的读者全把它读成「离线」——落进去等于对着一台刚答过话的 server 说「连不上本地服务」，
+  还会把 PipelineBanner / DiagnosticsStrip / MaintenanceBanner / SelfImproveBanner
+  <strong>四条横幅一并关掉</strong>（§49 追记 2026-09-05 为同一理由否决过一次）。</p>
+</div>
+
+<div class="card bad">
+  <h3>⑤ 新面绝不复用 <code>BoardMissingState</code><span class="tag bad">数据丢失风险</span></h3>
+  <p>它给的「立即生成一次」会 <code>POST /api/setup/seed-dashboard</code> →
+  <code>write_dashboard</code> 原子替换 <code>dashboard.json</code>，而 <code>registry.load_all</code>
+  对读不动的卡片文件是<strong>静默跳过</strong>——在一台只是读不动的机器上那是拿一份可能零卡的
+  看板盖掉最后一份好快照。<strong>这颗按钮此前正对着 owner 出现在向导那一页上。</strong></p>
+</div>
+
+<div class="card bad">
+  <h3>⑥ 两条差点自己造出 500 的坑<span class="tag bad">第一版实现有</span></h3>
+  <ul>
+    <li><code>UnicodeDecodeError</code> 是 <code>ValueError</code> 而<strong>不是</strong>
+    <code>OSError</code>，必须与 <code>json.loads</code> 共用同一个 try。第一版把 <code>except ValueError</code>
+    只挂在 <code>json.loads</code> 上，一份非 UTF-8 的 <code>dashboard.json</code> 就会让
+    <code>snapshot()</code> 抛出去、<code>/api/health</code> 变成 <strong>500 + 一份栈</strong>。</li>
+    <li><code>_send_api_error</code> 是从 <code>_dispatch</code> 的 <code>except ApiError</code>
+    <strong>子句里</strong>调的，从那里抛出去的异常同级 <code>except Exception</code>
+    <strong>兜不住</strong>，会逃到 <code>handle_one_request</code>——客户端连 envelope 都收不到。
+    所以诊断行整段包 <code>try/except</code>，判例直接注入一个会抛的
+    <code>_errno_diagnostic</code> 证明 envelope 照发。</li>
+  </ul>
+</div>
+
+<h2 id="law">4. 法条改动（必答三问）</h2>
+
+<div class="card teach">
+  <h3>问一：触及哪些 §</h3>
+  <ul>
+    <li><strong>§49</strong>：codes 词表 +<code>BOARD_UNREADABLE</code>、<code>/api/health</code>
+    路由行键表、<strong>新增 2026-09-18 追记</strong>（收窄 2026-09-05 那条「网络 / 5xx /
+    <code>READ_FAILED</code> → 仍 <code>boardError</code>」）。</li>
+    <li><strong>§47.4</strong>：读者 2 的 body 键表、<strong>新增 2026-09-18 追记</strong>、
+    读者 3 的 <code>stale</code> 正文。</li>
+    <li><strong>§54.2</strong>：<strong>新增 2026-09-18 追记</strong>（errno 诊断行的三条纪律）。</li>
+  </ul>
+  <p>行为改了 → 法在同一个 PR 里改了。三处都是<strong>带日期的 add-only 追记段落，不是新
+  <code>## N.</code> / <code>### N.M</code> 标题</strong>——<code>scripts/qa/coverage_inventory.py</code>
+  只从标题派生清点行，加标题会让 <code>qa/coverage_inventory.json</code> 过期。</p>
+</div>
+
+<div class="card teach">
+  <h3>问二：与 §0 宪法</h3>
+  <p><strong>第 3 条「诚实」</strong>是本 PR 的全部理由（「坏掉的通道」与「没有新数据」严格区分，
+  此前在这条路上是破的）；<strong>第 11 条</strong>被<strong>加强</strong>了一点——
+  <code>/api/health</code> 原本有一条通往 500 的暗路（非 UTF-8 正文），本 PR 把它关了。
+  没有旁路写 registry（§44 单写者不动，server 仍只读）、跨组件字段只增不改
+  （<code>dashboard_error</code> 新增，<code>dashboard</code> / <code>details.path</code> 原义不动）、
+  没有不可信文本进 prompt。<strong>零修宪。</strong></p>
+</div>
+
+<div class="card teach">
+  <h3>问三：有没有已存在的机制</h3>
+  <p>有，而且全用了——<strong>节流不是新造的</strong>：<code>server/app.py</code> 已经有一个 300 s、
+  按桶、线程安全、会报 suppressed 条数的 <code>_PollSampler</code>（§54.2），诊断行复用
+  <strong>同一个类</strong>、只另起一个实例；日志出口复用 <code>Handler.log_message</code>；
+  客户端的「留旧快照 + 一行 warning」复用 <code>boardDecodeError</code> 的韧性先例与同一个
+  <code>ErrorBanner</code> 变体；错误码复用 <code>ShellUnavailableError</code> 的模板逐字。
+  <strong>没造新模块、<code>state/</code> 下没加新文件、没加第二套双语机制。</strong></p>
+</div>
+
+<h2 id="gates">5. 门与证据</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>门</th><th>命令</th><th>结果</th></tr></thead>
+  <tbody>
+    <tr><td>compileall</td><td><code>python3 -m compileall -q act ingest server</code></td><td>exit 0</td></tr>
+    <tr><td>ruff</td><td><code>ruff check .</code></td><td><code>All checks passed!</code></td></tr>
+    <tr><td>受影响判例</td><td><code>python3 -m unittest tests.test_server_board_read_denied tests.test_server_health tests.test_server_health_verdict_ladder tests.test_server_board tests.test_server_log_noise</code></td><td><strong>88 passed</strong></td></tr>
+    <tr><td>web typecheck</td><td><code>npm run typecheck</code></td><td>exit 0</td></tr>
+    <tr><td>web build</td><td><code>npm run build</code></td><td>exit 0</td></tr>
+    <tr><td>web vitest 全量</td><td><code>npx vitest run</code></td><td><strong>224 files / 2651 passed / 4 skipped</strong></td></tr>
+    <tr><td>changelog fragment</td><td><code>python3 scripts/ci/changelog_fragments.py check</code></td><td><code>ok (127)</code></td></tr>
+    <tr><td>progress fragment</td><td><code>python3 scripts/ci/progress_log.py check</code></td><td><code>ok (126)</code></td></tr>
+    <tr><td>复杂度</td><td><code>python3 scripts/qa/complexity.py</code></td><td><code>threshold 6: 0 violation(s)</code></td></tr>
+    <tr><td>hygiene</td><td><code>python3 scripts/qa/hygiene.py</code></td><td><code>OK</code>（存量 2 条不变）</td></tr>
+    <tr><td>依赖方向</td><td><code>python3 scripts/qa/depgraph.py</code></td><td><code>OK</code>（存量 37 条不变）</td></tr>
+    <tr><td>账本 shrink-only</td><td><code>python3 scripts/qa/ledger_diff.py --base origin/main</code></td><td><code>0 finding(s) / OK</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+  <h3><code>qa/coverage_inventory.json</code> 只动两行</h3>
+  <p>都是新判例文件引了 <code>§54.2</code> 与 <code>/api/health</code> 造成的机械重算：
+  <code>contract:§54.2</code> 的 proof 多出 <code>tests.test_server_board_read_denied</code>，
+  <code>route:GET /api/health</code> 的 top-4（<code>MAX_MODULES=4</code>、按模块名排序）里它挤掉了
+  <code>tests.test_server_log_noise</code>。<strong>没有夹带任何无关漂移</strong>——开工时
+  <code>--check</code> 是 exit 0、<code>tests.test_coverage_inventory</code> 32 条全绿。为了不让第三行
+  也动，<code>/api/cards/{id}</code> 的派生路由判例刻意放进<strong>已经在那一行 top-4 里</strong>的
+  <code>tests/test_server_board.py</code>，新文件里一个 <code>/api/cards/</code> 字面量都没有。</p>
+</div>
+
+<div class="card">
+  <h3>Swift 两门没跑</h3>
+  <p>本 PR 不碰 <code>mac/</code> <code>shell/</code> <code>ios/</code> <code>shared/</code> 任何
+  <code>*.swift</code>，按 §56.8 的 per-PR 路径过滤，<code>ci</code> 会走 ubuntu 空转路径并打印
+  「no Swift changes」。</p>
+</div>
+
+<h2 id="review">6. 交付后又跑了一轮对抗 review，改了 17 处</h2>
+
+<p>交付物推上来之后，又用<strong>五个对抗 reviewer</strong>（Python 正确性 / TypeScript 正确性 /
+判例是否真钉得住 / 法条与代码是否逐句相符 / 波及面）把<strong>已提交的 diff</strong> 重读一遍，
+每条发现再各交一个独立 agent <strong>专门去推翻</strong>。<strong>26 条原始发现，17 条挺过了反驳</strong>，
+全部已修（commit <code>ffce0efa</code>）。三条由不同 lens 各自独立撞到，那也正是最要命的两个问题。</p>
+
+<div class="card bad">
+  <h3>① errno 根本没到屏幕上<span class="tag bad">3 个 lens 同时报</span></h3>
+  <p><code>failBoardUnreadable</code> 存的是 server 那句 <code>message</code>，而那句只说
+  「see details.errno」；客户端把 <code>details</code> 整个丢了。于是页面挂着一句指向某个数字的话，
+  <strong>而那个数字页面上根本没有</strong>，AppShell 的提示还写着「上面的 errno 就是这次读真正拿到的」
+  ——上面并没有 errno。<strong>这等于把本 issue 的目的丢在最后一米。</strong></p>
+  <p>现在句子由 <code>details.errno</code> / <code>details.strerror</code> 拼；裸 <code>OSError</code>
+  拿不到号码时退到 strerror 再退到 server 原句，<strong>永不渲染 <code>errno null</code></strong>。
+  判例钉「<code>errno 1</code> 这个数字本身出现在屏幕上」。</p>
+</div>
+
+<div class="card bad">
+  <h3>② 两条横幅同时说同一件事，其中一条给错的修法<span class="tag bad">2 个 lens</span></h3>
+  <p><code>state/</code> 整个读不动时心跳也 stat 不到 → verdict 落 <code>stale</code> → 横幅说
+  「后台服务没在运行」并递一颗<strong>「启动后台服务」</strong>，就摆在诚实的看板空态旁边。
+  对一个权限问题那是错的修法。<code>pipelineBannerMuted</code> 自此也覆盖
+  <code>boardUnreadable</code>，<strong>不限看板页</strong>。</p>
+</div>
+
+<div class="card warn">
+  <h3>③ 判例里有三条其实钉不住东西<span class="tag warn">用真变异体证的</span></h3>
+  <ul>
+    <li>health 套件从来没注入过<strong>非 <code>PermissionError</code></strong> 的
+    <code>OSError</code>，所以把 <code>except OSError</code> 收窄成 <code>except PermissionError</code>
+    <strong>49 条判例一条都不红</strong>，而那个收窄会让 EIO 下的 <code>/api/health</code> 变 500。
+    已补 EIO / EISDIR / ELOOP 三例，并在一份<strong>脚本副本</strong>上证明它现在真能杀掉那个变异体
+    （原版通过、变异体 <code>snapshot()</code> 抛出去 ⇒ 500）。</li>
+    <li>store 的「四态互斥」是一条链，后两步的 <code>toBeNull()</code> 在入口就已经是 null
+    ——<strong>永远不可能红</strong>。拆成四条，每条都从 <code>boardUnreadable</code> 已置位出发。</li>
+    <li>采样器隔离那条判例在 setUp 里把自己要断言的那个全局替换掉了，于是
+    <code>_ERRNO_SAMPLER = _POLL_SAMPLER</code> 这种真事故也照样绿。移进一个不打 patch 的 TestCase。</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>其余已修</h3>
+  <ul>
+    <li><code>isBoardUnreadableError</code> 不再接受「envelope 解不出来的 503」——那种 503 连 errno
+    都没有，说「看板文件读不出来」是同一类没查就断言；它继续落 <code>boardError</code>。</li>
+    <li>两侧文案不再替 server 断言<strong>「文件在」</strong>（ENOTDIR / ELOOP / ENAMETOOLONG 那几路
+    谁也没查过）。</li>
+    <li><code>ErrorBanner</code> 不再叫人「点重试」——那条横幅没有按钮。</li>
+    <li>整页态不再把 <code>launchctl kickstart …</code> 揉进句子（§47.4 追记 2026-09-05
+    「修法命令出句入行」）。</li>
+    <li>裸 <code>OSError</code> 现在也写一行 <code>errno=?</code> 而不是静默；<code>strerror</code>
+    为 None 不再渲染成字面 <code>None</code>。</li>
+    <li><code>_errno_diagnostic</code> 因这些守卫涨到复杂度 8（阈值 6）→ <strong>拆成三个小函数
+    而不是上账本</strong>（<code>ledger_diff</code> 会拒绝新增债）。</li>
+  </ul>
+</div>
+
+<div class="card teach">
+  <h3>法条同步纠了三处被 reviewer 证伪的断言</h3>
+  <ul>
+    <li>真正逐字引那句 404 消息的是<strong>五份 web fixture</strong>，而不是
+    <code>scripts/qa/shell_ui_probe.py</code>——那个文件只按 <code>status != 200</code> 分支，
+    <strong>别当它是 golden</strong>。</li>
+    <li>渲染面的实际内容（标题带 errno、细节不承诺重连也不叫人点重试）。</li>
+    <li>「一个状态只有一个说话的」——那句话要靠上面那条静音才成立。</li>
+  </ul>
+</div>
+
+<h2 id="honest">7. 诚实交代：没修的、既有的红</h2>
+
+<div class="card bad">
+  <h3>心跳那两次读仍把「读被拒」压成「文件不在」——wire 上的洞还在</h3>
+  <p><code>health._read_json</code> / <code>_age</code> 对<strong>心跳与 loop_health</strong> 那两次读
+  照旧吞 <code>OSError</code>，所以 <code>state/</code> 整个读不动时 <code>/api/health</code> 的 body
+  仍分不出「没有心跳」与「读不动心跳」（verdict 落 <code>stale</code>）。用户可见的那半句谎话由
+  <code>pipelineBannerMuted</code> 收口——读不动时那条「后台服务没在运行」横幅根本不渲染——但
+  <strong>wire 上这个洞仍在，别当它修好了</strong>。那是第二、第三个 add-only 键，另一张卡。</p>
+</div>
+
+<div class="card warn">
+  <h3>web 全量 vitest 在本机有约 1/5 的<strong>既有</strong> flake，与本 PR 无关（已实测）</h3>
+  <p>第一次全量跑 <code>AboutSection.test.tsx</code>（「Check now」10 s 冷却那条，用 fake timers）红了一次。
+  为了不把它算在自己头上，我在 <code>origin/main</code> 的<strong>未改动</strong>树里建了个 worktree 跑了
+  10 次全量：<strong>run 5 同一条用例同样红</strong>，run 8 另有
+  <code>SlackSection.helpCopy.test.tsx</code> 红——clean main <strong>10 次 2 红</strong>；本 PR 的树
+  7 次 1 红（同一条用例），之后连续 5 次全绿。CI 上这次是 pass。
+  <strong>值得 owner 单独开一张卡——它砸的是 required 检查 <code>Web tests</code>。</strong></p>
+</div>
+
+<div class="card warn">
+  <h3>两条本机红，在未改动的 <code>origin/main</code> 上红得一模一样</h3>
+  <ul>
+    <li><code>test_readme_audit_repo_readme::test_no_stale_claims</code>：<code>README.md:13</code>
+    写 <code>v1.0.114</code>，当前 tag 是 <code>v1.0.116</code>。既有，没碰（版本字面量按 §56.1
+    不是我该动的）。</li>
+    <li><code>tests/integration/test_auto_deploy_script.py</code> 的 <code>tearDownModule</code>
+    撞单文件时间预算（<code>took 900s &gt; 600s</code>）——那一跑与 web 全量并行、机器满载。
+    是环境而不是逻辑，判例本体全绿。</li>
+  </ul>
+  <p>另：全量 Python 套件（7,965 条）在本机被两次外部 SIGTERM 打断
+  （<code>run_gates.sh</code> 里的 coverage 跑同样被 <code>Terminated: 15</code>）。全量的权威判决取
+  CI 的 <code>Tests on ubuntu</code>。</p>
+</div>
+
+<div class="card bad">
+  <h3>壳冷启动那一路仍说假话，本 PR 没修</h3>
+  <p><code>shell/Sources/main.swift</code> 的探活只认 2xx（<code>(200...299).contains(code)</code>），
+  503 与今天的 404 一样走 10 s 超时后的「连不上看板服务」启动失败页，上面三条修法全是 launchd 的。
+  <strong>只有窗口已经开着时翻掉</strong>（issue 时间线里 16:44 那一次）才走得到本 PR 的新面。
+  §54.2 的后续，未开卡。</p>
+</div>
+
+<div class="card bad">
+  <h3>「为什么会被重定向到向导」没修，而且机理与我一开始的猜测不同</h3>
+  <p><code>server/setup.py</code> 用的是 <code>Path.is_file()</code>，它<strong>不</strong>吞 EACCES——
+  本机实测 mode-000 目录里的文件 <code>is_file()</code> 直接抛 <code>PermissionError(13)</code>，
+  所以 <strong>stat 级</strong>拒绝下 <code>/api/setup</code> 自己就是 500 + 一份栈；
+  <strong>open 级</strong>拒绝下 <code>config.yaml</code> 与 <code>setup_done.json</code> 反而读成「在」，
+  <code>needed: true</code> 只经 <code>secrets_store.read_value</code> 的
+  <code>except OSError: return None</code> 出现。同一病灶的兄弟，另开一张卡。
+  向导终章那一行本 PR 已按 §47.4 追记说实话并撤掉播种按钮。</p>
+</div>
+
+<div class="card">
+  <h3>其余明确不做</h3>
+  <ul>
+    <li><strong>errno 的 OS 层根因</strong>（issue 第 3 项）。owner 侧那个只读诊断 job
+    （<code>com.zelin.diag-read</code>）会在下次翻掉时记下 errno；本 PR 只保证那个数字到得了人眼前
+    ——envelope、<code>/api/health</code>、设置页诊断区、server 日志四处。</li>
+    <li><code>health._age</code> 的 stat 拒绝（心跳文件）：另一条读者、另一个键，不在 issue 范围。</li>
+    <li>不动 <code>_read_json</code>（心跳与 loop_health 共用它）、不动 <code>_verdict</code> 的三入参、
+    不给 503 加 <code>Retry-After</code>（客户端只重试<strong>抛错</strong>的 fetch，503 不在其列）。</li>
+  </ul>
+</div>
+
+<h2 id="collision">8. 需要 owner 拍板：一个 PR，三张卡</h2>
+
+<div class="card bad">
+  <h3>卡号 <code>R-001</code> 被复用了</h3>
+  <p>lane 把卡号 <code>R-001</code> 交给了 issue #423，但这个卡号上一轮属于另一张卡
+  （「修红 CI：PR #405」），而那张卡的两个并行 session 正在同一条分支
+  <code>ai/self-improve/R-001</code> 上交付、并且已经开了 PR
+  <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/426">#426</a>。</p>
+  <p>lane 契约要求分支名<strong>恰好</strong>是 <code>ai/self-improve/R-001</code>、daemon 按分支名
+  反查 PR（OPEN 优先），所以两张卡的交付物<strong>物理上只能落在这一个 PR 里</strong>。</p>
+  <p><strong>三半的文件集完全不重叠</strong>（本轮 23 个文件全在 <code>server/</code>
+  <code>web/src/</code> <code>tests/test_server_*</code> <code>docs/CONTRACT.md</code>
+  <code>qa/coverage_inventory.json</code> 与两个 fragment 里，一个字节都没碰另两个 session 的
+  <code>deliverables/r001-pr405-ci-red.html</code> /
+  <code>docs/design/progress/2026-09-18-r001-pr405-*</code> /
+  <code>tests/test_review_stale_sweep.py</code> / <code>scripts/qa/fixtures_b/aging_22d.py</code>），
+  所以内容上不冲突；但<strong>一个 PR 只能被 daemon 核验成一张卡的交付</strong>。</p>
+  <p><strong>建议</strong>：把本轮的 commit <code>87dbe1da</code> cherry-pick 到自己的分支单独开一个
+  PR，或反之。本 session 刻意<strong>没有</strong>改动另两半的正文、没有动标题里它们那一半、
+  也没有 force-push；PR 正文里它们的原文逐字保留在本节之下。</p>
+</div>
+
+<footer>
+  分支 <code>ai/self-improve/R-001</code> · commit <code>87dbe1da</code> ·
+  草稿 PR <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/426">#426</a> ·
+  issue <a href="https://github.com/Wan-ZL/zelin-ai-assistant/issues/423">#423</a> ·
+  本页由 R-001 本轮生成，2026-09-18
+</footer>
+
+</div>
+</body>
+</html>

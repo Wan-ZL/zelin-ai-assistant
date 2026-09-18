@@ -5,7 +5,9 @@
 //      board.trash / archived / recaps 同一份快照；原生 MainWindow.detail 的其余 section 从不依赖 store.dashboard，§54.1 追记）：
 //      首载 loading / 从未加载成功且离线（诚实空态+恢复路径——「拉不到」绝不渲染成「为空」）/ dashboard.json 不存在
 //      （server 在、文件不在：看板页 = 原生 PipelineEmptyStateView + 列顶 composer；三个列表页 = 空列表，原生
-//      `dashboard?.trash ?? []`）/ dashboard.json 解不出来且从未有过好快照（原生 loadError 那一行 + 重试，§49 追记
+//      `dashboard?.trash ?? []`）/ dashboard.json 在、但 server 读不动且从未有过好快照（§49 追记 2026-09-18，
+//      issue #423：那一行 + errno + 重启命令 + 重试，**不给「立即生成一次」**——它会覆盖最后一份好快照）
+//      / dashboard.json 解不出来且从未有过好快照（原生 loadError 那一行 + 重试，§49 追记
 //      `store-resilience-drawer`）/ 正常渲染页面；自拉快照的页（设置 / 关于 / 录制 / 权限体检 / 向导）无条件渲染 children；
 //   2. <html lang> 与 document.title 随语言与当前页同步（原生 installTitleSink：「Zelin's AI Assistant — <页>」，pageTitles.ts）；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
@@ -132,7 +134,7 @@ export function BoardMissingState() {
 
 export function AppShell({ searchSlot, children }: AppShellProps) {
   const { language, text } = useI18n();
-  const { board, boardError, boardMissing, boardDecodeError, boardLoading } = useAppState();
+  const { board, boardError, boardMissing, boardDecodeError, boardUnreadable, boardLoading } = useAppState();
   const page = readPage(useRoute()); // D40：换页不重载，页从路由订阅里来
   const isBoard = page === "board";
   const readsBoard = BOARD_FED_PAGES.has(page);
@@ -162,6 +164,31 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
     // server 在、dashboard.json 不在（404）：不是离线——看板页 = 原生 PipelineEmptyStateView + composer；
     // 回收站 / 永久性完成 / 会议纪要 = 空列表（原生 TrashPageView 读 `dashboard?.trash ?? []`，健康横幅照常说话）
     content = isBoard ? <BoardMissingState /> : children;
+  } else if (boardUnreadable) {
+    // 从未加载成功 + 文件在、server 读不动（503 BOARD_UNREADABLE，§49 追记 2026-09-18 / issue #423）：
+    // **绝不复用 BoardMissingState**——它给的「立即生成一次」会 POST /api/setup/seed-dashboard 拿一份可能零卡的
+    // 看板原子替换掉最后一份好快照（registry 对读不动的卡片文件静默跳过），在一台只是读不动的机器上那是数据丢失。
+    // 四个 BOARD_FED_PAGES 同此一态：读不动时把回收站 / 永久性完成 / 会议纪要渲染成空列表是同一句谎话。
+    content = (
+      <div className="shell-center">
+        <EmptyState
+          icon={<WarningIcon />}
+          title={boardUnreadable}
+          // 只说已知的：那个 errno（标题里就是它）。**不说「文件在」**——server 那一侧刻意不断言存在
+          // （ELOOP / ENOTDIR / ENAMETOOLONG 那几路谁也没查过），客户端也不许替它断言。
+          // 修法命令不揉进句子（§47.4 追记 2026-09-05「修法命令出句入行」）：本态给的是「重试」。
+          hint={text(
+            "后台服务这个进程读不动看板文件（权限 / I-O 类；标题里的 errno 就是这次读真正拿到的）。修好访问权限后点「重试」，本页即恢复；设置 → 依赖检查里也能看到同一个 errno。",
+            "This server process could not read the board file (a permissions / I-O condition; the errno in the title is what this read actually got). Fix access, then hit Retry and this page recovers; the same errno is in Settings → Dependency check.",
+          )}
+          action={
+            <button type="button" className="shell-button" onClick={() => void refreshBoard()}>
+              {text("重试", "Retry")}
+            </button>
+          }
+        />
+      </div>
+    );
   } else if (boardDecodeError) {
     // 从未加载成功 + server 答了但 dashboard.json 解不出来（§49 追记 `store-resilience-drawer`）：原生 loadError 那一行
     // + 重试；不是离线（server 在跑），不借「连不上」说话——有旧快照时同一句话由 ErrorBanner 的 warning 变体说
@@ -206,8 +233,11 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
     );
   }
 
-  // 看板页的「没写出数据」空态自带「启动后台服务」——健康横幅同一句话不说两遍（原生 .missing 归 PipelineEmptyStateView）
-  const pipelineBannerMuted = isBoard && !board && boardMissing;
+  // 看板页的「没写出数据」空态自带「启动后台服务」——健康横幅同一句话不说两遍（原生 .missing 归 PipelineEmptyStateView）。
+  // **读不动时也闭嘴**（§49 追记 2026-09-18）：`state/` 整个读不动时心跳也 stat 不到 → verdict `stale`，
+  // 横幅会同时说「后台服务没在运行」并给一颗「启动后台服务」——对一个权限问题那是**错的修法**，
+  // 而看板面已经带着 errno 在说真话了。这一条不限 isBoard：任何页上那颗按钮都指错方向。
+  const pipelineBannerMuted = boardUnreadable != null || (isBoard && !board && boardMissing);
 
   return (
     <div className="shell">

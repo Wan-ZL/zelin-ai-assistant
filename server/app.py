@@ -7,7 +7,10 @@
   `log_message` 行首带本地 ISO 时间戳；`log_request` 把 `/api/board` 与
   `/api/health` 按 `(path, 状态码)` 分桶、5 分钟窗口采样（状态码一变立刻写，
   被吃掉的条数随下一行报出来，`ZAI_LOG_POLLS=1` 关采样）。日志只减噪、永不
-  删（§55 审计 L3）。
+  删（§55 审计 L3）。**errno 诊断行（§54.2 追记 2026-09-18，issue #423）**：
+  `details` 带 `errno` 的受控错误（今日只有 §49 的 `BOARD_UNREADABLE`）在
+  `_send_api_error` 里多写一行 `<CODE> errno=<n> <strerror> path=<…>`，经同一个
+  `log_message`、同一条 300 s 窗，桶键含 errno（换个 errno 立刻写）。
 - error envelope 统一 ``{"error":{"code","message","details"}}``（errors.py）。
 - POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（reveal 在
   本层校验，actions 的字段闸门归 inbox_writer/G1）。
@@ -165,6 +168,10 @@ class _PollSampler:
 
 
 _POLL_SAMPLER = _PollSampler()
+# errno 诊断行（§54.2 追记 2026-09-18，issue #423）自带一个**独立**实例：桶键不是
+# 真 path，与访问日志的 (_POLL_PATHS, 状态码) 桶互不相撞，上面那句「桶数有界 =
+# len(_POLL_PATHS) × 见过的状态码」对访问日志那个实例照旧成立。
+_ERRNO_SAMPLER = _PollSampler()
 
 
 def _log_polls_verbatim(env: "dict[str, str] | None" = None) -> bool:
@@ -188,6 +195,52 @@ def _quiet_candidate(path: str, code) -> bool:
     「同一条轮询路径反复返回同一个码」（含反复 404）。状态码形状不明的行不进
     闸，逐条写。"""
     return path in _POLL_PATHS and _status_int(code) is not None
+
+
+def _errno_shown(details: dict):
+    """``details["errno"]``，拿不到号码时渲染成 ``?``——裸 ``OSError`` 真的没有。
+
+    绝不让字面 ``None`` 进日志：读日志的人会在「号码」那一格看见一个 None。"""
+    number = details.get("errno")
+    return "?" if number is None else number
+
+
+def _errno_key(details: dict, code: str) -> str:
+    """采样桶键，**含 errno**：换个号码立刻写。
+
+    采样器的立论是「变化是信号」（§54.2 2026-09-14 追记按状态码分桶的同款推论）
+    ——EACCES 之后来一条 EIO 必须自己写一行，不许被并进 suppressed 让读日志的人
+    把 I/O 错误诊断成权限问题。"""
+    return "errno:%s:%s" % (code, _errno_shown(details))
+
+
+def _errno_line(code: str, details: dict, suppressed: int) -> str:
+    """诊断行的文本：``<CODE> errno=<n> <strerror> path=<…>`` (+ 被吃掉的条数)。"""
+    why = details.get("strerror")
+    tail = ("" if not suppressed else " (+%d suppressed in the last %ds)" % (
+        suppressed, int(_ERRNO_SAMPLER.window)))
+    return "%s errno=%s%s path=%s%s" % (
+        code, _errno_shown(details), "" if not why else " " + str(why),
+        details.get("path"), tail)
+
+
+def _errno_diagnostic(err: ApiError, now: float) -> Optional[str]:
+    """带 errno 的受控错误 → 一行诊断，同 300 s 窗采样；被采样掉 → None。
+
+    §54.2 追记 2026-09-18（issue #423）：envelope 把 errno 交给客户端，日志也得留
+    一份——owner 那台机器上 1549 行一模一样的 `/api/board 404` 之所以查不出东西，
+    就是因为真正的 errno 从来没落过盘。``errno`` 键在场就写，**号码为 None 也写**
+    （「连 errno 都没拿到」本身就是要报的事，静默才是本 issue 的病）。
+    ``ZAI_LOG_POLLS=1`` = 采样整个关掉，那时**不碰桶**——没有东西在被压制，也就
+    没有 suppressed 可报；旋钮打开之前真被压住的那些条一条不丢，关回去后照样报。"""
+    details = err.details if isinstance(err.details, dict) else {}
+    if "errno" not in details:
+        return None
+    if _log_polls_verbatim():
+        return _errno_line(err.code, details, 0)
+    emit, suppressed = _ERRNO_SAMPLER.decide(
+        _errno_key(details, err.code), err.status, now)
+    return _errno_line(err.code, details, suppressed) if emit else None
 
 
 def _access_line(address: str, text: str, now: "float | None" = None) -> str:
@@ -253,6 +306,16 @@ class Handler(BaseHTTPRequestHandler):
                          {"Cache-Control": "no-store"})
 
     def _send_api_error(self, err: ApiError) -> None:
+        # errno 落一份到日志（§54.2 追记 2026-09-18）。整段包进 try——本方法是从
+        # `_dispatch` 的 `except ApiError` **子句里**调的，那里抛出去的异常不会被
+        # 同级的 `except Exception` 兜住，会一路逃到 handle_one_request，客户端
+        # 连 envelope 都收不到。日志出 bug 绝不许赔上这次回答。
+        try:
+            line = _errno_diagnostic(err, time.time())
+            if line is not None:
+                self.log_message("%s", line)   # 唯一的 stderr 写者，测试套件替换它
+        except Exception:                      # noqa: BLE001 - 日志永不吃掉回答
+            pass
         self._send_json(err.status, err.envelope())
 
     # ------------------------------------------------------------------ #

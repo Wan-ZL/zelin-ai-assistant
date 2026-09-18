@@ -1,6 +1,10 @@
 """看板数据源：/api/board 透传 + /api/cards/{id} 详情增补。
 
 - GET /api/board = ``state/dashboard.json`` 原样透传（bytes 级，零改写）。
+  读失败分两种，**永不再合并**（§49 追记 2026-09-18，issue #423）：缺席
+  （``FileNotFoundError``）→ 404 ``NOT_FOUND``；其余 ``OSError`` → 503
+  ``BOARD_UNREADABLE``，errno / strerror 进 details。透传原则不松动——只分类，
+  不重试、不消毒、不塞空骨架。
 - GET /api/cards/{id} = 投影行 + registry 真源只读增补（add-only 合并，
   绝不覆盖投影字段名）。``{id}`` 接受主键（P-/legacy R-）**或**工作编号
   （§60.3）：投影行按 ``id`` 或 ``work_id`` 命中，registry 增补同样两步查；
@@ -38,7 +42,8 @@ except Exception:  # pragma: no cover - 降级路径
     store2_readonly = None  # type: ignore[assignment]
 
 from server import paths
-from server.errors import InvalidFieldError, NotFoundError
+from server.errors import (BoardUnreadableError, InvalidFieldError,
+                           NotFoundError)
 
 # webui.py _SAFE_ID_RE 同款保守 allow-list：无 ``.``/``/``/NUL，长度封顶——
 # id 直接参与 ``{id}.yaml`` 文件名拼接，必须防穿越。
@@ -58,10 +63,21 @@ def board_bytes(home: Path) -> bytes:
     p = paths.dashboard_path(home)
     try:
         return p.read_bytes()
-    except OSError:
+    except FileNotFoundError:
+        # 真的不在（ENOENT：叶子缺席 / 父目录缺席 / 悬空软链）——消息与 details.path
+        # 一字不改，四份 web fixture 与 §49 追记 2026-09-05 的判据逐字引它
         raise NotFoundError("dashboard.json not found — is actd (or the demo "
                             "seeder) pointed at this AIASSISTANT_HOME?",
                             {"path": str(p)})
+    except OSError as exc:
+        # 读不出来，但**不是缺席**（§49 追记 2026-09-18，issue #423）：EPERM /
+        # EACCES / EIO / EISDIR / ELOOP / ENOTDIR / ENAMETOOLONG…
+        # 消息刻意**不断言文件存在**——ELOOP / ENOTDIR / ENAMETOOLONG 这几路
+        # 谁也没查过那个文件在不在，把「读不动」说成「在、但读不动」是同一类
+        # 没查就断言（宪法第 3 条）。真相只有一个：errno。
+        raise BoardUnreadableError(
+            "cannot read dashboard.json — see details.errno",
+            {"path": str(p), "errno": exc.errno, "strerror": exc.strerror})
 
 
 def _board_dict(home: Path) -> dict:

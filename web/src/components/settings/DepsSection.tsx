@@ -242,6 +242,10 @@ export function DepsSection() {
               heartbeat_phase: diagnostics.health.heartbeat?.phase,
               heartbeat_pid: diagnostics.health.heartbeat?.pid,
               dashboard_age_s: diagnostics.health.dashboard?.age_s,
+              // §47.4 追记 2026-09-18（issue #423）：读被拒时这里是唯一能读到 errno 的地方——
+              // OS 层根因（TCC / 卷权限）要的就是这个数字
+              dashboard_errno: diagnostics.health.dashboard_error?.errno,
+              dashboard_strerror: diagnostics.health.dashboard_error?.strerror,
               consecutive_failures: diagnostics.health.loop_health.consecutive_failures,
               last_error: diagnostics.health.loop_health.last_error,
               registry_backend: diagnostics.registry_backend,

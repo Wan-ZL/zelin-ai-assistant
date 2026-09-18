@@ -746,6 +746,10 @@ export interface HealthSnapshot {
     stale: boolean;
   } | null;
   dashboard: { generated_at: string; age_s: number; stale: boolean } | null;
+  /** 2026-09-18 add-only（§47.4 追记，issue #423）：`dashboard: null` 分不出「没有看板」和「读不动看板」——
+   *  **读被拒**（EPERM / EACCES / EIO / EISDIR…）时这一键报这次读真正拿到的 errno，其余一切情况（读成功 / 文件缺席 /
+   *  正文撕裂）恒为 null。可选键：老 server 不发它。 */
+  dashboard_error?: { path: string; errno: number | null; strerror: string | null } | null;
   loop_health: { consecutive_failures: number; last_error: string | null };
   checked_at: string;
   [key: string]: unknown;

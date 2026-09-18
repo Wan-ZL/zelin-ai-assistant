@@ -177,7 +177,7 @@ class TheStampIsRearmedByLaterActivityTestCase(_Case):
         少了这一条，`restore` 在第二天就被同一条规则无声撤销。"""
         registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
         self.assertEqual([r["id"] for r in self.sweep()], ["P-1"])
-        restored = registry.restore(registry.load("P-1"))
+        restored = registry.restore(registry.load("P-1"), now=NOW)   # 戳用注入时钟
         self.assertEqual(restored.status, State.REVIEW.value)
         self.assertTrue(restored.execution.get("restored_at"))   # 捞回来 = 活动
         self.assertIn("restored_at", maintenance._EXECUTION_STAMPS)

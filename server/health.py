@@ -18,6 +18,14 @@ launchctl and must not spawn):
     "unknown"  no heartbeat file, dashboard fresh                (old daemon still writing)
     "ok"       heartbeat fresh
 
+``dashboard_error`` (2026-09-18, §47.4 追记, issue #423) — add-only nullable key:
+``dashboard: null`` alone cannot tell "there is no board" from "this process may
+not read the board", so a read DENIAL (EPERM / EACCES / EIO / EISDIR…) also
+reports ``{path, errno, strerror}`` here; every other outcome (read fine, file
+absent, torn body) leaves it ``null``. Only the errno this one read actually got
+— no extra probe, no spawn. The verdict ladder above is untouched and this face
+still never 500s.
+
 server/ is stdlib-only and never imports act (§49); the file layout is mirrored
 in server/paths.py and pinned by tests/test_server_paths_mirror.py.
 """
@@ -42,6 +50,31 @@ def _read_json(p: Path) -> Optional[dict]:
     except (OSError, ValueError):
         return None
     return doc if isinstance(doc, dict) else None
+
+
+def _read_json_or_denial(p: Path) -> "tuple[Optional[dict], Optional[dict]]":
+    """``(doc, denial)`` —— ``_read_json`` 的分类版（§47.4 追记 2026-09-18，issue #423）。
+
+    缺席（ENOENT）与撕裂（不是 JSON / 不是 UTF-8 / 顶层不是对象）→ ``(None, None)``，
+    语义与 ``_read_json`` 一字不动；**读被拒**（EPERM / EACCES / EIO / EISDIR…）→
+    ``(None, {path, errno, strerror})``。只读一次、只报这次读真正拿到的 errno——
+    server 不再探、不 spawn（§47.4「只 stat/读三个 state 文件」不松动）。
+
+    子句顺序是承重的：``FileNotFoundError`` 是 ``OSError`` 子类所以在前；
+    ``ValueError`` 在后且与 ``json.loads`` 共用同一个 try——``UnicodeDecodeError``
+    是 ``ValueError`` 而**不是** ``OSError``（非 UTF-8 的 dashboard.json 在本仓
+    是预期状态，见 board_source._board_dict），漏掉它会让 ``snapshot()`` 抛出去、
+    /api/health 变成 500，正是本次要修的那类事故。"""
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, {"path": str(p), "errno": exc.errno,
+                      "strerror": exc.strerror}
+    except ValueError:
+        return None, None
+    return (doc if isinstance(doc, dict) else None), None
 
 
 def _age(p: Path, now: float) -> Optional[float]:
@@ -87,9 +120,12 @@ def _heartbeat_view(home: Path, now: float) -> Optional[dict]:
     }
 
 
-def _dashboard_view(home: Path, now: float) -> Optional[dict]:
-    """``dashboard`` block, or None when there is no parseable ``generated_at``."""
-    dash_body = _read_json(paths.dashboard_path(home)) or {}
+def _dashboard_view(body: Optional[dict], now: float) -> Optional[dict]:
+    """``dashboard`` block, or None when there is no parseable ``generated_at``.
+
+    Takes the already-read body (``snapshot`` owns the single read, §47.4 追记
+    2026-09-18) — the file must not be read twice per request."""
+    dash_body = body or {}
     gen_ts = _parse_iso(dash_body.get("generated_at"))
     if gen_ts is None:
         return None
@@ -134,12 +170,17 @@ def snapshot(home: Path, now: Optional[float] = None) -> dict:
     """The /api/health body. Never raises; missing files are reported as such."""
     now = time.time() if now is None else now
     heartbeat = _heartbeat_view(home, now)
-    dashboard = _dashboard_view(home, now)
+    dash_body, dash_denial = _read_json_or_denial(paths.dashboard_path(home))
+    dashboard = _dashboard_view(dash_body, now)
     loop_health = _loop_health_view(home)
     return {
         "verdict": _verdict(heartbeat, dashboard, loop_health["consecutive_failures"]),
         "heartbeat": heartbeat,
         "dashboard": dashboard,
+        # add-only（§47.4 追记 2026-09-18）：读被拒才非 null。``dashboard: null``
+        # 的含义一字不变——它仍然同时覆盖「缺席」「撕裂」「读被拒」三种，这一键
+        # 只负责把第三种从前两种里分出来
+        "dashboard_error": dash_denial,
         "loop_health": loop_health,
         "checked_at": _dt.datetime.fromtimestamp(now, _dt.timezone.utc)
         .strftime("%Y-%m-%dT%H:%M:%SZ"),
