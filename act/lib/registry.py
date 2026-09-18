@@ -652,7 +652,7 @@ def trash(req: Requirement, reason: str) -> Requirement:
 def restore(req: Requirement, now: Optional[_dt.datetime] = None) -> Requirement:
     """Restore a trashed requirement to its ``prev_status`` and clear trash fields.
 
-    Also stamps ``execution.restored_at`` (add-only, D73 / CONTRACT §9 追记): pulling
+    Also stamps ``execution.restored_at`` (add-only, D74 / CONTRACT §9 追记): pulling
     a card back out of the bin is the owner saying "I still want this one", so it
     counts as activity (``maintenance._EXECUTION_STAMPS``). Without it the nightly
     loop would re-trash the card it was just told to keep — nothing else on the card

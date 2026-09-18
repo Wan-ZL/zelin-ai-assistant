@@ -1,4 +1,4 @@
-"""§9 追记 / D73 —— `registry.restore` 的时钟是注入缝，不许是墙上钟。
+"""§9 追记 / D74 —— `registry.restore` 的时钟是注入缝，不许是墙上钟。
 
 `restore` 盖 `execution.restored_at`，而它是 `maintenance._EXECUTION_STAMPS` 之一
 （= 「最近一次活动」），待验收两阶段老化（§70.2 追记二第 4 条）正是从这枚戳量

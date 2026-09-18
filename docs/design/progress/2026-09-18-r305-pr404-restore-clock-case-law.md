@@ -1,6 +1,6 @@
 pr: `ai/self-improve/R-305`（PR #424；R-305「修红 CI：PR #404 ci: Bump anthropics/claude-code-action from 1.0.217 to 1.0.224」）
 phase: 横切（§65 自我改进通道：`pr_red` 卡；§58 QA 六门；D5 / D12「红 CI 是臣子的事」）
-law: —（无修法；test-only。§9 追记 / D73 的 `restored_at` 与 §70.2 追记二第 4 条的两阶段老化一字未动）
+law: —（无修法；test-only。§9 追记 / D74 的 `restored_at` 与 §70.2 追记二第 4 条的两阶段老化一字未动。另修 `act/lib/registry.py` docstring 里 `ad4f0b71` 写错的决策号 D73 → D74，纯文档指针，防腐 #5）
 
 **#404 的三项红是同一颗炸弹的第五张卡，但这一轮的处置与前四张都不同。** 前四张（R-219/#402、R-220/#406、R-303/#408、R-304）带的是同一套 test-side 拼法：在判例里 `mock.patch.object(registry, "_iso_now", …)` 把戳钉回冻结钟。本轮起手先按 CLAUDE.md 的「动手第一条命令是 `gh pr list --state open` 查孪生」查了一遍，然后发现**上游已经换了路线**：owner 在 2026-09-17 11:37:53 PT 亲手写了 `ad4f0b71`，给 `registry.restore` 加 `now=` 生产侧注入缝（`Optional[datetime]`，默认 `_iso_now()` 逐字不变），经 #412 于 11:38 PT 合入 main。那三条分支的 hunk 因此**已被超越且与 main 冲突**——`git merge-tree --write-tree origin/main origin/ai/self-improve/R-{219,220,303}` 三处都报 `CONFLICT (content): Merge conflict in tests/test_review_stale_sweep.py`（main 侧 blob `b9adeac3` → `43959976`，孪生侧 → `daff9b9c`，三方合不上）。所以本轮**没有**照抄孪生 hunk，这是与「有孪生就只带逐字节 hunk」惯例的一次有据偏离：那条惯例是为了避免同一处代码在多条分支上出现两种拼法，而这里 main 已经选定了第三种、且是更彻底的那种（缝在生产代码里，不在判例的 mock 里）。
 
