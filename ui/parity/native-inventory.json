@@ -109,6 +109,10 @@
         "owner": "retired",
         "reason": "D46 看板换列 / deal-in 动画正式退役（§68.14 1.16 tombstone 2026-09-06；§43 是原生 display-only 层）：BoardMotion 飞行标签的兜底词无落点"
       },
+      "control:deps:label:which-gh-login-shell": {
+        "owner": "retired",
+        "reason": "原生探针命令的自述（which gh 在登录 shell 里），web 依赖页由 server 探测并显示 server detail，不照抄（§54.4 追记 D30 依赖检查并入设置页；D79）"
+      },
       "control:doctor:label:failed-to-write-dest": {
         "owner": "retired",
         "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8 / D50：已加载 → launchctl kickstart，未加载 → bash install.sh --reinstall-agent 由安装器渲染 + 加载，其失败以 server 原文 + 可复制的手动命令回到失败行）"
@@ -5247,9 +5251,10 @@
     },
     {
       "en": "which gh (login shell)",
-      "gated": true,
+      "gated": false,
       "id": "control:deps:label:which-gh-login-shell",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "原生探针命令的自述（which gh 在登录 shell 里），web 依赖页由 server 探测并显示 server detail，不照抄（§54.4 追记 D30 依赖检查并入设置页；D79）",
       "role": "label",
       "screen": "deps",
       "source": "Pages.swift:198",

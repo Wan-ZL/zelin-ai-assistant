@@ -65,13 +65,26 @@ final class PermissionsProbe: ObservableObject {
     /// 被动探 Documents 授权（原生 probeVaultPassive 逐字）：GUI 里读一下 ~/Documents 本身就会触发
     /// 一次性 TCC 弹窗，弹窗必须留在按钮后面。证据两条：ingest 链只在 courier 成功拉过之后才写
     /// state/vault_sync_mode="mirror"（证明授权在 cron 里也生效），UserDefaults 记一次 app 内成功授权。
-    nonisolated static func probeVaultPassive() -> String {
+    /// `d` 只为测试注入（缺省 = 真 UserDefaults.standard）：harness 拿一次性 suite
+    /// 钉住 vaultAccessGranted 这把键的读边（§66.2 setting:prefs:vaultAccessGranted）。
+    nonisolated static func probeVaultPassive(_ d: UserDefaults = .standard) -> String {
         let modeFile = AppPaths.stateRoot + "/state/vault_sync_mode"
         if let mode = try? String(contentsOfFile: modeFile, encoding: .utf8),
            mode.trimmingCharacters(in: .whitespacesAndNewlines) == "mirror" {
             return "granted"
         }
-        return Prefs.bool(vaultGrantedKey, default: false) ? "granted" : "unknown"
+        return vaultGranted(in: d) ? "granted" : "unknown"
+    }
+
+    /// app 内成功授权过一次（读边；写边在 requestVaultAccess 的 UserDefaults.standard）。
+    nonisolated static func vaultGranted(in d: UserDefaults) -> Bool {
+        d.object(forKey: vaultGrantedKey) == nil ? false : d.bool(forKey: vaultGrantedKey)
+    }
+
+    /// 这次点「屏幕录制」该弹系统提示（= 还没弹过）还是只能深链面板（= 弹过了）。
+    /// `d` 同样只为测试注入；写边留在 request(_:) 里的 UserDefaults.standard。
+    nonisolated static func screenPromptPending(in d: UserDefaults = .standard) -> Bool {
+        !(d.object(forKey: screenRequestedKey) == nil ? false : d.bool(forKey: screenRequestedKey))
     }
 
     /// 生效的笔记库根（= obsidian_raw 的上级），override → config.yaml → 默认，与设置页同一解析。
@@ -149,7 +162,7 @@ final class PermissionsProbe: ObservableObject {
         case "vault":
             requestVaultAccess()
         case "screen":
-            if !Prefs.bool(Self.screenRequestedKey, default: false) {
+            if Self.screenPromptPending() {
                 UserDefaults.standard.set(true, forKey: Self.screenRequestedKey)
                 RecordingController.requestScreenPermission()
             } else {

@@ -215,7 +215,10 @@ remove_app() {
     done
     info "left alone (bundle id ${have:-unreadable} is not ours): $p"
 }
-for _dir in "/Applications" "$HOME/Applications"; do
+# AIASSISTANT_UI_APPS_DIR: the same test seam install.sh honours (default /Applications) —
+# the QA coverage runner points both scripts at a throwaway dir so a sandboxed
+# uninstall never reaches the owner's real bundle (2026-09-15 incident).
+for _dir in "${AIASSISTANT_UI_APPS_DIR:-/Applications}" "$HOME/Applications"; do
     # the product path: the shell, or a legacy bundle never moved (pre-swap install)
     remove_app "$_dir/$SHELL_APP_NAME.app" "$SHELL_BUNDLE_ID" "$APP_BUNDLE_ID"
     remove_app "$_dir/$APP_NAME.app" "$APP_BUNDLE_ID"                     # legacy at "(old)"

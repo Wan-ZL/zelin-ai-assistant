@@ -195,7 +195,7 @@ class TheStampIsRearmedByLaterActivityTestCase(_Case):
         """满窗之后才又轮到第一阶段——而且仍然是先通知，不是直接归档。"""
         registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
         self.sweep()
-        registry.restore(registry.load("P-1"))
+        registry.restore(registry.load("P-1"), now=NOW)   # 戳用注入时钟，判例不随真日期漂
 
         later = NOW + _dt.timedelta(days=15)
         notifier = _Notifier()

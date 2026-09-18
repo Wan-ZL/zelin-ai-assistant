@@ -62,3 +62,11 @@ act/_version.py
 # worktrees are per-run artifacts; the ledgers it reads live in ui/parity/ and stay committed
 .test-ui/reports/
 .test-ui/cache/
+
+# 全覆盖跑者的报告 R 与每场景日志（scripts/qa/full_coverage.sh，CONTRACT §58）——
+# 每跑一次都重写、体积随日志涨；真源是清单 qa/coverage_inventory.json + 跑一次的命令，
+# 报告本身是产物（要留档时由 integrator 拷去 media 卷）。
+qa/coverage-report/
+
+# hypothesis example database (test cache; was committed by accident in a514b402)
+.hypothesis/
