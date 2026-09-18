@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-001`（PR #426；R-001「修红 CI：PR #405 chore: Bump the react group in /web with 4 updates」；**同一张卡由两个并行 session 交付，共用这一条分支**：本片段是收据一半，`e43e8ba3` 的时刻缝判例是孪生那一半——转绿的那一推也不是本片段发的，见下）
+pr: `ai/self-improve/R-001`（PR #426；R-001「修红 CI：PR #405 chore: Bump the react group in /web with 4 updates」；**同一张卡由两个并行 session 交付，共用这一条分支**：本片段是收据一半，`deliverables/r001-pr405-ci-red.html` 的诊断报告与两行时钟注入清理（`test_review_stale_sweep.py:180`、`scripts/qa/fixtures_b/aging_22d.py:57`）是孪生那一半；孪生一度推上的 `tests/test_clock_injection_seams.py` 已由它自己在 `3928cfbc` 撤回——#424 是超集，见末段 ③。转绿的那一推也不是本片段发的，见下）
 phase: 横切（依赖维护；D5 / D12 每日循环「红 CI 是臣子的事」；§56.6 auto-update-branch；§65 自我改进通道；§70.3 ⑪ 判例 #405）
 law: —（无新 §、无修法；§70.2 追记的两阶段老化、§9 追记的 `restore` 盖 `restored_at` 一字未动）
 
