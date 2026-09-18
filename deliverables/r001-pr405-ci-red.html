@@ -394,6 +394,23 @@ traceback 上色，制造假红。</p>
   不是绝对的通过/失败。</p>
 </div>
 
+<div class="card good">
+  <h3>补：对抗复核把这条证据拉到了全套件宽度，结论一致</h3>
+  <p>我自己只跑了 15 个模块 × 6 个时钟。并行的对抗复核用一个<strong>经校准的</strong> shim
+  把<strong>整套 7,676 条</strong>顶层判例在 <strong>+1d（对照）/ 2026-09-21 / 09-30 / 10-01 /
+  2027-01-01 / 2030-01-01 / 2099-01-02</strong> 各跑一遍，结论：</p>
+  <ul>
+    <li><strong>今天到 2030 年之间没有第二颗 #405 形状的炸弹</strong>——从 +1 天到 2030-01-01，
+        每一档的失败集合与对照档<strong>完全相同</strong>；</li>
+    <li>真正按日历红的只有两枚 <strong>2099-01-02</strong> 哨兵
+        （<code>test_card_lifecycle.py:370</code>、<code>test_proposal_decision_signals.py:52</code>，
+        已在既有记忆里，本轮不改：跨文件且 72 年后）；</li>
+    <li>它那一档的 4 条失败里 3 条同样是 <strong>mtime 假报</strong>、1 条是 shim 保真度问题
+        ——与我这边三条假报的归因一致。</li>
+  </ul>
+  <p>唯一它比我多抓到的真问题，就是上面 <a href="#notdone">⑥</a> 那颗跨 00:00 UTC 的。</p>
+</div>
+
 <h2 id="notdone">六、我没做的事（连同证据，够直接开卡）</h2>
 
 <p>下面每一条都查实了，但都<strong>不在这张卡的 DoD 里</strong>，也不该塞进一个「修 #405 的 CI」的 PR。</p>
@@ -495,6 +512,8 @@ RESETS   test_bootstrap_script.py
       <tr><td><code>registry.py:1490</code> <code>_unique_fold_ts</code></td><td>fold note <code>ts</code></td><td class="fail">在 <code>_activity_candidates</code> 里 ⇒ 同上</td></tr>
       <tr><td><code>registry.py:646</code> <code>trash</code></td><td><code>trashed_at</code></td><td class="na">不算活动，今天无影响；但 restore/trash 现在一边有缝一边没有，不对称</td></tr>
       <tr><td><code>registry.py:890</code> <code>archive</code></td><td><code>archived_at</code></td><td class="na">同上</td></tr>
+      <tr><td><code>registry.capture_source</code></td><td><code>date.today()</code></td><td class="na">对抗复核补的第五处</td></tr>
+      <tr><td><code>actd/housekeeping.has_future_deadline</code></td><td><code>date.today()</code></td><td class="na">对抗复核补的第六处</td></tr>
     </tbody>
   </table>
   <p>今天没有任何判例踩到它们，所以我<strong>没有投机性地重构</strong>。但只要有人写一条
@@ -514,13 +533,43 @@ RESETS   test_bootstrap_script.py
         要么平移 runner 的<strong>系统日期</strong>（<code>libfaketime</code> 之类，两个时钟一起走），
         要么先给这些判例加一层时钟注入。<strong>做成 monkeypatch 版本的话，这个 job 出生就是红的，
         然后没人会再看它。</strong></li>
-    <li><strong>(b) 静态规则</strong>：我已经写过原型并在当前 main 上跑过，命中
-        <strong>4 个调用点里 3 个「违例」</strong>——而唯一「合规」的那个正是 <code>ad4f0b71</code> 改的那一行。
-        但另外两处（<code>test_review_stale_sweep.py:103</code>、
+    <li><strong>(b) 静态规则 —— <span class="fail">这一条我先前的结论是错的，已更正</span></strong>：
+        我原型写的是**测试侧**规则（「冻结了 <code>NOW</code>/<code>TODAY</code> 的模块调用了不带
+        <code>now=</code> 的 registry 写者」），在 main 上命中 4 个调用点里 3 个「违例」，
+        但其中两处（<code>test_review_stale_sweep.py:103</code>、
         <code>test_daily_loop_stale_rules.py:128</code>）只断言 <code>.status</code>、不量任何窗口，
-        <strong>把它们判成违例是误报</strong>。所以这条规则要能落地，得先想清楚怎么只盯
-        「戳之后真的量了窗口」的那些——<strong>我没有把一条会误报的门塞进 PR</strong>。</li>
+        判成违例是<strong>误报</strong>。我据此写下「这条路会误报、不可行」——<strong>那个结论只对我那版规则成立</strong>。
+        <br>对抗复核跑出了<strong>另一侧</strong>的规则，而它是精确的：把判据放在<strong>代码侧</strong>——
+        「一个把持久化的 <code>*_at</code> 戳从真时钟写下的函数，必须暴露 <code>now=</code> 缝」。实测：
+        <ul>
+          <li>在炸弹那一次提交 <code>f8a734d1</code> 上<strong>恰好新增一个命中</strong>：
+              <code>act/lib/registry.py::restore</code>——正是真凶；</li>
+          <li>全仓存量违例只有 <strong>12 个</strong>（够进 shrink-only 账本）；</li>
+          <li>回测 30 天 / 282 个 commit，只红 <strong>6 次</strong>；</li>
+          <li>约 60 行。</li>
+        </ul>
+        <strong>而且不需要碰任何保护路径</strong>：<code>ci.yml:392</code> 就是
+        <code>run: bash scripts/qa/run_gates.sh</code>，往 <code>run_gates.sh</code> 里加一门 CI 自动就跑到
+        （我已核对过这一行）。⇒ <strong>这是本轮最值得开的技术卡</strong>，比 (a) 更该先做。</li>
   </ul>
+</div>
+
+<div class="card bad">
+  <h3>⑥ 还有一颗<strong>真的</strong>定时炸弹：跨 00:00 UTC 就红，而且能打红那三道必过门</h3>
+  <p><code>tests/integration/test_auto_deploy_script.py:2402</code> 拿<strong>两次独立的 UTC 日期读数</strong>
+  互比（两端都已逐行核对）：</p>
+  <pre><code>scripts/auto-deploy.sh:1079   _today="$(date -u +%Y-%m-%d)"      # 壳里写
+scripts/auto-deploy.sh:1081   write_state "tcc_notified_day=$_today"
+
+tests/…/test_auto_deploy_script.py:2402
+  self.assertEqual(self.mirror()["tcc_notified_day"],
+                   time.strftime("%Y-%m-%d", time.gmtime()))   # 判例里另读一次</code></pre>
+  <p>任何<strong>跨过 00:00 UTC</strong> 的 run 都会让两个读数差一天 ⇒ 红。它住在
+  <code>discover -s tests</code> 里，所以<strong>能把 Tests 3.9 / Tests 3.x / QA gates 三道一起打红</strong>
+  ——正是这张卡的症状。与 #405 那颗不同：那颗是单调的（过了 09-17 就永远红），这颗是
+  <strong>每天一次、约 10 分钟宽的窗口</strong>。<span class="mono-sm">（#408 的片段独立测到 3/3 + 2/3 复现。）</span></p>
+  <p>修法只能在<strong>判例侧</strong>：断言落在 {跑前的日, 次日} 集合里，或给壳一个 <code>date</code> stub。
+  <code>scripts/auto-deploy.sh</code> 是本通道的<strong>保护路径</strong>，改不了。</p>
 </div>
 
 <h2 id="method">七、方法论备注（下一个 session 可以直接抄）</h2>
