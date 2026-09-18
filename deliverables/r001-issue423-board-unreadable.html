@@ -70,7 +70,10 @@
     <li><strong>病灶</strong>：<code>board_bytes</code> 只有一个 <code>except OSError</code>，把一切读失败都说成「文件不在」。真正的 errno 从来没落过盘——所以那 1549 行被噪音闸压住的 <code>/api/board 404</code>，压住的是<strong>一句假话</strong>。</li>
     <li><strong>已复现</strong>：mode-000 的文件与真的删掉那个文件，对每个客户端<strong>逐字节相同</strong>（status / code / message / details 四样全等）。</li>
     <li><strong>已修</strong>：缺席 → 404（消息一字节未动）；其余 <code>OSError</code> → 503 <code>BOARD_UNREADABLE</code> 带 errno。<code>/api/health</code> 加 add-only 键 <code>dashboard_error</code>。看板页、向导、设置页、server 日志四处都拿得到那个数字。</li>
-    <li><strong>DoD</strong>：PR 正文含 <code>Closes #423</code> ✓；CI 见本页「门与证据」。</li>
+    <li><strong>DoD</strong>：PR 正文含 <code>Closes #423</code> ✓；CI 七项 required <strong>全绿</strong>
+    （实际是全部 11 项都绿，含 informational 的 playwright）。</li>
+    <li><strong>交付后又跑了一轮对抗 review</strong>：26 条发现、17 条挺过反驳、全部已修——其中
+    「errno 根本没到屏幕上」这一条差点让整个 issue 白修（见第 6 节）。</li>
     <li><strong>需要 owner 拍板一件事</strong>：卡号 <code>R-001</code> 被复用，这条分支上现在有三个 session 的交付挤在同一个 PR 里。</li>
   </ul>
 </div>
@@ -83,8 +86,9 @@
     <li><a href="#calls">3. 六个被 review 打回来才定的取舍</a></li>
     <li><a href="#law">4. 法条改动（必答三问）</a></li>
     <li><a href="#gates">5. 门与证据</a></li>
-    <li><a href="#honest">6. 诚实交代：没修的、既有的红</a></li>
-    <li><a href="#collision">7. 需要 owner 拍板：一个 PR，三张卡</a></li>
+    <li><a href="#review">6. 交付后又跑了一轮对抗 review，改了 17 处</a></li>
+    <li><a href="#honest">7. 诚实交代：没修的、既有的红</a></li>
+    <li><a href="#collision">8. 需要 owner 拍板：一个 PR，三张卡</a></li>
   </ul>
 </nav>
 
@@ -340,7 +344,85 @@ VERDICT: the two cases above are INDISTINGUISHABLE to every client.</code></pre>
   「no Swift changes」。</p>
 </div>
 
-<h2 id="honest">6. 诚实交代：没修的、既有的红</h2>
+<h2 id="review">6. 交付后又跑了一轮对抗 review，改了 17 处</h2>
+
+<p>交付物推上来之后，又用<strong>五个对抗 reviewer</strong>（Python 正确性 / TypeScript 正确性 /
+判例是否真钉得住 / 法条与代码是否逐句相符 / 波及面）把<strong>已提交的 diff</strong> 重读一遍，
+每条发现再各交一个独立 agent <strong>专门去推翻</strong>。<strong>26 条原始发现，17 条挺过了反驳</strong>，
+全部已修（commit <code>ffce0efa</code>）。三条由不同 lens 各自独立撞到，那也正是最要命的两个问题。</p>
+
+<div class="card bad">
+  <h3>① errno 根本没到屏幕上<span class="tag bad">3 个 lens 同时报</span></h3>
+  <p><code>failBoardUnreadable</code> 存的是 server 那句 <code>message</code>，而那句只说
+  「see details.errno」；客户端把 <code>details</code> 整个丢了。于是页面挂着一句指向某个数字的话，
+  <strong>而那个数字页面上根本没有</strong>，AppShell 的提示还写着「上面的 errno 就是这次读真正拿到的」
+  ——上面并没有 errno。<strong>这等于把本 issue 的目的丢在最后一米。</strong></p>
+  <p>现在句子由 <code>details.errno</code> / <code>details.strerror</code> 拼；裸 <code>OSError</code>
+  拿不到号码时退到 strerror 再退到 server 原句，<strong>永不渲染 <code>errno null</code></strong>。
+  判例钉「<code>errno 1</code> 这个数字本身出现在屏幕上」。</p>
+</div>
+
+<div class="card bad">
+  <h3>② 两条横幅同时说同一件事，其中一条给错的修法<span class="tag bad">2 个 lens</span></h3>
+  <p><code>state/</code> 整个读不动时心跳也 stat 不到 → verdict 落 <code>stale</code> → 横幅说
+  「后台服务没在运行」并递一颗<strong>「启动后台服务」</strong>，就摆在诚实的看板空态旁边。
+  对一个权限问题那是错的修法。<code>pipelineBannerMuted</code> 自此也覆盖
+  <code>boardUnreadable</code>，<strong>不限看板页</strong>。</p>
+</div>
+
+<div class="card warn">
+  <h3>③ 判例里有三条其实钉不住东西<span class="tag warn">用真变异体证的</span></h3>
+  <ul>
+    <li>health 套件从来没注入过<strong>非 <code>PermissionError</code></strong> 的
+    <code>OSError</code>，所以把 <code>except OSError</code> 收窄成 <code>except PermissionError</code>
+    <strong>49 条判例一条都不红</strong>，而那个收窄会让 EIO 下的 <code>/api/health</code> 变 500。
+    已补 EIO / EISDIR / ELOOP 三例，并在一份<strong>脚本副本</strong>上证明它现在真能杀掉那个变异体
+    （原版通过、变异体 <code>snapshot()</code> 抛出去 ⇒ 500）。</li>
+    <li>store 的「四态互斥」是一条链，后两步的 <code>toBeNull()</code> 在入口就已经是 null
+    ——<strong>永远不可能红</strong>。拆成四条，每条都从 <code>boardUnreadable</code> 已置位出发。</li>
+    <li>采样器隔离那条判例在 setUp 里把自己要断言的那个全局替换掉了，于是
+    <code>_ERRNO_SAMPLER = _POLL_SAMPLER</code> 这种真事故也照样绿。移进一个不打 patch 的 TestCase。</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>其余已修</h3>
+  <ul>
+    <li><code>isBoardUnreadableError</code> 不再接受「envelope 解不出来的 503」——那种 503 连 errno
+    都没有，说「看板文件读不出来」是同一类没查就断言；它继续落 <code>boardError</code>。</li>
+    <li>两侧文案不再替 server 断言<strong>「文件在」</strong>（ENOTDIR / ELOOP / ENAMETOOLONG 那几路
+    谁也没查过）。</li>
+    <li><code>ErrorBanner</code> 不再叫人「点重试」——那条横幅没有按钮。</li>
+    <li>整页态不再把 <code>launchctl kickstart …</code> 揉进句子（§47.4 追记 2026-09-05
+    「修法命令出句入行」）。</li>
+    <li>裸 <code>OSError</code> 现在也写一行 <code>errno=?</code> 而不是静默；<code>strerror</code>
+    为 None 不再渲染成字面 <code>None</code>。</li>
+    <li><code>_errno_diagnostic</code> 因这些守卫涨到复杂度 8（阈值 6）→ <strong>拆成三个小函数
+    而不是上账本</strong>（<code>ledger_diff</code> 会拒绝新增债）。</li>
+  </ul>
+</div>
+
+<div class="card teach">
+  <h3>法条同步纠了三处被 reviewer 证伪的断言</h3>
+  <ul>
+    <li>真正逐字引那句 404 消息的是<strong>五份 web fixture</strong>，而不是
+    <code>scripts/qa/shell_ui_probe.py</code>——那个文件只按 <code>status != 200</code> 分支，
+    <strong>别当它是 golden</strong>。</li>
+    <li>渲染面的实际内容（标题带 errno、细节不承诺重连也不叫人点重试）。</li>
+    <li>「一个状态只有一个说话的」——那句话要靠上面那条静音才成立。</li>
+  </ul>
+</div>
+
+<h2 id="honest">7. 诚实交代：没修的、既有的红</h2>
+
+<div class="card bad">
+  <h3>心跳那两次读仍把「读被拒」压成「文件不在」——wire 上的洞还在</h3>
+  <p><code>health._read_json</code> / <code>_age</code> 对<strong>心跳与 loop_health</strong> 那两次读
+  照旧吞 <code>OSError</code>，所以 <code>state/</code> 整个读不动时 <code>/api/health</code> 的 body
+  仍分不出「没有心跳」与「读不动心跳」（verdict 落 <code>stale</code>）。用户可见的那半句谎话由
+  <code>pipelineBannerMuted</code> 收口——读不动时那条「后台服务没在运行」横幅根本不渲染——但
+  <strong>wire 上这个洞仍在，别当它修好了</strong>。那是第二、第三个 add-only 键，另一张卡。</p>
+</div>
 
 <div class="card warn">
   <h3>web 全量 vitest 在本机有约 1/5 的<strong>既有</strong> flake，与本 PR 无关（已实测）</h3>
@@ -398,7 +480,7 @@ VERDICT: the two cases above are INDISTINGUISHABLE to every client.</code></pre>
   </ul>
 </div>
 
-<h2 id="collision">7. 需要 owner 拍板：一个 PR，三张卡</h2>
+<h2 id="collision">8. 需要 owner 拍板：一个 PR，三张卡</h2>
 
 <div class="card bad">
   <h3>卡号 <code>R-001</code> 被复用了</h3>
