@@ -20,6 +20,16 @@ law: —（无新 §、无修法；§70.2 追记的两阶段老化、§9 追记�
 
 **`Web visual (playwright)` 的红不是 react 19.3 造成的（实证）**：main 自己的 push run `35272277273`（**没有** react bump）与 #405 的 run `35345868390`（**有** bump）红在同一条 spec、同一个断言、同一个比分——`e2e/headerLayout.spec.ts:142:1 › tight：搜索框展开着，点「筛选」/「提建议」一下就开`，`Error: expect(locator).toHaveCount(expected) failed`，`1 failed / 58 passed`（7.6 m vs 7.5 m）。带不带 bump 都红 ⇒ 与 bump 无因果。这条 spec 由 draft PR **#425**（R-306，`fix(web): close the Filters popover on Escape regardless of where focus is`，动 `FilterPopover.tsx` + 同名 spec）在修，本卡不碰。
 
+**六路并行独立复核补出的四条（本片段的主要增量）**：
+
+① **react 19.3.0 这次 bump 本身是干净的**——把 #405 的两个依赖文件套到 main 当前的 `web/` 源码上跑完整套 web 门（`npm ci` / type-check / build / `vitest`），与**未改依赖的对照组**逐项对比：2,633 条 vitest 的通过/跳过集合**逐条相同**，type-check 与 build 都 exit 0。唯一差别是 main bundle 涨 29,281 B（+3.75% → 811.07 kB），**当前没有任何门判 bundle 体积**（`vite.config.ts` 与 Python 套件里都没有预算），所以不构成红；但记一笔：它离 vite 自己那条 500 kB 警告线又远了一截。
+
+② **「合 main」为什么比「cherry-pick 修复」好——#403 就是反例**。R-220 当初给 #403 用的是把测试修复 cherry-pick 到**旧 base** `f5edb5a1` 上（`8803d399`），当时确实转绿；但那个 blob `daff9b9c` 与 main 经 `ad4f0b71` 得到的 `43959976` 在**同一行**（`tests/test_review_stale_sweep.py:195`）分叉，于是今天 #403 是 `mergeable: false` / `dirty`，它那 7 项绿全是 09-17 的旧账。**cherry-pick 让 PR 变绿，同时让它合不进去**；合 main 则同时买到「绿」与「可合并」。#403 的修法因此是固定的：`git rebase origin/main`，`tests/test_review_stale_sweep.py` **一律取 main 侧字节**（丢掉 8803d399 那版拼法）。
+
+③ **main 自己 macOS 那条 `ci` 红是个诊断不了的 flake**：`tests/integration/test_auto_deploy_script.py` 的 `_git` 助手用 `capture_output=True`，在 `CalledProcessError` 上把 stderr 丢了，所以日志里只剩 `git clone` exit 128、没有原因。它可能在任何一次 macOS run 上复发——包括 #405 合进 main 之后那次 push run（那次 `swift=true`，走 macOS 腿）。同一个 run 里 `release` 也是 failure。修它是另一张卡的事，但**先把 stderr 留下来**是最小的第一步。
+
+④ **#405 的绿是有保质期的，而且 auto-merge 没开**：`autoMergeRequest: null`。CONTRIBUTING 的「PR 生命周期」写的是开 PR 就立刻 `gh pr merge --auto --merge`；#405 没开，而 §56.6 又是 report-only，所以 **main 再前进一步，#405 就又落后，得再有人手动合一次**。另外 dependabot 在 react 出 19.3.1 时会把 #405 关掉、重开一个干净分支——今天这次手工 merge 连同它的 commit body 会一起没掉。**本卡不替 owner 开 auto-merge**（§65 这条通道禁止合并，开 auto-merge 等于预约一次合并），只把这件事摆上来。
+
 **顺手查出、不在本卡范围、写下来给 owner / 下一个 session 的两件事**：① **#403 已经从绿回退成冲突**——`gh api repos/…/pulls/403` 答 `mergeable: false` / `mergeable_state: "dirty"`，head 仍是 `8803d399`、base 仍是 `f5edb5a1`，它那 10 项绿是 2026-09-17T10:36 的旧账。它需要真的解冲突，`PUT update-branch` 对冲突答 422。② **main 自己的 `ci` 是红的**（push run `35272277273`，macOS 腿的 "Run unit tests" 步），与 #405 无关：#405 是 web-only PR，`changes.outputs.swift == 'false'` ⇒ `ci` 走 ubuntu 空转路径（本轮 5 s 绿）。
 
 **三条给下一个 session 的操作口径**：① `gh` 的**默认凭证不是 owner**——`gh auth status` 是 keyring 里的 `zelinPostman`（OAuth `gho_*`），它对本 repo 是 `push: false`，只读。任何写操作都必须显式 `GH_TOKEN=$(cat ~/Desktop/Keys/personal_github_key.txt)`（`Wan-ZL` 的 fine-grained PAT，2026-11-16 22:06:31 UTC 到期），否则会拿到 403/404 并被误读成「PAT 没权限」。② 本 repo 的 `credential.helper` 是一段 inline shell，`cat` 的是 `config/secrets/github-wanzl-pat.txt`——**那个文件不存在**（被 gitignore，worktree 里更没有），所以从 worktree 直接 `git push` 会送出空密码而认证失败；同样别把它读成「PAT 没有写权限」。推送要自带 helper 覆盖，token 一律取 `~/Desktop/Keys/` 那份。③ **并行 session 会清掉你 worktree 里没 commit 的东西**：本轮这个片段写好、`git add` 过之后被抹掉一次（本 worktree 的 reflog 留下一条 `checkout: moving from ai/self-improve/R-001 to ai/self-improve/R-001`，分支仍在 `3c69fbfd`，工作树与暂存区被清空）。几十个 worktree 共用一个 `.git` 的时候，写完就 commit，别把成果留在工作树里过夜。
