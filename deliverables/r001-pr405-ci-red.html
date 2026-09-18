@@ -128,9 +128,15 @@ Web visual (playwright)                                          fail   8m3s    
   <code>Tests on ubuntu (Python 3.x)</code>、<code>Web tests (build + vitest)</code>、
   <code>QA gates (…)</code>、<code>Version pins untouched</code>；该 job 在 <code>ci.yml:425</code> 带
   <code>continue-on-error: true</code>。卡面原话也写了「informational job 的红不算」。</p>
-  <p>它的根因是 <code>web/e2e/headerLayout.spec.ts:153</code>——按下 <code>Escape</code> 后
-  <code>expect(page.getByRole("dialog")).toHaveCount(0)</code> 收到 1。六张真快照全过，所以不是
-  golden 漂移，是确定性坏。<strong>这条已经有自己的卡在处理（R-306 / #425）</strong>，本轮不碰。</p>
+  <p>它的根因在 <code>web/e2e/headerLayout.spec.ts</code>：判例起于 <strong>142 行</strong>
+  （<em>tight：搜索框展开着，点「筛选」/「提建议」一下就开</em>），红在 <strong>153 行</strong>——
+  <code>page.keyboard.press("Escape")</code> 之后
+  <code>expect(page.getByRole("dialog")).toHaveCount(0)</code> 收到 1。
+  六张真快照全过，所以不是 golden 漂移。
+  <strong>这条已经有自己的卡在处理（R-306 / #425，改 <code>FilterPopover.tsx</code>）</strong>，本轮不碰。</p>
+  <p class="mono-sm">⚠️ 别把它记成「永久卡死」：同日另一轮 A/B 每臂多跑证明它<strong>率随机器负载</strong>
+  （空载 1/6、忙时 8/12），单次红或单次绿都不是信号。main 自己两跑也是一红（<code>3c69fbfd</code>）
+  一绿（<code>adb5160a</code>，早 23 分钟）。与 react 版本无关（带不带 bump 都红）。</p>
 </div>
 
 <h2 id="rootcause">二、根因：一枚用真时钟盖的戳，把 14 天窗口越量越短</h2>
@@ -308,7 +314,7 @@ wall clock 2026-09-15  OK            wall clock 2026-09-19  FAILED</code></pre>
 
 <h2 id="evidence">五、证据</h2>
 
-<h3>本地四门</h3>
+<h3>本地门（四门里跑了三门，Swift 两门本轮不适用）</h3>
 <pre><code>$ python3 -m compileall -q act ingest                         # rc=0
 $ AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 $ ruff check .                                                 # All checks passed!
@@ -320,6 +326,21 @@ B-08-aging-22d PASS review card idle 22d (threshold 14d): stamped+1 banner,
 CI 的 <code>Changed paths (per-PR filter)</code> 会让 <code>ci</code> 走 ubuntu 快路（#405 上就是 5 秒过）。
 跑测试一律 <code>unset FORCE_COLOR</code>：本机 shell 的 <code>FORCE_COLOR=3</code> 会让 Python 3.14 给
 traceback 上色，制造假红。</p>
+
+<div class="card warn">
+  <h3>全量 unittest 这一门在本机被掐死了三次，照实记</h3>
+  <p>三次都是 <code>Terminated: 15</code>（<code>rc=143</code>），<strong>不是判例红</strong>：本机同时有
+  多个 session 在跑同一套套件，<code>tests/integration/</code> 那批真 subprocess 判例把并发的几套
+  suite 拖到「8 分钟只推进 2.5 秒 CPU」。<strong>孪生 session 独立撞上同一件事、同样记了两次
+  <code>rc=143</code></strong>，并同样把权威判决改取 CI。</p>
+  <p>绕开的办法（写给下一个 session）：<code>nohup</code> + 脚本里 <code>trap '' TERM HUP</code>
+  能让它活下来（macOS <strong>没有 <code>setsid</code></strong>，别照 Linux 抄）。
+  <strong>但 <code>rc=143</code> 既不能记成失败、也不能当成「跑过了」。</strong></p>
+  <p><strong>权威判决取 CI，而且比本机更强</strong>：本 PR（#426）自己的七项 required check 在
+  ubuntu 上对这棵树跑过。本机的 <code>run_gates.sh</code> 里 <code>crap</code> 与
+  <code>coverage-floor</code> 两门在 darwin 上被 <code>soften_off_canonical</code> 清零退出码，
+  本来就不是权威判决（truth = CI <code>qa-gates</code> job 的 <code>qa-report</code> artifact）。</p>
+</div>
 
 <h3>时间旅行（time-travel）harness</h3>
 <p>为了回答「还有没有别的日历炸弹」，我把挂钟整体平移若干天再跑套件。
@@ -395,6 +416,13 @@ traceback 上色，制造假红。</p>
   所以这个空转从来没有报警。修它 = 建一个 fine-grained PAT 并加成 secret，
   <strong>不需要改代码</strong>；但 <code>.github/workflows/</code> 是 protected path，
   且加 secret 只有 owner 能做，所以本轮只报不动。</p>
+  <p><strong>孪生 session 拿到了比我更硬的那一半证据</strong>（它的 PAT 有 <code>secrets=read</code>）：
+  <code>gh api …/actions/secrets</code> 列出的 8 个 secret 里<strong>没有</strong>
+  <code>PR_AUTOUPDATE_TOKEN</code>，直接 GET 它答 <strong>404</strong>——不是配错了，是<strong>从来没建过</strong>。
+  它也逐 run 核过 126 次全是 report-only、真更新行零命中。</p>
+  <p><strong>一处重要的限定</strong>：ruleset 的 <code>strict_required_status_checks_policy</code> 是
+  <code>false</code>，所以「落后 59 个 commit」<strong>本身从来不是合并闸门</strong>——闸门只是那三项红。
+  §56.6 想买的「required check 永远是对合并后形状的判决」，这半个价值至今没到账。</p>
   <p class="mono-sm">⚠️ 查证陷阱：这条 workflow 的 <code>run</code> 脚本会被 Actions <strong>逐字回显</strong>到日志里，
   所以 <code>grep "report-only: PR_AUTOUPDATE_TOKEN is not configured"</code> 一定命中——那是<strong>源码回显</strong>
   （行首带 ANSI <code>[36;1m</code> 追踪前缀），不是证据。唯一可信的是
@@ -486,6 +514,17 @@ RESETS   test_bootstrap_script.py
 <h2 id="method">七、方法论备注（下一个 session 可以直接抄）</h2>
 
 <ul>
+  <li><strong>第一条命令是 <code>gh pr list --state open</code>，不是 <code>gh run view --log-failed</code>。</strong>
+      这是本轮最贵的一条教训：我把根因查得很透、判例写得很细、变异体一个个杀过，
+      <strong>然后才发现 #424 早就做完了同一件事</strong>。在这个仓库里，一条按日历红的判例会同时
+      放倒每一个开着的 PR，于是<strong>一个根因被铸成六张卡、六个 session 各自从零推导一遍</strong>
+      （#402 / #406 / #408 / #424 / #426 + 本轮）。查重的成本是一条命令，重复造的成本是一整个 session。
+      <span class="mono-sm">更省的做法（#408 与 #424 都提了、值得进 §70.3）：<code>pr_red</code>
+      铸卡前按「失败判例的 <code>文件:行</code>」去重——六张会收敛成一张。</span></li>
+  <li><strong>别在共享的探针树上做变异。</strong> 我自己踩了：<code>fuse.sh</code> 把
+      <code>ad4f0b71</code> 回滚进探针树的同一时刻，另一个平移 +1095 天的跑批正在读它——
+      那一档的结果（5 红 2 错）是<strong>我自己污染的</strong>，已作废不予采信。
+      主工作树我小心地隔离了，探针树内部却没有。</li>
   <li><strong>先看 PR 改了什么，再看红的是什么。</strong> #405 只动了
       <code>web/package.json</code> + lockfile，红的却是三个 Python 门——这个错位本身就说明
       「根因不在这个 PR 里」，直接把方向从「修 dependabot」扳到「查 main 的历史」。</li>
