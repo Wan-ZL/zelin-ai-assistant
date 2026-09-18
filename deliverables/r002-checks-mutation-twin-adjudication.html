@@ -95,6 +95,7 @@
     <li><a href="#s7">建议与处置命令</a></li>
     <li><a href="#s8">门与 DoD 逐条对照</a></li>
     <li><a href="#s9">带过来的三处待拍板缺陷</a></li>
+    <li><a href="#s9b"><strong>第四条缺陷（安全性）：secret_scan 对最大文档失明</strong></a></li>
     <li><a href="#s10">超出本卡范围但你应该知道的：重复扇出与分支撞车</a></li>
     <li><a href="#s11"><strong>独立审计的判决，与它带来的三条修正</strong></a></li>
   </ol>
@@ -499,15 +500,63 @@ gh pr close 391 && gh pr close 429 && gh pr close 430
   还是保持现状并给 docstring 加个例外。</p>
 </div>
 
+<h2 id="s9b">9b · 第四条缺陷（安全性）—— 复核成立</h2>
+
+<div class="card bad">
+  <h3>本仓库自己的 <code>secret_scan</code> 对最大那份文档完全失明<span class="tag b">真缺陷 · 我验过</span></h3>
+  <p>#401 报了三条（见 §9）。并跑的第五张卡（#431）又找出第四条，我自己逐条验过，
+  <strong>成立，且比那三条更要紧</strong>。</p>
+  <p><code>_scan_files</code>（<code>checks.py:376-386</code>）的 docstring 承诺
+  「<strong>读不到/解析不了记 errors（caller fail closed）</strong>」，但代码是：</p>
+  <pre>text = lc.read_text(os.path.join(repo, rel))
+if text is not None:
+    violations.update(fn(rel, text))</pre>
+  <p>而 <code>lc.read_text</code>（<code>ladder_common.py:200-203</code>）对<strong>超过
+  <code>TEXT_CAP_BYTES</code>（:34 = 1 MiB）或二进制</strong>的文件返回 <code>None</code>
+  ⇒ 这类文件被<strong>静默跳过</strong>：既不记违例，也不进 <code>errors</code>。
+  与自己的 docstring 直接矛盾，而且是 fail-<strong>open</strong>。</p>
+  <p><strong>实测本仓库：<code>docs/CONTRACT.md</code> = 1,513,333 字节，超帽 44%</strong>
+  （cap = 1,048,576）⇒ 往 CONTRACT.md 里粘一个密钥，这个检查永远不会报。
+  四个消费者同受影响：<code>secret_scan</code>（:426）、<code>actions_sha_pin</code>（:457）、
+  <code>test_smells</code>（:530）、<code>docs_drift</code>（:591）。</p>
+  <p>修法方向：<code>read_text</code> 超帽时回报原因而不是返回 <code>None</code>，
+  或 <code>_scan_files</code> 把 <code>text is None</code> 的文件记进 <code>errors</code>
+  —— 那样 caller 才真按它 docstring 说的 fail closed。</p>
+  <p class="muted">同一 session 还更正了 #401 的一个范围数：「缺 npm 报 RED」实际是
+  <strong>10 处而非 3 处</strong>。这一条我没复核，转述并标明来源。</p>
+</div>
+
+<h3>消融下界有三档，三个数都对但不是一回事</h3>
+<table>
+  <thead><tr><th>消融</th><th>存活</th><th>杀伤</th><th>过 DoD 门（≤202）？</th></tr></thead>
+  <tbody>
+    <tr><td>只删 <code>EST_GOLDEN</code>（#401 报的）</td><td class="num">91</td>
+      <td class="num">89.2%</td><td><span class="tag g">✅</span></td></tr>
+    <tr><td><code>EST_GOLDEN</code> + <code>PHASE_GOLDEN</code> 都删</td><td class="num">157</td>
+      <td class="num">81.3%</td><td><span class="tag g">✅</span></td></tr>
+    <tr><td>再把 <code>tier</code> / <code>TIER_TIMEOUTS</code> 的文档表也当抄本折掉</td>
+      <td class="num">265</td><td class="num">68.4%</td><td><span class="tag b">❌</span></td></tr>
+  </tbody>
+</table>
+<p>最后一档<strong>过苛、不采用</strong>：<code>tier</code> 有独立的行为通道
+（<code>default_checks</code> + <code>run_ladder.timeout_for</code>），不是纯抄本。
+但列出来是诚实的：<strong>DoD 成立依赖「文档同源算真 oracle」这条判断</strong>，请 owner 复核这条判断本身。</p>
+
 <h2 id="s10">10 · 超出本卡范围，但你应该知道的</h2>
 
 <div class="card bad">
   <h3>同一个测试网洞，至今八次独立尝试<span class="tag b">循环扇出</span></h3>
+  <p><strong>同一批 404 个存活体现在有五个 open PR</strong>（收尾时清点，可核验）：
+  <strong>#391</strong>（<code>R-217</code>）、<strong>#401</strong>（<code>R-301</code>）、
+  <strong>#429</strong>（<code>R-8153</code>）、<strong>#430</strong>（本 PR）、
+  <strong>#431</strong>（<code>ai/self-improve/R-002-checks-mutation</code> —— 另一个
+  <strong>同样叫 R-002</strong>、同样撞了分支名后加后缀的 session）。后三个都是
+  「逐字节采用 #401 + 自己的仲裁/复核报告」这同一个形状，彼此独立收敛。</p>
   <p><code>ListAgents</code> 在本轮窗内（2026-09-18 约 06:10 本地）显示
   <strong>五个并发 session 在做同一批 404 个存活体</strong>，横跨三个卡号：
   <code>R-002</code>（我）、<code>R-002</code>（另一个，早 28 分钟起）、<code>R-001</code>、
   <code>R-8153</code> ×2。加上已开的 #391 / #401，以及窗内新开的
-  <strong>#429</strong>（<code>R-8153</code>）和本 PR，同一个洞被尝试了八次。</p>
+  <strong>#429</strong>（<code>R-8153</code>）和本 PR，同一个洞被尝试了九次。</p>
   <p>同一现象在别处也在发生：<strong>#425</strong>（<code>R-306</code>）与 <strong>#427</strong>
   （<code>R-002</code>）是同一个 Filters-popover 修复的两份；<strong>#426</strong>
   （<code>R-001</code>）与 <strong>#428</strong>（<code>R-8152</code>）是同一张

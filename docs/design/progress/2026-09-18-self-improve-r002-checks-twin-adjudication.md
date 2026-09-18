@@ -18,6 +18,11 @@ daily_loop 继续铸卡。** 这就是第三、第四张卡存在的全部原因
 `ai/self-improve/R-8153`「checks-mutants」停在 main HEAD 上 —— 窗内它果然开出了 **#429**，做法与本 PR
 完全相同）。所以本轮交付的不是第四套判例，而是**一次实测仲裁 + 把胜者的 hunk 逐字节搬到本分支**。
 
+**收尾时再清点一次（可核验）：同一批 404 个存活体现在有五个 open PR** —— **#391**（`R-217`）、
+**#401**（`R-301`）、**#429**（`R-8153`）、**#430**（本 PR）、**#431**
+（`ai/self-improve/R-002-checks-mutation` —— 另一个**同样叫 R-002**、同样撞了分支名后加后缀的
+session）。后三个都是「逐字节采用 #401 + 自己的仲裁/复核报告」这同一个形状，彼此独立收敛。
+
 ## 判决的地基：三件先验事实，逐个核过
 
 1. `skills/test-code/scripts/checks.py` 在 main / R-301 / R-217 上**逐字节相同**（blob `669cacb6c5c1`，
@@ -343,6 +348,48 @@ CLAUDE.md 的必答三问第 3 条（「有没有已存在的机制做类似的�
 （各档 est 和 = 255 / 990 / 1445 / 2410，退掉两个 600 使档 3 变 245）；一处 `inspect.getsource(e["build"])`
 去 grep 字面量 `_internal(`，寄生在 `checks.py:72` 那个两行工厂上；`SKILL.md` 的切片按字面量
 `references/catalog.md):` 与 `, plus` 切。这三处都不影响本轮的杀伤判决，但会在将来变成假红。
+
+## 第四条缺陷（安全性）—— 由并跑的第五张卡（#431）提出，我逐条复核成立
+
+#401 报了三条待拍板缺陷（见上）。并跑的另一个 session 又找出第四条，我自己验过，**成立且比那三条更要紧**：
+
+`_scan_files`（`checks.py:376-386`）的 docstring 承诺「**读不到/解析不了记 errors（caller fail closed）**」，
+但代码是：
+
+```python
+text = lc.read_text(os.path.join(repo, rel))
+if text is not None:
+    violations.update(fn(rel, text))
+```
+
+而 `lc.read_text`（`ladder_common.py:200-203`）对**超过 `TEXT_CAP_BYTES`（:34 = 1 MiB）或二进制**的文件
+返回 `None` ⇒ 这类文件被**静默跳过**：既不记违例，也不进 `errors`。与自己的 docstring 直接矛盾，
+而且是 fail-**open**。
+
+实测本仓库：`docs/CONTRACT.md` = **1,513,333 字节**，超帽 44%（cap = 1,048,576）⇒
+**本仓库自己的 `secret_scan` 对它最大的那份文档完全失明。** 往 CONTRACT.md 里粘一个密钥，
+这个检查永远不会报。四个消费者同受影响：`secret_scan`（:426）、`actions_sha_pin`（:457）、
+`test_smells`（:530）、`docs_drift`（:591）。
+
+一行修法方向：`read_text` 超帽时不返回 `None` 而是抛/回报原因，或 `_scan_files` 把 `text is None`
+的文件记进 `errors`（这样 caller 就按它自己 docstring 说的 fail closed）。
+
+同一个 session 还更正了 #401 的一个范围数：「缺 npm 报 RED」的**实际位点是 10 处，不是 3 处**。
+本轮没复核这一条，转述时标明来源。
+
+## 消融下界有三档，三个数都对但不是一回事
+
+报「不依赖 golden 表的下界」时要说清消融了哪几张表 —— 并跑的 session 补齐了另两档：
+
+| 消融 | 存活 | 杀伤 | 过 DoD 门（≤202）？ |
+|---|---|---|---|
+| 只删 `EST_GOLDEN`（#401 报的） | 91 | 89.2% | ✅ |
+| `EST_GOLDEN` + `PHASE_GOLDEN` 都删 | 157 | 81.3% | ✅ |
+| 再把 `tier` / `TIER_TIMEOUTS` 的文档表也当抄本折掉 | 265 | 68.4% | ❌ |
+
+最后一档**过苛、不采用**：`tier` 有独立的行为通道（`default_checks` + `run_ladder.timeout_for`），
+不是纯抄本。但把它列出来是诚实的：**DoD 成立依赖「文档同源算真 oracle」这条判断**，
+这条判断本身请 owner 复核。
 
 ## 给下一个 session 的三条
 
