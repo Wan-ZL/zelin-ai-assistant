@@ -14,6 +14,7 @@ import io
 import os
 import re
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import ThreadingHTTPServer
@@ -88,8 +89,32 @@ class HandleErrorTestCase(unittest.TestCase):
         self.assertIn("OSError", out + err)
 
 
+@unittest.skipUnless(hasattr(time, "tzset"), "fixed local timezone needs time.tzset (POSIX)")
 class AccessLineTestCase(unittest.TestCase):
-    """访问日志行首的本地 ISO 时间戳（原来只有 `127.0.0.1 - …`）。"""
+    """访问日志行首的本地 ISO 时间戳（原来只有 `127.0.0.1 - …`）。
+
+    时区钉死（照 `tests/test_report_golden.py` 的 setUp / tearDown idiom）：本节量的是
+    **本地**时间戳，而 `_access_line` 走 `time.localtime`（server/app.py:199）——不钉时区，
+    注入时钟那条判例就随跑测试的机器漂。注入的 `1757865245.0` = 2025-09-14T15:54:05Z，
+    本地偏移一旦 ≥ +08:06（东京 +09 / 悉尼 +10 / 奥克兰 +12）本地日期就翻成 09-15，
+    判例必红——与 `registry.restore` 那颗日历炸弹（ad4f0b71 修的那枚 `restored_at` 戳）
+    同一形状：判例把时钟冻住，被量的那一端却走另一把尺。只是这颗的自变量是时区不是
+    日期，所以 CI（UTC）与 PT 本机上都看不见。钉 `America/New_York`
+    是因为它把这一瞬放在 11:54（离两头午夜都 ≈12 h），偏移又正好是 server/app.py:198
+    文档里那个 `-0400` 形状。
+    """
+
+    def setUp(self):
+        self._tz = os.environ.get("TZ")
+        os.environ["TZ"] = "America/New_York"
+        time.tzset()
+
+    def tearDown(self):
+        if self._tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self._tz
+        time.tzset()
 
     def test_line_starts_with_iso_stamp(self):
         line = app._access_line("127.0.0.1", '"GET /api/board HTTP/1.1" 200 12')
@@ -99,7 +124,11 @@ class AccessLineTestCase(unittest.TestCase):
 
     def test_stamp_follows_the_injected_clock(self):
         line = app._access_line("127.0.0.1", "x", now=1757865245.0)
-        self.assertTrue(line.startswith("2025-09-14T"), line)
+        # 整枚戳，不只日期前缀：注入的时钟要逐字生效（日期 + 时分秒 + 偏移）。
+        # 只钉日期前缀会放行「日期对、时分秒错」——实测把 server/app.py:199 的
+        # `time.localtime(now)` 换成 `time.gmtime(now)`（UTC 时刻配本地偏移）时，
+        # 前缀版整个 class 仍 OK，本版红。偏移丢了那种由上面那条正则判例管。
+        self.assertTrue(line.startswith("2025-09-14T11:54:05-0400 "), line)
 
 
 class PollSamplerTestCase(unittest.TestCase):
