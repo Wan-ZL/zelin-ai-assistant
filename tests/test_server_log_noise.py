@@ -14,6 +14,7 @@ import io
 import os
 import re
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import ThreadingHTTPServer
@@ -25,6 +26,9 @@ from server import app
 
 # 2026-09-14T14:34:05-0400 / …+0000（`%z` 在 UTC runner 上也一定有偏移）
 ISO_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4} ")
+
+# 冻结的那一瞬 = 2025-09-14T15:54:05Z（钉 America/New_York 时本地 11:54:05-0400）
+FROZEN = 1757865245.0
 
 
 def _handler(path, requestline=None):
@@ -89,7 +93,31 @@ class HandleErrorTestCase(unittest.TestCase):
 
 
 class AccessLineTestCase(unittest.TestCase):
-    """访问日志行首的本地 ISO 时间戳（原来只有 `127.0.0.1 - …`）。"""
+    """访问日志行首的本地 ISO 时间戳（原来只有 `127.0.0.1 - …`）。
+
+    **只有注入时钟那条判例钉时区，另一条故意不钉**：走墙上钟的正则判例在 CI 的
+    ubuntu runner 上（不设 `TZ` ⇒ UTC）恰好是 `%z` 零偏移形状 `+0000` 唯一的现场
+    （见本模块顶部 `ISO_STAMP` 的注释），整个 class 一起钉就把那个形状的覆盖弄没了；
+    它也不需要钉——它只过正则，不碰绝对日期。
+    """
+
+    def _pin_tz(self, name="America/New_York"):
+        """把本地时区钉成 `name`（照 `tests/test_report_golden.py` 的 idiom，但用
+        `addCleanup` 还原——`tearDown` 在 `setUp` 自己抛的时候不跑）。"""
+        if not hasattr(time, "tzset"):
+            self.skipTest("fixed local timezone needs time.tzset (POSIX)")
+        old = os.environ.get("TZ")
+
+        def _restore():
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
+        self.addCleanup(_restore)
+        os.environ["TZ"] = name
+        time.tzset()
 
     def test_line_starts_with_iso_stamp(self):
         line = app._access_line("127.0.0.1", '"GET /api/board HTTP/1.1" 200 12')
@@ -98,8 +126,27 @@ class AccessLineTestCase(unittest.TestCase):
             '127.0.0.1 - "GET /api/board HTTP/1.1" 200 12\n'))
 
     def test_stamp_follows_the_injected_clock(self):
-        line = app._access_line("127.0.0.1", "x", now=1757865245.0)
-        self.assertTrue(line.startswith("2025-09-14T"), line)
+        """注入的时钟要逐字生效——而量它的尺子（本地时区）必须自己也钉住。
+
+        `_access_line` 走 `time.localtime` 渲染，所以不钉时区这条判例就随跑测试的
+        机器漂：注入的 `FROZEN` = 2025-09-14T15:54:05Z，本地偏移一旦 ≥ +08:06
+        （东京 +09 / 悉尼 +10 / 奥克兰 +12）本地日期就翻成 09-15，必红。与
+        `registry.restore` 那颗日历炸弹（`ad4f0b71` 修的那枚 `restored_at` 戳）同一
+        形状：判例把时钟冻住，被量的那一端却走另一把尺；只是这颗的自变量是时区不是
+        日期，所以 CI（UTC）与 PT 本机上都看不见。钉 `America/New_York` 是因为它把
+        这一瞬放在 11:54（离两头午夜都 ≈12 h），偏移又正好是 `_access_line` docstring
+        里举的那个 `-0400` 形状。
+        """
+        self._pin_tz()
+        if time.strftime("%z", time.localtime(FROZEN)) != "-0400":
+            # 解析不出来的时区名会静默回落 UTC，那样红的话报错会指错方向
+            self.skipTest("tz database has no America/New_York")
+        line = app._access_line("127.0.0.1", "x", now=FROZEN)
+        # 整枚戳，不只日期前缀：注入的时钟要逐字生效（日期 + 时分秒 + 偏移）。
+        # 只钉日期前缀会放行「日期对、时分秒错」——实测把 `_access_line` 里的
+        # `time.localtime(now)` 换成 `time.gmtime(now)`（UTC 时刻配本地偏移）时，
+        # 前缀版整个 class 仍 OK，本版红。偏移丢了那种由上面那条正则判例管。
+        self.assertTrue(line.startswith("2025-09-14T11:54:05-0400 "), line)
 
 
 class PollSamplerTestCase(unittest.TestCase):
