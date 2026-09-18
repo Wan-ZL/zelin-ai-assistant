@@ -149,6 +149,15 @@ test("tight：搜索框展开着，点「筛选」/「提建议」一下就开",
   await expect(page.getByRole("dialog", { name: "Filters" })).toBeVisible();
   // 面板开的同一次渲染里搜索框已收起——面板量到的锚点就是最终位置
   await expect(page.getByRole("searchbox")).toHaveCount(0);
+  // ⎋ 关面板与焦点落在哪儿无关（issue #420）。这一句以前是隐式赌概率：开面板那一下 activeElement 掉回
+  // body，焦点进面板排在 requestAnimationFrame 里，⎋ 抢在帧前面时这一下按键就被吞掉、面板留在开着的状态，
+  // 而本用例只按一次，所以这一句红到超时（本地 3/10、加载重的 runner 上更频繁）。把焦点显式退回 body，
+  // 赌概率变成每次都跑的判例——真浏览器里的常态本来就是这一侧。
+  const focusLeftOnBody = await page.evaluate(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    return document.activeElement === document.body;
+  });
+  expect(focusLeftOnBody).toBe(true);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
