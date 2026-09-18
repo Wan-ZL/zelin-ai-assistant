@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-001 — PR #405 三道必过门修红</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1d2129; --muted:#5c6773; --line:#e3e6ea;
+    --good:#1f9254; --warn:#c9930b; --bad:#c0392b; --info:#1f6fb2; --teach:#7a4fb5;
+    --code-bg:#f2f3f5;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#15171a; --card:#1d2024; --ink:#e6e8ea; --muted:#9aa4b0; --line:#2c3238;
+           --code-bg:#23272c; --good:#3fbd77; --warn:#e0ab29; --bad:#e2685a; --info:#4f9fe0; --teach:#a382d8; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 80px;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.2px}
+  .sub{color:var(--muted);margin:0 0 24px;font-size:13.5px}
+  h2{font-size:19px;margin:38px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15.5px;margin:22px 0 8px}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  code{background:var(--code-bg);padding:1.5px 5px;border-radius:4px;
+       font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre{background:var(--code-bg);padding:12px 14px;border-radius:8px;overflow-x:auto;
+      font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:10px 0}
+  pre code{background:none;padding:0}
+  .card{background:var(--card);border:1px solid var(--line);border-left-width:4px;
+        border-radius:8px;padding:14px 18px;margin:14px 0}
+  .good{border-left-color:var(--good)} .warn{border-left-color:var(--warn)}
+  .bad{border-left-color:var(--bad)}  .info{border-left-color:var(--info)}
+  .teach{border-left-color:var(--teach)}
+  .card h3{margin-top:0}
+  .star{background:var(--card);border:1px dashed var(--teach);border-radius:8px;
+        padding:12px 16px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--code-bg);font-weight:600}
+  .pass{color:var(--good);font-weight:600}
+  .fail{color:var(--bad);font-weight:600}
+  .na{color:var(--muted)}
+  nav{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 18px;margin:0 0 6px}
+  nav a{color:var(--info);text-decoration:none;margin-right:16px;font-size:13.5px;white-space:nowrap}
+  nav a:hover{text-decoration:underline}
+  .mono-sm{font:12.5px ui-monospace,Menlo,monospace;color:var(--muted)}
+  figure{margin:18px 0}
+  figcaption{color:var(--muted);font-size:12.5px;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>R-001 — PR #405 三道必过门修红</h1>
+<p class="sub">self-improve / T1 · 2026-09-18 · 目标 PR = <a href="https://github.com/Wan-ZL/zelin-ai-assistant/pull/405">#405 chore: Bump the react group in /web with 4 updates</a></p>
+
+<nav>
+  <a href="#dod">验收对照</a>
+  <a href="#rootcause">根因</a>
+  <a href="#timeline">为什么它自己好了</a>
+  <a href="#delivered">我交付了什么</a>
+  <a href="#evidence">证据</a>
+  <a href="#notdone">我没做的事</a>
+  <a href="#method">方法论备注</a>
+</nav>
+
+<div class="card good">
+  <h3>TL;DR</h3>
+  <p>PR #405 三道必过门<strong>现在全绿</strong>（run <code>35345868390</code>，conclusion = success）。
+  红的根因不在 dependabot 的 react 升级里——那个 PR 只改了 <code>web/package.json</code> 与 lockfile，
+  红的却全是 Python 门。真凶是 <code>registry.restore()</code> 用真时钟盖 <code>restored_at</code>
+  造成的<strong>日历炸弹</strong>：判例用注入的 <code>NOW=2026-09-15</code> 量 14 天窗口，真日期一过 09-16
+  窗口就少算一天。它在 <strong>2026-09-17 一天里放倒了观察到的 6 个 run</strong>（#405 只是其中之一，
+  另两个 dependabot PR 在同一分钟同样红）。</p>
+  <p>修复 <code>ad4f0b71</code> 在 <strong>09-17 18:37Z</strong> 才落到 main，而 #405 那次红跑在
+  <strong>08:37Z</strong>——它带的是<strong>过期的 merge base</strong>。dependabot 今天 12:39Z 把 main
+  合进分支，三道门随即全绿。<strong>这张卡不需要任何产品改动就已满足验收。</strong></p>
+  <p><strong>而它为什么整整 28 小时都没自动接上修复，也查出来了</strong>：本该干这件事的
+  <code>update-pr-branches.yml</code>（§56.6）<strong>从来没真正推过一根分支</strong>——缺
+  <code>PR_AUTOUPDATE_TOKEN</code> 就退化成 report-only。09-17 20:41Z 那次 run 的原话是
+  <code>#405: behind by 59 — would update (report-only, no token)</code>。
+  详见<a href="#notdone">「我没做的事」①</a>，那是本轮最该开下一张卡的地方。</p>
+  <p>所以本轮交付的是 <code>ad4f0b71</code> <strong>漏掉的那一半：判例</strong>。那次修复只改了调用点，
+  没有任何测试钉住注入缝本身——缝被删掉或被「收下但忽略」，仍然只会在某个未来的日期、
+  在一条看不出关系的老化判例上红一次。</p>
+</div>
+
+<h2 id="dod">一、验收对照（DEFINITION OF DONE 逐条）</h2>
+
+<p>验收标准只有一条：<em>PR #405 required checks 全绿：QA gates、Tests on ubuntu (Python 3.9)、Tests on ubuntu (Python 3.x)</em>。</p>
+
+<table>
+  <thead><tr><th>required check</th><th>结果</th><th>耗时</th><th>证据</th></tr></thead>
+  <tbody>
+    <tr><td>QA gates (complexity + CRAP + coverage floor + deps + hygiene)</td><td class="pass">PASS</td><td>8m29s</td><td>job 105602181351，完成于 12:48:27Z</td></tr>
+    <tr><td>Tests on ubuntu (Python 3.9)</td><td class="pass">PASS</td><td>6m35s</td><td>job 105602181727，完成于 12:46:32Z</td></tr>
+    <tr><td>Tests on ubuntu (Python 3.x)</td><td class="pass">PASS</td><td>6m23s</td><td>job 105602181734，完成于 12:46:20Z</td></tr>
+  </tbody>
+</table>
+
+<p>复核命令与输出：</p>
+<pre><code>$ gh pr checks 405
+QA gates (complexity + CRAP + coverage floor + deps + hygiene)   pass   8m29s
+Tests on ubuntu (Python 3.9)                                     pass   6m35s
+Tests on ubuntu (Python 3.x)                                     pass   6m23s
+ci                                                               pass   5s
+Lint (shellcheck + ruff)                                         pass   14s
+Web tests (build + vitest)                                       pass   3m21s
+Version pins untouched                                           pass   10s
+Changed paths (per-PR filter)                                    pass   5s
+Contract reminder (soft gate)                                    pass   9s
+qlty check                                                       pass   —
+Web visual (playwright)                                          fail   8m3s     &lt;-- informational
+</code></pre>
+
+<div class="card info">
+  <h3>唯一剩下的红是 informational，卡面已明确排除</h3>
+  <p><code>Web visual (playwright)</code> 仍红。它<strong>不是</strong> required：main 的 branch ruleset
+  （<code>gh api repos/Wan-ZL/zelin-ai-assistant/rules/branches/main</code>）只列七个 context —
+  <code>ci</code>、<code>Lint (shellcheck + ruff)</code>、<code>Tests on ubuntu (Python 3.9)</code>、
+  <code>Tests on ubuntu (Python 3.x)</code>、<code>Web tests (build + vitest)</code>、
+  <code>QA gates (…)</code>、<code>Version pins untouched</code>；该 job 在 <code>ci.yml:425</code> 带
+  <code>continue-on-error: true</code>。卡面原话也写了「informational job 的红不算」。</p>
+  <p>它的根因是 <code>web/e2e/headerLayout.spec.ts:153</code>——按下 <code>Escape</code> 后
+  <code>expect(page.getByRole("dialog")).toHaveCount(0)</code> 收到 1。六张真快照全过，所以不是
+  golden 漂移，是确定性坏。<strong>这条已经有自己的卡在处理（R-306 / #425）</strong>，本轮不碰。</p>
+</div>
+
+<h2 id="rootcause">二、根因：一枚用真时钟盖的戳，把 14 天窗口越量越短</h2>
+
+<p>失败的判例是 <code>tests/test_review_stale_sweep.py:203</code>
+<code>test_the_window_restarts_from_the_restore_not_from_the_old_stamp</code>，
+报 <code>AssertionError: Lists differ: [] != ['P-1']</code>。链条如下：</p>
+
+<figure>
+<svg viewBox="0 0 900 250" width="100%" role="img" aria-label="日历炸弹机制图">
+  <style>
+    .bx{fill:var(--card);stroke:var(--line);stroke-width:1.5;rx:6}
+    .lbl{font:12.5px -apple-system,"PingFang SC",sans-serif;fill:var(--ink)}
+    .sm{font:11px ui-monospace,Menlo,monospace;fill:var(--muted)}
+    .ar{stroke:var(--muted);stroke-width:1.5;fill:none;marker-end:url(#ah)}
+    .hot{stroke:var(--bad);stroke-width:2}
+  </style>
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+
+  <rect class="bx" x="8"   y="20" width="190" height="56" rx="6"/>
+  <text class="lbl" x="20" y="42">判例注入的时钟</text>
+  <text class="sm"  x="20" y="62">NOW = 2026-09-15 03:30Z</text>
+
+  <rect class="bx" x="8"   y="120" width="190" height="72" rx="6" style="stroke:var(--bad);stroke-width:2"/>
+  <text class="lbl" x="20" y="142">registry.restore()</text>
+  <text class="sm"  x="20" y="161">ex["restored_at"] =</text>
+  <text class="sm"  x="20" y="177">_iso_now()  ← 真时钟</text>
+
+  <rect class="bx" x="258" y="120" width="200" height="72" rx="6"/>
+  <text class="lbl" x="270" y="142">_EXECUTION_STAMPS</text>
+  <text class="sm"  x="270" y="161">restored_at 算「活动」</text>
+  <text class="sm"  x="270" y="177">→ last_activity()</text>
+
+  <rect class="bx" x="518" y="70" width="180" height="72" rx="6"/>
+  <text class="lbl" x="530" y="92">_idle_days()</text>
+  <text class="sm"  x="530" y="111">(today − last).days</text>
+  <text class="sm"  x="530" y="127">today = NOW + 15d</text>
+
+  <rect class="bx" x="750" y="70" width="142" height="72" rx="6" style="stroke:var(--bad);stroke-width:2"/>
+  <text class="lbl" x="762" y="92">闸门 idle ≥ 14</text>
+  <text class="sm"  x="762" y="111">09-16 → 14 ✓</text>
+  <text class="sm"  x="762" y="127">09-17 → 13 ✗</text>
+
+  <path class="ar" d="M103,76 L103,118"/>
+  <path class="ar" d="M198,156 L256,156"/>
+  <path class="ar" d="M458,150 L508,120"/>
+  <path class="ar hot" d="M698,106 L748,106"/>
+
+  <text class="sm" x="258" y="40">戳越新 ⇒ last_activity 越新 ⇒ idle 越小 ⇒ 闸门关</text>
+  <text class="sm" x="258" y="228">真日期每往前走一天，窗口就少算一天——判例 09-15 写的，能过的只有 09-14~09-16 三天</text>
+</svg>
+<figcaption>修复前的数据流。红框是两端：真时钟写入点，和被它推翻的闸门。</figcaption>
+</figure>
+
+<ol>
+  <li>判例存一张 30 天没动的待验收卡，<code>self.sweep()</code> 把它归档进回收站；</li>
+  <li><code>registry.restore()</code> 把它捞回来，<strong>用真时钟</strong>盖 <code>execution.restored_at</code>；</li>
+  <li><code>restored_at</code> 在 <code>maintenance._EXECUTION_STAMPS</code> 里（<code>f8a734d1</code> 加的：捞回来算 owner 活动），于是 <code>last_activity()</code> 返回这枚真时钟戳；</li>
+  <li><code>_idle_days(req, today)</code> 用 <code>today = NOW + 15d = 2026-09-30</code> 减它；</li>
+  <li>闸门是 <code>idle ≥ review_stale_days</code>（出厂 14）。真日期 09-16 时 idle=14 刚好过；<strong>09-17 时 idle=13，闸门关，通知列表变空</strong>，断言 <code>[] != ['P-1']</code>。</li>
+</ol>
+
+<div class="star">
+  <p><strong>⭐ 这个判例出生就在一个三天的窗口里。</strong> 我把 <code>ad4f0b71</code> 在隔离树里
+  回滚掉，再平移真时钟逐天重跑，量出了引信的两端：</p>
+  <pre><code>wall clock 2026-09-12  FAILED        wall clock 2026-09-16  OK
+wall clock 2026-09-13  FAILED        wall clock 2026-09-17  FAILED   &lt;-- #405 那次红跑
+wall clock 2026-09-14  OK            wall clock 2026-09-18  FAILED
+wall clock 2026-09-15  OK            wall clock 2026-09-19  FAILED</code></pre>
+  <p>它由 <code>f8a734d1</code> 在 <strong>2026-09-15</strong> 写下，而能让它通过的真实日期只有
+  <strong>09-14 / 09-15 / 09-16</strong>。换句话说：<em>写下它的那一天，引信已经点着了，只剩两天</em>。
+  两个方向都会炸——真日期 ≥ 09-17 时第 203 行报 <code>[] != ['P-1']</code>；
+  ≤ 09-13 时第 202 行反过来报 <code>['P-1'] != []</code>（那时旧戳比 <code>restored_at</code> 新，
+  <code>_notice_state</code> 返回 <code>"set"</code>，反而在 20 小时闸门上重新归档）。</p>
+</div>
+
+<h2 id="timeline">三、为什么它今天自己好了：过期的 merge base</h2>
+
+<table>
+  <thead><tr><th>时刻 (UTC)</th><th>事件</th><th>三道必过门</th></tr></thead>
+  <tbody>
+    <tr><td>09-15 14:40</td><td><code>f8a734d1</code> 写下这条判例（引信 09-14~09-16）</td><td class="na">—</td></tr>
+    <tr><td><strong>09-17 08:37</strong></td><td><strong>PR #405 那次红跑</strong>（head <code>2300eeb8</code>，run <code>35200638899</code>）</td><td class="fail">红</td></tr>
+    <tr><td>09-17 08:36–18:37</td><td>同一炸弹放倒<strong>观察到的 6 个 run</strong>：#405、另两个 dependabot PR（github_actions / vite）、dev 三支</td><td class="fail">红</td></tr>
+    <tr><td><strong>09-17 18:37</strong></td><td><strong><code>ad4f0b71</code> 落地</strong>：<code>restore()</code> 加 <code>now=</code> 注入缝 + 判例传 <code>NOW</code></td><td class="na">—</td></tr>
+    <tr><td>09-17 20:41</td><td>main <code>3c69fbfd</code></td><td class="pass">全绿</td></tr>
+    <tr><td><strong>09-17 20:41</strong></td><td><strong>auto-update 本该在这里救它，却空转</strong>：<code>#405: behind by 59 — would update (report-only, no token)</code></td><td class="fail">仍红（未更新）</td></tr>
+    <tr><td><strong>09-18 12:39</strong></td><td><strong>dependabot 自己把 main 合进 #405</strong>（head <code>96c9515b</code>，run <code>35345868390</code>）</td><td class="pass">全绿</td></tr>
+  </tbody>
+</table>
+
+<div class="card warn">
+  <h3>这不是「修好了」，是「等到了」——而且这个形状在同一个仓库里反复出现</h3>
+  <p>#405 的红从来不是 #405 的问题。修复在它那次红跑<strong>之后 10 小时</strong>才落到 main，
+  它自己什么都没做错，只是背着一个过期的 merge base 在跑 CI。</p>
+  <p>同一个「修复比该被它救的那次红晚落地」的形状，在
+  <code>tests/integration/test_auto_deploy_script.py</code> 上也发生过一次（<strong>那是另一类 bug</strong>——
+  <code>time.monotonic()</code> 的<em>流逝</em>时间预算，与日期无关）：它在 09-16 01:20Z 炸
+  （<code>took 457s &gt; 420s budget</code>），把常数从 420 提到 600 的 <code>c31cc506</code> 在
+  <strong>01:37Z</strong> 落地——晚了 17 分钟。见下文<a href="#notdone">「我没做的事」③</a>。</p>
+</div>
+
+<h2 id="delivered">四、我交付了什么</h2>
+
+<p>验收已经满足，所以本轮<strong>不碰任何产品行为</strong>。交付的是 <code>ad4f0b71</code> 漏掉的判例，
+外加两处同类调用点的收尾。三个文件，行为零变化。</p>
+
+<h3>1. 新判例 <code>tests/test_clock_injection_seams.py</code>（主交付物）</h3>
+
+<p><code>ad4f0b71</code> 补了缝、改了调用点，但<strong>没有任何测试钉住缝本身</strong>。
+缺的后果不是抽象的：缝被删掉，或者被改成「收下 <code>now=</code> 但忽略它」，套件今天照样全绿——
+要等到某个未来的日期，才会在 <code>test_review_stale_sweep</code> 上红一次，
+而那条判例的名字里没有一个字提到注入缝。新判例把它变成<strong>当场红、红在名字说得清的地方</strong>：</p>
+
+<table>
+  <thead><tr><th>判例</th><th>钉住的契约</th></tr></thead>
+  <tbody>
+    <tr><td><code>test_the_seam_exists_and_takes_a_clock</code></td><td><code>restore</code> 签名收 <code>now=</code>，且默认 <code>None</code>（= 可选，既有调用方不用改）</td></tr>
+    <tr><td><code>test_the_seam_decides_the_stamp</code></td><td>传进去的时刻<strong>真的</strong>成为 <code>execution.restored_at</code>，盘上那份也是它</td></tr>
+    <tr><td><code>test_an_aware_clock_is_normalised_to_utc</code></td><td>带偏移的时刻先折算成 UTC，不是把本地墙上时间抄进 <code>…Z</code></td></tr>
+    <tr><td><code>test_without_the_seam_the_default_is_still_the_wall_clock</code></td><td><code>ad4f0b71</code> 承诺的 “default unchanged = wall clock”</td></tr>
+  </tbody>
+</table>
+
+<p><strong>变异测试证明它真的能杀人</strong>（在 <code>git archive HEAD</code> 出来的一份隔离树里做，不污染工作树）：</p>
+
+<table>
+  <thead><tr><th>变异体</th><th>新判例的下场</th><th>被谁杀</th></tr></thead>
+  <tbody>
+    <tr><td>整体回滚 <code>ad4f0b71</code>（缝删掉，回到 <code>_iso_now()</code>）</td><td class="pass">杀死 3/4 红</td><td><code>TypeError: restore() got an unexpected keyword argument 'now'</code> + 签名判例</td></tr>
+    <tr><td>缝留着但<strong>忽略参数</strong>（最阴的那种回归）</td><td class="pass">杀死 2/4 红</td><td><code>'2026-09-18T12:54:51Z' != '2026-09-15T03:30:00Z'</code></td></tr>
+    <tr><td>去掉 UTC 归一（<code>now.strftime</code> 而非 <code>now.astimezone(utc).strftime</code>）</td><td class="pass">杀死 1/4 红</td><td><code>'2026-09-14T20:30:00Z' != '2026-09-15T03:30:00Z'</code></td></tr>
+  </tbody>
+</table>
+
+<div class="star">
+  <p><strong>⭐ 判例自己没有引入新的漂移。</strong> 我实测过 naive datetime 的下场：
+  <code>restore(req, now=datetime(2026,9,15,3,30))</code>（不带时区）经 <code>astimezone</code>
+  会按<strong>跑测试那台机器</strong>的时区折算——本机（PT）盖成 <code>10:30Z</code>，UTC 机器上盖成
+  <code>03:30Z</code>。钉这个行为等于新造一个同类炸弹，所以判例<strong>只用 aware datetime</strong>，
+  并在 docstring 里写明为什么故意不钉 naive。</p>
+</div>
+
+<h3>2. 两处同类调用点收尾（各一行）</h3>
+<ul>
+  <li><code>tests/test_review_stale_sweep.py:180</code> — 同模块最后一处读真时钟的
+      <code>restore()</code>。改前它<strong>靠 idle 变成负数才过</strong>（真时钟戳在
+      <code>later</code> 之后 ⇒ idle = −2/−1），量的不是它 docstring 声称的「窗口重新起算」；
+      改后 idle = 1 和 2 天对 14 天窗口，判例说的就是它做的。
+      这个模块从此与真实日期无关。
+      <div class="mono-sm">注：它<strong>不会</strong>在未来某天变红（idle 只会更负），
+      但真日期 ≤ 2026-09-02 会红——时钟歪掉的 runner 或 RTC 不准的容器会踩到。</div></li>
+  <li><code>scripts/qa/fixtures_b/aging_22d.py:57</code> — 该 fixture 的 docstring 写着
+      「时钟全部注入（<code>today</code> / <code>now</code>），不依赖真实日期」，而第 57 行正是一处真时钟读取，
+      <strong>那句声明是假的</strong>。补上 <code>now=later</code> 让声明成真。</li>
+</ul>
+
+<h3>3. <code>changelog.d/ai-self-improve-r001-clock-seam-precedent.md</code></h3>
+<p>照 §56.7 一 PR 一 fragment（<code>type: fixed</code>），不碰 <code>CHANGELOG.md</code> 的
+<code>[Unreleased]</code>。</p>
+
+<div class="card info">
+  <h3>CLAUDE.md 的三问</h3>
+  <ol>
+    <li><strong>触及哪些 §</strong>：§9 追记（<code>restored_at</code>，D73）——字段与语义一字未改，本轮只补判例；
+        相关 §70.2 追记 / §70.6（两阶段老化）、§56.7（changelog fragment）、§58（QA fixture B-08）。<strong>无需修法</strong>：没有新行为。</li>
+    <li><strong>与 §0 宪法</strong>：第 11 条（一张坏卡不许弄坏一整轮）的测试侧对应物——
+        判例不许因为真实日期而说谎。没有任何一条被打破。</li>
+    <li><strong>已存在的机制</strong>：找过了。<code>grep -rln "faketime\|freeze_time\|TIME_TRAVEL\|calendar bomb\|日历炸弹" scripts .github tests docs</code>
+        零命中——<strong>三次事故之后仍然没有任何机器防线</strong>，所以这一条不是重复造轮子。</li>
+  </ol>
+</div>
+
+<h2 id="evidence">五、证据</h2>
+
+<h3>本地四门</h3>
+<pre><code>$ python3 -m compileall -q act ingest                         # rc=0
+$ AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
+$ ruff check .                                                 # All checks passed!
+$ python3 scripts/ci/changelog_fragments.py check               # changelog fragments: ok (127)
+$ python3 scripts/qa/fixtures_b/aging_22d.py
+B-08-aging-22d PASS review card idle 22d (threshold 14d): stamped+1 banner,
+               archived at +21h rule=review_stale restorable checks=8
+</code></pre>
+<p class="mono-sm">注：<code>mac/build.sh</code> 与 <code>mac/LogicTests/test.sh</code> 未跑——本轮零 Swift 改动，
+CI 的 <code>Changed paths (per-PR filter)</code> 会让 <code>ci</code> 走 ubuntu 快路（#405 上就是 5 秒过）。
+跑测试一律 <code>unset FORCE_COLOR</code>：本机 shell 的 <code>FORCE_COLOR=3</code> 会让 Python 3.14 给
+traceback 上色，制造假红。</p>
+
+<h3>时间旅行（time-travel）harness</h3>
+<p>为了回答「还有没有别的日历炸弹」，我把挂钟整体平移若干天再跑套件。
+所有相关模块都是 <code>import datetime as _dt</code> + 调用时才读
+<code>_dt.date.today()</code> / <code>_dt.datetime.now()</code>，所以在任何
+<code>act.*</code> import 之前替换 <code>datetime</code> 模块属性就能覆盖到每一处真时钟读取。
+已验证它确实穿透到 <code>registry._iso_now()</code>。</p>
+
+<p><strong>结果：本家族里没有第二颗真的日历炸弹。</strong> 平移档确实报出三条失败，
+但逐条查下来<strong>三条都是 harness 自己的假报</strong>（见下）。</p>
+
+<table>
+  <thead><tr><th>时钟</th><th>结果（15 模块 / 318 判例）</th></tr></thead>
+  <tbody>
+    <tr><td>shift = 0（对照）</td><td class="pass">OK — 318 tests</td></tr>
+    <tr><td>+1 天</td><td class="fail">1 failure</td></tr>
+    <tr><td>+14 天</td><td class="fail">3 failures</td></tr>
+  </tbody>
+</table>
+
+<div class="card bad">
+  <h3>⚠️ 三条失败全是假报：patched Python 时钟 vs 没被 patch 的文件系统 mtime</h3>
+  <p>我的 harness 换掉了 <code>datetime.date</code> / <code>datetime.datetime</code>，
+  但<strong>换不掉文件系统的时钟</strong>。任何「拿 Python 的 now 去减 <code>st_mtime</code>」的判例
+  都会因此假红。三条逐一查实：</p>
+  <ul>
+    <li><code>test_card_lifecycle.ArchiveStaleTestCase.test_daily_gate_prevents_second_sweep</code>
+        —— <code>housekeeping.py:68</code> 的 24 小时闸门算
+        <code>age = datetime.now(utc).timestamp() − marker.stat().st_mtime</code>。
+        实测：只平移 Python 时钟时 <code>age = 86400.00s</code> ⇒ <code>age &lt; 86400</code> 为假 ⇒ 闸门开 ⇒ 二次清扫跑了；
+        <strong>把两个时钟一起平移（真机上的实际情形）则 <code>age = 0.00s</code>、闸门照常关</strong>。</li>
+    <li><code>test_honest_receipts.DigestFailureNotifyTestCase</code> 两条 ——
+        <code>weekly_digest.py:132-148</code> 按 <strong>mtime</strong>（不是文件名里的日期）筛 7 天窗口。
+        <strong>可falsify的预测 + 实测吻合</strong>：假报应当只在平移 &gt; <code>WINDOW_DAYS</code>(7) 时出现——
+        实测 +0 / +6 天 <span class="pass">OK</span>，+7 / +8 / +14 天 <span class="fail">FAILED</span>，
+        <strong>拐点正好落在 7</strong>。真机上那份 note 的 mtime 会跟着时钟走，永远是「刚写的」。</li>
+  </ul>
+  <p class="mono-sm">附带反证：如果肇因是文件名里的 <code>2026-07-15</code>，shift=0 档也该红
+  （按文件名它今天已经 65 天大了），但它是绿的 ⇒ 判据确实是 mtime。</p>
+</div>
+
+<div class="card warn">
+  <h3>这项证据是有界的，别当成「全绿保证」</h3>
+  <p>全套件 × 多个平移日期的版本<strong>没跑完</strong>：本机同时有其他 agent 在跑同一套套件，
+  <code>tests/integration/test_auto_deploy_script.py</code> 那批真 subprocess 判例把几个并发套件
+  拖到 8 分钟只推进 2.5 秒 CPU，我主动杀掉了。所以最终跑的是
+  <strong>restore / reraise / 老化家族 15 个模块 × 6 个时钟</strong>（0 / +1 / +14 / +90 / +365 / +1095 天），
+  <strong>不是全套件</strong>。</p>
+  <p>另外隔离树是 <code>git archive</code> 出来的、<strong>没有 <code>.git</code></strong>，
+  所以依赖 git 的判例在那里本来就红。因此判据是<strong>平移档与 shift=0 对照档的差集</strong>，
+  不是绝对的通过/失败。</p>
+</div>
+
+<h2 id="notdone">六、我没做的事（连同证据，够直接开卡）</h2>
+
+<p>下面每一条都查实了，但都<strong>不在这张卡的 DoD 里</strong>，也不该塞进一个「修 #405 的 CI」的 PR。</p>
+
+<div class="card bad">
+  <h3>① §56.6 的 auto-update 从来没真正推过一根分支 —— 这才是这张卡存在的原因</h3>
+  <p><code>.github/workflows/update-pr-branches.yml</code> 的本职是把 main 合进每个落后的同仓 PR，
+  让它们自动接上刚落地的修复。它<strong>一次都没做到</strong>：缺 secret
+  <code>PR_AUTOUPDATE_TOKEN</code> 时（workflow 头部第 20/26 行自己写明）整条逻辑退化成
+  report-only，只打印「本来会更新谁」。</p>
+  <p>09-17 20:41Z 那次 run（<code>35272277210</code>，紧跟在 <code>ad4f0b71</code> 落地之后）的<strong>渲染输出</strong>原话：</p>
+  <pre><code>#405: behind by 59 — would update (report-only, no token)
+#404: behind by 59 — would update (report-only, no token)
+#403: behind by 59 — would update (report-only, no token)</code></pre>
+  <p>修复已经在 main 上躺了两个小时，workflow 看见 #405 落后 59 个 commit、<em>知道</em>该更新它，
+  然后什么也没做。#405 就这样又带着过期 merge base 挂了 16 小时，直到 dependabot 自己
+  在 09-18 12:39Z 合了一次 main。<strong>同一颗炸弹因此扇出了多张 pr_red 卡</strong>
+  （#403 / #404 / #405 当时是同一批）。</p>
+  <p>该 workflow 共 126 次 run，<strong>全部 <code>success</code></strong>——它在什么都不做的时候也是绿的，
+  所以这个空转从来没有报警。修它 = 建一个 fine-grained PAT 并加成 secret，
+  <strong>不需要改代码</strong>；但 <code>.github/workflows/</code> 是 protected path，
+  且加 secret 只有 owner 能做，所以本轮只报不动。</p>
+  <p class="mono-sm">⚠️ 查证陷阱：这条 workflow 的 <code>run</code> 脚本会被 Actions <strong>逐字回显</strong>到日志里，
+  所以 <code>grep "report-only: PR_AUTOUPDATE_TOKEN is not configured"</code> 一定命中——那是<strong>源码回显</strong>
+  （行首带 ANSI <code>[36;1m</code> 追踪前缀），不是证据。唯一可信的是
+  <code>note</code> 函数吐出的「渲染后」那三行 <code>behind by N — would update</code>。</p>
+</div>
+
+<div class="card bad">
+  <h3>② main 上 required 的 <code>ci</code>（macOS）现在是红的——而且没法诊断</h3>
+  <p><code>tests/integration/test_auto_deploy_script.py:489</code> 的 <code>setUp</code> 里
+  <code>git clone</code> 间歇性 <code>exit 128</code>，11 天内 4 次、每次挂在<strong>不同的</strong>测试名上
+  （fixture 级 flake 的签名）。main <code>3c69fbfd</code> 当前的红就是它。<code>ci</code> 按 branch ruleset
+  <strong>是 required</strong>。</p>
+  <p>更糟的是<strong>查不了</strong>：<code>_git</code>（同文件 417 行）用
+  <code>capture_output=True, check=True</code>，而 <code>CalledProcessError.__str__</code> 只印 argv 和返回码，
+  从不印 <code>stderr</code>。四次失败的日志里除了 <code>returned non-zero exit status 128</code> 什么都没有——
+  git 自己那句话（dubious ownership？磁盘压力？漏出来的 <code>GIT_DIR</code>？）被吞了。
+  <strong>最便宜的一步：把 <code>e.stderr</code> 带进报错。</strong></p>
+  <p class="mono-sm">附带发现：这批判例也是本机并发跑套件时的拖死点，我今天就踩到了。</p>
+</div>
+
+<div class="card warn">
+  <h3>③ <code>test_auto_deploy_script.py</code> 的预算计时器<strong>算错了对象</strong>（14 个模块里唯一一个）</h3>
+  <p><code>tearDownModule</code>（420–424 行）在
+  <code>time.monotonic() − _T0 &gt; BUDGET_SECONDS</code> 时直接 <code>AssertionError</code>。
+  而 <code>_T0 = time.monotonic()</code> 在<strong>模块作用域</strong>（130 行）、
+  <strong>且该文件没有 <code>setUpModule</code> 去重置它</strong>——于是计时从 <em>discovery-import</em>
+  那一刻就开始跑，把<strong>在它之前跑的别的模块</strong>的耗时也记到自己账上。</p>
+  <p>我逐个数过：<code>tests/integration/</code> 里用 <code>_T0</code> 的 14 个模块，
+  <strong>13 个都在 <code>setUpModule</code> 里重置</strong>，只有它没有。</p>
+  <pre><code>NO-RESET test_auto_deploy_script.py      &lt;-- 唯一一个
+RESETS   test_auto_deploy_defer_episode.py
+RESETS   test_auto_deploy_session_gate.py
+RESETS   test_bootstrap_script.py
+…（其余 10 个同样 RESETS）</code></pre>
+  <p>后果：那个常数自己的注释（<code>600 # 94 runs of real bash+git…</code>，即「预算跟着本模块判例条数走」）
+  <strong>是假的</strong>——它其实会被「任何一个排在它前面的新模块」重新上膛。
+  09-16 01:20Z 炸过一次（<code>took 457s &gt; 420s budget</code>，macOS <code>ci</code> leg），
+  提额的 <code>c31cc506</code> 晚了 17 分钟落地；那 457 秒也<strong>不是这个模块的开销</strong>。</p>
+  <p><strong>一行就能修</strong>：照 13 个兄弟的写法加 <code>setUpModule</code> 重置 <code>_T0</code>。
+  方向是安全的（只会让 elapsed 变小），而且能让 600 这个数第一次有意义。</p>
+  <div class="mono-sm">
+    <p style="margin:6px 0"><strong>⚠️ 我先前的草稿在这条上写错了四处，已按逐条复核改正：</strong>
+    它<strong>不是</strong>日历炸弹（读的是 <code>time.monotonic()</code> 的<strong>流逝</strong>时间，
+    与日期 / NTP / DST 全无关，也无法用平移日期复现）——正确定性是
+    「慢 runner + 套件增长」型 flake；它<strong>不在</strong> #405 那个炸弹的同一个模块里
+    （那是 <code>tests/test_review_stale_sweep.py</code>）；常数被抬过的是
+    <strong>五次</strong>（120→180→240→300→420→600），不是三次；而且它<strong>不确定性地</strong>只在 macOS leg 上炸——
+    同一次 run 里两条 ubuntu leg（409 s / 355 s）都是绿的。</p>
+  </div>
+</div>
+
+<div class="card warn">
+  <h3>④ 同类注入缝还缺四处（<code>restore</code> 修好了，邻居没修）</h3>
+  <table>
+    <thead><tr><th>写者</th><th>戳</th><th>要紧程度</th></tr></thead>
+    <tbody>
+      <tr><td><code>registry.py:1690</code> <code>_reraised_execution</code></td><td><code>reraised_at</code></td><td class="fail">在 <code>_EXECUTION_STAMPS</code> 里 ⇒ 喂同一条 idle 计算，与本次事故同一条路</td></tr>
+      <tr><td><code>registry.py:1490</code> <code>_unique_fold_ts</code></td><td>fold note <code>ts</code></td><td class="fail">在 <code>_activity_candidates</code> 里 ⇒ 同上</td></tr>
+      <tr><td><code>registry.py:646</code> <code>trash</code></td><td><code>trashed_at</code></td><td class="na">不算活动，今天无影响；但 restore/trash 现在一边有缝一边没有，不对称</td></tr>
+      <tr><td><code>registry.py:890</code> <code>archive</code></td><td><code>archived_at</code></td><td class="na">同上</td></tr>
+    </tbody>
+  </table>
+  <p>今天没有任何判例踩到它们，所以我<strong>没有投机性地重构</strong>。但只要有人写一条
+  「re-raise 或 fold 一张卡，然后用注入的 <code>today</code> 量窗口」的判例，本次事故会一字不差地重演。</p>
+</div>
+
+<div class="card info">
+  <h3>⑤ 还没有任何机器防线拦这一类 bug</h3>
+  <p>三次事故之后，仓库里没有任何东西在平移日期下跑套件，也没有 lint 在看
+  「同一个模块既冻结了 <code>NOW</code>/<code>TODAY</code>、又调用了不带 <code>now=</code> 的 registry 写者」——
+  而这正是三次事故共同的签名。两条可选路线：</p>
+  <ul>
+    <li><strong>(a) 夜间平移时钟跑一遍套件</strong>（+30 / +90 / +365 天）。需要动
+        <code>.github/workflows/ci-nightly.yml</code>——<strong>protected path</strong>，本轮不能碰，要 owner 放行。
+        <br><strong>⚠️ 别用 Python 层的 monkeypatch 去实现它</strong>：我今天就是这么做的，它会在
+        「Python 时钟 vs 文件系统 mtime」的判例上稳定假报（本轮三条假报全出于此）。
+        要么平移 runner 的<strong>系统日期</strong>（<code>libfaketime</code> 之类，两个时钟一起走），
+        要么先给这些判例加一层时钟注入。<strong>做成 monkeypatch 版本的话，这个 job 出生就是红的，
+        然后没人会再看它。</strong></li>
+    <li><strong>(b) 静态规则</strong>：我已经写过原型并在当前 main 上跑过，命中
+        <strong>4 个调用点里 3 个「违例」</strong>——而唯一「合规」的那个正是 <code>ad4f0b71</code> 改的那一行。
+        但另外两处（<code>test_review_stale_sweep.py:103</code>、
+        <code>test_daily_loop_stale_rules.py:128</code>）只断言 <code>.status</code>、不量任何窗口，
+        <strong>把它们判成违例是误报</strong>。所以这条规则要能落地，得先想清楚怎么只盯
+        「戳之后真的量了窗口」的那些——<strong>我没有把一条会误报的门塞进 PR</strong>。</li>
+  </ul>
+</div>
+
+<h2 id="method">七、方法论备注（下一个 session 可以直接抄）</h2>
+
+<ul>
+  <li><strong>先看 PR 改了什么，再看红的是什么。</strong> #405 只动了
+      <code>web/package.json</code> + lockfile，红的却是三个 Python 门——这个错位本身就说明
+      「根因不在这个 PR 里」，直接把方向从「修 dependabot」扳到「查 main 的历史」。</li>
+  <li><strong>PR 的红跑要和 merge base 一起读。</strong> 红跑时刻（08:37Z）比修复落地（18:37Z）早 10 小时，
+      对照 main 同期全绿 —— 「过期 merge base」一眼就成立，
+      而 <code>gh pr checks</code> 当时显示 <em>pending</em>（rebase 后的新跑），差点被误读成「还在红」。</li>
+  <li><strong>自己的假设要自己去证伪。</strong> 我一开始判定 180 行那条判例是「空过的」（vacuous），
+      于是去隔离树里做变异：把 <code>restored_at</code> 从 <code>_EXECUTION_STAMPS</code> 里删掉——
+      <strong>判例照样被杀死</strong>，假设被我自己的实验推翻。改完之后又复跑同一个变异体确认
+      <strong>杀伤力没有下降</strong>（同样 2 红）。<em>「这个判例其实没在测东西」是个很好用但很容易错的直觉，
+      别不做变异就下结论。</em></li>
+  <li><strong>变异实验住在隔离树里。</strong> <code>git archive HEAD | tar -x -C &lt;tmp&gt;</code>
+      比「改完记得改回来」安全得多，尤其当还有并发的 agent 在读同一个工作树。
+      代价是那棵树没有 <code>.git</code>，所以必须配一个 shift=0 对照档。</li>
+  <li><strong>平移挂钟的正确姿势。</strong> Homebrew 的 Python 自带 <code>sitecustomize.py</code>，
+      会<strong>盖掉</strong>你放在 cwd 的同名文件（实测无效）；改用一个显式 runner，在
+      <code>import unittest</code> 之前替换 <code>datetime.date</code> / <code>datetime.datetime</code>。
+      只有 <code>import datetime as _dt</code> + 延迟读取的模块能被覆盖到；
+      <code>from datetime import datetime</code> 那种在 import 期就绑死了，覆盖不到。</li>
+  <li><strong>unittest 的进度点是不带换行的</strong>，重定向到文件时会一直卡在缓冲区里——
+      日志「不长」不等于进程没在动，要看 <code>ps -o time</code> 的 CPU 时间。
+      本机 CPU 才 2.5 秒而 elapsed 8 分钟 = 它在等 subprocess，不是在算。</li>
+</ul>
+
+<p class="sub" style="margin-top:34px">
+分支 <code>ai/self-improve/R-001</code> · 改动三个文件（新增判例 + 两处一行收尾 + changelog fragment）· 产品行为零变化
+</p>
+
+</div>
+</body>
+</html>

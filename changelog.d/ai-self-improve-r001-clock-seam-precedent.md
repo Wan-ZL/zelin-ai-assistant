@@ -1,0 +1,2 @@
+type: fixed
+- **时刻戳的注入缝现在有判例钉着**：`registry.restore` 的 `now=` 缝（ad4f0b71 补的）此前只有调用点、没有判例——缝被删掉或被接收后忽略，只会在某个未来的日期让一条看不出关系的老化判例变红（2026-09-17 08:36Z–18:37Z 之间观察到 6 个 run 同时红，dependabot PR #405 的三道必过门红的就是它）。新判例 `tests/test_clock_injection_seams.py` 把缝本身钉住：签名收 `now=`、它真的决定 `execution.restored_at` 的值、带时区的时刻归一到 UTC、不传时默认仍是真时钟（ad4f0b71 承诺的 default unchanged）。故意不钉 naive datetime 的下场——它经 `astimezone` 按跑测试那台机器的时区折算，钉它等于新造一个同类漂移。`tests/test_review_stale_sweep` 里最后一处读真时钟的 `restore` 调用同时改用注入时钟，这个模块从此与真实日期无关。行为零变化。
