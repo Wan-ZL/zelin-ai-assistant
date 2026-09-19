@@ -57,6 +57,8 @@ TCC_FAILURE_IDS = frozenset({
 TCC_ROW_NAMES = frozenset({
     "launchd claude", "launchd volume access", "cron write access",
     "cron ingest chain", "cron disk access", "board ui build", "launchd paths",
+    # §55 追记 2026-09-19：解释器是共享签名身份的 shim → FDA 只在部分时刻被查到
+    "launchd interpreter identity",
 })
 
 
