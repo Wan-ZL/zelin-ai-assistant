@@ -1,5 +1,5 @@
 """doctor 探针家族：macOS launchd（CONTRACT §25 行目录；§55 模板路径纪律与
-TCC 三幕；§56.3 第 1 步卷访问）。
+TCC 诸幕；§56.3 第 1 步卷访问）。
 
 行：``<agent short>``（每个模板 label 一行：未注册 / running / loaded /
 crash-loop 并按日志归因 ``No module named 'act'`` vs ``'yaml'``）、
@@ -8,8 +8,9 @@ crash-loop 并按日志归因 ``No module named 'act'`` vs ``'yaml'``）、
 （在一次性 launchd job 里问 launchd 本人 claude 读不读得到任务目录）、
 ``launchd volume access``（读 §56.4 HOME 镜像的无人值守判决）、``launchd
 interpreter identity``（§55 追记 2026-09-19：plist 里的解释器是不是 Apple 的
-xcode-select 工具 shim——它与 /usr/bin/git 共用一个签名身份，TCC 按「最近见到
-的路径」查表，外置卷上的 agent 会在运行中途失去读权）。默认探针实现
+xcode-select 工具 shim——它与 /usr/bin/git 是同一个文件的 78 个硬链接名之一，
+TCC 按路径记「完全磁盘访问」，而给进程查表用的名字会被绑到其中一个、粘滞数小时
+（绑定事件本身没在日志里抓到），外置卷上的 agent 因此会在运行中途失去读权）。默认探针实现
 （agent 日志路径 / 尾部 / mtime、已装 plist label、launchd claude 探针）也住
 这里——tests 一律注入，绝不真起 launchd（tests/__init__.py 的 env 保险）。
 """
@@ -530,10 +531,11 @@ def check_paths(probes):
 # --------------------------------------------------------------------------- #
 # §55 launchd interpreter identity（追记 2026-09-19，issue #423）
 # --------------------------------------------------------------------------- #
-# /usr/bin/python3 不是解释器本体，是 Apple 的 xcode-select 工具 shim，签名标识
-# 与 /usr/bin/git、/usr/bin/xcrun … 全部 Xcode shim 相同。live 2026-09-18：tccd
-# 给 server 进程查「完全磁盘访问」时 subject 是 /usr/bin/git（authValue=0），
-# 表里只有 /usr/bin/python3 那行——同一个进程 13 小时读不到外置卷上的 repo。
+# /usr/bin/python3 不是解释器本体，是 Apple 的 xcode-select 工具 shim：与
+# /usr/bin/git、clang、swift 等是同一个 inode 的 78 个硬链接名（xcrun / xcodebuild
+# 不在其中）。live 2026-09-18：tccd 给 server 进程查「完全磁盘访问」时 subject 是
+# /usr/bin/git（authValue=0），表里只有 /usr/bin/python3 那行——同一个进程被内核
+# 拒了 17 小时以上，看板那段时间答的 404 由此推断（board_bytes 把 errno 吞掉了）。
 SHIM_IDENTIFIER = "com.apple.dt.xcode_select.tool-shim-public"
 _IDENTITY_ROW = "launchd interpreter identity"
 _CODESIGN_ID_RE = re.compile(r"^Identifier=(\S+)", re.M)
@@ -553,13 +555,24 @@ def _link_count(path: str) -> Optional[int]:
         return None
 
 
+def _shares_inode_with_git(path: str) -> bool:
+    """`path` 与 /usr/bin/git 是不是同一个 inode（真比 st_ino，不凭 nlink 推断）。"""
+    try:
+        return os.stat(path).st_ino == os.stat("/usr/bin/git").st_ino
+    except OSError:
+        return False
+
+
 def _names_note(path: str) -> "tuple[str, str]":
-    """(zh, en)：多名字文件的说明；单名或读不到 → 两句空串。"""
+    """(zh, en)：多名字文件的说明；单名或读不到 → 两句空串。只说 stat 证明了的事。"""
     n = _link_count(path)
     if not n or n < 2:
         return "", ""
-    return ("——`ls -li` 可见它与 /usr/bin/git 是同一个 inode、共 %d 个硬链接名" % n,
-            " - `ls -li` shows it IS /usr/bin/git: one inode with %d hard-linked names" % n)
+    if _shares_inode_with_git(path):
+        return ("——`ls -li` 可见它与 /usr/bin/git 是同一个 inode、共 %d 个硬链接名" % n,
+                " - `ls -li` shows it IS /usr/bin/git: one inode with %d hard-linked names" % n)
+    return ("——`stat` 可见它有 %d 个硬链接名" % n,
+            " - `stat` shows it has %d hard-linked names" % n)
 
 
 def codesign_identifier(run, path: str) -> Optional[str]:
@@ -585,8 +598,12 @@ def _identity_fix(py: str, real: str) -> str:
     target = real or (_REAL_INTERPRETER_SHELL % (py, _REAL_INTERPRETER_SNIPPET))
     return ("AIASSISTANT_PYTHON=%s bash install.sh  # pin the real interpreter,"
             " not the shim, into every agent; then System Settings > Privacy &"
-            " Security > Full Disk Access: add that binary. Stopgap without"
-            " re-rendering: also add /usr/bin/git there" % target)
+            " Security > Full Disk Access: add that binary; confirm with"
+            " `log show --last 10m --info --predicate 'process == \"tccd\"' |"
+            " grep AUTHREQ_SUBJECT` that the subject is now the pinned path."
+            " Stopgap without re-rendering: adding /usr/bin/git there also works,"
+            " but it grants Full Disk Access to every name of that inode"
+            " (clang, swift, make ...)" % target)
 
 
 def _shim_row(probes, shim: dict) -> CheckResult:
@@ -597,22 +614,24 @@ def _shim_row(probes, shim: dict) -> CheckResult:
     note_zh, note_en = _names_note(first)
     return CheckResult(
         _IDENTITY_ROW, WARN,
-        pick("%s 是 Apple 的 xcode-select 工具 shim（签名标识 %s，与 /usr/bin/git"
-             " 等全部 Xcode shim 共用%s）——macOS TCC 按路径记「完全磁盘访问」，"
-             "给这个多名字文件查表时用的 subject 是它当时被解析成的那个名字，"
+        pick("%s 是 Apple 的 xcode-select 工具 shim（签名标识 %s，与 /usr/bin/git、"
+             "clang、swift 等 Xcode shim 同款%s）——macOS TCC 按路径记「完全磁盘访问」，"
+             "给这个多名字文件查表时用的 subject 会被绑到其中一个名字、粘滞数小时，"
              "所以给 %s 授的权只在 subject 恰好是这个名字时被查到；repo 在外置卷上，"
-             "agent 会在运行中途失去读权（live 2026-09-18：server 进程被拒 17 小时"
-             "以上、看板连答 404，tccd 查的 subject 全是 /usr/bin/git）"
+             "agent 会在运行中途失去读权（live 2026-09-18：server 进程被内核拒了"
+             " 17 小时以上，tccd 查的 subject 全是 /usr/bin/git；看板那段时间答的 404"
+             " 由此推断）"
              % (named, SHIM_IDENTIFIER, note_zh, first),
              "%s is Apple's xcode-select tool shim (code-signing identifier %s,"
-             " shared with /usr/bin/git and every other Xcode shim%s) - macOS TCC"
-             " keys Full Disk Access by path, and the subject it looks up for a"
-             " many-named file is whichever name that file resolved to at the"
-             " time, so the grant for %s is consulted only when the subject happens"
-             " to be that name; with the repo on an external volume an agent loses"
-             " read access mid-life (live 2026-09-18: the server process was denied"
-             " for 17+ h and the board answered 404 while every tccd lookup used"
-             " subject=/usr/bin/git)"
+             " the same as /usr/bin/git, clang, swift and the other Xcode shims%s)"
+             " - macOS TCC keys Full Disk Access by path, and the subject it looks"
+             " up for a many-named file gets bound to one of those names and sticks"
+             " for hours, so the grant for %s is consulted only when the subject"
+             " happens to be that name; with the repo on an external volume an"
+             " agent loses read access mid-life (live 2026-09-18: the kernel denied"
+             " the server process for 17+ h while every tccd lookup used"
+             " subject=/usr/bin/git; the board's 404s in that window are inferred"
+             " from it)"
              % (named, SHIM_IDENTIFIER, note_en, first)),
         _identity_fix(first, real_interpreter(probes.run, first)))
 

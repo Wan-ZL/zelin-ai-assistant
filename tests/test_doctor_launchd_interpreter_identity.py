@@ -1,10 +1,11 @@
 """doctor `launchd interpreter identity` 行（CONTRACT §55 追记 2026-09-19；issue #423）。
 
-live 2026-09-18：server 进程（launchd 起的 `/usr/bin/python3 -m server`）13 小时读不到
-外置卷上的 repo，`GET /api/board` 连续 404；tccd 日志里那段时间每次查「完全磁盘访问」
-的 subject 都是 `/usr/bin/git`（authValue=0），表里只有 `/usr/bin/python3` 那行。两者是
-同一个 Apple xcode-select 工具 shim 的签名身份（`com.apple.dt.xcode_select.tool-shim-public`），
-TCC 按「最近见到的路径」查表。这一行只把这个形状说出来（WARN + 修法），永不 FAIL。
+live 2026-09-18：server 进程（launchd 起的 `/usr/bin/python3 -m server`）被内核拒了
+17 小时以上读不到外置卷上的 repo（看板那段时间的 404 由此推断）；tccd 日志里每次查
+「完全磁盘访问」的 subject 都是 `/usr/bin/git`（authValue=0），表里只有 `/usr/bin/python3`
+那行。两者是同一个文件的 78 个硬链接名之一——Apple 的 xcode-select 工具 shim
+（`com.apple.dt.xcode_select.tool-shim-public`）；TCC 按路径记账，给进程查表用的名字会被
+绑到其中一个、粘滞数小时。这一行只把这个形状说出来（WARN + 修法），永不 FAIL。
 全部经 Probes 注入（plist 原文、run）——绝不读开发者的 ~/Library/LaunchAgents，绝不起
 真 codesign。
 """
@@ -20,6 +21,9 @@ from act.lib.checks import launchd
 from server import permissions
 
 _WIN = sys.platform.startswith("win")
+# 导入时捕获的真 stat 探针（setUp 会把模块属性换成桩）
+REAL_LINK_COUNT = launchd._link_count
+REAL_SHARES_INODE = launchd._shares_inode_with_git
 
 SHIM = "/usr/bin/python3"
 REAL = ("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/"
@@ -66,6 +70,13 @@ class InterpreterIdentityRowTestCase(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
+        # 硬链接数 / 与 git 同 inode 两个探针默认读不到（None / False）——开发者机器上
+        # /usr/bin/python3 真有 78 个名字，不打桩会让判例依赖宿主机
+        for name, value in (("_link_count", None), ("_shares_inode_with_git", False)):
+            q = mock.patch.object(launchd, name, return_value=value)
+            q.start()
+            self.addCleanup(q.stop)
+
     def _probes(self, plists, run):
         return doctor.Probes(
             run=run,
@@ -109,10 +120,14 @@ class InterpreterIdentityRowTestCase(unittest.TestCase):
         self.assertIn(launchd.SHIM_IDENTIFIER, r.detail)
         self.assertIn("/usr/bin/git", r.detail)
         self.assertIn("2026-09-18", r.detail)        # 说清这是哪次事故的形状
-        # 修法：钉本体 + 给本体授 FDA，权宜 = 顺手给 git 也授
+        # 修法：钉本体 + 给本体授 FDA + 盯一次 subject；权宜 = 给 git 也授，但要说清影响面
         self.assertIn("AIASSISTANT_PYTHON=%s bash install.sh" % REAL, r.fix)
         self.assertIn("Full Disk Access", r.fix)
+        self.assertIn("AUTHREQ_SUBJECT", r.fix)
         self.assertIn("/usr/bin/git", r.fix)
+        self.assertIn("every name of that inode", r.fix)
+        # 不断言没查过的事：没有 stat 过 git 之前，detail 不说「它就是 git」
+        self.assertNotIn("inode", r.detail)
         # 无 §25 id（§55 2026-09-14 追记的先例：新 id 要同 PR 改 Swift 镜像表）
         self.assertEqual(r.failure_id, "")
         self.assertEqual(r.row_class, "")
@@ -122,25 +137,39 @@ class InterpreterIdentityRowTestCase(unittest.TestCase):
         (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
         self.assertNotEqual(r.status, doctor.FAIL)
 
-    def test_hard_link_count_is_named_when_the_shim_has_many_names(self):
+    def test_hard_link_count_and_git_inode_are_named_when_stat_proves_them(self):
         # /usr/bin/python3 与 /usr/bin/git 是同一个 inode（ls -li：78 个名字）——
-        # 这就是「按路径授权」为什么盖不住它；stat 读得到就说出来
+        # 这就是「按路径授权」为什么盖不住它；两件事都由 stat 证明了才说
         run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)})
-        with mock.patch.object(launchd, "_link_count", return_value=78):
+        with mock.patch.object(launchd, "_link_count", return_value=78), \
+                mock.patch.object(launchd, "_shares_inode_with_git", return_value=True):
             (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
         self.assertIn("78", r.detail)
         self.assertIn("inode", r.detail)
+        self.assertIn("/usr/bin/git", r.detail)
+
+    def test_many_names_but_not_git_names_only_the_count(self):
+        run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)})
+        with mock.patch.object(launchd, "_link_count", return_value=78), \
+                mock.patch.object(launchd, "_shares_inode_with_git", return_value=False):
+            (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
+        self.assertIn("78", r.detail)
+        self.assertNotIn("inode", r.detail)
 
     def test_unknown_or_single_link_count_stays_quiet(self):
         run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)})
         for count in (None, 1):
-            with mock.patch.object(launchd, "_link_count", return_value=count):
+            with mock.patch.object(launchd, "_link_count", return_value=count), \
+                    mock.patch.object(launchd, "_shares_inode_with_git", return_value=True):
                 (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
             self.assertEqual(r.status, doctor.WARN)
             self.assertNotIn("inode", r.detail)
+            self.assertNotIn("硬链接名", r.detail)
 
-    def test_link_count_helper_never_raises(self):
-        self.assertIsNone(launchd._link_count("/nonexistent/binary"))
+    def test_stat_helpers_never_raise(self):
+        # 真函数（模块导入时捕获，绕过 setUp 的桩）对不存在的路径安静地返回 None / False
+        self.assertIsNone(REAL_LINK_COUNT("/nonexistent/binary"))
+        self.assertFalse(REAL_SHARES_INODE("/nonexistent/binary"))
 
     def test_real_interpreter_unresolvable_falls_back_to_the_resolution_command(self):
         run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)}, real=(1, "boom"))
