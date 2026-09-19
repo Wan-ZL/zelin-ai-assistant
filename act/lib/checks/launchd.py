@@ -1,12 +1,16 @@
 """doctor 探针家族：macOS launchd（CONTRACT §25 行目录；§55 模板路径纪律与
-TCC 三幕；§56.3 第 1 步卷访问）。
+TCC 诸幕；§56.3 第 1 步卷访问）。
 
 行：``<agent short>``（每个模板 label 一行：未注册 / running / loaded /
 crash-loop 并按日志归因 ``No module named 'act'`` vs ``'yaml'``）、
 ``launchd paths`` + ``launchd python``（§55 四种症状）、``launchd orphans``
 （退役 agent 残留）、``launchd fd limit``（只抬 soft）、``launchd claude``
 （在一次性 launchd job 里问 launchd 本人 claude 读不读得到任务目录）、
-``launchd volume access``（读 §56.4 HOME 镜像的无人值守判决）。默认探针实现
+``launchd volume access``（读 §56.4 HOME 镜像的无人值守判决）、``launchd
+interpreter identity``（§55 追记 2026-09-19：plist 里的解释器是不是 Apple 的
+xcode-select 工具 shim——它与 /usr/bin/git 是同一个文件的 78 个硬链接名之一，
+TCC 按路径记「完全磁盘访问」，而给进程查表用的名字会被绑到其中一个、粘滞数小时
+（绑定事件本身没在日志里抓到），外置卷上的 agent 因此会在运行中途失去读权）。默认探针实现
 （agent 日志路径 / 尾部 / mtime、已装 plist label、launchd claude 探针）也住
 这里——tests 一律注入，绝不真起 launchd（tests/__init__.py 的 env 保险）。
 """
@@ -24,7 +28,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from act.lib import claude_bin as claude_bin_lib
-from act.lib import config, deploy_state, platform
+from act.lib import config, deploy_state, fresh_install, platform
 from act.lib.checks.core import (ACTD_LABEL, FAIL, LABEL_PREFIX, OK,
                                  RESIDENT_LABELS, WARN, CheckResult, installer,
                                  launchctl_table, pick, pinned_interpreter,
@@ -522,6 +526,168 @@ def check_paths(probes):
     paths = _paths_row(scan)
     python = _python_row(scan, paths)
     return [paths] if python is None else [paths, python]
+
+
+# --------------------------------------------------------------------------- #
+# §55 launchd interpreter identity（追记 2026-09-19，issue #423）
+# --------------------------------------------------------------------------- #
+# /usr/bin/python3 不是解释器本体，是 Apple 的 xcode-select 工具 shim：与
+# /usr/bin/git、clang、swift 等是同一个 inode 的 78 个硬链接名（xcrun / xcodebuild
+# 不在其中）。live 2026-09-18：tccd 给 server 进程查「完全磁盘访问」时 subject 是
+# /usr/bin/git（authValue=0），表里只有 /usr/bin/python3 那行——同一个进程被内核
+# 拒了 17 小时以上，看板那段时间答的 404 由此推断（board_bytes 把 errno 吞掉了）。
+SHIM_IDENTIFIER = "com.apple.dt.xcode_select.tool-shim-public"
+_IDENTITY_ROW = "launchd interpreter identity"
+_CODESIGN_ID_RE = re.compile(r"^Identifier=(\S+)", re.M)
+# 解释器本体 = 解开 shim 之后 sys.executable 的 realpath（Xcode 的框架 python
+# 是 …/Python3.framework/Versions/3.9/bin/python3.9）
+_REAL_INTERPRETER_SNIPPET = "import os, sys; print(os.path.realpath(sys.executable))"
+# 解不出本体时给 owner 的等价一行（同一段 snippet，别让两处漂移）
+_REAL_INTERPRETER_SHELL = "$(%s -c '%s')"
+
+
+def _link_count(path: str) -> Optional[int]:
+    """该二进制有几个硬链接名（/usr/bin 的 Xcode shim 是一个 Mach-O、78 个名字：
+    python3 / git / clang / swift …同一个 inode）；stat 不到 → None。"""
+    try:
+        return os.stat(path).st_nlink
+    except OSError:
+        return None
+
+
+def _shares_inode_with_git(path: str) -> bool:
+    """`path` 与 /usr/bin/git 是不是同一个 inode（真比 st_ino，不凭 nlink 推断）。"""
+    try:
+        return os.stat(path).st_ino == os.stat("/usr/bin/git").st_ino
+    except OSError:
+        return False
+
+
+def _names_note(path: str) -> "tuple[str, str]":
+    """(zh, en)：多名字文件的说明；单名或读不到 → 两句空串。只说 stat 证明了的事。"""
+    n = _link_count(path)
+    if not n or n < 2:
+        return "", ""
+    if _shares_inode_with_git(path):
+        return ("——`ls -li` 可见它与 /usr/bin/git 是同一个 inode、共 %d 个硬链接名" % n,
+                " - `ls -li` shows it IS /usr/bin/git: one inode with %d hard-linked names" % n)
+    return ("——`stat` 可见它有 %d 个硬链接名" % n,
+            " - `stat` shows it has %d hard-linked names" % n)
+
+
+def codesign_identifier(run, path: str) -> Optional[str]:
+    """``codesign -dv <path>`` 的 ``Identifier=``；读不出（不存在 / 未签名 /
+    非 darwin 的假 runner）→ None。经 probes.run 走，tests 注入。"""
+    rc, out = run(["codesign", "-dv", path], timeout=10)
+    if rc != 0:
+        return None
+    m = _CODESIGN_ID_RE.search(str(out or ""))
+    return m.group(1) if m else None
+
+
+def real_interpreter(run, py: str) -> str:
+    """shim 背后真正的解释器二进制（绝对路径）；问不出 → ""。"""
+    rc, out = run([py, "-c", _REAL_INTERPRETER_SNIPPET], timeout=10)
+    lines = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
+    if rc != 0 or not lines or not lines[-1].startswith("/"):
+        return ""
+    return lines[-1]
+
+
+def _identity_fix(py: str, real: str) -> str:
+    """先授权、再重钉：install.sh 的 launchd 可行性闸门会拒绝还读不到 repo 的
+    override（`AIASSISTANT_PYTHON=… did not pass the daemon interpreter gates —
+    ignored`），顺序反了等于白跑一遍。"""
+    target = real or (_REAL_INTERPRETER_SHELL % (py, _REAL_INTERPRETER_SNIPPET))
+    return ("System Settings > Privacy & Security > Full Disk Access: add %s"
+            " (the real interpreter, a single-name binary); then"
+            " AIASSISTANT_PYTHON=%s bash install.sh  # pins it, not the shim,"
+            " into every agent (install.sh ignores the override until that grant"
+            " exists); confirm with `log show --last 10m --info --predicate"
+            " 'process == \"tccd\"' | grep AUTHREQ_SUBJECT` that the subject is"
+            " now the pinned path. Stopgap without re-rendering: adding"
+            " /usr/bin/git there also works, but it grants Full Disk Access to"
+            " every name of that inode (clang, swift, make ...)"
+            % (target, target))
+
+
+def _shim_row(probes, shim: dict) -> CheckResult:
+    """shim → agents。detail 点名每个 shim 解释器与它托管的 agent。"""
+    named = "; ".join("%s (%s)" % (py, ", ".join(sorted(agents)))
+                      for py, agents in sorted(shim.items()))
+    first = sorted(shim)[0]
+    note_zh, note_en = _names_note(first)
+    return CheckResult(
+        _IDENTITY_ROW, WARN,
+        pick("%s 是 Apple 的 xcode-select 工具 shim（签名标识 %s，与 /usr/bin/git、"
+             "clang、swift 等 Xcode shim 同款%s）——macOS TCC 按路径记「完全磁盘访问」，"
+             "给这个多名字文件查表时用的 subject 会被绑到其中一个名字、粘滞数小时，"
+             "所以给 %s 授的权只在 subject 恰好是这个名字时被查到；repo 在 $HOME 之外"
+             "（TCC 按程序授权的形状），agent 会在运行中途失去读权（live 2026-09-18：server 进程被内核拒了"
+             " 17 小时以上，tccd 查的 subject 全是 /usr/bin/git；看板那段时间答的 404"
+             " 由此推断）"
+             % (named, SHIM_IDENTIFIER, note_zh, first),
+             "%s is Apple's xcode-select tool shim (code-signing identifier %s,"
+             " the same as /usr/bin/git, clang, swift and the other Xcode shims%s)"
+             " - macOS TCC keys Full Disk Access by path, and the subject it looks"
+             " up for a many-named file gets bound to one of those names and sticks"
+             " for hours, so the grant for %s is consulted only when the subject"
+             " happens to be that name; with the repo outside $HOME (the shape TCC"
+             " gates per binary) an agent loses read access mid-life (live"
+             " 2026-09-18: the kernel denied"
+             " the server process for 17+ h while every tccd lookup used"
+             " subject=/usr/bin/git; the board's 404s in that window are inferred"
+             " from it)"
+             % (named, SHIM_IDENTIFIER, note_en, first)),
+        _identity_fix(first, real_interpreter(probes.run, first)))
+
+
+def _identity_ok_row(identities: dict) -> CheckResult:
+    named = ", ".join("%s = %s" % (py, ident) for py, ident in sorted(identities.items()))
+    return CheckResult(
+        _IDENTITY_ROW, OK,
+        pick("launchd 解释器的签名身份不是共享的 xcode-select shim：%s" % named,
+             "the launchd interpreter's code-signing identity is not the shared"
+             " xcode-select shim: %s" % named))
+
+
+def check_interpreter_identity(probes):
+    """§55 追记 2026-09-19（issue #423）：已装 plist 的 ProgramArguments[0] 是不是
+    共享签名身份的 shim。只在 repo 在 $HOME **之外**（TCC 才咬人的形状，§55
+    候选次序同一判据）且 codesign 读得出身份时出行：shim → WARN（修法 = 用
+    AIASSISTANT_PYTHON 把本体钉进 plist + 给本体授 FDA；权宜 = 顺手给
+    /usr/bin/git 也授）；别的身份 → OK 点名；身份读不出 → 不出行（不猜）。
+    永不 FAIL：这是解释一类偶发失读的根因，不是此刻的故障，§56 的回滚判据不许
+    因它翻车。"""
+    if not fresh_install.repo_outside_home(config.HOME):
+        return []
+    by_interp = _installed_interpreters(probes)
+    known = _known_identities(probes.run, by_interp)
+    if not known:
+        return []
+    shim = {py: by_interp[py] for py, ident in known.items() if ident == SHIM_IDENTIFIER}
+    return _shim_row(probes, shim) if shim else _identity_ok_row(known)
+
+
+def _installed_interpreters(probes) -> dict:
+    """已装 plist 的 ProgramArguments[0] → 它托管的 agent short name 列表。"""
+    by_interp: dict = {}
+    for label in templated_labels(probes):
+        text = probes.installed_plist_text(label)
+        py = plist_interpreter(text) if text else None
+        if py:
+            by_interp.setdefault(py, []).append(label.rsplit(".", 1)[-1])
+    return by_interp
+
+
+def _known_identities(run, interpreters) -> dict:
+    """解释器 → codesign 身份；读不出的不进表（同一个解释器只问一次）。"""
+    known: dict = {}
+    for py in interpreters:
+        ident = codesign_identifier(run, py)
+        if ident:
+            known[py] = ident
+    return known
 
 
 # --------------------------------------------------------------------------- #

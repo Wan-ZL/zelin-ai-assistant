@@ -18,8 +18,8 @@ cron（§25 ingest 链读 ~/Documents 下的 vault）是第四个——原生 Cr
 路径全部是**可复制的绝对路径**（系统设置里点 + → ⌘⇧G → 粘贴）。doctor 行来自
 server/doctor_run（``--fast``；缓存 15 s），只挑 TCC 相关的：``launchd claude`` /
 ``launchd volume access`` / ``cron write access`` / ``cron ingest chain`` /
-``cron disk access`` / ``board ui build`` / ``launchd paths``（以及任何 failure_id 属 TCC
-词表的行）。``vault`` = 原生 PermissionsModel 的**被动**笔记库（Documents）探针：只看
+``cron disk access`` / ``board ui build`` / ``launchd paths`` / ``launchd interpreter
+identity``（§55 追记 2026-09-19；以及任何 failure_id 属 TCC 词表的行）。``vault`` = 原生 PermissionsModel 的**被动**笔记库（Documents）探针：只看
 ``state/vault_sync_mode`` 是否为 ``mirror``（ingest 链经壳身份 courier 拉成功过 = 授权确实
 生效）；server 永不去读 ~/Documents（那一读会在壳之外触发一次性 TCC 弹窗）——主动请求
 是壳的活（桥 ``requestPermission {kind:"vault"}``，§68.13）。
@@ -57,6 +57,8 @@ TCC_FAILURE_IDS = frozenset({
 TCC_ROW_NAMES = frozenset({
     "launchd claude", "launchd volume access", "cron write access",
     "cron ingest chain", "cron disk access", "board ui build", "launchd paths",
+    # §55 追记 2026-09-19：解释器是共享签名身份的 shim → FDA 只在部分时刻被查到
+    "launchd interpreter identity",
 })
 
 
