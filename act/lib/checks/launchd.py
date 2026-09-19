@@ -601,8 +601,8 @@ def _shim_row(probes, shim: dict) -> CheckResult:
              " 等全部 Xcode shim 共用%s）——macOS TCC 按路径记「完全磁盘访问」，"
              "给这个多名字文件查表时用的 subject 是它当时被解析成的那个名字，"
              "所以给 %s 授的权只在 subject 恰好是这个名字时被查到；repo 在外置卷上，"
-             "agent 会在运行中途失去读权（live 2026-09-18：GET /api/board 连续 404"
-             " 13 小时，tccd 查的 subject 全是 /usr/bin/git）"
+             "agent 会在运行中途失去读权（live 2026-09-18：server 进程被拒 17 小时"
+             "以上、看板连答 404，tccd 查的 subject 全是 /usr/bin/git）"
              % (named, SHIM_IDENTIFIER, note_zh, first),
              "%s is Apple's xcode-select tool shim (code-signing identifier %s,"
              " shared with /usr/bin/git and every other Xcode shim%s) - macOS TCC"
@@ -610,8 +610,9 @@ def _shim_row(probes, shim: dict) -> CheckResult:
              " many-named file is whichever name that file resolved to at the"
              " time, so the grant for %s is consulted only when the subject happens"
              " to be that name; with the repo on an external volume an agent loses"
-             " read access mid-life (live 2026-09-18: GET /api/board 404 for 13 h"
-             " while every tccd lookup used subject=/usr/bin/git)"
+             " read access mid-life (live 2026-09-18: the server process was denied"
+             " for 17+ h and the board answered 404 while every tccd lookup used"
+             " subject=/usr/bin/git)"
              % (named, SHIM_IDENTIFIER, note_en, first)),
         _identity_fix(first, real_interpreter(probes.run, first)))
 
