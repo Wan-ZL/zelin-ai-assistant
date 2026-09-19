@@ -15,6 +15,10 @@ To ship a change:
 2. Merge. `release-on-merge.yml` tags the merged commit with the next patch (`release: minor` / `release: major` labels on the PR pick a bigger bump), dispatches `release.yml`, and the GitHub Release body is the *delta* of (fragments ∪ `[Unreleased]`) since the previous tag (`scripts/ci/changelog_release_notes.py`). Nothing in this file or in `changelog.d/` is rewritten or deleted by a release; the per-version history lives in GitHub Releases + tags. The dated `## [X.Y.Z]` sections below are the pre-cutover history and stay as they are.
 3. Later, any PR that touches `changelog.d/` runs `python3 scripts/ci/changelog_prune.py` to drop fragments the latest tag already shipped (CI nudges with a `::notice::`; a delta body means a late prune never duplicates a note).
 
+### Fixed
+- README no longer carries a hand-written version literal; the git tag on `main` is the only version truth (§56.1). The literal red-lit its own release: `release.yml` fetches tags, so the README audit saw v1.0.115/v1.0.116 while the page still said v1.0.114 and the Release job died at the unit-test step. A tag-independent test now pins it.
+
+
 ## [Unreleased]
 
 1.0.0 — 新架构基线 / architecture baseline
