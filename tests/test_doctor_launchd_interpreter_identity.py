@@ -120,9 +120,11 @@ class InterpreterIdentityRowTestCase(unittest.TestCase):
         self.assertIn(launchd.SHIM_IDENTIFIER, r.detail)
         self.assertIn("/usr/bin/git", r.detail)
         self.assertIn("2026-09-18", r.detail)        # 说清这是哪次事故的形状
-        # 修法：钉本体 + 给本体授 FDA + 盯一次 subject；权宜 = 给 git 也授，但要说清影响面
+        # 修法：先给本体授 FDA、再钉本体（install.sh 的闸门拒绝没授权的 override）、
+        # 盯一次 subject；权宜 = 给 git 也授，但要说清影响面
         self.assertIn("AIASSISTANT_PYTHON=%s bash install.sh" % REAL, r.fix)
-        self.assertIn("Full Disk Access", r.fix)
+        self.assertIn("Full Disk Access: add %s" % REAL, r.fix)
+        self.assertLess(r.fix.index("Full Disk Access: add"), r.fix.index("AIASSISTANT_PYTHON="))
         self.assertIn("AUTHREQ_SUBJECT", r.fix)
         self.assertIn("/usr/bin/git", r.fix)
         self.assertIn("every name of that inode", r.fix)
@@ -212,6 +214,9 @@ class InterpreterIdentityRowTestCase(unittest.TestCase):
         self.assertEqual(launchd.codesign_identifier(run, SHIM), launchd.SHIM_IDENTIFIER)
         self.assertIsNone(launchd.codesign_identifier(run, "/nonexistent"))
         self.assertIsNone(launchd.codesign_identifier(lambda *a, **k: (0, "Format=Mach-O\n"), SHIM))
+        # runner 契约是 str；给 None / bytes 也不许炸（宪法第 11 条）
+        self.assertIsNone(launchd.codesign_identifier(lambda *a, **k: (0, None), SHIM))
+        self.assertIsNone(launchd.codesign_identifier(lambda *a, **k: (0, b"Identifier=x\n"), SHIM))
 
     def test_real_interpreter_takes_the_last_absolute_line(self):
         self.assertEqual(launchd.real_interpreter(lambda *a, **k: (0, "warn\n%s\n" % REAL), SHIM), REAL)

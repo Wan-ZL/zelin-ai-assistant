@@ -581,7 +581,7 @@ def codesign_identifier(run, path: str) -> Optional[str]:
     rc, out = run(["codesign", "-dv", path], timeout=10)
     if rc != 0:
         return None
-    m = _CODESIGN_ID_RE.search(out or "")
+    m = _CODESIGN_ID_RE.search(str(out or ""))
     return m.group(1) if m else None
 
 
@@ -595,15 +595,20 @@ def real_interpreter(run, py: str) -> str:
 
 
 def _identity_fix(py: str, real: str) -> str:
+    """先授权、再重钉：install.sh 的 launchd 可行性闸门会拒绝还读不到 repo 的
+    override（`AIASSISTANT_PYTHON=… did not pass the daemon interpreter gates —
+    ignored`），顺序反了等于白跑一遍。"""
     target = real or (_REAL_INTERPRETER_SHELL % (py, _REAL_INTERPRETER_SNIPPET))
-    return ("AIASSISTANT_PYTHON=%s bash install.sh  # pin the real interpreter,"
-            " not the shim, into every agent; then System Settings > Privacy &"
-            " Security > Full Disk Access: add that binary; confirm with"
-            " `log show --last 10m --info --predicate 'process == \"tccd\"' |"
-            " grep AUTHREQ_SUBJECT` that the subject is now the pinned path."
-            " Stopgap without re-rendering: adding /usr/bin/git there also works,"
-            " but it grants Full Disk Access to every name of that inode"
-            " (clang, swift, make ...)" % target)
+    return ("System Settings > Privacy & Security > Full Disk Access: add %s"
+            " (the real interpreter, a single-name binary); then"
+            " AIASSISTANT_PYTHON=%s bash install.sh  # pins it, not the shim,"
+            " into every agent (install.sh ignores the override until that grant"
+            " exists); confirm with `log show --last 10m --info --predicate"
+            " 'process == \"tccd\"' | grep AUTHREQ_SUBJECT` that the subject is"
+            " now the pinned path. Stopgap without re-rendering: adding"
+            " /usr/bin/git there also works, but it grants Full Disk Access to"
+            " every name of that inode (clang, swift, make ...)"
+            % (target, target))
 
 
 def _shim_row(probes, shim: dict) -> CheckResult:
@@ -617,8 +622,8 @@ def _shim_row(probes, shim: dict) -> CheckResult:
         pick("%s 是 Apple 的 xcode-select 工具 shim（签名标识 %s，与 /usr/bin/git、"
              "clang、swift 等 Xcode shim 同款%s）——macOS TCC 按路径记「完全磁盘访问」，"
              "给这个多名字文件查表时用的 subject 会被绑到其中一个名字、粘滞数小时，"
-             "所以给 %s 授的权只在 subject 恰好是这个名字时被查到；repo 在外置卷上，"
-             "agent 会在运行中途失去读权（live 2026-09-18：server 进程被内核拒了"
+             "所以给 %s 授的权只在 subject 恰好是这个名字时被查到；repo 在 $HOME 之外"
+             "（TCC 按程序授权的形状），agent 会在运行中途失去读权（live 2026-09-18：server 进程被内核拒了"
              " 17 小时以上，tccd 查的 subject 全是 /usr/bin/git；看板那段时间答的 404"
              " 由此推断）"
              % (named, SHIM_IDENTIFIER, note_zh, first),
@@ -627,8 +632,9 @@ def _shim_row(probes, shim: dict) -> CheckResult:
              " - macOS TCC keys Full Disk Access by path, and the subject it looks"
              " up for a many-named file gets bound to one of those names and sticks"
              " for hours, so the grant for %s is consulted only when the subject"
-             " happens to be that name; with the repo on an external volume an"
-             " agent loses read access mid-life (live 2026-09-18: the kernel denied"
+             " happens to be that name; with the repo outside $HOME (the shape TCC"
+             " gates per binary) an agent loses read access mid-life (live"
+             " 2026-09-18: the kernel denied"
              " the server process for 17+ h while every tccd lookup used"
              " subject=/usr/bin/git; the board's 404s in that window are inferred"
              " from it)"
