@@ -122,6 +122,26 @@ class InterpreterIdentityRowTestCase(unittest.TestCase):
         (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
         self.assertNotEqual(r.status, doctor.FAIL)
 
+    def test_hard_link_count_is_named_when_the_shim_has_many_names(self):
+        # /usr/bin/python3 与 /usr/bin/git 是同一个 inode（ls -li：78 个名字）——
+        # 这就是「按路径授权」为什么盖不住它；stat 读得到就说出来
+        run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)})
+        with mock.patch.object(launchd, "_link_count", return_value=78):
+            (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
+        self.assertIn("78", r.detail)
+        self.assertIn("inode", r.detail)
+
+    def test_unknown_or_single_link_count_stays_quiet(self):
+        run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)})
+        for count in (None, 1):
+            with mock.patch.object(launchd, "_link_count", return_value=count):
+                (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)
+            self.assertEqual(r.status, doctor.WARN)
+            self.assertNotIn("inode", r.detail)
+
+    def test_link_count_helper_never_raises(self):
+        self.assertIsNone(launchd._link_count("/nonexistent/binary"))
+
     def test_real_interpreter_unresolvable_falls_back_to_the_resolution_command(self):
         run = FakeRun(codesign={SHIM: (0, CODESIGN_SHIM)}, real=(1, "boom"))
         (r,) = self._rows({LABELS[0]: _plist(SHIM)}, run)

@@ -544,6 +544,24 @@ _REAL_INTERPRETER_SNIPPET = "import os, sys; print(os.path.realpath(sys.executab
 _REAL_INTERPRETER_SHELL = "$(%s -c '%s')"
 
 
+def _link_count(path: str) -> Optional[int]:
+    """该二进制有几个硬链接名（/usr/bin 的 Xcode shim 是一个 Mach-O、78 个名字：
+    python3 / git / clang / swift …同一个 inode）；stat 不到 → None。"""
+    try:
+        return os.stat(path).st_nlink
+    except OSError:
+        return None
+
+
+def _names_note(path: str) -> "tuple[str, str]":
+    """(zh, en)：多名字文件的说明；单名或读不到 → 两句空串。"""
+    n = _link_count(path)
+    if not n or n < 2:
+        return "", ""
+    return ("——`ls -li` 可见它与 /usr/bin/git 是同一个 inode、共 %d 个硬链接名" % n,
+            " - `ls -li` shows it IS /usr/bin/git: one inode with %d hard-linked names" % n)
+
+
 def codesign_identifier(run, path: str) -> Optional[str]:
     """``codesign -dv <path>`` 的 ``Identifier=``；读不出（不存在 / 未签名 /
     非 darwin 的假 runner）→ None。经 probes.run 走，tests 注入。"""
@@ -576,21 +594,25 @@ def _shim_row(probes, shim: dict) -> CheckResult:
     named = "; ".join("%s (%s)" % (py, ", ".join(sorted(agents)))
                       for py, agents in sorted(shim.items()))
     first = sorted(shim)[0]
+    note_zh, note_en = _names_note(first)
     return CheckResult(
         _IDENTITY_ROW, WARN,
         pick("%s 是 Apple 的 xcode-select 工具 shim（签名标识 %s，与 /usr/bin/git"
-             " 等全部 Xcode shim 共用）——macOS TCC 按这个共享身份「最近见到的路径」"
-             "查「完全磁盘访问」表，给 %s 授的权只在部分时刻被查到；repo 在外置卷上，"
+             " 等全部 Xcode shim 共用%s）——macOS TCC 按路径记「完全磁盘访问」，"
+             "给这个多名字文件查表时用的 subject 是它当时被解析成的那个名字，"
+             "所以给 %s 授的权只在 subject 恰好是这个名字时被查到；repo 在外置卷上，"
              "agent 会在运行中途失去读权（live 2026-09-18：GET /api/board 连续 404"
-             " 13 小时，tccd 查的 subject 是 /usr/bin/git）"
-             % (named, SHIM_IDENTIFIER, first),
+             " 13 小时，tccd 查的 subject 全是 /usr/bin/git）"
+             % (named, SHIM_IDENTIFIER, note_zh, first),
              "%s is Apple's xcode-select tool shim (code-signing identifier %s,"
-             " shared with /usr/bin/git and every other Xcode shim) - macOS TCC"
-             " looks up Full Disk Access under that shared identity's last-seen"
-             " path, so the grant for %s is consulted only some of the time; with"
-             " the repo on an external volume an agent loses read access mid-life"
-             " (live 2026-09-18: GET /api/board 404 for 13 h while tccd checked"
-             " subject=/usr/bin/git)" % (named, SHIM_IDENTIFIER, first)),
+             " shared with /usr/bin/git and every other Xcode shim%s) - macOS TCC"
+             " keys Full Disk Access by path, and the subject it looks up for a"
+             " many-named file is whichever name that file resolved to at the"
+             " time, so the grant for %s is consulted only when the subject happens"
+             " to be that name; with the repo on an external volume an agent loses"
+             " read access mid-life (live 2026-09-18: GET /api/board 404 for 13 h"
+             " while every tccd lookup used subject=/usr/bin/git)"
+             % (named, SHIM_IDENTIFIER, note_en, first)),
         _identity_fix(first, real_interpreter(probes.run, first)))
 
 
