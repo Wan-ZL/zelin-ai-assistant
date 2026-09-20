@@ -1070,7 +1070,7 @@
       "id": "contract:§56.1",
       "source": "contract",
       "scenario": "版本真源 = git tag；没有任何文件承载版本（2026-09-02 改写；宪法第 8 条同日修宪）",
-      "proof": "unittest:tests.test_doctor,tests.test_version_pins_check,tests.test_version_resolution,tests.test_version_stamp_cli && flow:install_fresh && flow:uninstall_reinstall",
+      "proof": "unittest:tests.test_doctor,tests.test_readme_audit_repo_readme,tests.test_version_pins_check,tests.test_version_resolution && flow:install_fresh && flow:uninstall_reinstall",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

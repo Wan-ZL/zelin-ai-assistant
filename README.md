@@ -10,7 +10,7 @@
 
 A personal AI chief-of-staff for macOS (and a headless-plus-board port on Windows and Linux). It watches where work arrives — meeting recordings, Slack, Gmail — turns requests into approval cards on a kanban board, and executes the approved ones with background Claude agents. You do two things: **approve** and **accept**. Everything else is automated.
 
-This page describes **v1.0.114**. The version truth is the git tag on `main` (releases are minted on merge); `python3 scripts/version_stamp.py` prints the version of the checkout in front of you.
+This page describes the release currently tagged on `main` — the git tag is the only version truth (releases are minted on merge; CONTRACT §56.1), so no number is written here. `python3 scripts/version_stamp.py` prints the version of the checkout in front of you.
 
 ![The board: proposals, working, in review, done](docs/images/board-kanban-light.png)
 
