@@ -1,4 +1,4 @@
-pr: `ai/self-improve/R-224`（R-224「修红 CI：PR #437 fix(readme): drop the hand-written version literal」；回执型——真交付是推到 #437 head 分支 `fix/readme-version-literal` 的 `94fb1e8b`，本分支带 CONTRIBUTING 三句 + 本片段）
+pr: `ai/self-improve/R-224`（PR #438；R-224「修红 CI：PR #437 fix(readme): drop the hand-written version literal」；回执型——真交付是推到 #437 head 分支 `fix/readme-version-literal` 的 `94fb1e8b`，本分支带 CONTRIBUTING 三句 + 本片段）
 phase: 横切（§65 自我改进通道：`pr_red` 卡；§58 QA 六门；§77.1 全覆盖清单；D5 / D12「红 CI 是臣子的事」）
 law: —（无修法；docs-only。§77.1 早已写明「表是派生物、不是账本」，本轮只把这条搬到 CONTRIBUTING 里贡献者会读到的位置）
 
