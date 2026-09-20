@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, platform
 from act.lib.checks import core, environment, launchd, pipeline, services
@@ -61,7 +61,7 @@ class RunnerTestCase(unittest.TestCase):
 
 class _FakeHome(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-doctor-home-"))
+        self.home = Path(scratch_dir(self, prefix="zai-doctor-home-"))
         p = mock.patch.object(Path, "home", return_value=self.home)
         p.start()
         self.addCleanup(p.stop)
@@ -259,7 +259,7 @@ class MiscHelpersTestCase(unittest.TestCase):
         self.assertFalse(launchd.symlink_shaped(None))
         self.assertFalse(launchd.symlink_shaped("relative"))
         self.assertFalse(launchd.symlink_shaped("/nonexistent-zai-path-xyz/"))
-        tmp = Path(tempfile.mkdtemp(prefix="zai-sym-"))
+        tmp = Path(scratch_dir(self, prefix="zai-sym-"))
         real = tmp / "real"
         real.mkdir()
         link = tmp / "link"

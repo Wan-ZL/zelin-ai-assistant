@@ -8,12 +8,12 @@ only（Windows 合成 mode 位，_reharden 直接放行——单独钉一条）�
 from __future__ import annotations
 
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from server import security
 
@@ -22,7 +22,7 @@ _POSIX = os.name == "posix"
 
 class _Home(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-tok-edge-"))
+        self.home = Path(scratch_dir(self, prefix="zai-tok-edge-"))
         self.p = security.token_path(self.home)
         self.p.parent.mkdir(parents=True)
         self.p.write_text("abcDEF_-123\n", encoding="utf-8")

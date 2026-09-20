@@ -25,7 +25,6 @@ mutation net — all of these were <15 % covered):
 import io
 import json
 import subprocess
-import tempfile
 import time
 import unittest
 import urllib.error
@@ -35,6 +34,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import radar_slack
 from act.lib import analytics, config
@@ -92,7 +92,7 @@ class SlackApiTestCase(unittest.TestCase):
 
 class DownloadFileTestCase(unittest.TestCase):
     def test_writes_bytes_and_reports_failure(self):
-        dest = Path(tempfile.mkdtemp(prefix="dl-")) / "sub" / "img.png"
+        dest = Path(scratch_dir(self, prefix="dl-")) / "sub" / "img.png"
         with mock.patch.object(urllib.request, "urlopen",
                                lambda *a, **k: _Resp(b"PNGDATA")):
             self.assertTrue(radar_slack.download_file("t", "https://x/f", dest))
@@ -106,7 +106,7 @@ class DownloadFileTestCase(unittest.TestCase):
 
 class ExtractFramesTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="frames-"))
+        self.tmp = Path(scratch_dir(self, prefix="frames-"))
         self.video = self.tmp / "clip.mp4"
         self.video.write_bytes(b"\x00")
         self.out = self.tmp / "frames"
@@ -162,7 +162,7 @@ class ExtractFramesTestCase(unittest.TestCase):
 
 class CollectMediaTestCase(unittest.TestCase):
     def setUp(self):
-        self.media = Path(tempfile.mkdtemp(prefix="media-"))
+        self.media = Path(scratch_dir(self, prefix="media-"))
         patcher = mock.patch.object(radar_slack, "MEDIA_DIR", self.media)
         patcher.start()
         self.addCleanup(patcher.stop)

@@ -12,12 +12,12 @@ the LAST cwd wins (worktree hop). Fixtures live under a throwaway $HOME.
 """
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import transcripts
@@ -37,7 +37,7 @@ def _blocks(*texts):
 
 class _Home(unittest.TestCase):
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix="transcript-edges-")
+        self.home = scratch_dir(self, prefix="transcript-edges-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)

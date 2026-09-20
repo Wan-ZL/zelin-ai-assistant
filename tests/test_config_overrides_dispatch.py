@@ -10,19 +10,19 @@ error skipping just that entry, and the CLI ``--print-path`` in-process.
 """
 import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config
 
 
 class ReaderTestCase(unittest.TestCase):
     def test_read_overrides_shapes(self):
-        tmp = Path(tempfile.mkdtemp(prefix="ovr-"))
+        tmp = Path(scratch_dir(self, prefix="ovr-"))
         with mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", tmp / "none.json"):
             self.assertIsNone(config._read_overrides())
         bad = tmp / "bad.json"
@@ -156,7 +156,7 @@ class HandlerTestCase(unittest.TestCase):
         self.assertEqual(self.cfg.daily_loop_time, "03:05")
 
     def test_bad_entry_skips_only_itself(self):
-        tmp = Path(tempfile.mkdtemp(prefix="ovr-skip-"))
+        tmp = Path(scratch_dir(self, prefix="ovr-skip-"))
         path = tmp / "settings_overrides.json"
         path.write_text(json.dumps({"trash_retention_days": "nine", "language": "en",
                                     "features": {"a": "no"}, "features.a": "yes",

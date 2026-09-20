@@ -59,13 +59,13 @@ import datetime as _dt
 import json
 import os
 import re
-import tempfile
 import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import (config, dashboard, fold_receipts, radar_health, radar_rounds,
                      secrets, self_improve, transcripts)
@@ -80,8 +80,8 @@ def _req(**fields) -> Requirement:
     return Requirement.from_dict(base)
 
 
-def _tmpdir(prefix: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix=prefix))
+def _tmpdir(case, prefix: str) -> Path:
+    return Path(scratch_dir(case, prefix=prefix))
 
 
 class SandboxHomeMixin:
@@ -89,7 +89,7 @@ class SandboxHomeMixin:
 
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.dict(os.environ, {"HOME": str(_tmpdir("dash-mut-home-"))})
+        patcher = mock.patch.dict(os.environ, {"HOME": str(_tmpdir(self, "dash-mut-home-"))})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -198,7 +198,7 @@ class MissingTimestampsSinkTestCase(unittest.TestCase):
     最上」同时失真）。"""
 
     def _merge_dir(self, *stems_and_stamps) -> Path:
-        d = _tmpdir("dash-mut-merge-")
+        d = _tmpdir(self, "dash-mut-merge-")
         for stem, stamp in stems_and_stamps:
             body = {"status": "done", "ids": ["R-1", "R-2"]}
             if stamp is not None:
@@ -445,19 +445,19 @@ class DirIsNonemptyIsAllThreeTestCase(unittest.TestCase):
     """§7：「已有仓库」= 存在 ∧ 是目录 ∧ 非空——三个都要，不是任意一个。"""
 
     def test_a_plain_file_is_not_a_repo(self):
-        d = _tmpdir("dash-mut-dir-")
+        d = _tmpdir(self, "dash-mut-dir-")
         f = d / "README.md"
         f.write_text("x", encoding="utf-8")
         self.assertIs(dashboard._dir_is_nonempty(f), False)
 
     def test_an_empty_directory_is_not_a_repo(self):
-        self.assertIs(dashboard._dir_is_nonempty(_tmpdir("dash-mut-empty-")), False)
+        self.assertIs(dashboard._dir_is_nonempty(_tmpdir(self, "dash-mut-empty-")), False)
 
     def test_a_missing_path_is_not_a_repo(self):
-        self.assertIs(dashboard._dir_is_nonempty(_tmpdir("dash-mut-gone-") / "nope"), False)
+        self.assertIs(dashboard._dir_is_nonempty(_tmpdir(self, "dash-mut-gone-") / "nope"), False)
 
     def test_a_directory_with_content_is(self):
-        d = _tmpdir("dash-mut-full-")
+        d = _tmpdir(self, "dash-mut-full-")
         (d / "f").write_text("x", encoding="utf-8")
         self.assertIs(dashboard._dir_is_nonempty(d), True)
 
@@ -593,12 +593,12 @@ class WriteDashboardBytesTestCase(unittest.TestCase):
     """§2：落盘的字节形状本身是契约——目录自建、中文不转义、缩进两格。"""
 
     def test_the_whole_parent_chain_is_created(self):
-        target = _tmpdir("dash-mut-write-") / "state" / "nested" / "dashboard.json"
+        target = _tmpdir(self, "dash-mut-write-") / "state" / "nested" / "dashboard.json"
         dashboard.write_dashboard({"counts": {}}, path=target)
         self.assertTrue(target.exists())
 
     def test_cjk_stays_readable_and_the_indent_is_two(self):
-        target = _tmpdir("dash-mut-write-") / "dashboard.json"
+        target = _tmpdir(self, "dash-mut-write-") / "dashboard.json"
         dashboard.write_dashboard({"title": "中文标题"}, path=target)
         text = target.read_text(encoding="utf-8")
         self.assertIn("中文标题", text)              # ensure_ascii=False

@@ -13,12 +13,12 @@ never a stale answer, never a guess.
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import os
-import tempfile
 import sys
 import unittest
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard, transcripts
 from act.lib.registry import Requirement
@@ -92,7 +92,7 @@ class TinfoSigTestCase(unittest.TestCase):
                      "transcript dir resolution unported on Windows "
                      "(HOME-based sandbox; same area as harvest)")
     def test_signature_tracks_the_transcript_file(self):
-        home = tempfile.mkdtemp(prefix="tinfo-home-")
+        home = scratch_dir(self, prefix="tinfo-home-")
         proj = os.path.join(home, ".claude", "projects", "proj-x")
         os.makedirs(proj)
         path = os.path.join(proj, SID + ".jsonl")
@@ -116,7 +116,7 @@ class BuildDashboardUsesCacheTestCase(unittest.TestCase):
     def setUp(self):
         dashboard._TINFO_CACHE.clear()
         self.addCleanup(dashboard._TINFO_CACHE.clear)
-        home = tempfile.mkdtemp(prefix="dash-cache-home-")
+        home = scratch_dir(self, prefix="dash-cache-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)

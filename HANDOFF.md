@@ -148,6 +148,7 @@
 - **每个改动批次**：py_compile + `python3 -m unittest discover -s tests`（150+ 个测试，以 CI 为准）+
   `bash mac/build.sh` 三关全绿再合并。app 装机 = `bash mac/build.sh --install`。
 - **测试用 tempdir AIASSISTANT_HOME**，绝不碰真实 state/registry。
+- **判例草稿目录走 `tests/scratch_testkit.scratch_dir(self, prefix=…)`**，不裸调 `tempfile.mkdtemp`（hygiene 门执法，CONTRACT §58.3）；`tests/__init__.py` 把整次 run 的临时目录根指进沙箱并在退出时整树删（issue #436）。
 - commit 信息写清楚"为什么"，运行态 registry 文件不进代码 commit。
 
 ## 5. 当前状态快照（交接时点）

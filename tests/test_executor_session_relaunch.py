@@ -17,12 +17,12 @@ argv is observed instead of a real claude:
   adopted by brief; ``cfg=None`` loads the sandbox config.
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor, llm
 from act.lib import config, registry
@@ -43,7 +43,7 @@ class _Base(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
         self.cfg = config.Config()
-        self.wt = Path(tempfile.mkdtemp(prefix="relaunch-wt-")) / "worktree"
+        self.wt = Path(scratch_dir(self, prefix="relaunch-wt-")) / "worktree"
         self.calls = []
         for patcher in (
             mock.patch.object(executor, "_agent_info", return_value={"pid": None}),

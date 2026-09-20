@@ -27,12 +27,12 @@ Same injectable-runner pattern as tests/test_dispatch.py; nothing real is
 launched, notified or queried.
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import actd, executor
 from act.lib import analytics, config, dashboard, failures, registry
@@ -100,7 +100,7 @@ class BrakeBase(unittest.TestCase):
         config.ensure_state_dirs()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
-        self.target = Path(tempfile.mkdtemp(prefix="storm-target-"))
+        self.target = Path(scratch_dir(self, prefix="storm-target-"))
         (self.target / "keep.txt").write_text("x", encoding="utf-8")
         self.cfg = config.Config()
         self.cfg.memory_inject = False
@@ -200,7 +200,7 @@ class StormBrakeTripsTestCase(BrakeBase):
         self.assertNotIn("dispatch_halted", registry.load("R-983").execution)
 
     def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="storm-cfg-")) / "config.yaml"
+        path = Path(scratch_dir(self, prefix="storm-cfg-")) / "config.yaml"
         path.write_text(body, encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()

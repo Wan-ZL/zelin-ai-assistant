@@ -40,7 +40,6 @@ Everything lives under the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
 import json
-import tempfile
 import unittest
 import urllib.error
 import urllib.parse
@@ -49,6 +48,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act import actd
 from act.lib import analytics, config, feedback, feedback_sync, secrets
@@ -757,7 +757,7 @@ class ConfigWiringTestCase(unittest.TestCase):
     """
 
     def _load(self, overrides: dict, yaml_body: str = "") -> config.Config:
-        tmp = Path(tempfile.mkdtemp(prefix="cfg-fbsync-"))
+        tmp = Path(scratch_dir(self, prefix="cfg-fbsync-"))
         cfg_path = tmp / "config.yaml"
         cfg_path.write_text(yaml_body, encoding="utf-8")
         ov_path = tmp / "settings_overrides.json"

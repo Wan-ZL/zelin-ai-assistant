@@ -9,13 +9,12 @@ collection (no-op payload, unchanged hot column), put_card's source projection
 rewrite + no-op short-circuit, and get_activities' tolerant JSON read.
 """
 import json
-import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib.store2 import store as st
 from act.lib.store2 import IntegrityViolation, NotFound, Store, StoreError, TransitionDenied
@@ -107,7 +106,7 @@ class PureHelpersTestCase(unittest.TestCase):
 
 class AssignmentsTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-helpers-"))
+        self.tmp = Path(scratch_dir(self, prefix="store2-helpers-"))
         self.store = Store(self.tmp / "s.db", now_fn=lambda: NOW)
         self.store.create_card({"id": "R-1", "status": "card_sent", "title": "t",
                                 "payload": {"k": 1}}, actor_type="system")
@@ -115,7 +114,6 @@ class AssignmentsTestCase(unittest.TestCase):
 
     def tearDown(self):
         self.store.close()
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_check_update_fields(self):
         st._check_update_fields({"tier": "T2"}, "system")
@@ -148,12 +146,11 @@ class AssignmentsTestCase(unittest.TestCase):
 
 class WritePathsTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-writes-"))
+        self.tmp = Path(scratch_dir(self, prefix="store2-writes-"))
         self.store = Store(self.tmp / "s.db", now_fn=lambda: NOW)
 
     def tearDown(self):
         self.store.close()
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _sources(self, card_id):
         return [tuple(r) for r in self.store._conn().execute(

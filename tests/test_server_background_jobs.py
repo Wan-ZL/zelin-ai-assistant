@@ -13,12 +13,12 @@ train PR 的 CI（Tests on ubuntu 3.9，head 0619da32）真红过一次：
 - 三个后台模块都有同一道缝，且 `reset_*_for_tests()` 先 join 再清场。
 「join 之后没有任何写落地」那一条拿真的临时目录钉在 tests/test_server_screenpipe_disk.py。
 """
-import tempfile
 import threading
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from server import background_jobs, ingest_run, screenpipe_disk, worktree_inventory
 
@@ -95,7 +95,7 @@ class SeamIsWiredEverywhereTestCase(unittest.TestCase):
         `runner` 是注入的假件（仓规：unit 层禁真 subprocess）。"""
         ingest_run.reset_jobs_for_tests()
         self.addCleanup(ingest_run.reset_jobs_for_tests)
-        home = Path(tempfile.mkdtemp(prefix="zai-ingest-seam-"))
+        home = Path(scratch_dir(self, prefix="zai-ingest-seam-"))
         seen = []
 
         def runner(_argv, _env, _cwd, _timeout_s):

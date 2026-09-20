@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import recap
 from act.lib import failures, notify
@@ -162,7 +162,7 @@ class CatalogShapeTestCase(unittest.TestCase):
 
 class CatalogRouteTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-notify-"))
+        self.home = Path(scratch_dir(self, prefix="zai-notify-"))
         (self.home / "state").mkdir()
         _, self.port = start_server(self, self.home)
 

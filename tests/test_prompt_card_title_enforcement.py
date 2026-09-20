@@ -32,6 +32,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config, registry, sanitize, titles
@@ -260,7 +261,7 @@ class ReworkGateTitleTierTestCase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
         self.cfg = config.Config()
-        self.wt = Path(tempfile.mkdtemp(prefix="rework-title-")) / "worktree"
+        self.wt = Path(scratch_dir(self, prefix="rework-title-")) / "worktree"
         patcher = mock.patch.object(executor, "_agent_info", return_value={})
         patcher.start()
         self.addCleanup(patcher.stop)

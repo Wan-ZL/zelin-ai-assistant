@@ -24,10 +24,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[2]
 _WIN = sys.platform.startswith("win")
@@ -78,8 +78,7 @@ def _git(cwd, *args):
 @unittest.skipIf(_WIN, "bash scripts are POSIX-only")
 class BuildVersionTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="buildver-"))
-        self.addCleanup(shutil.rmtree, str(self.tmp), ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="buildver-"))
         self.repo = self.tmp / "repo"
         for rel in COPIED:
             dst = self.repo / rel

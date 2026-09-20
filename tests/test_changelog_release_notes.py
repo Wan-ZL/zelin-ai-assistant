@@ -14,10 +14,10 @@
 import io
 import os
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 _CI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "ci")
 if _CI_DIR not in sys.path:
@@ -170,7 +170,7 @@ class FragmentsTestCase(unittest.TestCase):
 
 class MainTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="crn-"))
+        self.tmp = Path(scratch_dir(self, prefix="crn-"))
         (self.tmp / "cur.md").write_text(CURR, encoding="utf-8")
         (self.tmp / "prev.md").write_text(PREV, encoding="utf-8")
 

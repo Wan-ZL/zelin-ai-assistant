@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ET
 import unittest
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import taskscheduler as ts
 
@@ -183,9 +184,8 @@ class RenderTemplatesTestCase(unittest.TestCase):
 
 class RenderCliTestCase(unittest.TestCase):
     def test_main_writes_rendered_xml_into_out_dir(self):
-        import tempfile
         from pathlib import Path
-        out = Path(tempfile.mkdtemp(prefix="tasksched-out-"))
+        out = Path(scratch_dir(self, prefix="tasksched-out-"))
         rc = ts.main(["--python", PY, "--repo-root", REPO,
                       "--claude-bin-dir", CLAUDE_DIR, "--zai-port", PORT,
                       "--out", str(out)])

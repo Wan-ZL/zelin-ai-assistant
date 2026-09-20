@@ -64,15 +64,15 @@ def _cfg(enabled: bool) -> config.Config:
 
 def _load(yaml_body: str = "", overrides=None) -> config.Config:
     """真 load_config 的三层：config.yaml + settings_overrides.json。"""
-    tmp = Path(tempfile.mkdtemp(prefix="si-switch-"))
-    cfg_path = tmp / "config.yaml"
-    cfg_path.write_text(yaml_body, encoding="utf-8")
-    ov_path = tmp / "settings_overrides.json"
-    if overrides is not None:
-        ov_path.write_text(json.dumps(overrides), encoding="utf-8")
-    with mock.patch.object(config, "CONFIG_PATH", cfg_path), \
-            mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", ov_path):
-        return config.load_config()
+    with tempfile.TemporaryDirectory(prefix="si-switch-") as tmp:
+        cfg_path = Path(tmp) / "config.yaml"
+        cfg_path.write_text(yaml_body, encoding="utf-8")
+        ov_path = Path(tmp) / "settings_overrides.json"
+        if overrides is not None:
+            ov_path.write_text(json.dumps(overrides), encoding="utf-8")
+        with mock.patch.object(config, "CONFIG_PATH", cfg_path), \
+                mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", ov_path):
+            return config.load_config()
 
 
 class ConfigLayeringTestCase(unittest.TestCase):

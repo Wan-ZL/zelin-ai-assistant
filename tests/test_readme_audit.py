@@ -10,9 +10,9 @@ app / mac 构建指令 / 非当前 tag 的版本字面量）、UI 标签判据�
 import io
 import os
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stdout
+from tests.scratch_testkit import scratch_dir
 
 _QA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "qa")
@@ -22,9 +22,9 @@ if _QA_DIR not in sys.path:
 import readme_audit  # noqa: E402
 
 
-def _fake_repo(readme, extra_files=()):
+def _fake_repo(case, readme, extra_files=()):
     """最小仓库：README + ui/parity 清单 + web/src 一个文案源。"""
-    root = tempfile.mkdtemp(prefix="readme-audit-")
+    root = scratch_dir(case, prefix="readme-audit-")
     os.makedirs(os.path.join(root, "ui", "parity"))
     os.makedirs(os.path.join(root, "web", "src"))
     os.makedirs(os.path.join(root, "docs", "images"))
@@ -70,42 +70,42 @@ class ExtractClaimsTest(unittest.TestCase):
 
 class PathClaimTest(unittest.TestCase):
     def test_missing_path_is_stale(self):
-        root = _fake_repo("- see [the guide](docs/NOPE.md)\n")
+        root = _fake_repo(self, "- see [the guide](docs/NOPE.md)\n")
         report = readme_audit.audit(root, tag="v1.0.114")
         self.assertEqual(len(report.stale), 1)
         self.assertIn("docs/NOPE.md", report.stale[0].reasons[0])
 
     def test_existing_path_is_ok(self):
-        root = _fake_repo("- see [the guide](docs/INSTALL.md)\n",
+        root = _fake_repo(self, "- see [the guide](docs/INSTALL.md)\n",
                           extra_files=("docs/INSTALL.md",))
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_runtime_paths_are_not_stale(self):
-        root = _fake_repo("- the board reads `state/dashboard.json` from `web/dist`\n")
+        root = _fake_repo(self, "- the board reads `state/dashboard.json` from `web/dist`\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_prose_slash_is_not_a_path(self):
-        root = _fake_repo("- launchd/cron scheduling with Slack/Gmail radars\n")
+        root = _fake_repo(self, "- launchd/cron scheduling with Slack/Gmail radars\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_command_line_inside_a_fence_is_path_checked(self):
-        root = _fake_repo("```bash\nbash scripts/ghost.sh\n```\n")
+        root = _fake_repo(self, "```bash\nbash scripts/ghost.sh\n```\n")
         report = readme_audit.audit(root, tag="v1.0.114")
         self.assertEqual([c.kind for c in report.stale], ["code"])
 
     def test_mermaid_node_text_is_not_a_path_claim(self):
-        root = _fake_repo("```mermaid\nA[\"radars / three of them\"] --> B\n```\n")
+        root = _fake_repo(self, "```mermaid\nA[\"radars / three of them\"] --> B\n```\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_glob_resolves(self):
-        root = _fake_repo("- three radars live in `act/radar*.py`\n",
+        root = _fake_repo(self, "- three radars live in `act/radar*.py`\n",
                           extra_files=("act/radar_slack.py",))
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
 
 class RetiredSurfaceTest(unittest.TestCase):
     def _reasons(self, text):
-        root = _fake_repo(text)
+        root = _fake_repo(self, text)
         return [r for c in readme_audit.audit(root, tag="v1.0.114").stale
                 for r in c.reasons]
 
@@ -131,7 +131,7 @@ class RetiredSurfaceTest(unittest.TestCase):
 
     def test_unknown_tag_disables_the_version_judgement(self):
         """浅 clone / 没有 tag 的 checkout 上不判版本——宁可少判，不可乱判。"""
-        root = _fake_repo("- removed in v0.21 as announced\n")
+        root = _fake_repo(self, "- removed in v0.21 as announced\n")
         self.assertEqual(readme_audit.audit(root, tag="").stale, [])
 
     def test_os_versions_are_not_version_literals(self):
@@ -140,34 +140,34 @@ class RetiredSurfaceTest(unittest.TestCase):
 
 class LabelClaimTest(unittest.TestCase):
     def test_label_in_inventory_is_ok(self):
-        root = _fake_repo('- click the "Approve" button on the card\n')
+        root = _fake_repo(self, '- click the "Approve" button on the card\n')
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_label_from_web_sources_is_ok(self):
-        root = _fake_repo('- the "In review" lane holds finished work\n')
+        root = _fake_repo(self, '- the "In review" lane holds finished work\n')
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_unknown_label_is_stale(self):
-        root = _fake_repo('- press the "Teleport" button on the board\n')
+        root = _fake_repo(self, '- press the "Teleport" button on the board\n')
         stale = readme_audit.audit(root, tag="v1.0.114").stale
         self.assertEqual(len(stale), 1)
         self.assertIn("Teleport", stale[0].reasons[0])
 
     def test_retired_owner_label_is_stale(self):
         """清单里 owner=retired 的文案（Ask）不算「web app 渲染得出来」。"""
-        root = _fake_repo('- the "Ask" tab answers questions\n')
+        root = _fake_repo(self, '- the "Ask" tab answers questions\n')
         self.assertTrue(readme_audit.audit(root, tag="v1.0.114").stale)
 
     def test_html_attribute_values_are_not_labels(self):
-        root = _fake_repo('<p align="center"><sub>the board page</sub></p>\n')
+        root = _fake_repo(self, '<p align="center"><sub>the board page</sub></p>\n')
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_quotes_without_ui_context_are_not_labels(self):
-        root = _fake_repo('The music is "Voxel Revolution" by Kevin MacLeod.\n')
+        root = _fake_repo(self, 'The music is "Voxel Revolution" by Kevin MacLeod.\n')
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_render_mode_requires_the_label_on_screen(self):
-        root = _fake_repo('- click the "Approve" button on the card\n')
+        root = _fake_repo(self, '- click the "Approve" button on the card\n')
         clean = readme_audit.audit(root, tag="v1.0.114",
                                    rendered="Approve Reject")
         self.assertEqual(clean.stale, [])
@@ -178,20 +178,20 @@ class LabelClaimTest(unittest.TestCase):
 
 class SummaryAndOutputTest(unittest.TestCase):
     def test_summary_line_is_verbatim(self):
-        root = _fake_repo("- a bullet about `docs/NOPE.md`\n"
+        root = _fake_repo(self, "- a bullet about `docs/NOPE.md`\n"
                           "![shot](docs/images/board-light.png)\n",
                           extra_files=("docs/images/board-light.png",))
         report = readme_audit.audit(root, tag="v1.0.114")
         self.assertEqual(report.summary(), "README claims=2 stale=1 images=1")
 
     def test_images_are_deduped(self):
-        root = _fake_repo("![a](docs/images/x.png) and again docs/images/x.png\n",
+        root = _fake_repo(self, "![a](docs/images/x.png) and again docs/images/x.png\n",
                           extra_files=("docs/images/x.png",))
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").images,
                          ["docs/images/x.png"])
 
     def test_markdown_table_has_one_row_per_claim(self):
-        root = _fake_repo("- one bullet\n- two bullets\n")
+        root = _fake_repo(self, "- one bullet\n- two bullets\n")
         report = readme_audit.audit(root, tag="v1.0.114")
         body = readme_audit.render_markdown(report, "v1.0.114")
         self.assertIn("| # | line | kind | verdict | reason | claim |", body)
@@ -199,7 +199,7 @@ class SummaryAndOutputTest(unittest.TestCase):
         self.assertIn("README claims=2 stale=0 images=0", body)
 
     def test_main_summary_prints_exactly_one_line(self):
-        root = _fake_repo("- a clean bullet\n")
+        root = _fake_repo(self, "- a clean bullet\n")
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = readme_audit.main(["--repo", root, "--tag", "v1.0.114",
@@ -208,7 +208,7 @@ class SummaryAndOutputTest(unittest.TestCase):
         self.assertEqual(buf.getvalue(), "README claims=1 stale=0 images=0\n")
 
     def test_check_exits_1_when_stale(self):
-        root = _fake_repo("- broken `docs/NOPE.md`\n")
+        root = _fake_repo(self, "- broken `docs/NOPE.md`\n")
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = readme_audit.main(["--repo", root, "--tag", "v1.0.114",
@@ -216,7 +216,7 @@ class SummaryAndOutputTest(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_out_writes_the_default_report_path(self):
-        root = _fake_repo("- a clean bullet\n")
+        root = _fake_repo(self, "- a clean bullet\n")
         buf = io.StringIO()
         with redirect_stdout(buf):
             readme_audit.main(["--repo", root, "--tag", "v1.0.114", "--out"])

@@ -40,13 +40,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import actd, radar_claude_sessions as rcs
 from act.lib import analytics, config, registry
 
 
-# a real directory, so import sets it as target_repo (existence-checked)
-_DEMO_CWD = tempfile.mkdtemp(prefix="demo-app-")
+# a real directory, so import sets it as target_repo (existence-checked);
+# lives exactly as long as this module's tests (tearDownModule), not the process
+_DEMO_CWD_TMP = tempfile.TemporaryDirectory(prefix="demo-app-")
+_DEMO_CWD = _DEMO_CWD_TMP.name
+
+
+def tearDownModule():
+    _DEMO_CWD_TMP.cleanup()
 
 
 def _iso(dt: datetime) -> str:
@@ -79,7 +86,7 @@ def _entry(etype: str, text, ts: datetime, cwd: str = None,
 
 class ClaudeSessionsRadarTest(unittest.TestCase):
     def setUp(self):
-        self.claude_dir = Path(tempfile.mkdtemp(prefix="claude-cfg-"))
+        self.claude_dir = Path(scratch_dir(self, prefix="claude-cfg-"))
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.claude_dir)
         self.proj = self.claude_dir / "projects" / "-tmp-demo-app"
         self.proj.mkdir(parents=True)
@@ -100,7 +107,6 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
-        shutil.rmtree(self.claude_dir, ignore_errors=True)
 
     # -- fixture helpers ---------------------------------------------------- #
     def _write_session(self, sid: str, entries: list, project: Path = None,
@@ -328,8 +334,7 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         # session's id/cwd (berkeley Q&A card pointing at an Obsidian ingest
         # session). Two transcripts, different projects/cwds -> each imported
         # card carries ITS OWN session id (ref) and cwd in the source.
-        vault_cwd = tempfile.mkdtemp(prefix="vault-")
-        self.addCleanup(shutil.rmtree, vault_cwd, ignore_errors=True)
+        vault_cwd = scratch_dir(self, prefix="vault-")
         vault_proj = self.claude_dir / "projects" / "-vault"
         vault_proj.mkdir(parents=True)
         t = self.now - timedelta(hours=2)
@@ -378,8 +383,7 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
     def test_project_dir_uses_final_main_chain_cwd(self):
         # sessions migrate into worktrees mid-flight; resume is scoped to the
         # FINAL cwd, so the binding must use the last main-chain cwd
-        wt = tempfile.mkdtemp(prefix="worktree-")
-        self.addCleanup(shutil.rmtree, wt, ignore_errors=True)
+        wt = scratch_dir(self, prefix="worktree-")
         t = self.now - timedelta(hours=1)
         self._write_session("sess-migrating", [
             _entry("user", "Isolate this refactor into a worktree", t),

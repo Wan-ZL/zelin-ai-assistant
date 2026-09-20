@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import http.client
 import json
-import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (DEMO_SEED_PATH, rewrite_board,
                                       seed_scene, start_server)
 
@@ -58,7 +58,7 @@ class EventHubTestCase(unittest.TestCase):
 @unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
 class BoardWatcherTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-watch-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-watch-"))
         self.dash = seed_scene(self.home, "initial")
         self.hub = EventHub()
         self.q = self.hub.subscribe()
@@ -99,7 +99,7 @@ class SseEndToEndTestCase(unittest.TestCase):
     """真 server + 真 watcher（默认 300ms 轮询）：连上 → touch → 收到事件。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-sse-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-sse-"))
         self.dash = seed_scene(self.home, "initial")
         _, self.port = start_server(self, self.home, start_watcher=True)
 
@@ -165,7 +165,7 @@ class MidStreamErrorTestCase(unittest.TestCase):
     行写进已开启的 event-stream（app.py _serve_events 的 except Exception）。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-sse-err-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-sse-err-"))
         seed_scene(self.home, "initial")
         self.httpd, self.port = start_server(self, self.home)
         self.hub = _PoisonHub()

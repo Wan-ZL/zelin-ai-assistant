@@ -13,12 +13,12 @@ C. universal FILE PATH REPORTING block (all delivery modes, both formats);
 D. rework gate_lines repeat the same rules, else one 打回 undoes A-C.
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config, registry
@@ -35,7 +35,7 @@ class BuildPromptPathRulesTestCase(unittest.TestCase):
         cfg.default_output_format = fmt
         req = Requirement.from_dict({"id": "R-980", "title": "写一份报告",
                                      "delivery_mode": delivery_mode})
-        td = Path(tempfile.mkdtemp(prefix="audit-prompt-"))
+        td = Path(scratch_dir(self, prefix="audit-prompt-"))
         return executor.build_prompt(req, cfg, target=td), td
 
     def test_html_block_demands_file_at_target_deliverables(self):
@@ -80,7 +80,7 @@ class ReworkGateLinePathRulesTestCase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
         self.cfg = config.Config()
-        self.wt = Path(tempfile.mkdtemp(prefix="audit-rework-wt-")) / "worktree"
+        self.wt = Path(scratch_dir(self, prefix="audit-rework-wt-")) / "worktree"
         for name, ret in (("_agent_info", {}),):
             patcher = mock.patch.object(executor, name, return_value=ret)
             patcher.start()

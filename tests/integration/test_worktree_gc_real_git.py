@@ -18,11 +18,11 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import worktrees
 
@@ -76,8 +76,7 @@ class RealGitTestCase(unittest.TestCase):
     """真 repo：`origin` 是本地裸库；main 上一个提交；三条 worktree（干净 / 脏 / 有本地提交）。"""
 
     def setUp(self):
-        self.base = os.path.realpath(tempfile.mkdtemp(prefix="wt-gc-real-"))
-        self.addCleanup(shutil.rmtree, self.base, True)
+        self.base = os.path.realpath(scratch_dir(self, prefix="wt-gc-real-"))
         remote = os.path.join(self.base, "remote.git")
         self.repo = os.path.join(self.base, "repo")
         _git(self.base, "init", "--bare", "--initial-branch=main", remote)

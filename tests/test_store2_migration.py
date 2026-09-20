@@ -11,11 +11,11 @@ import importlib.util
 import json
 import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
+from tests.scratch_testkit import scratch_dir
 
 import yaml
 
@@ -188,7 +188,7 @@ class MigrationTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = Path(tempfile.mkdtemp(prefix="store2-migrate-"))
+        cls.tmp = Path(scratch_dir(cls, prefix="store2-migrate-"))
         cls.registry_dir = cls.tmp / "registry"
         cls.db_path = cls.tmp / "store2.db"
         build_fixture_registry(cls.registry_dir)
@@ -199,7 +199,6 @@ class MigrationTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.conn.close()
-        shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def _row(self, rid):
         row = self.conn.execute(
@@ -353,7 +352,7 @@ class OriginTrustRoundTripTestCase(unittest.TestCase):
 
     def test_hand_first_card_folded_with_gmail_round_trips_external(self):
         from act.lib.store2.export_yaml import export_db
-        tmp = Path(tempfile.mkdtemp(prefix="store2-origin-rt-"))
+        tmp = Path(scratch_dir(self, prefix="store2-origin-rt-"))
         try:
             reg = tmp / "registry"
             reg.mkdir(parents=True)
@@ -407,7 +406,7 @@ class MigrationRefusalTestCase(unittest.TestCase):
 
     def test_out_of_vocab_status_refuses_whole_run(self):
         import act.lib.store2.migrate_yaml as m
-        tmp = Path(tempfile.mkdtemp(prefix="store2-refuse-"))
+        tmp = Path(scratch_dir(self, prefix="store2-refuse-"))
         try:
             reg = tmp / "registry"
             reg.mkdir(parents=True)
@@ -442,15 +441,12 @@ class NonSerializableValueRefusalTestCase(unittest.TestCase):
     网里）——必须与其他坏形态同路：干净 REFUSED（rc 非零）+ plan 层点名。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-nonjson-"))
+        self.tmp = Path(scratch_dir(self, prefix="store2-nonjson-"))
         self.reg = self.tmp / "registry"
         self.reg.mkdir(parents=True)
         (self.reg / "R-070.yaml").write_text(
             "id: R-070\ntitle: 手编日期卡\nstatus: detected\n"
             "deadline: 2026-09-15\n", encoding="utf-8")
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_unquoted_date_refuses_whole_run_without_traceback(self):
         import act.lib.store2.migrate_yaml as m
@@ -477,7 +473,7 @@ class UnknownKeyRefusalTestCase(unittest.TestCase):
     --allow-unknown 显式降级为 WARN + 丢弃（from_dict 语义）。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-unknown-"))
+        self.tmp = Path(scratch_dir(self, prefix="store2-unknown-"))
         self.reg = self.tmp / "registry"
         self.reg.mkdir(parents=True)
         card = _card("R-301", "detected")
@@ -485,9 +481,6 @@ class UnknownKeyRefusalTestCase(unittest.TestCase):
         (self.reg / "R-301.yaml").write_text(
             yaml.safe_dump(card, allow_unicode=True, sort_keys=False),
             encoding="utf-8")
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_unknown_key_refuses_whole_run(self):
         import act.lib.store2.migrate_yaml as m
@@ -540,7 +533,7 @@ class GarbageTargetTestCase(unittest.TestCase):
 
     def test_garbage_target_file_is_clean_refusal(self):
         import act.lib.store2.migrate_yaml as m
-        tmp = Path(tempfile.mkdtemp(prefix="store2-garbage-"))
+        tmp = Path(scratch_dir(self, prefix="store2-garbage-"))
         try:
             garbage = tmp / "not-a-db.db"
             garbage.write_bytes(b"\x00\x01this is not sqlite\xff" * 40)
@@ -561,7 +554,7 @@ class GarbageTargetTestCase(unittest.TestCase):
 @unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
 class MigrationDryRunTestCase(unittest.TestCase):
     def test_dry_run_writes_no_rows(self):
-        tmp = Path(tempfile.mkdtemp(prefix="store2-dryrun-"))
+        tmp = Path(scratch_dir(self, prefix="store2-dryrun-"))
         try:
             registry_dir = tmp / "registry"
             db_path = tmp / "store2.db"

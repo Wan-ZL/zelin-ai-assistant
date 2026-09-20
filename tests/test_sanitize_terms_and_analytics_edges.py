@@ -19,12 +19,12 @@ pre-refactor modules.
 import datetime as _dt
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import analytics, config, sanitize
 
@@ -39,7 +39,7 @@ def _unlink_config_files() -> None:
 
 class LoadTermsTestCase(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="terms-"))
+        self.dir = Path(scratch_dir(self, prefix="terms-"))
         sanitize._terms_cache.clear()
 
     def test_missing_file(self):
@@ -90,7 +90,7 @@ class ScrubEdgeTestCase(unittest.TestCase):
         cfg.redaction_enabled = True
         cfg.redaction_terms_file = None
         self.assertEqual(sanitize.scrub("plain", cfg), ("plain", 0))
-        terms = Path(tempfile.mkdtemp(prefix="terms-")) / "t.txt"
+        terms = Path(scratch_dir(self, prefix="terms-")) / "t.txt"
         terms.write_text("Phoenix\nre:z+\n", encoding="utf-8")
         cfg.redaction_terms_file = str(terms)
         self.assertEqual(sanitize.scrub("nothing here", cfg), ("nothing here", 0))
@@ -111,7 +111,7 @@ class ScrubEdgeTestCase(unittest.TestCase):
 
 class ReadEventsTestCase(unittest.TestCase):
     def setUp(self):
-        d = Path(tempfile.mkdtemp(prefix="ana-"))
+        d = Path(scratch_dir(self, prefix="ana-"))
         for attr, val in (("ANALYTICS_DIR", d), ("EVENTS_PATH", d / "events.jsonl")):
             p = mock.patch.object(analytics, attr, val)
             p.start()
@@ -188,7 +188,7 @@ class GateEdgeTestCase(unittest.TestCase):
 
 class LogFirstAndClipTestCase(unittest.TestCase):
     def setUp(self):
-        d = Path(tempfile.mkdtemp(prefix="ana-"))
+        d = Path(scratch_dir(self, prefix="ana-"))
         for attr, val in (("ANALYTICS_DIR", d), ("EVENTS_PATH", d / "events.jsonl"),
                           ("FIRST_DIR", d / "first")):
             p = mock.patch.object(analytics, attr, val)

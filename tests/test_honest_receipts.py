@@ -38,6 +38,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import actd, radar, radar_slack, weekly_digest
 from act.lib import config, dashboard, notify, registry
@@ -50,7 +51,7 @@ from act.lib.registry import Requirement, State
 class CostStateTestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()  # show_cost_above_usd = 5.0
-        home = tempfile.mkdtemp(prefix="cost-home-")
+        home = scratch_dir(self, prefix="cost-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -90,7 +91,7 @@ class CostStateTestCase(unittest.TestCase):
 class PurgeAtTestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()  # trash_retention_days = 60
-        home = tempfile.mkdtemp(prefix="purge-home-")
+        home = scratch_dir(self, prefix="purge-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)

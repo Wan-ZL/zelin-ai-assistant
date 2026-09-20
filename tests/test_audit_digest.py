@@ -20,13 +20,13 @@ Everything runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
 import os
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act.* import
+from tests.scratch_testkit import scratch_dir
 
 from act import digest, oneonone
 from act.lib import config, registry
@@ -101,8 +101,7 @@ class DigestCardTestCase(unittest.TestCase):
         ok_retry，漏计会让真实完成的合并从周报里消失（review finding，
         2026-08-18）。事件文件整体隔离，免受同轮其他测试落的事件污染。"""
         from act.lib import analytics
-        tmp = Path(tempfile.mkdtemp(prefix="ev-"))
-        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        tmp = Path(scratch_dir(self, prefix="ev-"))
         with mock.patch.object(analytics, "ANALYTICS_DIR", tmp), \
                 mock.patch.object(analytics, "EVENTS_PATH",
                                   tmp / "events.jsonl"):

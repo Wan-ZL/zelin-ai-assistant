@@ -99,6 +99,7 @@ The retired Mac app under `mac/Sources` is the terminal UI spec; `ui/parity/nati
 - **Bilingual strings.** Every user-visible string goes through `L("中文", "English")` — both languages, always; the UI switches at runtime.
 - **Shell scripts run on bash 3.2** (the live `/bin/bash`): inside a bilingual string, always brace a variable followed by a fullwidth/CJK character — `（${_why}）` not `（$_why）` — bash 3.2 swallows the multibyte character's first byte into the variable name and aborts under `set -u` (shipped bug in PR #130, caught by its own test).
 - **Tests use a tempdir `AIASSISTANT_HOME`** — never a real `state/` or registry.
+- **Test scratch directories go through `scratch_dir(self, prefix="…")`** (`tests/scratch_testkit.py`; pass `cls` from `setUpClass`), or a `tempfile.TemporaryDirectory()` context manager when the directory only lives inside one helper call — never a bare `tempfile.mkdtemp`. The hygiene gate (`scripts/qa/hygiene.py`, CONTRACT §58.3) rejects raw `mkdtemp` anywhere under `tests/`, and `tests/__init__.py` points the whole run's temp root into the sandbox HOME and removes it at exit, so a run leaves nothing in your `$TMPDIR` (issue #436: 215k leaked directories on the owner's Mac).
 - **Commit messages**: conventional commits, English, and say *why*, not just what.
 
 Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map, the reasoning behind every "weird" design, and a pitfall list paid for in real debugging time), then `docs/CONTRACT.md`.

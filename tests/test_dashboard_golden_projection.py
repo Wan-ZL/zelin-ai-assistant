@@ -28,12 +28,12 @@ and say so in CONTRACT §2.
 import datetime as _dt
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import (card_summary, config, dashboard, deploy_state, fold_receipts,
                      radar_health, registry, secrets)
@@ -300,12 +300,12 @@ def serialize(dash: dict) -> str:
 
 class DashboardGoldenTestCase(unittest.TestCase):
     def setUp(self):
-        home = tempfile.mkdtemp(prefix="dash-golden-home-")
+        home = scratch_dir(self, prefix="dash-golden-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.merge_dir = Path(tempfile.mkdtemp(prefix="dash-golden-merge-"))
-        self.state_dir = Path(tempfile.mkdtemp(prefix="dash-golden-state-"))
+        self.merge_dir = Path(scratch_dir(self, prefix="dash-golden-merge-"))
+        self.state_dir = Path(scratch_dir(self, prefix="dash-golden-state-"))
 
     def test_projection_matches_golden_byte_for_byte(self):
         import io

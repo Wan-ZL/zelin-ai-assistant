@@ -11,12 +11,12 @@ Covers (v0.37 build brief):
 """
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config, registry, search_index
@@ -33,7 +33,7 @@ def _line(kind: str, text: str, **extra) -> str:
 
 class TranscriptPlainTextTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix="searchidx-home-")
+        self.home = scratch_dir(self, prefix="searchidx-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)

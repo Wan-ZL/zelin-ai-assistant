@@ -38,10 +38,10 @@ import shutil
 import stat as statmod
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[2]
 PACKAGE_SH = REPO / "mac" / "package.sh"
@@ -132,8 +132,7 @@ def _mini_bin(tmp: Path) -> Path:
 @unittest.skipIf(_WIN, "the .pkg postinstall is a macOS bash script (stubs are POSIX)")
 class PostinstallGitGuardTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="pkg-guard-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="pkg-guard-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.mini = _mini_bin(self.tmp)
@@ -245,8 +244,7 @@ class GuardUnresolvableDestinationTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="pkg-guard-resolve-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="pkg-guard-resolve-"))
 
     def _run(self, dest: Path):
         return subprocess.run(["bash", str(REPO / GUARD_REL), str(dest)],
@@ -279,8 +277,7 @@ class InstallShSecondLockTestCase(unittest.TestCase):
     THAT one (§74.4 边界)."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="pkg-guard-install-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="pkg-guard-install-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.copy = self.tmp / "zelin-ai-assistant"

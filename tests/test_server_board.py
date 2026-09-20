@@ -11,11 +11,11 @@
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (DEMO_SEED_PATH, SCENES, assert_envelope,
                                       dashboard_path, get_json, http_request,
                                       seed_scene, start_server, write_text)
@@ -39,7 +39,7 @@ _HERO_LANE = {
 @unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
 class BoardPassthroughTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-board-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-board-"))
         seed_scene(self.home, "initial")
         _, self.port = start_server(self, self.home)
 
@@ -95,7 +95,7 @@ class BoardPassthroughTestCase(unittest.TestCase):
 
 class BoardMissingTestCase(unittest.TestCase):
     def test_missing_dashboard_is_404_envelope(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-g5-empty-"))
+        home = Path(scratch_dir(self, prefix="zai-g5-empty-"))
         _, port = start_server(self, home)
         status, obj = get_json(port, "/api/board")
         self.assertEqual(status, 404)
@@ -107,7 +107,7 @@ class CardDetailProjectionTestCase(unittest.TestCase):
     """投影行部分——不依赖 PyYAML（registry 增补缺席也必须可用）。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-card-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-card-"))
         self.dash = seed_scene(self.home, "initial")
         _, self.port = start_server(self, self.home)
 
@@ -165,7 +165,7 @@ class CardDetailEnrichmentTestCase(unittest.TestCase):
     """registry YAML 增补：add-only 合并 + archive 优先 + 批次文件 + 样例跳过。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-enrich-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-enrich-"))
         self.dash = seed_scene(self.home, "initial")
         self.reg = self.home / "act" / "registry"
         _, self.port = start_server(self, self.home)

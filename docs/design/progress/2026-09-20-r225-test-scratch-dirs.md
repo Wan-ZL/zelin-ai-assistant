@@ -1,0 +1,9 @@
+pr: `ai/self-improve/R-225`（issue #436；§65 自动草稿 PR 通道）
+phase: 横切（QA 卫生；§58.3 追记 2026-09-20）
+law: §58.3 追记（hygiene 门 `mkdtemp:` 规则；套件临时目录根 + atexit 整树删）
+
+owner 2026-09-19 开 issue #436：`/var/folders/…/T` 里 215,092 个陈旧目录、5.6 GB、日增约 11k，每个前缀都对得上 `tests/` 里一处 `tempfile.mkdtemp(prefix=…)`——`dash-home-` 一个前缀 48,889 个。审计 235 处调用（130 个文件）：79 处在 `setUp` 里登记了 cleanup、53 处 `setUp` 没登记、55 处测试方法里没登记、8 处是无 TestCase 在手的 module-level helper、3 处 `setUpClass`、1 处 module-level 常量、`tests/__init__.py` 自己的沙箱 HOME 从不删。「登记了」也不保险：`test_merge_review` 的 `dash-home-` 同一个 `setUp` 里只登记了 patcher.stop，目录本身没人删。
+
+修法三道（缺一道都还会漏）：**(a)** 新工厂 `tests/scratch_testkit.scratch_dir(case, prefix=…)`——`tests/` 里唯一准调 mkdtemp 的地方，登记进 `case.addCleanup` / `addClassCleanup` 整树删；AST codemod 把 224 处 `self`/`cls` 上下文的调用逐字换成 `scratch_dir(self, …)`（关键字原样保留），顺手删掉 51 行如今冗余的 `self.addCleanup(shutil.rmtree, …)` 与 16 处只剩 rmtree 的 `tearDown`；9 处 module-level helper 手改：返回目录给调用方用的加 `case` 形参、只在调用期间活着的改 `TemporaryDirectory()` 上下文、`_DEMO_CWD` 改 `TemporaryDirectory` + `tearDownModule`；`worktree_testkit.Tree` 内部改 `TemporaryDirectory`，`cleanup()` 委托。**(b)** `tests/__init__.py` 铸完 `TMP_HOME` 就把 `tempfile.tempdir` 与 `TMPDIR`/`TEMP`/`TMP` 指进 `<TMP_HOME>/tmp`，`atexit` 整树删——判例进程与子进程的一切草稿一棵树，忘了 cleanup 的最多活到本次 run 结束。**(c)** hygiene 门（`scripts/qa/hygiene.py`）新规则 `mkdtemp:<文件>`：白名单外 `tests/**` 每处裸调用计 1 分、阈值 0、账本零条；`--list` 首次列出 128 个文件，收工时 0。§57 变异 runner 的 per-run `TMPDIR` + `finally` rmtree 早在 4dcf4ddd 就有，本次补 integration 判例钉住（含 timeout `killpg` 路径）。
+
+判例五件：工厂删得干净（实例 / 类 / 关键字 / 已删目录不炸）、门规则（两种拼法计数、子目录在范围、白名单豁免、TemporaryDirectory 不算、坏文件不崩门、真仓库零条）、指向（gettempdir / 三个 env 键 / 三种构造器）、真子进程退出后 `$TMPDIR` 零残留（issue 第三条期望的机器版）、变异 runner 子进程的 home 在 pass 与 timeout 两条路都被删。CONTRACT §58.3 追记、CONTRIBUTING 项目规则、HANDOFF 一行；`qa/gates.toml` 不动（无新阈值），`ledger_diff` 无需声明方向。
