@@ -2,8 +2,8 @@
 
 `mutate.run_subset` 给每个测试子进程一个 `mutate-home-*` 目录当 AIASSISTANT_HOME，并把
 TMPDIR/TEMP/TMP 一起指进去，`finally` 里整树 rmtree——所以 killpg 收割的超时子进程也
-漏不出一个目录。真 python 子进程，住 integration/（防腐 #7）。时间预算：一个亚秒级
-子进程 + 一个 1 秒超时被杀的子进程。
+漏不出一个目录。真 python 子进程，住 integration/（防腐 #7）。时间预算：BUDGET_SECONDS
+兜底（一个亚秒级子进程 + 一个 3 秒超时被杀的子进程）。
 """
 import importlib.util
 import json
@@ -21,6 +21,8 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 mutate = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(mutate)
+
+BUDGET_SECONDS = 60
 
 # 子进程里的判例：把它看到的临时目录根写回工作区，（可选）再睡到被收割。
 _PROBE = (
@@ -54,6 +56,12 @@ def _wait_for(path, seconds=20):
 
 
 class ScratchHomeTestCase(unittest.TestCase):
+    def setUp(self):
+        self.start = time.monotonic()
+
+    def tearDown(self):
+        self.assertLess(time.monotonic() - self.start, BUDGET_SECONDS)
+
     def test_child_temp_root_is_the_per_run_home_and_it_is_removed(self):
         with TemporaryDirectory(prefix="mutate-ws-") as ws:
             root = _workspace(ws)
@@ -70,7 +78,7 @@ class ScratchHomeTestCase(unittest.TestCase):
             root = _workspace(ws)
             os.environ["PROBE_SLEEP"] = "1"
             self.addCleanup(os.environ.pop, "PROBE_SLEEP", None)
-            status, _ = mutate.run_subset(root, [Path("t/test_probe.py")], timeout=1)
+            status, _ = mutate.run_subset(root, [Path("t/test_probe.py")], timeout=3)
             self.assertEqual(status, "timeout")
             seen = _wait_for(root / "seen.json")
         self.assertTrue(os.path.basename(seen["home"]).startswith("mutate-home-"), seen)

@@ -81,9 +81,9 @@ class RawMkdtempTestCase(unittest.TestCase):
 
 class LiveRepoTestCase(unittest.TestCase):
     def test_the_live_tests_tree_has_no_raw_mkdtemp(self):
-        scores = hygiene.scan(qa_common.REPO_ROOT)
-        raw = sorted(k for k in scores if k.startswith("mkdtemp:"))
-        self.assertEqual(raw, [], "use tests.scratch_testkit.scratch_dir (CONTRACT §58.3)")
+        scores = {}
+        hygiene._scan_test_scratch(qa_common.REPO_ROOT, scores)  # the one rule, not the whole gate
+        self.assertEqual(sorted(scores), [], "use tests.scratch_testkit.scratch_dir (CONTRACT §58.3)")
 
 
 if __name__ == "__main__":

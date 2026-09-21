@@ -4,11 +4,12 @@
 会写的空目录：子进程 import tests（铸沙箱 HOME + 重定向 + 登记 atexit），再故意用三种
 tempfile 构造器各漏一个不 cleanup 的草稿，退出。断言：子进程报的 TMP_HOME 不存在了，
 那个空目录仍然是空的——这就是 issue 里「suite leaves $TMPDIR entry count unchanged」
-的机器版。时间预算：一个亚秒级子进程。
+的机器版。时间预算：BUDGET_SECONDS 兜底（一个亚秒级子进程）。
 """
 import os
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,6 +17,7 @@ from tempfile import TemporaryDirectory
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
 REPO = Path(__file__).resolve().parents[2]
+BUDGET_SECONDS = 60
 
 _CHILD = (
     "import os, tempfile, tests\n"
@@ -29,11 +31,13 @@ _CHILD = (
 
 class ScratchRootRemovedAtExitTestCase(unittest.TestCase):
     def test_tmpdir_is_empty_after_the_process_exits(self):
+        start = time.monotonic()
         with TemporaryDirectory(prefix="fresh-tmpdir-") as fresh:
             env = dict(os.environ, TMPDIR=fresh, TEMP=fresh, TMP=fresh, PYTHONDONTWRITEBYTECODE="1")
             proc = subprocess.run([sys.executable, "-c", _CHILD], cwd=str(REPO), env=env,
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, timeout=BUDGET_SECONDS)
             self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertLess(time.monotonic() - start, BUDGET_SECONDS)
             home, scratch = proc.stdout.strip().splitlines()[-2:]
             self.assertEqual(os.path.dirname(home), fresh, "sandbox HOME was minted in the child's TMPDIR")
             self.assertEqual(scratch, os.path.join(home, "tmp"), "child redirected its temp root into the sandbox")

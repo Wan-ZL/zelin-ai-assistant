@@ -93,9 +93,11 @@ class SeamIsWiredEverywhereTestCase(unittest.TestCase):
         否则 §68.4 的有界 join 等的是一张空表，而真正在往 home 里写的那个线程谁也
         等不到——CI 那次 `Errno 39 Directory not empty` 就是这个形状。脚本不真跑：
         `runner` 是注入的假件（仓规：unit 层禁真 subprocess）。"""
+        # scratch first: cleanups run LIFO, so the home is removed only after the
+        # bounded join below has waited for the thread that writes into it.
+        home = Path(scratch_dir(self, prefix="zai-ingest-seam-"))
         ingest_run.reset_jobs_for_tests()
         self.addCleanup(ingest_run.reset_jobs_for_tests)
-        home = Path(scratch_dir(self, prefix="zai-ingest-seam-"))
         seen = []
 
         def runner(_argv, _env, _cwd, _timeout_s):

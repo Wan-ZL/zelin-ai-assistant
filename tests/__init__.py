@@ -26,7 +26,8 @@ os.environ["AIASSISTANT_HOME"] = TMP_HOME
 # （2026-09-19 owner 机器上 215k 个目录、5.6 GB，每个前缀都对得上 tests/ 里一处
 # mkdtemp）。判例侧的规矩：目录一律经 tests/scratch_testkit.scratch_dir 铸——那是
 # tests/ 里除本文件外唯一准调 mkdtemp 的地方（hygiene 门 `mkdtemp:` 规则执法）。
-# atexit 在此登记 = 全部 handler 里最后一个跑（LIFO），别人退出时写的东西也一起走。
+# atexit 是 LIFO：这里登记得早，就跑在判例们登记的一切 handler 之后；比它更早登记的
+# （如 coverage 的落盘）在它之后跑，但那些不写沙箱。
 _SCRATCH_ROOT = os.path.join(TMP_HOME, "tmp")
 os.makedirs(_SCRATCH_ROOT, exist_ok=True)
 tempfile.tempdir = _SCRATCH_ROOT
