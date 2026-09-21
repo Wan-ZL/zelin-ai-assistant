@@ -15,12 +15,12 @@ tests/test_dispatch.py; this file covers resume() only.
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config, registry
@@ -41,7 +41,7 @@ class ResumeTestCase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
         self.cfg = config.Config()
-        self.wt = Path(tempfile.mkdtemp(prefix="resume-wt-")) / "worktree"
+        self.wt = Path(scratch_dir(self, prefix="resume-wt-")) / "worktree"
 
     def _mk_req(self, execution):
         req = Requirement(id="R-950", title="resume 测试",

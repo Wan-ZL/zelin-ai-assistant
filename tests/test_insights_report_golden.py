@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -115,8 +116,7 @@ class MainStagesTestCase(unittest.TestCase):
     """main(): missing key notice / fetch failure / no-change gate / full run."""
 
     def setUp(self):
-        import tempfile
-        self.out = Path(tempfile.mkdtemp(prefix="insights-main-")) / "body.md"
+        self.out = Path(scratch_dir(self, prefix="insights-main-")) / "body.md"
 
     def _env(self, **extra):
         base = {"SUPABASE_INSIGHTS_KEY": "k", "ANTHROPIC_API_KEY": "", "INSIGHTS_PREV_TOTAL": "",

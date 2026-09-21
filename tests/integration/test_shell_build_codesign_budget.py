@@ -18,10 +18,10 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parent.parent.parent
 BUILD_SH = REPO / "shell" / "build.sh"
@@ -50,8 +50,7 @@ class ShellBuildCodesignBudgetTestCase(unittest.TestCase):
         assert time.time() - cls.t0 < BUDGET_SECONDS, "integration budget blown"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="shell-codesign-budget-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.tmp = Path(scratch_dir(self, prefix="shell-codesign-budget-"))
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         self.calls = self.tmp / "codesign.calls"

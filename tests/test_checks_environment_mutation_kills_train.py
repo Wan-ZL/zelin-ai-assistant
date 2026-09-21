@@ -30,12 +30,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act import
+from tests.scratch_testkit import scratch_dir
 
 from act import doctor
 from act.lib import config, platform, secrets
@@ -45,8 +45,8 @@ from act.lib.checks import environment
 NOISE = "".join(str(i % 10) for i in range(300))
 
 
-def _tmpdir(prefix: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix=prefix))
+def _tmpdir(case, prefix: str) -> Path:
+    return Path(scratch_dir(case, prefix=prefix))
 
 
 class _Run:
@@ -73,7 +73,7 @@ def _probes(**kw):
 class HomeRowTestCase(unittest.TestCase):
     def test_a_home_without_install_sh_is_a_fail_row_that_names_itself(self):
         # 下面每一条路径都由 HOME 推导——它错了，报告里其余每一行都在说谎。
-        with mock.patch.object(config, "HOME", _tmpdir("zai-nohome-")):
+        with mock.patch.object(config, "HOME", _tmpdir(self, "zai-nohome-")):
             row = environment.check_home(_probes())
         self.assertEqual(row.name, "AIASSISTANT_HOME")
         self.assertEqual(row.status, doctor.FAIL)
@@ -130,7 +130,7 @@ class DaemonPythonRowTestCase(unittest.TestCase):
     """`daemon python` 行：pin 不可用 = FAIL，版本取探针输出的最后一行。"""
 
     def setUp(self):
-        self.home = _tmpdir("zai-runtime-")
+        self.home = _tmpdir(self, "zai-runtime-")
         (self.home / "config").mkdir()
         self.rj = self.home / "config" / "runtime.json"
         p = mock.patch.object(config, "HOME", self.home)
@@ -202,7 +202,7 @@ class ConfigRowTestCase(unittest.TestCase):
     """`config.yaml` 行：三种坏法各有一行，YAML 报错截到一行。"""
 
     def setUp(self):
-        self.home = _tmpdir("zai-config-")
+        self.home = _tmpdir(self, "zai-config-")
         self.path = self.home / "config.yaml"
         p = mock.patch.object(config, "CONFIG_PATH", self.path)
         p.start()
@@ -240,7 +240,7 @@ class AnthropicKeyRowTestCase(unittest.TestCase):
     """`anthropic key` 行：POSIX 上逐位查 group/other，Windows 上不查。"""
 
     def setUp(self):
-        self.dir = _tmpdir("zai-secrets-")
+        self.dir = _tmpdir(self, "zai-secrets-")
         p = mock.patch.object(secrets, "SECRETS_DIR", self.dir)
         p.start()
         self.addCleanup(p.stop)
@@ -275,7 +275,7 @@ class StateDirsRowTestCase(unittest.TestCase):
     """`state dirs` 行：缺目录和不可写是两个不同的 FAIL，都必须有行。"""
 
     def setUp(self):
-        self.root = _tmpdir("zai-state-")
+        self.root = _tmpdir(self, "zai-state-")
         self.dirs = (self.root / "state", self.root / "state" / "inbox",
                      self.root / "state" / "logs")
         for name, value in zip(("STATE_DIR", "INBOX_DIR", "LOG_DIR"), self.dirs):
@@ -307,7 +307,7 @@ class ObsidianRowTestCase(unittest.TestCase):
     """`obsidian vault` 行：未配置 / 目录不在 / 收件箱不在 / 都在，四条各一行。"""
 
     def setUp(self):
-        self.root = _tmpdir("zai-vault-")
+        self.root = _tmpdir(self, "zai-vault-")
 
     def _row(self, raw=None, unprocessed=None):
         cfg = config.Config(obsidian_raw=raw, obsidian_unprocessed=unprocessed)
@@ -353,7 +353,7 @@ class ScreenpipeRowTestCase(unittest.TestCase):
     """`screenpipe db` 行：两小时整是门槛，时长是向下取整的真实时间。"""
 
     def setUp(self):
-        self.db = _tmpdir("zai-screenpipe-") / "db.sqlite"
+        self.db = _tmpdir(self, "zai-screenpipe-") / "db.sqlite"
         self.db.write_text("not-a-real-db", encoding="utf-8")
         self.mtime = self.db.stat().st_mtime
 
@@ -423,7 +423,7 @@ class ClaudeAuthRowTestCase(unittest.TestCase):
     """`claude auth` 行（唯一花钱的活探针）：凭证解析与失败归类。"""
 
     def setUp(self):
-        self.dir = _tmpdir("zai-auth-secrets-")
+        self.dir = _tmpdir(self, "zai-auth-secrets-")
         p = mock.patch.object(secrets, "SECRETS_DIR", self.dir)
         p.start()
         self.addCleanup(p.stop)

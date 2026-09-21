@@ -19,12 +19,12 @@ transcripts under ~/.claude/projects — the real ~/.claude is never read.
 import json
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 
@@ -64,7 +64,7 @@ def _tool_result() -> str:
     "transcript-path area is not ported yet, same as test_harvest_delivery")
 class AuditHarvestBase(unittest.TestCase):
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix="audit-harvest-home-")
+        self.home = scratch_dir(self, prefix="audit-harvest-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -175,7 +175,7 @@ class MultiMessageHarvestTestCase(AuditHarvestBase):
 class HtmlPathHydrationTestCase(AuditHarvestBase):
     def setUp(self):
         super().setUp()
-        self.outdir = Path(tempfile.mkdtemp(prefix="audit-harvest-html-"))
+        self.outdir = Path(scratch_dir(self, prefix="audit-harvest-html-"))
         self.html = self.outdir / "report.html"
         self.html.write_text("<!DOCTYPE html>\n<html><body>正文</body></html>",
                              encoding="utf-8")

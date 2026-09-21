@@ -8,12 +8,12 @@ kwarg 默认关）；build_prompt 只对 self_improve 卡多一段 lane 契约�
 出网档。runner 全部注入或 mock subprocess.run——绝不 spawn 真 claude。
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 from tests.self_improve_testkit import SI_SRC, lane_card
 
 from act import executor, llm
@@ -80,7 +80,7 @@ class LaunchSitesTestCase(unittest.TestCase):
             p.unlink()
         self.cfg = config.Config()
         self.cfg.memory_inject = False
-        self.wt = Path(tempfile.mkdtemp(prefix="lane-wt-"))
+        self.wt = Path(scratch_dir(self, prefix="lane-wt-"))
         for patcher in (
             mock.patch.object(executor, "has_remote", return_value=True),
             mock.patch.object(executor.notify, "notify", mock.Mock(return_value=True)),

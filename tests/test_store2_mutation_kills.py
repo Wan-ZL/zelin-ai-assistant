@@ -41,14 +41,13 @@
 * WAL 转换重试 ``range(100)`` 的 99 / 101 与 ``break → continue``：只改重试上限或
   多发 99 次无锁 pragma，行为不变、只有耗时——正确性本就不依赖 WAL（见 _conn 注释）。
 """
-import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib.store2 import store as st
 from act.lib.store2 import (IntegrityViolation, NotFound, Store, StoreError,
@@ -59,13 +58,12 @@ NOW = "2026-09-08T12:00:00Z"
 
 class _StoreCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-kills-"))
+        self.tmp = Path(scratch_dir(self, prefix="store2-kills-"))
         self.db = self.tmp / "s.db"
         self.store = Store(self.db, now_fn=lambda: NOW)
 
     def tearDown(self):
         self.store.close()
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _create(self, card_id, status, **extra):
         card = {"id": card_id, "status": status, "title": "t", **extra}

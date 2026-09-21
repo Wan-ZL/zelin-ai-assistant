@@ -32,7 +32,6 @@ import os
 import re
 import shutil
 import sqlite3
-import tempfile
 import threading
 import unittest
 import uuid
@@ -40,6 +39,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
+from tests.scratch_testkit import scratch_dir
 from tests import store2_testkit
 
 from act import actd, executor
@@ -527,13 +527,13 @@ class ProjectionAndNamingTestCase(unittest.TestCase):
         cfg = config.Config()
         cfg.memory_inject = False
         with mock.patch.object(executor, "has_remote", return_value=False):
-            prompt = executor.build_prompt(req, cfg, target=Path(tempfile.mkdtemp()))
+            prompt = executor.build_prompt(req, cfg, target=Path(scratch_dir(self)))
         self.assertIn("# Requirement R-280: 写周报", prompt)
         self.assertNotIn("# Requirement P-007", prompt)
         self.assertEqual(executor.session_name(req), "R-280 · 写周报")
 
     def test_dispatch_log_named_by_work_id_and_analytics_by_key(self):
-        target = Path(tempfile.mkdtemp(prefix="ids-target-"))
+        target = Path(scratch_dir(self, prefix="ids-target-"))
         (target / "keep.txt").write_text("x", encoding="utf-8")
         req = _card("P-007", "派发", status=State.APPROVED.value,
                     target_repo=str(target))
@@ -609,10 +609,7 @@ def _objects(db: Path) -> dict:
 
 class SchemaUpgradeTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-v2-"))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="store2-v2-"))
 
     def _v1_db(self, name="v1.db") -> Path:
         db = self.tmp / name
@@ -893,7 +890,7 @@ class SchemaUpgradeTestCase(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 class ExportImportParityTestCase(unittest.TestCase):
     def test_work_id_survives_yaml_migration_and_export(self):
-        tmp = Path(tempfile.mkdtemp(prefix="ids-rt-"))
+        tmp = Path(scratch_dir(self, prefix="ids-rt-"))
         reg = tmp / "registry"
         reg.mkdir()
         (reg / "P-001.yaml").write_text(

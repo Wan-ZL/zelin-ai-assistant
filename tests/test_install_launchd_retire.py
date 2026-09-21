@@ -17,12 +17,11 @@ against a fake `launchctl` on PATH:
 POSIX-only (install.sh is the macOS/Linux installer; install.ps1 has its own).
 """
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -59,8 +58,7 @@ def _prelude():
 @unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
 class LaunchdRetireTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="retire-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="retire-"))
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         shim = self.bin / "launchctl"

@@ -6,12 +6,12 @@ None, readable → its text reaches build_command_file), the printed path,
 any failure into a printed hint + exit 1 instead of a traceback.
 """
 import io
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import ai_fix
 from act.lib import config
@@ -22,7 +22,7 @@ class ReadContextTestCase(unittest.TestCase):
         self.assertIsNone(ai_fix._read_context(None))
         self.assertIsNone(ai_fix._read_context(""))
         self.assertIsNone(ai_fix._read_context("/nonexistent/ctx.txt"))
-        tmp = Path(tempfile.mkdtemp(prefix="aifix-")) / "ctx.txt"
+        tmp = Path(scratch_dir(self, prefix="aifix-")) / "ctx.txt"
         tmp.write_text("extra", encoding="utf-8")
         self.assertEqual(ai_fix._read_context(str(tmp)), "extra")
 
@@ -47,7 +47,7 @@ class MainTestCase(unittest.TestCase):
         self.assertIsNone(bcf.call_args.kwargs["extra_context"])
 
     def test_context_file_is_forwarded(self):
-        tmp = Path(tempfile.mkdtemp(prefix="aifix-ctx-")) / "ctx.txt"
+        tmp = Path(scratch_dir(self, prefix="aifix-ctx-")) / "ctx.txt"
         tmp.write_text("from the app", encoding="utf-8")
         with mock.patch.object(ai_fix.config, "load_config", return_value=self._cfg()), \
                 mock.patch.object(ai_fix, "build_command_file", return_value=Path("/x")) as bcf, \

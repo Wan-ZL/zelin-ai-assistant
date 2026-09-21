@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import contextlib
 import io
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act import
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import taskscheduler as ts
 
@@ -33,8 +33,8 @@ REPO = r"C:\Users\Friend\Projects\zelin-ai-assistant"
 CLAUDE_DIR = r"C:\Users\Friend\.local\bin"
 
 
-def _tmpdir(name: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix="tasksched-train-")) / name
+def _tmpdir(case, name: str) -> Path:
+    return Path(scratch_dir(case, prefix="tasksched-train-")) / name
 
 
 def _main(argv: list) -> int:
@@ -61,7 +61,7 @@ class RequiredFlagsTestCase(unittest.TestCase):
         # Path(None)）是另一种失败：那会在 staging 里留下 install.ps1 会照单
         # 注册的半份 XML。
         for flag in ("--python", "--repo-root", "--claude-bin-dir", "--out"):
-            out = _tmpdir("staging")
+            out = _tmpdir(self, "staging")
             with self.subTest(missing=flag):
                 with contextlib.redirect_stderr(io.StringIO()), \
                         self.assertRaises(SystemExit) as caught:
@@ -70,7 +70,7 @@ class RequiredFlagsTestCase(unittest.TestCase):
                 self.assertFalse(out.exists(), flag)
 
     def test_all_four_together_render_the_full_task_set(self):
-        out = _tmpdir("staging")
+        out = _tmpdir(self, "staging")
         self.assertEqual(_main(self._argv(out)), 0)
         self.assertEqual(sorted(p.name for p in out.glob("*.xml")),
                          sorted(ts.render_all(PY, REPO, CLAUDE_DIR)))
@@ -86,7 +86,7 @@ class StagingDirTestCase(unittest.TestCase):
     def test_missing_parent_dirs_are_created(self):
         # `$env:TEMP\zelin-tasks\<run-id>` 整条路径都可能不存在——渲染器建全套，
         # 不是只建最后一级（那会 FileNotFoundError，装机当场断在渲染这一步）。
-        out = _tmpdir("nested") / "deeper" / "staging"
+        out = _tmpdir(self, "nested") / "deeper" / "staging"
         self.assertFalse(out.parent.exists())
         self.assertEqual(self._run(out), 0)
         self.assertTrue(out.is_dir())
@@ -95,7 +95,7 @@ class StagingDirTestCase(unittest.TestCase):
     def test_rendering_twice_into_the_same_dir_is_idempotent(self):
         # 每次装机/升级 install.ps1 都往同一个 staging 目录再渲染一遍：第二次
         # 必须照样 0 并覆盖出同一批文件，不许「目录已存在」就炸。
-        out = _tmpdir("staging")
+        out = _tmpdir(self, "staging")
         self.assertEqual(self._run(out), 0)
         first = {p.name: p.read_text(encoding="utf-8") for p in out.glob("*.xml")}
         self.assertEqual(self._run(out), 0)

@@ -12,12 +12,12 @@ import io
 import json
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME
+from tests.scratch_testkit import scratch_dir
 
 from act import doctor
 from act.lib import claude_bin, config, secrets
@@ -1132,7 +1132,7 @@ class DaemonClaudeCheckTestCase(unittest.TestCase):
         p = mock.patch("sys.platform", "darwin")
         p.start()
         self.addCleanup(p.stop)
-        self.tmp = Path(tempfile.mkdtemp(prefix="daemon-claude-"))
+        self.tmp = Path(scratch_dir(self, prefix="daemon-claude-"))
 
     def _shim(self, sub: str, version: str, help_text: str,
               bg_supported: bool) -> Path:

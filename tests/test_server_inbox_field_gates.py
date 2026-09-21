@@ -10,11 +10,11 @@ import_claude_sessions 空表，以及 Mac 字节形序列化的每种值类型�
 from __future__ import annotations
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from server import inbox_writer as iw
 from server.errors import InvalidFieldError, UnknownFieldError
@@ -22,7 +22,7 @@ from server.errors import InvalidFieldError, UnknownFieldError
 
 class _Home(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-inbox-gate-"))
+        self.home = Path(scratch_dir(self, prefix="zai-inbox-gate-"))
 
     def _write(self, payload: dict) -> dict:
         return iw.write_action(payload, home=self.home)

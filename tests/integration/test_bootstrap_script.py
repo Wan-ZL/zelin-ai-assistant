@@ -34,10 +34,10 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[2]
 BOOTSTRAP = REPO / "scripts" / "bootstrap.sh"
@@ -130,8 +130,7 @@ CORE_TOOLS = ("bash", "sh", "dirname", "basename", "mkdir", "ls", "cp", "sed", "
 @unittest.skipIf(_WIN, "bootstrap.sh is a macOS bash script (stubs are POSIX)")
 class FakeToolsTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bootstrap-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="bootstrap-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.fakebin = self.tmp / "fakebin"
@@ -371,8 +370,7 @@ class RealGitTestCase(unittest.TestCase):
     """clone from a bare origin, then fast-forward on the second run — real git."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bootstrap-git-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="bootstrap-git-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.fakebin = self.tmp / "fakebin"

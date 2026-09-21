@@ -13,11 +13,11 @@ Covers (v0.37 build brief):
   stored when present and degrades silently when absent/malformed.
 """
 import os
-import tempfile
 import unittest
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import analyze
 from act.lib import config, dashboard, quick_capture, registry, titles
@@ -199,7 +199,7 @@ class SetDisplayTitleTestCase(unittest.TestCase):
 class ProjectionTestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="title-home-")
+        home = scratch_dir(self, prefix="title-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)

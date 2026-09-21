@@ -17,12 +17,12 @@ Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 import datetime as _dt
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard, registry
 from act.lib.registry import Requirement, State
@@ -180,11 +180,11 @@ _PARTITIONS = ("needs_approval", "running", "needs_input", "review",
 class DashboardHidesMergedTestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.merge_dir = Path(tempfile.mkdtemp(prefix="merge-dir-"))
+        self.merge_dir = Path(scratch_dir(self, prefix="merge-dir-"))
 
     def test_merged_card_enters_no_column(self):
         merged = Requirement.from_dict({
@@ -215,11 +215,11 @@ class DashboardHidesMergedTestCase(unittest.TestCase):
 class MergeSuggestionsPartitionTestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.merge_dir = Path(tempfile.mkdtemp(prefix="merge-dir-"))
+        self.merge_dir = Path(scratch_dir(self, prefix="merge-dir-"))
 
     def _write(self, name: str, payload) -> Path:
         path = self.merge_dir / name

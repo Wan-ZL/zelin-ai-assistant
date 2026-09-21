@@ -45,6 +45,7 @@ class WorktreeSweepHeartbeatTestCase(unittest.TestCase):
         self.beats = []
         self.tree.cleanup()
         self.tree = Tree()
+        self.addCleanup(self.tree.cleanup)
         self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
         many = FakeGit(self.tree.repo, self._entries(6), remotes=["origin/main"])
         self._sweep(many)

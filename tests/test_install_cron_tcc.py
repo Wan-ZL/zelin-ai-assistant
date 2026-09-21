@@ -22,15 +22,14 @@ stub crontab 前置 PATH；不碰真 crontab、不出网。
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 from act import doctor
 from act.lib import config
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -67,8 +66,7 @@ class ApplyCrontabTestCase(unittest.TestCase):
     DIGEST = "7 9 * * * fixture digest line"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="cron-tcc-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="cron-tcc-"))
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         stub = self.bin / "crontab"

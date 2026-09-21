@@ -15,13 +15,12 @@ registry.from_dict 与 schema CHECK 的既定语义，不是测试放水。
 """
 import json
 import re
-import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, registry
 from tests.test_store2_migration import (
@@ -51,7 +50,7 @@ class ParityTestCase(unittest.TestCase):
             p.unlink()
         build_fixture_registry(config.REGISTRY_DIR, with_archive=False,
                                with_example=False)
-        cls.tmp = Path(tempfile.mkdtemp(prefix="store2-parity-"))
+        cls.tmp = Path(scratch_dir(cls, prefix="store2-parity-"))
         cls.db_path = cls.tmp / "store2.db"
         _run_migrate(config.REGISTRY_DIR, cls.db_path)
         cls.conn = sqlite3.connect(cls.db_path)
@@ -62,7 +61,6 @@ class ParityTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.conn.close()
-        shutil.rmtree(cls.tmp, ignore_errors=True)
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
 

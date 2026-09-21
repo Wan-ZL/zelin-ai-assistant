@@ -16,12 +16,12 @@ in a temp REPO_ROOT holding a fake template. Pinned:
 """
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -58,8 +58,7 @@ class ReinstallAgentModeTestCase(unittest.TestCase):
     LABEL = "com.zelin.aiassistant.slackradar"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="install-reinstall-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="install-reinstall-"))
         self.repo_root = self.tmp / "repo"
         (self.repo_root / "act" / "launchd").mkdir(parents=True)
         (self.repo_root / "act" / "launchd" / (self.LABEL + ".plist")).write_text("<plist/>", encoding="utf-8")

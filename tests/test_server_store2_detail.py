@@ -11,10 +11,10 @@ import json
 import os
 import unittest
 from pathlib import Path
-import tempfile
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib.store2.store import Store
 from act.lib.store2 import hot as store2_hot
@@ -22,8 +22,8 @@ from act.lib.store2.export_yaml import normalize_card
 from server import board_source, paths
 
 
-def _mk_home() -> Path:
-    home = Path(tempfile.mkdtemp(prefix="server-store2-"))
+def _mk_home(case) -> Path:
+    home = Path(scratch_dir(case, prefix="server-store2-"))
     (home / "state").mkdir(parents=True)
     (home / "act" / "registry").mkdir(parents=True)
     (home / "state" / "dashboard.json").write_text(json.dumps({
@@ -59,7 +59,7 @@ class Store2DetailTestCase(unittest.TestCase):
         os.environ.pop("ZAI_REGISTRY_BACKEND", None)
 
     def test_detail_reads_payload_from_sqlite_when_active(self):
-        home = _mk_home()
+        home = _mk_home(self)
         _seed_store2(home, {
             "id": "R-001", "title": "真源标题", "status": "card_sent",
             "plan": ["step 1"], "notes": "一条备注",
@@ -72,7 +72,7 @@ class Store2DetailTestCase(unittest.TestCase):
         self.assertEqual(detail["notes"], "一条备注")
 
     def test_marker_present_never_falls_back_to_frozen_yaml(self):
-        home = _mk_home()
+        home = _mk_home(self)
         _seed_store2(home, {"id": "R-001", "title": "真源标题",
                             "status": "card_sent"})
         # 冻结的 YAML 残件带着旧数据——绝不能被当作真相读出来
@@ -82,7 +82,7 @@ class Store2DetailTestCase(unittest.TestCase):
             board_source.card_detail(home, "R-002")
 
     def test_yaml_path_intact_without_marker(self):
-        home = _mk_home()
+        home = _mk_home(self)
         _write_yaml_card(
             home, "R-001",
             "id: R-001\ntitle: yaml 增补\nstatus: card_sent\nnotes: 旧路健在\n")
@@ -92,7 +92,7 @@ class Store2DetailTestCase(unittest.TestCase):
     def test_rollback_config_switch_returns_detail_reads_to_yaml(self):
         """§53.6 文档化回滚（标记留在原地 + config 开关强制 yaml）：server
         详情读必须跟着回 YAML——曾经只看标记，回滚后永远读死 DB（B2）。"""
-        home = _mk_home()
+        home = _mk_home(self)
         _seed_store2(home, {"id": "R-001", "title": "废弃 DB 里的旧值",
                             "status": "card_sent", "notes": "stale-db-value"})
         paths.config_path(home).write_text("registry:\n  backend: yaml\n",
@@ -110,7 +110,7 @@ class Store2DetailTestCase(unittest.TestCase):
                          "回滚窗口新卡")
 
     def test_rollback_env_switch_returns_detail_reads_to_yaml(self):
-        home = _mk_home()
+        home = _mk_home(self)
         _seed_store2(home, {"id": "R-001", "title": "废弃 DB 里的旧值",
                             "status": "card_sent", "notes": "stale-db-value"})
         _write_yaml_card(
@@ -123,7 +123,7 @@ class Store2DetailTestCase(unittest.TestCase):
 
     def test_garbage_config_falls_back_to_marker(self):
         """坏 config / 词表外值 = auto（看标记），与 registry._coerce 同口径。"""
-        home = _mk_home()
+        home = _mk_home(self)
         _seed_store2(home, {"id": "R-001", "title": "真源标题",
                             "status": "card_sent", "notes": "db 真相"})
         paths.config_path(home).write_text("registry:\n  backend: banana\n",

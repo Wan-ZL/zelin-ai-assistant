@@ -15,12 +15,12 @@ Pinned (P3 mutation net):
 """
 import datetime as _dt
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import weekly_digest as wd
 from act.lib import config
@@ -48,7 +48,7 @@ class ParseOutputTestCase(unittest.TestCase):
 
 class CollectNotesTestCase(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="wd-notes-"))
+        self.root = Path(scratch_dir(self, prefix="wd-notes-"))
         self.cfg = config.Config()
         self.now = _dt.datetime(2026, 7, 13, 12, 0, 0)
         patcher = mock.patch.object(config, "effective_obsidian_raw",

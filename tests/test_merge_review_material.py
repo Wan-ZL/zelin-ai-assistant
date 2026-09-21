@@ -14,13 +14,13 @@ import io
 import json
 import os
 import subprocess
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import merge_review
 from act.lib.registry import Requirement
@@ -42,7 +42,7 @@ def _msg(role, content, **extra):
 
 class TailMessagesTestCase(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="mr-tail-"))
+        self.dir = Path(scratch_dir(self, prefix="mr-tail-"))
 
     def test_filters_and_caps(self):
         p = self.dir / "t.jsonl"
@@ -69,7 +69,7 @@ class TailMessagesTestCase(unittest.TestCase):
 
 class TranscriptTailTextTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix="mr-home-")
+        self.home = scratch_dir(self, prefix="mr-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -106,7 +106,7 @@ def _git(rc_log=0, log="c0ffee first", rc_diff=0, diff=" a.py | 1 +"):
 
 class WorktreeGitTextTestCase(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="mr-wt-")
+        self.dir = scratch_dir(self, prefix="mr-wt-")
 
     def test_missing_dir_or_none_skips(self):
         self.assertIsNone(merge_review._worktree_git_text(None))
@@ -298,7 +298,7 @@ class SmallHelpersTestCase(unittest.TestCase):
 
 class AnalyzeSuggestionEdgeTestCase(unittest.TestCase):
     def setUp(self):
-        d = Path(tempfile.mkdtemp(prefix="mr-jobs-"))
+        d = Path(scratch_dir(self, prefix="mr-jobs-"))
         patcher = mock.patch.object(merge_review, "MERGE_DIR", d)
         patcher.start()
         self.addCleanup(patcher.stop)

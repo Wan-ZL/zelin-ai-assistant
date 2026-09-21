@@ -23,14 +23,13 @@ tests/integration/test_version_git_fixture.py）。钉住的行为：
 import os
 import plistlib
 import re
-import shutil
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 
 from act import doctor
 from act.lib import version as ver
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -113,7 +112,7 @@ class FromDescribeTestCase(unittest.TestCase):
 
 class ComputeAndResolveTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="ver-"))
+        self.tmp = Path(scratch_dir(self, prefix="ver-"))
         self.stamp = self.tmp / "act" / "_version.py"
 
     def test_compute_prefers_git_then_fallback(self):
@@ -275,8 +274,7 @@ class BoardAppVersionRowTestCase(unittest.TestCase):
             self.assertNotEqual(self.board(app).status, doctor.FAIL, app)
 
     def test_installed_board_app_reads_the_first_bundle_that_exists(self):
-        tmp = Path(tempfile.mkdtemp(prefix="boardapp-"))
-        self.addCleanup(shutil.rmtree, str(tmp), ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="boardapp-"))
         first, second = tmp / "Applications" / ver.BOARD_APP_NAME, tmp / "home" / "Applications" / ver.BOARD_APP_NAME
         self.assertIsNone(ver.installed_board_app([first, second]), "nothing installed → None")
         (second / "Contents").mkdir(parents=True)

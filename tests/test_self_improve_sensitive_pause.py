@@ -9,12 +9,12 @@ dashboard 顶层 self_improve；server 端清暂停与 act 侧 clear_pause 键�
 （server 不 import act，路径由 paths.py 镜像）。
 """
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 from tests.self_improve_testkit import FakeGh, lane_card, pr_doc
 from tests.test_server_common import assert_envelope, post_json, start_server
 
@@ -231,7 +231,7 @@ class PauseVisibilityAndClearTestCase(unittest.TestCase):
 
 class ServerResumeRouteTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-lane-route-"))
+        self.home = Path(scratch_dir(self, prefix="zai-lane-route-"))
         (self.home / "state").mkdir()
         _, self.port = start_server(self, self.home)
 

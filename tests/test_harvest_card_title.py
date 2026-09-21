@@ -11,12 +11,12 @@ Contract cases:
 """
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import sanitize, titles
@@ -33,7 +33,7 @@ def _assistant(text: str) -> str:
 
 class HarvestCardTitleTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix="cardtitle-home-")
+        self.home = scratch_dir(self, prefix="cardtitle-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)

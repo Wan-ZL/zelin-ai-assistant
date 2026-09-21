@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import io
 import json
-import shutil
 import socket
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env
+from tests.scratch_testkit import scratch_dir
 from tests import test_server_common as common
 
 from act import boardctl
@@ -32,8 +31,7 @@ class _CtlBase(unittest.TestCase):
     scene = "initial"
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="boardctl-test-home-"))
-        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self.home = Path(scratch_dir(self, prefix="boardctl-test-home-"))
         self.board = common.seed_scene(self.home, self.scene)
         _httpd, self.port = common.start_server(self, self.home)
         # AIASSISTANT_HOME 指向 server 的 home——boardctl 从那里读写动作要带
@@ -194,8 +192,7 @@ class TokenWallTest(_CtlBase):
     def test_write_without_token_file_gets_401_passthrough(self):
         # home 指到没有 server.token 的空目录 → 不发头 → server 401，
         # envelope 如实透传（exit 4），且 inbox 零落盘
-        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
-        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        empty = Path(scratch_dir(self, prefix="boardctl-no-token-"))
         err = self.err_json(4, "capture", "--text", "x",
                             env=self._env_with_home(empty))
         self.assertEqual(err["code"], "UNAUTHORIZED")
@@ -203,8 +200,7 @@ class TokenWallTest(_CtlBase):
 
     def test_reads_stay_token_light(self):
         # 读路径不带 token 也通（GET token-light，§49）——空 home 照样能读板
-        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
-        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        empty = Path(scratch_dir(self, prefix="boardctl-no-token-"))
         out, errbuf = io.StringIO(), io.StringIO()
         rc = boardctl.main(["board"], stdout=out, stderr=errbuf,
                            environ=self._env_with_home(empty))

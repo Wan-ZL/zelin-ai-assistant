@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import io
 import json
-import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from act import boardctl
 
@@ -183,7 +183,7 @@ class InternalErrorTestCase(unittest.TestCase):
         self.assertEqual(json.loads(err)["error"]["message"], "KeyError")
 
     def test_instance_token_missing_file_is_none(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-ctl-tok-"))
+        home = Path(scratch_dir(self, prefix="zai-ctl-tok-"))
         self.assertIsNone(boardctl._instance_token({"AIASSISTANT_HOME": str(home)}))
         (home / "state").mkdir()
         (home / "state" / "server.token").write_text("\n", encoding="utf-8")

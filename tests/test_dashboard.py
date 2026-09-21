@@ -21,11 +21,11 @@ Covered:
 import datetime as _dt
 import json
 import os
-import tempfile
 import unittest
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard
 from act.lib.registry import Requirement
@@ -38,7 +38,7 @@ def _utc_epoch(*args) -> int:
 class BuildDashboardV010TestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -255,7 +255,7 @@ class CompletedCapTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -322,7 +322,7 @@ class EmptySidNoGlobBindTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cfg = config.Config()
-        self.home = tempfile.mkdtemp(prefix="dash-home-")
+        self.home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -385,7 +385,7 @@ class SingleCardCorruptionIsolationTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)

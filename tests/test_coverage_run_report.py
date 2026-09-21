@@ -10,10 +10,10 @@
 import importlib.util
 import json
 import os
-import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -243,7 +243,7 @@ class ReportTestCase(unittest.TestCase):
         self.assertEqual(cr.one_line(""), "-")
 
     def test_rows_are_written_in_id_order(self):
-        path = Path(tempfile.mkdtemp(prefix="zaa-cov-inv-")) / "inv.json"
+        path = Path(scratch_dir(self, prefix="zaa-cov-inv-")) / "inv.json"
         path.write_text(json.dumps({"scenarios": [{"id": "z"}, {"id": "a"}, {"id": "m"}]}),
                         encoding="utf-8")
         self.assertEqual([r["id"] for r in cr.load_inventory(str(path))], ["a", "m", "z"])
@@ -251,7 +251,7 @@ class ReportTestCase(unittest.TestCase):
 
 class CliTestCase(unittest.TestCase):
     def _run(self, rows, argv_extra=(), table=None, routes=None):
-        tmp = Path(tempfile.mkdtemp(prefix="zaa-cov-cli-"))
+        tmp = Path(scratch_dir(self, prefix="zaa-cov-cli-"))
         inv = tmp / "inv.json"
         inv.write_text(json.dumps({"scenarios": rows}), encoding="utf-8")
         report = tmp / "report.md"

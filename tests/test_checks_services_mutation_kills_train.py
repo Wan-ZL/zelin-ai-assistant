@@ -28,6 +28,7 @@ test_doctor_service_orphans.py 也一样——夜间变异（§57）因此在
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 import unittest
@@ -35,6 +36,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act import
+from tests.scratch_testkit import scratch_dir
 
 from act import doctor
 from act.lib import config, taskscheduler
@@ -65,10 +67,12 @@ def _schtasks(rows) -> str:
     return "".join(out)
 
 
+@contextlib.contextmanager
 def _empty_home():
     """一个连 act/ 都没有的 AIASSISTANT_HOME（期望集合 = 空集）。"""
-    tmp = tempfile.mkdtemp(prefix="zai-no-templates-")
-    return mock.patch.object(config, "HOME", Path(tmp))
+    with tempfile.TemporaryDirectory(prefix="zai-no-templates-") as tmp, \
+            mock.patch.object(config, "HOME", Path(tmp)):
+        yield
 
 
 class _UnreadableHome:
@@ -192,7 +196,7 @@ class OrphanFileFaceTestCase(unittest.TestCase):
     """§55 孤儿探测的文件面：读不到 = 空清单，绝不是 None、绝不抛。"""
 
     def test_only_prefixed_unit_files_are_listed_and_sorted(self):
-        tmp = tempfile.mkdtemp(prefix="zai-xdg-")
+        tmp = scratch_dir(self, prefix="zai-xdg-")
         unit_dir = Path(tmp) / "systemd" / "user"
         unit_dir.mkdir(parents=True)
         for name in ("zelin-server.service", "zelin-actd.service",
