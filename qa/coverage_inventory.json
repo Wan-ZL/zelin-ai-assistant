@@ -1590,7 +1590,7 @@
       "id": "contract:§63.13",
       "source": "contract",
       "scenario": "可发送长版逐条带自己的语气与一条转写锚（2026-09-22；issue #440 第 1 件，源自 #332，owner 决策 **D79**）",
-      "proof": "unittest:tests.test_recap_item_anchors,tests.test_recap_item_tags,tests.test_recap_shapes",
+      "proof": "unittest:tests.test_recap_item_anchors,tests.test_recap_item_tags,tests.test_recap_revert,tests.test_recap_shapes",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
