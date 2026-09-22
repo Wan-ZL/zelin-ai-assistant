@@ -6,9 +6,13 @@
 import { describe, expect, it } from "vitest";
 import type { RecapAnchor, RecapRow } from "../../types";
 import {
-  endOverrideIso, localHHMM, lostAfterMinutes, problemLabel, recapAnchors, recapBody, recapClipboardText,
-  recapHeader, rowLabel, shownDuration, shownEnd,
+  EVIDENCE_ITEM_CHARS, endOverrideIso, endOverrideProblem, evidenceLabel, localHHMM, lostAfterMinutes,
+  problemLabel, recapAnchors, recapBody, recapClipboardText, recapHeader, rowLabel, shownDuration, shownEnd,
 } from "./recapText";
+
+function hhmmOf(t: Date): string {
+  return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+}
 
 const en = (zh: string, e: string) => e;
 const zh = (z: string, _e: string) => z;
@@ -73,31 +77,63 @@ describe("§63.16 end_override", () => {
     expect(shownDuration(row({ end_override: "2026-08-31T19:00:00Z" }))).toBe(0);
   });
 
-  it("turns the editor's HH:MM into an ISO-Z on the meeting's day, and refuses an end before the start", () => {
+  it("turns the editor's HH:MM into an ISO-Z, rolling past local midnight when the time is before the start", () => {
     const r = row();
     const startLocal = new Date(r.start);
     const later = new Date(startLocal.getTime() + 34 * 60000);
-    const hhmm = `${String(later.getHours()).padStart(2, "0")}:${String(later.getMinutes()).padStart(2, "0")}`;
-    const iso = endOverrideIso(r, hhmm);
+    const iso = endOverrideIso(r, hhmmOf(later));
     expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    // 无论本机时区把 start 摆在哪一天（19:56Z 在 UTC+4 已是第二天），往回读出的是同一个瞬间
     expect(new Date(iso as string).getTime()).toBe(later.getTime());
-    // 与开始同一分钟 / 更早 / 坏输入 = null（面板据此说「结束要晚于开始」，不发请求）
-    expect(endOverrideIso(r, localHHMM(r.start))).toBeNull();
+    // 比开始早的时刻 = 跨过本地午夜：23:40 开、00:05 散——落到下一天，而不是拒绝
     const earlier = new Date(startLocal.getTime() - 60000);
-    expect(endOverrideIso(r, `${String(earlier.getHours()).padStart(2, "0")}:${String(earlier.getMinutes()).padStart(2, "0")}`)).toBeNull();
+    const rolled = endOverrideIso(r, hhmmOf(earlier));
+    expect(rolled).not.toBeNull();
+    expect(new Date(rolled as string).getTime()).toBe(earlier.getTime() + 24 * 60 * 60 * 1000);
+    // 与开始同一分钟才是真的说不通（滚一天就成了 24 小时的会）
+    expect(endOverrideIso(r, localHHMM(r.start))).toBeNull();
+    expect(endOverrideProblem(r, localHHMM(r.start))).toBe("same");
+    // 空框 / 越界 / 这一行的 start 读不出，各说各的
     expect(endOverrideIso(r, "")).toBeNull();
+    expect(endOverrideProblem(r, "")).toBe("input");
     expect(endOverrideIso(r, "25:99")).toBeNull();
+    expect(endOverrideProblem(r, "25:99")).toBe("input");
     expect(endOverrideIso(row({ start: "garbage" }), "13:00")).toBeNull();
+    expect(endOverrideProblem(row({ start: "garbage" }), "13:00")).toBe("start");
+    expect(endOverrideProblem(r, hhmmOf(later))).toBeNull();
     expect(localHHMM("garbage")).toBe("");
   });
 });
 
 describe("§63.13 transcript anchors on the page", () => {
-  it("lists one evidence row per anchored item, tag first, position when the item has no tag", () => {
-    expect(recapAnchors(sectionsRow())).toEqual([
-      { tag: "D1", at: "12:57", quote: "Ann will take the data mix" },
-      { tag: "3", at: "13:02", quote: "maybe Bo could take the handover" },
+  it("lists one evidence row per anchored item; the tag is used only when the body really carries it", () => {
+    const r = sectionsRow();
+    const body = recapBody(r, "en");
+    expect(recapAnchors(r, body)).toEqual([
+      { tag: "D1", item: "Ann owns the data mix", at: "12:57", quote: "Ann will take the data mix" },
+      { tag: "", item: "Bo may take the handover", at: "13:02", quote: "maybe Bo could take the handover" },
     ]);
+    // 名字：有正文里的标签 = `#D1`；没有 = 条目原文（不按位置自己编号——略掉的填充条目会让号指错行）
+    expect(evidenceLabel({ tag: "D1", item: "x", at: "", quote: "" })).toBe("#D1");
+    expect(evidenceLabel({ tag: "", item: "Bo may take the handover", at: "", quote: "" })).toBe("Bo may take the handover");
+    const long = "w".repeat(EVIDENCE_ITEM_CHARS + 5);
+    expect(evidenceLabel({ tag: "", item: long, at: "", quote: "" })).toBe(`${"w".repeat(EVIDENCE_ITEM_CHARS)}…`);
+    // wire 上有标签、正文里却没有它 = daemon 略掉的条目（填充值）——纸上没有的东西不给依据，整条不列
+    const dropped = sectionsRow({
+      sections_en: [{ key: "decided", modality: "decided", items: ["Ann owns the data mix", "none"],
+                      tags: ["D1", "D2"], anchors: [{ at: "12:57", quote: "Ann will take the data mix" },
+                                                    { at: "12:59", quote: "nothing else came up" }] }],
+      copy_en: "Decided:\nD1. Ann owns the data mix",
+    });
+    expect(recapAnchors(dropped, recapBody(dropped, "en")).map((e) => e.tag)).toEqual(["D1"]);
+    // 老记录：条目没有标签 → 仍列，用原文认
+    const untagged = sectionsRow({
+      sections_en: [{ key: "decided", modality: "decided", items: ["Ann owns the data mix"],
+                      anchors: [{ at: "12:57", quote: "Ann will take the data mix" }] }],
+      copy_en: "Decided:\n1. Ann owns the data mix",
+    });
+    expect(recapAnchors(untagged, recapBody(untagged, "en"))).toEqual([
+      { tag: "", item: "Ann owns the data mix", at: "12:57", quote: "Ann will take the data mix" }]);
   });
 
   it("drops hand-mangled anchors and never touches the body or the clipboard", () => {
@@ -106,10 +142,11 @@ describe("§63.13 transcript anchors on the page", () => {
     const r = sectionsRow({
       sections_en: [{ key: "decided", modality: "decided", items: ["a", "b", "c", "d"], tags: ["D1", "D2", "D3", "D4"],
                       anchors: junk }],
+      copy_en: "Decided:\nD1. a\nD2. b\nD3. c\nD4. d",
     });
-    expect(recapAnchors(r)).toEqual([{ tag: "D4", at: "12:58", quote: "real words" }]);
-    expect(recapAnchors(sectionsRow({ sections_en: null }))).toEqual([]);
-    expect(recapAnchors(row())).toEqual([]);                       // 五行形没有条目
+    expect(recapAnchors(r, recapBody(r, "en"))).toEqual([{ tag: "D4", item: "d", at: "12:58", quote: "real words" }]);
+    expect(recapAnchors(sectionsRow({ sections_en: null }), "")).toEqual([]);
+    expect(recapAnchors(row(), recapBody(row(), "en"))).toEqual([]);      // 五行形没有条目
     const body = recapClipboardText(sectionsRow(), "en");
     expect(body).not.toContain("12:57");
     expect(body).not.toContain("Ann will take the data mix");
@@ -126,6 +163,8 @@ describe("§63.13 transcript anchors on the page", () => {
     expect(problemLabel({ code: "anchor_unverified", lang: "en", line: 5 }, zh)).toContain("第 5 条的转写锚对不上转写");
     expect(problemLabel({ code: "item_modality", lang: "zh", line: 1 }, en)).toContain("item 1 has a modality outside decided / proposed / floated / open");
     expect(problemLabel({ code: "item_modality", lang: "zh", line: 1 }, zh)).toContain("第 1 条的语气不在固定表里");
+    expect(problemLabel({ code: "item_mismatch", lang: "zh" }, en)).toContain("different number of items in Chinese and English");
+    expect(problemLabel({ code: "item_mismatch", lang: "zh" }, zh)).toContain("条数不一致");
   });
 });
 

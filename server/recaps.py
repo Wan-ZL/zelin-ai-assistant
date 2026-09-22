@@ -188,11 +188,13 @@ def snapshot(home: Path) -> dict:
         {"enabled": bool, "default_language": "auto|zh|en",
          "slack_draft_enabled": bool, "default_shape": "lines|sections",
          "languages": [...],
-         "source": {"enabled": "override|config|default", ...}}
+         "source": {"enabled": "override|config|default", ...},
+         "glossary": {"path": str, "present": bool, "config_terms": int}}
 
     §63.10：``default_shape`` 是**只读**的一格（config.yaml 层，无 overrides 扁平键）——
     面板拿它当形状选择器的初值，否则「重新生成」会替配置做主，把每一份老纪要
-    永久盖成五行形。"""
+    永久盖成五行形。§63.14：``glossary`` 也是只读的一格（:func:`glossary_hint`），
+    不进 ``source``、PUT 不收。"""
     overrides = settings.read_overrides(home)
     values, source = _base_values(home)
     for field, key in OVERRIDE_KEYS.items():

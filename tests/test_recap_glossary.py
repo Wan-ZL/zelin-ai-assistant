@@ -123,6 +123,13 @@ class ApplyTestCase(unittest.TestCase):
         self.assertEqual(text, "open SageMaker Studio, not SageMaker")
         self.assertEqual(hits, 2)
 
+    def test_the_correct_spelling_is_a_literal_not_a_replacement_template(self):
+        # `re.sub` 的字符串替换是模板：`C:\tools` 会炸 bad escape、`\g<0>` 会把听错形原样放回去
+        table = [("C:\\tools\\sft", ["see tools"]), ("\\g<0> ok", ["gee zero"]), ("A\\1B", ["a one b"])]
+        text, hits = gl.apply("see tools then gee zero then a one b", table)
+        self.assertEqual(text, "C:\\tools\\sft then \\g<0> ok then A\\1B")
+        self.assertEqual(hits, 3)
+
     def test_an_empty_table_changes_nothing(self):
         self.assertEqual(gl.apply("stage maker", []), ("stage maker", 0))
         self.assertEqual(gl.apply("", self.TABLE), ("", 0))

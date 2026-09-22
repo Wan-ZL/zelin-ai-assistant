@@ -46,10 +46,12 @@ class FormulaTestCase(unittest.TestCase):
     def test_the_ceiling_holds_and_junk_word_counts_fall_to_the_floor(self):
         self.assertEqual(timing.llm_timeout_s(10 ** 6), timing.LLM_TIMEOUT_MAX_S)
         self.assertEqual(timing.LLM_TIMEOUT_MAX_S, 900.0)
-        for junk in (True, False, "6160", [], {}, -5, -0.5):
+        for junk in (True, False, "6160", [], {}, -5, -0.5, float("nan"), float("inf"), float("-inf")):
             self.assertEqual(timing.llm_timeout_s(junk), timing.LLM_TIMEOUT_BASE_S, junk)
-        # 浮点词数照算（记录上手改成 1200.0 也不崩）
+        # 浮点词数照算（记录上手改成 1200.0 也不崩）；大到离谱的整数封在 MAX_WORDS，算术不溢出
         self.assertAlmostEqual(timing.llm_timeout_s(1200.0), 240.0 + 72.0)
+        self.assertEqual(timing.llm_timeout_s(10 ** 400), timing.LLM_TIMEOUT_MAX_S)
+        self.assertEqual(timing.lost_after_s(float("nan")), 600.0)
 
     def test_lost_after_is_lock_wait_plus_the_model_calls_of_one_run(self):
         # §63.8 原文：「10 分钟 = 一次成功生成的上界：锁等待 120 s + 模型 240 s × 重试」——

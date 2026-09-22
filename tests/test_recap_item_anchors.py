@@ -105,17 +105,25 @@ class ValidatorTestCase(unittest.TestCase):
                       section([{"text": "no quote", "at": STAMP}], key="open", modality="open")])
         found = rt.validate_sections_detail(doc)
         codes = [(f["code"], f["lang"], f["line"]) for f in found]
-        self.assertEqual(codes, [("item_unanchored", "en", 2), ("item_unanchored", "en", 3)])
+        # zh 侧默认是同一份条目（`reply()`），锚两语言都判 → 两侧各两条，条目号跨节连续
+        self.assertEqual(codes, [("item_unanchored", "en", 2), ("item_unanchored", "en", 3),
+                                 ("item_unanchored", "zh", 2), ("item_unanchored", "zh", 3)])
         self.assertIn("has no transcript anchor", found[0]["text"])
         # 重试喂回模型的 text 列与结构化列同源
         self.assertEqual(rt.validate_sections(doc), [f["text"] for f in found])
 
     def test_anchor_shape_gates(self):
-        bad_at = parsed([section([{"text": "x", "at": "12:5", "quote": fx.QUOTE}])])
+        # zh 侧给一条干净的，形状闸只在 en 侧响一次
+        zh = [section([fx.item("甲")])]
+        bad_at = parsed([section([{"text": "x", "at": "12:5", "quote": fx.QUOTE}])], zh)
         self.assertEqual(self.codes(bad_at), ["item_unanchored"])
         self.assertIn("HH:MM", rt.validate_sections(bad_at)[0])
         short = parsed([section([{"text": "x", "at": STAMP, "quote": "run"}])])
         self.assertIn("too short", rt.validate_sections(short)[0])
+        # 全是标点的片段归一后是空串——「空串是任何转写的子串」会让对照那一关白白放行，所以按太短拒
+        dots = parsed([section([{"text": "x", "at": STAMP, "quote": "...... ——"}])], zh)
+        self.assertIn("too short", rt.validate_sections(dots)[0])
+        self.assertEqual(self.codes(dots, context()), ["item_unanchored"])
         long = parsed([section([{"text": "x", "at": STAMP, "quote": "w" * (rt.MAX_QUOTE_CHARS + 1)}])])
         self.assertIn("too long", rt.validate_sections(long)[0])
         self.assertEqual((rt.MIN_QUOTE_CHARS, rt.MAX_QUOTE_CHARS), (6, 160))
@@ -126,8 +134,10 @@ class ValidatorTestCase(unittest.TestCase):
         # 没有对照：形状都对 = 干净（回退的重算走这条路）
         self.assertEqual(self.codes(doc), [])
         found = rt.validate_sections_detail(doc, context())
-        self.assertEqual([(f["code"], f["line"]) for f in found],
-                         [("anchor_unverified", 2), ("anchor_unverified", 3)])
+        # zh 侧默认与 en 同一份条目（`reply()` 的默认），所以两侧各记两条——锚两语言都判
+        self.assertEqual([(f["code"], f["lang"], f["line"]) for f in found],
+                         [("anchor_unverified", "en", 2), ("anchor_unverified", "en", 3),
+                          ("anchor_unverified", "zh", 2), ("anchor_unverified", "zh", 3)])
         self.assertIn("not a stamp", found[0]["text"])
         self.assertIn("verbatim", found[1]["text"])
         # 「逐字」容忍标点与大小写，不容忍改写
@@ -143,12 +153,30 @@ class ValidatorTestCase(unittest.TestCase):
                  "modalities": 7}]
         self.assertEqual(rt.validate_sections_detail({"en": junk, "zh": junk}), [])
 
-    def test_only_the_english_side_is_judged_on_anchors(self):
-        zh = [section([{"text": "甲"}])]                     # 锚缺席（zh 侧不判——锚是转写的事实，与语言无关）
+    def test_both_languages_are_judged_on_anchors_against_the_same_transcript(self):
+        # 锚是转写的事实、与语言无关：zh 侧缺锚 / 对不上一样记——不判的那一侧会成为一列没人看过的存储
+        zh = [section([{"text": "甲"}])]
         doc = parsed([section([fx.item("a")])], zh)
-        self.assertEqual(self.codes(doc, context()), [])
-        # zh 侧带着的锚原样存着（add-only 列），不判
-        self.assertEqual(doc["zh"][0]["anchors"], [None])
+        self.assertEqual([(f["code"], f["lang"]) for f in rt.validate_sections_detail(doc, context())],
+                         [("item_unanchored", "zh")])
+        skew = parsed([section([fx.item("a")])],
+                      [section([{"text": "甲", "at": STAMP, "quote": "not what anyone said here"}])])
+        self.assertEqual([(f["code"], f["lang"]) for f in rt.validate_sections_detail(skew, context())],
+                         [("anchor_unverified", "zh")])
+        # 两侧都齐 = 干净（fixture 的 zh 条目本来就带同一个锚）
+        self.assertEqual(self.codes(rt.parse_sections(fx.good_sections_output()), context()), [])
+
+    def test_item_counts_and_section_modality_must_agree_across_languages(self):
+        # 三列（tags / modalities / anchors）按位置共享——条数不齐就全对不上位，一条 item_mismatch 说清
+        skew = parsed([section([fx.item("a"), fx.item("b")])], [section([fx.item("甲")])])
+        found = rt.validate_sections_detail(skew)
+        self.assertEqual([(f["code"], f["lang"]) for f in found], [("item_mismatch", "zh")])
+        # 节的语气两边不一致：渲染出的尾巴会一边有一边没有——记成 section_mismatch
+        tone = parsed([section([fx.item("a", "floated")], key="split", modality="decided")],
+                      [section([fx.item("甲", "floated")], key="split", modality="floated")])
+        found = rt.validate_sections_detail(tone)
+        self.assertEqual([(f["code"], f["lang"]) for f in found], [("section_mismatch", "zh")])
+        self.assertIn("modality differs from the English section", found[0]["text"])
 
     def test_item_modality_is_a_closed_table_and_agrees_across_languages(self):
         doc = parsed([section([fx.item("a", "floated"), fx.item("b", "certain"), fx.item("c")])],
@@ -202,11 +230,13 @@ class RenderTestCase(unittest.TestCase):
         self.assertNotIn("(floated)\n", body.split("\n", 1)[1])
 
     def test_anchors_never_reach_the_pasted_body_and_filler_takes_its_modality_along(self):
-        secs = [{"key": "decided", "modality": "decided", "tags": ["D1", "D2"],
-                 "items": ["a real item", "none"], "modalities": ["floated", "open"],
-                 "anchors": [fx.anchor(), fx.anchor(1)]}]
+        # 填充值在**中间**：按剔掉之后的下标去取语气会把第三条的语气拿错（那种实现在这里会露馅）
+        secs = [{"key": "decided", "modality": "decided", "tags": ["D1", "D2", "D3"],
+                 "items": ["a real item", "none", "another real item"],
+                 "modalities": ["floated", "open", "decided"],
+                 "anchors": [fx.anchor(), fx.anchor(1), fx.anchor(2)]}]
         body = rt.render_sections(secs, "en")
-        self.assertEqual(body, "Decided:\nD1. a real item (floated)")
+        self.assertEqual(body, "Decided:\nD1. a real item (floated)\nD3. another real item")
         self.assertNotIn(STAMP, body)
         self.assertNotIn(fx.QUOTE, body)
         # 一条都不剩的回落（整份照原样出）同样带语气尾巴
@@ -327,7 +357,8 @@ class PipelineTestCase(unittest.TestCase):
         legacy = reply([section(["Ann owns the data mix"])], [section(["数据配比归 Ann"])])
         rec = self.closed(_Runner(legacy))
         self.assertEqual(rec["quality"], store.QUALITY_NEEDS_REVIEW)
-        self.assertEqual([f["code"] for f in rec["problems"]], ["item_unanchored"])
+        self.assertEqual([(f["code"], f["lang"]) for f in rec["problems"]],
+                         [("item_unanchored", "en"), ("item_unanchored", "zh")])
         self.assertEqual(rec["sections_en"][0]["anchors"], [None])
         self.assertIn("D1. Ann owns the data mix", rec["copy_en"])
 
@@ -367,8 +398,31 @@ class PipelineTestCase(unittest.TestCase):
                        runner=_Runner(fx.good_sections_output()), cfg=self.cfg)
         back = recap.revert(KEY, 1, now=fx.T0 + 50 * MIN)
         self.assertEqual(back["quality"], store.QUALITY_NEEDS_REVIEW)
-        # 形状上的缺锚重算得出来；对照转写那一半没有转写可对，不编一条 anchor_unverified
-        self.assertEqual([f["code"] for f in back["problems"]], ["item_unanchored"])
+        # 形状上的缺锚重算得出来（两语言）；对照转写那一半没有转写可对，不编一条 anchor_unverified
+        self.assertEqual([f["code"] for f in back["problems"]], ["item_unanchored", "item_unanchored"])
+
+    def test_a_reverted_version_whose_only_finding_needed_the_transcript_keeps_its_reason(self):
+        """`anchor_unverified` 要对着模型当时看到的转写才算得出——回退时没有转写，所以那几行从
+        条目自己的出生台账（add-only `problems`）带回，需复核的 badge 下面不许空着（issue #298 的病）。"""
+        paraphrased = reply([section([{"text": "Ann owns the data mix", "modality": "decided", "at": STAMP,
+                                       "quote": "Ann is going to own the data mix"}])],
+                            [section([fx.item("数据配比归 Ann")])])
+        self.closed(_Runner(paraphrased))                              # v1 needs_review：只有 anchor_unverified
+        first = store.load_recap(KEY)
+        self.assertEqual([f["code"] for f in first["problems"]], ["anchor_unverified"])
+        recap.generate(KEY, now=fx.T0 + 40 * MIN, conn=self.conn,
+                       runner=_Runner(fx.good_sections_output()), cfg=self.cfg)
+        entry = store.load_recap(KEY)["history"][0]
+        self.assertEqual([f["code"] for f in entry["problems"]], ["anchor_unverified"])   # 出生台账进了条目
+        back = recap.revert(KEY, 1, now=fx.T0 + 50 * MIN)
+        self.assertEqual(back["quality"], store.QUALITY_NEEDS_REVIEW)
+        self.assertEqual([f["code"] for f in back["problems"]], ["anchor_unverified"])
+        self.assertNotIn("going to own", json.dumps(back["problems"]))
+        # 回退到一个 ok 的版本：不带任何发现（带回的只属于 needs_review）
+        recap.generate(KEY, now=fx.T0 + 60 * MIN, conn=self.conn,
+                       runner=_Runner(fx.good_sections_output()), cfg=self.cfg)
+        ok = recap.revert(KEY, 2, now=fx.T0 + 70 * MIN)
+        self.assertEqual((ok["quality"], ok["problems"]), (store.QUALITY_OK, []))
 
 
 if __name__ == "__main__":

@@ -277,8 +277,8 @@ def transcript_rows_between(conn: sqlite3.Connection, lo: float, hi: float) -> l
     """``[(epoch_ts, text)]`` of the non-empty transcription rows inside
     [lo, hi], in time order — the only place the engine's words are read.
     §63.13: the sendable shape's prompt stamps every row with its local
-    ``[HH:MM]`` (``recap_text.stamp_transcript``) so an item can name the line
-    it rests on; :func:`transcript_between` is the same rows joined."""
+    ``[HH:MM]`` (:func:`stamped_transcript`, below) so an item can name the
+    line it rests on; :func:`transcript_between` is the same rows joined."""
     rows = conn.execute(
         "SELECT timestamp, transcription FROM audio_transcriptions "
         "WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp, id",

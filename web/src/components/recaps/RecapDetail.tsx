@@ -47,7 +47,8 @@ import { copyText } from "../detail/copyText";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import { RecapIntentPanel } from "./RecapIntent";
 import {
-  answersFor, bodyTags, changedItems, changedLines, endOverrideIso, hasBaseline, hasRecapText, isGenerating,
+  answersFor, bodyTags, changedItems, changedLines, endOverrideIso, endOverrideProblem, evidenceLabel,
+  hasBaseline, hasRecapText, isGenerating,
   itemCitation, lineCitation, LINE_TAG_LABELS, localHHMM, lostAfterMinutes,
   pickLanguage, pickShape,
   problemLabel,
@@ -317,8 +318,8 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
   const progress = generationNote(phase, isOpen, text, lostAfterMinutes(row));
-  // §63.13 逐条的转写锚（只从 sections_en 读；纯展示、不进剪贴板）
-  const evidence = shape === "sections" ? recapAnchors(row) : [];
+  // §63.13 逐条的转写锚（只从 sections_en 读，标签只认正文里真出现过的；纯展示、不进剪贴板）
+  const evidence = shape === "sections" ? recapAnchors(row, body) : [];
   // §63.16 显示的结束时刻（手改优先）；编辑框的初值 = 现在显示的那个
   const ending = shownEnd(row);
   // §63.9 回退的回执：每次渲染现算（与 §63.8 页面侧同一口径），落地 / 退场即自己结束
@@ -421,7 +422,11 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const saveEnd = () => {
     const iso = endOverrideIso(row, endInput);
     if (!iso) {
-      setFlash(text("结束时间要晚于开始时间", "The end time has to be after the start"));
+      // 不能用的输入按原因各说一句（空框 / 越界、这一行的开始时刻坏了、与开始同一分钟）
+      const problem = endOverrideProblem(row, endInput);
+      setFlash(problem === "input" ? text("请填一个时间（HH:MM）", "Pick a time (HH:MM) first")
+        : problem === "start" ? text("这一行的开始时间读不出来，改不了结束时间", "This row's start time is unreadable, so the end cannot be edited")
+        : text("结束时间不能和开始是同一分钟", "The end time cannot be the same minute as the start"));
       return;
     }
     void run(text("已改结束时间（只改显示，录制到的时间仍存着）", "End time changed (display only; the captured time stays on file)"),
@@ -547,9 +552,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
                       `Transcript evidence (${evidence.length}) — the line each item rests on`)}
               </summary>
               <ul className="recap-evidence-list">
-                {evidence.map((entry) => (
-                  <li key={`${entry.tag}-${entry.at}`}>
-                    <span className="recap-evidence-tag">{`#${entry.tag}`}</span>
+                {evidence.map((entry, i) => (
+                  <li key={`${i}-${entry.tag}-${entry.at}`}>
+                    <span className="recap-evidence-tag">{evidenceLabel(entry)}</span>
                     {" · "}
                     <span className="recap-evidence-at">{entry.at}</span>
                     {" · "}

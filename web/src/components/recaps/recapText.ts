@@ -63,19 +63,40 @@ export function localHHMM(iso: string): string {
   return label === "--:--" ? "" : label;
 }
 
-/**
- * §63.16 把编辑框里的本地 `HH:MM` 合到会议开始那一天上 → ISO-Z（秒级，与记录上的 start / end 同形）。
- * 不晚于开始时刻 = null（面板据此说「结束要晚于开始」，不发请求）；坏输入 = null。
- */
-export function endOverrideIso(row: RecapRow, hhmmValue: string): string | null {
+/** §63.16 编辑框输入为什么不能用（面板据它说不同的一句）：`input` = 不是 HH:MM / 越界；
+ *  `start` = 这一行的 start 解析不出；`same` = 与开始是同一分钟（一场会不可能零分钟）；null = 能用 */
+export type EndOverrideProblem = "input" | "start" | "same" | null;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function endCandidate(row: RecapRow, hhmmValue: string): { problem: EndOverrideProblem; end?: Date } {
   const m = /^(\d{2}):(\d{2})$/.exec(hhmmValue.trim());
-  const start = new Date(row.start);
-  if (!m || Number.isNaN(start.getTime())) return null;
+  if (!m) return { problem: "input" };
   const hours = Number(m[1]);
   const minutes = Number(m[2]);
-  if (hours > 23 || minutes > 59) return null;            // `25:99` 不许被 Date 悄悄滚到第二天
-  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate(), hours, minutes, 0, 0);
-  if (end.getTime() <= start.getTime()) return null;
+  if (hours > 23 || minutes > 59) return { problem: "input" };   // `25:99` 不许被 Date 悄悄滚到第二天
+  const start = new Date(row.start);
+  if (Number.isNaN(start.getTime())) return { problem: "start" };
+  let end = new Date(start.getFullYear(), start.getMonth(), start.getDate(), hours, minutes, 0, 0);
+  // 输入的时刻比开始早 = 跨过了本地午夜（23:40 开、00:05 结束的那种会）：落到开始的**下一天**；
+  // 与开始同一分钟才是真的说不通（滚一天变成 24 小时的会，不是 owner 的意思）
+  if (end.getTime() < start.getTime()) end = new Date(end.getTime() + DAY_MS);
+  if (end.getTime() === start.getTime()) return { problem: "same" };
+  return { problem: null, end };
+}
+
+/** §63.16 编辑框里的值能不能用（null = 能）——与 :func:`endOverrideIso` 同一条判定 */
+export function endOverrideProblem(row: RecapRow, hhmmValue: string): EndOverrideProblem {
+  return endCandidate(row, hhmmValue).problem;
+}
+
+/**
+ * §63.16 把编辑框里的本地 `HH:MM` 合到会议开始那一天上 → ISO-Z（秒级，与记录上的 start / end 同形）；
+ * 比开始早的时刻按跨午夜算、落到下一天。不能用的输入 = null（原因由 :func:`endOverrideProblem` 说）。
+ */
+export function endOverrideIso(row: RecapRow, hhmmValue: string): string | null {
+  const { problem, end } = endCandidate(row, hhmmValue);
+  if (problem || !end) return null;
   return end.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
@@ -389,35 +410,50 @@ export function recapSections(row: RecapRow, language: Language): RecapSection[]
     Boolean(sec) && typeof sec === "object" && Array.isArray((sec as RecapSection).items));
 }
 
-/** §63.13 面板「转写依据」的一行：条目的标签（老记录 / 用尽 = 按位置的连续号）、戳、原话片段 */
+/** §63.13 面板「转写依据」的一行：条目的标签（只认**正文里真出现过的**；没有 = 空串，面板改用条目原文认它）、
+ *  条目原文、戳、原话片段 */
 export interface RecapEvidence {
   tag: string;
+  item: string;
   at: string;
   quote: string;
 }
 
 /**
  * §63.13 这一版每一条的转写锚（**只从 `sections_en` 读**：锚是转写的事实、与条目的语言无关，
- * daemon 也只在英文那一侧校验它）。`tags` 与 `anchors` 都与 `items` 逐位对齐；没有锚的条目
- * （老记录 / 模型漏了）不列；手改坏的 wire（非对象、缺字段）滤掉。**纯展示层**：锚从不进
- * `recapBody()` / `recapClipboardText()`——§63.3 的禁项对粘出去的那一份照旧成立。
+ * 两语言按位置是同一条）。`tags` / `anchors` / `items` 逐位对齐；没有锚的条目（老记录 / 模型漏了）
+ * 不列；手改坏的 wire（非对象、缺字段）滤掉。标签**只认 daemon 渲染进 `body`（`copy_*`）里的那几个**
+ * （`bodyTags`）——client 不再按位置自己编号：略掉的填充条目、`tag_ok` 拒掉的标签都不在正文里，
+ * 自己数出来的号会指到正文里没有的一行。wire 上带着标签而正文里没有它的条目 = daemon 把它略掉了
+ * （填充值「无 / none」），纸上没有的东西不给依据、整条不列；没有标签的条目（§63.12 之前的老记录）
+ * 仍列，面板改用条目原文认它。
+ * **纯展示层**：锚从不进 `recapBody()` / `recapClipboardText()`——§63.3 的禁项对粘出去的那一份照旧成立。
  */
-export function recapAnchors(row: RecapRow): RecapEvidence[] {
+export function recapAnchors(row: RecapRow, body: string): RecapEvidence[] {
+  const inBody = new Set(bodyTags(body));
   const out: RecapEvidence[] = [];
-  let n = 0;
   for (const sec of recapSections(row, "en")) {
     const anchors = Array.isArray(sec.anchors) ? sec.anchors : [];
     const tags = Array.isArray(sec.tags) ? sec.tags : [];
-    sec.items.forEach((_item, i) => {
-      n += 1;
+    sec.items.forEach((item, i) => {
       const anchor = anchors[i];
       if (!anchor || typeof anchor !== "object") return;
       if (typeof anchor.at !== "string" || typeof anchor.quote !== "string" || !anchor.quote.trim()) return;
-      const tag = typeof tags[i] === "string" && tags[i] ? tags[i] : String(n);
-      out.push({ tag, at: anchor.at, quote: anchor.quote });
+      const wireTag = typeof tags[i] === "string" ? tags[i] : "";
+      if (wireTag && !inBody.has(wireTag)) return;          // 有标签却不在纸上 = 被略掉的条目
+      out.push({ tag: wireTag, item: typeof item === "string" ? item : "", at: anchor.at, quote: anchor.quote });
     });
   }
   return out;
+}
+
+/** 「转写依据」一行的名字：有正文里的标签就 `#D1`，否则条目原文（截到 `EVIDENCE_ITEM_CHARS` 字） */
+export const EVIDENCE_ITEM_CHARS = 40;
+
+export function evidenceLabel(entry: RecapEvidence): string {
+  if (entry.tag) return `#${entry.tag}`;
+  const text = entry.item.trim();
+  return text.length > EVIDENCE_ITEM_CHARS ? `${text.slice(0, EVIDENCE_ITEM_CHARS)}…` : text;
 }
 
 /**
@@ -674,6 +710,9 @@ export function problemLabel(problem: RecapProblem, text: Bilingual): string {
     case "anchor_unverified":
       return text(`${lang}：第 ${problem.line ?? "?"} 条的转写锚对不上转写（原话不是逐字的，或时间戳不是转写里的一行）`,
                   `${lang}: item ${problem.line ?? "?"}'s anchor does not match the transcript (the fragment is not verbatim, or the stamp is not a transcript line)`);
+    case "item_mismatch":
+      return text("中英两版有一节的条数不一致（每一条的语气与转写锚按位置共享，条数必须对齐）",
+                  "A section has a different number of items in Chinese and English (modality and anchors are shared by position, so the counts must match)");
     case "timestamp":
       return text(`${at}：有时间戳`, `${at}: contains a timestamp`);
     case "link":

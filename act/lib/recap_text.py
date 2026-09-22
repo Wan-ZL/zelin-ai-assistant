@@ -201,6 +201,8 @@ MAX_QUOTE_CHARS = 160
 CODE_UNANCHORED = "item_unanchored"
 CODE_ANCHOR_UNVERIFIED = "anchor_unverified"
 CODE_ITEM_MODALITY = "item_modality"
+# 同一节两语言的条数不齐（逐条列按位置共享，条数不齐 = 语气 / 锚 / 标签都对不上位）
+CODE_ITEM_MISMATCH = "item_mismatch"
 
 # 填充值 = 模板**自己规定的固定串**（PROMPT_HEADER 逐字要求模型这么写），所以「这一部分是空的」
 # 是一次查表，不是对模型散文的正则猜测（宪法第 11 条的同一条纪律：判定要可复现）。
@@ -702,8 +704,10 @@ def _modality_findings(sections: list, lang: str) -> list:
 
 
 def _quote_problem(quote: str) -> Optional[str]:
-    """原话片段的长度闸（喂回模型的那句人话）；None = 长度对。不带原话。"""
-    if len(quote) < MIN_QUOTE_CHARS:
+    """原话片段的长度闸（喂回模型的那句人话）；None = 长度对。不带原话。
+    归一后一个字都不剩（全是标点 / 空白）的片段也算太短——它的归一形是空串，
+    「空串是任何转写的子串」会让对照那一关白白放行。"""
+    if len(quote) < MIN_QUOTE_CHARS or not _norm_match(quote):
         return "anchor quote is too short: copy 3-15 words from that transcript line"
     if len(quote) > MAX_QUOTE_CHARS:
         return "anchor quote is too long: copy 3-15 words (at most %d characters)" % MAX_QUOTE_CHARS
@@ -740,8 +744,9 @@ def _anchor_problem(anchor, context: Optional[dict]) -> Optional[tuple]:
 
 
 def _anchor_findings(sections: list, lang: str, context: Optional[dict]) -> list:
-    """§63.13 逐条锚（**只判英文那一侧**：锚是转写的事实，与条目的语言无关；两语言的条目
-    按位置是同一条，zh 侧的锚原样存着、不判）。声明了 ``anchors`` 列的节才判。"""
+    """§63.13 逐条锚，**两语言都判**：锚是转写的事实、与条目的语言无关，两侧对照的是同一份
+    转写（模板要 zh 侧逐条带同一个 at / quote）——不判的那一侧会成为一列没有上限、没人看过的
+    存储（防腐 #4）。声明了 ``anchors`` 列的节才判。"""
     out = []
     for sec, i, n in _numbered_items(sections):
         declared = _declared(sec, "anchors")
@@ -768,24 +773,44 @@ def _lang_section_findings(sections: list, lang: str, context: Optional[dict] = 
             for sec in sections if sec["modality"] not in MODALITIES]
     out += _item_findings(sections, lang)
     out += _modality_findings(sections, lang)
-    if lang == "en":
-        out += _anchor_findings(sections, lang, context)
+    out += _anchor_findings(sections, lang, context)
     out += _shared_findings([item for sec in sections for item in sec["items"]], lang)
     return out
 
 
-def _paired_modality_findings(en: list, zh: list) -> list:
-    """§63.13：两语言按位置是同一条，声明了的逐条语气必须一致（同节同序是 §63.10 的硬闸，
-    这里只在两侧都声明了的位置上比）。"""
+def _paired_item_findings(sec_en: dict, sec_zh: dict, first: int) -> list:
+    """同一位的两节逐条比声明了的语气（``first`` = 这一节第一条的跨节连续号 − 1）。"""
+    out = []
+    mods_en, mods_zh = _declared(sec_en, "modalities"), _declared(sec_zh, "modalities")
+    for i in range(len(sec_en["items"])):
+        a, b = _at(mods_en, i), _at(mods_zh, i)
+        if a and b and a != b:
+            out.append(_finding(CODE_ITEM_MODALITY, "zh item %d: modality differs from the English item"
+                                % (first + i + 1), lang="zh", line=first + i + 1))
+    return out
+
+
+def _paired_section_findings(sec_en: dict, sec_zh: dict, first: int) -> list:
+    """§63.13：同一位的两节是同一份内容的两面——节的语气要一致（否则渲染出的尾巴一边有一边没有），
+    **条数要一致**（`tags` / `modalities` / `anchors` 三列都按位置共享，条数不齐 = 全对不上位），
+    齐了再逐条比声明了的语气。"""
+    out = []
+    if sec_en["modality"] != sec_zh["modality"]:
+        out.append(_finding("section_mismatch", "zh section %d: modality differs from the English section"
+                            % (first + 1), lang="zh"))
+    if len(sec_en["items"]) != len(sec_zh["items"]):
+        out.append(_finding(CODE_ITEM_MISMATCH, "zh section starting at item %d must have the same number "
+                            "of items as the English one" % (first + 1), lang="zh"))
+        return out
+    return out + _paired_item_findings(sec_en, sec_zh, first)
+
+
+def _paired_findings(en: list, zh: list) -> list:
+    """两语言按节配对（同节同序已由 `section_mismatch` 那一关保证）；条目号跨节连续、按英文侧数。"""
     out, n = [], 0
     for sec_en, sec_zh in zip(en, zh):
-        mods_en, mods_zh = _declared(sec_en, "modalities"), _declared(sec_zh, "modalities")
-        for i in range(len(sec_en["items"])):
-            n += 1
-            a, b = _at(mods_en, i), _at(mods_zh, i)
-            if a and b and a != b:
-                out.append(_finding(CODE_ITEM_MODALITY, "zh item %d: modality differs from the English item"
-                                    % n, lang="zh", line=n))
+        out += _paired_section_findings(sec_en, sec_zh, n)
+        n += len(sec_en["items"])
     return out
 
 
@@ -796,7 +821,9 @@ def validate_sections_detail(recap: dict, context: Optional[dict] = None) -> lis
     field). Codes (add-only): section_count / section_key / section_modality /
     section_empty / item_count / item_too_long / item_numbered /
     section_mismatch + the cross-language bans :func:`_shared_findings` already
-    owns; §63.13 adds item_modality / item_unanchored / anchor_unverified.
+    owns; §63.13 adds item_modality / item_unanchored / anchor_unverified /
+    item_mismatch (a section's item count differs between the languages — the
+    item-aligned columns are shared by position, so they must line up).
     ``line`` = the item's **continuous number across sections**, which is
     the number the rendered document shows. ``context`` (§63.13) =
     :func:`anchor_context` of the transcript the model saw — with it the
@@ -805,12 +832,12 @@ def validate_sections_detail(recap: dict, context: Optional[dict] = None) -> lis
     en, zh = recap.get("en"), recap.get("zh")
     if not isinstance(en, list) or not isinstance(zh, list) or not en or not zh:
         return [_finding("section_count", "both languages need at least one section")]
-    out = _lang_section_findings(en, "en", context) + _lang_section_findings(zh, "zh")
+    out = _lang_section_findings(en, "en", context) + _lang_section_findings(zh, "zh", context)
     if [sec["key"] for sec in en] != [sec["key"] for sec in zh]:
         out.append(_finding("section_mismatch",
                             "the English and 中文 sections must be the same keys in the same order"))
     else:
-        out += _paired_modality_findings(en, zh)
+        out += _paired_findings(en, zh)
     return out
 
 

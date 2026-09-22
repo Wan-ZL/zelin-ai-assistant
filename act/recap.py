@@ -286,9 +286,13 @@ def _push_history(rec: dict) -> None:
     judgement that a regeneration must never lose the previous text."""
     if not store.has_text(rec):
         return
+    # §63.13 追记：条目自此也带出生时的 `problems`（add-only）——`anchor_unverified` 这一种发现要
+    # 对着转写才算得出，回退时没有转写可对，只能从出生台账带回（其余 code 回退时照旧重算，见
+    # `_carried_problems`）；D77 那句「不存算得出来的东西」对算不出来的那一种自此不再成立
     entry = {"version": rec.get("version"), "generated_at": rec.get("generated_at"),
              "en": rec["en"], "zh": rec["zh"], "partial": bool(rec.get("partial")),
              "quality": rec.get("quality"), "repairs": list(rec.get("repairs") or []),
+             "problems": list(rec.get("problems") or []),
              "shape": text.normalize_shape(rec.get("shape")),
              "sections_en": rec.get("sections_en"), "sections_zh": rec.get("sections_zh"),
              "copy_en": rec.get("copy_en"), "copy_zh": rec.get("copy_zh")}
@@ -851,6 +855,17 @@ def _restored_problems(rec: dict) -> list:
     return [] if body is None else text.validate_detail_for(shape, body)
 
 
+def _carried_problems(entry: dict) -> list:
+    """§63.13：回退时**只**从条目的出生台账（add-only ``problems``，§63.13 起 `_push_history` 存入）
+    带回 `anchor_unverified` 那几行——它们要对着模型当时看到的转写才算得出，`_restored_problems`
+    没有转写可对；其余 code 都能重算，不搬（把存着的发现挪过来是 D77 明令的撒谎）。本键之前入库
+    的条目 / 非 dict 的行 = 空。"""
+    rows = entry.get("problems") if isinstance(entry, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict) and row.get("code") == text.CODE_ANCHOR_UNVERIFIED]
+
+
 def _entry_repairs(entry: dict) -> list:
     """The trims the restored version was born with (add-only entry key, §63.6
     追记 2026-09-15 修正); entries from before the key — or junk — restore none."""
@@ -890,6 +905,8 @@ def _apply_history_entry(rec: dict, entry: dict, now: float) -> None:
     rec["quality"] = _entry_quality(entry)
     rec["note"] = None
     rec["problems"] = _restored_problems(rec)
+    if rec["quality"] == store.QUALITY_NEEDS_REVIEW:
+        rec["problems"] += _carried_problems(entry)       # §63.13：对不着转写的那一种从出生台账带回
     rec["repairs"] = _entry_repairs(entry)
     # §63.14：术语替换的计数属于产出那份正文的那一次生成，回退搬不回来 = None（不写 0：
     # 「换了 0 处」是一个我们没有资格说的数）

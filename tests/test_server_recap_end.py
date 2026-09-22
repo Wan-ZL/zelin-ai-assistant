@@ -22,6 +22,8 @@ from act.lib import recap_sessions as rs
 from act.lib import recap_store as store
 
 KEY = "meeting:2026-08-31T1256-zoom"
+# 与 ProjectionTestCase 的记录同一天：录制到 20:16Z，owner 说会 20:10Z 就散了
+START_TS = 1756669000.0                         # 2026-08-31T19:36:40Z（fixture 的会议区间起点）
 END = "2026-08-31T20:10:00Z"
 
 
@@ -95,7 +97,7 @@ class ProjectionTestCase(unittest.TestCase):
         state.mkdir()
         mock.patch.object(config, "STATE_DIR", state).start()
         self.addCleanup(mock.patch.stopall)
-        rec = store.new_record(rs.Session(start=1756669000.0, end=1756670200.0, frames=40,
+        rec = store.new_record(rs.Session(start=START_TS, end=START_TS + 1200, frames=40,
                                           audio_rows=30, app="zoom", events=[]), KEY, rs.CLOSED)
         store.save_recap(rec)
 
@@ -111,8 +113,8 @@ class ProjectionTestCase(unittest.TestCase):
         self._marks({"end_override": END, "copied_at": "2026-08-31T20:20:00Z"})
         row = self._row()
         self.assertEqual(row["end_override"], END)
-        self.assertEqual(row["end"], rs.iso_utc(1756670200.0))   # 录制到的 end 原样
-        self.assertEqual(store.load_recap(KEY)["end"], rs.iso_utc(1756670200.0))
+        self.assertEqual(row["end"], rs.iso_utc(START_TS + 1200))   # 录制到的 end 原样
+        self.assertEqual(store.load_recap(KEY)["end"], rs.iso_utc(START_TS + 1200))
 
     def test_a_hand_mangled_override_is_none_not_a_crash(self):
         for junk in (7, True, "yesterday", "", [END], {"at": END}):
@@ -122,13 +124,16 @@ class ProjectionTestCase(unittest.TestCase):
         self._marks({"end_override": None})
         self.assertIsNone(self._row()["end_override"])
 
-    def test_the_override_does_not_move_the_row_between_lanes_or_windows(self):
+    def test_the_override_does_not_move_the_row_between_lanes(self):
+        # 手改的结束时间不是一个「理由」：不归档、不忽略、filed 时刻也不看它
         self._marks({"end_override": END})
         row = self._row()
         self.assertEqual(store.lane(row), "active")
         self.assertFalse(store.filed(row))
-        # 保留窗按会议 start / dismissed_at 算，与手改的结束时间无关
-        self.assertEqual(store.prune(1756670200.0 + 86400, 90, 14), 0)
+        self._marks({"end_override": END, "sent_at": "2026-08-31T21:00:00Z"})
+        row = self._row()
+        self.assertEqual(store.lane(row), "archived")
+        self.assertEqual(store._filed_ts(row), rs.parse_ts("2026-08-31T21:00:00Z"))
 
 
 if __name__ == "__main__":

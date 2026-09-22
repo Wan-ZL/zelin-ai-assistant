@@ -164,12 +164,16 @@ describe("RecapsPage — issue #440", () => {
     await waitFor(() => expect(detailTitle()).toContain("40 min"));
   });
 
-  it("refuses an end that is not after the start without posting, and hides the editor on an open meeting", async () => {
+  it("refuses the same minute as the start and an empty field with distinct messages, and hides the editor on an open meeting", async () => {
     await renderPage([recap()]);
     fireEvent.click(screen.getByRole("button", { name: "Edit end time…" }));
     fireEvent.change(screen.getByLabelText("End time"), { target: { value: localHHMM("2026-08-31T19:56:00Z") } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("The end time has to be after the start")).toBeTruthy();
+    expect(await screen.findByText("The end time cannot be the same minute as the start")).toBeTruthy();
+    expect(postRecapEnd).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Pick a time (HH:MM) first")).toBeTruthy();
     expect(postRecapEnd).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByLabelText("End time")).toBeNull();
@@ -186,6 +190,40 @@ describe("RecapsPage — issue #440", () => {
     await waitFor(() => expect(postRecapMark).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
     expect(detailTitle()).toContain("34 min");
+  });
+
+  it("editing the end time keeps the row's other marks, and copying afterwards keeps the edited end", async () => {
+    // 已归档的一行（sent_at 来自 server）：改结束时间不许把它踢回活跃栏、不许翻 badge
+    await renderPage([recap({ sent_at: "2026-09-01T00:00:01Z" })]);
+    fireEvent.click(screen.getByRole("tab", { name: /Archived/ }));
+    expect(screen.getAllByRole("button", { name: /Zoom · 40 min/ }).length).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Edit end time…" }));
+    const target = new Date(new Date("2026-08-31T19:56:00Z").getTime() + 34 * 60000);
+    fireEvent.change(screen.getByLabelText("End time"),
+                     { target: { value: `${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}` } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(postRecapEnd).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(detailTitle()).toContain("34 min"));
+    // 仍在「已归档」栏（左列还列着它、按钮仍是「取消已发送」）
+    expect(screen.getAllByRole("button", { name: /Zoom · 34 min/ }).length).toBe(1);
+    expect(screen.getByRole("button", { name: "Unmark sent" })).toBeTruthy();
+    // 复制（markRecap 的回执三个戳齐发）不许把手改的结束时间冲掉
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(postRecapMark).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(detailTitle()).toContain("34 min");
+  });
+
+  it("hides the evidence block while reading the transcript-original version", async () => {
+    await renderPage([sectionsRecap({
+      baseline: { version: 1, generated_at: "2026-08-31T20:20:00Z", shape: "sections",
+                  copy_en: "Decided:\nD1. The first version", copy_zh: "定了：\nD1. 第一版" },
+    })]);
+    expect(screen.getByTestId("recap-evidence")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "What the transcript said" }));
+    expect(screen.queryByTestId("recap-evidence")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "What I chose to record" }));
+    expect(screen.getByTestId("recap-evidence")).toBeTruthy();
   });
 
   it("says how long the daemon waited before calling a generation lost, from the receipt", async () => {

@@ -33,14 +33,21 @@ LLM_TIMEOUT_PER_KWORD_S = 60.0
 LLM_TIMEOUT_MAX_S = 900.0
 # 一次出稿最多几次模型调用（§63.3：一次 + 重试一次）
 MODEL_CALLS_PER_RUN = 2
+# 词数的天花板：四小时的会也不到十万词；再大的数只可能来自手改坏的记录，封住它免得算术溢出
+MAX_WORDS = 10_000_000
 
 
 def _words(value) -> int:
-    """记录上的 ``transcript_words``：真整数且 ≥ 0 才算（``bool`` 是 ``int`` 子类，
-    None / 手改坏的值 = 0 = 地板）。"""
+    """记录上的 ``transcript_words``：真数且 ≥ 0 才算（``bool`` 是 ``int`` 子类；None / 字符串 /
+    nan / inf / 大到离谱的数——手改坏的记录里都见得到——一律 = 0 = 地板，永不抛：这个数算不出来
+    不许把整个 ``recaps[]`` 投影拖死）。"""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
-    return max(0, int(value))
+    try:
+        words = int(value)
+    except (ValueError, OverflowError):     # float("nan") / float("inf")
+        return 0
+    return max(0, min(words, MAX_WORDS))
 
 
 def llm_timeout_s(words=None) -> float:

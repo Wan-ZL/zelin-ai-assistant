@@ -23,7 +23,8 @@ SageMaker 听成 stage maker、同一个人名三种拼法——而转写进模�
 :data:`MAX_FILE_BYTES` 不读（只剩 config 那一半）。读不动 / 坏行 = 那一行丢掉，永不抛。
 
 stdlib-only；调用方 ``act/recap.py``（读表、替换、进 prompt），server 侧 ``server/recaps.py``
-只读同一个文件报一个计数（`GET /api/settings/recap` 的 add-only ``glossary_terms``）。
+只读同一个文件报一个提示（`GET /api/settings/recap` 的 add-only ``glossary {path, present,
+config_terms}``——路径、文件在不在、config 列表里的条数；不解析词条）。
 """
 from __future__ import annotations
 
@@ -153,7 +154,9 @@ def _rules(glossary) -> list:
 def _substitute(text: str, rules: list) -> tuple:
     out, hits = str(text or ""), 0
     for pattern, term in rules:
-        out, n = pattern.subn(term, out)
+        # 正确拼法作**字面量**换进去（callable 替换）：`re.subn` 的字符串替换是模板，
+        # 一个带反斜杠的 term（`C:\tools`、`\1`）会被重新解析——要么炸整轮、要么悄悄改写转写
+        out, n = pattern.subn(lambda _m, literal=term: literal, out)
         hits += n
     return out, hits
 
