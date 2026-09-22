@@ -114,18 +114,43 @@ def settle_chunk(conn: sqlite3.Connection, chunk_id: int, status: str = "transcr
     conn.commit()
 
 
+# §63.13 逐条锚：原话片段逐字来自 SENTENCE（转写的每一行都是它），戳 = 第 `minute` 分钟那一行
+QUOTE = "training run moves to the new data mix"
+
+
+def stamp_at(minute: int = 0, start: float = T0) -> str:
+    """转写第 ``minute`` 分钟那一行的本地 ``HH:MM`` 戳（与代码同一个函数算，tz 缺席也一致）。"""
+    from act.lib import recap_sessions
+    return recap_sessions.stamp(start + minute * MIN, TZ)
+
+
+def anchor(minute: int = 0, quote: str = QUOTE, start: float = T0) -> dict:
+    """一个对得上 fixture 转写的锚 ``{at, quote}``（§63.13）。"""
+    return {"at": stamp_at(minute, start), "quote": quote}
+
+
+def item(text: str, modality: str = None, minute: int = 0, quote: str = QUOTE) -> dict:
+    """§63.13 形的一条 item：``{text, modality?, at, quote}``（``modality`` None = 不声明，沿用本节）。"""
+    out = {"text": text, **anchor(minute, quote)}
+    if modality is not None:
+        out["modality"] = modality
+    return out
+
+
 def good_sections_output(extra_items: int = 0) -> str:
     """§63.10 一份校验干净的**可发送长版**回复（同样裹在代码围栏里）。
-    ``extra_items`` 往第一节里再塞几条，用来撞条目上限。"""
+    ``extra_items`` 往第一节里再塞几条，用来撞条目上限。§63.13 起每一条都是带锚的对象。"""
     import json
-    en_items = ["Ann owns the data mix from Monday"] + ["Extra commitment %d" % i
-                                                        for i in range(extra_items)]
-    zh_items = ["数据配比自周一起归 Ann"] + ["额外事项 %d" % i for i in range(extra_items)]
+    en_items = [item("Ann owns the data mix from Monday", "decided")] + [
+        item("Extra commitment %d" % i, "decided", minute=i % 20) for i in range(extra_items)]
+    zh_items = [item("数据配比自周一起归 Ann", "decided")] + [
+        item("额外事项 %d" % i, "decided", minute=i % 20) for i in range(extra_items)]
     en = [{"key": "decided", "modality": "decided", "items": en_items},
           {"key": "proposed", "modality": "proposed",
-           "items": ["Exit criteria: the eval clears the current baseline"]}]
+           "items": [item("Exit criteria: the eval clears the current baseline", "proposed", minute=3)]}]
     zh = [{"key": "decided", "modality": "decided", "items": zh_items},
-          {"key": "proposed", "modality": "proposed", "items": ["结项标准：评测超过当前基线"]}]
+          {"key": "proposed", "modality": "proposed",
+           "items": [item("结项标准：评测超过当前基线", "proposed", minute=3)]}]
     return "```json\n" + json.dumps({"en": en, "zh": zh}, ensure_ascii=False) + "\n```"
 
 

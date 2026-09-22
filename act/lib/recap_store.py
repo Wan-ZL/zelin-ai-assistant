@@ -1,4 +1,4 @@
-"""act/lib/recap_store.py — ``state/recap/`` on disk + the add-only board projection (CONTRACT §63 / §63.10 / §63.11 / §63.12).
+"""act/lib/recap_store.py — ``state/recap/`` on disk + the add-only board projection (CONTRACT §63 / §63.10 / §63.11 / §63.12 / §63.14 / §63.15 / §63.16).
 
 Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
 
@@ -12,10 +12,12 @@ Layout (all under ``STATE_DIR/recap/``; the whole directory is disposable):
                          or send it (tests/test_recap_no_egress.py pins the
                          absent keys)
     marks.json           server-owned local flags
-                         {key: {copied_at, sent_at, dismissed_at}}
-                         (web 「复制」/「标记已发送」/「忽略」); read here for
-                         the projection, for the 活跃 / 已归档 / 已忽略 budgets
-                         and for the dismissed retention window
+                         {key: {copied_at, sent_at, dismissed_at, end_override}}
+                         (web 「复制」/「标记已发送」/「忽略」/「改结束时间」);
+                         read here for the projection, for the 活跃 / 已归档 /
+                         已忽略 budgets and for the dismissed retention window;
+                         ``end_override`` (§63.16) only rides into the row —
+                         display-only, no judgement here reads it
 
 §63.5 追记（2026-09-15，issue #301）：旧法条那句「无控制流读它 / no control
 flow anywhere reads a mark」**自此失效**。marks 参与**恰好两处**判决——
@@ -241,6 +243,9 @@ def new_record(session: recap_sessions.Session, key: str, status: str) -> dict:
         # **单调、永不回退、永不复用**——一条被删掉的条目的标签不会再发给别人；它是这个
         # key 的台账而不是某一版的正文，所以不进 `history[]` 条目，回退也不让它回头
         "tag_seq": {},
+        # §63.14 追记（add-only）：术语表在这一版的转写里换了几处听错的词（`fill_record` 每版
+        # 重写成整数；还没出过稿 / 回退出来的版本 = None——那个数属于产出正文的那一次生成）
+        "glossary_hits": None,
         # §63.3 追记（add-only）：needs_review 的结构化原因与落地前的长度修剪台账
         "problems": [], "repairs": [],
         # §63.9 追记（add-only）：这一版的正文回退自第几版（生成出来的版本 = None）
@@ -410,6 +415,11 @@ def history_versions(rec: dict) -> list:
     return [handle for handle in handles if handle is not None]
 
 
+def _end_override(value):
+    """marks.json 里手改的结束时间：解析得出的 ISO 字符串原样，其余（None / 手改坏的）= None。"""
+    return value if isinstance(value, str) and recap_sessions.parse_ts(value) is not None else None
+
+
 def _row(rec: dict, marks: dict, requests: Optional[dict] = None) -> dict:
     row = {k: v for k, v in rec.items() if k != "history"}
     row["history_count"] = len(rec.get("history") or [])
@@ -421,9 +431,14 @@ def _row(rec: dict, marks: dict, requests: Optional[dict] = None) -> dict:
     row["sent_at"] = mark.get("sent_at")
     # §63.5 追记 add-only（issue #301）：已忽略的时刻（无 = None，键恒在）
     row["dismissed_at"] = mark.get("dismissed_at")
+    # §63.16 add-only：owner 手改的结束时间（server 独写 marks.json；解析不出的值 = None，键恒在）
+    # ——只进投影，记录上的 `end` 仍是录制到的那一刻，生成 / 晚到切片都不读它
+    row["end_override"] = _end_override(mark.get("end_override"))
     # §63.8 add-only：「重新生成 / 现在生成」回执（actd 台账 × 本文件的 generated_at；无请求 = None）
+    # §63.15：「丢了」的判线按这一行的转写词数伸缩（OPEN 行 / 老记录没有词数 = 地板）
     row["generate_request"] = recap_requests.projection(rec.get("key"), rec.get("generated_at"),
-                                                        requests if requests is not None else {})
+                                                        requests if requests is not None else {},
+                                                        words=rec.get("transcript_words"))
     return row
 
 

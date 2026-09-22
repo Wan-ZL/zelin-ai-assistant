@@ -26,13 +26,22 @@ import type { RecapLaneTotals, RecapRow } from "../types";
 /** 生成中的补拉间隔：actd pass 是 10 s，一半足够及时；不在生成时零请求 */
 export const GENERATING_POLL_MS = 5000;
 
+/**
+ * 本地乐观标记盖到行上——**按键在不在**逐个盖（null 也是一个值 = 已清），不把「有一条本地记录」
+ * 当成对全部四个戳的权威：`setRecapEnd`（§63.16）写的记录只带 `end_override`，若照旧把缺席的
+ * `sent_at` / `dismissed_at` 读成 null，改一次结束时间就会让一行从「已归档」跳回活跃、badge 翻面。
+ * `markRecap` 的回执三个戳齐发（server 真值），键都在 → 照旧全盖。
+ */
 function withMarks(rows: RecapRow[], marks: Record<string, RecapMark>): RecapRow[] {
   return rows.map((row) => {
     const local = marks[row.key];
-    return local
-      ? { ...row, copied_at: local.copied_at ?? row.copied_at, sent_at: local.sent_at ?? null,
-          dismissed_at: local.dismissed_at ?? null }
-      : row;
+    if (!local) return row;
+    const merged: RecapRow = { ...row };
+    if ("copied_at" in local) merged.copied_at = local.copied_at ?? row.copied_at;
+    if ("sent_at" in local) merged.sent_at = local.sent_at ?? null;
+    if ("dismissed_at" in local) merged.dismissed_at = local.dismissed_at ?? null;
+    if ("end_override" in local) merged.end_override = local.end_override ?? null;
+    return merged;
   });
 }
 

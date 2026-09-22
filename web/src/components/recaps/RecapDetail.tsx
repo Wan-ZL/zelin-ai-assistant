@@ -31,22 +31,30 @@
 // 走 wire 的 `row.questions`；client 不造问题、没点过的问题不发答案），按下时把点过的
 // `answers` 一并送出；正文上方多一排「转写原版 | 我记录的版本」——`row.baseline` 在时才出现，
 // 复制跟着切换走（`recapClipboardText(row, language, view)`，所见即所复制不因两版并存失效）。
+// §63.13（issue #440）：可发送长版每一条带自己的语气（daemon 渲染进 copy_* 的尾巴 `(floated)`）与一条
+// 转写锚（时间戳 + 原话片段）——锚**不进正文**，正文下方一个折叠的「转写依据」列出它（核对用），
+// 复制的仍只有正文；needs_review 的脚注多认三种原因（逐条语气 / 缺锚 / 锚对不上转写）。
+// §63.16（issue #440）：表头旁一颗「改结束时间」——录制到的最后一段不一定是会议真正的结束；改的是
+// server 独写 marks.json 的 add-only 键 end_override（POST /api/recaps/end），表头 / 行标签 / 剪贴板表头
+// 都按它显示，脚注注明录制到几点；纪要文件里的 end 一字不动，生成不读它。§63.15：「生成未落地」那句
+// 的分钟数来自回执的 lost_after_s（按转写长度伸缩），不再写死 10。§63.14：脚注报术语表换了几处。
 import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchRecapHistory, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
-import { markRecap, markRecapPending, refreshBoard } from "../../store";
+import { markRecap, markRecapPending, refreshBoard, setRecapEnd } from "../../store";
 import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
 import { copyText } from "../detail/copyText";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import { RecapIntentPanel } from "./RecapIntent";
 import {
-  answersFor, bodyTags, changedItems, changedLines, hasBaseline, hasRecapText, isGenerating,
-  itemCitation, lineCitation, LINE_TAG_LABELS,
+  answersFor, bodyTags, changedItems, changedLines, endOverrideIso, endOverrideProblem, evidenceLabel,
+  hasBaseline, hasRecapText, isGenerating,
+  itemCitation, lineCitation, LINE_TAG_LABELS, localHHMM, lostAfterMinutes,
   pickLanguage, pickShape,
   problemLabel,
-  recapClipboardText, recapHeader, recapProblems, recapQuestions, recapRepairs, recapShape,
+  recapAnchors, recapClipboardText, recapHeader, recapProblems, recapQuestions, recapRepairs, recapShape,
   recapViewBody, RECAP_SHAPES, RECAP_VIEWS,
-  repairLabel, REVERT_POLL_MS, revertPhase, slackDraftLabel, versionLabel, type GenerationPhase,
+  repairLabel, REVERT_POLL_MS, revertPhase, shownEnd, slackDraftLabel, versionLabel, type GenerationPhase,
   type RecapShape, type RecapView, type RevertPending, type RevertPhase,
 } from "./recapText";
 
@@ -108,8 +116,9 @@ function versionLines(entry: RecapVersion | null, language: Language): string[] 
   return typeof body === "string" && body.trim() ? body.split("\n") : [];
 }
 
-/** §63.8 生成态的一句话（idle 不说话；done 由正文与 landedNote 的闪句体现） */
-export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Text): string | null {
+/** §63.8 生成态的一句话（idle 不说话；done 由正文与 landedNote 的闪句体现）。
+ *  §63.15：lost 那句的分钟数 = 回执的 `lost_after_s`（按这份转写的长度伸缩），老 daemon 无此键 = 10。 */
+export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Text, lostMinutes = 10): string | null {
   switch (phase) {
     case "queued":
       return text("已排队，等待后台接手…", "Queued, waiting for the daemon to pick it up…");
@@ -120,7 +129,7 @@ export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Te
         ? text("正在生成阶段稿，落地后这里自动更新（通常 1–3 分钟）。", "Generating the partial recap. It lands here by itself (usually 1–3 min).")
         : text("正在重新生成，新版本落地后这里自动更新（通常 1–3 分钟）。", "Regenerating. The new version lands here by itself (usually 1–3 min).");
     case "lost":
-      return text("上次生成没有落地：超过 10 分钟没写出新版本——后台进程崩了或模型调用失败（看 state/recap.log）。可以再试一次。", "The last generation never landed: no new version for over 10 minutes. The process crashed or the model call failed (see state/recap.log). You can try again.");
+      return text(`上次生成没有落地：超过 ${lostMinutes} 分钟没写出新版本——后台进程崩了或模型调用失败（看 state/recap.log）。可以再试一次。`, `The last generation never landed: no new version for over ${lostMinutes} minutes. The process crashed or the model call failed (see state/recap.log). You can try again.`);
     case "noop":
       return text("上次生成没起来：后台进程启动失败（看 state/actd.log）。可以再试一次。", "The last generation did not start: the background process failed to launch (see state/actd.log). You can try again.");
     default:
@@ -228,6 +237,9 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // §63.16 改结束时间：编辑框开着没 + 框里的本地 HH:MM（切行复位）
+  const [editingEnd, setEditingEnd] = useState(false);
+  const [endInput, setEndInput] = useState("");
   // §63.9：存着的每一版（点开「上一版」才拉；正文不在看板投影里）+ 选中的那一版
   const [history, setHistory] = useState<RecapHistory | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -252,6 +264,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     setHistoryError(null);
     setPicked(null);
     setRevertPending(null);
+    setEditingEnd(false);
     // 设置是异步拉来的（挂载时一次）：`default_shape` 落地也要重播一次初值，
     // 否则一行还没出过稿时选择器会停在「快速五行」，而配置说的是可发送长版
   }, [row.key, settings?.default_language, settings?.default_shape, ui]);
@@ -304,7 +317,11 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const hasText = hasRecapText(row);      // §63.10：可发送长版的正文在 sections_en / copy_en
   const isOpen = row.status === "open";
   const generating = isGenerating(phase);
-  const progress = generationNote(phase, isOpen, text);
+  const progress = generationNote(phase, isOpen, text, lostAfterMinutes(row));
+  // §63.13 逐条的转写锚（只从 sections_en 读，标签只认正文里真出现过的；纯展示、不进剪贴板）
+  const evidence = shape === "sections" ? recapAnchors(row, body) : [];
+  // §63.16 显示的结束时刻（手改优先）；编辑框的初值 = 现在显示的那个
+  const ending = shownEnd(row);
   // §63.9 回退的回执：每次渲染现算（与 §63.8 页面侧同一口径），落地 / 退场即自己结束
   const reverting = revertPhase(row, revertPending, Date.now());
   const revertProgress = revertNote(reverting, revertPending?.version ?? 0, text);
@@ -400,6 +417,23 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
     const ok = await copyText(itemCitation(row, tag));
     if (!ok) throw new Error(text("复制失败", "Copy failed"));
   });
+  // §63.16 改结束时间：框里的本地 HH:MM 合到会议那一天 → ISO-Z → server marks.json；不晚于开始 = 不发、说一句
+  const openEndEditor = () => { setEndInput(localHHMM(ending.end)); setEditingEnd(true); };
+  const saveEnd = () => {
+    const iso = endOverrideIso(row, endInput);
+    if (!iso) {
+      // 不能用的输入按原因各说一句（空框 / 越界、这一行的开始时刻坏了、与开始同一分钟）
+      const problem = endOverrideProblem(row, endInput);
+      setFlash(problem === "input" ? text("请填一个时间（HH:MM）", "Pick a time (HH:MM) first")
+        : problem === "start" ? text("这一行的开始时间读不出来，改不了结束时间", "This row's start time is unreadable, so the end cannot be edited")
+        : text("结束时间不能和开始是同一分钟", "The end time cannot be the same minute as the start"));
+      return;
+    }
+    void run(text("已改结束时间（只改显示，录制到的时间仍存着）", "End time changed (display only; the captured time stays on file)"),
+             async () => { await setRecapEnd(row.key, iso); setEditingEnd(false); });
+  };
+  const clearEnd = () => run(text("已回到录制到的结束时间", "Back to the captured end time"),
+                             async () => { await setRecapEnd(row.key, null); setEditingEnd(false); });
 
   return (
     <article className="recap-detail" aria-live="polite">
@@ -420,6 +454,42 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
           ))}
         </div>
       </header>
+
+      {/* §63.16 改结束时间：录制到的最后一段（12:36）不一定是会真正结束的时刻（12:30）。改的是 server
+          独写 marks.json 的 add-only 键，表头 / 行标签 / 剪贴板表头三处同一口径；纪要文件的 end 不动。
+          今天没有日历事件源可取（§63.7 登记），所以是手改。 */}
+      {!isOpen && (
+        <div className="recap-end-edit">
+          {editingEnd ? (
+            <>
+              <label className="recap-panel-label" htmlFor="recap-end-time">{text("结束时间", "End time")}</label>
+              <input
+                id="recap-end-time"
+                className="recap-end-input"
+                type="time"
+                step={60}
+                value={endInput}
+                onChange={(event) => setEndInput(event.target.value)}
+              />
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={saveEnd}>
+                {text("保存", "Save")}
+              </button>
+              {ending.overridden && (
+                <button type="button" className="btn" disabled={busy} onClick={() => void clearEnd()}>
+                  {text("回到录制时间", "Use captured time")}
+                </button>
+              )}
+              <button type="button" className="btn" disabled={busy} onClick={() => setEditingEnd(false)}>
+                {text("取消", "Cancel")}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn" disabled={busy} onClick={openEndEditor}>
+              {text("改结束时间…", "Edit end time…")}
+            </button>
+          )}
+        </div>
+      )}
 
       {progress && (
         <p className={`recap-progress${generating ? " is-busy" : " is-warning"}`} role="status" data-phase={phase}>
@@ -472,6 +542,31 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
               {text("这一份是可发送长版：条目前面的标签（D1 / S2…）跨版稳定——重新生成保留同一条的标签，新条目才拿新的，删掉的号不会再发给别人。",
                     "This is the sendable long form: the tag in front of an item (D1 / S2…) is stable across versions — a regeneration keeps an item's tag, only a new commitment gets a new one, and a dropped number is never handed to something else.")}
             </p>
+          )}
+          {/* §63.13 转写依据：每一条靠的是转写哪一行（时间戳 + 逐字的原话片段）。锚**不在**正文里
+              （§63.3 禁时间戳与原话，粘出去的那份照旧干净），这里折叠列出、核对用；复制不带它。 */}
+          {shape === "sections" && !viewingBaseline && evidence.length > 0 && (
+            <details className="recap-evidence" data-testid="recap-evidence">
+              <summary>
+                {text(`转写依据（${evidence.length} 条）——每一条靠的是转写里的哪一句`,
+                      `Transcript evidence (${evidence.length}) — the line each item rests on`)}
+              </summary>
+              <ul className="recap-evidence-list">
+                {evidence.map((entry, i) => (
+                  <li key={`${i}-${entry.tag}-${entry.at}`}>
+                    <span className="recap-evidence-tag">{evidenceLabel(entry)}</span>
+                    {" · "}
+                    <span className="recap-evidence-at">{entry.at}</span>
+                    {" · "}
+                    <span className="recap-evidence-quote">{entry.quote}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="recap-hint">
+                {text("锚只在这里，不进正文，复制不带它；「校验未通过」时原话对不上转写会在下面列出来。",
+                      "Anchors live only here — never in the body or the clipboard; a fragment the validator could not find in the transcript is listed below under Needs review.")}
+              </p>
+            </details>
           )}
           {/* §63.12 逐条引用：标签本来就在粘出去的那一份里，chip 只是把引用串整理成一次复制
               （`2026-08-31 Zoom #D1`）。正文一字不变。 */}
@@ -764,6 +859,20 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
           <span className="recap-meta-item">
             {text(`这一版回退自第 ${row.reverted_from} 版（原正文已存进历史，可以再回退回来）。`,
                   `This version was restored from version ${row.reverted_from} (the replaced text is in history, so it can be restored back).`)}
+          </span>
+        )}
+        {/* §63.16：手改过就说出录制到的那一刻（表头显示的是手改的；录制到的仍在文件上，不许悄悄换掉） */}
+        {ending.overridden && (
+          <span className="recap-meta-item">
+            {text(`结束时间已手改（录制到 ${localHHMM(row.end) || "--:--"}）。`,
+                  `End time set by hand (captured until ${localHHMM(row.end) || "--:--"}).`)}
+          </span>
+        )}
+        {/* §63.14：术语表在这一版的转写里换了几处听错的词（0 或 null 不说话） */}
+        {typeof row.glossary_hits === "number" && row.glossary_hits > 0 && (
+          <span className="recap-meta-item">
+            {text(`术语表替换了 ${row.glossary_hits} 处听错的词。`,
+                  `The glossary corrected ${row.glossary_hits} misheard term(s).`)}
           </span>
         )}
         {row.note && <span className="recap-meta-item">{text("上次备注：", "Last note: ")}{row.note}</span>}

@@ -288,10 +288,13 @@ class RevertReasonsTestCase(RevertCase):
     def test_problems_are_recomputed_for_the_restored_text_not_carried_over(self):
         # 当前 v2 带着自己的 problems（_record 造的），v1 干净：回退后台账是 v1 的（空），不是 v2 的
         self._record()
+        v2_problems = list(store.load_recap(KEY)["problems"])
         recap.revert(KEY, 1, now=T1)
         rec = store.load_recap(KEY)
         self.assertEqual((rec["quality"], rec["problems"]), (store.QUALITY_OK, []))
-        self.assertNotIn("problems", rec["history"][-1])            # 条目照旧不存发现
+        # §63.13 追记：条目自此带着那一版**出生时**的发现（add-only；只为 `anchor_unverified` 那一种
+        # 回退时带回——它对不着转写算不出来），回退到别的版本仍然只重算、不把 v2 的台账搬过去
+        self.assertEqual(rec["history"][-1]["problems"], v2_problems)
 
     def test_an_ok_version_never_grows_a_reason_list_on_revert(self):
         # ok 出生即干净（或修剪后合规）：即使校验器日后变严，ok badge 下面也不列原因

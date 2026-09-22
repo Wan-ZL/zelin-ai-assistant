@@ -33,6 +33,7 @@ import {
   postClaudeCodeDefault,
   postMaterialAdd,
   postMaterialDismiss,
+  postRecapEnd,
   postRecapMark,
   putDisplaySettings,
   postSkill,
@@ -167,11 +168,13 @@ export interface AppState {
   archiveStripExpanded: boolean;
 }
 
-/** §63 本地标记（server marks.json 的镜像片段；dismissed_at = §63.5 追记 issue #301） */
+/** §63 本地标记（server marks.json 的镜像片段；dismissed_at = §63.5 追记 issue #301；
+ *  end_override = §63.16 手改的结束时间——键在才覆盖行上的值（null = 已清、回到录制时间）） */
 export interface RecapMark {
   copied_at?: string | null;
   sent_at?: string | null;
   dismissed_at?: string | null;
+  end_override?: string | null;
 }
 
 /** §63.8 乐观「排队中」：按下时看到的版本号与回执 requested_at（新版本或新回执落地即结束）+ 按下时刻（10 分钟兜底） */
@@ -737,8 +740,19 @@ export async function saveRecapSettings(
  */
 export async function markRecap(key: string, mark: RecapMarkKind, on = true): Promise<void> {
   const receipt = await postRecapMark(key, mark, on);
-  setState({ recapMarks: { ...state.recapMarks, [key]: {
+  // 只盖这条回执带来的三个戳；同一行本地记着的 end_override（§63.16）原样留着
+  setState({ recapMarks: { ...state.recapMarks, [key]: { ...(state.recapMarks[key] ?? {}),
     copied_at: receipt.copied_at, sent_at: receipt.sent_at, dismissed_at: receipt.dismissed_at ?? null } } });
+}
+
+/**
+ * §63.16 手改结束时间：POST 并乐观记住回执（board 回流时以 server 投影为准）。`null` = 回到录制时间；
+ * 键写进本地标记（即便是 null），RecapsPage 的合并据「键在不在」判是否覆盖行上的值。
+ */
+export async function setRecapEnd(key: string, endOverride: string | null): Promise<void> {
+  const receipt = await postRecapEnd(key, endOverride);
+  setState({ recapMarks: { ...state.recapMarks, [key]: { ...(state.recapMarks[key] ?? {}),
+    end_override: receipt.end_override ?? null } } });
 }
 
 /** 「重新生成 / 现在生成」inbox 写成功后：记下按下时看到的版本与回执，行随即显示「生成中」（§63.8；board 回流带新版本 / 新回执即结束） */

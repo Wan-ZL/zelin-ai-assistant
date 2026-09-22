@@ -1,4 +1,4 @@
-"""act/lib/recap_requests.py — 「重新生成 / 现在生成」的请求台账 + 行投影 ``generate_request``（CONTRACT §63.8）。
+"""act/lib/recap_requests.py — 「重新生成 / 现在生成」的请求台账 + 行投影 ``generate_request``（CONTRACT §63.8 / §63.15）。
 
 issue #297：按「重新生成」只换来一条 toast，新版本落地前后面板看起来一模一样——
 一次 59 秒的成功被读成失败。§48.7 ``radar_rounds`` 的模式原样搬过来：
@@ -27,13 +27,16 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from act.lib import config
+from act.lib import config, recap_timing
 
 REQUESTS_PATH: Path = config.STATE_DIR / "recap_requests.json"
-# 子进程起了却迟迟没落笔：一次成功的生成 = 锁等待（≤ LOCK_WAIT_S 120 s）+ 模型调用（≤ LLM_TIMEOUT_S
-# 240 s × 重试一次）——10 分钟之外仍无新版本，按丢了处理（与 radar_rounds.LOST_AFTER_S 同款）。
-# crash 掉的运行（模型非零退出 / 超时 / 未知 key）不落笔，也在这条线之后才显 lost。
-LOST_AFTER_S = 10 * 60
+# 子进程起了却迟迟没落笔：一次成功的生成 = 锁等待（≤ LOCK_WAIT_S 120 s）+ 模型调用 × 重试一次
+# ——这条线之外仍无新版本，按丢了处理（与 radar_rounds.LOST_AFTER_S 同款）。
+# §63.15 追记：模型调用的超时随转写词数伸缩（truth = act/lib/recap_timing.py），所以判线是
+# `recap_timing.lost_after_s(words)`，按这一行记录上的 `transcript_words` 算；这个名字留作**地板**
+# （词数未知 = 原来的 10 分钟）。crash 掉的运行（模型非零退出 / 超时 / 未知 key）不落笔，
+# 也在这条线之后才显 lost。
+LOST_AFTER_S = recap_timing.lost_after_s()
 # 台账上界：一条请求最多活 24 h（之后投影回 null）、最多 60 条（= recap_store.PROJECTION_CAP）
 TTL_S = 24 * 3600
 CAP = 60
@@ -102,14 +105,14 @@ def record(key: str, launch: str, requested_at: Optional[str] = None,
         pass
 
 
-def _state(rec: dict, generated_at, now: _dt.datetime) -> str:
+def _state(rec: dict, generated_at, now: _dt.datetime, words=None) -> str:
     if rec.get("launch") != RUNNING:
         return NOOP
     requested_at = rec["requested_at"]
     # 同格式 ISO-Z 字串，字典序 = 时间序；子进程在请求之后落过笔就是跑完了
     if isinstance(generated_at, str) and generated_at >= requested_at:
         return "done"
-    return "lost" if _age_s(requested_at, now) > LOST_AFTER_S else RUNNING
+    return "lost" if _age_s(requested_at, now) > recap_timing.lost_after_s(words) else RUNNING
 
 
 def _live_entry(key, data, now: _dt.datetime) -> Optional[dict]:
@@ -126,14 +129,17 @@ def _note(rec: dict) -> Optional[str]:
 
 
 def projection(key, generated_at, requests: Optional[dict] = None,
-               now: Optional[_dt.datetime] = None) -> Optional[dict]:
+               now: Optional[_dt.datetime] = None, words=None) -> Optional[dict]:
     """行的 ``generate_request``：无请求记录 / 过了 TTL → None。
 
-    ``requests`` = :func:`load` 的结果（调用方一次读、逐行传，投影 60 行不读 60 遍）。"""
+    ``requests`` = :func:`load` 的结果（调用方一次读、逐行传，投影 60 行不读 60 遍）。
+    ``words``（§63.15）= 这一行记录上的 ``transcript_words``：「丢了」的判线按它伸缩，
+    算出来的秒数 add-only 地随回执发出（``lost_after_s``），页面据它说「超过 N 分钟」。"""
     when = now if now is not None else _dt.datetime.now(_dt.timezone.utc)
     rec = _live_entry(key, load() if requests is None else requests, when)
     if rec is None:
         return None
     return {"requested_at": rec["requested_at"],
-            "state": _state(rec, generated_at, when),
-            "note": _note(rec)}
+            "state": _state(rec, generated_at, when, words),
+            "note": _note(rec),
+            "lost_after_s": int(recap_timing.lost_after_s(words))}
