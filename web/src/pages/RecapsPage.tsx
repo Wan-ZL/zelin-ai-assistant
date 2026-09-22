@@ -29,10 +29,13 @@ export const GENERATING_POLL_MS = 5000;
 function withMarks(rows: RecapRow[], marks: Record<string, RecapMark>): RecapRow[] {
   return rows.map((row) => {
     const local = marks[row.key];
-    return local
-      ? { ...row, copied_at: local.copied_at ?? row.copied_at, sent_at: local.sent_at ?? null,
-          dismissed_at: local.dismissed_at ?? null }
-      : row;
+    if (!local) return row;
+    const merged: RecapRow = { ...row, copied_at: local.copied_at ?? row.copied_at, sent_at: local.sent_at ?? null,
+                               dismissed_at: local.dismissed_at ?? null };
+    // §63.16：手改的结束时间只在本地标记**带着这个键**时覆盖（null 也是一个值 = 已清、回到录制时间）；
+    // 别的标记（复制 / 已发送）不带它，行上 server 给的值照旧
+    if ("end_override" in local) merged.end_override = local.end_override ?? null;
+    return merged;
   });
 }
 

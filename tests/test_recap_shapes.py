@@ -298,8 +298,9 @@ class RecordTestCase(unittest.TestCase):
         self.assertEqual([sec["key"] for sec in rec["sections_en"]], ["decided", "proposed"])
 
     def test_a_failing_sections_generation_lands_needs_review_with_its_findings(self):
-        bad = json.dumps({"en": [{"key": "decided", "modality": "certain", "items": ["x"]}],
-                          "zh": [{"key": "decided", "modality": "certain", "items": ["甲"]}]})
+        # §63.13 起条目带锚（否则 `item_unanchored` 也会进台账，这条判例钉的是节的语气）
+        bad = json.dumps({"en": [{"key": "decided", "modality": "certain", "items": [fx.item("x")]}],
+                          "zh": [{"key": "decided", "modality": "certain", "items": [fx.item("甲")]}]})
         self.closed_round()
         recap.generate(KEY, now=fx.T0 + 40 * MIN, conn=self.conn, cfg=self.cfg,
                        runner=lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout=bad, stderr=""))

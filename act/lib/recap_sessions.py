@@ -1,4 +1,4 @@
-"""act/lib/recap_sessions.py — deterministic meeting-session detection (CONTRACT §63).
+"""act/lib/recap_sessions.py — deterministic meeting-session detection (CONTRACT §63 / §63.13).
 
 Reads ``~/.screenpipe/db.sqlite`` **read-only** and turns two event streams into
 meeting sessions without any model call (owner 拍板 2026-09-01, issue #129):
@@ -273,19 +273,39 @@ def pending_chunks_between(conn: sqlite3.Connection, lo: float, hi: float) -> in
     return count
 
 
-def transcript_between(conn: sqlite3.Connection, lo: float, hi: float) -> str:
-    """Transcription text inside [lo, hi] in time order (the only place the
-    engine's words are read; they go straight into the fenced prompt)."""
+def transcript_rows_between(conn: sqlite3.Connection, lo: float, hi: float) -> list:
+    """``[(epoch_ts, text)]`` of the non-empty transcription rows inside
+    [lo, hi], in time order — the only place the engine's words are read.
+    §63.13: the sendable shape's prompt stamps every row with its local
+    ``[HH:MM]`` (``recap_text.stamp_transcript``) so an item can name the line
+    it rests on; :func:`transcript_between` is the same rows joined."""
     rows = conn.execute(
         "SELECT timestamp, transcription FROM audio_transcriptions "
         "WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp, id",
         (_iso_bound(lo - 3600), _iso_bound(hi + 3600))).fetchall()
-    parts = []
+    out = []
     for ts_raw, text in rows:
         ts = parse_ts(ts_raw)
         if ts is not None and lo <= ts <= hi and _text(text):
-            parts.append(str(text).strip())
-    return "\n".join(parts)
+            out.append((ts, str(text).strip()))
+    return out
+
+
+def transcript_between(conn: sqlite3.Connection, lo: float, hi: float) -> str:
+    """Transcription text inside [lo, hi] in time order (they go straight
+    into the fenced prompt) — :func:`transcript_rows_between` joined by newlines."""
+    return "\n".join(text for _ts, text in transcript_rows_between(conn, lo, hi))
+
+
+def stamp(ts: float, timezone: str) -> str:
+    """一行转写的本地 ``HH:MM`` 戳（§63.13 逐条锚的 ``at`` 指的就是它；与 dedup key 同一时区）。"""
+    return local_dt(ts, timezone).strftime("%H:%M")
+
+
+def stamped_transcript(rows: list, timezone: str) -> str:
+    """``[(ts, text)]`` → 每行前面带 ``[HH:MM]`` 的转写（§63.13：可发送长版的 prompt 用它，
+    条目才指得出自己靠的是哪一行）。五行形照旧拿素文（§63.3 的模板禁时间戳，一个字符没动）。"""
+    return "\n".join("[%s] %s" % (stamp(ts, timezone), text) for ts, text in rows)
 
 
 # --------------------------------------------------------------------------- #

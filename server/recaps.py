@@ -1,4 +1,4 @@
-"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9 / §63.10).
+"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9 / §63.10 / §63.14 / §63.16).
 
 Three small things, all stdlib (config.yaml is read through
 server.settings.config_yaml_doc, which degrades to {} without PyYAML):
@@ -17,7 +17,9 @@ server.settings.config_yaml_doc, which degrades to {} without PyYAML):
 
 2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」/「忽略」
    write ``state/recap/marks.json``
-   ``{key: {copied_at, sent_at, dismissed_at}}``. This file is server-owned
+   ``{key: {copied_at, sent_at, dismissed_at, end_override}}`` (§63.16 adds
+   ``POST /api/recaps/end`` for the hand-set end time, same file, add-only
+   key; the recap file's captured ``end`` is never touched). This file is server-owned
    (act/recap.py never writes it; act/lib/recap_store.py only reads it).
    §63.5 追记（2026-09-15，issue #301）retires the old clause «**no control
    flow reads a mark** — it is a badge, not a state transition»: ``sent_at``
@@ -85,6 +87,13 @@ _BOOL_FALSE = ("false", "no", "off", "0")
 def marks_path(home: Path) -> Path:
     # mirrors act/lib/recap_store.marks_path (STATE_DIR / recap / marks.json)
     return home / "state" / "recap" / "marks.json"
+
+
+def glossary_path(home: Path) -> Path:
+    # mirrors act/lib/recap_glossary.glossary_path (STATE_DIR / recap-glossary.md; §63.14).
+    # **Read-only here**: the owner edits that file by hand, act/recap.py reads it at
+    # generation time; this process only reports whether it exists.
+    return home / "state" / "recap-glossary.md"
 
 
 def recap_file_path(home: Path, key: str) -> Path:
@@ -197,7 +206,28 @@ def snapshot(home: Path) -> dict:
     out = dict(values)
     out["languages"] = list(LANGUAGES)
     out["source"] = source
+    # §63.14 add-only, read-only: where the glossary lives and whether anything is there yet —
+    # the Settings section points the owner at the file; the parser lives in act (§49: no import)
+    out["glossary"] = glossary_hint(home)
     return out
+
+
+def _config_glossary_count(home: Path) -> int:
+    """config.yaml ``recap.glossary`` 的字符串条数（只数形状，不解析——解析器住 act）。"""
+    blk = settings.config_yaml_doc(home).get("recap")
+    items = blk.get("glossary") if isinstance(blk, dict) else None
+    return sum(1 for item in items if isinstance(item, str)) if isinstance(items, list) else 0
+
+
+def glossary_hint(home: Path) -> dict:
+    """``{"path": <abs>, "present": bool, "config_terms": int}``（§63.14）——面板据此说
+    「术语表在哪、有没有」；条目怎么解析、换了几处，都是 act 侧的事（记录上的 ``glossary_hits``）。"""
+    path = glossary_path(home)
+    try:
+        present = path.is_file() and path.stat().st_size > 0
+    except OSError:
+        present = False
+    return {"path": str(path), "present": bool(present), "config_terms": _config_glossary_count(home)}
 
 
 # --------------------------------------------------------------------------- #
@@ -366,6 +396,45 @@ def history(home: Path, query: dict) -> dict:
     out["current"] = _version_shape(doc)
     out["entries"] = _shaped_entries(doc)
     return out
+
+
+# §63.16 手改的结束时间：ISO-Z 秒级（与 recap 文件的 start / end 同一形）
+END_OVERRIDE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def _require_end_override(payload: dict):
+    """``end_override`` = ISO-Z 字符串（改成这个时刻）或 null（回到录制到的结束时间）；其余 400。"""
+    value = payload.get("end_override", "")
+    if value is None:
+        return None
+    if not (isinstance(value, str) and END_OVERRIDE_RE.match(value)):
+        raise InvalidFieldError("end_override must be an ISO-8601 UTC timestamp (…Z) or null",
+                                {"field": "end_override"})
+    try:
+        _dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise InvalidFieldError("end_override is not a real timestamp", {"field": "end_override"})
+    return value
+
+
+def end(home: Path, payload: dict) -> dict:
+    """``POST /api/recaps/end`` ``{"key": "meeting:…", "end_override": "2026-09-21T19:30:00Z" | null}``
+    → ``{"ok": true, "key", "end_override"}`` (§63.16, issue #440 / #299).
+
+    The header shows the last **captured** segment (12:36 when the meeting really ended
+    12:30); the owner may set the end time by hand. It is a display-layer fact like the
+    other marks: it lives in marks.json (server-owned, add-only key ``end_override``),
+    the recap file's ``end`` stays what the engine captured, generation never reads it.
+    ``null`` clears it (back to the captured time)."""
+    _reject_unknown(payload, ("key", "end_override"))
+    key = _require_key(payload)
+    value = _require_end_override(payload)
+    marks = _read_marks(home)
+    entry = marks.get(key) if isinstance(marks.get(key), dict) else {}
+    entry["end_override"] = value
+    marks[key] = entry
+    settings.atomic_write_json(marks_path(home), marks)
+    return {"ok": True, "key": key, "end_override": entry.get("end_override")}
 
 
 def mark(home: Path, payload: dict) -> dict:

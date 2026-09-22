@@ -57,6 +57,7 @@ from act.lib import recap_sessions as rs
 from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
 from act.lib import recap_text as text
+from act.lib import recap_timing as timing
 
 KEY = fx.KEY
 MIN = 60.0
@@ -263,9 +264,14 @@ class PromptMaterialTestCase(RecapCase):
         self.assertTrue(body.startswith("12:56–%s · zoom · 20 min" % end_hm), body)
 
     def test_the_model_call_carries_the_recap_timeout(self):
-        """一次挂起的 claude 不许把 30 分钟一轮的 cron 链拖住：四分钟硬超时。"""
+        """一次挂起的 claude 不许把 30 分钟一轮的 cron 链拖住：硬超时——地板四分钟，
+        §63.15 起按这份转写的词数往上加、封在天花板下（truth = act/lib/recap_timing.py）。"""
         self.closed_recap()
-        self.assertEqual(self.runner.calls[0][1]["timeout"], 240)
+        words = store.load_recap(KEY)["transcript_words"]
+        budget = self.runner.calls[0][1]["timeout"]
+        self.assertEqual(budget, timing.llm_timeout_s(words))
+        self.assertGreaterEqual(budget, 240)
+        self.assertLessEqual(budget, timing.LLM_TIMEOUT_MAX_S)
 
 
 # --------------------------------------------------------------------------- #

@@ -15,7 +15,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
 from act import actd, doctor, llm, recap
 from act.lib import config, heartbeat, registry
-from act.lib import recap_intent, recap_store, recap_text
+from act.lib import recap_glossary, recap_intent, recap_store, recap_text
 from server import health as server_health
 from server import inbox_writer as server_inbox
 from server import paths
@@ -167,6 +167,11 @@ class RecapMirrorTestCase(unittest.TestCase):
     def test_marks_path_mirror(self):
         with mock.patch.object(config, "STATE_DIR", HOME / "state"):
             self.assertEqual(server_recaps.marks_path(HOME), recap_store.marks_path())
+
+    def test_glossary_path_mirror(self):
+        """§63.14：server 报的术语表位置与 act 读的那个文件逐字同一个。"""
+        with mock.patch.object(config, "STATE_DIR", HOME / "state"):
+            self.assertEqual(server_recaps.glossary_path(HOME), recap_glossary.glossary_path())
 
     def test_recap_file_path_mirror(self):
         """§63.9：GET /api/recaps/history 读的那个文件名与 act 侧逐字同一个（key 的 ':' → '_'）。"""

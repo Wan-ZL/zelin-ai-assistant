@@ -108,7 +108,9 @@ class ProjectionTestCase(SandboxCase):
         self.assertEqual(requests.projection(KEY, None, ledger, NOW)["state"], "running")
         self.assertEqual(requests.projection(KEY, _ago(minutes=5), ledger, NOW)["state"], "running")
         out = requests.projection(KEY, _ago(minutes=1), ledger, NOW)   # same second as the request = done
-        self.assertEqual(out, {"requested_at": _ago(minutes=1), "state": "done", "note": None})
+        # §63.15 add-only：回执多带判线的秒数（词数未知 = 地板 10 分钟）
+        self.assertEqual(out, {"requested_at": _ago(minutes=1), "state": "done", "note": None,
+                               "lost_after_s": 600})
         self.assertEqual(requests.projection(KEY, _iso(NOW), ledger, NOW)["state"], "done")
 
     def test_lost_after_the_budget_without_a_new_version(self):
