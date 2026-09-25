@@ -52,7 +52,7 @@ from act.lib import (card_summary, config, daily_loop, deploy_state, dispatch_pr
                      maintenance, policy, power, radar_health, radar_rounds, recap_store, risk,
                      secrets, self_improve, sources, steer, titles, transcripts)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
-from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
+from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES, has_live_process
 from act.lib.registry import Requirement, State, load_all, load_archived
 
 TIER_HINTS = {
@@ -1278,6 +1278,7 @@ class _Session:
     agent_name: Any
     agent_name_stale: bool
     agent: dict   # roster record or {} (agent not found yet)
+    live: bool    # roster entry has a live pid (§30 / #446: stale ≠ working)
 
 
 # copy_cmd 的第一个词是裸 ``claude``——终端里解析到登录 shell 的 Claude Code——
@@ -1372,6 +1373,7 @@ def _session_for(req: Requirement, ex: dict, ctx: _Ctx) -> _Session:
         agent_name=a.get("name"),
         agent_name_stale=_agent_name_stale(req, a),
         agent=a,
+        live=has_live_process(a),
     )
 
 
@@ -1477,7 +1479,9 @@ def _review_row(req: Requirement, ex: dict, sx: _Session, cfg: config.Config) ->
         # §71.2 add-only：dispatched_at→review_at 的耗时里有多少是电脑在睡
         **_opt("slept_seconds", _slept(ex)),
         "delivery_mode": _delivery_mode(req),
-        "session_active": sx.state in _RUNNING_STATES,
+        # §30 追记（issue #446）：会话「有新活动」= roster working **且有活进程**
+        # ——working 但无 pid 是过时 roster 项（非真活动），徽章不亮、卡不促成运行中。
+        "session_active": sx.state in _RUNNING_STATES and sx.live,
         # #119 add-only：这行是「中断收割」而非正常交付（受阻/放弃救活被收进
         # 待验收）——detect_transitions 据此不发「AI 已交付草稿」，客户端
         # decodeIfPresent 可标注。
@@ -1528,12 +1532,18 @@ def _running_row(req: Requirement, ex: dict, sx: _Session) -> dict:
     }
 
 
-def _session_lane(status: str, state: str) -> str:
-    """Which lane a card in a session state lands in (§2 / §11 / §30)."""
+def _session_lane(status: str, state: str, live: bool) -> str:
+    """Which lane a card in a session state lands in (§2 / §11 / §30).
+
+    ``live`` = the session's roster entry has a live pid. §30 (issue #446)
+    promotes a delivered 待验收 card into 运行中 ONLY when a live PROCESS backs
+    the roster's ``working`` — a ``working`` state with no pid is a stale
+    roster entry, not a real re-run, and must stay in 待验收 (so it keeps its
+    ✓验收/↩︎打回 buttons instead of latching in 运行中 forever)."""
     if status == State.DELIVERED.value:
         return "completed"
     if status == State.REVIEW.value:
-        return "running_from_review" if state in _RUNNING_STATES else "review"
+        return "running_from_review" if (live and state in _RUNNING_STATES) else "review"
     return "review" if state in _DONE_STATES else "running"
 
 
@@ -1541,7 +1551,7 @@ def _session_row(req: Requirement, ctx: _Ctx) -> tuple[str, dict]:
     """(lane, row) for executing / review / delivered cards."""
     ex = _execution(req)
     sx = _session_for(req, ex, ctx)
-    lane = _session_lane(req.status, sx.state)
+    lane = _session_lane(req.status, sx.state, sx.live)
     if lane == "completed":
         return lane, _delivered_row(req, ex, sx)
     if lane == "running_from_review":

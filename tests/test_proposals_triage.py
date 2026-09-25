@@ -484,7 +484,7 @@ class RegistryGuardTests(TriageBase):
         card.set_status(State.REVIEW)
         registry.save(card)
         actd._triage_snapshot_path(card.id).unlink(missing_ok=True)
-        actd._reconcile_review_attach(card, {"sid-guard": {"state": "working"}})
+        actd._reconcile_review_attach(card, {"sid-guard": {"state": "working", "pid": 4242}})
         saved = registry.load(card.id)
         ref = (saved.execution or {}).get("registry_snapshot_ref")
         self.assertTrue(ref)
@@ -502,7 +502,7 @@ class RegistryGuardTests(TriageBase):
         card.execution = ex
         card.set_status(State.REVIEW)
         registry.save(card)
-        actd._reconcile_review_attach(card, {"sid-guard": {"state": "working"}})
+        actd._reconcile_review_attach(card, {"sid-guard": {"state": "working", "pid": 4242}})
         card = registry.load(card.id)
         snap_file = actd._triage_snapshot_path(card.id)
         self.assertTrue(snap_file.exists())

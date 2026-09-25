@@ -42,3 +42,17 @@ RUNNING_STATES = _RUNNING_STATES
 BLOCKED_STATES = _BLOCKED_STATES
 DONE_STATES = _DONE_STATES
 LIVE_STATES = _LIVE_STATES
+
+
+def has_live_process(agent) -> bool:
+    """True when a roster entry is backed by a live OS process (has a ``pid``).
+
+    ``claude agents --json`` prints ``pid`` ONLY while the worker process is
+    alive — the same liveness predicate ``dashboard._copy_cmd`` (attach vs
+    resume) and ``executor.live_session_count`` (§56.3 会话闸) already key on.
+    A roster entry whose ``state`` still reads ``working`` but carries no
+    ``pid`` is a STALE entry, not real activity; §30 (issue #446) must not
+    treat it as a live session, or a delivered 待验收 card latches in 运行中
+    forever with no way to accept it. ``None`` / ``{}`` (agent absent) is not
+    live. Single source so dashboard and reconcile can never drift."""
+    return bool(agent) and bool(agent.get("pid"))
