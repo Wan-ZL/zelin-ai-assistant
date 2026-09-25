@@ -308,6 +308,18 @@ class AbortExecutionTestCase(InverseActionsBase):
         self.assertEqual(ex.get("aborted_session_id"), "sess-rv2")
         self.assertTrue(ex.get("aborted_at"))
 
+    def test_clears_review_active_flag(self):
+        # §30 追记（issue #446）：退回提案 = 收工，清掉内部 attach 活跃标记，
+        # 别让它悬着被下一轮误读成「会话还在跑」。
+        _mk_req(status=State.REVIEW.value,
+                execution={"session_id": "sess-ab", "done": True,
+                           "_review_active": True})
+        stub = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
+            req = self._run("abort_execution")
+        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertNotIn("_review_active", req.execution or {})
+
     def test_double_abort_second_is_noop(self):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-3"})
@@ -440,6 +452,18 @@ class StopToReviewTestCase(InverseActionsBase):
         self.assertEqual(ex.get("final_draft"), "新草稿全文")
         self.assertTrue(ex.get("done"))
         self.assertIn("[stopped by user]", req.notes)
+
+    def test_clears_review_active_flag(self):
+        # §30 追记（issue #446）：显式「去待验收」= 收工，立刻清掉内部 attach 活跃
+        # 标记；别等下一轮 reconcile，也别让它悬着被误读成「会话还在跑」。
+        _mk_req(status=State.REVIEW.value,
+                execution={"session_id": "sess-ra", "_review_active": True,
+                           "delivered_summary": "旧稿"})
+        harvest = mock.Mock(return_value={})
+        stop = mock.Mock(return_value=(True, True, "stopped"))
+        req = self._run_with_executor(harvest, stop)
+        self.assertEqual(req.status, State.REVIEW.value)
+        self.assertNotIn("_review_active", req.execution or {})
 
     def test_analytics_autologged(self):
         _mk_req(req_id="R-859", status=State.EXECUTING.value,

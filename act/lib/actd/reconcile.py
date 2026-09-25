@@ -22,7 +22,8 @@ from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_int
                                   update_search_index)
 from act.lib.actd.triage_guard import (PROPOSALS_TRIAGE_PRESET, check_triage_registry_guard,
                                        stamp_triage_snapshot)
-from act.lib.agent_states import BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES
+from act.lib.agent_states import (BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES,
+                                  has_live_process)
 from act.lib.dashboard import index_agents
 from act.lib.maintenance import parse_iso
 from act.lib.registry import Requirement
@@ -94,11 +95,18 @@ def reconcile_review_attach(d: Daemon, req: Requirement, agents: dict) -> None:
 
 
 def _session_working(agent, state: str) -> bool:
-    return bool(agent) and state in RUNNING_STATES
+    # §30 追记（issue #446）：working 但 roster 无 pid = 过时项，非真活动——不 latch
+    # `_review_active`（否则 done 的会话被永远当成 attach 回流在跑）。
+    return has_live_process(agent) and state in RUNNING_STATES
 
 
 def _activity_ended(agent, state: str) -> bool:
-    return agent is None or state in DONE_STATES
+    if agent is None or state in DONE_STATES:
+        return True
+    # §30 staleness bound（issue #446）：roster 报 RUNNING 却无活进程 = 过时项，
+    # 视同活动收工——latch 住的 `_review_active` 就此重新收割并清标，不再永挂运行中。
+    # blocked（有 pid，等用户输入）不在此列：仍保留标记等下一轮。
+    return state in RUNNING_STATES and not has_live_process(agent)
 
 
 def _review_attach(d: Daemon, req: Requirement, agents: dict) -> None:
