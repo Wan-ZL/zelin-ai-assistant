@@ -1,10 +1,12 @@
-"""actd/dispatch — dev 列车改动行上的变异幸存体判例（CONTRACT §65.1 / §71.1 / §51）。
+"""actd/dispatch — dev 列车改动行上的变异幸存体判例（CONTRACT §65.1 / §71.1 / §51 /
+§78）。
 
 三条契约：
 
   * **§65.1 通道关掉之后不再续派**：免批批准（`execution.auto_dispatched`）但还没
-    起跑的 self_improve 卡本 pass 就退回待审批——「已处理完」的答案必须真的把这张卡
-    从派发链上摘下去，否则它照样被派出去烧执行器与 API 额度（#335 review 复现）。
+    起跑的 self_improve 卡本 pass 就退回潜在任务（§78 / issue #447 提案车道退役前
+    是退回提案列）——「已处理完」的答案必须真的把这张卡从派发链上摘下去，否则它
+    照样被派出去烧执行器与 API 额度（#335 review 复现）。
   * **executor 缺席 = 按住，不是一次派发失败**：没有执行器时这张卡不进 `_dispatch_one`
     ——不写卡、不落 `last_error`、不打 `dispatch_failed` 遥测；下一 pass 照常重试。
   * **§71.1 机器在睡按住整个 pass，且状态只探一次**：懒算的判决全 pass 共用，
@@ -65,7 +67,7 @@ class DispatchGateTestCase(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
 
     def test_a_frozen_lane_card_is_withdrawn_instead_of_dispatched(self):
-        """§65.1：退回待审批的卡不许在同一个 pass 里又被派出去。"""
+        """§65.1：退回潜在任务的卡不许在同一个 pass 里又被派出去（§78 落点）。"""
         registry.save(lane_card("P-7", status=State.APPROVED.value,
                                 execution={"auto_dispatched": True}))
         ex = _Exec()
@@ -73,7 +75,7 @@ class DispatchGateTestCase(unittest.TestCase):
             self.assertEqual(actd.dispatch_approved(config.Config()), 0)
         self.assertEqual(ex.dispatched, [])
         req = registry.load("P-7")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)   # §78：退回潜在任务
         self.assertNotIn("auto_dispatched", req.execution or {})
 
     def test_a_missing_executor_holds_the_card_rather_than_failing_it(self):

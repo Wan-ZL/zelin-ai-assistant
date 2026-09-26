@@ -12,7 +12,7 @@ A personal AI chief-of-staff for macOS (and a headless-plus-board port on Window
 
 This page describes **v1.0.114**. The version truth is the git tag on `main` (releases are minted on merge); `python3 scripts/version_stamp.py` prints the version of the checkout in front of you.
 
-![The board: proposals, working, in review, done](docs/images/board-kanban-light.png)
+![The board: backlog, working, in review, done](docs/images/board-kanban-light.png)
 
 <p align="center"><sub>Every screenshot on this page is a real render of this release, captured by the <code>visual-goldens</code> workflow from the fictional demo data in <code>scripts/demo_seed.py</code> — no real person, message or repository appears in them. The capture runs in 中文; one switch in the header turns the whole board to English.</sub></p>
 
@@ -20,7 +20,7 @@ This page describes **v1.0.114**. The version truth is the git tag on `main` (re
 
 - **Capture** — [screenpipe](https://github.com/mediar-ai/screenpipe) records screen and audio locally; scheduled jobs export increments and a headless Claude session distills them into an Obsidian wiki (`ingest/`).
 - **Detect** — radars (Obsidian notes, Slack, Gmail, your own Claude sessions) scan for things people are asking you to do and file them into a requirement registry — a SQLite source of truth with a daily, diffable YAML export — merging duplicates across sources (`act/`).
-- **Approve** — each requirement becomes a proposal card with a plain-language summary, a cost estimate and acceptance criteria. One click approves, rejects or comments.
+- **Approve** — each requirement becomes a card in the backlog lane with a plain-language summary, a cost estimate and acceptance criteria. One click approves, rejects or comments.
 - **Execute** — approved cards dispatch `claude --bg` agents in isolated git worktrees, supervised by a resident daemon (`act/actd.py`) with automatic resume and a quality gate: self-check, fresh-context diff review, draft-PR-only delivery.
 - **Deliver** — finished work lands in the review lane: a paste-ready final draft for writing tasks, a draft PR for code. You accept it or send it back with comments.
 
@@ -41,7 +41,7 @@ flowchart TB
 
         subgraph ACTP["Act pipeline (act/)"]
             RADARS["radars<br/>Obsidian · Slack · Gmail · claude sessions"]
-            REG[("registry — SQLite source of truth<br/>daily YAML export for diffing/backup<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(any state → trashed)")]
+            REG[("registry — SQLite source of truth<br/>daily YAML export for diffing/backup<br/>detected → approved →<br/>executing → review → delivered<br/>(any state → trashed)")]
             ACTD["actd daemon (10 s pass)<br/>inbox → dispatch → reconcile → dashboard"]
             AGENTS["claude --bg agents<br/>isolated git worktrees + quality gate<br/>deliver: draft PR or FINAL DRAFT"]
             RADARS -->|"merge_or_new (dedup)"| REG
@@ -133,12 +133,12 @@ Building the board needs Node.js LTS; `scripts/dev-preview.sh` and `install.sh` 
 
 - **Requirement radars with dedup** — a restatement merges into the existing card instead of spamming you; a genuine increment becomes a linked improvement card; low-confidence items park in the backlog lane until they are raised again.
 - **Tiered approvals** — auto / one-click / typed confirmation. Outbound messages, merges and resource deletion are never automatic; cost appears on the card and an expensive card escalates a tier (thresholds live in `config.example.yaml`).
-- **Board settlement signals** — a card in the proposals lane says when its deadline has passed without a decision, turns its raised-count chip red once the same thing has been raised too many times without being approved, deferred or rejected, and marks a card as probably already done when a radar finds evidence that the work happened outside the board. None of the three moves a card by itself: every settlement is still your click (CONTRACT §76).
+- **Board settlement signals** — a card in the backlog lane says when its deadline has passed without a decision, turns its raised-count chip red once the same thing has been raised too many times without being approved or rejected, and marks a card as probably already done when a radar finds evidence that the work happened outside the board. None of the three moves a card by itself: every settlement is still your click (CONTRACT §76).
 - **Review-lane aging** — work you never accepted does not rot silently. A card sitting in the review lane past the auto-archive window gets one warning before the daily tidy archives it (window truth = `archive_after_days` in `act/lib/config.py`, `0` disables it), and that warning is one of the three notifications that pierce quiet hours.
 - **Terminal takeover by double-click** — double-click a working, blocked or review card and its agent session opens in your terminal, already attached, so you can steer it by hand. A single click does nothing and Enter opens the detail panel, so a takeover is never an accident; when the shell is not running the command is copied to your clipboard instead (CONTRACT §54.1).
 - **Meeting recaps, two shapes** — a recap is either a handful of tagged lines or sections with numbered items, and you pick the shape per meeting. Each item carries a tag — Decided, Split, Deadline, Changed since last plan, Open — so a reader sees in one pass what was settled and what is still open. Regenerating opens an intent panel that asks a few short questions about this meeting and folds your answers into the next draft; the recap is copy-only, and sending it anywhere is your action, never the daemon's.
 - **Skills page** — the in-repo skill store has its own page: enable or disable a skill (a symlink into your Claude skills directory), reveal it in Finder, refresh the list, and see a status badge when the linked copy has drifted from the one in the repo (CONTRACT §67).
-- **Notification preferences** — the task-done alert is off / banner / banner + sound, and new proposals, needs-input pauses and failures are three separate switches. Quiet hours drop banners inside a window you set instead of pretending to queue them, with three deliberate exceptions: failures, the receipt for a button you just pressed, and the last call before a review card is archived.
+- **Notification preferences** — the task-done alert is off / banner / banner + sound, and newly filed cards, needs-input pauses and failures are three separate switches. Quiet hours drop banners inside a window you set instead of pretending to queue them, with three deliberate exceptions: failures, the receipt for a button you just pressed, and the last call before a review card is archived.
 - **Recording data & disk** — the settings page shows what the recording engine is costing you in disk, how fast it is growing and when it was last tidied, and gives OCR text, transcripts and raw media their own retention windows (CONTRACT §72). Sensitive apps are excluded from capture at the engine level.
 - **Quick capture** — type a thought into the board's composer; an LLM triages it against the registry into one of three outcomes: a new card, a fold into an existing card, or ignore. The same gate serves the Slack self-DM path, so a one-liner or a photo of a whiteboard from your phone lands on the same board.
 - **Install it as an app (PWA)** — the board ships a web manifest and icons, so Edge, Chrome or Safari can install it as a standalone window with its own icon, on every OS, with no second UI codebase to maintain (CONTRACT §73).
@@ -235,7 +235,7 @@ skills/                    # in-repo skill store: manifest + skills, enabled by 
 act/actd.py                # daemon: inbox → dispatch → reconcile → dashboard
 act/executor.py            # claude --bg dispatch, resume, rework, quality gate, delivery harvest
 act/radar*.py              # the requirement radars (Obsidian / Slack / Gmail / claude sessions)
-act/analyze.py             # debt → approvable proposal expansion (LLM)
+act/analyze.py             # research & propose: fills a backlog card in place (LLM)
 act/digest.py              # state digest + self-improvement suggestion cards
 act/lib/                   # config / registry / projection / notify / secrets / …
 server/                    # stdlib HTTP + SSE server: board API, settings, recaps, skills

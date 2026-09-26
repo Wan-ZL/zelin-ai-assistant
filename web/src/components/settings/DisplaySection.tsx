@@ -152,9 +152,11 @@ function DisplayPreview() {
           <span className="chip chip-purple chip-quiet">{text("已并入×2", "Folded ×2")}</span>
         </div>
         <div className="card-actions">
+          {/* 三颗动词逐字镜像 ReviewCard 的动作行（防腐 #10）——§78（D80，issue #447）之前这里第三颗
+              写的是「暂缓 / Defer」，那是提案卡的动词、而且随提案列一起退役了，预览里不许再有 */}
           <span className="btn btn-success">{text("验收", "Accept")}</span>
-          <span className="btn btn-warning">{text("打回…", "Send back…")}</span>
-          <span className="btn">{text("暂缓", "Defer")}</span>
+          <span className="btn btn-warning">{text("打回", "Send Back")}</span>
+          <span className="btn btn-accent">{text("复制成稿", "Copy final draft")}</span>
         </div>
       </div>
     </div>

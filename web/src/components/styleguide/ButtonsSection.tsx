@@ -1,17 +1,17 @@
 // 第 2 节 Buttons：全部真按钮动词，从【真组件】里长出来（fixture props 喂进
-// ProposalCard / RunningCard / ReviewCard / DoneCard / DebtCardItem / LaneComposer）。
+// DebtCardItem / RunningCard / ReviewCard / DoneCard / LaneComposer）。
 // 按钮是活的——点击会真发 POST /api/actions（fixture id 不存在，server 拒绝，无副作用）。
 // 变体条（.btn / .btn-primary / .btn-danger + disabled）用真实 class 直接展示态。
+// §78（D80，issue #447）：提案卡的那一格随 ProposalCard 一起墓碑——它的四颗动词里有两颗
+// （批准 / 暂缓）在新架构里不存在，留在样板间等于让退役动词从这一页漏回产品。
 import { useI18n } from "../../i18n";
 import { DebtCardItem } from "../board/DebtCardItem";
 import { DoneCard } from "../board/DoneCard";
 import { LaneComposer } from "../board/LaneComposer";
-import { ProposalCard } from "../board/ProposalCard";
 import { ReviewCard } from "../board/ReviewCard";
 import { RunningCard } from "../board/RunningCard";
 import {
-  DEBT_FIXTURE,
-  PROPOSAL_T1,
+  BACKLOG_T1,
   REVIEW_FIXTURE,
   TASK_BLOCKED,
   TASK_DONE,
@@ -23,13 +23,6 @@ export function ButtonsSection() {
   const { text } = useI18n();
   return (
     <div className="sg-grid">
-      <figure className="sg-specimen">
-        <ProposalCard card={PROPOSAL_T1} />
-        <SpecimenNote
-          zh="提案卡动词（Mac tint 一比一）：批准（.btn-success 绿；T2 才弹键入确认）· 拒绝（.btn-danger 红，fork 弹窗）· 修改（.btn-info 蓝）· 暂缓（中性 .btn 灰）"
-          en="Proposal verbs (one-to-one with Mac tints): Approve (.btn-success green; typed confirm only on T2), Reject (.btn-danger red, fork dialog), Comment (.btn-info blue), Later (neutral grey .btn)"
-        />
-      </figure>
       <figure className="sg-specimen">
         <RunningCard row={TASK_BLOCKED} isBlocked />
         <SpecimenNote
@@ -59,26 +52,28 @@ export function ButtonsSection() {
         />
       </figure>
       <figure className="sg-specimen">
-        <DebtCardItem item={DEBT_FIXTURE} />
+        <DebtCardItem item={BACKLOG_T1} />
         <SpecimenNote
-          zh="潜在任务卡动词：研究并提议（.btn-info 蓝，Mac DebtRow 同蓝）· 删除（.btn-danger 红，进回收站可恢复所以不弹确认）"
-          en="Backlog verbs: Research & propose (.btn-info blue, matching Mac's DebtRow), Delete (.btn-danger red; recoverable via trash, so no confirm)"
+          zh="潜在任务卡动词（§78 起这是看板上唯一的机器卡动词行，Mac tint 一比一）：促成运行（.btn-success 绿，原生批准同一颗绿；T2 才弹键入确认）· 拒绝（.btn-danger 红，fork 弹窗）· 修改（.btn-info 蓝）· 研究并提议（.btn-info 蓝，Mac DebtRow 同蓝）· 删除（.btn-danger 红，进回收站可恢复所以不弹确认）· 永久完成（封存）（中性 .btn 灰）"
+          en="Backlog verbs (since §78 the board's only machine-card verb row; one-to-one with Mac tints): Run it (.btn-success green — the native Approve green; typed confirm only on T2), Reject (.btn-danger red, fork dialog), Comment (.btn-info blue), Research & propose (.btn-info blue, matching Mac's DebtRow), Delete (.btn-danger red; recoverable via trash, so no confirm), Done for good (neutral .btn)"
         />
       </figure>
       <figure className="sg-specimen">
+        {/* 占位句逐字镜像各自的挂载点（防腐 #10）：捕获框在潜在任务条头（BacklogStrip），直跑框在运行中列头
+            （BoardLanes）——§78 起捕获框不再说「提案」，直跑也不再说「跳过提案」（那一列没了） */}
         <LaneComposer
-          placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
+          placeholder={text("一句话，先记下来，AI 来补计划…", "One line — jot it down, the AI fills in the plan…")}
           submitLabel={text("捕获", "Capture")}
           buildBody={(t) => ({ action: "capture", text: t })}
         />
         <LaneComposer
-          placeholder={text("一句话，直接开跑（跳过提案）…", "One line — run it now (skips proposal)…")}
+          placeholder={text("一句话，直接开跑…", "One line — run it now…")}
           submitLabel={text("直跑", "Run")}
           buildBody={(t) => ({ action: "capture", text: t, mode: "run" })}
         />
         <SpecimenNote
-          zh="列顶输入框（真 LaneComposer，⚠️ 真捕获通道——在这里提交会真的铸卡）：多行 textarea 1…5 行自动增高，回车 = 换行、只有按钮提交（D35）；捕获 / 直跑按钮都是 .btn-primary、贴底；输入框空或提交中自动 disabled（下方即活的 disabled 态）；focus 环 --accent-soft + --accent"
-          en="Lane composers (real LaneComposer — ⚠️ the real capture channel; submitting here mints a real card): a textarea that grows from 1 to 5 rows, Enter = newline, the button is the only submit (D35); Capture / Run are .btn-primary, bottom-aligned; the button disables itself while empty or busy (a live disabled state); focus ring --accent-soft + --accent"
+          zh="两个输入框（真 LaneComposer，⚠️ 真捕获通道——在这里提交会真的铸卡）：捕获框住潜在任务条头、直跑框住运行中列头（§78）；多行 textarea 1…5 行自动增高，回车 = 换行、只有按钮提交（D35）；捕获 / 直跑按钮都是 .btn-primary、贴底；输入框空或提交中自动 disabled（下方即活的 disabled 态）；focus 环 --accent-soft + --accent"
+          en="Two composers (real LaneComposer — ⚠️ the real capture channel; submitting here mints a real card): Capture sits at the head of the Backlog strip and Run at the head of the Running lane (§78); a textarea that grows from 1 to 5 rows, Enter = newline, the button is the only submit (D35); Capture / Run are .btn-primary, bottom-aligned; the button disables itself while empty or busy (a live disabled state); focus ring --accent-soft + --accent"
         />
       </figure>
       <figure className="sg-specimen">

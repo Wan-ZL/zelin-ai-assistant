@@ -1,18 +1,19 @@
 // 第 4 节 Cards：每个 lane 状态一张真卡（真组件 + fixture 数据）——
-// proposal T1 / proposal T2 / processing 占位 / queued / working / needs-input /
-// review / done（+ 潜在任务 debt 附赠）。卡面 = .task-card 基座（--surface /
+// 潜在任务 T1 / 潜在任务 T2 / processing 占位 / queued / working / needs-input /
+// review / done（+ 老债务行附赠）。卡面 = .task-card 基座（--surface /
 // --card-shadow / --border），子状态 class：.is-queued（--surface-muted 虚线框）、
 // .is-blocked（--warning 左边条）；sheen 动效行来自 animations.css fork 块。
+// §78（D80，issue #447）：提案列与 ProposalCard 一起墓碑，机器卡的样板一律是 DebtCardItem——
+// 样板间不许挂一张看板上已经挂不出来的卡（否则退役的动词会从这一页漏回产品里）。
 import { DebtCardItem } from "../board/DebtCardItem";
 import { DoneCard } from "../board/DoneCard";
-import { ProposalCard } from "../board/ProposalCard";
 import { ReviewCard } from "../board/ReviewCard";
 import { RunningCard } from "../board/RunningCard";
 import {
+  BACKLOG_PROCESSING,
+  BACKLOG_T1,
+  BACKLOG_T2,
   DEBT_FIXTURE,
-  PROPOSAL_PROCESSING,
-  PROPOSAL_T1,
-  PROPOSAL_T2,
   REVIEW_FIXTURE,
   TASK_BLOCKED,
   TASK_DONE,
@@ -25,24 +26,24 @@ export function CardsSection() {
   return (
     <div className="sg-grid">
       <figure className="sg-specimen">
-        <ProposalCard card={PROPOSAL_T1} />
+        <DebtCardItem item={BACKLOG_T1} />
         <SpecimenNote
-          zh="提案 T1（ProposalCard）：徽章全开——tier .chip-purple 粉紫、交付 .chip-purple、紧急截止 .chip-danger.chip-outline 红字、成本 .chip、被提×N .chip-warning.chip-quiet、已并入×N .chip-purple.chip-quiet、green-sign / 回锅 .chip-warning、章行之后「怎样算办完：」紧凑形 .card-dod.is-dod（前 3 条 + 「+N」，空 DoD 不渲染，D43）、分歧行 .card-line.is-warning；落点行「📄 草稿落点: your-workbench（只出文档）」；id 右上角；DoD 全文与其余详情在右侧侧栏（展开详情 ▸ 打开，D34）"
-          en="Proposal T1 (ProposalCard): full badge row — tier .chip-purple pink-magenta, deliver .chip-purple, urgent deadline .chip-danger.chip-outline red, cost .chip, raised ×N .chip-warning.chip-quiet, folded ×N .chip-purple.chip-quiet, green-sign / returned .chip-warning, compact “Definition of done:” .card-dod.is-dod after the badge row (first 3 + “+N”, hidden when empty, D43), disagreement line .card-line.is-warning; target line “📄 Drafts land in: your-workbench”; id top-right; full DoD and the rest of the details live in the right sidebar (Details ▸ opens it, D34)"
+          zh="潜在任务 T1（DebtCardItem）：徽章全开——tier .chip-purple 粉紫、交付 .chip-purple、紧急截止 .chip-danger.chip-outline 红字、成本 .chip、被提×N .chip-warning.chip-quiet、已并入×N .chip-purple.chip-quiet、green-sign / 回锅 .chip-warning、章行之后「怎样算办完：」紧凑形 .card-dod.is-dod（前 3 条 + 「+N」，空 DoD 不渲染，D43）、分歧行 .card-line.is-warning；落点行「📄 草稿落点: your-workbench（只出文档）」；id 右上角；DoD 全文与其余详情在右侧侧栏（展开详情 ▸ 打开，D34）"
+          en="Backlog T1 (DebtCardItem): full badge row — tier .chip-purple pink-magenta, deliver .chip-purple, urgent deadline .chip-danger.chip-outline red, cost .chip, raised ×N .chip-warning.chip-quiet, folded ×N .chip-purple.chip-quiet, green-sign / returned .chip-warning, compact “Definition of done:” .card-dod.is-dod after the badge row (first 3 + “+N”, hidden when empty, D43), disagreement line .card-line.is-warning; target line “📄 Drafts land in: your-workbench”; id top-right; full DoD and the rest of the details live in the right sidebar (Details ▸ opens it, D34)"
         />
       </figure>
       <figure className="sg-specimen">
-        <ProposalCard card={PROPOSAL_T2} />
+        <DebtCardItem item={BACKLOG_T2} />
         <SpecimenNote
-          zh="提案 T2（ProposalCard）：批准弹键入确认（§41 confirmT2）；较难 .chip-danger（hardness=hard，hardnessLabel；--danger / --danger-soft）；落点行「🟠 修改现有: …（只提 draft PR）」.card-line.is-warning"
-          en="Proposal T2 (ProposalCard): Approve opens typed confirm (§41 confirmT2); Hard chip .chip-danger (--danger / --danger-soft); target line “🟠 Modify existing: … (draft PR only)” .card-line.is-warning"
+          zh="潜在任务 T2（DebtCardItem）：促成运行弹键入确认（§41 confirmT2，弹窗里的确认键仍是原生的「批准」）——没看过明细时那颗键换成「T2 需先展开看明细」一句；较难 .chip-danger（hardness=hard，hardnessLabel；--danger / --danger-soft）；落点行「🟠 修改现有: …（只提 draft PR）」.card-line.is-warning"
+          en="Backlog T2 (DebtCardItem): Run it opens the typed confirm (§41 confirmT2; the dialog's confirm key keeps the native “Approve”) — before the details were opened the key is replaced by the “T2: expand details first” line; Hard chip .chip-danger (--danger / --danger-soft); target line “🟠 Modify existing: … (draft PR only)” .card-line.is-warning"
         />
       </figure>
       <figure className="sg-specimen">
-        <ProposalCard card={PROPOSAL_PROCESSING} />
+        <DebtCardItem item={BACKLOG_PROCESSING} />
         <SpecimenNote
-          zh="processing 占位（ProposalCard processing=true）：只有 sheen 动效行（.task-processing-ring，animations.css），无决策按钮"
-          en="Processing placeholder (ProposalCard processing=true): sheen row only (.task-processing-ring, animations.css), no decision buttons"
+          zh="processing 占位（DebtCardItem processing=true）：只有 sheen 动效行（.task-processing-ring，animations.css），无决策按钮"
+          en="Processing placeholder (DebtCardItem processing=true): sheen row only (.task-processing-ring, animations.css), no decision buttons"
         />
       </figure>
       <figure className="sg-specimen">
@@ -83,8 +84,8 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <DebtCardItem item={DEBT_FIXTURE} />
         <SpecimenNote
-          zh="潜在任务卡（DebtCardItem，附赠）：type 词表 .chip + 较难 .chip-danger（hardness=hard，hardnessLabel）"
-          en="Backlog card (DebtCardItem, bonus): type table .chip + Hard .chip-danger (hardness=hard, hardnessLabel)"
+          zh="老债务行（DebtCardItem，server 只发 type / 难度 / 摘要）：tier 章回落「未分级」+ type 词表 .chip + 较难 .chip-danger（hardness=hard，hardnessLabel）；缺席的字段整节不渲染，卡面自然退回 §78 改动前的样子"
+          en="Legacy debt row (DebtCardItem with only type / hardness / summary from the server): the tier chip falls back to “Untiered”, plus type table .chip and Hard .chip-danger (hardness=hard, hardnessLabel); absent fields render nothing, so the face falls back to its pre-§78 shape"
         />
       </figure>
     </div>

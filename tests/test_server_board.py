@@ -8,6 +8,10 @@
   增补（投影已有键绝不被覆盖）；archive/ 优先于 active（crash 残留判例）；
   list 批次文件可命中；R-000-example.yaml 永不加载；
 - card id 闸门：穿越形 id（含 URL 编码）→ 400 INVALID_FIELD，查无此卡 → 404。
+
+§78（提案车道退役）：拍板前的 hero 卡走位由 needs_approval 改为 debt（潜在任务），
+``/api/cards/{id}`` 回的 ``lane`` 随之变 ``debt``；needs_approval 作为 add-only 的
+wire 键留在透传字节里但恒空（D80.1），这里逐场景钉住。
 """
 from __future__ import annotations
 
@@ -25,10 +29,12 @@ from server import board_source
 HERO = "P-101"          # 主键（§60）；批准后工作编号 R-101
 HERO_WORK = "R-101"
 
-# 场景 → hero 卡所在分区（demo_seed 的管线走位，UI 各列渲染的判据）
+# 场景 → hero 卡所在分区（demo_seed 的管线走位，UI 各列渲染的判据）。
+# §78（提案车道退役）：拍板前的两个场景由 needs_approval 改落 debt（潜在任务），
+# 那一列现在是机器卡的唯一落点；needs_approval 恒空，hero 永远不该再出现在那里。
 _HERO_LANE = {
-    "captured": "needs_approval",
-    "initial": "needs_approval",
+    "captured": "debt",
+    "initial": "debt",
     "approved": "running",
     "running": "running",
     "review": "review",
@@ -62,11 +68,15 @@ class BoardPassthroughTestCase(unittest.TestCase):
                               f"scene={scene}: {HERO} should sit in {lane}")
                 for sec in dash["counts"]:
                     self.assertEqual(dash["counts"][sec], len(dash[sec]))
+                # §78 / D80.1：退役的列留在 wire 上但恒空——透传字节里也一样
+                self.assertEqual(dash["needs_approval"], [])
+                self.assertEqual(dash["counts"]["needs_approval"], 0)
 
     def test_hero_scene_shapes(self):
         # captured = raising 占位（processing true）；approved = queued 无 session
+        # §78：raising 占位重新安家在潜在任务列（D80.6 的灰卡）
         dash = seed_scene(self.home, "captured")
-        hero = [c for c in dash["needs_approval"] if c["id"] == HERO][0]
+        hero = [c for c in dash["debt"] if c["id"] == HERO][0]
         self.assertTrue(hero["processing"])
 
         dash = seed_scene(self.home, "approved")
@@ -114,8 +124,8 @@ class CardDetailProjectionTestCase(unittest.TestCase):
     def test_projection_row_verbatim_plus_lane(self):
         status, obj = get_json(self.port, f"/api/cards/{HERO}")
         self.assertEqual(status, 200)
-        row = [c for c in self.dash["needs_approval"] if c["id"] == HERO][0]
-        self.assertEqual(obj["lane"], "needs_approval")
+        row = [c for c in self.dash["debt"] if c["id"] == HERO][0]
+        self.assertEqual(obj["lane"], "debt")   # §78：拍板前的卡住潜在任务列
         for k, v in row.items():  # 投影字段一个不少、一字不改
             self.assertEqual(obj[k], v, f"projection field {k} mutated")
 
@@ -134,7 +144,7 @@ class CardDetailProjectionTestCase(unittest.TestCase):
         self.assertEqual(obj["id"], HERO)
         self.assertEqual(obj["display_id"], HERO_WORK)
         self.assertEqual(obj["lane"], "running")
-        # 提案场景里 hero 还没有工作编号 → 按 R-101 查是 404（不按前缀猜卡）
+        # 潜在任务场景里 hero 还没有工作编号 → 按 R-101 查是 404（不按前缀猜卡）
         seed_scene(self.home, "initial")
         status, obj = get_json(self.port, f"/api/cards/{HERO_WORK}")
         self.assertEqual(status, 404)
@@ -173,6 +183,8 @@ class CardDetailEnrichmentTestCase(unittest.TestCase):
     def test_registry_fields_fill_gaps_only(self):
         write_text(self.reg / f"{HERO}.yaml", "\n".join([
             f"id: {HERO}",
+            # §78：card_sent 是「合法但退役」的存量值（§0 第 6 条 add-only）——
+            # 老安装上还会有这样的 YAML，增补必须原样透出、不许改写或炸掉
             "status: card_sent",
             "title: REGISTRY-TITLE-MUST-NOT-WIN",
             "plan: REGISTRY-PLAN-MUST-NOT-WIN",
@@ -185,7 +197,7 @@ class CardDetailEnrichmentTestCase(unittest.TestCase):
         ]))
         status, obj = get_json(self.port, f"/api/cards/{HERO}")
         self.assertEqual(status, 200)
-        row = [c for c in self.dash["needs_approval"] if c["id"] == HERO][0]
+        row = [c for c in self.dash["debt"] if c["id"] == HERO][0]   # §78
         # 投影已有键绝不被 registry 覆盖（add-only 铁律）
         self.assertEqual(obj["title"], row["title"])
         self.assertEqual(obj["plan"], row["plan"])

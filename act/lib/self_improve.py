@@ -95,8 +95,11 @@ REJECTED_CAP_BYTES = 256 * 1024
 FOREIGN_CAP = 200
 FOLLOWUP_QUOTE_CAP = 1500
 CARD_TYPE = "self-improvement"
-# 跟进卡在这些状态 = 这张 PR 已有人在跟，不再铸第二张
-_OPEN_STATUSES = (State.CARD_SENT.value, State.RAISING.value,
+# 跟进卡在这些状态 = 这张 PR 已有人在跟，不再铸第二张。§78 起跟进卡生在
+# detected（潜在任务），这一条**必须**在词表里——否则每天都会为同一张 PR 再铸
+# 一张（去重整条失效）；card_sent 留着是存量卡的 add-only 容忍。
+_OPEN_STATUSES = (State.DETECTED.value, State.CARD_SENT.value,
+                  State.RAISING.value,
                   State.APPROVED.value, State.EXECUTING.value)
 
 GhRunner = Callable[[list, str], tuple]
@@ -169,7 +172,7 @@ def channel_off(cfg: object = None) -> bool:
 
 def frozen_in_flight(card: object, cfg: object = None) -> bool:
     """§65.1 + issue #307 第 4 条「关闭开关时至少不再续派」：通道关着时这张卡
-    不再被**自动**推进——免批批准还没派出的不派（退回待审批，见
+    不再被**自动**推进——免批批准还没派出的不派（§78：退回潜在任务，见
     actd/dispatch.py），已在跑但 agent 死了的不自动续命（见 actd/reconcile.py）。
     判据只看写死的 channel（同 :func:`egress_locked`，与仓库是否匹配无关）；
     owner 亲手批准 / 亲手打回的动作不在本闸下（那是显式动作，由调用方区分），
@@ -855,7 +858,8 @@ def _followup_dod(red: list) -> list:
 
 def mint_followup(pr: dict, comments: list, red: list, cfg: object,
                   now: _dt.datetime) -> Requirement:
-    """铸跟进卡（card_sent；lane 下一 pass 免批）。sources 唯一一条 = 写死的
+    """铸跟进卡（§78：detected/潜在任务；§65 lane 下一 pass 从这一列免批）。
+    sources 唯一一条 = 写死的
     self_improve 渠道 + PR 坐标（pr_number/head/head_sha 供核验）；owner 评论原文
     只进 ``quote``（build_prompt 围栏它），标题/plan 全部硬编码骨架。"""
     number = int(pr["number"])
@@ -866,7 +870,7 @@ def mint_followup(pr: dict, comments: list, red: list, cfg: object,
            "head": pr.get("headRefName"), "head_sha": pr.get("headRefOid")}
     req = Requirement(
         id=registry.next_id(), title=_followup_title(number, comments, red),
-        type=CARD_TYPE, tier="T1", status=State.CARD_SENT.value, hardness="soft",
+        type=CARD_TYPE, tier="T1", status=State.DETECTED.value, hardness="soft",
         sources=[src],
         summary=f"owner 在 {pr.get('url')} 上留了话 / CI 红了——同一分支上补。",
         plan=_followup_plan(number, pr.get("headRefName"), red),

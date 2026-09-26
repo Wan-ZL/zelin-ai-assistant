@@ -2,7 +2,10 @@
 
 fixture = demo_seed 的 initial 场景（固定 now，确定性）+ 封存卡 + 词表行（状态词 / tier 提示 /
 截止 / 分歧 / 合并建议三态…）+ server/lanes.py 目录 + 空 home 的设置目录与凭证快照；形状必须让
-web 的每个渲染面都有东西可画（看板六列、回收站、右侧书立条、设置页每个通用区）。
+web 的每个渲染面都有东西可画（看板列、回收站、右侧书立条、设置页每个通用区）。
+
+§78 / D80（issue #447）：提案列退役后，提案卡面的全部词表行改落潜在任务列（`debt[]`），
+`needs_approval` 只剩一把恒空的合法 wire key——它不再是「要有东西可画」的一列。
 """
 import io
 import os
@@ -23,13 +26,18 @@ class FixtureShapeTestCase(unittest.TestCase):
         a = pf.build_board()
         b = pf.build_board()
         self.assertEqual(a, b)
-        for lane in ("needs_approval", "running", "needs_input", "review", "completed", "debt", "trash", "archived"):
+        for lane in ("running", "needs_input", "review", "completed", "debt", "trash", "archived"):
             self.assertGreater(len(a[lane]), 0, lane)
+        # §78 / D80.1：提案列退役，`needs_approval` 仍是合法 wire key（add-only，老 reader 读到的是
+        # 一个合法空列而不是缺键），但恒空、counts 恒 0——它不再是「有东西可画」的一列
+        self.assertEqual(a["needs_approval"], [])
+        self.assertEqual(a["counts"]["needs_approval"], 0)
         self.assertEqual(a["counts"]["archived"], 4)
         self.assertEqual({row["archive_reason"] for row in a["archived"]}, {"user", "auto"})
         self.assertEqual({row["prev_status"] for row in a["archived"]}, {"delivered", "merged", "review"})
         # 词表行：每个 tier 提示 / 每种 running 状态词 / 合并建议三态都至少出现一次
-        self.assertEqual({c.get("tier_hint") for c in a["needs_approval"]} >= {"自动执行", "一键可批", "需文字确认", "未分级"}, True)
+        # （§78：提案卡面的 tier 词表随卡搬到潜在任务列，vitest 才有得渲染）
+        self.assertEqual({c.get("tier_hint") for c in a["debt"]} >= {"自动执行", "一键可批", "需文字确认", "未分级"}, True)
         self.assertTrue({r["state"] for r in a["running"]} >= {"working", "queued", "dispatched", "idle", "unknown"})
         self.assertEqual([m["status"] for m in a["merge_suggestions"]][:3], ["analyzing", "done", "failed"])
         self.assertTrue({m.get("verdict") for m in a["merge_suggestions"]} >= {"partition", "merge", "keep_separate", None})
@@ -57,9 +65,11 @@ class FixtureShapeTestCase(unittest.TestCase):
         self.assertEqual(pf.build_secrets(), secrets)
 
     def test_lanes_catalog_mirrors_server_order(self):
+        # §78.7 / D80：提案列退役 → server/lanes.py 的目录里不再有 needs_approval 那一条
+        # （没有列就没有列说明；wire 上那把空的 needs_approval 键另算，见上面的 board 判例）
         lanes = pf.build_lanes()
         self.assertEqual([lane["slug"] for lane in lanes["lanes"]],
-                         ["debt", "needs_approval", "running", "review", "completed", "archived"])
+                         ["debt", "running", "review", "completed", "archived"])
         self.assertIn("zh", lanes["lanes"][0]["help"])
 
     def test_cli_write_then_check(self):

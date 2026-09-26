@@ -4,16 +4,20 @@
 法典：docs/CONTRACT.md §58（质量仪表：每条场景要一条可执行证据）。被探的行为
 各有法条，探针只读它们的可观测量、不新增行为：
 
-  - `dock_badge`     Dock 图标徽章 = 等你动作的卡数（§15 v0.46 ②：提案 + 需输入 +
-                     待验收；web `pushBadge` → 桥 `setBadge` → 壳 `DockBadge.set`，
+  - `dock_badge`     Dock 图标徽章 = 等你动作的卡数（§15 v0.46 ②，§78 改口径：潜在任务 +
+                     需输入 + 待验收——提案列退役后 owner 的决策都长在潜在任务上；
+                     web `pushBadge` → 桥 `setBadge` → 壳 `DockBadge.set`，
                      §54.1 / §61.6）。观测量 = Dock 进程里该 app tile 的
                      `NSDockTile.badgeLabel` 经 LaunchServices 发布（`lsappinfo … StatusLabel`），
                      比对 `GET /api/board` 的 counts；Dock 进程的 `AXStatusLabel` 只作回落
                      （2026-09-17 实测：徽章明明是 42，AX 仍回 missing value）。
-  - `hotkey_focus`   全局 ⌃⌥Space = 聚焦提案列捕获框（§68.13，与菜单 显示 ▸ 聚焦
+  - `hotkey_focus`   全局 ⌃⌥Space = 聚焦看板捕获框（§68.13，与菜单 显示 ▸ 聚焦
                      捕获框 ⌘L 同一条路 `focusCaptureField` → `quick_capture`）。
-                     观测量 = 壳前置 + `AXFocusedUIElement` 是提案 composer 的
-                     textarea（placeholder 逐字取自 web BoardLanes/AppShell）。
+                     观测量 = 壳前置 + `AXFocusedUIElement` 是捕获 composer 的
+                     textarea（placeholder 逐字取自 web BacklogStrip/AppShell）。
+                     §78：提案列退役，那只捕获框搬到了潜在任务条（BacklogStrip）
+                     的条头，目标随之是它（看板缺席时是 AppShell 的
+                     BoardMissingState 捕获框）——运行中列的直跑框不是合法落点。
   - `menu_open_page` app 菜单 关于 / 设置… / 权限体检… → `open_page {page}`（§54.4
                      追记 D40 / §61.6；壳 `openBoardPage`）。观测量 = 窗口标题
                      （`Zelin's AI Assistant — <页>`，web pageTitles.ts 经
@@ -75,14 +79,22 @@ DEFAULT_HOME = "~/Projects/zelin-ai-assistant"
 HEARTBEAT_FRESH_S = 15.0
 #: §28 通知条目过期阈值，秒（truth = shell/Sources/NotifyRelay.swift staleAfter）
 NOTIFY_STALE_AFTER_S = 600.0
-#: 提案列 composer 的 placeholder 双语逐字（truth = web/src/components/board/BoardLanes.tsx
-#: 提案列 + web/src/components/shell/AppShell.tsx BoardMissingState）
+#: 捕获框 placeholder 的双语逐字（truth = web/src/components/chrome/BacklogStrip.tsx
+#: 潜在任务条头的捕获框 + web/src/components/shell/AppShell.tsx BoardMissingState）。
+#: §78：提案列退役，那只捕获框搬到了潜在任务条头，⌃⌥Space / ⌘L 的落点跟着它走
+#: （focusComposer.COMPOSER_SELECTOR）；看板还没写出来时焦点落在 BoardMissingState 的
+#: 捕获框上，两对都算命中（索引 0/1 = 潜在任务条捕获框的 zh/en，判例
+#: tests/test_shell_ui_probe.py 按下标取）。运行中列直跑框的占位句**故意不在这里**：
+#: 全局快捷键落到直跑框上就是「一按就开跑」，那正是本探针要抓的回归，不许当容差。
 COMPOSER_PLACEHOLDERS = (
+    "一句话，先记下来，AI 来补计划…",
+    "One line — jot it down, the AI fills in the plan…",
     "一句话，AI 来研究并提案…",
     "One sentence — AI researches and proposes…",
 )
-#: 徽章口径的三条泳道（truth = web/src/app.tsx badgeCount）
-BADGE_LANES = ("needs_approval", "needs_input", "review")
+#: 徽章口径的三条泳道（truth = web/src/app.tsx badgeCount；§78 / D80.12：提案列
+#: 退役，owner 的决策都在潜在任务列上）
+BADGE_LANES = ("debt", "needs_input", "review")
 #: 焦点元素可接受的 AX 角色（WebKit 把 <textarea> 暴露成 AXTextArea）
 TEXT_ROLES = ("AXTextArea", "AXTextField")
 #: 菜单项 → 期望页标题片段（truth = shell MenuSpec.menus + web pageTitles.ts PAGE_LABELS）
@@ -659,7 +671,7 @@ def hotkey_reason(seen: dict, checks: dict) -> str:
     if not checks["role_ok"]:
         why.append("focused role=%r not in %s" % (seen["role"], list(TEXT_ROLES)))
     if not checks["field_ok"]:
-        why.append("placeholder=%r is not the proposal composer" % seen["placeholder"])
+        why.append("placeholder=%r is not the capture composer" % seen["placeholder"])
     return "; ".join(why)
 
 
@@ -672,7 +684,7 @@ def off_board_title(title: str) -> bool:
 
 def setup_wizard_gate(env, probe: str, seen: dict, reason: str) -> "dict | None":
     """§68.5 首启向导拦在看板页前面（`GET /api/setup` needed=true，看板页 replaceState
-    换到 `?page=setup`）→ 提案 composer 根本不在 DOM 里：这不是壳的快捷键坏了，记
+    换到 `?page=setup`）→ 捕获 composer 根本不在 DOM 里：这不是壳的快捷键坏了，记
     BLOCKED（前置条件不满足）而不是 MISSING，也不去替 owner 点「先去看板」绕开它。"""
     title = seen.get("window_title", "")
     if not off_board_title(title):
@@ -682,7 +694,7 @@ def setup_wizard_gate(env, probe: str, seen: dict, reason: str) -> "dict | None"
     return blocked(
         probe,
         "%s; GET /api/setup needed=true and the window is on %r — the §68.5 setup wizard "
-        "replaces the board page, so the proposal composer is not in the DOM" % (reason, title),
+        "replaces the board page, so the capture composer is not in the DOM" % (reason, title),
         owner_action="在看板窗口的首启向导里点「先去看板（下次再来）」，或让 actd 写出 "
                      "state/dashboard.json，然后重跑 --probe hotkey_focus")
 

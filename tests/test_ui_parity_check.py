@@ -4,6 +4,9 @@
 注入的假 vitest runner（永不真起 node）钉住：每类静态探针的在/不在、control 走 vitest
 报告（普通 it 与 `[pending]` it 的反向语义）、三态判决（NEW / STALE / PENDING / WAIVED）、
 报告内容、--write-pending、vitest 报告缺席 = FAIL 不软化。
+
+`rail:order` / `lanes:order` 的期望顺序都只数清单里**仍 gated 的**项（归属表 RAIL_OWNER 的
+D29 / D30 侧栏项、LANE_OWNER 的提案列 §78.8 / D80）——退役项不判，但被画回界面照样红。
 """
 import io
 import json
@@ -236,8 +239,29 @@ class StaticProbesTestCase(_RepoCase):
         structural = pc.structural_items(snap, INVENTORY)
         self.assertEqual(structural, {"rail:order": False, "lanes:order": True,
                                       "lanes:rail-left": False, "lanes:rail-right": False})
-        bad_lanes = dict(INVENTORY, lanes=dict(INVENTORY["lanes"], order=["needs_approval", "debt", "archived"]))
+        # 期望顺序来自 lanes["items"]（§78.8 起只数仍 gated 的项，与 rail 同形），不是 lanes["order"]：
+        # 把清单里的列换个次序 → server/lanes.py 的次序对不上 → 红
+        bad_lanes = dict(INVENTORY, lanes=dict(
+            INVENTORY["lanes"], items=[INVENTORY["lanes"]["items"][i] for i in (1, 0, 2)]))
         self.assertFalse(pc.structural_items(snap, bad_lanes)["lanes:order"])
+
+    def test_lanes_order_skips_retired_lanes_but_flags_them_when_rendered(self):
+        """§78.8 / D80：归属表 LANE_OWNER 标 retired 的列（提案列）不进 lanes:order 的期望顺序，
+        但 server 若把它画回看板照样红——「退役」不许退化成「忘了」（同 D29/D30 的 rail 先例）。"""
+        retired = dict(INVENTORY, lanes=dict(INVENTORY["lanes"], items=[
+            dict(lane, owner="retired", gated=False, reason="D80 owner 退役提案列（§78，issue #447）")
+            if lane["slug"] == "needs_approval" else lane
+            for lane in INVENTORY["lanes"]["items"]]))
+        # 目录里也拿掉了那一列 = 顺序正确（期望只数 debt / archived）
+        without = LANES_PY.replace(' {"slug": "needs_approval", "help": {}},', '')
+        _write(self.root, "server/lanes.py", without)
+        self.assertTrue(pc.structural_items(pc.WebSnapshot(self.root), retired)["lanes:order"])
+        # 把退役的列又发回目录（web 就会画出来）→ 顺序探针红
+        _write(self.root, "server/lanes.py", LANES_PY)
+        self.assertFalse(pc.structural_items(pc.WebSnapshot(self.root), retired)["lanes:order"])
+        # 退役的列不进 gated 清单，报告里不计（lane:needs_approval 的双语名探针也不再判）
+        self.assertNotIn("lane:needs_approval", pc.gated_ids(retired))
+        self.assertIn("lane:needs_approval", pc.gated_ids(INVENTORY))
 
     def test_rail_order_skips_retired_rail_items_but_flags_them_when_rendered(self):
         # 清单里 ask 在 dashboard 与 trash 之间、owner=retired（D29）：web 栏上没有它 = 顺序正确

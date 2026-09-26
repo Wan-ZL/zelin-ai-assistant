@@ -54,7 +54,8 @@ class RegistryBase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
 
-    def _save(self, rid="R-100", title=TITLE, status=State.CARD_SENT.value, **kw):
+    def _save(self, rid="R-100", title=TITLE, status=State.DETECTED.value, **kw):
+        # §78（issue #447）：卡默认住在潜在任务列（提案车道退役）
         kw.setdefault("sources", [_src()])
         req = Requirement(id=rid, title=title, status=status, **kw)
         registry.save(req)
@@ -122,14 +123,15 @@ class MergedMatchingTestCase(RegistryBase):
     def test_merged_parent_with_increment_reraises_in_place(self):
         # v0.20.0 行为变更 (§3.3 / 残留风险 #5): a resolved (merged/delivered)
         # parent + same-task restatement carrying a new actionable ask now
-        # RE-RAISES the original card back to 提案 (card_sent) instead of
-        # spawning an improvement child. (canonical R-050 is absent here, so the
-        # merged duplicate itself is the re-raise target.)
+        # RE-RAISES the original card back to 潜在任务 (detected — §78/issue #447
+        # retired the 提案/card_sent lane) instead of spawning an improvement
+        # child. (canonical R-050 is absent here, so the merged duplicate itself
+        # is the re-raise target.)
         self._save(status=State.MERGED.value, merged_into="R-050",
                    deadline="2026-08-01")
         got = registry.merge_or_new(_incoming(deadline="2026-07-15"))
         self.assertEqual(got.id, "R-100")                       # in-place
-        self.assertEqual(got.status, State.CARD_SENT.value)     # 翻回提案
+        self.assertEqual(got.status, State.DETECTED.value)      # §78 翻回潜在任务
         self.assertTrue((got.execution or {}).get("reraised_at"))
         self.assertEqual(self._all_ids(), ["R-100"])            # no second card
 

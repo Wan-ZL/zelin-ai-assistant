@@ -1,12 +1,16 @@
-"""§10 ``capture_id`` — a quick capture maps exactly to the card it minted (issue #7).
+"""§10 / §78 ``capture_id`` — a quick capture maps exactly to the card it minted (issue #7).
 
 Chain pinned end to end (inbox filename → registry source → dashboard card):
   - actd processes ``state/inbox/capture-<uuid>.json`` → the birth ``sources[0]``
     row carries ``capture_id == "capture-<uuid>"`` (the stem, = what the server
     returns to the web as ``file`` minus ``.json``); Slack self-DM captures have no
     inbox file → no key;
-  - the raising placeholder AND the expanded card_sent row on the dashboard carry
-    the card-level ``capture_id``; projected ``sources[]`` rows carry it too;
+  - the raising placeholder AND the expanded row on the dashboard carry the
+    card-level ``capture_id``; projected ``sources[]`` rows carry it too.
+    **§78（issue #447 / D80）：两者都住在潜在任务列（``debt[]``）**——提案车道
+    退役，「研究并提议」自此是就地把同一张卡写厚（``raising → detected``），
+    回执对账键因此必须在**同一列的同一张卡面**上全程可见，否则 web 的
+    ``captureReceipt`` 对不上账、300 s 后报一次假的诚实超时；
   - ``mode:"run"`` cards carry it as well (and it equals ``execution.inbox_stem``);
   - two near-identical captures that do NOT fold each keep their own id; a fold
     (restatement) keeps the BIRTH id — folds never rewrite it;
@@ -65,12 +69,13 @@ class CaptureIdTestCase(unittest.TestCase):
         # raising placeholder (what the web sees first) already carries it
         self.assertEqual(req.status, State.RAISING.value)
         dash = _dash([req])
-        self.assertEqual(_row(dash, "needs_approval", req.id)["capture_id"], stem)
-        # after AI expansion → card_sent: the full proposal row + its sources carry it
-        req.set_status(State.CARD_SENT)
+        self.assertEqual(_row(dash, "debt", req.id)["capture_id"], stem)
+        # after AI expansion → detected (§78: 就地写厚，不换列): the full card row
+        # + its sources still carry it
+        req.set_status(State.DETECTED)
         registry.save(req)
         dash = _dash([registry.load(req.id)])
-        row = _row(dash, "needs_approval", req.id)
+        row = _row(dash, "debt", req.id)
         self.assertEqual(row["capture_id"], stem)
         self.assertEqual(row["sources"][0]["capture_id"], stem)
         self.assertEqual(row["sources"][0]["quote"], "给下周评审准备材料 capture-id 判例")
@@ -113,29 +118,31 @@ class CaptureIdTestCase(unittest.TestCase):
         first = _drop_capture("同一件事 fold 判例")
         actd.process_inbox()
         (req,) = registry.load_all()
-        req.set_status(State.CARD_SENT)
+        req.set_status(State.DETECTED)          # §78：扩写完成就地落潜在任务
         registry.save(req)
         second = _drop_capture("同一件事 fold 判例")     # exact restatement → folds
         actd.process_inbox()
         (req,) = registry.load_all()
         self.assertEqual(req.sources[0]["capture_id"], first)
         self.assertNotEqual(first, second)
-        self.assertEqual(_row(_dash([req]), "needs_approval", req.id)["capture_id"], first)
+        self.assertEqual(_row(_dash([req]), "debt", req.id)["capture_id"], first)
 
     def test_slack_self_dm_capture_has_no_key(self):
         quick_capture.apply_result({"action": "new_proposal", "title": "Slack 来的想法",
                                     "summary": "Slack 来的想法", "_text": "Slack 来的想法"})
         (req,) = registry.load_all()
         self.assertNotIn("capture_id", req.sources[0])
-        row = _row(_dash([req]), "needs_approval", req.id)
+        row = _row(_dash([req]), "debt", req.id)
         self.assertNotIn("capture_id", row)
         self.assertNotIn("capture_id", row["sources"][0])
 
     def test_legacy_card_without_key_projects_unchanged(self):
+        """老卡刻意停在退役的 ``card_sent`` 上：§78 把它投进潜在任务列（落单卡
+        永不隐形），而缺 ``capture_id`` 的行照旧不长出这个键。"""
         req = Requirement(id="R-1", title="老卡", status=State.CARD_SENT.value,
                           sources=[{"who": "zelin", "channel": "quick_capture",
                                     "date": "2026-01-01", "quote": "老卡"}])
-        row = _row(_dash([req]), "needs_approval", "R-1")
+        row = _row(_dash([req]), "debt", "R-1")
         self.assertNotIn("capture_id", row)
         self.assertEqual(set(row["sources"][0]), {"who", "channel", "date", "quote"})
 

@@ -152,7 +152,8 @@ class FollowupTestCase(TickBase):
         summary = self._tick(gh)
         self.assertEqual(len(summary["followups"]), 1)
         card = registry.load(summary["followups"][0])
-        self.assertEqual(card.status, State.CARD_SENT.value)
+        # §78（D80）：跟进卡与其它机器卡一样生在潜在任务，owner 一点即开跑
+        self.assertEqual(card.status, State.DETECTED.value)
         self.assertTrue(card.id.startswith("P-"))
         self.assertEqual(card.title, "跟进 PR #123：1 条 owner 评论 / 0 项红检查")
         self.assertNotIn("Where is the test", card.title)
@@ -180,13 +181,20 @@ class FollowupTestCase(TickBase):
         self.notify.assert_called_once()
 
     def test_one_per_pr_per_day(self):
+        """一 PR 一天一张 + 在途不重铸——`_OPEN_STATUSES` 的回归闸（§65.5/§78）。
+
+        §78 把跟进卡的出生状态从 card_sent 改成 detected：要是
+        ``self_improve._OPEN_STATUSES`` 没跟着收下 DETECTED，第二天这一步就会
+        为同一张 PR 再铸一张，天天铸，去重整条失效。下面「第二天仍不铸」那一
+        断言就是钉它的——把 DETECTED 从那个元组里拿掉，这条判例必红。
+        """
         _review_card()
         gh = FakeGh({123: pr_doc(branch=BRANCH)}, comments={123: [_comment("a")]})
         first = self._tick(gh)["followups"]
         gh.comments[123].append(_comment("b", at="2026-09-02T09:30:00Z"))
         # 同一天：即便有新评论也不铸第二张
         self.assertEqual(self._tick(gh, now=NOW + _dt.timedelta(hours=2))["followups"], [])
-        # 第二天：跟进卡若仍在途（card_sent）也不铸；验收掉它后新评论才铸
+        # 第二天：跟进卡若仍在途（§78 起 = detected）也不铸；验收掉它后新评论才铸
         tomorrow = NOW + _dt.timedelta(days=1)
         self.assertEqual(self._tick(gh, now=tomorrow)["followups"], [])
         f = registry.load(first[0])

@@ -1,8 +1,15 @@
-"""dashboard.json projection golden (CONTRACT §2 / §5 / §21 / §44.6 / §48 / §63 / §64).
+"""dashboard.json projection golden (CONTRACT §2 / §5 / §21 / §44.6 / §48 / §63 / §64 / §78).
+
+**§78（issue #447 / owner 决策 D80）**：提案车道退役。``needs_approval[]`` 与
+``counts.needs_approval`` 作为墓碑键**留在 wire 上且恒空 / 恒 0**（宪法第 6 条
+add-only：冻结的原生 app 与 iOS 按 BoardLane 全集解码，少一个键整份 payload 解
+不开），机器卡全部投进 ``debt[]``——``detected``、``raising`` 灰占位、以及退役
+状态 ``card_sent`` 的落单卡（永不隐形）共用 ``_backlog_row`` 一张完整卡面
+（§78.6）。fixture 里那三张 ``card_sent`` 卡自此就是 straggler 判例。
 
 Pins the FULL serialized output of ``dashboard.build_dashboard`` for a fixture
-set that walks every lane branch of the projection — card_sent (with and
-without cost / origin_trust / reraise), raising, detected, trashed (pinned,
+set that walks every lane branch of the projection — card_sent stragglers (with
+and without cost / origin_trust / reraise), raising, detected, trashed (pinned,
 purgeable, unparsable trashed_at), approved queued (concurrency-blocked and
 plain), approved dispatch-halted, executing with a live pid / without one /
 with an ISO started_at, review (idle / working / interrupted), delivered
@@ -323,11 +330,24 @@ class DashboardGoldenTestCase(unittest.TestCase):
 
     def test_golden_covers_every_partition(self):
         """Sanity: the fixture really exercises each lane (a hollow golden
-        would pass the byte comparison while pinning nothing)."""
+        would pass the byte comparison while pinning nothing).
+
+        §78：``needs_approval`` 从「必须非空」翻成「**必须在、且必须空**」——
+        它是墓碑键（D80.1），空是法条不是遗漏。两侧都要钉死：键消失 = 冻结的
+        原生 app / iOS 整份 payload 解不开；键里出现了行 = 有一条写路径漏改，
+        卡落回了一条没有面的车道。"""
         dash = json.loads(GOLDEN.read_text(encoding="utf-8"))
-        for key in ("needs_approval", "running", "needs_input", "review",
+        for key in ("running", "needs_input", "review",
                     "completed", "debt", "trash", "archived", "merge_suggestions"):
             self.assertTrue(dash[key], key)
+        self.assertIn("needs_approval", dash)                 # §78 墓碑：键永不消失
+        self.assertEqual(dash["needs_approval"], [])          # …且永远是空的
+        self.assertEqual(dash["counts"]["needs_approval"], 0)
+        # 退役状态的落单卡照样投进潜在任务列，长的是完整卡面（§78.6）
+        straggler = next(r for r in dash["debt"] if r["id"] == "P-201")
+        for key in ("egress", "effective_tier", "cost_usd", "show_cost",
+                    "cost_state", "decision_due", "mention_escalated"):
+            self.assertIn(key, straggler, key)
         self.assertEqual(dash["counts"]["completed"], 3)      # TRUE total, cap 2
         self.assertEqual(len(dash["completed"]), 2)
         self.assertEqual(dash["counts"]["archived"], 3)
@@ -348,7 +368,8 @@ class DashboardGoldenTestCase(unittest.TestCase):
         review = {r["id"]: r for r in dash["review"]}
         self.assertEqual(review["R-230"]["assessment"]["verdict"], "建议验收")
         self.assertTrue(all("assessment" not in r for r in dash["completed"]))
-        by_id = {r["id"]: r for r in dash["needs_approval"]}
+        # §78：这一切都发生在潜在任务列上了——同一批断言，同一批卡，换了一列
+        by_id = {r["id"]: r for r in dash["debt"]}
         self.assertEqual(by_id["P-201"]["egress"], [])                 # chat delivery
         self.assertEqual(by_id["P-202"]["egress"][0]["kind"], "github_repo_create")
         self.assertEqual(by_id["P-201"]["capture_id"], "capture-0001")
@@ -363,12 +384,16 @@ class DashboardGoldenTestCase(unittest.TestCase):
             (by_id["P-201"]["decision_due"], by_id["P-201"]["mention_escalated"]),
             (False, False))
         self.assertNotIn("completion_hint", by_id["P-201"])
-        # §76.2 债务列同款：P-210 带提示（备选卡也会被盖），P-204 不带；
-        # 两个派生 bool 不下到这一列
-        debt = {row["id"]: row for row in dash["debt"]}
-        self.assertEqual(debt["P-210"]["completion_hint"]["note"], "对账脚本已经在跑了")
-        self.assertNotIn("decision_due", debt["P-210"])
-        self.assertNotIn("completion_hint", debt["P-204"])
+        # §76.2 §78 修法（D80.8）：两个派生 bool 现在**必须**长在这一列上——
+        # 这是 owner 唯一看得见它们的卡面。P-210 带提示，P-204 不带（「有才发」
+        # 的语义一字不变）。
+        self.assertEqual(by_id["P-210"]["completion_hint"]["note"], "对账脚本已经在跑了")
+        self.assertIs(by_id["P-210"]["decision_due"], False)
+        self.assertIs(by_id["P-210"]["mention_escalated"], False)
+        self.assertNotIn("completion_hint", by_id["P-204"])
+        # raising 灰占位行与它们同住一列（AI 研究中），卡面字段一个不少
+        self.assertIs(by_id["P-203"]["processing"], True)
+        self.assertIn("egress", by_id["P-203"])
 
 
 if __name__ == "__main__":

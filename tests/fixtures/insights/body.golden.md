@@ -17,7 +17,7 @@ _Distinct devices reaching each lifecycle stage; later stages imply the earlier 
 |---|---|---|---|
 | Installed (app launched) | 5 | 100.0% | — |
 | Configured an ingest source | 5 | 100.0% | 0.0% |
-| First proposal card | 3 | 60.0% | 40.0% |
+| First card filed | 3 | 60.0% | 40.0% |
 | First approval | 2 | 40.0% | 33.3% |
 | First delivery (dispatch) | 2 | 40.0% | 0.0% |
 

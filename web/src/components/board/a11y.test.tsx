@@ -15,9 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetStoreForTests, useAppState } from "../../store";
 import { DetailDrawer } from "../detail/DetailDrawer";
 import {
+  BACKLOG_PROCESSING,
+  BACKLOG_T1,
   DEBT_FIXTURE,
-  PROPOSAL_PROCESSING,
-  PROPOSAL_T1,
   REVIEW_FIXTURE,
   TASK_BLOCKED,
   TASK_DONE,
@@ -26,7 +26,6 @@ import {
 } from "../styleguide/fixtures";
 import { DebtCardItem } from "./DebtCardItem";
 import { DoneCard } from "./DoneCard";
-import { ProposalCard } from "./ProposalCard";
 import { ReviewCard } from "./ReviewCard";
 import { RunningCard } from "./RunningCard";
 
@@ -52,14 +51,14 @@ function SelectedProbe() {
 }
 
 const CARDS: Array<{ name: string; id: string; stateWord: string; node: () => ReactElement }> = [
-  { name: "proposal", id: PROPOSAL_T1.id, stateWord: "Proposal", node: () => <ProposalCard card={PROPOSAL_T1} /> },
-  { name: "raising placeholder", id: PROPOSAL_PROCESSING.id, stateWord: "AI researching", node: () => <ProposalCard card={PROPOSAL_PROCESSING} /> },
+  { name: "backlog (full badge row)", id: BACKLOG_T1.id, stateWord: "Backlog", node: () => <DebtCardItem item={BACKLOG_T1} /> },
+  { name: "raising placeholder", id: BACKLOG_PROCESSING.id, stateWord: "AI researching", node: () => <DebtCardItem item={BACKLOG_PROCESSING} /> },
   { name: "queued", id: TASK_QUEUED.id, stateWord: "Queued", node: () => <RunningCard row={TASK_QUEUED} /> },
   { name: "working", id: TASK_WORKING.id, stateWord: "Working", node: () => <RunningCard row={TASK_WORKING} /> },
   { name: "blocked", id: TASK_BLOCKED.id, stateWord: "Needs input", node: () => <RunningCard row={TASK_BLOCKED} isBlocked /> },
   { name: "review", id: REVIEW_FIXTURE.id, stateWord: "In review", node: () => <ReviewCard card={REVIEW_FIXTURE} /> },
   { name: "done", id: TASK_DONE.id, stateWord: "Done", node: () => <DoneCard row={TASK_DONE} /> },
-  { name: "backlog", id: DEBT_FIXTURE.id, stateWord: "Backlog", node: () => <DebtCardItem item={DEBT_FIXTURE} /> },
+  { name: "backlog (bare legacy row)", id: DEBT_FIXTURE.id, stateWord: "Backlog", node: () => <DebtCardItem item={DEBT_FIXTURE} /> },
 ];
 
 describe("board cards — keyboard path + state not by color (issue #8)", () => {
@@ -79,22 +78,22 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
   }
 
   it("Enter on a button inside the card belongs to the button, not the card", () => {
-    render(<><ProposalCard card={PROPOSAL_T1} /><SelectedProbe /></>);
+    render(<><DebtCardItem item={BACKLOG_T1} /><SelectedProbe /></>);
     const details = screen.getByRole("button", { name: /Details/ });
     fireEvent.keyDown(details, { key: "Enter" });
     expect(screen.getByTestId("selected").textContent).toBe("");
   });
 
-  it("「Details ▸」 click opens the sidebar for that card; double-click never opens it (D34 — a proposal has no session, so it is a no-op)", () => {
-    render(<><ProposalCard card={PROPOSAL_T1} /><SelectedProbe /></>);
-    fireEvent.doubleClick(screen.getByRole("article", { name: /^Proposal · / }));
+  it("「Details ▸」 click opens the sidebar for that card; double-click never opens it (D34 — a backlog card has no session, so it is a no-op)", () => {
+    render(<><DebtCardItem item={BACKLOG_T1} /><SelectedProbe /></>);
+    fireEvent.doubleClick(screen.getByRole("article", { name: /^Backlog · / }));
     expect(screen.getByTestId("selected").textContent).toBe("");
     fireEvent.click(screen.getByRole("button", { name: /Details/ }));
-    expect(screen.getByTestId("selected").textContent).toBe(PROPOSAL_T1.id);
+    expect(screen.getByTestId("selected").textContent).toBe(BACKLOG_T1.id);
   });
 
   it("closing the sidebar returns focus to the 「Details ▸」 / card that opened it", async () => {
-    render(<><ProposalCard card={PROPOSAL_T1} /><DetailDrawer /></>);
+    render(<><DebtCardItem item={BACKLOG_T1} /><DetailDrawer /></>);
     const details = screen.getByRole("button", { name: /Details/ });
     details.focus();
     fireEvent.click(details);
@@ -104,7 +103,7 @@ describe("board cards — keyboard path + state not by color (issue #8)", () => 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.activeElement).toBe(details); // 关闭：还给触发按钮
 
-    const surface = screen.getByRole("article", { name: /^Proposal · / });
+    const surface = screen.getByRole("article", { name: /^Backlog · / });
     surface.focus();
     fireEvent.keyDown(surface, { key: "Enter" });
     await screen.findByRole("dialog");

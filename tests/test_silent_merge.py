@@ -6,6 +6,13 @@ fold note, prev_status on the trashed secondary), the LIGHT-secondary
 guard, briefing queue + delivery bookkeeping, the §44.2 pre-filing fold
 hook in apply_triage, and the sweep. No network, no real claude: every
 LLM touchpoint is an injected runner.
+
+§78（issue #447，owner 决策 D80）：轻状态铁律看的是**卡的状态**，不是它躺在哪
+一列（§44.4 §78 追记）——提案车道退役后轻状态表上实际只剩 ``detected`` /
+``raising``，所以本文件的副卡默认住 ``detected``。退役的 ``card_sent`` 仍在轻状态
+词表里（add-only），落单卡照旧可被静默并入；它被扔进回收站后的**回程票**由
+``registry.restore`` 钳到 ``detected``（D80.10），判例见
+``test_retired_secondary_restores_into_the_backlog``。
 """
 import json
 import unittest
@@ -36,7 +43,7 @@ def _clean():
             p.unlink()
 
 
-def _seed(rid, summary, status=State.CARD_SENT.value, **kw):
+def _seed(rid, summary, status=State.DETECTED.value, **kw):
     r = Requirement(id=rid, title=rid, status=status, summary=summary, **kw)
     registry.save(r)
     return r
@@ -107,10 +114,28 @@ class ExecuteTestCase(unittest.TestCase):
         self.assertEqual(p.silent_merge_count, 1)
         # secondary is TRASHED (restorable), NOT merged (terminal)
         self.assertEqual(s.status, State.TRASHED.value)
-        self.assertEqual(s.prev_status, State.CARD_SENT.value)
+        self.assertEqual(s.prev_status, State.DETECTED.value)
         self.assertIn("R-001", s.trash_reason)
         restored = registry.restore(s)
-        self.assertEqual(restored.status, State.CARD_SENT.value)
+        self.assertEqual(restored.status, State.DETECTED.value)
+
+    def test_retired_secondary_restores_into_the_backlog(self):
+        """§44.4 + §78 D80.10：落单提案卡可被静默并入，恢复时回程票被钳到 detected。
+
+        轻状态铁律看的是状态不是列，所以退役的 ``card_sent`` 副卡照旧能被折进
+        主卡（少了这条，归并扫描跑到之前的那段时间里去重是瞎的）。可逆性因此也
+        必须兑现——但**不能**按字面把卡送回一条已经没有界面的车道：那是「可恢复」
+        的反面（宪法第 2 条）。所以 restore 钳位：card_sent 回程票 → 潜在任务。
+        """
+        primary = _seed("R-001", DUP_A)
+        secondary = _seed("R-002", DUP_B, status=State.CARD_SENT.value)
+        self.assertTrue(silent_merge.execute(primary, secondary, "落单卡也能折"))
+        s = registry.load("R-002")
+        self.assertEqual(s.status, State.TRASHED.value)
+        # 回程票**原样**记着历史事实（add-only：字段值不许被后来的法条篡改）
+        self.assertEqual(s.prev_status, State.CARD_SENT.value)
+        restored = registry.restore(s)
+        self.assertEqual(restored.status, State.DETECTED.value)   # 钳位
 
     def test_invested_secondary_refused(self):
         primary = _seed("R-001", DUP_A)
@@ -123,7 +148,7 @@ class ExecuteTestCase(unittest.TestCase):
         primary = _seed("R-001", DUP_A, status=State.TRASHED.value)
         secondary = _seed("R-002", DUP_B)
         self.assertFalse(silent_merge.execute(primary, secondary, ""))
-        self.assertEqual(registry.load("R-002").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-002").status, State.DETECTED.value)
 
     def test_executing_primary_queues_briefing(self):
         primary = _seed("R-001", DUP_A, status=State.EXECUTING.value,
@@ -173,7 +198,7 @@ class ExecuteTestCase(unittest.TestCase):
         self.assertEqual(p.notes.count("静默并入 R-002"), 1)
         # trash 半程补完：可恢复、reason 指向主卡
         self.assertEqual(s.status, State.TRASHED.value)
-        self.assertEqual(s.prev_status, State.CARD_SENT.value)
+        self.assertEqual(s.prev_status, State.DETECTED.value)
         # §44.6：补完路径也要看板回执——且只一条（note 决定性生成 → 与成功
         # 路径同内容键，去重语义保证重放不翻倍）
         from act.lib import fold_receipts
@@ -417,7 +442,7 @@ class CliMainTestCase(unittest.TestCase):
         job = json.loads(silent_merge._job_path(sid).read_text())
         self.assertEqual(job["status"], "judged")
         # the judge itself touched no cards
-        self.assertEqual(registry.load("R-002").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-002").status, State.DETECTED.value)
         # actd's pass executes it
         self.assertEqual(silent_merge.consume_judged(), 1)
         job = json.loads(silent_merge._job_path(sid).read_text())
@@ -435,7 +460,7 @@ class CliMainTestCase(unittest.TestCase):
             silent_merge._main(sid)
         job = json.loads(silent_merge._job_path(sid).read_text())
         self.assertEqual(job["verdict"], "separate")
-        self.assertEqual(registry.load("R-002").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-002").status, State.DETECTED.value)
         self.assertNotIn("静默并入", registry.load("R-001").notes or "")
 
     def test_judge_failure_fails_job_and_touches_nothing(self):
@@ -448,7 +473,7 @@ class CliMainTestCase(unittest.TestCase):
             silent_merge._main(sid)
         job = json.loads(silent_merge._job_path(sid).read_text())
         self.assertEqual(job["status"], "failed")
-        self.assertEqual(registry.load("R-002").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-002").status, State.DETECTED.value)
 
     def test_state_moved_between_judge_and_execute_is_skipped(self):
         _seed("R-001", DUP_A)
@@ -478,7 +503,7 @@ class CliMainTestCase(unittest.TestCase):
             silent_merge._main(sid)
         job = json.loads(silent_merge._job_path(sid).read_text())
         self.assertEqual(job["verdict"], "separate")
-        self.assertEqual(registry.load("R-002").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-002").status, State.DETECTED.value)
 
     def test_verdict_extraction_resists_material_echo(self):
         # a chatty model that echoes card-embedded JSON before its real
@@ -527,7 +552,7 @@ class PreFilingFoldTestCase(unittest.TestCase):
 
     def test_rule_hit_plus_same_judge_folds_instead_of_filing(self):
         _seed("R-001", DUP_A)
-        req = Requirement(id="R-999", title=DUP_B, status="card_sent",
+        req = Requirement(id="R-999", title=DUP_B, status="detected",
                           summary=DUP_B)
         with mock.patch.object(silent_merge, "JUDGE_RUNNER",
                                _runner('{"same_thing": true, "brief": "补充链接"}')):
@@ -543,7 +568,7 @@ class PreFilingFoldTestCase(unittest.TestCase):
 
     def test_judge_says_separate_files_normally(self):
         _seed("R-001", DUP_A)
-        req = Requirement(id="R-999", title=DUP_B, status="card_sent",
+        req = Requirement(id="R-999", title=DUP_B, status="detected",
                           summary=DUP_B)
         with mock.patch.object(silent_merge, "JUDGE_RUNNER",
                                _runner('{"same_thing": false, "brief": "两件事"}')):
@@ -557,7 +582,7 @@ class PreFilingFoldTestCase(unittest.TestCase):
         # A recording runner (NOT a raising one: judge() swallows exceptions,
         # so a raising sentinel proves nothing — review finding).
         _seed("R-001", DUP_A)
-        req = Requirement(id="R-999", title=DUP_B, status="card_sent",
+        req = Requirement(id="R-999", title=DUP_B, status="detected",
                           summary=DUP_B)
         calls = []
         def recording(prompt):
@@ -574,7 +599,7 @@ class PreFilingFoldTestCase(unittest.TestCase):
     def test_no_rule_hit_files_normally_without_judge(self):
         _seed("R-001", "修 login oauth bug")
         req = Requirement(id="R-999", title="订购 snowboard 装备",
-                          status="card_sent", summary="订购 snowboard 装备")
+                          status="detected", summary="订购 snowboard 装备")
         calls = []
         def recording(prompt):
             calls.append(prompt)

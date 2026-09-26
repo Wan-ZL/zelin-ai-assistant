@@ -3,7 +3,8 @@ into 待验收, flush queued steers at the safe windows.
 
 CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119：受阻 / 放弃
 救活的会话按 stop_to_review 收割进待验收，不再挂「需输入」）/ §16（auto_resume
-双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis（收割时比对快照）/
+双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis + §78（收割时比对快照；
+护栏的认卡判据 §78/D80.11 起是直跑卡 triage_guard.guarded_card）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
 / §46（resume 风暴降级 + 确认式停止）/ §65.1（通道总开关关着 = 不给 self_improve
 卡自动续命）/ §65.3（self_improve 收割核验）/ §71.3（被睡眠打断的会话收割前
@@ -20,7 +21,7 @@ from act.lib import (analytics, config, dispatch_prompt, notify, registry, self_
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
                                   update_search_index)
-from act.lib.actd.triage_guard import (PROPOSALS_TRIAGE_PRESET, check_triage_registry_guard,
+from act.lib.actd.triage_guard import (check_triage_registry_guard, guarded_card,
                                        stamp_triage_snapshot)
 from act.lib.agent_states import BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES
 from act.lib.dashboard import index_agents
@@ -130,9 +131,14 @@ def _restamp_triage_snapshot(d: Daemon, req: Requirement, ex: dict) -> None:
     attach 复活的仍是同一个带 skip-permissions、握着 registry
     路径的会话——不重拍，本轮活动期间的越权写零告警。复活轮
     是会话先活、快照后拍（夹缝写入进基线）的 best-effort 边界
-    （CONTRACT §34bis 记账），与首轮的启动前快照不同。"""
-    if getattr(req, "preset", None) == PROPOSALS_TRIAGE_PRESET \
-            and not ex.get("registry_snapshot_ref"):
+    （CONTRACT §34bis 记账），与首轮的启动前快照不同。
+
+    §78（D80.11）：认卡判据从退役的 ``preset`` 词表换成
+    :func:`triage_guard.guarded_card`——护栏整套重锚在直跑卡上，dispatch
+    的起跑前快照已经用同一个判据（``dispatch._pre_dispatch_snapshot``）。
+    两处不同步的话直跑卡的 attach 复活轮永远重拍不出基线，那一轮的护栏
+    是瞎的。"""
+    if guarded_card(req) and not ex.get("registry_snapshot_ref"):
         ref = stamp_triage_snapshot(d, req.id)
         if ref:
             ex["registry_snapshot_ref"] = ref
@@ -150,7 +156,7 @@ def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
         apply_harvest_title(d, req, harvested)   # §37, round boundary
     ex.pop("_review_active", None)
     # §34bis 复活轮收割同样过护栏——比对并消费复活时重拍的快照，
-    # 每一轮「活跃→收割」都有基线（非 preset 卡无 ref，零开销）。
+    # 每一轮「活跃→收割」都有基线（非直跑卡无 ref，零开销；§78 改锚）。
     check_triage_registry_guard(d, req, ex)
     req.execution = ex
     registry.save(req)
@@ -228,7 +234,7 @@ def _promote_delivered(d: Daemon, req, ex: dict, sid, harvested: dict) -> None:
         ex["delivered_summary"] = harvested["delivered_summary"]
     ex["final_draft"] = harvested["final_draft"]
     apply_harvest_title(d, req, harvested)   # §37, round boundary
-    # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
+    # §34bis 机械护栏终点：直跑卡收割时做起止快照比对（§78 改锚）。
     check_triage_registry_guard(d, req, ex)
     self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex
@@ -614,7 +620,7 @@ def _handle_done(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_
         return
     ex["done"] = True                    # mark finished so a later purge isn't mistaken for a crash
     ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
-    # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
+    # §34bis 机械护栏终点：直跑卡收割时做起止快照比对（§78 改锚）。
     check_triage_registry_guard(d, req, ex)
     self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex

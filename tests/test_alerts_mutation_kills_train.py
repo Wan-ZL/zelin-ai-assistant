@@ -1,8 +1,13 @@
-"""alerts — dev 列车改动行上的变异幸存体判例（CONTRACT §76.3 / §40 / §28）。
+"""alerts — dev 列车改动行上的变异幸存体判例（CONTRACT §76.3 / §40 / §28 / §78）。
+
+**§78（issue #447 / owner 决策 D80）**：提案列退役，`detect_transitions` 的差分源
+改成潜在任务列 `debt[]`（§40.6 修法 / §78.6）。本文件的快照工厂因此重建在 `debt[]`
+上——手搭一份带 `needs_approval` 行的快照正是让这三条判例**全部空转通过**的形状：
+键还在 wire 上，只是恒空，diff 器一行也读不到。
 
 三条契约，每条都是一个存活变异体改掉过的答案：
 
-  * **§76.3 结算信号只对两个快照里都在的提案行响**：出生即带信号的新卡由 §40
+  * **§76.3 结算信号只对两个快照里都在的潜在任务行响**：出生即带信号的新卡由 §40
     的新卡通知负责，不许在同一 pass 里再响第二声；而一张「上一版就在」的卡不因为
     它前面排着一张刚出生的卡就被漏掉——跳过新卡的那一步是 `continue`，不是 `break`。
     翻面是一次性的：信号在下一个 pass 里恒为真，通知却不再响。
@@ -26,9 +31,13 @@ from act.lib.actd import alerts
 from act.lib.registry import Requirement, State
 
 
-def _na(*items):
-    """A dashboard snapshot whose only populated partition is 待审批."""
-    return {"needs_approval": [dict(i) for i in items], "running": [], "review": []}
+def _backlog(*items):
+    """A dashboard snapshot whose only populated partition is 潜在任务（§78）。
+
+    退役的 ``needs_approval`` 键照样摆在这里、照样恒空——这是 wire 的真实形状，
+    也是这份判例要守的那条线：diff 器再从它读一行，通知就整体哑了。"""
+    return {"needs_approval": [], "debt": [dict(i) for i in items],
+            "running": [], "review": []}
 
 
 def _proposal(title, rid, kind=notify.KIND_PROPOSAL):
@@ -40,8 +49,8 @@ class SettlementFlipTestCase(unittest.TestCase):
     """§76.3：三条结算信号的一次性翻面。"""
 
     def test_a_signal_that_turns_true_on_a_known_card_rings_exactly_once(self):
-        prev = _na({"id": "R-1", "title": "报销"})
-        curr = _na({"id": "R-1", "title": "报销", "completion_hint": True})
+        prev = _backlog({"id": "R-1", "title": "报销"})
+        curr = _backlog({"id": "R-1", "title": "报销", "completion_hint": True})
         self.assertEqual(
             alerts.detect_transitions(prev, curr),
             [_proposal(notify.msg_completion_hint("报销"), "R-1")])
@@ -50,15 +59,17 @@ class SettlementFlipTestCase(unittest.TestCase):
 
     def test_a_card_born_with_signals_only_gets_the_new_card_copy(self):
         """新卡的信号由 §40 新卡通知代言：不许在同一 pass 里再响三声。"""
-        curr = _na({"id": "R-2", "title": "续签", "completion_hint": True,
-                    "decision_due": True, "mention_escalated": True, "repeated": 4})
-        self.assertEqual(alerts.detect_transitions(_na(), curr),
+        curr = _backlog({"id": "R-2", "title": "续签", "completion_hint": True,
+                         "decision_due": True, "mention_escalated": True,
+                         "repeated": 4})
+        self.assertEqual(alerts.detect_transitions(_backlog(), curr),
                          [_proposal(notify.msg_new_card("续签"), "R-2")])
 
     def test_a_fresh_card_in_front_does_not_stop_the_settlement_scan(self):
-        prev = _na({"id": "R-2", "title": "续签"})
-        curr = _na({"id": "R-1", "title": "报销"},                        # 本 pass 新出生 → 跳过
-                   {"id": "R-2", "title": "续签", "decision_due": True})  # 老卡 → 该响
+        prev = _backlog({"id": "R-2", "title": "续签"})
+        curr = _backlog({"id": "R-1", "title": "报销"},        # 本 pass 新出生 → 跳过
+                        {"id": "R-2", "title": "续签",
+                         "decision_due": True})               # 老卡 → 该响
         self.assertEqual(
             alerts.detect_transitions(prev, curr),
             [_proposal(notify.msg_new_card("报销"), "R-1"),
@@ -69,8 +80,9 @@ class RepeatedCountTestCase(unittest.TestCase):
     """§76.3 第三条：横幅里的次数是卡上的计数，读不出就是 0。"""
 
     def _escalate(self, rid, **fields):
-        prev = _na(dict({"id": rid, "title": "催进度"}, **fields))
-        curr = _na(dict({"id": rid, "title": "催进度", "mention_escalated": True}, **fields))
+        prev = _backlog(dict({"id": rid, "title": "催进度"}, **fields))
+        curr = _backlog(dict({"id": rid, "title": "催进度",
+                              "mention_escalated": True}, **fields))
         return alerts.detect_transitions(prev, curr)
 
     def test_the_copy_carries_the_cards_own_count(self):

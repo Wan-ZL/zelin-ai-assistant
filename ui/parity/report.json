@@ -1,6 +1,6 @@
 {
   "counts": {
-    "PRESENT": 841,
+    "PRESENT": 837,
     "WAIVED": 4
   },
   "inventory_sha256": "2f09a2197a3458226077936622728c1eaadf6f8cd2b6b9b0615f81194a60b352",
@@ -168,10 +168,8 @@
     "control:board.needs_approval:alert-button:cancel": "PRESENT",
     "control:board.needs_approval:alert-button:won-t-do-to-trash": "PRESENT",
     "control:board.needs_approval:button:approve": "PRESENT",
-    "control:board.needs_approval:button:clean-up": "PRESENT",
     "control:board.needs_approval:button:comment": "PRESENT",
     "control:board.needs_approval:button:details": "PRESENT",
-    "control:board.needs_approval:button:later": "PRESENT",
     "control:board.needs_approval:button:no-need-to-run-this-card": "PRESENT",
     "control:board.needs_approval:button:reject": "PRESENT",
     "control:board.needs_approval:label:cost-unknown": "PRESENT",
@@ -201,7 +199,6 @@
     "control:board.notices:label:accepting": "PRESENT",
     "control:board.notices:label:done-outside": "PRESENT",
     "control:board.notices:label:feedback-recorded": "PRESENT",
-    "control:board.notices:label:moving-to-backlog": "PRESENT",
     "control:board.notices:label:reverting-to-review": "PRESENT",
     "control:board.notices:label:sending-back": "PRESENT",
     "control:board.notices:label:starting": "PRESENT",
@@ -736,7 +733,6 @@
     "lane:archived": "PRESENT",
     "lane:completed": "PRESENT",
     "lane:debt": "PRESENT",
-    "lane:needs_approval": "PRESENT",
     "lane:review": "PRESENT",
     "lane:running": "PRESENT",
     "lanes:order": "PRESENT",
@@ -855,7 +851,7 @@
   "not_gated": {
     "informational": 409,
     "os": 11,
-    "retired": 65,
+    "retired": 69,
     "shell": 70
   },
   "ok": true,

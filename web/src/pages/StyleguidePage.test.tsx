@@ -37,9 +37,12 @@ describe("StyleguidePage", () => {
 
   it("真组件挂载：每类卡的动词按钮都在（Buttons + Cards 两节共用原件）", () => {
     render(<StyleguidePage />);
-    // ProposalCard（Buttons 节 T1 + Cards 节 T1/T2 = 3 张，processing 占位无按钮）
-    expect(screen.getAllByRole("button", { name: "Approve" }).length).toBeGreaterThanOrEqual(2);
+    // DebtCardItem（Buttons 节 T1 + Cards 节 T1/T2 = 3 张，processing 占位无按钮）——§78 起
+    // 机器卡的动词行只有这一套，那颗绿键叫「促成运行」；T2 那张没看过明细，给的是提示句不是键
+    expect(screen.getAllByRole("button", { name: "Run it" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("T2: expand details first").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole("button", { name: "Reject" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByRole("button", { name: "Delete" }).length).toBeGreaterThanOrEqual(2);
     // RunningCard blocked / working、ReviewCard、DoneCard、DebtCardItem
     // （#119：answer_input 已退役——blocked 卡只剩「停止」(+ 让 AI 修) 出口；
     // 「回答…」只回到出错的执行卡上，走 comment/steer 通道——原生 parity 项 5）
@@ -63,11 +66,15 @@ describe("StyleguidePage", () => {
     const { container } = render(<StyleguidePage />);
     const hasClass = (name: string, cls: string) =>
       screen.getAllByRole("button", { name }).some((b) => b.className.includes(cls));
-    // 按钮：绿批准 / 红拒绝 / 蓝修改 / 灰暂缓（无 hue 变体）/ 绿验收 / 橙打回 / 青复制成稿
+    // 按钮：绿促成运行 / 红拒绝 / 蓝修改 / 绿验收 / 橙打回 / 青复制成稿；
+    // 参照表里老 app 的绿「批准」样本仍是那颗绿（§78 改的是卡面标签，不是色相）
+    expect(hasClass("Run it", "btn-success")).toBe(true);
     expect(hasClass("Approve", "btn-success")).toBe(true);
     expect(hasClass("Reject", "btn-danger")).toBe(true);
     expect(hasClass("Comment", "btn-info")).toBe(true);
-    expect(screen.getAllByRole("button", { name: "Later" }).every((b) => !/btn-(success|danger|info|warning|accent|primary)/.test(b.className))).toBe(true);
+    // §78/D80：「暂缓 / Later」这颗键在整页（含参照表样本列）一个都不许再长出来
+    expect(screen.queryAllByRole("button", { name: "Later" })).toEqual([]);
+    expect(screen.queryAllByRole("button", { name: "暂缓" })).toEqual([]);
     expect(hasClass("Accept", "btn-success")).toBe(true);
     expect(hasClass("Send Back", "btn-warning")).toBe(true);
     expect(hasClass("Copy final draft", "btn-accent")).toBe(true);
@@ -86,7 +93,7 @@ describe("StyleguidePage", () => {
 
   it("lane 状态卡齐：processing 占位 sheen、queued 灰卡、steer 三态回执可见", () => {
     render(<StyleguidePage />);
-    expect(screen.getAllByText("AI is researching; becomes a proposal when done").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("AI is researching; the plan and DoD land on this card when it finishes").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Queued").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Steer queued ×1").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Steer delivered ×1").length).toBeGreaterThanOrEqual(1);

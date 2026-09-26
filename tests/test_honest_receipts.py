@@ -56,10 +56,13 @@ class CostStateTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _card(self, **fields):
+        # §78：成本三件套随整张卡面搬到潜在任务列（§40.1 §78 追记）——
+        # 「促成运行」那颗键就在这一行上，本节当初要堵的正是「看起来免费」
+        # 的卡被一键批掉。
         req = Requirement.from_dict(
-            {"id": "R-1", "title": "t", "status": "card_sent", **fields})
+            {"id": "R-1", "title": "t", "status": "detected", **fields})
         dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=self.cfg)
-        return dash["needs_approval"][0]
+        return dash["debt"][0]
 
     def test_estimate_below_threshold_is_estimated_but_badge_hidden(self):
         item = self._card(cost_estimate_usd=3)
@@ -292,8 +295,9 @@ class CaptureReceiptTestCase(unittest.TestCase):
              "cost_estimate_usd": 3}, self.cfg)   # cost = the increment
         self.assertEqual(kind, "reraised")
         self.assertEqual(saved.id, "R-050")       # the ORIGINAL card flipped
+        # §78：回锅的落点是潜在任务（delivered -> detected）
         self.assertEqual(registry.load("R-050").status,
-                         State.CARD_SENT.value)
+                         State.DETECTED.value)
         self.assertEqual(radar_slack._RECEIPT_EMOJI[kind],
                          "leftwards_arrow_with_hook")
 
@@ -516,18 +520,22 @@ class DigestFailureNotifyTestCase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# §40.6 notification batching (fresh proposals only)
+# §40.6 notification batching (fresh cards only)
 # --------------------------------------------------------------------------- #
-def _dash(needs_approval=()):
-    return {"needs_approval": [dict(i) for i in needs_approval],
+def _dash(debt=()):
+    """§78（issue #447 / owner 决策 D80）：新卡通知的差分源是潜在任务列
+    （``debt[]``）；``needs_approval`` 是恒空的墓碑键——摆在这里就是钉死
+    「合批扫描再也不看那一列」。用 ``needs_approval`` 手搭快照正是让整组合批
+    判例空转通过的形状（§40.6 §78 修法 / §78.6）。"""
+    return {"needs_approval": [], "debt": [dict(i) for i in debt],
             "running": [], "needs_input": [], "review": []}
 
 
 class BatchNotifyTestCase(unittest.TestCase):
     def test_three_fresh_cards_collapse_to_one(self):
         prev = _dash()
-        curr = _dash(needs_approval=[{"id": f"R-{i}", "title": f"卡{i}"}
-                                     for i in range(3)])
+        curr = _dash(debt=[{"id": f"R-{i}", "title": f"卡{i}"}
+                           for i in range(3)])
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual(len(msgs), 1)
         title, _body, rid, _kind = msgs[0]
@@ -537,15 +545,15 @@ class BatchNotifyTestCase(unittest.TestCase):
 
     def test_two_fresh_cards_stay_per_card(self):
         prev = _dash()
-        curr = _dash(needs_approval=[{"id": "R-1", "title": "卡一"},
-                                     {"id": "R-2", "title": "卡二"}])
+        curr = _dash(debt=[{"id": "R-1", "title": "卡一"},
+                           {"id": "R-2", "title": "卡二"}])
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual(len(msgs), 2)
         self.assertEqual({m[2] for m in msgs}, {"R-1", "R-2"})
 
     def test_reraised_stays_per_card_next_to_a_batch(self):
         prev = _dash()
-        curr = _dash(needs_approval=(
+        curr = _dash(debt=(
             [{"id": f"R-{i}", "title": f"卡{i}"} for i in range(3)]
             + [{"id": "R-9", "title": "回锅卡", "reraised": True,
                 "reraised_note": "新信息"}]))
@@ -565,7 +573,7 @@ class BatchNotifyTestCase(unittest.TestCase):
                "sources": [{"who": "assistant", "channel": "weekly-digest",
                             "date": "2026-07-13", "quote": "q"}]}
               for i in range(3)]
-        curr = _dash(needs_approval=wd + [{"id": "R-9", "title": "雷达卡"}])
+        curr = _dash(debt=wd + [{"id": "R-9", "title": "雷达卡"}])
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual(len(msgs), 1)
         self.assertEqual(msgs[0][2], "R-9")   # only the non-digest card pings

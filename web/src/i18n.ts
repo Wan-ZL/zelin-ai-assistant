@@ -59,17 +59,19 @@ export const TYPE_LABELS: LabelTable = {
   },
 };
 
-/** 看板列 lane（board 投影的 needs_approval/running/… 闭枚举）。
- *  注：列头是复数形（"Proposals"，BoardLanes.tsx 的 Lane title 内联对），
- *  这里是详情抽屉里指代**单张卡**所属列的 chip，故取单数。 */
+/** 看板列 lane（board 投影的 running/debt/… 闭枚举）。
+ *  注：列头是复数形（"Running"，BoardLanes.tsx 的 Lane title 内联对），
+ *  这里是详情抽屉里指代**单张卡**所属列的 chip，故取单数。
+ *  §78 tombstone：`needs_approval`（提案）这一项随提案列退役一并删——那一列恒空，
+ *  没有一张卡还会报这个 lane；机器卡的 lane 是 `debt`（潜在任务）。 */
 export const LANE_LABELS: LabelTable = {
   zh: {
-    needs_approval: "提案", running: "运行中", needs_input: "需输入",
+    running: "运行中", needs_input: "需输入",
     review: "待验收", completed: "阶段性完成", debt: "潜在任务",
     trash: "回收站", archived: "永久完成",
   },
   en: {
-    needs_approval: "Proposal", running: "Running", needs_input: "Needs input",
+    running: "Running", needs_input: "Needs input",
     review: "In review", completed: "Done", debt: "Backlog",
     trash: "Trash", archived: "Archived",
   },

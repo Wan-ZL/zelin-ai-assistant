@@ -4,7 +4,8 @@ The target user almost certainly already uses Claude Code, so their recent
 sessions are the cheapest possible seed for an empty kanban: scan
 ``~/.claude/projects/<slug>/*.jsonl`` transcripts, surface "work you were
 just doing" (especially sessions that ended with the AI waiting on a reply),
-and turn the selected ones into normal proposal cards.
+and turn the selected ones into normal cards in 潜在任务（§78：提案列退役后
+机器卡只有这一个落点；「等你回话」只决定要不要通知，见 :func:`_mark_birth`）。
 
 Design notes:
 - **One-shot, not a daemon.** Triggered by the Settings section (via the
@@ -582,9 +583,9 @@ def scan(window_days: int = DEFAULT_WINDOW_DAYS, *,
 # import
 # --------------------------------------------------------------------------- #
 def _import_candidates(cands: list) -> int:
-    """Selected candidates -> normal proposal cards. Waiting-on-you sessions
-    land in 待审批 (card_sent); merely-recent ones in 备选 (detected) — the
-    same confidence split the other radars use. Returns cards created/merged.
+    """Selected candidates -> normal cards in 潜在任务 (detected, §78). The old
+    waiting-on-you / merely-recent split survives as the quiet_birth
+    notification signal (:func:`_mark_birth`). Returns cards created/merged.
     Hard-gated candidates (session_mismatch) are dropped here too as a last
     belt — callers log the analytics; the soft ``answered`` flag is decided
     by the callers (bulk skips, explicit import overrides)."""
@@ -610,11 +611,17 @@ def _import_target(c: dict) -> Optional[str]:
 
 
 def _import_status(c: dict) -> str:
-    """Waiting-on-you sessions land in 待审批 (card_sent); merely-recent ones
-    in 备选 (detected) — the same confidence split the other radars use."""
-    if c.get("ended_waiting_on_user"):
-        return registry.State.CARD_SENT.value
+    """§78：提案列退役后导入卡一律落潜在任务（detected）——唯一的落点。"""
     return registry.State.DETECTED.value
+
+
+def _mark_birth(req: registry.Requirement, c: dict) -> registry.Requirement:
+    """§78 / D80.7：原来的「等你回话 → 待审批 / 只是最近 → 备选」分流不再挑列，
+    改挑要不要打扰——不是等你回话的会话安静出生（add-only ``quiet_birth``，
+    alerts 跳过这行），通知面逐字保持退役前的样子。默认 False 整键不落盘。"""
+    if not c.get("ended_waiting_on_user"):
+        req.quiet_birth = True
+    return req
 
 
 def _session_source(c: dict) -> dict:
@@ -632,7 +639,7 @@ def _session_source(c: dict) -> dict:
 
 
 def _session_card(c: dict) -> registry.Requirement:
-    return registry.Requirement(
+    return _mark_birth(registry.Requirement(
         id=registry.next_id(),
         title=(c.get("title") or c.get("gist") or "")[:80],
         summary=c.get("gist") or "",
@@ -645,7 +652,7 @@ def _session_card(c: dict) -> registry.Requirement:
         target_repo=_import_target(c),
         notes="claude-code 导入 / imported from Claude Code session "
               f"{(c.get('session_id') or '')[:8]}",
-    )
+    ), c)
 
 
 def _importable_id(sid: str, imported: dict) -> bool:

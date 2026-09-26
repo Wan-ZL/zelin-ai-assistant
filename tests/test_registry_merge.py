@@ -5,8 +5,10 @@ Three documented paths (registry.py docstring):
     bump repeated_mentions, STATUS UNCHANGED, no new card;
   increment (new/earlier deadline, first cost estimate, soft->hard) ->
     improvement card with improvement_of=<parent-id>;
-  no match -> brand-new entry; high_confidence + hard + deadline routes
-    straight to card_sent, everything else lands as detected debt.
+  no match -> brand-new entry; **§78（issue #447，owner 决策 D80）起一律落
+    detected**（潜在任务）——退役前的「high_confidence + hard + deadline 直发
+    card_sent（提案）」那一格随提案车道一起退役，``high_confidence`` 只剩
+    通知资格的含义。
 
 Plus the two matching guards: fuzzy title containment only above 12 chars,
 and trashed/rejected/merged entries never match (决策 6: 拒绝 ≠ 已办完 —
@@ -40,7 +42,8 @@ class MergeBase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
 
-    def _parent(self, title=TITLE, status=State.CARD_SENT.value, **kw):
+    def _parent(self, title=TITLE, status=State.DETECTED.value, **kw):
+        # §78：父卡住在潜在任务列（退役前是提案列）
         kw.setdefault("sources", [_src()])
         req = Requirement(id="R-100", title=title, status=status, **kw)
         registry.save(req)
@@ -59,7 +62,7 @@ class RestatementTestCase(MergeBase):
         got = registry.merge_or_new(_incoming())
         self.assertEqual(got.id, "R-100")
         self.assertEqual(self._all_ids(), ["R-100"])       # 不新建卡
-        self.assertEqual(got.status, State.CARD_SENT.value)  # 状态不动
+        self.assertEqual(got.status, State.DETECTED.value)  # 状态不动
         self.assertEqual(got.repeated_mentions, 2)
         self.assertEqual(len(got.sources), 2)              # slack 来源并入
 
@@ -161,16 +164,18 @@ class IncrementTestCase(MergeBase):
         self.assertEqual(got.improvement_of, "R-100")
         self.assertEqual(got.hardness, "hard")
 
-    def test_high_confidence_increment_routes_to_card_sent(self):
+    def test_high_confidence_increment_routes_to_detected(self):
+        # §78：高置信增量子卡也落潜在任务（退役前这颗子卡直发提案列）。增量的
+        # 全部其他语义——认父、继承、deadline 提前——一字不变。
         self._parent(deadline="2026-08-01")
         got = registry.merge_or_new(_incoming(deadline="2026-07-15", hardness="hard"),
                                     high_confidence=True)
         self.assertEqual(got.improvement_of, "R-100")
-        self.assertEqual(got.status, State.CARD_SENT.value)
+        self.assertEqual(got.status, State.DETECTED.value)
 
 
 # --------------------------------------------------------------------------- #
-# path 3: no match -> new entry, high-confidence routing
+# path 3: no match -> new entry（§78：高置信分流退役，四种组合同落 detected）
 # --------------------------------------------------------------------------- #
 class NewEntryRoutingTestCase(MergeBase):
     def test_new_entry_defaults_to_detected_debt(self):
@@ -179,11 +184,14 @@ class NewEntryRoutingTestCase(MergeBase):
         self.assertEqual(got.status, State.DETECTED.value)
         self.assertEqual(got.repeated_mentions, 1)
 
-    def test_high_confidence_hard_deadline_goes_straight_to_card(self):
+    def test_high_confidence_hard_deadline_also_lands_in_detected(self):
+        # §78：这一格原本是「直发提案」——机器卡把自己送进 owner 的审批列的唯一
+        # 自动入口。车道退役后它没有落点了，必须与其余三种组合同落潜在任务，
+        # 否则就是一条绕过 §78 的旁路（宪法第 4 条：AI 说的话不进 owner 已投入态）。
         got = registry.merge_or_new(
             _incoming(hardness="hard", deadline="2026-07-20"),
             high_confidence=True)
-        self.assertEqual(got.status, State.CARD_SENT.value)
+        self.assertEqual(got.status, State.DETECTED.value)
 
     def test_high_confidence_without_deadline_stays_detected(self):
         got = registry.merge_or_new(_incoming(hardness="hard"),
@@ -195,6 +203,26 @@ class NewEntryRoutingTestCase(MergeBase):
             _incoming(hardness="soft", deadline="2026-07-20"),
             high_confidence=True)
         self.assertEqual(got.status, State.DETECTED.value)
+
+    def test_no_producer_path_can_mint_a_card_sent_card(self):
+        """§78：铸卡漏斗的任何一条出口都不许再落退役车道（issue #447）。
+
+        新卡 / 高置信新卡 / 增量子卡三条出口一起扫一遍——这是「每个生产者只铸
+        detected」那条法条在 registry 侧的总闸；漏掉一条不会报错，只会让一张卡
+        悄悄落进一列已经没有界面的车道上（隐身卡，宪法第 3 条）。
+        """
+        self._parent(deadline="2026-08-01")
+        minted = [
+            registry.merge_or_new(_incoming(title="全新的一件事")),
+            registry.merge_or_new(_incoming(title="另一件事", hardness="hard",
+                                            deadline="2026-07-20"),
+                                  high_confidence=True),
+            registry.merge_or_new(_incoming(deadline="2026-07-15", hardness="hard"),
+                                  high_confidence=True),   # 增量子卡
+        ]
+        for req in minted:
+            self.assertNotEqual(req.status, State.CARD_SENT.value, msg=req.title)
+            self.assertEqual(req.status, State.DETECTED.value, msg=req.title)
 
 
 # --------------------------------------------------------------------------- #

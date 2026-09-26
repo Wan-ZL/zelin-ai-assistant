@@ -1,13 +1,19 @@
 """quick_capture — the helpers split out of capture / triage / apply_triage /
-apply_result in P3b (CONTRACT §13 / §37 / §38 / §40 / §44 / §45).
+apply_result in P3b (CONTRACT §13 / §37 / §38 / §40 / §44 / §45 / §78).
 
 Characterization net: the LLM ask (non-zero rc, crash, bare proc), the
 capture fallback (typed vs media text), decision validity, the inventory line
 tails, the relates_to canonicalisation + sealed hit, the dead-end fall-through
 that still logs relates_to_miss, CORROBORATE blocking on resolved targets,
-fold promotion vs §45 block, low-confidence status reset, the silent
-pre-filing fold's TOCTOU guard / urgent promotion / executing briefing, the
-separate_from pair ledger, and every apply_result reply/shape helper.
+fold-never-promotes, the low-confidence quiet stamp, the silent pre-filing
+fold's TOCTOU guard / executing briefing, the separate_from pair ledger, and
+every apply_result reply/shape helper.
+
+§78（owner 决策 D80，issue #447）提案车道退役后本文件改钉的三件事：①fold 的
+「提升进提案列」整条删了（连同 ``_promote_if_urgent``），所以每条 fold 路径钉
+的是**目标卡状态不动**；②低置信不再降列，改盖 ``quiet_birth``（D80.7 的通知
+资格）；③owner 面的回执文案从「进待审批」改口成「记入潜在任务」——文案是
+owner 唯一看得见的那一行，钉死它才防得住悄悄改口。
 """
 import unittest
 from types import SimpleNamespace
@@ -128,29 +134,46 @@ class TriageHelpersTestCase(unittest.TestCase):
         self.assertEqual((kind, saved.id, saved.status), ("folded", "P-20", "delivered"))
         self.assertIn("[radar] note", registry.load("P-20").notes)
 
-    def test_fold_into_open_promotion_matrix(self):
-        target = self._card("P-30", "debt", State.DETECTED.value)
+    def test_fold_into_open_never_promotes(self):
+        """§78：fold 进开着的卡只并信息——提升那一步（连同它唯一的
+        ``radar_echo_blocked{stage=fold_promotion}`` 发射点）已经删干净.
+
+        原来这里是一张提升矩阵：``promote_ok=False`` → 压平 + 留痕，
+        ``promote_ok=True`` + act-now → 提升进提案列，``needs_action="no"``
+        → 不提升。提案列退役后三格塌成同一个结局，所以矩阵改钉「四个入参
+        组合下目标卡的 status 一律不动」——真正要防的回归（fold 偷偷替 owner
+        搬卡）一格不少。
+        """
+        target = self._card("P-30", "debt", State.DETECTED.value,
+                            quiet_birth=True)
+        # 候选刻意仍带退役的 card_sent：那正是被删掉的提升分支的触发条件。
         cand = Requirement(id="", title="debt", status=State.CARD_SENT.value)
-        kind, saved = qc._fold_into_open({}, cand, target, "n", None, False)
-        self.assertEqual((kind, registry.load("P-30").status), ("folded", "detected"))
-        self.assertEqual(self.events[-2][1]["stage"], "fold_promotion")
-        kind, saved = qc._fold_into_open({}, cand, target, "n", None, True)
-        self.assertEqual(registry.load("P-30").status, "card_sent")
-        other = self._card("P-31", "other", State.DETECTED.value)
-        quiet = Requirement(id="", title="other", status=State.DETECTED.value)
-        qc._fold_into_open({"needs_action": "no"}, quiet, other, "n", None, True)
-        self.assertEqual(registry.load("P-31").status, "detected")
+        for promote_ok in (False, True):
+            for decision in ({}, {"needs_action": True}, {"needs_action": "no"}):
+                kind, _saved = qc._fold_into_open(
+                    decision, cand, target, "n", None, promote_ok)
+                self.assertEqual(kind, "folded")
+                folded = registry.load("P-30")
+                self.assertEqual(folded.status, "detected")
+                # 静默出生的卡不许被一次 fold 解除静默（§45 §78 的打扰面）
+                self.assertTrue(folded.quiet_birth)
+        self.assertEqual(
+            [e for e in self.events
+             if e[1].get("stage") == "fold_promotion"], [])
 
     def test_triage_note_and_low_confidence(self):
         req = Requirement(id="", title="T", summary="S")
         self.assertEqual(qc._triage_note({"note": " n "}, req), "n")
         self.assertEqual(qc._triage_note({"note": ""}, req), "S")
         self.assertEqual(qc._triage_note({}, Requirement(id="", title="T")), "T")
-        req = Requirement(id="", title="x", status=State.CARD_SENT.value)
+        # §78/D80.7：低置信不再降列（没有第二列了），改盖 quiet_birth——
+        # 「真实但不紧急」的含义自此是「照样落潜在任务，只是不打扰」。
+        req = Requirement(id="", title="x", status=State.DETECTED.value)
         self.assertTrue(qc._apply_low_confidence({"confidence": "HIGH"}, req, True))
-        self.assertEqual(req.status, "card_sent")
+        self.assertFalse(req.quiet_birth)          # 高置信：照常响
         self.assertFalse(qc._apply_low_confidence({"confidence": " Low "}, req, True))
-        self.assertEqual(req.status, "detected")
+        self.assertTrue(req.quiet_birth)           # 低置信：安静出生
+        self.assertEqual(req.status, "detected")   # 状态一步没动
         self.assertFalse(qc._apply_low_confidence({"confidence": "low"}, req, False))
 
     def test_silent_fold_helpers(self):
@@ -160,11 +183,11 @@ class TriageHelpersTestCase(unittest.TestCase):
         self.assertEqual(qc._silent_note(req), "T")
         req._silent_brief = "多了截止日"
         self.assertEqual(qc._silent_note(req), "T（多了截止日）")
+        # ``_promote_if_urgent`` retired with §78（提案列没了，无处可升）——
+        # 它保的那条行为（静默并入不许替 owner 搬卡）改由
+        # test_pre_filing_fold_toctou_and_success 在真路径上钉。
+        self.assertFalse(hasattr(qc, "_promote_if_urgent"))
         target = self._card("P-40", "T", State.DETECTED.value)
-        qc._promote_if_urgent(target, Requirement(id="", title="T", status=State.DETECTED.value))
-        self.assertEqual(registry.load("P-40").status, "detected")
-        qc._promote_if_urgent(target, Requirement(id="", title="T", status=State.CARD_SENT.value))
-        self.assertEqual(registry.load("P-40").status, "card_sent")
         running = self._card("P-41", "R", State.EXECUTING.value)
         with mock.patch("act.lib.silent_merge.queue_briefing") as qb:
             qc._brief_if_executing(running, "note")
@@ -184,15 +207,19 @@ class TriageHelpersTestCase(unittest.TestCase):
         open_card = self._card("P-52", "open", State.DETECTED.value)
         with mock.patch.object(qc, "_silent_fold_target", return_value=open_card):
             kind, saved = qc._pre_filing_fold(req, None)
-        self.assertEqual((kind, saved.id, registry.load("P-52").status), ("folded", "P-52", "card_sent"))
+        # §78：静默并入只并信息。``req`` 上面那个退役的 card_sent 正是被删掉的
+        # ``_promote_if_urgent`` 的触发信号——盘上的卡一步都不许被它搬动。
+        self.assertEqual((kind, saved.id, registry.load("P-52").status),
+                         ("folded", "P-52", "detected"))
         self.assertEqual(self.events[-1], ("silent_merge", {"primary": "P-52", "secondary": None,
                                                             "outcome": "pre_filing_fold"}))
 
     def test_file_candidate_ledger_and_receipt(self):
-        req = Requirement(id="", title="fresh", status=State.CARD_SENT.value)
+        # §78：候选的出生态 = 生产者现在写的那个值（提案车道退役）
+        req = Requirement(id="", title="fresh", status=State.DETECTED.value)
         with mock.patch("act.lib.auto_merge.record_pair_final") as rpf:
             kind, saved = qc._file_candidate(req, True, True, "P-9")
-        self.assertEqual(kind, "proposed")
+        self.assertEqual((kind, saved.status), ("proposed", "detected"))
         rpf.assert_called_once_with(saved.id, "P-9")
         with mock.patch("act.lib.auto_merge.record_pair_final", side_effect=OSError("ledger")):
             kind, _ = qc._file_candidate(Requirement(id="", title="other"), True, True, "P-9")
@@ -276,8 +303,11 @@ class ApplyResultHelpersTestCase(unittest.TestCase):
                          f"已记入潜在任务 {req.id}：T（不紧急，先存着不打扰）/ parked in backlog {req.id}")
         merged = Requirement(id="P-0", title="parent", summary="ps")
         self.assertEqual(qc._proposal_reply(merged, req, False), "已并入已有条目 P-0（parent），提及次数 +1")
+        # §78：owner 的回执里没有「待审批」可进了——卡记入潜在任务，等他一次
+        # 「促成运行」。这一行是他唯一看得见的东西，逐字钉住防止悄悄改口。
         child = Requirement(id="P-9", title="c", summary="cs", improvement_of="P-0")
-        self.assertEqual(qc._proposal_reply(child, req, False), "已建卡 P-9：cs（进待审批）")
+        self.assertEqual(qc._proposal_reply(child, req, False),
+                         "已记入潜在任务 P-9：cs / filed in the backlog P-9")
         self.assertEqual(qc._saved_label(Requirement(id="x", title="only")), "only")
 
     def test_relates_to_helpers(self):
@@ -320,11 +350,19 @@ class ApplyResultHelpersTestCase(unittest.TestCase):
     def test_fold_note_into_phrases(self):
         with mock.patch.object(analytics, "log_event"):
             for status, phrase in qc._FOLD_PHRASES.items():
-                req = Requirement(id=f"P-8{status[:2]}", title="t", status=status)
+                # plan 非空 = 已扩写过的卡（§78 后 detected 既装裸欠账也装完整
+                # 机器卡）：这张表讲的就是「不再扩写、只追加备注」那条平路，
+                # 裸卡走的是下面 P-90 那支 §8 扩写。
+                req = Requirement(id=f"P-8{status[:2]}", title="t", status=status,
+                                  plan=["已经有计划了"])
                 registry.save(req)
                 kind, saved, reply = qc._fold_note_into(req, "note", None, None)
                 self.assertEqual((kind, reply), ("folded", f"已关联 {req.id}：{phrase}"))
                 self.assertIn("[quick] note", registry.load(req.id).notes)
+            # 上面那圈是照着词表自己跑的——文案本身得单独钉一次。§78：退役
+            # 车道上的存量卡投影在潜在任务列里，回执不许再说「已在待审批」。
+            self.assertEqual(qc._FOLD_PHRASES[State.CARD_SENT.value],
+                             "已在潜在任务，备注已追加")
             odd = Requirement(id="P-89", title="t", status="raising")
             registry.save(odd)
             self.assertEqual(qc._fold_note_into(odd, "n", None, None)[2], "已关联 P-89：状态 raising，备注已追加")
@@ -333,7 +371,13 @@ class ApplyResultHelpersTestCase(unittest.TestCase):
             with mock.patch.object(qc.analyze, "expand_debt") as ed:
                 kind, saved, reply = qc._fold_note_into(debt, "n", "cfg", None)
             ed.assert_called_once_with(debt, "cfg")
-            self.assertEqual(reply, "已关联 P-90，已提案（扩成完整建议，进待审批）")
+            # §78/§8：「研究并提议」不再跨列提案，它就地把卡写厚——回执必须
+            # 说实话（卡还在潜在任务里，等 owner 一次点名），否则 owner 会去
+            # 一条已经没有面的车道上找他的卡。
+            self.assertEqual(
+                reply,
+                "已关联 P-90：已扩成完整建议，留在潜在任务等你一次点名 / "
+                "expanded in place, still in the backlog")
 
 
 class NewProposalFoldReceiptTestCase(unittest.TestCase):

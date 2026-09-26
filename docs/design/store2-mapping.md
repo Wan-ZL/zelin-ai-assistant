@@ -116,6 +116,7 @@ YAML `notes` 是**换行拼接的混合 blob**，含四种行：
 
 CONTRACT §1 状态机 + State enum 全集（11 值）与 corpus 分布：`detected` 53 · `card_sent` 23 · `raising` 0 · `approved` 0 · `executing` 1 · `review` 17 · `delivered` 24 · `rejected` 0 · `trashed` 43 · `merged` 8 · `archived` 5（仅 archive/ 目录）。
 
+- **§78 追记（2026-09-26，owner 决策 **D80**，issue #447）——`card_sent` 是退役但合法的值，11 词词表一词不减**：提案车道整条退役，`card_sent` 折叠进 `detected`（CONTRACT §78）。对本文的映射决定**没有任何影响**：状态 CHECK 仍认 11 词、热列仍是纯投影、payload 仍是真源、export 仍逐字节 round-trip。**唯一变化在 `transition_whitelist`（梯子 v2 → v3）**：新增九条 `detected` 侧的孪生行 + 一次性归并扫描用的 `('card_sent','detected','system')`，`card_sent` 的既有行**一条不删**（存量卡与迟到的 inbox 重放必须照旧被放行），**agent 行仍恒为零**。上文 corpus 分布里的 `card_sent` 23 张是 2026-08-30 的抓拍，归并扫描跑完后这个数会归零——它是历史快照，**不是**任何代码或测试的判据（防腐 #5：别把它当计数真源读）。`prev_status` 那一行（§1 热列表，corpus 值含 `card_sent` 12）同理：字段原样保留，只有 `registry.restore` 的**读侧**把 `card_sent` 钳到 `detected`（D80.10）。
 - `approved`/`raising` 是**短命过渡态**（actd 快速消化），corpus 抓拍不到 ≠ 不存在，trigger 转移表必须包含。
 - `rejected` 0 例的原因：reject 动作实际走 `trash(reason="rejected")` 落 `trashed`——`rejected` 态在现行管线近乎理论态，但 enum/matchable 都还引用它，勿删。
 - legacy `merged_into:<id>` verbatim status：与终态 `merged` **matching 语义相反**——`matchable()` 排除 legacy（`is_merged`）但放行 `merged`（当 delivered 参与匹配压重述，决策 6）。**已实现决定**：热列投影归一为 `merged` + `merged_into_id`（schema 状态 CHECK 只认 11 词，verbatim 串进不了热列，trigger 白名单也不含前缀形）；**payload 真源保留原字符串**，export 走 payload 不失真，matching 语义差异由消费 payload 的一侧按 `is_merged` 前缀判定——热列不承载这层区别。

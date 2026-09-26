@@ -10,10 +10,20 @@ sandbox AIASSISTANT_HOME（tests/__init__.py）里。钉住的契约：
 (c) needs_action=false（未来条件性进展）-> 折叠为既往卡备注，不成卡；
 (d) 跨 pass/跨源去重：同一父卡已有未决 follow-up 时，第二个来源（如 MCP 路径）
     并入该卡，不出第二张（registry.find_open_follow_up 机制）；
-(e) obsidian 的 hard+deadline 分流保留（new_proposal 不满足 -> detected/备选）；
+(e) obsidian 的 hard+deadline 分流保留——§78 后它分的不再是**列**而是**响不响**
+    （hard+deadline+urgent -> 落潜在任务并计一张卡；soft -> 同列安静出生）；
 (f) 原有路径回归：只注入 legacy runner（回 JSON 数组）时 triage 走兜底
     new_proposal，行为与三选一落地前完全一致（宁可多建，不丢候选）；
 (g) self-DM quick capture 的 relates_to 命中已交付卡 -> 同一 follow-up 机制。
+
+**§78（owner 决策 D80，issue #447；生产者落点全表 = §78.3，安静出生 = §78.6）**：
+提案车道退役，三选一闸门的每一条出口
+都落 `detected`（潜在任务）。本文件里原先用 `card_sent` 表达的三件事分别改锚：
+①「进提案列」-> 「落潜在任务」（状态断言换值）；②「hard+deadline 才进提案列」
+-> `quiet_birth` 通知资格（判例主场在 tests/test_radar_echo_gate.py）；③ fold
+的 act-now 提升整条删除（无处可升）。候选卡的出生态（`_cand` 的默认 status）
+也跟着生产者改成 `detected`——留着 `card_sent` 会让这些判例继续测一条没有
+生产者的路径。
 
 §42（v0.42.0 卡面大扫除）的那一项 python 管线行为也钉在这里（该节唯一的非渲染
 改动）：提取提示词的 {owner} 槽位以 cfg.owner_name 注入、语义放宽成「任何人对
@@ -145,7 +155,8 @@ class ApplyTriageTestCase(TriageBase):
     def _cand(self, summary="确认 editor 权限已生效并继续补文档", **kw) -> registry.Requirement:
         defaults = dict(
             id=registry.next_id(), title=summary[:80], summary=summary,
-            type="comms", tier="T1", status="card_sent", hardness="soft",
+            # §78：候选卡的出生态 = 生产者现在真正写的那个值（提案车道退役）
+            type="comms", tier="T1", status="detected", hardness="soft",
             sources=[{"who": "quinton", "channel": "slack",
                       "date": "2026-07-09", "quote": summary}])
         defaults.update(kw)
@@ -166,7 +177,7 @@ class ApplyTriageTestCase(TriageBase):
             self._cand(), self.cfg)
         self.assertEqual(kind, "follow_up")
         self.assertEqual(saved.improvement_of, "R-019")
-        self.assertEqual(saved.status, "card_sent")
+        self.assertEqual(saved.status, "detected")   # §78：后续卡落潜在任务
         self.assertTrue(saved.summary.startswith("既往卡 R-019 的后续："))
         # parent untouched (still delivered, no new isolated card)
         self.assertEqual(registry.load("R-019").status, "delivered")
@@ -251,7 +262,7 @@ class ApplyTriageTestCase(TriageBase):
         self.assertEqual(rejected.status, "rejected")       # untouched
         self.assertNotIn("[radar]", rejected.notes or "")   # nothing buried
         open_cards = [r for r in registry.load_all()
-                      if r.status == "card_sent"]
+                      if r.status == "detected"]
         self.assertEqual(len(open_cards), 1)
 
     def test_relates_to_trashed_card_recards_instead_of_folding(self):
@@ -302,15 +313,24 @@ class ApplyTriageTestCase(TriageBase):
         self.assertEqual(kind2, "folded")
         self.assertEqual(second.id, first.id)
 
-    def test_actionable_fold_promotes_detected_card_to_proposal(self):
-        """act-now 候选折叠进 detected/备选卡时，卡必须升入提案列."""
-        _seed("R-020", "把周报模板双语化", "detected")
+    def test_actionable_fold_never_moves_the_card(self):
+        """§78：act-now 的 fold 只并信息——提案列退役，目标卡无处可升.
+
+        原判例：act-now 候选折叠进备选卡时，卡必须升入提案列（否则一件「现在
+        就要」的事会静静躺在 backlog 里）。退役后备选卡与机器卡本来就同住
+        潜在任务列，那次搬运没有目的地了；这条判例改钉它的反面——fold 不许
+        替 owner 动卡（状态、静默标记都不动），能见度由这一列本身保证。
+        """
+        _seed("R-020", "把周报模板双语化", "detected", quiet_birth=True)
         kind, saved = quick_capture.apply_triage(
             {"action": "relates_to", "req": "R-020",
              "note": "manager 现在就要", "needs_action": True},
             self._cand(summary="manager 现在就要双语周报"), self.cfg)
         self.assertEqual(kind, "folded")
-        self.assertEqual(registry.load("R-020").status, "card_sent")
+        folded = registry.load("R-020")
+        self.assertEqual(folded.status, "detected")
+        self.assertTrue(folded.quiet_birth)
+        self.assertIn("[radar] manager 现在就要", folded.notes or "")
 
     def test_non_actionable_fold_keeps_detected_card_in_backlog(self):
         _seed("R-021", "有空整理 wiki", "detected")
@@ -341,20 +361,28 @@ class ApplyTriageTestCase(TriageBase):
         self.assertEqual(saved.id, "R-019")
         self.assertEqual(len(registry.load_all()), 1)   # no follow-up card
 
-    def test_low_confidence_new_proposal_lands_in_backlog(self):
-        """统一口径第四出口：真实但不紧急 -> 备选（清掉调用方预设的 card_sent）."""
+    def test_low_confidence_new_proposal_lands_in_backlog_quietly(self):
+        """统一口径第四出口：真实但不紧急 -> 照落潜在任务，但安静（§78/D80.7）.
+
+        原判例钉的是「清掉调用方预设的 card_sent」——那半条法条随提案列退役，
+        「不紧急」的唯一可观测后果自此是 ``quiet_birth``（alerts 跳过这一行）。
+        另一半（绝不 ignore、绝不丢）一字不动。
+        """
         kind, saved = quick_capture.apply_triage(
             {"action": "new_proposal", "confidence": "low"},
             self._cand(summary="下季度想做 X"), self.cfg)
         self.assertEqual(kind, "proposed")
         self.assertEqual(saved.status, "detected")
+        self.assertTrue(saved.quiet_birth)
 
-    def test_high_confidence_new_proposal_keeps_caller_status(self):
+    def test_high_confidence_new_proposal_lands_in_backlog_loudly(self):
+        """高置信与低置信同落一列，差别只剩「响不响」（§45 §78 修法）."""
         kind, saved = quick_capture.apply_triage(
             {"action": "new_proposal", "confidence": "high"},
             self._cand(summary="现在就要回 manager 的确认"), self.cfg)
         self.assertEqual(kind, "proposed")
-        self.assertEqual(saved.status, "card_sent")
+        self.assertEqual(saved.status, "detected")
+        self.assertFalse(getattr(saved, "quiet_birth", False))
 
 
 class RegistryFollowUpLookupTestCase(TriageBase):
@@ -364,7 +392,9 @@ class RegistryFollowUpLookupTestCase(TriageBase):
         _seed("R-003", "被拒的后续", "rejected", improvement_of="R-001")
         _seed("R-004", "回收站的后续", "trashed", improvement_of="R-001")
         self.assertIsNone(registry.find_open_follow_up("R-001"))
-        _seed("R-005", "未决后续", "card_sent", improvement_of="R-001")
+        # §78：新后续卡出生在 detected——去重窗口必须认这个值，不然每一
+        # pass 都会给同一个父卡再开一张后续（这正是本判例当初要堵的洞）
+        _seed("R-005", "未决后续", "detected", improvement_of="R-001")
         found = registry.find_open_follow_up("R-001")
         self.assertEqual(found.id, "R-005")
         self.assertIsNone(registry.find_open_follow_up(""))
@@ -372,6 +402,7 @@ class RegistryFollowUpLookupTestCase(TriageBase):
     def test_find_open_follow_up_matches_across_merge_cluster(self):
         _seed("R-001", "父卡（主）", "delivered")
         _seed("R-002", "父卡（并入的副卡）", "merged", merged_into="R-001")
+        # 存量的 card_sent 后续（§78 退役 straggler）照样算「还开着」
         _seed("R-003", "挂在副卡名下的未决后续", "card_sent",
               improvement_of="R-002")
         # a later hit on EITHER cluster member finds the same open follow-up
@@ -434,7 +465,7 @@ class SlackNativeTriageTestCase(TriageBase):
         fus = self._followups_of("R-019")
         self.assertEqual(len(fus), 1)
         self.assertTrue(fus[0].summary.startswith("既往卡 R-019 的后续："))
-        self.assertEqual(fus[0].status, "card_sent")
+        self.assertEqual(fus[0].status, "detected")   # §78：后续卡落潜在任务
 
     def test_dual_source_same_event_yields_one_card(self):
         """(d) 双源同事件：原生路径建 follow-up 后，MCP 路径命中同一父卡只并入."""
@@ -470,7 +501,7 @@ class SlackNativeTriageTestCase(TriageBase):
         self.assertEqual(self._scan(llm), 1)
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")   # §78：落潜在任务
         self.assertEqual(reqs[0].title, "回复 manager 的 eval 数字确认")
 
     def test_extract_prompt_keeps_non_urgent_requests(self):
@@ -544,7 +575,13 @@ class ObsidianTriageTestCase(TriageBase):
         self.assertEqual(radar._read_marker(), BASE)   # processed, not lost
 
     def test_hard_deadline_split_preserved_for_new_proposals(self):
-        """(e) hard+deadline -> card_sent；soft -> detected/备选."""
+        """(e) hard+deadline -> 计一张卡并响；soft -> 同列安静出生（§78）.
+
+        §78 之前这条分流分的是**列**（hard+deadline 进提案列、soft 落备选）。
+        提案列退役后两者同落 `detected`，分流本身没死——它平移到了 D80.7 的
+        通知资格上：只有 hard+deadline+urgent 的出生算 `summary["cards"]`
+        （= 会响一声的那种卡），soft 的安静落列、不计数、不打扰。
+        """
         self._note("2026-07-09 sync.md", "two asks")
         runner = self._items(
             {"title": "Ship the Q3 quarterly report", "type": "report",
@@ -560,8 +597,11 @@ class ObsidianTriageTestCase(TriageBase):
         self.assertEqual(summary["reconciled"], 2)
         self.assertEqual(summary["cards"], 1)
         by_title = {r.title: r for r in registry.load_all()}
-        self.assertEqual(by_title["Ship the Q3 quarterly report"].status, "card_sent")
-        self.assertEqual(by_title["Maybe tidy the team wiki sometime"].status, "detected")
+        loud = by_title["Ship the Q3 quarterly report"]
+        quiet = by_title["Maybe tidy the team wiki sometime"]
+        self.assertEqual((loud.status, quiet.status), ("detected", "detected"))
+        self.assertFalse(getattr(loud, "quiet_birth", False))
+        self.assertTrue(quiet.quiet_birth)
 
     def test_obsidian_hit_on_delivered_card_becomes_followup(self):
         # audio×human = FULL（§45）：缺 provenance 的老式输出如今是 LIMITED，
@@ -575,10 +615,18 @@ class ObsidianTriageTestCase(TriageBase):
         triager = _FakeLLM(decision={"action": "relates_to", "req": "R-019",
                                      "note": "权限已开", "needs_action": True})
         summary = radar.scan(runner=runner, triager=triager)
-        self.assertEqual(summary["cards"], 1)   # follow-up 按统一口径直接进提案列
+        # §78：follow-up 的落点从提案列换成潜在任务，但「响不响」逐字照搬
+        # 退役前——main 上这条路是 `_birth_state(cap_detected)`（FULL =
+        # card_sent = 响），**只看 §45 来源天花板，不看提取层的紧急度**。所以
+        # 一条 soft / 无 deadline 的 FULL 后续卡照旧响、照旧计一张卡：把候选
+        # 那枚（记紧急度的）`quiet_birth` 并进这条路，等于让一件老板已经验收
+        # 过、现在又有新事项的活儿从此不吭声。LIMITED 的天花板判例在
+        # tests/test_radar_echo_gate.py。
+        self.assertEqual(summary["cards"], 1)
         fus = self._followups_of("R-019")
-        self.assertEqual(len(fus), 1)
-        self.assertEqual(fus[0].status, "card_sent")
+        self.assertEqual(len(fus), 1)                 # 不再连发孤立新卡
+        self.assertEqual(fus[0].status, "detected")
+        self.assertFalse(getattr(fus[0], "quiet_birth", False))
         self.assertTrue(fus[0].summary.startswith("既往卡 R-019 的后续："))
         # the meeting source landed on the follow-up card
         self.assertEqual(fus[0].sources[0]["channel"], "meeting")
@@ -593,7 +641,9 @@ class ObsidianTriageTestCase(TriageBase):
         summary = radar.scan(runner=lambda text: json.dumps([item]))
         self.assertEqual(summary["reconciled"], 1)
         self.assertEqual(summary["cards"], 1)
-        self.assertEqual(registry.load_all()[0].status, "card_sent")
+        (req,) = registry.load_all()
+        self.assertEqual(req.status, "detected")            # §78：潜在任务
+        self.assertFalse(getattr(req, "quiet_birth", False))  # FULL+紧急 = 响
 
     def test_extract_prompt_no_longer_drops_non_urgent_asks(self):
         # 提取层双重过滤已拆除：只滤纯信息/闲聊/已完成，非紧急真实需求带
@@ -655,11 +705,14 @@ class QuickCaptureFollowUpTestCase(TriageBase):
              "note": "Quinton 已设我为 editor，继续把文档补完"}, self.cfg)
         fus = [r for r in registry.load_all() if r.improvement_of == "R-019"]
         self.assertEqual(len(fus), 1)
-        self.assertEqual(fus[0].status, "card_sent")
+        self.assertEqual(fus[0].status, "detected")   # §78：后续卡落潜在任务
         self.assertTrue(fus[0].summary.startswith("既往卡 R-019 的后续："))
         self.assertIn(fus[0].id, reply)
         self.assertIn("后续卡", reply)
         self.assertIn("follow-up", reply)   # 双语回执
+        # §78：回执必须说卡去了哪——「待审批」这一站已经不存在了
+        self.assertIn("记入潜在任务", reply)
+        self.assertNotIn("待审批", reply)
         # parent delivered card is NOT reopened and got no [quick] note
         parent = registry.load("R-019")
         self.assertEqual(parent.status, "delivered")
@@ -677,10 +730,13 @@ class QuickCaptureFollowUpTestCase(TriageBase):
         self.assertIn("[radar] 再补一句", fus[0].notes)
 
     def test_relates_to_open_card_behavior_unchanged(self):
+        # 目标卡刻意留在退役的 card_sent 上（§78 的存量 straggler）：它照样
+        # 读得出、照样收备注，只是回执改口说它在潜在任务列——owner 去那一列
+        # 才找得到它。
         _seed("R-030", "写周报", "card_sent")
         reply = quick_capture.apply_result(
             {"action": "relates_to", "req": "R-030", "note": "加 eval 数字"}, self.cfg)
-        self.assertIn("已在待审批", reply)
+        self.assertIn("已在潜在任务", reply)
         self.assertEqual(len(registry.load_all()), 1)
         self.assertIn("[quick] 加 eval 数字", registry.load("R-030").notes)
 
@@ -721,13 +777,17 @@ class QuickCaptureLosslessTestCase(TriageBase):
         self.assertIn("潜在任务", reply)
         self.assertIn(req.id, reply)
 
-    def test_default_capture_still_files_card_sent(self):
-        quick_capture.apply_result(
+    def test_default_capture_files_into_the_backlog_loudly(self):
+        """缺省置信（= 现在就要办）的快速捕获落潜在任务，且照常响一声（§78）."""
+        reply = quick_capture.apply_result(
             {"action": "new_proposal", "summary": "现在就回 manager",
              "title": "回 manager", "type": "comms", "tier": "T1",
              "plan": ["回复"], "_text": "回 manager"}, self.cfg)
         (req,) = registry.load_all()
-        self.assertEqual(req.status, "card_sent")
+        self.assertEqual(req.status, "detected")
+        self.assertFalse(getattr(req, "quiet_birth", False))
+        self.assertIn("已记入潜在任务", reply)
+        self.assertNotIn("待审批", reply)
 
 
 class LegacyIntIdCardDoesNotHaltCaptureTestCase(TriageBase):

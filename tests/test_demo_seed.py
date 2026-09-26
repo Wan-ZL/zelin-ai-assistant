@@ -11,6 +11,9 @@ Pinned behavior:
   - ``--check`` accepts what ``--english`` wrote; the ``_EN`` table has no unused rows
     (dead vocabulary would rot silently).
 In-process (module loaded by path, stdlib-only) — no subprocess.
+
+§78（提案车道退役）：hero 卡在 scene=initial 时坐在 ``debt``（潜在任务）而不再是
+``needs_approval``——双语对照取的是同一张卡，锚点跟着卡走。
 """
 from __future__ import annotations
 
@@ -75,7 +78,8 @@ class DemoSeedEnglishTestCase(unittest.TestCase):
     def test_default_is_unchanged_chinese(self):
         zh = self.ds.build("initial", NOW)
         self.assertEqual(zh, self.ds.build("initial", NOW, lang="zh"))
-        hero = next(c for c in zh["needs_approval"] if c["id"] == self.ds.HERO_ID)
+        # §78：提案列退役，hero 卡在 scene=initial 时坐在潜在任务列（debt）
+        hero = next(c for c in zh["debt"] if c["id"] == self.ds.HERO_ID)
         self.assertEqual(hero["title"], "example-bench: leaderboard 一键导出评测报告")
         self.assertTrue(any(_CJK.search(v) for _, v in _strings(zh)))
 
@@ -102,7 +106,7 @@ class DemoSeedEnglishTestCase(unittest.TestCase):
 
     def test_english_hero_reads_in_english(self):
         en = self.ds.build("initial", NOW, lang="en")
-        hero = next(c for c in en["needs_approval"] if c["id"] == self.ds.HERO_ID)
+        hero = next(c for c in en["debt"] if c["id"] == self.ds.HERO_ID)  # §78：潜在任务列
         self.assertEqual(hero["title"], "example-bench: one-click leaderboard report export")
         self.assertEqual(hero["tier_hint"], "One-click approval")
         self.assertIn("Export report", hero["summary"])

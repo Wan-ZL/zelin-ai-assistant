@@ -24,8 +24,9 @@
 `FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN` / `VIA_SCREEN` / `FUNCTION_SCREEN` 五张归属表、
 `SCREEN_OWNER`（谁负责补齐：web / shell / os / retired）、prefs 键的 `PREF_OWNER`
 （shell / server / retired + 理由）、单条 control 的 `CONTROL_OWNER`（retired + 理由：
-非界面文案 / 新架构无落点的句子）与 rail 项的 `RAIL_OWNER`（owner 决策拿掉的侧栏项：
-retired + 理由；`rail:order` 只数剩下的）——表本身也进 JSON（`attribution`）。owner=shell 的
+非界面文案 / 新架构无落点的句子）、rail 项的 `RAIL_OWNER`（owner 决策拿掉的侧栏项：
+retired + 理由；`rail:order` 只数剩下的）与看板列的 `LANE_OWNER`（owner 决策退役的列：
+retired + 理由；`lanes:order` 只数剩下的）——表本身也进 JSON（`attribution`）。owner=shell 的
 条目原则上只列不判；例外是带 `probe` 的条目（通知句 / kind → notify_catalog，
 壳持有的偏好键 → shell_source，搬到 server 的偏好键 → server_source），§66.2 追记。
 
@@ -272,6 +273,29 @@ CONTROL_OWNER = {
         "owner": "retired",
         "reason": "D41：feedback 弹窗保持文字-only、不接贴图（§10bis 追记 2026-09-06），「建议未提交」这句无落点",
     },
+    # D80（owner 2026-09-26 原话「我觉得 proposals 这一列不需要了，自动生成任务推进的卡片都放在『潜在任务』中」，issue #447）：
+    # 提案列整列退役（§78），但**只有这三条真的消失**——卡面动词（批准 / 修改 / 拒绝 / 展开详情 / 收起 / 三颗
+    # 「这张卡不需要执行？」弹窗按钮）随卡搬到潜在任务列的卡面上照判（探针按 accessible name 在整块看板上找，
+    # 渲染面换列不影响判决，同 D30 的「页面并入设置页仍照判」）。
+    #   clean-up          —— §34bis「提案积压清理」预设随提案列一起墓碑（D80.11：预设退役，它驱动的登记写入守卫 /
+    #                        孤儿快照机制改挂在一次普通直跑上）；
+    #   later             —— 「暂缓」这个动词从来没在生产里用过（§10 verb inventory 的 defer 同日墓碑），新架构无落点；
+    #   moving-to-backlog —— 上面那颗按钮按下后的 pending 一句（原生 Store.swift addEcho target .debt /
+    #                        web boardActions.pendingNote("defer")）。§10 给 defer 立墓碑后（retired v1.0，并入 §78）
+    #                        整块看板再没有一个入口能发出 defer，这句话永远进不了渲染树。退役的是**这句话的渲染面**，
+    #                        不是动词：动词名与诚实 ack 路径仍在 wire 白名单上（add-only，§10 墓碑条款）。
+    "control:board.needs_approval:button:clean-up": {
+        "owner": "retired",
+        "reason": "D80.11：§34bis 提案积压清理预设随提案列退役（§78 tombstone 2026-09-26，issue #447）；守卫机制改挂普通直跑，不再有这颗列顶按钮",
+    },
+    "control:board.needs_approval:button:later": {
+        "owner": "retired",
+        "reason": "D80：提案列退役（§78，issue #447）后「暂缓」无落点——这个动词从未在生产里用过，§10 verb inventory 同日给 defer 立墓碑",
+    },
+    "control:board.notices:label:moving-to-backlog": {
+        "owner": "retired",
+        "reason": "D80：「暂缓」按钮随提案列退役（§78，issue #447）后 defer 在看板上再无入口（§10 defer 墓碑 retired v1.0），这句 pending 文案永无渲染面；动词与 ack 路径按 add-only 留着",
+    },
 }
 
 # D29（owner 2026-09-04 原话「这个问问助手我希望去掉。」）：问问助手 web 页整页退役——Ask.swift 的 17 条 L() 全部
@@ -308,6 +332,16 @@ RAIL_OWNER = {
     "ask": {"owner": "retired", "reason": _ASK_RETIRED_REASON},
     "deps": {"owner": "retired",
              "reason": "D30 依赖检查并入设置页一区（§49 / §54.4 追记 2026-09-04）；页面内容仍判，只有侧栏项退役"},
+}
+
+# 看板列（Kanban.swift 的 column / collapsibleColumn 调用）→ 归属（第九张归属表）：owner 决策整列拿掉的列。
+# owner=retired、不判、理由进 JSON attribution.lane_owner；`lanes:order` 的期望顺序只数仍 gated 的列
+# （parity_check._lanes_order_ok），与 RAIL_OWNER / `rail:order` 同一形状。
+#   needs_approval —— 提案列退役（D80，§78，issue #447）：机器卡一律落潜在任务列，卡面与动词随卡搬过去、照判，
+#                     只有列本身与 §34bis 的列顶「清理积压」按钮没有落点；wire key 仍在（add-only，dashboard.json
+#                     恒发 needs_approval: [] / counts 0），所以这里只退役列，不动 _LANE_SLUG。
+LANE_OWNER = {
+    "needs_approval": {"owner": "retired", "reason": "D80 owner 退役提案列（§78，issue #447）"},
 }
 
 # screen 前缀 → 负责补齐的一方。web = 看板必须补（进门）；shell = 原生残留
@@ -716,11 +750,17 @@ def lane_items(files):
     lanes = []
     for m in _LANE_CALL.finditer(f.stripped):
         slug = _LANE_SLUG.get(m.group(4), m.group(4))
-        lanes.append({
+        lane = {
             "id": "lane:" + slug, "slug": slug, "zh": uc.unescape_swift(m.group(2)),
             "en": uc.unescape_swift(m.group(3)), "collapsible": m.group(1) == "collapsibleColumn",
             "index": len(lanes), "source": f.source(m.start()), "owner": "web", "gated": True,
-        })
+        }
+        retired = LANE_OWNER.get(slug)   # owner 决策退役的列：只列不判，理由随行
+        if retired:
+            lane["owner"] = retired["owner"]
+            lane["gated"] = False
+            lane["reason"] = retired["reason"]
+        lanes.append(lane)
     return _mark_rails(lanes)
 
 
@@ -995,7 +1035,7 @@ def build_inventory(root=uc.MAC_SOURCES):
                         "screen_owner": SCREEN_OWNER, "via_screen": VIA_SCREEN,
                         "probed_shell_screens": sorted(PROBED_SHELL_SCREENS),
                         "pref_owner": PREF_OWNER, "control_owner": CONTROL_OWNER,
-                        "rail_owner": RAIL_OWNER},
+                        "rail_owner": RAIL_OWNER, "lane_owner": LANE_OWNER},
         "controls": controls,
         "lanes": {"order": [lane["slug"] for lane in lanes], "items": lanes,
                   "card_affordances": card_affordances(controls)},

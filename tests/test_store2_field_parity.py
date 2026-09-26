@@ -120,6 +120,7 @@ class NormalizeCardMirrorsFromDictTestCase(unittest.TestCase):
                               "source_hash": "abcd"},
                "needs_mcp": True,
                "merged_from": ["P-10", "P-11"],
+               "quiet_birth": True,          # §78/§45 D80.7 安静出生（add-only）
                "completion_hint": {"at": "2026-09-09T12:00:00Z",
                                    "note": "repo 已建、slides 已改",
                                    "channel": "meeting"}}

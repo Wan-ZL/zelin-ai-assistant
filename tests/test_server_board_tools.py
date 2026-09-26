@@ -60,6 +60,12 @@ class TerminalLaunchTestCase(_ServerCase):
     def _running_row(self):
         return next(r for r in self.board["running"] if r.get("session_id") or r.get("copy_cmd"))
 
+    def _no_session_row(self):
+        """还没开跑过的卡。§78（提案车道退役）：这种卡以前坐 needs_approval，
+        现在一律住 debt（潜在任务）——对它开终端必须 400，而不是猜一条命令。"""
+        return next(r for r in self.board["debt"]
+                    if not r.get("session_id") and not r.get("copy_cmd"))
+
     def _entries(self):
         return sorted(self.queue.glob("*.json")) if self.queue.is_dir() else []
 
@@ -160,8 +166,8 @@ class TerminalLaunchTestCase(_ServerCase):
         status, obj = post_json(self.port, "/api/terminal", {"card_id": "R-999999"})
         self.assertEqual(status, 404)
         assert_envelope(self, obj, "NOT_FOUND")
-        proposal = self.board["needs_approval"][0]["id"]
-        status, obj = post_json(self.port, "/api/terminal", {"card_id": proposal})
+        no_session = self._no_session_row()["id"]
+        status, obj = post_json(self.port, "/api/terminal", {"card_id": no_session})
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "INVALID_FIELD")
         self.assertEqual(self._entries(), [])

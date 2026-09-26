@@ -1,7 +1,9 @@
-"""Native notifications + transition classifiers (CONTRACT §5, §28).
+"""Native notifications + transition classifiers (CONTRACT §5, §28, §78).
 
 State transitions surfaced as native notifications:
-  - new card_sent (radar found a new requirement)  -> "有新需求待审批：<title>"
+  - new detected (radar found a new requirement)   -> "潜在任务有新卡待审批：<title>"
+    （§78：提案列退役，机器卡一律落潜在任务；下面的 ``KIND_PROPOSAL`` 令牌与
+    ``notify_proposals`` 偏好键是**持久化的**——逐字不动，只改周边文案）
   - executing -> done                              -> "任务完成：<title>"
   - executing 受阻/放弃救活 -> review（#119 收割）  -> "任务停下来了：<title>"
   - credential failure (log has auth/login words)  -> "需要重新登录：<service>"
@@ -78,7 +80,8 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
 # 的 notify-send 路径同样受偏好管；shell/Sources/NotifyRelay.swift 得以继续是
 # mac/ 冻结件的逐字副本（§28 v0.48.x，判例 tests/test_shell_engine_mirror.py）。
 # 职责切分自此是：**抑制归写方（Python），呈现（横幅 / 声音）归消费方（壳）**。
-KIND_PROPOSAL = "proposal"          # 新卡待审批 / 批量 / 回锅
+KIND_PROPOSAL = "proposal"          # 潜在任务新卡 / 批量 / 回锅（§78 后落点是潜在任务；
+                                    # 令牌本身是持久化的偏好分类名，永不改字）
 KIND_REVIEW_READY = "review_ready"  # 交付进待验收（v0.46 就有）
 KIND_NEEDS_INPUT = "needs_input"    # 任务停下来了 / 反复中断 / 停止重试，等人一句话
 KIND_FAILURE = "failure"            # 需重新登录 / 雷达停摆 / 派发失败 / 会话没停住
@@ -288,28 +291,35 @@ def _pick(zh: str, en: str) -> str:
 
 
 def msg_new_card(title: str) -> tuple[str, str]:
-    return (_pick("有新需求待审批", "New card awaiting approval"),
-            _pick(f"{title} —— 打开菜单栏面板，✅ 批准或 ❌ 拒绝",
-                  f"{title} — open the menu-bar panel: ✅ approve or ❌ reject"))
+    """§78：新卡落的是潜在任务列，拍板的一键是「促成运行」（approve 动词没变，
+    只是起点从提案列换成了潜在任务）。"""
+    return (_pick("潜在任务有新卡待审批", "New card in Backlog awaiting approval"),
+            _pick(f"{title} —— 打开菜单栏面板，✅ 促成运行或 ❌ 拒绝",
+                  f"{title} — open the menu-bar panel: ✅ run it or ❌ reject"))
 
 
 def msg_new_cards_batch(n: int) -> tuple[str, str]:
-    """§40: >2 fresh proposals in one actd pass collapse to ONE notification
+    """§40: >2 fresh cards in one actd pass collapse to ONE notification
     (a radar backfill was previously n pings in a row). 需输入/回锅/失败
     classes stay per-card — those each demand a distinct decision.
 
     Copy is source-NEUTRAL on purpose: actd only sees the board diff, and
     fresh cards may come from any filer (radar, weekly digest, capture) —
     attributing them to 雷达 would mislabel every non-radar batch."""
-    return (_pick(f"新增 {n} 张待审批卡", f"{n} new cards awaiting approval"),
-            _pick("打开菜单栏面板逐张审批（✅ 批准 / ❌ 拒绝）",
-                  "Open the menu-bar panel to review them (✅ approve / ❌ reject)"))
+    return (_pick(f"潜在任务新增 {n} 张卡待审批",
+                  f"{n} new cards in Backlog awaiting approval"),
+            _pick("打开菜单栏面板逐张拍板（✅ 促成运行 / ❌ 拒绝）",
+                  "Open the menu-bar panel to go through them (✅ run it / ❌ reject)"))
 
 
 def msg_registry_guard(title: str, files: str) -> tuple[str, str]:
-    """§34bis 机械护栏：清理会话期间 registry 出现非 actd 的文件变动。"""
-    return (_pick("清理会话疑似改动了 registry，请核查",
-                  "Triage session may have modified the registry"),
+    """机械护栏：直跑会话期间 registry 出现非 actd 的文件变动。
+
+    §34bis（提案积压清理按钮 + preset）随 §78 一起退役，但它驱动的这套通用
+    registry-write 护栏 / 孤儿快照机制**留着**，重新挂在普通直跑上（D80.11）
+    ——任何会话都按律只读 registry，护栏与车道无关。"""
+    return (_pick("直跑会话疑似改动了 registry，请核查",
+                  "A direct-run session may have modified the registry"),
             _pick(f"{title} —— 快照比对发现非 actd 写入：{files}。会话按律只读，"
                   "请人工核查这些卡片文件",
                   f"{title} — snapshot diff found non-actd writes: {files}. "
@@ -360,20 +370,21 @@ def msg_auth(service: str) -> tuple[str, str]:
 
 
 def msg_reraised(title: str, note: str = "") -> tuple[str, str]:
-    """re-raise -> card_sent (v0.20.0 §5「回锅」): a card the user already
-    accepted came back with new actionable info and is a proposal again."""
+    """re-raise -> detected (v0.20.0 §5「回锅」，§78 起落点是潜在任务): a card the
+    user already accepted came back with new actionable info and waits again."""
     extra = f"：{note}" if note else ""
     return (_pick("回锅：你验收过的事来了新信息", "Returned: new info on an accepted task"),
-            _pick(f"{title}{extra} —— 打开菜单栏面板重新审批（✅ 批准 / ❌ 拒绝）",
-                  f"{title}{extra} — open the menu-bar panel to re-approve (✅ / ❌)"))
+            _pick(f"{title}{extra} —— 已退回潜在任务，打开菜单栏面板重新拍板（✅ 促成运行 / ❌ 拒绝）",
+                  f"{title}{extra} — back in Backlog; open the menu-bar panel to decide again (✅ / ❌)"))
 
 
 def msg_completion_hint(title: str) -> tuple[str, str]:
-    """§76.3 疑似已完成：雷达扫到的新证据说这张提案描述的事已经被做完了。
+    """§76.3 疑似已完成：雷达扫到的新证据说这张卡描述的事已经被做完了。
 
     文案指向卡上那两颗一键（记为已交付 / 不做）——**状态没有变**，提示是提示，
-    拍板仍是 owner 的一次点击（§76.1）。"""
-    return (_pick("这张提案好像已经做完了", "This proposal looks already done"),
+    拍板仍是 owner 的一次点击（§76.1）。§78 后这三条结算信号长在潜在任务卡面上
+    （§76.2 同步修法），措辞随之不再说「提案」。"""
+    return (_pick("这张卡好像已经做完了", "This card looks already done"),
             _pick(f"{title} —— 新证据显示这件事已经发生。打开看板：「已办完（记为已交付）」"
                   "或「不做」",
                   f"{title} — new evidence says it already happened. Open the board: "
@@ -381,18 +392,19 @@ def msg_completion_hint(title: str) -> tuple[str, str]:
 
 
 def msg_deadline_due(title: str) -> tuple[str, str]:
-    """§76.3 截止日到了还没批准：不再让「今天截止」无声地变成「已过期」。"""
-    return (_pick("提案到截止日了，还没批准", "A proposal hit its deadline unapproved"),
-            _pick(f"{title} —— 现在做个决定：批准 / 暂缓 / 拒绝",
-                  f"{title} — decide now: approve / defer / reject"))
+    """§76.3 截止日到了还没拍板：不再让「今天截止」无声地变成「已过期」。"""
+    return (_pick("潜在任务里这张卡到截止日了，还没拍板",
+                  "A card in Backlog hit its deadline undecided"),
+            _pick(f"{title} —— 现在做个决定：促成运行 / 拒绝",
+                  f"{title} — decide now: run it / reject"))
 
 
 def msg_repeated_unhandled(title: str, n: int) -> tuple[str, str]:
     """§76.3 被提 N 次仍未处理：一次性升级，不再只是默默把计数加一。"""
     return (_pick(f"这件事被提了 {n} 次，仍未处理",
                   f"This came up {n} times and is still unhandled"),
-            _pick(f"{title} —— 打开看板批准、暂缓或拒绝它",
-                  f"{title} — open the board to approve, defer or reject it"))
+            _pick(f"{title} —— 打开看板的「潜在任务」列：促成运行或拒绝它",
+                  f"{title} — open the board's Backlog lane: run it or reject it"))
 
 
 def msg_review_stale(n: int, days: int) -> tuple[str, str]:
@@ -437,15 +449,16 @@ def msg_dispatch_halted(title: str, n: int, reason: Optional[str] = None) -> tup
     2026-08-31: a 256-fd cap made one card fail 66 launches in 13h while the
     only notification said「会自动重试」. The body names the classified cause
     when there is one and the exact buttons that re-arm the card (停止 →
-    退回提案 → 批准 clears the streak; approve is the re-arm verb)."""
+    退回潜在任务 → 促成运行 clears the streak; approve is the re-arm verb;
+    §78 只换了退回的落点，动词与刹车语义一个字没动)."""
     why = f"：{reason}" if reason else ""
     why_en = f": {reason}" if reason else ""
     return (_pick(f"任务派发已停止重试（连续失败 {n} 次）",
                   f"Task launch stopped retrying ({n} straight failures)"),
-            _pick(f"{title}{why} —— 这张卡在「需输入」列。修好原因后点「停止」选"
-                  "「退回提案」，再重新批准即恢复派发",
+            _pick(f"{title}{why} —— 这张卡在「需输入」列。修好原因后点「停止」把它"
+                  "退回潜在任务，再「促成运行」即恢复派发",
                   f"{title}{why_en} — the card is in Needs input. Fix the cause, then"
-                  " press \"Stop\" → \"Discard & re-propose\" and approve it again"
+                  " press \"Stop\" to send it back to Backlog and run it again"
                   " to resume dispatch"))
 
 
@@ -503,7 +516,12 @@ def msg_self_improve_dispatched(title: str) -> tuple[str, str]:
 
 
 def msg_auto_dispatched(reason: str, title: str) -> tuple[str, str]:
-    """§51 观察模式通知按 lane 分派：hand lane 文案逐字不变（v0.48 原句）。"""
+    """§51 观察模式通知按 lane 分派：hand lane 文案逐字不变（v0.48 原句）。
+
+    §78/D80.4：§51 的手打卡免批车道已 tombstone（它唯一的喂料口是被删掉的提案
+    捕获框；owner 亲笔要起跑走 §34 直跑框，那条路直接产 approved）。下面的回落
+    分支因此不再有生产调用方，逐字留着只为老 reason 值不炸——新代码只该走
+    ``ok:self_improve``（§65）。"""
     if reason == "ok:self_improve":
         return msg_self_improve_dispatched(title)
     return ("观察模式：手打卡已自动派发（免批）", title)

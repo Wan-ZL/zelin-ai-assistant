@@ -2,7 +2,8 @@
 
 The trap: a DELIVERED card keeps the finished round's ``execution.session_id``
 (dispatch set it; the review/delivered promotions only add keys). The §3.5
-re-raise flips the card back to card_sent but used to leave that stale id in
+re-raise flips the card back to the backlog lane (``detected`` since §78 —
+issue #447 retired 提案/card_sent) but used to leave that stale id in
 place, and ``dispatch_approved`` skips any card with a ``session_id`` as
 "already dispatched" — so after the user approved the re-raised round it sat
 queued forever, with no agent behind it and no error anywhere.
@@ -74,7 +75,7 @@ class ReraiseDispatchTestCase(unittest.TestCase):
                         summary="need it a week earlier", deadline="2026-07-15",
                         sources=[_src()]))
         self.assertEqual(got.id, "R-100")
-        self.assertEqual(got.status, State.CARD_SENT.value)
+        self.assertEqual(got.status, State.DETECTED.value)   # §78 回锅落潜在任务
         ex = got.execution or {}
         self.assertTrue(ex.get("reraised_at"))
         # the flip must archive the FINISHED round's session id — this is what
@@ -99,7 +100,7 @@ class ReraiseDispatchTestCase(unittest.TestCase):
         cand = Requirement(id=registry.next_id(),
                            title="Ship the quarterly report",
                            summary="manager wants it now",
-                           status=State.CARD_SENT.value, sources=[_src()])
+                           status=State.DETECTED.value, sources=[_src()])
         kind, saved = apply_triage(
             {"action": "relates_to", "req": "R-019",
              "note": "manager escalated", "needs_action": True},
@@ -125,7 +126,7 @@ class ReraiseDispatchTestCase(unittest.TestCase):
             Requirement(id="", title="Ship the quarterly report",
                         summary="again, sooner", deadline="2026-07-15",
                         sources=[_src()]))
-        self.assertEqual(got.status, State.CARD_SENT.value)
+        self.assertEqual(got.status, State.DETECTED.value)   # §78
         ex = got.execution or {}
         self.assertNotIn("reraised_session_id", ex)
         self.assertNotIn("session_id", ex)

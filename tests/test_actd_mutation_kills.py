@@ -9,17 +9,18 @@ survivor below changed an observable answer and is now pinned:
                channel; the new-card loop continues past an already-known card; the
                batch collapses at 3 fresh cards and not at 2; a reraised card without
                a note; suspended time = wall advance MINUS mono advance.
-  inbox        a skipped preset capture acks ``running``; ``is_owner_ingress`` is
-               None-or-"web" (web comments fold, agent comments only record).
+  inbox        a retired §34bis preset capture falls through to a plain capture;
+               ``is_owner_ingress`` is None-or-"web" (web comments fold, agent
+               comments only record).
   session      stop_session_tracked's (stopped, issued) answers drive whether the
-               session id survives; no stop on a card_sent card; execution None is fine;
+               session id survives; no stop on a 潜在任务 card; execution None is fine;
                a harvest failure is reported to the caller.
   decisions    W17 forced expansion needs BOTH plan and DoD empty; analyze missing
                blocks approve / raise with ``noop``; notes None gets the W17 tag.
   merge        the detached launch's success is what emits ``merge_review_requested``;
                merge_force acks by outcome.
-  dispatch     auto-dispatch continues past non-proposal cards; an explicit external
-               stamp on a hand card blocks; the live count is one per executing
+  dispatch     auto-dispatch continues past ineligible cards; an explicit external
+               stamp on a §65 lane card blocks; the live count is one per executing
                session and one per launch; two approved cards both log without an
                executor; a halted card does not stop the next one; stale last_error is
                cleared after a successful launch.
@@ -30,6 +31,13 @@ survivor below changed an observable answer and is now pinned:
                interval; a probe failure is a clean False; a non-preset review card
                never gets a snapshot ref; harvest_to_review without an executor still
                lands review; a failed harvest is logged, a good one is not.
+
+**§78 re-anchor（issue #447 / owner 决策 D80）**：提案车道退役。两处判据跟着搬，
+判决口径一个字没改：①`detect_transitions` 的快照差分源 = `debt[]`（§40.6 修法；
+用 `needs_approval` 搭的快照会让这四条 alerts 判例全体空转通过）；②免批闸只认
+`detected` 且只放 §65 self_improve 出身的卡过（D80.4 把 §51 的 hand lane 通道
+立了墓碑，§78.9）。卡片 fixture 一律从退役的 `card_sent` 改成 `detected` ——
+那是这些动词在产的起点状态。
 """
 import unittest
 from unittest import mock
@@ -39,6 +47,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 from act import actd
 from act.lib import analytics, config, registry
 from act.lib.registry import Requirement, State
+from tests.self_improve_testkit import lane_card
 
 
 def _clean():
@@ -79,37 +88,44 @@ class Base(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # alerts
 # --------------------------------------------------------------------------- #
-def _na(*items):
-    return {"needs_approval": list(items), "running": [], "review": []}
+def _backlog(*items):
+    """§78（issue #447 / D80）：新卡与结算通知的差分源是潜在任务列
+    （``debt[]``）；``needs_approval`` 留在 wire 上但恒空——快照照实摆成
+    这个形状，用 ``needs_approval`` 搭出来的判例会全体空转通过。"""
+    return {"needs_approval": [], "debt": list(items),
+            "running": [], "review": []}
 
 
 class AlertsKillsTest(Base):
     def test_digest_skip_needs_a_dict_source_with_the_exact_channel(self):
-        prev = _na()
-        curr = _na({"id": "R-1", "title": "digest 卡", "sources": [{"channel": "weekly-digest"}]},
-                   {"id": "R-2", "title": "非 dict 来源", "sources": ["weekly-digest"]},
-                   {"id": "R-3", "title": "别的渠道", "sources": [{"channel": "digest"}]})
+        prev = _backlog()
+        curr = _backlog(
+            {"id": "R-1", "title": "digest 卡", "sources": [{"channel": "weekly-digest"}]},
+            {"id": "R-2", "title": "非 dict 来源", "sources": ["weekly-digest"]},
+            {"id": "R-3", "title": "别的渠道", "sources": [{"channel": "digest"}]})
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual([m[2] for m in msgs], ["R-2", "R-3"])
 
     def test_known_card_first_does_not_stop_the_scan(self):
-        prev = _na({"id": "R-1", "title": "老卡"})
-        curr = _na({"id": "R-1", "title": "老卡"}, {"id": "R-2", "title": "新卡"})
+        prev = _backlog({"id": "R-1", "title": "老卡"})
+        curr = _backlog({"id": "R-1", "title": "老卡"}, {"id": "R-2", "title": "新卡"})
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual([m[2] for m in msgs], ["R-2"])
 
     def test_batch_threshold_is_more_than_two(self):
-        two = _na({"id": "R-1", "title": "a"}, {"id": "R-2", "title": "b"})
-        three = _na({"id": "R-1", "title": "a"}, {"id": "R-2", "title": "b"}, {"id": "R-3", "title": "c"})
-        self.assertEqual([m[2] for m in actd.detect_transitions(_na(), two)], ["R-1", "R-2"])
-        batched = actd.detect_transitions(_na(), three)
+        two = _backlog({"id": "R-1", "title": "a"}, {"id": "R-2", "title": "b"})
+        three = _backlog({"id": "R-1", "title": "a"}, {"id": "R-2", "title": "b"},
+                         {"id": "R-3", "title": "c"})
+        self.assertEqual([m[2] for m in actd.detect_transitions(_backlog(), two)], ["R-1", "R-2"])
+        batched = actd.detect_transitions(_backlog(), three)
         self.assertEqual(len(batched), 1)
         self.assertEqual(batched[0][2:], (None, actd.notify.KIND_PROPOSAL))
         self.assertIn("3", batched[0][0] + batched[0][1])
 
     def test_reraised_card_without_a_note(self):
         with mock.patch.object(actd.notify, "msg_reraised", return_value=("t", "b")) as msg:
-            msgs = actd.detect_transitions(_na(), _na({"id": "R-9", "title": "回锅", "reraised": True}))
+            msgs = actd.detect_transitions(
+                _backlog(), _backlog({"id": "R-9", "title": "回锅", "reraised": True}))
         msg.assert_called_once_with("回锅", "")
         self.assertEqual(msgs, [("t", "b", "R-9", actd.notify.KIND_PROPOSAL)])
 
@@ -130,20 +146,31 @@ class AlertsKillsTest(Base):
 # inbox
 # --------------------------------------------------------------------------- #
 class InboxKillsTest(Base):
-    def test_skipped_preset_capture_acks_running(self):
+    def test_a_retired_preset_capture_falls_through_to_a_plain_capture(self):
+        """§34bis 的「提案积压清理」preset **retired v-next**（并入 §78，D80.11）：
+        按钮住在被删掉的提案泳道头上。原判例钉的是「在途的 preset 卡会让第二次
+        点击被跳过、ack ``running`` 且不建卡」——那条**去重支路随按钮一起退役**，
+        所以这一条改钉退役之后的 fail-safe（inbox 的退役注释逐字要求的那一条）：
+        一份迟到的 / 伪造的 ``preset`` 键**一律被忽略**，capture 照普通路径走完
+        （`_apply_capture` 真的被调到），绝不因为一个认不出的键被静默吞掉。
+        ``preset`` 这个 inbox 键本身不删（add-only，宪法第 6 条）。"""
         registry.save(Requirement(id="R-t", title="清理", status=State.APPROVED.value,
                                   preset=actd.PROPOSALS_TRIAGE_PRESET))
         import json
         import uuid
         aid = str(uuid.uuid4())
         (config.INBOX_DIR / f"{aid}.json").write_text(json.dumps(
-            {"action": "capture", "text": "清理", "mode": "run", "preset": actd.PROPOSALS_TRIAGE_PRESET}),
+            {"action": "capture", "text": "清理", "mode": "run",
+             "preset": actd.PROPOSALS_TRIAGE_PRESET}),
             encoding="utf-8")
         with mock.patch.object(actd, "_write_applied_ack") as ack, \
-                mock.patch.object(actd, "_apply_capture") as cap:
+                mock.patch.object(actd, "_apply_capture",
+                                  return_value="running") as cap:
             self.assertEqual(actd.process_inbox(), 1)
         ack.assert_called_once_with(aid, "running")
-        cap.assert_not_called()
+        cap.assert_called_once()
+        # 退役的 preset 键不再被转发给 apply_capture（它已经不选任何支路了）
+        self.assertNotIn("preset", cap.call_args.kwargs)
 
     def test_owner_ingress_is_none_or_web(self):
         self.assertTrue(actd._is_owner_ingress(None))
@@ -152,7 +179,7 @@ class InboxKillsTest(Base):
         self.assertFalse(actd._is_owner_ingress("remote"))
         self.assertFalse(actd._is_owner_ingress("WEB"))
         for via, folded in (("web", True), ("agent", False)):
-            req = Requirement(id=f"R-{via}", title="t", status=State.CARD_SENT.value, plan=["p"])
+            req = Requirement(id=f"R-{via}", title="t", status=State.DETECTED.value, plan=["p"])
             registry.save(req)
             self.assertEqual(actd._apply_decision(req, "comment", "改", via=via), "running")
             after = registry.load(req.id)
@@ -197,7 +224,7 @@ class SessionKillsTest(Base):
 
     def test_no_stop_for_a_proposal_card_and_execution_none_is_fine(self):
         fake = self._fake((True, True, "ok"))
-        req = Requirement(id="R-p", title="t", status=State.CARD_SENT.value,
+        req = Requirement(id="R-p", title="t", status=State.DETECTED.value,
                           execution={"session_id": "sid-p"})
         with mock.patch.object(actd, "executor", fake):
             actd._stop_live_session(req, "trash")
@@ -228,12 +255,12 @@ _EXTERNAL = [{"who": "boss", "channel": "slack", "date": "2026-09-01", "quote": 
 
 class DecisionsKillsTest(Base):
     def test_w17_forced_expansion_needs_both_plan_and_dod_empty(self):
-        with_dod = Requirement(id="R-d", title="t", status=State.CARD_SENT.value,
+        with_dod = Requirement(id="R-d", title="t", status=State.DETECTED.value,
                                sources=list(_EXTERNAL), plan=None, definition_of_done=["done"])
         registry.save(with_dod)
         self.assertEqual(actd._apply_decision(with_dod, "approve", None), "running")
         self.assertEqual(registry.load("R-d").status, State.APPROVED.value)
-        bare = Requirement(id="R-e", title="t", status=State.CARD_SENT.value,
+        bare = Requirement(id="R-e", title="t", status=State.DETECTED.value,
                            sources=list(_EXTERNAL), plan=None, definition_of_done=None, notes=None)
         registry.save(bare)
         self.assertEqual(actd._apply_decision(bare, "approve", None), "running")
@@ -242,14 +269,14 @@ class DecisionsKillsTest(Base):
         self.assertTrue(after.notes.startswith("[W17]"), after.notes)
 
     def test_analyze_missing_blocks_approve_and_raise_with_noop(self):
-        ext = Requirement(id="R-f", title="t", status=State.CARD_SENT.value, sources=list(_EXTERNAL))
+        ext = Requirement(id="R-f", title="t", status=State.DETECTED.value, sources=list(_EXTERNAL))
         registry.save(ext)
         debt = Requirement(id="R-g", title="t", status=State.DETECTED.value)
         registry.save(debt)
         with mock.patch.object(actd, "analyze", None):
             self.assertEqual(actd._apply_decision(ext, "approve", None), "noop")
             self.assertEqual(actd._apply_decision(debt, "raise", None), "noop")
-        self.assertEqual(registry.load("R-f").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-f").status, State.DETECTED.value)
         self.assertEqual(registry.load("R-g").status, State.DETECTED.value)
 
 
@@ -263,8 +290,8 @@ class MergeKillsTest(Base):
         merge_review.MERGE_DIR.mkdir(parents=True, exist_ok=True)
         for p in merge_review.MERGE_DIR.glob("*.json"):
             p.unlink()
-        registry.save(Requirement(id="R-1", title="a", status=State.CARD_SENT.value))
-        registry.save(Requirement(id="R-2", title="b", status=State.CARD_SENT.value))
+        registry.save(Requirement(id="R-1", title="a", status=State.DETECTED.value))
+        registry.save(Requirement(id="R-2", title="b", status=State.DETECTED.value))
 
     def test_requested_event_only_when_the_launch_succeeded(self):
         import subprocess
@@ -286,8 +313,11 @@ class MergeKillsTest(Base):
 # --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
-def _hand(rid, status=State.CARD_SENT.value, **kw):
-    kw.setdefault("sources", [{"who": "zelin", "channel": "quick", "date": "2026-09-01", "quote": "q"}])
+def _hand(rid, status=State.DETECTED.value, **kw):
+    """手打出身的卡。§78 / D80.4：hand lane 的免批通道**已退役**，所以这种卡
+    自此只用来当「排在前面的不合格卡」——它永远不会被自动提升。"""
+    kw.setdefault("sources", [{"who": "zelin", "channel": "quick",
+                               "date": "2026-09-01", "quote": "q"}])
     kw.setdefault("cost_estimate_usd", 1.0)
     kw.setdefault("target_repo", TMP_HOME)
     kw.setdefault("target_kind", "existing")
@@ -296,17 +326,36 @@ def _hand(rid, status=State.CARD_SENT.value, **kw):
     return req
 
 
-class DispatchKillsTest(Base):
-    def test_auto_dispatch_continues_past_non_proposal_cards(self):
-        _hand("R-1", status=State.APPROVED.value)
-        _hand("R-2")
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 1)
-        self.assertEqual(registry.load("R-2").status, State.APPROVED.value)
+def _lane(rid, status=State.DETECTED.value, **kw):
+    """§65 self_improve lane 卡——§78 之后**唯一**还能免批自动提升的一类。"""
+    req = lane_card(rid, status=status, execution=None, **kw)
+    registry.save(req)
+    return req
 
-    def test_explicit_external_stamp_blocks_a_hand_card(self):
-        _hand("R-3", origin_trust="external")
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
-        self.assertEqual(registry.load("R-3").status, State.CARD_SENT.value)
+
+class DispatchKillsTest(Base):
+    def test_auto_dispatch_continues_past_ineligible_cards(self):
+        """跳过不合格卡用的是 ``continue`` 不是 ``break``：排在前面的卡不许让
+        后面那张该提升的永远等下去。§78 / D80.4 之后「不合格」多了一种——
+        hand 出身的卡即便正躺在潜在任务列里也再不参与免批（它唯一的喂料口是被
+        删掉的提案捕获框），所以这条判例同时钉住两种跳过都得是 ``continue``。"""
+        _hand("R-1", status=State.APPROVED.value)      # 状态不对 → 跳过
+        _hand("R-2")                                   # detected 但 hand 出身 → 跳过
+        _lane("R-3")                                   # §65 lane 卡 → 该提升
+        cfg = config.Config(self_improve_enabled=True)
+        self.assertEqual(actd.auto_dispatch_pass(cfg), 1)
+        self.assertEqual(registry.load("R-3").status, State.APPROVED.value)
+        # §51 hand lane 墓碑：手打卡留在潜在任务列，等 owner 点「促成运行」
+        self.assertEqual(registry.load("R-2").status, State.DETECTED.value)
+
+    def test_explicit_external_stamp_blocks_a_lane_card(self):
+        """W17 belt-and-braces：显式 ``origin_trust: external`` 章比 sources 现算
+        更严，forced_expand 的卡绝不自动派发。§78 / D80.4 把这道复核重锚到 §65
+        lane（hand lane 已退役，它的卡连资格闸都不进，那样的断言会空转通过）。"""
+        _lane("R-3", origin_trust="external")
+        cfg = config.Config(self_improve_enabled=True)
+        self.assertEqual(actd.auto_dispatch_pass(cfg), 0)
+        self.assertEqual(registry.load("R-3").status, State.DETECTED.value)
 
     def test_live_count_and_cap_within_one_pass(self):
         cfg = config.Config(raw={"autodispatch": {"max_concurrent": 2}})
@@ -386,7 +435,7 @@ class HousekeepingKillsTest(Base):
 
     def test_lineage_and_thread_siblings_protect(self):
         self._cold("R-1")                                                   # improvement target
-        registry.save(Requirement(id="R-1i", title="改进", status=State.CARD_SENT.value, improvement_of="R-1"))
+        registry.save(Requirement(id="R-1i", title="改进", status=State.DETECTED.value, improvement_of="R-1"))
         self._cold("R-2", improvement_of="R-2b")                             # improves an open card
         registry.save(Requirement(id="R-2b", title="base", status=State.DETECTED.value))
         self._cold("R-3")                                                   # thread sibling open
@@ -661,7 +710,7 @@ class AttachmentRefsKillsTest(Base):
             (att / name).write_bytes(b"x")
             old = _time.time() - actd._ATTACH_GC_MAX_AGE_S - 60
             os.utime(att / name, (old, old))
-        registry.save(Requirement(id="R-1", title="t", status=State.CARD_SENT.value,
+        registry.save(Requirement(id="R-1", title="t", status=State.DETECTED.value,
                                   execution={"attachments": [123, None, f" {keep} "]}))
         from pathlib import Path
         order = [keep, att / "orphan-a.png", att / "orphan-b.png"]
@@ -676,10 +725,10 @@ class PurgeCountKillsTest(Base):
     def test_purge_counts_only_due_cards(self):
         cfg = config.Config()
         cfg.trash_retention_days = 7
-        fresh = Requirement(id="R-f", title="t", status=State.CARD_SENT.value)
+        fresh = Requirement(id="R-f", title="t", status=State.DETECTED.value)
         registry.save(fresh)
         registry.trash(fresh, "deleted")
-        old = Requirement(id="R-o", title="t", status=State.CARD_SENT.value)
+        old = Requirement(id="R-o", title="t", status=State.DETECTED.value)
         registry.save(old)
         registry.trash(old, "deleted")
         old = registry.load("R-o")
@@ -705,7 +754,7 @@ class StragglerKillsTest(Base):
         self.assertNotIn("[", str(pend[0].get("ts")))
 
     def test_fold_appends_to_a_string_plan(self):
-        req = Requirement(id="R-sp", title="t", status=State.CARD_SENT.value, plan="第一步")
+        req = Requirement(id="R-sp", title="t", status=State.DETECTED.value, plan="第一步")
         registry.save(req)
         self.assertEqual(actd._apply_decision(req, "comment", "补一步"), "running")
         plan = registry.load("R-sp").plan

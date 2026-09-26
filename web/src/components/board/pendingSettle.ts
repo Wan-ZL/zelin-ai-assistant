@@ -8,6 +8,7 @@
 //   - 换列动词（approve / accept / rework / defer / trash / reject / archive / restore / unarchive / raise /
 //     abort_execution / stop_to_review / revert_review / done_external）→ 该 id 离开了提交时所在的列
 //     （PendingSweep.swift:250-258 sticky hide 的释放条件；running 与 needs_input 合成一列，同原生 ids(in: .running)）；
+//     例外 raise：§78 之后它**不换列**（就地把这张潜在任务卡填满），真信号 = 行变成灰占位（processing: true）；
 //   - merge_apply / merge_dismiss → 该建议离开了 merge_suggestions（:289-292）；
 //   - comment → 卡的 plan 指纹变了（actd fold_comment 往 plan 追加「修改方向」tag，:218-229）或 steers[] 变长
 //     （运行中卡的 comment 是 steer 中继，§44.3-S）或卡离开了原列；
@@ -170,6 +171,13 @@ export function landed(rec: PendingRecord, board: Board): boolean {
     const row = findRow(board, id);
     if (!row || typeof row.notes_text !== "string" || !rec.noteTs) return false;
     return parseFoldNotes(row.notes_text).folds.some((f) => f.ts === rec.noteTs && f.splitInto !== null);
+  }
+  // §78：「研究并提议」不再换列（raising 与 detected 同投影进 debt），换列判据永远等不到——
+  // 真信号改看这一行**变成灰占位**（status raising → 投影 processing: true）。卡真的离开了
+  // 潜在任务（并入 / 被删）也算落地，所以判完仍落回下面的换列分支。
+  if (action === "raise") {
+    const row = findRow(board, id);
+    if (row?.processing === true) return true;
   }
   if (LANE_VERBS.has(action ?? "")) {
     if (!rec.sourceLane) return bumped;

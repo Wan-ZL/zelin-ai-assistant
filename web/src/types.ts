@@ -14,7 +14,11 @@ export interface CardSource {
   [key: string]: unknown;
 }
 
-/** 提案卡（needs_approval 分区项；含 raising 占位项 processing=true） */
+/**
+ * 提案卡（needs_approval 分区项）。**§78 起这一列退役**：wire 键留着、恒为 `[]`
+ * （add-only 只增不删），机器卡一律落 `debt[]`（DebtCard）。这个形状本身没退役——
+ * 它仍是样板间（styleguide）与卡面判例的模型，字段与 `_backlog_row` 逐字同源。
+ */
 export interface ApprovalCard {
   id: string;
   title: string;
@@ -264,11 +268,18 @@ export interface ReviewCard {
   [key: string]: unknown;
 }
 
-/** 欠账/备选卡（debt 分区项，v0.17 起展示层叫「潜在任务/Backlog」） */
+/**
+ * 潜在任务卡（debt 分区项，v0.17 起展示层叫「潜在任务/Backlog」）。
+ * §78 提案车道退役后这是**唯一**的机器卡面：dashboard.py `_backlog_row` 把旧提案行的
+ * 整条尾巴搬了过来（detected / raising / 落单 card_sent 同一张卡面），所以下面的键是
+ * **add-only 长出来的**，逐字镜像 wire（防腐 #10 无翻译层）——egress（§7）、
+ * effective_tier（§50 打字确认）、cost 三样任缺一样，「促成运行」就成了瞎批。
+ * 老 server 的 debt 行不带这些键 → 全部 optional，缺席即不渲染那一节。
+ */
 export interface DebtCard {
   id: string;
   title: string;
-  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
+  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；潜在任务/回收站卡缺席 */
   work_id?: string | null;
   /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
   display_id?: string;
@@ -278,12 +289,59 @@ export interface DebtCard {
   type?: string;
   sources?: CardSource[];
   summary?: string;
-  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号）。备选卡的出口是
-   *  「永久完成（封存）」/「删除」——状态永远没变过，拍板仍是 owner 的一次点击 */
+  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号）。出口是
+   *  「已办完」/「拒绝」/「永久完成（封存）」——状态永远没变过，拍板仍是 owner 的一次点击 */
   completion_hint?: CompletionHint;
   /** §37 摘要优先面（原生 DebtRow displaySummary）：卡面标题走 cardHeadline */
   display_title?: string;
   user_titled?: boolean;
+  former_titles?: string[];
+  // ----- §78 add-only：旧提案行的卡面（「促成运行」要看的全部判据） ----- #
+  /** 声明档位 T0 | T1 | T2（未知值原样；缺席 = 老 server 的债务行） */
+  tier?: string;
+  /** W17 生效档位（§50）：外部出身恒 "T2"；缺席 = 消费端回落 tier */
+  effective_tier?: string;
+  /** 出身章四值词表（§50）；缺章整键省略 */
+  origin_trust?: string;
+  /** 档位提示；raising 行是「AI 研究中」而不是档位（server 现算） */
+  tier_hint?: string;
+  /** §51 / C-6 auto-dispatch 被拦下的原因（常态原因不上卡，整键省略） */
+  auto_dispatch_block?: string;
+  deadline?: string | null;
+  days_left?: number | null;
+  repeated?: number;
+  cost_usd?: number | null;
+  show_cost?: boolean;
+  /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
+  cost_state?: string;
+  green_sign?: boolean;
+  disagreement?: string | null;
+  improvement_of?: string | null;
+  /** raising 灰占位（AI 正在补上下文与计划）——不给「促成运行」 */
+  processing?: boolean;
+  plan?: string[];
+  dod?: string[];
+  outputs?: string[];
+  delivery_mode?: "chat" | "repo" | string;
+  reraised?: boolean;
+  reraised_note?: string;
+  /** §7 落点三元组：target_kind "new"（新建 repo）/ "existing"（改现有） */
+  target_repo?: string | null;
+  target_name?: string | null;
+  target_kind?: "new" | "existing" | string | null;
+  /** §7（issue #11）：促成运行即出机的后果；空 / 缺席 = 不出机 */
+  egress?: EgressRow[];
+  /** §10（issue #7）：出生 capture 的 inbox stem；非 capture 出身的卡缺席 */
+  capture_id?: string;
+  /** §44 静默并入次数（0 = 从未）——「已并入×N」紫章 */
+  silent_merged?: number;
+  /** §76.2 结算信号：截止日已到（days_left ≤ 0）仍没人拍板 → 卡面出决策提示行 */
+  decision_due?: boolean;
+  /** §76.2 结算信号：被提 ≥ approval.mention_escalation 次仍未处理 → 被提×N 章转红 */
+  mention_escalated?: boolean;
+  /** §45 / §78 D80.7：LIMITED 信任的来源出生——落列但不响通知（alerts 跳过这一行）。
+   *  假 / 缺席 = 整键不出。页面不据此改卡面，镜像它只为不撒谎 */
+  quiet_birth?: boolean;
   [key: string]: unknown;
 }
 
@@ -400,6 +458,8 @@ export interface Maintenance {
 export interface Board {
   generated_at: string;
   counts: Record<string, number>;
+  /** §78 tombstone：提案列退役，这一列**恒为空**（counts.needs_approval 恒 0）——
+   *  键与计数留在 wire 上是 add-only 纪律，不是还有卡会落进来 */
   needs_approval: ApprovalCard[];
   running: TaskRow[];
   needs_input: TaskRow[];
@@ -423,7 +483,7 @@ export interface Board {
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
   radar_sources?: Record<string, RadarSourceHealth>;
-  /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——提案列顶一行 info 通知 */
+  /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——§78 起落潜在任务条顶一行 info 通知 */
   fold_receipts?: FoldReceipt[];
   [key: string]: unknown;
 }

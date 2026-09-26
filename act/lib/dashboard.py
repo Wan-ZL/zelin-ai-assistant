@@ -7,6 +7,13 @@ registry ``status=executing`` items with ``claude agents --json --all`` by
 v0.48.8 (#119 — the session blocked/waiting join is retired; wire key stays,
 add-only).
 
+§78 提案车道退役：机器卡一律落**潜在任务**（``debt[]``）。``detected`` /
+``raising`` / 以及退役车道的落单 ``card_sent`` 三个状态共用同一个行构造器
+``_backlog_row``，卡面 = 旧提案卡面的全貌（egress / effective_tier / cost 一个
+不少——「促成运行」这一下点在哪张卡面上，审批就有多少信息）。``needs_approval``
+这个 wire 键**永久保留且恒为 []**（``counts.needs_approval`` 恒 0）：跨组件字段
+只增不删（header 的 add-only 纪律），冻结的原生 app（D3）按 BoardLane 全集解码。
+
 merge_suggestions (merge-review 契约 六) is a pure projection of the job files
 under ``state/merge/*.json`` (actd/act.merge_review write them; we only read):
 analyzing/done/failed are emitted, dismissed is not, corrupt files are skipped,
@@ -24,11 +31,12 @@ projection, never rewritten server-side (§44 single writer).
 观察值，绝不自己探），运行中/待验收行多一个 ``slept_seconds``（§71.2 —— 这一轮
 里电脑睡掉的秒数，卡面据此说「其中 N 小时电脑睡眠」）。
 
-§76.2 的投影面（add-only）：提案行多三个结算信号——``decision_due``（截止日已到
-仍未批准）、``mention_escalated``（被提 ≥ ``approval.mention_escalation`` 次）与
-``completion_hint``（雷达盖的「疑似已完成」证据，``at`` 转 epoch int）。三个都是
+§76.2 的投影面（add-only）：潜在任务行多三个结算信号——``decision_due``（截止日
+已到仍未批准）、``mention_escalated``（被提 ≥ ``approval.mention_escalation`` 次）
+与 ``completion_hint``（雷达盖的「疑似已完成」证据，``at`` 转 epoch int）。三个都是
 **只读判据**，本模块不改任何卡片状态（§76.1 的红线：结算动作永远是 owner 的一次
-点击）。
+点击）。前两个自 §78 起随卡一起搬到潜在任务列（D80.8 修订 §76.2 的「备选卡面没有
+deadline 决策行」一句）——那是它们唯一还存在的卡面。
 
 ``copy_cmd`` (§2 / §6 / §68.7 takeover) deliberately starts with a bare
 ``claude`` (§55 第五幕 追记 2026-09-07): a ``--bg`` worker runs the binary of
@@ -381,8 +389,17 @@ def _name(req: Requirement) -> str:
     return _s(req.title or req.id)
 
 
+# §78：回收站行的 kind 说的是「这张卡从哪一列被删的」。提案列退役后，机器卡的
+# 那一列只剩潜在任务——detected 之外，raising（灰占位）与落单的 card_sent 也都
+# 住在那儿，所以三个 prev_status 一律报 "debt"；再报 "suggestion"（web 渲染成
+# 「建议」）就是指着一个已经不存在的列。其余 prev_status（approved/执行中/
+# 待验收/已交付……）沿用既有回落值，语义不变。
+_BACKLOG_PREV_STATUSES = (State.DETECTED.value, State.RAISING.value,
+                          State.CARD_SENT.value)
+
+
 def _trash_kind(req: Requirement) -> str:
-    return "debt" if req.prev_status == State.DETECTED.value else "suggestion"
+    return "debt" if req.prev_status in _BACKLOG_PREV_STATUSES else "suggestion"
 
 
 def _dod(req: Requirement) -> list:
@@ -436,7 +453,8 @@ def _target_view(req: Requirement, cfg: config.Config) -> tuple[str, str, str]:
 
 def _cost_view(req: Requirement, cfg: config.Config
                ) -> tuple[Optional[float], bool, str]:
-    """(cost_usd, show_cost, cost_state) for a proposal card (§40).
+    """(cost_usd, show_cost, cost_state) for a 潜在任务 card (§40；§78 之前
+    是提案卡——卡面并列后这三个值是「促成运行」那一下的钱面)。
 
     ``cost_state`` is the honesty bit: "estimated" when a number exists,
     "unknown" when there is none (direct-run promotions, capture fallbacks,
@@ -560,7 +578,7 @@ def _capture_id(req: Requirement) -> Optional[str]:
 
 
 def _decision_due(req: Requirement) -> bool:
-    """§76.2 决策到点：截止日已到或已过（`days_left <= 0`）而卡还挂在提案列。
+    """§76.2 决策到点：截止日已到或已过（`days_left <= 0`）而卡还挂在潜在任务列。
 
     无 deadline / 坏 deadline = False（拿不准不催人）。这是**投影**，不是状态：
     §70.2 的 `stale:deadline_passed` 静默清扫一字不动，它只是让「今天截止」不再
@@ -596,7 +614,8 @@ def _completion_hint_view(req: Requirement) -> Optional[dict]:
 
 
 def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
-    """The add-only tail of a needs_approval (card_sent) row. Every key here is
+    """The add-only tail of a 潜在任务 (``debt[]``) row — §78 之前它是提案行的
+    尾巴，车道退役后整条搬到唯一还在的机器卡面上。Every key here is
     optional/add-only:
 
     - ``reraised`` / ``reraised_note`` (v0.20.0 §5 「回锅」marker: this
@@ -614,7 +633,11 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
       they are derived, so there is no "unknown" to omit);
     - ``completion_hint`` (§76.2): the stored 疑似已完成 evidence, omitted when
       the card has none. **None of the three changes status** — they are what
-      turns a silent board row into a decision the owner can see."""
+      turns a silent board row into a decision the owner can see;
+    - ``quiet_birth`` (§45 / §78 D80.7): 这张卡出生自 LIMITED 信任的来源，落列
+      但**不响通知**。§45 的回声环一刀在提案列退役后靠它继续可观测：
+      ``alerts.detect_transitions`` 跳过带这个键的新行，卡照样进潜在任务列
+      （没有一张卡因为静默而隐形）。假 / 缺席 = 整键不出（FULL 出生照常响）。"""
     return {
         "reraised": bool(ex.get("reraised_at")),
         "reraised_note": str(ex.get("reraised_note") or ""),
@@ -625,6 +648,7 @@ def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config) -> dict:
         "decision_due": _decision_due(req),
         "mention_escalated": _mention_escalated(req, cfg),
         **_opt("completion_hint", _completion_hint_view(req)),
+        **_opt("quiet_birth", getattr(req, "quiet_birth", None)),
     }
 
 
@@ -1087,11 +1111,21 @@ def _silent_merged(req: Requirement) -> int:
     return _int_or(getattr(req, "silent_merge_count", 0), 0) or 0
 
 
-def _card_sent_row(req: Requirement, ctx: _Ctx) -> dict:
+def _backlog_row(req: Requirement, ctx: _Ctx) -> dict:
+    """§78 潜在任务行：``detected`` / ``raising`` / 落单 ``card_sent`` 同一张卡面。
+
+    提案列退役后这是**唯一**的机器卡面，所以它长的是旧提案行的全貌，不是旧
+    债务行的缩略版：egress（§7，issue #11）、``effective_tier``（§50 打字确认）
+    与 cost 三样任缺一样，「促成运行」就成了瞎批——卡面缩水 = 审批降级。
+    detected 行原有的 ``type`` 一并保留（债务卡面本来就显示它）；``raising``
+    只多一个 ``processing: true`` 的灰占位语义（AI 正在补上下文与计划），字段
+    仍然一个不少——「研究并提议」自 §78 起是**就地填满同一张卡**，不再换列。
+    """
     cfg = ctx.cfg
     cost, show_cost, cost_state = _cost_view(req, cfg)
     target_repo, target_name, target_kind = _target_view(req, cfg)
     ex = _execution(req)
+    raising = req.status == State.RAISING.value
     return {
         "id": _s(req.id),
         "title": _s(req.title),
@@ -1101,7 +1135,9 @@ def _card_sent_row(req: Requirement, ctx: _Ctx) -> dict:
         "target_name": target_name,
         "target_kind": target_kind,
         "tier": _s(req.tier),
-        "tier_hint": TIER_HINTS.get(_s(req.tier), ""),
+        # 灰占位行的档位提示说的是「AI 还在研究」而不是档位——扩写完成前
+        # 「一键可批」是假话（宪法 3：诚实的状态报告）。
+        "tier_hint": "AI 研究中" if raising else TIER_HINTS.get(_s(req.tier), ""),
         # W17 add-only：生效档位（外部来源强制 T2；否则同声明 tier）。
         # v0.48.1（§50）：外部出身 = 显式 origin_trust=external 章
         # **或** sources 现算为 external——缺章卡也从 sources 现算，
@@ -1109,6 +1145,8 @@ def _card_sent_row(req: Requirement, ctx: _Ctx) -> dict:
         # 客户端 decodeIfPresent 兼容（缺字段回落 tier）。
         "effective_tier": risk.effective_tier(req).tier,
         "hardness": req.hardness,
+        # §78：旧债务行的 type 跟着搬过来（潜在任务卡面一直显示它）。
+        "type": req.type,
         "deadline": req.deadline,
         "days_left": days_left(req.deadline),
         "repeated": _repeated(req),
@@ -1126,52 +1164,20 @@ def _card_sent_row(req: Requirement, ctx: _Ctx) -> dict:
         "plan": _as_list(req.plan),
         "outputs": list(req.outputs or []),
         "dod": _dod(req),
-        "processing": False,
+        # 灰占位（AI 研究中）= 不给决策按钮的那张卡；客户端只看这一个 bool
+        # （web ProposalCard/DebtCardItem 的 selectable 也读它）。
+        "processing": raising,
         "delivery_mode": _delivery_mode(req),
         **_proposal_extras(req, ex, cfg),
     }
 
 
-def _raising_row(req: Requirement, ctx: _Ctx) -> dict:
-    # AI is expanding this debt into a proposal — show it in 待审批 as a
-    # greyed spinner placeholder so the click gives immediate feedback.
-    return {
-        "id": _s(req.id),
-        "title": _s(req.title),
-        "summary": _summary(req),
-        **_title_fields(req),
-        "tier": _s(req.tier),
-        "effective_tier": risk.effective_tier(req).tier,  # W17 add-only
-        "tier_hint": "AI 研究中",
-        "processing": True,
-        "sources": [],
-        "plan": [],
-        "dod": [],
-        "show_cost": False,
-        "delivery_mode": _delivery_mode(req),
-        # v-next add-only（§50）；§10 capture_id（issue #7）——占位
-        # 行就带，客户端对账「我刚输入的那条」不用等扩写完成
-        **_opt("origin_trust", getattr(req, "origin_trust", None)),
-        **_opt("capture_id", _capture_id(req)),
-    }
-
-
-def _detected_row(req: Requirement, ctx: _Ctx) -> dict:
-    return {
-        "id": _s(req.id),
-        "title": _s(req.title),
-        "summary": _summary(req),
-        **_title_fields(req),
-        "hardness": req.hardness,
-        "type": req.type,
-        "sources": _source_view(req, ctx.cfg),
-        # §76.2：备选卡也会被盖「疑似已完成」（§76.1 的盖章状态含 detected），
-        # 所以债务列同样要能看见那条证据——潜在任务卡的出口（封存 / 删除）本来
-        # 就在卡上，缺的只是「它可能已经不用做了」这一句（PR #349 评审）。
-        # 提案列的两个派生 bool 不来这一列：备选卡没有 deadline 决策面，
-        # 「被提×N」也不在这张卡面上（§66.2 原生 DebtRow 逐字镜像）。
-        **_opt("completion_hint", _completion_hint_view(req)),
-    }
+# （``_raising_row`` / ``_detected_row``：retired §78 —— 并入 ``_backlog_row``。
+# 灰占位行的三件事全部保住：``processing: true``、``tier_hint``「AI 研究中」、
+# 以及 ``capture_id``（§10 issue #7 的回执对账键，现在由 _proposal_extras 发，
+# 扩写完成前就带）。债务行原来只发 ``completion_hint``、不发 §76.2 的两个派生
+# bool——那条限制自 §78 / D80.8 起作废：deadline 决策行与「被提×N」现在就长在
+# 这张卡面上，因为这已经是 owner 唯一能拍板的卡面。）
 
 
 def _trash_row(req: Requirement, ctx: _Ctx) -> dict:
@@ -1195,15 +1201,16 @@ def _trash_row(req: Requirement, ctx: _Ctx) -> dict:
 def _halted_question(ex: dict) -> tuple[str, Optional[str]]:
     """(question, last_error_id) for a §4 dispatch-halted row. question 是
     固定文案：这里没有 agent 在提问，说的是事实和唯一出口（停止 → 退回
-    提案 → 重批）。"""
+    潜在任务 → 重批；§78 之后 abort_execution 的落点是潜在任务列，文案
+    跟着落点走，不许还指着退役的提案列）。"""
     fid = failures.classify(ex.get("last_error"))
     hint = failures.user_message(fid) or _s(ex.get("last_error")) or ""
     n = int(ex.get("dispatch_class_streak") or ex.get("dispatch_attempts") or 0)
     question = failures.pick(
         f"派发连续失败 {n} 次，已停止自动重试：{hint}。修好原因后点"
-        "「停止」选「退回提案」，再重新批准即恢复派发",
+        "「停止」选「退回潜在任务」，再重新批准即恢复派发",
         f"Launch failed {n} times in a row; auto-retry stopped: {hint}. "
-        "Fix the cause, then press \"Stop\" → \"Discard & re-propose\" "
+        "Fix the cause, then press \"Stop\" → \"Discard & send back to Backlog\" "
         "and approve again to resume")
     return question, fid
 
@@ -1557,13 +1564,22 @@ def _session_row(req: Requirement, ctx: _Ctx) -> tuple[str, dict]:
 # status -> (lane, builder) for the single-shape lanes; approved and the
 # session states branch on more than status (see _lane_row).
 _SIMPLE_LANES = {
-    State.CARD_SENT.value: ("needs_approval", _card_sent_row),
-    State.RAISING.value: ("needs_approval", _raising_row),
-    State.DETECTED.value: ("debt", _detected_row),
+    # §78：机器卡一律落潜在任务（debt），三个状态共用 _backlog_row 一张卡面。
+    # detected 是常态；raising 是「研究并提议」进行中的灰占位；card_sent 是
+    # **退役车道的落单卡**——新卡永不再写这个状态（§78 一次性归并扫描把存量
+    # 搬走），但投影照收：法典里没有任何一张卡可以因为状态退役而隐形。
+    State.DETECTED.value: ("debt", _backlog_row),
+    State.RAISING.value: ("debt", _backlog_row),
+    State.CARD_SENT.value: ("debt", _backlog_row),
     State.TRASHED.value: ("trash", _trash_row),
 }
 _SESSION_STATES = (State.EXECUTING.value, State.REVIEW.value, State.DELIVERED.value)
 _INVISIBLE_STATES = (State.REJECTED.value, State.MERGED.value, State.ARCHIVED.value)
+# §78 tombstone —— ``needs_approval`` 这一列已退役（§2 的提案列并入 §78 的
+# 潜在任务列），但 **wire 键永久保留、恒为 []**（counts.needs_approval 恒 0）：
+# 跨组件 JSON 字段只增不改不删（CONTRACT header 的 add-only 纪律），冻结的原生
+# app（D3）与 iOS 仍按 BoardLane 全集解码，少一个键就是整份 payload 解不开。
+# 谁也别把它从 _LANES 里摘掉——它的空是法条，不是遗漏。
 _LANES = ("needs_approval", "running", "needs_input", "review", "completed",
           "debt", "trash")
 
@@ -1667,6 +1683,10 @@ def _assemble(lanes: dict, completed_total: int, archived_rows: list,
     dash = {
         "generated_at": _iso_now(),
         "counts": {
+            # §78 tombstone：列已退役，这个数恒为 0（lanes["needs_approval"]
+            # 永远是空表）。照常用 len() 而不是写死 0——键的语义仍是「这一列
+            # 有几张卡」，只是答案永远是没有。徽章口径见 web 的 badgeCount
+            # （debt + needs_input + review，D80.12）。
             "needs_approval": len(lanes["needs_approval"]),
             "running": len(lanes["running"]),
             "needs_input": len(lanes["needs_input"]),
