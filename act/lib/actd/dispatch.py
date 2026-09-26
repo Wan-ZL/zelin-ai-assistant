@@ -113,18 +113,29 @@ def auto_dispatch_pass(d: Daemon, cfg: config.Config) -> int:
         if not policy.is_self_improve_sources(req.sources):
             _clear_stale_block(d, req)   # §51 退役：hand 卡再不会被这个闸拦
             continue
-        try:
-            ok, reason = _admission(req, cfg, paused)
-            ex = dict(req.execution or {})
-            if not ok:
-                _record_block(d, req, ex, reason)
-                continue
-            cost = _approve_auto(d, req, ex, reason)
-            approved += 1
-            _announce_auto(d, req, reason, cost, ad["notify"])
-        except Exception as e:  # noqa: BLE001 - one bad card must not kill the pass
-            d.log(f"autodispatch: {getattr(req, 'id', '?')} FAILED: {e}")
+        approved += _lift_one(d, req, cfg, paused, ad["notify"])
     return approved
+
+
+def _lift_one(d: Daemon, req: Requirement, cfg: config.Config,
+              paused: bool, notify_flag: bool) -> int:
+    """裁一张 §65 lane 卡：过了全部天花板就免批抬进 approved（返 1），被拦
+    或途中出错就留在潜在任务列（返 0）。
+
+    一张坏卡不许带走整个 pass（宪法第 11 条）——所以异常在这一层收口，
+    调用方只拿到一个计数。"""
+    try:
+        ok, reason = _admission(req, cfg, paused)
+        ex = dict(req.execution or {})
+        if not ok:
+            _record_block(d, req, ex, reason)
+            return 0
+        cost = _approve_auto(d, req, ex, reason)
+        _announce_auto(d, req, reason, cost, notify_flag)
+        return 1
+    except Exception as e:  # noqa: BLE001 - one bad card must not kill the pass
+        d.log(f"autodispatch: {getattr(req, 'id', '?')} FAILED: {e}")
+        return 0
 
 
 def _admission(req: Requirement, cfg: config.Config, paused: bool) -> tuple:

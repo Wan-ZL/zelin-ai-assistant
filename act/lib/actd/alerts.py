@@ -104,20 +104,32 @@ def _new_card_msgs(p_card: dict, c_card: dict) -> list:
     msgs: list = []
     fresh: list = []
     for rid, item in c_card.items():
-        if rid in p_card:
+        if _no_ping_owed(rid, item, p_card):
             continue
-        if _quiet_birth(item):
-            # §45 LIMITED 出生：进列、不响（回锅同理——静默来源的卡不因为
-            # 被重述一次就获得打断 owner 的资格）
-            continue
-        if item.get("reraised"):
-            t, b = notify.msg_reraised(item.get("title", rid),
-                                       item.get("reraised_note") or "")
-            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
+        reraised = _reraised_msg(rid, item)
+        if reraised is not None:
+            msgs.append(reraised)
         elif not _from_weekly_digest(item):   # digest cards: announced by the digest itself
             fresh.append((rid, item))
     msgs.extend(_fresh_card_msgs(fresh))
     return msgs
+
+
+def _no_ping_owed(rid: str, item: dict, p_card: dict) -> bool:
+    """这一行欠不欠一次打断：上一帧就在了（不是新卡），或者它安静出生。
+
+    ``quiet_birth`` = §45 LIMITED 一类的出生事实（§78 D80.7）——回锅同理：
+    静默来源的卡不因为被重述一次就获得打断 owner 的资格。"""
+    return rid in p_card or _quiet_birth(item)
+
+
+def _reraised_msg(rid: str, item: dict):
+    """回锅卡的那条通知（v0.20.0「回锅」文案）；不是回锅卡给 None。"""
+    if not item.get("reraised"):
+        return None
+    t, b = notify.msg_reraised(item.get("title", rid),
+                               item.get("reraised_note") or "")
+    return (t, b, rid, notify.KIND_PROPOSAL)
 
 
 def _fresh_card_msgs(fresh: list) -> list:

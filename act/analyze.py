@@ -346,6 +346,18 @@ def _expansion_data(runner, prompt: str) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # public
 # --------------------------------------------------------------------------- #
+def _already_expanded_without_a_ticket(req: Requirement) -> bool:
+    """二道防线的判据：这张卡已经写厚了，而且没人排过这一次扩写。
+
+    ``raising`` 是「有人明确排了一次扩写」的唯一票据（§8 / §78）。没票据、又
+    已经带着 plan 或 DoD 的卡再进来，只可能是调用方把「机器卡都是 detected」
+    错读成「都是裸欠账」——而 ``_apply_expansion`` 是覆盖写，放过去就是一段
+    内容被无声顶掉。"""
+    if str(req.status) == State.RAISING.value:
+        return False
+    return bool(req.plan or req.definition_of_done)
+
+
 def expand_debt(
     req: Requirement,
     cfg: Optional[config.Config] = None,
@@ -366,8 +378,7 @@ def expand_debt(
     （真正的闸在调用点：inbox.``_unexpanded`` 与 quick_capture.
     ``_fold_note_into``，这一层只兜住漏过的）。
     """
-    if str(req.status) != State.RAISING.value and (req.plan
-                                                   or req.definition_of_done):
+    if _already_expanded_without_a_ticket(req):
         return req
     if cfg is None:
         cfg = config.load_config()
