@@ -31,9 +31,16 @@ from act.lib import config, dashboard
 from act.lib.registry import Requirement, State
 
 
-def _build(reqs, create_github_repo):
+def _build(reqs, create_github_repo, default_target_repo=None):
     cfg = config.Config()
     cfg.create_github_repo = create_github_repo
+    if default_target_repo is not None:
+        # 卡上没有 target_repo 时披露算的是**配置默认落点**（`cfg.default_target_repo`，
+        # 出厂值 `~/Projects/your-workbench`）。不钉死它，判例就随跑测的机器上那个
+        # 目录存不存在而变：存在 → 落点是 existing → 不出机；不存在 → 「新建 repo」
+        # 照实披露。两种都是对的产品行为，但**判例不许有两种答案**——这条在
+        # macOS（目录恰好在）上绿、在 CI 的 linux runner 上红过一次。
+        cfg.default_target_repo = str(default_target_repo)
     return dashboard.build_dashboard(reqs=reqs, agents=[], cfg=cfg, archived=[])
 
 
@@ -128,16 +135,28 @@ class EgressDisclosureTestCase(unittest.TestCase):
         dash = _build([self._card("P-1", self.existing), raising,
                        self._card("P-8", self.new_dir,
                                   status=State.CARD_SENT.value)],
-                      create_github_repo=True)
+                      create_github_repo=True, default_target_repo=self.existing)
         self.assertEqual({r["id"] for r in dash["debt"]}, {"P-1", "P-9", "P-8"})
         for rid in ("P-1", "P-9", "P-8"):
             with self.subTest(row=rid):
                 self.assertIn("egress", _row(dash, rid))
-        # 占位行没有 target，披露的是「什么也不出机」而不是缺键
+        # 占位行自己没有 target，落点是配置默认（这里钉成已存在的目录）——
+        # 披露的是「什么也不出机」而不是缺键
         self.assertEqual(_row(dash, "P-9")["egress"], [])
         # 落单卡与 detected 卡一样会出机建 repo，所以照样如实披露
         self.assertEqual(_row(dash, "P-8")["egress"][0]["kind"],
                          dashboard.EGRESS_GITHUB_REPO_CREATE)
+
+    def test_a_placeholder_whose_default_landing_is_new_discloses_the_repo(self):
+        """上一条的另一半：占位行的「空」不是「占位行不出机」这条规矩，而是那台
+        机器上配置默认落点恰好存在。默认落点不存在时，批准这张卡**会**建 repo，
+        卡面就必须现在说——披露跟着后果走，不跟着状态走（§7 / issue #11）。"""
+        raising = Requirement(id="P-9", title="t", status=State.RAISING.value)
+        dash = _build([raising], create_github_repo=True,
+                      default_target_repo=self.new_dir)
+        self.assertEqual(_row(dash, "P-9")["egress"],
+                         [{"kind": dashboard.EGRESS_GITHUB_REPO_CREATE,
+                           "target": self.new_dir.name, "visibility": "private"}])
 
 
 if __name__ == "__main__":
