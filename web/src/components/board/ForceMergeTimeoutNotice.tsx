@@ -1,6 +1,7 @@
 // §21bis 强制合并 180 s 没落地的诚实超时条（原生 Store.swift sweepTimeouts 的 notice-merge-force：lane .approval，
 // kind .raiseTimeout——橙色，一批过期只出一条）。数据 = store.forceMergeTimedOutAt（章退场的同一笔落时间戳）；
-// 点 × 或 120 s（原生 notices 自然褪去的时长）后归 null。提案列 composer 之下、并入回执之旁。
+// 点 × 或 120 s（原生 notices 自然褪去的时长）后归 null。§78 起与并入回执一起住潜在任务书立条顶
+// （原生那一列退役了，条自己在有超时条时强制展开——BacklogStrip）。
 // 120 s 从**落时间戳**起算，不从本组件挂载起算（原生 sweep 按 notice.created 清，与哪个视图在前无关）：超时在
 // 设置页期间发生、十分钟后回看板，条已过期 → 直接归 null，不再复活一整段 120 s。
 import { useEffect } from "react";

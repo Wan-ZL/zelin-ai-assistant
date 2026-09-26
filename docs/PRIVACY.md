@@ -46,7 +46,7 @@
 | 3 | Slack 雷达 | launchd，每 3 分钟 | Anthropic | 开 | `features.slack_radar: false` / 不配 token |
 | 4 | Gmail 雷达 | launchd，每 5 分钟 | Anthropic | 开 | `features.gmail_radar: false` / 不配 app password |
 | 5 | Quick capture | 你发 self-DM 时 | Anthropic | — | 不发即不触发 |
-| 6 | 欠账扩写 | 欠账升级为提案时 | Anthropic（+ 联网工具） | 开 | 无专用开关（不用欠账循环即不触发） |
+| 6 | 欠账扩写 | 你点「研究并提议」时 | Anthropic（+ 联网工具） | 开 | 无专用开关（不点即不触发） |
 | 7 | 执行派发 | **你批准一张卡时** | Anthropic | — | 审批本身就是开关 |
 | 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | **关**（v0.11 起） | 默认即关；设 `execution.create_github_repo: true` 才启用 |
 | 9 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
@@ -118,7 +118,7 @@
 
 ### 6. 欠账扩写（analyze）→ Anthropic + 联网研究工具
 
-- **触发**：一条欠账（debt）被升级为可审批提案时（CONTRACT §8，`act/analyze.py`）。
+- **触发**：你在一张潜在任务卡上点「研究并提议」时——AI 就地把计划、成本与验收标准补进同一张卡，卡不换列（CONTRACT §8，`act/analyze.py`）。
 - **Payload**：欠账的 title + notes + sources 引文。出境前过 `sanitize.scrub()`。
 - **工具白名单（只读红线）**：这个 headless run 允许 `WebFetch` / `WebSearch` + 4 个只读
   Slack MCP 工具（读 thread/channel/搜索/用户资料），**永不**给 Bash/Edit/发消息类工具
@@ -147,7 +147,7 @@
 - **Payload**：`gh repo create <目录名> --private` 在你的 GitHub 账号下新建**私有** repo,
   执行产出（可能源自屏幕/会议/邮件内容）会被推送为 feature 分支 + draft PR。
 - **批准前可见**（issue #11，CONTRACT §7 `egress[]`）：开关为 true 且卡指向新目录、repo 交付时，
-  提案卡本身多一行红色后果句「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」——
+  潜在任务卡本身多一行红色后果句「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」——
   你在点批准之前就看得到这条出机后果；开关关（默认）时 `egress` 恒为空、卡面无任何变化。
 - **关闭时的行为**：仅本地 `git init` + 本地分支交付；任何失败也自动留在本地
   （"stay local"，永不阻塞派发）。
@@ -402,10 +402,11 @@
   prompt 级缓解,不是系统 enforcement,恶意构造的内容仍有可能诱导 agent 执行非预期操作。
   因此: **审批是这个系统的安全边界**——批准前请看清卡片的来源与计划（卡片 sources
   会显示发件人/频道）,拿不准就 ❌ 或 💬 打回。
-- **两条免批 lane 的边界（CONTRACT §51 / §65；§0 第 12 条修宪，2026-09-02）**：上面那句
+- **唯一一条免批 lane 的边界（CONTRACT §51 / §65 / §78；§0 第 12 条修宪，2026-09-02）**：上面那句
   对**人工审批的卡**成立；免批的卡把边界换成了确定性后盾，诚实列出：
-  - *hand lane*（你亲手打的快速捕获 / Slack self-DM）：文本是你自己写的，边界 = 你的
-    键盘；天花板（T2 / 对外沟通 / 新 repo / 无估价）仍回人批。
+  - *你亲手打的卡*（快速捕获 / Slack self-DM）自 §78 起**不再免批**：它们和机器卡一样落
+    进潜在任务列，要你点一下「促成运行」才开跑。想不经人审直接开跑只剩运行中列顶的
+    直跑框一条路，它会当面说明「跳过了 plan / 费用预估的人审预览」。
   - *self_improve lane*（AI 对**本仓库**的自我改进，D7）：审批从起点移到终点——你审的
     是**草稿 PR**，不是派发。后盾：① 准入只认写死的 sources channel + `target_repo`
     的 realpath（LLM 可写字段开不了门）；② 会话跑在 `--strict-mcp-config

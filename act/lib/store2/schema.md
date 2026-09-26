@@ -1,4 +1,4 @@
-# store2 schema v1 — 设计说明（B1；BUILD-CONTRACT §3）
+# store2 schema — 设计说明（B1；BUILD-CONTRACT §3；版本 truth = `store.py` `SCHEMA_VERSION`）
 
 `schema.sql` 是 store2 SQLite 真源的唯一 DDL（版本钉扎 truth = `store.py` `SCHEMA_VERSION`，schema.sql 末尾同值；旧库经 `store._UPGRADES` 逐级升级）。**v0.48.8 起已接线**（CONTRACT §53：registry 门面 + 激活协议 + agent 墙生效；本文其余「本 PR 不接线」语境的段落保留作 v1 设计出处）。本文记录每个结构决定的出处与取舍，供 B2（store.py）/B3（migrate/export）/B4（测试）与修宪引用。
 
@@ -63,6 +63,17 @@ activities = dashi `task_activities` 同型审计流（`changes` JSON `[{field,b
 | 任意态 → trashed | user, system | CONTRACT header「any state → trashed」 |
 | trashed → 任意态 | user | §9 restore 精确复位 prev_status（含 merged/rejected/archived 等罕见来路，不许 brick） |
 | 活状态/delivered → merged | user | §21 merge_apply/merge_force 全程用户拍板，actd 只是确定性执行者 |
+
+**§78 提案车道退役后的补行（schema v3，issue #447 / owner decision D80）**——`card_sent` 成为退役态：上表带 `card_sent` 的行**一行不删**（法条表 add-only，存量落单卡还要被搬走），但没有任何写者再落进它，新落点全是 `detected`。升级路径 = `store._UPGRADES[2]`（`_upgrade_2_to_3`：只跑下表的 `INSERT OR IGNORE` + `PRAGMA user_version = 3`，**一行卡都不碰**——搬卡是 actd 主循环那次一次性归并扫描的事，宪法第 1 条单写者）；schema.sql 末尾有逐行相同的一批 INSERT，全新库与升级库收敛到同一形状。
+
+| 转移 | actor | 出处 |
+|---|---|---|
+| detected → approved | system | §65 self_improve lane 免批（§51 hand lane retired，D80.4） |
+| detected → delivered | user | §10 done_external，现在从潜在任务列直接点 |
+| card_sent → detected | system | §78 一次性归并扫描（actd 主循环，唯一写者） |
+| approved/executing/review → detected | user | §10 abort_execution 退回潜在任务（原落点 card_sent） |
+| approved → detected | system | §65.1 通道关掉时撤回免批派发（旧白名单漏收了 `approved→card_sent(system)`，退役时补它的孪生） |
+| raising → detected | user | 扩写中卡上的评论折回潜在任务重审 |
 
 **actor 语义**：actor = 动作的**发起者**，不是写库进程——actd 替用户执行 inbox 动作时记 `user`；radar/triage/digest/auto-archive 等自主管线记 `system`；headless 执行 session 及一切旁路进程记 `agent`。
 

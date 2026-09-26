@@ -1,9 +1,18 @@
-"""Inverse inbox actions — frozen contract v0.10.2 (CONTRACT §10).
+"""Inverse inbox actions — frozen contract v0.10.2 (CONTRACT §10, §78).
 
-done_external   : card_sent | review | approved | executing -> delivered
-                  (v0.12 widened from card_sent | review); execution.accepted_at
-                  set; notes get "[done outside] Zelin 在系统外完成".
-                  card_sent | review : a live session is left alone (the human
+§0 clause 2「一切可逆」is what this file guards: every owner action must keep an
+inverse. §78 (issue #447, owner decision D80) retires the 提案 (card_sent) lane
+and folds it into 潜在任务 (detected) — the inverses all SURVIVE, they just land
+one lane over. Their source/target sets are re-anchored below; ``card_sent``
+stays a legal-but-retired value that existing stragglers can still be acted on
+from (add-only, §0 clause 6).
+
+done_external   : detected | review | approved | executing -> delivered
+                  (v0.12 widened from card_sent | review; §78 re-anchored the
+                  backlog head onto detected and kept card_sent for stragglers);
+                  execution.accepted_at set; notes get
+                  "[done outside] Zelin 在系统外完成".
+                  detected | review : a live session is left alone (the human
                   finished, the AI session idles out).
                   executing + session: best-effort executor.harvest_delivery
                   first (non-empty results only are written to
@@ -12,10 +21,11 @@ done_external   : card_sent | review | approved | executing -> delivered
                   blocked agent; failure NEVER blocks the delivery).
                   approved (queued, undispatched): straight to delivered,
                   no harvest/stop.
-abort_execution : approved | executing | review -> card_sent; live session
-                  stopped best-effort via executor.stop_session (a stop failure
-                  NEVER blocks the state rollback); execution.session_id archived
-                  to aborted_session_id then removed (clean re-dispatch on
+abort_execution : approved | executing | review -> detected (§78: 「退回潜在
+                  任务」, was card_sent); live session stopped best-effort via
+                  executor.stop_session (a stop failure NEVER blocks the state
+                  rollback); execution.session_id archived to
+                  aborted_session_id then removed (clean re-dispatch on
                   re-approval); execution.done dropped; aborted_at recorded.
                   (v0.28.1 §30: review added — a 待验收 card routed into 运行中
                   by an attach-reactivated session can be discarded from there.)
@@ -79,10 +89,22 @@ class InverseActionsBase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# done_external — original paths: card_sent | review -> delivered
+# done_external — original paths: detected | review -> delivered
+# （§78：backlog 那一头从 card_sent 换成 detected，退役值留作落单卡的入口）
 # --------------------------------------------------------------------------- #
 class DoneExternalTestCase(InverseActionsBase):
-    def test_from_card_sent_delivers_and_stamps(self):
+    def test_from_detected_delivers_and_stamps(self):
+        """§78.4 补行 `detected → delivered(user)`：潜在任务列现在就是卡面所在,
+        「已办完 · 记为已交付」从这里一键点（退役前这颗按钮长在提案卡上）。"""
+        _mk_req(status=State.DETECTED.value)
+        req = self._run("done_external")
+        self.assertEqual(req.status, State.DELIVERED.value)
+        self.assertTrue((req.execution or {}).get("accepted_at"))
+        self.assertIn("[done outside] Zelin 在系统外完成", req.notes)
+
+    def test_from_retired_card_sent_straggler_still_delivers(self):
+        # §78 add-only（§0 第 6 条）：退役 ≠ 删值。归并扫描还没跑到的存量提案卡
+        # 仍然可以被「已办完」一键落账——不然它就成了一张没有出口的死卡。
         _mk_req(status=State.CARD_SENT.value)
         req = self._run("done_external")
         self.assertEqual(req.status, State.DELIVERED.value)
@@ -103,14 +125,17 @@ class DoneExternalTestCase(InverseActionsBase):
         self.assertTrue(ex.get("accepted_at"))
 
     def test_preserves_existing_notes(self):
-        _mk_req(status=State.CARD_SENT.value, notes="原有备注")
+        _mk_req(status=State.DETECTED.value, notes="原有备注")
         req = self._run("done_external")
         self.assertTrue(req.notes.startswith("原有备注"))
         self.assertIn("[done outside]", req.notes)
 
     def test_wrong_status_is_idempotent_noop(self):
         # v0.12: approved|executing are now ALLOWED — the no-op set shrinks.
-        wrong = (State.DETECTED.value, State.RAISING.value,
+        # §78: detected LEFT the no-op set with the lane fold (it is the head of
+        # _DONE_EXTERNAL_FROM now); raising stays — a card mid-expansion has no
+        # 卡面 to click 「已办完」 from.
+        wrong = (State.RAISING.value,
                  State.DELIVERED.value, State.TRASHED.value)
         for i, st in enumerate(wrong):
             rid = f"R-81{i}"
@@ -121,7 +146,7 @@ class DoneExternalTestCase(InverseActionsBase):
             self.assertNotIn("[done outside]", req.notes or "", msg=st)
 
     def test_replay_does_not_overwrite_accepted_at(self):
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         req = self._run("done_external")
         first = (req.execution or {}).get("accepted_at")
         self.assertTrue(first)
@@ -230,10 +255,10 @@ class DoneExternalExtendedTestCase(InverseActionsBase):
 
 
 # --------------------------------------------------------------------------- #
-# abort_execution — approved | executing -> card_sent
+# abort_execution — approved | executing | review -> detected（§78「退回潜在任务」）
 # --------------------------------------------------------------------------- #
 class AbortExecutionTestCase(InverseActionsBase):
-    def test_from_executing_archives_session_and_returns_to_card_sent(self):
+    def test_from_executing_archives_session_and_returns_to_detected(self):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-1", "done": True,
                            "log": "/tmp/x.log"})
@@ -241,7 +266,7 @@ class AbortExecutionTestCase(InverseActionsBase):
         with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_called_once_with("sess-1")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)   # §78：退回潜在任务
         ex = req.execution or {}
         self.assertNotIn("session_id", ex)        # 干净重派发
         self.assertEqual(ex.get("aborted_session_id"), "sess-1")
@@ -256,7 +281,7 @@ class AbortExecutionTestCase(InverseActionsBase):
         with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_called_once_with("sess-2")    # stop 被调……
-        self.assertEqual(req.status, State.CARD_SENT.value)  # ……失败不阻塞回退
+        self.assertEqual(req.status, State.DETECTED.value)  # ……失败不阻塞回退
         ex = req.execution or {}
         self.assertEqual(ex.get("aborted_session_id"), "sess-2")
         self.assertNotIn("session_id", ex)
@@ -268,15 +293,18 @@ class AbortExecutionTestCase(InverseActionsBase):
         with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_not_called()                  # 还没派发，无 session 可停
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         ex = req.execution or {}
         self.assertTrue(ex.get("aborted_at"))
         self.assertNotIn("aborted_session_id", ex)
 
     def test_wrong_status_is_idempotent_noop(self):
-        # v0.28.1 §30: review DROPPED from the no-op set — 「退回提案」 must apply
-        # to a review card routed into 运行中 by attach-reactivated session
-        # activity (covered by test_from_review_discards_and_returns_to_card_sent).
+        # v0.28.1 §30: review DROPPED from the no-op set — 「退回潜在任务」 must
+        # apply to a review card routed into 运行中 by attach-reactivated session
+        # activity (covered by test_from_review_discards_and_returns_to_detected).
+        # §78: detected is now the TARGET of the abort, so aborting a card that
+        # already sits there stays the idempotent no-op (双击保护不变); the
+        # retired card_sent is a no-op for the same reason.
         wrong = (State.CARD_SENT.value, State.DELIVERED.value,
                  State.DETECTED.value)
         for i, st in enumerate(wrong):
@@ -292,17 +320,18 @@ class AbortExecutionTestCase(InverseActionsBase):
             self.assertNotIn("aborted_session_id", ex, msg=st)
             self.assertNotIn("aborted_at", ex, msg=st)
 
-    def test_from_review_discards_and_returns_to_card_sent(self):
+    def test_from_review_discards_and_returns_to_detected(self):
         # v0.28.1 §30: 待验收 card routed to 运行中 by a reactivated session —
-        # 「退回提案」 stops the live session and kicks the card back to card_sent
-        # for a fresh decision (the reattached run is discarded).
+        # 「退回潜在任务」 stops the live session and kicks the card back to
+        # detected (§78, was card_sent) for a fresh decision (the reattached run
+        # is discarded).
         _mk_req(status=State.REVIEW.value,
                 execution={"session_id": "sess-rv2", "done": True})
         stub = mock.Mock(return_value=(True, True, "stopped"))
         with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_called_once_with("sess-rv2")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         ex = req.execution or {}
         self.assertNotIn("session_id", ex)                 # 干净重派发
         self.assertEqual(ex.get("aborted_session_id"), "sess-rv2")
@@ -316,8 +345,23 @@ class AbortExecutionTestCase(InverseActionsBase):
             self._run("abort_execution")
             req = self._run("abort_execution")   # 连点第二下
         self.assertEqual(stub.call_count, 1)
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertEqual((req.execution or {}).get("aborted_session_id"), "sess-3")
+
+    def test_abort_is_reversible_the_same_card_can_be_approved_again(self):
+        """§0 第 2 条一切可逆 + §78：停止的逆动作在新车道上依然存在。
+
+        退役前「停止」把卡退回提案列，owner 在那一列点「批准」复跑；提案列没了
+        之后落点是潜在任务，**同一颗按钮**（`approve`，`decisions._approve` 本来
+        就接受 detected）必须仍然把它送回 approved——否则 abort 就成了一条单程路。
+        """
+        _mk_req(status=State.EXECUTING.value, execution={"session_id": "sess-4"})
+        with mock.patch.object(actd.executor, "stop_session_confirmed",
+                               mock.Mock(return_value=(True, True, "stopped"))):
+            req = self._run("abort_execution")
+        self.assertEqual(req.status, State.DETECTED.value)
+        req = self._run("approve")
+        self.assertEqual(req.status, State.APPROVED.value)
 
 
 # --------------------------------------------------------------------------- #

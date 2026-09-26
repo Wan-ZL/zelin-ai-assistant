@@ -1,15 +1,18 @@
 // 看板列各自滚动（owner 决策 D42，CONTRACT §54.4 2026-09-06 追记；原生 Kanban.swift：横向 ScrollView 里每列
 // 各一个纵向 ScrollView，窗口从不整体滚）——真浏览器判例：
-//   · 在提案列上滚滚轮 → 只有这一列的卡片列表动了：这一列的列头与列顶输入框一像素不动、其余列的列头与首卡不动、
+//   · 在运行中列上滚滚轮 → 只有这一列的卡片列表动了：这一列的列头与列顶输入框一像素不动、其余列的列头与首卡不动、
 //     文档与 .shell-main 都没滚（document 不再是滚动容器）；
+//     （§78 提案车道退役前这几条盯的是提案列——它是当时的第一根 <Lane>；那一列连同它的捕获框一起删了，
+//      判例整体搬到现在的第一根 <Lane>「运行中」，它的列顶常驻 direct-run 框担任「钉住的输入框」角色。）
 //   · 键盘：把焦点落到这一列视口外的卡上 → 浏览器把这一列滚过去（卡进入列表的可视框），列头照旧钉着；
 //   · 首卡的焦点环（2px outline，在卡的 border box 之外）落在滚动容器的 padding box 里——滚动容器只画 padding box，
 //     顶上不留 2px 就把环的上边切掉（#274 审查抓到）；卡自己的位置一像素不动；
 //   · 多选态的操作条横贯看板底部、整条在视口里（此前它是横排里的一个 flex 项，被排到最右列之后、视口之外）；
 //   · 永久性完成书立条展开后：搜索框是滚动容器的兄弟、钉在条顶，滚行列表时它不动（与列顶输入框同款；#274 审查抓到）；
 //   · D40 的换页滚动记忆挂在 .shell-main 上（文档不滚了）：设置页滚过 400 → 第一次到回收站从顶开始 → 回设置页还原 400。
-// 数据 = demo initial 场景（提案列四张卡 + 一张占位；600px 高的视口下列表必然溢出）；书立条那条用 page.route
-// 往 /api/board 里注 20 条 archived 行（demo seed 的 archived 是空的）。
+// 数据 = demo initial 场景（运行中列 = 1 张 needs_input 阻塞卡 + 3 张 running 卡，500px 高的视口下列表必然溢出；
+// 左书立条自 §78 起默认展开——它是机器卡的唯一收件箱，D80.3）；书立条那条用 page.route 往 /api/board 里注 20 条
+// archived 行（demo seed 的 archived 是空的）。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
 
@@ -24,13 +27,17 @@ test.afterAll(() => {
   server?.stop();
 });
 
-/** 短视口：列表必然比列高，滚得起来 */
+/**
+ * 短视口：列表必然比列高，滚得起来。
+ * 500 而不是原先的 600：§78 之后第一根 <Lane> 是运行中（4 张卡），它比退役的提案列（4 卡 + 1 占位）矮，
+ * 600px 下只溢出 ~49px——判例要的是「滚得动一大截」，视口再压 100px 把余量还回来。
+ */
 async function openBoard(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.setItem("zai.theme", "light");
     window.localStorage.setItem("zai.lang", "zh");
   });
-  await page.setViewportSize({ width: 1440, height: 600 });
+  await page.setViewportSize({ width: 1440, height: 500 });
   await page.goto(`${server.baseURL}/`);
   await page.getByRole("heading", { level: 1 }).waitFor();
   await page.locator(".shell-main").waitFor();
@@ -45,7 +52,7 @@ interface LaneGeometry {
   firstItemTops: number[];
   /** 每列列表的 scrollTop */
   listScrollTops: number[];
-  /** 提案列输入框的 top */
+  /** 运行中列输入框（常驻 direct-run 框，§34 mode:"run"）的 top */
   composerTop: number;
   docScrollY: number;
   mainScrollTop: number;
@@ -70,21 +77,21 @@ function measure(page: Page): Promise<LaneGeometry> {
   });
 }
 
-test("滚提案列 → 只有这一列的卡动；它的列头 / 输入框与其余列一像素不动；文档不滚", async ({ page }) => {
+test("滚运行中列 → 只有这一列的卡动；它的列头 / 输入框与其余列一像素不动；文档不滚", async ({ page }) => {
   await openBoard(page);
   const list = page.locator(".board-column .column-list").first();
   const before = await measure(page);
   // 文档本身已不是滚动容器：整页恰好一屏高
   expect(before.docScrollHeight).toBe(before.innerHeight);
   expect(before.listScrollTops.every((t) => t === 0)).toBe(true);
-  // 看板层只横向滚：没有任何东西（含两根收起的书立条）把 .board-main 撑出纵向溢出
+  // 看板层只横向滚：没有任何东西（含默认展开的左书立条、收起的右书立条）把 .board-main 撑出纵向溢出
   const boardOverflow = await page.locator(".board-main").evaluate((el) => ({
     vertical: el.scrollHeight - el.clientHeight,
     horizontal: el.scrollWidth - el.clientWidth,
   }));
   expect(boardOverflow.vertical).toBe(0);
   expect(boardOverflow.horizontal).toBeGreaterThan(0);
-  // 提案列确实溢出（不然这个判例什么都证明不了）
+  // 运行中列确实溢出（不然这个判例什么都证明不了）
   expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100);
 
   await list.hover();
@@ -159,7 +166,7 @@ test("首卡的焦点环不被滚动容器切掉：每列 scrollTop 0 时列表�
 });
 
 test("永久性完成书立条：展开后搜索框钉在条顶，滚行列表时不动", async ({ page }) => {
-  // demo seed 的 archived 是空的：注 20 条进 /api/board，600px 高的条必然溢出
+  // demo seed 的 archived 是空的：注 20 条进 /api/board，500px 高的条必然溢出
   await page.route("**/api/board", async (route) => {
     const response = await route.fetch();
     const body = await response.json();

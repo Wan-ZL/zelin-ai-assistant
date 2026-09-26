@@ -8,6 +8,11 @@ D2/D7 retention, legacy aggregate incl. non-dict rows and short timestamps) is
 rendered with a frozen clock; ``tests/fixtures/insights/views.golden.json``
 holds the view dicts, ``body.golden.md`` the assembled body. Captured from the
 pre-P3b script, so any drift in counting, ordering or wording flips this test.
+
+§78（提案车道退役）：漏斗第三级的**显示名**改成 "First card filed"（卡不再叫
+提案），但它统计的事件名集合 ``{"milestone_first_card", "card_sent"}`` 一字未动
+——事件名是历史遥测行的归档键，改名会让老装机的这一级凭空塌陷。这里的金样同时
+钉住这两件事：标签变了、口径没变（每级的 count / drop-off 数字逐字不动）。
 """
 import datetime as dt
 import json
@@ -86,6 +91,19 @@ class ViewsGoldenTestCase(unittest.TestCase):
     def test_install_fallback_when_no_app_launch(self):
         rows = [r for r in self.rows if not (isinstance(r, dict) and r.get("props", {}).get("feature") == "app_launch")]
         self.assertEqual(json.loads(json.dumps(ir.funnel(rows))), self.golden["funnel_fallback"])
+
+    def test_retired_card_sent_event_name_still_counts_the_stage(self):
+        """§78：提案车道退役只改了漏斗那一级的**显示名**，事件名集合没动。
+        ``card_sent`` 是历史遥测行的归档键（老装机一直在发），把它从口径里摘掉
+        等于让那一级在存量数据上凭空塌陷——本例用只有 ``card_sent`` 的一台设备
+        钉住：这一级照样算它过关。"""
+        stage = [s for s in ir.FUNNEL if s[0] == "first_card"][0]
+        self.assertEqual(stage[2][1], {"milestone_first_card", "card_sent"})
+        rows = [_row("legacy", "feature_first_reach", 9, props={"feature": "app_launch"}),
+                _row("legacy", "card_sent", 8)]
+        by_key = {s["key"]: s for s in ir.funnel(rows)["stages"]}
+        self.assertEqual(by_key["first_card"]["devices"], 1)
+        self.assertEqual(by_key["first_card"]["label"], "First card filed")
 
     def test_empty_views(self):
         self.assertEqual(json.loads(json.dumps(ir.retention([]))), self.golden["retention_empty"])

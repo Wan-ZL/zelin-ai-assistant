@@ -1,7 +1,9 @@
 """Usage report — aggregate the analytics event log for improvement decisions.
 
 契约：CONTRACT §16（feature flags + 自我进化：本地事件日志 `state/analytics/events.jsonl`
-是唯一输入，只读）+ §24（每周摘要把 `build_report(days=7)` 折进 digest）。
+是唯一输入，只读）+ §24（每周摘要把 `build_report(days=7)` 折进 digest）+ §78（提案车道
+退役：`card_sent` 作为**事件名**照旧——历史事件行不可改名；它数的是「铸了多少张卡」，
+那些卡现在落在潜在任务列而不是提案列）。
 
     python -m act.report            # last 30 days
     python -m act.report --days 7
@@ -128,6 +130,9 @@ def _resume_lines(events: list) -> list:
 
 
 def _funnel_lines(c_all: Counter) -> list:
+    # `card_sent` = 历史**事件名**（§78 车道退役不改事件名：老事件行按它聚合，
+    # 改名 = 三十天窗口里的旧行凭空消失）。渲染文案逐字不动——tests/fixtures/
+    # report/usage.golden.txt 按字节钉住这一行。
     n_appr = c_all.get("inbox_approve", 0)
     n_rej = c_all.get("inbox_reject", 0)
     n_trash = c_all.get("inbox_trash", 0)

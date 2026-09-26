@@ -24,7 +24,7 @@ macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack�
 
 - **感知**——[screenpipe](https://github.com/mediar-ai/screenpipe) 本地录屏+录音；定时任务增量导出，headless Claude 加工进 Obsidian wiki（`ingest/`）。
 - **发现**——三路需求雷达（Obsidian 笔记 / Slack / Gmail）扫出"别人要你做的事"，写入需求注册表（SQLite 唯一真源，每日导出一份可 diff 的 YAML 镜像），跨源合并去重（`act/`）。
-- **审批**——每条需求扩写成提案卡（大白话摘要、成本预估、验收标准），出现在看板上——本地服务器提供的网页看板，装在 Dock 里一个普通 app 里。一键 ✅ 批准 / ❌ 拒绝 / 💬 评论。
+- **审批**——每条需求变成潜在任务列上的一张卡（大白话摘要、成本预估、验收标准），出现在看板上——本地服务器提供的网页看板，装在 Dock 里一个普通 app 里。一键 ✅ 批准 / ❌ 拒绝 / 💬 评论。
 - **执行**——批准的卡片以 `claude --bg` 派发到独立 git worktree,由常驻守护进程（`actd`）监控,自动 resume + 质量门（自检、fresh-context 审 diff、只交 draft PR）。
 - **交付**——完工进"待验收"列：文书任务给可直接粘贴的成稿,代码任务给 draft PR。验收进「阶段性完成」,彻底结束点「永久完成」;不满意带评论打回。
 
@@ -45,7 +45,7 @@ flowchart TB
 
         subgraph ACTP["Act 管线(act/)"]
             RADARS["三路雷达<br/>Obsidian · Slack · Gmail"]
-            REG[("注册表 —— SQLite 唯一真源(store2)<br/>每日导出 YAML 镜像供 diff / 备份<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(任意状态 → trashed)")]
+            REG[("注册表 —— SQLite 唯一真源(store2)<br/>每日导出 YAML 镜像供 diff / 备份<br/>detected → approved →<br/>executing → review → delivered<br/>(任意状态 → trashed)")]
             ACTD["actd 守护(launchd,10 s 一轮)<br/>inbox → 派发 → reconcile → dashboard"]
             AGENTS["claude --bg agents<br/>独立 git worktree + 质量门<br/>交付:draft PR 或 FINAL DRAFT"]
             RADARS -->|"merge_or_new(去重)"| REG
@@ -142,7 +142,7 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 
 ## 功能特性
 
-- **带去重的需求雷达**——纯重述合并进已有卡片不刷屏;含增量出"改进卡"链接父条目;低置信度进潜在任务(backlog)停车场,可 raise 升级。
+- **带去重的需求雷达**——纯重述合并进已有卡片不刷屏;含增量出"改进卡"链接父条目;低置信度进潜在任务(backlog)停车场,点「研究并提议」就地补上计划与成本。
 - **分级审批**——T0 自动 / T1 一键 / T2 文字确认;对外发消息、merge、删资源永不自动。成本 >$5 显示,>$50 升 T2。
 - **质量门**——可运行检查 + 只读测试 + fresh-context 审 diff + 风险分级 + 可回滚的 draft PR 交付。
 - **两种交付方式**——代码走 `repo`(feature 分支 / draft PR);文书走 `chat`(可直接粘贴的 `FINAL DRAFT`),一段回复稿不会被逼着建分支。
@@ -214,7 +214,7 @@ act/
   actd.py          # 守护进程:inbox → 派发 → reconcile → dashboard
   executor.py      # claude --bg 派发 + resume/rework + 质量门 + 交付收割
   radar*.py        # 三路需求雷达(Obsidian / Slack / Gmail)
-  analyze.py       # 欠账 → 可审批提案的 LLM 扩写
+  analyze.py       # 研究并提议:就地把潜在任务卡写厚的 LLM 扩写
   digest.py        # 状态摘要 digest（digest.frequency 节奏，默认 off）+ self-improvement 建议卡
   lib/             # config / registry(状态机) / dashboard 投影 / notify / secrets / …
   registry/        # 需求注册表(YAML,一条需求一个文件,运行时生成)

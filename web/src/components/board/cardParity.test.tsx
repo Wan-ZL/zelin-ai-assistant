@@ -1,18 +1,18 @@
 // 原生看板 parity 判例（mac/Sources/Cards.swift 为规格）：
 //   1) 卡面永远收起（D34 / #217）：plan / 来源 / 技术标题不在卡的 DOM 里；「Details ▸」= 打开右侧详情侧栏
 //      （选中卡 + ?card= 深链），卡上没有「Collapse ▾」、没有双击绑定——卡片详情只有侧栏一面。
-//      DoD 例外（D43，原生 :1085 / :1858 卡面常显）：提案面「怎样算办完」与待验收面「☐ 验收清单」以紧凑形回到卡面
-//      （判例 ProposalCard.dodFace.test.tsx / ReviewCard.checklistFace.test.tsx），点 Details ▸ 卡面仍一个字不多；
-//   2) 卡面 chips / 行从投影字段渲染：提案落点行 + 已并入×N；待验收 repo 章 + 耗时 + 已等待验收；
+//      DoD 例外（D43，原生 :1085 / :1858 卡面常显）：机器卡面「怎样算办完」与待验收面「☐ 验收清单」以紧凑形回到卡面
+//      （判例 DebtCardItem.dodFace.test.tsx / ReviewCard.checklistFace.test.tsx），点 Details ▸ 卡面仍一个字不多；
+//   2) 卡面 chips / 行从投影字段渲染：机器卡落点行 + 已并入×N（§78/D80 起提案卡墓碑，这一面是潜在任务卡）；待验收 repo 章 + 耗时 + 已等待验收；
 //      阶段性完成 已交付 + repo 章 + 验收于（相对时间，hover 绝对）；卡面没有「单击复制指令」行（D36）；
 //   3) 出错的执行卡：让 AI 修（POST /api/ai-fix，只传 card_id + lang）+ 回答…（comment/steer 四键形）+ 停止；
 //   4) 卡 id 在标题行右侧（.card-head 内）。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getState, resetStoreForTests } from "../../store";
-import type { ApprovalCard, ReviewCard as ReviewRow, TaskRow } from "../../types";
+import type { DebtCard, ReviewCard as ReviewRow, TaskRow } from "../../types";
+import { DebtCardItem } from "./DebtCardItem";
 import { DoneCard } from "./DoneCard";
-import { ProposalCard } from "./ProposalCard";
 import { ReviewCard } from "./ReviewCard";
 import { RunningCard } from "./RunningCard";
 
@@ -44,7 +44,7 @@ afterEach(cleanup);
 
 const NOW_S = Math.floor(Date.now() / 1000);
 
-function proposal(extra: Partial<ApprovalCard> = {}): ApprovalCard {
+function backlog(extra: Partial<DebtCard> = {}): DebtCard {
   return {
     id: "R-301",
     title: "leaderboard 一键导出评测报告（技术标题）",
@@ -60,8 +60,8 @@ function proposal(extra: Partial<ApprovalCard> = {}): ApprovalCard {
 }
 
 describe("one detail surface (D34): the card face stays collapsed, Details ▸ opens the sidebar", () => {
-  it("提案卡：plan/来源/技术标题不在卡的 DOM（DoD 紧凑形在卡面，D43）；点 Details ▸ = 选中这张卡 + ?card= 深链；卡上没有 Collapse ▾", () => {
-    render(<ProposalCard card={proposal()} />);
+  it("机器卡：plan/来源/技术标题不在卡的 DOM（DoD 紧凑形在卡面，D43）；点 Details ▸ = 选中这张卡 + ?card= 深链；卡上没有 Collapse ▾", () => {
+    render(<DebtCardItem item={backlog()} />);
     expect(screen.queryByText(/接后端/)).toBeNull();
     // D43：怎样算办完 回到卡面（原生 Cards.swift:1085 收起态常显——批准即批准这份 DoD）
     expect(screen.getByText(/点击后下载 CSV/).closest(".card-dod")).not.toBeNull();
@@ -78,38 +78,38 @@ describe("one detail surface (D34): the card face stays collapsed, Details ▸ o
     expect(screen.getByRole("button", { name: "Details ▸" })).toBeTruthy();
   });
 
-  it("双击卡片不开详情（#216 起双击 = 在终端接管；提案卡没有会话 → no-op，判例 cardTakeover.test.tsx）", () => {
-    render(<ProposalCard card={proposal()} />);
+  it("双击卡片不开详情（#216 起双击 = 在终端接管；潜在任务卡没有会话 → no-op，判例 cardTakeover.test.tsx）", () => {
+    render(<DebtCardItem item={backlog()} />);
     fireEvent.doubleClick(screen.getByRole("article"));
     expect(getState().selectedCardId).toBeNull();
   });
 
   it("卡 id 在标题行右侧（.card-head 内的 .card-id）", () => {
-    const { container } = render(<ProposalCard card={proposal()} />);
+    const { container } = render(<DebtCardItem item={backlog()} />);
     const head = container.querySelector(".card-head")!;
     expect(head.querySelector(".card-title")?.textContent).toBe("在 dashboard 加导出按钮");
     expect(head.querySelector(".card-id")?.textContent).toBe("R-301");
   });
 });
 
-describe("proposal chips from projection fields", () => {
+describe("backlog-card chips from projection fields", () => {
   it("落点行三态：新建 repo 绿 / your-workbench 只出文档 / 改现有 橙（basename 来自 target_name 或 target_repo）", () => {
-    const { unmount } = render(<ProposalCard card={proposal({ target_kind: "new", target_name: "acme-site" })} />);
+    const { unmount } = render(<DebtCardItem item={backlog({ target_kind: "new", target_name: "acme-site" })} />);
     expect(screen.getByText("🟢 New repo: acme-site").className).toContain("is-success");
     unmount();
-    const { unmount: u2 } = render(<ProposalCard card={proposal({ target_kind: "existing", target_repo: "/Users/z/Projects/your-workbench" })} />);
+    const { unmount: u2 } = render(<DebtCardItem item={backlog({ target_kind: "existing", target_repo: "/Users/z/Projects/your-workbench" })} />);
     expect(screen.getByText(/Drafts land in: your-workbench \(documents only, no code touched\)/)).toBeTruthy();
     u2();
-    render(<ProposalCard card={proposal({ target_kind: "existing", target_repo: "/Users/z/Projects/zelin-ai-assistant/" })} />);
+    render(<DebtCardItem item={backlog({ target_kind: "existing", target_repo: "/Users/z/Projects/zelin-ai-assistant/" })} />);
     expect(screen.getByText("🟠 Modify existing: zelin-ai-assistant (draft PR only, main branch untouched)").className).toContain("is-warning");
   });
 
   it("无 target_kind 不渲染落点行；已并入×N 紫 quiet 章只在 silent_merged ≥ 1 时出现", () => {
-    const { container, unmount } = render(<ProposalCard card={proposal({ silent_merged: 0 })} />);
+    const { container, unmount } = render(<DebtCardItem item={backlog({ silent_merged: 0 })} />);
     expect(container.querySelector(".card-line.is-success, .card-line.is-warning")).toBeNull();
     expect(screen.queryByText(/Folded ×/)).toBeNull();
     unmount();
-    render(<ProposalCard card={proposal({ silent_merged: 2 })} />);
+    render(<DebtCardItem item={backlog({ silent_merged: 2 })} />);
     const chip = screen.getByText("Folded ×2");
     expect(chip.className).toContain("chip-purple");
     expect(chip.className).toContain("chip-quiet");

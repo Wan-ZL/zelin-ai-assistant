@@ -1,4 +1,4 @@
-"""analyze — turn a terse debt item into a full, approvable proposal (CONTRACT §8).
+"""analyze — turn a terse debt item into a full, approvable proposal (CONTRACT §8, §78).
 
 ``expand_debt(req)`` builds a prompt from the debt's title + notes + sources and
 asks a headless ``claude -p --output-format text`` run for JSON. The run gets a
@@ -8,10 +8,12 @@ content — never any tool that sends messages or edits files:
 
     {summary, plan, cost_estimate_usd, target_repo, target_kind}
 
-The result is folded back onto the requirement and its status is advanced to
-``card_sent`` so it surfaces in the approval queue. Any failure (claude missing,
-non-zero exit, unparseable output) falls back to a minimal card flagged for
-manual attention — the debt item is never lost.
+The result is folded back onto the requirement, which **stays in 潜在任务**
+(``detected``) — §78 retired the 提案 lane, so 研究并提议 now enriches the card
+in place（raising → detected，带 plan/DoD/成本），and the owner's one click
+（促成运行）is what starts it. Any failure (claude missing, non-zero exit,
+unparseable output) falls back to a minimal card flagged for manual attention —
+the debt item is never lost.
 
 Run standalone: ``python -m act.analyze <req_id>``.
 """
@@ -349,11 +351,24 @@ def expand_debt(
     cfg: Optional[config.Config] = None,
     runner: Optional[Callable[[str], subprocess.CompletedProcess]] = None,
 ) -> Requirement:
-    """Expand a debt item into a full proposal and advance it to ``card_sent``.
+    """Expand a debt item into a full proposal **in place**（§78：raising →
+    ``detected``，卡不离开潜在任务列；提案列已退役，开跑靠 owner 的一次点击）。
 
     ``runner`` is injectable for tests; it receives the prompt and returns a
     ``CompletedProcess``-like object with ``.stdout`` / ``.returncode``.
+
+    二道防线（§0 第 2 条 一切可逆 / §78）：``_apply_expansion`` 是覆盖写——
+    summary/plan/DoD/成本/target_repo 全被新输出顶掉。所以**不在 raising**
+    的卡一旦已经带着 plan/DoD，这里直接原样返回：``raising`` 是「有人明确
+    排了一次扩写」的唯一票据（owner 的「研究并提议」= decisions.``_raise``、
+    W17 强制展开、capture 铸的裸卡），owner 主动再扩写照常生效；没票据又已
+    扩写过的调用只可能是调用方把「机器卡都是 detected」错读成「都是裸欠账」
+    （真正的闸在调用点：inbox.``_unexpanded`` 与 quick_capture.
+    ``_fold_note_into``，这一层只兜住漏过的）。
     """
+    if str(req.status) != State.RAISING.value and (req.plan
+                                                   or req.definition_of_done):
+        return req
     if cfg is None:
         cfg = config.load_config()
     if runner is None:
@@ -369,13 +384,15 @@ def expand_debt(
     except Exception:  # noqa: BLE001 - never lose the debt item
         _apply_fallback(req)
 
-    req.set_status(State.CARD_SENT)
+    req.set_status(State.DETECTED)
     save(req)
     _log_card(req)
     return req
 
 
 def _log_card(req):
+    # 事件名 "card_sent" 是历史事件行的主键，**不改名**（§78/D80 只退役车道，
+    # 不重写已落盘的 analytics 词表）——语义现在读作「一张卡扩写完成」。
     analytics.log_event("card_sent", req=req.id, via="raise")
 
 
@@ -388,6 +405,10 @@ def _main(argv: list[str]) -> int:
     if req is None:
         print(f"error: requirement {req_id} not found in registry")
         return 1
+    # 命令行调用 = 人明确要求「就地再扩写这一张」，所以先盖 raising 这张票据：
+    # 不盖的话 expand_debt 的二道防线会挡住已带 plan/DoD 的卡，CLI 会安静地
+    # 什么都不做还打印「expanded」（§8；票据语义见 expand_debt docstring）。
+    req.set_status(State.RAISING)
     expand_debt(req)
     print(f"expanded {req_id} -> {req.status} (summary={req.summary!r})")
     return 0

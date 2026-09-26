@@ -4,7 +4,9 @@ The injectable ``runner`` replaces the headless ``claude -p`` call, so no
 subprocess can fire. Pinned here:
 
 - strict-JSON output -> requirement reconciled through merge_or_new, hard +
-  deadline routes straight to card_sent, marker advances to the note's mtime;
+  deadline lands in 潜在任务 (`detected`) as a LOUD birth (§78 起提案车道退役，
+  「高置信」分的是通知资格 `quiet_birth` 而不再是列), marker advances to the
+  note's mtime;
 - 水位语义 v2: a claude failure sends the note to the
   state/radar_failed.json retry queue (marker advances past it — a failed
   note neither pins later notes into re-extraction nor gets lost behind a
@@ -97,7 +99,10 @@ class ExtractionTestCase(RadarScanBase):
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
         req = reqs[0]
-        self.assertEqual(req.status, "card_sent")
+        # §78：落点是潜在任务；「high confidence」的可观测后果搬到通知资格上
+        # （安静出生的卡不算 summary["cards"]，见上面那一行断言）。
+        self.assertEqual(req.status, "detected")
+        self.assertFalse(getattr(req, "quiet_birth", False))
         self.assertEqual(req.deadline, "2026-07-20")
         src = req.sources[0]
         self.assertEqual(src["channel"], "meeting")
@@ -867,12 +872,15 @@ class ItemHygieneTestCase(RadarScanBase):
         self.assertEqual(summary["cards"], 0)
         self.assertEqual(registry.load_all()[0].status, "detected")
 
-    def test_act_now_fold_promotes_detected_card(self):
-        # hc 候选 relates_to 一张备选卡时，卡必须提进提案列（不许把硬 deadline
-        # 的紧急诉求折进 backlog 里不可见）
+    def test_act_now_fold_does_not_move_the_detected_card(self):
+        # §78（issue #447）：原判例是「hc 候选 relates_to 一张备选卡时，卡必须
+        # 提进提案列」——理由是别让硬 deadline 的紧急诉求折进 backlog 里不可
+        # 见。提案列退役后「可见」由潜在任务这一列本身保证（它就是 owner 的
+        # 收件箱），提升那一步整条删掉。所以这里改钉：fold 只并信息，盘上的卡
+        # 一步不动、静默章不被解除。
         parked = registry.upsert(registry.Requirement(
             id=registry.next_id(), title="build eval harness", type="code",
-            tier="T1", status="detected", hardness="soft"))
+            tier="T1", status="detected", hardness="soft", quiet_birth=True))
         self._note("n.md", "x", BASE)
         triager = lambda p, i=parked.id: subprocess.CompletedProcess(  # noqa: E731
             [], 0, stdout='{"action": "relates_to", "req": "%s", "note": "hard ddl"}' % i)
@@ -880,7 +888,10 @@ class ItemHygieneTestCase(RadarScanBase):
             runner=lambda t: json.dumps(
                 [_item("do X", hardness="hard", deadline="2026-07-20")]),
             triager=triager)
-        self.assertEqual(registry.load(parked.id).status, "card_sent")
+        folded = registry.load(parked.id)
+        self.assertEqual(folded.status, "detected")
+        self.assertTrue(folded.quiet_birth)
+        self.assertIn("[radar] hard ddl", folded.notes or "")
 
     def test_filing_exception_queues_note_not_fatal(self):
         from act.lib import quick_capture

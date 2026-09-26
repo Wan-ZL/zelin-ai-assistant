@@ -32,7 +32,9 @@ def healthy_env(**overrides):
     osa["click menu item"] = probe.OsaResult(0, menu)
     osa["key code"] = hotkey_out()
     osa.update(overrides.pop("osa", {}))
-    http = {("GET", "/api/board"): board({"needs_approval": 3}),
+    # 徽章口径 = BADGE_LANES 三列之和（§78 / D80.12：提案列退役后是潜在任务 + 需输入 + 待验收），
+    # 要和上面的 badge:3 对得上 dock_badge 才 present——这一行喂错列，summary 就只有 3/4
+    http = {("GET", "/api/board"): board({"debt": 3}),
             ("GET", "/api/health"): probe.HttpResult(200, "{}")}
     http.update(overrides.pop("http", {}))
     return FakeEnv(osa=osa, http=http,

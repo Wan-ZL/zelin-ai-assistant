@@ -36,9 +36,10 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 # schema 版本（§53.1）：schema.sql 末尾的 PRAGMA user_version 必须等于它；
-# 旧库按 _UPGRADES 逐级升到它（v1→v2 是本 repo 第一级梯子，§60/D21）。升级单向
-# ——旧代码 fail-closed 打不开新库，踏出每级前 _pre_upgrade_snapshot 先留退路。
-SCHEMA_VERSION = 2
+# 旧库按 _UPGRADES 逐级升到它（v1→v2 = §60/D21 工作编号，v2→v3 = §78 提案车道
+# 退役的白名单补行）。升级单向——旧代码 fail-closed 打不开新库，踏出每级前
+# _pre_upgrade_snapshot 先留退路。
+SCHEMA_VERSION = 3
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # 卡片热列全集（schema.sql cards 表）——行↔dict 转换与 create_card 白名单的共同真源。
@@ -184,7 +185,36 @@ def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA user_version = 2")
 
 
-_UPGRADES = {1: _upgrade_1_to_2}
+# §78（issue #447，D80.15）提案车道退役后新增的合法转移——逐条对应 schema.sql
+# 里同一批 INSERT（全新库与升级库必须收敛，判例比对 sqlite_master + 本表行）。
+_V3_TRANSITIONS = (
+    ("detected",  "approved",  "system"),   # §65 lane 免批（§51 hand lane 已退役）
+    ("detected",  "delivered", "user"),     # §10 done_external 从潜在任务直落已交付
+    ("detected",  "raising",   "user"),     # §8 研究并提议（v1 即有，列出以求自明）
+    ("card_sent", "detected",  "system"),   # §78 一次性归并扫描（actd 主循环）
+    ("approved",  "detected",  "user"),     # §10 abort_execution 退回潜在任务
+    ("executing", "detected",  "user"),
+    ("review",    "detected",  "user"),
+    ("approved",  "detected",  "system"),   # §65.1 通道关闭时的免批派发撤回
+    ("approved",  "card_sent", "system"),   # 退役前就缺的旧洞（_withdraw_frozen_lane）
+    ("raising",   "detected",  "user"),     # 扩写中卡上的评论折回潜在任务
+)
+
+
+def _upgrade_2_to_3(conn: sqlite3.Connection) -> None:
+    """v2 → v3（§78，issue #447）：提案车道退役的白名单补行，**纯 add-only**。
+
+    只往 transition_whitelist 追加行（INSERT OR IGNORE，天然幂等）+ 钉版本。
+    **一行卡都不碰**：宪法第 1 条单写者——搬卡是 actd 主循环那次一次性归并
+    扫描的事（dispatch.fold_retired_lane），梯子只管法条。"""
+    conn.executemany(
+        "INSERT OR IGNORE INTO transition_whitelist"
+        " (old_status, new_status, actor_type) VALUES (?, ?, ?)",
+        _V3_TRANSITIONS)
+    conn.execute("PRAGMA user_version = 3")
+
+
+_UPGRADES = {1: _upgrade_1_to_2, 2: _upgrade_2_to_3}
 
 
 def _check_known_version(version: int) -> int:
@@ -292,6 +322,10 @@ def _payload_changes(old_payload: dict, payload: dict) -> list:
 # --------------------------------------------------------------------------- #
 # verb 表 — 动词只算「去哪 + 带什么」，合法性（老状态×新状态×actor）由 whitelist trigger 执法。
 # 用户动词与 live inbox 动作同名（actd.py handlers）；管线动词按 CONTRACT 法条命名。
+# §78（issue #447）提案车道退役：live 侧这四个动词（abort_execution / expand_done /
+# promote / re_raise）的落点已改成 detected，但本表的 ``to`` 值保持原样不动——
+# 它是 store2 自带的类型化转移 API（当前只有判例在用，registry 走 put_card），
+# 改它等于悄悄改一张法条表的语义。词表 add-only，动词名永不复用。
 # --------------------------------------------------------------------------- #
 class _Verb(NamedTuple):
     to: Optional[str] = None      # 固定目标状态

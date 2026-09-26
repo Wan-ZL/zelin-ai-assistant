@@ -215,6 +215,9 @@ INSERT OR IGNORE INTO board_revision (id, value) VALUES (1, 0);
 -- 不在表里 = 非法（fail-closed）。actor_type='agent' 一行都没有：D3 权限墙,
 -- 旁路 agent 进程对 status 零写权（宪法第 1 条单写者的 SQL 化）。
 -- 追加合法转移 = 新增 INSERT 行（add-only），绝不改语义地删行。
+-- §78（issue #447）起 card_sent 是**退役态**：上面这段派生注释描述的是首版
+-- 法条（历史），带 card_sent 的行一行不删（存量卡仍要能被归并扫描搬走），
+-- 但没有任何写者再落进 card_sent——新落点全是 detected，见文件末尾那批 v3 补行。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS transition_whitelist (
   old_status  TEXT NOT NULL,
@@ -319,6 +322,30 @@ INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) 
   ('delivered', 'detected',  'system'),
   ('merged',    'card_sent', 'system'),
   ('merged',    'detected',  'system');
+
+-- §78 提案车道退役（issue #447，D80.15；梯子 v2→v3 = store.py _upgrade_2_to_3
+-- 的 _V3_TRANSITIONS，两处必须逐行相同：全新库与升级库的形状要收敛）。
+-- card_sent 一行都不删（法条表 add-only + 存量落单卡仍要能被搬走）：
+--   detected→approved(system)  = §65 self_improve lane 免批（§51 hand lane 退役，D80.4）
+--   detected→delivered(user)   = §10 done_external 从潜在任务直落已交付
+--   card_sent→detected(system) = §78 一次性归并扫描（actd 主循环唯一写者）
+--   approved/executing/review→detected(user) = §10 abort_execution 退回潜在任务
+--   approved→detected(system)  = §65.1 通道关掉时撤回免批派发
+--   approved→card_sent(system) = 退役**之前**就缺的一行（`dispatch._withdraw_frozen_lane`
+--     一直在做这次转移，sqlite 库上它会抛 ILLEGAL_TRANSITION，而默认 yaml 后端
+--     不执法所以没有判例看得见）。只加不减：补旧洞 + 它的 detected 孪生。
+--   raising→detected(user)     = 扩写中卡上的评论折回潜在任务重审
+INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) VALUES
+  ('detected',  'approved',  'system'),
+  ('detected',  'delivered', 'user'),
+  ('detected',  'raising',   'user'),
+  ('card_sent', 'detected',  'system'),
+  ('approved',  'detected',  'user'),
+  ('executing', 'detected',  'user'),
+  ('review',    'detected',  'user'),
+  ('approved',  'detected',  'system'),
+  ('approved',  'card_sent', 'system'),
+  ('raising',   'detected',  'user');
 
 -- ---------------------------------------------------------------------------
 -- triggers — 状态机 + 权限墙 + append-only 执法（dashi RAISE 惯用法）
@@ -478,4 +505,4 @@ END;
 -- 版本号才生效，建库途中崩溃 = 版本仍 0 = 下次重跑幂等补全。
 -- 数值必须等于 store.py SCHEMA_VERSION（判例钉死）
 -- ---------------------------------------------------------------------------
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;

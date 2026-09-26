@@ -3,8 +3,13 @@
 > **English orientation** — This is the frozen data contract between the Python pipeline and the
 > Mac app. The card ledger's source of truth is the store2 SQLite database `state/store2.db`
 > once the activation marker exists (§53; before activation, and under the one-release rollback
-> switch, it is `act/registry/<ID>.yaml`). The state machine is unchanged:
-> `detected → card_sent → approved → executing → review → delivered`, any state → `trashed`.
+> switch, it is `act/registry/<ID>.yaml`). The state machine (**amended 2026-09-26 by §78**,
+> owner decision D80, issue #447): `detected → approved → executing → review → delivered`,
+> any state → `trashed`. `card_sent` is a **retired but legal** status value — nothing new
+> ever enters it, every producer now lands cards in `detected`, and any straggler still
+> carrying it projects into the 潜在任务 (`debt[]`) lane so no card can go invisible (§78).
+> The historical form `detected → card_sent → approved → …` therefore still reads correctly
+> for every card minted before that PR; the value is never removed and never reused.
 > Two more files complete the contract: `state/dashboard.json` (actd writes, app reads) and
 > `state/inbox/<uuid>.json` (app writes, actd reads then deletes). Fields are **add-only** —
 > never renamed or removed; the Swift side decodes every new field with `decodeIfPresent`.
@@ -35,6 +40,19 @@
 4. **记录 ≠ 立案**：进档案（笔记/wiki）不等于成任务。屏幕 OCR 上的内容永不发起
    卡片（回声环的一刀，2026-07-25）；AI/assistant 的话在任何来源下都到不了直发
    提案；出生资格由 §45 决策表统一裁决。（act/lib/provenance.py；tests/test_provenance.py）
+   **修宪（2026-09-26，owner 决策 D80，issue #447，§78 提案车道退役）**：上一句的
+   「直发提案」是 `card_sent` 车道的说法，那条车道自 §78 起退役——一切机器卡（雷达、
+   每日循环、会话导入、扩写、去重合成）一律落 `detected`（潜在任务）。本条守的不变量
+   从来不是「到不了提案列」，而是**到不了 owner 已经拍过板的状态**；退役之后那个状态
+   是 **`approved`**，所以句子按不变量重写：**AI/assistant 的话在任何来源下都到不了
+   `approved`**（以及 approved 之后的 executing / review / delivered）。**绝不可以**
+   把原句逐字改成「到不了潜在任务」——潜在任务恰恰是机器卡现在的落点，那样改是把本条
+   反着写（等于禁止机器铸卡，与 §45 的 FULL / LIMITED 两档判决直接矛盾）。机器执法三层
+   一字不动：①`detected → approved` 的 `user` 行是 owner 点「促成运行」（§78.3）；
+   ②store2 `transition_whitelist` 的 **agent 行恒为零**（§53.2）；③`system` 行只发给
+   §51 第二条 lane（§65 self_improve 通道，且由第 12 条的终点验收兜底）——§51 的 hand
+   lane 免批随本次退役一并入土（§78.9 墓碑）。（act/lib/provenance.py；
+   act/lib/actd/dispatch.py 的 lane 守卫；tests/test_provenance.py）
 5. **不可信内容进围栏**：一切外部文本（邮件/Slack/笔记/OCR）进 LLM prompt 必须过
    `sanitize.fence_untrusted`，是数据不是指令。（docs/SANITIZATION.md；§21/§24 的
    出站材料条款；tests/test_prompt_fencing.py）
@@ -59,6 +77,19 @@
    钉 bind 字面量）
 10. **打扰要有资格**：主动打扰用户的面（提案卡/通知）只留给「需要人才能推进」的
     事；拿不准的落备选静默过期，重复的静默并入。（§44；§45 LIMITED 语义）
+    **修宪（2026-09-26，owner 决策 D80，issue #447，§78 提案车道退役）**：原文的两个面
+    （**提案卡**会打断、**备选**安静过期）自此塌成一条车道——提案列退役，机器卡与备选卡
+    同住**潜在任务**（§78）。所以「主动打扰的面」重新定义为**通知 + 这条唯一的机器卡
+    车道**：车道本身是 owner 的收件箱，它出现一张新卡不必然出声，**出声的是通知**。
+    「拿不准的静默过期」**不随提案列陪葬**，它改由**安静的出生**承载：§45 判 **FULL**
+    的卡落潜在任务**并**响一次新卡通知；判 **LIMITED** 的卡落同一条车道但**不响**——
+    卡上盖 add-only 字段 `quiet_birth: true`，`act/lib/actd/alerts.py` 的新卡 diff 跳过
+    带这枚标记的行，此后照旧由 §70.2 的 `stale:idle` 安静过期。少了这半条，FULL 与
+    LIMITED 在退役后会塌成完全相同的结局，§45 的三档判决表就只剩两档还有意义——回声环
+    的那一刀是按「够不够资格打扰人」切的，不是按「落哪一列」切的。「重复的静默并入」
+    （§44）一字不变。（truth = `act/lib/actd/alerts.py` 的 quiet-birth 跳过；字段词表
+    truth = `act/lib/card_model.py` `OPTIONAL_ORDER` + `act/lib/store2/export_yaml.py`
+    `FIELD_DEFAULTS`；§45 三档表与 tests/test_provenance.py 的性质测试逐格未改）
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
     pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账；§47 瞬时重试/
     解析降级卡/loop_health）
@@ -78,6 +109,16 @@
     其它一切 lane、其它一切仓库的审批位置不变；「验收 = 用户专属」的权限墙不动
     ——GitHub 上的合并就是 owner 的点击，actd 只是 relay。（§51 第二条 lane；
     §65；tests/test_policy_self_improve_lane.py、test_self_improve_*.py）
+    **追记（2026-09-26，add-only，owner 决策 D80，issue #447，§78）**：本条只改两处
+    指向，语义零变化。①「**起点**」自此指**潜在任务**那一列——提案列退役后机器卡出生即
+    落 `detected`，owner 在卡上点「促成运行」把它推成 `approved` 就是本条说的起点审批
+    （§78.3）。②「**唯一例外**是 §65」**一字不变**（D80.5）：self_improve lane 的免批
+    只是把起跳点从 `card_sent` 换成 `detected`，例外的射程（sources 全是写死的
+    `self_improve` 渠道 ∧ `target_repo` 的 realpath 就是本仓库）、四条确定性后盾
+    （草稿 PR 物理核验 / 零 MCP 出网 / 受保护路径墙 / main 受 ruleset 保护）全部原样。
+    ③括号里「hand lane 的免批见 §51」那半句**作废**——§51 的 hand lane 免批通道随 §78
+    退役（墓碑见 §78.9），它唯一的入口是被删掉的提案列捕获框；owner 自己发起的活改走
+    §34 `mode:"run"` 的「直跑」入口，那条路本来就直接产 `approved`，不经任何免批闸。
 
 ## 1. 注册表（卡片账本）— 真源与字段
 
@@ -94,6 +135,8 @@ tests/test_registry_backend_parity.py）；激活后 YAML 目录降级为**迁�
 YAML 载体：一条需求一个文件。状态机：
 `detected → card_sent → approved → executing → review → delivered`，旁支 `rejected` / `merged_into:<父ID>`；merge-review 终态 `merged`（+ 顶层 `merged_into` 字段，语义见 §21）。
 
+**§78 修法（2026-09-26，owner 决策 D80，issue #447）——状态机去掉中间那一跳**：canonical 状态机自此是 `detected → approved → executing → review → delivered`，任意态 → `trashed`；旁支与 merge 终态一字不变。`card_sent` **不删、不重编号、不复用**（宪法第 6 条 add-only）——它降为**退役但合法的路标**：`State.CARD_SENT` 常量留着、store2 的 status CHECK 词表留着、存量卡上的值原样读得出，但**没有任何生产者再写它**（全表见 §78.3），`registry.restore` 把 `prev_status == card_sent` 的回程票钳到 `detected`（D80.10），一次性归并扫描（§78.5）把盘上残留的卡搬进潜在任务。本节其余字段词表、YAML 形状、`repeated_mentions` 等语义零改动。
+
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
 
 **2026-09-02 追记（§65，add-only optional 字段 `needs_mcp`，bool，默认 false 整键省略）**：卡显式声明本次执行需要 MCP（Slack/Gmail 等外部工具）。它只会让卡**更不自主**——`self_improve` lane 见到即拒（`self_improve:needs_mcp`，只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开；对其它出身的卡无任何效果。producer / owner 写，LLM 不写。
@@ -102,7 +145,25 @@ YAML 载体：一条需求一个文件。状态机：
 
 **§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
 
-**§76 追记（add-only optional 字段 `completion_hint`，2026-09-15，issue #313 / owner 决策 D70）**：dict `{at(ISO str), note(str 截 200), channel(str)}`——雷达 fold 判「这张卡描述的事已经发生」时盖的**提示**，只盖在 `detected` / `card_sent` 卡上（`quick_capture._HINT_STATES`），同一张卡被反复命中即最新一次覆盖。**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`——归档 / 记为已交付仍只由 owner 点（§64 `assessment` 的先例）。词表同步 `registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py。完整法条见 §76.1。
+**§76 追记（add-only optional 字段 `completion_hint`，2026-09-15，issue #313 / owner 决策 D70）**：dict `{at(ISO str), note(str 截 200), channel(str)}`——雷达 fold 判「这张卡描述的事已经发生」时盖的**提示**，只盖在潜在任务车道的卡上——`detected` / `raising` / 退役残留的 `card_sent`（`quick_capture._HINT_STATES`，§78 追记）——同一张卡被反复命中即最新一次覆盖。**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`——归档 / 记为已交付仍只由 owner 点（§64 `assessment` 的先例）。词表同步 `registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py。完整法条见 §76.1。
+
+**§78 追记（add-only optional 字段 `quiet_birth`，2026-09-26，owner 决策 D80，issue #447）**：bool，默认 false **整键省略**——这张卡**出生即安静**：照落潜在任务列、照样看得见，但 §40.6 的新卡 diff 整条跳过它，owner 不被打断一下（§0 第 10 条修宪）。
+
+**唯一的尺子（每个 producer 都对齐这一把）**：退役之前，「这张卡值不值得打断 owner」这件事编码在**卡出生在哪一列**上——`card_sent` 被通知器 diff，`detected` 不被 diff。两列并成一列之后，那个事实必须骑在卡上，载体就是本字段。判据因此**逐字可复述**：`quiet_birth` 为真 **⟺ 在提案车道退役之前，同一张卡会落 `detected` 而不是 `card_sent`**。凡是拿不准某个 producer 该不该盖章的，回到这一句问一遍 main 的行为，不要另发明口径。
+
+盖章的五类理由（各自 truth 指针）：
+
+- **(a) §45 的出身天花板**：LIMITED（备选）/ CORROBORATE（仅佐证）来源的候选——落库侧的 `cap_detected=` 与 `apply_triage(gate=…)`，truth = `act/lib/quick_capture.apply_triage` + `act/lib/registry.reraise_or_followup`。
+- **(b) 提取层判它不紧急**：radar 的 `urgent: false`（truth = `act/radar._file_item` 的 `hc` / `act/radar_slack._mark_birth`）、triage 的 `confidence: "low"`（truth = `act/lib/quick_capture._apply_low_confidence` / `act/radar_gmail`）、claude-sessions 判「这个会话不是在等你回话」（truth = `act/radar_claude_sessions`）。这三处在 main 上都是**挑列**的判据，退役后一律只挑「响不响」。
+- **(c) 生来就不打扰的 producer**（硬写 `quiet_birth=True`，不经任何判据）：§40.3 的 radar give-up 诊断卡、§47.2 的解析失败降级卡、§16/§17 的 digest 进化建议。三者在 main 上不出声的**全部机制**就是「落 detected 而不是 card_sent」——退役把那半条法条抽走了，必须由这枚章接住（各节同 PR 追记）。
+- **(d) §70 每日整理的合成卡继承全簇的安静**：**全簇都安静才安静**（truth = `act/lib/maintenance._merged_quiet_birth`）。簇里只要有一张当初会响的卡，合成卡照响——它接的是同一件事；反过来，一簇全安静的卡被并成一张就突然响一声，等于在 owner 从没被打扰过的地方凭空造一次打扰。
+- **(e) 非高置信的增量子卡**：`registry._increment_child`（main 上 = `CARD_SENT if high_confidence else DETECTED`，落点即资格）。
+
+**谁盖**：**producer 或铸卡漏斗**在**出生那一刻**盖——producer 直接在候选上写（(b)(c)(d) 三类），漏斗 `registry.merge_or_new` / `reraise_or_followup` 据落库侧的 `cap_detected=` 天花板写（(a) 类），两条路都合法。**不存在「只有漏斗能盖」这回事**：漏斗根本看不见「这个 Slack 消息急不急」「这是不是一张诊断卡」，那些事实只有 producer 知道。
+
+**改写规则**：出生盖一次；**回锅是同一张卡的又一次落列**——`registry._reraise` 按**那一轮**的 `cap_detected` **重新赋值**（`quiet_birth = bool(cap_detected)`，truth = `act/lib/registry._reraise`），这是唯一的例外且必须存在：只盖不清的话，一次 LIMITED 的屏幕佐证会把这张卡**永久静音**，连日后真正 FULL 的重提也不再响。**其余任何动作都不改写它**（owner 点了什么、卡走到哪一态、被 fold 进多少证据，都与它无关——它记的是出生/落列那一刻的事实，不是状态）。
+
+唯一读者 = `act/lib/actd/alerts.py` 的新卡 diff。**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。producer 写，LLM 不写。词表同步 `registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py。完整法条见 §45 §78 修法（两条路两把尺）+ §78.6。
 
 **§70 追记（add-only optional 字段）**：`merged_from`（list[str]，每日整理合成卡上的来源卡主键列表——`merged_into` 的反向指针；lineage 只指主键；非合成卡整键省略。词表同步：`registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py）。
 
@@ -131,7 +192,7 @@ YAML 载体：一条需求一个文件。状态机：
 - `show_cost` = cost_usd 是否 ≥ config.show_cost_above_usd（<$5 时 false，app 不显示成本）
 - **投影 golden（P3a）**：`tests/test_dashboard_golden_projection.py` 以 `tests/fixtures/dashboard_golden.json` 逐字节钉住 `build_dashboard` 对一组走遍全部 lane 分支的 fixture 的输出（含每行的键序——Swift/web 解码器按它写成）。任何 wire 变化（新键、改序、改值形）必须同 PR 用 `REGEN_DASHBOARD_GOLDEN=1` 重铸 golden 并在本节落字；golden 变了而本节没动 = 审查 blocker。
 - running/needs_input/completed 由 actd 把注册表中 status=executing 的项与 `claude agents --json` 按 session_id join 得到（**§46.3 追记**：needs_input 另收 auto-resume 已放弃且会话已死的 executing 降级卡，行带 add-only `resume_exhausted: true`。**v0.48.8 修订（#119，需输入退役）**：以上两条会话来源全部退役——受阻（roster blocked 且无待注入 briefing/steer）与放弃救活的 executing 卡由 reconcile 按 stop_to_review 收割路径直接落 review（§46.3 v0.48.8 块）；`needs_input[]` 键 add-only 恒在，唯一住户 = §4 派发刹车行（下方 v0.48.4 块）。）
-- debt = status=detected 的项
+- debt = status=detected 的项（**§78 修订 2026-09-26**：`debt[]` = 潜在任务车道 = `detected` ∪ `raising`（灰色 `processing` 占位行）∪ 退役残留的 `card_sent`（straggler 投影，永不隐身）；行形长成完整卡面，见本节 §78 追记）
 
 **v0.10 新增字段**（全部 optional，Swift 侧一律 `decodeIfPresent`；注册表存 ISO 字符串，dashboard 输出 **epoch int**——与 `started_at` 一致）：
 - 审批卡分区项（needs_approval，含 raising 占位项）加 `delivery_mode`（`"chat"|"repo"`，语义见 §20）
@@ -187,6 +248,12 @@ YAML 载体：一条需求一个文件。状态机：
 
 **§2 §63.5 追记（2026-09-15，issue #301 / owner 决策 D71；新顶层 optional 键）**：顶层 add-only 键 **`recap_counts`**（object，`{active, archived, dismissed}` 三个 int，键 = 栏 slug 词表 truth = `act/lib/recap_store.RECAP_LANES`；同 `recaps[]` 一道由 `recap_store.attach` 发出，读不出 recap 目录 = **两个键一起缺席**，看板不为一份笔记而死）——`recaps[]` 被两份投影预算（60 + 60）切之前的**真实**总数，形制照 §2 `counts.completed` 的先例（行可以被上限切掉，计数不许跟着缩水）。为什么必须发它：会议纪要页只有 `board.recaps` 这一条路、没有分页，不报总数的话「已归档」会在保留期删掉那些行之前很久就静默少东西（宪法第 3 条）；页面据此显示 `N+` 与「另有 N 条更早的没列在这一栏」（§63.5 追记）。**不是易变键**（§31 F2 `_VOLATILE_DASH_KEYS` 不收它：它只在纪要落地 / 标记变化时变）。`tests/fixtures/dashboard_golden.json` 因此以 `REGEN_DASHBOARD_GOLDEN=1` 重铸（唯一 diff = 新键 `recap_counts` 的三个 0）。Swift 侧不解它（D3 不加功能）。
 **§2 追记（2026-09-15，add-only optional；issue #312 / owner 决策 **D74**）——待验收行认得出机器卡**：`review[]` 行加 `self_improve: true`，**只在**这张卡的 `sources` **全部**是 `self_improve` 渠道时出现（判据单源 = `policy.is_self_improve_sources`，混入任何别的渠道即失格——「混合来源取最小信任」，同 §50）；其余行**整键不出**。缺席 ≠ `false`：web 的过滤维度「隐藏 🤖」（`taskFilters.hideBot`，URL `bot=hide`）按跨分区语义**只约束携带该键的行**，人卡与老 server 的行因此永远不会被这一维藏掉。owner 的待验收列 19 张里 12 张是机器卡（issue #312 病灶），这一位是让人的卡先露出来的唯一判据——客户端不按标题的 `🤖 ` 前缀猜（那是显示层，可被改名）。判例 `tests/test_dashboard_review_self_improve_flag.py`、web `ReviewLaneTools.test.tsx` / `taskFilters.test.ts`。
+
+**§2 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——`needs_approval[]` 恒空的墓碑 + `debt[]` 长出完整卡面**：
+- **`needs_approval[]`（retired v1.0，并入 §78）**：键与 `counts.needs_approval` **都留着**（宪法第 6 条 add-only；Swift `Contract.swift` / `BoardLane.allCases` 是 D3 冻结件，一个字节都不许改），但自此**恒为 `[]` / 恒为 `0`**——没有任何卡会被投影进去（D80.1）。旧 reader（原生 app、老 iOS 包、任何缓存的 wire schema）读到的是一个合法的空列，不会崩、不会缺键。`_LANES` 的顺序 `("needs_approval", "running", "needs_input", "review", "completed", "debt", "trash")` 一字不动（truth = `act/lib/dashboard.py`）。
+- **`debt[]` 的行形 add-only 长成老 `needs_approval` 行的全形**（truth = `act/lib/dashboard.py` 的 `_backlog_row`）：`tier` / `effective_tier`（§50 typed-confirm 的判据）/ `origin_trust` / `cost_usd` / `show_cost` / `cost_state`（§40.1）/ `green_sign` / `disagreement` / `dod` / `plan` / `outputs` / `sources` / `egress`（§7 issue #11 的出机披露）/ `reraised` / `reraised_note` / `decision_due` / `mention_escalated`（§76.2，见该节同日修订）/ `completion_hint` / `processing` / `delivery_mode` / `deadline` / `days_left` / `repeated` / `silent_merged` / `improvement_of` / `capture_id` / `auto_dispatch_block` / `display_id` / `id_kind` / `work_id`。这是**必须**而非锦上添花：「促成运行」那颗按钮现在长在这一行上，一颗会出机建 repo（`egress`）、会按 T2 要求打字确认（`effective_tier`）、会花钱（`cost_*`）的批准键，绝不许坐在一个把这三件事藏起来的行上（§7 / §50 / issue #11 的披露义务随按钮一起搬家）。全部是新增键，老 reader 照旧按 `decodeIfPresent` / `?? []` 忽略。
+- **straggler 投影**：`State.CARD_SENT` 在 `_SIMPLE_LANES` 里映到同一个 `("debt", _backlog_row)`——退役状态在盘上多活一天，它的卡就在潜在任务里多显示一天；归并扫描（§78.5）跑完之后这条分支恒不命中，但**永远留着**（防的是「状态还在、面没了」的隐身卡，宪法第 3 条）。
+- `tests/fixtures/dashboard_golden.json` 随本 PR 以 `REGEN_DASHBOARD_GOLDEN=1` 重铸（diff = `needs_approval[]` 空 + `counts.needs_approval: 0` + 原提案 fixture 卡改投 `debt[]` 并带上全部新键）；golden 变了而本节没动 = 审查 blocker（§2 投影 golden 条款）。完整法条见 §78。
 
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
@@ -261,6 +328,15 @@ approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_
   ——UI 上没有任何出口，只能手改 YAML。owner 的出口仍是 停止 → 退回提案 →
   修好原因 → 批准（或免批通道自动接手）；成功派发整体重建 execution，台账
   自然消失。不新增 inbox 动词。
+- **§78 追记（2026-09-26，add-only；D80 / issue #447）——三条重新上膛路径的落点换名**：
+  ①owner 的 `approve` 现在是 `detected → approved`（`card_sent → approved` 退役但
+  仍在 `transition_whitelist` 里，读旧数据不炸）；②「policy 免批」只剩 §51 第二条
+  lane（§65 self_improve，`detected → approved(system)`），hand lane 随 §78 退役
+  （§78.9 墓碑）；③`abort_execution`（停止 → **退回潜在任务**）落 `detected` 而不再
+  落 `card_sent`，「那个动词的语义就是丢弃这一轮、重新决定」与「退回来的卡不得带着
+  刹车」两条一字不变。上段审查复现的那条死路（刹车停下 → 退回 → 免批原样推回
+  approved → 卡回「需输入」）在新落点上同样被堵住：`rearm_dispatch` 照旧清
+  `DISPATCH_STREAK_KEYS`，且 hand lane 已不存在，免批闸只认 §65 卡。
 - 判例：`tests/test_dispatch_storm_brake.py`（分类、刹车、换类重数、0 关闭、
   退避零写零 traceback、重批清账、退回提案清账、免批重上膛后真能再派、投影、
   去重通知、server 不标 steer）。
@@ -273,6 +349,10 @@ approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_
 
 状态跃迁时用 `osascript -e 'display notification ...'`：
 - 新 card_sent（雷达发现新需求）→ "有新需求待审批：<title>"
+  （**§78 修订 2026-09-26，D80 / issue #447**：触发源改为 `debt[]` 的新行——提案列
+  退役，新卡一律出生在潜在任务；文案改说「潜在任务里多了一件事」而不再说「待审批」。
+  带 `quiet_birth` 的行（§45 LIMITED，§0 第 10 条修宪）**整条跳过**，安静出生不出声。
+  truth = `act/lib/actd/alerts.py` + `act/lib/notify.py`）
 - executing → done → "任务完成：<title>"
 - ~~executing → blocked(needs_input) → "任务需要你输入：<title>"~~（retired v0.48.8，#119：受阻会话收割进待验收，改发 `msg_review_interrupted`「任务停下来了」）
 - 凭证失效（执行日志含 auth/login 关键词）→ "需要重新登录：<service>"
@@ -318,6 +398,8 @@ debt item 新增 `summary`（同上，大白话）。
 红色后果句渲染（「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」），未知 kind 按原文降级显示、永不吞掉；
 客户端 decodeIfPresent / `?? []`。docs/PRIVACY.md 出机清单第 8 行反向引用本条。判例 `tests/test_dashboard_egress_disclosure.py`。
 
+**§7 §78 追记（2026-09-26，add-only；owner 决策 D80，issue #447）——本节的每一条自此长在潜在任务的卡面上**：节标题「needs_approval + debt 都适用」原本就是本节的射程，退役之后它只剩一列可适用——`needs_approval[]` 恒空（§2 追记），可读性重构的全部条款（大白话 `summary` 黑体优先、目标行 🟢 新建 / 🟠 修改现有、badge 行、折叠默认 + 「展开详情 ▸」的「需求来自」/「要做什么」两块、以及 issue #11 追记的 `egress[]` 出机披露）**逐字搬到 `debt[]` 的卡面**（web `DebtCardItem.tsx`，truth = `web/src/components/board/`）。`egress` 这一条尤其不许打折：本节原文「每条 needs_approval 卡恒带 `egress`，空 list = 批了什么也不出机」自此读作「**每条**潜在任务卡恒带」——批准键搬到哪一行，后果披露就跟到哪一行（issue #11 的判例 `tests/test_dashboard_egress_disclosure.py` 随之改钉 `debt[]`）。**`raising` 占位行不设例外**：一条车道只有一种行形（`_backlog_row` 全形，§2 §78 追记），少一个键客户端就得猜「没有出机」还是「还不知道」，而 issue #11 立这条款正是为了杀掉这种猜。占位行的「还不能拍板」由 `processing: true` 说，不由缺键说——键在、值是 `[]` / `false`，是诚实；键不在，是含糊。
+
 **v0.48 引用注（W17，本文见 §50）**：审批与调度层的生效档位自 v0.48 起读派生值 `effective_tier`（外部出身——显式 `origin_trust=="external"` 章或 sources 现算为 external，v0.48.1 修订——的卡强制按 T2 对待 + 强制 plan expansion），声明字段 `tier` 在 registry YAML 里原样不动；T2 typed-confirm 闸门（Mac/web，§41）应读 `effective_tier` 而非 `tier`——web 客户端自 v0.48.1 已接线（ProposalCard 批准闸门），Mac 端接线是排期项（缺席期间 daemon 侧强制扩写是后盾）。
 
 ## 8. 欠账 → 建议 循环
@@ -326,6 +408,18 @@ debt item 新增 `summary`（同上，大白话）。
   - **「研究并提议」** → 写 inbox `{id, action:"raise"}`。
   - **「删除」** → 写 inbox `{id, action:"trash"}`（进回收站）。
 - actd 收到 `raise`：调 `analyze.expand_debt(req)`（headless `claude -p` 把简短欠账扩成完整建议：summary/plan/cost/target_repo 建议）→ status=card_sent → 出现在待审批。失败兜底：summary=title、plan=[title]、标注 needs manual。
+
+**§8 §78 修法（2026-09-26，owner 决策 D80，issue #447）——「研究并提议」不再「提升成提案」，它就地把卡写厚**：欠账 → 建议这条循环的两颗按钮（「研究并提议」/「删除」）与 inbox 动词（`raise` / `trash`）一字不变，变的只有扩写的**落点**：`detected → raising`（潜在任务列里的灰色 `processing` 占位行，D80.6）→ 扩写成功后回 **`detected`**，卡带着 summary / plan / cost / DoD / target\_repo 原地变厚，**不再跨列**。失败兜底（summary=title、plan=[title]、标注 needs manual）与 `raising → detected(system)` 的白名单行都是既有的（§53.2），本次只是让成功路径也走它。产品意思也更直白：这一列本来就是 owner 的收件箱，「研究并提议」是**把一张薄卡研究清楚**，不是把它搬到另一列排队；研究完要不要开跑，由同一张卡上的「促成运行」（`approve`）决定（§78.3）。
+
+**§8 §78 修法（续一）——扩写的准入判据从「状态」换成「裸卡」**：main 上这道闸是 `status == detected`，而那句判据是**靠车道兜着**才成立的——完整的机器卡住在 `card_sent`，`detected` 里只剩 owner 随手记的薄欠账。退役之后**每一张机器卡都是 `detected`**，照旧只看状态就等于把带 plan / DoD / 成本 / target\_repo 的完整卡（`daily_loop` 铸的 🤖 卡、回锅的既往卡、已经扩写过一次的卡）也送进扩写管线，而 `analyze._apply_expansion` 是**覆盖写**：summary / plan / DoD / 成本 / target\_repo 全被新一轮 LLM 输出顶掉，被顶掉的那份手写计划没有任何回程票（§0 第 2 条「一切可逆」的正反面）。
+
+- **单一定义**：**裸卡 = `not (plan or definition_of_done)`**——没有计划也没有验收标准的那张薄卡。扩写的准入 = **`detected` 且裸卡**，两个条件缺一不可。这一句是本仓库对「该不该重跑 `claude -p`」的唯一口径，任何新调用点照抄它、不许另立。
+- **三处同源实现**（同一把尺，三个调用点）：`act/lib/actd/inbox.py` 的 `_unexpanded`（capture 落卡后要不要排一次 AI 扩写）、`act/lib/quick_capture.py` 的 `_fold_note_into`（self-DM `relates_to` 的备注折进一张卡时要不要顺手扩写）、`act/lib/actd/decisions.py` 的 **W17 分支**（外部出身卡强制展开：`et.forced_expand and not (req.plan or req.definition_of_done)`——W17 早在退役之前就用的是这把尺，它是本判据的判例先例）。**前两处是双生点，两边不许漂**：同一件事在两条入口上各判一次，漂了就是一条路覆盖写、另一条路不覆盖，而症状是**数据丢失不是报错**（代码两侧的注释互相点名，改一处必须改另一处）。
+- **`raising` = 「有人明确排了一次扩写」的唯一票据**：它不是「这张卡很薄」的同义词，而是一次**显式排队**的记录——owner 按「研究并提议」（`decisions._raise`）、W17 强制展开、capture 给裸卡排的那一次，三条路都经它。据此 `act/analyze.expand_debt` 另有**第二道防线**（§0 第 2 条）：**不在 `raising`、却已经带着 plan 或 DoD 的卡，原样返回、一个字段都不碰**（truth = `act/analyze.expand_debt` 的首个判据）。owner 主动再扩写照常生效（卡在 `raising`，票据在手）；被这一层拦下的只可能是某个调用方把「机器卡都是 `detected`」错读成了「机器卡都是裸欠账」。两层都不多余：上层保住语义（谁该被扩写），下层保住数据（谁的字段不许被顶掉）。
+
+**§8 §78 修法（续二）——「研究并提议」跑完不再响那一声，这是有意的**（D80 已拍板，不再讨论）：main 上扩写的落点是 `card_sent`，一张卡因此会从 `debt[]` **换到** `needs_approval[]`，通知器在后一列看见一行新的、响一声。退役之后这张卡**从 `debt[]` 出发、回到 `debt[]`**（`detected → raising → detected`，占位行也投在 `debt[]` 里，D80.6），diff 里没有新行，那一声就此不响。**法条明写这份安静是对的、不是漏掉的**：扩写**永远是 owner 自己发起的**——他按了「研究并提议」，或者他自己发了一条 self-DM 并且**当场已经拿到 DM 回执**（§13 快速捕获 #0 的三选一回执）——为一张他**刚刚亲口点名**的卡再推一条系统通知，正是 §0 第 10 条（打扰要有资格）点名要杀的噪音。研究完了没有，看板上那张卡自己会说：灰色 `processing` 占位行变回完整卡面。交叉引用 **§40.6**（`raising` 占位行照旧不算新卡——它是同一张卡的处理中形态，不是第二次出生）。
+
+**§8 §78 修法（续三）——一张 capture follow-up 子卡现在可以被扩写一次，main 从不扩写它**（D80 已拍板）：`registry._open_follow_up` 的子卡在 main 上出生即 `card_sent`，于是 capture 落卡后那道闸（当时只看 `status == detected`）对它**恒假**——它带着一句标题留在提案列里等人看。退役后它出生在 `detected`，若又恰好是裸卡，这道闸会把它排进一次扩写。**这是改善、不是回归，法条收下它**：(a) 它是**裸卡**，扩写**覆盖不掉任何东西**（`_apply_expansion` 顶掉的全是空值）；(b) 结果与 owner 自己按一下「研究并提议」**逐字相同**（同一个 `analyze.expand_debt`、同一条 `raising → detected(system)` 白名单边）；(c) 产品上，一张只有标题的子卡躺在潜在任务列里是**不可决策**的——owner 看不出该不该给它按「促成运行」，而这一列现在是他唯一的收件箱。**立法按「裸不裸」，不按 `kind` 特判**：闸的判据只有「`detected` 且裸卡」这一条，候选是 `_open_follow_up` / `_increment_child` 还是 `merge_or_new` 的新卡**不进判据**——按 `kind` 特判会立刻把上面那三处同源实现劈成三把尺，而「一件事两把尺」正是本次退役最贵的一课（§45 §78 修法的「两条路两把尺」是另一半：该分的分清楚，该合的不许劈）。
 
 ## 9. 回收站（trash / recycle bin）
 
@@ -338,6 +432,8 @@ debt item 新增 `summary`（同上，大白话）。
 - **§70 追记（add-only；`trash_reason` 词表扩展 + 分级保留期）**：每日整理循环（actd 内运行，system actor）写两族新 reason——`daily-merge: 并入 <new id>`（同题多卡合成一张新卡后，旧卡进回收站；新卡主键在 reason 里，新卡 `merged_from[]` 反向列出旧卡）与 `stale:<rule>`（rule ∈ `deadline_passed` / `diagnostic_expired` / `superseded` / `idle`，词表见 §70.2）。两族卡 **`prev_status` 完整、restore 语义不变**；保留期改由 `maintenance.retention_days(req, cfg)` 按卡判决：这两族 = `daily_loop.trash_retention_days`（默认 **90**——owner 没亲眼看过它们进回收站，比手动 trash 的 60 天更长），其余 = `trash.retention_days`；`trash.retention_days <= 0` 仍是总开关（关掉后循环卡也不清）。`actd.purge_trash` 与 §40.5 `purge_at` 投影经**同一个**判决（`maintenance.purge_due` / `maintenance.purge_at`），倒计时永不许诺一次不会发生的删除。存量的 ~40 张 owner 手动 trash 的卡不受本条影响（它们按 owner 自己设的 60 天走）；想留作参考请在回收站页对每张按「永久保存」（pin），或临时抬高 `trash.retention_days`。
 
 - **§9 追记（2026-09-15，add-only；issue #312 / owner 决策 **D74**）——恢复 = 一次活动，落一枚 `execution.restored_at`**：`registry.restore` 在清掉三个回收站字段（`trashed_at` / `prev_status` / `trash_reason`）之外，同时盖 add-only 执行戳 `execution.restored_at`（ISO UTC）。原因：restore 之前**不会让卡上任何时间变新**，所以在 `maintenance.last_activity` 眼里一张刚被 owner 捞回来的卡与它被扔掉时一样陈旧——§70.2 追记二的 `review_stale`（以及两列的 `idle` / `deadline_passed`）会在下一轮原地把它再扔一次，「恢复」变成一个第二天自动撤销的按钮（宪法第 2 条可撤销名存实亡）。这枚戳**登记在** `maintenance._EXECUTION_STAMPS` 里（与 `review_stale_notified_at` 刻意不登记正相反：捞回来是 owner 亲手的动作，而通知只是我们自己说了句话），于是闲置时钟从恢复那一刻重新起算。`restore` 的状态语义（回 `prev_status`，缺失回 `detected`）、单写者（只有 actd 的 inbox pass 调它，§0 第 1 条）、trash 侧的 `trash_reason` 词表一字不动；投影不发这个键（web 无面）。判例 `tests/test_review_stale_sweep.py::TheStampIsRearmedByLaterActivityTestCase`。
+
+- **§9 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——回程票遇到退役状态就地钳到 `detected`**：`reject` / `trash` 记 `prev_status` 的规则一字不变（本节原文「prev_status=card_sent, reason=rejected」自此只可能出现在**退役前**扔进回收站的存量卡上）；变的是 **`registry.restore` 的读侧**：`prev_status == "card_sent"` 时**钳到 `detected`** 再复位。这是本 PR 对 issue 原文「迁移时保留 prev_status」的**一处明确偏离**（D80.10，PR 描述里逐字记录）：`prev_status` 是回收站/归档的**回程票**，把 `card_sent` 原样写回去意味着 owner 一点「恢复」，卡就回到一条**已经没有面的退役车道**——那是「可逆」的反面（宪法第 2 条）。钳位只动这一次复位的目标状态，**不改写盘上的 `prev_status` 字段**（add-only，宪法第 6 条：字段值是历史事实，不许被后来的法条篡改），回收站行、`trash_reason` 词表、保留期分级、`execution.restored_at`（§9 追记）全部零改动。一次性归并扫描（§78.5）**刻意不碰 trashed 卡的 `prev_status`**，正是因为这里已经钳住了。
 
 ## 10. inbox 动作全集（app → actd）
 `approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
@@ -356,6 +452,16 @@ debt item 新增 `summary`（同上，大白话）。
 > 各自的 § 里，本段一并点名——本节首段的动词清单自 v0.48 起以 `server/inbox_writer.ALLOWED_ACTIONS` 为机器真源。
 
 **动词判决表 golden（P3b，add-only）**：`tests/test_actd_decision_table.py` 以 `tests/fixtures/actd_decision_table.json` 钉住本节 16 个卡级动词 + 1 个未知动词 × 11 种盘上状态（4 种另带活 session）× 有/无 comment（approve 另加外部出身，W17）的判决——§5.4 ack、落后状态、execution 增删键、notes 尾巴（日期掩码）、plan 是否变——再加 comment / raise / accept / rework 对 `expected_status` 命中 / 别名 / 过期 × owner / agent ingress 的第二张表（共 900 例，协作者是合作式假 executor / analyze，表钉的是 actd 自己的动词逻辑）。任何动词语义变化必须同 PR 用 `REGEN_DECISION_TABLE=1` 重铸并在本节落字；golden 变了而本节没动 = 审查 blocker。表由重构前的 `act/actd.py` 铸出，重构后逐例相等。
+
+**§10 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——动词全集一个不删，四个动词换落点、一个动词立墓碑**：本节首段的词表**零删除、零重命名**（wire 真源仍是 `server/inbox_writer.ALLOWED_ACTIONS`；宪法第 6 条），退役改的只是「从哪来 / 到哪去」：
+- `approve`：接受面从 `detected | card_sent | raising` 收敛为 `detected | raising`（`card_sent` 仍在白名单里读旧数据，幂等重放照旧）。web 上这颗键叫「**促成运行 / Run it**」——它长在潜在任务的卡面上，语义与从前提案列的「批准」逐字相同（`decisions._approve` 对 `detected` 卡本来就是合法的，**不新增动词**）。
+- `abort_execution`（停止）：`approved | executing | review` → **`detected`**（文案「退回潜在任务」），此前落 `card_sent`。
+- `comment`（💬 修改）：executing 卡照旧走 §44.3-S steer；非 executing 的折叠评论落 **`detected`**（此前 `card_sent`）——「并入 plan/notes 并等重新审批」的语义不变，等的那一列换了名字。
+- `raise`：接受面 `detected`（`card_sent` 幂等重放的既定行为保留），扩写成功回 `detected` 而不再升 `card_sent`（§8 修法）。
+- `restore`：`prev_status == card_sent` 钳到 `detected`（§9 追记，D80.10）。
+- **`defer`（暂缓 / 入库，retired v1.0，并入 §78）——墓碑**：它的全部语义是「仅 `card_sent` → `detected`」，而退役之后源状态永不出现，动词恒 no-op。**动词名与 ack 路径保留**（老客户端、老 inbox 文件、云同步重放照旧被诚实 ack `noop`），`ALLOWED_ACTIONS` 里**不删这一行**；web / server 不再渲染任何「暂缓」入口（它的产品意图——「先别做但别扔」——正是潜在任务这条车道本身，留着按钮等于让 owner 把卡从潜在任务暂缓进潜在任务）。判决表 golden 里 `verb=defer` 的每一格自此恒 `noop`。
+- `done_external` / `stop_to_review` / `revert_review` / `archive` / `unarchive` / `pin` / `trash` / `reject` / re-raise（§10 v0.20.0 块）：接受面里的 `card_sent` 逐条读作 `detected`——re-raise 把已验收卡**翻回潜在任务**（`delivered → detected`，白名单行已在 §53.2），`done_external` 从潜在任务一键记为已交付（`detected → delivered(user)`，§78.4 补行）。
+本追记改的是判决而不只是散文，因此 `tests/fixtures/actd_decision_table.json` 随本 PR 以 `REGEN_DECISION_TABLE=1` 重铸（diff = 上述五个动词的 `expected_status` 列 + `defer` 整行转 noop）；golden 变了而本节没动 = 审查 blocker（本节 golden 条款）。
 
 **§10 追记（2026-09-15，add-only；issue #312 / owner 决策 **D74**）——`restore` 多落一枚 `execution.restored_at`**：`restore` 的判决除清三个回收站字段外，现在还盖一枚 ISO UTC 的 `execution.restored_at`（理由与全文见 §9 追记：捞回来 = 一次活动，否则每日整理下一轮就把 owner 刚捞回来的卡再扔一次）。动词词表、允许的状态（仍只对 `trashed` 生效，非 trashed 照旧 `noop`）、ack 词表、落后状态一个字不变；变的只有判决表里 `verb=restore|status=trashed|*` 两例的 `ex_added`（`[]` → `["restored_at"]`），已用 `REGEN_DECISION_TABLE=1` 同 PR 重铸 `tests/fixtures/actd_decision_table.json`。
 
@@ -617,6 +723,8 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
 ## 16. Feature flags + 自我进化
 - config `features: {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics, manager_pack}`，默认全 on；各模块入口检查 flag，off 则 no-op。overrides 可改。
 - 周一 digest 末尾加**进化建议**节：基于 analytics（30 天未用的功能→建议关；重复风暴/高拒绝率→建议改），生成 type=self-improvement 的卡片（target_repo=本 repo），批准后照常 claude --bg 实现并以 **draft PR** 交付——app 更新永远走 PR。
+
+**§16 / §17 §78 追记（2026-09-26，add-only；owner 决策 D80，issue #447）——进化建议卡安静出生**：上一行的建议卡在 main 上落 `detected`、**从不通知**，而那正是它能一周攒一批还不惹人烦的全部机制——那一列当年不参与新卡 diff。退役之后 `debt[]` 被 diff（§40.6 §78 修法），不管就是每个周一一串通知（自省建议本来就是「有空再看」的东西，不是「现在决定」）。自此这批卡出生即盖 add-only **`quiet_birth: true`**（§78 D80.7，字段法条见 §1 §78 追记；truth = `act/digest._suggestion_card` / `file_suggestion_cards`）；落点仍是 `detected`（潜在任务），`merge_or_new` 的同题去重（易变的实时计数留在 summary / quote、不进标题）与「批准后 draft PR 交付」一字不变。§17 「待审批积压」那一节的**文案**同 PR 改口径（§78.7 点名的文案表），统计对象随车道走。
 
 **v0.14 追记（add-only；随 §17 v0.14 修订）**：`manager_pack` 随 manager pack ①的移除退出 flag 集合——`DEFAULT_FEATURES` 与设置窗口均不再包含它，代码中无任何调用点检查；config.yaml/overrides 里遗留的 `features.manager_pack` 键按「未知 flag」语义被静默忽略。现行集合 = {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics}。1:1 准备页（`act.oneonone`）随 §17 digest 生成，受 `features.digest` 门控，无独立 flag。
 
@@ -921,6 +1029,13 @@ CLI 驱动，绝不定时跑。**全程本地、无 LLM 调用**——gist = 首
 - 会话以 assistant 提问收尾（ended_waiting_on_user）→ `status=card_sent`（待审批）；
   仅仅是近期活动 → `status=detected`（欠账，v0.17 起展示为「备选/Backlog」）。
   与其他雷达的置信分流同构。
+  **§78 修法（2026-09-26，owner 决策 D80，issue #447）——两档置信同落潜在任务**：
+  上面两行合并为一行——**两种会话一律 `status=detected`**（提案车道退役，§78.3 的
+  写路径表点名 `act/radar_claude_sessions.py`）。`ended_waiting_on_user` 这个判据
+  **不作废**：它从「落哪一列」降级为「**响不响**」——等你回复的会话照常发一次新卡
+  通知，纯近期活动的会话按 §0 第 10 条修宪的安静出生（`quiet_birth`）静默入列。
+  `sources` / `summary` / `type` / `tier` / `target_repo` / notes 溯源标记、双保险
+  幂等与「排除本产品自己派发的会话」一字不变。
 - `sources[0] = {who:"claude-code", channel:"claude_code", date:<last_activity 日期>,
   quote:<gist>, ref:<session_id>}`；`summary=gist`；`type=code`；`tier=T1`；
   会话 cwd 存在时作 `target_repo`。
@@ -1849,7 +1964,10 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   内容（搜索框 + 归档行 + 放回看板），左右两条书立夹住五列工作流。
 - 展开状态 session 内记忆（挂在 store 上，换页不丢）但**不持久化**——每次启动都收起。
   暂缓 echo / debt 车道 notice 到达时潜在任务条自动展开（用户点了按钮，回执不能落在
-  看不见的列里）。
+  看不见的列里）。**§78 修法（2026-09-26，D80 / issue #447）**：出厂态改为**展开**
+  （D80.3——这条条自此是机器卡的唯一收件箱），且「notice 到达即展开」精确化为
+  **每条不同的通知恰好开一次、开完旗归 owner**（三个触发源：§44.6 并入回执 /
+  §21bis 强制合并超时条 / §21 合并建议卡），法条正文见 §33 / §54.1 §78 修法。
 - 「永久性完成」条**仍不是看板列**：不进 `selectableIDs`/多选合并面，不参与
   lane-notice 路由（unarchive 仍走 info-strip 机制）。
 - iOS 不变：仍是 5 页 pager，无归档 lane（`BoardLane` 不加 case）。
@@ -1871,7 +1989,15 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   `unknown`，坏文件 ack `bad_json`（文件删除，仅该文件终止）；rework 启动失败
   ack `noop`。§32.2 前置条件落地情况：`comment` 对 trashed/merged/rejected 卡
   no-op；`raise` 仅接受 detected/card_sent（card_sent 幂等重放为既定行为，测试
-  锚定）；accept/rework 的宽松接受面为本意保留。
+  锚定）；accept/rework 的宽松接受面为本意保留。**§78 追记（2026-09-26，D80 /
+  issue #447）**：`comment` 的接受面自此读作「仅 `detected`（含退役残留的
+  `card_sent` 幂等重放）」，`raise` 同理——两处都**不删** `card_sent` 分支（退役
+  状态仍是合法值，老 inbox 文件与云同步重放必须照旧被诚实处置，§5.4）。
+  `expected_status` 的手机端钉扎（下文第 6 条）随之：iOS 对 comment/raise 写的
+  固有前置状态改为 `detected`——**但 iOS 本轮不改**（D80.14 明文不在射程内），
+  所以手机上发出的 `expected_status: "card_sent"` 会按 §32.2 的 stale-guard 被
+  判过期而 no-op（诚实回执，不是静默吞）；这是已知且有意接受的代价，phone 半边
+  另案排期。
 - **inbox 三重边界校验**：手机→syncd（非法形状拒收不落盘）、web→webui（400）、
   actd（字段 coercion + per-file 兜底）。字段类型契约：`action/id/comment/text/
   primary` 为 str-or-absent（null=absent），`ids` 为 list-of-str。
@@ -2015,7 +2141,33 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **二分法（§44，2026-07-17）维持**：仍然绝不出人工确认卡——[run] 的答案从
   「静默并入」改为「一律新卡」，两者都无人工确认环节。
 
+**§34 / §34.1 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——两个输入框变成一个入口的两种意图，direct-run 因此成了 owner 唯一的「不经车道」通道**：
+- **`mode` 缺省 / 垃圾值的 fail-safe 落点改名**：本节原文「= 今天的行为不变（raising → triage → 提案卡）」自此读作 **raising → triage → 潜在任务卡**（`detected`）。fail-safe 的**性质一字不变**——垃圾 `mode` 值绝不静默启动 agent，它掉进**需要 owner 再点一下**的那条路；退役之后那条路的名字是潜在任务。`act/lib/actd/inbox.py` 的 `_capture_proposal` 仍置 `raising`（web 回执对账的 processing 行，§10 2026-09-05 追记），扩写完落 `detected`（§8 修法）。
+- **`mode:"run"` 的提升面收敛**：「把 pre-approval 形态（detected/card_sent/raising）直接提升为 approved」自此只可能命中 `detected` / `raising`（§34.1 之后 [run] 本就不判重、一律新卡，所以这句话今天只剩历史意义与存量卡语义）。交付强制（chat + 默认 workbench，不进任何 repo）、幂等键 `execution.inbox_stem`、「用户两次显式输入 = 两张卡」三条一字不动。
+- **它现在是 owner 发起工作的主入口**：§51 hand lane 的免批通道随 §78 退役（§78.9 墓碑），owner 想「不经审批直接开跑」的唯一合法路就是这个直跑框——它**本来就**直接产 `approved`，不经任何免批闸、不看出身信任矩阵，且带着本节的诚实声明（**跳过了 plan / 费用预估的人审预览**，UI 文案不得暗示有预估）。web 的两个列顶输入框（原「提案列捕获」/「运行中列直跑」）自此都挂在保留下来的列上：捕获框搬到潜在任务列头（意图 = 记一件事，落 `detected`），直跑框留在运行中列头（意图 = 现在就做，落 `approved`）。⌘L 的「归提案 composer」读作「归潜在任务列的捕获框」。
+
 ### 34bis. 提案积压清理按钮 — capture 的 `preset` 键（add-only，Zelin 2026-08-07 拍板）
+
+> **§34bis（retired v1.0，并入 §78）——墓碑（2026-09-26，owner 决策 D80，issue #447）**：
+> 本小节的**按钮与 preset 词表整体退役**。理由是结构性的而不是嫌弃它：它的产品定义
+> 是「清理**提案列**的积压」，审阅口径逐字钉死 `status ∈ card_sent / raising`、按钮
+> 长在提案泳道头、禁用口径 = 后端提案卡数——提案列退役之后，这三样东西一个都不剩。
+> 退役的**只有** ①提案泳道头那颗「清理积压」按钮（`web/src/components/board/ProposalsTriageButton.tsx`
+> 连同它的判例整份删除）、②`preset` 的词表值 `proposals_triage` 与 actd 注入的那份
+> 固定 plan（`_proposals_triage_plan()`）、③§66 清单条目
+> `control:board.needs_approval:button:clean-up`（经 `CONTROL_OWNER` 标 retired，
+> 不进 `waivers.txt`，§78.8）。**`preset` 这个 inbox 键本身不删**（add-only，宪法第 6 条：
+> 老客户端 / 老 inbox 文件带着它来照旧合法；词表空了之后它按本小节原文「其它任何值 =
+> 完全忽略 preset」走 fail-safe 路径）。**保留并重新锚定的是这套机制真正值钱的那一半**
+> （D80.11）：`registry.guard_snapshot()` 的起止快照、侧文件 `state/triage_snapshots/<id>.json`、
+> 跨进程写入台账 `state/registry_writes.jsonl`（含 1 MB 自压缩——防腐第 4 条的样板）、
+> 收割三条路的比对与 `[§34bis 护栏]` 告警、每 pass 的孤儿快照清扫、以及「只检测告警、
+> 不回滚、绝不阻塞提升」的检测型纪律——它们自此**挂在一次普通的直跑（§34 `mode:"run"`）
+> 上**，对任何会话都成立，不再需要一个 preset 来触发。`tests/test_proposals_triage.py`
+> 里测这半边的方法**逐条改锚到普通直跑，不许删**（覆盖是资产）；只测按钮可用性 /
+> 提案列口径的方法随按钮一起走。本小节原文以下全部转为历史记录，**§34bis 这个编号
+> 永不复用**。owner 想审阅潜在任务的积压，用同一个直跑框打一句话即可——那本来就是
+> 它当初被做成 preset 的全部内容。
 
 提案泳道头（「提案 · proposals」标题行）右侧新增小按钮「清理积压」：点击 =
 **一次固定 prompt 的 direct-run capture**（§34 mode:"run" 同机制）——运行中列
@@ -2635,6 +2787,10 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
 - **回答失败通知**：`msg_answer_failed(title, reason)` —— 指向卡上错误详情与
   展开详情里的「在终端接管会话」兜底。
 
+**§39 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——角标的第一项换成潜在任务，「退回提案」四个字换名**：
+- **角标（D80.12）**：web / 壳 Dock 的 `badgeCount` = **`debt + needs_input + review`**（truth = `web/src/app.tsx`；壳探针口径同源，`scripts/qa/shell_ui_probe.py` 的 `BADGE_LANES` = `("debt","needs_input","review")`）。`needs_approval` 恒 0 已经不值得数，而 owner 的决策自此住在潜在任务列（要不要促成运行）、需输入列（回答被阻塞的 agent）与待验收列（验收还是打回）——角标数的是「等你点一下的事」，三列各一类。上文 §39.4 那条「iOS 角标 = `needs_approval + needs_input`」**不随本条改**（D80.14：iOS 不在射程内，手机上那一项自此恒为 0，等于只数 needs_input；phone 半边另案）。
+- **文案**：§39.1 / §39.3 里 needs_input 行的「停止」二选一自此是「**退回潜在任务**（`abort_execution`）/ 去待验收（`stop_to_review`）」；两个 verb、wire、幂等语义一字不变（§10 §78 追记），变的只有那四个字。`question` 字段、节选 `…` 纪律、`answerPending` 的真信号清除、180 s 诚实超时条全部零改动。
+
 ## 40. v0.40.0 钱看得见、事有回执（add-only）
 
 > 一批诚实性/反馈欠账。全部 add-only：老 App 忽略新键（`decodeIfPresent`）、
@@ -2650,6 +2806,7 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
   语义不变。T2 打字确认对话框同样带金额（或「成本未知」）。
 - 老 payload 缺 `cost_state`：App 端按 `cost_usd` 有无派生（有数=estimated）。
 - iOS/webui 的展示是后续跟进：字段在共享 Contract.swift 里已解码，尚无视图消费。
+- **§78 追记（2026-09-26，add-only；D80 / issue #447）**：小节标题的「needs_approval 每项」自此读作「**潜在任务（`debt[]`）每项**」——`cost_state` 连同 `cost_usd` / `show_cost` 随整张卡面搬到那一列（§2 §78 追记的 `_backlog_row` 全形）。展示语义一字不变：**展开详情永远说钱**（有数「预计费用: $X」/ 无数「成本未知」），`show_cost` 仍只门控收起态的 badge，T2 打字确认对话框仍带金额或「成本未知」。这条不是装饰——「促成运行」那颗键就在同一行上，本节当初要堵的正是「看起来免费」的卡被一键批掉。
 
 ### 40.2 快速捕获 emoji 回执（Slack self-DM）
 
@@ -2688,6 +2845,8 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
 - 卡片文案随界面语言双语（`failures.pick`，§15 单一语言开关）——去重身份是
   source ref 而非标题，切语言不会导致重发。
 
+**§40.3 §78 追记（2026-09-26，add-only；owner 决策 D80，issue #447）——诊断卡的「不打扰」换了载体**：上文「落一张可见的诊断卡：`status=detected`（备选列）」这句话里，**可见**与**不打扰**在 main 上是同一件事的两面——那一列当年不参与新卡 diff（producer 自己的定性逐字是「a fact to act on, not a proposal to approve」，truth = `act/radar.file_give_up_card` docstring）。退役后 `debt[]` 开始被 diff（§40.6 §78 修法），不盖章就等于把一条运维留痕升级成一次打扰，而 give-up 卡的全部意思是「这篇笔记我处理不了，原文还在那儿，你有空再看」。自此诊断卡出生即盖 add-only **`quiet_birth: true`**（§78 D80.7，字段法条见 §1 §78 追记；truth = `act/radar.file_give_up_card`）。按 note 路径去重、一篇 note 至多一张卡、systemic-failure 回滚 pass 不发卡、双语文案**全部一字不变**。
+
 ### 40.4 weekly digest 失败通知（手动跑）
 
 - `weekly_digest.run(force=True)`（设置页「现在生成一份」，detach 后原本无声）
@@ -2722,6 +2881,11 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
 - **weekly digest 落的建议卡整体跳过**（逐卡与合批都不发）：其 §24 通知已按
   数量点名（「另有 N 条自动化建议进了待审批」），再发一遍是重复轰炸。seam =
   行内 `sources[].channel == "weekly-digest"`（dashboard 投影自带）。
+
+**§40.6 §78 修法（2026-09-26，owner 决策 **D80**，issue #447）——合批的 diff 源从 `needs_approval[]` 换成 `debt[]`，并多一道安静出生的闸**：`detect_transitions`（`act/lib/actd/alerts.py`）此前逐行 diff `needs_approval[]`；提案列退役后那一列恒空，**不改 = 每一条新卡通知与 §76.3 的三条结算通知全部静默死掉**（本节是 §78 写路径表之外最容易漏、且漏了完全没有报错的一处）。自此：
+- **diff 源 = `debt[]`**（潜在任务车道）。合批规则一字不变：一个 pass 内新增（非回锅）> 2 张 → 一条「新增 N 张」（`notify.msg_new_cards_batch`）；≤2 张、回锅、需输入、待验收逐卡通知；文案仍 **source-neutral**（不写「雷达」）；§28 中继队列的 10 分钟 stale sweep 不变。
+- **新增一道跳过**：行带 `quiet_birth: true` 的**整条不参与 diff**（既不逐卡响也不计进合批的 N）——§0 第 10 条修宪的安静出生（§45 LIMITED），truth = `act/lib/actd/alerts.py`。weekly-digest 的既有跳过（seam = `sources[].channel == "weekly-digest"`）与它并存、互不吞并。
+- `raising` 占位行照旧不算新卡（它是同一张卡的处理中形态，不是第二次出生）；退役残留的 `card_sent` straggler 被归并扫描（§78.5）搬进 `debt[]` 时**不发通知**——那是一次迁移，不是一件新事（扫描写卡时 `prev` 快照里它本来就在，diff 天然不命中；判例钉住）。
 
 ### 40.7 周一 digest 落卡（不再落盘）+ 页面用通道显示名
 
@@ -3007,6 +3171,8 @@ display_title，会在 crash 窗口被改写）。**标记探测先于状态复�
 
 **§44.4 追记（2026-09-15，add-only，issue #313 / owner 决策 D70）——fold 执行点多盖一个提示，其余一字不动**：雷达 `relates_to` 的 fold（`quick_capture._fold_into`，与本节的跨卡静默并入是兄弟执行点）在 triage 判 `completed=true` 时顺手盖 §76.1 的 `completion_hint`（同一次 `registry.save`，不额外写盘）。本节的执行语义**全部保留**：`append_fold_note` + sources 去重 + `repeated_mentions` 累加 + `silent_merge_count` + §44.6 回执照旧，**证据永不因为盖了提示而被丢掉**（issue #313 原文「不要继续并入」的那一半被明确否决，理由与代价见 §76.4）。盖章只写 `completion_hint` 一个字段，不动 `status`（本节铁律「已投入的卡绝不静默移除」的同源纪律：一条 LLM 猜测不许移动任何卡）；盖章异常被吞、fold 照常完成。§44.1 的跨卡静默并入路径**不**盖提示（那条路判的是「两张卡是同一件事」，不是「这件事做完了」）。
 
+**§44.4 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——轻状态铁律看的是状态，不是列**：轻状态词表 **不删 `card_sent`**（退役残留的卡仍是轻状态，仍该能被静默并入；宪法第 6 条），实际落到这张表上的只剩 `detected` / `raising`。**铁律的依据不变且更清楚**：它看的是**卡的状态**（owner 投没投入），不是它躺在哪一列——退役把两列并成一列，并没有把任何一张已投入的卡变轻。§44.1 / §44.2 / §44.6 的「回执按副卡出身发」照旧（2026-09-06 追记里那句「owner 刚敲进来、还躺在 `card_sent` 的卡完全可能被折进主卡」自此读作「还躺在**潜在任务**的卡」）；回执通道、`silent_merge_count`、双向可逆（拆出 fold note + 恢复副卡）一字不动。
+
 **§44.5 可见性与记账（add-only）**：dashboard `needs_approval[]` 新增
 `silent_merged`（int，0=从未）；Mac 卡面「已并入×N」紫色 chip（.help 指明
 详情里的并入记录可一键拆回）+ webui 同款 badge；周一 digest 总览行追加
@@ -3063,6 +3229,13 @@ secondary,outcome∈ok|ok_retry|retry_aborted|separate|judge_failed|state_moved|
 - **总开关**：`§15.3` overrides 新增扁平键 `fold_receipt_notices`（bool，**出厂 true** = 本条之前的行为），唯一读者 = `dashboard._fold_receipts(cfg)`——关掉时整列投空，**顶层键 `fold_receipts` 本身恒在**（add-only 契约不变，Swift/web 的 decodeIfPresent 语义不动）。`cfg` 省略 = 按开着投（既有 0 参调用者不变）。
 - **判例**：`tests/test_fold_receipts.py`（自动通道 record 返回 None 且不落文件 / 盘面上的旧 radar 文件不投影 / 同卡两次并入合成一行 count=2 / cap 数簇 / 开关关掉投空且键恒在 / `_fold_into` 不出回执但 §38 折叠记录照常 / `via:"agent"`·`via:"remote"`·畸形 via 的 capture 并入零回执而 `via:"web"`·无 via 照常出）、`tests/test_silent_merge_receipt_provenance.py`（手打副卡有回执、雷达/外部副卡静默、混合来源里有一条手打就算手打）、`tests/test_server_settings_catalog.py`、web `boardNotices.test.tsx`。
 
+**§44.6 §78 追记（2026-09-26，add-only；owner 决策 D80，issue #447）——折进一张「已经扩写过的」潜在任务卡时，回执要说实话**：self-DM `relates_to` 的备注折叠（`act/lib/quick_capture._fold_note_into`）有两支出口，退役之前靠**车道**天然分开（完整的机器卡在 `card_sent`、裸欠账在 `detected`），退役之后两种卡同住一列，回执只能按**卡的形状**分：
+
+- **裸卡那一支**（`detected` 且 `not (plan or definition_of_done)`——§8 §78 修法续一的同一把尺）：顺手扩写一次，答复 =「已关联 {id}：**已扩成完整建议，留在潜在任务等你一次点名** / expanded in place, still in the backlog」。这句话描述的是**刚刚真的发生了一次扩写**，所以只属于这一支。
+- **已扩写过的那一支**（`detected`，但带着 plan 或 DoD）：**不重跑扩写**（覆盖写会顶掉 `daily_loop` / owner 手里那份计划），答复 =「已关联 {id}：**已在潜在任务，备注已追加**」。它与退役态 `card_sent` 存量卡**共用同一句**——那句话讲的是**车道**（「你的备注进了潜在任务那一列」），不是状态名，所以两个键同句不是偷懒。truth = `act/lib/quick_capture._FOLD_PHRASES`（`detected` / `card_sent` 两键同句）+ `_fold_note_into` 的分支。
+
+这两句说的是 **Slack 那条 DM 答复**（§13 快速捕获 #0），看板侧的回执义务不因此改变（`_fold_note_into` 的 channel 判决与上文「用户通道闸」一字不动）。**这条分支不许省**：让已扩写的卡掉进兜底文案（`f"状态 {req.status}，备注已追加"`）= 把 `detected` 这个内部 token 念给 owner 听；让它走裸卡那一支 = 对他撒谎说「已扩成完整建议」——两种都是散文与代码分家。
+
 **§44.7 存储层单写者精确化（v0.48.8，D2/R2.1.5；§0 宪法第 1 条同 PR 修宪）**：
 store2 接线后本节引用的「单写者」语义落到存储层的读法——(a) 状态转移只有 actd
 发出（DB transition_whitelist 执法，§53.2）；(b) 铸卡/折叠进程（雷达/digest/
@@ -3098,6 +3271,16 @@ triage 之后、落库之前裁决出生资格：
   提升一并压平（不借 fold 把既有备选卡推进提案列，triage LLM 的 `needs_action`
   不是豁免通道）；relates_to 命中完结卡、或 new_proposal 撞上完结卡标题时，
   内部 re-raise/follow-up 的天花板同样是 detected（不通知）；
+
+**§45 §78 修法（2026-09-26，owner 决策 **D80**，issue #447，§0 第 10 条修宪的正文）——FULL 与 LIMITED 的分界从「落哪一列」改判成「响不响」**：提案车道退役之后两档的**落点**相同（都是 `detected`，潜在任务），若就此不管，这张表的第一行与第二行会塌成同一个结局、三档判决只剩两档有意义。所以分界**平移到打扰面**（本来就是回声环那一刀真正在切的东西）：
+- **FULL** = 落潜在任务 **并**照 §40.6 响一次新卡通知（依 high-confidence 出生的卡值得 owner 当场看一眼）；
+- **LIMITED（备选）** = 落同一条车道但**安静出生**——铸卡时盖 add-only 顶层 optional 字段 **`quiet_birth: true`**（bool，默认 false 整键省略；词表同步 `act/lib/card_model.py` `OPTIONAL_ORDER` + `act/lib/store2/export_yaml.py` `FIELD_DEFAULTS`，判例 `tests/test_store2_field_parity.py`），`act/lib/actd/alerts.py` 的新卡 diff 整条跳过它。「自然过期」照旧由 §70.2 的 `stale:idle` 承担。
+- **CORROBORATE（仅佐证）一字不动**：屏幕永不发起卡片，唯一放行形态仍是「fold 进开着的卡」；命中完结卡照旧整条拦下（`radar_echo_blocked{stage:"filing"}`）。
+- **三条硬承诺原样**：act-now 提升照旧被**压平**（退役后它无处可升——既有备选卡与机器卡同列，「提升」这个动作在本表里就此只剩「要不要响一声」这一层含义，`needs_action` 依旧不是豁免通道）；re-raise / follow-up 的天花板仍是 `detected`（且安静）；`gate` 仍不参与 §76.1 盖章判定（§45 2026-09-15 追记不变）。表格本身（provenance × speaker 九格）、`act/lib/provenance.py` 的决策表、`tests/test_provenance.py` 的穷举 + Hypothesis 性质测试**逐格未改**——改的是三档 verdict 在落库侧的执行语义，不是裁决本身；`cap_detected=` 这条落库侧参数自此的含义是「天花板 = 安静出生」，`registry.merge_or_new` / `reraise_or_followup` 的签名 add-only 不变。
+- **两条路，两把尺——不许混成一把**（本次退役最严重的一处缺陷就是混了，评审抓到；混淆的后果是安静的传染，不是安静的漏盖）。`quiet_birth` 的判据按**这张卡是怎么落列的**分成两条互不相干的路：
+  - **① 回锅（`registry._reraise`）与 follow-up 子卡（`registry._open_follow_up`）：只看 `cap_detected`**，**不得**把候选自带的 `quiet_birth` 或进来。main 上这两条路的落点是 `DETECTED if cap_detected else CARD_SENT`——判据里从来没有候选身上那枚章。候选的 `quiet_birth` 记的是**生产者的紧急度轴**（「这条新消息急不急」），而这两条路问的是**出身天花板轴**（「这个来源有没有资格打扰」）；把紧急度或进来 = 一条不紧急的重述让这张卡的「回锅」从此不响，而回锅恰恰是「你已经做过决定的事又回来了」——§40.6 保留逐卡通知的理由。truth = `act/lib/registry._reraise` / `_open_follow_up`。
+  - **② 增量子卡（`registry._increment_child`）：`not high_confidence` 或 候选自带的章——两个判据取或、缺一不可**。main 上子卡的落点**只看** `high_confidence`（`CARD_SENT if high_confidence else DETECTED`），而 gmail / slack / claude-sessions 的调用点根本不传这个参数——那三条路上的子卡在 main 上恒落 `detected` = 恒安静，少了 `not high_confidence` 这一半就等于让它们开始响。另一半（候选自带的章）是 §45 的天花板：非 FULL 来源在 `apply_triage` 入口就把章盖在候选上，而这条路**不经过 `cap_detected`**，章只能从候选身上搭车过来。truth = `act/lib/registry._increment_child`。
+  - **③ `cap_detected` 刻意不下到 `_reconcile_open`**（签名逐字同 main）。理由两条，都不是省事：§45 的天花板在 main 上**从来不管**「开着的父卡长出来的子卡」（它管的是出生与完结卡命中），下沉它 = 借退役之名改 main 的行为、且无判例覆盖；而 CORROBORATE 连 `merge_or_new` 都走不到——屏幕唯一的放行形态是 fold 进**开着的**卡，走 `_fold_into` 不走铸卡漏斗（本节「执法位置」一段的既有事实）。多传一个参数在这里不是「更安全」，是静默扩大天花板的射程。
 - **仅佐证（CORROBORATE）**：不得发起新卡。唯一放行形态 = triage 判 `relates_to`
   且目标卡还开着（fold 补证，同样无提升权）；命中已完结卡的 re-raise/follow-up
   路径同样拦截（完结事项在屏幕上再现 ≈ assistant 在汇报自己的完成）。拦截计
@@ -3284,6 +3467,7 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   落库），再把整篇 note 原文落成一张**低置信降级卡**
   （`file_parse_degraded_card`）——替代旧的「进队列跨 pass 空转直至 §40
   give-up」路径（unparseable 类专属；claude 失败/不可读 note 仍走台账）。
+- **§47.2 §78 追记（2026-09-26，add-only；owner 决策 D80，issue #447）——「不通知」换了载体**：下一条里那句「`status=detected`（备选列，**不通知**——宪法第 10 条）」在 main 上是靠**列**兑现的（`detected` 不参与新卡 diff）。提案车道退役后这一列开始响（§40.6 §78 修法把 diff 源换成 `debt[]`），那句法条自此由 add-only 出生章 **`quiet_birth: true`** 承担（§78 D80.7，字段法条见 §1 §78 追记；truth = `act/radar.file_parse_degraded_card`）——降级卡仍然**看得见**（它是一条运维留痕，owner 要能找到那篇没处理成的笔记），只是永不打断他。落点、去重、围栏、隐私口径、screen note 的退化形态**一字不变**。
 - 卡形态：`status=detected`（备选列，不通知——宪法第 10 条）、
   `type=diagnostic`、notes 首行 `[radar-parse-degraded]` 标签 + 「解析失败
   降级，原文未加工」；**原文经 `sanitize.fence_untrusted` 围栏后整段进
@@ -4084,6 +4268,8 @@ agent（能读 0600 文件即过墙），落款在本机进程之间仍是礼仪
 **执行面**（注入文本骗 LLM 输出 channel=`quick` → 判 hand → 自动开跑攻击者
 措辞的任务）。provenance red line，测试钉死。
 
+**§50 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——四类出身与分类规则一字不动，`hand` 少了一条出口**：信任矩阵（`hand > proposed > meeting > external`）、`classify_origin` 的四条规则（逐条查 `CHANNEL_CLASS` / 未知渠道 fail-closed 落 external / 混合取最小信任 / 空 sources 判 proposed）、`origin_trust` 的盖章点与「调度侧不读章、每次从 sources 现算」、W17 的 `effective_tier` 强制 T2 + 强制展开、`via` 落款与它的诚实条款——**全部逐字保留**。退役只动一件事：出身 `hand` **不再换来免审批自动派发**（§51 hand lane 的墓碑，§78.9），所以 `hand` 今天的全部效力是「不被 W17 抬成 T2、不被强制展开」。`effective_tier` 的去处随卡面搬家：T2 typed-confirm 弹窗自此读**潜在任务卡**上的 `effective_tier`（§2 §78 追记的 `_backlog_row` 恒带它）——「促成运行」是批准动作，外部出身的卡在它上面照旧必须打字确认，一格都不许松。§50 M1.d 的 provenance red line（`radar_slack.py` 的 channel 硬编码）在退役后**更重要而不是更轻**：机器卡与 owner 手打卡同住一列，channel 是区分它们的唯一硬信号。**硬后盾四条**里的第 ①（§51 天花板）随 hand lane 退役只剩 §65 lane 一条通路、第 ④（§34bis 级篡改取证）按 §34bis 墓碑重锚到普通直跑，第 ②③ 一字不变。
+
 **判例**：tests/test_policy.py（分类真值表 + 混合最小信任 + fail-closed）、
 test_policy_trust_matrix.py（8 例逐漏斗：self-DM=hand 免批端到端 / gmail·
 slack=external 人批+强制扩写 / meeting=人批不强制扩写 / 空 sources=proposed /
@@ -4094,6 +4280,8 @@ external approve→RAISING + via 裁决）、web ProposalCard.test.tsx（外部
 升档卡 tier=T1/effective_tier=T2 必过 typed-confirm）。
 
 ## 51. 自动派发天花板（may_auto_dispatch）+ 合并运行列 queued 子状态
+
+> **§51 第一条 lane（hand 卡免批自动派发，retired v1.0，并入 §78）——墓碑（2026-09-26，owner 决策 D80，issue #447）**：本节开篇那条「只有出身 `hand` 的卡有资格免审批自动派发」的 lane **就此退役**（D80.4；**本节其余条款全部现行有效**——退的是第一条 lane，不是这一节）。理由是它的**唯一喂料口没了**：hand 出身的卡来自提案列的捕获框与 Slack self-DM，而提案列随 §78 删除；owner 想「不经审批直接开跑」的路自此是 §34 `mode:"run"` 的**直跑框**——那条路本来就直接产 `approved`，不经任何免批闸，且带着「跳过了 plan / 费用预估的人审预览」的诚实声明。执法面：`act/lib/actd/dispatch.py` 的免批扫描自此在扫到候选卡之后**多一道 `policy.is_self_improve_sources(req.sources)` 守卫**（守卫住在 `dispatch.py`，**不下沉进 `policy.py`**——`may_auto_dispatch` 的资格判决表 golden 因此逐例不变，改的是谁被拿去问），只有 §65 那条 lane 的卡会被自动提升。**保留的东西一件不少**：`may_auto_dispatch` 全函数、原因 token 词表（含 `origin:{proposed,meeting,external}` / `t2_confirm` / `outbound` / `repo:*` / `cost:unknown`）、五条共用天花板、`auto_dispatch_block` 的投影、`tests/fixtures/policy_admission_matrix.json` 的 583,200 例 golden——它们现在全部服务于**第二条 lane** 与卡面上的「为什么这张卡不自动跑」陈述。**token 永不复用、永不静默消失**；`ok:hand` 一类放行路径今天没有调用方，值留着。下文「第二条 lane」及其后的全部条款（§65 self_improve 通道、并发上限、queued 词表、预算天花板墓碑）**一字不变**，只是起跳状态从 `card_sent` 改成 **`detected`**。
 
 **语义（owner 拍板「手打自动/外部要批」的调度半边）**：只有出身 `hand` 的卡
 有资格免审批自动派发（card_sent → approved，actor=policy）；资格裁决 =
@@ -4346,6 +4534,28 @@ PyYAML。
 - `dispatches.status` 词表 `running|completed|failed|stopped`（随本节入宪）；
   `notes.kind` 三值 `comment|steer|fold` 定稿（§39 answer 已于同版退役，无需
   加值）。
+- **§78 接线补行（2026-09-26，add-only；owner 决策 **D80**，issue #447；梯子
+  v2 → v3）**：提案车道退役后，每一条原本经 `card_sent` 的边都需要一条落
+  `detected` 的孪生行。**只加不删**——`card_sent` 的既有九行一条不动（退役状态
+  仍合法，存量卡与迟到的 inbox 重放必须照旧被 DB 放行；宪法第 6 条）。新增
+  （truth = `act/lib/store2/schema.sql`）：`('detected','approved','system')`
+  （§65 lane 免批，hand lane 已退役）、`('detected','delivered','user')`
+  （潜在任务上的 `done_external`）、`('card_sent','detected','system')`
+  （§78.5 一次性归并扫描，actd 主循环 actor=system）、`('approved','detected','user')`
+  / `('executing','detected','user')` / `('review','detected','user')`
+  （`abort_execution` 三条）、`('approved','detected','system')`（§65.1
+  frozen-in-flight 退回）、`('raising','detected','user')`（raising 卡上的
+  评论折叠）。`('detected','raising','user')` 早已在表里，保留。**顺带补一个
+  既有漏洞**（不是本次退役引入的）：`('approved','card_sent','system')` 此前
+  缺席，而 `dispatch._withdraw_frozen_lane` 一直在做这次转移——本 PR 把它的
+  `detected` 孪生行加上；原缺的那一行**同样补上**，删任何一行都不是本 PR 的事。
+  **agent 行仍恒为零**（宪法第 1 条的 SQL 化，一条 agent 行都不新增）。
+  `SCHEMA_VERSION = 3`，`_UPGRADES = {1: _upgrade_1_to_2, 2: _upgrade_2_to_3}`；
+  **第三级升级只做两件事**——把上面这批行 `INSERT OR IGNORE` 进
+  `transition_whitelist`，然后 `PRAGMA user_version = 3`。它**绝不触碰任何 card
+  行**（§0 第 1 条：只有 actd 主循环能转移卡片状态；搬卡是 §78.5 那次扫描的活，
+  不是 schema 梯子的活）。§53.1 的单向门、`pre-v<from>` 快照、`SCHEMA_VERSION_MISMATCH`
+  语义逐字沿用；§60.5 的「升级只加列不回填」精神同样适用于这一级（它连列都不加）。
 
 ### 53.3 激活协议（首跑迁移；`act/lib/store2/activate.py` 是标记的唯一写者）
 
@@ -4697,6 +4907,16 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
 **§54.1 追记（2026-09-05，行为对齐批次 `linkify-card-text`；`fix/parity-linkify-card-text`）——纯文本里的 URL 可点，回到原生 `linkified`**：原生 `Utils.swift:877-889` `linkified(_:)` 用 NSDataDetector 把纯文本里的 URL 标成 `.link` + 下划线，SwiftUI `Text` 直接可点（「Slack-style, no gesture code needed」），应用在四处：提案卡摘要（`Cards.swift:1073`）、潜在任务卡摘要（`:2028`）、`💬 需求来自` 引文（`:508` / `:1311`「Slack quotes often carry links — make them clickable」）、`📋 要做什么` 步骤（`:529` / `:1329`）；运行中 / 待验收行的标题与正文原生**明确不** linkify（`:1829`：链接点击与整卡复制手势冲突，放弃并记入完成报告），AI 研究中占位（`:945`）、`怎样算办完`（`DodListView`）、交付正文也不。web 此前四处全是纯字符串（只有 markdown 正文经 `MarkdownDocument` 出链接）。自此 web 落点 = 展示积木 `web/src/components/board/Linkified.tsx`（`linkifyParts(text)` 纯函数 + `<Linkified text>`）：按 `https?://` 切段，URL 段渲染 `<a class="linkified" target="_blank" rel="noreferrer">`（壳的 `WKUIDelegate` 把 `target=_blank` 交系统浏览器，§54 追记「外链一律交系统浏览器」），其余仍是裸文本节点；`href` 过 `detail/markdown.ts` 的 `sanitizeUrl` 白名单（正则只认 `https?://`，`javascript:` / `data:` 本就不匹配，白名单是双保险）；URL **硬边界**（中文正文里 URL 后面通常紧跟标点、没有空格，「见 https://x.dev/a，然后」链接必须在 a 处停）= 空白、`<>`、ASCII 双引号、`()（）`、CJK 括号 `「」『』【】《》〈〉〔〕〖〗`、全角标点 `，。、；：！？～`——这一组 NSDataDetector 同判（本机探针逐个核过：`看 https://x.dev/a，然后做 b` → `https://x.dev/a`；`https://x.dev/a、https://y.dev/b` → 两条）；弯引号 `“”‘’` 也算边界，此处比 NSDataDetector 更严一格（它会把 `“https://x.dev/a”然后` 吞成 `a”然后`）；ASCII `.,;:!?'` 合法出现在 URL 内部（`a.html?q=1,2`），只在匹配段末尾剥掉（`see https://x.dev/x.` 链接是 x）；scheme 大小写不敏感（`HTTPS://X.DEV/A` 也成链，NSDataDetector 同判）；紧贴 URL 的 CJK 字（`https://x.dev/a然后`）与 `—` `…` `·` 不算边界，与 NSDataDetector 一致（IRI 允许非 ASCII 路径，无法区分）；**没有 URL 时原样返回字符串**——DOM 与此前逐节点相同，既有判例与视觉 golden 不动（demo 数据无 URL，golden 零 diff）。接线照原生边界，**唯一一处有意扩展见下**：`CardHead` 加 add-only `linkify` 开关（缺省 false），只有提案卡与潜在任务卡的摘要优先面打开，`aria-label` / T2 与拒绝弹窗正文仍是纯字串（链接只在可见标题里）；运行中 / 待验收 / 已完成行标题与 AI 研究中占位不开；`DetailFields`（D34 唯一详情面）的 `💬 需求来自` 每条引文、`📋 要做什么` 每步（「[修改方向]」行仍 `is-rework`）走 `Linkified`——原生 `PlanListView` / `SourceListView` 在所有 lane 共用，同判；摘要段也在所有 lane 走 `Linkified`（含「交付了什么」下的灰色审批时摘要），**这是 web 对原生的一处有意扩展**：原生只在提案面（`:1073`）与潜在任务面（`:2028`）linkify 摘要，运行中 / 待验收行的摘要是纯 `Text`（`:1722` / `:1843-1850`），理由是同一个手势冲突（`:1829`）——web 侧栏没有整卡复制手势，这个约束不存在，同一侧栏里步骤可点、摘要不可点反而怪；交付正文、`怎样算办完`、产出、备注不走。样式一条 `.linkified`（`board.css`：`--accent` 色 + 下划线 + `overflow-wrap: anywhere`，字级字重继承所在文本；`:focus-visible` 与卡片同一套 accent 轮廊），不动 `cardMarkdown.ts` / `MarkdownDocument`（markdown 正文本已出链接）。无新文案、无 wire 变化、不读 store。判例 `Linkified.test.tsx`（无 URL 原样 / 尾随 `」` `）` `。` 在链接外 / 紧跟的全角 `，。；：！？～` 与 `』》〉】”` ASCII `"` 是边界、ASCII `.,` 留在 URL 内只剥段尾 / `HTTPS://` 大写也成链 / `javascript:` `data:` 裸域名 `https://.` 不成链 / 两个 URL 各自成链，含只隔全角 `、` 的两条）、`CardHead.linkify.test.tsx`（提案 / 潜在任务摘要出 `<a target=_blank rel=noreferrer>`、`aria-label` 纯字串、无 URL 时标题 DOM 单文本节点、占位与运行中行不出链）、`DetailFields.linkify.test.tsx`（摘要 / 引文 / 步骤出链且文本逐字不变、引文 `URL，更多字` 链接在 URL 处停、`怎样算办完` 与交付正文不出链、待验收灰摘要出链（钉住上述扩展）、无 URL 时整面零 `<a>`）。
 
 **§54.1 追记（2026-09-05，add-only；`fix/parity-strips-force-open`，behaviour-parity 批次 `strips-force-open`（chain `store-actions` 第 3 棒，接 `pending-sweep-settle`），gap `board-cards-backlog-strip-force-open`）——两条书立条的展开态住 store；搜索命中潜在任务强制展开；暂缓 / 放回看板的回执不落进收起的条里**。v0.33 一节与 §33 早已立法（「展开状态 session 内记忆（挂在 store 上，换页不丢）但不持久化」「暂缓 echo / debt 车道 notice 到达时潜在任务条自动展开」「看板搜索命中潜在任务时强制展开该条（仅视图态）」「放回看板的反馈到达时该条自动展开」），web 移植时三条全丢：`BacklogStrip.tsx` / `ArchiveStrip.tsx` 各自 `useState(false)`（换页即收起）、唯一的写者是列头开合、搜索命中时收起的条只把计数改成 n/N——过时的过滤器 / 收起的条静默藏卡，正是原生 `Store.boardQuery` 不变量点名禁止的。本追记接回，落点如下。(a) **展开态 = store 字段**：`web/src/store.ts` `AppState` 加 add-only `backlogStripExpanded` / `archiveStripExpanded`（缺省 `false`；原生 `Store.swift:127-128`），setter `setBacklogStripExpanded(on)` / `setArchiveStripExpanded(on)` 是唯二写者；**不进 URL、不进 localStorage**——每次启动都收起（原生「deliberately NOT persisted」），`resetStoreForTests` 一并归零；两条书立条的列头开合改写旗、读旗（原生 `$store.backlogStripExpanded` / `$store.archiveStripExpanded` 双向绑定），换页（`BoardLanes` 卸载）再回来仍是用户离开时的状态。(b) **搜索 / 过滤命中潜在任务 → 左条强制展开**（原生 `Kanban.swift:316-328` `expanded: searching && !debt.isEmpty ? .constant(true) : $store.backlogStripExpanded`）：`BacklogStrip` 在 `cardFilterCount(filters) > 0 && rows.length > 0` 时不看旗直接展开——web 的条吃全局过滤 chips + ⌘F（G4），所以判据是「任一维度激活且有命中」，不只搜索词（原生只有搜索一维；web 的过滤 chips 同样会让收起的条藏卡，同一不变量）；无命中（计数 0/N）不强开（原生 `!debt.isEmpty` 半边）；强制展开期间列头开合是 **no-op**（`.constant(true)`：点了不收、旗也不翻），清掉查询即回到旗的状态（用户之前展开过就仍展开）；旗本身不被搜索改写（「仅视图态」）。右条**没有**搜索强开（原生 `:516` 直接绑旗；归档不是看板列、不吃全局过滤，§54.1 第 6 项）。(c) **回执落进条里时强制打开**（原生「a response to the user's own click can never appear inside an invisible column」），落点在 `boardActions.ts useSubmit`，不在卡组件：纯函数 `stripToForceOpen(rec, phase)` 判、`useSubmit` 调 setter。**提交成功**（`postAction` 落地那一刻 = 原生 `applyAction` 在 inbox 写成功后跑的时点）：`defer` → 左条（原生 `addEcho target: .debt`，`Store.swift:861`，「暂缓中…」echo 落潜在任务条）；`unarchive` → 右条（原生 `beginReturn source: .archived`，`:851`，「放回看板中」info 条落永久性完成条；`?page=archive` 整页上点的「放回看板」回到看板时右条因此是开的）；`archive`（永久完成）**不**开右条——原生 `addEcho target: .archived` 不触发任何条（只有 target `.debt` 开左条），audit 建议的「DoneCard archive 成功开右条」不是原生行为，不继承。放在成功路径而不是落地（`landed`）路径：换列动词落地的那一帧卡组件已随卡离开原列卸载，落地 effect 不会跑；POST 被拒不开（没有回执要落进条里）。**180 s 超时**（`useSubmit` 的兜底定时器）：只认换列动词（`pendingSettle.LANE_VERBS`，= 原生 raise / echo / return 三族）——提交时卡在 `debt` 的换列动词（研究并提议 / 删除 / 永久完成——超时句与静默恢复的卡都落回潜在任务条）→ 左条（原生 `:425` raise 超时、`:450` `e.source == .debt`）；提交时卡在 `archived`（放回看板超时）→ 右条（原生 `:539` `entry.source == .archived`）；提案列的动作（批准 / 暂缓）超时卡还在提案列，不碰任何条（原生 defer echo `source: .approval`，`:450` 不命中）；详情抽屉里对 debt / archived 卡的改名（`set_title`）/ 拆卡（`split_note`）/ 修改意见（`comment`）超时同样不碰任何条（原生 `expiredTitles` / `expiredSplits` / `expiredComments`，`Store.swift:452-473` / `:516-526`，从不写这两面旗）。**诚实边界**：超时半边只在发出动作的卡组件仍挂着时生效——两条书立条收起即卸载条内的卡（`{expanded && …}`），`useSubmit` 的兜底定时器随组件卸载丢弃（`pending-sweep-settle` 批次的 pending 状态是组件级的，不是原生 `raisingLocal` / `pendingEchoes` / `returningLocal` 那样的 store 级台账），所以原生「收起的条里超时 → 强开」这一场景 web 目前到不了；可达的只有搜索强开期间 debt 动作超时（旗翻 true，清掉搜索后条仍开着）与条本就开着时的超时（setter 无操作）。把 180 s 台账搬进 store、让定时器跨卸载存活，是独立的后续批次，不在本追记之内。无新文案、无 wire 变化、server 零变化；`ui/parity` 判卷面零变化（`pending.txt` / `waivers.txt` 无此项）；视觉 golden 不动（两条缺省收起、demo 无过滤）。判例（新文件，防腐 #7）：`web/src/components/chrome/BacklogStrip.forceOpen.test.tsx`（收起 + 搜索命中 → 列表可见 / aria-expanded / 计数 1/2、清掉查询回到收起且旗未变；tier chip 命中同样强开；无命中不强开 0/2；强开期间列头 no-op；用户展开过再搜索清掉后仍展开；旗跨卸载 / 重挂留存与再点收起；setter 打开与 reset 归零）、`web/src/components/board/useSubmit.stripOpen.test.tsx`（defer 成功开左条且卸载后仍在；defer 被拒不开；approve / archive 成功不碰；unarchive 成功开右条；raise 超时开左条（提交时不开）；unarchive 超时重开右条（hook 层）；approve 超时不碰；debt 卡 set_title / archived 卡 split_note 超时不碰任何条；raise 后卡组件卸载再超时不开条（定时器随组件丢弃，钉住上述诚实边界）；`stripToForceOpen` 两相真值表含非换列动词一律 null）、`web/src/components/chrome/ArchiveStrip.forceOpen.test.tsx`（点列头写旗、卸载再挂仍展开、再点收起；setter 打开；全局 ⌘F 不强开右条）。
+
+**§33 / §54.1 §78 修法（2026-09-26，owner 决策 **D80**，issue #447）——「回执不能落在收起的条里」是**每条通知**开一次，不是「有通知就恒开」**：上文 (c) 与 §33 / v0.33.0 的「notice 到达时潜在任务条自动展开」在 main 上只服务 owner 自己那一下点击的回执；退役之后这条书立条还接住了三类**不是他刚点出来的**通知——§44.6 的静默并入回执、§21bis 强制合并 180 s 超时条、§21 的合并建议卡（§78.7 的重新安家）。两种写法在这里天差地别，法条钉死后者：
+
+- **不是「有通知就开」**（`forced`-式的恒真强开）：那会让这条条**永远收不起来**——只要盘上还有一条没过期的回执，owner 点列头收起、下一帧又被推开，而这条条现在是全板最长的一列，收起权是真实需求。
+- **是「每条不同的通知恰好开一次」**：判据 = **逐条通知的身份**，逐类点名——每个没看过的 `fold_receipts[].id`（`unseenFoldReceipts`）、每个强制合并超时时间戳（`forceMergeTimedOutAt`）、每张 §21 合并建议卡的 **id + status**（`analyzing → done / failed` 的判决落地是**新的一件事**：那一刻卡上才长出「接受 / 取消」两颗键）。已经为之开过的身份**永不重开**；记忆每轮裁成当下还活着的键（过期的通知不占记忆，它日后再出现就是新的一件事）。truth = `web/src/components/chrome/BacklogStrip.tsx` 的 `noticeKeys` / `openedFor`。
+- **开完之后旗归 owner**：用的是 `store.setBacklogStripExpanded`（`useSubmit` 那条同一个 setter），不是搜索强开的 `.constant(true)` 锁死——列头照常能收；但**下一条**真正新的通知到货，还能把他中途收起的条**再打开一次**。这两句必须同时成立：少了前半句是夺走收起权，少了后半句是第二条通知落进看不见的条里。
+- **合并建议卡是第三个强开触发源**（本次新增，main 上它住提案列、没有条可开）：SelectionBar 按下「分析合并」后对 owner 的承诺逐字是「**潜在任务条顶会出现建议卡**」——那句话押在这个触发源上，不开条 = 产品当场撒谎。
+- **捕获框提交成功同样强开这条**（`LaneComposer.onSubmitted`）：捕获框随退役搬到了这条条的头部（§78.7），「你刚敲的那句话变成了哪张卡」属于 (c) 的原判——回执不能落在收起的条里。
+
+不变的部分：搜索 / 过滤强开（上文 (b)）仍是**视图态**、仍不写旗、期间列头仍 no-op；右条（永久性完成）不受本条影响；无新文案、无 wire 变化、server 零变化。判例 `web/src/components/chrome/BacklogStrip.forceOpen.test.tsx`（回执落地开条、owner 收起后同一条不重开、第二条回执再开一次；§21 建议卡落地开条且判决落地（`analyzing → done`）再开一次；§21bis 超时条在已有一条活着的回执之下照样开——两条通知各算各的；外加既有的搜索强开 / 列头 no-op / 旗跨卸载六格）、`BacklogStrip.test.tsx`（三条通知钉在 `.backlog-strip-list` 之前的兄弟位 + 条头捕获框）。
 
 **§54.1 追记（2026-09-05，行为对齐批次 `selection-merge-suggestion`，链 cards-face 第 3 批；`fix/parity-selection-merge-suggestion`；gap ids `board-cards-select-click-catcher` / `board-cards-select-all-lanes` / `board-cards-merge-suggestion-details` / `archive-confirm-added-on-done-card`）——多选态的整卡 tap catcher、全 lane 可选、合并建议卡四处细节、「永久完成」一点即发**：
 
@@ -5588,6 +5808,7 @@ owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不�
 - 存量 `R-<n>` 主键**原样保留**（文件名 / PK / lineage 都不动）；store2 v1→v2 升级只加列，`work_id` 全 NULL（§53.1 v2）；**不**批量回填 payload（激活协议的逐字段 parity 会把回填当差异，且宪法第 6 条禁止改写存量字段语义）。**升级是单向的**：< v0.48.15 的代码打不开 v2 库（每次 registry 调用抛 `SCHEMA_VERSION_MISMATCH`）——踏出升级前 store 自动留 `store2.db.pre-v1` 快照；§56.3 的部署回滚闸门（PR #130，**合并并部署到 live 之后**才生效）拒绝跨升级的代码 reset；降级出路见 §53.1 单向门条款与 TROUBLESHOOTING「store2 回滚」schema 降级段。
 - 已过批准闸的存量卡（approved/executing/review/delivered，含带这些回程票的 trashed/archived）：`display_id` = 主键，`registry.id_kind` 按状态判 `work`（不灰显——它们的 R 号是批准后跑出来的）；下一次落盘（派发失败落 `last_error`、归档扫、re-raise……）按 60.2 采纳主键作 `work_id`，号不变、显示不变。
 - 从未批准的存量卡（detected / card_sent / raising / 带这些回程票的 trashed）：`id_kind: legacy`，看板灰显——这就是 #127 数出来的 162 张「雷达噪音占号」；P5 清理（vnext2-plan §4）时连同 proposal-lane 一起处理。
+  **§78 追记（2026-09-26，owner 决策 **D80**，issue #447）——proposal-lane 的那半句现在兑现了，但兑现方式是「搬」不是「清」**：本行末尾许诺的「连同 proposal-lane 一起处理」由 §78 完成——处理法是把 `card_sent` 的卡**一次性搬进潜在任务**（§78.5 的归并扫描，只改 `status` + 追一行 notes），**不是**批量删号、不是回填 `work_id`、不是改主键。本节两条存量纪律因此原样成立：存量 `R-<n>` 主键不动，`work_id` 只在进 `approved` 时分配（set-once）；被搬的卡照旧 `id_kind: legacy`、照旧灰显——**搬列不等于批准**，它们的 `work_id` 仍然是 NULL。162 张噪音卡的真正出路仍是 owner 在潜在任务列上一张张点删除、或 §70.2 的 `stale:idle` 安静过期。
 
 ### 60.6 判例
 
@@ -5990,6 +6211,8 @@ wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictCh
 - **自本条起可以做的**：待验收列头的「选中全部建议验收(N)」（`ReviewLaneTools`，§70.5 追记）**只预选**——它把这批卡勾上、切进多选态，一条 inbox 动作都不发；真正的提交在多选条上，且必须先过一个**逐条列出 id + 标题**的确认弹窗（§21 追记二）。owner 因此仍然看见了这批卡、仍然自己按了那一次；被省掉的只是「19 张卡点 19 次」这件纯体力活。
 - **为什么这不算把建议变成默认**：原文的教训（interview scorecard）指的是**把 AI 的判断直接执行**；这里 AI 的判断只被用作**一次选择**（selection），而选择是可见、可改、可取消的——弹窗里删掉一张的办法是取消、去掉那张的勾、再来一次。判例 `web/src/components/board/ReviewLaneTools.test.tsx`（两颗键零 `postAction`）、`SelectionBar.reviewBatch.test.tsx`（弹窗逐条列 id + 标题、提交是逐卡一条动作）。
 
+**§64 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——本节零行为改动，但它是 §78 立法时援引的先例，所以把边界重述一遍**：`assessment` 仍**只**对 `status == review` 的卡生成、仍由 `card_summary` 在 actd 写者线程里落、仍**不是状态、不参与匹配/去重/re-raise、永不改 `status`**。退役新增的唯一一条路是 `review --abort_execution--> detected`（此前落 `card_sent`，§10 §78 追记）：被退回潜在任务的卡**带着上一轮的 `assessment` 一起回去**，而 §64.2 的新鲜度规则已经替它兜住——`assessment.source_hash ≠ 当前指纹` 时 `_assessment_view` 整键不出，且 `needs_assessment` 只认 review 卡，所以潜在任务列上**既不会显示一句过时评语、也不会为它再花一次钱**。`debt[]` 的行形（§2 §78 追记的 `_backlog_row`）**刻意不投影 `assessment`**：那一列的卡还没有交付物可评。§78 的三条红线（提示只上卡面、状态永远由 owner 点、AI 判断永不驱动转移）逐字照抄本节与 §76 的先例。
+
 ## 65. 自动草稿 PR 通道（self_improve lane；P6；owner 决策 D7·D8·D9·D12；§0 第 12 条修宪）
 
 owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……先只给泽林 AI assistant 这一个软件弄车道吧。」「Agent 使用的身份是我自己的 GitHub 个人账户。」「自动派工作，要不先不要搞预算。」「如果我留了一个 comment 'Where is the test?'，AI 就知道这个东西需要做 test 了。」「臣子把东西做出来了，皇上能挑你的那就是你的大幸。」本节把「人从起点审批移到终点验收」这条例外的**全部机械后盾**立法。执法代码：`act/lib/policy.py`（资格闸，§51 第二条 lane）、`act/lib/self_improve.py`（核验 / 护栏 / 巡检 / 拒绝记忆 / 状态）、`act/llm.py`（`NO_MCP_ARGV`）、`act/executor.py`（prompt 段 + argv + 派发记录）、`act/actd.py`（`_lane_delivery_check` 四条收割路径 + `_self_improve_tick`）、`act/lib/dashboard.py`（§2 投影）、`server/self_improve_lane.py`（恢复端点）、`web/src/components/shell/SelfImproveBanner.tsx` + `ReviewCard.DeliveryChip`。判例：`tests/test_policy_self_improve_lane.py` / `test_self_improve_verify.py` / `test_self_improve_sensitive_pause.py` / `test_self_improve_followups.py` / `test_self_improve_argv.py` / `test_self_improve_actd_wire.py`、web `SelfImproveBanner.test.tsx` / `ReviewCard.delivery.test.tsx`。
@@ -6001,6 +6224,11 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 - **只给本仓库**（D7）：其它 repo 的 self_improve 卡报 `self_improve:repo_mismatch` 上卡，照旧人工审批。`self_improve.repo_path` 可配，默认 `config.HOME`；比对必 realpath（`~/Projects/zelin-ai-assistant` 是外置卷 symlink，v0.48.2 事故）。
 - **身份**（D8）：agent 用机器上既有的 `gh auth` 身份 = owner 本人；没有第二个账号、没有 PAT。推论：owner login 下的 PR 评论一律视为 owner 的话（65.5），所以 prompt 明令 lane 会话**不发 PR 评论**。
 - **无预算**（D9）：lane 卡不看 `cost_estimate_usd`（`cost:unknown` 不适用）；`max_concurrent` 照常排队。
+
+**§65.1 §78 追记（2026-09-26，add-only；owner 决策 **D80**，issue #447）——通道从 `detected` 起跳，且它现在是唯一一条免批 lane**：
+- **起跳状态**：免批提升自此是 **`detected → approved(system)`**（白名单新行见 §53.2 §78 接线补行）。铸卡侧同步——两个 producer（§70.3 的每日循环提案、§65.6 的 PR 跟进卡）都改铸 `detected`。**准入判据一个字不改**：channel 全为 `self_improve` ∧ `realpath(target_repo) == realpath(self_improve.repo_path)` ∧ 开着 ∧ 未暂停 ∧ 未声明 `needs_mcp` ∧ 共用天花板全过；token 词表、notes 痕、`msg_self_improve_dispatched` 通知逐字不变。
+- **它成了唯一一条**：§51 的 hand lane 同 PR 退役（§78.9 墓碑），所以免批扫描在 `dispatch.py` 里多一道 `policy.is_self_improve_sources(req.sources)` 守卫——**没有这道守卫，「扫 `card_sent`」改成「扫 `detected`」会把整条潜在任务列变成自动派发的候选池**，那是本次退役最危险的一个坑（潜在任务里躺着雷达噪音、owner 随手记的半句话、以及 162 张 legacy 卡）。守卫写在 `dispatch.py` 而不是 `policy.py`：`may_auto_dispatch` 的资格判决表 golden（583,200 例）因此逐例不变，改的只是**谁被拿去问**。
+- **§65.1 追记（D57）的三层总开关、「关着时不做的三件事」、「关着时照样做的三件事」全部原样**；其中 ①「免批批准但还没派出的卡**退回 `card_sent`**」（frozen-in-flight，`act/lib/actd/dispatch.py`）自此**退回 `detected`**（白名单行 `('approved','detected','system')` 见 §53.2），清痕 + notes 一行、下一 pass 报常态 token `self_improve:disabled`、owner 亲批的卡照派——语义一字不变，只换落点。
 
 **§65.1 追记（2026-09-14，add-only，issue #307 / owner 决策 D57）——通道总开关出厂关，且设置页有面**：`self_improve.enabled` 的默认值 **true → false**（truth = `act/lib/policy.SELF_IMPROVE_DEFAULTS` + `act/lib/config.Config.self_improve_enabled`；`config.example.yaml` 不再钉这个键，见下一条）。理由见 D57：这是开发者 / 维护者功能，此前默认对所有安装开着、设置页里又找不到任何开关。自本条起：
 
@@ -6065,6 +6293,8 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 
 `Requirement(id=next_id(), title="跟进 PR #<n>：<k> 条 owner 评论 / <m> 项红检查", type="self-improvement", tier="T1", status=card_sent, hardness="soft", sources=[{who: <owner login>|"ci", channel: "self_improve", date, ref: "pr:<n>", quote: <评论原文时间序拼接 + "red required checks: …"，1500 字封顶>, pr_number, pr_url, head, head_sha}], summary, plan=[checkout PR 分支 / 逐条用改动回应评论 / 让 required check 变绿 / 本地门跑过再 push 同一分支], definition_of_done=[…], target_repo=repo_path, target_kind="existing", delivery_mode="repo")`，`origin_trust` 按 sources 盖章（proposed）。**owner 评论原文只进 `quote`**——build_prompt 把 sources 整块过 `sanitize.fence_untrusted`（宪法第 5 条），标题 / plan / DoD 全是不含评论文字的骨架；`pr_number / head / head_sha` 是 65.3 核验跟进交付的坐标。铸出即 card_sent，下一 pass 经 §51 lane 免批派发；通知 `msg_self_improve_followup(n, k, m)`。
 
+**§65.6 §78 修法（2026-09-26，owner 决策 **D80**，issue #447）——跟进卡铸 `detected`，且 `_OPEN_STATUSES` 必须同车加上它**：上面那行 `status=card_sent` 自此是 **`status=detected`**（潜在任务；下一 pass 照旧经 §51 第二条 lane 免批派发——起跳状态换了，资格判据一个字没换）。骨架的其余部分（title / sources 六个坐标键 / `quote` 的 1500 字封顶 / plan / DoD / `target_kind="existing"` / `delivery_mode="repo"`）以及「owner 评论原文只进 `quote`、标题与 plan 不含评论文字」的 §0 第 5 条纪律**逐字不变**。**必须同车改的第二处（否则是每天一张重复卡的静默事故）**：`act/lib/self_improve.py` 的 `_OPEN_STATUSES`——巡检用它判「这张 PR 是不是已经有一张没做完的跟进卡了」，它此前列的是 `card_sent` 一家；铸卡落点改成 `detected` 而这张集合没跟上，**同一个 PR 会在每一轮巡检里被重新铸一张跟进卡**，一天一张、永不去重、还每张响一次 `msg_self_improve_followup`。自此 `_OPEN_STATUSES` **加上 `detected`**（add-only，`card_sent` 留着认存量卡）。判例必须钉的是「同一 PR 连跑两轮只出一张卡」。
+
 ### 65.7 状态与文件（防腐 #4：出生即带帽）
 
 - `state/self_improve/lane.json`（atomic 写）：`paused` 家族（65.4）、`resumed_at/resumed_by`、`owner_login`、`repo_slug`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——**读-改-写全部在 `lane.json.lock` 的 `flock` 内、且只动自己的键**（`self_improve._update_state` / server `_locked`；巡检末尾只提交 `TICK_KEYS`）：server 清暂停与 actd 同一时刻写的暂停互不覆盖（Codex review P1；Windows 无 flock 退化为无锁）。
@@ -6094,11 +6324,13 @@ owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通�
 - **来源与冻结**：`scripts/ui/extract_native_inventory.py` 只读 `mac/Sources/*.swift`（D3 冻结、永不再改），机器提取全部用户可见面：左侧栏（`MainSection` 顺序 / 双语标题 / SF 图标 / ⌘1..8）、页面与面板（rail 页、`SettingsSectionDescriptor` 注册表的每个 section、权限体检 / 初始设置向导 / 诊断条 / 强制合并 sheet 等窗口）、每个 `L("zh","en")` 双语字面量按**调用链**归类（toggle / button / menu / link / textfield / picker / option / menu-item / alert-button / dialog / label；长句 = copy、tooltip = help）并附 screen 与 `File.swift:line`、settings 键（`settings_overrides.json` 扁平键与 `features.*` / `telemetry.*` 嵌套键；UserDefaults 纯界面偏好键）、看板列（顺序 / 双语列名 / 左右两根可折叠书立条 / 每列卡面动词）、快捷键（`.keyboardShortcut` + `NSMenuItem keyEquivalent`）、通知 kind、以及主题 / 布局常量的指针（数值住 §66.3）。mac/ 冻结 ⇒ 清单是**终版**；重跑零 diff 由判例钉死，P8 删 mac/ 时 JSON 留在仓里作规格、提取器与判例改 tombstone（防腐 #6）。
 - **id 稳定**：`control:<screen>:<role>:<slug-en>[#n]`（同 id 按源码顺序 #2/#3 稠密编号）、`rail:<slug>`、`lane:<slug>`、`screen:<screen>`、`setting:<overrides|prefs>:<key>`、`shortcut:<screen>:<key-slug>`、`notification:<kind>`、`theme:default`、`layout:<token>`。账本、报告、vitest 的 it 标题全部用这些 id 说话。
 - **唯一手写部分 = 归属表**（`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN`：文件 / 类型 / 成员 → screen；**2026-09-03 追记（add-only，`fix/parity-r2-board`）**：再加两张——`FUNCTION_SCREEN`：(文件, 顶层自由函数) → screen（Cards.swift 的 fileprivate 词表函数默认归文件 screen；`trashReasonLabel` 只被 TrashRow 调用 → `trash`，id 随之 `control:trash:label:you-rejected-it` / `you-deleted-it`）；`CONTROL_OWNER`：单条 control id → `{owner: retired, reason}`，只列不判、理由进 JSON `attribution.control_owner`——用于同一 screen 里个别 L() 不是界面文案（`header.freshness` 的 `AIFix.launch(context:)` prompt 上下文）或其机制在新架构里没有落点（`doctor` / `setup_wizard` 的「写入 {dest} 失败: 」「launchctl load 失败: 」：原生 app 自渲 plist + launchctl load；server 永不写 plist，§68.8 / §48.7）。这是 66.2 末句「新的不搬判断走归属表」的单条版，不进 waivers.txt。**同日 `fix/parity-r2-settings-header` 追记**：`CONTROL_OWNER` 再收 settings 面六条（`settings:label:no-usable-python`——Gmail IMAP 探针在 server 进程内跑，无 runtime python 子进程可失败，§68.3；`settings.skills` 新建表单五条——§67.1 仓库 = 商店、`skills/` 只有 git 写、§67.5 不做编辑器），每条理由带 §引用，判例钉 `reason` 含 `§`。同日提取器修正：`\(expr)` 插值按括号配对折成 `{expr}`（此前非贪婪正则把 `\(Self.money(cost))` 切成 `{Self.money(cost}` + 尾巴 `)`，探针正则因此要求 web 文案以 `)` 收尾、「💰 预计费用: $N」永远判不到）；slug 不变、id 不变。`SCREEN_OWNER`：screen → **谁负责补齐**：`web`（进门）/ `shell`（R2.2.3 原生残留：实时字幕悬浮窗、系统通知、macOS 应用菜单）/ `os`（⌘Q/⌘W/⌘H/⌘M/编辑菜单等系统惯例）/ `retired`（计划明文退役：D3 菜单栏状态项菜单、「显示菜单栏图标」、首启气泡「我在这里 👆」））。表本身进 JSON 的 `attribution` 节——改表 = 改规格，PR 可见、判例可钉。非 web 的条目**只列不判**；说明性文案（copy / help）同样只列不判——web 有自己的句子，但短标签、按钮、选项、字段名必须**逐字**（zh 与 en 都要）。**2026-09-04 追记（add-only，owner 决策 D29 / D30）**：`SCREEN_OWNER` 加 `ask: retired`（整页退役，`screen:ask` 与 screen `ask` 的 17 条随之不判）；`CONTROL_OWNER` 逐条点名这 17 条（理由「D29 owner 去掉问问助手 web 页（§27 tombstone …）」，进 JSON）；新增第八张表 **`RAIL_OWNER`**（rail slug → `{owner: retired, reason}`，进 JSON `attribution.rail_owner`）：`ask`（D29）与 `deps`（D30：只有侧栏项退役，`screen:deps` 与 `control:deps.*` / `doctor.*` 照判、渲染面换成设置页）——`rail:<slug>` 随表 retired 不判，探针 `rail:order` 的期望顺序只数仍 gated 的项，web 若把退役项画回栏上照样红。这是「新的不搬判断走归属表」的 rail 版：两本账本零改动。**同日追记（owner 决策 D35，`feat/composer-enter-newline`）**：`CONTROL_OWNER` 再收 `control:board.composer:copy:send-newline-esc-dismiss-v-pastes-images`（原生 Composer.swift 的键位提示句「↩ 发送 · ⇧↩ 换行 · Esc 退出 · ⌘V 可贴图」）——web 列顶输入框自 D35 起 Enter=换行、只有按钮提交（§41 追记），这句描述的键位不搬；copy 本就只列不判，点名是把判断落成判例，两本账本零改动。
+**§66.1 §78 追记（2026-09-26，add-only，owner 决策 **D80**，issue #447）——第九张归属表 `LANE_OWNER`**：`RAIL_OWNER`（D29 / D30 的侧栏版）在看板列上的对应物，形制逐字照它——`LANE_OWNER`：lane slug → `{owner, reason}`，**只列不判**，理由进 JSON `attribution.lane_owner`。首条也是今天唯一一条：`needs_approval → {owner: "retired", reason: "D80 owner 退役提案列（§78，issue #447）"}`。`scripts/ui/extract_native_inventory.py` 的 `lane_items()` 据表把该条目落成 `owner: "retired", gated: false`；`lane:needs_approval` 与 `lanes:order` 的期望值随之只数**仍 gated 的**列（§66.2 同日修订）。这是「新的不搬判断走归属表」的 **lane 版**——`ui/parity/pending.txt` 与 `waivers.txt` **零改动**（一行都不许加；退役不是欠账）。`mac/Sources/*.swift` 一个字节不改（D3 冻结 + D80.13：原生 app 是终版规格不是在产的面，退役只能由归属表表达，绝不能靠改 Swift）。判例随 `tests/test_ui_inventory_extractor.py` 既有的「归属表驱动 owner / gated」一格扩到 lane 维。
+
 **2026-09-04 追记（add-only，owner 决策 D34 / issue #217；`feat/single-detail-surface`）**：`CONTROL_OWNER` 再收看板面两条——`control:board.card:button:collapse` 与 `control:board.needs_approval:button:collapse`（原生 CardSurface 详情槽的「收起 ▾」）：卡片详情只留右侧侧栏一面（§49 追记 / §54.1 第 2 项 tombstone），就地展开退役、侧栏关闭是 × / ⎋，web 上没有这个动词的落点；理由带 §49 引用进 JSON。同一详情槽的其余 id 一条不退：渲染面换成侧栏后照判（探针第 ① 轮改为逐卡打开侧栏收文案，`parity.test.tsx openEachDetail`）。两本账本零改动。
 
 ### 66.2 门 `[ui-parity]`（scripts/ui/parity_check.py；shrink-only 两本账）
 
-- **探针**（每条 gated id 一个，真/假二值）：`control:*` → `web/src/parity.test.tsx`：由清单驱动生成 it()（不手写列表），用 demo fixture（`ui/parity/fixtures/`，`scripts/ui/parity_fixture.py` 从 `scripts/demo_seed.py` + `server/lanes.py` 落成，判例钉新鲜）渲染看板 / 回收站 / 设置三面 × zh / en，把每颗按钮点一遍收弹窗文案，按 accessible name / 自身文本**精确**匹配（插值 `{expr}` 放宽为正则）；原生 screen 按前缀映射到渲染面（`settings.*` → 设置页、`trash` → 回收站、其余看板相关 → 看板；web 尚无的页面在全部面的并集里找，新开页面时在该文件登记）。`screen:*` → zh + en 标题字面量都在 web/src 源码（剥注释、排除 `*.test.*`）；`rail:<slug>` → 双语标题 + `data-rail-item="<slug>"`，`rail:order` → 属性出现顺序 = 原生顺序且容器带 `data-rail="left"`；`lane:*` → 双语列名在 web/src 或 `server/lanes.py`，`lanes:order` → `LANES` 的 slug 顺序 = 原生顺序，`lanes:rail-left/right` → `BoardLanes.tsx` 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 之后；`setting:overrides:<k>` → `server/settings*.py` 出现 `"<k>"`（server 是 overrides 的 web 侧写者，§59.5）；`setting:prefs:<k>` → web/src 出现 `"<k>"`；`shortcut:*` → 字形（`⌘F`…）出现在 web/src；`theme:default` → `web/index.html` 首帧脚本写着 `dataset.theme = "light"` 兜底（无存储偏好时不跟随系统深色——owner (b)）；`layout:*` → 某个 web/src CSS `var(--native-layout-…)` 消费该 token（owner (c) 的列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）。
+- **探针**（每条 gated id 一个，真/假二值）：`control:*` → `web/src/parity.test.tsx`：由清单驱动生成 it()（不手写列表），用 demo fixture（`ui/parity/fixtures/`，`scripts/ui/parity_fixture.py` 从 `scripts/demo_seed.py` + `server/lanes.py` 落成，判例钉新鲜）渲染看板 / 回收站 / 设置三面 × zh / en，把每颗按钮点一遍收弹窗文案，按 accessible name / 自身文本**精确**匹配（插值 `{expr}` 放宽为正则）；原生 screen 按前缀映射到渲染面（`settings.*` → 设置页、`trash` → 回收站、其余看板相关 → 看板；web 尚无的页面在全部面的并集里找，新开页面时在该文件登记）。`screen:*` → zh + en 标题字面量都在 web/src 源码（剥注释、排除 `*.test.*`）；`rail:<slug>` → 双语标题 + `data-rail-item="<slug>"`，`rail:order` → 属性出现顺序 = 原生顺序且容器带 `data-rail="left"`；`lane:*` → 双语列名在 web/src 或 `server/lanes.py`，`lanes:order` → `LANES` 的 slug 顺序 = 原生**仍 gated 的**列顺序（**§78 修订 2026-09-26，D80 / issue #447**：与 `rail:order` 早已采用的写法对齐——`expected = [l["slug"] for l in inventory["lanes"]["items"] if l.get("gated")]`。不这么改，退役一列就等于让 `lanes:order` 在「原生五列」与「web 四列」之间永久红；改完之后 web 若把退役的提案列画回看板上，这条探针照样红。**同一修订的第二半——字号也归归属表管**：潜在任务卡的大白话 headline 自此按**审批卡字号**渲染（`CardHead variant="lg"`，15 semibold；§78.7 的「完整卡面包含字号」一条），与原生 `DebtRow` 的 12px 行标题**有意不同**。这不是 parity 欠账：原生那个小字号是**提案列还在时**的形状（债务行当年只是线索，决策发生在另一列），而「促成运行」现在就长在这张卡上——owner 按键前读的那一行不能是线索的字号。「原生 `DebtRow` 逐字镜像」这条理由已由 §76.2 §78 修法明文作废并交给归属表（`LANE_OWNER` / `CONTROL_OWNER` 的 retired 条目 + 决策引用），因此**一行都不进 `pending.txt` / `waivers.txt`**（§78.8 第 5 条：退役不是欠账）；`layout:*` / `token` 两类探针判的是 `--native-*` 数据变量有没有被消费，与卡面角色字号的映射（§54.1 第 10 项的 `typeScale.ts`）本就分属两层，未受影响），`lanes:rail-left/right` → `BoardLanes.tsx` 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 之后；`setting:overrides:<k>` → `server/settings*.py` 出现 `"<k>"`（server 是 overrides 的 web 侧写者，§59.5）；`setting:prefs:<k>` → web/src 出现 `"<k>"`；`shortcut:*` → 字形（`⌘F`…）出现在 web/src；`theme:default` → `web/index.html` 首帧脚本写着 `dataset.theme = "light"` 兜底（无存储偏好时不跟随系统深色——owner (b)）；`layout:*` → 某个 web/src CSS `var(--native-layout-…)` 消费该 token（owner (c) 的列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）。
 - **fixture 的读法（2026-09-03 追记，add-only）**：`parity.test.tsx` 读仓库根 `ui/parity/`（清单、两本账本、`fixtures/*.json`）**只经 `import.meta.glob`**（`eager` + `import: "default"`，账本带 `query: "?raw"`），不用静态 `import … from "../../ui/parity/…"`——静态 import 会让 `tsc` 去解析仓库根的文件，而 install.sh 的 ui 步在 web/ 的仓外镜像里编（§56.5 追记：首次 fresh-install 验收的死因）。glob 找不到 = 判例抛错（不静默空转）；`tests/test_web_build_self_contained.py` 钉 web/src 零逃逸 import。
 - **判决 = §58.4 同一三态**（`qa_common.compare_with_ledger`，阈值 0）：缺席且不在 `ui/parity/pending.txt`、也不在 `ui/parity/waivers.txt` → **NEW → FAIL**（补实现，不许记账）；在 pending 上但已在场 → **STALE → FAIL**（同 PR 划掉那行）。vitest 侧同一语义：普通 it 断言「在」，`[pending]` it 断言「不在」，`[waived]` skip——Web tests job 与 qa-gates job 读同两本账本，判决一致。vitest 跑不起来（没 node / 没 `npm ci`）= 门红，**不软化**。
 - **两本账本只许缩**（`ledger_diff.py` 对 base 差分，按 id 集合，备注列不是分数）：`pending.txt` = 尚未搬到 web 的原生条目（出生 = 本节立法当天的全量缺项，truth = 该文件行数，本节不复述；**每个加 UI 的 PR 必须让它缩**）；`waivers.txt` = 有意不搬（种子 = #119 需输入退役的回答对话框四条；行形 `<id>  <理由>  <issue/决策引用>`）。新的「不搬」判断**不走 waivers**——走归属表把 screen 标成 `retired` / `shell` 并带决策引用（代码可审、判例可钉）。
@@ -6490,6 +6722,8 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
 ### 70.2 维护半边（`act/lib/maintenance.py`）
 
 - **范围**：只碰 `detected`（潜在任务）与 `card_sent`（提案）两列；`raising` / `approved` / `executing` / `review` / `delivered` / `merged` / `archived` / `trashed` 永不入簇、永不判过时；`preset` 卡（§34bis）不入簇不判过时。
+  **§78 修法（2026-09-26，owner 决策 **D80**，issue #447）**：「两列」自此是**一列**——`LANE_STATES` 仍同时列 `detected` 与 `card_sent`（退役残留的卡在归并扫描跑到之前也该被去重、被判过时；词表 add-only 不删），但实际住户只剩 `detected`。保护罩逐条不变（`preset` / `user_titled` / 未来 `deadline` / 同簇有 approved·executing 兄弟 / `last_activity` 解析不了 / §70.2 追记二的 `review_stale` 分叉）。**合成卡的状态规则随之收敛，但那条规则问的事实必须换个地方活下来**：原文「`status` = 簇内有 card_sent 则 card_sent 否则 detected」自此恒为 **`detected`**（簇内不可能再有新的 card_sent；规则保留是为了读存量簇）——「**永不** approved/executing」的 §44.4 轻状态铁律一字不变。那条旧规则真正在裁的是**合成卡响不响**（`card_sent` 是会响的那一列），所以同一个判据平移到出生章上：合成卡的 `quiet_birth` = **全簇都安静才安静**（`all(...)`，truth = `act/lib/maintenance._merged_quiet_birth`，字段法条见 §1 §78 追记）。方向与旧规则逐字对应：簇里有一张当初会响的卡 → 合成卡照响（它接的是同一件事）；一簇**全部安静出生**的卡被并成一张 → 仍然安静，否则每日整理会在 owner 从没被打扰过的地方凭空造一次打扰。存量卡没有这个字段（默认 false = 会响），与 main 的 `card_sent` 同义。`preset` 卡的豁免随 §34bis 墓碑变成历史条款（词表不删，今天没有新的 preset 卡出生）。
+  **一条不许忘的连带**：`stale:idle` 自此是**机器卡的唯一自然出口**——§0 第 10 条修宪把「拿不准的静默过期」交给了安静出生 + 这条规则，它的默认 `stale_days`（45）与「`repeated_mentions < 3` 才判」的保护**都不动**（本 PR 不借退役之名调任何一把清扫旋钮）。
 - **去重合成（dedup_lanes）**：两列内按**同题**做 union-find 成簇（同题 = 归一标题相等且 ≥ 6 字，或 §38.3 `auto_merge.is_near_dupe` 的 **`high`** 信号——`contact` 信号只够触发 LLM 复核、不够直接合并，本节没有判官，宁可留重复卡不可错并；血缘相连的卡（`improvement_of` / `split_from` / 同 thread 根——thread 缺省按自根 / `merged_from`）永不同簇）。每簇 ≥ 2 → **一张新卡**（`registry.next_id()` 主键 `P-`）：`merged_from[]` = 旧卡主键（升序）；`title` / `display_title` / `user_titled` / `summary` / `plan` / `definition_of_done` / `target_repo` / `delivery_mode` 取**主稿**（用户改过名 > 提及最多 > 最新）；`sources` = `registry.dedupe_sources` 并集；`repeated_mentions` = 累加；`hardness` = 有 hard 则 hard；`deadline` = 最早；`green_sign_required` = 任一；`thread_id` = 最老旧卡的 thread 根；`thread_key` = 全部相同才继承否则 None（永不模糊）；`former_titles` = 旧名并集（去重保序，cap `registry.FORMER_TITLES_CAP`——超出的旧名仍逐字活在 fold note 里，§37「旧名仍可搜索」）；`origin_trust` 由 `policy.classify_origin` 按并集重算（最小信任者定卡，§50）；`status` = 簇内有 card_sent 则 card_sent 否则 detected（**永不** approved/executing，§44.4 轻状态铁律同款）；每张旧卡一行 §38.2 冻结文法的 fold note `[radar] 每日整理并入 <old id>「<旧名>」：<旧 summary 或旧名> [@ts]`（自带拆出句柄，`split_note` 照常可用）。落盘次序：**新卡先写**（crash 只会多一张、绝不丢），再逐张 `registry.trash(old, "daily-merge: 并入 <new id>")`（`prev_status` 完整保留），每对 `auto_merge.record_pair_final(new, old)`（恢复旧卡后 §38.3 不再建议并回；`auto_merge.linked` 自此认 `merged_from`），最后一条 §44.6 回执（channel `daily_loop`，内容只进散列）。**绝不使用 §21 的 `merged` 终态**。撤销 = 回收站恢复旧卡（+ 手动 trash 新卡）；不新增 inbox 动词。
 - **§70.2 追记（add-only，2026-09-14，issue #308 / D64）——每日整理不再出并入回执**：上一条末尾「最后一条 §44.6 回执（channel `daily_loop`，内容只进散列）」自 §44.6 追记起不再兑现：`daily_loop` 不在用户通道白名单（`policy.CHANNEL_CLASS` 的 HAND 类）内，`fold_receipts.record` 对它直接 no-op。调用**保留**（所有 fold 执行点统一调同一个闸，判据只住 `record` 一处），但看板上不再出现「刚才的输入已并入 …」——每日整理的可见面是顶部整理横幅（D10）+ 新卡上每张旧卡一行的 §38.2 fold note。合并本身、`merged_from`、pair 台账、回收站可恢复性一字不变。
 - **过时清理（sweep_stale）**：`stale_verdict(req, all, today, stale_days)` 全函数、确定性、guards 先于规则、**任何字段解析不了 = 不动**：
@@ -6520,7 +6754,7 @@ owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在�
 
 - **输入 → Signal**（每个读取器独立、坏了只丢自己、`inputs.<name>` 记 `unavailable: <Exc>`）：① 卡片 `execution` 块（approved 且 `dispatch_attempts ≥ 3` 或 `dispatch_halted` → `stuck_dispatch:<failure_id|hash>`；`last_error` 未被 `failures.classify` 命中 → `unclassified_failure:<hash>`）；② `state/analytics/events.jsonl` 近 8 天按日计数，今天 ≥ 50 且 > 5× 前七日中位数 → `event_anomaly:<event>`；③ `state/radar_failed.json` 的 `gave_up` 按报错类别聚合 → `radar_give_up:<hash>`（key 里的文件名**不进卡**，s2 H7）；④ `state/registry_writes.jsonl` 24 h 内同文件 > 100 写 → `write_storm:<file>`；⑤ `state/actd.log` 末 2000 行去时间戳后同形报错 ≥ 50 → `log_loop:<hash>`；⑥ `state/install_report.json` 的 fail 步骤 → `install_step_fail:<step>`；⑦ `~/Library/Logs/zelin-ai-assistant/*.log` 各尾 200 行命中已知环境故障正则（no module act / yaml、TCC EPERM、Xcode license、fd limit）→ `launchd_fault:<name>`（测试经 `ZAI_LAUNCHD_LOG_DIR` 指进沙箱）；⑧ `python3 -m act.doctor --fast --json` 的 FAIL 行 → `doctor_fail:<name>`（WARN 不铸卡）；⑨ §57 pinned issue「Nightly mutation report」的模块表：存活最多且 ≥ 5 的一个模块 → `mutation:<module>`；⑩ GitHub 开放 issue（`gh issue list`）：**owner 作者（`Wan-ZL` / `zelinPostman`）→ `issue:<n>`**；**他人作者 → 只出摘要行 `Summary`（D18），不铸卡不开 PR**，除非 owner 在该 issue 评论里写了「do it」（每轮最多查 10 张）；机器人报告 issue（夜间变异 / `[bot]` 作者）不是待办；⑪ GitHub 开放 PR（最多 20 张 `gh pr view --json comments,reviews,statusCheckRollup`）：必需检查有 FAILURE/TIMED_OUT/CANCELLED → `pr_red:<n>`；**owner 本人**近 7 天的评论 → `pr_comment:<n>:<hash(id)>`（D12：「Where is the test?」= 下一轮任务）——带 🤖 / `Generated with Claude` / `Co-Authored-By: Claude` 落款的评论是 agent 借 owner 账号（D8）写的，不算 owner 指令；⑫ 素材库（§62 台账，`materials.list_items` 取 `new` 与 `picked_up`——上一轮读过但没排上额度的重试）→ `material:<id>`：标题与证据经 `materials.fetch(url)`（永不抛，注入缝）+ `materials.prompt_block`（owner 备注与抓取内容各自围栏），提案 = 「消化这份素材」，真正的理解与实现交给被派工的 agent；**台账回写**（`loop_inputs.mark_materials`，本循环是 §62 预留的第二写者）：本轮读过的条目 → `picked_up`，铸了卡的 → `proposal_created` + `links.proposal_id = <P- 主键>`（状态机顺序 new → picked_up → proposal_created 逐级走），卡片侧反向链接 `sources[].ref = self_improve:material:<id>`；逐条隔离，被 owner 同时放弃的条目只丢那一条。**不读**：`state/logs/R-*.log`、legacy `state/*.launchd.log`、`dashboard.json` 正文、`search_index.json`（s2 §3 parse spec）。外来文本（issue 正文、PR 评论、素材备注）进 `quote` 前一律 `sanitize.fence_untrusted`（§0 第 5 条）。`gh` 缺席 / 未登录 / 超时（25 s）= GitHub 输入不可用，循环照跑。
 - **挑选（`select_signals`）**：按 `priority` 升序（红 CI 5 < owner PR 评论 8 < 派发卡死 10 < 安装失败 12 < doctor 14 < 事件风暴 15 < launchd 18 < 未分类报错 20 < 写风暴 25 < 雷达放弃 30 < 日志刷屏 35 < 变异 40 < 素材 42 < issue 45）逐条 offer，跳过原因逐类计数进审计行：`dedup`（指纹已在 registry 任何状态（含回收站——owner 扔掉 = 拒绝记忆，R2.6.6）的 `sources[].ref = self_improve:<fp>` 里，或在 90 天指纹台账 `state/daily_loop.json.fingerprints` 里）→ `kind_taken`（**每 class 每天一条**，s2：一场风暴 = 一条提案不是 954 条）→ `gh_title`（非 GitHub 来源的信号标题与某开放 issue/PR 标题互相包含 ≥ 12 字 = 已在 GitHub 上）→ `cap`（今日额度 = `daily_loop.max_proposals_per_day`（默认 5，0 = 只维护不提案）− 今天已铸的循环卡数（registry 现算，任何状态；重启不丢账））。
-- **铸卡（`build_card` → `registry.merge_or_new_with_kind`）**：`title` = `🤖 ` + 信号标题（≤ 120）；`type` = `self-improvement`；`tier` T1；`status` = **card_sent**（进提案列走正常三选一闸门——owner 批准才派工；P6 通道另立法）；`hardness` soft；`summary` / `plan[]` / `definition_of_done[]` / `cost_estimate_usd` 全部非空（R2.4.3）；`target_repo` = `config.HOME`（本仓库物理路径）；`delivery_mode` repo；`sources = [{channel: "self_improve", date: <今天>, ref: "self_improve:<fingerprint>", quote: <证据 ≤ 500，外来文本已 fence>, who: "daily_loop"}]`——**channel 是代码字面量，不经任何 LLM**（write-locked），`policy.CHANNEL_CLASS["self_improve"] = proposed`（§50）→ §51 不免批。同题（`merge_or_new` 的标题匹配）折进既有卡而不重复（outcome `folded`）。
+- **铸卡（`build_card` → `registry.merge_or_new_with_kind`）**：`title` = `🤖 ` + 信号标题（≤ 120）；`type` = `self-improvement`；`tier` T1；`status` = **card_sent**（进提案列走正常三选一闸门——owner 批准才派工；P6 通道另立法）——**§78 修法（2026-09-26，owner 决策 D80，issue #447）：改铸 `detected`**，落**潜在任务**列走同一道三选一闸门（促成运行 / 修改 / 拒绝，owner 点了才派工；§65 通道的免批仍由 §51 第二条 lane 单独裁决，与本行无关）。owner 原话就是冲这一条来的：「自动生成任务推进的卡片都放在『潜在任务』中」——`🤖 ` 前缀的每日循环提案卡是这句话最直接的落点。`sources[].channel` 仍是**代码字面量** `self_improve`（write-locked，不经任何 LLM），`policy.CHANNEL_CLASS["self_improve"] = proposed` 与「§51 不免批（除第二条 lane）」一字不变；同题折进既有卡（outcome `folded`）不变。`hardness` soft；`summary` / `plan[]` / `definition_of_done[]` / `cost_estimate_usd` 全部非空（R2.4.3）；`target_repo` = `config.HOME`（本仓库物理路径）；`delivery_mode` repo；`sources = [{channel: "self_improve", date: <今天>, ref: "self_improve:<fingerprint>", quote: <证据 ≤ 500，外来文本已 fence>, who: "daily_loop"}]`——**channel 是代码字面量，不经任何 LLM**（write-locked），`policy.CHANNEL_CLASS["self_improve"] = proposed`（§50）→ §51 不免批。同题（`merge_or_new` 的标题匹配）折进既有卡而不重复（outcome `folded`）。
 - **审计行**（`state/daily_loop.jsonl`，`logcap` 1 MB，防腐 #4）：`{ts, day, duration_s, merges[{new, from[], title}], trashed[{id, rule, display_id}], proposals[{id|error, fingerprint, kind, outcome, title}], skipped{dedup, kind_taken, gh_title, cap}, summaries[{kind, text, ref}], inputs{<reader>: n | "unavailable: …"}, errors[]}`。D18 的摘要行只活在这里与 `last_result.summaries` 计数里。
 
 **§70.3 ⑪ 追记（2026-09-04，add-only）——「必需检查」= ruleset 的 required set，不是 rollup 里的一切**：`statusCheckRollup` 不分 required 与 informational——`continue-on-error` 的 `Web visual (playwright)`、第三方 app 的 `qlty check` 在 rollup 里同样是 FAILURE。判例：2026-09-04 七项 required 全绿的 dependabot PR #193 只因 Web visual 红被旧逻辑铸成 R-280。自此 ⑪ 的判法分两步：rollup 里有 FAILURE/TIMED_OUT/CANCELLED **只是预筛**（全绿的 PR 不多花一次 gh）；预筛命中再问一次 `gh pr checks <n> -R <repo> --required --json name,bucket`（gh 经 GraphQL `isRequired` 读 ruleset / 分支保护的 required set，与 §65.5 `red_required_checks` 同一口径），**只有 required check 里有 `bucket == "fail"`（FAILURE / TIMED_OUT / ERROR / ACTION_REQUIRED）才铸 `pr_red:<n>`**，红的名字进 summary / plan / DoD。**Fail-closed**：`--required` 拿不到（没装 gh、旧 gh 不认 `--json`、超时、非法 JSON）或 required 集合为空 = 不铸，宁可漏一张也不铸假卡（宪法第 11 条）；`bucket == "cancel"`（CANCELLED）与 `pending` 不算红——被取消的 run 重跑即可，没有可修的东西。判例 `tests/test_daily_loop_inputs.py::PrSignalsTestCase`。
@@ -6889,7 +7123,7 @@ owner 原话（issue #315 Expected 三条，2026-09-09）：「self_improve lane
 
 - **判据来自同一个三选一闸门**，不新起第二次 LLM 调用：triage 的 `relates_to` 分支多问一句 `completed: true|false`（「新证据是否表明**这张卡描述的事已经发生**」——repo 已存在、命名已切换、Slack 里已宣布）。硬标准逐字写在 `_TRIAGE_BAR` 里：计划、承诺、进行中、只是又被提一次，全是 false；拿不准填 false。
 - **消毒 fail-closed**（`_completed`）：缺键 / null / `false` / `"maybe"` / `1` / `[]` 一律 False，只有 `True` 与字符串 `"true"/"yes"/"1"`（大小写与首尾空白宽容）为真。这与 `_needs_action` 的默认值**故意相反**——缺 `needs_action` 会丢掉一个真诉求（无损原则），缺 `completed` 只是少一条提示；宁可少提示，不可在卡上贴一句没人说过的「已完成」。
-- **盖章条件**：`completed` 为真 **且** 目标卡 `status ∈ {detected, card_sent}`（`quick_capture._HINT_STATES`）。approved 之后的卡（approved/executing/review/delivered/merged/archived/trashed）永不被盖——那些卡有自己的收尾出口（验收 / 打回 / 归档），一条猜测不许出现在 owner 已经投入的卡上。
+- **盖章条件**：`completed` 为真 **且** 目标卡 `status ∈ {detected, card_sent}`（`quick_capture._HINT_STATES`）。**§78 追记（2026-09-26，D80 / issue #447）**：`_HINT_STATES` 自此是 `{detected, raising, card_sent}`——**add-only 不删 `card_sent`**（退役残留的卡照旧可盖），并**新增 `raising`**：`raising` 是同一张潜在任务卡的「AI 正在补计划」形态（D80.6 把占位行也归进了 `debt[]`，卡面与 `detected` 同形），扩写期间外部世界照样可能把这件事做掉，那一刻不许因为 AI 恰好在研究就把提示丢掉。三档合起来正好是**潜在任务车道的全部**，本节「只盖在 owner 还没投入的卡上」这条界线因此与车道边界逐字重合。approved 之后的卡（approved/executing/review/delivered/merged/archived/trashed）永不被盖——那些卡有自己的收尾出口（验收 / 打回 / 归档），一条猜测不许出现在 owner 已经投入的卡上。
 - **形状**：`completion_hint = {at(ISO str), note(str，截 `quick_capture.HINT_NOTE_CAP`), channel(str)}`。`note` = 这次 fold 的备注（LLM 的一句话说明），`channel` = **证据的真实来路**（子候选 `sources[]` 最后一条的 channel，读不出回落 `"radar"`——同 §44.6 追记 D64「通道是内容的出身」的口径）。同一张卡被反复命中 = **最新一次覆盖**（owner 要看的是最近那条证据），`at` 是盖章时刻。字段词表同步 `card_model.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`（import 期 fail-fast 守卫，判例 `tests/test_store2_field_parity.py`）。
 - **fold 本身一字不动**：`append_fold_note` + sources 去重 + `repeated_mentions` 累加 + §44.6 回执照旧发生（盖章在同一次 `registry.save` 里，不额外写盘）。盖章失败（任何异常）被吞掉、fold 照常完成——提示是观测面，不许连坐数据落盘（宪法第 11 条）。
 - **§45 闸门中立**：`gate` 不参与盖章判定。屏幕来源（CORROBORATE）唯一的放行形态本来就是「fold 进开着的卡」，而盖一个提示既不铸卡也不改状态，所以 P-023 那条真实路径（证据只在屏幕录制笔记里）是通的；命中完结卡照旧整条拦下（`radar_echo_blocked{stage:"filing"}`）、act-now 提升照旧被压平。§45 的表、性质测试与「屏幕不发起卡片」一个字都没改。
@@ -6903,19 +7137,28 @@ owner 原话（issue #315 Expected 三条，2026-09-09）：「self_improve lane
 - `completion_hint`(object，**有才发**) = `{at(epoch int|null), note, channel}`（§2 惯例：注册表存 ISO、wire 发 epoch int）。空壳（`{}` / 既没有 `at` 也没有 `note`）整键省略——客户端不许拿空壳去猜（§64 assessment 的读侧语义）。
 - 两个 bool 恒在是有意的：它们是**派生值**，没有「不知道」这一档，客户端不必为旧 server 写回落。`raising` 占位行不带这三个键（AI 还在研究，没有可拍的板）。
 - **债务列同款**（PR #349 评审）：`debt[]` 的备选行也投影 `completion_hint`（同形、同「有才发」语义）——盖章状态含 `detected`，只盖不投就是只写不读的死字段，而「雷达已经证明这件事做完了」正是决定一张备选卡去留的信息。**两个派生 bool 不下到这一列**：备选卡面没有 deadline 决策行、也没有「被提×N」章（§66.2 原生 `DebtRow` 逐字镜像），造一个原生没有的面不是本节的事。备选卡的出口用卡上**既有的三颗动词**（研究并提议 / 删除 / 永久完成（封存））——不给债务列开第二套 `done_external` / `reject`（§10 那两个动词是提案卡的，备选卡的「真做完了」就是封存）。
+
+  **§76.2 §78 修法（2026-09-26，owner 决策 **D80**，issue #447）——上一条的后半段作废：两个派生 bool 现在必须下到这一列**。原文「备选卡面没有 deadline 决策行、也没有『被提×N』章」是一句**关于提案列与备选列分工**的论断，而提案列已经不存在了：`decision_due` / `mention_escalated` 唯一能被 owner 看见的地方就是 `debt[]`，留在恒空的 `needs_approval[]` 上等于把 issue #313 的三条结算信号**整体报废**（P-008「被提 ×23 一次升级动作都没有」会原样复发）。自此 `debt[]` 的行**恒带**这两个 bool（口径逐字不变：`decision_due = days_left <= 0`、`mention_escalated = repeated >= approval.mention_escalation`，坏 / 缺 deadline 为 false，阈值 0 或负 = 关），`completion_hint` 照旧「有才发」，三键仍全部由 actd 的投影单点算出（§44 单写者），server 永不改写。`raising` 占位行**同样带这两个 bool**（与 §7 §78 追记的 `egress` 同一条理由：一条车道一种行形，缺键 = 逼客户端猜；「AI 还在研究、还不能拍板」由 `processing: true` 说）——值照口径算，AI 研究期间 deadline 照样会过、被提数照样会涨，把这两件事在占位期间藏起来反而是撒谎。**「§66.2 原生 `DebtRow` 逐字镜像」这条理由随之失效并被归属表接手**：原生看板的 `DebtRow` 是提案列还在时的形状，退役之后 web 的潜在任务卡面本来就得长成老提案卡（§2 §78 追记的 `_backlog_row` 全形），差异由 `LANE_OWNER` / `CONTROL_OWNER` 的 retired 条目表达（§66.1 §78 追记），**不进 `pending.txt` / `waivers.txt`**。三颗动词那一句同样重写：潜在任务卡面上的动词是 **促成运行（`approve`）/ 修改（`comment`）/ 拒绝（`reject`）/ 研究并提议（`raise`）/ 删除（`trash`）**——全是 §10 既有动词，**一个新 inbox 动作都不开**；`completion_hint` 的绿章旁那两颗一键（「已办完 · 记为已交付」= `done_external`、「不做 · 进回收站」= `reject`）随卡面一起搬到这一列（§76.4 同日修订）。
+
+  **`decision_due` 那一行的文案同 PR 逐字重写**（旧句点的是一条不存在的路）：原文「⏰ 截止日已到，这张卡还没**批准** —— 现在决定：批准 / **暂缓** / 拒绝」里，「批准」不是这张卡上那颗键的名字（键叫**促成运行**），而「暂缓」（`defer`）已随本节退役、卡上根本没有这颗键（§10 墓碑 / §78.9）——一句催人决策的话点名两个他按不到的动词，比不催更糟。自此逐字是：
+
+  > 「**⏰ 截止日已到，这张卡还没拍板 —— 现在决定：促成运行 / 拒绝**」 / "**⏰ Past its deadline and still undecided — decide now: Run it / Reject**"
+
+  **两个动词的按钮就在下一排**（`approve` / `reject`，一个动词一颗键，绝不为提示行另造第二套动作），truth = `web/src/components/board/DebtCardItem.tsx`，判例 `web/src/components/board/DebtCardItem.face.test.tsx`（中英各一格）。这两个动词与 §76.3 那条通知的落款**逐字同源**——`act/lib/notify.py` 的 `msg_deadline_due`（「潜在任务里这张卡到截止日了，还没拍板」/「{title} —— 现在做个决定：**促成运行 / 拒绝**」）：通知把人叫到看板上，看板上那行字必须说同样的两个出口，否则 owner 打开卡面要重新找一遍自己被叫来干什么。`mention_escalated` 的「被提×N · 仍未处理」与 `completion_hint` 的绿章文案不变。
 - **阈值的面**（§15.3 §76.2 追记）：`approval.mention_escalation` 在 web 设置页「审批 / 成本」区有一行（override 扁平键 `approval_mention_escalation`，diff-write），actd 每 pass 现读——D3 之后原生 app 退役，一把只能手改 config.yaml + 重启才生效的旋钮等于没有面。
 - 三个键都由 actd 的投影算（§44 单写者），server 侧永不改写。判例：`tests/test_proposal_decision_signals.py` 的真值表 + 债务列一格 + 旋钮的面三格，以及 `tests/fixtures/dashboard_golden.json`（P-209 三个全真、P-201 三个全假/缺席、P-210 备选带提示；本 PR 以 `REGEN_DASHBOARD_GOLDEN=1` 重铸，见 §2）。
 
 ### 76.3 一次性升级通知（`detect_transitions` 的三条 false→true 翻面）
 
 - 只看**两个快照里都在**的提案行（`alerts._settlement_msgs`）：上一版为假 / 缺席、这一版为真 = 响一次，`notify.msg_completion_hint` / `msg_deadline_due` / `msg_repeated_unhandled(n)`，kind 一律既有的 `KIND_PROPOSAL`（§28 不新增分类值：三条催的是同一件事——这张提案该被拍一下了；用户关掉「提案」通知即三条全静）。
+  **§78 修法（2026-09-26，owner 决策 D80，issue #447）**：上一行的 diff 源从 `needs_approval[]` 换成 **`debt[]`**（潜在任务）——那一列恒空之后三条信号会**静默失声**，这是本次退役最容易漏的第二处（第一处是 §40.6 的新卡通知，同一个文件、同一个原因）。翻面判据、一次只响一次、`prev is None` 整轮不发、新卡不在此列、`KIND_PROPOSAL` 不新增分类值**全部一字不变**；带 `quiet_birth` 的行按 §40.6 §78 修法只影响**出生**那一声——一张安静出生的卡日后翻出 `decision_due` / `mention_escalated` / `completion_hint` 照样响。
 - **一次只响一次**：投影是幂等的（信号在此后每个 pass 都为真），通知不是——所以判据是**翻面**而不是「当前为真」。actd 重启（`prev is None`）整轮不发（`detect_transitions` 的既有约定），因此「重启即重播」不会发生；进程内不另立台账。
 - **新卡不在此列**：出生即带信号的卡只响 §40 的新卡通知（它已经点名了这张卡），不再多响三声。
 - **信号退回为假 = 静默**（不发「解除」通知），下次再翻面再响一次。退路是真实存在的那几条，逐条写明（PR #349 评审改正了上一版「把提示处理掉」那句——它描述了一个不存在的动作）：`decision_due` 在 deadline 被改到将来之后回落；`mention_escalated` 在阈值调高 / 调到 0 之后回落（§15.3 §76.2 追记那一行就是那把旋钮）；`completion_hint` 在 §76.1 的两条清章路（回锅 / 批准）之后回落，或者 owner 拍板让卡离开提案列（记为已交付 / 不做 / 暂缓进备选列）——**没有**「只擦掉这颗章、卡原地不动」的动作（§76.4 边界）。
 
 ### 76.4 面（web 卡面）与边界
 
-- 卡面（`ProposalCard.tsx`）：`completion_hint` → 绿章「✅ 疑似已完成」+ 证据一句（`✅ 证据: <note>`）+ 两颗一键**「已办完 · 记为已交付」（`done_external`）/「不做 · 进回收站」（`reject`）**——§10 既有动词，**不开新 inbox 动作**；`decision_due` → 红色决策提示行「截止日已到，这张卡还没批准 —— 现在决定：批准 / 暂缓 / 拒绝」，三个动词的按钮就在下一排（一个动词一颗键，绝不造第二套）；`mention_escalated` → 「被提×N」章从 quiet 转 danger 并说出「仍未处理」。文案走既有的 `text(zh, en)` 单源（防腐 #10）。
+- 卡面（`ProposalCard.tsx`；**§78 修订 2026-09-26，D80 / issue #447**：这套卡面自此渲染在**潜在任务**列的卡上，`web/src/components/board/DebtCardItem.tsx` 与它共用同一套组件与文案单源，三条信号一条不少）：`completion_hint` → 绿章「✅ 疑似已完成」+ 证据一句（`✅ 证据: <note>`）+ 两颗一键**「已办完 · 记为已交付」（`done_external`）/「不做 · 进回收站」（`reject`）**——§10 既有动词，**不开新 inbox 动作**；`decision_due` → 红色决策提示行「**⏰ 截止日已到，这张卡还没拍板 —— 现在决定：促成运行 / 拒绝**」（**§78 修订**：原句「还没批准 …… 批准 / 暂缓 / 拒绝」点的是这张卡上不存在的两颗键——`approve` 在这一列叫**促成运行**，`defer` 已随提案列退役；逐字文案与同源关系见 §76.2 §78 修法），**两个动词的按钮就在下一排**（一个动词一颗键，绝不造第二套）；`mention_escalated` → 「被提×N」章从 quiet 转 danger 并说出「仍未处理」，悬停句同样只点名这一对动词。文案走既有的 `text(zh, en)` 单源（防腐 #10）；`ProposalCard.tsx` 里那句提案列时代的原文**不再被渲染**（`needs_approval[]` 恒空），它与那个组件一起只活在判例里，**不是第二套文案**。
 - **明确偏离 issue 原文一处（D70 记录）**：issue 第 3 条要求「之后同源并入不再刷新计数」。**不做**——`repeated_mentions` 是 §44.4 静默并入、§70.2 主稿选择与 `_idle_rule` 的 mentions ≥ 3 保护共用的同一个数，冻结它会静默改掉三处不相关的行为。升级改为读同一个数的**第二个判据**（§76.2），计数照旧累加：被提第 24 次仍然如实记 24，只是卡面从第 5 次起就在喊「仍未处理」。
 - **不做**：不自动归档、不自动记为已交付、不自动删卡（本节红线）；不改 §70.2 的 `stale:deadline_passed` 静默清扫（它仍在 7+7 天后收走真正没人管的卡，`decision_due` 只是让那 14 天不再是沉默的）；不改 `_idle_rule` 的 mentions 保护；不给 `completion_hint` 开第二个写者（只有 §76.1 的 fold 路径写它，registry 单写者 §44 不变）；不把提示喂回任何匹配 / 去重 / re-raise 语料（`match_corpus` 不读它）。
 
@@ -6955,3 +7198,127 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 ### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）
 
 覆盖跑者会真跑 install.sh / uninstall.sh，而这两条脚本的关键判定**不看 HOME**：install.sh 用 `pgrep -x ZelinAIBoard` 决定是否杀 + 重开 owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` 并从硬编码 `/Applications` 删 bundle。因此临时 HOME 之外还必须：`pgrep` / `pkill` 也是 PATH 前缀假货（恒「没匹配」exit 1，install.sh 走「壳没在跑」分支）；`AIASSISTANT_UI_APPS_DIR`（install.sh 既有的 test seam，uninstall.sh 本轮补齐同款）指向临时 HOME 下的 `Applications/`，让 bundle 的安装与删除都落在沙箱里。缺这两条，2026-09-16 的第一轮全量跑把 owner 的 live 壳杀了两次、并用一个 ad-hoc 签名的 dev 构建顶替了 `/Applications` 的稳定签名（#317）——ad-hoc cdhash 与 owner 授的 Full Disk Access 对不上，壳从此写不出 `state/shell.heartbeat`。判例 `tests/test_coverage_run_flows.py`（假货清单 + exit 码）、`tests/test_uninstall.py`（`--dry-run` 带 seam 只规划沙箱 bundle、绝不碰真 `/Applications`）。**2026-09-17 追記**：`crontab` 与 `launchctl` 两只假货改成**有状态**——`crontab <file>` / `crontab -` 存、`-l` 读回（无台账 exit 1），`launchctl bootstrap|load` 记 label、`bootout|unload` 删、`list` 打三列——台账只落在沙箱 HOME 内，真 gui domain 与真 crontab 一个字节不碰；跑者过 2000 行上限后沙箱那一段住同层 `scripts/qa/coverage_sandbox.py`。
+
+## 78. 提案车道退役：机器卡一律落潜在任务，一次提升才开跑（issue #447；owner 决策 **D80**）
+
+owner 原话（2026-09-26）：「我觉得 proposals 这一列不需要了，自动生成任务推进的卡片都放在『潜在任务』中」
+
+（**§ 号与 D 行**：`origin/main` 上最后一个顶层号是 §77（owner 决策 **D79**），本节取下一个空号 §78——§ 号永不复用、永不重号、永不静默消失，机器执法 `tests/test_doc_numbering_unique.py`（同时看 CONTRACT 的 `## N.` 与 `docs/design/vnext2-plan.md` 的 `| DN |`，跳号不查）。同一把尺子抓出一处欠账并在本 PR 一并补上：§77 正文引用的 **D79** 在台账里**从来没有行**，`| DN |` 停在 D78——本 PR 补铸 D79（全量覆盖测试体系，§77）并取 **D80**。）
+
+**执法代码（truth 指针）**：`act/lib/registry.py`（铸卡漏斗 / `restore` 钳位 / re-raise）、`act/radar_slack.py` · `act/radar_gmail.py` · `act/radar.py` · `act/radar_claude_sessions.py`（四个雷达的落点）、`act/lib/quick_capture.py`（triage 落库 + 盖章）、`act/lib/daily_loop.py` + `act/lib/loop_inputs.py`（§70 提案半边）、`act/lib/self_improve.py`（§65 跟进卡 + `_OPEN_STATUSES`）、`act/analyze.py`（§8 扩写）、`act/lib/maintenance.py`（§70.2 去重合成）、`act/lib/actd/decisions.py`（动词判决）、`act/lib/actd/dispatch.py`（免批闸 + lane 守卫 + frozen-in-flight + §78.5 归并扫描——扫描与免批闸同住一处，因为 §78.5 的「排在免批之前」就是它俩的先后关系）、`act/actd.py`（`fold_retired_lane` 的开机闩）、`act/lib/actd/alerts.py`（通知 diff + 安静出生）、`act/lib/dashboard.py`（投影）、`act/lib/store2/schema.sql`（梯子 v3）、`server/lanes.py`（列目录与帮助文案）、`web/src/components/board/`（看板面）、`scripts/ui/extract_native_inventory.py` + `scripts/ui/parity_check.py`（§66 归属表与探针）。
+
+### 78.1 模型：一句话 + 三条硬承诺
+
+**一句话**：`card_sent`（提案）**折叠进** `detected`（潜在任务）。每一条原本把卡落在 `card_sent` 的写路径改落 `detected`；提案列从看板上消失；潜在任务列长出完整的提案卡面，owner 在**同一张卡**上按「促成运行」，卡直接 `detected → approved` 开跑。
+
+三条硬承诺，缺一条这次退役就是数据事故：
+
+1. **`card_sent` 是退役但合法的路标，不是被删掉的值**（宪法第 6 条 add-only）。`State.CARD_SENT` 常量留着、store2 的 status CHECK 词表留着、`transition_whitelist` 里它的每一条既有行留着、存量卡与迟到的 inbox 重放照旧被正确处置。**没有任何生产者再写它**（全表 §78.3），仅此而已。值永不复用、永不改写语义。
+2. **每一个生产者都落 `detected`**。这是本次退役的全部实质：一个都不能漏——漏一个，那类卡就出生在一条**没有面**的车道上，owner 永远看不见它，而 CI 全绿（§78.3 的表因此是逐条点名的，不是「凡是 card_sent 都改」这种口号）。
+3. **straggler 投影，没有一张卡会隐身**。`dashboard._SIMPLE_LANES` 把 `State.CARD_SENT` 映进 `("debt", _backlog_row)`：盘上只要还有一张 `card_sent`，它就出现在潜在任务列里。这条分支在 §78.5 的归并扫描跑完之后恒不命中，但**永远留着**——「状态还在、面没了」是宪法第 3 条（诚实）不能接受的形态。
+
+canonical 状态机（§1 同 PR 修法）：`detected → approved → executing → review → delivered`，任意态 → `trashed`；旁支 `rejected` / `merged_into:<父ID>`，merge-review 终态 `merged`。
+
+### 78.2 owner 决策表（**D80.1–D80.15**，已拍板，实施时不再讨论）
+
+| # | 问题 | 决定 |
+|---|---|---|
+| D80.1 | `needs_approval` 这个 wire key 还留不留？ | **留。**`dashboard.json` 恒发 `needs_approval: []` 与 `counts.needs_approval: 0`，永远空（§0 第 6 条 add-only；Swift `Contract.swift` / `BoardLane.allCases` 是 D3 冻结件，**一个字节都不许改**）。 |
+| D80.2 | 机器卡住哪？ | `detected` = 既有的潜在任务列（`debt[]`），仍是看板左侧的 `BacklogStrip` 书立条。 |
+| D80.3 | 书立条还默认收起吗？ | **不。**`backlogStripExpanded` 默认 **true**——这条车道自此是机器卡的收件箱，把它藏在一个折叠开关后面等于丢掉每一张雷达卡。 |
+| D80.4 | §51 的 hand lane 免批自动派发 | **退役**（墓碑 §78.9）。它唯一的喂料口是被删掉的提案列捕获框；owner 自己发起的活改走 §34 `mode:"run"` 的直跑入口，那条路本来就直接产 `approved`。 |
+| D80.5 | §65 self_improve 免批通道 | **保留**，起跳状态重锚到 `detected`。§0 第 12 条的「唯一例外是 §65」**逐字不变**，不需要第二次修宪。 |
+| D80.6 | `raising`（研究中） | **重新安家**在潜在任务列，作灰色 `processing: true` 占位行。「研究并提议」继续可用：它自此**就地把卡写厚**（`raising → detected`，带上 plan / DoD / 成本），不再「提升成提案」。 |
+| D80.7 | §45 的 FULL 与 LIMITED 会不会塌成一个？ | **不会——分界平移到通知资格**。FULL = 落潜在任务**并**响一次；LIMITED = 落同一条车道但**安静出生**（add-only 卡字段 `quiet_birth: true`，`alerts.py` 跳过这些行）。回声环的那一刀仍然可观测、可测试。 |
+| D80.8 | §76.2 的被提计数与红色决策行 | **搬到潜在任务列**：`decision_due` + `mention_escalated` 自此发在 `debt[]` 行上。§76.2 里「备选卡面没有 deadline 决策行」那一句同 PR 作废（§76.2 §78 修法）。 |
+| D80.9 | §40 / §76.3 的通知 | `alerts.py` 的 diff 源从 `needs_approval[]` 改成 `debt[]`。**不改的话，每一条新卡通知与三条结算通知都会静默死掉**，且没有任何报错。 |
+| D80.10 | 迁移要不要「保留 `prev_status`」？ | **有意偏离 issue 原文，记录在案**：`prev_status` 是回收站的**回程票**，写 `card_sent` 进去意味着 owner 点「恢复」后卡回到一条退役车道——那是可逆的反面。改为：扫描只追一行带日期的 `notes`，`registry.restore` 把 `card_sent → detected` 钳位（§9 §78 追记）。 |
+| D80.11 | §34bis 的「提案积压清理」按钮与 preset | **按钮与 preset 值退役**（墓碑 §78.9）；它驱动的**通用 registry 写入护栏 / 起止快照 / 写入台账**整套**保留**，重新锚定在一次普通直跑上。`tests/test_proposals_triage.py` 里测这半边的方法逐条改锚，**不许删**（覆盖是资产）。 |
+| D80.12 | Dock / 壳角标 | `badgeCount` = `debt + needs_input + review`。owner 的决策自此住在这三列。 |
+| D80.13 | `mac/Sources`（D3 冻结的原生 app） | **不编辑**。它是终版 UI 规格、不是在产的面；退役只能通过提取器的归属表表达（§78.8），**绝不许靠改 Swift 让 parity 变绿**。 |
+| D80.14 | iOS | **明确不在射程内**。手机上仍然显示已退役的那一页，phone 半边另案排期；`ios/` 一个字节不动（边界见 §78.10）。 |
+| D80.15 | store2 schema | 梯子走一级 **v2 → v3**，**只**新增 `transition_whitelist` 行。梯子里**不许有任何 card 行写入**（§0 第 1 条：只有 actd 主循环能转移卡片状态）。 |
+
+### 78.3 写路径重定向表（每一条 `card_sent` 的产地，逐条点名）
+
+| 路径 | 文件 | 原来 | 自此 |
+|---|---|---|---|
+| Slack 雷达铸卡 | `act/radar_slack.py` | `"card_sent" if urgent else "detected"` | 恒 `"detected"`；`urgent` 这个判据**不作废**，降级为 FULL / 安静出生的通知信号（§78.6） |
+| Gmail 雷达铸卡 | `act/radar_gmail.py` | `status="card_sent"` | `status="detected"` |
+| Obsidian 雷达 fold 提升 | `act/radar.py` | act-now 命中时 `detected → card_sent` | **整条提升删除**；`_is_proposal_card` 自此把 `detected` 算进来 |
+| Claude 会话导入 | `act/radar_claude_sessions.py` | 等你回复 → `card_sent` | `detected`（§22 同 PR 修法：判据改判「响不响」） |
+| quick_capture 三选一落库 | `act/lib/quick_capture.py` | `card_sent` 与 `detected` 二选一；fold 可提升 | 恒 `detected`；**fold 提升分支整段删除** |
+| 每日循环 🤖 提案 | `act/lib/daily_loop.py` | `State.CARD_SENT` | `State.DETECTED`（§70.3 同 PR 修法） |
+| §65 PR 跟进卡 | `act/lib/self_improve.py` | `State.CARD_SENT` | `State.DETECTED` —— **并且 `_OPEN_STATUSES` 必须同车加上 `DETECTED`**，否则同一张 PR 每天被重铸一张跟进卡（§65.6 §78 修法） |
+| §8 欠账扩写 | `act/analyze.py` | `raising → card_sent` | `raising → detected` |
+| 夜间去重合成 | `act/lib/maintenance.py` | 簇里有 card_sent 则合成卡为 card_sent | 恒 `detected`（§70.2 §78 修法） |
+| `abort_execution`（停止） | `act/lib/actd/decisions.py` | `approved｜executing｜review → card_sent` | `→ detected`，文案「退回潜在任务」 |
+| 评论折叠（非 executing） | `act/lib/actd/decisions.py` | `→ card_sent` | `→ detected` |
+| re-raise 回锅 | `act/lib/registry.py` | `delivered → card_sent` | `delivered → detected`（白名单行早已存在） |
+| §65.1 frozen-in-flight 退回 | `act/lib/actd/dispatch.py` | `approved → card_sent` | `approved → detected` |
+| 回收站恢复 | `act/lib/registry.py` | `prev_status` 原样复位 | `card_sent` **钳到** `detected`（D80.10） |
+| 免批扫描 | `act/lib/actd/dispatch.py` | `status != CARD_SENT: continue` | `status != DETECTED: continue`，**外加一道 `policy.is_self_improve_sources(req.sources)` 守卫**——只有 §65 那条 lane 会被自动提升（D80.4 退役了 hand lane）。守卫住在 `dispatch.py`，**不下沉进 `policy.py`**：`may_auto_dispatch` 的资格判决表 golden（583,200 例）因此逐例不变，改的只是谁被拿去问 |
+
+**这张表是本节的核心风险面**：上面每一行漏掉一条，症状都是同一种——卡照常出生、照常落盘、CI 照常全绿，只是 owner 永远看不见它。免批扫描那一行是其中最危险的（少了 lane 守卫，整条潜在任务列会变成自动派发的候选池，而那里躺着雷达噪音、owner 随手记的半句话与 162 张 legacy 卡）；`_OPEN_STATUSES` 那一行是第二危险的（每天一张重复卡，还每张响一次通知）。
+
+### 78.4 store2：梯子 v2 → v3（只加白名单行，不碰任何一张卡）
+
+法条正文见 §53.2 的「§78 接线补行」。要点复述三句：新增的九行全是 `detected` 侧的孪生行 + 一次性扫描用的 `('card_sent','detected','system')`；`card_sent` 的既有行**一条不删**；**agent 行仍恒为零**（宪法第 1 条的 SQL 化）。`SCHEMA_VERSION = 3`、`_UPGRADES = {1: _upgrade_1_to_2, 2: _upgrade_2_to_3}`，第三级只跑 `INSERT OR IGNORE` + `PRAGMA user_version = 3`，**绝不触碰任何 card 行**——搬卡是 §78.5 那次扫描的活，不是 schema 梯子的活。顺带补一个**本次退役之前就存在**的洞：`('approved','card_sent','system')` 此前缺席而 `dispatch._withdraw_frozen_lane` 一直在做这次转移，本 PR 把原缺的那行与它的 `detected` 孪生行一起补上（只加不减）。
+
+### 78.5 一次性归并扫描（迁移本身）
+
+- **住哪**：`act/lib/actd/dispatch.py` 的 `fold_retired_lane`（与免批闸同住——本条「排在免批之前」说的就是这两者的先后），**只由 actd 主循环调**（§0 第 1 条单写者；旁路进程与 server 一行都不许写）。开机闩在 `act/actd.py`（`_FOLD_SWEPT`，进程内；判例复位口 `_reset_fold_latch`）。
+- **做什么**：查出每一张 `status == card_sent` 的卡 → `set_status(detected)` + 在 `notes` 追一行 `[<YYYY-MM-DD> §78] 提案车道退役，卡移入潜在任务（issue #447）` → 经 `registry.save` 在 `acting_as("system")` 下落盘。
+- **纪律四条**：**幂等**（跑第二遍零改动——查不到 `card_sent` 就什么都不做）；**每次开机至多一次**（不是每 pass 扫全表）；**count-agnostic**（查出来多少改多少，**永不硬编码一个数字**——防腐第 5 条，文档里也不写这个数）；**不碰 trashed 卡的 `prev_status`**（那是历史事实，宪法第 6 条；回程票由 `restore` 侧钳位，D80.10）。
+- **不发通知**：被搬的卡在搬之前就已经投影在 `debt[]` 里（§78.1 第 3 条的 straggler 投影），所以 `detect_transitions` 的 diff 天然不把它当新卡——一次迁移不是一件新事（判例钉住）。
+- **失败只属于它自己**：单张卡写失败只记日志、不崩 pass、下次开机重试（宪法第 11 条）。跑过就落闩——**跑失败也算跑过**：一张卡搬不动是个案，不是「这一轮没发生」，重试交给下次开机，不许让一张坏卡把全表扫描变成每 pass 重来。
+- **闩之后的诚实边界**：落闩之后盘上再冒出退役状态的卡（旧客户端重放 / 云同步补发），本次开机不再搬它——它仍然**看得见**（straggler 投影，§78.1 第 3 条），下次开机的扫描收走。这不是缺陷，是「一次性迁移」的定义；判例 `tests/test_retired_lane_fold_sweep.py::BootOnceLatchTestCase` 把这条边界连同「第二遍根本不扫」一起钉住。
+
+### 78.6 投影、通知与安静出生
+
+- **投影**（`act/lib/dashboard.py`）：`_SIMPLE_LANES` = `{DETECTED: ("debt", _backlog_row), RAISING: ("debt", _backlog_row), CARD_SENT: ("debt", _backlog_row), TRASHED: ("trash", _trash_row)}`；`_LANES` 的七项与顺序一字不动，`needs_approval` 恒 `[]`、`counts.needs_approval` 恒 `0`。`_backlog_row` = 老 `_card_sent_row` 的全形（键表见 §2 §78 追记）——这是 `debt[]` 行的 **add-only 生长**，必须而不是可选：促成运行那颗键不许坐在一个藏起了 `egress` / `effective_tier` / `cost_*` 的行上。`dashboard.py` 里那条「禁止把 §76.2 的两个 bool 投到这一列」的注释同 PR 删除，§76.2 同 PR 修法。
+- **通知**（`act/lib/actd/alerts.py`）：新卡 diff 与 §76.3 的三条结算翻面都改读 `debt[]`（D80.9）。
+- **安静出生**（D80.7 / §0 第 10 条修宪 / §45 §78 修法）：add-only 卡字段 `quiet_birth: true`（字段法条见 §1 §78 追记），`alerts.py` 的新卡 diff 整条跳过这些行。**这是本次退役真正搬家的那件事**：退役之前「这张卡该不该打断 owner」编码在**它出生在哪一列**上（`card_sent` 被 diff、`detected` 不被 diff），一列之后这个事实只能骑在卡上。**尺子逐字可复述**：`quiet_birth` 为真 ⟺ 退役之前同一张卡会落 `detected` 而不是 `card_sent`；五类盖章理由（§45 天花板 / 提取层判不紧急 / 生来不打扰的 producer / 合成卡继承全簇的安静 / 非高置信的增量子卡）与 truth 指针见 §1 §78 追记，**producer 与铸卡漏斗都盖**（producer 知道的事实漏斗看不见）。**只影响出生那一声**：一张安静出生的卡日后翻出 `decision_due` / `mention_escalated` / `completion_hint` 照样响（§76.3）。**出生盖一次，回锅按那一轮的 `cap_detected` 重新赋值**（`registry._reraise`——回锅是同一张卡的又一次落列；只盖不清会让一次 LIMITED 的屏幕佐证把卡永久静音），其余任何动作都不改写它——它是出生/落列的事实，不是状态。
+
+### 78.7 面（server / web）
+
+- `server/lanes.py`：删掉 `needs_approval` 那一条目录项；`debt` 的帮助文案重写——它此前说「你暂缓的提案……点『研究并提议』升级成提案」，两句都指向不存在的东西。新文案说三件事：机器发现的事都落在这里、「研究并提议」把它研究清楚、「促成运行」让它开跑。文案走 server-owned catalog 的双语单源（防腐第 10 条，禁第二套双语机制）。
+- `web/src/components/board/BoardLanes.tsx`：删掉提案 `<Lane>`、它的 `LaneComposer` 与 `ProposalsTriageButton`；**重新安家**（不是删除）`<MergeSuggestionCard>` / `<FoldReceiptNotices>` / `<ForceMergeTimeoutNotice>` 到 `BacklogStrip`（它本来就有回执用的强制展开路径，§33 追记）。捕获框搬到潜在任务列头。
+- **「搬到 BacklogStrip」是搬到条的钉死头部，不是塞进列表**（这一句必须写死：最显然的读法——当成列表的第一个孩子——是一个真实的 bug）。落点逐条点名（truth = `web/src/components/chrome/BacklogStrip.tsx`）：捕获框（`LaneComposer`）在最上；两条通知条 `<FoldReceiptNotices>` / `<ForceMergeTimeoutNotice>` 紧跟其后，**是 `.backlog-strip-list` 的兄弟节点、不是它的孩子**，与捕获框同槽、同内边距（几何逐像素照旧）；§21 的 `<MergeSuggestionCard>` 钉在列表**顶端**、不进排序也不吃过滤（它是一张卡，站位随卡，SelectionBar 那句「潜在任务条顶会出现建议卡」押的就是它）。**理由**：这三件东西原本住在提案列的列顶 composer 槽（`BoardLanes` 的 `composer` prop，D42 / §54.4），是列表的兄弟、钉在列里不随卡滚走；而这条书立条退役后是**全板最长的一列**，把回执放进滚动容器当第一个孩子 = owner 滚到第 12 张卡时它落在视口之上，活到 TTL 过期都没被看见——那等于没给回执（§44.6 8-07 事故的原判）。
+- `BacklogStrip` / `DebtCardItem`：渲染完整卡面，并长出提案卡原有的动词——**促成运行 / Run it**（`approve`）、修改（`comment`）、拒绝（`reject`）、研究并提议（`raise`），加上既有的删除（`trash`）。`approve` 对一张 `detected` 卡**本来就是合法的**（`decisions._approve`），**不开任何新 inbox 动词**。
+- **「完整卡面」包含字号**（不只是键与动词）：§7 的大白话 headline 在潜在任务卡上按**审批卡字号**渲染（`CardHead variant="lg"` → token `--type-card-title-lg` = 15 semibold，原生 `ApprovalCardView`（`Cards.swift:1074`）/ web `ProposalCard` 同款；truth = `web/src/components/board/DebtCardItem.tsx` + `cardChrome.CardHead` + `web/src/styles/typeScale.ts`）。理由是动词搬家的直接后果：**「促成运行」现在长在这张卡上**，owner 按键之前读的就是那一行——它不能还是行标题 token `--type-card-title`（12 medium，原生 `DebtRow`，`Cards.swift:1562`）。那个小字号是**提案列还在时**的形状（债务行当年只是一条待研究的线索，决策发生在另一列），退役之后它不再是规格；「原生 `DebtRow` 逐字镜像」这条理由已随 §76.2 §78 修法作废，差异由 §66.1 / §66.2 的归属表表达，**不进 `pending.txt` / `waivers.txt`**。
+- `web/src/store.ts`：`backlogStripExpanded` 默认 `true`（D80.3）。`web/src/app.tsx`：`badgeCount = debt + needs_input + review`（D80.12）。
+- `captureReceipt.ts`：capture 回执的对账目标从 `needs_approval` 改成 `debt` 列——不改的话每一次捕获都会诚实地挂满 300 s 再显示一条**假的**超时条（§10 2026-09-05 追记的寿命机制本身一字不变）。
+- **点名这一列的文案**（逐处重写，不留「待审批 / 提案列」的死字）：`act/lib/quick_capture.py`（「进待审批」→「记入潜在任务」）、`act/lib/notify.py`（「有新需求待审批」）、`act/digest.py`（「📨 待审批积压」）、`server/settings_catalog.py`、`shared/Sources/Lanes.swift`、`ui/parity/fixtures/lanes.json`、`web/src/components/board/boardActions.ts` / `pendingSettle.ts`（「卡片将回到提案列」）。
+- **坚决不改名的三个持久化 token**（改了就是丢用户数据 / 丢历史）：偏好键 `notify_proposals`、通知分类 `notify.KIND_PROPOSAL = "proposal"`、编号种类 `registry.ID_KIND_PROPOSAL`，以及 analytics 的 `card_sent` **事件名**（历史事件行按它归档）。它们是存储层的字面量，不是文案——改写它们**周围的话**，不动它们本身。
+
+### 78.8 §66 UI 对齐的合法路径（硬门，且只有这一条路）
+
+1. `scripts/ui/extract_native_inventory.py` 新增第九张归属表 **`LANE_OWNER`**（`needs_approval → {owner: "retired", reason: "D80 owner 退役提案列（§78，issue #447）"}`），`lane_items()` 据表把该条目落成 `owner: "retired", gated: false`，理由进 JSON `attribution.lane_owner`——**只列不判**，D29 / D30 的 `RAIL_OWNER` 就是这条路的先例（§66.1 §78 追记）。
+2. `scripts/ui/parity_check.py` 的 `_lanes_order_ok` 过滤到仍 gated 的列，写法逐字照 `_rail_order_ok`（§66.2 同 PR 修订）。
+3. `CONTROL_OWNER` **只退真正消失的三条 id**：`control:board.needs_approval:button:clean-up`（§34bis）、`control:board.needs_approval:button:later`（暂缓，生产上从没被用过）、`control:board.notices:label:moving-to-backlog`（「暂缓中…」——`defer` 的在途回执句，随同一颗按钮一起没有了入口）。其余 `control:board.needs_approval:*`（批准 / 评论 / 拒绝 / 详情 / 收起 / 三颗告警键）**照判照过**——探针匹配的是**渲染后的看板上任意位置的可及名**，而这些动词随卡面搬到了潜在任务行上。
+4. 三份产物同 PR 重生成并提交：`extract_native_inventory.py --write`、`extract_native_tokens.py --write`、`parity_fixture.py --write`。
+5. **`ui/parity/pending.txt` 与 `waivers.txt` 是 shrink-only 的——一行都不许加**（§58.4 / §66.2 的账本哲学）。退役不是欠账，它走归属表。
+6. `mac/Sources/*.swift` **零改动**（D80.13）。
+
+### 78.9 墓碑与被本节修订的法条
+
+**墓碑**（形式固定 `§N（retired vX.Y，并入 §M）`，§ 号永不复用、永不静默消失）：
+
+- **§34bis（retired v1.0，并入 §78）**——提案积压清理按钮与 `preset` 词表值 `proposals_triage`。保留的护栏机制见 D80.11 与 §34bis 小节的墓碑块。
+- **§51 第一条 lane（hand 卡免批自动派发，retired v1.0，并入 §78）**——见 §51 开篇的墓碑块。§51 的其余全部条款（第二条 lane、共用天花板、原因 token 词表、queued 子状态、预算天花板的旧墓碑）原样有效。
+- **§10 `defer`（暂缓 / 入库，retired v1.0，并入 §78）**——动词名与诚实 ack 路径保留、`ALLOWED_ACTIONS` 不删行，但源状态永不出现、入口不再渲染（§10 §78 追记）。
+- **`needs_approval[]` 分区（retired v1.0，并入 §78）**——键、计数与 `_LANES` 里的位置全部保留，恒空（§2 §78 追记）。
+
+**被本节修订的法条**（每一处都在同一个 PR 里落字，散文与代码不许分家）：§0 第 4 条**修宪** · §0 第 10 条**修宪** · §0 第 12 条追记 · 英文 header 的状态机 · §1 状态机修法 + `quiet_birth` 字段 · §2（`needs_approval` 墓碑 + `debt[]` 全形） · §4（重新上膛三路径） · §5（新卡通知的触发源与文案） · §7（卡面条款搬家，含 `egress` 披露） · §8（「研究并提议」就地写厚 + 扩写准入判据换成「裸卡」+ 扩写完不再响那一声 + follow-up 子卡可被扩写一次） · §9（`restore` 钳位） · §10（动词落点 + `defer` 墓碑 + 判决表 golden 重铸） · §16 / §17（digest 进化建议卡安静出生——「落 detected 就是不通知」那半条法条搬到 `quiet_birth`） · §22（会话导入两档同落） · §33（`comment` / `raise` 接受面 + `expected_status` 的 iOS 代价 + 书立条出厂展开与「每条通知开一次」） · §34 / §34.1（fail-safe 落点改名 + 直跑成为 owner 唯一免批入口） · §34bis（墓碑） · §39（角标 + 「退回潜在任务」文案） · §40.1（`cost_state` 搬家） · §40.3（give-up 诊断卡安静出生） · §40.6（通知 diff 源 + 安静出生闸） · §44.4（轻状态词表说明） · §44.6（已扩写卡的并入回执口径） · §45（FULL / LIMITED 改判通知资格 + 两条路两把尺） · §47.2（解析失败降级卡安静出生） · §50（`hand` 少一条出口，其余逐字不变） · §51（第一条 lane 墓碑） · §53.2（白名单补行 + 梯子 v3） · §54.1（三条通知的落点 = 条的钉死头部 + 强制展开逐条一次） · §60.5（proposal-lane 的处理方式 = 搬不是清） · §64（零行为改动的边界重述） · §65.1 / §65.6（起跳状态 + `_OPEN_STATUSES`） · §66.1 / §66.2（`LANE_OWNER` + gated 过滤） · §70.2 / §70.3（去重合成状态 + **合成卡继承全簇的安静** + 🤖 卡落点） · §76.1 / §76.2 / §76.3 / §76.4（盖章面、两个 bool 下到 `debt[]`、通知 diff 源、卡面）。
+
+**同 PR 重铸的 golden**（每一份都用各自脚本的 `--write` / `REGEN_*` 旗标铸，**禁止手改**）：`tests/fixtures/dashboard_golden.json`（`REGEN_DASHBOARD_GOLDEN=1`）、`tests/fixtures/actd_decision_table.json`（`REGEN_DECISION_TABLE=1`）、`tests/fixtures/demo_seed/*.golden.json`、`tests/fixtures/report/usage.golden.txt`、`tests/fixtures/insights/*`、`ui/parity/native-inventory.json` + `ui/parity/fixtures/*` + `ui/parity/report.md`。`tests/fixtures/policy_admission_matrix.json` **不该变**（lane 守卫住在 `dispatch.py`，`may_auto_dispatch` 逐例不变）——它若变了，说明守卫写错了位置。
+
+### 78.10 边界（本节明确不做）
+
+- **iOS 不在射程内（D80.14）**：`ios/` 一个字节不动，手机上仍然显示那一页已退役的提案列，手机发出的 `expected_status: "card_sent"` 会被 §32.2 的 stale-guard 判过期而诚实 no-op（不是静默吞）。这是**明知且接受**的代价，phone 半边另案排期——在那之前，手机是只读加只有部分动词可用的次要面，本节不假装它已经跟上。
+- **`mac/Sources/` 不动（D80.13）**：原生 app 是 §66 的终版规格、不是在产的面；退役只由归属表表达。
+- **不删 `card_sent` 这个值**，不重编号任何状态、不回填任何存量卡的字段、不批量删号（§60.5 §78 追记）。
+- **不自动清理潜在任务列**：本 PR 不借退役之名调任何一把清扫旋钮（`stale_days` / `mention_escalation` / 保留期全部原值），也不给这一列加自动归档。owner 的删除键与 §70.2 的 `stale:idle` 是它仅有的两个出口。
+- **不开任何新 inbox 动词**（促成运行 = 既有的 `approve`），不新增通知分类值（三条结算信号仍走 `KIND_PROPOSAL`），不新建第二套双语文案机制。
+- **不让机器替 owner 拍板**：退役只是把两列并成一列，`detected → approved` 仍然是**一次人的点击**；唯一的例外仍然只有 §65（§0 第 12 条），而它的代价由终点验收与四条确定性后盾承担。

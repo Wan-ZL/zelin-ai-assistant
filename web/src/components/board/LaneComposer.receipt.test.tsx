@@ -6,7 +6,7 @@
 //   2) 回执活过键击（新草稿开打不清），只被下一次**成功的捕获**替换（原生 writeInboxFile 失败不 beginCapture、斜杠命令
 //      不进 store）；失败句 / "/" 提示行 / 斜杠回执按一行栈暂时顶掉它，一改字它们过期后回执回来，超时时钟全程没停；
 //   3) 刷新带来一行属于这次提交的卡即清——先认 row.capture_id === POST 回的 inbox stem（§10 issue #7），再退到原生的
-//      标题 / 摘要前缀猜测；propose 看 needs_approval、run 看 running + needs_input、都不看 review；提交那一刻的快照
+//      标题 / 摘要前缀猜测；propose 看 debt（§78：捕获落潜在任务）、run 看 running + needs_input、都不看 review；提交那一刻的快照
 //      （generated_at 相同）不算；
 //   4) 300 s（propose）/ 180 s（run）后换成原生超时条（黄 / 橙）；管线不 ok 时不计时，恢复时重新起算整段窗口；
 //      超时条 120 s 褪去。
@@ -63,7 +63,7 @@ function board(generatedAt: string, overrides: Partial<Board> = {}): Board {
 }
 
 const approval = (title: string) =>
-  ({ id: "P-1", title, tier: "T1", show_cost: false, processing: true, sources: [], plan: [], dod: [] }) as unknown as Board["needs_approval"][number];
+  ({ id: "P-1", title, tier: "T1", show_cost: false, processing: true, sources: [], plan: [], dod: [] }) as unknown as Board["debt"][number];
 const task = (name: string) => ({ id: "R-1", name, state: "queued" }) as unknown as Board["running"][number];
 
 async function setHealth(snapshot: HealthSnapshot) {
@@ -262,12 +262,12 @@ describe("LaneComposer receipt — survives keystrokes, yields only to the one-l
 });
 
 describe("LaneComposer receipt — clears when a refresh brings the matching row (PendingSweep.captureMatches)", () => {
-  it("propose: a later needs_approval row whose title prefix-matches (normalized) clears the receipt", async () => {
+  it("propose: a later debt row whose title prefix-matches (normalized) clears the receipt", async () => {
     await setBoard(board("t0"));
     const { field, button } = mount();
     await submit(field, button);
     expect(screen.getByText(PROPOSE_OK)).toBeTruthy();
-    await setBoard(board("t1", { needs_approval: [approval("“Write” — the onboarding doc for new hires")] }));
+    await setBoard(board("t1", { debt: [approval("“Write” — the onboarding doc for new hires")] }));
     expect(screen.queryByText(PROPOSE_OK)).toBeNull();
   });
 
@@ -275,7 +275,7 @@ describe("LaneComposer receipt — clears when a refresh brings the matching row
     await setBoard(board("t0"));
     const { field, button } = mount();
     await submit(field, button);
-    await setBoard(board("t1", { needs_approval: [approval("unrelated proposal")] }));
+    await setBoard(board("t1", { debt: [approval("unrelated proposal")] }));
     expect(screen.getByText(PROPOSE_OK)).toBeTruthy();
     // 同词的 running / review 行不算提案落地
     await setBoard(board("t2", { running: [task(TYPED)], review: [{ id: "R-9", name: TYPED } as unknown as Board["review"][number]] }));
@@ -283,11 +283,11 @@ describe("LaneComposer receipt — clears when a refresh brings the matching row
   });
 
   it("the snapshot current at submit time (same generated_at) does not count even if it already holds a matching row", async () => {
-    await setBoard(board("t0", { needs_approval: [approval(TYPED)] }));
+    await setBoard(board("t0", { debt: [approval(TYPED)] }));
     const { field, button } = mount();
     await submit(field, button);
     expect(screen.getByText(PROPOSE_OK)).toBeTruthy(); // 用户得先看见「已提交」
-    await setBoard(board("t1", { needs_approval: [approval(TYPED)] })); // 下一版里它还在（merge_or_new 并入）→ 落地
+    await setBoard(board("t1", { debt: [approval(TYPED)] })); // 下一版里它还在（merge_or_new 并入）→ 落地
     expect(screen.queryByText(PROPOSE_OK)).toBeNull();
   });
 
@@ -306,8 +306,8 @@ describe("LaneComposer receipt — clears when a refresh brings the matching row
     vi.mocked(postAction).mockResolvedValueOnce({ ok: true, file: "capture-0f3c.json", action: "capture" });
     const { field, button } = mount();
     await submit(field, button);
-    const rewritten = { ...approval("Onboarding handbook v2"), capture_id: "capture-0f3c" } as unknown as Board["needs_approval"][number];
-    await setBoard(board("t1", { needs_approval: [rewritten] }));
+    const rewritten = { ...approval("Onboarding handbook v2"), capture_id: "capture-0f3c" } as unknown as Board["debt"][number];
+    await setBoard(board("t1", { debt: [rewritten] }));
     expect(screen.queryByText(PROPOSE_OK)).toBeNull();
   });
 
@@ -316,15 +316,15 @@ describe("LaneComposer receipt — clears when a refresh brings the matching row
     vi.mocked(postAction).mockResolvedValueOnce({ ok: true, file: "capture-0f3c.json", action: "capture" });
     const { field, button } = mount();
     await submit(field, button);
-    const other = { ...approval("Quarterly budget review"), capture_id: "capture-ffff" } as unknown as Board["needs_approval"][number];
-    await setBoard(board("t1", { needs_approval: [other] }));
+    const other = { ...approval("Quarterly budget review"), capture_id: "capture-ffff" } as unknown as Board["debt"][number];
+    await setBoard(board("t1", { debt: [other] }));
     expect(screen.getByText(PROPOSE_OK)).toBeTruthy();
   });
 
   it("no board at submit time: the first snapshot that arrives is checked", async () => {
     const { field, button } = mount();
     await submit(field, button);
-    await setBoard(board("t1", { needs_approval: [approval(TYPED)] }));
+    await setBoard(board("t1", { debt: [approval(TYPED)] }));
     expect(screen.queryByText(PROPOSE_OK)).toBeNull();
   });
 });
@@ -424,7 +424,7 @@ describe("LaneComposer receipt — honest timeout (Store.swift sweepTimeouts)", 
     await setBoard(board("t0"));
     const { field, button } = mount();
     await submit(field, button);
-    await setBoard(board("t1", { needs_approval: [approval(TYPED)] }));
+    await setBoard(board("t1", { debt: [approval(TYPED)] }));
     expect(screen.queryByText(PROPOSE_OK)).toBeNull();
     act(() => vi.advanceTimersByTime(CAPTURE_TIMEOUT_MS.propose + 1));
     expect(screen.queryByRole("status")).toBeNull(); // 落地了就没有超时条

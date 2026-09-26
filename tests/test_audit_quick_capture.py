@@ -10,6 +10,10 @@ Covers four confirmed audit findings:
     user's TYPED text, never the synthetic "Read these images…" prompt;
   * _fold_into must not duplicate an identical [radar] note on retry.
 
+**§78（owner 决策 D80，issue #447；落点全表 §78.3）**：上面两条「必须重新成一张
+看得见的卡」的落点从退役的提案列改成 `detected`（潜在任务）——「看得见」这条
+法条一字未改，只是它现在指的是唯一那条机器卡车道。
+
 Everything runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no
 LLM is ever invoked (extractor injected / deterministic paths only).
 """
@@ -37,8 +41,9 @@ class RelatesToMissTestCase(unittest.TestCase):
         cards = registry.load_all()
         self.assertEqual(len(cards), 1)
         card = cards[0]
-        # the captured thought landed as a proposal, not dropped on the floor
-        self.assertEqual(card.status, registry.State.CARD_SENT.value)
+        # the captured thought landed as a visible card, not dropped on the
+        # floor —— §78（issue #447）起「可见」= 潜在任务列（提案车道退役）
+        self.assertEqual(card.status, registry.State.DETECTED.value)
         self.assertEqual(card.title, "跟进一下 R-099 那件事")
         self.assertIn("relates_to miss", card.notes)
         # the reply is honest about what actually happened (a card was filed)
@@ -71,7 +76,8 @@ class SealedTargetTestCase(unittest.TestCase):
         # and the restated ask got a NEW visible card (决策6: 拒绝≠已办完)
         others = [r for r in registry.load_all() if r.id != sealed.id]
         self.assertEqual(len(others), 1)
-        self.assertEqual(others[0].status, registry.State.CARD_SENT.value)
+        # 决策6 要的是「重新成一张看得见的卡」——§78 后那一列是潜在任务
+        self.assertEqual(others[0].status, registry.State.DETECTED.value)
         self.assertIn(others[0].id, reply)
 
 

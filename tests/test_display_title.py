@@ -11,6 +11,11 @@ Covers (v0.37 build brief):
   former_titles / notes_text (capped) add-only fields;
 - quick_capture / analyze piggyback: the optional display_title output key is
   stored when present and degrades silently when absent/malformed.
+
+**§78（issue #447 / owner 决策 D80）**：提案车道退役——机器卡（``detected`` /
+``raising`` / 退役残留的 ``card_sent``）同住潜在任务列 ``debt[]``，
+``needs_approval[]`` 恒空。投影那一组判例改钉那一列；「每一列都带 display_title」
+那一条同时补上逐卡落点核对，否则整张卡投丢了它会空转通过。
 """
 import os
 import tempfile
@@ -210,20 +215,20 @@ class ProjectionTestCase(unittest.TestCase):
 
     def test_url_title_never_renders_raw(self):
         req = Requirement.from_dict({
-            "id": "R-910", "status": "card_sent",
+            "id": "R-910", "status": "detected",
             "title": "https://www.youtube.com/watch?v=abc123",
         })
-        row = self._build([req])["needs_approval"][0]
+        row = self._build([req])["debt"][0]
         self.assertEqual(row["display_title"], "youtube.com ▸ abc123")
 
     def test_stored_display_title_wins_and_optionals_project(self):
         req = Requirement.from_dict({
-            "id": "R-911", "status": "card_sent", "title": "原始标题",
+            "id": "R-911", "status": "detected", "title": "原始标题",
             "notes": "n" * 5000,
         })
         registry.set_display_title(req, "旧名")
         registry.set_display_title(req, "钉住的名字", by_user=True)
-        row = self._build([req])["needs_approval"][0]
+        row = self._build([req])["debt"][0]
         self.assertEqual(row["display_title"], "钉住的名字")
         self.assertIs(row["user_titled"], True)
         self.assertEqual(row["former_titles"], ["旧名"])
@@ -246,6 +251,10 @@ class ProjectionTestCase(unittest.TestCase):
         self.assertNotIn("notes_text", row)
 
     def test_every_lane_carries_display_title(self):
+        """§78（issue #447 / D80）：``card_sent``、``detected``、``raising`` 三种
+        状态自此同落潜在任务列（``debt[]``），``needs_approval[]`` 恒空。逐卡先
+        核一遍落点再核字段——只扫 lane 的老写法在退役之后会**空转通过**：卡要是
+        整张投丢了，循环一次都不进，判例反而绿了。"""
         def mk(rid, status, **kw):
             return Requirement.from_dict(
                 {"id": rid, "status": status, "title": "标题 " + rid, **kw})
@@ -259,8 +268,15 @@ class ProjectionTestCase(unittest.TestCase):
             mk("R-925", "trashed", prev_status="detected"),
             mk("R-926", "raising"),
         ])
-        for lane in ("needs_approval", "debt", "running", "review",
-                     "completed", "trash"):
+        lanes = ("needs_approval", "debt", "running", "review",
+                 "completed", "trash")
+        seen = {row["id"] for lane in lanes for row in dash[lane]}
+        self.assertEqual(seen, {"R-920", "R-921", "R-922", "R-923",
+                                "R-924", "R-925", "R-926"})
+        self.assertEqual({r["id"] for r in dash["debt"]},
+                         {"R-920", "R-921", "R-926"})
+        self.assertEqual(dash["needs_approval"], [])       # §78 墓碑：恒空
+        for lane in lanes:
             for row in dash[lane]:
                 self.assertIn("display_title", row, msg=lane)
 
@@ -339,9 +355,9 @@ class MergeCarriesDisplayNamesTestCase(unittest.TestCase):
 
     def test_merge_folds_secondary_display_names_into_primary_notes(self):
         from act import actd
-        primary = Requirement(id="R-935", title="主卡", status="card_sent")
+        primary = Requirement(id="R-935", title="主卡", status="detected")
         registry.save(primary)
-        sec = Requirement(id="R-936", title="副卡内部标题", status="card_sent")
+        sec = Requirement(id="R-936", title="副卡内部标题", status="detected")
         registry.set_display_title(sec, "LLM 起的旧名")
         registry.set_display_title(sec, "用户改的名", by_user=True)
         registry.save(sec)
@@ -354,7 +370,7 @@ class MergeCarriesDisplayNamesTestCase(unittest.TestCase):
         # the searchable projection carries them (notes → notes_text)
         dash = dashboard.build_dashboard(
             reqs=[merged_primary], agents=[], cfg=config.Config(), archived=[])
-        row = dash["needs_approval"][0]
+        row = dash["debt"][0]          # §78：机器卡的唯一车道是潜在任务
         self.assertIn("用户改的名", row["notes_text"])
         # secondary is terminal merged, its names archived on the primary
         self.assertEqual(registry.load("R-936").status, State.MERGED.value)

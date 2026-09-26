@@ -22,16 +22,16 @@ vi.mock("../api", async (importOriginal) => {
 
 const board = {
   generated_at: "2026-09-06T12:00:00Z",
-  counts: { needs_approval: 1, running: 1, needs_input: 0, review: 0, completed: 5, debt: 0, trash: 0, archived: 0 },
-  needs_approval: [
-    { id: "P-201", title: "a proposal", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
-  ],
+  counts: { needs_approval: 0, running: 1, needs_input: 0, review: 0, completed: 5, debt: 1, trash: 0, archived: 0 },
+  needs_approval: [],
   running: [{ id: "R-100", name: "a run", state: "working" }],
   needs_input: [],
   review: [],
   // counts.completed（5）> 实际条数（1）→ 阶段性完成列渲染「仅显示最近 N 条」
   completed: [{ id: "R-050", name: "done", state: "delivered", delivered_at: "2026-09-06T10:00:00Z" }],
-  debt: [],
+  debt: [
+    { id: "P-201", title: "a backlog card", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
+  ],
   trash: [],
   archived: [],
 } as unknown as Board;
@@ -68,7 +68,7 @@ describe("board DOM: only .column-list scrolls; header / composer / cap note are
     expect(main.classList.contains("board-main")).toBe(true);
 
     const columns = Array.from(main.querySelectorAll(".board-column"));
-    expect(columns.length).toBe(4);
+    expect(columns.length).toBe(3);   // §78：提案列退役，只剩 运行中 / 待验收 / 阶段性完成
     for (const column of columns) {
       const header = column.querySelector(".column-header")!;
       const list = column.querySelector(".column-list")!;
@@ -82,9 +82,9 @@ describe("board DOM: only .column-list scrolls; header / composer / cap note are
       expect(column.querySelectorAll(".column-list").length).toBe(1);
     }
 
-    // 提案列 / 运行中列的输入框：列的直接子项，位于列头与列表之间
+    // 运行中列的输入框（§78 后看板上唯一的那只）：列的直接子项，位于列头与列表之间
     const composers = Array.from(main.querySelectorAll(".board-column .lane-composer"));
-    expect(composers.length).toBe(2);
+    expect(composers.length).toBe(1);
     for (const composer of composers) {
       const column = composer.closest(".board-column")!;
       expect(composer.parentElement).toBe(column);

@@ -106,7 +106,7 @@ export interface AppState {
   selectedCardId: string | null;  // 详情侧栏当前卡（route.ts 同步 ?card= 深链）——卡片详情的唯一面（D34，§49）
   cardDetail: CardDetail | null;  // selectedCardId 对应的 /api/cards/{id} 增补详情
   cardDetailError: string | null;
-  /** 本会话里详情侧栏**落地过**的卡主键（不持久化）：T2 提案「需先展开看明细」的闸门读它——看过明细才给「批准」（§54.1 第 2 项追记） */
+  /** 本会话里详情侧栏**落地过**的卡主键（不持久化）：T2 卡「需先展开看明细」的闸门读它——看过明细才给促成运行（§54.1 第 2 项追记） */
   detailViewedIds: ReadonlySet<string>;
   language: Language;             // UI 语言（D37 §15：真源 = server general.language；首帧 ?lang= 覆写 > localStorage 缓存 > 浏览器，hydrateLanguage 随后对齐）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
@@ -156,13 +156,15 @@ export interface AppState {
    *  离开所有列**（成为终态 merged）才清（settleForceMerging，原生 PendingForceMerge 判据）——不是 generated_at
    *  一变就清（actd 每个 pass 都重写看板，§39.3 / §21bis）；180 s 没等到 → 章退场 + forceMergeTimedOutAt 落时间戳 */
   forceMergingIds: ReadonlySet<string>;
-  /** 2026-09-05 add-only：最近一批强制合并 180 s 没落地的时刻（epoch ms）；提案列顶据此显示原生那句诚实超时条，
+  /** 2026-09-05 add-only：最近一批强制合并 180 s 没落地的时刻（epoch ms）；潜在任务条顶据此显示原生那句诚实超时条（§78 前在提案列顶），
    *  关掉 / 120 s 后归 null（原生 notice-merge-force） */
   forceMergeTimedOutAt: number | null;
   /** 2026-09-05 add-only（§54.1 追记 `strips-force-open`）：两条书立条（潜在任务 / 永久性完成）的展开态——挂 store 不挂
-   *  组件 @State，换页不丢、**不持久化**（每次启动都收起；原生 Store.swift:127-128）。回执不能落在收起的条里：useSubmit 在
+   *  组件 @State，换页不丢、**不持久化**。回执不能落在收起的条里：useSubmit 在
    *  暂缓 / 放回看板 提交成功与 debt / archived 源动作 180 s 超时时置 true（原生 addEcho / beginReturn / sweepTimeouts）；
-   *  搜索命中潜在任务时左条不看这面旗直接展开（BacklogStrip，原生 Kanban.swift:326 `.constant(true)`） */
+   *  搜索命中潜在任务时左条不看这面旗直接展开（BacklogStrip，原生 Kanban.swift:326 `.constant(true)`）。
+   *  §78（D80.3）起**左条出厂是展开的**（原生 Store.swift:127 的 false 不再镜像）：提案列退役后它是机器卡的
+   *  唯一收件箱，藏在折叠开关后面 = 雷达卡可能一张都没人看见。右条（永久性完成）仍出厂收起。 */
   backlogStripExpanded: boolean;
   archiveStripExpanded: boolean;
 }
@@ -265,7 +267,7 @@ const initialState: AppState = {
   selectedIds: new Set<string>(),
   forceMergingIds: new Set<string>(),
   forceMergeTimedOutAt: null,
-  backlogStripExpanded: false,
+  backlogStripExpanded: true,   // §78 / D80.3：机器卡的收件箱，出厂展开
   archiveStripExpanded: false,
 };
 
@@ -922,7 +924,8 @@ export function beginSelection(cardIds: Iterable<string>) {
 }
 
 // ----- v0.33 两条书立条的展开态（原生 Store.backlogStripExpanded / archiveStripExpanded；§54.1 追记） ------------ #
-// 只有这两个 setter 写旗：书立条头的开合按钮、useSubmit 的强制展开。不进 URL、不进 localStorage。
+// 只有这两个 setter 写旗：书立条头的开合按钮、useSubmit 的强制展开、BacklogStrip 的通知强制展开（§78）。
+// 不进 URL、不进 localStorage。
 
 export function setBacklogStripExpanded(on: boolean) {
   if (state.backlogStripExpanded !== on) setState({ backlogStripExpanded: on });
@@ -983,7 +986,7 @@ export function settleForceMerging(board: Board) {
   if (forceMergingIds !== state.forceMergingIds) setState({ forceMergingIds });
 }
 
-/** 180 s 到期：这一批的章退场，提案列顶给原生那句诚实超时条（forceMergeTimedOutAt） */
+/** 180 s 到期：这一批的章退场，潜在任务条顶给原生那句诚实超时条（§78；forceMergeTimedOutAt） */
 function expireForceMerge(batch: ForceMergeBatch) {
   if (!forceMergeBatches.includes(batch)) return;
   forceMergeBatches = forceMergeBatches.filter((b) => b !== batch);

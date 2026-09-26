@@ -19,7 +19,7 @@
 - **Ingest 管线**（`ingest/`）：screenpipe 持续录屏/录音 → 定时导出为 markdown → headless claude skill
   加工进 Obsidian vault（unprocessed → raw → wiki）。
 - **Act 管线**（`act/`）：需求雷达（Obsidian/Slack/Gmail）扫出"别人要 Zelin 做的事" → LLM 扩写成
-  带成本预估和验收标准的提案卡 → Mac 菜单栏 app 上一键批准 → `claude --bg` 自动执行 →
+  带成本预估和验收标准的潜在任务卡 → Mac 菜单栏 app 上一键批准 → `claude --bg` 自动执行 →
   产出进"待验收" → 用户验收/打回。目标：把"需求→次日可验收草稿"变成默认状态。
 
 用户只做两件事：**批准** 和 **验收**。其余全自动。
@@ -39,10 +39,10 @@
 │
 ├─ 雷达（radar.py=Obsidian 30min cron 尾挂；radar_slack.py=launchd 3min；radar_gmail.py=5min）
 │    LLM 判定 → registry.merge_or_new（重述合并 / 增量出改进卡 / 新条目）
-│    置信分流：hard+有deadline → 直接待审批；其余 → 欠账（低成本停车场，可 raise 升级）
+│    置信分流：两档同落潜在任务（欠账）；hard+有deadline 出生响一声，其余安静出生
 │
 ├─ registry（act/registry/*.yaml，任务唯一真源）状态机：
-│    detected(欠账) → card_sent(待审批) → approved(排队) → executing → review(待验收)
+│    detected(潜在任务) → approved(排队) → executing → review(待验收)
 │    → delivered ；任何点可 → trashed(回收站,60天) ；raising=扩写中
 │
 └─ 执行层 = 官方设施复用：claude --bg 派发（自动 worktree 隔离）+ claude agents --json 监控
@@ -76,7 +76,7 @@
 6. **拒绝 ≠ 已办完**：回收站条目不参与 merge_or_new 匹配 → 拒绝后同一需求会再次出卡；
    `done_external`（已办完，置 delivered）才能把后续重述压成静默合并。所以拒绝按钮弹二选。
 7. **逆操作矩阵而非全局 ⌘Z**：批准 5 秒后 claude 会话已真实在跑，undo 语义不成立。
-   每个操作配逆操作：回收站恢复 / 停止并退回待审批（abort_execution，session 归档重派发）/
+   每个操作配逆操作：回收站恢复 / 停止并退回潜在任务（abort_execution，session 归档重派发）/
    退回待验收（revert_review）/ attach 进会话改口。
 8. **review-attach 回流 ≠ 返工**（§30）：待验收任务被用户 attach 后 agent 重新 working →
    卡**留在待验收列**，review[] 项标 `session_active=true`（App 平静徽章「会话有新活动」）；

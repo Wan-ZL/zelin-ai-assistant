@@ -1,4 +1,5 @@
-// §44.6 静默并入回执（原生 Store.swift seenFoldReceipts → LocalNotice kind .info，提案列）：用户通道
+// §44.6 静默并入回执（原生 Store.swift seenFoldReceipts → LocalNotice kind .info，提案列；
+// §78 提案列退役后挂在潜在任务书立条顶）：用户通道
 // （quick / quick_capture）把一条输入并进了已有卡而没建新卡时，看板必须给可见回执——「刚才的输入已并入
 // R-xx「<展示名前 20 字>」（没有建新卡）」。数据 = dashboard add-only 顶层键 fold_receipts
 // （server TTL 600 s、按目标卡合簇后 cap 10，永不带被并入原文；雷达自扫的并入自 #308 起不进这条通道）。
@@ -37,6 +38,13 @@ function writeSeen(seen: Set<string>): void {
 export function receiptTitle(receipt: FoldReceipt): string {
   const title = typeof receipt.title === "string" ? receipt.title : "";
   return [...title].slice(0, TITLE_PREFIX).join("");
+}
+
+/** 这一版投影里**还该弹**的回执（形正确 + 本会话没关掉过）。§78 起潜在任务书立条也读它：
+ *  有回执要弹就强制把条打开——落在收起的条里的回执等于没给回执（`seen` 的真源仍是 sessionStorage）。 */
+export function unseenFoldReceipts(receipts: readonly FoldReceipt[]): FoldReceipt[] {
+  const seen = readSeen();
+  return receipts.filter((r) => r && typeof r.id === "string" && typeof r.req === "string" && r.req && !seen.has(r.id));
 }
 
 export function FoldReceiptNotices() {

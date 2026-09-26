@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""boardctl — agent 侧看板 CLI（scoped channel，M5；契约 docs/CONTRACT.md §52）。
+"""boardctl — agent 侧看板 CLI（scoped channel，M5；契约 docs/CONTRACT.md §52、§78）。
 
 给 headless Claude-Code agent 用的窄接口：读看板/卡片详情，投 capture
 候选（走 triage 三选一闸门，等价一条手动 note），给卡片留 comment/
@@ -48,7 +48,10 @@ TIMEOUT_SECONDS = 10
 # fail-closed，省一次注定 400 的往返）
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
-# 投影分区词表（board_source.SECTIONS 同步维护——新增 lane 两处一起改）
+# 投影分区词表（board_source.SECTIONS 同步维护——新增 lane 两处一起改）。
+# §78：``needs_approval`` 是退役车道，wire 上恒为空数组（add-only 不删键），
+# 词表里逐字留着——老脚本 `--lane needs_approval` 该拿到空列表，不该拿 usage 错。
+# 机器卡现在一律落 ``debt``（潜在任务）。
 LANES = ("needs_approval", "running", "needs_input", "review",
          "completed", "debt", "trash", "archived")
 
@@ -106,7 +109,9 @@ HELP_TEXT = {
 Reads GET /api/board. Without --lane the full projection is returned
 under "board". With --lane only that lane's rows are returned under
 "cards". Lanes: needs_approval, running, needs_input, review,
-completed, debt, trash, archived.""",
+completed, debt, trash, archived. Machine-filed cards waiting on the
+owner live in "debt" (the Backlog lane); "needs_approval" is a retired
+lane and is always empty.""",
     "card": """Usage: boardctl card CARD_ID [--json]
 
 Reads GET /api/cards/CARD_ID: the projection row plus read-only

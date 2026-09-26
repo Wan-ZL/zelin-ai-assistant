@@ -1,10 +1,10 @@
 // §21 多选态的整卡 tap catcher（原生 Kanban.swift:671-705 selectableCard；CONTRACT §54.1 第 11 项追记）：
-//   1) selectionMode 下卡的动作行是死的——点「批准」/「删除」/「永久完成」不发任何动作、只切换选中
+//   1) selectionMode 下卡的动作行是死的——点「促成运行」/「删除」/「永久完成」不发任何动作、只切换选中
 //      （原生注释「a mis-click must not approve/trash anything」），键盘 Enter 合成的 click 同样拦下；
 //   2) 点卡身 = 切换选中（is-selectable 手形、is-selected accent 淡底）；勾选框自己切一次、不叠加；
 //      仍活着的控件（标题里的链接）点了不算点卡身；
 //   3) 全 lane 可选（v0.21，Kanban.swift:575-591 selectableIDs）：潜在任务 / 阶段性完成 / 排队中 也长勾选框，
-//      提案列 AI 研究中占位不长；
+//      AI 研究中占位（raising 灰卡）不长；
 //   4) 不在多选态：动作照常、点卡身不选中、没有 is-selectable；
 //   5) axe：多选态的卡零 violation。
 import type { ReactElement } from "react";
@@ -13,10 +13,9 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { postAction } from "../../api";
 import { getState, resetStoreForTests, setSelectionMode, toggleSelected } from "../../store";
-import { DEBT_FIXTURE, PROPOSAL_PROCESSING, PROPOSAL_T1, TASK_DONE, TASK_QUEUED, TASK_WORKING } from "../styleguide/fixtures";
+import { BACKLOG_PROCESSING, BACKLOG_T1, DEBT_FIXTURE, TASK_DONE, TASK_QUEUED, TASK_WORKING } from "../styleguide/fixtures";
 import { DebtCardItem } from "./DebtCardItem";
 import { DoneCard } from "./DoneCard";
-import { ProposalCard } from "./ProposalCard";
 import { RunningCard } from "./RunningCard";
 
 vi.mock("../../api", async (importOriginal) => ({
@@ -35,21 +34,21 @@ afterEach(cleanup);
 const selected = () => [...getState().selectedIds];
 
 describe("selection mode blocks the card's own actions (native tap catcher)", () => {
-  it("提案卡：批准 / 拒绝 / 暂缓 在多选态点了不发动作、不开弹窗，这一下算点卡身 → 选中", () => {
+  it("机器卡：促成运行 / 拒绝 / 删除 在多选态点了不发动作、不开弹窗，这一下算点卡身 → 选中", () => {
     setSelectionMode(true);
-    render(<ProposalCard card={PROPOSAL_T1} />);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    render(<DebtCardItem item={BACKLOG_T1} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
     expect(postAction).not.toHaveBeenCalled();
-    expect(selected()).toEqual([PROPOSAL_T1.id]);
+    expect(selected()).toEqual([BACKLOG_T1.id]);
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     expect(document.querySelector("dialog")).toBeNull();
     expect(selected()).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(postAction).not.toHaveBeenCalled();
-    expect(selected()).toEqual([PROPOSAL_T1.id]);
+    expect(selected()).toEqual([BACKLOG_T1.id]);
   });
 
-  it("潜在任务卡：删除 / 永久完成 在多选态不发 trash / archive", () => {
+  it("老债务行（无 tier / 无计划）：删除 / 永久完成 在多选态不发 trash / archive", () => {
     setSelectionMode(true);
     render(<DebtCardItem item={DEBT_FIXTURE} />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -59,35 +58,35 @@ describe("selection mode blocks the card's own actions (native tap catcher)", ()
 
   it("「展开详情 ▸」在动作行里，多选态也是死的（原生 overlay 盖住整卡）", () => {
     setSelectionMode(true);
-    render(<ProposalCard card={PROPOSAL_T1} />);
+    render(<DebtCardItem item={BACKLOG_T1} />);
     fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
     expect(getState().selectedCardId).toBeNull();
-    expect(selected()).toEqual([PROPOSAL_T1.id]);
+    expect(selected()).toEqual([BACKLOG_T1.id]);
   });
 });
 
 describe("card body toggles selection; the checkbox stays the a11y path", () => {
   it("点卡身切换选中，再点取消；类名 is-selectable / is-selected 跟着走", () => {
     setSelectionMode(true);
-    render(<ProposalCard card={PROPOSAL_T1} />);
+    render(<DebtCardItem item={BACKLOG_T1} />);
     const article = screen.getByRole("article");
     expect(article.className).toContain("is-selectable");
     expect(article.className).not.toContain("is-selected");
     fireEvent.click(article);
-    expect(selected()).toEqual([PROPOSAL_T1.id]);
+    expect(selected()).toEqual([BACKLOG_T1.id]);
     expect(article.className).toContain("is-selected");
-    fireEvent.click(screen.getByText(String(PROPOSAL_T1.summary)));   // 标题文字也是卡身
+    fireEvent.click(screen.getByText(String(BACKLOG_T1.summary)));   // 标题文字也是卡身
     expect(selected()).toEqual([]);
     expect(article.className).not.toContain("is-selected");
   });
 
   it("勾选框只切一次（不叠加卡身的切换），checked 跟 store", () => {
     setSelectionMode(true);
-    render(<ProposalCard card={PROPOSAL_T1} />);
-    const box = screen.getByRole("checkbox", { name: `Select ${PROPOSAL_T1.id}` }) as HTMLInputElement;
+    render(<DebtCardItem item={BACKLOG_T1} />);
+    const box = screen.getByRole("checkbox", { name: `Select ${BACKLOG_T1.id}` }) as HTMLInputElement;
     expect(box.checked).toBe(false);
     fireEvent.click(box);
-    expect(selected()).toEqual([PROPOSAL_T1.id]);
+    expect(selected()).toEqual([BACKLOG_T1.id]);
     expect(box.checked).toBe(true);
     fireEvent.click(box);
     expect(selected()).toEqual([]);
@@ -96,8 +95,8 @@ describe("card body toggles selection; the checkbox stays the a11y path", () => 
 
   it("仍活着的控件（标题里的链接）点了不算点卡身", () => {
     setSelectionMode(true);
-    // 卡面自 D36 起没有「单击复制指令」行；提案摘要里的 URL（Linkified 的 <a>）是卡身之外仍活着的控件
-    render(<ProposalCard card={{ ...PROPOSAL_T1, summary: "把 https://github.com/Wan-ZL/example-bench/pull/12 的评审意见并进 README" }} />);
+    // 卡面自 D36 起没有「单击复制指令」行；摘要里的 URL（Linkified 的 <a>）是卡身之外仍活着的控件
+    render(<DebtCardItem item={{ ...BACKLOG_T1, summary: "把 https://github.com/Wan-ZL/example-bench/pull/12 的评审意见并进 README" }} />);
     const link = document.querySelector<HTMLAnchorElement>(".card-title a")!;
     expect(link).toBeTruthy();
     fireEvent.click(link);
@@ -106,8 +105,8 @@ describe("card body toggles selection; the checkbox stays the a11y path", () => 
 
   it("store 里已选的卡挂载即带 is-selected", () => {
     setSelectionMode(true);
-    toggleSelected(PROPOSAL_T1.id);
-    render(<ProposalCard card={PROPOSAL_T1} />);
+    toggleSelected(BACKLOG_T1.id);
+    render(<DebtCardItem item={BACKLOG_T1} />);
     expect(screen.getByRole("article").className).toContain("is-selected");
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
   });
@@ -121,7 +120,7 @@ describe("every board lane is selectable (v0.21 selectableIDs)", () => {
       [TASK_DONE.id, <DoneCard row={TASK_DONE} />, true],
       [TASK_QUEUED.id, <RunningCard row={TASK_QUEUED} />, true],
       [TASK_WORKING.id, <RunningCard row={TASK_WORKING} />, true],
-      [PROPOSAL_PROCESSING.id, <ProposalCard card={PROPOSAL_PROCESSING} />, false],
+      [BACKLOG_PROCESSING.id, <DebtCardItem item={BACKLOG_PROCESSING} />, false],
     ];
     for (const [id, node, expected] of faces) {
       const { unmount } = render(node);
@@ -133,7 +132,7 @@ describe("every board lane is selectable (v0.21 selectableIDs)", () => {
 
   it("AI 研究中占位点卡身不选中（原生 selectable: !card.processing）", () => {
     setSelectionMode(true);
-    render(<ProposalCard card={PROPOSAL_PROCESSING} />);
+    render(<DebtCardItem item={BACKLOG_PROCESSING} />);
     fireEvent.click(screen.getByRole("article"));
     expect(selected()).toEqual([]);
   });
@@ -151,14 +150,14 @@ describe("outside selection mode nothing changes", () => {
     expect(postAction).toHaveBeenCalledWith({ action: "revert_review", comment: null, id: TASK_DONE.id });
   });
 
-  it("退出多选态即刻恢复：同一张卡的 批准 又能点", () => {
+  it("退出多选态即刻恢复：同一张卡的 促成运行 又能点", () => {
     setSelectionMode(true);
-    render(<ProposalCard card={PROPOSAL_T1} />);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    render(<DebtCardItem item={BACKLOG_T1} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
     expect(postAction).not.toHaveBeenCalled();
     act(() => setSelectionMode(false));
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-    expect(postAction).toHaveBeenCalledWith({ action: "approve", comment: null, id: PROPOSAL_T1.id });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(postAction).toHaveBeenCalledWith({ action: "approve", comment: null, id: BACKLOG_T1.id });
   });
 });
 
@@ -166,7 +165,7 @@ describe("axe in selection mode", () => {
   it("可选卡（未选 + 已选）零 violation", async () => {
     setSelectionMode(true);
     toggleSelected(TASK_DONE.id);
-    const { container } = render(<><ProposalCard card={PROPOSAL_T1} /><DoneCard row={TASK_DONE} /></>);
+    const { container } = render(<><DebtCardItem item={BACKLOG_T1} /><DoneCard row={TASK_DONE} /></>);
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(" | ")}`)).toEqual([]);
   });

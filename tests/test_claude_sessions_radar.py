@@ -11,8 +11,10 @@ Contract under test:
     statement or trailing user message -> False;
 (c) exclusions: outside the window, subagent files, sidechain/meta entries,
     bookkeeping-only files, sessions this product itself dispatched;
-(d) import: waiting -> card_sent, merely-recent -> detected; marker file
-    written; re-import and re-scan are no-ops (dedupe both belts);
+(d) import: 两档会话同落潜在任务（`detected`，§78 提案车道退役）——原来的
+    「等你回话 -> card_sent / 只是最近 -> detected」分流改挑**要不要打扰**
+    （D80.7 的 add-only `quiet_birth`：不是等你回话的会话安静出生）；marker
+    file written; re-import and re-scan are no-ops (dedupe both belts);
 (e) the import_claude_sessions inbox action end-to-end through
     actd.process_inbox (explicit ids and the no-ids waiting-only default);
 (f) session binding (例4a regression): a card binds the session its content
@@ -274,8 +276,11 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
                        if "flaky login" in r.title)
         done = next(r for r in by_title.values()
                     if "Rename the config" in r.title)
-        self.assertEqual(waiting.status, "card_sent")
-        self.assertEqual(done.status, "detected")
+        # §78：两档会话同落潜在任务；分档改由 quiet_birth 承担（D80.7）——
+        # 「等你回话」的会话照旧值得响一声，「只是最近跑过」的安静进列。
+        self.assertEqual((waiting.status, done.status), ("detected", "detected"))
+        self.assertFalse(getattr(waiting, "quiet_birth", False))
+        self.assertTrue(done.quiet_birth)
         self.assertEqual(waiting.sources[0]["channel"], "claude_code")
         self.assertEqual(waiting.sources[0]["ref"], "sess-waiting")
         self.assertIn("claude-code 导入", waiting.notes)
@@ -303,7 +308,8 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         self.assertEqual(rcs.run_once(7), 1)
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")            # §78
+        self.assertFalse(getattr(reqs[0], "quiet_birth", False))  # 等你回话 = 响
 
     def test_run_once_all_imports_everything(self):
         self._waiting_session()
@@ -518,7 +524,8 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         self.assertEqual(processed, 1)
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")            # §78
+        self.assertFalse(getattr(reqs[0], "quiet_birth", False))
         self.assertFalse(list(config.INBOX_DIR.glob("*.json")))
 
     def test_inbox_action_without_ids_imports_waiting_in_window(self):
@@ -529,7 +536,8 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         actd.process_inbox()
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")            # §78
+        self.assertFalse(getattr(reqs[0], "quiet_birth", False))
 
     def test_inbox_action_bad_payload_never_raises(self):
         self._inbox_write({"action": "import_claude_sessions",

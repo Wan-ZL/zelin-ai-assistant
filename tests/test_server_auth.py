@@ -388,9 +388,10 @@ class DeliverableNotInjectedTestCase(unittest.TestCase):
         repo = self.home / "demo-repo"
         dlv = repo / "deliverables"
         dlv.mkdir(parents=True)
-        for row in dash["needs_approval"]:
-            if row["id"] == HERO:
-                row["target_repo"] = str(repo)
+        # §78（提案车道退役）：P-101 在 scene=initial 时坐在潜在任务列（debt）
+        rows = [row for row in dash["debt"] if row["id"] == HERO]
+        self.assertTrue(rows, f"{HERO} 不在 debt 列——布景没生效")
+        rows[0]["target_repo"] = str(repo)
         rewrite_board(self.home, dash)
         # 交付物 HTML 刻意含 __ZAI_TOKEN__ 字样 + <head>——若走注入会被改写
         (dlv / "out.html").write_text(

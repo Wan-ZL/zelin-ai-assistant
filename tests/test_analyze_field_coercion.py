@@ -14,7 +14,8 @@ Pinned here (P3 mutation net):
   delivery_mode -> repo, definition_of_done capped at 3 and blanks dropped,
   an empty summary/plan keeps the existing values (title fallback);
 - ``_apply_fallback``: the manual-attention tag is appended to existing notes;
-- ``expand_debt``: a non-zero exit code is a fallback even when stdout is JSON.
+- ``expand_debt``: a non-zero exit code is a fallback even when stdout is JSON
+  （§78 起兜底卡落 `detected`/潜在任务——提案车道退役，扩写不跨列）.
 """
 import json
 import unittest
@@ -158,7 +159,7 @@ class FallbackTestCase(unittest.TestCase):
         out = analyze.expand_debt(
             req, cfg=config.Config(),
             runner=lambda p: _Proc(stdout=payload, returncode=2))
-        self.assertEqual(str(out.status), State.CARD_SENT.value)
+        self.assertEqual(str(out.status), State.DETECTED.value)   # §78
         self.assertIn("auto-expand failed", out.notes)
         self.assertEqual(out.summary, req.title)
 
@@ -170,7 +171,7 @@ class FallbackTestCase(unittest.TestCase):
 
         out = analyze.expand_debt(_req(id="R-903"), cfg=config.Config(), runner=boom)
         self.assertIn("auto-expand failed", out.notes)
-        self.assertEqual(str(out.status), State.CARD_SENT.value)
+        self.assertEqual(str(out.status), State.DETECTED.value)   # §78
 
 
 if __name__ == "__main__":

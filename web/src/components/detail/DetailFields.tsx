@@ -6,7 +6,7 @@
 // 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）；唯一例外 =
 // 「📎 折叠进来的信息」每行的「拆成新卡」（§38.2 split_note，原生 FoldNotesView 同位），因为它只
 // 在这里有归属（note_ts 就是这一行）。按 server 给的 `lane` 选积木（防腐 #10：lane 是 server 数据）：
-// needs_approval 才说钱（「展开详情永远说钱」§40）、review 的清单永远渲染（§11）、needs_input 的指令行
+// 决策列（§78 起 = 潜在任务）才说钱（「展开详情永远说钱」§40）、review 的清单永远渲染（§11）、needs_input 的指令行
 // 用「在终端接管会话：」兜底句（§39）。指令行旁的按钮是「复制接管指令」——D36（owner 2026-09-06，issue #216）
 // 起卡面没有「单击复制指令」行、单击卡片什么也不做，这里是**唯一**的手动复制路（一键路 = 双击整卡）。§37 展示名：抬头是冻结 title（原生 expandedDetail 的技术标题）；
 // display_title 与抬头不同就在这里给一行「显示名」——侧栏是 modal，卡面未必在眼前（深链 / 收起的书立条），
@@ -30,6 +30,15 @@ import { cardHeadline } from "../board/cardHeadline";
 import { Linkified } from "../board/Linkified";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
+
+// 「决策列」= owner 在这一列上拍板要不要开跑，所以 §40「展开详情永远说钱」对它生效。§78 起它是
+// 潜在任务（debt）——提案列退役，机器卡一律落这里，一次「促成运行」直接进 approved；`needs_approval`
+// 留在表里是给存量 card_sent 卡的投影（恒空 wire key，D80.1），少了它老卡的钱会在侧栏里消失。
+const DECISION_LANES = new Set(["debt", "needs_approval"]);
+
+function isDecisionLane(lane: unknown): boolean {
+  return typeof lane === "string" && DECISION_LANES.has(lane);
+}
 
 // 专属版式已覆盖的键——其余进「其他字段」兜底（渲染未知枚举值按字符串兜底，见 CONVENTIONS）
 const KNOWN_KEYS = new Set([
@@ -222,10 +231,10 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   // 结构化排队原因（§M6.2）：queued 卡「排队中 · 等 R-xx / 等预算」的详情行
   const queuedReason = queuedReasonLabel(detail.queued_reason, text);
   if (queuedReason) meta.push([text("排队原因", "Queued because"), queuedReason]);
-  // 提案列的钱走下面的 💰 行（§40）；其余列 registry 并进来的 cost_estimate_usd（§49 add-only 合并）仍要看得见——
+  // 决策列的钱走下面的 💰 行（§40）；其余列 registry 并进来的 cost_estimate_usd（§49 add-only 合并）仍要看得见——
   // 老侧栏就有这一行，不能因为换了渲染器就把数字藏起来
   const cost = detail.cost_usd ?? detail.cost_estimate_usd;
-  if (lane !== "needs_approval" && detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
+  if (!isDecisionLane(lane) && detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
   const repo = str(detail.target_repo) ?? str(detail.cwd);
   if (repo) meta.push([text("工作目录", "Workdir"), repo]);
   const timeDefs: Array<[string, string, unknown]> = [
@@ -291,8 +300,8 @@ export function DetailFields({ detail }: DetailFieldsProps) {
         </section>
       )}
 
-      {/* 提案「展开详情永远说钱」（§40）：有数「💰 预计费用: $N」，无数「💰 成本未知」——只在 needs_approval 列 */}
-      {lane === "needs_approval" && <p className="zai-detail-cost">{costText(detail, text)}</p>}
+      {/* 「展开详情永远说钱」（§40）：有数「💰 预计费用: $N」，无数「💰 成本未知」——只在决策列 */}
+      {isDecisionLane(lane) && <p className="zai-detail-cost">{costText(detail, text)}</p>}
 
       {deliveredSummary ? (
         // v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文（原生 ReviewRow「交付了什么：」）。

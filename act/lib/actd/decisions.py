@@ -4,21 +4,24 @@ guard; §11 accept/rework; §32.2 terminal-state doctrine; §44.3-S steer relay;
 
 Full inbox action set — the ``_VERBS`` table IS the action whitelist/validation;
 anything else is the logged ``unknown``:
-  approve | reject(->trash) | comment | raise(debt->proposal)
+  approve | reject(->trash) | comment | raise(潜在任务 -> AI 扩写)
     approve：v-next W17 —— 外部出身未扩写的卡转 raising（先扩写再复批）
     comment：v-next §44.3-S —— EXECUTING 卡 = steer 入队（owner ingress
       限定；agent/remote 只上卡记录，T-28）
   | trash(->recycle) | restore(recycle->prev) | pin(recycle->permanent)
   | accept(review->delivered) | rework(review->executing)
-  | done_external(card_sent|review|approved|executing->delivered)
-                                            (v0.10.2, 扩展 v0.12)
-  | abort_execution(approved|executing->card_sent)      (v0.10.2)
+  | done_external(detected|review|approved|executing->delivered)
+                                            (v0.10.2, 扩展 v0.12/§78)
+  | abort_execution(approved|executing|review->detected)  (v0.10.2/§78)
   | stop_to_review(executing|approved->review, 收下成果待验收)
   | revert_review(delivered->review)                    (v0.10.2)
-  | defer(card_sent->detected, back to the backlog)     (v0.18)
+  | defer(retired §78：唯一来源态 card_sent 已退役，永久 no-op)
   | archive(delivered|detected->archived, relocate)     (v0.20.0)
   | unarchive(archived->prev_status, back to active)    (v0.20.0)
 v0.10.2 公共规则：状态不匹配的逆向动作 = 幂等 no-op + log（防连点/迟到 inbox）。
+
+§78（issue #447）：提案车道退役，动词表里一切「退回提案」的落点改成
+``detected``（潜在任务）——那一列现在既是机器卡的收件箱，也是唯一的审批起点。
 
 Every verb returns a §5.4 result_status for the sync ack ledger:
   "running" = applied a real state change; "noop" = guarded/idempotent/
@@ -67,10 +70,10 @@ def precondition_ok(req: Requirement, expected_status: Optional[str],
     (review OR executing — the accept branch's exact status whitelist; NOT
     gated on execution.done, which is never stamped in the auto_resume:false
     shape). Every other mismatch (trashed/card_sent/delivered/…) stays a stale
-    no-op. The other pinned verbs have no such alias: the phone renders 修改
-    only on non-processing 提案 cards (on-disk card_sent exactly — raising
-    cards hide the action bar) and 研究并提议 only in the debt lane (detected
-    exactly), so their pins always match at render time.
+    no-op. The other pinned verbs have no such alias: the phone renders 修改 and
+    研究并提议 on non-processing 潜在任务 cards (on-disk ``detected`` exactly —
+    raising cards hide the action bar), so their pins always match at render
+    time. (§78: both used to straddle 提案/备选 — one lane now, one pin.)
     """
     if expected_status is None:
         return True
@@ -114,7 +117,8 @@ def _approve(d: Daemon, req: Requirement, inp: _Input) -> str:
     # not re-dispatch and spawn a duplicate agent. WHITELIST (nightly audit
     # 2026-07-14): the old blacklist let a late/replayed approve flip
     # trashed/merged/raising cards straight to approved — dispatching
-    # deleted or mid-expansion work. Only a live proposal may be approved.
+    # deleted or mid-expansion work. 只有潜在任务列上的活卡可批（§78 起
+    # detected 是唯一起点；退役的 card_sent 仍收下——落单卡也得批得动）。
     if str(req.status) not in (State.DETECTED.value, State.CARD_SENT.value):
         d.log(f"inbox: {req.id} approve ignored (status={req.status})")
         return "noop"
@@ -125,7 +129,7 @@ def _approve(d: Daemon, req: Requirement, inp: _Input) -> str:
         return _approve_forced_expand(d, req, et)
     req.set_status(State.APPROVED)
     # §76.1：批准 = owner 看着那条「疑似已完成」的提示仍然要做这件事，猜测就地
-    # 作废——留着它，日后「退回提案」/ 评论重批把卡送回提案列时会带着旧绿章和
+    # 作废——留着它，日后「停止」/ 评论重批把卡送回潜在任务列时会带着旧绿章和
     # 那颗一键回来（PR #349 评审）。提示只活在未投入的那一轮里。
     req.completion_hint = None
     # approval timestamp (add-only bookkeeping, like accepted_at) — lets
@@ -133,7 +137,7 @@ def _approve(d: Daemon, req: Requirement, inp: _Input) -> str:
     ex = dict(req.execution or {})
     ex["approved_at"] = d.iso_now()
     # §4.1 storm brake：批准 = 重新上膛。上一轮派发的失败台账随新批准
-    # 清零，否则退回提案再批准的卡会带着旧刹车直接停在原地。
+    # 清零，否则退回潜在任务再批准的卡会带着旧刹车直接停在原地。
     req.execution = _dispatch.rearm_dispatch(d, ex)
     d.save(req)
     # lifecycle milestone (docs/TELEMETRY.md): first genuine approval on
@@ -186,12 +190,12 @@ def _raise(d: Daemon, req: Requirement, inp: _Input) -> str:
         # CONTRACT §32.2 (audit 2026-07-15): a late/replayed raise from a
         # stale board must never rip a card past approval back to raising
         # (approved→raising silently cancels the approval: dispatch never
-        # picks it up) nor resurrect a terminal card. Backlog/proposal only;
-        # card_sent stays allowed — the local web/board deliberately offers
-        # 研究并提议 there (see test_actd_sync raise cases).
+        # picks it up) nor resurrect a terminal card. 潜在任务列的卡才可
+        # 研究并提议；退役的 card_sent 一并收下（落单卡的动作栏照常渲染，
+        # see test_actd_sync raise cases）。
         d.log(f"inbox: {req.id} raise ignored (status={req.status}) — no-op")
         return "noop"
-    # Fast: just mark it 'raising' so it shows a processing spinner in 待审批
+    # Fast: just mark it 'raising' so it shows a processing spinner in 潜在任务
     # immediately. The slow claude -p expansion happens in process_raising(),
     # one item per loop pass, so 4 raises don't freeze the daemon for minutes.
     req.set_status(State.RAISING)
@@ -214,18 +218,18 @@ def _comment(d: Daemon, req: Requirement, inp: _Input) -> str:
         return record_nonowner_comment(d, req, inp.comment, inp.via)
     # §5.4 stale-guard (SYNC only): when the phone pinned an expected_status
     # that no longer matches, a stale 修改 must not rip a moved card back to
-    # card_sent. LOCAL callers (Mac app / web) send no expected_status, so
+    # 潜在任务. LOCAL callers (Mac app / web) send no expected_status, so
     # this passes and comment applies unconditionally exactly as on main —
     # the web renders 修改 on RAISING/processing cards too, and folding one
-    # back to card_sent for re-approval is the intended local behavior.
+    # back to detected for re-approval is the intended local behavior.
     if not precondition_ok(req, inp.expected_status):
         d.log(f"inbox: {req.id} comment stale "
               f"(expected {inp.expected_status}, is {req.status}) — no-op")
         return "noop"
     if str(req.status) in _COMMENT_TERMINAL:
         # CONTRACT §32.2 (audit 2026-07-15): a late comment on a terminal
-        # card must not fall through to the card_sent write below — that
-        # resurrects a rejected/merged card as a live proposal with its
+        # card must not fall through to the detected write below — that
+        # resurrects a rejected/merged card as a live 潜在任务 card with its
         # trash/merge bookkeeping still attached.
         d.log(f"inbox: {req.id} comment ignored (status={req.status} is "
               f"terminal) — no-op")
@@ -259,11 +263,12 @@ def _steer(d: Daemon, req: Requirement, inp: _Input) -> str:
 
 def _fold_ack(d: Daemon, req: Requirement) -> str:
     """nightly audit 2026-07-14: a comment landing on a card that is
-    already past approval must NOT rip it back to card_sent — that
+    already past approval must NOT rip it back to the backlog — that
     orphans a live agent (execution.session_id survives, and the next
     approve re-dispatches against a stale session). Past-approval
     states keep their status; the note is folded for the record (review
-    has its own formal channel: rework)."""
+    has its own formal channel: rework). §78：折回的落点是 detected
+    （潜在任务），提案列已退役。"""
     if str(req.status) == State.APPROVED.value:
         # pre-dispatch: the folded note rides into the dispatch prompt —
         # the direction change genuinely lands, so "running" is honest.
@@ -281,7 +286,7 @@ def _fold_ack(d: Daemon, req: Requirement) -> str:
         d.log(f"inbox: {req.id} comment folded (status {req.status} kept — "
               f"note is record-only, acking noop)")
         return "noop"
-    req.set_status(State.CARD_SENT)  # stays pending, re-approval
+    req.set_status(State.DETECTED)  # §78 回潜在任务列，等 owner 重新点「促成运行」
     d.save(req)
     d.log(f"inbox: {req.id} comment folded — re-approval pending")
     return "running"
@@ -452,7 +457,7 @@ def _revert_review(d: Daemon, req: Requirement, inp: _Input) -> str:
 # the three「停」verbs: done_external / abort_execution / stop_to_review
 # --------------------------------------------------------------------------- #
 # 三个「停」动作的分工：done_external =「我在系统外做完了」直接落
-# delivered 跳过验收；abort_execution =「不要了」丢弃成果退回待审批；
+# delivered 跳过验收；abort_execution =「不要了」丢弃成果退回潜在任务；
 # stop_to_review =「停下来我看看它做了什么」—— 停 agent、收下成果、
 # 落 待验收 让 Zelin ✓验收/↩︎打回，绝不跳过验收。
 def _harvest_and_stop(d: Daemon, req: Requirement, ex: dict, sid, verb: str) -> None:
@@ -468,12 +473,15 @@ def _harvest_and_stop(d: Daemon, req: Requirement, ex: dict, sid, verb: str) -> 
     update_search_index(d, req.id, sid)
 
 
-_DONE_EXTERNAL_FROM = (State.CARD_SENT.value, State.REVIEW.value,
+# §78：潜在任务列现在就是卡面所在，「已办完」从这里直接点（add-only：退役的
+# card_sent 仍在表内，落单卡的同一颗按钮照常工作）。
+_DONE_EXTERNAL_FROM = (State.DETECTED.value, State.CARD_SENT.value,
+                       State.REVIEW.value,
                        State.APPROVED.value, State.EXECUTING.value)
 
 
 def _done_external(d: Daemon, req: Requirement, inp: _Input) -> str:
-    # v0.10.2 已办完（系统外完成）：card_sent|review -> delivered。有活
+    # v0.10.2 已办完（系统外完成）：detected|review -> delivered。有活
     # session 不动它 —— 人做完了，AI 会话自然闲置。
     # v0.12 扩展：approved|executing 也允许 —— agent 停在 blocked 等输入、
     # 但 Zelin 已在 attach 会话里拿到交付时，这是唯一的完成出口。
@@ -501,12 +509,13 @@ _ABORTABLE = (State.APPROVED.value, State.EXECUTING.value, State.REVIEW.value)
 
 
 def _abort_execution(d: Daemon, req: Requirement, inp: _Input) -> str:
-    # v0.10.2 停止并退回待审批：approved|executing -> card_sent。活 session
-    # 先 best-effort 停止（stop 失败只记日志，绝不阻塞状态回退）；session_id
-    # 归档到 aborted_session_id 后删除，保证重新批准时干净重派发。
+    # v0.10.2 停止并退回潜在任务：approved|executing -> detected（§78：提案车道
+    # 退役，「退回」的唯一落点就是潜在任务列）。活 session 先 best-effort 停止
+    # （stop 失败只记日志，绝不阻塞状态回退）；session_id 归档到
+    # aborted_session_id 后删除，保证重新批准时干净重派发。
     # v0.28.1 §30: review is allowed too — a 待验收 card routed into 运行中
-    # by attach-reactivated session activity; 「退回提案」 discards this
-    # reattached run and kicks it back to card_sent for a fresh decision.
+    # by attach-reactivated session activity; 「停止」 discards this
+    # reattached run and kicks it back to 潜在任务 for a fresh decision.
     if str(req.status) not in _ABORTABLE:
         d.log(f"inbox: {req.id} abort_execution ignored (status={req.status}) — no-op")
         return "noop"
@@ -518,13 +527,13 @@ def _abort_execution(d: Daemon, req: Requirement, inp: _Input) -> str:
         ex.pop("session_id", None)
     ex.pop("done", None)
     ex["aborted_at"] = d.iso_now()
-    # §4.1：退回提案 = 丢弃这一轮，派发失败台账（含 dispatch_halted）一并
-    # 清掉——否则 card_sent 卡带着刹车回到待审批，policy 免批通道会把它
-    # 原样再推进 approved，永远停在「需输入」（审查复现 2026-09-01）。
+    # §4.1：退回潜在任务 = 丢弃这一轮，派发失败台账（含 dispatch_halted）一并
+    # 清掉——否则卡带着刹车回到潜在任务列，§65 免批通道会把它原样再推进
+    # approved，永远停在「需输入」（审查复现 2026-09-01）。
     req.execution = _dispatch.rearm_dispatch(d, ex)
-    req.set_status(State.CARD_SENT)
+    req.set_status(State.DETECTED)
     d.save(req)
-    d.log(f"inbox: {req.id} abort_execution -> card_sent")
+    d.log(f"inbox: {req.id} abort_execution -> detected")
     return "running"
 
 
@@ -573,13 +582,17 @@ def _stop_to_review(d: Daemon, req: Requirement, inp: _Input) -> str:
 # backlog / archive: defer / archive / unarchive
 # --------------------------------------------------------------------------- #
 def _defer(d: Daemon, req: Requirement, inp: _Input) -> str:
-    # v0.18 存备选：card_sent -> detected（退回备选）。Deliberately NOT
-    # trash: a deferred card keeps its expanded summary/plan/sources/
-    # repeated_mentions and stays in merge_or_new matching (restatements
-    # merge in; radar act-now re-promotes) — trashed cards are excluded
-    # and would re-card from scratch. Only card_sent is allowed (raising
-    # finishes its expansion and becomes card_sent first); anything else
-    # is the v0.10.2 idempotent no-op. Undo = the backlog lane's raise.
+    # §10 defer（retired v-next，并入 §78）：暂缓 = card_sent -> detected，
+    # 而 card_sent 这一头已经退役——提案列与它的「暂缓」按钮一起删了，卡本来
+    # 就住在潜在任务列。动词**保留不删**：迟到/重放的 inbox 文件（老手机、
+    # 老 ack 台账）还会发它，落进这里是 v0.10.2 那条幂等 no-op，比
+    # ``unknown`` 诚实；存量落单卡若还没被 §78 扫描搬走，这一下照旧把它
+    # 搬进潜在任务，语义与退役前逐字相同。
+    #
+    # 原注（历史）：Deliberately NOT trash — a deferred card keeps its
+    # expanded summary/plan/sources/repeated_mentions and stays in
+    # merge_or_new matching; trashed cards are excluded and would re-card
+    # from scratch. Undo = the backlog lane's raise.
     if str(req.status) != State.CARD_SENT.value:
         d.log(f"inbox: {req.id} defer ignored (status={req.status}) — no-op")
         return "noop"

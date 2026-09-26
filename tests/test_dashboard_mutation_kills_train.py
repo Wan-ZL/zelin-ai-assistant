@@ -1,5 +1,9 @@
 """§2 投影里夜报变异体活下来的那些格（外加 §5 / §7 / §37 / §38 / §40 / §44.6 /
-§48.4 / §65 / §71 / §76.2 挂在同一张投影面上的条文）。
+§48.4 / §65 / §71 / §76.2 / §78 挂在同一张投影面上的条文）。
+
+**§78（issue #447 / owner 决策 D80）**：提案车道退役，机器卡的在产状态是
+``detected``、可见的卡落 ``debt[]``——本文件的卡片工厂与 lane 路由判例跟着重锚；
+``card_sent`` 只作为「退役但合法、永不隐形」的落单形态保留一格。
 
 `act/lib/dashboard.py` 首轮 400 体只有 26% 杀伤——真正的原因是靶区映射
 （qa/mutation_targets.toml）里一个 dashboard 判例都没有：列的全是顺带 import
@@ -75,7 +79,8 @@ _NOW = _dt.datetime(2026, 9, 15, 12, 0, tzinfo=_dt.timezone.utc)
 
 
 def _req(**fields) -> Requirement:
-    base = {"id": "R-700", "title": "一张卡", "status": "card_sent"}
+    # §78（issue #447 / D80）：机器卡的在产状态是 detected（提案车道退役）。
+    base = {"id": "R-700", "title": "一张卡", "status": "detected"}
     base.update(fields)
     return Requirement.from_dict(base)
 
@@ -535,15 +540,19 @@ class InvisibleCardsEnterNoLaneTestCase(unittest.TestCase):
         self.assertIs(dashboard._invisible(_req(status="rejected")), True)
 
     def test_a_live_card_is_visible(self):
+        self.assertIs(dashboard._invisible(_req(status="detected")), False)
+        # §78：退役但合法的路标——落单卡照样可见（永不隐形）
         self.assertIs(dashboard._invisible(_req(status="card_sent")), False)
 
     def test_the_lane_router_agrees(self):
         cfg = config.Config()
         dash = dashboard.build_dashboard(
             reqs=[_req(id="R-1", status="archived"), _req(id="R-2", status="merged"),
-                  _req(id="R-3", status="card_sent")],
+                  _req(id="R-3", status="detected")],
             agents=[], cfg=cfg, archived=[])
-        self.assertEqual([r["id"] for r in dash["needs_approval"]], ["R-3"])
+        # §78：可见的那一张落潜在任务列；needs_approval 恒空（墓碑键）
+        self.assertEqual([r["id"] for r in dash["debt"]], ["R-3"])
+        self.assertEqual(dash["needs_approval"], [])
         self.assertEqual(sum(dash["counts"][lane] for lane in dashboard._LANES), 1)
 
 
@@ -554,7 +563,7 @@ class LiveSessionCountTestCase(unittest.TestCase):
         reqs = [_req(id="R-1", status="executing", execution={"session_id": "a1b2c3d4"}),
                 _req(id="R-2", status="executing", execution={"session_id": "e5f6a7b8"}),
                 _req(id="R-3", status="executing", execution={}),
-                _req(id="R-4", status="card_sent")]
+                _req(id="R-4", status="detected")]
         self.assertEqual(dashboard._live_session_count(reqs), 2)
         self.assertEqual(dashboard._live_session_count([]), 0)
 

@@ -65,6 +65,7 @@ FIELD_DEFAULTS = {
     "needs_mcp": False,       # §65 self_improve 卡显式声明需要 MCP（默认 False 不落盘）
     "merged_from": None,      # §70 每日整理合成卡的来源主键列表；None = 非合成卡
     "completion_hint": None,  # §76「疑似已完成」提示 dict；None = 无完成信号
+    "quiet_birth": False,     # §78/§45 静默出生（LIMITED 落潜在任务但不通知）；默认不落盘
 }
 
 # import 期 fail-fast：registry 加了字段而这里漏补默认值 = 迁移静默丢字段。

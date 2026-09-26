@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""B-09 daily-loop-0330-max2：03:30 解锁的每日循环一轮最多铸 2 张提案（§70 / §58）。
+"""B-09 daily-loop-0330-max2：03:30 解锁的每日循环一轮最多铸 2 张卡（§70 / §58 / §78）。
 
 假时钟钉两件事：03:29 不到点、03:30 到点（``daily_loop.due``，真源
 ``config.DEFAULT_DAILY_LOOP_TIME``），以及预算闸——五条信号里只落
 ``daily_loop_max_proposals_per_day`` 张（真源 ``config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS``），
 余下的记在 ``skipped["cap"]`` 里而不是静默丢。绝不出网（gh 不参与本场景）。
+
+§78（提案车道退役）：铸出来的卡落 ``detected``（潜在任务列）。旋钮与函数名里的
+``proposals`` 是持久化 token（配置键 / 存量安装），逐字不动；变的只有状态值，
+所以这里把状态也钉进 check 列表——每日循环是回写 ``card_sent`` 最容易漏网的一处。
 """
 from __future__ import annotations
 
@@ -52,6 +56,7 @@ def scenario(home: Path):
         ("rest_counted_as_cap", skipped["cap"] == len(KINDS) - budget),
         ("filed_exactly_budget", len(filed) == budget and len(cards) == budget),
         ("cards_are_self_improve", all(c.sources[0]["channel"] == "self_improve" for c in cards)),
+        ("cards_land_in_detected", all(c.status == "detected" for c in cards)),   # §78
     ])
     evidence = (f"03:30 unlocked (03:29 locked); {len(KINDS)} signals → filed {len(filed)} "
                 f"cards (budget={budget}, cap-skipped={skipped['cap']}) {why}")

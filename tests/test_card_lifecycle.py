@@ -1,4 +1,8 @@
-"""卡片生命周期 v0.20.0 — thread-level 语义匹配 + archived state + re-raise-to-提案.
+"""卡片生命周期 v0.20.0 — thread-level 语义匹配 + archived state + re-raise 回锅.
+
+§78（issue #447，owner 决策 D80）：提案（``card_sent``）车道退役并入潜在任务
+（``detected``）。回锅 / follow-up 子卡 / 增量子卡的**落点**因此全部读作 detected，
+本文件的判据随之平移；匹配、lineage、不污染旧卡标题、活卡只折不翻这些语义一字未动。
 
 Pins the §7 test list from the implementation spec (worktree A · py-core):
 
@@ -7,16 +11,16 @@ Pins the §7 test list from the implementation spec (worktree A · py-core):
  2. id-collision regression (critique #1, HIGHEST risk): archiving R-050 must
     NOT let next_id() reissue R-050 and overwrite it; load() still finds it;
  3. re-raise same_task: an unarchived delivered card + a new actionable ask +
-    an aligned title flips the ORIGINAL card back to card_sent (reraised_at +
-    summary「新增」); an archived hit opens a fresh detected card instead;
+    an aligned title flips the ORIGINAL card back to detected (§78; reraised_at
+    + summary「新增」); an archived hit opens a fresh detected card instead;
  4. re-raise different task (critique #2): a thread_key hit on a delivered card
-    with a DIFFERENT title opens a card_sent follow-up inheriting thread_id —
-    the old card's status + title are untouched;
+    with a DIFFERENT title opens a detected follow-up inheriting thread_id (§78)
+    — the old card's status + title are untouched;
  5. pure restatement (critique #3): resolved parent + not-actionable
     (needs_action=false / no increment) bumps mentions but does NOT flip —
     consistent across the deterministic and LLM paths;
  6. live-work protection: a canonical primary that is executing/review/approved
-    only folds (never flips to card_sent); a canonical dead-end on a
+    only folds (never flips back to the backlog); a canonical dead-end on a
     trashed/rejected primary re-cards from scratch;
  7. open follow-up coexistence (critique medium): a delivered card with an
     already-open follow-up folds a later hit into it — never a second proposal;
@@ -28,7 +32,8 @@ Pins the §7 test list from the implementation spec (worktree A · py-core):
     relocates, and self-gates to once per 24h;
 10. dashboard: archived cards enter ONLY archived[] (not completed/debt/
     needs_approval), counts.archived is the true total, the build-loop skip
-    guard holds, and the「回锅」reraised flag is projected;
+    guard holds, and the「回锅」reraised flag is projected on the 潜在任务 row
+    (§78: needs_approval[] is permanently empty);
 11. backward compat: legacy YAML with no thread/archive fields round-trips
     byte-stable and loads without the new keys leaking in;
 12. loop safety: two candidates on the same archived thread in one batch yield
@@ -155,7 +160,7 @@ class ReraiseSameTaskTestCase(LifecycleBase):
                         summary="need it a week earlier", deadline="2026-07-15",
                         sources=[_src(channel="meeting")]))
         self.assertEqual(got.id, "R-100")                       # in-place
-        self.assertEqual(got.status, State.CARD_SENT.value)     # 翻回提案
+        self.assertEqual(got.status, State.DETECTED.value)      # §78 翻回潜在任务
         self.assertTrue((got.execution or {}).get("reraised_at"))
         self.assertIn("新增", got.summary)
         self.assertEqual(self._active_ids(), ["R-100"])         # no second card
@@ -163,7 +168,7 @@ class ReraiseSameTaskTestCase(LifecycleBase):
     def test_llm_same_task_flips_and_returns_reraised(self):
         self._seed("R-019", "Ship the quarterly report", State.DELIVERED.value)
         cand = Requirement(id=registry.next_id(), title="Ship the quarterly report",
-                           summary="manager wants it now", status=State.CARD_SENT.value,
+                           summary="manager wants it now", status=State.DETECTED.value,
                            sources=[_src()])
         kind, saved = quick_capture.apply_triage(
             {"action": "relates_to", "req": "R-019",
@@ -171,7 +176,7 @@ class ReraiseSameTaskTestCase(LifecycleBase):
             cand, self.cfg)
         self.assertEqual(kind, "reraised")
         self.assertEqual(saved.id, "R-019")
-        self.assertEqual(saved.status, State.CARD_SENT.value)
+        self.assertEqual(saved.status, State.DETECTED.value)    # §78
         self.assertTrue((saved.execution or {}).get("reraised_at"))
         self.assertEqual(saved.execution.get("reraised_note"), "manager escalated")
 
@@ -179,7 +184,7 @@ class ReraiseSameTaskTestCase(LifecycleBase):
         r = self._seed("R-019", "Ship the quarterly report", State.DELIVERED.value)
         registry.archive(r, "user")
         cand = Requirement(id=registry.next_id(), title="Ship the quarterly report",
-                           summary="again", status=State.CARD_SENT.value,
+                           summary="again", status=State.DETECTED.value,
                            sources=[_src()])
         kind, saved = quick_capture.apply_triage(
             {"action": "relates_to", "req": "R-019", "needs_action": True},
@@ -203,7 +208,7 @@ class ReraiseDifferentTaskTestCase(LifecycleBase):
                         summary="draft the RFE response",
                         sources=[_src(channel="gmail", gmail_thread_id="THREAD1")]))
         self.assertNotEqual(got.id, "R-020")
-        self.assertEqual(got.status, State.CARD_SENT.value)
+        self.assertEqual(got.status, State.DETECTED.value)      # §78 子卡落潜在任务
         self.assertEqual(got.improvement_of, "R-020")
         self.assertEqual(got.thread_id, "R-020")                # inherited lineage
         # the old card's title + status are NOT polluted
@@ -231,7 +236,7 @@ class PureRestatementTestCase(LifecycleBase):
     def test_llm_needs_action_false_folds_not_flips(self):
         self._seed("R-019", "Ship the quarterly report", State.DELIVERED.value)
         cand = Requirement(id=registry.next_id(), title="unrelated wording",
-                           status=State.CARD_SENT.value, sources=[_src()])
+                           status=State.DETECTED.value, sources=[_src()])
         kind, saved = quick_capture.apply_triage(
             {"action": "relates_to", "req": "R-019",
              "note": "just an FYI update", "needs_action": False},
@@ -255,7 +260,7 @@ class LiveWorkProtectionTestCase(LifecycleBase):
             Requirement(id="", title="Ship the quarterly report",
                         summary="poke", deadline="2020-01-01",  # would be an increment
                         sources=[_src(channel="meeting")]))
-        # folded into the live primary; NEVER pulled back to card_sent
+        # folded into the live primary; NEVER pulled back to the backlog (§78)
         self.assertEqual(got.id, "R-011")
         self.assertEqual(got.status, State.EXECUTING.value)
         self.assertEqual(registry.load("R-010").status, State.MERGED.value)
@@ -279,10 +284,10 @@ class LiveWorkProtectionTestCase(LifecycleBase):
 class OpenFollowUpCoexistTestCase(LifecycleBase):
     def test_hit_folds_into_open_follow_up(self):
         self._seed("R-010", "Ship the quarterly report", State.DELIVERED.value)
-        self._seed("R-045", "follow-up already open", State.CARD_SENT.value,
+        self._seed("R-045", "follow-up already open", State.DETECTED.value,
                    improvement_of="R-010")
         cand = Requirement(id=registry.next_id(), title="Ship the quarterly report",
-                           summary="another mention", status=State.CARD_SENT.value,
+                           summary="another mention", status=State.DETECTED.value,
                            sources=[_src(channel="DM", date="2026-07-09")])
         kind, saved = quick_capture.apply_triage(
             {"action": "relates_to", "req": "R-010",
@@ -309,9 +314,13 @@ class ArchiveUnarchiveActionTestCase(LifecycleBase):
             self.assertEqual(registry.load(rid).prev_status, status)
 
     def test_illegal_state_archive_is_noop(self):
-        r = self._seed("R-102", "t", State.CARD_SENT.value)
-        actd._apply_decision(r, "archive", None)
-        self.assertEqual(registry.load("R-102").status, State.CARD_SENT.value)
+        # §78：detected 现在是**合法**的封存源（上一条判例），所以反例换成还没
+        # 交付的在跑卡；退役的 card_sent 仍然不合法，一并留着钉住落单卡。
+        for rid, st in (("R-102", State.EXECUTING.value),
+                        ("R-103", State.CARD_SENT.value)):
+            r = self._seed(rid, "t", st)
+            actd._apply_decision(r, "archive", None)
+            self.assertEqual(registry.load(rid).status, st, msg=st)
 
     def test_unarchive_restores_prev_status_and_relocates(self):
         r = self._seed("R-100", "t", State.DELIVERED.value)
@@ -381,7 +390,7 @@ class ArchiveStaleTestCase(LifecycleBase):
         cfg = self._cfg_days(30)
         self._seed("R-100", "cold", State.DELIVERED.value, thread_id="R-100",
                    execution={"accepted_at": _iso_days_ago(90)})
-        self._seed("R-101", "live sibling", State.CARD_SENT.value, thread_id="R-100")
+        self._seed("R-101", "live sibling", State.DETECTED.value, thread_id="R-100")
         self.assertEqual(actd.archive_stale(cfg), 0)
         self.assertEqual(registry.load("R-100").status, State.DELIVERED.value)
 
@@ -427,13 +436,26 @@ class DashboardArchivedTestCase(LifecycleBase):
             self.assertNotIn("R-9", [x["id"] for x in dash[lane]])
 
     def test_reraised_flag_projected(self):
-        r = Requirement(id="R-5", title="回锅", status=State.CARD_SENT.value,
+        # §78：回锅卡落潜在任务，「回锅」标记跟着搬到 debt[] 行上——needs_approval[]
+        # 自此恒空（D80.1），标记留在旧列 = 永不显示。
+        r = Requirement(id="R-5", title="回锅", status=State.DETECTED.value,
                         execution={"reraised_at": _iso_days_ago(0),
                                    "reraised_note": "new ask"})
         dash = self._build([r], [])
-        row = dash["needs_approval"][0]
+        self.assertEqual(dash["needs_approval"], [])
+        row = dash["debt"][0]
+        self.assertEqual(row["id"], "R-5")
         self.assertTrue(row["reraised"])
         self.assertEqual(row["reraised_note"], "new ask")
+
+    def test_retired_card_sent_straggler_projects_into_debt(self):
+        # §2 §78 追记的 straggler 投影：归并扫描还没跑到的存量提案卡必须在潜在
+        # 任务列里看得见（宪法第 3 条：状态还在、面没了 = 隐身卡）。
+        r = Requirement(id="R-6", title="落单提案", status=State.CARD_SENT.value)
+        dash = self._build([r], [])
+        self.assertEqual(dash["needs_approval"], [])
+        self.assertEqual(dash["counts"]["needs_approval"], 0)
+        self.assertIn("R-6", [x["id"] for x in dash["debt"]])
 
 
 # --------------------------------------------------------------------------- #

@@ -276,7 +276,12 @@
 .card-dot.is-queued { background: var(--text-quaternary); }
 .card-dot.is-review { background: var(--accent); }
 .card-dot.is-done { background: var(--success); }
-.card-dot.is-backlog { background: var(--status-backlog); }
+/* §78：潜在任务卡的标题是 15px 摘要（.card-title.is-lg），色点跟着下沉 2px 与首行视觉居中——
+   与上面 `.card-title.is-lg + .card-id` 的 4px 同一笔账（is-backlog 只长在这张卡上） */
+.card-dot.is-backlog {
+  margin-top: 7px;
+  background: var(--status-backlog);
+}
 
 /* 章行里的相对时间 / 耗时 小字（原生 10pt secondary） */
 .card-meta-text {

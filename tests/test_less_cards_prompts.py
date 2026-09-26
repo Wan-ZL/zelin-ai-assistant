@@ -2,7 +2,9 @@
 pre-pass flag, fold-first bias — AND the frozen pre-§38 anchors staying put.
 
 The dashboard notes_text projection (§38.2's display surface) is pinned here
-too — the Mac fold-note UI parses it.
+too — the Mac fold-note UI parses it. **§78（issue #447 / owner 决策 D80）**：
+提案车道退役，机器卡一律落潜在任务列（``debt[]``），那一组投影判例因此改钉这
+一列；卡片工厂的默认状态也从退役的 ``card_sent`` 换成 ``detected``。
 """
 import unittest
 
@@ -19,7 +21,7 @@ def _clean():
         p.unlink()
 
 
-def _seed(rid, title, status=State.CARD_SENT.value, **kw):
+def _seed(rid, title, status=State.DETECTED.value, **kw):
     r = Requirement(id=rid, title=title, status=status, **kw)
     registry.save(r)
     return r
@@ -159,21 +161,27 @@ class NotesTextProjectionTestCase(unittest.TestCase):
     def _dash(self):
         return build_dashboard(cfg=self.cfg, agents=[], merge_dir=None)
 
-    def test_needs_approval_and_debt_carry_notes_text(self):
-        a = _seed("R-040", "提案卡", State.CARD_SENT.value)
+    def test_every_backlog_status_carries_notes_text(self):
+        """§78（issue #447 / D80）：提案列退役，机器卡一律落潜在任务列。这一条
+        原来钉的是「提案行与备选行**两个**行构造器都得发 ``notes_text``」；两个
+        构造器并成了 ``_backlog_row`` 一个，但同一列里仍有三种状态穿过它，所以
+        判例改钉「潜在任务列的每一种状态都带折叠备注」——落单的 ``card_sent``
+        straggler 也在内（它的折叠进展不许因为状态退役而在卡面上消失）。"""
+        a = _seed("R-040", "落单提案卡", State.CARD_SENT.value)
         registry.append_fold_note(a, "折进来的进展", "radar")
         registry.save(a)
-        _seed("R-041", "备选卡", State.DETECTED.value, notes="[quick] 备注 [@t1]")
+        _seed("R-041", "潜在任务卡", State.DETECTED.value, notes="[quick] 备注 [@t1]")
         dash = self._dash()
-        row = next(r for r in dash["needs_approval"] if r["id"] == "R-040")
+        self.assertEqual(dash["needs_approval"], [])      # §78 墓碑：恒空
+        row = next(r for r in dash["debt"] if r["id"] == "R-040")
         self.assertIn("[radar] 折进来的进展", row["notes_text"])
         drow = next(r for r in dash["debt"] if r["id"] == "R-041")
         self.assertIn("[quick] 备注 [@t1]", drow["notes_text"])
 
     def test_empty_notes_key_omitted(self):
-        _seed("R-042", "无备注卡", State.CARD_SENT.value)
+        _seed("R-042", "无备注卡")
         dash = self._dash()
-        row = next(r for r in dash["needs_approval"] if r["id"] == "R-042")
+        row = next(r for r in dash["debt"] if r["id"] == "R-042")
         self.assertNotIn("notes_text", row)
 
     def test_notes_over_cap_keep_tail_fold_handles(self):
@@ -181,12 +189,12 @@ class NotesTextProjectionTestCase(unittest.TestCase):
         # silently drop the newest [@ts] handles, the exact thing 拆成新卡
         # needs. Over the cap the tail survives, line-aligned, with an honest
         # ellipsis marker for the dropped head.
-        r = _seed("R-044", "多备注卡", State.CARD_SENT.value)
+        r = _seed("R-044", "多备注卡")
         r.notes = "\n".join(f"老备注填充行{i} " + "x" * 60 for i in range(40))
         ts = registry.append_fold_note(r, "最新折叠进展", "radar")
         registry.save(r)
         dash = self._dash()
-        row = next(x for x in dash["needs_approval"] if x["id"] == "R-044")
+        row = next(x for x in dash["debt"] if x["id"] == "R-044")
         nt = row["notes_text"]
         self.assertIn(f"[@{ts}]", nt)
         self.assertIn("[radar] 最新折叠进展", nt)
@@ -205,7 +213,7 @@ class NotesTextProjectionTestCase(unittest.TestCase):
         # to an un-splittable legacy row. The tail-aligned projection must
         # keep the whole line.
         from unittest import mock
-        r = _seed("R-045", "跨界卡", State.CARD_SENT.value)
+        r = _seed("R-045", "跨界卡")
         r.notes = "x" * 1950                       # one old filler line
         with mock.patch.object(registry, "_iso_now",
                                return_value="2026-07-16T08:00:00Z"):
@@ -218,7 +226,7 @@ class NotesTextProjectionTestCase(unittest.TestCase):
         self.assertLess(tag_at, 2000)
         self.assertGreater(tag_at + len(" [已拆出 R-999]"), 2000)
         dash = self._dash()
-        row = next(x for x in dash["needs_approval"] if x["id"] == "R-045")
+        row = next(x for x in dash["debt"] if x["id"] == "R-045")
         nt = row["notes_text"]
         self.assertIn("[已拆出 R-999]", nt)              # intact, not "[已拆出 R"
         entry = registry.parse_fold_notes(nt)[-1]        # Store's real-signal read

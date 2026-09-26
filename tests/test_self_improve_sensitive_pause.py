@@ -117,12 +117,12 @@ class PauseOnHarvestTestCase(unittest.TestCase):
 
     def test_pause_gates_the_next_lane_card_in_actd(self):
         self_improve.pause("sensitive_paths", pr_number=1, pr_url="u", paths=["install.sh"])
-        card = lane_card("P-8", status=State.CARD_SENT.value, execution=None)
+        card = lane_card("P-8", status=State.DETECTED.value, execution=None)
         registry.save(card)
         n = actd.auto_dispatch_pass(_on())
         self.assertEqual(n, 0)
         req = registry.load("P-8")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)   # §78：潜在任务
         self.assertEqual(req.execution["auto_dispatch_block"], "self_improve:paused")
         self.assertIn("self_improve:paused", req.notes)
         # 解除 → 下一 pass 放行，token 清掉
@@ -132,13 +132,34 @@ class PauseOnHarvestTestCase(unittest.TestCase):
         self.assertEqual(req.status, State.APPROVED.value)
         self.assertNotIn("auto_dispatch_block", req.execution)
 
-    def test_hand_cards_keep_flowing_while_lane_is_paused(self):
+    def test_pause_is_lane_scoped_and_never_stamps_other_cards(self):
+        """§65.4 的暂停只冻结本通道，不是全局刹车（§78 之后的可观测形态）。
+
+        原判例（test_hand_cards_keep_flowing_while_lane_is_paused）钉的是
+        「lane 暂停时 hand 卡照样免批自动派发」。D80.4 退役了 hand 免批车道，
+        那半句话在 actd 里已无处观测——但「暂停不是全局刹车」这件事分毫未变，
+        换成还看得见的两个面钉住：
+
+          * 潜在任务里的非 lane 卡不会被暂停波及（不上 self_improve:paused
+            token、不留痕）——暂停只写本通道卡的卡面；
+          * **已批准的非 lane 卡照常派发**——暂停拦的是资格闸，不是执行侧。
+        """
         self_improve.pause("sensitive_paths")
-        hand = lane_card("P-9", status=State.CARD_SENT.value, execution=None,
-                         sources=[{"channel": "quick_capture", "date": "d", "quote": "手打"}],
-                         cost_estimate_usd=1.0)
-        registry.save(hand)
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 1)
+        hand_src = [{"channel": "quick_capture", "date": "d", "quote": "手打"}]
+        registry.save(lane_card("P-9", status=State.DETECTED.value, execution=None,
+                                sources=hand_src, cost_estimate_usd=1.0))
+        registry.save(lane_card("P-10", status=State.APPROVED.value, execution={},
+                                sources=hand_src, cost_estimate_usd=1.0))
+        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        backlogged = registry.load("P-9")
+        self.assertEqual(backlogged.status, State.DETECTED.value)
+        self.assertNotIn("auto_dispatch_block", backlogged.execution or {})
+        self.assertEqual(backlogged.notes, "")
+        ex_mock = mock.MagicMock()
+        with mock.patch.object(actd, "executor", ex_mock):
+            self.assertEqual(actd.dispatch_approved(config.Config()), 1)
+        ex_mock.dispatch.assert_called_once()
+        self.assertEqual(ex_mock.dispatch.call_args.args[0].id, "P-10")
 
 
 class PauseVisibilityAndClearTestCase(unittest.TestCase):

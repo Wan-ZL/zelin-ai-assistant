@@ -6,7 +6,9 @@ preset、user_titled、未来 deadline、同簇有 approved/executing/review 兄
 prev_status 完整；循环卡的保留期 = daily_loop.trash_retention_days（默认 90），
 purge_at 投影与 purge_due 同一判决；trash.retention_days = 0 总开关。
 待验收列的第五条规则 review_stale（D74，两阶段）住 tests/test_review_stale_sweep.py——
-本文件钉的是「四条老规则只认提案 / 潜在任务两列」这一半。
+本文件钉的是「四条老规则只认潜在任务这一列」这一半。§78（issue #447，owner 决策
+D80）提案车道退役后 `LANE_STATES` 词表 **add-only 不删** card_sent（存量落单卡照样
+要被整理），但被扫进回收站的落单卡在 `restore` 那一侧被钳回 detected（D80.10）。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
@@ -123,10 +125,15 @@ class SweepStaleTestCase(unittest.TestCase):
         p2 = registry.load("P-2")
         self.assertEqual(p2.status, State.TRASHED.value)
         self.assertEqual(p2.trash_reason, "stale:idle")
+        # 回程票记的是**当时**的状态（历史事实，add-only 不许被后来的法条改写）
         self.assertEqual(p2.prev_status, State.CARD_SENT.value)
         self.assertEqual(registry.load("P-3").status, State.DETECTED.value)
+        # §78 D80.10：恢复时钳到潜在任务——绝不把卡送回一条没有卡面的车道
         restored = registry.restore(registry.load("P-2"))
-        self.assertEqual(restored.status, State.CARD_SENT.value)
+        self.assertEqual(restored.status, State.DETECTED.value)
+        # 对照：从潜在任务被扫走的卡逐字复位（钳位只挑退役值）
+        restored_p1 = registry.restore(registry.load("P-1"))
+        self.assertEqual(restored_p1.status, State.DETECTED.value)
 
     def test_sweep_never_touches_running_or_a_fresh_review_card(self):
         """D10 的「running / 待验收不碰」自 D74（issue #312）起只保留 running 半边：

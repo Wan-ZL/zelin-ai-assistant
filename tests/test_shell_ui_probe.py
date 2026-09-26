@@ -102,7 +102,8 @@ class AccessibilityGateTest(unittest.TestCase):
 
 
 class DockBadgeProbeTest(unittest.TestCase):
-    """§15 v0.46 ②：徽章 = 提案 + 需输入 + 待验收（web pushBadge → 壳 DockBadge）。
+    """§15 v0.46 ②（§78 / D80.12 改口径）：徽章 = 潜在任务 + 需输入 + 待验收
+    （提案列退役，owner 的决策都长在潜在任务上；web pushBadge → 壳 DockBadge）。
     LaunchServices 拿不到时回落 AX（下面这些用例全部走回落路，行为与之前一致）。"""
 
     def setUp(self):
@@ -114,13 +115,13 @@ class DockBadgeProbeTest(unittest.TestCase):
 
     def test_badge_matches_board_counts(self):
         out = probe.run_probe(self._env("badge:5", board(
-            {"needs_approval": 2, "needs_input": 1, "review": 2})), "dock_badge")
+            {"debt": 2, "needs_input": 1, "review": 2})), "dock_badge")
         self.assertTrue(out["present"])
         self.assertEqual((out["badge"], out["expected"]), (5, 5))
 
     def test_lane_lengths_when_counts_absent(self):
         res = probe.HttpResult(200, json.dumps(
-            {"needs_approval": [{"id": "R-1"}], "needs_input": [], "review": [{"id": "R-2"}]}))
+            {"debt": [{"id": "R-1"}], "needs_input": [], "review": [{"id": "R-2"}]}))
         out = probe.run_probe(self._env("badge:2", res), "dock_badge")
         self.assertTrue(out["present"])
         self.assertEqual(out["expected"], 2)
@@ -131,7 +132,7 @@ class DockBadgeProbeTest(unittest.TestCase):
         self.assertEqual(out["badge"], 0)
 
     def test_mismatch_is_missing_with_reason(self):
-        out = probe.run_probe(self._env("badge:1", board({"needs_approval": 3})), "dock_badge")
+        out = probe.run_probe(self._env("badge:1", board({"debt": 3})), "dock_badge")
         self.assertFalse(out["present"])
         self.assertIn("Dock badge 1 != board count 3", out["reason"])
         self.assertEqual(probe.classify(out), "MISSING")
@@ -151,7 +152,8 @@ class DockBadgeProbeTest(unittest.TestCase):
 
 
 class HotkeyFocusProbeTest(unittest.TestCase):
-    """§68.13 ⌃⌥Space → 提案列 composer 拿到焦点，收尾还原原前台 app。"""
+    """§68.13 ⌃⌥Space → 捕获 composer 拿到焦点（§78 起它住在潜在任务条的条头，
+    不是运行中列的直跑框），收尾还原原前台 app。"""
 
     def _env(self, osa_out, http=None):
         return FakeEnv(osa=dict(AX_OK, **{"key code": osa_out}), http=http or {})
@@ -189,7 +191,16 @@ class HotkeyFocusProbeTest(unittest.TestCase):
         out = probe.run_probe(env, "hotkey_focus")
         self.assertFalse(out.get("blocked"))
         self.assertFalse(out["present"])
-        self.assertIn("is not the proposal composer", out["reason"])
+        self.assertIn("is not the capture composer", out["reason"])
+
+    def test_direct_run_composer_is_not_an_accepted_target(self):
+        """§78 的安全底线：全局键落到运行中列的直跑框上 = 一按就开跑（approved、真花钱），
+        这是要抓的回归，不是容差——占位句对得上也判 MISSING。"""
+        env = self._env(hotkey_out(place="一句话，直接开跑…"),
+                        http={("GET", "/api/setup"): probe.HttpResult(200, '{"needed": false}')})
+        out = probe.run_probe(env, "hotkey_focus")
+        self.assertFalse(out["present"])
+        self.assertIn("is not the capture composer", out["reason"])
 
     def test_setup_wizard_precondition_is_blocked(self):
         """§68.5 首启向导顶掉看板页 → 前置条件不满足记 BLOCKED，不记 MISSING、也不绕开。"""
@@ -366,7 +377,7 @@ class DockBadgeLaunchServicesTest(unittest.TestCase):
 
     def test_launchservices_label_beats_a_blind_ax_read(self):
         out = probe.run_probe(self._env('"StatusLabel"={ "label"="42" }', board(
-            {"needs_approval": 20, "needs_input": 2, "review": 20})), "dock_badge")
+            {"debt": 20, "needs_input": 2, "review": 20})), "dock_badge")
         self.assertTrue(out["present"])
         self.assertEqual((out["badge"], out["badge_raw"]), (42, "42"))
         self.assertTrue(out["source"].startswith("LaunchServices"))
@@ -382,14 +393,14 @@ class DockBadgeLaunchServicesTest(unittest.TestCase):
 
     def test_no_statuslabel_falls_back_to_ax(self):
         env = FakeEnv(osa=dict(AX_OK, **{"AXStatusLabel": probe.OsaResult(0, "badge:3")}),
-                      http={("GET", "/api/board"): board({"needs_approval": 3})},
+                      http={("GET", "/api/board"): board({"debt": 3})},
                       ls=probe.OsaResult(0, "(no such app)"))
         out = probe.run_probe(env, "dock_badge")
         self.assertTrue(out["present"])
         self.assertIn("fallback", out["source"])
 
     def test_zero_with_pending_board_settles_by_rereading(self):
-        env = self._env('"StatusLabel"={ "label"=kCFNULL }', board({"needs_approval": 4}))
+        env = self._env('"StatusLabel"={ "label"=kCFNULL }', board({"debt": 4}))
         # 第一次 0，之后真源变成 4（网页 push 到了）
         seq = [probe.OsaResult(0, '"StatusLabel"={ "label"=kCFNULL }'),
                probe.OsaResult(0, '"StatusLabel"={ "label"="4" }')]

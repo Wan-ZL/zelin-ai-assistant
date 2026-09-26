@@ -1,13 +1,16 @@
 // 活体样式指南的 fixture 数据（?page=styleguide 专用，不进任何 wire）。
 // 纪律：形状严格照 types.ts 的投影镜像造——指南渲染的是【真组件】，fixture 只是喂 props；
 // id 用 SG- 前缀避免与真卡撞号（点按钮会真发 POST /api/actions，server 端 NOT_FOUND 拒绝，无副作用）。
-import type { ApprovalCard, DebtCard, ReviewCard, TaskRow } from "../../types";
+import type { DebtCard, ReviewCard, TaskRow } from "../../types";
 
-/** 提案 T1：常见徽章齐全（deadline 紧急 / 成本 / 被提×N / green_sign / 分歧 / 回锅） */
-export const PROPOSAL_T1: ApprovalCard = {
+// §78（D80，issue #447）提案列退役后这三张机器卡 fixture 一律是 DebtCard：样板间渲染的是
+// 看板上真的挂得出来的那张卡（DebtCardItem），不是已经没有挂载点的提案卡形状。
+
+/** 潜在任务 T1：常见徽章齐全（deadline 紧急 / 成本 / 被提×N / green_sign / 分歧 / 回锅） */
+export const BACKLOG_T1: DebtCard = {
   id: "SG-T1",
-  title: "Styleguide fixture — T1 proposal with the full badge row",
-  summary: "整理本周会议纪要并起草跟进邮件（fixture：徽章全开的 T1 提案卡）。",
+  title: "Styleguide fixture — T1 backlog card with the full badge row",
+  summary: "整理本周会议纪要并起草跟进邮件（fixture：徽章全开的 T1 潜在任务卡）。",
   tier: "T1",
   tier_hint: "需要批准",
   deadline: "2026-09-02",
@@ -18,7 +21,7 @@ export const PROPOSAL_T1: ApprovalCard = {
   green_sign: true,
   disagreement: "两条来源对交付格式说法不一致。",
   reraised: true,
-  reraised_note: "上轮暂缓后信号再次出现，重新出卡。",
+  reraised_note: "上轮打回后信号再次出现，重新出卡。",
   silent_merged: 2,
   target_kind: "existing",
   target_repo: "/Users/zelin/Projects/your-workbench",
@@ -29,11 +32,11 @@ export const PROPOSAL_T1: ApprovalCard = {
   dod: ["成稿可直接发送"],
 };
 
-/** 提案 T2：typed-confirm 档 + 较难 chip（hardness=hard） */
-export const PROPOSAL_T2: ApprovalCard = {
+/** 潜在任务 T2：typed-confirm 档 + 较难 chip（hardness=hard） */
+export const BACKLOG_T2: DebtCard = {
   id: "SG-T2",
-  title: "Styleguide fixture — T2 proposal",
-  summary: "改动生产配置并重启守护进程（fixture：T2 批准需键入确认）。",
+  title: "Styleguide fixture — T2 backlog card",
+  summary: "改动生产配置并重启守护进程（fixture：T2 促成运行需键入确认）。",
   tier: "T2",
   tier_hint: "键入确认",
   hardness: "hard",
@@ -48,7 +51,7 @@ export const PROPOSAL_T2: ApprovalCard = {
 };
 
 /** raising 占位灰卡（processing=true：只有 sheen，无决策按钮） */
-export const PROPOSAL_PROCESSING: ApprovalCard = {
+export const BACKLOG_PROCESSING: DebtCard = {
   id: "SG-RAISING",
   title: "AI 正在研究的占位卡（fixture）",
   tier: "T1",

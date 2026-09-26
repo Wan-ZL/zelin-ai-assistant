@@ -714,6 +714,13 @@ def _record_launch_success(req: Requirement, ex: dict, cfg: config.Config,
         # 文件跨 pass 重放，重放闸靠这个键认出"这单已经建过卡"——整体重建
         # execution 抹掉它 = 每 pass 铸一张新卡、起一个新 agent（无上界）。
         req.execution["inbox_stem"] = ex["inbox_stem"]
+    if ex.get("direct_run"):
+        # §78（原 §34bis）护栏的认卡痕同样必须活过派发：triage_guard.guarded_card
+        # 读的就是这个键，而 §30 attach 复活轮在卡已经 executing 之后才跑
+        # reconcile._restamp_triage_snapshot——整体重建抹掉它 = 复活轮没有基线，
+        # 那条 skip-permissions 会话写 registry 不再有人看着（reconcile 的
+        # docstring 明写这不许发生）。退役前这个痕住在卡顶层 `preset`，天然活过重建。
+        req.execution["direct_run"] = ex["direct_run"]
     # §65：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
     # self_improve 卡给 {}，execution 形状不变。
     req.execution.update(self_improve.dispatch_record(req, cfg))

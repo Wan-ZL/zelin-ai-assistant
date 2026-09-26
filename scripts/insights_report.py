@@ -174,7 +174,10 @@ FUNNEL = [
      (_STAGE_FEATURE, "app_launch")),
     ("configured", "Configured an ingest source",
      (_STAGE_FEATURE, "ingest_configured")),
-    ("first_card", "First proposal card",
+    # §78：提案车道退役，铸出的卡落潜在任务列——阶段名随之去掉「proposal」。
+    # 事件名 ``card_sent`` 逐字不动：历史事件行按它归档，改名会让旧装机的这一
+    # 级凭空塌陷（同 act/report.py 的漏斗行）。
+    ("first_card", "First card filed",
      (_STAGE_EVENTS, {"milestone_first_card", "card_sent"})),
     ("first_approval", "First approval",
      (_STAGE_EVENTS, {"milestone_first_approval", "inbox_approve"})),
@@ -647,7 +650,7 @@ def render_tables(agg: dict) -> str:
 ANALYSIS_PROMPT = (
     "You are analyzing anonymous, AGGREGATE-ONLY usage telemetry for 'Zelin's "
     "AI Assistant', an open-source personal AI secretary (screen/inbox ingest "
-    "-> approval cards -> autonomous execution). Below are four derived views: "
+    "-> backlog cards the owner approves -> autonomous execution). Below are four derived views: "
     "an activation FUNNEL (install -> configure -> first card -> first approval "
     "-> first delivery, with drop-off %), per-path FAILURE rates, feature "
     "ABANDONMENT, and RETENTION.\n\n"

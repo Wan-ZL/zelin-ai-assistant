@@ -1,12 +1,13 @@
 """daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §70；§75 第三个维护阶段；R2.4；owner D10/D12/D18）。
 
 一句话：每天固定时段（`daily_loop.time`，默认 03:30 本地）在 actd 的 pass 里
-跑一次——**先**整理看板（act/lib/maintenance：提案列 + 潜在任务列去重合成、
+跑一次——**先**整理看板（act/lib/maintenance：潜在任务列去重合成（§78 起只剩
+这一列，存量 card_sent 卡一并扫）、
 过时卡进回收站），**再**回收磁盘（act/lib/worktrees：已合并 / 已删枝 / 过时的
 `.claude/worktrees/`，§75），**最后**从日志台账 / analytics / doctor / 夜间变异报告 / GitHub
 issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 ≤
 `max_proposals_per_day`（默认 truth = config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS）张
-🤖 提案卡进正常审批闸门。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
+🤖 卡进潜在任务列（§78：提案列退役，机器卡一律落那儿）。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
 它们只成 advisory 行，落在 `last_result.advisories`（≤ 20 条，带 first_seen；跨天备忘
 `state.advisory_first_seen`）、审计行与看板横幅「系统自检 N 条」里——同一根因的症状
 不该变成一排派不出去的卡。
@@ -254,10 +255,13 @@ def select_signals(signals: list, *, taken: set, gh_titles: list, budget: int) -
 
 
 def build_card(sig, today: str, repo_path: str) -> Requirement:
-    """一条信号 → 未落盘的提案卡（channel 硬编码 self_improve；plan/DoD/成本齐全）。"""
+    """一条信号 → 未落盘的 🤖 卡（channel 硬编码 self_improve；plan/DoD/成本齐全）。
+
+    §78：落点是潜在任务（detected）——提案列已退役，卡在那儿等 owner 一次
+    「促成运行」；§65 的免批 lane 从这一列自动接手（D80.5）。"""
     return Requirement(
         id="", title=(TITLE_PREFIX + sig.title)[:TITLE_CAP], type=CARD_TYPE, tier="T1",
-        status=State.CARD_SENT.value, hardness="soft", summary=str(sig.summary or "")[:300],
+        status=State.DETECTED.value, hardness="soft", summary=str(sig.summary or "")[:300],
         plan=list(sig.plan), definition_of_done=list(sig.dod),
         cost_estimate_usd=float(sig.cost_usd), target_repo=repo_path, delivery_mode="repo",
         sources=[{"channel": SOURCE_CHANNEL, "date": today, "ref": REF_PREFIX + sig.fingerprint,

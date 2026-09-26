@@ -15,7 +15,7 @@ vi.mock("../../api", async (importOriginal) => ({
 }));
 import { postAction } from "../../api";
 
-// jsdom <dialog> 兜底（同 ProposalCard.test.tsx）
+// jsdom <dialog> 兜底（同 DebtCardItem.promote.test.tsx）
 beforeEach(() => {
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {

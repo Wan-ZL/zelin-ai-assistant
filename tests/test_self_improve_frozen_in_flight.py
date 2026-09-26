@@ -1,11 +1,13 @@
 """通道关掉之后，**已经存在**的 self_improve 卡不再被自动推进（CONTRACT §65.1
 追记；issue #307 第 4 条「关闭开关时至少不再续派」，owner 决策 D57）。
+退回的落点随 §78（issue #447 / D80）从提案列改成潜在任务。
 
 钉的行为（开关本身的三层配置 / 读取器 / 巡检住 test_self_improve_channel_switch.py）：
 
 * 免批批准（`execution.auto_dispatched`）但还没起跑的 lane 卡：关着时**不派**，
-  退回 `card_sent`、清掉那枚痕、notes 记一行；下一 pass 的资格闸报常态
-  `self_improve:disabled`（不上卡、不来回摇）；
+  退回 `detected`（潜在任务；§78 之前是提案列 `card_sent`，那一列已退役）、清掉
+  那枚痕、notes 记一行；下一 pass 的资格闸报常态 `self_improve:disabled`
+  （不上卡、不来回摇）；
 * **owner 亲手批准的**同款卡照派——开关管的是自动化，显式动作不被静默吞掉；
 * 非 self_improve 卡一概不受影响；
 * 已在跑但 agent 死了的 lane 卡：关着时**不自动续命**（`executor.resume` 一次都
@@ -67,17 +69,17 @@ class WithdrawApprovedTestCase(FrozenBase):
         self.assertEqual(n, 0)
         ex_mock.dispatch.assert_not_called()
         req = registry.load("P-7")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)   # §78：退回潜在任务
         self.assertNotIn("auto_dispatched", req.execution or {})
         self.assertIn("通道已关", req.notes)
 
-    def test_withdrawn_card_settles_in_card_sent_without_a_token(self):
-        """退回之后不来回摇：资格闸报常态 token，不上卡、不再批。"""
+    def test_withdrawn_card_settles_in_the_backlog_without_a_token(self):
+        """退回之后不来回摇：资格闸报常态 token，不上卡、不再批（§78 落点）。"""
         self._approved()
         self._run(_cfg(False))
         self.assertEqual(actd.auto_dispatch_pass(_cfg(False)), 0)
         req = registry.load("P-7")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("auto_dispatch_block", req.execution or {})
 
     def test_switch_on_dispatches_the_same_card(self):

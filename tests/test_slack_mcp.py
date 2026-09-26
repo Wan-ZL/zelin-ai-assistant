@@ -11,6 +11,11 @@ inside the sandbox AIASSISTANT_HOME (tests/__init__.py). Contract under test:
     the lid-closed gap guarantee) and records mcp_failed in radar_health.json;
 (d) ```json fenced output is tolerated;
 (e) a bare [] is a SUCCESS with zero cards (marker advances, health ok).
+
+**§78（owner 决策 D80，issue #447；落点全表 §78.3、安静出生 §78.6）**：卡的落点
+从退役的提案列改成 `detected`
+（潜在任务）；提取层的 `urgent` 判据不作废，它降级成通知资格
+（D80.7 的 `quiet_birth`）——本例的 item 没说不紧急，所以是一次会响的出生。
 """
 import datetime as _dt
 import json
@@ -97,7 +102,8 @@ class SlackMcpFallbackTestCase(unittest.TestCase):
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
         r = reqs[0]
-        self.assertEqual(r.status, "card_sent")        # 进"待审批"
+        self.assertEqual(r.status, "detected")         # §78：落潜在任务
+        self.assertFalse(getattr(r, "quiet_birth", False))   # 未判非紧急 = 会响
         self.assertEqual(r.title, _ITEM["title"])
         self.assertEqual(r.sources[0]["who"], "your.manager")
         self.assertEqual(r.sources[0]["quote"], _ITEM["quote"])

@@ -2,7 +2,7 @@
 //   1) 输入框里按 Enter 不批准，也不被 preventDefault——单行 <input> 没有换行语义，Enter 什么都不做；
 //      正词已键入也一样：批准只有「批准」按钮一条路（正文本就写着「请输入 确认 或 go 后再点「批准」」）；
 //   2) 按钮走 approve：正词（trim + lowercase 宽容）→ onConfirm；错词 → 「上次输入不匹配。」+ 清空输入、不 onConfirm。
-//   确认词校验与 wire 的判例在 ProposalCard.test.tsx，这里只钉键盘半边。
+//   确认词校验与 wire 的判例在 DebtCardItem.promote.test.tsx（§78 起提案卡墓碑，闸门长在潜在任务卡上），这里只钉键盘半边。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
