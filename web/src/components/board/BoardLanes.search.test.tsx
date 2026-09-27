@@ -2,7 +2,8 @@
 // 提案列 processing 占位卡不被搜索词藏起（在途提交绝不「像丢了一样」消失）——但只有搜索这一维：
 // 原生没有 chips，tier / 期限 / 回锅 chips 是 web 加的，占位卡对它们照常判定；搜索按 §37.2 归一化 AND
 // 作用于全部列（display_title / former_titles / plan 也算）、运行中列的空态句 = 原生 composer 之下
-// 真正渲染过的那句 lanePlaceholder（不是从未显示的 column(emptyText:) 参数）。
+// 真正渲染过的那句 lanePlaceholder（不是从未显示的 column(emptyText:) 参数；该句自 §34 追记 D81 起
+// 去掉了「批准一个提案」那半句，与冻结原生有意分叉）。
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, fetchLanes } from "../../api";
@@ -108,8 +109,8 @@ describe("§37.2 fields + normalisation reach the board", () => {
   });
 });
 
-describe("running-lane empty copy (Kanban.swift lanePlaceholder under the composer)", () => {
-  it("运行中列空时显示原生 composer 之下那句，不是从未渲染的 column(emptyText:) 参数", async () => {
+describe("running-lane empty copy (Kanban.swift lanePlaceholder under the composer; D81 wording)", () => {
+  it("运行中列空时显示 composer 之下那句（§34 追记 D81 版），不是从未渲染的 column(emptyText:) 参数", async () => {
     vi.mocked(fetchBoard).mockResolvedValue({ ...board, running: [], counts: { ...board.counts, running: 0 } } as Board);
     await refreshBoard();
     const { container } = render(<BoardLanes />);

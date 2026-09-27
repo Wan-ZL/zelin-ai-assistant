@@ -90,8 +90,10 @@ describe("lane sort", () => {
   });
 });
 
-describe("composer placeholders (native wording)", () => {
-  it("提案列 / 运行中列的输入框占位文案逐字镜像原生 Composer.swift", () => {
+describe("composer placeholders", () => {
+  // 提案列那句逐字镜像原生 Composer.swift；运行中列那句自 §34 追记 D81（owner 决策，issue #448）
+  // 起**有意分叉**——「（跳过提案）」删掉了，§66 清单里它是 copy 条目（只列不判），inventory 不动
+  it("提案列镜像原生；运行中列是 D81 之后的新文案", () => {
     render(<BoardLanes />);
     expect(screen.getByPlaceholderText("One sentence — AI researches and proposes…")).toBeTruthy();
     expect(screen.getByPlaceholderText("One line — run it now…")).toBeTruthy();

@@ -105,10 +105,14 @@ class TypedSentenceTestCase(unittest.TestCase):
     def test_capture_quote_wins_and_keeps_newlines(self):
         self.assertEqual(dp.typed_sentence(_direct_run()), SENTENCE)
 
-    def test_non_dict_and_blank_entries_are_skipped(self):
-        card = _direct_run(sources=["not-a-dict", {"quote": "  "},
-                                    {"channel": "quick_capture", "quote": "真正那句"}])
-        self.assertEqual(dp.typed_sentence(card), "真正那句")
+    def test_only_the_birth_source_counts_never_a_later_one(self):
+        # 往后扫 = 把一段第三方文字（radar 引文、并入进来的别人的话）整条当成
+        # prompt 送进会话——逐字派发没有围栏，那就是一条现成的注入路
+        for sources in (["not-a-dict", {"quote": "别人说的话"}],
+                        [{"quote": "  "}, {"quote": "别人说的话"}]):
+            with self.subTest(sources=sources):
+                card = _direct_run(sources=sources)
+                self.assertEqual(dp.typed_sentence(card), card.title)
 
     def test_falls_back_to_title_without_a_usable_quote(self):
         self.assertEqual(dp.typed_sentence(_direct_run(sources=None)),
@@ -165,6 +169,11 @@ class SystemPromptTestCase(unittest.TestCase):
         self.assertIn("对外发消息", system)
         self.assertIn(f"{self.target}/deliverables/", system)
 
+    def test_keeps_the_resident_upgrade_escape_hatch(self):
+        # 常驻升级条款（聊天交付那一节）：「不进任何 repo」不许把 owner 自己的「定稿/落盘」
+        # 指令反压住——system prompt 的位阶比他后来那条消息高
+        self.assertIn("定稿", self._system())
+
     def test_final_draft_is_offered_not_mandated(self):
         system = self._system()
         self.assertIn("FINAL DRAFT:", system)
@@ -203,14 +212,28 @@ class LaunchArgvTestCase(unittest.TestCase):
         self.assertEqual(cmd.count("--append-system-prompt"), 1)
         i = cmd.index("--append-system-prompt")
         self.assertIn("待验收", cmd[i + 1])
-        self.assertEqual(cmd[-1], SENTENCE)      # prompt 位仍是最后一个参数
+        self.assertEqual(cmd[-2:], ["--", SENTENCE])   # prompt 位仍在末尾
 
     def test_non_verbatim_card_argv_is_unchanged(self):
         req, cfg = _direct_run(plan=["一步"]), _cfg()
         cmd = self._argv(req, lambda r: executor._default_runner(
             "PROMPT", Path("/golden/target"), name="n", cfg=cfg, req=r))
         self.assertNotIn("--append-system-prompt", cmd)
+        self.assertNotIn("--", cmd)
         self.assertEqual(cmd[-1], "PROMPT")
+
+    def test_a_dash_leading_sentence_still_launches(self):
+        # 那一位自此是用户原话，而 commander 把以 `-` 开头的 operand 当选项
+        # （实测 `claude -p "--version …"` → error: unknown option）——owner 打一句
+        # 「--dangerously-skip-permissions 是干嘛的」就会每 pass 派发失败、5 次
+        # 后撞上 §4 的派发刹车
+        dashed = "--dangerously-skip-permissions 是干嘛的"
+        req, cfg = _direct_run(sources=[registry.capture_source(
+            "zelin", "quick_capture", dashed)]), _cfg()
+        cmd = self._argv(req, lambda r: executor._default_runner(
+            dp.render(r, cfg, Path("/golden/target"), False),
+            Path("/golden/target"), name="n", cfg=cfg, req=r))
+        self.assertEqual(cmd[-2:], ["--", dashed])
 
     def test_resume_launch_appends_it_too(self):
         # system prompt 是每次调用给的——resume 不重新挂上，打回那一轮的会话
@@ -220,7 +243,19 @@ class LaunchArgvTestCase(unittest.TestCase):
             cfg, r, SID, Path("/golden/target"), "再补一句"))
         self.assertIn("--append-system-prompt", cmd)
         self.assertIn("--resume", cmd)
-        self.assertEqual(cmd[-1], "再补一句")
+        self.assertEqual(cmd[-2:], ["--", "再补一句"])
+
+    def test_the_contract_target_is_the_workbench_not_the_resume_cwd(self):
+        # resume 的 cwd 是 transcript 上一次的目录——bg 会话中途会钻进
+        # <workbench>/.claude/worktrees/<name>，拿它当交付目录 = 把成果指进一个
+        # 随时会被 worktree 回收扫走的隐藏目录
+        req, cfg = _direct_run(), _cfg()
+        worktree = cfg.target_repo_path / ".claude" / "worktrees" / "R-900"
+        cmd = self._argv(req, lambda r: executor._run_resume(
+            cfg, r, SID, worktree, "再补一句"))
+        system = cmd[cmd.index("--append-system-prompt") + 1]
+        self.assertNotIn(".claude/worktrees", system)
+        self.assertIn(f"{cfg.target_repo_path}/deliverables/", system)
 
 
 class ReworkVerbatimTestCase(unittest.TestCase):
@@ -282,6 +317,16 @@ class WholeMessageHarvestTestCase(unittest.TestCase):
         self.assertEqual(out["card_title"], "整理 onboarding 文档")
         self.assertEqual(out["final_draft"], "答案正文")
 
+    def test_a_lone_html_path_is_still_hydrated(self):
+        # §15：交付物是一个 .html 文件时，成稿该是文件正文而不是「我写到了这个
+        # 路径」那句话——marker 那条路一直如此，整条口径不许把它丢了
+        page = Path(tempfile.mkdtemp(prefix="d81-html-")) / "report.html"
+        page.write_text("<h1>整理结果</h1>", encoding="utf-8")
+        self._write(f"写好了，见\n{page}")
+        out = executor.harvest_delivery(SID, whole_message=True)
+        self.assertEqual(out["final_draft"], "<h1>整理结果</h1>")
+        self.assertIn(str(page), out["delivered_summary"])   # 路径仍在摘要里
+
 
 class HarvestKwargsTestCase(unittest.TestCase):
     def test_verbatim_card_asks_for_the_whole_message(self):
@@ -294,6 +339,14 @@ class HarvestKwargsTestCase(unittest.TestCase):
         self.assertEqual(
             actd_session.harvest_kwargs(_direct_run(), {"sleep_interrupted": True}),
             {})
+
+    def test_the_sleep_yield_is_spent_after_the_one_retry(self):
+        # 只让一次：`sleep_interrupted` 只在会话再次被看见活着时才被 _note_alive
+        # 清掉，重试完没活过来的卡带着这面旗，宽口径不该就此永远回不来
+        self.assertEqual(
+            actd_session.harvest_kwargs(
+                _direct_run(), {"sleep_interrupted": True, "sleep_retry_used": True}),
+            {"whole_message": True})
 
     def test_other_cards_call_it_exactly_as_before(self):
         self.assertEqual(actd_session.harvest_kwargs(_direct_run(plan=["一步"]), {}), {})
@@ -353,6 +406,40 @@ class BlockedVerbatimPromotionTestCase(unittest.TestCase):
         saved = self._pass(req, self._harvest())
         self.assertEqual(saved.status, State.REVIEW.value)
         self.assertEqual((saved.execution or {}).get("interrupted_reason"), "blocked")
+
+    def test_a_vanished_session_still_resumes_on_a_half_sentence(self):
+        # 宽判据**只**属于 blocked（会话确实收工了）。死掉 / 从 roster 消失的
+        # 会话最后那句话可能只是「好的，我先看一下相关文件」——把半句在途进度
+        # 当成果收下就等于把 §16/§46 的自动救活对这一类卡整条关掉。
+        req = _direct_run(status=State.EXECUTING.value,
+                          execution={"session_id": "aaaa1111"})
+        registry.save(req)
+        resume = mock.Mock(return_value=True)
+        with mock.patch.object(actd, "_run_claude_agents", return_value=[]), \
+             mock.patch.object(actd.executor, "harvest_delivery", self._harvest()), \
+             mock.patch.object(actd.executor, "resume", resume):
+            actd.reconcile_executing(self.cfg, set())
+        saved = registry.load(req.id)
+        resume.assert_called_once()
+        self.assertEqual(saved.status, State.EXECUTING.value)
+        self.assertIsNone((saved.execution or {}).get("final_draft"))
+
+    def test_queued_briefing_is_injected_before_the_wider_delivery_test(self):
+        # 宽判据会抢在注入窗口前面把卡提升掉，排队的 owner 指令就再也没人投递
+        # 也没人留痕（`_drop_undelivered_steers` 只挂在 done 那条路上）
+        req = _direct_run(status=State.EXECUTING.value,
+                          execution={"session_id": "aaaa1111",
+                                     "pending_briefings": ["fyi"]})
+        registry.save(req)
+        brief = mock.Mock(return_value=True)
+        with mock.patch.object(actd, "_run_claude_agents", return_value=self._roster()), \
+             mock.patch.object(actd.executor, "harvest_delivery", self._harvest()), \
+             mock.patch.object(actd.executor, "brief", brief), \
+             mock.patch.object(actd.executor, "resume", mock.Mock(return_value=True)):
+            actd.reconcile_executing(self.cfg, set())
+        brief.assert_called_once()
+        # 本 pass 不提升：会话吃下那句话后，下一 pass 再按新的最后一条消息判交付
+        self.assertEqual(registry.load(req.id).status, State.EXECUTING.value)
 
 
 if __name__ == "__main__":

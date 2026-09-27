@@ -176,9 +176,16 @@ def verbatim_direct_run(req: Requirement) -> bool:
                 or req.definition_of_done or req.summary)
 
 
-def _source_quote(s) -> str:
-    """One ``sources[]`` entry's quote；非 dict 条目 / 空引文一律给 ""。"""
-    return str(s.get("quote") or "").strip() if isinstance(s, dict) else ""
+def _birth_quote(req: Requirement) -> str:
+    """``sources[0].quote`` —— capture 的**出生**引文；非 dict / 空引文给 ""。
+
+    **只认第 0 条，不往后扫**：往后扫会把「第 0 条空了就拿后面某条顶上」变成
+    一条捷径，而后面那些条目可能是第三方内容（radar 引文、并入进来的别人的
+    话）。逐字派发的 prompt 没有围栏（§4 的围栏对 owner 原话不适用），把一段
+    外来文字整条当成 prompt 送进会话就是一条现成的注入路。§34.1 保证直跑卡
+    绝不判重并入，所以正常卡的 sources 恰好只有这一条。"""
+    first = (req.sources or [None])[0]
+    return str(first.get("quote") or "").strip() if isinstance(first, dict) else ""
 
 
 def typed_sentence(req: Requirement) -> str:
@@ -186,8 +193,7 @@ def typed_sentence(req: Requirement) -> str:
     （``sources[0].quote``，§10 D52 归一后的正文，换行原样保留）；引文缺失
     或形状异常（手编卡、非 dict 条目）回落 ``title``（它是同一句话折成一行
     截 80 的产物）。纯函数，不抛异常。"""
-    quotes = (_source_quote(s) for s in (req.sources or []))
-    return next((q for q in quotes if q), str(req.title or "").strip())
+    return _birth_quote(req) or str(req.title or "").strip()
 
 
 def card_title_tier(req: Requirement) -> tuple[str, bool]:
@@ -584,7 +590,10 @@ def direct_run_rules(target: Path) -> str:
         f"图片这类不该粘成纯文本的东西）写到 {target}/deliverables/ 下并在消息里"
         "报它的绝对路径。\n"
         "安全边界：不要 merge、不要 push 到 main、不要替他对外发消息"
-        "（Slack / 邮件 / 工单评论）——那些他自己发。"
+        "（Slack / 邮件 / 工单评论）——那些他自己发。\n"
+        "例外只有一条（§33 常驻升级条款）：他在后续消息里明说「定稿 / 存档 / 落盘 / "
+        "commit」（或同义）时照做——把成稿写进合适路径、commit 到**新** feature 分支，"
+        "并报告分支名与文件绝对路径；他说之前不要动。"
     )
 
 

@@ -144,16 +144,26 @@ def verbatim_whole_message(req: Requirement, ex: dict) -> bool:
 
     真当且仅当卡是逐字直跑卡（`dispatch_prompt.verbatim_direct_run`：prompt 里
     从来没有 ``FINAL DRAFT:`` 的强制格式，所以 marker 缺席**不**证明没交付）
-    **且**这次中断不是实测的睡眠打断。后一半是 §71.3 的让路：被睡眠切断的
-    会话 transcript 末尾常是一句 "API Error: … went to sleep mid-response"，
-    整条收下会把它冒充成成果、顶掉那次唯一的原地重试
-    （`reconcile._harvested_nothing` 判的就是 ``final_draft``）。
+    **且**这次中断不是**还没用掉重试机会的**实测睡眠打断。后一半是 §71.3 的
+    让路：被睡眠切断的会话 transcript 末尾常是一句 "API Error: … went to sleep
+    mid-response"，整条收下会把它冒充成成果、顶掉那次唯一的原地重试
+    （`reconcile._harvested_nothing` 判的就是 ``final_draft``）。让路**只让一次**，
+    判据与 `sleep_retry` 自己那道门逐字同源（``sleep_interrupted and not
+    sleep_retry_used``）——`sleep_interrupted` 只在会话再次被看见活着时才被
+    `_note_alive` 清掉，重试完没活过来的卡若一直带着这面旗，宽口径就永远回不来了。
 
     其余任何卡恒假 —— 它们的 prompt 明令 marker，缺席就是「没交付」的真信号
     （`reconcile.promote_if_delivered` 的强完成信号语义不变）。
+
+    **本函数只回答「这张卡该不该宽」，不回答「这个会话收工了没有」**——后者由
+    调用点负责：收割漏斗（`harvest_into`）与 `_settle_review_activity` 本就只在
+    会话结束/停止时调用，`promote_if_delivered` 则只在 blocked 那条路上把真值
+    传进来，dead/vanished 那条路恒传假（半句在途进度不是成果，§16/§46 的自动
+    救活不许被它关掉）。
     """
-    return (dispatch_prompt.verbatim_direct_run(req)
-            and not (ex or {}).get("sleep_interrupted"))
+    ex = ex or {}
+    spent = bool(ex.get("sleep_interrupted")) and not ex.get("sleep_retry_used")
+    return dispatch_prompt.verbatim_direct_run(req) and not spent
 
 
 def harvest_kwargs(req: Requirement, ex: dict) -> dict:

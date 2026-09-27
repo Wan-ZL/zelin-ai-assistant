@@ -38,7 +38,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
 from act import executor
-from act.lib import config, dispatch_prompt, registry, sanitize, titles
+from act.lib import config, registry, sanitize, titles
 from act.lib.registry import Requirement, State
 
 _MANDATORY = "required this round"
@@ -88,16 +88,16 @@ class IsUnreadableTitleTestCase(unittest.TestCase):
         self.assertFalse(titles.is_unreadable_title("修 复\n登 录"))
 
 
-def _session_text(req: Requirement, prompt: str, cfg, target: Path) -> str:
+def _session_text(req: Requirement, prompt: str, cfg) -> str:
     """会话这一轮真正读到的全部文字 = 用户回合 + system 旁路。
 
     §34 追记 D81 起逐字直跑卡的用户回合**只有他打的那句话**，§37.1 的分档
-    指令搬进了 ``--append-system-prompt``（`dispatch_prompt.direct_run_system_prompt`）。
-    分档保证一个字没变，只是换了载体——所以本模块的分档判例一律对这段合并
-    文本断言，其余卡的旁路为空、断言与从前逐字相同。"""
-    if not dispatch_prompt.verbatim_direct_run(req):
-        return prompt
-    return prompt + "\n" + dispatch_prompt.direct_run_system_prompt(req, cfg, target)
+    指令搬进了 ``--append-system-prompt``。分档保证一个字没变，只是换了载体——
+    所以本模块的分档判例一律对这段合并文本断言，其余卡的旁路为空、断言与从前
+    逐字相同。旁路的文本**从生产 argv 上取**（`executor._system_append_argv`），
+    不自己重算：判例要钉的正是「会话真的收到了这条指令」，重算等于只钉住一个
+    函数存在。"""
+    return "\n".join([prompt] + executor._system_append_argv(req, cfg)[1:])
 
 
 class PromptEnforcementTestCase(unittest.TestCase):
@@ -107,8 +107,7 @@ class PromptEnforcementTestCase(unittest.TestCase):
         cfg.voice_enabled = False   # keep the prompt minimal/deterministic
         with tempfile.TemporaryDirectory(prefix="cardtitle-") as td:
             target = Path(td)
-            return _session_text(req, executor.build_prompt(req, cfg, target=target),
-                                 cfg, target)
+            return _session_text(req, executor.build_prompt(req, cfg, target=target), cfg)
 
     # ---- v0.46 两档：无 display_title 且不可读 / direct-run（回归不破） ----
 
@@ -298,7 +297,7 @@ class ReworkGateTitleTierTestCase(unittest.TestCase):
                 if str(sid).startswith("feedc0de") else None):
             self.assertTrue(executor.rework(req, "再补一个测试", self.cfg,
                                             runner=runner))
-        return _session_text(req, runner.call_args[0][0], self.cfg, self.wt)
+        return _session_text(req, runner.call_args[0][0], self.cfg)
 
     def test_rework_prompt_requires_title_recheck_with_current_value(self):
         prompt = self._rework_prompt(display_title="重跑数据清洗脚本")
