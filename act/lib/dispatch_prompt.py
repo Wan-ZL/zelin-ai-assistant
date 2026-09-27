@@ -6,10 +6,13 @@ executor (act/executor.py) composes these blocks after resolving the launch
 cwd and whether the target has a git remote — prompt content is the contract
 tests/test_executor_prompt_golden.py pins byte-for-byte, so every block keeps
 its wording and order. Law touched by the text: §4 sources fencing, §15
-default output format, §33 chat delivery, §37.1 CARD TITLE tiers (dispatch and
-rework share :func:`card_title_tier` — the single tier judgement), §44.3 the
-briefing prefix + fence, §60 display ids / §60.4 bg 会话名（:func:`session_name`，
-命名单源与 CARD TITLE 现值同一条链，见 §37.1 追记）。
+default output format, §33 chat delivery, §34 追记 D81 逐字直跑
+（:func:`verbatim_direct_run` / :func:`typed_sentence` /
+:func:`direct_run_system_prompt` — 模板整段退场，只剩用户那句话），
+§37.1 CARD TITLE tiers (dispatch and rework share :func:`card_title_tier` — the
+single tier judgement), §44.3 the briefing prefix + fence, §60 display ids /
+§60.4 bg 会话名（:func:`session_name`，命名单源与 CARD TITLE 现值同一条链，
+见 §37.1 追记）。
 """
 from __future__ import annotations
 
@@ -146,6 +149,47 @@ def training_block() -> str:
     )
 
 
+def is_direct_run(req: Requirement) -> bool:
+    """§34 direct-run 卡的**唯一判定点**（分档、逐字派发两处共用）。
+
+    只看 notes **首行**是否以创建标签开头（actd 铸卡时写的首行是
+    「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文里出现
+    字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。str()
+    防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。"""
+    return str(req.notes or "").lstrip().startswith("[direct-run]")
+
+
+def verbatim_direct_run(req: Requirement) -> bool:
+    """§34 追记（2026-09-27，owner 决策 D81，issue #448）：这张卡的派发
+    prompt = 用户那句话**逐字**，模板一个字都不加（:func:`render` 的早退）。
+
+    条件是 direct-run 卡（§34：完全不过 LLM，卡上只有他打的那句话）**且**
+    卡面除那句话外没有任何经人审的指令内容——``plan`` / ``preset``（§34bis
+    清理卡的固定 plan 只有模板的可信 `## Plan` 区送得到）/
+    ``definition_of_done`` / ``summary`` 任一非空即退回模板，宁可多包装不可
+    漏指令。看板需要的那点东西（会话名、交付与安全边界、附图、CARD TITLE）
+    全部搬出 prompt 正文，走 CLI 旁路（``--name`` §60.4 +
+    ``--append-system-prompt`` :func:`direct_run_system_prompt`）。"""
+    if not is_direct_run(req):
+        return False
+    return not (req.plan or getattr(req, "preset", None)
+                or req.definition_of_done or req.summary)
+
+
+def _source_quote(s) -> str:
+    """One ``sources[]`` entry's quote；非 dict 条目 / 空引文一律给 ""。"""
+    return str(s.get("quote") or "").strip() if isinstance(s, dict) else ""
+
+
+def typed_sentence(req: Requirement) -> str:
+    """用户在运行中列逐字敲下的那句话。真源 = capture 出生引文
+    （``sources[0].quote``，§10 D52 归一后的正文，换行原样保留）；引文缺失
+    或形状异常（手编卡、非 dict 条目）回落 ``title``（它是同一句话折成一行
+    截 80 的产物）。纯函数，不抛异常。"""
+    quotes = (_source_quote(s) for s in (req.sources or []))
+    return next((q for q in quotes if q), str(req.title or "").strip())
+
+
 def card_title_tier(req: Requirement) -> tuple[str, bool]:
     """§37.1 v0.47 CARD TITLE 三档分档 — dispatch 与 rework 的**唯一判定点**
     （法条明文「build_prompt / rework 同一分档逻辑」，共用这一个函数保证
@@ -158,11 +202,8 @@ def card_title_tier(req: Requirement) -> tuple[str, bool]:
     - ``"recheck"``：其余卡 → 注入现值 + 每轮必须重新审视，仍准确原样
       重复亦可。
 
-    direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
-    首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
-    里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
-    str() 防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。"""
-    direct_run = str(req.notes or "").lstrip().startswith("[direct-run]")
+    direct-run 判定见 :func:`is_direct_run`。"""
+    direct_run = is_direct_run(req)
     if getattr(req, "user_titled", False):
         return "user", direct_run
     if _needs_forced_title(req, direct_run):
@@ -499,6 +540,12 @@ def rework_gate_line(req: Requirement, cfg: config.Config, title_line: str) -> s
 
 
 def rework_prompt(req: Requirement, cfg: config.Config, feedback: str) -> str:
+    # §34 追记 D81：逐字直跑卡的**每一条** owner 输入都原样送达，打回意见也
+    # 不包装——会话契约（交付 / 安全 / CARD TITLE）常驻 system prompt，resume
+    # 时重新挂上，模板那段「对照 DEFINITION OF DONE 逐条自检」对这类卡本就
+    # 无物可对（没有 DoD、没有 QUALITY GATE 正文）。
+    if verbatim_direct_run(req):
+        return feedback.strip()
     gate_line = rework_gate_line(req, cfg, rework_title_line(req))
     return (
         "Zelin 验收后打回了这次交付，追加要求如下（在原有上下文上继续，不要重做已完成的部分）：\n"
@@ -521,11 +568,69 @@ def briefing_prompt(pend: list) -> str:
               "Acknowledge briefly and continue your current task.")
 
 
+def direct_run_rules(target: Path) -> str:
+    """§34 追记 D81 的三行会话契约——模板那一大段 QUALITY GATE / 交付方式 /
+    FILE PATH 在逐字派发里压缩成这三行，**且住在 system prompt 里**（用户那条
+    消息只有他打的那句话）。法条对应：§34 交付强制（chat + 默认 workbench，
+    不进任何 repo）、§33 聊天交付、§4 安全边界。``FINAL DRAFT:`` 自本条起对
+    直跑卡是**可选**的——收割侧对这类卡整条收最后一条消息
+    （``executor.harvest_delivery(whole_message=True)``）。"""
+    return (
+        f"工作目录：{target}。这是 chat 交付：不要在任何 repo 里建分支、开 PR、commit"
+        "（他没审过预览，§34）；提到文件一律用绝对路径。\n"
+        "交付：干完把成果完整写在你的**最后一条消息**里——系统把它整条收割进看板的"
+        "「待验收」等他验收，没有必须照抄的格式标记行；成稿很长时可以在单独一行 "
+        "`FINAL DRAFT:` 之后跟全文（可选，不是要求）。文件型交付物（网页、表格、"
+        f"图片这类不该粘成纯文本的东西）写到 {target}/deliverables/ 下并在消息里"
+        "报它的绝对路径。\n"
+        "安全边界：不要 merge、不要 push 到 main、不要替他对外发消息"
+        "（Slack / 邮件 / 工单评论）——那些他自己发。"
+    )
+
+
+def direct_run_identity(req: Requirement) -> str:
+    """谁在说话、那句话是什么身份（§34 追记 D81）。「原话」这件事必须写明：
+    session 看到的是一句没有需求文档的话，不说清楚它就会去猜一份不存在的。"""
+    return (
+        f"你在为 Zelin 的看板执行一张「直跑」卡（{display_id(req)}）。"
+        "**用户消息里的那句话是他在看板「运行中」列逐字敲下的原话**——没有经过"
+        "任何改写、扩写或模板包装；之后他发来的每一条消息（追加要求、验收打回）"
+        "同样是原话。按字面做，不要去补一份不存在的需求文档。"
+    )
+
+
+def direct_run_system_prompt(req: Requirement, cfg: config.Config, target: Path) -> str:
+    """逐字派发的 CLI 旁路（``--append-system-prompt``）：看板需要而用户那句话
+    里没有的东西，一条都不进他的消息正文。
+
+    块序 = 身份 → 会话契约 → 附图 → voice → §15 输出格式 → §37.1 CARD TITLE
+    → green sign。每一块都**复用**模板同一个函数（法条单源，防腐 #5），只是
+    换了个载体。刻意**不含** :func:`memory_blocks`：那份 auto-memory 索引属于
+    另一个项目，在 9/21 的实测里占了直跑 prompt 的 74.6%（issue #448）。"""
+    blocks = [direct_run_identity(req), direct_run_rules(target)]
+    blocks += attachment_blocks(req)
+    blocks += voice_blocks(cfg)
+    blocks += output_format_blocks(cfg, target)
+    blocks += card_title_blocks(req)
+    if req.green_sign_required:
+        blocks.append(
+            "\nNOTE: This output requires the manager's green sign before going external. "
+            "Stop at draft — do not publish or share outside."
+        )
+    return "\n".join(blocks)
+
+
 def render(req: Requirement, cfg: config.Config, target: Path, remote: bool) -> str:
     """The full dispatch prompt. Block order is the contract
     (tests/test_executor_prompt_golden.py pins the bytes): header →
     attachments → memory → voice → gates → output format → file-path rule →
-    CARD TITLE → closing line."""
+    CARD TITLE → closing line.
+
+    §34 追记 D81 的早退：:func:`verbatim_direct_run` 卡的 prompt **就是**
+    :func:`typed_sentence`，一个字不加——看板那点需求走
+    :func:`direct_run_system_prompt` 的 CLI 旁路。"""
+    if verbatim_direct_run(req):
+        return typed_sentence(req)
     mode = delivery_mode(req)
     blocks = header_blocks(req)
     blocks += attachment_blocks(req)

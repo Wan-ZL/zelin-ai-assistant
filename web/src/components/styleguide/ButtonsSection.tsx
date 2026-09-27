@@ -72,7 +72,7 @@ export function ButtonsSection() {
           buildBody={(t) => ({ action: "capture", text: t })}
         />
         <LaneComposer
-          placeholder={text("一句话，直接开跑（跳过提案）…", "One line — run it now (skips proposal)…")}
+          placeholder={text("一句话，直接开跑…", "One line — run it now…")}
           submitLabel={text("直跑", "Run")}
           buildBody={(t) => ({ action: "capture", text: t, mode: "run" })}
         />

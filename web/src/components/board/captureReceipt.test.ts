@@ -79,8 +79,8 @@ describe("copy — native lines, verbatim", () => {
   });
 
   it("run: queued-for-dispatch vs saved-to-queue (Cards.swift:863-867)", () => {
-    expect(captureNote("run", false, zh)).toBe("已提交，直接开跑（跳过提案），排队派发中…");
-    expect(captureNote("run", false, en)).toBe("Submitted — running it now (skipped proposal), queued for dispatch…");
+    expect(captureNote("run", false, zh)).toBe("已提交，直接开跑，排队派发中…");
+    expect(captureNote("run", false, en)).toBe("Submitted — running it now, queued for dispatch…");
     expect(captureNote("run", true, zh)).toBe("已保存到队列，pipeline 启动后直接开跑");
     expect(captureNote("run", true, en)).toBe("Saved to the queue — runs once the pipeline is up");
   });

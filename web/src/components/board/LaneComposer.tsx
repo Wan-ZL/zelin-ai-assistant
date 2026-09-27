@@ -41,7 +41,7 @@
 //     队列」而不是许诺「2-3 分钟」）。只有下一次**成功的捕获**才替换它（原生 writeInboxFile 失败不 beginCapture、
 //     斜杠命令不进 store）：失败句 / 提示行 / 斜杠回执只是按一行栈暂时顶掉它，一改字它们过期后回执回来，
 //     时钟全程没停（useCaptureReceipt.ts，与「清理积压」按钮共用）；
-//   - 输入框与按钮的 title = 原生 `.help` 提示：直跑「直接开跑：跳过提案与费用预估，成果仍进「待验收」」/
+//   - 输入框与按钮的 title = 原生 `.help` 提示：直跑「直接开跑：这句话原样交给 Claude Code，成果进「待验收」」/
 //     捕获「快速捕获（<快捷键>）」——原生写死 ⌘L；web 只在壳（WKWebView）里有键：⌘L（rail 的 window keydown，
 //     §54.4 2026-09-05 追记）与全局快速捕获键（§61.6，壳快照 hotkey 如 ⌃⌥Space），写成「⌘L · ⌃⌥Space」；
 //     浏览器标签页里 ⌘L 归地址栏、也没有全局键，就不写键，不许谎报。身份（propose / run）从 buildBody 的 payload 读
@@ -105,10 +105,13 @@ export function quickCaptureKeys(shell: Pick<ShellState, "hotkey"> | null): stri
   return ["⌘L", shell.hotkey].filter(Boolean).join(" · ");
 }
 
-/** 原生 Composer.swift `.help` 两句（Composer.swift:101-104）；捕获句的快捷键 = quickCaptureKeys，没有键就不写键 */
+/** 原生 Composer.swift `.help` 两句（Composer.swift:101-104）；捕获句的快捷键 = quickCaptureKeys，没有键就不写键。
+ *  直跑句自 §34 2026-09-27 追记（owner 决策 D81，issue #448）起不再提「提案」与「费用预估」，改说这句话原样
+ *  交给 Claude Code——那正是直跑此刻真实的行为（`dispatch_prompt.verbatim_direct_run`）；§66 清单里它是 help
+ *  条目（只列不判），与冻结原生的有意分叉。 */
 export function composerTitle(mode: ComposerMode, hotkey: string | null, text: (zh: string, en: string) => string): string {
   if (mode === "run") {
-    return text("直接开跑：跳过提案与费用预估，成果仍进「待验收」", "Runs now — skips the proposal & cost preview; the result still lands in Review");
+    return text("直接开跑：这句话原样交给 Claude Code，成果进「待验收」", "Runs now — your sentence goes to Claude Code as typed; the result lands in Review");
   }
   return hotkey ? text(`快速捕获（${hotkey}）`, `Quick capture (${hotkey})`) : text("快速捕获", "Quick capture");
 }

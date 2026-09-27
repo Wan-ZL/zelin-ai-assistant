@@ -3,7 +3,7 @@
 // 固定 prompt 的单一真源在 actd（_proposals_triage_plan），web 只发 preset 信号 + 短标签。
 // 提案列没有积压（后端提案卡 0 张，processing 占位也计入）时禁用；2s 防连点。
 // 回执 = 原生 RunCapturePendingRow 的状态句（AppDelegate.submitProposalsTriage → store.beginCapture(run: true)，
-// Cards.swift:848,863-867）：管线 ok「已提交，直接开跑（跳过提案），排队派发中…」/ 不 ok「已保存到队列，pipeline 启动后
+// Cards.swift:848,863-867）：管线 ok「已提交，直接开跑，排队派发中…」/ 不 ok「已保存到队列，pipeline 启动后
 // 直接开跑」——判据与列顶输入框同一个 pipelineStalled（captureReceipt.ts），健康一变句子随之切换（§10 / §41 追记）。
 // 寿命也与列顶输入框同一份（useCaptureReceipt：原生那张占位卡就是同一个 beginCapture）：刷新带来 running / needs_input
 // 里名字前缀匹配短标签的行即清（原生注释「text = 短标签 = 后端卡标题，归一匹配天然清除」）；否则 180 s（管线 ok 时才计时）

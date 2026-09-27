@@ -1,6 +1,6 @@
 // 「清理积压」按钮的回执诚实纪律（CONTRACT §34bis / §10 / §41 2026-09-05 追记；原生 AppDelegate.submitProposalsTriage →
 // store.beginCapture(run: true) → Cards.swift:848,863-867 RunCapturePendingRow 的状态句）：
-//   1) 管线 ok → 「已提交，直接开跑（跳过提案），排队派发中…」；stalled / failing / stale → 「已保存到队列，pipeline 启动后直接开跑」；
+//   1) 管线 ok → 「已提交，直接开跑，排队派发中…」；stalled / failing / stale → 「已保存到队列，pipeline 启动后直接开跑」；
 //   2) 健康在回执挂着时变了，句子跟着变（原生 body 每次重算 stalled）；
 //   3) 失败仍是 server 原文，不套状态句；payload 不变（preset 信号 + 短标签 + mode:"run"）；
 //   4) 寿命 = 列顶输入框直跑回执的寿命（useCaptureReceipt，原生同一个 beginCapture(run: true) 占位卡）：刷新带来
@@ -22,7 +22,7 @@ vi.mock("../../api", async (importOriginal) => ({
   fetchBoard: vi.fn(),
 }));
 
-const OK = "Submitted — running it now (skipped proposal), queued for dispatch…";
+const OK = "Submitted — running it now, queued for dispatch…";
 const STALLED = "Saved to the queue — runs once the pipeline is up";
 const TIMEOUT = `"${clip20(PROPOSALS_TRIAGE_TEXT)}" did not start — the backend may not be running (check actd)`;
 

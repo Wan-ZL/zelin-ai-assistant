@@ -94,7 +94,7 @@ describe("composer placeholders (native wording)", () => {
   it("提案列 / 运行中列的输入框占位文案逐字镜像原生 Composer.swift", () => {
     render(<BoardLanes />);
     expect(screen.getByPlaceholderText("One sentence — AI researches and proposes…")).toBeTruthy();
-    expect(screen.getByPlaceholderText("One line — run it now (skips proposal)…")).toBeTruthy();
+    expect(screen.getByPlaceholderText("One line — run it now…")).toBeTruthy();
   });
 });
 

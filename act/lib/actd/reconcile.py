@@ -3,7 +3,9 @@ into 待验收, flush queued steers at the safe windows.
 
 CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119：受阻 / 放弃
 救活的会话按 stop_to_review 收割进待验收，不再挂「需输入」）/ §16（auto_resume
-双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis（收割时比对快照）/
+双键现读）/ §30（待验收 attach 回流不动状态机）/ §34 追记 D81（逐字直跑卡的
+强完成信号 = 会话已停工 + 最后一条消息，`session.harvest_kwargs`）/ §34bis
+（收割时比对快照）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
 / §46（resume 风暴降级 + 确认式停止）/ §65.1（通道总开关关着 = 不给 self_improve
 卡自动续命）/ §65.3（self_improve 收割核验）/ §71.3（被睡眠打断的会话收割前
@@ -19,7 +21,7 @@ from act.lib import (analytics, config, dispatch_prompt, notify, registry, self_
                      steer)
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
-                                  update_search_index)
+                                  harvest_kwargs, update_search_index)
 from act.lib.actd.triage_guard import (PROPOSALS_TRIAGE_PRESET, check_triage_registry_guard,
                                        stamp_triage_snapshot)
 from act.lib.agent_states import BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES
@@ -139,10 +141,12 @@ def _restamp_triage_snapshot(d: Daemon, req: Requirement, ex: dict) -> None:
 
 
 def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
-    # 会话活动结束 -> 重新收割交付物（收割失败/为空不覆盖旧值）
+    # 会话活动结束 -> 重新收割交付物（收割失败/为空不覆盖旧值；§34 追记 D81：
+    # 逐字直跑卡整条收最后一条消息，与其余收割点同一个 harvest_kwargs）
     if d.executor is not None:
         try:
-            harvested = d.executor.harvest_delivery(str(sid)) or {}
+            harvested = d.executor.harvest_delivery(
+                str(sid), **harvest_kwargs(req, ex)) or {}
         except Exception as e:  # noqa: BLE001 - harvest is best-effort
             harvested = {}
             d.log(f"reconcile: re-harvest {req.id} failed: {e}")
@@ -182,9 +186,9 @@ def _probe_throttled(sid, at: Optional[dict] = None) -> bool:
     return False
 
 
-def _probe_harvest(d: Daemon, sid) -> dict:
+def _probe_harvest(d: Daemon, sid, **kw) -> dict:
     try:
-        return d.executor.harvest_delivery(str(sid)) or {}
+        return d.executor.harvest_delivery(str(sid), **kw) or {}
     except Exception:  # noqa: BLE001 - the probe is best-effort
         return {}
 
@@ -195,12 +199,18 @@ def promote_if_delivered(d: Daemon, req, ex: dict, sid) -> bool:
     delivered_summary is any dead session's last words, never proof of
     delivery, so it must not short-circuit a resume. Returns True when
     promoted (callers `continue`).
+
+    §34 追记 D81 的例外：逐字直跑卡的 prompt 从来没有明令这个 marker，所以对
+    它 marker 缺席**不是**「没交付」的信号——这类卡改判「会话已不在工作且在最后
+    一次用户回合之后说过话」= 交付（`session.verbatim_whole_message`，实测睡眠
+    打断的会话除外，那种仍留给 §71.3 的一次原地重试）。强完成信号对**其余每一
+    张卡**逐字不变。
     """
     if d.executor is None:
         return False
     if _probe_throttled(sid):
         return False
-    harvested = _probe_harvest(d, sid)
+    harvested = _probe_harvest(d, sid, **harvest_kwargs(req, ex))
     if not str(harvested.get("final_draft") or "").strip():
         _apply_probe_title(d, req, harvested)
         return False

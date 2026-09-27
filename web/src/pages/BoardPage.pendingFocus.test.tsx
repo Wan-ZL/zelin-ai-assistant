@@ -16,7 +16,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 
 const PROPOSE_PLACEHOLDER = "One sentence — AI researches and proposes…";
-const RUN_PLACEHOLDER = "One line — run it now (skips proposal)…";
+const RUN_PLACEHOLDER = "One line — run it now…";
 
 const board = {
   generated_at: "2026-09-05T12:00:00Z",
