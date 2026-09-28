@@ -8,7 +8,7 @@
     "shell"
   ],
   "counts": {
-    "contract": 251,
+    "contract": 258,
     "fixtures_b": 15,
     "parity": 841,
     "routes": 162,
@@ -2651,6 +2651,76 @@
       "source": "contract",
       "scenario": "覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）",
       "proof": "unittest:tests.test_coverage_run_flows,tests.test_coverage_run_sse_no_hang,tests.test_uninstall",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§79",
+      "source": "contract",
+      "scenario": "探索式 UI 巡检 `ui_scout`：一个驾驶员在真沙箱里用看板（issue #449；**D82**，§65 通道内定、PR 上验收）",
+      "proof": "unittest:tests.test_ui_scout_issue_plan,tests.test_ui_scout_pilot_protocol,tests.test_ui_scout_report_verdict && flow:card_lifecycle && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§79.1",
+      "source": "contract",
+      "scenario": "行程表（truth = `web/e2e/ui_scout/core/journeys.ts`）",
+      "proof": "unittest:tests.test_ui_scout_pilot_protocol && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§79.2",
+      "source": "contract",
+      "scenario": "驾驶协议与两个驾驶员（truth = `web/e2e/ui_scout/core/protocol.ts`）",
+      "proof": "unittest:tests.test_ui_scout_pilot_protocol && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§79.3",
+      "source": "contract",
+      "scenario": "判官（truth = `web/e2e/ui_scout/core/oracles.ts`）",
+      "proof": "unittest:tests.test_ui_scout_issue_plan,tests.test_ui_scout_pilot_protocol,tests.test_ui_scout_report_verdict && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§79.4",
+      "source": "contract",
+      "scenario": "发现、指纹与去重（truth = `web/e2e/ui_scout/core/findings.ts` / `scripts/qa/ui_scout.py`）",
+      "proof": "unittest:tests.test_ui_scout_issue_plan && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§79.5",
+      "source": "contract",
+      "scenario": "沙箱与报告（truth = `web/e2e/demoServer.ts` / `web/e2e/ui_scout.spec.ts`）",
+      "proof": "unittest:tests.test_ui_scout_issue_plan,tests.test_ui_scout_report_verdict && flow:pages_controls",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§79.6",
+      "source": "contract",
+      "scenario": "边界（明确不做）",
+      "proof": "unittest:tests.test_ui_scout_report_verdict",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

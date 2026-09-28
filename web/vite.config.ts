@@ -28,7 +28,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: ["src/**/*.test.{ts,tsx}"],
+    // ui_scout 的判官与协议是纯函数，住 e2e/ui_scout/core/（CONTRACT §79）——它们由 vitest
+    // 判，不由 playwright 跑（playwright.config.ts 的 testMatch 把 `*.test.ts` 让了出来）。
+    include: ["src/**/*.test.{ts,tsx}", "e2e/ui_scout/core/**/*.test.ts"],
     // 防腐 #7：把 Node 的真 fetch 换成不开 socket 的拒绝桩——没 mock 住 api.ts 的判例不再真打 localhost
     setupFiles: ["src/vitest.setup.ts"],
     // vitest 默认把 CSS 换成空串跳过处理——连 `?raw` 一起空掉，而

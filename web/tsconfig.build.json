@@ -4,7 +4,9 @@
   // 而 vitest 判例可以（经 import.meta.glob）读仓库根的 fixture——那是 vitest 的事，
   // 不是 build 的事。全量类型检查（含测试）= `npm run typecheck`（tsconfig.json），
   // CI「Web tests」job 两个都跑。tests/test_web_build_self_contained.py 钉这份形状。
+  // include 与 tsconfig.json 逐字相同（tests/test_web_build_self_contained.py 钉这一条）；
+  // 把 e2e/ 整个排除在外，所以 `e2e/ui_scout/core` 只进 `npm run typecheck`，不进 build。
   "extends": "./tsconfig.json",
-  "include": ["src", "vite.config.ts"],
+  "include": ["src", "vite.config.ts", "e2e/ui_scout/core"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "e2e", "node_modules", "dist"]
 }
