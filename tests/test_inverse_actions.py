@@ -535,8 +535,10 @@ class StopSessionHelperTestCase(unittest.TestCase):
             calls.append(cmd)
             return subprocess.CompletedProcess(cmd, 0)
 
+        waited = []
         with mock.patch.object(executor.subprocess, "run", fake_run), \
-             mock.patch.object(executor.time, "sleep") as slept:
+             mock.patch.object(executor, "_await_exit",
+                               side_effect=lambda pid: waited.append(pid) or True):
             ok = executor.stop_session(
                 "abc12345-6789-4abc-8def-0123456789ab", info={"pid": 4242})
         self.assertTrue(ok)
@@ -545,7 +547,10 @@ class StopSessionHelperTestCase(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(Path(calls[0][0]).name, "claude")
         self.assertEqual(calls[0][1:], ["stop", "abc12345"])
-        slept.assert_called_once_with(2)  # rework 原路径的 2s 等待不变
+        # rework 原路径的等死窗口仍在（本条判例当初钉的就是「别把它删了」）；
+        # §80.2 起它从无条件 sleep(2) 改成按 roster pid 轮询、进程一死即返回，
+        # 所以判据从「睡了 2 秒」改成「等的是那个 pid」。
+        self.assertEqual(waited, [4242])
 
     def test_no_live_pid_is_a_noop(self):
         with mock.patch.object(executor.subprocess, "run") as run:

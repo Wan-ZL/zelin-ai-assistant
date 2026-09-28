@@ -3149,7 +3149,9 @@ reconcile「见到活着」把 `resume_attempts` 清零，退避永远从零开�
 stop-idle-then-resume 内部路径不变）：
 
 - **verify-first 循环**：每轮先探 roster；**确认**无活 pid 即视为已停（含
-  「本来就没在跑」）；有 pid 则发 `claude stop`（自带 2s 等死窗口），重试轮
+  「本来就没在跑」）；有 pid 则发 `claude stop`（自带 2s 等死窗口——**§80.2
+  修订（2026-09-28）**：窗口总长仍是 2s，但改为按 pid 轮询，**进程一死即
+  返回**，不再无条件睡满），重试轮
   之间退避 2s·4s；打满 `retries=2` 次重试仍存活 → 判失败。返回
   `(stopped, issued, detail)`——`issued` 区分「我们停掉的」与「本来就死的」
   （`_stop_live_session` 只在 stopped∧issued 时收走 session_id，restore
@@ -3161,6 +3163,13 @@ stop-idle-then-resume 内部路径不变）：
   CLI）；只有确认查到「无活 pid」才算已停。
 - **总预算**：一次确认全程限 `STOP_CONFIRM_BUDGET_S=60s`（调用方是单线程
   actd 主循环，无预算最坏串行 ~218s）；超预算立即按失败返回、落台账。
+  **§80.2 追记的诚实更正（2026-09-28，只改这段文字的口径，代码与判例不动）**：
+  60s 是**截止时刻**，不是一次调用的墙钟上界。截止只在轮次边界检查，所以最坏
+  可以在 t=59.999 通过检查，然后走完 `_try_stop`（roster/stop 的 30s timeout
+  + 2s 等死窗口）再加下一轮开头无条件的 4s 退避——**一次确认的真实上界
+  ≈96s**。原文那句「全程限 60s」读作「墙钟不超过 60s」是不对的。要把代码收紧
+  到逐字兑现 60s，就得移动 `tests/test_stop_confirmed_deadline_edges.py` 钉着的
+  那几个检查点，是一笔独立改动；本轮只把文字改成实话（宪法第 3 条）。
 - **actd `_stop_session_tracked`**（merge/accept/done_external/abort_execution/
   stop_to_review/reject·trash 全部调用点改走此壳）：仍 best-effort（吞异常、
   **绝不阻塞**调用方的状态落账——§10 各条款的「stop 失败不阻塞」语义不变），
@@ -3369,6 +3378,10 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   = 卡死的定义；90s 下限（= doctor `DASHBOARD_FRESH_SECONDS`）防 10s 间隔
   下一个合法的长 pass（`claude agents --json` + `claude --bg` 起跑）被判死。
   读者**一律读 body 里的 `stale_after_s`**，不自行推导——阈值只有一个主人。
+  **§80.1 追记（2026-09-28）**：主循环自此会因为 inbox 排着 owner 动作而**早醒**，
+  于是真实 pass 间隔 ≤ `interval`。`interval` 与 `stale_after_s` 报的仍是**配置**
+  值（门槛真源不变）——早醒只会让 beat 更新鲜，永远不会让它过期，所以本节的
+  判法一个字不用改。
 - **读者 1：doctor `actd heartbeat`**（全平台，紧跟 `dashboard` 行）：
   心跳新鲜 → OK（报 phase/age/pid）；**进程活着 + 心跳过期 → FAIL
   `actd_stalled`**（detail 点名 age 与最后 phase，fix = 本平台的 kill+respawn
@@ -6955,3 +6968,210 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 ### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）
 
 覆盖跑者会真跑 install.sh / uninstall.sh，而这两条脚本的关键判定**不看 HOME**：install.sh 用 `pgrep -x ZelinAIBoard` 决定是否杀 + 重开 owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` 并从硬编码 `/Applications` 删 bundle。因此临时 HOME 之外还必须：`pgrep` / `pkill` 也是 PATH 前缀假货（恒「没匹配」exit 1，install.sh 走「壳没在跑」分支）；`AIASSISTANT_UI_APPS_DIR`（install.sh 既有的 test seam，uninstall.sh 本轮补齐同款）指向临时 HOME 下的 `Applications/`，让 bundle 的安装与删除都落在沙箱里。缺这两条，2026-09-16 的第一轮全量跑把 owner 的 live 壳杀了两次、并用一个 ad-hoc 签名的 dev 构建顶替了 `/Applications` 的稳定签名（#317）——ad-hoc cdhash 与 owner 授的 Full Disk Access 对不上，壳从此写不出 `state/shell.heartbeat`。判例 `tests/test_coverage_run_flows.py`（假货清单 + exit 码）、`tests/test_uninstall.py`（`--dry-run` 带 seam 只规划沙箱 bundle、绝不碰真 `/Applications`）。**2026-09-17 追記**：`crontab` 与 `launchctl` 两只假货改成**有状态**——`crontab <file>` / `crontab -` 存、`-l` 读回（无台账 exit 1），`launchctl bootstrap|load` 记 label、`bootout|unload` 删、`list` 打三列——台账只落在沙箱 HOME 内，真 gui domain 与真 crontab 一个字节不碰；跑者过 2000 行上限后沙箱那一段住同层 `scripts/qa/coverage_sandbox.py`。
+
+## 80. 管线延迟：主循环早醒 + 停止按 pid 等死 + 交付探针不被旧戳挡住 + 先测量（issue #450；owner 决策 **D82**）
+
+**owner 原话（2026-09-28）**：「我希望卡片的展示没那么 heavy，现在是从 running
+输入 prompt 后到卡片出现到 running 完成后进入 review。点击停止后也是需要等待
+很久才能从 running 进入 review。前端来看每一步都有很多等待并且复杂功能。我希望
+优化 pipeline。」
+
+**病灶的形状**：owner 点名的四段等待（① 输入 → 卡片出现；② 卡片出现 → 会话
+开跑；③ 会话跑完 → 进待验收；④ 点停止 → 离开运行中）里，**没有一段慢在渲染**
+——最后一跳（`state/dashboard.json` 落盘 → 浏览器变色）合计约 0.5s（`server/
+watcher.py` 300ms mtime 轮询 + `web/src/realtime.ts` 120ms debounce），客户端
+也早就有 §21bis 的 pending 章挡住重复提交。慢的全在**守护进程的节拍**上：
+
+**实测**（2026-09-28，owner 的 live 装机，`interval=10`，262 张卡，暖 CLI；
+这一段数字是本节「先测量」的产出，不是估算）：
+
+| 段 | 实测 | 其中最大的一项 |
+|---|---|---|
+| ① 输入 → 卡片出现 → 会话在跑 | 均值 **≈7.2s**、最坏 **≈12.2s** | **inbox 排队 5.0s（最坏 10.0s）= 均值的 69%** |
+| ③ 会话打完 FINAL DRAFT → 卡进待验收 | min 2s、**p50 12s**、p90 18s（15 张里 13 张落在 2–18s） | **pass 间隔 10.0s = p50 的 90%** |
+| ④ 点停止 → 卡离开运行中 | 改动前 **≈10.7s**、改动后 **≈3.9s** | 改动前：排队 5.0s（47%）+ 两笔无条件 sleep 4.0s（37%） |
+
+参照量级（同一次实测）：整个 pass 本体只要 **0.485–0.545s**，其中
+`claude agents --json --all` 暖跑 **0.11–0.13s**、dashboard 阶段 0.30–0.36s、
+early dashboard 重建 0.244s、§71.1 电源闸三个子进程合计 **0.024s**。
+`registry.load_all()` 一次 **4.5ms**——一个 pass 调 8 次也只占周期的 0.3%，
+所以「pass 本体很贵」是错的判断：**贵的是 pass 之间那 10 秒，不是 pass 自己**。
+
+四段共用一个根因：**这条管线是纯轮询的，而轮询周期是按「省 CPU」调的，不是按
+「人在等」调的**。所以本节不动架构、不动真源、不动单写者，只把节拍改成
+「有人在等的时候立刻动，没人等的时候照旧省」。
+
+**口径与边界（别把这几个数读大了）**：①②④ 的排队那一项由 §80.1 消掉；
+**③ 不被 §80.1 改善**——会话跑完不会往 `state/inbox/` 写任何东西，所以它照旧
+付一整个 pass 间隔（理由与「那为什么不去监听 transcript」写在 §80.5）。§80.3
+修的是 ③ 的**尾巴与正确性**（旧戳把一次成功交付记成「会话受阻」），不是 ③ 的
+p50。另外 ③ 的实测尾部有两张卡落在 18s 之外（最坏 6h33m）——那是
+`stopped`/`failed`/空状态被 `_agent_class` 归进 `absent` 后走
+`_revive_dead` 的退避长征（60+120+240+480=900s 退避 + 最多 5 次 resume），
+本节不碰，形状记在 §80.5。
+
+### 80.1 主循环早醒（truth = `act/lib/actd/wakeup.py`）
+
+`act/actd.py` 的 `_loop_forever` 结尾那句无条件 `time.sleep(interval)` 换成
+`wakeup.wait_for_work(interval, baseline)`：睡最多 `interval` 秒，**inbox 里
+一出现基线之外的决策文件就提前返回**。轮询粒度 `POLL_SECONDS = 0.25`。
+
+- **单写者一个字没动（宪法第 1 条）**：改的只是主循环**睡多久**，不是谁写卡。
+  registry 的状态转移仍然只由 actd 主循环发出；server 照旧只写
+  `state/inbox/`（它本来就写这个目录）+ 回执。「有新工作」的信号就是那个目录
+  本身多了一个文件——于是**零新文件、零新写者、零新契约面**，syncd（§31）/
+  boardctl（§52）/ 手写进去的文件全部自动享受同一条早醒，不需要任何一方学会
+  发信号。**未采纳**：让 server 直接写卡 + 前端乐观换列（issue 的 Direction
+  末条原话）——那是宪法第 1 条「旁路进程与 server 仍只读+回执」的正面冲突，
+  而且换列真源一分叉就会有「前端说已停、账本说在跑」的一类新 bug；本节的做法
+  把同一段等待消掉而一条法都不用修。**未采纳**：FSEvents / inotify——运行时
+  依赖白名单是 stdlib + PyYAML（宪法第 7 条），而 `server/watcher.py` 早有同款
+  轮询先例并写明了理由。
+- **不会空转**：基线 = **pass 开始那一刻**的文件名集合，只有出现基线之外的名字
+  才早醒。`inbox.process_inbox` 是全路径 ack+unlink 的（连毒文件都删），但万一
+  `safe_unlink` 失败留下一个删不掉的文件，它在基线里，于是不会让循环 250ms
+  空转一整天。基线取在 pass **之前**还有第二个好处：pass 中途（drain 跑完之后）
+  才落地的动作不在基线里，那一笔因此也不用再等一整个 interval。
+- **heartbeat 的语义不动（§47.4）**：`heartbeat.beat()` 报的仍是**配置**间隔，
+  `stale_after_s = max(3 × interval, 90)` 的门槛真源不变——早醒只会让 beat 更
+  新鲜，永远不会让它过期。
+- **探测失败绝不崩主循环**（宪法第 11 条）：`inbox_names` 读不动目录 = 空集，
+  最坏退化成本节之前的老行为（睡满）。
+- 四个 seam（`names` / `sleeper` / `clock` / `poll_s`）全部可注入，判例不睡真觉、
+  不碰真目录。判例 `tests/test_actd_early_wake.py`（含「毒文件不空转」与
+  「主循环真的不再调 `time.sleep`」两条）。
+
+### 80.2 停止的等死窗口按 pid 轮询（truth = `act/executor.py` `_await_exit`）
+
+`stop_session` 发出 `claude stop` 之后原先是一句无条件 `time.sleep(2)`。改为
+按 pid 轮询（`STOP_GRACE_S = 2.0` / `STOP_GRACE_POLL_S = 0.1`）：**进程一死就
+返回**，claude 通常 100–300ms 就没了。
+
+- **§46.1 的承诺只被收紧、没有放宽**：等死窗口**总长仍是 2s**，一直不死就照旧
+  睡满。本节修订的只是那句「自带 2s 等死窗口」的措辞——现在是「≤2s，进程一死
+  即返回」。
+- **判据比「2 秒过去了」硬，但收益不吹**：pid 没了 = 进程真的死了（ground
+  truth）。**省下来的是墙钟，不是一轮重试**——这一点特意写清楚，免得下一个人
+  以为它省了更多：`stop_session_confirmed` 下一轮开头那笔
+  `sleeper(2.0 * attempt)` 是**无条件**的、在该轮 roster 探测之前就睡掉了，
+  所以改动前后的轮数完全一样，只是每轮少等 ~1.8s。也**没有**断言紧接着那次
+  roster 探测一定一把确认——roster 来自 `claude agents --json`，它多久反映
+  进程死亡是 claude 自己的行为，而本仓库的判例绝不 spawn 真 claude，所以这
+  一条**没在活机器上复验**（挂账，同 D72 的先例）。净效果是「不会更差，
+  通常更好」。
+- **拿不准一律算活着**：`_pid_alive` 只把 `ProcessLookupError`（ESRCH）当确认
+  死亡；EPERM（别的用户的同号 pid）、坏 pid、说不清的 `OSError` 全部算活着——
+  「没确认死」不许当已死，与 §46.1「探测失败 ≠ 已停」同一条精神。这些进程不是
+  我们的子进程（`claude --bg` 自己 daemonize），没有僵尸态要防。
+- `stop_session` 的返回值语义**一个字没改**：True 仍然只代表「stop 命令发出去
+  了」，等死窗口的结论刻意不折进返回值——确认死活是 `stop_session_confirmed`
+  的活（§46.1）。判例 `tests/test_stop_grace_window.py`。
+
+### 80.3 会话活动过就丢掉交付探针的旧戳（truth = `reconcile._clear_harvest_throttle`）
+
+`HARVEST_PROBE_AT` 记的是「上次读 transcript 时还没有 FINAL DRAFT」，120s 内
+不再读（防的是 10s 一个 pass 反复重读同一条 transcript）。但戳一旦盖下，这条
+真实路径就会出问题：
+
+    T0     会话提了个问题 → blocked → 交付探针空手、盖戳
+    T0     排队的 briefing/steer 被 flush（§44.3 / §44.3-S）→ 会话被 resume
+    T0+30  会话打完 FINAL DRAFT → 又 blocked
+    T0+30  探针被自己 30 秒前的戳挡住 → 卡不提升
+
+**而且不只是晚 90s**：这时 `_another_move_left` 已经没有别的出路，于是
+`_handle_blocked` 按「[会话受阻]」把一次**成功交付**收进待验收——账本上一次
+干净交付被记成中断收割（宪法第 3 条诚实报告）。`reconcile.py` 里 `TITLE_PROBE_AT`
+上方那段注释早就点名了这个后果（「比晚 120 s 更糟」），只是当时只为改名探针
+留了第二本台账。
+
+改为：`_note_alive`（会话被看见活着的唯一触点）丢掉**交付**那一本的戳，
+§37.1 改名探针的 `TITLE_PROBE_AT` 一个字不动。代价按状态**翻面**计次，不按
+pass 计次——真正一直 blocked 的会话根本走不到 `_note_alive`，所以
+`HARVEST_PROBE_INTERVAL_S` 防的那件事一点没被放宽。判例
+`tests/test_harvest_probe_not_throttled_after_activity.py`（同时钉住「一直
+blocked 仍然被节流」这一半）。
+
+### 80.4 先测量：每笔 owner 动作的排队秒数（truth = `inbox.queue_wait_s`）
+
+issue #450 的 Direction 第一条是「Measure first」。全链路里最贵、又从来没人记过
+的一跳就是 80.1 消掉的那一段：`ts` 是 server 落 inbox 文件时盖的（owner 点下
+那一刻，`server/inbox_writer._iso_now`），而 `approved_at` / `dispatched_at` /
+`review_at`（§2 执行戳）盖的是**被 drain 那一刻**——两个数一直都在，只是从没有
+人把它们相减。
+
+- 口径唯一真源 = `queue_wait_s`：`ts` → now 的秒数；**负数夹到 0**（`ts` 由另一个
+  进程盖，两边时钟差一秒就会算出「排队了 -1 秒」，那是假话）；没有 `ts` / 解析
+  不动 → None，什么都不记，绝不瞎编一个数。
+- 落两处：`state/actd.log` 一行人话（1MB 自压缩，防腐 #4 满足）+ analytics
+  `inbox_queue_wait`。**打点只有动词名 + 秒数**——动词是固定词表、秒数是数字，
+  不碰 TELEMETRY 红线（与既有 `review_promoted` 的 `exec_s` 同款口径）。量由人
+  点键的手速封顶，不是按 pass 计的。
+- 测量绝不挡 drain：判不动就静默退场，毒文件纪律（ack + 删除，终局处置）不变。
+- **诚实补一句（本轮清点出来的既有欠账，不是本节造的）**：上面那个「不新开一本
+  JSONL」的理由说「多一本就要多一套 size-cap」——而本节选中的
+  `state/analytics/events.jsonl` **自己今天就没有帽子**（实测 6,316,304 字节
+  且无 cap，不像 `registry_writes.jsonl` 的 1MB 自压缩、`rejected.jsonl` 的
+  256KiB、`daily_loop.jsonl`、`materials.jsonl`）。本节新增的那一行是人手速
+  封顶的量级，实践上无害；但要说清楚：**它搭的这本账本正是缺帽子的那一本**，
+  给 events.jsonl 补 size-cap 是一笔独立的 防腐 #4 欠账（本节只登记，不顺手改
+  ——那会动到所有打点者的共享载体）。本节自己那一行人话落的是 `actd.log`，
+  那本**有** 1MB 自压缩。
+- **未采纳（本轮明确挂账）**：①**新开一本 per-hop 延迟 JSONL**——既有的 analytics
+  台账 + actd.log 已经答完「publish the per-hop latency」这句话，而多一本
+  append-only 文件就要多一套 size-cap 与 retention（防腐 #4），不值；②**给卡片
+  加 `execution.requested_at` 之类的新执行戳**——那要同步 `registry.OPTIONAL_ORDER`
+  + `store2/export_yaml.FIELD_DEFAULTS` + 字段对等判例 + dashboard golden，而
+  本节要的数已经能从两处现有落点算出来；真要逐卡的 per-hop 视图再单开一节。
+
+### 80.5 本轮**没有**做的那一半：「卡片 = agent session 的薄视图」
+
+issue 的 Direction 第二条（「the session is the source of truth for running /
+done」）**刻意不做**，理由记在这里而不是留给下一个 session 重新发现：
+
+- 那句话要把「在跑 / 跑完」的真源从卡片账本搬到会话上，而账本真源是 §1/§53
+  的地基（store2 的 `transition_whitelist` 触发器逐条执法状态转移）。搬真源
+  = 修 §1 + 修 §53 + 让 DB 触发器对一个它看不见的外部状态让路，是一次独立的
+  修宪，不该搭在一个延迟优化的 PR 上。
+- 而且**本节测出来的数说明不需要搬**：四段等待没有一段慢在「真源在卡片上」，
+  全部慢在轮询节拍——节拍改完，薄视图想要的那个体验（点一下就动）已经到手。
+- orca（`stablyai/orca`）的会话模型与轻 UI 仍然值得借，但 9/21 的核实结论不变：
+  它要 GUI/Node 运行时、它的 hooks 跳过 `--bg` 会话，所以托不住本 app 的
+  executor；**永不从 orca resume 本 app 的会话**（§46 resume 风暴）。
+- 卡面「heavy」的那一半（运行中 / 待验收卡上的控件密度）属于 §66 UI 对齐面与
+  ui_scout 判卷面（issue #449 / 草稿 PR #461 立的 §79——本节写这句时它还没合并，
+  所以按 PR 号引，别把它当已生效的法条），不在本节。
+- **为什么不用「监听 transcript」来救第 ③ 段**（本轮认真算过才放弃，记下来省得
+  下一个人重新踩）：§80.1 只在 `state/inbox/` 多一个文件时早醒，而会话跑完不写
+  inbox，所以 ③ 照旧付一整个 pass 间隔（实测 p50 12s 里的 10s）。看起来顺手的
+  补法是「再加一个唤醒判据：在跑的卡的 transcript `(mtime_ns, size)` 变了就早
+  醒」——`act/lib/transcripts.transcript_paths` 已经是那个 glob 的单源，零子
+  进程。**但它会反噬**：一个**正在干活**的 agent 每秒都在往 transcript 追加，
+  于是这个判据在整条会话的生命周期里每 250ms 都成立 = 主循环从 10s 一拍变成
+  250ms 一拍，每拍还带一次 `claude agents --json` 子进程。那不是提速，那是把
+  空闲机器烧穿。真要做，判据必须是「**变完又静下来**」（静默窗口）或者「只看
+  roster class 已经不是 working 的会话」——前者要多一个计时器，后者要子进程，
+  两个都不是一行改动。本节因此**只在 inbox 上早醒**，③ 留在一个 pass。
+- **③ 的长尾另有其人**（同样不在本节，但别再归因给节流窗口）：实测 15 张里
+  有 2 张落在 18s 之外、最坏 6h33m。根因是 roster 上真实出现的
+  `stopped` / `failed` / 空字符串——**它们都不在 `act/lib/agent_states.py`
+  的三本词表里**（实测 88 行 roster：`done` 48、`blocked` 15、`stopped` 12、
+  空 9、`failed` 3、`working` 1、**`idle` 0**），于是 `_agent_class` 把它们
+  归进 `absent` 走 `_revive_dead` 的退避长征（60+120+240+480 = 900s 退避 +
+  最多 5 次 resume 才收割）。顺带纠正一条流传的判断：`idle ∈ LIVE_STATES` +
+  「跑完的进程还 idle 挂着 ~1h」那条路**在这台机器上一次都没发生**（`idle`
+  零行），所以它不是 ③ 的主项。要修就得动 `_DONE_STATES` / `_session_lane`
+  ——那会改 §2 的 wire、要重铸 `tests/fixtures/dashboard_golden.json`、还要
+  过 `tests/test_agent_states.py` 钉着的 idle 不对称判例，是一个独立的
+  correctness PR，不该搭在延迟这一节里。
+- **给下一个 session 的两个指针**（本轮清点出来的、真要做薄视图时该先看的既有
+  机制，免得再造轮子）：①**会话正文已经在 server 上、也已经有 HTTP 面**——
+  `state/search_index.json`（`act/lib/search_index.py`，`TEXT_CAP=50_000`）由
+  actd 每 pass 写、`GET /api/search-index` 带 ETag/304 只读服务、web store 已
+  经缓存；今天它只被当作 ⌘F 的命中层用（卡面唯一可见产物是那枚紫色「命中
+  会话」chip）。「卡上看见会话在说什么」不需要新通道，只需要新读法。
+  ②**逐跳延迟已经有两个既有字段**：analytics `dispatch` 事件的 `wait_s`
+  （`approved_at` → 启动，`act/executor.py`）与 `review_promoted` 的 `exec_s`
+  （派发 → 交付，§80.4 的 `inbox_queue_wait` 补的是它们前面那一段）。**不要**
+  去用 `state/sync/applied.jsonl` 做延迟账——它带着 `{action_id, result_status,
+  ts}` 看起来正合适，但写它的那道门挂在云同步上（`act/actd.py` 的
+  `_write_applied_ack` gate），纯本机安装根本不落这本账。

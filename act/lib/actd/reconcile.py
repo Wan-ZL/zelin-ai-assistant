@@ -182,6 +182,22 @@ def _probe_throttled(sid, at: Optional[dict] = None) -> bool:
     return False
 
 
+def _clear_harvest_throttle(sid) -> None:
+    """§80.3：会话又活了 → 丢掉交付探针的节流戳。
+
+    戳记的是「上次读 transcript 时还没有 FINAL DRAFT」，而会话一旦重新活动，
+    这个结论就过期了。不丢戳的后果正是 owner 在 issue #450 里点名的「running
+    完成后进入 review」那一段白等：一条会话 T0 因为提问掉进 blocked（探针空手、
+    盖戳），owner 回答后它继续干活，T0+30s 交付完又 blocked——卡要等到 T0+120s
+    才被提升，白等 90s。
+
+    代价按状态**翻面**计次，不按 pass 计次：真正一直 blocked 的会话根本走不到
+    `_note_alive`，所以 HARVEST_PROBE_INTERVAL_S 防的那件事（10s 一个 pass 反复
+    重读同一条 transcript）一点没被放宽。
+    """
+    HARVEST_PROBE_AT.pop(str(sid), None)
+
+
 def _probe_harvest(d: Daemon, sid) -> dict:
     try:
         return d.executor.harvest_delivery(str(sid)) or {}
@@ -482,6 +498,7 @@ def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_n
         req.execution = ex
         registry.save(req)
     resume_notified.discard(req.id)
+    _clear_harvest_throttle(sid)   # §80.3：下次 blocked 立刻探交付，不等窗口
     _probe_title_alive(d, req, sid)
 
 

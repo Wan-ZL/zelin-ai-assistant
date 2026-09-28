@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from act.lib import analytics, config, registry
+from act.lib import analytics, config, maintenance, registry
 from act.lib.actd import merge as _merge
 from act.lib.actd import triage_guard
 from act.lib.actd.seam import Daemon
@@ -31,6 +31,52 @@ try:
     from act.lib.store2.store import TransitionDenied
 except Exception:  # pragma: no cover - degrade：墙错误按普通异常走 poison 路径
     class TransitionDenied(Exception):  # type: ignore[no-redef]
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# §80.4 先测量：owner 点下 → 这一笔被 drain 的排队秒数
+# --------------------------------------------------------------------------- #
+def queue_wait_s(decision: dict, now: Optional[_dt.datetime] = None) -> Optional[float]:
+    """owner 点下那一刻到这一笔被 drain 之间的秒数；判不动 → None。
+
+    `ts` 是 server 落 inbox 文件时盖的（`server/inbox_writer._iso_now`），所以
+    这个差值正是 issue #450 里「前端来看每一步都有很多等待」的**第一段**，而且
+    它挂在每一个动词上。§80.1 早醒之前它的期望值 = interval/2、最坏 = interval；
+    早醒之后应当塌到一次轮询粒度（出厂 0.25s）。口径写死在这一个函数里，因为
+    「先测量」要的是一个能跨版本对比的数。
+
+    负数夹到 0：`ts` 由另一个进程盖，两边时钟差一秒就会算出 -1，而「排队了
+    -1 秒」是假话（宪法第 3 条诚实报告）。
+    """
+    stamped = maintenance.parse_iso(decision.get("ts"))
+    if stamped is None:
+        return None
+    at = now or _dt.datetime.now(_dt.timezone.utc)
+    return max((at - stamped).total_seconds(), 0.0)
+
+
+def _note_queue_wait(d: Daemon, decision: dict) -> None:
+    """排队秒数记进 actd.log（1MB 自压缩，防腐 #4）+ analytics（§80.4）。
+
+    每个 owner 动作一行——量由人点键的手速封顶，不是按 pass 计的。打点只有
+    动词名 + 一个秒数：秒数是数字，动词**截 40 字**（server 入站面有白名单，
+    但 syncd / 手写进来的文件没有，而 analytics 是可上传面——不许让一个任意
+    长的外来字符串搭车出门；TELEMETRY 红线，与既有 `review_promoted` 的
+    `exec_s` 同款口径）。
+
+    **整函数自吞异常**：这是一支温度计，绝不许影响管线（宪法第 11 条）。特别
+    是它跑在 `process_inbox` 的 try 里——从这里抛出去会让那条 except 再写一次
+    `bad_json` 回执，把一笔已经正确落账的动作覆盖成「毒文件」。
+    """
+    try:
+        waited = queue_wait_s(decision)
+        if waited is None:
+            return
+        verb = str(decision.get("action") or "?")[:40]
+        d.log(f"inbox: {verb} 排队 {waited:.1f}s（owner 点下 → 本 pass drain）")
+        analytics.log_event("inbox_queue_wait", verb=verb, waited_s=round(waited, 1))
+    except Exception:  # noqa: BLE001 - 量不准就不量，绝不改 drain 的结局
         pass
 
 
@@ -50,6 +96,7 @@ def process_inbox(d: Daemon) -> int:
             status, counted = _route(d, path, decision)
             d.write_applied_ack(path.stem, status)
             processed += counted
+            _note_queue_wait(d, decision)   # §80.4 先测量（best-effort，不抛）
             d.safe_unlink(path)
         except Exception as e:  # noqa: BLE001 - one poison file must never wedge the inbox
             # ANY per-file crash (field-type poison, guard regression) must end

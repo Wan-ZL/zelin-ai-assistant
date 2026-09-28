@@ -24,6 +24,7 @@ from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act impor
 
 from act import actd
 from act.lib import analytics, config, registry
+from act.lib.actd import reconcile as _reconcile
 from act.lib.registry import Requirement, State
 
 SID = "aaaa1111-0000-4000-8000-000000000001"  # short id = aaaa1111
@@ -503,8 +504,10 @@ class DeliveredTranscriptPromotionTestCase(ReconcileBase):
         # counts from boot, so with a 0.0 "never probed" default the very
         # first probe was throttled away whenever uptime < interval.
         self._mk_req(execution={"session_id": "d1a10005"})
+        # 节流台账的时钟住在 reconcile（§80.1 起入口层不再 import time，
+        # 此前 patch actd.time 生效只是因为它与 reconcile.time 是同一个模块对象）
         with self._harvest(final_draft="成稿全文"), \
-                mock.patch.object(actd.time, "monotonic", return_value=5.0):
+                mock.patch.object(_reconcile.time, "monotonic", return_value=5.0):
             _, resume = self._reconcile([_agent("blocked", sid="d1a10005")])
         resume.assert_not_called()
         self.assertEqual(registry.load("R-900").status, State.REVIEW.value)
