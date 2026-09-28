@@ -74,7 +74,7 @@ class InboxNamesTestCase(unittest.TestCase):
 
 class WaitForWorkTestCase(unittest.TestCase):
     def _wait(self, interval, baseline, seen, clock=None, poll_s=0.25):
-        """seen = 每次探测返回的名字集合（list = 逐次，单值 = 恒定）。"""
+        """seen：每次探测返回的名字集合；传 list 逐次取用，传单值则恒定返回。"""
         clk = clock or _Clock()
         names = mock.Mock(side_effect=seen) if isinstance(seen, list) \
             else mock.Mock(return_value=seen)
