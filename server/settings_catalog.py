@@ -149,6 +149,15 @@ _FLAGS = (
     ("features.analytics", "用量统计", "usage stats"),
     ("features.feedback_sync", "建议同步到 GitHub", "feedback sync to GitHub"),
     ("features.auto_deploy", "自动部署", "auto-deploy"),
+    # §81（issue #451 / D83）自动行为总账补上的五把闸。它们在这之前**一把开关
+    # 都没有**（worktree 回收只有一个进程级环境变量），设置页上关不掉。每条的
+    # 射程 / 处置 / 为什么还默认开着，逐行写在 act/lib/automation.py:LEDGER 与
+    # qa/automation_baseline.txt 里。
+    ("features.merge_silent", "近重复静默并入", "silent merge of near-duplicates"),
+    ("features.worktree_sweep", "worktree 自动回收", "worktree GC"),
+    ("features.attachment_gc", "孤儿贴图清理", "orphan attachment GC"),
+    ("features.raising", "欠账卡自动展开", "raising-debt expansion"),
+    ("features.ingest", "笔记自动加工（ingest）", "headless vault ingest"),
 )
 
 SECTIONS: tuple = (
@@ -389,9 +398,10 @@ SECTIONS: tuple = (
                config=("approval", "mention_escalation"),
                help_zh="同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
                help_en="When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
-            _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=60,
+            _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=0,
                config=("trash", "retention_days"),
-               help_zh="超期且未标永久的卡硬删；0 = 永不自动清。", help_en="Unpinned cards older than this are purged; 0 = never."),
+               help_zh="超期且未标永久的卡硬删；0 = 永不自动清，也是出厂值（§81 / D83：硬删是整条管线里唯一不可恢复的自动删除，要它自己开）。",
+               help_en="Unpinned cards older than this are hard-deleted; 0 = never, and that is the factory value (§81 / D83 — a hard purge is the one irreversible automatic deletion in the pipeline, so it is opt-in)."),
         ],
     ),
     _section(

@@ -339,6 +339,8 @@ debt item 新增 `summary`（同上，大白话）。
 
 - **§9 追记（2026-09-15，add-only；issue #312 / owner 决策 **D74**）——恢复 = 一次活动，落一枚 `execution.restored_at`**：`registry.restore` 在清掉三个回收站字段（`trashed_at` / `prev_status` / `trash_reason`）之外，同时盖 add-only 执行戳 `execution.restored_at`（ISO UTC）。原因：restore 之前**不会让卡上任何时间变新**，所以在 `maintenance.last_activity` 眼里一张刚被 owner 捞回来的卡与它被扔掉时一样陈旧——§70.2 追记二的 `review_stale`（以及两列的 `idle` / `deadline_passed`）会在下一轮原地把它再扔一次，「恢复」变成一个第二天自动撤销的按钮（宪法第 2 条可撤销名存实亡）。这枚戳**登记在** `maintenance._EXECUTION_STAMPS` 里（与 `review_stale_notified_at` 刻意不登记正相反：捞回来是 owner 亲手的动作，而通知只是我们自己说了句话），于是闲置时钟从恢复那一刻重新起算。`restore` 的状态语义（回 `prev_status`，缺失回 `detected`）、单写者（只有 actd 的 inbox pass 调它，§0 第 1 条）、trash 侧的 `trash_reason` 词表一字不动；投影不发这个键（web 无面）。判例 `tests/test_review_stale_sweep.py::TheStampIsRearmedByLaterActivityTestCase`。
 
+- **§9 追记（2026-09-29，add-only；issue #451 / owner 决策 **D83**，法条在 §81.3）——出厂值 60 → 0**：本节的硬删是整条管线里唯一同时满足「自动、不可逆、动的是用户数据」的动作，与 §0 第 2 条「绝无不可恢复的自动删除」正面冲突。机制**一字不改**（超期 + 未 pin + 分级保留期全部照旧），改的只是 `trash.retention_days` 的**出厂默认**：60 → **0**（= 永不自动硬删，回收站的卡一直躺着，什么时候清由人点）。config.yaml 或设置页里写过数字的安装（含写着 60 的）行为不变；`daily_loop.trash_retention_days` 是下级，本键为 0 时整体不生效；§40.5 的 `purge_at` 倒计时随之投 null（它与 purge 判决共用同一个判官，绝不许诺一次不会发生的删除）。判例 `tests/test_automation_ledger.py::EnabledTestCase::test_hard_purge_is_off_out_of_the_box`。
+
 ## 10. inbox 动作全集（app → actd）
 `approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
 
@@ -684,6 +686,8 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
   tests/test_reconcile.py 的 flag off 用例 + 「进程内翻开关下一 pass 生效」用例。
 
 **§16 追记（2026-09-06，add-only；owner 决策 D48，PR `feat/telemetry-consent-analytics-min`，行为对齐审计 diagnostics-setup-ui-analytics-events）——web 看板的 analytics 事件：只恢复元数据级的最小子集，事件名与字段由 server 白名单裁**。原生 app 从向导 / 权限 / 诊断漏斗发 150+ 个 UI 事件（`mac/Sources/SetupWizard.swift` / `Permissions.swift` / `Doctor.swift` / `Pages.swift`…），web 移植后 `web/src` 一个 analytics 调用都没有、server 也没有 ingestion 路由——只剩壳侧的录制 / 权限事件（§61）与 Python 侧的管线事件在流。owner 授权代拍选项 (b)：**不整本复活**（plan L8：152 个事件名里 69 个从未发过；owner 的 D34 精神也是少而准），只恢复两条、且**不给客户端造词的余地**：**(a) 路由** `POST /api/analytics {event[, fields]}`（§49 路由表；`server/analytics_ingest.py`；四闸写面）——事件白名单 `EVENTS = {wizard_complete: {}, pipeline_repair_result: {ok: bool}}`（server-owned，add-only；加事件 = server 加一行 + docs/TELEMETRY.md 表加一行 + web 类型词表 `WebAnalyticsEvent` 加一项——两边同词由判例 `tests/test_web_analytics_event_vocabulary_mirror.py` 钉死，单边改名 = 红）；白名单外的事件名 400 `INVALID_FIELD`（details 带 `allowed`），顶层多余键 / 白名单外字段 400 `UNKNOWN_FIELD`，字段类型严格且**只从闭集 `_FIELD_TYPES = {bool, int}` 里取**（bool 只认 JSON 布尔，`1` / `"true"` 都 400；int 不认 bool；白名单里写了表外类型（如 `str`）import 期就炸、请求期也不放行）——自由文本、路径、内容从这条路根本进不来。**(b) 不另起管线**：命中的事件经 `act.lib.analytics.log_event` 追加进同一份 `state/analytics/events.jsonl`（server/ 准 import act.lib，§58.3 规则 3；写者路径是模块常量、随 env `AIASSISTANT_HOME`——§55 模板给 server 的同一个值），于是本节 `features.analytics` gate（隐私 fail-closed、指纹缓存）、写者级版本戳 `v`、§15 上传端的 consent 门与 `telemetry.enabled` 全部原样适用，与 Python / Swift 写者同一条路；另带常量 `via:"web"`（区分同名的原生历史事件）。回执 `{ok, event, logged}`：`logged:false` = gate 关着（或写失败），HTTP 仍 200——analytics 永不弄坏 UI（宪法第 11 条）；server 不为此再读一次设置，gate 只在写者里判一次。**(c) 两个发射点**（都经 `web/src/telemetry.ts`，永不 reject；只在显式动作上发、挂载不发）：`wizard_complete`（向导「完成」，`POST /api/setup/complete` 成功后；原生 SetupWizard.swift:615）；`pipeline_repair_result{ok}`（一键修复的**下场**，`useRepairActd`：POST 被拒 `ok:false`、15 s 轮询没转好 `ok:false`、恢复 `ok:true`，每次修复恰好一条、卸载后丢弃的结果不发；原生 Doctor.swift:379 在最终 phase 落定时发一条，install 失败也算）。**明确不做**：其余原生 UI 事件（`mw_section_dwell` / `wizard_step` / `permissions_action` / `diag_card` / `mw_doctor_*` / `ai_fix_launch` / `recording_consent` 等）本条不恢复也不退役——要恢复先加白名单（add-only），要退役另立 tombstone。docs/TELEMETRY.md 事件表加「web 看板」一节、docs/PRIVACY.md 第 9 条加一句。判例：`tests/test_server_analytics_ingest.py`（白名单恰为两个 / `via:web` / 字段严格 / 类型表闭集：int 规格照判、表外类型 fail-loud 不放行 / 白名单外 400 带 allowed / 多余键与白名单外字段 UNKNOWN_FIELD / 经真写者：flag on 落一行带 `v`、flag off `logged:false` 零落盘 / 路由：命中、拒绝、无 token 401）、`tests/test_web_analytics_event_vocabulary_mirror.py`（web 词表 = server 白名单）、web `repairActd.analytics.test.tsx`（三种下场各一条、轮询中途不发、running 重复点不重复发）、`SetupPage.finishTelemetry.test.tsx`、`telemetry.test.ts`。
+
+**§16 追记（2026-09-29，add-only；issue #451 / owner 决策 **D83**，法条在 §81.4）——五把新 flag + 死开关的总解**：`DEFAULT_FEATURES` 增补 `merge_silent` / `worktree_sweep` / `attachment_gc` / `raising` / `ingest` 五把（默认全 on = 本改动前的行为）——它们管的五条自动行为此前**一把开关都没有**（worktree 回收只有进程级环境变量 `AIASSISTANT_WORKTREE_SWEEP`，而且注入假 runner 时那道闸压根不看）。本节「死开关修复追记」讲的两处落地（analytics 三环节 gate、auto_resume 两键 AND + 每 pass 现读）自此升格为**通则**：哪些开关必须每 pass 现读，真源 = `act/lib/automation.py:live_fields()`，刷新点 = `act/actd.py:_refresh_automation_switches`，机器执法 = `scripts/qa/automation_check.py` 的 `cold-switch:` 规则（§81.1 不变量 2）。五把新 flag 与其余 flag 同样出现在设置页「Feature flags」区（`server/settings_catalog._FLAGS`）。
 
 ## 17. 周一 digest + Manager pack
 - `python -m act.digest`：待审批积压、待验收积压、卡住项（v0.48.8 起口径 = §4 派发刹车行 + 中断收割进待验收的 interrupted 卡；needs_input 会话行已退役，#119）、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
@@ -3070,6 +3074,8 @@ capture）经 registry 门面写入，事务原子（§53.5）；(c) §44.1 的 
 judge 与 server 照旧 registry-read-only（sqlite 侧另有 `mode=ro` 只读面，
 act/lib/store2/readonly.py）；(d) §44 全部 fold/receipt 语义不因载体切换而变
 （判例 tests/test_registry_backend_parity.py 双后端逐字一致）。
+
+**§44 追记（2026-09-29，add-only；issue #451 / owner 决策 **D83**，法条在 §81.2）——探测端与落盘端共用一把闸**：近重复这一族历来是**两条互不知情的自动行为**——探测端 `auto_merge.scan_new_cards`（§38，每 pass 扫新卡、派旁路判官）与落盘端 `silent_merge.consume_judged`（本节，每 pass 在主循环里落账），**两边都没有任何 config / env 开关**。自此共用 `features.merge_silent` 一把（默认 on = 行为不变）：关掉时探测不再派判官、落盘端连在飞的判定都不消费（判官文件留着，开关翻回来下一 pass 照常落账——与 §65.1「关开关不腰斩仍活着的会话」同纪律：不丢数据，只停动作）。落账时另落一行 `state/automation.jsonl` 回执（§81.1 不变量 3）。每日整理的「同题多卡合成一张」（§70 `dedup`）**不是**本条的重复——那是三四张合成一张新卡，射程不同，两条都留（总账里互为 `overlaps`，分工写在 `why` 列）。
 
 ## 45. 来源角色决策表（出生资格 — 回声环的一刀）
 
@@ -6875,6 +6881,8 @@ owner 原话（issue #315 Expected 三条，2026-09-09）：「self_improve lane
 - **不做定时之外的自动清理**：一天一次（每日循环）+ 卡结算那一刻 + owner 在设置页点一下，没有第四个触发点；executor / 派发路径上零开销。
 - **不猜「这个 worktree 属于哪张卡」**：只认登记表里的分支名与 transcript 记下的 cwd 两条硬证据。
 
+**§75 追记（2026-09-29，add-only；issue #451 / owner 决策 **D83**，法条在 §81.4）——回收终于有了一把配置开关**：本节的三个触发点此前只受进程级环境变量 `AIASSISTANT_WORKTREE_SWEEP` 管，设置页上关不掉，而且 `worktrees.sweep` 的那道闸写成「只有在没注入 runner 时才看」——注入了就完全不看。自此每日循环那个触发点（§70.1 第三阶段）先过 `features.worktree_sweep`（默认 on = 行为不变），关着时回执与它自己的 disabled 分支逐字同形（`skipped: {"disabled": 1}`），下游计数不用改；真删了东西的轮次在 `state/automation.jsonl` 留一行。判决规则、三条删除理由、年龄地板、`prune` 的那道闸一字不动。
+
 ## 76. 提案结算信号：疑似已完成 / 截止未批 / 被提 N 次仍未处理（issue #313；owner 决策 **D70**）
 
 （**§75 席位与 D68 / D69 席位**：同轮并行的 `feat/worktree-gc`（issue #315 / PR #347）与本 PR 都按「`origin/dev` 上 max 顶层 § 74 + 1」算到了 75，本节按 §59 的先例让号取下一个空号（「同轮并行 PR 已各自立法…本节取下一个空号；若它们最终未立法，两个号作废、永不复用」）——§ 号只许作废，永不复用、永不重号（#347 随后带着 §75 / D68 先落地 dev，让号让对了）。D 行同理：`origin/dev` 上 D67 已被 #342 占用，D68 被 #347 占用，#348 那张同轮 PR 还写着 D67，本节的决策行因此让到 **D70**（按 PR 号顺次：#347→68 / #348→69 / 本 PR→70）。重号自此**有机器执法**：`tests/test_doc_numbering_unique.py` 同时看 CONTRACT 的顶层 `## N.` 与 vnext2-plan 的 `| DN |`，重号 = 测试红，不再靠人眼对号；**跳号不查**——作废的号必须留着空着。）
@@ -6955,3 +6963,41 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 ### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）
 
 覆盖跑者会真跑 install.sh / uninstall.sh，而这两条脚本的关键判定**不看 HOME**：install.sh 用 `pgrep -x ZelinAIBoard` 决定是否杀 + 重开 owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` 并从硬编码 `/Applications` 删 bundle。因此临时 HOME 之外还必须：`pgrep` / `pkill` 也是 PATH 前缀假货（恒「没匹配」exit 1，install.sh 走「壳没在跑」分支）；`AIASSISTANT_UI_APPS_DIR`（install.sh 既有的 test seam，uninstall.sh 本轮补齐同款）指向临时 HOME 下的 `Applications/`，让 bundle 的安装与删除都落在沙箱里。缺这两条，2026-09-16 的第一轮全量跑把 owner 的 live 壳杀了两次、并用一个 ad-hoc 签名的 dev 构建顶替了 `/Applications` 的稳定签名（#317）——ad-hoc cdhash 与 owner 授的 Full Disk Access 对不上，壳从此写不出 `state/shell.heartbeat`。判例 `tests/test_coverage_run_flows.py`（假货清单 + exit 码）、`tests/test_uninstall.py`（`--dry-run` 带 seam 只规划沙箱 bundle、绝不碰真 `/Applications`）。**2026-09-17 追記**：`crontab` 与 `launchctl` 两只假货改成**有状态**——`crontab <file>` / `crontab -` 存、`-l` 读回（无台账 exit 1），`launchctl bootstrap|load` 记 label、`bootout|unload` 删、`list` 打三列——台账只落在沙箱 HOME 内，真 gui domain 与真 crontab 一个字节不碰；跑者过 2000 行上限后沙箱那一段住同层 `scripts/qa/coverage_sandbox.py`。
+
+## 81. 自动行为总账：一条行为一行、一把热开关、一行回执（issue #451；owner 决策 **D83**）
+
+owner 原话：「**当前软件有很多自动的东西。我觉得太多了，有优化的空间。需要整理出来后重新设计。去掉冗余设计**」。2026-09-23 的只读审计在 launchd / crontab / actd 主循环 / `server/` / 两个 Mac 壳 / GitHub Actions 上数出几十条**无人值守**行为——没有任何一处能回答「它们现在到底哪些开着、开关在哪、动手留没留痕、能不能撤」。本节就是那一处，与 §48 对三个雷达源做的事同形，只是把射程推广到全部自动行为。
+
+**真源 = `act/lib/automation.py` 的 `LEDGER`**（行数 / 分类 / 处置一律指这个文件，文档里不写字面量数字——防腐第 5 条）。一条行为 = 一行 `Behaviour`：`slug`（canonical id，防腐第 9 条）、`runner`、`cadence`、`effect`（`cards|delete|spend|network|notify|state` 闭集）、`switch`（Config 字段名，**合取**）、`kind`（`bool|threshold|none`）、`audit`、`reversible`、`law`、`code`（`<路径>:<符号>`）、`unit`（外部调度器里的登记名）、以及 issue 第 1 问的三列答案 `verdict`（`keep|merged|retired`）/ `why` / `merged_into`。字段只增不改（§0 第 6 条）。
+
+### 81.1 四条不变量（机器执法 = `scripts/qa/automation_check.py`，账本 `qa/automation_baseline.txt` shrink-only）
+
+1. **代价大的行必须有开关**：`effect` 沾 `cards|delete|spend` 的 `keep` 行要么有 `switch`，要么明账挂在账本上。射程刻意**不**含只读 / 只投影 / 健康扫描类——给「诚实的健康报告」配一把关它的开关本身违反 §0 第 3 条；那一层能关的只有「要不要打扰你」（§28 `notify_failures`）。
+2. **开关是热的**：`runner=actd` 行的每把 `switch` 都进 `automation.live_fields()`，由 `act/actd.py:_refresh_automation_switches` 每 pass 从盘上现读一次刷到启动时冻结的 cfg 上。名单是**派生**的——总账加一行带开关的 actd 行为，那把开关自动变热，刷新点一个字都不用改。这条修的是 issue 点名的「开关只在 actd 启动时读一次」：`trash.retention_days`、`card_summary.enabled`、`updates.check_enabled`、`features.feedback_sync`、`autodispatch.enabled`、`archive.after_days` 六把自此下一 pass 生效。
+3. **动手留痕**：代价大的行必须说明它在哪里留痕；走 `automation.audit()` 的落 `state/automation.jsonl`（一行一个 JSON `{ts, slug, action, …}`，出生即带 1MB 自压缩帽——防腐第 4 条，与 `registry_writes.jsonl` 同款）。审计行**与 analytics 无关**：`features.analytics` 是可以整条关掉的隐私面（§16 fail-closed），回执不是。
+4. **代价大的默认关**：`effect` 沾 `cards|delete|spend` 的行出厂必须是关，否则明账挂账本。**本轮真翻的只有一把**——`trash.retention_days` 60 → **0**（见 §81.3）；其余逐条带理由挂在 `qa/automation_baseline.txt` 上，账本只许缩（`scripts/qa/ledger_diff.py` 按 `qa/*_baseline.txt` 自动看管，§58.4），owner 想再关哪条就划掉哪行。
+
+**诚实条款**（照 §77.1 的写法）：完备性只数得到 committed 的调度器文件——launchd plist 的 `Label`、`install.sh` 的 cron 行变量、`.github/workflows/*.yml` 里带 `schedule:` 的那些（三个源互为子集，违例记 `unlisted:`）。库内重试循环、后台线程、Swift 壳侧 timer、server 的 watcher 线程**数不到**，门不假装数得到（§0 第 3 条）。
+
+### 81.2 去掉的冗余（issue 第 3 问）
+
+- **近重复这一族本来是两条互不知情的自动行为**：探测端 `auto_merge.scan_new_cards`（§38）与落盘端 `silent_merge.consume_judged`（§44）各跑各的、**两边都没有开关**。自此共用一把 `features.merge_silent`，总账里互为 `overlaps`。
+- **「每日同题合并」不是它俩的重复**：`silent_merge` 是近重复两两并入，`loop_dedup_merge` 是 D10 原话要的「同题三四张合成一张新卡」，射程不同——总账把分工写进 `why`，两条都留。
+- **`materials` 读取器并进 §65.1 那道闸**：它铸的同样是 self_improve 卡（`ref self_improve:material:*`、target_repo = 本仓库、plan 写着「实现成草稿 PR」），却从不跟着 D57 的通道总开关关——「关着时不再产生新的 🤖 卡」本来就该罩住它。闸门真源自此是 `daily_loop.SELF_IMPROVE_READERS`（= `GITHUB_READERS` + `materials`）。
+- **`mac/Sources/NotifyRelay.swift` 记为并入 `shell_notify_relay`**：两个 app 同时在班时两边都消费同一个通知队列、都去重启录制引擎。D3 已判旧 app 退役，总账只立墓碑，代码删除随 P8 同车。
+
+### 81.3 硬删默认关（§0 第 2 条 vs §9）
+
+§9 允许回收站超期硬删，§0 第 2 条说「**绝无不可恢复的自动删除**」——它是整条管线里唯一同时满足「自动、不可逆、动的是用户数据」的动作，两条法条正面冲突。本节按 issue 第 4 问裁决：**出厂值 `trash.retention_days: 0`（永不自动硬删）**，要它的人自己写数字。射程只是出厂默认——config.yaml 或设置页里写过数字的安装（含写着 60 的）行为一字不变；`daily_loop.trash_retention_days` 是它的下级，本键为 0 时整体不生效。§9 的法条本身不改（机制还在，只是不再默认替人做决定）。
+
+### 81.4 新补的五把闸（§16 feature flag，默认全开 = 本改动前的行为）
+
+`features.merge_silent`（§44 静默并入，探测 + 落盘共用）/ `features.worktree_sweep`（§75 worktree 回收，原来只有进程级环境变量 `AIASSISTANT_WORKTREE_SWEEP`，而且注入 git runner 时那道闸压根不看）/ `features.attachment_gc`（§10 孤儿贴图清理）/ `features.raising`（§1/§40 欠账展开）/ `features.ingest`（§18 cron 链里的 headless 笔记加工——整条链最贵的一步，此前一把开关都没有；`ingest/process-screenpipe.sh` 经 `python3 -m act.lib.automation --enabled ingest_vault_process` 判闸，出口码 0/3/2 与 §48 的 `act.lib.sources` CLI 逐字同款，**1 号刻意空着**留给解释器自身的故障，任何故障 fail-open）。五把都在设置页「Feature flags」区，actd 每 pass 现读。
+
+### 81.5 判例
+
+`tests/test_automation_ledger.py`（词表闭集 / slug 唯一 / lineage 指得到活行 / `enabled` fail-closed 与合取 / 枚举型 `off` 不被读成开 / raw 块开关 / 审计行形状 · 消毒 · 带帽 · 永不抛 / `live_fields` 派生 / CLI 出口码）、`tests/test_qa_automation_gate.py`（每条规则一红一绿 + 三个源的非平凡性 + **自维护钉**：真仓今天的违例必须全在账本上、账本上不许有已修好的行）、`tests/test_self_improve_channel_switch.py`（`materials` 进闸）、`tests/test_audit_trash_purge.py` 与 `tests/test_honest_receipts.py`（硬删机制不变，只是要显式给保留期）。
+
+### 81.6 Tombstone：`approval.poll_interval_minutes`（retired v0.48.x，并入 §81.1 不变量 1）
+
+模板里唯一写着的那个 poll 键，自 v0.21 Slack 审批通道退役起就没有消费者了：它的解析分支是一句字面 `cfg.poll_interval_seconds = cfg.poll_interval_seconds` 的空操作——文档上有效、实际无效，正是 issue #451 点名的「有些开关做的和说的不一样」的标本。本节删掉解析分支与模板行；yaml 里遗留的这一键**按未知键静默忽略**（与 §16 `features.manager_pack` 同一处理，语义与删除前逐字相同，判例 `tests/test_config_load_blocks.py::ApprovalExecutionTestCase::test_poll_and_thresholds` 原样钉着「不炸、不改值」）。主循环的真间隔仍是 `approval.poll_interval_seconds`（不写 = 10 秒）。§ 号永不复用（防腐第 6 条）。

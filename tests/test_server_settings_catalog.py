@@ -89,7 +89,7 @@ class CatalogGetTestCase(_ServerCase):
         _s, digest = get_json(self.port, "/api/settings/digest")
         self.assertEqual(self._field(digest, "digest_frequency")["source"], "default")
         _s, approval = get_json(self.port, "/api/settings/approval")
-        self.assertEqual(self._field(approval, "trash_retention_days")["effective"], 60)
+        self.assertEqual(self._field(approval, "trash_retention_days")["effective"], 0)
 
     def test_unknown_section_is_404(self):
         status, obj = get_json(self.port, "/api/settings/nope")

@@ -8,11 +8,11 @@
     "shell"
   ],
   "counts": {
-    "contract": 251,
+    "contract": 258,
     "fixtures_b": 15,
     "parity": 841,
     "routes": 162,
-    "settings": 60,
+    "settings": 65,
     "shell": 33
   },
   "scenarios": [
@@ -170,7 +170,7 @@
       "id": "contract:§0",
       "source": "contract",
       "scenario": "设计宪法（不变原则 — 修宪必须显式声明，任何功能不得默默违反）",
-      "proof": "unittest:tests.test_radar_health,tests.test_radar_ledger_rearm,tests.test_recap_item_tags,tests.test_recap_store_mutation_kills_train",
+      "proof": "unittest:tests.test_qa_automation_gate,tests.test_radar_health,tests.test_radar_ledger_rearm,tests.test_recap_item_tags",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -250,7 +250,7 @@
       "id": "contract:§17",
       "source": "contract",
       "scenario": "周一 digest + Manager pack",
-      "proof": "unittest:tests.test_config_load_blocks,tests.test_digest_frequency,tests.test_digest_stuck_detection,tests.test_doctor",
+      "proof": "unittest:tests.test_automation_ledger,tests.test_config_load_blocks,tests.test_digest_frequency,tests.test_digest_stuck_detection",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -900,7 +900,7 @@
       "id": "contract:§51",
       "source": "contract",
       "scenario": "自动派发天花板（may_auto_dispatch）+ 合并运行列 queued 子状态",
-      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_wire,tests.test_daily_loop_proposals,tests.test_dashboard_helpers_edge",
+      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_wire,tests.test_automation_ledger,tests.test_daily_loop_proposals",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -1200,7 +1200,7 @@
       "id": "contract:§58.4",
       "source": "contract",
       "scenario": "shrink-only 账本（qa/*_baseline.txt；实现 qa_common.compare_with_ledger）",
-      "proof": "unittest:tests.test_actd_facade_delegation,tests.test_qa_crap_baseline_reconciled,tests.test_qa_ledger_diff,tests.test_qa_ledger_shrink",
+      "proof": "unittest:tests.test_actd_facade_delegation,tests.test_qa_automation_gate,tests.test_qa_crap_baseline_reconciled,tests.test_qa_ledger_diff",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2665,6 +2665,76 @@
       "status": "todo",
       "waive_reason": null,
       "note": null
+    },
+    {
+      "id": "contract:§81",
+      "source": "contract",
+      "scenario": "自动行为总账：一条行为一行、一把热开关、一行回执（issue #451；owner 决策 **D83**）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§81.1",
+      "source": "contract",
+      "scenario": "四条不变量（机器执法 = `scripts/qa/automation_check.py`，账本 `qa/automation_baseline.txt` shrink-only）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§81.2",
+      "source": "contract",
+      "scenario": "去掉的冗余（issue 第 3 问）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§81.3",
+      "source": "contract",
+      "scenario": "硬删默认关（§0 第 2 条 vs §9）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§81.4",
+      "source": "contract",
+      "scenario": "新补的五把闸（§16 feature flag，默认全开 = 本改动前的行为）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§81.5",
+      "source": "contract",
+      "scenario": "判例",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§81.6",
+      "source": "contract",
+      "scenario": "Tombstone：`approval.poll_interval_minutes`（retired v0.48.x，并入 §81.1 不变量 1）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "parent-cite"
     },
     {
       "id": "contract:§9",
@@ -12847,6 +12917,16 @@
       "note": null
     },
     {
+      "id": "setting:flags.features.attachment_gc",
+      "source": "settings",
+      "scenario": "flags / attachment_gc — orphan attachment GC round-trips (PUT → GET → effective → default)",
+      "proof": "settings:flags.features.attachment_gc",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
       "id": "setting:flags.features.auto_deploy",
       "source": "settings",
       "scenario": "flags / auto_deploy — auto-deploy round-trips (PUT → GET → effective → default)",
@@ -12897,6 +12977,26 @@
       "note": null
     },
     {
+      "id": "setting:flags.features.ingest",
+      "source": "settings",
+      "scenario": "flags / ingest — headless vault ingest round-trips (PUT → GET → effective → default)",
+      "proof": "settings:flags.features.ingest",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "setting:flags.features.merge_silent",
+      "source": "settings",
+      "scenario": "flags / merge_silent — silent merge of near-duplicates round-trips (PUT → GET → effective → default)",
+      "proof": "settings:flags.features.merge_silent",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
       "id": "setting:flags.features.obsidian_radar",
       "source": "settings",
       "scenario": "flags / obsidian_radar — Obsidian radar round-trips (PUT → GET → effective → default)",
@@ -12907,10 +13007,30 @@
       "note": null
     },
     {
+      "id": "setting:flags.features.raising",
+      "source": "settings",
+      "scenario": "flags / raising — raising-debt expansion round-trips (PUT → GET → effective → default)",
+      "proof": "settings:flags.features.raising",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
       "id": "setting:flags.features.slack_radar",
       "source": "settings",
       "scenario": "flags / slack_radar — Slack demand radar round-trips (PUT → GET → effective → default)",
       "proof": "settings:flags.features.slack_radar",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "setting:flags.features.worktree_sweep",
+      "source": "settings",
+      "scenario": "flags / worktree_sweep — worktree GC round-trips (PUT → GET → effective → default)",
+      "proof": "settings:flags.features.worktree_sweep",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

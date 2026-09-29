@@ -163,7 +163,7 @@ class LoadConfigRobustnessTestCase(unittest.TestCase):
         )
         self.assertEqual(cfg.poll_interval_seconds, 10)
         self.assertEqual(cfg.show_cost_above_usd, 5.0)
-        self.assertEqual(cfg.trash_retention_days, 60)
+        self.assertEqual(cfg.trash_retention_days, 0)   # §81/D83 出厂 = 永不自动硬删
 
     def test_garbage_capture_input_is_not_an_informed_choice(self):
         cfg = self._load_with_yaml("telemetry:\n  capture_input: banana\n")
