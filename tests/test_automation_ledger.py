@@ -37,7 +37,7 @@ class VocabularyTestCase(unittest.TestCase):
             self.assertIn(row.kind, automation.KINDS, row.slug)
             self.assertIn(row.verdict, automation.VERDICTS, row.slug)
             self.assertTrue(row.effect, row.slug)
-            self.assertTrue(set(row.effect) <= set(automation.EFFECTS), row.slug)
+            self.assertLessEqual(set(row.effect), set(automation.EFFECTS), row.slug)
 
     def test_slugs_are_unique(self):
         slugs = automation.slugs()
@@ -115,6 +115,41 @@ class EnabledTestCase(unittest.TestCase):
         cfg.raw = {"autodispatch": {"enabled": False}}
         self.assertFalse(automation.enabled("auto_dispatch", cfg))
 
+    def test_an_unwritten_raw_block_follows_that_block_s_factory_default(self):
+        """盘上没写过 `autodispatch:` 块 ≠ 关。
+
+        第一版把「键不在」读成 None 进而判关，于是出厂 Config 下
+        `auto_dispatch` 报「已经关着」——整条管线里最贵的「没人点过、卡却自己
+        批准并开了 LLM 会话」就这样从 ask 4 的账单底下溜过去了。真源是
+        `policy.AUTODISPATCH_DEFAULTS["enabled"] = True`。
+        """
+        self.assertTrue(automation.enabled("auto_dispatch", config.Config()))
+        empty = config.Config()
+        empty.raw = {"autodispatch": {}}          # 块在、键不在
+        self.assertTrue(automation.enabled("auto_dispatch", empty))
+        explicit_off = config.Config()
+        explicit_off.raw = {"autodispatch": {"enabled": False}}
+        self.assertFalse(automation.enabled("auto_dispatch", explicit_off))
+
+    def test_the_autodispatch_default_matches_policys_own(self):
+        """两处不许分叉：总账判出来的出厂值 = §51 自己那张默认表。"""
+        from act.lib import policy
+        self.assertEqual(automation.enabled("auto_dispatch", config.Config()),
+                         bool(policy.autodispatch_config(config.Config())["enabled"]))
+
+    def test_truthy_covers_every_arm(self):
+        """`_truthy` 的四条臂各钉一次——缺席、阈值、枚举字符串、裸布尔。"""
+        t = automation._truthy
+        self.assertTrue(t(automation._ABSENT, automation.KIND_BOOL))
+        self.assertFalse(t(automation._ABSENT, automation.KIND_THRESHOLD))
+        self.assertTrue(t("30", automation.KIND_THRESHOLD))
+        self.assertFalse(t("forever", automation.KIND_THRESHOLD))
+        self.assertFalse(t(None, automation.KIND_THRESHOLD))
+        self.assertFalse(t("off", automation.KIND_BOOL))
+        self.assertTrue(t("weekly", automation.KIND_BOOL))
+        self.assertTrue(t(True, automation.KIND_BOOL))
+        self.assertFalse(t(None, automation.KIND_BOOL))
+
     def test_a_broken_config_never_raises(self):
         """宪法第 11 条：开关判定自身绝不反杀调用方。"""
 
@@ -153,6 +188,44 @@ class LiveFieldsTestCase(unittest.TestCase):
         fields = automation.live_fields()
         self.assertEqual(len(fields), len(set(fields)))
         self.assertEqual(fields, automation.live_fields())
+
+    def test_a_yaml_null_switch_stays_off_across_a_refresh(self):
+        """`autodispatch:\\n  enabled:`（YAML null）= 关，刷新不许把它刷成开。
+
+        `policy.autodispatch_config` 分得出「写了但空值」（`bool(None)` = 关）与
+        「压根没写」（= 出厂开）；刷新点最初照 `_refresh_owner_logins` 那样按
+        None 删键，于是这份 config 启动时免批是关的、第一个 pass 之后自己变成
+        开的——整条管线里最贵的那条自动行为，被一个「为了让开关更可信」才加的
+        刷新点朝着 ask 4 明令禁止的方向掰了过去。
+        """
+        from unittest import mock
+
+        from act import actd
+
+        frozen = config.Config()
+        frozen.raw = {"autodispatch": {"enabled": None, "max_concurrent": 3}}
+        fresh = config.Config()
+        fresh.raw = {"autodispatch": {"enabled": None, "max_concurrent": 3}}
+        self.assertFalse(automation.enabled("auto_dispatch", frozen))
+        with mock.patch.object(config, "load_config", return_value=fresh):
+            actd._refresh_automation_switches(frozen, fresh)
+        self.assertFalse(automation.enabled("auto_dispatch", frozen))
+        self.assertIn("enabled", frozen.raw["autodispatch"])
+
+    def test_a_key_that_left_the_disk_falls_back_to_the_factory_default(self):
+        """反过来的那一半：盘上删掉了这一键 = 回到出厂默认，不是留着旧值。"""
+        from unittest import mock
+
+        from act import actd
+
+        frozen = config.Config()
+        frozen.raw = {"autodispatch": {"enabled": False}}
+        fresh = config.Config()
+        fresh.raw = {"autodispatch": {}}
+        with mock.patch.object(config, "load_config", return_value=fresh):
+            actd._refresh_automation_switches(frozen, fresh)
+        self.assertNotIn("enabled", frozen.raw["autodispatch"])
+        self.assertTrue(automation.enabled("auto_dispatch", frozen))
 
     def test_actd_really_refreshes_every_live_field(self):
         """不变量 2 的**行为**判例，不是名单比对：把冻结 cfg 上的每一把都写坏，
@@ -257,7 +330,7 @@ class ProjectionTestCase(unittest.TestCase):
         self.assertIsNone(automation.by_slug("nope"))
 
     def test_kept_excludes_retired_and_merged(self):
-        self.assertTrue(set(automation.kept()) <= set(automation.LEDGER))
+        self.assertLessEqual(set(automation.kept()), set(automation.LEDGER))
         for row in automation.kept():
             self.assertEqual(row.verdict, automation.VERDICT_KEEP)
 

@@ -10,6 +10,7 @@
 # 备注必须写在 ` #` 之后（qa_common.parse_ledger_text 把第二个 token 当分数）。
 audit:notify_burst_cap 1  # 一轮 >5 条时多出来的队列文件直接 unlink、零留痕；合成横幅保留、溢出改落痕值得单独一张卡 #451
 default-on:archive_stale 1  # 封存可逆（archive/ 里还在，prev_status 记着），带未来 deadline / 同簇有活卡的一律不动 #451
+default-on:auto_dispatch 1  # §51 hand lane 的免批通道是 §0 第 12 条的明文例外；关它 = 手打快速捕获又要逐张点批准 #451
 default-on:auto_resume 1  # 关了 = 睡醒 / 断网后的会话全成僵尸，要人逐张手点重启；§16 已两键合取且每 pass 现读 #451
 default-on:card_summary 1  # 每张待验收卡一次 headless 判官；只写 assessment 建议、永不改 status，关它等于 §64 整节退役 #451
 default-on:daily_loop_proposals 1  # D10 拍板的每日循环主体，上限出厂 2 张/天（D33），已在设置页；关它 = 关掉 §70 #451
@@ -31,4 +32,5 @@ default-on:radar_obsidian 1  # 同上：唯一从笔记立案的通道 #451
 default-on:radar_slack 1  # 同上 #451
 default-on:raising_expansion 1  # 展开的是人已经放进来的欠账，不是凭空立案；有界（每 pass 一张）；本轮刚补 features.raising #451
 default-on:silent_merge 1  # §44 的落盘端；并入可拆、副卡进回收站可恢复；本轮刚补 features.merge_silent #451
+switch:notify_burst_cap 1  # 壳侧中继只读 review_notify 一个键，§28 的三把分类开关管不到溢出丢弃；给它填一把管不着它的开关才是更坏的选择 #451
 switch:dispatch_approved 1  # 「批准即派发」的闸就是人点的那一下——给它第二把开关等于做一个「批了也不跑」的陷阱 #451

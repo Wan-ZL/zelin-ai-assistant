@@ -80,6 +80,18 @@ VERDICTS = (VERDICT_KEEP, VERDICT_MERGED, VERDICT_RETIRED)
 
 AUDIT_LOG = "automation.jsonl"   # state/ 下的一份，经 audit() 落笔
 AUDIT_NONE = "none"              # 还没有留痕（= 欠账）
+# 别处已有的留痕面（不是本模块写的，总账只是指过去）。收成闭词表而不是散在
+# 六十行里的字符串字面量——防腐 #9：同一个东西只许有一种写法。
+AUDIT_ACTD_LOG = "actd.log"
+AUDIT_DAILY_LOOP = "daily_loop.jsonl"
+AUDIT_RADAR_HEALTH = "radar_health.json"
+AUDIT_GHA = "GitHub Actions 日志"
+AUDIT_CHANNELS = (AUDIT_LOG, AUDIT_NONE, AUDIT_ACTD_LOG, AUDIT_DAILY_LOOP,
+                  AUDIT_RADAR_HEALTH, AUDIT_GHA)
+
+# 外部调度器的登记名里唯一被多条行为共用的那个（ingest 那条 30 分钟 cron 链，
+# 一行 crontab 挂着四个步骤）。
+UNIT_INGEST_CHAIN = "install.sh:INGEST_CHAIN"
 AUDIT_MAX_BYTES = 1 << 20        # 防腐 #4：出生即带帽（registry_writes.jsonl 同款）
 _AUDIT_FIELD_CAP = 200           # 单个附加字段的字符上限（日志不当数据库使）
 
@@ -139,11 +151,11 @@ LEDGER: tuple = (
     # ---------------------------------------------------------------- 卡片出生
     _b(slug="radar_obsidian", zh="Obsidian 笔记雷达", en="Obsidian note radar",
        runner=RUNNER_CRON, cadence="crontab */30（ingest 链末步）",
-       effect=[EFFECT_CARDS, EFFECT_SPEND], code="act/radar.py:main", unit="install.sh:INGEST_CHAIN",
+       effect=[EFFECT_CARDS, EFFECT_SPEND], code="act/radar.py:main", unit=UNIT_INGEST_CHAIN,
        law=["§42", "§48"], verdict=VERDICT_KEEP,
        why="唯一从笔记立案的通道；§48 已给它一把合取开关，保留不动。",
        switch=["features.obsidian_radar", "obsidian_enabled"], kind=KIND_BOOL,
-       audit="radar_health.json", reversible="建出来的卡可 trash / 静默并入可拆",
+       audit=AUDIT_RADAR_HEALTH, reversible="建出来的卡可 trash / 静默并入可拆",
        overlaps=["radar_slack", "radar_gmail"]),
     _b(slug="radar_slack", zh="Slack 雷达", en="Slack radar",
        runner=RUNNER_LAUNCHD, cadence="launchd StartInterval=180s",
@@ -152,7 +164,7 @@ LEDGER: tuple = (
        law=["§13", "§48"], verdict=VERDICT_KEEP,
        why="同上；没有凭证时自身静默 no-op，开关真源已归一到 §48。",
        switch=["features.slack_radar", "slack_enabled"], kind=KIND_BOOL,
-       audit="radar_health.json", reversible="建出来的卡可 trash",
+       audit=AUDIT_RADAR_HEALTH, reversible="建出来的卡可 trash",
        overlaps=["radar_obsidian", "radar_gmail"]),
     _b(slug="radar_gmail", zh="Gmail 雷达", en="Gmail radar",
        runner=RUNNER_LAUNCHD, cadence="launchd StartInterval=300s",
@@ -160,7 +172,7 @@ LEDGER: tuple = (
        code="act/radar_gmail.py:_main", unit="com.zelin.aiassistant.gmailradar",
        law=["§14", "§48"], verdict=VERDICT_KEEP,
        why="同上。", switch=["features.gmail_radar", "gmail_enabled"], kind=KIND_BOOL,
-       audit="radar_health.json", reversible="建出来的卡可 trash",
+       audit=AUDIT_RADAR_HEALTH, reversible="建出来的卡可 trash",
        overlaps=["radar_obsidian", "radar_slack"]),
     _b(slug="daily_loop_proposals", zh="每日循环铸提案卡", en="daily-loop proposals",
        runner=RUNNER_ACTD, cadence="每天 daily_loop.time 后的第一个 pass",
@@ -168,7 +180,7 @@ LEDGER: tuple = (
        code="act/lib/daily_loop.py:_propose", law=["§70", "§65"], verdict=VERDICT_KEEP,
        why="D10 的主体；上限旋钮已在设置页，保留。",
        switch=["daily_loop_enabled", "daily_loop_max_proposals_per_day"],
-       kind=KIND_THRESHOLD, audit="daily_loop.jsonl",
+       kind=KIND_THRESHOLD, audit=AUDIT_DAILY_LOOP,
        reversible="铸出的卡可 trash（循环卡 90 天可恢复）",
        overlaps=["loop_material_proposals", "weekly_digest", "digest_card"]),
     _b(slug="loop_material_proposals", zh="素材库铸提案卡", en="material-library proposals",
@@ -179,7 +191,7 @@ LEDGER: tuple = (
        why="它铸的是 self_improve 卡（ref self_improve:material:*、target=本仓库），"
            "却没跟着 §65.1 的通道开关关——本轮并进 GITHUB_READERS 那道闸。",
        switch=["daily_loop_enabled", "self_improve_enabled"], kind=KIND_BOOL,
-       audit="daily_loop.jsonl", reversible="铸出的卡可 trash",
+       audit=AUDIT_DAILY_LOOP, reversible="铸出的卡可 trash",
        overlaps=["daily_loop_proposals"]),
     _b(slug="digest_card", zh="状态摘要卡", en="state digest card",
        runner=RUNNER_CRON, cadence="crontab 每天 09:07 唤醒，按 digest.frequency 自闸",
@@ -195,7 +207,7 @@ LEDGER: tuple = (
        law=["§24"], verdict=VERDICT_KEEP,
        why="D19 已出厂关（0/15 获批）；留着给想要的人开。",
        switch=["weekly_digest_enabled"], kind=KIND_BOOL,
-       audit="actd.log", reversible="卡可 trash", overlaps=["digest_card"]),
+       audit=AUDIT_ACTD_LOG, reversible="卡可 trash", overlaps=["digest_card"]),
     _b(slug="quick_capture_fold", zh="入库前折叠判官", en="pre-filing fold judge",
        runner=RUNNER_CRON, cadence="每张候选新卡一次（阻塞式 LLM 判官）",
        effect=[EFFECT_CARDS, EFFECT_SPEND],
@@ -223,20 +235,20 @@ LEDGER: tuple = (
        law=["§4", "§34"], verdict=VERDICT_KEEP,
        why="人点了批准就是授权，不该再给它一把「批了也不跑」的开关；"
            "无人值守的那一半由 auto_dispatch 那一行的闸门管。",
-       audit="actd.log", reversible="会话可 stop，卡可打回"),
+       audit=AUDIT_ACTD_LOG, reversible="会话可 stop，卡可打回"),
     _b(slug="auto_resume", zh="死会话自动续命", en="auto-resume dead sessions",
        runner=RUNNER_ACTD, cadence="每 pass（带退避）",
        effect=[EFFECT_SPEND], code="act/lib/actd/reconcile.py:reconcile_executing",
        law=["§16", "§46"], verdict=VERDICT_KEEP,
        why="§16 已把两键合取并做成每 pass 现读——本总账照抄这条先例，不动它。",
        switch=["auto_resume", "features.auto_resume"], kind=KIND_BOOL,
-       audit="actd.log", reversible="停会话即止"),
+       audit=AUDIT_ACTD_LOG, reversible="停会话即止"),
     _b(slug="card_summary", zh="待验收卡 AI 摘要", en="review-card AI summary",
        runner=RUNNER_ACTD, cadence="每 pass（指纹变了才派）",
        effect=[EFFECT_SPEND], code="act/lib/card_summary.py:tick",
        law=["§64"], verdict=VERDICT_KEEP,
        why="只是建议、永不改 status；开关是冷的——本轮转热。",
-       switch=["card_summary_enabled"], kind=KIND_BOOL, audit="actd.log",
+       switch=["card_summary_enabled"], kind=KIND_BOOL, audit=AUDIT_ACTD_LOG,
        reversible="n/a（只写 assessment 字段，不改状态）"),
     _b(slug="raising_expansion", zh="欠账卡自动展开", en="raising-debt expansion",
        runner=RUNNER_ACTD, cadence="每 pass 一张",
@@ -271,7 +283,7 @@ LEDGER: tuple = (
        law=["§70"], verdict=VERDICT_KEEP,
        why="它做的是 silent_merge 做不了的事——**同题多卡合成一张新卡**（D10 原话），"
            "不是近重复两两并入；两者射程不同，保留但在总账里明写分工。",
-       switch=["daily_loop_enabled"], kind=KIND_BOOL, audit="daily_loop.jsonl",
+       switch=["daily_loop_enabled"], kind=KIND_BOOL, audit=AUDIT_DAILY_LOOP,
        reversible="旧卡进回收站（90 天可恢复）",
        overlaps=["silent_merge", "near_dupe_scan"]),
     _b(slug="loop_idle_sweep", zh="提案/潜在任务过时清理", en="idle-card sweep",
@@ -281,7 +293,7 @@ LEDGER: tuple = (
        why="只碰提案 / 潜在任务两列、只进回收站（可恢复），与 archive_stale"
            "（碰 delivered、进 archive）射程不重叠。",
        switch=["daily_loop_enabled", "daily_loop_stale_days"], kind=KIND_THRESHOLD,
-       audit="daily_loop.jsonl", reversible="进回收站，90 天内可恢复",
+       audit=AUDIT_DAILY_LOOP, reversible="进回收站，90 天内可恢复",
        overlaps=["loop_review_aging", "archive_stale"]),
     _b(slug="loop_review_aging", zh="待验收卡老化", en="review-lane aging",
        runner=RUNNER_ACTD, cadence="每天一次（两阶段：先通知，隔 20h 才动）",
@@ -289,7 +301,7 @@ LEDGER: tuple = (
        law=["§70"], verdict=VERDICT_KEEP,
        why="D74 的两阶段「先说再做」；碰的是待验收列，与 idle_sweep 两列不重叠。",
        switch=["daily_loop_enabled", "daily_loop_review_stale_days"],
-       kind=KIND_THRESHOLD, audit="daily_loop.jsonl",
+       kind=KIND_THRESHOLD, audit=AUDIT_DAILY_LOOP,
        reversible="进回收站，90 天内可恢复", overlaps=["loop_idle_sweep"]),
     _b(slug="loop_worktree_sweep", zh="worktree 回收", en="worktree GC",
        runner=RUNNER_ACTD, cadence="每天一次（每日循环第三阶段）",
@@ -330,23 +342,23 @@ LEDGER: tuple = (
        effect=[EFFECT_STATE], code="act/lib/actd/merge.py:cleanup_merge_jobs",
        law=["§21"], verdict=VERDICT_KEEP,
        why="只清自己的作业文件、不碰卡片；纯管家，不值得一把开关。",
-       audit="actd.log", reversible="n/a（只清中间态作业）"),
+       audit=AUDIT_ACTD_LOG, reversible="n/a（只清中间态作业）"),
     _b(slug="triage_snapshot_sweep", zh="分诊快照清扫", en="triage snapshot sweep",
        runner=RUNNER_ACTD, cadence="每 pass",
        effect=[EFFECT_STATE], code="act/lib/actd/triage_guard.py:sweep_triage_snapshots",
        law=["§34"], verdict=VERDICT_KEEP,
-       why="同上，清的是自己的侧文件。", audit="actd.log",
+       why="同上，清的是自己的侧文件。", audit=AUDIT_ACTD_LOG,
        reversible="n/a（只清中间态快照）"),
     _b(slug="search_index_prune", zh="搜索索引裁剪", en="search index prune",
        runner=RUNNER_ACTD, cadence="每 pass",
        effect=[EFFECT_STATE], code="act/lib/search_index.py:prune",
        law=["§37"], verdict=VERDICT_KEEP,
-       why="派生索引，删了会重建；纯管家。", audit="actd.log",
+       why="派生索引，删了会重建；纯管家。", audit=AUDIT_ACTD_LOG,
        reversible="重新索引即可"),
     _b(slug="screenpipe_retention", zh="录制数据保留期清理",
        en="screenpipe retention cleanup",
        runner=RUNNER_CRON, cadence="crontab */30（ingest 链第二步）",
-       effect=[EFFECT_DELETE], code="act/lib/screenpipe_retention.py:prune", unit="install.sh:INGEST_CHAIN",
+       effect=[EFFECT_DELETE], code="act/lib/screenpipe_retention.py:prune", unit=UNIT_INGEST_CHAIN,
        law=["§72"], verdict=VERDICT_KEEP,
        why="§72 已有两把设置页旋钮（天数 / 分钟数），DB 行的出厂值是 0 = 永久保留；"
            "媒体分钟数出厂 60（= 历来写死值）。留，不动默认。",
@@ -369,21 +381,21 @@ LEDGER: tuple = (
        law=["§29"], verdict=VERDICT_KEEP,
        why="传的是用户自己按「提建议」写的东西（逐条 opt-in），不是遥测；"
            "只重试一次、失败即放弃，保留。",
-       switch=["telemetry_enabled"], kind=KIND_BOOL, audit="actd.log",
+       switch=["telemetry_enabled"], kind=KIND_BOOL, audit=AUDIT_ACTD_LOG,
        reversible="n/a（重试的是用户自己提交过的建议）"),
     _b(slug="feedback_sync", zh="建议同步成 GitHub issue", en="feedback → GitHub issues",
        runner=RUNNER_ACTD, cadence="每 pass（无 token 即静默 no-op）",
        effect=[EFFECT_NETWORK], code="act/lib/feedback_sync.py:sweep",
        law=["§29"], verdict=VERDICT_KEEP,
        why="逐条 opt-in + token 文件不在就整体关；开关是冷的——本轮转热。",
-       switch=["features.feedback_sync"], kind=KIND_BOOL, audit="actd.log",
+       switch=["features.feedback_sync"], kind=KIND_BOOL, audit=AUDIT_ACTD_LOG,
        reversible="issue 可关（公开过就是公开过——所以是逐条 opt-in）"),
     _b(slug="update_check", zh="应用内更新检查", en="in-app update check",
        runner=RUNNER_ACTD, cadence="至多每 24h 一次网络请求",
        effect=[EFFECT_NETWORK], code="act/lib/update_check.py:check",
        law=["§26"], verdict=VERDICT_KEEP,
        why="只查版本号、绝不自动下载安装；开关是冷的——本轮转热。",
-       switch=["updates_check_enabled"], kind=KIND_BOOL, audit="actd.log",
+       switch=["updates_check_enabled"], kind=KIND_BOOL, audit=AUDIT_ACTD_LOG,
        reversible="n/a（只读一个版本号）"),
     _b(slug="self_improve_tick", zh="自动 PR 通道巡检", en="self-improve lane tick",
        runner=RUNNER_ACTD, cadence="self_improve.tick_minutes（默认 60 分钟）",
@@ -404,28 +416,28 @@ LEDGER: tuple = (
     _b(slug="ingest_screenpipe_export", zh="屏幕录制导出进 vault",
        en="screenpipe export to vault",
        runner=RUNNER_CRON, cadence="crontab */30（第一步）",
-       effect=[EFFECT_STATE], code="ingest/screenpipe-export.sh", unit="install.sh:INGEST_CHAIN",
+       effect=[EFFECT_STATE], code="ingest/screenpipe-export.sh", unit=UNIT_INGEST_CHAIN,
        law=["§18"], verdict=VERDICT_KEEP,
        why="写的是笔记文件，不是卡片（§0 第 4 条：记录 ≠ 立案）；留。",
        audit="ingest 日志", reversible="笔记文件在 vault 里，人可删"),
     _b(slug="ingest_media_cleanup", zh="原始截图/录像删除",
        en="raw media deletion",
        runner=RUNNER_CRON, cadence="crontab */30（第二步）",
-       effect=[EFFECT_DELETE], code="ingest/screenpipe-cleanup.sh", unit="install.sh:INGEST_CHAIN",
+       effect=[EFFECT_DELETE], code="ingest/screenpipe-cleanup.sh", unit=UNIT_INGEST_CHAIN,
        law=["§72"], verdict=VERDICT_KEEP,
        why="§72.4 的分钟数旋钮已在设置页，出厂 60（= 历来写死值）；不删的话磁盘会炸。",
        switch=["screenpipe_media_retention_minutes"], kind=KIND_THRESHOLD,
        audit="screenpipe_cleanup 回执", reversible="不可逆（已导出的才删）"),
     _b(slug="ingest_meeting_recap", zh="会议纪要生成", en="meeting recap",
        runner=RUNNER_CRON, cadence="crontab */30（第三步）",
-       effect=[EFFECT_SPEND], code="act/recap.py:main", unit="install.sh:INGEST_CHAIN", law=["§63"],
+       effect=[EFFECT_SPEND], code="act/recap.py:main", unit=UNIT_INGEST_CHAIN, law=["§63"],
        verdict=VERDICT_KEEP,
        why="copy-only 纪要，不是卡、没有发送路径；已有设置页开关。",
        switch=["recap_enabled"], kind=KIND_BOOL, audit="recap 存档",
        reversible="纪要可忽略 / 删除"),
     _b(slug="ingest_vault_process", zh="headless 笔记加工", en="headless vault ingest",
        runner=RUNNER_CRON, cadence="crontab */30（第四步，上限 2 小时）",
-       effect=[EFFECT_SPEND], code="ingest/process-screenpipe.sh", unit="install.sh:INGEST_CHAIN",
+       effect=[EFFECT_SPEND], code="ingest/process-screenpipe.sh", unit=UNIT_INGEST_CHAIN,
        law=["§18"], verdict=VERDICT_KEEP,
        why="ingest 链里最花钱的一步，却没有任何开关——本轮补一把总闸。",
        switch=["features.ingest"], kind=KIND_BOOL, audit="ingest 日志",
@@ -446,7 +458,7 @@ LEDGER: tuple = (
        why="诚实的健康报告是 §0 第 3 条——**扫描永不可关**；能关的只有「要不要打扰"
            "你」那一层，真源是 §28 的 `notify_failures`（关掉时两道扫描照跑、只是不响）。",
        switch=["notify_failures"], kind=KIND_BOOL,
-       audit="radar_health.json", reversible="n/a"),
+       audit=AUDIT_RADAR_HEALTH, reversible="n/a"),
     _b(slug="auth_failure_alert", zh="凭证失效告警", en="auth failure alert",
        runner=RUNNER_ACTD, cadence="每 pass",
        effect=[EFFECT_NOTIFY], code="act/lib/actd/alerts.py:check_auth_failures",
@@ -458,7 +470,7 @@ LEDGER: tuple = (
        effect=[EFFECT_STATE], code="act/actd.py:_store2_tick", law=["§53"],
        verdict=VERDICT_KEEP,
        why="真源迁移 + 人类可读镜像；registry.backend 是回滚开关不是自动化闸。",
-       audit="actd.log", reversible="backend: yaml 回滚（保留一个版本）"),
+       audit=AUDIT_ACTD_LOG, reversible="backend: yaml 回滚（保留一个版本）"),
     _b(slug="board_watcher", zh="看板变更推送", en="board SSE watcher",
        runner=RUNNER_SERVER, cadence="300ms mtime 轮询",
        effect=[EFFECT_STATE], code="server/watcher.py:POLL_INTERVAL",
@@ -481,20 +493,20 @@ LEDGER: tuple = (
        unit=".github/workflows/mutation-nightly.yml", law=["§57"], verdict=VERDICT_KEEP,
        why="D5 定的「永不拦 PR」；它会开 / 重开 issue——那条噪音记在总账里，"
            "受保护路径，修法另开 PR。",
-       audit="GitHub Actions 日志", reversible="issue 可关"),
+       audit=AUDIT_GHA, reversible="issue 可关"),
     _b(slug="gha_insights", zh="夜间 insights 报告", en="nightly insights",
        runner=RUNNER_GHA, cadence="GitHub cron",
        effect=[EFFECT_NETWORK], code=".github/workflows/insights.yml",
        unit=".github/workflows/insights.yml", law=["§58"], verdict=VERDICT_KEEP,
        why="同上：它也会重开 owner 关掉的 issue。受保护路径，本轮只记账。",
-       audit="GitHub Actions 日志", reversible="issue 可关"),
+       audit=AUDIT_GHA, reversible="issue 可关"),
     _b(slug="gha_update_pr_branches", zh="自动把 main 并进每个 PR",
        en="auto-update PR branches",
        runner=RUNNER_GHA, cadence="main 每次移动",
        effect=[EFFECT_NETWORK], code=".github/workflows/update-pr-branches.yml",
        law=["§56"], verdict=VERDICT_KEEP,
        why="§56.6 的 merge-queue 替身，没它并行 PR 全要手动 rebase。受保护路径。",
-       audit="GitHub Actions 日志", reversible="no-autoupdate 标签可逐 PR 关"),
+       audit=AUDIT_GHA, reversible="no-autoupdate 标签可逐 PR 关"),
     _b(slug="gha_release_on_merge", zh="合并即发版", en="release on merge",
        runner=RUNNER_GHA, cadence="push 到 main",
        effect=[EFFECT_NETWORK], code=".github/workflows/release-on-merge.yml",
@@ -506,7 +518,7 @@ LEDGER: tuple = (
        effect=[EFFECT_NETWORK], code=".github/workflows/keepalive.yml",
        unit=".github/workflows/keepalive.yml", law=["§56"], verdict=VERDICT_KEEP,
        why="防 GitHub 60 天静默停掉计划任务；零状态改变。受保护路径。",
-       audit="GitHub Actions 日志", reversible="n/a"),
+       audit=AUDIT_GHA, reversible="n/a"),
 
     # ---------------------------------------------------------------- 壳 / 客户端
     _b(slug="shell_notify_relay", zh="通知队列消费（新壳）", en="notify relay (shell)",
@@ -529,7 +541,7 @@ LEDGER: tuple = (
        effect=[EFFECT_STATE], code="act/launchd/com.zelin.aiassistant.actd.plist",
        unit="com.zelin.aiassistant.actd", law=["§55"], verdict=VERDICT_KEEP,
        why="它是上面绝大多数行的宿主；自身不做业务动作，开关 = 装不装这个 agent。",
-       audit="actd.log", reversible="launchctl bootout 即停"),
+       audit=AUDIT_ACTD_LOG, reversible="launchctl bootout 即停"),
     _b(slug="launchd_server", zh="看板 server 常驻 + 自动重启", en="board server agent",
        runner=RUNNER_LAUNCHD, cadence="RunAtLoad + KeepAlive",
        effect=[EFFECT_STATE], code="act/launchd/com.zelin.aiassistant.server.plist",
@@ -561,7 +573,7 @@ LEDGER: tuple = (
        effect=[EFFECT_NETWORK], code=".github/workflows/ci-nightly.yml",
        unit=".github/workflows/ci-nightly.yml", law=["§56"], verdict=VERDICT_KEEP,
        why="informational（continue-on-error），永不是 required check；零状态改变。",
-       audit="GitHub Actions 日志", reversible="n/a"),
+       audit=AUDIT_GHA, reversible="n/a"),
     # ---------------------------------------------------------------- 补完（2026-09-29 复核补进的六条）
     # 下面六条是 issue #451 附的那份只读审计**没数到**的——它们散在 .pkg 安装器、
     # 雷达的重试阶梯、store2 的备份、syncd 的台账、两个壳的通知溢出、iOS 端。
@@ -611,8 +623,11 @@ LEDGER: tuple = (
        law=["§28"], verdict=VERDICT_KEEP,
        why="一轮超过 5 条时，多出来的队列文件**直接删掉、从不弹**，只合成一条「+N 条」。"
            "横幅是对的（不刷屏），删文件不对——那是队列里唯一一份内容，没有回程票，"
-           "也没有任何一行日志说删了什么。合成横幅保留、溢出条目改成落痕，值得单独一张卡。",
-       switch=["notify_proposals"], kind=KIND_BOOL, audit=AUDIT_NONE,
+           "也没有任何一行日志说删了什么。**它一把开关都没有**：壳侧的中继只读 "
+           "`review_notify` 一个键，§28 的 `notify_proposals` 管不到它（`grep notify_proposals shell/` 零命中），"
+           "所以这一行的 switch 列是空的、明账挂在 baseline 上——在总账里给它填一把"
+           "管不着它的开关，就是这张表最不该犯的错。合成横幅保留、溢出条目改成落痕，值得单独一张卡。",
+       switch=[], kind=KIND_NONE, audit=AUDIT_NONE,
        reversible="no（队列文件已 unlink）", overlaps=["shell_notify_relay"]),
     _b(slug="ios_refresh_and_notify", zh="iOS 前台激活即刷新 + 逐卡本地通知",
        en="iOS foreground refresh + per-card local notifications",
@@ -630,7 +645,7 @@ LEDGER: tuple = (
        effect=[EFFECT_NETWORK], code=".github/workflows/fresh-install.yml",
        unit=".github/workflows/fresh-install.yml", law=["§69"], verdict=VERDICT_KEEP,
        why="§69「一条命令装到能用」的守夜人；跑在干净 runner 上，不碰任何真机。",
-       audit="GitHub Actions 日志", reversible="n/a"),
+       audit=AUDIT_GHA, reversible="n/a"),
 )
 
 
@@ -670,10 +685,25 @@ def live_fields() -> tuple:
 # --------------------------------------------------------------------------- #
 # 「它现在开着吗」
 # --------------------------------------------------------------------------- #
+# `cfg.raw[<块>]` 里**没有**这一键时的返回值。它不是 None——None 会被 `_truthy`
+# 当成「关」，而这些块的语义恰恰相反：盘上没写过 `autodispatch:` 块 =
+# `policy.AUTODESPATCH 默认全套生效` = **开**。第一版把缺键读成关，于是
+# `enabled("auto_dispatch", Config())` 报「出厂关着」，整条管线里最贵的
+# 「没人点过、卡却自己批准并开了 LLM 会话」就这样从 ask 4 的账单底下溜过去了。
+# 与 `Config.feature()` 的「未知 flag 默认 on」同一条约定（§16）。
+_ABSENT = object()
+
+
 def _raw_value(cfg, head: str, tail: str):
-    """``cfg.raw[<块>][<键>]`` 一格（`autodispatch.enabled` 这种住在 raw 里的旋钮）。"""
+    """``cfg.raw[<块>][<键>]`` 一格（`autodispatch.enabled` 这种住在 raw 里的旋钮）。
+
+    键不在 → :data:`_ABSENT`（= 跟随那个块自己的出厂默认，见上面的注释），
+    **不是** None。
+    """
     block = cfg.raw.get(head) if isinstance(getattr(cfg, "raw", None), dict) else None
-    return block.get(tail) if isinstance(block, dict) else None
+    if not isinstance(block, dict) or tail not in block:
+        return _ABSENT
+    return block[tail]
 
 
 def _switch_value(cfg, name: str):
@@ -693,12 +723,22 @@ def _switch_value(cfg, name: str):
 _OFF_WORDS = frozenset({"", "off", "false", "no", "0", "none"})
 
 
+def _positive_int(value) -> bool:
+    """天数 / 条数型旋钮的判真：> 0 才算开；坏值按关（配错一个字不许让一条会删
+    数据的规则悄悄跑起来）。"""
+    try:
+        return int(value or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _truthy(value, kind: str) -> bool:
+    if value is _ABSENT:
+        # 块整个没写过 = 跟随那个块的出厂默认。布尔型按「开」（与 §16 未知 flag
+        # 同约定）；天数 / 条数型没有「缺席即有值」的说法，按关。
+        return kind != KIND_THRESHOLD
     if kind == KIND_THRESHOLD:
-        try:
-            return int(value or 0) > 0
-        except (TypeError, ValueError):
-            return False
+        return _positive_int(value)
     if isinstance(value, str):
         return value.strip().lower() not in _OFF_WORDS
     return bool(value)

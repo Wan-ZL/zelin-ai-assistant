@@ -97,8 +97,14 @@ ingest_enabled() {
     [ "$rc" -eq 3 ] && return 1
     return 0
 }
-if ! ingest_enabled; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipped — features.ingest is off (CONTRACT §81)" >> "$LOGFILE"
+# The switch gates the UNATTENDED path only. This same script is what the
+# Settings page's "ingest now" button runs (server/ingest_run.py:32) — an
+# automation switch must never make a button the human just pressed do nothing.
+# AIASSISTANT_CRON=1 is set by the crontab line and nowhere else (install.sh's
+# INGEST_CHAIN; same discriminator screenpipe-export.sh:90 and act/radar.py:840
+# already use).
+if [ -n "${AIASSISTANT_CRON:-}" ] && ! ingest_enabled; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipped — features.ingest is off (CONTRACT §81; the Settings 'ingest now' button still works)" >> "$LOGFILE"
     exit 0
 fi
 

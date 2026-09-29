@@ -1342,6 +1342,10 @@ _OVERRIDE_FIELDS: dict = {
     # 负数 / 垃圾值 → ValueError → 该条 override 整条跳过（保留出厂值）。
     "approval_mention_escalation": _nonneg_int,
     "trash_retention_days": int,
+    # §81（issue #451 / D83）：冷交付卡自动封存的天数。此前只能改 config.yaml
+    # （`archive.after_days`），设置页上根本没有这一行——「一把开关在一个地方」
+    # 的反例。封存可逆，坏值 / 负数按 int() 语义走（与 trash_retention_days 同款）。
+    "archive_after_days": int,
     # §72 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
     "screenpipe_retention_days": int,
     # §72.4 原始媒体保留分钟数（同一区；cleanup 步经 --print-value 读同一层）

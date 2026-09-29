@@ -15,11 +15,12 @@ issue #451 / owner 决策 D83：这道门是「整理出来后重新设计」里
     code:<slug>                code 指针指不到真文件 / 真符号
     law:<slug>:§<N>            law 里的 § 在 CONTRACT 里没有正文
     orphan-call:<路径>:<slug>  代码里 enabled("X") / audit("X") 的 X 不在总账里
-    no-callsite:<slug>         总账里的 actd 行在代码里找不到调用点（空头支票）
-    unlisted:<源>:<id>         调度器里有、总账里没有（完备性；四个可枚举源）
+    no-callsite:<slug>         行说它往 automation.jsonl 留痕，代码里却没人 audit 过（空头支票）
+    pinned:<slug>:<键>         模板把一把代价大的开关钉成活行（ask 4 的第二只眼）
+    unlisted:<源>:<id>         调度器里有、总账里没有（完备性；三个可枚举源）
 
 **诚实条款**（照 §77.1 的写法）：可枚举的只有 committed 的调度器文件——launchd
-plist 的 Label、`install.sh` 的 cron 变量、`.github/workflows/*.yml` 里带
+plist 的 Label、`install.sh` 的 cron 行变量、`.github/workflows/*.yml` 里带
 ``schedule:`` 的那些。库内重试循环、后台线程、Swift 壳侧 timer、server 的
 watcher 线程**数不到**，本门不假装数得到；它们靠 ``no-callsite`` / ``audit``
 两条与人工复核兜着。不知道就说不知道（§0 第 3 条）。
@@ -30,7 +31,7 @@ watcher 线程**数不到**，本门不假装数得到；它们靠 ``no-callsite
     python3 scripts/qa/automation_check.py --list
     python3 scripts/qa/automation_check.py --write-baseline
 
-判例：tests/test_qa_automation_ledger.py。
+判例：tests/test_qa_automation_gate.py。
 """
 
 import argparse
@@ -112,6 +113,39 @@ def _scan_default(row, factory, scores):
         scores["default-on:%s" % row.slug] = 1.0
 
 
+def _scan_pinned(row, template, scores):
+    """ask 4 的第二半：模板**钉死**一把代价大的开关，等于每台新装机都带着一个
+    用户从没做过的「显式选择」。
+
+    `_scan_default` 只看 `config.Config()`（纯出厂值、可复现），所以它永远看不见
+    `config.example.yaml` 里那行活的 `enabled: true`——2026-09-02 到 09-14 之间
+    装的机器就是这么带上 `self_improve.enabled: true` 的（D57 原话）。这条规则补上
+    那只眼睛：代价大的行，它的开关键不许出现在模板的**活行**里（注释掉的不算）。
+
+    诚实条款：只判**带块名的**开关（`<块>.<键>` 与 `features.<flag>`）——那种
+    拼法在模板里有确定的位置，找得准。扁平 Config 字段（`auto_resume` 之于
+    `execution:`）在总账里不带 yaml 路径，靠末段字符串去模板里捞会误伤同名的
+    别家键（`daily_loop.trash_retention_days` 就是现成的例子），宁可不判。
+    """
+    if not row.costly:
+        return
+    for name in row.switch:
+        if "." not in name:
+            continue
+        block, key = name.split(".", 1)
+        if _pinned_in_block(template, block, key):
+            scores["pinned:%s:%s" % (row.slug, name)] = 1.0
+
+
+def _pinned_in_block(template, block, key):
+    """模板里 `<block>:` 那一段的活行中有没有 `<key>:`（注释行不算）。"""
+    body = re.search(r"^%s:\s*$\n((?:[ \t].*\n|\n)*)" % re.escape(block),
+                     template, re.M)
+    if body is None:
+        return False
+    return re.search(r"^\s+%s\s*:" % re.escape(key), body.group(1), re.M) is not None
+
+
 def _scan_pointers(row, sections, scores):
     if not _code_resolves(row.code):
         scores["code:%s" % row.slug] = 1.0
@@ -170,22 +204,29 @@ def _literal_first_arg(node):
 
 
 class _CallCollector(ast.NodeVisitor):
-    """收 ``automation.<enabled|audit>("<slug>", …)`` 的字面量首参。"""
+    """收 ``automation.<enabled|audit>("<slug>", …)`` 的字面量首参。
+
+    两个函数**分开记**：`no-callsite` 问的是「这行说它往 automation.jsonl 留痕，
+    代码里真有人 audit 过吗」，拿 `enabled()` 的调用点去顶这个证据等于放它过关
+    ——一条新行只要写了闸门、忘了回执，门照样绿，而总账那一列在撒谎。
+    """
 
     def __init__(self):
-        self.slugs = set()
+        self.by_func = {name: set() for name in _CALL_FUNCS}
 
     def visit_Call(self, node):
-        if _is_automation_call(node.func):
+        func = node.func
+        if _is_automation_call(func):
             slug = _literal_first_arg(node)
             if slug is not None:
-                self.slugs.add(slug)
+                self.by_func[func.attr].add(slug)
         self.generic_visit(node)
 
 
 def _callsites(root):
-    """{slug: {相对路径, …}} —— 代码里真的有人问过 / 记过的那些。"""
+    """``({slug: {相对路径, …}}, {audit 过的 slug})`` —— 代码里真的有人问过 / 记过的。"""
     found = {}
+    audited = set()
     for path in qa_common.iter_py_files(root, rel_dirs=_CALLSITE_DIRS):
         tree = qa_common.parse_file(path)
         if tree is None:
@@ -193,12 +234,13 @@ def _callsites(root):
         collector = _CallCollector()
         collector.visit(tree)
         rel = os.path.relpath(path, root).replace(os.sep, "/")
-        for slug in collector.slugs:
+        audited |= collector.by_func["audit"]
+        for slug in set().union(*collector.by_func.values()):
             found.setdefault(slug, set()).add(rel)
-    return found
+    return found, audited
 
 
-def _scan_callsites(rows, found, scores):
+def _scan_callsites(rows, found, audited, scores):
     """幽灵 slug（代码问了一条总账里没有的行为）与空头支票（行声称往
     ``automation.jsonl`` 留痕，代码里却没有一处 ``automation.audit(…)``）。
 
@@ -212,7 +254,7 @@ def _scan_callsites(rows, found, scores):
         for rel in sorted(found[slug]):
             scores["orphan-call:%s:%s" % (rel, slug)] = 1.0
     for row in rows:
-        if row.audit == automation.AUDIT_LOG and row.slug not in found:
+        if row.audit == automation.AUDIT_LOG and row.slug not in audited:
             scores["no-callsite:%s" % row.slug] = 1.0
 
 
@@ -268,6 +310,7 @@ def scan(root=None, rows=None):
     rows = automation.LEDGER if rows is None else tuple(rows)
     live = set(automation.live_fields())
     sections = contract_sections(root)
+    template = _read(os.path.join(root, "config.example.yaml")) or ""
     factory = config.Config()
     scores = {}
     for row in rows:
@@ -276,8 +319,10 @@ def scan(root=None, rows=None):
         _scan_switch(row, live, scores)
         _scan_audit(row, scores)
         _scan_default(row, factory, scores)
+        _scan_pinned(row, template, scores)
         _scan_pointers(row, sections, scores)
-    _scan_callsites(rows, _callsites(root), scores)
+    found, audited = _callsites(root)
+    _scan_callsites(rows, found, audited, scores)
     _scan_units(rows, scheduler_units(root), scores)
     return scores
 

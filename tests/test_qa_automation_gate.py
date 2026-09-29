@@ -72,6 +72,22 @@ class AuditRuleTestCase(unittest.TestCase):
         """`purge_trash` 在 act/actd.py 里真有 automation.audit(...) 的调用点。"""
         self.assertNotIn("no-callsite:purge_trash", _keys(automation.LEDGER))
 
+    def test_an_enabled_call_is_not_accepted_as_proof_of_a_receipt(self):
+        """写了闸门、忘了回执 —— 门必须照样红。
+
+        第一版把 `enabled()` 与 `audit()` 的调用点记在同一个集合里，于是「这行说
+        它往 automation.jsonl 留痕」只要有人 `enabled()` 过就算证明完毕。
+        """
+        row = _row(slug="probe", audit=automation.AUDIT_LOG)
+        scores = {}
+        automation_check._scan_callsites(
+            (row,), {"probe": {"act/actd.py"}}, set(), scores)   # 只 enabled 过
+        self.assertIn("no-callsite:probe", scores)
+        scores = {}
+        automation_check._scan_callsites(
+            (row,), {"probe": {"act/actd.py"}}, {"probe"}, scores)   # 真 audit 过
+        self.assertNotIn("no-callsite:probe", scores)
+
 
 class DefaultRuleTestCase(unittest.TestCase):
     def test_a_costly_row_that_is_factory_on_is_red(self):
@@ -85,6 +101,30 @@ class DefaultRuleTestCase(unittest.TestCase):
     def test_the_verdict_does_not_depend_on_this_machine(self):
         """用 config.Config() 求值 = 纯出厂值，不读跑它那台机器的 config.yaml。"""
         self.assertEqual(_keys([_row()]), _keys([_row()]))
+
+
+class PinnedRuleTestCase(unittest.TestCase):
+    """ask 4 的第二半：模板钉死一把代价大的开关 = 每台新装机带着一个用户从没
+    做过的显式选择（D57 原话：2026-09-02 到 09-14 之间装的机器就是这么带上
+    `self_improve.enabled: true` 的）。"""
+
+    def test_a_live_template_line_for_a_costly_switch_is_red(self):
+        tpl = "autodispatch:\n  enabled: true\n  notify: true\n\nother: 1\n"
+        self.assertTrue(automation_check._pinned_in_block(tpl, "autodispatch", "enabled"))
+
+    def test_a_commented_out_template_line_is_green(self):
+        tpl = "autodispatch:\n  # enabled: true\n  notify: true\n\nother: 1\n"
+        self.assertFalse(automation_check._pinned_in_block(tpl, "autodispatch", "enabled"))
+
+    def test_a_same_named_key_in_another_block_is_not_a_match(self):
+        """`daily_loop.trash_retention_days` 不许被当成 `trash.retention_days`。"""
+        tpl = "trash:\n  retention_days: 0\n\ndaily_loop:\n  trash_retention_days: 90\n"
+        self.assertFalse(automation_check._pinned_in_block(tpl, "trash", "trash_retention_days"))
+        self.assertTrue(automation_check._pinned_in_block(tpl, "trash", "retention_days"))
+
+    def test_the_shipped_template_pins_nothing_costly(self):
+        found = _keys(automation.LEDGER)
+        self.assertEqual({k for k in found if k.startswith("pinned:")}, set())
 
 
 class PointerRuleTestCase(unittest.TestCase):

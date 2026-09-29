@@ -681,7 +681,15 @@ def _refresh_automation_switches(cfg: config.Config, fresh: config.Config) -> No
 
 def _refresh_raw_key(cfg: config.Config, fresh: config.Config, block: str, key: str) -> None:
     """``cfg.raw[<block>][<key>]`` 现读一格（`autodispatch.enabled` 是第一个客户：
-    §51 的免批闸只从 `cfg.raw` 读，所以不刷这里，设置页翻它要重启 actd）。"""
+    §51 的免批闸只从 `cfg.raw` 读，所以不刷这里，设置页翻它要重启 actd）。
+
+    判据是**键在不在**，不是值是不是 None——`policy.autodispatch_config` 分得出
+    「写了但是空值」（`enabled:` 的 YAML null → `bool(None)` = 关）与「压根没写」
+    （= 出厂默认，开）这两件事。照 :func:`_refresh_owner_logins` 那样按 None 删键，
+    会把前者刷成后者：一份写着 `enabled:` 的 config 启动时免批是关的，第一个 pass
+    之后自己变成开的——整条管线里最贵的那条自动行为，被一个「为了让开关更可信」
+    才加的刷新点朝着 issue #451 ask 4 明令禁止的方向掰了过去。
+    """
     if not isinstance(cfg.raw, dict):
         return
     target = cfg.raw.get(block)
@@ -689,11 +697,10 @@ def _refresh_raw_key(cfg: config.Config, fresh: config.Config, block: str, key: 
         target = {}
         cfg.raw[block] = target
     source = fresh.raw.get(block) if isinstance(fresh.raw, dict) else None
-    value = source.get(key) if isinstance(source, dict) else None
-    if value is None:
-        target.pop(key, None)
+    if isinstance(source, dict) and key in source:
+        target[key] = source[key]
     else:
-        target[key] = value
+        target.pop(key, None)
 
 
 def _refresh_owner_logins(cfg: config.Config, fresh: config.Config) -> None:

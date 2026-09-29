@@ -138,7 +138,8 @@ class LaneAdmissionTestCase(unittest.TestCase):
 
 
 class DailyLoopReadersTestCase(unittest.TestCase):
-    """§70.3：关着 = 三个 GitHub 读取器不跑（零 gh 调用），开着 = 今天的行为。"""
+    """§70.3 / §81.2：关着 = 出身 self_improve 的读取器一个都不跑（零 gh 调用、
+    零素材抓取），开着 = 今天的行为。名单 truth = `daily_loop.SELF_IMPROVE_READERS`。"""
 
     def setUp(self):
         config.ensure_state_dirs()

@@ -12,7 +12,7 @@
     "fixtures_b": 15,
     "parity": 841,
     "routes": 162,
-    "settings": 65,
+    "settings": 67,
     "shell": 33
   },
   "scenarios": [
@@ -2690,11 +2690,11 @@
       "id": "contract:§81.2",
       "source": "contract",
       "scenario": "去掉的冗余（issue 第 3 问）",
-      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "proof": "unittest:tests.test_self_improve_channel_switch",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "parent-cite"
+      "note": null
     },
     {
       "id": "contract:§81.3",
@@ -12781,6 +12781,26 @@
       "source": "settings",
       "scenario": "approval / Raised N times, still unhandled (escalate at) round-trips (PUT → GET → effective → default)",
       "proof": "settings:approval.approval_mention_escalation",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "setting:approval.archive_after_days",
+      "source": "settings",
+      "scenario": "approval / Auto-archive delivered after (days) round-trips (PUT → GET → effective → default)",
+      "proof": "settings:approval.archive_after_days",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "setting:approval.card_summary_enabled",
+      "source": "settings",
+      "scenario": "approval / Review-card AI summary round-trips (PUT → GET → effective → default)",
+      "proof": "settings:approval.card_summary_enabled",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

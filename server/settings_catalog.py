@@ -398,6 +398,18 @@ SECTIONS: tuple = (
                config=("approval", "mention_escalation"),
                help_zh="同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
                help_en="When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
+            # §81（issue #451 / D83）：这两把此前**在设置页上根本不存在**——
+            # 一把每张待验收卡起一次 headless 判官（花钱），一把自动封存冷交付卡，
+            # 都只能改 config.yaml。ask 2 要的是「一把开关在一个地方」，所以补进目录；
+            # 两者的 actd 现读已由 automation.live_fields() 接上（翻完下一 pass 生效）。
+            _f("card_summary_enabled", "bool", "待验收卡 AI 摘要", "Review-card AI summary",
+               default=True, config=("card_summary", "enabled"),
+               help_zh="每张待验收卡内容变化时起一次判官，生成一句话摘要 + 完成度评语。只是建议，验收 / 打回仍只有你能按；关掉 = 不再派新判官（在飞的仍收回）。",
+               help_en="When a review card's content changes, one judge run produces a one-line summary and a completion verdict. Advisory only — accepting or reworking is still yours; off = no new judges are dispatched (in-flight ones are still harvested)."),
+            _f("archive_after_days", "int", "冷交付卡自动封存（天）", "Auto-archive delivered after (days)",
+               default=30, config=("archive", "after_days"),
+               help_zh="已交付的卡最后一次活动超过这么多天就自动封存进归档（可逆，随时捞回来）；带未来截止日 / 同一串里还有在跑的卡一律不动。0 = 永不自动封存。",
+               help_en="A delivered card whose last activity is older than this is auto-archived (reversible — restore it any time); cards with a future deadline or a live sibling in their cluster are never touched. 0 = never auto-archive."),
             _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=0,
                config=("trash", "retention_days"),
                help_zh="超期且未标永久的卡硬删；0 = 永不自动清，也是出厂值（§81 / D83：硬删是整条管线里唯一不可恢复的自动删除，要它自己开）。",
