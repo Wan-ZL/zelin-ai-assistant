@@ -215,8 +215,8 @@
           "default": false,
           "effective": false,
           "help": {
-            "en": "While on, no banner is posted inside the window below (three exceptions: failure alerts, the receipt for a button you just pressed, and the last call before a card in review is archived). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board.",
-            "zh": "开启后，下面的时段内不弹任何横幅（三类除外：失败通知、你刚按下的按钮的回执、待验收卡归档前的最后一次告知）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。"
+            "en": "While on, no banner is posted inside the window below (three exceptions: failure alerts, the receipt for a button you just pressed, and the last call before a card in review is archived). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): any card it files (only when materials proposals are on) stays silent and waits for you on the board.",
+            "zh": "开启后，下面的时段内不弹任何横幅（三类除外：失败通知、你刚按下的按钮的回执、待验收卡归档前的最后一次告知）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它若铸卡（只有打开素材库提案时才会）不会响，只在看板上等你。"
           },
           "key": "quiet_hours_enabled",
           "kind": "bool",
@@ -860,11 +860,51 @@
         },
         {
           "choices": null,
-          "default": 60,
-          "effective": 60,
+          "default": true,
+          "effective": true,
           "help": {
-            "en": "Unpinned cards older than this are purged; 0 = never.",
-            "zh": "超期且未标永久的卡硬删；0 = 永不自动清。"
+            "en": "When a review card's content changes, one judge run produces a one-line summary and a completion verdict. Advisory only — accepting or reworking is still yours; off = no new judges are dispatched (in-flight ones are still harvested).",
+            "zh": "每张待验收卡内容变化时起一次判官，生成一句话摘要 + 完成度评语。只是建议，验收 / 打回仍只有你能按；关掉 = 不再派新判官（在飞的仍收回）。"
+          },
+          "key": "card_summary_enabled",
+          "kind": "bool",
+          "label": {
+            "en": "Review-card AI summary",
+            "zh": "待验收卡 AI 摘要"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": 30,
+          "effective": 30,
+          "help": {
+            "en": "A delivered card whose last activity is older than this is auto-archived (reversible — restore it any time); cards with a future deadline or a live sibling in their cluster are never touched. 0 = never auto-archive.",
+            "zh": "已交付的卡最后一次活动超过这么多天就自动封存进归档（可逆，随时捞回来）；带未来截止日 / 同一串里还有在跑的卡一律不动。0 = 永不自动封存。"
+          },
+          "key": "archive_after_days",
+          "kind": "int",
+          "label": {
+            "en": "Auto-archive delivered after (days)",
+            "zh": "冷交付卡自动封存（天）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": 0,
+          "effective": 0,
+          "help": {
+            "en": "Unpinned cards older than this are hard-deleted; 0 = never, and that is the factory value (§81 / D83 — a hard purge is the one irreversible automatic deletion in the pipeline, so it is opt-in).",
+            "zh": "超期且未标永久的卡硬删；0 = 永不自动清，也是出厂值（§81 / D83：硬删是整条管线里唯一不可恢复的自动删除，要它自己开）。"
           },
           "key": "trash_retention_days",
           "kind": "int",
@@ -1050,6 +1090,106 @@
             "zh": ""
           },
           "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "",
+            "zh": ""
+          },
+          "key": "features.merge_silent",
+          "kind": "bool",
+          "label": {
+            "en": "merge_silent — silent merge of near-duplicates",
+            "zh": "merge_silent — 近重复静默并入"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "",
+            "zh": ""
+          },
+          "key": "features.worktree_sweep",
+          "kind": "bool",
+          "label": {
+            "en": "worktree_sweep — worktree GC",
+            "zh": "worktree_sweep — worktree 自动回收"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "",
+            "zh": ""
+          },
+          "key": "features.attachment_gc",
+          "kind": "bool",
+          "label": {
+            "en": "attachment_gc — orphan attachment GC",
+            "zh": "attachment_gc — 孤儿贴图清理"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "",
+            "zh": ""
+          },
+          "key": "features.raising",
+          "kind": "bool",
+          "label": {
+            "en": "raising — raising-debt expansion",
+            "zh": "raising — 欠账卡自动展开"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
+        },
+        {
+          "choices": null,
+          "default": true,
+          "effective": true,
+          "help": {
+            "en": "",
+            "zh": ""
+          },
+          "key": "features.ingest",
+          "kind": "bool",
+          "label": {
+            "en": "ingest — headless vault ingest",
+            "zh": "ingest — 笔记自动加工（ingest）"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
         }
       ],
       "help": {
@@ -1170,46 +1310,6 @@
     },
     {
       "fields": [
-        {
-          "choices": null,
-          "default": false,
-          "effective": false,
-          "help": {
-            "en": "Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 cards into the Backlog lane, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the Backlog lane, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once.",
-            "zh": "维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并往潜在任务列铸 🤖 卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回潜在任务列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。"
-          },
-          "key": "self_improve_enabled",
-          "kind": "bool",
-          "label": {
-            "en": "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
-            "zh": "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）"
-          },
-          "placeholder": {
-            "en": "",
-            "zh": ""
-          },
-          "source": "default"
-        },
-        {
-          "choices": null,
-          "default": [],
-          "effective": [],
-          "help": {
-            "en": "The self-improvement lane only counts YOUR actions: you merge a PR = accepted, you close it = rejected, your comments = the next round of work. Two identities count out of the box — the account in the first half of the repo slug, and whichever account gh is logged in as on this machine (they differ when the repo is on a personal account and gh is logged in with a work one). Add further logins here. Case-insensitive. Takes effect on the next poll, no restart.",
-            "zh": "自动改进通道只把「你」的动作当数：你合并 PR = 验收，你关闭 = 拒绝，你的评论 = 下一轮任务。出厂就认两个身份——仓库地址前半段那个账号，以及这台机器上 gh 当前登录的账号；两者不同（个人号开仓库、工作号登 gh）时都算你本人。这里填第三个、第四个。大小写不敏感。改完下一轮巡检生效，不用重启。"
-          },
-          "key": "self_improve_owner_logins",
-          "kind": "list",
-          "label": {
-            "en": "Extra GitHub logins that count as you (comma-separated)",
-            "zh": "额外算作我本人的 GitHub 用户名（逗号分隔）"
-          },
-          "placeholder": {
-            "en": "",
-            "zh": ""
-          },
-          "source": "default"
-        },
         {
           "choices": null,
           "default": "",

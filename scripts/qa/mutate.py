@@ -18,8 +18,9 @@ stdlib + PyYAML）+ Uncle Bob 采纳清单的判决——价值靠确定性工�
         python3 scripts/qa/mutate.py --all
   * 永不作为 PR 门（owner 决策 D5 / R2.3.4）。
 
-机器可读输出（P5 每日自我改进循环的输入——survivors 列表带 file:line +
-operator，循环据此自动提出补测试提案，R2.3.4/R2.4.2；JSON 字段 add-only）：
+机器可读输出（survivors 列表带 file:line + operator；JSON 字段 add-only）。
+D86 起每日循环不再读它铸补测试卡——survivors are read by humans from the
+artifact / pinned issue：
   .qa/mutation/report.json    本轮聚合报告（schema 见 build_report()）
   .qa/mutation/state.json     断点续跑台账（跨夜 resume；模块内容**或其映射
                               测试子集**的 hash 变 = 该模块结果作废重跑——
@@ -503,7 +504,7 @@ def _fingerprint_files(repo_root, tests):
 
 def _tests_fingerprint(repo_root, tests):
     """映射测试子集的内容指纹。测试变强必须作废该模块的旧账，否则夜报把
-    已被杀死的变异体继续当「测试网的洞」喂给 P5（v0.48.13 审查 B3）。"""
+    已被杀死的变异体继续当「测试网的洞」报出来（v0.48.13 审查 B3）。"""
     digest = hashlib.sha256()
     for rel in _fingerprint_files(repo_root, tests):
         digest.update(rel.encode("utf-8") + b"\0")
@@ -752,7 +753,7 @@ def _module_complete(plan, pending):
 
 
 def build_report(plans, *, budget_seconds, executed_this_run, budget_hit):
-    """聚合报告（JSON schema 的唯一出生点；字段 add-only——P5 循环消费它）。"""
+    """聚合报告（JSON schema 的唯一出生点；字段 add-only——人读 artifact / pinned issue）。"""
     modules = {}
     complete = True
     for plan in plans:
@@ -827,9 +828,9 @@ def render_markdown(report):
                  f"{report['executed_this_run']} mutants executed this run.")
     lines.append("")
     lines.append("**Never a PR gate** (owner decision D5, CONTRACT §57). "
-                 "Surviving mutants are test-gap proposals for the daily "
-                 "self-improvement loop — the JSON artifact `mutation-report` "
-                 "on the workflow run is the machine-readable feed.")
+                 "Surviving mutants are test gaps read by humans from this "
+                 "pinned issue and the `mutation-report` JSON artifact on the "
+                 "workflow run — nothing mints cards from them (D86).")
     lines.append("")
     lines.append("| module | sites | run | killed | survived | timeout | score | status |")
     lines.append("|---|---|---|---|---|---|---|---|")

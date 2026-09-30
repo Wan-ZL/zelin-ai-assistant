@@ -62,7 +62,7 @@ FIELD_DEFAULTS = {
     "former_titles": None, "preset": None,
     "work_id": None,          # §60（D21）工作编号；None = 未批准/legacy
     "assessment": None,       # §64 AI 摘要 + 评语（dict）；None = 未评
-    "needs_mcp": False,       # §65 self_improve 卡显式声明需要 MCP（默认 False 不落盘）
+    "needs_mcp": False,       # §65 needs_mcp（writer retired D86，inert；默认 False 不落盘）
     "merged_from": None,      # §70 每日整理合成卡的来源主键列表；None = 非合成卡
     "completion_hint": None,  # §76「疑似已完成」提示 dict；None = 无完成信号
     "quiet_birth": False,     # §78/§45 静默出生（LIMITED 落潜在任务但不通知）；默认不落盘

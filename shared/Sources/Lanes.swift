@@ -16,8 +16,8 @@ enum LaneHelp {
     // §78（D80）提案车道退役：机器卡一律落潜在任务，backlog 这条说明改写成新
     // 现实。逐字同源三处：server/lanes.py LANES、ui/parity/fixtures/lanes.json。
     static var backlog: String {
-        L("机器铸的卡都落在这里：雷达捕获、每日循环、自我改进通道，还有你暂缓的事。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」补上计划、成本和验收标准，点「促成运行」一键开跑。",
-          "Every machine-filed card lands here — radar captures, the daily loop, the self-improve lane, plus anything you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to fill in the plan, cost and acceptance criteria, then \"Run it\".")
+        L("机器铸的卡都落在这里：雷达捕获、每日循环，还有你暂缓的事。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」补上计划、成本和验收标准，点「促成运行」一键开跑。",
+          "Every machine-filed card lands here — radar captures, the daily loop, plus anything you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to fill in the plan, cost and acceptance criteria, then \"Run it\".")
     }
     // §78 tombstone：提案列退役后 web / server 不再发这条 help，但 `proposals`
     // 本体留着——mac/Sources/Kanban.swift（D3 冻结的原生看板）与 iOS pager

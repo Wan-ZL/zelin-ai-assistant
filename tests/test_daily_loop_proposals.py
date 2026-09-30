@@ -1,6 +1,9 @@
 """§70 每日提案器：≤ max_proposals_per_day 张 🤖 卡、指纹去重、每 class 一条、
-GitHub 同题不重提、卡片形状（channel self_improve 写死 → proposed，plan/DoD/成本齐）；
+卡片形状（channel self_improve 写死 → proposed，plan/DoD/成本齐）；
 D33：自检类信号（ADVISORY_KINDS / doctor owner_action）只成 advisory 行，永不铸卡。
+D86：GitHub 面的四个 card kind（issue / pr_red / pr_comment / mutation）与「GitHub
+同题不重提」随读取器删除，`CARD_KINDS` 只剩 `material`——每 class 一条的规则因此
+意味着一天至多 1 张。
 
 **§70.3 §78 追记（owner 决策 D80，issue #447）**：🤖 卡的落点从退役的提案列
 改成 `detected`（潜在任务）——和所有机器卡同一条车道。它不是安静出生（不盖
@@ -31,31 +34,27 @@ def _sig(kind, detail, priority=50, title=None, ref=""):
 
 
 class SelectSignalsTestCase(unittest.TestCase):
-    def test_cap_priority_and_one_per_kind(self):
-        signals = [_sig("issue", "1", 45), _sig("issue", "2", 45), _sig("pr_red", "7", 5),
-                   _sig("mutation", "m", 40), _sig("pr_comment", "a", 8), _sig("pr_comment", "b", 8),
-                   _sig("material", "m-1", 42)]
-        chosen, skipped = daily_loop.select_signals(signals, taken=set(), gh_titles=[], budget=3)
-        self.assertEqual([s.kind for s in chosen], ["pr_red", "pr_comment", "mutation"])
-        self.assertEqual(skipped["kind_taken"], 1)      # pr_comment:b (a was chosen)
-        self.assertEqual(skipped["cap"], 3)             # material, issue:1, issue:2
+    def test_card_kinds_are_materials_only(self):
+        self.assertEqual(CARD_KINDS, ("material",))    # retired D86: issue, pr_red, pr_comment, mutation
+
+    def test_one_per_kind_caps_the_day_at_one(self):
+        signals = [_sig("material", "m-3", 42), _sig("material", "m-1", 42), _sig("material", "m-2", 42)]
+        chosen, skipped = daily_loop.select_signals(signals, taken=set(), budget=3)
+        self.assertEqual([s.fingerprint for s in chosen], ["material:m-1"])   # (priority, fingerprint) order
+        self.assertEqual(skipped["kind_taken"], 2)
+        self.assertEqual(skipped["cap"], 0)
         self.assertEqual(skipped["dedup"], 0)
         self.assertEqual(skipped["advisory"], 0)
+        self.assertEqual(skipped["gh_title"], 0)       # add-only audit key, always 0 since D86
 
-    def test_taken_fingerprints_and_github_titles_dedup(self):
-        signals = [_sig("material", "m-1", title="消化素材：账本写风暴：R-1.yaml 24 h 内被重写 150 次"),
-                   _sig("mutation", "x", title="补测试：act/lib/registry.py 变异存活 198 体"),
-                   _sig("issue", "18", title="issue #18：账本写风暴：R-1.yaml 24 h 内被重写 150 次")]
-        chosen, skipped = daily_loop.select_signals(
-            signals, taken={"mutation:x"},
-            gh_titles=["fix: 消化素材：账本写风暴：R-1.yaml 24 h 内被重写 150 次 (write storm)"], budget=5)
-        # material is already an open issue/PR title → skipped; the issue-derived
-        # signal is exempt from the GitHub-title check (it IS the GitHub item)
-        self.assertEqual([s.kind for s in chosen], ["issue"])
-        self.assertEqual(skipped, {"advisory": 0, "dedup": 1, "kind_taken": 0, "gh_title": 1, "cap": 0})
+    def test_taken_fingerprints_dedup(self):
+        signals = [_sig("material", "m-1"), _sig("material", "m-2")]
+        chosen, skipped = daily_loop.select_signals(signals, taken={"material:m-1"}, budget=5)
+        self.assertEqual([s.fingerprint for s in chosen], ["material:m-2"])
+        self.assertEqual(skipped, {"advisory": 0, "dedup": 1, "kind_taken": 0, "gh_title": 0, "cap": 0})
 
     def test_zero_budget_selects_nothing(self):
-        chosen, skipped = daily_loop.select_signals([_sig("pr_red", "1")], taken=set(), gh_titles=[], budget=0)
+        chosen, skipped = daily_loop.select_signals([_sig("material", "1")], taken=set(), budget=0)
         self.assertEqual(chosen, [])
         self.assertEqual(skipped["cap"], 1)
 
@@ -81,7 +80,7 @@ class AdvisoryKindsTestCase(unittest.TestCase):
         # 铸卡是白名单：忘了归类的新 kind 走便宜的那条路（横幅），而不是铸一张派不出去的卡
         sig = _sig("brand_new", "x", 1)
         self.assertTrue(loop_inputs.is_advisory(sig))
-        chosen, skipped = daily_loop.select_signals([sig], taken=set(), gh_titles=[], budget=5)
+        chosen, skipped = daily_loop.select_signals([sig], taken=set(), budget=5)
         self.assertEqual((chosen, skipped["advisory"]), ([], 1))
         cards, adv = daily_loop.split_advisories([sig])
         self.assertEqual((cards, [a.fingerprint for a in adv]), ([], ["brand_new:x"]))
@@ -90,13 +89,13 @@ class AdvisoryKindsTestCase(unittest.TestCase):
         for kind in ADVISORY_KINDS:
             with self.subTest(kind=kind):
                 chosen, skipped = daily_loop.select_signals([_sig(kind, "x", 1)], taken=set(),
-                                                            gh_titles=[], budget=5)
+                                                            budget=5)
                 self.assertEqual(chosen, [])
                 self.assertEqual(skipped["advisory"], 1)
         for kind in CARD_KINDS:
             with self.subTest(kind=kind):
                 chosen, _skipped = daily_loop.select_signals([_sig(kind, "x", 1)], taken=set(),
-                                                             gh_titles=[], budget=5)
+                                                             budget=5)
                 self.assertEqual([s.kind for s in chosen], [kind])
 
     def test_collector_turns_advisory_kinds_into_summaries(self):
@@ -105,8 +104,7 @@ class AdvisoryKindsTestCase(unittest.TestCase):
                 sig = _sig(kind, "x", 1, title="派发卡死：3 张已批卡发不出去")
                 with mock.patch.object(loop_inputs, "registry_signals", return_value=[sig]), \
                         mock.patch.object(loop_inputs, "materials_signals", return_value=[]):
-                    out = daily_loop.collect_signals([], now=NOW, gh=lambda a: None, doctor=lambda: "[]",
-                                                     repo="o/r")
+                    out = daily_loop.collect_signals([], now=NOW, doctor=lambda: "[]", materials=True)
                 self.assertEqual(out["signals"], [])
                 self.assertEqual(out["inputs"]["registry"], 1)        # the reader is still counted
                 mine = [a for a in out["advisories"] if a.fingerprint == f"{kind}:x"]
@@ -118,16 +116,17 @@ class AdvisoryKindsTestCase(unittest.TestCase):
 
     def test_doctor_owner_action_row_is_an_advisory_whatever_its_kind(self):
         for fid in sorted(failures.OWNER_ACTION_IDS):
-            self.assertTrue(loop_inputs.is_advisory(_sig("issue", "1", ref=fid)), fid)   # belt and braces
+            self.assertTrue(loop_inputs.is_advisory(_sig("material", "1", ref=fid)), fid)   # belt and braces
         self.assertTrue(loop_inputs.is_advisory(_sig("doctor_fail", "launchd claude", ref="claude_blind")))
         self.assertTrue(loop_inputs.is_advisory(_sig("doctor_fail", "python", ref="")))   # kind alone suffices
-        self.assertFalse(loop_inputs.is_advisory(_sig("issue", "1", ref="https://github.com/x/1")))
-        self.assertFalse(loop_inputs.is_advisory(_sig("pr_red", "7", ref="")))
+        self.assertFalse(loop_inputs.is_advisory(_sig("material", "1", ref="https://example.com/x/1")))
+        self.assertFalse(loop_inputs.is_advisory(_sig("material", "7", ref="")))
+        self.assertTrue(loop_inputs.is_advisory(_sig("issue", "1", ref="")))   # retired kind D86 → advisory
 
     def test_split_orders_by_priority_and_keeps_cards(self):
-        cards, adv = daily_loop.split_advisories([_sig("doctor_fail", "a", 14), _sig("issue", "1", 45),
+        cards, adv = daily_loop.split_advisories([_sig("doctor_fail", "a", 14), _sig("material", "1", 45),
                                                   _sig("stuck_dispatch", "claude_blind", 10)])
-        self.assertEqual([s.kind for s in cards], ["issue"])
+        self.assertEqual([s.kind for s in cards], ["material"])
         self.assertEqual([a.fingerprint for a in adv], ["stuck_dispatch:claude_blind", "doctor_fail:a"])
 
     def test_advisory_rows_inherit_first_seen_and_are_capped(self):
@@ -153,7 +152,7 @@ class FileProposalsTestCase(unittest.TestCase):
             p.unlink()
 
     def test_card_shape_is_backlog_lane_with_locked_channel(self):
-        sig = _sig("pr_red", "7", title="修红 CI：PR #7 feat: quieter loop")
+        sig = _sig("material", "7", title="消化素材：quieter loop talk")
         filed = daily_loop.file_proposals([sig], TODAY, "/repo/path")
         self.assertEqual(len(filed), 1)
         card = registry.load(filed[0]["id"])
@@ -169,11 +168,11 @@ class FileProposalsTestCase(unittest.TestCase):
         self.assertEqual(card.cost_estimate_usd, 2.0)
         src = card.sources[0]
         self.assertEqual(src["channel"], daily_loop.SOURCE_CHANNEL)
-        self.assertEqual(src["ref"], "self_improve:pr_red:7")
+        self.assertEqual(src["ref"], "self_improve:material:7")
         self.assertEqual(src["date"], TODAY)
         self.assertEqual(card.origin_trust, policy.PROPOSED)          # §50: AI 自提 → 人批
         self.assertEqual(policy.classify_origin(card.sources), policy.PROPOSED)
-        self.assertFalse(policy.may_auto_dispatch(card, config.Config())[0])   # §51 不免批
+        self.assertTrue(policy.is_self_improve_sources(card.sources))      # D74 hide-🤖 判据（D86 起无免批 lane）
         self.assertTrue(card.id.startswith("P-"))                        # §60 主键
 
     def test_fingerprints_are_read_back_from_the_registry_including_trash(self):
@@ -187,29 +186,22 @@ class FileProposalsTestCase(unittest.TestCase):
         self.assertEqual(daily_loop.proposals_today(reqs, "2026-09-03"), 0)
 
     def test_same_title_twice_folds_instead_of_duplicating(self):
-        sig = _sig("mutation", "x", title="补测试：act/lib/registry.py 变异存活 198 体")
+        sig = _sig("material", "x", title="消化素材：act/lib/registry.py 写风暴分析长文")
         first = daily_loop.file_proposals([sig], TODAY, "/repo")
-        again = daily_loop.file_proposals([Signal(**{**sig.__dict__, "fingerprint": "mutation:y"})], TODAY, "/repo")
+        again = daily_loop.file_proposals([Signal(**{**sig.__dict__, "fingerprint": "material:y"})], TODAY, "/repo")
         self.assertEqual(first[0]["outcome"], "proposed")
         self.assertEqual(again[0]["outcome"], "folded")
         self.assertEqual(again[0]["id"], first[0]["id"])
         self.assertEqual(len(registry.load_all()), 1)
 
     def test_a_bad_card_is_isolated(self):
-        bad = _sig("issue", "1")
+        bad = _sig("material", "1")
         bad.plan = object()          # unserializable → save blows up
-        good = _sig("pr_red", "7")
+        good = _sig("material", "7")
         filed = daily_loop.file_proposals([bad, good], TODAY, "/repo")
         self.assertEqual(len(filed), 2)
         self.assertIn("error", filed[0])
         self.assertIn("id", filed[1])
-
-
-class TitleOnGithubTestCase(unittest.TestCase):
-    def test_containment_needs_length(self):
-        self.assertTrue(daily_loop.title_on_github("修红 CI：PR #7 feat: x", ["fix: 修红 CI：PR #7 feat: x now"]))
-        self.assertFalse(daily_loop.title_on_github("short", ["short"]))
-        self.assertFalse(daily_loop.title_on_github("something long enough here", ["unrelated title here"]))
 
 
 class ConfigKnobsTestCase(unittest.TestCase):

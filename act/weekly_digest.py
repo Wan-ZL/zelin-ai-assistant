@@ -10,9 +10,9 @@ is deleted — the prompt asks for ``{"digest": ...}`` only, and a model that
 volunteers a ``suggestions`` key anyway is ignored. Nothing reaches
 ``card_sent`` from here. The summary/analytics keys ``suggestions`` /
 ``suggestion_ids`` stay as add-only constants (0 / []). Bringing ideas back
-is ``git revert`` of the D19 commits; per vnext2-plan P5 the daily
-self-improvement loop is their new outlet (fingerprint-deduped), not this
-module.
+is ``git revert`` of the D19 commits; per vnext2-plan P5 the daily loop was
+their new outlet (fingerprint-deduped), not this module — since D86 that loop
+only mints from the materials library (``daily_loop.materials_enabled``).
 
 Reads the last 7 days of the Obsidian ingest output (``sources.obsidian_raw``,
 the same ``2 - raw`` folder the radar scans — YYYY-MM-DD-*.md files produced by

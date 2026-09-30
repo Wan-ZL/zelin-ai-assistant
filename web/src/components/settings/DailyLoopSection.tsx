@@ -134,8 +134,8 @@ export function DailyLoopSection() {
       <h3 id="settings-daily-loop-title" className="settings-section-title">{title}</h3>
       <p className="settings-helper">
         {text(
-          "每天固定时刻，后台服务先整理看板（提案列与潜在任务列：同主题多卡合成一张新卡、过时卡进回收站——都可撤销），再从日志、doctor、GitHub issue / PR 和素材库里挑最多 N 条改进，铸成 🤖 提案卡等你审批。待验收列只做一件事：躺太久的卡先通知你一次、第二天收进回收站（可恢复）。运行中 / 已交付的卡永不被碰。",
-          "Once a day the daemon first tidies the board (proposal + backlog lanes: same-topic cards become one new card, stale cards go to the trash — all undoable), then reads logs, doctor, GitHub issues / PRs and the materials box and drafts at most N improvement proposals as 🤖 cards for your approval. In the Review lane it does one thing only: cards that sat too long get one notification, then move to the trash — restorable — the next day. Running / delivered cards are never touched.",
+          "每天固定时刻，后台服务先整理看板（提案列与潜在任务列：同主题多卡合成一张新卡、过时卡进回收站——都可撤销），再从素材库挑最多 N 条（需在 config.yaml 打开 `daily_loop.materials_enabled`，出厂关）铸成 🤖 卡等你促成运行；日志与 doctor 的发现只进维护横幅。待验收列只做一件事：躺太久的卡先通知你一次、第二天收进回收站（可恢复）。运行中 / 已交付的卡永不被碰。",
+          "Once a day the daemon first tidies the board (proposal + backlog lanes: same-topic cards become one new card, stale cards go to the trash — all undoable), then picks at most N items from the materials box (only when `daily_loop.materials_enabled` is on in config.yaml — off by default) and files them as 🤖 cards that wait for you to start them; findings from logs and doctor only show up in the maintenance banner. In the Review lane it does one thing only: cards that sat too long get one notification, then move to the trash — restorable — the next day. Running / delivered cards are never touched.",
         )}
       </p>
 

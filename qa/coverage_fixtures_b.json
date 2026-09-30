@@ -82,7 +82,7 @@
   {
     "id": "B-09-daily-loop-0330-max2",
     "source": "fixtures_b",
-    "scenario": "假时钟 03:30 解锁每日循环：五条信号只落 max_proposals_per_day(2) 张，余下记 cap",
+    "scenario": "假时钟 03:30 解锁每日循环：五条素材信号只落 1 张（D86 起唯一 card kind，每 class 一天一条），余下记 kind_taken；额度 0 记 cap",
     "proof": "fixture:B-09-daily-loop-0330-max2",
     "tier": "B",
     "status": "todo",

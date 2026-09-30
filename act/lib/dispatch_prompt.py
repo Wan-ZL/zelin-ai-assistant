@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from act.lib import config, sanitize, self_improve
+from act.lib import config, sanitize
 from act.lib.registry import Requirement, display_id
 
 MEMORY_HEAD_LINES = 60
@@ -362,15 +362,12 @@ def voice_blocks(cfg: config.Config) -> list[str]:
 
 
 def gate_blocks(req: Requirement, cfg: config.Config, remote: bool, delivery_mode: str, target: Path) -> list[str]:
-    """QUALITY GATE, the §65 self_improve delivery contract (empty for every
-    other card), the training discipline (type==training) and the green-sign note."""
+    """QUALITY GATE, the training discipline (type==training) and the green-sign
+    note. (The §65 self_improve delivery-contract block retired with the lane, D86.)"""
     blocks: list[str] = []
     blocks.append("\n## " + quality_gate_block(cfg, remote=remote,
                                                 delivery_mode=delivery_mode,
                                                 target=target))
-    # §65 self_improve lane：确定性交付契约段（分支名 / 只准草稿 PR / 受保护
-    # 路径 / 无 MCP）——非 self_improve 卡给 []，prompt 逐字节不变。
-    blocks.extend(self_improve.prompt_blocks(req, cfg, target))
 
     if (req.type or "").lower() == "training":
         blocks.append("\n## " + training_block())

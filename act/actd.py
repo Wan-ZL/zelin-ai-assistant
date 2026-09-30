@@ -10,8 +10,6 @@ Each pass:
         merge_review / merge_apply / merge_dismiss -> merge-review 契约 一/四/五
       delete the decision file after reading it.
   (a'') §78 一次性归并扫描：退役提案车道上的存量 card_sent 卡搬进潜在任务（detected）。
-  (a') auto-dispatch（§65 self_improve lane；§51 hand lane retired，D80.4）：
-       潜在任务里的 lane 卡过天花板即免批 approved。
   (b) dispatch every status=approved requirement that has no execution yet
       （并发上限内；超出留在合并运行列的 queued 子状态）。
   (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
@@ -67,7 +65,6 @@ from act.lib import (
     recap_requests,
     recap_store,
     registry,  # noqa: F401 - surface: tests patch ``actd.registry.load`` (module attr)
-    self_improve,
     voice_job,
 )
 from act.lib.actd import alerts as _alerts
@@ -451,7 +448,7 @@ def cleanup_merge_jobs() -> int:
     return _merge.cleanup_merge_jobs(_ctx())
 
 
-# (a') auto-dispatch / (b) dispatch / raising --------------------------------
+# (b) dispatch / raising ---------------------------------------------
 def _rearm_dispatch(ex: dict) -> dict:
     return _dispatch.rearm_dispatch(_ctx(), ex)
 
@@ -462,10 +459,6 @@ def _power_sample() -> int:
     卡面的「耗时」因此能诚实地说「其中 N 小时电脑睡眠」，§71.3 的一次性重试
     也只认这个测量值作证据。"""
     return _power.sample_pass(_ctx())
-
-
-def auto_dispatch_pass(cfg: config.Config) -> int:
-    return _dispatch.auto_dispatch_pass(_ctx(), cfg)
 
 
 #: §78.5「每次开机至多一次」的闩：一次性迁移不该每 pass 再扫一遍全表
@@ -656,12 +649,10 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     """§59（D22 + D53）：把三把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass
     一次，web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立
     进程，本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这
-    几个字段，其余 startup-frozen 语义不动；§70 的五把每日循环旋钮与 §65.1 的通道
-    总开关（`self_improve_enabled`，#307 / D57）与 §44.6 的并入回执开关
+    几个字段，其余 startup-frozen 语义不动；§70 的每日循环旋钮与 §44.6 的并入回执开关
     （`fold_receipt_notices`，#308 / D64）与 §76.2 的升级阈值
-    （`approval_mention_escalation`，#313 / D70）同一刷新点——设置页「开发者」区一关，
-    下一 pass 就不再读 GitHub、不再巡检、不再免批派发，无需重启守护进程；§65.5 的
-    `self_improve.owner_logins`（#310）也在这里现读（`_refresh_owner_logins`）。"""
+    （`approval_mention_escalation`，#313 / D70）同一刷新点，设置页改完下一 pass 生效、
+    无需重启守护进程。（§65 通道总开关与 owner_logins 的现读随通道删除，D86。）"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
@@ -671,14 +662,12 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     cfg.models_fallback = fresh.models_fallback   # D53 第三把（--fallback-model）
     for knob in daily_loop.LIVE_KNOBS:
         setattr(cfg, knob, getattr(fresh, knob))
-    cfg.self_improve_enabled = fresh.self_improve_enabled   # §65.1（#307 / D57）
     # §44.6 追记（#308 / D64）：并入回执开关同一刷新点——设置页一关，下一 pass
     # 写出的 dashboard 里 fold_receipts 就空了，无需重启。
     cfg.fold_receipt_notices = fresh.fold_receipt_notices
     # §76.2（#313 / D70）：被提 N 次的升级阈值同一刷新点——设置页改完（或调成
     # 0 关掉）下一 pass 的投影就按新阈值算，不必重启守护进程。
     cfg.approval_mention_escalation = fresh.approval_mention_escalation
-    _refresh_owner_logins(cfg, fresh)                       # §65.5（#310）
     _refresh_automation_switches(cfg, fresh)                # §81（#451 / D83）
 
 
@@ -687,69 +676,21 @@ def _refresh_automation_switches(cfg: config.Config, fresh: config.Config) -> No
 
     以前这个刷新点是手抄的——谁想让自己的旋钮变热，就自己来加一行；抄漏了就是
     一把「设置页翻了却要重启才生效」的死开关（`trash.retention_days`、
-    `card_summary.enabled`、`updates.check_enabled`、`features.feedback_sync`、
-    `autodispatch.enabled` 五把就是这么冷了一年）。现在名单的真源是
+    `card_summary.enabled`、`updates.check_enabled`、`features.feedback_sync`
+    几把就是这么冷了一年）。现在名单的真源是
     :func:`act.lib.automation.live_fields`：总账里加一行带 switch 的 actd 行为，
     那把开关自动变热，本函数一个字都不用改。
 
-    三种拼法各走各的赋值：``features.<flag>`` 进 ``cfg.features``、
-    ``<block>.<key>``（如 `autodispatch.enabled`）进 ``cfg.raw``、其余是
-    ``Config`` 上的扁平字段。盘上没有那一键 = 删掉内存里的旧值（与
-    :func:`_refresh_owner_logins` 同纪律：diff-write 删键就该退回出厂默认）。
+    两种拼法各走各的赋值：``features.<flag>`` 进 ``cfg.features``，其余是 ``Config``
+    上的扁平字段。（``<block>.<key>`` 进 ``cfg.raw`` 的第三条路径只服务过
+    `autodispatch.enabled`，随 §51 第二条 lane 删除，D86；总账测试钉死不许再出现。）
     """
     for name in automation.live_fields():
-        if "." not in name:
-            if hasattr(fresh, name):
-                setattr(cfg, name, getattr(fresh, name))
-            continue
-        head, tail = name.split(".", 1)
-        if head == "features":
+        head, _, tail = name.partition(".")
+        if head == "features" and tail:
             cfg.features[tail] = fresh.feature(tail)
-        else:
-            _refresh_raw_key(cfg, fresh, head, tail)
-
-
-def _refresh_raw_key(cfg: config.Config, fresh: config.Config, block: str, key: str) -> None:
-    """``cfg.raw[<block>][<key>]`` 现读一格（`autodispatch.enabled` 是第一个客户：
-    §51 的免批闸只从 `cfg.raw` 读，所以不刷这里，设置页翻它要重启 actd）。
-
-    判据是**键在不在**，不是值是不是 None——`policy.autodispatch_config` 分得出
-    「写了但是空值」（`enabled:` 的 YAML null → `bool(None)` = 关）与「压根没写」
-    （= 出厂默认，开）这两件事。照 :func:`_refresh_owner_logins` 那样按 None 删键，
-    会把前者刷成后者：一份写着 `enabled:` 的 config 启动时免批是关的，第一个 pass
-    之后自己变成开的——整条管线里最贵的那条自动行为，被一个「为了让开关更可信」
-    才加的刷新点朝着 issue #451 ask 4 明令禁止的方向掰了过去。
-    """
-    if not isinstance(cfg.raw, dict):
-        return
-    target = cfg.raw.get(block)
-    if not isinstance(target, dict):
-        target = {}
-        cfg.raw[block] = target
-    source = fresh.raw.get(block) if isinstance(fresh.raw, dict) else None
-    if isinstance(source, dict) and key in source:
-        target[key] = source[key]
-    else:
-        target.pop(key, None)
-
-
-def _refresh_owner_logins(cfg: config.Config, fresh: config.Config) -> None:
-    """§65.8 追记（issue #310）：`self_improve:` 块**只有 `owner_logins` 一键**
-    每 pass 现读（设置页「开发者」区改完下一 pass 生效）；`repo_path` /
-    `tick_minutes` / `github_repo` 仍随 actd 启动冻结。盘上没有这一键 = 删掉内存
-    里的旧值（设置页清空列表 = diff-write 删键，不删就还认着被撤销的 login）。"""
-    if not isinstance(cfg.raw, dict):
-        return
-    block = cfg.raw.get("self_improve")
-    if not isinstance(block, dict):
-        block = {}
-        cfg.raw["self_improve"] = block
-    source = fresh.raw.get("self_improve") if isinstance(fresh.raw, dict) else None
-    logins = source.get("owner_logins") if isinstance(source, dict) else None
-    if logins is None:
-        block.pop("owner_logins", None)
-    else:
-        block["owner_logins"] = logins
+        elif not tail and hasattr(fresh, name):
+            setattr(cfg, name, getattr(fresh, name))
 
 
 def _early_dashboard(cfg: config.Config) -> None:
@@ -765,7 +706,7 @@ def _silent_merge_sweep(cfg: Optional[config.Config] = None) -> None:
     """§44 的**落盘端** + §81 闸门（`features.merge_silent`，与探测端共用一把）。
 
     关掉时连在飞的判定都不消费——判官文件留着，开关翻回来下一 pass 照常落账
-    （与 §65.1 「关开关不腰斩仍活着的会话」同纪律：不丢数据，只停动作）。
+    （§81 同纪律：关开关不腰斩在飞的东西——不丢数据，只停动作）。
     """
     if not automation.enabled("silent_merge", cfg):
         return
@@ -862,7 +803,6 @@ def _housekeeping_phase(cfg: config.Config, interval: Optional[int]) -> None:
     _archive_step(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
     daily_loop.tick(cfg, interval=interval)   # §70: 到点跑一次「先维护再提案」，自吞异常
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
-    self_improve.tick_hook(cfg, log=_log)   # §65.5 lane PR 巡检（自身节流）
     _silent_merge_sweep(cfg)
     # §64：待验收卡 AI 摘要 + 完成度评语——同款两段式（detached 判官只读，本线程落卡）；只是建议，永不改 status；绝不抛
     card_summary.tick(cfg)
@@ -929,15 +869,13 @@ def run_once(
     _store2_tick()   # §53 数据层：首跑激活（备份→迁移→比对→标记）+ 每日导出
     heartbeat.beat("inbox", interval)
     n_inbox = process_inbox()
-    # §78 一次性归并扫描必须排在免批闸**之前**：退役车道上的存量卡先落进
-    # 潜在任务，本 pass 的 §65 lane 卡才可能被看见（否则要多等一整轮）。
+    # §78 一次性归并扫描：退役车道上的存量卡先落进潜在任务，排在派发之前。
     fold_retired_lane()
-    n_auto = auto_dispatch_pass(cfg)   # §65 lane 免批通道（detected→approved）
     heartbeat.beat("dispatch", interval)
     n_dispatched = dispatch_approved(cfg)
     # 仅在真有变化时才早写——空闲 pass 不额外跑 build_dashboard（内含 `claude agents`
     # 子进程 + 全量 registry 加载）。
-    if n_inbox or n_auto or n_dispatched:
+    if n_inbox or n_dispatched:
         _early_dashboard(cfg)
     heartbeat.beat("reconcile", interval)
     reconcile_executing(cfg, resume_notified if resume_notified is not None else set())

@@ -85,8 +85,8 @@ export function MaterialsSection() {
       <h3 id="settings-materials-title" className="settings-section-title">{text("素材库", "Materials box")}</h3>
       <p className="settings-helper">
         {text(
-          "看到好东西就往这里扔：一个链接（YouTube、文章、repo…）加一句为什么值得看。不会变成卡片；每日自我改进循环会抓取内容、结合本产品提出改进提案。",
-          "Drop things worth learning from here: a link (YouTube, article, repo…) plus one line on why. Nothing becomes a card; the daily self-improvement loop fetches the content and turns it into proposals for this product.",
+          "看到好东西就往这里扔：一个链接（YouTube、文章、repo…）加一句为什么值得看。不会变成卡片；每日循环会抓取内容、结合本产品提出改进提案——只在 config.yaml 打开 `daily_loop.materials_enabled` 时（出厂关）。",
+          "Drop things worth learning from here: a link (YouTube, article, repo…) plus one line on why. Nothing becomes a card; the daily loop fetches the content and turns it into proposals for this product — only while `daily_loop.materials_enabled` is on in config.yaml (off by default).",
         )}
       </p>
 

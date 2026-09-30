@@ -176,21 +176,21 @@ LEDGER: tuple = (
        overlaps=["radar_obsidian", "radar_slack"]),
     _b(slug="daily_loop_proposals", zh="每日循环铸提案卡", en="daily-loop proposals",
        runner=RUNNER_ACTD, cadence="每天 daily_loop.time 后的第一个 pass",
-       effect=[EFFECT_CARDS, EFFECT_SPEND, EFFECT_NETWORK],
-       code="act/lib/daily_loop.py:_propose", law=["§70", "§65"], verdict=VERDICT_KEEP,
-       why="D10 的主体；上限旋钮已在设置页，保留。",
+       effect=[EFFECT_CARDS, EFFECT_SPEND],
+       code="act/lib/daily_loop.py:_propose", law=["§70"], verdict=VERDICT_KEEP,
+       why="D10 的主体；D86 起唯一的输入是素材库（出厂关），上限旋钮在设置页",
        switch=["daily_loop_enabled", "daily_loop_max_proposals_per_day"],
        kind=KIND_THRESHOLD, audit=AUDIT_DAILY_LOOP,
        reversible="铸出的卡可 trash（循环卡 90 天可恢复）",
        overlaps=["loop_material_proposals", "weekly_digest", "digest_card"]),
     _b(slug="loop_material_proposals", zh="素材库铸提案卡", en="material-library proposals",
        runner=RUNNER_ACTD, cadence="随每日循环",
-       effect=[EFFECT_CARDS, EFFECT_SPEND],
-       code="act/lib/loop_inputs.py:materials_signals", law=["§62", "§70", "§65"],
+       effect=[EFFECT_CARDS, EFFECT_SPEND, EFFECT_NETWORK],
+       code="act/lib/loop_inputs.py:materials_signals", law=["§62", "§70"],
        verdict=VERDICT_KEEP,
-       why="它铸的是 self_improve 卡（ref self_improve:material:*、target=本仓库），"
-           "却没跟着 §65.1 的通道开关关——本轮并进 GITHUB_READERS 那道闸。",
-       switch=["daily_loop_enabled", "self_improve_enabled"], kind=KIND_BOOL,
+       why="D86：原挂 §65.1 通道开关，通道删除后改为 yaml 专用开关 "
+           "daily_loop.materials_enabled（出厂关）",
+       switch=["daily_loop_enabled", "daily_loop_materials_enabled"], kind=KIND_BOOL,
        audit=AUDIT_DAILY_LOOP, reversible="铸出的卡可 trash",
        overlaps=["daily_loop_proposals"]),
     _b(slug="digest_card", zh="状态摘要卡", en="state digest card",
@@ -224,17 +224,17 @@ LEDGER: tuple = (
     _b(slug="auto_dispatch", zh="免批自动派发", en="policy auto-dispatch",
        runner=RUNNER_ACTD, cadence="每 pass",
        effect=[EFFECT_CARDS, EFFECT_SPEND],
-       code="act/lib/actd/dispatch.py:auto_dispatch_pass", law=["§51", "§50", "§71"],
-       verdict=VERDICT_KEEP,
-       why="hand lane 的免批通道是 §0 第 12 条的明文例外；问题只在开关是冷的——本轮转热。",
-       switch=["autodispatch.enabled"], kind=KIND_BOOL, audit=AUDIT_LOG,
-       reversible="派出去的会话可 stop；卡回退 card_sent"),
+       code="act/lib/actd/dispatch.py:auto_dispatch_pass（retired D86）", law=["§51", "§50", "§71"],
+       verdict=VERDICT_RETIRED,
+       why="D86：§51 两条免批 lane 均已退役（hand D80.4、self_improve D86），无可免批的卡",
+       switch=[], kind=KIND_NONE, audit=AUDIT_NONE,   # D86：行为已删，不再有 audit() 调用点
+       reversible="n/a（行为已删除）"),
     _b(slug="dispatch_approved", zh="批准即派 headless 会话", en="dispatch approved cards",
        runner=RUNNER_ACTD, cadence="每 pass",
        effect=[EFFECT_SPEND], code="act/lib/actd/dispatch.py:dispatch_approved",
        law=["§4", "§34"], verdict=VERDICT_KEEP,
        why="人点了批准就是授权，不该再给它一把「批了也不跑」的开关；"
-           "无人值守的那一半由 auto_dispatch 那一行的闸门管。",
+           "D86 起没有无人值守的那一半（免批 lane 全部退役）。",
        audit=AUDIT_ACTD_LOG, reversible="会话可 stop，卡可打回"),
     _b(slug="auto_resume", zh="死会话自动续命", en="auto-resume dead sessions",
        runner=RUNNER_ACTD, cadence="每 pass（带退避）",
@@ -398,13 +398,14 @@ LEDGER: tuple = (
        switch=["updates_check_enabled"], kind=KIND_BOOL, audit=AUDIT_ACTD_LOG,
        reversible="n/a（只读一个版本号）"),
     _b(slug="self_improve_tick", zh="自动 PR 通道巡检", en="self-improve lane tick",
-       runner=RUNNER_ACTD, cadence="self_improve.tick_minutes（默认 60 分钟）",
+       runner=RUNNER_ACTD, cadence="n/a（retired D86）",
        effect=[EFFECT_NETWORK, EFFECT_CARDS],
-       code="act/lib/self_improve.py:tick_hook", law=["§65"], verdict=VERDICT_KEEP,
-       why="D57 已经把整条通道收进一把出厂关的开关并做成每 pass 现读——"
-           "本总账的样板，不动。",
-       switch=["self_improve_enabled"], kind=KIND_BOOL, audit="lane.json",
-       reversible="跟进卡可 trash；PR 是草稿，合并权在人"),
+       code="act/lib/self_improve.py:tick_hook（retired D86，模块已删）", law=["§65"],
+       verdict=VERDICT_RETIRED,
+       why="D86：owner「你把这个自动读 issue 写 PR 的循环功能完整删掉」——§65 通道整条删除，"
+           "巡检随之退役。",
+       switch=[], kind=KIND_NONE, audit="lane.json",
+       reversible="n/a（行为已删除）"),
     _b(slug="syncd", zh="云同步守护进程", en="cloud sync daemon",
        runner=RUNNER_LAUNCHD, cadence="常驻（KeepAlive）",
        effect=[EFFECT_NETWORK, EFFECT_STATE], code="act/syncd.py:main", unit="com.zelin.aiassistant.syncd",
@@ -613,7 +614,7 @@ LEDGER: tuple = (
        effect=[EFFECT_STATE], code="act/syncd.py:_ledger_append",
        law=["§31"], verdict=VERDICT_KEEP,
        why="`state/sync/delivered.jsonl` 是纯 append 且**不走 logcap**——同一个仓库里"
-           "`self_improve` 的孪生台账是带帽的（`REJECTED_CAP_BYTES`）。没配对时整条静默，"
+           "别的台账都带帽（防腐 #4）。没配对时整条静默，"
            "所以今天不痛；配上之后它每 10 秒被整份读一次，涨起来是 O(n) 的。",
        switch=[], kind=KIND_NONE, audit="它自己就是台账",
        reversible="n/a（只记送达）", overlaps=["syncd"]),
@@ -685,36 +686,16 @@ def live_fields() -> tuple:
 # --------------------------------------------------------------------------- #
 # 「它现在开着吗」
 # --------------------------------------------------------------------------- #
-# `cfg.raw[<块>]` 里**没有**这一键时的返回值。它不是 None——None 会被 `_truthy`
-# 当成「关」，而这些块的语义恰恰相反：盘上没写过 `autodispatch:` 块 =
-# `policy.AUTODESPATCH 默认全套生效` = **开**。第一版把缺键读成关，于是
-# `enabled("auto_dispatch", Config())` 报「出厂关着」，整条管线里最贵的
-# 「没人点过、卡却自己批准并开了 LLM 会话」就这样从 ask 4 的账单底下溜过去了。
-# 与 `Config.feature()` 的「未知 flag 默认 on」同一条约定（§16）。
-_ABSENT = object()
-
-
-def _raw_value(cfg, head: str, tail: str):
-    """``cfg.raw[<块>][<键>]`` 一格（`autodispatch.enabled` 这种住在 raw 里的旋钮）。
-
-    键不在 → :data:`_ABSENT`（= 跟随那个块自己的出厂默认，见上面的注释），
-    **不是** None。
-    """
-    block = cfg.raw.get(head) if isinstance(getattr(cfg, "raw", None), dict) else None
-    if not isinstance(block, dict) or tail not in block:
-        return _ABSENT
-    return block[tail]
-
-
 def _switch_value(cfg, name: str):
-    """一个开关字段的值。三种拼法：扁平 Config 字段 / ``features.<flag>`` /
-    ``<块>.<键>``（cfg.raw）。"""
-    if "." not in name:
+    """一个开关字段的值。两种拼法：扁平 Config 字段 / ``features.<flag>``。
+    （第三种 ``<块>.<键>``（cfg.raw）只服务过 `autodispatch.enabled`，随 §51 第二条
+    lane retired D86；再出现就读成 None = 关，fail-closed，总账测试钉死不许出现。）"""
+    head, _, tail = name.partition(".")
+    if not tail:
         return getattr(cfg, name, None)
-    head, tail = name.split(".", 1)
     if head == "features":
         return cfg.feature(tail) if hasattr(cfg, "feature") else True
-    return _raw_value(cfg, head, tail)
+    return None
 
 
 # 字符串型旋钮里表示「关」的字面量（`digest.frequency: off` 是第一个客户——
@@ -733,10 +714,6 @@ def _positive_int(value) -> bool:
 
 
 def _truthy(value, kind: str) -> bool:
-    if value is _ABSENT:
-        # 块整个没写过 = 跟随那个块的出厂默认。布尔型按「开」（与 §16 未知 flag
-        # 同约定）；天数 / 条数型没有「缺席即有值」的说法，按关。
-        return kind != KIND_THRESHOLD
     if kind == KIND_THRESHOLD:
         return _positive_int(value)
     if isinstance(value, str):

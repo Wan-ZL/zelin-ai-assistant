@@ -1,5 +1,5 @@
 """``--fallback-model`` placement in every argv act/llm.py builds (CONTRACT §59
-D53; §4 / §65 ordering).
+D53; §4 ordering; the zero-MCP tail is the channel-keyed egress lock kept by D86).
 
 Fixed head of every launch: ``--output-format <fmt>`` → ``--model`` →
 ``--fallback-model`` → (``--bg`` only) ``NO_MCP_ARGV`` → the variable tail

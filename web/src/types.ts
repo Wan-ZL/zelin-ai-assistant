@@ -198,32 +198,6 @@ export interface TaskRow {
   [key: string]: unknown;
 }
 
-/** §65.3 self_improve 卡的 gh 物理核验结果（review 行 `delivery`，wire key 逐字镜像 execution.delivery） */
-export interface Delivery {
-  verified: boolean;
-  reason?: string | null;
-  branch?: string;
-  pr_number?: number | null;
-  pr_url?: string | null;
-  pr_draft?: boolean | null;
-  pr_state?: string | null;
-  changed_files?: number;
-  sensitive_paths?: string[];
-  [key: string]: unknown;
-}
-
-/** §65 顶层 `self_improve`：自动草稿 PR 通道的开关 + 暂停状态（敏感路径护栏） */
-export interface SelfImproveState {
-  enabled: boolean;
-  paused: boolean;
-  paused_reason?: string | null;
-  paused_pr?: number | null;
-  paused_pr_url?: string | null;
-  paused_paths?: string[];
-  paused_at?: string | null;
-  [key: string]: unknown;
-}
-
 /** 待验收卡（review 分区项） */
 export interface ReviewCard {
   id: string;
@@ -231,8 +205,6 @@ export interface ReviewCard {
   name: string;
   /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
   title?: string;
-  /** §65.3 self_improve 卡才有：草稿 PR 核验结果 */
-  delivery?: Delivery;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
   work_id?: string | null;
   /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
@@ -479,8 +451,6 @@ export interface Board {
   recaps?: RecapRow[];
   /** §63.5 追记（issue #301）三栏的**真实**总数（add-only；老 daemon 缺席 = 整键不在） */
   recap_counts?: RecapLaneTotals;
-  /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
-  self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
   radar_sources?: Record<string, RadarSourceHealth>;
   /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——§78 起落潜在任务条顶一行 info 通知 */

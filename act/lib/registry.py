@@ -492,7 +492,7 @@ def save(req: Requirement) -> None:
 
     §60（D21）**工作编号的唯一分配点**：卡以 ``approved`` 落盘且尚无
     ``work_id`` 时，在这里分配 ``R-<m>``（:func:`next_work_id`）。进入
-    approved 的每条路径——owner approve、§65 lane 免批、capture[run] 出生即
+    approved 的每条路径——owner approve、（§65 lane 免批，retired D86）、capture[run] 出生即
     approved、restore 按 prev_status 精确复位回 approved——都经 save()，
     所以调用方零改动、零遗漏；detected/raising/trashed/merged（含退役的
     card_sent）的落盘永不分配。分配失败（序列文件读不了等）不崩 save：编号是显示层
@@ -983,7 +983,7 @@ def is_legacy_key(rid) -> bool:
 def id_sort_key(rid) -> tuple:
     """跨命名空间的 FIFO 序：legacy R 主键 < P 主键（一切 P 卡都晚于一切
     存量卡出生），同空间按数值；其他形状按字面排最后。
-    actd 的公平轮转（process_raising / auto_dispatch_pass）与 auto_merge /
+    actd 的公平轮转（process_raising；auto_dispatch_pass retired D86）与 auto_merge /
     quick_capture 的「哪张更老」判断都用它——字典序 ``"P-" < "R-"`` 会让
     每张 P 卡插到所有存量卡前面（饿死存量 raising 队列），数值解析把 P 当
     0 会让 P 卡永远「更老」（合并方向反转）。"""
@@ -1563,7 +1563,7 @@ def _stamp_origin(req: Requirement) -> None:
     """盖/刷新出身信任章（amendments §50 / M1.a）：铸卡与一切 fold/re-raise
     都经过本文件的漏斗，sources 一变章就重算——最小信任者定卡（手打卡被
     slack/gmail 来源并入即降 external）。调度侧不读章、每次从 sources 现算
-    （policy.may_auto_dispatch）；章只服务投影/审计。"""
+    （policy.may_auto_dispatch 曾是那一侧，retired D86）；章只服务投影/审计。"""
     req.origin_trust = policy.classify_origin(req.sources)
 
 

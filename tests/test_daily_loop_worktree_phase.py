@@ -5,17 +5,14 @@
 """
 import datetime as _dt
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 from tests.worktree_testkit import FakeGit, Tree
 
-from act.lib import config, daily_loop
+from act.lib import config, daily_loop, worktrees
 
 NOW = _dt.datetime(2026, 9, 15, 4, 0)
-
-
-def _gh_none(_args, _cwd=None):
-    return None, ""
 
 
 class DailyLoopWorktreePhaseTestCase(unittest.TestCase):
@@ -28,10 +25,13 @@ class DailyLoopWorktreePhaseTestCase(unittest.TestCase):
             state.unlink()
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
+        self.cfg = config.Config()
+        root = mock.patch.object(worktrees, "primary_repo", return_value=self.tree.repo)
+        root.start()
+        self.addCleanup(root.stop)
 
     def _run(self, git):
-        return daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=lambda: "[]", git=git)
+        return daily_loop.run(self.cfg, now=NOW, doctor=lambda: "[]", git=git)
 
     def test_the_phase_runs_between_stale_sweep_and_proposals_and_counts_what_it_removed(self):
         path = self.tree.add("dead", age_days=40.0)

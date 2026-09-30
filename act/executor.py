@@ -41,8 +41,8 @@ from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
 from act import llm
-from act.lib import (analytics, config, dispatch_prompt, failures, notify, registry, sanitize,
-                     self_improve, transcripts)
+from act.lib import (analytics, config, dispatch_prompt, failures, notify, policy, registry,
+                     sanitize, transcripts)
 from act.lib.registry import Requirement, State, display_id, load, save
 
 # prompt text (dispatch / rework / brief) lives in act/lib/dispatch_prompt.py;
@@ -271,12 +271,20 @@ def _bg_base_cmd(cfg: Optional[config.Config] = None,
     is on (default; P0-10 — off means the agent runs under claude's normal
     permission model; a blocked agent is harvested to review by actd's
     reconcile (#119) instead of acting unattended), then ``--model <id>``
-    when the dispatch knob is explicit (nothing when it follows). ``req``
-    (§65, add-only): a self_improve card without ``needs_mcp`` gets
-    ``llm.NO_MCP_ARGV`` appended — the session sees no Slack/Gmail MCP; every
-    launch site passes its card so a resume/rework/brief can never re-open the
-    MCP surface the dispatch closed. ``req=None`` = byte-identical to before."""
-    return llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))
+    when the dispatch knob is explicit (nothing when it follows). ``req``:
+    a card whose sources are all ``self_improve`` (daily-loop materials cards
+    embed fetched third-party text) and that does not declare ``needs_mcp``
+    gets ``llm.NO_MCP_ARGV`` — the zero-MCP egress lock survived the §65 lane
+    (D86) because it is keyed on the channel. Every launch site passes its card
+    so a resume can never re-open the MCP surface the dispatch closed."""
+    return llm.dispatch_argv(cfg, no_mcp=egress_locked(req))
+
+
+def egress_locked(req: Optional[Requirement]) -> bool:
+    """All-``self_improve`` sources and no ``needs_mcp`` → zero-MCP argv."""
+    if req is None or getattr(req, "needs_mcp", False):
+        return False
+    return policy.is_self_improve_sources(getattr(req, "sources", None))
 
 
 def _verbatim(req: Optional[Requirement]) -> bool:
@@ -766,9 +774,6 @@ def _record_launch_success(req: Requirement, ex: dict, cfg: config.Config,
         # 那条 skip-permissions 会话写 registry 不再有人看着（reconcile 的
         # docstring 明写这不许发生）。退役前这个痕住在卡顶层 `preset`，天然活过重建。
         req.execution["direct_run"] = ex["direct_run"]
-    # §65：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
-    # self_improve 卡给 {}，execution 形状不变。
-    req.execution.update(self_improve.dispatch_record(req, cfg))
     req.set_status(State.EXECUTING)
     save(req)
     # capture_input gating (docs/TELEMETRY.md): the instruction summary is

@@ -68,11 +68,11 @@ activities = dashi `task_activities` 同型审计流（`changes` JSON `[{field,b
 
 | 转移 | actor | 出处 |
 |---|---|---|
-| detected → approved | system | §65 self_improve lane 免批（§51 hand lane retired，D80.4） |
+| detected → approved | system | §65 self_improve lane 免批（§51 hand lane retired，D80.4；writer retired D86，行保留 add-only） |
 | detected → delivered | user | §10 done_external，现在从潜在任务列直接点 |
 | card_sent → detected | system | §78 一次性归并扫描（actd 主循环，唯一写者） |
 | approved/executing/review → detected | user | §10 abort_execution 退回潜在任务（原落点 card_sent） |
-| approved → detected | system | §65.1 通道关掉时撤回免批派发（旧白名单漏收了 `approved→card_sent(system)`，退役时补它的孪生） |
+| approved → detected | system | 撤回免批派发（§65.1 时代；D86 起唯一写者 = `_withdraw_retired_auto_approval` 一次性退役护栏；旧白名单漏收了 `approved→card_sent(system)`，退役时补它的孪生） |
 | raising → detected | user | 扩写中卡上的评论折回潜在任务重审 |
 
 **actor 语义**：actor = 动作的**发起者**，不是写库进程——actd 替用户执行 inbox 动作时记 `user`；radar/triage/digest/auto-archive 等自主管线记 `system`；headless 执行 session 及一切旁路进程记 `agent`。

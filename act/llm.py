@@ -243,11 +243,12 @@ def build_argv(prompt: Optional[str], *, mode: str = MODE_PIPELINE,
     return argv
 
 
-# §65 出网封锁（self_improve lane 会话的 MCP 面归零）：``--strict-mcp-config``
-# 让 claude 只认 ``--mcp-config`` 给的服务器集合，而这个集合是空的——用户级
-# Slack/Gmail MCP 对该会话不存在。三个 token 顺序固定，紧跟模型旗标（D53 起
-# 是 ``--model`` 再 ``--fallback-model``）、在 ``--name`` 之前（``--mcp-config``
-# 是变参，后面必须是一个选项而不是裸 prompt——所以任何固定旗标都排在它前面）。
+# Zero-MCP egress lock for machine-minted cards whose plan embeds fetched
+# third-party text (daily-loop materials cards, channel=self_improve): the
+# session sees no user-level Slack/Gmail MCP. Kept when the §65 lane retired
+# (D86) because it is keyed on the channel, not on the lane. Token order is
+# fixed: right after the model flags, before ``--name`` (``--mcp-config`` is
+# variadic, so the next token must be an option, never a bare prompt).
 NO_MCP_ARGV: tuple = ("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}')
 
 
@@ -259,9 +260,8 @@ def dispatch_argv(cfg: Optional[config.Config] = None, *,
     P0-10) — off means the agent runs under claude's normal permission
     model. The dispatch model knob rides right behind it, then the D53
     fallback (``--fallback-model <id>``, nothing when ``off``); ``no_mcp``
-    (§65, add-only kwarg, default off = byte-identical argv) appends
-    :data:`NO_MCP_ARGV` after both; the caller appends ``--name`` /
-    ``--resume`` / the prompt.
+    (default off = byte-identical argv) appends :data:`NO_MCP_ARGV` after
+    both; the caller appends ``--name`` / ``--resume`` / the prompt.
     """
     cmd = [claude_bin(cfg), "--bg"]
     if cfg is None or getattr(cfg, "skip_permissions", True):

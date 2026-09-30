@@ -12,9 +12,9 @@ approve 跑了的,才给编号。」
 钉住的行为（两后端逐条跑）：
   * 出生 = ``P-<n>`` 主键（next_id），detected/raising/merge/trash（以及退役的
     card_sent）一律 **不**分配工作编号；
-  * 进入 approved 的每条路径都分配 ``R-<m>``：owner approve、§65 lane 免批
-    （§51 hand lane 随 §78 退役）、capture[run] 出生即 approved、restore 精确
-    复位回 approved；
+  * 进入 approved 的每条路径都分配 ``R-<m>``：owner approve、capture[run] 出生即
+    approved、restore 精确复位回 approved（§51 两条免批 lane 均已退役：hand 随 §78，
+    §65 lane 随 D86）；
   * 工作序列稠密、单调、永不复用（含 sqlite tombstone / yaml 硬删 + 高水位）；
   * set-once：退回潜在任务再批准、trash→restore 都不换号；
   * resolve() 主键与工作编号双向可达；inbox/merge 入口按两种 ref 都能找到卡且
@@ -152,8 +152,7 @@ class BirthNeverConsumesWorkNumberTestCase(_Both):
 # --------------------------------------------------------------------------- #
 class ApprovalAllocatesTestCase(_Both):
     def setUp(self):
-        # §65.1 通道总开关出厂关着；免批判例要的是发号，不是开关行为，所以显式开。
-        self.cfg = config.Config(self_improve_enabled=True)
+        self.cfg = config.Config()
         self.cfg.memory_inject = False
 
     def test_owner_approve_from_detected_allocates_exactly_once(self):
@@ -180,24 +179,6 @@ class ApprovalAllocatesTestCase(_Both):
             registry.upsert(_card("P-001", "存量提案", status=State.CARD_SENT.value))
             self.assertIsNone(registry.load("P-001").work_id)
             self.assertEqual(_approve("P-001"), "running")
-            saved = registry.load("P-001")
-            self.assertEqual(saved.status, State.APPROVED.value)
-            self.assertEqual(saved.work_id, "R-001")
-        self.for_each_backend(body)
-
-    def test_policy_auto_dispatch_allocates(self):
-        # §78 / D80.4：免批通道只剩 §65 self_improve lane（hand lane 立碑退役），
-        # 起跳态从 card_sent 换成 detected——它仍然是「进入 approved 的一条路径」，
-        # 所以仍然发号。
-        def body(_b):
-            lane = _card("P-001", "自我改进卡", type="self-improvement",
-                         cost_estimate_usd=1.0, target_repo=str(config.HOME),
-                         target_kind="existing", delivery_mode="repo",
-                         sources=[{"who": "loop", "channel": "self_improve",
-                                   "date": "2026-08-31", "quote": "原话"}])
-            registry.upsert(lane)
-            with mock.patch.object(actd.notify, "notify"):
-                self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
             saved = registry.load("P-001")
             self.assertEqual(saved.status, State.APPROVED.value)
             self.assertEqual(saved.work_id, "R-001")

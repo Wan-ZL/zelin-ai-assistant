@@ -3,7 +3,8 @@
 契约：CONTRACT **§78** / **§78.3** 的四条退回路径（`abort_execution` / 评论折叠 /
 re-raise 回锅 / `restore`）/ **§78.2** D80.10（回程票夹逼，对 issue 原文的一处
 明确偏离）/ §9 §78 追记（`prev_status` 是历史事实，只钳复位目标、不改写字段）/
-§10（动词全集零删除，换的只是「到哪去」）/ §65.1（通道关掉时免批派发的撤回）。
+§10（动词全集零删除，换的只是「到哪去」）/ D86（免批通道删除后，policy 免批过但未派出
+的存量卡一次性撤回）。
 
 为什么这几条要一起钉：`card_sent` 退役之后它**没有面**了。任何一条还往那儿
 写的退回路径，效果都是「owner 点了停止 / 改了一句话 / 从回收站恢复了一张卡，
@@ -17,10 +18,9 @@ import unittest
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
-from tests.self_improve_testkit import lane_card
 
 from act import actd
-from act.lib import config, registry, self_improve
+from act.lib import config, registry
 from act.lib.registry import Requirement, State
 
 
@@ -60,8 +60,8 @@ class AbortExecutionTestCase(LandingPadBase):
                 self.assertEqual(req.status, State.DETECTED.value)
 
     def test_the_dispatch_brake_ledger_is_cleared_on_the_way_back(self):
-        """§4.1：卡带着刹车回到潜在任务列，§65 免批会把它原样再推进 approved，
-        然后永远停在「需输入」（2026-09-01 审查复现）。"""
+        """§4.1：卡带着刹车回到潜在任务列，当年的 §65 免批（retired D86）会把它原样
+        再推进 approved，然后永远停在「需输入」（2026-09-01 审查复现）。"""
         _mk("P-310", State.EXECUTING.value,
             execution={"session_id": "sess-9", "dispatch_halted": True,
                        "dispatch_attempts": 3, "last_error": "boom"})
@@ -116,20 +116,16 @@ class ReRaiseTestCase(LandingPadBase):
         self.assertEqual(registry.load("P-330").status, State.DETECTED.value)
 
 
-class FrozenLaneWithdrawalTestCase(LandingPadBase):
-    """§65.1：通道关掉时，免批批准但还没派出的 lane 卡退回潜在任务列。"""
-
-    def setUp(self):
-        super().setUp()
-        self_improve.lane_state_path().unlink(missing_ok=True)
-        self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
+class RetiredAutoApprovalWithdrawalTestCase(LandingPadBase):
+    """D86：policy 免批批准但还没派出的存量卡（`execution.auto_dispatched`）退回潜在任务列。"""
 
     def test_the_withdrawal_lands_in_the_backlog(self):
-        registry.save(lane_card("P-340", status=State.APPROVED.value,
-                                execution={"auto_dispatched": True}))
+        _mk("P-340", State.APPROVED.value, target_repo=TMP_HOME,
+            sources=[{"channel": "self_improve", "date": "2026-09-26", "quote": "q"}],
+            execution={"auto_dispatched": True})
         ex_mock = mock.MagicMock()
         with mock.patch.object(actd, "executor", ex_mock):
-            self.assertEqual(actd.dispatch_approved(config.Config(self_improve_enabled=False)), 0)
+            self.assertEqual(actd.dispatch_approved(config.Config()), 0)
         ex_mock.dispatch.assert_not_called()
         req = registry.load("P-340")
         self.assertEqual(req.status, State.DETECTED.value)

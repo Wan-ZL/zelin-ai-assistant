@@ -1,4 +1,6 @@
-"""act/lib/policy 的行为测试 — 信任矩阵 + 自动派发天花板 + 排队原因.
+"""act/lib/policy 的行为测试 — 信任矩阵 + autodispatch 配置块 + 排队原因.
+
+（may_auto_dispatch 与全部天花板随 §51 最后一条免批 lane retired D86，判例同删。）
 
 纯函数模块：无 I/O、无 registry 写入。repo 存在性经 path_exists seam 注入，
 测试绝不碰真文件系统（CONTRIBUTING 测试纪律）。
@@ -161,108 +163,6 @@ class TestAutodispatchConfig(unittest.TestCase):
         self.assertNotIn("daily_budget_usd", got)
         self.assertNotIn("daily_budget_usd", policy.AUTODISPATCH_DEFAULTS)
         self.assertEqual(got["max_concurrent"], 2)
-
-
-class TestMayAutoDispatch(unittest.TestCase):
-    def setUp(self):
-        self.cfg = _cfg()
-        self.exists = lambda p: True
-
-    def _may(self, card, cfg=None, exists=None):
-        return policy.may_auto_dispatch(
-            card, cfg if cfg is not None else self.cfg,
-            path_exists=exists if exists is not None else self.exists)
-
-    def test_happy_path(self):
-        self.assertEqual(self._may(_hand_card()), (True, "ok"))
-
-    def test_disabled(self):
-        cfg = _cfg(auto={"enabled": False})
-        self.assertEqual(self._may(_hand_card(), cfg=cfg),
-                         (False, "disabled"))
-
-    def test_non_hand_origins_denied(self):
-        cases = [("slack", "origin:external"), ("gmail", "origin:external"),
-                 ("meeting", "origin:meeting"),
-                 ("analytics", "origin:proposed")]
-        for chan, reason in cases:
-            card = _hand_card(sources=[{"channel": chan}])
-            self.assertEqual(self._may(card), (False, reason), chan)
-
-    def test_hand_folded_with_external_denied(self):
-        card = _hand_card(sources=[{"channel": "quick"},
-                                   {"channel": "slack"}])
-        self.assertEqual(self._may(card), (False, "origin:external"))
-
-    def test_t2_semantics_survive(self):
-        self.assertEqual(self._may(_hand_card(tier="T2")),
-                         (False, "t2_confirm"))
-        self.assertEqual(self._may(_hand_card(green_sign_required=True)),
-                         (False, "t2_confirm"))
-        # 估价高过文字确认线（cfg 默认 50）一样按 T2 拦
-        cfg = _cfg(require_text_confirm_above_usd=1.0)
-        self.assertEqual(self._may(_hand_card(), cfg=cfg),
-                         (False, "t2_confirm"))
-
-    def test_outbound_denied(self):
-        self.assertEqual(self._may(_hand_card(type="comms")),
-                         (False, "outbound"))
-
-    def test_repo_ceilings(self):
-        self.assertEqual(self._may(_hand_card(target_kind="new")),
-                         (False, "repo:new"))
-        cfg = _cfg(default_target_repo="")
-        self.assertEqual(self._may(_hand_card(target_repo=None), cfg=cfg),
-                         (False, "repo:none"))
-        self.assertEqual(self._may(_hand_card(), exists=lambda p: False),
-                         (False, "repo:missing"))
-
-    def test_repo_falls_back_to_default_target_repo(self):
-        seen = []
-        cfg = _cfg(default_target_repo="~/Projects/workbench")
-        ok, reason = policy.may_auto_dispatch(
-            _hand_card(target_repo=None), cfg,
-            path_exists=lambda p: seen.append(p) or True)
-        self.assertEqual((ok, reason), (True, "ok"))
-        self.assertTrue(seen and seen[0].endswith("Projects/workbench"))
-
-    def test_unknown_cost_still_fails_closed(self):
-        # 估价缺失 = 不可证明 <= require_text_confirm_above_usd 文字确认线
-        # （§7/§41 审批语义仍在），保守回人批——这条不是预算，D9 后保留。
-        self.assertEqual(self._may(_hand_card(cost_estimate_usd=None)),
-                         (False, "cost:unknown"))
-
-    def test_no_cost_ceiling_d9(self):
-        # 原判例（test_cost_ceilings / test_budget_ceilings）钉 $5 单卡上限
-        # 与 today_spend 累计：7.0 → cost:over_ceiling、spend 4+2 →
-        # budget:exhausted、"garbage" → budget:unknown。owner decision D9
-        # （docs/design/vnext2-plan.md「取消一切预算」）retired 全部预算天花板
-        # v0.48.7：任何 <= 文字确认线的估价都放行，today_spend 参数随台账退役。
-        for cost in (5.0, 5.5, 7.0, 49.99):
-            self.assertEqual(self._may(_hand_card(cost_estimate_usd=cost)),
-                             (True, "ok"), cost)
-        for retired in ("cost:over_ceiling", "budget:unknown",
-                        "budget:exhausted"):
-            self.assertNotIn(retired, policy.MAY_REASONS)
-        with self.assertRaises(TypeError):     # 旧签名的第三个位置参数不再存在
-            policy.may_auto_dispatch(_hand_card(), self.cfg, 0.0, self.exists)
-
-    def test_dict_card_accepted(self):
-        card = {"tier": "T1", "type": "other", "cost_estimate_usd": 1,
-                "target_repo": "~/x", "target_kind": "existing",
-                "sources": [{"channel": "quick"}]}
-        self.assertEqual(self._may(card), (True, "ok"))
-
-    def test_reason_tokens_in_vocabulary(self):
-        cards = [
-            _hand_card(), _hand_card(tier="T2"), _hand_card(type="comms"),
-            _hand_card(target_kind="new"), _hand_card(cost_estimate_usd=None),
-            _hand_card(cost_estimate_usd=99),
-            _hand_card(sources=[{"channel": "slack"}]),
-        ]
-        for card in cards:
-            _ok, reason = self._may(card)
-            self.assertIn(reason, policy.MAY_REASONS)
 
 
 class TestQueuedReason(unittest.TestCase):

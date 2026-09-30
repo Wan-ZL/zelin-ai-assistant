@@ -13,6 +13,7 @@ issue #315：生产 checkout 攒了 190+ 个 worktree，没有任何一处代码
 import os
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
@@ -26,8 +27,11 @@ class WorktreeGcTestCase(unittest.TestCase):
     def setUp(self):
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        # 通道 repo = 假 repo（§65.3 的物理闸就是 worktrees 的扫描根）
-        self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
+        # 扫描根 = 假 repo（§75.1 primary_repo）
+        self.cfg = config.Config()
+        _root = mock.patch.object(worktrees, "primary_repo", side_effect=lambda: self.tree.repo)
+        _root.start()
+        self.addCleanup(_root.stop)
 
     def _entry(self, name, branch="feat/x", age_days=30.0, **over):
         path = self.tree.add(name, age_days=age_days)

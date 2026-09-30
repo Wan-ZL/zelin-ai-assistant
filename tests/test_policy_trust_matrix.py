@@ -1,4 +1,4 @@
-"""信任矩阵行为测试——从真实铸卡漏斗到审批/免批车道（vnext §50/§51/§65/§78/§W17）。
+"""信任矩阵行为测试——从真实铸卡漏斗到审批车道（vnext §50/§51/§78/§W17；§65 免批 lane retired D86）。
 
 test_policy.py 钉的是 policy 纯函数；这里钉的是**穿过真实漏斗后的车道归属**：
 
@@ -102,7 +102,7 @@ class TestSelfDMHandLane(TrustMatrixBase):
         self.assertEqual(req.origin_trust, "hand")
         self.assertEqual(req.status, State.DETECTED.value)   # §78：落潜在任务
 
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        self.assertEqual(actd.dispatch_approved(config.Config()), 0)   # 派发只认 approved（D86：无免批 lane）
         req = registry.load(req.id)
         self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("auto_dispatched", req.execution or {})
@@ -125,7 +125,7 @@ class TestExternalLane(TrustMatrixBase):
     def test_slack_funnel_never_auto_dispatches(self):
         req = _mint("slack")
         self.assertEqual(req.origin_trust, "external")
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        self.assertEqual(actd.dispatch_approved(config.Config()), 0)   # 派发只认 approved（D86：无免批 lane）
         req = registry.load(req.id)
         self.assertEqual(req.status, State.DETECTED.value)     # 留潜在任务等人点
         # 不留 block 痕（C-6）：§78 前是 origin:* 常态回落不留痕，之后非 §65
@@ -141,7 +141,7 @@ class TestMeetingLane(TrustMatrixBase):
         req = _mint("meeting", plan=None, definition_of_done=None)
         self.assertEqual(req.origin_trust, "meeting")
         # 不自动派发
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        self.assertEqual(actd.dispatch_approved(config.Config()), 0)   # 派发只认 approved（D86：无免批 lane）
         self.assertEqual(registry.load(req.id).status, State.DETECTED.value)
         # 但 plain approve 直接过——meeting 不吃 W17 的裸批转扩写
         et = risk.effective_tier(registry.load(req.id))
@@ -157,7 +157,7 @@ class TestProposedLane(TrustMatrixBase):
     def test_sourceless_ai_card_needs_approval_without_stamp(self):
         req = _mint(None, sources=[])
         self.assertEqual(req.origin_trust, "proposed")
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        self.assertEqual(actd.dispatch_approved(config.Config()), 0)   # 派发只认 approved（D86：无免批 lane）
         req = registry.load(req.id)
         self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("auto_dispatch_block", req.execution or {})
@@ -176,7 +176,7 @@ class TestScreenDefenseInDepth(TrustMatrixBase):
         et = risk.effective_tier(registry.load(req.id))
         self.assertEqual(et.tier, "T2")
         self.assertTrue(et.forced_expand)
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        self.assertEqual(actd.dispatch_approved(config.Config()), 0)   # 派发只认 approved（D86：无免批 lane）
         self.assertEqual(registry.load(req.id).status, State.DETECTED.value)
 
     def test_screen_source_poisons_a_hand_card_on_fold(self):
@@ -220,7 +220,7 @@ class TestMcpChannelHardcode(TrustMatrixBase):
         self.assertEqual(src["ref"], "quick")        # LLM 的说法只作展示
         self.assertEqual(req.origin_trust, "external")
         # 免批通道对它关死
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
+        self.assertEqual(actd.dispatch_approved(config.Config()), 0)   # 派发只认 approved（D86：无免批 lane）
         self.assertEqual(registry.load(req.id).status, State.DETECTED.value)
 
 

@@ -172,7 +172,8 @@ class PromotionOnAnUpgradedDatabaseTestCase(unittest.TestCase):
         self.assertEqual(self._move("P-100", "approved", "user")["status"], "approved")
 
     def test_the_self_improve_lane_promotes_the_same_card_as_system(self):
-        """§65 免批：actor=system 的同一跳——这条行 v2 库上根本不存在。"""
+        """§65 免批：actor=system 的同一跳——这条行 v2 库上根本不存在。
+        （writer retired D86；白名单行 add-only 保留，让旧 DB 与回放合法。）"""
         self._card("P-101", "detected")
         self.assertEqual(self._move("P-101", "approved", "system")["status"], "approved")
 

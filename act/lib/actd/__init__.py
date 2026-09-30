@@ -11,7 +11,7 @@ pass lives here, one module per phase of the loop described in its docstring:
   inbox         (a)  drain state/inbox decision files (§5.4 §10 §22 §29 §38)
   decisions     (a)  the card-level verb whitelist behind ``_apply_decision`` (§10 §32.2)
   merge         merge-review actd side + job housekeeping (§21)
-  dispatch      (a') auto-dispatch gate, (b) dispatch, raising expansion (§4 §34bis §51 §65)
+  dispatch      (a'') §78 fold sweep, (b) dispatch, raising expansion (§4 §34bis §51 §78)
   reconcile     auto-resume / harvest / steer flush of executing sessions (§13 §44.3 §46)
   housekeeping  trash purge, auto-archive, attachment GC (§4 §9 §10)
   alerts        transition notifications, auth scan, radar liveness (§40 §48)

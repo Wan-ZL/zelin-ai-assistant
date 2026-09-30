@@ -28,16 +28,17 @@
   `silent_merge_count` 绝不许凭空报一个并入数、缺 `fold_receipt_notices` 的
   老 cfg 照常发回执（§44.6 fail-open）、缺 `approval_mention_escalation` 绝不
   自己开始催人（§3.6 anti-nag）。
-* **降级路径答的是形状，不是 None**：`_self_improve_view` / `_live_config` /
+* **降级路径答的是形状，不是 None**：`_live_config` /
   `_radar_health_data` / `_radar_rounds_data` / `_secret_file_started` /
   `_source_signals` / `_dir_is_nonempty`——宪法第 11 条，坏文件不许崩 pass，
-  更不许把「答不上来」冒充成一个能被 `or` 吞掉的假值。
+  更不许把「答不上来」冒充成一个能被 `or` 吞掉的假值。（`_self_improve_view` 随
+  §65 retired D86：顶层 `self_improve` 键冻结为常量关闭形，下面改钉那个形状。）
 * **出机的字节**：`write_dashboard` 的 `parents=True` / `ensure_ascii=False` /
   `indent=2`，以及 roster 子进程的 `capture_output` + 30 秒超时（§55：一个挂住
   的 claude 不许拖垮 ~10 s 的 pass，它的 stdout 也不许漏进 actd 的终端）。
 
 注入缝只有本模块**本来就朝外的边界**：`subprocess.run`、`config.load_config`、
-`radar_health` / `radar_rounds` / `fold_receipts` / `self_improve` / `secrets`
+`radar_health` / `radar_rounds` / `fold_receipts` / `secrets`
 这几个协作模块的读函数、`_today()` 时钟、`HOME`。被测单元自己（`_transcript_
 info_cached`、`_notes_text`、`_cap_completed`、lane 投影…）一律真跑。
 
@@ -72,7 +73,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.scratch_testkit import scratch_dir
 
 from act.lib import (config, dashboard, fold_receipts, radar_health, radar_rounds,
-                     secrets, self_improve, transcripts)
+                     secrets, transcripts)
 from act.lib.registry import Requirement
 
 _NOW = _dt.datetime(2026, 9, 15, 12, 0, tzinfo=_dt.timezone.utc)
@@ -404,13 +405,16 @@ class DegradedPathsAnswerAShapeTestCase(unittest.TestCase):
     """宪法第 11 条：读坏了的每一处都要答出**完整形状**——None 会被下游的
     `or` / `if` 静默吞掉，把「读不到」伪装成「没有」。"""
 
-    def test_self_improve_view_keeps_the_full_shape_and_clips_the_error(self):
-        with mock.patch.object(self_improve, "board_view",
-                               side_effect=RuntimeError("x" * 300)):
-            view = dashboard._self_improve_view(config.Config())
-        self.assertEqual(view["enabled"], False)
-        self.assertEqual(view["paused"], False)
-        self.assertEqual(view["error"], "x" * 200)     # §65 错误串上限 200
+    def test_the_retired_self_improve_key_is_the_frozen_off_shape(self):
+        """§2 D86 追记：通道已删，顶层键恒在、逐字是常量关闭形（键序即 golden 的键序）。"""
+        dash = dashboard.build_dashboard(reqs=[], agents=[], cfg=config.Config())
+        self.assertEqual(list(dash["self_improve"]), ["enabled", "paused", "paused_reason", "paused_pr",
+                                                      "paused_pr_url", "paused_paths", "paused_at"])
+        self.assertEqual(dash["self_improve"], {"enabled": False, "paused": False, "paused_reason": None,
+                                                "paused_pr": None, "paused_pr_url": None,
+                                                "paused_paths": [], "paused_at": None})
+        dash["self_improve"]["paused_paths"].append("x")     # 每次投影一份新 list，不共享常量
+        self.assertEqual(dashboard._RETIRED_SELF_IMPROVE["paused_paths"], [])
 
     def test_a_broken_config_read_falls_back_to_the_callers_snapshot(self):
         snapshot = config.Config()

@@ -53,8 +53,8 @@ def effective_tier(card: Any) -> EffectiveTier:
         被手改成 hand,章不被洗掉;
       * sources 现算(policy.classify_origin)为 external——缺章/存量卡
         (v0.10.3 registry 尚无此字段)不再按「缺章 = 保持声明档」放行:
-        章可以缺,出身不会缺,与调度侧 may_auto_dispatch「不读章、每次从
-        sources 现算」同一条纪律(堵 stamp-less 手改 YAML 裸批的洞)。
+        章可以缺,出身不会缺,与调度侧(旧 may_auto_dispatch,retired D86)「不读章、
+        每次从 sources 现算」同一条纪律(堵 stamp-less 手改 YAML 裸批的洞)。
     空 sources 的存量卡现算为 proposed,声明档位保持不变——「全部历史卡
     一夜抬成 T2」不会发生,抬档的只有真判 external 的卡:slack/gmail,以及
     **任何不在 policy.CHANNEL_CLASS 表内的 channel**(fail-closed)。后者是

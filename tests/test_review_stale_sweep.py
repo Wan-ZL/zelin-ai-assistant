@@ -309,7 +309,7 @@ class AuditRowTestCase(_Case):
 
         registry.save(_review("P-1", age=30, notified=NOW - _dt.timedelta(hours=21)))
         registry.save(_review("P-2", age=30))
-        result = daily_loop.run(self.cfg, now=NOW, gh=lambda args: "", doctor=lambda: [])
+        result = daily_loop.run(self.cfg, now=NOW, doctor=lambda: [])
 
         self.assertEqual([row["rule"] for row in result["trashed_cards"]], ["review_stale"])
         self.assertEqual([row["id"] for row in result["review_notices"]], ["P-2"])

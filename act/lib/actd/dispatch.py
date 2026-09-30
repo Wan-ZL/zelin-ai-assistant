@@ -1,15 +1,15 @@
-"""dispatch — moving cards forward: (a'') the §78 一次性归并扫描, (a') the §65
-auto-dispatch gate, (b) dispatching approved cards within the concurrency cap,
-and the one-per-pass raising expansion.
+"""dispatch — moving cards forward: (a'') the §78 一次性归并扫描, (b) dispatching
+approved cards within the concurrency cap, and the one-per-pass raising expansion.
 
 CONTRACT §4（派发失败台账 + §4.1 风暴刹车：进入 approved 的每条路径重新上膛）/
-§51（免批通道 + queued 词表；**hand lane retired**，并入 §78）/ §65（self_improve
-lane）/ §65.1（通道总开关关着 = 免批批准过的 lane 卡退回潜在任务，不再派出）/
-§71.1（睡眠感知派发：机器不在清醒态时本 pass 一张卡都不派）/ §78（提案车道退役：
-免批扫的是 detected，且只有 §65 lane 还能自动提升）。当日花费台账
-state/autodispatch_spend.json retired v0.48.7（owner decision D9）：没有预算就
-没有账要记。§34bis 的 preset 清理卡 retired（D80.11）——起跑前拍 registry 快照
-的机械护栏本身留着，改锚在 owner 的直跑卡上。
+§51（queued 词表；**两条免批 lane 均已退役**：hand 并入 §78（D80.4），
+self_improve 随 §65 删除（D86））/ §71.1（睡眠感知派发：机器不在清醒态时本 pass
+一张卡都不派）/ §78（提案车道退役）。D86 起卡只有 owner 亲手促成才进 approved；
+policy 免批过但未派出的存量卡（``execution.auto_dispatched``）由
+:func:`_withdraw_retired_auto_approval` 一次性退回潜在任务。当日花费台账
+state/autodispatch_spend.json retired v0.48.7（owner decision D9）。§34bis 的 preset
+清理卡 retired（D80.11）——起跑前拍 registry 快照的机械护栏本身留着，改锚在 owner
+的直跑卡上。
 """
 from __future__ import annotations
 
@@ -19,8 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from act.lib import (analytics, automation, config, failures, notify, policy, power,
-                     registry, risk, self_improve)
+from act.lib import analytics, config, failures, policy, power, registry
 from act.lib.actd import triage_guard
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.registry import Requirement, State, load_all
@@ -36,13 +35,13 @@ def card_cost(req: Requirement) -> float:
 def rearm_dispatch(d: Daemon, ex: dict) -> dict:
     """§4.1 storm brake：清掉上一轮派发的失败台账（attempts / 同类连败计数 /
     halted 标记 / 旧 last_error），返回同一个 dict。**进入 approved 的每条路径**
-    都必须过这里——不只是 owner 的 approve。审查复现（2026-09-01）：
-    auto_dispatch_pass 把 execution 原样带进 approved，`dispatch_halted` 跟着
-    过去，卡永远停在「需输入」；owner 再点批准是 approved 上的幂等 no-op，
-    UI 上没有任何出口。abort_execution（退回潜在任务）也一并清——那个动词的
-    语义本来就是「丢弃这一轮，重新决定」。"""
+    都必须过这里（owner approve / 直跑）——否则 `dispatch_halted` 跟着带进
+    approved，卡永远停在「需输入」，owner 再点批准是幂等 no-op，UI 上没有出口。
+    abort_execution（退回潜在任务）也一并清——那个动词的语义本来就是「丢弃这一轮，
+    重新决定」。D86：也清掉退役免批通道留下的 ``auto_dispatched`` 痕——owner 亲手
+    重新促成的卡不许被 :func:`_withdraw_retired_auto_approval` 再撤回一次。"""
     for key in (tuple(getattr(d.executor, "DISPATCH_STREAK_KEYS", ()))
-                + ("last_error", "last_error_at")):
+                + ("last_error", "last_error_at", "auto_dispatched")):
         ex.pop(key, None)
     return ex
 
@@ -87,127 +86,6 @@ def fold_retired_lane(d: Daemon) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# (a') auto-dispatch（§65 lane · vnext-amendments M1.b/C-6）
-# --------------------------------------------------------------------------- #
-def auto_dispatch_pass(d: Daemon, cfg: config.Config) -> int:
-    """§65 self_improve lane 的免批通道：潜在任务（``detected``）里**只有**全
-    self_improve 出身的卡参与资格裁决，全部天花板通过 → 直接 approved
-    （actor=policy，token ``ok:self_improve``）。任一不过 → 留在潜在任务列，
-    原因 token 上卡（``execution.auto_dispatch_block``，C-6 定名；origin:*/
-    disabled 两类常态原因不上卡不留痕）。并发上限不在资格闸里——那是排队问题，
-    归 dispatch_approved / queued_reason（M1.b）。预算不存在（D9）：一天派多少
-    张、累计多少钱都不拦。
-
-    §51 hand lane retired v-next（并入 §78，owner decision D80.4）：hand 出身卡
-    免批的唯一喂料口是提案捕获框，那个框随提案列一起删了；owner 亲手发起的工作
-    走「运行中」直跑框（§34 ``mode:"run"``），出生即 approved，压根不进这个闸。
-    所以这里在 ``_admission`` **之前**先按 sources 过一道 §65 闸——policy 仍是
-    纯资格函数（hand 卡它照旧判「可以」），退役的是**入口**，不是裁决表。"""
-    ad = policy.autodispatch_config(cfg)
-    approved = 0
-    paused = self_improve.lane_paused()
-    # §60 跨命名空间 FIFO（legacy R < P，同空间按数值）——字典序会让 P 卡全体插队
-    for req in sorted(load_all(), key=lambda r: registry.id_sort_key(r.id)):
-        if req.status != State.DETECTED.value:
-            continue
-        if not policy.is_self_improve_sources(req.sources):
-            _clear_stale_block(d, req)   # §51 退役：hand 卡再不会被这个闸拦
-            continue
-        approved += _lift_one(d, req, cfg, paused, ad["notify"])
-    return approved
-
-
-def _lift_one(d: Daemon, req: Requirement, cfg: config.Config,
-              paused: bool, notify_flag: bool) -> int:
-    """裁一张 §65 lane 卡：过了全部天花板就免批抬进 approved（返 1），被拦
-    或途中出错就留在潜在任务列（返 0）。
-
-    一张坏卡不许带走整个 pass（宪法第 11 条）——所以异常在这一层收口，
-    调用方只拿到一个计数。"""
-    try:
-        ok, reason = _admission(req, cfg, paused)
-        ex = dict(req.execution or {})
-        if not ok:
-            _record_block(d, req, ex, reason)
-            return 0
-        cost = _approve_auto(d, req, ex, reason)
-        _announce_auto(d, req, reason, cost, notify_flag)
-        return 1
-    except Exception as e:  # noqa: BLE001 - one bad card must not kill the pass
-        d.log(f"autodispatch: {getattr(req, 'id', '?')} FAILED: {e}")
-        return 0
-
-
-def _admission(req: Requirement, cfg: config.Config, paused: bool) -> tuple:
-    ok, reason = policy.may_auto_dispatch(req, cfg, lane_paused=paused)
-    # W17 belt-and-braces：显式 external 章可能比 sources 现算更严
-    # （手改 YAML 等）——forced_expand 的卡绝不自动派发。
-    if ok and risk.effective_tier(req).forced_expand:
-        return False, "origin:external"
-    return ok, reason
-
-
-def _clear_stale_block(d: Daemon, req: Requirement) -> None:
-    """§78：hand lane 退役之后，非 §65 卡连资格闸都不进——上一轮留在卡上的
-    ``auto_dispatch_block`` token 就成了永不更新的假话（卡面会一直挂着
-    「auto-dispatch 拦下 …」的 chip）。见到就清，没有就零开销（与
-    :func:`_record_block` 的「过期 token 清掉」同一条纪律）。"""
-    ex = dict(req.execution or {})
-    if "auto_dispatch_block" not in ex:
-        return
-    ex.pop("auto_dispatch_block", None)
-    req.execution = ex
-    d.save(req)
-
-
-def _record_block(d: Daemon, req: Requirement, ex: dict, reason: str) -> None:
-    """Blocked card: routine reasons leave no trace (and clear a stale token);
-    the rest land on the card once（token 变了才写）."""
-    if policy.is_routine_reason(reason):
-        if "auto_dispatch_block" in ex:
-            ex.pop("auto_dispatch_block", None)   # 过期 token 清掉
-            req.execution = ex
-            d.save(req)
-        return
-    if ex.get("auto_dispatch_block") == reason:
-        return
-    ex["auto_dispatch_block"] = reason
-    req.execution = ex
-    append_note(req, f"[{_dt.date.today().isoformat()} auto-dispatch 拦下] {reason}")
-    d.save(req)
-    d.log(f"autodispatch: {req.id} blocked ({reason})")
-    analytics.log_event("auto_dispatch_blocked", req=req.id, reason=reason)
-
-
-def _approve_auto(d: Daemon, req: Requirement, ex: dict, reason: str) -> float:
-    """detected → approved by policy（saved）; returns the disclosed cost."""
-    cost = card_cost(req)
-    ex.pop("auto_dispatch_block", None)
-    ex["auto_dispatched"] = True          # add-only：审计痕（policy 批的，非 owner 点头）
-    # §4.1：policy 批准与 owner 批准同权——进入 approved 即重新上膛。
-    # 不清的话，刹车停下 → 退回潜在任务 → 本 pass 免批再推进 approved 的
-    # 卡会带着 dispatch_halted 直接停回「需输入」，无 UI 出口。
-    req.execution = rearm_dispatch(d, ex)
-    append_note(req, policy.auto_dispatch_note(reason, cost, _dt.date.today().isoformat()))
-    req.set_status(State.APPROVED)
-    d.save(req)
-    return cost
-
-
-def _announce_auto(d: Daemon, req: Requirement, reason: str, cost: float, notify_on: bool) -> None:
-    d.log(f"autodispatch: {req.id} detected -> approved ({reason}, est ${cost:g})")
-    analytics.log_event("auto_dispatch", req=req.id, cost=cost, lane=reason)
-    # §81（issue #451 / D83）：免批批准是「没人点过、卡却动了」里最该有回执的一条。
-    # analytics 是可以整条关掉的隐私面（§16 fail-closed），审计行不是——它永远落
-    # state/automation.jsonl，与通知开没开无关。
-    automation.audit("auto_dispatch", "acted", req=req.id, lane=reason, cost_usd=cost)
-    if notify_on:
-        # 观察模式：每次免批派发都出一条通知，owner 随时可关
-        # （autodispatch.notify=false）或全关（enabled=false）。
-        notify.notify(*notify.msg_auto_dispatched(reason, req.title or req.id), req=req.id)
-
-
-# --------------------------------------------------------------------------- #
 # (b) dispatch approved
 # --------------------------------------------------------------------------- #
 def _live_count(reqs: list) -> int:
@@ -228,7 +106,7 @@ def dispatch_approved(d: Daemon, cfg: config.Config) -> int:
     for req in reqs:
         if not _awaiting_dispatch(req):
             continue
-        if _withdraw_frozen_lane(d, req, cfg):
+        if _withdraw_retired_auto_approval(d, req):
             continue
         if gate.holds(req):
             continue
@@ -238,29 +116,22 @@ def dispatch_approved(d: Daemon, cfg: config.Config) -> int:
     return count
 
 
-def _withdraw_frozen_lane(d: Daemon, req: Requirement, cfg: config.Config) -> bool:
-    """§65.1（issue #307 第 4 条「关闭开关时至少不再续派」）：通道被关掉之后，
-    **policy 免批批准**（`execution.auto_dispatched`）但还没派出的 self_improve
-    卡不再起跑——退回潜在任务列（§78 前落提案列；`auto_dispatched` 痕一并清掉，
-    approved 那一刻的资格判定已经过期），下一 pass 的资格闸照常报既有的
-    `self_improve:disabled`（常态回落、不上卡），维护者把开关打开后它照常重新免批。
-
-    审查复现（#335 review）：`_held_this_pass` 让并发满时的 lane 卡留在 approved
-    排队（§51 queued），这些卡在关开关几 pass / 几小时之后仍会被派出去烧执行器
-    与 API 额度——开关只挡了「铸卡 / 批准」那一端。
-
-    **owner 亲手批准的 self_improve 卡不动**（没有 `auto_dispatched` 痕）：开关
-    管的是自动化，显式动作永远不被静默吞掉。True = 本卡已处理完，别再派。"""
+def _withdraw_retired_auto_approval(d: Daemon, req: Requirement) -> bool:
+    """D86 退役护栏：§65 通道还在时 policy 免批批准（``execution.auto_dispatched``）
+    但一直没派出的卡，通道删除后**不许**再起跑——撤回潜在任务列、清痕、留一行
+    note，等 owner 亲手促成运行（owner approve 走 :func:`rearm_dispatch`，痕已清，
+    本护栏每张卡至多触发一次）。owner 亲手批准的卡没有这个痕，永远不动。
+    True = 本卡已处理完，别再派。"""
     ex = dict(req.execution or {})
-    if not (ex.get("auto_dispatched") and self_improve.frozen_in_flight(req, cfg)):
+    if not ex.get("auto_dispatched"):
         return False
     ex.pop("auto_dispatched", None)
     req.execution = ex
-    append_note(req, f"[{_dt.date.today().isoformat()} 通道已关] "
-                     "self_improve 免批派发撤回，卡退回潜在任务（§65.1）")
+    append_note(req, f"[{_dt.date.today().isoformat()} D86] 免批通道已删除：policy 免批撤回，"
+                     "卡退回潜在任务，需 owner 亲手促成运行")
     req.set_status(State.DETECTED)
     d.save(req)
-    d.log(f"dispatch: {req.id} withdrawn (self_improve:disabled)")
+    d.log(f"dispatch: {req.id} withdrawn (auto-approval retired, D86)")
     return True
 
 

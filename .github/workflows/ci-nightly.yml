@@ -7,8 +7,8 @@
 # anyone acts on them.
 #
 # Never a PR gate: keep this workflow out of the required-checks set. A
-# Windows regression or a qlty finding is read from this run's summary (or
-# the P5 daily loop picks it up), not from a blocked PR.
+# Windows regression or a qlty finding is read from this run's summary, not
+# from a blocked PR.
 #
 # Cadence: after mutation-nightly (09:03 UTC) and usage insights (09:23 UTC)
 # so the scheduled jobs never compete with each other for slots.
