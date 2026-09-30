@@ -51,6 +51,10 @@ Design notes / landmines:
   launchd agent (unlike the Obsidian radar, which is TCC-blocked from ~/Documents
   and must use crontab).
 - Feature flag: features.slack_radar (CONTRACT §16); off -> scan() no-ops.
+- Clock stamps in state/ (CONTRACT §82.4): the two MCP markers read here are
+  "future value == absent", and their read fallback must stay
+  ``except (OSError, ValueError)`` — a torn, non-UTF-8 marker degrades to
+  "unreadable", it never crashes the pass (constitution art. 11).
 - v0.11 MCP fallback: while the xoxp token is stuck in admin approval, scan()
   does NOT just early-exit — every sources.slack_mcp_interval_minutes (default
   30; throttled via state/slack_mcp.marker, so the 3-minute launchd cadence is

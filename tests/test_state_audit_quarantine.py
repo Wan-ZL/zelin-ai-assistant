@@ -211,10 +211,85 @@ class FailSafeTestCase(_HomeMixin, unittest.TestCase):
 
         self.assertEqual(list(state_audit._candidates(Unlistable())), [])
 
+    def test_report_survives_a_listing_failure_end_to_end(self):
+        """上一条是对 `_candidates` 的单元探针，够不到 `report()` 这一层。真正要
+        保证的是**上层拿到一份能读的报告**：所以同一个故障从 CLI 的入口再跑一遍。
+        """
+        self._write("slack_mcp.marker", FUTURE)
+        with mock.patch.object(Path, "rglob",
+                               side_effect=OSError("scandir: permission denied")):
+            result = state_audit.report(self.home, NOW)
+        self.assertEqual(result["scanned"], 0)
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["home"], str(self.home))
+
     def test_a_directory_named_like_a_ledger_is_not_read(self):
         (self.state / "looks_like.json").mkdir()
-        self.assertFalse(state_audit._scannable(self.state / "looks_like.json"))
+        self.assertFalse(
+            state_audit._scannable(self.state / "looks_like.json", self.state))
         self.assertEqual(state_audit.report(self.home, NOW)["scanned"], 0)
+
+    def test_a_file_that_cannot_be_stat_ed_does_not_escape_as_a_traceback(self):
+        """`is_file()` 会抛 `PermissionError`：pathlib 只咽 ENOENT/ENOTDIR/EBADF/
+        ELOOP，EACCES 往外抛。真实形状是一个 `chmod 0444` 的子目录（列得出、
+        stat 不了）；`0000` / `0111` 反而没事，因为那两种 rglob 自己就列不出来。
+        `report()` 得到的必须还是一份能读的报告，不是 traceback（宪法第 11 条）。
+        """
+        self._write("slack_mcp.marker", FUTURE)
+        real = Path.is_file
+
+        def boom(self_):
+            if self_.name == "slack_mcp.marker":
+                raise PermissionError(13, "Permission denied")
+            return real(self_)
+
+        with mock.patch.object(Path, "is_file", boom):
+            result = state_audit.report(self.home, NOW)
+
+        self.assertEqual(result["scanned"], 0)
+        self.assertEqual(result["findings"], [])
+
+    def test_a_home_living_under_a_dir_named_backups_is_still_scanned(self):
+        """`backups` 只该在 `state/` 内部数层。拿整条绝对路径去比的话，home 住在
+        任何一个叫 `backups` 的目录底下（一个完全正常的路径）都会让每份文件被当成
+        隔离区跳过——一棵脏树报成 `scanned=0` 的干净，正是这把扫帚要治的病
+        （宪法第 3 条）。
+        """
+        home = Path(self.tmp.name) / "backups" / "aiassistant"
+        state = home / "state"
+        state.mkdir(parents=True)
+        (state / "slack_mcp.marker").write_text(FUTURE, encoding="utf-8")
+
+        result = state_audit.report(home, NOW)
+
+        self.assertEqual(result["scanned"], 1)
+        self.assertEqual([f["rel"] for f in result["findings"]],
+                         ["state/slack_mcp.marker"])
+
+    def test_the_quarantine_copy_is_still_skipped_on_the_next_run(self):
+        """上一条把判据收窄到 `state/` 内部之后，这条老保证不许跟着丢。"""
+        self._write("slack_mcp.marker", FUTURE)
+        state_audit.apply(self.home, NOW)
+        self.assertEqual(state_audit.report(self.home, NOW)["findings"], [])
+
+    def test_ninety_nine_taken_names_report_instead_of_reusing_one(self):
+        """`for n in range(2, 100)` 原来是**掉出去**的：带着一个仍然存在的 target
+        回去，`mkdir(exist_ok=True)` 照样成功，这一轮就搬进上一轮的隔离区、连
+        manifest 一起盖掉。够到那儿要同一秒 `--apply` 99 次，实际到不了——但
+        §82.5 的「永不覆盖」是无条件的，宁可报「建不出隔离区」。
+        """
+        victim = self._write("slack_mcp.marker", FUTURE)
+        slug = "quarantine-%s" % state_audit._stamp_slug(NOW)
+        base = self.state / "backups"
+        for n in range(1, 100):
+            (base / (slug if n == 1 else "%s-%d" % (slug, n))).mkdir(parents=True)
+
+        result = state_audit.apply(self.home, NOW)
+
+        self.assertIn("quarantine dir", result["error"])
+        self.assertEqual(result["quarantined"], [])
+        self.assertEqual(victim.read_text(encoding="utf-8"), FUTURE,
+                         "一个字节都不许搬——原文件还在原地")
 
     def test_a_file_that_vanished_reads_as_none(self):
         self.assertIsNone(state_audit._read(self.state / "gone.json"))
@@ -325,6 +400,28 @@ class CliTestCase(_HomeMixin, unittest.TestCase):
 
         self.assertIn("report-only", out)
         self.assertNotIn("re-run with --apply", out)
+
+    def test_report_mode_with_only_report_only_hits_does_not_advise_apply(self):
+        """同一个稳态、**默认**那一跑（文档里写的就是这条命令）：劝 `--apply` 的
+        前提是 `--apply` 真会搬走点什么，而这里它可证明地什么都不搬。判据是有没有
+        可搬项，不是带没带 `--apply`——只修 `--apply` 半边等于默认跑法还在虚报。
+        """
+        self._write("work_seq.json", json.dumps({"next": 8154, "at": FUTURE}))
+
+        _rc, out = self._run()
+
+        self.assertIn("report-only", out)
+        self.assertNotIn("re-run with --apply", out,
+                         "默认这一跑劝的是一个可证明的空操作（宪法第 3 条）")
+
+    def test_report_mode_still_advises_apply_when_something_is_movable(self):
+        """反面钉住：真有可搬项时那句劝告必须还在——上一条不许把它劝没了。"""
+        self._write("work_seq.json", json.dumps({"next": 8154, "at": FUTURE}))
+        self._write("slack_mcp.marker", FUTURE)
+
+        _rc, out = self._run()
+
+        self.assertIn("re-run with --apply", out)
 
 
 if __name__ == "__main__":

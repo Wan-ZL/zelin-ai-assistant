@@ -9,8 +9,9 @@
 **只搬不删（宪法第 2 条）**：命中的文件整份搬进
 ``state/backups/quarantine-<UTC 时间戳>/``（同名已存在就加 `-2`、`-3`，永不覆盖——
 口径抄 `act/lib/store2/activate.py` 的备份命名），里面**按原相对路径铺开**，
-同目录留一份 ``manifest.json`` 记原路径 / sha256 / 命中的那几个戳。搬错了 `mv`
-回去就是了。
+隔离区**根目录**留一份 ``manifest.json`` 记原相对路径 / sha256 / 命中的那几个戳
+（铺开之后被隔离的文件各在自己的子目录里，与这份回执不同层——正是这一点让源文件
+名恰好是 `manifest.json` 时也挤不掉它）。搬错了 `mv` 回去就是了。
 
 **出厂只看不动**：``report()`` 是纯读，``apply()`` 才搬。CLI 默认 `report`。
 
@@ -98,23 +99,47 @@ def _read(path: Path) -> Optional[str]:
         return None
 
 
-def _scannable(path: Path) -> bool:
-    """这一份该不该读：隔离区自己跳过，目录跳过，只认白名单后缀。"""
-    if "backups" in path.parts:
+def _scannable(path: Path, state_dir: Path) -> bool:
+    """这一份该不该读：隔离区自己跳过，目录跳过，只认白名单后缀。**永不抛。**
+
+    **`backups` 只在 `state/` 内部数层**：判据一度是 `"backups" in path.parts`，
+    拿的是整条绝对路径。于是 home 自己住在某个叫 `backups` 的目录底下时
+    （`<…>/backups/aiassistant` 完全是个正常路径），`state/` 里每一份文件都被当成
+    隔离区跳过，一棵脏树被报成 `scanned=0` 的干净——虚报健康（宪法第 3 条），
+    而且恰恰是这把扫帚存在的理由。改成数 `state/` 内部的层数之后，「隔离区里再
+    深的嵌套下一轮也不重扫」这条仍然成立（隔离区就在 `state/backups/` 底下）。
+
+    **`is_file()` 会抛**：pathlib 的 `_ignore_error` 只咽 ENOENT/ENOTDIR/EBADF/
+    ELOOP，**EACCES 是往外抛的**。一个「列得出、stat 不了」的目录（`chmod 0444`：
+    可读、不可执行）里的文件因此能把整轮体检变成 traceback——`0000` / `0111` 反而
+    没事，因为那两种 `rglob` 自己就列不出来。一份权限怪的文件只属于它自己
+    （宪法第 11 条）。
+    """
+    try:
+        rel = path.relative_to(state_dir)
+    except ValueError:                    # 不在 state/ 底下 → 与本轮无关
         return False
-    return path.suffix in SCAN_SUFFIXES and path.is_file()
+    if "backups" in rel.parts:
+        return False
+    if path.suffix not in SCAN_SUFFIXES:
+        return False
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _candidates(state_dir: Path) -> Iterable[Path]:
-    """`state/` 下该看一眼的文件（backups/ 自己跳过——那是隔离区）。
+    """`state/` 下该看一眼的文件（`state/` 内部带 `backups` 的跳过——那是隔离区）。
 
-    列目录本身失败（权限、竞态下被删）只让这一轮扫到空，不抛（宪法第 11 条）。
+    列目录本身失败（权限、竞态下被删）只让这一轮扫到空，不抛（宪法第 11 条）；
+    逐份的判决也不许抛，所以 `_scannable` 是个全函数（见它自己的 docstring）。
     """
     try:
         entries = sorted(state_dir.rglob("*"))
     except OSError:
         return []
-    return [path for path in entries if _scannable(path)]
+    return [path for path in entries if _scannable(path, state_dir)]
 
 
 def _root(home: Optional[Path]) -> Path:
@@ -144,16 +169,22 @@ def report(home: Optional[Path] = None, now: Optional[_dt.datetime] = None) -> d
     return {"home": str(root), "scanned": scanned, "findings": findings}
 
 
-def _quarantine_dir(root: Path, now: _dt.datetime) -> Path:
-    """`state/backups/quarantine-<ts>[-n]/`——已存在就换个名，永不覆盖。"""
+def _quarantine_dir(root: Path, now: _dt.datetime) -> Optional[Path]:
+    """`state/backups/quarantine-<ts>[-n]/`——已存在就换个名；**找不到空名就 `None`**。
+
+    原来的循环 `for n in range(2, 100)` 在 99 个同秒候选全被占掉时是**掉出去**的，
+    带着一个仍然存在的 `target` 回去，`mkdir(exist_ok=True)` 照样成功，于是这一轮
+    搬进上一轮的隔离区、连 manifest 一起盖掉。够到那儿要同一秒里 `--apply` 99 次，
+    实际到不了；但 §82.5 写的「永不覆盖」是无条件的，而**铺开 `rel` 之后盖的是
+    同名相对路径**，正是本轮刚禁掉的那次不可恢复删除。宁可报「建不出隔离区」。
+    """
     base = root / "state" / "backups"
     slug = "quarantine-%s" % _stamp_slug(now)
-    target = base / slug
-    for n in range(2, 100):
+    for n in range(1, 100):
+        target = base / (slug if n == 1 else "%s-%d" % (slug, n))
         if not target.exists():
-            break
-        target = base / ("%s-%d" % (slug, n))
-    return target
+            return target
+    return None
 
 
 def _sha256(path: Path) -> Optional[str]:
@@ -204,10 +235,17 @@ def _write_manifest(target: Path, root: Path, ref: _dt.datetime,
 
 
 def _make_quarantine(root: Path, ref: _dt.datetime) -> tuple:
-    """`(隔离区目录, None)`；建不出来就 `(None, 原因)`——一个字节都还没搬。"""
+    """`(隔离区目录, None)`；建不出来就 `(None, 原因)`——一个字节都还没搬。
+
+    `exist_ok=False`：让「搬进一个已经有东西的隔离区」在结构上不可能，而不是靠
+    上面那个循环选对了名字。两者之间还有一道竞态（选名与 mkdir 之间有人建了同名），
+    这样写会把它报成错误而不是静静复用。
+    """
     target = _quarantine_dir(root, ref)
+    if target is None:
+        return None, "quarantine dir: 99 same-second names all taken"
     try:
-        target.mkdir(parents=True, exist_ok=True)
+        target.mkdir(parents=True, exist_ok=False)
     except OSError as exc:
         return None, "quarantine dir: %s" % exc
     return target, None
@@ -245,13 +283,20 @@ def _print_finding(finding: dict) -> None:
 
 
 def _outcome_line(result: dict, applied: bool) -> Optional[str]:
-    """搬运那一段的一句话结论；`None` = 上面已经说完了，不必再补一句。"""
+    """搬运那一段的一句话结论；`None` = 上面已经说完了，不必再补一句。
+
+    劝 `--apply` 的前提是 `--apply` **真会搬走点什么**。owner live 装机的稳态恰恰
+    不是：命中只剩 `work_seq.json` 这类 report-only 项（§44/§60.2 永久欠账），此时
+    默认那一跑再劝一次 `--apply`，换来的是一个可证明的空操作——和 `--apply` 之后
+    劝他再跑一次 `--apply` 是同一种虚报（宪法第 3 条）。判据看的是有没有可搬项，
+    不是这一跑带没带 `--apply`。
+    """
     if result.get("quarantine_dir"):
         return ("quarantined %d file(s) -> %s"
                 % (len(result["quarantined"]), result["quarantine_dir"]))
     if not result["findings"] or result.get("error"):
         return None
-    if applied:
+    if applied or not any(not f["report_only"] for f in result["findings"]):
         return "nothing moved — every finding is report-only (§44/§60.2)"
     return "nothing moved (report mode) — re-run with --apply to quarantine"
 
