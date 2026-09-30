@@ -8,11 +8,11 @@
     "shell"
   ],
   "counts": {
-    "contract": 286,
+    "contract": 279,
     "fixtures_b": 15,
     "parity": 837,
-    "routes": 164,
-    "settings": 67,
+    "routes": 162,
+    "settings": 65,
     "shell": 33
   },
   "scenarios": [
@@ -99,7 +99,7 @@
     {
       "id": "B-09-daily-loop-0330-max2",
       "source": "fixtures_b",
-      "scenario": "假时钟 03:30 解锁每日循环：五条信号只落 max_proposals_per_day(2) 张，余下记 cap",
+      "scenario": "假时钟 03:30 解锁每日循环：五条素材信号只落 1 张（D86 起唯一 card kind，每 class 一天一条），余下记 kind_taken；额度 0 记 cap",
       "proof": "fixture:B-09-daily-loop-0330-max2",
       "tier": "B",
       "status": "todo",
@@ -170,7 +170,7 @@
       "id": "contract:§0",
       "source": "contract",
       "scenario": "设计宪法（不变原则 — 修宪必须显式声明，任何功能不得默默违反）",
-      "proof": "unittest:tests.test_actd_wire,tests.test_fold_into_an_expanded_card_never_re_expands_it,tests.test_inverse_actions,tests.test_lane_retirement_opens_no_new_doors",
+      "proof": "unittest:tests.test_fold_into_an_expanded_card_never_re_expands_it,tests.test_inverse_actions,tests.test_lane_retirement_opens_no_new_doors,tests.test_limited_provenance_births_are_quiet",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -710,7 +710,7 @@
       "id": "contract:§41",
       "source": "contract",
       "scenario": "v0.41.0 三端动作一致性（add-only，展示层 + webui 入站闸门）",
-      "proof": "unittest:tests.test_e2e_header_parsing,tests.test_policy,tests.test_policy_ceilings,tests.test_qr_golden && flow:pages_controls",
+      "proof": "unittest:tests.test_e2e_header_parsing,tests.test_qr_golden,tests.test_qr_mask_selection,tests.test_qr_png_bytes && flow:pages_controls",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -900,7 +900,7 @@
       "id": "contract:§51",
       "source": "contract",
       "scenario": "自动派发天花板（may_auto_dispatch）+ 合并运行列 queued 子状态",
-      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_mutation_kills,tests.test_actd_wire,tests.test_auto_dispatch_lifts_only_the_self_improve_lane",
+      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_mutation_kills,tests.test_actd_wire,tests.test_dashboard_helpers_edge",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -1120,11 +1120,11 @@
       "id": "contract:§56.6",
       "source": "contract",
       "scenario": "PR 分支自动跟随 main（auto-update-branch；2026-09-02，owner：「一旦一个 main 弄了，其他的就直接自动 rebase」）",
-      "proof": "unittest:tests.test_daily_loop_inputs && flow:install_fresh && flow:uninstall_reinstall",
+      "proof": "unittest:tests.test_auto_deploy_agent,tests.test_changelog_fragments,tests.test_changelog_prune,tests.test_changelog_release_notes && flow:install_fresh && flow:uninstall_reinstall",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": null
+      "note": "parent-cite"
     },
     {
       "id": "contract:§56.7",
@@ -1779,91 +1779,11 @@
     {
       "id": "contract:§65",
       "source": "contract",
-      "scenario": "自动草稿 PR 通道（self_improve lane；P6；owner 决策 D7·D8·D9·D12；§0 第 12 条修宪）",
-      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_mutation_kills,tests.test_actd_wire,tests.test_auto_dispatch_lifts_only_the_self_improve_lane",
+      "scenario": "（retired 2026-09-30，owner 决策 D86：自动草稿 PR 通道整条删除）",
+      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_mutation_kills,tests.test_actd_wire,tests.test_automation_ledger",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.1",
-      "source": "contract",
-      "scenario": "准入（谁进通道）",
-      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_auto_dispatch_lifts_only_the_self_improve_lane,tests.test_backlog_is_the_return_landing_pad,tests.test_config_load_blocks",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.2",
-      "source": "contract",
-      "scenario": "会话边界（派发时刻）",
-      "proof": "unittest:tests.test_self_improve_argv",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.3",
-      "source": "contract",
-      "scenario": "交付核验（收割时刻；宪法第 3 条「诚实」在通道上的形态）",
-      "proof": "unittest:tests.test_self_improve_frozen_in_flight,tests.test_self_improve_mutation_kills_train,tests.test_self_improve_verify,tests.test_worktree_gc",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.4",
-      "source": "contract",
-      "scenario": "敏感路径护栏（通道不许扩自己的权）",
-      "proof": "unittest:tests.test_actd_wire,tests.test_policy_ceilings,tests.test_self_improve_mutation_kills_train,tests.test_self_improve_sensitive_pause",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.5",
-      "source": "contract",
-      "scenario": "巡检：PR 评论 = 下一轮任务，合并 = 验收，关闭 = 拒绝（D12）",
-      "proof": "unittest:tests.test_config_overrides_dispatch,tests.test_self_improve_channel_switch,tests.test_self_improve_followup_dedup_sees_the_backlog,tests.test_self_improve_followups",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.6",
-      "source": "contract",
-      "scenario": "跟进卡（producer 硬编码的形状）",
-      "proof": "unittest:tests.test_self_improve_followup_dedup_sees_the_backlog",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "contract:§65.7",
-      "source": "contract",
-      "scenario": "状态与文件（防腐 #4：出生即带帽）",
-      "proof": "unittest:tests.test_actd_dispatch_mutation_kills_train,tests.test_actd_mutation_kills,tests.test_actd_wire,tests.test_auto_dispatch_lifts_only_the_self_improve_lane",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": "parent-cite"
-    },
-    {
-      "id": "contract:§65.8",
-      "source": "contract",
-      "scenario": "不做 / 边界",
-      "proof": "unittest:tests.test_self_improve_owner_identity",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
+      "status": "waived",
+      "waive_reason": "tombstone",
       "note": null
     },
     {
@@ -2250,7 +2170,7 @@
       "id": "contract:§70.3",
       "source": "contract",
       "scenario": "提案半边（`act/lib/loop_inputs.py` + `daily_loop._propose`）",
-      "proof": "unittest:tests.test_daily_loop_issue_labels,tests.test_daily_loop_proposals,tests.test_dependabot_config,tests.test_self_improve_channel_switch && flow:card_lifecycle",
+      "proof": "unittest:tests.test_daily_loop_inputs,tests.test_daily_loop_proposals,tests.test_dependabot_config && flow:card_lifecycle",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2260,11 +2180,11 @@
       "id": "contract:§70.4",
       "source": "contract",
       "scenario": "配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）",
-      "proof": "unittest:tests.test_self_improve_channel_switch",
+      "proof": "unittest:tests.test_config_load_blocks,tests.test_config_mutation_kills_train,tests.test_daily_loop_dedup_merge,tests.test_daily_loop_inputs",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": null
+      "note": "parent-cite"
     },
     {
       "id": "contract:§70.5",
@@ -2529,12 +2449,12 @@
     {
       "id": "contract:§75.2",
       "source": "contract",
-      "scenario": "结算即释放（`release`；§65.5 追记的正文）",
-      "proof": "unittest:tests.test_worktrees_mutation_kills_train",
+      "scenario": "（retired 2026-09-30，D86：结算即释放随 §65.5 巡检删除）",
+      "proof": "unittest:tests.test_background_jobs_mutation_kills_train,tests.test_daily_loop_run,tests.test_daily_loop_worktree_phase,tests.test_module_script_entries",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "parent-cite"
     },
     {
       "id": "contract:§75.3",
@@ -2730,7 +2650,7 @@
       "id": "contract:§78.2",
       "source": "contract",
       "scenario": "owner 决策表（**D80.1–D80.15**，已拍板，实施时不再讨论）",
-      "proof": "unittest:tests.test_auto_dispatch_lifts_only_the_self_improve_lane,tests.test_backlog_is_the_return_landing_pad,tests.test_lane_retirement_opens_no_new_doors,tests.test_needs_approval_wire_key_stays_present_and_empty",
+      "proof": "unittest:tests.test_backlog_is_the_return_landing_pad,tests.test_lane_retirement_opens_no_new_doors,tests.test_needs_approval_wire_key_stays_present_and_empty",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2740,7 +2660,7 @@
       "id": "contract:§78.3",
       "source": "contract",
       "scenario": "写路径重定向表（每一条 `card_sent` 的产地，逐条点名）",
-      "proof": "unittest:tests.test_audit_quick_capture,tests.test_auto_dispatch_lifts_only_the_self_improve_lane,tests.test_backlog_is_the_return_landing_pad,tests.test_card_notifications_diff_the_backlog_lane && flow:card_lifecycle",
+      "proof": "unittest:tests.test_audit_quick_capture,tests.test_backlog_is_the_return_landing_pad,tests.test_card_notifications_diff_the_backlog_lane,tests.test_machine_cards_are_born_in_the_backlog && flow:card_lifecycle",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2760,7 +2680,7 @@
       "id": "contract:§78.5",
       "source": "contract",
       "scenario": "一次性归并扫描（迁移本身）",
-      "proof": "unittest:tests.test_auto_dispatch_lifts_only_the_self_improve_lane,tests.test_registry_reraise_matrix,tests.test_retired_lane_fold_sweep,tests.test_retired_lane_stragglers_project_with_the_full_face",
+      "proof": "unittest:tests.test_registry_reraise_matrix,tests.test_retired_lane_fold_sweep,tests.test_retired_lane_stragglers_project_with_the_full_face,tests.test_store2_v3_ladder_opens_the_promotion",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2800,7 +2720,7 @@
       "id": "contract:§78.9",
       "source": "contract",
       "scenario": "墓碑与被本节修订的法条",
-      "proof": "unittest:tests.test_actd_mutation_kills,tests.test_auto_dispatch_lifts_only_the_self_improve_lane,tests.test_proposals_triage",
+      "proof": "unittest:tests.test_proposals_triage",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2970,7 +2890,7 @@
       "id": "contract:§81.2",
       "source": "contract",
       "scenario": "去掉的冗余（issue 第 3 问）",
-      "proof": "unittest:tests.test_self_improve_channel_switch",
+      "proof": "unittest:tests.test_automation_ledger",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -3010,6 +2930,16 @@
       "id": "contract:§81.6",
       "source": "contract",
       "scenario": "Tombstone：`approval.poll_interval_minutes`（retired v0.48.x，并入 §81.1 不变量 1）",
+      "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
+      "tier": "A",
+      "status": "waived",
+      "waive_reason": "tombstone",
+      "note": "parent-cite"
+    },
+    {
+      "id": "contract:§81.7",
+      "source": "contract",
+      "scenario": "Tombstone：self_improve_tick / auto_dispatch（retired 2026-09-30，D86）",
       "proof": "unittest:tests.test_audit_trash_purge,tests.test_automation_ledger,tests.test_config_defaults,tests.test_config_load_blocks",
       "tier": "A",
       "status": "waived",
@@ -12547,26 +12477,6 @@
       "note": null
     },
     {
-      "id": "route:POST /api/self-improve/resume",
-      "source": "routes",
-      "scenario": "POST /api/self-improve/resume is routed",
-      "proof": "unittest:tests.test_self_improve_sensitive_pause",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "route:POST /api/self-improve/resume#401",
-      "source": "routes",
-      "scenario": "POST /api/self-improve/resume without a token is 401",
-      "proof": "http:POST /api/self-improve/resume noauth expect=401",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
       "id": "route:POST /api/setup/complete",
       "source": "routes",
       "scenario": "POST /api/setup/complete is routed",
@@ -13411,26 +13321,6 @@
       "source": "settings",
       "scenario": "maintainer / Session id to resume round-trips (PUT → GET → effective → default)",
       "proof": "settings:maintainer.maintainer_session_id",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "setting:maintainer.self_improve_enabled",
-      "source": "settings",
-      "scenario": "maintainer / Let this software improve itself (daily-loop GitHub proposals + draft-PR lane) round-trips (PUT → GET → effective → default)",
-      "proof": "settings:maintainer.self_improve_enabled",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
-      "id": "setting:maintainer.self_improve_owner_logins",
-      "source": "settings",
-      "scenario": "maintainer / Extra GitHub logins that count as you (comma-separated) round-trips (PUT → GET → effective → default)",
-      "proof": "settings:maintainer.self_improve_owner_logins",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
