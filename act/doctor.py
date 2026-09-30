@@ -189,6 +189,10 @@ def _check_launchd_paths(probes: Probes):
     return launchd.check_paths(probes)
 
 
+def _check_launchd_interpreter_identity(probes: Probes):
+    return launchd.check_interpreter_identity(probes)
+
+
 def _check_launchd_orphans(probes: Probes):
     return launchd.check_orphans(probes)
 
@@ -458,7 +462,8 @@ def _service_checks() -> "tuple[list, list]":
     job whose template is gone is otherwise structurally invisible — the
     expected sets are globbed from the template dirs)."""
     if platform.is_darwin():
-        return ([_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
+        return ([_check_launchd, _check_launchd_paths,
+                 _check_launchd_interpreter_identity, _check_launchd_fd_limit,
                  _check_launchd_claude, _check_launchd_volume_access,
                  _check_launchd_orphans, _check_cron],
                 [_check_screenpipe, _check_npx, _check_power])
