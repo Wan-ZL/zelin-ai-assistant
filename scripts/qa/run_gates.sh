@@ -9,6 +9,18 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
+# 沙箱 home（CONTRACT §82.3，issue #452）：**无条件**覆盖继承来的那一份。
+# 无人值守的 self-improve 会话从守护进程继承 `AIASSISTANT_HOME=<live checkout>`
+# （install.sh 把它烙进 launchd plist），于是 run_coverage.sh 的 `${VAR:-$(mktemp -d)}`
+# 永远命不中，整套 unittest 就跑在真账本上——2026-09-18 看板被抹的那条路。
+# 两条语句而不是 `export X="$(mktemp -d)"`：后者触发 shellcheck SC2155（掩盖退出码），
+# 而 ci.yml 的 lint job 对每个 tracked *.sh 跑 shellcheck。
+ZAI_GATE_HOME="$(mktemp -d)"
+export AIASSISTANT_HOME="$ZAI_GATE_HOME"
+# 门自己建出来的沙箱自己收（防腐 #4 的精神：出生即带回收）。EXIT trap 里不写
+# `exit`，所以下面刻意累加的 `exit "$fail"` 判决原样传出（bash 语义）。
+trap 'rm -rf "$ZAI_GATE_HOME"' EXIT INT TERM
+
 OUT="${QA_REPORT_DIR:-.qa-report}"
 mkdir -p "$OUT"
 

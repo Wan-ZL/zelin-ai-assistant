@@ -18,6 +18,7 @@ retired with the §65 lane, D86 — those functions no longer exist.)
 import itertools
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import policy
 
 

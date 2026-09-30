@@ -6,6 +6,7 @@
 """
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import steer
 from act.lib.registry import Requirement
 

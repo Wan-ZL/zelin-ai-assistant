@@ -46,7 +46,7 @@ def _report(findings, **over):
 
 
 def _write(case, report):
-    """报告落一个临时 run 目录（寿命 = ``case`` 的 cleanup），返回目录路径。"""
+    """报告落一个临时 run 目录，返回目录路径（清理登记在 case 上）。"""
     run_dir = scratch_dir(case, prefix="ui-scout-run-", dir=TMP_HOME)
     with open(os.path.join(run_dir, ui_scout.REPORT_NAME), "w", encoding="utf-8") as handle:
         json.dump(report, handle)

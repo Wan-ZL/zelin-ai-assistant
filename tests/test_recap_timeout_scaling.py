@@ -165,10 +165,10 @@ class LostLineTestCase(unittest.TestCase):
                                           audio_rows=30, app="zoom", events=[]), KEY, rs.CLOSED)
         rec["transcript_words"] = 6160
         store.save_recap(rec)
-        # store.projection() 读墙上时钟：setUp 里钉在 2026-09-21 的那条请求过了 24 h TTL 就会
-        # 投成 None（日期炸弹，2026-09-22 起必红）——这条判例钉的是词数进判线，不是 TTL，
-        # 所以用此刻重记一次同一把 key。
-        requests.record(KEY, "running")
+        # store.projection() 读真时钟判 TTL（24 h）：setUp 那条请求钉在 2026-09-21，过一天就成
+        # None——本条只验词数喂判线，两条请求都按真 now 记（2026-09-30 定时炸弹）
+        live = _dt.datetime.now(_dt.timezone.utc)
+        requests.record(KEY, "running", now=live)
         row = {r["key"]: r for r in store.projection()}[KEY]
         self.assertEqual(row["generate_request"]["lost_after_s"], int(timing.lost_after_s(6160)))
         # OPEN 行（还没有文件、没有词数）= 地板
@@ -178,7 +178,7 @@ class LostLineTestCase(unittest.TestCase):
                                                           frames=3, audio_rows=0, app="teams",
                                                           events=[]), open_key, rs.OPEN))]
         store.save_state(state)
-        requests.record(open_key, "running")      # 同上：墙上时钟，别让 TTL 抢答
+        requests.record(open_key, "running", now=live)
         open_row = {r["key"]: r for r in store.projection()}[open_key]
         self.assertEqual(open_row["generate_request"]["lost_after_s"], 600)
 

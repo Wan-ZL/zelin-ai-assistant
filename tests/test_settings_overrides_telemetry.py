@@ -10,6 +10,7 @@ Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py.
 import json
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import config
 
 

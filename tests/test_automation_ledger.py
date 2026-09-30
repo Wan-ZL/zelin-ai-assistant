@@ -10,8 +10,10 @@ import os
 import unittest
 from pathlib import Path
 
-from act.lib import automation, config
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.scratch_testkit import scratch_dir
+
+from act.lib import automation, config  # noqa: E402
 
 
 def _poison(cfg, name):
