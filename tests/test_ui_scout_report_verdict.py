@@ -10,10 +10,10 @@ import io
 import json
 import os
 import sys
-import tempfile
 import unittest
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 _QA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "qa")
 if _QA_DIR not in sys.path:
@@ -45,9 +45,9 @@ def _report(findings, **over):
     return report
 
 
-def _write(report):
-    """报告落一个临时 run 目录，返回目录路径（调用方负责清理）。"""
-    run_dir = tempfile.mkdtemp(prefix="ui-scout-run-", dir=TMP_HOME)
+def _write(case, report):
+    """报告落一个临时 run 目录（寿命 = ``case`` 的 cleanup），返回目录路径。"""
+    run_dir = scratch_dir(case, prefix="ui-scout-run-", dir=TMP_HOME)
     with open(os.path.join(run_dir, ui_scout.REPORT_NAME), "w", encoding="utf-8") as handle:
         json.dump(report, handle)
     return run_dir
@@ -116,7 +116,7 @@ class LoadTestCase(unittest.TestCase):
     """读不动的报告要说清楚是哪一份坏了，而不是抛一个裸 KeyError。"""
 
     def test_round_trip(self):
-        run_dir = _write(_report([_finding("warn")]))
+        run_dir = _write(self, _report([_finding("warn")]))
         self.assertEqual(len(ui_scout.load_report(run_dir)["findings"]), 1)
 
     def test_missing_file(self):
@@ -124,21 +124,21 @@ class LoadTestCase(unittest.TestCase):
             ui_scout.load_report(os.path.join(TMP_HOME, "没有这个目录"))
 
     def test_bad_json(self):
-        run_dir = tempfile.mkdtemp(prefix="ui-scout-bad-", dir=TMP_HOME)
+        run_dir = scratch_dir(self, prefix="ui-scout-bad-", dir=TMP_HOME)
         with open(os.path.join(run_dir, ui_scout.REPORT_NAME), "w", encoding="utf-8") as handle:
             handle.write("{not json")
         with self.assertRaises(ui_scout.ReportError):
             ui_scout.load_report(run_dir)
 
     def test_json_that_is_not_a_report(self):
-        run_dir = tempfile.mkdtemp(prefix="ui-scout-shape-", dir=TMP_HOME)
+        run_dir = scratch_dir(self, prefix="ui-scout-shape-", dir=TMP_HOME)
         with open(os.path.join(run_dir, ui_scout.REPORT_NAME), "w", encoding="utf-8") as handle:
             json.dump({"hello": "world"}, handle)
         with self.assertRaises(ui_scout.ReportError):
             ui_scout.load_report(run_dir)
 
     def test_latest_run_picks_the_newest_timestamp_dir(self):
-        root = tempfile.mkdtemp(prefix="ui-scout-root-", dir=TMP_HOME)
+        root = scratch_dir(self, prefix="ui-scout-root-", dir=TMP_HOME)
         for name in ("2026-09-01T00-00-00-000Z", "2026-09-28T11-08-34-823Z"):
             os.makedirs(os.path.join(root, name))
             with open(os.path.join(root, name, ui_scout.REPORT_NAME), "w", encoding="utf-8") as handle:
@@ -146,7 +146,7 @@ class LoadTestCase(unittest.TestCase):
         self.assertTrue(ui_scout.latest_run(root).endswith("2026-09-28T11-08-34-823Z"))
 
     def test_latest_run_skips_dirs_without_a_report(self):
-        root = tempfile.mkdtemp(prefix="ui-scout-part-", dir=TMP_HOME)
+        root = scratch_dir(self, prefix="ui-scout-part-", dir=TMP_HOME)
         os.makedirs(os.path.join(root, "2026-09-29T00-00-00-000Z"))  # 半路崩掉的一次
         os.makedirs(os.path.join(root, "2026-09-01T00-00-00-000Z"))
         with open(os.path.join(root, "2026-09-01T00-00-00-000Z", ui_scout.REPORT_NAME),
@@ -168,17 +168,17 @@ class CliTestCase(unittest.TestCase):
         return code, out.getvalue() + err.getvalue()
 
     def test_check_returns_one_on_error(self):
-        run_dir = _write(_report([_finding("error")]))
+        run_dir = _write(self, _report([_finding("error")]))
         code, text = self._run(["--run", run_dir, "--check"])
         self.assertEqual(code, 1)
         self.assertIn("ui_scout: FAIL", text)
 
     def test_check_returns_zero_on_warn_only(self):
-        run_dir = _write(_report([_finding("warn")]))
+        run_dir = _write(self, _report([_finding("warn")]))
         self.assertEqual(self._run(["--run", run_dir])[0], 0)
 
     def test_summary_flag_is_always_zero(self):
-        run_dir = _write(_report([_finding("error")]))
+        run_dir = _write(self, _report([_finding("error")]))
         code, text = self._run(["--run", run_dir, "--summary"])
         self.assertEqual(code, 0)
         self.assertTrue(text.startswith("UI_SCOUT "))

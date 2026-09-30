@@ -16,7 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
-import type { Delivery, ReviewCard as ReviewCardRow } from "../../types";
+import type { ReviewCard as ReviewCardRow } from "../../types";
 import { copyText } from "../detail/copyText";
 import { cardAction, REWORK_EMPTY_FALLBACK, useSubmit, pendingNote } from "./boardActions";
 import { CardHead, CardSurface, CopiedAnnouncer, DetailsToggle, DurationText, MergeStateChip, RepoChip, SessionHitChip, SleepNote } from "./cardChrome";
@@ -30,27 +30,6 @@ interface ReviewCardProps {
 
 /** 复制成稿失败短注的停留时间（成功回执是原生的 1.5 s；失败要给人读完一句） */
 export const COPY_FAILED_NOTE_MS = 4000;
-
-/** §65.3 交付核验章：verified → 「PR #n · draft」链接（绿）；否则「PR 未核验：<reason>」（红）；无 delivery 不渲染 */
-export function DeliveryChip({ delivery }: { delivery?: Delivery }) {
-  const { text } = useI18n();
-  if (!delivery) return null;
-  if (delivery.verified) {
-    const label = `PR #${delivery.pr_number ?? "?"}${delivery.pr_draft ? " · draft" : ""}`;
-    return delivery.pr_url ? (
-      <a className="chip chip-success" href={delivery.pr_url} target="_blank" rel="noreferrer" data-delivery="verified">
-        {label}
-      </a>
-    ) : (
-      <span className="chip chip-success" data-delivery="verified">{label}</span>
-    );
-  }
-  return (
-    <span className="chip chip-danger" data-delivery="unverified" title={delivery.reason ?? undefined}>
-      {text(`PR 未核验：${delivery.reason ?? "?"}`, `PR unverified: ${delivery.reason ?? "?"}`)}
-    </span>
-  );
-}
 
 export function ReviewCard({ card }: ReviewCardProps) {
   const { text } = useI18n();
@@ -90,8 +69,6 @@ export function ReviewCard({ card }: ReviewCardProps) {
         {/* §30 会话再活跃：只是平静地标注，不是打回轮（原生 teal 章） */}
         {card.session_active && <span className="chip chip-accent">{text("会话有新活动", "Session active")}</span>}
         {card.interrupted === true && <span className="chip chip-warning">{text("中断收割", "Interrupted")}</span>}
-        {/* §65.3 self_improve 卡：gh 物理核验结果——通过 = PR 章（可点开）；未通过 = 原因 token（红） */}
-        <DeliveryChip delivery={card.delivery} />
         <RepoChip path={card.cwd} />
         <DurationText from={card.dispatched_at} to={card.review_at} prefix={text("耗时 ", "took ")} />
         {/* §71.2：「耗时」数的是墙上时间——电脑睡掉的那几小时必须当着面说出来 */}

@@ -1,17 +1,16 @@
-"""worktrees — `.claude/worktrees/` 的清点与回收（CONTRACT §75；§65.3 / §65.5 追记；§70.1 的第三个维护阶段；issue #315）。
+"""worktrees — `.claude/worktrees/` 的清点与回收（CONTRACT §75；§70.1 的第三个维护阶段；issue #315）。
 
 `claude --bg` 每派一个会话就在 `<repo>/.claude/worktrees/<name>/` 隔离出一份完整
 checkout（跑过前端的还带 `web/node_modules`），而此前**没有任何一处代码删过它们**：
 owner 的生产 checkout 2026-09-09 攒到 30 个、写这条法时 190+，`git status` /
-`git gc` 越来越慢，`git branch -vv` 里满是死分支。本模块是那把扫帚，三条腿：
+`git gc` 越来越慢，`git branch -vv` 里满是死分支。本模块是那把扫帚，两条腿：
 
 - **清点**（:func:`inventory`）：`git worktree list --porcelain` + 每条的年龄 / 锁 /
   是否属于在飞的卡；占用 = 对**托管根目录**跑一次 `du -sk`（不是每条一次），量不到
   就报 null 而不是 0（§0 第 3 条）。
 - **扫**（:func:`sweep`）：判决见下；`git worktree prune` 在前、`git worktree remove`
   在后，**永不 `--force`**、**永不 `git branch -D`**。
-- **结算即释放**（:func:`release`）：§65.5 的 PR 合并 / 关闭落账后顺手删掉那张卡自己的
-  worktree 与本地分支（best-effort，失败只记日志）。
+- （第三条腿「结算即释放」随 §65.5 巡检删除，§75.2 retired D86。）
 
 **判决**（truth = 本模块常量）。硬边界：路径必须在 `<repo>/.claude/worktrees/` 之内、
 永不碰主工作树。守卫（命中即留下，reason 逐字进回执）：`main` / `unmanaged` /
@@ -61,7 +60,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import config, policy, registry, transcripts
+from act.lib import config, registry, transcripts
 from act.lib.card_model import State
 
 GitRunner = Callable[[list, str], "tuple[Optional[int], str]"]
@@ -83,7 +82,7 @@ REMOVE_REASONS = ("merged", "gone", "stale", "settled")
 # 不进 `managed` 计数的两个（它们压根不归本模块管，别让「worktree 数」把它们算进去）
 UNMANAGED_REASONS = ("main", "unmanaged")
 # 进程级总闸（同 §55 AIASSISTANT_LAUNCHD_PROBE / §71.1 AIASSISTANT_POWER_PROBE 的
-# belt-and-braces）：只管两个**会动文件系统**的出口（sweep / release），清点不受它管。
+# belt-and-braces）：只管**会动文件系统**的出口（sweep；release 随 §75.2 retired D86），清点不受它管。
 # 测试套件默认设 0——忘了注入 git runner 的判例是空转，而不是真删开发者的 worktree。
 SWEEP_ENV = "AIASSISTANT_WORKTREE_SWEEP"
 _PORCELAIN_FLAGS = ("locked", "prunable", "bare", "detached")
@@ -286,10 +285,16 @@ def _extra_root(req: object, seen: set) -> Optional[str]:
     return real if os.path.isdir(os.path.join(real, MANAGED_REL)) else None
 
 
+def primary_repo() -> str:
+    """恒在的扫描根 = 安装根 ``config.HOME``（本软件自己的 checkout；§75.1，D86 起
+    不再经 §65 的 `self_improve.repo_path`）。测试 patch 这一个缝。"""
+    return str(config.HOME)
+
+
 def roots(cfg: object = None, reqs: Optional[list] = None) -> list:
-    """扫哪些 repo：通道 repo（§65.3 的物理闸，恒在）∪ 卡片 `target_repo` 里真的带
-    `.claude/worktrees/` 的那些；realpath 去重、保序。"""
-    primary = _real(policy.self_improve_repo_path(cfg)) or str(config.HOME)
+    """扫哪些 repo：安装根（:func:`primary_repo`，恒在）∪ 卡片 `target_repo` 里真的带
+    `.claude/worktrees/` 的那些；realpath 去重、保序。``cfg`` 保留给调用方签名兼容。"""
+    primary = _real(primary_repo()) or str(config.HOME)
     seen = {primary}
     extra = (_extra_root(req, seen) for req in reqs or [])
     return [primary] + [real for real in extra if real]
@@ -651,78 +656,6 @@ def sweep(cfg: object = None, *, git: Optional[GitRunner] = None, now: Optional[
     _sweep_roots(receipt, cfg, cards,
                  _sweep_plan(git or default_git, now, live, days, limit, dry_run, budget_s, beat))
     return receipt
-
-
-# --------------------------------------------------------------------------- #
-# 结算即释放（§65.5 的两条出口调用）
-# --------------------------------------------------------------------------- #
-def _card_branch(req: object) -> str:
-    ex = getattr(req, "execution", None) or {}
-    block = ex.get("self_improve") if isinstance(ex, dict) else None
-    branch = block.get("branch") if isinstance(block, dict) else None
-    return str(branch or "")
-
-
-def _branch_worktrees(git: GitRunner, repo: str, branch: str) -> list:
-    """登记表里分支名对得上的那些路径（卡上没有分支名 = 空）。"""
-    if not branch:
-        return []
-    entries, _err = registered(git, repo)
-    return [e["path"] for e in entries if not e.get("main") and e.get("branch") == branch]
-
-
-def _release_targets(git: GitRunner, repo: str, root: str, branch: str, req: object,
-                     resolve: Callable[[str], Optional[Path]]) -> list:
-    """这张卡自己的 worktree：登记表里同分支的那条 ∪ transcript 记下的会话 cwd；
-    两者都必须在托管根之内（会话可能压根没进 worktree，那时 cwd = repo 根）。"""
-    paths = _branch_worktrees(git, repo, branch)
-    known = {_real(p) for p in paths}
-    ex = getattr(req, "execution", None)
-    cwd = _session_cwd(ex if isinstance(ex, dict) else {}, resolve)
-    if cwd and _real(cwd) not in known:
-        paths.append(cwd)
-    return [p for p in paths if under(root, p)]
-
-
-def _release_one(out: dict, git: GitRunner, repo: str, path: str, branch: str) -> None:
-    if is_dirty(git, path):
-        out["skipped"].append({"path": path, "reason": "dirty"})
-        return
-    done = remove_one(git, repo, {"path": path, "branch": branch, "reason": "settled"})
-    (out["removed"] if done["removed"] else out["skipped"]).append(done)
-
-
-def _release_body(out: dict, req: object, cfg: object, git: GitRunner,
-                  resolve: Callable[[str], Optional[Path]]) -> None:
-    try:
-        repo = str(policy.self_improve_repo_path(cfg))
-        out["branch"] = _card_branch(req)
-        for path in _release_targets(git, repo, managed_root(repo), out["branch"], req, resolve):
-            _release_one(out, git, repo, path, out["branch"])
-    except Exception as exc:  # noqa: BLE001 - 结算路径上的清扫失败只记账
-        out["error"] = "%s: %s" % (type(exc).__name__, str(exc)[:200])
-
-
-def _log_release(log: Optional[Callable[[str], None]], req: object, out: dict) -> None:
-    if not log:
-        return
-    tail = "" if not out["error"] else " error=" + out["error"]
-    log("self_improve: %s worktree release removed=%d skipped=%d%s"
-        % (getattr(req, "id", "?"), len(out["removed"]), len(out["skipped"]), tail))
-
-
-def release(req: object, cfg: object = None, *, git: Optional[GitRunner] = None,
-            log: Optional[Callable[[str], None]] = None,
-            resolve: Optional[Callable[[str], Optional[Path]]] = None) -> dict:
-    """卡结算（PR 合并 = 验收 / 关闭 = 拒绝）后删掉它自己的 worktree 与本地分支。
-    best-effort：任何失败只进回执与日志，绝不抛（§65.5 的落账不许被扫地连累）。"""
-    out = {"removed": [], "skipped": [], "branch": "", "error": None}
-    if git is None and not sweep_enabled():
-        out["skipped"].append({"path": None, "reason": "disabled"})
-        return out
-    _release_body(out, req, cfg, git or default_git, resolve or transcripts.transcript_cwd)
-    _log_release(log, req, out)
-    return out
 
 
 # --------------------------------------------------------------------------- #

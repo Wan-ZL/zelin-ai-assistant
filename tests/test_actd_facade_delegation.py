@@ -47,7 +47,6 @@ _TABLE = [
     ("_merge_into_primary", merge, "merge_into_primary", ("R-1", ["R-2"]), {}, True),
     ("cleanup_merge_jobs", merge, "cleanup_merge_jobs", (), {}, True),
     ("_rearm_dispatch", dispatch, "rearm_dispatch", ({"x": 1},), {}, True),
-    ("auto_dispatch_pass", dispatch, "auto_dispatch_pass", ("cfg",), {}, True),
     ("dispatch_approved", dispatch, "dispatch_approved", ("cfg",), {}, True),
     ("process_raising", dispatch, "process_raising", ("cfg",), {}, True),
     ("_reconcile_review_attach", reconcile, "reconcile_review_attach", ("req", {}), {}, True),

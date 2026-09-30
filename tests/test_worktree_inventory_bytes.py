@@ -9,6 +9,7 @@
 """
 import os
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 from tests.worktree_testkit import FakeGit, Tree
@@ -20,7 +21,10 @@ class InventoryBytesTestCase(unittest.TestCase):
     def setUp(self):
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
+        self.cfg = config.Config()
+        _root = mock.patch.object(worktrees, "primary_repo", side_effect=lambda: self.tree.repo)
+        _root.start()
+        self.addCleanup(_root.stop)
         path = self.tree.add("wf-a", age_days=1.0)
         self.git = FakeGit(self.tree.repo, [{"path": path, "branch": "feat/a",
                                              "head": "sha-a"}],

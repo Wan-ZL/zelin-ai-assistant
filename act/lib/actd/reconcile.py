@@ -7,9 +7,8 @@ CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119�
 强完成信号 = 会话已停工 + 最后一条消息，`session.harvest_kwargs`）/ §34bis + §78
 （收割时比对快照；护栏的认卡判据 §78/D80.11 起是直跑卡 triage_guard.guarded_card）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
-/ §46（resume 风暴降级 + 确认式停止）/ §65.1（通道总开关关着 = 不给 self_improve
-卡自动续命）/ §65.3（self_improve 收割核验）/ §71.3（被睡眠打断的会话收割前
-原地重试一次）。
+/ §46（resume 风暴降级 + 确认式停止）/ §71.3（被睡眠打断的会话收割前原地重试
+一次）。§65.1 frozen-in-flight 与 §65.3 收割核验随 §65 通道删除（D86）。
 """
 from __future__ import annotations
 
@@ -17,8 +16,7 @@ import datetime as _dt
 import time
 from typing import Optional
 
-from act.lib import (analytics, config, dispatch_prompt, notify, registry, self_improve,
-                     steer)
+from act.lib import analytics, config, dispatch_prompt, notify, registry, steer
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
                                   harvest_kwargs, update_search_index,
@@ -274,7 +272,6 @@ def _promote_delivered(d: Daemon, req, ex: dict, sid, harvested: dict) -> None:
     apply_harvest_title(d, req, harvested)   # §37, round boundary
     # §34bis 机械护栏终点：直跑卡收割时做起止快照比对（§78 改锚）。
     check_triage_registry_guard(d, req, ex)
-    self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex
     req.set_status(registry.State.REVIEW)
     registry.save(req)
@@ -305,7 +302,6 @@ def harvest_to_review(d: Daemon, req: Requirement, ex: dict, sid, note_tag: str,
     ex["review_at"] = d.iso_now()
     if interrupted_reason:
         ex["interrupted_reason"] = interrupted_reason
-    self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 核验（失败原因覆盖上面的中断原因）
     req.execution = ex
     append_note(req, note_tag)
     req.set_status(registry.State.REVIEW)
@@ -507,13 +503,6 @@ def _reconcile_one(d: Daemon, req: Requirement, cfg: config.Config, agents: dict
     if ex.get("done"):
         _promote_if_missed(req)
         return 0
-    if self_improve.frozen_in_flight(req, cfg):
-        # §65.1（issue #307 第 4 条）：通道关着时死掉的 self_improve 会话**不自动
-        # 续命**——「在电脑睡眠时被中断」正是 owner 点名的那条路。卡原地留在运行
-        # 中（不改状态、不写卡、不打日志：出厂默认不该每 pass 出声），维护者把开关
-        # 打开后下一 pass 照常救活。收割（done / blocked 两条路）与 §65.3 核验不在
-        # 本闸下——已经跑完的活该被收下。
-        return 0
     return _revive_dead(d, req, ex, sid, cfg, resume_notified)
 
 
@@ -682,7 +671,6 @@ def _handle_done(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_
     ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
     # §34bis 机械护栏终点：直跑卡收割时做起止快照比对（§78 改锚）。
     check_triage_registry_guard(d, req, ex)
-    self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex
     _drop_undelivered_steers(d, req)
     # §11: agent done = 草稿就绪，进入待验收（Zelin ✓验收/↩︎打回）。

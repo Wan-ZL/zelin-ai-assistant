@@ -119,8 +119,8 @@ KINDS: tuple = (
      "preference": None},
     {"kind": "general",
      "title": {"zh": "其余守护进程通知", "en": "Other daemon notifications"},
-     "help": {"zh": "没落进上面四类的其余守护进程通知：自动恢复中（无需操作）/ 免批派发的观察模式通知 / 自我改进通道事件 / 简报——文案由 act/lib/notify.py 按界面语言即时生成。没有分类开关，但同样守安静时段。",
-              "en": "Every daemon notification outside the four categories above: auto-recovery in progress (nothing to do) / observation-mode auto-dispatch / self-improve lane events / digests — copy is generated per UI language by act/lib/notify.py. No category switch, but quiet hours still applies."},
+     "help": {"zh": "没落进上面四类的其余守护进程通知：自动恢复中（无需操作）/ 简报——文案由 act/lib/notify.py 按界面语言即时生成。没有分类开关，但同样守安静时段。",
+              "en": "Every daemon notification outside the four categories above: auto-recovery in progress (nothing to do) / digests — copy is generated per UI language by act/lib/notify.py. No category switch, but quiet hours still applies."},
      "preference": None},
 )
 

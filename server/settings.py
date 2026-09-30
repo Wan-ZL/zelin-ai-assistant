@@ -16,7 +16,7 @@ Two things, both stdlib (+ optional PyYAML for reading config.yaml):
    other key in the file is preserved byte-for-byte as JSON. The pipeline
    (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same three keys.
 
-3. **The daily self-improvement loop's knobs** (CONTRACT §70, D10) —
+3. **The daily loop's knobs** (CONTRACT §70, D10) —
    ``GET/PUT /api/settings/daily-loop``: ``enabled`` / ``time`` (local HH:MM)
    / ``max_proposals_per_day`` / ``stale_days`` / ``trash_retention_days``
    / ``review_stale_days`` (D74, §70.2 追记),

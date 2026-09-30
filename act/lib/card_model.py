@@ -137,10 +137,9 @@ OPTIONAL_ORDER = [
     # {summary, verdict, verdict_reason, at, source_hash | error}，只由
     # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
     "assessment",
-    # §65 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
-    # 只会让卡**更不自主**——self_improve lane 见到即拒（self_improve:needs_mcp，
-    # 只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开。
-    # 默认 False 整键省略。
+    # §65 自动草稿 PR 通道的「卡显式声明需要 MCP」。writer retired D86：通道删除后
+    # 这个字段 inert（没有 MCP 封锁要放开、没有免批闸要拒），存量卡照常读、不再写；
+    # 槽位保留（add-only，store2 migrate_yaml 不许见到未知键）。默认 False 整键省略。
     "needs_mcp",
     # §70 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
     # 旧卡主键列表；旧卡进回收站（reason `daily-merge: 并入 <new>`）、可恢复。
@@ -276,7 +275,7 @@ class Requirement:
     # §76「疑似已完成」提示（见 OPTIONAL_ORDER 注）。None = 没有完成信号。
     completion_hint: Optional[dict] = None
 
-    # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
+    # §65（inert since D86）：存量 self_improve 卡的 needs_mcp（见 OPTIONAL_ORDER 注）。
     needs_mcp: bool = False
     # §78/§45 静默出生标记（见 OPTIONAL_ORDER 注）。False = 照常通知。
     quiet_birth: bool = False

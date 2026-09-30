@@ -35,7 +35,7 @@ import datetime as _dt
 from dataclasses import dataclass
 from typing import Optional
 
-from act.lib import analytics, registry, risk, self_improve, steer
+from act.lib import analytics, registry, risk, steer
 from act.lib.actd import dispatch as _dispatch
 from act.lib.actd.inbox import is_owner_ingress
 from act.lib.actd.seam import Daemon, append_note
@@ -530,8 +530,8 @@ def _abort_execution(d: Daemon, req: Requirement, inp: _Input) -> str:
     # §30 追记（issue #446）：退回潜在任务也是收工——清掉 attach 活跃标记，别让它悬着。
     ex.pop("_review_active", None)
     # §4.1：退回潜在任务 = 丢弃这一轮，派发失败台账（含 dispatch_halted）一并
-    # 清掉——否则卡带着刹车回到潜在任务列，§65 免批通道会把它原样再推进
-    # approved，永远停在「需输入」（审查复现 2026-09-01）。
+    # 清掉——否则卡带着刹车回到潜在任务列，下一次进 approved 时原样带着它，
+    # 永远停在「需输入」（审查复现 2026-09-01；当年推它回去的 §65 免批通道 retired D86）。
     req.execution = _dispatch.rearm_dispatch(d, ex)
     req.set_status(State.DETECTED)
     d.save(req)
@@ -565,7 +565,6 @@ def _stop_to_review(d: Daemon, req: Requirement, inp: _Input) -> str:
     # §34bis 机械护栏终点：手动「去待验收」也是一次收割提升 —— preset 清理卡同样比对
     # 起止快照（少了这一刀，手动停出的卡永不检查、快照侧文件永不消费；无 ref 零开销）。
     check_triage_registry_guard(d, req, ex)
-    self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     # mirror the natural executing->review transition's review fields
     # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
     # renders (dashboard reads execution.review_at) and a later purge is

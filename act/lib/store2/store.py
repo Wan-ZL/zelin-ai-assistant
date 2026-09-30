@@ -188,15 +188,15 @@ def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
 # §78（issue #447，D80.15）提案车道退役后新增的合法转移——逐条对应 schema.sql
 # 里同一批 INSERT（全新库与升级库必须收敛，判例比对 sqlite_master + 本表行）。
 _V3_TRANSITIONS = (
-    ("detected",  "approved",  "system"),   # §65 lane 免批（§51 hand lane 已退役）
+    ("detected",  "approved",  "system"),   # §65 lane 免批（writer retired D86；行保留 add-only）
     ("detected",  "delivered", "user"),     # §10 done_external 从潜在任务直落已交付
     ("detected",  "raising",   "user"),     # §8 研究并提议（v1 即有，列出以求自明）
     ("card_sent", "detected",  "system"),   # §78 一次性归并扫描（actd 主循环）
     ("approved",  "detected",  "user"),     # §10 abort_execution 退回潜在任务
     ("executing", "detected",  "user"),
     ("review",    "detected",  "user"),
-    ("approved",  "detected",  "system"),   # §65.1 通道关闭时的免批派发撤回
-    ("approved",  "card_sent", "system"),   # 退役前就缺的旧洞（_withdraw_frozen_lane）
+    ("approved",  "detected",  "system"),   # 免批派发撤回（D86 起写者 = _withdraw_retired_auto_approval）
+    ("approved",  "card_sent", "system"),   # 退役前就缺的旧洞（旧 _withdraw_frozen_lane；writer retired）
     ("raising",   "detected",  "user"),     # 扩写中卡上的评论折回潜在任务
 )
 

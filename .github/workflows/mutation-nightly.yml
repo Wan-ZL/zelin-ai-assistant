@@ -1,9 +1,10 @@
 # Nightly mutation testing -> one pinned issue + a machine-readable artifact.
 #
 # NEVER a PR gate (owner decision D5 / CONTRACT §57): surviving mutants are
-# test-gap *proposals* — input for the daily self-improvement loop (P5 reads
-# the pinned issue and the `mutation-report` JSON artifact), never a merge
-# veto. This workflow is not in the required-checks set and must stay out.
+# test gaps read by humans from the pinned issue and the `mutation-report`
+# JSON artifact, never a merge veto. Since D86 (2026-09-30) the daily loop no
+# longer reads this report or mints cards from it — this is a measurement job.
+# This workflow is not in the required-checks set and must stay out.
 #
 # scripts/qa/mutate.py is stdlib-only (constitution art. 7): it flips
 # operators in the target modules (truth = qa/mutation_targets.toml), runs
@@ -72,8 +73,9 @@ jobs:
           path: .qa/mutation/state.json
           key: mutation-state-${{ github.run_id }}
 
-      # The JSON is the machine-readable feed the P5 daily loop consumes
-      # (survivors with file:line + operator -> test-gap proposals).
+      # The JSON is the full machine-readable report (survivors with
+      # file:line + operator), for humans and local tooling; D86 retired the
+      # daily-loop hand-off that used to mint cards from it.
       - name: Upload report artifact
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

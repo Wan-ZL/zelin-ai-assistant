@@ -99,7 +99,7 @@ from server import (about, ai_fix_launch, analytics_ingest, attachments,
                     material_box, mcp_servers, notify_catalog, paths,
                     permissions, radars, recaps, repair, screenpipe_disk,
                     search_index_source, secrets_store, security,
-                    self_improve_lane, settings, settings_catalog, setup,
+                    settings, settings_catalog, setup,
                     slack_directory, slack_manifest, sync_pairing,
                     telemetry_consent,
                     terminal_launch, uninstall_launch, voice_profile,
@@ -804,8 +804,6 @@ _POST_JSON_ROUTES = {
     # §63.16 手改的会议结束时间（{key, end_override: ISO-Z | null}）→ 同一个 marks.json 的 add-only 键；
     # 纯展示层：recap 文件里录制到的 end 一字不动，生成不读它
     "/api/recaps/end": lambda ctx, payload: recaps.end(ctx.home, payload),
-    # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
-    "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
     # §67 启用/停用一个 skill（= ~/.claude/skills 软链接的建/删；自定义副本拒改 409）
     "/api/skills": lambda ctx, payload: settings.update_skill(ctx.home, payload),
     # §68.7 在终端接管会话（命令由 server 从投影推导）

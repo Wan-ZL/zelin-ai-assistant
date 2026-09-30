@@ -199,7 +199,6 @@ vi.mock("./api", async (importOriginal) => {
     fetchIngestJob: vi.fn(),
     postMaintainerTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && claude", command_file: "/tmp/m.command", cwd: "/r" }),
     postRepairActd: vi.fn().mockResolvedValue({ ok: true }),
-    postSelfImproveResume: vi.fn().mockResolvedValue({ ok: true, paused: false, was_paused: true }),
     postClaudeCodeDefault: vi.fn().mockResolvedValue({ model: "x", previous: null, backup: null, path: "p" }),
     postAction: vi.fn().mockResolvedValue({ ok: true }),
     // §10bis 贴图上传（D41）：默认成功回一条路径；「server 拒绝」那一遍换成拒绝 → 「图片保存失败」+ 好

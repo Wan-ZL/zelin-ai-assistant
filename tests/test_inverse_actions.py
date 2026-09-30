@@ -346,7 +346,9 @@ class AbortExecutionTestCase(InverseActionsBase):
         stub = mock.Mock(return_value=(True, True, "stopped"))
         with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        # §78（D80）：退回的落点是潜在任务（detected），与上面几条同款；这里的 CARD_SENT 是
+        # 合并时残留的旧断言（#446 与 #447 两车交叉），不是本判例要钉的东西。
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("_review_active", req.execution or {})
 
     def test_double_abort_second_is_noop(self):

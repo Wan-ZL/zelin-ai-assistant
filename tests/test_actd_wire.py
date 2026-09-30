@@ -1,14 +1,11 @@
-"""actd v-next 接线行为测试（vnext-amendments §50/§51/§65/§78/§44.3-S/W1.c/W17）。
+"""actd v-next 接线行为测试（vnext-amendments §50/§51/§78/§44.3-S/W1.c/W17）。
 
 §78（issue #447 / owner decision D80）：提案列退役，机器卡一律落潜在任务
-（``detected``）；§51 的 hand 免批车道随之 tombstone（D80.4），免批闸扫的是
-``detected`` 且只放 §65 self_improve 出身的卡进去。本文件的卡因此全部铸在
-``detected``——铸在别处的「不自动派发」断言是空断言（闸根本不看那一列）。
+（``detected``）；§51 的 hand 免批车道随之 tombstone（D80.4），§65 self_improve
+免批 lane 于 D86 整条删除——``auto_dispatch_pass`` 已不存在，本文件的卡全部铸在
+``detected``，钉的是「跑完一整个 pass 仍然留在那儿」。
 
 覆盖：
-  auto_dispatch_pass — §65 lane 免批通道、hand 卡不再自跑（§78）、天花板回落
-      + auto_dispatch_block 上卡（origin:*/disabled 常态原因不上卡）、观察模式
-      通知钩子、无预算（D9）；
   dispatch_approved — 并发上限排队（queued 子状态）、无预算复核（D9）；
   comment-on-EXECUTING — steer 入队（ts+stem 带键 dedup，owner ingress 限定）、
       agent/remote 评论只记录（T-28）、其余状态保基线 fold；
@@ -34,7 +31,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd
-from act.lib import config, policy, registry, self_improve, steer
+from act.lib import config, registry, steer
 from act.lib.dashboard import build_dashboard
 from act.lib.registry import Requirement, State
 
@@ -42,9 +39,6 @@ _HAND_SRC = [{"who": "zelin", "channel": "quick_capture",
               "date": "2026-08-30", "quote": "手打的活"}]
 _SLACK_SRC = [{"who": "boss", "channel": "slack",
                "date": "2026-08-30", "quote": "外部请求"}]
-# §65 lane 出身（producer 硬编码的唯一免批渠道）——§78 之后免批闸只认它。
-_LANE_SRC = [{"who": "loop", "channel": "self_improve", "date": "2026-09-02",
-              "ref": "proposal:abc", "quote": "让 doctor 多一行"}]
 
 # v0.48 当日花费台账文件名（retired v0.48.7，D9）：只用来钉「不再写它」。
 _LEGACY_LEDGER = "autodispatch_spend.json"
@@ -58,13 +52,6 @@ def _mk(req_id="R-700", status=State.DETECTED.value, sources=None, **kw):
     req = Requirement(**base)
     registry.save(req)
     return req
-
-
-def _lane(req_id="R-700", **kw):
-    """§65 self_improve 卡：§78 之后唯一还能进免批资格闸的出身。"""
-    kw.setdefault("target_repo", str(config.HOME))
-    kw.setdefault("target_kind", "existing")
-    return _mk(req_id, sources=_LANE_SRC, **kw)
 
 
 def _reload(req_id):
@@ -86,14 +73,11 @@ def _clean_registry():
     marker = config.STATE_DIR / actd._ARCHIVE_SWEEP_MARKER
     if marker.exists():
         marker.unlink()
-    self_improve.lane_state_path().unlink(missing_ok=True)   # §65.4 暂停态不串场
 
 
 def _cfg(**auto):
-    """§65 通道开着（#307/D57 起出厂关；关着的判决在 test_self_improve_*）——
-    §78 之后免批闸只走 lane 卡，通道关着的话本文件全部判例都是空跑。"""
-    return config.Config(raw={"autodispatch": auto} if auto else {},
-                         self_improve_enabled=True)
+    """`autodispatch:` 块（D86 起只剩 max_concurrent / require_awake 还被读）。"""
+    return config.Config(raw={"autodispatch": auto} if auto else {})
 
 
 class WireBase(unittest.TestCase):
@@ -101,116 +85,6 @@ class WireBase(unittest.TestCase):
         _clean_registry()
         self.notify = mock.patch.object(actd.notify, "notify").start()
         self.addCleanup(mock.patch.stopall)
-
-
-# --------------------------------------------------------------------------- #
-# auto_dispatch_pass（§51 tombstone / §65 lane / §78 / M1.b / C-6）
-# --------------------------------------------------------------------------- #
-class TestAutoDispatch(WireBase):
-    def test_lane_card_auto_approved_and_notified(self):
-        # §78 之后唯一还在的免批通道：§65 self_improve 卡从潜在任务直接进 approved。
-        _lane("R-700", cost_estimate_usd=2.0)
-        n = actd.auto_dispatch_pass(_cfg())
-        self.assertEqual(n, 1)
-        req = _reload("R-700")
-        self.assertEqual(req.status, State.APPROVED.value)
-        self.assertTrue(req.execution.get("auto_dispatched"))
-        self.assertIn("auto-dispatch", req.notes)
-        # 当日花费台账 retired v0.48.7（D9）：原判例钉 ledger["cards"]=={"R-700":2.0}，
-        # 现在钉「根本不落这个文件」。
-        self.assertFalse((config.STATE_DIR / _LEGACY_LEDGER).exists())
-        self.notify.assert_called_once()  # 观察模式钩子
-
-    def test_hand_card_no_longer_auto_approved(self):
-        """§78/D80.4：§51 的 hand 免批车道 tombstone——手打卡在潜在任务里等人点。
-
-        原判例（test_hand_card_auto_approved_and_notified）钉的是「hand 出身
-        + 天花板全过 → 免批直接 approved + 观察通知」。那条车道唯一的喂料口是
-        被删掉的提案捕获框；owner 亲笔要起跑走 §34「运行中」直跑框（出生即
-        approved，压根不过这个闸）。同一张卡现在必须原地不动：不批、不留痕、
-        不打扰——「AI 的话绝不自动变成 owner 承诺过的状态」（§0 第 4 条）在提案
-        列消失之后正是靠这条兜住。
-        """
-        _mk("R-707", cost_estimate_usd=2.0)          # 默认 _HAND_SRC
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
-        req = _reload("R-707")
-        self.assertEqual(req.status, State.DETECTED.value)
-        self.assertNotIn("auto_dispatched", req.execution or {})
-        self.assertNotIn("auto-dispatch", req.notes or "")
-        self.assertFalse((config.STATE_DIR / _LEGACY_LEDGER).exists())
-        self.notify.assert_not_called()
-
-    def test_notify_hook_respects_config(self):
-        _lane("R-700", cost_estimate_usd=2.0)
-        actd.auto_dispatch_pass(_cfg(notify=False))
-        self.notify.assert_not_called()
-
-    def test_external_card_stays_without_block_stamp(self):
-        # 常态回落（C-6）：不上卡不留痕，照常等 owner 在潜在任务里决定
-        _mk("R-701", sources=_SLACK_SRC, cost_estimate_usd=2.0)
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
-        req = _reload("R-701")
-        self.assertEqual(req.status, State.DETECTED.value)
-        self.assertNotIn("auto_dispatch_block", req.execution or {})
-        self.assertNotIn("拦下", req.notes or "")
-
-    def test_over_confirm_line_blocks_with_reason_once(self):
-        # D9 前这里用 $12 触发 cost:over_ceiling（已退役）；改用 $60 > 文字确认线
-        # 触发 t2_confirm，钉的仍是「token 上卡 + 留痕只一次」。
-        _lane("R-702", cost_estimate_usd=60.0)
-        cfg = _cfg()
-        actd.auto_dispatch_pass(cfg)
-        actd.auto_dispatch_pass(cfg)   # 第二遍不得重复留痕
-        req = _reload("R-702")
-        self.assertEqual(req.status, State.DETECTED.value)
-        self.assertEqual((req.execution or {}).get("auto_dispatch_block"),
-                         "t2_confirm")
-        self.assertEqual(req.notes.count("auto-dispatch 拦下"), 1)
-
-    def test_second_card_not_blocked_by_accumulated_spend_d9(self):
-        # 原判例 test_budget_exhausted_second_card_blocked 钉「$3 + $3 > $5 →
-        # 第二张 budget:exhausted」。owner decision D9（docs/design/vnext2-plan.md）
-        # retired v0.48.7：过得了资格闸的卡不管当天累计多少都自动派发。
-        _lane("R-703", cost_estimate_usd=3.0)
-        _lane("R-704", cost_estimate_usd=3.0)
-        _lane("R-705", cost_estimate_usd=30.0)
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 3)
-        for rid in ("R-703", "R-704", "R-705"):
-            req = _reload(rid)
-            self.assertEqual(req.status, State.APPROVED.value, rid)
-            self.assertNotIn("auto_dispatch_block", req.execution)
-
-    def test_disabled_clears_stale_block(self):
-        # （cost:over_ceiling 是 v0.48 遗留 token——D9 后只会以「旧卡残留」出现）
-        _lane("R-705", cost_estimate_usd=12.0,
-              execution={"auto_dispatch_block": "cost:over_ceiling"})
-        actd.auto_dispatch_pass(_cfg(enabled=False))
-        req = _reload("R-705")
-        self.assertEqual(req.status, State.DETECTED.value)
-        self.assertNotIn("auto_dispatch_block", req.execution or {})
-
-    def test_stale_block_cleared_on_a_card_that_no_longer_enters_the_gate(self):
-        # §78：hand lane 退役后非 §65 卡不再过资格闸——卡上那枚永不更新的
-        # auto_dispatch_block 会变成假话（卡面一直挂「auto-dispatch 拦下…」），
-        # 所以见到就清（与「解除即清」同一条纪律）。
-        _mk("R-708", cost_estimate_usd=2.0,
-            execution={"auto_dispatch_block": "t2_confirm"})
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
-        req = _reload("R-708")
-        self.assertEqual(req.status, State.DETECTED.value)
-        self.assertNotIn("auto_dispatch_block", req.execution or {})
-
-    def test_explicit_external_stamp_never_auto_runs(self):
-        # W17 belt-and-braces：sources 说得再干净，章是 external（手改 YAML）
-        # 就绝不免批——§78 后这条 belt 的受众是 §65 lane 卡（hand 卡连闸都不进）
-        _lane("R-706", cost_estimate_usd=2.0, origin_trust="external")
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
-        req = _reload("R-706")
-        self.assertEqual(req.status, State.DETECTED.value)
-        # origin:* 仍是常态回落（C-6）：不上卡不留痕——§78 之后这条分支只剩
-        # 「进了闸又被 W17 拦下」的 lane 卡还走得到
-        self.assertNotIn("auto_dispatch_block", req.execution or {})
-        self.assertNotIn("拦下", req.notes or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -236,10 +110,10 @@ class TestDispatchGates(WireBase):
 
     def test_auto_card_never_waits_on_budget_d9(self):
         # 原判例 test_auto_card_waits_when_budget_tightened 钉「台账 3+4 > 5 →
-        # auto 卡留队、人批卡照发」。D9 retired v0.48.7：auto 卡与人批卡同等派发，
-        # 旧 config 里残留的 daily_budget_usd 键不起作用。
-        _mk("R-720", status=State.APPROVED.value, cost_estimate_usd=40.0,
-            execution={"auto_dispatched": True})
+        # auto 卡留队、人批卡照发」。D9 retired v0.48.7：旧 config 里残留的
+        # daily_budget_usd 键不起作用。（D86 起没有 auto 卡：带 auto_dispatched 痕的
+        # 存量卡被退役护栏撤回，那一条的判例在 test_retired_self_improve_lane_is_inert。）
+        _mk("R-720", status=State.APPROVED.value, cost_estimate_usd=40.0)
         _mk("R-721", status=State.APPROVED.value, cost_estimate_usd=4.0)
         ex_mock = mock.MagicMock()
         with mock.patch.object(actd, "executor", ex_mock):
@@ -585,38 +459,48 @@ class TestIngressMarker(WireBase):
         self.assertEqual(len(reqs), 1)
         return reqs[0]
 
+    def _assert_stays_after_a_pass(self, req_id, status):
+        """跑一整个 actd.run_once（executor 为 mock）：卡不动、不被派发。"""
+        ex_mock = mock.MagicMock()
+        with mock.patch.object(actd, "executor", ex_mock), \
+                mock.patch.object(actd, "_housekeeping_phase"), \
+                mock.patch.object(actd, "_store2_tick"), \
+                mock.patch.object(actd, "_refresh_model_knobs"), \
+                mock.patch.object(actd, "reconcile_executing", return_value=0), \
+                mock.patch.object(actd, "write_dashboard"), \
+                mock.patch.object(actd, "build_dashboard", return_value={}), \
+                mock.patch.object(actd, "detect_transitions", return_value=[]):
+            actd.run_once(_cfg(), None, set())
+        ex_mock.dispatch.assert_not_called()
+        self.assertEqual(_reload(req_id).status, status)
+
     def test_agent_capture_lands_agent_channel_not_dispatchable(self):
         # boardctl 形捕获（via:"agent"）：agent_capture 通道 + PROPOSED 章，
-        # may_auto_dispatch 从 sources 现算出身 → 结构性拒绝
+        # 照旧进 triage 扩写；D86 起没有免批 lane，一整个 pass 之后也不会被推进
         req = self._capture_inbox("agent 发现的 follow-up", via="agent")
         self.assertEqual(req.sources[0]["channel"], "agent_capture")
         self.assertEqual(req.origin_trust, "proposed")
         self.assertEqual(req.status, State.RAISING.value)  # 照旧进 triage 扩写
-        ok, reason = policy.may_auto_dispatch(req, _cfg())
-        self.assertFalse(ok)
-        self.assertEqual(reason, "origin:proposed")
+        self._assert_stays_after_a_pass(req.id, State.RAISING.value)
 
     def test_remote_capture_lands_remote_channel_not_dispatchable(self):
         req = self._capture_inbox("远程投的活", via="remote")
         self.assertEqual(req.sources[0]["channel"], "remote_capture")
         self.assertEqual(req.origin_trust, "proposed")
-        ok, reason = policy.may_auto_dispatch(req, _cfg())
-        self.assertFalse(ok)
-        self.assertEqual(reason, "origin:proposed")
+        self._assert_stays_after_a_pass(req.id, State.RAISING.value)
 
     def test_unknown_via_fails_closed_to_remote_channel(self):
         req = self._capture_inbox("伪造 via 的捕获", via="owner")
         self.assertEqual(req.sources[0]["channel"], "remote_capture")
         self.assertEqual(req.origin_trust, "proposed")
 
-    def test_owner_web_capture_keeps_hand_admission_but_waits(self):
-        """owner ingress 的章还是 hand（资格闸照判「可以」），但 §78 后它不自跑。
+    def test_owner_web_capture_keeps_hand_stamp_but_waits(self):
+        """owner ingress 的章还是 hand，但 §78 后它不自跑（D86 起任何卡都不自跑）。
 
         原判例钉的是「via:"web" 保住 HAND ⇒ 免批自动派发」，与上面两条
-        （agent/remote → origin:proposed，结构性关死）成对。§78/D80.4 退役的是
-        hand 车道的**入口**，不是信任矩阵：所以这里仍然正面钉 may_auto_dispatch
-        对 owner ingress 判 ``(True, "ok")``（对照组的 (False, "origin:proposed")
-        才有意义），同时钉真实接线上它留在潜在任务等 owner 点。
+        （agent/remote → origin:proposed）成对。§78/D80.4 退役了 hand 车道的入口，
+        D86 删掉了最后一条免批 lane：这里仍钉章是 hand（对照组的 proposed 才有
+        意义），同时钉真实接线上跑完一整个 pass 它还留在潜在任务等 owner 点。
         """
         req = self._capture_inbox("web 手打的活", via="web")
         self.assertEqual(req.origin_trust, "hand")
@@ -624,9 +508,7 @@ class TestIngressMarker(WireBase):
         req.cost_estimate_usd = 1.0
         req.target_repo = TMP_HOME
         registry.save(req)
-        self.assertEqual(policy.may_auto_dispatch(req, _cfg()), (True, "ok"))
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
-        self.assertEqual(_reload(req.id).status, State.DETECTED.value)
+        self._assert_stays_after_a_pass(req.id, State.DETECTED.value)
 
     def test_agent_capture_never_auto_dispatches_in_the_backlog(self):
         # 不批、不上 block 痕，留在潜在任务等 owner（§78 前是待审批列）
@@ -635,7 +517,7 @@ class TestIngressMarker(WireBase):
         req.cost_estimate_usd = 1.0
         req.target_repo = TMP_HOME
         registry.save(req)
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
+        self._assert_stays_after_a_pass(req.id, State.DETECTED.value)
         after = _reload(req.id)
         self.assertEqual(after.status, State.DETECTED.value)
         self.assertNotIn("auto_dispatch_block", after.execution or {})

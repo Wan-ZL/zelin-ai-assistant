@@ -120,7 +120,8 @@ class TransitionWallTestCase(unittest.TestCase):
     def test_system_approve_is_listed_for_autodispatch(self):
         # v0.48.8 接线修订：§51 hand 卡免批通道 = actd 自主管线（system）把
         # card_sent 翻 approved 是真实管线转移——白名单补行（add-only）。
-        # 资格闸门在应用层（policy.may_auto_dispatch）；agent 仍零行（下测）。
+        # 资格闸门曾在应用层（policy.may_auto_dispatch，retired D86——行保留 add-only）；
+        # agent 仍零行（下测）。
         insert_card(self.conn, "R-001", "card_sent")
         set_status(self.conn, "R-001", "approved", "system")
         row = self.conn.execute(

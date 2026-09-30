@@ -4,8 +4,8 @@
 跑一次——**先**整理看板（act/lib/maintenance：潜在任务列去重合成（§78 起只剩
 这一列，存量 card_sent 卡一并扫）、
 过时卡进回收站），**再**回收磁盘（act/lib/worktrees：已合并 / 已删枝 / 过时的
-`.claude/worktrees/`，§75），**最后**从日志台账 / analytics / doctor / 夜间变异报告 / GitHub
-issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 ≤
+`.claude/worktrees/`，§75），**最后**从日志台账 / analytics / doctor / 素材库读信号
+（act/lib/loop_inputs；GitHub / CI / 夜间变异报告自 D86 起一律不读），按指纹去重后铸 ≤
 `max_proposals_per_day`（默认 truth = config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS）张
 🤖 卡进潜在任务列（§78：提案列退役，机器卡一律落那儿）。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
 它们只成 advisory 行，落在 `last_result.advisories`（≤ 20 条，带 first_seen；跨天备忘
@@ -16,16 +16,17 @@ issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 
 
 - **只在 actd 里跑**（:func:`tick` 由 act/actd.py 每 pass 调；本模块的 CLI
   只出计划报告、零写入）——状态转移单写者不变（§0 第 1 条）。
-- **GitHub 半边挂在 §65.1 的总开关下**（`self_improve.enabled`，#307 / D57 起默认
-  **关**）：关着时 `issues` / `prs` / `mutation` 三个读取器一个都不跑（零 gh 调用，
-  `inputs` 里记 `"off"`），因此不铸 🤖 卡；维护半边（去重 / 过时清扫）与其余读取器
-  照常——每日整理不是维护者功能。
+- **GitHub 半边已删除**（owner 决策 D86，2026-09-30）：`issues` / `prs` / `mutation`
+  三个读取器与 §65 通道一起退役（CONTRACT §70.3 ⑨–⑪ 墓碑）。**唯一**还能铸 🤖 卡的
+  输入是素材库，闸门是 yaml 专用开关 `daily_loop.materials_enabled`（出厂**关**，
+  :func:`materials_enabled`）；关着时 `inputs.materials` 记 `"off"`、零抓取。维护半边
+  （去重 / 过时清扫 / worktree 回收）与 advisory 读取器照常——每日整理不是维护者功能。
 - **不调 LLM**：提案是确定性模板（Uncle Bob 原则「价值靠确定性工具不靠
   提示词」，R2.9）；理解素材 URL / 修 CI / 补测试的智力活留给被派工的 agent。
   外来文本进卡片前已在 loop_inputs 里 fence（§0 第 5 条）。
 - 铸卡走 `registry.merge_or_new`（同题折叠、§50 盖章），channel 恒
   `self_improve`（代码硬编码 = write-locked，policy.CHANNEL_CLASS → proposed，
-  照旧人批；P6 通道的准入只认这个 channel + 物理 repo 路径）。
+  需 owner 亲手促成运行；D86 起没有任何免批 lane）。
 - **待验收列的两阶段老化**（§70.2 追记 / D74，issue #312）：维护阶段在过时清扫之后
   多跑一次 `maintenance.sweep_review_notices`——够久没动的待验收卡盖一枚 add-only 执行
   戳并由**整轮一条**汇总通知点名（§70.6 追记；一卡一条在 owner 的真板上是 19 条横幅），
@@ -63,13 +64,11 @@ LOG_NAME = "daily_loop.jsonl"
 LOG_MAX_BYTES = 1 << 20
 LEDGER_DAYS = 90        # 指纹台账保留天数（与循环卡的回收站保留期同长）
 LEDGER_CAP = 2000
-COMMENT_LOOKBACK_DAYS = 7
 TITLE_CAP = 120
-DEDUP_MIN_TITLE = 12    # 与开放 issue/PR 标题做包含匹配的最短长度
 ADVISORIES_CAP = 20     # last_result.advisories 上限（D33；横幅可展开的列表不该无限长）
 
 # 进程级总闸（belt-and-braces，同 §55 AIASSISTANT_LAUNCHD_PROBE）：测试套件把它设为 "0"，
-# 任何走真 actd.run_once 的判例都不会在沙箱里跑起整轮循环（真 gh / doctor 子进程）。
+# 任何走真 actd.run_once 的判例都不会在沙箱里跑起整轮循环（真 doctor 子进程）。
 DISABLE_ENV = "AIASSISTANT_DAILY_LOOP"
 
 # actd 每 pass 从磁盘现读到冻结 cfg 上的六把旋钮（§59 _refresh_model_knobs 同一刷新点）
@@ -82,15 +81,6 @@ PHASE_DEDUP = "dedup"
 PHASE_STALE = "stale_sweep"
 PHASE_WORKTREES = "worktree_sweep"       # §75：过时 / 已合并的 .claude/worktrees/ 回收
 PHASE_PROPOSALS = "proposals"
-GITHUB_KINDS = ("issue", "pr_red", "pr_comment", "mutation")
-# §65.1 自动改进本软件的通道关着时不跑的三个读取器（零 gh 调用）；`inputs.<name>` 记 READER_OFF
-GITHUB_READERS = ("mutation", "issues", "prs")
-# §81 修法（issue #451 / D83）：`materials` 铸的也是 self_improve 卡
-# （`sources[].ref = self_improve:material:<id>`、target_repo = 本仓库、plan 写着
-# 「实现成草稿 PR」），却从来不跟着 §65.1 的通道总开关关——D57 说「关着时不再产生
-# 新的 🤖 卡」，素材那一路是这句话的漏洞。闸门真源自此是本元组，不再是
-# :data:`GITHUB_READERS`（后者保持原义 = 真正调 gh 的三个，判例还在钉它）。
-SELF_IMPROVE_READERS = GITHUB_READERS + ("materials",)
 READER_OFF = "off"
 
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
@@ -201,18 +191,6 @@ def proposals_today(reqs, today: str) -> int:
     return sum(1 for r in reqs if _born_today(r, today))
 
 
-def _norm(text) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
-
-
-def title_on_github(title: str, gh_titles: list) -> bool:
-    """提案标题与某个开放 issue/PR 标题互相包含（≥12 字）= 已在 GitHub 上。"""
-    t = _norm(title)
-    if len(t) < DEDUP_MIN_TITLE:
-        return False
-    return any(len(g) >= DEDUP_MIN_TITLE and (t in g or g in t) for g in map(_norm, gh_titles))
-
-
 def _prune_ledger(ledger: dict, today: _dt.date) -> dict:
     cutoff = (today - _dt.timedelta(days=LEDGER_DAYS)).isoformat()
     kept = {fp: day for fp, day in ledger.items() if isinstance(day, str) and day >= cutoff}
@@ -221,17 +199,14 @@ def _prune_ledger(ledger: dict, today: _dt.date) -> dict:
 
 class _Selector:
     """按优先级挑今天要铸的信号：跳过 advisory 类（D33，collect_signals 已分流，
-    这里是第二道闸）/ 已有指纹 / 同 class 今天已取 / GitHub 上已有同题 / 超额度。
-    每条 skip 计数进审计行。"""
+    这里是第二道闸）/ 已有指纹 / 同 class 今天已取 / 超额度。每条 skip 计数进审计行。"""
 
-    def __init__(self, taken: set, gh_titles: list, budget: int) -> None:
-        self.taken, self.gh_titles, self.budget = set(taken), list(gh_titles), budget
+    def __init__(self, taken: set, budget: int) -> None:
+        self.taken, self.budget = set(taken), budget
         self.kinds: set = set()
+        # "gh_title": add-only audit key, always 0 since D86（GitHub 同题去重随读取器删除）
         self.skipped = {"advisory": 0, "dedup": 0, "kind_taken": 0, "gh_title": 0, "cap": 0}
         self.chosen: list = []
-
-    def _on_github(self, sig) -> bool:
-        return sig.kind not in GITHUB_KINDS and title_on_github(sig.title, self.gh_titles)
 
     def _reason(self, sig) -> Optional[str]:
         if loop_inputs.is_advisory(sig):
@@ -240,8 +215,6 @@ class _Selector:
             return "dedup"
         if sig.kind in self.kinds:
             return "kind_taken"
-        if self._on_github(sig):
-            return "gh_title"
         return "cap" if len(self.chosen) >= self.budget else None
 
     def offer(self, sig) -> None:
@@ -254,8 +227,8 @@ class _Selector:
         self.taken.add(sig.fingerprint)
 
 
-def select_signals(signals: list, *, taken: set, gh_titles: list, budget: int) -> "tuple[list, dict]":
-    sel = _Selector(taken, gh_titles, budget)
+def select_signals(signals: list, *, taken: set, budget: int) -> "tuple[list, dict]":
+    sel = _Selector(taken, budget)
     for sig in sorted(signals, key=lambda s: (s.priority, s.fingerprint)):
         sel.offer(sig)
     return sel.chosen, sel.skipped
@@ -265,7 +238,7 @@ def build_card(sig, today: str, repo_path: str) -> Requirement:
     """一条信号 → 未落盘的 🤖 卡（channel 硬编码 self_improve；plan/DoD/成本齐全）。
 
     §78：落点是潜在任务（detected）——提案列已退役，卡在那儿等 owner 一次
-    「促成运行」；§65 的免批 lane 从这一列自动接手（D80.5）。"""
+    「促成运行」（D86 起没有免批 lane 会自动接手）。"""
     return Requirement(
         id="", title=(TITLE_PREFIX + sig.title)[:TITLE_CAP], type=CARD_TYPE, tier="T1",
         status=State.DETECTED.value, hardness="soft", summary=str(sig.summary or "")[:300],
@@ -292,35 +265,23 @@ def file_proposals(chosen: list, today: str, repo_path: str) -> list:
 # --------------------------------------------------------------------------- #
 # signal collection（每个读取器单独隔离）
 # --------------------------------------------------------------------------- #
-def github_enabled(cfg) -> bool:
-    """§65.1 总开关（#307 / D57，默认关）：GitHub 读取器要不要跑。真源 =
-    `cfg.self_improve_enabled`（config.yaml `self_improve.enabled` + §15 overrides
-    合并后的值，actd 每 pass 现读）；属性不在 = 关（fail-closed，宪法第 11 条）。"""
-    return bool(getattr(cfg, "self_improve_enabled", False))
+def materials_enabled(cfg) -> bool:
+    """§70 / §81 D86：素材库读取器的闸门——yaml 专用 `daily_loop.materials_enabled`，
+    出厂关；属性不在 = 关（fail-closed，宪法第 11 条）。"""
+    return bool(getattr(cfg, "daily_loop_materials_enabled", False))
 
 
-def _beating_gh(gh: Callable, interval) -> Callable:
-    def _gh(args):
-        heartbeat.beat("daily_loop:gh", interval)
-        return gh(args)
-    return _gh
-
-
-def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
-                    doctor: Optional[Callable], repo: str, interval=None,
-                    github: bool = True) -> dict:
+def collect_signals(reqs: list, *, now: _dt.datetime, doctor: Optional[Callable],
+                    interval=None, materials: bool = False) -> dict:
     """全部输入源 → {"signals", "advisories", "summaries", "gh_titles", "inputs"}；
     坏读取器只在 inputs 里记 "unavailable"。`signals` 只剩 CARD_KINDS（可铸卡）；
     自检类已按 D33 转成 `advisories`（Summary，按原 priority 排）。`inputs.<name>`
     仍数读取器给出的全部信号——两类都算，看得见每个读取器活着。
 
-    ``github=False``（§65.1 通道关着，#307 / D57）= :data:`SELF_IMPROVE_READERS`
-    四个读取器一个都不跑、**零 gh 调用零素材抓取**，`inputs` 里各记一行
-    :data:`READER_OFF`（看得见是关着而不是坏了）；维护半边与其余读取器一字不动，
-    `gh_titles` 自然空。第四个（`materials`）是 §81 / D83 补进来的——它铸的同样是
-    self_improve 卡，D57 的「关着时不再产生新的 🤖 卡」本来就该罩住它。"""
-    gh = _beating_gh(gh, interval)
-    since = now - _dt.timedelta(days=COMMENT_LOOKBACK_DAYS)
+    ``materials=False``（出厂默认，:func:`materials_enabled`）= 素材读取器不跑、
+    **零抓取**，`inputs.materials` 记 :data:`READER_OFF`（看得见是关着而不是坏了）。
+    `summaries` / `gh_titles` 是 add-only 形状键，D86 起恒空（GitHub 读取器已删）。
+    ``interval`` 保留给调用方签名兼容（读取器自身不打心跳）。"""
     readers = [
         ("registry", lambda: loop_inputs.registry_signals(reqs)),
         ("analytics", lambda: loop_inputs.analytics_signals(now=now)),
@@ -330,16 +291,11 @@ def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
         ("install_report", loop_inputs.install_report_signals),
         ("launchd_logs", loop_inputs.launchd_log_signals),
         ("doctor", lambda: loop_inputs.doctor_signals(doctor)),
-        ("mutation", lambda: loop_inputs.mutation_signals(gh, repo)),
         ("materials", loop_inputs.materials_signals),
     ]
     out: dict = {"signals": [], "advisories": [], "summaries": [], "gh_titles": [], "inputs": {}}
     for name, fn in readers:
-        _run_reader(out, name, fn, on=github or name not in SELF_IMPROVE_READERS)
-    _run_reader(out, "issues", lambda: loop_inputs.issue_signals(gh, repo),
-                github=True, on=github)
-    _run_reader(out, "prs", lambda: loop_inputs.pr_signals(gh, repo, since),
-                github=True, on=github)
+        _run_reader(out, name, fn, on=(name != "materials" or materials))
     out["signals"], out["advisories"] = split_advisories(out["signals"])
     return out
 
@@ -353,9 +309,8 @@ def split_advisories(signals: list) -> "tuple[list, list]":
     return cards, [loop_inputs.as_advisory(s) for s in advisory]
 
 
-def _run_reader(out: dict, name: str, fn: Callable, github: bool = False,
-                on: bool = True) -> None:
-    if not on:                                  # §65.1 通道关着：这个读取器整个不跑
+def _run_reader(out: dict, name: str, fn: Callable, on: bool = True) -> None:
+    if not on:                                  # 闸门关着：这个读取器整个不跑
         out["inputs"][name] = READER_OFF
         return
     try:
@@ -363,19 +318,8 @@ def _run_reader(out: dict, name: str, fn: Callable, github: bool = False,
     except Exception as exc:  # noqa: BLE001 - 一个坏读取器只丢它自己
         out["inputs"][name] = f"unavailable: {type(exc).__name__}"
         return
-    if github:
-        _absorb_github(out, got)
-        out["inputs"][name] = len(got[0])
-        return
     out["signals"].extend(got)
     out["inputs"][name] = len(got)
-
-
-def _absorb_github(out: dict, got: tuple) -> None:
-    out["signals"].extend(got[0])
-    if len(got) == 3:                       # issue_signals: (signals, summaries, titles)
-        out["summaries"].extend(got[1])
-    out["gh_titles"].extend(got[-1])
 
 
 # --------------------------------------------------------------------------- #
@@ -396,21 +340,17 @@ def _phase(fn: Callable, errors: list, label: str, default):
         return default
 
 
-def _propose(cfg, now: _dt.datetime, gh, doctor, state: dict, interval) -> dict:
+def _propose(cfg, now: _dt.datetime, doctor, state: dict, interval) -> dict:
     today = now.date().isoformat()
     reqs = registry.load_all()
-    collected = collect_signals(reqs, now=now, gh=gh, doctor=doctor,
-                                repo=loop_inputs.DEFAULT_REPO, interval=interval,
-                                github=github_enabled(cfg))
+    collected = collect_signals(reqs, now=now, doctor=doctor, interval=interval,
+                                materials=materials_enabled(cfg))
     ledger = _prune_ledger(dict(state.get("fingerprints") or {}), now.date())
     taken = existing_fingerprints(reqs) | set(ledger)
     budget = max(0, int(getattr(cfg, "daily_loop_max_proposals_per_day",
                                 config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS) or 0)
                  - proposals_today(reqs, today))
-    chosen, skipped = select_signals(collected["signals"], taken=taken,
-                                     gh_titles=collected["gh_titles"], budget=budget)
-    # 分诊标签拦下的 issue 在读取器层就没成 Signal（§70.3 ⑩ 追记）；审计行里与其余 skip 并列计数
-    skipped["label_parked"] = loop_inputs.parked_count(collected["summaries"])
+    chosen, skipped = select_signals(collected["signals"], taken=taken, budget=budget)
     filed = file_proposals(chosen, today, str(config.HOME))
     ledger.update({row["fingerprint"]: today for row in filed if "id" in row})
     state["fingerprints"] = ledger
@@ -474,7 +414,7 @@ def _worktree_phase(cfg, git, interval) -> dict:
     return swept
 
 
-def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,
+def run(cfg, *, now: Optional[_dt.datetime] = None,
         doctor: Optional[Callable] = None, interval=None, git: Optional[Callable] = None) -> dict:
     """一次完整运行：dedup → stale sweep → worktree sweep（§75）→ proposals；
     写投影与审计行。永不 raise。"""
@@ -495,7 +435,7 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
     swept = _phase(lambda: _worktree_phase(cfg, git, interval),
                    errors, "worktree_sweep", {"removed": []})
     _set_phase(state, PHASE_PROPOSALS, interval)
-    proposed = _phase(lambda: _propose(cfg, now, gh or loop_inputs.default_gh, doctor, state, interval),
+    proposed = _phase(lambda: _propose(cfg, now, doctor, state, interval),
                       errors, "proposals", {"filed": [], "skipped": {}, "summaries": [],
                                             "advisories": [], "inputs": {}})
     filed = [row for row in proposed["filed"] if "id" in row]
@@ -517,7 +457,7 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
                 worktree_sweep=swept, review_notices=review_notices)
 
 
-def tick(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,
+def tick(cfg, *, now: Optional[_dt.datetime] = None,
          doctor: Optional[Callable] = None, interval=None,
          git: Optional[Callable] = None) -> Optional[dict]:
     """actd 每 pass 调一次：到点且今天没跑 → run；否则一次 stat 级开销。永不 raise。"""
@@ -527,7 +467,7 @@ def tick(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = No
         now = now or local_now()
         if not due(cfg, load_state(), now):
             return None
-        return run(cfg, now=now, gh=gh, doctor=doctor, interval=interval, git=git)
+        return run(cfg, now=now, doctor=doctor, interval=interval, git=git)
     except Exception:  # noqa: BLE001 - 循环绝不反杀主循环
         return None
 
@@ -589,12 +529,11 @@ def attach(dash: dict, cfg=None) -> dict:
 # --------------------------------------------------------------------------- #
 # CLI：计划报告（零写入——真执行只在 actd 的 pass 里，§0 第 1 条）
 # --------------------------------------------------------------------------- #
-def plan(cfg, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None) -> dict:
+def plan(cfg, now: Optional[_dt.datetime] = None) -> dict:
     """会做什么（不做）：同题簇、过时判决、候选提案。"""
     now = now or local_now()
     reqs = registry.load_all()
-    collected = collect_signals(reqs, now=now, gh=gh or loop_inputs.default_gh, doctor=None,
-                                repo=loop_inputs.DEFAULT_REPO, github=github_enabled(cfg))
+    collected = collect_signals(reqs, now=now, doctor=None, materials=materials_enabled(cfg))
     clusters = [[r.id for r in c] for c in maintenance.find_clusters(reqs, cfg)]
     clustered = {rid for c in clusters for rid in c}   # dedup 先跑：簇内卡由合并处置
     return {

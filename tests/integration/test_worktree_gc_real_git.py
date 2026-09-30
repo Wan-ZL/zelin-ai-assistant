@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.scratch_testkit import scratch_dir
@@ -94,7 +95,10 @@ class RealGitTestCase(unittest.TestCase):
         _write(os.path.join(self.root, "ahead", "local.txt"))
         _git(os.path.join(self.root, "ahead"), "add", "local.txt")
         _git(os.path.join(self.root, "ahead"), "commit", "-m", "local only")
-        self.cfg = {"self_improve": {"repo_path": self.repo}}
+        self.cfg = {}
+        _root = mock.patch.object(worktrees, "primary_repo", side_effect=lambda: self.repo)
+        _root.start()
+        self.addCleanup(_root.stop)
 
     def _age_them_all(self):
         stamp = time.time() - OLD_DAYS * 86400.0

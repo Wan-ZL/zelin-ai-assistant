@@ -2,8 +2,8 @@
 
 契约：CONTRACT **§78**（提案车道退役）/ **§78.1** 第 2 条硬承诺「每一个生产者
 都落 `detected`」/ **§78.3** 写路径重定向表 / §45（出生资格：FULL 与 LIMITED 的
-差别搬到通知资格，不再是「哪一列」）/ §51（hand lane 墓碑）/ §65（self_improve
-跟进卡）/ §70.2（夜间去重合成卡）/ §8（欠账扩写就地写厚）。
+差别搬到通知资格，不再是「哪一列」）/ §51（hand lane 墓碑）/ §70.2（夜间去重合成卡）
+/ §8（欠账扩写就地写厚）。（§65 self_improve PR 跟进卡随通道 retired D86，那一行产地同删。）
 
 **这个文件是整次退役的防回归网**（§78.3 原话：「上面每一行漏掉一条，症状都是
 同一种——卡照常出生、照常落盘、CI 照常全绿，只是 owner 永远看不见它」）。所以
@@ -25,7 +25,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 
 from act import analyze, radar_claude_sessions, radar_gmail, radar_slack
 from act.lib import (config, daily_loop, maintenance, provenance, quick_capture,
-                     registry, self_improve)
+                     registry)
 from act.lib.loop_inputs import Signal
 from act.lib.registry import Requirement, State
 
@@ -103,17 +103,10 @@ class MachineCardBirthLaneTestCase(unittest.TestCase):
         return saved
 
     def _daily_loop(self):
-        sig = Signal(kind="issue", fingerprint="issue:447", title="一条够长的每日循环信号标题",
+        sig = Signal(kind="material", fingerprint="material:447", title="一条够长的每日循环信号标题",
                      summary="为什么", plan=["第一步"], dod=["做完了"], cost_usd=2.0,
                      evidence="证据", priority=50, ref="")
         return daily_loop.build_card(sig, TODAY, str(config.HOME))
-
-    def _self_improve_followup(self):
-        pr = {"number": 447, "url": "https://github.com/o/r/pull/447",
-              "headRefName": "ai/self-improve/R-229", "headRefOid": "deadbeef"}
-        return self_improve.mint_followup(
-            pr, [{"login": "Wan-ZL", "at": "2026-09-26T09:00:00Z", "body": "补个测试",
-                  "url": "https://github.com/o/r/pull/447#c1"}], [], self.cfg, NOW)
 
     def _analyze_expand(self):
         req = Requirement(id=registry.next_id(), title="研究并提议的那张卡",
@@ -189,7 +182,6 @@ class MachineCardBirthLaneTestCase(unittest.TestCase):
             ("quick_capture 三选一（FULL）", self._quick_capture_full),
             ("quick_capture 三选一（LIMITED）", self._quick_capture_limited),
             ("daily_loop 🤖 卡", self._daily_loop),
-            ("self_improve PR 跟进卡", self._self_improve_followup),
             ("analyze 欠账扩写（成功）", self._analyze_expand),
             ("analyze 欠账扩写（兜底）", self._analyze_expand_fallback),
             ("maintenance 夜间去重合成卡", self._maintenance_merge),

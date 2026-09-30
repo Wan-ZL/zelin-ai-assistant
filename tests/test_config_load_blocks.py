@@ -193,8 +193,24 @@ class MiscBlocksTestCase(unittest.TestCase):
                                  "_apply_digest_registry_server", "_apply_models_voice",
                                  "_apply_recording", "_apply_telemetry", "_apply_redaction",
                                  "_apply_switch_blocks", "_apply_maintainer_feedback",
-                                 "_apply_language_format_features",
-                                 "_apply_self_improve_block"])   # §65.1（#307 / D57）追加在队尾
+                                 "_apply_language_format_features"])
+        # _apply_self_improve_block（§65.1）retired D86：队尾那一项随 §65 删除
+
+    def test_a_retired_self_improve_block_loads_silently(self):
+        # §65 墓碑（D86）：旧 config.yaml 的 `self_improve:` 块照常加载，内容留在 raw 里无人读
+        cfg = _load("self_improve:\n  enabled: true\n  owner_logins: [Wan-ZL]\n"
+                    "  github_repo: o/r\n  repo_path: /somewhere\n")
+        self.assertFalse(hasattr(cfg, "self_improve_enabled"))
+        self.assertEqual(cfg.raw["self_improve"]["github_repo"], "o/r")
+        self.assertFalse(cfg.daily_loop_materials_enabled)
+
+    def test_daily_loop_materials_enabled_parses_with_a_safe_default(self):
+        # §70 / §81 D86：素材库读取器的 yaml 专用闸，出厂关；坏值保留默认（关）
+        self.assertFalse(config.Config().daily_loop_materials_enabled)
+        self.assertTrue(_load("daily_loop:\n  materials_enabled: true\n").daily_loop_materials_enabled)
+        self.assertFalse(_load("daily_loop:\n  materials_enabled: false\n").daily_loop_materials_enabled)
+        self.assertFalse(_load("daily_loop:\n  materials_enabled: maybe\n").daily_loop_materials_enabled)
+        self.assertFalse(_load("daily_loop:\n  enabled: true\n").daily_loop_materials_enabled)
 
     def test_bool_word_and_channel_entry(self):
         self.assertTrue(config._bool_word(" ON "))

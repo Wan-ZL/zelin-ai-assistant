@@ -30,6 +30,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import actd, executor
 from act.lib import config, registry, sanitize
@@ -277,7 +278,7 @@ class WholeMessageHarvestTestCase(unittest.TestCase):
 
     def setUp(self):
         # fake $HOME so the ~/.claude/projects glob lands in a throwaway dir
-        home = tempfile.mkdtemp(prefix="d81-tx-")
+        home = scratch_dir(self, prefix="d81-tx-")
         p = mock.patch.dict(os.environ, {"HOME": home})
         p.start()
         self.addCleanup(p.stop)
@@ -320,7 +321,7 @@ class WholeMessageHarvestTestCase(unittest.TestCase):
     def test_a_lone_html_path_is_still_hydrated(self):
         # §15：交付物是一个 .html 文件时，成稿该是文件正文而不是「我写到了这个
         # 路径」那句话——marker 那条路一直如此，整条口径不许把它丢了
-        page = Path(tempfile.mkdtemp(prefix="d81-html-")) / "report.html"
+        page = Path(scratch_dir(self, prefix="d81-html-")) / "report.html"
         page.write_text("<h1>整理结果</h1>", encoding="utf-8")
         self._write(f"写好了，见\n{page}")
         out = executor.harvest_delivery(SID, whole_message=True)

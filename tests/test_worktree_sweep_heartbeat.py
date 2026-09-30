@@ -8,6 +8,7 @@ checkout），一台攒了 190 个 worktree 的机器上是分钟级——`heart
 actd 判成 `actd_stalled`。本判例因此按「判了几条 + 删了几条」数心跳，而不是按 root 数。
 """
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 from tests.worktree_testkit import FakeGit, Tree
@@ -19,7 +20,10 @@ class WorktreeSweepHeartbeatTestCase(unittest.TestCase):
     def setUp(self):
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
+        self.cfg = config.Config()
+        _root = mock.patch.object(worktrees, "primary_repo", side_effect=lambda: self.tree.repo)
+        _root.start()
+        self.addCleanup(_root.stop)
         self.beats = []
 
     def _entries(self, n):
@@ -46,7 +50,7 @@ class WorktreeSweepHeartbeatTestCase(unittest.TestCase):
         self.tree.cleanup()
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
+        self.cfg = config.Config()   # the primary_repo patch follows self.tree
         many = FakeGit(self.tree.repo, self._entries(6), remotes=["origin/main"])
         self._sweep(many)
         self.assertGreater(len(self.beats), small)

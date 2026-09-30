@@ -42,7 +42,7 @@ from typing import Callable, NamedTuple, Optional
 
 from act import llm
 from act.lib import (analytics, config, dispatch_prompt, failures, notify, registry, sanitize,
-                     self_improve, transcripts)
+                     transcripts)
 from act.lib.registry import Requirement, State, display_id, load, save
 
 # prompt text (dispatch / rework / brief) lives in act/lib/dispatch_prompt.py;
@@ -263,20 +263,16 @@ def _claude_bin(cfg: Optional[config.Config] = None) -> str:
     return llm.claude_bin(cfg)
 
 
-def _bg_base_cmd(cfg: Optional[config.Config] = None,
-                 req: Optional[Requirement] = None) -> list:
+def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
     """Base ``claude --bg`` argv shared by all launch sites (dispatch / resume /
     rework / brief) — built by the §59 single LLM boundary (act/llm.py):
     ``--dangerously-skip-permissions`` only while ``execution.skip_permissions``
     is on (default; P0-10 — off means the agent runs under claude's normal
     permission model; a blocked agent is harvested to review by actd's
     reconcile (#119) instead of acting unattended), then ``--model <id>``
-    when the dispatch knob is explicit (nothing when it follows). ``req``
-    (§65, add-only): a self_improve card without ``needs_mcp`` gets
-    ``llm.NO_MCP_ARGV`` appended — the session sees no Slack/Gmail MCP; every
-    launch site passes its card so a resume/rework/brief can never re-open the
-    MCP surface the dispatch closed. ``req=None`` = byte-identical to before."""
-    return llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))
+    when the dispatch knob is explicit (nothing when it follows). (The §65
+    per-card zero-MCP egress lock retired with the lane, D86.)"""
+    return llm.dispatch_argv(cfg)
 
 
 def _verbatim(req: Optional[Requirement]) -> bool:
@@ -326,7 +322,7 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
                     cfg: Optional[config.Config] = None,
                     req: Optional[Requirement] = None) -> subprocess.CompletedProcess:
     prompt, _ = sanitize.scrub(prompt)
-    cmd = _bg_base_cmd(cfg, req)
+    cmd = _bg_base_cmd(cfg)
     if name:
         cmd += ["--name", name]
     cmd += _system_append_argv(req, cfg)
@@ -766,9 +762,6 @@ def _record_launch_success(req: Requirement, ex: dict, cfg: config.Config,
         # 那条 skip-permissions 会话写 registry 不再有人看着（reconcile 的
         # docstring 明写这不许发生）。退役前这个痕住在卡顶层 `preset`，天然活过重建。
         req.execution["direct_run"] = ex["direct_run"]
-    # §65：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
-    # self_improve 卡给 {}，execution 形状不变。
-    req.execution.update(self_improve.dispatch_record(req, cfg))
     req.set_status(State.EXECUTING)
     save(req)
     # capture_input gating (docs/TELEMETRY.md): the instruction summary is
@@ -877,7 +870,7 @@ def _run_resume(cfg: config.Config, req: Requirement, sid: str, target: Path,
     是**每次调用**给的——resume 不重新挂上，打回/转向那一轮的会话就没了交付
     与安全边界。故 ``--append-system-prompt`` 与 dispatch 同源同挂（契约里的
     工作目录取自卡，不是这里的 ``target``——见 :func:`_contract_target`）。"""
-    cmd = _bg_base_cmd(cfg, req) + ["--name", session_name(req), "--resume", str(sid)]
+    cmd = _bg_base_cmd(cfg) + ["--name", session_name(req), "--resume", str(sid)]
     cmd += _system_append_argv(req, cfg)
     if prompt and str(prompt).strip():
         cmd += _prompt_argv(req, sanitize.scrub(str(prompt))[0])

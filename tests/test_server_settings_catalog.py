@@ -17,7 +17,6 @@ from tests.test_server_common import (assert_envelope, auth_headers, get_json,
                                       http_request, start_server, write_text)
 
 from act.lib import config as act_config
-from act.lib import policy as act_policy
 from server import settings_catalog as catalog
 
 
@@ -183,21 +182,18 @@ class CatalogPutTestCase(_ServerCase):
         _s, slack = get_json(self.port, "/api/settings/slack")
         self.assertEqual(self._field(slack, "slack_channels")["effective"], ["C9", "C8"])
 
-    def test_owner_logins_list_is_written_into_the_nested_self_improve_block(self):
-        """§15.3 §65.5 追记（#310）：开发者区的 list 字段落嵌套形（键 = config.yaml 的路径），
-        清空即删块——总开关的扁平键 `self_improve_enabled` 与它在同一份文件里互不干扰。"""
-        _s, obj = put_json(self.port, "/api/settings/maintainer",
-                           {"self_improve_enabled": True,
-                            "self_improve_owner_logins": " Wan-ZL , zelinPostman "})
-        self.assertEqual(self._field(obj, "self_improve_owner_logins")["effective"],
-                         ["Wan-ZL", "zelinPostman"])
-        self.assertEqual(self._overrides(),
-                         {"self_improve_enabled": True,
-                          "self_improve": {"owner_logins": ["Wan-ZL", "zelinPostman"]}})
-        _s, obj = put_json(self.port, "/api/settings/maintainer",
-                           {"self_improve_owner_logins": ""})
-        self.assertEqual(self._field(obj, "self_improve_owner_logins")["source"], "default")
-        self.assertEqual(self._overrides(), {"self_improve_enabled": True})
+    def test_the_retired_lane_rows_are_unknown_fields(self):
+        """§65 墓碑（D86）：开发者区两行随通道删除——PUT 它们是 400 UNKNOWN_FIELD，不落盘。"""
+        for payload in ({"self_improve_enabled": True}, {"self_improve_owner_logins": "Wan-ZL"}):
+            with self.subTest(payload=payload):
+                status, obj = put_json(self.port, "/api/settings/maintainer", payload)
+                self.assertEqual(status, 400)
+                assert_envelope(self, obj, "UNKNOWN_FIELD")
+        self.assertFalse(self.overrides_path.exists())
+        _s, obj = get_json(self.port, "/api/settings/maintainer")
+        keys = [f["key"] for f in obj["fields"]]
+        self.assertNotIn("self_improve_enabled", keys)
+        self.assertNotIn("self_improve_owner_logins", keys)
 
     def test_unknown_field_is_400(self):
         status, obj = put_json(self.port, "/api/settings/general", {"language": "en", "theme": "x"})
@@ -246,11 +242,7 @@ class CatalogPutTestCase(_ServerCase):
 class ConfigMirrorTestCase(unittest.TestCase):
     """目录 ↔ act/lib/config.py：键必须是管线真读的键，默认值必须一致。"""
 
-    NESTED_BLOCKS = {"telemetry": ("enabled", "level", "capture_input"), "features": None,
-                     # §15.3 §65.5 追记（#310）：`self_improve:` 块唯一可 override 的键
-                     "self_improve": ("owner_logins",)}
-    # config.yaml 的 raw 块键（没有 Config 数据类字段）：默认值真源 = act/lib/policy 的块默认
-    RAW_BLOCK_DEFAULTS = {"self_improve_owner_logins": "owner_logins"}
+    NESTED_BLOCKS = {"telemetry": ("enabled", "level", "capture_input"), "features": None}
 
     def _fields(self):
         for section in catalog.SECTIONS:
@@ -285,11 +277,6 @@ class ConfigMirrorTestCase(unittest.TestCase):
             key = field["key"]
             if key.startswith("features."):
                 self.assertTrue(act_config.DEFAULT_FEATURES[key.split(".", 1)[1]])
-                continue
-            raw_key = self.RAW_BLOCK_DEFAULTS.get(key)
-            if raw_key is not None:
-                with self.subTest(key=key):
-                    self.assertEqual(field["default"], act_policy.SELF_IMPROVE_DEFAULTS[raw_key])
                 continue
             attr = attr_for.get(key, key)
             expected = getattr(cfg, attr)

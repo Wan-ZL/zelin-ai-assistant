@@ -4,8 +4,9 @@
 §16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
 §53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
 D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
-§70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关；
-§65.5 的 `self_improve.owner_logins` 是 overrides 能碰的第二键）+
+§70（daily_loop 块；D86 起含 yaml 专用的 `daily_loop.materials_enabled`）+
+§65 墓碑（`self_improve:` 块与 overrides 键 `self_improve_enabled` /
+`self_improve.owner_logins` retired D86：读到即静默忽略）+
 §72（录制数据保留期：`recording.retention_days` 的 DB 天数与 §72.4
 `recording.media_retention_minutes` 的媒体分钟数，后者经 `--print-value` 给 cron 消费）。
 
@@ -383,11 +384,9 @@ class Config:
     # 先收到一条汇总通知，下一轮进回收站（可恢复）。0 = 关掉这条规则。
     daily_loop_review_stale_days: int = 14
 
-    # §65.1 自动改进本软件的通道总开关（config.yaml `self_improve.enabled`；issue
-    # #307 / D57）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
-    # 每日循环不跑 issues/prs/mutation 三个 GitHub 读取器、§65.5 巡检不巡、§51 第二
-    # 条 lane 不免批派发；打开它的唯一面 = 设置页「开发者」区（扁平 override 键同名）。
-    self_improve_enabled: bool = False
+    # §70 / §81 D86: materials reader gate, yaml-only, factory off
+    # （config.yaml `daily_loop.materials_enabled`；没有设置页行、没有 override 键）。
+    daily_loop_materials_enabled: bool = False
 
     # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
     # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
@@ -690,14 +689,8 @@ def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
                 "review_stale_days"):
         attr = f"daily_loop_{key}"
         setattr(cfg, attr, max(0, _int_or(blk.get(key), getattr(cfg, attr))))
-
-
-def _apply_self_improve_block(cfg: "Config", data: dict) -> None:
-    """§65.1 config.yaml `self_improve:` 块的总开关 → cfg（坏值/缺键保留默认 = 关）。
-    块里其余键（repo_path / tick_minutes / owner_logins / github_repo）仍由
-    `policy.self_improve_config` 现读 raw——只有总开关要走 overrides 层（设置页）。"""
-    blk = _dict_or(data.get("self_improve"))
-    cfg.self_improve_enabled = _bool_or(blk.get("enabled"), cfg.self_improve_enabled)
+    cfg.daily_loop_materials_enabled = _bool_or(blk.get("materials_enabled"),
+                                                cfg.daily_loop_materials_enabled)
 
 
 def _server_port_from(data: dict) -> int:
@@ -1153,7 +1146,8 @@ _BLOCK_APPLIERS = (
     _apply_switch_blocks,
     _apply_maintainer_feedback,
     _apply_language_format_features,
-    _apply_self_improve_block,          # §65.1
+    # _apply_self_improve_block retired D86（§65 墓碑）：yaml `self_improve:` 块留在
+    # cfg.raw 里无人读。
 )
 
 
@@ -1405,9 +1399,8 @@ _OVERRIDE_FIELDS: dict = {
     "daily_loop_stale_days": _nonneg_int,
     "daily_loop_trash_retention_days": _nonneg_int,
     "daily_loop_review_stale_days": _nonneg_int,
-    # §65.1 (#307 / D57): 自动改进本软件的通道总开关——设置页「开发者」区经
-    # PUT /api/settings/maintainer 写这个扁平键（diff-write 同款；默认 false）。
-    "self_improve_enabled": _coerce_bool,
+    # "self_improve_enabled" retired D86（§15.3 墓碑）：旧 overrides 里残留的这一键
+    # 落进 _override_scalar 后被静默忽略；名字永不复用。
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }
@@ -1440,8 +1433,8 @@ def _clean_slack_channels(value: list) -> list:
 
 
 def _clean_str_list(value: list) -> list:
-    """字串表的清洗（去空白、丢空项与非字串）——watch_people 与
-    `self_improve.owner_logins`（§15.3 §65.5 追记）共用一把。"""
+    """字串表的清洗（去空白、丢空项与非字串）——watch_people 用它（曾与
+    `self_improve.owner_logins` 共用，那一键随 §65 retired D86）。"""
     return [str(v).strip() for v in value
             if isinstance(v, (str, int)) and str(v).strip()]
 
@@ -1668,33 +1661,6 @@ def _override_watch_people(cfg: Config, value, _nested: dict) -> None:
         cfg.watch_people = _clean_watch_people(value)
 
 
-def _set_self_improve_owner_logins(cfg: Config, value: list) -> None:
-    """落回 `cfg.raw["self_improve"]`——`policy.self_improve_config` 从 raw 现读
-    这一键（§15.3 §65.5 追记，issue #310）。空表 = 显式的「没有额外 login」。"""
-    block = cfg.raw.get("self_improve")
-    if not isinstance(block, dict):
-        block = {}
-        cfg.raw["self_improve"] = block
-    block["owner_logins"] = _clean_str_list(value)
-
-
-def _override_self_improve(cfg: Config, value, _nested: dict) -> None:
-    """nested form mirroring config.yaml self_improve —— 设置页「开发者」区的
-    list 字段就写这个形（`{"self_improve": {"owner_logins": [...]}}`）。**只认
-    `owner_logins` 一键**：总开关的唯一 override 拼法仍是扁平的
-    `self_improve_enabled`（§65.1 追记「没有第二套写入面」），其余三键不进
-    overrides（§65.8）。"""
-    if isinstance(value, dict) and isinstance(value.get("owner_logins"), list):
-        _set_self_improve_owner_logins(cfg, value["owner_logins"])
-
-
-def _override_self_improve_owner_logins(cfg: Config, value, _nested: dict) -> None:
-    """flat form: `{"self_improve.owner_logins": ["Wan-ZL"]}`（手写 overrides 的
-    拼法；嵌套形优先，同 telemetry 的两拼法）。"""
-    if isinstance(value, list):
-        _set_self_improve_owner_logins(cfg, value)
-
-
 # exact-key overrides → handler(cfg, value, nested_feats); prefix families and
 # scalar fields are resolved in _apply_override.
 _OVERRIDE_HANDLERS = {
@@ -1708,11 +1674,8 @@ _OVERRIDE_HANDLERS = {
     "telemetry.capture_input": _override_telemetry_capture_input,
     "slack_channels": _override_slack_channels,
     "watch_people": _override_watch_people,
-    # §15.3 §65.5 追记（issue #310）：两拼法都登记——`_apply_override` 按**精确
-    # 键**分派，只登记 "self_improve" 的话扁平点号键会掉进 `_override_scalar`
-    # 被静默丢掉（"self_improve.owner_logins" 不是 _OVERRIDE_FIELDS 的键）。
-    "self_improve": _override_self_improve,
-    "self_improve.owner_logins": _override_self_improve_owner_logins,
+    # "self_improve" / "self_improve.owner_logins" retired D86（§15.3 墓碑）：两拼法都
+    # 落进 _override_scalar，不在 _OVERRIDE_FIELDS 里 = 静默忽略。
 }
 
 

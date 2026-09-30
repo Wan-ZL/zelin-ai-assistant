@@ -326,12 +326,14 @@ INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) 
 -- §78 提案车道退役（issue #447，D80.15；梯子 v2→v3 = store.py _upgrade_2_to_3
 -- 的 _V3_TRANSITIONS，两处必须逐行相同：全新库与升级库的形状要收敛）。
 -- card_sent 一行都不删（法条表 add-only + 存量落单卡仍要能被搬走）：
---   detected→approved(system)  = §65 self_improve lane 免批（§51 hand lane 退役，D80.4）
+--   detected→approved(system)  = §65 self_improve lane 免批（§51 hand lane 退役，D80.4；
+--     writer retired D86——§65 整条删除，行保留让旧 DB 与回放合法）
 --   detected→delivered(user)   = §10 done_external 从潜在任务直落已交付
 --   card_sent→detected(system) = §78 一次性归并扫描（actd 主循环唯一写者）
 --   approved/executing/review→detected(user) = §10 abort_execution 退回潜在任务
---   approved→detected(system)  = §65.1 通道关掉时撤回免批派发
---   approved→card_sent(system) = 退役**之前**就缺的一行（`dispatch._withdraw_frozen_lane`
+--   approved→detected(system)  = 撤回免批派发（§65.1 时代；D86 起唯一写者是
+--     `dispatch._withdraw_retired_auto_approval` 的一次性退役护栏）
+--   approved→card_sent(system) = 退役**之前**就缺的一行（旧 `dispatch._withdraw_frozen_lane`，writer retired
 --     一直在做这次转移，sqlite 库上它会抛 ILLEGAL_TRANSITION，而默认 yaml 后端
 --     不执法所以没有判例看得见）。只加不减：补旧洞 + 它的 detected 孪生。
 --   raising→detected(user)     = 扩写中卡上的评论折回潜在任务重审

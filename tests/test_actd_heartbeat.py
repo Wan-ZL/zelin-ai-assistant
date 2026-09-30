@@ -95,7 +95,6 @@ class RunOnceBeatsTestCase(unittest.TestCase):
 
         with mock.patch.object(actd.heartbeat, "beat", spy), \
                 mock.patch.object(actd, "process_inbox", return_value=0), \
-                mock.patch.object(actd, "auto_dispatch_pass", return_value=0), \
                 mock.patch.object(actd, "dispatch_approved", return_value=0), \
                 mock.patch.object(actd, "reconcile_executing"), \
                 mock.patch.object(actd, "process_raising", return_value=0), \

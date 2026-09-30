@@ -9,8 +9,7 @@ number → 输入框、list → 逗号分隔输入框），新增一个旋钮 = 
 section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.json 的 control:settings.*，
 §66.2）：区按原生分（general / notifications / obsidian / slack / gmail / telemetry / digest /
 approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
-开发者区前两行是 web 才有的（原生没有）：`self_improve_enabled`（§65.1 / issue #307 / D57）自动改进本软件的通道总开关，默认关；
-`self_improve_owner_logins`（§65.5 / issue #310）额外算作 owner 本人的 GitHub login，默认空表（仓库 owner 与 gh 当前身份恒在集合里）。
+开发者区曾有两行 web 才有的 §65 通道开关（`self_improve_enabled` / `self_improve_owner_logins`）——the §65 lane rows retired 2026-09-30 (D86)。
 「审批 / 成本」区的 `approval_mention_escalation`（§76.2 / issue #313）也是 web 才有的一行：一张卡被提够多少次仍未拍板就升级（0 = 关），actd 每 pass 现读。
 §78（提案车道退役）：目录里凡是说「卡回到提案列 / 待审批列」的文案改口指向潜在任务列；持久化的旋钮键（`notify_proposals` 等）与它们的标签逐字不动——键是存量偏好，改名会让老安装的设置凭空复位。
 
@@ -454,24 +453,8 @@ SECTIONS: tuple = (
     _section(
         "maintainer", "开发者 · 开发会话", "Developer session",
         [
-            # §65.1（issue #307 / D57）：自动改进本软件的通道总开关，**默认关**——开发者区的第一行。
-            # 落点 config.yaml `self_improve.enabled`，override 扁平键 `self_improve_enabled`（act/lib/config.py 同名字段）。
-            _f("self_improve_enabled", "bool",
-               "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）",
-               "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
-               default=False, config=("self_improve", "enabled"),
-               help_zh="维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并往潜在任务列铸 🤖 卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回潜在任务列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。",
-               help_en="Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 cards into the Backlog lane, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the Backlog lane, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once."),
-            # §65.5 追记（issue #310）：通道把谁的合并 / 关闭 / 评论当作 owner 本人的动作。出厂就认仓库 owner 与
-            # 这台机器 gh 当前登录的身份；这一行是第三份来源。落点 config.yaml `self_improve.owner_logins`，override
-            # 写嵌套形 `{"self_improve": {"owner_logins": [...]}}`（act/lib/config.py `_OVERRIDE_HANDLERS` 两拼法都认）。
-            _f("self_improve_owner_logins", "list",
-               "额外算作我本人的 GitHub 用户名（逗号分隔）",
-               "Extra GitHub logins that count as you (comma-separated)",
-               default=[], config=("self_improve", "owner_logins"),
-               override="self_improve.owner_logins",
-               help_zh="自动改进通道只把「你」的动作当数：你合并 PR = 验收，你关闭 = 拒绝，你的评论 = 下一轮任务。出厂就认两个身份——仓库地址前半段那个账号，以及这台机器上 gh 当前登录的账号；两者不同（个人号开仓库、工作号登 gh）时都算你本人。这里填第三个、第四个。大小写不敏感。改完下一轮巡检生效，不用重启。",
-               help_en="The self-improvement lane only counts YOUR actions: you merge a PR = accepted, you close it = rejected, your comments = the next round of work. Two identities count out of the box — the account in the first half of the repo slug, and whichever account gh is logged in as on this machine (they differ when the repo is on a personal account and gh is logged in with a work one). Add further logins here. Case-insensitive. Takes effect on the next poll, no restart."),
+            # §65.1 / §65.5 的两行（self_improve_enabled / self_improve_owner_logins）retired
+            # 2026-09-30（D86：自动草稿 PR 通道整条删除）；旧 overrides 里残留的键静默忽略。
             # 两行的 placeholder 动态（DYNAMIC_PLACEHOLDERS，§68.7 追记）：原生 SettingsMaintainer 的灰字是**生效默认**——
             # 仓库路径 = config.yaml maintainer.repo_path（~ 展开）否则本 checkout（maintainer_launch.resolve 用的同一条）；
             # 会话 id = config.yaml maintainer.session_id，没设才是下面这行示例。

@@ -75,12 +75,6 @@ def loop_health_path(home: Path) -> Path:
     return home / "state" / "loop_health.json"
 
 
-def self_improve_lane_path(home: Path) -> Path:
-    # §65：act/lib/self_improve.lane_state_path()——自动草稿 PR 通道的暂停状态；
-    # server 只在 owner 点「恢复通道」时写 paused:false（server/self_improve_lane.py）
-    return home / "state" / "self_improve" / "lane.json"
-
-
 def settings_overrides_path(home: Path) -> Path:
     # §15.3：act/lib/config.SETTINGS_OVERRIDES_PATH（STATE_DIR / settings_overrides.json）
     return home / "state" / "settings_overrides.json"

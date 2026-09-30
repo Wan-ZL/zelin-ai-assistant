@@ -52,10 +52,6 @@ os.environ.setdefault("AIASSISTANT_HTTP_PROBE", "0")
 # （activate.py 只在 auto 下激活）。store2 侧的行为测试自己显式切 sqlite
 # （改 env + registry.reset_store_cache()，用完复原）。
 os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
-# §65 自动草稿 PR 通道：默认 gh runner 见到这个开关直接报「不可用」（核验 →
-# gh_unavailable、巡检 → 跳过），套件里凡要 gh 的判例都注入假 runner。gh 同时
-# 在下方出网黑名单里——忘了注入的那一处会响亮地炸，而不是静默打 GitHub API。
-os.environ.setdefault("AIASSISTANT_GH", "0")
 # §70 每日循环的 launchd 日志读取器默认读 ~/Library/Logs/zelin-ai-assistant/——
 # 开发者机器上有真日志，读了就是不确定的测试输入；指进沙箱（目录可以不存在）。
 os.environ.setdefault("ZAI_LAUNCHD_LOG_DIR", os.path.join(TMP_HOME, "launchd-logs"))
@@ -101,7 +97,7 @@ os.environ.setdefault("AIASSISTANT_WORKTREE_SWEEP", "0")
 _PROMPT_FLAGS = frozenset({"-p", "--print", "--resume"})
 _NETWORK_PROGRAMS = frozenset({
     "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp",
-    "gh",   # GitHub CLI = GitHub API（§65 通道的 gh 调用一律走注入缝）
+    "gh",   # GitHub CLI = GitHub API（任何 gh 调用一律走注入缝；§65 通道 retired D86，名单照留）
 })
 # 待办（§70 审查）：`gh` 也该进这份名单——§70 循环与 §57 pinned issue 都经注入缝——
 # 但 test_ask / test_telemetry_level 仍经 doctor 真跑 `gh auth status`；先把那两处

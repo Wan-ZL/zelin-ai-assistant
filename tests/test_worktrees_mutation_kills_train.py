@@ -28,7 +28,6 @@ import os
 import subprocess
 import time
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
@@ -37,7 +36,7 @@ from tests.worktree_testkit import FakeGit, Tree
 from act.lib import config, worktrees
 from act.lib.registry import Requirement
 
-BRANCH = "ai/self-improve/R-900"
+BRANCH = "feat/R-900"
 
 
 class _Completed:
@@ -79,19 +78,16 @@ class _BareGit(FakeGit):
         return rc, out
 
 
-def _card(sid="aaaa1111", branch=BRANCH):
-    return Requirement(id="P-7", title="lane 卡", type="self-improvement", tier="T1",
-                       status="review",
-                       execution={"session_id": sid, "self_improve": {"branch": branch}})
-
-
 class TreeCase(unittest.TestCase):
     """一棵假 repo + 一个假 git runner 的共用底座（目录是真的，内容是空的）。"""
 
     def setUp(self):
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        self.cfg = config.Config(raw={"self_improve": {"repo_path": self.tree.repo}})
+        self.cfg = config.Config()
+        _root = mock.patch.object(worktrees, "primary_repo", side_effect=lambda: self.tree.repo)
+        _root.start()
+        self.addCleanup(_root.stop)
 
     def _entry(self, name, branch="feat/x", age_days=30.0, **over):
         path = self.tree.add(name, age_days=age_days)
@@ -390,45 +386,6 @@ class MultipleRootsTestCase(TreeCase):
         self.assertEqual(got["removable"], 2)       # 两个 root 各有一个够格的
         self.assertEqual(len(got["removed"]), 1)    # 额度只有一个
         self.assertEqual(got["skipped"].get("cap"), 1)
-
-
-class ReleaseTestCase(TreeCase):
-    """§75.2 / §65.5：结算即释放只认「这张卡自己的」，失败只记账。"""
-
-    def test_a_card_without_a_branch_releases_nothing_and_is_not_an_error(self):
-        card = Requirement(id="P-8", title="没有分支的卡", status="review",
-                           execution={"session_id": "aaaa1111"})
-        git = FakeGit(self.tree.repo, [], remotes=["origin/main"])
-        got = worktrees.release(card, self.cfg, git=git, resolve=lambda _s: None)
-        self.assertEqual((got["removed"], got["skipped"], got["branch"]), ([], [], ""))
-        self.assertIsNone(got["error"])
-
-    def test_release_only_takes_the_worktree_whose_branch_matches_the_card(self):
-        mine = self.tree.add("r900")
-        theirs = self.tree.add("someone-else")
-        git = FakeGit(self.tree.repo,
-                      [{"path": mine, "branch": BRANCH, "head": "sha-mine"},
-                       {"path": theirs, "branch": "feat/not-mine", "head": "sha-theirs"}])
-        got = worktrees.release(_card(), self.cfg, git=git, resolve=lambda _s: None)
-        self.assertEqual([row["path"] for row in got["removed"]], [mine])
-        self.assertEqual(git.removed, [mine])
-
-    def test_a_session_that_stayed_in_the_cards_own_worktree_is_not_removed_twice(self):
-        mine = self.tree.add("r900")
-        git = FakeGit(self.tree.repo, [{"path": mine, "branch": BRANCH, "head": "sha-mine"}])
-        got = worktrees.release(_card(), self.cfg, git=git, resolve=lambda _s: Path(mine))
-        self.assertEqual(len(got["removed"]), 1)
-        self.assertEqual(git.removed, [mine])
-
-    def test_a_blowing_up_release_is_capped_in_the_receipt_and_named_in_the_log(self):
-        def boom(_args, _cwd):
-            raise RuntimeError("x" * 5000)
-
-        lines = []
-        got = worktrees.release(_card(), self.cfg, git=boom, log=lines.append,
-                                resolve=lambda _s: None)
-        self.assertEqual(got["error"], "RuntimeError: " + "x" * 200)
-        self.assertIn(" error=RuntimeError", lines[0])
 
 
 class InventoryTestCase(TreeCase):

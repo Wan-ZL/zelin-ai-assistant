@@ -23,8 +23,7 @@ default ``claude-opus-5[1m]``). ``follow`` (the default) appends no
 every ``-p`` and ``--bg`` site (``off`` appends nothing and restores the
 pre-D53 argv byte for byte; tests/test_llm_boundary.py pins each site's
 argv). Ordering rule for the fixed part of argv: ``--output-format`` →
-``--model`` → ``--fallback-model`` → (``--bg`` only) :data:`NO_MCP_ARGV` →
-the variable tail (``extra_argv`` / ``--name`` / ``--resume`` / prompt) —
+``--model`` → ``--fallback-model`` → the variable tail (``extra_argv`` / ``--name`` / ``--resume`` / prompt) —
 the tail may start with a variadic option, so nothing fixed goes after it.
 
 Why the fallback is ours to spell (D53): when the primary model — the
@@ -243,33 +242,21 @@ def build_argv(prompt: Optional[str], *, mode: str = MODE_PIPELINE,
     return argv
 
 
-# §65 出网封锁（self_improve lane 会话的 MCP 面归零）：``--strict-mcp-config``
-# 让 claude 只认 ``--mcp-config`` 给的服务器集合，而这个集合是空的——用户级
-# Slack/Gmail MCP 对该会话不存在。三个 token 顺序固定，紧跟模型旗标（D53 起
-# 是 ``--model`` 再 ``--fallback-model``）、在 ``--name`` 之前（``--mcp-config``
-# 是变参，后面必须是一个选项而不是裸 prompt——所以任何固定旗标都排在它前面）。
-NO_MCP_ARGV: tuple = ("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}')
-
-
-def dispatch_argv(cfg: Optional[config.Config] = None, *,
-                  no_mcp: bool = False) -> list:
+def dispatch_argv(cfg: Optional[config.Config] = None) -> list:
     """Base ``claude --bg`` argv shared by the executor's launch sites
     (dispatch / resume / rework / brief). ``--dangerously-skip-permissions``
     is included only while ``execution.skip_permissions`` is on (default;
     P0-10) — off means the agent runs under claude's normal permission
     model. The dispatch model knob rides right behind it, then the D53
-    fallback (``--fallback-model <id>``, nothing when ``off``); ``no_mcp``
-    (§65, add-only kwarg, default off = byte-identical argv) appends
-    :data:`NO_MCP_ARGV` after both; the caller appends ``--name`` /
-    ``--resume`` / the prompt.
+    fallback (``--fallback-model <id>``, nothing when ``off``); the caller
+    appends ``--name`` / ``--resume`` / the prompt. (The §65 ``no_mcp`` egress
+    lock retired with the lane, D86.)
     """
     cmd = [claude_bin(cfg), "--bg"]
     if cfg is None or getattr(cfg, "skip_permissions", True):
         cmd.append("--dangerously-skip-permissions")
     cmd += _model_flags(MODE_DISPATCH, cfg)
     cmd += _fallback_flags(cfg)
-    if no_mcp:
-        cmd += list(NO_MCP_ARGV)
     return cmd
 
 

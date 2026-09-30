@@ -34,9 +34,9 @@ survivor below changed an observable answer and is now pinned:
 
 **§78 re-anchor（issue #447 / owner 决策 D80）**：提案车道退役。两处判据跟着搬，
 判决口径一个字没改：①`detect_transitions` 的快照差分源 = `debt[]`（§40.6 修法；
-用 `needs_approval` 搭的快照会让这四条 alerts 判例全体空转通过）；②免批闸只认
-`detected` 且只放 §65 self_improve 出身的卡过（D80.4 把 §51 的 hand lane 通道
-立了墓碑，§78.9）。卡片 fixture 一律从退役的 `card_sent` 改成 `detected` ——
+用 `needs_approval` 搭的快照会让这四条 alerts 判例全体空转通过）；②免批闸（D80.4
+先给 §51 hand lane 立墓碑，D86 连同 §65 self_improve lane 整条删除，两条判例随之删）。
+卡片 fixture 一律从退役的 `card_sent` 改成 `detected` ——
 那是这些动词在产的起点状态。
 """
 import unittest
@@ -48,7 +48,6 @@ from act import actd
 from act.lib import analytics, config, registry
 from act.lib.actd import reconcile as _reconcile
 from act.lib.registry import Requirement, State
-from tests.self_improve_testkit import lane_card
 
 
 def _clean():
@@ -327,37 +326,7 @@ def _hand(rid, status=State.DETECTED.value, **kw):
     return req
 
 
-def _lane(rid, status=State.DETECTED.value, **kw):
-    """§65 self_improve lane 卡——§78 之后**唯一**还能免批自动提升的一类。"""
-    req = lane_card(rid, status=status, execution=None, **kw)
-    registry.save(req)
-    return req
-
-
 class DispatchKillsTest(Base):
-    def test_auto_dispatch_continues_past_ineligible_cards(self):
-        """跳过不合格卡用的是 ``continue`` 不是 ``break``：排在前面的卡不许让
-        后面那张该提升的永远等下去。§78 / D80.4 之后「不合格」多了一种——
-        hand 出身的卡即便正躺在潜在任务列里也再不参与免批（它唯一的喂料口是被
-        删掉的提案捕获框），所以这条判例同时钉住两种跳过都得是 ``continue``。"""
-        _hand("R-1", status=State.APPROVED.value)      # 状态不对 → 跳过
-        _hand("R-2")                                   # detected 但 hand 出身 → 跳过
-        _lane("R-3")                                   # §65 lane 卡 → 该提升
-        cfg = config.Config(self_improve_enabled=True)
-        self.assertEqual(actd.auto_dispatch_pass(cfg), 1)
-        self.assertEqual(registry.load("R-3").status, State.APPROVED.value)
-        # §51 hand lane 墓碑：手打卡留在潜在任务列，等 owner 点「促成运行」
-        self.assertEqual(registry.load("R-2").status, State.DETECTED.value)
-
-    def test_explicit_external_stamp_blocks_a_lane_card(self):
-        """W17 belt-and-braces：显式 ``origin_trust: external`` 章比 sources 现算
-        更严，forced_expand 的卡绝不自动派发。§78 / D80.4 把这道复核重锚到 §65
-        lane（hand lane 已退役，它的卡连资格闸都不进，那样的断言会空转通过）。"""
-        _lane("R-3", origin_trust="external")
-        cfg = config.Config(self_improve_enabled=True)
-        self.assertEqual(actd.auto_dispatch_pass(cfg), 0)
-        self.assertEqual(registry.load("R-3").status, State.DETECTED.value)
-
     def test_live_count_and_cap_within_one_pass(self):
         cfg = config.Config(raw={"autodispatch": {"max_concurrent": 2}})
         _hand("R-x", status=State.EXECUTING.value, execution={"session_id": "sid-x"})
@@ -677,7 +646,6 @@ class RaisingAndLoopKillsTest(Base):
     def test_early_dashboard_write_needs_any_activity_and_anti_nag_sets_keep_identity(self):
         resume_set, radar_set = set(), set()
         with mock.patch.object(actd, "process_inbox", return_value=1), \
-                mock.patch.object(actd, "auto_dispatch_pass", return_value=0), \
                 mock.patch.object(actd, "dispatch_approved", return_value=0), \
                 mock.patch.object(actd, "reconcile_executing", return_value=0) as rec, \
                 mock.patch.object(actd, "_housekeeping_phase"), \
@@ -767,7 +735,6 @@ class StragglerKillsTest(Base):
     def test_run_once_returns_the_dashboard_it_wrote(self):
         dash = {"needs_approval": [], "marker": 1}
         with mock.patch.object(actd, "process_inbox", return_value=0), \
-                mock.patch.object(actd, "auto_dispatch_pass", return_value=0), \
                 mock.patch.object(actd, "dispatch_approved", return_value=0), \
                 mock.patch.object(actd, "reconcile_executing", return_value=0), \
                 mock.patch.object(actd, "_housekeeping_phase"), \

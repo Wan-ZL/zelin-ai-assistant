@@ -7,25 +7,29 @@ tests/test_qa_automation_gate.py——一个 behavior 一个文件。
 """
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 
 from act.lib import automation, config
+from tests.scratch_testkit import scratch_dir
 
 
 def _poison(cfg, name):
-    """把冻结 cfg 上的一把开关写成一个绝不会是出厂值的东西（三种拼法各一种写法）。"""
-    if "." not in name:
-        setattr(cfg, name, "POISONED")
-        return
-    head, tail = name.split(".", 1)
-    if head == "features":
+    """把冻结 cfg 上的一把开关写成一个绝不会是出厂值的东西（两种拼法各一种写法；
+    第三种 `<块>.<键>` 随 `autodispatch.enabled` retired D86）。"""
+    head, _, tail = name.partition(".")
+    if head == "features" and tail:
         cfg.features[tail] = "POISONED"
         return
-    block = cfg.raw.setdefault(head, {}) if isinstance(cfg.raw, dict) else None
-    if isinstance(block, dict):
-        block[tail] = "POISONED"
+    setattr(cfg, name, "POISONED")
+
+
+def _row(*switch, kind=automation.KIND_BOOL):
+    """合成的一条 keep 行（只用来喂 row_enabled）。"""
+    return automation._b(slug="synthetic", zh="合成", en="synthetic", runner=automation.RUNNER_ACTD,
+                         cadence="每 pass", effect=[automation.EFFECT_STATE], code="act/actd.py:run_once",
+                         law=["§81"], verdict=automation.VERDICT_KEEP, why="test", switch=list(switch),
+                         kind=kind)
 
 
 class VocabularyTestCase(unittest.TestCase):
@@ -107,41 +111,43 @@ class EnabledTestCase(unittest.TestCase):
         旋钮读成开着（§17 / D19 的默认就会被误报）。"""
         self.assertFalse(automation.enabled("digest_card", config.Config()))
 
-    def test_a_raw_block_switch_is_read_from_cfg_raw(self):
-        """`autodispatch.enabled` 住在 cfg.raw 里（§51 的闸只从那里读）。"""
+    def test_a_flat_switch_is_read_from_the_config_field(self):
+        cfg = config.Config()
+        self.assertFalse(automation.row_enabled(_row("daily_loop_materials_enabled"), cfg))
+        cfg.daily_loop_materials_enabled = True
+        self.assertTrue(automation.row_enabled(_row("daily_loop_materials_enabled"), cfg))
+        self.assertFalse(automation.row_enabled(_row("no_such_field"), cfg))   # 缺字段 = 关
+
+    def test_a_features_switch_follows_cfg_feature(self):
+        cfg = config.Config()
+        self.assertTrue(automation.row_enabled(_row("features.worktree_sweep"), cfg))
+        cfg.features["worktree_sweep"] = False
+        self.assertFalse(automation.row_enabled(_row("features.worktree_sweep"), cfg))
+
+    def test_a_block_key_switch_fails_closed(self):
+        """`<块>.<键>`（cfg.raw）的第三种拼法随 `autodispatch.enabled` retired D86——
+        再有人写出来也只会读成关，绝不按「缺席 = 出厂开」放行。"""
         cfg = config.Config()
         cfg.raw = {"autodispatch": {"enabled": True}}
-        self.assertTrue(automation.enabled("auto_dispatch", cfg))
-        cfg.raw = {"autodispatch": {"enabled": False}}
-        self.assertFalse(automation.enabled("auto_dispatch", cfg))
+        self.assertFalse(automation.row_enabled(_row("autodispatch.enabled"), cfg))
 
-    def test_an_unwritten_raw_block_follows_that_block_s_factory_default(self):
-        """盘上没写过 `autodispatch:` 块 ≠ 关。
+    def test_the_retired_lane_rows_never_run(self):
+        """D86：免批派发与 §65 巡检两行是 retired，出厂与全开的 cfg 下都判关。"""
+        cfg = config.Config()
+        cfg.raw = {"autodispatch": {"enabled": True}}
+        for slug in ("auto_dispatch", "self_improve_tick"):
+            self.assertEqual(automation.by_slug(slug).verdict, automation.VERDICT_RETIRED, slug)
+            self.assertFalse(automation.enabled(slug, cfg), slug)
 
-        第一版把「键不在」读成 None 进而判关，于是出厂 Config 下
-        `auto_dispatch` 报「已经关着」——整条管线里最贵的「没人点过、卡却自己
-        批准并开了 LLM 会话」就这样从 ask 4 的账单底下溜过去了。真源是
-        `policy.AUTODISPATCH_DEFAULTS["enabled"] = True`。
-        """
-        self.assertTrue(automation.enabled("auto_dispatch", config.Config()))
-        empty = config.Config()
-        empty.raw = {"autodispatch": {}}          # 块在、键不在
-        self.assertTrue(automation.enabled("auto_dispatch", empty))
-        explicit_off = config.Config()
-        explicit_off.raw = {"autodispatch": {"enabled": False}}
-        self.assertFalse(automation.enabled("auto_dispatch", explicit_off))
-
-    def test_the_autodispatch_default_matches_policys_own(self):
-        """两处不许分叉：总账判出来的出厂值 = §51 自己那张默认表。"""
-        from act.lib import policy
-        self.assertEqual(automation.enabled("auto_dispatch", config.Config()),
-                         bool(policy.autodispatch_config(config.Config())["enabled"]))
+    def test_material_proposals_are_off_out_of_the_box(self):
+        """§81.2 D86 追记：素材铸卡改挂 yaml 专用 `daily_loop.materials_enabled`，出厂关。"""
+        self.assertFalse(automation.enabled("loop_material_proposals", config.Config()))
+        self.assertTrue(automation.enabled("loop_material_proposals",
+                                           config.Config(daily_loop_materials_enabled=True)))
 
     def test_truthy_covers_every_arm(self):
-        """`_truthy` 的四条臂各钉一次——缺席、阈值、枚举字符串、裸布尔。"""
+        """`_truthy` 的三条臂各钉一次——阈值、枚举字符串、裸布尔（「缺席」臂随 D86 删除）。"""
         t = automation._truthy
-        self.assertTrue(t(automation._ABSENT, automation.KIND_BOOL))
-        self.assertFalse(t(automation._ABSENT, automation.KIND_THRESHOLD))
         self.assertTrue(t("30", automation.KIND_THRESHOLD))
         self.assertFalse(t("forever", automation.KIND_THRESHOLD))
         self.assertFalse(t(None, automation.KIND_THRESHOLD))
@@ -181,7 +187,7 @@ class LiveFieldsTestCase(unittest.TestCase):
         live = set(automation.live_fields())
         for name in ("trash_retention_days", "card_summary_enabled",
                      "updates_check_enabled", "features.feedback_sync",
-                     "autodispatch.enabled", "archive_after_days"):
+                     "archive_after_days"):   # autodispatch.enabled retired D86（无人读）
             self.assertIn(name, live, name)
 
     def test_the_order_is_stable_and_deduped(self):
@@ -189,43 +195,26 @@ class LiveFieldsTestCase(unittest.TestCase):
         self.assertEqual(len(fields), len(set(fields)))
         self.assertEqual(fields, automation.live_fields())
 
-    def test_a_yaml_null_switch_stays_off_across_a_refresh(self):
-        """`autodispatch:\\n  enabled:`（YAML null）= 关，刷新不许把它刷成开。
+    def test_no_live_switch_uses_block_key(self):
+        """D86（R8）：actd 的刷新点只剩扁平字段与 `features.*` 两条路——`<块>.<键>`
+        的第三条（`_refresh_raw_key`）已删，总账里再出现那种拼法就会是一把冷开关。"""
+        for name in automation.live_fields():
+            head, _, tail = name.partition(".")
+            self.assertTrue(not tail or head == "features", name)
 
-        `policy.autodispatch_config` 分得出「写了但空值」（`bool(None)` = 关）与
-        「压根没写」（= 出厂开）；刷新点最初照 `_refresh_owner_logins` 那样按
-        None 删键，于是这份 config 启动时免批是关的、第一个 pass 之后自己变成
-        开的——整条管线里最贵的那条自动行为，被一个「为了让开关更可信」才加的
-        刷新点朝着 ask 4 明令禁止的方向掰了过去。
-        """
+    def test_a_flat_key_that_left_the_disk_falls_back_to_the_factory_default(self):
+        """盘上删掉了这一键 = 回到出厂默认，不是留着旧值（扁平字段与 features 两条路）。"""
         from unittest import mock
 
         from act import actd
 
-        frozen = config.Config()
-        frozen.raw = {"autodispatch": {"enabled": None, "max_concurrent": 3}}
+        frozen = config.Config(daily_loop_materials_enabled=True)
+        frozen.features["worktree_sweep"] = False
         fresh = config.Config()
-        fresh.raw = {"autodispatch": {"enabled": None, "max_concurrent": 3}}
-        self.assertFalse(automation.enabled("auto_dispatch", frozen))
         with mock.patch.object(config, "load_config", return_value=fresh):
             actd._refresh_automation_switches(frozen, fresh)
-        self.assertFalse(automation.enabled("auto_dispatch", frozen))
-        self.assertIn("enabled", frozen.raw["autodispatch"])
-
-    def test_a_key_that_left_the_disk_falls_back_to_the_factory_default(self):
-        """反过来的那一半：盘上删掉了这一键 = 回到出厂默认，不是留着旧值。"""
-        from unittest import mock
-
-        from act import actd
-
-        frozen = config.Config()
-        frozen.raw = {"autodispatch": {"enabled": False}}
-        fresh = config.Config()
-        fresh.raw = {"autodispatch": {}}
-        with mock.patch.object(config, "load_config", return_value=fresh):
-            actd._refresh_automation_switches(frozen, fresh)
-        self.assertNotIn("enabled", frozen.raw["autodispatch"])
-        self.assertTrue(automation.enabled("auto_dispatch", frozen))
+        self.assertFalse(frozen.daily_loop_materials_enabled)
+        self.assertTrue(frozen.feature("worktree_sweep"))
 
     def test_actd_really_refreshes_every_live_field(self):
         """不变量 2 的**行为**判例，不是名单比对：把冻结 cfg 上的每一把都写坏，
@@ -235,12 +224,11 @@ class LiveFieldsTestCase(unittest.TestCase):
         里面还混着 `daily_loop_time` 这类调参（不是 on/off，本来就不该进 switch），
         真正要钉的是「总账说热的，actd 就真的每 pass 现读」。
         """
-        import tempfile
         from unittest import mock
 
         from act import actd
 
-        home = tempfile.mkdtemp(prefix="live-switch-")
+        home = scratch_dir(self, prefix="live-switch-")
         frozen = config.Config()
         for name in automation.live_fields():
             _poison(frozen, name)
@@ -257,7 +245,7 @@ class AuditTestCase(unittest.TestCase):
     """一行「<slug> 做了 <action>」：形状、消毒、带帽、永不抛。"""
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="automation-audit-")
+        self.dir = scratch_dir(self, prefix="automation-audit-")
         self.path = Path(self.dir) / "automation.jsonl"
 
     def test_it_writes_one_json_line_per_call(self):

@@ -130,18 +130,18 @@ class HandlerTestCase(unittest.TestCase):
         self._apply("sources.slack_enabled", "off")
         self.assertFalse(self.cfg.slack_enabled)
 
-    def test_self_improve_owner_logins_both_spellings(self):
-        # §15.3 §65.5 追记（#310）：设置页写嵌套形，手写 overrides 可用扁平点号键；
-        # 两拼法都落回 cfg.raw（policy.self_improve_config 的读取点），坏形状静默跳过。
-        self._apply("self_improve", {"owner_logins": [" Wan-ZL ", "", 7]})
-        self.assertEqual(self.cfg.raw["self_improve"]["owner_logins"], ["Wan-ZL", "7"])
-        self._apply("self_improve.owner_logins", ["other"])
-        self.assertEqual(self.cfg.raw["self_improve"]["owner_logins"], ["other"])
-        for key, value in (("self_improve", "junk"), ("self_improve", {"owner_logins": "x"}),
-                           ("self_improve", {"enabled": True}), ("self_improve.owner_logins", "x")):
+    def test_retired_self_improve_keys_are_silently_ignored(self):
+        # §15.3 墓碑（D86）：`self_improve_enabled` / 嵌套 `self_improve` / 扁平
+        # `self_improve.owner_logins` 三种旧 overrides 键读到即静默忽略——不抛、
+        # 不写 cfg.raw、不在 Config 上长出字段。
+        before = json.dumps(self.cfg.__dict__, default=str)
+        for key, value in (("self_improve_enabled", True),
+                           ("self_improve", {"owner_logins": ["Wan-ZL"], "enabled": True}),
+                           ("self_improve.owner_logins", ["other"]), ("self_improve", "junk")):
             self._apply(key, value)
-        self.assertEqual(self.cfg.raw["self_improve"], {"owner_logins": ["other"]})
-        self.assertFalse(self.cfg.self_improve_enabled)   # 总开关只有扁平键一个写入面
+        self.assertEqual(json.dumps(self.cfg.__dict__, default=str), before)
+        self.assertFalse(hasattr(self.cfg, "self_improve_enabled"))
+        self.assertNotIn("self_improve", self.cfg.raw)
 
     def test_scalar_table(self):
         self._apply("default_target_repo", "/x")

@@ -577,7 +577,7 @@
   color: var(--warning);
 }
 
-/* §65.4 自我改进通道横幅：详情里的 PR 链接 + 右侧「恢复通道」按钮（紧凑版 shell-button） */
+/* compact banner button (PipelineBanner / DiagnosticsStrip / retry) */
 .shell-banner .shell-button {
   margin-left: auto;
   align-self: center;
@@ -587,10 +587,6 @@
 .shell-banner .shell-button:disabled {
   opacity: 0.6;
   cursor: default;
-}
-
-.shell-banner-detail a {
-  color: var(--accent);
 }
 
 /* 每日整理横幅（MaintenanceBanner，§70）的 info 变体：不是报警，是「服务在干活」
