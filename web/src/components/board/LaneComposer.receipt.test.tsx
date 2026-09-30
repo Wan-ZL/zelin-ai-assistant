@@ -31,7 +31,7 @@ const TYPED = "Write the onboarding doc for new hires";
 const HEAD = "Write the onboarding"; // 前 20 个 code point（恰好 20 = "Write the onboarding"）
 const PROPOSE_OK = `"${HEAD}" Submitted — analyzing (usually 2-3 min)`;
 const PROPOSE_STALLED = `"${HEAD}" Saved to the queue — processed once the pipeline is running`;
-const RUN_OK = `"${HEAD}" Submitted — running it now (skipped proposal), queued for dispatch…`;
+const RUN_OK = `"${HEAD}" Submitted — running it now, queued for dispatch…`;
 const RUN_STALLED = `"${HEAD}" Saved to the queue — runs once the pipeline is up`;
 const PROPOSE_TIMEOUT = "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log";
 const RUN_TIMEOUT = `"${HEAD}" did not start — the backend may not be running (check actd)`;
@@ -379,7 +379,7 @@ describe("LaneComposer receipt — honest timeout (Store.swift sweepTimeouts)", 
       fireEvent.click(button); // 新提交替换超时条，时钟重来
     });
     expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.getByText('"typing meanwhile" Submitted — running it now (skipped proposal), queued for dispatch…')).toBeTruthy();
+    expect(screen.getByText('"typing meanwhile" Submitted — running it now, queued for dispatch…')).toBeTruthy();
     act(() => vi.advanceTimersByTime(CAPTURE_TIMEOUT_MS.run - 1));
     expect(screen.queryByRole("status")).toBeNull();
     act(() => vi.advanceTimersByTime(1));

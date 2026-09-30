@@ -46,7 +46,9 @@ export function captureNote(mode: CaptureMode, stalled: boolean, text: (zh: stri
   if (mode === "run") {
     return stalled
       ? text("已保存到队列，pipeline 启动后直接开跑", "Saved to the queue — runs once the pipeline is up")
-      : text("已提交，直接开跑（跳过提案），排队派发中…", "Submitted — running it now (skipped proposal), queued for dispatch…");
+      // §34 2026-09-27 追记（owner 决策 D81，issue #448）：直跑回执不再提「提案」——「跳过提案」说的是一条
+      // 用户根本不必知道的内部管线；stalled 那句本就没提，两句自此同口径。§66 清单里它是 copy 条目（只列不判）。
+      : text("已提交，直接开跑，排队派发中…", "Submitted — running it now, queued for dispatch…");
   }
   return stalled
     ? text("已保存到队列，pipeline 启动后开始处理", "Saved to the queue — processed once the pipeline is running")

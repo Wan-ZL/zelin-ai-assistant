@@ -506,8 +506,8 @@ def _reconcile_review_attach(req: Requirement, agents: dict) -> None:
     return _reconcile.reconcile_review_attach(_ctx(), req, agents)
 
 
-def _promote_if_delivered(req, ex: dict, sid) -> bool:
-    return _reconcile.promote_if_delivered(_ctx(), req, ex, sid)
+def _promote_if_delivered(req, ex: dict, sid, whole_message: bool = False) -> bool:
+    return _reconcile.promote_if_delivered(_ctx(), req, ex, sid, whole_message)
 
 
 def _harvest_to_review(req: Requirement, ex: dict, sid, note_tag: str, log_reason: str,

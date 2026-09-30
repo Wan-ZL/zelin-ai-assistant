@@ -51,7 +51,8 @@ _TABLE = [
     ("dispatch_approved", dispatch, "dispatch_approved", ("cfg",), {}, True),
     ("process_raising", dispatch, "process_raising", ("cfg",), {}, True),
     ("_reconcile_review_attach", reconcile, "reconcile_review_attach", ("req", {}), {}, True),
-    ("_promote_if_delivered", reconcile, "promote_if_delivered", ("req", {}, "sid"), {}, True),
+    # §34 追记 D81：第 4 个位置参 whole_message（add-only，默认假）同样要原样转发
+    ("_promote_if_delivered", reconcile, "promote_if_delivered", ("req", {}, "sid", True), {}, True),
     ("_harvest_to_review", reconcile, "harvest_to_review", ("req", {}, "sid", "tag", "why"),
      {"interrupted_reason": "blocked", "agent": {"pid": 1}}, True),
     ("_drop_steers", reconcile, "drop_steers", ("req", ["p"], "reason", "why"), {}, True),

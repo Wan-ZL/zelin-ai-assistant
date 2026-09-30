@@ -122,7 +122,7 @@ describe("running-lane empty copy (Kanban.swift lanePlaceholder under the compos
     vi.mocked(fetchBoard).mockResolvedValue({ ...board, running: [], counts: { ...board.counts, running: 0 } } as Board);
     await refreshBoard();
     const { container } = render(<BoardLanes />);
-    expect(laneEmptyText(container, 0)).toBe("Nothing running — approve a proposal, or type above to run one now");
+    expect(laneEmptyText(container, 0)).toBe("Nothing running — type above to run one now");
     expect(screen.queryByText("Nothing running — approve a proposal to start")).toBeNull();
   });
 });

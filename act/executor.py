@@ -278,6 +278,49 @@ def _bg_base_cmd(cfg: Optional[config.Config] = None,
     return llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))
 
 
+def _verbatim(req: Optional[Requirement]) -> bool:
+    return req is not None and dispatch_prompt.verbatim_direct_run(req)
+
+
+def _contract_target(req: Requirement, cfg: config.Config) -> Path:
+    """会话契约里的「工作目录 / deliverables」——卡的工作台，经 chat 交付的既有
+    解析链（`_resolve_target` → `_chat_target` 的缺目录回退）。
+
+    刻意**不用**本次 launch 的 cwd：resume 的 cwd 是 transcript 上一次的目录，
+    而 bg 会话中途会自己钻进 `<workbench>/.claude/worktrees/<name>`——拿它当
+    交付目录会把成果指进一个随时会被回收的隐藏 worktree（§75）。逐字直跑卡恒
+    chat 交付（§34），所以这条链与 dispatch 当时算出的 cwd 同值。"""
+    return _chat_target(_resolve_target(req, cfg), cfg)
+
+
+def _system_append_argv(req: Optional[Requirement],
+                        cfg: Optional[config.Config]) -> list:
+    """``["--append-system-prompt", <会话契约>]`` for a §34 追记 D81 逐字直跑
+    card, ``[]`` for everything else (argv byte-identical to before).
+
+    这是「卡片需求 → 会话」的旁路：逐字直跑的 prompt 正文只有用户那句话，
+    看板要的交付/安全/命名约定全走这里（issue #448 自己提的
+    「prefer passing those through CLI flags rather than prompt text」）。
+    scrub 与正文同待遇——旁路也是出站文本（反泄漏，不是反注入）。"""
+    if not _verbatim(req):
+        return []
+    if cfg is None:
+        cfg = config.load_config()
+    text, _ = sanitize.scrub(
+        dispatch_prompt.direct_run_system_prompt(req, cfg, _contract_target(req, cfg)))
+    return ["--append-system-prompt", text]
+
+
+def _prompt_argv(req: Optional[Requirement], prompt: str) -> list:
+    """argv 末尾的 prompt 位。逐字直跑卡前面多一个 ``--``：那一位自此是**用户
+    原话**，而 `claude` 的 commander 解析器会把以 `-` 开头的 operand 当成选项
+    （实测：`claude -p "--version …"` → `error: unknown option`）。owner 打一句
+    「--dangerously-skip-permissions 是干嘛的」就会让这张卡每 pass 派发失败、
+    5 次后撞上 §4 的派发刹车。`--` 之后的一切都是 operand（实测同上）。
+    非逐字卡的 prompt 恒以 `# Requirement` / 固定前缀开头，argv 不变。"""
+    return ["--", prompt] if _verbatim(req) else [prompt]
+
+
 def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
                     cfg: Optional[config.Config] = None,
                     req: Optional[Requirement] = None) -> subprocess.CompletedProcess:
@@ -285,7 +328,8 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
     cmd = _bg_base_cmd(cfg, req)
     if name:
         cmd += ["--name", name]
-    cmd.append(prompt)
+    cmd += _system_append_argv(req, cfg)
+    cmd += _prompt_argv(req, prompt)
     return subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -826,10 +870,16 @@ def _run_resume(cfg: config.Config, req: Requirement, sid: str, target: Path,
                 prompt: Optional[str] = None) -> subprocess.CompletedProcess:
     """``claude --bg --resume <full sid>`` in the transcript's cwd; a non-blank
     ``prompt`` rides as the first input (scrubbed — that is anti-leak, not
-    anti-injection; owner text is trusted, see steer.build_steer_prompt)."""
+    anti-injection; owner text is trusted, see steer.build_steer_prompt).
+
+    §34 追记 D81：逐字直跑卡的会话契约住在 system prompt 里，而 system prompt
+    是**每次调用**给的——resume 不重新挂上，打回/转向那一轮的会话就没了交付
+    与安全边界。故 ``--append-system-prompt`` 与 dispatch 同源同挂（契约里的
+    工作目录取自卡，不是这里的 ``target``——见 :func:`_contract_target`）。"""
     cmd = _bg_base_cmd(cfg, req) + ["--name", session_name(req), "--resume", str(sid)]
+    cmd += _system_append_argv(req, cfg)
     if prompt and str(prompt).strip():
-        cmd.append(sanitize.scrub(str(prompt))[0])
+        cmd += _prompt_argv(req, sanitize.scrub(str(prompt))[0])
     return subprocess.run(
         cmd,
         cwd=str(target),
@@ -1071,15 +1121,23 @@ def _hydrate_html(before: str, final_draft: str) -> tuple[str, str]:
     return before, contents[:20000]
 
 
-def _split_delivery(text: str) -> dict:
+def _split_delivery(text: str, whole_message: bool = False) -> dict:
     """Card title + summary + draft out of one delivery message (契约 C)."""
     # §37 CARD TITLE rides in the same delivery message (all delivery
     # modes) — extract + strip it BEFORE the FINAL DRAFT split so neither
     # delivered_summary nor final_draft carries the marker line.
     card_title, lines = _extract_card_title(text.splitlines())
     idxs = _fence_marker_idxs(lines)
-    summary_text = "\n".join(lines).strip()[:500]
+    body = "\n".join(lines).strip()
+    summary_text = body[:500]
     if not idxs:
+        # §34 追记 D81：逐字直跑卡的 prompt 里没有 FINAL DRAFT 的强制格式，
+        # 所以「没有 marker」对它不是「没交付」——最后一条消息整条就是成果。
+        # §15 的 html 水合同样适用：交付物是一个 .html 文件时，成稿该是文件
+        # 正文而不是「我写到了这个路径」那句话（marker 那条路一直如此）。
+        if whole_message and body:
+            _, draft = _hydrate_html("", body[:20000])
+            return _result(summary_text, draft, card_title)
         return _result(summary_text, None, card_title)
     final_draft = _draft_after(lines, idxs[-1])
     if not final_draft:
@@ -1089,7 +1147,7 @@ def _split_delivery(text: str) -> dict:
     return _result(before, final_draft, card_title)
 
 
-def harvest_delivery(session_id: str) -> dict:
+def harvest_delivery(session_id: str, *, whole_message: bool = False) -> dict:
     """Extract the delivered summary (and chat-mode final draft) of a finished
     session from its transcript (v0.10 契约 C).
 
@@ -1113,6 +1171,11 @@ def harvest_delivery(session_id: str) -> dict:
     - §37: an out-of-fence standalone ``CARD TITLE:`` line in the delivery
       message (any delivery mode) comes back as ``card_title`` (clipped) and
       is STRIPPED from both outputs; absent/empty/fenced -> None.
+    - ``whole_message`` (§34 追记 D81, add-only kwarg, default off = byte-identical
+      to before): the caller says this card's prompt never MANDATED the marker
+      (逐字直跑), so a missing ``FINAL DRAFT:`` proves nothing — the whole delivery
+      message (20000 chars max) becomes ``final_draft``. A message that DOES carry
+      the marker still splits on it, exactly as for every other card.
     Any failure returns all None — never raises.
     """
     empty = dict(_EMPTY_DELIVERY)
@@ -1120,7 +1183,7 @@ def harvest_delivery(session_id: str) -> dict:
         texts = _delivery_texts(session_id)
         if not texts:
             return empty
-        return _split_delivery(_delivery_message(texts))
+        return _split_delivery(_delivery_message(texts), whole_message)
     except Exception:  # noqa: BLE001 - harvesting must never break the pipeline
         return dict(empty)
 

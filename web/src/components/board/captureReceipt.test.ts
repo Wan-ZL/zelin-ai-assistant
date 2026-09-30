@@ -1,7 +1,8 @@
 // 列顶输入框回执的诚实纪律——纯函数半边（CONTRACT §10 / §41 2026-09-05 追记；原生 Cards.swift:934,951-956 / :848,863-867、
 // Store.swift:343-353 / :402-411、PendingSweep.swift:169-192）：
 //   1) stalled 判据 = 横幅的 describeHealth（stalled / failing / stale 为真；ok / unknown / 还没拉到为假）；
-//   2) 四句状态句 + 两句超时条逐字镜像原生；回执带原话前 20 个 code point；
+//   2) 四句状态句 + 两句超时条逐字镜像原生——**除了直跑 ok 那句**：它自 §34 追记 D81（issue #448）起
+//      去掉「（跳过提案）」，与冻结原生有意分叉（§66 清单里是 copy 条目，只列不判）；回执带原话前 20 个 code point；
 //   3) captureLanded：先认精确键 row.capture_id === POST 回的 inbox stem（§10 issue #7 / §49），再退到原生 captureMatches——
 //      归一化（小写、去空白 / 标点 / 符号）后前 10 字双向 contains：propose 只看 **debt** 的 title / summary
 //      （§78：捕获的卡落潜在任务，提案列退役），run 只看 running + needs_input 的 name / summary，两者都不看 review。
@@ -80,8 +81,8 @@ describe("copy — native lines, verbatim", () => {
   });
 
   it("run: queued-for-dispatch vs saved-to-queue (Cards.swift:863-867)", () => {
-    expect(captureNote("run", false, zh)).toBe("已提交，直接开跑（跳过提案），排队派发中…");
-    expect(captureNote("run", false, en)).toBe("Submitted — running it now (skipped proposal), queued for dispatch…");
+    expect(captureNote("run", false, zh)).toBe("已提交，直接开跑，排队派发中…");
+    expect(captureNote("run", false, en)).toBe("Submitted — running it now, queued for dispatch…");
     expect(captureNote("run", true, zh)).toBe("已保存到队列，pipeline 启动后直接开跑");
     expect(captureNote("run", true, en)).toBe("Saved to the queue — runs once the pipeline is up");
   });

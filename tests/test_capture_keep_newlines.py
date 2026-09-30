@@ -13,8 +13,9 @@ multi-line composer was gone before the LLM / agent ever saw it. Now:
   the dedupe / re-raise identity anchor, §37).
 - End to end (inbox file → card): ``sources[0].quote`` and the text handed to
   the proposal / direct-run paths keep the newlines; the expand prompt (§10 →
-  process_raising) and the dispatch prompt (§34 direct run, §4 fencing) both
-  carry the user's lines. Fixtures / goldens elsewhere are untouched.
+  process_raising) carries the user's lines inside its SOURCES block, and the
+  direct-run dispatch prompt **is** those lines (§34 追记 D81, 2026-09-27 —
+  逐字派发取代了 §4 围栏引文那条路)。Fixtures / goldens elsewhere are untouched.
 
 Runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no LLM, no
 subprocess.
@@ -27,7 +28,7 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
 from act import actd, analyze
-from act.lib import config, dispatch_prompt, registry
+from act.lib import config, dispatch_prompt, registry, sanitize
 from act.lib.actd import inbox
 from act.lib.registry import State
 
@@ -187,13 +188,18 @@ class CaptureKeepsNewlinesEndToEndTestCase(unittest.TestCase):
         self.assertIn("- 支持 CSV\n- 支持 PDF\n\n附：上周会议提过一次", prompt)
         self.assertIn(f"TITLE: {inbox.capture_title(MULTI)}\n", prompt)
 
-    def test_dispatch_prompt_carries_the_lines_inside_the_fence(self):
+    def test_dispatch_prompt_is_the_typed_lines_verbatim(self):
+        # §34 追记 D81（2026-09-27）：直跑卡的派发 prompt 不再是「围栏里的引文」，
+        # 而**就是**那段文字本身——D52 要保的「用户排好的行原样到会话」因此比
+        # 从前更强：一个围栏字节都没有，整条 prompt 逐字等于归一后的正文。
         _write_capture(MULTI, mode="run")
         actd.process_inbox()
         req = _only_card()
         cfg = config.Config()
         prompt = dispatch_prompt.render(req, cfg, Path(TMP_HOME), remote=False)
         self.assertIn("- 支持 CSV\n- 支持 PDF\n\n附：上周会议提过一次", prompt)
+        self.assertEqual(prompt, req.sources[0]["quote"])
+        self.assertNotIn(sanitize.UNTRUSTED_OPEN, prompt)
 
 
 if __name__ == "__main__":

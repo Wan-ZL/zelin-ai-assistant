@@ -65,7 +65,9 @@ export function BoardLanes() {
       <BacklogStrip renderCard={(card) => <DebtCardItem item={card} />} />
 
       {/* 运行中列空态 = 原生 Kanban.swift 在常驻 composer 之下手动渲染的 lanePlaceholder 那句（「或在上面输入框里直接开跑」）；
-          原生 column(emptyText:) 参数里的「AI 就开始干活」因 isEmpty: false 从未显示过，web 不镜像它 */}
+          原生 column(emptyText:) 参数里的「AI 就开始干活」因 isEmpty: false 从未显示过，web 不镜像它。
+          §34 2026-09-27 追记（owner 决策 D81，issue #448）：直跑框的三句文案不再提「提案」——占位句、空态句、
+          §66 清单里这两条 copy 条目（只列不判）自此与冻结原生分叉，inventory 不动（它是原生的提取，不是 web 的规格） */}
       <Lane
         title={text("运行中 · running", "Running")}
         slug="running"
@@ -79,7 +81,7 @@ export function BoardLanes() {
           />
         }
         isEmpty={blocked.length === 0 && running.length === 0}
-        emptyText={emptyText(text("没有正在执行的任务。批准一个提案，或在上面输入框里直接开跑", "Nothing running — approve a proposal, or type above to run one now"))}
+        emptyText={emptyText(text("没有正在执行的任务。在上面输入框里说一句，直接开跑", "Nothing running — type above to run one now"))}
       >
         {blocked.map((row) => (
           <RunningCard key={row.id} row={row} isBlocked />

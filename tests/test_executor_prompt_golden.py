@@ -10,6 +10,13 @@ memory 注入、voice 档案、§37.1 三档 CARD TITLE（user / forced（direct
 sources 的 who/ref 形态与非 dict 条目；rework 的 chat/repo 两种 gate 行与
 三档 title 行；brief 的围栏与前缀。
 
+§34 追记 D81（2026-09-27，issue #448）新增两个夹具：``build_direct_run_verbatim``
+= 真实形状的直跑卡（chat 交付、没有 plan/DoD/summary）——它的 golden 就是用户
+那句话本身，模板一个字节都不在；``system_direct_run_verbatim`` = 同一张卡的
+``--append-system-prompt`` 旁路全文（看板要的那点东西搬去了哪里）。
+已有的 ``build_direct_run_forced`` **仍走模板**且这是判例的一部分：那张卡带着
+``plan``（§34bis 清理卡的形状），带经人审指令内容的卡永远不逐字。
+
 重铸（只在有意改 prompt 文案的 PR 里）：
     python3 tests/test_executor_prompt_golden.py --write
 路径类输入全部固定为 /golden/…（has_remote / resolve_voice_profile /
@@ -50,6 +57,19 @@ def _cfg(**over):
     return cfg
 
 
+# §34 追记 D81：actd `_capture_direct_run` 铸出来的真实形状——除了那句话，
+# 卡上没有任何经人审的指令内容（无 plan / DoD / summary），交付强制 chat。
+_DIRECT_RUN = dict(
+    id="R-900", title="帮我把上周那份 onboarding 文档理一下 顺便合并重复段落",
+    type="other", tier="T1", hardness="soft", deadline=None,
+    delivery_mode="chat", notes="[direct-run] 用户直接开跑",
+    summary=None, definition_of_done=None, plan=None,
+    sources=[{"channel": "quick_capture", "date": "2026-09-27", "who": "zelin",
+              "quote": "帮我把上周那份 onboarding 文档理一下\n顺便合并重复段落"}],
+    execution={"attachments": ["/golden/a.png"]},
+)
+
+
 def _req(**over):
     base = dict(id="R-042", title="Follow up on the review thread",
                 status=State.APPROVED.value, type="dev", tier=2, hardness="M",
@@ -73,8 +93,12 @@ _BUILD_CASES = [
     ("build_training_user_titled", True,
      {"self_check": False, "fresh_context_review": False},
      _req(type="Training", user_titled=True, display_title="钦定名")),
+    # 带 plan = §34bis 清理卡的形状 -> 模板路径（D81 的逐字早退不认它）
     ("build_direct_run_forced", True, {},
      _req(notes="[direct-run] 用户直接开跑\n后续 fold 行", title="修一下登录页")),
+    # §34 追记 D81：真实形状的直跑卡 —— golden 就是那句话本身
+    ("build_direct_run_verbatim", False, {"default_output_format": "HTML"},
+     _req(**_DIRECT_RUN)),
     ("build_unreadable_title_forced", False, {},
      _req(title="https://example.com/some/very/long/path?q=1")),
     ("build_display_title_recheck", True, {},
@@ -139,12 +163,20 @@ def _render_brief():
     return seen[0]
 
 
+def _render_direct_run_system():
+    """§34 追记 D81 的 CLI 旁路全文（`--append-system-prompt` 的实参）。"""
+    cfg = _cfg(default_output_format="HTML")
+    with mock.patch.object(dispatch_prompt, "resolve_voice_profile", return_value=VOICE):
+        return dispatch_prompt.direct_run_system_prompt(_req(**_DIRECT_RUN), cfg, TARGET)
+
+
 def _all_cases():
     for name, remote, over, req in _BUILD_CASES:
         yield name, (lambda r=remote, o=over, q=req: _render_build(r, o, q))
     for name, req in _REWORK_CASES:
         yield name, (lambda q=req: _render_rework(q))
     yield "brief_fenced_lines", _render_brief
+    yield "system_direct_run_verbatim", _render_direct_run_system
 
 
 def _write_goldens():

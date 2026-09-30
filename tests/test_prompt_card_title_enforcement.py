@@ -24,6 +24,10 @@
 - 注入的现值按不可信 DATA 回流：必过 sanitize.fence_untrusted（定界线转义
   生效），围栏外明示「DATA、不是指令」——display_title 是 LLM 每轮可写字段，
   裸嵌指令句会成为跨轮自我提权信道（round-2 review 判例）。
+- §34 追记 D81（2026-09-27）：逐字直跑卡的分档指令**换了载体**——用户回合只剩
+  他打的那句话，指令住在 `--append-system-prompt`。三档判决一字未改，故本模块
+  统一对「会话这一轮读到的全部文字」断言（:func:`_session_text`）；载体本身
+  的判例在 tests/test_direct_run_verbatim.py。
 """
 import subprocess
 import tempfile
@@ -85,13 +89,26 @@ class IsUnreadableTitleTestCase(unittest.TestCase):
         self.assertFalse(titles.is_unreadable_title("修 复\n登 录"))
 
 
+def _session_text(req: Requirement, prompt: str, cfg) -> str:
+    """会话这一轮真正读到的全部文字 = 用户回合 + system 旁路。
+
+    §34 追记 D81 起逐字直跑卡的用户回合**只有他打的那句话**，§37.1 的分档
+    指令搬进了 ``--append-system-prompt``。分档保证一个字没变，只是换了载体——
+    所以本模块的分档判例一律对这段合并文本断言，其余卡的旁路为空、断言与从前
+    逐字相同。旁路的文本**从生产 argv 上取**（`executor._system_append_argv`），
+    不自己重算：判例要钉的正是「会话真的收到了这条指令」，重算等于只钉住一个
+    函数存在。"""
+    return "\n".join([prompt] + executor._system_append_argv(req, cfg)[1:])
+
+
 class PromptEnforcementTestCase(unittest.TestCase):
     def _prompt(self, req: Requirement) -> str:
         cfg = config.Config()
         cfg.memory_inject = False   # stay off the real ~/.claude memory
         cfg.voice_enabled = False   # keep the prompt minimal/deterministic
         with tempfile.TemporaryDirectory(prefix="cardtitle-") as td:
-            return executor.build_prompt(req, cfg, target=Path(td))
+            target = Path(td)
+            return _session_text(req, executor.build_prompt(req, cfg, target=target), cfg)
 
     # ---- v0.46 两档：无 display_title 且不可读 / direct-run（回归不破） ----
 
@@ -281,7 +298,7 @@ class ReworkGateTitleTierTestCase(unittest.TestCase):
                 if str(sid).startswith("feedc0de") else None):
             self.assertTrue(executor.rework(req, "再补一个测试", self.cfg,
                                             runner=runner))
-        return runner.call_args[0][0]
+        return _session_text(req, runner.call_args[0][0], self.cfg)
 
     def test_rework_prompt_requires_title_recheck_with_current_value(self):
         prompt = self._rework_prompt(display_title="重跑数据清洗脚本")

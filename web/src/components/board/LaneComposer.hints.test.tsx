@@ -3,7 +3,7 @@
 //   1) 草稿以 "/" 开头时输入框下给一行命令词表提示（hintLine），不以 "/" 开头就没有；提示行顶掉成功回执——
 //      包括 ↑/↓ 翻历史翻出一条 "/…" 旧捕获（不走 onChange）的那条路；回执（捕获的 / 斜杠的）一改字即过期；
 //   2) 失败句优先于提示行；一改字失败句即清（原生 `.onChange(of: text) { slashError = nil }`），"/" 草稿随即回到提示行；
-//   3) textarea 与按钮的 title：直跑 = 「直接开跑：跳过提案与费用预估，成果仍进「待验收」」；捕获 = 「快速捕获（⌘L · <壳全局键>）」，
+//   3) textarea 与按钮的 title：直跑 = 「直接开跑：这句话原样交给 Claude Code，成果进「待验收」」；捕获 = 「快速捕获（⌘L · <壳全局键>）」，
 //      壳不在场时没有键可报就只有「快速捕获」（浏览器里 ⌘L 归地址栏，不谎报）；身份从 buildBody 的 payload 读（mode:"run"）。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,7 @@ import { postAction } from "../../api";
 
 const en = (_zh: string, english: string) => english;
 const HINT = hintLine(en);
-const RUN_TITLE = "Runs now — skips the proposal & cost preview; the result still lands in Review";
+const RUN_TITLE = "Runs now — your sentence goes to Claude Code as typed; the result lands in Review";
 /** 捕获回执 = 「"<原话前 20 字>" Submitted — analyzing (usually 2-3 min)」（captureReceipt.ts） */
 const RECEIPT = /Submitted — analyzing/;
 
@@ -187,7 +187,7 @@ describe("LaneComposer — native .help tooltips as title", () => {
     expect(composerMode((t) => ({ action: "capture", text: t }))).toBe("propose");
     expect(composerMode((t) => ({ action: "capture", text: t, mode: "run" }))).toBe("run");
     const zh = (chinese: string) => chinese;
-    expect(composerTitle("run", null, zh)).toBe("直接开跑：跳过提案与费用预估，成果仍进「待验收」");
+    expect(composerTitle("run", null, zh)).toBe("直接开跑：这句话原样交给 Claude Code，成果进「待验收」");
     expect(composerTitle("propose", "⌘L · ⌃⌥Space", zh)).toBe("快速捕获（⌘L · ⌃⌥Space）");
     expect(composerTitle("propose", "⌘L", zh)).toBe("快速捕获（⌘L）");
     expect(composerTitle("propose", null, zh)).toBe("快速捕获");

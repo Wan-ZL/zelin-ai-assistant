@@ -1,14 +1,16 @@
 """session — live-session plumbing shared by the inbox verbs, merge and reconcile.
 
-CONTRACT §11（收割交付物进待验收）/ §37（CARD TITLE 收割 + Mac 本地会话内容搜索层）
-/ §46（确认式停止 + 失败台账）。All best-effort: nothing here may raise into the
-caller's state write — a stop that fails leaves a ledger, never a crash.
+CONTRACT §11（收割交付物进待验收）/ §34 追记 D81（逐字直跑卡的收割口径 =
+整条最后一条消息，:func:`verbatim_whole_message`）/ §37（CARD TITLE 收割 +
+Mac 本地会话内容搜索层）/ §46（确认式停止 + 失败台账）/ §71.3（睡眠重试的让路）。
+All best-effort: nothing here may raise into the caller's state write — a stop
+that fails leaves a ledger, never a crash.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from act.lib import analytics, failures, notify
+from act.lib import analytics, dispatch_prompt, failures, notify
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.registry import Requirement, State
 
@@ -137,15 +139,49 @@ def fold_harvest(ex: dict, harvested: dict) -> None:
         ex["final_draft"] = harvested["final_draft"]
 
 
+def verbatim_whole_message(req: Requirement, ex: dict) -> bool:
+    """§34 追记 D81 —— 这张卡的收割该不该「整条最后一条消息就是成果」。
+
+    真当且仅当卡是逐字直跑卡（`dispatch_prompt.verbatim_direct_run`：prompt 里
+    从来没有 ``FINAL DRAFT:`` 的强制格式，所以 marker 缺席**不**证明没交付）
+    **且**这次中断不是**还没用掉重试机会的**实测睡眠打断。后一半是 §71.3 的
+    让路：被睡眠切断的会话 transcript 末尾常是一句 "API Error: … went to sleep
+    mid-response"，整条收下会把它冒充成成果、顶掉那次唯一的原地重试
+    （`reconcile._harvested_nothing` 判的就是 ``final_draft``）。让路**只让一次**，
+    判据与 `sleep_retry` 自己那道门逐字同源（``sleep_interrupted and not
+    sleep_retry_used``）——`sleep_interrupted` 只在会话再次被看见活着时才被
+    `_note_alive` 清掉，重试完没活过来的卡若一直带着这面旗，宽口径就永远回不来了。
+
+    其余任何卡恒假 —— 它们的 prompt 明令 marker，缺席就是「没交付」的真信号
+    （`reconcile.promote_if_delivered` 的强完成信号语义不变）。
+
+    **本函数只回答「这张卡该不该宽」，不回答「这个会话收工了没有」**——后者由
+    调用点负责：收割漏斗（`harvest_into`）与 `_settle_review_activity` 本就只在
+    会话结束/停止时调用，`promote_if_delivered` 则只在 blocked 那条路上把真值
+    传进来，dead/vanished 那条路恒传假（半句在途进度不是成果，§16/§46 的自动
+    救活不许被它关掉）。
+    """
+    ex = ex or {}
+    spent = bool(ex.get("sleep_interrupted")) and not ex.get("sleep_retry_used")
+    return dispatch_prompt.verbatim_direct_run(req) and not spent
+
+
+def harvest_kwargs(req: Requirement, ex: dict) -> dict:
+    """``{"whole_message": True}`` 或 ``{}`` —— 非逐字直跑卡的调用逐字节不变
+    （判例里 `assert_called_once_with(sid)` 的那几条接缝照旧成立）。"""
+    return {"whole_message": True} if verbatim_whole_message(req, ex) else {}
+
+
 def harvest_into(d: Daemon, req: Requirement, ex: dict, sid) -> Optional[Exception]:
     """executor.harvest_delivery(sid) → ``ex`` deliverable fields + §37 title.
 
     The whole harvest is one guarded step (§11 收割失败绝不阻塞提升): the
     exception is RETURNED so each call site keeps logging its own line, exactly
     as the five inline copies did before P3b. Requires ``d.executor``.
+    §34 追记 D81: 逐字直跑卡多带一个 ``whole_message=True``（:func:`harvest_kwargs`）。
     """
     try:
-        harvested = d.executor.harvest_delivery(str(sid)) or {}
+        harvested = d.executor.harvest_delivery(str(sid), **harvest_kwargs(req, ex)) or {}
         fold_harvest(ex, harvested)
         apply_harvest_title(d, req, harvested)   # §37, round boundary
     except Exception as e:  # noqa: BLE001 - harvest is best-effort
