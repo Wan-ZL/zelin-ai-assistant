@@ -18,12 +18,12 @@ Pinned here:
 """
 import ast
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import analytics, config, registry, secrets
@@ -46,7 +46,7 @@ def _proc(rc, stdout="", stderr=""):
 class NoRawErrorInTelemetryTestCase(unittest.TestCase):
     def setUp(self):
         config.ensure_state_dirs()
-        self.target = Path(tempfile.mkdtemp(prefix="telemetry-err-"))
+        self.target = Path(scratch_dir(self, prefix="telemetry-err-"))
         (self.target / "keep.txt").write_text("x", encoding="utf-8")
         self.cfg = config.Config()
         self.cfg.memory_inject = False

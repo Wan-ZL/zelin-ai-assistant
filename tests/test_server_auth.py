@@ -14,12 +14,12 @@ import json
 import os
 import stat
 import sys
-import tempfile
 import threading
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (assert_envelope, auth_headers,
                                       http_request, rewrite_board, seed_scene,
                                       start_server)
@@ -44,7 +44,7 @@ def _run_payload() -> bytes:
 
 class _AuthHomeMixin:
     def _boot(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-auth-"))
+        self.home = Path(scratch_dir(self, prefix="zai-auth-"))
         _, self.port = start_server(self, self.home)
         self.inbox = self.home / "state" / "inbox"
 
@@ -192,7 +192,7 @@ class TokenLifecycleTestCase(unittest.TestCase):
     """token 铸造/注入：0600、跨启动稳定、只进本面服务的 index.html。"""
 
     def test_token_file_created_0600_and_stable(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-auth-tok-"))
+        home = Path(scratch_dir(self, prefix="zai-auth-tok-"))
         tok = security.load_or_create_token(home)
         p = security.token_path(home)
         self.assertTrue(p.is_file())
@@ -202,7 +202,7 @@ class TokenLifecycleTestCase(unittest.TestCase):
         self.assertEqual(security.load_or_create_token(home), tok)
 
     def test_index_html_gets_token_injected(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-auth-inject-"))
+        home = Path(scratch_dir(self, prefix="zai-auth-inject-"))
         dist = home / "dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text(
@@ -224,7 +224,7 @@ class TokenLifecycleTestCase(unittest.TestCase):
         self.assertEqual(headers.get("X-Frame-Options"), "DENY")
 
     def test_assets_are_not_injected(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-auth-asset-"))
+        home = Path(scratch_dir(self, prefix="zai-auth-asset-"))
         dist = home / "dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text("<head></head>", encoding="utf-8")
@@ -293,7 +293,7 @@ class TokenFileHardeningTestCase(unittest.TestCase):
     """M2/M3：既有 token 文件的权限收回、坏内容重铸、symlink 拒跟随。"""
 
     def _home(self, prefix: str) -> Path:
-        home = Path(tempfile.mkdtemp(prefix=prefix))
+        home = Path(scratch_dir(self, prefix=prefix))
         (home / "state").mkdir(parents=True)
         return home
 
@@ -383,7 +383,7 @@ class DeliverableNotInjectedTestCase(unittest.TestCase):
     的交付物 HTML（本面最该防的泄露路径）。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-auth-dlv-"))
+        self.home = Path(scratch_dir(self, prefix="zai-auth-dlv-"))
         dash = seed_scene(self.home, "initial")
         repo = self.home / "demo-repo"
         dlv = repo / "deliverables"

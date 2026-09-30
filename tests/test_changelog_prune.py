@@ -9,9 +9,9 @@
 import io
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 _CI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "ci")
 if _CI_DIR not in sys.path:
@@ -70,7 +70,7 @@ class FakeGit:
 
 class MainTestCase(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="prune-"))
+        self.root = Path(scratch_dir(self, prefix="prune-"))
         self.dir = self.root / "changelog.d"
         self.dir.mkdir()
         for name, data in (("shipped.md", SHIPPED), ("edited.md", EDITED), ("fresh.md", FRESH)):

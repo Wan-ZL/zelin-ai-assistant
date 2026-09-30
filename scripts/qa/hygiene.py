@@ -7,8 +7,13 @@
     tests/ 是判例不设门。
   - docstring 引 §（防腐 #5 前半）：act/** + server/** 的模块 docstring 必须
     含 `§<数字>`（__init__.py 豁免——版本占位/包壳没有行为可引）。
+  - 判例草稿目录（防腐 #4 的测试侧；issue #436）：tests/** 里 `tempfile.mkdtemp`
+    只准住 tests/__init__.py（整次 run 的沙箱根，退出时整树删）与
+    tests/scratch_testkit.py（scratch_dir 工厂，cleanup 阶段删）；别处每一处裸调用
+    记 `mkdtemp:<文件>`，分 = 该文件的调用数。2026-09-19 owner 机器的 $TMPDIR 里
+    215k 个泄漏目录全部出自这些调用点。
 存量账本 qa/hygiene_baseline.txt（shrink-only：挂账文件不许再长）。
-判例：tests/test_qa_hygiene_caps.py。
+判例：tests/test_qa_hygiene_caps.py、tests/test_qa_hygiene_test_scratch.py。
 
 用法：
     python3 scripts/qa/hygiene.py --check [--report DIR]
@@ -28,6 +33,8 @@ import qa_common  # noqa: E402
 BASELINE = os.path.join(qa_common.REPO_ROOT, "qa", "hygiene_baseline.txt")
 _SECTION_RE = re.compile(r"§\s*\d")
 _DOCSTRING_DIRS = ("act", "server")
+# issue #436：tests/ 里准直接 mkdtemp 的两处（沙箱根 + scratch_dir 工厂）。
+_MKDTEMP_ALLOWED = frozenset({"tests/__init__.py", "tests/scratch_testkit.py"})
 
 
 def _line_count(path):
@@ -82,6 +89,40 @@ def _scan_docstring(relpath, root, scores):
         scores["docstring:%s" % relpath] = 1.0
 
 
+def _is_mkdtemp_call(node):
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+    return name == "mkdtemp"
+
+
+def _raw_mkdtemp_count(path):
+    """文件里 `mkdtemp(...)` 调用数（`tempfile.mkdtemp` 与裸 `mkdtemp` 两形）。
+    先做文本预筛：530+ 个判例文件里只解析提到 mkdtemp 的那几个。"""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            if "mkdtemp" not in fh.read():
+                return 0
+    except OSError:
+        return 0
+    tree = qa_common.parse_file(path)
+    if tree is None:
+        return 0
+    return sum(1 for node in ast.walk(tree) if _is_mkdtemp_call(node))
+
+
+def _scan_test_scratch(root, scores):
+    """tests/** 的裸 mkdtemp（issue #436）：白名单外每个文件记一条，分 = 调用数。"""
+    for path in qa_common.iter_py_files(root, rel_dirs=("tests",)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if rel in _MKDTEMP_ALLOWED:
+            continue
+        count = _raw_mkdtemp_count(path)
+        if count:
+            scores["mkdtemp:%s" % rel] = float(count)
+
+
 def scan(root=None):
     """全部 hygiene 违例：{violation_key: 测量值}。"""
     root = root or qa_common.REPO_ROOT
@@ -93,6 +134,7 @@ def scan(root=None):
         if rel.split("/", 1)[0] in _DOCSTRING_DIRS:
             _scan_docstring(rel, root, scores)
     _scan_swift_caps(root, caps["max_file_lines_swift"], scores)
+    _scan_test_scratch(root, scores)
     return scores
 
 

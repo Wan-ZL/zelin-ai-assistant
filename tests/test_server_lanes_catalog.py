@@ -8,11 +8,11 @@
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from server import lanes
 from tests.test_server_common import get_json, http_request, start_server
@@ -50,7 +50,7 @@ class CatalogShapeTestCase(unittest.TestCase):
 
 class CatalogRouteTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-lanes-"))
+        self.home = Path(scratch_dir(self, prefix="zai-lanes-"))
         (self.home / "state").mkdir()
         _, self.port = start_server(self, self.home)
 

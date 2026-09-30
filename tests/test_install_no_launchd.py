@@ -19,12 +19,11 @@ environment. Pinned here with the real function text (same
     the crontab branch is skipped with `cron=skipped:--no-launchd…`.
 """
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -50,8 +49,7 @@ def _install_sh_fn(name):
 @unittest.skipIf(_WIN, "install.sh is POSIX-only")
 class FlagParsingTestCase(unittest.TestCase):
     def test_unknown_flag_is_a_usage_error_before_any_side_effect(self):
-        tmp = Path(tempfile.mkdtemp(prefix="install-flags-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="install-flags-"))
         proc = subprocess.run(["bash", str(REPO / "install.sh"), "--bogus"],
                               capture_output=True, text=True, timeout=60,
                               env={"HOME": str(tmp), "PATH": "/usr/bin:/bin"})
@@ -84,8 +82,7 @@ class FlagParsingTestCase(unittest.TestCase):
 @unittest.skipIf(_WIN, "install.sh is POSIX-only")
 class RunActdOnceTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="actd-once-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="actd-once-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.repo = self.tmp / "repo"

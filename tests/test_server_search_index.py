@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import assert_envelope, http_request, start_server
 
 from act.lib import config, search_index as act_search_index
@@ -45,7 +45,7 @@ def _write_index(home: Path, data, raw: "str | None" = None) -> Path:
 
 class SearchIndexRouteTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-search-index-"))
+        self.home = Path(scratch_dir(self, prefix="zai-search-index-"))
         _, self.port = start_server(self, self.home)
 
     def _get(self, headers=None, path="/api/search-index"):
@@ -175,7 +175,7 @@ class PureFunctionsTestCase(unittest.TestCase):
         self.assertFalse(search_index_source.etag_matches("1-2", etag))  # 没引号不是同一个字面
 
     def test_snapshot_skips_non_dict_top_level(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-search-index-pure-"))
+        home = Path(scratch_dir(self, prefix="zai-search-index-pure-"))
         p = _write_index(home, None, raw='["P-1"]')
         self.assertEqual(search_index_source.snapshot(p, p.stat().st_size),
                          {"entries": {}, "truncated": False})

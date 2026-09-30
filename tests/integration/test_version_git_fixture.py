@@ -31,10 +31,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[2]
 _WIN = sys.platform.startswith("win")
@@ -72,8 +72,7 @@ def _install_sh_fn(name):
 
 class VersionGitFixtureTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="vergit-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="vergit-"))
         self.repo = self.tmp / "repo"
         for rel in COPIED:
             dst = self.repo / rel

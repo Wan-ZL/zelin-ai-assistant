@@ -14,12 +14,12 @@ app — radar-extracted third-party content never enters telemetry.
 """
 import json
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import actd, ask, executor
 from act.lib import analytics, config, quick_capture, registry
@@ -71,7 +71,7 @@ class CaptureInputConfigTestCase(unittest.TestCase):
     config values honored; §15 override plumbing (nested + flat forms)."""
 
     def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="cfg-capture-")) / "config.yaml"
+        path = Path(scratch_dir(self, prefix="cfg-capture-")) / "config.yaml"
         path.write_text(body, encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
@@ -179,7 +179,7 @@ class DispatchCaptureGateTestCase(unittest.TestCase):
     def setUp(self):
         config.ensure_state_dirs()
         # existing non-empty target dir -> target_kind=existing, no ensure_repo
-        self.target = Path(tempfile.mkdtemp(prefix="tele-target-"))
+        self.target = Path(scratch_dir(self, prefix="tele-target-"))
         (self.target / "keep.txt").write_text("x", encoding="utf-8")
         for patcher in (
             mock.patch.object(executor, "has_remote", return_value=False),
@@ -441,7 +441,7 @@ class ExampleConfigDefaultsTestCase(unittest.TestCase):
     REPO_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.yaml"
 
     def _example_cfg(self) -> config.Config:
-        missing = Path(tempfile.mkdtemp(prefix="cfg-none-")) / "config.yaml"
+        missing = Path(scratch_dir(self, prefix="cfg-none-")) / "config.yaml"
         with mock.patch.object(config, "CONFIG_PATH", missing), \
              mock.patch.object(config, "CONFIG_EXAMPLE_PATH",
                                self.REPO_EXAMPLE):
@@ -517,7 +517,7 @@ class ConsentV2GateTestCase(unittest.TestCase):
         self.assertFalse(analytics.content_gate(cfg))
 
     def test_explicit_flag_set_by_yaml_and_overrides(self):
-        path = Path(tempfile.mkdtemp(prefix="cfg-v2-")) / "config.yaml"
+        path = Path(scratch_dir(self, prefix="cfg-v2-")) / "config.yaml"
         path.write_text("telemetry:\n  capture_input: true\n",
                         encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", path):
@@ -532,7 +532,7 @@ class ConsentV2GateTestCase(unittest.TestCase):
             config.SETTINGS_OVERRIDES_PATH.unlink()
 
     def test_absent_key_leaves_explicit_false(self):
-        missing = Path(tempfile.mkdtemp(prefix="cfg-v2-none-")) / "config.yaml"
+        missing = Path(scratch_dir(self, prefix="cfg-v2-none-")) / "config.yaml"
         with mock.patch.object(config, "CONFIG_PATH", missing):
             cfg = config.load_config()
         self.assertFalse(cfg.telemetry_capture_input)     # default off (v0.48)

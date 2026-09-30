@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (get_json, http_request, start_server,
                                       write_text)
 
@@ -37,7 +37,7 @@ def _iso(ts: float) -> str:
 
 class HealthSnapshotTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-health-"))
+        self.home = Path(scratch_dir(self, prefix="zai-health-"))
         (self.home / "state").mkdir()
         self.now = time.time()
 
@@ -125,7 +125,7 @@ class HealthSnapshotTestCase(unittest.TestCase):
 
 class HealthRouteTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-health-route-"))
+        self.home = Path(scratch_dir(self, prefix="zai-health-route-"))
         (self.home / "state").mkdir()
         _, self.port = start_server(self, self.home)
 

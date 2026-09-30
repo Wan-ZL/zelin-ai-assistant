@@ -8,12 +8,12 @@ through a scripted ``subprocess.run`` — no real git, no real gh — plus the
 three probes' failure answers and ``compute_target_kind``'s OSError guard.
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config
@@ -60,7 +60,7 @@ class _Git:
 
 class EnsureRepoTestCase(unittest.TestCase):
     def setUp(self):
-        self.target = Path(tempfile.mkdtemp(prefix="ensure-repo-")) / "new"
+        self.target = Path(scratch_dir(self, prefix="ensure-repo-")) / "new"
         self.cfg = config.Config()
         self.cfg.create_github_repo = False
 
@@ -145,7 +145,7 @@ class EnsureRepoTestCase(unittest.TestCase):
 
 class ProbesTestCase(unittest.TestCase):
     def setUp(self):
-        self.target = Path(tempfile.mkdtemp(prefix="probes-"))
+        self.target = Path(scratch_dir(self, prefix="probes-"))
 
     def test_missing_directory_is_not_a_repo(self):
         with mock.patch.object(executor.subprocess, "run") as run:
@@ -200,7 +200,7 @@ class ProbesTestCase(unittest.TestCase):
 
 class ComputeTargetKindTestCase(unittest.TestCase):
     def test_kinds(self):
-        d = Path(tempfile.mkdtemp(prefix="kind-"))
+        d = Path(scratch_dir(self, prefix="kind-"))
         self.assertEqual(executor.compute_target_kind(d), "new")          # empty dir
         self.assertEqual(executor.compute_target_kind(d / "missing"), "new")
         (d / "f").write_text("x", encoding="utf-8")

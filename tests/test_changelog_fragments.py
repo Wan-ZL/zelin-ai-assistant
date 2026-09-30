@@ -11,9 +11,9 @@
 import io
 import os
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr
+from tests.scratch_testkit import scratch_dir
 
 _CI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "ci")
 if _CI_DIR not in sys.path:
@@ -74,7 +74,7 @@ class ParseTestCase(unittest.TestCase):
 
 class DirectoryTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="cf-")
+        self.tmp = scratch_dir(self, prefix="cf-")
 
     def write(self, name, text):
         with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:
@@ -128,7 +128,7 @@ class BlobShaTestCase(unittest.TestCase):
 
 class CliTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="cf-cli-")
+        self.tmp = scratch_dir(self, prefix="cf-cli-")
 
     def write(self, name, text):
         with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:

@@ -22,17 +22,16 @@ import io
 import os
 import plistlib
 import re
-import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act.* import
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, systemd
 from server import app as server_app
@@ -90,8 +89,7 @@ class ServerPlistShapeTestCase(unittest.TestCase):
 @unittest.skipIf(_WIN, "install.sh is POSIX-only")
 class InstallShRendersThePortTestCase(unittest.TestCase):
     def _render(self, server_port):
-        tmp = Path(tempfile.mkdtemp(prefix="server-plist-render-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="server-plist-render-"))
         out = tmp / "out.plist"
         prelude = "".join(
             "eval \"$(awk '/^%s\\(\\) \\{/,/^\\}/' \"$REPO/install.sh\")\"\n" % fn
@@ -135,8 +133,7 @@ class SystemdUnitMirrorTestCase(unittest.TestCase):
                       rendered["zelin-server.service"])
 
     def test_cli_accepts_zai_port(self):
-        tmp = Path(tempfile.mkdtemp(prefix="systemd-cli-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="systemd-cli-"))
         with redirect_stdout(io.StringIO()):
             rc = systemd.main(["--python", "/usr/bin/python3", "--repo-root", "/r",
                                "--claude-bin-dir", "/c", "--out", str(tmp), "--zai-port", "48000"])
@@ -160,8 +157,7 @@ class ServerPortKnobTestCase(unittest.TestCase):
             self.assertEqual(config._server_port_from(bad), config.DEFAULT_SERVER_PORT, bad)
 
     def test_load_config_reads_the_block(self):
-        tmp = Path(tempfile.mkdtemp(prefix="server-port-cfg-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="server-port-cfg-"))
         (tmp / "config.yaml").write_text("server:\n  port: 47821\n", encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", tmp / "config.yaml"), \
                 mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", tmp / "none.json"):
@@ -178,8 +174,7 @@ class BusyPortExitTestCase(unittest.TestCase):
         holder.listen(1)
         self.addCleanup(holder.close)
         port = holder.getsockname()[1]
-        home = Path(tempfile.mkdtemp(prefix="server-busy-"))
-        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        home = Path(scratch_dir(self, prefix="server-busy-"))
         out = io.StringIO()
         with mock.patch.dict(os.environ, {"ZAI_PORT": str(port), "AIASSISTANT_HOME": str(home)}), \
                 redirect_stdout(out):

@@ -9,12 +9,12 @@ sandboxed REGISTRY_DIR; no subprocess is spawned (Popen is stubbed).
 """
 import datetime as _dt
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import analytics, config, registry, silent_merge
 from act.lib.registry import Requirement
@@ -26,11 +26,11 @@ def _iso(dt: _dt.datetime) -> str:
 
 class _JobDirMixin:
     def _isolate_jobs(self):
-        d = Path(tempfile.mkdtemp(prefix="sm-jobs-"))
+        d = Path(scratch_dir(self, prefix="sm-jobs-"))
         p = mock.patch.object(silent_merge, "SILENT_DIR", d)
         p.start()
         self.addCleanup(p.stop)
-        logs = Path(tempfile.mkdtemp(prefix="sm-logs-"))
+        logs = Path(scratch_dir(self, prefix="sm-logs-"))
         p2 = mock.patch.object(config, "LOG_DIR", logs)
         p2.start()
         self.addCleanup(p2.stop)
@@ -38,7 +38,7 @@ class _JobDirMixin:
 
     def _isolate_analytics(self):
         config.STATE_DIR.mkdir(parents=True, exist_ok=True)
-        d = Path(tempfile.mkdtemp(dir=str(config.STATE_DIR)))
+        d = Path(scratch_dir(self, dir=str(config.STATE_DIR)))
         for attr, val in (("ANALYTICS_DIR", d), ("EVENTS_PATH", d / "events.jsonl")):
             p = mock.patch.object(analytics, attr, val)
             p.start()

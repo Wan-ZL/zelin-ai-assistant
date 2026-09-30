@@ -21,9 +21,7 @@ live server).
 """
 import json
 import os
-import shutil
 import socket
-import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -31,6 +29,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act.* import
+from tests.scratch_testkit import scratch_dir
 
 from act import doctor
 from act.lib import board_server, config, failures, install_report
@@ -250,8 +249,7 @@ class UiBuildRowTestCase(unittest.TestCase):
     Full Disk Access fix; `ui=fail` → WARN toward the build log; else no row."""
 
     def _with_report(self, steps):
-        tmp = Path(tempfile.mkdtemp(prefix="ui-build-row-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="ui-build-row-"))
         path = tmp / "install_report.json"
         if steps is not None:
             path.write_text(json.dumps({"version": "0.48.18", "steps": steps}), encoding="utf-8")
@@ -284,8 +282,7 @@ class UiBuildRowTestCase(unittest.TestCase):
         self.assertIsNone(self._row(None))
 
     def test_torn_report_emits_no_row(self):
-        tmp = Path(tempfile.mkdtemp(prefix="ui-build-torn-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="ui-build-torn-"))
         path = tmp / "install_report.json"
         path.write_text("{not json", encoding="utf-8")
         with mock.patch.object(install_report, "REPORT_PATH", path):

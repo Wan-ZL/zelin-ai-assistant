@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config
@@ -26,7 +27,7 @@ from act.lib.registry import Requirement
 
 class OutputFormatConfigTestCase(unittest.TestCase):
     def _load(self, overrides: dict, yaml_body: str = "") -> config.Config:
-        tmp = Path(tempfile.mkdtemp(prefix="cfg-outfmt-"))
+        tmp = Path(scratch_dir(self, prefix="cfg-outfmt-"))
         cfg_path = tmp / "config.yaml"
         cfg_path.write_text(yaml_body, encoding="utf-8")
         ov_path = tmp / "settings_overrides.json"

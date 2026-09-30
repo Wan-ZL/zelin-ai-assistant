@@ -27,13 +27,13 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config, skills
@@ -135,8 +135,7 @@ def build_fixture_repo(root: Path) -> Path:
 @unittest.skipIf(_WIN, "git symlinks + bash are POSIX here")
 class AgentVisibilityTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="skills-agent-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="skills-agent-"))
         self.repo = build_fixture_repo(self.tmp / "repo")
         self.user_home = self.tmp / "user"
         (self.user_home / ".claude").mkdir(parents=True)
@@ -197,8 +196,7 @@ class AgentVisibilityTestCase(unittest.TestCase):
 @unittest.skipIf(_WIN, "git symlinks + bash are POSIX here")
 class SkillsSyncScriptTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="skills-sync-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="skills-sync-"))
         self.repo = build_fixture_repo(self.tmp / "repo")
         self.user_home = self.tmp / "user"
         self.user_home.mkdir()

@@ -8,12 +8,12 @@ reveal 非 darwin 501。reveal 的 ``open -R`` 用注入缝 mock——测试绝�
 from __future__ import annotations
 
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (DEMO_SEED_PATH, assert_envelope,
                                       get_json, http_request, post_json,
                                       rewrite_board, seed_scene, start_server)
@@ -37,7 +37,7 @@ class _DeliverablesHome(unittest.TestCase):
     """公共布景：P-101 的 target_repo 改指 tmpdir 内的假 repo（不出沙箱）。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-files-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-files-"))
         dash = seed_scene(self.home, "initial")
         self.repo = self.home / "demo-repo"
         self.dlv = self.repo / "deliverables"

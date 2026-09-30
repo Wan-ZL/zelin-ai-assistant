@@ -3,13 +3,12 @@ B2 的真实写路径（test_store2_schema.py 钉的是同一批不变量的裸 
 这里证明 store.py 的 helper 与 trigger 执法接得上——B5 集成绿灯的关键一环）。
 """
 import importlib.util
-import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
+from tests.scratch_testkit import scratch_dir
 
 _STORE_LANDED = importlib.util.find_spec("act.lib.store2.store") is not None
 _SKIP_REASON = "act.lib.store2.store (B2) not importable"
@@ -27,12 +26,11 @@ class _StoreFixture(unittest.TestCase):
     """共享脚手架：临时库 + 铸卡 helper（本类无测试方法，仅供继承）。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-cas-"))
+        self.tmp = Path(scratch_dir(self, prefix="store2-cas-"))
         self.store = Store(self.tmp / "store2.db", now_fn=lambda: NOW)
 
     def tearDown(self):
         self.store.close()
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _mint(self, rid="R-001", status="card_sent", **kw):
         card = {"id": rid, "status": status, "title": f"card {rid}"}
@@ -275,10 +273,7 @@ class SchemaVersionGateTestCase(unittest.TestCase):
     版本号在场但表缺席的半截/伪造库 fail-closed 拒开。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-gate-"))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="store2-gate-"))
 
     def test_fake_version_without_tables_refused(self):
         db = self.tmp / "half.db"

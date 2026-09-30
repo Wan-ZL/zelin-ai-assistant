@@ -18,14 +18,13 @@
 import os
 import plistlib
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 from act import auto_deploy
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "act" / "launchd" / "com.zelin.aiassistant.autodeploy.plist"
@@ -60,8 +59,7 @@ class AutodeployPlistShapeTestCase(unittest.TestCase):
 
 class LauncherTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="autodeploy-launcher-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="autodeploy-launcher-"))
         self.calls = []
         self._orig = auto_deploy.SCRIPT
 
@@ -108,8 +106,7 @@ class InstallGateTestCase(unittest.TestCase):
     """真跑 install.sh 的 autodeploy_wanted（闸门）与 failed_deploy_steps（退出码）。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="autodeploy-gate-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="autodeploy-gate-"))
 
     def _git_repo(self, config_yaml=None):
         root = self.tmp / "repo"
@@ -180,8 +177,7 @@ class InstallMacAppStepTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="autodeploy-app-step-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="autodeploy-app-step-"))
         (self.tmp / "mac").mkdir()
         self.calls = self.tmp / "calls.log"
         (self.tmp / "mac" / "build.sh").write_text(

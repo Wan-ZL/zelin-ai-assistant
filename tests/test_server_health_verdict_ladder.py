@@ -7,11 +7,11 @@ test_server_health 走文件 + 真 server；这里把 _verdict 的五档按输�
 from __future__ import annotations
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from server import health, paths
 
@@ -46,7 +46,7 @@ class StaleAfterTestCase(unittest.TestCase):
 
 class LoopHealthViewTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-health-lh-"))
+        self.home = Path(scratch_dir(self, prefix="zai-health-lh-"))
         (self.home / "state").mkdir()
 
     def _write(self, doc) -> None:
@@ -69,7 +69,7 @@ class LoopHealthViewTestCase(unittest.TestCase):
 
 class DashboardViewTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-health-dash-"))
+        self.home = Path(scratch_dir(self, prefix="zai-health-dash-"))
         (self.home / "state").mkdir()
 
     def test_unparseable_generated_at_is_none(self):

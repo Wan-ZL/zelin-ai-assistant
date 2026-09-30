@@ -9,14 +9,30 @@ real model call or reach the network.
 Run the suite from the repo root:
     python3 -m unittest discover -s tests -v
 """
+import atexit
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 
 TMP_HOME = tempfile.mkdtemp(prefix="aiassistant-test-home-")
 os.environ["AIASSISTANT_HOME"] = TMP_HOME
+# §58.3 / issue #436：整套件的临时目录根指进沙箱，进程退出时连沙箱整树删。
+# 判例里 tempfile.mkdtemp / TemporaryDirectory / NamedTemporaryFile 铸的一切草稿，
+# 连同子进程（TMPDIR；TEMP/TMP 是 Windows 侧同义键）铸的，都落在这一棵树下——
+# 忘了 cleanup 的那一处最多活到本次 run 结束，绝不再堆进开发者的 $TMPDIR
+# （2026-09-19 owner 机器上 215k 个目录、5.6 GB，每个前缀都对得上 tests/ 里一处
+# mkdtemp）。判例侧的规矩：目录一律经 tests/scratch_testkit.scratch_dir 铸——那是
+# tests/ 里除本文件外唯一准调 mkdtemp 的地方（hygiene 门 `mkdtemp:` 规则执法）。
+# atexit 是 LIFO：这里登记得早，就跑在判例们登记的一切 handler 之后；比它更早登记的
+# （如 coverage 的落盘）在它之后跑，但那些不写沙箱。
+_SCRATCH_ROOT = os.path.join(TMP_HOME, "tmp")
+os.makedirs(_SCRATCH_ROOT, exist_ok=True)
+tempfile.tempdir = _SCRATCH_ROOT
+os.environ["TMPDIR"] = os.environ["TEMP"] = os.environ["TMP"] = _SCRATCH_ROOT
+atexit.register(shutil.rmtree, TMP_HOME, ignore_errors=True)
 # §55 launchd probes (install.sh's interpreter viability probe, doctor's
 # `launchd claude` row) bootstrap a real throwaway launchd job when switched
 # on. The suite injects fakes everywhere; this is the belt-and-braces so a

@@ -11,12 +11,12 @@ from __future__ import annotations
 import json
 import os
 import stat
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from server import settings
 from server.errors import ConflictError, InvalidFieldError
@@ -24,7 +24,7 @@ from server.errors import ConflictError, InvalidFieldError
 
 class _Home(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-settings-edge-"))
+        self.home = Path(scratch_dir(self, prefix="zai-settings-edge-"))
         (self.home / "state").mkdir()
 
 

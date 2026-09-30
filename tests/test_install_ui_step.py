@@ -51,9 +51,9 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -166,8 +166,7 @@ def _ui_globals():
 @unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
 class InstallUiStepTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="install-ui-step-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="install-ui-step-"))
         self.calls = self.tmp / "calls.log"
         self.home = self.tmp / "home"
         self.home.mkdir()

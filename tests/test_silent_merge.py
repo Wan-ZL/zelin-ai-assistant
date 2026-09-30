@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import analytics, config, quick_capture, registry, silent_merge
@@ -190,8 +191,7 @@ class ExecuteTestCase(unittest.TestCase):
     def _isolate_analytics(self):
         """事件文件整体隔离（digest 判例同款）：events.jsonl 跨测试共享，
         既污染断言又会让 _merge_event_logged 误认先前测试的 ok 事件。"""
-        import tempfile
-        d = Path(tempfile.mkdtemp(dir=str(config.STATE_DIR)))
+        d = Path(scratch_dir(self, dir=str(config.STATE_DIR)))
         for attr, val in (("ANALYTICS_DIR", d),
                           ("EVENTS_PATH", d / "events.jsonl")):
             p = mock.patch.object(analytics, attr, val)

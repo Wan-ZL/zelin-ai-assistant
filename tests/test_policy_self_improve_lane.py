@@ -10,10 +10,10 @@ needs_mcp / 仓库不符）逐 token；其余天花板（t2_confirm / outbound /
 沙箱 TMP_HOME 里的真 symlink，只为证明默认 realpath 真能解开它）。
 """
 import os
-import tempfile
 import unittest
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, policy
 from act.lib.config import Config
@@ -92,7 +92,7 @@ class AdmissionKeyTestCase(unittest.TestCase):
 
     def test_realpath_resolves_symlinked_target(self):
         # ~/Projects/zelin-ai-assistant 是指向外置卷的 symlink（v0.48.2 事故）
-        link = os.path.join(tempfile.mkdtemp(prefix="lane-link-"), "repo-link")
+        link = os.path.join(scratch_dir(self, prefix="lane-link-"), "repo-link")
         os.symlink(str(config.HOME), link)
         self.addCleanup(lambda: os.unlink(link))
         self.assertEqual(_may(_card(target_repo=link)), (True, "ok:self_improve"))

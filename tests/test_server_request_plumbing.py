@@ -13,7 +13,6 @@ import errno
 import io
 import json
 import os
-import tempfile
 import unittest
 from email.message import Message
 from pathlib import Path
@@ -21,6 +20,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (assert_envelope, http_request,
                                       start_server)
 
@@ -144,7 +144,7 @@ class StaticServingTestCase(unittest.TestCase):
     """web/dist 静态面：真 server + 临时 dist。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-static-"))
+        self.home = Path(scratch_dir(self, prefix="zai-static-"))
         self.dist = self.home / "dist"
         (self.dist / "assets").mkdir(parents=True)
         (self.dist / "index.html").write_text("<head></head><body>ok</body>",
@@ -210,7 +210,7 @@ class StaticServingTestCase(unittest.TestCase):
 
 class PlaceholderTestCase(unittest.TestCase):
     def test_missing_dist_gives_placeholder_at_root_and_404_elsewhere(self):
-        home = Path(tempfile.mkdtemp(prefix="zai-nodist-"))
+        home = Path(scratch_dir(self, prefix="zai-nodist-"))
         _httpd, port = start_server(self, home)   # static_dir = home/no-dist
         status, _h, body = http_request(port, "GET", "/")
         self.assertEqual(status, 200)

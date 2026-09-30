@@ -1190,7 +1190,7 @@
       "id": "contract:§58.3",
       "source": "contract",
       "scenario": "尺四：依赖方向 + 防腐十条机械化（scripts/qa/depgraph.py、hygiene.py）",
-      "proof": "unittest:tests.test_doc_numbering_unique,tests.test_qa_depgraph_rules,tests.test_qa_hygiene_caps,tests.test_reconcile_without_executor",
+      "proof": "unittest:tests.test_doc_numbering_unique,tests.test_qa_depgraph_rules,tests.test_qa_hygiene_caps,tests.test_qa_hygiene_test_scratch",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
