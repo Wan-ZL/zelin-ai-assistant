@@ -444,10 +444,15 @@ def _read_mcp_marker(now: Optional[_dt.datetime] = None) -> Optional[_dt.datetim
     `< interval` 恒真于是永远「还没到点」；窗口起点也落到未来、连 `_MCP_LOOKBACK_CAP_H`
     的地板都夹不住它。2026-09-18 一次泄漏到 live 的测试跑把它写成
     `2027-10-23T11:32:23Z`，Slack MCP 雷达就此静默到 2027 年（issue #452）。
+
+    读那一步继续兜 `ValueError`：`read_text(encoding="utf-8")` 碰上非 UTF-8 字节
+    抛的是 `UnicodeDecodeError`，而它是 `ValueError` 的子类、不是 `OSError`——
+    §82.4 的接线把解析挪进 `parse_iso` 时差点把这半边收窄掉，一份被撕坏的
+    marker 就会把整个 pass 崩掉（宪法第 11 条：一条坏记录不许崩 pass）。
     """
     try:
         raw = _mcp_marker_path().read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
         return None
     return maintenance.parse_iso(raw, reject_future=True, now=now)
 
@@ -549,13 +554,17 @@ def _slack_mcp_present() -> tuple[bool, bool]:
     **§82.4**：这个缓存的时钟是**文件 mtime**，未来的 mtime 让 `age` 变成负数、
     于是 `< TTL` 恒真——缓存永不过期，一次「没配 MCP」的判决就永久冻住整条来源。
     未来 mtime 与「缓存过期」同路（重新探一次），口径与 `_read_mcp_marker` 一致。
+
+    「Never raises」此前有个洞（早于本轮，同批一起补）：缓存文件被写坏成非 UTF-8
+    时 `read_text` 抛的 `UnicodeDecodeError` 是 `ValueError`、不是 `OSError`，
+    会直接崩掉整个 pass。坏缓存与「没有缓存」同路：重新探一次。
     """
     p = _mcp_present_marker_path()
     try:
         age = time.time() - p.stat().st_mtime
         if -maintenance.FUTURE_SKEW_S <= age < _MCP_PRESENT_TTL_S:
             return (p.read_text(encoding="utf-8").strip() == "1", False)
-    except OSError:
+    except (OSError, ValueError):
         pass
     present = _probe_slack_mcp()
     try:

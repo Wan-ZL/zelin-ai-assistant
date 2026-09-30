@@ -17,6 +17,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
@@ -120,8 +121,9 @@ class ApplyTestCase(_HomeMixin, unittest.TestCase):
 
         self.assertFalse(src.exists(), "原文件必须离开 state/ 根")
         target = Path(result["quarantine_dir"])
-        self.assertEqual((target / "slack_mcp.marker").read_text(encoding="utf-8"),
-                         FUTURE, "内容一个字节都不许改——搬走不是删掉")
+        self.assertEqual(
+            (target / "state" / "slack_mcp.marker").read_text(encoding="utf-8"),
+            FUTURE, "内容一个字节都不许改——搬走不是删掉")
         manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["moved"][0]["rel"], "state/slack_mcp.marker")
         self.assertEqual(len(manifest["moved"][0]["sha256"]), 64)
@@ -140,6 +142,47 @@ class ApplyTestCase(_HomeMixin, unittest.TestCase):
         result = state_audit.apply(self.home, NOW)
         self.assertTrue(Path(result["quarantine_dir"]).name.endswith("-2"))
 
+    def test_two_offenders_sharing_a_basename_both_survive(self):
+        """`state/` 是一棵树，两个子目录下可以同名。拍平成 basename 会让
+        `shutil.move` 退化成 `os.rename` 静静盖掉前一份——那是不可恢复的自动删除
+        （宪法第 2 条），而 manifest 还照记两行两个 sha256，等于回执在撒谎。"""
+        self._write("inbox/R-237.json", '{"who": "A", "at": "%s"}' % FUTURE)
+        self._write("fold_receipts/R-237.json", '{"who": "B", "at": "%s"}' % FUTURE)
+
+        result = state_audit.apply(self.home, NOW)
+        target = Path(result["quarantine_dir"])
+
+        self.assertEqual(len(result["quarantined"]), 2)
+        self.assertIn(
+            "A", (target / "state" / "inbox" / "R-237.json").read_text(encoding="utf-8"))
+        self.assertIn(
+            "B", (target / "state" / "fold_receipts" / "R-237.json"
+                  ).read_text(encoding="utf-8"))
+        manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        digests = {row["sha256"] for row in manifest["moved"]}
+        self.assertEqual(len(digests), 2, "两行两个 sha256，就得有两份字节还在")
+
+    def test_a_file_named_manifest_json_does_not_eat_the_receipt(self):
+        """源文件叫 `manifest.json` 时，拍平会让回执把被隔离的那一份覆盖掉——
+        用来让它可恢复的东西反过来销毁了它。"""
+        self._write("sub/manifest.json", '{"mine": true, "at": "%s"}' % FUTURE)
+
+        result = state_audit.apply(self.home, NOW)
+        target = Path(result["quarantine_dir"])
+
+        self.assertIn(
+            "mine", (target / "state" / "sub" / "manifest.json"
+                     ).read_text(encoding="utf-8"))
+        receipt = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["moved"][0]["rel"], "state/sub/manifest.json")
+
+    def test_the_quarantine_copy_is_not_rescanned_on_the_next_run(self):
+        """铺开之后隔离区里多了一层 `state/`——它仍然在 `backups/` 底下，
+        下一轮必须照样跳过，否则每跑一次就再搬一次。"""
+        self._write("slack_mcp.marker", FUTURE)
+        state_audit.apply(self.home, NOW)
+        self.assertEqual(state_audit.report(self.home, NOW)["findings"], [])
+
     def test_work_seq_is_left_in_place_by_apply_too(self):
         src = self._write("work_seq.json", json.dumps({"next": 8154, "at": FUTURE}))
         result = state_audit.apply(self.home, NOW)
@@ -152,6 +195,72 @@ class ApplyTestCase(_HomeMixin, unittest.TestCase):
         result = state_audit.apply(self.home, NOW)
         self.assertEqual(result["quarantined"], [])
         self.assertFalse((self.state / "backups").exists())
+
+
+class FailSafeTestCase(_HomeMixin, unittest.TestCase):
+    """一把诊断扫帚不许因为环境不配合就把整轮体检掀翻（宪法第 11 条）。
+
+    下面每一条都是「这一份出事只属于它自己」：列不动目录、读不动文件、算不出
+    摘要、搬不动、回执写不下去——上层拿到的都是一份能读的报告，不是 traceback。
+    """
+
+    def test_a_state_dir_that_cannot_be_listed_scans_to_empty(self):
+        class Unlistable:
+            def rglob(self, _pattern):
+                raise OSError("scandir: permission denied")
+
+        self.assertEqual(list(state_audit._candidates(Unlistable())), [])
+
+    def test_a_directory_named_like_a_ledger_is_not_read(self):
+        (self.state / "looks_like.json").mkdir()
+        self.assertFalse(state_audit._scannable(self.state / "looks_like.json"))
+        self.assertEqual(state_audit.report(self.home, NOW)["scanned"], 0)
+
+    def test_a_file_that_vanished_reads_as_none(self):
+        self.assertIsNone(state_audit._read(self.state / "gone.json"))
+
+    def test_a_digest_that_cannot_be_taken_is_none_not_a_raise(self):
+        self.assertIsNone(state_audit._sha256(self.state / "gone.json"))
+
+    def test_a_file_that_cannot_be_moved_is_recorded_on_itself(self):
+        target = self.state / "backups" / "q"
+        target.mkdir(parents=True)
+        finding = {"path": str(self.state / "gone.json"),
+                   "rel": "state/gone.json", "stamps": [FUTURE]}
+
+        manifest, moved = state_audit._move_all([finding], target)
+
+        self.assertEqual((manifest, moved), ([], []), "搬不动的不许进 manifest")
+        self.assertIn("error", finding, "失败要写在它自己头上，不是抛出去")
+
+    def test_a_receipt_that_cannot_be_written_reports_why(self):
+        target = self.state / "backups" / "q"
+        (target / "manifest.json").mkdir(parents=True)
+        self.assertIsNotNone(
+            state_audit._write_manifest(target, self.home, NOW, []))
+
+    def test_an_unbuildable_quarantine_dir_moves_nothing(self):
+        src = self._write("slack_mcp.marker", FUTURE)
+        (self.state / "backups").write_text("我不是目录", encoding="utf-8")
+
+        result = state_audit.apply(self.home, NOW)
+
+        self.assertIn("quarantine dir", result["error"])
+        self.assertTrue(src.exists(), "建不出隔离区就一个字节都不许搬")
+        self.assertEqual(result["quarantined"], [])
+        self.assertIsNone(result["quarantine_dir"])
+
+    def test_a_failed_receipt_does_not_un_move_the_files(self):
+        self._write("slack_mcp.marker", FUTURE)
+        with mock.patch.object(state_audit, "_write_manifest",
+                               return_value="No space left on device"):
+            result = state_audit.apply(self.home, NOW)
+
+        self.assertIn("manifest: No space left on device", result["error"])
+        self.assertEqual(result["quarantined"], ["state/slack_mcp.marker"])
+        self.assertTrue(
+            (Path(result["quarantine_dir"]) / "state" / "slack_mcp.marker").exists(),
+            "回执写不下去是回执的事——文件已经搬走了，报告必须照实说它在哪")
 
 
 class CliTestCase(_HomeMixin, unittest.TestCase):
@@ -185,6 +294,37 @@ class CliTestCase(_HomeMixin, unittest.TestCase):
         self._write("work_seq.json", json.dumps({"at": FUTURE}))
         _rc, out = self._run()
         self.assertIn("report-only", out)
+
+    def test_a_failed_apply_says_so_instead_of_advising_apply(self):
+        """机器面（--json）有 error、人看的这面一个字不说，还反过来劝他
+        「re-run with --apply」——那是在虚报干净（宪法第 3 条）。"""
+        self._write("slack_mcp.marker", FUTURE)
+        (self.state / "backups").write_text("我不是目录", encoding="utf-8")
+
+        rc, out = self._run("--apply")
+
+        self.assertEqual(rc, 0, "扫帚不是门，退出码恒 0（§82.5）")
+        self.assertIn("quarantine dir", out, "失败的原因必须出现在人看的这一面")
+        self.assertNotIn("re-run with --apply", out,
+                         "他刚跑过 --apply —— 不许再劝他跑一次")
+
+    def test_a_file_that_could_not_be_moved_is_named_in_the_output(self):
+        self._write("slack_mcp.marker", FUTURE)
+        with mock.patch.object(state_audit.shutil, "move",
+                               side_effect=OSError("Read-only file system")):
+            _rc, out = self._run("--apply")
+        self.assertIn("Read-only file system", out)
+
+    def test_apply_with_only_report_only_hits_does_not_advise_apply(self):
+        """owner 的 live 装机就是这个稳态：`work_seq.json` 被夹具卡抬高过的工号
+        按法条永远只上报（工号只许往上走）。搬完之后每一次 `--apply` 都劝他再跑
+        一次 `--apply`，等于这条命令永远显得没干完。"""
+        self._write("work_seq.json", json.dumps({"next": 8154, "at": FUTURE}))
+
+        _rc, out = self._run("--apply")
+
+        self.assertIn("report-only", out)
+        self.assertNotIn("re-run with --apply", out)
 
 
 if __name__ == "__main__":

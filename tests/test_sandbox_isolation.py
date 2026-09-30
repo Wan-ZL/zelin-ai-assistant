@@ -27,16 +27,35 @@ TESTS_DIR = REPO_ROOT / "tests"
 PRODUCT_PACKAGES = ("act", "server")
 
 
+#: 进了这些节点就不再往下看——函数/类体里的懒 import 发生在 env 立起来之后。
+_SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _collect(node, out):
+    """递归收 import，但**不进**函数/类体。
+
+    只看 `tree.body` 的直接子节点是不够的：`if _LANDED:` / `try: … except
+    ImportError:` / `with …:` 里的 import 照样在 import 期执行（`tests/test_store2_cas.py`
+    就是这个形状），而扫描器看不见它 = 那个文件整份从本条法里消失——不是判它违例，
+    是压根不查。§82.2 写的是「零豁免」，一个隐形豁免比一条明账更糟。
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _SCOPE_NODES):
+            continue
+        if isinstance(child, ast.Import):
+            out.extend((child.lineno, alias.name.split(".")[0])
+                       for alias in child.names)
+        elif isinstance(child, ast.ImportFrom):
+            out.append((child.lineno, (child.module or "").split(".")[0]))
+        else:
+            _collect(child, out)
+
+
 def _top_level_imports(tree):
-    """[(lineno, 顶层包名)]，按源码顺序——只看模块级 import（函数里的懒 import
-    发生在 env 立起来之后，与本条法无关）。"""
+    """[(lineno, 顶层包名)]，按源码顺序——import 期会执行到的那些。"""
     out = []
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            out.extend((node.lineno, alias.name.split(".")[0]) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            out.append((node.lineno, (node.module or "").split(".")[0]))
-    return out
+    _collect(tree, out)
+    return sorted(out)
 
 
 def _first(imports, wanted):
@@ -72,6 +91,27 @@ class SandboxImportOrderTestCase(unittest.TestCase):
     def test_the_scan_actually_sees_the_corpus(self):
         """扫描器自己坏了（比如 rglob 改错）不许悄悄变成全绿。"""
         self.assertGreater(len(_test_modules()), 400)
+
+    def test_an_import_nested_in_try_or_if_still_counts(self):
+        """import 期会跑到的 import 都算——藏进 `try:` 不是豁免（§82.2 零豁免）。"""
+        source = ("import unittest\n"
+                  "try:\n"
+                  "    from act.lib import config\n"
+                  "except ImportError:\n"
+                  "    config = None\n")
+        imports = _top_level_imports(ast.parse(source))
+        self.assertEqual(_first(imports, PRODUCT_PACKAGES), 3)
+        self.assertIsNone(_first(imports, ("tests",)),
+                          "这份源码没立沙箱 —— 扫描器必须把它判成漏网，不是跳过")
+
+    def test_a_lazy_import_inside_a_function_is_still_exempt(self):
+        """函数体里的 import 发生在 env 立起来之后，与本条法无关。"""
+        source = ("import unittest\n"
+                  "def helper():\n"
+                  "    from act.lib import config\n"
+                  "    return config\n")
+        self.assertIsNone(
+            _first(_top_level_imports(ast.parse(source)), PRODUCT_PACKAGES))
 
 
 class SandboxTripwireTestCase(unittest.TestCase):

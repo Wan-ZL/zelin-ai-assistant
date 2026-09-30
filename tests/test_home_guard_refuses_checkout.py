@@ -168,10 +168,12 @@ class ConfigWiringTestCase(unittest.TestCase):
                 self.assertIsNone(home.checkout_root(getattr(config, name)))
 
 
-class ImportTimeRefusalTestCase(unittest.TestCase):
-    """端到端：真起一个子进程，证明 `import act.lib.config` 在 #452 的形状下就炸。"""
+class _SubprocessMixin:
+    """真起一个子进程跑一小段源码（import 期的事只有真 import 证得了）。"""
 
-    def _run(self, home_value, extra_env=None):
+    DEFAULT_CODE = "import unittest\nfrom act.lib import config\nprint(config.HOME)\n"
+
+    def _run(self, home_value, extra_env=None, code=None):
         env = dict(os.environ)
         env.pop("AIASSISTANT_ALLOW_LIVE_HOME", None)
         env["AIASSISTANT_HOME"] = str(home_value)
@@ -180,10 +182,13 @@ class ImportTimeRefusalTestCase(unittest.TestCase):
         env["PYTHONPATH"] = str(REPO_ROOT)
         env.update(extra_env or {})
         return subprocess.run(
-            [sys.executable, "-c",
-             "import unittest\nfrom act.lib import config\nprint(config.HOME)\n"],
+            [sys.executable, "-c", code or self.DEFAULT_CODE],
             cwd=str(REPO_ROOT), env=env, capture_output=True, text=True,
         )
+
+
+class ImportTimeRefusalTestCase(_SubprocessMixin, unittest.TestCase):
+    """端到端：真起一个子进程，证明 `import act.lib.config` 在 #452 的形状下就炸。"""
 
     def test_a_test_runner_pointed_at_this_checkout_dies_on_import(self):
         proc = self._run(REPO_ROOT)
@@ -199,6 +204,34 @@ class ImportTimeRefusalTestCase(unittest.TestCase):
     def test_the_escape_hatch_works_across_the_process_boundary(self):
         proc = self._run(REPO_ROOT, {"AIASSISTANT_ALLOW_LIVE_HOME": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+
+class SwallowedGuardTestCase(_SubprocessMixin, unittest.TestCase):
+    """守卫不许被生产代码的 best-effort 兜底吞掉（`HomeNotIsolated(BaseException)`）。
+
+    生产代码遍地是 `except Exception`（宪法第 11 条——一条坏记录不许崩 pass）。
+    这条守卫要是个普通 Exception，第一个兜底就把它咽了，进程带着 live 路径接着跑，
+    只是少了一块能力——看起来像产品 bug，不像 home 出了事。仓库里已经为同一个问题
+    立过一次法：`tests/__init__.RealSubprocessBanned` 就继承 BaseException，
+    docstring 写着同样的理由。
+    """
+
+    def test_server_settings_cannot_degrade_the_refusal_into_a_missing_feature(self):
+        # server/settings.py: `except Exception: skill_store = None`。
+        # HomeNotIsolated 曾经是 RuntimeError，这一句实测 rc=0 + skill_store=None。
+        proc = self._run(REPO_ROOT, code="import unittest\nimport server.settings\n")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("HomeNotIsolated", proc.stderr)
+
+    def test_a_bare_except_exception_around_the_import_does_not_catch_it(self):
+        code = ("import unittest\n"
+                "try:\n"
+                "    from act.lib import config\n"
+                "except Exception:\n"
+                "    print('SWALLOWED')\n")
+        proc = self._run(REPO_ROOT, code=code)
+        self.assertNotIn("SWALLOWED", proc.stdout)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
 
 
 if __name__ == "__main__":

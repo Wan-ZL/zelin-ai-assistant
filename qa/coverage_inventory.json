@@ -2669,7 +2669,7 @@
     {
       "id": "contract:§82",
       "source": "contract",
-      "scenario": "测试与工具链永不写进 live 安装（issue #452；2026-09-18 看板被抹的根因；owner 决策 **D84**）",
+      "scenario": "测试与工具链永不写进 live 安装（issue #452；2026-09-18 看板被抹的根因；owner 决策 **D87**）",
       "proof": "unittest:tests.test_future_stamps_read_as_absent,tests.test_home_guard_refuses_checkout,tests.test_qa_gates_sandbox_home,tests.test_sandbox_isolation && flow:card_lifecycle && flow:install_fresh && flow:uninstall_reinstall",
       "tier": "A",
       "status": "todo",

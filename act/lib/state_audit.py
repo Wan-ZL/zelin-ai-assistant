@@ -8,14 +8,16 @@
 
 **只搬不删（宪法第 2 条）**：命中的文件整份搬进
 ``state/backups/quarantine-<UTC 时间戳>/``（同名已存在就加 `-2`、`-3`，永不覆盖——
-口径抄 `act/lib/store2/activate.py` 的备份命名），同目录留一份 ``manifest.json``
-记原路径 / sha256 / 命中的那几个戳。搬错了 `mv` 回去就是了。
+口径抄 `act/lib/store2/activate.py` 的备份命名），里面**按原相对路径铺开**，
+同目录留一份 ``manifest.json`` 记原路径 / sha256 / 命中的那几个戳。搬错了 `mv`
+回去就是了。
 
 **出厂只看不动**：``report()`` 是纯读，``apply()`` 才搬。CLI 默认 `report`。
 
-**卡片一个字节都不碰（§44 单写者）**：`act/registry/` 与 `state/store2.db` 只上报、
-永不搬——registry 只有 actd 主循环一个写者，旁路进程只读+回执。`state/work_seq.json`
-被夹具卡抬高过的工号同理只上报：§60.2 不许把它调低。
+**卡片与工号一个字节都不碰（§44 单写者）**：`state/work_seq.json` 与
+`state/store2_truth.json` 只上报、永不搬——registry 只有 actd 主循环一个写者，
+旁路进程只读+回执；被夹具卡抬高过的工号按 §60.2 不许调低。`act/registry/` 与
+`state/store2.db` 则连看都不看（见下面 SCAN_SUFFIXES：不扫、也不报）。
 
 **永不抛（宪法第 11 条）**：单个文件读不动 / 解析不了只属于它自己，整轮照走完；
 退出码恒 0（这是一把诊断扫帚，不是门）。
@@ -41,7 +43,9 @@ from act.lib import maintenance
 #: 媒体一律跳过：前两者有自己的写者与保留期，日志里的 2027 行搬走等于丢历史。
 SCAN_SUFFIXES = (".marker", ".json", ".txt")
 
-#: 只上报、永不搬的子树（§44 单写者 + §60.2 工号不可回退）。
+#: 只上报、永不搬的账本（§44 单写者 + §60.2 工号不可回退）。`store2.db` 今天落在
+#: SCAN_SUFFIXES 之外因而不可达——留着是后缀集合将来扩张时的第二道墙，它只可能
+#: 阻止一次搬运、不可能促成一次。
 REPORT_ONLY_NAMES = ("work_seq.json", "store2.db", "store2_truth.json")
 
 #: 一份账本最多报几个命中戳（证据行要能读，不是 dump）。
@@ -64,6 +68,12 @@ def _stamp_slug(now: _dt.datetime) -> str:
     return now.astimezone(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _is_future(raw: str, ref: _dt.datetime) -> bool:
+    """这一串认得出来、而且比 `ref` 还晚（解析不了 = 不算命中，不是证据）。"""
+    parsed = maintenance.parse_iso(raw)
+    return parsed is not None and maintenance.in_future(parsed, ref)
+
+
 def future_stamps(text: str, now: Optional[_dt.datetime] = None) -> List[str]:
     """`text` 里比「现在」还晚的 ISO 戳（去重、保持出现顺序、封顶）。"""
     ref = _now(now)
@@ -71,8 +81,7 @@ def future_stamps(text: str, now: Optional[_dt.datetime] = None) -> List[str]:
     for raw in _STAMP_RE.findall(text):
         if raw in hits:
             continue
-        parsed = maintenance.parse_iso(raw)
-        if parsed is not None and maintenance.in_future(parsed, ref):
+        if _is_future(raw, ref):
             hits.append(raw)
         if len(hits) >= MAX_STAMPS_PER_FILE:
             break
@@ -89,24 +98,33 @@ def _read(path: Path) -> Optional[str]:
         return None
 
 
+def _scannable(path: Path) -> bool:
+    """这一份该不该读：隔离区自己跳过，目录跳过，只认白名单后缀。"""
+    if "backups" in path.parts:
+        return False
+    return path.suffix in SCAN_SUFFIXES and path.is_file()
+
+
 def _candidates(state_dir: Path) -> Iterable[Path]:
-    """`state/` 下该看一眼的文件（backups/ 自己跳过——那是隔离区）。"""
+    """`state/` 下该看一眼的文件（backups/ 自己跳过——那是隔离区）。
+
+    列目录本身失败（权限、竞态下被删）只让这一轮扫到空，不抛（宪法第 11 条）。
+    """
     try:
         entries = sorted(state_dir.rglob("*"))
     except OSError:
         return []
-    out = []
-    for path in entries:
-        if "backups" in path.parts or not path.is_file():
-            continue
-        if path.suffix in SCAN_SUFFIXES:
-            out.append(path)
-    return out
+    return [path for path in entries if _scannable(path)]
+
+
+def _root(home: Optional[Path]) -> Path:
+    """本轮体检的 home；`None` = 这个进程自己的 `config.HOME`。"""
+    return Path(home) if home else _config.HOME
 
 
 def report(home: Optional[Path] = None, now: Optional[_dt.datetime] = None) -> dict:
     """纯读：`{"home", "scanned", "findings": [{path, stamps, report_only}]}`。"""
-    root = Path(home) if home else _config.HOME
+    root = _root(home)
     state_dir = root / "state"
     findings = []
     scanned = 0
@@ -146,13 +164,23 @@ def _sha256(path: Path) -> Optional[str]:
 
 
 def _move_all(movable: list, target: Path) -> tuple:
-    """(manifest 行, 搬成了的相对路径)。搬不动的那一份只记在它自己的 `error` 上。"""
+    """(manifest 行, 搬成了的相对路径)。搬不动的那一份只记在它自己的 `error` 上。
+
+    **按 `rel` 原样铺开，不拍平到 basename**：`state/` 是一棵树（`inbox/`、
+    `fold_receipts/`、`notify_queue/`……），两个子目录下同名的账本拍平之后
+    `shutil.move` 在 POSIX 上退化成 `os.rename`，后一份直接盖掉前一份的字节——
+    manifest 还照记两行两个 sha256，等于回执在撒谎。那是一次**不可恢复的
+    自动删除**（宪法第 2 条，§82.5 「只搬不删」），比它要治的病更重。铺开之后
+    隔离区里的相对路径自己就是原位置，`manifest.json` 也永远被挤不掉。
+    """
     manifest, moved = [], []
     for finding in movable:
         src = Path(finding["path"])
         digest = _sha256(src)
+        dst = target / finding["rel"]
         try:
-            shutil.move(str(src), str(target / src.name))
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
         except OSError as exc:
             finding["error"] = str(exc)
             continue
@@ -175,10 +203,20 @@ def _write_manifest(target: Path, root: Path, ref: _dt.datetime,
     return None
 
 
+def _make_quarantine(root: Path, ref: _dt.datetime) -> tuple:
+    """`(隔离区目录, None)`；建不出来就 `(None, 原因)`——一个字节都还没搬。"""
+    target = _quarantine_dir(root, ref)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return None, "quarantine dir: %s" % exc
+    return target, None
+
+
 def apply(home: Optional[Path] = None, now: Optional[_dt.datetime] = None) -> dict:
     """把命中的文件搬进隔离区并落 manifest；report-only 的那些只留在报告里。"""
     ref = _now(now)
-    root = Path(home) if home else _config.HOME
+    root = _root(home)
     found = report(root, ref)
     movable = [f for f in found["findings"] if not f["report_only"]]
     found["quarantined"] = []
@@ -186,33 +224,52 @@ def apply(home: Optional[Path] = None, now: Optional[_dt.datetime] = None) -> di
     if not movable:
         return found
 
-    target = _quarantine_dir(root, ref)
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        found["error"] = "quarantine dir: %s" % exc
+    target, problem = _make_quarantine(root, ref)
+    if problem:
+        found["error"] = problem
         return found
 
     manifest, found["quarantined"] = _move_all(movable, target)
     found["quarantine_dir"] = str(target)
-    problem = _write_manifest(target, root, ref, manifest)
-    if problem:
-        found["error"] = "manifest: %s" % problem
+    trouble = _write_manifest(target, root, ref, manifest)
+    if trouble:
+        found["error"] = "manifest: %s" % trouble
     return found
 
 
-def _print_human(result: dict) -> None:
+def _print_finding(finding: dict) -> None:
+    tag = " (report-only, §44/§60.2)" if finding["report_only"] else ""
+    print("  %s%s  %s" % (finding["rel"], tag, ", ".join(finding["stamps"])))
+    if finding.get("error"):
+        print("    ! 搬不动：%s" % finding["error"])
+
+
+def _outcome_line(result: dict, applied: bool) -> Optional[str]:
+    """搬运那一段的一句话结论；`None` = 上面已经说完了，不必再补一句。"""
+    if result.get("quarantine_dir"):
+        return ("quarantined %d file(s) -> %s"
+                % (len(result["quarantined"]), result["quarantine_dir"]))
+    if not result["findings"] or result.get("error"):
+        return None
+    if applied:
+        return "nothing moved — every finding is report-only (§44/§60.2)"
+    return "nothing moved (report mode) — re-run with --apply to quarantine"
+
+
+def _print_human(result: dict, applied: bool = False) -> None:
+    """人看的那一面。**失败必须出现在这里**：`--apply` 建不出隔离区、某一份搬不动、
+    回执写不下去，机器面（`--json`）里都有，人看的这面从前一个字都不说，还会反过来
+    劝他「re-run with --apply」——那是在虚报干净（宪法第 3 条）。"""
     findings = result["findings"]
     print("state_audit: home=%s scanned=%d future-stamped=%d"
           % (result["home"], result["scanned"], len(findings)))
-    for f in findings:
-        tag = " (report-only, §44/§60.2)" if f["report_only"] else ""
-        print("  %s%s  %s" % (f["rel"], tag, ", ".join(f["stamps"])))
-    if result.get("quarantine_dir"):
-        print("quarantined %d file(s) -> %s"
-              % (len(result["quarantined"]), result["quarantine_dir"]))
-    elif findings:
-        print("nothing moved (report mode) — re-run with --apply to quarantine")
+    for finding in findings:
+        _print_finding(finding)
+    if result.get("error"):
+        print("! %s" % result["error"])
+    line = _outcome_line(result, applied)
+    if line:
+        print(line)
 
 
 def main(argv=None) -> int:
@@ -230,7 +287,7 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     else:
-        _print_human(result)
+        _print_human(result, args.apply)
     return 0
 
 
