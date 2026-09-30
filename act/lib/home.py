@@ -34,8 +34,9 @@ DEFAULT_HOME = "~/Projects/zelin-ai-assistant"
 #: 认得出「我正跑在测试里」的模块名。`python3 -m unittest` / `pytest` 都由 runpy
 #: 先把跑者模块装进 `sys.modules`，**之后**才 import 任何测试模块——所以这个判据
 #: 与 import 顺序无关（`tests/__init__.py` 的沙箱恰恰依赖顺序，那是 #452 的病根）。
-#: 生产侧零误伤：act/ 与 server/ 全树没有一行 `import unittest|pytest|doctest`，
-#: 十二个生产入口 import 完 `sys.modules` 里一个都不在（判例钉住）。
+#: 生产侧零误伤：act/ 与 server/ 全树没有一行 `import unittest|pytest|doctest`
+#: （判例逐文件扫源码文本；运行时那一半在进程内不可证——跑判例的进程自己就在
+#: unittest 里。见 CONTRACT §82.2）。
 TEST_RUNNER_MODULES = ("unittest", "pytest")
 
 #: 逃生门：显式认领「我知道这是 live 树，照写」。仓库里没有任何一处设它——
@@ -46,12 +47,19 @@ ALLOW_LIVE_ENV = "AIASSISTANT_ALLOW_LIVE_HOME"
 _FALSEY = frozenset({"", "0", "false", "no", "off"})
 
 
-class HomeNotIsolated(RuntimeError):
+class HomeNotIsolated(BaseException):
     """测试跑者把一棵 git 工作树当成了 `AIASSISTANT_HOME`（§82.2）。
 
     故意在 `act.lib.config` **import 期**抛：那一刻 11 个路径常量还没有一个被下游
     的 34 处模块级常量抄走，进程里也还没有任何一次写盘（全树 import 期零文件副作用，
     判例钉住）。抛得越早，能被写坏的东西越少。
+
+    **故意继承 BaseException**，与 `tests/__init__.RealSubprocessBanned` 同款同理由：
+    生产代码遍地是 `except Exception` 的 best-effort 兜底（宪法第 11 条——一条坏记录
+    不许崩 pass），守卫要是能被吞掉就等于没建。实测过一次：`server/settings.py` 那句
+    `except Exception: skill_store = None` 会把这条拒绝咽下去，进程带着 live 路径
+    若无其事地跑完（判例 `SwallowedGuardTestCase`）。unittest 的 testPartExecutor
+    用裸 `except:` 兜，所以照样记成该条测试的 ERROR，不会把整轮跑飞。
     """
 
 
@@ -106,7 +114,8 @@ def explain(home, root) -> str:
 def guard(home, *, modules=None, env=None) -> None:
     """测试跑者 × home 在工作树里 → 抛 `HomeNotIsolated`；其余一切情形静默放行。
 
-    注入缝三个参数全可显式传（判例用），默认读真进程状态。
+    `modules` / `env` 是注入缝（判例用；`tests/__init__.py` 的反向哨兵靠
+    `modules=("unittest",)` 以跑者身份补问一次），默认读真进程状态。
     """
     environ = os.environ if env is None else env
     if not under_test(modules) or _allowed(environ):

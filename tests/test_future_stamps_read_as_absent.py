@@ -92,6 +92,17 @@ class SlackMcpMarkerTestCase(unittest.TestCase):
         self._write("not a timestamp at all")
         self.assertIsNone(radar_slack._read_mcp_marker(NOW))
 
+    def test_a_non_utf8_marker_is_absent_instead_of_crashing_the_pass(self):
+        """被撕坏成非 UTF-8 的 marker 只是「读不出」，不许崩掉整个 pass。
+
+        `read_text(encoding="utf-8")` 抛的 `UnicodeDecodeError` 是 `ValueError`
+        的子类、**不是** `OSError`——把解析挪进 `parse_iso` 时若顺手把兜底收窄成
+        `except OSError`，这一份坏字节就会一路穿到 launchd 的 3 分钟 tick 上
+        （宪法第 11 条：一条坏记录不许崩 pass）。
+        """
+        self.path.write_bytes(b"\xff\xfe2027-10-23T11:32:23Z")
+        self.assertIsNone(radar_slack._read_mcp_marker(NOW))
+
     def test_the_2027_marker_no_longer_suppresses_the_pass(self):
         """这一条就是 #452 的伤害面：未来戳曾让节流永远答「不到点」。"""
         cfg = config.Config()
@@ -137,6 +148,13 @@ class SlackMcpPresenceCacheTestCase(unittest.TestCase):
 
     def test_an_expired_cache_still_reprobes(self):
         self._set_mtime(-(radar_slack._MCP_PRESENT_TTL_S + 60))
+        with mock.patch.object(radar_slack, "_probe_slack_mcp", return_value=True):
+            self.assertEqual(radar_slack._slack_mcp_present(), (True, True))
+
+    def test_a_non_utf8_cache_reprobes_instead_of_raising(self):
+        """docstring 写着「Never raises」，坏字节也得算数（与 marker 同款）。"""
+        self.path.write_bytes(b"\xff\xfe1")
+        self._set_mtime(-60)
         with mock.patch.object(radar_slack, "_probe_slack_mcp", return_value=True):
             self.assertEqual(radar_slack._slack_mcp_present(), (True, True))
 
