@@ -14,13 +14,12 @@ schema.sql 从头跑一遍，九条补行天然都在。而真实安装里的库
 近似库；终点与全新 v3 库**逐行比对**（§78.4 的「两处必须收敛」）。纯 sqlite3 +
 store.Store，不碰沙箱注册表。
 """
-import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib.store2 import store as store_mod
 from act.lib.store2.store import SCHEMA_VERSION, Store
@@ -77,8 +76,7 @@ def _card_row(db: Path, card_id: str) -> dict:
 
 class V3LadderTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-v3-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="store2-v3-"))
 
     def _v2_db(self, name="v2.db") -> Path:
         db = self.tmp / name
@@ -151,8 +149,7 @@ class PromotionOnAnUpgradedDatabaseTestCase(unittest.TestCase):
     """真正要证明的那件事：owner 在一台升上来的库上点得动「促成运行」。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="store2-v3-promote-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="store2-v3-promote-"))
         db = self.tmp / "upgraded.db"
         con = sqlite3.connect(db)
         con.executescript(_v2_schema_sql())

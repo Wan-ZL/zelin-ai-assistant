@@ -31,12 +31,11 @@ CATALOG 那 54 行里的 `tier` / `phase` / `est` 三个数字，以前只被「
 import inspect
 import os
 import re
-import shutil
-import tempfile
 import threading
 import unittest
 
 from tests import skill_test_code_testkit as kit
+from tests.scratch_testkit import scratch_dir
 
 import checks  # noqa: E402
 import run_ladder as rl  # noqa: E402
@@ -187,8 +186,7 @@ class _FixtureCase(unittest.TestCase):
     """一个能让大多数层真正建出 plan 的 mini python repo（只在 tmpdir 里落盘）。"""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="test-code-catalog-")
-        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.tmp = scratch_dir(self, prefix="test-code-catalog-")
         self.repo = kit.make_repo(os.path.join(self.tmp, "repo"), _FIXTURE)
         self.out = os.path.join(self.tmp, "out")
         os.makedirs(self.out)

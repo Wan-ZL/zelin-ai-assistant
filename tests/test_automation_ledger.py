@@ -7,11 +7,11 @@ tests/test_qa_automation_gate.py——一个 behavior 一个文件。
 """
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 
 from act.lib import automation, config
+from tests.scratch_testkit import scratch_dir
 
 
 def _poison(cfg, name):
@@ -235,12 +235,11 @@ class LiveFieldsTestCase(unittest.TestCase):
         里面还混着 `daily_loop_time` 这类调参（不是 on/off，本来就不该进 switch），
         真正要钉的是「总账说热的，actd 就真的每 pass 现读」。
         """
-        import tempfile
         from unittest import mock
 
         from act import actd
 
-        home = tempfile.mkdtemp(prefix="live-switch-")
+        home = scratch_dir(self, prefix="live-switch-")
         frozen = config.Config()
         for name in automation.live_fields():
             _poison(frozen, name)
@@ -257,7 +256,7 @@ class AuditTestCase(unittest.TestCase):
     """一行「<slug> 做了 <action>」：形状、消毒、带帽、永不抛。"""
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="automation-audit-")
+        self.dir = scratch_dir(self, prefix="automation-audit-")
         self.path = Path(self.dir) / "automation.jsonl"
 
     def test_it_writes_one_json_line_per_call(self):
