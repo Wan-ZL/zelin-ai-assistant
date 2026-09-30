@@ -41,8 +41,9 @@ radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`
   解析失败不许崩 pass（宪法第 11 条）。
 - **永不 bump 版本**（§56.1，2026-09-02 起）：版本真源 = main 上的 git tag，合并时
   `release-on-merge` 自动铸造；`act/__init__.py` 的回落行、iOS 两处 `0.0.0-dev` 占位、
-  CHANGELOG 的版本标题都是**只读**的，CI「Version pins untouched」会拦。发版说明只写
-  `[Unreleased]` 下。要看你这个 checkout 的版本：`python3 scripts/version_stamp.py`。
+  CHANGELOG 的版本标题都是**只读**的，CI「Version pins untouched」会拦。发版说明写
+  `changelog.d/<kebab-slug>.md` 片段（首行 `type: added|changed|fixed|removed|security`，再 `- ` bullets；§56.7），
+  `CHANGELOG.md` 的 `[Unreleased]` 已冻结只减不增，CI「Version pins untouched」同样会拦。要看你这个 checkout 的版本：`python3 scripts/version_stamp.py`。
 - **测试即判例**：1500+ 条测试钉着历史行为；改坏一条先想想它当初为什么在那。
   运行时依赖白名单 = stdlib + PyYAML，测试侧可加（hypothesis 在 CI 装）。
 - **屏幕不发起卡片**（§45）：screenpipe 屏幕 OCR 的内容只能佐证已有卡，

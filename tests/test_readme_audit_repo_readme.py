@@ -39,6 +39,15 @@ class RepoReadmeIsCurrentTest(unittest.TestCase):
                 self.assertEqual(handle.read(8), b"\x89PNG\r\n\x1a\n",
                                  rel + " is not a real PNG")
 
+    def test_no_version_literals(self):
+        """§56.1：任何被 PR 编辑的文件都不承载版本号——README 也不例外。写死一个
+        版本就会在打下一个 tag 时把那个 tag 自己的 Release 弄红：release.yml 用
+        fetch-tags 让审计器看见新 tag，而 README 还写着上一版（v1.0.115 / v1.0.116
+        的两次 failure 就是这条路）。这条判例不看 tag，浅 clone 的 CI 也能判。"""
+        with open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8") as handle:
+            hits = readme_audit._VERSION_RE.findall(handle.read())
+        self.assertEqual(hits, [], "README carries version literals: %r" % (hits,))
+
     def test_summary_line_shape(self):
         self.assertRegex(self.report.summary(),
                          r"^README claims=\d+ stale=\d+ images=\d+$")
