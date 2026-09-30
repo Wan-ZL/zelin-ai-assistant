@@ -10,6 +10,8 @@ import os
 import sys
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "scripts", "qa"))
 import automation_check  # noqa: E402
