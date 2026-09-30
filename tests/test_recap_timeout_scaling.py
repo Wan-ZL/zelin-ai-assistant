@@ -165,6 +165,9 @@ class LostLineTestCase(unittest.TestCase):
                                           audio_rows=30, app="zoom", events=[]), KEY, rs.CLOSED)
         rec["transcript_words"] = 6160
         store.save_recap(rec)
+        # store.projection() 读真时钟判 TTL（24 h）：setUp 那条请求钉在 2026-09-21，过一天就成
+        # None——本条只验词数喂判线，请求按真 now 再记一次（2026-09-30 定时炸弹）
+        requests.record(KEY, "running", now=_dt.datetime.now(_dt.timezone.utc))
         row = {r["key"]: r for r in store.projection()}[KEY]
         self.assertEqual(row["generate_request"]["lost_after_s"], int(timing.lost_after_s(6160)))
         # OPEN 行（还没有文件、没有词数）= 地板

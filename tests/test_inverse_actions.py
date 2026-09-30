@@ -338,7 +338,7 @@ class AbortExecutionTestCase(InverseActionsBase):
         self.assertTrue(ex.get("aborted_at"))
 
     def test_clears_review_active_flag(self):
-        # §30 追记（issue #446）：退回提案 = 收工，清掉内部 attach 活跃标记，
+        # §30 追记（issue #446）：退回潜在任务 = 收工（§78 起退回落 detected），清掉内部 attach 活跃标记，
         # 别让它悬着被下一轮误读成「会话还在跑」。
         _mk_req(status=State.REVIEW.value,
                 execution={"session_id": "sess-ab", "done": True,
@@ -346,7 +346,7 @@ class AbortExecutionTestCase(InverseActionsBase):
         stub = mock.Mock(return_value=(True, True, "stopped"))
         with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("_review_active", req.execution or {})
 
     def test_double_abort_second_is_noop(self):
