@@ -26,6 +26,7 @@ from act.lib import config, notify
 from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
 from act.lib import recap_text as rt
+from act.lib import recap_timing as timing
 
 KEY = fx.KEY
 MIN = 60.0
@@ -79,7 +80,10 @@ class NoEgressTestCase(unittest.TestCase):
         # neutral cwd + the boundary's legacy kwargs
         self.assertEqual(kwargs["cwd"], str(config.STATE_DIR))
         self.assertTrue(kwargs["capture_output"])
-        self.assertEqual(kwargs["timeout"], recap.LLM_TIMEOUT_S)
+        # §63.15：超时按这份转写的词数伸缩（地板 = 老定值 recap.LLM_TIMEOUT_S）
+        words = store.load_recap(fx.KEY)["transcript_words"]
+        self.assertEqual(kwargs["timeout"], timing.llm_timeout_s(words))
+        self.assertGreaterEqual(kwargs["timeout"], recap.LLM_TIMEOUT_S)
 
     def test_argv_has_no_tool_no_mcp_no_permission_skip_no_slack(self):
         self._closed_round()

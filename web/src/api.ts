@@ -32,6 +32,7 @@ import type {
   LogTail,
   McpList,
   ModelsSettings,
+  RecapEndReceipt,
   RecapHistory,
   RecapMarkKind,
   RecapMarkReceipt,
@@ -400,6 +401,18 @@ export function postRecapMark(key: string, mark: RecapMarkKind, on = true): Prom
   return request<RecapMarkReceipt>("/api/recaps/mark", {
     method: "POST",
     body: JSON.stringify({ key, mark, on }),
+  });
+}
+
+/**
+ * POST /api/recaps/end — owner 手改的会议结束时间（CONTRACT §63.16，issue #440）：ISO-Z 或 null（回到录制时间）。
+ * 与「复制 / 已发送 / 忽略」同一个 server 独写的 marks.json（add-only 键 end_override）；recap 文件里
+ * 录制到的 end 一字不动，生成不读它——纯展示层。
+ */
+export function postRecapEnd(key: string, endOverride: string | null): Promise<RecapEndReceipt> {
+  return request<RecapEndReceipt>("/api/recaps/end", {
+    method: "POST",
+    body: JSON.stringify({ key, end_override: endOverride }),
   });
 }
 

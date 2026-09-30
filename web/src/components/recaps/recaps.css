@@ -246,6 +246,57 @@
   font: var(--type-card-meta);
 }
 
+/* §63.16 表头旁的「改结束时间」：一颗小按钮 + 展开后的一行编辑框（time 输入 + 保存 / 回到录制时间 / 取消） */
+.recap-end-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.recap-end-input {
+  border: var(--stroke-w) solid var(--border-strong);
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: var(--type-button);
+  font-variant-numeric: tabular-nums;
+}
+
+/* §63.13 转写依据（可发送长版逐条的锚）：折叠块，默认收起——它是核对用的，不是正文的一部分 */
+.recap-evidence {
+  border: var(--stroke-w) dashed var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
+}
+
+.recap-evidence summary {
+  cursor: pointer;
+  color: var(--text-tertiary);
+  font: var(--type-composer-hint);
+}
+
+.recap-evidence-list {
+  margin: 6px 0 0;
+  padding-inline-start: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recap-evidence-tag {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.recap-evidence-at {
+  font-variant-numeric: tabular-nums;
+}
+
 .recap-meta a { color: var(--accent); }
 
 /* §63.3 追记：needs_review 的逐条原因 / 自动修剪台账（脚注里的一张小清单） */

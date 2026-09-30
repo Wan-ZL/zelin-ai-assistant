@@ -508,6 +508,11 @@ export interface RecapRow {
   /** §63.12 这个 key 的逐条标签计数器 `{字母: 发到第几号}`（add-only，单调、永不复用）——
    *  页面不读它（标签本身在正文与 `sections_*[].tags` 里），镜像它只为不撒谎 */
   tag_seq?: Record<string, number> | null;
+  /** §63.16 owner 手改的结束时间（ISO-Z；server 独写 marks.json 的 add-only 键，投影带出；
+   *  没改过 = null，老 daemon 无此键）——表头 / 行标签 / 剪贴板表头按它显示，`end` 仍是录制到的那一刻 */
+  end_override?: string | null;
+  /** §63.14 术语表在这一版的转写里换了几处听错的词（add-only；回退出来的版本 / 老记录 = null） */
+  glossary_hits?: number | null;
   [key: string]: unknown;
 }
 
@@ -562,6 +567,19 @@ export interface RecapSection {
   /** §63.12 逐条标签（add-only，与 `items` 逐位对齐；老记录无此键 = 渲染回落到连续编号）——
    *  daemon 派发，模型永不是作者（`act/lib/recap_text.assign_tags`） */
   tags?: string[] | null;
+  /** §63.13 逐条语气（add-only，与 `items` 逐位对齐；空串 = 沿用本节的）——与本节不同时
+   *  daemon 渲染进 `copy_*` 的尾巴（`S2. … (floated)`），页面不再拼一遍 */
+  modalities?: (string | null)[] | null;
+  /** §63.13 逐条转写锚（add-only，与 `items` 逐位对齐；null = 那一条没有锚）——转写的事实，
+   *  只在英文那一侧被校验，页面从 `sections_en` 读它给两种语言看；**永不进正文与剪贴板** */
+  anchors?: (RecapAnchor | null)[] | null;
+  [key: string]: unknown;
+}
+
+/** §63.13 一条的转写锚：`at` = 转写那一行的本地 HH:MM 戳，`quote` = 那一行里逐字的原话片段 */
+export interface RecapAnchor {
+  at: string;
+  quote: string;
   [key: string]: unknown;
 }
 
@@ -604,6 +622,8 @@ export interface RecapGenerateRequest {
   requested_at: string;
   state: "running" | "done" | "noop" | "lost" | string;
   note: string | null;
+  /** §63.15「丢了」的判线（秒；按这一行的转写词数伸缩，老 daemon 无此键 = 10 分钟）——面板据它说「超过 N 分钟」 */
+  lost_after_s?: number | null;
   [key: string]: unknown;
 }
 
@@ -662,6 +682,24 @@ export interface RecapSettings {
   default_shape: "lines" | "sections" | string;
   languages: string[];
   source: { [key: string]: unknown };
+  /** §63.14 术语表在哪、有没有（只读；server/recaps.glossary_hint 逐字镜像；老 server 无此键） */
+  glossary?: RecapGlossaryHint | null;
+  [key: string]: unknown;
+}
+
+/** §63.14 术语表提示：文件路径、文件在不在（非空）、config.yaml recap.glossary 里的条数 */
+export interface RecapGlossaryHint {
+  path: string;
+  present: boolean;
+  config_terms: number;
+  [key: string]: unknown;
+}
+
+/** POST /api/recaps/end 回执（§63.16）：手改的结束时间（null = 已回到录制时间） */
+export interface RecapEndReceipt {
+  ok: boolean;
+  key: string;
+  end_override: string | null;
   [key: string]: unknown;
 }
 

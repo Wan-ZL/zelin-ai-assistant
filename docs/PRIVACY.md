@@ -302,9 +302,14 @@
   recap + 语气档（docs/VOICE.md）+ 你在页面上手写的纠正备注。全部过 `fence_untrusted`。
   argv 固定 `claude -p … --tools "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'`
   ——模型拿不到任何工具或 MCP，**只能出文字**（tests/test_recap_no_egress.py 钉死）。
-- **产物**：`state/recap/recaps/<key>.json`（5 行中英纯文本 + 元数据；**不是卡**，没有
-  收件人字段），唯一出口 = 你在看板「会议纪要」页点复制。正文**不进** analytics，事件
-  `recap_generated` 只有 app / 时长 / 字数 / 质量档这些元数据。
+- **产物**：`state/recap/recaps/<key>.json`（5 行中英纯文本，或可发送长版的分节正文 + 元数据；
+  **不是卡**，没有收件人字段），唯一出口 = 你在看板「会议纪要」页点复制。正文**不进** analytics，事件
+  `recap_generated` 只有 app / 时长 / 字数 / 质量档 / 术语表替换计数这些元数据。**CONTRACT §63.13
+  起**，可发送长版的每一条还带一个**转写锚**——转写那一行的 `HH:MM` 戳 + 一段短的逐字原话片段
+  （上限 truth = `act/lib/recap_text.MAX_QUOTE_CHARS`），存在同一个文件与它的 `history[]` 里、
+  随纪要一起到保留期；它只在看板「转写依据」里显示，**不进复制出去的正文**、不进 analytics、不出境。
+  §63.14 的术语表（`state/recap-glossary.md` / config `recap.glossary`）的正确拼法清单会随第 17 行
+  的 payload 进 Anthropic（fenced），听错形的替换在本机完成。
 - **关闭**：Settings「会议纪要」→ 关「会后自动生成纪要」，或 `recap.enabled: false`；
   录制模式不含音频时自然没有转写可出稿。
 

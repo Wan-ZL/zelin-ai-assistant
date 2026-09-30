@@ -221,6 +221,10 @@ recap:                                 # 会议 recap（CONTRACT §63，issue #1
   # default_shape: lines                # §63.10 出厂形状：lines = 快速五行（自用便签）｜ sections = 可发送长版
   #                                     #   （分节 + 每节语气 decided/proposed/floated/open + 跨节连续编号）；
   #                                     #   单份纪要可在页面上逐次改选，之后的重生成沿用它选的那一种
+  # glossary:                           # §63.14 术语表：转写进模型之前先把听错的词换回正确拼法（Whisper 把 SageMaker
+  #   - "SageMaker: stage maker, sage maker"   #   听成 stage maker、Nemotron 听成 new tron…）。一行一条：`正确拼法: 听错1, 听错2`
+  #   - "Nemotron: new tron, nemo tron"        #   （听错形按大小写不敏感 + 词边界确定性替换；只写正确拼法也行 = 只进 prompt 的清单）。
+  #   - "SFT"                                  #   另一处是 state/recap-glossary.md（同一行格式，# 注释；两处合并，最多 200 条）
   # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
   # max_per_day: 8                      # 每个本地日上限
   # retention_days: 90                  # recaps/<key>.json 保留天数

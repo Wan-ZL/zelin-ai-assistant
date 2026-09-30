@@ -52,9 +52,10 @@ def payload(en, zh=None):
 
 
 def model_reply(en_items, zh_items=None, key="decided", modality="decided") -> str:
+    # §63.13 起每一条是带锚的对象（`fx.item`：锚对得上 fixture 的转写，语气沿用本节）
     zh_items = en_items if zh_items is None else zh_items
-    doc = {"en": [{"key": key, "modality": modality, "items": list(en_items)}],
-           "zh": [{"key": key, "modality": modality, "items": list(zh_items)}]}
+    doc = {"en": [{"key": key, "modality": modality, "items": [fx.item(t) for t in en_items]}],
+           "zh": [{"key": key, "modality": modality, "items": [fx.item(t) for t in zh_items]}]}
     return "```json\n" + json.dumps(doc, ensure_ascii=False) + "\n```"
 
 

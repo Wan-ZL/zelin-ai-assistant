@@ -123,6 +123,17 @@ export function RecapSection() {
         )}
       </p>
 
+      {/* §63.14 术语表（issue #440）：转写进模型前先把听错的词换回正确拼法。组成来自 server 的只读提示
+          （路径 / 文件在不在 / config 条数）——老 server 无此键就不说；这里没有编辑框（文件与 config.yaml 是入口） */}
+      {recapSettings.glossary && (
+        <p className="settings-helper" data-testid="recap-glossary-hint">
+          {text(
+            `术语表：${recapSettings.glossary.path}（${recapSettings.glossary.present ? "已有" : "尚未创建"}）；config.yaml recap.glossary 里 ${recapSettings.glossary.config_terms} 条。一行一条「正确拼法: 听错1, 听错2」——转写进模型之前先把听错的词换回来，替换了几处会写在纪要脚注里。`,
+            `Glossary: ${recapSettings.glossary.path} (${recapSettings.glossary.present ? "present" : "not created yet"}); ${recapSettings.glossary.config_terms} line(s) in config.yaml recap.glossary. One line per term, "Correct spelling: heard1, heard2" — mishearings are swapped before the transcript reaches the model, and the recap's footer reports how many.`,
+          )}
+        </p>
+      )}
+
       <div className="settings-actions">
         <button type="button" className="btn btn-primary" disabled={!isDirty || isSaving} onClick={() => void save()}>
           {isSaving ? text("保存中…", "Saving…") : text("保存", "Save")}
