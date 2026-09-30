@@ -2,7 +2,7 @@
 // 在随机空闲端口起 `python3 -m server`，等 /api/board 通了再把 baseURL 交给 spec。
 // 与 scripts/dev-preview.sh 同一条链路，只是端口随机、目录临时、结束即杀进程。
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -50,8 +50,44 @@ async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 90
   throw new Error(`server did not answer OK on ${baseURL}/api/board within ${timeoutMs} ms (last: ${last})`);
 }
 
+/**
+ * 临时 home 的可选补料（默认全关 = 老调用点的行为逐字不变）。
+ *
+ * 两项都照 `scripts/qa/coverage_run.py` 的 `_seed_home` 补：没有 `config.yaml` 时 server 走
+ * 内建默认（不致命），但 `GET /api/skills` 会恒 409——浏览器控制台里就是一条 console error，
+ * 任何「零 console error」的判例都会被它假红一次（ui_scout 的 rail_walk 首跑实测）。
+ * skills 用**拷贝**不用 symlink：临时 home 收尾是 `rmSync(recursive)`，拷贝让「删沙箱」这件事
+ * 在任何实现下都不可能碰到仓库里的 skills/（776K，拷得起）。
+ */
+export interface DemoServerExtras {
+  /** 把 config.example.yaml 拷成 <home>/config.yaml */
+  config?: boolean;
+  /** 把仓库的 skills/ 拷进 <home>/skills/ */
+  skills?: boolean;
+  /**
+   * 把**真** HOME 下的 user site-packages 接回 PYTHONPATH。
+   *
+   * 本函数把 `HOME` 指向临时目录（golden 不许带上开发者机器的真实路径），而 PyYAML 在这台
+   * 机器和 CI runner 上都是 `pip install --user` 装的——user site 跟着 HOME 走，于是 server
+   * 子进程里 `import yaml` 直接失败：`GET /api/skills` 恒 409、设置页的 doctor 行恒报
+   * ModuleNotFoundError。既有 spec 没撞上是因为 coverage.spec.ts 只走 `[data-rail-item]`，
+   * 而技能页是 `data-rail-extra`（ui_scout 的 rail_walk 首跑撞出来的）。
+   * 默认关：打开会改设置页/技能页的渲染，视觉 golden 得跟着重拍——那是另一件事。
+   */
+  pythonUserSite?: boolean;
+}
+
+/** 真 HOME 下的 user site-packages（`pip install --user` 的落点）；问不出来就返回 null。 */
+function userSitePackages(): string | null {
+  const probe = spawnSync(PYTHON, ["-c", "import site;print(site.getusersitepackages())"], {
+    encoding: "utf-8",
+  });
+  const value = (probe.stdout ?? "").trim();
+  return probe.status === 0 && value ? value : null;
+}
+
 /** 种 `scene`（默认 initial）→ 起 server → 返回可用的 baseURL。调用方负责 stop()。 */
-export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
+export async function startDemoServer(scene = "initial", extras: DemoServerExtras = {}): Promise<DemoServer> {
   const home = mkdtempSync(path.join(tmpdir(), "zai-visual-"));
   const seed = spawnSync(PYTHON, [path.join(REPO_ROOT, "scripts", "demo_seed.py"), home, "--scene", scene], {
     encoding: "utf-8",
@@ -61,14 +97,22 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
   // 所以写上「向导已完成」标记（与 POST /api/setup/complete 同一文件）——向导页有自己的判例，不在这组截图里。
   mkdirSync(path.join(home, "state"), { recursive: true });
   writeFileSync(path.join(home, "state", "setup_done.json"), JSON.stringify({ completed_at: "2026-09-02T12:00:00Z" }));
+  if (extras.config) {
+    cpSync(path.join(REPO_ROOT, "config.example.yaml"), path.join(home, "config.yaml"));
+  }
+  if (extras.skills && existsSync(path.join(REPO_ROOT, "skills"))) {
+    cpSync(path.join(REPO_ROOT, "skills"), path.join(home, "skills"), { recursive: true });
+  }
   const port = await freePort();
+  const userSite = extras.pythonUserSite ? userSitePackages() : null;
+  const pythonPath = userSite ? `${REPO_ROOT}${path.delimiter}${userSite}` : REPO_ROOT;
   // HOME 也指向临时目录：设置页读 ~/.claude/settings.json（§59 全局默认）——golden 不许带上
   // 开发者机器的真实路径 / 模型名，CI runner 上也没有这个文件，两边一致 = 「文件不存在」态。
   const child = spawn(PYTHON, ["-m", "server"], {
     // stdout/stderr 都收：server 的横幅与访问日志走 stdout，起不来时一并进错误信息
     cwd: REPO_ROOT,
     env: {
-      ...process.env, HOME: home, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: REPO_ROOT,
+      ...process.env, HOME: home, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: pythonPath,
       PYTHONUNBUFFERED: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],

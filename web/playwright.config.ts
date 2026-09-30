@@ -11,6 +11,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // 只收 `*.spec.ts`。playwright 的默认 testMatch 连 `*.test.ts` 一起收，而 e2e/ 下从
+  // ui_scout 起住着 vitest 判例（`e2e/ui_scout/core/**/*.test.ts`，纯函数、jsdom 环境）——
+  // 两个 runner 抢同一批文件的话，谁先跑谁报一堆「describe is not defined」。
+  testMatch: "**/*.spec.ts",
   fullyParallel: false,
   workers: 1,
   retries: 0,

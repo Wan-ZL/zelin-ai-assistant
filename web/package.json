@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "visual": "playwright test --config playwright.config.ts",
-    "visual:update": "playwright test --config playwright.config.ts --update-snapshots"
+    "visual:update": "playwright test --config playwright.config.ts --update-snapshots",
+    "ui-scout": "playwright test e2e/ui_scout.spec.ts --config playwright.config.ts"
   },
   "dependencies": {
     "react": "^19.3.0",

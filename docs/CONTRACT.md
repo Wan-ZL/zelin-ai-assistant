@@ -7395,3 +7395,83 @@ canonical 状态机（§1 同 PR 修法）：`detected → approved → executin
 - **不自动清理潜在任务列**：本 PR 不借退役之名调任何一把清扫旋钮（`stale_days` / `mention_escalation` / 保留期全部原值），也不给这一列加自动归档。owner 的删除键与 §70.2 的 `stale:idle` 是它仅有的两个出口。
 - **不开任何新 inbox 动词**（促成运行 = 既有的 `approve`），不新增通知分类值（三条结算信号仍走 `KIND_PROPOSAL`），不新建第二套双语文案机制。
 - **不让机器替 owner 拍板**：退役只是把两列并成一列，`detected → approved` 仍然是**一次人的点击**；唯一的例外仍然只有 §65（§0 第 12 条），而它的代价由终点验收与四条确定性后盾承担。
+
+# v0.49 additions（探索式 UI 巡检）
+
+## 79. 探索式 UI 巡检 `ui_scout`：一个驾驶员在真沙箱里用看板（issue #449；owner 决策 **D85**）
+
+owner 的原话：「思考是否有办法让 AI 来做 e2e 的点击，软件使用等操作。从而发现软件的问题。比如使用多模态友好的模型，比如 kimi k3。」
+
+既有的浏览器判例（`web/e2e/*.spec.ts`、§66.4 视觉基线、`skills/test-ui`）都是**写死的**：只走有人想到过要写下来的那条路。#446 那一类 bug（卡片卡在运行中、停止超时、待验收计数与数据对不上）全是**肉眼可见**的，却全是 owner 自己撞出来的——因为没人写过那条路。本节立的是另一半：一个**驾驶员**（离线剧本，或一个多模态模型）在一次性沙箱里像人一样用这个看板——点、打字、等、看屏幕——旁边站着一排**确定性判官**记账，跑完落一份带截图与复现步骤的报告。
+
+canonical slug = `ui_scout`（防腐 #9：模块名 / 目录名 / npm script / 报告目录全从它逐字派生）。跑者住 `web/e2e/ui_scout.spec.ts` + `web/e2e/ui_scout/`，读报告的那一半住 `scripts/qa/ui_scout.py`，参考驾驶员住 `scripts/qa/ui_scout_pilot.py`。一句话跑：`cd web && npm run ui-scout`。
+
+### 79.1 行程表（truth = `web/e2e/ui_scout/core/journeys.ts`）
+
+一趟（journey）= 一个用户目标 + 一条离线剧本 + 一个**到达判据**。行的形状（add-only）：`name` / `scene`（`scripts/demo_seed.py` 的场景词表）/ `lang` / `viewport` / `goal`（给驾驶员看的一句话）/ `notes`（沙箱须知）/ `maxSteps` / `stepBudgetMs` / `isolate` / `check` / `benignAlerts` / `hints`。
+
+- **`goal` / `notes` 进 prompt，`hints` 不进**。`hints` 是离线驾驶员的剧本；把它喂给模型等于把答案抄过去，巡检就退化成剧本回放。
+- **`notes` 是防假红的第一道闸**：沙箱里没有跑 actd，写动作（批准 / 验收 / 停止 / 恢复 / 捕获）发出去之后卡片不会换列、计数不会变——这是沙箱的已知事实，须知里必须说清楚，否则模型会把它当 bug 报回来。
+- **`benignAlerts` 每条必须写明理由**：只放两类——沙箱自身的产物，和产品本来就诚实的降级说明（例如浏览器里打开看板时的「录制引擎只在看板 app（壳）里可控」）。命中的报警降级成 `info`，**不是丢掉**（宪法第 3 条：探到什么说什么）。
+- **`isolate`**：凡是改**服务端**设置的行程必须独占一台 server。语言开关写的是 `PUT /api/settings` 的 `general.language`，一趟改完，后面同场景的行程全部继承英文界面——首跑实测 `narrow_viewport` 因此报了一条英文文案的 overflow。只写 inbox 的行程不改投影，同场景共用一台。
+- **`check`**（到达判据）四形：`none` / `selector` / `absent` / `lang`。不成立记一条 `stuck`（warn），不判红——「没走到」是线索，不是产品坏了。
+
+### 79.2 驾驶协议与两个驾驶员（truth = `web/e2e/ui_scout/core/protocol.ts`）
+
+一步一问一答。**问** = Observation（协议版本 / 目标 / **沙箱须知** / 第几步 / URL / 界面语言 / **截图的本机路径** / 可操作元素表 / 可见文本 / 上一步的回执 / 这一屏落定了没）；**答** = 一行 Action JSON。Observation 的字段 add-only。动词全集 `click` `type` `press` `wait` `goto` `report` `done` `give_up`（词表真源即该文件的 `VERBS` / `KEYS` / `PAGES`）。
+
+- **越权面只有一道闸：`ref`**。元素表由跑者每一步重发（先抹掉上一轮的 `data-ui-scout-ref` 再按文档顺序发新的），驾驶员只能按 `ref` 指认，**永远写不出 selector**。本步没发出去的 `ref` 一律拒。
+- **配对靠 `step` 回声，不靠时序**。答案必须把问题的 `step` 原样带回来，对不上就丢。`ref` 闸挡不住错位：`ref` 每步按文档序重编，上一步漂回来的 `e7` 在这一步几乎总能对上号，只是指向了另一个元素——于是巡检自己点出来的状态变化会被当成产品 bug 报上去。回声由**传输层**盖章（参考驾驶员按读到的 Observation 盖），不交给模型的记性。跑者另外在问下一问之前清空未领走的行。
+- **超时预算只有一个真源**：`DEFAULT_PILOT_TIMEOUT_MS`（`protocol.ts`）/ 环境变量 `ZAI_UI_SCOUT_PILOT_TIMEOUT_MS`。跑者把自己的读超时逐字传给驾驶员，驾驶员的模型预算从它派生且**严格更短**——这样「没答上来」永远由驾驶员先说出口（一行 `give_up`），而不是跑者先放弃、模型的回答随后漂回来。两边各留一个默认值、名字还不一样，就是上一条那个错位的来源（防腐 #9）。
+- **驾驶员的输出不可信**（防腐「LLM 输出不可信」+ 宪法第 11 条）：逐字段显式消毒——非字符串的 `text` 归零、控制字符剥掉、`ms` 只认真数字并夹进上限、`key` / `page` / `severity` 一律查词表、多余的键忽略。认不出来的回答降级成一条 `{ok:false}` 的记录，**永不抛**，巡检继续走。
+- **没有双击**：看板上双击卡片会真的起一个终端会话（§54 接管）。协议里压根没有这个动作。
+- **两个驾驶员，同一条循环**：`scripted`（离线、确定性、零成本、不出网——CI 与本地默认就是它）和 `process`（把一步交给外部命令：stdin 一行 Observation、stdout 一行 Action）。协议模型无关，所以 Claude / Kimi K3 / 任何多模态端点都只要满足这一页；本仓**不为此引入任何运行时依赖**（宪法第 7 条）。
+- **参考驾驶员**（truth = `scripts/qa/ui_scout_pilot.py`）：截图已经由跑者写到磁盘，prompt 里给的是那个**路径**并只放行 `Read` 工具——模型自己把 PNG 读进来看。于是「模型看着屏幕操作」不需要第二条 LLM 边界：调用仍然只经 `act/llm.py` 的 `run(prompt, runner=None)`（防腐 #3）。页面文本与元素名是外部内容，进 prompt 前必过 `sanitize.fence_untrusted`（宪法第 5 条）。任何失态（没回、回的不是 JSON、子进程炸了）都降级成一条 `give_up`。两端的词表由 `tests/test_ui_scout_pilot_protocol.py` 读 TS 真源逐字对表，漂了就判红。
+
+### 79.3 判官（truth = `web/e2e/ui_scout/core/oracles.ts`）
+
+模型负责操作与「觉得哪里不对」，但一条发现算不算数，由**纯函数**判：输入是浏览器那边采下来的可序列化快照，输出是 OracleHit。纯函数 = 判例喂字面量就能钉口径，不必起浏览器。
+
+七只：`crash`（AppErrorBoundary 接管整页）、`console`（console.error / pageerror）、`lane_count`（列头那个数字与 `/api/board` 的数据对不上）→ **error**；`alert`（这一步有东西在朝用户喊）、`budget`（单步超预算）、`overflow`（chrome 里的文字被裁）、`i18n`（英文界面的 chrome 里漏出中文）→ **warn**。
+
+三条必须照抄的口径，抄错就是满屏假红：
+
+- **「运行中」一列同时装 `running` 与 `needs_input`**，徽章是两者之和（truth = `web/src/components/board/BoardLanes.tsx` 的装配）；
+- **`completed` / `archived` 的 `counts` 是截断前的总数**，所以 `counts > 数组长度` 正常、`counts < 数组长度` 才是错；左右两条书立另有算法，不在判官范围内；
+- **省略号本身是设计**。`overflow` 说的是「这一处真的把字省掉了」，而且只看 chrome（页头 / 左栏 / 列头 / 动作按钮 / 对话框），不看卡片正文——卡片是用户数据，本来就长、本来就是中文。`i18n` 同样只看 chrome，且只在 `lang=en` 时判；语言开关按设计显示的是**目标**语言，不算漏翻译。
+
+`budget` 只吃**界面**的往返耗时。驾驶员想了多久单独记成 `pilotMs`，不进预算——否则模型驾驶时每一步都会因为模型慢而「超预算」，判出一屏假黄。
+
+**为什么比的是投影而不是 `state/store2.db`**（issue #449 原文写的是后者）：`scripts/demo_seed.py` 只写 `state/dashboard.json`，既不落 YAML 卡也不建 SQLite，而 §53 的后端判定看的是激活标记——所以这个沙箱里**根本没有 store2.db**，拿它当第二真源是一句许不起的愿。`lane_count` 因此两头都比：**界面上那个数字 vs 投影的分区数组长度**（用户看得见的那一类，#446 就是它），以及**投影自报的 `counts` vs 同一份投影的数组长度**（与界面无关的纯数据自洽）。要再往下比到 registry 真源，得先有一个跑过 actd 的沙箱——见 §79.6。
+
+### 79.4 发现、指纹与去重（truth = `web/e2e/ui_scout/core/findings.ts` / `scripts/qa/ui_scout.py`）
+
+一条发现 = 哪一趟 + 哪只判官 + 一句话 + 复现坐标（第几步 / URL / 截图）+ **指纹**。指纹 = `journey` + `oracle` + 归一后的签名（数字、ISO 时间戳、长路径、hex id 一律先抹平），**唯一实现在 TS 侧**，python 侧只读不重算（防腐 #9 在跨语言时的落法）。
+
+三档的语义是硬的：**error** = 确定性判官说坏了；**warn** = 值得看一眼，可能是环境；**info** = 驾驶员自己说的话，以及 `benignAlerts` 登记过的已知事实。**驾驶员的 `report` 永远只记 info**——它是线索不是判决，否则一个会幻觉的模型就能把 CI 判红。
+
+issue #449 提的「便宜模型探索、强模型复核」在这里换了个做法：复核的那一半**不是第二个模型，是判官**。模型负责走到没人走过的地方并喊一声，要不要算数由纯函数说了算——比再问一次模型更便宜、更确定，也不会两个模型一起幻觉。真想上两级模型，那是驾驶员脚本自己的事（协议不变，§79.2）。
+
+`python3 scripts/qa/ui_scout.py`（读最近一次巡检，也可 `--run <目录>`）：`--summary` 打一行 `UI_SCOUT pilot=… journeys=… steps=… error=… warn=… info=…`；`--check`（默认动作）按 `--fail-on`（默认 `error`，可 `warn` / `info` / `never`）出退出码；`--issue-plan` 拿指纹比对**已开**的 issue（正文落款 `ui_scout-fingerprint: <8 位 hex>`）——命中就说「已有 #N，去那条底下补一句」，没命中才给一条可以直接跑的 `gh issue create`。本脚本**自己永不开 issue、永不发评论**：对外动作是 owner 的一次点击（§65）。gh 走注入缝，不可用时返回空集（宁可多提醒一次，也不静默当成「已经有了」）。
+
+**这条命令是要给人粘进终端的，所以它自己要扛住壳**：标题走 `shlex.quote`（不是 `json.dumps`——JSON 的引号不是壳的引号，双引号里的反引号与 `$(…)` 照样展开），标题里的控制字符与换行进门先拍平，正文走引号版 heredoc 且正文里正好等于定界符的那一行会被顶开。判据是「按壳的规矩切出来的 argv 逐字等于标题」，不是「看起来被引起来了」。标题与正文都是**页面文本**拼的（console.error 原文、告警文案），这不是假想威胁。
+
+### 79.5 沙箱与报告（truth = `web/e2e/demoServer.ts` / `web/e2e/ui_scout.spec.ts`）
+
+沙箱复用既有的 `startDemoServer`（§66.4 视觉基线同一条链路）：`mktemp` 出来的临时 `AIASSISTANT_HOME` + `scripts/demo_seed.py` 的全虚构数据 + 随机空闲端口上的**真** `python3 -m server`，`stop()` 杀进程并整棵删。绝不碰 live `state/`（宪法第 9 条 / §77.7 沙箱纪律的同一条红线）。本节给它补了三项**默认关**的可选补料（老调用点行为逐字不变）：`config`（拷 `config.example.yaml`）、`skills`（拷仓库的 `skills/`；用拷贝不用 symlink，让「删沙箱」在任何实现下都碰不到仓库）、`pythonUserSite`（把真 HOME 下的 user site-packages 接回 `PYTHONPATH`）。
+
+最后一项是首跑撞出来的真问题：沙箱把 `HOME` 指向临时目录，而 PyYAML 在 owner 机器与 CI runner 上都是 `pip install --user` 装的——user site 跟着 HOME 走，于是 server 子进程里 `import yaml` 直接失败，`GET /api/skills` 恒 409、设置页的 doctor 行恒报 `ModuleNotFoundError`。既有判例没撞上，是因为 `coverage.spec.ts` 只走 `[data-rail-item]`，而技能页是 `data-rail-extra`。
+
+报告落 `.ui-scout/reports/<ISO 时间戳>/`（仓库根，出生即 gitignore）：`report.json` 是机器面、`report.html` 是人面（自包含，无外链；页面文本进 HTML 前一律转义——采来的正是不可信文本），每步一张 PNG，外加每趟一份 `result.json`（半路崩掉时已经走过的行程不跟着蒸发）。保留期出生就有（防腐 #4）：跑者按 `ZAI_UI_SCOUT_KEEP`（默认 5）只留最近 N 次。
+
+旋钮（全部是环境变量，默认值让 `npm run ui-scout` 是离线、确定性的一次全跑）：`ZAI_UI_SCOUT_PILOT`（外部驾驶员命令）、`ZAI_UI_SCOUT_PILOT_TIMEOUT_MS`、`ZAI_UI_SCOUT_JOURNEYS`（只跑这几趟）、`ZAI_UI_SCOUT_MAX_STEPS`（成本闸：压低每趟步数）、`ZAI_UI_SCOUT_KEEP`、`ZAI_UI_SCOUT_NO_SHOTS`。
+
+**判红只在最后一条 test 上**（「巡检判决」）：行程的 test 只跑、只记账、不断言。playwright 在一条 test 失败后会重启 worker，而 worker 一重启这份 spec 就被重新 import、报告目录换一个时间戳、半份报告落在两处；把断言压到最后一条，一次巡检就永远只有一份完整报告。`web/playwright.config.ts` 的 `testMatch` 因此收成 `**/*.spec.ts`——`e2e/ui_scout/core/**/*.test.ts` 是 vitest 判例（纯函数、jsdom），两个 runner 不许抢同一批文件。
+
+### 79.6 边界（明确不做）
+
+- **不跑 actd**。沙箱里只有 server，所以本节巡检的是**界面**，不是状态机：卡片不会在巡检期间换列。要真的把一张卡从提案走到待验收，既有的路是 §77.2 的 `flow:card_lifecycle`（`coverage_run.py` 里用 `write_shims` 的假 `claude` + `python3 -m act.actd --once`，走 HTTP 不走浏览器）。把这条沙箱接到浏览器这一侧是下一程，不在本节。
+- **不开 issue、不发评论、不铸卡**。发现只落报告；`--issue-plan` 只打印。机器发现永远不自己进 registry（§44 单写者、§45 出生资格）。
+- **不进 7 个 required checks**。本节出生是观测门。`npm run ui-scout` 的 spec 住 `web/e2e/`，所以它跟着既有的 "Web visual (playwright)" job（informational、macOS、`web/` 变了才跑）一起跑离线驾驶员那一版；**模型驾驶永不在 CI 上跑**——一步就是一次带图的模型往返（本机实测 12~35 s/步，随模型与这一屏的复杂度浮动），那是本地与夜间的事。真要排一个夜班，`.github/workflows/` 是受保护路径（宪法第 12 条 ③），必须由 owner 亲手加。
+- **不驱动 macOS 壳**（computer-use 式）。壳自己的可观测量另有 §77.4 的 `axprobe`。
+- **不做静态漏翻译扫描**。`text("中文","中文")` 这类静态可查的漏翻译是另一件事（§66 家族），本节只报运行时在屏幕上真看见的那一条。

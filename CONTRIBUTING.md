@@ -83,6 +83,26 @@ The retired Mac app under `mac/Sources` is the terminal UI spec; `ui/parity/nati
 
 **Goldens are runner-rendered — never regenerate them on a Mac.** Text rasterization differs between any developer / agent Mac and the `macos-latest` image the CI job runs on (PingFang / Chromium build / hinting), so a laptop-made golden makes every CJK glyph "regress" at 1–3 % of pixels and the job stays red with no UI change behind it — that is exactly what happened 2026-09-04. `npm run visual:update` therefore exists only for looking at what your change does locally; the PNGs that get committed come from the **Refresh visual goldens** workflow (`.github/workflows/visual-goldens.yml`, `workflow_dispatch`, same runner + same setup steps as the CI job; it re-captures every golden with `--update-snapshots=all`, then re-runs the comparison so the runner proves it reproduces its own output). Procedure: `gh workflow run "Refresh visual goldens" --ref main -f ref=<your branch>` (the `ref` input is what gets captured; default main) → wait for the run (`gh run list --workflow visual-goldens.yml --limit 1`) → `gh run download <run-id> -n visual-goldens -D /tmp/goldens` → copy `/tmp/goldens/visual.spec.ts/*.png` over `web/e2e/__screenshots__/visual.spec.ts/` → commit + open a PR whose body names which pages changed and why (the run's step summary lists the sha256 of every PNG — quote the run URL). The job never commits or opens PRs itself (a `GITHUB_TOKEN`-authored PR gets no CI here); the artifact is the deliverable. When the `macos-latest` label moves to a new macOS major, both jobs move together and one refresh is due — that is the only legitimate "all six changed, no UI diff" golden PR.
 
+### Exploratory UI scout (`ui_scout`, CONTRACT §79)
+
+The specs above only walk paths somebody thought to write down. `ui_scout` is the other half: a *driver* uses the real board in a throwaway sandbox — click, type, wait, read the screen — while seven deterministic oracles keep score (render crash / console error / lane count vs `/api/board` → error; alerts / step budget / clipped chrome text / Chinese left in the English UI → warn).
+
+```bash
+cd web && npm run build && npx playwright install chromium   # once
+cd web && npm run ui-scout                                   # offline driver: deterministic, free, offline
+python3 scripts/qa/ui_scout.py --check                       # read the report, exit 1 on any error finding
+python3 scripts/qa/ui_scout.py --issue-plan                  # what to file, minus what is already filed
+```
+
+The offline driver follows the scripted `hints` in `web/e2e/ui_scout/core/journeys.ts`, so it is a regression test and rides the existing informational "Web visual (playwright)" job. To let a **model** drive instead (local / nightly only — one step is one image-carrying model round-trip, measured 12–35 s here and model-dependent):
+
+```bash
+cd web && ZAI_UI_SCOUT_PILOT='python3 ../scripts/qa/ui_scout_pilot.py' \
+          ZAI_UI_SCOUT_JOURNEYS=board_tour ZAI_UI_SCOUT_MAX_STEPS=4 npm run ui-scout
+```
+
+The driver protocol is model-agnostic (one Observation JSON in, one Action JSON out — §79.2), so pointing `ZAI_UI_SCOUT_PILOT` at your own script is how another multimodal model drives. Two rules your script must honour: **echo the observation's `step` in the answer** (the runner discards anything that does not pair, which is what stops a late answer from driving the next screen), and derive your own model timeout from `ZAI_UI_SCOUT_PILOT_TIMEOUT_MS` so it stays strictly below the runner's — the reference implementation does both. Reports land in `.ui-scout/reports/<timestamp>/report.html` (git-ignored, last 5 runs kept). Adding a journey means adding a row to the journey table plus its `check` and, if it writes server-side settings, `isolate: true`.
+
 ### board shell 手动检查（shell/ 没有 test target）
 
 `shell/Sources/main.swift` 的连接序（CONTRACT §54.2）没有 Swift 测试靶，改动它时手动过一遍（每条 ≤1 分钟）：
