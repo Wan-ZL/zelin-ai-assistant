@@ -27,7 +27,7 @@ class WorktreeGcTestCase(unittest.TestCase):
     def setUp(self):
         self.tree = Tree()
         self.addCleanup(self.tree.cleanup)
-        # 通道 repo = 假 repo（§65.3 的物理闸就是 worktrees 的扫描根）
+        # 扫描根 = 假 repo（§75.1 primary_repo）
         self.cfg = config.Config()
         _root = mock.patch.object(worktrees, "primary_repo", side_effect=lambda: self.tree.repo)
         _root.start()

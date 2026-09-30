@@ -1,6 +1,6 @@
 """§75 / §70.1 追记：worktree 回收的心跳打在**工作单元**上，不是每个 root 一下。
 
-现实里 root 只有一个（§65.3 的通道 repo），所以「每个 root beat 一次」= 整段回收只有
+现实里 root 只有一个（§75.1 的安装根 `primary_repo`），所以「每个 root beat 一次」= 整段回收只有
 开头那一下心跳。而这一段之后还要逐条 `git status` / `rev-list`（时间预算
 `SCAN_BUDGET_S`）、再逐条 `git worktree remove`（每条是一份带 `web/node_modules` 的完整
 checkout），一台攒了 190 个 worktree 的机器上是分钟级——`heartbeat.stale_after_seconds`

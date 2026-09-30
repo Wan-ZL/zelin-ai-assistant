@@ -12,9 +12,9 @@ approve 跑了的,才给编号。」
 钉住的行为（两后端逐条跑）：
   * 出生 = ``P-<n>`` 主键（next_id），detected/raising/merge/trash（以及退役的
     card_sent）一律 **不**分配工作编号；
-  * 进入 approved 的每条路径都分配 ``R-<m>``：owner approve、§65 lane 免批
-    （§51 hand lane 随 §78 退役）、capture[run] 出生即 approved、restore 精确
-    复位回 approved；
+  * 进入 approved 的每条路径都分配 ``R-<m>``：owner approve、capture[run] 出生即
+    approved、restore 精确复位回 approved（§51 两条免批 lane 均已退役：hand 随 §78，
+    §65 lane 随 D86）；
   * 工作序列稠密、单调、永不复用（含 sqlite tombstone / yaml 硬删 + 高水位）；
   * set-once：退回潜在任务再批准、trash→restore 都不换号；
   * resolve() 主键与工作编号双向可达；inbox/merge 入口按两种 ref 都能找到卡且

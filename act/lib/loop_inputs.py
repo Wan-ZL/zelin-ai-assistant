@@ -126,8 +126,8 @@ def _clip(text, cap: int = EVIDENCE_CAP) -> str:
     return " ".join(str(text or "").split())[:cap]
 
 
-def _parse_gh_ts(value) -> Optional[_dt.datetime]:
-    """ISO 时间戳（gh 的 createdAt / 台账的 ts，含 Z）→ aware UTC；坏值 None。"""
+def _parse_ts(value) -> Optional[_dt.datetime]:
+    """ISO 时间戳（台账 / 事件行的 ts，含 Z）→ aware UTC；坏值 None。"""
     try:
         dt = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (ValueError, TypeError):
@@ -209,7 +209,7 @@ def _event_days(path: Path, since: _dt.datetime) -> dict:
 
 def _count_event(line: str, since: _dt.datetime, counts: dict) -> None:
     d = _json_row(line)
-    ts = _parse_gh_ts(d.get("ts"))
+    ts = _parse_ts(d.get("ts"))
     if ts is None or ts < since:
         return
     per_day = counts.setdefault(str(d.get("event") or "?"), {})
@@ -314,7 +314,7 @@ def _json_row(line: str) -> dict:
 
 def _count_write(line: str, since: _dt.datetime, per_file: dict) -> None:
     d = _json_row(line)
-    ts = _parse_gh_ts(d.get("ts"))
+    ts = _parse_ts(d.get("ts"))
     if ts is None or ts < since:
         return
     f = str(d.get("f") or "?")

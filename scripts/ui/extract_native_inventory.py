@@ -180,7 +180,7 @@ CONTROL_OWNER = {
         "reason": "原生 Kind.plain 分支无任何行实例化、从不渲染；web 五行皆可验证 / 可检测 → 恒「已保存（未验证）」（§68.3 2026-09-05 追记）",
     },
     # 原生「新建 skill」表单往 ~/.claude/skills/<name>/SKILL.md 写文件；§67 立法后仓库 = 商店、`skills/` 只有 git 写
-    # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的 PR（§65 草稿 PR 通道），不是设置页表单。
+    # （防腐 #8）、§67.5 明文「不做编辑器」——新 skill 是一次进 skills/ 的普通 PR，不是设置页表单。
     # 依赖页 gh 行的 detail 文案 `which gh（登录 shell）` 是原生**自己的探针命令**（Pages.swift:198 →
     # Shell.ok("which gh") 起 /bin/zsh -lc）：web 的依赖页把探测交给 server（GET /api/deps）、
     # 显示 server 的 detail——照抄这句等于对用户说「web 也在你的登录 shell 里 which gh」，是假话。

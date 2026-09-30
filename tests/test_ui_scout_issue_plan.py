@@ -2,7 +2,7 @@
 
 issue #449 点名要的行为——「Check existing issues first and comment on a match instead of
 filing a new one」。这一份钉三件事：指纹是唯一的去重键、gh 不可用时宁可多提醒一次也不静默、
-本脚本自己永不开 issue 永不发评论（对外动作是 owner 的一次点击，§65）。
+本脚本自己永不开 issue 永不发评论（对外动作是 owner 的一次点击，§79.6）。
 gh 一律走注入缝：套件里真 gh 是被 tests/__init__.py 的出网守卫禁掉的。
 """
 
@@ -195,7 +195,7 @@ class GhFailureTestCase(unittest.TestCase):
 
 
 class NoOutboundActionTestCase(unittest.TestCase):
-    """§65：这条通道永不自己开 issue、永不自己发评论——只读一次，其余都是打印。"""
+    """§79.6：ui_scout 永不自己开 issue、永不自己发评论——只读一次，其余都是打印。"""
 
     def test_plan_only_ever_reads(self):
         runner = _gh([])

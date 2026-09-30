@@ -706,7 +706,7 @@ def _silent_merge_sweep(cfg: Optional[config.Config] = None) -> None:
     """§44 的**落盘端** + §81 闸门（`features.merge_silent`，与探测端共用一把）。
 
     关掉时连在飞的判定都不消费——判官文件留着，开关翻回来下一 pass 照常落账
-    （与 §65.1 「关开关不腰斩仍活着的会话」同纪律：不丢数据，只停动作）。
+    （§81 同纪律：关开关不腰斩在飞的东西——不丢数据，只停动作）。
     """
     if not automation.enabled("silent_merge", cfg):
         return

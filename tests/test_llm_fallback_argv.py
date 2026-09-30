@@ -1,8 +1,8 @@
 """``--fallback-model`` placement in every argv act/llm.py builds (CONTRACT §59
-D53; §4 ordering).
+D53; §4 ordering; the zero-MCP tail is the channel-keyed egress lock kept by D86).
 
 Fixed head of every launch: ``--output-format <fmt>`` → ``--model`` →
-``--fallback-model`` → the variable tail
+``--fallback-model`` → (``--bg`` only) ``NO_MCP_ARGV`` → the variable tail
 (``extra_argv`` / ``--name`` / ``--resume`` / prompt). ``off`` restores the
 pre-D53 argv byte for byte; garbage on the knob degrades to the default id —
 never to a bare flag, never to argv junk. The doctor's probe stays fallback-free
@@ -22,6 +22,7 @@ from act.lib import config
 
 DEFAULT = config.DEFAULT_MODEL_FALLBACK
 FB = ["--fallback-model", DEFAULT]
+NO_MCP = list(llm.NO_MCP_ARGV)
 OPUS = "claude-opus-5"
 
 
@@ -130,8 +131,7 @@ class HeadlessArgvTestCase(_Sandbox):
 
 class BgArgvTestCase(_Sandbox):
     """``claude --bg`` base argv — the pair sits behind the dispatch model flag
-    and ends the fixed part; the caller's --name / --resume / prompt follow.
-    (The §65 ``NO_MCP_ARGV`` tail retired with the lane, D86.)"""
+    and ahead of NO_MCP_ARGV; the caller's --name / --resume / prompt follow."""
 
     def test_default(self):
         self.assertEqual(llm.dispatch_argv(_cfg()),
@@ -141,18 +141,29 @@ class BgArgvTestCase(_Sandbox):
         self.assertEqual(llm.dispatch_argv(_cfg(models_dispatch=OPUS)),
                          ["claude", "--bg", "--dangerously-skip-permissions", "--model", OPUS, *FB])
 
-    def test_the_pair_ends_the_fixed_argv(self):
-        self.assertEqual(llm.dispatch_argv(_cfg(models_dispatch=OPUS))[-2:], FB)
+    def test_ahead_of_no_mcp(self):
+        self.assertEqual(llm.dispatch_argv(_cfg(), no_mcp=True),
+                         ["claude", "--bg", "--dangerously-skip-permissions", *FB, *NO_MCP])
+        self.assertEqual(llm.dispatch_argv(_cfg(models_dispatch=OPUS), no_mcp=True),
+                         ["claude", "--bg", "--dangerously-skip-permissions",
+                          "--model", OPUS, *FB, *NO_MCP])
+
+    def test_without_no_mcp_ends_with_the_pair(self):
+        self.assertEqual(llm.dispatch_argv(_cfg(models_dispatch=OPUS), no_mcp=False)[-2:], FB)
 
     def test_skip_permissions_off(self):
         self.assertEqual(llm.dispatch_argv(_cfg(skip_permissions=False)), ["claude", "--bg", *FB])
+        self.assertEqual(llm.dispatch_argv(_cfg(skip_permissions=False), no_mcp=True),
+                         ["claude", "--bg", *FB, *NO_MCP])
 
     def test_off_is_the_pre_d53_argv_byte_for_byte(self):
         off = _cfg(models_fallback="off")
         self.assertEqual(llm.dispatch_argv(off), ["claude", "--bg", "--dangerously-skip-permissions"])
+        self.assertEqual(llm.dispatch_argv(off, no_mcp=True),
+                         ["claude", "--bg", "--dangerously-skip-permissions", *NO_MCP])
         off.models_dispatch = OPUS
-        self.assertEqual(llm.dispatch_argv(off),
-                         ["claude", "--bg", "--dangerously-skip-permissions", "--model", OPUS])
+        self.assertEqual(llm.dispatch_argv(off, no_mcp=True),
+                         ["claude", "--bg", "--dangerously-skip-permissions", "--model", OPUS, *NO_MCP])
 
     def test_executor_launch_site_keeps_name_and_prompt_last(self):
         captured = {}

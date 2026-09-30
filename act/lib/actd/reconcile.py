@@ -8,7 +8,9 @@ CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119�
 （收割时比对快照；护栏的认卡判据 §78/D80.11 起是直跑卡 triage_guard.guarded_card）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
 / §46（resume 风暴降级 + 确认式停止）/ §71.3（被睡眠打断的会话收割前原地重试
-一次）。§65.1 frozen-in-flight 与 §65.3 收割核验随 §65 通道删除（D86）。
+一次）。§65.1 frozen-in-flight 与 §65.3 收割核验随 §65 通道删除（D86）；
+通道时代派出、会话已死的存量卡由 :func:`_retire_lane_session` 一次性收割进
+待验收（`interrupted_reason=lane_retired`），绝不自动续命。
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import datetime as _dt
 import time
 from typing import Optional
 
-from act.lib import analytics, config, dispatch_prompt, notify, registry, steer
+from act.lib import analytics, config, dispatch_prompt, notify, policy, registry, steer
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
                                   harvest_kwargs, update_search_index,
@@ -503,7 +505,28 @@ def _reconcile_one(d: Daemon, req: Requirement, cfg: config.Config, agents: dict
     if ex.get("done"):
         _promote_if_missed(req)
         return 0
+    if _retire_lane_session(d, req, ex, sid):
+        return 0
     return _revive_dead(d, req, ex, sid, cfg, resume_notified)
+
+
+def _retire_lane_session(d: Daemon, req: Requirement, ex: dict, sid) -> bool:
+    """D86 退役护栏（接替 §65.1 frozen-in-flight）：§65 通道还在时派出的卡
+    （all-self_improve sources + 通道写下的 ``execution.self_improve`` 派发记录，
+    D86 起无人再写），会话死了**不自动续命**——出厂时通道关着，这种卡本来就冻着；
+    通道删了之后续命会在没人点击的情况下重新拉起旧的草稿 PR 会话（烧钱）。
+    改为一次性收割进待验收，owner 在那里决定打回继续 / 验收 / 丢弃。
+    True = 本卡已处理完。"""
+    if not isinstance(ex.get("self_improve"), dict):
+        return False
+    if not policy.is_self_improve_sources(req.sources):
+        return False
+    harvest_to_review(d, req, ex, sid,
+                      f"[{_dt.date.today().isoformat()} D86] 自动草稿 PR 通道已删除：会话已停，"
+                      "不再自动续命，已收割进待验收——打回即继续",
+                      "lane retired (D86), not resumed",
+                      interrupted_reason="lane_retired")
+    return True
 
 
 def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_notified: set) -> None:

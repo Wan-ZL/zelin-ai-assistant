@@ -41,8 +41,8 @@ from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
 from act import llm
-from act.lib import (analytics, config, dispatch_prompt, failures, notify, registry, sanitize,
-                     transcripts)
+from act.lib import (analytics, config, dispatch_prompt, failures, notify, policy, registry,
+                     sanitize, transcripts)
 from act.lib.registry import Requirement, State, display_id, load, save
 
 # prompt text (dispatch / rework / brief) lives in act/lib/dispatch_prompt.py;
@@ -263,16 +263,28 @@ def _claude_bin(cfg: Optional[config.Config] = None) -> str:
     return llm.claude_bin(cfg)
 
 
-def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
+def _bg_base_cmd(cfg: Optional[config.Config] = None,
+                 req: Optional[Requirement] = None) -> list:
     """Base ``claude --bg`` argv shared by all launch sites (dispatch / resume /
     rework / brief) — built by the §59 single LLM boundary (act/llm.py):
     ``--dangerously-skip-permissions`` only while ``execution.skip_permissions``
     is on (default; P0-10 — off means the agent runs under claude's normal
     permission model; a blocked agent is harvested to review by actd's
     reconcile (#119) instead of acting unattended), then ``--model <id>``
-    when the dispatch knob is explicit (nothing when it follows). (The §65
-    per-card zero-MCP egress lock retired with the lane, D86.)"""
-    return llm.dispatch_argv(cfg)
+    when the dispatch knob is explicit (nothing when it follows). ``req``:
+    a card whose sources are all ``self_improve`` (daily-loop materials cards
+    embed fetched third-party text) and that does not declare ``needs_mcp``
+    gets ``llm.NO_MCP_ARGV`` — the zero-MCP egress lock survived the §65 lane
+    (D86) because it is keyed on the channel. Every launch site passes its card
+    so a resume can never re-open the MCP surface the dispatch closed."""
+    return llm.dispatch_argv(cfg, no_mcp=egress_locked(req))
+
+
+def egress_locked(req: Optional[Requirement]) -> bool:
+    """All-``self_improve`` sources and no ``needs_mcp`` → zero-MCP argv."""
+    if req is None or getattr(req, "needs_mcp", False):
+        return False
+    return policy.is_self_improve_sources(getattr(req, "sources", None))
 
 
 def _verbatim(req: Optional[Requirement]) -> bool:
@@ -322,7 +334,7 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
                     cfg: Optional[config.Config] = None,
                     req: Optional[Requirement] = None) -> subprocess.CompletedProcess:
     prompt, _ = sanitize.scrub(prompt)
-    cmd = _bg_base_cmd(cfg)
+    cmd = _bg_base_cmd(cfg, req)
     if name:
         cmd += ["--name", name]
     cmd += _system_append_argv(req, cfg)
@@ -870,7 +882,7 @@ def _run_resume(cfg: config.Config, req: Requirement, sid: str, target: Path,
     是**每次调用**给的——resume 不重新挂上，打回/转向那一轮的会话就没了交付
     与安全边界。故 ``--append-system-prompt`` 与 dispatch 同源同挂（契约里的
     工作目录取自卡，不是这里的 ``target``——见 :func:`_contract_target`）。"""
-    cmd = _bg_base_cmd(cfg) + ["--name", session_name(req), "--resume", str(sid)]
+    cmd = _bg_base_cmd(cfg, req) + ["--name", session_name(req), "--resume", str(sid)]
     cmd += _system_append_argv(req, cfg)
     if prompt and str(prompt).strip():
         cmd += _prompt_argv(req, sanitize.scrub(str(prompt))[0])

@@ -1,4 +1,4 @@
-"""`.github/dependabot.yml` 成立且 vite 工具链、react 四包各自成组（CONTRACT §54 依赖澄清、§56.8、§70.3 ⑪ 判例）。
+"""`.github/dependabot.yml` 成立且 vite 工具链、react 四包各自成组（CONTRACT §54 依赖澄清、§56.8 判例）。
 
 七项 required check 里没有一项解析这个文件：Lint 只跑 shellcheck + ruff，qlty 的
 actionlint / zizmor 只管 workflows。一个拼错的键（`patterns` → `pattern`）或缩进

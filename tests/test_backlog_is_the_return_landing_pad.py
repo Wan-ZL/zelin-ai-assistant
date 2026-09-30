@@ -60,8 +60,8 @@ class AbortExecutionTestCase(LandingPadBase):
                 self.assertEqual(req.status, State.DETECTED.value)
 
     def test_the_dispatch_brake_ledger_is_cleared_on_the_way_back(self):
-        """§4.1：卡带着刹车回到潜在任务列，§65 免批会把它原样再推进 approved，
-        然后永远停在「需输入」（2026-09-01 审查复现）。"""
+        """§4.1：卡带着刹车回到潜在任务列，当年的 §65 免批（retired D86）会把它原样
+        再推进 approved，然后永远停在「需输入」（2026-09-01 审查复现）。"""
         _mk("P-310", State.EXECUTING.value,
             execution={"session_id": "sess-9", "dispatch_halted": True,
                        "dispatch_attempts": 3, "last_error": "boom"})

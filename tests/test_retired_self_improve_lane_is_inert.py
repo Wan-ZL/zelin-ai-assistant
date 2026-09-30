@@ -13,10 +13,16 @@ delivery_unverified`；他的 config.yaml 与 settings_overrides.json 可能还�
    潜在任务、留痕、不派；owner 亲手批准之后下一 pass 照常派出（痕已被 re-arm 清掉）；
 3. 已经派出（有 session）的卡不被撤回；
 4. 旧 config / overrides 键静默忽略，Config 上不再有 `self_improve_enabled`；
-5. `channel=self_improve` 卡的派发 argv 不再带 `--strict-mcp-config`；
+5. 零 MCP 出网封锁**留着**：它只看写死的 channel（全 self_improve 来源、未声明
+   `needs_mcp`），素材库卡的 evidence 是抓来的外部网页——dispatch 与 resume 两个
+   发射点都带 `--strict-mcp-config`；普通卡与声明 `needs_mcp` 的卡 argv 不变；
 6. dashboard 顶层 `self_improve` 是冻结的常量关闭形；
 7. 素材库铸卡的闸是 `daily_loop.materials_enabled`，出厂关 = 零抓取、`inputs.materials
-   == "off"`；打开才铸卡。
+   == "off"`；打开才铸卡；
+8. 通道时代派出（带 `execution.self_improve` 派发记录）、会话已死的运行中卡**不自动
+   续命**（接替 §65.1 frozen-in-flight）：一次性收割进待验收
+   （`interrupted_reason=lane_retired`），`executor.resume` 一次都不调用；没有那条
+   派发记录的素材卡照常续命。
 
 这条判例接替 §78 时代「只有 §65 lane 能被免批提升」那条不变量：现在是「什么都不能」。
 沙箱 AIASSISTANT_HOME；executor / 抓取全 mock，零子进程、零网络。
@@ -173,13 +179,14 @@ class RetiredConfigKeysTestCase(unittest.TestCase):
         self.assertFalse(cfg.daily_loop_materials_enabled)
 
 
-class NoEgressLockTestCase(unittest.TestCase):
-    def test_a_lane_card_dispatches_with_the_ordinary_argv(self):
-        cfg = config.Config()
-        self.assertFalse(hasattr(llm, "NO_MCP_ARGV"))
-        self.assertNotIn("--strict-mcp-config", llm.dispatch_argv(cfg))
-        card = Requirement(id="P-920", title="旧通道卡", status=State.APPROVED.value,
-                           sources=[dict(s) for s in _LANE_SRC], needs_mcp=False)
+class EgressLockSurvivesTestCase(unittest.TestCase):
+    NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+
+    def _card(self, **kw):
+        kw.setdefault("sources", [dict(s) for s in _LANE_SRC])
+        return Requirement(id="P-920", title="素材卡", status=State.APPROVED.value, **kw)
+
+    def _launch(self, fn):
         captured = {}
 
         def fake_run(cmd, **kw):
@@ -187,10 +194,58 @@ class NoEgressLockTestCase(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, stdout="backgrounded · abc123ff", stderr="")
 
         with mock.patch("subprocess.run", fake_run), mock.patch("act.llm.runner_env", return_value={}):
-            executor._default_runner("prompt text", config.STATE_DIR, name="P-920", cfg=cfg, req=card)
-        self.assertNotIn("--strict-mcp-config", captured["cmd"])
-        self.assertNotIn("--mcp-config", captured["cmd"])
-        self.assertEqual(captured["cmd"][:len(llm.dispatch_argv(cfg))], llm.dispatch_argv(cfg))
+            fn()
+        return captured["cmd"]
+
+    def test_self_improve_sources_dispatch_and_resume_with_zero_mcp(self):
+        cfg = config.Config()
+        self.assertEqual(list(llm.NO_MCP_ARGV), self.NO_MCP)
+        card = self._card()
+        for cmd in (self._launch(lambda: executor._default_runner(
+                        "prompt text", config.STATE_DIR, name="P-920", cfg=cfg, req=card)),
+                    self._launch(lambda: executor._run_resume(
+                        cfg, card, "abc123ff", config.STATE_DIR, "continue"))):
+            i = cmd.index("--strict-mcp-config")
+            self.assertEqual(cmd[i:i + 3], self.NO_MCP)
+            self.assertEqual(cmd[i + 3], "--name")
+
+    def test_needs_mcp_and_ordinary_cards_keep_the_plain_argv(self):
+        cfg = config.Config()
+        plain = executor._bg_base_cmd(cfg)
+        self.assertEqual(executor._bg_base_cmd(cfg, self._card(needs_mcp=True)), plain)
+        hand = self._card(sources=[{"channel": "quick_capture", "date": "2026-09-30"}])
+        self.assertEqual(executor._bg_base_cmd(cfg, hand), plain)
+        mixed = self._card(sources=[dict(_LANE_SRC[0]), {"channel": "quick_capture"}])
+        self.assertEqual(executor._bg_base_cmd(cfg, mixed), plain)
+        self.assertEqual(executor._bg_base_cmd(cfg, self._card()), plain + self.NO_MCP)
+
+
+class DeadLaneSessionIsNotRevivedTestCase(_Base):
+    def _reconcile(self):
+        resume = mock.Mock(return_value=True)
+        with mock.patch.object(actd, "_run_claude_agents", return_value=[]), \
+                mock.patch.object(actd.executor, "resume", resume), \
+                mock.patch.object(actd.executor, "harvest_delivery", return_value={}):
+            n = actd.reconcile_executing(config.Config(), set())
+        return n, resume
+
+    def test_a_lane_dispatched_card_is_harvested_to_review_not_resumed(self):
+        _lane("P-930", State.EXECUTING.value,
+              execution=dict(_LEGACY_EX, session_id="cccc3333", auto_dispatched=True))
+        n, resume = self._reconcile()
+        self.assertEqual(n, 0)
+        resume.assert_not_called()
+        req = registry.load("P-930")
+        self.assertEqual(req.status, State.REVIEW.value)
+        self.assertEqual(req.execution["interrupted_reason"], "lane_retired")
+        self.assertIn("D86", req.notes)
+
+    def test_a_materials_card_dispatched_after_d86_is_still_revived(self):
+        _lane("P-931", State.EXECUTING.value, execution={"session_id": "dddd4444"})
+        n, resume = self._reconcile()
+        self.assertEqual(n, 1)
+        resume.assert_called_once()
+        self.assertEqual(registry.load("P-931").status, State.EXECUTING.value)
 
 
 class FrozenDashboardKeyTestCase(unittest.TestCase):

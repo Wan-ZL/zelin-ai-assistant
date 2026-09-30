@@ -19,11 +19,9 @@ survivor below changed an observable answer and is now pinned:
                blocks approve / raise with ``noop``; notes None gets the W17 tag.
   merge        the detached launch's success is what emits ``merge_review_requested``;
                merge_force acks by outcome.
-  dispatch     auto-dispatch continues past ineligible cards; an explicit external
-               stamp on a §65 lane card blocks; the live count is one per executing
-               session and one per launch; two approved cards both log without an
-               executor; a halted card does not stop the next one; stale last_error is
-               cleared after a successful launch.
+  dispatch     the live count is one per executing session and one per launch; two
+               approved cards both log without an executor; a halted card does not
+               stop the next one; stale last_error is cleared after a successful launch.
   housekeeping purge_trash disabled → 0; a deadline of today protects; improvement_of
                lineage in both directions protects; a sibling on the card's thread
                protects; archive_after_days=1 is enabled.
