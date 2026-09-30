@@ -90,7 +90,13 @@ per_mutant_timeout_seconds = 60
 "skills/test-code/scripts/complexity_min.py" = ["tests/test_skill_test_code_complexity_min.py"]
 "skills/test-code/scripts/structure_check.py" = ["tests/test_skill_test_code_structure.py"]
 "skills/test-code/scripts/detect.py" = ["tests/test_skill_test_code_detect.py"]
-"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py"]
+# R-301（2026-09-16）：checks.py 首轮 839 体只有 51.8% 杀伤，404 存活。映射原本漏了两份**既有**判例
+# （run_ladder / detect 都 import checks 并驱动它的 builder 与菜单）——补进去白得 21 体。剩下的靠四份新判例：
+# catalog_docs（CATALOG 的 tier/phase/est 与 TIER_TIMEOUTS 逐条钉在 tiers.md / catalog.md / SKILL.md /
+# triggers.md 上，防腐 #5 的机器执法，对照姐妹 skill 的 test_skill_test_ui_catalog_docs.py）、
+# builder_gates（_b_* 的「配置在 AND 工具在」闸门与 `X or 默认` 回落）、internal_math（自制检查的算术与
+# fail-closed 扫描器）、plan_plumbing（argv / 步骤构造与各栈就绪判定）。
+"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py", "tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_detect.py", "tests/test_skill_test_code_catalog_docs.py", "tests/test_skill_test_code_builder_gates.py", "tests/test_skill_test_code_internal_math.py", "tests/test_skill_test_code_plan_plumbing.py"]
 "skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
 
 # test-ui skill（skills/test-ui；vnext2-plan R2.8，test-code 的姐妹）——同样每晚第 4 档。
