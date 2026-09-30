@@ -16,6 +16,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
@@ -152,6 +153,34 @@ class ApplyTestCase(_HomeMixin, unittest.TestCase):
         result = state_audit.apply(self.home, NOW)
         self.assertEqual(result["quarantined"], [])
         self.assertFalse((self.state / "backups").exists())
+
+
+class FailurePathTestCase(_HomeMixin, unittest.TestCase):
+    """三条失败分支：扫描读不了目录、隔离区建不出来、manifest 落不了盘——都不抛，
+    都在结果里说清楚（宪法第 11 条），而且已经搬走的不会被「撤销」成丢失。"""
+
+    def test_an_unlistable_state_dir_reports_nothing_instead_of_raising(self):
+        self._write("slack_mcp.marker", FUTURE)
+        with mock.patch.object(Path, "rglob", side_effect=OSError("denied")):
+            result = state_audit.report(self.home, NOW)
+        self.assertEqual((result["scanned"], result["findings"]), (0, []))
+
+    def test_a_quarantine_dir_that_cannot_be_created_moves_nothing(self):
+        src = self._write("slack_mcp.marker", FUTURE)
+        (self.state / "backups").write_text("a file where the dir should be", encoding="utf-8")
+        result = state_audit.apply(self.home, NOW)
+        self.assertTrue(result["error"].startswith("quarantine dir: "))
+        self.assertEqual((result["quarantined"], result["quarantine_dir"]), ([], None))
+        self.assertTrue(src.exists(), "建不出隔离区就一个字节都不许动")
+
+    def test_a_manifest_that_cannot_be_written_is_reported_after_the_move(self):
+        src = self._write("slack_mcp.marker", FUTURE)
+        with mock.patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            result = state_audit.apply(self.home, NOW)
+        self.assertEqual(result["error"], "manifest: disk full")
+        self.assertFalse(src.exists())
+        self.assertEqual(len(result["quarantined"]), 1, "回执写不出来不该反噬已经搬走的文件")
+        self.assertTrue((Path(result["quarantine_dir"]) / "slack_mcp.marker").exists())
 
 
 class CliTestCase(_HomeMixin, unittest.TestCase):
