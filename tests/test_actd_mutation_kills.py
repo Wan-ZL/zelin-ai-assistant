@@ -440,7 +440,7 @@ class ReconcileKillsTest(Base):
         req = Requirement(id="R-r", title="t", status=State.REVIEW.value,
                           execution={"session_id": "sid-r"})
         registry.save(req)
-        actd._reconcile_review_attach(req, {"sid-r": {"state": "working"}})
+        actd._reconcile_review_attach(req, {"sid-r": {"state": "working", "pid": 4242}})
         ex = registry.load("R-r").execution
         self.assertTrue(ex.get("_review_active"))
         self.assertNotIn("registry_snapshot_ref", ex)

@@ -518,6 +518,8 @@ def _abort_execution(d: Daemon, req: Requirement, inp: _Input) -> str:
         ex.pop("session_id", None)
     ex.pop("done", None)
     ex["aborted_at"] = d.iso_now()
+    # §30 追记（issue #446）：退回提案也是收工——清掉 attach 活跃标记，别让它悬着。
+    ex.pop("_review_active", None)
     # §4.1：退回提案 = 丢弃这一轮，派发失败台账（含 dispatch_halted）一并
     # 清掉——否则 card_sent 卡带着刹车回到待审批，policy 免批通道会把它
     # 原样再推进 approved，永远停在「需输入」（审查复现 2026-09-01）。
@@ -561,6 +563,9 @@ def _stop_to_review(d: Daemon, req: Requirement, inp: _Input) -> str:
     # never mistaken for a crash needing auto-resume.
     ex["done"] = True
     ex["review_at"] = d.iso_now()
+    # §30 追记（issue #446）：显式「去待验收」就是收工——立刻清掉 attach 活跃标记，
+    # 不等下一轮 reconcile；否则该键悬着会被误读成「会话还在跑」。
+    ex.pop("_review_active", None)
     req.execution = ex
     append_note(req, "[stopped by user] 手动停止，已收下成果待验收")
     req.set_status(State.REVIEW)

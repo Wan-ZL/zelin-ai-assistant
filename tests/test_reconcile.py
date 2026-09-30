@@ -436,10 +436,37 @@ class ReviewAttachReflowTestCase(ReconcileBase):
                                 "_review_active": True})
         harvest = mock.Mock()
         with mock.patch.object(actd.executor, "harvest_delivery", harvest):
-            self._reconcile([_agent("blocked")])
+            self._reconcile([_agent("blocked", pid=42)])
         harvest.assert_not_called()  # 会话中途等输入，还没收工
         req = registry.load("R-900")
         self.assertTrue((req.execution or {}).get("_review_active"))
+
+    def test_stale_working_no_pid_does_not_mark_review_active(self):
+        # §30 追记（issue #446）：roster 报 working 但**无 pid**（进程已退出、roster
+        # 项过时）= 非真活动，绝不 latch _review_active——否则一条 done 的会话会被
+        # 当成 attach 回流，把已交付的待验收卡永远钉在 运行中 列。
+        self._mk_req(status=State.REVIEW.value,
+                     execution={"session_id": "aaaa1111", "done": True,
+                                "delivered_summary": "旧摘要"})
+        self._reconcile([_agent("working")])   # pid=None by default
+        req = registry.load("R-900")
+        self.assertNotIn("_review_active", req.execution or {})
+
+    def test_stale_working_no_pid_settles_latched_flag(self):
+        # staleness bound（issue #446）：已 latch 的 _review_active 遇到 working 但
+        # 无 pid 时按「活动收工」处理——重新收割 + 清标，卡自然落回待验收，不再永挂。
+        self._mk_req(status=State.REVIEW.value,
+                     execution={"session_id": "aaaa1111", "done": True,
+                                "_review_active": True, "delivered_summary": "旧摘要"})
+        harvest = mock.Mock(return_value={"delivered_summary": "收工后的新摘要",
+                                          "final_draft": "新全文"})
+        with mock.patch.object(actd.executor, "harvest_delivery", harvest):
+            self._reconcile([_agent("working")])   # pid=None
+        req = registry.load("R-900")
+        ex = req.execution or {}
+        self.assertNotIn("_review_active", ex)
+        self.assertEqual(ex.get("delivered_summary"), "收工后的新摘要")
+        self.assertEqual(ex.get("final_draft"), "新全文")
 
 
 # --------------------------------------------------------------------------- #

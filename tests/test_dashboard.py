@@ -249,6 +249,20 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(len(dash["review"]), 1)
         self.assertFalse(dash["review"][0]["session_active"])
 
+    def test_review_with_stale_working_no_pid_stays_in_review(self):
+        # §30 追记（issue #446）：roster 报 working 但**没有 pid**（进程早已退出、
+        # roster 项过时）绝不促成 运行中——否则已交付的待验收卡会永远卡在运行中
+        # 列、拿不到验收/打回按钮。诚实降级：留在 review[]，session_active=false。
+        dash = dashboard.build_dashboard(
+            reqs=[self._review_req()], agents=[self._agent("working", pid=None)],
+            cfg=self.cfg)
+        self.assertEqual(dash["running"], [])
+        self.assertEqual(len(dash["review"]), 1)
+        self.assertEqual(dash["review"][0]["state"], "review")
+        self.assertFalse(dash["review"][0]["session_active"])
+        self.assertEqual(dash["counts"]["running"], 0)
+        self.assertEqual(dash["counts"]["review"], 1)
+
 
 class CompletedCapTestCase(unittest.TestCase):
     """§2 completed cap: newest COMPLETED_CAP by accepted_at, true total in counts."""
