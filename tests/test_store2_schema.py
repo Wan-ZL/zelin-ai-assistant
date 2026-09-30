@@ -14,6 +14,7 @@ import sqlite3
 import unittest
 from pathlib import Path
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 # 只借一个常量（schema.sql 末尾钉的版本必须等于它）——DDL 断言本身仍是纯 sqlite3
 from act.lib.store2.store import SCHEMA_VERSION
 

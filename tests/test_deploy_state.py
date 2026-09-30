@@ -10,6 +10,7 @@
 import json
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act import doctor, syncd
 from act.lib import config, dashboard, deploy_state
 

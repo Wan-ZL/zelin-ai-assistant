@@ -75,7 +75,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import radar
-from act.lib import analytics, config, radar_health, registry, sanitize, secrets, sources
+from act.lib import (analytics, config, maintenance, radar_health, registry, sanitize,
+                     secrets, sources)
 
 SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
@@ -435,12 +436,20 @@ def _mcp_marker_path() -> Path:
     return config.STATE_DIR / MCP_MARKER_FILE
 
 
-def _read_mcp_marker() -> Optional[_dt.datetime]:
+def _read_mcp_marker(now: Optional[_dt.datetime] = None) -> Optional[_dt.datetime]:
+    """上一次成功 MCP pass 的起点；读不出 → None。
+
+    **§82.4**：未来戳一律当缺席。这个戳同时喂 `_mcp_not_due`（节流）与
+    `_mcp_since`（窗口起点），未来值把两者一起弄坏——`now - marker` 变成负的，
+    `< interval` 恒真于是永远「还没到点」；窗口起点也落到未来、连 `_MCP_LOOKBACK_CAP_H`
+    的地板都夹不住它。2026-09-18 一次泄漏到 live 的测试跑把它写成
+    `2027-10-23T11:32:23Z`，Slack MCP 雷达就此静默到 2027 年（issue #452）。
+    """
     try:
         raw = _mcp_marker_path().read_text(encoding="utf-8").strip()
-        return _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except (OSError, ValueError):
+    except OSError:
         return None
+    return maintenance.parse_iso(raw, reject_future=True, now=now)
 
 
 def _write_mcp_marker(ts: _dt.datetime) -> None:
@@ -535,10 +544,16 @@ def _slack_mcp_present() -> tuple[bool, bool]:
     ``claude mcp list`` nor beacon on every 3-minute launchd tick — a fresh
     probe (cache miss/expired) is the only pass allowed to record the skip,
     which throttles the ``mcp_not_configured`` beacon to once per interval.
-    Never raises."""
+    Never raises.
+
+    **§82.4**：这个缓存的时钟是**文件 mtime**，未来的 mtime 让 `age` 变成负数、
+    于是 `< TTL` 恒真——缓存永不过期，一次「没配 MCP」的判决就永久冻住整条来源。
+    未来 mtime 与「缓存过期」同路（重新探一次），口径与 `_read_mcp_marker` 一致。
+    """
     p = _mcp_present_marker_path()
     try:
-        if (time.time() - p.stat().st_mtime) < _MCP_PRESENT_TTL_S:
+        age = time.time() - p.stat().st_mtime
+        if -maintenance.FUTURE_SKEW_S <= age < _MCP_PRESENT_TTL_S:
             return (p.read_text(encoding="utf-8").strip() == "1", False)
     except OSError:
         pass

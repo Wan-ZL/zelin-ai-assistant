@@ -772,7 +772,7 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
   3. 旧默认路径兜底（slack: `~/Desktop/Keys/slack-user-token.txt`；gmail: `~/Desktop/Keys/gmail-app-password.txt`；anthropic: `~/.config/anthropic-key.txt`）——**deprecated（v0.11 起，warn-only）**：走到这一级时 Python 侧在 stderr 打一行 deprecation 警告并记一条 `legacy_secret_path` analytics 事件（只含凭证文件名，永不含内容/路径外的信息），解析结果不变、永不 raise。理由：`~/Desktop` 在默认 macOS 上被 iCloud 同步。请迁移到第 1 级（App 设置窗口粘贴）。
   行为不变式：config/secrets/ 为空时一切照旧，Zelin 现有布置不断。
 - **runtime python 指针** = `<AIASSISTANT_HOME>/config/runtime.json`，内容 `{"python": "<绝对路径>"}`。install.sh 生成（探测顺序：`$AIASSISTANT_PYTHON` env → `~/miniconda3/bin/python3`（存在且能 `import yaml`）→ `which python3`）；Swift 依赖检查用它跑 python 检查。
-- **home 指针** = `~/Library/Application Support/ZelinAIAssistant/home.txt`，内容为 repo 根绝对路径（一行）。install.sh 写入，让 clone 到任意位置的 repo 对 GUI app 可见。**Mac app 的 repo 根解析顺序**（`AppPaths.stateRoot`）：① env var `AIASSISTANT_HOME` → ② home 指针文件（其指向的目录存在时）→ ③ 旧默认 `~/Projects/zelin-ai-assistant`。Python 侧不变（env var → 旧默认）：launchd plist（install.sh 渲染时注入）与 crontab 行都显式携带 `AIASSISTANT_HOME`，daemon 不读指针。
+- **home 指针** = `~/Library/Application Support/ZelinAIAssistant/home.txt`，内容为 repo 根绝对路径（一行）。install.sh 写入，让 clone 到任意位置的 repo 对 GUI app 可见。**Mac app 的 repo 根解析顺序**（`AppPaths.stateRoot`）：① env var `AIASSISTANT_HOME` → ② home 指针文件（其指向的目录存在时）→ ③ 旧默认 `~/Projects/zelin-ai-assistant`。Python 侧不变（env var → 旧默认）：launchd plist（install.sh 渲染时注入）与 crontab 行都显式携带 `AIASSISTANT_HOME`，daemon 不读指针。**§82 追记（2026-09-30，issue #452）**：本条那句「生产入口一律显式携带 env」从此不只是描述，而是 §82.2 守卫赖以成立的前提——它的逆命题（「env 设了就是生产」）**不成立**，所以判据改看「是不是测试跑者 × home 是不是一棵 git 工作树」。三层解析顺序与「Python 侧不读指针」一字不改（理由见 §82.6：指针在 owner 机器上指的正是 live 安装）。
 - app 侧只**写** secrets 文件（设置窗口粘贴保存），Python 侧只**读**；两侧不通过 secrets 之外的通道传递凭证；凭证内容永不打印/入日志。
 
 ---
@@ -6955,3 +6955,68 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 ### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）
 
 覆盖跑者会真跑 install.sh / uninstall.sh，而这两条脚本的关键判定**不看 HOME**：install.sh 用 `pgrep -x ZelinAIBoard` 决定是否杀 + 重开 owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` 并从硬编码 `/Applications` 删 bundle。因此临时 HOME 之外还必须：`pgrep` / `pkill` 也是 PATH 前缀假货（恒「没匹配」exit 1，install.sh 走「壳没在跑」分支）；`AIASSISTANT_UI_APPS_DIR`（install.sh 既有的 test seam，uninstall.sh 本轮补齐同款）指向临时 HOME 下的 `Applications/`，让 bundle 的安装与删除都落在沙箱里。缺这两条，2026-09-16 的第一轮全量跑把 owner 的 live 壳杀了两次、并用一个 ad-hoc 签名的 dev 构建顶替了 `/Applications` 的稳定签名（#317）——ad-hoc cdhash 与 owner 授的 Full Disk Access 对不上，壳从此写不出 `state/shell.heartbeat`。判例 `tests/test_coverage_run_flows.py`（假货清单 + exit 码）、`tests/test_uninstall.py`（`--dry-run` 带 seam 只规划沙箱 bundle、绝不碰真 `/Applications`）。**2026-09-17 追記**：`crontab` 与 `launchctl` 两只假货改成**有状态**——`crontab <file>` / `crontab -` 存、`-l` 读回（无台账 exit 1），`launchctl bootstrap|load` 记 label、`bootout|unload` 删、`list` 打三列——台账只落在沙箱 HOME 内，真 gui domain 与真 crontab 一个字节不碰；跑者过 2000 行上限后沙箱那一段住同层 `scripts/qa/coverage_sandbox.py`。
+
+## 82. 测试与工具链永不写进 live 安装（issue #452；2026-09-18 看板被抹的根因；owner 决策 **D84**）
+
+**判例先行**：2026-09-18 06:03–06:38 PT，owner 的 live 安装里 `state/store2.db` 被**重新激活了 9 次**（其中 8 次带 0 张卡），registry 被清空，`state/vault-mirror` 整个消失，27 个 tracked 文件从 checkout 里被删掉。同一批伤害还留下两道更长的尾巴：夹具卡 `R-8150`（`tests/test_dispatch_sleep_gate.py`）与 `R-960`（`tests/test_rework.py` / `tests/test_dispatch.py`）落进了真 registry，**工号分配把它们当成真卡收养**，于是此后真卡从 R-8152 / R-8153 / R-961 起编号、再往后一路从 8154 续（§60.2 不许把工号调低，这一笔改不回来）；一批**假时钟戳**留在真 `state/` 里，`state/slack_mcp.marker` = `2027-10-23T11:32:23Z` 让 Slack MCP 雷达的节流判决直到 2027 年都答「还没到点」（§82.4）。
+
+干这件事的不是恶意代码，是**一次普通的测试跑**。三个事实叠在一起就够了：
+
+1. **回落值就是生产路径**。`act/lib/config.py` 的 `_home()` 在 `AIASSISTANT_HOME` 缺席时回落到 `~/Projects/zelin-ai-assistant`（§19 第三层），而那正是 owner 的 live 安装——在这台机器上更狠一层：`~/Projects` 是一条指向 `/Volumes/Storage/Server/Projects` 的符号链接（§74 的判例里同一条），所以「live 安装」与「开发 checkout」**是同一棵树**，测试写进去的每一笔都同时污染真账本与 git 工作树。11 个路径常量在 import 期一次绑定，下游还有 34 处模块级常量把它们抄走——绑错之后再改 env 已经没用了。
+2. **沙箱依赖 import 顺序**。`tests/__init__.py`（沙箱 `AIASSISTANT_HOME` 的唯一出生地）只在它**先跑**时管用，而 `unittest discover -s tests` 把用例命名成**裸模块名**（`test_policy`，不是 `tests.test_policy`），本包的 `__init__` 只因为某个用例写了 `from tests import …` 才被牵进来。修法落地时全树有 **33 个**测试文件先 import `act`/`server` 且根本不 import `tests`——单独跑它们（`python3 -m unittest test_policy`、一次 `-k` 收窄、变异跑者的逐模块 argv）就是在真账本上跑。
+3. **门跑继承了守护进程的 env**。`scripts/qa/run_coverage.sh` 原来写的是 `${AIASSISTANT_HOME:-$(mktemp -d)}`——而无人值守的 §65 self-improve 会话从 actd 继承 `AIASSISTANT_HOME=<live checkout>`（install.sh 把它烙进 launchd plist），**回落值永远命不中**。`scripts/qa/run_gates.sh` 自己一句都没设，它的六道门与它调的 run_coverage.sh 于是全跑在 live 上。这条比「忘了设」更隐蔽：变量**设了**，设得很对，对的是生产。
+
+**法条一句话**：**跑测试的进程永远不许把一棵 git 工作树当成 `AIASSISTANT_HOME`。** 判据与 §74.1 的 `.pkg` 目的地守卫逐字同源——「路径解析掉所有符号链接之后，它自己或它的某个祖先有没有 `.git`」——理由也同源：2026-09-07 与 2026-09-18 两次事故的入口都是符号链接，只看字面路径的守卫在真实形状上等于没装。
+
+### 82.1 为什么判据是「是不是工作树」而不是「env 有没有设」
+
+「生产 = 显式携带 `AIASSISTANT_HOME`」这条早就是成文法（§19：launchd plist、crontab 行、`ingest/*.sh`、`install.sh`、壳注入的子进程 env 全部显式携带，「daemon 不读指针」）。它的逆命题**不成立**：env 设了也可能是测试（上面第 3 条），env 没设也可能是人手敲的 `python3 -m act.doctor`。所以判据只能看两件与意图无关的事实——**这个进程是不是测试跑者**，以及**这个 home 是不是一棵工作树**。两者同时为真才拒。
+
+- **不做「env 缺席即拒」**：真安装本身就是一棵 clone，回落值在每台机器上都指向一棵工作树，于是那条法等于「回落值永久作废」——`python3 -m act.doctor` 这类人手命令对每个用户都当场断掉，换来的安全为零（测试跑者继承 env 的那条路它一条都拦不住）。
+- **不做「路径白名单 / 必须在 $TMPDIR 底下」**：`ci-nightly.yml` 给的是 `${{ runner.temp }}`（`/home/runner/work/_temp`），不在 `tempfile.gettempdir()` 底下；`.github/workflows/` 是受保护路径改不动。白名单会把一条已经正确的 CI 腿判红。
+- **不做「只拒写、放行读」**：写面散在 11 个常量 + 34 处下游抄写 + 235 处 `ensure_state_dirs()` 调用点里，逐个设闸既漏又贵；而绑定只有一处。
+
+### 82.2 守卫：`act/lib/home.py`（import 期，fail-closed）
+
+- **形制**：`home.guard(HOME)` 由 `act/lib/config.py` 在 `HOME = _home()` 的**下一行**调用——11 个路径常量还没有一个被下游抄走，进程里也还没有任何一次写盘（全树 import 期零文件副作用）。命中即抛 `home.HomeNotIsolated`，消息点名两棵树并给出两条修法。抛得越早，能写坏的东西越少。
+- **跑者判据与 import 顺序无关**：`"unittest" in sys.modules or "pytest" in sys.modules`。`python3 -m unittest` / `pytest` 都由 runpy 先把跑者模块装进 `sys.modules`、**之后**才 import 任何测试模块，所以这一判据恰好补上第 2 条那个由字母序决定的洞。**零误伤的前提写成判例**：act/ 与 server/ 全树没有一行 `import unittest|pytest|doctest`，十二个生产入口 import 完 `sys.modules` 里一个都不在（`tests/test_home_guard_refuses_checkout.py`）。
+- **`.git` 是目录还是文件都算，一路往上走到 `/`**：普通 clone 是目录，worktree / submodule 是一个指向 gitdir 的文件；事故里那棵 checkout 不在 `$HOME` 底下。**解析不动 = 不算证明**（fail-closed）：`resolve()` 抛了就拿原路径继续判——判据是「能不能**证明**它在工作树之外」，不是「有没有找到 `.git`」（§74.1 同款措辞）。
+- **`_home()` 自己仍是纯解析、永不抛**：`act.doctor` 启动时先打一行 `home: <path>`、`act/lib/checks/environment.py` 的 `check_home` 行专门诊断坏 home、`--print-path` CLI 承诺「永不 traceback、永不打空行」——三者都建在「解析不抛」上。守卫是**另一行**，不是把解析改成会抛。
+- **逃生门**：`AIASSISTANT_ALLOW_LIVE_HOME=1`（`""` / `0` / `false` / `no` / `off` 都不算开）。仓库里没有任何一处设它——设了就是人手按下的。fail-closed 的守卫必须留一个有记录的出口，否则下一个被它挡住的人会把整条守卫删掉。
+- **正面修法同批落地**：33 个漏网测试文件各加一行 `from tests import TMP_HOME  # noqa: F401 - sandbox env first`（房内已有 139 份同款先例）。守卫是**拒绝**那种进程，这一行是让它**压根不发生**——单独跑一个模块从此照样沙箱化，开发者不会被守卫挡住。不许再退回去：`tests/test_sandbox_isolation.py` 用 ast 扫全树，任何 `tests/**/test_*.py` 里 `tests` 的 import 必须先于第一个 `act`/`server` import，**零豁免、零 shrink-only 账本**（同一个 PR 里修得完的事不配拥有一份欠账台账）；同文件另有一条绊线，`config.HOME` / `STATE_DIR` / `REGISTRY_DIR` / `INBOX_DIR` / `LOG_DIR` 必须都落在 `tests.TMP_HOME` 底下——2026-09-18 之前没有任何一处把这两者对比过。
+- **反向哨兵**：`tests/__init__.py` 立好沙箱 env 之后，若 `act.lib.config` **已经**在 `sys.modules` 里（某个 harness 先 import 了 act，那一刻 `sys.modules` 里还没有 unittest，守卫判不出「我在测试里」），就以测试跑者的身份补问同一把尺一次，绑在工作树上即抛。
+
+### 82.3 门跑的沙箱（shell 侧，三处）
+
+- **`scripts/qa/run_gates.sh`**：开头**无条件** `ZAI_GATE_HOME="$(mktemp -d)"` + `export AIASSISTANT_HOME="$ZAI_GATE_HOME"`，并 `trap 'rm -rf …' EXIT INT TERM` 自己收（防腐 #4：出生即带回收）。**无条件**是本条的全部要点——继承来的那一份必须被覆盖掉。EXIT trap 里不写 `exit`，所以 `exit "$fail"` 的六道门累加判决原样传出。
+- **`scripts/qa/run_coverage.sh`**：同款，`${AIASSISTANT_HOME:-…}` 就此作废。它是子进程，父脚本的 export 传不回来，所以两处各有一道——互为第二道墙。
+- **`ingest/vault-sync.sh`**：文件里每条路径都长在 `$AIASSISTANT_HOME` 上，而它的 pull 是 `rsync --delete`——变量为空时目的地塌成 `/state/vault-mirror`。两个 sourcing 脚本都先 `export AIASSISTANT_HOME="${AIASSISTANT_HOME:-$REPO_ROOT}"`，所以今天安全是**巧合**；`: "${AIASSISTANT_HOME:?…}"` 把它钉成前置条件。
+- **写法约束（判例钉住）**：赋值必须是两条语句，**不许** `export X="$(mktemp -d)"`——后者触发 shellcheck SC2155，而 ci.yml 的 lint job 对每个 tracked `*.sh` 跑裸 `shellcheck`（info 级也算红）。判例 `tests/test_qa_gates_sandbox_home.py` 逐字钉三条脚本的字面量。
+
+### 82.4 未来时间戳一律当缺席
+
+假时钟戳的伤害与「测试写进 live」是同一起事故的两半，治法也只有一句：**比「现在」还晚的时钟值当它不存在**。
+
+- **单源**：`act/lib/maintenance.py` 的 `parse_iso(ts, *, reject_future=False, now=None)`——房内的既有 ISO 解析器（`act/actd.py:300` 直接别名它，`act/lib/actd/*` 三个模块 import 它），新旋钮 **add-only、出厂 False，行为一字不变**。容差 `FUTURE_SKEW_S = 300`：NTP 一跳、夏令时边界、机器间漂移都在这个量级内，判例里那枚 2027-10-23 离它十几个月远。`now` 是注入缝（与 `registry.restore()` 的可注入时钟同款房风）。
+- **为什么「缺席」是对的降级**：这些读者本来就有「戳不在 → 照跑一轮」的 fail-open 分支，而且那条分支已经被判例钉住。把未来值接回那条老路，比新造一条「未来值专属」的判决安全得多（宪法第 11 条：坏数据只降级，不升级成破坏）。
+- **本轮接线三处**：
+  - `act/radar_slack.py` 的 `_read_mcp_marker`（`state/slack_mcp.marker`）——**判例里那一处**。未来戳让 `now - marker` 变成负 timedelta、`< interval` 恒真，于是 `_mcp_not_due` 永远答「不到点」；同一个戳还是 `_mcp_since` 的窗口起点，未来值连 `_MCP_LOOKBACK_CAP_H` 的地板都夹不住。一处修好，两个判决一起回正。
+  - `act/radar_slack.py` 的 `_slack_mcp_present`（`state/slack_mcp_present.marker`）——这个缓存的时钟是**文件 mtime**，未来 mtime 让 age 变负、`< TTL` 恒真，于是缓存永不过期、一次「没配 MCP」的判决永久冻住整条来源。未来 mtime 与「缓存过期」同路：重新探一次。
+  - `act/lib/checks/pipeline.py` 的 dashboard 行（宪法第 3 条）——未来 `generated_at` 让 `age` 变负，`age <= 90` 恒真，`max(int(age), 0)` 还把它印成 `fresh (generated 0s ago)`：一块**死了的**看板被报成健康。现在分类报 FAIL、detail 点名那枚未来戳。**沿用 `dashboard_stale` 这个 failure_id、§25 词表不新增**：症状不同而修法逐字相同（删掉它让 actd 原子重写），诚实落在文案上而不是新造一个 id（新 id 会连带要改 `mac/Sources/Doctor.swift` 的 FailureCatalog 漂移判例与 server 侧镜像，收益为零）。
+- **明确不接的**：`act/lib/maintenance.py` 的 `purge_due` / `_idle_days`、`act/lib/actd/housekeeping.py` 的 deadline 判决——那些地方未来戳已经**朝安全侧失效**（「先别动这张卡」），改它们等于把一条更宽的闸重新打开。凡是未来值只会让系统**更保守**的读者，本条一律不碰。
+
+### 82.5 live `state/` 的扫帚：`act/lib/state_audit.py`
+
+- **形制**：`python3 -m act.lib.state_audit [--apply] [--home PATH] [--json]`。**出厂只看不动**——`report()` 纯读，不带 `--apply` 一个字节都不写。退出码恒 0（这是一把诊断扫帚，不是门）；单个文件读不动 / 解析不了只属于它自己（宪法第 11 条）。
+- **只搬不删（宪法第 2 条）**：命中的文件整份搬进 `state/backups/quarantine-<UTC 时间戳>/`（同名已存在就加 `-2`、`-3`，**永不覆盖**——命名口径抄 `act/lib/store2/activate.py` 的备份），同目录留 `manifest.json` 记原相对路径 / sha256 / 命中的那几个戳。搬错了 `mv` 回去就是了。**绝不 `unlink`**：2026-09-18 之后再做一次不可恢复的自动删除，等于用同一种病治病。
+- **卡片与工号一个字节不碰**：`state/work_seq.json`、`state/store2.db`、`state/store2_truth.json` **只上报**——registry 只有 actd 主循环一个写者（§0 第 1 条 / §44），旁路进程只读+回执；被夹具卡抬高过的工号按 §60.2 不许调低，那一笔是永久欠账，报出来给人看，不许悄悄「修」。
+- **射程**：只扫 `<home>/state` 下的 `*.marker` / `*.json` / `*.txt`，`state/backups/` 自己跳过（那是隔离区），单文件读取封顶 2 MiB。`.db` 与 `.log` 不碰：前者有自己的写者，后者里的 2027 行搬走等于丢历史——它们出现在报告里就够了。
+
+### 82.6 边界（明确不做）
+
+- **不动 `server/paths.py` 的 `DEFAULT_HOME` 镜像**：§54.3 允许壳在**不注入任何 env** 的情况下回落着起 `python -m server`，给那一侧接上同一道守卫要先修 §54.3，是另一个爆炸半径。两份字面量的漂移已由 `tests/test_server_paths_mirror.py` 钉住，现状不变。
+- **不给 Python 侧加 home 指针那一层**：§19 明说「Python 侧不变（env var → 旧默认）…daemon 不读指针」，而指针（`~/Library/Application Support/ZelinAIAssistant/home.txt`）在这台机器上指的**正是** live 安装——加上它只会给守卫要关的那扇门多开一条缝。Mac app 的三层解析顺序一字不动。
+- **不给 `discover` 加 `-t .`**：把用例改名成 `tests.test_*` 能让 `tests/__init__.py` 无条件先跑，看着很对，但它同时改 8 处文档与命令字面量、撞掉 `skills/test-code` 的 argv 判例、并让 `tests/integration/test_auto_deploy_script.py` 的**故意**双重收集塌掉。§82.2 的守卫 + 33 行正面修法已经覆盖同一个洞，`-t .` 是可有可无的第三道墙。
+- **不拦「先 import act、再在同进程里起 unittest」的 harness**（射程诚实说）：那一刻 `sys.modules` 里还没有跑者模块，守卫判不出来。§82.2 的反向哨兵在 `tests/__init__.py` 被牵进来时补问一次——但一个既不 import `tests`、又自己造 TestSuite 的 harness 仍然在射程之外。今天树里没有这样的 harness（`scripts/qa/mutate.py` 给子进程显式开沙箱 home）；真有一个，它自己得先违反 §82.2 的 ast 判例。
+- **不碰 §77.2 那两个被授权的 live-checkout 写者**：`flow:doctor_clean` 故意以 `AIASSISTANT_HOME=<checkout>` 问一次 `act.doctor` 并补一次 `ensure_state_dirs()`（那是「在真安装上体检」这件事本身的定义），`scripts/qa/fixtures_b/` 的脚本各自开一次性 home。它们都不是测试跑者进程，守卫一个字节不碰它们——**这是刻意的豁免，不是漏网**。
+- **不回滚工号、不重建被删的 27 个文件**：前者 §60.2 禁止，后者是 git 的活（`git checkout -- <path>`，人手做）。本节只保证同一件事不再发生，以及留下的假戳可以被一条命令找出来。

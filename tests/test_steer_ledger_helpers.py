@@ -9,6 +9,7 @@ rules (missing text/ts/delivered_at), and the dirty-entry parser.
 import unittest
 from unittest import mock
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import steer
 from act.lib.registry import Requirement
 

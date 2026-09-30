@@ -6,6 +6,7 @@ stamp's), and a non-external card yields no reason at all.
 """
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import risk
 
 

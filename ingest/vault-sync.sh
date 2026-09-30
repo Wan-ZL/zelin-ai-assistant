@@ -19,6 +19,12 @@
 # (helper missing / grant missing / non-mac) — the chain always works, mirror
 # mode is an upgrade, never a requirement.
 
+# §82.3：本文件的每条路径都长在 $AIASSISTANT_HOME 上，而下面的 pull 是
+# `rsync --delete` —— 变量为空时目的地会塌成 `/state/vault-mirror`。两个 sourcing
+# 脚本都先 `export AIASSISTANT_HOME="${AIASSISTANT_HOME:-$REPO_ROOT}"`，所以今天
+# 是安全的**巧合**；把它钉成前置条件（`:?` = 空/未设即带原因退出，fail-closed）。
+: "${AIASSISTANT_HOME:?vault-sync.sh needs AIASSISTANT_HOME (CONTRACT §82.3)}"
+
 VAULT_MIRROR="$AIASSISTANT_HOME/state/vault-mirror"
 # shellcheck disable=SC2034  # consumed by the sourcing scripts, not here
 VAULT_SYNC_MODE_FILE="$AIASSISTANT_HOME/state/vault_sync_mode"

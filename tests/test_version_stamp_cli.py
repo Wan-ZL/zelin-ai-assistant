@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import version as ver
 
 _SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")

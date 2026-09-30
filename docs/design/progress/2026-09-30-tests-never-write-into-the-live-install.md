@@ -1,0 +1,13 @@
+pr: `ai/self-improve/R-237`（PR #TBD）
+phase: 横切（测试隔离 / QA 门；issue #452）
+law: §82（新增）· §19 追记
+
+2026-09-18 06:03–06:38 PT 的「看板被抹」查到底了，根因不在任何一段业务代码里：`act/lib/config.py` 的 home 回落值 `~/Projects/zelin-ai-assistant` **就是** owner 的 live 安装，而这台机器上 `~/Projects` 是一条指向 `/Volumes/Storage/Server/Projects` 的符号链接（§74 的判例里同一条），于是「live 安装」与「开发 checkout」是同一棵树。测试沙箱又依赖 import 顺序：`unittest discover -s tests` 把用例命名成裸模块名，`tests/__init__.py` 只因为某个用例写了 `from tests import …` 才被牵进来——落地时全树 **33 个**文件先 import `act`/`server` 且根本不 import `tests`。第三条最隐蔽：无人值守的 §65 会话从 actd **继承**了 `AIASSISTANT_HOME=<live checkout>`（install.sh 把它烙进 launchd plist），所以 `run_coverage.sh` 那句 `${AIASSISTANT_HOME:-$(mktemp -d)}` 的回落永远命不中——变量设了，设得很对，对的是生产。
+
+新法 §82 一句话：**跑测试的进程永远不许把一棵 git 工作树当成 `AIASSISTANT_HOME`**。判据不看 env 有没有设（那条的逆命题不成立，而且真安装本身就是一棵 clone，「env 缺席即拒」等于把回落值对每个用户永久作废换来零安全），也不看路径白名单（`ci-nightly.yml` 给的 `${{ runner.temp }}` 不在 `$TMPDIR` 底下，而 `.github/workflows/` 改不动），而是「解析掉所有符号链接之后，它自己或某个祖先有没有 `.git`」——与 §74.1 的 `.pkg` 目的地守卫逐字同源，因为两次事故的入口都是符号链接。守卫住 `act/lib/home.py`，在 `HOME = _home()` 的下一行执行：11 个路径常量还没有一个被下游 34 处模块级常量抄走，进程里也还没有任何一次写盘。跑者判据是 `sys.modules` 里有没有 `unittest`/`pytest`——runpy 先装跑者模块、之后才 import 测试模块，所以它与 import 顺序无关；零误伤的前提（act/ 与 server/ 全树没有一行 `import unittest`）写成了判例。
+
+同批三件配套：33 个漏网文件各加一行 `from tests import TMP_HOME`（守卫是拒绝，这一行是让它压根不发生——开发者单独跑一个模块从此照样沙箱化），`run_gates.sh` / `run_coverage.sh` 改成**无条件**开一次性沙箱（写法被判例钉成两条语句：`export X="$(mktemp -d)"` 会触发 shellcheck SC2155，而 CI 的 lint job 对每个 tracked `*.sh` 跑裸 shellcheck），`ingest/vault-sync.sh` 把 `AIASSISTANT_HOME` 钉成 `:?` 前置条件（它的 pull 是 `rsync --delete`，空变量会让目的地塌成 `/state/vault-mirror`——今天安全只是两个 sourcing 脚本先设了值的巧合）。防回退靠 `tests/test_sandbox_isolation.py` 的 ast 全树扫描，零豁免、零 shrink-only 账本：同一个 PR 里修得完的事不配拥有一份欠账台账。
+
+事故的第二半是假时钟戳（§82.4）。`state/slack_mcp.marker` 被写成 `2027-10-23T11:32:23Z`，于是 `now - marker` 是负 timedelta、`< interval` 恒真，Slack MCP 雷达直到 2027 年都答「还没到点」。治法是给房内既有的 ISO 解析器 `maintenance.parse_iso` 加一个 add-only 旋钮 `reject_future`（出厂关），接线三处：MCP 节流戳、用**文件 mtime** 当时钟的 MCP 存在性缓存（未来 mtime 让缓存永不过期），以及 doctor 的 dashboard 行——未来 `generated_at` 此前让 `max(int(age), 0)` 把一块死看板印成 `fresh (generated 0s ago)`，是宪法第 3 条的活违例。`dashboard_stale` 这个 failure_id 沿用不新增：症状不同而修法逐字相同，新 id 会连带拖上 `mac/Sources/Doctor.swift` 的 FailureCatalog 漂移判例，收益为零。凡是未来值只会让系统更保守的读者（`purge_due`、deadline 判决）一律不碰。
+
+留在 live `state/` 里的那批字节则交给一把扫帚 `python3 -m act.lib.state_audit`：默认只看不动，`--apply` 把命中的文件整份**搬**进 `state/backups/quarantine-<UTC 时间戳>/`（sha256 manifest、同名永不覆盖、搬错了 `mv` 回去）。绝不 `unlink`——2026-09-18 之后再做一次不可恢复的自动删除，等于用同一种病治病（宪法第 2 条）。`work_seq.json` 与 store2 只上报：夹具卡 `R-8150` / `R-960` 被工号分配收养这件事按 §60.2 改不回来，报出来给人看，不许悄悄「修」。决策按 owner 常设授权代拍（「所有我希望有的功能全部都推进到完成」，2026-09-06），记作 **D84**；§78–§81 与 D80–D83 已被四个在审草稿 PR（#459 / #461 / #462 / #463）占用，本轮避开它们取下一个空号。

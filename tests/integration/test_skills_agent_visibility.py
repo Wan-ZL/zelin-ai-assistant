@@ -44,6 +44,9 @@ BUDGET_SECONDS = 60
 _T0 = [time.monotonic()]
 
 ACT_FILES = ("act/__init__.py", "act/lib/__init__.py", "act/lib/version.py",
+             # config.py 的 import 闭包：home.py 是 §82.2 的 home 守卫（config 在
+             # import 期调它）——漏了这一份，假仓库里的 config 就 ImportError。
+             "act/lib/home.py",
              "act/lib/config.py", "act/lib/skills.py", "scripts/skills_sync.sh")
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3

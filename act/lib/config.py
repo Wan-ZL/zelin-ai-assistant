@@ -14,11 +14,17 @@ Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (``R-*.yaml``) are gitignored — they contain real extracted work data.
 
 All paths are derived from the ``AIASSISTANT_HOME`` env var, defaulting to
-``~/Projects/zelin-ai-assistant``. Constants are exposed as ``pathlib.Path`` objects so
+``act.lib.home.DEFAULT_HOME``. Constants are exposed as ``pathlib.Path`` objects so
 every component (executor, actd, radar, dashboard) resolves to the same files.
 
 Shell consumers (the ingest scripts) resolve vault paths through the same
 layer via ``python3 -m act.lib.config --print-path obsidian_unprocessed``.
+
+**§82 追记（issue #452）**：回落值就是 owner 的 live 安装，所以 import 期多一道
+`home.guard(HOME)`——**测试跑者**把一棵 git 工作树当 home 时当场抛
+`home.HomeNotIsolated`，生产入口（一律显式携带该 env）一个字节不受影响。
+`_home()` 本身仍是纯解析、永不抛：`act.doctor` 的 home 行与 `--print-path` CLI
+的「永不 traceback」承诺都建在它上面（§82.2 边界）。
 """
 from __future__ import annotations
 
@@ -30,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from act.lib import home as _home_mod
+
 try:
     import yaml  # PyYAML — install if missing (see module docstring)
 except ImportError:  # pragma: no cover - surfaced clearly at runtime
@@ -40,10 +48,14 @@ except ImportError:  # pragma: no cover - surfaced clearly at runtime
 # Canonical paths (env-driven, single source everywhere)
 # --------------------------------------------------------------------------- #
 def _home() -> Path:
-    return Path(os.environ.get("AIASSISTANT_HOME", "~/Projects/zelin-ai-assistant")).expanduser()
+    """纯解析，永不抛（§19 第一/第三层；拒收的判决在下面那行 guard 里）。"""
+    return Path(os.environ.get("AIASSISTANT_HOME", _home_mod.DEFAULT_HOME)).expanduser()
 
 
 HOME: Path = _home()
+# §82.2：测试跑者 × home 在一棵 git 工作树里 = 当场抛。放在 11 个路径常量**之前**——
+# 下游 34 处模块级常量与任何一次写盘都还没发生（issue #452 的伤害全在那之后）。
+_home_mod.guard(HOME)
 STATE_DIR: Path = HOME / "state"
 REGISTRY_DIR: Path = HOME / "act" / "registry"
 INBOX_DIR: Path = STATE_DIR / "inbox"

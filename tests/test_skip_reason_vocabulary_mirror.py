@@ -15,6 +15,7 @@ import re
 import unittest
 from pathlib import Path
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import radar_health
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

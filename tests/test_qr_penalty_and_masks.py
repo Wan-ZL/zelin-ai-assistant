@@ -11,6 +11,7 @@ run），于是 rule 2 的邻居下标、rule 3 的 ×40 权重、rule 4 的百�
 """
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import qr
 
 M = qr._Matrix
