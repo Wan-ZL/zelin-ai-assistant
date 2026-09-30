@@ -16,13 +16,15 @@ from scripts.qa.fixtures_b import _harness, _scan  # noqa: E402
 from scripts.qa.fixtures_b.gmail_mint import extraction  # noqa: E402
 from act.lib import registry  # noqa: E402
 
+# §78（提案车道退役）：目标卡的状态是 ``detected``（潜在任务列里等 owner 拍板的
+# 机器卡），折叠只攒证据、不许动状态（§0 第 1 条：只有 owner 能表态）。
 FIXTURE_ID = "B-05-gmail-fold"
 NOTE = "manager 又发了一封催 Q3 数字的邮件"
 
 
 def scenario(_home):
     registry.save(registry.Requirement(
-        id="R-901", title="把 Q3 rollout plan 发给 manager", status="card_sent",
+        id="R-901", title="把 Q3 rollout plan 发给 manager", status="detected",
         sources=[{"who": "manager", "channel": "gmail", "date": "2026-09-14",
                   "quote": "send the Q3 rollout plan"}]))
     msg = _harness.fixture_json("coverage_b/gmail_message.json")
@@ -36,7 +38,7 @@ def scenario(_home):
         ("no_new_card", n == 0),
         ("still_one_card", len(cards) == 1),
         ("note_folded_in", NOTE in ((target.notes or "") if target else "")),
-        ("status_unchanged", bool(target) and target.status == "card_sent"),
+        ("status_unchanged", bool(target) and target.status == "detected"),   # §78
     ])
     evidence = (f"second gmail uid={msg['uid']} folded into R-901 cards={len(cards)} "
                 f"minted={n} status={target.status if target else '-'} {why}")

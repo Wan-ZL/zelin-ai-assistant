@@ -3,6 +3,10 @@
 stop_to_review）、dashboard review 行带 `delivery`（未通过 = interrupted）、巡检
 钩子绝不崩 pass。
 
+§78（issue #447 / D80.4-D80.5）：提案列退役之后，免批闸扫的是潜在任务
+（``detected``），且**只有**本通道还在——§51 的 hand 车道 tombstone。所以
+lane 卡一律铸在 ``detected``，被拦下的 lane 卡也留在 ``detected``。
+
 沙箱 AIASSISTANT_HOME；executor/notify/roster 全 mock；gh 经
 self_improve.default_gh 的 patch 注入 FakeGh——绝不 spawn 真 claude / gh。
 """
@@ -13,7 +17,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 from tests.self_improve_testkit import FakeGh, lane_card, pr_doc
 
 from act import actd
-from act.lib import config, registry, self_improve
+from act.lib import config, notify, policy, registry, self_improve
 from act.lib.dashboard import build_dashboard
 from act.lib.registry import State
 
@@ -63,7 +67,7 @@ class WireBase(unittest.TestCase):
 
 class AutoDispatchWireTestCase(WireBase):
     def test_lane_card_is_approved_with_its_own_note_and_notice(self):
-        registry.save(lane_card(status=State.CARD_SENT.value, execution=None))
+        registry.save(lane_card(status=State.DETECTED.value, execution=None))
         self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
         req = registry.load("P-7")
         self.assertEqual(req.status, State.APPROVED.value)
@@ -74,30 +78,50 @@ class AutoDispatchWireTestCase(WireBase):
         title = self.notify.call_args.args[0]
         self.assertTrue("自我改进通道" in title or "Self-improve lane" in title, title)
 
-    def test_hand_card_note_and_notice_unchanged(self):
-        registry.save(lane_card("P-8", status=State.CARD_SENT.value, execution=None,
+    def test_hand_card_is_left_in_the_backlog_and_keeps_the_old_copy(self):
+        """§78/D80.4：hand 卡不再进闸——但 §51 的两句文案逐字留着，不许被改。
+
+        原判例（test_hand_card_note_and_notice_unchanged）把 hand 卡塞进同一个
+        pass，钉「§65 的新文案不得污染 hand 车道的 notes 痕与通知标题」。owner
+        退役提案列时一并 tombstone 了 hand 车道的入口，所以这条判例拆成两半，
+        两半都不能丢：
+
+        1. **接线面**：同一张 hand 卡现在留在潜在任务，一个字都不写；
+        2. **词表面**：``auto_dispatch_note`` / ``msg_auto_dispatched`` 的回落
+           分支逐字不变（reason != "ok:self_improve"）。它们没有生产调用方了，
+           但 §65 的文案永远不许顺手盖到那条分支上——哪天有人给 hand 卡接回
+           入口，卡面与通知必须还是老样子。
+        """
+        registry.save(lane_card("P-8", status=State.DETECTED.value, execution=None,
                                 sources=[{"channel": "quick_capture", "date": "d", "quote": "x"}],
                                 cost_estimate_usd=2.0))
-        self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
+        self.assertEqual(actd.auto_dispatch_pass(self.cfg), 0)
         req = registry.load("P-8")
-        self.assertIn("hand 出身免批自动派发（est $2）", req.notes)
-        self.assertEqual(self.notify.call_args.args[0], "观察模式：手打卡已自动派发（免批）")
+        self.assertEqual(req.status, State.DETECTED.value)
+        self.assertEqual(req.notes, "")
+        self.notify.assert_not_called()
+        # 词表半边（纯函数，retired-but-legal 分支）
+        self.assertEqual(policy.auto_dispatch_note("ok", 2.0, "2026-09-02"),
+                         "[2026-09-02 auto-dispatch] hand 出身免批自动派发（est $2）")
+        self.assertEqual(notify.msg_auto_dispatched("ok", "标题")[0],
+                         "观察模式：手打卡已自动派发（免批）")
 
     def test_lane_disabled_is_routine_and_clears_stale_token(self):
-        registry.save(lane_card(status=State.CARD_SENT.value,
+        registry.save(lane_card(status=State.DETECTED.value,
                                 execution={"auto_dispatch_block": "self_improve:paused"}))
         cfg = config.Config()          # 出厂默认：self_improve.enabled=false
         self.assertEqual(actd.auto_dispatch_pass(cfg), 0)
         req = registry.load("P-7")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("auto_dispatch_block", req.execution)
         self.assertEqual(req.notes, "")
 
     def test_repo_mismatch_is_stated_on_the_card(self):
-        registry.save(lane_card(status=State.CARD_SENT.value, execution=None,
+        registry.save(lane_card(status=State.DETECTED.value, execution=None,
                                 target_repo="/somewhere/else"))
         self.assertEqual(actd.auto_dispatch_pass(self.cfg), 0)
         req = registry.load("P-7")
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertEqual(req.execution["auto_dispatch_block"], "self_improve:repo_mismatch")
         self.assertIn("self_improve:repo_mismatch", req.notes)
         self.notify.assert_not_called()

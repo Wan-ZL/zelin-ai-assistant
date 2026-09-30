@@ -1,7 +1,9 @@
 """W17 effective tier + W18 remote direct-run gate (act/lib/risk.py).
 
 法源:docs/design/vnext-amendments.md §W17/§W18。纯函数,无需起 server;
-dashboard 投影的 add-only ``effective_tier`` 字段也在这里钉住。
+dashboard 投影的 add-only ``effective_tier`` 字段也在这里钉住——**§78**
+（issue #447 / owner 决策 D80）之后那个字段长在潜在任务列（``debt[]``）的卡面
+上:批准键搬到哪一行,T2 打字确认的判据就得跟到哪一行。
 """
 import unittest
 
@@ -72,7 +74,7 @@ class EffectiveTierTestCase(unittest.TestCase):
 
     def test_requirement_object_without_field_is_declared_tier(self):
         req = Requirement(id="R-900", title="x", tier="T2",
-                          status=State.CARD_SENT.value)
+                          status=State.DETECTED.value)
         et = risk.effective_tier(req)
         self.assertEqual(et.tier, "T2")
         self.assertFalse(et.forced_expand)
@@ -111,21 +113,31 @@ class RemoteDirectRunAllowedTestCase(unittest.TestCase):
 
 
 class DashboardEffectiveTierTestCase(unittest.TestCase):
-    def test_needs_approval_carries_effective_tier(self):
+    def test_the_backlog_lane_carries_effective_tier(self):
+        """§50 的生效档位驱动 T2 打字确认，所以它必须长在**带批准键的那一行**上。
+        §78（issue #447 / D80）把那颗键搬到了潜在任务列（``debt[]``），退役的
+        ``needs_approval[]`` 恒空——判例跟着搬，否则「促成运行」会坐在一张看不出
+        自己是 T2 的卡上（§2 §78 追记明说这是必须而非可选）。三种状态同列同面：
+        ``detected``、``raising`` 灰占位、以及退役残留的 ``card_sent`` 落单卡。
+        """
         # v0.10.3 Requirement 无 origin_trust => effective_tier 恒等于 tier
         # (add-only 字段,W17 接线后由 origin_trust 驱动)。
         reqs = [
             Requirement(id="R-901", title="卡一", tier="T1",
-                        status=State.CARD_SENT.value),
+                        status=State.DETECTED.value),
             Requirement(id="R-902", title="卡二", tier="T2",
                         status=State.RAISING.value),
+            Requirement(id="R-903", title="落单卡", tier="T2",
+                        status=State.CARD_SENT.value),
         ]
         dash = dashboard.build_dashboard(reqs=reqs, agents=[],
                                          cfg=config.Config())
-        items = {i["id"]: i for i in dash["needs_approval"]}
+        self.assertEqual(dash["needs_approval"], [])        # §78 墓碑：恒空
+        items = {i["id"]: i for i in dash["debt"]}
         self.assertEqual(items["R-901"]["effective_tier"], "T1")
         self.assertEqual(items["R-901"]["effective_tier"], items["R-901"]["tier"])
         self.assertEqual(items["R-902"]["effective_tier"], "T2")
+        self.assertEqual(items["R-903"]["effective_tier"], "T2")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,9 @@ informational or future-conditional messages never card; follow-ups of
 delivered/merged cards get improvement_of lineage instead of isolated new
 cards; a second source of the same event folds into the open follow-up.
 
+§78（提案车道退役）：本雷达铸的卡一律落 detected/潜在任务——提取层的
+``urgent`` 不再挑列，只挑要不要打扰（见 :func:`_mark_birth` 的 quiet_birth）。
+
 Self-DM quick capture — the SELF-DM (the im channel with yourself) is a mobile
 capture inbox. Zelin's OWN messages there are NOT skipped; each one (text
 and/or photo/video attachments) is pushed through the same three-way
@@ -676,10 +679,17 @@ def _mcp_items(runner, prompt: str) -> Optional[list]:
     return items
 
 
-def _preset_status(r: dict) -> str:
-    """统一口径：非紧急真实请求落 detected/备选（triage 的 confidence=low
-    也会强制降级——这里按提取层的 urgent 预设，兜住 triage 兜底路径）。"""
-    return "card_sent" if r.get("urgent") is not False else "detected"
+def _mark_birth(req: registry.Requirement, r: dict) -> registry.Requirement:
+    """§78 / D80.7：提案列退役后 ``urgent`` 不再挑列——机器卡一律落潜在任务
+    （detected），这个信号改挑「要不要打扰」：提取层判非紧急 = 安静出生，盖
+    add-only 的 ``quiet_birth``，alerts 的新卡通知跳过这一行（§45 FULL/LIMITED
+    的可观测性搬到通知资格上）。triage 的 confidence=low 由
+    :func:`act.lib.quick_capture._apply_low_confidence` 按同一口径补盖。
+
+    只在真安静时盖：``quiet_birth`` 默认 False，整键不落盘，老卡零差异。"""
+    if r.get("urgent") is False:
+        req.quiet_birth = True
+    return req
 
 
 def _mcp_source(r: dict) -> dict:
@@ -703,18 +713,18 @@ def _mcp_source(r: dict) -> dict:
 
 
 def _mcp_requirement(r: dict) -> registry.Requirement:
-    return registry.Requirement(
+    return _mark_birth(registry.Requirement(
         id=registry.next_id(),
         title=(r.get("title") or r.get("summary") or "")[:80],
         summary=r.get("summary") or r.get("title"),
         type="comms",
         tier="T1",
-        status=_preset_status(r),
+        status=registry.State.DETECTED.value,   # §78：机器卡只落潜在任务
         hardness="soft",
         plan=[],
         sources=[_mcp_source(r)],
         notes="from Slack (MCP fallback)",
-    )
+    ), r)
 
 
 def _file_mcp_item(quick_capture, r: dict, cfg: config.Config, runner) -> bool:
@@ -1088,18 +1098,18 @@ def _native_source(r: dict, src_msg: dict) -> dict:
 
 
 def _native_requirement(r: dict, source: dict) -> registry.Requirement:
-    return registry.Requirement(
+    return _mark_birth(registry.Requirement(
         id=registry.next_id(),
         title=(r.get("summary") or "")[:80],
         summary=r.get("summary"),
         type=r.get("type") or "comms",
         tier=r.get("tier") or "T1",
-        status=_preset_status(r),   # 统一口径：见 _preset_status
+        status=registry.State.DETECTED.value,   # §78：机器卡只落潜在任务
         hardness="soft",
         plan=r.get("plan") or [],
         sources=[source],
         notes=f"needs_reply={r.get('needs_reply')} · from Slack",
-    )
+    ), r)
 
 
 def _file_native_item(quick_capture, r: dict, by_permalink: dict,

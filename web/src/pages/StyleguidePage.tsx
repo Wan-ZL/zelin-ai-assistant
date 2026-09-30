@@ -1,6 +1,8 @@
 // 活体样式指南（?page=styleguide，深链同 TrashPage 约定）。结构性保证：本页渲染的
-// 是【真组件 + 真 token】——ProposalCard/RunningCard/ReviewCard/DoneCard/DebtCardItem/
-// LaneComposer 原件挂载，chip/btn 用 board.css 现役 class；token 一改本页即变。
+// 是【真组件 + 真 token】——DebtCardItem/RunningCard/ReviewCard/DoneCard/LaneComposer
+// 原件挂载，chip/btn 用 board.css 现役 class；token 一改本页即变。
+// §78（D80，issue #447）：ProposalCard 随提案列一起墓碑，本页不再挂它——样板间只许展示
+// 看板上真的挂得出来的卡，否则退役的动词（批准 / 暂缓）会从这一页漏回产品。
 // 入口纪律：只有 URL 直达（看板头部保持干净；现无 About/footer 可挂小链接）。
 // 五节：1 老 app 参照表（palette.ts，⚠️=可见差异）2 Buttons 3 Chips 4 Cards 5 Type & spacing。
 import type { ReactNode } from "react";
@@ -57,8 +59,8 @@ export function StyleguidePage() {
       <Section
         title={text("2 · Buttons（真组件）", "2 · Buttons (real components)")}
         note={text(
-          "全部动词按钮从真卡组件长出：批准/拒绝/修改/暂缓 · 评论/停止 · 验收/打回/复制成稿 · 退回待验收/永久完成 · 研究并提议/删除 · 捕获/直跑；末格为三变体 class + disabled 态与 hover token 注。",
-          "Every verb button grows out of the real card components: approve/reject/comment/later · answer/comment/stop · accept/send-back/copy-draft · back-to-review/done-for-good · raise/delete · capture/run; the last cell shows the three variant classes with disabled states and hover-token notes.",
+          "全部动词按钮从真卡组件长出：回答…/停止 · 评论/停止 · 验收/打回/复制成稿 · 退回待验收/永久完成 · 促成运行/拒绝/修改/研究并提议/删除/永久完成（封存）· 捕获/直跑；末格为三变体 class + disabled 态与 hover token 注。",
+          "Every verb button grows out of the real card components: answer/stop · comment/stop · accept/send-back/copy-draft · back-to-review/done-for-good · run-it/reject/comment/raise/delete/done-for-good · capture/run; the last cell shows the three variant classes with disabled states and hover-token notes.",
         )}
       >
         <ButtonsSection />
@@ -77,8 +79,8 @@ export function StyleguidePage() {
       <Section
         title={text("4 · Cards（每个 lane 状态一张真卡）", "4 · Cards (one real card per lane state)")}
         note={text(
-          "proposal T1 / T2 / processing 占位 / queued / working / needs-input / review / done + 潜在任务；.task-card 基座 + .is-queued / .is-blocked 子状态。",
-          "Proposal T1 / T2 / processing placeholder / queued / working / needs-input / review / done, plus backlog; .task-card base with .is-queued / .is-blocked substates.",
+          "潜在任务 T1 / T2 / processing 占位 / queued / working / needs-input / review / done + 老债务行；.task-card 基座 + .is-queued / .is-blocked 子状态。",
+          "Backlog T1 / T2 / processing placeholder / queued / working / needs-input / review / done, plus the legacy debt row; .task-card base with .is-queued / .is-blocked substates.",
         )}
       >
         <CardsSection />

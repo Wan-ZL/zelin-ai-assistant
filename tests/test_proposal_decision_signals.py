@@ -1,19 +1,27 @@
-"""§76.2 / §76.3 提案结算信号：投影真值表 + 三条一次性升级通知。
+"""§76.2 / §76.3 结算信号：投影真值表 + 三条一次性升级通知。
 
-issue #313 的第二、三条诉求。钉住的契约：
+issue #313 的第二、三条诉求。**§78（issue #447 / owner 决策 D80）之后这三个
+信号住在潜在任务列**（``debt[]``）：提案车道退役，``needs_approval[]`` 恒空，
+所以原来钉在提案行上的每一条判例都逐条重锚到 ``debt[]``——口径一个字没改，
+换的只是它长在哪一行上。钉住的契约：
 
 - ``decision_due``：``days_left <= 0`` 为真；未来 / 无 / 坏 deadline 为假
   （拿不准不催人）。它是投影，不是状态——§70.2 的静默清扫一字不动；
 - ``mention_escalated``：``repeated >= approval.mention_escalation``（默认
   ``config.DEFAULT_MENTION_ESCALATION``）；阈值 0 / 负 = 关；坏配置回落出厂值；
 - ``completion_hint``：卡上有提示才出键，``at`` 转 epoch int；空壳整键省略；
-  **债务列的备选卡同样投影它**（盖章状态含 detected，卡面才有得看，PR #349 评审）；
+- **两个派生 bool 现在必须下到潜在任务列**（§78 / D80.8 作废了 §76.2 原文
+  「备选卡面没有 deadline 决策行」那一句）：那是 owner 唯一看得见它们的卡面，
+  留在恒空的提案列上等于把 issue #313 的三条信号整体报废；
+- 退役状态 ``card_sent`` 的落单卡投影进同一列、同一张卡面（§78：没有一张卡
+  因为状态退役而隐形）；
 - 阈值这把旋钮有**唯一一处**可见面：设置页「审批 / 成本」区那一行（落点
   ``approval.mention_escalation``、override 扁平键同名），actd 每 pass 现读
   （`_refresh_model_knobs`）——config.yaml 手改 + 重启不是唯一出路；
 - ``detect_transitions``：三个信号的 false→true 翻面各响**一次**（同一张卡
   在两个快照里都在）；恒为真的下一个 pass 静默；新卡不在此列（§40 的新卡
-  通知已经点名过它）；``prev is None``（actd 刚起）整轮不发。
+  通知已经点名过它）；``prev is None``（actd 刚起）整轮不发。**差分源自 §78
+  起是 ``debt[]``**——这是整次退役里最容易静默失效的一处（§40.6 修法）。
 """
 import json
 import unittest
@@ -27,21 +35,12 @@ from act.lib.registry import Requirement
 from server import settings_catalog
 
 
-def _row(**kw) -> dict:
-    """一张 card_sent 卡的投影行（needs_approval[0]）。"""
+def _row(status="detected", **kw) -> dict:
+    """一张机器卡的投影行（§78：潜在任务列 ``debt[0]``，不再是 needs_approval）。"""
     cfg = kw.pop("cfg", None) or config.Config()
     req = Requirement.from_dict({"id": "P-023", "title": "改名 Compass",
-                                 "status": "card_sent", **kw})
+                                 "status": status, **kw})
     dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=cfg, archived=[])
-    return dash["needs_approval"][0]
-
-
-def _debt_row(**kw) -> dict:
-    """一张 detected 卡的投影行（debt[0]）——备选列的同一条提示。"""
-    req = Requirement.from_dict({"id": "P-204", "title": "潜在任务",
-                                 "status": "detected", **kw})
-    dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config(),
-                                     archived=[])
     return dash["debt"][0]
 
 
@@ -109,17 +108,44 @@ class CompletionHintProjectionTestCase(unittest.TestCase):
         self.assertEqual(row["completion_hint"],
                          {"at": None, "note": "已经做完了", "channel": ""})
 
-    def test_the_debt_lane_projects_it_too(self):
-        """备选卡也会被盖章（§76.1 的 `_HINT_STATES` 含 detected），所以债务列
-        也必须发这一键——否则那是只写不读的死字段（PR #349 评审）。"""
-        row = _debt_row(completion_hint={"at": "2026-09-09T12:00:00Z",
-                                         "note": "repo 已建", "channel": "meeting"})
+    def test_the_retired_lane_straggler_projects_the_same_face(self):
+        """退役状态 ``card_sent`` 的落单卡照样投影进潜在任务列、长同一张卡面
+        （§78：归并扫描没跑完 / 手改盘面留下的卡不许因为状态退役而隐形）。
+
+        这一条继承的是旧判例「另一条车道也必须发 ``completion_hint``，否则那是
+        只写不读的死字段」（PR #349 评审）——提案列退役后「另一条车道」指的就是
+        落单的 ``card_sent``。"""
+        row = _row(status="card_sent",
+                   completion_hint={"at": "2026-09-09T12:00:00Z",
+                                    "note": "repo 已建", "channel": "meeting"})
         self.assertEqual(row["completion_hint"],
                          {"at": 1788955200, "note": "repo 已建", "channel": "meeting"})
-        self.assertNotIn("completion_hint", _debt_row())
-        # 提案列那两个派生 bool 不下到这一列（备选卡没有 deadline / 被提章面）
-        self.assertNotIn("decision_due", row)
-        self.assertNotIn("mention_escalated", row)
+        self.assertNotIn("completion_hint", _row(status="card_sent"))
+        # 落单卡面与 detected 卡面同形：三个结算信号一个不少
+        self.assertIn("decision_due", row)
+        self.assertIn("mention_escalated", row)
+
+    def test_the_two_derived_bools_ride_the_backlog_row(self):
+        """§78 / D80.8 **作废**了 §76.2 原文「备选卡面没有 deadline 决策行、
+        也没有『被提×N』章」那一句——它是一句关于提案列与备选列分工的论断，而
+        提案列已经不存在了。``debt[]`` 是 owner 唯一看得见这两个派生 bool 的卡面：
+        留在恒空的 ``needs_approval[]`` 上 = issue #313 的三条结算信号整体报废
+        （P-008「被提 ×23 一次升级动作都没有」原样复发）。"""
+        row = _row(deadline="2000-01-01", repeated_mentions=23)
+        self.assertIs(row["decision_due"], True)
+        self.assertIs(row["mention_escalated"], True)
+
+    def test_the_retired_proposal_lane_stays_present_and_empty(self):
+        """§78 墓碑：``needs_approval`` 这个 wire 键与 ``counts.needs_approval``
+        都留着（宪法第 6 条 add-only；冻结的原生 app 少一个键就整份 payload 解不开），
+        但恒为 ``[]`` / 恒为 0——它的空是法条，不是遗漏。"""
+        req = Requirement.from_dict({"id": "P-023", "title": "改名 Compass",
+                                     "status": "detected", "deadline": "2000-01-01"})
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config(),
+                                         archived=[])
+        self.assertEqual(dash["needs_approval"], [])
+        self.assertEqual(dash["counts"]["needs_approval"], 0)
+        self.assertEqual([r["id"] for r in dash["debt"]], ["P-023"])
 
 
 class MentionEscalationKnobSurfaceTestCase(unittest.TestCase):
@@ -172,9 +198,12 @@ class MentionEscalationKnobSurfaceTestCase(unittest.TestCase):
 
 
 def _snap(**flags) -> dict:
+    """一份看板快照。§78：结算信号的差分源是潜在任务列（``debt[]``）——
+    ``needs_approval[]`` 恒空，继续从它差分 = 三条升级通知全部无声死掉
+    （§40.6 修法）。这里刻意把空的提案列也摆上，钉死「别再看那一列」。"""
     row = {"id": "P-023", "title": "改名 Compass", "repeated": 23}
     row.update(flags)
-    return {"needs_approval": [row], "running": [], "review": []}
+    return {"needs_approval": [], "debt": [row], "running": [], "review": []}
 
 
 class SettlementTransitionsTestCase(unittest.TestCase):
@@ -219,7 +248,8 @@ class SettlementTransitionsTestCase(unittest.TestCase):
 
     def test_a_brand_new_card_does_not_double_up(self):
         """出生即带信号的新卡只响 §40 的新卡通知，不再多响三声。"""
-        titles = self._titles({"needs_approval": [], "running": [], "review": []},
+        empty = {"needs_approval": [], "debt": [], "running": [], "review": []}
+        titles = self._titles(empty,
                               _snap(decision_due=True, mention_escalated=True))
         self.assertEqual(len(titles), 1)
         self.assertIn("awaiting approval", titles[0])

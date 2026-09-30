@@ -4,12 +4,14 @@ Each pass:
   (a) drain STATE/inbox/*.json decisions
         approve  -> status=approved（W17：外部出身未扩写 -> 转 raising）
         reject   -> status=rejected
-        comment  -> fold text into plan/notes, keep card_sent (re-approval)
+        comment  -> fold text into plan/notes, back to detected (re-approval)
                     ——除 EXECUTING 卡：comment = steer（§44.3-S 中途转向指令，
                     入队等安全窗口 flush 进 live session，状态机零改动）
         merge_review / merge_apply / merge_dismiss -> merge-review 契约 一/四/五
       delete the decision file after reading it.
-  (a') auto-dispatch（§51 hand lane + §65 self_improve lane）：card_sent 卡过天花板即免批 approved。
+  (a'') §78 一次性归并扫描：退役提案车道上的存量 card_sent 卡搬进潜在任务（detected）。
+  (a') auto-dispatch（§65 self_improve lane；§51 hand lane retired，D80.4）：
+       潜在任务里的 lane 卡过天花板即免批 approved。
   (b) dispatch every status=approved requirement that has no execution yet
       （并发上限内；超出留在合并运行列的 queued 子状态）。
   (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
@@ -300,9 +302,11 @@ _TransitionDenied = _inbox.TransitionDenied
 _parse_iso = maintenance.parse_iso
 _mtime_dt = _merge.mtime_dt
 _MERGE_DEAD_STATES = _merge.MERGE_DEAD_STATES
+# §34bis preset retired v-next（并入 §78，D80.11）：按钮与固定 plan 都已删，
+# 词表键留着认存量卡（_proposals_triage_plan / _proposals_triage_in_flight 随
+# 功能一并退役，名字永不复用）。
 PROPOSALS_TRIAGE_PRESET = _triage_guard.PROPOSALS_TRIAGE_PRESET
-_proposals_triage_plan = _triage_guard.proposals_triage_plan
-_proposals_triage_in_flight = _triage_guard.proposals_triage_in_flight
+_guarded_card = _triage_guard.guarded_card
 _registry_snapshot = _triage_guard.registry_snapshot
 _triage_snapshot_path = _triage_guard.triage_snapshot_path
 _precondition_ok = _decisions.precondition_ok
@@ -404,7 +408,7 @@ def _update_search_index(card_id, session_id) -> None:
     return _session.update_search_index(_ctx(), card_id, session_id)
 
 
-# §34bis triage guard ---------------------------------------------------------
+# §34bis registry 写入护栏（§78 起认的是直跑卡）------------------------------
 def _stamp_triage_snapshot(req_id: str) -> Optional[str]:
     return _triage_guard.stamp_triage_snapshot(_ctx(), req_id)
 
@@ -461,6 +465,32 @@ def _power_sample() -> int:
 
 def auto_dispatch_pass(cfg: config.Config) -> int:
     return _dispatch.auto_dispatch_pass(_ctx(), cfg)
+
+
+#: §78.5「每次开机至多一次」的闩：一次性迁移不该每 pass 再扫一遍全表
+#: （`load_all()` 在 YAML 后端是整目录读+解析，而本 pass 已经为免批闸读过一次）。
+#: 进程内 latch 而不是落盘标记：重启重跑一遍是**幂等的零改动**，为它引一个
+#: 新的状态文件反而要自己带帽（防腐 #4）。测试用 `_reset_fold_latch()` 复位。
+_FOLD_SWEPT = False
+
+
+def _reset_fold_latch() -> None:
+    """判例用：把 §78.5 的开机闩拨回未跑（同一进程里跑第二遍扫描）。"""
+    global _FOLD_SWEPT
+    _FOLD_SWEPT = False
+
+
+def fold_retired_lane() -> int:
+    """§78 一次性归并扫描（card_sent → detected）——幂等，搬完即恒 0 张。
+
+    §78.5 纪律「每次开机至多一次」：本进程跑过就不再扫（下面的 latch）。跑失败
+    也算跑过——一张卡搬不动是 `_dispatch.fold_retired_lane` 内部吞掉的个案，
+    不是「这一轮没发生」，重试交给下次开机（宪法第 11 条：失败不外溢）。"""
+    global _FOLD_SWEPT
+    if _FOLD_SWEPT:
+        return 0
+    _FOLD_SWEPT = True
+    return _dispatch.fold_retired_lane(_ctx())
 
 
 def dispatch_approved(cfg: config.Config) -> int:
@@ -794,7 +824,10 @@ def run_once(
     _store2_tick()   # §53 数据层：首跑激活（备份→迁移→比对→标记）+ 每日导出
     heartbeat.beat("inbox", interval)
     n_inbox = process_inbox()
-    n_auto = auto_dispatch_pass(cfg)   # §51：hand 卡免批通道（card_sent→approved）
+    # §78 一次性归并扫描必须排在免批闸**之前**：退役车道上的存量卡先落进
+    # 潜在任务，本 pass 的 §65 lane 卡才可能被看见（否则要多等一整轮）。
+    fold_retired_lane()
+    n_auto = auto_dispatch_pass(cfg)   # §65 lane 免批通道（detected→approved）
     heartbeat.beat("dispatch", interval)
     n_dispatched = dispatch_approved(cfg)
     # 仅在真有变化时才早写——空闲 pass 不额外跑 build_dashboard（内含 `claude agents`

@@ -67,8 +67,8 @@ session_id 等。写入模式跑完也会自动做同一套校验。
 
 | scene | R-101 所在位置 |
 |---|---|
-| `captured` | 提案——「AI 研究中」占位卡（会议录音刚被 radar 捕获，完整提案生成前） |
-| `initial`（默认） | 提案（T1 卡，满配：sources/plan/DoD/成本/截止） |
+| `captured` | 潜在任务——「AI 研究中」占位卡（会议录音刚被 radar 捕获，完整提案生成前） |
+| `initial`（默认） | 潜在任务（T1 卡，满配：sources/plan/DoD/成本/截止） |
 | `approved` | 运行中——灰色 queued 卡（已批准、待派发） |
 | `running` | 运行中——working，40 秒前启动，带 `claude attach` 命令 |
 | `review` | 待验收——delivered_summary 提到 draft PR #42，30 秒前进入 |
@@ -80,8 +80,8 @@ python3 scripts/demo_seed.py /tmp/assistant-demo --scene approved
 
 ## 截图 shot list（README 用）
 
-1. **看板主窗口**：点菜单栏图标直接打开看板（v0.48 起 popover 已移除）。点最左
-   的「潜在任务」窄条展开后，提案 / 运行中 / 待验收 / 潜在任务 / 阶段性完成
+1. **看板主窗口**：点菜单栏图标直接打开看板（v0.48 起 popover 已移除）。最左
+   的「潜在任务」条出厂即展开，潜在任务 / 运行中 / 待验收 / 阶段性完成
    全部非空；最右还有一条默认收起的「永久性完成」窄条（scene `initial`）。
 2. **T2 卡展开**：R-102（inkweld demo 环境）点「展开详情 ▸」——$85 成本、
    需文字确认、disagreement、重复×3、🟢 新建 repo 一行全在。
@@ -95,8 +95,8 @@ python3 scripts/demo_seed.py /tmp/assistant-demo --scene approved
 
 | 时间 | 命令 | 画面 |
 |---|---|---|
-| 0–6s | `--scene initial` | 全景：五列都有货。镜头推向提案列的 R-101。 |
-| 6–11s | 点 R-101 的 ✅，随即 `--scene approved` | 卡片从提案列消失，运行中列顶出现灰色 queued 卡——"批准即入队"。 |
+| 0–6s | `--scene initial` | 全景：四列都有货。镜头推向潜在任务列的 R-101。 |
+| 6–11s | 点 R-101 的「促成运行」，随即 `--scene approved` | 卡片从潜在任务列消失，运行中列顶出现灰色 queued 卡——"批准即入队"。 |
 | 11–16s | `--scene running` | 灰卡变 working：转起来的状态、`claude attach` 一键复制。 |
 | 16–24s | `--scene review` | 卡片跳到待验收：draft PR #42 回执 + DoD checklist，鼠标划过「验收 ✓」。 |
 | 24–30s | 点验收，随即 `--scene done` | 卡片落入完成列（刚刚验收）。拉远回全景，定格。 |

@@ -4,6 +4,9 @@
 section、Kanban 列、卡片按钮 / 对话框、AppDelegate 菜单与 ⌘n、NotifyRelay kind）钉住：
 归类 role、screen 归属、id 铸造与 #n 去重、settings 键、列序与书立条、快捷键、
 owner（web / shell / os / retired）、确定性（重跑同 JSON）与 CLI 三态。
+
+归属表里 owner 决策的三张（`CONTROL_OWNER` / `RAIL_OWNER` / 第九张 `LANE_OWNER`，
+§78.8 / D80 退役提案列）各有一条判例：retired 只列不判，理由随行进 JSON attribution。
 """
 import io
 import json
@@ -497,6 +500,50 @@ class ControlClassificationTestCase(_FixtureCase):
                          ["dashboard", "ingest", "trash", "archive", "settings", "about"])
         # 迷你 fixture 的三页不在表里 → 全部照判
         self.assertTrue(all(r["gated"] and r["owner"] == "web" for r in self.inventory["rail"]["items"]))
+
+    def test_lane_owner_retires_the_proposals_lane_only_and_keeps_its_verbs_gated(self):
+        """§78.8 / D80（issue #447）：第九张归属表 LANE_OWNER 只退役提案列本身。
+
+        退役走归属表、不走 waivers（§78.8 第 5 条：两本账都是 shrink-only）。真正消失的
+        只有三条 control——§34bis 的「清理积压」、从没用过的「暂缓」、以及暂缓按下后那句
+        pending 文案；批准 / 修改 / 拒绝 / 展开详情随卡面搬到潜在任务行上，**照判照过**
+        （探针匹配的是渲染后看板上任意位置的可及名，§78.8 第 3 条）。这条判例守的是
+        「退役 ≠ 顺手把一整列的动词也免判了」。
+        """
+        self.assertEqual(set(inv.LANE_OWNER), {"needs_approval"})
+        for slug, entry in inv.LANE_OWNER.items():
+            self.assertEqual(set(entry), {"owner", "reason"}, slug)
+            self.assertEqual(entry["owner"], "retired", slug)
+            self.assertIn("D80", entry["reason"], slug)
+            self.assertRegex(entry["reason"], r"§\s*78", slug)
+        real = uc.load_json(uc.INVENTORY_PATH)
+        self.assertEqual(real["attribution"]["lane_owner"], inv.LANE_OWNER)
+        lanes = {lane["slug"]: lane for lane in real["lanes"]["items"]}
+        self.assertEqual((lanes["needs_approval"]["owner"], lanes["needs_approval"]["gated"]),
+                         ("retired", False))
+        self.assertEqual(lanes["needs_approval"]["reason"], inv.LANE_OWNER["needs_approval"]["reason"])
+        # 其余五列照判；列本身退役不改 _LANE_SLUG，order 里一个 slug 都不少（§ 号 / wire key 永不静默消失）
+        self.assertEqual([slug for slug, lane in lanes.items() if lane["gated"]],
+                         ["debt", "running", "review", "completed", "archived"])
+        self.assertEqual(real["lanes"]["order"],
+                         ["debt", "needs_approval", "running", "review", "completed", "archived"])
+        controls = {c["id"]: c for c in real["controls"]}
+        for cid in ("control:board.needs_approval:button:clean-up",
+                    "control:board.needs_approval:button:later",
+                    "control:board.notices:label:moving-to-backlog"):
+            self.assertEqual((controls[cid]["owner"], controls[cid]["gated"]), ("retired", False), cid)
+            self.assertIn("D80", controls[cid]["reason"], cid)
+        for cid in ("control:board.needs_approval:button:approve",
+                    "control:board.needs_approval:button:comment",
+                    "control:board.needs_approval:button:reject",
+                    "control:board.needs_approval:button:details"):
+            self.assertEqual((controls[cid]["owner"], controls[cid]["gated"]), ("web", True), cid)
+        # 归属表按 slug 生效，迷你 fixture 的提案列一样被退役（表是全局真源，不是清单里的一次性标注）
+        mini = {lane["slug"]: lane for lane in self.inventory["lanes"]["items"]}
+        self.assertEqual((mini["needs_approval"]["owner"], mini["needs_approval"]["gated"]),
+                         ("retired", False))
+        self.assertTrue(all(lane["gated"] and lane["owner"] == "web"
+                            for slug, lane in mini.items() if slug != "needs_approval"))
 
     def test_card_affordances_group_verbs_by_lane(self):
         aff = self.inventory["lanes"]["card_affordances"]

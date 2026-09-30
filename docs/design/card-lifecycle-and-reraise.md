@@ -20,6 +20,17 @@
 >   same_task（title 对齐）翻原卡；同 thread 不同任务（仅 thread_key 命中）开继承 `thread_id`
 >   的 follow-up 子卡，绝不污染旧卡标题。两入口共用 `registry.reraise_or_followup`。
 > - **archived relocate** 为唯一 archive 存储模型（非 in-place 改状态）。
+>
+> ### 2026-09-26 追记（CONTRACT **§78**，owner 决策 **D80**，issue #447）——本文全篇的「提案 / `card_sent`」读作「潜在任务 / `detected`」
+> 提案车道整条退役：`card_sent` 折叠进 `detected`，提案列从看板消失，机器卡一律落**潜在任务**，
+> owner 在同一张卡上按「促成运行」（既有的 `approve` 动词）才开跑。本文的 PM-level 意图**一条都没变**
+> ——「prior acceptance = ownership」「completed(matchable) vs archived(sealed)」「flip-on-actionable-only」
+> 三条仍是现行法；变的只有**翻回去的那一列叫什么**：Q3 的「re-raise 翻回 `card_sent`」自此是
+> **翻回 `detected`**（same_task 翻原卡、同 thread 不同任务开继承 `thread_id` 的 follow-up 子卡，
+> 两条规则逐字不变；`delivered → detected` 的白名单行早已存在）。Q1（thread-level 匹配）与
+> Q2（archive 可达自「已验收 + 备选」）一个字不动。`card_sent` 作为状态**值**不删、不重编号、不复用
+> （add-only，CONTRACT §0 第 6 条），所以本文引用旧行为的 `file:line` 与历史叙述保持原样可读；
+> **当前行为的权威口径以 `docs/CONTRACT.md` §78 为准**，其次是 §2 / §10 / §45。
 
 ---
 

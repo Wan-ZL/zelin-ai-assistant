@@ -44,7 +44,9 @@ from server.errors import InvalidFieldError, NotFoundError
 # id 直接参与 ``{id}.yaml`` 文件名拼接，必须防穿越。
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
-# 投影分区词表（dashboard.py §2 + v0.20 archived）——卡片可能出现的所有 lane
+# 投影分区词表（dashboard.py §2 + v0.20 archived）——卡片可能出现的所有 lane。
+# §78：``needs_approval`` 退役后 wire 上恒为空数组（add-only 不删键），词表里
+# 逐字留着——扫一个空列表不花钱，而删掉它会让任何仍带该键的老快照解析出洞。
 SECTIONS = ("needs_approval", "running", "needs_input", "review",
             "completed", "debt", "trash", "archived")
 

@@ -42,10 +42,12 @@ class _DeliverablesHome(unittest.TestCase):
         self.repo = self.home / "demo-repo"
         self.dlv = self.repo / "deliverables"
         self.dlv.mkdir(parents=True)
-        # 投影行是 card_detail 的第一真源：直接改 P-101 的 target_repo
-        for row in dash["needs_approval"]:
-            if row["id"] == HERO:
-                row["target_repo"] = str(self.repo)
+        # 投影行是 card_detail 的第一真源：直接改 P-101 的 target_repo。
+        # §78（提案车道退役）：P-101 在 scene=initial 时坐在潜在任务列（debt），
+        # 不再有 needs_approval 列。找不到就当场报，别让 8 个下游用例各自 404。
+        rows = [row for row in dash["debt"] if row["id"] == HERO]
+        self.assertTrue(rows, f"{HERO} 不在 debt 列——布景没生效")
+        rows[0]["target_repo"] = str(self.repo)
         rewrite_board(self.home, dash)
 
         self.older = self.dlv / "report.txt"

@@ -777,9 +777,11 @@ async function renderSurface(language: Language, page: Surface) {
   clickEverything(view.container, pool, page !== "board", page === "ingest");
   await settle(pool);
   if (page === "board") {
-    // 详情侧栏再单独开三张：hero 卡、一张待验收卡、一张改过名的卡（侧栏里的字段标题 / 动作 / 所属列章 / 曾用名）
-    const renamed = demoBoard.needs_approval.find((c) => Array.isArray(c.former_titles) && c.former_titles.length > 0);
-    for (const id of [demoBoard.needs_approval[0].id, demoBoard.review[0].id, ...(renamed ? [renamed.id] : [])]) {
+    // 详情侧栏再单独开三张：hero 卡、一张待验收卡、一张改过名的卡（侧栏里的字段标题 / 动作 / 所属列章 / 曾用名）。
+    // §78 起 hero 卡住 debt[]——提案列退役，机器卡（含改过名的那张）一律落潜在任务；needs_approval[] 恒空（D80.1），
+    // 从它取 [0] 会 undefined 把整个 suite 炸成 722 skipped（探针静默失灵，比红更危险）。
+    const renamed = demoBoard.debt.find((c) => Array.isArray(c.former_titles) && c.former_titles.length > 0);
+    for (const id of [demoBoard.debt[0].id, demoBoard.review[0].id, ...(renamed ? [renamed.id] : [])]) {
       selectCard(id);
       await settle(pool);
       collectLabels(document.body, pool);
@@ -1081,12 +1083,17 @@ async function renderBoardRejectVariant(language: Language) {
     await settle(pool);
     clickAll(Array.from(document.querySelectorAll<HTMLButtonElement>("dialog[open] button")).filter((b) => /^(好|OK)$/.test(normalize(b.textContent))), pool);
   }
-  // 两个列顶输入框：第一个打一条参数错误的斜杠命令，其余照常一句捕获（走 postAction 的拒绝）
-  view.container.querySelectorAll<HTMLTextAreaElement>(".lane-composer textarea").forEach((el, i) => {
-    fireEvent.change(el, { target: { value: i === 0 ? "/rec nope" : "demo" } });
-  });
-  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer .btn-primary")), pool);
-  await settle(pool);
+  // 在场的每个输入框都走两轮，两句失败文案各收一遍：先一条参数错误的斜杠命令（→「未识别或参数错误：」），
+  // 再一句普通捕获（→ postAction 拒绝 →「提交失败，已保留输入」）。§78 起 composer 的个数与先后不再固定——
+  // 捕获框随 D80.2 搬进书立条、只在展开态在场，运行中列的直跑框常驻——所以不按下标分工：斜杠解析在
+  // LaneComposer.submit 里先于 buildBody（两种框都认），只剩一个框时两句话也都收得到（探针只认渲染出的字）。
+  for (const value of ["/rec nope", "demo"]) {
+    for (const el of Array.from(view.container.querySelectorAll<HTMLTextAreaElement>(".lane-composer textarea"))) {
+      fireEvent.change(el, { target: { value } });   // 一改字清上一轮的失败句（原生 onChange slashError = nil）——上一轮已收进 pool
+    }
+    clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer .btn-primary")), pool);
+    await settle(pool);
+  }
   clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /让 AI 修|Fix with AI/.test(b.textContent ?? "")), pool);
   doubleClickTakeovers(view.container, pool); // 接管会话被拒 → 「打开终端失败」（#216：双击整卡，不再有按钮）
   await settle(pool);

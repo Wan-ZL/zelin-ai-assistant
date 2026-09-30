@@ -1,10 +1,18 @@
-"""§70 每日维护——两列去重：同题簇合成一张新卡、旧卡进回收站可恢复（D10）。
+"""§70 每日维护——潜在任务列去重：同题簇合成一张新卡、旧卡进回收站可恢复（D10）。
+
+§78（issue #447，owner 决策 D80）：提案（``card_sent``）车道退役并入潜在任务
+（``detected``）。簇的取材词表 **add-only 不删**——退役后仍可能有存量 card_sent
+落单卡要整理——但**合成卡一律落 detected**（``maintenance._merged_status``）：
+再把新卡送进一条没有界面的车道就是造隐身卡。旧卡的回程票原样记着历史事实，
+``registry.restore`` 在读侧把 ``card_sent`` 钳到 ``detected``（D80.10）。
 
 钉住的行为：
-- 只碰 detected / card_sent；approved / executing / review / delivered 永不入簇；
+- 只碰 detected（+ 存量 card_sent）；approved / executing / review / delivered
+  永不入簇；
 - 新卡 merged_from[] 列全部旧卡主键、sources 并集、mentions 累加、former_titles
-  记旧名、每张旧卡一行带 [@ts] 句柄的 fold note、状态 = 有 card_sent 则 card_sent；
-- 旧卡 reason `daily-merge: 并入 <new>`、prev_status 完整、restore 回原列；
+  记旧名、每张旧卡一行带 [@ts] 句柄的 fold note、状态恒 = detected（§78）；
+- 旧卡 reason `daily-merge: 并入 <new>`、prev_status 完整、restore 回潜在任务
+  （退役回程票被钳位，判例 test_restore_clamps_a_retired_return_ticket）；
 - 恢复出的旧卡与新卡是 linked（auto_merge 永不建议并回）、卡对进终局台账；
 - 血缘（improvement_of / thread）相连的卡不同簇；一簇失败不影响另一簇。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
@@ -96,7 +104,8 @@ class ApplyMergeTestCase(_Sandbox):
         new = registry.load(result["new"])
         self.assertIsNotNone(new)
         self.assertEqual(new.merged_from, ["P-1", "P-2"])
-        self.assertEqual(new.status, State.CARD_SENT.value)        # any card_sent → card_sent
+        # §78：簇里混进存量 card_sent 卡也不再把合成卡送进退役车道
+        self.assertEqual(new.status, State.DETECTED.value)
         self.assertEqual(new.repeated_mentions, 5)                 # 2 + 3
         self.assertEqual(new.hardness, "hard")
         self.assertEqual(new.deadline, "2026-11-01")               # earliest
@@ -125,7 +134,9 @@ class ApplyMergeTestCase(_Sandbox):
     def test_restore_puts_an_old_back_and_it_stays_linked_to_the_new_card(self):
         new_id = maintenance.apply_merge(self._cluster())["new"]
         old = registry.restore(registry.load("P-2"))
-        self.assertEqual(old.status, State.CARD_SENT.value)
+        # P-2 出簇前躺在退役的提案格子里，回程票写着 card_sent；§78 D80.10 的
+        # 钳位把它送回潜在任务——linked / 终局台账 / 不再重并全部一字不变。
+        self.assertEqual(old.status, State.DETECTED.value)
         self.assertIsNone(old.trash_reason)
         new = registry.load(new_id)
         self.assertTrue(auto_merge.linked(new, old))
@@ -135,6 +146,32 @@ class ApplyMergeTestCase(_Sandbox):
         self.assertIn(auto_merge.pair_key(new_id, "P-2"), seen.get("suggested") or [])
         # and the daily dedup itself does not re-merge the restored card
         self.assertEqual(maintenance.find_clusters(registry.load_all(), self.cfg), [])
+
+    def test_restore_clamps_a_retired_return_ticket(self):
+        """§78 D80.10：回收站的回程票写着退役的 card_sent 时，restore 钳到 detected。
+
+        `prev_status` 是「恢复」这颗按钮的回程票。issue #447 原文说迁移时保留它，
+        本 PR 明确偏离：照字面复位 = owner 点「恢复」之后卡回到一条**已经没有
+        卡面**的车道，那是「一切可逆」（宪法第 2 条）的反面。钳位只动这一次复位
+        的目标状态，盘上的 `prev_status` 字段值不被篡改（add-only，宪法第 6 条）
+        ——所以归并扫描才敢刻意不碰 trashed 卡。
+        """
+        _mk("P-9", "落单的退役提案卡", status=State.CARD_SENT.value)
+        with registry.acting_as("user"):
+            registry.trash(registry.load("P-9"), "rejected")
+        trashed = registry.load("P-9")
+        self.assertEqual(trashed.status, State.TRASHED.value)
+        self.assertEqual(trashed.prev_status, State.CARD_SENT.value)   # 票面原样
+        with registry.acting_as("user"):
+            restored = registry.restore(registry.load("P-9"))
+        self.assertEqual(restored.status, State.DETECTED.value)        # 钳位
+        self.assertIsNone(restored.prev_status)                        # 用掉即清
+        # 对照组：非退役的回程票逐字复位，钳位绝不误伤别的状态
+        _mk("P-10", "批过又被扔的卡", status=State.APPROVED.value)
+        with registry.acting_as("user"):
+            registry.trash(registry.load("P-10"), "deleted")
+            back = registry.restore(registry.load("P-10"))
+        self.assertEqual(back.status, State.APPROVED.value)
 
     def test_dedup_lanes_isolates_a_failing_cluster(self):
         self._cluster()
@@ -161,8 +198,8 @@ class ApplyMergeTestCase(_Sandbox):
 
 
 class Store2BackendTestCase(unittest.TestCase):
-    """§53 真源下同样成立：合成 + 旧卡 →trashed（system 白名单行）+ 过时 + 铸提案，
-    双后端逐字一致（tests/test_registry_backend_parity 的纪律）。"""
+    """§53 真源下同样成立：合成 + 旧卡 →trashed（system 白名单行）+ 过时 + 铸卡
+    （§78 起落潜在任务），双后端逐字一致（tests/test_registry_backend_parity 的纪律）。"""
 
     def _round_trip(self):
         _mk("P-1", "邮件截止日期雷达 for job pipeline")
@@ -198,7 +235,8 @@ class Store2BackendTestCase(unittest.TestCase):
                 self.assertEqual(card.sources[0]["channel"], "self_improve")
                 with registry.acting_as("user"):        # restore 是 owner 的 inbox 动作（§9 白名单 user 行）
                     restored = registry.restore(registry.load("P-2"))
-                self.assertEqual(restored.status, State.CARD_SENT.value)
+                # §78 D80.10：两后端都把退役回程票钳到潜在任务
+                self.assertEqual(restored.status, State.DETECTED.value)
                 outcomes[backend] = (new.to_dict() | {"id": "X"}, card.to_dict() | {"id": "Y"})
         # same shapes on both backends (ids/timestamps aside)
         for a, b in zip(outcomes["yaml"], outcomes["sqlite"]):

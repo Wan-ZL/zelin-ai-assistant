@@ -4,7 +4,7 @@ Zelin 发给自己的 Slack self-DM（一句话 / 一张图的描述）进来后
 清单**（每条非回收站条目一行 "<id> | status | title"（id = P-/legacy R- 主键，§60），含 delivered/merged）做三选一，
 只返回一个 JSON 对象：
 
-    {"action": "new_proposal", ...card fields}            -> 新卡，status=card_sent
+    {"action": "new_proposal", ...card fields}            -> 新卡，status=detected（§78）
     {"action": "relates_to", "req": "<id>", "note": ...} -> 关联已有条目（detected 则 raise）
     {"action": "ignore", "reason": ...}                   -> 无需行动
 
@@ -20,18 +20,19 @@ key 解析；``extractor`` 可注入做测试）并返回解析后的决策 dict
 v0.17 —— 本模块同时是**所有雷达候选需求的统一入库闸门**（共享位置，勿另起炉灶）：
 Slack 原生路径 / Slack MCP 兜底路径 (act/radar_slack.py) 和 Obsidian 提取项
 (act/radar.py) 落库前都必须经过 :func:`triage`（对照注册表清单三选一，硬标准=
-"现在需要 owner 行动或决策 -> 提案；真实但不紧急 -> 备选；纯信息 -> ignore"）
-+ :func:`apply_triage`：
+"现在需要 owner 行动或决策 -> 立刻通知他；真实但不紧急 -> 安静存着；纯信息
+-> ignore"）+ :func:`apply_triage`。**§78 起卡只有潜在任务一个落点**——三选一
+判的不再是「哪一列」，而是「发不发卡 / 要不要打扰」：
 
-    new_proposal          -> registry.merge_or_new（obsidian 的 hard+deadline
-                             分流由调用方经 high_confidence 保留；
-                             confidence="low" = 真实但不紧急 -> 强制落
-                             detected/备选，即使调用方预设了 card_sent）
+    new_proposal          -> registry.merge_or_new，status=detected（obsidian 的
+                             hard+deadline 分流由调用方经 high_confidence 保留；
+                             confidence="low" = 真实但不紧急 -> 盖 D80.7 的
+                             ``quiet_birth``，落卡但不通知）
     relates_to <id>       -> 先做 merge-cluster 归一（副卡命中挂到主卡）；
                              REJECTED/TRASHED 命中按未知 id 处理（决策6：
                              拒绝≠已办完，重述重新成卡）。
-                             未结卡：折叠为备注+来源（不发新卡；detected 卡
-                             命中 act-now 候选时提升为 card_sent 进提案列）；
+                             未结卡：折叠为备注+来源（不发新卡——§78 之前这里
+                             还会把 detected 卡提升进提案列，现在无处可升）；
                              已交付/已合并卡 + needs_action=true（缺省视为
                              true，无损原则）：生成挂 improvement_of 血缘的
                              后续卡（摘要 "既往卡 X 的后续：…"）；
@@ -237,8 +238,8 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
         '粘贴的成稿"这类表述，不得出现"存入 xx repo/建分支"字样；repo=代码、脚本、'
         "要长期留存引用的文档、多文件产出）,\n"
         '    "cost_estimate_usd": 数字或 null,\n'
-        '    "confidence": "high|low"（high=现在就要办，进待审批；low=不紧急的'
-        "备忘/未来条件性事项，先进潜在任务不打扰）}\n"
+        '    "confidence": "high|low"（high=现在就要办，记入潜在任务并立刻通知他；'
+        "low=不紧急的备忘/未来条件性事项，一样记入潜在任务，但不打扰）}\n"
         "2) 他在说上面清单里的某个已有条目（含 delivered/merged 既往卡的后续）->\n"
         '   {"action": "relates_to", "req": "<清单里的卡片 id，原样照抄>", "note": "他补充/追加了什么"}\n'
         "3) 纯闲聊 / 纯感慨（真的什么都不用记）->\n"
@@ -354,10 +355,10 @@ def _capture_fallback(text_or_media_desc: str, typed_text: Optional[str]) -> dic
 _TRIAGE_BAR = (
     "硬标准（所有雷达来源统一）：\n"
     "- 只有当【现在】就需要 {owner} 采取行动或做决策时，才允许 "
-    'new_proposal 且 confidence="high"（进提案列）。\n'
+    'new_proposal 且 confidence="high"（记入潜在任务并通知他）。\n'
     '- 真实但不紧急的全新需求（确实要 {owner} 做，只是此刻不用动手，如"下季度'
-    '想做 X"）-> new_proposal 且 confidence="low"（进潜在任务/Backlog 停车，'
-    "绝不 ignore——宁可进潜在任务，不可丢失）。\n"
+    '想做 X"）-> new_proposal 且 confidence="low"（一样记入潜在任务/Backlog，'
+    "只是不打扰；绝不 ignore——宁可进潜在任务，不可丢失）。\n"
     "- ignore 只留给：纯信息性通知 / FYI / 闲聊 / 已解决的事。\n"
     "- 纯进展/FYI/补充/顺带一提的琐碎信息：只要与清单里某张卡相关（优先看"
     "「最可能相关」预筛），一律 relates_to 折进那张卡（needs_action 如实判断），"
@@ -409,7 +410,8 @@ def build_triage_prompt(desc: str, cfg: Optional[config.Config] = None) -> str:
         "三选一。只输出**一个** JSON 对象（无多余文字、无 code fence）：\n"
         '1) 全新的需求 -> {"action": "new_proposal", "confidence": "high|low",\n'
         '    "display_title": "看板显示名（<=40 字中文大白话，动词开头，说清这卡在干什么）"}\n'
-        "   （high=现在就需要行动/决策，进提案列；low=真实但不紧急，进潜在任务/Backlog）\n"
+        "   （都记入潜在任务/Backlog：high=现在就需要行动/决策，会通知他；"
+        "low=真实但不紧急，不打扰）\n"
         "2) 与清单里某条相关（后续/进展/重述/补充）->\n"
         '   {"action": "relates_to", "req": "<清单里的卡片 id，原样照抄>", "note": "它补充了什么",\n'
         f'    "needs_action": true|false（现在是否需要 {owner} 新的行动或决策），\n'
@@ -473,10 +475,13 @@ def _completed(decision: dict) -> bool:
     return v is True
 
 
-# §76 完成信号只盖在「还没人投入」的两列上：detected（备选）与 card_sent
-# （提案）。approved 之后的卡由会话/验收自己的出口收尾，一条 LLM 的猜测不许
-# 在上面留提示（也不许改 status——那永远是 owner 的一次点击）。
-_HINT_STATES = (registry.State.DETECTED.value, registry.State.CARD_SENT.value)
+# §76 完成信号只盖在「还没人投入」的卡上。§78 后那就是潜在任务这一列：
+# detected 与它的灰底占位 raising（研究并提议在途）。card_sent 留在词表里不是
+# 因为还有人往那儿写——是退役后可能仍有存量卡卡在那一格，它们照样该收提示
+# （add-only 容忍，§0 第 6 条）。approved 之后的卡由会话/验收自己的出口收尾，
+# 一条 LLM 的猜测不许在上面留提示（也不许改 status——那永远是 owner 的一次点击）。
+_HINT_STATES = (registry.State.DETECTED.value, registry.State.RAISING.value,
+                registry.State.CARD_SENT.value)
 # note 上限：卡上一句话够用，防止把整段屏幕 OCR 拖进 registry / 看板。
 HINT_NOTE_CAP = 200
 
@@ -506,7 +511,8 @@ def _hint_channel(child: Optional["registry.Requirement"]) -> str:
 def _stamp_completion_hint(target: "registry.Requirement",
                            child: Optional["registry.Requirement"],
                            note: str) -> None:
-    """§76.1：在 detected/card_sent 卡上盖 add-only ``completion_hint``。
+    """§76.1：在潜在任务列的卡（detected/raising，含 card_sent 存量）上盖
+    add-only ``completion_hint``。
 
     只写这一个字段——status / repeated_mentions / sources 一律不动（fold 本身
     已经把证据落进卡里）。同一张卡被反复命中时**最新一次覆盖**（用户看的是
@@ -591,15 +597,15 @@ def apply_triage(
     - ``("ignored", None)``      — informational, nothing filed;
     - ``("folded", target)``     — relates_to: note+source folded into an
       existing card (open card, resolved card without needs_action, or the
-      already-open follow-up of a resolved card). An act-now fold into a
-      DETECTED card promotes it to card_sent (提案列, 统一口径);
+      already-open follow-up of a resolved card). §78：fold 只并信息，不再有
+      「提升进提案列」这一步——车道退役后无处可升；
     - ``("follow_up", card)``    — relates_to a resolved card with
       needs_action=true (missing key defaults to true — never-lose): NEW
       follow-up card with improvement_of lineage;
     - ``("proposed", saved)``    — merge_or_new result (new card or absorbed
-      restatement); obsidian's hard+deadline split rides ``high_confidence``,
-      and ``decision["confidence"] == "low"`` (真实但不紧急) forces the 备选
-      lane (detected) even when the caller preset card_sent.
+      restatement)，一律落潜在任务（detected）；obsidian's hard+deadline split
+      rides ``high_confidence``，而 ``decision["confidence"] == "low"``
+      （真实但不紧急）盖 D80.7 的 ``quiet_birth``：卡照落，只是不打扰。
 
     A relates_to hit is canonicalized to its merge cluster's primary first;
     REJECTED/TRASHED targets are treated like unknown ids (决策6: 拒绝 ≠
@@ -610,9 +616,9 @@ def apply_triage(
     非 FULL 时闸门跟着候选走完全程——triage LLM 的 ``needs_action`` 不是出生
     资格的豁免通道：
 
-    - LIMITED/CORROBORATE：fold 进 detected 卡的 act-now 提升被压平（佐证照常
-      落卡，目标卡留在备选）；命中完结卡的 re-raise/follow-up 天花板压到
-      detected（不通知、自然过期）；
+    - LIMITED/CORROBORATE：候选盖 D80.7 的 ``quiet_birth``——§78 之后 FULL 与
+      LIMITED 的差别不再是「哪一列」而是**通知资格**（LIMITED 静静落潜在任务、
+      自然过期）；命中完结卡的 re-raise/follow-up 天花板仍压到 detected；
     - CORROBORATE 另加一刀：只许 fold 进**开着的**卡。radar 在闸门口已按
       :func:`act.radar._fold_onto_open` 预判拦截，这里是同一法条的落库侧执法
       （预判与落库之间目标卡可能换状态/消失——TOCTOU），拦截走
@@ -621,9 +627,12 @@ def apply_triage(
     if cfg is None:
         cfg = config.load_config()
     decision = decision or {}
-    # §45：非 FULL 来源无提升权——fold 本身合法（佐证是正职），但既有备选卡
-    # 不得借这次 fold 被推进提案列，完结卡的 re-raise/follow-up 也封顶备选。
+    # §45：非 FULL 来源无提升权——fold 本身合法（佐证是正职），完结卡的
+    # re-raise/follow-up 封顶 detected。§78/D80.7：车道退役后「压到备选」这半
+    # 条法条改由 quiet_birth 承担——非 FULL 出身照样落潜在任务，但不打扰。
     promote_ok = gate in (None, provenance.FULL)
+    if not promote_ok:
+        req.quiet_birth = True
     outcome = _triage_early_exit(decision, req, gate, promote_ok)
     if outcome is not None:
         return outcome
@@ -706,7 +715,8 @@ def _relate_to_resolved(decision: dict, req, target, note: str, gate, promote_ok
         return "ignored", None
     if _needs_action(decision, default=True):
         # v0.20.0 unified re-raise/follow-up (§3.5): a title match (真
-        # restatement, same_task) flips the ORIGINAL card back to 提案; a
+        # restatement, same_task) flips the ORIGINAL card back into 潜在任务
+        # (§78：回锅的落点，提案列已退役); a
         # thread-only hit (different task) opens a distinct thread-lineage
         # follow-up. needs_action=True == actionable.
         same_task = registry.same_source_and_title(target, req)
@@ -723,51 +733,27 @@ def _relate_to_resolved(decision: dict, req, target, note: str, gate, promote_ok
 
 
 def _fold_into_open(decision: dict, req, target, note: str, gate, promote_ok: bool):
-    """Fold into an open card; an act-now fold into a DETECTED card promotes it
-    to card_sent (统一口径) unless the §45 gate withholds promotion."""
+    """Fold into an open card. §78：只并信息——提案列退役后目标卡无处可升，
+    act-now 的 fold 与普通 fold 走同一条路（``gate`` / ``promote_ok`` 留在签名
+    里是 §45 的既有接缝，供上游与测试沿用）。"""
     _fold_into(target, req, note, completed=_completed(decision))
-    if target.status == registry.State.DETECTED.value and (
-            _needs_action(decision, default=False)
-            or req.status == registry.State.CARD_SENT.value):
-        if promote_ok:
-            # 统一口径：现在需要行动 -> 提案列。An act-now candidate must not
-            # stay invisible in the 备选/backlog lane just because it folded
-            # into a detected card — promote the card it fed.
-            target.set_status(registry.State.CARD_SENT)
-            registry.save(target)
-        else:
-            # §45：非 FULL 来源的 act-now 提升一并压平——triage LLM 的
-            # needs_action 不在闸门豁免之列（P1-1）。fold 已经落卡（佐证
-            # 合法），提升被拦下要留痕，绝不静默。
-            analytics.log_event("radar_echo_blocked", stage="fold_promotion",
-                                gate=gate, req=target.id)
     analytics.log_event("radar_triage", action="relates_to", req=target.id)
     return "folded", target
 
 
 def _apply_low_confidence(decision: dict, req, high_confidence: bool) -> bool:
-    """统一口径第四出口：真实但不紧急 -> 备选/Backlog（宁可 debt 不可 ignore）。
-    Clears any caller-preset card_sent so the card lands detected."""
+    """统一口径第四出口：真实但不紧急 -> 照样落潜在任务（宁可 debt 不可 ignore）。
+    §78 后没有第二列可降了，低置信只决定**不打扰**：盖 D80.7 的 ``quiet_birth``
+    （alerts 跳过这行），并清掉 hard+deadline 的 high_confidence 分流。"""
     if not _is_low_conf(decision):
         return high_confidence
-    if req.status == registry.State.CARD_SENT.value:
-        req.set_status(registry.State.DETECTED)
+    req.quiet_birth = True
     return False
 
 
 def _silent_note(req) -> str:
     brief = str(getattr(req, "_silent_brief", "") or "")
     return req.title if not brief or brief == "无新增信息" else f"{req.title}（{brief}）"
-
-
-def _promote_if_urgent(target, req) -> None:
-    """act-now signal (rides req.status, radar.py:698) — same promotion the
-    relates_to fold path guarantees: an urgent item must not vanish into the
-    backlog lane."""
-    if target.status == registry.State.DETECTED.value \
-            and req.status == registry.State.CARD_SENT.value:
-        target.set_status(registry.State.CARD_SENT)
-        registry.save(target)
 
 
 def _brief_if_executing(target, note: str) -> None:
@@ -792,8 +778,9 @@ def _pre_filing_fold(req, cfg):
     if target is None or target.status not in _am.OPEN_STATES:
         return None
     note = _silent_note(req)
+    # §78：静默并入只并信息——原来这里还会按 act-now 信号把目标卡提升进提案
+    # 列（_promote_if_urgent），车道退役后无处可升，那一步整条删掉。
     _fold_into(target, req, note)
-    _promote_if_urgent(target, req)
     _brief_if_executing(target, note)
     analytics.log_event("silent_merge", primary=target.id, secondary=None,
                         outcome="pre_filing_fold")
@@ -867,13 +854,13 @@ def apply_result_with_kind(
     matches a resolved parent re-raises it too), NOT derivable from the
     decision dict:
 
-    - ``proposed``  — new card filed (card_sent or 备选/backlog, incl. an
+    - ``proposed``  — new card filed (§78 起一律落潜在任务, incl. an
       increment child or an unknown/sealed-id fall-through's fresh card);
     - ``folded``    — absorbed into an existing card, no new card (open-
       parent restatement, note fold, a resolved parent's already-open
       follow-up, detected→expand raises);
     - ``follow_up`` — new lineage card under a resolved parent;
-    - ``reraised``  — an accepted card flipped back to 提案;
+    - ``reraised``  — an accepted card flipped back into 潜在任务;
     - ``ignored``   — judged not actionable, nothing filed.
 
     ``reply`` is the legacy self-DM string, unchanged — :func:`apply_result`
@@ -940,8 +927,9 @@ def _capture_title(res: dict, quote: str) -> str:
 
 
 def _is_low_conf(decision: dict) -> bool:
-    """confidence="low" = 不紧急的备忘（含未来条件性）——落备选/Backlog 而不是
-    待审批，绝不 ignore（无损原则）。缺失/其他值 = 原行为（card_sent）。"""
+    """confidence="low" = 不紧急的备忘（含未来条件性）——§78 后照样落潜在任务，
+    只是安静落（quiet_birth，不通知），绝不 ignore（无损原则）。缺失/其他值 =
+    正常出生（落潜在任务 + 通知）。"""
     return str(decision.get("confidence") or "").strip().lower() == "low"
 
 
@@ -998,8 +986,9 @@ def _new_proposal_req(res: dict, quote: str, title: str, low_conf: bool) -> regi
         summary=_proposal_summary(res, title),
         type=_proposal_type(res),
         tier=_proposal_tier(res),
-        status=(registry.State.DETECTED.value if low_conf
-                else registry.State.CARD_SENT.value),
+        # §78：提案列退役，快速捕获的卡一律落潜在任务；low_conf 只决定安静
+        # 与否（下面的 quiet_birth），不再挑列。
+        status=registry.State.DETECTED.value,
         hardness="soft",
         plan=analyze._coerce_plan(res.get("plan")) or [title],
         cost_estimate_usd=analyze._coerce_cost(res.get("cost_estimate_usd")),
@@ -1012,6 +1001,9 @@ def _new_proposal_req(res: dict, quote: str, title: str, low_conf: bool) -> regi
     )
     # attribute-set so this works even before the registry field lands
     req.delivery_mode = _delivery_mode(res)
+    if low_conf:
+        # D80.7：不紧急 = 安静出生，落卡但不打扰（alerts 跳过这一行）。
+        req.quiet_birth = True
     # §37 display_title: optional LLM key — absent/malformed degrades to the
     # projection-time sanitize(title) fallback, never fails the capture.
     registry.set_display_title(req, res.get("display_title"))
@@ -1029,7 +1021,9 @@ def _proposal_reply(saved, req, low_conf: bool) -> str:
     if low_conf and saved.status == registry.State.DETECTED.value:
         return (f"已记入潜在任务 {saved.id}：{_saved_label(saved)}"
                 f"（不紧急，先存着不打扰）/ parked in backlog {saved.id}")
-    return f"已建卡 {saved.id}：{_saved_label(saved)}（进待审批）"
+    # §78：机器卡没有「待审批」可进了——落潜在任务，等 owner 一次「促成运行」。
+    return (f"已记入潜在任务 {saved.id}：{_saved_label(saved)}"
+            f" / filed in the backlog {saved.id}")
 
 
 def _apply_relates_to(
@@ -1111,13 +1105,14 @@ def _capture_child(req, note: str) -> registry.Requirement:
 
 def _resolved_reply(kind: str, req, saved) -> tuple:
     if kind == "reraised":
+        # §78：回锅与后续卡都落潜在任务（没有待审批这一站了）。
         return ("reraised", saved,
-                f"{req.id} 之前已验收；来了新信息，已回锅重新提案，进待审批 / "
-                f"{req.id} was accepted; re-raised as a proposal (pending approval)")
+                f"{req.id} 之前已验收；来了新信息，已回锅记入潜在任务 / "
+                f"{req.id} was accepted; re-raised into the backlog")
     if kind == "follow_up":
         return ("follow_up", saved,
-                f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
-                f"{req.id} is closed; filed follow-up {saved.id} (pending approval)")
+                f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，记入潜在任务 / "
+                f"{req.id} is closed; filed follow-up {saved.id} in the backlog")
     return ("folded", saved,
             f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
             f"folded into {req.id}'s open follow-up {saved.id}")
@@ -1125,7 +1120,7 @@ def _resolved_reply(kind: str, req, saved) -> tuple:
 
 def _relates_to_resolved(req, note: str, tele_text: Optional[str]):
     """统一口径：已交付/已合并的既往卡不追加备注了事——走 reraise_or_followup
-    同一机制（v0.20.0 §3.5）：真 restatement（title 对齐）翻原卡回提案，
+    同一机制（v0.20.0 §3.5）：真 restatement（title 对齐）把原卡翻回潜在任务（§78），
     同 thread 不同任务则开继承 thread_id 的 follow-up 子卡（或并入未决 follow-up）。"""
     child = _capture_child(req, note)
     # explicit self-capture is inherently actionable (无损原则).
@@ -1140,7 +1135,14 @@ def _relates_to_resolved(req, note: str, tele_text: Optional[str]):
 
 
 _FOLD_PHRASES = {
-    registry.State.CARD_SENT.value: "已在待审批，备注已追加",
+    # §78：机器卡一律落 detected，所以**已扩写过**的卡（带 plan/DoD）折进来
+    # 走的是这条平路——回执与退役的 card_sent 同一句（那句话讲的是车道，不是
+    # 状态名），否则会漏进下面的兜底文案，把 "detected" 这个内部 token 念给
+    # owner 听。裸欠账不进这张表（它走 §8 扩写那一支）。
+    registry.State.DETECTED.value: "已在潜在任务，备注已追加",
+    # §78：card_sent 已退役（不再有卡进这一格），键留着只为存量卡的回执还说得
+    # 通——它们和 detected 一样显示在潜在任务列（add-only，§0 第 6 条）。
+    registry.State.CARD_SENT.value: "已在潜在任务，备注已追加",
     registry.State.APPROVED.value: "已批准待派发，备注已追加",
     registry.State.EXECUTING.value: "正在弄，备注已追加",
     registry.State.REVIEW.value: "已交付待你验收，备注已追加",
@@ -1154,12 +1156,21 @@ def _fold_note_into(req, note: str, cfg, tele_text: Optional[str]):
     # Slack 有文字答复不豁免看板留痕（用户可能只看板不看 DM）。best-effort。
     from act.lib import fold_receipts
     fold_receipts.record(req.id, "quick", note)
-    if req.status == registry.State.DETECTED.value:
-        # a quick mention of a debt item = raise it into a full proposal
-        analyze.expand_debt(req, cfg)  # saves + status=card_sent
+    if req.status == registry.State.DETECTED.value and not (
+            req.plan or req.definition_of_done):
+        # a quick mention of a **bare** debt item = raise it into a full proposal
+        # §78 之前这个判据由车道兜着：完整的机器卡住在 card_sent，detected 里
+        # 只剩裸欠账。车道退役后每张机器卡都是 detected，光看 status 会让一句
+        # 「顺带也看一下 Y」重跑 claude -p，把 daily_loop 手写的 plan/DoD/成本/
+        # target_repo 全覆盖掉（analyze._apply_expansion 是覆盖写；§0 第 2 条
+        # 一切可逆）。判据与 decisions.py 的 W17 分支同源：not (plan or DoD)。
+        # 双生点 = act/lib/actd/inbox.py ``_unexpanded``，两边不许漂。
+        analyze.expand_debt(req, cfg)  # saves + status=detected（§78：原地扩写）
         analytics.log_event("quick_capture", action="relates_to", req=req.id,
                             text=tele_text)
-        return "folded", req, f"已关联 {req.id}，已提案（扩成完整建议，进待审批）"
+        return ("folded", req,
+                f"已关联 {req.id}：已扩成完整建议，留在潜在任务等你一次点名 / "
+                "expanded in place, still in the backlog")
     registry.save(req)
     analytics.log_event("quick_capture", action="relates_to", req=req.id,
                         text=tele_text)

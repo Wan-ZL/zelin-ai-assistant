@@ -82,6 +82,9 @@ class DigestCardTestCase(unittest.TestCase):
         self.assertEqual(cards[0].status, registry.State.REVIEW.value)
 
     def test_pages_say_lane_names_not_raw_status_words(self):
+        """§40 (#19) + §78：退役的 card_sent 落单卡在页面上念「潜在任务」——
+        它投影的就是那一列（§78.1 第 3 条），念「待审批」等于指一条已经没有
+        面的车道。事件名 card_sent 仍是 telemetry 词表，不受此判例约束。"""
         req = registry.Requirement(id="R-101", title="写周报",
                                    status="card_sent")
         registry.save(req)
@@ -89,10 +92,10 @@ class DigestCardTestCase(unittest.TestCase):
         # the item line says the lane display name, not the raw status word
         # (the folded analytics block legitimately contains event NAMES like
         # card_sent — that's telemetry vocabulary, not the item line).
-        self.assertIn("- R-101 · 写周报（待审批", md)
+        self.assertIn("- R-101 · 写周报（潜在任务", md)
         self.assertNotIn("（card_sent", md)
         prep = oneonone.build_prep()
-        self.assertIn("R-101 · 写周报 （待审批", prep)
+        self.assertIn("R-101 · 写周报 （潜在任务", prep)
         self.assertNotIn("（card_sent", prep)
 
     def test_digest_folded_count_includes_ok_retry(self):

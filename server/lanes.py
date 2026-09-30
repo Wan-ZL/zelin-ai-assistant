@@ -5,37 +5,35 @@
 取 ``zh`` / ``en`` 键——client 端不再内联第二份列说明（防腐十条 #10：文案进
 server-owned catalog，禁第二套双语机制）。
 
-文案来源：``shared/Sources/Lanes.swift`` 的 ``LaneHelp``（backlog / proposals /
+文案来源：``shared/Sources/Lanes.swift`` 的 ``LaneHelp``（backlog /
 running / review / done 的 macOS 分支）与 ``mac/Sources/Cards.swift``
 ``ArchiveSectionView.helpCopy``（永久性完成条）——原生 app 是行为与文案规格
 （D3：退役前冻结）；这里是它们的 server 侧落点，改文案只改这一处。
 
-契约：docs/CONTRACT.md §49（路由表）、§54（web 看板 parity 清单）。
+§78（D80）提案车道退役：``needs_approval`` 不再是一列，目录里那一条随之删掉
+（wire 上 ``dashboard.json`` 仍恒发空的 ``needs_approval: []``，add-only 不删键，
+但没有列就没有列说明）；机器卡一律落 ``debt``（潜在任务），它的 help 改写成新
+现实。三处逐字同源：本表、``shared/Sources/Lanes.swift`` 的 ``LaneHelp.backlog``、
+``ui/parity/fixtures/lanes.json``——改一处必须三处一起改。
+
+契约：docs/CONTRACT.md §49（路由表）、§54（web 看板 parity 清单）、§78（提案车道退役）。
 """
 from __future__ import annotations
 
 # slug = dashboard.json 分区名（§2），也是 web 列组件取 help 的 key；顺序 =
-# 看板从左到右的显示顺序（潜在任务 | 提案 | 运行中 | 待验收 | 阶段性完成 |
+# 看板从左到右的显示顺序（潜在任务 | 运行中 | 待验收 | 阶段性完成 |
 # 永久性完成）。回收站是独立页面不是列，不在此表。
 LANES: tuple = (
     {
         "slug": "debt",
         "help": {
-            "zh": "真实但不着急的事都先停在这里：雷达低置信度捕获、导入的旧会话、你暂缓的提案。"
-                  "不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」升级成提案。",
-            "en": "Real but not-urgent asks park here — low-confidence radar captures, imported "
-                  "sessions, proposals you deferred. Nothing runs on its own and nothing expires; "
-                  "restatements merge in automatically. Press \"Research & propose\" to promote one.",
-        },
-    },
-    {
-        "slug": "needs_approval",
-        "help": {
-            "zh": "需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；"
-                  "修改=补充方向重提；暂缓=先不做，放进潜在任务。灰色卡是 AI 正在研究的占位。",
-            "en": "Cards that need your decision now, each with a plan, cost, and acceptance "
-                  "criteria. Approve = start executing; Comment = redo with your input; Later = not "
-                  "now, parks it in Backlog. Grey cards are placeholders the AI is still researching.",
+            "zh": "机器铸的卡都落在这里：雷达捕获、每日循环、自我改进通道，还有你暂缓的事。"
+                  "不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」补上计划、"
+                  "成本和验收标准，点「促成运行」一键开跑。",
+            "en": "Every machine-filed card lands here — radar captures, the daily loop, the "
+                  "self-improve lane, plus anything you deferred. Nothing runs on its own and "
+                  "nothing expires; restatements merge in automatically. Press \"Research & "
+                  "propose\" to fill in the plan, cost and acceptance criteria, then \"Run it\".",
         },
     },
     {

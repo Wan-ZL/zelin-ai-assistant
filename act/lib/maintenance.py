@@ -1,9 +1,12 @@
-"""maintenance — 每日维护：提案列 / 潜在任务列的去重合并 + 过时卡进回收站（CONTRACT §70）。
+"""maintenance — 每日维护：潜在任务列的去重合并 + 过时卡进回收站（CONTRACT §70、§78）。
 
 Owner 决策 D10（docs/design/vnext2-plan.md）：
 
-- **只碰两列**：提案（card_sent）与潜在任务（detected）。running / 待验收 /
-  已交付 / raising 一律不动（「Running 就不要去重，毕竟它在跑」）。
+- **只碰没人投入的卡**：潜在任务（detected）+ 退役的提案格子里的存量卡
+  （card_sent，§78 后没有新卡进那里，但存量卡照样要被整理）。running /
+  待验收 / 已交付 / raising 一律不动（「Running 就不要去重，毕竟它在跑」）。
+  合成卡一律落 detected（:func:`_merged_status`），通知资格随簇走
+  （:func:`_merged_quiet_birth`：全簇安静才安静——§45/§78 D80.7）。
 - **同主题多卡 → 合成一张新卡**（不是并入主卡）：新卡 `merged_from[]` 记全部
   来源主键、sources 并集、former_titles 记旧名、每张旧卡一行 §38.2 fold note
   （带拆出句柄）；旧卡全部走 `registry.trash(reason="daily-merge: 并入 <new>")`
@@ -43,7 +46,8 @@ from typing import Iterable, Optional
 from act.lib import auto_merge, config, fold_receipts, notify, policy, registry
 from act.lib.registry import Requirement, State
 
-# 维护只碰的两列（D10：提案 + 潜在任务）
+# 维护只碰的两格（D10：潜在任务 + §78 退役后仍可能有存量卡的 card_sent；
+# add-only 容忍——词表只留不删，存量卡永不因为车道退役而无人整理）
 LANE_STATES = (State.DETECTED.value, State.CARD_SENT.value)
 # 过时清扫走到的全部列（D74：两列 + 待验收；待验收只过 review_stale 一条规则，见 _rules）
 SWEPT_STATES = LANE_STATES + (State.REVIEW.value,)
@@ -562,9 +566,21 @@ def _primary(cluster: list) -> Requirement:
 
 
 def _merged_status(cluster: list) -> str:
-    if any(str(r.status) == State.CARD_SENT.value for r in cluster):
-        return State.CARD_SENT.value
+    """§78：合成卡一律落潜在任务——簇里混进存量 card_sent 卡也不再把新卡送进
+    那个退役的格子（``cluster`` 留在签名里：调用点与测试的既有接缝）。"""
     return State.DETECTED.value
+
+
+def _merged_quiet_birth(cluster: list) -> bool:
+    """合成卡响不响（§45 / §78 D80.7）：**全簇都安静**才安静。
+
+    退役前这半条法条住在 :func:`_merged_status` 里——「簇里有一张 card_sent
+    就落 card_sent」，而 card_sent 正是会响的那一列。两列合一之后状态不再
+    区分，事实必须搬到 ``quiet_birth`` 上，否则一簇**全部安静出生**的卡被
+    每日整理并成一张，就会在 owner 从没被打扰过的地方突然响一声（反过来，
+    只要簇里有一张当初响过的卡，合成卡照旧响——它接的是同一件事）。
+    存量卡没有这个字段（默认 False = 会响），与 main 的 card_sent 同义。"""
+    return all(bool(getattr(r, "quiet_birth", False)) for r in cluster)
 
 
 def _merged_hardness(cluster: list) -> str:
@@ -630,6 +646,7 @@ def plan_merge(cluster: list) -> Requirement:
     new = Requirement(
         id=registry.next_id(), title=primary.title, type=primary.type, tier=primary.tier,
         status=_merged_status(olds), hardness=_merged_hardness(olds),
+        quiet_birth=_merged_quiet_birth(olds),   # §78 D80.7：全簇安静才安静
         deadline=_earliest_deadline(olds),
         repeated_mentions=sum(int(r.repeated_mentions or 1) for r in olds),
         green_sign_required=any(bool(r.green_sign_required) for r in olds),

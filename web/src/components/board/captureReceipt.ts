@@ -1,9 +1,9 @@
-// 列顶输入框（提案列「捕获」/ 运行中列「直跑」）成功回执的诚实纪律（CONTRACT §10 / §41 2026-09-05 追记；
+// 捕获输入框（§78 后：空板兜底那只「捕获」框 / 运行中列「直跑」）成功回执的诚实纪律（CONTRACT §10 / §41 2026-09-05 追记；
 // 原生 mac/Sources/Cards.swift:934,951-956 processingBody · :848,863-867 RunCapturePendingRow ·
 // Store.swift:343-353 sweepTimeouts · :402-411 超时文案 · :652-659 updateHealth 重新起算 · PendingSweep.swift:169-192
 // captureMatches）。纯函数、零 React：只看 (输入的原文 × 管线健康 × 当前看板快照)。
 //
-// 原生的乐观回显是一张本地灰色占位卡（提案列 / 运行中列顶），web **不搬那张卡**：server 的 processing / queued 行
+// 原生的乐观回显是一张本地灰色占位卡（提案列 / 运行中列顶；§78 后提案侧那张住潜在任务条），web **不搬那张卡**：server 的 processing / queued 行
 // 在一个 actd pass（默认 10 s）内就落进列里（act/lib/actd/inbox.py `_capture_proposal` 置 raising、`_capture_direct_run`
 // 置 approved，act/actd.py run_once 在 n_inbox>0 时 `_early_dashboard`），列的组成是 server 数据不是 client 代码
 // （防腐 #10）。web 只保留输入框下那**一行回执**，但让它说真话：
@@ -16,7 +16,7 @@
 //     （行的 `capture_id` = POST /api/actions 回的 `file` stem，§49；「web 若加 optimistic echo 以此键对账」），
 //     再退到原生 captureMatches 的标题 / 摘要前缀猜测（归一化 + 前 10 字双向 contains）——精确键只在新铸的卡上
 //     （出生行的 stem；并入已有卡时那张卡带的是它自己出生那次的 stem，直跑的 queued 行今日还不带）。
-//     propose 只对 needs_approval，run 只对 running + needs_input——**刻意不对 review 清**：命中旧待验收卡时 actd ack
+//     propose 只对 debt（§78：捕获落潜在任务），run 只对 running + needs_input——**刻意不对 review 清**：命中旧待验收卡时 actd ack
 //     的是 noop，清了就是 fake launch；否则 300 s（propose，分析可以很慢）/ 180 s（run，无 LLM、下一轮就该排队）
 //     后换成原生的诚实超时条——只在管线 ok 时计时，管线恢复时重新起算整段窗口（原生 updateHealth 重置 created）。
 import type { Board, HealthSnapshot } from "../../types";
@@ -94,13 +94,15 @@ export interface CaptureIdentity {
   stem: string | null;
 }
 
-/** 这次提交落地了吗。行集合按 mode 取：propose = needs_approval（title / summary），run = running + needs_input
+/** 这次提交落地了吗。行集合按 mode 取：propose = debt（title / summary），run = running + needs_input
  *  （name / summary）；两者都不看 review——一周前的待验收卡同词会把回执清成假的「已开跑」。
+ *  §78：propose 的对账列从 needs_approval 换成 debt——捕获的卡如今落潜在任务，盯着一列恒空的
+ *  needs_approval 对账，每一条回执都会挂满 300 s 再冒出一句假的诚实超时。
  *  先认精确键 `row.capture_id === stem`（§10 issue #7），再退到原生 PendingSweep.captureMatches：归一化后前 10 字双向 contains。 */
 export function captureLanded(identity: CaptureIdentity, mode: CaptureMode, board: Board): boolean {
   const rows: Array<Record<string, unknown>> = mode === "run"
     ? [...(board.running ?? []), ...(board.needs_input ?? [])]
-    : (board.needs_approval ?? []);
+    : (board.debt ?? []);
   if (identity.stem && rows.some((r) => r.capture_id === identity.stem)) return true;
   const p = normalizedCapture(identity.text);
   if (!p) return false;

@@ -3,13 +3,20 @@
 D21 原话：「如果这个卡片没有执行,就不算是真正的卡片,不需要给它 R 编号;只有我
 approve 跑了的,才给编号。」
 
+§78（issue #447，owner 决策 D80）：提案车道退役，卡片在 ``detected``（潜在任务）
+里出生、从那里被一次点击提升成 ``approved``。本节全部判例的落点因此从 card_sent
+平移到 detected——**分配规则一个字没变**（§60「只在进入 approved 时发号」），变的
+只是发号前那一格叫什么。退役值 ``card_sent`` 仍是合法值（add-only），存量落单卡
+照样不发号、照样批得动，下面留着专门的判例钉住。
+
 钉住的行为（两后端逐条跑）：
-  * 出生 = ``P-<n>`` 主键（next_id），detected/card_sent/raising/merge/trash 一律
-    **不**分配工作编号；
-  * 进入 approved 的每条路径都分配 ``R-<m>``：owner approve、§51 免批、capture[run]
-    出生即 approved、restore 精确复位回 approved；
+  * 出生 = ``P-<n>`` 主键（next_id），detected/raising/merge/trash（以及退役的
+    card_sent）一律 **不**分配工作编号；
+  * 进入 approved 的每条路径都分配 ``R-<m>``：owner approve、§65 lane 免批
+    （§51 hand lane 随 §78 退役）、capture[run] 出生即 approved、restore 精确
+    复位回 approved；
   * 工作序列稠密、单调、永不复用（含 sqlite tombstone / yaml 硬删 + 高水位）；
-  * set-once：退回提案再批准、trash→restore 都不换号；
+  * set-once：退回潜在任务再批准、trash→restore 都不换号；
   * resolve() 主键与工作编号双向可达；inbox/merge 入口按两种 ref 都能找到卡且
     lineage 只落主键；
   * legacy ``R-<n>`` 主键：从未批准 → id_kind=legacy、display_id=主键；批准 →
@@ -54,7 +61,8 @@ BACKENDS = ("yaml", "sqlite")
 SCHEMA_PATH = Path(registry.__file__).parent / "store2" / "schema.sql"
 
 
-def _card(rid, title, status=State.CARD_SENT.value, **kw):
+def _card(rid, title, status=State.DETECTED.value, **kw):
+    # §78：默认出生态 = 潜在任务（退役前是 card_sent/提案）。
     base = dict(id=rid, title=title, type="dev", tier="T1", status=status,
                 hardness="soft", repeated_mentions=1,
                 sources=[{"channel": "meeting", "date": "2026-08-30",
@@ -110,11 +118,14 @@ class BirthNeverConsumesWorkNumberTestCase(_Both):
                     {"channel": "slack", "date": "2026-08-31", "ref": "s-1",
                      "quote": "again", "who": "hr"}]})
             self.assertIsNone(folded.work_id)
-            # raising / card_sent / trash 都不发
+            # raising / detected / 退役的 card_sent / trash 都不发（§78：退役值
+            # 留在这条判例里——落单卡落盘一次也绝不能凭空铸出一个工作编号）
             r = registry.load(new.id)
             r.set_status(State.RAISING)
             registry.save(r)
             r.set_status(State.CARD_SENT)
+            registry.save(r)
+            r.set_status(State.DETECTED)
             registry.save(r)
             with registry.acting_as("user"):
                 registry.trash(registry.load(new.id), "rejected")
@@ -141,26 +152,50 @@ class BirthNeverConsumesWorkNumberTestCase(_Both):
 # --------------------------------------------------------------------------- #
 class ApprovalAllocatesTestCase(_Both):
     def setUp(self):
-        self.cfg = config.Config()
+        # §65.1 通道总开关出厂关着；免批判例要的是发号，不是开关行为，所以显式开。
+        self.cfg = config.Config(self_improve_enabled=True)
         self.cfg.memory_inject = False
 
-    def test_owner_approve_allocates(self):
+    def test_owner_approve_from_detected_allocates_exactly_once(self):
+        # §78：owner 的一次点击 detected -> approved 就是发号那一刻（§60 分配点
+        # 不变）；再点一次是 approved 上的幂等 no-op，序列不许因此前进一格。
         def body(_b):
             registry.upsert(_card("P-001", "写周报"))
+            self.assertEqual(registry.load("P-001").status, State.DETECTED.value)
             self.assertEqual(_approve("P-001"), "running")
             saved = registry.load("P-001")
             self.assertEqual(saved.status, State.APPROVED.value)
             self.assertEqual(saved.work_id, "R-001")
             self.assertEqual(registry.display_id(saved), "R-001")
             self.assertEqual(registry.id_kind(saved), registry.ID_KIND_WORK)
+            self.assertEqual(_approve("P-001"), "noop")          # 连点
+            self.assertEqual(registry.load("P-001").work_id, "R-001")
+            self.assertEqual(registry.next_work_id(), "R-002")   # 只发过一个号
+        self.for_each_backend(body)
+
+    def test_retired_card_sent_straggler_still_approves_and_allocates(self):
+        # §78 add-only：归并扫描还没跑到的存量提案卡照样批得动、照样在进
+        # approved 的那一刻拿到第一个号（退役 ≠ 卡死在无出口的车道上）。
+        def body(_b):
+            registry.upsert(_card("P-001", "存量提案", status=State.CARD_SENT.value))
+            self.assertIsNone(registry.load("P-001").work_id)
+            self.assertEqual(_approve("P-001"), "running")
+            saved = registry.load("P-001")
+            self.assertEqual(saved.status, State.APPROVED.value)
+            self.assertEqual(saved.work_id, "R-001")
         self.for_each_backend(body)
 
     def test_policy_auto_dispatch_allocates(self):
+        # §78 / D80.4：免批通道只剩 §65 self_improve lane（hand lane 立碑退役），
+        # 起跳态从 card_sent 换成 detected——它仍然是「进入 approved 的一条路径」，
+        # 所以仍然发号。
         def body(_b):
-            hand = _card("P-001", "手打卡", type="other", cost_estimate_usd=1.0,
-                         sources=[{"who": "zelin", "channel": "quick",
+            lane = _card("P-001", "自我改进卡", type="self-improvement",
+                         cost_estimate_usd=1.0, target_repo=str(config.HOME),
+                         target_kind="existing", delivery_mode="repo",
+                         sources=[{"who": "loop", "channel": "self_improve",
                                    "date": "2026-08-31", "quote": "原话"}])
-            registry.upsert(hand)
+            registry.upsert(lane)
             with mock.patch.object(actd.notify, "notify"):
                 self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
             saved = registry.load("P-001")
@@ -186,8 +221,8 @@ class ApprovalAllocatesTestCase(_Both):
 
     def test_restore_into_approved_allocates_and_keeps_existing(self):
         def body(_b):
-            # ① 从未批准过的卡：trash（prev=card_sent）→ restore 回 card_sent = 无号
-            registry.upsert(_card("P-001", "提案"))
+            # ① 从未批准过的卡：trash（prev=detected）→ restore 回 detected = 无号
+            registry.upsert(_card("P-001", "潜在任务卡"))
             with registry.acting_as("user"):
                 registry.trash(registry.load("P-001"), "rejected")
                 registry.restore(registry.load("P-001"))
@@ -218,8 +253,8 @@ class ApprovalAllocatesTestCase(_Both):
             with registry.acting_as("user"):
                 actd._apply_decision(registry.load("P-001"), "abort_execution", None)
             back = registry.load("P-001")
-            self.assertEqual(back.status, State.CARD_SENT.value)
-            self.assertEqual(back.work_id, "R-001")      # 退回提案不收回号
+            self.assertEqual(back.status, State.DETECTED.value)   # §78 退回潜在任务
+            self.assertEqual(back.work_id, "R-001")      # 退回潜在任务不收回号
             _approve("P-001")
             self.assertEqual(registry.load("P-001").work_id, "R-001")
             self.assertEqual(registry.next_work_id(), "R-002")
@@ -318,18 +353,18 @@ class StaleCopyAdoptsStoredNumberTestCase(_Both):
         self.for_each_backend(body)
 
     def test_stale_copy_of_aborted_card_adopts_regardless_of_state(self):
-        # 批准 → abort_execution 退回 card_sent（号 set-once 保留）→ 一份批准前
-        # 取的无号 card_sent 副本落盘：采纳不看状态——只在过闸态采纳会把号覆写成
+        # 批准 → abort_execution 退回潜在任务（§78，号 set-once 保留）→ 一份批准
+        # 前取的无号 detected 副本落盘：采纳不看状态——只在过闸态采纳会把号覆写成
         # None（sqlite WORK_ID_SET_ONCE 硬失败 / yaml 静默丢号，再批准就重铸 =
         # 一卡两号，旧号被高水位烧掉）。
         def body(_b):
-            registry.upsert(_card("P-001", "退回提案"))
+            registry.upsert(_card("P-001", "退回潜在任务"))
             stale = registry.load("P-001")            # 批准前的副本，无号
             _approve("P-001")
             with registry.acting_as("user"):
                 actd._apply_decision(registry.load("P-001"), "abort_execution", None)
             back = registry.load("P-001")
-            self.assertEqual(str(back.status), State.CARD_SENT.value)
+            self.assertEqual(str(back.status), State.DETECTED.value)
             self.assertEqual(back.work_id, "R-001")   # set-once：退回不收号
             self.assertIsNone(stale.work_id)
             registry.save(stale)                      # 不抛、不清号
@@ -345,7 +380,7 @@ class StaleCopyAdoptsStoredNumberTestCase(_Both):
         def body(_b):
             registry.upsert(_card("P-001", "外部完成"))
             req = registry.load("P-001")
-            req.set_status(State.DELIVERED)          # done_external：card_sent→delivered
+            req.set_status(State.DELIVERED)          # done_external：detected→delivered
             with registry.acting_as("user"):
                 registry.save(req)
             again = registry.load("P-001")
@@ -418,16 +453,18 @@ class LegacyKeysTestCase(_Both):
                                   prev_status=State.EXECUTING.value,
                                   trashed_at="2026-09-01T00:00:00Z"))
             self.assertEqual(registry.load("R-031").work_id, "R-031")
-            # 从未批准的存量卡：raising / card_sent / 带 card_sent 票的回收站 = legacy
+            # 从未批准的存量卡：raising / 带 detected 票的回收站 = legacy；退役的
+            # card_sent 回程票（§78 之前扔进回收站的存量卡）判法一字不变
             for rid, st, prev in (("R-032", State.RAISING.value, None),
-                                  ("R-033", State.TRASHED.value, State.CARD_SENT.value)):
+                                  ("R-033", State.TRASHED.value, State.CARD_SENT.value),
+                                  ("R-034", State.TRASHED.value, State.DETECTED.value)):
                 registry.upsert(_card(rid, "噪音", status=st, prev_status=prev,
                                       trashed_at="2026-09-01T00:00:00Z" if prev else None))
                 got = registry.load(rid)
                 self.assertIsNone(got.work_id, rid)
                 self.assertEqual(registry.id_kind(got), registry.ID_KIND_LEGACY, rid)
             # 序列下界仍是 legacy 最大号（采纳不消耗）
-            self.assertEqual(registry.next_work_id(), "R-034")
+            self.assertEqual(registry.next_work_id(), "R-035")
         self.for_each_backend(body)
 
     def test_legacy_approved_card_keeps_log_name(self):
@@ -465,7 +502,8 @@ class ResolveTestCase(_Both):
                 json.dumps(payload), encoding="utf-8")
             actd._SYNC_ACTIVE_CACHE = None
             self.assertEqual(actd.process_inbox(), 1)
-            self.assertEqual(registry.load("P-001").status, State.CARD_SENT.value)
+            # §78：按工作号寻址的动作落在同一张卡上，abort 的落点是潜在任务
+            self.assertEqual(registry.load("P-001").status, State.DETECTED.value)
         self.for_each_backend(body)
 
     def test_merge_force_by_work_ids_writes_key_lineage(self):

@@ -390,6 +390,14 @@
   margin-top: 6px;
 }
 
+/* §44.6 并入回执 / §21bis 强制合并超时条（潜在任务条）：与捕获框同槽、列表的兄弟节点，钉在条顶不随行滚走
+   （原生它们住提案列的列顶 composer 槽；两边的列内边距同为 6px 10px 10px，几何一像素不动）。
+   不许被 flex 压扁来凑条高——溢出归下面的列表滚动 */
+.backlog-strip > .fold-receipts,
+.backlog-strip > .fold-receipt.is-timeout {
+  flex: 0 0 auto;
+}
+
 /* 展开态的行列表 = 这根条自己的滚动容器（与 board.css .column-list 同一套：吃掉列头 / 搜索框之外的条高、
    负外边距撑到条的全宽、行的几何不动；D42 起列高钉一屏，这里的 overflow-y 才真的生效） */
 .backlog-strip-list {

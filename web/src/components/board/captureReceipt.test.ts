@@ -3,8 +3,8 @@
 //   1) stalled 判据 = 横幅的 describeHealth（stalled / failing / stale 为真；ok / unknown / 还没拉到为假）；
 //   2) 四句状态句 + 两句超时条逐字镜像原生；回执带原话前 20 个 code point；
 //   3) captureLanded：先认精确键 row.capture_id === POST 回的 inbox stem（§10 issue #7 / §49），再退到原生 captureMatches——
-//      归一化（小写、去空白 / 标点 / 符号）后前 10 字双向 contains：propose 只看 needs_approval 的 title / summary，
-//      run 只看 running + needs_input 的 name / summary，两者都不看 review。
+//      归一化（小写、去空白 / 标点 / 符号）后前 10 字双向 contains：propose 只看 **debt** 的 title / summary
+//      （§78：捕获的卡落潜在任务，提案列退役），run 只看 running + needs_input 的 name / summary，两者都不看 review。
 import { describe, expect, it } from "vitest";
 import type { Board, HealthSnapshot } from "../../types";
 import {
@@ -52,8 +52,9 @@ function board(overrides: Partial<Board> = {}): Board {
 /** 对账凭据：默认没有 stem（server 没回 / 老 server）→ 只剩前缀猜测 */
 const id = (text: string, stem: string | null = null) => ({ text, stem });
 
-const approval = (title: string, summary?: string) =>
-  ({ id: "P-1", title, summary, tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] }) as unknown as Board["needs_approval"][number];
+/** 潜在任务行（§78 起 propose 捕获的落点） */
+const backlogRow = (title: string, summary?: string) =>
+  ({ id: "P-1", title, summary, tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] }) as unknown as Board["debt"][number];
 const task = (name: string, summary?: string) => ({ id: "R-1", name, summary, state: "queued" }) as unknown as Board["running"][number];
 
 describe("pipelineStalled — the banner's predicate, not `verdict !== ok`", () => {
@@ -115,28 +116,28 @@ describe("captureLanded — PendingSweep.captureMatches port", () => {
     expect(normalizedCapture("…—!?")).toBe("");
   });
 
-  it("propose: a needs_approval row whose title or summary shares the first 10 normalized chars clears", () => {
+  it("propose: a debt row whose title or summary shares the first 10 normalized chars clears", () => {
     const typed = "Write the onboarding doc for new hires";
-    expect(captureLanded(id(typed), "propose", board({ needs_approval: [approval("write the onboarding doc for new hires")] }))).toBe(true);
+    expect(captureLanded(id(typed), "propose", board({ debt: [backlogRow("write the onboarding doc for new hires")] }))).toBe(true);
     // backend cosmetic rewrite (quotes, dash, spacing) survives
-    expect(captureLanded(id(typed), "propose", board({ needs_approval: [approval("“Write” — the onboarding doc…")] }))).toBe(true);
+    expect(captureLanded(id(typed), "propose", board({ debt: [backlogRow("“Write” — the onboarding doc…")] }))).toBe(true);
     // summary counts too
-    expect(captureLanded(id(typed), "propose", board({ needs_approval: [approval("unrelated title", "Write the onboarding doc")] }))).toBe(true);
+    expect(captureLanded(id(typed), "propose", board({ debt: [backlogRow("unrelated title", "Write the onboarding doc")] }))).toBe(true);
     // bidirectional: the backend title's first 10 chars found anywhere in the typed text also counts (`p.contains(tKey)`)…
-    expect(captureLanded(id(typed), "propose", board({ needs_approval: [approval("the onboarding doc")] }))).toBe(true);
+    expect(captureLanded(id(typed), "propose", board({ debt: [backlogRow("the onboarding doc")] }))).toBe(true);
     // …and a short typed text whose first 10 chars sit inside a longer backend title (`t.contains(pKey)`)
-    expect(captureLanded(id("write the"), "propose", board({ needs_approval: [approval("Write the onboarding doc for new hires")] }))).toBe(true);
+    expect(captureLanded(id("write the"), "propose", board({ debt: [backlogRow("Write the onboarding doc for new hires")] }))).toBe(true);
     // but neither key inside the other → no match
-    expect(captureLanded(id(typed), "propose", board({ needs_approval: [approval("Onboard new hires quickly")] }))).toBe(false);
-    expect(captureLanded(id(typed), "propose", board({ needs_approval: [approval("Something else entirely")] }))).toBe(false);
+    expect(captureLanded(id(typed), "propose", board({ debt: [backlogRow("Onboard new hires quickly")] }))).toBe(false);
+    expect(captureLanded(id(typed), "propose", board({ debt: [backlogRow("Something else entirely")] }))).toBe(false);
   });
 
-  it("propose ignores running / needs_input / review rows; run ignores needs_approval / review rows", () => {
+  it("propose ignores running / needs_input / review rows; run ignores debt / review rows", () => {
     const typed = "clean up the proposals backlog";
     const runRow = task("clean up the proposals backlog");
     expect(captureLanded(id(typed), "propose", board({ running: [runRow] }))).toBe(false);
     expect(captureLanded(id(typed), "propose", board({ needs_input: [runRow] }))).toBe(false);
-    expect(captureLanded(id(typed), "run", board({ needs_approval: [approval(typed)] }))).toBe(false);
+    expect(captureLanded(id(typed), "run", board({ debt: [backlogRow(typed)] }))).toBe(false);
     // review is deliberately not a landing signal for either (a week-old accepted card with the same words = fake launch)
     const reviewRow = { id: "R-9", name: typed, title: typed, summary: typed } as unknown as Board["review"][number];
     expect(captureLanded(id(typed), "propose", board({ review: [reviewRow] }))).toBe(false);
@@ -151,21 +152,21 @@ describe("captureLanded — PendingSweep.captureMatches port", () => {
   });
 
   it("empty or punctuation-only input never matches; rows with missing fields are skipped", () => {
-    expect(captureLanded(id(""), "propose", board({ needs_approval: [approval("anything")] }))).toBe(false);
-    expect(captureLanded(id("!!!"), "propose", board({ needs_approval: [approval("anything")] }))).toBe(false);
-    const bare = { id: "P-2" } as unknown as Board["needs_approval"][number];
-    expect(captureLanded(id("anything"), "propose", board({ needs_approval: [bare] }))).toBe(false);
+    expect(captureLanded(id(""), "propose", board({ debt: [backlogRow("anything")] }))).toBe(false);
+    expect(captureLanded(id("!!!"), "propose", board({ debt: [backlogRow("anything")] }))).toBe(false);
+    const bare = { id: "P-2" } as unknown as Board["debt"][number];
+    expect(captureLanded(id("anything"), "propose", board({ debt: [bare] }))).toBe(false);
     expect(captureLanded(id("anything"), "run", board({ running: [{ id: "R-3" } as unknown as Board["running"][number]] }))).toBe(false);
   });
 
   it("exact key first: a row whose capture_id equals the POST's inbox stem lands even when the words differ", () => {
     const stem = "capture-0f3c";
-    const row = { ...approval("AI rewrote the title completely"), capture_id: stem } as unknown as Board["needs_approval"][number];
-    expect(captureLanded(id("my original words", stem), "propose", board({ needs_approval: [row] }))).toBe(true);
-    expect(captureLanded(id("my original words", "capture-other"), "propose", board({ needs_approval: [row] }))).toBe(false);
-    expect(captureLanded(id("my original words"), "propose", board({ needs_approval: [row] }))).toBe(false); // 没 stem 只剩前缀猜测
-    // the key is lane-scoped like the prefix rule: a needs_approval row cannot land a run
-    expect(captureLanded(id("my original words", stem), "run", board({ needs_approval: [row] }))).toBe(false);
+    const row = { ...backlogRow("AI rewrote the title completely"), capture_id: stem } as unknown as Board["debt"][number];
+    expect(captureLanded(id("my original words", stem), "propose", board({ debt: [row] }))).toBe(true);
+    expect(captureLanded(id("my original words", "capture-other"), "propose", board({ debt: [row] }))).toBe(false);
+    expect(captureLanded(id("my original words"), "propose", board({ debt: [row] }))).toBe(false); // 没 stem 只剩前缀猜测
+    // the key is lane-scoped like the prefix rule: a debt row cannot land a run
+    expect(captureLanded(id("my original words", stem), "run", board({ debt: [row] }))).toBe(false);
     const queued = { ...task("queued row"), capture_id: stem } as unknown as Board["running"][number];
     expect(captureLanded(id("my original words", stem), "run", board({ running: [queued] }))).toBe(true);
   });

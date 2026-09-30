@@ -1,18 +1,22 @@
-"""状态摘要 digest (CONTRACT §17/§40.7) — the state-of-the-world card.
+"""状态摘要 digest (CONTRACT §17/§40.7/§78) — the state-of-the-world card.
 
 Sections:
-  1. 待审批积压   — status=card_sent, with age in days
+  1. 潜在任务积压 — status=detected（§78 起机器卡的唯一落点），外加仍停在退役的
+                    card_sent 上的存量卡（一次性归并扫描之前的零头，绝不让它们
+                    从页面上消失），带 age in days
   2. 待验收       — status=review
   3. 卡住         — executing items that look stuck (resume exhausted, or
                     dispatched >24h ago with no promotion)
-  4. 潜在任务     — status=detected (low-confidence backlog)
-  5. 双向承诺账本 — registry notes carrying the [MANAGER-OWES] tag
-  6. analytics 摘要 — act.report.build_report(days=7) in a folded block
-  7. 进化建议     — CONTRACT §16: features unused for 30 days -> 建议关闭;
+  4. 双向承诺账本 — registry notes carrying the [MANAGER-OWES] tag
+  5. analytics 摘要 — act.report.build_report(days=7) in a folded block
+  6. 进化建议     — CONTRACT §16: features unused for 30 days -> 建议关闭;
                     resume-failure storms / high reject ratio -> one-liners.
                     Each suggestion ALSO lands in the registry as a
-                    type=self-improvement card (status=detected, i.e. it shows
-                    up in 潜在任务 for the owner to raise — never auto-card_sent).
+                    type=self-improvement card (status=detected — 同 §1 那一列，
+                    等 owner 一次「促成运行」，绝不自己开跑).
+
+§78（提案车道退役）：原来的「待审批积压」与「潜在任务」是两节，现在同一批卡，
+合成一节；总览行的第一个计数随之从「待审批」改成「潜在任务」。
 
 Output (§40.7): a review-lane chat card — same filing pattern as
 ``act.weekly_digest`` (status=review, delivery_mode=chat, final_draft = the
@@ -271,6 +275,10 @@ def _suggestion_card(title: str, detail: str, today: _dt.date) -> Requirement:
         type="self-improvement",
         tier="T1",
         status=State.DETECTED.value,
+        # §16/§78 D80.7：进化建议在 main 上就是靠「落 detected 而不是 card_sent」
+        # 不打扰 owner 的——那一列当年不参与新卡 diff。车道退役后 diff 源换成
+        # debt[]，不盖这枚章的话，每个周一的自省建议都会变成一串通知。
+        quiet_birth=True,
         hardness="soft",
         summary=f"建议：{title}" + (f" — {detail}" if detail else ""),
         target_repo=ASSISTANT_REPO,
@@ -288,10 +296,12 @@ def file_suggestion_cards(suggestions: list[tuple[str, str]],
                           today: Optional[_dt.date] = None) -> list[Requirement]:
     """Land each suggestion in the registry as a self-improvement card.
 
-    status=detected (NOT card_sent) — they show up in 潜在任务 for the owner
-    to raise. ``merge_or_new`` dedups on title, so repeat Mondays don't stack
-    duplicates — which is why the volatile detail (live counts) stays out of
-    the title and only lands in summary/quote.
+    status=detected（§78 后机器卡的唯一落点）+ ``quiet_birth=True``（§78 D80.7）
+    — they show up in 潜在任务 for the owner to 促成运行，**安静地**：退役前
+    「detected 而不是 card_sent」就是这批卡不打扰人的全部机制，车道合一之后
+    那半条法条由这枚出生章承担。``merge_or_new`` dedups on title, so repeat
+    Mondays don't stack duplicates — which is why the volatile detail (live
+    counts) stays out of the title and only lands in summary/quote.
     """
     today = today or _dt.date.today()
     filed: list[Requirement] = []
@@ -320,6 +330,15 @@ def _by_status(reqs: list[Requirement], status: str) -> list[Requirement]:
     return [r for r in reqs if r.status == status]
 
 
+# §78：潜在任务列 = detected + 退役的 card_sent（一次性归并扫描跑完就只剩前者，
+# 但页面绝不能在扫描之前把零头藏起来——投影面 dashboard._SIMPLE_LANES 同一条规则）。
+_BACKLOG_STATUSES = (State.DETECTED.value, State.CARD_SENT.value)
+
+
+def _backlog_cards(reqs: list[Requirement]) -> list[Requirement]:
+    return [r for r in reqs if r.status in _BACKLOG_STATUSES]
+
+
 def _stuck_items(executing: list[Requirement],
                  now: _dt.datetime) -> list[tuple[Requirement, str]]:
     stuck = [(r, _is_stuck(r, now)) for r in executing]
@@ -344,17 +363,17 @@ def _section(header: str, lines: list[str], empty: str = "- （无）") -> list[
     return [header] + (lines if lines else [empty]) + [""]
 
 
-def _overview_line(card_sent: int, review: int, stuck: int, detected: int,
-                   folded: int) -> str:
+def _overview_line(backlog: int, review: int, stuck: int, folded: int) -> str:
     """One-line overview right under the title — doubles as the review-lane
-    card's summary (_file_digest_card picks the first non-header line)."""
+    card's summary (_file_digest_card picks the first non-header line).
+
+    §78：提案列退役后「待审批 N」与「潜在任务 N」是同一批卡，两个计数合成一个。"""
     folded_zh = f" · 静默并入 {folded}" if folded else ""
     folded_en = f" · {folded} silently folded" if folded else ""
     return failures.pick(
-        f"待审批 {card_sent} · 待验收 {review} · 卡住 {stuck}"
-        f" · 潜在任务 {detected}{folded_zh}",
-        f"{card_sent} awaiting approval · {review} in review ·"
-        f" {stuck} stuck · {detected} in backlog{folded_en}")
+        f"潜在任务 {backlog} · 待验收 {review} · 卡住 {stuck}{folded_zh}",
+        f"{backlog} in backlog · {review} in review ·"
+        f" {stuck} stuck{folded_en}")
 
 
 def _report_block() -> list[str]:
@@ -372,30 +391,26 @@ def build_digest(today: Optional[_dt.date] = None,
     now = _dt.datetime.now(_dt.timezone.utc)
     cfg = config.load_config()
 
-    # 进化建议 first — filing them (status=detected) lets 潜在任务 below include them.
+    # 进化建议 first — filing them (status=detected) lets 潜在任务积压 below include them.
     suggestions = build_suggestions(cfg)
     file_suggestion_cards(suggestions, today)
 
     reqs = _open_cards()
-    card_sent = _by_status(reqs, State.CARD_SENT.value)
+    backlog = _backlog_cards(reqs)
     review = _by_status(reqs, State.REVIEW.value)
-    detected = _by_status(reqs, State.DETECTED.value)
     stuck = _stuck_items(_by_status(reqs, State.EXECUTING.value), now)
     folded = _folded_last_week(now)
 
     # cadence-neutral heading (D19): the card may be daily, so no weekday in
     # the name — §40.7 页面诚实
     out: list[str] = [f"# 状态摘要 · {today.isoformat()}", ""]
-    out += [_overview_line(len(card_sent), len(review), len(stuck),
-                           len(detected), folded), ""]
-    out += _section(f"## 📨 待审批积压（{len(card_sent)}）",
-                    [_fmt(r, today) for r in card_sent])
+    out += [_overview_line(len(backlog), len(review), len(stuck), folded), ""]
+    out += _section(f"## 📨 潜在任务积压（{len(backlog)}）",
+                    [_fmt(r, today) for r in backlog])
     out += _section(f"## 🔍 待验收（{len(review)}）",
                     [_fmt(r, today) for r in review])
     out += _section(f"## 🧱 卡住（{len(stuck)}）",
                     [_fmt(r, today, extra=why) for r, why in stuck])
-    out += _section(f"## 📡 潜在任务（{len(detected)}）",
-                    [_fmt(r, today) for r in detected])
     out += _section(ledger_header(cfg), promises_owed(reqs), empty=ledger_empty())
 
     if oneonone_path is not None:

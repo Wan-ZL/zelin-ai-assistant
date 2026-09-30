@@ -93,9 +93,21 @@
         "owner": "retired",
         "reason": "D35 推及弹窗：一律按钮提交、Enter 换行（§41 2026-09-05 追记）；原生 PromptSendDelegate 的「↩ 发送 · ⇧↩ 换行」提示句不搬"
       },
+      "control:board.needs_approval:button:clean-up": {
+        "owner": "retired",
+        "reason": "D80.11：§34bis 提案积压清理预设随提案列退役（§78 tombstone 2026-09-26，issue #447）；守卫机制改挂普通直跑，不再有这颗列顶按钮"
+      },
       "control:board.needs_approval:button:collapse": {
         "owner": "retired",
         "reason": "同 board.card:button:collapse（D34，§49 追记 2026-09-04）：提案卡的就地展开退役，详情在侧栏"
+      },
+      "control:board.needs_approval:button:later": {
+        "owner": "retired",
+        "reason": "D80：提案列退役（§78，issue #447）后「暂缓」无落点——这个动词从未在生产里用过，§10 verb inventory 同日给 defer 立墓碑"
+      },
+      "control:board.notices:label:moving-to-backlog": {
+        "owner": "retired",
+        "reason": "D80：「暂缓」按钮随提案列退役（§78，issue #447）后 defer 在看板上再无入口（§10 defer 墓碑 retired v1.0），这句 pending 文案永无渲染面；动词与 ack 路径按 add-only 留着"
       },
       "control:board.review:copy:click-to-copy-the-command-double-click-opens-the": {
         "owner": "retired",
@@ -185,6 +197,12 @@
     },
     "function_screen": {
       "Cards.swift:trashReasonLabel": "trash"
+    },
+    "lane_owner": {
+      "needs_approval": {
+        "owner": "retired",
+        "reason": "D80 owner 退役提案列（§78，issue #447）"
+      }
     },
     "member_screen": {
       "AppDelegate.alertImagesNotSaved": "board.dialogs",
@@ -3466,9 +3484,10 @@
     },
     {
       "en": "Later",
-      "gated": true,
+      "gated": false,
       "id": "control:board.needs_approval:button:later",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D80：提案列退役（§78，issue #447）后「暂缓」无落点——这个动词从未在生产里用过，§10 verb inventory 同日给 defer 立墓碑",
       "role": "button",
       "screen": "board.needs_approval",
       "source": "Cards.swift:1037",
@@ -3830,9 +3849,10 @@
     },
     {
       "en": "Clean up",
-      "gated": true,
+      "gated": false,
       "id": "control:board.needs_approval:button:clean-up",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D80.11：§34bis 提案积压清理预设随提案列退役（§78 tombstone 2026-09-26，issue #447）；守卫机制改挂普通直跑，不再有这颗列顶按钮",
       "role": "button",
       "screen": "board.needs_approval",
       "source": "Kanban.swift:944",
@@ -4138,9 +4158,10 @@
     },
     {
       "en": "Moving to backlog…",
-      "gated": true,
+      "gated": false,
       "id": "control:board.notices:label:moving-to-backlog",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D80：「暂缓」按钮随提案列退役（§78，issue #447）后 defer 在看板上再无入口（§10 defer 墓碑 retired v1.0），这句 pending 文案永无渲染面；动词与 ack 路径按 add-only 留着",
       "role": "label",
       "screen": "board.notices",
       "source": "Store.swift:730",
@@ -14597,11 +14618,12 @@
       {
         "collapsible": false,
         "en": "Proposals",
-        "gated": true,
+        "gated": false,
         "id": "lane:needs_approval",
         "index": 1,
-        "owner": "web",
+        "owner": "retired",
         "rail": null,
+        "reason": "D80 owner 退役提案列（§78，issue #447）",
         "slug": "needs_approval",
         "source": "Kanban.swift:351",
         "zh": "提案 · proposals"

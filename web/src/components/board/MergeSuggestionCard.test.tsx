@@ -1,15 +1,16 @@
-// §21 合并建议卡 + §21bis 强制合并 + 多选操作条 + §34bis 清理积压 + §37 改名 + §38.2 拆分：
+// §21 合并建议卡 + §21bis 强制合并 + 多选操作条 + §37 改名 + §38.2 拆分：
 // 每个动作的 wire payload 零多余字段（server 零容忍），T2 卡不进批量批准。
+// §78：拍板的卡都在潜在任务列（debt），两颗批量键因此读 debt；§34bis「清理积压」连同提案列一起退役
+// （D80.11），那一节判例随组件一并删除。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, postAction } from "../../api";
 import { LanguageContext } from "../../i18n";
 import { refreshBoard, resetStoreForTests, setSelectionMode, toggleSelected } from "../../store";
-import type { ApprovalCard, Board, MergeSuggestion } from "../../types";
+import type { Board, DebtCard, MergeSuggestion } from "../../types";
 import { normalizeTitle, TitleEditor } from "../detail/TitleEditor";
 import { forceMergeBody } from "./ForceMergeDialog";
 import { confidenceChip, MergeSuggestionCard, titlesFor, verdictLabel } from "./MergeSuggestionCard";
-import { proposalsTriageBody, ProposalsTriageButton } from "./ProposalsTriageButton";
 import { batchable, SelectionBar } from "./SelectionBar";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -22,14 +23,15 @@ const en = (_zh: string, english: string) => english;
 function board(): Board {
   return {
     generated_at: "2026-09-02T00:00:00Z",
-    counts: { needs_approval: 3 },
-    needs_approval: [
+    counts: { debt: 3 },
+    needs_approval: [],
+    debt: [
       { id: "P-1", title: "T1 card", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
       { id: "P-2", title: "T2 card", tier: "T2", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
       { id: "P-3", title: "External", tier: "T1", effective_tier: "T2", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
     ],
     running: [{ id: "R-9", name: "Run", state: "working" }],
-    needs_input: [], review: [], completed: [], debt: [], trash: [],
+    needs_input: [], review: [], completed: [], trash: [],
   } as unknown as Board;
 }
 
@@ -43,7 +45,7 @@ function renderEn(node: React.ReactNode) {
 }
 
 beforeEach(async () => {
-  // jsdom <dialog> 兜底（同 ProposalCard.test）：老版本没有 showModal/close
+  // jsdom <dialog> 兜底（同 DebtCardItem.promote.test）：老版本没有 showModal/close
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
       this.open = true;
@@ -101,10 +103,16 @@ describe("MergeSuggestionCard", () => {
 
 describe("SelectionBar", () => {
   it("batchable skips T2 (incl. W17 effective T2) for approve only", () => {
-    const proposals = board().needs_approval as ApprovalCard[];
+    const pending = board().debt as DebtCard[];
     const ids = new Set(["P-1", "P-2", "P-3", "R-9"]);
-    expect(batchable(ids, proposals, "approve")).toEqual({ ok: ["P-1"], skippedT2: ["P-2", "P-3"] });
-    expect(batchable(ids, proposals, "reject")).toEqual({ ok: ["P-1", "P-2", "P-3"], skippedT2: [] });
+    expect(batchable(ids, pending, "approve")).toEqual({ ok: ["P-1"], skippedT2: ["P-2", "P-3"] });
+    expect(batchable(ids, pending, "reject")).toEqual({ ok: ["P-1", "P-2", "P-3"], skippedT2: [] });
+  });
+
+  // §78：档位还没长出来的老 debt 行（server 没发 tier）不许被当成 T2 挡在批量之外
+  it("batchable treats a tier-less backlog row as non-T2", () => {
+    const rows = [{ id: "R-77", title: "old debt row" }] as DebtCard[];
+    expect(batchable(new Set(["R-77"]), rows, "approve")).toEqual({ ok: ["R-77"], skippedT2: [] });
   });
 
   it("renders only in selection mode; merge review sends ids in selection order", async () => {
@@ -128,18 +136,6 @@ describe("SelectionBar", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Approve" }).at(-1)!);
     await waitFor(() => expect(postAction).toHaveBeenCalledTimes(1));
     expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({ action: "approve", comment: null, id: "P-1" });
-  });
-});
-
-describe("ProposalsTriageButton", () => {
-  it("payload mirrors §34bis and the button is disabled with no backlog", async () => {
-    expect(proposalsTriageBody()).toEqual({ action: "capture", text: "清理提案积压：审阅提案列的积压卡片，给出保留/丢弃/合并建议", mode: "run", preset: "proposals_triage" });
-    renderEn(<ProposalsTriageButton backlogCount={0} />);
-    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
-    cleanup();
-    renderEn(<ProposalsTriageButton backlogCount={3} />);
-    fireEvent.click(screen.getByRole("button"));
-    await waitFor(() => expect(postAction).toHaveBeenCalledWith(proposalsTriageBody()));
   });
 });
 

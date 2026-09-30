@@ -52,13 +52,19 @@ _STATUS_ICON = {
 
 def lane_name(status) -> str:
     """§40 (#19): user-facing pages say lane display names, not raw registry
-    status words — 「card_sent」 means nothing to the owner; 「待审批」 does.
+    status words — 「card_sent」 means nothing to the owner; 「潜在任务」 does.
     Unknown/terminal statuses fall back to the raw word (these pages filter
-    them out anyway)."""
+    them out anyway).
+
+    §78（issue #447 / D80）：`card_sent` 是退役状态，盘上的落单卡按 §78.1 第 3
+    条投影进潜在任务列——页面上也必须说同一个词，否则 1:1 / digest 会把一张
+    实际躺在潜在任务里的卡念成「待审批」，指向一条已经没有面的车道（宪法第 3
+    条）。状态值本身 add-only 不删，这里改的只是它的**显示名**。"""
+    backlog = failures.pick("潜在任务", "Backlog")
     return {
-        State.DETECTED.value: failures.pick("潜在任务", "backlog"),
+        State.DETECTED.value: backlog,
         State.RAISING.value: failures.pick("提案生成中", "raising"),
-        State.CARD_SENT.value: failures.pick("待审批", "awaiting approval"),
+        State.CARD_SENT.value: backlog,          # §78 退役状态，显示同一条车道
         State.APPROVED.value: failures.pick("已批准待派发", "approved, queued"),
         State.EXECUTING.value: failures.pick("进行中", "in progress"),
         State.REVIEW.value: failures.pick("待验收", "awaiting review"),

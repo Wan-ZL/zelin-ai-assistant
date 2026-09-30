@@ -18,7 +18,7 @@
   词表 truth = ``act/lib/notify.QUIET_HOURS_EXEMPT``）、``review_stale``（待验收卡归档前的最后一次告知，
   §70.2 追记二；同样无分类开关、不受安静时段管——每日整理出厂 03:30 就在安静窗里）、
   ``recap_ready``（§63 会议 recap）、``general``（无 kind 的其余守护进程通知：
-  新卡待审批 / 任务停下 / 派发失败 / 雷达停摆 / 需重新登录……文案住 act/lib/notify.py 的
+  潜在任务新卡 / 任务停下 / 派发失败 / 雷达停摆 / 需重新登录……文案住 act/lib/notify.py 的
   msg_* 构造器，按 UI 语言即时生成，不在此重复）。
 
 §66.2 追记的 ``[ui-parity]`` 门以本目录判 ``notification:<kind>`` 与 ``control:notifications:*``
@@ -85,10 +85,12 @@ KINDS: tuple = (
      "help": {"zh": "卡片进入「待验收」时（act/lib/notify.msg_review_ready）；受「通知 · 任务完成提醒」三档控制：关 / 横幅 / 横幅+声音。",
               "en": "When a card reaches In review (act/lib/notify.msg_review_ready); governed by the Notifications · Task-done alert knob: off / banner / banner + sound."},
      "preference": "review_notify"},
+    # §78：提案列退役，这一类数的是「潜在任务列来了新卡」。``kind`` 与
+    # ``preference`` 两个令牌是持久化的（队列条目 / 存量偏好键），逐字不动。
     {"kind": "proposal",
      "title": {"zh": "新提案提醒", "en": "New-proposal alert"},
-     "help": {"zh": "雷达 / 捕获铸出新卡等审批时（含回锅与 §40 批量汇总）；受「通知 · 新提案通知」开关与安静时段控制。",
-              "en": "When a radar or capture files a new card for approval (including returned cards and the §40 batch summary); governed by the Notifications · New-proposal alerts switch and by quiet hours."},
+     "help": {"zh": "雷达 / 捕获往潜在任务列铸出新卡等你拍板时（含回锅与 §40 批量汇总）；受「通知 · 新提案通知」开关与安静时段控制。",
+              "en": "When a radar or capture files a new card into the Backlog lane for your decision (including returned cards and the §40 batch summary); governed by the Notifications · New-proposal alerts switch and by quiet hours."},
      "preference": "notify_proposals"},
     {"kind": "needs_input",
      "title": {"zh": "任务停下来了", "en": "Needs-input alert"},

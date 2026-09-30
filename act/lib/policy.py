@@ -1,11 +1,18 @@
 """policy — origin trust matrix + auto-dispatch ceilings（v-next 信任矩阵，纯函数）.
 
 契约：docs/CONTRACT.md §50（信任矩阵）/ §51（自动派发天花板 + queued 词表）/
-§71.1（睡眠感知派发：`autodispatch.require_awake` 旋钮 + `machine_asleep` 排队原因）。
+§71.1（睡眠感知派发：`autodispatch.require_awake` 旋钮 + `machine_asleep` 排队原因）/
+§78（提案车道退役：免批**入口**只剩 §65 lane，见下）。
+
+§51 hand lane retired v-next（并入 §78，owner decision D80.4）：hand 出身卡的
+免批通道唯一的喂料口是提案捕获框，那个框随提案列一起删了；owner 亲手发起的
+工作现在走「运行中」直跑框（§34 `mode:"run"`），出生即 approved，根本不经过
+资格闸。**本模块不因此改行为**——它仍是纯资格函数，hand 卡照旧判「可以」；
+闸在调用方（act/lib/actd/dispatch.py 只把 §65 self_improve 卡送进来）。
 
 Owner 拍板（2026-08-30，见 docs/design/vnext-amendments.md 的修宪草案）：
 
-- 手打捕获与 Slack self-DM 的卡 **自动派发**（免审批开跑）；
+- 手打捕获与 Slack self-DM 的卡 **自动派发**（免审批开跑；lane 已按 D80.4 退役）；
 - AI 自提（digest/诊断/会话挖掘）与会议音频出生的卡照旧走人工审批；
 - 外部 Slack/Gmail 出生的卡：审批 + 强制 plan 扩写（W17 cheap layer——
   effective tier 的投影判定在 act/lib/risk.py，本模块只产 origin 分类，
@@ -442,10 +449,14 @@ def may_auto_dispatch(
 ) -> tuple:
     """自动派发资格裁决 -> (bool, reason_token)。
 
-    只裁资格，不改状态：True 时 actd 把卡从 card_sent 直接推进 approved
-    （actor=policy，autodispatch.notify=true 则发观察模式通知）；False 时卡
-    留在待审批，reason token 上卡陈述（locked：over-ceiling => falls back to
-    needs-approval with a stated reason）。并发上限不在这里管——它不是资格
+    只裁资格，不改状态：True 时 actd 把卡从 detected（潜在任务，§78 前是
+    card_sent）直接推进 approved（actor=policy，autodispatch.notify=true 则发
+    观察模式通知）；False 时卡留在潜在任务列等人点，reason token 上卡陈述
+    （locked：over-ceiling => falls back to needs-approval with a stated
+    reason）。§78 之后调用方只把 §65 self_improve 卡送进来（hand lane 退役，
+    D80.4）——本函数的裁决表不变，多出来的那道闸在 dispatch.py。
+
+    并发上限不在这里管——它不是资格
     问题而是排队问题，由 queued_reason 在派发时刻裁（超并发的卡已 approved，
     排在合并运行列的 queued 子状态）。预算不在这里管——没有预算（D9，v0.48.7
     起 ``today_spend`` 参数随台账一并退役）。纯函数：repo 存在性经

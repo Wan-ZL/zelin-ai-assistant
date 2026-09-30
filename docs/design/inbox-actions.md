@@ -1,6 +1,8 @@
 # inbox 动作 wire 契约（F3 提取稿 — G1 `server/inbox_writer.py` 与 G6 golden 测试的唯一真源）
 
 > **状态（v0.48，2026-08-31）**：本文 §2+§3 目录已被 CONTRACT **§49** 正式引用为 `POST /api/actions` 动词白名单（T-2 终裁）；R2 → CONTRACT §3 v0.48 追记（T-17）、R9 → CONTRACT §10 v0.48 追记（T-18）均已入典。
+>
+> **2026-09-26 追记（CONTRACT **§78**，owner 决策 **D80**，issue #447）——提案车道退役，动词全集一个不删、四个换落点、一个立墓碑**：`card_sent` 折叠进 `detected`（潜在任务）。**wire 形状、字节纪律、golden fixtures、ack 词表、`via` 落款、幂等与消费顺序一个字节都没变**——本文的 §1 全部与每个动词的 JSON 样例照旧逐字有效；变的只有各动词条目里那句「从哪个状态到哪个状态」的散文，逐条标在下面。动词白名单（机器真源 `server/inbox_writer.ALLOWED_ACTIONS`）**零删除、零重命名**（CONTRACT §0 第 6 条 add-only）。
 
 提取自 live 树（只读，2026-08-30）：`docs/CONTRACT.md` §3/§10/§10bis/§21/§21bis/§22/§24/§29/§34/§34.1/§34bis/§37/§38.2/§39.2 + `mac/Sources/AppDelegate.swift`（`writeInboxFile` 与全部 `submit*`）+ `shared/Sources/InboxAction.swift` + `mac/Sources/ProposalsTriage.swift` + `mac/Sources/SettingsWeeklyDigest.swift` + `mac/Sources/SettingsClaudeImport.swift` + `mac/Sources/Utils.swift`（AppPaths）+ `act/actd.py`（`process_inbox` 读侧）。**Swift 写侧代码即字节真相；CONTRACT 散文与代码冲突处见 §6 风险备注（code wins）。**
 
@@ -23,6 +25,7 @@
 
 ### 2.1 approve（批准）
 允许 `detected|card_sent` → `approved`（补记 `execution.approved_at`）；其余状态 no-op（白名单防迟到 approve 复活 trashed/merged/raising 卡）。
+**§78 追记**：web 上这颗键叫「**促成运行 / Run it**」，长在潜在任务列的卡面上；接受面收敛为 `detected`（`card_sent` 留着读存量卡与迟到重放）。wire 一字不变——**不新增动词**。
 ```json
 {
   "action" : "approve",
@@ -45,6 +48,7 @@
 
 ### 2.3 comment（修改方向，携带文本）
 文本并入 plan/notes，卡留 `card_sent` 等重新审批；terminal（trashed/merged/rejected）no-op；raising 卡也可 comment（折回 card_sent 是预期行为）。
+**§78 追记**：非 executing 卡的折叠评论自此落 **`detected`**（executing 卡照旧走 §44.3-S steer）；raising 卡的 comment 折回 `detected`（白名单新行 `('raising','detected','user')`）。「并入 plan/notes 并等 owner 重新决定」的语义不变，等的那一列改叫潜在任务。
 ```json
 {
   "action" : "comment",
@@ -56,6 +60,7 @@
 
 ### 2.4 defer（暂缓，提案→备选）
 仅 `card_sent` → `detected`（保留全部已扩写内容，继续参与 merge_or_new）。
+**§78 墓碑（`defer` retired v1.0，并入 §78）**：源状态自此永不出现，动词恒 no-op。**动词名与诚实 ack 路径保留**（老客户端、老 inbox 文件、云同步重放照旧被 ack `noop`，`ALLOWED_ACTIONS` 不删这一行），web / server 不再渲染任何「暂缓」入口——它的产品意图（「先别做但别扔」）正是潜在任务这条车道本身。下面的 JSON 样例仍是合法 wire，只是不再有人发。
 ```json
 {
   "action" : "defer",
@@ -67,6 +72,7 @@
 
 ### 2.5 raise（研究并提议，debt→提案）
 `detected` → `raising`（逐轮扩写）→ `card_sent`。
+**§78 追记**：`detected` → `raising`（潜在任务列里的灰色 `processing` 占位行）→ **回 `detected`**——扩写**就地把卡写厚**（summary / plan / DoD / 成本），**不再跨列**。研究完要不要开跑由同一张卡上的「促成运行」决定。失败兜底（summary=title、plan=[title]、标 needs manual）不变。
 ```json
 {
   "action" : "raise",
@@ -89,6 +95,7 @@
 
 ### 2.7 restore（回收站→原状态）
 `trashed` → `prev_status`。
+**§78 追记（D80.10）**：`prev_status == "card_sent"` 时**钳到 `detected`** 再复位——回程票不许把卡送回一条已经没有面的退役车道（CONTRACT §0 第 2 条可逆）。钳位只动这一次复位的目标状态，**盘上的 `prev_status` 字段原样不动**（add-only，它是历史事实）。`execution.restored_at`（§9 追记）照常盖。
 ```json
 {
   "action" : "restore",
@@ -133,6 +140,7 @@
 
 ### 2.11 done_external（已办完·系统外完成）
 允许 `card_sent|review|approved|executing` → `delivered`；executing 且有 session 先 harvest 再 stop（均 best-effort）。
+**§78 追记**：首项读作 **`detected`**（潜在任务列上的「已办完 · 记为已交付」一键，§76.4；白名单新行 `('detected','delivered','user')`）；其余三种状态与 harvest / stop 的分状态行为一字不变。
 ```json
 {
   "action" : "done_external",
@@ -144,6 +152,7 @@
 
 ### 2.12 abort_execution（退回提案，丢弃成果）
 允许 `approved|executing|review` → `card_sent`；session_id 归档为 `aborted_session_id`。
+**§78 追记**：落点改为 **`detected`**（UI 文案「退回潜在任务」；白名单新三行 `('approved'|'executing'|'review','detected','user')`）。停活 session、归档 `aborted_session_id`、删 `execution.done`、记 `aborted_at`、以及 §4 的「退回来的卡不得带着派发刹车」（`rearm_dispatch` 清账）全部一字不变。
 ```json
 {
   "action" : "abort_execution",

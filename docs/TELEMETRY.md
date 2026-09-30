@@ -58,7 +58,7 @@ truth，上传只读不改不删。
 | `radar_scan.secs` | 一轮雷达扫描耗时 |
 | `card_action.has_comment` / `inbox_*.has_comment` | 该操作是否带了评论（布尔；评论文本属内容，见下表） |
 | `capture_submit.chars` / `ask_submit.chars` / `inbox_capture.chars` / `capture_direct_run.chars` | 输入长度（只有**数字**） |
-| `capture_submit.mode` / `composer_open.mode` | v0.34 add-only：值恒为 `"run"`，仅出现在运行中列的直接开跑输入框（缺席 = 提案输入框；source/trigger 词表不变） |
+| `capture_submit.mode` / `composer_open.mode` | v0.34 add-only：值恒为 `"run"`，仅出现在运行中列的直接开跑输入框（缺席 = 捕获输入框——**§78 起它挂在潜在任务列头**，原提案列随车道退役；source/trigger 词表不变） |
 | `mw_mcp_scan{user,project}` | 设置页扫描 MCP server 配置：两个作用域各解析出的 server **数量**（只有计数——server 名/命令/URL 都留在本机） |
 | `mw_mcp_reveal{scope}` | 点「在 Finder 显示」定位 MCP 配置文件：只有作用域枚举（`user` \| `project`） |
 
@@ -78,7 +78,7 @@ v0.48 首启页新增一个**默认未勾选**的「分享输入文本以帮助�
 |------|----|------|
 | `feature_first_reach{feature:"app_launch"}` | App | 本机**第一次**打开 App |
 | `feature_first_reach{feature:"ingest_configured"}` | App | 第一次配好任一 ingest 源（Slack key 验过 / 录制授权 / Gmail 凭据存盘） |
-| `milestone_first_card{req}` | daemon | 第一张需求卡进入 提案 lane（`registry.save()` 单一 choke，`req`=需求 id） |
+| `milestone_first_card{req}` | daemon | 第一张需求卡落进 潜在任务 lane（`detected`；`registry.save()` 单一 choke，`req`=需求 id。**§78 起改锚**：提案车道退役后机器卡一律落 `detected`，判据跟着改，退役的 `card_sent` 落单卡落盘也仍然算数——truth = `act/lib/registry.py` `_FIRST_CARD_LANES`） |
 | `milestone_first_approval{req}` | daemon | 第一次批准一张卡（`actd` approve 分支） |
 | `milestone_first_delivery{req}` | daemon | 第一次成功派发执行（`executor` dispatch 成功处） |
 
@@ -124,6 +124,17 @@ v0.14 从产品移除（发射端不复存在），维护者项目中已上传�
 | `wizard_complete{via:"web"}` | web | 首次运行向导点了「完成」（原生 SetupWizard 同名事件）；无其它字段 |
 | `pipeline_repair_result{ok,via:"web"}` | web | 横幅 / 向导「一键修复」的下场：`ok` = 15 秒内后台服务的数据重新更新了（原生 Doctor.swift 同名事件）；被 server 拒绝或超时都是 `false` |
 | `via` | web | 常量 `"web"`——把 web 看板发的这两条与原生 app 的同名历史事件分开 |
+
+**§78 提案车道退役新增事件（2026-09-26，owner 决策 D80，issue #447；元数据、两档都上传）**：
+
+| 事件 / 字段 | 端 | 内容 |
+|-------------|----|------|
+| `retired_lane_folded{count}` | daemon | 一次性归并扫描把退役车道（`card_sent`）上的**存量**卡搬进潜在任务：`count` = 本次搬成功的**张数**（只有数字，不带卡片 id / 标题 / 来源）。每次开机至多一条，搬了 0 张整条不发；搬完之后永不再发（truth = `act/lib/actd/dispatch.py` `fold_retired_lane`，法条 CONTRACT §78.5） |
+
+> 退役**不**产生新的卡片事件：`card_sent` 这个**事件名**（`act/analyze.py` 的
+> 「研究并提议」扩写完成）按既有历史数据兼容保留，与退役的**状态值**同名但
+> 不是同一回事——事件名永不改写（改了旧数据就解读不了），改的只是它旁边那句
+> 文案指向的车道。
 
 ### `capture_input`（**默认关，v0.48 起 opt-in**）——你输入的文本
 

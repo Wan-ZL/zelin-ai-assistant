@@ -6,13 +6,18 @@ What broke (all reproduced live against the pre-fix daemon):
   processed in mtime order, re-crashed every pass — the whole inbox wedged;
 - approve's blacklist let a late/replayed ✅ flip trashed/merged/raising
   cards straight to approved;
-- a late 💬 on an executing card ripped it back to card_sent while its
+- a late 💬 on an executing card ripped it back to the backlog lane while its
   agent kept running (session_id survived into the next dispatch);
 - reject/trash binned an executing card WITHOUT stopping its live agent;
 - restore replayed on a live card rewrote its status;
 - accept teleported never-dispatched cards to delivered;
 - any action on an ARCHIVED card rewrote status while the file stayed in
   archive/ (split brain).
+
+§78（issue #447，owner 决策 D80）：提案（``card_sent``）车道退役并入潜在任务
+（``detected``）。守卫矩阵的**白名单与 no-op 集合一个都没删**，只是「折回/退回」
+的落点改成 detected；退役值仍是合法值，落单卡照旧被同一批守卫接住（下面逐条
+留着对照行）。
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
@@ -28,7 +33,7 @@ from act.lib import config, registry
 from act.lib.registry import Requirement, State
 
 
-def _mk_req(req_id="R-810", status=State.CARD_SENT.value, execution=None):
+def _mk_req(req_id="R-810", status=State.DETECTED.value, execution=None):
     req = Requirement(id=req_id, title="守卫矩阵测试", status=status,
                       execution=execution)
     registry.save(req)
@@ -93,7 +98,8 @@ class ArchivedGateTestCase(GuardsBase):
 
 
 class ApproveWhitelistTestCase(GuardsBase):
-    def test_approve_only_lands_on_live_proposals(self):
+    def test_approve_only_lands_on_live_backlog_cards(self):
+        # §78：「活着的待批卡」自此 = 潜在任务列上的卡（提案列退役）
         for status in (State.TRASHED.value, State.MERGED.value,
                        State.RAISING.value):
             for p in config.REGISTRY_DIR.glob("*.yaml"):
@@ -125,13 +131,24 @@ class LateCommentTestCase(GuardsBase):
         self.assertEqual((req.execution or {}).get("session_id"), "abcd1234")
         self.assertIn("改个方向", req.notes or "")
 
-    def test_comment_on_card_sent_still_folds_for_reapproval(self):
+    def test_comment_on_a_backlog_card_still_folds_for_reapproval(self):
+        # §78：评论折回的落点是潜在任务（退役前是提案列）——卡留在 owner 的
+        # 收件箱里等他重新点「促成运行」，而不是被送进一列没有界面的车道。
         _mk_req(status=State.DETECTED.value)
         _drop("comment", comment="补充上下文")
         actd.process_inbox()
         req = registry.load("R-810")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertIn("补充上下文", req.notes or "")
+
+    def test_comment_on_a_retired_straggler_folds_into_the_backlog(self):
+        # 存量落单卡上的评论把它一并搬进潜在任务（§78 归并语义的第二道兜底）
+        _mk_req(status=State.CARD_SENT.value)
+        _drop("comment", comment="落单卡的补充")
+        actd.process_inbox()
+        req = registry.load("R-810")
+        self.assertEqual(req.status, State.DETECTED.value)
+        self.assertIn("落单卡的补充", req.notes or "")
 
 
 class DestructiveActionsStopAgentTestCase(GuardsBase):
@@ -165,8 +182,8 @@ class DestructiveActionsStopAgentTestCase(GuardsBase):
             actd.process_inbox()
         self.assertEqual(registry.load("R-810").status, State.TRASHED.value)
 
-    def test_reject_on_card_sent_does_not_touch_stop(self):
-        stop, req = self._run_with_stop("reject", State.CARD_SENT.value)
+    def test_reject_on_a_backlog_card_does_not_touch_stop(self):
+        stop, req = self._run_with_stop("reject", State.DETECTED.value)
         stop.assert_not_called()
         self.assertEqual(req.status, State.TRASHED.value)
 

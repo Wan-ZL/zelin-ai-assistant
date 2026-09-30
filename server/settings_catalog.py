@@ -11,7 +11,8 @@ section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.j
 approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
 开发者区前两行是 web 才有的（原生没有）：`self_improve_enabled`（§65.1 / issue #307 / D57）自动改进本软件的通道总开关，默认关；
 `self_improve_owner_logins`（§65.5 / issue #310）额外算作 owner 本人的 GitHub login，默认空表（仓库 owner 与 gh 当前身份恒在集合里）。
-「审批 / 成本」区的 `approval_mention_escalation`（§76.2 / issue #313）也是 web 才有的一行：提案被提够多少次仍未处理就升级（0 = 关），actd 每 pass 现读。
+「审批 / 成本」区的 `approval_mention_escalation`（§76.2 / issue #313）也是 web 才有的一行：一张卡被提够多少次仍未拍板就升级（0 = 关），actd 每 pass 现读。
+§78（提案车道退役）：目录里凡是说「卡回到提案列 / 待审批列」的文案改口指向潜在任务列；持久化的旋钮键（`notify_proposals` 等）与它们的标签逐字不动——键是存量偏好，改名会让老安装的设置凭空复位。
 
 读：``GET /api/settings`` 全目录 + 每 field 的 effective 值与来源
 （override / config / default，三层与 ``act/lib/config._apply_settings_overrides``
@@ -221,11 +222,12 @@ SECTIONS: tuple = (
                check="clock_time", placeholder=("08:00", "08:00"),
                help_zh="24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。",
                help_en="24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off."),
-            # §44.6 追记（issue #308 / D64）：提案列顶那排绿色回执的总开关。自动
+            # §44.6 追记（issue #308 / D64）：并入回执那排绿条的总开关。自动
             # 通道（雷达 / 每日整理）本就不再出回执，这把只管剩下的用户通道。
+            # §78：提案列退役，回执随之搬到潜在任务列顶（BacklogStrip 自带强制展开路径）。
             _f("fold_receipt_notices", "bool", "静默并入回执", "Silent-merge receipts", default=True,
-               help_zh="你自己捕获的一句话被并进已有卡（没有建新卡）时，提案列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。",
-               help_en="When something you captured is merged into an existing card (no new card filed), a green notice appears atop the proposals lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its \u201cFolded \u00d7N\u201d chip. Repeat merges into the same card collapse into one line (\u00d7N)."),
+               help_zh="你自己捕获的一句话被并进已有卡（没有建新卡）时，潜在任务列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。",
+               help_en="When something you captured is merged into an existing card (no new card filed), a green notice appears atop the Backlog lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its \u201cFolded \u00d7N\u201d chip. Repeat merges into the same card collapse into one line (\u00d7N)."),
         ],
         help_zh="系统通知由看板 app（壳）投递（§28）；app 没开就没有系统通知。通知权限见「权限体检」。",
         help_en="System notifications are posted by the board app (§28); no app running = no banners. Permission status: Permissions checkup.",
@@ -352,8 +354,8 @@ SECTIONS: tuple = (
                help_en="A recap card over the last 7 days of ingest (In review lane); skipped when nothing new landed."),
             _f("digest_frequency", "enum", "状态摘要频率", "Status digest cadence", default="off",
                choices=("off", "daily", "every2days", "weekly"), config=("digest", "frequency"),
-               help_zh="待审批 / 待验收积压 + 卡住任务 + 欠账的一张摘要卡。默认 off（D19）。",
-               help_en="One card summarizing approvals / review backlog, stuck tasks and debts. Default off (D19)."),
+               help_zh="潜在任务 / 待验收积压 + 卡住任务 + 承诺账本的一张摘要卡。默认 off（D19）。",
+               help_en="One card summarizing the backlog / review queue, stuck tasks and promises. Default off (D19)."),
         ],
     ),
     _section(
@@ -387,8 +389,8 @@ SECTIONS: tuple = (
             _f("approval_mention_escalation", "int", "被提 N 次仍未处理（升级阈值）",
                "Raised N times, still unhandled (escalate at)", default=5,
                config=("approval", "mention_escalation"),
-               help_zh="同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
-               help_en="When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
+               help_zh="同一件事被提够这么多次，卡还停在潜在任务列没被促成运行 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
+               help_en="When the same thing has been raised this many times and the card is still sitting in the Backlog lane, neither run nor rejected, its \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
             _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=60,
                config=("trash", "retention_days"),
                help_zh="超期且未标永久的卡硬删；0 = 永不自动清。", help_en="Unpinned cards older than this are purged; 0 = never."),
@@ -436,8 +438,8 @@ SECTIONS: tuple = (
                "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）",
                "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
                default=False, config=("self_improve", "enabled"),
-               help_zh="维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并铸 🤖 提案卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回待审批列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。",
-               help_en="Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 proposal cards, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the approval column, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once."),
+               help_zh="维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并往潜在任务列铸 🤖 卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回潜在任务列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。",
+               help_en="Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 cards into the Backlog lane, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the Backlog lane, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once."),
             # §65.5 追记（issue #310）：通道把谁的合并 / 关闭 / 评论当作 owner 本人的动作。出厂就认仓库 owner 与
             # 这台机器 gh 当前登录的身份；这一行是第三份来源。落点 config.yaml `self_improve.owner_logins`，override
             # 写嵌套形 `{"self_improve": {"owner_logins": [...]}}`（act/lib/config.py `_OVERRIDE_HANDLERS` 两拼法都认）。

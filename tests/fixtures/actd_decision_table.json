@@ -11,7 +11,7 @@
   ],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=approved+sid|sources=hand|comment=text": {
   "ack": "running",
@@ -25,7 +25,7 @@
   ],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=approved|sources=hand|comment=none": {
   "ack": "running",
@@ -35,7 +35,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=approved|sources=hand|comment=text": {
   "ack": "running",
@@ -45,7 +45,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=archived|sources=hand|comment=none": {
   "ack": "noop",
@@ -139,7 +139,7 @@
   ],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=executing+sid|sources=hand|comment=text": {
   "ack": "running",
@@ -153,7 +153,7 @@
   ],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=executing|sources=hand|comment=none": {
   "ack": "running",
@@ -163,7 +163,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=executing|sources=hand|comment=text": {
   "ack": "running",
@@ -173,7 +173,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=merged|sources=hand|comment=none": {
   "ack": "noop",
@@ -235,7 +235,7 @@
   ],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=review+sid|sources=hand|comment=text": {
   "ack": "running",
@@ -249,7 +249,7 @@
   ],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=review|sources=hand|comment=none": {
   "ack": "running",
@@ -259,7 +259,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=review|sources=hand|comment=text": {
   "ack": "running",
@@ -269,7 +269,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=abort_execution|status=trashed|sources=hand|comment=none": {
   "ack": "noop",
@@ -2461,7 +2461,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=card_sent|expected=card_sent|via=agent": {
   "ack": "running",
@@ -2493,7 +2493,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=card_sent|expected=same|via=agent": {
   "ack": "running",
@@ -2509,7 +2509,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=card_sent|sources=hand|comment=text": {
   "ack": "running",
@@ -2517,7 +2517,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=delivered+sid|expected=card_sent|via=None": {
   "ack": "noop",
@@ -2685,7 +2685,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=detected|expected=same|via=agent": {
   "ack": "running",
@@ -2701,7 +2701,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=detected|sources=hand|comment=text": {
   "ack": "running",
@@ -2709,7 +2709,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=executing+sid|expected=card_sent|via=None": {
   "ack": "noop",
@@ -2953,7 +2953,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=raising|expected=same|via=agent": {
   "ack": "running",
@@ -2969,7 +2969,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=raising|sources=hand|comment=text": {
   "ack": "running",
@@ -2977,7 +2977,7 @@
   "ex_removed": [],
   "notes_tail": "[<date> 修改方向] 改一下方向",
   "plan_changed": true,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=comment|status=rejected|expected=card_sent|via=None": {
   "ack": "noop",
@@ -3584,20 +3584,24 @@
   "status": "delivered"
  },
  "verb=done_external|status=detected|sources=hand|comment=none": {
-  "ack": "noop",
-  "ex_added": [],
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
   "ex_removed": [],
-  "notes_tail": "",
+  "notes_tail": "[done outside] Zelin 在系统外完成",
   "plan_changed": false,
-  "status": "detected"
+  "status": "delivered"
  },
  "verb=done_external|status=detected|sources=hand|comment=text": {
-  "ack": "noop",
-  "ex_added": [],
+  "ack": "running",
+  "ex_added": [
+   "accepted_at"
+  ],
   "ex_removed": [],
-  "notes_tail": "",
+  "notes_tail": "[done outside] Zelin 在系统外完成",
   "plan_changed": false,
-  "status": "detected"
+  "status": "delivered"
  },
  "verb=done_external|status=executing+sid|sources=hand|comment=none": {
   "ack": "running",
@@ -5443,7 +5447,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=restore|status=trashed|sources=hand|comment=text": {
   "ack": "running",
@@ -5453,7 +5457,7 @@
   "ex_removed": [],
   "notes_tail": "",
   "plan_changed": false,
-  "status": "card_sent"
+  "status": "detected"
  },
  "verb=revert_review|status=approved+sid|sources=hand|comment=none": {
   "ack": "noop",

@@ -62,8 +62,9 @@ def _epoch(now, **delta):
 
 
 def _vocab_proposals(now):
-    """提案列词表行：T0 自动执行 + 逾期 + 分歧 + 改进 / T2 需文字确认 + 今天截止 + 回锅新增 + 已并入 /
-    未分级 + 成本未知 + 常规难度 + 修改意见合并中（processing rework）。"""
+    """提案卡面词表行（§78 提案列退役后落在潜在任务列，D80）：T0 自动执行 + 逾期 + 分歧 + 改进 /
+    T2 需文字确认 + 今天截止 + 回锅新增 + 已并入 / 未分级 + 成本未知 + 常规难度 + 修改意见合并中
+    （processing rework）。"""
     src = [{"channel": "gmail", "date": "2026-08-30", "quote": "季度报告的图表能自动更新吗", "who": "sam.rivera"}]
     return [
         {"id": "P-131", "display_id": "P-131", "id_kind": "proposal", "title": "季度报告图表自动刷新",
@@ -192,7 +193,8 @@ def _vocab_debt(now):
 
 
 def _fold_receipts(now):
-    """§44.6 并入回执一条：看板提案列顶的一行 info 通知「刚才的输入已并入 R-xx「<title>」（没有建新卡）」。"""
+    """§44.6 并入回执一条：潜在任务列（BacklogStrip）顶的一行 info 通知「刚才的输入已并入 R-xx「<title>」
+    （没有建新卡）」——§78 退役提案列后回执随之搬到这条书立条上。"""
     return [{"id": "a3f1c2d4e5b6a7c8d9e0f1a2b3c4d5e6", "req": "R-105",
              "title": "example-bench: 修 flaky 的 e2e 测试（retry 逻辑）",   # = 目标卡的展示名（dashboard._fold_receipts 现查）
              "channel": "quick_capture", "at": _epoch(now, seconds=30)}]
@@ -236,7 +238,10 @@ def _archived_extra(now):
 
 def build_board(now=FIXED_NOW):
     board = demo_seed.build("initial", now=now)
-    board["needs_approval"] += _vocab_proposals(now)
+    # §78（D80，issue #447）：提案列退役，机器卡一律落潜在任务列——提案卡面的词表行随之改落 debt[]。
+    # needs_approval 仍是合法 wire key（add-only），但恒空、counts 0（D80.1）：留在那里的行在 web 上
+    # 没有渲染面，§66 的 control:board.needs_approval:* 探针就判不到卡面的词。
+    board["debt"] += _vocab_proposals(now)
     board["running"] += _vocab_running(now)
     board["needs_input"] = list(board.get("needs_input") or []) + _vocab_needs_input(now)
     board["review"] += _vocab_review(now)

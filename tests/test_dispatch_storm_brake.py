@@ -18,7 +18,8 @@ judgments pinned here:
 3. The backoff window is a pure no-op for actd: no registry write, no
    traceback (the fixpoint re-record was the write storm).
 4. EVERY path into approved re-arms (owner approve, policy auto-dispatch,
-   and 退回提案 itself clears) — the review-reproduced dead loop
+   and 退回潜在任务 itself clears — §78/issue #447 retired the 提案 lane, so
+   abort_execution now lands in ``detected``) — the review-reproduced dead loop
    (halt → abort → auto_dispatch_pass → still halted) is pinned; the
    dashboard projects a halted card into ``needs_input`` as a blocked row
    (never「排队中」), and the transition detector does not double-ping it.
@@ -304,7 +305,7 @@ class BackoffWindowIsANoOpTestCase(BrakeBase):
 
 class ReapprovalRearmsTestCase(BrakeBase):
     def test_approve_clears_the_streak_and_halt(self):
-        req = Requirement(id="R-988", title="重批测试", status=State.CARD_SENT.value,
+        req = Requirement(id="R-988", title="重批测试", status=State.DETECTED.value,
                           target_repo=str(self.target))
         req.execution = {"aborted_at": "2026-08-31T13:00:00Z",
                          "last_error": FD_ERR, "last_error_at": "x",
@@ -328,11 +329,16 @@ class ReapprovalRearmsTestCase(BrakeBase):
                "last_dispatch_attempt_at": "x",
                "dispatch_halted": True, "dispatch_halted_at": "x"}
 
-    def _hand_card(self, req_id: str, status: str) -> Requirement:
-        req = Requirement(id=req_id, title="免批重上膛", tier="T1", type="other",
-                          status=status, target_repo=str(self.target),
-                          cost_estimate_usd=1.0,
-                          sources=[{"who": "zelin", "channel": "quick",
+    def _lane_card(self, req_id: str, status: str) -> Requirement:
+        # §78 / D80.4：§51 hand lane 免批随提案列退役，唯一还在的免批通道是 §65
+        # self_improve lane——「每条进 approved 的路都重新上膛」这条判例因此改用
+        # lane 卡喂料（上膛语义一字未变，变的只是谁有资格被免批推进去）。
+        self.cfg.self_improve_enabled = True
+        req = Requirement(id=req_id, title="免批重上膛", tier="T1",
+                          type="self-improvement", status=status,
+                          target_repo=str(config.HOME), target_kind="existing",
+                          delivery_mode="repo", cost_estimate_usd=1.0,
+                          sources=[{"who": "loop", "channel": "self_improve",
                                     "date": "2026-08-31", "quote": "原话"}])
         req.execution = dict(self._HALTED)
         registry.save(req)
@@ -341,25 +347,25 @@ class ReapprovalRearmsTestCase(BrakeBase):
         return req
 
     def test_abort_execution_clears_the_streak(self):
-        # 退回提案 = 「丢弃这一轮」：card_sent 卡不得带着刹车回到待审批
-        # （adversarial review 2026-09-01 B1）。
+        # 退回潜在任务 = 「丢弃这一轮」：退回的卡不得带着刹车回到那一列
+        # （adversarial review 2026-09-01 B1；§78 起落点是 detected）。
         req = self._approved("R-990")
         req.execution = dict(self._HALTED)
         registry.save(req)
         self.assertEqual(actd._apply_decision(req, "abort_execution", None), "running")
         saved = registry.load("R-990")
-        self.assertEqual(saved.status, State.CARD_SENT.value)
+        self.assertEqual(saved.status, State.DETECTED.value)
         for key in executor.DISPATCH_STREAK_KEYS + ("last_error", "last_error_at"):
             self.assertNotIn(key, saved.execution, key)
         self.assertTrue(saved.execution.get("aborted_at"))
 
     def test_policy_reapproval_rearms_and_dispatch_resumes(self):
-        # Reproduced dead loop: brake trips -> 停止/退回提案 -> the SAME pass's
-        # auto_dispatch_pass re-approves the hand card -> before the fix the
+        # Reproduced dead loop: brake trips -> 停止/退回潜在任务 -> the SAME pass's
+        # auto_dispatch_pass re-approves the lane card -> before the fix the
         # halt rode along, the card sat in 需输入 forever and owner approve on
         # an approved card was a whitelist no-op. Every path into approved
         # must re-arm (§4.1).
-        self._hand_card("R-991", State.APPROVED.value)
+        self._lane_card("R-991", State.APPROVED.value)
         with mock.patch.object(actd.notify, "notify"):
             # the exact sequence the review scripted — no approve verb at all
             actd._apply_decision(registry.load("R-991"), "abort_execution", None)
@@ -377,9 +383,9 @@ class ReapprovalRearmsTestCase(BrakeBase):
         self.assertEqual(launch.call_args.args[0].id, "R-991")
 
     def test_policy_approval_rearms_even_without_abort(self):
-        # a card_sent card carrying a stale halt (hand-edited YAML, crash
+        # a 潜在任务 card carrying a stale halt (hand-edited YAML, crash
         # between abort and save, ...) must not be promoted with the halt on.
-        self._hand_card("R-992", State.CARD_SENT.value)
+        self._lane_card("R-992", State.DETECTED.value)
         with mock.patch.object(actd.notify, "notify"):
             self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
         saved = registry.load("R-992")

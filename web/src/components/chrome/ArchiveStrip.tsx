@@ -27,8 +27,8 @@ export const ARCHIVE_NO_MATCH = ["无匹配项", "No matches"] as const;
 /** archived prev_status（registry State）→ 用户认识的列名（原生 prevStatusLabel） */
 export function prevStatusLabel(status: string, language: "zh" | "en", text: (zh: string, en: string) => string): string {
   switch (status) {
-    case "detected": return domainLabel(LANE_LABELS, language, "debt");
-    case "raising": case "card_sent": return domainLabel(LANE_LABELS, language, "needs_approval");
+    // §78：detected / raising / 落单 card_sent 三个状态都投影进潜在任务——放回看板时回的也是那一列
+    case "detected": case "raising": case "card_sent": return domainLabel(LANE_LABELS, language, "debt");
     case "approved": case "executing": return domainLabel(LANE_LABELS, language, "running");
     case "review": return domainLabel(LANE_LABELS, language, "review");
     case "delivered": return domainLabel(LANE_LABELS, language, "completed");

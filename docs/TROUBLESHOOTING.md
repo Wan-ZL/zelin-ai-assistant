@@ -108,7 +108,7 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴 **`~/Library/Application Support/ZelinAIAssistant/bin/claude`**——这是 install.sh 维护的 claude **稳定副本**(CONTRACT §55 第五幕),后台任务起的就是它;路径永远不变,所以**授一次就够**,claude 更新后不用重做(见下一节)。文件还不存在就先 `bash install.sh` 一次(doctor `stable claude` 行会 WARN 提醒)。doctor `launchd claude` 行的 fix 文案会点名它刚刚探过的那条精确路径——照它写的加。
 2. 把任务 repo 放回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),改 `config.yaml` 的 `execution.default_target_repo`。
 
-然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上把停住的卡「停止 → 退回提案」再批准一次(批准会清掉整条失败台账;hand 卡免批通道也会自动接手)。一张卡真的到「执行中」才算修好。另一条结构性路线(有授权的 GUI app 托管后台服务、子进程全继承)记在 `docs/design/vnext2-plan.md` D20 / Q7,不再是 P6 的前提。
+然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上用「停止」把停住的卡退回潜在任务列、再批准一次(批准会清掉整条失败台账;§78 起你亲手打的卡也不再免批,要你点一下才重新开跑)。一张卡真的到「执行中」才算修好。另一条结构性路线(有授权的 GUI app 托管后台服务、子进程全继承)记在 `docs/design/vnext2-plan.md` D20 / Q7,不再是 P6 的前提。
 
 ## Claude Code 更新后派工被拒:`launchd claude` 行昨天还是绿的,今天又红了
 

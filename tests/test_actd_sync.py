@@ -44,7 +44,7 @@ def _activate_sync():
     actd._SYNC_ACTIVE_CACHE = None
 
 
-def _mk_req(req_id="R-700", status=State.CARD_SENT.value, execution=None, notes=""):
+def _mk_req(req_id="R-700", status=State.DETECTED.value, execution=None, notes=""):
     req = Requirement(id=req_id, title="sync guard test", status=status,
                       execution=execution, notes=notes)
     registry.save(req)
@@ -105,7 +105,7 @@ class StatusGuardTestCase(SyncGuardBase):
     # ---- SYNC stale-guard: expected_status present + mismatched => no-op ---- #
     def test_comment_stale_expected_status_is_noop(self):
         _mk_req(status=State.EXECUTING.value)
-        aid = _drop("comment", "R-700", comment="改方向", expected_status="card_sent")
+        aid = _drop("comment", "R-700", comment="改方向", expected_status="detected")
         actd.process_inbox()
         self.assertEqual(registry.load("R-700").status, State.EXECUTING.value)
         self.assertEqual(_result_for(aid), "noop")
@@ -121,31 +121,33 @@ class StatusGuardTestCase(SyncGuardBase):
 
     # (d) regression: a SYNCED accept whose pinned expected_status no longer
     # matches the current status is a no-op (the intended stale-guard).
-    def test_synced_accept_expected_review_but_now_card_sent_is_noop(self):
-        _mk_req(status=State.CARD_SENT.value)
+    def test_synced_accept_expected_review_but_now_in_backlog_is_noop(self):
+        # §78：卡回到的那一列现在是潜在任务（detected）；陈旧守卫语义一字不变
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("accept", "R-700", expected_status="review")
         actd.process_inbox()
-        self.assertEqual(registry.load("R-700").status, State.CARD_SENT.value)
+        self.assertEqual(registry.load("R-700").status, State.DETECTED.value)
         self.assertEqual(_result_for(aid), "noop")
 
     # ---- LOCAL callers (no expected_status) apply exactly as on main -------- #
-    def test_comment_on_card_sent_applies(self):
-        _mk_req(status=State.CARD_SENT.value)
+    def test_comment_on_a_backlog_card_applies(self):
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("comment", "R-700", comment="加个测试")
         actd.process_inbox()
         req = registry.load("R-700")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)   # §78 折回潜在任务
         self.assertIn("加个测试", req.notes or "")
         self.assertEqual(_result_for(aid), "running")
 
     # (c) regression B1: a LOCAL comment on a RAISING/processing card (the web
-    # renders 修改 on it) must APPLY — fold + return to card_sent — not no-op.
+    # renders 修改 on it) must APPLY — fold + return to 潜在任务 (detected since
+    # §78) — not no-op.
     def test_comment_on_raising_card_applies_without_expected(self):
         _mk_req(status=State.RAISING.value)
         aid = _drop("comment", "R-700", comment="换个方向")
         actd.process_inbox()
         req = registry.load("R-700")
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertIn("换个方向", req.notes or "")
         self.assertEqual(_result_for(aid), "running")
 
@@ -159,7 +161,8 @@ class StatusGuardTestCase(SyncGuardBase):
 
     # restore main: a LOCAL raise carries no expected_status, so it applies
     # regardless of the current status (no hard detected-only precondition).
-    def test_raise_without_expected_applies_from_card_sent(self):
+    def test_raise_without_expected_applies_from_a_retired_straggler(self):
+        # §78 add-only：落单的退役卡上「研究并提议」照旧把它送进 raising
         _mk_req(status=State.CARD_SENT.value)
         aid = _drop("raise", "R-700")
         with mock.patch.object(actd, "analyze", mock.Mock()):
@@ -218,7 +221,7 @@ class StatusGuardTestCase(SyncGuardBase):
 # --------------------------------------------------------------------------- #
 class AppliedAckTestCase(SyncGuardBase):
     def test_success_writes_running_ack(self):
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("approve", "R-700")
         actd.process_inbox()
         self.assertEqual(_result_for(aid), "running")
@@ -226,7 +229,7 @@ class AppliedAckTestCase(SyncGuardBase):
     def test_guarded_noop_writes_noop_ack(self):
         # a SYNCED accept whose pinned expected_status no longer matches the
         # current status is the guarded (stale) no-op.
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("accept", "R-700", expected_status="review")
         actd.process_inbox()
         self.assertEqual(_result_for(aid), "noop")
@@ -242,7 +245,7 @@ class AppliedAckTestCase(SyncGuardBase):
         self.assertEqual(_result_for(aid), "bad_json")
 
     def test_unknown_action_writes_unknown_ack(self):
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("frobnicate", "R-700")
         actd.process_inbox()
         self.assertEqual(_result_for(aid), "unknown")
@@ -270,7 +273,7 @@ class AppliedAckGatingTestCase(unittest.TestCase):
         actd._SYNC_ACTIVE_CACHE = None
 
     def test_local_action_writes_no_ack_and_no_sync_dir(self):
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("approve", "R-700")
         n = actd.process_inbox()
         self.assertEqual(n, 1)                       # action still applied
@@ -282,7 +285,7 @@ class AppliedAckGatingTestCase(unittest.TestCase):
     def test_mode_off_is_also_treated_as_local(self):
         _SYNC_JSON.write_text(json.dumps({"mode": "off"}), encoding="utf-8")
         actd._SYNC_ACTIVE_CACHE = None
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         aid = _drop("approve", "R-700")
         actd.process_inbox()
         self.assertFalse(_APPLIED.exists())
@@ -293,13 +296,13 @@ class AppliedAckGatingTestCase(unittest.TestCase):
         # the same process (actd is long-lived and never reloads its config) —
         # WITHOUT manually clearing the cache here, proving the stat check
         # invalidates it on its own.
-        _mk_req(status=State.CARD_SENT.value)
+        _mk_req(status=State.DETECTED.value)
         aid1 = _drop("approve", "R-700")
         actd.process_inbox()
         self.assertIsNone(_result_for(aid1))         # local: no ack yet
         _SYNC_JSON.write_text(json.dumps({"mode": "cloud", "device_id": "d"}),
                               encoding="utf-8")       # enable mid-run
-        _mk_req(req_id="R-701", status=State.CARD_SENT.value)
+        _mk_req(req_id="R-701", status=State.DETECTED.value)
         aid2 = _drop("approve", "R-701")
         actd.process_inbox()
         self.assertEqual(_result_for(aid2), "running")   # now acking

@@ -1,4 +1,5 @@
-// 列顶输入框（提案列快速捕获 / 运行中列直跑）。§41 网页纪律（2026-09-04 追记，owner 决策 D35）：
+// 列顶输入框（潜在任务条头的快速捕获 / 运行中列的直跑；§78 提案列退役后捕获框搬去了左书立条，
+// 组件本身不变——身份仍只从 buildBody 的 payload 读）。§41 网页纪律（2026-09-04 追记，owner 决策 D35）：
 //   - 多行 <textarea>，1 行起随内容增高、5 行封顶后内部滚动（fitComposerRows；行高 / 内边距从
 //     computed style 读，单源 = tokens.css 的 --type-composer）；
 //   - Enter = 换行，Shift+Enter 也是换行，键盘上没有任何键提交——只有「捕获」/「直跑」按钮提交
@@ -62,6 +63,9 @@ interface LaneComposerProps {
   placeholder: string;
   submitLabel: string;
   buildBody: (text: string) => Record<string, unknown>;
+  /** 捕获 POST 成功（回执刚换上）之后的一声招呼；§78：潜在任务条用它把自己强制展开——
+   *  回执与刚落的卡都在这条条里，收起的条里的回执等于没给回执。斜杠命令不算成功捕获，不叫。 */
+  onSubmitted?: () => void;
 }
 
 type ComposerMode = CaptureMode;
@@ -138,7 +142,7 @@ export function fitComposerRows(el: HTMLTextAreaElement, maxRows = COMPOSER_MAX_
   el.rows = Math.min(maxRows, Math.max(1, contentLines));
 }
 
-export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneComposerProps) {
+export function LaneComposer({ placeholder, submitLabel, buildBody, onSubmitted }: LaneComposerProps) {
   const { text } = useI18n();
   const shell = useShellState();
   const mode = composerMode(buildBody);
@@ -285,6 +289,7 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
       setDraft(""); // 仅确认成功后清空（§41 草稿保留）
       clearImages(); // 附图与文字同命：成功才清（原生 model.clear() 在 submitCapture 成功之后）
       beginReceipt(trimmed, response); // 成功才替换上一份回执、时钟重来（stem = server 回的 inbox 文件名，§49 对账精确键）
+      onSubmitted?.(); // §78：回执落在哪个容器里，就由那个容器负责把自己打开
     } catch (e) {
       // capture 写入失败（原生 submitCapture 返回 false）：固定一句 + server 原文；草稿原样留着
       setError({ prefix: text("提交失败，已保留输入", "Submit failed — input kept"), detail: describeActionError(e, text) });

@@ -5,6 +5,10 @@
 判 ``new_proposal``，也一张卡都不许发；判 ``relates_to`` 命中还开着的卡时照常折叠。
 两半都在这里跑一遍——只证明「不铸」不够，「还能佐证」也得同时成立，否则把闸门
 写成静默 no-op 也能过。
+
+§78（提案车道退役）：被佐证的那张卡现在是 ``detected``（潜在任务列）。屏幕佐证
+落下备注之后它必须**还是** ``detected``——§45 的那一刀在新模型下就是「屏幕不许
+把卡往前推一格」，退役前后一字不改。
 """
 from __future__ import annotations
 
@@ -43,7 +47,7 @@ def scenario(home: Path):
     config.CONFIG_PATH.write_text(f'sources:\n  obsidian_raw: "{raw.as_posix()}"\n',
                                   encoding="utf-8")
     registry.save(registry.Requirement(
-        id="R-902", title="把 Q3 rollout plan 发给 manager", status="card_sent",
+        id="R-902", title="把 Q3 rollout plan 发给 manager", status="detected",
         sources=[{"who": "manager", "channel": "slack", "date": "2026-09-14",
                   "quote": "Q3 rollout plan"}]))
 
@@ -68,7 +72,7 @@ def scenario(home: Path):
         ("fold_not_blocked", folded.get("echo_blocked") == 0),
         ("still_one_card", len(registry.load_all()) == 1),
         ("corroboration_landed", NOTE in ((target.notes or "") if target else "")),
-        ("status_not_promoted", bool(target) and target.status == "card_sent"),
+        ("status_not_promoted", bool(target) and target.status == "detected"),   # §78
     ])
     evidence = (f"screen new_proposal blocked={blocked.get('echo_blocked')} cards={blocked.get('cards')}; "
                 f"relates_to folded into R-902 total_cards={len(registry.load_all())} {why}")
