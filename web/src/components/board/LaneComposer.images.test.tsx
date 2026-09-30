@@ -26,6 +26,14 @@ import { encodePng } from "./pastedImages";
 
 const ENCODED = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])], { type: "image/png" });
 
+// 缩略图的 blob: URL 桩。vitest 的 jsdom 环境给 `URL` 套了层 compat 子类：createObjectURL 先把 jsdom Blob 翻成 Node Blob，
+// 翻法是扫 Blob wrapper 的 own symbol 找 jsdom 的 impl 再读它的字节；jsdom 30.1 起 impl 进了 private field（own symbol
+// 为空）→ 每次调用都抛 `Cannot read properties of undefined (reading '_buffer')`（vitest-dev/vitest#11336，上游未修）。
+// previewUrlFor 在 encode + upload 都成功之后才调它，抛出来被组件当成「图片保存失败」——缩略图行凭空消失、弹窗顶上来。
+// 这里把两个静态方法桩成可断言的假 URL（与下面 showModal 的桩同一口径），顺带钉住缩略图 src 与 ✕ / 成功清空时的 revoke。
+let blobUrlSeq = 0;
+const previewUrl = (n: number) => `blob:vitest/preview-${n}`;
+
 function pngFile(name = "image.png"): File {
   return new File([new Uint8Array([1, 2, 3])], name, { type: "image/png" });
 }
@@ -66,6 +74,9 @@ beforeEach(() => {
   resetStoreForTests();
   window.localStorage.clear();
   pathSeq = 0;
+  blobUrlSeq = 0;
+  vi.spyOn(URL, "createObjectURL").mockImplementation(() => previewUrl(++blobUrlSeq));
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
   vi.mocked(postAction).mockClear();
   vi.mocked(postAction).mockResolvedValue({ ok: true, file: "capture-1.json" });
   vi.mocked(encodePng).mockReset();
@@ -80,6 +91,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks(); // 还原 URL.createObjectURL / revokeObjectURL 的 spy（vi.fn 桩不受影响）
 });
 
 describe("LaneComposer — pasted screenshots ride the capture as attachments (D41)", () => {
@@ -92,7 +104,9 @@ describe("LaneComposer — pasted screenshots ride the capture as attachments (D
     expect(encodePng).toHaveBeenCalledWith(shot);
     expect(postAttachment).toHaveBeenCalledWith(ENCODED, expect.any(AbortSignal)); // 第二参 = 上传超时信号
     expect(thumbs()[0].dataset.imagePath).toBe("/home/demo/state/attachments/uuid-1-1.png");
-    expect(screen.getByAltText("Image 1")).toBeTruthy();
+    // 缩略图 src = 编码后那份 PNG 的 blob: URL（只给预览，不进 wire）
+    expect(URL.createObjectURL).toHaveBeenCalledWith(ENCODED);
+    expect(screen.getByAltText("Image 1").getAttribute("src")).toBe(previewUrl(1));
     expect(removeButtons()).toHaveLength(1);
 
     fireEvent.change(field, { target: { value: "look at this error" } });
@@ -107,6 +121,7 @@ describe("LaneComposer — pasted screenshots ride the capture as attachments (D
     });
     await waitFor(() => expect(thumbs()).toHaveLength(0));
     expect(field.value).toBe("");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(previewUrl(1)); // 成功清空也释放预览 URL
   });
 
   it("direct-run composer: images ride next to mode:\"run\"; wire keys stay exactly capture/text/mode/images", async () => {
@@ -169,8 +184,10 @@ describe("LaneComposer — pasted screenshots ride the capture as attachments (D
     fireEvent.click(removeButtons()[0]);
     expect(thumbs()).toHaveLength(1);
     expect(thumbs()[0].dataset.imagePath).toBe("/home/demo/state/attachments/uuid-2-1.png");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(previewUrl(1)); // ✕ 释放被移除那张的预览 URL
     fireEvent.click(removeButtons()[0]);
     expect(document.querySelector(".composer-images")).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(previewUrl(2));
 
     fireEvent.change(field, { target: { value: "text only after all" } });
     await act(async () => {
