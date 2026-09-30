@@ -5,6 +5,7 @@
 """
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import policy
 from act.lib.config import Config
 from act.lib.registry import Requirement

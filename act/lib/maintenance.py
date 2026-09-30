@@ -87,22 +87,53 @@ _TS_SUFFIX_RE = re.compile(r"#\d+$")
 # --------------------------------------------------------------------------- #
 # time helpers（与 actd._parse_iso 同口径 + 裸日期 + RFC-2822，全函数不 raise）
 # --------------------------------------------------------------------------- #
-def parse_iso(ts) -> Optional[_dt.datetime]:
+#: §82.4 未来戳的容差：机器之间的时钟漂移、NTP 一跳、夏令时边界都在这个量级内，
+#: 真正的假时钟戳（判例里是 2027-10-23）离这个量级有十几个月远。
+FUTURE_SKEW_S = 300
+
+
+def parse_iso(ts, *, reject_future: bool = False,
+              now: Optional[_dt.datetime] = None) -> Optional[_dt.datetime]:
     """ISO 8601（含 Z）→ aware UTC datetime；解析不了 → None。与 actd._parse_iso
     逐字同口径：fromisoformat 拒收的未补零月/日（`2026-8-1T10:00:00Z`）走
     strptime 兜底——§40.5 倒计时与 purge 判决共用这一把尺，少了兜底就会有
-    「永不清」的卡被投影成有倒计时（或反过来）。"""
+    「永不清」的卡被投影成有倒计时（或反过来）。
+
+    **`reject_future=True`（§82.4，add-only，出厂 False = 行为一字不变）**：比
+    `now + FUTURE_SKEW_S` 还晚的戳**当缺席**（→ None）。给的是那一类「上次什么时候
+    跑过」的节流戳：一个假时钟写下的未来戳会让节流判决永远答「还没到点」，于是整条
+    来源静默停工——`state/slack_mcp.marker` 被写成 2027-10-23 之后 Slack 雷达
+    直到 2027 年都不再扫一次（issue #452 实测）。缺席是这些读者本来就有的
+    fail-open 分支，所以「未来 = 缺席」恰好落回它们已被判例钉住的那条路。
+    `now` 是注入缝（judge/restore 同款，house style）。
+    """
     if not ts:
         return None
-    s = str(ts).strip().replace("Z", "+00:00")
+    dt = _parse_iso_literal(ts)
+    if dt is None:
+        return None
+    dt = _aware(dt)
+    return None if (reject_future and in_future(dt, now)) else dt
+
+
+def _parse_iso_literal(ts) -> Optional[_dt.datetime]:
+    """两种口径的字面量解析（naive 或 aware 原样返回）；解析不了 → None。"""
     try:
-        dt = _dt.datetime.fromisoformat(s)
+        return _dt.datetime.fromisoformat(str(ts).strip().replace("Z", "+00:00"))
     except ValueError:
-        try:
-            dt = _dt.datetime.strptime(str(ts).strip(), "%Y-%m-%dT%H:%M:%SZ")
-        except ValueError:
-            return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+        pass
+    try:
+        return _dt.datetime.strptime(str(ts).strip(), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+
+
+def in_future(dt: _dt.datetime, now: Optional[_dt.datetime] = None) -> bool:
+    """`dt` 比「现在」还晚超过 `FUTURE_SKEW_S`（§82.4）。"""
+    ref = now or _dt.datetime.now(_dt.timezone.utc)
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=_dt.timezone.utc)
+    return (dt - ref).total_seconds() > FUTURE_SKEW_S
 
 
 def _aware(dt: _dt.datetime) -> _dt.datetime:

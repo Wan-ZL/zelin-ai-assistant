@@ -23,6 +23,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act import auto_deploy
 from tests.scratch_testkit import scratch_dir
 

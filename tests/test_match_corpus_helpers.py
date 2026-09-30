@@ -8,6 +8,7 @@ rules (title containment, 32-char cap), and the alias limit loop.
 import unittest
 from types import SimpleNamespace
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import match_corpus as mc
 
 

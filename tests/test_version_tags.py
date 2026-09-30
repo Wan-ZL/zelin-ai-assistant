@@ -12,6 +12,7 @@ import os
 import sys
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import version as ver
 
 _CI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "ci")

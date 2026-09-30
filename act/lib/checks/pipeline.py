@@ -13,7 +13,8 @@ import json
 import os
 from typing import Optional
 
-from act.lib import board_server, config, deploy_state, heartbeat, install_report, platform
+from act.lib import (board_server, config, deploy_state, heartbeat, install_report,
+                     maintenance, platform)
 from act.lib.checks.core import (ACTD_LABEL, ACTD_TASK, ACTD_UNIT, FAIL, OK, WARN,
                                  CheckResult, installer, launchctl_table, pick,
                                  row_from)
@@ -150,6 +151,24 @@ def check_dashboard(probes):
             pick("删掉它并重启 actd（它会原子重写）",
                  "delete it and restart actd (it rewrites atomically)"))
     age = probes.now() - ts
+    # §82.4 诚实（宪法第 3 条）：未来的 generated_at 让 age 变成负数，于是
+    # `age <= 90` 恒真、`max(int(age), 0)` 还把它印成「fresh (generated 0s ago)」——
+    # 一个假时钟戳（2026-09-18 泄漏到 live 的测试跑留下的那一类）就此把一块**死了的**
+    # 看板报成健康。未来戳是坏数据，要分类报出来，不许答 ok。
+    if age < -maintenance.FUTURE_SKEW_S:
+        # 分类沿用 `dashboard_stale`（§25 词表不新增）：症状不同、**修法逐字相同**
+        # ——删掉它让 actd 原子重写。detail 里说清是未来戳，诚实在文案而不在 id 上。
+        return CheckResult(
+            "dashboard", FAIL,
+            pick("state/dashboard.json 的 generated_at 在未来（%s）——时钟错了，"
+                 "或者一次假时钟的测试跑写进了这棵树" % gen,
+                 "state/dashboard.json generated_at is in the future (%s) - a wrong "
+                 "clock, or a fake-clock test run wrote into this tree" % gen),
+            pick("删掉它并重启 actd（它会原子重写）；顺手查一遍 state/ 里的未来戳："
+                 "python3 -m act.lib.state_audit",
+                 "delete it and restart actd (it rewrites atomically); then sweep "
+                 "state/ for future stamps: python3 -m act.lib.state_audit"),
+        ).with_failure("dashboard_stale")
     if age <= DASHBOARD_FRESH_SECONDS:
         return CheckResult("dashboard", OK, "fresh (generated %ds ago)" % max(int(age), 0))
     return CheckResult(

@@ -8,6 +8,7 @@ import io
 import unittest
 from unittest import mock
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import secrets
 
 

@@ -12,6 +12,7 @@ import json
 import unittest
 from unittest import mock
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act import radar_gmail
 from act.lib import config
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act import doctor
 from act.lib import config
 from act.lib.checks import services

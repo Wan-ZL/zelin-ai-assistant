@@ -8,6 +8,7 @@ work_id NULL-ing, and that warnings are emitted in column order.
 """
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib.store2 import hot
 
 

@@ -9,6 +9,7 @@ registry facade re-exports the very same objects.
 """
 import unittest
 
+from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import card_model, registry
 from act.lib.card_model import Requirement, State
 

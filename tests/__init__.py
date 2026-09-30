@@ -81,6 +81,24 @@ os.environ.setdefault("AIASSISTANT_WORKTREE_SWEEP", "0")
 
 
 # --------------------------------------------------------------------------- #
+# §82.2 反向哨兵：沙箱 env 设晚了怎么办（issue #452）
+# --------------------------------------------------------------------------- #
+# 上面那行 env 只在**本模块先跑**时管用，而 `unittest discover -s tests` 把用例
+# 命名成裸模块名（`test_policy`），本包的 __init__ 只因为某个用例写了
+# `from tests import …` 才被牵进来——谁先谁后由字母序决定。真正危险的是反过来：
+# 某个 harness 先 `import act.lib.config`（那一刻 sys.modules 里还没有 unittest，
+# act/lib/home.py 的守卫判不出「我在测试里」），随后才 import 本包。那种进程里 11 个
+# 路径常量已经绑在 live 树上，再跑下去就是 2026-09-18 的重演。
+# 所以在这里**以测试跑者的身份**补问一次同一把尺（`modules=("unittest",)` 是
+# home.guard 的注入缝）：绑在工作树上就当场抛，绝不静默往真账本里写。
+_bound = sys.modules.get("act.lib.config")
+if _bound is not None:  # pragma: no cover - 只在 import 顺序被搞反时发生
+    from act.lib import home as _home
+
+    _home.guard(getattr(_bound, "HOME", TMP_HOME), modules=("unittest",))
+
+
+# --------------------------------------------------------------------------- #
 # fail-loud subprocess guard（测试卫生 rule 7 的执法机制）
 # --------------------------------------------------------------------------- #
 # 纪律：测试**绝不真的起 agent**、绝不出网——LLM 调用一律走注入缝（runner /
