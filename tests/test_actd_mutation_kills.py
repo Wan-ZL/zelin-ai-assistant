@@ -46,6 +46,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 
 from act import actd
 from act.lib import analytics, config, registry
+from act.lib.actd import reconcile as _reconcile
 from act.lib.registry import Requirement, State
 from tests.self_improve_testkit import lane_card
 
@@ -466,8 +467,10 @@ class ReconcileKillsTest(Base):
         fake = mock.Mock()
         fake.harvest_delivery = mock.Mock(return_value={})
         clock = [1000.0]
+        # 节流台账的时钟住在 reconcile（§80.1 起入口层不再 import time）
         with mock.patch.object(actd, "executor", fake), \
-                mock.patch.object(actd.time, "monotonic", side_effect=lambda: clock[0]):
+                mock.patch.object(_reconcile.time, "monotonic",
+                                  side_effect=lambda: clock[0]):
             self.assertFalse(actd._promote_if_delivered(req, {}, "sid-p"))
             clock[0] += actd._HARVEST_PROBE_INTERVAL_S - 1
             self.assertFalse(actd._promote_if_delivered(req, {}, "sid-p"))

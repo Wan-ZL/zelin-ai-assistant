@@ -47,7 +47,6 @@ import argparse
 import datetime as _dt
 import json
 import os
-import time
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -80,6 +79,7 @@ from act.lib.actd import reconcile as _reconcile
 from act.lib.actd import seam as _seam
 from act.lib.actd import session as _session
 from act.lib.actd import triage_guard as _triage_guard
+from act.lib.actd import wakeup as _wakeup
 from act.lib.agent_states import BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES
 from act.lib.dashboard import build_dashboard, index_agents, run_claude_agents, write_dashboard
 from act.lib.registry import Requirement, State, load, load_all, save  # noqa: F401 - re-exported surface
@@ -867,6 +867,9 @@ def _loop_forever(cfg: config.Config, interval: int, auth_notified: set,
     loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
     heartbeat.beat("starting", interval)
     while True:
+        # §80.1 早醒基线取在 pass **之前**：本 pass 的 drain 之后才落地的动作
+        # 不在基线里，于是那一笔不用再等一整个 interval（理由见 wakeup 模块）。
+        queued = _wakeup.inbox_names()
         try:
             prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
                                  radar_dead_notified, interval=interval)
@@ -876,7 +879,9 @@ def _loop_forever(cfg: config.Config, interval: int, auth_notified: set,
             loop_health.record_failure(f"{type(e).__name__}: {e}")
             heartbeat.beat("failed", interval)    # 崩了也算活着——循环还在转
             _log(f"loop pass FAILED: {e}\n{traceback.format_exc()}")
-        time.sleep(interval)
+        # §80.1：排着 owner 动作就别睡满——heartbeat 报的仍是**配置**间隔
+        # （staleness 门槛的真源，早醒只会让 beat 更新鲜，不会让它过期）。
+        _wakeup.wait_for_work(interval, queued)
 
 
 def main(argv: Optional[list] = None) -> int:

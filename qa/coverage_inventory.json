@@ -8,7 +8,7 @@
     "shell"
   ],
   "counts": {
-    "contract": 273,
+    "contract": 279,
     "fixtures_b": 15,
     "parity": 837,
     "routes": 164,
@@ -770,7 +770,7 @@
       "id": "contract:§46.1",
       "source": "contract",
       "scenario": "stop 确认重试 + 失败台账",
-      "proof": "unittest:tests.test_executor_roster_parsing,tests.test_stop_confirmed_deadline_edges",
+      "proof": "unittest:tests.test_executor_roster_parsing,tests.test_stop_confirmed_deadline_edges,tests.test_stop_grace_window",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -2885,6 +2885,66 @@
       "status": "todo",
       "waive_reason": null,
       "note": null
+    },
+    {
+      "id": "contract:§80",
+      "source": "contract",
+      "scenario": "管线延迟：主循环早醒 + 停止按 pid 等死 + 交付探针不被旧戳挡住 + 先测量（issue #450；owner 决策 **D82**）",
+      "proof": "unittest:tests.test_actd_early_wake,tests.test_actd_loop_and_phase_edges,tests.test_actd_mutation_kills,tests.test_harvest_probe_not_throttled_after_activity",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§80.1",
+      "source": "contract",
+      "scenario": "主循环早醒（truth = `act/lib/actd/wakeup.py`）",
+      "proof": "unittest:tests.test_actd_early_wake,tests.test_actd_loop_and_phase_edges,tests.test_actd_mutation_kills,tests.test_inbox_queue_wait",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§80.2",
+      "source": "contract",
+      "scenario": "停止的等死窗口按 pid 轮询（truth = `act/executor.py` `_await_exit`）",
+      "proof": "unittest:tests.test_inverse_actions,tests.test_stop_confirmed_deadline_edges,tests.test_stop_grace_window",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§80.3",
+      "source": "contract",
+      "scenario": "会话活动过就丢掉交付探针的旧戳（truth = `reconcile._clear_harvest_throttle`）",
+      "proof": "unittest:tests.test_harvest_probe_not_throttled_after_activity",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§80.4",
+      "source": "contract",
+      "scenario": "先测量：每笔 owner 动作的排队秒数（truth = `inbox.queue_wait_s`）",
+      "proof": "unittest:tests.test_inbox_queue_wait && flow:card_lifecycle",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": null
+    },
+    {
+      "id": "contract:§80.5",
+      "source": "contract",
+      "scenario": "本轮**没有**做的那一半：「卡片 = agent session 的薄视图」",
+      "proof": "unittest:tests.test_actd_early_wake,tests.test_actd_loop_and_phase_edges,tests.test_actd_mutation_kills,tests.test_harvest_probe_not_throttled_after_activity && flow:card_lifecycle",
+      "tier": "A",
+      "status": "todo",
+      "waive_reason": null,
+      "note": "parent-cite"
     },
     {
       "id": "contract:§9",

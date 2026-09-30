@@ -42,14 +42,19 @@ class ResidentLoopTest(unittest.TestCase):
 
         sleeps = []
 
-        def fake_sleep(seconds):
-            sleeps.append(seconds)
+        # §80.1：pass 之间的等待从无条件 `time.sleep(interval)` 换成
+        # `wakeup.wait_for_work(interval, baseline)`（inbox 有活就早醒）。本条
+        # 判例钉的仍是「每个 pass 之后等**配置的** interval 一次」，只是判据
+        # 从睡的秒数变成传给等待器的 interval。
+        def fake_wait(interval, baseline=None, **kw):
+            sleeps.append(interval)
             if len(sleeps) == 3:
                 raise _StopLoop()
+            return False
 
         beats = []
         with mock.patch.object(actd, "run_once", side_effect=fake_run_once), \
-                mock.patch.object(actd.time, "sleep", side_effect=fake_sleep), \
+                mock.patch.object(actd._wakeup, "wait_for_work", side_effect=fake_wait), \
                 mock.patch.object(heartbeat, "beat", side_effect=lambda phase, *_: beats.append(phase)), \
                 mock.patch.object(actd, "_log") as log:
             with self.assertRaises(_StopLoop):

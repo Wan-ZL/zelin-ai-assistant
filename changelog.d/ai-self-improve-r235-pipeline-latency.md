@@ -1,0 +1,4 @@
+type: changed
+- **看板的 running → review 管线不再每一步都白等一个 pass（§80，issue #450）**：主循环结尾那句无条件 `time.sleep(10)` 换成「inbox 里排着 owner 动作就早醒」的可中断等待（轮询粒度 0.25s）。实测 owner 装机：批准 / 直跑从「输入到会话在跑」均值 **≈7.2s → ≈2.4s**（排队那一项 5.0s 占了原均值的 69%）；点停止从 **≈10.7s → ≈3.9s**。信号就是 `state/inbox/` 目录本身多了一个文件，所以零新文件、零新写者：registry 的写者仍然只有 actd 主循环（宪法第 1 条不动），syncd / boardctl / 手写进去的文件全部自动享受同一条早醒。**边界写清**：会话跑完不写 inbox，所以「跑完 → 进待验收」那一段（实测 p50 12s）**不**被早醒改善，理由与「那为什么不监听 transcript」记在 §80.5。
+- **点停止不再无条件等 2 秒（§80.2）**：`executor.stop_session` 发出 `claude stop` 之后按 pid 轮询等死，进程一死就返回（claude 通常 100–300ms 就没了），等死窗口总长仍是 §46.1 承诺的 2s。省下来的是**墙钟，不是一轮重试**——`stop_session_confirmed` 下一轮开头那笔 `sleeper(2.0 * attempt)` 是无条件的、在该轮 roster 探测之前就睡掉了，所以改动前后轮数一样，只是每轮少等 ~1.8s。
+- **每笔 owner 动作的排队秒数落账（§80.4「先测量」）**：drain 一笔动作时把「owner 点下（server 盖的 `ts`）→ 被 drain」的秒数记进 `state/actd.log`（1MB 自压缩）+ analytics `inbox_queue_wait`（只有动词名截 40 字 + 秒数）。这两个数一直都在，只是从没有人把它们相减。

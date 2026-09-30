@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as _dt
 import functools
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1266,29 +1267,92 @@ def live_session_count() -> Optional[int]:
     return sum(1 for a in _unwrap_roster(data) if _is_live_background(a))
 
 
+# 等死窗口（§80.2）：`claude stop` 发出去之后给进程多久去死。总长不变（2s，
+# §46.1 的老承诺），但**进程一死就返回**——原先是无条件 `time.sleep(2)`，
+# owner 点一下停止要白等这 2s，而 claude 通常 100–300ms 就没了（issue #450
+# 点名「点击停止后也是需要等待很久」）。
+#
+# 判据是 pid 消失，比「2 秒过去了」硬：pid 没了 = 进程真的死了。
+#
+# 省下来的是**墙钟，不是一轮重试**——这一点特意写清楚，免得下一个人以为它
+# 省了更多：`stop_session_confirmed` 的下一轮开头是**无条件**的
+# `sleeper(2.0 * attempt)`，它在那一轮的 roster 探测之前就睡掉了，所以改动
+# 前后的轮数完全一样，只是每轮少等 ~1.8s。也**没有**断言那次 roster 探测
+# 一定一把确认：roster 来自 `claude agents --json`，它多久反映进程死亡是
+# claude 自己的行为，而本仓库的判例绝不 spawn 真 claude，所以那一条没在活
+# 机器上复验过。净效果 = 「不会更差，通常更好」。
+STOP_GRACE_S = 2.0
+STOP_GRACE_POLL_S = 0.1
+
+
+def _pid_alive(pid) -> bool:
+    """``os.kill(pid, 0)`` 的三态压成 bool。
+
+    这些进程不是我们的子进程（`claude --bg` 自己 daemonize），所以没有僵尸态
+    要防。**拿不准一律算活着**——「没确认死」不许当已死（§46.1 的探测失败
+    ≠ 已停，同一条精神）：EPERM（别的用户的同号 pid）、坏 pid、说不清的
+    OSError 全部返回 True，最坏结果只是睡满 2s 退化成老行为。
+    """
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:      # ESRCH——确认没有这个进程了
+        return False
+    except (OSError, TypeError, ValueError):
+        return True
+    return True
+
+
+def _await_exit(
+    pid,
+    *,
+    grace_s: float = STOP_GRACE_S,
+    poll_s: float = STOP_GRACE_POLL_S,
+    alive: Callable[[object], bool] = _pid_alive,
+    sleeper: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """给 ``pid`` 最多 ``grace_s`` 秒去死，死了立刻返回 True（不睡满）。
+
+    四个 seam（alive/sleeper/clock/poll_s）可注入，判例不睡真觉、不看真进程。
+    Returns True = 确认进程已消失；False = 窗口用完它还在（或 pid 判不动）。
+    """
+    deadline = clock() + max(float(grace_s), 0.0)
+    while True:
+        if not alive(pid):
+            return True
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return False
+        sleeper(min(poll_s, remaining))
+
+
 def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
-    """Stop a live background session (``claude stop <short-id>``), then give
-    the process 2s to die — the exact stop-before-resume path :func:`rework`
-    has always used, extracted so actd's ``abort_execution`` (v0.10.2) can
-    call it too.
+    """Stop a live background session (``claude stop <short-id>``), then wait up
+    to :data:`STOP_GRACE_S` for the process to die — returning as soon as its
+    pid is gone (§80.2; before that it was an unconditional ``sleep(2)``). The
+    exact stop-before-resume path :func:`rework` has always used, extracted so
+    actd's ``abort_execution`` (v0.10.2) can call it too.
 
     ``info`` = a pre-fetched :func:`_agent_info` dict (rework passes its own,
     keeping its original single-roster-query behaviour unchanged); omitted ->
     query the roster here. No live pid on the roster -> nothing to stop ->
     returns False without running anything. Returns True once the stop command
-    has been issued. Raises the same OSError/subprocess.SubprocessError the
-    old inline code did — callers decide whether a stop failure is fatal
-    (rework: unchanged, handled by its outer try) or best-effort (actd's
-    abort_execution catches + logs, state rollback is never blocked).
+    has been issued — the grace window's outcome is deliberately NOT folded in
+    (confirming death is :func:`stop_session_confirmed`'s job, §46.1). Raises
+    the same OSError/subprocess.SubprocessError the old inline code did —
+    callers decide whether a stop failure is fatal (rework: unchanged, handled
+    by its outer try) or best-effort (actd's abort_execution catches + logs,
+    state rollback is never blocked).
     """
     if info is None:
         info = _agent_info(session_id)
-    if not (info or {}).get("pid"):
+    pid = (info or {}).get("pid")
+    if not pid:
         return False
     short = str(session_id).split("-")[0]
     subprocess.run([_claude_bin(), "stop", short],
                    capture_output=True, text=True, timeout=30)
-    time.sleep(2)
+    _await_exit(pid)
     return True
 
 
