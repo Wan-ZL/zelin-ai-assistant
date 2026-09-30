@@ -15,11 +15,12 @@ import { resetStoreForTests } from "./store";
 const { BOARD, realtimeStart, realtimeStop } = vi.hoisted(() => ({
   BOARD: {
     generated_at: "2026-09-06T12:00:00Z",
-    needs_approval: [
-      { id: "P-201", title: "a proposal", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
+    needs_approval: [],
+    running: [], needs_input: [], review: [], completed: [], trash: [],
+    debt: [
+      { id: "P-201", title: "a backlog card", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
     ],
-    running: [], needs_input: [], review: [], completed: [], debt: [], trash: [],
-    counts: { needs_approval: 1 },
+    counts: { debt: 1 },
   },
   realtimeStart: vi.fn(),
   realtimeStop: vi.fn(),
@@ -81,7 +82,8 @@ describe("App — 换页滚动记忆挂在 .shell-main 与每列的 .column-list
     await renderBoard();
     expect(main().dataset.scrollMemory).toBe("shell-main");
     const keys = Array.from(document.querySelectorAll<HTMLElement>(".column-list")).map((el) => el.dataset.scrollMemory);
-    expect(keys).toEqual(["lane:needs_approval", "lane:running", "lane:review", "lane:completed"]);
+    // §78：提案列退役，只剩三列
+    expect(keys).toEqual(["lane:running", "lane:review", "lane:completed"]);
   });
 
   it("设置页滚到 400 → 关于页的 .shell-main 从 0 开始（不带上一页的位置）→ 回设置页还原 400", async () => {
@@ -97,15 +99,15 @@ describe("App — 换页滚动记忆挂在 .shell-main 与每列的 .column-list
     expect(main().scrollTop).toBe(400);
   });
 
-  it("看板提案列滚到 120 → 去关于页 → 回看板：这一列还原 120，其余列在 0", async () => {
+  it("看板运行中列滚到 120 → 去关于页 → 回看板：这一列还原 120，其余列在 0", async () => {
     await renderBoard();
-    document.querySelector<HTMLElement>('.column-list[data-scroll-memory="lane:needs_approval"]')!.scrollTop = 120;
+    document.querySelector<HTMLElement>('.column-list[data-scroll-memory="lane:running"]')!.scrollTop = 120;
     go("about");
     await waitFor(() => expect(document.title).toMatch(/— (关于|About)$/));
     expect(document.querySelector(".column-list")).toBeNull(); // 看板卸载了：回来靠记忆
     go("dashboard");
     await waitFor(() => expect(document.querySelector(".board-column")).toBeTruthy());
     const lists = Array.from(document.querySelectorAll<HTMLElement>(".column-list"));
-    expect(lists.map((el) => el.scrollTop)).toEqual([120, 0, 0, 0]);
+    expect(lists.map((el) => el.scrollTop)).toEqual([120, 0, 0]);
   });
 });

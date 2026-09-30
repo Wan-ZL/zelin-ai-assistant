@@ -18,6 +18,7 @@ import checks  # noqa: E402
 import ladder_common as lc  # noqa: E402
 import structure_check as sc  # noqa: E402
 from tests import skill_test_code_testkit as kit  # noqa: E402
+from tests.scratch_testkit import scratch_dir  # noqa: E402
 
 CLEAN = {
     "pkg/__init__.py": "",
@@ -133,7 +134,7 @@ class ImportGraphTestCase(unittest.TestCase):
 
 class CheckStructureTestCase(unittest.TestCase):
     def _run(self, files, init=False, caps=None):
-        tmp = tempfile.mkdtemp()
+        tmp = scratch_dir(self)
         kit.make_repo(tmp, files)
         det = kit.fake_det(sorted(files))
         det["thresholds"]["structure"] = caps or CAPS

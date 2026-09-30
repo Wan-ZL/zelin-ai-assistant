@@ -10,12 +10,12 @@ the dashboard/card can show why.
 Same fixture style as tests/test_rework.py: _transcript_info/_agent_info are
 patched — the suite never globs the real ~/.claude/projects nor shells out.
 """
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor
 from act.lib import config, registry
@@ -65,7 +65,7 @@ class ReworkAbortSurfacingTestCase(unittest.TestCase):
 
     def test_uncreatable_cwd_records_last_error(self):
         # target under a regular FILE -> mkdir raises (OSError subclass)
-        blocker = Path(tempfile.mkdtemp(prefix="rework-cwd-")) / "afile"
+        blocker = Path(scratch_dir(self, prefix="rework-cwd-")) / "afile"
         blocker.write_text("x", encoding="utf-8")
         req = self._mk_req(execution={"session_id": "feedc0de", "done": True})
         with mock.patch.object(executor, "_transcript_info",

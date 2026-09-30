@@ -20,12 +20,12 @@
 import contextlib
 import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import radar_gmail, radar_slack   # import 前表未 patch：常量绑定的是真值
 from act.lib import config, dashboard, radar_health, secrets, sources
@@ -38,7 +38,7 @@ class _Cfg(config.Config):
 
 class SourceIntentSignalsTestCase(unittest.TestCase):
     def setUp(self):
-        root = Path(tempfile.mkdtemp(prefix="intent-"))
+        root = Path(scratch_dir(self, prefix="intent-"))
         self.overrides = root / "settings_overrides.json"
         self.secrets_dir = root / "secrets"
         self.secrets_dir.mkdir()
@@ -143,7 +143,7 @@ class SourceIntentSignalsTestCase(unittest.TestCase):
         self.assertFalse(self._project()["slack"]["secret_present"])
 
     def test_explicit_config_path_counts_as_secret_present(self):
-        token = Path(tempfile.mkdtemp(prefix="tok-")) / "slack.txt"
+        token = Path(scratch_dir(self, prefix="tok-")) / "slack.txt"
         token.write_text("xoxp-explicit\n", encoding="utf-8")
         cfg = _Cfg()
         cfg.slack_token_path = str(token)

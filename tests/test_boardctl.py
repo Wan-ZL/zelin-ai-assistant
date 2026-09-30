@@ -9,18 +9,20 @@
 
 夹具复用 tests/test_server_common（真 server 起在 port 0 + demo_seed 种数据，
 绝不触碰生产 state/）。
+
+§78（提案车道退役）：等 owner 拍板的机器卡改住 ``debt``（潜在任务），卡详情的
+``lane`` 随之变；``needs_approval`` 仍在 LANES 词表里、仍 exit 0，只是恒空。
 """
 from __future__ import annotations
 
 import io
 import json
-import shutil
 import socket
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env
+from tests.scratch_testkit import scratch_dir
 from tests import test_server_common as common
 
 from act import boardctl
@@ -32,8 +34,7 @@ class _CtlBase(unittest.TestCase):
     scene = "initial"
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="boardctl-test-home-"))
-        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self.home = Path(scratch_dir(self, prefix="boardctl-test-home-"))
         self.board = common.seed_scene(self.home, self.scene)
         _httpd, self.port = common.start_server(self, self.home)
         # AIASSISTANT_HOME 指向 server 的 home——boardctl 从那里读写动作要带
@@ -77,10 +78,19 @@ class BoardReadTest(_CtlBase):
         self.assertEqual(doc["board"], self.board)
 
     def test_board_lane_filter(self):
-        doc = self.ok_json("board", "--lane", "needs_approval")
-        self.assertEqual(doc["lane"], "needs_approval")
+        # §78：等 owner 拍板的机器卡改住潜在任务列（debt）
+        doc = self.ok_json("board", "--lane", "debt")
+        self.assertEqual(doc["lane"], "debt")
         ids = [row["id"] for row in doc["cards"]]
         self.assertIn("P-101", ids)
+
+    def test_retired_lane_filter_is_empty_not_a_usage_error(self):
+        """§78 / D80.1：``needs_approval`` 退役但 wire 键 add-only 留着——老 agent
+        脚本 `--lane needs_approval` 必须照旧 exit 0 拿一个空列表，而不是 exit 2
+        usage 错（词表里删掉它 = 一批在跑的 agent 脚本当场炸）。"""
+        doc = self.ok_json("board", "--lane", "needs_approval")
+        self.assertEqual(doc["lane"], "needs_approval")
+        self.assertEqual(doc["cards"], [])
 
     def test_board_unknown_lane_is_usage_error(self):
         err = self.err_json(2, "board", "--lane", "bogus")
@@ -89,7 +99,7 @@ class BoardReadTest(_CtlBase):
     def test_card_detail_merges_lane(self):
         doc = self.ok_json("card", "P-101")
         self.assertEqual(doc["card"]["id"], "P-101")
-        self.assertEqual(doc["card"]["lane"], "needs_approval")
+        self.assertEqual(doc["card"]["lane"], "debt")   # §78：潜在任务列
 
     def test_card_detail_by_work_id(self):
         # §60.3：CARD_ID 也可以是工作编号（demo running 卡 P-105 的 R-105）
@@ -194,8 +204,7 @@ class TokenWallTest(_CtlBase):
     def test_write_without_token_file_gets_401_passthrough(self):
         # home 指到没有 server.token 的空目录 → 不发头 → server 401，
         # envelope 如实透传（exit 4），且 inbox 零落盘
-        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
-        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        empty = Path(scratch_dir(self, prefix="boardctl-no-token-"))
         err = self.err_json(4, "capture", "--text", "x",
                             env=self._env_with_home(empty))
         self.assertEqual(err["code"], "UNAUTHORIZED")
@@ -203,8 +212,7 @@ class TokenWallTest(_CtlBase):
 
     def test_reads_stay_token_light(self):
         # 读路径不带 token 也通（GET token-light，§49）——空 home 照样能读板
-        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
-        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        empty = Path(scratch_dir(self, prefix="boardctl-no-token-"))
         out, errbuf = io.StringIO(), io.StringIO()
         rc = boardctl.main(["board"], stdout=out, stderr=errbuf,
                            environ=self._env_with_home(empty))

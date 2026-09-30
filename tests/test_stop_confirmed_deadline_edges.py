@@ -110,17 +110,21 @@ class StopSessionTestCase(unittest.TestCase):
         run.assert_not_called()
 
     def test_live_pid_issues_stop_with_short_id_then_waits(self):
+        waited = []
         with mock.patch.object(executor.subprocess, "run") as run, \
-                mock.patch.object(executor.time, "sleep") as slept, \
+                mock.patch.object(executor, "_await_exit",
+                                  side_effect=lambda pid: waited.append(pid) or True), \
                 mock.patch.object(executor.llm, "claude_bin", return_value="/opt/claude"):
             self.assertTrue(executor.stop_session(SID, info={"pid": 42}))
         self.assertEqual(run.call_args.args[0], ["/opt/claude", "stop", "abcd1234"])
         self.assertEqual(run.call_args.kwargs, {"capture_output": True, "text": True, "timeout": 30})
-        slept.assert_called_once_with(2)
+        # 等死窗口仍在，判据自 §80.2 起是「等的是 roster 上那个 pid」而不是
+        # 「睡了 2 秒」——窗口总长不变（2s），但进程一死就返回。
+        self.assertEqual(waited, [42])
 
     def test_stop_spawn_failure_propagates_to_the_caller(self):
         with mock.patch.object(executor.subprocess, "run", side_effect=OSError("gone")), \
-                mock.patch.object(executor.time, "sleep"):
+                mock.patch.object(executor, "_await_exit", return_value=True):
             with self.assertRaises(OSError):
                 executor.stop_session(SID, info={"pid": 42})
 

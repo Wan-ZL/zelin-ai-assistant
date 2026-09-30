@@ -20,13 +20,13 @@ Everything runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
 import os
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act.* import
+from tests.scratch_testkit import scratch_dir
 
 from act import digest, oneonone
 from act.lib import config, registry
@@ -82,6 +82,9 @@ class DigestCardTestCase(unittest.TestCase):
         self.assertEqual(cards[0].status, registry.State.REVIEW.value)
 
     def test_pages_say_lane_names_not_raw_status_words(self):
+        """§40 (#19) + §78：退役的 card_sent 落单卡在页面上念「潜在任务」——
+        它投影的就是那一列（§78.1 第 3 条），念「待审批」等于指一条已经没有
+        面的车道。事件名 card_sent 仍是 telemetry 词表，不受此判例约束。"""
         req = registry.Requirement(id="R-101", title="写周报",
                                    status="card_sent")
         registry.save(req)
@@ -89,10 +92,10 @@ class DigestCardTestCase(unittest.TestCase):
         # the item line says the lane display name, not the raw status word
         # (the folded analytics block legitimately contains event NAMES like
         # card_sent — that's telemetry vocabulary, not the item line).
-        self.assertIn("- R-101 · 写周报（待审批", md)
+        self.assertIn("- R-101 · 写周报（潜在任务", md)
         self.assertNotIn("（card_sent", md)
         prep = oneonone.build_prep()
-        self.assertIn("R-101 · 写周报 （待审批", prep)
+        self.assertIn("R-101 · 写周报 （潜在任务", prep)
         self.assertNotIn("（card_sent", prep)
 
     def test_digest_folded_count_includes_ok_retry(self):
@@ -101,8 +104,7 @@ class DigestCardTestCase(unittest.TestCase):
         ok_retry，漏计会让真实完成的合并从周报里消失（review finding，
         2026-08-18）。事件文件整体隔离，免受同轮其他测试落的事件污染。"""
         from act.lib import analytics
-        tmp = Path(tempfile.mkdtemp(prefix="ev-"))
-        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        tmp = Path(scratch_dir(self, prefix="ev-"))
         with mock.patch.object(analytics, "ANALYTICS_DIR", tmp), \
                 mock.patch.object(analytics, "EVENTS_PATH",
                                   tmp / "events.jsonl"):

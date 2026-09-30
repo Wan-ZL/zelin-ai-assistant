@@ -6,11 +6,16 @@ Gmail 曾是唯一绕过 v0.17 统一三选一闸门的雷达：旧 scan() 对�
 全部用注入的 fake extractor（绝不 spawn 真 claude）+ 注入的 fetcher（不碰
 IMAP），跑在 sandbox AIASSISTANT_HOME（tests/__init__.py）里。钉住的契约：
 
-- new_proposal(high)  -> 一张 card_sent 提案卡（gate 被咨询过）；
-- new_proposal(low)   -> 一张 detected/备选卡（triage 降级预设的 card_sent）；
+- new_proposal(high)  -> 一张潜在任务卡且**会响**（gate 被咨询过）；
+- new_proposal(low)   -> 同一条车道但**安静出生**（`quiet_birth`）；
 - ignore              -> 零卡（纯 FYI 邮件不再无条件成卡）；
 - relates_to 开卡      -> 折叠为备注 + 来源，不出新卡；
 - 同一封邮件出现两次   -> 标题去重（merge_or_new），只留一张卡。
+
+**§78（owner 决策 D80，issue #447；落点全表 §78.3、安静出生 §78.6）**：提案车道
+退役，Gmail 的落点从
+`card_sent` 改成 `detected`；high/low 分的不再是列而是通知资格（D80.7 的
+`quiet_birth`）。老法条「low 降级预设的 card_sent」随车道一起退休。
 """
 import json
 import shlex
@@ -117,21 +122,23 @@ class GmailTriageTestCase(unittest.TestCase):
             fetcher=lambda cfg, last_uid: (list(msgs), newest),
             extractor=llm)
 
-    def test_high_confidence_new_proposal_files_card_sent(self):
+    def test_high_confidence_new_proposal_files_a_loud_backlog_card(self):
         llm = _FakeLLM(extraction=self._extraction(),
                        decision={"action": "new_proposal", "confidence": "high"})
         self.assertEqual(self._scan(llm), 1)
         self.assertEqual(len(llm.triage_calls), 1)   # gate WAS consulted
         (req,) = registry.load_all()
-        self.assertEqual(req.status, "card_sent")
+        self.assertEqual(req.status, "detected")     # §78：潜在任务
+        self.assertFalse(getattr(req, "quiet_birth", False))   # 高置信照常响
         self.assertEqual(req.sources[0]["channel"], "gmail")
 
-    def test_low_confidence_new_proposal_lands_in_backlog(self):
+    def test_low_confidence_new_proposal_lands_in_backlog_quietly(self):
         llm = _FakeLLM(extraction=self._extraction(),
                        decision={"action": "new_proposal", "confidence": "low"})
         self.assertEqual(self._scan(llm), 1)
         (req,) = registry.load_all()
-        self.assertEqual(req.status, "detected")     # 备选, not 提案, not lost
+        self.assertEqual(req.status, "detected")     # 同一条车道, not lost
+        self.assertTrue(req.quiet_birth)             # 差别只剩「不打扰」
 
     def test_informational_mail_files_no_card(self):
         llm = _FakeLLM(extraction=self._extraction(),
@@ -158,7 +165,7 @@ class GmailTriageTestCase(unittest.TestCase):
         # second pass sees the same mail again -> title-based merge_or_new folds
         # it into the existing card instead of producing a duplicate.
         self._scan(_FakeLLM(extraction=self._extraction(), decision=decision))
-        cards = [r for r in registry.load_all() if r.status == "card_sent"]
+        cards = [r for r in registry.load_all() if r.status == "detected"]
         self.assertEqual(len(cards), 1)
 
 

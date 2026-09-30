@@ -2,6 +2,11 @@
 GitHub 同题不重提、卡片形状（channel self_improve 写死 → proposed，plan/DoD/成本齐）；
 D33：自检类信号（ADVISORY_KINDS / doctor owner_action）只成 advisory 行，永不铸卡。
 
+**§70.3 §78 追记（owner 决策 D80，issue #447）**：🤖 卡的落点从退役的提案列
+改成 `detected`（潜在任务）——和所有机器卡同一条车道。它不是安静出生（不盖
+`quiet_birth`），所以 §40 的新卡通知照常响；写死的 channel、出身信任章
+（PROPOSED → 必须人批）、§60 主键形状一字未改。
+
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py)。
 """
 import ast
@@ -147,13 +152,16 @@ class FileProposalsTestCase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
 
-    def test_card_shape_is_proposal_lane_with_locked_channel(self):
+    def test_card_shape_is_backlog_lane_with_locked_channel(self):
         sig = _sig("pr_red", "7", title="修红 CI：PR #7 feat: quieter loop")
         filed = daily_loop.file_proposals([sig], TODAY, "/repo/path")
         self.assertEqual(len(filed), 1)
         card = registry.load(filed[0]["id"])
         self.assertTrue(card.title.startswith("🤖 "))
-        self.assertEqual(card.status, State.CARD_SENT.value)
+        # §78：落潜在任务（提案列退役），但**不是**安静出生——owner 照常被
+        # 通知一声，否则每日循环的产出会静静堆在列里没人看。
+        self.assertEqual(card.status, State.DETECTED.value)
+        self.assertFalse(getattr(card, "quiet_birth", False))
         self.assertEqual(card.type, "self-improvement")
         self.assertEqual(card.target_repo, "/repo/path")
         self.assertEqual(card.plan, ["p1"])

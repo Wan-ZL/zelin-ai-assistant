@@ -1,4 +1,9 @@
-"""dashboard.build_dashboard — v0.10 additions (CONTRACT §2).
+"""dashboard.build_dashboard — v0.10 additions (CONTRACT §2 / §78).
+
+**§78（issue #447 / owner 决策 D80）**：提案车道退役——机器卡（``detected`` /
+``raising`` / 退役残留的 ``card_sent``）一律投进潜在任务列 ``debt[]``，
+``needs_approval[]`` 恒空（墓碑键，永不删）。本文件的单点损坏隔离判例逐条重锚
+到那一列，降级口径一个字没变。
 
 build_dashboard is pure/injectable: requirements, agents and cfg are all passed
 in, so no ``claude agents`` subprocess and no real registry is touched. $HOME
@@ -21,11 +26,11 @@ Covered:
 import datetime as _dt
 import json
 import os
-import tempfile
 import unittest
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard
 from act.lib.registry import Requirement
@@ -38,7 +43,7 @@ def _utc_epoch(*args) -> int:
 class BuildDashboardV010TestCase(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -249,13 +254,27 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(len(dash["review"]), 1)
         self.assertFalse(dash["review"][0]["session_active"])
 
+    def test_review_with_stale_working_no_pid_stays_in_review(self):
+        # §30 追记（issue #446）：roster 报 working 但**没有 pid**（进程早已退出、
+        # roster 项过时）绝不促成 运行中——否则已交付的待验收卡会永远卡在运行中
+        # 列、拿不到验收/打回按钮。诚实降级：留在 review[]，session_active=false。
+        dash = dashboard.build_dashboard(
+            reqs=[self._review_req()], agents=[self._agent("working", pid=None)],
+            cfg=self.cfg)
+        self.assertEqual(dash["running"], [])
+        self.assertEqual(len(dash["review"]), 1)
+        self.assertEqual(dash["review"][0]["state"], "review")
+        self.assertFalse(dash["review"][0]["session_active"])
+        self.assertEqual(dash["counts"]["running"], 0)
+        self.assertEqual(dash["counts"]["review"], 1)
+
 
 class CompletedCapTestCase(unittest.TestCase):
     """§2 completed cap: newest COMPLETED_CAP by accepted_at, true total in counts."""
 
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -322,7 +341,7 @@ class EmptySidNoGlobBindTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cfg = config.Config()
-        self.home = tempfile.mkdtemp(prefix="dash-home-")
+        self.home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": self.home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -385,7 +404,7 @@ class SingleCardCorruptionIsolationTestCase(unittest.TestCase):
 
     def setUp(self):
         self.cfg = config.Config()
-        home = tempfile.mkdtemp(prefix="dash-home-")
+        home = scratch_dir(self, prefix="dash-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -395,55 +414,69 @@ class SingleCardCorruptionIsolationTestCase(unittest.TestCase):
             reqs=reqs, agents=agents or [], cfg=self.cfg, **kw)
 
     # -- 字段级损坏降级（不丢卡） -------------------------------------------- #
-    def test_execution_string_on_card_sent_degrades_not_crash(self):
+    # §78（issue #447 / owner 决策 D80）：机器卡一律落潜在任务列（``debt[]``），
+    # 提案列退役且恒空——本组判例整体重锚到那一列，降级口径一个字没变。
+    def test_execution_string_on_a_machine_card_degrades_not_crash(self):
         req = Requirement.from_dict({
-            "id": "R-101", "title": "bad exec", "status": "card_sent",
+            "id": "R-101", "title": "bad exec", "status": "detected",
             "execution": "oops-a-string",
         })
         dash = self._build([req])
-        item = dash["needs_approval"][0]
+        item = dash["debt"][0]
         self.assertEqual(item["id"], "R-101")
+        self.assertFalse(item["reraised"])
+
+    def test_execution_string_on_a_retired_card_sent_straggler_degrades_too(self):
+        """§78：归并扫描没跑完的落单卡照样投影（永不隐形），坏 execution 同样
+        只降级不炸——退役状态不是少一道消毒的借口。"""
+        req = Requirement.from_dict({
+            "id": "R-104", "title": "bad exec straggler", "status": "card_sent",
+            "execution": "oops-a-string",
+        })
+        dash = self._build([req])
+        item = dash["debt"][0]
+        self.assertEqual(item["id"], "R-104")
         self.assertFalse(item["reraised"])
 
     def test_bad_repeated_mentions_degrades_to_one(self):
         req = Requirement.from_dict({
-            "id": "R-102", "title": "bad repeats", "status": "card_sent",
+            "id": "R-102", "title": "bad repeats", "status": "detected",
             "repeated_mentions": "abc",
         })
         dash = self._build([req])
-        self.assertEqual(dash["needs_approval"][0]["repeated"], 1)
+        self.assertEqual(dash["debt"][0]["repeated"], 1)
 
     def test_bad_cost_estimate_degrades_to_no_cost(self):
         req = Requirement.from_dict({
-            "id": "R-103", "title": "bad cost", "status": "card_sent",
+            "id": "R-103", "title": "bad cost", "status": "detected",
             "cost_estimate_usd": "cheap",
         })
         dash = self._build([req])
-        item = dash["needs_approval"][0]
+        item = dash["debt"][0]
         self.assertIsNone(item["cost_usd"])
         self.assertFalse(item["show_cost"])
 
     # -- 整卡不可投影 -> 跳过这一张，兄弟卡与 counts 保持一致 ----------------- #
     def test_unprojectable_card_skipped_siblings_survive(self):
         bad = Requirement.from_dict({
-            "id": "R-110", "title": "broken dod", "status": "card_sent",
+            "id": "R-110", "title": "broken dod", "status": "detected",
             "definition_of_done": 42,           # list(42) -> TypeError
         })
         good = Requirement.from_dict({
-            "id": "R-111", "title": "healthy sibling", "status": "card_sent",
+            "id": "R-111", "title": "healthy sibling", "status": "detected",
         })
         dash = self._build([bad, good])
-        self.assertEqual([i["id"] for i in dash["needs_approval"]], ["R-111"])
+        self.assertEqual([i["id"] for i in dash["debt"]], ["R-111"])
         # 徽章与列表一致：跳过的卡也不计数（诚实降级，不出现"有数没卡"）
-        self.assertEqual(dash["counts"]["needs_approval"], 1)
+        self.assertEqual(dash["counts"]["debt"], 1)
 
     # -- wire 类型归一：int id/title/tier -> str ------------------------------ #
     def test_int_id_title_tier_emit_as_strings(self):
         req = Requirement.from_dict({
-            "id": 300, "title": 456, "tier": 7, "status": "card_sent",
+            "id": 300, "title": 456, "tier": 7, "status": "detected",
         })
         dash = self._build([req])
-        item = dash["needs_approval"][0]
+        item = dash["debt"][0]
         self.assertEqual(item["id"], "300")
         self.assertEqual(item["title"], "456")
         self.assertEqual(item["tier"], "7")

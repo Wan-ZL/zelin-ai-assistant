@@ -49,7 +49,9 @@ sources:                               # 需求雷达监控的增量源
 
 approval:
   surface: slack                       # v0: slack（桌面+手机同一条消息）；v2+: mac-app
-  poll_interval_minutes: 30
+  # poll_interval_minutes 已于 §81 / D83 删除（issue #451）：Slack 审批通道 v0.21 退役后
+  # 它就没有消费者了，解析分支是一句字面空操作——文档上有效、实际无效。主循环的真间隔是
+  # `approval.poll_interval_seconds`（不写 = 10 秒）。yaml 里留着这一键不报错，只是不再有任何效果。
   cost_thresholds:
     show_cost_above_usd: 5             # 低于此值卡片不显示成本
     require_text_confirm_above_usd: 50 # 高于此值升 T2，需文字确认
@@ -68,7 +70,13 @@ approval:
 # docs/design/vnext2-plan.md），旧配置里残留的这一键被忽略。钱的可见性由上面
 # approval.cost_thresholds.require_text_confirm_above_usd 的键入确认承担，估价照常显示在卡上。
 autodispatch:
-  enabled: true                        # 总开关；false = 信任矩阵只分类，所有卡回人工审批
+  # 总开关；false = 信任矩阵只分类，所有卡回人工审批。
+  # 这一行**故意注释掉**（§81 / D83，照 self_improve.enabled 的先例）：模板是
+  # install.sh / 设置向导逐字复制成 config.yaml 的，在这里钉死一个值 = 每台新装机
+  # 都带着一个用户从没做过的「显式选择」——而这条恰好是整条管线里最贵的自动行为
+  # （没人点过、卡却自己批准并开了 LLM 会话）。没有这个键 = 跟随出厂默认（开，
+  # truth = act/lib/policy.AUTODISPATCH_DEFAULTS）。行为一字不变，只是不再替你做选择。
+  # enabled: true
   max_concurrent: 3                    # 自动派发并发上限；超出的卡留在「运行中」列 queued 子状态（原因 chip：concurrency）
   notify: true                         # 观察模式：每次自动派发都发一条通知；false = 只有看板留痕
   require_awake: true                  # CONTRACT §71.1：机器不在清醒态（dark wake / 合盖睡着）时本 pass 一张卡都不派，
@@ -145,8 +153,25 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
     - Private Browsing                 # Safari 无痕窗口（按窗口标题匹配）
     - Incognito                        # Chrome/Edge 无痕窗口（按窗口标题匹配）
 
+# 自动行为总账（CONTRACT §81，owner 决策 D83，issue #451）——「这个软件现在到底有
+# 哪些东西是自动跑的、开关在哪、动手留没留痕、能不能撤」的唯一答案在
+# act/lib/automation.py:LEDGER（`python3 -m act.lib.automation --list` 逐行打印，
+# `--enabled <slug>` 问某一条现在开着没有）。动手的行在 state/automation.jsonl 留一行。
+# 下面五把是 §81 给「以前一把开关都没有」的行为补上的（§16 feature flag，默认全开
+# = 本改动前的行为）；它们和其余 features 一样可在设置页「Feature flags」区翻，
+# actd 每 pass 现读，**无需重启**。
+# features:
+#   merge_silent: true                 # §44 近重复静默并入（探测 + 落盘两半共用这一把）
+#   worktree_sweep: true               # §75 .claude/worktrees/ 自动回收（原来只有环境变量 AIASSISTANT_WORKTREE_SWEEP）
+#   attachment_gc: true                # §10 无引用贴图孤儿清理（>30 天且没有任何卡引用的才删）
+#   raising: true                      # §1/§40 欠账卡每 pass 展开一张
+#   ingest: true                       # §18 cron ingest 链里的 headless 笔记加工（整条链最贵的一步）
+
 trash:
-  retention_days: 60                   # 回收站保留天数；超期且未标永久的硬删。设 0 = 永不自动清
+  retention_days: 0                    # 回收站保留天数；超期且未标永久的硬删。**出厂 0 = 永不自动清**
+                                       # （§81 / D83：硬删是整条管线里唯一不可恢复的自动删除，与 §0 第 2 条
+                                       # 「绝无不可恢复的自动删除」正面冲突，所以要它得自己开）。写个数字
+                                       # （如 60）才开启；daily_loop.trash_retention_days 是它的下级，本键为 0 时整体不生效
 
 registry:                              # 数据层真源（CONTRACT §53，owner 决策 D2）
   backend: auto                        # auto = 首跑自动「备份 → 迁移 → 逐字段比对」后以 SQLite（state/store2.db）为真源；
@@ -221,6 +246,10 @@ recap:                                 # 会议 recap（CONTRACT §63，issue #1
   # default_shape: lines                # §63.10 出厂形状：lines = 快速五行（自用便签）｜ sections = 可发送长版
   #                                     #   （分节 + 每节语气 decided/proposed/floated/open + 跨节连续编号）；
   #                                     #   单份纪要可在页面上逐次改选，之后的重生成沿用它选的那一种
+  # glossary:                           # §63.14 术语表：转写进模型之前先把听错的词换回正确拼法（Whisper 把 SageMaker
+  #   - "SageMaker: stage maker, sage maker"   #   听成 stage maker、Nemotron 听成 new tron…）。一行一条：`正确拼法: 听错1, 听错2`
+  #   - "Nemotron: new tron, nemo tron"        #   （听错形按大小写不敏感 + 词边界确定性替换；只写正确拼法也行 = 只进 prompt 的清单）。
+  #   - "SFT"                                  #   另一处是 state/recap-glossary.md（同一行格式，# 注释；两处合并，最多 200 条）
   # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
   # max_per_day: 8                      # 每个本地日上限
   # retention_days: 90                  # recaps/<key>.json 保留天数

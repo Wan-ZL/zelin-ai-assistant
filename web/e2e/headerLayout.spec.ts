@@ -146,9 +146,15 @@ test("tight：搜索框展开着，点「筛选」/「提建议」一下就开",
   await page.getByRole("button", { name: "Search cards" }).click();
   await expect(page.getByRole("searchbox", { name: "Search cards" })).toBeFocused();
   await page.getByRole("button", { name: "Filters" }).click();
-  await expect(page.getByRole("dialog", { name: "Filters" })).toBeVisible();
+  const panel = page.getByRole("dialog", { name: "Filters" });
+  await expect(panel).toBeVisible();
   // 面板开的同一次渲染里搜索框已收起——面板量到的锚点就是最终位置
   await expect(page.getByRole("searchbox")).toHaveCount(0);
+  // ⎋ 是 FilterPopover 自己的 onKeyDown 收的（FilterBar 的 window 监听见 panelOpen 就撒手），
+  // 而焦点是它在 requestAnimationFrame 里送进面板的：焦点还没进去就按，那一下等于按给了 body，
+  // 面板不关。「可见」早于「拿到焦点」一帧以上（看板越重那一帧越晚，§78 后左书立条默认展开、
+  // 首帧要排七张完整卡面，实测差 ~56 ms）——所以先等焦点落进面板，再按 ⎋。
+  await expect(panel.getByRole("button").first()).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 

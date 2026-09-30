@@ -19,13 +19,12 @@ The server's terminal takeover (server/terminal_launch.command_for) passes
 copy_cmd through verbatim, so the same word reaches the shell line.
 """
 import os
-import shutil
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard
 from act.lib.registry import Requirement
@@ -35,8 +34,7 @@ SID = "feedc0de-0000-0000-0000-000000000000"
 
 class _Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="copycmd-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="copycmd-"))
         # $HOME → empty sandbox (no ~/.claude/projects transcript); the stable
         # copy path carries a SPACE like the real one under
         # ~/Library/Application Support — a quoted path would show up as such.

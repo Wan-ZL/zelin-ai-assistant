@@ -1,6 +1,11 @@
 # 审批卡片模板（Slack DM）
 
-发送到 `config.owner.slack_user_id`。桌面 Slack 与手机推送是同一条消息，✅/❌ reaction 或 💬 文字回复均可，轮询周期见 `config.approval.poll_interval_minutes`。
+发送到 `config.owner.slack_user_id`。桌面 Slack 与手机推送是同一条消息，✅/❌ reaction 或 💬 文字回复均可。
+
+> **这一页是历史件**：Slack 审批通道自 v0.21 起退役（审批只在看板里做），随它一起退役的
+> `config.approval.poll_interval_minutes` 已于 §81 / D83（issue #451）从配置层删除 —— 它的
+> 解析分支是一句字面空操作，属于「说的和做的不一样」的开关。主循环的真间隔是
+> `approval.poll_interval_seconds`（不写 = 10 秒）。
 
 ```
 🔔 *Zelin's AI Assistant · 审批卡片 #{id}*  `{tier} · {tier_hint}`

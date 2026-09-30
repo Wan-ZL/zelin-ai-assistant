@@ -27,6 +27,7 @@ import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (GOLDEN_DIR, REPO_ROOT, assert_envelope,
                                       http_request, post_json, start_server)
 
@@ -73,7 +74,7 @@ def _payload_from_golden(golden: dict) -> dict:
 
 class _ActionsHomeMixin:
     def _boot(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-actions-"))
+        self.home = Path(scratch_dir(self, prefix="zai-g5-actions-"))
         _, self.port = start_server(self, self.home)
         self.inbox = self.home / "state" / "inbox"
 

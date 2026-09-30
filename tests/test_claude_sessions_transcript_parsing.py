@@ -20,8 +20,6 @@ Pinned (P3 mutation net):
 import io
 import json
 import os
-import shutil
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -29,6 +27,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import radar_claude_sessions as rcs
 from act.lib import config
@@ -88,8 +87,7 @@ class CleanHeadTestCase(unittest.TestCase):
 
 class WindowReadersTestCase(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="rcs-win-"))
-        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.dir = Path(scratch_dir(self, prefix="rcs-win-"))
 
     def _write(self, lines):
         p = self.dir / "s.jsonl"
@@ -152,8 +150,7 @@ class ParseTsTestCase(unittest.TestCase):
 
 class CandidateTestCase(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="rcs-cand-"))
-        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.dir = Path(scratch_dir(self, prefix="rcs-cand-"))
         self.now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
 
     def _write(self, sid, entries, mtime=None):
@@ -255,10 +252,9 @@ class CandidateTestCase(unittest.TestCase):
 
 class CliTestCase(unittest.TestCase):
     def setUp(self):
-        self.claude_dir = Path(tempfile.mkdtemp(prefix="claude-cfg-"))
+        self.claude_dir = Path(scratch_dir(self, prefix="claude-cfg-"))
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.claude_dir)
         self.addCleanup(os.environ.pop, "CLAUDE_CONFIG_DIR", None)
-        self.addCleanup(shutil.rmtree, self.claude_dir, ignore_errors=True)
         config.ensure_state_dirs()
 
     def _run(self, argv):

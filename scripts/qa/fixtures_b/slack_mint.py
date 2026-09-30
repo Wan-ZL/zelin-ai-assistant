@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""B-01 slack-mint：真形 Slack 私信重放一遍 → 铸出一张提案卡（§13 / §44.2 / §58）。
+"""B-01 slack-mint：真形 Slack 私信重放一遍 → 铸出一张卡（§13 / §44.2 / §58 / §78）。
 
 样本 = ``tests/fixtures/coverage_b/slack_message.json``（``fetch_new_messages``
 的出参形状）。fetcher / extractor 全注入，绝不碰网络、绝不 spawn 真 claude。
+
+§78（提案车道退役）：新卡的状态是 ``detected``（落潜在任务列），``card_sent``
+永不再被写入。这一条是整条链上最容易静默退化的一格——铸卡路径若回写
+``card_sent``，卡仍然在看板上可见（退役车道的存量行也投进 debt），红不了，
+所以这里逐字钉死状态值。
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ def scenario(_home):
     ok, why = _harness.check([
         ("scan_returned_one", n == 1),
         ("one_card", len(cards) == 1),
-        ("status_card_sent", facts["status"] == "card_sent"),
+        ("status_detected", facts["status"] == "detected"),   # §78
         ("source_is_slack", facts["channel"] == "slack"),
         ("gate_consulted", len(llm.triage_calls) == 1),
     ])

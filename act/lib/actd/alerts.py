@@ -6,8 +6,10 @@ CONTRACT §40（新卡批量通知 ≥3 张合一条；digest 铸的卡由 diges
 §11 + §30 + §46.3（待验收就绪通知：from_review 回流与 #119 中断收割不发）/
 §48 + §48.2 + §48.3（开着的源死了要响、关掉的源全静默、无基线兜底、睡醒宽限）/
 §28（通知偏好：两道失败扫描的 ``suppressed`` 形参——失败类被静音时照跑、
-不花 anti-nag 台账）/ §76.3（提案结算信号的三条一次性翻面升级：疑似已完成 /
-截止未批 / 被提 N 次仍未处理）。
+不花 anti-nag 台账）/ §76.3（结算信号的三条一次性翻面升级：疑似已完成 /
+截止未批 / 被提 N 次仍未处理）/ §78（提案车道退役：新卡与结算通知改看
+``debt[]`` = 潜在任务列）/ §45（LIMITED 出生静默：带 ``quiet_birth`` 的新行
+落列但不响）。
 """
 from __future__ import annotations
 
@@ -23,10 +25,16 @@ from act.lib.registry import State, load_all
 # --------------------------------------------------------------------------- #
 # (d) transition detection
 # --------------------------------------------------------------------------- #
-# §40: more than this many fresh proposals in one pass collapse to one
+# §40: more than this many fresh cards in one pass collapse to one
 # notification (msg_new_cards_batch). At 1-2 the per-card copy is still the
 # more useful one — it names the ask.
 NEW_CARD_BATCH_ABOVE = 2
+
+# §78：机器卡一律落潜在任务列，所以「有新卡了」「这张该拍一下了」这两类通知
+# 的差分源从退役的 ``needs_approval[]`` 换成 ``debt[]``。这一行是整次退役里
+# 最容易静默失效的一处：键不改名、投影照常出、只是永远空着——不换的话 §40
+# 新卡通知与 §76.3 结算升级会**无声地**全部停发。
+_CARD_LANE = "debt"
 
 
 def by_id(items: list) -> dict:
@@ -40,16 +48,19 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list:
     card); every other class carries the card id. kind (v0.46, add-only) tags
     the transition class for per-event user preferences — "review_ready" (the
     完成提醒 off/banner/sound switch) and "proposal" (new cards, 回锅, and the
-    §76.3 settlement escalations)."""
+    §76.3 settlement escalations；持久化的偏好键名不动——§78 退的是车道，
+    不是存量偏好 token）。"""
     if prev is None:
         return []
-    p_na, c_na = by_id(prev.get("needs_approval", [])), by_id(curr.get("needs_approval", []))
+    # §78：机器卡的那一列 = 潜在任务（``debt[]``）。``needs_approval[]`` 仍在
+    # wire 上，但恒为空——继续从它差分等于永远没有新卡、永远没有结算升级。
+    p_card, c_card = by_id(prev.get(_CARD_LANE, [])), by_id(curr.get(_CARD_LANE, []))
     p_run = by_id(prev.get("running", []))
     p_rev, c_rev = by_id(prev.get("review", [])), by_id(curr.get("review", []))
     # 3-tuples (title, body, req); req is carried for caller compatibility (the
     # phone ✅-reaction approval surface was removed in v0.21 — Mac app only).
-    msgs = _new_card_msgs(p_na, c_na)
-    msgs.extend(_settlement_msgs(p_na, c_na))
+    msgs = _new_card_msgs(p_card, c_card)
+    msgs.extend(_settlement_msgs(p_card, c_card))
     msgs.extend(_review_ready_msgs(p_run, p_rev, c_rev))
     # 「executing -> blocked」的需输入通知类：retired v0.48.8（#119）。受阻
     # 会话不再投影「需输入」，msg_needs_input 随之退役；仍会出现在
@@ -60,34 +71,65 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list:
 def _from_weekly_digest(item: dict) -> bool:
     """Cards filed by the weekly digest are skipped entirely: its own
     notification already announced them by count (「另有 N 条自动化建议进了
-    待审批」) — re-announcing them here (per-card or batched) was a
+    潜在任务」) — re-announcing them here (per-card or batched) was a
     duplicate ping every suggestion-bearing Monday. Seam = the row's source
-    channel (weekly_digest.SOURCE_CHANNEL rides the dashboard projection)."""
+    channel (weekly_digest.SOURCE_CHANNEL rides the dashboard projection).
+
+    追记（§78）：周报早已不再铸卡，这个判据事实上是**死代码**。留着不删是
+    因为它零成本、且只要有一张带 weekly-digest 来源的存量卡还在列里（或哪天
+    周报再开始铸卡），它就仍是对的；真要退役得连 SOURCE_CHANNEL 一起走
+    tombstone（防腐 #6），不在本次退役的范围内。"""
     return any(isinstance(s, dict) and s.get("channel") == "weekly-digest"
                for s in item.get("sources") or [])
 
 
-def _new_card_msgs(p_na: dict, c_na: dict) -> list:
-    """new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
-    so Zelin knows it's a card he already accepted, not a brand-new find.
-    §40 batching: >2 fresh (non-reraised) proposals in one pass collapse to
-    ONE 「新增 N 张待审批卡」 — a radar backfill used to fire n pings in a
-    row. 回锅 stays per-card (each names a prior decision of the user's), as
+def _quiet_birth(item: dict) -> bool:
+    """§45 / §78 D80.7：这张卡出生自 LIMITED 信任的来源——落进潜在任务列，
+    但**不响**。回声环的那一刀在提案列退役后就靠这一个键继续可观测：卡照样
+    可见（没有一张卡因为静默而隐形），只是不来打断 owner。``dashboard``
+    的 ``_proposal_extras`` 用 add-only 语义发它（假/缺席 = 整键不出），所以
+    FULL 出生与存量卡一律照常走 §40 的新卡通知。"""
+    return bool(item.get("quiet_birth"))
+
+
+def _new_card_msgs(p_card: dict, c_card: dict) -> list:
+    """新卡进潜在任务列（§78；此前是提案列）——a re-raised card (v0.20.0
+    「回锅」) uses the Returned copy so Zelin knows it's a card he already
+    accepted, not a brand-new find.
+    §40 batching: >2 fresh (non-reraised) cards in one pass collapse to
+    ONE batched ping (文案 truth = ``notify.msg_new_cards_batch``) — a radar
+    backfill used to fire n pings in a row. 回锅 stays per-card (each names a prior decision of the user's), as
     do the 待验收 classes. The §28 relay queue's 10-min stale sweep is
     untouched — one batched entry ages out like any other."""
     msgs: list = []
     fresh: list = []
-    for rid, item in c_na.items():
-        if rid in p_na:
+    for rid, item in c_card.items():
+        if _no_ping_owed(rid, item, p_card):
             continue
-        if item.get("reraised"):
-            t, b = notify.msg_reraised(item.get("title", rid),
-                                       item.get("reraised_note") or "")
-            msgs.append((t, b, rid, notify.KIND_PROPOSAL))
+        reraised = _reraised_msg(rid, item)
+        if reraised is not None:
+            msgs.append(reraised)
         elif not _from_weekly_digest(item):   # digest cards: announced by the digest itself
             fresh.append((rid, item))
     msgs.extend(_fresh_card_msgs(fresh))
     return msgs
+
+
+def _no_ping_owed(rid: str, item: dict, p_card: dict) -> bool:
+    """这一行欠不欠一次打断：上一帧就在了（不是新卡），或者它安静出生。
+
+    ``quiet_birth`` = §45 LIMITED 一类的出生事实（§78 D80.7）——回锅同理：
+    静默来源的卡不因为被重述一次就获得打断 owner 的资格。"""
+    return rid in p_card or _quiet_birth(item)
+
+
+def _reraised_msg(rid: str, item: dict):
+    """回锅卡的那条通知（v0.20.0「回锅」文案）；不是回锅卡给 None。"""
+    if not item.get("reraised"):
+        return None
+    t, b = notify.msg_reraised(item.get("title", rid),
+                               item.get("reraised_note") or "")
+    return (t, b, rid, notify.KIND_PROPOSAL)
 
 
 def _fresh_card_msgs(fresh: list) -> list:
@@ -101,19 +143,21 @@ def _fresh_card_msgs(fresh: list) -> list:
     return msgs
 
 
-def _settlement_msgs(p_na: dict, c_na: dict) -> list:
+def _settlement_msgs(p_card: dict, c_card: dict) -> list:
     """§76.3 三条结算升级：每条都是 false→true 的**一次性**翻面。
 
-    只看**两个快照里都在**的提案行（新卡由 §40 的新卡通知负责；一张出生即带
-    信号的卡不许在新卡通知之外再响第二声）。翻面判据 = 上一版为假 / 缺席、这一
-    版为真——之后每个 pass 的 dashboard 里信号恒为真，却再也不会响：投影是
-    幂等的，通知不是。actd 重启（prev=None）整轮不发（`detect_transitions`
-    的既有约定），所以「重启即重播」不会发生。三条都用 `KIND_PROPOSAL`——它们
-    催的是同一件事：这张提案该被拍一下了。
+    只看**两个快照里都在**的潜在任务行（§78 之前是提案行；新卡由 §40 的新卡
+    通知负责，一张出生即带信号的卡不许在新卡通知之外再响第二声）。翻面判据 =
+    上一版为假 / 缺席、这一版为真——之后每个 pass 的 dashboard 里信号恒为真，
+    却再也不会响：投影是幂等的，通知不是。actd 重启（prev=None）整轮不发
+    （`detect_transitions` 的既有约定），所以「重启即重播」不会发生。三条都用
+    `KIND_PROPOSAL`——它们催的是同一件事：这张卡该被拍一下了。两个派生 bool
+    自 §78 / D80.8 起就长在潜在任务行上（``dashboard._backlog_row``），不换
+    车道就是三条升级一起哑掉。
     """
     msgs: list = []
-    for rid, item in c_na.items():
-        prev = p_na.get(rid)
+    for rid, item in c_card.items():
+        prev = p_card.get(rid)
         if prev is None:
             continue
         name = item.get("title", rid)

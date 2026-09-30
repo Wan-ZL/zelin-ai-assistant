@@ -18,9 +18,9 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -45,8 +45,7 @@ def _install_sh_fn(name):
 @unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
 class RelaunchBackgroundFlagTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="install-relaunch-bg-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="install-relaunch-bg-"))
         self.calls = self.tmp / "calls.log"
         self.running_flag = self.tmp / "app.running"
         self.fakebin = self.tmp / "fakebin"

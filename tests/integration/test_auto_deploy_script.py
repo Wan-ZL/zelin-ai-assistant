@@ -108,10 +108,10 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
@@ -432,8 +432,7 @@ class AutoDeployFixture(unittest.TestCase):
     89 runs below into their module."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="autodeploy-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="autodeploy-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.logs = self.tmp / "logs"

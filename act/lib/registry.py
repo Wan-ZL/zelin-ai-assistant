@@ -1,13 +1,14 @@
 """Requirement registry — the card-ledger facade every caller goes through.
 
 契约：CONTRACT §1（状态机/字段）+ §53（store2 真源与激活协议）+ §44（单写者）
-+ §60（两段式卡片编号：`P-` 主键 + `work_id` 工作编号，D21）。
++ §60（两段式卡片编号：`P-` 主键 + `work_id` 工作编号，D21）+ §78（提案车道
+退役：机器卡一律落 detected；回收站回程票上的 card_sent 由 restore 夹逼）。
 
 Ids（§60，D21）：``id`` 是终身不变的主键——新卡出生即 ``P-<n>``（provisional，
 :func:`next_id`）；``work_id`` 是人看的工作编号 ``R-<m>``，**只在卡进入
 approved 时**由 :func:`save` 单点分配（set-once、稠密、单调、永不复用），
-detected/card_sent/raising/trash/merge 一律不给。存量卡的 ``R-<n>`` 主键原样
-保留（legacy），显示名 = ``work_id or id``（:func:`display_id`）。
+detected/raising/trash/merge（以及退役的 card_sent）一律不给。存量卡的 ``R-<n>``
+主键原样保留（legacy），显示名 = ``work_id or id``（:func:`display_id`）。
 
 Truth（v0.48.8，D2）：``state/store2_truth.json`` 激活标记在（且未被回滚开关
 强制回 yaml）时，真源 = SQLite ``state/store2.db``（act/lib/store2）；否则
@@ -15,8 +16,8 @@ Truth（v0.48.8，D2）：``state/store2_truth.json`` 激活标记在（且未�
 tests/test_registry_backend_parity.py）——调用方（actd/雷达/digest/dashboard/
 server/boardctl）永远只经这里，永远看不见 SQL。
 
-State machine (CONTRACT §1):
-    detected -> card_sent -> approved -> executing -> review -> delivered
+State machine (CONTRACT §1，§78 起提案车道退役):
+    detected -> approved -> executing -> review -> delivered
     branches: rejected  /  merged_into:<parent-id>
     terminal (merge-review 契约 四): merged + merged_into=<primary>
 
@@ -386,7 +387,7 @@ def _dump_yaml(obj: Any) -> str:
 # state/registry_writes.jsonl（append-only，一行一条 {"f","ts"}），guard
 # 按快照起始 ts 过滤读取——actd 中途重启也不再丢账。进程内映射只留作
 # 落盘失败（磁盘满等）时的兜底，且**同样带 ts、同样按快照起始 ts 过滤**：
-# 无条件豁免会让本进程写过的每张卡（包括清理会话正在审阅的提案卡——最
+# 无条件豁免会让本进程写过的每张卡（包括直跑会话正在审阅的卡——最
 # 现实的篡改目标）永久免检，护栏对它们失明。宁多记一笔（漏报该笔）不
 # 少记（假警），但绝不豁免快照前的历史写入。
 _PROC_WRITES: dict = {}     # 文件名 -> 本进程最近一次写入 ts（UTC 字符串）
@@ -491,10 +492,10 @@ def save(req: Requirement) -> None:
 
     §60（D21）**工作编号的唯一分配点**：卡以 ``approved`` 落盘且尚无
     ``work_id`` 时，在这里分配 ``R-<m>``（:func:`next_work_id`）。进入
-    approved 的每条路径——owner approve、§51 免批、capture[run] 出生即
+    approved 的每条路径——owner approve、§65 lane 免批、capture[run] 出生即
     approved、restore 按 prev_status 精确复位回 approved——都经 save()，
-    所以调用方零改动、零遗漏；detected/card_sent/raising/trashed/merged
-    的落盘永不分配。分配失败（序列文件读不了等）不崩 save：编号是显示层
+    所以调用方零改动、零遗漏；detected/raising/trashed/merged（含退役的
+    card_sent）的落盘永不分配。分配失败（序列文件读不了等）不崩 save：编号是显示层
     资产，卡照常落盘，下一次 approved 落盘再补。"""
     _enforce_agent_wall(req)
     allocated = _allocate_work_id(req)
@@ -599,15 +600,19 @@ def _yaml_save_single(req: Requirement) -> None:
 
 def _note_first_card(req: Requirement) -> None:
     """Fire the once-per-install ``milestone_first_card`` event the first time
-    ANY requirement is persisted in the 提案 (card_sent) lane. ``save()`` is the
+    ANY requirement is persisted in the 潜在任务 (detected) lane. ``save()`` is the
     single choke every producer funnels through — ``analyze.py``, quick_capture
-    ``apply_triage``, self-DM follow-ups, and ``merge_or_new`` (which writes
-    ``card_sent`` directly, bypassing ``set_status``) — so guarding on the saved
+    ``apply_triage``, self-DM follow-ups, and ``merge_or_new`` (which writes the
+    birth status directly, bypassing ``set_status``) — so guarding on the saved
     status here catches them all without touching the hot path in each. Lazy
     import keeps registry import-light; ``log_first`` is idempotent and never
-    raises, so this is safe on the write path."""
+    raises, so this is safe on the write path.
+
+    §78（issue #447）：机器卡的落点从 card_sent 改成 detected，这条里程碑必须跟着
+    改锚——否则退役后**全新安装永远记不到第一张卡**。退役态一并收下（存量落单卡
+    的落盘也算数）；``log_first`` 只认一次，两个态不会重复计。"""
     try:
-        if str(req.status) != State.CARD_SENT.value:
+        if str(req.status) not in (State.DETECTED.value, State.CARD_SENT.value):
             return
         from act.lib import analytics  # lazy: keep registry import-light
         analytics.log_first("milestone_first_card", req=req.id)
@@ -661,8 +666,14 @@ def restore(req: Requirement, now: Optional[_dt.datetime] = None) -> Requirement
     ``now`` is the injection seam for the stamp (default = the wall clock): the
     stale-sweep tests measure a window from this stamp with an injected clock, and a
     wall-clock stamp made ``test_review_stale_sweep`` turn red on 2026-09-17 by itself.
+
+    §78（issue #447，D80.10）回程票夹逼：回收站存量卡的 ``prev_status`` 可能仍写着
+    退役的 ``card_sent``——照字面复位 = 把卡送回一条没有出口的车道（「可恢复」的
+    反面），所以这里夹逼一次 ``card_sent`` → ``detected``；迁移侧刻意**不**改
+    trashed 卡的 prev_status（那是回程票，改它才是篡改历史）。
     """
-    req.set_status(req.prev_status or State.DETECTED.value)
+    prev = str(req.prev_status or State.DETECTED.value)
+    req.set_status(State.DETECTED.value if prev == State.CARD_SENT.value else prev)
     req.prev_status = None
     req.trashed_at = None
     req.trash_reason = None
@@ -954,7 +965,8 @@ WORK_SEQ_NAME = "work_seq.json"
 # id_kind 词表（§2 投影 add-only 字段，web 据此灰显 legacy 主键）
 ID_KIND_WORK = "work"            # 有 work_id：显示名 = 工作编号
 ID_KIND_LEGACY = "legacy"        # 存量 R- 主键、未获工作编号
-ID_KIND_PROPOSAL = "proposal"    # P- 主键、未获工作编号（提案/备选/回收站）
+ID_KIND_PROPOSAL = "proposal"    # P- 主键、未获工作编号（潜在任务/回收站）；持久化
+                                 # token，§78 不改名（存量看板行/事件行按它渲染）
 
 
 def id_number(rid) -> Optional[int]:
@@ -1078,7 +1090,7 @@ def _pick_work_id(req: "Requirement") -> Optional[str]:
       的 trashed/archived）——存量卡不会再「进入 approved」一次。未批准的
       legacy 卡仍无号（id_kind=legacy，看板灰显）：D21 对存量卡同样成立。
     - P 卡先看真源里有没有已发的号（:func:`_stored_work_id`），**无论现态**
-      ——abort 把 approved 卡退回 card_sent 时号是保留的（set-once），一份
+      ——abort 把 approved 卡退回潜在任务时号是保留的（set-once），一份
       批准前取的陈旧副本在这之后落盘，若只在过闸态才采纳就会把号覆写成
       None（sqlite 打成 ``WORK_ID_SET_ONCE``、yaml 静默丢号后再批准重铸
       = 一卡两号）。真源无号且这次是 approved 落盘 → 铸新号；其余状态原样
@@ -1602,11 +1614,11 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
                                     rejected/trashed/archived → caller opens a
                                     fresh card (never bury in a dead card);
       - ``("reraised", parent)``    same-task + new actionable ask → the ORIGINAL
-                                    card flips back to card_sent (提案), source
+                                    card flips back to detected (潜在任务), source
                                     folded, repeated_mentions+1, execution
                                     .reraised_at/_note set, summary "· 新增:…";
       - ``("follow_up", child)``    different task in the SAME thread → a distinct
-                                    child (card_sent) inheriting thread lineage,
+                                    child (detected) inheriting thread lineage,
                                     NEVER polluting the old card's title;
       - ``("folded", card)``        pure restatement/no new ask (bump only, no
                                     flip), OR a fold into an already-open
@@ -1617,9 +1629,9 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
     (the merge_or_new path); an explicit bool is the LLM's ``needs_action``.
     ``same_task`` = the titles align (a genuine restatement of the same task),
     vs a thread-only match (same email/slack thread, different matter/task).
-    ``cap_detected`` = §45 LIMITED 天花板：re-raise 的翻回与 follow-up 子卡都
-    只落 detected/备选（不通知、自然过期），不得借完结卡命中把候选抬进提案列
-    ——出生资格 gate 非 FULL 时由调用方传 True，fold 类结果不受影响。
+    ``cap_detected`` = §45 LIMITED 天花板：§78 之后翻回与 follow-up 子卡本来就只落
+    detected/潜在任务，这个参数因此只剩**通知资格**的含义（不通知、自然过期，铸卡
+    侧盖 ``quiet_birth``）——gate 非 FULL 时调用方传 True，fold 类结果不受影响。
     """
     parent = canonical(parent)                       # merged 副卡 -> 主卡
     if parent.status in _DEAD_END_STATES:
@@ -1628,8 +1640,8 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
     parent.thread_id = parent.thread_id or parent.id
     if not is_resolved(parent):
         # canonical hopped to a LIVE/open primary (a merged duplicate whose
-        # primary is card_sent/approved/executing/review): never pull running/
-        # queued work back to card_sent — just fold the note + source.
+        # primary is approved/executing/review): never pull running/queued
+        # work back to the backlog — just fold the note + source.
         return "folded", _fold_hit(parent, new_req, note, sources)
     # resolved parent (delivered / merged, NOT archived):
     acts = _carries_increment(parent, new_req) if actionable is None else bool(actionable)
@@ -1647,7 +1659,7 @@ def _resolved_outcome(parent: Requirement, new_req: Requirement, same_task: bool
     if same_task and not acts:
         # Q3 pure-restatement gate: a closed thread re-mentioned with NO new
         # actionable content → bump repeated_mentions, do NOT flip (kills the
-        # hot-thread 提案 noise that LLM-recall jitter would otherwise create).
+        # hot-thread 潜在任务 noise that LLM-recall jitter would otherwise create).
         _absorb_restatement(parent, new_req, sources)
         save(parent)
         return "folded", parent
@@ -1659,7 +1671,7 @@ def _resolved_outcome(parent: Requirement, new_req: Requirement, same_task: bool
         return "folded", _fold_hit(existing_child, new_req, note, sources)
     if same_task:
         return "reraised", _reraise(parent, new_req, sources, note, cap_detected)
-    # different task, same thread -> distinct follow-up child (card_sent),
+    # different task, same thread -> distinct follow-up child (detected),
     # inheriting the thread lineage; the old card's title is left untouched.
     return "follow_up", _open_follow_up(parent, new_req, note, cap_detected)
 
@@ -1699,24 +1711,34 @@ def _reraised_execution(execution: Optional[dict], note: str) -> dict:
 
 def _reraise(parent: Requirement, new_req: Requirement, sources: Optional[list],
              note: str, cap_detected: bool) -> Requirement:
-    """in-place re-raise: flip the ORIGINAL card back to 提案 (Q3 ownership)."""
+    """in-place re-raise: flip the ORIGINAL card back to 潜在任务 (Q3 ownership).
+    §78（issue #447）：落点从 card_sent 改成 detected，``cap_detected``（§45 LIMITED
+    天花板）随之只剩**通知资格**的含义，改由 ``quiet_birth`` 表达。"""
     _absorb_restatement(parent, new_req, sources)
+    # 这一轮回锅响不响是**这一轮**的事实：逐轮赋值、不是单向只盖（否则一次
+    # LIMITED 的屏幕佐证把卡永久静音，连日后真正的 FULL 重提也不再响）。判据
+    # **只**是 ``cap_detected``——main 上是 ``DETECTED if cap_detected else
+    # CARD_SENT``，候选自带的 ``quiet_birth`` 记的是生产者紧急度（挑新卡落哪
+    # 一列），并进来 = 不紧急的重述让「回锅」从此不响。
+    parent.quiet_birth = bool(cap_detected)
     if note:
         tag = f"[re-raised] {note}"
         parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
         parent.summary = (f"{parent.summary} · 新增:{note}").strip()
     parent.execution = _reraised_execution(parent.execution, note)
     # §76.1：回锅 = 新的一轮诉求，上一轮盖的「疑似已完成」是过期证据——不清
-    # 掉的话这张卡会带着两周前的绿章和那颗「已办完 · 记为已交付」一键回到提案
-    # 列（PR #349 评审抓到）。提示只描述**当前**这一轮，所以随轮次一起归零。
+    # 掉的话这张卡会带着两周前的绿章和那颗「已办完 · 记为已交付」一键回到潜在
+    # 任务列（PR #349 评审抓到）。提示只描述**当前**这一轮，所以随轮次一起归零。
     parent.completion_hint = None
-    parent.set_status(State.DETECTED if cap_detected else State.CARD_SENT)
+    parent.set_status(State.DETECTED)
     return upsert(parent)
 
 
 def _birth_state(cap_detected: bool) -> str:
-    """§45 LIMITED 天花板：re-raise 的翻回与 follow-up 子卡都只落 detected。"""
-    return State.DETECTED.value if cap_detected else State.CARD_SENT.value
+    """机器卡的出生态：§78 之后恒为 detected（潜在任务）。``cap_detected``（§45
+    LIMITED 天花板）保留在签名里——两条路落同一车道之后，天花板只剩通知资格
+    那一半（``quiet_birth``），状态上不再有差别。"""
+    return State.DETECTED.value
 
 
 def _inherited_fields(parent: Requirement, new_req: Requirement) -> dict:
@@ -1747,6 +1769,9 @@ def _open_follow_up(parent: Requirement, new_req: Requirement, note: str,
         id=next_id(),
         title=_follow_up_title(parent, new_req, note),
         status=_birth_state(cap_detected),
+        # §45/§78 D80.7：子卡是新出生的卡，天花板随它落地（否则 LIMITED 会响）。
+        # 判据同 _reraise 只是 ``cap_detected``（main 上 = ``_birth_state``）。
+        quiet_birth=bool(cap_detected),
         hardness=new_req.hardness or "soft",
         deadline=new_req.deadline,
         repeated_mentions=1,
@@ -1794,8 +1819,8 @@ def merge_or_new_with_kind(
     - Pure restatement of an OPEN entry (same source+title, no increment):
       merge sources into the parent, bump ``repeated_mentions``, status unchanged.
     - Carries an increment on an OPEN entry: an ``improvement_of`` child.
-    - No match: a brand-new self-rooted entry (status=detected, or card_sent when
-      high-confidence + a hard deadline).
+    - No match: a brand-new self-rooted entry (status=detected — §78: the
+      high-confidence/hard-deadline split into card_sent is retired).
 
     Returns ``(kind, saved)`` — :func:`reraise_or_followup`'s vocabulary,
     which only this function can report truthfully (a ``new_proposal``
@@ -1807,7 +1832,7 @@ def merge_or_new_with_kind(
     - ``("folded", parent)``    — pure restatement absorbed into an open (or
       live-canonical) entry, no new card;
     - ``("follow_up", child)``  — new lineage card under a resolved parent;
-    - ``("reraised", parent)``  — a resolved card flipped back to 提案.
+    - ``("reraised", parent)``  — a resolved card flipped back to 潜在任务.
     """
     if isinstance(new_req, dict):
         new_req = Requirement.from_dict(new_req)
@@ -1896,10 +1921,19 @@ def _increment_fields(parent: Requirement, new_req: Requirement) -> dict:
 
 def _increment_child(parent: Requirement, new_req: Requirement,
                      high_confidence: bool) -> Requirement:
-    """An ``improvement_of`` child under an OPEN parent that carries an increment."""
+    """An ``improvement_of`` child under an OPEN parent that carries an increment.
+    §78/D80.7：子卡是一次**新出生**，通知资格必须跟着落盘——main 上是
+    ``CARD_SENT if high_confidence else DETECTED``（落点即资格）。"""
     child = Requirement(
         id=next_id(),
-        status=State.CARD_SENT.value if high_confidence else State.DETECTED.value,
+        # §78：机器卡一律落潜在任务；``high_confidence`` 只剩通知资格的含义
+        status=State.DETECTED.value,
+        # 两个判据取或，缺一不可：``not high_confidence``（main 上子卡的落点只看
+        # 它——gmail/slack/claude-sessions 的调用点根本不传，子卡恒安静），以及
+        # 候选自带的章（非 FULL 来源在 ``apply_triage`` 入口盖的 §45 天花板；这条
+        # 路不经过 ``cap_detected``，章只能从候选身上搭车过来）。
+        quiet_birth=(not high_confidence
+                     or bool(getattr(new_req, "quiet_birth", False))),
         repeated_mentions=1,
         cost_estimate_usd=new_req.cost_estimate_usd,
         sources=list(new_req.sources or []),
@@ -1918,7 +1952,9 @@ def _increment_child(parent: Requirement, new_req: Requirement,
 def _reconcile_open(parent: Requirement, new_req: Requirement,
                     high_confidence: bool) -> tuple[str, Requirement]:
     """Open parents keep the increment-child / restatement-bump behavior
-    (never pulled back)."""
+    (never pulled back). 签名逐字同 main——``cap_detected`` 不下到这条路：§45 的天花板
+    在 main 上也不管开着的父卡长出来的子卡，非 FULL 的静默事实由候选身上那枚章
+    接住（CORROBORATE 连 ``merge_or_new`` 都走不到）。"""
     parent.thread_id = parent.thread_id or parent.id
     if _carries_increment(parent, new_req):
         return "proposed", upsert(_increment_child(parent, new_req, high_confidence))
@@ -1932,13 +1968,22 @@ def _reconcile_open(parent: Requirement, new_req: Requirement,
 
 
 def _needs_birth_status(new_req: Requirement) -> bool:
-    return not new_req.status or new_req.status == State.DETECTED.value
+    """出生态要不要由本模块裁（而不是照抄候选自带的 status）。
+
+    §78：退役的 `card_sent` 跟「没写 status」同档——铸卡漏斗是「没有生产者再写
+    提案列」的最后一道闸。仓库里已经没人预设它了，但重放的 inbox 文件、云同步
+    补发的旧候选、照抄旧片段的新调用方都可能带着它进来；不钳住就会有崭新的卡
+    出生在一条没有面的车道上（只能等 §78.5 扫描捡回来）。"""
+    return (not new_req.status
+            or new_req.status in (State.DETECTED.value, State.CARD_SENT.value))
 
 
 def _brand_new_status(new_req: Requirement, high_confidence: bool) -> str:
-    """card_sent when high-confidence + a hard deadline, else detected."""
-    if high_confidence and new_req.hardness == "hard" and new_req.deadline:
-        return State.CARD_SENT.value
+    """恒 detected（§78 提案车道退役：新卡一律落潜在任务）。
+
+    §78 之前这里是「high-confidence + 硬 deadline → card_sent」的分流点，那是
+    提案列唯一的自动入口；车道退役后它没有落点了。``high_confidence`` 留在签名
+    上（调用方逐字不动），语义收窄为**通知资格**，由 ``quiet_birth`` 表达。"""
     return State.DETECTED.value
 
 

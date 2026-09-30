@@ -11,8 +11,10 @@ Contract under test:
     statement or trailing user message -> False;
 (c) exclusions: outside the window, subagent files, sidechain/meta entries,
     bookkeeping-only files, sessions this product itself dispatched;
-(d) import: waiting -> card_sent, merely-recent -> detected; marker file
-    written; re-import and re-scan are no-ops (dedupe both belts);
+(d) import: 两档会话同落潜在任务（`detected`，§78 提案车道退役）——原来的
+    「等你回话 -> card_sent / 只是最近 -> detected」分流改挑**要不要打扰**
+    （D80.7 的 add-only `quiet_birth`：不是等你回话的会话安静出生）；marker
+    file written; re-import and re-scan are no-ops (dedupe both belts);
 (e) the import_claude_sessions inbox action end-to-end through
     actd.process_inbox (explicit ids and the no-ids waiting-only default);
 (f) session binding (例4a regression): a card binds the session its content
@@ -40,13 +42,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act import actd, radar_claude_sessions as rcs
 from act.lib import analytics, config, registry
 
 
-# a real directory, so import sets it as target_repo (existence-checked)
-_DEMO_CWD = tempfile.mkdtemp(prefix="demo-app-")
+# a real directory, so import sets it as target_repo (existence-checked);
+# lives exactly as long as this module's tests (tearDownModule), not the process
+_DEMO_CWD_TMP = tempfile.TemporaryDirectory(prefix="demo-app-")
+_DEMO_CWD = _DEMO_CWD_TMP.name
+
+
+def tearDownModule():
+    _DEMO_CWD_TMP.cleanup()
 
 
 def _iso(dt: datetime) -> str:
@@ -79,7 +88,7 @@ def _entry(etype: str, text, ts: datetime, cwd: str = None,
 
 class ClaudeSessionsRadarTest(unittest.TestCase):
     def setUp(self):
-        self.claude_dir = Path(tempfile.mkdtemp(prefix="claude-cfg-"))
+        self.claude_dir = Path(scratch_dir(self, prefix="claude-cfg-"))
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.claude_dir)
         self.proj = self.claude_dir / "projects" / "-tmp-demo-app"
         self.proj.mkdir(parents=True)
@@ -100,7 +109,6 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
-        shutil.rmtree(self.claude_dir, ignore_errors=True)
 
     # -- fixture helpers ---------------------------------------------------- #
     def _write_session(self, sid: str, entries: list, project: Path = None,
@@ -274,8 +282,11 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
                        if "flaky login" in r.title)
         done = next(r for r in by_title.values()
                     if "Rename the config" in r.title)
-        self.assertEqual(waiting.status, "card_sent")
-        self.assertEqual(done.status, "detected")
+        # §78：两档会话同落潜在任务；分档改由 quiet_birth 承担（D80.7）——
+        # 「等你回话」的会话照旧值得响一声，「只是最近跑过」的安静进列。
+        self.assertEqual((waiting.status, done.status), ("detected", "detected"))
+        self.assertFalse(getattr(waiting, "quiet_birth", False))
+        self.assertTrue(done.quiet_birth)
         self.assertEqual(waiting.sources[0]["channel"], "claude_code")
         self.assertEqual(waiting.sources[0]["ref"], "sess-waiting")
         self.assertIn("claude-code 导入", waiting.notes)
@@ -303,7 +314,8 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         self.assertEqual(rcs.run_once(7), 1)
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")            # §78
+        self.assertFalse(getattr(reqs[0], "quiet_birth", False))  # 等你回话 = 响
 
     def test_run_once_all_imports_everything(self):
         self._waiting_session()
@@ -328,8 +340,7 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         # session's id/cwd (berkeley Q&A card pointing at an Obsidian ingest
         # session). Two transcripts, different projects/cwds -> each imported
         # card carries ITS OWN session id (ref) and cwd in the source.
-        vault_cwd = tempfile.mkdtemp(prefix="vault-")
-        self.addCleanup(shutil.rmtree, vault_cwd, ignore_errors=True)
+        vault_cwd = scratch_dir(self, prefix="vault-")
         vault_proj = self.claude_dir / "projects" / "-vault"
         vault_proj.mkdir(parents=True)
         t = self.now - timedelta(hours=2)
@@ -378,8 +389,7 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
     def test_project_dir_uses_final_main_chain_cwd(self):
         # sessions migrate into worktrees mid-flight; resume is scoped to the
         # FINAL cwd, so the binding must use the last main-chain cwd
-        wt = tempfile.mkdtemp(prefix="worktree-")
-        self.addCleanup(shutil.rmtree, wt, ignore_errors=True)
+        wt = scratch_dir(self, prefix="worktree-")
         t = self.now - timedelta(hours=1)
         self._write_session("sess-migrating", [
             _entry("user", "Isolate this refactor into a worktree", t),
@@ -518,7 +528,8 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         self.assertEqual(processed, 1)
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")            # §78
+        self.assertFalse(getattr(reqs[0], "quiet_birth", False))
         self.assertFalse(list(config.INBOX_DIR.glob("*.json")))
 
     def test_inbox_action_without_ids_imports_waiting_in_window(self):
@@ -529,7 +540,8 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         actd.process_inbox()
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].status, "card_sent")
+        self.assertEqual(reqs[0].status, "detected")            # §78
+        self.assertFalse(getattr(reqs[0], "quiet_birth", False))
 
     def test_inbox_action_bad_payload_never_raises(self):
         self._inbox_write({"action": "import_claude_sessions",

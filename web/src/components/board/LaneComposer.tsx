@@ -1,4 +1,5 @@
-// 列顶输入框（提案列快速捕获 / 运行中列直跑）。§41 网页纪律（2026-09-04 追记，owner 决策 D35）：
+// 列顶输入框（潜在任务条头的快速捕获 / 运行中列的直跑；§78 提案列退役后捕获框搬去了左书立条，
+// 组件本身不变——身份仍只从 buildBody 的 payload 读）。§41 网页纪律（2026-09-04 追记，owner 决策 D35）：
 //   - 多行 <textarea>，1 行起随内容增高、5 行封顶后内部滚动（fitComposerRows；行高 / 内边距从
 //     computed style 读，单源 = tokens.css 的 --type-composer）；
 //   - Enter = 换行，Shift+Enter 也是换行，键盘上没有任何键提交——只有「捕获」/「直跑」按钮提交
@@ -41,7 +42,7 @@
 //     队列」而不是许诺「2-3 分钟」）。只有下一次**成功的捕获**才替换它（原生 writeInboxFile 失败不 beginCapture、
 //     斜杠命令不进 store）：失败句 / 提示行 / 斜杠回执只是按一行栈暂时顶掉它，一改字它们过期后回执回来，
 //     时钟全程没停（useCaptureReceipt.ts，与「清理积压」按钮共用）；
-//   - 输入框与按钮的 title = 原生 `.help` 提示：直跑「直接开跑：跳过提案与费用预估，成果仍进「待验收」」/
+//   - 输入框与按钮的 title = 原生 `.help` 提示：直跑「直接开跑：这句话原样交给 Claude Code，成果进「待验收」」/
 //     捕获「快速捕获（<快捷键>）」——原生写死 ⌘L；web 只在壳（WKWebView）里有键：⌘L（rail 的 window keydown，
 //     §54.4 2026-09-05 追记）与全局快速捕获键（§61.6，壳快照 hotkey 如 ⌃⌥Space），写成「⌘L · ⌃⌥Space」；
 //     浏览器标签页里 ⌘L 归地址栏、也没有全局键，就不写键，不许谎报。身份（propose / run）从 buildBody 的 payload 读
@@ -62,6 +63,9 @@ interface LaneComposerProps {
   placeholder: string;
   submitLabel: string;
   buildBody: (text: string) => Record<string, unknown>;
+  /** 捕获 POST 成功（回执刚换上）之后的一声招呼；§78：潜在任务条用它把自己强制展开——
+   *  回执与刚落的卡都在这条条里，收起的条里的回执等于没给回执。斜杠命令不算成功捕获，不叫。 */
+  onSubmitted?: () => void;
 }
 
 type ComposerMode = CaptureMode;
@@ -105,10 +109,13 @@ export function quickCaptureKeys(shell: Pick<ShellState, "hotkey"> | null): stri
   return ["⌘L", shell.hotkey].filter(Boolean).join(" · ");
 }
 
-/** 原生 Composer.swift `.help` 两句（Composer.swift:101-104）；捕获句的快捷键 = quickCaptureKeys，没有键就不写键 */
+/** 原生 Composer.swift `.help` 两句（Composer.swift:101-104）；捕获句的快捷键 = quickCaptureKeys，没有键就不写键。
+ *  直跑句自 §34 2026-09-27 追记（owner 决策 D81，issue #448）起不再提「提案」与「费用预估」，改说这句话原样
+ *  交给 Claude Code——那正是直跑此刻真实的行为（`dispatch_prompt.verbatim_direct_run`）；§66 清单里它是 help
+ *  条目（只列不判），与冻结原生的有意分叉。 */
 export function composerTitle(mode: ComposerMode, hotkey: string | null, text: (zh: string, en: string) => string): string {
   if (mode === "run") {
-    return text("直接开跑：跳过提案与费用预估，成果仍进「待验收」", "Runs now — skips the proposal & cost preview; the result still lands in Review");
+    return text("直接开跑：这句话原样交给 Claude Code，成果进「待验收」", "Runs now — your sentence goes to Claude Code as typed; the result lands in Review");
   }
   return hotkey ? text(`快速捕获（${hotkey}）`, `Quick capture (${hotkey})`) : text("快速捕获", "Quick capture");
 }
@@ -138,7 +145,7 @@ export function fitComposerRows(el: HTMLTextAreaElement, maxRows = COMPOSER_MAX_
   el.rows = Math.min(maxRows, Math.max(1, contentLines));
 }
 
-export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneComposerProps) {
+export function LaneComposer({ placeholder, submitLabel, buildBody, onSubmitted }: LaneComposerProps) {
   const { text } = useI18n();
   const shell = useShellState();
   const mode = composerMode(buildBody);
@@ -285,6 +292,7 @@ export function LaneComposer({ placeholder, submitLabel, buildBody }: LaneCompos
       setDraft(""); // 仅确认成功后清空（§41 草稿保留）
       clearImages(); // 附图与文字同命：成功才清（原生 model.clear() 在 submitCapture 成功之后）
       beginReceipt(trimmed, response); // 成功才替换上一份回执、时钟重来（stem = server 回的 inbox 文件名，§49 对账精确键）
+      onSubmitted?.(); // §78：回执落在哪个容器里，就由那个容器负责把自己打开
     } catch (e) {
       // capture 写入失败（原生 submitCapture 返回 false）：固定一句 + server 原文；草稿原样留着
       setError({ prefix: text("提交失败，已保留输入", "Submit failed — input kept"), detail: describeActionError(e, text) });

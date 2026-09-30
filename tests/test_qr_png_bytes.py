@@ -9,12 +9,12 @@
 扫描枪读的是像素，所以判例也读像素。
 """
 import struct
-import tempfile
 import unittest
 import zlib
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandboxes AIASSISTANT_HOME first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import qr
 
@@ -57,7 +57,7 @@ class QrPngContainerTestCase(unittest.TestCase):
     DATA = "ZQR1-" + "y" * 60
 
     def _write(self, **kwargs) -> bytes:
-        path = Path(tempfile.mkdtemp()) / "qr.png"
+        path = Path(scratch_dir(self)) / "qr.png"
         qr.qr_png(self.DATA, path, **kwargs)
         return path.read_bytes()
 
@@ -104,13 +104,13 @@ class QrPngContainerTestCase(unittest.TestCase):
         self.assertEqual(rows[ring][ring], 255)
 
     def test_error_correction_level_reaches_the_png(self):
-        path = Path(tempfile.mkdtemp()) / "h.png"
+        path = Path(scratch_dir(self)) / "h.png"
         qr.qr_png(self.DATA, path, ec="H", scale=2, quiet=1)
         width, _h, _rows = _decode(path.read_bytes())
         self.assertEqual(width, (len(qr.qr_matrix(self.DATA, "H")) + 2) * 2)
 
     def test_path_is_accepted_as_a_string(self):
-        path = Path(tempfile.mkdtemp()) / "s.png"
+        path = Path(scratch_dir(self)) / "s.png"
         qr.qr_png(self.DATA, str(path), scale=1, quiet=0)
         width, _h, _rows = _decode(path.read_bytes())
         self.assertEqual(width, len(qr.qr_matrix(self.DATA)))

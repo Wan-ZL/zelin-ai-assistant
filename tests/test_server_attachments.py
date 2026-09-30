@@ -23,11 +23,11 @@ import os
 import re
 import socket
 import stat
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from server import attachments, paths, security
 from tests.test_server_common import (assert_envelope, auth_headers, get_json,
@@ -42,7 +42,7 @@ _NAME_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 class _AttachmentsHome:
     def _boot(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-attachments-"))
+        self.home = Path(scratch_dir(self, prefix="zai-attachments-"))
         _, self.port = start_server(self, self.home)
         self.dir = self.home / "state" / "attachments"
 

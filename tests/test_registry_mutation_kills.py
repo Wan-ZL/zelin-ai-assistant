@@ -91,12 +91,25 @@ class FileShapesTestCase(unittest.TestCase):
         self.assertIs(req._in_list, False)
         self.assertEqual(req._file, str(config.REGISTRY_DIR / "P-8.yaml"))
 
-    def test_first_card_milestone_only_for_card_sent(self):
+    def test_first_card_milestone_only_for_the_backlog_lane(self):
+        """§78：里程碑的锚从 card_sent 平移到 detected（潜在任务）。
+
+        守在退役车道上的判据在提案列退役后**再也不会为真**——全新安装会永远记不到
+        「第一张卡」这个 lifecycle 里程碑，而且一声不吭。所以这条判例必须跟着搬：
+        机器卡落潜在任务 = 记一次；已投入态的落盘不算（里程碑说的是「盘上出现了
+        第一张待决策的卡」，不是「第一次落盘」）。
+        """
         with mock.patch.object(analytics, "log_first") as lf:
+            registry.save(Requirement(id="P-8a", title="t", status=State.APPROVED.value))
+            lf.assert_not_called()      # owner 已投入的卡不是「第一张卡」
             registry.save(Requirement(id="P-9", title="t", status=State.DETECTED.value))
-            lf.assert_not_called()
+            lf.assert_called_once_with("milestone_first_card", req="P-9")
+            # 退役残留的 card_sent 落盘同样算数（add-only，§0 第 6 条）；真
+            # log_first 自己只认一次，所以两个态不会重复计。
             registry.save(Requirement(id="P-10", title="t", status=State.CARD_SENT.value))
-        lf.assert_called_once_with("milestone_first_card", req="P-10")
+        self.assertEqual(lf.call_count, 2)
+        self.assertEqual(lf.call_args_list[-1],
+                         mock.call("milestone_first_card", req="P-10"))
 
     def test_journal_compaction_boundary_is_strict(self):
         path = registry._writes_journal_path()
@@ -114,13 +127,15 @@ class FileShapesTestCase(unittest.TestCase):
 
     def test_agent_wall_uses_the_stored_status(self):
         from act.lib.store2.store import TransitionDenied
-        req = Requirement(id="P-11", title="t", status=State.CARD_SENT.value)
+        # §78：判例本身钉的是「旧状态从真源现查，不信内存副本」，与车道无关——
+        # 换成退役后仍然活着的一跳（detected -> approved，owner 的「促成运行」）。
+        req = Requirement(id="P-11", title="t", status=State.DETECTED.value)
         registry.save(req)
-        req.set_status(State.DETECTED)
+        req.set_status(State.APPROVED)
         with registry.acting_as("agent"):
             with self.assertRaises(TransitionDenied) as cm:
                 registry.save(req)
-        self.assertIn("may not move card P-11 'card_sent' -> 'detected'", str(cm.exception))
+        self.assertIn("may not move card P-11 'detected' -> 'approved'", str(cm.exception))
 
 
 class UnrepresentableTestCase(unittest.TestCase):
@@ -188,7 +203,7 @@ class MatchingTestCase(unittest.TestCase):
         registry.save(Requirement(id="P-21", title="child", status=State.DELIVERED.value,
                                   improvement_of="P-20"))
         self.assertIsNone(registry.find_open_follow_up("P-20"))
-        registry.save(Requirement(id="P-22", title="child2", status=State.CARD_SENT.value,
+        registry.save(Requirement(id="P-22", title="child2", status=State.DETECTED.value,
                                   improvement_of="P-20"))
         self.assertEqual(registry.find_open_follow_up("P-20").id, "P-22")
 
@@ -205,7 +220,9 @@ class MergeDefaultsTestCase(unittest.TestCase):
                                   repeated_mentions=None, notes="old note"))
         kind, saved = registry.merge_or_new_with_kind(Requirement(id="", title="done thing",
                                                                   summary="", hardness="hard"))
-        self.assertEqual((kind, saved.status), ("reraised", "card_sent"))    # cap_detected=False
+        # §78：回锅落潜在任务；cap_detected=False 的默认值现在表现为「不安静」
+        self.assertEqual((kind, saved.status), ("reraised", "detected"))
+        self.assertFalse(saved.quiet_birth)                                   # cap_detected=False
         self.assertEqual(saved.repeated_mentions, 2)                          # None or 1 → +1
         self.assertIn("[re-raised] done thing", saved.notes)                 # note = summary or title
         self.assertIn("old note", saved.notes)
@@ -222,7 +239,7 @@ class MergeDefaultsTestCase(unittest.TestCase):
         self.assertEqual(child.sources, [])
 
     def test_increment_child_keeps_notes_and_open_fold_roots_thread(self):
-        registry.save(Requirement(id="P-032", title="open parent", status=State.CARD_SENT.value,
+        registry.save(Requirement(id="P-032", title="open parent", status=State.DETECTED.value,
                                   thread_id=None))
         kind, child = registry.merge_or_new_with_kind(
             Requirement(id="", title="open parent", hardness="hard", notes="keep me", sources=None))

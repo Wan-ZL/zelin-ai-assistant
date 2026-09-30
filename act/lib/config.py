@@ -201,6 +201,15 @@ DEFAULT_FEATURES: dict = {
     # §56 合并即上岗: install.sh installs the self-updating deploy agent
     # (com.zelin.aiassistant.autodeploy) only for a git checkout with this on.
     "auto_deploy": True,
+    # ---- §81（issue #451 / D83）自动行为总账补上的五把闸 ----
+    # 这五条自动行为以前**一把开关都没有**（或只有一个进程级环境变量），总账
+    # 要求每条留下来的行为有且只有一把开关。射程逐条写在 act/lib/automation.py
+    # 的对应行里；默认全 on = 本改动前的行为，既有安装一字不变（§0 第 6 条）。
+    "merge_silent": True,      # §44 近重复静默并入（探测 + 落盘两半共用这一把）
+    "worktree_sweep": True,    # §75 .claude/worktrees/ 回收（原来只有 env）
+    "attachment_gc": True,     # §10 无引用贴图孤儿清理
+    "raising": True,           # §1/§40 欠账卡每 pass 展开一张
+    "ingest": True,            # §18 cron ingest 链里的 headless 笔记加工（最贵的一步）
 }
 
 
@@ -357,7 +366,12 @@ class Config:
     fresh_context_review: bool = True
 
     # trash / recycle bin
-    trash_retention_days: int = 60
+    # §81 修法（issue #451 ask 4 / owner 决策 D83，2026-09-29）：出厂值 60 → **0**。
+    # 硬删是整条管线里唯一「不可恢复的自动删除」，与 §0 第 2 条正面冲突（§9 允许它，
+    # 但允许 ≠ 该默认开）。0 = 永不自动硬删——回收站的卡一直躺着，什么时候清由人点。
+    # 射程只是**出厂默认**：config.yaml 或设置页里写过数字的安装（含写着 60 的）
+    # 行为一字不变；`daily_loop.trash_retention_days` 是它的下级，本键为 0 时整体不生效。
+    trash_retention_days: int = 0
 
     # auto-archive（vnext W1.c 决议）：delivered 卡最后活动超过 N 天自动封存
     # （actd.archive_stale 冷扫读取此值）。live v0.20.0 首发默认 0（off）；
@@ -883,17 +897,16 @@ def _apply_weekly_digest(cfg: Config, sources: dict) -> None:
 
 def _apply_approval(cfg: Config, data: dict) -> None:
     approval = _dict_or(data.get("approval"))
-    # poll_interval: config.example uses minutes for the approval surface; the
-    # daemon loop also accepts an explicit seconds override.
+    # 主循环的 pass 间隔。`approval.poll_interval_minutes`（模板里唯一写着的那个
+    # poll 键）自 v0.21 Slack 审批通道退役起就没有消费者了：它曾经的分支是一句
+    # `cfg.poll_interval_seconds = cfg.poll_interval_seconds` 的字面空操作——
+    # 文档上有效、实际无效，正是 issue #451 点名的「开关说的和做的不一样」。
+    # §81 / D83 把它作为 tombstone 删掉（模板同日删行）；yaml 里遗留的这一键
+    # 自此按未知键静默忽略，与 §16 `features.manager_pack` 同一处理。
     if "poll_interval_seconds" in approval:
         cfg.poll_interval_seconds = _int_or(
             approval["poll_interval_seconds"], cfg.poll_interval_seconds
         )
-    elif "poll_interval_minutes" in approval:
-        # Daemon default stays 10s; the minutes value governs the approval
-        # surface poll, not the tight local loop. We keep 10s unless an explicit
-        # seconds value is provided, to remain responsive to the inbox.
-        cfg.poll_interval_seconds = cfg.poll_interval_seconds
     thresholds = _dict_or(approval.get("cost_thresholds"))
     cfg.show_cost_above_usd = _float_or(
         thresholds.get("show_cost_above_usd", cfg.show_cost_above_usd),
@@ -1341,6 +1354,10 @@ _OVERRIDE_FIELDS: dict = {
     # 负数 / 垃圾值 → ValueError → 该条 override 整条跳过（保留出厂值）。
     "approval_mention_escalation": _nonneg_int,
     "trash_retention_days": int,
+    # §81（issue #451 / D83）：冷交付卡自动封存的天数。此前只能改 config.yaml
+    # （`archive.after_days`），设置页上根本没有这一行——「一把开关在一个地方」
+    # 的反例。封存可逆，坏值 / 负数按 int() 语义走（与 trash_retention_days 同款）。
+    "archive_after_days": int,
     # §72 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
     "screenpipe_retention_days": int,
     # §72.4 原始媒体保留分钟数（同一区；cleanup 步经 --print-value 读同一层）

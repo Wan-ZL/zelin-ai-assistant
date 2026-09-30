@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 _SPEC = importlib.util.spec_from_file_location(
     "qa_mutate",
@@ -191,7 +192,7 @@ class SchedulerTestCase(unittest.TestCase):
     """预算封顶、round-robin、断点续跑、hash 作废、baseline 红跳过——全部无 spawn。"""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="mutate-sched-")
+        self.root = scratch_dir(self, prefix="mutate-sched-")
         _write_module(self.root, "m1.py", _SMALL)
         _write_module(self.root, "m2.py", _SMALL)
         self.targets = {"m1.py": ["t/t1.py"], "m2.py": ["t/t2.py"]}
@@ -392,7 +393,7 @@ class MarkdownReportTestCase(unittest.TestCase):
     """pinned issue 的 body：存活体带 file:line，D5「永不作为 PR 门」明文在场。"""
 
     def _sample_report(self):
-        root = tempfile.mkdtemp(prefix="mutate-md-")
+        root = scratch_dir(self, prefix="mutate-md-")
         _write_module(root, "m1.py", _SMALL)
         clock = _FakeClock()
         runner = _FakeRunner(clock, verdict=lambda module, source: "pass")

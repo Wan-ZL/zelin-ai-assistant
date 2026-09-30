@@ -133,7 +133,8 @@ class SessionRowFrozenTitleTestCase(unittest.TestCase):
             name=dashboard._session_name(req, a), cwd="/tmp/wt", state="working",
             resume_sid="sid-9", short_id="sid-9", copy_cmd=None,
             agent_name=a.get("name"),
-            agent_name_stale=dashboard._agent_name_stale(req, a), agent=a)
+            agent_name_stale=dashboard._agent_name_stale(req, a), agent=a,
+            live=dashboard.has_live_process(a))
 
     def _rows(self) -> dict:
         req, sx, ex = self._req(), self._sx(), {}

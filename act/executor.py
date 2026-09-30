@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as _dt
 import functools
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -278,6 +279,49 @@ def _bg_base_cmd(cfg: Optional[config.Config] = None,
     return llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))
 
 
+def _verbatim(req: Optional[Requirement]) -> bool:
+    return req is not None and dispatch_prompt.verbatim_direct_run(req)
+
+
+def _contract_target(req: Requirement, cfg: config.Config) -> Path:
+    """会话契约里的「工作目录 / deliverables」——卡的工作台，经 chat 交付的既有
+    解析链（`_resolve_target` → `_chat_target` 的缺目录回退）。
+
+    刻意**不用**本次 launch 的 cwd：resume 的 cwd 是 transcript 上一次的目录，
+    而 bg 会话中途会自己钻进 `<workbench>/.claude/worktrees/<name>`——拿它当
+    交付目录会把成果指进一个随时会被回收的隐藏 worktree（§75）。逐字直跑卡恒
+    chat 交付（§34），所以这条链与 dispatch 当时算出的 cwd 同值。"""
+    return _chat_target(_resolve_target(req, cfg), cfg)
+
+
+def _system_append_argv(req: Optional[Requirement],
+                        cfg: Optional[config.Config]) -> list:
+    """``["--append-system-prompt", <会话契约>]`` for a §34 追记 D81 逐字直跑
+    card, ``[]`` for everything else (argv byte-identical to before).
+
+    这是「卡片需求 → 会话」的旁路：逐字直跑的 prompt 正文只有用户那句话，
+    看板要的交付/安全/命名约定全走这里（issue #448 自己提的
+    「prefer passing those through CLI flags rather than prompt text」）。
+    scrub 与正文同待遇——旁路也是出站文本（反泄漏，不是反注入）。"""
+    if not _verbatim(req):
+        return []
+    if cfg is None:
+        cfg = config.load_config()
+    text, _ = sanitize.scrub(
+        dispatch_prompt.direct_run_system_prompt(req, cfg, _contract_target(req, cfg)))
+    return ["--append-system-prompt", text]
+
+
+def _prompt_argv(req: Optional[Requirement], prompt: str) -> list:
+    """argv 末尾的 prompt 位。逐字直跑卡前面多一个 ``--``：那一位自此是**用户
+    原话**，而 `claude` 的 commander 解析器会把以 `-` 开头的 operand 当成选项
+    （实测：`claude -p "--version …"` → `error: unknown option`）。owner 打一句
+    「--dangerously-skip-permissions 是干嘛的」就会让这张卡每 pass 派发失败、
+    5 次后撞上 §4 的派发刹车。`--` 之后的一切都是 operand（实测同上）。
+    非逐字卡的 prompt 恒以 `# Requirement` / 固定前缀开头，argv 不变。"""
+    return ["--", prompt] if _verbatim(req) else [prompt]
+
+
 def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
                     cfg: Optional[config.Config] = None,
                     req: Optional[Requirement] = None) -> subprocess.CompletedProcess:
@@ -285,7 +329,8 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
     cmd = _bg_base_cmd(cfg, req)
     if name:
         cmd += ["--name", name]
-    cmd.append(prompt)
+    cmd += _system_append_argv(req, cfg)
+    cmd += _prompt_argv(req, prompt)
     return subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -714,6 +759,13 @@ def _record_launch_success(req: Requirement, ex: dict, cfg: config.Config,
         # 文件跨 pass 重放，重放闸靠这个键认出"这单已经建过卡"——整体重建
         # execution 抹掉它 = 每 pass 铸一张新卡、起一个新 agent（无上界）。
         req.execution["inbox_stem"] = ex["inbox_stem"]
+    if ex.get("direct_run"):
+        # §78（原 §34bis）护栏的认卡痕同样必须活过派发：triage_guard.guarded_card
+        # 读的就是这个键，而 §30 attach 复活轮在卡已经 executing 之后才跑
+        # reconcile._restamp_triage_snapshot——整体重建抹掉它 = 复活轮没有基线，
+        # 那条 skip-permissions 会话写 registry 不再有人看着（reconcile 的
+        # docstring 明写这不许发生）。退役前这个痕住在卡顶层 `preset`，天然活过重建。
+        req.execution["direct_run"] = ex["direct_run"]
     # §65：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
     # self_improve 卡给 {}，execution 形状不变。
     req.execution.update(self_improve.dispatch_record(req, cfg))
@@ -819,10 +871,16 @@ def _run_resume(cfg: config.Config, req: Requirement, sid: str, target: Path,
                 prompt: Optional[str] = None) -> subprocess.CompletedProcess:
     """``claude --bg --resume <full sid>`` in the transcript's cwd; a non-blank
     ``prompt`` rides as the first input (scrubbed — that is anti-leak, not
-    anti-injection; owner text is trusted, see steer.build_steer_prompt)."""
+    anti-injection; owner text is trusted, see steer.build_steer_prompt).
+
+    §34 追记 D81：逐字直跑卡的会话契约住在 system prompt 里，而 system prompt
+    是**每次调用**给的——resume 不重新挂上，打回/转向那一轮的会话就没了交付
+    与安全边界。故 ``--append-system-prompt`` 与 dispatch 同源同挂（契约里的
+    工作目录取自卡，不是这里的 ``target``——见 :func:`_contract_target`）。"""
     cmd = _bg_base_cmd(cfg, req) + ["--name", session_name(req), "--resume", str(sid)]
+    cmd += _system_append_argv(req, cfg)
     if prompt and str(prompt).strip():
-        cmd.append(sanitize.scrub(str(prompt))[0])
+        cmd += _prompt_argv(req, sanitize.scrub(str(prompt))[0])
     return subprocess.run(
         cmd,
         cwd=str(target),
@@ -1064,15 +1122,23 @@ def _hydrate_html(before: str, final_draft: str) -> tuple[str, str]:
     return before, contents[:20000]
 
 
-def _split_delivery(text: str) -> dict:
+def _split_delivery(text: str, whole_message: bool = False) -> dict:
     """Card title + summary + draft out of one delivery message (契约 C)."""
     # §37 CARD TITLE rides in the same delivery message (all delivery
     # modes) — extract + strip it BEFORE the FINAL DRAFT split so neither
     # delivered_summary nor final_draft carries the marker line.
     card_title, lines = _extract_card_title(text.splitlines())
     idxs = _fence_marker_idxs(lines)
-    summary_text = "\n".join(lines).strip()[:500]
+    body = "\n".join(lines).strip()
+    summary_text = body[:500]
     if not idxs:
+        # §34 追记 D81：逐字直跑卡的 prompt 里没有 FINAL DRAFT 的强制格式，
+        # 所以「没有 marker」对它不是「没交付」——最后一条消息整条就是成果。
+        # §15 的 html 水合同样适用：交付物是一个 .html 文件时，成稿该是文件
+        # 正文而不是「我写到了这个路径」那句话（marker 那条路一直如此）。
+        if whole_message and body:
+            _, draft = _hydrate_html("", body[:20000])
+            return _result(summary_text, draft, card_title)
         return _result(summary_text, None, card_title)
     final_draft = _draft_after(lines, idxs[-1])
     if not final_draft:
@@ -1082,7 +1148,7 @@ def _split_delivery(text: str) -> dict:
     return _result(before, final_draft, card_title)
 
 
-def harvest_delivery(session_id: str) -> dict:
+def harvest_delivery(session_id: str, *, whole_message: bool = False) -> dict:
     """Extract the delivered summary (and chat-mode final draft) of a finished
     session from its transcript (v0.10 契约 C).
 
@@ -1106,6 +1172,11 @@ def harvest_delivery(session_id: str) -> dict:
     - §37: an out-of-fence standalone ``CARD TITLE:`` line in the delivery
       message (any delivery mode) comes back as ``card_title`` (clipped) and
       is STRIPPED from both outputs; absent/empty/fenced -> None.
+    - ``whole_message`` (§34 追记 D81, add-only kwarg, default off = byte-identical
+      to before): the caller says this card's prompt never MANDATED the marker
+      (逐字直跑), so a missing ``FINAL DRAFT:`` proves nothing — the whole delivery
+      message (20000 chars max) becomes ``final_draft``. A message that DOES carry
+      the marker still splits on it, exactly as for every other card.
     Any failure returns all None — never raises.
     """
     empty = dict(_EMPTY_DELIVERY)
@@ -1113,7 +1184,7 @@ def harvest_delivery(session_id: str) -> dict:
         texts = _delivery_texts(session_id)
         if not texts:
             return empty
-        return _split_delivery(_delivery_message(texts))
+        return _split_delivery(_delivery_message(texts), whole_message)
     except Exception:  # noqa: BLE001 - harvesting must never break the pipeline
         return dict(empty)
 
@@ -1196,29 +1267,92 @@ def live_session_count() -> Optional[int]:
     return sum(1 for a in _unwrap_roster(data) if _is_live_background(a))
 
 
+# 等死窗口（§80.2）：`claude stop` 发出去之后给进程多久去死。总长不变（2s，
+# §46.1 的老承诺），但**进程一死就返回**——原先是无条件 `time.sleep(2)`，
+# owner 点一下停止要白等这 2s，而 claude 通常 100–300ms 就没了（issue #450
+# 点名「点击停止后也是需要等待很久」）。
+#
+# 判据是 pid 消失，比「2 秒过去了」硬：pid 没了 = 进程真的死了。
+#
+# 省下来的是**墙钟，不是一轮重试**——这一点特意写清楚，免得下一个人以为它
+# 省了更多：`stop_session_confirmed` 的下一轮开头是**无条件**的
+# `sleeper(2.0 * attempt)`，它在那一轮的 roster 探测之前就睡掉了，所以改动
+# 前后的轮数完全一样，只是每轮少等 ~1.8s。也**没有**断言那次 roster 探测
+# 一定一把确认：roster 来自 `claude agents --json`，它多久反映进程死亡是
+# claude 自己的行为，而本仓库的判例绝不 spawn 真 claude，所以那一条没在活
+# 机器上复验过。净效果 = 「不会更差，通常更好」。
+STOP_GRACE_S = 2.0
+STOP_GRACE_POLL_S = 0.1
+
+
+def _pid_alive(pid) -> bool:
+    """``os.kill(pid, 0)`` 的三态压成 bool。
+
+    这些进程不是我们的子进程（`claude --bg` 自己 daemonize），所以没有僵尸态
+    要防。**拿不准一律算活着**——「没确认死」不许当已死（§46.1 的探测失败
+    ≠ 已停，同一条精神）：EPERM（别的用户的同号 pid）、坏 pid、说不清的
+    OSError 全部返回 True，最坏结果只是睡满 2s 退化成老行为。
+    """
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:      # ESRCH——确认没有这个进程了
+        return False
+    except (OSError, TypeError, ValueError):
+        return True
+    return True
+
+
+def _await_exit(
+    pid,
+    *,
+    grace_s: float = STOP_GRACE_S,
+    poll_s: float = STOP_GRACE_POLL_S,
+    alive: Callable[[object], bool] = _pid_alive,
+    sleeper: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """给 ``pid`` 最多 ``grace_s`` 秒去死，死了立刻返回 True（不睡满）。
+
+    四个 seam（alive/sleeper/clock/poll_s）可注入，判例不睡真觉、不看真进程。
+    Returns True = 确认进程已消失；False = 窗口用完它还在（或 pid 判不动）。
+    """
+    deadline = clock() + max(float(grace_s), 0.0)
+    while True:
+        if not alive(pid):
+            return True
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return False
+        sleeper(min(poll_s, remaining))
+
+
 def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
-    """Stop a live background session (``claude stop <short-id>``), then give
-    the process 2s to die — the exact stop-before-resume path :func:`rework`
-    has always used, extracted so actd's ``abort_execution`` (v0.10.2) can
-    call it too.
+    """Stop a live background session (``claude stop <short-id>``), then wait up
+    to :data:`STOP_GRACE_S` for the process to die — returning as soon as its
+    pid is gone (§80.2; before that it was an unconditional ``sleep(2)``). The
+    exact stop-before-resume path :func:`rework` has always used, extracted so
+    actd's ``abort_execution`` (v0.10.2) can call it too.
 
     ``info`` = a pre-fetched :func:`_agent_info` dict (rework passes its own,
     keeping its original single-roster-query behaviour unchanged); omitted ->
     query the roster here. No live pid on the roster -> nothing to stop ->
     returns False without running anything. Returns True once the stop command
-    has been issued. Raises the same OSError/subprocess.SubprocessError the
-    old inline code did — callers decide whether a stop failure is fatal
-    (rework: unchanged, handled by its outer try) or best-effort (actd's
-    abort_execution catches + logs, state rollback is never blocked).
+    has been issued — the grace window's outcome is deliberately NOT folded in
+    (confirming death is :func:`stop_session_confirmed`'s job, §46.1). Raises
+    the same OSError/subprocess.SubprocessError the old inline code did —
+    callers decide whether a stop failure is fatal (rework: unchanged, handled
+    by its outer try) or best-effort (actd's abort_execution catches + logs,
+    state rollback is never blocked).
     """
     if info is None:
         info = _agent_info(session_id)
-    if not (info or {}).get("pid"):
+    pid = (info or {}).get("pid")
+    if not pid:
         return False
     short = str(session_id).split("-")[0]
     subprocess.run([_claude_bin(), "stop", short],
                    capture_output=True, text=True, timeout=30)
-    time.sleep(2)
+    _await_exit(pid)
     return True
 
 

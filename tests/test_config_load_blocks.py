@@ -14,16 +14,18 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config
 
 
 def _load(body: str) -> config.Config:
-    path = Path(tempfile.mkdtemp(prefix="cfg-blocks-")) / "config.yaml"
-    path.write_text(body, encoding="utf-8")
-    with mock.patch.object(config, "CONFIG_PATH", path), \
-            mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", path.with_name("none.json")):
-        return config.load_config()
+    with tempfile.TemporaryDirectory(prefix="cfg-blocks-") as tmp:
+        path = Path(tmp) / "config.yaml"
+        path.write_text(body, encoding="utf-8")
+        with mock.patch.object(config, "CONFIG_PATH", path), \
+                mock.patch.object(config, "SETTINGS_OVERRIDES_PATH", path.with_name("none.json")):
+            return config.load_config()
 
 
 class YamlReaderTestCase(unittest.TestCase):
@@ -32,7 +34,7 @@ class YamlReaderTestCase(unittest.TestCase):
             self.assertEqual(config._config_path(), config.CONFIG_EXAMPLE_PATH)
 
     def test_load_yaml_dict_shapes(self):
-        tmp = Path(tempfile.mkdtemp(prefix="cfg-yaml-"))
+        tmp = Path(scratch_dir(self, prefix="cfg-yaml-"))
         self.assertEqual(config._load_yaml_dict(tmp / "missing.yaml"), {})
         bad = tmp / "bad.yaml"
         bad.write_text("a: [unclosed", encoding="utf-8")
@@ -96,6 +98,9 @@ class ApprovalExecutionTestCase(unittest.TestCase):
         self.assertEqual((cfg.poll_interval_seconds, cfg.show_cost_above_usd), (30, 2.5))
         self.assertEqual(cfg.require_text_confirm_above_usd,
                          config.Config().require_text_confirm_above_usd)
+        # §81 / D83 tombstone（issue #451）：`poll_interval_minutes` 的解析分支曾是
+        # 一句字面空操作（「文档上有效、实际无效」），本轮删掉。遗留的这一键按未知键
+        # 静默忽略——语义与删除前逐字相同，所以这条断言原样留着钉死「不炸、不改值」。
         cfg = _load("approval:\n  poll_interval_minutes: 5\n")
         self.assertEqual(cfg.poll_interval_seconds, config.Config().poll_interval_seconds)
 

@@ -7,6 +7,12 @@ dashboard for a frozen clock plus a sha256 per scene × language;
 dashboard and for the queued_reason / steers edge cases. Both were captured from
 the pre-P3b script, so any drift in the seed data, the localisation table, the
 id stamping or the validator's wording flips this test.
+
+§78（D80）提案车道退役：demo 板不再种 ``needs_approval`` 行（该键恒空，
+``counts.needs_approval`` 恒 0），原来的提案卡与 ``raising`` 灰占位都搬进
+``debt``（潜在任务）。两条被点名的不变量在这里钉着，因为 §66 parity vitest 只能
+通过它们看到对应 UI：debt 里必须仍有至少一行 T2（§50 打字确认弹窗的文案）与
+至少一行 ``processing: true``（灰占位文案）。
 """
 import copy
 import datetime as dt
@@ -29,9 +35,11 @@ NOW = dt.datetime(2026, 9, 2, 12, 0, 0, tzinfo=dt.timezone.utc)
 def _broken(full: dict) -> dict:
     bad = copy.deepcopy(full)
     bad["counts"]["running"] = 99
-    bad["needs_approval"][0]["cost_usd"] = "free"
-    bad["needs_approval"][0]["show_cost"] = "yes"
-    bad["needs_approval"][0].pop("plan")
+    # §78：提案列退役后完整卡面住在 debt[0]（带 tier 的机器卡）——「数字成本 /
+    # bool show_cost / 必有 plan」这三条复验跟着卡面搬过来，一条都不能少
+    bad["debt"][0]["cost_usd"] = "free"
+    bad["debt"][0]["show_cost"] = "yes"
+    bad["debt"][0].pop("plan")
     bad["running"][0]["queued_reason"] = {"kind": "waiting_card"}
     bad["running"][0]["steers"] = [{"text": "", "ts": 5, "status": "delivered"}, "junk",
                                    {"text": "t", "ts": "x", "status": "pending", "delivered_at": "d"}]
@@ -39,8 +47,10 @@ def _broken(full: dict) -> dict:
     bad["review"][0]["final_draft"] = 7
     bad["trash"][0]["permanent"] = "no"
     bad["trash"][0]["trashed_at"] = None
-    bad["debt"] = [{"id": 5, "title": "", "sources": "x"}]
-    bad["counts"]["debt"] = 1
+    # 潜在任务列同时住只有一句话的低置信度捕获——那种行仍只走 id / title /
+    # sources 串检，两种行的复验必须同列共存（_check_debt 按 tier 分流）
+    bad["debt"] = [bad["debt"][0], {"id": 5, "title": "", "sources": "x"}]
+    bad["counts"]["debt"] = 2
     del bad["generated_at"]
     return bad
 
@@ -62,6 +72,31 @@ class BuildGoldenTestCase(unittest.TestCase):
 
     def test_initial_zh_full_dashboard(self):
         self.assertEqual(demo_seed.build("initial", now=NOW, lang="zh"), self.golden["initial_zh"])
+
+    def test_needs_approval_is_present_and_empty_in_every_scene(self):
+        """§78 / D80.1：提案列退役，但 wire 键 add-only 永不删——demo 板每个 scene
+        都发 ``needs_approval: []`` 且 ``counts.needs_approval == 0``。种子若回填
+        了一行，web 就会画回那一列，整场退役静默失效。"""
+        for scene in demo_seed.SCENES:
+            for lang in demo_seed.LANGS:
+                with self.subTest(scene=scene, lang=lang):
+                    dash = demo_seed.build(scene, now=NOW, lang=lang)
+                    self.assertIn("needs_approval", dash)
+                    self.assertEqual(dash["needs_approval"], [])
+                    self.assertEqual(dash["counts"]["needs_approval"], 0)
+
+    def test_debt_keeps_a_t2_row_and_a_processing_row(self):
+        """§78 把机器卡搬进潜在任务后，两段 UI 只能从这一列走到：§50 的打字确认
+        弹窗（需要一行 effective_tier=T2）与 §78/D80.6 的灰色占位文案（需要一行
+        ``processing: true``）。demo 板是 §66 parity vitest 的唯一数据源，种子
+        掉了这两种行 = 那两段界面在 parity 里彻底不被渲染，静默失去覆盖。"""
+        for scene in demo_seed.SCENES:
+            with self.subTest(scene=scene):
+                debt = demo_seed.build(scene, now=NOW, lang="zh")["debt"]
+                self.assertTrue([r for r in debt if r.get("effective_tier") == "T2"],
+                                f"scene={scene}: 潜在任务列里没有 T2 行")
+                self.assertTrue([r for r in debt if r.get("processing") is True],
+                                f"scene={scene}: 潜在任务列里没有 processing 灰占位行")
 
 
 class ValidateGoldenTestCase(unittest.TestCase):

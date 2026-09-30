@@ -12,22 +12,20 @@ resolution rule for every claude we run, and actd's launchd PATH is hostile
 (§55: a second, outdated claude ranked first on it once broke every dispatch).
 """
 import os
-import shutil
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard
 
 
 class _Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="roster-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="roster-"))
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.stable = self.tmp / "Application Support" / "bin" / "claude"

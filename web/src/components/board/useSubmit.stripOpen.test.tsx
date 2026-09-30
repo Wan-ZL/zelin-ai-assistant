@@ -3,10 +3,11 @@
 // 从潜在任务条发出的换列动词 180 s 超时 → 潜在任务条开；放回看板超时 → 永久性完成条开；提案列的动作超时不碰任何条；
 // 详情抽屉里对 debt / archived 卡的改名 / 拆卡超时不碰任何条（原生 expiredTitles / expiredSplits 不动旗）；
 // 超时半边只在发出动作的卡组件仍挂着时生效（组件卸载即丢弃兜底定时器——#253 组件级 pending 的既定后果）。
+// §78：左条出厂已是展开（D80.3），所以本文件每条先手动收起——被测的是「关着的条会不会被强制打开」。
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchBoard, postAction } from "../../api";
-import { getState, refreshBoard, resetStoreForTests, setArchiveStripExpanded } from "../../store";
+import { getState, refreshBoard, resetStoreForTests, setArchiveStripExpanded, setBacklogStripExpanded } from "../../store";
 import type { Board } from "../../types";
 import { CONFIRM_TIMEOUT_MS, stripToForceOpen, useSubmit } from "./boardActions";
 
@@ -18,9 +19,13 @@ vi.mock("../../api", async (importOriginal) => {
 const board = {
   generated_at: "2026-09-05T10:00:00Z",
   counts: {},
-  needs_approval: [{ id: "P-1", title: "P-1 title", summary: "摘要", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] }],
-  running: [], needs_input: [], review: [], completed: [],
-  debt: [{ id: "R-301", title: "README 安装一节过时", type: "engineering", sources: [] }],
+  needs_approval: [],
+  running: [{ id: "R-500", name: "正在跑的卡", state: "working" }],
+  needs_input: [], review: [], completed: [],
+  debt: [
+    { id: "R-301", title: "README 安装一节过时", type: "engineering", sources: [] },
+    { id: "P-1", title: "P-1 title", summary: "摘要", tier: "T1", show_cost: false, processing: false, sources: [], plan: [], dod: [] },
+  ],
   trash: [],
   archived: [{ id: "R-701", title: "旧的 onboarding 文档", kind: "suggestion", archived_at: "2026-09-01T00:00:00Z", archive_reason: "user", prev_status: "delivered" }],
 } as unknown as Board;
@@ -28,6 +33,7 @@ const board = {
 describe("useSubmit：书立条强制展开", () => {
   beforeEach(async () => {
     resetStoreForTests();
+    setBacklogStripExpanded(false); // §78 出厂展开 → 本文件先收起，才有「被强制打开」可测
     vi.mocked(fetchBoard).mockReset().mockResolvedValue(board);
     vi.mocked(postAction).mockReset().mockResolvedValue({ ok: true });
     vi.useFakeTimers();
@@ -89,7 +95,7 @@ describe("useSubmit：书立条强制展开", () => {
     await act(async () => {
       await result.current.submit({ action: "raise", id: "R-301", comment: null });
     });
-    expect(getState().backlogStripExpanded).toBe(false); // 提交本身不开（raise 的 echo 落提案列）
+    expect(getState().backlogStripExpanded).toBe(false); // 提交本身不开（条已经开着的常态下这一步无事发生）
     act(() => {
       vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);
     });
@@ -111,10 +117,11 @@ describe("useSubmit：书立条强制展开", () => {
     expect(getState().archiveStripExpanded).toBe(true);
   });
 
-  it("提案列的动作（批准 / 暂缓）180 s 超时 → 不碰任何条（卡还在提案列，通知也落在那里）", async () => {
+  // §78：提案列没了，「列里的动作超时不碰书立条」改由运行中列的卡代言（条不是它的家）
+  it("列里的动作（运行中卡的退回）180 s 超时 → 不碰任何条（卡还在列里，通知也落在那里）", async () => {
     const { result } = renderHook(() => useSubmit());
     await act(async () => {
-      await result.current.submit({ action: "approve", id: "P-1", comment: null });
+      await result.current.submit({ action: "abort_execution", id: "R-500", comment: null });
     });
     act(() => {
       vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);

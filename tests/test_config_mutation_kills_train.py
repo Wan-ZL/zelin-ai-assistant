@@ -10,7 +10,7 @@
   不夹取——文件里写着的数必须就是 cron 用的数）；
 - §72 `recording.retention_days`：出厂 0 = 永久保留，一行录制数据都不删；
 - §76.2 `approval.mention_escalation`：出厂 5 = issue #313 原文那个数——被提 4 次
-  不升级，第 5 次才升；
+  不升级，第 5 次才升（§78/D80.8：红戳随卡面搬到潜在任务列 `debt[]`，阈值不变）；
 - §28 通知偏好：出厂 = 本改动前的行为（安静时段关、三类全开）——新装机在夜里
   3 点也一条通知都不少；
 - §44.6 `fold_receipt_notices`：出厂开，静默并入的回执照投进 dashboard；
@@ -91,12 +91,14 @@ class MentionEscalationDefaultTestCase(unittest.TestCase):
     """§76.2 被提 N 次仍未处理：出厂阈值 = issue #313 原文的 5。"""
 
     def _escalated(self, repeated: int) -> bool:
+        # §78 / D80.8：提案列退役后红戳长在潜在任务卡面上——机器卡的状态是
+        # DETECTED，投影行在 debt[]。阈值本身（出厂 5）一字未动。
         req = Requirement.from_dict({"id": "P-023", "title": "改名 Compass",
-                                     "status": State.CARD_SENT.value,
+                                     "status": State.DETECTED.value,
                                      "repeated_mentions": repeated})
         dash = dashboard.build_dashboard(reqs=[req], agents=[],
                                          cfg=config.Config(), archived=[])
-        return dash["needs_approval"][0]["mention_escalated"]
+        return dash["debt"][0]["mention_escalated"]
 
     def test_the_fifth_mention_is_the_one_that_escalates(self):
         self.assertIs(self._escalated(4), False)

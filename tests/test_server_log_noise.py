@@ -13,13 +13,13 @@ import http
 import io
 import os
 import re
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
+from tests.scratch_testkit import scratch_dir
 
 from server import app
 
@@ -53,7 +53,7 @@ class ServerClassTestCase(unittest.TestCase):
     """make_server 起的就是带 handle_error 的那个子类。"""
 
     def test_make_server_returns_quiet_server(self):
-        home = tempfile.mkdtemp(prefix="zai-log-noise-home-")
+        home = scratch_dir(self, prefix="zai-log-noise-home-")
         httpd = app.make_server(port=0, home=home, start_watcher=False)
         self.addCleanup(httpd.server_close)
         self.assertIsInstance(httpd, app._Server)

@@ -2,7 +2,8 @@
 serialized field vocabulary (``CORE_ORDER`` / ``OPTIONAL_ORDER``).
 
 契约：CONTRACT §1（状态机/字段）+ §2（投影 add-only 字段）+ §60（两段式编号：
-``id`` 主键 + ``work_id`` 工作编号）。
+``id`` 主键 + ``work_id`` 工作编号）+ §78（提案车道退役：``CARD_SENT`` 成为
+只读的退役态，``quiet_birth`` 是 §45 静默出生的 add-only 标记）。
 
 Leaf module on purpose (stdlib only, imports nothing from act/): the facade
 ``act/lib/registry.py`` re-exports every name here under the same spelling, so
@@ -28,8 +29,12 @@ class State(str, Enum):
     ``merged_into`` field."""
 
     DETECTED = "detected"
+    # §78（retired v-next，并入 §1 的 detected）：提案车道退役后 card_sent
+    # **只进不出地退场**——没有任何写者再落这个值，存量卡由 actd 的一次性
+    # 归并扫描搬进 detected。枚举成员保留（字段 add-only：老 YAML / 老 DB 行
+    # 仍读得出，dashboard 把落单的 card_sent 卡照样投进潜在任务列，绝不隐身）。
     CARD_SENT = "card_sent"
-    RAISING = "raising"    # debt -> (AI expanding) -> card_sent
+    RAISING = "raising"    # debt -> (AI expanding) -> detected（§78 前落 card_sent）
     APPROVED = "approved"
     EXECUTING = "executing"
     REVIEW = "review"
@@ -120,11 +125,12 @@ OPTIONAL_ORDER = [
     # user-approved merges). Only present once >0.
     "silent_merge_count",
     # §34bis preset 卡标记 — 按钮注入固定 plan 的卡（词表目前仅
-    # "proposals_triage"）。顶层字段而非 execution 键：executor.dispatch
-    # 成功路径会整个重建 execution，标记放那里活不过起跑。
+    # "proposals_triage"，§34bis retired v-next 并入 §78：按钮与 preset 一起
+    # 退役，字段保留只为读得出存量卡）。顶层字段而非 execution 键：
+    # executor.dispatch 成功路径会整个重建 execution，标记放那里活不过起跑。
     "preset",
     # §60（D21）工作编号 ``R-<m>``：进入 approved 时由 save() 分配，set-once。
-    # None = 从未批准过（提案/备选/回收站卡）或存量 legacy 卡——整键省略，
+    # None = 从未批准过（潜在任务/回收站卡）或存量 legacy 卡——整键省略，
     # 旧 YAML 逐字节 round-trip 不受影响。
     "work_id",
     # §64（issue #128）AI 一句话摘要 + 完成度评语：dict
@@ -142,9 +148,14 @@ OPTIONAL_ORDER = [
     "merged_from",
     # §76（issue #313）结算信号之一「疑似已完成」：dict
     # {at, note(≤200), channel}，由雷达 fold 在 triage 判 completed=true 时盖在
-    # detected/card_sent 卡上。**只是提示**，永不改 status、不参与匹配/去重/
+    # 潜在任务卡（detected；§78 前也盖 card_sent）上。**只是提示**，永不改 status、不参与匹配/去重/
     # re-raise（§64 assessment 的先例）；归档 / 记为已交付仍只由 owner 点。
     "completion_hint",
+    # §78/§45（issue #447，D80.7）静默出生：LIMITED 出身的卡照样落潜在任务，
+    # 但**不通知**——回声环那一刀在提案列退役后仍然可观测。铸卡侧（雷达/
+    # 捕获）在非 FULL 资格时盖 True，act/lib/actd/alerts.py 见到即跳过该行。
+    # 默认 False 整键省略（老卡零差异 round-trip）。
+    "quiet_birth",
 ]
 
 # from_dict 归一为 str 的标量键（手写 YAML 的无引号数字会被 PyYAML 读成 int）
@@ -267,6 +278,8 @@ class Requirement:
 
     # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
     needs_mcp: bool = False
+    # §78/§45 静默出生标记（见 OPTIONAL_ORDER 注）。False = 照常通知。
+    quiet_birth: bool = False
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)

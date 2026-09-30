@@ -11,7 +11,9 @@
                 data-rail-item 的出现顺序 = 原生顺序（只数清单里仍 gated 的项——归属表
                 RAIL_OWNER 标 retired 的 ask / deps 不在栏上，D29 / D30），且容器带 `data-rail="left"`
   lane:*        双语列名出现在 web/src 或 server/lanes.py；lanes:order 要求 server/lanes.py
-                LANES 的 slug 顺序 = 原生顺序；lanes:rail-left/right 要求 BoardLanes.tsx
+                LANES 的 slug 顺序 = 原生**仍 gated 的**列顺序（只数清单里仍判的列——归属表
+                LANE_OWNER 标 retired 的 needs_approval 不在看板上，D80 / §78），web 若把退役的
+                列画回去照样红；lanes:rail-left/right 要求 BoardLanes.tsx
                 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 在之后
   setting:overrides:<k>   server/settings*.py 出现字面量 "<k>"（server 是 overrides 的写者，§59）
   setting:prefs:<k>       web/src 出现字面量 "<k>"（localStorage 同名键）——web 自有的六把键另有
@@ -213,7 +215,8 @@ def _rail_order_ok(snap, inventory):
 
 def _lanes_order_ok(snap, inventory):
     found = re.findall(r'"slug":\s*"(\w+)"', snap.lanes_py)
-    return found == inventory["lanes"]["order"]
+    expected = [lane["slug"] for lane in inventory["lanes"]["items"] if lane.get("gated")]   # 退役的列不在期望里
+    return found == expected
 
 
 def _strip_ok(snap, component, before):

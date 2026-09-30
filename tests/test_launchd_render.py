@@ -29,12 +29,11 @@ LaunchAgents.install、mac/Sources/SetupWizard.swift ActdAgent.renderAndLoad）
 import os
 import plistlib
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "act" / "launchd"
@@ -193,8 +192,7 @@ class InstallShRealRenderTestCase(unittest.TestCase):
     PATH_KEYS = ("PYTHONPATH", "AIASSISTANT_HOME")
 
     def _tmpdir(self, prefix):
-        d = Path(tempfile.mkdtemp(prefix=prefix))
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        d = Path(scratch_dir(self, prefix=prefix))
         return d
 
     def _symlinked_repo(self):
@@ -336,8 +334,7 @@ class DaemonInterpreterSelectionTestCase(unittest.TestCase):
     """
 
     def _tmpdir(self, prefix):
-        d = Path(tempfile.mkdtemp(prefix=prefix))
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        d = Path(scratch_dir(self, prefix=prefix))
         return d
 
     def _fake_python(self, name, imports_yaml=True):

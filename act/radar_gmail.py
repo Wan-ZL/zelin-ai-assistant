@@ -5,6 +5,7 @@ Polls the Gmail INBOX over IMAP for unread mail, triages it with the LLM
 messages are fetched with BODY.PEEK so their unread state is never touched.
 
 Design notes / landmines:
+- §78（提案车道退役）：本雷达铸的卡一律落 detected/潜在任务，没有第二条出路。
 - Auth = Gmail **app password** (requires 2-step verification on the Google
   account). Resolution (CONTRACT §19, via act/lib/secrets.resolve_credential):
   config/secrets/gmail-app-password.txt (App 设置窗口保存) -> config
@@ -851,8 +852,9 @@ def _gmail_requirement(r: dict, source: dict) -> registry.Requirement:
         summary=r.get("summary"),
         type=r.get("type") or "comms",
         tier=r.get("tier") or "T1",
-        # 预设 lane；triage confidence=="low" 会把它降到 detected/备选。
-        status="card_sent",
+        # §78：提案列退役，机器卡一律落潜在任务（detected）。triage
+        # confidence=="low" 不再降列，改盖 quiet_birth（不打扰，D80.7）。
+        status=registry.State.DETECTED.value,
         hardness="soft",
         plan=r.get("plan") or [],
         sources=[source],
@@ -884,9 +886,10 @@ def _file_candidate(quick_capture, r: dict, messages: list[dict],
 def _file_candidates(messages: list[dict], cfg: config.Config, extractor) -> int:
     """v0.17 统一口径: route every Gmail candidate through the SAME three-way
     triage gate (act/lib/quick_capture.triage — the one radar_slack and the
-    obsidian radar use) BEFORE touching the registry: new_proposal (提案，或
-    confidence=="low" 落 备选) / relates_to (fold into an open card, or file
-    an improvement_of follow-up on a resolved one) / ignore (pure FYI mail,
+    obsidian radar use) BEFORE touching the registry: new_proposal (§78 起
+    一律落潜在任务，confidence=="low" 只多盖一枚 quiet_birth) / relates_to
+    (fold into an open card, or file an improvement_of follow-up on a
+    resolved one) / ignore (pure FYI mail,
     no card). Replaces the old unconditional merge_or_new(status="card_sent")
     that bypassed the gate — a pure-FYI mail can now be ignored/folded, which
     is the intended fix, not a regression."""

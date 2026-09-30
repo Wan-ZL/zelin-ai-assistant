@@ -123,7 +123,8 @@ export const CONFIRM_TIMEOUT_MS = 180_000;
  *    不开右条——原生只对 target .debt 开左条，右条只因 unarchive 打开。
  *  - 180 s 超时（`timeout`，原生 sweepTimeouts）：从潜在任务条发出的**换列动词**（研究并提议 / 删除 / 永久完成）超时通知落回该条、
  *    卡也在那里静默恢复（:425 raise、:450 `e.source == .debt`）→ 左条；放回看板超时（:539 `entry.source == .archived`）→ 右条；
- *    暂缓超时卡还在提案列，不开。只认 raise / echo / return 三族（= LANE_VERBS）：详情抽屉里对 debt / archived 卡的改名
+ *    暂缓（defer）自 §78 起没有入口了（提案列退役 = 没有「从提案暂缓到潜在任务」这条路），这两行留着是因为
+ *    动词本身仍在 wire 白名单上（add-only），不是还有键能按。只认 raise / echo / return 三族（= LANE_VERBS）：详情抽屉里对 debt / archived 卡的改名
  *    （set_title）、拆卡（split_note）、修改意见（comment）超时——原生 expiredTitles / expiredSplits / expiredComments
  *    （:452-473 / :516-526）不碰任何条，这里同样不开。
  *  注意超时半边只在发出动作的卡组件仍挂着时生效：两条书立条收起即卸载条内的卡（`{expanded && …}`），useSubmit 的
@@ -225,7 +226,8 @@ export function pendingNote(action: string | null, text: (zh: string, en: string
     case "rework": return text("打回处理中…", "Sending back…");
     case "accept": return text("验收确认中…", "Accepting…");
     case "defer": return text("暂缓中…", "Moving to backlog…");
-    case "abort_execution": return text("停止中，卡片将回到提案列", "Stopping — card returns to Proposals");
+    // §78：「退回提案」这颗键的落点自提案列退役起是潜在任务（decisions.abort_execution → detected）
+    case "abort_execution": return text("停止中，卡片将回到潜在任务", "Stopping — card returns to Backlog");
     case "stop_to_review": return text("停止中，卡片将去待验收", "Stopping — card moves to Review");
     case "revert_review": return text("退回中，卡片将回到待验收", "Reverting to review");
     case "done_external": return text("已办完", "done outside");

@@ -12,12 +12,12 @@ recorded against the pre-refactor projection.
 import datetime as _dt
 import json
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config, dashboard, radar_health, secrets, sources
 from act.lib.registry import Requirement
@@ -62,7 +62,7 @@ class RunClaudeAgentsTestCase(unittest.TestCase):
 
 class WriteDashboardTestCase(unittest.TestCase):
     def test_writes_atomically_and_returns_dict(self):
-        target = Path(tempfile.mkdtemp(prefix="dash-write-")) / "sub" / "dashboard.json"
+        target = Path(scratch_dir(self, prefix="dash-write-")) / "sub" / "dashboard.json"
         dash = {"generated_at": "x", "when": _dt.date(2026, 9, 2),
                 "other": Path("/p")}
         out = dashboard.write_dashboard(dash, path=target)
@@ -73,7 +73,7 @@ class WriteDashboardTestCase(unittest.TestCase):
         self.assertEqual(loaded["other"], "/p")           # anything else -> str
 
     def test_builds_when_no_dash_given(self):
-        target = Path(tempfile.mkdtemp(prefix="dash-write-")) / "dashboard.json"
+        target = Path(scratch_dir(self, prefix="dash-write-")) / "dashboard.json"
         with mock.patch.object(dashboard, "build_dashboard",
                                return_value={"counts": {}}) as build:
             out = dashboard.write_dashboard(path=target)
@@ -151,7 +151,7 @@ class RadarSourcesFailureTestCase(unittest.TestCase):
         # §48.4 意愿信号读 overrides / secrets / §19 旧默认路径：全钉到空目录，别吃
         # 共享沙箱里其它判例落下的凭证、也别读开发机 ~/Desktop/Keys 的真凭证
         # （判例 tests/test_dashboard_source_intent.py 管信号本身）
-        empty = Path(tempfile.mkdtemp(prefix="dash-edge-"))
+        empty = Path(scratch_dir(self, prefix="dash-edge-"))
         with mock.patch.object(dashboard.config, "load_config", return_value=cfg), \
                 mock.patch.object(dashboard.config, "SETTINGS_OVERRIDES_PATH",
                                   empty / "settings_overrides.json"), \

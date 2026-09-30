@@ -16,13 +16,13 @@ import json
 import runpy
 import subprocess
 import sys
-import tempfile
 import unittest
 import warnings
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import screenpipe_retention, worktrees   # noqa: F401 - pinned module paths
 
@@ -59,7 +59,7 @@ def _run_as_script(module: str, argv: list) -> "tuple[int, str]":
 
 class ModuleScriptEntryTestCase(unittest.TestCase):
     def test_the_retention_module_prints_one_json_line_and_exits_zero(self):
-        missing = Path(tempfile.mkdtemp(prefix="zai-script-")) / "nope.sqlite"
+        missing = Path(scratch_dir(self, prefix="zai-script-")) / "nope.sqlite"
         code, out = _run_as_script("act.lib.screenpipe_retention",
                                    ["--dry-run", "--db", str(missing)])
         self.assertEqual(code, 0)

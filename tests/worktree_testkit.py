@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 import time
 
@@ -16,7 +15,8 @@ class Tree:
     """一个假 repo：`<base>/repo` 主工作树 + `<base>/repo/.claude/worktrees/<name>`。"""
 
     def __init__(self):
-        self.base = os.path.realpath(tempfile.mkdtemp(prefix="wt-gc-"))
+        self._tmp = tempfile.TemporaryDirectory(prefix="wt-gc-")
+        self.base = os.path.realpath(self._tmp.name)
         self.repo = os.path.join(self.base, "repo")
         self.root = os.path.join(self.repo, ".claude", "worktrees")
         os.makedirs(self.root)
@@ -34,7 +34,7 @@ class Tree:
         return path
 
     def cleanup(self):
-        shutil.rmtree(self.base, ignore_errors=True)
+        self._tmp.cleanup()
 
 
 class FakeGit:

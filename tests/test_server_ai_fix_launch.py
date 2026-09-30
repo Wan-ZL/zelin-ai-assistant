@@ -12,12 +12,12 @@ from __future__ import annotations
 import subprocess
 import sys
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from server import ai_fix_launch
 from server.errors import ApiError
@@ -59,7 +59,7 @@ def _fake_runner(rc: int = 0, out: str = "/tmp/zelin-ai-fix-1.command\n"):
 
 class _Home(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-aifix-"))
+        self.home = Path(scratch_dir(self, prefix="zai-aifix-"))
         (self.home / "state").mkdir()
         rewrite_board(self.home, BOARD)
 

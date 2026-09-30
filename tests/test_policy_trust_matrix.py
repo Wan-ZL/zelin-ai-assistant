@@ -1,9 +1,9 @@
-"""信任矩阵行为测试——从真实铸卡漏斗到审批/免批车道（vnext §50/§51/§W17）。
+"""信任矩阵行为测试——从真实铸卡漏斗到审批/免批车道（vnext §50/§51/§65/§78/§W17）。
 
 test_policy.py 钉的是 policy 纯函数；这里钉的是**穿过真实漏斗后的车道归属**：
 
   * Slack self-DM（quick_capture 通道，channel="quick"）铸出的卡 = hand
-    出身 → 天花板内免批自动派发（owner 拍板的信任矩阵第一行）；
+    出身 → 章照盖，但 §78/D80.4 之后**不再**免批自跑（见下）；
   * gmail / slack 第三方漏斗铸的卡 = external → 要人批 + W17 强制扩写；
   * meeting 漏斗（radar channel="meeting"）= meeting → 要人批，但**不**强制
     扩写（W17 只对 external）；
@@ -12,6 +12,13 @@ test_policy.py 钉的是 policy 纯函数；这里钉的是**穿过真实漏斗�
     车道——external 章、T2 强制、永不自动派发、裸批转扩写；
   * M1.d 安全前置：mcp_scan 的 sources.channel 硬编码 "slack"——提取 LLM
     自报的频道名（哪怕恰叫 "quick"）绝不能伪造 hand 信任。
+
+**§78（issue #447 / owner decision D80.4）**：提案列退役，机器卡一律落潜在任务
+（``detected``），§51 的 hand 免批车道随之 tombstone——它唯一的喂料口就是被删掉
+的提案捕获框。信任矩阵**本身一个字没改**（origin_trust 照盖、policy 的裁决表
+照旧），变的是「hand = 自动开跑」这一条推论：hand 卡现在也躺在潜在任务里等
+owner 点「促成运行」。所以本文件的卡全部铸在 ``detected``——那才是免批闸真正
+扫的那一列，落在别处的「永不自动派发」断言是空断言。
 
 沙箱 AIASSISTANT_HOME（tests/__init__.py）；绝不 spawn 真 claude。
 """
@@ -41,7 +48,7 @@ def _mint(channel, req_id=None, **kw):
         title=f"来自 {channel} 的漏斗测试卡",
         type="other",
         tier="T1",
-        status=State.CARD_SENT.value,
+        status=State.DETECTED.value,     # §78：机器卡唯一的落点 = 潜在任务
         sources=[{"who": "someone", "channel": channel,
                   "date": "2026-08-30", "quote": "原话"}],
         target_repo=TMP_HOME,
@@ -59,12 +66,20 @@ class TrustMatrixBase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# hand 车道：Slack self-DM（quick capture）→ 免批自动派发
+# hand 车道：Slack self-DM（quick capture）→ 章照盖，但 §78 之后不再自跑
 # --------------------------------------------------------------------------- #
 class TestSelfDMHandLane(TrustMatrixBase):
-    def test_self_dm_card_is_hand_and_auto_dispatches(self):
-        # radar_slack._handle_self_message 的落卡路径 = quick_capture.apply_result
-        # （channel="quick"）——铸出的卡必须是 hand 出身，天花板内直接免批。
+    def test_self_dm_card_is_hand_but_waits_in_the_backlog(self):
+        """§78/D80.4：hand 章还在，免批车道没了——卡落潜在任务等 owner 点。
+
+        原判例（§51）钉「self-DM 铸出的 hand 卡天花板内直接免批自动派发」。
+        owner 退役提案列时一并 tombstone 了 §51 的 hand 车道：它唯一的喂料口
+        是被删掉的提案捕获框，owner 亲笔要起跑走 §34 「运行中」直跑框（出生即
+        approved，压根不过这个闸）。信任矩阵这一行本身没变——origin_trust 仍
+        逐字盖 hand（W17 的扩写豁免、§50 的 effective_tier 都还吃它），变的是
+        「hand ⇒ 自动开跑」这条推论。所以这里正面钉两件事：**章照盖** +
+        **卡留在潜在任务、没有 auto_dispatched 痕、不发观察通知**。
+        """
         reply = quick_capture.apply_result({
             "action": "new_proposal",
             "summary": "把周报脚本修好",
@@ -77,17 +92,23 @@ class TestSelfDMHandLane(TrustMatrixBase):
             "cost_estimate_usd": 1.5,
             "_text": "修一下周报脚本",
         })
-        self.assertIn("已建卡", reply)
+        # 回执文案随车道改名（§78：「已建卡…进待审批」→「已记入潜在任务」），
+        # 钉的仍是「owner 立刻被告知卡建成了、落在哪」这件事本身。
+        self.assertIn("已记入潜在任务", reply)
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
         req = reqs[0]
         self.assertEqual(req.sources[0]["channel"], "quick")
         self.assertEqual(req.origin_trust, "hand")
+        self.assertEqual(req.status, State.DETECTED.value)   # §78：落潜在任务
 
-        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 1)
+        self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
         req = registry.load(req.id)
-        self.assertEqual(req.status, State.APPROVED.value)
-        self.assertTrue(req.execution.get("auto_dispatched"))
+        self.assertEqual(req.status, State.DETECTED.value)
+        self.assertNotIn("auto_dispatched", req.execution or {})
+        # 常态回落：不上 block 痕、不打扰（C-6 口径，hand 卡如今连闸都不进）
+        self.assertNotIn("auto_dispatch_block", req.execution or {})
+        self.notify.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -106,8 +127,9 @@ class TestExternalLane(TrustMatrixBase):
         self.assertEqual(req.origin_trust, "external")
         self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
         req = registry.load(req.id)
-        self.assertEqual(req.status, State.CARD_SENT.value)   # 留待人批
-        # origin:* 是常态回落：不留 block 痕（C-6）
+        self.assertEqual(req.status, State.DETECTED.value)     # 留潜在任务等人点
+        # 不留 block 痕（C-6）：§78 前是 origin:* 常态回落不留痕，之后非 §65
+        # 出身的卡连资格闸都不进，残留 token 还会被清掉——两条路同一个可见结果
         self.assertNotIn("auto_dispatch_block", req.execution or {})
 
 
@@ -120,7 +142,7 @@ class TestMeetingLane(TrustMatrixBase):
         self.assertEqual(req.origin_trust, "meeting")
         # 不自动派发
         self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
-        self.assertEqual(registry.load(req.id).status, State.CARD_SENT.value)
+        self.assertEqual(registry.load(req.id).status, State.DETECTED.value)
         # 但 plain approve 直接过——meeting 不吃 W17 的裸批转扩写
         et = risk.effective_tier(registry.load(req.id))
         self.assertFalse(et.forced_expand)
@@ -137,7 +159,7 @@ class TestProposedLane(TrustMatrixBase):
         self.assertEqual(req.origin_trust, "proposed")
         self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
         req = registry.load(req.id)
-        self.assertEqual(req.status, State.CARD_SENT.value)
+        self.assertEqual(req.status, State.DETECTED.value)
         self.assertNotIn("auto_dispatch_block", req.execution or {})
         self.notify.assert_not_called()
 
@@ -155,7 +177,7 @@ class TestScreenDefenseInDepth(TrustMatrixBase):
         self.assertEqual(et.tier, "T2")
         self.assertTrue(et.forced_expand)
         self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
-        self.assertEqual(registry.load(req.id).status, State.CARD_SENT.value)
+        self.assertEqual(registry.load(req.id).status, State.DETECTED.value)
 
     def test_screen_source_poisons_a_hand_card_on_fold(self):
         # 混合来源取最小信任：hand 卡被 screen 来源 fold 过 → external。
@@ -199,7 +221,7 @@ class TestMcpChannelHardcode(TrustMatrixBase):
         self.assertEqual(req.origin_trust, "external")
         # 免批通道对它关死
         self.assertEqual(actd.auto_dispatch_pass(config.Config()), 0)
-        self.assertEqual(registry.load(req.id).status, State.CARD_SENT.value)
+        self.assertEqual(registry.load(req.id).status, State.DETECTED.value)
 
 
 if __name__ == "__main__":

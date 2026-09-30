@@ -63,6 +63,7 @@ HUMAN_ROW_NAMES = frozenset({
     "anthropic key", "claude CLI", "daemon claude", "claude auth",
     "obsidian vault", "screenpipe db", "node/npx", "gh CLI",
     "launchd claude", "launchd volume access", "cron disk access", "cron write access",
+    "launchd interpreter identity",   # §55 追记 2026-09-19: re-pin + FDA are the owner's
 })
 
 # Rows that describe the resident daemons / schedulers install.sh wires in

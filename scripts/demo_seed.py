@@ -100,7 +100,8 @@ def _src(who: str, channel: str, date: str, quote: str) -> dict:
 # fictional dataset
 # --------------------------------------------------------------------------- #
 def _hero_card(now: dt.datetime) -> dict:
-    """P-101 as a needs_approval card (scene=initial) — no work number yet (§60)."""
+    """P-101 waiting in the 潜在任务 lane (``debt``, scene=initial) — no work
+    number yet (§60). §78：提案列退役，等 owner 拍板的卡就长在潜在任务列上。"""
     deadline = _date(now, 6)
     return {
         "id": HERO_ID,
@@ -149,7 +150,10 @@ def _hero_plan_dod(now: dt.datetime) -> dict:
     return {k: card[k] for k in ("summary", "plan", "dod", "sources")}
 
 
-def _needs_approval(now: dt.datetime) -> list[dict]:
+def _decision_cards(now: dt.datetime) -> list[dict]:
+    """§78：等 owner 一次「促成运行」的机器卡——落 ``debt``（潜在任务），不再
+    单起一列。卡面是完整的提案面（tier / 成本 / plan / dod / egress …），因为
+    促成运行那颗按钮不许长在一行藏了成本与外泄面的卡上（§7 / §50）。"""
     deadline_t2 = _date(now, 13)
     return [
         _hero_card(now),
@@ -905,12 +909,14 @@ def build(scene: str, now: dt.datetime | None = None, lang: str = "zh") -> dict:
     if now is None:
         now = dt.datetime.now(dt.timezone.utc)
     lanes = {
-        "needs_approval": _needs_approval(now),
+        # §78（D80.1）：提案列退役，但 wire 键 add-only 永不删——恒发空数组，
+        # counts.needs_approval 恒 0。机器卡与低置信度捕获同住 debt（潜在任务）。
+        "needs_approval": [],
         "running": _running(now),
         "needs_input": _needs_input(now),
         "review": _review(now),
         "completed": _completed(now),
-        "debt": _debt(now),
+        "debt": _decision_cards(now) + _debt(now),
         "trash": _trash(now),
     }
     _place_hero(lanes, scene, now)
@@ -924,9 +930,9 @@ def build(scene: str, now: dt.datetime | None = None, lang: str = "zh") -> dict:
 
 
 # scene → (lane the hero card is prepended to, its builder); "initial" keeps
-# the hero where _needs_approval seeds it.
+# the hero where _decision_cards seeds it (§78: the 潜在任务 lane).
 _HERO_SCENES = {
-    "captured": ("needs_approval", _hero_captured),
+    "captured": ("debt", _hero_captured),
     "approved": ("running", _hero_queued),
     "running": ("running", _hero_running),
     "steer": ("running", _hero_steer),
@@ -939,20 +945,20 @@ def _place_hero(lanes: dict, scene: str, now: dt.datetime) -> None:
     """Move the hero card to the lane the requested pipeline moment shows."""
     if scene == "initial":
         return
-    lanes["needs_approval"] = [c for c in lanes["needs_approval"] if c["id"] != HERO_ID]
+    lanes["debt"] = [c for c in lanes["debt"] if c["id"] != HERO_ID]
     placement = _HERO_SCENES.get(scene)
     if placement is not None:
         lane, hero = placement
         lanes[lane] = [hero(now)] + lanes[lane]
 
 
-# 批准过的 lane：每行带工作编号（§60）；提案/备选/回收站只有 P- 主键
+# 批准过的 lane：每行带工作编号（§60）；潜在任务/回收站只有 P- 主键
 _WORK_LANES = ("running", "needs_input", "review", "completed")
 
 
 def _stamp_lane_ids(lanes: dict) -> None:
     """§60 投影面：批准过的 lane（running/needs_input/review/completed）每行带工作
-    编号 R-<n>（demo 里取主键同号，P-105 → R-105，方便肉眼对账）；提案/备选/
+    编号 R-<n>（demo 里取主键同号，P-105 → R-105，方便肉眼对账）；潜在任务/
     回收站只有 P- 主键。display_id / id_kind 与 act/lib/dashboard._title_fields 同式。"""
     for name, rows in lanes.items():
         for row in rows:
@@ -1146,6 +1152,12 @@ def _rows(dash: dict, sec: str) -> list:
 
 
 def _check_debt(problems: list, w: str, d: dict) -> None:
+    """§78：潜在任务列现在同时住两种行——带完整卡面的机器卡（等一次「促成运行」）
+    与只有一句话的低置信度捕获。带 ``tier`` 的按整张卡面复验（成本 / 信任档 /
+    plan / dod 一个都不许缺），其余仍只要 id / title / sources。"""
+    if "tier" in d:
+        _check_proposal(problems, w, d)
+        return
     _check_str(problems, w, d, "id", "title")
     _check_sources(problems, w, d.get("sources") or [])
 
@@ -1234,7 +1246,9 @@ def _check_trash(problems: list, w: str, t: dict) -> None:
         problems.append(f"{w}.trashed_at: required ISO string")
 
 
-# validate() walks the sections in this order (the problem list is ordered)
+# validate() walks the sections in this order (the problem list is ordered).
+# §78：needs_approval 恒空，这一行留着是为了复验**别人**写的老快照——真实安装上
+# 仍可能有归并扫描之前的存量行，validator 不该对它装瞎。
 _SECTION_CHECKS = {
     "needs_approval": _check_proposal,
     "running": _check_task,

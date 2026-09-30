@@ -3,7 +3,9 @@ into 待验收, flush queued steers at the safe windows.
 
 CONTRACT §11（agent done = 草稿就绪进待验收）/ §13 + §46.3（#119：受阻 / 放弃
 救活的会话按 stop_to_review 收割进待验收，不再挂「需输入」）/ §16（auto_resume
-双键现读）/ §30（待验收 attach 回流不动状态机）/ §34bis（收割时比对快照）/
+双键现读）/ §30（待验收 attach 回流不动状态机）/ §34 追记 D81（逐字直跑卡的
+强完成信号 = 会话已停工 + 最后一条消息，`session.harvest_kwargs`）/ §34bis + §78
+（收割时比对快照；护栏的认卡判据 §78/D80.11 起是直跑卡 triage_guard.guarded_card）/
 §37（CARD TITLE + 搜索层）/ §44.3 + §44.3-S（briefing / steer 的安全注入窗口）
 / §46（resume 风暴降级 + 确认式停止）/ §65.1（通道总开关关着 = 不给 self_improve
 卡自动续命）/ §65.3（self_improve 收割核验）/ §71.3（被睡眠打断的会话收割前
@@ -19,10 +21,12 @@ from act.lib import (analytics, config, dispatch_prompt, notify, registry, self_
                      steer)
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.actd.session import (apply_harvest_title, fold_harvest, harvest_into,
-                                  update_search_index)
-from act.lib.actd.triage_guard import (PROPOSALS_TRIAGE_PRESET, check_triage_registry_guard,
+                                  harvest_kwargs, update_search_index,
+                                  verbatim_whole_message)
+from act.lib.actd.triage_guard import (check_triage_registry_guard, guarded_card,
                                        stamp_triage_snapshot)
-from act.lib.agent_states import BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES
+from act.lib.agent_states import (BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES,
+                                  has_live_process)
 from act.lib.dashboard import index_agents
 from act.lib.maintenance import parse_iso
 from act.lib.registry import Requirement
@@ -94,11 +98,18 @@ def reconcile_review_attach(d: Daemon, req: Requirement, agents: dict) -> None:
 
 
 def _session_working(agent, state: str) -> bool:
-    return bool(agent) and state in RUNNING_STATES
+    # §30 追记（issue #446）：working 但 roster 无 pid = 过时项，非真活动——不 latch
+    # `_review_active`（否则 done 的会话被永远当成 attach 回流在跑）。
+    return has_live_process(agent) and state in RUNNING_STATES
 
 
 def _activity_ended(agent, state: str) -> bool:
-    return agent is None or state in DONE_STATES
+    if agent is None or state in DONE_STATES:
+        return True
+    # §30 staleness bound（issue #446）：roster 报 RUNNING 却无活进程 = 过时项，
+    # 视同活动收工——latch 住的 `_review_active` 就此重新收割并清标，不再永挂运行中。
+    # blocked（有 pid，等用户输入）不在此列：仍保留标记等下一轮。
+    return state in RUNNING_STATES and not has_live_process(agent)
 
 
 def _review_attach(d: Daemon, req: Requirement, agents: dict) -> None:
@@ -130,19 +141,26 @@ def _restamp_triage_snapshot(d: Daemon, req: Requirement, ex: dict) -> None:
     attach 复活的仍是同一个带 skip-permissions、握着 registry
     路径的会话——不重拍，本轮活动期间的越权写零告警。复活轮
     是会话先活、快照后拍（夹缝写入进基线）的 best-effort 边界
-    （CONTRACT §34bis 记账），与首轮的启动前快照不同。"""
-    if getattr(req, "preset", None) == PROPOSALS_TRIAGE_PRESET \
-            and not ex.get("registry_snapshot_ref"):
+    （CONTRACT §34bis 记账），与首轮的启动前快照不同。
+
+    §78（D80.11）：认卡判据从退役的 ``preset`` 词表换成
+    :func:`triage_guard.guarded_card`——护栏整套重锚在直跑卡上，dispatch
+    的起跑前快照已经用同一个判据（``dispatch._pre_dispatch_snapshot``）。
+    两处不同步的话直跑卡的 attach 复活轮永远重拍不出基线，那一轮的护栏
+    是瞎的。"""
+    if guarded_card(req) and not ex.get("registry_snapshot_ref"):
         ref = stamp_triage_snapshot(d, req.id)
         if ref:
             ex["registry_snapshot_ref"] = ref
 
 
 def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
-    # 会话活动结束 -> 重新收割交付物（收割失败/为空不覆盖旧值）
+    # 会话活动结束 -> 重新收割交付物（收割失败/为空不覆盖旧值；§34 追记 D81：
+    # 逐字直跑卡整条收最后一条消息，与其余收割点同一个 harvest_kwargs）
     if d.executor is not None:
         try:
-            harvested = d.executor.harvest_delivery(str(sid)) or {}
+            harvested = d.executor.harvest_delivery(
+                str(sid), **harvest_kwargs(req, ex)) or {}
         except Exception as e:  # noqa: BLE001 - harvest is best-effort
             harvested = {}
             d.log(f"reconcile: re-harvest {req.id} failed: {e}")
@@ -150,7 +168,7 @@ def _settle_review_activity(d: Daemon, req: Requirement, ex: dict, sid) -> None:
         apply_harvest_title(d, req, harvested)   # §37, round boundary
     ex.pop("_review_active", None)
     # §34bis 复活轮收割同样过护栏——比对并消费复活时重拍的快照，
-    # 每一轮「活跃→收割」都有基线（非 preset 卡无 ref，零开销）。
+    # 每一轮「活跃→收割」都有基线（非直跑卡无 ref，零开销；§78 改锚）。
     check_triage_registry_guard(d, req, ex)
     req.execution = ex
     registry.save(req)
@@ -182,25 +200,51 @@ def _probe_throttled(sid, at: Optional[dict] = None) -> bool:
     return False
 
 
-def _probe_harvest(d: Daemon, sid) -> dict:
+def _clear_harvest_throttle(sid) -> None:
+    """§80.3：会话又活了 → 丢掉交付探针的节流戳。
+
+    戳记的是「上次读 transcript 时还没有 FINAL DRAFT」，而会话一旦重新活动，
+    这个结论就过期了。不丢戳的后果正是 owner 在 issue #450 里点名的「running
+    完成后进入 review」那一段白等：一条会话 T0 因为提问掉进 blocked（探针空手、
+    盖戳），owner 回答后它继续干活，T0+30s 交付完又 blocked——卡要等到 T0+120s
+    才被提升，白等 90s。
+
+    代价按状态**翻面**计次，不按 pass 计次：真正一直 blocked 的会话根本走不到
+    `_note_alive`，所以 HARVEST_PROBE_INTERVAL_S 防的那件事（10s 一个 pass 反复
+    重读同一条 transcript）一点没被放宽。
+    """
+    HARVEST_PROBE_AT.pop(str(sid), None)
+
+
+def _probe_harvest(d: Daemon, sid, **kw) -> dict:
     try:
-        return d.executor.harvest_delivery(str(sid)) or {}
+        return d.executor.harvest_delivery(str(sid), **kw) or {}
     except Exception:  # noqa: BLE001 - the probe is best-effort
         return {}
 
 
-def promote_if_delivered(d: Daemon, req, ex: dict, sid) -> bool:
+def promote_if_delivered(d: Daemon, req, ex: dict, sid,
+                         whole_message: bool = False) -> bool:
     """Promote to 待验收 IFF the transcript carries the standalone FINAL DRAFT
     marker — the chat-delivery contract's STRONG completion signal. A bare
     delivered_summary is any dead session's last words, never proof of
     delivery, so it must not short-circuit a resume. Returns True when
     promoted (callers `continue`).
+
+    ``whole_message``（§34 追记 D81，add-only 形参，默认关 = 与从前逐字节相同）：
+    调用方声明「这张卡的会话**确实收工了**」。只有 blocked 那条路传真——逐字
+    直跑卡的 prompt 从来没明令 marker，所以对它 marker 缺席不是「没交付」，
+    会话停工 + 最后一次用户回合之后说过话即算交付。**`_revive_dead` 恒传假**：
+    死掉/消失的会话最后那句话可能只是「好的，我先看一下相关文件」——把半句
+    在途进度当成果收下，就等于把 §16/§46 的自动救活对这一类卡整条关掉
+    （本函数这段 docstring 的头一句正是为这件事写的）。
     """
     if d.executor is None:
         return False
     if _probe_throttled(sid):
         return False
-    harvested = _probe_harvest(d, sid)
+    kw = harvest_kwargs(req, ex) if whole_message else {}
+    harvested = _probe_harvest(d, sid, **kw)
     if not str(harvested.get("final_draft") or "").strip():
         _apply_probe_title(d, req, harvested)
         return False
@@ -228,7 +272,7 @@ def _promote_delivered(d: Daemon, req, ex: dict, sid, harvested: dict) -> None:
         ex["delivered_summary"] = harvested["delivered_summary"]
     ex["final_draft"] = harvested["final_draft"]
     apply_harvest_title(d, req, harvested)   # §37, round boundary
-    # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
+    # §34bis 机械护栏终点：直跑卡收割时做起止快照比对（§78 改锚）。
     check_triage_registry_guard(d, req, ex)
     self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex
@@ -482,6 +526,7 @@ def _note_alive(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_n
         req.execution = ex
         registry.save(req)
     resume_notified.discard(req.id)
+    _clear_harvest_throttle(sid)   # §80.3：下次 blocked 立刻探交付，不等窗口
     _probe_title_alive(d, req, sid)
 
 
@@ -508,8 +553,18 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
     FINAL DRAFT block settles in exactly this waiting-input state
     (a bg session never exits on its own), and 2026-07-14 R-041 sat
     here for hours with the finished brief already in the
-    transcript while the board said 需输入."""
-    if not ex.get("done") and d.promote_if_delivered(req, ex, sid):
+    transcript while the board said 需输入.
+
+    §34 追记 D81 的一道让路：逐字直跑卡的「交付」判据比 marker 宽（会话停工 +
+    说过话即算），所以排队中的 owner 指令（§44.3-S steer / §44.3 briefing）会被
+    它抢在前面——卡一提升进待验收，`pending_steers` 就再也没人投递也没人留痕
+    （`_drop_undelivered_steers` 只挂在 done 那条路上）。有待注入内容时先让注入
+    窗口走一轮：会话吃下那句话、继续推进，下一 pass 再按新的最后一条消息判交付。
+    只对逐字卡让路——其余卡的 marker 是强信号，顺序不动（R-041）。"""
+    if _pending_injection_first(d, req, ex, cfg):
+        return
+    if not ex.get("done") and d.promote_if_delivered(
+            req, ex, sid, verbatim_whole_message(req, ex)):
         return
     if _another_move_left(d, req, ex, cfg):
         return
@@ -525,6 +580,17 @@ def _handle_blocked(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent,
     notify.notify(*notify.msg_review_interrupted(req.title or req.id),
                   req=req.id, kind=notify.KIND_NEEDS_INPUT)
     resume_notified.discard(req.id)
+
+
+def _pending_injection_first(d: Daemon, req: Requirement, ex: dict,
+                             cfg: config.Config) -> bool:
+    """§34 追记 D81：逐字直跑卡 + 有排队的 briefing / steer → 注入先于交付判定。
+    其余卡恒 False（`_handle_blocked` 的顺序逐字不变）。"""
+    if not verbatim_whole_message(req, ex):
+        return False
+    if not (ex.get("pending_briefings") or steer.pending_steers(req)):
+        return False
+    return _another_move_left(d, req, ex, cfg)
 
 
 def _another_move_left(d: Daemon, req: Requirement, ex: dict, cfg: config.Config) -> bool:
@@ -614,7 +680,7 @@ def _handle_done(d: Daemon, req: Requirement, ex: dict, sid, cfg, agent, resume_
         return
     ex["done"] = True                    # mark finished so a later purge isn't mistaken for a crash
     ex["review_at"] = d.iso_now()        # 进入待验收的时间（§2）
-    # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
+    # §34bis 机械护栏终点：直跑卡收割时做起止快照比对（§78 改锚）。
     check_triage_registry_guard(d, req, ex)
     self_improve.harvest_hook(req, ex, log=d.log)   # §65.3 self_improve 卡：gh 核验
     req.execution = ex

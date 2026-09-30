@@ -29,14 +29,14 @@ export function ChipsSection() {
         { className: "chip chip-purple", zh: "T1 · 需要批准", en: "T1 · 需要批准" },
         { className: "chip chip-purple", zh: "T2 · 键入确认", en: "T2 · 键入确认" },
       ],
-      noteZh: "tier chip（ProposalCard）：.chip-purple → --purple / --purple-soft（Mac systemPurple 粉紫章一比一）；文案 = tier + tier_hint",
-      noteEn: "Tier chip (ProposalCard): .chip-purple → --purple / --purple-soft (one-to-one with Mac's pink-magenta systemPurple); label = tier + tier_hint",
+      noteZh: "tier chip（DebtCardItem）：.chip-purple → --purple / --purple-soft（Mac systemPurple 粉紫章一比一）；文案 = tier + tier_hint",
+      noteEn: "Tier chip (DebtCardItem): .chip-purple → --purple / --purple-soft (one-to-one with Mac's pink-magenta systemPurple); label = tier + tier_hint",
     },
     {
       key: "deliver",
       chips: [{ className: "chip chip-purple", zh: "交付：聊天成稿", en: "Deliver: chat draft" }],
-      noteZh: "交付 tag（ProposalCard delivery_mode=chat）：.chip-purple——owner 验收单「紫交付」+ §10 提取表拍板紫（源码 Badge 为 .blue，差异见第 1 节 ⚠️ 行）",
-      noteEn: "Deliver tag (ProposalCard delivery_mode=chat): .chip-purple — ratified purple by the owner checklist and the §10 map (the source badge is .blue; see the flagged row in section 1)",
+      noteZh: "交付 tag（DebtCardItem delivery_mode=chat）：.chip-purple——owner 验收单「紫交付」+ §10 提取表拍板紫（源码 Badge 为 .blue，差异见第 1 节 ⚠️ 行）",
+      noteEn: "Deliver tag (DebtCardItem delivery_mode=chat): .chip-purple — ratified purple by the owner checklist and the §10 map (the source badge is .blue; see the flagged row in section 1)",
     },
     {
       key: "type",
@@ -52,8 +52,8 @@ export function ChipsSection() {
         { className: "chip", zh: "2026-09-20（剩 21 天）", en: "2026-09-20 (21d left)" },
         { className: "chip chip-danger chip-outline", zh: "2026-09-02（剩 2 天）", en: "2026-09-02 (2d left)" },
       ],
-      noteZh: "deadline chip（ProposalCard）：days_left ≤ 3 升级 .chip-danger.chip-outline（红字描边档，Mac 紧急截止红字同 hue）",
-      noteEn: "Deadline chip (ProposalCard): escalates to .chip-danger.chip-outline at days_left ≤ 3 (outline+red-text step, same hue as Mac's red urgent deadline)",
+      noteZh: "deadline chip（DebtCardItem）：days_left ≤ 3 升级 .chip-danger.chip-outline（红字描边档，Mac 紧急截止红字同 hue）",
+      noteEn: "Deadline chip (DebtCardItem): escalates to .chip-danger.chip-outline at days_left ≤ 3 (outline+red-text step, same hue as Mac's red urgent deadline)",
     },
     {
       key: "waiting",
@@ -64,8 +64,8 @@ export function ChipsSection() {
     {
       key: "cost",
       chips: [{ className: "chip", zh: "$2", en: "$2" }],
-      noteZh: "cost chip（ProposalCard）：show_cost && cost_usd 才渲染；中性 .chip",
-      noteEn: "Cost chip (ProposalCard): renders only with show_cost && cost_usd; neutral .chip",
+      noteZh: "cost chip（DebtCardItem）：show_cost && cost_usd 才渲染；中性 .chip",
+      noteEn: "Cost chip (DebtCardItem): renders only with show_cost && cost_usd; neutral .chip",
     },
     {
       key: "origin-trust",
@@ -105,8 +105,8 @@ export function ChipsSection() {
     {
       key: "disagreement",
       chips: [],
-      noteZh: "分歧不是 chip 而是警示行（ProposalCard .card-line.is-warning → --warning）：",
-      noteEn: "Disagreement is a warning line, not a chip (ProposalCard .card-line.is-warning → --warning):",
+      noteZh: "分歧不是 chip 而是警示行（DebtCardItem .card-line.is-warning → --warning）：",
+      noteEn: "Disagreement is a warning line, not a chip (DebtCardItem .card-line.is-warning → --warning):",
     },
     {
       key: "reraised",

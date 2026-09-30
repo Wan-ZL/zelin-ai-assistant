@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""B-04 gmail-mint：真形邮件重放一遍 → 铸出一张提案卡（§14 / §44.2 / §58）。
+"""B-04 gmail-mint：真形邮件重放一遍 → 铸出一张卡（§14 / §44.2 / §58 / §78）。
 
 样本 = ``tests/fixtures/coverage_b/gmail_message.json``（IMAP 取件器的出参形状）。
 取件器与提取器全注入：不连 IMAP、不出网、不 spawn 真 claude。
+
+§78（提案车道退役）：新卡的状态是 ``detected``（落潜在任务列），``card_sent``
+永不再被写入——铸卡路径回写退役状态是静默退化（卡照样可见），所以逐字钉死。
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ def scenario(_home):
     ok, why = _harness.check([
         ("scan_returned_one", n == 1),
         ("one_card", len(cards) == 1),
-        ("status_card_sent", facts["status"] == "card_sent"),
+        ("status_detected", facts["status"] == "detected"),   # §78
         ("source_is_gmail", facts["channel"] == "gmail"),
         ("gate_consulted", len(llm.triage_calls) == 1),
     ])

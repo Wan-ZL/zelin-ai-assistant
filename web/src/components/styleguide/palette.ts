@@ -3,9 +3,11 @@
 // owner 截图基准），并经 mac/Sources/Cards.swift tint 逐处复核（行注记标出行号出处）。
 // 例外声明（CONVENTIONS §5）：本文件的字面 hex 是【历史参照数据】不是 UI 样式——
 // 新侧渲染一律走 var(--token)；老侧色块必须显示老值本身，token 化反而失真。
-// flagged=true ⇒ 老 vs 新仍有可见差异（色相或位置）；owner 验收单（绿批准/红拒绝/蓝紫修改/
-// 灰暂缓/绿验收/橙打回/青复制成稿；粉紫T1章/紫交付/绿已交付/橙需输入/红受阻/黄等待/
-// 紫被提及已并入）已全部按 hue 一比一落地——见各行 token 列。
+// flagged=true ⇒ 老 vs 新仍有可见差异（色相或位置，含 §78 之后**新板没有承接者**的槽位）；
+// owner 验收单（绿批准/红拒绝/蓝紫修改/灰暂缓/绿验收/橙打回/青复制成稿；粉紫T1章/紫交付/
+// 绿已交付/橙需输入/红受阻/黄等待/紫被提及已并入）已全部按 hue 一比一落地——见各行 token 列。
+// 样本列纪律（D80，§78 issue #447）：`kind:"button"` 的样本等于「产品里可触达的动词名」，所以
+// 退役动词（暂缓 / defer）的行把样本降级成 `kind:"text"` 说明句，只留老值与色块作历史记录。
 
 export type Sample =
   | { kind: "button"; className: string; zh: string; en: string }
@@ -42,8 +44,8 @@ export const PALETTE_ROWS: PaletteRow[] = [
     oldValue: ".green · #32d74b", oldSwatches: ["#32d74b"],
     token: "--success（.btn-success）", newDark: "#32d74b", newLight: "#218739", swatchVars: ["--success"],
     sample: { kind: "button", className: "btn btn-success", zh: "批准", en: "Approve" }, flagged: false,
-    noteZh: "owner 验收单回归：绿批准（曾走 teal btn-primary，已按 Mac tint 改回绿）。",
-    noteEn: "Restored per owner checklist: green Approve (was teal btn-primary; back to Mac's green tint).",
+    noteZh: "owner 验收单回归：绿批准（曾走 teal btn-primary，已按 Mac tint 改回绿）。§78（D80，issue #447）起卡面那颗键改叫「促成运行」——改的是**标签**，色相、wire 动词 approve 与 §41 打字确认弹窗里的「批准」都没动（样本按老 app 的字面留在这里）。",
+    noteEn: "Restored per owner checklist: green Approve (was teal btn-primary; back to Mac's green tint). Since §78 (D80, issue #447) the card-face key reads “Run it” — only the label changed; the hue, the wire verb approve and the “Approve” key inside the §41 typed confirm are untouched (the sample keeps the old app's wording).",
   },
   {
     key: "accept", zh: "验收（accept）", en: "Accept",
@@ -67,12 +69,15 @@ export const PALETTE_ROWS: PaletteRow[] = [
     noteEn: "Blue slot added (--info = systemBlue family; the owner checklist calls it blue-violet); DebtRow's raise shares it.",
   },
   {
-    key: "later", zh: "暂缓（defer）", en: "Later",
+    // D80 / §78（issue #447）：这一行留着是墓碑，不是现役槽位——老 app 的灰在新板上没有承接者，
+    // 所以样本从活按钮降级成一句说明（按钮样本 = 产品里可触达的动词名，退役动词不许再长出一颗）。
+    key: "later", zh: "暂缓（defer）—— 已退役", en: "Later (defer) — retired",
     oldValue: ".gray tint（systemGray · #98989d，v0.18 起）", oldSwatches: ["#98989d"],
-    token: "中性 .btn", newDark: "#23262e 面", newLight: "#ffffff 面", swatchVars: ["--surface"],
-    sample: { kind: "button", className: "btn", zh: "暂缓", en: "Later" }, flagged: false,
-    noteZh: "更正前版表记：Mac ApprovalCardView 四按钮含暂缓（Cards.swift:1032 .tint(.gray)），灰对灰一致。",
-    noteEn: "Corrects the earlier claim: Mac's four-verb row includes Later (Cards.swift:1032, .tint(.gray)); grey matches grey.",
+    token: "—（新板无此动词）", newDark: "—", newLight: "—", swatchVars: [],
+    sample: { kind: "text", zh: "新板没有这颗键（中性 .btn 仍由「永久完成（封存）」使用）", en: "No such key on the new board (neutral .btn is still used by “Done for good”)" },
+    flagged: true,
+    noteZh: "老 app 的 ApprovalCardView 四按钮含暂缓（Cards.swift:1032 .tint(.gray)）。§78（D80，issue #447）提案列退役后「暂缓」在看板上再无入口——wire 动词 defer 按 add-only 留在白名单上，但界面不再给它一颗键，本行只记录老值。",
+    noteEn: "The old app's ApprovalCardView had four verbs including Later (Cards.swift:1032, .tint(.gray)). Since §78 (D80, issue #447) retired the proposal lane there is no entry point for Later on the board — the wire verb defer stays whitelisted (add-only) but the UI no longer gives it a key; this row only records the old value.",
   },
   {
     key: "sendback", zh: "打回（rework）", en: "Send back",

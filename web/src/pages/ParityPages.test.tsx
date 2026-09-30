@@ -343,10 +343,13 @@ describe("route + app helpers", () => {
     expect(readSettingsAnchor("?page=deps&anchor=credentials")).toBe("credentials");
   });
 
-  it("badgeCount = proposals + needs_input + review (counts first) and setup redirect only from the board", () => {
+  // §78 / D80.12：提案列退役后「等你拍板的」= 潜在任务（debt），徽章不再数恒空的 needs_approval
+  it("badgeCount = backlog + needs_input + review (counts first) and setup redirect only from the board", () => {
     expect(badgeCount(null)).toBe(0);
-    expect(badgeCount({ counts: { needs_approval: 2, needs_input: 1, review: 3 } })).toBe(6);
-    expect(badgeCount({ needs_approval: [{}], needs_input: [], review: [{}, {}] })).toBe(3);
+    expect(badgeCount({ counts: { debt: 2, needs_input: 1, review: 3 } })).toBe(6);
+    expect(badgeCount({ debt: [{}], needs_input: [], review: [{}, {}] })).toBe(3);
+    // 恒空的 needs_approval 不再进徽章（老 counts 里带着它也一样）
+    expect(badgeCount({ counts: { needs_approval: 5, debt: 1, needs_input: 0, review: 0 } })).toBe(1);
     expect(shouldRedirectToSetup("board", true)).toBe(true);
     expect(shouldRedirectToSetup("settings", true)).toBe(false);
     expect(shouldRedirectToSetup("board", false)).toBe(false);

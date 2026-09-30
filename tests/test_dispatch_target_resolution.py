@@ -12,12 +12,12 @@
 subprocess / ensure_repo / has_remote are patched — no git, no claude.
 """
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act import executor, llm
 from act.lib import config, registry
@@ -35,7 +35,7 @@ class _Base(unittest.TestCase):
         config.ensure_state_dirs()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
-        self.root = Path(tempfile.mkdtemp(prefix="dispatch-target-"))
+        self.root = Path(scratch_dir(self, prefix="dispatch-target-"))
         self.existing = self.root / "existing"
         self.existing.mkdir()
         (self.existing / "keep.txt").write_text("x", encoding="utf-8")

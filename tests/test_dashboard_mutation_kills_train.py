@@ -1,5 +1,9 @@
 """§2 投影里夜报变异体活下来的那些格（外加 §5 / §7 / §37 / §38 / §40 / §44.6 /
-§48.4 / §65 / §71 / §76.2 挂在同一张投影面上的条文）。
+§48.4 / §65 / §71 / §76.2 / §78 挂在同一张投影面上的条文）。
+
+**§78（issue #447 / owner 决策 D80）**：提案车道退役，机器卡的在产状态是
+``detected``、可见的卡落 ``debt[]``——本文件的卡片工厂与 lane 路由判例跟着重锚；
+``card_sent`` 只作为「退役但合法、永不隐形」的落单形态保留一格。
 
 `act/lib/dashboard.py` 首轮 400 体只有 26% 杀伤——真正的原因是靶区映射
 （qa/mutation_targets.toml）里一个 dashboard 判例都没有：列的全是顺带 import
@@ -59,13 +63,13 @@ import datetime as _dt
 import json
 import os
 import re
-import tempfile
 import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import (config, dashboard, fold_receipts, radar_health, radar_rounds,
                      secrets, self_improve, transcripts)
@@ -75,13 +79,14 @@ _NOW = _dt.datetime(2026, 9, 15, 12, 0, tzinfo=_dt.timezone.utc)
 
 
 def _req(**fields) -> Requirement:
-    base = {"id": "R-700", "title": "一张卡", "status": "card_sent"}
+    # §78（issue #447 / D80）：机器卡的在产状态是 detected（提案车道退役）。
+    base = {"id": "R-700", "title": "一张卡", "status": "detected"}
     base.update(fields)
     return Requirement.from_dict(base)
 
 
-def _tmpdir(prefix: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix=prefix))
+def _tmpdir(case, prefix: str) -> Path:
+    return Path(scratch_dir(case, prefix=prefix))
 
 
 class SandboxHomeMixin:
@@ -89,7 +94,7 @@ class SandboxHomeMixin:
 
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.dict(os.environ, {"HOME": str(_tmpdir("dash-mut-home-"))})
+        patcher = mock.patch.dict(os.environ, {"HOME": str(_tmpdir(self, "dash-mut-home-"))})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -198,7 +203,7 @@ class MissingTimestampsSinkTestCase(unittest.TestCase):
     最上」同时失真）。"""
 
     def _merge_dir(self, *stems_and_stamps) -> Path:
-        d = _tmpdir("dash-mut-merge-")
+        d = _tmpdir(self, "dash-mut-merge-")
         for stem, stamp in stems_and_stamps:
             body = {"status": "done", "ids": ["R-1", "R-2"]}
             if stamp is not None:
@@ -445,19 +450,19 @@ class DirIsNonemptyIsAllThreeTestCase(unittest.TestCase):
     """§7：「已有仓库」= 存在 ∧ 是目录 ∧ 非空——三个都要，不是任意一个。"""
 
     def test_a_plain_file_is_not_a_repo(self):
-        d = _tmpdir("dash-mut-dir-")
+        d = _tmpdir(self, "dash-mut-dir-")
         f = d / "README.md"
         f.write_text("x", encoding="utf-8")
         self.assertIs(dashboard._dir_is_nonempty(f), False)
 
     def test_an_empty_directory_is_not_a_repo(self):
-        self.assertIs(dashboard._dir_is_nonempty(_tmpdir("dash-mut-empty-")), False)
+        self.assertIs(dashboard._dir_is_nonempty(_tmpdir(self, "dash-mut-empty-")), False)
 
     def test_a_missing_path_is_not_a_repo(self):
-        self.assertIs(dashboard._dir_is_nonempty(_tmpdir("dash-mut-gone-") / "nope"), False)
+        self.assertIs(dashboard._dir_is_nonempty(_tmpdir(self, "dash-mut-gone-") / "nope"), False)
 
     def test_a_directory_with_content_is(self):
-        d = _tmpdir("dash-mut-full-")
+        d = _tmpdir(self, "dash-mut-full-")
         (d / "f").write_text("x", encoding="utf-8")
         self.assertIs(dashboard._dir_is_nonempty(d), True)
 
@@ -535,15 +540,19 @@ class InvisibleCardsEnterNoLaneTestCase(unittest.TestCase):
         self.assertIs(dashboard._invisible(_req(status="rejected")), True)
 
     def test_a_live_card_is_visible(self):
+        self.assertIs(dashboard._invisible(_req(status="detected")), False)
+        # §78：退役但合法的路标——落单卡照样可见（永不隐形）
         self.assertIs(dashboard._invisible(_req(status="card_sent")), False)
 
     def test_the_lane_router_agrees(self):
         cfg = config.Config()
         dash = dashboard.build_dashboard(
             reqs=[_req(id="R-1", status="archived"), _req(id="R-2", status="merged"),
-                  _req(id="R-3", status="card_sent")],
+                  _req(id="R-3", status="detected")],
             agents=[], cfg=cfg, archived=[])
-        self.assertEqual([r["id"] for r in dash["needs_approval"]], ["R-3"])
+        # §78：可见的那一张落潜在任务列；needs_approval 恒空（墓碑键）
+        self.assertEqual([r["id"] for r in dash["debt"]], ["R-3"])
+        self.assertEqual(dash["needs_approval"], [])
         self.assertEqual(sum(dash["counts"][lane] for lane in dashboard._LANES), 1)
 
 
@@ -554,7 +563,7 @@ class LiveSessionCountTestCase(unittest.TestCase):
         reqs = [_req(id="R-1", status="executing", execution={"session_id": "a1b2c3d4"}),
                 _req(id="R-2", status="executing", execution={"session_id": "e5f6a7b8"}),
                 _req(id="R-3", status="executing", execution={}),
-                _req(id="R-4", status="card_sent")]
+                _req(id="R-4", status="detected")]
         self.assertEqual(dashboard._live_session_count(reqs), 2)
         self.assertEqual(dashboard._live_session_count([]), 0)
 
@@ -593,12 +602,12 @@ class WriteDashboardBytesTestCase(unittest.TestCase):
     """§2：落盘的字节形状本身是契约——目录自建、中文不转义、缩进两格。"""
 
     def test_the_whole_parent_chain_is_created(self):
-        target = _tmpdir("dash-mut-write-") / "state" / "nested" / "dashboard.json"
+        target = _tmpdir(self, "dash-mut-write-") / "state" / "nested" / "dashboard.json"
         dashboard.write_dashboard({"counts": {}}, path=target)
         self.assertTrue(target.exists())
 
     def test_cjk_stays_readable_and_the_indent_is_two(self):
-        target = _tmpdir("dash-mut-write-") / "dashboard.json"
+        target = _tmpdir(self, "dash-mut-write-") / "dashboard.json"
         dashboard.write_dashboard({"title": "中文标题"}, path=target)
         text = target.read_text(encoding="utf-8")
         self.assertIn("中文标题", text)              # ensure_ascii=False

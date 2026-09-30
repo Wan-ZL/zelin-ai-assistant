@@ -13,8 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api";
 import { getState, resetStoreForTests, setSelectionMode } from "../../store";
 import type { ReviewCard as ReviewRow, TaskRow } from "../../types";
-import { PROPOSAL_T1, REVIEW_FIXTURE, TASK_BLOCKED, TASK_QUEUED, TASK_WORKING } from "../styleguide/fixtures";
-import { ProposalCard } from "./ProposalCard";
+import { BACKLOG_T1, REVIEW_FIXTURE, TASK_BLOCKED, TASK_QUEUED, TASK_WORKING } from "../styleguide/fixtures";
+import { DebtCardItem } from "./DebtCardItem";
 import { ReviewCard } from "./ReviewCard";
 import { RunningCard } from "./RunningCard";
 
@@ -81,10 +81,10 @@ describe("double-click = take over in a terminal (#216)", () => {
     expect(postTerminal).toHaveBeenCalledWith(blocked.id);
   });
 
-  it("cards without a session (queued / proposal) ignore double-click: no request, no detail", () => {
-    render(<><RunningCard row={TASK_QUEUED} /><ProposalCard card={PROPOSAL_T1} /></>);
+  it("cards without a session (queued / backlog) ignore double-click: no request, no detail", () => {
+    render(<><RunningCard row={TASK_QUEUED} /><DebtCardItem item={BACKLOG_T1} /></>);
     fireEvent.doubleClick(article(/^Queued · /));
-    fireEvent.doubleClick(article(/^Proposal · /));
+    fireEvent.doubleClick(article(/^Backlog · /));
     expect(postTerminal).not.toHaveBeenCalled();
     expect(getState().selectedCardId).toBeNull();
   });

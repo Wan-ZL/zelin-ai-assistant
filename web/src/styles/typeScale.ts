@@ -24,12 +24,14 @@ export const TYPE_SCALE: TypeRole[] = [
   {
     token: "--type-card-title-lg", font: "var(--w-semibold) calc(15px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1074, size: 15, weight: "semibold" },
-    zh: "提案卡摘要（ApprovalCardView 大白话一句）", en: "Proposal card summary (ApprovalCardView plain-language line)",
+    zh: "拍板卡摘要：潜在任务（ApprovalCardView 大白话一句；§78 起提案列退役，这一档跟着「促成运行」搬到潜在任务卡面）",
+    en: "Decision card summary: backlog (ApprovalCardView plain-language line; §78 moved this size with the Run-it button)",
   },
   {
     token: "--type-card-title", font: "var(--w-medium) calc(12px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1562, size: 12, weight: "medium" },
-    zh: "行标题：运行中 / 待验收 / 阶段性完成 / 潜在任务 / 归档 / 回收站（TaskRow.rowTitle）", en: "Row title: running / review / done / backlog / archive / trash (TaskRow.rowTitle)",
+    zh: "行标题：运行中 / 待验收 / 阶段性完成 / 归档 / 回收站（TaskRow.rowTitle；潜在任务自 §78 起走上面那一档）",
+    en: "Row title: running / review / done / archive / trash (TaskRow.rowTitle; backlog moved up a size in §78)",
   },
   {
     token: "--type-card-placeholder", font: "var(--w-regular) calc(13px * var(--text-scale))/1.4 var(--font-sans)",

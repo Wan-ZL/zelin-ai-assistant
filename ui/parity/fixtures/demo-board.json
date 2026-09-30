@@ -92,14 +92,175 @@
   "counts": {
     "archived": 4,
     "completed": 2,
-    "debt": 7,
-    "needs_approval": 9,
+    "debt": 16,
+    "needs_approval": 0,
     "needs_input": 2,
     "review": 4,
     "running": 10,
     "trash": 3
   },
   "debt": [
+    {
+      "cost_usd": 12,
+      "days_left": 6,
+      "deadline": "2026-09-08",
+      "delivery_mode": "repo",
+      "disagreement": null,
+      "display_id": "P-101",
+      "dod": [
+        "dashboard 页出现「导出报告」按钮",
+        "点击后生成 markdown + png 到 exports/",
+        "draft PR 通过 CI"
+      ],
+      "green_sign": false,
+      "hardness": "hard",
+      "id": "P-101",
+      "id_kind": "proposal",
+      "improvement_of": null,
+      "outputs": [
+        "draft PR: example-bench#42"
+      ],
+      "plan": [
+        "在 example-bench 的 dashboard 页加「导出报告」按钮",
+        "后端把当前 leaderboard 渲染成 markdown + png",
+        "产出 draft PR，不 merge"
+      ],
+      "processing": false,
+      "repeated": 2,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "meeting",
+          "date": "2026-08-26",
+          "quote": "能不能加个按钮，一键把 leaderboard 导出成报告发出去",
+          "who": "manager"
+        },
+        {
+          "channel": "slack",
+          "date": "2026-08-31",
+          "quote": "上周说的导出报告那个还做吗？周会又有人问了",
+          "who": "alex.doe"
+        }
+      ],
+      "summary": "给评测面板加一个「导出报告」按钮，批准后 AI 会在 example-bench 开 draft PR，不动主分支。",
+      "target_kind": "existing",
+      "target_name": "example-bench",
+      "target_repo": "~/Projects/example-bench",
+      "tier": "T1",
+      "tier_hint": "一键可批",
+      "title": "example-bench: leaderboard 一键导出评测报告"
+    },
+    {
+      "cost_usd": 85,
+      "days_left": 13,
+      "deadline": "2026-09-15",
+      "delivery_mode": "repo",
+      "disagreement": "demo 用真实数据还是合成数据，manager 和 alex.doe 意见不一致",
+      "display_id": "P-102",
+      "display_title": "搭 inkweld 公开 demo 站",
+      "dod": [
+        "demo 站可公网访问，演示账号能登录",
+        "数据全部合成，无任何真实客户信息",
+        "一条命令可重置 demo 数据"
+      ],
+      "effective_tier": "T2",
+      "green_sign": true,
+      "hardness": "hard",
+      "id": "P-102",
+      "id_kind": "proposal",
+      "improvement_of": null,
+      "origin_trust": "external",
+      "outputs": [],
+      "plan": [
+        "新建 inkweld-demo 仓库（从 inkweld 模板裁剪）",
+        "写种子数据生成脚本（全部合成数据）",
+        "部署到内部 PaaS，配只读演示账号",
+        "README 写清 demo 边界与重置方式"
+      ],
+      "processing": false,
+      "repeated": 3,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "meeting",
+          "date": "2026-08-24",
+          "quote": "客户那边想先看个能点的 demo，不用完整功能",
+          "who": "manager"
+        },
+        {
+          "channel": "slack",
+          "date": "2026-08-30",
+          "quote": "demo 环境这事本周能定吗？销售又来问了",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "新建 inkweld-demo 仓库，部署一个带种子数据的公开 demo 站。对外可见，所以需要你文字确认。",
+      "target_kind": "new",
+      "target_name": "inkweld-demo",
+      "target_repo": "~/Projects/inkweld-demo",
+      "tier": "T2",
+      "tier_hint": "需文字确认",
+      "title": "inkweld: 搭对外可访问的 demo 环境 + 种子数据"
+    },
+    {
+      "cost_usd": null,
+      "days_left": 3,
+      "deadline": "2026-09-05",
+      "delivery_mode": "chat",
+      "disagreement": null,
+      "display_id": "P-103",
+      "dod": [
+        "提纲覆盖 3 个 objective",
+        "中英双语",
+        "一页以内"
+      ],
+      "effective_tier": "T2",
+      "green_sign": false,
+      "hardness": "soft",
+      "id": "P-103",
+      "id_kind": "proposal",
+      "improvement_of": null,
+      "origin_trust": "external",
+      "outputs": [],
+      "plan": [
+        "梳理 Q2 结果与 Q3 候选方向",
+        "按 objective / key results / risks 出提纲",
+        "中英双语成稿，放在结束总结里等你定稿"
+      ],
+      "processing": false,
+      "repeated": 1,
+      "show_cost": false,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-09-01",
+          "quote": "Q3 planning 下周三要一版 one-pager，先给个提纲也行",
+          "who": "manager"
+        }
+      ],
+      "summary": "写作任务：Q3 planning 一页纸初稿，会话内交付成稿，不动任何仓库。",
+      "target_kind": "existing",
+      "target_name": "workbench",
+      "target_repo": "~/Projects/workbench",
+      "tier": "T1",
+      "tier_hint": "外部来源提级，需文字确认",
+      "title": "起草 Q3 planning 的 one-pager（中英双语）"
+    },
+    {
+      "delivery_mode": "repo",
+      "display_id": "P-104",
+      "dod": [],
+      "id": "P-104",
+      "id_kind": "proposal",
+      "plan": [],
+      "processing": true,
+      "show_cost": false,
+      "sources": [],
+      "summary": "统一 example-bench 和 inkweld 的 lint 配置",
+      "tier": "T1",
+      "tier_hint": "AI 研究中",
+      "title": "统一 example-bench 和 inkweld 的 lint 配置"
+    },
     {
       "display_id": "P-113",
       "hardness": "soft",
@@ -152,6 +313,176 @@
       "summary": "warning 刷屏，出真错时没人看得见。",
       "title": "inkweld 报错日志太吵，真错误被淹没",
       "type": "engineering"
+    },
+    {
+      "cost_usd": 3.5,
+      "days_left": -3,
+      "deadline": "2026-08-30",
+      "delivery_mode": "repo",
+      "disagreement": "研究员认为图表来源应改为 warehouse 视图，而不是直接读生产库。",
+      "display_id": "P-131",
+      "dod": [
+        "四张图数据与源一致"
+      ],
+      "hardness": "hard",
+      "id": "P-131",
+      "id_kind": "proposal",
+      "improvement_of": "R-111",
+      "plan": [
+        "接数据源",
+        "生成时刷新"
+      ],
+      "processing": false,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "把季度报告里的四张图接到数据源，生成时自动刷新。",
+      "target_kind": "existing",
+      "target_name": "example-bench",
+      "target_repo": "~/Projects/example-bench",
+      "tier": "T0",
+      "tier_hint": "自动执行",
+      "title": "季度报告图表自动刷新",
+      "type": "code"
+    },
+    {
+      "cost_usd": 80,
+      "days_left": 0,
+      "deadline": "2026-09-02",
+      "delivery_mode": "doc",
+      "display_id": "P-132",
+      "dod": [
+        "邮件草稿在 outbox"
+      ],
+      "hardness": "soft",
+      "id": "P-132",
+      "id_kind": "proposal",
+      "plan": [
+        "起草",
+        "你审阅"
+      ],
+      "processing": false,
+      "reraised": true,
+      "reraised_note": "又有两个人在群里问同一件事",
+      "show_cost": true,
+      "silent_merged": 2,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "以你的口吻起草迁移说明，发前你过一眼。",
+      "target_kind": "new",
+      "target_name": "migration-notes",
+      "tier": "T2",
+      "tier_hint": "需文字确认",
+      "title": "给全员发一封迁移说明邮件",
+      "type": "comms"
+    },
+    {
+      "cost_usd": null,
+      "days_left": 10,
+      "deadline": "2026-09-12",
+      "delivery_mode": "doc",
+      "display_id": "P-133",
+      "dod": [
+        "一页清单"
+      ],
+      "hardness": "soft",
+      "id": "P-133",
+      "id_kind": "proposal",
+      "plan": [
+        "收集",
+        "整理"
+      ],
+      "processing": false,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "把入职文书按部门整理成一页。",
+      "target_kind": "existing",
+      "target_name": "your-workbench",
+      "target_repo": "~/Projects/your-workbench",
+      "tier": null,
+      "tier_hint": "未分级",
+      "title": "整理 onboarding 文书清单",
+      "type": "paperwork"
+    },
+    {
+      "display_id": "P-134",
+      "hardness": "hard",
+      "id": "P-134",
+      "id_kind": "proposal",
+      "processing": true,
+      "rework": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "按你的修改意见重提中。",
+      "tier": "T1",
+      "tier_hint": "一键可批",
+      "title": "评审新的 API 设计稿",
+      "type": "review"
+    },
+    {
+      "cost_state": "unknown",
+      "cost_usd": null,
+      "delivery_mode": "doc",
+      "display_id": "P-135",
+      "display_title": "周报模板迁移",
+      "dod": [
+        "新系统里能打开每一版"
+      ],
+      "former_titles": [
+        "周报模板搬家",
+        "迁移周报模板"
+      ],
+      "hardness": "soft",
+      "id": "P-135",
+      "id_kind": "proposal",
+      "plan": [
+        "导出",
+        "导入",
+        "校对"
+      ],
+      "processing": false,
+      "show_cost": true,
+      "sources": [
+        {
+          "channel": "gmail",
+          "date": "2026-08-30",
+          "quote": "季度报告的图表能自动更新吗",
+          "who": "sam.rivera"
+        }
+      ],
+      "summary": "把周报模板从旧 wiki 搬到新的文档系统，保留历史版本。",
+      "target_kind": "existing",
+      "target_name": "your-workbench",
+      "target_repo": "~/Projects/your-workbench",
+      "tier": "T2",
+      "tier_hint": "需文字确认",
+      "title": "把周报模板迁到新的文档系统",
+      "type": "paperwork"
     },
     {
       "display_id": "P-161",
@@ -344,339 +675,7 @@
       "verdict": "partition"
     }
   ],
-  "needs_approval": [
-    {
-      "cost_usd": 12,
-      "days_left": 6,
-      "deadline": "2026-09-08",
-      "delivery_mode": "repo",
-      "disagreement": null,
-      "display_id": "P-101",
-      "dod": [
-        "dashboard 页出现「导出报告」按钮",
-        "点击后生成 markdown + png 到 exports/",
-        "draft PR 通过 CI"
-      ],
-      "green_sign": false,
-      "hardness": "hard",
-      "id": "P-101",
-      "id_kind": "proposal",
-      "improvement_of": null,
-      "outputs": [
-        "draft PR: example-bench#42"
-      ],
-      "plan": [
-        "在 example-bench 的 dashboard 页加「导出报告」按钮",
-        "后端把当前 leaderboard 渲染成 markdown + png",
-        "产出 draft PR，不 merge"
-      ],
-      "processing": false,
-      "repeated": 2,
-      "show_cost": true,
-      "sources": [
-        {
-          "channel": "meeting",
-          "date": "2026-08-26",
-          "quote": "能不能加个按钮，一键把 leaderboard 导出成报告发出去",
-          "who": "manager"
-        },
-        {
-          "channel": "slack",
-          "date": "2026-08-31",
-          "quote": "上周说的导出报告那个还做吗？周会又有人问了",
-          "who": "alex.doe"
-        }
-      ],
-      "summary": "给评测面板加一个「导出报告」按钮，批准后 AI 会在 example-bench 开 draft PR，不动主分支。",
-      "target_kind": "existing",
-      "target_name": "example-bench",
-      "target_repo": "~/Projects/example-bench",
-      "tier": "T1",
-      "tier_hint": "一键可批",
-      "title": "example-bench: leaderboard 一键导出评测报告"
-    },
-    {
-      "cost_usd": 85,
-      "days_left": 13,
-      "deadline": "2026-09-15",
-      "delivery_mode": "repo",
-      "disagreement": "demo 用真实数据还是合成数据，manager 和 alex.doe 意见不一致",
-      "display_id": "P-102",
-      "display_title": "搭 inkweld 公开 demo 站",
-      "dod": [
-        "demo 站可公网访问，演示账号能登录",
-        "数据全部合成，无任何真实客户信息",
-        "一条命令可重置 demo 数据"
-      ],
-      "effective_tier": "T2",
-      "green_sign": true,
-      "hardness": "hard",
-      "id": "P-102",
-      "id_kind": "proposal",
-      "improvement_of": null,
-      "origin_trust": "external",
-      "outputs": [],
-      "plan": [
-        "新建 inkweld-demo 仓库（从 inkweld 模板裁剪）",
-        "写种子数据生成脚本（全部合成数据）",
-        "部署到内部 PaaS，配只读演示账号",
-        "README 写清 demo 边界与重置方式"
-      ],
-      "processing": false,
-      "repeated": 3,
-      "show_cost": true,
-      "sources": [
-        {
-          "channel": "meeting",
-          "date": "2026-08-24",
-          "quote": "客户那边想先看个能点的 demo，不用完整功能",
-          "who": "manager"
-        },
-        {
-          "channel": "slack",
-          "date": "2026-08-30",
-          "quote": "demo 环境这事本周能定吗？销售又来问了",
-          "who": "sam.rivera"
-        }
-      ],
-      "summary": "新建 inkweld-demo 仓库，部署一个带种子数据的公开 demo 站。对外可见，所以需要你文字确认。",
-      "target_kind": "new",
-      "target_name": "inkweld-demo",
-      "target_repo": "~/Projects/inkweld-demo",
-      "tier": "T2",
-      "tier_hint": "需文字确认",
-      "title": "inkweld: 搭对外可访问的 demo 环境 + 种子数据"
-    },
-    {
-      "cost_usd": null,
-      "days_left": 3,
-      "deadline": "2026-09-05",
-      "delivery_mode": "chat",
-      "disagreement": null,
-      "display_id": "P-103",
-      "dod": [
-        "提纲覆盖 3 个 objective",
-        "中英双语",
-        "一页以内"
-      ],
-      "effective_tier": "T2",
-      "green_sign": false,
-      "hardness": "soft",
-      "id": "P-103",
-      "id_kind": "proposal",
-      "improvement_of": null,
-      "origin_trust": "external",
-      "outputs": [],
-      "plan": [
-        "梳理 Q2 结果与 Q3 候选方向",
-        "按 objective / key results / risks 出提纲",
-        "中英双语成稿，放在结束总结里等你定稿"
-      ],
-      "processing": false,
-      "repeated": 1,
-      "show_cost": false,
-      "sources": [
-        {
-          "channel": "gmail",
-          "date": "2026-09-01",
-          "quote": "Q3 planning 下周三要一版 one-pager，先给个提纲也行",
-          "who": "manager"
-        }
-      ],
-      "summary": "写作任务：Q3 planning 一页纸初稿，会话内交付成稿，不动任何仓库。",
-      "target_kind": "existing",
-      "target_name": "workbench",
-      "target_repo": "~/Projects/workbench",
-      "tier": "T1",
-      "tier_hint": "外部来源提级，需文字确认",
-      "title": "起草 Q3 planning 的 one-pager（中英双语）"
-    },
-    {
-      "delivery_mode": "repo",
-      "display_id": "P-104",
-      "dod": [],
-      "id": "P-104",
-      "id_kind": "proposal",
-      "plan": [],
-      "processing": true,
-      "show_cost": false,
-      "sources": [],
-      "summary": "统一 example-bench 和 inkweld 的 lint 配置",
-      "tier": "T1",
-      "tier_hint": "AI 研究中",
-      "title": "统一 example-bench 和 inkweld 的 lint 配置"
-    },
-    {
-      "cost_usd": 3.5,
-      "days_left": -3,
-      "deadline": "2026-08-30",
-      "delivery_mode": "repo",
-      "disagreement": "研究员认为图表来源应改为 warehouse 视图，而不是直接读生产库。",
-      "display_id": "P-131",
-      "dod": [
-        "四张图数据与源一致"
-      ],
-      "hardness": "hard",
-      "id": "P-131",
-      "id_kind": "proposal",
-      "improvement_of": "R-111",
-      "plan": [
-        "接数据源",
-        "生成时刷新"
-      ],
-      "processing": false,
-      "show_cost": true,
-      "sources": [
-        {
-          "channel": "gmail",
-          "date": "2026-08-30",
-          "quote": "季度报告的图表能自动更新吗",
-          "who": "sam.rivera"
-        }
-      ],
-      "summary": "把季度报告里的四张图接到数据源，生成时自动刷新。",
-      "target_kind": "existing",
-      "target_name": "example-bench",
-      "target_repo": "~/Projects/example-bench",
-      "tier": "T0",
-      "tier_hint": "自动执行",
-      "title": "季度报告图表自动刷新",
-      "type": "code"
-    },
-    {
-      "cost_usd": 80,
-      "days_left": 0,
-      "deadline": "2026-09-02",
-      "delivery_mode": "doc",
-      "display_id": "P-132",
-      "dod": [
-        "邮件草稿在 outbox"
-      ],
-      "hardness": "soft",
-      "id": "P-132",
-      "id_kind": "proposal",
-      "plan": [
-        "起草",
-        "你审阅"
-      ],
-      "processing": false,
-      "reraised": true,
-      "reraised_note": "又有两个人在群里问同一件事",
-      "show_cost": true,
-      "silent_merged": 2,
-      "sources": [
-        {
-          "channel": "gmail",
-          "date": "2026-08-30",
-          "quote": "季度报告的图表能自动更新吗",
-          "who": "sam.rivera"
-        }
-      ],
-      "summary": "以你的口吻起草迁移说明，发前你过一眼。",
-      "target_kind": "new",
-      "target_name": "migration-notes",
-      "tier": "T2",
-      "tier_hint": "需文字确认",
-      "title": "给全员发一封迁移说明邮件",
-      "type": "comms"
-    },
-    {
-      "cost_usd": null,
-      "days_left": 10,
-      "deadline": "2026-09-12",
-      "delivery_mode": "doc",
-      "display_id": "P-133",
-      "dod": [
-        "一页清单"
-      ],
-      "hardness": "soft",
-      "id": "P-133",
-      "id_kind": "proposal",
-      "plan": [
-        "收集",
-        "整理"
-      ],
-      "processing": false,
-      "show_cost": true,
-      "sources": [
-        {
-          "channel": "gmail",
-          "date": "2026-08-30",
-          "quote": "季度报告的图表能自动更新吗",
-          "who": "sam.rivera"
-        }
-      ],
-      "summary": "把入职文书按部门整理成一页。",
-      "target_kind": "existing",
-      "target_name": "your-workbench",
-      "target_repo": "~/Projects/your-workbench",
-      "tier": null,
-      "tier_hint": "未分级",
-      "title": "整理 onboarding 文书清单",
-      "type": "paperwork"
-    },
-    {
-      "display_id": "P-134",
-      "hardness": "hard",
-      "id": "P-134",
-      "id_kind": "proposal",
-      "processing": true,
-      "rework": true,
-      "sources": [
-        {
-          "channel": "gmail",
-          "date": "2026-08-30",
-          "quote": "季度报告的图表能自动更新吗",
-          "who": "sam.rivera"
-        }
-      ],
-      "summary": "按你的修改意见重提中。",
-      "tier": "T1",
-      "tier_hint": "一键可批",
-      "title": "评审新的 API 设计稿",
-      "type": "review"
-    },
-    {
-      "cost_state": "unknown",
-      "cost_usd": null,
-      "delivery_mode": "doc",
-      "display_id": "P-135",
-      "display_title": "周报模板迁移",
-      "dod": [
-        "新系统里能打开每一版"
-      ],
-      "former_titles": [
-        "周报模板搬家",
-        "迁移周报模板"
-      ],
-      "hardness": "soft",
-      "id": "P-135",
-      "id_kind": "proposal",
-      "plan": [
-        "导出",
-        "导入",
-        "校对"
-      ],
-      "processing": false,
-      "show_cost": true,
-      "sources": [
-        {
-          "channel": "gmail",
-          "date": "2026-08-30",
-          "quote": "季度报告的图表能自动更新吗",
-          "who": "sam.rivera"
-        }
-      ],
-      "summary": "把周报模板从旧 wiki 搬到新的文档系统，保留历史版本。",
-      "target_kind": "existing",
-      "target_name": "your-workbench",
-      "target_repo": "~/Projects/your-workbench",
-      "tier": "T2",
-      "tier_hint": "需文字确认",
-      "title": "把周报模板迁到新的文档系统",
-      "type": "paperwork"
-    }
-  ],
+  "needs_approval": [],
   "needs_input": [
     {
       "agent_name": "inkweld supabase auth",

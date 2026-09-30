@@ -22,12 +22,11 @@ POSIX-only (install.sh is the macOS/Linux installer).
 """
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
@@ -62,8 +61,7 @@ def _install_sh_line(prefix):
 @unittest.skipIf(_WIN, "install.sh is POSIX-only")
 class RefreshStableClaudeTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="stable-claude-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="stable-claude-"))
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         shim = self.bin / "codesign"

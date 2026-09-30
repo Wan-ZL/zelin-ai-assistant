@@ -1,12 +1,13 @@
 """daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §70；§75 第三个维护阶段；R2.4；owner D10/D12/D18）。
 
 一句话：每天固定时段（`daily_loop.time`，默认 03:30 本地）在 actd 的 pass 里
-跑一次——**先**整理看板（act/lib/maintenance：提案列 + 潜在任务列去重合成、
+跑一次——**先**整理看板（act/lib/maintenance：潜在任务列去重合成（§78 起只剩
+这一列，存量 card_sent 卡一并扫）、
 过时卡进回收站），**再**回收磁盘（act/lib/worktrees：已合并 / 已删枝 / 过时的
 `.claude/worktrees/`，§75），**最后**从日志台账 / analytics / doctor / 夜间变异报告 / GitHub
 issue·PR / 素材库读信号（act/lib/loop_inputs），按指纹去重后铸 ≤
 `max_proposals_per_day`（默认 truth = config.DEFAULT_DAILY_LOOP_MAX_PROPOSALS）张
-🤖 提案卡进正常审批闸门。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
+🤖 卡进潜在任务列（§78：提案列退役，机器卡一律落那儿）。**自检类信号不铸卡**（D33，`loop_inputs.ADVISORY_KINDS`）：
 它们只成 advisory 行，落在 `last_result.advisories`（≤ 20 条，带 first_seen；跨天备忘
 `state.advisory_first_seen`）、审计行与看板横幅「系统自检 N 条」里——同一根因的症状
 不该变成一排派不出去的卡。
@@ -47,7 +48,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import config, heartbeat, logcap, loop_inputs, maintenance, registry, worktrees
+from act.lib import (automation, config, heartbeat, logcap, loop_inputs, maintenance,
+                     registry, worktrees)
 from act.lib.registry import Requirement, State
 
 SOURCE_CHANNEL = "self_improve"      # policy.CHANNEL_CLASS 同款字面量（write-locked）
@@ -83,6 +85,12 @@ PHASE_PROPOSALS = "proposals"
 GITHUB_KINDS = ("issue", "pr_red", "pr_comment", "mutation")
 # §65.1 自动改进本软件的通道关着时不跑的三个读取器（零 gh 调用）；`inputs.<name>` 记 READER_OFF
 GITHUB_READERS = ("mutation", "issues", "prs")
+# §81 修法（issue #451 / D83）：`materials` 铸的也是 self_improve 卡
+# （`sources[].ref = self_improve:material:<id>`、target_repo = 本仓库、plan 写着
+# 「实现成草稿 PR」），却从来不跟着 §65.1 的通道总开关关——D57 说「关着时不再产生
+# 新的 🤖 卡」，素材那一路是这句话的漏洞。闸门真源自此是本元组，不再是
+# :data:`GITHUB_READERS`（后者保持原义 = 真正调 gh 的三个，判例还在钉它）。
+SELF_IMPROVE_READERS = GITHUB_READERS + ("materials",)
 READER_OFF = "off"
 
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
@@ -254,10 +262,13 @@ def select_signals(signals: list, *, taken: set, gh_titles: list, budget: int) -
 
 
 def build_card(sig, today: str, repo_path: str) -> Requirement:
-    """一条信号 → 未落盘的提案卡（channel 硬编码 self_improve；plan/DoD/成本齐全）。"""
+    """一条信号 → 未落盘的 🤖 卡（channel 硬编码 self_improve；plan/DoD/成本齐全）。
+
+    §78：落点是潜在任务（detected）——提案列已退役，卡在那儿等 owner 一次
+    「促成运行」；§65 的免批 lane 从这一列自动接手（D80.5）。"""
     return Requirement(
         id="", title=(TITLE_PREFIX + sig.title)[:TITLE_CAP], type=CARD_TYPE, tier="T1",
-        status=State.CARD_SENT.value, hardness="soft", summary=str(sig.summary or "")[:300],
+        status=State.DETECTED.value, hardness="soft", summary=str(sig.summary or "")[:300],
         plan=list(sig.plan), definition_of_done=list(sig.dod),
         cost_estimate_usd=float(sig.cost_usd), target_repo=repo_path, delivery_mode="repo",
         sources=[{"channel": SOURCE_CHANNEL, "date": today, "ref": REF_PREFIX + sig.fingerprint,
@@ -303,9 +314,11 @@ def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
     自检类已按 D33 转成 `advisories`（Summary，按原 priority 排）。`inputs.<name>`
     仍数读取器给出的全部信号——两类都算，看得见每个读取器活着。
 
-    ``github=False``（§65.1 通道关着，#307 / D57）= :data:`GITHUB_READERS` 三个读取器
-    一个都不跑、**零 gh 调用**，`inputs` 里各记一行 :data:`READER_OFF`（看得见是关着
-    而不是坏了）；维护半边与其余读取器一字不动，`gh_titles` 自然空。"""
+    ``github=False``（§65.1 通道关着，#307 / D57）= :data:`SELF_IMPROVE_READERS`
+    四个读取器一个都不跑、**零 gh 调用零素材抓取**，`inputs` 里各记一行
+    :data:`READER_OFF`（看得见是关着而不是坏了）；维护半边与其余读取器一字不动，
+    `gh_titles` 自然空。第四个（`materials`）是 §81 / D83 补进来的——它铸的同样是
+    self_improve 卡，D57 的「关着时不再产生新的 🤖 卡」本来就该罩住它。"""
     gh = _beating_gh(gh, interval)
     since = now - _dt.timedelta(days=COMMENT_LOOKBACK_DAYS)
     readers = [
@@ -322,7 +335,7 @@ def collect_signals(reqs: list, *, now: _dt.datetime, gh: Callable,
     ]
     out: dict = {"signals": [], "advisories": [], "summaries": [], "gh_titles": [], "inputs": {}}
     for name, fn in readers:
-        _run_reader(out, name, fn, on=github or name not in GITHUB_READERS)
+        _run_reader(out, name, fn, on=github or name not in SELF_IMPROVE_READERS)
     _run_reader(out, "issues", lambda: loop_inputs.issue_signals(gh, repo),
                 github=True, on=github)
     _run_reader(out, "prs", lambda: loop_inputs.pr_signals(gh, repo, since),
@@ -443,6 +456,24 @@ def _mark_materials(signals: list, filed: list) -> dict:
     return loop_inputs.mark_materials(picked, cards) if picked else {}
 
 
+def _worktree_phase(cfg, git, interval) -> dict:
+    """§75 的第三个维护阶段 + §81 闸门（`features.worktree_sweep`，issue #451 / D83）。
+
+    以前这条**只有**进程级环境变量 `AIASSISTANT_WORKTREE_SWEEP` 一道闸，而且那道闸
+    在注入了 git runner 时压根不看（`worktrees.sweep` 的 `git is None and ...`）——
+    设置页上没有任何一处能关掉「自动删 worktree」。关着时回执与它自己的 disabled
+    分支逐字同形（`skipped: {"disabled": 1}`），下游计数不用改。
+    """
+    if not automation.enabled("loop_worktree_sweep", cfg):
+        return {"removed": [], "skipped": {"disabled": 1}}
+    swept = worktrees.sweep(cfg, git=git, beat=lambda: heartbeat.beat(
+        f"daily_loop:{PHASE_WORKTREES}", interval))
+    removed = swept.get("removed") or []
+    if removed:
+        automation.audit("loop_worktree_sweep", "acted", removed=len(removed))
+    return swept
+
+
 def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,
         doctor: Optional[Callable] = None, interval=None, git: Optional[Callable] = None) -> dict:
     """一次完整运行：dedup → stale sweep → worktree sweep（§75）→ proposals；
@@ -461,8 +492,8 @@ def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = Non
     review_notices = _phase(lambda: maintenance.sweep_review_notices(cfg, today=now.date(), now=now),
                             errors, "review_notice", [])
     _set_phase(state, PHASE_WORKTREES, interval)
-    swept = _phase(lambda: worktrees.sweep(cfg, git=git, beat=lambda: heartbeat.beat(
-        f"daily_loop:{PHASE_WORKTREES}", interval)), errors, "worktree_sweep", {"removed": []})
+    swept = _phase(lambda: _worktree_phase(cfg, git, interval),
+                   errors, "worktree_sweep", {"removed": []})
     _set_phase(state, PHASE_PROPOSALS, interval)
     proposed = _phase(lambda: _propose(cfg, now, gh or loop_inputs.default_gh, doctor, state, interval),
                       errors, "proposals", {"filed": [], "skipped": {}, "summaries": [],

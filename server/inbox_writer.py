@@ -83,7 +83,10 @@ _VIA_AGENT = "agent"
 # actor 字段仅 boardctl 的动词面（capture/comment）接受；唯一合法值 "agent"
 _ACTOR_VERBS = frozenset({"capture", "comment"})
 
-# §34bis 双端字面量常量（Swift ProposalsTriage.presetKey = actd 同名常量）
+# §34bis 双端字面量常量（Swift ProposalsTriage.presetKey = actd 同名常量）。
+# §78/D80.11：提案积压清理**按钮**随提案列一起退役，但 wire 上这个 preset 值
+# 逐字留着（add-only：老客户端 / 存量 inbox 文件 / 字节形 golden 仍带着它），
+# 闸门照旧 fail-closed 只认这一个值 + mode:"run"。
 _CAPTURE_PRESET = "proposals_triage"
 # §10bis capture images 上限（actd 边界校验同值；这里 fail-closed 提前 400）
 _CAPTURE_IMAGES_MAX = 4

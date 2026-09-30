@@ -1,0 +1,2 @@
+type: fixed
+- **判例不再往 `$TMPDIR` 漏目录（issue #436；CONTRACT §58.3 追记）**：`tests/` 里全部 `tempfile.mkdtemp` 调用改走新工厂 `tests/scratch_testkit.scratch_dir(self, prefix=…)`（目录登记进 TestCase 的 cleanup 整树删；`setUpClass` 传 `cls`），只在一个 helper 内活着的草稿改 `TemporaryDirectory()` 上下文；`tests/__init__.py` 把整次 run 的临时目录根（`tempfile.tempdir` + `TMPDIR`/`TEMP`/`TMP`）指进沙箱 HOME 并在退出时连沙箱一起删，子进程与忘了 cleanup 的那一处也漏不出去；hygiene 门新增 `mkdtemp:` 规则禁 `tests/` 裸 mkdtemp（白名单只有 bootstrap 与工厂两文件）。owner 机器 2026-09-19 实测 `$TMPDIR` 里 215k 个、5.6 GB 的判例草稿目录全部出自这些调用点；变异 runner 侧的 per-run TMPDIR 早已就位，本次补判例钉住（含被 timeout 杀掉的子进程）。

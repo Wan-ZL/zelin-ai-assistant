@@ -1,4 +1,4 @@
-"""act/recap.py — meeting recaps: deterministic sessions in, a copy-only note out (CONTRACT §63 / §63.10 / §63.11 / §63.12).
+"""act/recap.py — meeting recaps: deterministic sessions in, a copy-only note out (CONTRACT §63 / §63.10 / §63.11 / §63.12 / §63.13 / §63.14 / §63.15).
 
 Hangs off the existing 30-minute screenpipe cron chain
 (``ingest/process-screenpipe.sh`` runs ``python -m act.recap --once`` before
@@ -54,6 +54,17 @@ tag on the same commitment — but the tag is decided **here**
 foreign claim is discarded and re-assigned, and the per-letter counter on the
 record (``tag_seq``) never goes back, so a tag is never reused inside one key.
 
+§63.13 (issue #440): the sendable shape's items carry their **own modality** and
+a **transcript anchor** (the ``[HH:MM]`` stamp of the transcript line + a
+verbatim fragment) — the sections prompt gets the transcript stamped per row
+(:func:`_transcript_view`), the anchors are checked against that transcript
+(``recap_text.anchor_context``) and never enter the pasted body. §63.14: the
+glossary (``act/lib/recap_glossary.py``) rewrites misheard terms in the
+transcript **before** it reaches the model (:func:`_source`; count on the
+record as ``glossary_hits``) and its spellings ride in the fenced prompt.
+§63.15: the model timeout scales with the transcript's word count
+(``act/lib/recap_timing.py``; the §63.8 lost line follows it).
+
 Other entry points (spawned detached by actd for the inbox special forms):
 ``--generate <key> [--note …] [--partial] [--shape …] [--answers …]``, ``--slack-draft <key>
 --channel-id <C…>`` and ``--revert <key> --to-version <n>`` (§63.9: a stored
@@ -82,22 +93,26 @@ from act.lib import (
     logcap,
     notify,
 )
+from act.lib import recap_glossary as glossary_mod
 from act.lib import recap_intent as intent
 from act.lib import recap_sessions as sessions
 from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
 from act.lib import recap_text as text
+from act.lib import recap_timing as timing
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows: no flock, the cron chain is macOS-only anyway
     fcntl = None  # type: ignore[assignment]
 
-LLM_TIMEOUT_S = 240
+# §63.15：模型调用的超时自此随转写词数伸缩（truth = act/lib/recap_timing.py）；这个名字
+# 留作**地板**（词数未知时的那一档 = 原来的定值 240 s），`fill_record` 按词数算真值
+LLM_TIMEOUT_S = timing.LLM_TIMEOUT_BASE_S
 DRAFT_TIMEOUT_S = 180
 MAX_GENERATION_FAILURES = 3
 HISTORY_CAP = 5
-LOCK_WAIT_S = 120.0
+LOCK_WAIT_S = timing.LOCK_WAIT_S
 NOTIFY_KIND = "recap_ready"
 
 
@@ -180,10 +195,11 @@ _SHAPE_MISS = {
 
 
 def _attempt(args: dict, runner, cfg, problems: Optional[list] = None,
-             drop_prior: bool = False) -> "tuple[Optional[dict], list]":
+             drop_prior: bool = False, timeout: Optional[float] = None,
+             context: Optional[dict] = None) -> "tuple[Optional[dict], list]":
     shape = text.normalize_shape(args.get("shape"))
     raw = _call_model(text.build_prompt(problems=problems, **args), runner, cfg,
-                      text.NO_EGRESS_ARGV, LLM_TIMEOUT_S)
+                      text.NO_EGRESS_ARGV, timeout or LLM_TIMEOUT_S)
     parsed = text.parse_for(shape, raw)
     if parsed is None:
         return None, [_SHAPE_MISS[shape]]
@@ -192,10 +208,12 @@ def _attempt(args: dict, runner, cfg, problems: Optional[list] = None,
     # 马上被替掉的散文的问题（问题行与存下来的正文对不上就是一条假回执）
     if drop_prior:
         parsed = text.drop_prior(shape, parsed)
-    return parsed, text.validate_for(shape, parsed)
+    # §63.13：`context` = 模型看到的那份转写的对照（戳 + 归一正文），逐条锚据它判「原话在不在」
+    return parsed, text.validate_for(shape, parsed, context)
 
 
-def _after_retry(best: Optional[dict], shape: str) -> "tuple[Optional[dict], str, list, list]":
+def _after_retry(best: Optional[dict], shape: str,
+                 context: Optional[dict] = None) -> "tuple[Optional[dict], str, list, list]":
     """The retry also failed: try the §63.3 追记 deterministic length repair, and
     failing that store the model's OWN version (never half-trimmed text) with the
     structured findings behind 需复核.
@@ -206,29 +224,36 @@ def _after_retry(best: Optional[dict], shape: str) -> "tuple[Optional[dict], str
     if best is None:
         return None, store.QUALITY_FAILED, [], []   # 两次都不是 JSON：无正文可复核
     if shape == text.SHAPE_SECTIONS:
-        return best, store.QUALITY_NEEDS_REVIEW, text.validate_sections_detail(best), []
+        return best, store.QUALITY_NEEDS_REVIEW, text.validate_sections_detail(best, context), []
     repaired, repairs = text.repair_lengths(best)
     if repairs and not text.validate_detail(repaired):
         return repaired, store.QUALITY_OK, [], repairs
     return best, store.QUALITY_NEEDS_REVIEW, text.validate_detail(best), []
 
 
-def generate_lines(args: dict, runner, cfg,
-                   drop_prior: bool = False) -> "tuple[Optional[dict], str, list, list]":
+def generate_lines(args: dict, runner, cfg, drop_prior: bool = False,
+                   timeout: Optional[float] = None,
+                   context: Optional[dict] = None) -> "tuple[Optional[dict], str, list, list]":
     """``(lines, quality, problems, repairs)`` — one call, one retry with the
     violations quoted back, then the §63.3 追记 deterministic repair: a failure
     that is nothing but a few characters over a cap is trimmed back instead of
     costing a round trip or a human (issue #298). Still failing = 需复核 with
     the structured findings on the record — the owner can copy and fix by hand.
     ``drop_prior`` (§63.11) is the owner's ``prior=drop`` answer, applied to
-    every attempt deterministically instead of being asked for."""
-    parsed, problems = _attempt(args, runner, cfg, drop_prior=drop_prior)
+    every attempt deterministically instead of being asked for. ``timeout``
+    (§63.15) is the per-call budget the caller derived from the transcript's
+    word count (``recap_timing.llm_timeout_s``); None = the floor. ``context``
+    (§63.13) is ``recap_text.anchor_context`` of the transcript the model saw —
+    the sendable shape's item anchors are checked against it on every attempt."""
+    parsed, problems = _attempt(args, runner, cfg, drop_prior=drop_prior, timeout=timeout,
+                                context=context)
     if not problems:
         return parsed, store.QUALITY_OK, [], []
-    retry, problems = _attempt(args, runner, cfg, problems, drop_prior=drop_prior)
+    retry, problems = _attempt(args, runner, cfg, problems, drop_prior=drop_prior, timeout=timeout,
+                               context=context)
     if not problems:
         return retry, store.QUALITY_OK, [], []
-    return _after_retry(retry or parsed, text.normalize_shape(args.get("shape")))
+    return _after_retry(retry or parsed, text.normalize_shape(args.get("shape")), context)
 
 
 def _when(rec: dict, tz: str) -> str:
@@ -261,9 +286,13 @@ def _push_history(rec: dict) -> None:
     judgement that a regeneration must never lose the previous text."""
     if not store.has_text(rec):
         return
+    # §63.13 追记：条目自此也带出生时的 `problems`（add-only）——`anchor_unverified` 这一种发现要
+    # 对着转写才算得出，回退时没有转写可对，只能从出生台账带回（其余 code 回退时照旧重算，见
+    # `_carried_problems`）；D77 那句「不存算得出来的东西」对算不出来的那一种自此不再成立
     entry = {"version": rec.get("version"), "generated_at": rec.get("generated_at"),
              "en": rec["en"], "zh": rec["zh"], "partial": bool(rec.get("partial")),
              "quality": rec.get("quality"), "repairs": list(rec.get("repairs") or []),
+             "problems": list(rec.get("problems") or []),
              "shape": text.normalize_shape(rec.get("shape")),
              "sections_en": rec.get("sections_en"), "sections_zh": rec.get("sections_zh"),
              "copy_en": rec.get("copy_en"), "copy_zh": rec.get("copy_zh")}
@@ -397,6 +426,29 @@ def _intent_args(rec: dict, answers: list) -> dict:
             "baseline": intent.baseline_block(intent.split_subjects(rec), copy_body(rec, "en"))}
 
 
+def _source(rec: dict, conn, cfg) -> dict:
+    """这份记录区间里的转写，连同它的派生物：``rows`` = 引擎里逐行的 ``(ts, text)``（§63.13
+    的逐条锚按行找原话），``plain`` = 拼起来的正文（词数与 prompt 用它），``hits`` /
+    ``glossary`` = §63.14 术语表在这份转写里换了几处、以及进 prompt 的正确拼法清单。
+    术语替换**逐行**做、在进模型之前做——owner 明确列出的听错形不交给模型再赌一次。"""
+    start, end = sessions.parse_ts(rec["start"]) or 0.0, sessions.parse_ts(rec["end"]) or 0.0
+    glossary = glossary_mod.load(cfg)
+    rows, hits = glossary_mod.apply_rows(sessions.transcript_rows_between(conn, start, end), glossary)
+    return {"start": start, "end": end, "rows": rows, "hits": hits,
+            "plain": "\n".join(line for _ts, line in rows),
+            "glossary": glossary_mod.prompt_block(glossary)}
+
+
+def _transcript_view(src: dict, shape: str, tz: str) -> tuple:
+    """``(进 prompt 的转写, 校验用的对照)``（§63.13）：可发送长版的转写逐行带 ``[HH:MM]`` 戳
+    （条目的锚要指得到自己靠的那一行），对照 = 戳的集合 + 归一正文（锚的原话在不在转写里）；
+    五行形照旧给素文、对照 None（§63.3 的模板禁时间戳，一个字符没动）。"""
+    if shape != text.SHAPE_SECTIONS:
+        return src["plain"], None
+    stamps = [sessions.stamp(ts, tz) for ts, _line in src["rows"]]
+    return sessions.stamped_transcript(src["rows"], tz), text.anchor_context(src["plain"], stamps)
+
+
 def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
                 note: Optional[str] = None, partial: bool = False,
                 shape: Optional[str] = None, answers: Optional[list] = None) -> dict:
@@ -412,24 +464,29 @@ def fill_record(rec: dict, conn, st: dict, runner, cfg, now: float,
     tz = st["options"].timezone
     shape = record_shape(rec, st, shape)
     answers = intent.clean_answers(answers)
-    start, end = sessions.parse_ts(rec["start"]) or 0.0, sessions.parse_ts(rec["end"]) or 0.0
-    transcript = sessions.transcript_between(conn, start, end)
-    words = text.transcript_words(transcript)
+    src = _source(rec, conn, cfg)
+    words = text.transcript_words(src["plain"])
     rec["transcript_words"] = words
+    # §63.14 add-only：术语表在这份转写里换了几处听错的词（只有计数，宪法第 9 条）
+    rec["glossary_hits"] = src["hits"]
     problems, repairs = [], []
     if words == 0:
         lines, quality = None, store.QUALITY_NO_AUDIO
     elif words < text.MIN_TRANSCRIPT_WORDS:
         lines, quality = None, store.QUALITY_THIN
     else:
-        args = {"transcript": transcript, "priors": store.priors_for(start, tz),
+        transcript, context = _transcript_view(src, shape, tz)
+        args = {"transcript": transcript, "priors": store.priors_for(src["start"], tz),
                 "voice_profile": voice_profile_text(), "note": note, "partial": partial,
-                "shape": shape,
+                "shape": shape, "glossary": src["glossary"],
                 "meta": {"when": _when(rec, tz), "app": rec["app"],
                          "duration_min": rec["duration_min"]},
                 **_tag_args(rec, shape), **_intent_args(rec, answers)}
+        # §63.15：超时按这份转写的词数算（地板 = 原来的定值），重试用同一个数
         lines, quality, problems, repairs = generate_lines(args, runner, cfg,
-                                                           drop_prior=intent.drops_prior(answers))
+                                                           drop_prior=intent.drops_prior(answers),
+                                                           timeout=timing.llm_timeout_s(words),
+                                                           context=context)
         lines = _tagged(rec, lines, shape)
     _apply_lines(rec, lines, quality, note, partial, now, problems, repairs, shape=shape,
                  answers=answers)
@@ -456,7 +513,7 @@ def _announce(rec: dict, st: dict) -> None:
     analytics.log_event("recap_generated", app=rec.get("app"), duration_min=rec.get("duration_min"),
                         words=rec.get("transcript_words"), quality=rec.get("quality"),
                         version=rec.get("version"), partial=rec.get("partial") or None,
-                        shape=rec.get("shape"))
+                        shape=rec.get("shape"), glossary_hits=rec.get("glossary_hits"))
 
 
 # --------------------------------------------------------------------------- #
@@ -798,6 +855,17 @@ def _restored_problems(rec: dict) -> list:
     return [] if body is None else text.validate_detail_for(shape, body)
 
 
+def _carried_problems(entry: dict) -> list:
+    """§63.13：回退时**只**从条目的出生台账（add-only ``problems``，§63.13 起 `_push_history` 存入）
+    带回 `anchor_unverified` 那几行——它们要对着模型当时看到的转写才算得出，`_restored_problems`
+    没有转写可对；其余 code 都能重算，不搬（把存着的发现挪过来是 D77 明令的撒谎）。本键之前入库
+    的条目 / 非 dict 的行 = 空。"""
+    rows = entry.get("problems") if isinstance(entry, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict) and row.get("code") == text.CODE_ANCHOR_UNVERIFIED]
+
+
 def _entry_repairs(entry: dict) -> list:
     """The trims the restored version was born with (add-only entry key, §63.6
     追记 2026-09-15 修正); entries from before the key — or junk — restore none."""
@@ -837,7 +905,12 @@ def _apply_history_entry(rec: dict, entry: dict, now: float) -> None:
     rec["quality"] = _entry_quality(entry)
     rec["note"] = None
     rec["problems"] = _restored_problems(rec)
+    if rec["quality"] == store.QUALITY_NEEDS_REVIEW:
+        rec["problems"] += _carried_problems(entry)       # §63.13：对不着转写的那一种从出生台账带回
     rec["repairs"] = _entry_repairs(entry)
+    # §63.14：术语替换的计数属于产出那份正文的那一次生成，回退搬不回来 = None（不写 0：
+    # 「换了 0 处」是一个我们没有资格说的数）
+    rec["glossary_hits"] = None
     # add-only：这一版的正文是从第几版搬回来的（面板据它说「由第 N 版回退而来」）
     rec["reverted_from"] = int(entry["version"])
 

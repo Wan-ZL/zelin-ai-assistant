@@ -24,13 +24,13 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import skills
 
@@ -74,8 +74,7 @@ def make_repo(root: Path, manifest: str = MANIFEST, project_links=("alpha",)) ->
 @unittest.skipIf(_WIN, "the fixture store needs symlinks (POSIX); pure-function cases below still run")
 class _Case(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="skills-store-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="skills-store-"))
         self.repo = make_repo(self.tmp / "repo")
         self.claude_home = self.tmp / "claude-home"
         self.state_dir = self.tmp / "state"
@@ -196,8 +195,7 @@ class VersionAndHashTestCase(unittest.TestCase):
         self.assertEqual(skills.version_relation("1.0.0", "x"), ("unknown", 0))
 
     def test_tree_hash_skips_caches_and_is_order_independent(self):
-        tmp = Path(tempfile.mkdtemp(prefix="skills-hash-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="skills-hash-"))
         a, b = tmp / "a", tmp / "b"
         for d in (a, b):
             (d / "sub").mkdir(parents=True)

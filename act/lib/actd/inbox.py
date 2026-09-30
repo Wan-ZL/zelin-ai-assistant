@@ -1,8 +1,9 @@
 """inbox — (a) drain ``state/inbox/*.json`` decision files, one terminal
 disposition per file (CONTRACT §5.4 ack ledger / §10 inbox action set / §22
 session import / §29 feedback / §33 boundary doctrine / §34 direct-run capture /
-§34bis preset capture / §37 set_title / §38 split_note / §44.6 fold 回执 /
-§53.5 actor wall / T-28 ingress 落款).
+§37 set_title / §38 split_note / §44.6 fold 回执 / §53.5 actor wall / §78 提案车道
+退役（capture 的落点是潜在任务；§34bis preset capture retired，D80.11）/
+T-28 ingress 落款).
 
 Robust: a poison file (bad JSON, non-object, wrong field types, a guard
 regression deep in the apply path) must end terminally for THAT file only —
@@ -19,9 +20,8 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from act.lib import analytics, config, registry
+from act.lib import analytics, config, maintenance, registry
 from act.lib.actd import merge as _merge
-from act.lib.actd import triage_guard
 from act.lib.actd.seam import Daemon
 from act.lib.registry import Requirement, State
 
@@ -31,6 +31,52 @@ try:
     from act.lib.store2.store import TransitionDenied
 except Exception:  # pragma: no cover - degrade：墙错误按普通异常走 poison 路径
     class TransitionDenied(Exception):  # type: ignore[no-redef]
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# §80.4 先测量：owner 点下 → 这一笔被 drain 的排队秒数
+# --------------------------------------------------------------------------- #
+def queue_wait_s(decision: dict, now: Optional[_dt.datetime] = None) -> Optional[float]:
+    """owner 点下那一刻到这一笔被 drain 之间的秒数；判不动 → None。
+
+    `ts` 是 server 落 inbox 文件时盖的（`server/inbox_writer._iso_now`），所以
+    这个差值正是 issue #450 里「前端来看每一步都有很多等待」的**第一段**，而且
+    它挂在每一个动词上。§80.1 早醒之前它的期望值 = interval/2、最坏 = interval；
+    早醒之后应当塌到一次轮询粒度（出厂 0.25s）。口径写死在这一个函数里，因为
+    「先测量」要的是一个能跨版本对比的数。
+
+    负数夹到 0：`ts` 由另一个进程盖，两边时钟差一秒就会算出 -1，而「排队了
+    -1 秒」是假话（宪法第 3 条诚实报告）。
+    """
+    stamped = maintenance.parse_iso(decision.get("ts"))
+    if stamped is None:
+        return None
+    at = now or _dt.datetime.now(_dt.timezone.utc)
+    return max((at - stamped).total_seconds(), 0.0)
+
+
+def _note_queue_wait(d: Daemon, decision: dict) -> None:
+    """排队秒数记进 actd.log（1MB 自压缩，防腐 #4）+ analytics（§80.4）。
+
+    每个 owner 动作一行——量由人点键的手速封顶，不是按 pass 计的。打点只有
+    动词名 + 一个秒数：秒数是数字，动词**截 40 字**（server 入站面有白名单，
+    但 syncd / 手写进来的文件没有，而 analytics 是可上传面——不许让一个任意
+    长的外来字符串搭车出门；TELEMETRY 红线，与既有 `review_promoted` 的
+    `exec_s` 同款口径）。
+
+    **整函数自吞异常**：这是一支温度计，绝不许影响管线（宪法第 11 条）。特别
+    是它跑在 `process_inbox` 的 try 里——从这里抛出去会让那条 except 再写一次
+    `bad_json` 回执，把一笔已经正确落账的动作覆盖成「毒文件」。
+    """
+    try:
+        waited = queue_wait_s(decision)
+        if waited is None:
+            return
+        verb = str(decision.get("action") or "?")[:40]
+        d.log(f"inbox: {verb} 排队 {waited:.1f}s（owner 点下 → 本 pass drain）")
+        analytics.log_event("inbox_queue_wait", verb=verb, waited_s=round(waited, 1))
+    except Exception:  # noqa: BLE001 - 量不准就不量，绝不改 drain 的结局
         pass
 
 
@@ -50,6 +96,7 @@ def process_inbox(d: Daemon) -> int:
             status, counted = _route(d, path, decision)
             d.write_applied_ack(path.stem, status)
             processed += counted
+            _note_queue_wait(d, decision)   # §80.4 先测量（best-effort，不抛）
             d.safe_unlink(path)
         except Exception as e:  # noqa: BLE001 - one poison file must never wedge the inbox
             # ANY per-file crash (field-type poison, guard regression) must end
@@ -174,38 +221,17 @@ def _capture(d: Daemon, stem: str, decision: dict) -> str:
     v0.34.0: optional mode="run" (运行中 lane input) skips the proposal
     gate — the card is filed straight into the approved queue.
     贴图 (建议 #5, add-only): optional images = absolute PNG paths the
-    app saved under state/attachments/."""
-    # §34bis 提案积压清理按钮：preset 只认词表内的值且必须携带
-    # mode:"run" —— 任何其它 preset 值/类型、或缺 run，一律
-    # 完全忽略 preset（fail-safe 走该 capture 原本的路径，
-    # 垃圾 preset 绝不静默替换任务内容）。
-    cap_plan = None
-    if _is_triage_preset(decision):
-        # §34bis 在途判重：已有未完结的清理会话卡（approved/
-        # executing）→ 不铸新卡，ack "running"（那轮清理真在
-        # 队列/在跑，诚实回执）。独立于 merge_or_new 的折叠
-        # 分支 —— §34.1（[run] 一律新卡）合入后依旧成立；
-        # Swift 2s 冷却只是 UI 层辅助，这里才是真防双开。
-        if triage_guard.proposals_triage_in_flight():
-            d.log("inbox: preset capture skipped — a proposals-"
-                  "triage session is already queued/running")
-            return "running"
-        cap_plan = triage_guard.proposals_triage_plan()
+    app saved under state/attachments/.
+
+    §34bis 提案积压清理 preset retired v-next（并入 §78，D80.11）：按钮住在
+    被删掉的提案泳道头上，注入固定 plan 的那条支路随它一起退役。迟到/伪造
+    的 ``preset`` 键现在**一律被忽略**（fail-safe 走普通 capture 路径，与
+    退役前对垃圾 preset 的处置同尺）——``apply_capture`` 的 plan/preset 形参
+    保持原样不动（签名 add-only，存量调用方零改动）。"""
     return d.apply_capture(
         decision.get("text"), decision.get("mode"),
-        decision.get("images"), plan=cap_plan,
-        preset=triage_guard.PROPOSALS_TRIAGE_PRESET if cap_plan else None,
+        decision.get("images"),
         inbox_stem=stem, via=decision.get("via"))
-
-
-def _is_triage_preset(decision: dict) -> bool:
-    """T-28：preset 注入固定 plan + 直跑，是 owner 特权面（Mac 按钮
-    /本地看板）——agent/remote ingress 的 preset 一律当普通
-    capture 处理（server 层对 actor+preset 已 400，这里是 actd
-    的 fail-closed 硬后盾）。"""
-    return (decision.get("preset") == triage_guard.PROPOSALS_TRIAGE_PRESET
-            and decision.get("mode") == "run"
-            and is_owner_ingress(decision.get("via")))
 
 
 def _split_note(d: Daemon, stem: str, decision: dict) -> str:
@@ -428,8 +454,9 @@ def apply_capture(d: Daemon, text: Optional[str], mode: Optional[str] = None,
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
     (title=text, channel=quick_capture, 原话进 sources) -> status=raising, so the
-    existing process_raising() expands it (one per pass) into a card_sent
-    proposal. Fast: no LLM call here, the poll loop is never blocked.
+    existing process_raising() expands it (one per pass) into a fleshed-out
+    潜在任务 card (``detected``；§78 之前落提案列). Fast: no LLM call here, the
+    poll loop is never blocked.
 
     §10 追记 D52（2026-09-06）：``text`` 的换行**保留**到 sources 原话与交给
     ``_capture_proposal`` / ``_capture_direct_run`` 的正文（归一规则见
@@ -454,17 +481,16 @@ def apply_capture(d: Daemon, text: Optional[str], mode: Optional[str] = None,
     普通 capture（mode 缺省）的静默并入保留（多渠道防重复的核心），但 fold
     发生时经 :mod:`act.lib.fold_receipts` 留看板回执（§44.6）。
 
-    §34bis ``plan``/``preset``（add-only）: preset capture（提案积压清理
-    按钮）注入的固定 plan + 卡片顶层 preset 标记，随新卡落盘。防双开在
-    上游（process_inbox 的在途判重）——走到这里的 preset capture 必然该
-    铸新卡；若判重命中既有卡（§34.1 前的世界），折叠/提升分支也不改写
-    对方的 plan/preset。preset 标记是快照护栏
-    （check_triage_registry_guard）认卡的依据。
+    §34bis ``plan``/``preset``（add-only，形参 retired 但不删——签名 add-only）:
+    提案积压清理按钮随提案列一起退役（§78/D80.11），actd 的 inbox 面已不再
+    注入固定 plan；两个形参保留只为让存量/外部调用方零改动，传进来照旧随新卡
+    落盘。快照护栏的认卡判据已改锚成直跑卡的 ``execution.direct_run``
+    （triage_guard.guarded_card）。
 
     ``via`` 是 HTTP 写入面的 ingress 落款（T-28）：source channel 按
     ``ingress_channel`` 盖——owner ingress 照旧 quick_capture（HAND），
     agent/remote 落 PROPOSED 级捕获通道，回人工审批；非 owner 的
-    ``mode:"run"`` 一并降级走提案管线（W18 的 actd 侧硬后盾——direct-run
+    ``mode:"run"`` 一并降级走潜在任务管线（W18 的 actd 侧硬后盾——direct-run
     是 owner 特权，伪造/绕过 HTTP 层的 mode 也开不了跑）。expansion
     （process_raising）不改 sources，章随卡走到调度侧现算。
 
@@ -477,7 +503,7 @@ def apply_capture(d: Daemon, text: Optional[str], mode: Optional[str] = None,
     channel = ingress_channel(via)
     owner = channel == "quick_capture"
     # T-28/W18 fail-closed：direct-run 是 owner 特权——非 owner ingress 的
-    # mode:"run" 一律降级为普通提案 capture（宁可少跑不可多跑）。
+    # mode:"run" 一律降级为普通 capture 走潜在任务（宁可少跑不可多跑）。
     run = mode == "run" and owner
     req = Requirement(
         id=registry.next_id(),
@@ -486,10 +512,8 @@ def apply_capture(d: Daemon, text: Optional[str], mode: Optional[str] = None,
         tier="T1",
         status=State.DETECTED.value,
         hardness="soft",
-        # §34bis add-only: preset 注入的固定 plan（目前仅 proposals_triage）。
-        # 防双开在上游：process_inbox 的在途判重已拦下「还有 approved/
-        # executing 清理卡」的重复点击 —— 走到这里的 preset capture 必然
-        # 该铸新卡（plan 也不进 _carries_increment 的增量口径）。
+        # §34bis add-only: 调用方注入的固定 plan（preset 通道已随提案列
+        # 退役，§78/D80.11；形参保留，plan 不进 _carries_increment 的增量口径）。
         plan=list(plan) if plan else None,
         preset=preset if plan else None,
         # §10 capture_id（issue #7）= inbox 文件 stem，随出生源引文落盘
@@ -539,7 +563,10 @@ def _capture_direct_run(d: Daemon, req: Requirement, t: str, images,
     # same bookkeeping as the approve action — dispatch reports wait_s
     # (approve → launch latency) off this stamp. inbox_stem = 上面那道
     # 重放闸的幂等键（直接来自 process_inbox 的文件名，纯元数据）。
-    req.execution = {"approved_at": d.iso_now()}
+    # direct_run（add-only，§78/D80.11）= §34bis 机械护栏的新认卡判据：
+    # 这一类卡没有 plan 预览、没有审批闸，起跑前要拍 registry 快照
+    # （act/lib/actd/triage_guard.py guarded_card）。
+    req.execution = {"approved_at": d.iso_now(), "direct_run": True}
     if inbox_stem:
         req.execution["inbox_stem"] = inbox_stem
     saved = registry.upsert(req)
@@ -552,6 +579,20 @@ def _capture_direct_run(d: Daemon, req: Requirement, t: str, images,
         text=(analytics.clip_content(t)
               if analytics.content_gate() else None))
     return "running"
+
+
+def _unexpanded(req: Requirement) -> bool:
+    """这张卡还是**裸欠账**（没 plan 也没验收标准）——§8 的扩写管线只该碰它。
+
+    §78 之前这个判据由车道兜着：完整的机器卡住在 card_sent，``detected``
+    里只剩裸欠账，所以「status==detected → 排一次 AI 扩写」就是对的。车道
+    退役后每张机器卡都是 ``detected``，光看 status 会把带 plan/DoD/成本的
+    完整卡（daily_loop 铸的 🤖 卡、回锅的既往卡）也送进 process_raising，
+    而 ``analyze._apply_expansion`` 是**覆盖写**：summary/plan/DoD/成本/
+    target_repo 全被新的 LLM 输出顶掉（§0 第 2 条 一切可逆的反面）。
+    判据与 decisions.py 的 W17 分支逐字同源：``not (plan or DoD)`` 才算裸卡。
+    双生点 = act/lib/quick_capture.py ``_fold_note_into``，两边不许漂。"""
+    return not (req.plan or req.definition_of_done)
 
 
 def _capture_proposal(d: Daemon, req: Requirement, t: str, images, channel: str) -> str:
@@ -567,7 +608,7 @@ def _capture_proposal(d: Daemon, req: Requirement, t: str, images, channel: str)
         # fold_receipts.record 里，这里只负责报真话。
         from act.lib import fold_receipts
         fold_receipts.record(saved.id, channel, t)
-    if saved.status == State.DETECTED.value:
+    if saved.status == State.DETECTED.value and _unexpanded(saved):
         saved.set_status(State.RAISING)
         d.save(saved)
         d.log(f"inbox: capture -> {saved.id} raising (queued for AI expansion, "

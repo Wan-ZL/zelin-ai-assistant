@@ -21,12 +21,11 @@ script, against a temp apps dir + temp HOME; mdfind is a fake on PATH):
     stays in direct mode, its existing fallback).
 """
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VAULT_SYNC_SH = REPO_ROOT / "ingest" / "vault-sync.sh"
@@ -44,8 +43,7 @@ exit 0
 @unittest.skipIf(sys.platform.startswith("win"), "bash-only ingest chain")
 class HelperResolutionTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="vault-sync-helper-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="vault-sync-helper-"))
         self.apps = self.tmp / "Applications"
         self.home = self.tmp / "home"
         self.apps.mkdir()

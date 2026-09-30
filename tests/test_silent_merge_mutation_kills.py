@@ -37,13 +37,13 @@ inflated); each is a behavior the module promises, pinned here:
 import datetime as _dt
 import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import analytics, config, registry, silent_merge
 from act.lib.registry import Requirement, State
@@ -73,9 +73,9 @@ class _Sandbox(unittest.TestCase):
         config.ensure_state_dirs()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
-        self.jobs = Path(tempfile.mkdtemp(prefix="sm-kill-jobs-"))
-        logs = Path(tempfile.mkdtemp(prefix="sm-kill-logs-"))
-        events = Path(tempfile.mkdtemp(dir=str(config.STATE_DIR)))
+        self.jobs = Path(scratch_dir(self, prefix="sm-kill-jobs-"))
+        logs = Path(scratch_dir(self, prefix="sm-kill-logs-"))
+        events = Path(scratch_dir(self, dir=str(config.STATE_DIR)))
         for target, attr, val in ((silent_merge, "SILENT_DIR", self.jobs),
                                   (config, "LOG_DIR", logs),
                                   (analytics, "ANALYTICS_DIR", events),
@@ -201,7 +201,7 @@ class JobFilePlumbingTest(_Sandbox):
 
     def test_job_dir_is_created_with_missing_parents(self):
         # fresh install: state/ may not exist yet when the first check is filed
-        deep = Path(tempfile.mkdtemp(prefix="sm-kill-deep-")) / "state" / "silent_merge"
+        deep = Path(scratch_dir(self, prefix="sm-kill-deep-")) / "state" / "silent_merge"
         with mock.patch.object(silent_merge, "SILENT_DIR", deep), \
                 mock.patch.object(silent_merge.subprocess, "Popen", lambda *a, **k: None):
             sid = silent_merge.request("R-001", "R-002")

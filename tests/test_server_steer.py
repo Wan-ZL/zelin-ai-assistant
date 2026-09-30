@@ -10,11 +10,11 @@
 from __future__ import annotations
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import (DEMO_SEED_PATH, get_json, post_json,
                                       rewrite_board, seed_scene, start_server)
 
@@ -30,7 +30,7 @@ class SteerFlagTestCase(unittest.TestCase):
     工作编号也能指到卡，本类的动作全部用工作编号发，顺带钉住 §60.3。"""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-m6-steer-"))
+        self.home = Path(scratch_dir(self, prefix="zai-m6-steer-"))
         seed_scene(self.home, "running")
         _httpd, self.port = start_server(self, self.home)
 
@@ -109,7 +109,7 @@ class ProjectionPassthroughTestCase(unittest.TestCase):
     ]
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-m6-passthru-"))
+        self.home = Path(scratch_dir(self, prefix="zai-m6-passthru-"))
         dash = seed_scene(self.home, "running")
         for row in dash["running"]:
             if row["id"] == "P-106":           # 主键（工作编号 R-106，§60）

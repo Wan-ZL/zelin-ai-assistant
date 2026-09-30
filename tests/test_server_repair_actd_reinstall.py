@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 from tests.test_server_common import assert_envelope, post_json, start_server
 
 from server import paths, repair
@@ -80,7 +81,7 @@ class ReinstallBranchTestCase(unittest.TestCase):
     def test_missing_install_sh_is_409_without_running_anything(self):
         run, _calls = _launchctl([False])
         install, install_calls = _install()
-        missing = Path(tempfile.mkdtemp(prefix="zai-no-install-"))
+        missing = Path(scratch_dir(self, prefix="zai-no-install-"))
         self.addCleanup(lambda: os.rmdir(missing))
         with mock.patch.object(paths, "repo_root", lambda: missing):
             with self.assertRaises(ConflictError) as ctx:
@@ -152,7 +153,7 @@ class ReinstallBranchTestCase(unittest.TestCase):
     def test_manual_command_shell_quotes_a_checkout_path_with_spaces(self):
         # 「手动命令：」是给人贴进终端的：路径含空格必须引起来，否则 bash 断在空格上；
         # 不含空格的路径 shlex.quote 原样不动（上一条判例的等式因此仍成立）
-        spaced = Path(tempfile.mkdtemp(prefix="zai spaced "))
+        spaced = Path(scratch_dir(self, prefix="zai spaced "))
         self.addCleanup(lambda: os.rmdir(spaced))
         with mock.patch.object(paths, "repo_root", lambda: spaced):
             command = repair.manual_command()

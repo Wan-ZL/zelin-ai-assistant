@@ -1,6 +1,7 @@
 // 多选操作条（原生 Kanban.swift「选择」态的底部 bar，§21 / §21bis / §68.12）：selectionMode 下
 // 常驻底部：已选 N · 请求合并建议（merge_review，≥2）· 强制合并（merge_force + 主卡弹窗）·
-// 批量批准 / 批量拒绝（只对提案列的卡；T2 卡跳过——typed-confirm 不能批量绕过，§0.8 / §50 W17）·
+// 批量批准 / 批量拒绝（§78 起只对**潜在任务**的卡——提案列退役，机器卡都在那一列；T2 卡跳过——
+// typed-confirm 不能批量绕过，§0.8 / §50 W17）·
 // 批量验收 / 批量打回 / 批量丢弃（只对待验收列的卡，§21 追记 / D74；三者都先过逐条列清单的
 // 确认弹窗——打回那颗的弹窗就是反馈输入框，同一句反馈送回每一张，留空 = 各自按验收标准自查）·
 // 清空 · 退出。每个批量动作 = 逐卡一条 inbox 动作（§3 四键形，server 零容忍不接受批量形）。
@@ -10,7 +11,7 @@ import { useState } from "react";
 import { postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { clearSelection, markForceMerging, setSelectionMode, useAppState } from "../../store";
-import type { ApprovalCard, ReviewCard } from "../../types";
+import type { ApprovalCard, DebtCard, ReviewCard } from "../../types";
 import { cardAction, describeActionError, effectiveTier, REWORK_EMPTY_FALLBACK } from "./boardActions";
 import { FeedbackDialog } from "./FeedbackDialog";
 import { ForceMergeDialog, forceMergeBody } from "./ForceMergeDialog";
@@ -23,13 +24,15 @@ type Confirm = "none" | "force" | "approve" | "reject" | "feedback" | "accept" |
 /** 待验收列的批量动词（§21 追记 / D74）——三个都是卡面上早就有的动词，零新 inbox 动词 */
 type ReviewVerb = "accept" | "rework" | "trash";
 
-/** 批量批准 / 拒绝的资格：只有提案列真实卡（processing 占位不算）；T2（含 W17 生效 T2）批准跳过 */
-export function batchable(ids: ReadonlySet<string>, proposals: ApprovalCard[], verb: "approve" | "reject"): { ok: string[]; skippedT2: string[] } {
+/** 批量批准 / 拒绝的资格：只有潜在任务列的真实卡（§78；raising 灰占位不算）；T2（含 W17 生效 T2）批准跳过。
+ *  档位缺席的老 debt 行（server 还没长出 tier）按非 T2 走——effective_tier 回落 tier 回落空串。 */
+export function batchable(ids: ReadonlySet<string>, cards: Array<ApprovalCard | DebtCard>, verb: "approve" | "reject"): { ok: string[]; skippedT2: string[] } {
   const ok: string[] = [];
   const skippedT2: string[] = [];
-  for (const card of proposals) {
+  for (const card of cards) {
     if (!ids.has(card.id) || card.processing) continue;
-    if (verb === "approve" && effectiveTier(card) === "T2") skippedT2.push(card.id);
+    const tier = effectiveTier({ tier: typeof card.tier === "string" ? card.tier : "", effective_tier: typeof card.effective_tier === "string" ? card.effective_tier : undefined });
+    if (verb === "approve" && tier === "T2") skippedT2.push(card.id);
     else ok.push(card.id);
   }
   return { ok, skippedT2 };
@@ -52,10 +55,11 @@ export function SelectionBar() {
   if (!selectionMode) return null;
 
   const ids = [...selectedIds];
-  const proposals = board?.needs_approval ?? [];
+  // §78：拍板的卡都在潜在任务列（needs_approval 恒空）——两颗批量键因此读 debt
+  const pending = board?.debt ?? [];
   const titles = titlesFor(ids, board as unknown as Record<string, unknown> | null);
-  const approve = batchable(selectedIds, proposals, "approve");
-  const reject = batchable(selectedIds, proposals, "reject");
+  const approve = batchable(selectedIds, pending, "approve");
+  const reject = batchable(selectedIds, pending, "reject");
   // §21 追记 / D74：待验收列的三颗批量键（同一份选中集，各自只认自己那一列的卡）
   const reviewIds = reviewBatchable(selectedIds, board?.review ?? []);
   const reviewVerb: ReviewVerb = confirm === "discard" ? "trash" : "accept";
@@ -89,7 +93,7 @@ export function SelectionBar() {
     <div className="selection-bar" role="toolbar" aria-label={text("多选操作", "Selection actions")}>
       <span className="selection-count">{text(`已选 ${ids.length}`, `${ids.length} selected`)}</span>
       <button type="button" className="btn btn-primary" disabled={busy || ids.length < 2}
-        onClick={() => void run([{ action: "merge_review", ids }], text("已请求合并建议，AI 分析中（提案列顶会出现建议卡）", "Merge review requested; the suggestion card appears atop Proposals"))}>
+        onClick={() => void run([{ action: "merge_review", ids }], text("已请求合并建议，AI 分析中（潜在任务条顶会出现建议卡）", "Merge review requested; the suggestion card appears atop Backlog"))}>
         {text(`请求合并建议 (${ids.length})`, `Suggest merge (${ids.length})`)}
       </button>
       <button type="button" className="btn btn-danger" disabled={busy || ids.length < 2} onClick={() => setConfirm("force")}>
@@ -177,7 +181,9 @@ export function SelectionBar() {
       )}
       {(confirm === "approve" || confirm === "reject") && (
         <ModalDialog
-          title={confirm === "approve" ? text(`批准 ${approve.ok.length} 张提案？`, `Approve ${approve.ok.length} proposals?`) : text(`拒绝 ${reject.ok.length} 张提案？`, `Reject ${reject.ok.length} proposals?`)}
+          title={confirm === "approve"
+            ? text(`批准 ${approve.ok.length} 张潜在任务？`, `Approve ${approve.ok.length} backlog cards?`)
+            : text(`拒绝 ${reject.ok.length} 张潜在任务？`, `Reject ${reject.ok.length} backlog cards?`)}
           onCancel={() => setConfirm("none")}
         >
           <p className="dialog-body">
@@ -187,6 +193,8 @@ export function SelectionBar() {
           </p>
           <div className="dialog-actions">
             <button type="button" className="btn" onClick={() => setConfirm("none")}>{text("取消", "Cancel")}</button>
+            {/* 弹窗里的确认键保持单字动词「批准 / 拒绝」（= wire 动词 approve / reject 的批量形）；
+                卡面那颗叫「促成运行」是因为它说的是这一次点击的后果，两处指的是同一条转移 */}
             <button type="button" className={`btn ${confirm === "approve" ? "btn-success" : "btn-danger"}`}
               onClick={() => void run((confirm === "approve" ? approve.ok : reject.ok).map((id) => cardAction(id, confirm === "approve" ? "approve" : "reject")),
                 confirm === "approve" ? text("已批量提交批准", "Approvals submitted") : text("已批量提交拒绝", "Rejections submitted"))}>

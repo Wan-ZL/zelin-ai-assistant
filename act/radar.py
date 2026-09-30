@@ -5,7 +5,8 @@ lock ``state/radar.lock``), §40 (give-up diagnostic card), §45 (provenance
 birth gate — 屏幕不发起卡片), §47 (transient retry / parse-failure degrade
 card / retry ledger), §47.5 (iCloud 驱逐的 note = 还没在本机：brctl 催下载 /
 deferred 放宽额度 / 复活闸), §48 (source switch + 关闭真静默), §15 (obsidian
-radar_health, cron-only writer).
+radar_health, cron-only writer), §78 (提案车道退役：候选一律落潜在任务，
+hard+deadline 的急迫只决定要不要通知)。
 
 This module covers the Obsidian raw source. For each ``.md`` file newer than
 the last marker (STATE/radar.marker) — plus the notes queued for retry in
@@ -293,7 +294,8 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
     worst failure mode, and stdout/analytics are exactly the places the owner
     never looks. The card lands in the 备选/detected lane (a fact to act on,
     not a proposal to approve), titled 「有一篇笔记我处理不了」 with the last
-    error + file path in notes.
+    error + file path in notes. §78 起那一列会响，所以「不打扰」改由出生章
+    ``quiet_birth`` 承担（D80.7）——卡照样可见，只是不来打断 owner。
 
     Dedup by note path (any status, incl. trashed/archived): one note = at
     most one card, ever — a re-give-up after the user edits the note (mtime
@@ -349,6 +351,10 @@ def _give_up_requirement(note: Path, entry: dict, ref: str) -> Requirement:
         type="diagnostic",
         tier="T0",
         status=registry.State.DETECTED.value,
+        # §40.3/§78 D80.7：诊断卡在 main 上落的就是不参与新卡 diff 的那一列
+        # （「a fact to act on, not a proposal to approve」）——退役后 diff 源
+        # 换成 debt[]，不盖这枚出生章就等于把一条运维留痕升级成一次打扰。
+        quiet_birth=True,
         hardness="soft",
         summary=failures.pick(
             f"原文还在 {ref}，你可以手动处理或删掉它。",
@@ -415,7 +421,8 @@ def _is_closed(r: Requirement) -> bool:
 
 def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement]:
     """§47.2：提取输出同 pass 重试一次后仍不可解析 → 原文降级为一张低置信
-    待办卡（备选/detected 列），绝不静默丢弃。
+    待办卡（备选/detected 列），绝不静默丢弃。§47.2 的「不通知」在提案车道
+    退役后由出生章 ``quiet_birth`` 承担（§78 D80.7）。
 
     卡上刻意不带 LLM 的 raw 输出片段（v0.47 review）：那是模型对不可信 note
     的输出（常复读原文），放围栏外会被 silent_merge 的 notes[:1200] 取走拼进
@@ -461,6 +468,10 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
         type="diagnostic",
         tier="T0",
         status=registry.State.DETECTED.value,
+        # §47.2 的法条原文是「`status=detected`（备选列，**不通知**——宪法第
+        # 10 条）」：车道退役后 detected 这一列开始响，那句「不通知」的载体
+        # 只剩这枚 §78 D80.7 的出生章。不盖 = 法条与代码分家。
+        quiet_birth=True,
         hardness="soft",
         summary=summary_txt,
         notes=(failures.pick(
@@ -762,7 +773,8 @@ def _extractor_urgent(item: dict) -> bool:
     """提取器的 ``urgent`` 宽松转 bool（与 quick_capture._needs_action 同口径）。
 
     缺失/None -> True（宁可打扰不可漏）；字符串 "false"/"no"/"0" -> False——
-    旧的 ``is not False`` 恒等比较会把字符串 "false" 当 urgent 发进提案列。
+    旧的 ``is not False`` 恒等比较会把字符串 "false" 当 urgent，§78 后那会变成
+    一条本不该发的通知（以前是一张本不该进提案列的卡）。
     """
     v = item.get("urgent")
     if v is None:
@@ -1589,19 +1601,14 @@ def _file_item(quick_capture, item: dict, note: Path, cfg: config.Config,
     # （CORROBORATE：只许 fold，不许发起）；unknown 最高备选；audio
     # 真人照旧 FULL——回声环断在这里，档案与佐证价值不受影响。
     gate = provenance.verdict(item.get("provenance"), item.get("speaker"))
-    # extraction-level urgency joins the hard+deadline split: an item
-    # the extractor marked non-urgent parks in 备选 (detected) even
-    # when it carries a hard deadline — 现在需要行动才进提案列.
-    # 非 FULL 来源一并压平 act-now：屏幕/不明来源既不发提案，也不借
-    # relates_to 的 fold 路径把既有备选卡提升进提案列。
+    # extraction-level urgency joins the hard+deadline split. §78：提案列退役
+    # 后它不再挑列（机器卡只有潜在任务一个落点），只挑「要不要打扰」——非
+    # 高置信的出生盖 add-only ``quiet_birth``，alerts 跳过这一行（D80.7 把
+    # §45 FULL/LIMITED 的可观测性搬到通知资格上；非 FULL 来源照旧不打扰）。
     hc = (gate == provenance.FULL
           and _is_high_confidence(req) and _extractor_urgent(item))
-    if hc:
-        # act-now 信号随 req.status 传给 apply_triage：relates_to 命中
-        # DETECTED 卡的 fold 路径靠 status==card_sent 提升目标卡进提案
-        # 列（否则硬 deadline 的紧急诉求折进备选卡后不可见）；低置信
-        # 降级时 apply_triage 会把它重置回 detected。
-        req.set_status(registry.State.CARD_SENT)
+    if not hc:
+        req.quiet_birth = True
     desc = _item_desc(quick_capture, item, req, note)
     decision = quick_capture.triage(desc, cfg, extractor=triager)
     if _echo_blocked(gate, decision):
@@ -1613,13 +1620,18 @@ def _file_item(quick_capture, item: dict, note: Path, cfg: config.Config,
 
 
 def _is_proposal_card(kind: str, saved: Optional[Requirement], hc: bool) -> bool:
-    """hard+deadline 分流保留：new_proposal 只有真落到提案列才计卡——triage
-    低置信降级（apply_triage 内部改 status）时不能再拿本地 hc 虚报。
-    follow-up/re-raise 同一把尺：§45 非 FULL 来源的天花板会把它们压到
-    detected/备选，那不是一张提案卡，不许虚报。"""
-    return (saved is not None and saved.status == registry.State.CARD_SENT.value
-            and (kind in ("follow_up", "reraised")
-                 or (hc and kind == "proposed")))
+    """§78：卡只落潜在任务（detected），所以计卡认的就是这一列——旧口径认
+    card_sent，车道退役后那会让本 pass 的 ``cards`` 与 radar_health 永远读 0。
+
+    hard+deadline 分流原样保留，只是「不是一张要 owner 看的卡」的载体从
+    status 换成 D80.7 的 ``quiet_birth``：安静出生（提取层判不紧急、非 FULL
+    来源、triage 低置信降级——三处都在候选卡上盖同一枚章）不计数，本地 hc
+    不许在 triage 已经降级之后虚报。"""
+    if saved is None or saved.status != registry.State.DETECTED.value:
+        return False
+    if getattr(saved, "quiet_birth", False):
+        return False
+    return kind in ("follow_up", "reraised") or (hc and kind == "proposed")
 
 
 def _count_outcome(summary: dict, outcome: Optional[tuple]) -> None:

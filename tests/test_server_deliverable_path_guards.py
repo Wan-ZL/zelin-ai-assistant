@@ -8,12 +8,12 @@ iterdir 失败 → None，以及 board_source 的 registry_backend 三层判定�
 from __future__ import annotations
 
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401
+from tests.scratch_testkit import scratch_dir
 
 from server import board_source, files
 from server.errors import InvalidFieldError, NotFoundError
@@ -31,7 +31,7 @@ class ValidateNameTestCase(unittest.TestCase):
 
 class ContainedFileTestCase(unittest.TestCase):
     def setUp(self):
-        self.base = Path(tempfile.mkdtemp(prefix="zai-deliv-"))
+        self.base = Path(scratch_dir(self, prefix="zai-deliv-"))
         self.real = self.base.resolve(strict=True)
         (self.base / "ok.txt").write_text("x", encoding="utf-8")
         (self.base / ".dot").write_text("x", encoding="utf-8")
@@ -45,7 +45,7 @@ class ContainedFileTestCase(unittest.TestCase):
         self.assertFalse(files._contained_file(self.base / "dir", self.real))
 
     def test_dangling_and_escaping_symlinks_excluded(self):
-        outside = Path(tempfile.mkdtemp(prefix="zai-outside-")) / "o.txt"
+        outside = Path(scratch_dir(self, prefix="zai-outside-")) / "o.txt"
         outside.write_text("o", encoding="utf-8")
         try:
             (self.base / "esc").symlink_to(outside)
@@ -65,7 +65,7 @@ class ContainedFileTestCase(unittest.TestCase):
 
 class ResolveInsideTestCase(unittest.TestCase):
     def setUp(self):
-        self.base = Path(tempfile.mkdtemp(prefix="zai-resolve-"))
+        self.base = Path(scratch_dir(self, prefix="zai-resolve-"))
         (self.base / "f.txt").write_text("f", encoding="utf-8")
         (self.base / "d").mkdir()
         self.nf = NotFoundError("deliverable not found", {})
@@ -82,7 +82,7 @@ class ResolveInsideTestCase(unittest.TestCase):
 
 class RegistryBackendTestCase(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp(prefix="zai-backend-"))
+        self.home = Path(scratch_dir(self, prefix="zai-backend-"))
         (self.home / "state").mkdir()
 
     def test_env_wins(self):

@@ -11,14 +11,13 @@ readback checks, the CLI stages, and export_yaml's row/prune helpers.
 import datetime as _dt
 import io
 import json
-import shutil
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib.store2 import export_yaml as ey
 from act.lib.store2 import migrate_yaml as my
@@ -66,10 +65,7 @@ class TimestampTestCase(unittest.TestCase):
 
 class ScanHelpersTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="migrate-scan-"))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="migrate-scan-"))
 
     def _f(self, name, text):
         p = self.tmp / name
@@ -180,10 +176,7 @@ class PlanHelpersTestCase(unittest.TestCase):
 
 class TargetAndReadbackTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="migrate-target-"))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="migrate-target-"))
 
     def _schema_db(self):
         db = self.tmp / "s.db"
@@ -272,10 +265,7 @@ class TargetAndReadbackTestCase(unittest.TestCase):
 
 class ExportHelpersTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="export-helpers-"))
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="export-helpers-"))
 
     def test_card_object_and_rel(self):
         self.assertEqual(ey._card_object("../x", "{}"), (None, "skip '../x': id 不符合文件名白名单"))
@@ -341,7 +331,7 @@ class ExportHelpersTestCase(unittest.TestCase):
 class ExportWarnTestCase(unittest.TestCase):
     def test_problem_rows_are_reported_and_exit_2(self):
         import sqlite3 as _sq
-        tmp = Path(tempfile.mkdtemp(prefix="export-warn-"))
+        tmp = Path(scratch_dir(self, prefix="export-warn-"))
         db = tmp / "s.db"
         con = _sq.connect(str(db))
         my._apply_schema(con)
@@ -353,7 +343,6 @@ class ExportWarnTestCase(unittest.TestCase):
         with mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(ey.export_db(db, tmp / "out"), 2)
         self.assertIn("export: WARN skip P-1: payload 缺 id", err.getvalue())
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

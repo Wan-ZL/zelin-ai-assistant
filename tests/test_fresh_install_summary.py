@@ -23,13 +23,12 @@ import contextlib
 import io
 import json
 import os
-import shutil
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 from tests import test_doctor
 
 from act import doctor
@@ -100,8 +99,7 @@ class ReportTestCase(unittest.TestCase):
         self.assertFalse(fi.report_says_no_launchd({"steps": "not-a-list"}))
 
     def test_read_report_tolerates_missing_and_torn_files(self):
-        tmp = Path(tempfile.mkdtemp(prefix="fi-report-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp = Path(scratch_dir(self, prefix="fi-report-"))
         self.assertIsNone(fi.read_report(tmp / "nope.json"))
         (tmp / "torn.json").write_text("{torn", encoding="utf-8")
         self.assertIsNone(fi.read_report(tmp / "torn.json"))
@@ -111,8 +109,7 @@ class ReportTestCase(unittest.TestCase):
         self.assertEqual(fi.read_report(tmp / "ok.json"), NO_LAUNCHD_REPORT)
 
     def test_runtime_python_reads_the_pin(self):
-        home = Path(tempfile.mkdtemp(prefix="fi-home-"))
-        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        home = Path(scratch_dir(self, prefix="fi-home-"))
         self.assertIsNone(fi.runtime_python(home))
         (home / "config").mkdir()
         (home / "config" / "runtime.json").write_text('{"python": "/usr/bin/python3"}', encoding="utf-8")
@@ -123,8 +120,7 @@ class ReportTestCase(unittest.TestCase):
 
 class ManualStepsTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="fi-steps-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="fi-steps-"))
         self.home_dir = self.tmp / "home"          # stands in for $HOME
         self.home = self.home_dir / "Projects" / "zai"   # the checkout
         (self.home / "config").mkdir(parents=True)
@@ -208,8 +204,7 @@ class ManualStepsTestCase(unittest.TestCase):
 
 class SummaryRenderTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="fi-sum-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.tmp = Path(scratch_dir(self, prefix="fi-sum-"))
         self.home = self.tmp / "home" / "Projects" / "zai"
         self.home.mkdir(parents=True)
 

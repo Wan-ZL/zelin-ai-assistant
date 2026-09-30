@@ -13,12 +13,12 @@ train PR 的 CI（Tests on ubuntu 3.9，head 0619da32）真红过一次：
 - 三个后台模块都有同一道缝，且 `reset_*_for_tests()` 先 join 再清场。
 「join 之后没有任何写落地」那一条拿真的临时目录钉在 tests/test_server_screenpipe_disk.py。
 """
-import tempfile
 import threading
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
+from tests.scratch_testkit import scratch_dir
 
 from server import background_jobs, ingest_run, screenpipe_disk, worktree_inventory
 
@@ -93,9 +93,11 @@ class SeamIsWiredEverywhereTestCase(unittest.TestCase):
         否则 §68.4 的有界 join 等的是一张空表，而真正在往 home 里写的那个线程谁也
         等不到——CI 那次 `Errno 39 Directory not empty` 就是这个形状。脚本不真跑：
         `runner` 是注入的假件（仓规：unit 层禁真 subprocess）。"""
+        # scratch first: cleanups run LIFO, so the home is removed only after the
+        # bounded join below has waited for the thread that writes into it.
+        home = Path(scratch_dir(self, prefix="zai-ingest-seam-"))
         ingest_run.reset_jobs_for_tests()
         self.addCleanup(ingest_run.reset_jobs_for_tests)
-        home = Path(tempfile.mkdtemp(prefix="zai-ingest-seam-"))
         seen = []
 
         def runner(_argv, _env, _cwd, _timeout_s):

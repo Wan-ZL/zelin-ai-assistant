@@ -1,10 +1,14 @@
-"""§34bis triage guard — the edges the P3b mutation round found unpinned (CONTRACT §34bis).
+"""registry 写入护栏的边角 —— P3b 变异轮找出来的未钉点（CONTRACT §34bis / §78）。
 
-Covered: the in-flight scan keeps looking past a non-preset card; a failed
-``guard_snapshot`` yields ``{}`` (never raises); a snapshot payload missing
-``at`` (or with a non-dict ``files``) is consumed silently — no comparison, no
-alarm; the alarm lists at most five files and appends the ellipsis only past
-five; the snapshot file is always consumed (also when unreadable).
+§78（owner 决策 D80.11，issue #447）退役了 §34bis 的提案积压清理按钮与它的
+``preset`` 词表，护栏机械本体改锚在普通直跑卡（``execution.direct_run``）上；
+本文件的判例随之改锚 —— 被护栏盯上的卡是**直跑卡**，不再是 preset 卡。
+
+Covered: a failed ``guard_snapshot`` yields ``{}`` (never raises); a snapshot
+payload missing ``at`` (or with a non-dict ``files``) is consumed silently — no
+comparison, no alarm; the alarm lists at most five files and appends the
+ellipsis only past five; the snapshot file is always consumed (also when
+unreadable).
 """
 import json
 import unittest
@@ -26,8 +30,9 @@ class TriageGuardEdgeBase(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
 
     def _card(self, rid="R-guard", **kw):
-        kw.setdefault("preset", actd.PROPOSALS_TRIAGE_PRESET)
-        req = Requirement(id=rid, title="清理", status=State.EXECUTING.value, **kw)
+        # §78 改锚：护栏盯的是直跑卡（§34 mode:"run"），不再是退役的 preset 卡。
+        kw.setdefault("execution", {"direct_run": True, "session_id": "sid-edge"})
+        req = Requirement(id=rid, title="直跑", status=State.EXECUTING.value, **kw)
         registry.save(req)
         return req
 
@@ -39,13 +44,7 @@ class TriageGuardEdgeBase(unittest.TestCase):
         return str(path)
 
 
-class InFlightScanTest(TriageGuardEdgeBase):
-    def test_scan_continues_past_non_preset_cards(self):
-        registry.save(Requirement(id="R-a", title="别的", status=State.APPROVED.value))
-        registry.save(Requirement(id="R-b", title="清理", status=State.APPROVED.value,
-                                  preset=actd.PROPOSALS_TRIAGE_PRESET))
-        self.assertTrue(actd._proposals_triage_in_flight())
-
+class SnapshotStampTest(TriageGuardEdgeBase):
     def test_snapshot_failure_is_an_empty_dict(self):
         with mock.patch.object(registry, "guard_snapshot", side_effect=RuntimeError("db")):
             self.assertEqual(actd._registry_snapshot(), {})

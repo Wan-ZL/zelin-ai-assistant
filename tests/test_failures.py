@@ -25,11 +25,11 @@ import json
 import os
 import re
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 from tests.test_launchd_render import install_sh_prelude
 
 from act import ai_fix, doctor
@@ -446,7 +446,7 @@ class CronProbeCheckTestCase(unittest.TestCase):
 class AIFixTestCase(unittest.TestCase):
     def setUp(self):
         config.ensure_state_dirs()
-        self.out_dir = Path(tempfile.mkdtemp(prefix="aifix-out-"))
+        self.out_dir = Path(scratch_dir(self, prefix="aifix-out-"))
         self.log = config.STATE_DIR / "actd.log"
         self.addCleanup(lambda: self.log.unlink(missing_ok=True))
         self.results = [doctor.CheckResult(
@@ -605,7 +605,7 @@ class ClaudePathRenderTestCase(unittest.TestCase):
         self.assertIn("export PATH=$CRON_CLAUDE_DIR:\\$PATH", m.group(1))
 
     def _render(self, claude_login_bin):
-        out = Path(tempfile.mkdtemp(prefix="render-")) / "out.plist"
+        out = Path(scratch_dir(self, prefix="render-")) / "out.plist"
         # run the REAL render function, extracted verbatim from install.sh
         script = (
             'set -eu\n'

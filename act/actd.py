@@ -4,12 +4,14 @@ Each pass:
   (a) drain STATE/inbox/*.json decisions
         approve  -> status=approved（W17：外部出身未扩写 -> 转 raising）
         reject   -> status=rejected
-        comment  -> fold text into plan/notes, keep card_sent (re-approval)
+        comment  -> fold text into plan/notes, back to detected (re-approval)
                     ——除 EXECUTING 卡：comment = steer（§44.3-S 中途转向指令，
                     入队等安全窗口 flush 进 live session，状态机零改动）
         merge_review / merge_apply / merge_dismiss -> merge-review 契约 一/四/五
       delete the decision file after reading it.
-  (a') auto-dispatch（§51 hand lane + §65 self_improve lane）：card_sent 卡过天花板即免批 approved。
+  (a'') §78 一次性归并扫描：退役提案车道上的存量 card_sent 卡搬进潜在任务（detected）。
+  (a') auto-dispatch（§65 self_improve lane；§51 hand lane retired，D80.4）：
+       潜在任务里的 lane 卡过天花板即免批 approved。
   (b) dispatch every status=approved requirement that has no execution yet
       （并发上限内；超出留在合并运行列的 queued 子状态）。
   (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
@@ -45,13 +47,13 @@ import argparse
 import datetime as _dt
 import json
 import os
-import time
 import traceback
 from pathlib import Path
 from typing import Optional
 
 from act.lib import (
     analytics,
+    automation,
     card_summary,
     config,
     daily_loop,
@@ -78,6 +80,7 @@ from act.lib.actd import reconcile as _reconcile
 from act.lib.actd import seam as _seam
 from act.lib.actd import session as _session
 from act.lib.actd import triage_guard as _triage_guard
+from act.lib.actd import wakeup as _wakeup
 from act.lib.agent_states import BLOCKED_STATES, DONE_STATES, LIVE_STATES, RUNNING_STATES
 from act.lib.dashboard import build_dashboard, index_agents, run_claude_agents, write_dashboard
 from act.lib.registry import Requirement, State, load, load_all, save  # noqa: F401 - re-exported surface
@@ -300,9 +303,11 @@ _TransitionDenied = _inbox.TransitionDenied
 _parse_iso = maintenance.parse_iso
 _mtime_dt = _merge.mtime_dt
 _MERGE_DEAD_STATES = _merge.MERGE_DEAD_STATES
+# §34bis preset retired v-next（并入 §78，D80.11）：按钮与固定 plan 都已删，
+# 词表键留着认存量卡（_proposals_triage_plan / _proposals_triage_in_flight 随
+# 功能一并退役，名字永不复用）。
 PROPOSALS_TRIAGE_PRESET = _triage_guard.PROPOSALS_TRIAGE_PRESET
-_proposals_triage_plan = _triage_guard.proposals_triage_plan
-_proposals_triage_in_flight = _triage_guard.proposals_triage_in_flight
+_guarded_card = _triage_guard.guarded_card
 _registry_snapshot = _triage_guard.registry_snapshot
 _triage_snapshot_path = _triage_guard.triage_snapshot_path
 _precondition_ok = _decisions.precondition_ok
@@ -404,7 +409,7 @@ def _update_search_index(card_id, session_id) -> None:
     return _session.update_search_index(_ctx(), card_id, session_id)
 
 
-# §34bis triage guard ---------------------------------------------------------
+# §34bis registry 写入护栏（§78 起认的是直跑卡）------------------------------
 def _stamp_triage_snapshot(req_id: str) -> Optional[str]:
     return _triage_guard.stamp_triage_snapshot(_ctx(), req_id)
 
@@ -463,6 +468,32 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
     return _dispatch.auto_dispatch_pass(_ctx(), cfg)
 
 
+#: §78.5「每次开机至多一次」的闩：一次性迁移不该每 pass 再扫一遍全表
+#: （`load_all()` 在 YAML 后端是整目录读+解析，而本 pass 已经为免批闸读过一次）。
+#: 进程内 latch 而不是落盘标记：重启重跑一遍是**幂等的零改动**，为它引一个
+#: 新的状态文件反而要自己带帽（防腐 #4）。测试用 `_reset_fold_latch()` 复位。
+_FOLD_SWEPT = False
+
+
+def _reset_fold_latch() -> None:
+    """判例用：把 §78.5 的开机闩拨回未跑（同一进程里跑第二遍扫描）。"""
+    global _FOLD_SWEPT
+    _FOLD_SWEPT = False
+
+
+def fold_retired_lane() -> int:
+    """§78 一次性归并扫描（card_sent → detected）——幂等，搬完即恒 0 张。
+
+    §78.5 纪律「每次开机至多一次」：本进程跑过就不再扫（下面的 latch）。跑失败
+    也算跑过——一张卡搬不动是 `_dispatch.fold_retired_lane` 内部吞掉的个案，
+    不是「这一轮没发生」，重试交给下次开机（宪法第 11 条：失败不外溢）。"""
+    global _FOLD_SWEPT
+    if _FOLD_SWEPT:
+        return 0
+    _FOLD_SWEPT = True
+    return _dispatch.fold_retired_lane(_ctx())
+
+
 def dispatch_approved(cfg: config.Config) -> int:
     return _dispatch.dispatch_approved(_ctx(), cfg)
 
@@ -476,8 +507,8 @@ def _reconcile_review_attach(req: Requirement, agents: dict) -> None:
     return _reconcile.reconcile_review_attach(_ctx(), req, agents)
 
 
-def _promote_if_delivered(req, ex: dict, sid) -> bool:
-    return _reconcile.promote_if_delivered(_ctx(), req, ex, sid)
+def _promote_if_delivered(req, ex: dict, sid, whole_message: bool = False) -> bool:
+    return _reconcile.promote_if_delivered(_ctx(), req, ex, sid, whole_message)
 
 
 def _harvest_to_review(req: Requirement, ex: dict, sid, note_tag: str, log_reason: str,
@@ -648,6 +679,58 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     # 0 关掉）下一 pass 的投影就按新阈值算，不必重启守护进程。
     cfg.approval_mention_escalation = fresh.approval_mention_escalation
     _refresh_owner_logins(cfg, fresh)                       # §65.5（#310）
+    _refresh_automation_switches(cfg, fresh)                # §81（#451 / D83）
+
+
+def _refresh_automation_switches(cfg: config.Config, fresh: config.Config) -> None:
+    """§81（issue #451 / owner 决策 D83）：**总账里每一把 actd 开关**都在这里现读。
+
+    以前这个刷新点是手抄的——谁想让自己的旋钮变热，就自己来加一行；抄漏了就是
+    一把「设置页翻了却要重启才生效」的死开关（`trash.retention_days`、
+    `card_summary.enabled`、`updates.check_enabled`、`features.feedback_sync`、
+    `autodispatch.enabled` 五把就是这么冷了一年）。现在名单的真源是
+    :func:`act.lib.automation.live_fields`：总账里加一行带 switch 的 actd 行为，
+    那把开关自动变热，本函数一个字都不用改。
+
+    三种拼法各走各的赋值：``features.<flag>`` 进 ``cfg.features``、
+    ``<block>.<key>``（如 `autodispatch.enabled`）进 ``cfg.raw``、其余是
+    ``Config`` 上的扁平字段。盘上没有那一键 = 删掉内存里的旧值（与
+    :func:`_refresh_owner_logins` 同纪律：diff-write 删键就该退回出厂默认）。
+    """
+    for name in automation.live_fields():
+        if "." not in name:
+            if hasattr(fresh, name):
+                setattr(cfg, name, getattr(fresh, name))
+            continue
+        head, tail = name.split(".", 1)
+        if head == "features":
+            cfg.features[tail] = fresh.feature(tail)
+        else:
+            _refresh_raw_key(cfg, fresh, head, tail)
+
+
+def _refresh_raw_key(cfg: config.Config, fresh: config.Config, block: str, key: str) -> None:
+    """``cfg.raw[<block>][<key>]`` 现读一格（`autodispatch.enabled` 是第一个客户：
+    §51 的免批闸只从 `cfg.raw` 读，所以不刷这里，设置页翻它要重启 actd）。
+
+    判据是**键在不在**，不是值是不是 None——`policy.autodispatch_config` 分得出
+    「写了但是空值」（`enabled:` 的 YAML null → `bool(None)` = 关）与「压根没写」
+    （= 出厂默认，开）这两件事。照 :func:`_refresh_owner_logins` 那样按 None 删键，
+    会把前者刷成后者：一份写着 `enabled:` 的 config 启动时免批是关的，第一个 pass
+    之后自己变成开的——整条管线里最贵的那条自动行为，被一个「为了让开关更可信」
+    才加的刷新点朝着 issue #451 ask 4 明令禁止的方向掰了过去。
+    """
+    if not isinstance(cfg.raw, dict):
+        return
+    target = cfg.raw.get(block)
+    if not isinstance(target, dict):
+        target = {}
+        cfg.raw[block] = target
+    source = fresh.raw.get(block) if isinstance(fresh.raw, dict) else None
+    if isinstance(source, dict) and key in source:
+        target[key] = source[key]
+    else:
+        target.pop(key, None)
 
 
 def _refresh_owner_logins(cfg: config.Config, fresh: config.Config) -> None:
@@ -678,15 +761,60 @@ def _early_dashboard(cfg: config.Config) -> None:
         _log(f"early dashboard write FAILED: {e}")
 
 
-def _silent_merge_sweep() -> None:
+def _silent_merge_sweep(cfg: Optional[config.Config] = None) -> None:
+    """§44 的**落盘端** + §81 闸门（`features.merge_silent`，与探测端共用一把）。
+
+    关掉时连在飞的判定都不消费——判官文件留着，开关翻回来下一 pass 照常落账
+    （与 §65.1 「关开关不腰斩仍活着的会话」同纪律：不丢数据，只停动作）。
+    """
+    if not automation.enabled("silent_merge", cfg):
+        return
     try:
         # §44: execute same-thing verdicts in THIS thread (the daemon is the single merge
         # writer — the detached judge is registry-read-only), then fail stuck checks + purge expired jobs.
         from act.lib import silent_merge
-        silent_merge.consume_judged()
+        merged = silent_merge.consume_judged()
         silent_merge.sweep()
+        if merged:
+            automation.audit("silent_merge", "acted", merged=merged)
     except Exception:  # noqa: BLE001 - sweep must not kill the daemon
         pass
+
+
+def _near_dupe_step(cfg: Optional[config.Config] = None) -> None:
+    """§38/§44 的**探测端**（新卡两两近重复 → 旁路判官）+ 同一把 §81 闸门。"""
+    if auto_merge is None or not automation.enabled("near_dupe_scan", cfg):
+        return
+    asked = auto_merge.scan_new_cards()
+    if asked:
+        automation.audit("near_dupe_scan", "acted", checks=asked)
+
+
+def _raising_step(cfg: config.Config) -> None:
+    """§1/§40 欠账展开（每 pass 一张）+ §81 闸门 `features.raising`。"""
+    if not automation.enabled("raising_expansion", cfg):
+        return
+    if process_raising(cfg):
+        automation.audit("raising_expansion", "acted", expanded=1)
+
+
+def _purge_step(cfg: config.Config) -> None:
+    """§9 回收站硬删 + §81 留痕。出厂默认已是关（`trash.retention_days: 0`，D83）。"""
+    if not automation.enabled("purge_trash", cfg):
+        return
+    purged = purge_trash(cfg)
+    if purged:
+        automation.audit("purge_trash", "acted", purged=purged,
+                         retention_days=int(getattr(cfg, "trash_retention_days", 0) or 0))
+
+
+def _archive_step(cfg: config.Config) -> None:
+    """§4 冷交付卡封存（可逆）+ §81 留痕。"""
+    if not automation.enabled("archive_stale", cfg):
+        return
+    archived = archive_stale(cfg)
+    if archived:
+        automation.audit("archive_stale", "acted", archived=archived)
 
 
 def _search_index_prune() -> None:
@@ -711,30 +839,37 @@ def _feedback_sync_sweep(cfg: config.Config) -> None:
         pass
 
 
-def _gc_attachments_guarded() -> None:
+def _gc_attachments_guarded(cfg: Optional[config.Config] = None) -> None:
+    """§10 无引用贴图孤儿清理 + §81 闸门 `features.attachment_gc` / 留痕。"""
+    if not automation.enabled("gc_attachments", cfg):
+        return
     try:
         # 贴图附件孤儿清理 — 日频节流；被节流的 pass 只付一次 marker stat()
-        gc_attachments()
+        removed = gc_attachments()
+        if removed:
+            automation.audit("gc_attachments", "acted", removed=removed)
     except Exception:  # noqa: BLE001 - housekeeping must not kill the pass
         pass
 
 
 def _housekeeping_phase(cfg: config.Config, interval: Optional[int]) -> None:
-    process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
-    purge_trash(cfg)
+    """每 pass 的管家阶段。**每一步都经 §81 总账的闸门**（`automation.enabled`
+    现读，翻开关下一 pass 生效）；真动了东西的步骤在 `state/automation.jsonl`
+    留一行。调用顺序与本改动前逐字一致——闸门是加在外面的一层壳，不是重排。"""
+    _raising_step(cfg)       # expand ONE 'raising' debt per pass (bounded block)
+    _purge_step(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
-    archive_stale(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
+    _archive_step(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
     daily_loop.tick(cfg, interval=interval)   # §70: 到点跑一次「先维护再提案」，自吞异常
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     self_improve.tick_hook(cfg, log=_log)   # §65.5 lane PR 巡检（自身节流）
-    _silent_merge_sweep()
+    _silent_merge_sweep(cfg)
     # §64：待验收卡 AI 摘要 + 完成度评语——同款两段式（detached 判官只读，本线程落卡）；只是建议，永不改 status；绝不抛
     card_summary.tick(cfg)
-    if auto_merge is not None:
-        # §38/§44: deterministic near-dupe rule for newly appeared open cards
-        # → detached silent two-card check (radar cron files cards from
-        # outside this process, so "new" is detected by ledger diff).
-        auto_merge.scan_new_cards()
+    # §38/§44: deterministic near-dupe rule for newly appeared open cards
+    # → detached silent two-card check (radar cron files cards from
+    # outside this process, so "new" is detected by ledger diff).
+    _near_dupe_step(cfg)
     _search_index_prune()
     if feedback is not None:
         # §29: retry pending feedback uploads ONCE, then give up (uploaded:
@@ -744,7 +879,7 @@ def _housekeeping_phase(cfg: config.Config, interval: Optional[int]) -> None:
         # inside the same outage. Cheap when state/feedback/ is empty.
         feedback.retry_pending(cfg)
     _feedback_sync_sweep(cfg)
-    _gc_attachments_guarded()
+    _gc_attachments_guarded(cfg)
 
 
 def _dashboard_phase(cfg: config.Config) -> dict:
@@ -794,7 +929,10 @@ def run_once(
     _store2_tick()   # §53 数据层：首跑激活（备份→迁移→比对→标记）+ 每日导出
     heartbeat.beat("inbox", interval)
     n_inbox = process_inbox()
-    n_auto = auto_dispatch_pass(cfg)   # §51：hand 卡免批通道（card_sent→approved）
+    # §78 一次性归并扫描必须排在免批闸**之前**：退役车道上的存量卡先落进
+    # 潜在任务，本 pass 的 §65 lane 卡才可能被看见（否则要多等一整轮）。
+    fold_retired_lane()
+    n_auto = auto_dispatch_pass(cfg)   # §65 lane 免批通道（detected→approved）
     heartbeat.beat("dispatch", interval)
     n_dispatched = dispatch_approved(cfg)
     # 仅在真有变化时才早写——空闲 pass 不额外跑 build_dashboard（内含 `claude agents`
@@ -834,6 +972,9 @@ def _loop_forever(cfg: config.Config, interval: int, auth_notified: set,
     loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
     heartbeat.beat("starting", interval)
     while True:
+        # §80.1 早醒基线取在 pass **之前**：本 pass 的 drain 之后才落地的动作
+        # 不在基线里，于是那一笔不用再等一整个 interval（理由见 wakeup 模块）。
+        queued = _wakeup.inbox_names()
         try:
             prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
                                  radar_dead_notified, interval=interval)
@@ -843,7 +984,9 @@ def _loop_forever(cfg: config.Config, interval: int, auth_notified: set,
             loop_health.record_failure(f"{type(e).__name__}: {e}")
             heartbeat.beat("failed", interval)    # 崩了也算活着——循环还在转
             _log(f"loop pass FAILED: {e}\n{traceback.format_exc()}")
-        time.sleep(interval)
+        # §80.1：排着 owner 动作就别睡满——heartbeat 报的仍是**配置**间隔
+        # （staleness 门槛的真源，早醒只会让 beat 更新鲜，不会让它过期）。
+        _wakeup.wait_for_work(interval, queued)
 
 
 def main(argv: Optional[list] = None) -> int:

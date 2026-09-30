@@ -25,10 +25,10 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
+from tests.scratch_testkit import scratch_dir
 
 REPO = Path(__file__).resolve().parents[2]
 WEB = REPO / "web"
@@ -63,15 +63,11 @@ class WebBuildOutsideRepoTestCase(unittest.TestCase):
     def setUpClass(cls):
         # the copy lives under a temp dir that is NOT inside the repo: ../../ui/parity
         # resolves to nothing there, exactly like ~/Library/Caches/zelin-ai-assistant/web-build
-        cls.tmp = Path(tempfile.mkdtemp(prefix="zai-web-mirror-"))
+        cls.tmp = Path(scratch_dir(cls, prefix="zai-web-mirror-"))
         cls.copy = cls.tmp / "web-build"
         shutil.copytree(WEB, cls.copy, ignore=_mirror_ignore, symlinks=True)
         os.symlink(NODE_MODULES, cls.copy / "node_modules")
         assert not (cls.tmp / "ui").exists()
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def _npm(self, *script):
         env = dict(os.environ, CI="1")

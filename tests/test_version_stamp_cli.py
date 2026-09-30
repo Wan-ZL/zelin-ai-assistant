@@ -11,12 +11,12 @@
 import os
 import shutil
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from act.lib import version as ver
+from tests.scratch_testkit import scratch_dir
 
 _SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 if _SCRIPTS not in sys.path:
@@ -58,7 +58,7 @@ class StampPinsTestCase(unittest.TestCase):
 
 class PinFilesOnDiskTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="pins-"))
+        self.tmp = Path(scratch_dir(self, prefix="pins-"))
         for rel in ver.PIN_FILES:
             dst = self.tmp / rel
             dst.parent.mkdir(parents=True, exist_ok=True)

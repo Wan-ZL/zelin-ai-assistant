@@ -2,17 +2,10 @@
   "lanes": [
     {
       "help": {
-        "en": "Real but not-urgent asks park here — low-confidence radar captures, imported sessions, proposals you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to promote one.",
-        "zh": "真实但不着急的事都先停在这里：雷达低置信度捕获、导入的旧会话、你暂缓的提案。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」升级成提案。"
+        "en": "Every machine-filed card lands here — radar captures, the daily loop, the self-improve lane, plus anything you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to fill in the plan, cost and acceptance criteria, then \"Run it\".",
+        "zh": "机器铸的卡都落在这里：雷达捕获、每日循环、自我改进通道，还有你暂缓的事。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」补上计划、成本和验收标准，点「促成运行」一键开跑。"
       },
       "slug": "debt"
-    },
-    {
-      "help": {
-        "en": "Cards that need your decision now, each with a plan, cost, and acceptance criteria. Approve = start executing; Comment = redo with your input; Later = not now, parks it in Backlog. Grey cards are placeholders the AI is still researching.",
-        "zh": "需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；暂缓=先不做，放进潜在任务。灰色卡是 AI 正在研究的占位。"
-      },
-      "slug": "needs_approval"
     },
     {
       "help": {

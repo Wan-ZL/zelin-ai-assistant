@@ -5,8 +5,17 @@ id is what lets the Slack ✅-reaction approve the right R-id; kind tags the
 class for per-event preferences — "review_ready" for fresh deliveries,
 "proposal" for new / re-raised / batched cards (§28 追记, issue #29)):
 
-  ∅ -> needs_approval          "有新需求待审批"     (notify.msg_new_card)
+  ∅ -> debt（潜在任务）         新卡待审批            (notify.msg_new_card)
   running -> review            "待验收：AI 已交付草稿"
+
+**§78（issue #447 / owner 决策 D80）**：第一类的差分源从退役的 `needs_approval[]`
+换成 `debt[]`（§40.6 修法 / §78.6）。这是整次退役里最容易静默失效的一处——键不
+改名、投影照常出、只是永远空着，不换就等于新卡通知与 §76.3 的三条结算升级**全部
+无声停发**，而 CI 全绿。本文件把既有的四类判决逐条重锚到那一列；退役本身的两条
+新行为各有专属判例，不在这里重复（一个 behavior 一个文件）：
+`tests/test_card_notifications_diff_the_backlog_lane.py`（只出现在墓碑列里的行
+一声不响）与 `tests/test_limited_provenance_births_are_quiet.py`（§45 / D80.7
+`quiet_birth` 落列不响）。
 
 「running -> needs_input」类：retired v0.48.8（#119）——受阻会话由 reconcile
 收割进待验收并当场发精确文案（msg_review_interrupted 等），diff 器对
@@ -36,9 +45,15 @@ def _review_ready(name):
     return t, b
 
 
-def _dash(needs_approval=(), running=(), needs_input=(), review=()):
+def _dash(debt=(), running=(), needs_input=(), review=()):
+    """一份看板快照。§78（issue #447 / owner 决策 D80）：机器卡住在潜在任务列
+    （``debt[]``），``needs_approval[]`` 是恒空的墓碑键——它仍然摆在这里，钉的
+    就是「diff 器绝不许再看那一列」：手搭一份带 ``needs_approval`` 行的快照正是
+    让新卡通知**无声死掉**的那个形状（§40.6 §78 修法 / §78.6），用它写出来的
+    判例会全部空转通过。"""
     return {
-        "needs_approval": [dict(i) for i in needs_approval],
+        "needs_approval": [],
+        "debt": [dict(i) for i in debt],
         "running": [dict(i) for i in running],
         "needs_input": [dict(i) for i in needs_input],
         "review": [dict(i) for i in review],
@@ -49,27 +64,27 @@ class FirstPassTestCase(unittest.TestCase):
     def test_prev_none_is_silent(self):
         # daemon (re)start: everything on the board is "new" vs no prev —
         # notifying would replay every card on every restart
-        curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}],
+        curr = _dash(debt=[{"id": "R-1", "title": "写周报"}],
                      review=[{"id": "R-2", "name": "任务二"}],
                      needs_input=[{"id": "R-3", "name": "任务三"}])
         self.assertEqual(actd.detect_transitions(None, curr), [])
 
 
 class NewCardTestCase(unittest.TestCase):
-    def test_new_card_sent_notifies_with_req_id(self):
+    def test_new_backlog_card_notifies_with_req_id(self):
         prev = _dash()
-        curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
+        curr = _dash(debt=[{"id": "R-1", "title": "写周报"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
                          [(*_new_card("写周报"), "R-1", notify.KIND_PROPOSAL)])
 
     def test_existing_card_stays_silent(self):
-        prev = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
-        curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
+        prev = _dash(debt=[{"id": "R-1", "title": "写周报"}])
+        curr = _dash(debt=[{"id": "R-1", "title": "写周报"}])
         self.assertEqual(actd.detect_transitions(prev, curr), [])
 
     def test_card_missing_title_falls_back_to_id(self):
         prev = _dash()
-        curr = _dash(needs_approval=[{"id": "R-1"}])
+        curr = _dash(debt=[{"id": "R-1"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
                          [(*_new_card("R-1"), "R-1", notify.KIND_PROPOSAL)])
 
@@ -147,7 +162,7 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
     def test_all_three_classes_in_one_pass(self):
         prev = _dash(running=[{"id": "R-2", "name": "任务二"},
                               {"id": "R-3", "name": "任务三"}])
-        curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}],
+        curr = _dash(debt=[{"id": "R-1", "title": "写周报"}],
                      review=[{"id": "R-2", "name": "任务二"}],
                      needs_input=[{"id": "R-3", "name": "任务三"}])
         msgs = actd.detect_transitions(prev, curr)
@@ -159,19 +174,19 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
 
     def test_approval_to_running_is_silent(self):
         # approve is user-initiated — echoing it back would be noise
-        prev = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
+        prev = _dash(debt=[{"id": "R-1", "title": "写周报"}])
         curr = _dash(running=[{"id": "R-1", "name": "写周报"}])
         self.assertEqual(actd.detect_transitions(prev, curr), [])
 
     def test_missing_partitions_tolerated(self):
         # prev written by an older build without some partitions
         msgs = actd.detect_transitions({}, _dash(
-            needs_approval=[{"id": "R-1", "title": "写周报"}]))
+            debt=[{"id": "R-1", "title": "写周报"}]))
         self.assertEqual(msgs, [(*_new_card("写周报"), "R-1", notify.KIND_PROPOSAL)])
 
     def test_items_without_id_are_ignored(self):
         prev = _dash()
-        curr = _dash(needs_approval=[{"title": "没有 id 的坏卡"}])
+        curr = _dash(debt=[{"title": "没有 id 的坏卡"}])
         self.assertEqual(actd.detect_transitions(prev, curr), [])
 
 

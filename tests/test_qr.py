@@ -10,6 +10,7 @@ data without needing an external decoder.
 import unittest
 
 from tests import TMP_HOME  # noqa: F401 - sandboxes AIASSISTANT_HOME first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import qr
 from tests import qr_testkit as kit
@@ -87,10 +88,9 @@ class QrRenderTestCase(unittest.TestCase):
         self.assertTrue(any(ch in out for ch in "█▀▄"))
 
     def test_png_has_magic_and_content(self):
-        import tempfile
         from pathlib import Path
 
-        p = Path(tempfile.mkdtemp()) / "qr.png"
+        p = Path(scratch_dir(self)) / "qr.png"
         qr.qr_png("hello world", p)
         blob = p.read_bytes()
         self.assertEqual(blob[:8], b"\x89PNG\r\n\x1a\n")

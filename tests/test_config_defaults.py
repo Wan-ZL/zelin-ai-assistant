@@ -12,19 +12,19 @@
 Explicit config.yaml values (either way) always keep their behavior.
 """
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.scratch_testkit import scratch_dir
 
 from act.lib import config
 
 
 class CreateGithubRepoDefaultTestCase(unittest.TestCase):
     def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="cfg-defaults-")) / "config.yaml"
+        path = Path(scratch_dir(self, prefix="cfg-defaults-")) / "config.yaml"
         path.write_text(body, encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
@@ -47,7 +47,7 @@ class CreateGithubRepoDefaultTestCase(unittest.TestCase):
 
 class TelemetryDefaultsTestCase(unittest.TestCase):
     def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="cfg-tele-")) / "config.yaml"
+        path = Path(scratch_dir(self, prefix="cfg-tele-")) / "config.yaml"
         path.write_text(body, encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
@@ -135,7 +135,7 @@ class LoadConfigRobustnessTestCase(unittest.TestCase):
     整个带崩（actd main() 另有纵深防御，但第一道闸在这里）。"""
 
     def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="cfg-robust-")) / "config.yaml"
+        path = Path(scratch_dir(self, prefix="cfg-robust-")) / "config.yaml"
         path.write_text(body, encoding="utf-8")
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
@@ -163,7 +163,7 @@ class LoadConfigRobustnessTestCase(unittest.TestCase):
         )
         self.assertEqual(cfg.poll_interval_seconds, 10)
         self.assertEqual(cfg.show_cost_above_usd, 5.0)
-        self.assertEqual(cfg.trash_retention_days, 60)
+        self.assertEqual(cfg.trash_retention_days, 0)   # §81/D83 出厂 = 永不自动硬删
 
     def test_garbage_capture_input_is_not_an_informed_choice(self):
         cfg = self._load_with_yaml("telemetry:\n  capture_input: banana\n")

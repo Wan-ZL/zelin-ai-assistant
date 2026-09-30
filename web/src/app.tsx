@@ -35,11 +35,13 @@ import { TrashPage } from "./pages/TrashPage";
 
 const HEALTH_POLL_MS = 30_000;
 
-/** 等你动作的卡数 = Dock 徽章（原生 §15 v0.46 ②：待拍板 + 需输入 + 待验收；counts 真实总数优先） */
-export function badgeCount(board: { counts?: Record<string, number>; needs_approval?: unknown[]; needs_input?: unknown[]; review?: unknown[] } | null): number {
+/** 等你动作的卡数 = Dock 徽章（原生 §15 v0.46 ②：待拍板 + 需输入 + 待验收；counts 真实总数优先）。
+ *  §78 / D80.12：「待拍板」自提案列退役起 = 潜在任务（debt）——owner 的决策都搬到了那一列；
+ *  `needs_approval` 恒 0，继续加它只是加个零，读起来却像徽章还在数一列不存在的卡。 */
+export function badgeCount(board: { counts?: Record<string, number>; debt?: unknown[]; needs_input?: unknown[]; review?: unknown[] } | null): number {
   if (!board) return 0;
-  const n = (key: "needs_approval" | "needs_input" | "review") => board.counts?.[key] ?? (Array.isArray(board[key]) ? board[key]!.length : 0);
-  return n("needs_approval") + n("needs_input") + n("review");
+  const n = (key: "debt" | "needs_input" | "review") => board.counts?.[key] ?? (Array.isArray(board[key]) ? board[key]!.length : 0);
+  return n("debt") + n("needs_input") + n("review");
 }
 
 /** 首次运行向导跳转（§68.5）：setup.needed 且当前在看板页 → 换到 ?page=setup（一次性、replaceState 不进历史栈）。
@@ -115,7 +117,7 @@ export function App() {
     // （server 只 stat 三个文件）。SSE 的 board.updated 不携带心跳，所以要独立拉。
     const healthTimer = setInterval(() => void refreshHealth(), HEALTH_POLL_MS);
     // §68.13 壳的全局快捷键 ⌃⌥Space / 壳菜单 View ▸ 聚焦捕获框（⌘L）→ quick_capture：与 rail 的 ⌘L 同一落点
-    // focusComposer（§54.4 2026-09-05 追记）——聚焦提案列 composer，不在看板页就留接力棒先回看板；
+    // focusComposer（§54.4 2026-09-05 追记；§78 后落点是看板上仅剩的那只列顶输入框）——不在看板页就留接力棒先回看板；
     // 壳菜单 关于 / 设置… / 权限体检… 与字幕悬浮窗齿轮 → open_page {page, anchor?}（D40）：SPA 自己换页，不重载
     const stopCommands = onShellCommand((command, args) => {
       if (command === "quick_capture") focusComposer();
