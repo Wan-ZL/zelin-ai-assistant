@@ -150,7 +150,7 @@ class LoopTrashRetentionTestCase(unittest.TestCase):
         config.ensure_state_dirs()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
-        self.cfg = config.Config()   # trash 60 d, loop 90 d
+        self.cfg = config.Config(trash_retention_days=60)   # §81/D83 后出厂 0；loop 90 d
 
     def _trashed(self, rid, reason, days_ago):
         ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")

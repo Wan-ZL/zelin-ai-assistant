@@ -1,0 +1,36 @@
+# automation_baseline.txt —— shrink-only 存量账本（docs/CONTRACT.md §58.4 + §81）。
+# 只许缩：新违例 FAIL、账上恶化 FAIL、已修好仍挂账 FAIL（划掉这行）。
+# 重铸：python3 scripts/qa/automation_check.py --write-baseline（P3 清账轮以外别用）。
+#
+# 这一本是 issue #451 ask 4 的**账单**：「铸卡 / 删数据 / 花钱的自动行为，出厂
+# 默认要关」——下面每一行都是今天出厂开着的一条，后面那句是它为什么还开着。
+# 本轮（§81 / D83）只真翻了一把默认：`trash.retention_days` 60 → 0（整条管线
+# 里唯一不可恢复的自动删除，与 §0 第 2 条正面冲突）。其余逐条明账，owner 在
+# PR 上看这张表，想关哪条就划掉哪行 —— 账本只许缩，翻掉一条就是少一行。
+# 备注必须写在 ` #` 之后（qa_common.parse_ledger_text 把第二个 token 当分数）。
+audit:notify_burst_cap 1  # 一轮 >5 条时多出来的队列文件直接 unlink、零留痕；合成横幅保留、溢出改落痕值得单独一张卡 #451
+default-on:archive_stale 1  # 封存可逆（archive/ 里还在，prev_status 记着），带未来 deadline / 同簇有活卡的一律不动 #451
+default-on:auto_dispatch 1  # §51 hand lane 的免批通道是 §0 第 12 条的明文例外；关它 = 手打快速捕获又要逐张点批准 #451
+default-on:auto_resume 1  # 关了 = 睡醒 / 断网后的会话全成僵尸，要人逐张手点重启；§16 已两键合取且每 pass 现读 #451
+default-on:card_summary 1  # 每张待验收卡一次 headless 判官；只写 assessment 建议、永不改 status，关它等于 §64 整节退役 #451
+default-on:daily_loop_proposals 1  # D10 拍板的每日循环主体，上限出厂 2 张/天（D33），已在设置页；关它 = 关掉 §70 #451
+default-on:dispatch_approved 1  # 人点了「批准」就是授权——无人值守的那一半由 auto_dispatch 那把闸管 #451
+default-on:gc_attachments 1  # 只删「无引用且 >30 天」的孤儿贴图，引用读不出就整轮零删除；不删会按 5-15MB/张无限涨 #451
+default-on:ingest_media_cleanup 1  # §72.4 出厂 60 分钟 = 历来的写死值；不删原始 jpg/mp4 磁盘会炸 #451
+default-on:ingest_meeting_recap 1  # copy-only 纪要，不是卡、没有发送路径；设置页已有 recap.enabled #451
+default-on:ingest_vault_process 1  # 本轮刚补上 features.ingest 这把闸（以前一把都没有）；出厂仍开 = 行为不变 #451
+default-on:loop_dedup_merge 1  # D10 原话要的「同题多卡合成一张」；旧卡进回收站可恢复 #451
+default-on:loop_idle_sweep 1  # 只碰提案 / 潜在任务两列，只进回收站（90 天可恢复）；D10 拍板 #451
+default-on:loop_review_aging 1  # D74 的两阶段「先说再做」，只进回收站可恢复；0 = 关那条规则的旋钮已在设置页 #451
+default-on:loop_worktree_sweep 1  # D68 定的三条保守理由 + 2 天年龄地板；本轮刚补上 features.worktree_sweep（以前只有 env）#451
+default-on:near_dupe_scan 1  # §44 的探测端，与 silent_merge 共用一把新闸；关了看板会重新长重复卡 #451
+default-on:notify_burst_cap 1  # 不删就刷屏；该修的是「删之前留一行」，不是把溢出保护关掉 #451
+default-on:radar_retry_ladder 1  # 宪法第 11 条要的「失败不外溢」；上限（最多 20 次计费提取）该不该收，等 owner 看这张表时定 #451
+default-on:quick_capture_fold 1  # 折叠优先是「少建卡」的主力，fold note 可拆；关它反而**多**铸卡 #451
+default-on:radar_gmail 1  # 三源之一；没有凭证时自身静默 no-op，§48 已有合取开关。全关 = 看板再也不会自己长出东西 #451
+default-on:radar_obsidian 1  # 同上：唯一从笔记立案的通道 #451
+default-on:radar_slack 1  # 同上 #451
+default-on:raising_expansion 1  # 展开的是人已经放进来的欠账，不是凭空立案；有界（每 pass 一张）；本轮刚补 features.raising #451
+default-on:silent_merge 1  # §44 的落盘端；并入可拆、副卡进回收站可恢复；本轮刚补 features.merge_silent #451
+switch:notify_burst_cap 1  # 壳侧中继只读 review_notify 一个键，§28 的三把分类开关管不到溢出丢弃；给它填一把管不着它的开关才是更坏的选择 #451
+switch:dispatch_approved 1  # 「批准即派发」的闸就是人点的那一下——给它第二把开关等于做一个「批了也不跑」的陷阱 #451

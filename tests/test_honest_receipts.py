@@ -93,7 +93,9 @@ class CostStateTestCase(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 class PurgeAtTestCase(unittest.TestCase):
     def setUp(self):
-        self.cfg = config.Config()  # trash_retention_days = 60
+        # §81/D83：出厂值改成 0（永不自动硬删），本用例算的是 purge_at 的
+        # 算术，显式钉一个保留期。
+        self.cfg = config.Config(trash_retention_days=60)
         home = scratch_dir(self, prefix="purge-home-")
         patcher = mock.patch.dict(os.environ, {"HOME": home})
         patcher.start()

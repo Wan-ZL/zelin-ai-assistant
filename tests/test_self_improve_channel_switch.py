@@ -138,7 +138,8 @@ class LaneAdmissionTestCase(unittest.TestCase):
 
 
 class DailyLoopReadersTestCase(unittest.TestCase):
-    """§70.3：关着 = 三个 GitHub 读取器不跑（零 gh 调用），开着 = 今天的行为。"""
+    """§70.3 / §81.2：关着 = 出身 self_improve 的读取器一个都不跑（零 gh 调用、
+    零素材抓取），开着 = 今天的行为。名单 truth = `daily_loop.SELF_IMPROVE_READERS`。"""
 
     def setUp(self):
         config.ensure_state_dirs()
@@ -151,17 +152,28 @@ class DailyLoopReadersTestCase(unittest.TestCase):
     def _bot_cards(self):
         return [r for r in registry.load_all() if r.title.startswith(daily_loop.TITLE_PREFIX)]
 
-    def test_collect_signals_off_marks_the_three_readers_and_calls_no_gh(self):
+    def test_collect_signals_off_marks_the_self_improve_readers_and_calls_no_gh(self):
         gh = _RecordingGh(OWNER_ISSUE)
         out = daily_loop.collect_signals([], now=NOW, gh=gh, doctor=_doctor_none,
                                          repo="o/r", github=False)
-        for name in daily_loop.GITHUB_READERS:
+        for name in daily_loop.SELF_IMPROVE_READERS:
             self.assertEqual(out["inputs"][name], daily_loop.READER_OFF, name)
         self.assertEqual(gh.calls, [])
         self.assertEqual(out["gh_titles"], [])
         # 其余读取器照跑（计数是 int，不是 "off"）
-        for name in ("registry", "analytics", "doctor", "materials"):
+        for name in ("registry", "analytics", "doctor"):
             self.assertIsInstance(out["inputs"][name], int, name)
+
+    def test_materials_is_one_of_them(self):
+        """§81 / D83（issue #451）：素材库那一路铸的同样是 self_improve 卡
+        （ref `self_improve:material:*`、target_repo = 本仓库、plan 写着「实现成
+        草稿 PR」），所以 D57 的「通道关着就不再产生新的 🤖 卡」必须罩住它。
+        这条以前是漏的——`materials` 不在 GITHUB_READERS 里，开关关着照跑照铸。"""
+        self.assertIn("materials", daily_loop.SELF_IMPROVE_READERS)
+        self.assertNotIn("materials", daily_loop.GITHUB_READERS)   # 它不调 gh，名字别乱
+        out = daily_loop.collect_signals([], now=NOW, gh=_RecordingGh(OWNER_ISSUE),
+                                         doctor=_doctor_none, repo="o/r", github=False)
+        self.assertEqual(out["inputs"]["materials"], daily_loop.READER_OFF)
 
     def test_collect_signals_on_still_reads_github(self):
         gh = _RecordingGh(OWNER_ISSUE)

@@ -68,7 +68,10 @@ class _Case(unittest.TestCase):
         config.ensure_state_dirs()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
-        self.cfg = config.Config()   # review_stale_days 出厂 14
+        # review_stale_days 出厂 14；trash 保留期自 §81/D83 起出厂 0（永不自动硬删），
+        # 本文件有一条断言算的是「循环卡的长保留期 = 90」，那道算术只有总开关开着
+        # 时才有意义，所以显式钉一个基准保留期。
+        self.cfg = config.Config(trash_retention_days=60)
 
     def notices(self, notifier=None, now=NOW, today=TODAY):
         return maintenance.sweep_review_notices(self.cfg, today=today, now=now,

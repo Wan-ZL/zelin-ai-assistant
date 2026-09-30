@@ -51,7 +51,8 @@ import subprocess
 from typing import Callable, Optional
 
 from act import analyze
-from act.lib import analytics, config, match_corpus, provenance, registry, sanitize
+from act.lib import (analytics, automation, config, match_corpus, provenance,
+                     registry, sanitize)
 
 _VALID_ACTIONS = ("new_proposal", "relates_to", "ignore")
 _VALID_TIERS = ("T0", "T1", "T2")
@@ -572,7 +573,15 @@ def _silent_fold_target(req: "registry.Requirement",
                         cfg) -> Optional["registry.Requirement"]:
     """§44.2 pre-filing check, isolated so tests can stub it and an import
     problem in silent_merge can never break triage. Returns fold target or
-    None (file normally)."""
+    None (file normally).
+
+    §81（issue #451 / D83）：这一步会起一个**阻塞式**的 LLM 判官（雷达每张候选
+    新卡一次），所以它和 §38 的每 pass 巡检、§44 的落盘端共用同一把闸
+    `features.merge_silent`——否则「我把静默并入关了」只关掉了三处里的两处，
+    雷达照样每轮花钱判。关着 = 照常铸新卡（不折叠），零 LLM 调用。
+    """
+    if not automation.enabled("silent_merge", cfg):
+        return None
     try:
         from act.lib import silent_merge
         return silent_merge.find_fold_target(req)

@@ -162,7 +162,7 @@ class PurgeSkipsMergedTestCase(RegistryBase):
                    trashed_at=old)
         self._save(rid="R-301", status=State.TRASHED.value, trashed_at=old)
 
-        purged = actd.purge_trash(config.Config())  # retention 默认 60 天
+        purged = actd.purge_trash(config.Config(trash_retention_days=60))  # §81/D83 后出厂 0，显式钉 60
 
         self.assertEqual(purged, 1)
         self.assertIsNone(registry.load("R-301"))            # trashed 被清

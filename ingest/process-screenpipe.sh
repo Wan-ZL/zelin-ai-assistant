@@ -78,6 +78,36 @@ run_recap_once() {
 }
 run_recap_once
 
+# §81 automation ledger (issue #451 / owner decision D83): the headless ingest
+# below is the single most expensive unattended behaviour in the product (a
+# `claude -p` session per round, budgeted up to 2h) and it had no switch at all
+# — neither config.yaml nor the Settings page could stop it. One switch now:
+# `features.ingest`. Exit-code contract mirrors act/lib/sources.py's CLI —
+# 0 = on, 3 = off, anything else (no python, broken config, missing module) =
+# fail-open, because a cron chain must never go dark on an environment fault.
+# The recap step above runs first and has its own switch (§63 recap.enabled);
+# exiting 0 here keeps the rest of the chain (radar) running as before.
+ingest_enabled() {
+    local py rc
+    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
+    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    [ -n "$py" ] || return 0
+    (cd "$REPO_ROOT" 2>/dev/null && "$py" -m act.lib.automation --enabled ingest_vault_process >/dev/null 2>&1)
+    rc=$?
+    [ "$rc" -eq 3 ] && return 1
+    return 0
+}
+# The switch gates the UNATTENDED path only. This same script is what the
+# Settings page's "ingest now" button runs (server/ingest_run.py:32) — an
+# automation switch must never make a button the human just pressed do nothing.
+# AIASSISTANT_CRON=1 is set by the crontab line and nowhere else (install.sh's
+# INGEST_CHAIN; same discriminator screenpipe-export.sh:90 and act/radar.py:840
+# already use).
+if [ -n "${AIASSISTANT_CRON:-}" ] && ! ingest_enabled; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipped — features.ingest is off (CONTRACT §81; the Settings 'ingest now' button still works)" >> "$LOGFILE"
+    exit 0
+fi
+
 # Prevent concurrent runs — PID lock.
 # (Was an mtime lock with a 30-min staleness cutoff, but real runs take
 # 26-33 min: a slow run's lock could be declared stale and a second run

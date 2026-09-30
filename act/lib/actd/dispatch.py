@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from act.lib import (analytics, config, failures, notify, policy, power, registry, risk,
-                     self_improve)
+from act.lib import (analytics, automation, config, failures, notify, policy, power,
+                     registry, risk, self_improve)
 from act.lib.actd import triage_guard
 from act.lib.actd.seam import Daemon, append_note
 from act.lib.registry import Requirement, State, load_all
@@ -197,6 +197,10 @@ def _approve_auto(d: Daemon, req: Requirement, ex: dict, reason: str) -> float:
 def _announce_auto(d: Daemon, req: Requirement, reason: str, cost: float, notify_on: bool) -> None:
     d.log(f"autodispatch: {req.id} detected -> approved ({reason}, est ${cost:g})")
     analytics.log_event("auto_dispatch", req=req.id, cost=cost, lane=reason)
+    # §81（issue #451 / D83）：免批批准是「没人点过、卡却动了」里最该有回执的一条。
+    # analytics 是可以整条关掉的隐私面（§16 fail-closed），审计行不是——它永远落
+    # state/automation.jsonl，与通知开没开无关。
+    automation.audit("auto_dispatch", "acted", req=req.id, lane=reason, cost_usd=cost)
     if notify_on:
         # 观察模式：每次免批派发都出一条通知，owner 随时可关
         # （autodispatch.notify=false）或全关（enabled=false）。

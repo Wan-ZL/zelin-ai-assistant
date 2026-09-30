@@ -98,6 +98,9 @@ class ApprovalExecutionTestCase(unittest.TestCase):
         self.assertEqual((cfg.poll_interval_seconds, cfg.show_cost_above_usd), (30, 2.5))
         self.assertEqual(cfg.require_text_confirm_above_usd,
                          config.Config().require_text_confirm_above_usd)
+        # §81 / D83 tombstone（issue #451）：`poll_interval_minutes` 的解析分支曾是
+        # 一句字面空操作（「文档上有效、实际无效」），本轮删掉。遗留的这一键按未知键
+        # 静默忽略——语义与删除前逐字相同，所以这条断言原样留着钉死「不炸、不改值」。
         cfg = _load("approval:\n  poll_interval_minutes: 5\n")
         self.assertEqual(cfg.poll_interval_seconds, config.Config().poll_interval_seconds)
 

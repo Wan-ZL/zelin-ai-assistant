@@ -57,7 +57,9 @@ class TrashPurgeTestCase(unittest.TestCase):
         _drop("pin", "R-501")
         actd.process_inbox()
 
-        purged = actd.purge_trash(config.Config())  # retention default: 60d
+        # §81/D83 起出厂值是 0（永不自动硬删）——本用例测的是保留期到点后的
+        # 硬删机制本身，所以显式给一个保留期，不吃出厂默认。
+        purged = actd.purge_trash(config.Config(trash_retention_days=60))
 
         self.assertEqual(purged, 1)
         pinned = registry.load("R-501")
@@ -75,7 +77,7 @@ class TrashPurgeTestCase(unittest.TestCase):
 
     def test_fresh_trash_is_never_purged(self):
         _mk_trashed("R-504", days_ago=1)
-        self.assertEqual(actd.purge_trash(config.Config()), 0)
+        self.assertEqual(actd.purge_trash(config.Config(trash_retention_days=60)), 0)
         self.assertIsNotNone(registry.load("R-504"))
 
 
