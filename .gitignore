@@ -43,6 +43,14 @@ dist/
 # per-run artifacts; .test-code/baselines/ (shrink-only ledgers) stays committed
 .test-code/reports/
 
+# Per-card delivery reports that headless card sessions write into their
+# worktree root (deliverables/*.html) are per-run artifacts. Left untracked they
+# make `git status --porcelain` non-empty, which the worktree sweeper
+# (act/lib/worktrees.py, CONTRACT §75) reads as "dirty" and keeps forever — 20
+# worktrees were pinned this way on 2026-09-21. Anchored to the root: no nested
+# deliverables/ is tracked. To commit a report on purpose: git add -f deliverables/<file>.
+/deliverables/
+
 # Playwright MCP browser-debug dumps (never commit)
 .playwright-mcp/
 
