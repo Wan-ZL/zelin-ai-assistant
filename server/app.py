@@ -833,7 +833,7 @@ _POST_JSON_ROUTES = {
     "/api/ingest/export": lambda ctx, payload: ingest_run.export_now(ctx.home, payload),
     "/api/ingest/run": lambda ctx, payload: ingest_run.ingest_now(ctx.home, payload),
     # §68.6 关于页「一键更新」：提前 kickstart §56 自动部署 agent（未加载 409 → 页面退回 release 页）
-    "/api/update/install": lambda ctx, payload: about.install_now(payload),
+    "/api/update/install": lambda ctx, payload: about.install_now(payload, home=ctx.home),
     # §68.15 同步 / 配对：起 act.syncd --pair --json / --disable（syncd 是 state/sync 的唯一写者）
     "/api/sync/pair": lambda ctx, payload: sync_pairing.pair(ctx.home, payload),
     "/api/sync/disable": lambda ctx, payload: sync_pairing.disable(ctx.home, payload),

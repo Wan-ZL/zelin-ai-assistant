@@ -6,6 +6,8 @@
 //   - 旧 409（agent 未加载，details 里没有 reason）→ 原生非 Sparkle 兜底照旧打开 release 页；
 //   - kickstart 真发生了：deferred 与整个中毒家族（`failed` / `rolled_back` / `rollback_failed` /
 //     `ci_failed`，不论上一轮记没记下 failed_sha）都不许拿到「几分钟后版本会变」的承诺。
+// §26 / §56.3 追记（2026-10-23）：409 manual_upgrade（新的大版本）→「需要手动升级」+ details.fix，
+// 不开 release 页、不说「这台机器不走自动部署」。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, fetchAbout, postUpdateInstall } from "../../api";
@@ -13,7 +15,7 @@ import { LanguageContext } from "../../i18n";
 import { resetShellBridgeForTests } from "../../shellBridge";
 import { resetStoreForTests } from "../../store";
 import type { AboutInfo, DeployState } from "../../types";
-import { AboutSection, deployGate, installNote, refusalDetails } from "./AboutSection";
+import { AboutSection, deployGate, installNote, manualUpgradeDetails, manualUpgradeNote, refusalDetails } from "./AboutSection";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -90,6 +92,31 @@ describe("deployGate / refusalDetails (pure)", () => {
     // 坏类型的 details 不许把渲染打崩
     expect(refusalDetails(conflict({ reason: "deploy_refused", deploy_status: 3, deploy_detail: null })))
       .toEqual({ status: "", detail: "" });
+  });
+});
+
+describe("manualUpgradeDetails / manualUpgradeNote (pure, §26 / §56.3 追记)", () => {
+  const FIX = "git fetch --tags origin && git checkout v2.0.0 && bash install.sh";
+
+  it("only 409 + reason=manual_upgrade counts; deploy_refused and the old 409 are other paths", () => {
+    expect(manualUpgradeDetails(conflict({ reason: "manual_upgrade", latest: "2.0.0", fix: FIX })))
+      .toEqual({ latest: "2.0.0", fix: FIX });
+    expect(manualUpgradeDetails(conflict({ reason: "deploy_refused", deploy_status: "refused_dirty" }))).toBeNull();
+    expect(manualUpgradeDetails(conflict({}))).toBeNull();
+    expect(manualUpgradeDetails(new ApiError(500, { error: { code: "INTERNAL_ERROR", message: "x", details: { reason: "manual_upgrade" } } }))).toBeNull();
+    expect(manualUpgradeDetails(new Error("boom"))).toBeNull();
+    expect(manualUpgradeDetails(conflict({ reason: "manual_upgrade", latest: 2, fix: null }))).toEqual({ latest: "", fix: "" });
+    // 反过来：manual_upgrade 不是 deploy_refused
+    expect(refusalDetails(conflict({ reason: "manual_upgrade", latest: "2.0.0", fix: FIX }))).toBeNull();
+  });
+
+  it("the note names the new major and the command, in both languages; still a sentence without either", () => {
+    expect(manualUpgradeNote({ latest: "2.0.0", fix: FIX }, zh))
+      .toBe(`需要手动升级：v2.0.0 是新的大版本，自动部署与一键更新都不会跨大版本。在 repo 里运行：${FIX}`);
+    expect(manualUpgradeNote({ latest: "2.0.0", fix: FIX }, en))
+      .toBe(`Manual upgrade needed: v2.0.0 is a new major version; neither auto-deploy nor this button crosses a major version. In the repo, run: ${FIX}`);
+    expect(manualUpgradeNote({ latest: "v2.0.0", fix: "" }, en)).toMatch(/^Manual upgrade needed: v2\.0\.0 is a new major version/);
+    expect(manualUpgradeNote({ latest: "", fix: "" }, zh)).toBe("需要手动升级：最新发布是新的大版本，自动部署与一键更新都不会跨大版本。");
   });
 });
 
@@ -193,6 +220,27 @@ describe("AboutSection with a refusing auto-deploy", () => {
     expect(opened).not.toHaveBeenCalled();
     // 拒绝的状态刚被 server 现读出来 → 重拉 about，按钮跟着灰掉
     await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(2));
+    opened.mockRestore();
+  });
+
+  it("409 manual_upgrade: the manual command is printed, the release page never opens, no 不走自动部署", async () => {
+    const fix = "git fetch --tags origin && git checkout v2.0.0 && bash install.sh";
+    vi.mocked(fetchAbout).mockResolvedValue({
+      ...about, deploy_state: { status: "major_boundary", detail: "origin/main carries v2.0.0 (new major version)" },
+      update_available: { latest: "2.0.0", url: "https://rel/2.0.0" },
+      update_check: { checked_at: "2026-09-14T11:00:00Z", latest: "2.0.0", url: "https://rel/2.0.0" },
+    });
+    vi.mocked(postUpdateInstall).mockRejectedValue(conflict({
+      reason: "manual_upgrade", manual_upgrade: true, current: "1.0.23+92", latest: "2.0.0",
+      deploy_status: "major_boundary", deploy_detail: "d", fix, label: "com.zelin.aiassistant.autodeploy",
+    }));
+    const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderIn("zh");
+    fireEvent.click(await screen.findByRole("button", { name: "新版本 v2.0.0 可用 — 一键更新" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/需要手动升级：v2\.0\.0 是新的大版本/));
+    expect(screen.getByRole("alert").textContent).toContain(fix);
+    expect(screen.getByRole("alert").textContent).not.toMatch(/不走自动部署|已触发/);
+    expect(opened).not.toHaveBeenCalled();
     opened.mockRestore();
   });
 

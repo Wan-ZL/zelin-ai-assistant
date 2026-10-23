@@ -6,7 +6,13 @@ whole run while background claude sessions are live — its roster count is
 ``act.executor.live_session_count``, called from the script, since this
 entrypoint may not import another (§58.3) —, install.sh --non-interactive,
 doctor-gated rollback, state/deploy_state.json) lives in that shell script so
-it can be tested against a throwaway git repo (tests/integration).
+it can be tested against a throwaway git repo (tests/integration). That
+includes the §56.3 step-2b major boundary (2026-10-23, the bridge release before lite 2.0):
+when origin/main's highest ``v*`` tag has a greater MAJOR than this checkout,
+the script refuses to fast-forward (``major_boundary``, one notification per
+tag, exit 0) — ``--force`` included; a new major is a manual
+``git checkout v<X>.0.0 && bash install.sh``. The refusal runs in the OLD
+script before the merge, so it needs nothing from the new tree.
 
 Why a python shim instead of ``/bin/bash <script>`` in the plist: §55 pins
 ``ProgramArguments[0]`` of every agent to the pinned, launchd-viable

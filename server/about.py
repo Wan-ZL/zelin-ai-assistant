@@ -35,6 +35,13 @@
   会再次延后；``deploy_state.POISONED`` 整族都不再承诺版本会变——``scripts/auto-deploy.sh`` 的
   五个 `status=failed` 写点里只有两个记得下 `failed_sha`，ff-only 失败的分叉 checkout 恰恰是
   没有 sha 的那一路，而分叉是永久态）。``state_reader`` 参数注入缝（防腐 #3：绝不 module-global）。
+- **§26 / §56.3 追记（2026-10-23，lite 2.0 之前的桥接版本）——跨大版本只许手动**：自动部署永不跨 major
+  （`scripts/auto-deploy.sh` 写 `major_boundary`），所以「一键更新」在两种情况下**不 kickstart**、
+  直接 409 ``manual_upgrade``：`state/update_check.json` 缓存的 latest 的 major 大于运行版本
+  （``update_check.needs_manual_upgrade``——与 §26 payload 的 ``manual_upgrade`` 同一把尺），或上一轮
+  部署判决就是 ``major_boundary``。details 带 ``current`` / ``latest`` / ``fix``（手动命令
+  ``git checkout v<X>.0.0 && bash install.sh``）。这一问排在「agent 有没有加载」之前：没加载时
+  「去 release 页手动装」同样不对——2.0 要的是 checkout + install.sh。``update_reader`` 参数注入缝。
 """
 from __future__ import annotations
 
@@ -43,7 +50,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import deploy_state          # 依赖方向：server → act.lib（§58.3 规则 3）
+from act.lib import deploy_state, update_check   # 依赖方向：server → act.lib（§58.3 规则 3）
 from server import paths, repair, settings_catalog, subproc
 from server.errors import ApiError, ConflictError, NotImplementedError501, UnknownFieldError
 
@@ -154,6 +161,44 @@ def _prev(state: Optional[dict], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
+UpdateReader = Callable[[], Optional[dict]]
+
+
+def _read_update(home: Optional[Path], update_reader: Optional[UpdateReader]) -> Optional[dict]:
+    """§26 缓存的公开子集（请求时现读）；读不到 / 坏文件 / 没给 home → None（宪法第 11 条）。"""
+    if update_reader is None and home is None:
+        return None
+    try:
+        doc = update_reader() if update_reader is not None else update_check_public(home)
+    except Exception:  # noqa: BLE001 - 更新缓存答不上来不许拖垮「一键更新」
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _new_major(update: Optional[dict], current: str) -> str:
+    """§26 缓存的 latest，当它是比 ``current`` 更大的 major 时；否则空串。"""
+    latest = _prev(update, "latest")
+    return latest if update_check.needs_manual_upgrade(latest, current) else ""
+
+
+def _refuse_if_manual_upgrade(update: Optional[dict], state: Optional[dict]) -> None:
+    """§26 / §56.3 追记（lite 2.0 之前的桥接版本）：新的大版本只许手动升级——kickstart 一轮只会让脚本
+    再写一次 ``major_boundary``，所以 409 ``manual_upgrade``，把手动命令交给页面。"""
+    current = version()
+    latest = _new_major(update, current)
+    if not latest and _prev(state, "status") != deploy_state.MAJOR_BOUNDARY:
+        return
+    tag = "v" + latest if latest else ""
+    fix = ("git fetch --tags origin && git checkout %s && bash install.sh" % tag if tag
+           else deploy_state.auto_deploy_fix(deploy_state.MAJOR_BOUNDARY))
+    raise ConflictError(
+        "%s is a new major version (running v%s) - auto-deploy never crosses a major version; "
+        "upgrade by hand: %s" % (tag or "origin/main", current, fix),
+        {"reason": "manual_upgrade", "manual_upgrade": True, "current": current, "latest": latest,
+         "deploy_status": _prev(state, "status"), "deploy_detail": _prev(state, "detail"),
+         "fix": fix, "label": AUTODEPLOY_LABEL})
+
+
 def _refuse_if_blocked(state: Optional[dict]) -> None:
     """§68.6 追记（#309）：上一轮的判决属于 ``deploy_state.BLOCKING`` → 提前一轮也无事发生
     （下一轮会以同样的理由再拒），所以**不 kickstart**，409 把拒绝原文交给页面。"""
@@ -170,13 +215,17 @@ def _refuse_if_blocked(state: Optional[dict]) -> None:
 
 def install_now(payload: dict, runner: Optional[repair.Runner] = None,
                 platform: Optional[str] = None,
-                state_reader: Optional[StateReader] = None) -> dict:
+                state_reader: Optional[StateReader] = None,
+                home: Optional[Path] = None,
+                update_reader: Optional[UpdateReader] = None) -> dict:
     """``POST /api/update/install {}``：kickstart 自动部署 agent（D17）；未加载 409、非 darwin 501。
     §68.6 追记（#309）：先读 deploy_state——BLOCKING 的状态直接 409 ``deploy_refused``（零
     kickstart），其余状态的回执带上一轮的 ``deploy_status`` / ``deploy_detail``，页面据此决定
-    能不能说「几分钟后版本会变」。"""
+    能不能说「几分钟后版本会变」。§26 / §56.3 追记（lite 2.0 之前的桥接版本）：新的大版本（§26 缓存，
+    ``home`` 下的 state/update_check.json，或上一轮 ``major_boundary``）→ 409 ``manual_upgrade``。"""
     _install_gate(payload, platform)
     state = read_deploy_state(state_reader)
+    _refuse_if_manual_upgrade(_read_update(home, update_reader), state)
     run = runner or repair.default_runner
     # 先问「这台机器走不走自动部署」（不走 → 原生兜底：release 页），再问「这一轮值不值得起」
     _require_autodeploy_loaded(run)

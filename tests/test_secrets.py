@@ -1,19 +1,40 @@
 """act/lib/secrets.py — CONTRACT §19 resolution order + file modes.
 
 Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py;
-no real key file (~/Desktop/Keys, ~/.config) is ever read or written.
+no real key file (~/Desktop/Keys, ~/.config) is ever read or written. On top
+of that, every test points ``secrets.SECRETS_DIR`` at its own fresh temp dir
+(:func:`_scratch_secrets_dir`): a run whose ``config.HOME`` resolved to the
+real checkout once left ``config/secrets/multi-w.txt`` behind there — and the
+old setUp, which emptied ``SECRETS_DIR`` before every test, would have deleted
+the real token files in the same run.
 """
 import contextlib
 import io
 import os
+import shutil
 import stat
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME
 
 from act.lib import analytics, config, secrets
 from act import radar_gmail, radar_slack
+
+_MODULE_SECRETS_DIR = secrets.SECRETS_DIR   # the import-time value, before any patch
+
+
+def _scratch_secrets_dir(case: unittest.TestCase) -> Path:
+    """A fresh, empty ``SECRETS_DIR`` for one test, removed afterwards."""
+    root = Path(tempfile.mkdtemp(prefix="zai-test-secrets-"))
+    case.addCleanup(shutil.rmtree, root, ignore_errors=True)
+    scratch = root / "config" / "secrets"
+    patcher = mock.patch.object(secrets, "SECRETS_DIR", scratch)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+    return scratch
 
 
 class SecretsTestCase(unittest.TestCase):
@@ -22,9 +43,7 @@ class SecretsTestCase(unittest.TestCase):
         # scratch files standing in for explicit-config + legacy paths
         self.keys = self.home / "fake-keys"
         self.keys.mkdir(parents=True, exist_ok=True)
-        if secrets.SECRETS_DIR.exists():
-            for p in secrets.SECRETS_DIR.iterdir():
-                p.unlink()
+        self.scratch = _scratch_secrets_dir(self)
 
     def _path(self, name: str, content: str) -> Path:
         p = self.keys / name
@@ -34,7 +53,10 @@ class SecretsTestCase(unittest.TestCase):
     # -- sandbox sanity ------------------------------------------------------ #
     def test_paths_are_sandboxed(self):
         self.assertEqual(config.HOME, self.home)
-        self.assertEqual(secrets.SECRETS_DIR, self.home / "config" / "secrets")
+        self.assertEqual(_MODULE_SECRETS_DIR, self.home / "config" / "secrets")
+        # …and the tests themselves write into a per-test scratch dir, never there
+        self.assertEqual(secrets.SECRETS_DIR, self.scratch)
+        self.assertFalse(str(self.scratch).startswith(str(self.home)))
 
     # -- write/read ---------------------------------------------------------- #
     def test_write_secret_enforces_modes_and_read_roundtrip(self):
@@ -89,6 +111,7 @@ class SecretsTestCase(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             path = secrets.write_secret("multi-w.txt", "tok-456\nrest of paste\n")
         self.assertEqual(path.read_text(encoding="utf-8"), "tok-456\n")
+        self.assertEqual(path.parent, self.scratch)
 
     # -- resolution order (§19): secrets -> explicit -> legacy --------------- #
     def test_resolution_order(self):
@@ -149,9 +172,7 @@ class LegacyDeprecationWarnTestCase(unittest.TestCase):
         self.home = Path(TMP_HOME)
         self.keys = self.home / "fake-keys"
         self.keys.mkdir(parents=True, exist_ok=True)
-        if secrets.SECRETS_DIR.exists():
-            for p in secrets.SECRETS_DIR.iterdir():
-                p.unlink()
+        _scratch_secrets_dir(self)
         secrets._warned_legacy.clear()
         self.addCleanup(secrets._warned_legacy.clear)
 
