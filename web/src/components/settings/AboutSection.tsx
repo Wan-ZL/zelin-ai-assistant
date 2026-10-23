@@ -18,6 +18,8 @@
 // 一轮）、中毒家族（failed / rolled_back / rollback_failed / ci_failed）→ 整族都不许承诺版本会变，记得下 sha 的说「该 sha 在
 // main 挪窝之前不会被重试」，没 sha 的（ff-only 失败的分叉 checkout 等）说「很可能同样倒在那里」。状态词与两个集合一律复用
 // components/shell/DeployLabel（顶栏与本页永不各判一次）。版本行按 §56.1 追记只显示 tag，`+N` 降级成一句辅助说明。
+// §26 / §56.3 追记（2026-10-23）：最新发布是新的大版本 → server 回 409 details.reason="manual_upgrade"（不 kickstart）→ 一行「需要手动升级」+
+// details.fix 的手动命令；不开 release 页、不说「这台机器不走自动部署」（那句只属于 agent 未加载的旧 409）。
 // 「卸载…」= 原生 confirmUninstall：确认弹窗（正文逐字原生 informativeText：会做的三件事 + 默认保留什么）→
 // POST /api/uninstall/terminal 在 Terminal 跑 uninstall.sh（脚本自己再问；server 不删任何东西）；脚本缺席（404）→
 // 「找不到卸载脚本」、Terminal 打不开 →「无法打开 Terminal」，两个弹窗都附「请手动在 Terminal 里运行：<server 给的命令>」+「好」。
@@ -167,6 +169,29 @@ export function refusalDetails(err: unknown): { status: string; detail: string }
   };
 }
 
+/** 409 manual_upgrade（CONTRACT §26 / §56.3 追记 2026-10-23）：最新发布是新的大版本，自动部署与「一键更新」都不跨——
+ *  不是「这台机器不走自动部署」，也不开 release 页；说「需要手动升级」+ server 给的 fix 命令。不是则回 null。 */
+export function manualUpgradeDetails(err: unknown): { latest: string; fix: string } | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const details = err.details && typeof err.details === "object" ? err.details as Record<string, unknown> : {};
+  if (details.reason !== "manual_upgrade") return null;
+  return {
+    latest: typeof details.latest === "string" ? details.latest : "",
+    fix: typeof details.fix === "string" ? details.fix : "",
+  };
+}
+
+/** manual_upgrade 那一行：版本号与命令都缺席时句子仍然成立。 */
+export function manualUpgradeNote(m: { latest: string; fix: string }, text: Text): string {
+  const which = releaseVersion(m.latest).replace(/^v/i, "");
+  const head = which
+    ? text(`需要手动升级：v${which} 是新的大版本，自动部署与一键更新都不会跨大版本。`,
+           `Manual upgrade needed: v${which} is a new major version; neither auto-deploy nor this button crosses a major version.`)
+    : text("需要手动升级：最新发布是新的大版本，自动部署与一键更新都不会跨大版本。",
+           "Manual upgrade needed: the latest release is a new major version; neither auto-deploy nor this button crosses a major version.");
+  return m.fix ? `${head}${text(`在 repo 里运行：${m.fix}`, ` In the repo, run: ${m.fix}`)}` : head;
+}
+
 /** kickstart 真发生了之后那句话：能不能承诺「几分钟后版本会变」由**上一轮**的状态决定。 */
 export function installNote(receipt: UpdateInstallReceipt | null, state: DeployState | null | undefined,
                             now: number, text: Text): string {
@@ -261,6 +286,7 @@ export function AboutSection() {
 
   // 原生 triggerUpdate：新架构 = 提前跑一轮 §56 自动部署；agent 不在（409）→ 原生非 Sparkle 兜底：打开 release 页。
   // §68.6 追记（#309）：server 判定这一轮必然被拒（409 deploy_refused）→ 说拒绝原文，不开 release 页、不说「已触发」。
+  // §26 / §56.3 追记（2026-10-23）：409 manual_upgrade（新的大版本）→ 「需要手动升级」+ details.fix，同样不开 release 页。
   async function installNow(url: string | null) {
     setBusy("install");
     setNote(null);
@@ -269,7 +295,10 @@ export function AboutSection() {
       setNote(installNote(receipt, about?.deploy_state, Date.now(), text));
     } catch (err) {
       const refused = refusalDetails(err);
-      if (refused) {
+      const manual = manualUpgradeDetails(err);
+      if (manual) {
+        setNote(manualUpgradeNote(manual, text));   // 新的大版本：说手动命令，不开 release 页、不说「不走自动部署」
+      } else if (refused) {
         setNote(`${refusalLine(refused.status, refused.detail, text)} ${refusalFix(text)}`);
         await refreshAbout();   // 拒绝的状态刚被 server 现读出来——让按钮也跟着灰掉
       } else if (err instanceof ApiError && err.status === 409 && url) {

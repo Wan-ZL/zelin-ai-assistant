@@ -1,4 +1,4 @@
-"""§26 追记（2026-10-23，v1.0.117 bridge）：``manual_upgrade`` 标记。
+"""§26 追记（2026-10-23，lite 2.0 之前的桥接版本）：``manual_upgrade`` 标记。
 
 最新 release 的 MAJOR 大于运行版本 → ``manual_upgrade: true``（add-only），出现在
 ``check()`` 的答案、dashboard ``update_available`` 投影与 CLI payload 里——§56.3 自动部署

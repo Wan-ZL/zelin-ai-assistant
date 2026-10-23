@@ -134,7 +134,7 @@ DEFERRED = "deferred"
 DEFER_REASON_SESSIONS = "sessions_running"
 DEFER_REASON_UNKNOWN = "roster_unknown"
 DEFER_WARN_AFTER_S = 6 * 3600
-# §56.3 major-boundary 追记（2026-10-23，v1.0.117 bridge）：origin/main 上最高的
+# §56.3 major-boundary 追记（2026-10-23，lite 2.0 之前的桥接版本）：origin/main 上最高的
 # `v*` tag 的 major 大于本 checkout 的 major → 脚本不 ff、不装，写这个状态 +
 # 每个 tag 只通知一次（私账 `major_notified_tag`，不投影）。跨大版本只走手动：
 # `git checkout v<X>.0.0 && bash install.sh`（1.x→2.0 过渡条款）。WARN 行，修法由
@@ -396,10 +396,12 @@ def auto_deploy_fix(status: str) -> str:
         # 修法只有手动升级；具体 tag 写在 detail 里
         return failures.pick(
             "新的大版本需要手动升级：在 repo 里 git fetch --tags origin && git checkout "
-            "<detail 里点名的 tag> && bash install.sh（自动部署与 --force 都不会跨大版本）",
+            "<detail 里点名的 tag> && bash install.sh（自动部署与 --force 都不会跨大版本；origin 上已删掉的"
+            "误打 tag 会被自动跳过，本机残留的用 git tag -d <tag> 删掉）",
             "a new major version needs a manual upgrade: in the repo, git fetch --tags origin && "
             "git checkout <the tag named in the detail> && bash install.sh (neither auto-deploy "
-            "nor --force crosses a major version)")
+            "nor --force crosses a major version; a mistaken tag origin has deleted is skipped "
+            "by itself, git tag -d <tag> removes the local copy)")
     if status == INSTALL_INCOMPLETE:
         return failures.pick(
             "下一轮会自动重跑 install.sh（连续几轮无效即停并通知）；等不及就手动"

@@ -35,9 +35,11 @@
 #      not be reinstalled forever) → then the sha is poisoned + one
 #      notification. origin/main is the remembered failed sha → one log
 #      line, exit (no retry storm)
-#   2b. MAJOR BOUNDARY (2026-10-23, the v1.0.117 bridge before lite 2.0): the
+#   2b. MAJOR BOUNDARY (2026-10-23, the bridge release before lite 2.0): the
 #      highest `v*` tag reachable from origin/main has a MAJOR greater than
-#      the checkout's own version → never fast-forward, never install:
+#      the checkout's own version (and origin still has that tag — a local
+#      tag origin lacks is skipped with a `git tag -d` log line, since
+#      `fetch --tags` never prunes) → never fast-forward, never install:
 #      `major_boundary` (detail names the tag + the manual command), ONE
 #      notification per tag (private `major_notified_tag`), exit 0. A new
 #      major is a different product tree (2.0 has no actd): this script's
@@ -1186,18 +1188,42 @@ target_version() { # $1=sha
 }
 
 # Step 2b (§56.3 major-boundary 追记): the highest `v*` tag reachable from $1
-# when its MAJOR is greater than the major of $2 (the checkout's version), ""
-# otherwise. Either side without a numeric major = "" (fail open: the rule
-# only stops a deploy it can show crosses a major; every other gate still
-# runs). Tags only — the commits after the newest tag carry its major too.
+# whose MAJOR is greater than the major of $2 (the checkout's version) AND that
+# origin still has, "" otherwise. Either side without a numeric major = ""
+# (fail open: the rule only stops a deploy it can show crosses a major; every
+# other gate still runs). Tags only — the commits after the newest tag carry
+# its major too. Origin is asked once (`ls-remote`, only when a local tag is a
+# candidate) because `fetch --tags` never prunes: a major tag deleted on origin
+# (a mistaken release) or made by hand on this machine would otherwise stop
+# every run for good, `--force` included. Such a tag is skipped with a log line
+# naming `git tag -d <tag>`; origin unreachable = the candidate counts (fail
+# closed — crossing a major is the hazard this step exists for).
 major_boundary_tag() { # $1=sha (origin/main) $2=checkout version
     _mb_cur="${2%%.*}"
     case "$_mb_cur" in ''|*[!0-9]*) return 0 ;; esac
-    _mb_top="$(git_q tag --merged "$1" --list 'v[0-9]*' --sort=-v:refname 2>/dev/null | head -n 1)"
-    _mb_major="${_mb_top#v}"
-    _mb_major="${_mb_major%%.*}"
-    case "$_mb_major" in ''|*[!0-9]*) return 0 ;; esac
-    [ "$_mb_major" -gt "$_mb_cur" ] && printf '%s' "$_mb_top"
+    _mb_tags="$(git_q tag --merged "$1" --list 'v[0-9]*' --sort=-v:refname 2>/dev/null)"
+    _mb_asked=0
+    _mb_origin=""
+    while IFS= read -r _mb_tag; do
+        _mb_major="${_mb_tag#v}"
+        _mb_major="${_mb_major%%.*}"
+        case "$_mb_major" in ''|*[!0-9]*) continue ;; esac
+        [ "$_mb_major" -gt "$_mb_cur" ] || return 0
+        if [ "$_mb_asked" -eq 0 ]; then
+            _mb_asked=1
+            _mb_origin="$(GIT_TERMINAL_PROMPT=0 \
+                GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oConnectTimeout=30}" \
+                git_q ls-remote --tags --refs "$REMOTE" 'refs/tags/v*' 2>>"$LOG")" || _mb_origin="?"
+        fi
+        if [ "$_mb_origin" = "?" ] \
+           || printf '%s\n' "$_mb_origin" | awk -v r="refs/tags/$_mb_tag" '$2 == r { f = 1 } END { exit !f }'; then
+            printf '%s' "$_mb_tag"
+            return 0
+        fi
+        log "local tag $_mb_tag (a new major over v$2) is not on $REMOTE (deleted there, or made by hand) — the major boundary ignores it; remove it with: git tag -d $_mb_tag"
+    done <<EOF
+$_mb_tags
+EOF
     return 0
 }
 
@@ -1725,7 +1751,7 @@ main() {
     _cur_version="$(repo_version)"
     _boundary="$(major_boundary_tag "$TARGET" "$_cur_version")"
     if [ -n "$_boundary" ]; then
-        log "origin/$BRANCH carries $_boundary, a new major version over v${_cur_version} — auto-deploy never crosses a major version (--force neither); upgrade by hand: git checkout $_boundary && bash install.sh"
+        log "origin/$BRANCH carries $_boundary, a new major version over v${_cur_version} — auto-deploy never crosses a major version (--force neither); upgrade by hand: git checkout $_boundary && bash install.sh (a mistaken tag that origin has deleted is skipped by itself; if origin was unreachable: git tag -d $_boundary)"
         write_state "status=major_boundary" "last_run=$_now" "head=$PREV" "version=$_cur_version" \
                     "detail=origin/$BRANCH carries $_boundary (new major version); v${_cur_version} does not upgrade across a major version by itself — manual upgrade: git checkout $_boundary && bash install.sh"
         if [ "$(read_state major_notified_tag)" != "$_boundary" ]; then

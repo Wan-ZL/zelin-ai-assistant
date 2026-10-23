@@ -19,7 +19,7 @@ Honesty rules (the trust posture of the whole product):
 - The dashboard projection (``update_available``) is emitted ONLY when a
   strictly newer semver exists AND ``updates.check_enabled`` is on. The app
   merely opens the release page — nothing is ever downloaded or run.
-- ``manual_upgrade`` (add-only, §26 追记 2026-10-23 — the v1.0.117 bridge):
+- ``manual_upgrade`` (add-only, §26 追记 2026-10-23 — the bridge release before lite 2.0):
   true when the newest release's MAJOR is greater than the running one's.
   §56.3 auto-deploy never crosses a major boundary by itself and the About
   page's「一键更新」answers 409 for it (server/about.py); the upgrade is a
@@ -109,7 +109,7 @@ def is_newer(latest, current) -> bool:
 
 def needs_manual_upgrade(latest, current) -> bool:
     """True when ``latest``'s MAJOR is greater than ``current``'s (§26 追记
-    2026-10-23, v1.0.117 bridge): a release that auto-deploy (§56.3) refuses
+    2026-10-23, the bridge release before lite 2.0): a release that auto-deploy (§56.3) refuses
     to reach by itself, so the page must say "upgrade by hand", not "update".
 
     Unparsable input on either side -> False (same rule as :func:`is_newer`).

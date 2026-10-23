@@ -35,7 +35,7 @@
   会再次延后；``deploy_state.POISONED`` 整族都不再承诺版本会变——``scripts/auto-deploy.sh`` 的
   五个 `status=failed` 写点里只有两个记得下 `failed_sha`，ff-only 失败的分叉 checkout 恰恰是
   没有 sha 的那一路，而分叉是永久态）。``state_reader`` 参数注入缝（防腐 #3：绝不 module-global）。
-- **§26 / §56.3 追记（2026-10-23，v1.0.117 bridge）——跨大版本只许手动**：自动部署永不跨 major
+- **§26 / §56.3 追记（2026-10-23，lite 2.0 之前的桥接版本）——跨大版本只许手动**：自动部署永不跨 major
   （`scripts/auto-deploy.sh` 写 `major_boundary`），所以「一键更新」在两种情况下**不 kickstart**、
   直接 409 ``manual_upgrade``：`state/update_check.json` 缓存的 latest 的 major 大于运行版本
   （``update_check.needs_manual_upgrade``——与 §26 payload 的 ``manual_upgrade`` 同一把尺），或上一轮
@@ -182,7 +182,7 @@ def _new_major(update: Optional[dict], current: str) -> str:
 
 
 def _refuse_if_manual_upgrade(update: Optional[dict], state: Optional[dict]) -> None:
-    """§26 / §56.3 追记（v1.0.117 bridge）：新的大版本只许手动升级——kickstart 一轮只会让脚本
+    """§26 / §56.3 追记（lite 2.0 之前的桥接版本）：新的大版本只许手动升级——kickstart 一轮只会让脚本
     再写一次 ``major_boundary``，所以 409 ``manual_upgrade``，把手动命令交给页面。"""
     current = version()
     latest = _new_major(update, current)
@@ -221,7 +221,7 @@ def install_now(payload: dict, runner: Optional[repair.Runner] = None,
     """``POST /api/update/install {}``：kickstart 自动部署 agent（D17）；未加载 409、非 darwin 501。
     §68.6 追记（#309）：先读 deploy_state——BLOCKING 的状态直接 409 ``deploy_refused``（零
     kickstart），其余状态的回执带上一轮的 ``deploy_status`` / ``deploy_detail``，页面据此决定
-    能不能说「几分钟后版本会变」。§26 / §56.3 追记（v1.0.117 bridge）：新的大版本（§26 缓存，
+    能不能说「几分钟后版本会变」。§26 / §56.3 追记（lite 2.0 之前的桥接版本）：新的大版本（§26 缓存，
     ``home`` 下的 state/update_check.json，或上一轮 ``major_boundary``）→ 409 ``manual_upgrade``。"""
     _install_gate(payload, platform)
     state = read_deploy_state(state_reader)

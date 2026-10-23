@@ -1,4 +1,4 @@
-"""「一键更新」不跨大版本（CONTRACT §26 / §56.3 追记 2026-10-23，v1.0.117 bridge）。
+"""「一键更新」不跨大版本（CONTRACT §26 / §56.3 追记 2026-10-23，lite 2.0 之前的桥接版本）。
 
 §56.3 的部署脚本永不跨 major（写 `major_boundary`），所以 `POST /api/update/install` 在
 §26 缓存的 latest 的 major 大于运行版本、或上一轮部署判决就是 `major_boundary` 时

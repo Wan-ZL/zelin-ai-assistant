@@ -7,7 +7,7 @@ whole run while background claude sessions are live — its roster count is
 entrypoint may not import another (§58.3) —, install.sh --non-interactive,
 doctor-gated rollback, state/deploy_state.json) lives in that shell script so
 it can be tested against a throwaway git repo (tests/integration). That
-includes the §56.3 step-2b major boundary (2026-10-23, the v1.0.117 bridge):
+includes the §56.3 step-2b major boundary (2026-10-23, the bridge release before lite 2.0):
 when origin/main's highest ``v*`` tag has a greater MAJOR than this checkout,
 the script refuses to fast-forward (``major_boundary``, one notification per
 tag, exit 0) — ``--force`` included; a new major is a manual
