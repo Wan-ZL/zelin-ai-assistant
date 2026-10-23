@@ -134,6 +134,13 @@ DEFERRED = "deferred"
 DEFER_REASON_SESSIONS = "sessions_running"
 DEFER_REASON_UNKNOWN = "roster_unknown"
 DEFER_WARN_AFTER_S = 6 * 3600
+# §56.3 major-boundary 追记（2026-10-23，v1.0.117 bridge）：origin/main 上最高的
+# `v*` tag 的 major 大于本 checkout 的 major → 脚本不 ff、不装，写这个状态 +
+# 每个 tag 只通知一次（私账 `major_notified_tag`，不投影）。跨大版本只走手动：
+# `git checkout v<X>.0.0 && bash install.sh`（1.x→2.0 过渡条款）。WARN 行，修法由
+# :func:`auto_deploy_fix` 给；「一键更新」对它回 409 `manual_upgrade`
+# （server/about.py——不并进 :data:`BLOCKING`：web 的 BLOCKING_STATUSES 逐字镜像那三个词）。
+MAJOR_BOUNDARY = "major_boundary"
 
 
 def _load_object(target: Path) -> Optional[dict]:
@@ -374,7 +381,7 @@ def volume_access_row(verdict: dict, interp: str, repo: str) -> dict:
 
 
 def auto_deploy_fix(status: str) -> str:
-    """WARN 行的修法按状态词分三种（§56.4）。doctor 行与 server 的 409
+    """WARN 行的修法按状态词分四种（§56.4；`major_boundary` 是 2026-10-23 追记）。doctor 行与 server 的 409
     `deploy_refused`（§68.6 追记）共用同一句——修法只有一个真源。"""
     if status == BLOCKED_TCC:
         # 探针在第一次 git 调用前就拒了——修法是授权，不是 --force；精确的
@@ -384,6 +391,15 @@ def auto_deploy_fix(status: str) -> str:
             "access 行与 docs/TROUBLESHOOTING.md「外置盘 + launchd 权限」",
             "grant Full Disk Access to the plist's interpreter - see the launchd volume "
             "access row and docs/TROUBLESHOOTING.md (external volume + launchd)")
+    if status == MAJOR_BOUNDARY:
+        # 自动部署永不跨大版本（§56.3 major-boundary 追记）：--force 同样不跨，
+        # 修法只有手动升级；具体 tag 写在 detail 里
+        return failures.pick(
+            "新的大版本需要手动升级：在 repo 里 git fetch --tags origin && git checkout "
+            "<detail 里点名的 tag> && bash install.sh（自动部署与 --force 都不会跨大版本）",
+            "a new major version needs a manual upgrade: in the repo, git fetch --tags origin && "
+            "git checkout <the tag named in the detail> && bash install.sh (neither auto-deploy "
+            "nor --force crosses a major version)")
     if status == INSTALL_INCOMPLETE:
         return failures.pick(
             "下一轮会自动重跑 install.sh（连续几轮无效即停并通知）；等不及就手动"

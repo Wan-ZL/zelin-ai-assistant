@@ -35,6 +35,15 @@
 #      not be reinstalled forever) → then the sha is poisoned + one
 #      notification. origin/main is the remembered failed sha → one log
 #      line, exit (no retry storm)
+#   2b. MAJOR BOUNDARY (2026-10-23, the v1.0.117 bridge before lite 2.0): the
+#      highest `v*` tag reachable from origin/main has a MAJOR greater than
+#      the checkout's own version → never fast-forward, never install:
+#      `major_boundary` (detail names the tag + the manual command), ONE
+#      notification per tag (private `major_notified_tag`), exit 0. A new
+#      major is a different product tree (2.0 has no actd): this script's
+#      readiness wait / doctor gate would roll it back, and that is the old
+#      script judging the new tree. The upgrade is manual — `git checkout
+#      v<X>.0.0 && bash install.sh`. `--force` does not cross it either.
 #   3. CI GATE on the exact origin/main sha: the GitHub check-runs API must
 #      say the `ci` run on THAT commit completed green. The ruleset only
 #      requires green on the PR head (non-strict), so a merge commit's tree
@@ -186,6 +195,7 @@
 #
 # Usage: bash scripts/auto-deploy.sh [--force]
 #   --force   forget the remembered failed sha, skip the CI gate, deploy now
+#             (never across a major version boundary — step 2b)
 #
 # Test seams (env, never set by the plist): AUTODEPLOY_LOG_DIR,
 # AUTODEPLOY_HOME_DIR, AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE,
@@ -1175,6 +1185,22 @@ target_version() { # $1=sha
     printf '%s' "${_tv#v}"
 }
 
+# Step 2b (§56.3 major-boundary 追记): the highest `v*` tag reachable from $1
+# when its MAJOR is greater than the major of $2 (the checkout's version), ""
+# otherwise. Either side without a numeric major = "" (fail open: the rule
+# only stops a deploy it can show crosses a major; every other gate still
+# runs). Tags only — the commits after the newest tag carry its major too.
+major_boundary_tag() { # $1=sha (origin/main) $2=checkout version
+    _mb_cur="${2%%.*}"
+    case "$_mb_cur" in ''|*[!0-9]*) return 0 ;; esac
+    _mb_top="$(git_q tag --merged "$1" --list 'v[0-9]*' --sort=-v:refname 2>/dev/null | head -n 1)"
+    _mb_major="${_mb_top#v}"
+    _mb_major="${_mb_major%%.*}"
+    case "$_mb_major" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$_mb_major" -gt "$_mb_cur" ] && printf '%s' "$_mb_top"
+    return 0
+}
+
 # The 6 h "still deferred" threshold has ONE truth: act/lib/deploy_state.py
 # DEFER_WARN_AFTER_S — the doctor row judges with that constant and the web
 # label mirrors it, so the log WARN here must read the same number (review of
@@ -1690,6 +1716,23 @@ main() {
 
     if [ "$PREV" = "$TARGET" ]; then
         verify_running "$TARGET"
+        exit 0
+    fi
+
+    # MAJOR BOUNDARY (§56.3 step 2b) — before the CI gate (no API call is
+    # needed to refuse) and regardless of --force: this script never moves a
+    # checkout onto a newer MAJOR. Nothing changes; one notification per tag.
+    _cur_version="$(repo_version)"
+    _boundary="$(major_boundary_tag "$TARGET" "$_cur_version")"
+    if [ -n "$_boundary" ]; then
+        log "origin/$BRANCH carries $_boundary, a new major version over v${_cur_version} — auto-deploy never crosses a major version (--force neither); upgrade by hand: git checkout $_boundary && bash install.sh"
+        write_state "status=major_boundary" "last_run=$_now" "head=$PREV" "version=$_cur_version" \
+                    "detail=origin/$BRANCH carries $_boundary (new major version); v${_cur_version} does not upgrade across a major version by itself — manual upgrade: git checkout $_boundary && bash install.sh"
+        if [ "$(read_state major_notified_tag)" != "$_boundary" ]; then
+            notify "新的大版本 ${_boundary} 需要手动升级 / ${_boundary} needs a manual upgrade" \
+                   "自动部署不会跨大版本升级，本机仍是 v${_cur_version}、什么都没改。升级：cd \"$REPO_ROOT\" && git checkout ${_boundary} && bash install.sh"
+            write_state "major_notified_tag=$_boundary"
+        fi
         exit 0
     fi
 

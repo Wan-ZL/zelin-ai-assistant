@@ -19,6 +19,11 @@ Honesty rules (the trust posture of the whole product):
 - The dashboard projection (``update_available``) is emitted ONLY when a
   strictly newer semver exists AND ``updates.check_enabled`` is on. The app
   merely opens the release page — nothing is ever downloaded or run.
+- ``manual_upgrade`` (add-only, §26 追记 2026-10-23 — the v1.0.117 bridge):
+  true when the newest release's MAJOR is greater than the running one's.
+  §56.3 auto-deploy never crosses a major boundary by itself and the About
+  page's「一键更新」answers 409 for it (server/about.py); the upgrade is a
+  manual ``git checkout v<X>.0.0 && bash install.sh``.
 """
 from __future__ import annotations
 
@@ -100,6 +105,19 @@ def is_newer(latest, current) -> bool:
     if lt is None or ct is None:
         return False
     return lt > ct
+
+
+def needs_manual_upgrade(latest, current) -> bool:
+    """True when ``latest``'s MAJOR is greater than ``current``'s (§26 追记
+    2026-10-23, v1.0.117 bridge): a release that auto-deploy (§56.3) refuses
+    to reach by itself, so the page must say "upgrade by hand", not "update".
+
+    Unparsable input on either side -> False (same rule as :func:`is_newer`).
+    """
+    lt, ct = parse_version(latest), parse_version(current)
+    if lt is None or ct is None:
+        return False
+    return lt[0] > ct[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -197,7 +215,8 @@ def check(cfg: Optional[config.Config] = None, *,
           fetch: Optional[Fetch] = None,
           now: Optional[_dt.datetime] = None,
           force: bool = False) -> Optional[dict]:
-    """Return ``{current, latest, url, pkg_asset_url, checked_at}`` or None.
+    """Return ``{current, latest, url, pkg_asset_url, checked_at, manual_upgrade}``
+    or None.
 
     None = the check is disabled or nothing is known yet (first run offline).
     Never raises; performs at most one network attempt per 24h (a failed
@@ -264,6 +283,7 @@ def _answer(state: dict) -> Optional[dict]:
         "url": state.get("url") or RELEASES_PAGE_URL,
         "pkg_asset_url": state.get("pkg_asset_url"),
         "checked_at": state.get("checked_at"),
+        "manual_upgrade": needs_manual_upgrade(latest, __version__),
     }
 
 
@@ -279,6 +299,8 @@ def update_available(cfg: Optional[config.Config] = None, *,
         "latest": info["latest"],
         "url": info["url"],
         "pkg_asset_url": info["pkg_asset_url"],
+        # add-only (§26 追记 2026-10-23): a new MAJOR is a manual upgrade
+        "manual_upgrade": info["manual_upgrade"],
     }
 
 
@@ -341,16 +363,17 @@ def cli_status(force: bool = False, *,
 
 def _cli_payload(state: dict, enabled: bool) -> dict:
     latest = state.get("latest")
+    known = bool(enabled and latest)   # off switch / nothing cached → no verdict
     return {
         "ok": True,
         "enabled": enabled,
         "current": __version__,
         "latest": str(latest) if latest else None,
-        "update_available": bool(enabled and latest
-                                 and is_newer(latest, __version__)),
+        "update_available": known and is_newer(latest, __version__),
         "url": state.get("url") or RELEASES_PAGE_URL,
         "pkg_asset_url": state.get("pkg_asset_url"),
         "checked_at": state.get("checked_at"),
+        "manual_upgrade": known and needs_manual_upgrade(latest, __version__),
     }
 
 
