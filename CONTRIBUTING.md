@@ -4,7 +4,7 @@ Issues, suggestions, and pull requests are all welcome — bug reports, feature 
 
 ## Hacking without the full stack
 
-You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on this project. The test suite plus a fully fictional demo runtime cover most development:
+You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on this project. The test suite and the shell build cover most development:
 
 ```bash
 # 1. Run the whole test suite — needs only python3 (3.9+) and PyYAML.
@@ -12,16 +12,10 @@ You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on thi
 #    tests must never touch a real state/ or registry.
 AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
-# 2. Build the menu-bar app, without installing it — needs Xcode / Swift 6.x.
-bash mac/build.sh
-
-# 3. Run the app against entirely fictional data — no keys, no recording:
-python3 scripts/demo_seed.py /tmp/assistant-demo          # add --english for English demo data
-AIASSISTANT_HOME=/tmp/assistant-demo \
-  "mac/build/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
+# 2. Build the Dock shell, without installing it — needs Xcode / Swift 6.x.
+#    The bundle lands in shell/build/; shell/tests/run.sh is its test suite.
+bash shell/build.sh
 ```
-
-The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` and `--english` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
 
 What you need for what:
 
@@ -29,10 +23,9 @@ What you need for what:
 |---|---|---|---|---|---|
 | run the tests | ✅ | — | — | — | — |
 | build the app | — | ✅ | — | — | — |
-| demo mode (full UI, fictional data) | ✅ (stdlib only) | ✅ | — | — | — |
 | run the full pipeline | ✅ | ✅ | ✅ | ✅ (engine runs via `npx screenpipe`) | ✅ (Obsidian optional but recommended) |
 
-Note that `install.sh` is the *end-user* installer — it installs the app to /Applications, loads launchd agents, and edits your crontab. As a contributor you usually don't want any of that on your dev machine; the three commands above are enough.
+Note that `install.sh` is the *end-user* installer — it installs the app to /Applications, loads launchd agents, and edits your crontab. As a contributor you usually don't want any of that on your dev machine; the two commands above are enough.
 
 ## Dev environment
 
@@ -112,10 +105,6 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
 - **Always work in a git worktree and fast-forward-merge back to `main`.** The main working tree can be a live daemon runtime — actd and cron execute files straight from it, and half-edited files have caused real breakage (HANDOFF §4).
 - After merging, verify HEAD actually moved (`git log -1`) — a failed `--ff-only` merge prints "Aborting" to stderr, which pipelines can swallow.
 - External PRs can't be ff-merged as-is; rebase them onto `main` (keeping the linear history) and run the four gates before the merge lands.
-- After any deploy to a real machine (`bash mac/build.sh --install` / .pkg /
-  Sparkle), verify it landed with `bash scripts/smoke-deploy.sh` — version
-  match, binary feature markers, actd liveness, and the full doctor in one
-  command (also printed as step 7 at the end of `install.sh`).
 - **Social preview** (issue #19): when the board UI changes materially, `bash promo/social-preview.sh`
   re-renders `docs/assets/social-preview.png` (1280 × 640) and you upload it by hand under GitHub →
   Settings → General → Social preview — GitHub has no API for this, so it is the one manual step
