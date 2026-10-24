@@ -1320,11 +1320,11 @@
       "id": "contract:§68.2",
       "source": "contract",
       "scenario": "字幕偏好（桥 add-only）",
-      "proof": "unittest:tests.test_shell_engine_mirror && flow:settings_roundtrip_all",
+      "proof": "unittest:tests.test_background_jobs_mutation_kills_train,tests.test_screenpipe_media_retention_knob,tests.test_server_about_check_enabled,tests.test_server_about_upgrade && flow:settings_roundtrip_all",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": null
+      "note": "parent-cite"
     },
     {
       "id": "contract:§68.3",
