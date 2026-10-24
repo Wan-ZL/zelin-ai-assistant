@@ -424,7 +424,7 @@ def tearDownModule():
                              % (elapsed, BUDGET_SECONDS))
 
 
-@unittest.skipIf(_WIN, "bash + install.sh are POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "bash + install.sh are POSIX-only (lite 2.0 is macOS-only)")
 class AutoDeployFixture(unittest.TestCase):
     """The origin + live clone + fakes, without tests: per-behaviour files under
     tests/integration/ (防腐 #7) subclass this through the module name
@@ -711,7 +711,7 @@ class AutoDeployFixture(unittest.TestCase):
         return self.tmp / "git.break"  # tests hand this path to FAKE_GIT_BREAK_FILE
 
 
-@unittest.skipIf(_WIN, "bash + install.sh are POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "bash + install.sh are POSIX-only (lite 2.0 is macOS-only)")
 class AutoDeployScriptTestCase(AutoDeployFixture):
 
     # -- 1. nothing to do ---------------------------------------------------- #

@@ -163,7 +163,7 @@ def _ui_globals():
     return "\n".join(lines) + "\n"
 
 
-@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "install.sh is POSIX-only (lite 2.0 is macOS-only)")
 class InstallUiStepTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="install-ui-step-"))

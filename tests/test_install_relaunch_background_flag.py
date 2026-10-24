@@ -42,7 +42,7 @@ def _install_sh_fn(name):
     return m.group(0) + "\n"
 
 
-@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "install.sh is POSIX-only (lite 2.0 is macOS-only)")
 class RelaunchBackgroundFlagTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="install-relaunch-bg-"))
