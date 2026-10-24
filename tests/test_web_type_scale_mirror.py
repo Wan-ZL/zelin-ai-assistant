@@ -1,23 +1,20 @@
 """web 看板字号/字重梯 ↔ 原生看板源行 的判例（CONTRACT §54.1 第 10 项）。
 
-原生 mac/Sources 在 D3 下是冻结的只读外观规格。web 的 type scale 住在
-web/src/styles/tokens.css（truth），可读镜像表 web/src/styles/typeScale.ts 给每个
---type-* token 标了它镜像的 Swift 源行（file:line + size/weight/design）。vitest
-（typeScale.test.ts）钉 CSS ↔ 表；本文件钉 表 ↔ Swift——被引用的那一行必须真的写着
-`.font(.system(size: N[, weight: .W][, design: .monospaced]))`，否则表在说谎。
-web 侧不许 import node:*（@types/node 不在 dev 白名单），所以读 Swift 的这一半在这里。
+web 的 type scale 住在 web/src/styles/tokens.css（truth），可读镜像表
+web/src/styles/typeScale.ts 给每个 --type-* token 标了它镜像的原生 Swift 源行（file:line +
+size/weight/design）。vitest（typeScale.test.ts）钉 CSS ↔ 表；本文件钉表自身的形状与
+表 ↔ CSS。**tombstone（v2.0.0）**：「表 ↔ Swift 源行」那一半随 mac/ 删除退役（全文见 tag
+full）——表里的 file:line 自此是历史出处，不再有文件可对。
 token 值的固定写法（§54.1 第 12 项，显示偏好）：
 ``var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh> var(--font-<sans|mono>)``——
 字重经 --w-* 吃 --weight-shift、字号乘 --text-scale；原生 px 与 SF 字重名仍逐字可读，本文件
 钉的就是那两个字面量。
-P8 删 mac/ 时把本文件改成 tombstone（§6）。
 """
 import re
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MAC = REPO_ROOT / "mac" / "Sources"
 TYPE_SCALE_TS = REPO_ROOT / "web" / "src" / "styles" / "typeScale.ts"
 TOKENS_CSS = REPO_ROOT / "web" / "src" / "styles" / "tokens.css"
 
@@ -41,11 +38,6 @@ def _entries():
     return found
 
 
-def _swift_line(file: str, line: int) -> str:
-    lines = (MAC / file).read_text(encoding="utf-8").splitlines()
-    return lines[line - 1] if 0 < line <= len(lines) else ""
-
-
 class TypeScaleMirrorTestCase(unittest.TestCase):
     def setUp(self):
         self.entries = _entries()
@@ -55,22 +47,8 @@ class TypeScaleMirrorTestCase(unittest.TestCase):
         tokens = [e["token"] for e in self.entries]
         self.assertEqual(len(tokens), len(set(tokens)), "token 名重复")
 
-    def test_every_cited_swift_line_carries_the_declared_size_weight_design(self):
-        for e in self.entries:
-            with self.subTest(token=e["token"]):
-                line = _swift_line(e["file"], int(e["line"]))
-                where = "%s:%s" % (e["file"], e["line"])
-                self.assertIn(".font(.system(size: ", line, "%s 不是 .font(.system(...)) 行" % where)
-                self.assertIn("size: %s" % e["size"], line, where)
-                if e["weight"] == "regular":
-                    self.assertNotIn("weight:", line, "%s 声明 regular 但源行带 weight:" % where)
-                else:
-                    # 允许原生的三元写法（`weight: rework ? .semibold : .regular`）
-                    self.assertRegex(line, r"weight: [^)]*\.%s\b" % e["weight"], where)
-                if e["mono"]:
-                    self.assertIn("design: .monospaced", line, where)
-                else:
-                    self.assertNotIn("design:", line, where)
+    def test_the_native_swift_reference_is_retired(self):
+        self.assertFalse((REPO_ROOT / "mac").exists(), "mac/ retired in v2.0.0; the swift{} cells are history")
 
     def test_font_shorthand_in_table_matches_the_declared_swift_face(self):
         for e in self.entries:

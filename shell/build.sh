@@ -214,7 +214,7 @@ fi
 
 # Bounded + fall back（§54.3 2026-09-12 修正）：install.sh 的 `ui` 步在 launchd 下跑本脚本，
 # 没有人能点对话框。用 keychain 里的私钥签名**可能**弹一次 GUI 授权框——
-# mac/scripts/make-signing-cert.sh 的 `security set-key-partition-list`（那把钥匙的 ACL：
+# shell/scripts/make-signing-cert.sh 的 `security set-key-partition-list`（那把钥匙的 ACL：
 # `-T /usr/bin/codesign`）是**可跳过**的一步，跳过了的机器上 codesign 就停在那个框上等一个
 # 不存在的人。`|| echo WARN` 接得住失败、接不住 hang：hang 会把 ui 步的 AIASSISTANT_UI_BUDGET
 # （默认 600 s）整份烧光 → UI_SHELL_STATUS=fail → 自动部署失败。macOS 没有 timeout(1)，
@@ -248,7 +248,7 @@ run_with_budget "$CODESIGN_BUDGET_S" codesign --force --deep -s "$SIGN_ID" "$APP
 if [ "$SIGN_RC" -ne 0 ] && [ "$SIGN_ID" != "-" ]; then
     if [ "$SIGN_RC" -eq 124 ]; then
         echo "WARN: codesign with '$SIGN_ID' hung past ${CODESIGN_BUDGET_S}s — a keychain prompt"
-        echo "      nobody can click? Run 'bash mac/scripts/make-signing-cert.sh' once so the key's"
+        echo "      nobody can click? Run 'bash shell/scripts/make-signing-cert.sh' once so the key's"
         echo "      partition list lets /usr/bin/codesign use it non-interactively."
     else
         echo "WARN: codesign with '$SIGN_ID' failed (exit $SIGN_RC)."

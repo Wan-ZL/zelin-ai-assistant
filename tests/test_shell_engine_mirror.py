@@ -1,22 +1,23 @@
 """shell/ 承接录制 + 实时字幕引擎的判例（CONTRACT §61.3 / §61.4 / §61.5）。
 
-mac/Sources 在 D3 下是冻结的行为规范（只读参考），引擎文件搬进 shell/Sources 的
-要求是**逻辑零改动**——本文件把「零改动」钉成机器可查：
+引擎文件从 mac/Sources 搬进 shell/Sources 的要求是**逻辑零改动**。v2.0.0 起 mac/ 删除
+（tombstone：逐字节对照 mac/ 原件的那半边退役，全文见 tag full），shell/ 的副本成为唯一
+真源（§61.3）——本文件改为钉住这些文件**退役那一刻的 SHA-256**：
 
-- Recording.swift / CaptionCore.swift / LiveCaptions.swift：shell 副本与 mac 原件
-  逐字节相同（谁改一边不改另一边就红）。P8 删 mac/ 时把这条改成 tombstone。
-- CaptionOverlay.swift：允许且只允许两处差异——文件头注释、齿轮按钮从原生
-  MainNav 改走 ShellNavigation.openSettings（web 设置页）。
+- Recording.swift / CaptionCore.swift / LiveCaptions.swift 与 shell/Helpers 的
+  VaultSyncHelper.swift / framegrab.swift：内容哈希等于 mac/ 原件退役时的哈希。改动它们
+  （尤其是 Recording.swift 的录制 recipe）= 同 PR 修 §61.3 并更新这里的哈希；删文件 = 同 PR
+  从表里划掉。
+- CaptionOverlay.swift：齿轮按钮走 ShellNavigation.openSettings（web 设置页），不回原生 MainNav。
 - ShellSupport.swift 的 FailureCatalog 引擎子集：每句与 act/lib/failures.py 的
   plain_zh / plain_en 逐字一致（§25 的第二个 Swift 镜像，不许各说各话）。
 - shell/Info.plist 带 NSMicrophoneUsageDescription（字幕 requestAccess 缺它即被
   macOS 杀进程）；shell/build.sh 链接引擎需要的框架并只借 shared I18n.swift。
 - ShellBridge.swift 的 wire 词表与 web/src/shellBridge.ts 的类型逐字互镜（防腐 #10）。
-- §68.13（P4 余量）：NotifyRelay.swift 壳副本只许两处差异（文件头、点击目标
-  MainWindowController → ShellWindow.show）；vault-sync-helper / framegrab 的源
-  （shell/Helpers/）与 mac/ 冻结版逐字节相同；ingest 找 helper 时壳先于原生 app（radar_slack 的 framegrab 查找 v2.0.0 随雷达退役）。
+- §68.13（P4 余量）：NotifyRelay.swift 的点击目标是 ShellWindow.show，§28 常量逐字带过来；
+  ingest 找 helper 时壳先于原生 app（radar_slack 的 framegrab 查找 v2.0.0 随雷达退役）。
 """
-import difflib
+import hashlib
 import re
 import unittest
 from pathlib import Path
@@ -24,12 +25,17 @@ from pathlib import Path
 from act.lib import failures
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MAC = REPO_ROOT / "mac" / "Sources"
 SHELL = REPO_ROOT / "shell" / "Sources"
 
-VERBATIM = ["Recording.swift", "CaptionCore.swift", "LiveCaptions.swift"]
-# §68.13：两个 helper CLI 的源从 mac/ 顶层逐字节搬进 shell/Helpers/（build.sh 编进壳 bundle）
-VERBATIM_HELPERS = [("VaultSyncHelper.swift", "VaultSyncHelper.swift"), ("framegrab.swift", "framegrab.swift")]
+# mac/ 原件在 v2.0.0 删除那一刻的 SHA-256（= 当时 shell 副本的哈希，逐字节相同已被旧判例证明）
+FROZEN_SHA256 = {
+    "shell/Sources/Recording.swift": "f1015bf30e1498b9773dcc9d126a79bf64b2b90c53da371dfb12114a5380ee18",
+    "shell/Sources/CaptionCore.swift": "cc6da71f50f8a424bcc9222e6028c6cf1889c10e4f814261bfdf70c0d2423527",
+    "shell/Sources/LiveCaptions.swift": "d81ed07257706afda3549ee8d669e0f7e4e39e0655b4944f13e4043f4639c31c",
+    # §68.13：两个 helper CLI 的源（build.sh 编进壳 bundle）
+    "shell/Helpers/VaultSyncHelper.swift": "b3c6b49bedd5418b9643bc283c5cc3ab9650fd14bfc3a9792773fd43ec81000f",
+    "shell/Helpers/framegrab.swift": "1477abb3637d22e3d9b76639fa5b1832e3882b5d212f56f03657fee713d996a7",
+}
 
 # FailureCatalog ids the shell needs (Recording.swift flashNote / postSystemNotice
 # + the bridge's diagnosis vocabulary). Everything else stays in Doctor.swift.
@@ -43,61 +49,28 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-class VerbatimCopyTestCase(unittest.TestCase):
-    def test_engine_files_are_byte_identical_to_the_frozen_native_reference(self):
-        for name in VERBATIM:
-            with self.subTest(file=name):
-                self.assertEqual(
-                    (SHELL / name).read_bytes(), (MAC / name).read_bytes(),
-                    "shell/Sources/%s drifted from mac/Sources/%s — the engines move "
-                    "AS-IS (§61.3); fix the shell copy, never the frozen mac/ reference"
-                    % (name, name))
+class FrozenEngineHashTestCase(unittest.TestCase):
+    def test_mac_reference_is_gone(self):
+        self.assertFalse((REPO_ROOT / "mac").exists(), "mac/ retired in v2.0.0 (§61.3 tombstone)")
 
-    def test_helper_sources_are_byte_identical_to_the_frozen_native_reference(self):
-        for shell_name, mac_name in VERBATIM_HELPERS:
-            with self.subTest(file=shell_name):
-                self.assertEqual(
-                    (REPO_ROOT / "shell" / "Helpers" / shell_name).read_bytes(),
-                    (REPO_ROOT / "mac" / mac_name).read_bytes(),
-                    "shell/Helpers/%s drifted from mac/%s (§68.13 verbatim move)" % (shell_name, mac_name))
+    def test_engine_and_helper_files_keep_their_frozen_hash(self):
+        for rel, digest in FROZEN_SHA256.items():
+            with self.subTest(file=rel):
+                actual = hashlib.sha256((REPO_ROOT / rel).read_bytes()).hexdigest()
+                self.assertEqual(actual, digest,
+                                 "%s changed — the engines moved AS-IS (§61.3); a deliberate change "
+                                 "amends §61.3 and updates FROZEN_SHA256 in the same PR" % rel)
 
-    def test_notify_relay_differs_only_in_header_and_click_target(self):
-        mac_lines = _read(MAC / "NotifyRelay.swift").splitlines()
-        shell_lines = _read(SHELL / "NotifyRelay.swift").splitlines()
-        allowed = re.compile(r"^\s*$|^\s*//|MainWindowController|ShellWindow")
-        offending = []
-        for line in difflib.unified_diff(mac_lines, shell_lines, n=0, lineterm=""):
-            if line.startswith(("---", "+++", "@@")):
-                continue
-            if not allowed.search(line[1:]):
-                offending.append(line)
-        self.assertEqual(offending, [],
-                         "NotifyRelay.swift shell copy changed logic beyond the documented "
-                         "click-target rewire (§28 / §68.13):\n" + "\n".join(offending))
-        shell_text = "\n".join(shell_lines)
+    def test_notify_relay_click_target_and_constants(self):
+        shell_text = _read(SHELL / "NotifyRelay.swift")
         self.assertNotIn("MainWindowController.shared", shell_text)
         self.assertIn("ShellWindow.show?()", shell_text)
         # §28 constants travel verbatim
         self.assertIn("static let staleAfter: TimeInterval = 600", shell_text)
         self.assertIn("static let burstCap = 5", shell_text)
 
-    def test_caption_overlay_differs_only_in_header_and_gear_action(self):
-        mac_lines = _read(MAC / "CaptionOverlay.swift").splitlines()
-        shell_lines = _read(SHELL / "CaptionOverlay.swift").splitlines()
-        allowed = re.compile(
-            r"^\s*$|^\s*//|MainNav|openMainWindow|ShellNavigation|"
-            r"^@MainActor$|^enum ShellNavigation \{$|static var openSettings|^\}$")
-        offending = []
-        for line in difflib.unified_diff(mac_lines, shell_lines, n=0, lineterm=""):
-            if line.startswith(("---", "+++", "@@")):
-                continue
-            body = line[1:]
-            if not allowed.search(body):
-                offending.append(line)
-        self.assertEqual(offending, [],
-                         "CaptionOverlay.swift shell copy changed logic beyond the "
-                         "documented gear-button rewire:\n" + "\n".join(offending))
-        shell_text = "\n".join(shell_lines)
+    def test_caption_overlay_gear_opens_the_web_settings(self):
+        shell_text = _read(SHELL / "CaptionOverlay.swift")
         self.assertNotIn("MainNav.shared", shell_text)
         self.assertIn('ShellNavigation.openSettings?("live_captions")', shell_text)
 

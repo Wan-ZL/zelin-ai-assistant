@@ -5,8 +5,9 @@
 `tests/test_install_ui_step.py` 用真 bash + 假 pgrep/pkill 钉。这里只钉「结构性的话」
 ——改了一边忘另一边就红：
 
-- 回收长在 `shell/Sources/EngineOwnership.swift` 的**外面**：`Recording.swift` 仍是 mac/
-  冻结副本（逐字节判例在 test_shell_engine_mirror.py，这里是本节的近身一句），新模块
+- 回收长在 `shell/Sources/EngineOwnership.swift` 的**外面**：`Recording.swift` 仍是冻结的引擎
+  文件（mac/ 原件 v2.0.0 删除后改钉退役时的哈希，判例在 test_shell_engine_mirror.py，这里是本节的
+  近身一句），新模块
   只经缝借它三样公开的东西，且 pkill 的模式**逐字复用** `RecordingController.enginePattern`；
 - 退出凭据是**活性不是历史**（`engineProcess?.isRunning == true`，绝不是 `!= nil`——冻结的
   `Recording.swift` 只赋一次值、从不置回 nil，判例连这一点一起钉），退出路径也有 §54 守卫；
@@ -17,13 +18,15 @@
   （它在「壳还活着吗」那一问上早退，覆盖不了崩溃那一格）；
 - CONTRACT §61.8 存在、法条引用的判例文件都在，§15 / §56.5 各有一处交叉引用。
 """
+import hashlib
 import re
 import unittest
 from pathlib import Path
 
+from tests.test_shell_engine_mirror import FROZEN_SHA256
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHELL = REPO_ROOT / "shell" / "Sources"
-MAC = REPO_ROOT / "mac" / "Sources"
 HARNESS = REPO_ROOT / "shell" / "tests" / "LaunchHarness.swift"
 INSTALL = REPO_ROOT / "install.sh"
 CONTRACT = REPO_ROOT / "docs" / "CONTRACT.md"
@@ -42,10 +45,9 @@ class FrozenEngineUntouchedTestCase(unittest.TestCase):
 
     def test_ownership_lives_outside_the_frozen_engine_file(self):
         self.assertTrue((SHELL / "EngineOwnership.swift").exists())
-        self.assertFalse((MAC / "EngineOwnership.swift").exists(),
-                         "engine ownership is shell-only (D3: mac/ is frozen)")
-        self.assertEqual((SHELL / "Recording.swift").read_bytes(), (MAC / "Recording.swift").read_bytes(),
-                         "Recording.swift must stay byte-identical to the frozen mac/ reference (§61.3)")
+        self.assertEqual(hashlib.sha256((SHELL / "Recording.swift").read_bytes()).hexdigest(),
+                         FROZEN_SHA256["shell/Sources/Recording.swift"],
+                         "Recording.swift must keep its frozen bytes (§61.3)")
         self.assertNotIn("EngineOwnership", self.engine,
                          "nothing about ownership may leak into the frozen engine file")
 
