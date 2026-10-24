@@ -5,3 +5,4 @@ type: removed
 - **模型旋钮 `models.dispatch` 与「跟随 Claude Code 全局默认」模式退役**：旧文件里写着的 `follow` 读作出厂模型；读写 `~/.claude/settings.json` 的代码全部删除。
 - **Slack / Gmail 凭证、通知的卡片类 kind 与分类开关、八个设置 section（slack / gmail / telemetry / digest / approval / flags / voice / maintainer）退役**；设置页对这些 section 回 404，旧 overrides 键照读照忽略。
 - **Linux systemd 与 Windows 计划任务的模板与 doctor 行退役**：lite 2.0 只支持 macOS；`act/launchd/` 只剩看板 server 一个 LaunchAgent 模板。QA 门 `[ui-parity]`（§66）一并退役。
+- **`act/registry/README.md` 删除**（它记录的注册表 schema 随 §1 退役）。示例卡 `act/registry/R-000-example.yaml` 暂留：本地 pre-commit 护栏 1 拦一切 `act/registry/R-*` 路径（含删除），等 owner 决定用 `--no-verify` 提交删除还是改护栏。
