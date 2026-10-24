@@ -30,10 +30,9 @@ import qa_common  # noqa: E402
 BASELINE = os.path.join(qa_common.REPO_ROOT, "qa", "deps_baseline.txt")
 
 STDLIB = frozenset(getattr(sys, "stdlib_module_names", ()))
-# 宪法第 7 条：运行时第三方 = PyYAML；cryptography 是 act/lib/e2e.py 的
-# 法定 lazy 依赖（没装时该功能自报不可用，CI macOS 腿安装）——两者之外
-# 的第三方 import 出现在 act/lib 即 lib-thirdparty 违例。
-_EXTERNAL_OK = frozenset({"yaml", "cryptography"})
+# 宪法第 7 条：运行时第三方 = PyYAML——之外的第三方 import 出现在 act/lib
+# 即 lib-thirdparty 违例（v2.0.0：cryptography 的豁免随 act/lib/e2e.py 删除）。
+_EXTERNAL_OK = frozenset({"yaml"})
 _FIRST_PARTY_TOPS = ("act", "server", "scripts")
 # §58.3 规则 2 的法定例外：entrypoint 层准 import 的同层模块（LLM 边界，§59）。
 # act.llm 自己仍按 entry 受审——它只准向下到 act.lib。lib 层不在此列（lib

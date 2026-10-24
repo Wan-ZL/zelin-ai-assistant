@@ -2225,7 +2225,7 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 **法条**：
 
-- **filter 的定义单源在 `ci.yml` 的 `changes` job**（`dorny/paths-filter`，按 commit SHA 钉；pull_request 下走 API 列文件、不 checkout；job 级 `pull-requests: read`）。`swift` = macOS 腿独有而 ubuntu 腿没有的一切：`mac/**`、`shell/**`、`ios/**`、`shared/**`、任意 `*.swift`、`.github/xcode-version`、`scripts/ci/select_xcode.sh`、构建调用的 stamper（`scripts/version_stamp.py`、`scripts/build_version.sh`、`act/lib/version.py`）、Swift↔Python interop 的 Python 半（`act/lib/e2e.py`）、`ci.yml` 自己；`web` = `web/**` + `ci.yml`。**新增会被 macOS 独占执行的东西 = 同 PR 加进 filter**——忘了加，push to main 的全量跑会红、56.3 第 3 步的 CI 闸门会拦住部署，但那是事后网，filter 是事前门。
+- **filter 的定义单源在 `ci.yml` 的 `changes` job**（`dorny/paths-filter`，按 commit SHA 钉；pull_request 下走 API 列文件、不 checkout；job 级 `pull-requests: read`）。`swift` = macOS 腿独有而 ubuntu 腿没有的一切：`mac/**`、`shell/**`、`ios/**`、`shared/**`、任意 `*.swift`、`.github/xcode-version`、`scripts/ci/select_xcode.sh`、构建调用的 stamper（`scripts/version_stamp.py`、`scripts/build_version.sh`、`act/lib/version.py`）、`ci.yml` 自己（v2.0.0：Swift↔Python E2E interop 步骤与 `ios/tests/interop/` 随 `act/lib/e2e.py` 在 PR-A 删除，filter 里的 `act/lib/e2e.py` 一行同删）；`web` = `web/**` + `ci.yml`。**新增会被 macOS 独占执行的东西 = 同 PR 加进 filter**——忘了加，push to main 的全量跑会红、56.3 第 3 步的 CI 闸门会拦住部署，但那是事后网，filter 是事前门。
 - **fail-closed 三条**：(a) 非 pull_request 事件（merge_group / push）filter 输出恒 `true`；(b) filter step 失败（API 抽风、限流）时 gate step 仍答 `true`——filter 只能**移除它正面证明不需要的**工作；(c) 下游 step 条件写 `!= 'false'` 而非 `== 'true'`，job 带 `if: !cancelled()`——`changes` 自己挂了，`ci` 与 `Web tests` 照样跑全套而不是被连坐 skip（GitHub 把 skipped 的 required check 当通过，所以「跳过」在这里等于「放行」，绝不允许由故障触发）。
 - **`ci` 的 runner 随 filter 走**：`runs-on: ${{ swift == 'false' && 'ubuntu-latest' || 'macos-latest' }}`——不命中时**一个 macOS 槽都不占**；job 名不变、结论 success、summary 一行说明为什么不需要。**被跳掉的不只是 Swift 构建**：macOS 腿上那次 Python 全量 unittest 也一起跳（darwin-only 判例只有 4 个文件，且多数测试经 PATH 的 bash = runner 上的 Homebrew bash 5，与 ubuntu 无异）——main 上每次 push 仍全量跑，这是接受的取舍。
 - **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
@@ -2319,7 +2319,7 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 
 分层模型正式入典（防腐 #2 从文字变机器；含函数体内的 lazy import 与 `TYPE_CHECKING`）：
 
-- `act/lib/**` 只准 import stdlib + `yaml` + `act(.lib)`——lib 永不向上（`lib-import` / `lib-thirdparty`；`cryptography` 是 `act/lib/e2e.py` 的法定 lazy 依赖，在白名单）。
+- `act/lib/**` 只准 import stdlib + `yaml` + `act(.lib)`——lib 永不向上（`lib-import` / `lib-thirdparty`；v2.0.0 起白名单只剩 `yaml`——`cryptography` 的豁免随 `act/lib/e2e.py` 在 PR-A 删除）。
 - `act/*.py`（entrypoint 层：actd、executor、radar*、digest、doctor、webui、boardctl……）准 import `act.lib`，**互相之间不准 import**（`entry-pair`）。今天账上的 ~25 条互引边（actd→analyze/executor/…）是 P3 的重构清单：该层里事实上的共享核心要么下沉 `act.lib`、要么显式立法为新层——届时修本节。**修订（v0.48.x，§63 落地时）——边界层**：`act.llm` 是本条的**法定例外**（`depgraph.BOUNDARY_MODULES`）：§59 / 防腐 #3 规定所有带 prompt 的 claude 调用只准经它构造 argv，禁 entrypoint import 它等于禁守法（新 entrypoint `act/recap.py` 是第一个撞上这条矛盾的模块）。entrypoint → `act.llm` 不再记 `entry-pair`，账本上 11 条 `->act.llm` 边同 PR 划掉（shrink）；`act.llm` 自己仍按 entry 受审（只准向下到 `act.lib`）；lib 层**照旧不许**向上 import 它——lib 经注入缝（`runner=`）拿模型调用。判例：tests/test_qa_depgraph_rules.py。
 - `server/**` 只准 import stdlib/第三方 + `act.lib` + `server`（`server-import`）。
 - **任何模块不准跨模块引用 `_私名`**（`from X import _y` 与 `X._y` 属性链两形，dunder 除外；`private:`）——防腐 #2 的「当场升 public 或抽进共享模块」。
