@@ -168,7 +168,6 @@ template in `act\tasksched\` is reported (never auto-removed) by the new
   `schtasks` output has no equivalent column, so on Windows the `server` task
   is checked like every other task (registered / ready / running) and
   `install.ps1` does the one-off port probe at the end of the install.
-- **`os.startfile` reveal** (`platform.open_path`) is wired but unproven here.
 
 ## Needs a real Windows machine (friend test + PR)
 
@@ -200,7 +199,6 @@ exercised on Windows here — please test and PR fixes:
 - **The board** in a real browser (the API layer + token/Origin defense are
   unit-tested; the end-to-end click-through is not), and `npm run build`
   producing a usable `web\dist` on Windows.
-- **`os.startfile`** behavior for `open_path()`.
 - **`install.ps1` end to end** — it is syntactically sane and statically checked
   but has never been executed on Windows.
 

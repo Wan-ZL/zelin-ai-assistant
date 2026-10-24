@@ -1,7 +1,8 @@
 """§26 追记（2026-10-23，lite 2.0 之前的桥接版本 PR #480；v2.0.0 保留）：``manual_upgrade`` 标记。
 
 最新 release 的 MAJOR 大于运行版本 → ``manual_upgrade: true``（add-only），出现在
-``check()`` 的答案、``update_available`` 投影（``attach`` / server/about.py 现算的同形 dict）与
+``check()`` 的答案、``update_available`` 投影（v2.0.0 起只剩 server/about.py 现算的那份，判例在
+tests/test_server_about_upgrade.py）与
 CLI payload 里——升级永不自己跨大版本（v2.0.0 起由 §79 升级器与 ``POST /api/update/install``
 的 409 执行），页面要说的是「手动升级」而不是「一键更新」。同 major 的新版 / 旧版 /
 垃圾版本号 → false。fetch 全部注入，不出网。
@@ -58,23 +59,21 @@ class PayloadTestCase(unittest.TestCase):
     def test_new_major_flags_every_payload(self):
         info = uc.check(_cfg(), fetch=_fetch("v2.0.0"), now=self.t0)
         self.assertIs(info["manual_upgrade"], True)
-        dash = uc.attach({}, _cfg(), now=self.t0)
-        self.assertEqual(dash["update_available"]["latest"], "2.0.0")
-        self.assertIs(dash["update_available"]["manual_upgrade"], True)
+        self.assertEqual(info["latest"], "2.0.0")
         out = uc.cli_status(cfg=_cfg(), now=self.t0)
         self.assertIs(out["update_available"], True)
         self.assertIs(out["manual_upgrade"], True)
 
     def test_patch_release_is_a_plain_update(self):
-        dash = uc.attach({}, _cfg(), fetch=_fetch("v1.0.118"), now=self.t0)
-        self.assertIs(dash["update_available"]["manual_upgrade"], False)
+        info = uc.check(_cfg(), fetch=_fetch("v1.0.118"), now=self.t0)
+        self.assertIs(info["manual_upgrade"], False)
         self.assertIs(uc.cli_status(cfg=_cfg(), now=self.t0)["manual_upgrade"], False)
 
     def test_disabled_check_never_claims_a_manual_upgrade(self):
         uc.check(_cfg(), fetch=_fetch("v2.0.0"), now=self.t0)
         out = uc.cli_status(cfg=_cfg(enabled=False), now=self.t0)
         self.assertIs(out["manual_upgrade"], False)
-        self.assertNotIn("update_available", uc.attach({}, _cfg(enabled=False), now=self.t0))
+        self.assertIs(out["update_available"], False)
 
 
 if __name__ == "__main__":

@@ -73,15 +73,6 @@ class DarwinSeamTestCase(unittest.TestCase):
             "t", "b", runner=_FakeRunner(
                 raises=subprocess.TimeoutExpired(cmd="osascript", timeout=10))))
 
-    def test_open_path_uses_open(self):
-        runner = _FakeRunner()
-        self.assertTrue(platform.open_path("/tmp/some file.command", runner=runner))
-        (argv, timeout), = runner.calls
-        self.assertEqual(argv, ["open", "/tmp/some file.command"])
-        self.assertEqual(timeout, 15)
-        self.assertFalse(platform.open_path("/x", runner=_FakeRunner(returncode=1)))
-        self.assertFalse(platform.open_path("/x", runner=_FakeRunner(raises=OSError())))
-
     def test_service_list_text_wraps_launchctl(self):
         runner = _FakeRunner(stdout="123\t0\tcom.zelin.aiassistant.actd\n",
                              stderr="warn\n")
@@ -110,11 +101,6 @@ class LinuxSeamTestCase(unittest.TestCase):
         # headless box: notify-send missing -> False, never a crash
         self.assertFalse(platform.notify_user(
             "t", "b", runner=_FakeRunner(raises=FileNotFoundError())))
-
-    def test_open_path_uses_xdg_open(self):
-        runner = _FakeRunner()
-        self.assertTrue(platform.open_path("/tmp/x", runner=runner))
-        self.assertEqual(runner.calls[0][0], ["xdg-open", "/tmp/x"])
 
     def test_service_list_text_uses_systemctl_user(self):
         runner = _FakeRunner(

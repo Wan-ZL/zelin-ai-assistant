@@ -146,15 +146,12 @@ class UiLangTestCase(_Sandboxed):
                                side_effect=RuntimeError("boom")):
             self.assertEqual(failures.ui_lang(), "zh")
 
-    def test_pick_and_user_message_follow_ui_lang(self):
+    def test_pick_follows_ui_lang(self):
         with mock.patch.dict(os.environ, {"AIASSISTANT_UI_LANG": "en"}):
             self.assertEqual(failures.pick("中", "en"), "en")
-            self.assertEqual(failures.user_message("network_error"),
-                             failures.FAILURES["network_error"]["plain_en"])
         with mock.patch.dict(os.environ, {"AIASSISTANT_UI_LANG": "zh"}):
             self.assertEqual(failures.pick("中", "en"), "中")
         self.assertEqual(failures.pick("中", "en", lang="en"), "en")
-        self.assertIsNone(failures.user_message("no_such_id"))
         self.assertIsNone(failures.action_id(None))
 
 

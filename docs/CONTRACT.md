@@ -718,8 +718,9 @@ msg_auto_resume_exhausted`。（**§46 追加**：`msg_resume_storm` /
 > 回缓存、不等网络；环境变量 `AIASSISTANT_UPDATE_AUTOCHECK=0` 关掉这一触发（测试套件设它）。手动「立即
 > 检查」仍是 `POST /api/update/check` → `--force`。dashboard.json 的 `update_available` 投影随 dashboard
 > 退役：`GET /api/about` 的 `update_available` 由 server/about.py **现算**（缓存的 latest 严格新于运行版本
-> 且检查开着 → `{current, latest, url, pkg_asset_url, manual_upgrade}`，否则 null；与
-> `update_check.update_available` 同形同尺）。「一键更新」改走 §79 升级器（`POST /api/update/install`）。
+> 且检查开着 → `{current, latest, url, pkg_asset_url, manual_upgrade}`，否则 null；act 侧的
+> `update_check.update_available()` / `attach()` 投影随之删除，about.py 这一份是唯一实现）。
+> 「一键更新」改走 §79 升级器（`POST /api/update/install`）。
 > 下面 PR #480 的 `manual_upgrade` 追记保留原文；它在 2.0 的执行点是：`POST /api/update/install` 在缓存的
 > latest 是新的 major 时 409 `manual_upgrade`（details `{reason, manual_upgrade, current, latest, fix}`，
 > `fix` = `git fetch --tags origin && git checkout v<latest> && bash install.sh`），**排在**「升级器在不在」
@@ -833,7 +834,9 @@ release 页链接，**绝不自动下载执行**；owner 机器上 §56 合并�
 > （`quiet_hours_enabled` / `quiet_hours_start` / `quiet_hours_end`，抑制仍在写方、被吃掉返回 True、
 > fail-open）。`server/notify_catalog.py` 的 `KINDS` = `recap_ready` / `failure` / `general`。判例
 > `tests/test_notify_preferences.py`、`tests/test_notify_relay.py`、`tests/test_server_notify_catalog.py`、
-> `tests/test_server_notify_preferences_settings.py`。
+> `tests/test_server_notify_preferences_settings.py`。`notify_catalog` 里只为 §66.2 探针存在的
+> `kind_names` / `fragments` / `same_template` / `sentences` / `has_sentence` 不是活的 server 面：唯一
+> 生产调用方 `scripts/ui/parity_check.py` 已不在门里（§66 墓碑），PR-C 删 `scripts/ui/` 时一并删除。
 
 **目标**：python daemons 的系统通知以 **Zelin's AI Assistant** 的身份/图标弹出，
 不再是 osascript 的 Script Editor 身份。实现：`act/lib/notify.py`（写方）

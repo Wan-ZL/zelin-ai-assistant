@@ -474,15 +474,6 @@ def describe(failure_id: Optional[str]) -> Optional[dict]:
     return FAILURES.get(str(failure_id))
 
 
-def user_message(failure_id: Optional[str], lang: Optional[str] = None) -> Optional[str]:
-    """Plain-language sentence for a failure id in the current UI language."""
-    entry = describe(failure_id)
-    if not entry:
-        return None
-    key = "plain_en" if (lang or ui_lang()) == "en" else "plain_zh"
-    return entry[key]
-
-
 def action_id(failure_id: Optional[str]) -> Optional[str]:
     entry = describe(failure_id)
     return entry["action_id"] if entry else None

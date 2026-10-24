@@ -270,7 +270,7 @@
       "id": "contract:§19",
       "source": "contract",
       "scenario": "凭证与 secrets（跨组件契约，两侧逐字一致）",
-      "proof": "unittest:tests.test_checks_environment_mutation_kills_train,tests.test_doctor,tests.test_launchd_render,tests.test_secrets",
+      "proof": "unittest:tests.test_checks_environment_mutation_kills_train,tests.test_doctor,tests.test_launchd_render,tests.test_llm_boundary",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,

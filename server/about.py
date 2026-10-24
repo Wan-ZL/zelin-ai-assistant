@@ -5,8 +5,8 @@
   ``state/update_check.json`` 的公开子集（checked_at / latest / url；ETag 不外发）；
   ``update_available`` 由**本模块现算**（v2.0.0：dashboard.json 投影随 actd 退役）——缓存的
   latest 严格新于运行版本且 ``updates.check_enabled`` 开着时才是 dict
-  ``{current, latest, url, pkg_asset_url, manual_upgrade}``（与
-  ``act.lib.update_check.update_available`` 同形同尺），否则 None；``check_enabled`` =
+  ``{current, latest, url, pkg_asset_url, manual_upgrade}``（v1 的 act 侧同名投影已随
+  dashboard.json 退役，这里是唯一一份），否则 None；``check_enabled`` =
   ``updates.check_enabled`` 的 effective 值（override → config.yaml → 默认 true；坏的 overrides
   文件当空，关于页不因它 409）。**周期检查的触发者**（§26 v2.0.0 修订）：缓存缺席或超过 24h 且
   检查开着时，GET 在后台线程里起一次 ``python -m act.lib.update_check``（它自己仍按 24h 预算

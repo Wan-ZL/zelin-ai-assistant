@@ -303,44 +303,6 @@ class ForceCheckTestCase(unittest.TestCase):
         self.assertEqual(st["latest"], "9.9.9")
 
 
-class DashboardProjectionTestCase(unittest.TestCase):
-    def setUp(self):
-        if uc.STATE_PATH.exists():
-            uc.STATE_PATH.unlink()
-        self.t0 = dt.datetime(2026, 7, 9, 12, 0, tzinfo=dt.timezone.utc)
-
-    def test_newer_release_projects_update_available(self):
-        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))
-        dash = uc.attach({"counts": {}}, _cfg(), fetch=fetch, now=self.t0)
-        ua = dash["update_available"]
-        self.assertEqual(ua["current"], __version__)
-        self.assertEqual(ua["latest"], "9.9.9")
-        self.assertIn("/releases/tag/v9.9.9", ua["url"])
-        self.assertEqual(ua["pkg_asset_url"], "https://example.com/v9.9.9.pkg")
-
-    def test_same_version_stays_absent(self):
-        fetch = FetchStub((200, 'W/"e1"', _release("v" + __version__)))
-        dash = uc.attach({"counts": {}}, _cfg(), fetch=fetch, now=self.t0)
-        self.assertNotIn("update_available", dash)
-
-    def test_older_release_stays_absent(self):
-        fetch = FetchStub((200, 'W/"e1"', _release("v0.0.1")))
-        dash = uc.attach({"counts": {}}, _cfg(), fetch=fetch, now=self.t0)
-        self.assertNotIn("update_available", dash)
-
-    def test_disabled_stays_absent_even_with_cached_newer(self):
-        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))
-        uc.check(_cfg(), fetch=fetch, now=self.t0)  # cache a newer version
-        dash = uc.attach({"counts": {}}, _cfg(enabled=False),
-                         now=self.t0 + dt.timedelta(hours=1))
-        self.assertNotIn("update_available", dash)
-
-    def test_unknown_stays_absent(self):
-        fetch = FetchStub(OSError("offline"))
-        dash = uc.attach({"counts": {}}, _cfg(), fetch=fetch, now=self.t0)
-        self.assertNotIn("update_available", dash)
-
-
 class OverrideTestCase(unittest.TestCase):
     """§26: the App toggle rides the standard overrides allowlist."""
 

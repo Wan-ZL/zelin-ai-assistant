@@ -2,24 +2,23 @@
 
 契约：CONTRACT §25（doctor 的 service 列表来源）/ §28（通知中继的原生落点 `notify_user`）。
 
-Three concerns in the python tree are OS-specific: firing a user notification,
-opening a path with the system file handler, listing the user's background
-services. The darwin implementations delegate to the exact commands this
-codebase always ran (osascript / open / launchctl); the linux / windows
+Two concerns in the python tree are OS-specific: firing a user notification and
+listing the user's background services. The darwin implementations delegate to
+the exact commands this codebase always ran (osascript / launchctl); the linux / windows
 branches remain as best-effort fallbacks for a dev box (lite 2.0 ships for
 macOS only). v2.0.0: the §71.1 power-state probe retired with the dispatch
-gate it fed (full text in tag ``full``).
+gate it fed, and ``open_path`` with its only caller act/ai_fix.py (full text
+in tag ``full``).
 
 NOT here on purpose:
   - anything already portable: claude / git / gh subprocess calls.
 
 Every function is best-effort and NEVER raises — a failed notification or
-reveal must not break the daemon loop (the posture act/lib/notify.py always
+service listing must not break the caller (the posture act/lib/notify.py always
 had). ``runner`` is the injectable subprocess runner used by tests.
 """
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from typing import Callable, List, Optional
@@ -114,32 +113,6 @@ def notify_user(title: str, body: str, subtitle: Optional[str] = None,
     try:
         return (runner or _run)(argv, 10).returncode == 0
     except Exception:  # noqa: BLE001 - a notification must never break a caller
-        return False
-
-
-def _startfile(path: str) -> bool:
-    """windows: os.startfile — the OS default handler. Never raises."""
-    try:
-        os.startfile(path)  # noqa: S606 # nosec B606 - the whole point of this function
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def open_path(path, runner: Optional[Runner] = None) -> bool:
-    """Open ``path`` with the OS default handler / file manager. Never raises.
-
-    darwin: open(1) — a directory reveals in Finder, a ``.command`` file runs
-    in Terminal.app (the act.ai_fix flow). linux: xdg-open. windows:
-    os.startfile.
-    """
-    p = str(path)
-    if sys.platform.startswith("win"):
-        return _startfile(p)
-    argv = ["open", p] if is_darwin() else ["xdg-open", p]
-    try:
-        return (runner or _run)(argv, 15).returncode == 0
-    except Exception:  # noqa: BLE001
         return False
 
 

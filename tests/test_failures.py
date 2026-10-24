@@ -63,14 +63,7 @@ class CatalogTestCase(unittest.TestCase):
     def test_describe_and_helpers_tolerate_unknown_ids(self):
         self.assertIsNone(failures.describe("no_such_id"))
         self.assertIsNone(failures.describe(None))
-        self.assertIsNone(failures.user_message("no_such_id"))
         self.assertIsNone(failures.action_id(None))
-
-    def test_user_message_is_bilingual(self):
-        self.assertEqual(failures.user_message("engine_dead", lang="zh"),
-                         failures.FAILURES["engine_dead"]["plain_zh"])
-        self.assertEqual(failures.user_message("engine_dead", lang="en"),
-                         failures.FAILURES["engine_dead"]["plain_en"])
 
 
 class ClassifyTestCase(unittest.TestCase):
@@ -181,7 +174,7 @@ class EngineLogClassifyTestCase(unittest.TestCase):
         fid = failures.classify_engine_log(self.DOWNLOAD, engine_alive=True)
         self.assertEqual(fid, "engine_npm_download")
         # the catalog copy must read as calm progress, not as a failure
-        msg = failures.user_message(fid, lang="zh")
+        msg = failures.FAILURES[fid]["plain_zh"]
         self.assertIn("下载中", msg)
         for bad in ("失败", "错误", "崩溃"):
             self.assertNotIn(bad, msg)

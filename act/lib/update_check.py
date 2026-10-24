@@ -6,8 +6,9 @@ the answer in ``state/update_check.json``. Since v2.0.0 the caller is the board
 server: ``GET /api/about`` starts the periodic (24h-gated) check in the
 background when the cache is stale, ``POST /api/update/check`` runs the forced
 one (both as ``python3 -m act.lib.update_check``); a cache hit costs zero
-network and zero money. :func:`attach` (the v1 dashboard projection) has no
-caller left and stays only as a library function.
+network and zero money. The ``update_available`` projection is computed by
+server/about.py from the cache; the v1 ``update_available()`` / ``attach()``
+dashboard projection retired with dashboard.json (full text in tag ``full``).
 
 Honesty rules (the trust posture of the whole product):
 - At most ONE network attempt per 24h — failures (offline, rate-limited, bad
@@ -290,41 +291,6 @@ def _answer(state: dict) -> Optional[dict]:
         "checked_at": state.get("checked_at"),
         "manual_upgrade": needs_manual_upgrade(latest, __version__),
     }
-
-
-def update_available(cfg: Optional[config.Config] = None, *,
-                     fetch: Optional[Fetch] = None,
-                     now: Optional[_dt.datetime] = None) -> Optional[dict]:
-    """CONTRACT §26 dashboard payload — dict ONLY when latest > current."""
-    info = check(cfg, fetch=fetch, now=now)
-    if not info or not is_newer(info["latest"], info["current"]):
-        return None
-    return {
-        "current": info["current"],
-        "latest": info["latest"],
-        "url": info["url"],
-        "pkg_asset_url": info["pkg_asset_url"],
-        # add-only (§26 追记 2026-10-23): a new MAJOR is a manual upgrade
-        "manual_upgrade": info["manual_upgrade"],
-    }
-
-
-def attach(dash: dict, cfg: Optional[config.Config] = None, *,
-           fetch: Optional[Fetch] = None,
-           now: Optional[_dt.datetime] = None) -> dict:
-    """Set ``dash["update_available"]`` when an update is known (§26).
-
-    Leaves the dict untouched otherwise — an ABSENT field is the contract for
-    "no known update". Never raises: the update check must never take a
-    dashboard write down with it.
-    """
-    try:
-        info = update_available(cfg, fetch=fetch, now=now)
-    except Exception:  # noqa: BLE001 — belt and braces (see docstring)
-        return dash
-    if info:
-        dash["update_available"] = info
-    return dash
 
 
 def cli_status(force: bool = False, *,
