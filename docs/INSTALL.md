@@ -16,7 +16,7 @@ Then, in the board's **first-run wizard** (`?page=setup`, it opens by itself unt
 
 Telemetry: anonymous usage statistics are on by default (event metadata only — names, timestamps, a random device id, version). **The text you type** into the board is uploaded only if you opt in (`telemetry.capture_input`, default off); the master switch is `telemetry.enabled: false`. Details and field tables: [docs/TELEMETRY.md](TELEMETRY.md).
 
-No API key yet? `bash scripts/dev-preview.sh` previews the entire board with fictional data — see [docs/DEMO.md](DEMO.md).
+No API key yet? `bash scripts/dev-preview.sh` previews the meeting recaps page with fictional data — see [docs/DEMO.md](DEMO.md).
 
 ## 前置条件
 
@@ -53,7 +53,22 @@ curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scri
 
 ### 更新
 
-同一条命令再跑一遍（或 `cd ~/Projects/zelin-ai-assistant && git pull && bash install.sh`）。此外，合并进 `main` 的每个 PR 会由 `com.zelin.aiassistant.autodeploy` 每 10 分钟自动部署到已装机器（CONTRACT §56；关掉：config.yaml `features.auto_deploy: false`）。
+- **已经是 2.x**：关于页的「立即升级」，或手跑 `bash scripts/upgrade.sh`（CONTRACT §79）。它只做一件事：`origin/main` 恰好是一个 `v*` tag 时把本地 `main` 快进过去，再跑 `bash install.sh --non-interactive --from-upgrade`；录制引擎不被打断。工作树有改动、不在 `main` 上或与 `origin/main` 分叉时，它只写 `state/upgrade_state.json`（`status=diverged`）并给出手动命令，**从不 reset**。同一条 bootstrap 命令再跑一遍也是更新。
+- **从 1.x 升级（一次性手动）**：1.x 的自动部署在大版本边界停下（v1.0.117 起）。在 checkout 里：
+
+  ```bash
+  cd ~/Projects/zelin-ai-assistant
+  git fetch --tags origin && git checkout main && git merge --ff-only origin/main && bash install.sh
+  ```
+
+  命令停在 `main` 上而不是某个 tag 上：`scripts/upgrade.sh` 只快进一个在 `main` 上的 checkout。`install.sh` 的 1.x 迁移步（CONTRACT §78）会卸掉 1.x 的 LaunchAgents、去掉 1.x 的 cron 尾巴、解除 `~/.claude/skills` 里指向本仓库的软链；录制引擎不动。
+- **快进被拒（本地 `main` 有自己的提交）**：脚本不会替你决定。先留一个备份分支，再把 `main` 对齐到要装的 tag（`state/`、`config.yaml`、`config/secrets/` 都在 `.gitignore` 里，不受影响）：
+
+  ```bash
+  git branch keep/local-main main && git reset --hard <tag> && bash install.sh
+  ```
+
+  最后一个 1.x 的完整代码在 git tag / branch `full`。
 
 ## 剩下的是你的（机器做不了）
 
@@ -161,7 +176,7 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材；**新装机器请�
 
 ### 零 key 的 UI 预览
 
-不想先配 key？`bash scripts/dev-preview.sh` 起一份完全虚构的看板，五种卡片和边缘状态全部可见——完整用法见 [`docs/DEMO.md`](DEMO.md)。
+不想先配 key？`bash scripts/dev-preview.sh` 起一份完全虚构的会议纪要页（两种出稿形状、各种质量状态、一场进行中的会、已归档与已忽略各一份）——完整用法见 [`docs/DEMO.md`](DEMO.md)。
 
 ## 装完之后（可选接入）
 
@@ -172,7 +187,7 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材；**新装机器请�
 
 ## 这条路线在 CI 上每天都走一遍
 
-`.github/workflows/fresh-install.yml`（"Fresh install (macOS)"）在每次 push 到 main、每晚一次以及手动触发时用一台干净的 macOS runner 复现本页（不按 PR 跑——macOS runner 稀缺，CONTRACT §56.8）：空 `$HOME`、本地 origin、`bash scripts/bootstrap.sh --no-launchd` → 断言安装报告、起看板 server 断言 `/api/board` `/api/health` `/api/setup`、`doctor --fresh-install` 退出 0、第二次运行是更新且 `config.yaml` 字节不变。绿 = 「另一台电脑、空白环境、一条命令、直接能用」成立（CONTRACT §69.4）。
+`.github/workflows/fresh-install.yml`（"Fresh install (macOS)"）在每次 push 到 main、每晚一次以及手动触发时用一台干净的 macOS runner 复现本页（不按 PR 跑——macOS runner 稀缺，CONTRACT §56.8）：空 `$HOME`、本地 origin、`bash scripts/bootstrap.sh`（即 `bash install.sh --non-interactive`，真的装 LaunchAgent、真的写 crontab）→ 断言安装报告；断言封闭足迹（CONTRACT §78）：`~/.claude` 从未被创建、`~/Library/LaunchAgents` 恰好只有 `com.zelin.aiassistant.server.plist`、crontab 里恰好一行属于本产品；安装后没有被改动的 tracked 文件；LaunchAgent 起的 server 答 `/api/health` `/api/recaps` `/api/setup` `/api/permissions`；`doctor --fresh-install` 退出 0；第二次运行是更新且足迹不变；最后 `bash uninstall.sh --yes` 逐项删干净。绿 = 「另一台电脑、空白环境、一条命令、直接能用」成立（CONTRACT §69.4 与其 v2.0.0 追记）。
 
 ## 卸载（clean uninstall）
 
@@ -192,8 +207,7 @@ bash uninstall.sh --purge
 
 > ✅ **预期状态**：`launchctl list | grep com.zelin.aiassistant` 无输出；`crontab -l` 里没有 screenpipe/act.* 行；后台不再有任何 claude 调用与屏幕录制。
 
-## 附：.pkg 安装包（旧路线，仍可用）
+## 附：GitHub Release 里有什么
 
-[GitHub Releases](https://github.com/Wan-ZL/zelin-ai-assistant/releases) 里的 `ZelinAIAssistant-<tag>.pkg` 装的是**旧的菜单栏 app**（现名 `Zelin's AI Assistant (old).app`，D3 退役中，保留到 owner 明确下令删除；产品名 `Zelin's AI Assistant.app` 归看板壳）+ 管线母本，postinstall 跑 `install.sh --pkg-postinstall`。未签名，Gatekeeper 会拦：右键 → 打开；若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。新机器请用上面的一条命令。
+每个 release（CONTRACT §56.2）带三个资产：`ZelinAIAssistant-<tag>-macos.zip`（CI 上用 `shell/build.sh` 构建、带 build provenance attestation 的 Dock app，`gh attestation verify <file> --repo Wan-ZL/zelin-ai-assistant` 可验）、`checksums.sha256`、以及零条目的 `appcast.xml`（CONTRACT §74.3：让残留的 1.x 菜单栏 app 的 Sparkle 永远读到「已是最新」）。app 依赖它的 checkout（看板 server、ingest 脚本、纪要代码都在仓库里），所以安装路线仍是上面的 bootstrap；zip 适合核对或单独替换 bundle。2.0 不再发 .pkg、不再发 Linux / Windows 包（CONTRACT §74.1 / §74.2 tombstone，1.x 的安装器在 tag `full`）。
 
-**它不会写进你的开发 checkout**（CONTRACT §74）：postinstall 播种 `~/Projects/zelin-ai-assistant` 之前先判一次——目的地解析掉符号链接之后若落在一棵 git 工作树里，整段 per-user 安装跳过（不拷贝、不配置、不重启守护进程），`/var/log/install.log` 里点名那棵 checkout 并让你去那里 `git pull` + 手跑 `bash install.sh`。旧菜单栏 app 的 Sparkle 自动更新也已经断粮（发布的 appcast 是永远答「已是最新」的终止版 feed），起因见 issue #333 与 `docs/TROUBLESHOOTING.md`「整棵 checkout 莫名回退到一个旧版本」。
