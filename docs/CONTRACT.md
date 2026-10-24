@@ -3356,10 +3356,10 @@ doctor 的 `isolation footprint` 行（WARN `isolation_footprint_violation`）�
 **uninstall 清单**（`uninstall.sh`）：两个前缀下的全部 LaunchAgent（server 与任何 1.x 残留）、我们的 cron 行（标记词
 `screenpipe-export.sh` / `act.radar` / `act.digest` / `act.weekly_digest` / `act.analytics_sync` / `zelin-ai-assistant`，其余行原样）、
 app bundle（按 bundle id 认）、`~/Library/Logs/zelin-ai-assistant`、`~/Library/Caches/zelin-ai-assistant`、Application Support 的
-`bin/` + `claude-config/` + `deploy_state.json`、ingest 的两个锁文件（持锁进程还活着就留着）与 `/tmp/screenpipe-auto.log`。
+`bin/` + `claude-config/` + `deploy_state.json`、ingest 的两个锁文件（锁里逐行记的 pid——`process-screenpipe.sh` 的 `$$` 与它追加的 headless claude 子进程——任何一个还活着就留着）与 `/tmp/screenpipe-auto.log`。
 引擎**只在 `--stop-engine` 时停**：默认先写 `engineHandoff` 再请壳退出，引擎照录（§61.8），并打印停它的命令。打印（不执行）
 `tccutil reset All com.zelin.ai-board`、登录项的手动检查、1.x transcript 的删除命令。`--purge` 另删 state/、config.yaml、
-config/secrets/、runtime.json、词表、Application Support 整个目录与 `~/.screenpipe`；vault 永不碰。判例 `tests/test_uninstall.py`。
+config/secrets/、runtime.json、词表、Application Support 整个目录与 `~/.screenpipe`；vault 永不碰。判例 `tests/test_uninstall.py`（含两行锁：两个 pid 都活 / 父进程死了 claude 还活 → 留；全死 → 删）。
 
 **明确不在范围内**：owner 自己放在 `~/.claude` 的 skills 与设置、`~/.screenpipe`、`~/Projects/data`、repo 内
 `.claude/` 的开发用 skills（cwd 在树外 + `--setting-sources ""`，对 headless 运行不可见）。

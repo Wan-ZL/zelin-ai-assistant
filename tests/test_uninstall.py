@@ -204,6 +204,29 @@ class UninstallRealRunTestCase(unittest.TestCase):
         self.assertTrue(live.exists())
         self.assertIn("in use by pid %d" % os.getpid(), out)
 
+    def test_a_two_line_live_lock_is_kept(self):
+        # process-screenpipe.sh writes $$, then appends its headless-claude child for
+        # the whole claude phase; the two lines must not concatenate into one dead pid.
+        live = self.tmpfiles / "process.lock"
+        live.write_text("%d\n%d\n" % (os.getppid(), os.getpid()), encoding="utf-8")
+        out, _ = self._run()
+        self.assertTrue(live.exists())
+        self.assertIn("in use by pid %d" % os.getppid(), out)
+
+    def test_a_lock_whose_parent_died_but_claude_lives_is_kept(self):
+        # A killed parent leaves the orphaned claude running; its pid on line 2 keeps the lock.
+        live = self.tmpfiles / "process.lock"
+        live.write_text("999999999\n%d\n" % os.getpid(), encoding="utf-8")
+        out, _ = self._run()
+        self.assertTrue(live.exists())
+        self.assertIn("in use by pid %d" % os.getpid(), out)
+
+    def test_a_two_line_lock_with_every_pid_dead_goes(self):
+        dead = self.tmpfiles / "process.lock"
+        dead.write_text("999999999\n999999998\n", encoding="utf-8")
+        self._run()
+        self.assertFalse(dead.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

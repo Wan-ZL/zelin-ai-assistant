@@ -81,12 +81,20 @@ remove_path() {
     fi
 }
 
-# An ingest PID lock goes only when its process is gone (a run in flight keeps it).
+# An ingest PID lock goes only when every process it records is gone (a run in
+# flight keeps it). The lock holds one pid per line: process-screenpipe.sh's $$,
+# then its headless-claude child appended at spawn — read line by line, as
+# ingest/vault-sync.sh does, so two live pids never concatenate into one dead one.
 remove_lock() {
-    _pid="$(tr -cd '0-9' < "$1" 2>/dev/null)"
-    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
-        info "in use by pid $_pid, left: $1"
-        return 0
+    if [ -f "$1" ]; then
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            _pid="$(printf '%s' "$_line" | tr -cd '0-9')"
+            [ -n "$_pid" ] || continue
+            if kill -0 "$_pid" 2>/dev/null; then
+                info "in use by pid $_pid, left: $1"
+                return 0
+            fi
+        done < "$1"
     fi
     remove_path "$1"
 }
