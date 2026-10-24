@@ -1,5 +1,7 @@
 // I18n.swift — L() 双语文案 + LanguageMirror（界面语言的 nonisolated 镜像）
 // SHARED between the Mac app and the iOS app. Foundation-only by contract.
+// lite 2.0: the shell now builds its own copy (shell/Sources/I18n.swift); this one
+// stays only while mac/ and ios/ still compile it and leaves with them.
 // Was the L()/LanguageMirror half of mac/Sources/L10n.swift — moved verbatim.
 // The Mac-only LanguageStore (ObservableObject, reads SettingsIO) stays in
 // mac/Sources/L10n.swift and keeps writing LanguageMirror.current; the iOS app

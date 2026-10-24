@@ -1,6 +1,6 @@
 #!/bin/bash
 # make-signing-cert.sh — one-time, idempotent setup of the STABLE self-signed
-# code-signing identity that mac/build.sh and .github/workflows/release.yml
+# code-signing identity that shell/build.sh and .github/workflows/release.yml
 # sign with.
 #
 # WHY THIS EXISTS
@@ -26,8 +26,8 @@
 #      repo (a leaked key in git history is unrecoverable).
 #
 # Usage:
-#   bash mac/scripts/make-signing-cert.sh          # create if missing (idempotent)
-#   bash mac/scripts/make-signing-cert.sh --force  # recreate even if present
+#   bash shell/scripts/make-signing-cert.sh          # create if missing (idempotent)
+#   bash shell/scripts/make-signing-cert.sh --force  # recreate even if present
 set -euo pipefail
 
 IDENTITY="Zelin AI Engineer Dev"
@@ -184,7 +184,7 @@ cat <<STEPS
 ============================================================================
 NEXT STEPS  (wire CI once, then delete the files)
 ============================================================================
-Local builds are already signed: mac/build.sh finds '$IDENTITY'
+Local builds are already signed: shell/build.sh finds '$IDENTITY'
 automatically. The two GitHub secrets below make CI *release* builds sign the
 same way, so tagged releases keep TCC grants across updates too.
 
