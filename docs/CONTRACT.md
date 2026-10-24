@@ -342,7 +342,8 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 ## 19. 凭证与 secrets（跨组件契约，两侧逐字一致）
 
 > **§19 v2.0.0 修订（PR-A：act/lib/secrets.py + server/secrets_store.py）**：凭证只剩一把——Anthropic API
-> key。解析顺序 `config/secrets/anthropic-api-key.txt` → `~/.config/anthropic-key.txt`（第二层照旧有效、
+> key。解析顺序：进程环境里已有的 `ANTHROPIC_API_KEY` 最先（从终端带着 export 启动的 server 会用它，而不是
+> 设置页存的 key）→ `config/secrets/anthropic-api-key.txt` → `~/.config/anthropic-key.txt`（第二层照旧有效、
 > 不再告警）；**永不**回落到 owner 的 Claude Code 登录、`~/.claude/.credentials.json` 或钥匙串（§78：
 > `--bare` 不读它们）。`slack-user-token.txt` / `gmail-app-password.txt` 两行随雷达退役：文件留在盘上也
 > 永不被读，`PUT /api/secrets/<它们>` = 404。字幕的两把火山 key 暂留在 `server/secrets_store.py` 的
@@ -3287,7 +3288,7 @@ shell 侧由 `ingest/claude-env.sh`（PR-D）读同一组值。`tests/test_isola
 **结构**而不只靠旗标语义：cwd 在 repo 树外，即使 `--bare` 将来变化，repo 的 CLAUDE.md、`.claude/skills` 与
 `state/vault-mirror/.claude/settings.json` 也不在祖先链上。
 
-**凭证政策**：只有 `ANTHROPIC_API_KEY`（§19 顺序：config/secrets → `~/.config/anthropic-key.txt`；
+**凭证政策**：只有 `ANTHROPIC_API_KEY`（§19 顺序：进程环境已有的值 → config/secrets → `~/.config/anthropic-key.txt`；
 `llm.runner_env` 注入）。`--bare` 永不读 OAuth / 钥匙串，所以「claude login 进隔离目录」不是可用的替代方案；没有
 key = doctor `anthropic key` 行 FAIL、`claude auth` 行如实写跳过。
 

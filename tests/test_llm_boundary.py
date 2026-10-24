@@ -166,6 +166,12 @@ class RunnerEnvTestCase(_Sandbox):
         (self.secrets / "anthropic-api-key.txt").write_text("sk-ant-file\n", encoding="utf-8")
         self.assertEqual(llm.runner_env(config.Config())["ANTHROPIC_API_KEY"], "sk-ant-env")
 
+    def test_law_names_the_env_first_precedence(self):
+        law = (Path(__file__).resolve().parents[1] / "docs" / "CONTRACT.md").read_text(encoding="utf-8")
+        section19 = law.split("## 19. ", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("进程环境里已有的 `ANTHROPIC_API_KEY` 最先", section19)
+        self.assertIn("§19 顺序：进程环境已有的值 → config/secrets", law)
+
 
 class RunTestCase(_Sandbox):
     def test_kwargs_and_neutral_cwd(self):
