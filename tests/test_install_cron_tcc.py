@@ -85,7 +85,7 @@ class ApplyCrontabTestCase(unittest.TestCase):
                     'warn() { printf "  [warn] %s\\n" "$1"; }\n'
                     'info() { printf "  [info] %s\\n" "$1"; }\n'
                     'REPORT_STEPS=""\n'
-                    'INGEST_CHAIN="$1"; DIGEST_LINE="$2"; CRON_PY="$3"\n'
+                    'INGEST_CHAIN="$1"; CRON_PY="$3"\n'
                     'NEW_CRON="$4"; CURRENT_CRON="$5"\n'
                     'apply_crontab\n'
                     'printf "===REPORT===\\n%s" "$REPORT_STEPS"\n'
@@ -116,9 +116,10 @@ class ApplyCrontabTestCase(unittest.TestCase):
         self.assertEqual(failed, [], "TCC 拒写不是部署失败步——回滚治不了环境问题")
         self.assertIn("Full Disk Access", out)
         self.assertIn("/pinned/python3", out, "the fix names the daemon python")
-        # the manual fallback still prints both lines for crontab -e
+        # the manual fallback prints the one line of ours for crontab -e (§18 v2.0.0:
+        # the digest / telemetry lines retired with their modules)
         self.assertIn(self.INGEST, out)
-        self.assertIn(self.DIGEST, out)
+        self.assertNotIn(self.DIGEST, out)
         # the raw crontab error is re-surfaced (it lands in the auto-deploy log)
         self.assertIn("Operation not permitted", stderr)
 
