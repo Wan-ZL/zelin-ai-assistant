@@ -2176,6 +2176,8 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 **§56.2 追记（2026-09-15，add-only；issue #333 / §74.3）——「四个产物自报的都是 tag」少了一个：appcast 从此不自报版本**。上文第一条枚举的是「此后每个产物（Info.plist、.pkg、appcast、便携包）自报的都是 tag」。§74.3 把发布的 `appcast.xml` 换成**零 `<item>` 的终止版 feed** 之后，那份 XML 里**根本没有 `sparkle:version`**——它不再自报任何版本，因为它不再提供任何可安装的东西（不是「报错了」，是「无可报」）。另外三个产物（Info.plist / .pkg / 便携包）的盖章一字不改，`scripts/version_stamp.py --version <X.Y.Z> --write --ios` 与其后的 `act.__version__ == X.Y.Z` 复核也一字不改。**Latest 判定那一条继续成立而且更要紧**：`/releases/latest/download/appcast.xml` 跟着 Latest 标记走，所以最新的那个 release 必须**永远**带着终止版 feed——一个旧 release 的武装 feed 重新变成 latest 就等于重新给退役 app 上膛（§74.3 的隐含要求）。`update_check`（读 `/releases/latest` 的 tag）不经过 appcast，不受影响。
 
+**§56.2 追记（v2.0.0，lite 2.0 PR-C）——major 档怎么抬、用哪种合并**：抬档判据一字不改，这里写明 2.0.0 依赖的两条前提。①`release: major`（或 `release: minor`）label 必须贴在**被合并进 main 的那个 PR** 上——lite 2.0 即 `dev` → `main` 那一条；贴在先合进 `dev` 的切片 PR 上不起作用，因为 release-on-merge 只在 push to main 时跑，只读 main 头 commit 首行指向的那个 PR 的 label。②合并方式只用 **merge commit 或 squash**：两者的首行分别是 `Merge pull request #N from …` 与 `… (#N)`，`act.lib.version.pr_number_from_subject` 都认得出 N；**rebase merge 禁用**——它把分支上的 commit 逐个重放到 main，main 头的首行是分支最后一个 commit 的原文，找不到被合并的 PR（= patch），或者首行恰好带着某个切片 PR 的 `(#M)`（squash 进 dev 的切片都是这个形状）而去读错 PR 的 label。误发了 patch 的补救是在下一个 PR 上贴 `release: major`；已经切出的 tag 不回收（§56.1）。上文「`scripts/version_stamp.py --version <X.Y.Z> --write --ios`」里的 `--ios` 随 §56.1 追记删除，`release.yml` 盖章步去掉它并删掉 mac/.pkg/便携包产物的改写在 lite 2.0 的 release.yml 切片里落地，v2.0.0 tag 之前完成；在那之前本树上的 release.yml 不可发版（它只在打 tag 时跑，合进 `dev` 不触发）。
+
 ### 56.3 部署 job：owner Mac 每 10 分钟跟随 origin/main —（retired v2.0.0，全文见 tag full）
 
 > **1.x 的最后一条法（PR #480 的大版本边界追记，随 v1.0.117 发布；全文同在 tag full）**：1.x 的部署
