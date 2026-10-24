@@ -152,8 +152,8 @@ jobs:
 
   tests-linux:
     name: Tests on ubuntu (Python ${{ matrix.python-version }})
-    # README/docs promise Python 3.9+ and docs/PORTING.md promises the headless
-    # core runs on Linux — same suite on the documented floor (3.9) and on
+    # README/docs promise Python 3.9+, and the headless core stays portable
+    # Python (1.x porting map at git tag full) — same suite on the documented floor (3.9) and on
     # current python. The act pipeline is pure Python + PyYAML (tests inject
     # fake runners instead of shelling out); darwin-only paths guard themselves
     # behind the OS seam (act/lib/platform.py) instead of failing here.

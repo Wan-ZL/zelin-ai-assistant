@@ -61,7 +61,7 @@ RETIRED_PATTERNS = (
     (re.compile(r"问问助手|\bAsk page\b|\?page=ask", re.I),
      "retired surface: 问问助手 / Ask page (CONTRACT §27 tombstone, D29)"),
     (re.compile(r"iMessage", re.I),
-     "retired surface: iMessage radar / transport (removed, docs/PORTING.md)"),
+     "retired surface: iMessage radar / transport (removed in v0.21)"),
     (re.compile(r"menu[- ]bar|menubar|菜单栏|MenuBarExtra", re.I),
      "retired surface: native Mac menu-bar app UI (D3 — the board is the UI)"),
     (re.compile(r"mac/(?:Sources|scripts|package\.sh|build)"),

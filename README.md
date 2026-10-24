@@ -169,7 +169,7 @@ Building the board needs Node.js LTS; `scripts/dev-preview.sh` and `install.sh` 
 | macOS 14+ | **Full product** — board, scheduled jobs and agents, screen-capture ingest, Slack/Gmail radars, Dock shell with notifications and terminal takeover |
 | Windows / Linux | **Removed in 2.0** — the 1.x installers live at git tag `full` |
 
-Off macOS the board is the whole UI, so install it as a PWA and you get a window with an icon; Slack self-DM is the cross-platform capture surface, and approvals always happen on the board. The porting map — what is portable, where the OS seam is, what a new platform must implement — is [docs/PORTING.md](docs/PORTING.md).
+The 1.x per-OS guides and the porting map were removed together with the installers; they also live at git tag `full`.
 
 ## Telemetry
 
@@ -216,7 +216,6 @@ More questions — use at work, forks, what counts as competing use, per-release
 | [docs/DEMO.md](docs/DEMO.md) | demo mode (fictional data, no keys needed) and the recording guide |
 | [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | data egress inventory / vulnerability reporting |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what's in progress, next, and later |
-| [docs/WINDOWS.md](docs/WINDOWS.md) / [docs/LINUX.md](docs/LINUX.md) / [docs/PORTING.md](docs/PORTING.md) | per-OS scope and the porting map |
 | [CHANGELOG.md](CHANGELOG.md) | human-readable release history |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | how to contribute / community standards |
 | [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT in practice: company use, competing use, the MIT conversion |
