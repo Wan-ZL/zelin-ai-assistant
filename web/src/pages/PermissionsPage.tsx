@@ -16,7 +16,7 @@ import { RecordingConsentSection } from "../components/permissions/RecordingCons
 import { TelemetryBlock } from "../components/permissions/TelemetryBlock";
 import { usePermissionPolling } from "../components/permissions/usePermissionPolling";
 import { pickText } from "../components/settings/catalogText";
-import { copyText } from "../components/detail/copyText";
+import { copyText } from "../copyText";
 import { useI18n } from "../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../route";
 import { callShell, hasShellBridge, PANE_IDS, type PermissionStatus } from "../shellBridge";

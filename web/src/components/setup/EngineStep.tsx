@@ -9,7 +9,7 @@ import { fetchSetupEngine, putSecret, verifySecret } from "../../api";
 import { useI18n } from "../../i18n";
 import { refreshSecrets, refreshSetup } from "../../store";
 import type { SetupEngine } from "../../types";
-import { copyText } from "../detail/copyText";
+import { copyText } from "../../copyText";
 import { errorMessage } from "../settings/useToast";
 
 type Text = (zh: string, en: string) => string;

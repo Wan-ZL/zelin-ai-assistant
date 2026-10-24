@@ -36,7 +36,7 @@ import { ApiError, fetchRecapHistory, postAction } from "../../api";
 import { useI18n, type Language } from "../../i18n";
 import { markRecap, markRecapPending, refreshBoard } from "../../store";
 import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
-import { copyText } from "../detail/copyText";
+import { copyText } from "../../copyText";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import { RecapIntentPanel } from "./RecapIntent";
 import {

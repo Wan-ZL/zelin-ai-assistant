@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
-import { ModalDialog } from "../board/ModalDialog";
+import { ModalDialog } from "../shell/ModalDialog";
 
 type Text = (zh: string, en: string) => string;
 

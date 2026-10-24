@@ -13,7 +13,7 @@ import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../../route";
 import { callShell, hasShellBridge, useShellState, schedulePaused } from "../../shellBridge";
 import { refreshBoard, refreshHealth, useAppState } from "../../store";
 import type { DoctorRow, HealthSnapshot, SetupEngine } from "../../types";
-import { RelativeTime } from "../board/cardChrome";
+import { RelativeTime } from "../shell/RelativeTime";
 import { grantCronFda } from "../settings/failureAction";
 import { errorMessage } from "../settings/useToast";
 import { useRepairActd } from "../shell/repairActd";

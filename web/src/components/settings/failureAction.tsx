@@ -12,7 +12,7 @@ import { useI18n } from "../../i18n";
 import { buildAppUrl, DEPS_ANCHOR, type AppPage } from "../../route";
 import { callShell, hasShellBridge } from "../../shellBridge";
 import { refreshHealth } from "../../store";
-import { copyText } from "../detail/copyText";
+import { copyText } from "../../copyText";
 import { errorMessage } from "./useToast";
 
 type Text = (zh: string, en: string) => string;

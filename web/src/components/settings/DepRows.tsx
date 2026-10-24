@@ -18,7 +18,7 @@ import { buildAppUrl, type AppPage } from "../../route";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState, type ShellState } from "../../shellBridge";
 import { refreshFailures, refreshSecrets, useAppState } from "../../store";
 import type { CronProbe, DoctorReport, DoctorRow, FailureCatalog, RadarSourceHealth, SecretsStatus } from "../../types";
-import { RelativeTime } from "../board/cardChrome";
+import { RelativeTime } from "../shell/RelativeTime";
 import { CronFdaGrantButton, cronGrantSteps } from "./failureAction";
 import { errorMessage } from "./useToast";
 

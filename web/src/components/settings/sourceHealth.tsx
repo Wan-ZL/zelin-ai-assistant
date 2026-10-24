@@ -4,7 +4,7 @@
 // 原生 SettingsSlack / SettingsGmail 的「运行状态（真实轮询结果）」一句也从这里算（RunStatusLine；
 // 后台雷达行与 立即测试一轮 在 RadarAgentPanel，§48.7）。
 import { useI18n } from "../../i18n";
-import { RelativeTime } from "../board/cardChrome";
+import { RelativeTime } from "../shell/RelativeTime";
 import type { RadarSourceHealth } from "../../types";
 
 type Text = (zh: string, en: string) => string;

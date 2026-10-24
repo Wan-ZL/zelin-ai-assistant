@@ -23,15 +23,15 @@
 // 「找不到卸载脚本」、Terminal 打不开 →「无法打开 Terminal」，两个弹窗都附「请手动在 Terminal 里运行：<server 给的命令>」+「好」。
 import { useEffect, useState } from "react";
 import { ApiError, postSetupStep, postUninstallTerminal, postUpdateCheck, postUpdateInstall } from "../../api";
-import { ForkDialog } from "../board/ForkDialog";
-import { ModalDialog } from "../board/ModalDialog";
+import { ForkDialog } from "../shell/ForkDialog";
+import { ModalDialog } from "../shell/ModalDialog";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../../route";
 import { hasShellBridge, useShellState } from "../../shellBridge";
 import { refreshAbout, setSetup, useAppState } from "../../store";
 import type { AboutInfo, Board, DeployState, UpdateCheckResult, UpdateInstallReceipt } from "../../types";
 import { aheadNote, releaseVersion } from "../../version";
-import { RelativeTime } from "../board/cardChrome";
+import { RelativeTime } from "../shell/RelativeTime";
 import { BLOCKING_STATUSES, POISONED_STATUSES, deferredLabel, statusLabel } from "../shell/DeployLabel";
 import { LaunchAtLoginRow } from "./LaunchAtLoginRow";
 import { errorMessage } from "./useToast";
