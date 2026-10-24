@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scri
 
 它按顺序做七件事，每件一行 `[ ok ]` / `[warn]` / `[ERR ]`：
 
-1. **preflight**：macOS（Linux 请用 `install-linux.sh`，Windows 用 `install.ps1`）；Xcode Command Line Tools；git；python3；claude（缺席只警告）。
+1. **preflight**：只支持 macOS（Linux / Windows 安装器在 v2.0.0 退役，1.x 版本在 git tag `full`）；Xcode Command Line Tools；git；python3；claude（缺席只警告）。
 2. **checkout 目录**：默认 `~/Projects/zelin-ai-assistant`；在 `$HOME` 之外则打出 TCC 警告。
 3. **clone 或更新**：首跑 `git clone --branch main`；已是本 repo 的 checkout 则 `fetch` + `--ff-only`。**有本地改动 = 不动代码只装现状**；目录存在但不是 git checkout、或是别的 repo → 拒绝，一个字节不碰。
 4. **config.yaml**：缺则从 `config.example.yaml` 复制，**存在永不覆盖**。
@@ -137,7 +137,7 @@ bash install.sh --check --fresh-install    # 剩下要你做的事
 
 ### 首次启动看板（Gatekeeper）
 
-自己构建的壳 app 用本机的稳定自签证书 `Zelin AI Engineer Dev` 签（没装证书才回落 ad-hoc；`bash mac/scripts/make-signing-cert.sh` 生成一次，签名跨版本不变 = TCC 授权不掉，CONTRACT §54.3），两种情况下本机 `open` 都不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
+自己构建的壳 app 用本机的稳定自签证书 `Zelin AI Engineer Dev` 签（没装证书才回落 ad-hoc；`bash shell/scripts/make-signing-cert.sh` 生成一次，签名跨版本不变 = TCC 授权不掉，CONTRACT §54.3），两种情况下本机 `open` 都不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
 
 > ✅ **预期状态**：Dock 里出现 "Zelin's AI Assistant"，窗口顶部新鲜度标签显示看板数据 ≤10 秒前生成——说明 actd 活着、契约两端接通。若显示橙色「后台服务没在运行」：`launchctl list | grep actd`、`tail ~/Library/Logs/zelin-ai-assistant/actd.launchd.log`，并对照 TROUBLESHOOTING。
 
@@ -169,7 +169,6 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材；**新装机器请�
 - **Gmail 雷达**：`docs/GMAIL_SETUP.md`（应用专用密码）。
 - **遥测**（匿名使用统计，默认开、仅事件元数据、一键可关 `telemetry.enabled: false`；**你输入**进看板的文本默认**不**上传，想帮忙改进产品可 opt in：`telemetry.capture_input: true`）：`docs/TELEMETRY.md`。
 - 什么数据会离开你的机器：`docs/PRIVACY.md`。
-- **Skills**（仓库内 skill 商店，CONTRACT §67）：`install.sh` 已把默认开的 skill（`board-agent`、`test-code`）链进 `~/.claude/skills`；其余在看板设置页 → Skills 启用/停用，或 `python3 -m act.lib.skills enable <name>`。另一台机器更新后跑 `bash scripts/skills_sync.sh --pull` 即同步；本地改过的副本标为「自定义」，商店永不覆盖（`skills/README.md`）。
 
 ## 这条路线在 CI 上每天都走一遍
 
