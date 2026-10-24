@@ -25,7 +25,7 @@ What you need for what:
 | build the app | — | ✅ | — | — | — |
 | run the full pipeline | ✅ | ✅ | ✅ | ✅ (engine runs via `npx screenpipe`) | ✅ (Obsidian optional but recommended) |
 
-Note that `install.sh` is the *end-user* installer — it installs the app to /Applications, loads launchd agents, and edits your crontab. As a contributor you usually don't want any of that on your dev machine; the two commands above are enough.
+Note that `install.sh` is the *end-user* installer — it installs the app to /Applications, loads the server LaunchAgent, rewrites your crontab and migrates a 1.x install (CONTRACT §78). As a contributor you usually don't want any of that on your dev machine; the two commands above are enough. When you change `install.sh`, `uninstall.sh` or `scripts/upgrade.sh`, test them the way their tests do — functions sourced or extracted with fake `launchctl` / `crontab` / `pgrep` / `pkill` on PATH — and, for an end-to-end run, use a copy of the repo with a throwaway `$HOME`: `HOME=$(mktemp -d) bash install.sh --non-interactive --no-launchd` (no agent, no crontab; add `AIASSISTANT_LAUNCHD_PROBE=0` to skip the launchd viability probe and `AIASSISTANT_UI_APPS_DIR=$HOME/Applications` to keep the bundle out of /Applications). Never run them against your own login session: the server agent is reloaded and the crontab rewritten.
 
 ## Dev environment
 
@@ -85,10 +85,11 @@ The `[ui-parity]` gate of CONTRACT §66 (native inventory extracted from `mac/So
 
 ## Project rules
 
-- **Contract first.** Any change to a `dashboard.json` or `state/inbox/` field lands in [docs/CONTRACT.md](docs/CONTRACT.md) *before* the code. Fields are **add-only** — never renamed or removed — and the Swift side decodes every new field with `decodeIfPresent` for backward compatibility. CONTRACT.md's section numbers are referenced from code and docs; never renumber them.
+- **Contract first.** Any change to a cross-component field (the `/api/*` payloads, `state/recap/`, `state/settings_overrides.json`, `state/install_report.json`, `state/upgrade_state.json`, `config.yaml` keys) lands in [docs/CONTRACT.md](docs/CONTRACT.md) *before* the code. Fields are **add-only** — never renamed or removed — and the Swift side decodes every new field with `decodeIfPresent` for backward compatibility. CONTRACT.md's section numbers are referenced from code and docs; never renumber them.
 - **Bilingual strings.** Every user-visible string goes through `L("中文", "English")` — both languages, always; the UI switches at runtime.
 - **Shell scripts run on bash 3.2** (the live `/bin/bash`): inside a bilingual string, always brace a variable followed by a fullwidth/CJK character — `（${_why}）` not `（$_why）` — bash 3.2 swallows the multibyte character's first byte into the variable name and aborts under `set -u` (shipped bug in PR #130, caught by its own test).
-- **Tests use a tempdir `AIASSISTANT_HOME`** — never a real `state/` or registry.
+- **Tests use a tempdir `AIASSISTANT_HOME`** — never a real `state/`.
+- **Never touch the owner's Claude Code home** (constitution art.13, CONTRACT §78): every headless `claude -p` goes through `act/llm.py` or `ingest/claude-env.sh` and their isolation constants; no code reads or writes `~/.claude` or `~/.claude.json` (`tests/test_isolation_footprint.py` greps for it). The resident footprint is a closed list — a new LaunchAgent, cron line or login item is a constitution change.
 - **Commit messages**: conventional commits, English, and say *why*, not just what.
 
 Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map, the reasoning behind every "weird" design, and a pitfall list paid for in real debugging time), then `docs/CONTRACT.md`.
@@ -102,7 +103,7 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
 
 ## Maintainer notes
 
-- **Always work in a git worktree and fast-forward-merge back to `main`.** The main working tree can be a live daemon runtime — actd and cron execute files straight from it, and half-edited files have caused real breakage (HANDOFF §4).
+- **Always work in a git worktree and fast-forward-merge back to `main`.** The main working tree can be a live runtime — the server agent and the cron ingest chain execute files straight from it, and half-edited files have caused real breakage.
 - After merging, verify HEAD actually moved (`git log -1`) — a failed `--ff-only` merge prints "Aborting" to stderr, which pipelines can swallow.
 - External PRs can't be ff-merged as-is; rebase them onto `main` (keeping the linear history) and run the four gates before the merge lands.
 - **Social preview** (issue #19): when the board UI changes materially, `bash promo/social-preview.sh`
@@ -130,7 +131,7 @@ Merging a PR **is** the release (CONTRACT §56), and **nobody bumps a version �
 - `act.__version__` resolves at import from the generated, git-ignored `act/_version.py` (written by `install.sh`, `shell/build.sh` and the release job through `scripts/version_stamp.py --write`), else `git describe`, else the fallback line. `python3 scripts/version_stamp.py` prints what your checkout would be stamped with (`X.Y.Z` on a tag, `X.Y.Z+N` when ahead); `python3 -m act.doctor` has a `version` row that warns when the stamp is missing or stale.
 - **No merge queue, but the same effect** (CONTRACT §56.6): GitHub's Merge Queue is unavailable on personal-account repositories, so `update-pr-branches.yml` merges every new `main` into every open PR branch instead and GitHub's auto-merge lands the PR the moment its rerun checks are green. Rebasing to pick up someone else's version bump is a thing of the past; rebasing at all is now something you do only when the bot tells you to. The lifecycle is spelled out below.
 
-The maintainer's Mac then fast-forwards to `main` by itself (`scripts/auto-deploy.sh`) once the `ci` check-run on that exact `main` commit is green — the merge commit itself is verified before it is installed — with a doctor-gated rollback; daemons, cron and config only; the frozen legacy Mac app is never rebuilt unattended (a hand-run `bash install.sh` does that, §56.5). Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).
+An installed machine picks a release up through the upgrader (CONTRACT §79): the About page's "Upgrade now" — or, with `updates.auto_install` on, the daily update check — runs `scripts/upgrade.sh`, which fast-forwards `main` only to an exact `v*` tag, runs `install.sh --non-interactive --from-upgrade` and reopens the app without stopping the recording engine. A dirty or diverged checkout is reported in `state/upgrade_state.json`, never reset; a new major version is always a manual upgrade. The 1.x auto-deploy agent retired in v2.0.0. Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).
 
 ### PR lifecycle (maintainers and agents)
 

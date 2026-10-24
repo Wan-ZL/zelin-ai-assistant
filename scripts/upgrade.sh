@@ -20,13 +20,15 @@
 #   commands[] (what to run by hand), started_at, updated_at.
 # A failure is a receipt + a notification (§28 relay); there is no automatic
 # rollback. Exit: 0 ok / up to date, 1 failed, 2 refused, 3 another upgrade is
-# running, 4 diverged / dirty.
+# running (state/upgrade.lock; a lock older than two hours is a killed run and is
+# cleared), 4 diverged / dirty.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 STATE_DIR="${AIASSISTANT_HOME:-$REPO_ROOT}/state"
 STATE_FILE="$STATE_DIR/upgrade_state.json"
 LOCK_DIR="$STATE_DIR/upgrade.lock"
+LOCK_STALE_MIN=120                   # = server/about.py UPGRADE_LOCK_STALE_S / 60
 REMOTE="origin"
 BRANCH="main"
 SHELL_BUNDLE_ID="com.zelin.ai-board"
@@ -84,7 +86,7 @@ refuse_diverged() { # $1 = reason, $2 = sentence, rest = the manual commands
         _cmds+=("commands=$_c")
     done
     write_state diverged "reason=$_reason" "from=$FROM" "target=$TARGET" "${_cmds[@]}"
-    notify_failure "$_why — the About page lists the commands to run by hand"
+    notify_failure "$_why — the commands to run by hand are in state/upgrade_state.json"
     exit 4
 }
 
@@ -111,6 +113,11 @@ relaunch_shell() {
 
 main() {
     mkdir -p "$STATE_DIR"
+    # A lock older than LOCK_STALE_MIN belongs to a run that was killed: clear it.
+    if [ -d "$LOCK_DIR" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +"$LOCK_STALE_MIN" 2>/dev/null)" ]; then
+        say "clearing a stale lock ($LOCK_DIR, older than $LOCK_STALE_MIN min)"
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+    fi
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         say "another upgrade is running ($LOCK_DIR exists) — nothing done"
         return 3

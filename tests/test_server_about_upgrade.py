@@ -175,6 +175,11 @@ class UpgraderTestCase(_Home):
                               spawner=self._spawner, repo=repo)
         self.assertEqual(ctx.exception.details["reason"], "upgrade_running")
         self.assertEqual(self.spawned, [])
+        old = about._dt.datetime.now(about._dt.timezone.utc).timestamp() - about.UPGRADE_LOCK_STALE_S - 5
+        os.utime(self.home / "state" / "upgrade.lock", (old, old))
+        about.install_now({}, home=self.home, update_reader=lambda: {"latest": "2.0.1"},
+                          spawner=self._spawner, repo=repo)
+        self.assertEqual(len(self.spawned), 1, "a stale lock (a killed run) does not block")
 
     def test_no_home_and_no_reader_reads_as_no_cache(self):
         self.assertIsNone(about._read_update(None, None))
@@ -230,6 +235,15 @@ class AutoInstallTestCase(_Home):
         self._cache(latest="2.0.0", checked_at=_iso(1e9))
         self.assertIsNone(self._auto())
         self.assertEqual(self.spawned, [])
+
+    def test_a_failing_spawn_never_raises(self):
+        self._cache(latest="2.0.1", checked_at=_iso(1e9))
+
+        def boom(argv, cwd, log_path):
+            raise OSError("no bash")
+        write_text(self.home / "state" / "settings_overrides.json",
+                   json.dumps({"updates_auto_install": True}))
+        self.assertIsNone(about.maybe_auto_install(self.home, spawner=boom, repo=self.repo))
 
     def test_check_disabled_means_no_auto_install(self):
         self._cache(latest="2.0.1", checked_at=_iso(1e9))

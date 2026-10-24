@@ -1,15 +1,15 @@
 """Install report writer (CONTRACT §23) — ``state/install_report.json``.
 
-install.sh (both the interactive run and the .pkg's ``--pkg-postinstall``
-mode) records what it actually did — one entry per step plus the list of
-launchd agents it loaded — so the app's first-run surfaces and ``act.doctor``
-can tell "installed but inert" apart from "healthy" without the user reading
-``/var/log/install.log``.
+install.sh (interactive, ``--non-interactive`` and the §79 upgrader's
+``--from-upgrade`` runs) records what it actually did — one entry per step plus
+the launchd agent it loaded (v2.0.0: only the board server, §78) — so the app's
+first-run surfaces and ``act.doctor`` can tell "installed but inert" apart from
+"healthy".
 
 Shell interface (what install.sh calls)::
 
     printf '%s' "$STEPS" | python3 -m act.lib.install_report \
-        --mode pkg-postinstall --steps-stdin --agents "label1 label2"
+        --mode non-interactive --steps-stdin --agents "com.zelin.aiassistant.server"
 
 where ``$STEPS`` is newline-separated ``name=status[:detail]`` lines
 (status vocabulary per CONTRACT §23 — ok|warn|fail|skipped plus the add-only
@@ -110,7 +110,7 @@ def write_report(
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="act.lib.install_report")
     parser.add_argument("--mode", required=True,
-                        help="interactive | pkg-postinstall")
+                        help="interactive | non-interactive | upgrade")
     parser.add_argument("--steps-stdin", action="store_true",
                         help="read name=status[:detail] lines from stdin")
     parser.add_argument("--step", action="append", default=[],

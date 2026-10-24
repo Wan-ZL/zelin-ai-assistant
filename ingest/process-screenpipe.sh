@@ -215,10 +215,15 @@ fi
 # 41 hours (2026-07-11, EINTR). 2h covers the observed worst honest case
 # (26-33 min normal, longer on backlog) with wide margin.
 # cwd = HEADLESS_CWD (outside the repo tree), the vault reached through --add-dir.
+# Tools: --bare sets CLAUDE_CODE_SIMPLE=1, which leaves exactly Bash, Edit and Read
+# (claude 2.1.309, probed 2026-10-24), so the allow list names those three and nothing
+# else. New files are created with Edit (empty old_string) or Bash. --add-dir makes
+# the vault readable and a working directory; it does NOT confine writes — Bash can
+# write anywhere this process can (CONTRACT §78 "工具面").
 CLAUDE_MAX_SECONDS="${CLAUDE_MAX_SECONDS:-7200}"
 PROMPT="Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\". Never run git."
 "$CLAUDE_BIN" -p "$PROMPT" "${ISOLATION_ARGV[@]}" --add-dir "$VAULT" ${VAULT_PROMPT_ARGV[@]+"${VAULT_PROMPT_ARGV[@]}"} \
-    --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1 &
+    --allowedTools "Read,Edit,Bash" >> "$LOGFILE" 2>&1 &
 CLAUDE_PID=$!
 # Record the child in the PID lock (second line): the liveness checks here
 # and in vault-sync.sh promise to cover "this script OR its headless-claude

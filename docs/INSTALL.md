@@ -1,6 +1,9 @@
 # INSTALL — 安装指南
 
-首次安装与更新的**唯一权威文档**。**一条命令**（`scripts/bootstrap.sh`）在空白 Mac 上把一切装到能用；同一条命令在已装过的机器上就是更新。装完剩下的事只有三件，而且只有人能做：给两个二进制开完全磁盘访问（需要时）、贴 API key、打开看板。每一步末尾有一个 ✅ **预期状态** checkpoint——到不了预期状态就先去 [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md)，别带病继续。法条：`docs/CONTRACT.md` §69（bootstrap + CI 验收）、§23（安装报告）、§55（TCC）。
+lite 2.0 首次安装、升级与卸载的权威文档。**一条命令**（`scripts/bootstrap.sh`）在空白 Mac 上装到能用；同一条命令在已装过的
+机器上就是更新。装完剩下的事只有人能做：贴 Anthropic API key、给几个二进制开完全磁盘访问（需要时）、在 app 里打开录制。
+每一步末尾有一个 ✅ **预期状态**；到不了就先去 [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md)。法条：`docs/CONTRACT.md`
+§69（bootstrap）、§23（安装报告）、§55（TCC）、§78（隔离与常驻足迹）、§79（升级）。
 
 ## English quickstart
 
@@ -8,28 +11,29 @@
 curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
 ```
 
-That is the whole install — and the whole update (re-run it any time; an existing checkout is fast-forwarded, `config.yaml` is never overwritten). Prerequisite: macOS 14+ with the Xcode Command Line Tools (`xcode-select --install`; the script tells you if they are missing and never pops the dialog itself). Optional but recommended before or after: [Claude Code CLI](https://claude.com/claude-code), Node.js LTS (`brew install node` — builds the web board and runs the capture engine), Obsidian, `gh`.
+That is the whole install, and re-running it is the update (an existing checkout is fast-forwarded; `config.yaml` is never
+overwritten). Prerequisites: macOS 14+ with the Xcode Command Line Tools (`xcode-select --install`), the
+[Claude Code CLI](https://claude.com/claude-code) and Node.js LTS (`brew install node`; it builds the web UI and runs the
+capture engine). The installer clones to `~/Projects/zelin-ai-assistant`, runs `bash install.sh --non-interactive`, prints what
+is left for you (`python3 -m act.doctor --fresh-install`) and opens the app.
 
-What the command does: clones to `~/Projects/zelin-ai-assistant` (or `bash -s -- <dir>` / `--dir`), creates `config.yaml` from the example, runs `bash install.sh --non-interactive` (never prompts: dependency checks with PyYAML auto-install, version stamp, daemon interpreter selection, state dirs, web board + Dock app build, launchd agents, cron chain), prints **what is left for you** (`python3 -m act.doctor --fresh-install` — with this machine's real paths), and opens the board app. Its exit code is 0 when nothing is broken; permissions and credentials still pending are listed, not counted.
-
-Then, in the board's **first-run wizard** (`?page=setup`, it opens by itself until config and credentials are in place): install Claude Code if missing, drop your Anthropic API key into `config/secrets/anthropic-api-key.txt` (the panel gives the exact command), and grant Full Disk Access to the daemon interpreter and to `claude` if the checkout or your task repos live under `~/Documents`, `~/Desktop`, `~/Downloads` or an external volume (paths are printed). Diagnostics any time: `bash install.sh --check` (full) or `bash install.sh --check --fresh-install` (what is left).
-
-Telemetry: anonymous usage statistics are on by default (event metadata only — names, timestamps, a random device id, version). **The text you type** into the board is uploaded only if you opt in (`telemetry.capture_input`, default off); the master switch is `telemetry.enabled: false`. Details and field tables: [docs/TELEMETRY.md](TELEMETRY.md).
-
-No API key yet? `bash scripts/dev-preview.sh` previews the meeting recaps page with fictional data — see [docs/DEMO.md](DEMO.md).
+What it leaves on the machine (CONTRACT §78, a closed list): one LaunchAgent (`com.zelin.aiassistant.server`), one cron line
+(the 30-minute ingest chain), the app in `/Applications`, and — only when you turn it on in the app — a login item and the
+screenpipe engine. Every headless `claude -p` runs with its own config dir under `~/Library/Application Support/ZelinAIAssistant/claude-config/`
+and an Anthropic API key; it never reads or writes your `~/.claude`. Nothing is uploaded except model calls and a daily
+version check against GitHub (switchable in Settings). Details: [docs/PRIVACY.md](PRIVACY.md).
 
 ## 前置条件
 
 | 组件 | 版本 | 用途 / 自检命令 |
 |---|---|---|
-| macOS | **14+** | 看板壳 app、launchd/cron 定时、TCC 权限模型 |
-| Xcode Command Line Tools | 随系统 | **唯一硬前置**：带来 git、swiftc、`/usr/bin/python3`；`xcode-select -p` 有输出即可，缺则 `xcode-select --install` |
-| [Claude Code CLI](https://claude.com/claude-code) | 最新版 | 雷达提取、提案扩写、执行全靠它；`claude --version`。缺席时装机照常完成，守护进程待机 |
-| Anthropic API key | — | headless 运行必需（为什么订阅不够用，见下方[认证模型](#认证模型api-key-vs-promax-订阅)） |
+| macOS | **14+** | Dock 壳 app、launchd / cron、TCC 权限模型。lite 只支持 macOS（Linux / Windows 安装器在 v2.0.0 退役） |
+| Xcode Command Line Tools | 随系统 | git、swiftc、`/usr/bin/python3`；`xcode-select -p` 有输出即可 |
+| [Claude Code CLI](https://claude.com/claude-code) | 最新版 | ingest 与会议纪要的 headless 运行；`claude --version`。需支持 `--bare`（doctor `claude bare supported` 行） |
+| Anthropic API key | — | headless 运行唯一的凭据（见[认证模型](#认证模型)） |
 | Python | **3.9+** | `/usr/bin/python3` 即可；PyYAML 由 install.sh 自动 `pip install --user` |
-| Node.js | LTS（含 `npx`） | 构建 web 看板（`web/`）、录制引擎经 `npx screenpipe` 运行；缺失时看板 UI 跳过构建，`/` 显示一页说明，`brew install node` 后重跑即补上 |
-| Obsidian（可选，推荐） | — | vault 是雷达扫描源与 wiki 落点 |
-| `gh` CLI（可选） | — | draft-PR 交付 |
+| Node.js | LTS（含 `npx`） | 构建 web UI；录制引擎经 `npx screenpipe` 运行 |
+| Obsidian（推荐） | — | ingest 的笔记落点 |
 
 ## 一条命令（推荐路线）
 
@@ -37,54 +41,51 @@ No API key yet? `bash scripts/dev-preview.sh` previews the meeting recaps page w
 curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
 ```
 
-自选目录：`curl -fsSL … | bash -s -- ~/Code/zelin-ai-assistant`（或 `--dir PATH`；`ZAI_BOOTSTRAP_DIR` 环境变量同义）。**推荐留在 `$HOME` 之内**：放到外置卷 / 网络盘 / `~/Documents` 之类受保护位置时，macOS 按 binary 授权（CONTRACT §55），守护解释器和 `claude` 都要各自开完全磁盘访问——脚本会在第 2 步醒目提示。
+自选目录：`curl -fsSL … | bash -s -- ~/Code/zelin-ai-assistant`（或 `--dir PATH`）。**推荐留在 `$HOME` 之内**：放到外置卷、
+`~/Documents` 之类受保护位置时，macOS 按二进制授权（§55），守护解释器、claude 与 cron 都要各自开完全磁盘访问。
 
-它按顺序做七件事，每件一行 `[ ok ]` / `[warn]` / `[ERR ]`：
+bootstrap 的七步：preflight（macOS、Command Line Tools、git、python3、claude）→ checkout 目录 → clone 或 fast-forward →
+`config.yaml` 缺则从模板复制 → `bash install.sh --non-interactive` → `python3 -m act.doctor --fresh-install` → 打开 app。
 
-1. **preflight**：只支持 macOS（Linux / Windows 安装器在 v2.0.0 退役，1.x 版本在 git tag `full`）；Xcode Command Line Tools；git；python3；claude（缺席只警告）。
-2. **checkout 目录**：默认 `~/Projects/zelin-ai-assistant`；在 `$HOME` 之外则打出 TCC 警告。
-3. **clone 或更新**：首跑 `git clone --branch main`；已是本 repo 的 checkout 则 `fetch` + `--ff-only`。**有本地改动 = 不动代码只装现状**；目录存在但不是 git checkout、或是别的 repo → 拒绝，一个字节不碰。
-4. **config.yaml**：缺则从 `config.example.yaml` 复制，**存在永不覆盖**。
-5. **`bash install.sh --non-interactive`**：永不停下来问；依赖检查（PyYAML 缺则自动装，PEP 668 环境自动带 `--break-system-packages` 重试）→ 版本盖章 → 守护解释器两道闸门（§55）→ state 目录 → web 看板 + Dock 壳 app 构建安装（node / swiftc 缺席时跳过，不算失败）→ launchd agents（actd 常驻 + 看板 server + 雷达）→ crontab（ingest 链 + digest + 遥测）。退出码 = 失败步数。
-6. **`python3 -m act.doctor --fresh-install`**：把体检行分成「installer 接好的 / 等你的（机器做不了）/ 按要求没接的 / 坏了的」四类，并按序列出**剩下要你做的事**——每条带可复制命令与本机真实路径。
-7. **打开看板**：`open "/Applications/Zelin's AI Assistant.app"`（`--no-open` 跳过）。看板会自己开在**首次运行向导**（`?page=setup`，CONTRACT §68.5）：配置文件 → 后台进程的磁盘授权（权限体检页给出可复制的路径）→ 可选凭证 → 完成；`python3 -m act.doctor --fresh-install` 是同一份清单的命令行版。
+`install.sh` 自己的八步（每步一行 `[ ok ]` / `[warn]` / `[ERR ]`，结尾写 `state/install_report.json`）：
 
-> ✅ **预期状态**：末尾 `bootstrap done (cloned)`（更新时 `updated`）、`exit 0 — nothing broken: the rest is yours`；看板窗口弹出并显示「还差 N 步就能用了」的面板。`bash ~/Projects/zelin-ai-assistant/install.sh --check` 随时可重跑全套诊断。
+1. **依赖检查**：claude、swift 工具链、python3 + PyYAML、node/npx。
+2. **配置与运行环境**：`config.yaml`（存在永不覆盖）与脱敏词表；版本盖章；守护解释器（两道闸门，§55）写进 `config/runtime.json`；
+   home 指针；claude 的稳定副本（`~/Library/Application Support/ZelinAIAssistant/bin/claude`）；§78 的隔离目录
+   `claude-config/` 与 `claude-config/cwd/`；`config/secrets/anthropic-api-key.txt` 缺而 `$ANTHROPIC_API_KEY` 或
+   `~/.config/anthropic-key.txt` 有 key 时复制过来（交互时先问）。
+3. **state 目录**。
+4. **1.x 迁移**（只在装过 1.x 的机器上有动作）：见下方[从 1.x 迁移](#从-1x-迁移)。
+5. **UI**：web 构建 + Dock 壳 app 装进 `/Applications`（node / swiftc 缺席时跳过，不算失败）。
+6. **server agent**：唯一的 LaunchAgent `com.zelin.aiassistant.server`。
+7. **crontab**：唯一的一行，每 30 分钟的 ingest 链（export → cleanup → process），日志 `state/ingest.cron.log`；你自己的其它 cron 行原样保留。
+8. **体检**（交互运行）：`python3 -m act.doctor`。
+
+录制引擎**永不**被 install.sh 停掉：已在录的引擎照录，app 启动时接管它（§61.8）。
+
+> ✅ **预期状态**：末尾 `bootstrap done (cloned)`（更新时 `updated`）、doctor `exit 0`；app 窗口打开，默认页是会议纪要。
 
 ### 更新
 
-- **已经是 2.x**：关于页的「立即升级」，或手跑 `bash scripts/upgrade.sh`（CONTRACT §79）。它只做一件事：`origin/main` 恰好是一个 `v*` tag 时把本地 `main` 快进过去，再跑 `bash install.sh --non-interactive --from-upgrade`；录制引擎不被打断。工作树有改动、不在 `main` 上或与 `origin/main` 分叉时，它只写 `state/upgrade_state.json`（`status=diverged`）并给出手动命令，**从不 reset**。同一条 bootstrap 命令再跑一遍也是更新。
-- **从 1.x 升级（一次性手动）**：1.x 的自动部署在大版本边界停下（v1.0.117 起）。在 checkout 里：
-
-  ```bash
-  cd ~/Projects/zelin-ai-assistant
-  git fetch --tags origin && git checkout main && git merge --ff-only origin/main && bash install.sh
-  ```
-
-  命令停在 `main` 上而不是某个 tag 上：`scripts/upgrade.sh` 只快进一个在 `main` 上的 checkout。`install.sh` 的 1.x 迁移步（CONTRACT §78）会卸掉 1.x 的 LaunchAgents、去掉 1.x 的 cron 尾巴、解除 `~/.claude/skills` 里指向本仓库的软链；录制引擎不动。
-- **快进被拒（本地 `main` 有自己的提交）**：脚本不会替你决定。先留一个备份分支，再把 `main` 对齐到要装的 tag（`state/`、`config.yaml`、`config/secrets/` 都在 `.gitignore` 里，不受影响）：
-
-  ```bash
-  git branch keep/local-main main && git reset --hard <tag> && bash install.sh
-  ```
-
-  最后一个 1.x 的完整代码在 git tag / branch `full`。
+关于页的「立即升级」（或 `bash scripts/upgrade.sh`）：`git fetch --tags` → 要求 origin/main 恰好是一个 `v*` release tag →
+`git merge --ff-only` → `bash install.sh --non-interactive --from-upgrade` → 重开 app（引擎不停）。工作树有改动、不在 main 或
+本地有 origin 上没有的 commit 时，升级器**什么都不改**，把要你手动跑的命令写进 `state/upgrade_state.json`。设置页 updates 区的
+「自动升级」（`updates.auto_install`，默认关）打开后，每日的版本检查发现同一大版本内的新版时自动跑同一个升级器；新的大版本
+永远手动（§79）。
 
 ## 剩下的是你的（机器做不了）
 
-装完后 `python3 -m act.doctor --fresh-install`（= `bash install.sh --check --fresh-install`）与看板的首次运行向导 / 权限体检页（`?page=setup` / `?page=permissions`）都会列出这几件：
+`bash install.sh --check --fresh-install` 与 app 的首次运行向导 / 权限页（`?page=setup` / `?page=permissions`）列出同一份清单：
 
 ### 1 · Claude Code CLI
 
 ```bash
-curl -fsSL https://claude.ai/install.sh | bash   # 然后：claude login
+curl -fsSL https://claude.ai/install.sh | bash
 ```
 
-装好后重跑 `bash install.sh`（让 launchd plist 的 PATH 指到它）。
+装好后重跑 `bash install.sh`（刷新稳定副本、cron 的 PATH）。
 
 ### 2 · Anthropic API key
-
-cron/launchd 的 daemon session 读不了 Keychain OAuth，所以 headless claude 必须有**文件形式的 key**（目录 0700 / 文件 0600，CONTRACT §19）：
 
 ```bash
 cd ~/Projects/zelin-ai-assistant
@@ -92,122 +93,104 @@ mkdir -p config/secrets && chmod 700 config/secrets
 printf '%s\n' 'sk-ant-…' > config/secrets/anthropic-api-key.txt && chmod 600 config/secrets/anthropic-api-key.txt
 ```
 
-旧路径 `~/.config/anthropic-key.txt` 仍兜底可用。只有 Pro/Max 订阅、没有 API key？见下方[认证模型](#认证模型api-key-vs-promax-订阅)。
+或在 app 的 设置 → 凭证 粘贴。
 
-> ✅ **预期状态**：`bash install.sh --check` 里 `anthropic key` 与 `claude auth` 两行都是 `[ ok ]`（doctor 会用这个 key 做一次廉价 live 调用）。
+> ✅ **预期状态**：`bash install.sh --check` 里 `anthropic key` 行 `[ ok ]`。
 
 ### 3 · 完全磁盘访问（TCC，按二进制授权）
 
-macOS 把文件访问权**按每个可执行文件**授予，launchd 起的进程不继承你终端的授权（CONTRACT §55 的全部事故史）。系统设置 → 隐私与安全性 → 完全磁盘访问权限 → 左下「+」→ ⌘⇧G 粘贴路径：
+系统设置 → 隐私与安全性 → 完全磁盘访问权限 → 「+」→ ⌘⇧G 粘贴路径：
 
 | 给谁 | 路径（doctor `--fresh-install` 打出本机真实值） | 为什么 |
 |---|---|---|
-| 守护解释器 | `config/runtime.json` 的 `python`（通常 `/usr/bin/python3`） | actd / 雷达 / 看板 server 以它运行 |
-| claude（稳定副本） | `~/Library/Application Support/ZelinAIAssistant/bin/claude`——install.sh 维护的 claude 稳定副本（CONTRACT §55 第五幕），**授权一次即可**，claude 更新不再失效；doctor `stable claude` 行确认 | 派出的 agent 以它读你的仓库 |
+| 守护解释器 | `config/runtime.json` 的 `python`（通常 `/usr/bin/python3`） | 看板 server 以它运行 |
+| claude（稳定副本） | `~/Library/Application Support/ZelinAIAssistant/bin/claude` | ingest 与纪要的 headless claude；授权一次即可，claude 更新不失效 |
 | cron | `/usr/sbin/cron` | ingest 链读 `~/Documents` 下的 Obsidian vault |
 
-**什么时候需要**：本 repo 或你的任务仓库在 `~/Documents`、`~/Desktop`、`~/Downloads` 或外置卷上时**必需**；都在 `$HOME` 其它位置时可以不授（多授无害）。doctor 的 `launchd volume access` / `cron write access` / `launchd claude` 行会在被拦时点名。
+repo 或 vault 在 `~/Documents`、`~/Desktop`、`~/Downloads` 或外置卷上时**必需**；都在 `$HOME` 其它位置时可以不授。
 
-### 4 · 屏幕录制与麦克风（只在你开录制时）
+### 4 · 屏幕录制、麦克风与登录项
 
-看板右上角的「录制」开关首次打开时系统会弹屏幕录制授权；字幕音源含麦克风时弹麦克风授权。默认**仅屏幕**不录音频。
+app 里打开录制时系统会弹屏幕录制授权（音源含麦克风时另弹麦克风）。想让录制在重启后自己恢复，在 app 里打开
+「Launch at login」（opt-in，SMAppService）。
 
-> ✅ **预期状态**：看板不再自动跳到向导页（完成标记已写）；`bash install.sh --check --fresh-install` 末行 `exit 0`，「waiting on you」桶为空（或只剩你有意不接的可选源）。
+> ✅ **预期状态**：`bash install.sh --check --fresh-install` 末行 `exit 0`，「waiting on you」桶为空。
 
-## 认证模型（API key vs Pro/Max 订阅）
+## 认证模型
 
-claude CLI 有两套互不相通的凭据，而这个项目的不同组件用到的**不是同一套**——装完后「终端里跑得通、cron 却静默死」几乎都源于此：
+每一次 headless `claude -p`（ingest、会议纪要、doctor 的探针）都在 §78 的隔离常量下运行：`CLAUDE_CONFIG_DIR` 指向
+`~/Library/Application Support/ZelinAIAssistant/claude-config/`，cwd 是它下面的空目录 `cwd/`（在 repo 树之外），argv 恒带
+`--bare --no-session-persistence --setting-sources "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'`。`--bare` **永不读**
+claude CLI 存的 OAuth 凭据或钥匙串，所以 Pro/Max 订阅登录不能代替 API key，`claude login` 进隔离目录也不行。
 
-| 认证方式 | 是什么 | 谁能用 | 计费 |
-|---|---|---|---|
-| **OAuth（Pro/Max 订阅）** | `claude` 登录后存进 macOS Keychain 的订阅凭据 | 只有你 GUI 登录会话里的进程（交互终端等） | 计入订阅额度，不另付费 |
-| **API key（`sk-ant-…`）** | [console.anthropic.com](https://console.anthropic.com) 签发的 metered key，以文件形式存放 | 任何进程，包括 cron / launchd 的 daemon session | 按 token 计费（API 账单） |
+key 的解析顺序（§19）：进程环境里的 `ANTHROPIC_API_KEY` → `config/secrets/anthropic-api-key.txt` → `~/.config/anthropic-key.txt`。
+三处都没有时 ingest 以退出码 1 失败（`/tmp/screenpipe-auto.log` 一行 `❌ no Anthropic API key`），会议纪要失败并写进
+`state/recap.log`，claude 不起。
 
-**为什么 headless 必须用 key 文件**：cron 和 launchd agents 跑在 daemon session 里，macOS 有两层沙箱把 OAuth 挡死——Keychain 只对 GUI 会话开放，而 `launchctl asuser` 也无法从 cron 的 daemon audit session 桥接过去（细节见 CONTRACT §19 与 §78）。因此：
-
-- **需要 key 文件**的组件（全部 headless，under cron/launchd）：ingest 链（`process-screenpipe.sh`）、各 radar、状态 digest、actd 派发的 `claude --bg` 执行。
-- **订阅凭据就够**的场景：你在终端手动跑 `claude`（交互 session 读得到 Keychain）。
-
-**没有 key 时的行为**：按 CONTRACT §19 顺序解析 key——进程环境里的 `ANTHROPIC_API_KEY` → `config/secrets/anthropic-api-key.txt` → 旧路径 `~/.config/anthropic-key.txt`。每一次 headless `claude -p` 都带 `--bare` 在应用自己的 `CLAUDE_CONFIG_DIR` 里运行（§78），它**永不读** claude CLI 存的 OAuth 凭据或钥匙串，所以没有回落路径：三处都没有 key 时 ingest 以退出码 1 失败，`/tmp/screenpipe-auto.log` 里一行 `❌ no Anthropic API key`，claude 不起；会议纪要同样失败并写进 `state/recap.log`。
-
-**计费预期**：key 文件存在时，所有 headless 用量按 API 计费（不消耗订阅额度）。量级参考：ingest 每 30 分钟一次 headless 调用（≈48 次/天，时长随积压素材量波动）+ 每张批准的卡一个执行 session。建议在 console.anthropic.com 设 spend limit，观察第一周的实际用量再调。
-
-**怎么验证**：`bash install.sh --check`（即 `python3 -m act.doctor`）整链体检——它会用与 headless 组件**相同的凭据解析顺序**做一次廉价 live 调用，key 贴错当场可见，而不是几分钟后死在没人看的 cron log 里。
+**计费预期**：所有 headless 用量按 API 计费。ingest 每 30 分钟最多一次调用（inbox 为空时不调），每场会议一次纪要调用。
+建议在 console.anthropic.com 设 spend limit。
 
 ## 手动路线（等价于 bootstrap 做的事）
-
-想看清每一步、或在 CI / 容器里复现，可以手动走：
 
 ```bash
 git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant
 cd ~/Projects/zelin-ai-assistant
-cp config.example.yaml config.yaml         # 改不改都行：vault 路径 / Slack / Gmail 之后在看板设置里改
 bash install.sh                            # 交互模式：缺 claude / swift 会停下来告诉你；结尾跑全套 doctor
 bash install.sh --check --fresh-install    # 剩下要你做的事
 ```
 
-`bash install.sh` 的模式：默认交互；`--non-interactive`（永不提问，自动部署与 bootstrap 用；退出码 = 失败步数）；`--no-launchd`（不装任何 launchd agent、不写 crontab，改为跑一次 `python3 -m act.actd --once` 证明 daemon 能跑——CI 验收与干跑用，正式安装不要传）；`--check [doctor 参数]`。每次运行都写 `state/install_report.json`（CONTRACT §23）记录实际做了什么。
+模式：默认交互；`--non-interactive`（永不提问，退出码 = 失败步数）；`--no-launchd`（不装 agent、不读写 crontab，CI 验收与
+干跑用）；`--from-upgrade`（升级器用）；`--check [doctor 参数]`。
 
-> ✅ **预期状态**：输出没有 `[ERR]`；`launchctl list | grep com.zelin.aiassistant` 至少 actd 与 server 两行；`crontab -l | grep screenpipe-export` 恰一行；`/Applications/Zelin's AI Assistant.app`（看板壳，或 `~/Applications/`）存在；`http://127.0.0.1:47820/` 能打开看板。
+> ✅ **预期状态**：`ls ~/Library/LaunchAgents | grep zelin` 只有 `com.zelin.aiassistant.server.plist`；`crontab -l | grep screenpipe-export`
+> 恰一行；`http://127.0.0.1:47820/` 打开会议纪要页。
 
-### 首次启动看板（Gatekeeper）
+### 首次启动（Gatekeeper）
 
-自己构建的壳 app 用本机的稳定自签证书 `Zelin AI Engineer Dev` 签（没装证书才回落 ad-hoc；`bash shell/scripts/make-signing-cert.sh` 生成一次，签名跨版本不变 = TCC 授权不掉，CONTRACT §54.3），两种情况下本机 `open` 都不会被拦。若是从别处拷来的 bundle，首次启动需在 `/Applications` 里**右键 → 打开**；macOS Sequoia+ 若仍被拒，系统设置 → 隐私与安全性 → 底部「仍要打开」。
+本机构建的壳 app 用稳定的自签证书签名（`bash shell/scripts/make-signing-cert.sh` 生成一次；没有证书时回落 ad-hoc），本机
+`open` 不会被拦。从别处拷来的 bundle 首次启动需右键 → 打开。
 
-> ✅ **预期状态**：Dock 里出现 "Zelin's AI Assistant"，窗口顶部新鲜度标签显示看板数据 ≤10 秒前生成——说明 actd 活着、契约两端接通。若显示橙色「后台服务没在运行」：`launchctl list | grep actd`、`tail ~/Library/Logs/zelin-ai-assistant/actd.launchd.log`，并对照 TROUBLESHOOTING。
+## 从 1.x 迁移
 
-## 第一张卡（5 分钟）
+1.x 与 2.0 不能在同一台机器上并存。1.x 的自动部署在大版本边界停下（v1.0.117 的桥），所以升到 2.0 是手动的一次：
 
-radar 出卡需要 screenpipe + Obsidian 里先积累素材；**新装机器请先走快速捕获**——只要 claude CLI + API key + actd 在跑，就能体验完整闭环。
+```bash
+cd ~/Projects/zelin-ai-assistant
+git branch keep/local-$(date +%Y%m%d) main     # 本地若有 origin 上没有的 commit，先留底
+git fetch --tags origin && git checkout main && git reset --hard v2.0.0
+bash install.sh
+```
 
-1. 打开看板，用提案列顶的输入框（⌘L 直接聚焦）。
-2. 输入一个 starter task（可直接复制）：
+`install.sh` 的第 4 步：bootout 并删除 1.x 的十个 LaunchAgent（actd、autodeploy、各雷达、syncd、weeklydigest 与
+`com.zelin.screenpipe-{process,prune}`），只 unlink `~/.claude/skills` 里指向本 repo 的软链（你自己的 skill 不碰），删
+`deploy_state.json`；第 7 步把 crontab 里的 1.x 行（带 radar 尾巴的旧链、digest、telemetry）收成一条 ingest 链。它还会**打印**
+（不执行）删除 1.x headless transcript 的命令（`~/.claude/projects/` 下以 `-…-zelin-ai-assistant-state` 开头的目录）——那是
+你的 Claude Code 目录，要删还是归档由你决定。正在录的引擎不受影响。
 
-   > 在 ~/Projects/assistant-hello 新建一个小脚本：统计 ~/Downloads 里各扩展名的文件数，输出 markdown 表格，配一个单元测试。
+> ✅ **预期状态**：doctor 的 `isolation footprint` 行 `[ ok ]`；`launchctl list | grep zelin` 只有 server。
 
-3. 回车。占位卡**立刻**出现（乐观回显）；LLM 对照注册表三选一后，真实的**提案卡**通常 **15 秒–2 分钟**内落地（actd 每 10s 一个 pass + 一次 claude 判定）。
-4. 点 ✅ 批准 → 卡片先灰显「排队」（瞬时），随后进入**执行中**（`claude --bg` 在独立 worktree 里跑）。这样的简单任务通常 **2–10 分钟**。
-5. 完工后卡片进入**待验收**，带交付摘要（代码任务给分支/draft PR；文书任务给可直接复制的 FINAL DRAFT）。点 ✅ 验收（卡片进「阶段性完成」），或 💬 带评论打回重做。
+## 卸载
 
-**慢 vs 坏**的判别线（拿不准就先跑 `bash install.sh --check`，它会把坏的一环直接指出来）：
+```bash
+cd ~/Projects/zelin-ai-assistant
+bash uninstall.sh --dry-run   # 先预览：只打印计划，不改任何东西
+bash uninstall.sh             # 执行（y/N 确认）
+```
 
-- 捕获后 **>5 分钟**没有提案卡 → actd 没在跑或 key 无效：`launchctl list | grep actd`、`tail state/actd.log`。
-- 批准后卡在「排队」 **>2 分钟** → 派发失败，卡片会显示 last_error；看 `state/actd.log`。
+它删除 §78 清单里的每一项：LaunchAgent（`com.zelin.aiassistant.*` 与 1.x 的 `com.zelin.screenpipe-*`）、crontab 里**只属于本产品**
+的行、app bundle、`~/Library/Logs/zelin-ai-assistant`、`~/Library/Caches/zelin-ai-assistant`、Application Support 里的
+`bin/`、`claude-config/` 与 `deploy_state.json`、ingest 的锁文件与日志。**录制引擎默认照录**（加 `--stop-engine` 才停）。
+它打印、不执行：`tccutil reset All com.zelin.ai-board`、登录项的手动检查、1.x transcript 的删除命令。
 
-### 零 key 的 UI 预览
+**默认保留你的数据**——会议纪要与设置（`state/`）、`config.yaml`、API key（`config/secrets/`）、Obsidian vault、`~/.screenpipe`，
+结尾逐项附删除命令。`bash uninstall.sh --purge` 一并删除（vault 永不碰）。
 
-不想先配 key？`bash scripts/dev-preview.sh` 起一份完全虚构的会议纪要页（两种出稿形状、各种质量状态、一场进行中的会、已归档与已忽略各一份）——完整用法见 [`docs/DEMO.md`](DEMO.md)。
-
-## 装完之后（可选接入）
-
-- **Slack 雷达**：`docs/SLACK_SETUP.md`（user token，或 MCP 只读兜底）。
-- **Gmail 雷达**：`docs/GMAIL_SETUP.md`（应用专用密码）。
-- **遥测**（匿名使用统计，默认开、仅事件元数据、一键可关 `telemetry.enabled: false`；**你输入**进看板的文本默认**不**上传，想帮忙改进产品可 opt in：`telemetry.capture_input: true`）：`docs/TELEMETRY.md`。
-- 什么数据会离开你的机器：`docs/PRIVACY.md`。
+> ✅ **预期状态**：`launchctl list | grep zelin` 无输出；`crontab -l` 里没有我们的行；`~/.claude` 与装机前一字不差。
 
 ## 这条路线在 CI 上每天都走一遍
 
 `.github/workflows/fresh-install.yml`（"Fresh install (macOS)"）在每次 push 到 main、每晚一次以及手动触发时用一台干净的 macOS runner 复现本页（不按 PR 跑——macOS runner 稀缺，CONTRACT §56.8）：空 `$HOME`、本地 origin、`bash scripts/bootstrap.sh`（即 `bash install.sh --non-interactive`，真的装 LaunchAgent、真的写 crontab）→ 断言安装报告；断言封闭足迹（CONTRACT §78）：`~/.claude` 从未被创建、`~/Library/LaunchAgents` 恰好只有 `com.zelin.aiassistant.server.plist`、crontab 里恰好一行属于本产品；安装后没有被改动的 tracked 文件；LaunchAgent 起的 server 答 `/api/health` `/api/recaps` `/api/setup` `/api/permissions`；`doctor --fresh-install` 退出 0；第二次运行是更新且足迹不变；最后 `bash uninstall.sh --yes` 逐项删干净。绿 = 「另一台电脑、空白环境、一条命令、直接能用」成立（CONTRACT §69.4 与其 v2.0.0 追记）。
 
-## 卸载（clean uninstall）
-
-```bash
-cd ~/Projects/zelin-ai-assistant
-bash uninstall.sh --dry-run   # 先预览：只打印计划，不改任何东西
-bash uninstall.sh             # 执行（Y/n 确认）
-```
-
-它做什么：卸载全部 launchd agents、从 crontab 移除**只属于本产品**的行（按标记 token 匹配，你的其他 cron 行原样保留）、退出 App 并停止录制引擎、删除 `/Applications` 里的 App 与 root 所有的管线母本（权限不够时会打印对应的 `sudo` 命令）。
-
-**默认保留你的数据**——任务历史（`state/`）、`config.yaml` 与 API 密钥（`config/secrets/`）、Obsidian vault、`~/.screenpipe` 录像，结尾逐项附上删除命令。想一次删干净（vault 除外，**永不碰**）：
-
-```bash
-bash uninstall.sh --purge
-```
-
-> ✅ **预期状态**：`launchctl list | grep com.zelin.aiassistant` 无输出；`crontab -l` 里没有 screenpipe/act.* 行；后台不再有任何 claude 调用与屏幕录制。
-
 ## 附：GitHub Release 里有什么
 
-每个 release（CONTRACT §56.2）带三个资产：`ZelinAIAssistant-<tag>-macos.zip`（CI 上用 `shell/build.sh` 构建、带 build provenance attestation 的 Dock app，`gh attestation verify <file> --repo Wan-ZL/zelin-ai-assistant` 可验）、`checksums.sha256`、以及零条目的 `appcast.xml`（CONTRACT §74.3：让残留的 1.x 菜单栏 app 的 Sparkle 永远读到「已是最新」）。app 依赖它的 checkout（看板 server、ingest 脚本、纪要代码都在仓库里），所以安装路线仍是上面的 bootstrap；zip 适合核对或单独替换 bundle。2.0 不再发 .pkg、不再发 Linux / Windows 包（CONTRACT §74.1 / §74.2 tombstone，1.x 的安装器在 tag `full`）。
-
+每个 release（CONTRACT §56.2）带三个资产：`ZelinAIAssistant-<tag>-macos.zip`（CI 上用 `shell/build.sh` 构建、带 build provenance attestation 的 Dock app，`gh attestation verify <file> --repo Wan-ZL/zelin-ai-assistant` 可验）、`checksums.sha256`、以及零条目的 `appcast.xml`（CONTRACT §74.3：让残留的 1.x 菜单栏 app 的 Sparkle 永远读到「已是最新」）。app 依赖它的 checkout（server、ingest 脚本、纪要代码都在仓库里），所以安装路线仍是上面的 bootstrap；zip 适合核对或单独替换 bundle。2.0 不再发 .pkg、不再发 Linux / Windows 包（CONTRACT §74.1 / §74.2 tombstone，1.x 的安装器在 tag `full`）。

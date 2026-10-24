@@ -1,141 +1,26 @@
-# Zelin's AI Assistant 配置模板 — copy 为 config.yaml 并按自己环境填写（config.yaml 不入库）
-owner:
-  name: Your Name
-  slack_user_id: U01234ABCDE          # 审批 DM 发到这里（换成你自己的 Slack user id）
+# Zelin's AI Assistant lite 2.0 配置模板 — install.sh 首次运行时复制为 config.yaml（config.yaml 不入库，
+# 之后永不覆盖）。设置页改的值写进 state/settings_overrides.json，优先级高于这里；这份文件只放
+# 代码真读的键（act/lib/config.py、act/lib/recap_store.py、server/settings_catalog.py、server/settings.py、
+# server/display.py、server/recaps.py）。
+# Anthropic API key 不在这里：设置页 > 凭证，或 config/secrets/anthropic-api-key.txt（CONTRACT §19）。
 
-# 凭证说明（CONTRACT §19）：token/密码路径字段都可省略——推荐直接在 App 设置窗口
-# 粘贴保存（写入 config/secrets/，目录 0700/文件 0600）。解析顺序：
-#   config/secrets/<固定文件名> → 这里的显式路径 → 旧默认（~/Desktop/Keys/...）
-sources:                               # 需求雷达监控的增量源
+# UI 语言（§15）：zh | en。界面、系统通知与修法句子跟它走。
+language: zh
+
+sources:
+  # Obsidian vault 的 2 - raw 目录。ingest 把录屏导出成笔记、按 vault 自己的 CLAUDE.md 约定整理进 wiki。
   obsidian_raw: "~/Documents/Obsidian Vault/2 - raw"
-  # Obsidian 管线四目录（按处理顺序）：1 - unprocessed（截图/录音导出落点）→
-  # 2 - raw（= 上面的 obsidian_raw，雷达扫描源）→ 3 - change-summary（ingest
-  # 变更日志）→ 4 - wiki（加工后的知识库）。下面三键缺省时自动由 obsidian_raw
-  # 的上级目录（vault 根）+ 标准目录名派生，通常无需填写；也可在 App 设置窗口
-  # 的"Obsidian 目录"小节编辑（写入 settings_overrides，优先级最高）。
-  # ingest 脚本（screenpipe-export.sh / process-screenpipe.sh）同样遵守这些键
-  # （经 `python3 -m act.lib.config --print-path` 解析，P1-6）。
+  # 另外三个目录缺省时由 obsidian_raw 的上级目录（vault 根）+ 标准目录名派生，通常不用填；
+  # ingest 脚本经 `python3 -m act.lib.config --print-path` 读同一份解析结果。
   # obsidian_unprocessed: "~/Documents/Obsidian Vault/1 - unprocessed"
   # obsidian_change_summary: "~/Documents/Obsidian Vault/3 - change-summary"
   # obsidian_wiki: "~/Documents/Obsidian Vault/4 - wiki"
-  # slack_token_path 可省略：推荐在 App 设置窗口粘贴保存（config/secrets/slack-user-token.txt）
-  slack_token_path: "~/Desktop/Keys/slack-user-token.txt"  # user token xoxp-（读 DM/@提及需要；见 docs/SLACK_SETUP.md）
-  slack_channels:                      # 这些频道里 @ 你才会建卡片（DM/群会全看）
-    - id: C01234ABCDE                  # <your-team-channel>
-      name: your-team-channel
-    - id: C01234FGHIJ                  # <your-weekly-report-channel>（周报所在）
-      name: your-weekly-report-channel
-  # （DM 无需配置：radar 自动扫描全部 DM / group DM，见 act/radar_slack.py）
-  slack_mcp_fallback: true             # 无 token 时改走 Slack MCP 只读兜底扫描（见 docs/SLACK_SETUP.md）
-  slack_mcp_interval_minutes: 30       # MCP 兜底最小间隔（launchd 每 3 分钟触发，靠 state/slack_mcp.marker 节流）
-  # slack_capture_receipts: true       # 快速捕获回执（默认开）：给自己发的每条消息上打一个 emoji reaction
-  #                                    # （📥 已记下/折叠 · ↩️ 回锅重提案 · 🚫 判定无需行动没建卡）。只打
-  #                                    # reaction、绝不回帖；token 需 reactions:write scope（缺了只少回执，捕获不受影响）
-  watch_people:   # 你主要盯的人（第一个当作直属经理）。当前仅用于：设置页人物
-                  # 勾选 + 派生「追踪对象」显示名（config.requester_display 取
-                  # 第一个）。注意：这【不是】硬过滤——雷达仍会看所有 DM/@提及/
-                  # 会议记录，不会因某人不在此列就丢其消息（避免误配置清空看板）。
-    - your.manager
-  # gmail:                             # Gmail 捕获（见 docs/GMAIL_SETUP.md）
-  #   address: "your.name@gmail.com"
-  #   enabled: true
-  #   # app_password_path 可省略：推荐在 App 设置窗口粘贴保存
-  #   # （config/secrets/gmail-app-password.txt）；旧默认 ~/Desktop/Keys/gmail-app-password.txt 仍兜底
-  # weekly_digest:                     # 每周摘要（CONTRACT §24）：近 7 天 ingest → 一张回顾卡（待验收）
-  #   enabled: false                   # 【默认关，D19】写 true 才生成；没有新 ingest 数据时自动跳过（不调 claude）
-  #                                    # 曾随附的「自动化建议」提案卡已退役（铸了 15 张、0 张获批），不再铸造
-  #   day: 0                           # 0=周一 .. 6=周日
-  #   hour: 9                          # 当地时间小时（24h）；改这里即可，无需重装 launchd agent
 
-approval:
-  surface: slack                       # v0: slack（桌面+手机同一条消息）；v2+: mac-app
-  poll_interval_minutes: 30
-  cost_thresholds:
-    show_cost_above_usd: 5             # 低于此值卡片不显示成本
-    require_text_confirm_above_usd: 50 # 高于此值升 T2，需文字确认
-  mention_escalation: 5                # CONTRACT §76.2：提案被提 ≥N 次仍未处理 → 卡面转红章
-                                       # 「仍未处理」+ 一次性通知（只响一次）；0 = 关掉升级
-                                       # （被提×N 的计数照常累加）。默认值 truth =
-                                       # act/lib/config.DEFAULT_MENTION_ESCALATION
-
-# 审批只在 Mac App 里做（v0.21 起）。iMessage 通道与 Slack 的手机审批角色都已移除；
-# Slack self-DM 仍保留为「给自己发一条 = 快速建卡」的手机端捕获入口（见 docs/SLACK_SETUP.md）。
-
-# 信任矩阵自动派发（v-next；见 docs/design/vnext-amendments.md §M1）——只有出身
-# hand（手打快速捕获 / Slack self-DM）的卡有资格免审批开跑；AI 自提、会议出生、
-# 外部 Slack/Gmail 一律照旧人工审批。全部键可省略（缺省如下）。
-# 没有预算：`daily_budget_usd`（原每日 $5 上限）已于 v0.48.7 取消（owner decision D9，
-# docs/design/vnext2-plan.md），旧配置里残留的这一键被忽略。钱的可见性由上面
-# approval.cost_thresholds.require_text_confirm_above_usd 的键入确认承担，估价照常显示在卡上。
-autodispatch:
-  enabled: true                        # 总开关；false = 信任矩阵只分类，所有卡回人工审批
-  max_concurrent: 3                    # 自动派发并发上限；超出的卡留在「运行中」列 queued 子状态（原因 chip：concurrency）
-  notify: true                         # 观察模式：每次自动派发都发一条通知；false = 只有看板留痕
-  require_awake: true                  # CONTRACT §71.1：机器不在清醒态（dark wake / 合盖睡着）时本 pass 一张卡都不派，
-                                       # 卡留「运行中」列排队（原因 chip：等电脑醒来），醒来的第一个 tick 就派；
-                                       # 探不到机器状态 = 当作醒着照常派发（fail-open）。false = 关掉这道闸
-
-# 自动草稿 PR 通道（CONTRACT §65；owner 决策 D7/D8/D9/D12）——第二条免批 lane，
-# **只给本仓库**：sources 全部是写死的 `self_improve` 渠道（每日循环提案 / PR 跟进卡）
-# 且 target_repo 的 realpath 就是 repo_path 的卡免批派发；交付只能是草稿 PR，做完后
-# 守护进程用 gh 物理核验（存在 / draft / base main / diff 非空），PR 触碰受保护路径
-# （act/lib/policy.py、act/lib/self_improve.py、act/llm.py、.github/workflows/、install.sh、
-# scripts/auto-deploy.sh）→ 打 needs-owner-eyes 标签并暂停通道直到 owner 处理。
-# 通道会话跑在 `--strict-mcp-config --mcp-config {}` 下（无 Slack/Gmail MCP）。
-# 用 owner 自己的 gh 身份（D8）、无预算（D9）。全部键可省略（缺省如下）。
-self_improve:
-  # 通道总开关，**出厂关**（#307 / D57：维护者功能，不该默认对所有安装开着）。
-  # 这一行**故意注释掉**：模板是 install.sh / 设置向导 / App 逐字复制成 config.yaml 的，
-  # 在这里钉死一个值 = 每台新装机都带着一个用户从没做过的「显式选择」（2026-09-02 到
-  # 09-14 之间装的机器就是这么带上 `enabled: true` 的）。没有这个键 = 跟随出厂默认（关）。
-  # true = 每日循环读 issue/红 CI/变异报告铸 🤖 卡 + 通道免批派发 + §65.5 巡检；
-  # 关着时核验/出网封锁仍生效（它们只看写死的 channel）。开关的面在设置页「开发者」区。
-  # enabled: true
-  repo_path: ""                        # 唯一放行的仓库；"" = 安装根（AIASSISTANT_HOME），比对用 realpath
-  tick_minutes: 60                     # PR 巡检间隔：owner 合并=验收 / 关闭=拒绝 / 评论·红 CI → 跟进卡
-  owner_logins: []                     # 额外算作 owner 的 GitHub login；仓库 slug 的 owner 与 gh 当前身份恒在集合里
-                                       # （#310：gh 登的是工作号、PR 是个人号合的 → 仓库 owner 才是最不该漏的那个）。
-                                       # 大小写不敏感；设置页「开发者」区可改（override 层压过这里，改完下一轮巡检生效）。
-                                       # 换了 gh 登录身份：`python3 -m act.lib.self_improve --forget-owner` 清掉缓存的 login
-  github_repo: ""                      # 通道仓库的 owner/repo；"" = 首次使用时 gh repo view 取并缓存进 lane.json，此后所有 gh pr 调用带 -R
-
-execution:
-  dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控
-  memory_inject: true                  # 注入 auto-memory program maps + 约束
-  create_github_repo: false            # 默认关（v0.11 起）：批卡不静默在你的 GitHub 建私有 repo、推送源自屏幕/会议/邮件的内容——false = 仅本地 git init + 本地分支交付；设 true 才对 target_kind=new 自动 gh repo create --private 做 remote（draft PR 需要）
-  auto_resume: true                    # 执行中任务的后台 agent 死掉（睡眠/断网/崩溃）时自动 claude --resume 拉起，带退避
-  # skip_permissions: true             # 后台 agent 带 --dangerously-skip-permissions 无人值守跑（默认）；改 false 走 claude 正常权限模型，被挡住的 agent 会浮到 needs_input 等你确认
-  # claude_bin: ~/.local/bin/claude    # 显式钉死 claude CLI 路径（默认不设：PATH → ~/.local/bin 兜底）。
-  #                                    # 机器上装了多个 claude、后台服务总用错旧版时的运行时逃生口
-  #                                    # （2026-07-08 事故：旧版不认 --bg，派发无限重试）
-  # dispatch_max_failures: 5           # 派发风暴刹车：同一失败类别连续失败 N 次后停止自动重试，卡进「需输入」列
-  #                                    # 等你修好原因再重批（2026-08-31 事故：fd 上限 256 让一张卡 13 小时重派 66 次）。0 = 不刹车
-  quality_gate:
-    self_check: true                   # 可运行检查 + 证据
-    fresh_context_review: true         # 交付前 fresh-context 审 diff
-
-recording:                             # 屏幕采集的 sensitive-app 排除（隐私控制）
-  # 命中的窗口在采集阶段就被录制引擎跳过（screenpipe --ignored-windows）——OCR/截图
-  # 根本不会写入 ~/.screenpipe/db.sqlite；导出脚本（ingest/screenpipe-export.sh）还会
-  # 用同一清单过滤引擎重启前已存的历史 frame。匹配规则：大小写不敏感的**子串**匹配，
-  # 同时匹配 app 名和窗口标题。
-  # 加银行等敏感 app：追加一行 `- <App 名或窗口标题关键词>`，如 `- Chase`、`- 招商银行`
-  # （银行若在普通浏览器标签里打开，只有窗口标题含该关键词时才会被排除——见
-  # docs/PRIVACY.md 残余风险）。进阶：支持引擎的 `App::Title` 定点语法——
-  # `Slack::#hr` 只排除 Slack 里标题含 #hr 的窗口，`::标题` 只按窗口标题匹配。
-  # 设为 `ignored_apps: []` = 明确关闭此过滤（不推荐）。
-  # 改动后重启录制引擎生效：菜单栏切一次录制模式，或重启 App。
-  # retention_days（CONTRACT §72.2，issue #28）：录制数据保留天数。0 = 永久保留（默认，现状不变）；N ≥ 1 =
-  # 30 分钟 cron 链的 cleanup 步删掉 ~/.screenpipe/db.sqlite 里「已导出进 vault 且早于 N 天」的 OCR / 音频转写行
-  # （分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）。设置页「录制数据与磁盘」区同一把旋钮（override 键
-  # screenpipe_retention_days）；磁盘占用与每月增长估算也在那一区看。
-  # retention_days: 0
-  # media_retention_minutes（CONTRACT §72.4，issue #28）：原始 jpg / mp4 在 ~/.screenpipe/data 里活多久，分钟。
-  # 出厂 60（= 历来的写死值，现状不变）；同一条 cleanup 链按它删媒体，**不碰 db.sqlite 里的文本行**（那是
-  # retention_days 管的另一把）。区间 [5, 525600]（= 1 年）；区间外或写坏了按未设 = 60。设置页「录制数据与磁盘」
-  # 区同一把旋钮（override 键 screenpipe_media_retention_minutes），改完下一轮 cron 生效、无需重启；
-  # 每轮的回执（删了几个文件几字节 / 目录读不到）在同一区的「上次媒体清理」行里看。
-  # media_retention_minutes: 60
+recording:                             # 屏幕采集（§61 / §72）
+  # 命中的窗口在采集阶段就被录制引擎跳过（screenpipe --ignored-windows），OCR / 截图不会写进
+  # ~/.screenpipe/db.sqlite；ingest/screenpipe-export.sh 用同一清单过滤引擎重启前已存的帧。
+  # 匹配：大小写不敏感的子串，同时比 app 名与窗口标题；`App::Title` 只排除该 app 里标题含 Title 的窗口，
+  # `::Title` 只按窗口标题。`ignored_apps: []` = 明确关闭过滤（不推荐）。改完重启录制生效。
   ignored_apps:
     - 1Password
     - Bitwarden
@@ -144,139 +29,57 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
     - Keychain Access
     - Private Browsing                 # Safari 无痕窗口（按窗口标题匹配）
     - Incognito                        # Chrome/Edge 无痕窗口（按窗口标题匹配）
+  # retention_days（§72.2）：db.sqlite 里「已导出进 vault 且早于 N 天」的 OCR / 转写行由 cron 链的 cleanup
+  # 步删掉（分批、不 VACUUM）。0 = 永久保留（出厂）。设置页「录制数据与磁盘」同一把旋钮。
+  # retention_days: 0
+  # media_retention_minutes（§72.4）：原始 jpg / mp4 在 ~/.screenpipe/data 里保留多少分钟，区间 [5, 525600]，
+  # 出厂 60。不碰 db.sqlite 的文本行。
+  # media_retention_minutes: 60
 
-trash:
-  retention_days: 60                   # 回收站保留天数；超期且未标永久的硬删。设 0 = 永不自动清
-
-registry:                              # 数据层真源（CONTRACT §53，owner 决策 D2）
-  backend: auto                        # auto = 首跑自动「备份 → 迁移 → 逐字段比对」后以 SQLite（state/store2.db）为真源；
-                                       # yaml = 回滚开关（保留一个版本）：忽略 store2 标记、继续读写 act/registry/*.yaml。
-                                       # 回滚步骤见 docs/TROUBLESHOOTING.md「store2 回滚」。改动本键需重启守护进程。
-
-# server:                              # 看板 server（CONTRACT §54）：launchd 常驻 com.zelin.aiassistant.server / systemd zelin-server.service
-#   port: 47820                        # 回环端口（1..65535，默认 47820）。install.sh 渲进 ZAI_PORT；改动需重跑 bash install.sh
-#                                      # 壳 app 缺 env 时按同一默认连；非默认端口要同步 defaults write com.zelin.ai-board serverPort <N>（或重跑 install.sh 盖进 app）
-
-# models:                              # 模型选择（CONTRACT §59，owner 决策 D22 + D53）——三把旋钮
-#   dispatch: follow                   # 「手」：claude --bg 派工 agent 用哪个模型。follow = 不传 --model，继承 Claude Code 全局默认（~/.claude/settings.json 的 model）
-#   pipeline: follow                   # 「脑」：各处 headless claude -p（雷达提取/分诊/判官/问答/digest）用哪个模型。同上
-#                                      # 显式值请用 canonical id：claude-fable-5 / claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5-20251001
-#                                      # 别名/后缀（[1m]、-eap…）随时可能下线——下线那天派工会静默全败；doctor 对显式值做一次活探针
-#   fallback: "claude-opus-5[1m]"      # 「回退」（D53）：主模型不可用时 claude 在本次会话里切到的模型——每次 headless -p / --bg 都带 `--fallback-model <id>`，
-#                                      # 且 Opus id 时同时钉 ANTHROPIC_DEFAULT_OPUS_MODEL（CLI 自己的 `opus` 别名也指向它，旧一代 Opus 永不登场）。
-#                                      # 默认就是 Opus 5 的 1M 形（与 owner ~/.claude/settings.json 的 fallbackModel 同一字面）；off = 不传旗标（CLI 自己的回退复活，doctor 那行不再软化 WARN）
-#                                      # web 设置页「模型」写 state/settings_overrides.json 的 models_dispatch / models_pipeline / models_fallback，优先级高于本块；改动下一次调用即生效，无需重启
-
-# card_summary:                        # 待验收卡的 AI 一句话摘要 + 完成度评语（CONTRACT §64，issue #128）
-#   enabled: true                      # 默认开。每张待验收卡内容变化（新一轮交付/打回/编辑）时一次 headless claude -p（models.pipeline）
-#                                      # 生成 ≤40 字白话摘要 + 建议验收/需继续做/需要拍板 + 一行理由；只是建议，验收/打回仍只有人能按
-#                                      # false = 不再派新判官（在飞的仍收回）。overrides 扁平键 card_summary_enabled
-
-archive:
-  after_days: 30                       # 交付(delivered)卡最后活动超过 N 天自动封存进 archive。vnext 决议把 v0.20.0 的默认 0(off) 改为 30；设 0 = 恢复永不自动归档。只封存冷 delivered：带未来 deadline / cluster 内还有 open 兄弟卡 / 时间戳不可解析的卡一律不动
-
-daily_loop:                            # 每日自我改进循环（CONTRACT §70，owner 决策 D10/D12/D18）：actd 每天在 time 之后的第一个 pass 跑一次「先维护再提案」
-  enabled: true                        # false = 不整理、不提案（回滚开关）
-  time: "03:30"                        # 本地时刻 HH:MM；到点后的第一个 pass 解锁，一天只跑一次（标记 state/daily_loop.json）
-  max_proposals_per_day: 2             # 每天新开 🤖 提案卡上限（web 设置页可改；0 = 只维护不提案）。D33（2026-09-04）从 5 降到 2：自检类信号（派发卡死 / doctor 红灯 / 日志刷屏……）不再铸卡、只进看板横幅「系统自检」，剩下的 GitHub issue·PR 与素材一天两张够审
-  stale_days: 45                       # 提案列 / 潜在任务列的卡无任何活动超过 N 天 → 回收站（stale:idle）；带未来 deadline / 用户改过名 / 提及 ≥3 次 / 同簇有在跑的卡 一律不动
-  trash_retention_days: 90             # 循环自动扔进回收站的卡（stale:* / daily-merge:*）保留多久再硬删——比手动 trash 的 60 天更长；trash.retention_days = 0 时整体关闭
-  review_stale_days: 14                # 待验收列的老化（CONTRACT §70.2 追记 / D74）：闲置 N 天的待验收卡先收到一条汇总通知「明天归档」，下一轮进回收站（stale:review_stale，可恢复）；你改过名的卡永不被碰；0 = 关掉这条规则
-                                       # web 设置页「每日整理」写 state/settings_overrides.json 的 daily_loop_* 扁平键，优先级高于本块；下一个 pass 生效
-
-remote:
-  allow_direct_run: false              # W18 远程直跑闸门：webui/syncd 等网络 ingress 收到 capture mode:"run"（直跑、跳过人审预览）时是否放行。默认 false = 自动降级为普通提案 capture（照进 triage，不报错）；只有明确要在手机/远端一键直跑才设 true
-
-integrations:
-  jira: off                            # 默认关；开启后自动建票到 projectKey
-  jira_project_key: ABC                # 换成你自己的 Jira project key
-
-digest:                                # 状态摘要卡（CONTRACT §17）：待审批/待验收积压 + 卡住任务 + 潜在任务 + 双向欠账 + 进化建议
-  frequency: off                       # 【默认 off，D19】off | daily | every2days | weekly。cron 每天 09:07 唤醒，模块按此节奏
-                                       # 自行闸门（滚动间隔，从上次生成起算，不钉周一）；off = 永不自动生成，几天不看也不会攒卡。
-                                       # App 设置也能改（settings_overrides 扁平键 digest_frequency）。`python -m act.digest --now` 手动立即生成
-
-ui:                                    # 看板显示偏好（CONTRACT §54.1 第 12 项）；设置页「显示」点选即写 overrides
-  display:                             #   扁平键 ui_display_text_size / ui_display_text_weight / ui_display_stroke，daemon 不读
-    text_size: m                       #   s | m | l | xl —— 字号倍率 .9 / 1 / 1.1 / 1.25
-    text_weight: regular               #   regular | medium | bold —— 字重平移 0 / +100 / +200
-    stroke: normal                     #   thin | normal | thick —— 描边 1px / 1.5px / 2px（系统「增强对比度」再加一档）
-
-recap:                                 # 会议 recap（CONTRACT §63，issue #129）：挂在 30 分钟 screenpipe cron 链上，只读 ~/.screenpipe/db.sqlite，
-                                       # 确定性判会议 session，CLOSED 后出 copy-only 纪要（中英同产；五行或分节两种形状，§63.10）到 state/recap/。不是卡，无发送路径。
-  enabled: true                        # 关 = 整条静默（Settings「会议纪要」同一开关；overrides 扁平键 recap_enabled）
-  default_language: auto               # auto | zh | en——详情页先显示哪一版（overrides 键 recap_default_language）
-  # ---- 确定性 session 判定（数字 = 分钟；坏值回默认） ----
-  # gap_minutes: 5                      # 静默超过即切 session（与 ingest SKILL 一致）
-  # quiet_minutes: 5                    # 距最后事件 ≥ 此值且区间内无 pending 转写 → CLOSED
-  # min_span_minutes: 10                # 资格：session 跨度下限
-  # min_presence_frames: 3              # 资格：会议窗口帧数下限
-  # force_close_minutes: 120            # 引擎死亡兜底：最后事件太久以前 → 无视 pending 强制 CLOSED
-  # max_session_minutes: 240            # 超长 session 切段
-  # audio_only_sessions: false          # 无会议窗口的纯音频（面谈）是否算 session（#129 未解项，默认关）
-  # timezone: America/Los_Angeles       # dedup key `meeting:<本地起始分钟>-<app>` 的时区
-  # meeting_windows:                    # 追加会议应用规则（默认表：Zoom / Microsoft Teams / Webex / FaceTime / meet.google.com / Slack+Huddle）
-  #   - {slug: gather, app: Gather}     #   每条 slug + ≥1 个大小写不敏感的子串匹配器（app / window / url）
+recap:                                 # 会议纪要（§63）：cron 链的一步，只读 ~/.screenpipe/db.sqlite，
+                                       # 确定性判会议 session，结束后出 copy-only 纪要到 state/recap/。没有发送路径。
+  enabled: true                        # 关 = 整条静默（设置页「会议纪要」同一开关）
+  default_language: auto               # auto | zh | en —— 详情页先显示哪一版
+  # ---- session 判定（分钟；坏值回默认） ----
+  # gap_minutes: 5                     # 静默超过即切 session
+  # quiet_minutes: 5                   # 距最后事件 ≥ 此值且无待转写 → CLOSED
+  # min_span_minutes: 10               # session 跨度下限
+  # min_presence_frames: 3             # 会议窗口帧数下限
+  # force_close_minutes: 120           # 引擎死了：最后事件太久以前 → 强制 CLOSED
+  # max_session_minutes: 240           # 超长 session 切段
+  # audio_only_sessions: false         # 没有会议窗口的纯音频（面谈）是否算 session
+  # timezone: America/Los_Angeles      # dedup key 的时区
+  # meeting_windows:                   # 追加会议应用规则（默认表：Zoom / Teams / Webex / FaceTime / Meet / Slack Huddle）
+  #   - {slug: gather, app: Gather}
   # ---- 出稿 ----
-  # default_shape: lines                # §63.10 出厂形状：lines = 快速五行（自用便签）｜ sections = 可发送长版
-  #                                     #   （分节 + 每节语气 decided/proposed/floated/open + 跨节连续编号）；
-  #                                     #   单份纪要可在页面上逐次改选，之后的重生成沿用它选的那一种
-  # max_per_run: 2                      # 每轮最多出几份（超的留到下一轮，不丢）
-  # max_per_day: 8                      # 每个本地日上限
-  # retention_days: 90                  # recaps/<key>.json 保留天数
-  # dismissed_retention_days: 14        # 页面上按过「忽略」的那份保留天数（从忽略那一刻算，下限 1；§63.5「已忽略」栏，按「恢复」即撤销）
-  # db_path: ~/.screenpipe/db.sqlite    # 引擎 DB 位置（默认即此）
-  slack_draft:                         # §63.4 可选：把 recap 放进你自己 Slack 的「Drafts & Sent」（草稿，不发送）
-    enabled: false                     # 【默认关】走用户级 Slack MCP 白名单 slack_send_message_draft；发送键仍在你手里（overrides 键 recap_slack_draft_enabled）
-    # targets:                         # 按会议应用配目标会话 id（C…/D…/G…）；没配又没在页面手选 = 不投
-    #   zoom: C0123456789
-    #   teams: C0987654321
+  # default_shape: lines               # lines = 快速五行 | sections = 可发送的分节长版（§63.10）
+  # max_per_run: 2                     # 每轮最多出几份（多的留到下一轮）
+  # max_per_day: 8                     # 每个本地日上限
+  # retention_days: 90                 # recaps/<key>.json 保留天数
+  # dismissed_retention_days: 14       # 按过「忽略」的那份保留天数
+  # db_path: ~/.screenpipe/db.sqlite   # 引擎 DB 位置
 
-# 执行落点：req 未指定 target_repo 时的兜底（paperwork/调研的家；绝不默认进你的代码 repo，如 your-bench-repo）
-# raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。
-# execution.default_target_repo: "~/Projects/your-workbench"
+models:                                # 模型（§59）：两把旋钮，都只是 claude 的 --model / --fallback-model
+  # pipeline: claude-opus-5            # 会议纪要用的模型（形状合法的模型 id；ingest 跟随 claude 的默认）
+  # fallback: "claude-opus-5[1m]"      # 主模型拿不到时切到的模型；off = 不传旗标
 
-# 交付物默认格式（CONTRACT §15）：助手以你名义起草文档/报告/FINAL DRAFT 时用哪种标记语言。
-# markdown（默认，行为不变）| html（追加一条 HTML 起草指令）。App 设置「交付物默认格式」也能改。
-# default_output_format: markdown
+redaction:                             # 发给模型之前的本地脱敏（act/lib/sanitize.py）
+  enabled: false                       # 词表脱敏（默认关；打开会改变模型看到的内容）
+  terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀 = 正则；install.sh 从模板建）
+  mask_secrets: true                   # 内置密钥 / token 掩码；默认开，不依赖 enabled
 
-# doctor:                              # AI Doctor（CONTRACT §25）
-#   ai_fix_enabled: true               # 「让 AI 修」按钮/CLI（act/ai_fix.py）总开关；
-#                                      # false = 隐藏按钮、python -m act.ai_fix 直接退出
+updates:                               # 更新（§26 / §79）
+  check_enabled: true                  # 至多每 24h 向 GitHub releases/latest 查一次版本号（唯一的非模型出网）
+  auto_install: false                  # 发现同一大版本内的新版时自动跑 scripts/upgrade.sh（默认关：关于页「立即升级」）
 
-# updates:                             # 应用内更新检查（CONTRACT §26；docs/TELEMETRY.md「更新检查」）
-#   check_enabled: true                # 默认开：至多每 24h 向 GitHub 查一次最新版本号（请求只暴露
-#                                      # IP + 当前版本号）。发现新版只在菜单栏/关于页低调提示，
-#                                      # 绝不自动下载安装。App 设置「自动检查新版本」也能关。
+# ui:                                  # 看板显示偏好（CONTRACT §54.1 第 12 项；server/display.py 读，次序：设置页 overrides →
+#   display:                           # 这里 → 默认）。设置页「显示」点选即写 overrides，通常不用填
+#     text_size: m                     # s | m | l | xl —— 字号倍率 .9 / 1 / 1.1 / 1.25
+#     text_weight: regular             # regular | medium | bold —— 字重平移 0 / +100 / +200
+#     stroke: normal                   # thin | normal | thick —— 描边 1px / 1.5px / 2px
 
-# ask:                                 # 问问助手 in-app Q&A（CONTRACT §27）
-#   enabled: true                      # 默认开；false = 隐藏主窗口提问框、python -m act.ask 直接退出
+# server:
+#   port: 47820                        # 看板 server 的本机端口（§54；install.sh 渲染进 LaunchAgent 与壳）
 
-# feedback_sync:                       # 建议公开跟踪表：勾选「同时公开」的建议 → 公开 repo 的 GitHub issue
-#   repo: "Wan-ZL/zelin-ai-assistant"  # issue 落在哪个公开 repo（owner/name）
-#   # token_path 默认 config/secrets/github-feedback-token.txt（相对管线根）；文件不存在 = 整个同步
-#   # 静默关闭（同 gmail 无凭证哲学，健康检查不报错）。token 只需目标 repo 的 issues:write。
-#   # token_path: "config/secrets/github-feedback-token.txt"
-#   # 总开关走 features.feedback_sync（默认开）；每条建议是否公开由弹窗勾选逐条决定，
-#   # 勾选框默认态 = App 记住的上次选择（settings_overrides.json，yaml 无此旋钮）。
-
-redaction:                             # 发给 AI 前的本地脱敏
-  enabled: false                       # 词表脱敏开关（默认关；打开会改变 AI 看到的内容，也可在 app 设置里切）
-  terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）
-  mask_secrets: true                   # 内置密钥/token 掩码（sk-ant-/xox*/AKIA/gh*_/PEM）；默认开且不依赖 enabled
-
-# telemetry:                           # 匿名使用统计（**默认开、仅事件元数据**；输入文本需 opt-in，见 docs/TELEMETRY.md 字段表）
-#   enabled: true                      # 【默认 true】总开关；false = 完全停止上传（App 设置「产品改进计划」也能关）
-#   level: detailed                    # 【默认 detailed】行为事件粒度（basic/detailed 都只是事件元数据：
-#                                      # 事件名/耗时/计数）；切 basic 同时会停掉输入文本上传（若已勾选）
-#   capture_input: false               # 【默认 false，v0.48 起 opt-in】上传你输入进本 App 的文本原文（快速
-#                                      # 捕获、提问、打回反馈、搜索词；每条截断 500 字符）。开启方式：首启页
-#                                      # 勾选「分享输入文本以帮助改进产品」、设置页同名开关，或在这里写 true。
-#                                      # 边界：只收集你亲手输入的文字——绝不含 AI 的回答、屏幕录制内容、
-#                                      # 邮件或 Slack 消息、密钥（这些在任何设置下都不进 telemetry）。
-#   # 默认上传到维护者的 Supabase（内置 publishable key，RLS 只允许写入、读不回数据）。
-#   # fork/自建收集端：换成你自己的项目 URL；置空 "" 则彻底禁用上传。
-#   supabase_url: "https://xxxx.supabase.co"
-#   # 自建收集端的 key 放 config/secrets/supabase-service-key.txt（0600），存在时优先于内置 key；
-#   # 也可用 key_path 显式指定文件路径（解析顺序同 CONTRACT §19：secrets → key_path → 内置 key）
-#   # key_path: "~/Desktop/Keys/supabase-service-key.txt"
+# execution:
+#   claude_bin: ~/.local/bin/claude    # 显式钉死 claude CLI 路径（默认：稳定副本 → PATH → ~/.local/bin）

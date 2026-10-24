@@ -11,7 +11,7 @@ and never touches the network. Pinned behavior:
     ``CLAUDE_CONFIG_DIR`` exported (an inherited value is overridden),
     ``DISABLE_AUTOUPDATER=1`` and the argv ``-p <prompt> *ISOLATION_ARGV --add-dir
     <vault> [--append-system-prompt-file <vault>/CLAUDE.md] --allowedTools
-    Read,Write,Edit,Bash,Glob,Grep`` (element for element ``act.llm.ISOLATION_ARGV``,
+    Read,Edit,Bash`` (element for element ``act.llm.ISOLATION_ARGV``,
     the empty ``--setting-sources`` value included); the prompt names the inbox, the
     SKILL.md (the repo's copy when the vault has none) and says "Never run git.";
   - key file present (``config/secrets/anthropic-api-key.txt`` first, legacy
@@ -159,7 +159,7 @@ class IngestSmokeTestCase(unittest.TestCase):
         tail = ["--add-dir", str(self.vault)]
         if vault_claude_md:
             tail += ["--append-system-prompt-file", str(self.vault / "CLAUDE.md")]
-        tail += ["--allowedTools", "Read,Write,Edit,Bash,Glob,Grep"]
+        tail += ["--allowedTools", "Read,Edit,Bash"]
         self.assertEqual(argv[2:], ISOLATION_ARGV + tail)
         env = self._stub_env()
         cwd = Path(env["cwd"])
