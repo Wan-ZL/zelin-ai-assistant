@@ -6,8 +6,8 @@ running / loaded / crash-loop 并按日志归因 ``No module named 'act'`` vs ``
 ``launchd paths`` + ``launchd python``（§55 四种症状）、``launchd orphans``（退役
 agent 残留）、``launchd claude``（在一次性 launchd job 里问 launchd 本人：server 派生
 的 headless claude 在 §78 的中性 cwd 里起不起得来）、``isolation footprint``（§78：
-清单外的 LaunchAgent / cron 行）。默认探针实现（agent 日志路径 / 尾部 / mtime、已装
-plist label、launchd claude 探针）也住这里——tests 一律注入，绝不真起 launchd。
+清单外的 LaunchAgent / cron 行 / 指进本 repo 的 skills 软链）。默认探针实现（agent 日志
+路径 / 尾部 / mtime、已装 plist label、launchd claude 探针、skills 软链探针）也住这里——tests 一律注入，绝不真起 launchd。
 
 v2.0.0：``launchd fd limit``（actd 的 soft 上限）与 ``launchd volume access``（自动部署
 的无人值守判决）随 Act 管线退役（全文见 tag full）。
@@ -686,6 +686,57 @@ def _footprint_cron(probes) -> list:
     return stray
 
 
+def owner_skills_dir() -> Path:
+    """The owner's Claude Code skills directory — named only for the footprint probe below.
+
+    §78's one read exception, mirrored on install.sh's 1.x migration: the probe lists
+    entry names and symlink targets there (``os.lstat`` / ``os.readlink``), never file
+    content, never a write, so a 1.x ``skills_sync.sh`` link left behind is visible."""
+    return Path.home() / ".claude" / "skills"
+
+
+def _resolved_link(link: str) -> Optional[str]:
+    """The real path a symlink points at (relative targets resolve against its dir);
+    None for a non-link or an unreadable entry."""
+    try:
+        if not os.path.islink(link):
+            return None
+        target = os.readlink(link)
+    except OSError:
+        return None
+    return os.path.realpath(os.path.join(os.path.dirname(link), target))
+
+
+def _entries(directory: Path) -> List[str]:
+    try:
+        return sorted(os.listdir(str(directory)))
+    except OSError:
+        return []
+
+
+def _inside(path: Optional[str], root: str) -> bool:
+    return path is not None and (path == root or path.startswith(root + os.sep))
+
+
+def repo_skill_links(skills_dir: Optional[Path] = None, repo: Optional[Path] = None) -> List[str]:
+    """Names of entries in the owner's skills dir that are symlinks into this repo.
+
+    Real directories (the owner's own skills) and links that point elsewhere are not
+    ours and are ignored. Any OSError = nothing found (宪法第 11 条: probes never crash).
+    ``skills_dir`` / ``repo`` default to the owner's dir and ``config.HOME``."""
+    skills_dir = skills_dir or owner_skills_dir()
+    root = os.path.realpath(str(repo or config.HOME))
+    return [name for name in _entries(skills_dir)
+            if _inside(_resolved_link(os.path.join(str(skills_dir), name)), root)]
+
+
+def _footprint_skill_links(probes) -> list:
+    try:
+        return list(probes.repo_skill_links())
+    except Exception:  # noqa: BLE001 - 探针不许崩
+        return []
+
+
 def _footprint_agents(probes) -> list:
     """Installed plists of ours outside the template set (server only)."""
     known = set(templated_labels(probes))
@@ -699,19 +750,24 @@ def _footprint_agents(probes) -> list:
 def check_footprint(probes):
     """§78 closed resident footprint (constitution art.13): one LaunchAgent
     (``com.zelin.aiassistant.server``), one cron line (the §18 ingest chain), the
-    opt-in login item, the engine. Anything else under our names — a 1.x agent
-    plist, a radar / digest cron line, a second ingest-chain line — is a
-    violation. WARN (install.sh's 1.x migration removes it); file reads only."""
-    agents = _footprint_agents(probes)
-    stray_cron = _footprint_cron(probes)
-    if not agents and not stray_cron:
+    opt-in login item, the engine — and nothing of ours inside the owner's Claude
+    Code home. Violations: a plist of ours outside the template set (a 1.x agent,
+    a ``com.zelin.screenpipe-*`` ingest / prune agent), a retired-module cron line
+    or a second ingest-chain line, a skills symlink pointing into this repo (1.x
+    ``skills_sync.sh``). A missing chain line is not a footprint item: the
+    ``cron ingest chain`` row FAILs it. WARN (install.sh's 1.x migration removes
+    every item); file-system reads only."""
+    found = (("LaunchAgents: ", ", ", _footprint_agents(probes)),
+             ("cron: ", "; ", _footprint_cron(probes)),
+             ("skills symlinks into this repo: ", ", ", _footprint_skill_links(probes)))
+    parts = [label + sep.join(items) for label, sep, items in found if items]
+    if not parts:
         return CheckResult("isolation footprint", OK,
                            pick("常驻足迹 = 封闭清单（§78）", "resident footprint = the closed list (§78)"))
-    parts = (["LaunchAgents: " + ", ".join(agents)] if agents else []) \
-        + (["cron: " + "; ".join(stray_cron)] if stray_cron else [])
     return CheckResult(
         "isolation footprint", WARN,
         pick("清单外的后台项（§78）：%s", "background items outside the closed list (§78): %s")
         % " | ".join(parts),
-        "bash install.sh  # migrates a 1.x install: boots out retired agents, strips retired cron lines",
+        "bash install.sh  # migrates a 1.x install: boots out retired agents, strips retired cron "
+        "lines, unlinks skills symlinks into this repo",
     ).with_failure("isolation_footprint_violation")

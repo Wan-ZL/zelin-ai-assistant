@@ -81,6 +81,25 @@ class PlistFileFaceTestCase(_FakeHome):
         self.assertEqual(core.installed_plist_text(core.SERVER_LABEL), "<plist/>")
         self.assertEqual(launchd.installed_agent_labels(), [core.SERVER_LABEL])
 
+    def test_repo_skill_links_lists_only_symlinks_into_the_repo(self):
+        skills = self.home / ".claude" / "skills"
+        self.assertEqual(launchd.repo_skill_links(skills, self.home / "repo"), [])  # no dir
+        repo = self.home / "repo"
+        (repo / "skills" / "board-agent").mkdir(parents=True)
+        skills.mkdir(parents=True)
+        (skills / "own-skill").mkdir()                                  # owner's real dir
+        os.symlink(str(repo / "skills" / "board-agent"), str(skills / "board-agent"))
+        os.symlink("../../repo/skills/board-agent", str(skills / "relative-link"))
+        elsewhere = self.home / "elsewhere"
+        elsewhere.mkdir()
+        os.symlink(str(elsewhere), str(skills / "other-link"))          # not ours
+        os.symlink(str(self.home / "gone"), str(skills / "dangling"))  # not ours
+        self.assertEqual(launchd.repo_skill_links(skills, repo), ["board-agent", "relative-link"])
+
+    def test_repo_skill_links_defaults_to_the_owner_dir_and_the_app_home(self):
+        self.assertEqual(launchd.owner_skills_dir(), self.home / ".claude" / "skills")
+        self.assertEqual(launchd.repo_skill_links(), [])
+
     def test_daemon_path_env_off_darwin_is_none(self):
         # v2.0.0 is macOS-only: the Linux systemd / Windows task readers retired
         for plat in ("linux", "win32"):

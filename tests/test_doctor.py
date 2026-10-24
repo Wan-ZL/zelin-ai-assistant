@@ -146,7 +146,8 @@ class DoctorTestCase(unittest.TestCase):
 
     def make_probes(self, run=None, launchctl=None, cron=None, which_map=None,
                     now=None, db=None, legacy=None, installed_plists=None,
-                    launchd_logs=None, agent_files=None, launchd_claude=None):
+                    launchd_logs=None, agent_files=None, launchd_claude=None,
+                    skill_links=None):
         if which_map is None:
             which_map = {"claude": "/fake/bin/claude",
                          "npx": "/fake/bin/npx"}
@@ -172,6 +173,8 @@ class DoctorTestCase(unittest.TestCase):
             launchd_log_tail=lambda short: (launchd_logs or {}).get(short, ""),
             # §55 orphan scan reads the REAL ~/Library/LaunchAgents by default — injected here.
             installed_agent_labels=lambda: list(agent_files or []),
+            # §78 footprint: never list the REAL owner's skills dir from the suite
+            repo_skill_links=lambda: list(skill_links or []),
             # §55 第三幕：the real probe bootstraps a launchd job — never from
             # the suite. Default = "claude reads the folder" so the healthy
             # baseline stays healthy.
@@ -862,6 +865,66 @@ class DoctorTestCase(unittest.TestCase):
         r = by_name(results, "isolation footprint")
         self.assertEqual(r.status, doctor.WARN)
         self.assertEqual(r.failure_id, "isolation_footprint_violation")
+
+    # -- §78 claude bare supported ------------------------------------------- #
+    def test_bare_supported_is_ok_when_help_lists_every_isolation_flag(self):
+        run = FakeRun()
+        r = by_name(doctor.run_checks(self.make_probes(run=run), fast=True), "claude bare supported")
+        self.assertEqual(r.status, doctor.OK)
+        self.assertIn("--bare", r.detail)
+        self.assertTrue(any(c["cmd"][1:] == ["--help"] for c in run.calls))
+
+    def test_bare_supported_fails_when_the_cli_lacks_bare(self):
+        older = " ".join(f for f in doctor.llm.ISOLATION_FLAGS if f != "--bare")
+        run = FakeRun(table={"claude --help": (0, "Usage: claude " + older)})
+        r = by_name(doctor.run_checks(self.make_probes(run=run), fast=True), "claude bare supported")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertEqual(r.failure_id, "claude_bare_unsupported")
+        self.assertIn("--bare", r.detail)
+        self.assertNotIn("--strict-mcp-config", r.detail.split("know", 1)[-1])
+
+    def test_bare_supported_warns_when_help_says_nothing(self):
+        run = FakeRun(table={"claude --help": (1, "")})
+        r = by_name(doctor.run_checks(self.make_probes(run=run), fast=True), "claude bare supported")
+        self.assertEqual(r.status, doctor.WARN)
+
+    def test_bare_supported_row_is_absent_without_a_claude(self):
+        probes = self.make_probes(which_map={"npx": "/fake/bin/npx"})
+        self.assertNotIn("claude bare supported",
+                         [r.name for r in doctor.run_checks(probes, fast=True)])
+
+    def test_a_skills_symlink_into_the_repo_is_a_footprint_violation(self):
+        results = doctor.run_checks(self.make_probes(skill_links=["board-agent"]), fast=True)
+        r = by_name(results, "isolation footprint")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "isolation_footprint_violation")
+        self.assertIn("board-agent", r.detail)
+        self.assertIn("unlinks skills symlinks", r.fix)
+
+    def test_a_retired_ingest_agent_plist_is_a_footprint_violation(self):
+        results = doctor.run_checks(
+            self.make_probes(agent_files=["com.zelin.aiassistant.server",
+                                          "com.zelin.screenpipe-prune"]), fast=True)
+        r = by_name(results, "isolation footprint")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("com.zelin.screenpipe-prune", r.detail)
+        self.assertNotIn("aiassistant.server", r.detail)
+
+    def test_two_ingest_chain_lines_are_a_footprint_violation(self):
+        results = doctor.run_checks(self.make_probes(cron=HEALTHY_CRON + HEALTHY_CRON), fast=True)
+        r = by_name(results, "isolation footprint")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("2 ingest-chain lines (expected 1)", r.detail)
+
+    def test_the_healthy_baseline_footprint_is_ok(self):
+        results = doctor.run_checks(self.make_probes(), fast=True)
+        self.assertEqual(by_name(results, "isolation footprint").status, doctor.OK)
+
+    def test_a_crashing_skill_link_probe_degrades_to_ok(self):
+        probes = self.make_probes()
+        probes.repo_skill_links = mock.Mock(side_effect=OSError("boom"))
+        self.assertEqual(by_name(doctor.run_checks(probes, fast=True), "isolation footprint").status,
+                         doctor.OK)
 
     # -- daemon python / PyYAML ------------------------------------------------ #
     def test_daemon_python_without_pyyaml_is_fail(self):
