@@ -229,7 +229,7 @@ def _history_entry(rec: dict) -> dict:
 def _planning(now: dt.datetime) -> dict:
     """A sendable (sections) recap regenerated once: history + baseline + intent."""
     start = _ago(now, 3)
-    rec = _with_sections(_record(start, 50, "google-meet"), SECTIONS_PLANNING_V1,
+    rec = _with_sections(_record(start, 50, "meet"), SECTIONS_PLANNING_V1,
                          start + dt.timedelta(minutes=58), 1)
     rec["history"] = [_history_entry(rec)]
     rec["baseline"] = {"version": 1, "generated_at": rec["generated_at"], "shape": rec["shape"],
@@ -265,7 +265,7 @@ def _closed_recaps(now: dt.datetime) -> list:
         _with_lines(_record(review_start, 30, "zoom"), LINES_REVIEW, review_start + dt.timedelta(minutes=33)),
         thin,
         noaudio,
-        _with_lines(_record(sent_start, 40, "google-meet"), LINES_SYNC, sent_start + dt.timedelta(minutes=45)),
+        _with_lines(_record(sent_start, 40, "meet"), LINES_SYNC, sent_start + dt.timedelta(minutes=45)),
         dismissed,
     ]
 

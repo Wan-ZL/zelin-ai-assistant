@@ -4,7 +4,7 @@
    "meeting:2026-08-29T1200-facetime": {
     "dismissed_at": "2026-08-29T12:00:00Z"
    },
-   "meeting:2026-08-30T1000-google-meet": {
+   "meeting:2026-08-30T1000-meet": {
     "copied_at": "2026-08-30T12:00:00Z",
     "sent_at": "2026-08-30T12:00:00Z"
    }
@@ -40,8 +40,8 @@
    "version": 1,
    "zh": null
   },
-  "recap/recaps/meeting_2026-08-30T1000-google-meet.json": {
-   "app": "google-meet",
+  "recap/recaps/meeting_2026-08-30T1000-meet.json": {
+   "app": "meet",
    "audio_rows": 480,
    "baseline": null,
    "copy_en": "Decided: ship the inkweld offline mode behind a flag in the next release.\nSplit: alex.doe owns the sync queue; sam.rivera owns the conflict banner.\nDeadline: flag build ready for internal testing by Friday.\nChanged since last plan: conflict banner moved ahead of export polish.\nOpen: whether offline edits count toward the storage quota.",
@@ -59,7 +59,7 @@
    "generated_at": "2026-08-30T10:45:00Z",
    "history": [],
    "intent": null,
-   "key": "meeting:2026-08-30T1000-google-meet",
+   "key": "meeting:2026-08-30T1000-meet",
    "note": null,
    "partial": false,
    "problems": [],
@@ -240,8 +240,8 @@
     "待定：首个版本里移动端是否显示问卷。"
    ]
   },
-  "recap/recaps/meeting_2026-09-02T0900-google-meet.json": {
-   "app": "google-meet",
+  "recap/recaps/meeting_2026-09-02T0900-meet.json": {
+   "app": "meet",
    "audio_rows": 600,
    "baseline": {
     "copy_en": "Decided:\nD1. Quarter goal for inkweld is collaborative comments.\n\nSplit (floated):\nS1. alex.doe may draft the comments data model.\n\nOpen:\nO1. Whether comments ship to the free plan on day one.",
@@ -342,7 +342,7 @@
     "at": "2026-09-02T10:10:00Z",
     "version": 2
    },
-   "key": "meeting:2026-09-02T0900-google-meet",
+   "key": "meeting:2026-09-02T0900-meet",
    "note": null,
    "partial": false,
    "problems": [],
@@ -549,7 +549,7 @@
  },
  "sha256": {
   "empty": "552b0358159e50803ae8348f42abcde6912c4c9d15eb5e47875a36a8d42aa037",
-  "generating": "5f1a8aba559407d351b7e29839cba1763e03423bba62bc667e53e191084c043c",
-  "initial": "c66cb4544d2fd75e66011d9b7f8cead9c5a5e71223d4ee804b8702f3c87213a5"
+  "generating": "969f44bc037fa35c23924b62057811068537d038f4104674e3ec7c13443c61da",
+  "initial": "99822439f41aa9483a69a5c127894941ee20e2c7909afa79a4c484944d7018c2"
  }
 }
