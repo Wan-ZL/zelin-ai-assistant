@@ -1,7 +1,8 @@
 """act/lib/platform.py — the Linux + Windows service-manager + notification seam.
 
 Companion to tests/test_platform.py; this file focuses on the parts a Linux /
-Windows port hangs off (docs/LINUX.md, docs/WINDOWS.md):
+Windows port hangs off (1.x guides docs/LINUX.md, docs/WINDOWS.md at git tag
+full; lite 2.0 ships macOS only):
 
   * service_list_text() shells `systemctl --user list-units` (Linux) /
     `schtasks /query /fo LIST /v` (Windows) — the text act.doctor's systemd /
@@ -13,7 +14,7 @@ Windows port hangs off (docs/LINUX.md, docs/WINDOWS.md):
 All via an injected fake runner — nothing is ever actually spawned, so this is
 green on the macOS / ubuntu / windows CI runners alike; the REAL loading of
 units/tasks and REAL notify-send/toast firing are friend-tested on a real box
-(see the "needs a real machine" sections in docs/LINUX.md, docs/WINDOWS.md).
+(see the "needs a real machine" sections of those 1.x guides).
 """
 import subprocess
 import unittest

@@ -14,7 +14,7 @@ against a fake `launchctl` on PATH:
   ~/Library/LaunchAgents) that have no template in act/launchd — other
   vendors' labels and templated labels are never orphans.
 
-POSIX-only (install.sh is the macOS/Linux installer; install.ps1 has its own).
+POSIX-only (install.sh is the only installer; lite 2.0 is macOS-only).
 """
 import os
 import shutil
@@ -56,7 +56,7 @@ def _prelude():
         for fn in _FNS)
 
 
-@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "install.sh is POSIX-only (lite 2.0 is macOS-only)")
 class LaunchdRetireTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="retire-"))

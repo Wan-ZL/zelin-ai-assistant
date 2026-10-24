@@ -1,8 +1,8 @@
 # CI: lint gates (shellcheck + ruff), Python 3.9 floor tests, compile check,
 # unit tests, the web gates and one macOS job (macOS runners are the scarce
-# resource — everything Apple-flavored lives in it: mac app build WITH
-# Sparkle, shared-contract Swift tests and the iOS simulator build) — on every pull request, on every merge-queue
-# group, and on push to main or dev (dev = the integration train PRs are
+# resource — everything Apple-flavored lives in it: since v2.0.0 that is the
+# board shell build + its Swift harness; mac/ and ios/ were removed) — on every
+# pull request, on every merge-queue group, and on push to main or dev (dev = the integration train PRs are
 # merged into before it is promoted to main; every advance of it gets the
 # full suite so a red dev head is caught before promotion, not after).
 #
@@ -18,9 +18,9 @@
 # contract is untouched. merge_group and push (main or dev) always run
 # everything (the filter is forced to 'true'), and a failed filter step also runs
 # everything: a broken filter must never become a skipped gate. The
-# informational Windows legs and qlty moved to ci-nightly.yml (schedule +
-# workflow_dispatch); the AI review bots run on demand (pr-review-*.yml,
-# label `review:ai`).
+# informational Windows legs and qlty lived in ci-nightly.yml until v2.0.0
+# retired it (lite 2.0 is macOS-only; CONTRACT §56.8 追记); the AI review bots
+# run on demand (pr-review-*.yml, label `review:ai`).
 #
 # MERGE QUEUE (CONTRACT §56.2): every job that backs a required status check
 # (ci, Lint, Tests on ubuntu ×2, Web tests, QA gates, Version pins untouched)
@@ -33,8 +33,8 @@
 # wiring stays for the day the repo moves to an organization.)
 #
 # TIMEOUTS (§56.6): every job carries timeout-minutes (40; the filter job 5)
-# — typical wall time is ≤4 min for the ubuntu legs and ~9 min for the macOS
-# job when it runs the Apple suite. Without a cap a hung job holds the
+# — typical wall time is ≤4 min for the ubuntu legs and a few minutes for the
+# macOS job when it runs the shell build + harness. Without a cap a hung job holds the
 # per-branch concurrency group for GitHub's 6-hour default and blocks every
 # later run on that PR.
 name: CI
@@ -83,13 +83,11 @@ jobs:
           # swift = everything the macOS `ci` job exercises that the ubuntu
           # legs do not: the Swift trees, the Xcode pin + selector, the
           # version stamper the builds call, and this workflow itself.
-          # (act/lib/e2e.py left with the Swift↔Python interop gate in v2.0.0.)
+          # (act/lib/e2e.py left with the Swift↔Python interop gate in v2.0.0;
+          # mac/, ios/ and shared/ left with PR-C — only shell/ remains.)
           filters: |
             swift:
-              - 'mac/**'
               - 'shell/**'
-              - 'ios/**'
-              - 'shared/**'
               - '**/*.swift'
               - '.github/xcode-version'
               - 'scripts/ci/select_xcode.sh'
@@ -153,8 +151,8 @@ jobs:
 
   tests-linux:
     name: Tests on ubuntu (Python ${{ matrix.python-version }})
-    # README/docs promise Python 3.9+ and docs/PORTING.md promises the headless
-    # core runs on Linux — same suite on the documented floor (3.9) and on
+    # README/docs promise Python 3.9+, and the headless core stays portable
+    # Python (1.x porting map at git tag full) — same suite on the documented floor (3.9) and on
     # current python. The act pipeline is pure Python + PyYAML (tests inject
     # fake runners instead of shelling out); darwin-only paths guard themselves
     # behind the OS seam (act/lib/platform.py) instead of failing here.
@@ -187,7 +185,7 @@ jobs:
 
   contract-reminder:
     name: Contract reminder (soft gate)
-    # 软门（§0 宪法配套）：act/ 或 mac/Sources/ 的行为改动通常应伴随
+    # 软门（§0 宪法配套）：act/ 或 shell/Sources/ 的行为改动通常应伴随
     # docs/CONTRACT.md 的同 PR 修法。只提醒（::warning::），永不阻塞——
     # 纯重构/修 typo 不该被一个文档门拦住，判断力在 reviewer。
     if: github.event_name == 'pull_request'
@@ -208,25 +206,24 @@ jobs:
           BASE="origin/${BASE_REF}"
           git fetch --quiet origin "${BASE_REF}"
           CHANGED="$(git diff --name-only "$(git merge-base "$BASE" HEAD)"...HEAD)"
-          if echo "$CHANGED" | grep -qE '^(act/|mac/Sources/)' \
+          if echo "$CHANGED" | grep -qE '^(act/|shell/Sources/)' \
              && ! echo "$CHANGED" | grep -q '^docs/CONTRACT.md$'; then
-            echo "::warning title=CONTRACT.md untouched::This PR changes act/ or mac/Sources/ without updating docs/CONTRACT.md. If it changes behavior, amend the matching § (or §0) in this PR; if it's a pure refactor/fix, say so in the description. See CLAUDE.md."
+            echo "::warning title=CONTRACT.md untouched::This PR changes act/ or shell/Sources/ without updating docs/CONTRACT.md. If it changes behavior, amend the matching § (or §0) in this PR; if it's a pure refactor/fix, say so in the description. See CLAUDE.md."
           else
             echo "contract check: ok"
           fi
 
   version-pins:
     name: Version pins untouched
-    # CONTRACT §56.1 — no PR may carry a version: the iOS MARKETING_VERSION
-    # placeholders, the act/__init__.py fallback line (refresh to the latest
-    # tag excepted) and CHANGELOG version headings are all read-only for PRs.
-    # §56.7 — nor may a PR write the two shared append-only ledgers by hand:
-    # new CHANGELOG bullets / `### ` headings ([Unreleased] is frozen,
-    # shrink-only) and new `| YYYY-MM-DD |` rows in vnext2-plan §8 are
-    # rejected; the PR adds a changelog.d/<slug>.md and a
-    # docs/design/progress/<date>-<slug>.md fragment instead, and this job
-    # validates their shape (a malformed fragment would otherwise vanish
-    # silently from the release notes — release.yml only warns).
+    # CONTRACT §56.1 — no PR may carry a version: the act/__init__.py fallback
+    # line (refresh to the latest tag excepted) and CHANGELOG version headings
+    # are read-only for PRs (the iOS MARKETING_VERSION pins left with ios/ in
+    # v2.0.0 — version.PIN_FILES is empty). §56.7 — nor may a PR write
+    # CHANGELOG [Unreleased] by hand (frozen, shrink-only): new bullets /
+    # `### ` headings are rejected; the PR adds a changelog.d/<slug>.md
+    # fragment instead, and this job validates the shape of every fragment
+    # (changelog.d/ and docs/design/progress/ — a malformed fragment would
+    # otherwise vanish silently from the release notes; release.yml only warns).
     # HEAD is the synthetic merge commit on both events (PR: refs/pull/N/merge;
     # queue: the group's merge commit) — HEAD^1 = base, HEAD^2 = PR head, so
     # `git diff HEAD^1 HEAD` is exactly the PR's change and merge-base(HEAD^1,
@@ -317,8 +314,8 @@ jobs:
       - name: Type-check everything (src + tests, tsconfig.json)
         # `npm run build` type-checks only what ships (tsconfig.build.json — the
         # install.sh ui step builds from a mirror of web/ outside the repo, where
-        # test-only fixtures under ui/parity/ do not exist); the tests' types are
-        # covered here so nothing is lost. tests/test_web_build_self_contained.py.
+        # nothing above web/ exists); the tests' types are covered here so
+        # nothing is lost. tests/test_web_build_self_contained.py.
         if: needs.changes.outputs.web != 'false'
         working-directory: web
         run: npm run typecheck
@@ -339,8 +336,7 @@ jobs:
     # ≤6、CRAP ≤6、总覆盖率不低于 qa/coverage_floor.txt、模块依赖方向 + 防腐
     # 十条机械化——全部对着 qa/*_baseline.txt 的 shrink-only 存量账本判决，
     # 所以老代码不挡门、新代码必须干净、账本只许缩（清账 = P3）。
-    # 第六道 [ui-parity]（§66.2）：原生 UI 清单 ⟷ web 实现，对着 ui/parity/pending.txt
-    # （shrink-only）判决；job 名不变（required check 按名字挂）。
+    # 第六道 [ui-parity]（§66.2）随 §66 在 v2.0.0 退役；job 名不变（required check 按名字挂）。
     # 出生时是非必需检查；在 main 上证明稳定后再升 required（§58.5）。
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -363,10 +359,10 @@ jobs:
       - name: Ledger shrink-only diff vs PR base
         # §58.4 的另一半：三态判决看不见「账本自己长了」——新增债务 + 同 PR
         # 自记账在三态下照样全绿。这里把 qa/*_baseline.txt（加键/抬分）、
-        # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）、
-        # ui/parity/{pending,waivers}.txt（§66.2 加 id）与 merge
+        # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）与 merge
         # ref 的第一父（= 当前 main；merge queue 的临时 merge commit 同形）
         # 比较，任何放宽即 FAIL。push 到 main 时没有 base 可比，跳过。
+        # （§66.2 的 ui/parity/ 两本账本 v2.0.0 退役，ledger_diff.PARITY_LEDGERS 为空。）
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: python3 scripts/qa/ledger_diff.py --base HEAD^1
 
@@ -374,18 +370,8 @@ jobs:
         # coverage = dev/CI-only（§0 宪法第 7 条：运行时白名单 stdlib+PyYAML 不变）
         run: python3 -m pip install "pyyaml>=6,<7" coverage
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Install web dependencies (the [ui-parity] gate runs vitest)
-        # §66.2：scripts/ui/parity_check.py 以 --reporter=json 跑 web/src/parity.test.tsx
-        # 读每条原生控件的在/不在——门要 node + web/node_modules 才能判卷。
-        run: npm ci
-        working-directory: web
-
       - name: Run QA gates
-        # 全套 unittest 在 coverage 下跑一遍 + 六道门（§58 五道 + §66 [ui-parity]）；
+        # 全套 unittest 在 coverage 下跑一遍 + §58 五道门（§66 [ui-parity] v2.0.0 退役）；
         # 判决与建议账本落 .qa-report/（下面整目录上传——收账 = 从 artifact 拷回 qa/）。
         run: bash scripts/qa/run_gates.sh
 
@@ -485,7 +471,7 @@ jobs:
         if: needs.changes.outputs.swift == 'false'
         run: |
           echo "no Swift changes — Swift gates not needed"
-          echo "no Swift changes — Swift gates not needed (mac/, shell/, ios/, shared/, *.swift and the Xcode / version-stamp toolchain files are untouched in this PR; the full Apple suite runs on push to main — CONTRACT §56.8)" >> "$GITHUB_STEP_SUMMARY"
+          echo "no Swift changes — Swift gates not needed (shell/, *.swift and the Xcode / version-stamp toolchain files are untouched in this PR; the full Apple suite runs on push to main — CONTRACT §56.8)" >> "$GITHUB_STEP_SUMMARY"
 
       - if: needs.changes.outputs.swift != 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -518,43 +504,14 @@ jobs:
         if: needs.changes.outputs.swift != 'false'
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
-      - name: Verify the committed version pins are the placeholder
-        # CONTRACT §56.1: the version's truth is the git tag on main; nothing
-        # committed carries it. ios/project.yml + the two pbxproj pins stay
-        # 0.0.0-dev in git and are stamped on the runner right below — a hand
-        # bump here would drift the moment the next PR merges (the tri-pin
-        # rebase storm this replaced) and is rejected by this gate as well as
-        # by the "Version pins untouched" job.
-        if: needs.changes.outputs.swift != 'false'
-        run: python3 scripts/version_stamp.py --check-pins
-
-      - name: Stamp the version (act/_version.py + iOS pins, runner-only)
-        # git describe on a shallow PR checkout finds no tag → the stamp is the
-        # baked fallback; on a tag checkout it is the tag. Either way the Mac
-        # app, the Swift tests and the iOS simulator build below all see one
-        # consistent version, and nothing is committed.
-        if: needs.changes.outputs.swift != 'false'
-        run: python3 scripts/version_stamp.py --write --ios
-
-      - name: Vendor Sparkle (framework + tools)
-        # Release builds link Sparkle (release.yml runs this same SHA-pinned
-        # script). Without it here, every `#if canImport(Sparkle)` block
-        # (updater wiring + the Settings update UI) compiles OUT of PR CI, so
-        # a symbol break inside those blocks merges green and only explodes at
-        # tag time — after the tag already exists.
-        if: needs.changes.outputs.swift != 'false'
-        run: bash mac/scripts/fetch-sparkle.sh
-
-      - name: Build macOS app (with Sparkle, like a release build)
-        if: needs.changes.outputs.swift != 'false'
-        run: bash mac/build.sh
-
       - name: Build board shell app (shell/build.sh — install.sh's ui step)
         # CONTRACT §56.5: merge = deploy now includes the UI; the shell must
         # compile on the CI toolchain or the auto-deploy `ui` step fails and
         # rolls the deploy back. ZAI_PORT stamping is exercised too. shell/ also
-        # hosts the recording + live-captions engines moved from mac/Sources
-        # (§61.3) and the zaiShell bridge (§61.1).
+        # hosts the recording + live-captions engines (moved from the retired
+        # mac/Sources, §61.3) and the zaiShell bridge (§61.1). The stamp it
+        # needs comes from scripts/build_version.sh (act/_version.py; no iOS pins
+        # since v2.0.0).
         if: needs.changes.outputs.swift != 'false'
         run: ZAI_PORT=47820 bash shell/build.sh
 
@@ -563,50 +520,3 @@ jobs:
         # pins the zaiShell wire vocabulary and the LegacyPrefs seed rules.
         if: needs.changes.outputs.swift != 'false'
         run: bash shell/tests/run.sh
-
-      - name: Swift logic tests (mac/LogicTests, swift test)
-        # 本地第四道门（CONTRIBUTING.md）：⌘V 认领矩阵
-        # (PastedImages.isImagePaste/readImages) — a Swift Testing package
-        # whose sources are SYMLINKS into mac/Sources, so the code under test
-        # is the real file. The wrapper is exactly
-        # `swift test --package-path mac/LogicTests` under full Xcode; it only
-        # adds framework search flags on Xcode-less CLT machines (see test.sh).
-        if: needs.changes.outputs.swift != 'false'
-        run: bash mac/LogicTests/test.sh
-
-      - name: Swift contract tests (shared/Sources, plain swiftc)
-        # Behavior tests for the lossy dashboard.json row decode (Contract.swift)
-        # and the board-lane merge/badge logic (BoardModel.swift) — shared logic
-        # both apps compile but nothing else executes. No Xcode project needed.
-        if: needs.changes.outputs.swift != 'false'
-        run: bash ios/tests/contract/run.sh
-
-      - name: Swift captions tests (CaptionCore, plain swiftc)
-        # 实时字幕 pure-logic gate: byte-exact Doubao ASR wire framing, gzip
-        # payload decode, definite/partial dedup, and the 2-line caption
-        # roll-up reducer (mac/Sources/CaptionCore.swift) — the only
-        # executable check on the hand-rolled binary protocol.
-        if: needs.changes.outputs.swift != 'false'
-        run: bash ios/tests/captions/run.sh
-
-      - name: Swift board-diff tests (BoardDiff, plain swiftc)
-        # v0.43 手感 gate: the pure snapshot differ driving the kanban flight
-        # layer (mac/Sources/BoardDiff.swift) — first-load, moves vs reorder
-        # noise, inserts/removals, and the >6-change crossfade cap.
-        if: needs.changes.outputs.swift != 'false'
-        run: bash ios/tests/boarddiff/run.sh
-
-      - name: Build iOS app (simulator, no signing)
-        # ios/Sources was previously compiled by NO workflow — an iOS-only (or
-        # shared-contract-used-only-by-iOS) break merged green and surfaced at
-        # the maintainer's next manual Xcode open. Builds the committed project
-        # (canonical spec: ios/project.yml; the pbxproj is kept in sync, so CI
-        # needs no xcodegen). Simulator destination → no signing identity.
-        if: needs.changes.outputs.swift != 'false'
-        run: |
-          set -euo pipefail
-          xcodebuild -project ios/ZelinAIAssistant.xcodeproj \
-                     -scheme ZelinAIAssistant \
-                     -destination 'generic/platform=iOS Simulator' \
-                     CODE_SIGNING_ALLOWED=NO \
-                     build

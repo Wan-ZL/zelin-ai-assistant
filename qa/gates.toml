@@ -25,8 +25,8 @@ ratchet_trigger = 0.5
 ratchet_buffer = 0.3
 
 [hygiene]
-# 防腐十条 #1 的机械化（CLAUDE.md）：mac/ 按 D3 豁免（退役中），Swift 线
-# 只对 shell/ 生效。
+# 防腐十条 #1 的机械化（CLAUDE.md）：Swift 线只对 shell/ 生效（mac/ 已在
+# v2.0.0 删除）。
 max_file_lines_py = 2000
 max_file_lines_swift = 1500
 max_function_lines = 300

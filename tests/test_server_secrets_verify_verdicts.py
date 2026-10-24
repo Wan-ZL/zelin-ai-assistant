@@ -23,9 +23,8 @@ from tests.test_server_common import post_json, start_server, write_text
 
 from server import secrets_store
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-# 原生 Settings.swift humanAuthReason 的 Anthropic 句（逐字）；{raw} = 探针 detail
+# 原生 Settings.swift humanAuthReason 的 Anthropic 句（逐字快照；mac/ 在 v2.0.0 删除，源文件见 tag full）；
+# {raw} = 探针 detail
 NATIVE = {
     "anthropic": ("key 无效——到 console.anthropic.com 重新生成，回来粘贴保存（{raw}）",
                   "The key is invalid — regenerate it at console.anthropic.com, then paste and save ({raw})"),
@@ -40,14 +39,10 @@ def _expected(key, raw):
 class HumanAuthReasonTestCase(unittest.TestCase):
     """纯函数：种类 + raw → {zh, en}，句子逐字镜像原生、raw 在括号里。"""
 
-    def test_catalog_sentences_mirror_the_native_source(self):
-        swift = (REPO_ROOT / "mac" / "Sources" / "Settings.swift").read_text(encoding="utf-8")
+    def test_catalog_sentences_mirror_the_native_snapshot(self):
         for key, (zh, en) in NATIVE.items():
             with self.subTest(key=key):
                 self.assertEqual(secrets_store.AUTH_REASONS[key], {"zh": zh, "en": en})
-                # 原生用 \(raw) 插值；除此之外逐字
-                self.assertIn(zh.replace("{raw}", "\\(raw)"), swift)
-                self.assertIn(en.replace("{raw}", "\\(raw)").replace('"', '\\"'), swift)
 
     def test_anthropic_has_one_sentence_and_the_retired_kinds_none(self):
         self.assertEqual(set(secrets_store.AUTH_REASONS), {"anthropic"})

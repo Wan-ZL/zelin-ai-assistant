@@ -173,14 +173,14 @@ class LaunchdTemplateShapeTestCase(unittest.TestCase):
                                  % path.name)
 
 
-@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "install.sh is POSIX-only (lite 2.0 is macOS-only)")
 class InstallShRealRenderTestCase(unittest.TestCase):
     """真的跑 install.sh 的函数（不是镜像）——2026-08-31 live 部署判例。
 
     整个 class 在 Windows 上跳过：这里的每一条都要么直接 `bash -c` 跑 install.sh
     抠出来的函数、要么经 _render_from/_pick 间接跑，另有四条还要 os.symlink
-    （Windows 上要特权）。install.sh 只在 macOS/Linux 上运行——Windows 侧的
-    安装器是 install.ps1，它有自己的判例。上面那个 class 是纯字符串 + plistlib
+    （Windows 上要特权）。install.sh 是唯一的安装器（lite 2.0 只支持 macOS，
+    Windows / Linux 安装器在 v2.0.0 退役）。上面那个 class 是纯字符串 + plistlib
     的模板形状检查，三个平台照跑，不在跳过范围内。
 
     症状：owner 的 repo 实体在 /Volumes/Storage/Server/Projects/…，另有便利
@@ -313,7 +313,7 @@ class InstallShRealRenderTestCase(unittest.TestCase):
         self.assertTrue(argv0.startswith("/"), argv0)
 
 
-@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+@unittest.skipIf(_WIN, "install.sh is POSIX-only (lite 2.0 is macOS-only)")
 class DaemonInterpreterSelectionTestCase(unittest.TestCase):
     """§55 双闸门解释器挑选——2026-08-31 live 部署的**最后**一幕判例。
 

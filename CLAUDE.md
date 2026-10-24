@@ -46,8 +46,8 @@ cron 的 ingest 链（`ingest/`：export → cleanup → process）把录到的�
 - **LLM 输出不可信**：类型逐字段消毒（数字 title、bool deadline 都真实出现过）；
   解析失败不许崩 pass（宪法第 11 条）。
 - **永不 bump 版本**（§56.1，2026-09-02 起）：版本真源 = main 上的 git tag，合并时
-  `release-on-merge` 自动铸造；`act/__init__.py` 的回落行、iOS 两处 `0.0.0-dev` 占位、
-  CHANGELOG 的版本标题都是**只读**的，CI「Version pins untouched」会拦。发版说明只写
+  `release-on-merge` 自动铸造；`act/__init__.py` 的回落行与 CHANGELOG 的版本标题都是
+  **只读**的（iOS 的 `0.0.0-dev` 占位随 ios/ 在 v2.0.0 删除），CI「Version pins untouched」会拦。发版说明只写
   `[Unreleased]` 下。要看你这个 checkout 的版本：`python3 scripts/version_stamp.py`。
 - **测试即判例**：1500+ 条测试钉着历史行为；改坏一条先想想它当初为什么在那。
   运行时依赖白名单 = stdlib + PyYAML，测试侧可加（hypothesis 在 CI 装）。
@@ -63,7 +63,7 @@ cron 的 ingest 链（`ingest/`：export → cleanup → process）把录到的�
 
 ## 防腐十条（结构审查 2026-08-30 制定）
 
-1. **文件上限**：Python 单文件 ≤2,000 行、Swift ≤1,500 行、单函数 ≤300 行、单 class/struct ≤800 行——超线的 PR 必须附拆分计划或在 PR 描述里显式豁免一次。（既有存量超线：mac/Sources/Cards.swift ~2,700 行，规则制定时已在案——不算新违例，动它时按本条附拆分计划。）**机器执法（§58）**：`scripts/qa/hygiene.py`（阈值 truth = qa/gates.toml；存量豁免 truth = qa/hygiene_baseline.txt，shrink-only；范围 act/ server/ scripts/ + shell/*.swift——mac/ 按 D3 豁免）。
+1. **文件上限**：Python 单文件 ≤2,000 行、Swift ≤1,500 行、单函数 ≤300 行、单 class/struct ≤800 行——超线的 PR 必须附拆分计划或在 PR 描述里显式豁免一次。**机器执法（§58）**：`scripts/qa/hygiene.py`（阈值 truth = qa/gates.toml；存量豁免 truth = qa/hygiene_baseline.txt，shrink-only；范围 act/ server/ scripts/ + shell/*.swift）。
 2. **import 方向**：`act/lib/` 只准 import stdlib+PyYAML+同层；entrypoint 互相不 import；跨模块引用 `_私名` = 当场升 public 或抽进共享模块。**机器执法（§58.3）**：`scripts/qa/depgraph.py`（存量豁免 truth = qa/deps_baseline.txt，shrink-only）。
 3. **唯一 LLM 边界**：所有模型调用走 `act/llm.py` 的 `run(prompt, runner=None)` 参数注入；**永久禁止 module-global 注入缝**（`JUDGE_RUNNER` 事故成法）。
 4. **数据不进包、日志必有帽**：Python 包目录内禁止运行时数据文件；任何新 append-only 文件出生当天就带 size-cap 或 retention（照 registry_writes.jsonl 的 1MB self-compaction）。

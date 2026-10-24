@@ -21,7 +21,7 @@ REPO_ROOT = os.path.normpath(
 )
 GATES_FILE = os.path.join(REPO_ROOT, "qa", "gates.toml")
 
-# 扫描范围（§58.1）：tests/ 是白盒判例不设门；mac/ 按 D3 豁免（退役中）。
+# 扫描范围（§58.1）：tests/ 是白盒判例不设门（mac/ 已在 v2.0.0 删除）。
 PY_SCAN_DIRS = ("act", "server", "scripts")
 
 _INT_RE = re.compile(r"-?\d+$")

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""vnext2-plan §8 进度日志 fragments（CONTRACT §56.7；docs/design/progress/）：校验 + 按需渲染成表。
+"""进度日志 fragments（CONTRACT §56.7；docs/design/progress/）：校验 + 按需渲染成表。
 
     python3 scripts/ci/progress_log.py check  [DIR]                  # 全部 fragment 形状合法 → rc 0；否则 ::error:: + rc 1
     python3 scripts/ci/progress_log.py render [DIR] [--plan PATH]    # §8 完整表（plan 里的历史行 + fragments）→ stdout
+
+**v2.0.0 起**：默认计划书改指 `docs/design/lite2-plan.md`（lite 2.0 的 owner 决定；它没有 §8 表，
+render 用默认表头 + fragments）。1.x 的 `docs/design/vnext2-plan.md` §8 是冻结历史（全文在 tag
+`full`）；要看那张旧表：`render --plan docs/design/vnext2-plan.md`（文件还在树里时）。CI 不再拦
+往 vnext2-plan 追加表行（scripts/ci/version_pins_check.py 的该规则随之退役）。
 
 **为什么有它**：`docs/design/vnext2-plan.md` §8 的表每个 PR 追加一行，全部追加在表尾 =
 并行 PR 的相邻行冲突（与 CHANGELOG [Unreleased] 同一类）。自本协议起 §8 里已有的行
@@ -28,7 +33,7 @@ import re
 import sys
 
 PROGRESS_DIR = "docs/design/progress"
-PLAN_FILE = "docs/design/vnext2-plan.md"
+PLAN_FILE = "docs/design/lite2-plan.md"
 KEYS = ("pr", "phase", "law")
 SKIP_NAMES = frozenset({"README.md"})
 DEFAULT_HEADER = ("| 日期 | PR / 分支 | 阶段 | 做了什么 | 法典 |", "|---|---|---|---|---|")
@@ -157,7 +162,7 @@ def _cmd_render(dirpath: str, plan: str, stdout) -> int:
 
 def main(argv=None, stdout=None) -> int:
     stdout = stdout or sys.stdout
-    parser = argparse.ArgumentParser(description="vnext2-plan §8 progress fragments: check / render")
+    parser = argparse.ArgumentParser(description="progress-log fragments: check / render")
     parser.add_argument("cmd", choices=("check", "render"))
     parser.add_argument("dir", nargs="?", default=PROGRESS_DIR)
     parser.add_argument("--plan", default=PLAN_FILE, help="plan file whose §8 rows are the frozen history")

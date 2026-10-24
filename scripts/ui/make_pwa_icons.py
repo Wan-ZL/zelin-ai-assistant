@@ -195,7 +195,7 @@ def pixels(blob):
 
 
 # --------------------------------------------------------------------------- #
-# CLI（--write / --check，与 scripts/ui/parity_fixture.py 同一副手柄）
+# CLI（--write / --check；与 v2.0.0 退役的 parity_fixture.py 同一副手柄）
 # --------------------------------------------------------------------------- #
 def main(argv=None):
     parser = argparse.ArgumentParser(

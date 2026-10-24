@@ -5,6 +5,6 @@ type: removed
 - **模型旋钮 `models.dispatch` 与「跟随 Claude Code 全局默认」模式退役**：旧文件里写着的 `follow` 读作出厂模型；读写 `~/.claude/settings.json` 的代码全部删除。
 - **Slack / Gmail 凭证、通知的卡片类 kind 与分类开关、八个设置 section（slack / gmail / telemetry / digest / approval / flags / voice / maintainer）退役**；设置页对这些 section 回 404，旧 overrides 键照读照忽略。
 - **Linux systemd 与 Windows 计划任务的模板与 doctor 行退役**：lite 2.0 只支持 macOS；`act/launchd/` 只剩看板 server 一个 LaunchAgent 模板。QA 门 `[ui-parity]`（§66）一并退役。
-- **`act/registry/README.md` 删除**（它记录的注册表 schema 随 §1 退役）。示例卡 `act/registry/R-000-example.yaml` 暂留：本地 pre-commit 护栏 1 拦一切 `act/registry/R-*` 路径（含删除），等 owner 决定用 `--no-verify` 提交删除还是改护栏。
+- **`act/registry/README.md` 删除**（它记录的注册表 schema 随 §1 退役）。示例卡 `act/registry/R-000-example.yaml` 在 PR-C 删除，`act/registry/` 整目录不复存在（`.gitignore` 的 `act/registry/R-*.yaml` 规则保留，防 1.x checkout 里残留的真实卡被提交）。
 - **doctor 的 `launchd fd limit` 行退役**（failure id `fd_limit`）：它只读已安装的 actd plist，actd 退役后没有可检查的对象；模板必须带 `SoftResourceLimits.NumberOfFiles` 的要求一并退役（§55 v2.0.0 追记）。
 - **Swift↔Python E2E crypto interop 门退役**：`act/lib/e2e.py` 删除后 `ios/tests/interop/` 无对象；ci.yml 的 macOS 腿去掉该步骤与 `cryptography` 安装，path filter 去掉 `act/lib/e2e.py`，depgraph 的 `cryptography` 白名单同删。七个 required job 名不变；ci.yml 其余 macOS 腿清理仍归 PR-C。

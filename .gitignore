@@ -4,18 +4,18 @@ config/redaction_terms.txt
 # runtime registry entries contain real extracted work data — never commit them
 # (the archive/ subdir too: archived cards are the same real data, and the
 # R-*.yaml pattern does not reach into subdirectories)
+# (v2.0.0: the registry retired with §1 and its fictional example card was removed;
+# the patterns stay so a 1.x checkout's leftover real cards never get committed)
 act/registry/R-*.yaml
 act/registry/archive/
-!act/registry/R-000-example.yaml
 *.log
 .DS_Store
 state/
-mac/build/
 shell/build/
-# SwiftPM build dir of the logic-test package (mac/LogicTests/test.sh)
+# mac/ was removed in v2.0.0; its build outputs (mac/build/, mac/LogicTests/.build/,
+# the vendored mac/Frameworks/) may still sit in a 1.x checkout — keep them ignored.
+mac/build/
 mac/LogicTests/.build/
-# Sparkle.framework + bin/ tools — vendored on demand by mac/scripts/fetch-sparkle.sh,
-# never committed (~30 MB binary; build.sh works fine without it).
 mac/Frameworks/
 __pycache__/
 *.pyc
@@ -26,9 +26,8 @@ promo/node_modules/
 promo/package.json
 promo/package-lock.json
 .coverage
-# Portable release bundles (scripts/package-portable.sh, CONTRACT §56.2) — the
-# built .zip / .tar.gz assets, produced on the release runner and uploaded to
-# the GitHub Release; never committed (防腐 #4: born gitignored).
+# Release bundles built on the release runner (the 1.x portable packager
+# scripts/package-portable.sh retired in v2.0.0); never committed (防腐 #4).
 dist/
 
 # QA instrument outputs (mutation state/reports — CONTRACT §57; 防腐 #4:
@@ -39,9 +38,10 @@ dist/
 # JSON and suggested baselines land here; the committed truth lives in qa/
 .qa-report/
 
-# test-code skill run outputs (skills/test-code; vnext2-plan R2.8) — reports are
-# per-run artifacts; .test-code/baselines/ (shrink-only ledgers) stays committed
-.test-code/reports/
+# test-code / test-ui skill run outputs — the repo copies of those skills (and the
+# .test-code/baselines/ ledgers) retired in v2.0.0; old run dirs stay ignored
+.test-code/
+.test-ui/
 
 # Playwright MCP browser-debug dumps (never commit)
 .playwright-mcp/
@@ -52,20 +52,13 @@ dist/
 act/_version.py
 
 # Claude Code's own runtime files under the project .claude/ (bg-session
-# worktrees, locks, local settings) never enter the repo; the ONE tracked entry
-# is .claude/skills/ — relative symlinks that make the default_enabled store
-# skills project-visible to every session and dispatched agent (CONTRACT §67).
+# worktrees, locks, local settings) never enter the repo. (Until v2.0.0 the
+# .claude/skills/ symlinks into the skill store were tracked; they left with
+# skills/ and §67.)
 .claude/*
-!.claude/skills/
 
-# test-ui skill run outputs (skills/test-ui; vnext2-plan R2.8) — reports and the detached reference
-# worktrees are per-run artifacts; the ledgers it reads live in ui/parity/ and stay committed
-.test-ui/reports/
-.test-ui/cache/
-
-# 全覆盖跑者的报告 R 与每场景日志（scripts/qa/full_coverage.sh，CONTRACT §58）——
-# 每跑一次都重写、体积随日志涨；真源是清单 qa/coverage_inventory.json + 跑一次的命令，
-# 报告本身是产物（要留档时由 integrator 拷去 media 卷）。
+# 报告产物目录（scripts/qa/readme_audit.py --out 的默认落点；v2.0.0 前也是全覆盖跑者
+# full_coverage.sh 的报告目录，那条跑者随 §77 退役）——产物，不进仓库。
 qa/coverage-report/
 
 # hypothesis example database (test cache; was committed by accident in a514b402)

@@ -1,6 +1,6 @@
 """P1-9 sensitive-app capture exclusion — config parsing, export-side SQL
 filter behaviour, and drift guards for the three copies of the default list
-(act/lib/config.py, mac/Sources/Recording.swift, ingest/screenpipe-export.sh
+(act/lib/config.py, shell/Sources/Recording.swift, ingest/screenpipe-export.sh
 python-less fallback, config.example.yaml).
 
 Config files live under the sandbox AIASSISTANT_HOME set in tests/__init__.py;
@@ -131,11 +131,9 @@ class DefaultListDriftTestCase(unittest.TestCase):
     guards fail loudly when someone edits one copy only."""
 
     def test_swift_default_matches_python(self):
-        # two Swift copies while mac/ is frozen-but-present (CONTRACT §61.3):
-        # the shell copy is what actually launches the engine now; the mac one
-        # stays as the read-only reference until P8 deletes it.
-        for rel in [("mac", "Sources", "Recording.swift"),
-                    ("shell", "Sources", "Recording.swift")]:
+        # one Swift copy since v2.0.0 deleted mac/ (CONTRACT §61.3): the shell
+        # copy is what launches the engine.
+        for rel in [("shell", "Sources", "Recording.swift")]:
             with self.subTest(file="/".join(rel)):
                 swift = REPO_ROOT.joinpath(*rel).read_text(encoding="utf-8")
                 block = re.search(
