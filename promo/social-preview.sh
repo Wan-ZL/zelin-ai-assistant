@@ -38,7 +38,7 @@ mkdir -p "$STAGE/promo/build" "$STAGE/docs/assets" "$STAGE/profile"
 cp promo/social-preview.html "$STAGE/promo/"
 cp docs/assets/kanban.png "$STAGE/docs/assets/"
 # app icon (same extraction as promo/prepare.sh)
-sips -s format png -Z 512 mac/AppIcon.icns --out "$STAGE/promo/build/icon.png" >/dev/null
+sips -s format png -Z 512 shell/AppIcon.icns --out "$STAGE/promo/build/icon.png" >/dev/null
 
 # cwd = the stage too (Chrome's helpers resolve cwd; an external-volume cwd is
 # another TCC trip wire). --timeout caps the page-load wait so a stuck
