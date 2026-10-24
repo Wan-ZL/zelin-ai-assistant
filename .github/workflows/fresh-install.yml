@@ -22,7 +22,8 @@
 #      version ok, state_dirs ok, migrate ok (nothing of 1.x here), ui ok (web
 #      + shell both built on this runner), launchd ok with exactly one agent,
 #      cron ok, no step `fail`; stable_claude / claude_bin say "no claude"
-#      when the runner has none;
+#      when the runner has none; and no tracked file is modified (a dirty
+#      checkout is what scripts/upgrade.sh refuses, §79);
 #   2. the closed footprint (§78): `test ! -e $FRESH_HOME/.claude`; the
 #      LaunchAgents directory holds exactly com.zelin.aiassistant.server.plist
 #      (no 1.x Act / radar / digest / auto-deploy / screenpipe-* plist), and
@@ -177,6 +178,15 @@ jobs:
           test -d "$AIASSISTANT_UI_APPS_DIR/Zelin's AI Assistant.app"
           test -d "$HOME/Library/Application Support/ZelinAIAssistant/claude-config/cwd"
 
+      - name: The install leaves no tracked file modified (scripts/upgrade.sh needs a clean tree, §79)
+        run: |
+          DIRTY="$(git -C "$CHECKOUT" status --porcelain --untracked-files=no)"
+          if [ -n "$DIRTY" ]; then
+            echo "::error::install.sh left tracked changes; scripts/upgrade.sh would refuse this checkout as dirty"
+            echo "$DIRTY"; git -C "$CHECKOUT" diff --summary; exit 1
+          fi
+          echo "checkout clean after install"
+
       - name: "Assert the closed footprint (§78) — one agent, one cron line, no ~/.claude"
         env:
           HOME: ${{ env.FRESH_HOME }}
@@ -255,7 +265,17 @@ jobs:
           PY
           test "$rc" -eq 0
           test ! -e "$FRESH_HOME/.claude" || { echo "::error::the doctor created $FRESH_HOME/.claude (art.13)"; exit 1; }
-          test "$(cat "$RUNNER_TEMP/bootstrap-1.rc")" -eq 0 || { echo "::error::bootstrap exited $(cat "$RUNNER_TEMP/bootstrap-1.rc") (install.sh failed steps + doctor broken rows; see its log above)"; exit 1; }
+          # bootstrap's exit = install.sh failed steps + its own doctor's broken rows. The
+          # install half is asserted on the report above and the doctor half right here,
+          # after the server answered; a non-zero bootstrap is accepted only when install.sh
+          # said every step ok (its doctor can race the server's first bind, which stalls on
+          # the runner's reverse DNS; see the health wait above).
+          BRC="$(cat "$RUNNER_TEMP/bootstrap-1.rc")"
+          if [ "$BRC" -ne 0 ]; then
+            grep -q "install.sh: every step ok" "$RUNNER_TEMP/bootstrap-1.log" \
+              || { echo "::error::bootstrap exited $BRC and install.sh reported failed steps (see its log)"; exit 1; }
+            echo "::notice::bootstrap exited $BRC (its doctor ran before the server answered); the doctor above, run after /api/health, is clean"
+          fi
 
       - name: Job summary — what a real Mac still needs from its owner
         # The same text bootstrap.sh prints (act.doctor --fresh-install), rendered from
@@ -295,9 +315,21 @@ jobs:
         run: |
           echo "# local edit that must survive an update" >> "$CHECKOUT/config.yaml"
           before="$(shasum -a 256 "$CHECKOUT/config.yaml")"
-          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --dir "$CHECKOUT" 2>&1 | tee "$RUNNER_TEMP/bootstrap-2.log"
-          test "${PIPESTATUS[0]}" -eq 0
+          rc=0
+          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --dir "$CHECKOUT" > "$RUNNER_TEMP/bootstrap-2.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/bootstrap-2.log"
           grep -q "bootstrap done (updated)" "$RUNNER_TEMP/bootstrap-2.log"
+          grep -q "install.sh: every step ok" "$RUNNER_TEMP/bootstrap-2.log"
+          # the re-install reloads the agent; wait for the server, then the doctor must be clean
+          for _ in $(seq 1 180); do
+            curl -fsS http://127.0.0.1:47820/api/health >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          PY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "$CHECKOUT/config/runtime.json")"
+          (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -m act.doctor --fresh-install --json > "$RUNNER_TEMP/doctor-fresh-2.json") \
+            || { echo "::error::doctor --fresh-install after the update is not clean (bootstrap exit $rc)"; python3 -m json.tool "$RUNNER_TEMP/doctor-fresh-2.json" | head -n 60; exit 1; }
+          [ "$rc" -eq 0 ] || echo "::notice::bootstrap exited $rc (its doctor raced the reloaded server); the doctor after /api/health is clean"
+          test -z "$(git -C "$CHECKOUT" status --porcelain --untracked-files=no | grep -v ' config.yaml$' || true)"
           test "$before" = "$(shasum -a 256 "$CHECKOUT/config.yaml")"
           test "$(git -C "$CHECKOUT" rev-parse --abbrev-ref HEAD)" = "main"
           test "$(ls "$FRESH_HOME/Library/LaunchAgents")" = "com.zelin.aiassistant.server.plist"
@@ -340,5 +372,6 @@ jobs:
             ${{ runner.temp }}/setup.json
             ${{ runner.temp }}/permissions.json
             ${{ runner.temp }}/doctor-fresh.json
+            ${{ runner.temp }}/doctor-fresh-2.json
             ${{ runner.temp }}/fresh-home/Projects/zelin-ai-assistant/state/install_report.json
             ${{ runner.temp }}/fresh-home/Library/Logs/zelin-ai-assistant/*.log
