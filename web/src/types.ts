@@ -1,454 +1,16 @@
-// dashboard.json 投影的 TS 镜像（wire 契约 = live 树 docs/CONTRACT.md §2 + scripts/demo_seed.py）。
-// 铁律：add-only——只加 optional 字段，绝不改名/删字段/收紧类型；未知字段一律保留（索引签名兜底）。
-// 服务端透传 actd 的投影，前端不发明字段。
-
-/** 来源引文（needs_approval/review/debt 共用形状） */
-export interface CardSource {
-  who: string;
-  channel: string;
-  date: string;
-  quote: string;
-  ref?: string;
-  /** §10 add-only（issue #7）：出生 capture 的 inbox stem（`capture-<uuid>` = POST /api/actions 回的 `file` 去掉 .json）；只有出生行带 */
-  capture_id?: string;
-  [key: string]: unknown;
-}
-
-/** 提案卡（needs_approval 分区项；含 raising 占位项 processing=true） */
-export interface ApprovalCard {
-  id: string;
-  title: string;
-  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
-  work_id?: string | null;
-  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
-  display_id?: string;
-  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
-  id_kind?: string;
-  tier: "T0" | "T1" | "T2" | string;
-  /** W17 生效档位（§50）：外部出身恒 "T2"；缺席 = 旧投影，消费端回落 tier */
-  effective_tier?: string;
-  /** 出身章四值词表（§50）；缺章整键省略 */
-  origin_trust?: string;
-  tier_hint?: string;
-  hardness?: string;
-  deadline?: string | null;
-  days_left?: number | null;
-  repeated?: number;
-  cost_usd?: number | null;
-  show_cost: boolean;
-  green_sign?: boolean;
-  disagreement?: string | null;
-  improvement_of?: string | null;
-  processing: boolean;
-  sources: CardSource[];
-  plan: string[];
-  dod: string[];
-  outputs?: string[];
-  delivery_mode?: "chat" | "repo" | string;
-  reraised?: boolean;
-  reraised_note?: string;
-  /** §7 落点三元组：target_kind "new"（新建 repo）/ "existing"（改现有；basename 以 your-workbench 结尾 = 只出文档） */
-  target_repo?: string | null;
-  target_name?: string | null;
-  target_kind?: "new" | "existing" | string | null;
-  /** §7 add-only（issue #11）：批准即出机的后果；kind 开放枚举，今日唯一值 github_repo_create（缺席 = 旧 server） */
-  egress?: EgressRow[];
-  /** §10 add-only（issue #7）：卡级 capture_id（= 出生 sources[].capture_id）——占位行与提案行都带；非 capture 出身的卡缺席 */
-  capture_id?: string;
-  /** §44 静默并入次数（0 = 从未）——原生「已并入×N」紫章 */
-  silent_merged?: number;
-  /** §76.2 结算信号：截止日已到（days_left ≤ 0）仍挂在提案列 → 卡面出决策提示 */
-  decision_due?: boolean;
-  /** §76.2 结算信号：被提 ≥ approval.mention_escalation 次仍未处理 → 被提×N 章转红「仍未处理」 */
-  mention_escalated?: boolean;
-  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号；状态永远没变过） */
-  completion_hint?: CompletionHint;
-  /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
-  cost_state?: string;
-  /** §37 展示名 / 曾用名——提案是摘要优先面：卡面标题走 cardHeadline（钦定名 > summary > display_title > title），
-   *  不是 running 族的 rowTitle（display_title 优先） */
-  display_title?: string;
-  /** §37 用户钦定标记（server 只在为真时发键）：为真时 display_title 压过 summary 成为卡面标题 */
-  user_titled?: boolean;
-  former_titles?: string[];
-  [key: string]: unknown;
-}
+// server wire 形的 TS 镜像（v2.0.0：数据源 = 本机看板 server 的各条 GET 路由，server/*.py 的快照函数逐字；
+// dashboard.json 投影与它的卡片 / 看板类型随 Act 管线退役，全文见 tag full）。
+// 铁律：add-only——只加 optional 字段，绝不改名 / 收紧类型；未知字段一律保留（索引签名兜底）。
+// 退役的整族字段（art.6 v2.0 条款）从这里一并删掉：client 不替 server 记已经不存在的东西。
 
 /**
- * 「疑似已完成」证据（needs_approval 项 `completion_hint`，CONTRACT §76.2 issue #313）。
- * 字段逐字镜像 wire：at = epoch 秒（缺失 null）、note = 证据一句话、channel = 证据来路。
- * 它**只是提示**：卡的 status 没有变过，归档 / 记为已交付仍是 owner 的一次点击。
- */
-export interface CompletionHint {
-  at?: number | null;
-  note?: string;
-  channel?: string;
-  [key: string]: unknown;
-}
-
-/**
- * 出机后果行（needs_approval 项 `egress[]`，CONTRACT §7 issue #11）。kind 开放枚举：
- * github_repo_create（批准后 `gh repo create <target> --private` + 推送派生内容）；
- * 未知 kind 按 kind 原文降级显示，永不吞掉——披露宁多勿少。
- */
-export interface EgressRow {
-  kind: string;
-  target?: string | null;
-  visibility?: string | null;
-  [key: string]: unknown;
-}
-
-/**
- * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
- * docs/CONTRACT.md §51（可能缺席，也可能是纯字符串——UI 经 steer.ts 双兼容
- * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id=前置卡主键）/
- * concurrency（等并发位）/ asleep（§71.1 等电脑醒来）；waiting_budget retired
- * v0.48.7（D9）。
- */
-export interface QueuedReason {
-  kind: string;
-  detail?: string | null;
-  /** 前置卡主键（lineage 口径） */
-  blocking_id?: string | null;
-  /** §60 add-only：前置卡的展示编号（work_id ?? id）——chip 文案用它，缺席回落 blocking_id */
-  blocking_display_id?: string | null;
-  [key: string]: unknown;
-}
-
-/**
- * steer 回执行（executing 卡上的 owner 方向修正，经 §44.3 briefing 机制中继；
- * add-only optional，wire 真源 = vnext-amendments.md §M6.1）。
- * status 诚实三态：queued（已排队未注入）/ delivered（已送达会话）/
- * dropped（3 次注入失败放弃，§39 trace 留痕）。
- */
-export interface SteerNote {
-  ts: string;
-  text?: string;
-  status?: "queued" | "delivered" | "dropped" | string;
-  delivered_at?: string | null;
-  [key: string]: unknown;
-}
-
-/** §64（issue #128）AI 一句话摘要 + 完成度评语——server 只在有摘要或评语时才发整键；
- *  只是建议：客户端只渲染，验收/打回仍是人按的按钮。verdict 是开放枚举，三个已知值见 VERDICTS */
-export interface CardAssessment {
-  summary?: string | null;
-  verdict?: string | null;
-  verdict_reason?: string | null;
-  /** 评语生成时刻（epoch 秒） */
-  at?: number | null;
-}
-
-/** 运行中/需输入/已完成 分区项（running 混入 state="queued" 的排队项，无 session_id） */
-export interface TaskRow {
-  id: string;
-  /** §37 会话行的名字 = 卡此刻的显示名（server `_session_name`，不是冻结 title） */
-  name: string;
-  /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
-  title?: string;
-  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
-  work_id?: string | null;
-  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
-  display_id?: string;
-  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
-  id_kind?: string;
-  state: "queued" | "working" | "blocked" | "done" | string;
-  session_id?: string;
-  short_id?: string;
-  copy_cmd?: string;
-  cwd?: string;
-  started_at?: number;
-  dispatched_at?: number;
-  /** §71.2 这一轮至今电脑睡掉的秒数（缺席 = 没睡过） */
-  slept_seconds?: number;
-  accepted_at?: number;
-  summary?: string;
-  plan?: string[];
-  dod?: string[];
-  log?: string;
-  delivery_mode?: string;
-  last_error?: string;
-  dispatch_error?: string | null;
-  waiting_for?: string;
-  resume_exhausted?: boolean;
-  /** §4 派发风暴刹车：approved 卡连续派发失败 N 次后停止重试，投影为 blocked 行（wire key 逐字镜像） */
-  dispatch_halted?: boolean;
-  dispatch_attempts?: number;
-  delivered_summary?: string;
-  queued_reason?: QueuedReason | string | null;
-  steers?: SteerNote[];
-  /** §30 待验收卡因会话再活跃投影回运行中——原生「已交付过·再运行」青章 */
-  from_review?: boolean;
-  /** §25 错误分类 id（null = 未分类）——RunningCard 据此从 store.failures 挑人话句 + 对症按钮（§25 追记 2026-09-05） */
-  last_error_id?: string | null;
-  dispatch_error_id?: string | null;
-  agent_name?: string | null;
-  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（CLI 改不了运行中会话的名字，下次 resume 才跟上）——
-   *  只发给还能再 resume 的行；已验收行（completed）不发这个键 */
-  agent_name_stale?: boolean;
-  question?: string | null;
-  display_title?: string;
-  former_titles?: string[];
-  /** §64 AI 摘要 + 评语（阶段性完成卡只用 summary 一句） */
-  assessment?: CardAssessment | null;
-  [key: string]: unknown;
-}
-
-/** §65.3 self_improve 卡的 gh 物理核验结果（review 行 `delivery`，wire key 逐字镜像 execution.delivery） */
-export interface Delivery {
-  verified: boolean;
-  reason?: string | null;
-  branch?: string;
-  pr_number?: number | null;
-  pr_url?: string | null;
-  pr_draft?: boolean | null;
-  pr_state?: string | null;
-  changed_files?: number;
-  sensitive_paths?: string[];
-  [key: string]: unknown;
-}
-
-/** §65 顶层 `self_improve`：自动草稿 PR 通道的开关 + 暂停状态（敏感路径护栏） */
-export interface SelfImproveState {
-  enabled: boolean;
-  paused: boolean;
-  paused_reason?: string | null;
-  paused_pr?: number | null;
-  paused_pr_url?: string | null;
-  paused_paths?: string[];
-  paused_at?: string | null;
-  [key: string]: unknown;
-}
-
-/** 待验收卡（review 分区项） */
-export interface ReviewCard {
-  id: string;
-  /** §37 会话行的名字 = 卡此刻的显示名（server `_session_name`，不是冻结 title） */
-  name: string;
-  /** §2 追记：卡出生时那句冻结原话（`name` 不再捎带它）——§37.2 搜索词表的一维 */
-  title?: string;
-  /** §65.3 self_improve 卡才有：草稿 PR 核验结果 */
-  delivery?: Delivery;
-  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
-  work_id?: string | null;
-  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
-  display_id?: string;
-  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
-  id_kind?: string;
-  delivered_summary?: string;
-  final_draft?: string | null;
-  plan?: string[];
-  dod: string[];
-  sources?: CardSource[];
-  log?: string;
-  dispatched_at?: number;
-  review_at?: number;
-  /** §71.2 这一轮耗时里电脑睡掉的秒数（缺席 = 没睡过；卡面「其中 N 小时电脑睡眠」） */
-  slept_seconds?: number;
-  delivery_mode: "chat" | "repo" | string;
-  /** 原生 ReviewRow meta 行：cwd basename 章 / 会话有新活动；copy_cmd = 双击整卡接管的「有没有会话」判据 + 详情侧栏「复制接管指令」的正文（D36：卡面不再渲染指令行） */
-  cwd?: string;
-  copy_cmd?: string | null;
-  session_active?: boolean;
-  summary?: string | null;
-  agent_name?: string | null;
-  /** §37.1 追记：roster 上这条会话的名字已经跟不上卡名了（下次 resume 才跟上）——
-   *  只发给还能再 resume 的行；已验收行（completed）不发这个键 */
-  agent_name_stale?: boolean;
-  display_title?: string;
-  /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
-  assessment?: CardAssessment | null;
-  /** §2 追记 / D74：来源全为 self_improve 的机器卡（🤖）；人卡与老 server 的行**整键缺席**，
-   *  列头「隐藏 🤖」因此只藏带这个键的行（taskFilters 的跨分区语义） */
-  self_improve?: boolean;
-  [key: string]: unknown;
-}
-
-/** 欠账/备选卡（debt 分区项，v0.17 起展示层叫「潜在任务/Backlog」） */
-export interface DebtCard {
-  id: string;
-  title: string;
-  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
-  work_id?: string | null;
-  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
-  display_id?: string;
-  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
-  id_kind?: string;
-  hardness?: string;
-  type?: string;
-  sources?: CardSource[];
-  summary?: string;
-  /** §76.2 结算信号：雷达盖的「疑似已完成」证据（缺席 = 没有完成信号）。备选卡的出口是
-   *  「永久完成（封存）」/「删除」——状态永远没变过，拍板仍是 owner 的一次点击 */
-  completion_hint?: CompletionHint;
-  /** §37 摘要优先面（原生 DebtRow displaySummary）：卡面标题走 cardHeadline */
-  display_title?: string;
-  user_titled?: boolean;
-  [key: string]: unknown;
-}
-
-/** 永久性完成行（archived[] 分区，§5 v0.20.0：镜像回收站行 + 封存簿记；dashboard.py _archived_view） */
-export interface ArchivedRow {
-  id: string;
-  title: string;
-  summary?: string;
-  kind?: "suggestion" | "debt" | string;
-  archived_at?: string | null;
-  archive_reason?: "user" | "auto" | string | null;
-  prev_status?: string | null;
-  type?: string;
-  hardness?: string;
-  /** §37 摘要优先面（原生 ArchiveRow displaySummary）：行标题走 cardHeadline */
-  display_title?: string;
-  user_titled?: boolean;
-  [key: string]: unknown;
-}
-
-/** 回收站行（§9 + §40.5：purge_at 为 null/缺失 = 不会自动清，不显示倒计时） */
-export interface TrashRow {
-  id: string;
-  title: string;
-  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
-  work_id?: string | null;
-  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
-  display_id?: string;
-  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
-  id_kind?: string;
-  permanent: boolean;
-  trashed_at: string;
-  summary?: string;
-  kind?: "suggestion" | "debt" | string;
-  trash_reason?: "rejected" | "deleted" | string;
-  type?: string;
-  hardness?: string;
-  purge_at?: string | null;
-  /** §37 摘要优先面（原生 TrashRow displaySummary；trash/archived 行只解码这两键）：行标题走 cardHeadline */
-  display_title?: string;
-  user_titled?: boolean;
-  [key: string]: unknown;
-}
-
-/**
- * §56 合并即上岗：scripts/auto-deploy.sh 最近一次运行的结果（dashboard add-only
- * 顶层键 deploy_state；字段逐字镜像 wire key，全部 string）。status 已知值：
- * deployed | up_to_date | rolled_back | rollback_failed | refused_dirty |
- * refused_branch | fetch_failed | ci_pending | ci_failed | failed |
- * install_incomplete | blocked_tcc —— 未知值按"需要人看"处理。v0.48.20 add-only：
- * running_version（actd 心跳里的版本）/ install_report_version / reason /
- * last_incident（上一次回滚判决「<ts> <status>: <detail>」，healthy 状态下仍在 =
- * 回滚被拒后没人看过，直到下一次 deployed 才清）。2026-09-03 add-only：
- * behind_main / behind_main_why（上一次部署停在 origin/main head 之前的最新绿 commit，
- * head 的 CI 还没绿 / 红了 / 已中毒；部署到 head 或 up_to_date 时清掉）。2026-09-07
- * add-only（§56.3 会话闸门）：status `deferred` + deferred_reason（sessions_running |
- * roster_unknown）/ deferred_sessions（挡住部署的活会话数）/ deferred_since（本轮
- * 延后首次的时间戳——顶栏按它算「已 X 小时」）。
- */
-export interface DeployState {
-  status?: string;
-  version?: string;
-  head?: string;
-  prev?: string;
-  last_deployed?: string;
-  last_run?: string;
-  detail?: string;
-  failed_sha?: string;
-  running_version?: string;
-  install_report_version?: string;
-  reason?: string;
-  last_incident?: string;
-  behind_main?: string;
-  behind_main_why?: string;
-  deferred_reason?: string;
-  deferred_sessions?: string;
-  deferred_since?: string;
-  [key: string]: unknown;
-}
-
-/**
- * §70 每日自我改进循环的投影（dashboard add-only 顶层键 maintenance；act/lib/daily_loop.projection）。
- * phase 已知值：idle | dedup | stale_sweep | proposals（未知值按「在跑」显示）；时间全是 epoch 秒或 null。
- * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数；
- * advisories（D33）= 自检类信号——不铸卡，只在横幅里列出来（kind / text / ref / fingerprint / first_seen 逐字镜像 wire）。
- */
-export interface MaintenanceAdvisory {
-  kind: string;
-  text: string;
-  ref?: string;
-  fingerprint?: string;
-  first_seen?: string;
-  [key: string]: unknown;
-}
-
-export interface Maintenance {
-  phase: string;
-  started_at: number | null;
-  last_run_at: number | null;
-  next_run_at?: number | null;
-  last_result: {
-    merged: number;
-    trashed: number;
-    proposals: number;
-    summaries?: number;
-    errors?: number;
-    advisories?: MaintenanceAdvisory[];
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-/** 看板投影顶层（GET /api/board = dashboard.json 原样透传） */
-export interface Board {
-  generated_at: string;
-  counts: Record<string, number>;
-  needs_approval: ApprovalCard[];
-  running: TaskRow[];
-  needs_input: TaskRow[];
-  review: ReviewCard[];
-  completed: TaskRow[];
-  debt: DebtCard[];
-  trash: TrashRow[];
-  archived?: ArchivedRow[];
-  /** §21 合并建议作业（analyzing/done/failed）；旧 server 缺席 */
-  merge_suggestions?: MergeSuggestion[];
-  update_available?: unknown;
-  device_label?: string;
-  deploy_state?: DeployState;
-  /** §70 每日整理投影（add-only；旧 server 缺席）——顶部横幅读它 */
-  maintenance?: Maintenance;
-  /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
-  recaps?: RecapRow[];
-  /** §63.5 追记（issue #301）三栏的**真实**总数（add-only；老 daemon 缺席 = 整键不在） */
-  recap_counts?: RecapLaneTotals;
-  /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
-  self_improve?: SelfImproveState;
-  /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
-  radar_sources?: Record<string, RadarSourceHealth>;
-  /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——提案列顶一行 info 通知 */
-  fold_receipts?: FoldReceipt[];
-  [key: string]: unknown;
-}
-
-/** §44.6 并入回执行（dashboard._fold_receipts 的 wire 形逐字镜像）：只有目标卡 id + 展示名，永不带被并入原文 */
-export interface FoldReceipt {
-  id: string;
-  req: string;
-  title: string;
-  channel: string;
-  at: number;
-  /** §44.6 追记（#308）：同一张卡在 TTL 窗口内的并入次数（add-only；老 server 缺席 = 1，不渲染 ×N） */
-  count?: number;
-  [key: string]: unknown;
-}
-
-/**
- * §63 会议 recap 行（dashboard.json 顶层 recaps[] 的元素 = act/lib/recap_store 投影，
+ * §63 会议 recap 行（`GET /api/recaps` 的 `recaps[]` 元素 = act/lib/recap_store 投影，
  * wire key 逐字镜像）。status open = 进行中（无正文）；en/zh = 5 行纯文本（null =
  * 未生成 / 无音频 / 转写不全 / 生成失败，看 quality）；copied_at / sent_at /
- * dismissed_at = server 本地标记（marks.json）；slack_draft = §63.4 草稿投递回执；
- * generate_request = §63.8 「重新生成」回执（行上「生成中」的真源）。
- * §63.5 追记（issue #301）：旧注「无控制流读它」自此失效——sent_at（= 已归档，派生，
- * 取消标记即回到活跃）与 dismissed_at 决定行落在哪一栏，并在 daemon 侧决定已忽略的
- * 保留期；marks 仍不进 registry、不触发任何发送 / 派发 / 卡片状态机。
+ * dismissed_at = server 本地标记（marks.json）；generate_request = §63.8 「重新生成」
+ * 回执（行上「生成中」的真源）。
+ * §63.5 追记（issue #301）：sent_at（= 已归档，派生，取消标记即回到活跃）与 dismissed_at
+ * 决定行落在哪一栏，并在 recap 侧决定已忽略的保留期；marks 不触发任何发送。
  */
 export interface RecapRow {
   key: string;
@@ -487,12 +49,8 @@ export interface RecapRow {
   sent_at?: string | null;
   /** §63.5 追记 已忽略的时刻（add-only；没忽略过 = null，老 daemon 无此键）——与 sent_at 一起决定分栏 */
   dismissed_at?: string | null;
-  slack_draft?: {
-    status: string;
-    channel_link?: string | null;
-    at?: string | null;
-    [key: string]: unknown;
-  } | null;
+  /** §63.4 Slack 草稿回执——v2.0.0 退役（§78 隔离下的 claude 没有 Slack MCP），recap_store 恒发 null；页面不读 */
+  slack_draft?: null;
   /** §63.8 「重新生成 / 现在生成」回执（add-only；没请求过 / 过了 TTL = null；老 daemon 无此键） */
   generate_request?: RecapGenerateRequest | null;
   /** §63.3 追记 校验未通过的结构化原因（add-only；clean = []；老 daemon 无此键）——永不含正文 */
@@ -508,6 +66,32 @@ export interface RecapRow {
   /** §63.12 这个 key 的逐条标签计数器 `{字母: 发到第几号}`（add-only，单调、永不复用）——
    *  页面不读它（标签本身在正文与 `sections_*[].tags` 里），镜像它只为不撒谎 */
   tag_seq?: Record<string, number> | null;
+  [key: string]: unknown;
+}
+
+/** `GET /api/recaps`（§63.5，server/recaps.list_recaps）：两份预算切过的行 + 三栏真实总数 */
+export interface RecapsSnapshot {
+  recaps: RecapRow[];
+  recap_counts?: RecapLaneTotals;
+  [key: string]: unknown;
+}
+
+/** `POST /api/recaps/generate` 回执（§63.8）：launch = running（已派生 act.recap）| noop（派生失败，行显示 launch_failed） */
+export interface RecapGenerateReceipt {
+  ok: boolean;
+  key: string;
+  launch: "running" | "noop" | string;
+  requested_at: string;
+  generate_request: RecapGenerateRequest | null;
+  [key: string]: unknown;
+}
+
+/** `POST /api/recaps/revert` 回执（§63.9）：版本存不存在由加锁的写者（act/recap.revert）判 */
+export interface RecapRevertReceipt {
+  ok: boolean;
+  key: string;
+  version: number;
+  launch: "running" | "noop" | string;
   [key: string]: unknown;
 }
 
@@ -597,7 +181,7 @@ export interface RecapRepair {
 
 /**
  * §63.8 生成请求回执（act/lib/recap_requests.projection 的 wire 形逐字镜像；与 §48.7 test_round 同形）：
- * running = actd 起了子进程、新版本还没落地；done = 文件的 generated_at ≥ requested_at；
+ * running = server 派生了 act.recap、新版本还没落地；done = 文件的 generated_at ≥ requested_at；
  * lost = 超过 10 分钟仍无新版本；noop = 子进程没起来（note = launch_failed）。
  */
 export interface RecapGenerateRequest {
@@ -657,8 +241,7 @@ export interface RecapHistory {
 export interface RecapSettings {
   enabled: boolean;
   default_language: "auto" | "zh" | "en" | string;
-  slack_draft_enabled: boolean;
-  /** §63.10 出厂形状（只读：config.yaml 层，PUT 仍只认三把旋钮）——形状选择器的初值 */
+  /** §63.10 出厂形状（只读：config.yaml 层，PUT 只认两把旋钮）——形状选择器的初值 */
   default_shape: "lines" | "sections" | string;
   languages: string[];
   source: { [key: string]: unknown };
@@ -689,7 +272,7 @@ export interface DisplaySettingsPatch {
 export type RecapMarkKind = "copied" | "sent" | "dismissed";
 
 /**
- * §63.5 追记（issue #301）dashboard.json 顶层 `recap_counts`：三栏各自的**真实**总数，
+ * §63.5 追记（issue #301）`GET /api/recaps` 的 `recap_counts`：三栏各自的**真实**总数，
  * 在 `recaps[]` 被两份预算切之前算（act/lib/recap_store.lane_counts）。键 = 栏 slug
  * （`recap_store.RECAP_LANES` 逐字镜像）。页面拿它减掉实际收到的行数，说出「另有 N 条
  * 更早的没列在这一栏」——上限是硬上限，但不许悄悄少东西（宪法第 3 条）。
@@ -712,220 +295,32 @@ export interface RecapMarkReceipt {
   [key: string]: unknown;
 }
 
-/** GET /api/lanes（CONTRACT §54）：列说明文案的 server-owned 目录——web 列头「?」气泡逐字镜像，按 UI 语言取 zh / en */
-export interface LaneCatalogEntry {
-  slug: string;
-  help: { zh: string; en: string; [key: string]: unknown };
-  [key: string]: unknown;
-}
-
-export interface LaneCatalog {
-  lanes: LaneCatalogEntry[];
-  [key: string]: unknown;
-}
-
-/** POST /api/ai-fix 回执（§54 让 AI 修）：server 已在 Terminal 打开修复会话；command_file = 生成的 .command 路径 */
-export interface AiFixReceipt {
-  ok: boolean;
-  command_file?: string;
-  [key: string]: unknown;
-}
-
-/** GET /api/cards/{id} = 投影行 + registry YAML 只读增补（add-only 合并，字段名同投影） */
-export type CardDetail = Record<string, unknown> & { id: string };
-
-/** GET /api/health（CONTRACT §47.4）：管线活性——server/health.py 的 wire 形逐字镜像 */
+/** GET /api/health（§49，v2.0.0）：活性 = server 在答 + cron ingest 链的探针新鲜度 + 上次 recap 轮次——
+ *  server/health.py 的 wire 形逐字镜像（v1 的 actd 心跳 / 看板新鲜度 / 连崩计数随 actd 退役） */
 export interface HealthSnapshot {
-  verdict: "ok" | "unknown" | "stale" | "stalled" | "failing" | string;
-  heartbeat: {
-    age_s: number;
-    phase: string | null;
-    pid: number | null;
-    interval: number | null;
-    stale_after_s: number;
-    stale: boolean;
-  } | null;
-  dashboard: { generated_at: string; age_s: number; stale: boolean } | null;
-  loop_health: { consecutive_failures: number; last_error: string | null };
+  verdict: "ok" | "unknown" | "stale" | string;
+  server: { ok: boolean; [key: string]: unknown };
+  /** state/cron_probe.json 的年龄；null = 链从没跑过 */
+  cron: { age_s: number; read_ok: boolean | null; stale: boolean; [key: string]: unknown } | null;
+  /** state/recap/sessions.json 的 updated_at；null = act.recap 从没跑完一轮 */
+  recap: { updated_at: string; age_s: number; [key: string]: unknown } | null;
   checked_at: string;
   [key: string]: unknown;
 }
 
-/** GET/PUT /api/settings/models（CONTRACT §59，D22 + D53）：server/settings.py models_snapshot 的 wire 形逐字镜像。
- *  dispatch/pipeline = "follow" 或显式模型 id；fallback（D53）= "off" 或模型 id（headless 调用的 --fallback-model）；
- *  off / fallback_default = server 给的哨兵与出厂值；canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告 */
+/** GET/PUT /api/settings/models（§59）：server/settings.py models_snapshot 的 wire 形逐字镜像。
+ *  pipeline = 模型 id；fallback = "off" 或模型 id（headless 调用的 --fallback-model）；off / *_default = server 给的哨兵与出厂值；
+ *  canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告。v2.0.0：dispatch 旋钮与 "follow"（跟随 Claude Code
+ *  全局默认）随 Act 管线与 §78 隔离退役 */
 export interface ModelsSettings {
-  dispatch: string;
   pipeline: string;
   fallback: string;
-  follow: string;
   off: string;
+  pipeline_default?: string;
   fallback_default: string;
   canonical: string[];
-  source: { dispatch?: string; pipeline?: string; fallback?: string; [key: string]: unknown };
+  source: { pipeline?: string; fallback?: string; [key: string]: unknown };
   warnings: string[];
-  [key: string]: unknown;
-}
-
-/** GET /api/claude-code/default-model（§59）：follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json `model`） */
-export interface ClaudeCodeDefault {
-  model: string | null;
-  path: string;
-  exists: boolean;
-  parseable: boolean;
-  canonical: boolean;
-  [key: string]: unknown;
-}
-
-/** GET/PUT /api/settings/daily-loop（CONTRACT §70，D10）：server/settings.py daily_loop_snapshot 的 wire 形逐字镜像。
- *  time = 本地 HH:MM；三个天数/张数都是非负整数（0 = 关掉那一项）；source = 每个字段的生效来源 override|config|default */
-export interface DailyLoopSettings {
-  enabled: boolean;
-  time: string;
-  max_proposals_per_day: number;
-  stale_days: number;
-  trash_retention_days: number;
-  /** §70.2 追记 / D74：待验收列闲置多少天算过时（先一条汇总通知，下一轮归档）；0 = 关 */
-  review_stale_days: number;
-  source: { [key: string]: unknown };
-  [key: string]: unknown;
-}
-
-/** PUT /api/settings/daily-loop 的 body：六键任意子集 */
-export type DailyLoopPatch = Partial<Pick<DailyLoopSettings,
-  "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days"
-  | "review_stale_days">>;
-
-/** POST /api/claude-code/default-model 的回执（只改 model 键；backup = 改前副本路径，文件原本不存在时为 null） */
-export interface ClaudeCodeDefaultWrite {
-  model: string;
-  previous: string | null;
-  backup: string | null;
-  path: string;
-  [key: string]: unknown;
-}
-
-/** 素材库一条记录（CONTRACT §62.2；act/lib/materials.py 台账行的 wire 形逐字镜像）。
- *  status 词表 new | picked_up | proposal_created | pr_opened | done | dismissed（开放枚举：未知值原样展示）；
- *  links = 循环回填的 proposal_id / pr_url */
-export interface MaterialItem {
-  id: string;
-  ts: string;
-  created_at: string;
-  url: string;
-  note: string;
-  status: string;
-  links: { proposal_id?: string; pr_url?: string; [key: string]: unknown };
-  [key: string]: unknown;
-}
-
-/** GET /api/materials/list?status=…（§62.4）：items 按创建时间新→旧；status = 生效的过滤名；counts 反映全量台账 */
-export interface MaterialsList {
-  items: MaterialItem[];
-  status: string;
-  counts: { open: number; total: number; [key: string]: unknown };
-  [key: string]: unknown;
-}
-
-/** GET /api/skills 的一行（CONTRACT §67）：act/lib/skills.Store.inspect 的 wire 形逐字镜像（add-only）。
- *  state = disabled | enabled | copy | custom | foreign；toggle = enable | disable | locked；
- *  relation/distance = 本机副本相对仓库版本的 same | behind | ahead | unknown 与「N 版」距离 */
-export interface SkillRow {
-  name: string;
-  version: string;
-  upstream: string | null;
-  upstream_version: string | null;
-  default_enabled: boolean;
-  description: string;
-  path: string;
-  target: string;
-  link: string;
-  state: string;
-  stale_target: boolean;
-  installed_version: string | null;
-  relation: string;
-  distance: number;
-  decision: string | null;
-  project_visible: boolean;
-  toggle: string;
-  [key: string]: unknown;
-}
-
-/** GET /api/skills 快照 = POST /api/skills 回执（§67） */
-export interface SkillsSnapshot {
-  skills: SkillRow[];
-  skills_dir: string;
-  repo_skills_dir: string;
-  state_path: string;
-  [key: string]: unknown;
-}
-
-// ----- §21 合并建议（merge_suggestions 分区；dashboard.py _merge_suggestions 的 wire 形逐字镜像） ----- #
-/** MS-xxxx 作业投影：analyzing / done / failed（dismissed 不发）；verdict/primary/rationale/action_plan 仅 done 时齐备 */
-export interface MergeSuggestion {
-  id: string;
-  ids: string[];
-  status: "analyzing" | "done" | "failed" | string;
-  verdict?: "merge" | "link_improvement" | "keep_separate" | "close_secondary" | "partition" | string | null;
-  primary?: string | null;
-  rationale?: string | null;
-  action_plan?: string[];
-  confidence?: "high" | "medium" | "low" | string | null;
-  error?: string | null;
-  requested_at?: number | null;
-  /** §21ter partition 分组方案（仅 partition verdict 携带） */
-  groups?: Array<{ primary: string; ids: string[]; reason?: string | null; [key: string]: unknown }>;
-  [key: string]: unknown;
-}
-
-/** §48.7「立即测试一轮」回执（radar_sources.<src>.test_round；actd 台账 × health 的纯投影）：
- *  running = 子进程起了、雷达还没落笔；done = 请求之后 health 有新一轮；noop = 没起（note: disabled /
- *  launch_failed）；lost = 超时仍无落笔 */
-export interface RadarTestRound {
-  requested_at: string;
-  state: "running" | "done" | "noop" | "lost" | string;
-  note: string | null;
-  [key: string]: unknown;
-}
-
-/** §48 radar_sources 投影（dashboard 顶层键）：每源 enabled / last_ok / skip_reason / stale
- *  + §48.7 add-only last_attempt（原生「最近一轮 <相对时间>」）/ test_round
- *  + §48.4 add-only intent / secret_present（意愿信号；setup 类 / Slack token 类诊断卡的资格） */
-export interface RadarSourceHealth {
-  enabled: boolean;
-  last_ok?: string | null;
-  skip_reason?: string | null;
-  stale?: boolean;
-  last_attempt?: string | null;
-  test_round?: RadarTestRound | null;
-  /** 碰过开关（overrides 里有 <src>_enabled / features.<src>_radar）/ 凭证文件在 / 凭证非空；缺 = 旧 payload = 老判据 */
-  intent?: boolean;
-  /** §19 凭证非空（slack user token / gmail 应用密码；obsidian 恒 false） */
-  secret_present?: boolean;
-  [key: string]: unknown;
-}
-
-/** GET /api/radars（§48.7）：每源的 launchd agent 状态——loaded 问 launchd 本人（非 darwin 为 null），
- *  interval_s 读模板 StartInterval（原生「已安装，每 N 分钟自动运行」的 N） */
-export interface RadarAgentStatus {
-  label: string;
-  interval_s: number | null;
-  loaded: boolean | null;
-  plist_installed: boolean;
-  [key: string]: unknown;
-}
-
-export interface RadarAgentsSnapshot {
-  radars: Record<string, RadarAgentStatus>;
-  [key: string]: unknown;
-}
-
-/** POST /api/radars/reinstall 回执（§48.7）：install.sh --reinstall-agent 跑完后再问一次 launchd */
-export interface RadarReinstallReceipt {
-  ok: boolean;
-  source: string;
-  label: string;
-  loaded: boolean;
   [key: string]: unknown;
 }
 
@@ -999,53 +394,11 @@ export interface SecretStatus {
   mtime: number | null;
   /** add-only（§68.3 2026-09-03 追记）：secrets 文件缺席但 §19 第二 / 三层旧路径的文件非空 = 原生「使用旧路径」态；老 server 缺席 */
   legacy?: boolean;
-  /** PUT 回执 add-only（§68.3 2026-09-05 追记）：豆包语音凭证识别为旧版 App ID + Access Token 对；GET 行不带 */
-  legacy_pair?: boolean;
   [key: string]: unknown;
 }
 
 export interface SecretsStatus {
   secrets: SecretStatus[];
-  [key: string]: unknown;
-}
-
-/** GET /api/sync（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码（PNG base64；开着才带回） */
-export interface SyncStatus {
-  enabled: boolean;
-  channel_id: string;
-  label: string;           // state/sync.json 里的设备名（从未命名 = ""）
-  default_label: string;   // 这台 Mac 的主机名（预填）
-  qr_png_base64: string | null;
-  [key: string]: unknown;
-}
-
-/** POST /api/sync/pair 回执：ok:true 带 channel / label / registered / 二维码；ok:false 带 error（no_python | pair_failed）+ message */
-export interface SyncPairReceipt {
-  ok: boolean;
-  channel_id?: string;
-  label?: string;
-  registered?: boolean;
-  qr_png_base64?: string | null;
-  error?: string;
-  message?: string;
-  [key: string]: unknown;
-}
-
-/** POST /api/sync/disable 回执 = ok + 快照（失败带 error / message） */
-export interface SyncDisableReceipt extends SyncStatus {
-  ok: boolean;
-  error?: string;
-  message?: string;
-}
-
-/** GET /api/voice（§68.1 追记）：语气档案两级候选的在场性 + 开关 */
-export interface VoiceProfileStatus {
-  enabled: boolean;
-  private_path: string;
-  private_exists: boolean;
-  default_path: string;
-  default_exists: boolean;
-  effective_path: string | null;
   [key: string]: unknown;
 }
 
@@ -1122,124 +475,12 @@ export interface ScreenpipeDisk {
   [key: string]: unknown;
 }
 
-/** GET /api/worktrees[?refresh=1]（§75.4，issue #315）：`.claude/worktrees/` 的清点。`state` computing = 首次、后台还在扫
- *  （数字全 null）；ready = 缓存快照；error = 后台算失败。`bytes` = 托管根目录 du 之和，量不到 = null + `bytes_partial`
- *  （不虚报 0）。`verdict` remove = 本轮会被清掉、reason 是理由（merged / gone / stale）；keep 的 reason 是守卫名
- *  （main / missing / locked / live / dirty / unpushed / active / budget / cap）——两份词表 truth = act/lib/worktrees.py。 */
-export interface WorktreeRow {
-  path: string;
-  name: string;
-  branch: string;
-  head: string;
-  locked: boolean;
-  exists: boolean;
-  age_days: number | null;
-  live: boolean;
-  dirty: boolean | null;
-  /** 非 null = 这条的本地分支无论如何都留着，值是理由（目前只有 "unpushed"） */
-  kept_branch: string | null;
-  verdict: "keep" | "remove" | string;
-  reason: string;
-}
-
-export interface WorktreeRepo {
-  repo: string;
-  root: string;
-  registered: number;
-  managed: number;
-  removable: number;
-  truncated: boolean;
-  rows: WorktreeRow[];
-  bytes?: number | null;
-  error: string | null;
-}
-
-export interface WorktreeInventory {
-  state?: "computing" | "ready" | "error" | string;
-  ok: boolean;
-  scanned_at: string | null;
-  repos: WorktreeRepo[];
-  worktrees: number | null;
-  removable: number | null;
-  bytes: number | null;
-  bytes_partial: boolean;
-  truncated: boolean;
-  refreshing?: boolean;
-  stale_days?: number;
-  error?: string;
-  message?: string;
-  [key: string]: unknown;
-}
-
-/** POST /api/worktrees/cleanup（§75.4）：`{}` = 真扫、`{"dry_run": true}` = 只报会删谁；回执 = act/lib/worktrees.sweep 的原文。 */
-export interface WorktreeRemoval {
-  path: string;
-  branch: string;
-  reason: string;
-  removed?: boolean;
-  branch_deleted: boolean;
-  /** 非 null = 目录删了但分支特意留着，值是理由（"unpushed" = 有只存在于本地的提交） */
-  kept_branch?: string | null;
-  error: string | null;
-}
-
-export interface WorktreeCleanup {
-  ok: boolean;
-  dry_run?: boolean;
-  swept_at?: string;
-  removed: WorktreeRemoval[];
-  failed?: WorktreeRemoval[];
-  skipped?: Record<string, number>;
-  worktrees?: number;
-  removable?: number;
-  truncated?: boolean;
-  error?: string;
-  message?: string;
-  [key: string]: unknown;
-}
-
-/** GET /api/voice/generate-status（§68.1 追记 D47）：「从我的消息生成/更新档案」最近一次 job（state/voice_gen/job.json，
- *  actd 写 running、act.voice_gen --job 写 done / failed）；lost = running 却超过 15 分钟没回执（server 算） */
-export interface VoiceGenJob {
-  status: "running" | "done" | "failed";
-  started_at: string | null;
-  finished_at: string | null;
-  error: string | null;
-  message: string | null;
-  profile_path: string | null;
-  lost: boolean;
-  [key: string]: unknown;
-}
-
-export interface VoiceGenStatus {
-  job: VoiceGenJob | null;
-  [key: string]: unknown;
-}
-
-/** GET /api/slack/directory（§68.1 追记）：act/lib/slack_setup.directory 的 JSON 行原样 */
-export interface SlackDirEntry {
-  id: string;
-  name: string;
-  real_name?: string;
-  [key: string]: unknown;
-}
-
-export interface SlackDirectory {
-  ok: boolean;
-  fetched_at?: string;
-  channels: SlackDirEntry[];
-  users: SlackDirEntry[];
-  error?: string;      // ok:false 时：no_token / no_python / directory_failed / …（act 侧词表）
-  message?: string;    // ok:false 时的人话（act 侧按界面语言生成；no_python / directory_failed 是尾巴原文）
-  [key: string]: unknown;
-}
-
 /** POST /api/secrets/{name}/verify 回执（§68.3；三分判决：ok / 凭证错 network:false / 判决未知 network:true） */
 export interface SecretVerifyResult {
   ok: boolean;
   network: boolean;
   detail: string;
-  extra: Record<string, unknown>;   // Slack ok：user_id / user / team（auth.test 原字段）；Gmail 没地址：precondition = "gmail_address"（探针没跑）
+  extra: Record<string, unknown>;   // 探针的原字段（v2.0.0 只剩 Anthropic；precondition = 探针没跑的原因）
   /** §68.3 2026-09-05 追记（add-only）：只在 ok:false ∧ network:false 且探针真跑过（无 extra.precondition）时带——原生 humanAuthReason 的分类人话，raw detail 在括号里 */
   reason?: BilingualText;
   [key: string]: unknown;
@@ -1319,7 +560,8 @@ export interface CronProbe {
 /** 录制页「最近活动」三个时间戳（原生 IngestModel.refreshLabels；epoch 秒，缺席 null；add-only） */
 export interface IngestActivity {
   screenpipe_db: { path: string; mtime: number | null; [key: string]: unknown };
-  actd_log: { path: string; mtime: number | null; [key: string]: unknown };
+  /** v2.0.0 add-only：state/recap.log 的 mtime（取代退役的 actd_log） */
+  recap_log: { path: string; mtime: number | null; [key: string]: unknown };
   /** readable:false = 目录住 TCC 保护位置且不在 mirror 模式——server 永不读 ~/Documents（§68.3） */
   unprocessed: { path: string; mtime: number | null; readable: boolean; [key: string]: unknown };
   [key: string]: unknown;
@@ -1328,15 +570,10 @@ export interface IngestActivity {
 export interface DiagnosticsSnapshot {
   doctor: DoctorReport;
   health: HealthSnapshot;
-  deploy_state: DeployState | null;
-  radar_sources: Record<string, RadarSourceHealth> | null;
   install_report: InstallReport | null;
-  registry_backend: string;
   logs: LogEntry[];
   cron_probe?: CronProbe | null;
   activity?: IngestActivity | null;
-  /** config.yaml doctor.ai_fix_enabled（原生 AIFix.enabled；false = 「让 AI 修」整颗不出现；缺席 = 开；add-only） */
-  ai_fix_enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -1379,15 +616,6 @@ export interface LogTail {
   [key: string]: unknown;
 }
 
-// ----- §37.2 会话内容搜索层（D45）：GET /api/search-index 的投影 ----- #
-export interface SearchIndexSnapshot {
-  /** card_id → 会话正文（actd 维护的 state/search_index.json 每条的 text，server 尾裁；原文，未归一化） */
-  entries: Record<string, string>;
-  /** server 因 size cap 拒读了文件（entries 为空、层诚实缺席） */
-  truncated: boolean;
-  [key: string]: unknown;
-}
-
 // ----- §68.5 首次运行向导 ----- #
 export interface SetupSnapshot {
   needed: boolean;
@@ -1407,8 +635,10 @@ export interface SetupReceipt {
   [key: string]: unknown;
 }
 
-/** GET /api/setup/engine（§68.5；原生 EngineDetector）：CLI 路径 / 版本 / 认证梯子（顺序 = server AUTH_LADDER） */
-export type EngineAuth = "oauth" | "env_key" | "secrets_file" | "legacy_file";
+/** GET /api/setup/engine（§68.5；原生 EngineDetector）：CLI 路径 / 版本 / 认证梯子（顺序 = server AUTH_LADDER）。
+ *  v2.0.0：§78 的 `--bare` 只认 API key，`oauth` 档（Claude Code 登录 / 钥匙串）退役 */
+export type EngineAuth = "env_key" | "secrets_file" | "legacy_file";
+
 export interface SetupEngine {
   cli_path: string | null;
   version: string | null;
@@ -1424,16 +654,9 @@ export interface SetupVault {
   path: string;
   [key: string]: unknown;
 }
+
 export interface SetupVaults {
   vaults: SetupVault[];
-  [key: string]: unknown;
-}
-
-/** POST /api/setup/seed-dashboard：ok:false 带 error 尾巴（不 500） */
-export interface SeedDashboardReceipt {
-  ok: boolean;
-  rc: number;
-  error?: string;
   [key: string]: unknown;
 }
 
@@ -1442,17 +665,11 @@ export interface AboutInfo {
   version: string;
   home: string;
   repo: string;
-  update_available: { current?: string; latest?: string; url?: string; pkg_asset_url?: string | null; [key: string]: unknown } | null;
+  /** manual_upgrade = 新版本跨了大版本（§26 追记）：只许手动升级，页面给手动命令 */
+  update_available: { current?: string; latest?: string; url?: string; pkg_asset_url?: string | null; manual_upgrade?: boolean; [key: string]: unknown } | null;
   update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
   /** §68.6 追记（add-only）：updates.check_enabled 的 effective 值（override → config → true）；旧 server 缺席 = 当 true */
   check_enabled?: boolean;
-  /**
-   * §68.6 追记（2026-09-14，add-only，issue #309）：上一轮 scripts/auto-deploy.sh 的判决——
-   * 与 board.deploy_state **同一个 wire 形**（DeployState），但由 server 在**请求时现读文件**，
-   * 不是 actd 的看板投影（actd 死了 / launchd 被 TCC 拦着时投影本身就是陈的，而这一行要回答的
-   * 恰是「更新链路还活着吗」）。null / 缺席 = 这台机器没有自动部署的记录（旧 server 同样缺席）。
-   */
-  deploy_state?: DeployState | null;
   [key: string]: unknown;
 }
 
@@ -1469,115 +686,13 @@ export interface UpdateCheckResult {
   [key: string]: unknown;
 }
 
-// ----- §68.9 MCP servers（Skills 商店的 wire 形在 §67 SkillRow / SkillsSnapshot） ----- #
-export interface McpServer {
-  name: string;
-  scope: string;
-  transport: string;
-  summary: string;
-  env_count: number;
-  [key: string]: unknown;
-}
-
-export interface McpScope {
-  scope: "user" | "project" | string;
-  path: string;
-  path_display?: string;   // add-only（§68.9 追记）：$HOME 缩成 ~ 的展示路径；老 server 缺席时退回 path
-  exists: boolean;
-  parseable: boolean;
-  servers: McpServer[];
-  [key: string]: unknown;
-}
-
-export interface McpList {
-  scopes: McpScope[];
-  [key: string]: unknown;
-}
-
-// ----- §22 导入 Claude Code 工作（radar_claude_sessions --scan 的 JSON 行） ----- #
-export interface ClaudeSessionCandidate {
-  session_id: string;
-  project?: string;
-  project_dir?: string;
-  title?: string;
-  gist?: string;
-  last_activity?: string;
-  ended_waiting_on_user?: boolean;
-  answered?: boolean;
-  session_mismatch?: boolean;
-  [key: string]: unknown;
-}
-
-export interface ClaudeSessionsScan {
+/** POST /api/update/install 回执（§79）：升级器 scripts/upgrade.sh 已分离起跑（ff-only 到带 tag 的 main + install.sh；
+ *  永不碰录制引擎）；进度在 log。跨大版本 → 409 manual_upgrade；这个 checkout 还没有升级器 → 501（两者 details.fix = 手动命令） */
+export interface UpdateInstallReceipt {
   ok: boolean;
-  reason?: string;
-  root?: string;
-  window: number;
-  candidates: ClaudeSessionCandidate[];
-  error?: string;
-  [key: string]: unknown;
-}
-
-/** POST /api/terminal 回执（§68.7）：server 已把 launch 请求入队 state/terminal_queue（2026-09-05 起，issue #216；
- *  壳消费队列经 Apple Events 开终端）。`command_file` 键保留 = 队列条目路径（跨组件字段只增不删）；`queue_id` add-only。
- *  同一形状也是 POST /api/uninstall/terminal / /api/maintainer/terminal 的回执。 */
-export interface TerminalReceipt {
-  ok: boolean;
-  command: string;
-  command_file: string;
-  cwd?: string;
-  /** add-only（§68.7 2026-09-05 追记，issue #216）：队列条目 id（server 入队回执；老 server 缺席） */
-  queue_id?: string;
-  /** add-only（§68.7 追记；今日只有 POST /api/maintainer/terminal 带）：打开用的终端展示名；老 server 缺席 */
-  terminal_app_name?: string;
-  [key: string]: unknown;
-}
-
-/** POST /api/attachments 回执（§10bis web 贴图路径，D41）：path = server 铸的 state/attachments/<uuid>-1.png 绝对路径，
- *  客户端只把它原样塞进 capture 的 images[]；bytes = 落盘字节数 */
-export interface AttachmentReceipt {
-  ok: boolean;
-  path: string;
-  bytes: number;
-  [key: string]: unknown;
-}
-
-/**
- * POST /api/update/install 回执（§68.6 追记 2026-09-14，issue #309）：kickstart 之外 add-only 带上
- * **上一轮**自动部署的判决——页面据此决定能不能说「几分钟后版本会变」（`deferred` 会再延后一轮、
- * 中毒家族整族不许承诺）。`deploy_failed_sha` = 上一轮记下的 `failed_sha`（记得下的时候才有）：
- * server 在 kickstart 那一刻现读，比一进页拉的 about 快照新。旧 server 缺席 = 空串。
- */
-export interface UpdateInstallReceipt extends RepairReceipt {
-  deploy_status?: string;
-  deploy_detail?: string;
-  deploy_failed_sha?: string;
-}
-
-/** POST /api/repair/actd 回执（§68.8）：action = "kickstart"（已加载）| "reinstall"（未加载 → install.sh，D50；此时另带 loaded） */
-export interface RepairReceipt {
-  ok: boolean;
-  label: string;
-  action: string;
-  loaded?: boolean;
-  [key: string]: unknown;
-}
-
-/** POST /api/telemetry/consent-shown 回执（§15 consent 门，D49）：written = 本次新写了标记；shown_at = 首次展示时刻 */
-export interface ConsentShownReceipt {
-  ok: boolean;
-  written: boolean;
-  shown_at: string;
-  [key: string]: unknown;
-}
-
-/** POST /api/analytics 的事件词表 = server 白名单（server/analytics_ingest.py EVENTS，D48）——加事件先加 server；tests/test_web_analytics_event_vocabulary_mirror.py 钉两边同词 */
-export type WebAnalyticsEvent = "wizard_complete" | "pipeline_repair_result";
-
-/** POST /api/analytics 回执（§16，D48）：logged=false = features.analytics 关着（server 诚实报 no-op，仍 200） */
-export interface AnalyticsReceipt {
-  ok: boolean;
-  event: string;
-  logged: boolean;
+  action: "upgrade" | string;
+  script: string;
+  log: string;
+  latest: string | null;
   [key: string]: unknown;
 }

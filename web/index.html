@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <!-- 相对引用（./）配合 vite base:"./"：由 server 静态服务 dist 时仍然正确；路由只用 query，文档恒在根 -->
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <!-- PWA 安装清单（CONTRACT §73）：Edge/Chrome 据此把这块看板装成独立窗口；
+    <!-- PWA 安装清单（CONTRACT §73）：Edge/Chrome 据此把这个页面装成独立窗口；
          清单的 name 与下面的页面标题逐字相同，颜色来自 native-tokens 的 windowBackground.light -->
     <link rel="manifest" href="./manifest.webmanifest" />
     <title>Zelin's AI Assistant</title>
@@ -25,10 +25,6 @@
         } else {
           document.documentElement.dataset.theme = "light";
         }
-        // 设置 → 通用「看板动画」（原生 UserDefaults boardAnimations 同名键）：关了就首帧关，避免闪一下动效
-        try {
-          if (localStorage.getItem("boardAnimations") === "false") document.documentElement.dataset.boardAnimations = "off";
-        } catch (_) { /* 按默认开 */ }
       })();
       // 首帧前应用显示偏好缓存（字号 / 字重 / 描边，CONTRACT §54.1 第 12 项），避免 server 快照到达前字号跳变。
       // key: zai.display = {"text_size","text_weight","stroke"}（displayPrefs.ts 写）；值 → CSS 变量的映射在 tokens.css。

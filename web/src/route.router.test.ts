@@ -31,21 +31,21 @@ describe("route — navigate 是 pushState，不是整页重载", () => {
     const seen: string[] = [];
     const stop = subscribeRoute(() => seen.push(window.location.search));
     const push = vi.spyOn(window.history, "pushState");
-    navigate(buildAppUrl(window.location.href, "settings", null));
+    navigate(buildAppUrl(window.location.href, "settings"));
     expect(push).toHaveBeenCalledTimes(1);
     expect(window.location.search).toBe("?page=settings");
     expect(readPage(window.location.search)).toBe("settings");
     expect(seen).toEqual(["?page=settings"]);
     stop();
-    navigate(buildAppUrl(window.location.href, "trash", null));
+    navigate(buildAppUrl(window.location.href, "ingest"));
     expect(seen).toEqual(["?page=settings"]); // 退订后不再收
-    expect(window.location.search).toBe("?page=trash");
+    expect(window.location.search).toBe("?page=ingest");
   });
 
   it("replace=true → replaceState（向导跳转 / mainSection 冷启动回跳不进历史栈）", () => {
     const push = vi.spyOn(window.history, "pushState");
     const replace = vi.spyOn(window.history, "replaceState");
-    navigate(buildAppUrl(window.location.href, "setup", null), true);
+    navigate(buildAppUrl(window.location.href, "setup"), true);
     expect(push).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledTimes(1);
     expect(window.location.search).toBe("?page=setup");
@@ -56,7 +56,7 @@ describe("route — navigate 是 pushState，不是整页重载", () => {
     const push = vi.spyOn(window.history, "pushState");
     const seen = vi.fn();
     subscribeRoute(seen);
-    navigate(buildAppUrl(window.location.href, "about", null));
+    navigate(buildAppUrl(window.location.href, "about"));
     expect(push).not.toHaveBeenCalled();
     expect(seen).toHaveBeenCalledTimes(1); // 仍通知（订阅者幂等）
   });
@@ -64,8 +64,8 @@ describe("route — navigate 是 pushState，不是整页重载", () => {
   it("字符串也认（相对 / 绝对）", () => {
     navigate("?page=ingest");
     expect(window.location.search).toBe("?page=ingest");
-    navigate(`${window.location.origin}/?page=archive`);
-    expect(window.location.search).toBe("?page=archive");
+    navigate(`${window.location.origin}/?page=about`);
+    expect(window.location.search).toBe("?page=about");
   });
 
   it("不属于本 SPA 的 URL（别的路径 / origin）→ 整页 location.assign / replace，不进路由", () => {
@@ -91,33 +91,33 @@ describe("route — navigate 是 pushState，不是整页重载", () => {
 
   it("isAppUrl / isHashOnlyChange 真值表", () => {
     const here = { origin: "http://127.0.0.1:47820", pathname: "/", search: "?page=settings" };
-    expect(isAppUrl(new URL("http://127.0.0.1:47820/?page=trash"), here)).toBe(true);
+    expect(isAppUrl(new URL("http://127.0.0.1:47820/?page=ingest"), here)).toBe(true);
     expect(isAppUrl(new URL("http://127.0.0.1:47820/#settings-deps"), here)).toBe(true); // 同路径，片段不算
-    expect(isAppUrl(new URL("http://127.0.0.1:47820/api/board"), here)).toBe(false);
+    expect(isAppUrl(new URL("http://127.0.0.1:47820/api/recaps"), here)).toBe(false);
     expect(isAppUrl(new URL("http://127.0.0.1:47820/files/x.html"), here)).toBe(false);
     expect(isAppUrl(new URL("https://127.0.0.1:47820/"), here)).toBe(false); // scheme 也算 origin
     expect(isAppUrl(new URL("http://localhost:47820/"), here)).toBe(false);
     expect(isHashOnlyChange(new URL("http://127.0.0.1:47820/?page=settings#settings-deps"), here)).toBe(true);
-    expect(isHashOnlyChange(new URL("http://127.0.0.1:47820/?page=trash#x"), here)).toBe(false); // query 变了 = 换页
+    expect(isHashOnlyChange(new URL("http://127.0.0.1:47820/?page=ingest#x"), here)).toBe(false); // query 变了 = 换页
     expect(isHashOnlyChange(new URL("http://127.0.0.1:47820/?page=settings"), here)).toBe(false); // 没片段
   });
 
   it("buildAppUrl / buildSettingsUrl 不带上一页的片段（设置页目录点过 #settings-<id> 之后 location.href 带着它）", () => {
-    const url = buildAppUrl("http://127.0.0.1:47820/?page=settings#settings-deps", "board", null);
+    const url = buildAppUrl("http://127.0.0.1:47820/?page=settings#settings-deps", "recaps");
     expect(url.hash).toBe("");
     expect(url.search).toBe("");
-    expect(buildAppUrl("http://127.0.0.1:47820/#x", "trash", "R-1").href).toBe("http://127.0.0.1:47820/?page=trash&card=R-1");
+    expect(buildAppUrl("http://127.0.0.1:47820/#x", "ingest").href).toBe("http://127.0.0.1:47820/?page=ingest");
   });
 
-  it("buildAppUrl 不带上一页的页内 query（?anchor= / ?log= / ?step=）——过滤器照旧带着；要带的调用方之后自己 set", () => {
-    // ?page=settings&anchor=deps&log=actd.log 之后点 rail 任务台：不许成 /?anchor=deps&log=actd.log（再点设置又滚回 deps、又翻开日志）
-    const board = buildAppUrl("http://127.0.0.1:47820/?page=settings&anchor=deps&log=actd.log&q=foo&tier=T1", "board", null);
-    expect(board.search).toBe("?q=foo&tier=T1");
+  it("buildAppUrl 不带上一页的页内 query（?anchor= / ?log= / ?step=）——别的 query 照旧带着；要带的调用方之后自己 set", () => {
+    // ?page=settings&anchor=deps&log=engine.log 之后点 rail 会议纪要：不许成 /?anchor=deps&log=engine.log（再点设置又滚回 deps、又翻开日志）
+    const recaps = buildAppUrl("http://127.0.0.1:47820/?page=settings&anchor=deps&log=engine.log&lang=zh", "recaps");
+    expect(recaps.search).toBe("?lang=zh");
     // 已在设置页（anchor 还在 URL 上）点 rail 设置：同样不带
-    expect(buildAppUrl("http://127.0.0.1:47820/?page=settings&anchor=deps", "settings", null).search).toBe("?page=settings");
+    expect(buildAppUrl("http://127.0.0.1:47820/?page=settings&anchor=deps", "settings").search).toBe("?page=settings");
     // 向导的 ?step= 是向导页内的
-    expect(buildAppUrl("http://127.0.0.1:47820/?page=setup&step=vault", "board", null).search).toBe("");
-    expect(buildAppUrl("http://127.0.0.1:47820/?step=vault", "setup", null).search).toBe("?page=setup");
+    expect(buildAppUrl("http://127.0.0.1:47820/?page=setup&step=vault", "recaps").search).toBe("");
+    expect(buildAppUrl("http://127.0.0.1:47820/?step=vault", "setup").search).toBe("?page=setup");
     // buildSettingsUrl 在之后 set anchor：照旧只有它这一个
     expect(buildSettingsUrl("http://127.0.0.1:47820/?page=settings&anchor=general&log=x.log", "deps").search).toBe("?page=settings&anchor=deps");
   });
@@ -128,7 +128,7 @@ describe("route — startRouter：popstate + 链接委托", () => {
     const stop = startRouter();
     const seen = vi.fn();
     subscribeRoute(seen);
-    window.history.replaceState(null, "", "/?page=trash");
+    window.history.replaceState(null, "", "/?page=ingest");
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(seen).toHaveBeenCalledTimes(1);
     stop();
@@ -184,12 +184,12 @@ describe("route — startRouter：popstate + 链接委托", () => {
 
   it("点在 <a> 里的子元素（图标 / 文字 span）也算点了链接", () => {
     const stop = startRouter();
-    const a = link("/?page=trash");
+    const a = link("/?page=ingest");
     const span = document.createElement("span");
     a.appendChild(span);
     const event = click(span);
     expect(event.defaultPrevented).toBe(true);
-    expect(window.location.search).toBe("?page=trash");
+    expect(window.location.search).toBe("?page=ingest");
     stop();
   });
 
@@ -197,13 +197,13 @@ describe("route — startRouter：popstate + 链接委托", () => {
     const stop = startRouter();
     const push = vi.spyOn(window.history, "pushState");
     const cases: Array<[HTMLAnchorElement, MouseEventInit]> = [
-      [link("/?page=trash"), { metaKey: true }],
-      [link("/?page=trash"), { ctrlKey: true }],
-      [link("/?page=trash"), { shiftKey: true }],
-      [link("/?page=trash"), { altKey: true }],
-      [link("/?page=trash"), { button: 1 }],
-      [link("/?page=trash", { target: "_blank" }), {}],
-      [link("/?page=trash", { download: "" }), {}],
+      [link("/?page=ingest"), { metaKey: true }],
+      [link("/?page=ingest"), { ctrlKey: true }],
+      [link("/?page=ingest"), { shiftKey: true }],
+      [link("/?page=ingest"), { altKey: true }],
+      [link("/?page=ingest"), { button: 1 }],
+      [link("/?page=ingest", { target: "_blank" }), {}],
+      [link("/?page=ingest", { download: "" }), {}],
       [link("/api/logs/actd.log"), {}],
       [link("/files/R-1/report.html"), {}],
       [link("https://example.com/"), {}],
@@ -213,7 +213,7 @@ describe("route — startRouter：popstate + 链接委托", () => {
       const event = click(a, init);
       expect(event.defaultPrevented).toBe(false);
     }
-    const inner = link("/?page=trash");
+    const inner = link("/?page=ingest");
     inner.addEventListener("click", (e) => e.preventDefault());
     click(inner);
     expect(push).not.toHaveBeenCalled();
@@ -231,7 +231,7 @@ describe("route — startRouter：popstate + 链接委托", () => {
     const a = link("/?page=about", { target: "_self" });
     expect(click(a).defaultPrevented).toBe(true);
     stop();
-    const b = link("/?page=trash");
+    const b = link("/?page=ingest");
     expect(click(b).defaultPrevented).toBe(false);
   });
 
@@ -240,7 +240,7 @@ describe("route — startRouter：popstate + 链接委托", () => {
     document.body.appendChild(root);
     const stop = interceptAppLinks(root as unknown as Document);
     const a = document.createElement("a");
-    a.href = "/?page=archive";
+    a.href = "/?page=about";
     root.appendChild(a);
     expect(click(a).defaultPrevented).toBe(true);
     stop();
@@ -249,23 +249,23 @@ describe("route — startRouter：popstate + 链接委托", () => {
 });
 
 describe("route — 滚动记忆", () => {
-  it("离开看板记住 window + [data-scroll-memory] 容器的位置，回来还原；没记过的页到顶", () => {
+  it("离开会议纪要页记住 window + [data-scroll-memory] 容器的位置，回来还原；没记过的页到顶", () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
     const lane = document.createElement("div");
-    lane.dataset.scrollMemory = "lane:needs_approval";
+    lane.dataset.scrollMemory = "recap-list";
     document.body.appendChild(lane);
     Object.defineProperty(lane, "scrollTop", { value: 120, writable: true, configurable: true });
     Object.defineProperty(lane, "scrollLeft", { value: 4, writable: true, configurable: true });
     Object.defineProperty(window, "scrollY", { value: 300, configurable: true });
     Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
-    rememberScroll("board");
+    rememberScroll("recaps");
     // 换到设置页：DOM 里换成别的东西
     lane.scrollTop = 0;
     lane.scrollLeft = 0;
     Object.defineProperty(window, "scrollY", { value: 900, configurable: true });
     restoreScroll("settings"); // 没记过 → 到顶
     expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
-    restoreScroll("board");
+    restoreScroll("recaps");
     expect(scrollTo).toHaveBeenLastCalledWith(0, 300);
     expect(lane.scrollTop).toBe(120);
     expect(lane.scrollLeft).toBe(4);
@@ -282,12 +282,12 @@ describe("route — 滚动记忆", () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
     const stop = startRouter();
     Object.defineProperty(window, "scrollY", { value: 250, configurable: true });
-    navigate("?page=settings"); // 离开 board @250
+    navigate("?page=settings"); // 离开 recaps @250
     Object.defineProperty(window, "scrollY", { value: 40, configurable: true });
     window.history.pushState(null, "", "/?page=about");
     window.dispatchEvent(new PopStateEvent("popstate")); // 离开 settings @40（模拟前进）
     Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
-    restoreScroll("board");
+    restoreScroll("recaps");
     expect(scrollTo).toHaveBeenLastCalledWith(0, 250);
     restoreScroll("settings");
     expect(scrollTo).toHaveBeenLastCalledWith(0, 40);

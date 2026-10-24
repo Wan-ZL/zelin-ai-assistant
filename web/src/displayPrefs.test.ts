@@ -103,8 +103,8 @@ describe("web/src：描边与字号字重只经 token", () => {
 
   it("the lint actually sees the stylesheets and components", () => {
     expect(files.length).toBeGreaterThan(20);
-    expect(files.some(([path]) => path.endsWith("board.css"))).toBe(true);
-    expect(files.some(([path]) => path.endsWith("cardChrome.tsx"))).toBe(true);
+    expect(files.some(([path]) => path.endsWith("controls.css"))).toBe(true);
+    expect(files.some(([path]) => path.endsWith("RecapDetail.tsx"))).toBe(true);
   });
 
   it("no hard-coded hairline border / outline anywhere outside tokens.css", () => {
@@ -120,7 +120,7 @@ describe("web/src：描边与字号字重只经 token", () => {
   it("borders that carry a width use var(--stroke-w)", () => {
     let count = 0;
     for (const [, source] of files) count += (stripComments(source).match(/var\(--stroke-w\)/g) ?? []).length;
-    expect(count).toBeGreaterThan(40);
+    expect(count).toBeGreaterThan(20); // v2.0.0：看板 / 详情 / 过滤条的样式随之删除，存量少了一大半
     expect(tokens).not.toContain("--border-hairline");
   });
 

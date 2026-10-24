@@ -1,47 +1,20 @@
-// 顶栏行为测试（G7）：新鲜度阈值（镜像 Freshness.swift 的 90s 语义）、
-// 主题切换（dataset + localStorage）、语言切换（store.chooseLanguage：store 翻转 + zai.lang 首帧缓存；PUT 半边见 LanguageToggle.persist.test.tsx）、
-// §56 部署状态小字（deploy_state 缺失自隐藏 / healthy 次级色 / 回滚警告色）。
-// 页面入口（回收站 / 设置 …）已搬到左侧导航栏——判例在 NavRail.test.tsx（§54.4）。
-// 三档密度（§49 追记 2026-09-04）：data-density 反映档位；compact 收设备标签；tight 把新鲜度 / 部署小字折进
-// 连接点 tooltip、壳开关只留图标（title 说全「录制：状态词」）、标题挂 title 全名（极窄省略号的 tooltip；几何在
-// e2e/headerLayout.spec.ts）。jsdom 无 ResizeObserver → 不给 prop 时恒 full。
+// 顶栏行为测试（G7）：主题切换（dataset + localStorage）、语言切换（store.chooseLanguage：store 翻转 + zai.lang 首帧缓存；
+// PUT 半边见 LanguageToggle.persist.test.tsx）、连接点（词随 SSE 状态）、三档密度（§49 追记 2026-09-04：data-density 反映
+// 档位；tight 壳开关只留图标（title 说全「录制：状态词」）、标题挂 title 全名）。jsdom 无 ResizeObserver → 不给 prop 时恒 full。
+// 页面入口在左侧导航栏——判例在 NavRail.test.tsx（§54.4）。v2.0.0 退役：看板新鲜度、§56 部署状态小字、设备标签、
+// 搜索 / 过滤槽位、实时字幕开关（全文见 tag full）。
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBoard } from "../../api";
 import { LanguageContext } from "../../i18n";
 import { resetShellBridgeForTests, type ShellState } from "../../shellBridge";
-import { getState, refreshBoard, resetStoreForTests } from "../../store";
-import type { Board, DeployState } from "../../types";
+import { getState, resetStoreForTests, setConnection } from "../../store";
 import { HeaderBar, type HeaderBarProps } from "./HeaderBar";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
   // putSettingsSection：D37 起顶栏切换还 PUT general.language（判例在 LanguageToggle.persist.test.tsx；这里只要它不打真网络）
-  return { ...mod, fetchBoard: vi.fn(), fetchCard: vi.fn(), putSettingsSection: vi.fn().mockResolvedValue({ id: "general", fields: [] }) };
+  return { ...mod, putSettingsSection: vi.fn().mockResolvedValue({ id: "general", fields: [] }) };
 });
-
-const fetchBoardMock = vi.mocked(fetchBoard);
-
-function makeBoard(generatedAt: string, deployState?: DeployState): Board {
-  return {
-    generated_at: generatedAt,
-    counts: {},
-    needs_approval: [],
-    running: [],
-    needs_input: [],
-    review: [],
-    completed: [],
-    debt: [],
-    trash: [],
-    ...(deployState ? { deploy_state: deployState } : {}),
-  };
-}
-
-async function seedBoard(ageSeconds: number, deployState?: DeployState) {
-  const generatedAt = new Date(Date.now() - ageSeconds * 1000).toISOString();
-  fetchBoardMock.mockResolvedValue(makeBoard(generatedAt, deployState));
-  await refreshBoard();
-}
 
 function renderHeader(language: "zh" | "en" = "en", props: HeaderBarProps = {}) {
   return render(
@@ -57,15 +30,8 @@ function shellState(): ShellState {
       available: true, on: false, mode: "off", engine_running: false, diagnosis: null,
       note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen",
     },
-    captions: {
-      available: true, on: false, engine: "auto", paused: false, engine_dead: false,
-      status_text: "", status_is_error: false,
-      source: "both", translate: false, translate_direction: "auto", apple_locale: "zh",
-      ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7,
-    },
     permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
     launch_at_login: false,
-    hotkey: "⌃⌥Space",
     language: "en",
   };
 }
@@ -73,38 +39,12 @@ function shellState(): ShellState {
 describe("HeaderBar", () => {
   beforeEach(() => {
     resetStoreForTests();
-    fetchBoardMock.mockReset();
     window.localStorage.clear();
     delete document.documentElement.dataset.theme;
   });
 
   afterEach(() => {
     cleanup();
-    vi.useRealTimers();
-  });
-
-  it("新鲜数据（≤90s）：显示相对时间，无 actd 警告", async () => {
-    await seedBoard(30);
-    renderHeader();
-    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && el.textContent === "Data generated just now")).toBeTruthy();
-    expect(screen.queryByText(/actd may be down/)).toBeNull();
-  });
-
-  it("过期数据（>90s）：显示分钟数 + actd 可能未运行警告", async () => {
-    await seedBoard(5 * 60);
-    renderHeader();
-    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && el.textContent === "Data generated 5 min ago — actd may be down")).toBeTruthy();
-  });
-
-  it("15s tick 自驱变陈旧：80s 时新鲜，跨过 90s 阈值后变警告", async () => {
-    vi.useFakeTimers();
-    await seedBoard(80);
-    renderHeader();
-    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && /Data generated 1m ago/.test(el.textContent ?? ""))).toBeTruthy();
-    act(() => {
-      vi.advanceTimersByTime(15_000); // 80s + 15s = 95s > 90s
-    });
-    expect(screen.getByText(/actd may be down/)).toBeTruthy();
   });
 
   it("主题切换：写 dataset.theme + localStorage zai.theme，往返翻转", () => {
@@ -118,228 +58,38 @@ describe("HeaderBar", () => {
     expect(window.localStorage.getItem("zai.theme")).toBe("light");
   });
 
-  it("§56 部署状态：无 deploy_state 时顶栏不渲染部署小字", async () => {
-    await seedBoard(10);
-    renderHeader();
-    expect(screen.queryByText(/^v\d+\.\d+\.\d+/)).toBeNull();
-  });
-
-  it("§56 部署状态：healthy → 「v0.48.4 · deployed 12m ago」，次级色、无警告 class", async () => {
-    const lastDeployed = new Date(Date.now() - 12 * 60 * 1000).toISOString();
-    await seedBoard(10, {
-      status: "deployed",
-      version: "0.48.4",
-      head: "abcdef0",
-      last_deployed: lastDeployed,
-      detail: "deployed 1111111 -> abcdef0",
-    });
-    renderHeader();
-    const label = screen.getByText("v0.48.4 · deployed 12m ago");
-    expect(label.className).toBe("shell-deploy");
-    expect(label.getAttribute("title")).toBe("deployed 1111111 -> abcdef0");
-  });
-
-  it("§56.1 追记（#309）：`X.Y.Z+N` 只显示 tag，`+N` 降级进 title", async () => {
-    // 生产机的 deploy_state 写着 1.0.23+92——92 数的是 release 分支上 ingest 的数据 commit，
-    // 对用户没有意义，而且与 about 说的数不一样；顶栏只说 tag。
-    await seedBoard(10, {
-      status: "refused_branch",
-      version: "1.0.23+92",
-      detail: "HEAD is on 'release', not main",
-    });
-    renderHeader("zh");
-    const label = screen.getByText("v1.0.23 · 不在 main，部署暂停");
-    expect(label.className).toBe("shell-deploy is-warn");
-    expect(label.getAttribute("title")).toBe("HEAD is on 'release', not main · 本地领先 92 个提交，未发版");
-  });
-
-  it("§56 部署状态：rolled_back → 点名状态 + 警告 class；中文文案镜像", async () => {
-    const lastDeployed = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-    const state: DeployState = {
-      status: "rolled_back",
-      version: "0.48.3",
-      last_deployed: lastDeployed,
-      failed_sha: "deadbeef",
-    };
-    await seedBoard(10, state);
-    renderHeader();
-    const label = screen.getByText("v0.48.3 · deployed 3h ago · rolled back");
-    expect(label.className).toBe("shell-deploy is-warn");
-    cleanup();
-    renderHeader("zh");
-    expect(screen.getByText("v0.48.3 · 3小时前部署 · 已回滚")).toBeTruthy();
-  });
-
-  it("§56 部署状态：ci_pending / ci_failed 是警告态，各有双语文案（B1 CI 闸门）", async () => {
-    await seedBoard(10, {
-      status: "ci_pending",
-      version: "0.48.6",
-      detail: "waiting for CI on origin/main abc1234: ci is in_progress",
-    });
-    renderHeader();
-    const pending = screen.getByText("v0.48.6 · waiting for CI on main");
-    expect(pending.className).toBe("shell-deploy is-warn");
-    expect(pending.getAttribute("title")).toContain("in_progress");
-    cleanup();
-    resetStoreForTests();
-    await seedBoard(10, { status: "ci_failed", version: "0.48.6", failed_sha: "abc1234" });
-    renderHeader("zh");
-    expect(screen.getByText("v0.48.6 · main 的 CI 红了，未部署").className).toBe("shell-deploy is-warn");
-  });
-
-  it("§56 部署状态：install_incomplete / blocked_tcc（v0.48.20）是警告态，各有双语文案", async () => {
-    await seedBoard(10, {
-      status: "install_incomplete",
-      version: "0.48.11",
-      running_version: "0.48.8",
-      detail: "install_report.json says v0.48.8, checkout is v0.48.11",
-    });
-    renderHeader();
-    const incomplete = screen.getByText("v0.48.11 · install incomplete");
-    expect(incomplete.className).toBe("shell-deploy is-warn");
-    expect(incomplete.getAttribute("title")).toContain("v0.48.8");
-    cleanup();
-    resetStoreForTests();
-    await seedBoard(10, { status: "blocked_tcc", version: "0.48.11", reason: "volume_access_denied" });
-    renderHeader("zh");
-    expect(screen.getByText("v0.48.11 · 后台任务读不到外置盘（需授权）").className).toBe("shell-deploy is-warn");
-  });
-
-  it("§56.3 会话闸门：deferred → 次级色「新版本已就绪，等待 N 个会话结束或验收后更新」，满 6 h 才警告色 + 「已 X 小时」", async () => {
-    const lastDeployed = new Date(Date.now() - 40 * 60 * 1000).toISOString();
-    const fresh: DeployState = {
-      status: "deferred",
-      version: "1.0.73",
-      last_deployed: lastDeployed,
-      deferred_reason: "sessions_running",
-      deferred_sessions: "2",
-      deferred_since: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-      detail: "deploy of v1.0.74 (abc1234) deferred: 2 live background claude session(s) on the roster",
-    };
-    await seedBoard(10, fresh);
-    renderHeader();
-    const label = screen.getByText("v1.0.73 · deployed 40m ago · update ready, waiting for 2 sessions to finish or be accepted");
-    expect(label.className, "a deferral under 6 h is the intended behaviour, not a warning").toBe("shell-deploy");
-    expect(label.getAttribute("title")).toContain("2 live background claude session(s)");
-    cleanup();
-    resetStoreForTests();
-    await seedBoard(10, { ...fresh, deferred_sessions: "1" });
-    renderHeader("zh");
-    expect(screen.getByText("v1.0.73 · 40分钟前部署 · 新版本已就绪，等待 1 个会话结束或验收后更新").className).toBe("shell-deploy");
-    cleanup();
-    resetStoreForTests();
-    // 7 h of continuous deferral: warning colour + the age, both languages
-    const overdue: DeployState = { ...fresh, deferred_since: new Date(Date.now() - 7 * 3600 * 1000).toISOString() };
-    await seedBoard(10, overdue);
-    renderHeader();
-    const warn = screen.getByText("v1.0.73 · deployed 40m ago · update ready, waiting for 2 sessions to finish or be accepted (7h)");
-    expect(warn.className).toBe("shell-deploy is-warn");
-    cleanup();
-    resetStoreForTests();
-    await seedBoard(10, overdue);
-    renderHeader("zh");
-    expect(screen.getByText("v1.0.73 · 40分钟前部署 · 新版本已就绪，等待 2 个会话结束或验收后更新（已 7 小时）").className)
-      .toBe("shell-deploy is-warn");
-    cleanup();
-    resetStoreForTests();
-    // roster unreadable (fail closed): no count → generic wording, still not a warning
-    await seedBoard(10, { status: "deferred", version: "1.0.73", deferred_reason: "roster_unknown",
-      deferred_since: new Date().toISOString() });
-    renderHeader();
-    expect(screen.getByText("v1.0.73 · update ready, waiting for sessions to finish or be accepted").className).toBe("shell-deploy");
-  });
-
-  it("§56.3 会话闸门：deferred 遮不住 last_incident（#135 规则同判）也遮不住被延后的修补（reason 带 install_incomplete token）", async () => {
-    const lastDeployed = new Date(Date.now() - 40 * 60 * 1000).toISOString();
-    const verdict = "2026-09-07T04:10:00Z rollback_failed: rollback refused (store2 became the registry truth)";
-    const fresh: DeployState = {
-      status: "deferred",
-      version: "1.0.73",
-      last_deployed: lastDeployed,
-      reason: "sessions_running",
-      deferred_reason: "sessions_running",
-      deferred_sessions: "2",
-      deferred_since: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-      detail: "deploy of v1.0.74 (abc1234) deferred: 2 live background claude session(s) on the roster",
-    };
-    // a rollback verdict nobody has looked at: warning colour, the verdict named, title = the verdict
-    await seedBoard(10, { ...fresh, last_incident: verdict });
-    renderHeader();
-    const incident = screen.getByText(
-      "v1.0.73 · deployed 40m ago · update ready, waiting for 2 sessions to finish or be accepted · unresolved rollback verdict",
-    );
-    expect(incident.className).toBe("shell-deploy is-warn");
-    expect(incident.getAttribute("title")).toBe(verdict);
-    cleanup();
-    resetStoreForTests();
-    // a deferred install.sh re-run (§56.3 step 2): the machine is not running its
-    // checkout — warning colour from the first minute, the install_incomplete named
-    await seedBoard(10, {
-      ...fresh,
-      reason: "heartbeat_missing install_report_version_mismatch sessions_running",
-      deferred_sessions: "1",
-      detail: "install.sh re-run of v1.0.73 (abc1234) deferred: 1 live background claude session(s); install incomplete: state/actd.heartbeat missing",
-    });
-    renderHeader();
-    const repair = screen.getByText(
-      "v1.0.73 · deployed 40m ago · install incomplete, repair waiting for 1 session to finish or be accepted",
-    );
-    expect(repair.className).toBe("shell-deploy is-warn");
-    expect(repair.getAttribute("title")).toContain("state/actd.heartbeat missing");
-    cleanup();
-    resetStoreForTests();
-    await seedBoard(10, { ...fresh, reason: "heartbeat_stale roster_unknown", deferred_reason: "roster_unknown", deferred_sessions: undefined });
-    renderHeader("zh");
-    expect(screen.getByText("v1.0.73 · 40分钟前部署 · 安装未完成，修补等待会话结束或验收").className).toBe("shell-deploy is-warn");
-  });
-
-  it("§56 部署状态：healthy 但 last_incident 在案 → 警告色 + 判决进 title（#135 review）", async () => {
-    const verdict = "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2 became the registry truth)";
-    await seedBoard(10, {
-      status: "up_to_date",
-      version: "0.48.11",
-      last_deployed: "2026-09-02T00:30:00Z",
-      detail: "",
-      last_incident: verdict,
-    });
-    renderHeader();
-    const el = screen.getByText(/unresolved rollback verdict/);
-    expect(el.textContent).toContain("v0.48.11");
-    expect(el.className).toBe("shell-deploy is-warn");
-    expect(el.getAttribute("title")).toBe(verdict);
-    cleanup();
-    resetStoreForTests();
-    await seedBoard(10, { status: "up_to_date", version: "0.48.12", last_incident: verdict });
-    renderHeader("zh");
-    expect(screen.getByText("v0.48.12 · 上次回滚判决待处理").className).toBe("shell-deploy is-warn");
-  });
-
-  it("§56 部署状态：只有 version、还没成功部署过（无 last_deployed）→ 只显示版本", async () => {
-    await seedBoard(10, { status: "up_to_date", version: "0.48.4" });
-    renderHeader();
-    expect(screen.getByText("v0.48.4")).toBeTruthy();
-  });
-
   it("语言切换：store.language 翻转 + 首帧缓存 zai.lang", () => {
     renderHeader("zh");
     fireEvent.click(screen.getByRole("button", { name: "切换到英文" }));
     expect(getState().language).toBe("en");
     expect(window.localStorage.getItem("zai.lang")).toBe("en");
   });
+
+  it("连接点：词与 class 随 SSE 状态（连接中 / 已连接 / 重连中）", () => {
+    renderHeader("en");
+    const connection = () => document.querySelector(".shell-connection")!;
+    expect(connection().textContent).toBe("Connecting");
+    expect(connection().getAttribute("title")).toBe("Connecting");
+    act(() => setConnection("live"));
+    expect(connection().className).toContain("is-live");
+    expect(connection().textContent).toBe("Live");
+    act(() => setConnection("reconnecting"));
+    expect(connection().className).toContain("is-reconnecting");
+    expect(connection().getAttribute("title")).toBe("Reconnecting");
+  });
+
+  it("左翼只有标识 + 标题：没有新鲜度 / 部署 / 设备小字，也没有搜索槽位", () => {
+    renderHeader("en");
+    expect(document.querySelector(".shell-freshness")).toBeNull();
+    expect(document.querySelector(".shell-deploy")).toBeNull();
+    expect(document.querySelector(".shell-device")).toBeNull();
+    expect(document.querySelector(".shell-search-slot")).toBeNull();
+  });
 });
 
 describe("HeaderBar 三档密度（§49 追记 2026-09-04）", () => {
-  const withDevice = (generatedAt: string, deployState?: DeployState): Board =>
-    ({ ...makeBoard(generatedAt, deployState), device_label: "This Mac" }) as Board;
-
-  async function seedDeviceBoard(ageSeconds: number, deployState?: DeployState) {
-    fetchBoardMock.mockResolvedValue(withDevice(new Date(Date.now() - ageSeconds * 1000).toISOString(), deployState));
-    await refreshBoard();
-  }
-
   beforeEach(() => {
     resetStoreForTests();
-    fetchBoardMock.mockReset();
   });
 
   afterEach(() => {
@@ -348,64 +98,28 @@ describe("HeaderBar 三档密度（§49 追记 2026-09-04）", () => {
     resetShellBridgeForTests();
   });
 
-  it("jsdom 没有 ResizeObserver：不给 prop 时 data-density=full，设备标签 / 新鲜度 / 部署小字都在", async () => {
-    await seedDeviceBoard(10, { status: "deployed", version: "1.0.7", last_deployed: new Date(Date.now() - 60_000).toISOString() });
+  it("jsdom 没有 ResizeObserver：不给 prop 时 data-density=full；给了就按给的", () => {
     renderHeader();
     expect(screen.getByRole("banner").getAttribute("data-density")).toBe("full");
-    expect(screen.getByText("This Mac")).toBeTruthy();
-    expect(document.querySelector(".shell-freshness")?.textContent).toBe("Data generated just now");
-    expect(screen.getByText("v1.0.7 · deployed 1m ago")).toBeTruthy();
-    expect(document.querySelector(".shell-connection")?.getAttribute("title")).toBe("Connecting");
-  });
-
-  it("compact：只收设备标签，新鲜度 / 部署小字照旧", async () => {
-    await seedDeviceBoard(10, { status: "deployed", version: "1.0.7" });
+    cleanup();
     renderHeader("en", { density: "compact" });
     expect(screen.getByRole("banner").getAttribute("data-density")).toBe("compact");
-    expect(screen.queryByText("This Mac")).toBeNull();
-    expect(document.querySelector(".shell-freshness")?.textContent).toBe("Data generated just now");
-    expect(screen.getByText("v1.0.7")).toBeTruthy();
   });
 
-  it("tight：新鲜度 / 部署小字不占行，整句折进连接点的 tooltip；陈旧 / 非 healthy 时点带 is-warn", async () => {
-    const deployedAt = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-    await seedDeviceBoard(5 * 60, { status: "rolled_back", version: "1.0.6", last_deployed: deployedAt, failed_sha: "deadbeef" });
-    renderHeader("en", { density: "tight" });
-    expect(screen.getByRole("banner").getAttribute("data-density")).toBe("tight");
-    expect(screen.queryByText("This Mac")).toBeNull();
-    expect(document.querySelector(".shell-freshness")).toBeNull();
-    expect(document.querySelector(".shell-deploy")).toBeNull();
-    const connection = document.querySelector(".shell-connection")!;
-    expect(connection.getAttribute("title")).toBe(
-      "Connecting · Data generated 5 min ago — actd may be down · v1.0.6 · deployed 3h ago · rolled back",
-    );
-    expect(connection.className).toContain("is-warn");
-  });
-
-  it("tight + 新鲜 + healthy：tooltip 带上信息但连接点不报警", async () => {
-    await seedDeviceBoard(10, { status: "up_to_date", version: "1.0.7" });
-    renderHeader("zh", { density: "tight" });
-    const connection = document.querySelector(".shell-connection")!;
-    expect(connection.getAttribute("title")).toBe("连接中 · 数据生成于 刚刚 · v1.0.7");
-    expect(connection.className).not.toContain("is-warn");
-  });
-
-  it("tight + 壳桥：录制 / 字幕开关保留 aria-label，录制的 title 说全「Rec: Off」（文字由 CSS 收起）", async () => {
+  it("tight + 壳桥：录制开关保留 aria-label，title 说全「Rec: Off」（文字由 CSS 收起）；字幕开关不再出现", async () => {
     const state = shellState();
     window.webkit = { messageHandlers: { zaiShell: { postMessage: vi.fn(async () => state) } } };
-    await seedDeviceBoard(10);
     renderHeader("en", { density: "tight" });
     const rec = await screen.findByRole("button", { name: "Recording controls" });
     expect(rec.getAttribute("title")).toBe("Rec: Off");
     expect(rec.textContent).toContain("Off"); // 文案节点仍在（判卷面按节点找），只是 tight 档 CSS 不显示
-    expect(screen.getByRole("button", { name: "Live captions" }).getAttribute("title")).toBe("Live captions");
+    expect(screen.queryByRole("button", { name: "Live captions" })).toBeNull();
     cleanup();
     renderHeader("en", { density: "full" });
     expect((await screen.findByRole("button", { name: "Recording controls" })).getAttribute("title")).toBe("Recording controls");
   });
 
-  it("tight：标题挂 title 全名（极窄时省略号的 tooltip，双语）；full / compact 标题不缩、不挂", async () => {
-    await seedDeviceBoard(10);
+  it("tight：标题挂 title 全名（极窄时省略号的 tooltip，双语）；full / compact 标题不缩、不挂", () => {
     renderHeader("en", { density: "tight" });
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading.className).toBe("shell-title");

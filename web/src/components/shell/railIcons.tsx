@@ -1,8 +1,6 @@
-// 左侧导航栏的图标（CONTRACT §54.4）：原生 MainSection.icon 的 SF Symbol 名 → 同名内联 SVG
-// （tray.full / record.circle / trash / archivebox / gearshape / info.circle + 折叠钮 sidebar.leading；
-// questionmark.bubble / checklist 随 D29 / D30 的两页一起从栏上撤下）。16×16 线稿、currentColor、
-// aria-hidden——文字在 NavRail 里。
-// web 自有页的图标同一套画法（同 viewBox / 同笔宽）：text.bubble = 会议纪要（D32）、puzzlepiece.extension = 技能（D78）。
+// 左侧导航栏的图标（CONTRACT §54.4）：SF Symbol 名 → 同名内联 SVG（text.bubble = 会议纪要 / record.circle = 录制与导入 /
+// gearshape = 设置 / info.circle = 关于 + 折叠钮 sidebar.leading）。16×16 线稿、currentColor、aria-hidden——文字在 NavRail 里。
+// v2.0.0：tray.full / trash / archivebox / puzzlepiece.extension 随任务台 / 回收站 / 永久性完成 / 技能四页退役。
 import type { ReactNode } from "react";
 
 interface IconProps {
@@ -18,44 +16,12 @@ function Icon({ children }: IconProps) {
   );
 }
 
-/** tray.full — 任务台 */
-export function TrayFullIcon() {
-  return (
-    <Icon>
-      <path d="M3 13.5V17a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3.5" />
-      <path d="M3 13.5h5l1.5 2.5h5l1.5-2.5h5" />
-      <path d="M7 9h10M8.5 5.5h7" />
-    </Icon>
-  );
-}
-
-/** record.circle — 录制与数据接入 */
+/** record.circle — 录制与导入 */
 export function RecordCircleIcon() {
   return (
     <Icon>
       <circle cx="12" cy="12" r="8.5" />
       <circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none" />
-    </Icon>
-  );
-}
-
-/** trash — 回收站 */
-export function TrashIcon() {
-  return (
-    <Icon>
-      <path d="M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13" />
-      <path d="M10 11v6M14 11v6" />
-    </Icon>
-  );
-}
-
-/** archivebox — 永久性完成 */
-export function ArchiveBoxIcon() {
-  return (
-    <Icon>
-      <rect x="3.5" y="4" width="17" height="4" rx="1" />
-      <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
-      <path d="M10 12h4" />
     </Icon>
   );
 }
@@ -87,15 +53,6 @@ export function SidebarLeadingIcon() {
     <Icon>
       <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
       <path d="M9 4.5v15" />
-    </Icon>
-  );
-}
-
-/** puzzlepiece.extension — 技能（web 自有页，不在原生八页里；D78 起 Skills 商店自己一页） */
-export function SkillIcon() {
-  return (
-    <Icon>
-      <path d="M9.8 6v-.7a2.2 2.2 0 0 1 4.4 0V6h2.3A1.5 1.5 0 0 1 18 7.5v10A1.5 1.5 0 0 1 16.5 19h-9A1.5 1.5 0 0 1 6 17.5v-2.3h.7a2.2 2.2 0 0 0 0-4.4H6V7.5A1.5 1.5 0 0 1 7.5 6Z" />
     </Icon>
   );
 }

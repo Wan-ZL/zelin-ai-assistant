@@ -40,21 +40,23 @@ describe("shellBridge", () => {
     expect(s.recording.diagnosis).toBeNull();
     expect(s.recording.screen_permission).toBe(true);
     expect(s.recording.resume_mode).toBe("screen");
-    expect(s.captions.on).toBe(false);
-    expect(s.captions.engine).toBe("auto");
     expect(s.language).toBeUndefined();
     expect(normalizeShellState(null).recording.mode).toBe("off");
-    expect(normalizeShellState("garbage").captions.available).toBe(false);
+    expect(normalizeShellState("garbage").recording.available).toBe(false);
+    // v2.0.0：老壳快照里的 captions / hotkey（Live captions 与全局快速捕获已退役）不进类型化状态
+    const legacy = normalizeShellState({ captions: { on: true }, hotkey: "⌃⌥Space" }) as unknown as Record<string, unknown>;
+    expect(legacy.captions).toBeUndefined();
+    expect(legacy.hotkey).toBeUndefined();
   });
 
   it("callShell：无桥 → NO_BRIDGE；壳 reject 字符串 → Error.message 原文；成功 → 快照落店", async () => {
     await expect(callShell("getState")).rejects.toThrow("NO_BRIDGE");
     const postMessage = vi.fn(async (body: unknown) => {
-      if ((body as { method: string }).method === "setCaptions") throw "INVALID_ARGS: setCaptions needs on: bool";
-      return { recording: { mode: "screen_audio", engine_running: true }, captions: { on: true }, language: "zh" };
+      if ((body as { method: string }).method === "setLaunchAtLogin") throw "INVALID_ARGS: setLaunchAtLogin needs on: bool";
+      return { recording: { mode: "screen_audio", engine_running: true }, language: "zh" };
     });
     window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
-    await expect(callShell("setCaptions")).rejects.toThrow("INVALID_ARGS: setCaptions needs on: bool");
+    await expect(callShell("setLaunchAtLogin")).rejects.toThrow("INVALID_ARGS: setLaunchAtLogin needs on: bool");
     const listener = vi.fn();
     subscribeShellState(listener);
     const state = await callShell("setRecording", { on: true, mode: "screen_audio" });
@@ -70,7 +72,7 @@ describe("shellBridge", () => {
     const postMessage = vi.fn(async (body: unknown) => {
       const b = body as { method: string; current?: string };
       if (b.method !== "chooseFolder") throw "UNKNOWN_METHOD: " + b.method;
-      return { recording: { mode: "screen" }, captions: {}, language: "en", dialog: { path: b.current ? "~/Picked" : null } };
+      return { recording: { mode: "screen" }, language: "en", dialog: { path: b.current ? "~/Picked" : null } };
     });
     window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
     expect(await chooseFolder({ current: "~/Notes", prompt: "选择" })).toBe("~/Picked");
@@ -89,16 +91,16 @@ describe("shellBridge", () => {
   it("startShellBridge：无桥 no-op；有桥 → 拉 getState + 订阅 zai-shell-state，stop 后不再收", async () => {
     expect(getShellState()).toBeNull();
     startShellBridge()(); // 无桥：返回 no-op stop
-    const postMessage = vi.fn(async () => ({ recording: { mode: "off" }, captions: {} }));
+    const postMessage = vi.fn(async () => ({ recording: { mode: "off" } }));
     window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
     const stop = startShellBridge();
     expect(postMessage).toHaveBeenCalledWith({ method: "getState" });
     await Promise.resolve();
     window.dispatchEvent(new CustomEvent(SHELL_STATE_EVENT, {
-      detail: { recording: { mode: "screen", engine_running: true }, captions: { on: true } },
+      detail: { recording: { mode: "screen", engine_running: true } },
     }));
     expect(getShellState()?.recording.mode).toBe("screen");
-    expect(getShellState()?.captions.on).toBe(true);
+    expect(getShellState()?.recording.engine_running).toBe(true);
     stop();
     window.dispatchEvent(new CustomEvent(SHELL_STATE_EVENT, { detail: { recording: { mode: "off" } } }));
     expect(getShellState()?.recording.mode).toBe("screen");

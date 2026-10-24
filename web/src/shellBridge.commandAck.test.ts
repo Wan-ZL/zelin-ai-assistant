@@ -23,8 +23,8 @@ describe("shellBridge — command ack", () => {
   it("a listening page acknowledges (handled = true) and receives command + args; after stop nobody acknowledges", () => {
     const handler = vi.fn();
     const stop = onShellCommand(handler);
-    expect(shellDispatch({ command: "open_page", page: "settings", anchor: "live_captions" })).toBe(true);
-    expect(handler).toHaveBeenCalledWith("open_page", { page: "settings", anchor: "live_captions" });
+    expect(shellDispatch({ command: "open_page", page: "settings", anchor: "recording" })).toBe(true);
+    expect(handler).toHaveBeenCalledWith("open_page", { page: "settings", anchor: "recording" });
     expect(shellDispatch({ command: "quick_capture" })).toBe(true);
     expect(handler).toHaveBeenLastCalledWith("quick_capture", {});
     stop();

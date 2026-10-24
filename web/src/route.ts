@@ -1,58 +1,41 @@
 // 深链路由：URL query 序列化模式，fork 自 dashi web/src/issueRoute.ts（Apache-2.0，NOTICE 登记）。
-// 单页两个维度：?page=trash（回收站单独页，缺省 board）+ ?card=R-101（详情抽屉深链）。
-// ?page=styleguide = 活体样式指南（开发者页，仅 URL 直达——看板头部不放入口）。
-// ?page=settings = 设置页（§59 首个 section「模型」；顶栏齿轮入口）。
-// ?page=recaps = 会议纪要页（§63；顶栏入口）——recap 不是卡，不走 ?card= 抽屉。
-// ?page=archive（永久性完成页）/ permissions（权限体检）/ setup（首次运行向导）= §68 P4 parity 页。
-// ?page=ingest（录制与数据接入）/ about（关于）= 左侧导航栏（§54.4，原生 MainSection）补齐的页；
-// rail slug ↔ page 的映射在 components/shell/NavRail.tsx。
-// ?page=skills = 技能页（Claude Code skill 商店 §67.5）：D78（2026-09-15）起从设置页的一区搬成左侧导航栏的独立页
-// （web 自有页，原生没有它）；设置页留一行入口，旧深链 `?page=settings&anchor=skills` 到达即改道到本页（SettingsPage）。
-// ?page=deps / diagnostics（依赖检查——原生 DepsView 的名字与更早的诊断页深链）：D30（2026-09-04）起依赖检查并入
-// 设置页的一区，两个值仍接受（URL 是 API，add-only），都渲染设置页并滚到 deps 区（readSettingsAnchor）。
-// ?page=ask（问问助手 §27）已随 D29 退役：不再是合法页，旧深链按「未知页」回落看板。
-// ?anchor=<section id>：设置页滚到某个 section（字幕悬浮窗齿轮深链 live_captions，§61.3；依赖检查 = deps）。
-// 约定：路由只存"哪一页 + 哪张卡"，过滤器序列化由 A8 仿 dashi taskFilters.ts 在独立模块追加。
+// 一个维度：?page=<页>，缺省 = 会议纪要（v2.0.0 起默认页；看板随 Act 管线退役，全文见 tag full）。
+// ?page=ingest（录制与导入）/ settings（设置）/ about（关于）= 左侧导航栏的三页（§54.4；rail slug ↔ page 的映射在
+// components/shell/NavRail.tsx）；?page=permissions（权限体检）/ setup（首次运行向导）= 从设置 / 关于页进的两页。
+// ?page=deps / diagnostics（依赖检查——原生 DepsView 的名字与更早的诊断页深链）：D30 起依赖检查是设置页的一区，两个值仍
+// 接受（URL 是 API，add-only），都渲染设置页并滚到 deps 区（readSettingsAnchor）。
+// 退役的页（board / trash / archive / styleguide / skills / ask）不再是合法页，旧深链按「未知页」回落到会议纪要；
+// ?card=（卡片详情抽屉）随卡片退役，留在 URL 上也不读。
+// ?anchor=<section id>：设置页滚到某个 section（依赖检查 = deps）。
 //
 // 客户端路由（D40，CONTRACT §49 / §54.4 2026-09-06 追记）：**URL 仍是真源**——但换页不再整页重载。
 // `navigate()` = `history.pushState` / `replaceState` + 通知订阅者；`useRoute()` 让组件订阅 `location.search`
 // （与 realtime.ts / shellBridge.ts 同款的 useSyncExternalStore 小店，快照就是浏览器的 URL，没有第二份 state）；
 // `startRouter()` 挂 popstate（后退 / 前进）与文档级的链接委托——页面里任何指向本 SPA 的 `<a href>`（rail 项、
-// 「← 返回看板」、横幅 / 诊断条 / 向导的深链……）左键点下去都走 `navigate()`，href 照旧留着（⌘点 / 中键开新标签、
-// 复制链接、无 JS 退化都还是原来的 URL）。原生 MainWindow.swift 在进程内换 section、store 是 app 寿命的
-// （AppDelegate.swift:21）；web 自此同样：store / SSE / 「合并中…」章与它的 180 s 定时器 / 多选 / 书立条展开态
-// 都活过换页；每一页的滚动位置离开时记住、回来还原（看板在内），第一次到的页从顶部开始（整页导航的默认行为）。
+// 「← 返回会议纪要」、向导的深链……）左键点下去都走 `navigate()`，href 照旧留着（⌘点 / 中键开新标签、
+// 复制链接、无 JS 退化都还是原来的 URL）。store / SSE 活过换页；每一页的滚动位置离开时记住、回来还原，
+// 第一次到的页从顶部开始（整页导航的默认行为）。
 import { useSyncExternalStore } from "react";
 
-const CARD_QUERY_PARAM = "card";
 const PAGE_QUERY_PARAM = "page";
 const ANCHOR_QUERY_PARAM = "anchor";
 /** 只属于某一页的 query（设置页 `?anchor=` / 依赖检查区 `?log=` / 向导 `?step=`）：换页链接不带上一页的这些——否则
- *  `?page=settings&anchor=deps` 之后点 rail 任务台成了 `/?anchor=deps`，再点设置又滚回 deps 区、`?log=` 又翻开日志。
- *  要带的调用方在 buildAppUrl 之后自己 set（buildSettingsUrl / PipelineBanner / IngestPage / DepRows / failureAction…） */
+ *  `?page=settings&anchor=deps` 之后点 rail 会议纪要成了 `/?anchor=deps`，再点设置又滚回 deps 区、`?log=` 又翻开日志。
+ *  要带的调用方在 buildAppUrl 之后自己 set（buildSettingsUrl / IngestPage / DepRows / failureAction…） */
 const PAGE_SCOPED_PARAMS = [ANCHOR_QUERY_PARAM, "log", "step"] as const;
 
-export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps" | "archive" | "permissions" | "diagnostics" | "setup"
-  | "deps" | "ingest" | "about" | "skills";
-const PAGES: readonly AppPage[] = ["board", "trash", "styleguide", "settings", "recaps", "archive", "permissions", "diagnostics", "setup",
-  "deps", "ingest", "about", "skills"];
+export type AppPage = "recaps" | "settings" | "permissions" | "diagnostics" | "setup" | "deps" | "ingest" | "about";
+const PAGES: readonly AppPage[] = ["recaps", "settings", "permissions", "diagnostics", "setup", "deps", "ingest", "about"];
+
+/** 缺省页（`?page=` 缺席 / 不认识）——v2.0.0 起是会议纪要 */
+export const DEFAULT_PAGE: AppPage = "recaps";
 
 /** 设置页「依赖检查」区的 section id（D30；`?page=deps` / `diagnostics` 旧深链都落到它） */
 export const DEPS_ANCHOR = "deps";
 
-/** Skills 的 section id：D78 起它是独立页（`?page=skills`），设置页上只剩一行入口——
- *  `?anchor=skills` / `#settings-skills` 旧深链到达设置页即改道到技能页（SettingsPage 的锚点消费处） */
-export const SKILLS_ANCHOR = "skills";
-
-export function readCardId(search: string): string | null {
-  // 保留大小写：id 由 SAFE_ID_RE 界定（允许小写），匹配按原样精确比对——不做 case 折叠
-  const id = new URLSearchParams(search).get(CARD_QUERY_PARAM)?.trim();
-  return id || null;
-}
-
 export function readPage(search: string): AppPage {
   const page = new URLSearchParams(search).get(PAGE_QUERY_PARAM);
-  return page && (PAGES as readonly string[]).includes(page) ? (page as AppPage) : "board";
+  return page && (PAGES as readonly string[]).includes(page) ? (page as AppPage) : DEFAULT_PAGE;
 }
 
 /** 依赖检查的两个旧深链（?page=deps / ?page=diagnostics）——它们如今都是设置页（D30） */
@@ -60,10 +43,9 @@ export function isDepsPage(page: AppPage): boolean {
   return page === "deps" || page === "diagnostics";
 }
 
-/** URL 有没有明确指定去处（?page= 或 ?card=）——没有 = 「就打开 app」，冷启动可回上次的页（NavRail restoreMainSection） */
+/** URL 有没有明确指定去处（?page=）——没有 = 「就打开 app」，冷启动可回上次的页（NavRail restoreMainSection） */
 export function hasExplicitRoute(search: string): boolean {
-  const params = new URLSearchParams(search);
-  return params.has(PAGE_QUERY_PARAM) || params.has(CARD_QUERY_PARAM);
+  return new URLSearchParams(search).has(PAGE_QUERY_PARAM);
 }
 
 /** ?anchor=<id>（设置页 section 深链）；只认 [a-z0-9_-]，其余当没有 */
@@ -77,17 +59,15 @@ export function readSettingsAnchor(search: string): string | null {
   return readAnchor(search) ?? (isDepsPage(readPage(search)) ? DEPS_ANCHOR : null);
 }
 
-export function buildAppUrl(href: string, page: AppPage, cardId: string | null): URL {
+export function buildAppUrl(href: string, page: AppPage): URL {
   const url = new URL(href);
 
-  if (page !== "board") url.searchParams.set(PAGE_QUERY_PARAM, page);
+  if (page !== DEFAULT_PAGE) url.searchParams.set(PAGE_QUERY_PARAM, page);
   else url.searchParams.delete(PAGE_QUERY_PARAM);
-
-  if (cardId) url.searchParams.set(CARD_QUERY_PARAM, cardId.trim());
-  else url.searchParams.delete(CARD_QUERY_PARAM);
+  url.searchParams.delete("card"); // 退役的卡片抽屉深链：换页时顺手摘掉
 
   // 上一页的页内 query（anchor / log / step）与片段（设置页目录 `#settings-<id>` 点过之后 location.href 会带着它）都不带——
-  // 它们是页内的一次性指令 / 锚点，不是路由的一部分；过滤器（?q= / tier=…）照旧带着
+  // 它们是页内的一次性指令 / 锚点，不是路由的一部分
   for (const key of PAGE_SCOPED_PARAMS) url.searchParams.delete(key);
   url.hash = "";
   return url;
@@ -95,7 +75,7 @@ export function buildAppUrl(href: string, page: AppPage, cardId: string | null):
 
 /** 设置页某一区的深链：?page=settings&anchor=<id>（横幅 / 诊断条 / 向导 / 权限体检指向依赖检查区都走这里） */
 export function buildSettingsUrl(href: string, anchor: string): URL {
-  const url = buildAppUrl(href, "settings", null);
+  const url = buildAppUrl(href, "settings");
   url.searchParams.set(ANCHOR_QUERY_PARAM, anchor);
   return url;
 }
@@ -135,8 +115,8 @@ export function useRoute(): string {
   return useSyncExternalStore(subscribeRoute, currentSearch, currentSearch);
 }
 
-/** 这个 URL 是不是本 SPA 的一页（同 origin + 同路径；`?page=` / `?card=` 都是 query，片段不算）——
- *  `/api/…` `/files/…` 与别的 origin 不是，交给浏览器整页走 */
+/** 这个 URL 是不是本 SPA 的一页（同 origin + 同路径；`?page=` 是 query，片段不算）——
+ *  `/api/…` 与别的 origin 不是，交给浏览器整页走 */
 export function isAppUrl(url: URL, current: { origin: string; pathname: string } = window.location): boolean {
   return url.origin === current.origin && url.pathname === current.pathname;
 }
@@ -147,7 +127,7 @@ export function isHashOnlyChange(url: URL, current: { search: string } = window.
 }
 
 /**
- * 换页（rail / ⌘1…⌘7 / `/open` / 「← 返回看板」/ 向导完成 / 壳的 open_page 命令都走这一条）：
+ * 换页（rail / ⌘1…⌘4 / 「← 返回会议纪要」/ 向导完成 / 壳的 open_page 命令都走这一条）：
  * 本 SPA 的 URL → `pushState`（`replace=true` 或目标就是当前 URL → `replaceState`，不叠历史）+ 通知订阅者，**不重载**；
  * 不属于本 SPA 的 URL（别的路径 / origin）→ 仍是整页 `location.assign` / `replace`。
  * 离开当前页前先记下它的滚动位置（restoreScroll 回来还原）。
@@ -225,8 +205,7 @@ export function startRouter(): () => void {
 }
 
 // ----- 滚动记忆与焦点：整页导航白送的两样默认行为，pushState 换页要自己补 ------------------------------------------------ #
-// 滚动按页记 window 滚动 + 任何 `[data-scroll-memory="<key>"]` 滚动容器（看板的列容器 `.board-main` 挂 "board-main"——窄窗下横向
-// 滚过的列回来还在；每列的 `.column-list` 挂 "lane:<slug>"）。D42（§54.4 2026-09-06 追记）起文档不滚：非看板页在
+// 滚动按页记 window 滚动 + 任何 `[data-scroll-memory="<key>"]` 滚动容器。D42（§54.4 2026-09-06 追记）起文档不滚：页面在
 // `<main class="shell-main">`（挂 "shell-main"）里滚，window 那一份恒为 0 只是留着——所以「没记过 → 到顶」也要把每个容器归零：
 // `.shell-main` 跨页常驻，不归零的话上一页滚到哪、第一次到的新页就从哪开始（整页导航的新文档从不这样）。
 
@@ -266,8 +245,8 @@ export function restoreScroll(page: AppPage, doc: Document = document): void {
   }
 }
 
-/** 换页后焦点掉到了 <body>（刚点的「← 返回看板」随旧页卸载）→ 放到 `<main class="shell-main">`（AppShell，tabIndex=-1）：读屏器报到
- *  主区、Tab 从新页内容起步——整页导航时浏览器归零焦点 + 报新文档标题，pushState 什么都不报。焦点还在（rail 项 / ⌘1…⌘7 时的输入框）
+/** 换页后焦点掉到了 <body>（刚点的「← 返回会议纪要」随旧页卸载）→ 放到 `<main class="shell-main">`（AppShell，tabIndex=-1）：读屏器报到
+ *  主区、Tab 从新页内容起步——整页导航时浏览器归零焦点 + 报新文档标题，pushState 什么都不报。焦点还在（rail 项 / ⌘1…⌘4 时的输入框）
  *  就不动；preventScroll——滚动归 restoreScroll 管 */
 export function focusPageRoot(doc: Document = document): void {
   const active = doc.activeElement;

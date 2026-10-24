@@ -4,23 +4,19 @@
 // - source default → 把首帧显示的语言 PUT 一次（首启持久化），UI 不动；
 // - ?lang= 在场 → 不读不写（截图 / 演示的一次性覆写）；
 // - 壳在场：水合改了语言 → ShellControls 再发一次 setLanguage 给壳（悬浮窗 / 通知文案跟随，§61.1）。
-// api 全 mock（fetchBoard 回最小快照，其余 offline）、realtime mock。
+// api 全 mock（fetchRecaps 回空列表，其余 offline）、realtime mock。
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBoard, fetchSettingsSection, putSettingsSection } from "./api";
+import { fetchRecaps, fetchSettingsSection, putSettingsSection } from "./api";
 import { App } from "./app";
 import { resetRouterForTests } from "./route";
 import { resetShellBridgeForTests } from "./shellBridge";
 import { getState, resetStoreForTests, setLanguage } from "./store";
 
-const { BOARD, SHELL_STATE } = vi.hoisted(() => ({
-  BOARD: {
-    generated_at: "2026-09-06T12:00:00Z",
-    needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [], counts: {},
-  },
+const { SNAPSHOT, SHELL_STATE } = vi.hoisted(() => ({
+  SNAPSHOT: { recaps: [] },
   SHELL_STATE: {
     recording: { available: false, on: false, mode: "off", engine_running: false, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen" },
-    captions: { available: false, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false },
     language: "en",
   },
 }));
@@ -33,11 +29,11 @@ vi.mock("./api", async (importOriginal) => {
       offline[name] = vi.fn().mockRejectedValue(new Error("offline"));
     }
   }
-  return { ...actual, ...offline, fetchBoard: vi.fn().mockResolvedValue(BOARD) };
+  return { ...actual, ...offline, fetchRecaps: vi.fn().mockResolvedValue(SNAPSHOT) };
 });
 
 vi.mock("./realtime", () => ({
-  createBoardRealtime: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
+  createRecapsRealtime: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
 }));
 
 const general = (language: string, source: string) => ({
@@ -46,7 +42,7 @@ const general = (language: string, source: string) => ({
     default: "zh", choices: ["zh", "en"], effective: language, source }],
 });
 
-const boardTitle = () => document.querySelector("h1")?.textContent ?? "";
+const appTitle = () => document.querySelector("h1")?.textContent ?? "";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -56,7 +52,7 @@ beforeEach(() => {
   resetStoreForTests();
   resetRouterForTests();
   resetShellBridgeForTests();
-  vi.mocked(fetchBoard).mockClear();
+  vi.mocked(fetchRecaps).mockClear();
   vi.mocked(fetchSettingsSection).mockReset();
   vi.mocked(putSettingsSection).mockReset();
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
@@ -77,7 +73,7 @@ describe("App · 语言水合", () => {
     await waitFor(() => expect(getState().language).toBe("zh"));
     expect(fetchSettingsSection).toHaveBeenCalledTimes(1);
     expect(fetchSettingsSection).toHaveBeenCalledWith("general");
-    await waitFor(() => expect(boardTitle()).not.toBe(""));
+    await waitFor(() => expect(appTitle()).not.toBe(""));
     expect(document.documentElement.lang).toBe("zh-CN");           // AppShell 随 store 语言写 <html lang>
     expect(window.localStorage.getItem("zai.lang")).toBe("zh");
     expect(putSettingsSection).not.toHaveBeenCalled();
@@ -97,7 +93,7 @@ describe("App · 语言水合", () => {
     setLanguage("zh"); // detectInitialLanguage 在模块加载时算过一次；这里模拟它按 ?lang= 得出的首帧值
     vi.mocked(fetchSettingsSection).mockResolvedValue(general("en", "override"));
     render(<App />);
-    await waitFor(() => expect(fetchBoard).toHaveBeenCalled());
+    await waitFor(() => expect(fetchRecaps).toHaveBeenCalled());
     expect(fetchSettingsSection).not.toHaveBeenCalled();
     expect(putSettingsSection).not.toHaveBeenCalled();
     expect(getState().language).toBe("zh");
