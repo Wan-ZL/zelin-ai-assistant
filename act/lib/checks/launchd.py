@@ -490,7 +490,7 @@ def _python_row(scan: _PlistScan, paths: CheckResult) -> Optional[CheckResult]:
             "the repo when launchd spawns it (macOS grants file access per "
             "binary, and launchd jobs do not inherit your terminal's grant)"
             % (", ".join(sorted(scan.blind_py)), _agents_named(scan.blind_py)),
-            INTERPRETER_BLIND_FIX)
+            INTERPRETER_BLIND_FIX).with_failure("interpreter_blind")
     return None
 
 
@@ -611,7 +611,7 @@ def _claude_failed_row(res: dict, claude_bin: str, cwd: Path, text: str,
             "Access per executable path and this claude has none; every recap the "
             "server starts dies the same way" % (claude_bin, cwd, res.get("rc"), first),
             fda_fix,
-        )
+        ).with_failure("claude_blind")
     return CheckResult(
         "launchd claude", WARN,
         "`%s --version` under launchd with cwd=%s exited %s: %s"
@@ -647,7 +647,7 @@ def _claude_probe_row(res: dict, claude_bin: str, cwd: Path) -> CheckResult:
             "macOS file-access prompt looks like for a job that has no UI to show it"
             % (claude_bin, cwd),
             fda_fix,
-        )
+        ).with_failure("claude_blind")
     return _claude_failed_row(res, claude_bin, cwd, text, first, fda_fix)
 
 

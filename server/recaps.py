@@ -11,7 +11,7 @@ full text in tag ``full``). Five things:
 2. **Generate / regenerate** ``POST /api/recaps/generate``
    ``{key, note?, partial?, shape?, answers?}`` (「重新生成」/「现在生成」/
    「重新生成成可发送长版」/「按我的答案再出一版」). Field rules are the v1
-   inbox_writer gate verbatim (note ≤ 500 chars, ``partial`` only ``true``,
+   inbox_writer gate verbatim (note non-blank and ≤ 500 chars, ``partial`` only ``true``,
    ``shape`` ∈ lines | sections, ``answers`` = 1..12 distinct ``id=value`` strings);
    ``recap_store.request_argv`` then applies the daemon-side vocabulary
    (``recap_intent.answers_ok``) — a malformed request is a 400 and spawns
@@ -415,6 +415,8 @@ def _bad_answers(answers) -> bool:
 def _check_note(note) -> str:
     if not isinstance(note, str):
         raise InvalidFieldError("note must be a string", {"field": "note"})
+    if not note.strip():
+        raise InvalidFieldError("note must not be empty", {"field": "note"})
     if len(note) > NOTE_MAX:
         raise InvalidFieldError("note allows at most %d chars" % NOTE_MAX, {"field": "note"})
     return note

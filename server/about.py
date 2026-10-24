@@ -10,14 +10,15 @@
   ``updates.check_enabled`` 的 effective 值（override → config.yaml → 默认 true；坏的 overrides
   文件当空，关于页不因它 409）。**周期检查的触发者**（§26 v2.0.0 修订）：缓存缺席或超过 24h 且
   检查开着时，GET 在后台线程里起一次 ``python -m act.lib.update_check``（它自己仍按 24h 预算
-  自闸），响应永远立刻回缓存——GET 不等网络。
+  自闸），响应永远立刻回缓存——GET 不等网络。环境变量 ``AIASSISTANT_UPDATE_AUTOCHECK=0`` 关掉
+  这个后台触发（测试套件设它：判例绝不出网；手动「立即检查」不受影响）。
 - ``POST /api/update/check`` → ``python -m act.lib.update_check --force``（§26 手动「立即检查」；
   ``updates.check_enabled: false`` 时它自己拒发网络请求），stdout 那一行 JSON 原样透出。
 - ``POST /api/update/install {}`` → §79 升级器：先过两道 409，再分离起 ``scripts/upgrade.sh``
   （ff-only 到 origin/main 上的 v* tag + ``bash install.sh --non-interactive --from-upgrade``；
   永不碰录制引擎）。
 
-  1. **跨大版本只许手动**（§26 / §56.3 追记 2026-10-23 桥接版本，PR-0 语义保留）：缓存的 latest
+  1. **跨大版本只许手动**（§26 追记 2026-10-23 桥接版本；1.x 的 §56.3 已退役，PR-0 语义保留）：缓存的 latest
      的 major 大于运行版本（``update_check.needs_manual_upgrade``）→ 409 ``manual_upgrade``，
      details 带 ``manual_upgrade`` / ``current`` / ``latest`` / ``fix``（``git fetch --tags origin &&
      git checkout v<latest> && bash install.sh``）。缓存读不出 = 不拒（宪法第 11 条）。
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
@@ -116,6 +118,14 @@ def check_due(update: Optional[dict], now: Optional[float] = None) -> bool:
     return checked is None or current - checked >= CHECK_INTERVAL_S
 
 
+AUTOCHECK_ENV = "AIASSISTANT_UPDATE_AUTOCHECK"
+
+
+def autocheck_enabled() -> bool:
+    """The GET-triggered background check; ``AIASSISTANT_UPDATE_AUTOCHECK=0`` turns it off."""
+    return os.environ.get(AUTOCHECK_ENV, "1").strip() != "0"
+
+
 def _start_periodic_check(home: Path, runner=None) -> None:
     """One background ``python -m act.lib.update_check`` (self-gated to 24h); never two at once."""
     if _JOBS.live_count():
@@ -137,7 +147,7 @@ def snapshot(home: Path, runner=None, now: Optional[float] = None) -> dict:
     update = update_check_public(home)
     enabled = check_enabled(home)
     current = version()
-    if enabled and check_due(update, now):
+    if enabled and autocheck_enabled() and check_due(update, now):
         _start_periodic_check(home, runner)
     return {
         "version": current,

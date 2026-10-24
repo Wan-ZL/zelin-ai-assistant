@@ -49,15 +49,28 @@ FAILURES: dict = {
         "plain_en": "The claude CLI is not installed — meeting recaps and note processing cannot run",
         "action_id": "install_claude",
     },
+    # v2.0.0 re-scoped (still produced by the `daemon claude` row): the claude the
+    # server agent would launch is older than the one your login shell runs. The
+    # --bg / --name / --resume classify signatures retired with dispatch.
     "claude_cli_outdated": {
-        "plain_zh": "（已退役）claude 版本过旧导致后台派发失败",
-        "plain_en": "(retired) an outdated claude broke background dispatch",
-        "action_id": "open_deps", "retired": "v2.0.0",
+        "plain_zh": "这台机器上有多个 claude 命令，后台服务会用过旧的那个——更新或删掉旧版，再重跑一次安装",
+        "plain_en": "This Mac has more than one claude CLI and the background service would use an outdated copy — update or remove the old one, then re-run the installer",
+        "action_id": "open_deps",
     },
+    # §55 第三幕 / §78 (still produced by the `stable claude` and `launchd claude`
+    # rows): macOS grants Full Disk Access per executable path, and the claude the
+    # server agent launches has no grant yet. Owner action (a TCC toggle).
     "claude_blind": {
-        "plain_zh": "（已退役）launchd 派发的 claude 读不到任务目录",
-        "plain_en": "(retired) launchd-dispatched claude could not read the task folder",
-        "action_id": "open_deps", "retired": "v2.0.0",
+        "plain_zh": "后台服务起的 claude 读不到它要用的文件夹（macOS 按可执行文件授磁盘权限，launchd 起的"
+                    " claude 没有「完全磁盘访问」）——系统设置 → 隐私与安全性 → 完全磁盘访问，加入 doctor"
+                    " `launchd claude` / `stable claude` 行点名的那个 claude 路径（install.sh 维护的稳定副本，"
+                    "授一次即跨 claude 更新有效）",
+        "plain_en": "The claude the background service launches cannot read the folder it needs (macOS "
+                    "grants disk access per executable, and a launchd-started claude has no Full Disk "
+                    "Access) — System Settings → Privacy & Security → Full Disk Access: add the claude "
+                    "path the doctor's `launchd claude` / `stable claude` row names (the stable copy "
+                    "install.sh maintains; one grant survives claude updates)",
+        "action_id": "open_deps",
     },
     "fd_limit": {
         "plain_zh": "（已退役）后台服务打开文件数耗尽",
@@ -117,10 +130,15 @@ FAILURES: dict = {
         "plain_en": "(retired) an Act background service was not loaded",
         "action_id": "open_deps", "retired": "v2.0.0",
     },
+    # still produced by the `launchd python` row (the server agent's interpreter).
     "interpreter_blind": {
-        "plain_zh": "（已退役）后台服务的 Python 读不到项目文件夹",
-        "plain_en": "(retired) the background services' Python could not read the project folder",
-        "action_id": "open_deps", "retired": "v2.0.0",
+        "plain_zh": "后台服务用的那个 Python 读不到项目文件夹（macOS 按程序单独授权，"
+                    "后台任务不继承终端的权限）——重跑一次安装器会换一个能读的",
+        "plain_en": "The Python the background service runs cannot read the project "
+                    "folder (macOS grants file access per program, and background jobs "
+                    "do not inherit your terminal's grant) — re-running the installer "
+                    "picks one that can",
+        "action_id": "open_deps",
     },
     "deploy_blind_tcc": {
         "plain_zh": "（已退役）自动部署任务读不到项目所在的卷",
@@ -248,6 +266,7 @@ RETIRED: frozenset = frozenset(k for k, v in FAILURES.items() if v.get("retired"
 # --------------------------------------------------------------------------- #
 OWNER_ACTION = "owner_action"
 OWNER_ACTION_IDS: frozenset = frozenset({
+    "claude_blind",             # FDA for the claude binary launchd runs
     "cron_fda_blocked",         # FDA for /usr/sbin/cron
     "cron_tcc_blocked",         # FDA for the daemon python (crontab write)
     "ui_build_tcc_blocked",     # FDA for the node binary

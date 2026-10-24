@@ -50,9 +50,11 @@ PANES = {
 _DEFAULT_OBSIDIAN_RAW = "~/Documents/Obsidian Vault/2 - raw"
 
 # §25 里凡是「TCC 挡住了」的失败 id
-# v2.0.0：claude_blind / deploy_blind_tcc / interpreter_blind 随 actd 与自动部署退役（tombstone id）
+# v2.0.0：deploy_blind_tcc 随自动部署退役（tombstone id）；claude_blind / interpreter_blind 仍由
+# server agent 的 `launchd claude` / `stable claude` / `launchd python` 行产出
 TCC_FAILURE_IDS = frozenset({
-    "cron_tcc_blocked", "cron_fda_blocked", "ui_build_tcc_blocked", "screen_tcc_lost",
+    "claude_blind", "cron_tcc_blocked", "cron_fda_blocked", "ui_build_tcc_blocked",
+    "interpreter_blind", "screen_tcc_lost",
 })
 TCC_ROW_NAMES = frozenset({
     "launchd claude", "cron write access",
