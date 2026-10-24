@@ -1,6 +1,8 @@
 #!/bin/bash
 # claude-env.sh — the shell half of the §78 headless-claude isolation constants
-# (constitution art.13). Sourced by process-screenpipe.sh; not executable on its own.
+# (constitution art.13). Sourced by process-screenpipe.sh; running it directly does nothing useful.
+# Mode 755 like its siblings: install.sh chmods ingest/*.sh, and a 644 file here showed up
+# as a tracked mode change that would make scripts/upgrade.sh refuse the checkout as dirty (§79).
 #
 # act/lib/config.py + act/llm.py are the Python definition; this file spells the same
 # literals for the ingest chain (equality pinned by tests/test_isolation_footprint.py and
