@@ -1,6 +1,7 @@
 # Zelin's AI Assistant lite 2.0 配置模板 — install.sh 首次运行时复制为 config.yaml（config.yaml 不入库，
 # 之后永不覆盖）。设置页改的值写进 state/settings_overrides.json，优先级高于这里；这份文件只放
-# 代码真读的键（act/lib/config.py、act/lib/recap_store.py、server/settings_catalog.py）。
+# 代码真读的键（act/lib/config.py、act/lib/recap_store.py、server/settings_catalog.py、server/settings.py、
+# server/display.py、server/recaps.py）。
 # Anthropic API key 不在这里：设置页 > 凭证，或 config/secrets/anthropic-api-key.txt（CONTRACT §19）。
 
 # UI 语言（§15）：zh | en。界面、系统通知与修法句子跟它走。
@@ -70,6 +71,12 @@ redaction:                             # 发给模型之前的本地脱敏（act
 updates:                               # 更新（§26 / §79）
   check_enabled: true                  # 至多每 24h 向 GitHub releases/latest 查一次版本号（唯一的非模型出网）
   auto_install: false                  # 发现同一大版本内的新版时自动跑 scripts/upgrade.sh（默认关：关于页「立即升级」）
+
+# ui:                                  # 看板显示偏好（CONTRACT §54.1 第 12 项；server/display.py 读，次序：设置页 overrides →
+#   display:                           # 这里 → 默认）。设置页「显示」点选即写 overrides，通常不用填
+#     text_size: m                     # s | m | l | xl —— 字号倍率 .9 / 1 / 1.1 / 1.25
+#     text_weight: regular             # regular | medium | bold —— 字重平移 0 / +100 / +200
+#     stroke: normal                   # thin | normal | thick —— 描边 1px / 1.5px / 2px
 
 # server:
 #   port: 47820                        # 看板 server 的本机端口（§54；install.sh 渲染进 LaunchAgent 与壳）
