@@ -20,7 +20,7 @@ Honesty rules (the trust posture of the whole product):
   still stamping ``checked_at`` (so the periodic budget restarts from it),
   and still a hard no-op while ``updates.check_enabled`` is off.
 - The request exposes ONLY the caller's IP and the current version string in
-  the User-Agent (docs/TELEMETRY.md「更新检查」). No auth, no cookies, no ids.
+  the User-Agent (docs/PRIVACY.md「更新检查」). No auth, no cookies, no ids.
 - The dashboard projection (``update_available``) is emitted ONLY when a
   strictly newer semver exists AND ``updates.check_enabled`` is on. The app
   merely opens the release page — nothing is ever downloaded or run.

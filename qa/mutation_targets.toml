@@ -4,7 +4,7 @@
 # 整数 / true·false / 单行字符串数组 / # 注释）——Python 3.9 floor 没有
 # tomllib，宪法第 7 条不许装。超出子集 runner 直接报错。
 #
-# 靶区选择（vnext2-plan R2.3.4 + UNCLEBOB-ADOPTION §3）：宪法关键模块先行——
+# 靶区选择（1.x vnext2-plan R2.3.4，全文在 tag full + UNCLEBOB-ADOPTION §3）：宪法关键模块先行——
 # 一个存活变异体在这些模块里意味着宪法条文没有被测试执法。映射的测试子集
 # 必须先绿（baseline），红映射 = 模块整轮跳过并在报告点名。
 # 未映射模块（[] 空数组）fallback 全套件 discover——允许，但报告标 slow。
