@@ -9900,11 +9900,11 @@
       "id": "parity:setting:prefs:boardAnimations",
       "source": "parity",
       "scenario": "settings key boardAnimations (prefs store) is carried",
-      "proof": "parity:setting:prefs:boardAnimations",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref pinned by a vitest it()"
+      "note": "web localStorage pref, no server/vitest probe"
     },
     {
       "id": "parity:setting:prefs:captionsAppleLocale",
@@ -9990,21 +9990,21 @@
       "id": "parity:setting:prefs:captureHistory",
       "source": "parity",
       "scenario": "settings key captureHistory (prefs store) is carried",
-      "proof": "parity:setting:prefs:captureHistory",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref pinned by a vitest it()"
+      "note": "web localStorage pref, no server/vitest probe"
     },
     {
       "id": "parity:setting:prefs:cardSortOrder",
       "source": "parity",
       "scenario": "settings key cardSortOrder (prefs store) is carried",
-      "proof": "parity:setting:prefs:cardSortOrder",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref pinned by a vitest it()"
+      "note": "web localStorage pref, no server/vitest probe"
     },
     {
       "id": "parity:setting:prefs:hasCompletedFirstRun",
@@ -10040,11 +10040,11 @@
       "id": "parity:setting:prefs:mainSection",
       "source": "parity",
       "scenario": "settings key mainSection (prefs store) is carried",
-      "proof": "parity:setting:prefs:mainSection",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref pinned by a vitest it()"
+      "note": "web localStorage pref, no server/vitest probe"
     },
     {
       "id": "parity:setting:prefs:recordingMode",
@@ -10070,21 +10070,21 @@
       "id": "parity:setting:prefs:sidebarCollapsed",
       "source": "parity",
       "scenario": "settings key sidebarCollapsed (prefs store) is carried",
-      "proof": "parity:setting:prefs:sidebarCollapsed",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref pinned by a vitest it()"
+      "note": "web localStorage pref, no server/vitest probe"
     },
     {
       "id": "parity:setting:prefs:sidebarWidth",
       "source": "parity",
       "scenario": "settings key sidebarWidth (prefs store) is carried",
-      "proof": "parity:setting:prefs:sidebarWidth",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "web localStorage pref pinned by a vitest it()"
+      "note": "web localStorage pref, no server/vitest probe"
     },
     {
       "id": "parity:setting:prefs:terminalApp",

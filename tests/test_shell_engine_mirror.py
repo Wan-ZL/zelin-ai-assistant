@@ -170,29 +170,27 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
 
     RECORDING_KEYS = ["available", "on", "mode", "engine_running", "diagnosis", "note",
                       "tcc_lost", "screen_permission", "resume_mode"]
-    CAPTIONS_KEYS = ["available", "on", "engine", "paused", "engine_dead",
-                     "status_text", "status_is_error",
-                     # §68.2 字幕偏好八键
-                     "source", "translate", "translate_direction", "apple_locale",
-                     "ark_model", "font_size", "opacity"]
     PERMISSION_KEYS = ["screen", "microphone", "notifications",
                        "vault"]   # §68.13 笔记库（Documents）授权（原生 PermissionsModel.vault）
-    TOP_KEYS = ["launch_at_login", "hotkey",
+    TOP_KEYS = ["launch_at_login",
                 "launch_at_login_available"]   # §28 追记 D39（向导终章「登录时自动启动」行的可用判据）
     METHODS = ["getState", "setRecording", "restartRecording",
-               "openScreenRecordingSettings", "setCaptions", "setLanguage",
+               "openScreenRecordingSettings", "setLanguage",
                # §68.13
                "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin",
-               "setCaptionPrefs", "setBadge",
                # §68.1 目录字段的文件对话框
                "chooseFolder"]
+    # v2.0.0（§61.1 tombstone，art.6 v2.0 条款）：页面一侧不再读 / 不再调的桥面——实时字幕的快照块与两种设置方法、
+    # Dock 徽章、全局快速捕获快捷键（Swift 一侧随 LiveCaptions / QuickCaptureHotkey / DockBadge 一起删）
+    WEB_RETIRED_KEYS = ["captions", "hotkey", "translate_direction", "apple_locale", "ark_model", "font_size", "opacity"]
+    WEB_RETIRED_METHODS = ["setCaptions", "setCaptionPrefs", "setBadge", "probeCaptionKey"]
 
     def setUp(self):
         self.swift = _read(SHELL / "ShellBridge.swift")
         self.ts = _read(REPO_ROOT / "web" / "src" / "shellBridge.ts")
 
     def test_snapshot_keys_exist_on_both_sides(self):
-        for key in self.RECORDING_KEYS + self.CAPTIONS_KEYS + self.PERMISSION_KEYS + self.TOP_KEYS:
+        for key in self.RECORDING_KEYS + self.PERMISSION_KEYS + self.TOP_KEYS:
             with self.subTest(key=key):
                 self.assertIn('"%s"' % key, self.swift)
                 self.assertIsNotNone(
@@ -204,6 +202,15 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
             with self.subTest(method=method):
                 self.assertIn('case "%s":' % method, self.swift)
                 self.assertIn('"%s"' % method, self.ts)
+
+    def test_web_no_longer_reads_the_retired_bridge_surface(self):
+        code = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", self.ts)
+        for key in self.WEB_RETIRED_KEYS:
+            with self.subTest(key=key):
+                self.assertIsNone(re.search(r"\b%s\b" % re.escape(key), code), key)
+        for method in self.WEB_RETIRED_METHODS:
+            with self.subTest(method=method):
+                self.assertNotIn('"%s"' % method, code)
 
     def test_handler_and_event_names_match(self):
         self.assertIn('static let handlerName = "zaiShell"', self.swift)

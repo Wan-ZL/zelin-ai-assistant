@@ -4,8 +4,8 @@
   1. §66 清单：`control:board:label:card`（原生 BoardMotion.titlesFor 给飞行标签用的兜底词
      「卡片 / Card」）经 `CONTROL_OWNER` 标 retired、理由带 D46 与 §68.14，JSON 里 gated=False；
   2. 账本：`ui/parity/pending.txt` 不再挂这一行（退役条目留在 pending 上会被 §66.2 判 STALE）；
-  3. 死 CSS：`web/src/styles/animations.css` 不再定义 `.is-moving` / `.is-settling` /
-     `task-card-settle`，且 web/src 没有任何 TS/TSX/CSS/HTML 在注释之外再引用这三个名字——飞行层
+  3. 死 CSS：`web/src/styles/animations.css` 整份不在（v2.0.0 随看板删除），且 web/src 没有任何 TS/TSX/CSS/HTML
+     在注释之外再引用 `.is-moving` / `.is-settling` / `task-card-settle` 这三个名字——飞行层
      没被移植，这些规则从出生起就没人挂，删了就不许再长回来（长回来 = 先修 §68.14 的 tombstone）；
      注释里引 tombstone 提到名字不算。
 纯文件读，无 subprocess、无网络（防腐 #7）。
@@ -64,18 +64,13 @@ class LaneMotionRetiredTestCase(unittest.TestCase):
         self.assertNotIn(CARD_LABEL_ID, uc.load_ledger(uc.PENDING_PATH))
         self.assertNotIn(CARD_LABEL_ID, uc.load_ledger(uc.WAIVERS_PATH))   # 退役走归属表，不走 waivers（§66.2 末句）
 
-    def test_animations_css_dropped_the_moving_and_settling_rules(self):
-        css = uc.read_text(ANIMATIONS_CSS)
-        # 注释里允许提到名字（头部差异清单 ③ 记着删了什么）；规则本身不许在
-        rules = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-        self.assertNotRegex(rules, r"\.is-moving\b")
-        self.assertNotRegex(rules, r"\.is-settling\b")
-        self.assertNotIn("@keyframes task-card-settle", rules)
-        # 留下的动效与两重降级仍在：hover 抬升、sheen、reduced-motion、「看板动画」开关
-        self.assertIn(".task-card:hover", rules)
-        self.assertIn("@keyframes task-processing-sheen", rules)
+    def test_animations_css_is_gone_and_only_reduced_motion_survives(self):
+        # v2.0.0：animations.css 随看板整份删除（全文见 tag full）；留下的只有 controls.css 末尾的
+        # prefers-reduced-motion 降级——飞行 / 落定规则与「看板动画」开关一并不在
+        self.assertFalse(os.path.exists(ANIMATIONS_CSS))
+        rules = re.sub(r"/\*.*?\*/", "", uc.read_text(os.path.join(WEB_SRC, "styles", "controls.css")), flags=re.S)
         self.assertIn("prefers-reduced-motion: reduce", rules)
-        self.assertIn('data-board-animations="off"', rules)
+        self.assertNotIn("data-board-animations", rules)
 
     def test_comment_stripper_spares_comments_but_not_code(self):
         # 行注释 / 块注释 / HTML 注释里提名字不算复活；className 字串与选择器才算

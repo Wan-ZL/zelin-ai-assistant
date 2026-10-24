@@ -12,7 +12,8 @@ tests/integration/test_web_build_outside_repo.py）：
   - CI「Web tests」job 两个都跑（build 瘦了，测试文件的类型覆盖不许因此丢）；
   - web/src 下**任何**文件（测试也算）都没有逃出 web/ 的静态 import——仓库根的
     fixture 只许经 import.meta.glob 读（vite 在转换期解析、tsc 不看文件系统），
-    找不到时判例自己抛错而不是静默空转；
+    找不到时判例自己抛错而不是静默空转；v2.0.0 起唯一的那批（ui/parity/*，§66）随 parity 退役，
+    web/src 不再读任何仓库根 fixture；
   - install.sh 的镜像排除集不变（node_modules / dist / .zai-*），tsconfig.build.json
     因此随镜像走。
 """
@@ -125,13 +126,13 @@ class NoEscapingImportTestCase(unittest.TestCase):
         self.assertEqual(offenders, {}, "static imports that escape web/ break the out-of-repo build "
                                         "(install.sh ui step); read repo fixtures via import.meta.glob")
 
-    def test_parity_suite_reads_repo_fixtures_via_glob_and_fails_loud(self):
-        text = (SRC / "parity.test.tsx").read_text(encoding="utf-8")
-        self.assertIn('import.meta.glob(["../../ui/parity/native-inventory.json", "../../ui/parity/fixtures/*.json"]', text)
-        self.assertIn('import.meta.glob("../../ui/parity/*.txt"', text)
-        self.assertIn('query: "?raw"', text)
-        self.assertIn("throw new Error(`ui/parity/${rel} not found", text)
-        self.assertNotIn('from "../../ui/parity/', text)
+    def test_no_web_src_file_reaches_the_retired_parity_fixtures(self):
+        # v2.0.0：§66 UI parity 退役——src/parity.test.tsx 与 NavRail 判例里经 import.meta.glob 读的
+        # ui/parity/*.json 一并删除（全文见 tag full）；web/src 下不许再有文件够得着仓库根的那批 fixture
+        self.assertFalse((SRC / "parity.test.tsx").exists())
+        offenders = sorted(str(p.relative_to(REPO_ROOT)) for p in _source_files()
+                           if "ui/parity/" in p.read_text(encoding="utf-8"))
+        self.assertEqual(offenders, [])
 
     def test_detector_sees_an_escaping_import(self):
         # the detector itself must not be a no-op: plant an escaping import in a temp file under src

@@ -38,6 +38,8 @@ NEW_KEYS = {
     "captions": ["translation_note", "translation_active", "source_note", "apple_engine_available"],
     "permissions": ["screen_requested"],
 }
+# 页面一侧已退役的块（v2.0.0 Live captions；Swift 一侧随 LiveCaptions.swift 一起删）
+WEB_RETIRED_BLOCKS = {"captions"}
 
 
 def _read(path: Path) -> str:
@@ -54,9 +56,17 @@ class AddOnlyKeysMirrorTestCase(unittest.TestCase):
             for key in keys:
                 with self.subTest(block=block, key=key):
                     self.assertIn('"%s"' % key, self.swift, "ShellBridge.stateSnapshot lacks %r" % key)
+                    if block in WEB_RETIRED_BLOCKS:
+                        continue
                     self.assertIsNotNone(
                         re.search(r"^\s+%s\??: " % re.escape(key), self.ts, re.MULTILINE),
                         "web/src/shellBridge.ts lacks wire key %r" % key)
+
+    def test_web_side_no_longer_reads_the_captions_block(self):
+        # v2.0.0（§61.1 tombstone）：实时字幕随 Live captions 退役，页面不再读 captions.*（老壳快照里残留的键被忽略）
+        for key in NEW_KEYS["captions"]:
+            self.assertIsNone(re.search(r"^\s+%s\??: " % re.escape(key), self.ts, re.MULTILINE), key)
+        self.assertNotIn("captions", re.sub(r"//[^\n]*", "", self.ts))
 
     def test_new_keys_read_the_frozen_engine_fields_verbatim(self):
         # 值的来源是逐字节冻结的引擎副本里的 @Published（Recording.swift / LiveCaptions.swift）
@@ -97,15 +107,9 @@ class AddOnlyKeysMirrorTestCase(unittest.TestCase):
 
     def test_web_normalize_defaults_every_new_key(self):
         # 老壳缺席 → "" / false（asString / asBool 默认），页面永不读到 undefined。
-        # 唯一的三态是 apple_engine_available（§61.1 追记，batch captions-settings-notes）：缺席 / 非布尔 → null，
-        # 页面据此不出引擎脚注——「不知道」不能被补成「这台 Mac 低于 macOS 26」。
+        # v2.0.0：captions.* 四键（含三态的 apple_engine_available）随 Live captions 从页面一侧退役。
         for key in NEW_KEYS["recording"]:
             self.assertIn("%s: asString(rec.%s)" % (key, key), self.ts)
-        self.assertIn("translation_note: asString(cap.translation_note)", self.ts)
-        self.assertIn("translation_active: asBool(cap.translation_active)", self.ts)
-        self.assertIn("source_note: asString(cap.source_note)", self.ts)
-        self.assertIn("apple_engine_available: asBoolOrNull(cap.apple_engine_available)", self.ts)
-        self.assertIn("apple_engine_available?: boolean | null;", self.ts)
         self.assertIn("screen_requested: asBool(perm.screen_requested)", self.ts)
 
 
