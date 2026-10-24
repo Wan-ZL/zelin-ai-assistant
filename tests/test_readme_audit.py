@@ -1,4 +1,4 @@
-"""README 主张审计器的判据（docs/CONTRACT.md §58 质量仪表 + §66 UI 对齐清单）。
+"""README 主张审计器的判据（docs/CONTRACT.md §58 质量仪表 + §77.5 README 真实性审计）。
 
 钉四件事：抽取（bullet / prose / table / code / mermaid 各归各类）、路径判据
 （不存在 = stale，运行时路径放行）、退役面判据（问问助手 / iMessage / 菜单栏
@@ -9,6 +9,7 @@ app / mac 构建指令 / 非当前 tag 的版本字面量）、UI 标签判据�
 """
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -80,7 +81,7 @@ class PathClaimTest(unittest.TestCase):
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_prose_slash_is_not_a_path(self):
-        root = _fake_repo("- launchd/cron scheduling with Slack/Gmail radars\n")
+        root = _fake_repo("- launchd/cron scheduling with export/cleanup scripts\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_command_line_inside_a_fence_is_path_checked(self):
@@ -89,12 +90,12 @@ class PathClaimTest(unittest.TestCase):
         self.assertEqual([c.kind for c in report.stale], ["code"])
 
     def test_mermaid_node_text_is_not_a_path_claim(self):
-        root = _fake_repo("```mermaid\nA[\"radars / three of them\"] --> B\n```\n")
+        root = _fake_repo("```mermaid\nA[\"recaps / three of them\"] --> B\n```\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_glob_resolves(self):
-        root = _fake_repo("- three radars live in `act/radar*.py`\n",
-                          extra_files=("act/radar_slack.py",))
+        root = _fake_repo("- the recap helpers live in `act/lib/recap_*.py`\n",
+                          extra_files=("act/lib/recap_text.py",))
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
 
@@ -131,6 +132,119 @@ class RetiredSurfaceTest(unittest.TestCase):
 
     def test_os_versions_are_not_version_literals(self):
         self.assertEqual(self._reasons("- needs macOS 14+ and Python 3.9+\n"), [])
+
+    def test_lite_2_0_retired_surfaces(self):
+        """v2.0.0 退役的面在 Removed 块之外出现 = stale（§77.5 追记）。"""
+        cases = {
+            "- turn on Live captions in the header\n": "live captions",
+            "- the Slack radar mints a card\n": "radars",
+            "- drag a card across the kanban\n": "board",
+            "- double-click the .pkg to install\n": ".pkg",
+            "- every merge auto-deploys to your Mac\n": "auto-deploy",
+            "- actd dispatches approved work\n": "Act daemon",
+        }
+        for text, needle in cases.items():
+            with self.subTest(text=text):
+                reasons = self._reasons(text)
+                self.assertTrue(reasons and needle in reasons[0], reasons)
+
+    def test_lite_vocabulary_is_not_retired(self):
+        self.assertEqual(self._reasons(
+            "- record the screen, ingest notes into Obsidian, get meeting recaps\n"), [])
+
+
+class RemovedBlockTest(unittest.TestCase):
+    """一个围栏「Removed in 2.0」块免判（§77.5 追记）；第二个块 stale。"""
+
+    BODY = ("menu-bar app and Live captions\n"
+            "`mac/build.sh`, `install-linux.sh`, the .pkg installer\n"
+            "last 1.x = v1.0.117 (tag full)\n")
+
+    def _stale(self, readme):
+        return readme_audit.audit(_fake_repo(readme), tag="v2.0.0").stale
+
+    def test_removed_language_fence_is_exempt(self):
+        self.assertEqual(self._stale("```removed\n" + self.BODY + "```\n"), [])
+
+    def test_removed_heading_line_fence_is_exempt(self):
+        self.assertEqual(self._stale("```text\nRemoved in 2.0\n" + self.BODY + "```\n"), [])
+
+    def test_chinese_heading_line_is_recognised(self):
+        self.assertEqual(self._stale("```\n2.0 删除的东西\n" + self.BODY + "```\n"), [])
+
+    def test_claims_are_kind_removed(self):
+        claims = readme_audit.extract_claims("```removed\nmenu-bar app\n```\n- after\n")
+        self.assertEqual([c.kind for c in claims], ["removed", "bullet"])
+
+    def test_heading_only_counts_on_the_first_line(self):
+        """块中间才出现的 Removed in 2.0 不把整块变成免判块。"""
+        stale = self._stale("```text\nmenu-bar app\nRemoved in 2.0\n```\n")
+        self.assertEqual(len(stale), 1)
+
+    def test_second_block_is_stale(self):
+        readme = ("```removed\nmenu-bar app\n```\n"
+                  "text between\n"
+                  "```removed\nLive captions\n```\n")
+        stale = self._stale(readme)
+        self.assertEqual(len(stale), 1)
+        self.assertIn("only one 'Removed in 2.0' block", stale[0].reasons[0])
+        self.assertEqual(stale[0].text, "Live captions")
+
+    def test_outside_the_block_is_still_judged(self):
+        stale = self._stale("```removed\nmenu-bar app\n```\n- click the menu bar icon\n")
+        self.assertEqual([c.kind for c in stale], ["bullet"])
+
+
+def _git(root, *args):
+    subprocess.run(["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+                   + list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+class FullRefTest(unittest.TestCase):
+    """`full` 标签 / 分支：提到它的主张里，本树没有的路径到 full 那棵树上查（§77.5 追记）。"""
+
+    def _repo_with_full(self, readme):
+        root = _fake_repo(readme, extra_files=("docs/OLD.md",))
+        _git(root, "init", "-q")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "-m", "1.x")
+        _git(root, "tag", "full")
+        _git(root, "rm", "-q", "docs/OLD.md")
+        _git(root, "commit", "-q", "-m", "2.0")
+        return root
+
+    def _stale(self, root):
+        return readme_audit.audit(root, tag="v2.0.0").stale
+
+    def test_path_at_full_is_ok_when_the_claim_names_full(self):
+        root = self._repo_with_full("- the old guide is at tag `full`: `docs/OLD.md`\n")
+        self.assertEqual(self._stale(root), [])
+
+    def test_full_object_syntax(self):
+        root = self._repo_with_full("- `git show full:docs/OLD.md`\n")
+        self.assertEqual(self._stale(root), [])
+
+    def test_missing_at_full_is_stale(self):
+        root = self._repo_with_full("- `git show full:docs/NOPE.md`\n")
+        stale = self._stale(root)
+        self.assertEqual(len(stale), 1)
+        self.assertIn("nor at tag full", stale[0].reasons[0])
+
+    def test_claim_without_full_is_judged_on_this_tree(self):
+        root = self._repo_with_full("- read `docs/OLD.md`\n")
+        self.assertEqual(len(self._stale(root)), 1)
+
+    def test_no_full_ref_means_unjudgeable(self):
+        """本地还没有 full（S2 之前、浅 clone）= 放行，不乱判。"""
+        root = _fake_repo("- the old guide is at tag `full`: `docs/GONE.md`\n")
+        self.assertEqual(readme_audit.audit(root, tag="v2.0.0").stale, [])
+
+    def test_plain_full_literal_is_not_a_path(self):
+        root = self._repo_with_full("```\ngit checkout full && bash install.sh\n```\n")
+        _git(root, "commit", "-q", "--allow-empty", "-m", "noop")
+        with open(os.path.join(root, "install.sh"), "w") as fh:
+            fh.write("x")
+        self.assertEqual(self._stale(root), [])
 
 
 class LabelClaimTest(unittest.TestCase):

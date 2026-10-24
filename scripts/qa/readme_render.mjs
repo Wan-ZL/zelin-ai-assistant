@@ -1,12 +1,12 @@
-// readme_audit.py 的 `--render` 后端（CONTRACT §58 / §66）：把看板的每一页真渲染一遍，
+// readme_audit.py 的 `--render` 后端（CONTRACT §58 / §77.5）：把 web app 的每一页真渲染一遍，
 // 把可见文本打到 stdout，让 README 里引号括起来的 UI 文案有一条「屏幕上真有这几个字」的判据。
 //
 // 与 web/e2e/demoServer.ts 同一条链路（scripts/demo_seed.py 种临时 AIASSISTANT_HOME →
 // 随机端口起 `python3 -m server` → Playwright 打开），只是不进 Playwright test runner：
 // 这支脚本被 python 侧 subprocess 调用，退出码 0 = stdout 可信。**绝不碰生产 state/**。
 //
-// 用法（页面用逗号分隔的 query 串，空串 = 看板首页）：
-//   node scripts/qa/readme_render.mjs "" "?page=settings,?page=skills"
+// 用法（页面用逗号分隔的 query 串，空串 = 缺省页 = 会议纪要）：
+//   node scripts/qa/readme_render.mjs ",?page=settings,?page=ingest"
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -30,13 +30,14 @@ function freePort() {
   });
 }
 
-async function waitForBoard(baseURL, child, timeoutMs = 90_000) {
+async function waitForServer(baseURL, child, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   let last = "no response yet";
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`server exited with code ${child.exitCode}`);
     try {
-      const res = await fetch(`${baseURL}/api/board`);
+      // v2.0.0：/api/board 随 dashboard.json 退役；/api/health 是永远答话的活性路由（§54.2）
+      const res = await fetch(`${baseURL}/api/health`);
       if (res.ok) return;
       last = `HTTP ${res.status}`;
     } catch (error) {
@@ -44,7 +45,7 @@ async function waitForBoard(baseURL, child, timeoutMs = 90_000) {
     }
     await new Promise((r) => setTimeout(r, 120));
   }
-  throw new Error(`server never answered on ${baseURL}/api/board (last: ${last})`);
+  throw new Error(`server never answered on ${baseURL}/api/health (last: ${last})`);
 }
 
 async function main() {
@@ -53,7 +54,7 @@ async function main() {
   const seed = spawnSync(PYTHON, [path.join(REPO_ROOT, "scripts", "demo_seed.py"), home, "--scene", "initial"],
     { encoding: "utf-8" });
   if (seed.status !== 0) throw new Error(`demo_seed.py failed: ${seed.stderr || seed.stdout}`);
-  // 首次运行向导会整页顶掉看板（§68.5）——与 e2e 同一个「向导已完成」标记。
+  // 首次运行向导会整页顶掉会议纪要页（§68.5）——与 e2e 同一个「向导已完成」标记。
   mkdirSync(path.join(home, "state"), { recursive: true });
   writeFileSync(path.join(home, "state", "setup_done.json"),
     JSON.stringify({ completed_at: "2026-09-02T12:00:00Z" }));
@@ -66,7 +67,7 @@ async function main() {
   const baseURL = `http://127.0.0.1:${port}`;
   let browser;
   try {
-    await waitForBoard(baseURL, child);
+    await waitForServer(baseURL, child);
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     // 两种语言都渲一遍：README 的 UI 文案可能引任一侧（§49 语言单源）。
