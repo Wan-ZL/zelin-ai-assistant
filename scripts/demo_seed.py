@@ -281,29 +281,33 @@ def _open_session(now: dt.datetime) -> dict:
 # --------------------------------------------------------------------------- #
 # build: scene -> {relative path under <home>/state: document}
 # --------------------------------------------------------------------------- #
+def _marks(now: dt.datetime, closed: list) -> dict:
+    """marks.json: the 7th recap archived (sent), the 8th dismissed; nothing for an empty scene."""
+    if not closed:
+        return {}
+    archived, dismissed = closed[6], closed[7]
+    return {archived["key"]: {"copied_at": _iso(now - dt.timedelta(days=3)),
+                              "sent_at": _iso(now - dt.timedelta(days=3))},
+            dismissed["key"]: {"dismissed_at": _iso(now - dt.timedelta(days=4))}}
+
+
+def _sessions(now: dt.datetime, closed: list, open_rows: list) -> dict:
+    return {"schema": 1, "first_run_at": _iso(now - dt.timedelta(days=30)),
+            "cursor": {"frame": 0, "audio": 0}, "events": [], "open": open_rows,
+            "day": {"date": now.strftime("%Y-%m-%d"), "count": len(closed)},
+            "failures": {}, "updated_at": _iso(now)}
+
+
 def build(scene: str = DEFAULT_SCENE, now: dt.datetime | None = None) -> dict:
     """The files a scene writes, keyed by their path relative to ``<home>/state``."""
     if scene not in SCENES:
         raise ValueError("unknown scene %r (one of %s)" % (scene, ", ".join(SCENES)))
     now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
-    files: dict = {}
-    closed = [] if scene == "empty" else _closed_recaps(now)
-    open_rows = [] if scene == "empty" else [_open_session(now)]
-    for rec in closed:
-        files["recap/recaps/%s.json" % rec["key"].replace(":", "_")] = rec
-    files["recap/sessions.json"] = {
-        "schema": 1, "first_run_at": _iso(now - dt.timedelta(days=30)),
-        "cursor": {"frame": 0, "audio": 0}, "events": [], "open": open_rows,
-        "day": {"date": now.strftime("%Y-%m-%d"), "count": len(closed)},
-        "failures": {}, "updated_at": _iso(now),
-    }
-    marks: dict = {}
-    if closed:
-        archived, dismissed = closed[6], closed[7]
-        marks[archived["key"]] = {"copied_at": _iso(now - dt.timedelta(days=3)),
-                                  "sent_at": _iso(now - dt.timedelta(days=3))}
-        marks[dismissed["key"]] = {"dismissed_at": _iso(now - dt.timedelta(days=4))}
-    files["recap/marks.json"] = marks
+    empty = scene == "empty"
+    closed = [] if empty else _closed_recaps(now)
+    files = {"recap/recaps/%s.json" % rec["key"].replace(":", "_"): rec for rec in closed}
+    files["recap/sessions.json"] = _sessions(now, closed, [] if empty else [_open_session(now)])
+    files["recap/marks.json"] = _marks(now, closed)
     if scene == "generating":
         target = closed[3]["key"]       # regenerate the needs_review draft
         files["recap_requests.json"] = {target: {"requested_at": _iso(now - dt.timedelta(seconds=40)),
@@ -314,20 +318,38 @@ def build(scene: str = DEFAULT_SCENE, now: dt.datetime | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # validation
 # --------------------------------------------------------------------------- #
-def _check_record(problems: list, where: str, rec: dict) -> None:
+def _check_strings(problems: list, where: str, rec: dict) -> None:
     for field in ("key", "app", "start", "end", "status"):
         if not isinstance(rec.get(field), str) or not rec.get(field):
             problems.append("%s: %s must be a non-empty string" % (where, field))
+
+
+def _check_vocab(problems: list, where: str, rec: dict) -> None:
     if rec.get("status") == STATUS_CLOSED and rec.get("quality") not in QUALITIES:
         problems.append("%s: quality %r is not one of %s" % (where, rec.get("quality"), QUALITIES))
     shape = rec.get("shape")
     if shape is not None and shape not in recap_text.SHAPES:
         problems.append("%s: shape %r is not one of %s" % (where, shape, recap_text.SHAPES))
-    if rec.get("quality") == "ok":
-        payload = ({"en": rec.get("sections_en"), "zh": rec.get("sections_zh")}
-                   if shape == recap_text.SHAPE_SECTIONS else {"en": rec.get("en"), "zh": rec.get("zh")})
-        for finding in recap_text.validate_detail_for(shape, payload):
-            problems.append("%s: quality ok but the gate says %s" % (where, finding["text"]))
+
+
+def _gate_payload(rec: dict) -> dict:
+    if rec.get("shape") == recap_text.SHAPE_SECTIONS:
+        return {"en": rec.get("sections_en"), "zh": rec.get("sections_zh")}
+    return {"en": rec.get("en"), "zh": rec.get("zh")}
+
+
+def _check_gate(problems: list, where: str, rec: dict) -> None:
+    """A record that says quality ok must pass the daemon's own gate."""
+    if rec.get("quality") != "ok":
+        return
+    for finding in recap_text.validate_detail_for(rec.get("shape"), _gate_payload(rec)):
+        problems.append("%s: quality ok but the gate says %s" % (where, finding["text"]))
+
+
+def _check_record(problems: list, where: str, rec: dict) -> None:
+    _check_strings(problems, where, rec)
+    _check_vocab(problems, where, rec)
+    _check_gate(problems, where, rec)
 
 
 def validate(files: dict) -> list:
@@ -395,6 +417,23 @@ def summary_line(files: dict) -> str:
         len(files.get("recap_requests.json", {})))
 
 
+def _parse_now(parser: argparse.ArgumentParser, value):
+    """``--now 2026-09-02T12:00:00Z`` → aware UTC datetime; absent → None (the real clock)."""
+    if not value:
+        return None
+    try:
+        return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        parser.error("--now must look like 2026-09-02T12:00:00Z")
+
+
+def _report(problems: list, ok_line: str) -> int:
+    for problem in problems:
+        print("PROBLEM: " + problem, file=sys.stderr)
+    print(ok_line)
+    return 1 if problems else 0
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("home", help="the throwaway AIASSISTANT_HOME to write state/recap/ into")
@@ -408,22 +447,9 @@ def main(argv: list | None = None) -> int:
     home = Path(args.home).expanduser()
     if args.check:
         problems = check_home(home)
-        for problem in problems:
-            print("PROBLEM: " + problem, file=sys.stderr)
-        print("demo recaps: %s" % ("ok" if not problems else "%d problem(s)" % len(problems)))
-        return 1 if problems else 0
-    now = None
-    if args.now:
-        try:
-            now = dt.datetime.strptime(args.now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
-        except ValueError:
-            parser.error("--now must look like 2026-09-02T12:00:00Z")
-    files = seed(home, args.scene, now)
-    problems = validate(files)
-    for problem in problems:
-        print("PROBLEM: " + problem, file=sys.stderr)
-    print(summary_line(files) + " -> %s" % (home / "state" / "recap"))
-    return 1 if problems else 0
+        return _report(problems, "demo recaps: %s" % ("ok" if not problems else "%d problem(s)" % len(problems)))
+    files = seed(home, args.scene, _parse_now(parser, args.now))
+    return _report(validate(files), summary_line(files) + " -> %s" % (home / "state" / "recap"))
 
 
 if __name__ == "__main__":

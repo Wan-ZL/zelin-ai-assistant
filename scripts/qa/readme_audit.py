@@ -192,11 +192,34 @@ def _plain_claims(stripped):
     return [("prose", sentence) for sentence in _split_sentences(stripped)]
 
 
-def _promote_removed(fence, stripped, fresh):
-    """块内第一行以 Removed in 2.0 开头 → 这个围栏整块按 removed 判（§77.5 追记）。"""
-    if fresh and fence is not None and _REMOVED_HEAD_RE.match(stripped):
-        return _REMOVED_FENCE_LANG
-    return fence
+class _FenceState(object):
+    """extract_claims 的围栏状态：当前围栏语言、是否刚开围栏、见过几个 Removed in 2.0 块。"""
+
+    def __init__(self):
+        self.fence = None
+        self.fresh = False      # 刚开了一个围栏、还没见到第一行内容
+        self.blocks = 0
+
+    def toggle(self, stripped):
+        """```开合。"""
+        self.fence = _fence_language(stripped, self.fence)
+        self.fresh = self.fence is not None
+        if self.fence == _REMOVED_FENCE_LANG:
+            self.blocks += 1
+
+    def see(self, stripped):
+        """围栏内第一行以 Removed in 2.0 开头 → 整块按 removed 判（§77.5 追记）。"""
+        if self.fence is None or not stripped:
+            return
+        if self.fresh and _REMOVED_HEAD_RE.match(stripped):
+            self.fence = _REMOVED_FENCE_LANG
+            self.blocks += 1
+        self.fresh = False
+
+    def pairs(self, stripped):
+        if self.fence is not None:
+            return _fenced_claims(stripped, self.fence)
+        return _plain_claims(stripped)
 
 
 def extract_claims(text):
@@ -205,27 +228,16 @@ def extract_claims(text):
     removed = 「Removed in 2.0」围栏块里的行（§77.5 追记）；每行带上它属于第几个这样的块
     （``Claim.block``），:func:`check_removed_blocks` 据此只放行第一个。"""
     claims = []
-    fence = None
-    fresh = False       # 刚开了一个围栏、还没见到第一行内容
-    blocks = 0
+    state = _FenceState()
     for lineno, raw in enumerate(text.splitlines(), start=1):
         stripped = raw.strip()
         if stripped.startswith("```"):
-            fence = _fence_language(stripped, fence)
-            fresh = fence is not None
-            if fence == _REMOVED_FENCE_LANG:
-                blocks += 1
+            state.toggle(stripped)
             continue
-        if fence is not None and stripped:
-            promoted = _promote_removed(fence, stripped, fresh)
-            if promoted != fence:
-                blocks += 1
-            fence, fresh = promoted, False
-        pairs = (_fenced_claims(stripped, fence) if fence is not None
-                 else _plain_claims(stripped))
-        for kind, body in pairs:
+        state.see(stripped)
+        for kind, body in state.pairs(stripped):
             claim = Claim(len(claims) + 1, kind, lineno, body)
-            claim.block = blocks if kind == "removed" else 0
+            claim.block = state.blocks if kind == "removed" else 0
             claims.append(claim)
     return claims
 
