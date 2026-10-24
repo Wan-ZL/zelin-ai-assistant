@@ -166,18 +166,25 @@ def _last_target(home: Path) -> str:
     return target.lstrip("v") if isinstance(target, str) else ""
 
 
+def _auto_offer(home: Path) -> Optional[dict]:
+    """The §79 auto-install candidate: auto_install on, a same-major update cached, not tried yet."""
+    if not auto_install_enabled(home):
+        return None
+    update = update_check_public(home)
+    offer = update_available(update, check_enabled(home), version())
+    if not offer or offer["manual_upgrade"] or _last_target(home) == offer["latest"]:
+        return None
+    return update
+
+
 def maybe_auto_install(home: Path, spawner: Optional[Spawner] = None,
                        repo: Optional[Path] = None) -> Optional[dict]:
-    """§79 auto mode: ``updates.auto_install`` on + a same-major update in the cache + not yet
-    tried for that version → spawn the upgrader. Returns the receipt, or None when nothing ran.
-    Never raises (a background thread has nobody to report to; the receipt file is the record)."""
+    """§79 auto mode: spawn the upgrader for :func:`_auto_offer`'s update. Returns the receipt,
+    or None when nothing ran. Never raises (a background thread has nobody to report to; the
+    receipt file is the record)."""
     try:
-        if not auto_install_enabled(home):
-            return None
-        update = update_check_public(home)
-        current = version()
-        offer = update_available(update, check_enabled(home), current)
-        if not offer or offer["manual_upgrade"] or _last_target(home) == offer["latest"]:
+        update = _auto_offer(home)
+        if update is None:
             return None
         return install_now({}, home=home, update_reader=lambda: update, spawner=spawner, repo=repo)
     except Exception:  # noqa: BLE001 - 自动升级绝不拖垮 GET /api/about 的后台线程
