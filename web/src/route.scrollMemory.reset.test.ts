@@ -39,7 +39,7 @@ describe("restoreScroll — 容器的「到顶」", () => {
     const main = scroller("shell-main", 300);
     rememberScroll("settings"); // 只记到 shell-main
     main.scrollTop = 900;
-    const lane = scroller("lane:needs_approval", 77);
+    const lane = scroller("recap-list", 77);
     restoreScroll("settings");
     expect(main.scrollTop).toBe(300);
     expect(lane.scrollTop).toBe(0);
@@ -49,7 +49,7 @@ describe("restoreScroll — 容器的「到顶」", () => {
     const el = scroller("shell-main", 0);
     const spy = vi.fn();
     Object.defineProperty(el, "scrollTop", { get: () => 0, set: spy, configurable: true });
-    restoreScroll("trash");
+    restoreScroll("ingest");
     expect(spy).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,6 @@
 // i18n：text(zh, en) 内联对模式，fork 自 dashi web/src/i18n.tsx（Apache-2.0，NOTICE 登记）。
 // 约定：所有用户可见文案在组件内写成 text("中文", "English") 内联对——没有 key 表、
-// 没有翻译文件；新增文案 = 新增一个内联对。领域词表（列名/动词/tier 提示等固定枚举）
-// 由 filters/i18n 组件（A8）在本文件追加 Record<Language, Record<K, string>> 表，同 dashi 的
-// STATUS_LABELS 形。本文件无 JSX（Provider 在 app.tsx 用 LanguageContext.Provider 直接挂）。
+// 没有翻译文件；新增文案 = 新增一个内联对。本文件无 JSX（Provider 在 app.tsx 用 LanguageContext.Provider 直接挂）。
 import { createContext, useContext } from "react";
 
 export type Language = "zh" | "en";
@@ -41,53 +39,5 @@ export function useI18n(): I18n {
   return I18N[useContext(LanguageContext)];
 }
 
-// ----- 领域词表（A8/G4 追加，仿 dashi STATUS_LABELS）：固定枚举值 → 双语标签。 --- #
-// 铁律：未知枚举值原样展示（wire add-only，前端绝不因新值崩渲染）——一律经 domainLabel 取。
-export type LabelTable = Record<Language, Record<string, string>>;
-
-/** 卡片 type（debt/trash 行；radar 提取的开放枚举，常见值预置双语）。
- *  原生 Cards.swift typeLabel 的闭集（quick_capture 提取 schema：code / comms / paperwork / research / review /
- *  training / other + suggestion）逐字镜像；radar 侧的 engineering / process / writing / digest 是 web 已有词。 */
-export const TYPE_LABELS: LabelTable = {
-  zh: {
-    code: "代码", comms: "沟通", paperwork: "文书", research: "调研", review: "评审", training: "训练", other: "其他", suggestion: "建议",
-    engineering: "工程", process: "流程", writing: "写作", digest: "回顾",
-  },
-  en: {
-    code: "Code", comms: "Comms", paperwork: "Paperwork", research: "Research", review: "Review", training: "Training", other: "Other", suggestion: "Suggestion",
-    engineering: "Engineering", process: "Process", writing: "Writing", digest: "Digest",
-  },
-};
-
-/** 看板列 lane（board 投影的 needs_approval/running/… 闭枚举）。
- *  注：列头是复数形（"Proposals"，BoardLanes.tsx 的 Lane title 内联对），
- *  这里是详情抽屉里指代**单张卡**所属列的 chip，故取单数。 */
-export const LANE_LABELS: LabelTable = {
-  zh: {
-    needs_approval: "提案", running: "运行中", needs_input: "需输入",
-    review: "待验收", completed: "阶段性完成", debt: "潜在任务",
-    trash: "回收站", archived: "永久完成",
-  },
-  en: {
-    needs_approval: "Proposal", running: "Running", needs_input: "Needs input",
-    review: "In review", completed: "Done", debt: "Backlog",
-    trash: "Trash", archived: "Archived",
-  },
-};
-
-/** 回收站行 kind —— 对齐 mac/Sources/Cards.swift kindLabel */
-export const TRASH_KIND_LABELS: LabelTable = {
-  zh: { suggestion: "建议", debt: "潜在任务" },
-  en: { suggestion: "Suggestion", debt: "Backlog" },
-};
-
-/** 回收站行 trash_reason —— 对齐 mac/Sources/Cards.swift trashReasonLabel */
-export const TRASH_REASON_LABELS: LabelTable = {
-  zh: { rejected: "你拒绝的", deleted: "你删除的" },
-  en: { rejected: "You rejected it", deleted: "You deleted it" },
-};
-
-/** 词表取值：命中返回双语标签，未知值原样返回 */
-export function domainLabel(table: LabelTable, language: Language, value: string): string {
-  return table[language][value] ?? value;
-}
+// v2.0.0：领域词表（卡片 type / 看板列 / 回收站 kind 与原因）随看板退役，全文见 tag full；固定枚举词表若再出现，照 dashi
+// STATUS_LABELS 的 Record<Language, Record<K, string>> 形加在这里，未知值原样展示（wire add-only）。

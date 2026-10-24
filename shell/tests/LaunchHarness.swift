@@ -22,12 +22,16 @@
 // `launch_at_login_available` (the wizard finale offers 「登录时自动启动」 only for a bundle
 // installed under /Applications or ~/Applications; CONTRACT §28 追记).
 //
-// [8]/[9] pin EngineOwnership (CONTRACT §61.8, issue #318): the launch/exit verdicts about
-// who owns the running screenpipe engine, and the two effectful entry points driven through
-// recorded seams — the harness never runs a real pgrep/pkill (same rule as the §61.7 schedule
-// gate). [8] is the pure truth table, [9] the call sequences (log breadcrumb → pkill → poll,
-// TERM→KILL escalation on exit, the "do nothing" paths, and — cell (i), against the default
-// seam — that the exit credential is our engine's LIVENESS, never "this shell once spawned one":
+// [8]/[9] pin EngineOwnership (CONTRACT §61.8, lite 2.0 adopt semantics): at launch an engine
+// whose argv carries the recipe markers (`screenpipe@0.3.349 record` + `--ignored-windows`) is
+// ADOPTED — pid recorded, never killed; any other engine is logged and left alone; nothing is
+// ever signalled at launch. At exit only an engine this shell spawned AND that is still alive is
+// stopped, and not even that one while the `engineHandoff` preference (written by the §79
+// upgrade script before relaunch) is present. [8] is the pure truth table (verdicts, the pgrep
+// listing parser, the exit verdict, the pidfile body), [9] the call sequences through recorded
+// seams — the harness never runs a real pgrep/pkill and never writes the real pidfile or
+// UserDefaults (same rule as the §61.7 schedule gate). Cell (h), against the default seam, pins
+// that the exit credential is our engine's LIVENESS, never "this shell once spawned one":
 // `Recording.swift` never puts `engineProcess` back to nil.
 
 import Foundation
@@ -170,21 +174,57 @@ func run() {
 func checkEngineOwnershipVerdicts() {
     print("[8] EngineOwnership verdicts:")
     typealias V = EngineOwnership.LaunchVerdict
-    func decide(_ alive: Bool, _ legacy: Bool) -> V {
-        EngineOwnership.decideAtLaunch(engineAlive: alive, legacyAppRunning: legacy)
-    }
-    check(decide(false, false) == V.idle, "no engine at launch → idle (autostart unchanged)")
-    check(decide(false, true) == V.idle, "no engine, legacy app running → still idle (nothing to decide)")
-    check(decide(true, false) == V.reclaim,
-          "engine alive, no legacy app → reclaim (a fresh shell spawned nothing, so it is not ours)")
-    check(decide(true, true) == V.legacyOwns,
-          "engine alive while ZelinAIEngineer runs → legacyOwns (§54 frozen app owns its own engine)")
-    check(EngineOwnership.legacyExecName == "ZelinAIEngineer",
-          "the legacy guard uses the frozen app's CFBundleExecutable verbatim (§54)")
-    check(EngineOwnership.stopAtExit(spawned: true),
-          "we spawned the engine → quitting stops it (§15 追记: quitting the app stops recording)")
-    check(!EngineOwnership.stopAtExit(spawned: false),
-          "we spawned nothing → never kill an engine we merely saw (lifecycle honesty)")
+    typealias E = EngineOwnership.EngineProcess
+    let recipe = "npm exec screenpipe@0.3.349 record --disable-audio --use-all-monitors"
+        + " --ignored-windows 1Password --ignored-windows Bitwarden -l chinese -l english --retention-days 1"
+    let node = "node /Users/x/.npm/_npx/abc/node_modules/.bin/screenpipe record --disable-audio --ignored-windows 1Password"
+    let bare = "/opt/homebrew/bin/screenpipe record --disable-audio"
+    check(EngineOwnership.recipeMarkers == ["screenpipe@0.3.349 record", "--ignored-windows"],
+          "recipe markers are the two literals Recording.swift startCommand emits")
+    check(EngineOwnership.isRecipeEngine(recipe), "the npx wrapper of our recipe carries both markers")
+    check(!EngineOwnership.isRecipeEngine(node), "the node child lacks the pinned version → not a marker line by itself")
+    check(!EngineOwnership.isRecipeEngine(bare), "a hand-started engine without the markers is not ours")
+    check(!EngineOwnership.isRecipeEngine("npx screenpipe@0.3.349 record --disable-audio"),
+          "pinned version but no --ignored-windows (ignored_apps: []) → not adopted (both markers required)")
+    check(!EngineOwnership.isRecipeEngine("npx screenpipe@0.3.350 record --ignored-windows X"),
+          "another engine version → not adopted (the recipe pins 0.3.349)")
+    check(EngineOwnership.decideAtLaunch(engines: []) == V.idle, "no engine at launch → idle (autostart unchanged)")
+    check(EngineOwnership.decideAtLaunch(engines: [E(pid: 10, command: recipe), E(pid: 11, command: node)])
+          == V.adopt(pid: 10),
+          "recipe engine alive → adopt the marker-carrying pid (never reclaim, never kill)")
+    check(EngineOwnership.decideAtLaunch(engines: [E(pid: 11, command: node), E(pid: 10, command: recipe)])
+          == V.adopt(pid: 10),
+          "adopt picks the marker-carrying line wherever pgrep lists it")
+    check(EngineOwnership.decideAtLaunch(engines: [E(pid: 12, command: bare)]) == V.foreign,
+          "engine without the markers → foreign (logged only: not adopted, not stopped)")
+    // the pgrep -lf listing parser
+    let listing = "96282 \(recipe)\n96343 \(node)\n\nnot-a-pid line\n96347   \(bare)  \n"
+    let parsed = EngineOwnership.parseListing(listing)
+    check(parsed.map(\.pid) == [96282, 96343, 96347], "parseListing keeps every `<pid> <command>` line — got \(parsed.map(\.pid))")
+    check(parsed.first?.command == recipe, "the full command line survives (no 400-char tail truncation)")
+    check(parsed.last?.command == bare, "surrounding whitespace is trimmed")
+    check(EngineOwnership.parseListing("").isEmpty, "empty listing → no engines")
+    check(EngineOwnership.parseListing("123\n").isEmpty, "a pid with no command is skipped")
+    // exit verdict: our live engine, and only without the upgrade handoff
+    check(EngineOwnership.stopAtExit(spawnedAlive: true, handoffPending: false),
+          "we spawned it, it is alive, no handoff → quitting stops it (§15 追记: quitting the app stops recording)")
+    check(!EngineOwnership.stopAtExit(spawnedAlive: true, handoffPending: true),
+          "engineHandoff set → never stopped (§79: upgrades never interrupt recording)")
+    check(!EngineOwnership.stopAtExit(spawnedAlive: false, handoffPending: false),
+          "adopted / foreign / dead engine → never stopped by the quit path (lifecycle honesty)")
+    check(!EngineOwnership.stopAtExit(spawnedAlive: false, handoffPending: true), "nothing spawned + handoff → nothing")
+    // pidfile body
+    check(EngineOwnership.pidfileBody(spawnedPid: 7, adoptedPid: 9, engineAlive: true) == "7 spawned\n",
+          "a live engine this shell spawned wins the pidfile")
+    check(EngineOwnership.pidfileBody(spawnedPid: nil, adoptedPid: 9, engineAlive: true) == "9 adopted\n",
+          "otherwise the adopted pid, while an engine is alive")
+    check(EngineOwnership.pidfileBody(spawnedPid: nil, adoptedPid: 9, engineAlive: false) == nil,
+          "no engine alive → the pidfile is removed")
+    check(EngineOwnership.pidfileBody(spawnedPid: nil, adoptedPid: nil, engineAlive: true) == nil,
+          "a foreign engine never lands in the pidfile")
+    check(EngineOwnership.handoffKey == "engineHandoff", "handoff preference key literal frozen (§61.8 / §79)")
+    check(EngineOwnership.pidfilePath.hasSuffix("/Library/Application Support/ZelinAIAssistant/engine.pid"),
+          "pidfile lives in Application Support, outside the repo tree")
     check(EngineOwnership.exitBudget <= 2.0,
           "the willTerminate budget stays well inside macOS's ~5 s (\(EngineOwnership.exitBudget)s)")
     check(EngineOwnership.pollStep > 0, "a non-positive poll step would spin forever")
@@ -192,131 +232,175 @@ func checkEngineOwnershipVerdicts() {
 
 // ---- 9. §61.8 engine ownership — the effects, through recorded seams ---- //
 func checkEngineOwnershipEffects() {
-    print("[9] EngineOwnership effects (fake pgrep/pkill — nothing is ever signalled):")
+    print("[9] EngineOwnership effects (fake pgrep/pkill/defaults/pidfile — nothing is ever signalled):")
+    typealias E = EngineOwnership.EngineProcess
+    let recipe = "npm exec screenpipe@0.3.349 record --disable-audio --ignored-windows 1Password"
 
-    // one recorder per scenario: `alive` is the fake pgrep's answer, mutated by the fake pkill
     final class Rec {
         var calls: [String] = []
+        var engines: [E]
         var engineAlive: Bool
-        var legacyAlive: Bool
         var spawned: Bool
+        var spawnedPid: Int32?
+        var handoff: Bool
         /// how many `killEngine` calls it takes before the fake engine dies (huge = never)
         var diesAfterKills: Int
         private var kills = 0
-        init(engineAlive: Bool, legacyAlive: Bool = false, spawned: Bool = false, diesAfterKills: Int = 1) {
+        init(engines: [E] = [], engineAlive: Bool = false, spawned: Bool = false, spawnedPid: Int32? = nil,
+             handoff: Bool = false, diesAfterKills: Int = 1) {
+            self.engines = engines
             self.engineAlive = engineAlive
-            self.legacyAlive = legacyAlive
             self.spawned = spawned
+            self.spawnedPid = spawnedPid
+            self.handoff = handoff
             self.diesAfterKills = diesAfterKills
         }
         func install() {
+            EngineOwnership.resetState()
+            EngineOwnership.listEngines = { [self] in calls.append("pgrep -lf"); return engines }
             EngineOwnership.engineRunning = { [self] in calls.append("pgrep engine"); return engineAlive }
-            EngineOwnership.legacyAppRunning = { [self] in calls.append("pgrep legacy"); return legacyAlive }
             EngineOwnership.engineSpawnedByUs = { [self] in spawned }
+            EngineOwnership.spawnedPid = { [self] in spawnedPid }
+            EngineOwnership.handoffPending = { [self] in calls.append("read handoff"); return handoff }
+            EngineOwnership.clearHandoff = { [self] in calls.append("clear handoff"); handoff = false }
             EngineOwnership.killEngine = { [self] signal in
                 calls.append("pkill \(signal)")
                 kills += 1
                 if kills >= diesAfterKills { engineAlive = false }
             }
+            EngineOwnership.writePidfile = { [self] body in calls.append("pidfile \(body ?? "<rm>")") }
             EngineOwnership.logLine = { [self] line in calls.append("log \(line)") }
             EngineOwnership.pause = { [self] _ in calls.append("sleep") }
         }
     }
     /// Between scenarios the seams are left INERT, never restored to the real
-    /// pgrep/pkill: a stray call from anywhere in this harness must not be able to
-    /// signal a real process on the developer's machine (§61.7 harness rule).
+    /// pgrep/pkill/defaults/file writes: a stray call from anywhere in this harness must not be
+    /// able to signal a real process or touch the developer's preferences (§61.7 harness rule).
     func disarmSeams() {
+        EngineOwnership.listEngines = { [] }
         EngineOwnership.engineRunning = { false }
-        EngineOwnership.legacyAppRunning = { false }
         EngineOwnership.engineSpawnedByUs = { false }
+        EngineOwnership.spawnedPid = { nil }
+        EngineOwnership.handoffPending = { false }
+        EngineOwnership.clearHandoff = {}
         EngineOwnership.killEngine = { _ in }
+        EngineOwnership.writePidfile = { _ in }
         EngineOwnership.logLine = { _ in }
         EngineOwnership.pause = { _ in }
+        EngineOwnership.resetState()
     }
-    /// run `body` against a fresh recorder, then disarm
     func scenario(_ rec: Rec, _ body: () -> Void) -> [String] {
         rec.install()
         body()
         disarmSeams()
         return rec.calls
     }
+    func signals(_ calls: [String]) -> Bool { calls.contains(where: { $0.hasPrefix("pkill") }) }
 
-    // (a) nothing running at launch: one probe, zero kills, zero noise in engine.log
-    var calls = scenario(Rec(engineAlive: false)) { EngineOwnership.reclaimAtLaunch() }
-    check(calls == ["pgrep engine"],
-          "idle launch: one pgrep, no pkill, no log line — got \(calls)")
+    // (a) nothing running at launch: one listing, no signal, no log, no pidfile
+    var calls = scenario(Rec()) { EngineOwnership.adoptAtLaunch() }
+    check(calls == ["pgrep -lf", "read handoff"],
+          "idle launch: one listing + the handoff read, nothing else — got \(calls)")
 
-    // (b) the orphan: breadcrumb → pkill -TERM → poll → "done"
-    calls = scenario(Rec(engineAlive: true)) { EngineOwnership.reclaimAtLaunch() }
-    check(calls.contains("pkill -TERM"), "orphan launch: the engine is signalled — got \(calls)")
-    check(!calls.contains("pkill -KILL"),
-          "the launch reclaim never escalates to SIGKILL (§15 contract stop recipe is TERM)")
-    check(calls.first == "pgrep engine" && calls[1] == "pgrep legacy",
-          "the legacy guard is consulted before anything is killed — got \(calls)")
-    check(calls.firstIndex(of: "log reclaim orphan engine: this shell spawned nothing yet")
-            .map { $0 < calls.firstIndex(of: "pkill -TERM")! } ?? false,
-          "the breadcrumb lands in engine.log BEFORE the kill (a crash mid-reclaim still explains itself)")
-    check(calls.last == "log reclaim orphan engine: done",
-          "a verified reclaim says so — got \(String(describing: calls.last))")
+    // (b) our recipe engine survived the previous shell: adopt, record, never signal
+    var verdict = EngineOwnership.LaunchVerdict.idle
+    calls = scenario(Rec(engines: [E(pid: 4242, command: recipe)], engineAlive: true)) {
+        verdict = EngineOwnership.adoptAtLaunch()
+    }
+    check(verdict == .adopt(pid: 4242), "recipe engine → adopt(pid) — got \(verdict)")
+    check(!signals(calls), "adopt sends not one signal — got \(calls)")
+    check(calls.contains("log adopt engine pid=4242: recipe markers present — this shell never stops it on quit"),
+          "the adoption is written down in engine.log — got \(calls)")
+    check(calls.contains("pidfile 4242 adopted\n"), "the adopted pid lands in the pidfile — got \(calls)")
 
-    // (c) the orphan survives: bounded polling, honest log, never an infinite loop
-    let stubborn = Rec(engineAlive: true, diesAfterKills: 99)
-    calls = scenario(stubborn) { EngineOwnership.reclaimAtLaunch() }
-    check(calls.last == "log reclaim orphan engine: still alive after 2s",
-          "an unkillable orphan is reported, not pretended away — got \(String(describing: calls.last))")
-    let sleeps = calls.filter { $0 == "sleep" }.count
-    check(sleeps <= Int(EngineOwnership.reclaimBudget / EngineOwnership.pollStep) + 1,
-          "the poll is bounded by reclaimBudget (\(sleeps) sleeps)")
+    // (c) a foreign engine: logged, not adopted, not stopped, no pidfile
+    calls = scenario(Rec(engines: [E(pid: 5, command: "/opt/homebrew/bin/screenpipe record")], engineAlive: true)) {
+        verdict = EngineOwnership.adoptAtLaunch()
+    }
+    check(verdict == .foreign && EngineOwnership.adoptedPid == nil, "foreign engine → not adopted")
+    check(!signals(calls) && !calls.contains(where: { $0.hasPrefix("pidfile") }),
+          "foreign engine: no signal, no pidfile — got \(calls)")
+    check(calls.contains("log engine running without the recipe markers — left alone (not adopted, not stopped)"),
+          "foreign engine: one honest log line — got \(calls)")
 
-    // (d) the frozen legacy app is in charge: hands off (§54)
-    calls = scenario(Rec(engineAlive: true, legacyAlive: true)) { EngineOwnership.reclaimAtLaunch() }
-    check(!calls.contains(where: { $0.hasPrefix("pkill") }),
-          "legacy app running → not one signal is sent — got \(calls)")
-    check(calls.last == "log reclaim skipped: ZelinAIEngineer is running and owns its own engine",
-          "and the skip is written down — got \(String(describing: calls.last))")
+    // (d) relaunch after an upgrade: adopt, then clear the one-shot handoff
+    let upgraded = Rec(engines: [E(pid: 77, command: recipe)], engineAlive: true, handoff: true)
+    calls = scenario(upgraded) { EngineOwnership.adoptAtLaunch() }
+    check(calls.last == "clear handoff" && !signals(calls),
+          "upgrade relaunch: adopt, then clear engineHandoff (one relaunch only) — got \(calls)")
+    check(!upgraded.handoff, "the handoff preference is gone after the launch decision")
+    calls = scenario(Rec(handoff: true)) { EngineOwnership.adoptAtLaunch() }
+    check(calls.contains("log engine handoff: no engine running to adopt") && calls.last == "clear handoff",
+          "a stale handoff with no engine is logged and cleared — got \(calls)")
 
-    // (e) quit, engine ours and well behaved: TERM only
+    // (e) quit, engine ours and well behaved, no handoff: TERM only, then the pidfile goes
     calls = scenario(Rec(engineAlive: true, spawned: true)) { EngineOwnership.stopAtExit() }
     check(calls.contains("pkill -TERM") && !calls.contains("pkill -KILL"),
           "a well-behaved engine dies on TERM — got \(calls)")
-    check(calls.first == "pgrep legacy",
-          "the §54 guard is consulted BEFORE the exit path fires: `pkill -f` cannot tell "
-            + "whose engine it is, so the frozen app being in charge means hands off — got \(calls)")
-    check(calls[1] == "log stop engine on quit: this shell spawned it and it is still alive",
-          "the quit path leaves a breadcrumb too — got \(calls)")
+    check(calls.first == "read handoff" && calls[1] == "log stop engine on quit: this shell spawned it and it is still alive",
+          "the handoff is consulted BEFORE anything is signalled, and the quit leaves a breadcrumb — got \(calls)")
+    check(calls.last == "pidfile <rm>", "a stopped engine leaves no pidfile behind — got \(calls)")
 
     // (f) quit, engine ignores TERM: exactly one escalation to KILL
-    calls = scenario(Rec(engineAlive: true, spawned: true, diesAfterKills: 2)) {
-        EngineOwnership.stopAtExit()
-    }
-    check(calls.filter { $0 == "pkill -TERM" }.count == 1
-            && calls.filter { $0 == "pkill -KILL" }.count == 1,
+    calls = scenario(Rec(engineAlive: true, spawned: true, diesAfterKills: 2)) { EngineOwnership.stopAtExit() }
+    check(calls.filter { $0 == "pkill -TERM" }.count == 1 && calls.filter { $0 == "pkill -KILL" }.count == 1,
           "TERM then exactly one KILL — got \(calls)")
-    check(calls.firstIndex(of: "pkill -TERM")! < calls.firstIndex(of: "pkill -KILL")!,
-          "TERM before KILL")
+    check(calls.firstIndex(of: "pkill -TERM")! < calls.firstIndex(of: "pkill -KILL")!, "TERM before KILL")
+    let sleeps = calls.filter { $0 == "sleep" }.count
+    check(sleeps <= Int(EngineOwnership.exitBudget / EngineOwnership.pollStep) + 1,
+          "the poll is bounded by exitBudget (\(sleeps) sleeps)")
 
-    // (g) quit, engine is somebody else's: not a single probe of it
-    calls = scenario(Rec(engineAlive: true, spawned: false)) { EngineOwnership.stopAtExit() }
-    check(calls.isEmpty, "we spawned nothing → the quit path does nothing at all — got \(calls)")
+    // (g) quit with the upgrade handoff set: our own engine keeps recording
+    calls = scenario(Rec(engineAlive: true, spawned: true, handoff: true)) { EngineOwnership.stopAtExit() }
+    check(!signals(calls), "engineHandoff set at quit → not one signal, even though the engine is ours — got \(calls)")
+    check(calls.last == "log stop engine on quit skipped: engineHandoff is set — the next shell adopts it",
+          "and the skipped stop is written down — got \(String(describing: calls.last))")
 
-    // (h) quit while the §54 frozen app is in charge: our own engine is left running
-    //     rather than risking its engine (`pkill -f` hits both) — the leak is §61.8's
-    //     second honest boundary, the next launch without it in charge reclaims ours.
-    calls = scenario(Rec(engineAlive: true, legacyAlive: true, spawned: true)) {
+    // (g2) quit, engine adopted / foreign (not spawned by us): the quit path does nothing at all
+    calls = scenario(Rec(engines: [E(pid: 4242, command: recipe)], engineAlive: true, spawned: false)) {
+        EngineOwnership.adoptAtLaunch()
         EngineOwnership.stopAtExit()
     }
-    check(!calls.contains(where: { $0.hasPrefix("pkill") }),
-          "legacy app in charge at quit → not one signal, even though the engine is ours — got \(calls)")
-    check(calls.last == "log stop engine on quit skipped: ZelinAIEngineer is running — "
-            + "pkill -f would take its engine down too",
-          "and the skipped stop is written down, not silently dropped — got \(String(describing: calls.last))")
+    check(!signals(calls) && !calls.contains(where: { $0.hasPrefix("log stop") }),
+          "an adopted engine is never stopped by our quit path — got \(calls)")
 
-    // (i) THE credential itself (default seam, no recorder installed): ownership is
+    // (g3) the 5 s tick keeps the pidfile honest and writes only on change
+    calls = scenario(Rec(spawnedPid: 31)) {
+        EngineOwnership.syncPidfile(engineAlive: true)
+        EngineOwnership.syncPidfile(engineAlive: true)
+        EngineOwnership.syncPidfile(engineAlive: false)
+    }
+    check(calls == ["pidfile 31 spawned\n"],
+          "tick: our spawned pid is written once; a live spawned handle wins even when pgrep lags — got \(calls)")
+    calls = scenario(Rec(engines: [E(pid: 8, command: recipe)], engineAlive: true)) {
+        EngineOwnership.adoptAtLaunch()
+        EngineOwnership.syncPidfile(engineAlive: true)
+        EngineOwnership.syncPidfile(engineAlive: false)
+    }
+    check(calls.filter { $0.hasPrefix("pidfile") } == ["pidfile 8 adopted\n", "pidfile <rm>"],
+          "tick: the adopted pid stays while the engine lives and is removed once it is gone — got \(calls)")
+
+    // (g4) launch outside the schedule window: nothing refreshed the cached engineRunning before
+    //      the first tick, so the tick must read liveness itself — the adopted engine's pidfile
+    //      survives the first tick and is still dropped once the engine is really gone
+    let adoptedOutside = Rec(engines: [E(pid: 9, command: recipe)], engineAlive: true)
+    calls = scenario(adoptedOutside) {
+        EngineOwnership.adoptAtLaunch()
+        EngineOwnership.tickPidfile()
+        EngineOwnership.tickPidfile()
+        adoptedOutside.engineAlive = false
+        EngineOwnership.tickPidfile()
+    }
+    check(calls.filter { $0.hasPrefix("pidfile") } == ["pidfile 9 adopted\n", "pidfile <rm>"],
+          "first tick after an adopt reads liveness fresh and keeps the pidfile — got \(calls)")
+    check(calls.filter { $0 == "pgrep engine" }.count == 3, "every tick asks pgrep itself — got \(calls)")
+
+    // (h) THE exit credential itself (default seam, no recorder installed): ownership is
     //     LIVENESS, not history. `Recording.swift` assigns `engineProcess` once in
     //     startEngineBlocking and never puts it back to nil, so a `!= nil` credential
     //     would survive our engine's death (§61.7 schedule stop / mode=off / a crash)
-    //     and make the exit path pkill whatever foreign engine is alive at quit time —
-    //     including the frozen app's. A Process that was never launched has the same
+    //     and make the exit path pkill whatever engine is alive at quit time — including
+    //     an adopted one. A Process that was never launched has the same
     //     `isRunning == false` as one that exited, and costs no subprocess here.
     disarmSeams()
     RecordingController.engineProcess = nil

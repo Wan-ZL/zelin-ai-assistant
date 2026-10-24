@@ -1,5 +1,6 @@
-// 凭证区（§19 / §68.3；原生 Settings.swift credentialsGroup：标题与说明逐字镜像）：AI 引擎的 Anthropic API key
-// 一行（SecretRow，保存即验证 = GET /v1/models）+ 一句「Slack token 与 Gmail 密码在各自接入区」。
+// 凭证区（§19 / §68.3；原生 Settings.swift credentialsGroup：标题逐字镜像）：Anthropic API key 一行（SecretRow，保存即验证 =
+// GET /v1/models）。v2.0.0：这是唯一的凭证——§78 的 headless claude 只认 API key（`--bare` 永不读 Claude Code 登录 / 钥匙串），
+// Slack token 与 Gmail 密码随各自的接入区退役。
 // 锚 `credentials` 与原生冻结锚同名（依赖检查 / doctor 深链）。
 import { useEffect } from "react";
 import { useI18n } from "../../i18n";
@@ -21,11 +22,8 @@ export function CredentialsSection() {
         name="anthropic-api-key.txt"
         labelOverride="Anthropic API key"
         links={[{ label: text("控制台", "Console"), href: "https://console.anthropic.com/settings/keys" }]}
-        helper={text("雷达提取的兜底 key（管线主路径走 Claude Code 登录，不需要它）。", "Fallback key for radar extraction (the main pipeline uses the Claude Code login and does not need it).")}
+        helper={text("会议纪要与笔记整理都用这把 key：app 的 claude 跑在自己的隔离目录里，不读你的 Claude Code 登录。", "Meeting recaps and note processing both use this key: the app runs claude in its own isolated directory and never reads your Claude Code login.")}
       />
-      <p className="settings-helper">
-        {text("Slack token 与 Gmail 密码在下面各自的接入区里粘贴（同样存本机、保存即验证）。", "The Slack token and Gmail password live in their own sections below (same local storage, same verify-on-save).")}
-      </p>
     </section>
   );
 }

@@ -471,7 +471,7 @@ install_mac_app() {
 # the `app` precedent, §56.5). Never prompts: npm runs with CI=1 --no-audit
 # --no-fund, and shell/build.sh's codesign uses the stable identity whose key
 # ACL already allows /usr/bin/codesign non-interactively (`-T /usr/bin/codesign`
-# + `security set-key-partition-list`, mac/scripts/make-signing-cert.sh). That
+# + `security set-key-partition-list`, shell/scripts/make-signing-cert.sh). That
 # partition-list step is SKIPPABLE in that script, so on a machine where the
 # owner skipped it codesign would block on a GUI prompt nobody can click —
 # shell/build.sh therefore runs codesign under its own wall clock and falls
@@ -502,12 +502,12 @@ install_mac_app() {
 UI_APP_NAME="Zelin's AI Assistant"      # bundle folder — id com.zelin.ai-board (§54)
 UI_BUNDLE_ID="com.zelin.ai-board"
 UI_EXEC_NAME="ZelinAIBoard"             # CFBundleExecutable → pgrep/pkill -x
+UI_ENGINE_HANDOFF_KEY="engineHandoff"   # = shell EngineOwnership.handoffKey (§61.8 upgrade handoff)
 UI_LEGACY_APP_NAME="Zelin's AI Assistant (old)"   # the frozen menu-bar app (D3, R2.2.4)
 UI_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"       # CONTRACT §12 — deliberately unchanged
-UI_LEGACY_EXEC_NAME="ZelinAIEngineer"   # the frozen app's CFBundleExecutable (§54) — it owns its own engine
-# §61.8 orphan sweep: the §15 contract engine predicate, verbatim the shell's
-# RecordingController.enginePattern (the [r] class keeps pgrep/pkill from matching their own argv).
-UI_ENGINE_PATTERN="screenpipe.*[r]ecord"
+# v2.0.0 (CONTRACT §61.8): the installer never signals the screenpipe engine — the next
+# shell adopts a running recipe engine; the 1.x orphan sweep (UI_ENGINE_PATTERN /
+# UI_LEGACY_EXEC_NAME / ui_sweep_orphan_engine) is retired, full text at tag full.
 UI_PREVIOUS_APP_NAME="Zelin AI Board"   # the shell's folder name before the swap (≤ v0.48.29)
 UI_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam
 UI_BUDGET_S="${AIASSISTANT_UI_BUDGET:-600}"
@@ -816,29 +816,6 @@ install_shell_app() {
     fi
 }
 
-# §61.8 孤儿引擎扫除（issue #318）：screenpipe 归壳所有——**没有壳在跑却有引擎在跑**
-# 就是孤儿（上一个壳崩了、或被 SIGKILL 掉，`applicationWillTerminate` 根本没跑过）。
-# 它 ppid=1 继续录屏，TCC 的责任方还是那个已经不存在的壳身份（#316 重置授权后每帧都
-# 弹系统授权框）。壳还活着 = 不碰（它自己的退出路径 / 下次启动的回收管它）；§54 冻结
-# 的原生 app 在班 = 不碰（那是它自己的引擎）。永不致命：扫不掉只 warn。
-ui_sweep_orphan_engine() {
-    [ "$(uname -s)" = "Darwin" ] || return 0
-    if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then return 0; fi
-    if pgrep -x "$UI_LEGACY_EXEC_NAME" >/dev/null 2>&1; then return 0; fi
-    if ! pgrep -f "$UI_ENGINE_PATTERN" >/dev/null 2>&1; then return 0; fi
-    info "ui: no board shell is running but a screenpipe engine is — reclaiming the orphan ($1)"
-    pkill -f "$UI_ENGINE_PATTERN" 2>/dev/null || true
-    for _ in 1 2 3 4; do
-        pgrep -f "$UI_ENGINE_PATTERN" >/dev/null 2>&1 || break
-        sleep 0.5
-    done
-    if pgrep -f "$UI_ENGINE_PATTERN" >/dev/null 2>&1; then
-        warn "ui: the orphan screenpipe engine is still running — stop it by hand: pkill -f 'screenpipe.*record'"
-    else
-        ok "ui: reclaimed the orphan screenpipe engine"
-    fi
-}
-
 install_ui() {
     if [ "$PKG_POSTINSTALL" -eq 1 ]; then
         echo "==> 4b. board UI (web/dist + shell app) — skipped (.pkg mode)"
@@ -848,8 +825,6 @@ install_ui() {
     echo "==> 4b. board UI (web/dist + shell app)"
     ui_log_begin
     _ui_t0="$(ui_now)"
-    # 先扫孤儿再构建：引擎录到什么时候不该取决于 npm ci 跑多久（预算 600 s）。
-    ui_sweep_orphan_engine "install.sh ui step"
     install_web_ui
     install_shell_app
     _ui_s=$(( $(ui_now) - _ui_t0 ))
@@ -869,8 +844,12 @@ install_ui() {
 # this run installed a new shell bundle AND the app is running, and only AFTER
 # step 5 reloaded the server agent. SIGTERM → the shell's DispatchSource turns
 # it into a regular NSApp.terminate, i.e. applicationWillTerminate runs: the
-# server is launchd's, but since §61.8 the shell DOES stop the screenpipe engine
-# it spawned there (before that it leaked it as a ppid=1 orphan — issue #318).
+# server is launchd's; the shell stops the screenpipe engine only if it spawned
+# it and no engineHandoff is set (§61.8). So BEFORE the SIGTERM this function
+# writes the engineHandoff preference (key literal = EngineOwnership.handoffKey,
+# pinned by tests/test_shell_engine_orphan.py): the quitting shell then leaves
+# its engine recording (ppid becomes 1) and the relaunched shell adopts it and
+# clears the key. The installer itself never signals the engine.
 # `open -g` relaunches without stealing focus, and `--args
 # --background` tells the shell itself not to order its window front or activate
 # (D38, shell LaunchPolicy): `-g` alone only asks LaunchServices not to switch —
@@ -881,18 +860,20 @@ relaunch_shell_app() {
     [ "$UI_SHELL_INSTALLED" -eq 1 ] || return 0
     [ -n "$UI_APP_PATH" ] || return 0
     pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || return 0
+    # §61.8 upgrade handoff: without it the quitting shell stops an engine it spawned.
+    # A failed write only costs a recording gap; a failed relaunch leaves a stale key
+    # that the next shell launch clears.
+    defaults write "$UI_BUNDLE_ID" "$UI_ENGINE_HANDOFF_KEY" -string "$(date -u +%FT%TZ)" 2>/dev/null || true
     pkill -TERM -x "$UI_EXEC_NAME" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || break
         sleep 0.5
     done
-    # §61.8：SIGTERM 送不走它才 KILL（此前这一发是无条件的）——KILL 之后
-    # applicationWillTerminate 没跑过，旧壳拉起的 screenpipe 当场成孤儿，就地扫掉，
-    # 不必等新壳启动那一下的回收（新壳起不来时那一下根本不会发生）。
+    # SIGTERM 送不走它才 KILL。KILL 之后 applicationWillTerminate 没跑过，旧壳拉起的
+    # screenpipe 照录（ppid 1）——v2.0.0 起不扫它：新壳启动时按 recipe 标记 adopt（§61.8）。
     if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
         pkill -KILL -x "$UI_EXEC_NAME" 2>/dev/null || true
         sleep 0.5
-        ui_sweep_orphan_engine "shell app SIGKILLed — willTerminate never ran"
     fi
     if open -g "$UI_APP_PATH" --args --background 2>/dev/null; then
         ok "ui: relaunched the shell app on the new build (server agent reloaded first)"

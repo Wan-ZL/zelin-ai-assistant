@@ -4,9 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
-  deliverableUrl,
-  fetchBoard,
-  postAction,
+  fetchRecaps,
+  postRecapGenerate,
+  postRecapRevert,
   resolveApiUrl,
   setApiText,
 } from "./api";
@@ -51,7 +51,7 @@ describe("server error envelope", () => {
         error: { code: "UNKNOWN_FIELD", message: "unknown field: foo", details: { field: "foo" } },
       }),
     );
-    const error = await expectApiError(postAction({ id: "R-101", action: "approve" }));
+    const error = await expectApiError(postRecapGenerate({ key: "meeting:2026-10-20T1400-zoom" }));
     expect(error.status).toBe(400);
     expect(error.code).toBe("UNKNOWN_FIELD");
     expect(error.message).toBe("unknown field: foo");
@@ -61,7 +61,7 @@ describe("server error envelope", () => {
 
   it("falls back to REQUEST_FAILED + generic message when the error body is not JSON", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 500 }));
-    const error = await expectApiError(fetchBoard());
+    const error = await expectApiError(fetchRecaps());
     expect(error.status).toBe(500);
     expect(error.code).toBe("REQUEST_FAILED");
     expect(error.message).toBe("Request failed (500)");
@@ -72,7 +72,7 @@ describe("network failure taxonomy", () => {
   it("GET retries twice with backoff, then synthesizes READ_FAILED (status 0)", async () => {
     vi.useFakeTimers();
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
-    const settled = expectApiError(fetchBoard());
+    const settled = expectApiError(fetchRecaps());
     await vi.runAllTimersAsync();
     const error = await settled;
     expect(fetchMock).toHaveBeenCalledTimes(3); // 首发 + 2 次重试
@@ -85,16 +85,16 @@ describe("network failure taxonomy", () => {
     vi.useFakeTimers();
     fetchMock
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockResolvedValueOnce(jsonResponse(200, { generated_at: "x" }));
-    const settled = fetchBoard();
+      .mockResolvedValueOnce(jsonResponse(200, { recaps: [] }));
+    const settled = fetchRecaps();
     await vi.runAllTimersAsync();
-    await expect(settled).resolves.toEqual({ generated_at: "x" });
+    await expect(settled).resolves.toEqual({ recaps: [] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("POST never retries and synthesizes SERVICE_UNAVAILABLE", async () => {
     fetchMock.mockRejectedValue(new Error("connection refused"));
-    const error = await expectApiError(postAction({ id: "R-101", action: "approve" }));
+    const error = await expectApiError(postRecapGenerate({ key: "meeting:2026-10-20T1400-zoom" }));
     expect(fetchMock).toHaveBeenCalledTimes(1); // 写动作绝不自动重发
     expect(error.status).toBe(0);
     expect(error.code).toBe("SERVICE_UNAVAILABLE");
@@ -105,35 +105,43 @@ describe("network failure taxonomy", () => {
     const abort = new Error("aborted");
     abort.name = "AbortError";
     fetchMock.mockRejectedValue(abort);
-    await expect(fetchBoard()).rejects.toBe(abort);
+    await expect(fetchRecaps()).rejects.toBe(abort);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("localizes synthesized error copy through the injected text function", async () => {
     setApiText((chinese) => chinese);
     fetchMock.mockRejectedValue(new Error("connection refused"));
-    const error = await expectApiError(postAction({ id: "R-101", action: "approve" }));
+    const error = await expectApiError(postRecapGenerate({ key: "meeting:2026-10-20T1400-zoom" }));
     expect(error.message).toBe("暂时连不上本地服务，请稍后重试。");
   });
 });
 
 describe("request shape", () => {
-  it("postAction sends the payload verbatim as JSON — no fields added or dropped", async () => {
+  it("postRecapGenerate sends the body verbatim as JSON — no fields added or dropped", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
-    await postAction({ id: "R-101", action: "approve", comment: null });
+    await postRecapGenerate({ key: "meeting:2026-10-20T1400-zoom", note: "shorter" });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe(resolveApiUrl("/api/actions"));
+    expect(String(url)).toBe(resolveApiUrl("/api/recaps/generate"));
     expect(init.method).toBe("POST");
     expect((init.headers as Headers).get("Content-Type")).toBe("application/json");
     // server 零容忍 UNKNOWN_FIELD：客户端不得偷偷注入任何字段
-    expect(JSON.parse(init.body as string)).toEqual({ id: "R-101", action: "approve", comment: null });
+    expect(JSON.parse(init.body as string)).toEqual({ key: "meeting:2026-10-20T1400-zoom", note: "shorter" });
+  });
+
+  it("postRecapRevert posts exactly {key, version} to /api/recaps/revert (§63.9)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
+    await postRecapRevert("meeting:2026-10-20T1400-zoom", 2);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(resolveApiUrl("/api/recaps/revert"));
+    expect(JSON.parse(init.body as string)).toEqual({ key: "meeting:2026-10-20T1400-zoom", version: 2 });
   });
 
   it("POST carries X-Zai-Token from the injected window.__ZAI_TOKEN__ (§49 auth model)", async () => {
     (window as Window & { __ZAI_TOKEN__?: string }).__ZAI_TOKEN__ = "tok-123";
     try {
       fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
-      await postAction({ id: "R-101", action: "approve", comment: null });
+      await postRecapGenerate({ key: "meeting:2026-10-20T1400-zoom", note: "shorter" });
       const [, init] = fetchMock.mock.calls[0];
       expect((init.headers as Headers).get("X-Zai-Token")).toBe("tok-123");
     } finally {
@@ -144,21 +152,11 @@ describe("request shape", () => {
   it("GET never carries the token; POST without injection omits the header (server will 401)", async () => {
     // 每次调用一个新 Response：body 只能读一次，复用同一个对象第二次 .json() 会抛——自 2xx 非 JSON 体拒收起那不再被吞成 {}
     fetchMock.mockImplementation(async () => jsonResponse(200, { ok: true }));
-    await fetchBoard();
-    await postAction({ id: "R-101", action: "approve", comment: null });
+    await fetchRecaps();
+    await postRecapGenerate({ key: "meeting:2026-10-20T1400-zoom", note: "shorter" });
     const getHeaders = (fetchMock.mock.calls[0][1] as RequestInit).headers as Headers;
     const postHeaders = (fetchMock.mock.calls[1][1] as RequestInit).headers as Headers;
     expect(getHeaders.has("X-Zai-Token")).toBe(false);
     expect(postHeaders.has("X-Zai-Token")).toBe(false);
-  });
-
-  it("deliverableUrl percent-encodes both segments (traversal text stays inert)", () => {
-    expect(deliverableUrl("R-101", "report v1.html")).toBe(
-      resolveApiUrl("/files/deliverables/R-101/report%20v1.html"),
-    );
-    // ../ 只会被编码成普通文本段，不产生上跳路径
-    expect(deliverableUrl("R-101", "../secret")).toBe(
-      resolveApiUrl("/files/deliverables/R-101/..%2Fsecret"),
-    );
   });
 });

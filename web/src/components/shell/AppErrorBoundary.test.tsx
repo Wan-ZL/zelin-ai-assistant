@@ -1,15 +1,14 @@
-// 顶层错误边界（CONTRACT §49 追记 `store-resilience-drawer`）：渲染期未捕获的异常 → 「看板渲染失败」+ 原话 + 「重试」，
-// 而不是 React 卸载整棵树留白页（原生 Store.swift:320-324「Keep the previously good dashboard rather than blanking the UI」
-// 的最后一道）。重试 = 重挂子树 + refreshBoard；正常渲染时边界透明；文案随 store 语言。api 层 mock 掉，零真实网络。
+// 顶层错误边界（CONTRACT §49 追记 `store-resilience-drawer`）：渲染期未捕获的异常 → 「页面渲染失败」+ 原话 + 「重试」，
+// 而不是 React 卸载整棵树留白页。重试 = 重挂子树 + refreshRecaps；正常渲染时边界透明；文案随 store 语言。api 层 mock 掉，零真实网络。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBoard } from "../../api";
+import { fetchRecaps } from "../../api";
 import { resetStoreForTests, setLanguage } from "../../store";
 import { AppErrorBoundary, renderErrorText } from "./AppErrorBoundary";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
-  return { ...mod, fetchBoard: vi.fn(), fetchCard: vi.fn() };
+  return { ...mod, fetchRecaps: vi.fn() };
 });
 
 let crash = true;
@@ -25,8 +24,8 @@ beforeEach(() => {
   resetStoreForTests();
   setLanguage("en");
   crash = true;
-  vi.mocked(fetchBoard).mockReset();
-  vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "x", counts: {}, needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [] });
+  vi.mocked(fetchRecaps).mockReset();
+  vi.mocked(fetchRecaps).mockResolvedValue({ recaps: [] });
   vi.spyOn(console, "error").mockImplementation(() => undefined); // React 的错误边界日志 + 我们自己的 console.error
   window.addEventListener("error", swallowExpectedCrash);
 });
@@ -48,7 +47,7 @@ describe("AppErrorBoundary", () => {
   it("a render crash shows the line + the error's own words + Retry instead of a blank tree", () => {
     render(<AppErrorBoundary><Bomb /></AppErrorBoundary>);
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("The board failed to render");
+    expect(alert.textContent).toContain("The page failed to render");
     expect(alert.textContent).toContain("Cannot read properties of undefined (reading 'filter')");
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(screen.queryByText("board-content")).toBeNull();
@@ -63,14 +62,14 @@ describe("AppErrorBoundary", () => {
     expect(screen.getByTestId("app-error-boundary").getAttribute("role")).toBeNull();
   });
 
-  it("Retry remounts the children and refetches the board through refreshBoard", async () => {
+  it("Retry remounts the children and refetches the recaps through refreshRecaps", async () => {
     render(<AppErrorBoundary><Bomb /></AppErrorBoundary>);
     screen.getByRole("alert");
     crash = false;
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("board-content")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(fetchBoard).toHaveBeenCalledTimes(1);
+    expect(fetchRecaps).toHaveBeenCalledTimes(1);
   });
 
   it("Retry while the cause persists shows the boundary again (no blank page either way)", async () => {
@@ -83,7 +82,7 @@ describe("AppErrorBoundary", () => {
   it("speaks the store's language (LanguageContext lives inside App, the boundary outside it)", () => {
     setLanguage("zh");
     render(<AppErrorBoundary><Bomb /></AppErrorBoundary>);
-    expect(screen.getByText("看板渲染失败")).toBeTruthy();
+    expect(screen.getByText("页面渲染失败")).toBeTruthy();
     expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
   });
 

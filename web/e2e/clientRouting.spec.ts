@@ -1,9 +1,9 @@
 // 客户端路由（CONTRACT §49 / §54.4 2026-09-06 追记，D40）——真浏览器判例：
 //   · rail「设置」→ 设置页、URL ?page=settings、document.title 跟页，**文档没有重载**（window 上放的标记还在；整页导航会把它清掉）；
-//   · 「← 返回看板」→ 看板列直接在（快照还在 store 里），不闪「正在加载看板…」，标记仍在；
+//   · rail「会议纪要」→ 回到缺省页（不带 ?page=），标记仍在；
 //   · 浏览器后退 / 前进（popstate）→ 页跟 URL 走、标记仍在；
 //   · ⌘点 rail 项不拦（浏览器手势归浏览器：这里只验 href 仍是完整深链、能在新文档里直达）；
-//   · rail「技能」→ 技能页（D78）、设置页原处那一行入口 → 同一页，文档仍不重载。
+//   · 退役页的旧深链（?page=board / trash）回落会议纪要，不白屏。
 // 数据 = demo initial 场景（demoServer.ts 起随机端口的真 server）。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
@@ -21,14 +21,14 @@ test.afterAll(() => {
 
 const MARKER = "__zaiSameDocument";
 
-async function openBoard(page: Page) {
+async function openRecaps(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.setItem("zai.theme", "light");
     window.localStorage.setItem("zai.lang", "zh");
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${server.baseURL}/`);
-  await page.locator(".board-column").first().waitFor();
+  await page.locator(".recaps-page").waitFor();
   await page.waitForLoadState("networkidle");
   // 同文档标记：整页重载会把它清掉
   await page.evaluate((key) => { (window as unknown as Record<string, unknown>)[key] = "alive"; }, MARKER);
@@ -36,9 +36,9 @@ async function openBoard(page: Page) {
 
 const marker = (page: Page) => page.evaluate((key) => (window as unknown as Record<string, unknown>)[key], MARKER);
 
-test("rail → 设置 → 「← 返回看板」：URL / 标题跟页，文档不重载，看板不闪加载态", async ({ page }) => {
-  await openBoard(page);
-  await expect(page).toHaveTitle(/— 任务台$/);
+test("rail → 设置 → rail 会议纪要：URL / 标题跟页，文档不重载", async ({ page }) => {
+  await openRecaps(page);
+  await expect(page).toHaveTitle(/— 会议纪要$/);
 
   await page.locator('[data-rail-item="settings"]').click();
   await expect(page).toHaveURL(/[?&]page=settings(&|$)/);
@@ -47,70 +47,52 @@ test("rail → 设置 → 「← 返回看板」：URL / 标题跟页，文档�
   await expect(page.locator('[data-rail-item="settings"]')).toHaveAttribute("aria-current", "page");
   expect(await marker(page)).toBe("alive");
 
-  await page.locator(".settings-page .trash-back-link").click();
+  await page.locator('[data-rail-item="recaps"]').click();
   await expect(page).not.toHaveURL(/[?&]page=/);
-  await expect(page.locator(".board-column").first()).toBeVisible();
-  expect(await page.getByText("正在加载看板…").count()).toBe(0);
-  await expect(page).toHaveTitle(/— 任务台$/);
-  await expect(page.locator('[data-rail-item="dashboard"]')).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".recaps-page")).toBeVisible();
+  await expect(page).toHaveTitle(/— 会议纪要$/);
+  await expect(page.locator('[data-rail-item="recaps"]')).toHaveAttribute("aria-current", "page");
   expect(await marker(page)).toBe("alive");
 });
 
 test("浏览器后退 / 前进走 popstate：页跟 URL，文档仍不重载", async ({ page }) => {
-  await openBoard(page);
-  await page.locator('[data-rail-item="trash"]').click();
-  await expect(page).toHaveURL(/[?&]page=trash(&|$)/);
-  await expect(page).toHaveTitle(/— 回收站$/);
+  await openRecaps(page);
+  await page.locator('[data-rail-item="ingest"]').click();
+  await expect(page).toHaveURL(/[?&]page=ingest(&|$)/);
+  await expect(page).toHaveTitle(/— 录制与导入$/);
   await page.locator('[data-rail-item="about"]').click();
   await expect(page).toHaveURL(/[?&]page=about(&|$)/);
   await expect(page).toHaveTitle(/— 关于$/);
 
   await page.goBack();
-  await expect(page).toHaveURL(/[?&]page=trash(&|$)/);
-  await expect(page).toHaveTitle(/— 回收站$/);
+  await expect(page).toHaveURL(/[?&]page=ingest(&|$)/);
+  await expect(page).toHaveTitle(/— 录制与导入$/);
   expect(await marker(page)).toBe("alive");
 
   await page.goBack();
   await expect(page).not.toHaveURL(/[?&]page=/);
-  await expect(page.locator(".board-column").first()).toBeVisible();
-  await expect(page).toHaveTitle(/— 任务台$/);
+  await expect(page.locator(".recaps-page")).toBeVisible();
+  await expect(page).toHaveTitle(/— 会议纪要$/);
   expect(await marker(page)).toBe("alive");
 
   await page.goForward();
-  await expect(page).toHaveURL(/[?&]page=trash(&|$)/);
-  await expect(page).toHaveTitle(/— 回收站$/);
+  await expect(page).toHaveURL(/[?&]page=ingest(&|$)/);
+  await expect(page).toHaveTitle(/— 录制与导入$/);
   expect(await marker(page)).toBe("alive");
 });
 
-test("rail「技能」→ 技能页（D78）；设置页那一行入口也到同一页，全程不重载", async ({ page }) => {
-  await openBoard(page);
-
-  await page.locator('[data-rail-extra="skills"]').click();
-  await expect(page).toHaveURL(/[?&]page=skills(&|$)/);
-  await expect(page.locator(".skills-page .trash-page-title")).toHaveText("技能");
-  await expect(page).toHaveTitle(/— 技能$/);
-  await expect(page.locator('[data-rail-extra="skills"]')).toHaveAttribute("aria-current", "page");
-  // 页面正文就是原设置页那一区（同一个组件）：区标题与「刷新」在
-  await expect(page.locator(".skills-page #settings-skills-title")).toHaveText("Skills（Claude Code 技能）");
-  expect(await marker(page)).toBe("alive");
-
-  // 设置页留下的一行入口：点它回到技能页（同一个文档）
-  await page.locator('[data-rail-item="settings"]').click();
-  await expect(page.locator(".settings-page-title")).toHaveText("设置");
-  await page.locator('.settings-fold[data-section="skills"] .settings-fold-toggle').click();
-  await page.locator('.settings-fold[data-section="skills"] a.btn').click();
-  await expect(page).toHaveURL(/[?&]page=skills(&|$)/);
-  await expect(page.locator(".skills-page .trash-page-title")).toHaveText("技能");
-  expect(await marker(page)).toBe("alive");
-});
-
-test("深链仍是 API：rail 项的 href 是完整的 ?page= 深链，直接打开 / 刷新还原同一页", async ({ page }) => {
-  await openBoard(page);
-  const href = await page.locator('[data-rail-item="archive"]').getAttribute("href");
+test("深链仍是 API：rail 项的 href 是完整的 ?page= 深链，直接打开 / 刷新还原同一页；退役页的旧深链回落会议纪要", async ({ page }) => {
+  await openRecaps(page);
+  const href = await page.locator('[data-rail-item="about"]').getAttribute("href");
   expect(href).toBeTruthy();
-  expect(new URL(href!, server.baseURL).searchParams.get("page")).toBe("archive");
+  expect(new URL(href!, server.baseURL).searchParams.get("page")).toBe("about");
   await page.goto(new URL(href!, server.baseURL).toString());
-  await expect(page).toHaveTitle(/— 永久性完成$/);
+  await expect(page).toHaveTitle(/— 关于$/);
   await page.reload();
-  await expect(page).toHaveTitle(/— 永久性完成$/);
+  await expect(page).toHaveTitle(/— 关于$/);
+  for (const retired of ["board", "trash", "skills"]) {
+    await page.goto(`${server.baseURL}/?page=${retired}`);
+    await expect(page).toHaveTitle(/— 会议纪要$/);
+    await expect(page.locator(".recaps-page")).toBeVisible();
+  }
 });

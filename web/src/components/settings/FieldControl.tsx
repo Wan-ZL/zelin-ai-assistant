@@ -42,15 +42,6 @@ export function fieldProblem(field: SettingsField, value: unknown, language: Lan
   return pickText(field.check.reasons?.[reason] ?? field.check.message, language);
 }
 
-/** 400 details `{check, reason?}`（PUT 或 POST /api/maintainer/terminal 的启动重检）→ 目录里的同一句；对不上 → null */
-export function checkSentence(field: SettingsField | undefined, details: unknown, language: Language): string | null {
-  if (!field?.check || !details || typeof details !== "object") return null;
-  const { check, reason } = details as { check?: unknown; reason?: unknown };
-  if (check !== field.check.kind) return null;
-  const variant = typeof reason === "string" ? field.check.reasons?.[reason] : undefined;
-  return pickText(variant ?? field.check.message, language) || null;
-}
-
 /** 数字框的校验句（原生每个数字字段各有一句；web 按 kind + key 取，示例数 = 目录 default） */
 export function numberHint(field: SettingsField, text: (zh: string, en: string) => string): string {
   const example = typeof field.default === "number" ? String(field.default) : "5";

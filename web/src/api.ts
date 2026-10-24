@@ -1,70 +1,44 @@
 // fetch 客户端 + 错误分类学。模式 fork 自 dashi web/src/api.ts（Apache-2.0，NOTICE 登记）：
 // ApiError{status,code,details} 统一封装 + GET 幂等重试（2 次退避）+ 网络失败合成码。
 // error envelope 契约（server/app.py）：{"error":{"code","message","details"}}，
-// server 端码：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / INTERNAL_ERROR；
+// server 端码：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / CONFLICT / NOT_IMPLEMENTED / INTERNAL_ERROR；
 // 客户端合成码：READ_FAILED（读失败，UI 静默重试）/ SERVICE_UNAVAILABLE（写失败，UI 明确报错）。
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
+// v2.0.0：只导出 server/app.py 路由表里**还在**的路由（CONTRACT §49 路由集）；看板 / 卡片 / inbox 动作 / 附件 /
+// 技能 / MCP / Slack / 同步 / 语气档案 / 雷达 / 遥测 / 终端 / 修复等路由随 Act 管线退役，全文见 tag full。
 import type {
   AboutInfo,
-  AiFixReceipt,
-  AnalyticsReceipt,
-  AttachmentReceipt,
-  Board,
-  CardDetail,
-  ClaudeCodeDefault,
-  ClaudeCodeDefaultWrite,
-  ConsentShownReceipt,
+  DiagnosticsSnapshot,
   DisplaySettings,
   DisplaySettingsPatch,
-  ClaudeSessionsScan,
-  DiagnosticsSnapshot,
   DoctorReport,
   FailureCatalog,
-  IngestJob,
-  IngestJobStart,
-  DailyLoopPatch,
-  DailyLoopSettings,
   FolderReceipt,
   HealthSnapshot,
-  LaneCatalog,
-  MaterialItem,
-  MaterialsList,
+  IngestJob,
+  IngestJobStart,
   LogTail,
-  McpList,
   ModelsSettings,
+  PermissionsSnapshot,
+  RecapGenerateReceipt,
   RecapHistory,
   RecapMarkKind,
   RecapMarkReceipt,
+  RecapRevertReceipt,
   RecapSettings,
-  SearchIndexSnapshot,
-  SkillsSnapshot,
-  PermissionsSnapshot,
-  RadarAgentsSnapshot,
-  RadarReinstallReceipt,
-  RepairReceipt,
+  RecapsSnapshot,
   ScreenpipeDisk,
   SecretStatus,
   SecretVerifyResult,
-  SlackDirectory,
-  SyncDisableReceipt,
-  SyncPairReceipt,
-  SyncStatus,
-  VoiceGenStatus,
-  VoiceProfileStatus,
   SecretsStatus,
-  SeedDashboardReceipt,
   SettingsCatalog,
   SettingsSection,
   SetupEngine,
   SetupReceipt,
   SetupSnapshot,
   SetupVaults,
-  TerminalReceipt,
   UpdateCheckResult,
   UpdateInstallReceipt,
-  WebAnalyticsEvent,
-  WorktreeCleanup,
-  WorktreeInventory,
 } from "./types";
 
 interface ApiErrorBody {
@@ -131,7 +105,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       break;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw error;
-      // 只重试幂等读——写动作绝不自动重发（inbox 动作不做客户端幂等假设）
+      // 只重试幂等读——写动作绝不自动重发（生成 / 回退会派生子进程，不做客户端幂等假设）
       if (readRequest && attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
         continue;
@@ -146,8 +120,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
           code: readRequest ? "READ_FAILED" : "SERVICE_UNAVAILABLE",
           message: readRequest
             ? apiText(
-                "暂时读不到看板数据，会自动重试。",
-                "Board data is temporarily unavailable. Retrying automatically.",
+                "暂时读不到本地服务的数据，会自动重试。",
+                "Local data is temporarily unavailable. Retrying automatically.",
               )
             : apiText(
                 "暂时连不上本地服务，请稍后重试。",
@@ -165,9 +139,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch (error) {
     if ((error as Error).name === "AbortError") throw error;
     if (response.ok) {
-      // 2xx 却解不出 JSON（/api/board 原样透传的 dashboard.json 写了一半、代理页……）：不许当 `{}` 放行——空对象
-      // 一路进 store 会让看板渲染崩（`board.needs_approval` 取不到）。按读失败上报，调用方留旧快照
-      //（原生 Store.swift:320-324 decode 失败分支）；status 带真值（2xx），store 据此与断网（status 0）分开
+      // 2xx 却解不出 JSON（代理页、写了一半的响应……）：不许当 `{}` 放行——空对象一路进 store 会让页面渲染崩。
+      // 按读失败上报，调用方留旧快照；status 带真值（2xx），store 据此与断网（status 0）分开
       throw new ApiError(response.status, {
         error: {
           code: "READ_FAILED",
@@ -185,216 +158,50 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-/** GET /api/board — dashboard.json 原样透传 */
-export function fetchBoard(signal?: AbortSignal): Promise<Board> {
-  return request<Board>("/api/board", { signal });
-}
+const EMPTY_BODY = JSON.stringify({});
 
-/** GET /api/cards/{id} — 投影 + registry 详情增补 */
-export function fetchCard(id: string, signal?: AbortSignal): Promise<CardDetail> {
-  return request<CardDetail>(`/api/cards/${encodeURIComponent(id)}`, { signal });
-}
+// ----- 活性 / 失败目录 ------------------------------------------------------------------------------------------- #
 
-/** GET /api/health — 管线活性（心跳年龄 / 看板新鲜度 / 连崩计数 → verdict，§47.4） */
+/** GET /api/health — 活性（server 在答 + cron ingest 链探针新鲜度 + 上次 recap 轮次 → verdict，§49） */
 export function fetchHealth(signal?: AbortSignal): Promise<HealthSnapshot> {
   return request<HealthSnapshot>("/api/health", { signal });
 }
 
-/** `fetchSearchIndex` 的结果：`null` = 304（带去的 ETag 仍有效，缓存不动）；否则新快照 + server 的 ETag（文件缺席 = server 回 200 空表且不带 ETag → etag null） */
-export type SearchIndexFetch = { etag: string | null; snapshot: SearchIndexSnapshot } | null;
+/** GET /api/failures：§25 失败目录的 server-owned 双语句（依赖行 / 引擎诊断行按 failure id 取） */
+export function fetchFailures(signal?: AbortSignal): Promise<FailureCatalog> {
+  return request<FailureCatalog>("/api/failures", { signal });
+}
 
-/** 缺席 / 拒读时的空层（§37.2「索引缺失 = 该层静默缺席」） */
-export const EMPTY_SEARCH_INDEX: SearchIndexSnapshot = { entries: {}, truncated: false };
+// ----- 会议纪要（§63） -------------------------------------------------------------------------------------------- #
 
-/**
- * GET /api/search-index — §37.2 会话内容层（D45）：actd 维护的 state/search_index.json 的 server 只读投影
- * `{entries: {card_id: text}, truncated}`。**条件 GET**：带上次的 ETag（`If-None-Match`）→ 304 = 没变（返回 null，
- * 调用方留着缓存）；文件缺席 = server 照样 200、空 `entries`、无 ETag（§49：层缺席不是错误）。不走 request()：它把非 2xx
- * 一律当失败，而 304 在这条路上是正常答案；404 也按空快照收（防御：这条路上「没有这一层」永远不该变成错误）。其余失败（断网 / 5xx / 坏 JSON）合成 READ_FAILED 抛出，调用方静默——字段搜索照常，层缺席不报错。
- * token-light 读路径（§49），不重试（每次搜索开始 / 每版看板落地都会再重验一次）。
- */
-export async function fetchSearchIndex(etag: string | null = null, signal?: AbortSignal): Promise<SearchIndexFetch> {
-  const headers = new Headers();
-  if (etag) headers.set("If-None-Match", etag);
-  let response: Response;
-  try {
-    response = await fetch(resolveApiUrl("/api/search-index"), { headers, signal });
-  } catch (error) {
-    if ((error as { name?: unknown } | null)?.name === "AbortError") throw error; // 调用方的取消不是读失败（DOMException 可能不是本 realm 的 Error）
-    throw new ApiError(0, { error: { code: "READ_FAILED", message: apiText("会话索引暂时读不到。", "The session index is temporarily unavailable."), details: { method: "GET", failure: "network" } } });
-  }
-  if (response.status === 304) return null;
-  if (response.status === 404) return { etag: null, snapshot: EMPTY_SEARCH_INDEX }; // 防御：层缺席永不当错误
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (!response.ok) throw new ApiError(response.status, (body ?? {}) as ApiErrorBody);
-  const doc = body as Partial<SearchIndexSnapshot> | null;
-  if (!doc || typeof doc !== "object" || typeof doc.entries !== "object" || doc.entries === null) {
-    throw new ApiError(response.status, { error: { code: "READ_FAILED", message: apiText(`服务端响应不是合法 JSON（${response.status}）`, `The server response is not valid JSON (${response.status})`), details: { method: "GET", failure: "invalid-json" } } });
-  }
-  return { etag: response.headers.get("ETag"), snapshot: { ...doc, entries: doc.entries, truncated: doc.truncated === true } };
+/** GET /api/recaps — §63.5 投影（两份预算切过的行 + 三栏真实总数；server 现读 state/recap/，SSE recaps.updated 后重拉） */
+export function fetchRecaps(signal?: AbortSignal): Promise<RecapsSnapshot> {
+  return request<RecapsSnapshot>("/api/recaps", { signal });
+}
+
+/** POST /api/recaps/generate 的 body（§63.8 / §63.10 / §63.11）：server 字段闸零容忍——多一个键 400 UNKNOWN_FIELD */
+export interface RecapGenerateBody {
+  key: string;
+  note?: string;
+  partial?: true;
+  shape?: string;
+  answers?: string[];
+}
+
+/** POST /api/recaps/generate — 「重新生成 / 现在生成」：server 派生 `python -m act.recap --generate`（单写者仍是 act.recap，§63.6）
+ *  并把这一次请求记进 §63.8 台账；回执带 generate_request（行上「生成中」的真源） */
+export function postRecapGenerate(body: RecapGenerateBody): Promise<RecapGenerateReceipt> {
+  return request<RecapGenerateReceipt>("/api/recaps/generate", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** POST /api/recaps/revert {key, version} — §63.9「回退到这一版」：server 派生 `act.recap --revert`（非破坏：当前正文先进 history） */
+export function postRecapRevert(key: string, version: number): Promise<RecapRevertReceipt> {
+  return request<RecapRevertReceipt>("/api/recaps/revert", { method: "POST", body: JSON.stringify({ key, version }) });
 }
 
 /**
- * POST /api/actions — 写 inbox 动作。body 形状 = live CONTRACT §3 现有动词清单，
- * 由动作发起组件逐字段构造；本函数不校验、不补字段（多一个字段 server 会 400 UNKNOWN_FIELD）。
- */
-export function postAction(body: Record<string, unknown>): Promise<unknown> {
-  return request<unknown>("/api/actions", { method: "POST", body: JSON.stringify(body) });
-}
-
-/**
- * POST /api/attachments — 贴图上传（CONTRACT §10bis web 路径，D41）：body = 客户端 canvas 已转好的**原始 PNG 字节**
- * （Content-Type image/png——本面唯一的二进制体路由，四闸同 POST，token 照带），server 落 state/attachments/<uuid>-1.png
- * 并回绝对路径；文件名 / 目录全由 server 定，这里不传任何名字。写请求：失败不重试。signal = 调用方的超时 / 取消
- * （LaneComposer 给 AbortSignal.timeout——上传是粘贴顺带触发的，卡死不许把整个输入框锁到刷新；TimeoutError 走
- * 上面的 failure:"timeout" 分支成 SERVICE_UNAVAILABLE，调用方按「保存失败」弹窗处理）。
- */
-export function postAttachment(png: Blob, signal?: AbortSignal): Promise<AttachmentReceipt> {
-  return request<AttachmentReceipt>("/api/attachments", {
-    method: "POST",
-    headers: { "Content-Type": "image/png" },
-    body: png,
-    signal,
-  });
-}
-
-/** POST /api/reveal — 访达定位交付物（路径由 server 从卡片记录推导，客户端只传 card_id） */
-export function postReveal(cardId: string): Promise<unknown> {
-  return request<unknown>("/api/reveal", {
-    method: "POST",
-    body: JSON.stringify({ card_id: cardId }),
-  });
-}
-
-/** POST /api/self-improve/resume（CONTRACT §65.4）：owner 清掉敏感路径护栏挂起的自动草稿 PR 通道；空 body */
-export function postSelfImproveResume(): Promise<{ ok: boolean; paused: boolean; was_paused: boolean }> {
-  return request("/api/self-improve/resume", { method: "POST", body: "{}" });
-}
-
-/** GET /api/lanes — 列说明文案目录（server-owned，§54；静态内容，进程内拉一次即可） */
-export function fetchLanes(signal?: AbortSignal): Promise<LaneCatalog> {
-  return request<LaneCatalog>("/api/lanes", { signal });
-}
-
-/**
- * POST /api/ai-fix — 「让 AI 修」：server 从投影行推导错误上下文并起
- * act.ai_fix 的 Terminal 修复会话（§54）。客户端只传 card_id + UI 语言，
- * 绝不传错误文本（server 端不接受）。非 darwin / config 关闭 → 501。
- */
-export function postAiFix(cardId: string, lang: "zh" | "en"): Promise<AiFixReceipt> {
-  return request<AiFixReceipt>("/api/ai-fix", {
-    method: "POST",
-    body: JSON.stringify({ card_id: cardId, lang }),
-  });
-}
-
-/** POST /api/ai-fix {source: "doctor"} — 依赖检查页的「让 AI 修」：上下文 = server 自己跑的 doctor 报告里没过的行（§54.4） */
-export function postAiFixDoctor(lang: "zh" | "en"): Promise<AiFixReceipt> {
-  return request<AiFixReceipt>("/api/ai-fix", {
-    method: "POST",
-    body: JSON.stringify({ source: "doctor", lang }),
-  });
-}
-
-/** 交付物静态 URL（iframe/链接用；server 端做路径推导与穿越校验） */
-export function deliverableUrl(cardId: string, name: string): string {
-  return resolveApiUrl(`/files/deliverables/${encodeURIComponent(cardId)}/${encodeURIComponent(name)}`);
-}
-
-/** GET /api/settings/models — 三把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §59，D22 + D53） */
-export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSettings> {
-  return request<ModelsSettings>("/api/settings/models", { signal });
-}
-
-/** PUT /api/settings/models 的 body：dispatch / pipeline = "follow" 或模型 id；fallback（D53）= "off" 或模型 id */
-export type ModelsPatch = { dispatch?: string; pipeline?: string; fallback?: string };
-
-/**
- * PUT /api/settings/models — 保存旋钮（写请求：四闸同 POST，api.ts 自动带 token）。
- * body 只许 dispatch / pipeline / fallback 三键（server UNKNOWN_FIELD 零容忍）。
- */
-export function putModelsSettings(body: ModelsPatch): Promise<ModelsSettings> {
-  return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
-}
-
-/** GET /api/settings/daily-loop — 每日自我改进循环的五把旋钮 effective 值（CONTRACT §70） */
-export function fetchDailyLoopSettings(signal?: AbortSignal): Promise<DailyLoopSettings> {
-  return request<DailyLoopSettings>("/api/settings/daily-loop", { signal });
-}
-
-/** PUT /api/settings/daily-loop — 保存旋钮子集（写请求：四闸同 POST；server 校验 + diff-write） */
-export function putDailyLoopSettings(body: DailyLoopPatch): Promise<DailyLoopSettings> {
-  return request<DailyLoopSettings>("/api/settings/daily-loop", { method: "PUT", body: JSON.stringify(body) });
-}
-
-/** GET /api/claude-code/default-model — follow 模式继承的 Claude Code 全局默认 */
-export function fetchClaudeCodeDefault(signal?: AbortSignal): Promise<ClaudeCodeDefault> {
-  return request<ClaudeCodeDefault>("/api/claude-code/default-model", { signal });
-}
-
-/** POST /api/claude-code/default-model — owner 显式一键「设为 <id>」：server 只改 model 键、先备份 */
-export function postClaudeCodeDefault(model: string): Promise<ClaudeCodeDefaultWrite> {
-  return request<ClaudeCodeDefaultWrite>("/api/claude-code/default-model", {
-    method: "POST",
-    body: JSON.stringify({ model }),
-  });
-}
-
-/** GET /api/materials/list?status= — 素材库（CONTRACT §62）；open = 尚未开 PR / 完成 / 放弃的条目（弹窗） */
-export function fetchMaterials(status: "open" | "all" = "open", signal?: AbortSignal): Promise<MaterialsList> {
-  return request<MaterialsList>(`/api/materials/list?status=${encodeURIComponent(status)}`, { signal });
-}
-
-/** POST /api/materials/add — 扔一条链接 + 备注进素材库（body 只许 url / note 两键，server UNKNOWN_FIELD 零容忍） */
-export function postMaterialAdd(body: { url: string; note: string }): Promise<MaterialItem> {
-  return request<MaterialItem>("/api/materials/add", { method: "POST", body: JSON.stringify(body) });
-}
-
-/** POST /api/materials/dismiss — 放弃一条（状态机 → dismissed；台账保留记录，API 侧可恢复） */
-export function postMaterialDismiss(id: string): Promise<MaterialItem> {
-  return request<MaterialItem>("/api/materials/dismiss", { method: "POST", body: JSON.stringify({ id }) });
-}
-
-/** GET /api/settings/recap — 会议 recap 三把旋钮的 effective 值（CONTRACT §63） */
-export function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
-  return request<RecapSettings>("/api/settings/recap", { signal });
-}
-
-/** PUT /api/settings/recap — 只许 enabled / default_language / slack_draft_enabled 三键（server 零容忍） */
-export function putRecapSettings(
-  body: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
-): Promise<RecapSettings> {
-  return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
-}
-
-/**
- * GET /api/recaps/history?key= — 这份纪要存着的每一版 + 正文（CONTRACT §63.9，issue #300）。
- * 正文只走这一条路（看板投影只带标量句柄 `history_versions`）；只读——回退是
- * `postAction({action:"recap_revert"})`，因为 recap 文件的唯一写者是 act/recap.py（§63.6）。
- */
-export function fetchRecapHistory(key: string, signal?: AbortSignal): Promise<RecapHistory> {
-  return request<RecapHistory>(`/api/recaps/history?key=${encodeURIComponent(key)}`, { signal });
-}
-
-/** GET /api/settings/display — 显示偏好三把旋钮的 effective 值 + 词表（CONTRACT §54.1 第 12 项） */
-export function fetchDisplaySettings(signal?: AbortSignal): Promise<DisplaySettings> {
-  return request<DisplaySettings>("/api/settings/display", { signal });
-}
-
-/** PUT /api/settings/display — 只许 text_size / text_weight / stroke 三键（server 零容忍） */
-export function putDisplaySettings(body: DisplaySettingsPatch): Promise<DisplaySettings> {
-  return request<DisplaySettings>("/api/settings/display", { method: "PUT", body: JSON.stringify(body) });
-}
-
-/**
- * POST /api/recaps/mark — 「复制」/「标记已发送」/「忽略」本地标记（server 独写 marks.json）。
- * §63.5 追记（issue #301）：旧注「无控制流读它」失效——sent_at / dismissed_at 决定分栏与已忽略的
- * 保留期；仍不进 registry、不触发发送 / 派发 / 卡片状态机。`on: false` 清戳 = 恢复。
+ * POST /api/recaps/mark {key, mark, on} — §63 本地标记（marks.json，server 单写者）：
+ * copied（复制）/ sent（标记已发送 = 归档）/ dismissed（忽略，§63.5 追记 issue #301）；on:false = 撤销。
  */
 export function postRecapMark(key: string, mark: RecapMarkKind, on = true): Promise<RecapMarkReceipt> {
   return request<RecapMarkReceipt>("/api/recaps/mark", {
@@ -403,32 +210,57 @@ export function postRecapMark(key: string, mark: RecapMarkKind, on = true): Prom
   });
 }
 
-/** GET /api/skills — skill 商店 manifest + 本机每个 skill 的状态（CONTRACT §67） */
-export function fetchSkills(signal?: AbortSignal): Promise<SkillsSnapshot> {
-  return request<SkillsSnapshot>("/api/skills", { signal });
+/** GET /api/recaps/history?key=… — §63.9 单份纪要存着的每一版 + 正文（只读；正文只在这条路上） */
+export function fetchRecapHistory(key: string, signal?: AbortSignal): Promise<RecapHistory> {
+  return request<RecapHistory>(`/api/recaps/history?key=${encodeURIComponent(key)}`, { signal });
 }
 
-/**
- * POST /api/skills — 启用/停用一个 skill（写请求：四闸同 POST，api.ts 自动带 token）。
- * body 只许 name / action 两键；自定义副本（state=custom）server 拒改 409 CONFLICT，整句原文由页面 toast。
- */
-export function postSkill(name: string, action: "enable" | "disable"): Promise<SkillsSnapshot> {
-  return request<SkillsSnapshot>("/api/skills", { method: "POST", body: JSON.stringify({ name, action }) });
+/** GET /api/settings/recap — 两把旋钮（enabled / default_language）+ 只读的出厂形状（§63.10） */
+export function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
+  return request<RecapSettings>("/api/settings/recap", { signal });
 }
 
-// ----- §68 legacy-app parity 面（设置全套 / 凭证 / 权限 / 诊断 / 向导 / 关于 / 工具） ----- #
+/** PUT /api/settings/recap — 只认 enabled / default_language（server diff-write，§15） */
+export function putRecapSettings(body: { enabled?: boolean; default_language?: string }): Promise<RecapSettings> {
+  return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
+}
 
-/** GET /api/settings — 通用设置目录全集（section → fields，effective + source；文案 server-owned） */
+// ----- 设置（§15 / §59 / §68.1） --------------------------------------------------------------------------------- #
+
+/** GET /api/settings/models — pipeline / fallback 两把模型旋钮的 effective 值 + canonical 下拉全集（§59） */
+export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSettings> {
+  return request<ModelsSettings>("/api/settings/models", { signal });
+}
+
+/** PUT /api/settings/models 的 body：pipeline = 模型 id；fallback = "off" 或模型 id */
+export type ModelsPatch = { pipeline?: string; fallback?: string };
+
+/** PUT /api/settings/models — 保存旋钮（写请求：四闸同 POST，自动带 token）；body 只许 pipeline / fallback 两键 */
+export function putModelsSettings(body: ModelsPatch): Promise<ModelsSettings> {
+  return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/settings/display — 字号 / 字重 / 描边三把显示旋钮（§68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役）） */
+export function fetchDisplaySettings(signal?: AbortSignal): Promise<DisplaySettings> {
+  return request<DisplaySettings>("/api/settings/display", { signal });
+}
+
+/** PUT /api/settings/display — 三键任意子集（server 零容忍多余字段） */
+export function putDisplaySettings(body: DisplaySettingsPatch): Promise<DisplaySettings> {
+  return request<DisplaySettings>("/api/settings/display", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/settings — 通用设置目录（server/settings_catalog.py 的全部 section） */
 export function fetchSettingsCatalog(signal?: AbortSignal): Promise<SettingsCatalog> {
   return request<SettingsCatalog>("/api/settings", { signal });
 }
 
-/** GET /api/settings/{section} — 单 section 快照 */
+/** GET /api/settings/{section} — 单个 section 的快照 */
 export function fetchSettingsSection(section: string, signal?: AbortSignal): Promise<SettingsSection> {
   return request<SettingsSection>(`/api/settings/${encodeURIComponent(section)}`, { signal });
 }
 
-/** PUT /api/settings/{section} — body = {key: value} 子集（server 字段白名单 + 类型校验 + diff-write） */
+/** PUT /api/settings/{section} — 保存一个 section 的字段子集（server 校验 + diff-write 进 settings_overrides.json） */
 export function putSettingsSection(section: string, body: Record<string, unknown>): Promise<SettingsSection> {
   return request<SettingsSection>(`/api/settings/${encodeURIComponent(section)}`, {
     method: "PUT",
@@ -436,7 +268,7 @@ export function putSettingsSection(section: string, body: Record<string, unknown
   });
 }
 
-/** GET /api/secrets — 凭证状态（present / verifiable），值永不回显 */
+/** GET /api/secrets — 凭证状态（§19：v2.0.0 只剩 Anthropic API key；永无值） */
 export function fetchSecrets(signal?: AbortSignal): Promise<SecretsStatus> {
   return request<SecretsStatus>("/api/secrets", { signal });
 }
@@ -449,8 +281,7 @@ export function putSecret(name: string, value: string): Promise<SecretStatus> {
   });
 }
 
-/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id）。
- *  带 value = 粘贴即验证（§68.3；只探这个值、不落盘——向导「先验后存」用） */
+/** POST /api/secrets/{name}/verify — 最小活探针（server 侧）。带 value = 粘贴即验证（§68.3；只探这个值、不落盘——向导「先验后存」用） */
 export function verifySecret(name: string, value?: string): Promise<SecretVerifyResult> {
   return request<SecretVerifyResult>(`/api/secrets/${encodeURIComponent(name)}/verify`, {
     method: "POST",
@@ -458,12 +289,35 @@ export function verifySecret(name: string, value?: string): Promise<SecretVerify
   });
 }
 
-/** GET /api/permissions — 权限体检的 server 半边（FDA 清单 + TCC 相关 doctor 行） */
+/** POST /api/folders/open {key} — 目录字段「打开」：server 从已保存的设置读路径，访达打开（§68.1） */
+export function postFolderOpen(key: string): Promise<FolderReceipt> {
+  return request<FolderReceipt>("/api/folders/open", { method: "POST", body: JSON.stringify({ key }) });
+}
+
+/** POST /api/folders/create {key} — 目录字段「创建」：server 建目录（§68.1） */
+export function postFolderCreate(key: string): Promise<FolderReceipt> {
+  return request<FolderReceipt>("/api/folders/create", { method: "POST", body: JSON.stringify({ key }) });
+}
+
+/** POST /api/reveal 的词表（server/folders.REVEAL_TARGETS 逐字）：config = config.yaml（缺席则模板）；voice_profile = recap 读的语气档案 */
+export type RevealTarget = "config" | "voice_profile";
+export type RevealMode = "reveal" | "open";
+
+/** POST /api/reveal {target, mode?} — 访达定位 / 默认编辑器打开；路径永远由 server 推导，客户端只点名词表项（非 darwin 501） */
+export function postRevealTarget(target: RevealTarget, mode?: RevealMode): Promise<unknown> {
+  const body: Record<string, string> = { target };
+  if (mode) body.mode = mode;
+  return request("/api/reveal", { method: "POST", body: JSON.stringify(body) });
+}
+
+// ----- 权限体检 / 依赖检查 / 日志（§25 / §68.3 / §68.4） --------------------------------------------------------- #
+
+/** GET /api/permissions — 权限体检快照（refresh = 重跑 doctor 的权限行） */
 export function fetchPermissions(refresh = false, signal?: AbortSignal): Promise<PermissionsSnapshot> {
   return request<PermissionsSnapshot>(`/api/permissions${refresh ? "?refresh=1" : ""}`, { signal });
 }
 
-/** GET /api/diagnostics — doctor + health + deploy_state + install_report + 日志清单；lang = 当前 UI 语言（doctor 人话随之，§68.4 追记） */
+/** GET /api/diagnostics — doctor（缓存）+ 活性 + install_report + 日志清单 + cron 探针 + 最近活动；lang = doctor 人话的语言 */
 export function fetchDiagnostics(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<DiagnosticsSnapshot> {
   const params = new URLSearchParams();
   if (refresh) params.set("refresh", "1");
@@ -472,7 +326,7 @@ export function fetchDiagnostics(refresh = false, lang?: "zh" | "en", signal?: A
   return request<DiagnosticsSnapshot>(`/api/diagnostics${query ? `?${query}` : ""}`, { signal });
 }
 
-/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token）；lang 同上（原生 runFullOutput 的 AIASSISTANT_UI_LANG） */
+/** GET /api/doctor — 完整 doctor（fast=false 含活探针，会花 token）；lang 同上 */
 export function fetchDoctor(fast = true, refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<DoctorReport> {
   const params = new URLSearchParams();
   if (!fast) params.set("fast", "0");
@@ -482,205 +336,69 @@ export function fetchDoctor(fast = true, refresh = false, lang?: "zh" | "en", si
   return request<DoctorReport>(`/api/doctor${query ? `?${query}` : ""}`, { signal });
 }
 
-/** GET /api/logs/{name}?lines=N — 日志尾巴（只读、size-cap） */
+/** GET /api/logs/{name}?lines=N — 日志尾巴（只读、size-cap；name 必须在诊断快照的清单里） */
 export function fetchLogTail(name: string, lines = 200, signal?: AbortSignal): Promise<LogTail> {
   return request<LogTail>(`/api/logs/${encodeURIComponent(name)}?lines=${lines}`, { signal });
 }
 
-/** GET /api/setup — 首次运行向导状态 */
+// ----- 首次运行向导（§68.5） ------------------------------------------------------------------------------------- #
+
+/** GET /api/setup — 向导判定（config.yaml / Anthropic key / 完成标记） */
 export function fetchSetup(signal?: AbortSignal): Promise<SetupSnapshot> {
   return request<SetupSnapshot>("/api/setup", { signal });
 }
 
-/** POST /api/setup/{config-from-example | complete | reset} */
+/** POST /api/setup/{config-from-example|complete|reset} — 复制模板（已存在 409，绝不覆盖）/ 写完成标记 / 删标记 */
 export function postSetupStep(step: "config-from-example" | "complete" | "reset"): Promise<SetupReceipt> {
-  return request<SetupReceipt>(`/api/setup/${step}`, { method: "POST", body: JSON.stringify({}) });
+  return request<SetupReceipt>(`/api/setup/${step}`, { method: "POST", body: EMPTY_BODY });
 }
 
-/** GET /api/setup/engine — AI 引擎检测（claude CLI + 认证梯子；原生 EngineDetector） */
+/** GET /api/setup/engine — claude CLI 路径 / 版本 / API key 梯子（§78：headless 只认 API key） */
 export function fetchSetupEngine(signal?: AbortSignal): Promise<SetupEngine> {
   return request<SetupEngine>("/api/setup/engine", { signal });
 }
 
-/** POST /api/setup/seed-dashboard — 首次数据「立即生成一次」（python -m act.lib.dashboard） */
-export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
-  return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
-}
-
-/** GET /api/setup/vaults — Obsidian 自己登记过的库（obsidian.json；只回仍存在的目录；没装 Obsidian → 空列表；§68.5 追记 D51） */
+/** GET /api/setup/vaults — Obsidian 自己登记过的库（只读；没装 Obsidian = 空表） */
 export function fetchSetupVaults(signal?: AbortSignal): Promise<SetupVaults> {
   return request<SetupVaults>("/api/setup/vaults", { signal });
 }
 
-export type RevealTarget = "config" | "skill" | "voice_profile" | "mcp_user" | "mcp_project";
-export type RevealMode = "reveal" | "open";
+// ----- 关于 / 更新（§26 / §79） ---------------------------------------------------------------------------------- #
 
-/** POST /api/reveal {target[, name][, mode]} — 访达定位 server 词表里的文件（config = config.yaml / 模板，§68.4「显示文件」；
- *  skill + name = 该 skill 的 SKILL.md，§67.5「在 Finder 显示」；mcp_user / mcp_project = 该作用域的 MCP 配置文件，§68.9——
- *  客户端只传词与名，路径 server 推导）。add-only mode（缺省 reveal）：voice_profile 的「打开档案」传 "open"（默认编辑器打开，
- *  原生 NSWorkspace.open，§68.1 追记 (b)）；其它 target 传 open 会被 server 400。缺省时不发该键（零多余字段）。 */
-export function postRevealTarget(target: RevealTarget, name?: string, mode?: RevealMode): Promise<unknown> {
-  const body: Record<string, string> = { target };
-  if (name !== undefined) body.name = name;
-  if (mode !== undefined) body.mode = mode;
-  return request("/api/reveal", { method: "POST", body: JSON.stringify(body) });
-}
-
-/** GET /api/about — 版本 / 路径 / 更新状态 */
+/** GET /api/about — 版本 / 路径 / 更新缓存（update_available 由 server 现算） */
 export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
   return request<AboutInfo>("/api/about", { signal });
 }
 
-/** POST /api/update/check — §26 手动「立即检查」 */
+/** POST /api/update/check — §26「立即检查」（只问不装；检查关着时 server 侧自己拒发网络请求） */
 export function postUpdateCheck(): Promise<UpdateCheckResult> {
-  return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: JSON.stringify({}) });
+  return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: EMPTY_BODY });
 }
 
-/** POST /api/update/install — 关于页「新版本 v… 可用 — 一键更新」：提前 kickstart §56 自动部署 agent
- *  （未加载 → 409；上一轮的判决 kickstart 也清不掉 → 409 details.reason="deploy_refused"，§68.6 追记 #309） */
+/** POST /api/update/install — §79「立即升级」：分离起 scripts/upgrade.sh；跨大版本 409 manual_upgrade、
+ *  这个 checkout 还没有升级器 501（两者 details.fix = 手动命令） */
 export function postUpdateInstall(): Promise<UpdateInstallReceipt> {
-  return request<UpdateInstallReceipt>("/api/update/install", { method: "POST", body: JSON.stringify({}) });
+  return request<UpdateInstallReceipt>("/api/update/install", { method: "POST", body: EMPTY_BODY });
 }
 
-/** POST /api/ingest/export — 录制页「立即导出」= bash ingest/screenpipe-export.sh（后台跑，回 job id） */
+// ----- 录制与导入（§18 / §72） ----------------------------------------------------------------------------------- #
+
+/** POST /api/ingest/export — 现在导出一次（ingest/screenpipe-export.sh，server 后台线程跑） */
 export function postIngestExport(): Promise<IngestJobStart> {
-  return request<IngestJobStart>("/api/ingest/export", { method: "POST", body: JSON.stringify({}) });
+  return request<IngestJobStart>("/api/ingest/export", { method: "POST", body: EMPTY_BODY });
 }
 
-/** POST /api/ingest/run — 录制页「立即 ingest」= SCREENPIPE_NO_WAIT=1 bash ingest/process-screenpipe.sh（exit 3 = 持锁跳过） */
+/** POST /api/ingest/run — 现在整理一次（ingest/process-screenpipe.sh；持锁 = skipped） */
 export function postIngestRun(): Promise<IngestJobStart> {
-  return request<IngestJobStart>("/api/ingest/run", { method: "POST", body: JSON.stringify({}) });
+  return request<IngestJobStart>("/api/ingest/run", { method: "POST", body: EMPTY_BODY });
 }
 
-/** GET /api/ingest/jobs/{id} — 手动触发的进度：running → done（回执五键） */
+/** GET /api/ingest/jobs/{id} — 手动 ingest 任务的状态（running → done + 回执） */
 export function fetchIngestJob(id: string, signal?: AbortSignal): Promise<IngestJob> {
   return request<IngestJob>(`/api/ingest/jobs/${encodeURIComponent(id)}`, { signal });
 }
 
-/** GET /api/failures — §25 失败目录（原生 FailureCatalog.message 的 server-owned 双语句） */
-export function fetchFailures(signal?: AbortSignal): Promise<FailureCatalog> {
-  return request<FailureCatalog>("/api/failures", { signal });
-}
-
-/** GET /api/mcp — MCP servers 两作用域（只读、已掩码） */
-export function fetchMcp(signal?: AbortSignal): Promise<McpList> {
-  return request<McpList>("/api/mcp", { signal });
-}
-
-/** GET /api/claude-sessions?window=N — 导入预览扫描 */
-export function fetchClaudeSessions(window = 7, signal?: AbortSignal): Promise<ClaudeSessionsScan> {
-  return request<ClaudeSessionsScan>(`/api/claude-sessions?window=${window}`, { signal });
-}
-
-/** POST /api/terminal — 在终端接管会话（双击卡片，§68.7 / issue #216）：命令由 server 从投影推导、入队给壳；客户端只传 card_id。
- *  501（非 darwin）/ 503 SHELL_UNAVAILABLE（壳没在跑）= 页面降级为复制指令（terminalTakeover.ts） */
-export function postTerminal(cardId: string): Promise<TerminalReceipt> {
-  return request<TerminalReceipt>("/api/terminal", { method: "POST", body: JSON.stringify({ card_id: cardId }) });
-}
-
-/** POST /api/repair/actd — 横幅一键修复（已加载 → launchctl kickstart；未加载 → install.sh --reinstall-agent，D50；
- *  没 pinned 解释器 / install.sh 不在 → 409 带 details.command） */
-export function postRepairActd(): Promise<RepairReceipt> {
-  return request<RepairReceipt>("/api/repair/actd", { method: "POST", body: JSON.stringify({}) });
-}
-
-/** GET /api/slack/manifest — repo 的 Slack App Manifest 原文（Slack 接入区「复制 App Manifest」） */
-export function fetchSlackManifest(signal?: AbortSignal): Promise<{ manifest: string; path: string }> {
-  return request<{ manifest: string; path: string }>("/api/slack/manifest", { signal });
-}
-
-/** GET /api/sync — 同步 / 配对状态（开关 + 设备名 + 配对二维码 PNG） */
-export function fetchSync(signal?: AbortSignal): Promise<SyncStatus> {
-  return request<SyncStatus>("/api/sync", { signal });
-}
-
-/** POST /api/sync/pair {label?} — 起 act.syncd --pair --json（开启 / 重新生成 / 改名；幂等，同一 channel 同一码） */
-export function postSyncPair(label?: string): Promise<SyncPairReceipt> {
-  return request<SyncPairReceipt>("/api/sync/pair", { method: "POST", body: JSON.stringify(label ? { label } : {}) });
-}
-
-/** POST /api/sync/disable {} — act.syncd --disable（mode=off，密钥保留） */
-export function postSyncDisable(): Promise<SyncDisableReceipt> {
-  return request<SyncDisableReceipt>("/api/sync/disable", { method: "POST", body: JSON.stringify({}) });
-}
-
-/** GET /api/voice — 语气档案「当前生效」状态行（私有 / 出厂 / 无；开关） */
-export function fetchVoiceProfile(signal?: AbortSignal): Promise<VoiceProfileStatus> {
-  return request<VoiceProfileStatus>("/api/voice", { signal });
-}
-
-/** GET /api/voice/generate-status — 「从我的消息生成/更新档案」的回执（§68.1 追记 D47；按钮本身 = postAction voice_generate） */
-export function fetchVoiceGenerateStatus(signal?: AbortSignal): Promise<VoiceGenStatus> {
-  return request<VoiceGenStatus>("/api/voice/generate-status", { signal });
-}
-
-/** GET /api/screenpipe/disk[?refresh=1] — 录制数据磁盘占用快照（§72.1）：立刻回缓存（首次 computing），扫目录在 server 后台线程；
- *  refresh=1 让 server 起一次重算（GET 本身仍不阻塞） */
+/** GET /api/screenpipe/disk — 录制数据占用 + 增长 + 两道保留期回执（§72；refresh = 重新 du） */
 export function fetchScreenpipeDisk(refresh = false, signal?: AbortSignal): Promise<ScreenpipeDisk> {
   return request<ScreenpipeDisk>(refresh ? "/api/screenpipe/disk?refresh=1" : "/api/screenpipe/disk", { signal });
-}
-
-/** GET /api/slack/directory[?refresh=1][&lang=zh|en] — 频道 + 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；§68.1 追记）；
- *  lang = 当前 UI 语言（ok:false 的双语 message 随之——原生 SettingsSlack.fetchDirectory 的 AIASSISTANT_UI_LANG） */
-export function fetchSlackDirectory(refresh = false, lang?: "zh" | "en", signal?: AbortSignal): Promise<SlackDirectory> {
-  const params = new URLSearchParams();
-  if (refresh) params.set("refresh", "1");
-  if (lang) params.set("lang", lang);
-  const query = params.toString();
-  return request<SlackDirectory>(`/api/slack/directory${query ? `?${query}` : ""}`, { signal });
-}
-
-/** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 把 `cd repo && bash uninstall.sh` 入队 state/terminal_queue 给壳开终端（§68.6 / §68.7 队列通道；壳没在跑 503 SHELL_UNAVAILABLE，details.command 是手动命令） */
-export function postUninstallTerminal(): Promise<TerminalReceipt> {
-  return request<TerminalReceipt>("/api/uninstall/terminal", { method: "POST", body: JSON.stringify({}) });
-}
-
-/** POST /api/maintainer/terminal — 开发者区「在终端打开开发会话」：cd <repo> && claude [--resume]，参数由 server 读设置（§68.1） */
-export function postMaintainerTerminal(): Promise<TerminalReceipt> {
-  return request<TerminalReceipt>("/api/maintainer/terminal", { method: "POST", body: JSON.stringify({}) });
-}
-
-/** GET /api/worktrees[?refresh=1] — 开发者区 `.claude/worktrees/` 清点（§75.4）：立刻回缓存（首次 computing），
- *  扫目录 + du 在 server 后台线程；refresh=1 让 server 重算一次 */
-export function fetchWorktrees(refresh = false, signal?: AbortSignal): Promise<WorktreeInventory> {
-  return request<WorktreeInventory>(refresh ? "/api/worktrees?refresh=1" : "/api/worktrees", { signal });
-}
-
-/** POST /api/worktrees/cleanup — 开发者区「清理」（§75.4）：`dry_run` 只报会删谁，一个字节都不动 */
-export function postWorktreesCleanup(dryRun = false): Promise<WorktreeCleanup> {
-  return request<WorktreeCleanup>("/api/worktrees/cleanup", {
-    method: "POST",
-    body: JSON.stringify(dryRun ? { dry_run: true } : {}),
-  });
-}
-
-/** GET /api/radars — Slack / Gmail 后台雷达 agent 的 launchd 状态（§48.7；token-light GET） */
-export function fetchRadarAgents(signal?: AbortSignal): Promise<RadarAgentsSnapshot> {
-  return request<RadarAgentsSnapshot>("/api/radars", { signal });
-}
-
-/** POST /api/radars/reinstall {source} — 「重新安装」：server 跑 install.sh --reinstall-agent <label>（§48.7） */
-export function postRadarReinstall(source: "gmail" | "slack"): Promise<RadarReinstallReceipt> {
-  return request<RadarReinstallReceipt>("/api/radars/reinstall", { method: "POST", body: JSON.stringify({ source }) });
-}
-
-/** POST /api/folders/open {key} — 目录字段「打开」：server 从已保存的设置读路径，访达打开（§68.1） */
-export function postFolderOpen(key: string): Promise<FolderReceipt> {
-  return request<FolderReceipt>("/api/folders/open", { method: "POST", body: JSON.stringify({ key }) });
-}
-
-/** POST /api/folders/create {key} — 目录字段「创建」/「创建文件夹」：mkdir -p（任务工作目录另 git init）（§68.1） */
-export function postFolderCreate(key: string): Promise<FolderReceipt> {
-  return request<FolderReceipt>("/api/folders/create", { method: "POST", body: JSON.stringify({ key }) });
-}
-
-/** POST /api/telemetry/consent-shown {} — consent 门标记 write-once（§15，D49）；调用点见 telemetry.ts（永不在挂载时调） */
-export function postTelemetryConsentShown(): Promise<ConsentShownReceipt> {
-  return request<ConsentShownReceipt>("/api/telemetry/consent-shown", { method: "POST", body: JSON.stringify({}), keepalive: true });
-}
-
-/** POST /api/analytics {event[, fields]} — web 极简事件（server 白名单裁事件名与字段；§16 gate 在 server 侧，D48） */
-export function postAnalytics(event: WebAnalyticsEvent, fields?: Record<string, boolean>): Promise<AnalyticsReceipt> {
-  const body = fields && Object.keys(fields).length > 0 ? { event, fields } : { event };
-  return request<AnalyticsReceipt>("/api/analytics", { method: "POST", body: JSON.stringify(body), keepalive: true });
 }

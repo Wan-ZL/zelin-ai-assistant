@@ -1,7 +1,7 @@
 // 脚手架冒烟测试：realtime 的 debounce/合并/生命周期（经注入缝，零真实网络零真实计时器）。
 // A11 在此基础上扩展 store/api/组件行为测试。
 import { describe, expect, it, vi } from "vitest";
-import { BOARD_UPDATED_EVENT, createBoardRealtime } from "./realtime";
+import { RECAPS_UPDATED_EVENT, createRecapsRealtime } from "./realtime";
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -35,7 +35,7 @@ function setup() {
   FakeEventSource.instances = [];
   const onRefetch = vi.fn();
   const connections: string[] = [];
-  const handle = createBoardRealtime({
+  const handle = createRecapsRealtime({
     onRefetch,
     onConnectionChange: (state) => connections.push(state),
     createEventSource: (url) => new FakeEventSource(url) as unknown as EventSource,
@@ -45,15 +45,15 @@ function setup() {
   return { handle, onRefetch, connections };
 }
 
-describe("createBoardRealtime", () => {
-  it("merges a burst of board.updated events into one refetch after 120ms", () => {
+describe("createRecapsRealtime", () => {
+  it("merges a burst of recaps.updated events into one refetch after 120ms", () => {
     const { handle, onRefetch } = setup();
     handle.start();
     const source = FakeEventSource.instances[0];
 
-    source.emit(BOARD_UPDATED_EVENT);
+    source.emit(RECAPS_UPDATED_EVENT);
     vi.advanceTimersByTime(60);
-    source.emit(BOARD_UPDATED_EVENT); // 60ms 后又来一发：窗口重置，仍只应 refetch 一次
+    source.emit(RECAPS_UPDATED_EVENT); // 60ms 后又来一发：窗口重置，仍只应 refetch 一次
     vi.advanceTimersByTime(119);
     expect(onRefetch).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
@@ -85,7 +85,7 @@ describe("createBoardRealtime", () => {
     handle.start();
     const source = FakeEventSource.instances[0];
 
-    source.emit(BOARD_UPDATED_EVENT);
+    source.emit(RECAPS_UPDATED_EVENT);
     handle.stop();
     vi.advanceTimersByTime(1000);
     expect(onRefetch).not.toHaveBeenCalled();

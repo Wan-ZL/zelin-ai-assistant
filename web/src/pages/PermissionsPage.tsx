@@ -1,37 +1,25 @@
 // 权限体检页（§15 v0.13 权限体检窗 → §68.3 web 版；?page=permissions）。原生 PermissionsView 的顺序原样：
 //   抬头「权限体检」+ 一句说明 → 屏幕记录（一次性同意块 / 实时状态行，RecordingConsentSection）→
 //   「系统权限」三行（屏幕录制 / 笔记库访问（Documents） / 通知 + web 多一行麦克风，CapabilityRows）→
-//   telemetry 披露块（TelemetryBlock）→ 页脚「打开依赖检查」…「完成」（首启：回向导）/「关闭」（体检：回看板）。
+//   页脚「打开依赖检查」…「完成」（首启：回向导）/「关闭」（体检：回会议纪要）。v2.0.0：telemetry 披露块随遥测退役。
 // GUI 项的真相只有壳知道（TCC 探针是原生 API）：桥在场时读 shell.permissions、按钮 = requestPermission /
-// openPane，2 s 轮询一次（components/permissions/usePermissionPolling，与向导共用）；浏览器里如实说「只在看板 app 里可探」。
+// openPane，2 s 轮询一次（components/permissions/usePermissionPolling，与向导共用）；浏览器里如实说「只在 app（壳）里可探」。
 // web 多出的下半：完全磁盘访问（D20 家族的一半原生窗从不管的事）——server 列出要授权的可执行文件
 // （守护 python / claude / node / 壳 app）+ 可复制的绝对路径 + 系统设置深链 + TCC 相关 doctor 行，
 // 授权步骤原样写在页面上（系统设置 → 隐私与安全性 → 完全磁盘访问 → + → ⌘⇧G 粘路径）。
 import { useEffect, useState } from "react";
-import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import "../components/permissions/permissions.css";
 import { CapabilityRows } from "../components/permissions/CapabilityRows";
 import { RecordingConsentSection } from "../components/permissions/RecordingConsentSection";
-import { TelemetryBlock } from "../components/permissions/TelemetryBlock";
 import { usePermissionPolling } from "../components/permissions/usePermissionPolling";
 import { pickText } from "../components/settings/catalogText";
-import { copyText } from "../components/detail/copyText";
+import { copyText } from "../copyText";
 import { useI18n } from "../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../route";
-import { callShell, hasShellBridge, PANE_IDS, type PermissionStatus } from "../shellBridge";
+import { callShell, hasShellBridge, PANE_IDS } from "../shellBridge";
 import { refreshPermissions, refreshSetup, useAppState } from "../store";
 import type { DoctorRow, FdaExecutable } from "../types";
-
-type Text = (zh: string, en: string) => string;
-
-export function statusLabel(status: PermissionStatus, text: Text): string {
-  switch (status) {
-    case "granted": return text("已授权", "Granted");
-    case "denied": return text("未授权", "Denied");
-    default: return text("未知 / 尚未询问", "Unknown / not asked yet");
-  }
-}
 
 function CopyPath({ path }: { path: string }) {
   const { text } = useI18n();
@@ -87,7 +75,7 @@ export function PermissionsPage() {
   const { permissions, pageErrors, setup } = useAppState();
   const present = hasShellBridge();
   const [note, setNote] = useState<string | null>(null);
-  // 原生 firstRun：向导还没走完 → 页脚是「完成」（回向导继续）；否则「关闭」（回看板）
+  // 原生 firstRun：向导还没走完 → 页脚是「完成」（回向导继续）；否则「关闭」（回会议纪要）
   const firstRun = Boolean(setup?.needed);
 
   useEffect(() => {
@@ -103,7 +91,7 @@ export function PermissionsPage() {
 
   return (
     <main className="settings-page perm-page">
-      <a className="trash-back-link" href={buildAppUrl(window.location.href, "board", null).toString()}>{text("← 返回看板", "← Back to board")}</a>
+      <a className="page-back-link" href={buildAppUrl(window.location.href, "settings").toString()}>{text("← 返回设置", "← Back to Settings")}</a>
       <div className="settings-page-head">
         <h2 className="settings-page-title">{text("权限体检", "Permissions Checkup")}</h2>
         <button type="button" className="btn" onClick={() => { void refreshPermissions(true); if (present) void callShell("getPermissions").catch(() => undefined); }}>{text("重新探测", "Re-probe")}</button>
@@ -118,7 +106,6 @@ export function PermissionsPage() {
       <section className="settings-section" aria-labelledby="perm-gui-title">
         <h3 id="perm-gui-title" className="settings-section-title">{text("系统权限", "System permissions")}</h3>
         <CapabilityRows onError={setNote} />
-        <TelemetryBlock />
         {note && <p className="settings-warning" role="alert">{note}</p>}
       </section>
 
@@ -139,7 +126,7 @@ export function PermissionsPage() {
               </li>
               <li>{text("点「+」→ 按 ⌘⇧G → 粘贴下面某一行路径 → 打开 → 开关拨开", "Click \"+\" → press ⌘⇧G → paste one of the paths below → Open → flip the switch on")}</li>
               <li>{text("每个可执行文件重复一次；claude 每次更新换了路径要重做。", "Repeat for each executable; redo claude after an update moves its binary.")}</li>
-              <li>{text("等下一轮 timer / 雷达自己跑（终端里 kickstart 会借终端的授权，绿了不算）。", "Wait for the next timer / radar pass on its own (a kickstart typed in a terminal borrows the terminal's grant and proves nothing).")}</li>
+              <li>{text("等下一轮定时任务自己跑（终端里手动跑会借终端的授权，绿了不算）。", "Wait for the next scheduled run on its own (a run typed in a terminal borrows the terminal's grant and proves nothing).")}</li>
             </ol>
             <ul className="settings-list perm-execs">
               {permissions.fda.executables.map((exe) => <ExecutableRow key={exe.role} exe={exe} />)}
@@ -154,7 +141,7 @@ export function PermissionsPage() {
 
       <div className="settings-actions perm-footer">
         <a className="settings-link" href={buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString()}>{text("打开依赖检查", "Open dependency check")}</a>
-        <button type="button" className="btn btn-primary" onClick={() => navigate(buildAppUrl(window.location.href, firstRun ? "setup" : "board", null))}>
+        <button type="button" className="btn btn-primary" onClick={() => navigate(buildAppUrl(window.location.href, firstRun ? "setup" : "recaps"))}>
           {firstRun ? text("完成", "Done") : text("关闭", "Close")}
         </button>
       </div>

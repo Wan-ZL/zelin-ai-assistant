@@ -1,17 +1,15 @@
 // ShellSystem.swift — 壳内其余原生残留（R2.2.3；CONTRACT §68.13 / §61.6）：
-//   ShellWindow        窗口显示钩子（通知点击 / 全局快捷键 → 前置看板窗口）；
+//   ShellWindow        窗口显示钩子（通知点击 → 前置主窗口）；
 //   PermissionsProbe   TCC 四项探针（屏幕录制 / 麦克风 / 通知 / 笔记库 Documents）+ 请求 + 系统设置深链
 //                      ——原生 Permissions.swift 的 model 半边（视图半边在 web 权限体检页）；
 //   LaunchAtLogin      SMAppService.mainApp（原生 Settings 通用区「登录时启动」）；
-//   QuickCaptureHotkey Carbon RegisterEventHotKey 全局快捷键 ⌃⌥Space（不需要辅助功能授权），
-//                      触发 = 前置窗口 + 向页面推 `zai-shell-command {command: "quick_capture"}`；
-//   DockBadge          Dock 图标徽章（原生菜单栏徽章的 Dock 版，D3：等你动作的卡数由页面推来）；
 //   FolderDialog / FileDialog  NSOpenPanel（§68.1 目录字段「选择…」/ 页面 <input type=file> 的 WKUIDelegate 落点）。
 // 全部只做「原生 API 调用 + 状态」，无业务逻辑（§54 薄壳）；经 ShellBridge 暴露给页面。
+// v2.0.0 退役（§61.1 / §68.13 tombstone，全文见 tag full）：QuickCaptureHotkey（⌃⌥Space）、
+// DockBadge（setBadge）、CaptionKeyCheck（probeCaptionKey）。
 
 import AppKit
 import AVFoundation
-import Carbon.HIToolbox
 import Combine
 import ServiceManagement
 import UniformTypeIdentifiers
@@ -21,7 +19,7 @@ import UserNotifications
 
 @MainActor
 enum ShellWindow {
-    /// AppDelegate 在启动时装上：前置看板窗口 + activate（点通知 / 快捷键 共用）。
+    /// AppDelegate 在启动时装上：前置主窗口 + activate（点通知）。
     static var show: (() -> Void)?
 }
 
@@ -179,7 +177,6 @@ final class PermissionsProbe: ObservableObject {
         default:
             requestNotifications()
         }
-        Analytics.log("permissions_action", fields: ["cap": kind])
     }
 
     private func requestNotifications() {
@@ -267,55 +264,6 @@ enum LaunchAtLogin {
     }
 }
 
-// MARK: - global quick-capture hotkey（⌃⌥Space，Carbon；无需辅助功能授权）
-
-@MainActor
-final class QuickCaptureHotkey {
-    static let shared = QuickCaptureHotkey()
-    /// 人话（页面「设置 → 关于」显示）。改键 = 改这里 + register() 的 keyCode/modifiers。
-    static let label = "⌃⌥Space"
-
-    private var ref: EventHotKeyRef?
-    private var handler: EventHandlerRef?
-    /// 触发回调（AppDelegate 装：前置窗口 + 推命令）
-    var onFire: (() -> Void)?
-
-    private init() {}
-
-    func register() {
-        guard ref == nil else { return }
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { QuickCaptureHotkey.shared.onFire?() }
-            }
-            return noErr
-        }, 1, &spec, nil, &handler)
-        guard status == noErr else { return }
-        // signature 'zaiQ' + id 1；Space = kVK_Space (49)；⌃⌥ = controlKey | optionKey
-        let hotKeyID = EventHotKeyID(signature: 0x7A61_6951, id: 1)
-        RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey), hotKeyID,
-                            GetApplicationEventTarget(), 0, &ref)
-    }
-
-    func unregister() {
-        if let ref { UnregisterEventHotKey(ref) }
-        ref = nil
-        if let handler { RemoveEventHandler(handler) }
-        handler = nil
-    }
-}
-
-// MARK: - Dock badge
-
-@MainActor
-enum DockBadge {
-    /// 等你动作的卡数（页面经桥 setBadge 推来；0 = 清空）。
-    static func set(_ count: Int) {
-        NSApp.dockTile.badgeLabel = count > 0 ? String(count) : nil
-    }
-}
-
 // MARK: - folder dialog（原生 Settings.pickFolder 的 NSOpenPanel；CONTRACT §61.1 `chooseFolder` / §68.1 目录字段）
 
 @MainActor
@@ -376,90 +324,5 @@ enum FileDialog {
 
     static func chooseImages(multiple: Bool) -> [URL]? {
         runner(multiple)
-    }
-}
-
-// MARK: - caption key test（原生 Settings 凭证行「检测」按钮的壳侧落点；CONTRACT §61.1 `probeCaptionKey` / §68.2 追记）
-//
-// 火山两把 key（豆包语音 / Ark 翻译）没有 server 探针（server/secrets_store 对它们 verify → 400）：
-// 唯一真连一次服务器的检测是搬进壳的 CaptionKeyProbe（LiveCaptions.swift 逐字节副本，判例钉住不改）。
-// 桥 `probeCaptionKey {name, value?}` 起一次探测（value 非空 = 粘贴即检测、不落盘；否则探已保存的），
-// 结果落在这里的 @Published，经快照 `captions.key_probe` 推回页面——页面按 verdict 组原生
-// applyCaptionVerdict 的六句；这里零文案。
-
-@MainActor
-final class CaptionKeyCheck: ObservableObject {
-    static let shared = CaptionKeyCheck()
-    static let names = [SecretsIO.volcanoSpeechFile, SecretsIO.volcanoArkFile]
-    /// 最近一次检测：{name, state: running|done, verdict, detail, code, message}；nil = 从未检测
-    @Published private(set) var last: [String: Any]? = nil
-    private var token = 0
-
-    /// 探针执行体（注入缝：桥 harness 换成假实现，绝不真连网络）。
-    var speechProbe: (VolcanoSpeechCredential, @escaping @MainActor (CaptionKeyVerdict) -> Void) -> Void = {
-        CaptionKeyProbe.speech(credential: $0, done: $1)
-    }
-    var arkProbe: (String, String, @escaping @MainActor (CaptionKeyVerdict) -> Void) -> Void = {
-        CaptionKeyProbe.ark(key: $0, model: $1, done: $2)
-    }
-
-    func snapshotValue() -> Any { last ?? NSNull() }
-
-    /// value 非空 → 探它（原生 verify() 的「框里有字」分支）；否则探 config/secrets 里已保存的；
-    /// 两者都没有 → INVALID_ARGS（页面提示「先粘贴（或保存）一个凭证再验证」）。
-    func start(name: String, value: String?) throws {
-        guard Self.names.contains(name) else {
-            throw BridgeError.invalidArgs("name must be one of \(Self.names.joined(separator: "|"))")
-        }
-        let pasted = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let secret = pasted.isEmpty ? SecretsIO.read(name) : pasted else {
-            throw BridgeError.invalidArgs("nothing to test: paste or save the credential first")
-        }
-        token += 1
-        let mine = token
-        last = ["name": name, "state": "running"]
-        let done: @MainActor (CaptionKeyVerdict) -> Void = { [weak self] verdict in
-            guard let self, self.token == mine else { return }   // 旧检测的回执不覆盖新一轮
-            self.last = Self.describe(name: name, verdict: verdict)
-            Analytics.log("mw_key_validate", fields: ["name": name, "result": Self.result(verdict)])
-        }
-        if name == SecretsIO.volcanoSpeechFile {
-            // 粘贴的是旧版 App ID + Access Token 对 → parse 归一；文件里的是存储格式 → decode；都不是 → 裸 key
-            let credential = (pasted.isEmpty ? nil : VolcanoSpeechCredential.parse(secret))
-                ?? VolcanoSpeechCredential.decode(secret) ?? .apiKey(secret)
-            speechProbe(credential, done)
-        } else {
-            arkProbe(secret, LiveCaptionsController.shared.arkModel, done)
-        }
-    }
-
-    /// verdict → wire（页面组句用的原料；code / message / detail 缺席即空串）
-    static func describe(name: String, verdict: CaptionKeyVerdict) -> [String: Any] {
-        var out: [String: Any] = ["name": name, "state": "done", "detail": "", "code": "", "message": ""]
-        switch verdict {
-        case .ok:
-            out["verdict"] = "ok"
-        case .badKey(let detail):
-            out["verdict"] = "bad_key"; out["detail"] = detail
-        case .resourceNotEnabled(let code, let message):
-            out["verdict"] = "resource_not_enabled"; out["code"] = code; out["message"] = message
-        case .modelNotFound(let detail):
-            out["verdict"] = "model_not_found"; out["detail"] = detail
-        case .serviceError(let code, let message):
-            out["verdict"] = "service_error"; out["code"] = code; out["message"] = message
-        case .network(let detail):
-            out["verdict"] = "network"; out["detail"] = detail
-        }
-        return out
-    }
-
-    /// 原生 applyCaptionVerdict 的 analytics result 词表（不变）
-    static func result(_ verdict: CaptionKeyVerdict) -> String {
-        switch verdict {
-        case .ok: return "ok"
-        case .badKey, .resourceNotEnabled: return "unauthorized"
-        case .modelNotFound: return "model_not_found"
-        case .serviceError, .network: return "error"
-        }
     }
 }

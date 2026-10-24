@@ -4,32 +4,30 @@
 #   [2/9]+[3/9] compile + run BridgeHarness.swift against every shell source
 #       except main.swift (the bootstrap has top-level statements; the harness
 #       is the main.swift of this build) — pins the `zaiShell` wire vocabulary
-#       and the LegacyPrefs seed rules;
+#       (and the ABSENCE of the v2.0.0-retired methods / keys);
 #   [4/9]+[5/9] compile + run PolicyHarness.swift the same way — pins the
 #       window policies of §54 追记 (ExternalLinkPolicy / ReopenPolicy /
 #       WindowTitlePolicy) that AppDelegate consults;
 #   [6/9]+[7/9] compile + run MenuHarness.swift the same way — pins the
 #       main-menu table of §54 追记「菜单 l10n」(MenuSpec: bilingual titles, key
-#       equivalents, actions; ⌥⌘S retired) that AppDelegate installs verbatim;
+#       equivalents, actions; ⌥⌘S and ⌘L retired) that AppDelegate installs verbatim;
 #   [8/9]+[9/9] compile + run LaunchHarness.swift the same way — pins the
 #       launch-source policy of D38 (§56.5 / §61 追记: `--background` argv or a
 #       login-item launch builds the window without ordering it front) and,
 #       in its own sections [8]/[9], the §61.8 engine-ownership verdicts
-#       (orphan reclaim at launch / stop-what-we-spawned at exit) through
-#       recorded seams — the harness never runs a real pgrep or pkill.
-# Mirrors ios/tests/captions/run.sh: plain swiftc, no Xcode project, any
-# failed assertion exits non-zero.
+#       (adopt-at-launch for recipe engines / stop only what we spawned at exit,
+#       never while engineHandoff is set) through recorded seams — the harness
+#       never runs a real pgrep or pkill.
+# Plain swiftc, no Xcode project, any failed assertion exits non-zero.
 #
 # Sandbox: AIASSISTANT_HOME points at a throwaway dir so nothing the engines'
-# singletons touch at init (config.yaml / overrides reads, analytics dir) can
+# singletons touch at init (config.yaml / overrides reads) can
 # reach the live checkout.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHELL_DIR="$(cd "$HERE/.." && pwd)"
-REPO="$(cd "$SHELL_DIR/.." && pwd)"
 SRC_DIR="$SHELL_DIR/Sources"
-SHARED_I18N="$REPO/shared/Sources/I18n.swift"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -37,8 +35,8 @@ FRAMEWORKS=(-framework AppKit -framework WebKit -framework SwiftUI -framework Fo
             -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications
             -framework ServiceManagement -framework Carbon)
 
-echo "==> [1/9] Typecheck shell module (swiftc -typecheck, all Sources + shared I18n)"
-swiftc -typecheck "$SRC_DIR"/*.swift "$SHARED_I18N" "${FRAMEWORKS[@]}"
+echo "==> [1/9] Typecheck shell module (swiftc -typecheck, all Sources)"
+swiftc -typecheck "$SRC_DIR"/*.swift "${FRAMEWORKS[@]}"
 
 # Every shell source except main.swift — each harness below becomes the
 # main.swift of its own build.
@@ -53,7 +51,7 @@ compile_harness() {
     local name="$1"
     mkdir -p "$WORK/$name"
     cp "$HERE/$name.swift" "$WORK/$name/main.swift"
-    swiftc -O "${NON_MAIN[@]}" "$SHARED_I18N" "$WORK/$name/main.swift" \
+    swiftc -O "${NON_MAIN[@]}" "$WORK/$name/main.swift" \
         -o "$WORK/$name/$name" "${FRAMEWORKS[@]}"
 }
 

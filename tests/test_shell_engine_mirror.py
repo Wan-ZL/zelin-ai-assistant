@@ -1,22 +1,22 @@
-"""shell/ 承接录制 + 实时字幕引擎的判例（CONTRACT §61.3 / §61.4 / §61.5）。
+"""shell/ 承接录制引擎的判例（CONTRACT §61.3 / §61.5）。
 
-mac/Sources 在 D3 下是冻结的行为规范（只读参考），引擎文件搬进 shell/Sources 的
-要求是**逻辑零改动**——本文件把「零改动」钉成机器可查：
+v2.0.0 起 shell/Sources/Recording.swift 是录制引擎的 **source of truth**（§61.3 修订）：
+mac/ 冻结参考随 lite 2.0 退役，「shell 副本与 mac 原件逐字节相同」的镜像判例改为 tombstone
+——这里只钉 shell 文件自己的 SHA-256（改它 = 改法：同 PR 改 §61.3 与这里的哈希）。
 
-- Recording.swift / CaptionCore.swift / LiveCaptions.swift：shell 副本与 mac 原件
-  逐字节相同（谁改一边不改另一边就红）。P8 删 mac/ 时把这条改成 tombstone。
-- CaptionOverlay.swift：允许且只允许两处差异——文件头注释、齿轮按钮从原生
-  MainNav 改走 ShellNavigation.openSettings（web 设置页）。
+- Recording.swift / Helpers/VaultSyncHelper.swift：钉 SHA-256（字节不动）。
+- 退役（全文见 tag full）：CaptionCore / LiveCaptions / CaptionOverlay 的镜像与差异判例
+  （Live captions 退役，§36 tombstone）、framegrab 的逐字节判例（随 Slack radar 退役）、
+  NotifyRelay 对 mac/ 的差异判例（mac/ 退役；§28 常量仍在下面钉）。
 - ShellSupport.swift 的 FailureCatalog 引擎子集：每句与 act/lib/failures.py 的
   plain_zh / plain_en 逐字一致（§25 的第二个 Swift 镜像，不许各说各话）。
-- shell/Info.plist 带 NSMicrophoneUsageDescription（字幕 requestAccess 缺它即被
-  macOS 杀进程）；shell/build.sh 链接引擎需要的框架并只借 shared I18n.swift。
-- ShellBridge.swift 的 wire 词表与 web/src/shellBridge.ts 的类型逐字互镜（防腐 #10）。
-- §68.13（P4 余量）：NotifyRelay.swift 壳副本只许两处差异（文件头、点击目标
-  MainWindowController → ShellWindow.show）；vault-sync-helper / framegrab 的源
-  （shell/Helpers/）与 mac/ 冻结版逐字节相同；ingest 找 helper 时壳先于原生 app（radar_slack 的 framegrab 查找 v2.0.0 随雷达退役）。
+- shell/Info.plist 带 NSMicrophoneUsageDescription（「屏幕 + 音频」模式 requestAccess 缺它即被
+  macOS 杀进程）、不再带 NSAppleEventsUsageDescription；shell/build.sh 编 shell/Sources/*.swift
+  （I18n.swift 已在其中）、链接引擎需要的框架、不再编 framegrab。
+- ShellBridge.swift 的 wire 词表与 web/src/shellBridge.ts 的类型逐字互镜（防腐 #10），
+  v2.0.0 退役的面在两边都不许再出现。
 """
-import difflib
+import hashlib
 import re
 import unittest
 from pathlib import Path
@@ -24,12 +24,13 @@ from pathlib import Path
 from act.lib import failures
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MAC = REPO_ROOT / "mac" / "Sources"
 SHELL = REPO_ROOT / "shell" / "Sources"
 
-VERBATIM = ["Recording.swift", "CaptionCore.swift", "LiveCaptions.swift"]
-# §68.13：两个 helper CLI 的源从 mac/ 顶层逐字节搬进 shell/Helpers/（build.sh 编进壳 bundle）
-VERBATIM_HELPERS = [("VaultSyncHelper.swift", "VaultSyncHelper.swift"), ("framegrab.swift", "framegrab.swift")]
+# §61.3（v2.0.0 修订）：source of truth 的字节指纹。改这两个文件 = 同 PR 改 §61.3 与这里。
+PINNED_SHA256 = {
+    "shell/Sources/Recording.swift": "f1015bf30e1498b9773dcc9d126a79bf64b2b90c53da371dfb12114a5380ee18",
+    "shell/Helpers/VaultSyncHelper.swift": "b3c6b49bedd5418b9643bc283c5cc3ab9650fd14bfc3a9792773fd43ec81000f",
+}
 
 # FailureCatalog ids the shell needs (Recording.swift flashNote / postSystemNotice
 # + the bridge's diagnosis vocabulary). Everything else stays in Doctor.swift.
@@ -43,63 +44,30 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-class VerbatimCopyTestCase(unittest.TestCase):
-    def test_engine_files_are_byte_identical_to_the_frozen_native_reference(self):
-        for name in VERBATIM:
+class PinnedSourceOfTruthTestCase(unittest.TestCase):
+    """§61.3 tombstone of the mac/ mirror: the shell files are the truth, pinned by hash."""
+
+    def test_source_of_truth_files_are_byte_stable(self):
+        for rel, digest in PINNED_SHA256.items():
+            with self.subTest(file=rel):
+                got = hashlib.sha256((REPO_ROOT / rel).read_bytes()).hexdigest()
+                self.assertEqual(got, digest,
+                                 "%s changed — it is the §61.3 source of truth; a change is a law "
+                                 "change (amend §61.3 and this pin in the same PR)" % rel)
+
+    def test_retired_engine_files_are_gone_from_the_shell(self):
+        for name in ("CaptionCore.swift", "LiveCaptions.swift", "CaptionOverlay.swift",
+                     "TerminalLauncher.swift", "TerminalRelay.swift"):
             with self.subTest(file=name):
-                self.assertEqual(
-                    (SHELL / name).read_bytes(), (MAC / name).read_bytes(),
-                    "shell/Sources/%s drifted from mac/Sources/%s — the engines move "
-                    "AS-IS (§61.3); fix the shell copy, never the frozen mac/ reference"
-                    % (name, name))
+                self.assertFalse((SHELL / name).exists(), "%s retired in v2.0.0 (tag full)" % name)
+        self.assertFalse((REPO_ROOT / "shell" / "Helpers" / "framegrab.swift").exists())
 
-    def test_helper_sources_are_byte_identical_to_the_frozen_native_reference(self):
-        for shell_name, mac_name in VERBATIM_HELPERS:
-            with self.subTest(file=shell_name):
-                self.assertEqual(
-                    (REPO_ROOT / "shell" / "Helpers" / shell_name).read_bytes(),
-                    (REPO_ROOT / "mac" / mac_name).read_bytes(),
-                    "shell/Helpers/%s drifted from mac/%s (§68.13 verbatim move)" % (shell_name, mac_name))
-
-    def test_notify_relay_differs_only_in_header_and_click_target(self):
-        mac_lines = _read(MAC / "NotifyRelay.swift").splitlines()
-        shell_lines = _read(SHELL / "NotifyRelay.swift").splitlines()
-        allowed = re.compile(r"^\s*$|^\s*//|MainWindowController|ShellWindow")
-        offending = []
-        for line in difflib.unified_diff(mac_lines, shell_lines, n=0, lineterm=""):
-            if line.startswith(("---", "+++", "@@")):
-                continue
-            if not allowed.search(line[1:]):
-                offending.append(line)
-        self.assertEqual(offending, [],
-                         "NotifyRelay.swift shell copy changed logic beyond the documented "
-                         "click-target rewire (§28 / §68.13):\n" + "\n".join(offending))
-        shell_text = "\n".join(shell_lines)
+    def test_notify_relay_keeps_the_shell_click_target_and_section_28_constants(self):
+        shell_text = _read(SHELL / "NotifyRelay.swift")
         self.assertNotIn("MainWindowController.shared", shell_text)
         self.assertIn("ShellWindow.show?()", shell_text)
-        # §28 constants travel verbatim
         self.assertIn("static let staleAfter: TimeInterval = 600", shell_text)
         self.assertIn("static let burstCap = 5", shell_text)
-
-    def test_caption_overlay_differs_only_in_header_and_gear_action(self):
-        mac_lines = _read(MAC / "CaptionOverlay.swift").splitlines()
-        shell_lines = _read(SHELL / "CaptionOverlay.swift").splitlines()
-        allowed = re.compile(
-            r"^\s*$|^\s*//|MainNav|openMainWindow|ShellNavigation|"
-            r"^@MainActor$|^enum ShellNavigation \{$|static var openSettings|^\}$")
-        offending = []
-        for line in difflib.unified_diff(mac_lines, shell_lines, n=0, lineterm=""):
-            if line.startswith(("---", "+++", "@@")):
-                continue
-            body = line[1:]
-            if not allowed.search(body):
-                offending.append(line)
-        self.assertEqual(offending, [],
-                         "CaptionOverlay.swift shell copy changed logic beyond the "
-                         "documented gear-button rewire:\n" + "\n".join(offending))
-        shell_text = "\n".join(shell_lines)
-        self.assertNotIn("MainNav.shared", shell_text)
-        self.assertIn('ShellNavigation.openSettings?("live_captions")', shell_text)
 
 
 class FailureCatalogMirrorTestCase(unittest.TestCase):
@@ -130,23 +98,30 @@ class BundleAndBuildTestCase(unittest.TestCase):
     def test_info_plist_declares_microphone_usage(self):
         plist = _read(REPO_ROOT / "shell" / "Info.plist")
         self.assertIn("<key>NSMicrophoneUsageDescription</key>", plist)
+        # v2.0.0: no Apple Events (the terminal takeover retired with TerminalLauncher)
+        self.assertNotIn("NSAppleEventsUsageDescription", plist)
+        self.assertIn("<string>com.zelin.ai-board</string>", plist, "bundle id unchanged (TCC identity)")
         # Dock-only (D3): the shell must NOT be a UI-element (menu-bar) app
         self.assertNotIn("LSUIElement", plist)
 
     def test_build_script_compiles_every_shell_source_with_engine_frameworks(self):
         build = _read(REPO_ROOT / "shell" / "build.sh")
         self.assertIn('"$SRC_DIR"/*.swift', build)
-        self.assertIn("shared/Sources/I18n.swift", build)
+        self.assertNotIn("shared/Sources", build, "I18n.swift lives in shell/Sources since v2.0.0")
+        self.assertTrue((SHELL / "I18n.swift").exists())
         for fw in ["AVFoundation", "ScreenCaptureKit", "UserNotifications", "WebKit", "SwiftUI",
                    "ServiceManagement", "Carbon"]:
             self.assertIn("-framework %s" % fw, build)
         # 签名（§54.3 2026-09-12 修正：稳定身份优先、有界、缺证书才回落 ad-hoc）
         # 不在本文件——判例见 tests/test_shell_build_codesign_identity.py 与
         # tests/integration/test_shell_build_codesign_budget.py
-        # §68.13 helper CLIs ride in the shell bundle (vault-sync-helper / framegrab)
+        # §68.13 helper CLI rides in the shell bundle (vault-sync-helper); framegrab retired
         self.assertIn('VAULTSYNC_SRC="$HELPERS_DIR/VaultSyncHelper.swift"', build)
-        self.assertIn('FRAMEGRAB_SRC="$HELPERS_DIR/framegrab.swift"', build)
-        self.assertIn('for helper in vault-sync-helper framegrab', build)
+        self.assertNotIn("FRAMEGRAB_SRC", build)
+        self.assertIn('"$BUILD_DIR/vault-sync-helper" "$APP_DIR/Contents/MacOS/vault-sync-helper"', build)
+        # the stable signing identity's setup script moved with the shell (§54.3)
+        self.assertIn("shell/scripts/make-signing-cert.sh", build)
+        self.assertTrue((REPO_ROOT / "shell" / "scripts" / "make-signing-cert.sh").exists())
 
     def test_helper_lookups_know_both_homes(self):
         # ingest/vault-sync.sh（§54 名字互换 + §68.13）：旧 app "(old)" 先（已有 Documents 授权），
@@ -155,8 +130,7 @@ class BundleAndBuildTestCase(unittest.TestCase):
         old = sh.index('"Zelin\'s AI Assistant (old).app"')
         product = sh.index('"Zelin\'s AI Assistant.app"')
         self.assertLess(old, product)
-        # (the radar_slack framegrab lookup retired with the radars in v2.0.0; framegrab
-        # itself leaves the shell bundle with PR-B)
+        # (the radar_slack framegrab lookup and framegrab itself retired in v2.0.0)
 
     def test_shell_swift_files_respect_the_file_cap(self):
         # 防腐 #1（hygiene gate enforces this too; this is the readable twin）
@@ -170,29 +144,27 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
 
     RECORDING_KEYS = ["available", "on", "mode", "engine_running", "diagnosis", "note",
                       "tcc_lost", "screen_permission", "resume_mode"]
-    CAPTIONS_KEYS = ["available", "on", "engine", "paused", "engine_dead",
-                     "status_text", "status_is_error",
-                     # §68.2 字幕偏好八键
-                     "source", "translate", "translate_direction", "apple_locale",
-                     "ark_model", "font_size", "opacity"]
     PERMISSION_KEYS = ["screen", "microphone", "notifications",
                        "vault"]   # §68.13 笔记库（Documents）授权（原生 PermissionsModel.vault）
-    TOP_KEYS = ["launch_at_login", "hotkey",
+    TOP_KEYS = ["launch_at_login",
                 "launch_at_login_available"]   # §28 追记 D39（向导终章「登录时自动启动」行的可用判据）
     METHODS = ["getState", "setRecording", "restartRecording",
-               "openScreenRecordingSettings", "setCaptions", "setLanguage",
+               "openScreenRecordingSettings", "setLanguage",
                # §68.13
                "getPermissions", "requestPermission", "openPane", "setLaunchAtLogin",
-               "setCaptionPrefs", "setBadge",
                # §68.1 目录字段的文件对话框
                "chooseFolder"]
+    # v2.0.0（§61.1 tombstone，art.6 v2.0 条款）：页面一侧不再读 / 不再调的桥面——实时字幕的快照块与两种设置方法、
+    # Dock 徽章、全局快速捕获快捷键（Swift 一侧随 LiveCaptions / QuickCaptureHotkey / DockBadge 一起删）
+    WEB_RETIRED_KEYS = ["captions", "hotkey", "translate_direction", "apple_locale", "ark_model", "font_size", "opacity"]
+    WEB_RETIRED_METHODS = ["setCaptions", "setCaptionPrefs", "setBadge", "probeCaptionKey"]
 
     def setUp(self):
         self.swift = _read(SHELL / "ShellBridge.swift")
         self.ts = _read(REPO_ROOT / "web" / "src" / "shellBridge.ts")
 
     def test_snapshot_keys_exist_on_both_sides(self):
-        for key in self.RECORDING_KEYS + self.CAPTIONS_KEYS + self.PERMISSION_KEYS + self.TOP_KEYS:
+        for key in self.RECORDING_KEYS + self.PERMISSION_KEYS + self.TOP_KEYS:
             with self.subTest(key=key):
                 self.assertIn('"%s"' % key, self.swift)
                 self.assertIsNotNone(
@@ -204,6 +176,25 @@ class BridgeWireMirrorTestCase(unittest.TestCase):
             with self.subTest(method=method):
                 self.assertIn('case "%s":' % method, self.swift)
                 self.assertIn('"%s"' % method, self.ts)
+
+    def test_swift_no_longer_serves_the_retired_bridge_surface(self):
+        code = re.sub(r"//[^\n]*", "", self.swift)
+        for key in ("captions", "hotkey"):
+            with self.subTest(key=key):
+                self.assertNotIn('"%s"' % key, code)
+        for method in self.WEB_RETIRED_METHODS:
+            with self.subTest(method=method):
+                self.assertNotIn('case "%s":' % method, code)
+        self.assertNotIn("LegacyPrefs", code, "§61.4 one-time native-prefs seed retired")
+
+    def test_web_no_longer_reads_the_retired_bridge_surface(self):
+        code = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", self.ts)
+        for key in self.WEB_RETIRED_KEYS:
+            with self.subTest(key=key):
+                self.assertIsNone(re.search(r"\b%s\b" % re.escape(key), code), key)
+        for method in self.WEB_RETIRED_METHODS:
+            with self.subTest(method=method):
+                self.assertNotIn('"%s"' % method, code)
 
     def test_handler_and_event_names_match(self):
         self.assertIn('static let handlerName = "zaiShell"', self.swift)

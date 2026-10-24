@@ -2,14 +2,13 @@
 //   · 主句 = §25 FailureCatalog 的人话（当前语言）?? 原句；用了人话时原句 + 修法降成辅助行 + title 气泡；
 //   · 表里只有没通过的行，OK 行留在「完整报告」；
 //   · 快照 / 完整 doctor 都带当前 UI 语言（?lang=），切语言重拉；
-//   · 「让 AI 修」成功留一句状态行（与卡片共用），ai_fix_enabled=false 时整颗不出现。
+//   · 「让 AI 修」随 v2.0.0 退役（交互式 Terminal 修复会话）：有失败行也不出现这颗按钮。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchDiagnostics, fetchDoctor, fetchFailures, fetchSecrets, postAiFixDoctor } from "../../api";
+import { fetchDiagnostics, fetchDoctor, fetchFailures, fetchSecrets } from "../../api";
 import { LanguageContext, type Language } from "../../i18n";
 import { resetStoreForTests, setLanguage } from "../../store";
 import type { DiagnosticsSnapshot, DoctorReport, FailureCatalog } from "../../types";
-import { aiFixOpenedText } from "../board/cardChrome";
 import { DepsSection, doctorFindings, doctorSentence } from "./DepsSection";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -17,7 +16,7 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     fetchBoard: vi.fn().mockResolvedValue({}), fetchHealth: vi.fn(), fetchDiagnostics: vi.fn(), fetchDoctor: vi.fn(), fetchSecrets: vi.fn(),
-    fetchFailures: vi.fn(), postAiFixDoctor: vi.fn(),
+    fetchFailures: vi.fn(),
   };
 });
 
@@ -28,7 +27,7 @@ const renderIn = (language: Language, node: React.ReactNode) => render(<Language
 const report: DoctorReport = { ok: true, fast: true, rc: 0, home: "/h", ran_at: "x", checks: [
   { name: "claude CLI", status: "ok", detail: "/u/claude 1.0.99", fix: "" },
   { name: "launchd claude", status: "fail", detail: "claude in launchd cannot read the vault (EPERM)", fix: "grant Full Disk Access to claude", failure_id: "claude_blind" },
-  { name: "gh CLI", status: "warn", detail: "missing - optional", fix: "brew install gh" },
+  { name: "screenpipe db", status: "warn", detail: "missing - recording never ran", fix: "turn recording on" },
   { name: "config", status: "fail", detail: "broken yaml at line 3", fix: "restore", failure_id: "config_invalid" },
 ] };
 const catalog: FailureCatalog = { failures: {
@@ -38,8 +37,8 @@ const catalog: FailureCatalog = { failures: {
 function diagnostics(over: Partial<DiagnosticsSnapshot> = {}): DiagnosticsSnapshot {
   return {
     doctor: report,
-    health: { verdict: "ok", heartbeat: null, dashboard: null, loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "x" },
-    deploy_state: null, install_report: null, registry_backend: "sqlite", radar_sources: null, logs: [], cron_probe: null, activity: null,
+    health: { verdict: "ok", server: { ok: true }, cron: null, recap: null, checked_at: "x" },
+    install_report: null, logs: [], cron_probe: null, activity: null,
     ...over,
   } as DiagnosticsSnapshot;
 }
@@ -47,7 +46,7 @@ function diagnostics(over: Partial<DiagnosticsSnapshot> = {}): DiagnosticsSnapsh
 beforeEach(() => {
   resetStoreForTests();
   setLanguage("en");
-  for (const fn of [fetchDiagnostics, fetchDoctor, fetchSecrets, fetchFailures, postAiFixDoctor]) vi.mocked(fn).mockReset();
+  for (const fn of [fetchDiagnostics, fetchDoctor, fetchSecrets, fetchFailures]) vi.mocked(fn).mockReset();
   vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [] });
   vi.mocked(fetchFailures).mockResolvedValue(catalog);
   vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics());
@@ -70,7 +69,7 @@ describe("doctorSentence / doctorFindings（原生 doctorFindingRow 的两条规
   });
 
   it("findings drop OK rows (they stay in the full report)", () => {
-    expect(doctorFindings(report).map((r) => r.name)).toEqual(["launchd claude", "gh CLI", "config"]);
+    expect(doctorFindings(report).map((r) => r.name)).toEqual(["launchd claude", "screenpipe db", "config"]);
   });
 });
 
@@ -142,37 +141,10 @@ describe("语言透传（原生 runFullOutput 的 AIASSISTANT_UI_LANG + onChange
   });
 });
 
-describe("让 AI 修（原生 AIFix：成功句 + config 关闭即隐藏）", () => {
-  it("success leaves the shared repair-session sentence as the status line", async () => {
-    vi.mocked(postAiFixDoctor).mockResolvedValue({ ok: true, command_file: "/tmp/x.command" });
-    renderIn("en", <DepsSection />);
-    const button = await screen.findByRole("button", { name: "Fix with AI" });
-    fireEvent.click(button);
-    await waitFor(() => expect(postAiFixDoctor).toHaveBeenCalledWith("en"));
-    await screen.findByText("Repair session opened in Terminal — just follow the AI");
-    expect(screen.getByRole("status").textContent).toBe(aiFixOpenedText(en));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(aiFixOpenedText(zh)).toBe("已在 Terminal 打开修复会话——跟着 AI 走即可");
-  });
-
-  it("failure keeps the native prefix + server sentence as an alert", async () => {
-    vi.mocked(postAiFixDoctor).mockRejectedValue(new Error("Fix with AI opens Terminal.app — macOS only"));
-    renderIn("en", <DepsSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "Fix with AI" }));
-    await screen.findByRole("alert");
-    expect(screen.getByRole("alert").textContent).toBe("Fix with AI failed to launch: Fix with AI opens Terminal.app — macOS only");
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-
-  it("ai_fix_enabled:false hides the button entirely; absent keeps it", async () => {
-    vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics({ ai_fix_enabled: false }));
+describe("让 AI 修已退役（v2.0.0）", () => {
+  it("a failing doctor row no longer offers Fix with AI", async () => {
     renderIn("en", <DepsSection />);
     await screen.findByText("2 check(s) failed — each has its own button");
     expect(screen.queryByRole("button", { name: "Fix with AI" })).toBeNull();
-    cleanup();
-    vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics({ ai_fix_enabled: true }));
-    resetStoreForTests();
-    renderIn("en", <DepsSection />);
-    expect(await screen.findByRole("button", { name: "Fix with AI" })).toBeTruthy();
   });
 });

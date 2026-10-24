@@ -1,15 +1,15 @@
-// 设置页「模型」的第三把旋钮「回退模型」（CONTRACT §59，owner 决策 D53）：
+// 设置页「模型」的「回退模型」旋钮（CONTRACT §59，owner 决策 D53）：
 //   1) 从 server 快照水合：哨兵是 off（文案「关闭回退」）、出厂值 claude-opus-5[1m] 以「（默认）」单列在 canonical 之前，
 //      默认值不算自定义（不弹别名警告）；
-//   2) 选「关闭回退」→ PUT 带 fallback: "off"，两把 D22 旋钮原样同车；选 canonical id / 自定义 → PUT 带那个 id；
+//   2) 选「关闭回退」→ PUT 带 fallback: "off"，pipeline 原样同车；选 canonical id / 自定义 → PUT 带那个 id；
 //   3) 自定义框留空 = 出厂值（与 server「空白 = 出厂值」同一规则；留空不该悄悄关掉回退，off 只经「关闭回退」显式选项）；
 //   4) server 给的 fallback 专用 warning 原句回显；server 400 的整句以 alert toast 显示。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchClaudeCodeDefault, fetchModelsSettings, putModelsSettings } from "../../api";
+import { ApiError, fetchModelsSettings, putModelsSettings } from "../../api";
 import { LanguageContext } from "../../i18n";
 import { resetStoreForTests } from "../../store";
-import type { ClaudeCodeDefault, ModelsSettings } from "../../types";
+import type { ModelsSettings } from "../../types";
 import { ModelsSection } from "./ModelsSection";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -18,8 +18,6 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     fetchModelsSettings: vi.fn(),
     putModelsSettings: vi.fn(),
-    fetchClaudeCodeDefault: vi.fn(),
-    postClaudeCodeDefault: vi.fn(),
   };
 });
 
@@ -28,26 +26,17 @@ const DEFAULT = "claude-opus-5[1m]";
 
 function snapshot(over: Partial<ModelsSettings> = {}): ModelsSettings {
   return {
-    dispatch: "follow",
-    pipeline: "follow",
+    pipeline: "claude-opus-5",
     fallback: DEFAULT,
-    follow: "follow",
     off: "off",
+    pipeline_default: "claude-opus-5",
     fallback_default: DEFAULT,
     canonical: CANONICAL,
-    source: { dispatch: "default", pipeline: "default", fallback: "default" },
+    source: { pipeline: "default", fallback: "default" },
     warnings: [],
     ...over,
   };
 }
-
-const ccDefault: ClaudeCodeDefault = {
-  model: "claude-fable-5-1[1m]",
-  path: "/Users/me/.claude/settings.json",
-  exists: true,
-  parseable: true,
-  canonical: false,
-};
 
 function renderSection() {
   return render(
@@ -64,7 +53,6 @@ async function fallbackSelect(): Promise<HTMLSelectElement> {
 beforeEach(() => {
   resetStoreForTests();
   vi.mocked(fetchModelsSettings).mockReset().mockResolvedValue(snapshot());
-  vi.mocked(fetchClaudeCodeDefault).mockReset().mockResolvedValue(ccDefault);
   vi.mocked(putModelsSettings).mockReset();
 });
 
@@ -92,9 +80,9 @@ describe("ModelsSection — fallback knob (D53)", () => {
     expect((await fallbackSelect()).value).toBe("off");
   });
 
-  it("choosing 'off' PUTs fallback: off with the two D22 knobs unchanged", async () => {
+  it("choosing 'off' PUTs fallback: off with the pipeline knob unchanged", async () => {
     vi.mocked(putModelsSettings).mockResolvedValue(snapshot({ fallback: "off",
-      source: { dispatch: "default", pipeline: "default", fallback: "override" } }));
+      source: { pipeline: "default", fallback: "override" } }));
     renderSection();
     fireEvent.change(await fallbackSelect(), { target: { value: "off" } });
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
@@ -102,7 +90,7 @@ describe("ModelsSection — fallback knob (D53)", () => {
     fireEvent.click(save);
 
     await screen.findByText(/Saved — applies to the next call, no restart needed/);
-    expect(vi.mocked(putModelsSettings).mock.calls[0][0]).toEqual({ dispatch: "follow", pipeline: "follow", fallback: "off" });
+    expect(vi.mocked(putModelsSettings).mock.calls[0][0]).toEqual({ pipeline: "claude-opus-5", fallback: "off" });
     await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true));
     expect((screen.getByLabelText("Fallback model") as HTMLSelectElement).value).toBe("off");
   });
@@ -113,7 +101,7 @@ describe("ModelsSection — fallback knob (D53)", () => {
     fireEvent.change(await fallbackSelect(), { target: { value: "claude-sonnet-5" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("status");
-    expect(vi.mocked(putModelsSettings).mock.calls[0][0]).toEqual({ dispatch: "follow", pipeline: "follow", fallback: "claude-sonnet-5" });
+    expect(vi.mocked(putModelsSettings).mock.calls[0][0]).toEqual({ pipeline: "claude-opus-5", fallback: "claude-sonnet-5" });
   });
 
   it("back to the default from off is a dirty change that PUTs the default id", async () => {
@@ -179,10 +167,11 @@ describe("ModelsSection — fallback knob (D53)", () => {
     expect(vi.mocked(putModelsSettings).mock.calls[0][0].fallback).toBe("off");
   });
 
-  it("the D22 knobs do not change their follow sentinel", async () => {
+  it("the pipeline knob has no sentinel (no off, no follow-the-global-default): default/canonical → custom", async () => {
     renderSection();
-    const dispatch = (await screen.findByLabelText("Dispatch agents (hands)")) as HTMLSelectElement;
-    expect(Array.from(dispatch.options).map((o) => o.value)).toEqual(["follow", ...CANONICAL, "__custom__"]);
+    const pipeline = (await screen.findByLabelText("Pipeline judgment (brain)")) as HTMLSelectElement;
+    expect(Array.from(pipeline.options).map((o) => o.value)).toEqual([...CANONICAL, "__custom__"]); // claude-opus-5 已在 canonical 里，不单列
+    expect(screen.queryByLabelText("Dispatch agents (hands)")).toBeNull();
   });
 
   it("surfaces the server's validation sentence for the fallback field as an alert toast", async () => {

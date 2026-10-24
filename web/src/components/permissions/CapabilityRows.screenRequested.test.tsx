@@ -13,9 +13,8 @@ const text = (zh: string, en: string) => en;
 
 const base: ShellState = {
   recording: { available: true, on: false, mode: "off", engine_running: false, diagnosis: null, note: "", tcc_lost: false, screen_permission: false, resume_mode: "screen" },
-  captions: { available: true, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: false, translate_direction: "auto", apple_locale: "zh", ark_model: "", font_size: 24, opacity: 0.7 },
   permissions: { screen: "denied", microphone: "unknown", notifications: "unknown", vault: "unknown" },
-  launch_at_login: false, hotkey: "⌃⌥Space",
+  launch_at_login: false,
 };
 
 function installShell(permissions: Partial<ShellState["permissions"]> = {}) {

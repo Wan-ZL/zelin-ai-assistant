@@ -2,7 +2,7 @@
 //   1) 三档单选下面固定一句「打开 App 时自动按此模式启动 Screenpipe 持续录制。」（次要色 settings-helper）；
 //   2) consent-race 自愈成功句（self_heal_note）以绿色 ✓ 行出现在引擎行之前，与拒绝说明（note，拼在引擎行里）并存——
 //      原生是两个并列的 if，不是 else-if；空则不渲；
-//   3) 浏览器（无桥）里两句都不出——整块退成「只在看板 app 里可控」。
+//   3) 浏览器（无桥）里两句都不出——整块退成「只在 app（壳）里可控」。
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LanguageContext } from "../../i18n";
@@ -11,9 +11,8 @@ import { RecordingSection } from "./RecordingSection";
 
 const base: ShellState = {
   recording: { available: true, on: true, mode: "screen", engine_running: true, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen", self_heal_note: "", log_tail: "" },
-  captions: { available: true, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: false, translate_direction: "auto", apple_locale: "zh", ark_model: "", font_size: 24, opacity: 0.7 },
   permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
-  launch_at_login: false, hotkey: "⌃⌥Space",
+  launch_at_login: false,
 };
 
 function installShell(recording: Partial<ShellState["recording"]> = {}) {
@@ -55,7 +54,7 @@ describe("RecordingSection · 自动启动说明句", () => {
     const { container } = renderSection();
     expect(screen.queryByText(AUTOSTART_EN)).toBeNull();
     expect(container.querySelector(".self-heal-note")).toBeNull();
-    expect(container.querySelector(".settings-warning")?.textContent).toContain("only controllable inside the board app");
+    expect(container.querySelector(".settings-warning")?.textContent).toContain("only controllable inside the app (shell)");
   });
 });
 

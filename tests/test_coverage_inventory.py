@@ -200,12 +200,10 @@ class PrefKeyProofTestCase(unittest.TestCase):
             self._pref(probe="server_source", landing="nowhere.json"), {}, {}, frozenset())
         self.assertEqual(proof, "")
 
-    def test_the_repo_parity_test_declares_the_six_web_prefs(self):
-        """真仓的 web/src/parity.test.tsx 里这六把键各有一条 it()（只读文件，不跑 vitest）。"""
-        found = ci.parity_vitest_ids(_ROOT)
-        for key in ("boardAnimations", "captureHistory", "cardSortOrder",
-                    "mainSection", "sidebarCollapsed", "sidebarWidth"):
-            self.assertIn("setting:prefs:" + key, found)
+    def test_the_repo_has_no_parity_suite_any_more(self):
+        """v2.0.0：web/src/parity.test.tsx 随 §66 UI parity 退役（PR-B）——真仓读不出任何 vitest parity id，
+        六把 web 偏好键的 proof 因此回到空（清单本身与这套工具随 §77 在 PR-C 退役）。"""
+        self.assertEqual(ci.parity_vitest_ids(_ROOT), frozenset())
 
 
 _API = "/api/"   # 路由字面量分段拼（见 RouteProofDialectTestCase 的 docstring）

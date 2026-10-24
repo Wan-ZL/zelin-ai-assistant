@@ -1,15 +1,15 @@
 // 设置页分区的开合记忆（CONTRACT §68.1 追记，D44；原生 Settings.swift `SettingsCollapseStore` 的 web 版）。
 // 键名逐字镜像原生 UserDefaults `settings.expandedSections`，落 localStorage；值 = 展开着的 section id 的 JSON 数组
-// （排序后写，读时坏形 / 缺席 → 默认集）。原生首跑种子是「全部折叠」；web 是混合式（D44）：常用四区默认展开、
-// 其余折叠——「常用」= 通用（语言 / 终端 / 更新，最常拨的旋钮）、依赖检查（这台机器能不能跑，D30 把它排在通用之后
-// 就是同一话题）、录制 + 实时字幕（每天开关的两把）。集成类 / 开关表 / 摘要 / 语气档案等设一次就不再动的区折着。
-// 只有键**缺席**才用默认集：用户把四区全折起来存的是 `[]`，下次仍是全折——记忆比默认大。
+// （排序后写，读时坏形 / 缺席 → 默认集）。原生首跑种子是「全部折叠」；web 是混合式（D44）：常用三区默认展开、
+// 其余折叠——「常用」= 通用（语言，最常拨的旋钮）、依赖检查（这台机器能不能跑，D30 把它排在通用之后就是同一话题）、
+// 录制（每天开关的那一把）。设一次就不再动的区折着。v2.0.0：实时字幕随 Live captions 退役，默认集少一项。
+// 只有键**缺席**才用默认集：用户把三区全折起来存的是 `[]`，下次仍是全折——记忆比默认大。
 // 搜索 / ?anchor= 深链的强制展开不写这里（搜索期间 toggle 禁用、状态不动，原生 §1.9 同款；anchor 与原生一样 expand 并记住）。
 
 export const EXPANDED_SECTIONS_STORAGE_KEY = "settings.expandedSections";
 
-/** 默认展开的四区（truth = 本常量；SettingsPage.SETTINGS_TOC 里的 id） */
-export const DEFAULT_EXPANDED_SECTIONS: readonly string[] = ["general", "deps", "recording", "live_captions"];
+/** 默认展开的三区（truth = 本常量；SettingsPage.SETTINGS_TOC 里的 id） */
+export const DEFAULT_EXPANDED_SECTIONS: readonly string[] = ["general", "deps", "recording"];
 
 /** 读记忆：缺席 / 不可读 / 坏形 → 默认集；合法 JSON 数组（含空数组）原样收，非字串项丢弃 */
 export function readExpandedSections(): ReadonlySet<string> {

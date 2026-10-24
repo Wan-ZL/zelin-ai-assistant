@@ -38,7 +38,7 @@ async function open(page: Page, query: string, hint: "zh" | "en") {
 test("首次运行：首帧显示的语言被持久化一次；设置页的 help 与来源章说的是同一把开关", async ({ page }) => {
   await open(page, "?page=settings", "zh");
   expect(overrides().language).toBe("zh");
-  await expect(page.getByText("看板、系统通知与修法句共用这一把开关", { exact: false })).toBeVisible();
+  await expect(page.getByText("界面、系统通知与修法句共用这一把开关", { exact: false })).toBeVisible();
   const chip = page.locator("section[aria-labelledby='settings-general-title'] .settings-source-chip").first();
   await expect(chip).toHaveAttribute("data-source", "override");
   // 幂等：再开一次不再写（文件内容不变）

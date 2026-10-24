@@ -1,0 +1,3 @@
+type: removed
+- **web 端随 Act 管线退役的页面与组件（lite 2.0，PR-B）**：看板、回收站、永久性完成、技能、活体样式指南五页；卡片详情抽屉、过滤 / 搜索栏、书立条、多选与强制合并、列顶捕获框；离线 / 管线健康 / 自我改进 / 每日整理横幅与诊断条；顶栏的设备标签、看板新鲜度与部署状态小字；Dock 徽章与全局快速捕获（⌘L / ⌃⌥Space）；设置页的实时字幕、Slack / Gmail 接入、导入 Claude Code 工作、Skills、MCP servers、同步 / 配对、审批 / 成本、Feature flags、每周摘要、语气档案、产品改进计划、开发会话、素材库、每日整理各区，以及「看板动画」开关；关于页的「用量报告」行与自动部署话术；向导的可选凭证步、「立即生成一次」与后台服务行；依赖检查的 gh / Slack / Gmail 三行、雷达健康与「让 AI 修」。1.x 的完整前端留在 git tag / branch `full`。
+- **实时字幕（Live captions）在 web 一侧退役**：顶栏字幕开关、设置区与 BYO key 检测删除，壳桥快照里的 `captions` 块与 `setCaptions` / `setCaptionPrefs` / `probeCaptionKey` / `setBadge` 不再被页面使用。

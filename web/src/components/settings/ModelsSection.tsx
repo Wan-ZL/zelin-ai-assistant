@@ -1,51 +1,35 @@
 // 设置页 section「模型」（CONTRACT §59，owner 决策 D22 + D53）。
-// 三把旋钮：dispatch（「手」——claude --bg 派工 agent）与 pipeline（「脑」——雷达提取/分诊/判官/问答
-// 的 headless claude -p），每把 = 跟随 Claude Code 全局 | canonical id | 自定义；fallback（D53，「回退」——
-// 主模型不可用时每次 headless 调用带的 --fallback-model），= 关闭 | 出厂值 claude-opus-5[1m] | canonical id | 自定义
-// （自定义框留空 = 出厂值，不是 off——off 只经「关闭回退」显式选项）。
-// 数据经 store（refreshSettings/saveModels/setClaudeCodeDefaultModel）；这里只存草稿 + toast 这类瞬态。
-// 保存 = 一次 PUT 三键；server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。
+// 两把旋钮：pipeline（「脑」——会议纪要与笔记整理的 headless claude -p）= 出厂值 | canonical id | 自定义；
+// fallback（D53，「回退」——主模型不可用时每次 headless 调用带的 --fallback-model）= 关闭 | 出厂值 | canonical id | 自定义
+// （自定义框留空 = 出厂值，不是 off——off 只经「关闭回退」显式选项）。v2.0.0：dispatch（「手」，claude --bg 派工）随 Act
+// 管线退役；「跟随 Claude Code 全局默认」与「设为全局默认」随 §78 隔离退役（app 不读不写 owner 自己的 Claude Code 设置）。
+// 数据经 store（refreshSettings / saveModels）；这里只存草稿 + toast 这类瞬态。
+// 保存 = 一次 PUT 两键；server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
 import { useI18n } from "../../i18n";
-import {
-  refreshSettings,
-  saveModels,
-  setClaudeCodeDefaultModel,
-  useAppState,
-} from "../../store";
-import { ClaudeCodeDefaultRow } from "./ClaudeCodeDefaultRow";
+import { refreshSettings, saveModels, useAppState } from "../../store";
+import type { ModelsSettings } from "../../types";
 import { CUSTOM_CHOICE, ModelKnob } from "./ModelKnob";
 
-const MODES = ["dispatch", "pipeline", "fallback"] as const;
+const MODES = ["pipeline", "fallback"] as const;
 type Mode = (typeof MODES)[number];
 type Draft = Record<Mode, { value: string; isCustom: boolean }>;
 
-interface KnobSnapshot {
-  dispatch: string;
-  pipeline: string;
-  fallback: string;
-  follow: string;
-  off: string;
-  fallback_default: string;
-  canonical: string[];
+/** 每把旋钮的出厂值（server 给；老 server 缺 pipeline_default 时退回第一个 canonical） */
+function defaultOf(models: ModelsSettings, mode: Mode): string {
+  return mode === "fallback" ? models.fallback_default : (models.pipeline_default ?? models.canonical[0] ?? "");
 }
 
-/** 每把旋钮的哨兵：两把 D22 旋钮是 follow，fallback 是 off */
-function sentinelOf(models: KnobSnapshot, mode: Mode): string {
-  return mode === "fallback" ? models.off : models.follow;
+/** 自定义框留空的落点 = 出厂值——与 server「空白 = 出厂值」同一规则，留空是漏填不是决定；off 只经「关闭回退」显式选项到达 */
+function blankCustomOf(models: ModelsSettings, mode: Mode): string {
+  return defaultOf(models, mode);
 }
 
-/** 自定义框留空的落点：D22 旋钮回到 follow；fallback 回到出厂值——与 server「空白 = 出厂值」同一规则，
- *  留空是漏填不是决定，不该让 CLI 自己的回退悄悄复活；off 只经「关闭回退」那个显式选项到达 */
-function blankCustomOf(models: KnobSnapshot, mode: Mode): string {
-  return mode === "fallback" ? models.fallback_default : models.follow;
-}
-
-/** 下拉里的固定选项（哨兵与「自定义…」之外）：fallback 多一个出厂值 */
-function isFixedChoice(models: KnobSnapshot, mode: Mode, value: string): boolean {
-  if (value === sentinelOf(models, mode)) return true;
-  if (mode === "fallback" && value === models.fallback_default) return true;
+/** 下拉里的固定选项（「自定义…」之外）：fallback 的哨兵 off + 出厂值 + canonical */
+function isFixedChoice(models: ModelsSettings, mode: Mode, value: string): boolean {
+  if (mode === "fallback" && value === models.off) return true;
+  if (value === defaultOf(models, mode)) return true;
   return models.canonical.includes(value);
 }
 
@@ -56,20 +40,19 @@ interface Toast {
   message: string;
 }
 
-function draftFrom(models: KnobSnapshot): Draft {
+function draftFrom(models: ModelsSettings): Draft {
   const one = (mode: Mode) => ({
     value: models[mode],
     isCustom: !isFixedChoice(models, mode, models[mode]),
   });
-  return { dispatch: one("dispatch"), pipeline: one("pipeline"), fallback: one("fallback") };
+  return { pipeline: one("pipeline"), fallback: one("fallback") };
 }
 
 export function ModelsSection() {
   const { text } = useI18n();
-  const { models, claudeCodeDefault, settingsError } = useAppState();
+  const { models, settingsError } = useAppState();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isSaving, setSaving] = useState(false);
-  const [isSettingDefault, setSettingDefault] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
@@ -104,9 +87,6 @@ export function ModelsSection() {
     );
   }
 
-  const follow = models.follow;
-  const globalDefault = claudeCodeDefault?.model ?? null;
-
   const choose = (mode: Mode, choice: string) => {
     setDraft((d) => d && {
       ...d,
@@ -132,7 +112,6 @@ export function ModelsSection() {
     setToast(null);
     try {
       const saved = await saveModels({
-        dispatch: effective("dispatch"),
         pipeline: effective("pipeline"),
         fallback: effective("fallback"),
       });
@@ -148,60 +127,26 @@ export function ModelsSection() {
     }
   }
 
-  async function setDefault(model: string) {
-    setSettingDefault(true);
-    setToast(null);
-    try {
-      const backup = await setClaudeCodeDefaultModel(model);
-      setToast({
-        kind: "ok",
-        message: backup
-          ? text(`Claude Code 全局默认已设为 ${model}；原文件备份在 ${backup}`, `Claude Code global default set to ${model}; the old file is backed up at ${backup}`)
-          : text(`Claude Code 全局默认已设为 ${model}（此前没有 settings.json，已新建）`, `Claude Code global default set to ${model} (settings.json did not exist; created)`),
-      });
-    } catch (error) {
-      setToast({ kind: "error", message: error instanceof ApiError ? error.message : String(error) });
-    } finally {
-      setSettingDefault(false);
-    }
-  }
-
   return (
     <section className="settings-section" aria-labelledby="settings-models-title">
       <h3 id="settings-models-title" className="settings-section-title">{text("模型", "Models")}</h3>
       <p className="settings-helper">
         {text(
-          "三把旋钮。「手」= 派出去干活的 agent；「脑」= 管线里的判断（雷达提取、分诊、并入判官、问答、摘要）——这两把默认都跟随 Claude Code 全局默认，即不传 --model。「回退」= 主模型不可用时切到哪个模型（每次调用带 --fallback-model），默认 Opus 5。",
-          "Three knobs. \"Hands\" = the agents dispatched to do the work; \"brain\" = the pipeline's judgment calls (radar extraction, triage, merge judge, ask, digests) — both follow the Claude Code global default unless set, i.e. no --model is passed. \"Fallback\" = the model every call switches to when the primary is unavailable (--fallback-model), Opus 5 by default.",
+          "两把旋钮。「脑」= 会议纪要与笔记整理用哪个模型（每次 headless 调用带 --model）；「回退」= 主模型不可用时切到哪个模型（每次调用带 --fallback-model）。两把都有出厂值，不跟随你自己的 Claude Code 设置。",
+          "Two knobs. \"Brain\" = the model meeting recaps and note processing run on (every headless call passes --model); \"fallback\" = the model a call switches to when the primary is unavailable (--fallback-model). Both have factory defaults and never follow your own Claude Code settings.",
         )}
       </p>
 
       <ModelKnob
-        mode="dispatch"
-        label={text("派工 agent（手）", "Dispatch agents (hands)")}
-        helper={text(
-          "claude --bg 启动的后台 agent 用哪个模型。改它影响批准后的每一次派工、恢复与打回。",
-          "Which model the claude --bg background agents run on. Affects every dispatch, resume and rework after approval.",
-        )}
-        value={draft.dispatch.value}
-        follow={follow}
-        canonical={models.canonical}
-        globalDefault={globalDefault}
-        isCustom={draft.dispatch.isCustom}
-        onChoose={(choice) => choose("dispatch", choice)}
-        onCustomText={(value) => customText("dispatch", value)}
-      />
-      <ModelKnob
         mode="pipeline"
         label={text("管线判断（脑）", "Pipeline judgment (brain)")}
         helper={text(
-          "所有 headless claude -p 用哪个模型：雷达提取、快速捕获分诊、合并判官、问答、digest、语气档。便宜快的模型在这里最划算。",
-          "Which model every headless claude -p uses: radar extraction, quick-capture triage, merge judge, ask, digests, voice profile. A cheaper, faster model pays off most here.",
+          "所有 headless claude -p 用哪个模型：会议纪要、笔记整理、权限体检里的模型探针。",
+          "Which model every headless claude -p uses: meeting recaps, note processing, the model probe on the Permissions checkup.",
         )}
         value={draft.pipeline.value}
-        follow={follow}
         canonical={models.canonical}
-        globalDefault={globalDefault}
+        defaultChoice={defaultOf(models, "pipeline")}
         isCustom={draft.pipeline.isCustom}
         onChoose={(choice) => choose("pipeline", choice)}
         onCustomText={(value) => customText("pipeline", value)}
@@ -210,14 +155,12 @@ export function ModelsSection() {
         mode="fallback"
         label={text("回退模型", "Fallback model")}
         helper={text(
-          "主模型（全局默认或上面两把旋钮）拿不到时，claude 在本次会话里切到这个模型；不设则用 Claude Code 自己的回退（旧一代 Opus）。关闭 = 不传 --fallback-model。",
-          "When the primary model (the global default or a knob above) is unavailable, claude switches to this model for the session; unset, Claude Code falls back on its own (an older Opus). Off = no --fallback-model is passed.",
+          "上面那把旋钮的模型拿不到时，claude 在本次会话里切到这个模型。关闭 = 不传 --fallback-model。",
+          "When the model above is unavailable, claude switches to this model for the session. Off = no --fallback-model is passed.",
         )}
         value={draft.fallback.value}
-        follow={models.off}
         canonical={models.canonical}
-        globalDefault={globalDefault}
-        sentinelLabel={text("关闭回退（主模型不可用时直接失败）", "No fallback (fail when the primary is unavailable)")}
+        sentinel={{ value: models.off, label: text("关闭回退（主模型不可用时直接失败）", "No fallback (fail when the primary is unavailable)") }}
         defaultChoice={models.fallback_default}
         isCustom={draft.fallback.isCustom}
         onChoose={(choice) => choose("fallback", choice)}
@@ -235,16 +178,9 @@ export function ModelsSection() {
           {isSaving ? text("保存中…", "Saving…") : text("保存", "Save")}
         </button>
         <span className="settings-helper">
-          {text("保存后下一次派工 / 管线调用即生效，无需重启后台服务。", "Applies to the next dispatch / pipeline call after saving; no daemon restart.")}
+          {text("保存后下一次调用即生效，无需重启。", "Applies to the next call after saving; no restart.")}
         </span>
       </div>
-
-      <ClaudeCodeDefaultRow
-        current={claudeCodeDefault}
-        canonical={models.canonical}
-        isBusy={isSettingDefault}
-        onSetDefault={(model) => void setDefault(model)}
-      />
 
       {toast && (
         <div className={`settings-toast is-${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"}>

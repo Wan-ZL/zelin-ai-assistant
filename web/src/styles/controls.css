@@ -1,0 +1,318 @@
+/*
+ * 跨页共用的控件与页面骨架样式（v2.0.0：从退役的看板样式 board.css / chrome.css / animations.css / detail.css 里
+ * 搬出各页还在用的那一半——按钮、chip、原生 <dialog>、读屏专用文本、显示设置预览用的卡片、页头 / 页内搜索框 /
+ * 返回链接 / 可复制的命令行；看板列 / 卡片状态 / composer / 多选 / 过滤条全文见 tag full）。
+ * 纪律：颜色 / 阴影只用 tokens.css 已有 var(--...)，不造新色值（CONVENTIONS §5）；字号只用 `font: var(--type-…)`
+ * 或 `calc(<px> * var(--text-scale))`，字重只用 var(--w-…)，描边只用 var(--stroke-w)（displayPrefs.test.ts 判红字面量）。
+ */
+
+/* —— 页面骨架（各页的标题行 / 计数 / 返回链接 / 页内搜索框）—— */
+.page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.page-title {
+  font-size: calc(17px * var(--text-scale));
+  font-weight: var(--w-bold);
+  margin: 0;
+}
+
+.page-count {
+  color: var(--text-tertiary);
+  font-size: calc(12.5px * var(--text-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.page-back-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: calc(12.5px * var(--text-scale));
+}
+
+.page-back-link:hover {
+  text-decoration: underline;
+}
+
+.page-search {
+  border: var(--stroke-w) solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  font: var(--type-header-control);
+  padding: 5px 10px;
+  border-radius: 8px;
+  width: var(--header-search-width);
+  min-width: var(--header-search-min-width);
+}
+
+.page-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.page-search::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+/* 一条可复制的命令 / 路径（关于页的升级 / 卸载命令、向导与权限体检页的路径行）：等宽正文 + 一颗小「复制」 */
+.settings-command {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-command code {
+  overflow-wrap: anywhere;
+}
+
+.zai-detail-copy {
+  appearance: none;
+  padding: 1px 7px;
+  border: var(--stroke-w) solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-chip);
+  cursor: pointer;
+}
+
+.zai-detail-copy:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 屏幕阅读器专用文本（复制成功播报等）：视觉隐藏、可访问性树里仍在 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 相对时间小字（components/shell/RelativeTime；原生 10pt secondary） */
+.card-meta-text {
+  align-self: center;
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
+  line-height: calc(16px * var(--text-scale));
+  white-space: nowrap;
+}
+
+.card-meta-text.is-warning { color: var(--warning); white-space: normal; }
+
+/* —— 卡片（设置 → 显示 的预览：字号 / 字重 / 描边三把旋钮作用在真实类名上）—— */
+.task-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 6px;
+  padding: 8px 9px;
+  overflow: hidden;
+  border: var(--stroke-w) solid var(--border);
+  border-radius: var(--native-layout-card-radius);
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+  transition: border-color 100ms ease, background-color 100ms ease, box-shadow 100ms ease;
+}
+
+.task-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.card-head .card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.card-head .card-id {
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.card-title {
+  color: var(--text-primary);
+  font: var(--type-card-title);
+  overflow-wrap: anywhere;
+}
+
+.card-id {
+  color: var(--text-tertiary);
+  font: var(--type-card-fine-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.card-dot.is-review { background: var(--accent); }
+
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* —— chip（原生 Badge：10 semibold，色字 + 同色 .18 底，胶囊）—— */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: var(--stroke-w) solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font: var(--type-chip);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip.chip-accent { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.chip.chip-warning { color: var(--warning); border-color: var(--warning-soft); background: var(--warning-soft); }
+.chip.chip-danger { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
+.chip.chip-success { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
+.chip.chip-purple { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
+.chip.chip-info { color: var(--info); border-color: var(--info-soft); background: var(--info-soft); }
+.chip.chip-quiet { border-color: transparent; }
+.chip.chip-purple.chip-quiet { background: var(--purple-soft-quiet); }
+.chip.chip-accent.chip-quiet { background: var(--accent-soft-quiet); }
+a.chip { text-decoration: none; }
+a.chip:hover { text-decoration: underline; }
+
+/* —— 按钮 —— */
+.btn {
+  appearance: none;
+  padding: 3px 9px;
+  border: var(--stroke-w) solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: var(--type-button);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) { background: var(--surface-hover); }
+.btn:active:not(:disabled) { background: var(--surface-active); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+a.btn { text-decoration: none; }
+
+.btn.btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent); /* dark 主题 accent 为亮 teal，白字对比不够 —— 统一走 on-accent token */
+}
+
+.btn.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn.btn-primary:active:not(:disabled) { background: var(--accent-active); }
+
+/* 语义动词按钮（outline + 文字，hover 升 tinted 底；hover/active 走 --X-hover/--X-active token） */
+.btn.btn-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--surface);
+}
+
+.btn.btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger-hover); color: var(--danger-hover); }
+.btn.btn-danger:active:not(:disabled) { background: var(--danger-soft); border-color: var(--danger-active); color: var(--danger-active); }
+
+.btn.btn-success {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--surface);
+}
+
+.btn.btn-success:hover:not(:disabled) { background: var(--success-soft); border-color: var(--success-hover); color: var(--success-hover); }
+.btn.btn-success:active:not(:disabled) { background: var(--success-soft); border-color: var(--success-active); color: var(--success-active); }
+
+/* —— 原生 <dialog>（components/shell/ModalDialog）—— */
+.zai-dialog {
+  min-width: 320px;
+  max-width: 440px;
+  padding: 16px;
+  border: var(--stroke-w) solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--dialog-shadow);
+}
+
+.zai-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.zai-dialog h2 {
+  margin: 0 0 8px;
+  font: var(--type-header-title);
+}
+
+.zai-dialog .dialog-body {
+  margin: 0 0 12px;
+  font: var(--type-composer);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 多段正文（卸载对话框的项目符号列表）：段落零外边距，列表用原生的 • */
+.zai-dialog .dialog-body > p {
+  margin: 0;
+}
+
+.zai-dialog .dialog-list {
+  margin: 6px 0;
+  padding-left: 1.4em;
+  list-style: "• ";
+}
+
+.zai-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* —— 系统减弱动效 = 全部动画即时完成（fork 自 dashi web/src/styles.css L8590-8599，Apache-2.0，NOTICE 登记）—— */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

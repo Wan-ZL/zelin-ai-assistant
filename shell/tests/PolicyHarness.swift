@@ -31,7 +31,7 @@ func run() {
     // ?page= query (web/src/route.ts), so query / fragment do not matter
     check(verdict("http://127.0.0.1:47821/") == .board, "board root → board")
     check(verdict("http://127.0.0.1:47821") == .board, "board origin without a path → board")
-    check(verdict("http://127.0.0.1:47821/?page=settings&anchor=live_captions") == .board,
+    check(verdict("http://127.0.0.1:47821/?page=settings&anchor=recording") == .board,
           "board deep link (?page=settings&anchor=) → board")
     check(verdict("http://127.0.0.1:47821/?page=permissions") == .board,
           "board deep link (?page=permissions) → board")
@@ -88,7 +88,7 @@ func run() {
     // ---- 2. ReopenPolicy.action — the four cells; hasVisibleWindows is not an input ----
     print("[2] ReopenPolicy.action:")
     check(ReopenPolicy.action(boardVisible: false, boardMiniaturized: false) == .show,
-          "board closed → show (even while the captions panel keeps hasVisibleWindows true)")
+          "board closed → show (even while another panel keeps hasVisibleWindows true)")
     check(ReopenPolicy.action(boardVisible: true, boardMiniaturized: false) == .none,
           "board visible → no-op")
     check(ReopenPolicy.action(boardVisible: false, boardMiniaturized: true) == .deminiaturize,
@@ -123,12 +123,12 @@ func run() {
     check(open("http://127.0.0.1:47821/?page=settings&anchor=deps&q=foo", "permissions")
           == .pushCommand(page: "permissions", anchor: nil),
           "board on another page (with query) → still push (same document)")
-    check(open("http://localhost:47821/?card=R-1", "settings", "live_captions")
-          == .pushCommand(page: "settings", anchor: "live_captions"),
-          "captions gear while the board is up → push open_page settings + anchor")
+    check(open("http://localhost:47821/?card=R-1", "settings", "recording")
+          == .pushCommand(page: "settings", anchor: "recording"),
+          "a deep link while the page is up → push open_page settings + anchor")
     check(open(nil, "about") == .load(page: "about", anchor: nil),
           "no URL yet (embedded splash, loadHTMLString baseURL nil) → full load of the deep link")
-    check(open("about:blank", "settings", "live_captions") == .load(page: "settings", anchor: "live_captions"),
+    check(open("about:blank", "settings", "recording") == .load(page: "settings", anchor: "recording"),
           "about:blank (failure page) → full load, anchor carried")
     check(open("http://127.0.0.1:47821/api/board", "about") == .load(page: "about", anchor: nil),
           "same origin but not the SPA path → load (the SPA is not there to receive a command)")
@@ -139,8 +139,8 @@ func run() {
     // WKWebView.url is already the target URL while the document is still in flight (loadBoard / ⌘R): no SPA listening yet
     check(open("http://127.0.0.1:47821/", "settings", loading: true) == .load(page: "settings", anchor: nil),
           "board URL but still loading (provisional) → load the deep link, do not push into an empty document")
-    check(open("http://127.0.0.1:47821/?page=about", "settings", "live_captions", loading: true)
-          == .load(page: "settings", anchor: "live_captions"),
+    check(open("http://127.0.0.1:47821/?page=about", "settings", "recording", loading: true)
+          == .load(page: "settings", anchor: "recording"),
           "reload in flight on another page → load, anchor carried")
 }
 

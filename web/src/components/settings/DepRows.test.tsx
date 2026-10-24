@@ -27,15 +27,12 @@ const report: DoctorReport = { ok: true, fast: true, rc: 0, home: "/h", ran_at: 
   { name: "obsidian vault", status: "warn", detail: "/v missing", fix: "" },
 ] };
 const secrets: SecretsStatus = { secrets: [
-  { name: "anthropic-api-key.txt", label: { zh: "k", en: "k" }, present: true, verifiable: true, mtime: 1, legacy: false },
-  { name: "slack-user-token.txt", label: { zh: "s", en: "s" }, present: false, verifiable: true, mtime: null, legacy: true },
-  { name: "gmail-app-password.txt", label: { zh: "g", en: "g" }, present: false, verifiable: true, mtime: null, legacy: false },
+  { name: "anthropic-api-key.txt", label: { zh: "k", en: "k" }, present: false, verifiable: true, mtime: null, legacy: true },
 ] };
 const shell: ShellState = {
   recording: { available: true, on: false, mode: "off", engine_running: false, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen" },
-  captions: { available: true, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: false, translate_direction: "auto", apple_locale: "zh", ark_model: "", font_size: 24, opacity: 0.7 },
   permissions: { screen: "granted", microphone: "unknown", notifications: "granted", vault: "unknown" },
-  launch_at_login: false, hotkey: "⌃⌥Space",
+  launch_at_login: false,
 };
 const NOW = Date.parse("2026-09-05T12:00:00Z");
 const cronRow = () => within(document.querySelector("[data-dep='cron_fda']") as HTMLElement);
@@ -150,17 +147,16 @@ describe("凭证行：旧路径的文件算 ok（原生 credRow hasSecret || has
     expect(secretVerdict({ present: false }, en).ok).toBe(false);
   });
 
-  it("the Slack row on a legacy path is ✅ with the legacy suffix; the unset Gmail row stays ⚠️", async () => {
+  it("the Anthropic key on the legacy path (~/.config/anthropic-key.txt) is ✅ with the legacy suffix; there is no Slack / Gmail row", async () => {
     const rows = buildDepRows(report, null, secrets, null, null, "en", en);
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    expect(byId.slack.ok).toBe(true);
-    expect(byId.gmail.ok).toBe(false);
     expect(byId.anthropic.ok).toBe(true);
+    expect(byId.slack).toBeUndefined();
+    expect(byId.gmail).toBeUndefined();
     renderEn(<DepRows report={report} probe={READABLE} />);
     // 凭证来自 store（GET /api/secrets），等它回来
     await screen.findByText("(managed in-app; using legacy path)");   // 节点文本首空格被 normalizer 去掉
-    expect(screen.getByText("(managed in-app; not set)")).toBeTruthy();
-    expect((document.querySelector("[data-dep='slack']") as HTMLElement).getAttribute("data-ok")).toBe("true");
+    expect((document.querySelector("[data-dep='anthropic']") as HTMLElement).getAttribute("data-ok")).toBe("true");
   });
 });
 

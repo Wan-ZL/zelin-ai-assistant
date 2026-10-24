@@ -32,6 +32,10 @@ import ui_common as uc  # noqa: E402
 
 # 随 Act 管线退役的卡片生命周期 kind（v2.0.0，全文见 tag full）。
 RETIRED_KINDS = frozenset({"review_ready", "proposal", "needs_input", "receipt", "review_stale"})
+# 原生清单（mac/ 的冻结抽取）里文案已改的句子：中继汇总的正文随看板退役改为「打开 App 查看会议纪要」
+# （§28 v2.0.0 修订，PR-B）；清单不重抽（mac/ 冻结，PR-C 删除），新句由下面的 test_template_helpers 与
+# test_bodies_are_the_shell_sentence_or_the_failure_catalog_sentence 钉。
+REWORDED_CONTROLS = frozenset({"control:notifications:label:open-the-app-to-see-the-board"})
 
 
 def _shell_l_pairs() -> list:
@@ -92,8 +96,9 @@ class ShellMirrorTestCase(unittest.TestCase):
                 continue
             with self.subTest(item=item["id"]):
                 self.assertIn(kind, names)
-        gated = [c for c in self.inventory["controls"] if c["screen"] == "notifications" and c.get("gated")]
-        self.assertGreaterEqual(len(gated), 5)   # 三句录制通知的 title + 汇总句的 title / body
+        gated = [c for c in self.inventory["controls"] if c["screen"] == "notifications" and c.get("gated")
+                 and c["id"] not in REWORDED_CONTROLS]
+        self.assertGreaterEqual(len(gated), 4)   # 三句录制通知的 title + 汇总句的 title（正文 v2.0.0 改词）
         for control in gated:
             with self.subTest(control=control["id"]):
                 self.assertEqual(control.get("probe"), "notify_catalog")
@@ -136,8 +141,10 @@ class ShellMirrorTestCase(unittest.TestCase):
         self.assertTrue(nc.same_template("+{n} more notifications", "+{overflow.count} more notifications"))
         self.assertFalse(nc.same_template("+{n} more notifications", "{n} more notifications"))
         self.assertEqual(nc.fragments("plain"), ["plain"])
-        self.assertTrue(nc.has_sentence("打开 App 查看看板", "Open the app to see the board"))   # body 也算一句
-        self.assertFalse(nc.has_sentence("打开 App 查看看板", "Open the app"))
+        self.assertTrue(nc.has_sentence("打开 App 查看会议纪要", "Open the app to see the recaps"))   # body 也算一句
+        self.assertFalse(nc.has_sentence("打开 App 查看会议纪要", "Open the app"))
+        self.assertFalse(nc.has_sentence("打开 App 查看看板", "Open the app to see the board"),
+                         "the board is retired (v2.0.0): the overflow body names the recaps")
 
 
 class CatalogShapeTestCase(unittest.TestCase):

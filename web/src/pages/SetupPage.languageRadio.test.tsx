@@ -25,8 +25,8 @@ const receipt = (language: string) => ({
     default: "zh", choices: ["zh", "en"], effective: language, source: "override" }],
 });
 
-const HEALTH_OK = { verdict: "ok", heartbeat: { age_s: 3, phase: "dashboard", pid: 1, interval: 10, stale_after_s: 90, stale: false }, dashboard: { generated_at: "2026-09-02T00:00:00Z", age_s: 30, stale: false }, loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "x" };
-const ENGINE_READY = { cli_path: "/usr/local/bin/claude", version: "1.0.99 (Claude Code)", auth: "oauth", auth_sources: { oauth: true, env_key: false, secrets_file: false, legacy_file: false }, ready: true };
+const HEALTH_OK = { verdict: "ok", server: { ok: true }, cron: { age_s: 300, read_ok: true, stale: false }, recap: null, checked_at: "x" };
+const ENGINE_READY = { cli_path: "/usr/local/bin/claude", version: "1.0.99 (Claude Code)", auth: "secrets_file", auth_sources: { env_key: false, secrets_file: true, legacy_file: false }, ready: true };
 
 function permissions(): PermissionsSnapshot {
   return {

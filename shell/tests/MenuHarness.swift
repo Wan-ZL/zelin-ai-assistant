@@ -3,8 +3,9 @@
 // the native AppDelegate.installMainMenu rebuilt as a pure `menus(lang:appName:)`
 // table: L()-style bilingual titles, 关于 → ?page=about, 设置… ⌘, → settings,
 // 权限体检… → ?page=permissions, 隐藏 ⌘H / 隐藏其他 ⌥⌘H / 全部显示 / 退出 ⌘Q, 文件 →
-// 关闭窗口 ⌘W, 编辑 chain, 显示 → 重新载入 ⌘R + 聚焦捕获框 ⌘L, 窗口 → 最小化 ⌘M + 缩放;
-// ⌥⌘S sidebar toggle deliberately retired — tombstone §54.4 2026-09-05 追记 (c)).
+// 关闭窗口 ⌘W, 编辑 chain, 显示 → 重新载入 ⌘R, 窗口 → 最小化 ⌘M + 缩放;
+// ⌥⌘S sidebar toggle deliberately retired — tombstone §54.4 2026-09-05 追记 (c); 聚焦捕获框 ⌘L
+// retired with the capture box in v2.0.0 — §61.1 tombstone).
 // Compiled by run.sh together with every shell source except main.swift into a plain
 // macOS CLI tool — no Xcode, no XCTest, no NSApplication. Exits non-zero on any
 // failure. Same harness style as BridgeHarness.swift / PolicyHarness.swift (one
@@ -129,15 +130,15 @@ func run() {
 
     // ---- 4. View (AppDelegate.swift:475-503 minus ⌘1..5 and ⌥⌘S) ----
     print("[4] View menu:")
-    check(titles(zh[3]) == ["重新载入", "聚焦捕获框"] && titles(en[3]) == ["Reload", "Focus Capture Field"],
-          "显示 → 重新载入 + 聚焦捕获框 (⌘1..7 page switching belongs to the web NavRail)",
+    check(titles(zh[3]) == ["重新载入"] && titles(en[3]) == ["Reload"],
+          "显示 → 重新载入 only (⌘1..4 page switching belongs to the web NavRail)",
           String(describing: titles(zh[3]) + titles(en[3])))
     let reload = item(zh, .shell(.reload))
     check(reload?.key == "r" && reload?.option == false, "重新载入 → ShellAction.reload ⌘R (shell-only item, kept)")
-    let focus = item(zh, .shell(.focusCapture))
-    check(focus?.title == "聚焦捕获框" && focus?.key == "l" && focus?.option == false,
-          "聚焦捕获框 → ShellAction.focusCapture ⌘L (shortcut:menu.main:cmd-l-focus-capture-field; same path as ⌃⌥Space)")
-    check(item(en, .shell(.focusCapture))?.title == "Focus Capture Field", "en: Focus Capture Field")
+    // v2.0.0: 聚焦捕获框 ⌘L retired with the capture box (§61.1 tombstone) — pin the absence.
+    check(!flat(zh).contains { $0.key == "l" } && !flat(zh).contains { $0.title.contains("捕获") }
+          && !flat(en).contains { $0.title.contains("Capture") },
+          "no 聚焦捕获框 ⌘L (retired v2.0.0)")
     // owner decision (s4 acceptance table DELETE list): no ⌥⌘S sidebar toggle — collapsing the web
     // rail is the rail's own 折叠钮 only (tombstone §54.4 2026-09-05 追记 (c), pointer in §68.13).
     // Pin the absence so nobody re-adds it by mirroring the native file blindly.
@@ -269,7 +270,6 @@ final class MenuTarget: NSObject {
     @objc func openSettingsPage(_ sender: Any?) {}
     @objc func openPermissionsPage(_ sender: Any?) {}
     @objc func reloadPage(_ sender: Any?) {}
-    @objc func focusCaptureField(_ sender: Any?) {}
 
     static func selector(for action: MenuSpec.ShellAction) -> Selector {
         switch action {
@@ -277,7 +277,6 @@ final class MenuTarget: NSObject {
         case .settings: return #selector(openSettingsPage(_:))
         case .permissions: return #selector(openPermissionsPage(_:))
         case .reload: return #selector(reloadPage(_:))
-        case .focusCapture: return #selector(focusCaptureField(_:))
         }
     }
 }

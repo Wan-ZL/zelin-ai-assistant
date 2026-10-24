@@ -42,7 +42,7 @@ describe("shellBridge · §61.7 recording.schedule", () => {
   });
 
   it("setRecordingSchedule 在词表里、参数原样发出，回执成为快照", async () => {
-    const postMessage = vi.fn(async () => ({ recording: { mode: "screen", schedule: { enabled: true, start: "08:30", end: "17:45", days: [2, 4], paused: false } }, captions: {} }));
+    const postMessage = vi.fn(async () => ({ recording: { mode: "screen", schedule: { enabled: true, start: "08:30", end: "17:45", days: [2, 4], paused: false } } }));
     window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
     const state = await callShell("setRecordingSchedule", { enabled: true, start: "08:30", end: "17:45", days: [2, 4] });
     expect(postMessage).toHaveBeenCalledWith({ method: "setRecordingSchedule", enabled: true, start: "08:30", end: "17:45", days: [2, 4] });

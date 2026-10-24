@@ -1,28 +1,33 @@
-// 关于页「立即检查」三道守卫 + 投影变更重拉 + 卸载确认全文（CONTRACT §26 / §68.6 2026-09-05 追记；parity 批次
-// about-update-guards-uninstall-copy）——原生 Pages.swift UpdateCheckModel / confirmUninstall 的行为：
+// 关于页「立即检查」三道守卫 + §79「立即升级」+ 卸载复制命令对话框（CONTRACT §26 / §68.6 / §79；parity 批次
+// about-update-guards-uninstall-copy 的守卫半边原样）：
 //   - 一进页就按 about.check_enabled 灰掉按钮并说「自动检查新版本已关闭」（不必等第一次点击的回执；旧 server 缺席 = 开）；
 //   - 每次「立即检查」落地后冷却 10 s（不论成败），到点自动解锁；
-//   - 看板投影 update_available 变了 → 重拉 /api/about；
-//   - 卸载确认正文 = 会做的三件事（• 列表）+ 默认保留什么，zh/en 逐字原生（第三条点名 Zelin's AI Assistant.app）。
+//   - 「立即升级」= POST /api/update/install：回执 → 「已开始升级…进度在 <log>」；409 manual_upgrade / 501 upgrader_missing →
+//     一句原因 + server 给的手动命令（带复制键），绝不打开 release 页；快照里 manual_upgrade = true 时不给按钮、直接给命令；
+//   - 卸载 = 复制命令对话框（uninstall.sh 会做什么 + 默认保留什么 + `cd <repo> && bash uninstall.sh` + 复制）——页面不开 Terminal。
+// v2.0.0：看板投影 update_available 变了就重拉（dashboard.json 退役）与 §56 自动部署话术（#309）的判例随之退役（全文见 tag full）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchAbout, fetchBoard, postUpdateCheck } from "../../api";
+import { ApiError, fetchAbout, postUpdateCheck, postUpdateInstall } from "../../api";
+import { copyText } from "../../copyText";
 import { LanguageContext } from "../../i18n";
 import { resetShellBridgeForTests } from "../../shellBridge";
-import { refreshBoard, resetStoreForTests } from "../../store";
-import type { AboutInfo, Board } from "../../types";
-import { AboutSection, CHECK_COOLDOWN_MS, projectedLatest, updateView } from "./AboutSection";
+import { resetStoreForTests } from "../../store";
+import type { AboutInfo } from "../../types";
+import { AboutSection, CHECK_COOLDOWN_MS, manualCommand, uninstallCommand, upgradeRefusal, updateView } from "./AboutSection";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
   return {
     ...actual,
-    fetchBoard: vi.fn(), fetchHealth: vi.fn(), fetchAbout: vi.fn(), postUpdateCheck: vi.fn(),
-    postUpdateInstall: vi.fn(), postUninstallTerminal: vi.fn(), postSetupStep: vi.fn(),
+    fetchHealth: vi.fn(), fetchAbout: vi.fn(), postUpdateCheck: vi.fn(), postUpdateInstall: vi.fn(), postSetupStep: vi.fn(),
   };
 });
 
+vi.mock("../../copyText", () => ({ copyText: vi.fn(async () => true) }));
+
 const about: AboutInfo = { version: "1.0.7", home: "/h", repo: "/r", update_available: null, update_check: { checked_at: "2026-09-02T11:00:00Z", latest: "1.0.7" } };
+const withUpdate: AboutInfo = { ...about, update_available: { current: "1.0.7", latest: "1.0.8", url: "https://rel/1.0.8" }, update_check: { checked_at: "2026-09-02T11:00:00Z", latest: "1.0.8" } };
 const NOW = Date.parse("2026-09-02T12:00:00Z");
 const renderIn = (language: "zh" | "en", node: React.ReactNode) => render(<LanguageContext.Provider value={language}>{node}</LanguageContext.Provider>);
 
@@ -37,8 +42,9 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date(NOW));
   vi.mocked(fetchAbout).mockReset();
-  vi.mocked(fetchBoard).mockReset();
   vi.mocked(postUpdateCheck).mockReset();
+  vi.mocked(postUpdateInstall).mockReset();
+  vi.mocked(copyText).mockClear();
   vi.mocked(fetchAbout).mockResolvedValue(about);
   window.history.replaceState(null, "", "/?page=about");
   delete (window as Window & { webkit?: unknown }).webkit;
@@ -57,14 +63,6 @@ describe("updateView seeds enabled from the server (native reload: override → 
     // 原生 finish(): enabled = obj["enabled"] ?? enabled —— 回执没带 enabled 就沿用快照的
     expect(updateView({ ...about, check_enabled: false }, { ok: true, latest: null }).enabled).toBe(false);
     expect(updateView({ ...about, check_enabled: false }, { ok: true, enabled: true, latest: "1.0.7" }).enabled).toBe(true);
-  });
-
-  it("projectedLatest reads dashboard.update_available.latest and tolerates the unknown shape", () => {
-    expect(projectedLatest(null)).toBeNull();
-    expect(projectedLatest({ update_available: undefined } as unknown as Board)).toBeNull();
-    expect(projectedLatest({ update_available: "junk" } as unknown as Board)).toBeNull();
-    expect(projectedLatest({ update_available: { latest: 3 } } as unknown as Board)).toBeNull();
-    expect(projectedLatest({ update_available: { latest: "1.0.8", url: "https://rel" } } as unknown as Board)).toBe("1.0.8");
   });
 });
 
@@ -110,80 +108,78 @@ describe("AboutSection Check now guards (native .disabled(checking || cooldown |
     await act(async () => { vi.advanceTimersByTime(CHECK_COOLDOWN_MS); });
     expect(button.disabled).toBe(false);
   });
+});
 
-  it("a fresh board projection (update_available changed) re-reads /api/about; an unchanged one does not", async () => {
-    renderIn("en", <AboutSection />);
-    await screen.findByText("Up to date");
-    await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(1));
-    // 同一投影（没有 latest）→ 不重拉
-    vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "x", counts: {} } as unknown as Board);
-    await act(async () => { await refreshBoard(); });
-    expect(fetchAbout).toHaveBeenCalledTimes(1);
-    // actd 一个 pass 落了新版投影 → 重拉，关于行跟着变
-    vi.mocked(fetchAbout).mockResolvedValue({ ...about, update_available: { latest: "1.0.8", url: "https://rel/1.0.8" }, update_check: { checked_at: "2026-09-02T12:00:00Z", latest: "1.0.8" } });
-    vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "y", counts: {}, update_available: { latest: "1.0.8", url: "https://rel/1.0.8" } } as unknown as Board);
-    await act(async () => { await refreshBoard(); });
-    await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(2));
-    expect(await screen.findByRole("button", { name: "Update v1.0.8 available — install now" })).toBeTruthy();
+describe("§79 upgrade now", () => {
+  const text = (_zh: string, en: string) => en;
+
+  it("manualCommand prefers the server's fix and otherwise spells the §79 transition command", () => {
+    expect(manualCommand("git fetch --tags origin && git checkout v2.0.0 && bash install.sh", "2.0.0")).toBe("git fetch --tags origin && git checkout v2.0.0 && bash install.sh");
+    expect(manualCommand(undefined, "1.0.8")).toBe("git fetch --tags origin && git checkout v1.0.8 && bash install.sh");
+    expect(manualCommand(null, null)).toBe("git fetch --tags origin && git checkout v<latest> && bash install.sh");
   });
 
-  it("a projection change after a manual check re-derives the row from the snapshot (native reload overwrites finish)", async () => {
-    // 手动检查说「已是最新」→ 页面留着 → ≥24 h 后 actd 的日检落了新版投影 → 行必须跟着变，回执不能一直压着快照
-    vi.mocked(postUpdateCheck).mockResolvedValue({ ok: true, enabled: true, current: "1.0.7", latest: "1.0.7", update_available: false, checked_at: "2026-09-02T12:00:00Z" });
+  it("upgradeRefusal: 409 manual_upgrade and 501 each give a reason and the manual command; other errors → null", () => {
+    const conflict = new ApiError(409, { error: { code: "CONFLICT", message: "x", details: { reason: "manual_upgrade", latest: "2.0.0", fix: "FIX-409" } } });
+    expect(upgradeRefusal(conflict, "1.0.8", text)).toEqual({ tone: "warning", line: expect.stringMatching(/v2\.0\.0 is a new major version/), command: "FIX-409" });
+    const missing = new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "x", details: { reason: "upgrader_missing", fix: "FIX-501" } } });
+    expect(upgradeRefusal(missing, "1.0.8", text)).toEqual({ tone: "warning", line: expect.stringMatching(/no one-click upgrader yet/), command: "FIX-501" });
+    expect(upgradeRefusal(new ApiError(409, { error: { code: "CONFLICT", message: "busy" } }), "1.0.8", text)).toBeNull();
+    expect(upgradeRefusal(new Error("boom"), "1.0.8", text)).toBeNull();
+  });
+
+  it("the button posts /api/update/install and then says the upgrade started, the app reopens and where the log is", async () => {
+    vi.mocked(fetchAbout).mockResolvedValue(withUpdate);
+    vi.mocked(postUpdateInstall).mockResolvedValue({ ok: true, action: "upgrade", script: "scripts/upgrade.sh", log: "/h/state/upgrade.log", latest: "1.0.8" });
     renderIn("en", <AboutSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "Check now" }));
-    await waitFor(() => expect(postUpdateCheck).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Up to date")).toBeTruthy();
-    const calls = vi.mocked(fetchAbout).mock.calls.length;
+    fireEvent.click(await screen.findByRole("button", { name: "Update v1.0.8 available — upgrade now" }));
+    await waitFor(() => expect(postUpdateInstall).toHaveBeenCalledTimes(1));
+    expect((await screen.findByRole("status")).textContent).toMatch(/Upgrading to v1\.0\.8: the app reopens by itself.*recording is never interrupted.*\/h\/state\/upgrade\.log/);
+  });
 
-    vi.mocked(fetchAbout).mockResolvedValue({ ...about, update_available: { latest: "1.0.8", url: "https://rel/1.0.8" }, update_check: { checked_at: "2026-09-03T12:00:00Z", latest: "1.0.8" } });
-    vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "y", counts: {}, update_available: { latest: "1.0.8", url: "https://rel/1.0.8" } } as unknown as Board);
-    await act(async () => { await refreshBoard(); });
-    await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(calls + 1));
-    expect(await screen.findByRole("button", { name: "Update v1.0.8 available — install now" })).toBeTruthy();
-    expect(screen.queryByText("Up to date")).toBeNull();
-    expect(screen.getByText(/Last checked:/)).toBeTruthy();
+  it("501 (this checkout has no upgrader yet) shows the manual command with a Copy button; nothing opens a release page", async () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    vi.mocked(fetchAbout).mockResolvedValue(withUpdate);
+    vi.mocked(postUpdateInstall).mockRejectedValue(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "no upgrader", details: { reason: "upgrader_missing", fix: "git fetch --tags origin && git checkout v1.0.8 && bash install.sh" } } }));
+    renderIn("en", <AboutSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Update v1.0.8 available — upgrade now" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("This install has no one-click upgrader yet (scripts/upgrade.sh).");
+    expect(alert.textContent).toContain("git fetch --tags origin && git checkout v1.0.8 && bash install.sh");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith("git fetch --tags origin && git checkout v1.0.8 && bash install.sh"));
+    expect(open).not.toHaveBeenCalled();
+  });
 
-    // 镜像情形：页面开着时部署完成 → 投影消失、about.version 已到 1.0.8 → 「新版本可用」按钮撤下，行说已是最新
-    vi.mocked(fetchAbout).mockResolvedValue({ ...about, version: "1.0.8", update_available: null, update_check: { checked_at: "2026-09-03T12:00:00Z", latest: "1.0.8" } });
-    vi.mocked(fetchBoard).mockResolvedValue({ generated_at: "z", counts: {} } as unknown as Board);
-    await act(async () => { await refreshBoard(); });
-    await waitFor(() => expect(fetchAbout).toHaveBeenCalledTimes(calls + 2));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Update v1.0.8 available — install now" })).toBeNull());
-    expect(screen.getByText("Up to date")).toBeTruthy();
+  it("a snapshot that already says manual_upgrade (new major) shows the command instead of the button", async () => {
+    vi.mocked(fetchAbout).mockResolvedValue({ ...withUpdate, update_available: { current: "1.0.7", latest: "2.0.0", url: "https://rel/2.0.0", manual_upgrade: true }, update_check: { checked_at: "2026-09-02T11:00:00Z", latest: "2.0.0" } });
+    renderIn("en", <AboutSection />);
+    expect(await screen.findByText(/v2\.0\.0 is a new major version/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /upgrade now/ })).toBeNull();
+    expect(screen.getByText("git fetch --tags origin && git checkout v2.0.0 && bash install.sh")).toBeTruthy();
   });
 });
 
-describe("Uninstall confirmation body mirrors the native informativeText", () => {
-  const ZH = {
-    intro: "将执行以下操作（在 Terminal 中逐条显示，动手前再确认一次）：",
-    bullets: [
-      "停止并移除全部后台服务（AI 派发、屏幕录制、雷达、定时任务）",
-      "从 crontab 移除本产品的行（你的其他行原样保留）",
-      "退出看板 app，删除 /Applications 里的 Zelin's AI Assistant.app 与系统级管线副本",
-    ],
-    kept: "默认保留：任务历史（state/）、API 密钥、Obsidian vault、屏幕录像——每一项都会附上删除命令。",
-  };
-  const EN = {
-    intro: "What will happen (each step shown in Terminal, with one final confirmation there):",
-    bullets: [
-      "Stop and remove every background service (AI dispatch, screen recording, radars, scheduled jobs)",
-      "Remove this product's lines from your crontab (all your other lines kept)",
-      "Quit the board app, delete Zelin's AI Assistant.app in /Applications and the system-level pipeline copy",
-    ],
-    kept: "Kept by default: task history (state/), API keys, your Obsidian vault, screen recordings — each listed with its removal command.",
-  };
+describe("Uninstall = a copy-command dialog (no Terminal is opened for you)", () => {
+  it("uninstallCommand names the real repo when the snapshot has it", () => {
+    expect(uninstallCommand(about)).toBe("cd /r && bash uninstall.sh");
+    expect(uninstallCommand(null)).toBe("cd <repo> && bash uninstall.sh");
+  });
 
-  for (const [language, copy, open, confirm] of [["zh", ZH, "卸载…", "在 Terminal 中卸载…"], ["en", EN, "Uninstall…", "Uninstall in Terminal…"]] as const) {
-    it(`${language}: intro line + three bullets + kept-by-default line, then the Terminal button`, async () => {
+  for (const [language, open, intro, kept] of [
+    ["zh", "卸载…", "在 Terminal 里运行下面这条命令。脚本会逐条显示要做的事，动手前再确认一次：", "默认保留：state/（会议纪要与笔记整理记录）、API 密钥、Obsidian vault、屏幕录像——每一项都会附上删除命令。"],
+    ["en", "Uninstall…", "Run the command below in Terminal. The script lists each step and asks once more before doing anything:", "Kept by default: state/ (recaps and note-processing records), API keys, your Obsidian vault, screen recordings — each listed with its removal command."],
+  ] as const) {
+    it(`${language}: intro + three bullets + kept-by-default line + the command with Copy`, async () => {
       renderIn(language, <AboutSection />);
       fireEvent.click(await screen.findByRole("button", { name: open }));
       const dialog = await screen.findByRole("dialog", { hidden: true });
-      expect(screen.getByText(copy.intro)).toBeTruthy();
-      const items = Array.from(dialog.querySelectorAll("ul.dialog-list li")).map((li) => li.textContent);
-      expect(items).toEqual(copy.bullets);
-      expect(screen.getByText(copy.kept)).toBeTruthy();
-      expect(screen.getByRole("button", { name: confirm, hidden: true })).toBeTruthy();
+      expect(screen.getByText(intro)).toBeTruthy();
+      expect(dialog.querySelectorAll("ul.dialog-list li")).toHaveLength(3);
+      expect(screen.getByText(kept)).toBeTruthy();
+      expect(screen.getByText("cd /r && bash uninstall.sh")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: language === "zh" ? "复制" : "Copy", hidden: true }));
+      await waitFor(() => expect(copyText).toHaveBeenCalledWith("cd /r && bash uninstall.sh"));
     });
   }
 });

@@ -1,5 +1,5 @@
 // 设置页分区开合记忆的纯函数（CONTRACT §68.1 追记，D44；原生 SettingsCollapseStore 的 web 版）：
-// 键 settings.expandedSections 缺席 → 默认四区；合法 JSON 数组原样收（含 `[]` = 全折，记忆比默认大）；坏形 → 默认；
+// 键 settings.expandedSections 缺席 → 默认三区；合法 JSON 数组原样收（含 `[]` = 全折，记忆比默认大）；坏形 → 默认；
 // 写出排序后的 JSON 数组；toggle 纯函数翻一区。
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -15,10 +15,10 @@ beforeEach(() => {
 });
 
 describe("readExpandedSections — memory beats the default seed", () => {
-  it("seeds the four everyday sections when nothing is stored", () => {
+  it("seeds the three everyday sections when nothing is stored", () => {
     expect(EXPANDED_SECTIONS_STORAGE_KEY).toBe("settings.expandedSections");
     expect([...readExpandedSections()].sort()).toEqual([...DEFAULT_EXPANDED_SECTIONS].sort());
-    expect([...DEFAULT_EXPANDED_SECTIONS].sort()).toEqual(["deps", "general", "live_captions", "recording"]);
+    expect([...DEFAULT_EXPANDED_SECTIONS].sort()).toEqual(["deps", "general", "recording"]);
   });
 
   it("honours a stored array verbatim — including the empty array (everything collapsed)", () => {

@@ -1,6 +1,6 @@
 // 壳内原生开关判例（CONTRACT §61.2）：桥在/不在的渲染门、录制按钮的文案/颜色三态
-// （镜像 mac RecordingMenuButton）、三态单选菜单、实时字幕四态、乐观 UI + 桥 reject
-// 回滚、真相追平/拒绝说明退场乐观值、zai-shell-state 推送更新、语言同步。
+// （镜像 mac RecordingMenuButton）、三态单选菜单、乐观 UI + 桥 reject 回滚、真相追平/拒绝说明退场乐观值、
+// zai-shell-state 推送更新、语言同步。v2.0.0：实时字幕开关随 Live captions 退役（壳快照里残留的 captions 键被忽略）。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LanguageContext } from "../../i18n";
@@ -20,7 +20,6 @@ function deferred<T>(): Deferred<T> {
 
 function makeState(overrides: {
   recording?: Partial<ShellState["recording"]>;
-  captions?: Partial<ShellState["captions"]>;
 } = {}): ShellState {
   return {
     recording: {
@@ -28,16 +27,8 @@ function makeState(overrides: {
       note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen",
       ...overrides.recording,
     },
-    captions: {
-      available: true, on: false, engine: "auto", paused: false, engine_dead: false,
-      status_text: "", status_is_error: false,
-      source: "both", translate: false, translate_direction: "auto", apple_locale: "zh",
-      ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7,
-      ...overrides.captions,
-    },
     permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
     launch_at_login: false,
-    hotkey: "⌃⌥Space",
     language: "en",
   };
 }
@@ -73,7 +64,6 @@ function renderControls(language: "zh" | "en" = "en") {
 }
 
 const recButton = () => screen.getByRole("button", { name: "Recording controls" });
-const capButton = () => screen.getByRole("button", { name: "Live captions" });
 
 describe("ShellControls", () => {
   beforeEach(() => {
@@ -95,7 +85,7 @@ describe("ShellControls", () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  it("壳里：挂载即 getState + setLanguage，两个开关按快照渲染（关态：次级色、Rec: Off）", async () => {
+  it("壳里：挂载即 getState + setLanguage，录制开关按快照渲染（关态：次级色、Rec: Off）；不再有字幕开关", async () => {
     installBridge(makeState());
     renderControls();
     await waitFor(() => expect(recButton()).toBeTruthy());
@@ -103,16 +93,15 @@ describe("ShellControls", () => {
     expect(postMessage).toHaveBeenCalledWith({ method: "setLanguage", lang: "en" });
     expect(recButton().className).toBe("shell-rec-button is-off");
     expect(recButton().textContent).toContain("Rec: Off");
-    expect(capButton().getAttribute("aria-pressed")).toBe("false");
-    expect(capButton().textContent).toBe("Live captions");
+    expect(screen.queryByRole("button", { name: "Live captions" })).toBeNull();
   });
 
-  it("中文文案镜像原生：录制：关 / 实时字幕；语言同步发 zh", async () => {
+  it("中文文案镜像原生：录制：关；语言同步发 zh", async () => {
     installBridge(makeState());
     renderControls("zh");
     await waitFor(() => expect(screen.getByRole("button", { name: "录制控制" })).toBeTruthy());
     expect(screen.getByRole("button", { name: "录制控制" }).textContent).toContain("录制：关");
-    expect(screen.getByRole("button", { name: "实时字幕" }).textContent).toBe("实时字幕");
+    expect(screen.queryByRole("button", { name: "实时字幕" })).toBeNull();
     expect(postMessage).toHaveBeenCalledWith({ method: "setLanguage", lang: "zh" });
   });
 
@@ -253,50 +242,12 @@ describe("ShellControls", () => {
     expect(recButton().textContent).toContain("restarting…");
   });
 
-  it("实时字幕：点击乐观翻转 + setCaptions{on}；回执追平；出错/暂停两态文案与颜色", async () => {
-    installBridge(makeState());
+  it("引擎 available:false 时录制开关不渲染（未来非 mac 壳）；老壳快照里残留的 captions 键不长出字幕开关", async () => {
+    const legacy = { ...makeState({ recording: { available: false } }), captions: { available: true, on: true } };
+    installBridge(legacy as ShellState);
     renderControls();
-    await waitFor(() => expect(capButton()).toBeTruthy());
-    const pending = deferred<unknown>();
-    postMessage.mockImplementation(async (body: unknown) => {
-      if ((body as { method: string }).method === "setCaptions") return pending.promise;
-      return makeState();
-    });
-    fireEvent.click(capButton());
-    expect(postMessage).toHaveBeenCalledWith({ method: "setCaptions", on: true });
-    expect(capButton().getAttribute("aria-pressed")).toBe("true"); // 乐观
-    expect(capButton().className).toBe("shell-cap-button is-on");
-    await act(async () => {
-      pending.resolve(makeState({ captions: { on: true } }));
-    });
-    expect(capButton().getAttribute("aria-pressed")).toBe("true");
-
-    pushState(makeState({ captions: { on: true, paused: true } }));
-    expect(capButton().textContent).toBe("Live captions (paused)");
-    pushState(makeState({ captions: { on: true, engine_dead: true, status_text: "bad key", status_is_error: true } }));
-    expect(capButton().textContent).toBe("Live captions (error — see overlay)");
-    expect(capButton().className).toBe("shell-cap-button is-warn");
-    expect(capButton().getAttribute("title")).toBe("bad key");
-  });
-
-  it("实时字幕：桥 reject → aria-pressed 回滚、title 带 reject 原文", async () => {
-    installBridge(makeState({ captions: { on: true } }));
-    renderControls();
-    await waitFor(() => expect(capButton()).toBeTruthy());
-    postMessage.mockImplementation(async (body: unknown) => {
-      if ((body as { method: string }).method === "setCaptions") throw new Error("INTERNAL: boom");
-      return makeState({ captions: { on: true } });
-    });
-    fireEvent.click(capButton());
-    expect(capButton().getAttribute("aria-pressed")).toBe("false");
-    await waitFor(() => expect(capButton().getAttribute("aria-pressed")).toBe("true"));
-    expect(capButton().getAttribute("title")).toBe("INTERNAL: boom");
-  });
-
-  it("引擎 available:false 时对应开关不渲染（未来非 mac 壳）", async () => {
-    installBridge(makeState({ captions: { available: false } }));
-    renderControls();
-    await waitFor(() => expect(recButton()).toBeTruthy());
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith({ method: "getState" }));
+    expect(screen.queryByRole("button", { name: "Recording controls" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Live captions" })).toBeNull();
   });
 });
