@@ -16,14 +16,19 @@
   ``updates.check_enabled: false`` 时它自己拒发网络请求），stdout 那一行 JSON 原样透出。
 - ``POST /api/update/install {}`` → §79 升级器：先过两道 409，再分离起 ``scripts/upgrade.sh``
   （ff-only 到 origin/main 上的 v* tag + ``bash install.sh --non-interactive --from-upgrade``；
-  永不碰录制引擎）。
+  永不碰录制引擎；回执 ``state/upgrade_state.json``，日志 ``state/upgrade.log``，起之前按
+  ``act.lib.logcap`` 封顶）。
 
   1. **跨大版本只许手动**（§26 追记 2026-10-23 桥接版本；1.x 的 §56.3 已退役，PR-0 语义保留）：缓存的 latest
      的 major 大于运行版本（``update_check.needs_manual_upgrade``）→ 409 ``manual_upgrade``，
      details 带 ``manual_upgrade`` / ``current`` / ``latest`` / ``fix``（``git fetch --tags origin &&
      git checkout v<latest> && bash install.sh``）。缓存读不出 = 不拒（宪法第 11 条）。
-  2. **升级器还没落地** → 501：``scripts/upgrade.sh`` 随 PR-D 进 repo（lite 2.0 的切片顺序）；
-     在那之前本端点诚实地说「这个 checkout 还没有升级器」，details 带同一条手动命令。
+  2. **已有一次升级在跑**（``state/upgrade.lock`` 目录在）→ 409 ``upgrade_running``，details 带日志路径。
+  3. 这个 checkout 缺 ``scripts/upgrade.sh``（残缺的 checkout；脚本随 v2.0.0 入库）→ 501
+     ``upgrader_missing``，details 带同一条手动命令。
+- **自动模式**（§79）：``updates.auto_install``（默认关）开着时，GET 触发的那次后台 §26 检查跑完后，
+  缓存说有同一大版本内的新版、且 ``state/upgrade_state.json`` 的 ``target`` 还不是它（每个版本只自动试
+  一次，失败留回执不重试）→ 同一个升级器被分离起（``maybe_auto_install``）。没有 LaunchAgent。
 
   v2.0.0 退役（全文见 tag full）：§56 自动部署 agent 的 kickstart、``deploy_state`` 的现读与
   ``deploy_refused`` 409、``repair`` 模块——2.0 没有自动部署 agent，升级只走 §79。
@@ -38,14 +43,17 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import update_check   # 依赖方向：server → act.lib（§58.3 规则 3）
+from act.lib import logcap, update_check   # 依赖方向：server → act.lib（§58.3 规则 3）
 from server import background_jobs, paths, settings_catalog, subproc
 from server.errors import ConflictError, NotImplementedError501, UnknownFieldError
 
 _UPDATE_TIMEOUT_S = 40
 CHECK_ENABLED_FIELD = ("updates", "updates_check_enabled")   # settings_catalog 里那把旋钮（§68.1）
-UPGRADE_SCRIPT = "scripts/upgrade.sh"                           # §79（PR-D 落地）
+UPGRADE_SCRIPT = "scripts/upgrade.sh"                           # §79
 UPGRADE_LOG = "upgrade.log"
+UPGRADE_LOCK = "upgrade.lock"          # = scripts/upgrade.sh LOCK_DIR
+UPGRADE_STATE = "upgrade_state.json"   # = scripts/upgrade.sh STATE_FILE
+AUTO_INSTALL_FIELD = ("updates", "updates_auto_install")
 CHECK_INTERVAL_S = update_check.CHECK_INTERVAL_SECONDS
 
 _JOBS = background_jobs.Threads("update-check")
@@ -77,16 +85,26 @@ def update_check_public(home: Path) -> Optional[dict]:
     return {k: doc.get(k) for k in ("checked_at", "latest", "url", "pkg_asset_url")}
 
 
-def check_enabled(home: Path) -> bool:
-    """``updates.check_enabled`` 的 effective 值；overrides 坏文件当空（落到 config.yaml）。"""
-    section, key = CHECK_ENABLED_FIELD
+def _effective(home: Path, section_key: tuple):
+    """一把设置旋钮的 effective 值；overrides 坏文件当空（落到 config.yaml）。"""
+    section, key = section_key
     field = settings_catalog.field_index(settings_catalog.lookup(section))[key]
     try:
         overrides = settings_catalog.read_overrides(home)
     except ConflictError:
         overrides = {}
     value, _src = settings_catalog.effective(field, overrides, settings_catalog.load_config_doc(home))
-    return value is not False
+    return value
+
+
+def check_enabled(home: Path) -> bool:
+    """``updates.check_enabled`` 的 effective 值（默认 true）。"""
+    return _effective(home, CHECK_ENABLED_FIELD) is not False
+
+
+def auto_install_enabled(home: Path) -> bool:
+    """§79 ``updates.auto_install`` 的 effective 值（默认 false：只有严格的 True 才算开）。"""
+    return _effective(home, AUTO_INSTALL_FIELD) is True
 
 
 def update_available(update: Optional[dict], enabled: bool, current: str) -> Optional[dict]:
@@ -126,16 +144,42 @@ def autocheck_enabled() -> bool:
     return os.environ.get(AUTOCHECK_ENV, "1").strip() != "0"
 
 
-def _start_periodic_check(home: Path, runner=None) -> None:
-    """One background ``python -m act.lib.update_check`` (self-gated to 24h); never two at once."""
+def _start_periodic_check(home: Path, runner=None, spawner: Optional[Spawner] = None) -> None:
+    """One background ``python -m act.lib.update_check`` (self-gated to 24h), then the §79
+    auto-install decision; never two at once."""
     if _JOBS.live_count():
         return
 
     def job() -> None:
         subproc.run_module(home, "act.lib.update_check", [], timeout_s=_UPDATE_TIMEOUT_S,
                            runner=runner)
+        maybe_auto_install(home, spawner=spawner)
 
     _JOBS.spawn(job)
+
+
+def _last_target(home: Path) -> str:
+    doc = _read_json(home / "state" / UPGRADE_STATE) or {}
+    target = doc.get("target")
+    return target.lstrip("v") if isinstance(target, str) else ""
+
+
+def maybe_auto_install(home: Path, spawner: Optional[Spawner] = None,
+                       repo: Optional[Path] = None) -> Optional[dict]:
+    """§79 auto mode: ``updates.auto_install`` on + a same-major update in the cache + not yet
+    tried for that version → spawn the upgrader. Returns the receipt, or None when nothing ran.
+    Never raises (a background thread has nobody to report to; the receipt file is the record)."""
+    try:
+        if not auto_install_enabled(home):
+            return None
+        update = update_check_public(home)
+        current = version()
+        offer = update_available(update, check_enabled(home), current)
+        if not offer or offer["manual_upgrade"] or _last_target(home) == offer["latest"]:
+            return None
+        return install_now({}, home=home, update_reader=lambda: update, spawner=spawner, repo=repo)
+    except Exception:  # noqa: BLE001 - 自动升级绝不拖垮 GET /api/about 的后台线程
+        return None
 
 
 def join_jobs_for_tests(timeout: float = background_jobs.JOIN_TIMEOUT_S) -> bool:
@@ -206,9 +250,10 @@ def _refuse_if_manual_upgrade(update: Optional[dict]) -> None:
 
 
 def _default_spawner(argv: list, cwd: Path, log_path: Path) -> None:
-    """Detached ``bash scripts/upgrade.sh`` — outlives the request (and the server
-    restart the upgrade itself performs)."""
+    """Detached ``bash scripts/upgrade.sh`` — its own session, so it outlives the request and
+    the server agent reload the upgrade itself performs. The log is capped first (防腐 #4)."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    logcap.cap(log_path)
     with open(log_path, "ab") as fh:
         subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=fh, stderr=fh,
                          start_new_session=True)
@@ -220,22 +265,29 @@ def _latest_of(update: Optional[dict]) -> str:
 
 
 def _require_upgrader(root: Path, latest: str) -> Path:
-    """The §79 script, or 501 while this checkout has none (it lands with PR-D)."""
+    """The §79 script, or 501 for a partial checkout that lacks it."""
     script = root / UPGRADE_SCRIPT
     if not script.is_file():
         raise NotImplementedError501(
-            "this checkout has no upgrader yet (%s) - upgrade by hand: %s"
+            "this checkout has no upgrader (%s) - upgrade by hand: %s"
             % (UPGRADE_SCRIPT, manual_fix(latest)),
             {"reason": "upgrader_missing", "script": UPGRADE_SCRIPT, "fix": manual_fix(latest)})
     return script
+
+
+def _refuse_if_running(state_dir: Path, log_path: Path) -> None:
+    """409 while ``scripts/upgrade.sh`` holds its lock directory (one upgrade at a time)."""
+    if (state_dir / UPGRADE_LOCK).is_dir():
+        raise ConflictError("an upgrade is already running - progress in %s" % log_path,
+                            {"reason": "upgrade_running", "log": str(log_path)})
 
 
 def install_now(payload: dict, home: Optional[Path] = None,
                 update_reader: Optional[UpdateReader] = None,
                 spawner: Optional[Spawner] = None,
                 repo: Optional[Path] = None) -> dict:
-    """``POST /api/update/install {}`` → §79 upgrader (detached). 409 ``manual_upgrade``
-    for a new major; 501 while ``scripts/upgrade.sh`` is not in this checkout yet."""
+    """``POST /api/update/install {}`` → §79 upgrader (detached). 409 ``manual_upgrade`` for a
+    new major, 409 ``upgrade_running`` while one runs, 501 when the checkout lacks the script."""
     if payload:
         raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
     update = _read_update(home, update_reader)
@@ -244,6 +296,7 @@ def install_now(payload: dict, home: Optional[Path] = None,
     latest = _latest_of(update)
     script = _require_upgrader(root, latest)
     log_path = (home or root) / "state" / UPGRADE_LOG
+    _refuse_if_running(log_path.parent, log_path)
     (spawner or _default_spawner)(["/bin/bash", str(script)], root, log_path)
     return {"ok": True, "action": "upgrade", "script": UPGRADE_SCRIPT, "log": str(log_path),
             "latest": latest or None}
