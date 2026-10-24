@@ -56,10 +56,9 @@ class SecretsStatusTestCase(_ServerCase):
         by_name = {s["name"]: s for s in obj["secrets"]}
         self.assertTrue(by_name["anthropic-api-key.txt"]["present"])
         self.assertTrue(by_name["anthropic-api-key.txt"]["verifiable"])
-        self.assertFalse(by_name["volcano-ark-key.txt"]["verifiable"])
-        # v2.0.0: the Slack / Gmail rows retired with the radars
-        self.assertNotIn("slack-user-token.txt", by_name)
-        self.assertNotIn("gmail-app-password.txt", by_name)
+        # v2.0.0: the Slack / Gmail rows retired with the radars, the two volcano caption keys
+        # with Live captions (§36 tombstone) — Anthropic is the only credential left
+        self.assertEqual(sorted(by_name), ["anthropic-api-key.txt"])
 
     def test_whitespace_only_file_counts_as_absent(self):
         write_text(self.secret_path("anthropic-api-key.txt"), "\n  \n")
@@ -69,15 +68,14 @@ class SecretsStatusTestCase(_ServerCase):
 
     def test_legacy_flag_reports_the_older_tiers_without_reading_them_out(self):
         """add-only ``legacy``（原生「使用旧路径」）：secrets 缺席 + §19 第二层文件非空 → True；
-        secrets 在 → False（第一层赢）；火山两把无旧路径恒 False；值仍不回显。"""
+        secrets 在 → False（第一层赢）；值仍不回显。"""
         fake_home = Path(self.tmp.name) / "user"
         write_text(fake_home / ".config" / "anthropic-key.txt", "sk-ant-LEGACYVALUE\n")
         with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
             _s, obj = get_json(self.port, "/api/secrets")
             by_name = {s["name"]: s for s in obj["secrets"]}
             self.assertEqual({n: s["legacy"] for n, s in by_name.items()},
-                             {"anthropic-api-key.txt": True, "volcano-speech-key.txt": False,
-                              "volcano-ark-key.txt": False})
+                             {"anthropic-api-key.txt": True})
             self.assertNotIn("LEGACYVALUE", json.dumps(obj))
             write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-new\n")
             _s, obj = get_json(self.port, "/api/secrets")
@@ -169,11 +167,16 @@ class SecretsVerifyTestCase(_ServerCase):
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "INVALID_FIELD")
 
-    def test_unverifiable_secret_is_400(self):
-        write_text(self.secret_path("volcano-ark-key.txt"), "k\n")
-        status, obj = post_json(self.port, "/api/secrets/volcano-ark-key.txt/verify", {})
-        self.assertEqual(status, 400)
-        assert_envelope(self, obj, "INVALID_FIELD")
+    def test_retired_caption_keys_are_unknown_names(self):
+        # v2.0.0（§36 tombstone）：火山两把字幕 key 不再是已知凭证——PUT / verify 都是 404
+        for name in ("volcano-speech-key.txt", "volcano-ark-key.txt"):
+            with self.subTest(name=name):
+                write_text(self.secret_path(name), "k\n")
+                status, obj = post_json(self.port, "/api/secrets/%s/verify" % name, {})
+                self.assertEqual(status, 404)
+                assert_envelope(self, obj, "NOT_FOUND")
+                status, _obj = put_json(self.port, "/api/secrets/%s" % name, {"value": "k"})
+                self.assertEqual(status, 404)
 
     def test_verify_with_body_fields_is_400_unknown_field(self):
         status, obj = post_json(self.port, "/api/secrets/anthropic-api-key.txt/verify", {"x": 1})
@@ -218,11 +221,10 @@ class NameMirrorTestCase(unittest.TestCase):
         self.assertIn(act_secrets.ANTHROPIC_API_KEY_FILE, names)
         self.assertEqual(secrets_store._LEGACY_PATHS["anthropic-api-key.txt"][1],
                          act_secrets.LEGACY_ANTHROPIC_KEY_PATH)
+        # v2.0.0: the shell reads no secret at all (SecretsIO left with the caption keys)
         swift = (REPO_ROOT / "shell" / "Sources" / "ShellSupport.swift").read_text(encoding="utf-8")
-        for const in ("volcanoSpeechFile", "volcanoArkFile"):
-            m = re.search(r'static let %s = "([^"]+)"' % const, swift)
-            self.assertIsNotNone(m, const)
-            self.assertIn(m.group(1), names)
+        self.assertIsNone(re.search(r"^enum SecretsIO", swift, re.M))
+        self.assertNotIn("volcano", " ".join(names))
 
     def test_secrets_dir_layout_mirrors_act(self):
         from server import paths
