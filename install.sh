@@ -471,7 +471,7 @@ install_mac_app() {
 # the `app` precedent, §56.5). Never prompts: npm runs with CI=1 --no-audit
 # --no-fund, and shell/build.sh's codesign uses the stable identity whose key
 # ACL already allows /usr/bin/codesign non-interactively (`-T /usr/bin/codesign`
-# + `security set-key-partition-list`, mac/scripts/make-signing-cert.sh). That
+# + `security set-key-partition-list`, shell/scripts/make-signing-cert.sh). That
 # partition-list step is SKIPPABLE in that script, so on a machine where the
 # owner skipped it codesign would block on a GUI prompt nobody can click —
 # shell/build.sh therefore runs codesign under its own wall clock and falls

@@ -3,7 +3,7 @@
 住在 tests/integration/（防腐 #7：真 subprocess 只许住这里；单文件预算见 BUDGET_SECONDS）。
 
 为什么非真跑不可：install.sh 的 `ui` 步在 launchd 下跑 shell/build.sh，而
-`mac/scripts/make-signing-cert.sh` 里那句 `security set-key-partition-list`（给钥匙的 ACL
+`shell/scripts/make-signing-cert.sh` 里那句 `security set-key-partition-list`（给钥匙的 ACL
 加 `-T /usr/bin/codesign`）是**可跳过**的一步——跳过了的机器上 codesign 会停在一个没人能点
 的 keychain 授权框上。`|| echo WARN` 接得住失败、接不住 hang，一次 hang 就把
 AIASSISTANT_UI_BUDGET（600 s）烧光 → UI_SHELL_STATUS=fail → 自动部署失败。静态断言只能证明

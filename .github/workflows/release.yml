@@ -95,7 +95,7 @@ jobs:
         # Makes CI release builds sign with the SAME stable self-signed identity
         # as local builds, so macOS TCC grants (Screen Recording, etc.) PERSIST
         # across version updates instead of resetting on every ad-hoc rebuild.
-        # Created + wired once by mac/scripts/make-signing-cert.sh.
+        # Created + wired once by shell/scripts/make-signing-cert.sh.
         #
         # GitHub can't reference `secrets` in `if:`, so the guard is inside bash:
         # with no secret this step is a harmless no-op and build.sh falls back to
