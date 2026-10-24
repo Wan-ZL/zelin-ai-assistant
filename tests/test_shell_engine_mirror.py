@@ -123,13 +123,13 @@ class BundleAndBuildTestCase(unittest.TestCase):
         self.assertIn("shell/scripts/make-signing-cert.sh", build)
         self.assertTrue((REPO_ROOT / "shell" / "scripts" / "make-signing-cert.sh").exists())
 
-    def test_helper_lookups_know_both_homes(self):
-        # ingest/vault-sync.sh（§54 名字互换 + §68.13）：旧 app "(old)" 先（已有 Documents 授权），
-        # 产品路径上的壳其次（新机器）；顺序与 helper 存在性判例在 tests/test_vault_sync_helper_resolution.py
+    def test_helper_lookup_is_the_shell_only(self):
+        # ingest/vault-sync.sh（§68.13；v2.0.0 起旧菜单栏 app 退役，"(old)" 路径与它的 bundle id
+        # 不再查找）：只认产品路径上的壳；存在性判例在 tests/test_vault_sync_helper_resolution.py
         sh = _read(REPO_ROOT / "ingest" / "vault-sync.sh")
-        old = sh.index('"Zelin\'s AI Assistant (old).app"')
-        product = sh.index('"Zelin\'s AI Assistant.app"')
-        self.assertLess(old, product)
+        self.assertIn('"$dir/Zelin\'s AI Assistant.app/Contents/MacOS/vault-sync-helper"', sh)
+        self.assertNotIn('(old).app"', sh)
+        self.assertNotIn("com.zelin.ai-engineer", sh)
         # (the radar_slack framegrab lookup and framegrab itself retired in v2.0.0)
 
     def test_shell_swift_files_respect_the_file_cap(self):

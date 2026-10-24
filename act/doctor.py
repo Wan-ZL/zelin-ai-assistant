@@ -106,6 +106,8 @@ class Probes:
     launchd_log_tail: Callable[[str], str] = launchd.launchd_log_tail
     # §55 / §78 孤儿与足迹探测：~/Library/LaunchAgents 里带我们前缀的 plist label（文件面）
     installed_agent_labels: Callable[[], List[str]] = launchd.installed_agent_labels
+    # §78 足迹：owner 的 skills 目录里指进本 repo 的软链名（只 lstat / readlink）；tests 注入
+    repo_skill_links: Callable[[], List[str]] = launchd.repo_skill_links
     # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = §78 中性目录）；
     # tests 注入，绝不真起 launchd
     launchd_claude_probe: Callable[[str, str], dict] = launchd.claude_probe

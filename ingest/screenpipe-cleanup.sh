@@ -11,6 +11,13 @@
 #    删掉 db.sqlite 里「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行
 #    （act/lib/screenpipe_retention.py，回执 state/screenpipe_retention.json）。
 #    这一步永不让链断掉：模块自己把错误写进回执并退出 0，这里再 || true 兜一层。
+# 3) a11y 瘦身（§72.5，每天一次）：把 db.sqlite 里早于 1 天的无障碍树 / 无障碍文本 / 无障碍
+#    elements / ui_events 清掉（OCR 文本与音频转写一行不碰）。这个引擎版本采集时关不掉它们，
+#    不清就会把库撑大、写入变慢。SQL 原样搬自 v2.0.0 之前仓外的 ~/.local/bin/screenpipe-prune-a11y.sh
+#    （它由 com.zelin.screenpipe-prune 这个 LaunchAgent 每天 04:00 跑；该 agent 随 §78 封闭足迹退役）。
+#    「今天跑过没有」看回执 state/screenpipe_a11y_prune.json 的 `date`（本地日期）：一天只试一次，
+#    不论成败——失败写进回执，明天再试。录制中也能安全跑（busy_timeout 等锁、触发器照常，
+#    *_fts 索引保持一致）；不 VACUUM（要独占锁），释放的页被新写入复用。
 # 本脚本**永远 exit 0**：cron 链是 && 串的，清理的毛病不许吞掉这一轮 ingest；真相走回执。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -158,5 +165,82 @@ if [ -n "$PY" ]; then
     (cd "$REPO_ROOT" && "$PY" -m act.lib.screenpipe_retention \
         --db "$(dirname "$DATA_DIR")/db.sqlite" >/dev/null 2>&1) || true
 fi
+
+# 第三步：每天一次的 a11y 瘦身（§72.5）。两个 env 缝只为判例（回执位置、sqlite3 可执行文件）。
+A11Y_DB="$(dirname "$DATA_DIR")/db.sqlite"
+A11Y_RECEIPT="${ZAI_SCREENPIPE_A11Y_RECEIPT:-$AIASSISTANT_HOME/state/screenpipe_a11y_prune.json}"
+A11Y_COUNTS_SQL="SELECT (SELECT COUNT(*) FROM frames WHERE accessibility_tree_json IS NOT NULL)||'|'||(SELECT COUNT(*) FROM elements WHERE source='accessibility')||'|'||(SELECT COUNT(*) FROM ui_events);"
+
+resolve_sqlite() {
+    local c="${ZAI_SQLITE3:-}"
+    [ -n "$c" ] || c="/usr/bin/sqlite3"
+    [ -x "$c" ] || c="$(command -v sqlite3 2>/dev/null)"
+    printf '%s\n' "$c"
+}
+
+# "a|b|c" → {"a11y_frames":a,"a11y_elements":b,"ui_events":c}；形状不对 = null（表缺失 / 库坏）
+a11y_counts_json() {
+    case "$1" in
+        *[!0-9\|]*|'') printf 'null' ;;
+        *\|*\|*)
+            printf '{"a11y_frames":%s,"a11y_elements":%s,"ui_events":%s}' \
+                "$(printf '%s' "$1" | cut -d'|' -f1)" "$(printf '%s' "$1" | cut -d'|' -f2)" \
+                "$(printf '%s' "$1" | cut -d'|' -f3)" ;;
+        *) printf 'null' ;;
+    esac
+}
+
+write_a11y_receipt() {  # $1 = state, $2 = rc, $3 = before 计数, $4 = after 计数
+    local dir tmp escaped
+    dir="$(dirname "$A11Y_RECEIPT")"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    tmp="$A11Y_RECEIPT.tmp.$$"
+    escaped="$(printf '%s' "$A11Y_DB" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    if printf '{"ts":"%s","date":"%s","state":"%s","rc":%s,"db":"%s","before":%s,"after":%s}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$A11Y_TODAY" "$1" "$2" "$escaped" \
+        "$(a11y_counts_json "$3")" "$(a11y_counts_json "$4")" > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$A11Y_RECEIPT" 2>/dev/null
+    fi
+    rm -f "$tmp" 2>/dev/null
+    return 0
+}
+
+prune_a11y() {
+    local sqlite before after rc
+    A11Y_TODAY="$(date +%Y-%m-%d)"
+    # 今天已经试过 = 跳过（本地日期；回执是本脚本自己写的紧凑形）
+    if [ "$(receipt_string date "$(cat "$A11Y_RECEIPT" 2>/dev/null)")" = "$A11Y_TODAY" ]; then
+        return 0
+    fi
+    if [ ! -f "$A11Y_DB" ]; then
+        write_a11y_receipt no_db 0 "" ""
+        return 0
+    fi
+    sqlite="$(resolve_sqlite)"
+    if [ -z "$sqlite" ] || [ ! -x "$sqlite" ]; then
+        write_a11y_receipt no_sqlite 0 "" ""
+        return 0
+    fi
+    before="$("$sqlite" -cmd ".timeout 120000" "$A11Y_DB" "$A11Y_COUNTS_SQL" 2>/dev/null)"
+    "$sqlite" "$A11Y_DB" >/dev/null 2>&1 <<'SQL'
+PRAGMA busy_timeout=120000;
+UPDATE frames SET accessibility_tree_json=NULL, accessibility_text=NULL
+  WHERE timestamp < datetime('now','-1 day')
+    AND (accessibility_tree_json IS NOT NULL OR accessibility_text IS NOT NULL);
+DELETE FROM elements
+  WHERE source='accessibility'
+    AND frame_id IN (SELECT id FROM frames WHERE timestamp < datetime('now','-1 day'));
+DELETE FROM ui_events WHERE timestamp < datetime('now','-1 day');
+SQL
+    rc=$?
+    after="$("$sqlite" -cmd ".timeout 120000" "$A11Y_DB" "$A11Y_COUNTS_SQL" 2>/dev/null)"
+    if [ "$rc" -eq 0 ]; then
+        write_a11y_receipt ok "$rc" "$before" "$after"
+    else
+        write_a11y_receipt error "$rc" "$before" "$after"
+    fi
+}
+
+prune_a11y || true
 
 exit 0

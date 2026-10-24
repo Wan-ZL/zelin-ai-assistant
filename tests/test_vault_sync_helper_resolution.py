@@ -1,22 +1,18 @@
 """ingest/vault-sync.sh `find_vault_sync_helper` — where the Documents courier lives.
 
-The vault-sync-helper ships inside the LEGACY menu-bar app (bundle id
-com.zelin.ai-engineer, the identity holding the one-time Documents grant —
-CONTRACT §12). The §54 name swap (owner 2026-09-02) moved that bundle to
-"Zelin's AI Assistant (old).app" and gave the product name to the board shell.
-Since P4 (CONTRACT §68.13) the shell bundle ALSO ships a helper copy (shell/build.sh
-compiles shell/Helpers/VaultSyncHelper.swift) — a fresh machine without the legacy
-app syncs through the shell's identity; when both are installed the legacy app's
-existing grant wins. Pinned here (the real function, sourced from the real
-script, against a temp apps dir + temp HOME; mdfind is a fake on PATH):
+The vault-sync-helper ships inside the board shell (bundle id com.zelin.ai-board;
+shell/build.sh compiles shell/Helpers/VaultSyncHelper.swift into
+Contents/MacOS/vault-sync-helper — CONTRACT §12 / §54 / §68.13). v2.0.0 retired the
+legacy menu-bar app: its "(old).app" home and its bundle id are no longer looked up,
+so a leftover legacy bundle is never used as the courier. Pinned here (the real
+function, sourced from the real script, against a temp apps dir + temp HOME; mdfind
+is a fake on PATH):
 
-  - "(old)" in the apps dir or ~/Applications → its helper;
-  - a pre-swap legacy bundle still under the product name → still found (the
-    shell under that name has no helper, so nothing is ever picked by name
-    alone); "(old)" wins when both exist;
-  - neither fixed home → Spotlight by bundle id (`mdfind kMDItemCFBundleIdentifier
-    == 'com.zelin.ai-engineer'`, limited to the two app dirs) — a relocated legacy
-    bundle is still found; mdfind is NOT consulted when a fixed home answers;
+  - the shell in the apps dir or ~/Applications → its helper, Spotlight not asked;
+  - a leftover "(old).app" with a helper is ignored;
+  - neither fixed home → Spotlight by the shell's bundle id (`mdfind
+    kMDItemCFBundleIdentifier == 'com.zelin.ai-board'`, limited to the two app dirs)
+    — a relocated shell is still found;
   - a helper that is not executable, or no bundle at all → non-zero (the chain
     stays in direct mode, its existing fallback).
 """
@@ -81,41 +77,30 @@ class HelperResolutionTestCase(unittest.TestCase):
         self.assertEqual((rc, out), (1, ""))
         calls = self._mdfind_calls()
         self.assertEqual(len(calls), 1, calls)
-        self.assertIn("kMDItemCFBundleIdentifier == 'com.zelin.ai-engineer'", calls[0])
+        self.assertIn("kMDItemCFBundleIdentifier == 'com.zelin.ai-board'", calls[0])
+        self.assertNotIn("com.zelin.ai-engineer", calls[0])
         self.assertIn("-onlyin %s" % self.apps, calls[0])
         self.assertIn("-onlyin %s" % (self.home / "Applications"), calls[0])
 
-    def test_old_bundle_in_the_apps_dir_wins_without_spotlight(self):
-        helper = self._plant(self.apps / OLD_APP)
+    def test_the_shell_in_the_apps_dir_wins_without_spotlight(self):
+        helper = self._plant(self.apps / PRODUCT_APP)
         rc, out = self._resolve(mdfind_result=str(self.apps / "elsewhere.app"))
         self.assertEqual((rc, out), (0, str(helper)))
         self.assertEqual(self._mdfind_calls(), [], "a fixed home answered — Spotlight not consulted")
 
-    def test_old_bundle_in_home_applications(self):
-        helper = self._plant(self.home / "Applications" / OLD_APP)
+    def test_the_shell_in_home_applications(self):
+        helper = self._plant(self.home / "Applications" / PRODUCT_APP)
         self.assertEqual(self._resolve(), (0, str(helper)))
 
-    def test_pre_swap_legacy_under_the_product_name_is_still_found_and_old_is_preferred(self):
-        product = self._plant(self.apps / PRODUCT_APP)
-        self.assertEqual(self._resolve(), (0, str(product)), "an install that never ran the swap still syncs")
-        old = self._plant(self.apps / OLD_APP)
-        self.assertEqual(self._resolve(), (0, str(old)), '"(old)" is the legacy app\'s home now')
-
-    def test_p4_shell_helper_is_used_when_no_legacy_app_and_loses_to_the_legacy_when_both(self):
-        # §68.13: the shell bundle carries its own helper (shell/build.sh) — a fresh machine syncs
-        # through it without Spotlight; the legacy "(old)" grant still wins while it is installed
+    def test_a_leftover_legacy_old_bundle_is_never_the_courier(self):
+        self._plant(self.apps / OLD_APP)
+        self._plant(self.home / "Applications" / OLD_APP)
+        self.assertEqual(self._resolve(), (1, ""))
         shell_helper = self._plant(self.apps / PRODUCT_APP)
-        (self.apps / PRODUCT_APP / "Contents" / "MacOS" / "ZelinAIBoard").write_text("", encoding="utf-8")
         self.assertEqual(self._resolve(), (0, str(shell_helper)))
-        self.assertEqual(self._mdfind_calls(), [])
-        old = self._plant(self.apps / OLD_APP)
-        self.assertEqual(self._resolve(), (0, str(old)))
 
-    def test_a_pre_p4_shell_under_the_product_name_has_no_helper_so_spotlight_finds_the_moved_legacy(self):
-        # a board shell built before P4 (no vault-sync-helper inside) under the product name
-        (self.apps / PRODUCT_APP / "Contents" / "MacOS").mkdir(parents=True)
-        (self.apps / PRODUCT_APP / "Contents" / "MacOS" / "ZelinAIBoard").write_text("", encoding="utf-8")
-        relocated = self.apps / "Archive" / "Zelin legacy.app"
+    def test_spotlight_finds_a_relocated_shell(self):
+        relocated = self.apps / "Archive" / "Moved Shell.app"
         helper = self._plant(relocated)
         rc, out = self._resolve(mdfind_result=str(relocated))
         self.assertEqual((rc, out), (0, str(helper)))
@@ -127,7 +112,7 @@ class HelperResolutionTestCase(unittest.TestCase):
         self.assertEqual(self._resolve(mdfind_result=str(broken)), (1, ""))
 
     def test_non_executable_helper_in_a_fixed_home_is_not_found(self):
-        self._plant(self.apps / OLD_APP, executable=False)
+        self._plant(self.apps / PRODUCT_APP, executable=False)
         self.assertEqual(self._resolve(), (1, ""))
 
 

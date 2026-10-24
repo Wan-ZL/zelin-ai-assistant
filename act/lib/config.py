@@ -138,10 +138,24 @@ def ensure_state_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+def _ensure_private_dir(path: Path) -> None:
+    """mkdir -p + chmod 0700, best effort (a read-only volume must not crash a caller)."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
 def claude_config_dir() -> Path:
-    """§78 CLAUDE_CONFIG_DIR for every headless claude (env override, then default)."""
+    """§78 CLAUDE_CONFIG_DIR for every headless claude (env override, then default).
+
+    Created on demand (0700): Claude Code writes its own state there, and a
+    missing directory must never make it fall back to anything else."""
     override = os.environ.get("AIASSISTANT_CLAUDE_CONFIG_DIR", "").strip()
-    return Path(override).expanduser() if override else CLAUDE_CONFIG_DIR
+    path = Path(override).expanduser() if override else CLAUDE_CONFIG_DIR
+    _ensure_private_dir(path)
+    return path
 
 
 def headless_cwd() -> str:
@@ -150,14 +164,10 @@ def headless_cwd() -> str:
     An empty directory under Application Support — outside the repo tree, so the
     repo's CLAUDE.md, its repo-local skills and the vault mirror's project settings
     are never on claude's ancestor chain even if ``--bare`` semantics change.
-    Created on demand (0700); never written into by this app.
+    Created on demand (both levels 0700); never written into by this app.
     """
     cwd = claude_config_dir() / "cwd"
-    try:
-        cwd.mkdir(parents=True, exist_ok=True)
-        os.chmod(cwd.parent, 0o700)
-    except OSError:
-        pass
+    _ensure_private_dir(cwd)
     return str(cwd)
 
 

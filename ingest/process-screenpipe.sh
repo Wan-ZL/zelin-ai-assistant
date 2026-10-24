@@ -160,79 +160,70 @@ fi
 FILE_COUNT=$(echo "$FILES" | wc -l | tr -d ' ')
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Processing triggered — $FILE_COUNT file(s) found" >> "$LOGFILE"
 
-if ! cd "$VAULT"; then
+if [ ! -d "$VAULT" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ vault root not accessible: $VAULT — nothing processed" >> "$LOGFILE"
     echo "---" >> "$LOGFILE"
     exit 1
 fi
 
-# Cron auth strategy: use ANTHROPIC_API_KEY (not OAuth via Keychain).
+# §78 isolation (constitution art.13): one set of constants shared with act/llm.py —
+# CLAUDE_CONFIG_DIR (the app's own Claude Code home, never the owner's), the API key
+# (CONTRACT §19: config/secrets/anthropic-api-key.txt, then ~/.config/anthropic-key.txt;
+# --bare never reads OAuth or the keychain, so there is no CLI-credential fallback),
+# CLAUDE_BIN (the same resolution recap uses), HEADLESS_CWD (an empty directory outside
+# the repo tree) and the ISOLATION_ARGV array.
 #
-# Background — there are TWO macOS sandboxes blocking cron:
-#   1. macOS Keychain — only readable from a process in the user's Aqua GUI
-#      session. Cron runs in a daemon session, so OAuth tokens are inaccessible.
-#   2. Audit session — `launchctl asuser <UID>` can in principle bridge into
-#      the user's GUI session, but the caller itself must already be in the
-#      user's audit session. From cron's daemon audit session, the asuser call
-#      fails with "Could not switch to audit session: Operation not permitted".
-#
-# Both block OAuth-based auth from cron. The ONLY auth path that bypasses
-# both is ANTHROPIC_API_KEY env var — claude CLI uses it directly, no keychain
-# or session bridge needed. Trade-off: usage bills against the API key
-# (a metered API key), not against the Pro subscription.
-#
-# IMPORTANT: key file MUST live outside TCC-protected folders (~/Desktop, ~/Documents,
-# ~/Downloads, etc). cron's grandfathered FDA via /usr/sbin/cron covers ~/Documents
-# but NOT ~/Desktop — a key file there reads as silently empty from cron.
-#
-# Resolution order (CONTRACT §19, mirrors act/lib/secrets.resolve_credential):
-#   1. $AIASSISTANT_HOME/config/secrets/anthropic-api-key.txt (App 设置窗口保存;
-#      AIASSISTANT_HOME resolved at the top of this script, defaulting to the
-#      checkout this script lives in)
-#   2. legacy ~/.config/anthropic-key.txt (single line, sk-ant-... only)
-#   3. neither file → fall back to the claude CLI's own stored credentials.
-#      The keychain caveats above are real on some machines, but not all: on an
-#      always-logged-in Mac (e.g. a Mac mini) cron can often use the CLI's own
-#      auth just fine. If claude then fails, its error lands in $LOGFILE below.
-SECRETS_KEY_FILE="$AIASSISTANT_HOME/config/secrets/anthropic-api-key.txt"
-if [ -s "$SECRETS_KEY_FILE" ]; then
-    ANTHROPIC_API_KEY=$(cat "$SECRETS_KEY_FILE" 2>>"$LOGFILE")
-    export ANTHROPIC_API_KEY
-elif [ -s "$HOME/.config/anthropic-key.txt" ]; then
-    ANTHROPIC_API_KEY=$(cat "$HOME/.config/anthropic-key.txt" 2>>"$LOGFILE")
-    export ANTHROPIC_API_KEY
-fi
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    unset ANTHROPIC_API_KEY
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] no API key file — falling back to the claude CLI's own credentials" >> "$LOGFILE"
-fi
+# Key files must live outside TCC-protected folders (~/Desktop, ~/Documents, ~/Downloads):
+# cron's grandfathered FDA covers ~/Documents but not ~/Desktop — a key there reads as
+# silently empty from cron.
+# shellcheck source=ingest/claude-env.sh
+. "$SCRIPT_DIR/claude-env.sh"
 
-# Resolve the claude binary — cron's PATH is minimal, so check the usual homes
-# instead of hardcoding one machine's install path (repo-portable, CONTRACT §18).
-CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
-if [ -z "$CLAUDE_BIN" ]; then
-    for c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
-        if [ -x "$c" ]; then CLAUDE_BIN="$c"; break; fi
-    done
-fi
 if [ -z "$CLAUDE_BIN" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ claude CLI not found — aborting" >> "$LOGFILE"
+    echo "---" >> "$LOGFILE"
+    exit 1
+fi
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ no Anthropic API key (config/secrets/anthropic-api-key.txt or ~/.config/anthropic-key.txt) — isolated claude reads nothing else; nothing processed" >> "$LOGFILE"
     echo "---" >> "$LOGFILE"
     exit 1
 fi
 
 # Skill lives in the vault (original setup — the mirror carries the vault's
 # copy); fall back to the repo's copy so a fresh machine works before the
-# vault skill is provisioned (self-contained).
+# vault skill is provisioned (self-contained). Loaded by absolute path: --bare
+# turns off skill and CLAUDE.md auto-discovery.
 SKILL_MD="$VAULT/.claude/skills/unprocessed-ingest/SKILL.md"
 [ -f "$SKILL_MD" ] || SKILL_MD="$SCRIPT_DIR/skills/unprocessed-ingest/SKILL.md"
+
+# The vault's own CLAUDE.md carries the wiki conventions; --bare skips auto-discovery,
+# so it is injected explicitly — only when present (claude refuses a missing file).
+VAULT_PROMPT_ARGV=()
+if [ -f "$VAULT/CLAUDE.md" ]; then
+    VAULT_PROMPT_ARGV=(--append-system-prompt-file "$VAULT/CLAUDE.md")
+fi
+
+if ! cd "$HEADLESS_CWD"; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ headless cwd not accessible: $HEADLESS_CWD — nothing processed" >> "$LOGFILE"
+    echo "---" >> "$LOGFILE"
+    exit 1
+fi
 
 # Run claude in headless print mode and load the /unprocessed-ingest skill
 # directly — under a watchdog: a wedged run once held the chain's lock for
 # 41 hours (2026-07-11, EINTR). 2h covers the observed worst honest case
 # (26-33 min normal, longer on backlog) with wide margin.
+# cwd = HEADLESS_CWD (outside the repo tree), the vault reached through --add-dir.
+# Tools: --bare sets CLAUDE_CODE_SIMPLE=1, which leaves exactly Bash, Edit and Read
+# (claude 2.1.309, probed 2026-10-24), so the allow list names those three and nothing
+# else. New files are created with Edit (empty old_string) or Bash. --add-dir makes
+# the vault readable and a working directory; it does NOT confine writes — Bash can
+# write anywhere this process can (CONTRACT §78 "工具面").
 CLAUDE_MAX_SECONDS="${CLAUDE_MAX_SECONDS:-7200}"
-"$CLAUDE_BIN" -p "Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\"." --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1 &
+PROMPT="Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\". Never run git."
+"$CLAUDE_BIN" -p "$PROMPT" "${ISOLATION_ARGV[@]}" --add-dir "$VAULT" ${VAULT_PROMPT_ARGV[@]+"${VAULT_PROMPT_ARGV[@]}"} \
+    --allowedTools "Read,Edit,Bash" >> "$LOGFILE" 2>&1 &
 CLAUDE_PID=$!
 # Record the child in the PID lock (second line): the liveness checks here
 # and in vault-sync.sh promise to cover "this script OR its headless-claude
