@@ -131,8 +131,11 @@ class MainWiringTestCase(unittest.TestCase):
         tick = after.index("Timer(timeInterval: 5.0")
         self.assertLess(enforce, autostart)
         self.assertLess(autostart, tick)
-        self.assertIn("EngineOwnership.syncPidfile(engineAlive: RecordingController.shared.engineRunning)",
-                      after[tick:], "the 5 s tick keeps the pidfile honest")
+        self.assertIn("EngineOwnership.tickQueue.async { EngineOwnership.tickPidfile() }",
+                      after[tick:], "the 5 s tick keeps the pidfile honest from a FRESH liveness read")
+        self.assertNotIn("syncPidfile(engineAlive: RecordingController.shared.engineRunning)", after,
+                         "the cached engineRunning is still the initial false on the first tick outside "
+                         "the schedule window and would drop the adopted engine's pidfile")
         before = self.start[:self.start.index("private func startRecordingAfterAdopt()")]
         for forbidden in ("autostartIfNeeded()", 'enforce(reason: "launch")', "Timer(timeInterval: 5.0"):
             with self.subTest(forbidden=forbidden):

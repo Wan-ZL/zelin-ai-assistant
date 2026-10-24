@@ -2400,11 +2400,12 @@ lite 2.0 的硬规矩：**升级与重启永不打断录制**。1.x（issue #318
   - **detached 的含义**：引擎的寿命不绑在壳进程上——壳崩溃 / SIGKILL / 升级 relaunch 时引擎照录（ppid 变 1），下一个
     壳 adopt 它；只有用户手动退出且没有升级握手时，退出路径才停它。
   - **pidfile** `~/Library/Application Support/ZelinAIAssistant/engine.pid`（repo 树之外），一行 `<pid> spawned` 或
-    `<pid> adopted`；5 s tick 按当前活性重算（自己派生的优先）、内容变了才写，引擎没了就删。它只是取证（doctor /
+    `<pid> adopted`；5 s tick 在串行后台队列上**现读**活性（`tickPidfile()`，不用 RecordingController 缓存的
+  `engineRunning`——窗外启动时第一拍它还是初值 false）后重算（自己派生的优先）、内容变了才写，引擎没了就删。它只是取证（doctor /
     排障），**归属判决不读它**——判决只信 argv 与活性。
 - **接线（`shell/Sources/main.swift`）**：`startEngines()` 在后台队列跑 `adoptAtLaunch()`（pgrep 阻塞，不占主线程），
   完成后 hop 回 MainActor 再跑 `startRecordingAfterAdopt()`：日程执法 → `autostartIfNeeded()` → 装 5 s tick（其中
-  `syncPidfile`）；`applicationWillTerminate` 第一句 `stopAtExit()`。
+  `tickQueue.async { tickPidfile() }`）；`applicationWillTerminate` 第一句 `stopAtExit()`（先等在途的那一拍写完）。
 - **installer 一根手指不碰引擎**：`install.sh` 的 1.x 孤儿扫除（`ui` 步与 SIGKILL 回落里的 `ui_sweep_orphan_engine`）
   删除；`relaunch_shell_app` 在 `pkill -TERM` 壳之前先 `defaults write com.zelin.ai-board engineHandoff -string <ISO>`
   （键名 `UI_ENGINE_HANDOFF_KEY` = `EngineOwnership.handoffKey`），所以 SIGTERM 退出的壳不停它派生的引擎；`pkill -KILL`
@@ -2414,7 +2415,7 @@ lite 2.0 的硬规矩：**升级与重启永不打断录制**。1.x（issue #318
   argv 只看 recipe 标记，不验证 TCC 授权归属（本机今天的引擎持的是 Ghostty 的授权，§7 上线步骤先在权限页确认壳已授权）。
 - **判例**：`shell/tests/LaunchHarness.swift` [8]（recipe 标记、pgrep 列表解析、三格启动判决、退出判决含 handoff、pidfile
   内容、常量）/ [9]（经缝录制的调用序列：idle 一次列表零日志、adopt 零信号 + 日志 + pidfile、foreign 零信号、升级握手
-  被清、退出 TERM / TERM→KILL / handoff 零信号 / adopt 的那台零信号、tick 只在变化时写 pidfile、凭据是活性）；
+  被清、退出 TERM / TERM→KILL / handoff 零信号 / adopt 的那台零信号、tick 只在变化时写 pidfile、tick 现读活性（窗外启动 adopt 后第一拍不删 pidfile）、凭据是活性）；
   `tests/test_shell_engine_orphan.py`（结构：启动路径无 kill、标记与 startCommand 同源、接线顺序、installer 无扫除）；
   `tests/test_install_ui_step.py`（真 bash + 假 pgrep / pkill / defaults：`ui` 步与 SIGKILL 回落都不碰引擎；relaunch 先写
   `engineHandoff` 再 SIGTERM，键名与壳同源）。

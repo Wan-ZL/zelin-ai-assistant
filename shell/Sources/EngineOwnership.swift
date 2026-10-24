@@ -189,7 +189,17 @@ enum EngineOwnership {
         return verdict
     }
 
-    /// 5 s tick：按当前活性重算 pidfile（spawn 的优先），内容变了才写。
+    /// 5 s tick 的串行后台队列：pgrep 阻塞，不占主线程；串行保证两拍不交叠写 pidfile。
+    static let tickQueue = DispatchQueue(label: "com.zelin.ai-board.engine-ownership", qos: .utility)
+
+    /// 5 s tick 的入口（在 `tickQueue` 上跑）：**现读**活性再 sync。不吃 RecordingController 缓存的
+    /// `engineRunning`——窗外启动时 autostart 被跳过，第一拍之前没人刷新过它，读到的是初值 false，
+    /// 会把刚 adopt 的那台的 pidfile 删掉、再也写不回来（判例 [9](g4)）。
+    static func tickPidfile() {
+        syncPidfile(engineAlive: engineRunning())
+    }
+
+    /// 按给定活性重算 pidfile（spawn 的优先），内容变了才写。
     static func syncPidfile(engineAlive: Bool) {
         if !engineAlive { adoptedPid = nil }
         recordPidfile(pidfileBody(spawnedPid: spawnedPid(), adoptedPid: adoptedPid, engineAlive: engineAlive))
@@ -197,6 +207,7 @@ enum EngineOwnership {
 
     /// 退出路径：`pkill -TERM` → 等 ≤ `exitBudget` → 还在就 `pkill -KILL`。同步、有界。
     static func stopAtExit() {
+        tickQueue.sync {}   // 等在途的那一拍写完，免得它在下面删掉 pidfile 之后再写回去
         guard engineSpawnedByUs() else { return }
         let handoff = handoffPending()
         guard stopAtExit(spawnedAlive: true, handoffPending: handoff) else {

@@ -380,6 +380,21 @@ func checkEngineOwnershipEffects() {
     check(calls.filter { $0.hasPrefix("pidfile") } == ["pidfile 8 adopted\n", "pidfile <rm>"],
           "tick: the adopted pid stays while the engine lives and is removed once it is gone — got \(calls)")
 
+    // (g4) launch outside the schedule window: nothing refreshed the cached engineRunning before
+    //      the first tick, so the tick must read liveness itself — the adopted engine's pidfile
+    //      survives the first tick and is still dropped once the engine is really gone
+    let adoptedOutside = Rec(engines: [E(pid: 9, command: recipe)], engineAlive: true)
+    calls = scenario(adoptedOutside) {
+        EngineOwnership.adoptAtLaunch()
+        EngineOwnership.tickPidfile()
+        EngineOwnership.tickPidfile()
+        adoptedOutside.engineAlive = false
+        EngineOwnership.tickPidfile()
+    }
+    check(calls.filter { $0.hasPrefix("pidfile") } == ["pidfile 9 adopted\n", "pidfile <rm>"],
+          "first tick after an adopt reads liveness fresh and keeps the pidfile — got \(calls)")
+    check(calls.filter { $0 == "pgrep engine" }.count == 3, "every tick asks pgrep itself — got \(calls)")
+
     // (h) THE exit credential itself (default seam, no recorder installed): ownership is
     //     LIVENESS, not history. `Recording.swift` assigns `engineProcess` once in
     //     startEngineBlocking and never puts it back to nil, so a `!= nil` credential

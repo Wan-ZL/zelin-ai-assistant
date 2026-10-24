@@ -404,8 +404,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     RecordingController.shared.refreshEngineState()
                     RecordingSchedule.active.enforce(reason: "tick")   // §61.7：边界 / 复活的引擎在此拍执法
                     NotifyRelay.drain()   // §28：5 s 节拍消费 state/notify_queue（原生 refresh tick 同款）
-                    // §61.8：自己派生的引擎记 pidfile（Application Support），引擎没了就删
-                    EngineOwnership.syncPidfile(engineAlive: RecordingController.shared.engineRunning)
+                    // §61.8：pidfile（Application Support）按现读的活性重算，引擎没了就删。不传缓存的
+                    // engineRunning：上面的 refreshEngineState 是异步的，窗外启动时第一拍它还是初值 false
+                    EngineOwnership.tickQueue.async { EngineOwnership.tickPidfile() }
                 }
             }
         }
