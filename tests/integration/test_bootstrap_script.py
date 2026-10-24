@@ -6,7 +6,7 @@ one class against REAL git and a local bare origin. Nothing here touches the
 developer's machine: HOME is a temp dir, the "clone" lands under it, `open`
 is a stub, install.sh is a stub the fake clone ships. Pinned:
 
-  preflight   not macOS → exit 2 naming install-linux.sh / install.ps1, no git
+  preflight   not macOS → exit 2 saying lite is macOS-only (no installer to point at), no git
               call; no Xcode CLT → exit 3 naming `xcode-select --install`;
               no git → exit 4; `--help` → 0 + usage; unknown flag → 2;
   checkout    default ~/Projects/zelin-ai-assistant; positional / --dir /
@@ -173,11 +173,12 @@ class FakeToolsTestCase(unittest.TestCase):
                               text=True, timeout=120, env=base)
 
     # -- preflight --------------------------------------------------------- #
-    def test_not_macos_points_at_the_other_installers(self):
+    def test_not_macos_says_lite_is_macos_only(self):
         proc = self.run_bootstrap(env={"FAKE_UNAME": "Linux"})
         self.assertEqual(proc.returncode, 2, proc.stderr)
-        self.assertIn("install-linux.sh", proc.stderr)
-        self.assertIn("install.ps1", proc.stderr)
+        self.assertIn("macOS-only", proc.stderr)
+        self.assertNotIn("install-linux.sh", proc.stderr)
+        self.assertNotIn("install.ps1", proc.stderr)
         self.assertEqual(self._log("git"), [])
 
     def test_missing_command_line_tools_names_the_fix(self):
