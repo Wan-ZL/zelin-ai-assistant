@@ -180,8 +180,8 @@ def _no_service_row(installer: str) -> dict:
     else:
         where = "systemd unit"
     return _row("warn", failures.pick(
-        "actd 的 %s 未安装（或没带 PATH）——无法确认后台服务用的是哪个 claude",
-        "actd %s not installed (or carries no PATH) - cannot verify which claude the daemon runs")
+        "server 的 %s 未安装（或没带 PATH）——无法确认后台服务用的是哪个 claude",
+        "server %s not installed (or carries no PATH) - cannot verify which claude the daemon runs")
         % where,
         failures.pick("bash %s（重渲染服务配置，把你 shell 的 claude 目录排在 PATH 最前）",
                       "bash %s (renders the agent with your shell's claude dir first on PATH)")

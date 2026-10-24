@@ -1,19 +1,16 @@
-"""act 常驻守护进程无界日志的自压缩（registry_writes.jsonl 同款模式）。
+"""act 日志的自压缩（防腐 #4：每个 append-only 文件出生就带 size-cap）。
 
-actd / syncd 是 KeepAlive 常驻进程，``state/actd.log`` 与 ``state/syncd.log``
-由各自进程内的 ``_log()`` 逐行 append、从不轮转——live 实测 syncd.log 涨到
-74MB。复用 act/lib/registry.py 写入台账（``_WRITES_JOURNAL_MAX_BYTES``）的
-既有自压缩模式：超过 ~1MB 只保留最近半数行，atomic tmp+replace。
+``state/recap.log`` 由 act/recap.py 的 ``_log()`` 逐行 append（cron 轮与 server 派生的运行都写），
+从不轮转。自压缩模式：超过 ~1MB 只保留最近半数行，atomic tmp+replace。v1 的 actd.log /
+syncd.log 随 Act 管线退役（全文见 tag full）。
 
-单写者语义：每个日志文件只有它自己的 daemon 写（syncd 的 docstring 明言
-"own log file, never touches actd's"），rewrite 竞态比 registry 台账的多进程
-场景更弱。压缩 best-effort：任何失败都吞掉——日志护理绝不反噬 daemon 本体。
+压缩 best-effort：任何失败都吞掉——日志护理绝不反噬调用方。
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-# 与 registry._WRITES_JOURNAL_MAX_BYTES 同款上限：超过 ~1MB 压缩到最近半数行
+# 超过 ~1MB 压缩到最近半数行
 MAX_BYTES = 1 << 20
 
 # 行减半缩不动时（单行 > cap 的病态日志）按字节保尾的截断标记行
@@ -28,7 +25,7 @@ def cap(path: Path, max_bytes: int = MAX_BYTES) -> None:
     try:
         if path.stat().st_size <= max_bytes:
             return
-        # errors="replace"：actd._log 本就以 errors="replace" 写入；压缩读回
+        # errors="replace"：写入方本就以 errors="replace" 写入；压缩读回
         # 遇到坏字节也绝不能崩（日志内容可能来自任意外部文本）。
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         keep = lines[len(lines) // 2:]

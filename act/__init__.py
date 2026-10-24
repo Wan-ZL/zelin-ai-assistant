@@ -1,4 +1,4 @@
-"""Zelin's AI Assistant — act (approve / execute / deliver) pipeline package.
+"""Zelin's AI Assistant (lite) — the act package: meeting recaps, the doctor, shared config.
 
 版本真源是 main 上的 git tag（CONTRACT §56.1；宪法第 8 条），**不是这个文件**：
 下面那一行只是烘焙回落值（没有 act/_version.py 也没有 git 的副本才用它）。

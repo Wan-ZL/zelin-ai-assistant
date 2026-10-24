@@ -2,13 +2,17 @@
 
 Queries the GitHub releases API (``/releases/latest`` — GitHub already filters
 out drafts and prereleases there) for the newest published version and caches
-the answer in ``state/update_check.json``. actd calls :func:`attach` every
-pass; a cache hit costs zero network and zero money.
+the answer in ``state/update_check.json``. Since v2.0.0 the caller is the board
+server: ``GET /api/about`` starts the periodic (24h-gated) check in the
+background when the cache is stale, ``POST /api/update/check`` runs the forced
+one (both as ``python3 -m act.lib.update_check``); a cache hit costs zero
+network and zero money. :func:`attach` (the v1 dashboard projection) has no
+caller left and stays only as a library function.
 
 Honesty rules (the trust posture of the whole product):
 - At most ONE network attempt per 24h — failures (offline, rate-limited, bad
   response) consume the budget too, so a broken network can never turn the
-  10s daemon pass into a retry storm. Failure = silently keep the cache.
+  server into a retry storm. Failure = silently keep the cache.
   The ONLY exception is an explicit user click: the About page's「立即检查」
   runs ``python3 -m act.lib.update_check --force`` (see :func:`cli_status`),
   which skips the freshness gate for that one attempt — still ETag-validated,
@@ -19,6 +23,11 @@ Honesty rules (the trust posture of the whole product):
 - The dashboard projection (``update_available``) is emitted ONLY when a
   strictly newer semver exists AND ``updates.check_enabled`` is on. The app
   merely opens the release page — nothing is ever downloaded or run.
+- ``manual_upgrade`` (add-only, §26 追记 2026-10-23 — the bridge release before lite 2.0):
+  true when the newest release's MAJOR is greater than the running one's.
+  §56.3 auto-deploy never crosses a major boundary by itself and the About
+  page's「一键更新」answers 409 for it (server/about.py); the upgrade is a
+  manual ``git checkout v<X>.0.0 && bash install.sh``.
 """
 from __future__ import annotations
 
@@ -100,6 +109,19 @@ def is_newer(latest, current) -> bool:
     if lt is None or ct is None:
         return False
     return lt > ct
+
+
+def needs_manual_upgrade(latest, current) -> bool:
+    """True when ``latest``'s MAJOR is greater than ``current``'s (§26 追记
+    2026-10-23, the bridge release before lite 2.0): a release that auto-deploy (§56.3) refuses
+    to reach by itself, so the page must say "upgrade by hand", not "update".
+
+    Unparsable input on either side -> False (same rule as :func:`is_newer`).
+    """
+    lt, ct = parse_version(latest), parse_version(current)
+    if lt is None or ct is None:
+        return False
+    return lt[0] > ct[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -197,14 +219,15 @@ def check(cfg: Optional[config.Config] = None, *,
           fetch: Optional[Fetch] = None,
           now: Optional[_dt.datetime] = None,
           force: bool = False) -> Optional[dict]:
-    """Return ``{current, latest, url, pkg_asset_url, checked_at}`` or None.
+    """Return ``{current, latest, url, pkg_asset_url, checked_at, manual_upgrade}``
+    or None.
 
     None = the check is disabled or nothing is known yet (first run offline).
     Never raises; performs at most one network attempt per 24h (a failed
     attempt consumes the budget too, so failures keep the cached answer and
     stay silent — CONTRACT §26).
 
-    ``force=True`` (manual「立即检查」only — never the actd path) skips the
+    ``force=True`` (manual「立即检查」only — never the periodic path) skips the
     24h freshness gate for this one call: the fetch still sends If-None-Match
     (a 304 is a valid fresh "no update"), and ``checked_at`` is stamped as
     usual, so the periodic budget restarts from the manual check. A disabled
@@ -264,6 +287,7 @@ def _answer(state: dict) -> Optional[dict]:
         "url": state.get("url") or RELEASES_PAGE_URL,
         "pkg_asset_url": state.get("pkg_asset_url"),
         "checked_at": state.get("checked_at"),
+        "manual_upgrade": needs_manual_upgrade(latest, __version__),
     }
 
 
@@ -279,6 +303,8 @@ def update_available(cfg: Optional[config.Config] = None, *,
         "latest": info["latest"],
         "url": info["url"],
         "pkg_asset_url": info["pkg_asset_url"],
+        # add-only (§26 追记 2026-10-23): a new MAJOR is a manual upgrade
+        "manual_upgrade": info["manual_upgrade"],
     }
 
 
@@ -341,16 +367,17 @@ def cli_status(force: bool = False, *,
 
 def _cli_payload(state: dict, enabled: bool) -> dict:
     latest = state.get("latest")
+    known = bool(enabled and latest)   # off switch / nothing cached → no verdict
     return {
         "ok": True,
         "enabled": enabled,
         "current": __version__,
         "latest": str(latest) if latest else None,
-        "update_available": bool(enabled and latest
-                                 and is_newer(latest, __version__)),
+        "update_available": known and is_newer(latest, __version__),
         "url": state.get("url") or RELEASES_PAGE_URL,
         "pkg_asset_url": state.get("pkg_asset_url"),
         "checked_at": state.get("checked_at"),
+        "manual_upgrade": known and needs_manual_upgrade(latest, __version__),
     }
 
 

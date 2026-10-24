@@ -10,7 +10,7 @@ then present a short set of questions next to it」）。
 一张写死的问卷（issue #302：「The questions are the point, so they should be
 derived from the recap rather than fixed」）。
 
-问题的**组成**（哪几条、什么 id、什么选项）是 daemon 数据、经 dashboard 投影上
+问题的**组成**（哪几条、什么 id、什么选项）是 daemon 数据、经 GET /api/recaps 投影上
 wire（``recaps[].questions``，projection-only）；**问法**是 web 的 `text(zh, en)`
 按 ``kind`` / 选项值查表（防腐 #10：不起第二套双语机制，client 也不自己造问题）。
 
@@ -137,7 +137,7 @@ def _split_kind(answer_id: str) -> Optional[str]:
 
 
 def kind_of(answer_id) -> Optional[str]:
-    """一个答案 id 属于哪一类；认不出 = None（= 整条请求畸形，actd 诚实 noop）。
+    """一个答案 id 属于哪一类；认不出 = None（= 整条请求畸形，server 诚实 400）。
 
     §63.12 追记（add-only）：闭表之外还认**标签形**（`s2` = 那一份纪要里的 S2 那一条，
     §63.12 的跨版稳定身份）。位置形 `split<n>` 一个字符没动，仍是面板送出去的那一种。"""
@@ -270,7 +270,7 @@ def _one_answer(value) -> Optional[tuple]:
 def answers_ok(value) -> bool:
     """wire 上的 ``answers`` 合不合法：1.. :data:`MAX_ANSWERS` 条字符串、每条
     ``id=value`` 都在闭表里、id 不重复。**全有或全无**——一条认不出就是整条请求
-    畸形（actd 诚实 noop，永不「猜掉」一个答案偷偷改写这份纪要）。"""
+    畸形（server 诚实 400，永不「猜掉」一个答案偷偷改写这份纪要）。"""
     if not isinstance(value, list) or not (1 <= len(value) <= MAX_ANSWERS):
         return False
     pairs = [_one_answer(item) for item in value]
