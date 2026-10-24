@@ -1,8 +1,8 @@
 """The third model knob ``models.fallback`` (CONTRACT §59 D53; §15 add-only key
 ``models_fallback``) — coercion, config.yaml block, overrides precedence.
 
-Default is the literal ``claude-opus-5[1m]`` (the owner's ~/.claude/settings.json
-``fallbackModel``); ``off`` disables the flag; a malformed value degrades to the
+Default is the literal ``claude-opus-5[1m]`` (the D53 owner decision; v2.0.0 the
+app never reads the owner's Claude Code settings, §78); ``off`` disables the flag; a malformed value degrades to the
 default on the yaml path and is skipped on the overrides path (the effective
 value stays) — never to ``off``, because a typo must not quietly hand the
 session back to the CLI's own fallback (Opus 4.8).
@@ -67,9 +67,10 @@ class CoercionTestCase(unittest.TestCase):
                 config.coerce_fallback_model(bad)
 
     def test_lenient_helper_degrades_to_default_not_off(self):
-        self.assertEqual(config._fallback_or("has space", DEFAULT), DEFAULT)
-        self.assertEqual(config._fallback_or(12, DEFAULT), DEFAULT)
-        self.assertEqual(config._fallback_or("off", DEFAULT), "off")
+        c = config.coerce_fallback_model
+        self.assertEqual(config._or_default(c, "has space", DEFAULT), DEFAULT)
+        self.assertEqual(config._or_default(c, 12, DEFAULT), DEFAULT)
+        self.assertEqual(config._or_default(c, "off", DEFAULT), "off")
 
 
 class YamlBlockTestCase(_Files):
@@ -89,10 +90,10 @@ class YamlBlockTestCase(_Files):
         self.assertEqual(config.load_config().models_fallback, DEFAULT)
 
     def test_absent_key_keeps_the_default(self):
-        self._yaml("models:\n  dispatch: claude-opus-5\n")
+        self._yaml("models:\n  pipeline: claude-sonnet-5\n")
         cfg = config.load_config()
         self.assertEqual(cfg.models_fallback, DEFAULT)
-        self.assertEqual(cfg.models_dispatch, "claude-opus-5")   # siblings untouched
+        self.assertEqual(cfg.models_pipeline, "claude-sonnet-5")   # sibling untouched
 
     def test_bad_shape_degrades_to_default(self):
         self._yaml("models:\n  fallback: 'has space'\n")
@@ -128,10 +129,10 @@ class OverridesTestCase(_Files):
     def test_key_is_in_the_allowlist_with_its_own_coercion(self):
         self.assertIs(config._OVERRIDE_FIELDS["models_fallback"], config.coerce_fallback_model)
 
-    def test_two_d22_knobs_unaffected(self):
+    def test_pipeline_knob_unaffected(self):
         self._overrides({"models_fallback": "off"})
         cfg = config.load_config()
-        self.assertEqual((cfg.models_dispatch, cfg.models_pipeline), ("follow", "follow"))
+        self.assertEqual(cfg.models_pipeline, config.DEFAULT_MODEL_PIPELINE)
 
 
 if __name__ == "__main__":

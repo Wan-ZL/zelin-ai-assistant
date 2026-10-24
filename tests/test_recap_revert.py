@@ -4,8 +4,8 @@
 钉死的行为：当前正文先进 history（**非破坏**——回退本身也能被回退）、version + 1、
 新的 ``generated_at``、``reverted_from`` 说出搬自第几版、``quality`` 跟着那一版回来
 （§63.9 之前入库的条目没有这个键 → 需复核，永不伪造 ok）、``note`` / ``problems`` /
-``repairs`` 清空；这一版不存在 / key 不认识 = 诚实 None 且文件一字不动；inbox
-``recap_revert`` 经 actd 的 detached 表分离起子进程（server 永不写纪要文件，§63.6）。
+``repairs`` 清空；这一版不存在 / key 不认识 = 诚实 None 且文件一字不动；
+``POST /api/recaps/revert`` 经 server/recaps.revert 分离起子进程（server 永不写纪要文件，§63.6）。
 帽的代价也钉在这里：``history`` 已经满 ``HISTORY_CAP`` 条时，回退把当前正文压进历史
 **会挤掉最早那一版**（一个回退目标就此老化），面板的文案照这条判例说话。
 时钟是注入的，绝不起真 claude（本路径根本不调模型）。
@@ -18,11 +18,13 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from act import actd, recap
+from act import recap
 from act.lib import analytics, config, detached
 from act.lib import recap_sessions as rs
 from act.lib import recap_store as store
 from act.lib import recap_text as text
+from server import recaps as server_recaps
+from server.errors import InvalidFieldError, UnknownFieldError
 
 KEY = "meeting:2026-08-31T1256-zoom"
 T1 = 1756670000.0
@@ -134,14 +136,11 @@ class RevertBehaviourTestCase(RevertCase):
         recap.revert(KEY, 1, now=T1)
         self.assertEqual(store.load_recap(KEY)["quality"], store.QUALITY_NEEDS_REVIEW)
 
-    def test_metadata_only_analytics(self):
+    def test_no_analytics_event_at_all(self):
+        """§78 零遥测：回退不记任何事件（v1 的 metadata-only recap_reverted 随 analytics 退役）。"""
         self._record()
         recap.revert(KEY, 1, now=T1)
-        name, payload = self.events[-1]
-        self.assertEqual(name, "recap_reverted")
-        self.assertEqual((payload["version"], payload["reverted_from"]), (3, 1))
-        self.assertNotIn("en", payload)                         # 宪法第 9 条：正文永不进 analytics
-        self.assertNotIn("zh", payload)
+        self.assertEqual(self.events, [])
 
 
 class RevertMissesTestCase(RevertCase):
@@ -197,53 +196,52 @@ class RevertProjectionTestCase(RevertCase):
         self.assertEqual(store.projection()[0]["history_count"], 4)   # 原始条数不撒谎
 
 
-class RevertInboxFormTestCase(unittest.TestCase):
+class RevertRequestFormTestCase(unittest.TestCase):
     def test_argv_tail(self):
-        self.assertEqual(store.inbox_argv({"action": "recap_revert", "meeting_key": KEY, "version": 3}),
+        self.assertEqual(store.request_argv({"action": "recap_revert", "meeting_key": KEY, "version": 3}),
                          ["--revert", KEY, "--to-version", "3"])
 
     def test_malformed_versions_are_none(self):
         for version in (None, 0, -1, True, "2", 2.0, [2]):
             with self.subTest(version=version):
-                self.assertIsNone(store.inbox_argv(
+                self.assertIsNone(store.request_argv(
                     {"action": "recap_revert", "meeting_key": KEY, "version": version}))
-        self.assertIsNone(store.inbox_argv({"action": "recap_revert", "meeting_key": "R-1", "version": 1}))
+        self.assertIsNone(store.request_argv({"action": "recap_revert", "meeting_key": "R-1", "version": 1}))
 
 
 class RevertDetachedSpawnTestCase(unittest.TestCase):
-    def setUp(self):
-        config.INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    """server/recaps.revert = v1 actd detached 表的接班人。"""
 
-    def _drop(self, name, decision):
-        path = config.INBOX_DIR / name
-        path.write_text(json.dumps(decision), encoding="utf-8")
-        return path
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-recap-revert-spawn-")
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name)
+        (self.home / "state").mkdir()
 
     def test_recap_revert_spawns_the_recap_module_detached(self):
-        path = self._drop("recap-revert.json", {"action": "recap_revert", "meeting_key": KEY,
-                                                "version": 2, "ts": "2026-09-01T00:00:00Z"})
         with mock.patch.object(detached, "spawn") as spawn:
-            self.assertEqual(actd.process_inbox(), 1)
-        spawn.assert_called_once_with(["act.recap", "--revert", KEY, "--to-version", "2"], "recap.log")
-        self.assertFalse(path.exists())
+            out = server_recaps.revert(self.home, {"key": KEY, "version": 2})
+        spawn.assert_called_once_with(["act.recap", "--revert", KEY, "--to-version", "2"], "recap.log",
+                                      home=self.home)
+        self.assertEqual(out, {"ok": True, "key": KEY, "version": 2, "launch": "running"})
 
-    def test_a_malformed_revert_is_a_noop_without_spawn(self):
-        self._drop("recap-revert-bad.json", {"action": "recap_revert", "meeting_key": KEY,
-                                             "version": 0, "ts": "2026-09-01T00:00:00Z"})
-        with mock.patch.object(detached, "spawn") as spawn, \
-                mock.patch.object(actd, "_write_applied_ack") as ack:
-            actd.process_inbox()
+    def test_a_malformed_revert_is_a_400_without_spawn(self):
+        with mock.patch.object(detached, "spawn") as spawn:
+            for payload in ({"key": KEY, "version": 0}, {"key": KEY}, {"key": "R-1", "version": 1},
+                            {"key": KEY, "version": True}):
+                with self.subTest(payload=payload), self.assertRaises(InvalidFieldError):
+                    server_recaps.revert(self.home, payload)
+            with self.assertRaises(UnknownFieldError):
+                server_recaps.revert(self.home, {"key": KEY, "version": 2, "note": "x"})
         spawn.assert_not_called()
-        ack.assert_called_once_with("recap-revert-bad", "noop")
 
     def test_revert_stays_out_of_the_generate_request_ledger(self):
         # §63.8 的台账只记「重新生成」：回退不是一次生成，行上不该出现「生成中」
-        self._drop("recap-revert-2.json", {"action": "recap_revert", "meeting_key": KEY,
-                                           "version": 1, "ts": "2026-09-01T00:00:00Z"})
         with mock.patch.object(detached, "spawn"), \
                 mock.patch("act.lib.recap_requests.record") as record:
-            actd.process_inbox()
+            server_recaps.revert(self.home, {"key": KEY, "version": 1})
         record.assert_not_called()
+        self.assertFalse((self.home / "state" / "recap_requests.json").exists())
 
 
 # 一行英文 185 字符：超出 45、按词回退也远超 MAX_TRIM_EN——确定性修不动，出生即 needs_review

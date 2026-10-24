@@ -88,11 +88,6 @@ class DoctorRouteTestCase(_ServerCase):
 class DiagnosticsRouteTestCase(_ServerCase):
     def test_snapshot_shape_and_sources(self):
         self.patch_runner()
-        write_text(self.home / "state" / "dashboard.json", json.dumps({
-            "generated_at": "2026-09-02T00:00:00Z", "counts": {},
-            "deploy_state": {"status": "deployed", "version": "0.48.22"},
-            "radar_sources": {"gmail": {"enabled": True, "last_ok": None, "skip_reason": "no_credentials", "stale": False}},
-        }))
         write_text(self.home / "state" / "install_report.json", json.dumps({
             "version": "0.48.22", "generated_at": "x", "ok": True,
             "steps": [{"name": "cron", "status": "skipped_tcc", "detail": "EPERM", "secret": "no"}]}))
@@ -100,18 +95,18 @@ class DiagnosticsRouteTestCase(_ServerCase):
         self.assertEqual(status, 200)
         self.assertTrue(obj["doctor"]["ok"])
         self.assertIn("verdict", obj["health"])
-        self.assertEqual(obj["deploy_state"]["status"], "deployed")
-        self.assertEqual(obj["radar_sources"]["gmail"]["skip_reason"], "no_credentials")
         self.assertEqual(obj["install_report"]["steps"], [{"name": "cron", "status": "skipped_tcc", "detail": "EPERM"}])
-        self.assertIn(obj["registry_backend"], ("yaml", "sqlite"))
         self.assertEqual(obj["logs"], [])
+        self.assertEqual(set(obj), {"doctor", "health", "install_report", "logs", "cron_probe", "activity"})
+        # v2.0.0: the dashboard projections and the registry backend retired with actd
+        for gone in ("deploy_state", "radar_sources", "registry_backend", "ai_fix_enabled"):
+            self.assertNotIn(gone, obj)
 
     def test_missing_files_are_null_not_errors(self):
         self.patch_runner()
         _s, obj = get_json(self.port, "/api/diagnostics")
-        self.assertIsNone(obj["deploy_state"])
         self.assertIsNone(obj["install_report"])
-        self.assertIsNone(obj["radar_sources"])
+        self.assertIsNone(obj["cron_probe"])
 
 
 class LogsRouteTestCase(_ServerCase):

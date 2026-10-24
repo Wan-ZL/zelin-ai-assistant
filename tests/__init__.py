@@ -1,6 +1,6 @@
 """Test bootstrap: point AIASSISTANT_HOME at a throwaway tmp dir BEFORE any
 ``act.*`` import, so module-level path constants (config.HOME, STATE_DIR,
-REGISTRY_DIR, secrets.SECRETS_DIR, analytics dirs, ...) all resolve inside the
+secrets.SECRETS_DIR, the §78 claude-config dir, ...) all resolve inside the
 sandbox and no test ever touches the real repo/state or Zelin's real keys.
 
 Also installs the fail-loud subprocess guard (see below): no test may fire a
@@ -28,40 +28,27 @@ os.environ.setdefault("AIASSISTANT_LAUNCHD_PROBE", "0")
 # default; tests that want one create it there). Unconditional: a stray value
 # in the developer's shell must not aim the suite at a real binary either.
 os.environ["AIASSISTANT_STABLE_CLAUDE"] = os.path.join(TMP_HOME, "stable-claude", "claude")
+# §78 headless isolation: config.claude_config_dir() / headless_cwd() default to
+# ~/Library/Application Support/ZelinAIAssistant/claude-config — llm.run and the
+# doctor probes create that directory. Point it into the sandbox so the suite
+# never writes under the developer's real Application Support. Unconditional,
+# same reason as above.
+os.environ["AIASSISTANT_CLAUDE_CONFIG_DIR"] = os.path.join(TMP_HOME, "claude-config")
 # §54 doctor `board server` row: the default probe GETs 127.0.0.1:<port>/api/health.
 # A developer machine usually has a real board server on 47820 — the suite must
 # never read it. Off = the row is omitted unless a test injects Probes.board_health.
 os.environ.setdefault("AIASSISTANT_HTTP_PROBE", "0")
-# §53 数据层后端：套件默认强制 YAML——测试沙箱里 ensure()/tick() 绝不偷偷迁移
-# （activate.py 只在 auto 下激活）。store2 侧的行为测试自己显式切 sqlite
-# （改 env + registry.reset_store_cache()，用完复原）。
-os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
-# §65 自动草稿 PR 通道：默认 gh runner 见到这个开关直接报「不可用」（核验 →
-# gh_unavailable、巡检 → 跳过），套件里凡要 gh 的判例都注入假 runner。gh 同时
-# 在下方出网黑名单里——忘了注入的那一处会响亮地炸，而不是静默打 GitHub API。
-os.environ.setdefault("AIASSISTANT_GH", "0")
-# §70 每日循环的 launchd 日志读取器默认读 ~/Library/Logs/zelin-ai-assistant/——
-# 开发者机器上有真日志，读了就是不确定的测试输入；指进沙箱（目录可以不存在）。
-os.environ.setdefault("ZAI_LAUNCHD_LOG_DIR", os.path.join(TMP_HOME, "launchd-logs"))
+# §26 v2.0.0: GET /api/about starts a background `python -m act.lib.update_check`
+# when the cache is stale — a real GitHub request from a detached child the
+# subprocess guard below cannot see. Off in the suite; the about tests that
+# exercise the trigger inject a runner and flip it back on.
+os.environ["AIASSISTANT_UPDATE_AUTOCHECK"] = "0"
 # §68.4 诊断页日志清单列出 ingest 链的 LOGFILE（默认 /tmp/screenpipe-auto.log，
 # server/paths.ingest_log_path）——开发者机器上那是一份真日志，读了就是不确定的测试
 # 输入（清单多一条、尾巴是真数据）。指进沙箱（默认不存在；要它的判例自己写）。
 # 无条件：shell 里残留的值也不许把套件对准真文件。integration/test_ingest_smoke.py
 # 起真脚本时在子进程 env 里显式设自己的一份，不受影响。
 os.environ["PROCESS_SCREENPIPE_LOG"] = os.path.join(TMP_HOME, "screenpipe-auto.log")
-# §70 每日循环挂在 actd.run_once 里：沙箱里没有 state/daily_loop.json，任何一条走
-# 真 run_once 的判例都会在本地时间 ≥ 03:30 时把整轮循环跑起来（真 gh、真 doctor
-# 子进程）。默认关掉；循环自己的判例显式打开（AIASSISTANT_DAILY_LOOP=1）。
-os.environ.setdefault("AIASSISTANT_DAILY_LOOP", "0")
-# §71.1 电源探针（pmset / ioreg）：派发闸每 pass 问一次「这台机器醒着吗」。开发者
-# 的 Mac 上那是三个真子进程、真机器状态——套件里既不该起也不该信。默认关掉
-# （判决恒 unknown = fail-open，派发行为与本条法之前逐字相同）；探针自己的判例
-# 注入 runner / probe，走同一段解析。
-os.environ.setdefault("AIASSISTANT_POWER_PROBE", "0")
-# §75 worktree 回收：sweep / release 会真的跑 `git worktree remove` + `git branch -d`。
-# 套件里默认关掉（两个出口空转，回执记 skipped: disabled）；本条法自己的判例注入
-# 假 git runner——注入了就照跑，忘了注入的判例是空转而不是删开发者机器上的 worktree。
-os.environ.setdefault("AIASSISTANT_WORKTREE_SWEEP", "0")
 
 
 # --------------------------------------------------------------------------- #

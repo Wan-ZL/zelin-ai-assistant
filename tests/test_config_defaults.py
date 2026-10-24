@@ -1,17 +1,10 @@
-"""Config defaults with privacy consequences.
+"""load_config robustness: config.yaml is a hand-edited file.
 
-- execution.create_github_repo (PRIVACY.md egress row 8): approving a card
-  must NOT silently create GitHub repos for new users — default False.
-- telemetry (PRIVACY.md egress row 10, docs/TELEMETRY.md): default ON at
-  level "detailed" with capture_input OFF (v0.48 opt-in revision — typed
-  text uploads only after the user checks the first-run checkbox / Settings
-  toggle, which writes the explicit override key) and the maintainer URL;
-  opt-out via config.yaml or the settings_overrides.json telemetry keys
-  (§15).
-
-Explicit config.yaml values (either way) always keep their behavior.
+v2.0.0: the privacy-default classes this file used to pin (execution.create_github_repo,
+the telemetry block, feature flags) retired with the Act pipeline and the §78
+zero-telemetry rule (full text in tag ``full``). What stays is the first line of
+defence: a malformed file never takes a process down.
 """
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,117 +15,10 @@ from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 from act.lib import config
 
 
-class CreateGithubRepoDefaultTestCase(unittest.TestCase):
-    def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="cfg-defaults-")) / "config.yaml"
-        path.write_text(body, encoding="utf-8")
-        with mock.patch.object(config, "CONFIG_PATH", path):
-            return config.load_config()
-
-    def test_dataclass_default_is_false(self):
-        self.assertFalse(config.Config().create_github_repo)
-
-    def test_missing_key_resolves_false(self):
-        cfg = self._load_with_yaml("execution:\n  memory_inject: true\n")
-        self.assertFalse(cfg.create_github_repo)
-
-    def test_explicit_true_is_honored(self):
-        cfg = self._load_with_yaml("execution:\n  create_github_repo: true\n")
-        self.assertTrue(cfg.create_github_repo)
-
-    def test_explicit_false_is_honored(self):
-        cfg = self._load_with_yaml("execution:\n  create_github_repo: false\n")
-        self.assertFalse(cfg.create_github_repo)
-
-
-class TelemetryDefaultsTestCase(unittest.TestCase):
-    def _load_with_yaml(self, body: str) -> config.Config:
-        path = Path(tempfile.mkdtemp(prefix="cfg-tele-")) / "config.yaml"
-        path.write_text(body, encoding="utf-8")
-        with mock.patch.object(config, "CONFIG_PATH", path):
-            return config.load_config()
-
-    def test_dataclass_defaults_on_detailed_maintainer_url(self):
-        # v0.48 shipped defaults: on / detailed / capture_input OFF — typed
-        # text is opt-in (first-run checkbox / Settings toggle / yaml key).
-        cfg = config.Config()
-        self.assertTrue(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "detailed")
-        self.assertFalse(cfg.telemetry_capture_input)
-        self.assertEqual(cfg.telemetry_supabase_url,
-                         config.DEFAULT_TELEMETRY_SUPABASE_URL)
-
-    def test_missing_block_keeps_defaults(self):
-        cfg = self._load_with_yaml("owner:\n  name: X\n")
-        self.assertTrue(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "detailed")
-        self.assertFalse(cfg.telemetry_capture_input)
-        self.assertEqual(cfg.telemetry_supabase_url,
-                         config.DEFAULT_TELEMETRY_SUPABASE_URL)
-
-    def test_yaml_opt_out_and_level(self):
-        cfg = self._load_with_yaml(
-            "telemetry:\n  enabled: false\n  level: detailed\n")
-        self.assertFalse(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "detailed")
-
-    def test_invalid_level_falls_back_to_basic(self):
-        cfg = self._load_with_yaml("telemetry:\n  level: everything\n")
-        self.assertEqual(cfg.telemetry_level, "basic")
-
-    def test_empty_url_disables_uploads(self):
-        # forks' hard off switch: explicit "" wins over the default URL
-        cfg = self._load_with_yaml('telemetry:\n  supabase_url: ""\n')
-        self.assertEqual(cfg.telemetry_supabase_url, "")
-
-    def _load_with_overrides(self, data: dict) -> config.Config:
-        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        config.SETTINGS_OVERRIDES_PATH.write_text(
-            json.dumps(data), encoding="utf-8")
-        try:
-            return config.load_config()
-        finally:
-            config.SETTINGS_OVERRIDES_PATH.unlink()
-
-    def test_overrides_flat_keys_win(self):
-        cfg = self._load_with_overrides(
-            {"telemetry.enabled": False, "telemetry.level": "detailed"})
-        self.assertFalse(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "detailed")
-
-    def test_overrides_nested_form_supports_level(self):
-        # the Settings form writes the nested shape (shared with the
-        # first-run permissions page's TelemetryConsent)
-        cfg = self._load_with_overrides(
-            {"telemetry": {"enabled": False, "level": "detailed"}})
-        self.assertFalse(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "detailed")
-
-    def test_overrides_invalid_level_degrades_to_basic(self):
-        # an unrecognized EXPLICIT override value degrades to "basic",
-        # mirroring the config.yaml path (fail-private on typos) — it must
-        # not silently keep the more-permissive default "detailed"
-        cfg = self._load_with_overrides({"telemetry.level": "verbose"})
-        self.assertEqual(cfg.telemetry_level, "basic")
-
-
-class FeatureFlagSemanticsTestCase(unittest.TestCase):
-    """Config.feature() (CONTRACT §16): flags default on — known, unknown, or
-    absent alike — and only an explicit false turns one off."""
-
-    def test_absent_or_unknown_flag_defaults_on(self):
-        self.assertTrue(config.Config().feature("digest"))
-        self.assertTrue(config.Config().feature("no_such_flag"))
-
-    def test_explicit_false_is_honored(self):
-        cfg = config.Config(features={"digest": False})
-        self.assertFalse(cfg.feature("digest"))
-
-
 class LoadConfigRobustnessTestCase(unittest.TestCase):
     """load_config 防崩（夜间审计批次）：config.yaml 是用户手改文件——坏
     yaml、标量写成块、字符串写成数字，都必须回退默认而不是把 daemon/CLI
-    整个带崩（actd main() 另有纵深防御，但第一道闸在这里）。"""
+    整个带崩）。"""
 
     def _load_with_yaml(self, body: str) -> config.Config:
         path = Path(tempfile.mkdtemp(prefix="cfg-robust-")) / "config.yaml"
@@ -143,32 +29,27 @@ class LoadConfigRobustnessTestCase(unittest.TestCase):
     def test_malformed_yaml_returns_defaults(self):
         cfg = self._load_with_yaml("sources: [\n")  # YAMLError
         self.assertEqual(cfg.language, "zh")
-        self.assertEqual(cfg.poll_interval_seconds, 10)
+        self.assertEqual(cfg.server_port, config.DEFAULT_SERVER_PORT)
 
     def test_scalar_blocks_do_not_crash(self):
         cfg = self._load_with_yaml(
             "owner: hi\nsources: 3\napproval: nope\nexecution: [1]\n"
             "telemetry: x\ntrash: y\nvoice: z\nredaction: w\nrecording: v\n"
+            "models: m\nupdates: u\nrecap: r\nserver: s\n"
         )
-        self.assertEqual(cfg.owner_name, "Zelin")
-        self.assertTrue(cfg.telemetry_enabled)
+        self.assertIsNone(cfg.claude_bin)
+        self.assertTrue(cfg.updates_check_enabled)
+        self.assertTrue(cfg.recap_enabled)
+        self.assertEqual(cfg.recording_ignored_apps, list(config.DEFAULT_IGNORED_APPS))
 
     def test_uncastable_numbers_keep_defaults(self):
         cfg = self._load_with_yaml(
-            "approval:\n"
-            "  poll_interval_seconds: abc\n"
-            "  cost_thresholds:\n"
-            "    show_cost_above_usd: cheap\n"
-            "trash:\n  retention_days: forever\n"
+            "server:\n  port: abc\n"
+            "recording:\n  retention_days: forever\n  media_retention_minutes: soon\n"
         )
-        self.assertEqual(cfg.poll_interval_seconds, 10)
-        self.assertEqual(cfg.show_cost_above_usd, 5.0)
-        self.assertEqual(cfg.trash_retention_days, 60)
-
-    def test_garbage_capture_input_is_not_an_informed_choice(self):
-        cfg = self._load_with_yaml("telemetry:\n  capture_input: banana\n")
-        self.assertFalse(cfg.telemetry_capture_input)         # 保留默认（v0.48 起默认关）
-        self.assertFalse(cfg.telemetry_capture_input_explicit)  # 坏值≠知情
+        self.assertEqual(cfg.server_port, config.DEFAULT_SERVER_PORT)
+        self.assertEqual(cfg.screenpipe_retention_days, 0)
+        self.assertEqual(cfg.screenpipe_media_retention_minutes, 60)
 
 
 if __name__ == "__main__":

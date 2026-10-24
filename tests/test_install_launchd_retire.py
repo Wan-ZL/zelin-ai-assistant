@@ -126,7 +126,7 @@ class LaunchdRetireTestCase(unittest.TestCase):
 
     def test_retire_of_an_absent_label_is_silent(self):
         proc = self._run('launchd_retire com.zelin.aiassistant.radar\n',
-                         "4242\t0\tcom.zelin.aiassistant.actd\n")
+                         "4242\t0\tcom.zelin.aiassistant.server\n")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "")
         self.assertEqual(proc.stderr.strip(), "")
@@ -134,11 +134,11 @@ class LaunchdRetireTestCase(unittest.TestCase):
     def test_orphans_are_prefixed_labels_without_a_template(self):
         (self.la_dir / "com.zelin.aiassistant.oldthing.plist").write_text(
             "<plist/>", encoding="utf-8")
-        (self.la_dir / "com.zelin.aiassistant.actd.plist").write_text(
+        (self.la_dir / "com.zelin.aiassistant.server.plist").write_text(
             "<plist/>", encoding="utf-8")
         proc = self._run(
             'launchd_orphans\n',
-            "4242\t0\tcom.zelin.aiassistant.actd\n"
+            "4242\t0\tcom.zelin.aiassistant.server\n"
             "-\t1\tcom.zelin.aiassistant.imessageradar\n"
             "-\t0\tcom.zelin.storageguard\n"
             "77\t0\tcom.apple.unrelated\n")
@@ -149,7 +149,7 @@ class LaunchdRetireTestCase(unittest.TestCase):
 
     def test_no_orphans_prints_nothing(self):
         proc = self._run('launchd_orphans\n',
-                         "4242\t0\tcom.zelin.aiassistant.actd\n")
+                         "4242\t0\tcom.zelin.aiassistant.server\n")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.strip(), "")
 

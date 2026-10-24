@@ -271,7 +271,7 @@ class ConfigLayerTestCase(unittest.TestCase):
         self.assertEqual(cfg.screenpipe_retention_days, 30)     # 负数 = 坏值，保留原值
         config._apply_recording(cfg, {"recording": {"retention_days": "lots"}})
         self.assertEqual(cfg.screenpipe_retention_days, 30)
-        config._override_scalar(cfg, "screenpipe_retention_days", 14)
+        config._apply_override(cfg, "screenpipe_retention_days", 14)
         self.assertEqual(cfg.screenpipe_retention_days, 14)
         self.assertEqual(ret.retention_days_from_config(cfg), 14)
 

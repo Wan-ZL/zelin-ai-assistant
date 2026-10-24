@@ -9,26 +9,21 @@
   历来写死的 `-mmin +60`；区间 [5, 525600] 的两端各钉一格（区间外 = 坏值，
   不夹取——文件里写着的数必须就是 cron 用的数）；
 - §72 `recording.retention_days`：出厂 0 = 永久保留，一行录制数据都不删；
-- §76.2 `approval.mention_escalation`：出厂 5 = issue #313 原文那个数——被提 4 次
-  不升级，第 5 次才升；
-- §28 通知偏好：出厂 = 本改动前的行为（安静时段关、三类全开）——新装机在夜里
-  3 点也一条通知都不少；
-- §44.6 `fold_receipt_notices`：出厂开，静默并入的回执照投进 dashboard；
-- §70.2 / D74 `daily_loop.review_stale_days`：出厂 14 天——待验收卡闲置 13 天不动，
-  满 14 天才收到「明天归档」那一条。
+- §28 通知偏好：出厂 = 安静时段关——新装机在夜里 3 点也一条通知都不少。
+
+（v2.0.0：§76.2 mention_escalation、§44.6 fold_receipt_notices、§70.2 review_stale_days
+与三把分类开关随 Act 管线退役，全文见 tag full。）
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
-import shutil
 import time
 import unittest
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 
-from act.lib import config, dashboard, fold_receipts, maintenance, notify
+from act.lib import config, notify
 from act.lib import screenpipe_retention
-from act.lib.registry import Requirement, State
 
 TODAY = _dt.date(2026, 9, 15)
 
@@ -87,84 +82,19 @@ class RecordingRetentionDefaultTestCase(unittest.TestCase):
         self.assertEqual(cfg.screenpipe_retention_days, 0)
 
 
-class MentionEscalationDefaultTestCase(unittest.TestCase):
-    """§76.2 被提 N 次仍未处理：出厂阈值 = issue #313 原文的 5。"""
-
-    def _escalated(self, repeated: int) -> bool:
-        req = Requirement.from_dict({"id": "P-023", "title": "改名 Compass",
-                                     "status": State.CARD_SENT.value,
-                                     "repeated_mentions": repeated})
-        dash = dashboard.build_dashboard(reqs=[req], agents=[],
-                                         cfg=config.Config(), archived=[])
-        return dash["needs_approval"][0]["mention_escalated"]
-
-    def test_the_fifth_mention_is_the_one_that_escalates(self):
-        self.assertIs(self._escalated(4), False)
-        self.assertIs(self._escalated(5), True)
-
-
 class FactoryNotificationPreferencesTestCase(unittest.TestCase):
     """§28 追记（issue #29）：出厂值 = 本改动前的行为，一条通知都不少。"""
 
     def test_a_fresh_install_suppresses_nothing_at_any_hour(self):
         cfg = config.Config()
-        kinds = (notify.KIND_PROPOSAL, notify.KIND_NEEDS_INPUT,
-                 notify.KIND_FAILURE, notify.KIND_REVIEW_READY, None)
+        kinds = (notify.KIND_RECAP_READY, notify.KIND_FAILURE, None)
         # 3 点与 23 点都落在**出厂安静窗** 22:00–08:00 里：安静时段出厂是关的，
-        # 所以这两个时刻与正午一样照发；三个分类开关出厂全开，同理。
+        # 所以这两个时刻与正午一样照发。
         for hour in (3, 12, 23):
             for kind in kinds:
                 with self.subTest(hour=hour, kind=kind):
                     self.assertIsNone(
                         notify.suppression_reason(kind, cfg, now=_at(hour)))
-
-    def test_each_category_switch_still_silences_its_own_kind(self):
-        # 出厂开 ≠ 开关不存在：显式关掉的那一类任何时候都不发（判序在安静时段之前）。
-        for attr, kind in (("notify_proposals", notify.KIND_PROPOSAL),
-                           ("notify_needs_input", notify.KIND_NEEDS_INPUT),
-                           ("notify_failures", notify.KIND_FAILURE)):
-            with self.subTest(attr=attr):
-                cfg = config.Config()
-                setattr(cfg, attr, False)
-                self.assertEqual(
-                    notify.suppression_reason(kind, cfg, now=_at(12)), "category")
-
-
-class FoldReceiptNoticesDefaultTestCase(unittest.TestCase):
-    """§44.6 追记（issue #308）：静默并入回执出厂开。"""
-
-    def setUp(self):
-        shutil.rmtree(config.FOLD_RECEIPTS_DIR, ignore_errors=True)
-        self.addCleanup(shutil.rmtree, config.FOLD_RECEIPTS_DIR, True)
-
-    def test_a_fresh_install_projects_the_silent_merge_receipt(self):
-        fold_receipts.record("R-007", "quick", "并进来的一句话")
-        dash = dashboard.build_dashboard(reqs=[], agents=[], cfg=config.Config(),
-                                         archived=[])
-        # 出厂关掉 = 用户永远看不到「刚才的输入已并入 …」那排绿字，而台账照写——
-        # 一条静默的静默，正是 issue #308 要消灭的那件事。
-        self.assertEqual(len(dash["fold_receipts"]), 1)
-
-
-class ReviewStaleDaysDefaultTestCase(unittest.TestCase):
-    """§70.2 追记 / D74（issue #312）：待验收卡的出厂老化天数 = 14。"""
-
-    def _card(self, age: int) -> Requirement:
-        day = (TODAY - _dt.timedelta(days=age)).isoformat()
-        return Requirement(id="P-9", title="draft P-9 with enough length",
-                           status=State.REVIEW.value,
-                           sources=[{"channel": "meeting", "date": day, "quote": "q"}],
-                           execution={"review_at": day + "T09:00:00Z"})
-
-    def _named(self, age: int) -> bool:
-        req = self._card(age)
-        rows = maintenance.review_notice_candidates(config.Config(), today=TODAY,
-                                                    reqs=[req])
-        return [r.id for r in rows] == ["P-9"]
-
-    def test_the_fourteenth_idle_day_is_the_one_that_warns(self):
-        self.assertIs(self._named(13), False)
-        self.assertIs(self._named(14), True)
 
 
 if __name__ == "__main__":   # pragma: no cover

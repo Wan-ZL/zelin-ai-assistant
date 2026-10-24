@@ -2,10 +2,10 @@
 
 钉死 v0.48.1 关掉的 CRITICAL CSRF 洞（V048-AUDIT §5）：跨源浏览器
 simple request（Content-Type: text/plain、无预检）曾经能对 /api/actions
-直发 ``mode:"run"``，被 inbox 落款 via:"web" → actd 按 owner ingress 放行
-→ APPROVED 直跑。四闸（Host / Origin / Content-Type / instance token）
-之后，这条路在 body 被解析**之前**就断——本文件的每个拒绝判例都同时断言
-「零落盘」。
+直发 ``mode:"run"``。四闸（Host / Origin / Content-Type / instance token）
+之后，任何写路由在 body 被解析**之前**就断——本文件的每个拒绝判例都同时断言
+「零落盘」。v2.0.0：/api/actions 与 inbox 随 actd 退役，探针改打仍在的写路由
+``POST /api/recaps/mark``（server 独写 state/recap/marks.json），四闸本身一字未动。
 """
 from __future__ import annotations
 
@@ -21,13 +21,12 @@ from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env
 from tests.test_server_common import (assert_envelope, auth_headers,
-                                      http_request, rewrite_board, seed_scene,
-                                      start_server)
+                                      http_request, start_server)
 
 from server import security
 from server import app as app_mod
 
-HERO = "P-101"     # 主键（§60）
+KEY = "meeting:2026-08-31T1256-zoom"
 
 # Windows 口径（CI 判例，2026-08-31）：st_mode 组/他人位在 Windows 是合成值
 # （可写文件一律 ~0o666），0600 断言只在 POSIX 有意义；权限收回在生产侧也是
@@ -37,23 +36,21 @@ _POSIX = os.name == "posix"
 
 
 def _run_payload() -> bytes:
-    # 审计探针原样：无 actor、直跑 mode——正是要被闸死的那发
-    return json.dumps({"action": "capture", "text": "pwn",
-                       "mode": "run"}).encode("utf-8")
+    # 一发合法的写：过了四闸就会落 marks.json——拒绝判例据此断言「零落盘」
+    return json.dumps({"key": KEY, "mark": "copied"}).encode("utf-8")
 
 
 class _AuthHomeMixin:
     def _boot(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-auth-"))
         _, self.port = start_server(self, self.home)
-        self.inbox = self.home / "state" / "inbox"
+        self.marks = self.home / "state" / "recap" / "marks.json"
 
     def _inbox_files(self):
-        if not self.inbox.is_dir():
-            return set()
-        return {p.name for p in self.inbox.iterdir()}
+        """What the write would have landed (name kept from the v1 inbox probe)."""
+        return {self.marks.name} if self.marks.exists() else set()
 
-    def _post(self, headers: dict, body: bytes = None, path="/api/actions"):
+    def _post(self, headers: dict, body: bytes = None, path="/api/recaps/mark"):
         return http_request(self.port, "POST", path,
                             body=_run_payload() if body is None else body,
                             headers=headers)
@@ -107,7 +104,7 @@ class HostGateTestCase(_AuthHomeMixin, unittest.TestCase):
         self._boot()
 
     def test_rebound_host_rejected_on_get(self):
-        status, _h, data = http_request(self.port, "GET", "/api/board",
+        status, _h, data = http_request(self.port, "GET", "/api/recaps",
                                         headers={"Host": "evil.example"})
         self.assertEqual(status, 403)
         assert_envelope(self, json.loads(data.decode("utf-8")), "FORBIDDEN")
@@ -125,7 +122,7 @@ class HostGateTestCase(_AuthHomeMixin, unittest.TestCase):
                      "[::1]:9999"):
             with self.subTest(host=host):
                 status, _h, _d = http_request(
-                    self.port, "GET", "/api/board", headers={"Host": host})
+                    self.port, "GET", "/api/recaps", headers={"Host": host})
                 self.assertNotEqual(status, 403)
 
 
@@ -152,18 +149,14 @@ class TokenGateTestCase(_AuthHomeMixin, unittest.TestCase):
         self.assertEqual(self._inbox_files(), set())
 
     def test_owner_write_with_origin_and_token_still_works(self):
-        # 同源 + token 的 owner 面必须完好——含 §34 直跑（本面 owner 特权，
-        # 依据 = 四闸鉴权而非裸信 localhost；§49 v0.48.1 拍板）
+        # 同源 + token 的 owner 面必须完好（依据 = 四闸鉴权而非裸信 localhost；§49 v0.48.1 拍板）
         status, _h, data = self._post(auth_headers(self.port))
         self.assertEqual(status, 200)
         obj = json.loads(data.decode("utf-8"))
         self.assertTrue(obj.get("ok"))
-        self.assertEqual(obj.get("via"), "web")
-        files = self._inbox_files()
-        self.assertEqual(len(files), 1)
-        rec = json.loads((self.inbox / next(iter(files))).read_text("utf-8"))
-        self.assertEqual(rec.get("mode"), "run")
-        self.assertEqual(rec.get("via"), "web")
+        self.assertEqual(self._inbox_files(), {"marks.json"})
+        rec = json.loads(self.marks.read_text("utf-8"))
+        self.assertTrue(rec[KEY]["copied_at"])
 
     def test_non_browser_write_without_origin_needs_token_only(self):
         # 无 Origin = 非浏览器客户端（boardctl/curl）：token 即墙。浏览器的
@@ -174,16 +167,16 @@ class TokenGateTestCase(_AuthHomeMixin, unittest.TestCase):
         self.assertEqual(status, 200)
 
     def test_reads_stay_token_light(self):
-        # dashboard.json 缺席 → 404（而非 401/403）：读路径不吃 token 闸
-        status, _h, data = http_request(self.port, "GET", "/api/board")
-        self.assertEqual(status, 404)
-        assert_envelope(self, json.loads(data.decode("utf-8")), "NOT_FOUND")
+        # 读路径不吃 token 闸：没有 token 照样 200（空列表），而非 401/403
+        status, _h, data = http_request(self.port, "GET", "/api/recaps")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data.decode("utf-8"))["recaps"], [])
 
     def test_reveal_route_is_token_gated_too(self):
         headers = auth_headers(self.port)
         del headers[security.TOKEN_HEADER]
         status, _h, _d = self._post(
-            headers, body=json.dumps({"card_id": "R-1"}).encode("utf-8"),
+            headers, body=json.dumps({"target": "config"}).encode("utf-8"),
             path="/api/reveal")
         self.assertEqual(status, 401)
 
@@ -354,7 +347,7 @@ class PreAuthAndCorsTestCase(_AuthHomeMixin, unittest.TestCase):
         # 前读 body，会阻塞到超时；正确行为是**先鉴权**、立刻 403，不碰 body。
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
-            conn.putrequest("POST", "/api/actions", skip_host=True)
+            conn.putrequest("POST", "/api/recaps/mark", skip_host=True)
             conn.putheader("Host", "evil.example")   # Host 闸先拒
             conn.putheader("Content-Type", "application/json")
             conn.putheader("Content-Length", str(10_000_000))
@@ -371,42 +364,26 @@ class PreAuthAndCorsTestCase(_AuthHomeMixin, unittest.TestCase):
         # (b) OPTIONS（未实现方法）绝不回 Access-Control-Allow-* ——本面永不
         # 让跨源页面读任何响应
         status, headers, _body = http_request(
-            self.port, "OPTIONS", "/api/actions",
+            self.port, "OPTIONS", "/api/recaps/mark",
             headers={"Origin": "http://evil.example"})
         joined = " ".join(f"{k}:{v}" for k, v in headers.items()).lower()
         self.assertNotIn("access-control-allow", joined)
         self.assertNotEqual(status, 200)
 
 
-class DeliverableNotInjectedTestCase(unittest.TestCase):
-    """(c) /files/deliverables/* 绝不注入 token——否则 token 会漏进 agent 生成
-    的交付物 HTML（本面最该防的泄露路径）。"""
+class DeliverableRouteRetiredTestCase(unittest.TestCase):
+    """(c) v1 的 /files/deliverables/* 是 token 最该防的泄露路径（agent 生成的交付物 HTML）。
+    v2.0.0 起没有卡片也没有交付物：路由整个不在——404，绝不回落到注入 token 的 index.html。"""
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-auth-dlv-"))
-        dash = seed_scene(self.home, "initial")
-        repo = self.home / "demo-repo"
-        dlv = repo / "deliverables"
-        dlv.mkdir(parents=True)
-        for row in dash["needs_approval"]:
-            if row["id"] == HERO:
-                row["target_repo"] = str(repo)
-        rewrite_board(self.home, dash)
-        # 交付物 HTML 刻意含 __ZAI_TOKEN__ 字样 + <head>——若走注入会被改写
-        (dlv / "out.html").write_text(
-            "<html><head></head><body>__ZAI_TOKEN__</body></html>",
-            encoding="utf-8")
         _, self.port = start_server(self, self.home)
 
-    def test_deliverable_html_carries_no_token(self):
+    def test_deliverable_route_is_gone_and_leaks_no_token(self):
         tok = security.load_or_create_token(self.home)
-        status, _h, body = http_request(
-            self.port, "GET", f"/files/deliverables/{HERO}/out.html")
-        self.assertEqual(status, 200)
-        text = body.decode("utf-8")
-        self.assertNotIn(tok, text)
-        self.assertNotIn("window.__ZAI_TOKEN__=", text)   # 注入片段绝不出现
-        self.assertIn("__ZAI_TOKEN__", text)              # 原文字样原样保留
+        status, _h, body = http_request(self.port, "GET", "/files/deliverables/R-1/out.html")
+        self.assertEqual(status, 404)
+        self.assertNotIn(tok, body.decode("utf-8", errors="replace"))
 
 
 if __name__ == "__main__":

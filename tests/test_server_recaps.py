@@ -1,11 +1,12 @@
 """server/ recap face (CONTRACT §63 / §63.9; §49 routes): GET/PUT
-/api/settings/recap, POST /api/recaps/mark, GET /api/recaps/history and the
-three inbox special forms through POST /api/actions.
+/api/settings/recap, POST /api/recaps/mark and GET /api/recaps/history.
+(The listing and generate / revert routes that replaced the v1 inbox special
+forms live in tests/test_server_recaps_actions.py.)
 
 - settings: effective values layered overrides → config.yaml → default;
-  ``slack_draft_enabled`` is false out of the box; PUT diff-writes the flat
-  keys (equal-to-effective deletes the key, other keys preserved), unknown
-  field / bad value → 400.
+  PUT diff-writes the flat keys (equal-to-effective deletes the key, other keys
+  preserved), unknown field / bad value → 400. v2.0.0: ``slack_draft_enabled``
+  retired with §63.4 — a PUT naming it is an unknown field.
 - marks: the server-owned filing axis (§63.5 追记 2026-09-15, issue #301 —
   the old 「无控制流读它」clause is retired: ``sent_at`` / ``dismissed_at``
   decide the projection budget and the dismissed retention window in
@@ -16,11 +17,6 @@ three inbox special forms through POST /api/actions.
   scalar handles). Read-only (the server never writes a recap file, §63.6),
   fail-open: absent / corrupt / oversize = 200 empty layer, never 500 / 404;
   a bad key is the one 400 — the client never names a path.
-- inbox forms: meeting_key shape, note ≤ 500, partial only ``true``,
-  channel_id shape, ``recap_revert`` version = a real integer ≥ 1, §63.11
-  ``answers`` = 1..12 distinct ``id=value`` strings (a list of strings, because
-  the byte serializer has no nested-object branch); unknown fields 400; files
-  land with ``via: web``.
 Real server on a random port (tests/test_server_common.py); stdlib client.
 """
 import json
@@ -60,12 +56,11 @@ class SettingsTestCase(_Case):
         self.assertEqual(status, 200)
         self.assertEqual(snap["enabled"], True)
         self.assertEqual(snap["default_language"], "auto")
-        self.assertEqual(snap["slack_draft_enabled"], False)
+        self.assertNotIn("slack_draft_enabled", snap)
         self.assertEqual(snap["languages"], ["auto", "zh", "en"])
         # §63.10 只读的第四格：出厂 = 快速五行（面板拿它当形状选择器的初值）
         self.assertEqual(snap["default_shape"], "lines")
         self.assertEqual(snap["source"], {"enabled": "default", "default_language": "default",
-                                          "slack_draft_enabled": "default",
                                           "default_shape": "default"})
 
     def test_config_yaml_layer(self):
@@ -73,8 +68,7 @@ class SettingsTestCase(_Case):
                    "recap:\n  enabled: false\n  default_language: zh\n  default_shape: sections\n"
                    "  slack_draft:\n    enabled: 'true'\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
-        self.assertEqual((snap["enabled"], snap["default_language"], snap["slack_draft_enabled"]),
-                         (False, "zh", True))
+        self.assertEqual((snap["enabled"], snap["default_language"]), (False, "zh"))
         # §63.10：形状也是 config.yaml 层的一格（PUT 不收它——管线没有对应的 overrides 扁平键）
         self.assertEqual(snap["default_shape"], "sections")
         self.assertEqual(set(snap["source"].values()), {"config"})
@@ -83,25 +77,29 @@ class SettingsTestCase(_Case):
         self.assertEqual(snap["default_shape"], "lines")   # 认不出的值回落到出厂形，不 500
         write_text(self.home / "config.yaml", "recap: [not, a, map]\n")
         _s, snap = get_json(self.port, "/api/settings/recap")
-        self.assertEqual(snap["slack_draft_enabled"], False)
+        self.assertEqual((snap["enabled"], snap["default_shape"]), (True, "lines"))
 
     def test_put_diff_writes_and_preserves_other_keys(self):
         write_text(self.home / "state" / "settings_overrides.json",
                    json.dumps({"language": "en", "models_pipeline": "claude-opus-5"}))
         status, snap = put_json(self.port, "/api/settings/recap",
-                                {"slack_draft_enabled": True, "default_language": "EN"})
+                                {"enabled": False, "default_language": "EN"})
         self.assertEqual(status, 200)
-        self.assertEqual((snap["slack_draft_enabled"], snap["default_language"]), (True, "en"))
-        self.assertEqual(snap["source"]["slack_draft_enabled"], "override")
+        self.assertEqual((snap["enabled"], snap["default_language"]), (False, "en"))
+        self.assertEqual(snap["source"]["enabled"], "override")
         ov = self.overrides()
-        self.assertEqual(ov["recap_slack_draft_enabled"], True)
+        self.assertEqual(ov["recap_enabled"], False)
         self.assertEqual(ov["recap_default_language"], "en")
         self.assertEqual((ov["language"], ov["models_pipeline"]), ("en", "claude-opus-5"))
-        # back to the default → the key is deleted, not written as false
-        status, snap = put_json(self.port, "/api/settings/recap", {"slack_draft_enabled": "false"})
-        self.assertEqual(snap["slack_draft_enabled"], False)
-        self.assertNotIn("recap_slack_draft_enabled", self.overrides())
-        self.assertEqual(snap["source"]["slack_draft_enabled"], "default")
+        # back to the default → the key is deleted, not written as true
+        status, snap = put_json(self.port, "/api/settings/recap", {"enabled": "true"})
+        self.assertEqual(snap["enabled"], True)
+        self.assertNotIn("recap_enabled", self.overrides())
+        self.assertEqual(snap["source"]["enabled"], "default")
+        # §63.4 retired: the old knob is an unknown field now
+        status, body = put_json(self.port, "/api/settings/recap", {"slack_draft_enabled": True})
+        self.assertEqual(status, 400)
+        assert_envelope(self, body, "UNKNOWN_FIELD")
 
     def test_bad_override_entry_is_skipped(self):
         write_text(self.home / "state" / "settings_overrides.json",
@@ -293,102 +291,6 @@ class HistoryTestCase(_Case):
         before = path.read_bytes()
         get_json(self.port, "/api/recaps/history?key=" + KEY)
         self.assertEqual(path.read_bytes(), before)
-
-
-class InboxFormsTestCase(_Case):
-    def _files(self):
-        return sorted((self.home / "state" / "inbox").glob("*.json"))
-
-    def test_recap_generate_lands_with_via_web(self):
-        status, body = post_json(self.port, "/api/actions",
-                                 {"action": "recap_generate", "meeting_key": KEY, "note": "fix", "partial": True})
-        self.assertEqual(status, 200)
-        self.assertEqual(body["action"], "recap_generate")
-        rec = json.loads(self._files()[0].read_text(encoding="utf-8"))
-        self.assertEqual(rec["meeting_key"], KEY)
-        self.assertEqual((rec["note"], rec["partial"], rec["via"]), ("fix", True, "web"))
-        self.assertNotIn("channel_id", rec)
-
-    def test_recap_generate_carries_the_intent_answers(self):
-        """§63.11（issue #302）：答案是**字符串列表**（golden `recap_generate-intent` 钉字节形）。"""
-        answers = ["split1=drop", "aud=send"]
-        status, _body = post_json(self.port, "/api/actions",
-                                  {"action": "recap_generate", "meeting_key": KEY,
-                                   "answers": answers})
-        self.assertEqual(status, 200)
-        raw = self._files()[0].read_bytes().decode("utf-8")
-        self.assertIn('"answers" : [\n    "split1=drop",\n    "aud=send"\n  ]', raw)
-        rec = json.loads(raw)
-        self.assertEqual((rec["answers"], rec["via"]), (answers, "web"))
-
-    def test_recap_generate_answers_fail_closed(self):
-        for answers in ([], "split1=drop", [1], ["split1"], ["Split1=drop"], ["aud=send too"],
-                        ["split1=drop", "split1=keep"], ["aud=send"] * 13, [["split1=drop"]],
-                        [{"split1": "drop"}]):
-            with self.subTest(answers=answers):
-                status, body = post_json(self.port, "/api/actions",
-                                         {"action": "recap_generate", "meeting_key": KEY,
-                                          "answers": answers})
-                self.assertEqual(status, 400)
-                assert_envelope(self, body, "INVALID_FIELD")
-        self.assertEqual(self._files(), [])
-
-    def test_recap_slack_draft_lands(self):
-        status, _body = post_json(self.port, "/api/actions",
-                                  {"action": "recap_slack_draft", "meeting_key": KEY, "channel_id": "D0ABCDEF12"})
-        self.assertEqual(status, 200)
-        rec = json.loads(self._files()[0].read_text(encoding="utf-8"))
-        self.assertEqual(rec["channel_id"], "D0ABCDEF12")
-
-    def test_recap_revert_lands_with_an_integer_version(self):
-        """§63.9（issue #300）：第一个带整数值的 inbox 动作——字节形多一支值类型（golden 钉死）。"""
-        status, body = post_json(self.port, "/api/actions",
-                                 {"action": "recap_revert", "meeting_key": KEY, "version": 2})
-        self.assertEqual(status, 200)
-        self.assertEqual(body["action"], "recap_revert")
-        raw = self._files()[0].read_bytes().decode("utf-8")
-        self.assertIn('"version" : 2', raw)          # 裸十进制，不是 "2"
-        rec = json.loads(raw)
-        self.assertEqual((rec["meeting_key"], rec["version"], rec["via"]), (KEY, 2, "web"))
-
-    def test_recap_revert_validation_fails_closed(self):
-        for payload, code in (
-            ({"action": "recap_revert", "meeting_key": KEY}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": 0}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": -1}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": True}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": "2"}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": 2.0}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": 10 ** 9}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": "R-1", "version": 2}, "INVALID_FIELD"),
-            ({"action": "recap_revert", "meeting_key": KEY, "version": 2, "note": "x"}, "UNKNOWN_FIELD"),
-        ):
-            with self.subTest(payload=payload):
-                status, body = post_json(self.port, "/api/actions", payload)
-                self.assertEqual(status, 400)
-                assert_envelope(self, body, code)
-        self.assertEqual(self._files(), [])
-
-    def test_validation_fails_closed(self):
-        cases = (
-            ({"action": "recap_generate"}, "INVALID_FIELD"),
-            ({"action": "recap_generate", "meeting_key": "R-101"}, "INVALID_FIELD"),
-            ({"action": "recap_generate", "meeting_key": KEY, "note": "n" * 501}, "INVALID_FIELD"),
-            ({"action": "recap_generate", "meeting_key": KEY, "note": ""}, "INVALID_FIELD"),
-            ({"action": "recap_generate", "meeting_key": KEY, "partial": False}, "INVALID_FIELD"),
-            ({"action": "recap_generate", "meeting_key": KEY, "channel_id": "C123"}, "UNKNOWN_FIELD"),
-            ({"action": "recap_generate", "meeting_key": KEY, "id": "R-1"}, "UNKNOWN_FIELD"),
-            ({"action": "recap_slack_draft", "meeting_key": KEY}, "INVALID_FIELD"),
-            ({"action": "recap_slack_draft", "meeting_key": KEY, "channel_id": "general"}, "INVALID_FIELD"),
-            ({"action": "recap_slack_draft", "meeting_key": KEY, "channel_id": "C0123456789", "note": "x"},
-             "UNKNOWN_FIELD"),
-        )
-        for payload, code in cases:
-            with self.subTest(payload=payload):
-                status, body = post_json(self.port, "/api/actions", payload)
-                self.assertEqual(status, 400)
-                assert_envelope(self, body, code)
-        self.assertEqual(self._files(), [])
 
 
 if __name__ == "__main__":

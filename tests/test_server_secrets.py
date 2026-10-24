@@ -49,15 +49,17 @@ class _ServerCase(unittest.TestCase):
 
 class SecretsStatusTestCase(_ServerCase):
     def test_status_never_echoes_values(self):
-        write_text(self.secret_path("slack-user-token.txt"), "xoxp-SUPERSECRET\n")
+        write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-SUPERSECRET\n")
         status, obj = get_json(self.port, "/api/secrets")
         self.assertEqual(status, 200)
         self.assertNotIn("SUPERSECRET", json.dumps(obj))
         by_name = {s["name"]: s for s in obj["secrets"]}
-        self.assertTrue(by_name["slack-user-token.txt"]["present"])
-        self.assertFalse(by_name["anthropic-api-key.txt"]["present"])
+        self.assertTrue(by_name["anthropic-api-key.txt"]["present"])
+        self.assertTrue(by_name["anthropic-api-key.txt"]["verifiable"])
         self.assertFalse(by_name["volcano-ark-key.txt"]["verifiable"])
-        self.assertTrue(by_name["gmail-app-password.txt"]["verifiable"])
+        # v2.0.0: the Slack / Gmail rows retired with the radars
+        self.assertNotIn("slack-user-token.txt", by_name)
+        self.assertNotIn("gmail-app-password.txt", by_name)
 
     def test_whitespace_only_file_counts_as_absent(self):
         write_text(self.secret_path("anthropic-api-key.txt"), "\n  \n")
@@ -66,22 +68,17 @@ class SecretsStatusTestCase(_ServerCase):
         self.assertFalse(anth["present"])
 
     def test_legacy_flag_reports_the_older_tiers_without_reading_them_out(self):
-        """add-only ``legacy``（原生「使用旧路径」）：secrets 缺席 + §19 第二 / 三层文件非空 → True；
+        """add-only ``legacy``（原生「使用旧路径」）：secrets 缺席 + §19 第二层文件非空 → True；
         secrets 在 → False（第一层赢）；火山两把无旧路径恒 False；值仍不回显。"""
         fake_home = Path(self.tmp.name) / "user"
         write_text(fake_home / ".config" / "anthropic-key.txt", "sk-ant-LEGACYVALUE\n")
-        write_text(fake_home / "Desktop" / "Keys" / "gmail-app-password.txt", "   \n")   # 空白 = 缺席
-        write_text(fake_home / "vault" / "slack.txt", "xoxp-EXPLICIT\n")
-        write_text(self.home / "config.yaml", "sources:\n  slack_token_path: %s\n" % (fake_home / "vault" / "slack.txt"))
         with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
             _s, obj = get_json(self.port, "/api/secrets")
             by_name = {s["name"]: s for s in obj["secrets"]}
             self.assertEqual({n: s["legacy"] for n, s in by_name.items()},
-                             {"anthropic-api-key.txt": True, "slack-user-token.txt": True,
-                              "gmail-app-password.txt": False, "volcano-speech-key.txt": False,
+                             {"anthropic-api-key.txt": True, "volcano-speech-key.txt": False,
                               "volcano-ark-key.txt": False})
             self.assertNotIn("LEGACYVALUE", json.dumps(obj))
-            self.assertNotIn("EXPLICIT", json.dumps(obj))
             write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-new\n")
             _s, obj = get_json(self.port, "/api/secrets")
             anth = next(s for s in obj["secrets"] if s["name"] == "anthropic-api-key.txt")
@@ -102,11 +99,18 @@ class SecretsPutTestCase(_ServerCase):
             self.assertEqual(stat.S_IMODE(p.parent.stat().st_mode), 0o700)
 
     def test_put_empty_value_deletes_the_file(self):
-        write_text(self.secret_path("slack-user-token.txt"), "xoxp-1\n")
-        status, obj = put_json(self.port, "/api/secrets/slack-user-token.txt", {"value": ""})
+        write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-1\n")
+        status, obj = put_json(self.port, "/api/secrets/anthropic-api-key.txt", {"value": ""})
         self.assertEqual(status, 200)
         self.assertFalse(obj["present"])
-        self.assertFalse(self.secret_path("slack-user-token.txt").exists())
+        self.assertFalse(self.secret_path("anthropic-api-key.txt").exists())
+
+    def test_retired_names_are_404(self):
+        for name in ("slack-user-token.txt", "gmail-app-password.txt"):
+            with self.subTest(name=name):
+                status, _obj = put_json(self.port, "/api/secrets/%s" % name, {"value": "x"})
+                self.assertEqual(status, 404)
+                self.assertFalse(self.secret_path(name).exists())
 
     def test_put_requires_write_gates(self):
         body = json.dumps({"value": "x"}).encode("utf-8")
@@ -147,30 +151,6 @@ class SecretsVerifyTestCase(_ServerCase):
         self.assertEqual(status, 200)
         self.assertEqual(seen, {"kind": "anthropic", "token": "sk-ant-zzz"})
         self.assertEqual(obj, {"ok": True, "network": False, "detail": "key accepted", "extra": {}})
-
-    def test_slack_success_autofills_owner_slack_user_id(self):
-        write_text(self.secret_path("slack-user-token.txt"), "xoxp-1\n")
-        write_text(self.home / "state" / "settings_overrides.json", json.dumps({"language": "en"}))
-        self._patch_prober(lambda kind, token, ctx: (True, "auth.test ok", {"user_id": "U0ZELIN", "user": "zelin"}))
-        _s, obj = post_json(self.port, "/api/secrets/slack-user-token.txt/verify", {})
-        self.assertTrue(obj["ok"])
-        self.assertEqual(obj["extra"]["user_id"], "U0ZELIN")
-        overrides = json.loads((self.home / "state" / "settings_overrides.json").read_text())
-        self.assertEqual(overrides, {"language": "en", "owner_slack_user_id": "U0ZELIN"})
-
-    def test_gmail_probe_gets_the_effective_address(self):
-        write_text(self.secret_path("gmail-app-password.txt"), "abcd efgh\n")
-        write_text(self.home / "config.yaml", "sources:\n  gmail:\n    address: me@gmail.com\n")
-        seen = {}
-
-        def prober(kind, token, ctx):
-            seen.update(ctx)
-            return False, "IMAP LOGIN rejected", {}
-        self._patch_prober(prober)
-        _s, obj = post_json(self.port, "/api/secrets/gmail-app-password.txt/verify", {})
-        self.assertEqual(seen, {"address": "me@gmail.com"})
-        self.assertFalse(obj["ok"])
-        self.assertFalse(obj["network"])
 
     def test_network_failure_is_reported_as_network_not_credential(self):
         write_text(self.secret_path("anthropic-api-key.txt"), "sk-ant-zzz\n")
@@ -215,14 +195,6 @@ class SecretsVerifyTestCase(_ServerCase):
         self.assertEqual(seen, {"kind": "anthropic", "token": "sk-ant-pasted"})
         self.assertFalse(self.secret_path("anthropic-api-key.txt").exists())
 
-    def test_verify_by_value_never_autofills_slack_owner(self):
-        # 还没落盘的 token 探成功也不动 override（落盘后再验才写 owner_slack_user_id）
-        self._patch_prober(lambda kind, token, ctx: (True, "auth.test ok", {"user_id": "U0PASTE"}))
-        status, obj = post_json(self.port, "/api/secrets/slack-user-token.txt/verify", {"value": "xoxp-2"})
-        self.assertEqual(status, 200)
-        self.assertEqual(obj["extra"]["user_id"], "U0PASTE")
-        self.assertFalse((self.home / "state" / "settings_overrides.json").exists())
-
     def test_verify_by_value_rejects_bad_shapes(self):
         for payload in ({"value": 1}, {"value": ""}, {"value": "   \n"}, {"value": "x" * 5000}):
             with self.subTest(payload=str(payload)[:30]):
@@ -243,9 +215,9 @@ class SecretsVerifyTestCase(_ServerCase):
 class NameMirrorTestCase(unittest.TestCase):
     def test_server_names_mirror_act_secrets_and_shell_support(self):
         names = {s["name"] for s in secrets_store.SECRETS}
-        self.assertIn(act_secrets.SLACK_TOKEN_FILE, names)
-        self.assertIn(act_secrets.GMAIL_APP_PASSWORD_FILE, names)
         self.assertIn(act_secrets.ANTHROPIC_API_KEY_FILE, names)
+        self.assertEqual(secrets_store._LEGACY_PATHS["anthropic-api-key.txt"][1],
+                         act_secrets.LEGACY_ANTHROPIC_KEY_PATH)
         swift = (REPO_ROOT / "shell" / "Sources" / "ShellSupport.swift").read_text(encoding="utf-8")
         for const in ("volcanoSpeechFile", "volcanoArkFile"):
             m = re.search(r'static let %s = "([^"]+)"' % const, swift)
@@ -303,62 +275,10 @@ class ProbeImplementationTestCase(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("401", detail)
 
-    def test_slack_ok_returns_identity_and_failure_returns_error_code(self):
-        self._patch_urlopen(lambda req, timeout: self._Resp(200, b'{"ok": true, "user_id": "U1", "user": "z", "team": "t"}'))
-        ok, detail, extra = secrets_store.default_prober("slack", "xoxp-1", {})
-        self.assertTrue(ok)
-        self.assertEqual(extra, {"user_id": "U1", "user": "z", "team": "t"})
-        self._patch_urlopen(lambda req, timeout: self._Resp(200, b'{"ok": false, "error": "invalid_auth"}'))
-        ok, detail, extra = secrets_store.default_prober("slack", "xoxp-1", {})
-        self.assertFalse(ok)
-        self.assertIn("invalid_auth", detail)
-        self.assertEqual(extra, {})
-
     def test_network_layer_failures_become_probe_network_error(self):
         def down(req, timeout):
             raise secrets_store.urllib.error.URLError("dns")
         self._patch_urlopen(down)
         with self.assertRaises(secrets_store.ProbeNetworkError):
             secrets_store.default_prober("anthropic", "k", {})
-        # 非 JSON 响应体不崩：没有 ok 字段 = 没有判决（原生 .failed("no response")），走网络 / 服务层那一支
-        # （§68.3 2026-09-05 追记；三分判决的细则在 tests/test_server_secrets_verify_verdicts.py）
-        self._patch_urlopen(lambda req, timeout: self._Resp(200, b"<html>"))
-        with self.assertRaises(secrets_store.ProbeNetworkError):
-            secrets_store.default_prober("slack", "k", {})
 
-    def test_gmail_probe_paths(self):
-        # 无地址：不出网，直接 ok:false 人话
-        ok, detail, _extra = secrets_store.default_prober("gmail", "pw", {"address": ""})
-        self.assertFalse(ok)
-        self.assertIn("address", detail)
-
-        class FakeImap:
-            instances = []
-
-            def __init__(self, host, port, timeout):
-                self.calls = []
-                FakeImap.instances.append(self)
-
-            def login(self, user, pw):
-                self.calls.append(("login", user))
-                if pw == "wrong":
-                    raise secrets_store.imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Invalid credentials")
-
-            def logout(self):
-                self.calls.append(("logout",))
-        patcher = mock.patch.object(secrets_store.imaplib, "IMAP4_SSL", FakeImap)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        ok, detail, _extra = secrets_store.default_prober("gmail", "good", {"address": "me@gmail.com"})
-        self.assertTrue(ok)
-        self.assertIn("me@gmail.com", detail)
-        self.assertEqual(FakeImap.instances[-1].calls, [("login", "me@gmail.com"), ("logout",)])
-        ok, detail, _extra = secrets_store.default_prober("gmail", "wrong", {"address": "me@gmail.com"})
-        self.assertFalse(ok)
-        self.assertIn("AUTHENTICATIONFAILED", detail)
-
-        def refused(host, port, timeout):
-            raise OSError("connection refused")
-        with mock.patch.object(secrets_store.imaplib, "IMAP4_SSL", refused):
-            with self.assertRaises(secrets_store.ProbeNetworkError):
-                secrets_store.default_prober("gmail", "pw", {"address": "me@gmail.com"})

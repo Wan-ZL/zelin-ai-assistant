@@ -309,7 +309,9 @@ class RouteProofDialectTestCase(unittest.TestCase):
                          "http:PUT %s noauth expect=401" % upload)
 
     def test_media_types_come_from_the_app_table_not_a_hand_copy(self):
-        self.assertEqual(ci.raw_media_types(_ROOT), {_API + "attachments": "image/png"})
+        # v2.0.0: the §10bis image upload retired with the cards — the binary-body
+        # table is empty (the mechanism stays), so nothing is hand-copied here either
+        self.assertEqual(ci.raw_media_types(_ROOT), {})
 
 
 class CommittedInventoryTestCase(unittest.TestCase):

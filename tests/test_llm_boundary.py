@@ -1,20 +1,20 @@
-"""act/llm.py — the single LLM boundary (CONTRACT §59, D22; 防腐十条 #3).
+"""act/llm.py — the single LLM boundary (CONTRACT §59, D22; §78 isolation; 防腐十条 #3).
 
-Pins, per call site, that routing through ``llm.run`` / ``llm.dispatch_argv``
-changed NOTHING while both knobs follow: the argv every headless site hands to
-``subprocess.run`` is its pre-§59 literal plus exactly the two D53 tokens
-``--fallback-model claude-opus-5[1m]`` (binary resolution patched to the bare
-``"claude"`` so the pin reads like the old code), and so are the kwargs
-(timeout / env / neutral cwd / stdin piping). Then flips the pipeline knob
-through ``state/settings_overrides.json`` (the web's write path) and asserts
-every site — separate-process sites read config fresh — gains exactly
-``--model <id>`` right behind ``--output-format text`` and nothing else
-moves. The dispatch knob rides ``executor._bg_base_cmd`` the same way.
+v2.0.0: one headless site is left (the meeting recap, act/recap.py), and every
+argv the boundary builds carries the §78 isolation literally:
 
-D53 (2026-09-07) deliberately re-pinned every literal here: the default
-fallback knob puts ``--fallback-model claude-opus-5[1m]`` right behind the
-model flag on every ``-p`` and ``--bg`` site. ``models_fallback: off`` gives
-the pre-D53 argv back byte for byte (tests/test_llm_fallback_argv.py).
+- ``build_argv`` = ``[claude, -p, <prompt>, --output-format, <fmt>, --model, <id>,
+  (--fallback-model, <id>)?, *ISOLATION_ARGV, *extra_argv]`` — ``--model`` is
+  always explicit (the "follow the Claude Code global default" mode retired with
+  its reader of the owner's settings), the D53 pair sits behind it, and the
+  isolation tuple sits ahead of the variadic tail;
+- ``runner_env`` always sets ``CLAUDE_CONFIG_DIR`` to the app's own claude-config
+  (overriding an inherited value), injects ``ANTHROPIC_API_KEY`` from
+  config/secrets or ~/.config/anthropic-key.txt, sets ``DISABLE_AUTOUPDATER=1``;
+- ``run`` hands the runner ``cwd = config.headless_cwd()`` unless the caller names
+  one, scrubs the prompt, pipes it for ``prompt_via="stdin"``;
+- the knob flips through ``state/settings_overrides.json`` (the web's write path)
+  reach the recap site's argv and nothing else moves.
 
 ``subprocess.run`` is faked (recorder) — no claude is ever spawned (the
 tests/__init__.py guard would refuse anyway). Sandbox AIASSISTANT_HOME.
@@ -29,19 +29,18 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act import
 
-from act import (actd, analyze, ask, executor, golden_eval, llm, merge_review,
-                 radar, radar_gmail, radar_slack, voice_gen, weekly_digest)
-from act.lib import config, quick_capture
+from act import llm, recap
+from act.lib import config, secrets
 
-STATE = str(config.STATE_DIR)
-OPUS = "claude-opus-5"
-# D53: the two tokens every headless launch carries while the fallback knob
-# sits on its default
+OPUS = config.DEFAULT_MODEL_PIPELINE
 FB = ["--fallback-model", config.DEFAULT_MODEL_FALLBACK]
+# §78, spelled literally on purpose (a change here is a law change, not a refactor)
+ISOLATION = ["--bare", "--no-session-persistence", "--setting-sources", "",
+             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
 
 
 class _Recorder:
-    def __init__(self, stdout="[]"):
+    def __init__(self, stdout="ok"):
         self.calls = []
         self.stdout = stdout
 
@@ -61,318 +60,176 @@ class _Sandbox(unittest.TestCase):
         self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
         config.SETTINGS_OVERRIDES_PATH.unlink(missing_ok=True)
         config.CONFIG_PATH.unlink(missing_ok=True)
-        # bare "claude" so the per-site pins read exactly like the pre-§59 code
         patcher = mock.patch("act.lib.config.resolve_claude_bin", return_value="claude")
         patcher.start()
         self.addCleanup(patcher.stop)
-        env_patch = mock.patch("act.llm.runner_env", return_value={"ENV": "x"})
-        env_patch.start()
-        self.addCleanup(env_patch.stop)
 
 
-# --------------------------------------------------------------------------- #
-# knob resolution + argv builders
-# --------------------------------------------------------------------------- #
+class IsolationConstantsTestCase(unittest.TestCase):
+    def test_the_tuple_is_the_law(self):
+        self.assertEqual(llm.ISOLATION_ARGV, tuple(ISOLATION))
+        self.assertEqual(llm.ISOLATION_FLAGS, ("--bare", "--no-session-persistence",
+                                               "--setting-sources", "--strict-mcp-config",
+                                               "--mcp-config"))
+        self.assertEqual(json.loads(llm.ISOLATION_ARGV[-1]), {"mcpServers": {}})
+        self.assertEqual(llm.CONFIG_DIR_ENV, "CLAUDE_CONFIG_DIR")
+
+    def test_the_owner_settings_readers_are_gone(self):
+        for gone in ("dispatch_argv", "NO_MCP_ARGV", "claude_code_settings_path",
+                     "read_claude_code_default_model", "MODE_DISPATCH", "MODEL_FOLLOW"):
+            self.assertFalse(hasattr(llm, gone), gone)
+        self.assertEqual(llm.MODES, ("pipeline",))
+
+
 class ModelForTestCase(_Sandbox):
-    def test_follow_is_none_for_both_knobs(self):
-        cfg = config.Config()
-        self.assertIsNone(llm.model_for("dispatch", cfg))
-        self.assertIsNone(llm.model_for("pipeline", cfg))
+    def test_default_is_explicit(self):
+        self.assertEqual(llm.model_for("pipeline", config.Config()), OPUS)
 
-    def test_explicit_id_comes_back_verbatim(self):
-        cfg = config.Config()
-        cfg.models_dispatch = OPUS
-        self.assertEqual(llm.model_for("dispatch", cfg), OPUS)
-        self.assertIsNone(llm.model_for("pipeline", cfg))
+    def test_explicit_and_legacy_follow_and_garbage(self):
+        self.assertEqual(llm.model_for("pipeline", _cfg(models_pipeline="claude-sonnet-5")),
+                         "claude-sonnet-5")
+        self.assertEqual(llm.model_for("pipeline", _cfg(models_pipeline="follow")), OPUS)
+        self.assertEqual(llm.model_for("pipeline", _cfg(models_pipeline="bad id")), OPUS)
 
-    def test_garbage_degrades_to_follow_never_into_argv(self):
-        cfg = config.Config()
-        cfg.models_pipeline = "has space\nnewline"
-        self.assertIsNone(llm.model_for("pipeline", cfg))
-        self.assertNotIn("--model", llm.build_argv("p", cfg=cfg))
-
-    def test_unknown_mode_is_a_programming_error(self):
-        with self.assertRaises(ValueError):
-            llm.model_for("brain", config.Config())
+    def test_unknown_mode_raises(self):
+        for mode in ("dispatch", "fallback", ""):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                llm.model_for(mode, config.Config())
 
     def test_cfg_none_reads_fresh_config(self):
-        _write_overrides({"models_pipeline": OPUS})
-        self.assertEqual(llm.model_for("pipeline"), OPUS)
-        self.assertIsNone(llm.model_for("dispatch"))
+        _write_overrides({"models_pipeline": "claude-haiku-4-5-20251001"})
+        self.assertEqual(llm.model_for("pipeline"), "claude-haiku-4-5-20251001")
 
 
 class BuildArgvTestCase(_Sandbox):
-    def test_arg_shape_follow(self):
+    def test_shape(self):
         self.assertEqual(llm.build_argv("P", cfg=config.Config()),
-                         ["claude", "-p", "P", "--output-format", "text", *FB])
+                         ["claude", "-p", "P", "--output-format", "text", "--model", OPUS,
+                          *FB, *ISOLATION])
 
-    def test_arg_shape_with_model_sits_behind_output_format(self):
+    def test_extra_tail_rides_behind_the_isolation(self):
+        argv = llm.build_argv("P", extra_argv=("--tools", ""), cfg=config.Config())
+        self.assertEqual(argv[-2:], ["--tools", ""])
+        self.assertEqual(argv[-2 - len(ISOLATION):-2], ISOLATION)
+
+    def test_prompt_placements(self):
         cfg = config.Config()
-        cfg.models_pipeline = OPUS
-        self.assertEqual(
-            llm.build_argv("P", cfg=cfg, extra_argv=["--allowedTools", "X"]),
-            ["claude", "-p", "P", "--output-format", "text", "--model", OPUS, *FB,
-             "--allowedTools", "X"])
-
-    def test_arg_last_keeps_prompt_at_the_end(self):
-        cfg = config.Config()
-        cfg.models_pipeline = OPUS
-        self.assertEqual(llm.build_argv("P", prompt_via="arg_last", cfg=cfg),
-                         ["claude", "-p", "--output-format", "text", "--model", OPUS, *FB, "P"])
-
-    def test_stdin_shape_has_no_prompt_in_argv(self):
-        self.assertEqual(llm.build_argv("P", prompt_via="stdin", cfg=config.Config()),
-                         ["claude", "-p", "--output-format", "text", *FB])
-
-    def test_unknown_prompt_via_rejected(self):
+        last = llm.build_argv("P", prompt_via="arg_last", extra_argv=("--x",), cfg=cfg)
+        self.assertEqual((last[:2], last[-2:]), (["claude", "-p"], ["--x", "P"]))
+        stdin = llm.build_argv("P", prompt_via="stdin", cfg=cfg)
+        self.assertNotIn("P", stdin)
+        self.assertEqual(stdin[:3], ["claude", "-p", "--output-format"])
         with self.assertRaises(ValueError):
-            llm.build_argv("P", prompt_via="magic", cfg=config.Config())
+            llm.build_argv("P", prompt_via="file", cfg=cfg)
 
-    def test_dispatch_argv_follow_and_explicit(self):
-        cfg = config.Config()
-        self.assertEqual(llm.dispatch_argv(cfg),
-                         ["claude", "--bg", "--dangerously-skip-permissions", *FB])
-        cfg.models_dispatch = OPUS
-        self.assertEqual(llm.dispatch_argv(cfg),
-                         ["claude", "--bg", "--dangerously-skip-permissions", "--model", OPUS, *FB])
-        cfg.skip_permissions = False
-        self.assertEqual(llm.dispatch_argv(cfg), ["claude", "--bg", "--model", OPUS, *FB])
+    def test_no_personal_setup_flag_ever_appears(self):
+        argv = llm.build_argv("P", cfg=config.Config())
+        for banned in ("--bg", "--resume", "--dangerously-skip-permissions", "--allowedTools",
+                       "--add-dir", "--settings"):
+            self.assertNotIn(banned, argv)
 
-    def test_pipeline_knob_never_leaks_into_dispatch(self):
-        cfg = config.Config()
-        cfg.models_pipeline = OPUS
-        self.assertNotIn("--model", llm.dispatch_argv(cfg))
-
-    def test_probe_argv(self):
-        self.assertEqual(llm.probe_argv(OPUS, config.Config()),
-                         ["claude", "-p", "ok", "--model", OPUS,
-                          "--output-format", "text", "--max-turns", "1"])
+    def test_probe_argvs_carry_the_isolation(self):
+        self.assertEqual(llm.probe_argv("claude-sonnet-5", config.Config()),
+                         ["claude", "-p", "ok", "--model", "claude-sonnet-5", "--output-format",
+                          "text", "--max-turns", "1", *ISOLATION])
+        self.assertEqual(llm.auth_probe_argv(config.Config()),
+                         ["claude", "-p", llm.AUTH_PROBE_PROMPT, "--max-turns", "1", *ISOLATION])
 
 
-class RunSeamTestCase(_Sandbox):
-    def test_runner_receives_argv_and_legacy_kwargs(self):
+class RunnerEnvTestCase(_Sandbox):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.secrets = Path(tempfile.mkdtemp(prefix="zai-llm-secrets-"))
+        mock.patch.object(secrets, "SECRETS_DIR", self.secrets).start()
+        mock.patch.object(secrets, "LEGACY_ANTHROPIC_KEY_PATH",
+                          str(self.secrets / "absent-legacy.txt")).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_claude_config_dir_is_always_the_apps_own(self):
+        os.environ["CLAUDE_CONFIG_DIR"] = "/Users/someone/.claude"   # inherited from a CC session
+        env = llm.runner_env(config.Config())
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(config.claude_config_dir()))
+        self.assertNotIn(".claude", Path(env["CLAUDE_CONFIG_DIR"]).name)
+        self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
+
+    def test_api_key_from_the_secrets_file(self):
+        (self.secrets / "anthropic-api-key.txt").write_text("sk-ant-file\n", encoding="utf-8")
+        self.assertEqual(llm.runner_env(config.Config())["ANTHROPIC_API_KEY"], "sk-ant-file")
+
+    def test_an_exported_key_wins_and_no_key_is_no_key(self):
+        self.assertNotIn("ANTHROPIC_API_KEY", llm.runner_env(config.Config()))
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-env"
+        (self.secrets / "anthropic-api-key.txt").write_text("sk-ant-file\n", encoding="utf-8")
+        self.assertEqual(llm.runner_env(config.Config())["ANTHROPIC_API_KEY"], "sk-ant-env")
+
+
+class RunTestCase(_Sandbox):
+    def test_kwargs_and_neutral_cwd(self):
         rec = _Recorder()
-        proc = llm.run("P", runner=rec, timeout=42, cwd="/tmp/x", cfg=config.Config())
-        self.assertEqual(proc.returncode, 0)
-        argv, kw = rec.calls[0]
-        self.assertEqual(argv, ["claude", "-p", "P", "--output-format", "text", *FB])
-        self.assertEqual(kw, {"capture_output": True, "text": True, "timeout": 42,
-                              "env": {"ENV": "x"}, "cwd": "/tmp/x"})
+        with mock.patch("act.llm.runner_env", return_value={"ENV": "x"}):
+            llm.run("hello", runner=rec, timeout=7, cfg=config.Config())
+        argv, kwargs = rec.calls[0]
+        self.assertEqual(argv[:3], ["claude", "-p", "hello"])
+        self.assertEqual(kwargs, {"capture_output": True, "text": True, "timeout": 7,
+                                  "env": {"ENV": "x"}, "cwd": config.headless_cwd()})
+        self.assertTrue(Path(kwargs["cwd"]).is_dir())
 
-    def test_stdin_mode_pipes_the_scrubbed_prompt(self):
+    def test_explicit_cwd_and_stdin_piping(self):
         rec = _Recorder()
-        llm.run("key sk-ant-api03-abcdefghijklmnop here", runner=rec, timeout=1,
-                prompt_via="stdin", cfg=config.Config())
-        argv, kw = rec.calls[0]
-        self.assertEqual(argv, ["claude", "-p", "--output-format", "text", *FB])
-        self.assertNotIn("sk-ant-api03", kw["input"])
-        self.assertIn("[脱敏]", kw["input"])
+        llm.run("hello", runner=rec, timeout=1, prompt_via="stdin", cwd="/tmp", cfg=config.Config())
+        argv, kwargs = rec.calls[0]
+        self.assertEqual((kwargs["cwd"], kwargs["input"]), ("/tmp", "hello"))
+        self.assertNotIn("hello", argv)
+
+    def test_the_prompt_is_scrubbed_before_it_leaves(self):
+        rec = _Recorder()
+        llm.run("key sk-ant-api03-abcdefghijklmnop", runner=rec, timeout=1, cfg=config.Config())
+        self.assertNotIn("sk-ant-api03-abcdefghijklmnop", rec.calls[0][0][2])
 
     def test_default_runner_is_subprocess_run_looked_up_at_call_time(self):
         rec = _Recorder()
         with mock.patch("subprocess.run", rec):
-            llm.run("P", timeout=1, cfg=config.Config())
+            llm.run("hi", timeout=1, cfg=config.Config())
         self.assertEqual(len(rec.calls), 1)
 
 
-# --------------------------------------------------------------------------- #
-# per-site pins — argv byte-identical to the pre-§59 literals while following
-# --------------------------------------------------------------------------- #
-class PerSiteUnchangedArgvTestCase(_Sandbox):
-    """Each entry: (site runner, expected argv, expected kwargs besides env).
-    The literals are the pre-§59 shapes plus the D53 ``*FB`` pair right behind
-    ``--output-format text``."""
+class RecapSiteTestCase(_Sandbox):
+    """The one headless site left: act/recap._call_model through the boundary."""
 
-    def _sites(self):
-        return [
-            ("analyze", analyze._default_runner,
-             ["claude", "-p", "P", "--output-format", "text", *FB,
-              "--allowedTools", analyze._EXPAND_ALLOWED_TOOLS],
-             {"timeout": 420}),
-            ("radar_slack.extractor", radar_slack._default_extractor,
-             ["claude", "-p", "--output-format", "text", *FB],
-             {"timeout": 180, "cwd": STATE, "input": "P"}),
-            ("radar_slack.mcp", radar_slack._default_mcp_runner,
-             ["claude", "-p", "P", "--output-format", "text", *FB,
-              "--allowedTools", radar_slack._MCP_ALLOWED_TOOLS],
-             {"timeout": 300}),
-            ("radar_gmail", radar_gmail._default_extractor,
-             ["claude", "-p", "--output-format", "text", *FB],
-             {"timeout": 180, "cwd": STATE, "input": "P"}),
-            ("golden_eval", golden_eval._default_extractor,
-             ["claude", "-p", "--output-format", "text", *FB],
-             {"timeout": 180, "cwd": STATE, "input": "P"}),
-            ("voice_gen", voice_gen._default_runner,
-             ["claude", "-p", "P", "--output-format", "text", *FB,
-              "--allowedTools", voice_gen._MCP_ALLOWED_TOOLS],
-             {"timeout": voice_gen.TIMEOUT_S}),
-            ("ask", ask._default_runner,
-             ["claude", "-p", "P", "--output-format", "text", *FB],
-             {"timeout": ask.ASK_TIMEOUT, "cwd": STATE}),
-            ("merge_review", merge_review._default_runner,
-             ["claude", "-p", "P", "--output-format", "text", *FB],
-             {"timeout": merge_review.CLAUDE_TIMEOUT, "cwd": STATE}),
-            ("weekly_digest", weekly_digest._run_claude,
-             ["claude", "-p", "--output-format", "text", *FB, "P"],
-             {"timeout": 420, "cwd": STATE}),
-            ("quick_capture", quick_capture._default_extractor,
-             ["claude", "-p", "--output-format", "text", *FB, "P"],
-             {"timeout": 300, "cwd": STATE}),
-        ]
-
-    def test_every_site_argv_and_kwargs_unchanged_while_following(self):
-        for name, runner, argv, extra in self._sites():
-            with self.subTest(site=name):
-                rec = _Recorder()
-                with mock.patch("subprocess.run", rec):
-                    runner("P")
-                self.assertEqual(len(rec.calls), 1)
-                got_argv, kw = rec.calls[0]
-                self.assertEqual(got_argv, argv)
-                expected = {"capture_output": True, "text": True, "env": {"ENV": "x"}}
-                expected.update(extra)
-                self.assertEqual(kw, expected)
-
-    def test_radar_extract_argv_unchanged_prompt_last(self):
+    def _call(self, cfg=None):
+        from act.lib import recap_text
         rec = _Recorder()
-        with mock.patch("subprocess.run", rec):
-            radar._run_extract("note body")
-        argv, kw = rec.calls[0]
-        self.assertEqual(argv[:6], ["claude", "-p", "--output-format", "text", *FB])
-        self.assertEqual(len(argv), 7)
-        self.assertIn("note body", argv[-1])          # prompt stays LAST (radar_scrub pin)
-        self.assertEqual(kw["timeout"], 600)
-        self.assertEqual(kw["cwd"], STATE)
+        recap._call_model("PROMPT", rec, cfg if cfg is not None else config.load_config(),
+                          recap_text.NO_EGRESS_ARGV, 30)
+        return rec.calls[0]
 
-    def test_every_site_gains_only_model_flag_when_pipeline_knob_is_explicit(self):
-        _write_overrides({"models_pipeline": OPUS})
-        for name, runner, argv, _extra in self._sites():
-            with self.subTest(site=name):
-                rec = _Recorder()
-                with mock.patch("subprocess.run", rec):
-                    runner("P")
-                got, _kw = rec.calls[0]
-                i = got.index("--output-format")
-                self.assertEqual(got[i:i + 4], ["--output-format", "text", "--model", OPUS])
-                without = got[:i + 2] + got[i + 4:]
-                self.assertEqual(without, argv, "only --model may differ")
+    def test_default_argv_and_kwargs(self):
+        argv, kwargs = self._call()
+        self.assertEqual(argv, ["claude", "-p", "PROMPT", "--output-format", "text",
+                                "--model", OPUS, *FB, *ISOLATION,
+                                "--tools", "", "--strict-mcp-config", "--mcp-config",
+                                '{"mcpServers":{}}'])
+        self.assertEqual(kwargs["cwd"], config.headless_cwd())
+        self.assertEqual(kwargs["env"]["CLAUDE_CONFIG_DIR"], str(config.claude_config_dir()))
 
-    def test_dispatch_knob_does_not_touch_pipeline_sites(self):
-        _write_overrides({"models_dispatch": OPUS})
-        rec = _Recorder()
-        with mock.patch("subprocess.run", rec):
-            ask._default_runner("P")
-        self.assertNotIn("--model", rec.calls[0][0])
+    def test_the_pipeline_knob_flip_moves_only_the_model_id(self):
+        before, _ = self._call()
+        _write_overrides({"models_pipeline": "claude-sonnet-5"})
+        after, _ = self._call()
+        self.assertEqual([a for a in after if a != "claude-sonnet-5"],
+                         [a for a in before if a != OPUS])
+        self.assertIn("claude-sonnet-5", after)
 
 
-class ExecutorDispatchArgvTestCase(_Sandbox):
-    def _launch_argv(self, cfg):
-        captured = {}
-
-        def fake_run(cmd, **kw):
-            captured["cmd"] = list(cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout="backgrounded · abc123ff", stderr="")
-
-        with mock.patch("subprocess.run", fake_run):
-            executor._default_runner("prompt text", Path("/tmp"), name="R-1 · t", cfg=cfg)
-        return captured["cmd"]
-
-    def test_follow_argv_is_the_pre_57_literal_plus_fallback(self):
-        self.assertEqual(self._launch_argv(config.Config()),
-                         ["claude", "--bg", "--dangerously-skip-permissions", *FB,
-                          "--name", "R-1 · t", "prompt text"])
-
-    def test_explicit_dispatch_knob_adds_model_before_fallback_and_name(self):
-        cfg = config.Config()
-        cfg.models_dispatch = OPUS
-        self.assertEqual(self._launch_argv(cfg),
-                         ["claude", "--bg", "--dangerously-skip-permissions",
-                          "--model", OPUS, *FB, "--name", "R-1 · t", "prompt text"])
-
-    def test_bg_base_cmd_is_the_boundary(self):
-        cfg = config.Config()
-        cfg.models_dispatch = OPUS
-        self.assertEqual(executor._bg_base_cmd(cfg), llm.dispatch_argv(cfg))
-
-
-# --------------------------------------------------------------------------- #
-# live pickup: actd refreshes the two knobs on its frozen cfg every pass
-# --------------------------------------------------------------------------- #
-class ActdKnobRefreshTestCase(_Sandbox):
-    def test_refresh_pulls_overrides_onto_frozen_cfg(self):
-        frozen = config.Config()
-        self.assertEqual(frozen.models_dispatch, "follow")
-        _write_overrides({"models_dispatch": OPUS, "models_pipeline": "claude-sonnet-5"})
-        actd._refresh_model_knobs(frozen)
-        self.assertEqual(frozen.models_dispatch, OPUS)
-        self.assertEqual(frozen.models_pipeline, "claude-sonnet-5")
-        # and back to follow once the override key is gone (diff-write delete)
-        _write_overrides({})
-        actd._refresh_model_knobs(frozen)
-        self.assertEqual((frozen.models_dispatch, frozen.models_pipeline), ("follow", "follow"))
-
-    def test_refresh_survives_a_broken_config_loader(self):
-        frozen = config.Config()
-        frozen.models_dispatch = OPUS
-        with mock.patch("act.lib.config.load_config", side_effect=RuntimeError("boom")):
-            actd._refresh_model_knobs(frozen)
-        self.assertEqual(frozen.models_dispatch, OPUS)
-
-
-# --------------------------------------------------------------------------- #
-# Claude Code global default reader (what follow inherits)
-# --------------------------------------------------------------------------- #
-class ClaudeCodeDefaultReaderTestCase(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="llm-cc-")
-        self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name) / "settings.json"
-
-    def test_missing_file(self):
-        self.assertEqual(llm.read_claude_code_default_model(self.path),
-                         {"model": None, "exists": False, "parseable": False})
-
-    def test_unparsable_file(self):
-        self.path.write_text("{not json", encoding="utf-8")
-        self.assertEqual(llm.read_claude_code_default_model(self.path),
-                         {"model": None, "exists": True, "parseable": False})
-
-    def test_model_key_read_and_stripped(self):
-        self.path.write_text(json.dumps({"model": " claude-fable-5-1[1m] ", "theme": "dark"}),
-                             encoding="utf-8")
-        self.assertEqual(llm.read_claude_code_default_model(self.path),
-                         {"model": "claude-fable-5-1[1m]", "exists": True, "parseable": True})
-
-    def test_no_model_key_is_none_but_parseable(self):
-        self.path.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
-        self.assertEqual(llm.read_claude_code_default_model(self.path),
-                         {"model": None, "exists": True, "parseable": True})
-
-    def test_path_lives_under_home(self):
-        self.assertEqual(llm.claude_code_settings_path(),
-                         Path.home() / ".claude" / "settings.json")
-
-
-# --------------------------------------------------------------------------- #
-# runner_env — the one env every claude subprocess inherits (§19 + §55 第五幕)
-# --------------------------------------------------------------------------- #
-class RunnerEnvTestCase(unittest.TestCase):
-    def test_headless_claude_never_self_updates(self):
-        # daemons run the stable daemon copy; install.sh — not Claude Code's own
-        # updater — decides when that file changes (§55 第五幕). Pinned even over
-        # an inherited opt-in, and on a COPY of the environment.
-        with mock.patch.dict(os.environ, {"DISABLE_AUTOUPDATER": "0"}):
-            env = llm.runner_env()
-            self.assertEqual(os.environ["DISABLE_AUTOUPDATER"], "0", "our own environ is untouched")
-        self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
-
-    def test_run_hands_it_to_the_runner(self):
-        # llm.run and the executor's --bg sites all take env=runner_env(); pin
-        # the seam they share rather than each site
-        rec = _Recorder()
-        with mock.patch("act.lib.config.resolve_claude_bin", return_value="claude"):
-            llm.run("hi", runner=rec, timeout=1)
-        self.assertEqual(rec.calls[0][1]["env"].get("DISABLE_AUTOUPDATER"), "1")
+def _cfg(**over):
+    cfg = config.Config()
+    for k, v in over.items():
+        setattr(cfg, k, v)
+    return cfg
 
 
 if __name__ == "__main__":

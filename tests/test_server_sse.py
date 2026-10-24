@@ -1,8 +1,9 @@
-"""GET /api/events（SSE）+ BoardWatcher（§2.1 sse/watcher）。
+"""GET /api/events（SSE）+ RecapWatcher（§49 / §63；server/sse.py + server/watcher.py）。
 
 覆盖：帧格式常量（A5 realtime 的解码判据）、EventHub 满队列静默丢弃、
-watcher mtime 变更→广播 / 文件消失→不广播、端到端：真 server + 真 watcher，
-touch dashboard.json 后客户端在既有连接上收到 ``board.updated``。
+watcher 对 ``state/recap/`` 与 ``state/recap/recaps/`` 的 mtime 变更→广播 / 目录消失→不广播、
+端到端：真 server + 真 watcher，原子写一份纪要文件后客户端在既有连接上收到
+``recaps.updated``（v2.0.0：dashboard.json 与 ``board.updated`` 随 actd 退役）。
 心跳间隔 25s 不做实时等待——只钉常量与注释行格式。
 """
 from __future__ import annotations
@@ -15,12 +16,12 @@ import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
-from tests.test_server_common import (DEMO_SEED_PATH, rewrite_board,
-                                      seed_scene, start_server)
+from tests.test_server_common import start_server
 
 from server.sse import (CONNECTED_FRAME, HEARTBEAT_FRAME, HEARTBEAT_SECONDS,
                         EventHub, format_frame)
-from server.watcher import BoardWatcher
+from server import watcher as watcher_mod
+from server.watcher import RecapWatcher
 
 
 class EventHubTestCase(unittest.TestCase):
@@ -55,72 +56,78 @@ class EventHubTestCase(unittest.TestCase):
         self.assertEqual(q.qsize(), 16)
 
 
-@unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
-class BoardWatcherTestCase(unittest.TestCase):
+def _write_recap(home: Path, name: str = "meeting_2026-09-01T1000-zoom.json") -> None:
+    """Atomic tmp + rename into state/recap/recaps/ — the act.recap writer's shape."""
+    d = home / "state" / "recap" / "recaps"
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / (name + ".tmp")
+    tmp.write_text(json.dumps({"key": "meeting:2026-09-01T1000-zoom", "t": time.time()}),
+                   encoding="utf-8")
+    tmp.replace(d / name)
+
+
+class RecapWatcherTestCase(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-g5-watch-"))
-        self.dash = seed_scene(self.home, "initial")
+        (self.home / "state" / "recap" / "recaps").mkdir(parents=True)
         self.hub = EventHub()
         self.q = self.hub.subscribe()
-        self.watcher = BoardWatcher(self.home, self.hub, interval=0.02)
+        self.watcher = RecapWatcher(self.home, self.hub, interval=0.02)
         self.watcher.start()
         self.addCleanup(self.watcher.stop)
 
+    def test_vocabulary(self):
+        self.assertEqual(watcher_mod.EVENT, "recaps.updated")
+        self.assertIs(watcher_mod.BoardWatcher, RecapWatcher)   # v1 name kept as an alias
+        self.assertEqual(watcher_mod.recap_dirs(self.home),
+                         (self.home / "state" / "recap", self.home / "state" / "recap" / "recaps"))
+
     def test_startup_baseline_emits_nothing(self):
         time.sleep(0.2)
-        self.assertTrue(self.q.empty(),
-                        "watcher must not fire on its startup baseline")
+        self.assertTrue(self.q.empty(), "watcher must not fire on its startup baseline")
 
-    def test_rewrite_publishes_board_updated_with_generated_at(self):
-        self.dash["generated_at"] = "2031-12-31T23:59:59Z"
-        rewrite_board(self.home, self.dash)
+    def test_a_new_recap_file_publishes_recaps_updated(self):
+        time.sleep(0.05)
+        _write_recap(self.home)
         frame = self.q.get(timeout=3)
-        self.assertIn(b"event: board.updated", frame)
+        self.assertIn(b"event: recaps.updated", frame)
         data = json.loads(frame.split(b"data: ")[1].split(b"\n")[0])
-        self.assertEqual(data, {"generated_at": "2031-12-31T23:59:59Z"})
+        self.assertEqual(set(data), {"updated_at"})
 
-    def test_file_disappearing_is_silent_until_it_returns(self):
-        path = self.home / "state" / "dashboard.json"
-        path.unlink()
+    def test_directory_disappearing_is_silent_until_it_returns(self):
+        import shutil
+        shutil.rmtree(self.home / "state" / "recap")
         time.sleep(0.2)
         self.assertTrue(self.q.empty(), "deletion must not broadcast")
-        self.dash["generated_at"] = "2032-01-01T00:00:00Z"
-        rewrite_board(self.home, self.dash)
+        _write_recap(self.home)
         frame = self.q.get(timeout=3)
-        self.assertIn(b"2032-01-01T00:00:00Z", frame)
+        self.assertIn(b"recaps.updated", frame)
 
     def test_stop_is_idempotent(self):
         self.watcher.stop()
         self.watcher.stop()
 
 
-@unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
 class SseEndToEndTestCase(unittest.TestCase):
-    """真 server + 真 watcher（默认 300ms 轮询）：连上 → touch → 收到事件。"""
+    """真 server + 真 watcher（默认 300ms 轮询）：连上 → 写一份纪要 → 收到事件。"""
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-g5-sse-"))
-        self.dash = seed_scene(self.home, "initial")
+        (self.home / "state" / "recap" / "recaps").mkdir(parents=True)
         _, self.port = start_server(self, self.home, start_watcher=True)
 
-    def test_board_updated_arrives_on_dashboard_touch(self):
+    def test_recaps_updated_arrives_on_a_recap_write(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
         self.addCleanup(conn.close)
-        conn.request("GET", "/api/events",
-                     headers={"Accept": "text/event-stream"})
+        conn.request("GET", "/api/events", headers={"Accept": "text/event-stream"})
         resp = conn.getresponse()
         self.assertEqual(resp.status, 200)
-        self.assertTrue(resp.getheader("Content-Type", "")
-                        .startswith("text/event-stream"))
+        self.assertTrue(resp.getheader("Content-Type", "").startswith("text/event-stream"))
         # 连接即到的注释帧（客户端可用作「已连上」信号）
         self.assertEqual(resp.fp.readline(), b": connected\n")
         self.assertEqual(resp.fp.readline(), b"\n")
-
-        marker = "2033-03-03T03:03:03Z"
-        self.dash["generated_at"] = marker
-        rewrite_board(self.home, self.dash)
-
-        # 300ms 轮询 + 线程调度余量：在既有连接上等 board.updated
+        time.sleep(0.05)
+        _write_recap(self.home)
         deadline = time.time() + 10
         lines = []
         got_event = False
@@ -129,13 +136,12 @@ class SseEndToEndTestCase(unittest.TestCase):
             if not line:
                 break
             lines.append(line)
-            if line == b"event: board.updated\n":
+            if line == b"event: recaps.updated\n":
                 got_event = True
             if got_event and line.startswith(b"data: "):
-                data = json.loads(line[len(b"data: "):])
-                self.assertEqual(data, {"generated_at": marker})
+                self.assertIn("updated_at", json.loads(line[len(b"data: "):]))
                 return
-        self.fail(f"no board.updated within deadline; got: {lines!r}")
+        self.fail(f"no recaps.updated within deadline; got: {lines!r}")
 
 
 class _PoisonQueue:
@@ -159,14 +165,13 @@ class _PoisonHub:
         pass
 
 
-@unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
 class MidStreamErrorTestCase(unittest.TestCase):
     """流已开后的非连接类异常：静默断流 + 退订，绝不把 500 envelope
     行写进已开启的 event-stream（app.py _serve_events 的 except Exception）。"""
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-g5-sse-err-"))
-        seed_scene(self.home, "initial")
+        (self.home / "state").mkdir()
         self.httpd, self.port = start_server(self, self.home)
         self.hub = _PoisonHub()
         self.httpd.ctx.hub = self.hub

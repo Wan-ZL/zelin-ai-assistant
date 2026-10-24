@@ -1,5 +1,10 @@
-"""config.yaml ``models:`` + overrides ``models_dispatch`` / ``models_pipeline``
-(CONTRACT §59, D22) — parsing, coercion and the canonical-list warning flag.
+"""config.yaml ``models:`` + overrides ``models_pipeline`` (CONTRACT §59, D22) —
+parsing, coercion and the canonical-list warning flag.
+
+v2.0.0: the ``models.dispatch`` knob retired with the executor and the "follow the
+Claude Code global default" mode retired with the reader of the owner's Claude Code
+settings (§78: the app never reads ~/.claude). A stored ``follow`` (yaml or
+override, any case) reads as the factory pipeline model.
 
 Both files live in the sandbox AIASSISTANT_HOME (tests/__init__.py) and are
 removed after every test so nothing leaks into the other suites.
@@ -10,6 +15,8 @@ import unittest
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
 from act.lib import config
+
+DEFAULT = config.DEFAULT_MODEL_PIPELINE
 
 
 class _Files(unittest.TestCase):
@@ -27,12 +34,12 @@ class _Files(unittest.TestCase):
 
 
 class DefaultsTestCase(_Files):
-    def test_both_knobs_default_to_follow(self):
+    def test_pipeline_defaults_to_the_factory_model(self):
         cfg = config.load_config()
-        self.assertEqual(cfg.models_dispatch, config.MODEL_FOLLOW)
-        self.assertEqual(cfg.models_pipeline, config.MODEL_FOLLOW)
-        self.assertEqual(config.MODEL_FOLLOW, "follow")
-        self.assertEqual(config.MODEL_MODES, ("dispatch", "pipeline"))
+        self.assertEqual(cfg.models_pipeline, DEFAULT)
+        self.assertEqual(DEFAULT, "claude-opus-5")
+        self.assertEqual(config.MODEL_MODES, ("pipeline",))
+        self.assertFalse(hasattr(cfg, "models_dispatch"))
 
     def test_canonical_list_is_the_d22_four(self):
         self.assertEqual(config.CANONICAL_MODELS, (
@@ -41,62 +48,57 @@ class DefaultsTestCase(_Files):
 
 
 class YamlBlockTestCase(_Files):
-    def test_explicit_ids_are_read(self):
-        self._yaml("models:\n  dispatch: claude-opus-5\n  pipeline: claude-sonnet-5\n")
-        cfg = config.load_config()
-        self.assertEqual(cfg.models_dispatch, "claude-opus-5")
-        self.assertEqual(cfg.models_pipeline, "claude-sonnet-5")
+    def test_explicit_id_is_read(self):
+        self._yaml("models:\n  pipeline: claude-sonnet-5\n")
+        self.assertEqual(config.load_config().models_pipeline, "claude-sonnet-5")
 
-    def test_follow_spelled_any_case_and_blank_is_follow(self):
-        self._yaml("models:\n  dispatch: Follow\n  pipeline: ''\n")
-        cfg = config.load_config()
-        self.assertEqual((cfg.models_dispatch, cfg.models_pipeline), ("follow", "follow"))
+    def test_legacy_follow_any_case_and_blank_read_as_the_default(self):
+        for raw in ("Follow", "''", "follow"):
+            with self.subTest(raw=raw):
+                self._yaml("models:\n  pipeline: %s\n" % raw)
+                self.assertEqual(config.load_config().models_pipeline, DEFAULT)
 
     def test_free_text_alias_is_kept_verbatim(self):
-        self._yaml("models:\n  dispatch: 'claude-fable-5-1[1m]'\n")
-        self.assertEqual(config.load_config().models_dispatch, "claude-fable-5-1[1m]")
+        self._yaml("models:\n  pipeline: 'claude-fable-5-1[1m]'\n")
+        self.assertEqual(config.load_config().models_pipeline, "claude-fable-5-1[1m]")
 
-    def test_bad_shape_degrades_to_follow(self):
-        self._yaml("models:\n  dispatch: 'has space'\n  pipeline: 12\n")
-        cfg = config.load_config()
-        self.assertEqual((cfg.models_dispatch, cfg.models_pipeline), ("follow", "follow"))
+    def test_bad_shape_degrades_to_the_default(self):
+        self._yaml("models:\n  pipeline: 12\n")
+        self.assertEqual(config.load_config().models_pipeline, DEFAULT)
+        self._yaml("models:\n  pipeline: 'has space'\n")
+        self.assertEqual(config.load_config().models_pipeline, DEFAULT)
 
     def test_non_mapping_block_is_ignored(self):
-        self._yaml("models: claude-opus-5\n")
-        self.assertEqual(config.load_config().models_dispatch, "follow")
+        self._yaml("models: claude-sonnet-5\n")
+        self.assertEqual(config.load_config().models_pipeline, DEFAULT)
 
 
 class OverridesTestCase(_Files):
-    def test_flat_keys_win_over_yaml(self):
-        self._yaml("models:\n  dispatch: claude-opus-5\n")
-        self._overrides({"models_dispatch": "claude-sonnet-5",
-                         "models_pipeline": "claude-haiku-4-5-20251001"})
-        cfg = config.load_config()
-        self.assertEqual(cfg.models_dispatch, "claude-sonnet-5")
-        self.assertEqual(cfg.models_pipeline, "claude-haiku-4-5-20251001")
+    def test_flat_key_wins_over_yaml(self):
+        self._yaml("models:\n  pipeline: claude-sonnet-5\n")
+        self._overrides({"models_pipeline": "claude-haiku-4-5-20251001"})
+        self.assertEqual(config.load_config().models_pipeline, "claude-haiku-4-5-20251001")
 
-    def test_override_follow_beats_yaml_explicit(self):
-        self._yaml("models:\n  dispatch: claude-opus-5\n")
-        self._overrides({"models_dispatch": "follow"})
-        self.assertEqual(config.load_config().models_dispatch, "follow")
+    def test_override_follow_reads_as_the_default(self):
+        self._yaml("models:\n  pipeline: claude-sonnet-5\n")
+        self._overrides({"models_pipeline": "follow"})
+        self.assertEqual(config.load_config().models_pipeline, DEFAULT)
 
     def test_bad_override_is_skipped_and_yaml_value_stays(self):
-        self._yaml("models:\n  dispatch: claude-opus-5\n")
-        self._overrides({"models_dispatch": "bad value with spaces", "models_pipeline": None})
-        cfg = config.load_config()
-        self.assertEqual(cfg.models_dispatch, "claude-opus-5")
-        self.assertEqual(cfg.models_pipeline, "follow")
+        self._yaml("models:\n  pipeline: claude-sonnet-5\n")
+        self._overrides({"models_pipeline": "bad value with spaces", "models_dispatch": "x"})
+        self.assertEqual(config.load_config().models_pipeline, "claude-sonnet-5")
 
-    def test_keys_are_in_the_allowlist(self):
-        self.assertIs(config._OVERRIDE_FIELDS["models_dispatch"], config.coerce_model)
+    def test_key_is_in_the_allowlist_and_dispatch_is_not(self):
         self.assertIs(config._OVERRIDE_FIELDS["models_pipeline"], config.coerce_model)
+        self.assertNotIn("models_dispatch", config._OVERRIDE_FIELDS)
 
 
 class CoercionTestCase(unittest.TestCase):
     def test_coerce_model_table(self):
-        self.assertEqual(config.coerce_model(None), "follow")
-        self.assertEqual(config.coerce_model(""), "follow")
-        self.assertEqual(config.coerce_model("  FOLLOW "), "follow")
+        self.assertEqual(config.coerce_model(None), DEFAULT)
+        self.assertEqual(config.coerce_model(""), DEFAULT)
+        self.assertEqual(config.coerce_model("  FOLLOW "), DEFAULT)
         self.assertEqual(config.coerce_model(" claude-opus-5 "), "claude-opus-5")
         self.assertEqual(config.coerce_model("claude-fable-5-1[1m]"), "claude-fable-5-1[1m]")
         for bad in ("a b", "x\ny", "-lead", "a" * 65, 5, True, ["x"], "q'uote"):
@@ -104,11 +106,10 @@ class CoercionTestCase(unittest.TestCase):
                 config.coerce_model(bad)
 
     def test_canonical_flag(self):
-        self.assertTrue(config.model_is_canonical("follow"))
         self.assertTrue(config.model_is_canonical(None))
+        self.assertTrue(config.model_is_canonical(""))
         self.assertTrue(config.model_is_canonical("claude-opus-5"))
         self.assertFalse(config.model_is_canonical("claude-fable-5-1[1m]"))
-        self.assertFalse(config.model_is_canonical("claude-opus-5-eap"))
 
 
 if __name__ == "__main__":

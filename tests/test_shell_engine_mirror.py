@@ -14,7 +14,7 @@ mac/Sources 在 D3 下是冻结的行为规范（只读参考），引擎文件�
 - ShellBridge.swift 的 wire 词表与 web/src/shellBridge.ts 的类型逐字互镜（防腐 #10）。
 - §68.13（P4 余量）：NotifyRelay.swift 壳副本只许两处差异（文件头、点击目标
   MainWindowController → ShellWindow.show）；vault-sync-helper / framegrab 的源
-  （shell/Helpers/）与 mac/ 冻结版逐字节相同；ingest / radar_slack 找 helper 时壳先于原生 app。
+  （shell/Helpers/）与 mac/ 冻结版逐字节相同；ingest 找 helper 时壳先于原生 app（radar_slack 的 framegrab 查找 v2.0.0 随雷达退役）。
 """
 import difflib
 import re
@@ -155,9 +155,8 @@ class BundleAndBuildTestCase(unittest.TestCase):
         old = sh.index('"Zelin\'s AI Assistant (old).app"')
         product = sh.index('"Zelin\'s AI Assistant.app"')
         self.assertLess(old, product)
-        from act import radar_slack
-        self.assertEqual([p.parts[-3] for p in radar_slack.FRAMEGRAB_CANDIDATES], ["shell", "mac"])
-        self.assertIn(radar_slack.FRAMEGRAB, radar_slack.FRAMEGRAB_CANDIDATES)
+        # (the radar_slack framegrab lookup retired with the radars in v2.0.0; framegrab
+        # itself leaves the shell bundle with PR-B)
 
     def test_shell_swift_files_respect_the_file_cap(self):
         # 防腐 #1（hygiene gate enforces this too; this is the readable twin）

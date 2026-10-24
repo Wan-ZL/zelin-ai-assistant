@@ -6,7 +6,7 @@ credentials, tool installs) and non-zero only for rows that are actually
 broken. Pinned here:
 
   - bucket order: OK → wired; under --no-launchd the scheduler rows (agent /
-    cron / dashboard / heartbeat / board server families) → unwired, never
+    cron / board server families) → unwired, never
     broken; HUMAN catalog (failure id or row name) → human; other FAIL →
     broken; other WARN → notes;
   - `report_says_no_launchd` keys on the §23 `launchd=skipped` step carrying
@@ -50,22 +50,22 @@ def report(launchd_status="ok", launchd_detail="3 agents loaded", extra=()):
     return {"mode": "non-interactive", "steps": steps}
 
 
-NO_LAUNCHD_REPORT = report("skipped", "--no-launchd: no agent loaded; one actd pass run instead")
+NO_LAUNCHD_REPORT = report("skipped", "--no-launchd: no agent loaded")
 
 
 class BucketTestCase(unittest.TestCase):
     def test_ok_rows_are_wired_whatever_else_they_carry(self):
-        self.assertEqual(fi.bucket_for(row("actd", "ok", "agent_unloaded"), True), fi.WIRED)
+        self.assertEqual(fi.bucket_for(row("server", "ok", "board_server_down"), True), fi.WIRED)
         self.assertEqual(fi.bucket_for(row("anything", "OK"), False), fi.WIRED)
 
     def test_human_catalog_by_failure_id_and_by_name(self):
         self.assertEqual(fi.bucket_for(row("claude CLI", "fail", "claude_cli_missing"), False), fi.HUMAN)
-        self.assertEqual(fi.bucket_for(row("launchd volume access", "fail", "deploy_blind_tcc"), False), fi.HUMAN)
+        self.assertEqual(fi.bucket_for(row("launchd claude", "fail", "claude_blind"), False), fi.HUMAN)
         self.assertEqual(fi.bucket_for(row("anthropic key", "warn"), False), fi.HUMAN)
         self.assertEqual(fi.bucket_for(row("obsidian vault", "warn"), False), fi.HUMAN)
 
     def test_scheduler_rows_are_unwired_only_under_no_launchd(self):
-        agent = row("actd", "fail", "agent_unloaded")
+        agent = row("server", "fail", "board_server_down")
         self.assertEqual(fi.bucket_for(agent, True), fi.UNWIRED)
         self.assertEqual(fi.bucket_for(agent, False), fi.BROKEN)
         cron = row("cron ingest chain", "fail", "cron_missing")
@@ -75,8 +75,8 @@ class BucketTestCase(unittest.TestCase):
         dc = row("daemon claude", "warn")
         self.assertEqual(fi.bucket_for(dc, True), fi.UNWIRED)
         self.assertEqual(fi.bucket_for(dc, False), fi.HUMAN)
-        stale = row("dashboard", "fail", "dashboard_stale")
-        self.assertEqual(fi.bucket_for(stale, True), fi.UNWIRED)
+        board = row("board server", "fail", "board_server_down")
+        self.assertEqual(fi.bucket_for(board, True), fi.UNWIRED)
 
     def test_unknown_fail_is_broken_and_unknown_warn_is_a_note(self):
         self.assertEqual(fi.bucket_for(row("store2", "fail", "store2_refused"), True), fi.BROKEN)
@@ -84,11 +84,11 @@ class BucketTestCase(unittest.TestCase):
 
     def test_bucket_rows_partitions_everything_exactly_once(self):
         rows = [row("a", "ok"), row("claude CLI", "fail", "claude_cli_missing"),
-                row("actd", "fail", "agent_unloaded"), row("store2", "fail"), row("x", "warn")]
+                row("server", "fail", "board_server_down"), row("store2", "fail"), row("x", "warn")]
         buckets = fi.bucket_rows(rows, True)
         self.assertEqual(sum(len(v) for v in buckets.values()), len(rows))
         self.assertEqual([r["name"] for r in buckets[fi.BROKEN]], ["store2"])
-        self.assertEqual([r["name"] for r in buckets[fi.UNWIRED]], ["actd"])
+        self.assertEqual([r["name"] for r in buckets[fi.UNWIRED]], ["server"])
 
 
 class ReportTestCase(unittest.TestCase):
@@ -218,7 +218,7 @@ class SummaryRenderTestCase(unittest.TestCase):
                             system_apps=self.tmp / "no-system-apps")
 
     def test_exit_code_counts_only_broken_rows(self):
-        rows = [row("claude CLI", "fail", "claude_cli_missing"), row("actd", "fail", "agent_unloaded"),
+        rows = [row("claude CLI", "fail", "claude_cli_missing"), row("server", "fail", "board_server_down"),
                 row("anthropic key", "warn"), row("store2", "fail", "store2_refused")]
         s = self._summary(rows, NO_LAUNCHD_REPORT)
         self.assertEqual(s["exit_code"], 1)
@@ -235,7 +235,7 @@ class SummaryRenderTestCase(unittest.TestCase):
 
     def test_render_names_every_bucket_and_ends_with_the_verdict(self):
         rows = [row("config.yaml", "ok"), row("claude CLI", "fail", "claude_cli_missing"),
-                row("actd", "fail", "agent_unloaded"), row("board app version", "warn"), row("store2", "fail")]
+                row("server", "fail", "board_server_down"), row("board app version", "warn"), row("store2", "fail")]
         text = fi.render(self._summary(rows, NO_LAUNCHD_REPORT))
         self.assertIn("wired by the installer (1):\n  config.yaml", text)
         self.assertIn("BROKEN", text)
@@ -243,7 +243,7 @@ class SummaryRenderTestCase(unittest.TestCase):
         self.assertIn("waiting on you", text)
         self.assertIn("[ you] claude CLI", text)
         self.assertIn("not wired in this run (--no-launchd)", text)
-        self.assertIn("[ n/a] actd", text)
+        self.assertIn("[ n/a] server", text)
         self.assertIn("notes (1)", text)
         self.assertIn("[warn] board app version", text)
         self.assertIn("what is left for you, in order:", text)
@@ -254,7 +254,7 @@ class SummaryRenderTestCase(unittest.TestCase):
         # the first CI acceptance run (2026-09-03) exited 0 yet read as three
         # [FAIL] lines — a red status inside an "expected" bucket is not a failure
         # of this machine, so the badge names the class instead
-        fail_row = row("actd", "fail", "agent_unloaded")
+        fail_row = row("server", "fail", "board_server_down")
         self.assertEqual(fi.row_badge(fail_row, fi.UNWIRED), "[ n/a]")
         self.assertEqual(fi.row_badge(row("cron ingest chain", "fail", "cron_missing"), fi.UNWIRED), "[ n/a]")
         self.assertEqual(fi.row_badge(row("claude CLI", "fail", "claude_cli_missing"), fi.HUMAN), "[ you]")

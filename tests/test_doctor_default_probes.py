@@ -20,7 +20,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401
 
 from act.lib import config, platform
-from act.lib.checks import core, environment, launchd, pipeline, services
+from act.lib.checks import core, environment, launchd
 
 _POSIX = os.name == "posix"
 
@@ -74,35 +74,26 @@ class PlistFileFaceTestCase(_FakeHome):
         (d / (label + ".plist")).write_text(text, encoding="utf-8")
 
     def test_installed_plist_text_and_labels(self):
-        self.assertIsNone(core.installed_plist_text(core.ACTD_LABEL))
+        self.assertIsNone(core.installed_plist_text(core.SERVER_LABEL))
         self.assertEqual(launchd.installed_agent_labels(), [])
-        self._plist(core.ACTD_LABEL, "<plist/>")
+        self._plist(core.SERVER_LABEL, "<plist/>")
         self._plist("com.other.thing", "<plist/>")
-        self.assertEqual(core.installed_plist_text(core.ACTD_LABEL), "<plist/>")
-        self.assertEqual(launchd.installed_agent_labels(), [core.ACTD_LABEL])
+        self.assertEqual(core.installed_plist_text(core.SERVER_LABEL), "<plist/>")
+        self.assertEqual(launchd.installed_agent_labels(), [core.SERVER_LABEL])
+
+    def test_daemon_path_env_off_darwin_is_none(self):
+        # v2.0.0 is macOS-only: the Linux systemd / Windows task readers retired
+        for plat in ("linux", "win32"):
+            with mock.patch("sys.platform", plat):
+                self.assertIsNone(environment.installed_daemon_path_env())
 
     def test_daemon_path_env_darwin(self):
         with mock.patch("sys.platform", "darwin"):
-            self.assertIsNone(environment.installed_actd_path_env())
-            self._plist(core.ACTD_LABEL, "<key>PATH</key>\n<string>/a:/b</string>")
-            self.assertEqual(environment.installed_actd_path_env(), "/a:/b")
-            self._plist(core.ACTD_LABEL, "<key>Other</key><string>x</string>")
-            self.assertIsNone(environment.installed_actd_path_env())
-
-    def test_daemon_path_env_linux_last_wins(self):
-        with mock.patch("sys.platform", "linux"):
-            self.assertIsNone(environment.installed_actd_path_env())
-            unit = self.home / ".config" / "systemd" / "user" / core.ACTD_UNIT
-            unit.parent.mkdir(parents=True)
-            unit.write_text("[Service]\nEnvironment=PATH=/first\n  Environment=PATH=/second \n",
-                            encoding="utf-8")
-            self.assertEqual(environment.installed_actd_path_env(), "/second")
-            unit.write_text("[Service]\nExecStart=x\n", encoding="utf-8")
-            self.assertIsNone(environment.installed_actd_path_env())
-
-    def test_daemon_path_env_windows_is_none(self):
-        with mock.patch("sys.platform", "win32"):
-            self.assertIsNone(environment.installed_actd_path_env())
+            self.assertIsNone(environment.installed_daemon_path_env())
+            self._plist(core.SERVER_LABEL, "<key>PATH</key>\n<string>/a:/b</string>")
+            self.assertEqual(environment.installed_daemon_path_env(), "/a:/b")
+            self._plist(core.SERVER_LABEL, "<key>Other</key><string>x</string>")
+            self.assertIsNone(environment.installed_daemon_path_env())
 
 
 class LaunchdLogFaceTestCase(_FakeHome):
@@ -142,42 +133,6 @@ class LoginShellClaudeTestCase(unittest.TestCase):
         self.assertEqual(runner.call_args.args[0][0], "/bin/zsh")
 
 
-class PidAliveTestCase(unittest.TestCase):
-    @unittest.skipUnless(_POSIX, "os.kill(pid, 0) liveness is POSIX")
-    def test_own_pid_is_alive(self):
-        self.assertTrue(pipeline.pid_alive(os.getpid()))
-
-    @unittest.skipUnless(_POSIX, "os.kill(pid, 0) liveness is POSIX")
-    def test_kill_outcomes(self):
-        with mock.patch.object(os, "kill", side_effect=ProcessLookupError()):
-            self.assertFalse(pipeline.pid_alive(4242))
-        with mock.patch.object(os, "kill", side_effect=PermissionError()):
-            self.assertTrue(pipeline.pid_alive(1))
-        with mock.patch.object(os, "kill", side_effect=OSError("odd")):
-            self.assertIsNone(pipeline.pid_alive(1))
-        self.assertIsNone(pipeline.pid_alive("not-a-pid"))
-
-    def test_windows_never_probes(self):
-        with mock.patch("sys.platform", "win32"), \
-                mock.patch.object(os, "kill", side_effect=AssertionError("must not kill")):
-            self.assertIsNone(pipeline.pid_alive(os.getpid()))
-
-    def test_restart_command_per_os(self):
-        with mock.patch("sys.platform", "darwin"):
-            self.assertIn("kickstart", pipeline.actd_restart_cmd())
-        with mock.patch("sys.platform", "win32"):
-            self.assertIn("schtasks", pipeline.actd_restart_cmd())
-        with mock.patch("sys.platform", "linux"):
-            self.assertIn("systemctl", pipeline.actd_restart_cmd())
-
-    def test_heartbeat_pid_shape(self):
-        self.assertIsNone(pipeline._heartbeat_pid(None))
-        self.assertIsNone(pipeline._heartbeat_pid({"pid": True}))
-        self.assertIsNone(pipeline._heartbeat_pid({"pid": 0}))
-        self.assertIsNone(pipeline._heartbeat_pid({"pid": "7"}))
-        self.assertEqual(pipeline._heartbeat_pid({"pid": 7}), 7)
-
-
 class PinnedInterpreterTestCase(unittest.TestCase):
     def setUp(self):
         self.rj = config.HOME / "config" / "runtime.json"
@@ -201,28 +156,13 @@ class PinnedInterpreterTestCase(unittest.TestCase):
 class TemplateDerivationTestCase(unittest.TestCase):
     """Expected labels / units / tasks derive from the template dirs under HOME."""
 
-    def test_systemd_units_from_templates(self):
-        d = config.HOME / "act" / "systemd"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "zelin-actd.service").write_text("", encoding="utf-8")
-        (d / "zelin-radar.timer").write_text("", encoding="utf-8")
-        self.addCleanup(lambda: [p.unlink() for p in d.glob("*")])
-        self.assertEqual(services.systemd_units(), ["zelin-actd.service", "zelin-radar.timer"])
-
-    def test_scheduled_tasks_from_templates(self):
-        d = config.HOME / "act" / "tasksched"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "actd.xml").write_text("", encoding="utf-8")
-        self.addCleanup(lambda: [p.unlink() for p in d.glob("*")])
-        self.assertEqual(services.scheduled_tasks(), [core.ACTD_TASK])
-
     def test_templated_labels_from_plists(self):
         d = config.HOME / "act" / "launchd"
         d.mkdir(parents=True, exist_ok=True)
-        (d / (core.ACTD_LABEL + ".plist")).write_text("", encoding="utf-8")
+        (d / (core.SERVER_LABEL + ".plist")).write_text("", encoding="utf-8")
         self.addCleanup(lambda: [p.unlink() for p in d.glob("*")])
         probes = mock.Mock(launchd_labels=None)
-        self.assertEqual(core.templated_labels(probes), [core.ACTD_LABEL])
+        self.assertEqual(core.templated_labels(probes), [core.SERVER_LABEL])
         self.assertEqual(core.templated_labels(mock.Mock(launchd_labels=["x"])), ["x"])
 
 
@@ -240,7 +180,7 @@ class MiscHelpersTestCase(unittest.TestCase):
         with mock.patch("sys.platform", "darwin"):
             self.assertEqual(core.installer(), "install.sh")
         with mock.patch("sys.platform", "linux"):
-            self.assertEqual(core.installer(), "install-linux.sh")
+            self.assertEqual(core.installer(), "install.sh")   # v2.0.0: one installer
 
     def test_row_from_attaches_failure(self):
         res = core.row_from({"status": "fail", "detail": "d", "failure_id": "cron_missing"}, "n")

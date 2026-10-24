@@ -6,7 +6,7 @@
   正文与 act/lib/failures.py plain_zh / plain_en 逐字一致（单源，不复制第二份）；
 - §66 清单里每个 ``notification:<kind>`` 都登记在 ``kinds``，每条 gated 的
   ``control:notifications:*`` 都能在 ``shell_notices`` 里找到同一对 zh / en；
-- 守护进程真写的 kind（act/recap NOTIFY_KIND、NotifyRelay 过滤的 review_ready）在词表里；
+- 写方真写的 kind（act/recap NOTIFY_KIND、act/lib/notify.KINDS）在词表里，退役的卡片类不在；
 - 路由：token-light GET、no-store、body == catalog()、不需要 dashboard。
 """
 from __future__ import annotations
@@ -29,6 +29,9 @@ _UI_DIR = str(REPO_ROOT / "scripts" / "ui")
 if _UI_DIR not in sys.path:
     sys.path.insert(0, _UI_DIR)
 import ui_common as uc  # noqa: E402
+
+# 随 Act 管线退役的卡片生命周期 kind（v2.0.0，全文见 tag full）。
+RETIRED_KINDS = frozenset({"review_ready", "proposal", "needs_input", "receipt", "review_stale"})
 
 
 def _shell_l_pairs() -> list:
@@ -84,8 +87,11 @@ class ShellMirrorTestCase(unittest.TestCase):
     def test_inventory_kinds_and_notice_controls_are_all_registered(self):
         names = nc.kind_names()
         for item in self.inventory["notifications"]:
+            kind = item["kind"] or "general"
+            if kind in RETIRED_KINDS:   # v2.0.0：卡片生命周期类随 Act 退役（宪法第 10 条）
+                continue
             with self.subTest(item=item["id"]):
-                self.assertIn(item["kind"] or "general", names)
+                self.assertIn(kind, names)
         gated = [c for c in self.inventory["controls"] if c["screen"] == "notifications" and c.get("gated")]
         self.assertGreaterEqual(len(gated), 5)   # 三句录制通知的 title + 汇总句的 title / body
         for control in gated:
@@ -117,16 +123,13 @@ class ShellMirrorTestCase(unittest.TestCase):
     def test_daemon_written_kinds_are_in_the_vocabulary(self):
         names = nc.kind_names()
         self.assertIn(recap.NOTIFY_KIND, names)
-        self.assertIn("review_ready", names)
         self.assertIn("general", names)
-        review = next(k for k in nc.KINDS if k["kind"] == "review_ready")
-        self.assertEqual(review["preference"], "review_notify")   # §28 v0.46 三档偏好键
-        # §28 追记（issue #29）：写方打的三个分类 kind 各自登记着它的偏好键，
-        # 且与 act/lib/notify.CATEGORY_PREFERENCE 逐字一致（壳不读目录，目录是规格）。
-        for kind, preference in notify.CATEGORY_PREFERENCE.items():
+        # v2.0.0（宪法第 10 条）：写方的 kind 词表就是 act/lib/notify.KINDS，目录逐个登记，
+        # 退役的卡片类一个都不许留在词表里。
+        for kind in notify.KINDS:
             with self.subTest(kind=kind):
-                entry = next(k for k in nc.KINDS if k["kind"] == kind)
-                self.assertEqual(entry["preference"], preference)
+                self.assertIn(kind, names)
+        self.assertFalse(RETIRED_KINDS & set(names))
 
     def test_template_helpers(self):
         self.assertEqual(nc.fragments("还有 {n} 条通知"), ["还有 ", " 条通知"])
@@ -170,9 +173,9 @@ class CatalogRouteTestCase(unittest.TestCase):
         status, headers, data = http_request(self.port, "GET", "/api/notifications")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Cache-Control"), "no-store")
-        self.assertIn(b'"kind": "review_ready"', data)
+        self.assertIn(b'"kind": "recap_ready"', data)
 
-    def test_body_equals_catalog_without_a_dashboard(self):
+    def test_body_equals_catalog(self):
         status, obj = get_json(self.port, "/api/notifications")
         self.assertEqual(status, 200)
         self.assertEqual(obj, nc.catalog())

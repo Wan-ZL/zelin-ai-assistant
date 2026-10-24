@@ -208,12 +208,12 @@ class PruneTestCase(StoreCase):
 # 设置：地板与 fail-open / fail-closed 的缺省
 # --------------------------------------------------------------------------- #
 class SettingsTestCase(StoreCase):
-    def test_a_config_object_without_the_recap_keys_is_on_with_the_draft_off(self):
-        """老配置 / 鸭子类型的 cfg 缺这两个键时：纪要默认**开**（少一份纪要是损失），
-        Slack 草稿默认**关**（那是唯一一条会出门的路，§63.4 owner 决策）。"""
+    def test_a_config_object_without_the_recap_keys_is_on(self):
+        """老配置 / 鸭子类型的 cfg 缺这些键时：纪要默认**开**（少一份纪要是损失）。
+        （§63.4 Slack 草稿 v2.0.0 退役，那把默认关的开关随之不在。）"""
         st = store.settings(types.SimpleNamespace(raw={}))
         self.assertIs(st["enabled"], True)
-        self.assertIs(st["slack_draft_enabled"], False)
+        self.assertNotIn("slack_draft_enabled", st)
         self.assertEqual(st["default_shape"], text.DEFAULT_SHAPE)
 
     def test_every_cap_has_a_floor_of_one(self):
@@ -318,7 +318,7 @@ class InboxArgvTestCase(StoreCase):
     def _argv(self, **decision):
         base = {"action": "recap_generate", "meeting_key": _key(T)}
         base.update(decision)
-        return store.inbox_argv(base)
+        return store.request_argv(base)
 
     def test_a_note_of_exactly_five_hundred_characters_still_goes_through(self):
         """帽是 500 字符**含**——正好 500 的备注照发，501 才是畸形（整条 noop）。"""
@@ -328,11 +328,11 @@ class InboxArgvTestCase(StoreCase):
     def test_the_first_version_is_a_revertible_target_and_zero_is_not(self):
         """`recap_revert` 的 version 必须是 ≥ 1 的真整数：1 是合法目标（第一版），
         0 / 负数 / bool 都是畸形（wire 上 `true` 真出现过）。"""
-        self.assertEqual(store.inbox_argv({"action": "recap_revert", "meeting_key": _key(T),
+        self.assertEqual(store.request_argv({"action": "recap_revert", "meeting_key": _key(T),
                                            "version": 1}),
                          ["--revert", _key(T), "--to-version", "1"])
         for bad in (0, -1, True, "1"):
-            self.assertIsNone(store.inbox_argv({"action": "recap_revert", "meeting_key": _key(T),
+            self.assertIsNone(store.request_argv({"action": "recap_revert", "meeting_key": _key(T),
                                                 "version": bad}))
 
 

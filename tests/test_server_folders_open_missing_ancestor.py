@@ -5,7 +5,8 @@ parity gap pages-shell-nav-reveal-vault-missing-no-parent-fallback）。
 此前 server 对不是目录的落点回 404，依赖检查快速行的「显示」在 vault 还没建时是死路。自本条起：
 落点不是目录 → 打开**最近的既有祖先**、回执 add-only ``opened`` + ``missing: true``；落点在 → 回执照旧、
 两键不出现（老客户端零改动）；连根都不在才 404。落点本身由 ``open_target`` 决定（``obsidian_raw`` = vault 根，
-§68.1 追记 (d)；其它键 = 存值），本文件用 ``default_target_repo`` 钉通用规则、用 ``obsidian_raw`` 钉两条规则的合成。
+§68.1 追记 (d)）。v2.0.0：``default_target_repo`` 随 executor 退役，``obsidian_raw`` 是目录词表里唯一的键，通用规则
+与合成规则都用它钉（存值 ``<根>/2 - raw``，落点 = 根）。
 opener 注入，绝不真 open。
 """
 import json
@@ -39,13 +40,17 @@ class OpenMissingFolderTestCase(unittest.TestCase):
     def _overrides(self, **kv):
         write_text(self.home / "state" / "settings_overrides.json", json.dumps(kv))
 
-    def _open(self, key="default_target_repo"):
+    def _vault(self, root):
+        """存 ``<root>/2 - raw``——落点是 ``root``（vault 根）。"""
+        self._overrides(obsidian_raw=str(Path(root) / "2 - raw"))
+
+    def _open(self, key="obsidian_raw"):
         return folders.open_folder(self.home, {"key": key}, opener=self.opened.append, platform="darwin")
 
     def test_existing_folder_receipt_has_no_missing_keys(self):
         target = Path(self.tmp.name) / "work" / "bench"
         target.mkdir(parents=True)
-        self._overrides(default_target_repo=str(target))
+        self._vault(target)
         out = self._open()
         self.assertEqual(self.opened, [target])
         self.assertNotIn("missing", out)
@@ -55,10 +60,10 @@ class OpenMissingFolderTestCase(unittest.TestCase):
         work = Path(self.tmp.name) / "work"
         work.mkdir()
         target = work / "bench"
-        self._overrides(default_target_repo=str(target))
+        self._vault(target)
         out = self._open()
         self.assertEqual(self.opened, [work])
-        self.assertEqual(out, {"ok": True, "key": "default_target_repo", "path": str(target),
+        self.assertEqual(out, {"ok": True, "key": "obsidian_raw", "path": str(target),
                                "opened": str(work), "missing": True})
 
     def test_whole_missing_tree_climbs_to_the_nearest_existing_ancestor(self):
@@ -66,13 +71,13 @@ class OpenMissingFolderTestCase(unittest.TestCase):
         root = Path(self.tmp.name) / "docs"
         root.mkdir()
         target = root / "projects" / "bench"
-        self._overrides(default_target_repo=str(target))
+        self._vault(target)
         out = self._open()
         self.assertEqual(self.opened, [root])
         self.assertEqual((out["opened"], out["missing"]), (str(root), True))
 
     def test_tilde_path_is_expanded_before_climbing(self):
-        self._overrides(default_target_repo="~/Work/bench")
+        self._overrides(obsidian_raw="~/Work/bench/2 - raw")
         out = self._open()
         self.assertEqual(self.opened, [Path.home()])
         self.assertTrue(out["missing"])
@@ -80,7 +85,7 @@ class OpenMissingFolderTestCase(unittest.TestCase):
     def test_file_at_the_path_counts_as_not_a_directory(self):
         stray = Path(self.tmp.name) / "bench-file"
         write_text(stray, "not a folder\n")
-        self._overrides(default_target_repo=str(stray))
+        self._vault(stray)
         out = self._open()
         self.assertEqual(self.opened, [stray.parent])
         self.assertTrue(out["missing"])
@@ -106,7 +111,7 @@ class OpenMissingFolderTestCase(unittest.TestCase):
 
     def test_relative_stored_path_is_still_404_not_the_server_cwd(self):
         # 设置字段没有绝对路径校验，config.yaml 也能存相对值；绝不 /usr/bin/open . 然后说「已打开上级目录」
-        self._overrides(default_target_repo="Obsidian Vault/2 - raw")
+        self._overrides(obsidian_raw="Projects/Obsidian Vault/2 - raw")
         with self.assertRaises(NotFoundError):
             self._open()
         self.assertEqual(self.opened, [])

@@ -1,12 +1,12 @@
-"""act/lib/logcap.py — 常驻守护进程日志的自压缩（registry 台账同款 1MB 模式）。
+"""act/lib/logcap.py — append-only 日志的自压缩（1MB 模式，防腐 #4）。
 
-live 事故（2026-08）：syncd.log 涨到 74MB——actd/syncd 是 KeepAlive 常驻进程，
-进程内 _log() 逐行 append、从不轮转。钉住的契约：
+live 事故（2026-08）：v1 的 syncd.log 涨到 74MB——进程内 _log() 逐行 append、从不轮转。
+v2.0.0 的唯一调用方是 act/recap.py 的 state/recap.log。钉住的契约：
 
 - 不超限的文件一字不动（幂等，无谓 rewrite 会翻 mtime）；
 - 超限后只保留最近半数行（尾部 = 最新），atomic tmp+replace；
-- 文件不存在 / IO 失败绝不 raise（日志护理绝不反噬 daemon 本体）；
-- actd._log / syncd._log 的接线真的触发压缩。
+- 文件不存在 / IO 失败绝不 raise（日志护理绝不反噬调用方）；
+- recap._log 的接线真的触发压缩。
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
@@ -14,8 +14,8 @@ import unittest
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import actd, syncd
-from act.lib import config, logcap
+from act import recap
+from act.lib import config, logcap, recap_store
 
 
 def _big_log(path, n_lines=12_000, width=100):
@@ -68,25 +68,19 @@ class CapTestCase(unittest.TestCase):
         self.assertIn("TAIL-SENTINEL", out)               # 尾部（最新）保留
 
 
-class DaemonWiringTestCase(unittest.TestCase):
-    """actd._log / syncd._log append 后自压缩真的触发（接线判例）。"""
+class RecapWiringTestCase(unittest.TestCase):
+    """recap._log append 后自压缩真的触发（接线判例；v1 的 actd / syncd 接线随 Act 退役）。"""
 
-    def _run(self, log_fn, name):
-        path = config.STATE_DIR / name
+    def test_recap_log_self_compacts(self):
+        path = recap_store.log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
         self.addCleanup(lambda: path.unlink(missing_ok=True))
         _big_log(path)
         self.assertGreater(path.stat().st_size, logcap.MAX_BYTES)
-        log_fn("one more line after the cap")
+        recap._log("one more line after the cap")
         self.assertLess(path.stat().st_size, logcap.MAX_BYTES)
         tail = path.read_text(encoding="utf-8").splitlines()[-1]
         self.assertIn("one more line after the cap", tail)  # 新行幸存在尾部
-
-    def test_actd_log_self_compacts(self):
-        self._run(actd._log, "actd.log")
-
-    def test_syncd_log_self_compacts(self):
-        self._run(syncd._log, "syncd.log")
-
 
 if __name__ == "__main__":
     unittest.main()

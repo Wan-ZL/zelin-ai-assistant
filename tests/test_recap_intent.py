@@ -170,16 +170,15 @@ class AnswersTestCase(unittest.TestCase):
         self.assertTrue(ri.drops_prior(["prior=drop"]))
         self.assertFalse(ri.drops_prior(["prior=compare"]))
 
-    def test_the_wire_shape_is_a_list_of_strings_because_the_serializer_says_so(self):
-        """inbox 的字节序列化器只认 null / bool / 整数 / 字符串 / 列表——dict 当场 TypeError。
+    def test_the_wire_shape_is_a_list_of_strings(self):
+        """`answers` 是 `["split1=drop"]` 而不是 `{"split1": "drop"}`。
 
-        `answers` 因此是 `["split1=drop"]` 而不是 `{"split1": "drop"}`：37 份 golden 的
-        Mac 字节形里一处嵌套对象都没有，换 dict 要连带重钉全部 golden。"""
-        from server import inbox_writer
-        self.assertEqual(inbox_writer._dump_value(["split1=drop"], 2),
-                         '[\n    "split1=drop"\n  ]')
-        with self.assertRaises(TypeError):
-            inbox_writer._dump_value({"split1": "drop"}, 2)
+        v1 的 inbox 字节序列化器不认嵌套对象，这一形由此而来；v2.0.0 起请求走
+        ``POST /api/recaps/generate``（server/recaps.py），照收同一形——web 一个字不用改，
+        dict 形在 server 的形状闸上就是 400。"""
+        from server import recaps as server_recaps
+        self.assertFalse(server_recaps._bad_answers(["split1=drop"]))
+        self.assertTrue(server_recaps._bad_answers({"split1": "drop"}))
 
 
 class PromptTestCase(unittest.TestCase):
@@ -363,16 +362,16 @@ class GenerationTestCase(unittest.TestCase):
 
     def test_the_inbox_form_carries_the_answers_to_the_cli(self):
         base = {"action": "recap_generate", "meeting_key": KEY}
-        self.assertEqual(store.inbox_argv(dict(base, answers=["split1=drop", "aud=send"])),
+        self.assertEqual(store.request_argv(dict(base, answers=["split1=drop", "aud=send"])),
                          ["--generate", KEY, "--answers", '["split1=drop","aud=send"]'])
-        self.assertEqual(store.inbox_argv(dict(base, shape="sections", answers=["dl=drop"])),
+        self.assertEqual(store.request_argv(dict(base, shape="sections", answers=["dl=drop"])),
                          ["--generate", KEY, "--shape", "sections", "--answers", '["dl=drop"]'])
-        self.assertEqual(store.inbox_argv(base), ["--generate", KEY])
+        self.assertEqual(store.request_argv(base), ["--generate", KEY])
         for bad in ([], ["split1=nope"], "split1=drop", [{"a": "b"}], ["aud=send"] * 13):
-            self.assertIsNone(store.inbox_argv(dict(base, answers=bad)), bad)
+            self.assertIsNone(store.request_argv(dict(base, answers=bad)), bad)
         # 无发送路径一寸没松（§63 第 4 层）：答案带不进任何会话 / 收件人
         self.assertNotIn("C0123456789", " ".join(
-            store.inbox_argv(dict(base, answers=["aud=send"]))))
+            store.request_argv(dict(base, answers=["aud=send"]))))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """§28 追记（issue #29）通知偏好里夜报变异体活下来的那几格。
 
-判例 tests/test_notify_preferences.py 钉住了这一节的主干（跨午夜、分类开关、
+判例 tests/test_notify_preferences.py 钉住了这一节的主干（跨午夜、
 失败类穿透、fail-open、被吞返回 True），但有四类格子是它没碰到的——夜间变异
 （§57）在 `act/lib/notify.py` 的偏好闸门上留了一串存活体，全落在这四类里：
 
@@ -8,28 +8,24 @@
   数`（`_minute_of_day`，词法单源 = §70 的 `config.coerce_clock_time`）的算式
   改一个字也照样通过。这里的窗带分钟（"22:30"），并判半开区间 `[start, end)`
   的**两个端点**：start 那一分钟算在内、end 那一分钟不算。
-* **当下时刻也要按分钟折算**：`_quiet_now` 把 `time.struct_time` 折成
+* **当下时刻也要按分钟折算**：`suppression_reason` 把 `time.struct_time` 折成
   `tm_hour * 60 + tm_min`。判例的窗有 10 小时宽，折算差个几十分钟也还在窗里；
   这里用一个 30 分钟的窄窗，把「窗是按分钟判的，不是按整点判的」钉死。
-* **两处 getattr 缺省 = fail-open 的构造**：`getattr(cfg, preference, True)`
-  与 `getattr(cfg, "quiet_hours_enabled", False)`。判例喂的都是完整的
-  `config.Config`，缺省值永远走不到；缺键的 cfg（老版本配置 / 鸭子类型的注入）
-  必须是「分类默认开、安静时段默认关」——两把缺省都指向「宁可多一条也不静音」
+* **getattr 缺省 = fail-open 的构造**：`getattr(cfg, "quiet_hours_enabled", False)`。
+  判例喂的都是完整的 `config.Config`，缺省值永远走不到；缺键的 cfg（老版本配置 /
+  鸭子类型的注入）必须是「安静时段默认关」（v2.0 起分类开关已退役）——缺省指向「宁可多一条也不静音」
   （宪法第 11 条 fail-open，§28 追记「配错一个字不许把所有通知静音」）。
 * **谓词要答一个真 bool**：`in_quiet_hours` / `suppressed_now` 的返回值被
   `assertFalse` 一类的松断言接受成 None 也不报警；公开谓词答 None 就是把
   「判不了」和「判成假」混成一件事。这里逐个 `assertIs`。
 
-一条都不许 mock 被测单元自己（`_native_notify` / `_queue_write` 照跑）：注入缝
+一条都不许 mock 被测单元自己（`_queue_write` 照跑）：注入缝
 只有 cfg、`now` 与 `config.load_config`（配置读 = 盘 IO 边界）。
 
 **两个体判为等价（可达输入上无可观察差异，不强杀）**：
 * `in_quiet_hours` 的 `if a < b`（`< → <=`）：`a == b`（零长窗）在上一行就已经
   `return False`，到这一行 `a != b` 恒成立——两个算子对所有可达输入同解。
-* `_quiet_now` 的 `return False`（`→ return None`）：私名，唯一消费者是
-  `suppression_reason` 里的 `if _quiet_now(...)`，None 与 False 同为假值。
-  （`in_quiet_hours` / `suppressed_now` 是**公开**谓词，答 None 在公开面上看得
-  见，所以上面那两条 `assertIs` 管它们、不管这个。）
+  （v2.0 起 `_quiet_now` 已内联进 `suppression_reason`，原先那一条等价体随之消失。）
 """
 import time
 import types
@@ -89,7 +85,7 @@ class QuietWindowIsJudgedToTheMinuteTestCase(unittest.TestCase):
                 quiet_hours_end="22:30")
 
     def _reason(self, now):
-        return notify.suppression_reason(notify.KIND_PROPOSAL, _cfg(**self._CFG), now=now)
+        return notify.suppression_reason(notify.KIND_RECAP_READY, _cfg(**self._CFG), now=now)
 
     def test_inside_the_narrow_window(self):
         self.assertEqual(self._reason(_at(22, 0)), "quiet_hours")
@@ -100,7 +96,7 @@ class QuietWindowIsJudgedToTheMinuteTestCase(unittest.TestCase):
         self.assertIsNone(self._reason(_at(21, 59)))
 
     def test_the_exempt_classes_pierce_the_same_minute(self):
-        """豁免是按**类**判的，与窗多窄无关（失败 / 手动回执 / 归档前的告知）。"""
+        """豁免是按**类**判的，与窗多窄无关（v2.0 只剩失败类）。"""
         cfg = _cfg(**self._CFG)
         for kind in sorted(notify.QUIET_HOURS_EXEMPT):
             with self.subTest(kind=kind):
@@ -108,33 +104,34 @@ class QuietWindowIsJudgedToTheMinuteTestCase(unittest.TestCase):
 
 
 class AbsentKeysFailOpenTestCase(unittest.TestCase):
-    """缺键的 cfg（老配置 / 鸭子类型注入）走 getattr 缺省：分类默认开、安静时段默认关。"""
+    """缺键的 cfg（老配置 / 鸭子类型注入）走 getattr 缺省：安静时段默认关。"""
 
-    def test_a_missing_category_key_leaves_that_class_on(self):
-        cfg = types.SimpleNamespace(quiet_hours_enabled=False)
-        for kind in sorted(notify.CATEGORY_PREFERENCE):
+    def test_a_cfg_without_any_switch_posts_every_kind(self):
+        cfg = types.SimpleNamespace()
+        for kind in notify.KINDS:
             with self.subTest(kind=kind):
                 self.assertIsNone(notify.suppression_reason(kind, cfg, now=_at(12)))
 
     def test_a_missing_quiet_hours_switch_means_quiet_hours_are_off(self):
         """安静时段是**勾上才有**的：端点在、开关键不在 → 窗当关（照发）。"""
-        cfg = types.SimpleNamespace(notify_proposals=True, quiet_hours_start="22:00",
+        cfg = types.SimpleNamespace(quiet_hours_start="22:00",
                                     quiet_hours_end="08:00")
-        self.assertIsNone(notify.suppression_reason(notify.KIND_PROPOSAL, cfg, now=_at(2, 30)))
+        self.assertIsNone(notify.suppression_reason(notify.KIND_RECAP_READY, cfg, now=_at(2, 30)))
 
 
 class SuppressedNowTestCase(unittest.TestCase):
     """`suppressed_now` 现读一次配置，答一个真 bool；读炸了照发。"""
 
     def test_both_answers_are_real_bools(self):
-        with mock.patch.object(config, "load_config", return_value=_cfg(notify_proposals=False)):
-            self.assertIs(notify.suppressed_now(notify.KIND_PROPOSAL), True)
+        with mock.patch.object(config, "load_config", return_value=_cfg(quiet_hours_enabled=True, quiet_hours_start="00:00", quiet_hours_end="23:59")), \
+                mock.patch.object(notify.time, "localtime", return_value=_at(12)):
+            self.assertIs(notify.suppressed_now(notify.KIND_RECAP_READY), True)
         with mock.patch.object(config, "load_config", return_value=config.Config()):
-            self.assertIs(notify.suppressed_now(notify.KIND_PROPOSAL), False)
+            self.assertIs(notify.suppressed_now(notify.KIND_RECAP_READY), False)
 
     def test_a_config_read_that_explodes_fails_open(self):
         with mock.patch.object(config, "load_config", side_effect=RuntimeError("boom")):
-            self.assertIs(notify.suppressed_now(notify.KIND_PROPOSAL), False)
+            self.assertIs(notify.suppressed_now(notify.KIND_RECAP_READY), False)
         with mock.patch.object(config, "load_config", side_effect=OSError("disk")):
             self.assertIs(notify.suppressed_now(notify.KIND_FAILURE), False)
 
@@ -148,8 +145,9 @@ class SuppressedNotifyReportsSuccessTestCase(unittest.TestCase):
 
     def test_a_suppressed_notification_is_not_a_failure(self):
         before = self._queued()
-        with mock.patch.object(config, "load_config", return_value=_cfg(notify_proposals=False)):
-            ok = notify.notify("t", "b", kind=notify.KIND_PROPOSAL)
+        with mock.patch.object(config, "load_config", return_value=_cfg(quiet_hours_enabled=True, quiet_hours_start="00:00", quiet_hours_end="23:59")), \
+                mock.patch.object(notify.time, "localtime", return_value=_at(12)):
+            ok = notify.notify("t", "b", kind=notify.KIND_RECAP_READY)
         self.assertIs(ok, True)                     # 偏好吞掉 ≠ 失败
         self.assertEqual(self._queued(), before)    # §28 队列没被碰（连 sweep 都没跑）
 

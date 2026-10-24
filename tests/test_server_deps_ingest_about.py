@@ -1,15 +1,14 @@
-"""server/ 依赖检查 / 录制与数据接入 / 关于 三面的 §66 清账补丁（CONTRACT §15.1 / §15.2 / §25 / §68.4 / §68.6）。
+"""server/ 依赖检查 / 录制与数据接入两面（CONTRACT §15.1 / §15.2 / §25 / §68.4）。
 
 - ``GET /api/diagnostics`` add-only：``cron_probe``（state/cron_probe.json 公开子集）、``activity``
-  （screenpipe db / actd.log / vault unprocessed 三个时间戳；server 永不读 ~/Documents），日志清单
-  第三个目录 ``~/.screenpipe/``（engine.log）；
+  （screenpipe db / recap.log / vault unprocessed 三个时间戳；server 永不读 ~/Documents；v2.0.0 起
+  ``actd_log`` 换成 ``recap_log``），日志清单第三个目录 ``~/.screenpipe/``（engine.log）；
 - ``POST /api/ingest/export`` / ``POST /api/ingest/run`` + ``GET /api/ingest/jobs/{id}``：同一条 ingest/ 脚本、
   同一套退出码，POST 回 job id、后台线程跑、轮询拿回执；``SCREENPIPE_NO_WAIT=1`` 只给 ingest；同脚本在跑即复用；
   job 表有上限、running 不淘汰；脚本缺席 404、多余字段 400、未知 job 404；
-- ``POST /api/update/install``：kickstart 自动部署 agent（不带 -k）；未加载 409、非 darwin 501；
-- ``GET /api/failures``：§25 FailureCatalog 的 server-owned 投影，每个 id 双语句都在；
-- 卸载 404 / open 失败的 details 带手动命令。
-子进程一律经注入缝——测试绝不真跑脚本 / launchctl。
+- ``GET /api/failures``：§25 FailureCatalog 的 server-owned 投影，每个 id 双语句都在。
+（``POST /api/update/install`` 的 §79 升级器在 tests/test_server_about_upgrade.py；v1 的自动部署 kickstart
+与卸载终端启动随 Act 退役。）子进程一律经注入缝——测试绝不真跑脚本 / launchctl。
 """
 import json
 import os
@@ -22,8 +21,7 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import assert_envelope, get_json, post_json, start_server, write_text
 
 from act.lib import failures
-from act.lib.checks import launchd as launchd_checks
-from server import about, diagnostics, doctor_run, failure_catalog, ingest_run, paths, subproc, uninstall_launch
+from server import diagnostics, doctor_run, failure_catalog, ingest_run, paths, subproc
 
 DOCTOR_JSON = json.dumps({"home": "/x", "checks": []})
 
@@ -71,13 +69,14 @@ class DiagnosticsAddOnlyTestCase(_ServerCase):
         _s, obj = get_json(self.port, "/api/diagnostics")
         act = obj["activity"]
         self.assertIsNone(act["screenpipe_db"]["mtime"])
-        self.assertIsNone(act["actd_log"]["mtime"])
-        self.assertEqual(act["actd_log"]["path"], str(self.home / "state" / "actd.log"))
+        self.assertIsNone(act["recap_log"]["mtime"])
+        self.assertEqual(act["recap_log"]["path"], str(self.home / "state" / "recap.log"))
+        self.assertNotIn("actd_log", act)
         write_text(self.user_home / ".screenpipe" / "db.sqlite", "x")
-        write_text(self.home / "state" / "actd.log", "log")
+        write_text(self.home / "state" / "recap.log", "log")
         _s, obj = get_json(self.port, "/api/diagnostics")
         self.assertIsInstance(obj["activity"]["screenpipe_db"]["mtime"], int)
-        self.assertIsInstance(obj["activity"]["actd_log"]["mtime"], int)
+        self.assertIsInstance(obj["activity"]["recap_log"]["mtime"], int)
 
     def test_unprocessed_reads_the_mirror_in_mirror_mode(self):
         write_text(self.home / "state" / "vault_sync_mode", "mirror\n")
@@ -203,54 +202,6 @@ class IngestRunTestCase(_ServerCase):
             self.assertTrue((paths.repo_root() / rel).is_file(), rel)
 
 
-class UpdateInstallTestCase(_ServerCase):
-    def _runner(self, loaded=True, kick_rc=0):
-        seen = []
-
-        def run(argv):
-            seen.append(argv)
-            if argv[1] == "print":
-                return (0 if loaded else 113), ""
-            return kick_rc, "kick failed" if kick_rc else ""
-        return run, seen
-
-    def test_label_mirrors_the_doctor(self):
-        self.assertEqual(about.AUTODEPLOY_LABEL, launchd_checks.AUTODEPLOY_LABEL)
-
-    def test_kickstart_without_minus_k_when_loaded(self):
-        run, seen = self._runner(loaded=True)
-        receipt = about.install_now({}, runner=run, platform="darwin")
-        # §68.6 追记（#309）：回执 add-only 多了上一轮的 deploy_status / deploy_detail /
-        # deploy_failed_sha（没有记录 = 三个空串）
-        self.assertEqual(receipt, {"ok": True, "label": about.AUTODEPLOY_LABEL, "action": "kickstart",
-                                   "deploy_status": "", "deploy_detail": "", "deploy_failed_sha": ""})
-        self.assertEqual(seen[1][:3], ["/bin/launchctl", "kickstart", seen[1][2]])
-        self.assertNotIn("-k", seen[1])
-        self.assertTrue(seen[1][2].endswith("/" + about.AUTODEPLOY_LABEL))
-
-    def test_not_loaded_is_409_and_kick_failure_500(self):
-        run, _seen = self._runner(loaded=False)
-        with self.assertRaises(about.ConflictError):
-            about.install_now({}, runner=run, platform="darwin")
-        run, _seen = self._runner(loaded=True, kick_rc=1)
-        with self.assertRaises(about.ApiError) as ctx:
-            about.install_now({}, runner=run, platform="darwin")
-        self.assertEqual(ctx.exception.status, 500)
-
-    def test_gates(self):
-        with self.assertRaises(about.UnknownFieldError):
-            about.install_now({"now": True}, runner=lambda a: (0, ""), platform="darwin")
-        with self.assertRaises(about.NotImplementedError501):
-            about.install_now({}, runner=lambda a: (0, ""), platform="linux")
-
-    def test_route_is_wired(self):
-        with mock.patch.object(about.repair, "default_runner", lambda argv: (0, "")), \
-                mock.patch.object(about.sys, "platform", "darwin"):
-            status, obj = post_json(self.port, "/api/update/install", {})
-        self.assertEqual(status, 200)
-        self.assertEqual(obj["action"], "kickstart")
-
-
 class FailureCatalogTestCase(_ServerCase):
     def test_every_failure_id_has_both_sentences(self):
         status, obj = get_json(self.port, "/api/failures")
@@ -261,30 +212,6 @@ class FailureCatalogTestCase(_ServerCase):
             self.assertEqual(entry["action_id"], failures.FAILURES[fid].get("action_id"))
         self.assertEqual(failure_catalog.catalog()["failures"]["engine_crashed"]["zh"],
                          failures.FAILURES["engine_crashed"]["plain_zh"])
-
-
-class UninstallDetailsTestCase(_ServerCase):
-    def test_missing_script_and_open_failure_carry_the_manual_command(self):
-        """脚本缺席 404、壳没在跑 503、队列写不进去 500——三种都把手动命令带在 details 里（§68.6 / §68.7 队列通道）。"""
-        from server import terminal_launch
-        with mock.patch.object(uninstall_launch, "script_path", lambda: Path(self.tmp.name) / "nope.sh"):
-            with self.assertRaises(uninstall_launch.NotFoundError) as ctx:
-                uninstall_launch.launch({}, platform="darwin", home=self.home)
-        self.assertEqual(ctx.exception.details["command"], uninstall_launch.shell_command())
-
-        # 壳没在跑（没有 state/shell.heartbeat）→ 503，仍带手动命令
-        with self.assertRaises(terminal_launch.ShellUnavailableError) as ctx:
-            uninstall_launch.launch({}, platform="darwin", home=self.home)
-        self.assertEqual(ctx.exception.details["command"], uninstall_launch.shell_command())
-
-        # 壳在跑但队列目录被一个普通文件占着 → 入队 500，仍带手动命令 + 队列目录
-        terminal_launch.paths.shell_heartbeat_path(self.home).write_text("pid=1\n", encoding="utf-8")
-        terminal_launch.paths.terminal_queue_dir(self.home).write_text("not a dir", encoding="utf-8")
-        with self.assertRaises(uninstall_launch.ApiError) as ctx:
-            uninstall_launch.launch({}, platform="darwin", home=self.home)
-        self.assertEqual(ctx.exception.status, 500)
-        self.assertEqual(ctx.exception.details["command"], uninstall_launch.shell_command())
-        self.assertIn("queue_dir", ctx.exception.details)
 
 
 if __name__ == "__main__":

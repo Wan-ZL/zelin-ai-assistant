@@ -1,12 +1,13 @@
-"""config.load_config — every config.yaml block applier on its own (§15 / §17 /
-§48 / §53 / §54 / §59 / §63 / §64 / §70).
+"""config.load_config — every config.yaml block applier on its own (§15 / §26 /
+§54 / §59 / §63 / §72 / §79).
 
-Characterization net for the P3b split: non-mapping blocks read as {} and keep
-the defaults; the yaml reader's three failure shapes; weekly_digest range
-edges; the approval poll knobs; execution repo/claude_bin/max-failures;
-telemetry level + capture_input consent flag; redaction relative path anchor;
-switch blocks with junk shapes; maintainer / feedback_sync blanks; language /
-output format / features coercion; the block order and the two post-steps.
+Characterization net: non-mapping blocks read as {} and keep the defaults; the
+yaml reader's three failure shapes; the execution block's one surviving pin
+(claude_bin); redaction relative path anchor; recording lists; updates / recap /
+language coercion; the block order. v2.0.0 retired the owner / approval /
+retention / digest / registry / telemetry / switch / maintainer / feedback-sync /
+features / self-improve appliers with the Act pipeline (full text in tag ``full``)
+— their keys in an old config.yaml are read and ignored.
 """
 import tempfile
 import unittest
@@ -47,85 +48,43 @@ class YamlReaderTestCase(unittest.TestCase):
             self.assertEqual(config._load_yaml_dict(ok), {})
 
     def test_non_mapping_blocks_keep_defaults(self):
-        cfg = _load("owner: hi\nsources: [1]\napproval: 3\nexecution: null\ntrash: x\n"
-                    "archive: x\ndigest: x\nregistry: x\nmodels: x\nvoice: x\nrecording: x\n"
-                    "telemetry: x\nredaction: x\nremote: x\ndoctor: [1]\nupdates: x\nask: x\n"
-                    "maintainer: x\nfeedback_sync: x\nfeatures: x\nlanguage: 5\n")
+        cfg = _load("sources: [1]\nexecution: null\nserver: x\nmodels: x\nrecording: x\n"
+                    "redaction: x\nupdates: x\nrecap: x\nlanguage: 5\n")
         default = config.Config()
-        for attr in ("owner_name", "slack_channels", "poll_interval_seconds", "memory_inject",
-                     "trash_retention_days", "archive_after_days", "digest_frequency",
-                     "registry_backend", "models_dispatch", "voice_enabled",
-                     "recording_ignored_apps", "telemetry_level", "redaction_enabled",
-                     "remote_allow_direct_run", "doctor_ai_fix_enabled", "updates_check_enabled",
-                     "ask_enabled", "maintainer_repo_path", "feedback_sync_repo", "language"):
+        for attr in ("claude_bin", "server_port", "models_pipeline",
+                     "models_fallback", "recording_ignored_apps", "screenpipe_retention_days",
+                     "redaction_enabled", "updates_check_enabled", "updates_auto_install",
+                     "recap_enabled", "recap_default_language", "language"):
             self.assertEqual(getattr(cfg, attr), getattr(default, attr), attr)
 
-
-class SourcesTestCase(unittest.TestCase):
-    def test_lists_and_switches(self):
-        cfg = _load("sources:\n  slack_channels: null\n  watch_people:\n    - a\n"
-                    "  slack:\n    enabled: 'no'\n  obsidian: 7\n  gmail:\n    enabled: yes\n"
-                    "    address: a@b\n")
-        self.assertEqual((cfg.slack_channels, cfg.watch_people), ([], ["a"]))
-        self.assertFalse(cfg.slack_enabled)
-        self.assertTrue(cfg.obsidian_enabled)
-        self.assertTrue(cfg.gmail_enabled)
-        self.assertEqual(cfg.gmail_address, "a@b")
-
-    def test_weekly_digest_ranges(self):
-        cfg = _load("sources:\n  weekly_digest:\n    enabled: true\n    day: 6\n    hour: 23\n")
-        self.assertEqual((cfg.weekly_digest_enabled, cfg.weekly_digest_day, cfg.weekly_digest_hour),
-                         (True, 6, 23))
-        default = config.Config()
-        cfg = _load("sources:\n  weekly_digest:\n    day: 7\n    hour: -1\n")
-        self.assertEqual((cfg.weekly_digest_day, cfg.weekly_digest_hour),
-                         (default.weekly_digest_day, default.weekly_digest_hour))
-        cfg = _load("sources:\n  weekly_digest:\n    day: monday\n    hour: '5'\n")
-        self.assertEqual((cfg.weekly_digest_day, cfg.weekly_digest_hour), (default.weekly_digest_day, 5))
-        cfg = _load("sources:\n  weekly_digest: nope\n")
-        self.assertEqual(cfg.weekly_digest_day, default.weekly_digest_day)
-        self.assertIsNone(config._int_in_range("x", 0, 1))
-        self.assertIsNone(config._int_in_range(None, 0, 1))
-        self.assertEqual(config._int_in_range(True, 0, 1), 1)
+    def test_retired_act_blocks_are_ignored_not_fatal(self):
+        cfg = _load("approval:\n  poll_interval_seconds: 30\ntelemetry:\n  level: detailed\n"
+                    "digest:\n  frequency: daily\nregistry:\n  backend: sqlite\n"
+                    "self_improve:\n  enabled: true\nmaintainer:\n  repo_path: /r\n")
+        for gone in ("poll_interval_seconds", "telemetry_level", "digest_frequency",
+                     "registry_backend", "maintainer_repo_path"):
+            self.assertFalse(hasattr(cfg, gone), gone)
+        self.assertEqual(cfg.raw["approval"], {"poll_interval_seconds": 30})
 
 
-class ApprovalExecutionTestCase(unittest.TestCase):
-    def test_poll_and_thresholds(self):
-        cfg = _load("approval:\n  poll_interval_seconds: '30'\n  cost_thresholds:\n"
-                    "    show_cost_above_usd: 2.5\n    require_text_confirm_above_usd: bad\n")
-        self.assertEqual((cfg.poll_interval_seconds, cfg.show_cost_above_usd), (30, 2.5))
-        self.assertEqual(cfg.require_text_confirm_above_usd,
-                         config.Config().require_text_confirm_above_usd)
-        cfg = _load("approval:\n  poll_interval_minutes: 5\n")
-        self.assertEqual(cfg.poll_interval_seconds, config.Config().poll_interval_seconds)
+class SourcesExecutionTestCase(unittest.TestCase):
+    def test_obsidian_dirs_and_retired_source_switches(self):
+        cfg = _load("sources:\n  obsidian_raw: /v/2 - raw\n  slack:\n    enabled: true\n")
+        self.assertEqual(cfg.obsidian_raw, "/v/2 - raw")
+        self.assertEqual(cfg.obsidian_wiki, "/v/4 - wiki")
+        self.assertFalse(hasattr(cfg, "slack_enabled"))
 
-    def test_execution_block(self):
-        cfg = _load("execution:\n  default_target_repo: ''\n  claude_bin: '  '\n"
-                    "  dispatch_max_failures: -3\n  quality_gate:\n    self_check: 'off'\n")
-        self.assertFalse(cfg.default_target_repo_configured)
-        self.assertEqual(cfg.default_target_repo, "")
-        self.assertEqual(cfg.claude_bin, config.Config().claude_bin)
-        self.assertEqual(cfg.dispatch_max_failures, 0)
-        self.assertFalse(cfg.self_check)
-        cfg = _load("execution:\n  default_target_repo: /r\n  claude_bin: ' /c '\n"
-                    "  auto_resume: 'false'\n  skip_permissions: 1\n")
-        self.assertTrue(cfg.default_target_repo_configured)
+    def test_execution_block_keeps_only_the_claude_bin_pin(self):
+        cfg = _load("execution:\n  default_target_repo: /r\n  claude_bin: '  '\n"
+                    "  dispatch_max_failures: -3\n")
+        self.assertIsNone(cfg.claude_bin)
+        self.assertFalse(hasattr(cfg, "default_target_repo"))
+        cfg = _load("execution:\n  claude_bin: ' /c '\n  skip_permissions: 1\n")
         self.assertEqual(cfg.claude_bin, "/c")
-        self.assertEqual((cfg.auto_resume, cfg.skip_permissions), (False, True))
+        self.assertFalse(hasattr(cfg, "skip_permissions"))
 
 
-class TelemetryRedactionTestCase(unittest.TestCase):
-    def test_telemetry(self):
-        cfg = _load("telemetry:\n  level: LOUD\n  capture_input: maybe\n  supabase_url: null\n")
-        self.assertEqual(cfg.telemetry_level, "basic")
-        self.assertFalse(cfg.telemetry_capture_input_explicit)
-        self.assertEqual(cfg.telemetry_supabase_url, "")
-        cfg = _load("telemetry:\n  level: ' Detailed '\n  capture_input: 'yes'\n")
-        self.assertEqual((cfg.telemetry_level, cfg.telemetry_capture_input,
-                          cfg.telemetry_capture_input_explicit), ("detailed", True, True))
-        cfg = _load("telemetry:\n  level: null\n")
-        self.assertEqual(cfg.telemetry_level, "basic")
-
+class RedactionRecordingTestCase(unittest.TestCase):
     def test_redaction_relative_terms_anchor(self):
         cfg = _load("redaction:\n  terms_file: rel/terms.txt\n")
         self.assertEqual(cfg.redaction_terms_file, str(config.HOME / "rel/terms.txt"))
@@ -133,77 +92,69 @@ class TelemetryRedactionTestCase(unittest.TestCase):
         self.assertEqual(cfg.redaction_terms_file, "~/abs.txt")
         cfg = _load("redaction:\n  terms_file: ''\n")
         self.assertEqual(cfg.redaction_terms_file, "")
+        cfg = _load("redaction:\n  enabled: 'yes'\n  mask_secrets: junk\n")
+        self.assertTrue(cfg.redaction_enabled)
+        self.assertTrue(cfg.redaction_mask_secrets)
 
     def test_recording_apps(self):
         cfg = _load("recording:\n  ignored_apps:\n    - ' Zoom '\n    - null\n    - ''\n    - 7\n")
         self.assertEqual(cfg.recording_ignored_apps, ["Zoom", "7"])
         cfg = _load("recording:\n  ignored_apps: Zoom\n")
         self.assertEqual(cfg.recording_ignored_apps, config.Config().recording_ignored_apps)
+        cfg = _load("recording:\n  ignored_apps: []\n")
+        self.assertEqual(cfg.recording_ignored_apps, [])
+
+    def test_recording_retention_edges(self):
+        cfg = _load("recording:\n  retention_days: -4\n  media_retention_minutes: 3\n")
+        self.assertEqual(cfg.screenpipe_retention_days, 0)
+        self.assertEqual(cfg.screenpipe_media_retention_minutes, 60)
+        cfg = _load("recording:\n  retention_days: '14'\n  media_retention_minutes: 120\n")
+        self.assertEqual(cfg.screenpipe_retention_days, 14)
+        self.assertEqual(cfg.screenpipe_media_retention_minutes, 120)
 
 
 class MiscBlocksTestCase(unittest.TestCase):
-    def test_switch_blocks(self):
-        cfg = _load("remote:\n  allow_direct_run: 'yes'\ndoctor:\n  ai_fix_enabled: 'off'\n"
-                    "updates:\n  check_enabled: 0\nask:\n  enabled: junk\n")
-        self.assertTrue(cfg.remote_allow_direct_run)
-        self.assertFalse(cfg.doctor_ai_fix_enabled)
+    def test_updates_block(self):
+        cfg = _load("updates:\n  check_enabled: 0\n  auto_install: 'yes'\n")
         self.assertFalse(cfg.updates_check_enabled)
-        self.assertEqual(cfg.ask_enabled, config.Config().ask_enabled)
+        self.assertTrue(cfg.updates_auto_install)
+        cfg = _load("updates:\n  check_enabled: maybe\n  auto_install: junk\n")
+        self.assertTrue(cfg.updates_check_enabled)
+        self.assertFalse(cfg.updates_auto_install)   # §79: default off, junk keeps it off
 
-    def test_maintainer_and_feedback_sync(self):
-        cfg = _load("maintainer:\n  repo_path: '  '\n  session_id: ' s1 '\n"
-                    "feedback_sync:\n  repo: ''\n  token_path: ' /t '\n")
-        self.assertEqual(cfg.maintainer_repo_path, config.Config().maintainer_repo_path)
-        self.assertEqual(cfg.maintainer_session_id, "s1")
-        self.assertEqual(cfg.feedback_sync_repo, config.Config().feedback_sync_repo)
-        self.assertEqual(cfg.feedback_sync_token_path, "/t")
-        self.assertIsNone(config._nonblank(None))
-        self.assertIsNone(config._nonblank("  "))
-        self.assertEqual(config._nonblank(5), "5")
+    def test_recap_and_language(self):
+        cfg = _load("language: ' en '\nrecap:\n  enabled: 'no'\n  default_language: ZH\n")
+        self.assertEqual(cfg.language, "en")
+        self.assertFalse(cfg.recap_enabled)
+        self.assertEqual(cfg.recap_default_language, "zh")
+        cfg = _load("language: '  '\nrecap:\n  default_language: fr\n")
+        self.assertEqual(cfg.language, config.Config().language)
+        self.assertEqual(cfg.recap_default_language, "auto")
 
-    def test_language_format_features(self):
-        cfg = _load("language: ' en '\ndefault_output_format: HTML\nfeatures:\n  digest: 'no'\n"
-                    "  weird: maybe\n  3: false\n")
-        self.assertEqual((cfg.language, cfg.default_output_format), ("en", "html"))
-        self.assertEqual((cfg.features["digest"], cfg.features["weird"], cfg.features["3"]),
-                         (False, True, False))
-        cfg = _load("language: '  '\ndefault_output_format: pdf\n")
-        self.assertEqual((cfg.language, cfg.default_output_format),
-                         (config.Config().language, "markdown"))
-
-    def test_digest_registry_server_models(self):
-        cfg = _load("digest:\n  frequency: Every-2-Days\nregistry:\n  backend: SQLite\n"
-                    "server:\n  port: 70000\nmodels:\n  dispatch: claude-opus-5\n  pipeline: 7\n")
-        self.assertEqual((cfg.digest_frequency, cfg.registry_backend), ("every2days", "sqlite"))
+    def test_server_port_and_models(self):
+        cfg = _load("server:\n  port: 70000\nmodels:\n  dispatch: claude-opus-5\n  pipeline: 7\n")
         self.assertEqual(cfg.server_port, config.DEFAULT_SERVER_PORT)
-        self.assertEqual((cfg.models_dispatch, cfg.models_pipeline), ("claude-opus-5", "follow"))
-        cfg = _load("digest:\n  weekly: monday\nregistry: {}\n")
-        self.assertEqual((cfg.digest_frequency, cfg.registry_backend),
-                         (config.Config().digest_frequency, config.Config().registry_backend))
+        self.assertEqual(cfg.models_pipeline, config.DEFAULT_MODEL_PIPELINE)
+        self.assertFalse(hasattr(cfg, "models_dispatch"))
+        cfg = _load("server:\n  port: 8123\nmodels:\n  pipeline: claude-sonnet-5\n  fallback: 'off'\n")
+        self.assertEqual(cfg.server_port, 8123)
+        self.assertEqual((cfg.models_pipeline, cfg.models_fallback), ("claude-sonnet-5", "off"))
 
-    def test_block_order_is_the_historical_one(self):
+    def test_block_order(self):
         names = [f.__name__ for f in config._BLOCK_APPLIERS]
-        self.assertEqual(names, ["_apply_owner", "_apply_sources", "_apply_approval",
-                                 "_apply_execution", "_apply_retention",
-                                 "_apply_digest_registry_server", "_apply_models_voice",
-                                 "_apply_recording", "_apply_telemetry", "_apply_redaction",
-                                 "_apply_switch_blocks", "_apply_maintainer_feedback",
-                                 "_apply_language_format_features",
-                                 "_apply_self_improve_block"])   # §65.1（#307 / D57）追加在队尾
+        self.assertEqual(names, ["_apply_sources", "_apply_execution", "_apply_server_models",
+                                 "_apply_recording", "_apply_redaction",
+                                 "_apply_updates_recap_language"])
 
-    def test_bool_word_and_channel_entry(self):
+    def test_bool_word(self):
         self.assertTrue(config._bool_word(" ON "))
         self.assertFalse(config._bool_word("0"))
         with self.assertRaises(ValueError):
             config._bool_word("maybe")
         with self.assertRaises(ValueError):
-            config._coerce_bool(2)
+            config.coerce_bool(2)
         with self.assertRaises(ValueError):
-            config._coerce_bool(None)
-        self.assertEqual(config._channel_entry({"id": 1, "name": ""}), {"id": "1"})
-        self.assertEqual(config._channel_entry({"id": "C", "name": 9}), {"id": "C", "name": "9"})
-        self.assertEqual(config._clean_slack_channels([{"id": ""}, " C1 ", "", 5, {"id": "C2"}]),
-                         ["C1", {"id": "C2"}])
+            config.coerce_bool(None)
 
 
 if __name__ == "__main__":
