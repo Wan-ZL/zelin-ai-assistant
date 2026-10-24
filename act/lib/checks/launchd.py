@@ -519,7 +519,7 @@ def check_paths(probes):
 
 
 # --------------------------------------------------------------------------- #
-# §55 orphans / fd limit
+# §55 orphans
 # --------------------------------------------------------------------------- #
 def _is_orphan(label: str, known: set) -> bool:
     return label.startswith(FOOTPRINT_PREFIXES) and label not in known

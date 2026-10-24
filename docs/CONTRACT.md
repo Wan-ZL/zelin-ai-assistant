@@ -1827,7 +1827,9 @@ owner 原话（2026-09-02，§66 开篇）：原生主窗口**左侧竖排图标
 > **§55 v2.0.0 追记（PR-A：doctor 侧）**：`act/lib/checks/core.RESIDENT_LABELS` = §78 的封闭清单 =
 > `{com.zelin.aiassistant.server}`；`act/launchd/` 只剩 server 一个模板，doctor 的 `launchd claude` /
 > `daemon claude` 行改看 server plist，`launchd claude` 探针的 cwd 是 §78 的 `HEADLESS_CWD`（不再是派发目标
-> repo）。Linux systemd / Windows 计划任务两条渲染路与 doctor 行随 macOS-only 决定退役。install.sh 的渲染器
+> repo）。Linux systemd / Windows 计划任务两条渲染路与 doctor 行随 macOS-only 决定退役。doctor 的
+> `launchd fd limit` 行（failure id `fd_limit`）与模板必须带 `SoftResourceLimits.NumberOfFiles` ≥ 4096 的
+> 要求随 actd 退役：那一行只读已安装的 actd plist，下文的对应条目是 1.x 历史文本。install.sh 的渲染器
 > 与 1.x 迁移由 PR-D 修订。
 
 「一键修复」/ 初始设置向导 / install.sh 三方共用 `act/launchd/*.plist` 模板与
