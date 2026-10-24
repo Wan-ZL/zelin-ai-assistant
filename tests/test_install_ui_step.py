@@ -38,13 +38,11 @@ build.sh; nothing real is installed, /Applications is a temp dir):
   - relaunch rule: only --non-interactive, only after this run installed a
     bundle, only when the app is running (pkill -TERM … then open -g); the
     interactive run never quits a running app;
-  - the §61.8 orphan sweep (issue #318): screenpipe belongs to the shell, so
-    "no shell running but an engine running" = an orphan a crashed / SIGKILLed
-    shell left behind (applicationWillTerminate never ran). The `ui` step sweeps
-    it before building — ungated by --non-interactive and by "is the shell still
-    alive", because relaunch_shell_app early-returns exactly on the crash case;
-    a live shell or the frozen legacy app (ZelinAIEngineer, §54) means hands off.
-    relaunch_shell_app's SIGKILL is now an explicit branch and sweeps after it.
+  - §61.8 (v2.0.0, adopt semantics): the installer never signals the screenpipe
+    engine — not before building, not after a SIGKILLed shell. A running recipe
+    engine is adopted by the next shell launch; the 1.x orphan sweep
+    (ui_sweep_orphan_engine) is retired (full text at tag full). relaunch_shell_app's
+    SIGKILL stays an explicit branch.
 """
 import os
 import re
@@ -106,7 +104,7 @@ _FNS = ("report_step", "failed_deploy_steps", "ui_run_with_timeout", "ui_log_beg
         "ui_log_tail", "ui_now", "ui_web_build_dir", "ui_sync_web_sources",
         "ui_log_says_tcc", "ui_web_failed", "install_web_ui", "ui_bundle_id",
         "ui_retire_legacy_app", "ui_remove_previous_shell", "install_shell_app",
-        "ui_sweep_orphan_engine", "install_ui", "relaunch_shell_app")
+        "install_ui", "relaunch_shell_app")
 
 
 def _plant_bundle(app_dir, bundle_id, payload="payload\n", mtime=1_700_000_000):
@@ -123,8 +121,9 @@ def _plant_bundle(app_dir, bundle_id, payload="payload\n", mtime=1_700_000_000):
     return plist, exe
 
 
-# pgrep/pkill/open fakes for the relaunch rule and the §61.8 orphan sweep: one flag
-# file per process the installer asks about (shell app / frozen legacy app / engine).
+# pgrep/pkill/open fakes for the relaunch rule: one flag file per process the installer
+# might ask about (shell app / frozen legacy app / engine — the last two only to prove
+# the installer never touches them, §61.8).
 FAKE_PGREP = r"""#!/bin/bash
 printf 'pgrep %s\n' "$*" >> "$CALLS"
 case "$*" in
@@ -471,9 +470,8 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertIn("web skipped (no node/npm)", ui)
         self.assertIn("shell skipped", ui)
         self.assertIn("WARN:", out)
-        # the §61.8 sweep probes (pgrep only) are the sole calls a toolchain-less run makes
-        self.assertEqual([c for c in self._calls() if not c.startswith("pgrep ")], [],
-                         "nothing may be built or signalled without a toolchain")
+        self.assertEqual(self._calls(), [],
+                         "nothing may be probed, built or signalled without a toolchain")
         self.assertFalse((self.apps / SHELL_APP).exists())
         self._assert_legacy_untouched()
 
@@ -620,65 +618,38 @@ class InstallUiStepTestCase(unittest.TestCase):
         if _DARWIN:
             self.assertIn("quit + reopen it", out, "interactive mode tells the owner instead")
 
-    # -- the §61.8 orphan sweep (issue #318) --------------------------------------- #
+    # -- §61.8 (v2.0.0): the installer never signals the engine ------------------ #
 
-    @unittest.skipUnless(_DARWIN, "the sweep is macOS-only (pgrep -x on the shell bundle exec)")
-    def test_ui_step_reclaims_an_engine_left_by_a_crashed_shell(self):
-        # the crash shape: no ZelinAIBoard process, a screenpipe engine still recording
+    def test_ui_step_never_signals_a_running_engine(self):
+        # the 1.x crash shape (no shell, engine still recording) is no longer an
+        # "orphan" to reclaim: the next shell launch adopts it (§61.8)
         self.engine_flag.write_text("", encoding="utf-8")
         self._with_toolchains(web=False)
         out, report = self._run()
         calls = self._calls()
-        self.assertIn("pkill -f screenpipe.*[r]ecord", calls,
-                      "an orphan engine must be reclaimed, not adopted — %s" % calls)
-        self.assertFalse(self.engine_flag.exists(), "the fake engine is gone")
-        self.assertIn("reclaiming the orphan", out)
-        self.assertIn("reclaimed the orphan screenpipe engine", out)
-        self.assertTrue(self._ui_line(report).startswith("ui=ok:"),
-                        "the sweep never changes the ui verdict")
-        self.assertLess(calls.index("pkill -f screenpipe.*[r]ecord"),
-                        min(i for i, c in enumerate(calls) if "build.sh" in c),
-                        "sweep before building: the orphan must not record through the whole budget")
+        self.assertFalse(any("screenpipe" in c for c in calls), calls)
+        self.assertTrue(self.engine_flag.exists(), "the engine keeps recording through an install")
+        self.assertNotIn("orphan", out)
+        if _DARWIN:
+            self.assertTrue(self._ui_line(report).startswith("ui=ok:"))
 
-    @unittest.skipUnless(_DARWIN, "the sweep is macOS-only")
-    def test_a_live_shell_keeps_its_engine(self):
-        self.running_flag.write_text("", encoding="utf-8")
-        self.engine_flag.write_text("", encoding="utf-8")
-        self._run()
-        self.assertFalse(any(c.startswith("pkill") for c in self._calls()), self._calls())
-        self.assertTrue(self.engine_flag.exists(), "a running shell owns its engine")
+    def test_the_retired_sweep_is_gone_from_install_sh(self):
+        text = _install_sh_text()
+        self.assertNotIn("ui_sweep_orphan_engine()", text)
+        self.assertNotIn('pkill -f "$UI_ENGINE_PATTERN"', text)
+        self.assertIsNone(re.search(r"pkill[^\n]*screenpipe", text),
+                          "install.sh must never pkill the screenpipe engine (§61.8 adopt semantics)")
 
-    @unittest.skipUnless(_DARWIN, "the sweep is macOS-only")
-    def test_the_frozen_legacy_app_keeps_its_engine(self):
-        # §54 / D3: the old menu-bar app spawns its own screenpipe — one finger off it
-        self.legacy_flag.write_text("", encoding="utf-8")
-        self.engine_flag.write_text("", encoding="utf-8")
-        self._run()
-        self.assertFalse(any(c.startswith("pkill") for c in self._calls()), self._calls())
-        self.assertTrue(self.engine_flag.exists())
-
-    @unittest.skipUnless(_DARWIN, "the sweep is macOS-only")
-    def test_no_engine_means_no_pkill_at_all(self):
-        self._run()
-        self.assertEqual([c for c in self._calls() if c.startswith("pkill")], [])
-
-    @unittest.skipUnless(_DARWIN, "the sweep is macOS-only")
-    def test_the_sweep_is_not_gated_on_non_interactive(self):
-        # a crashed shell leaves an orphan whether or not this is an auto-deploy run
-        self.engine_flag.write_text("", encoding="utf-8")
-        self._run(non_interactive=0)
-        self.assertIn("pkill -f screenpipe.*[r]ecord", self._calls())
-
-    def test_the_pkg_postinstall_path_never_sweeps(self):
+    def test_the_pkg_postinstall_path_never_touches_anything(self):
         self.engine_flag.write_text("", encoding="utf-8")
         self._run(pkg=1)
         self.assertEqual(self._calls(), [], "pkg mode returns before anything in the ui step")
         self.assertTrue(self.engine_flag.exists())
 
     @unittest.skipUnless(_DARWIN, "relaunch needs an installed bundle (macOS half)")
-    def test_sigkill_fallback_sweeps_the_engine_the_shell_never_stopped(self):
-        # the shell ignores SIGTERM → pkill -KILL → applicationWillTerminate never ran,
-        # so its engine is an orphan: reclaim it before the new shell is opened
+    def test_sigkill_fallback_leaves_the_engine_for_the_next_shell(self):
+        # the shell ignores SIGTERM → pkill -KILL → applicationWillTerminate never ran;
+        # its engine keeps recording (ppid 1) and the relaunched shell adopts it
         self._with_toolchains(web=False)
         self.engine_flag.write_text("", encoding="utf-8")
         script_pkill = self.fakebin / "pkill"
@@ -695,33 +666,28 @@ class InstallUiStepTestCase(unittest.TestCase):
         calls = self._calls()
         self.assertIn("pkill -TERM -x ZelinAIBoard", calls)
         self.assertIn("pkill -KILL -x ZelinAIBoard", calls)
-        self.assertIn("pkill -f screenpipe.*[r]ecord", calls, calls)
+        self.assertFalse(any("screenpipe" in c for c in calls), calls)
+        self.assertTrue(self.engine_flag.exists(), "the engine survives the SIGKILL fallback")
         opens = [c for c in calls if c.startswith("open ")]
         self.assertEqual(len(opens), 1, calls)
-        self.assertLess(calls.index("pkill -f screenpipe.*[r]ecord"), calls.index(opens[0]),
-                        "reclaim before the new shell starts")
 
     @unittest.skipUnless(_DARWIN, "relaunch needs an installed bundle (macOS half)")
-    def test_a_graceful_quit_needs_no_sigkill_and_no_sweep(self):
-        # SIGTERM works → the shell's applicationWillTerminate stopped its own engine
+    def test_a_graceful_quit_needs_no_sigkill(self):
         self._with_toolchains(web=False)
         self.running_flag.write_text("", encoding="utf-8")
         self._run(non_interactive=1, relaunch=True)
         calls = self._calls()
         self.assertIn("pkill -TERM -x ZelinAIBoard", calls)
         self.assertNotIn("pkill -KILL -x ZelinAIBoard", calls,
-                         "the SIGKILL is an explicit branch now, not an unconditional shot")
+                         "the SIGKILL is an explicit branch, not an unconditional shot")
         self.assertFalse(any(c.startswith("pkill -f") for c in calls), calls)
 
     def test_relaunch_is_a_no_op_when_nothing_was_installed(self):
-        # toolchain absent → nothing installed → even a running app is left alone.
-        # On macOS the one call is the §61.8 sweep's "is the shell running?" probe,
-        # which answers yes and stops there; off macOS the sweep returns at its own
-        # `uname -s` guard, so the honest expectation there is zero calls at all
-        # (this test is the non-Darwin cell too — it must stay green on tests-linux).
+        # toolchain absent → nothing installed → even a running app is left alone, and
+        # with the 1.x sweep retired not a single process is probed either.
         self.running_flag.write_text("", encoding="utf-8")
         self._run(non_interactive=1, relaunch=True)
-        self.assertEqual(self._calls(), ["pgrep -x ZelinAIBoard"] if _DARWIN else [])
+        self.assertEqual(self._calls(), [])
 
 
 if __name__ == "__main__":
