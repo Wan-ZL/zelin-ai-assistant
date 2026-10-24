@@ -20,6 +20,7 @@ opened and the screenpipe engine is never reachable. Pinned:
   - a second upgrade while one holds the lock = exit 3, the receipt untouched.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -208,6 +209,22 @@ class UpgradeScriptTestCase(unittest.TestCase):
         self.assertEqual(self._git(self.local, "describe", "--tags", "--exact-match"), "v2.0.1",
                          "no rollback: the code stays on the tag")
         self.assertFalse(any(c.startswith(("open", "pkill", "defaults")) for c in self._calls()))
+
+    def test_a_stale_lock_is_cleared(self):
+        lock = self.local / "state" / "upgrade.lock"
+        lock.mkdir()
+        old = 1_000_000_000
+        os.utime(lock, (old, old))
+        proc = self._upgrade()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("clearing a stale lock", proc.stdout)
+        self.assertEqual(self._state()["status"], "up_to_date")
+        self.assertFalse(lock.exists())
+
+    def test_the_stale_cutoff_matches_the_server(self):
+        from server import about
+        text = (REPO / "scripts" / "upgrade.sh").read_text(encoding="utf-8")
+        self.assertIn("LOCK_STALE_MIN=%d " % (about.UPGRADE_LOCK_STALE_S // 60), text)
 
     def test_a_held_lock_is_exit_3_and_leaves_the_receipt(self):
         (self.local / "state" / "upgrade.lock").mkdir()

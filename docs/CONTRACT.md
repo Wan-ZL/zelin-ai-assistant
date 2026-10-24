@@ -3359,12 +3359,12 @@ config/secrets/、runtime.json、词表、Application Support 整个目录与 `~
 ## 79. lite 升级：带 tag 的快进 + 重装，永不打断录制（v2.0.0）
 
 `POST /api/update/install {}`（关于页「立即升级」）依次过三道闸：§26 的 409 `manual_upgrade`（新的 major 只许手动）；
-409 `upgrade_running`（`state/upgrade.lock` 目录在 = 已有一次在跑，details 带日志路径）；这个 checkout 缺
+409 `upgrade_running`（`state/upgrade.lock` 目录在且不到两小时 = 已有一次在跑，details 带日志路径；更老的锁是被杀那一轮留下的）；这个 checkout 缺
 `scripts/upgrade.sh`（残缺的 checkout）= 501 `upgrader_missing`，details 带手动命令。然后把 `<home>/state/upgrade.log`
 按 `act.lib.logcap` 封顶，分离起 `/bin/bash scripts/upgrade.sh`（cwd = repo，新 session——server agent 在升级里被重载时
 它不跟着死），回执 `{ok, action: "upgrade", script, log, latest}`。
 
-**脚本**（`scripts/upgrade.sh`）：持锁（`state/upgrade.lock`，占用 = exit 3、回执不动）→ `git fetch --tags origin` →
+**脚本**（`scripts/upgrade.sh`）：持锁（`state/upgrade.lock`，占用 = exit 3、回执不动；超过两小时的锁先清掉）→ `git fetch --tags origin` →
 origin/main 必须**恰好**是一个 `v*` tag（否则 `refused` / `untagged`，exit 2）→ 已在该 commit = `up_to_date`（不跑安装）→
 工作树有改动（`dirty`）、不在 main（`not_on_main`）、本地有 origin/main 之外的 commit（`diverged`）或 `git merge --ff-only`
 失败（`ff_failed`）= `status=diverged` + `commands[]`（要手动跑的命令；diverged 给 `git branch keep/local-<日期> HEAD` →

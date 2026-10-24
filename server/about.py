@@ -23,7 +23,8 @@
      的 major 大于运行版本（``update_check.needs_manual_upgrade``）→ 409 ``manual_upgrade``，
      details 带 ``manual_upgrade`` / ``current`` / ``latest`` / ``fix``（``git fetch --tags origin &&
      git checkout v<latest> && bash install.sh``）。缓存读不出 = 不拒（宪法第 11 条）。
-  2. **已有一次升级在跑**（``state/upgrade.lock`` 目录在）→ 409 ``upgrade_running``，details 带日志路径。
+  2. **已有一次升级在跑**（``state/upgrade.lock`` 目录在且不到两小时；更老的是被杀那一轮留下的，升级器
+     自己清掉）→ 409 ``upgrade_running``，details 带日志路径。
   3. 这个 checkout 缺 ``scripts/upgrade.sh``（残缺的 checkout；脚本随 v2.0.0 入库）→ 501
      ``upgrader_missing``，details 带同一条手动命令。
 - **自动模式**（§79）：``updates.auto_install``（默认关）开着时，GET 触发的那次后台 §26 检查跑完后，
@@ -52,6 +53,7 @@ CHECK_ENABLED_FIELD = ("updates", "updates_check_enabled")   # settings_catalog 
 UPGRADE_SCRIPT = "scripts/upgrade.sh"                           # §79
 UPGRADE_LOG = "upgrade.log"
 UPGRADE_LOCK = "upgrade.lock"          # = scripts/upgrade.sh LOCK_DIR
+UPGRADE_LOCK_STALE_S = 7200            # = scripts/upgrade.sh LOCK_STALE_MIN × 60（被杀的那一轮留下的锁）
 UPGRADE_STATE = "upgrade_state.json"   # = scripts/upgrade.sh STATE_FILE
 AUTO_INSTALL_FIELD = ("updates", "updates_auto_install")
 CHECK_INTERVAL_S = update_check.CHECK_INTERVAL_SECONDS
@@ -275,9 +277,19 @@ def _require_upgrader(root: Path, latest: str) -> Path:
     return script
 
 
+def _lock_held(state_dir: Path, now: Optional[float] = None) -> bool:
+    """The upgrader's lock directory exists and is younger than the stale cutoff."""
+    try:
+        mtime = (state_dir / UPGRADE_LOCK).stat().st_mtime
+    except OSError:
+        return False
+    current = now if now is not None else _dt.datetime.now(_dt.timezone.utc).timestamp()
+    return current - mtime < UPGRADE_LOCK_STALE_S
+
+
 def _refuse_if_running(state_dir: Path, log_path: Path) -> None:
-    """409 while ``scripts/upgrade.sh`` holds its lock directory (one upgrade at a time)."""
-    if (state_dir / UPGRADE_LOCK).is_dir():
+    """409 while ``scripts/upgrade.sh`` holds a fresh lock (one upgrade at a time)."""
+    if _lock_held(state_dir):
         raise ConflictError("an upgrade is already running - progress in %s" % log_path,
                             {"reason": "upgrade_running", "log": str(log_path)})
 

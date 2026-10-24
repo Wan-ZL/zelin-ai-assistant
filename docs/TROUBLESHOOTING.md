@@ -90,7 +90,7 @@ Claude Code 目录，脚本只打印、不执行；想留就先归档。日志�
   `git reset --hard <tag> && bash install.sh`）。
 - `refused`（`untagged`）：origin/main 现在不是一个 `v*` release tag，等下一个 release 即可。
 - `failed`：`reason=fetch` = 离线；`reason=install` = `install.sh` 有失败步，`state/install_report.json` 写着哪一步。没有自动回滚。
-- `running` 卡住：`state/upgrade.lock` 目录还在而 `state/upgrade.log` 不再增长 = 上一轮被杀掉了，删掉那个目录再点一次。
+- `running` 卡住：`state/upgrade.lock` 目录还在而 `state/upgrade.log` 不再增长 = 上一轮被杀掉了；锁超过两小时，升级器与 server 都把它当作过期锁，急的话删掉那个目录再点一次。
 
 **新的大版本**（关于页写着「需要手动升级」）：大版本永不自动跨，按页面给的命令手动 `git fetch --tags origin &&
 git checkout v<版本> && bash install.sh`（CONTRACT §26 / §79）。

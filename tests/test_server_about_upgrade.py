@@ -175,6 +175,11 @@ class UpgraderTestCase(_Home):
                               spawner=self._spawner, repo=repo)
         self.assertEqual(ctx.exception.details["reason"], "upgrade_running")
         self.assertEqual(self.spawned, [])
+        old = about._dt.datetime.now(about._dt.timezone.utc).timestamp() - about.UPGRADE_LOCK_STALE_S - 5
+        os.utime(self.home / "state" / "upgrade.lock", (old, old))
+        about.install_now({}, home=self.home, update_reader=lambda: {"latest": "2.0.1"},
+                          spawner=self._spawner, repo=repo)
+        self.assertEqual(len(self.spawned), 1, "a stale lock (a killed run) does not block")
 
     def test_no_home_and_no_reader_reads_as_no_cache(self):
         self.assertIsNone(about._read_update(None, None))
