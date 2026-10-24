@@ -9,14 +9,19 @@
 2. §26 v2.0.0 的周期触发：缓存缺席 / 超过 24h 且检查开着 → 后台起一次
    ``python -m act.lib.update_check``（GET 不等它）；缓存新鲜、检查关着、或
    ``AIASSISTANT_UPDATE_AUTOCHECK=0`` → 不起；
-3. ``POST /api/update/install``：升级器 ``scripts/upgrade.sh`` 不在这个 checkout → 501
-   ``upgrader_missing``（details 带手动命令）；在 → 分离起 ``/bin/bash scripts/upgrade.sh``，cwd = repo、
-   日志 = ``<home>/state/upgrade.log``；跨大版本的 409 在 tests/test_server_about_manual_upgrade.py。
+3. ``POST /api/update/install``：升级器 ``scripts/upgrade.sh`` 不在这个 checkout（残缺 checkout）→ 501
+   ``upgrader_missing``（details 带手动命令）；已有一次在跑（``state/upgrade.lock``）→ 409
+   ``upgrade_running``；否则分离起 ``/bin/bash scripts/upgrade.sh``，cwd = repo、日志 =
+   ``<home>/state/upgrade.log``（起之前封顶）；跨大版本的 409 在 tests/test_server_about_manual_upgrade.py；
+4. §79 自动模式 ``maybe_auto_install``：``updates.auto_install`` 开 + 缓存里有同一大版本的新版 + 回执的
+   ``target`` 还不是它 → 起同一个升级器；关着 / 大版本 / 已试过 / 检查关着 → 什么都不起。
+脚本本身的判例在 tests/test_upgrade_script.py。
 子进程一律经注入缝——测试绝不真跑升级器、绝不出网。
 """
 import datetime as dt
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -152,11 +157,24 @@ class UpgraderTestCase(_Home):
                                    "log": str(log), "latest": "2.0.1"})
         self.assertEqual(self.spawned, [(["/bin/bash", str(repo / "scripts" / "upgrade.sh")], repo, log)])
 
-    def test_default_spawner_is_detached(self):
-        with mock.patch.object(about.subprocess, "Popen") as popen:
-            about._default_spawner(["/bin/bash", "x"], self.home, self.home / "state" / "upgrade.log")
+    def test_default_spawner_is_detached_and_caps_the_log(self):
+        log = self.home / "state" / "upgrade.log"
+        with mock.patch.object(about.subprocess, "Popen") as popen, \
+                mock.patch.object(about.logcap, "cap") as cap:
+            about._default_spawner(["/bin/bash", "x"], self.home, log)
         self.assertTrue(popen.call_args[1]["start_new_session"])
         self.assertEqual(popen.call_args[1]["cwd"], str(self.home))
+        cap.assert_called_once_with(log)
+
+    def test_a_running_upgrade_is_409(self):
+        repo = Path(tempfile.mkdtemp(prefix="zai-about-repo-"))
+        write_text(repo / "scripts" / "upgrade.sh", "#!/bin/bash\n")
+        (self.home / "state" / "upgrade.lock").mkdir()
+        with self.assertRaises(about.ConflictError) as ctx:
+            about.install_now({}, home=self.home, update_reader=lambda: {"latest": "2.0.1"},
+                              spawner=self._spawner, repo=repo)
+        self.assertEqual(ctx.exception.details["reason"], "upgrade_running")
+        self.assertEqual(self.spawned, [])
 
     def test_no_home_and_no_reader_reads_as_no_cache(self):
         self.assertIsNone(about._read_update(None, None))
@@ -169,6 +187,64 @@ class UpgraderTestCase(_Home):
     def test_manual_fix_without_a_known_latest(self):
         self.assertEqual(about.manual_fix(""),
                          "git fetch --tags origin && git checkout v<latest> && bash install.sh")
+
+
+class AutoInstallTestCase(_Home):
+    """§79 auto mode — the upgrader is spawned by the §26 background check, never by a LaunchAgent."""
+
+    def setUp(self):
+        super().setUp()
+        self.spawned = []
+        self.repo = Path(tempfile.mkdtemp(prefix="zai-about-auto-"))
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        write_text(self.repo / "scripts" / "upgrade.sh", "#!/bin/bash\n")
+
+    def _spawner(self, argv, cwd, log_path):
+        self.spawned.append(argv)
+
+    def _auto(self, on=True):
+        if on is not None:
+            write_text(self.home / "state" / "settings_overrides.json",
+                       json.dumps({"updates_auto_install": on}))
+        return about.maybe_auto_install(self.home, spawner=self._spawner, repo=self.repo)
+
+    def test_off_by_default(self):
+        self._cache(latest="2.0.1", checked_at=_iso(1e9))
+        self.assertIs(about.auto_install_enabled(self.home), False)
+        self.assertIsNone(self._auto(on=None))
+        self.assertEqual(self.spawned, [])
+
+    def test_on_with_a_same_major_update_spawns_the_upgrader_once_per_version(self):
+        self._cache(latest="2.0.1", checked_at=_iso(1e9))
+        receipt = self._auto()
+        self.assertEqual(receipt["action"], "upgrade")
+        self.assertEqual(self.spawned, [["/bin/bash", str(self.repo / "scripts" / "upgrade.sh")]])
+        write_text(self.home / "state" / "upgrade_state.json",
+                   json.dumps({"status": "failed", "target": "v2.0.1"}))
+        self.assertIsNone(self._auto(), "a version already tried is not retried automatically")
+        self.assertEqual(len(self.spawned), 1)
+
+    def test_never_crosses_a_major_and_never_without_an_update(self):
+        self._cache(latest="3.0.0", checked_at=_iso(1e9))
+        self.assertIsNone(self._auto())
+        self._cache(latest="2.0.0", checked_at=_iso(1e9))
+        self.assertIsNone(self._auto())
+        self.assertEqual(self.spawned, [])
+
+    def test_check_disabled_means_no_auto_install(self):
+        self._cache(latest="2.0.1", checked_at=_iso(1e9))
+        write_text(self.home / "state" / "settings_overrides.json",
+                   json.dumps({"updates_auto_install": True, "updates_check_enabled": False}))
+        self.assertIsNone(about.maybe_auto_install(self.home, spawner=self._spawner, repo=self.repo))
+
+    def test_the_background_check_runs_the_auto_decision(self):
+        calls = []
+        with mock.patch.dict(os.environ, {about.AUTOCHECK_ENV: "1"}), \
+                mock.patch.object(about, "maybe_auto_install",
+                                  side_effect=lambda home, spawner=None: calls.append(home)):
+            about.snapshot(self.home, runner=lambda *a: (0, "{}", ""), now=1e9)
+            self.assertTrue(about.join_jobs_for_tests(10.0))
+        self.assertEqual(calls, [self.home])
 
 
 class RouteTestCase(unittest.TestCase):
