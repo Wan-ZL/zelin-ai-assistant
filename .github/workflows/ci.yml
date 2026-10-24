@@ -505,11 +505,11 @@ jobs:
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
       - name: Build board shell app (shell/build.sh — install.sh's ui step)
-        # CONTRACT §56.5: merge = deploy now includes the UI; the shell must
-        # compile on the CI toolchain or the auto-deploy `ui` step fails and
-        # rolls the deploy back. ZAI_PORT stamping is exercised too. shell/ also
-        # hosts the recording + live-captions engines (moved from the retired
-        # mac/Sources, §61.3) and the zaiShell bridge (§61.1). The stamp it
+        # The shell must compile on the CI toolchain: install.sh's `ui` step
+        # (§56.5), scripts/upgrade.sh (§79) and release.yml all build exactly
+        # this. ZAI_PORT stamping is exercised too. shell/ hosts the recording
+        # engine (Recording.swift, the §61.3 source of truth) and the zaiShell
+        # bridge (§61.1); live captions left with v2.0.0. The stamp it
         # needs comes from scripts/build_version.sh (act/_version.py; no iOS pins
         # since v2.0.0).
         if: needs.changes.outputs.swift != 'false'

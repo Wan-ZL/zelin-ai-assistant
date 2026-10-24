@@ -30,8 +30,9 @@ The one restriction: you may not make the Software available **to others** in a
 **commercial product or service** that substitutes for this software or offers
 substantially the same functionality. Concretely:
 
-- Selling or offering a hosted/paid "AI chief-of-staff for macOS" built from
-  this code — not permitted while a version is still under FSL terms.
+- Selling or offering a hosted/paid meeting-recap and screen-recording
+  assistant for macOS built from this code — not permitted while a version is
+  still under FSL terms.
 - Bundling this software into a commercial product that competes with it — not
   permitted.
 - Everything short of that — using it yourself or at your company, forking it,

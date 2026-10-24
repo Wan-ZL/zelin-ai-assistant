@@ -153,7 +153,7 @@ def _config_file(home: Path) -> Path:
 
 
 def _voice_profile_file(home: Path) -> Path:
-    # mirrors act/recap.voice_profile_text's two-level fallback (docs/VOICE.md)
+    # mirrors act/recap.voice_profile_text's two-level fallback
     for path in (home / "state" / "voice-profile.md", home / "config" / "voice-profile.default.md"):
         if path.is_file():
             return path

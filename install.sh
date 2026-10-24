@@ -1206,7 +1206,9 @@ setup_config_and_runtime() {
 
 make_state_dirs() {
     echo "==> 3. state directories"
-    if mkdir -p "$REPO_ROOT/state/recap"; then
+    # state/logs = config.LOG_DIR: the doctor's `state dirs` row requires it and
+    # server/diagnostics lists it (the 1.x daemon used to create it on start).
+    if mkdir -p "$REPO_ROOT/state/recap" "$REPO_ROOT/state/logs"; then
         ok "state/ ready"
         report_step "state_dirs" "ok"
     else

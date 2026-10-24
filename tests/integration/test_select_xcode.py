@@ -108,8 +108,8 @@ class SelectXcodeTestCase(unittest.TestCase):
         text = PIN_FILE.read_text(encoding="utf-8").strip()
         self.assertRegex(text, r"^\d+(\.\d+)+$", ".github/xcode-version must be e.g. 26.6")
 
-    def test_both_workflows_use_the_shared_selector_and_no_newest_fallback(self):
-        for wf in ("ci.yml", "release.yml"):
+    def test_every_macos_workflow_uses_the_shared_selector_and_no_newest_fallback(self):
+        for wf in ("ci.yml", "release.yml", "fresh-install.yml"):
             with self.subTest(workflow=wf):
                 text = (REPO / ".github" / "workflows" / wf).read_text(encoding="utf-8")
                 self.assertIn("bash scripts/ci/select_xcode.sh", text)

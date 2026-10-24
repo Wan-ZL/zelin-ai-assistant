@@ -1,37 +1,31 @@
 # Roadmap
 
-Single source of truth for where this project is going. Extracted from [HANDOFF.md](../HANDOFF.md) §6
-(which now just points here). Statuses reflect July 2026; issue links will be added as items get filed.
-Before picking anything up, check the in-progress list — several items already have work in flight.
+Where this project goes after lite 2.0. Statuses reflect October 2026. Before picking anything up,
+check the in-progress list; some items already have work in flight.
+
+Lite 2.0 is deliberately small: screen recording, the Obsidian ingest chain, meeting recaps and a
+Dock app around them. Anything that would grow it back into the 1.x pipeline (radars, approval
+cards, background agents) is out of scope; the 1.x tree lives at git tag and branch `full`.
 
 ## In progress
 
-- **`.pkg` installer + release automation** — one installer that lays down the app and the whole
-  pipeline (launchd agents + cron chain); the `.pkg` itself has landed, release automation is being
-  finished. *In flight — don't duplicate.*
-- **Demo assets** — hero screenshots, flow GIF and demo video per the conventions in
-  [docs/assets/README.md](assets/README.md); the hero set has landed, remaining screenshot slots
-  (`t2-card`, `review-final-draft`, `trash`) are in flight.
-- **Telemetry v2 — research loop** — v1 (Supabase sync of local analytics events; default-on with a one-click opt-out) has landed;
-  v2 closes the loop: after ≥14 days of data the Monday digest proposes self-improvement cards
-  ("this feature is unused", "this step keeps failing") — the new-install guard is already written.
-- **Swift strict-concurrency migration** — move the Mac app onto Swift 6 strict concurrency before
-  the toolchain default flips make it urgent.
-- **Developer ID signing & notarization** — the local self-signed identity already keeps TCC grants
-  across upgrades (`mac/build.sh` + `shell/build.sh`, 2026-09-12); what is left is a real Apple
-  Developer ID plus notarization so a downloaded copy stops needing right-click → Open, and so
-  machines without the local cert stop falling back to ad-hoc.
+- **Visual baselines for the recaps page.** The goldens are captured on the CI runner by the
+  `visual-goldens` workflow from fictional demo recaps with a pinned clock
+  (`scripts/demo_seed.py --now`); the first lite set is pending one manual dispatch.
+- **Developer ID signing and notarization.** The local self-signed identity already keeps the TCC
+  grants across upgrades (`shell/build.sh`). What is left is a real Apple Developer ID plus
+  notarization, so a downloaded copy no longer needs right-click → Open.
 
 ## Next
 
-- **iOS remote approver** (`ios/` is a placeholder) — approve and accept from the phone, with push
-  notifications; the app stays a pure remote control over the same dashboard/inbox contract.
-- **Structured deliverable manifests** — agents end a run by writing a `{branch, files[]}` JSON
-  manifest so review cards can link artifacts instead of describing them in prose.
+- **Move the vault mirror out of the git checkout.** The ingest mirror still lives under `state/`
+  inside the repository tree; moving it out removes the last way a headless run could see the
+  checkout.
+- **A prebuilt app that does not depend on the build path.** The zip attached to a release starts
+  the server through the LaunchAgent that `install.sh` writes; its own fallback still points at
+  the path it was built in.
 
 ## Later
 
-- **Radar confidence-routing parameters** — "hard but no deadline → debt parking lot" is a fixed
-  rule today; make the thresholds tunable once there is enough data to justify settings.
-- **Stable TCC helper binary** — split the TCC-sensitive capture path into a rarely-changing helper
-  so main-app updates don't touch permissions; fallback plan if Developer ID signing doesn't happen.
+- **Stable TCC helper binary.** Split the capture path into a rarely changing helper so app
+  updates never touch permissions; the fallback if Developer ID signing does not happen.

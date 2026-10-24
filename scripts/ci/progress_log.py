@@ -6,7 +6,8 @@
 
 **v2.0.0 起**：默认计划书改指 `docs/design/lite2-plan.md`（lite 2.0 的 owner 决定；它没有 §8 表，
 render 用默认表头 + fragments）。1.x 的 `docs/design/vnext2-plan.md` §8 是冻结历史（全文在 tag
-`full`）；要看那张旧表：`render --plan docs/design/vnext2-plan.md`（文件还在树里时）。CI 不再拦
+`full`）；要看那张旧表：`git show full:docs/design/vnext2-plan.md`。v2.0.0 起 `docs/design/progress/`
+连同 1.x 的 125 个片段一并删除，目录不存在时 `check` 答 `ok (0)`；进度片段是可选的。CI 不再拦
 往 vnext2-plan 追加表行（scripts/ci/version_pins_check.py 的该规则随之退役）。
 
 **为什么有它**：`docs/design/vnext2-plan.md` §8 的表每个 PR 追加一行，全部追加在表尾 =
@@ -146,7 +147,7 @@ def _cmd_check(dirpath: str, stdout) -> int:
     for problem in problems:
         stdout.write("::error::%s/%s\n" % (PROGRESS_DIR, problem))
     if problems:
-        stdout.write("progress fragments: FAIL — see docs/design/progress/README.md for the shape\n")
+        stdout.write("progress fragments: FAIL — see the header of scripts/ci/progress_log.py for the shape\n")
         return 1
     stdout.write("progress fragments: ok (%d)\n" % len(rows))
     return 0

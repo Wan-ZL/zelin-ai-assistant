@@ -8,225 +8,151 @@
 [![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)](docs/INSTALL.md)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](docs/INSTALL.md)
 
-macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack、Gmail），把"别人要你做的事"变成看板上的审批卡片，批准后由后台 Claude agent 自动执行。你只做两件事——**批准** 和 **验收**，其余全自动。
+一个小的 macOS 助理：在本机录屏录音，把录到的内容整理成 Obsidian 笔记，每场会议结束后写一份简短的会议纪要。这是本项目的 lite 2.0 版本，只有下面四部分。
 
-<p align="center">
-  <a href="docs/assets/promo-zh.mp4"><img src="docs/assets/promo-teaser-zh.gif" alt="60 秒产品导览：AI 从录音里找出相关碎片，汇聚成一张审批卡" width="760"></a>
-  <br><sub>▶️ <a href="docs/assets/promo-zh.mp4">观看 60 秒导览（含配乐）</a> · <a href="docs/assets/promo-en.mp4">English</a> —— 画面全部为虚构 demo 数据，成片可由 <a href="promo/">promo/</a> 一条命令重录</sub>
-  <br><sub>配乐：《Voxel Revolution》— Kevin MacLeod（<a href="https://incompetech.com">incompetech.com</a>），<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a></sub>
-</p>
+- **录制**：[screenpipe](https://github.com/mediar-ai/screenpipe) 引擎在你的 Mac 上采集屏幕文字和音频，由 Dock app 托管。
+- **Obsidian 导入**：每 30 分钟，一条 cron 把新采集的内容导出，再由一次 headless Claude 运行整理进你的 Obsidian vault（`ingest/`）。
+- **会议纪要**：会议结束后大约 5 到 35 分钟，`act/recap.py` 写出纪要：五行带标签的短版（定了什么、谁负责、截止、较上次变化、待定），或者分节的长版。你自己复制粘贴，它从不替你发送。
+- **一个小的 Dock app**：本地 web 界面（`web/`，由 `server/` 里的标准库 server 提供）套在一个很薄的 Dock 壳（`shell/`）里：会议纪要、录制与导入、设置、关于。
 
-![任务台看板](docs/assets/kanban.png)
+版本以 `main` 上的 git tag 为准；`python3 scripts/version_stamp.py` 打印你手上这份 checkout 的版本。
 
-<p><img src="docs/assets/flow.gif" alt="审批 → 排队 → 执行 → 待验收 → 阶段性完成 全流程"><br><sub>一张卡片的一生：批准 → 排队 → 执行 → 待验收 → 阶段性完成（<a href="docs/assets/demo.mp4">mp4 版</a>；图中数据全部为虚构 demo 数据，由 <code>scripts/demo_seed.py</code> 生成）</sub></p>
+![会议纪要：左边是列表，右边是一份纪要和复制、标记已发送、忽略、重新生成按钮](docs/images/recaps-zh-light.png)
 
-## 工作原理
+<p align="center"><sub>本页每张截图都是 web 界面的真实渲染，数据来自 <code>scripts/demo_seed.py</code> 的虚构会议纪要，由 <code>scripts/qa/readme_shots.mjs</code> 拍摄。图里没有任何真实的人、会议或仓库。</sub></p>
 
-- **感知**——[screenpipe](https://github.com/mediar-ai/screenpipe) 本地录屏+录音；定时任务增量导出，headless Claude 加工进 Obsidian wiki（`ingest/`）。
-- **发现**——三路需求雷达（Obsidian 笔记 / Slack / Gmail）扫出"别人要你做的事"，写入需求注册表（SQLite 唯一真源，每日导出一份可 diff 的 YAML 镜像），跨源合并去重（`act/`）。
-- **审批**——每条需求扩写成提案卡（大白话摘要、成本预估、验收标准），出现在看板上——本地服务器提供的网页看板，装在 Dock 里一个普通 app 里。一键 ✅ 批准 / ❌ 拒绝 / 💬 评论。
-- **执行**——批准的卡片以 `claude --bg` 派发到独立 git worktree,由常驻守护进程（`actd`）监控,自动 resume + 质量门（自检、fresh-context 审 diff、只交 draft PR）。
-- **交付**——完工进"待验收"列：文书任务给可直接粘贴的成稿,代码任务给 draft PR。验收进「阶段性完成」,彻底结束点「永久完成」;不满意带评论打回。
+## 安装
 
-看板与管线彻底解耦：看板只读 `state/dashboard.json` 投影、只写 `state/inbox/`,注册表的唯一写者是 `actd` 守护进程;契约见 [docs/CONTRACT.md](docs/CONTRACT.md)。
+只支持 macOS 14+。需要 Xcode Command Line Tools、[Claude Code CLI](https://claude.com/claude-code)、Node.js LTS 和一个 Anthropic API key。
 
-### 架构图
-
-```mermaid
-flowchart TB
-    subgraph MAC["你的 Mac —— 框内一切留在本机"]
-        direction TB
-
-        subgraph INGEST["Ingest 管线(ingest/,cron)"]
-            SP["screenpipe 引擎<br/>录屏 + 录音"] --> EXP["增量导出<br/>(markdown)"]
-            EXP --> DISTILL["headless claude<br/>ingest skill 加工"]
-            DISTILL --> VAULT[("Obsidian vault<br/>unprocessed → raw → wiki")]
-        end
-
-        subgraph ACTP["Act 管线(act/)"]
-            RADARS["三路雷达<br/>Obsidian · Slack · Gmail"]
-            REG[("注册表 —— SQLite 唯一真源(store2)<br/>每日导出 YAML 镜像供 diff / 备份<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(任意状态 → trashed)")]
-            ACTD["actd 守护(launchd,10 s 一轮)<br/>inbox → 派发 → reconcile → dashboard"]
-            AGENTS["claude --bg agents<br/>独立 git worktree + 质量门<br/>交付:draft PR 或 FINAL DRAFT"]
-            RADARS -->|"merge_or_new(去重)"| REG
-            ACTD <-->|"状态跃迁"| REG
-            ACTD -->|"派发已批准任务"| AGENTS
-        end
-
-        VAULT --> RADARS
-
-        DASH["state/dashboard.json<br/>(投影,原子写)"]
-        INBOX["state/inbox/*.json<br/>(一个用户操作一个文件)"]
-
-        subgraph APP["看板 —— 网页看板(web/)装在 Dock 壳(shell/)里,<br/>由本地 stdlib 服务器(server/,launchd agent)提供"]
-            UI["审批卡片 · 看板 · 快速捕获 ·<br/>录制 / 实时字幕开关"]
-        end
-
-        ACTD --> DASH
-        DASH -->|"只读,SSE 推送"| UI
-        UI -->|"批准 · 拒绝 · 评论 · 捕获"| INBOX
-        INBOX --> ACTD
-    end
-
-    subgraph EXT["外部服务"]
-        ANTH["Anthropic API"]
-        GH["GitHub"]
-        SRC["Slack · Gmail"]
-    end
-
-    DISTILL -.->|"屏幕/音频摘录进 prompt"| ANTH
-    RADARS -.->|"笔记与消息正文进 prompt"| ANTH
-    AGENTS -.->|"任务 prompt + repo 上下文"| ANTH
-    AGENTS -.->|"经 gh 提 draft PR(repo 模式)"| GH
-    SRC -.->|"消息 / 未读邮件 / self-DM 快速捕获"| RADARS
+```bash
+git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant
+cd ~/Projects/zelin-ai-assistant
+bash install.sh
 ```
 
-实线 = 本地文件/进程流;虚线 = 仅有的网络出境点(完整清单及每一条对应的控制开关见 [docs/PRIVACY.md](docs/PRIVACY.md))。看板永不联网:它的服务器只读投影与注册表、把你的操作写成 inbox 文件——注册表的单一写者始终是 `actd`(CONTRACT §44)。
-
-## 快速开始
-
-空白 Mac（macOS 14+，装了 Xcode Command Line Tools）上一条命令——以后更新也是同一条：
+`install.sh` 在缺 `config.yaml` 时从 `config.example.yaml` 复制一份，构建 web 界面和 Dock app，为本地 server 装一个 LaunchAgent，为导入链写一条 cron，最后跑一遍体检。空白 Mac 上也可以用一条命令完成同样的步骤：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
 ```
 
-它把仓库 clone 到 `~/Projects/zelin-ai-assistant`（`bash -s -- <目录>` 可改），从模板生成 `config.yaml`，跑 `install.sh --non-interactive`（永不停下来问；构建 web 看板 + Dock 壳 app、装 launchd agents 与 crontab），打出**剩下要你做的事**（带本机真实路径），然后打开看板。看板的首次运行向导（`?page=setup`）只列脚本做不了的几件：缺 [Claude Code](https://claude.com/claude-code) 就装、把 Anthropic API key 放进 `config/secrets/anthropic-api-key.txt`（launchd/cron 下的 headless `claude` 读不了 Keychain OAuth）、仓库在受保护目录或外置卷上时给守护解释器和 `claude` 开完全磁盘访问。合并进 `main` 的每个 PR 也会自动部署到已装机器（CONTRACT §56）；每个 PR 都有一个 macOS CI job 在干净 runner 上重放这条命令（CONTRACT §68）。
+剩下要你做的：把 Anthropic API key 放进 `config/secrets/anthropic-api-key.txt`（或在 设置 → 凭证 里粘贴），在 app 里打开录制，按体检的提示给需要的程序开完全磁盘访问。`bash install.sh --check` 列出还缺什么。每一步和它的预期结果见 [docs/INSTALL.md](docs/INSTALL.md)，按症状找修法见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
-手动等价：`git clone … && cd zelin-ai-assistant && cp config.example.yaml config.yaml && bash install.sh`（交互模式，结尾跑全套诊断）。之后哪里不对：`bash install.sh --check`。
+## 升级
 
-- 完整安装教程（逐步 checkpoint、TCC 授权准确路径、「第一张卡 5 分钟」练习）：**[docs/INSTALL.md](docs/INSTALL.md)**。
-- 还没有 API key?一条命令用完全虚构的数据预览整个看板:`bash scripts/dev-preview.sh`,见下一节与 [docs/DEMO.md](docs/DEMO.md)。
+- **在 app 里**：关于页每天最多向 GitHub 检查一次新版本。有新版时点「立即升级」。
+- **在终端里**：`bash scripts/upgrade.sh`，效果相同。
 
-## 看板 · 两分钟上手
+两者都只把 checkout 快进到带 tag 的 `main`，再重跑一遍 `install.sh`。工作树有改动或本地分叉时，它们停下、什么都不改，并打印要你手动跑的命令。录制不会被打断，设置和会议纪要原样保留。同一大版本内的自动升级是设置页里的一个开关（默认关）；新的大版本永远手动升级。
 
-产品 UI 是浏览器看板:纯 stdlib 的本地 HTTP + SSE 服务器(`server/`)提供 React 看板(`web/`),外面套一层薄薄的 Dock app(`shell/`)——**没有菜单栏图标**。它和其他组件遵守同一份文件契约(读 `state/dashboard.json` + 注册表,把审批写进 `state/inbox/`)。你在跑的版本就是 `install.sh` 盖章的那个 git tag——页首的 Release 徽章即当前版本。三种进入方式:
+卸载安装器加上的一切：`bash uninstall.sh`（先加 `--dry-run` 看计划）。
+
+## 隐私
+
+- **只在本机。** 录制、笔记和会议纪要都留在你的 Mac 上。server 只监听 127.0.0.1。
+- **零遥测。** app 不上传使用统计，也不上传反馈。内容只以模型调用的形式发往 Anthropic API（用你的 key）；唯一的其它请求是每天一次向 GitHub 检查版本，可以关掉。
+- **隔离的 Claude 运行。** 每一次 headless `claude -p` 都用自己的配置目录 `~/Library/Application Support/ZelinAIAssistant/claude-config/`、一个在仓库之外的空工作目录，并带 `--bare`。它不加载你的 Claude Code hooks、插件、MCP server 和 CLAUDE.md，不往你的 Claude Code 目录写会话记录，从不读写 `~/.claude`。
+- **敏感 app 在引擎层排除采集**（`config.yaml` 的 `recording.ignored_apps`：默认含密码管理器、钥匙串访问和无痕浏览窗口）。
+
+每一个出网通道在什么时候触发、带了什么、用哪个开关关掉：[docs/PRIVACY.md](docs/PRIVACY.md)。安全漏洞请经 [SECURITY.md](SECURITY.md) 私下报告。
+
+## 界面
+
+| | |
+|---|---|
+| ![English 的会议纪要](docs/images/recaps-en-light.png) | ![设置：一个可搜索的页面，按区折叠](docs/images/settings-en-light.png) |
+| English 的会议纪要：每份纪要都带中英两种语言，顶栏一个开关切换整个界面 | 设置：一个可搜索的页面，按区折叠 |
+| ![关于：版本、更新检查、升级和卸载](docs/images/about-en-light.png) | ![权限体检：屏幕录制、系统权限和完全磁盘访问](docs/images/permissions-en-light.png) |
+| 关于：版本、更新检查、升级和卸载命令 | 权限体检：app 需要 macOS 给的权限，附确切路径 |
+
+不安装也能看界面：跑 demo。它把虚构的会议纪要写进一个临时目录，从不碰真实的 `state/`。
 
 ```bash
-# ① Demo —— 虚构数据,不要 API key,不装东西:
-git clone https://github.com/Wan-ZL/zelin-ai-assistant && cd zelin-ai-assistant
-bash scripts/dev-preview.sh              # 首次自动构建 web/,灌 demo 数据,打开浏览器
-
-# ② 真数据 —— `bash install.sh` 跑过一次之后(或设了 AIASSISTANT_HOME):
-bash scripts/dev-preview.sh --real
-
-# ③ 原生窗口 —— app "Zelin's AI Assistant"(shell/):`bash install.sh` 构建 web/dist、
-#    构建薄壳并装进 /Applications,看板服务器以 launchd agent
-#    com.zelin.aiassistant.server 常驻(CONTRACT §54)。开发循环:
-bash shell/build.sh && open "shell/build/Zelin's AI Assistant.app"   # 连接正在跑的服务器
+bash scripts/dev-preview.sh
 ```
 
-构建 web UI 需要 Node.js LTS——`web/dist` 缺席时 `dev-preview.sh` 自动 `npm install && npm run build`;`install.sh` 同样(lockfile 变了才 `npm ci`),node 或 swiftc 缺席时跳过 UI 并 warn。壳 app 是 ad-hoc 签名:自己构建不需要 Apple 开发者账号;从网上下载的副本首次需右键 → 打开(Gatekeeper)。
+## 从 1.x 迁移
+
+1.x 和 2.0 不能在同一台 Mac 上并存。1.x 在大版本边界停下，不会自己升级到 2.0，所以迁移是一次手动操作，步骤见 [docs/INSTALL.md](docs/INSTALL.md)；`install.sh` 会顺带删掉 1.x 的后台 agent 和 cron 行。
+
+最后一个完整的 1.x 版本归档为 git tag 和 branch `full`。要回到它：
+
+```bash
+git fetch --tags && git checkout full && bash install.sh
+```
+
+```removed
+2.0 删除的东西（全部还在 tag 和 branch full 的树里；最后一个完整的 1.x 版本：v1.0.117）
+- Act 管线：Slack、Gmail、Obsidian、Claude 会话雷达，需求登记表，审批卡片与看板，actd 守护进程和它派发的 claude --bg agent，快速捕获，技能页，回收站
+- 实时字幕、纪要转 Slack 草稿、往 agent 草稿里注入语气档案
+- 遥测：匿名使用事件、Supabase 上传、建议上报通道
+- 原生 Mac app（mac/）、iOS 审批端（ios/）、Linux 与 Windows 安装器、.pkg 安装器、Sparkle 更新与自动部署
+```
 
 ## 环境要求
 
 | 组件 | 版本 | 用途 |
 |---|---|---|
-| macOS | 14+ | 看板壳 app、launchd/cron 定时、TCC 权限模型 |
-| Xcode / Swift toolchain | 6.x | 从源码构建看板壳(与旧 app) |
-| [Claude Code CLI](https://claude.com/claude-code) + Anthropic API key | 最新版 | 雷达、提案扩写、执行全靠 headless `claude` |
-| Python | 3.9+ 与 PyYAML | `actd` 守护、雷达、digest |
-| Node.js | LTS(`npx`) | 录制引擎经 `npx screenpipe` 自动运行;构建网页看板(`web/`) |
-| Obsidian(可选) | — | 雷达扫描源 + wiki 落点 |
-| `gh` CLI(可选) | — | draft-PR 交付 |
-
-### 平台支持
-
-| 操作系统 | 状态 |
-|---|---|
-| macOS 14+ | **完整产品**——Dock 壳里的网页看板、launchd/cron 定时、屏幕录制 ingest、Slack/Gmail 雷达 |
-| Windows / Linux | **2.0 起移除**——1.x 安装器、各平台指南与移植地图在 git tag `full` |
-
-Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一在看板上做。
-
-## 功能特性
-
-- **带去重的需求雷达**——纯重述合并进已有卡片不刷屏;含增量出"改进卡"链接父条目;低置信度进潜在任务(backlog)停车场,可 raise 升级。
-- **分级审批**——T0 自动 / T1 一键 / T2 文字确认;对外发消息、merge、删资源永不自动。成本 >$5 显示,>$50 升 T2。
-- **质量门**——可运行检查 + 只读测试 + fresh-context 审 diff + 风险分级 + 可回滚的 draft PR 交付。
-- **两种交付方式**——代码走 `repo`(feature 分支 / draft PR);文书走 `chat`(可直接粘贴的 `FINAL DRAFT`),一段回复稿不会被逼着建分支。
-- **快速捕获**——在看板的输入框随手记一句(一句话提案,或直接开跑);LLM 对照注册表三选一:新卡 / 关联已有 / 忽略。<!-- screenshot slot: docs/assets/t2-card.png -->
-- **即时反馈的 UI**——所有点击 ≤1 帧内有视觉反馈(乐观回显),看板主窗口,回收站配逆操作而非假 undo,双语界面(English / 中文)。<!-- screenshot slot: docs/assets/review-final-draft.png -->
-- **Slack self-DM 手机端快速捕获**——在手机上给自己发一句话(或拍白板/屏幕/纸条的图片/视频),系统对照注册表三选一建卡,和桌面快速捕获同一条三选一门(见 [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md))。iOS app 上线前这是手机端的捕获方式;**审批统一在看板上做**(iMessage 通道与 Slack 手机审批已于 v0.21 移除)。
-- **内容本地优先**——注册表、dashboard、所有采集内容全部留在本机;默认只上传匿名使用事件(见下方「匿名使用统计」)。
-
-## 匿名使用统计(Telemetry)
-
-> **匿名使用统计默认开启**(像 VS Code 一样),用于驱动产品改进。发送的内容:仅事件元数据(事件名、时间戳、随机设备号、版本号)。**你输入进本 App 的文本**——快速捕获、提问、打回反馈、搜索词,每条截断 500 字符——**默认不上传**:`telemetry.capture_input` 默认关(opt-in),只有你在首启页勾选「分享输入文本以帮助改进产品」、在设置里打开「上传我输入的文本」,或自己写 `telemetry.capture_input: true` 后才收集。**任何设置下都不发送**:AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息正文、文件内容、密钥。关闭在 设置 →「产品改进计划」:取消文本开关即收回同意(`telemetry.capture_input: false`),关总开关全部停止(`telemetry.enabled: false`)。Fork 用户注意:不改 `telemetry.supabase_url` 时数据会传给本项目维护者——把 URL 置空(`""`)即彻底禁用上传。字段表与细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
-
-## 隐私与安全
-
-这个工具会录屏、可读你的 Slack/Gmail、还跑无人值守 agent——什么数据、何时、经哪些开关控制着离开你的机器,见 [docs/PRIVACY.md](docs/PRIVACY.md)。sensitive app 在录制引擎层就被排除采集(config.yaml `recording.ignored_apps`,默认含密码管理器、Keychain Access 与无痕窗口;银行 app 请自行加进清单);安全漏洞请走私密渠道上报,见 [SECURITY.md](SECURITY.md)。
-
-## 运行状态
-
-- [x] v0:审批卡片 → ✅ → 执行任务闭环
-- [x] v1:三路雷达 cron/launchd 接入,审批回传,周一 digest
-- [x] v2:SwiftUI 菜单栏 app(看板主窗口 + 快速捕获 + 回收站 + 双语)——已冻结:它的活由看板接手;先留着,等 owner 下令再退役
-- [x] 架构基线(当前大版本——看页首 Release 徽章):SQLite 唯一真源、Dock 壳里的网页看板 + 录制/字幕开关、合并即发版即部署、质量仪表作为合并硬门、版本号由 git tag 铸出。大白话说明见 [CHANGELOG.md](CHANGELOG.md) `[Unreleased]`;总设计与终态验收清单见 [docs/design/vnext2-plan.md](docs/design/vnext2-plan.md)
-
-进行中与接下来的方向,见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+| macOS | 14+ | 唯一支持的平台 |
+| [Claude Code CLI](https://claude.com/claude-code) + Anthropic API key | 最新 | headless 的导入与纪要运行 |
+| Python | 3.9+，带 PyYAML | server、纪要与体检（`/usr/bin/python3` 即可） |
+| Node.js | LTS | 构建 web 界面；录制引擎经 `npx screenpipe` 运行 |
+| Xcode Command Line Tools | — | git，以及构建 Dock app（`shell/`） |
+| Obsidian *（推荐）* | — | 导入链写笔记的地方 |
 
 ## 参与贡献
 
-不需要完整技术栈就能上手:测试套件只要 Python + PyYAML,一秒内跑完;`scripts/demo_seed.py` 用完全虚构的数据驱动整套 UI——无需 API key、screenpipe 或 Obsidian。入口见 [CONTRIBUTING.md](CONTRIBUTING.md);[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 适用于所有社区空间。
+Python 测试只需要 Python 和 PyYAML；`scripts/demo_seed.py` 用虚构数据驱动整个界面，不需要 API key、screenpipe 或 Obsidian。从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始；[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 处处适用。发布说明：[CHANGELOG.md](CHANGELOG.md) 与 GitHub releases。接下来做什么：[docs/ROADMAP.md](docs/ROADMAP.md)。
 
-提问 → [Discussions(Q&A)](https://github.com/Wan-ZL/zelin-ai-assistant/discussions) · bug → [issue 表单](https://github.com/Wan-ZL/zelin-ai-assistant/issues/new/choose)。
+提问 → [Discussions (Q&A)](https://github.com/Wan-ZL/zelin-ai-assistant/discussions) · 报 bug → [issue 表单](https://github.com/Wan-ZL/zelin-ai-assistant/issues/new/choose)。
 
-## License
+## 许可证
 
-本项目以 [Functional Source License 1.1, MIT Future License (FSL-1.1-MIT)](LICENSE.md) 发布:
+以 [Functional Source License 1.1, MIT Future License (FSL-1.1-MIT)](LICENSE.md) 发布。白话版：
 
-- **允许**:使用、fork、修改、分发,包括非竞争性的商业用途(公司内部使用等)。
-- **禁止**:用本软件做与作者竞争的商业产品或服务。
-- **未来开源**:每个版本发布满 2 年后自动转为 MIT License。
-- **贡献**:欢迎 issue、建议和 PR,见 [CONTRIBUTING.md](CONTRIBUTING.md)。(GitHub 的 license 检测器不认识 FSL,只会显示 "Other";以上方 badge 为准。)
+- **可以** 使用、fork、修改和再分发，包括在公司内部商用。
+- **不可以** 出售与本软件竞争的产品或服务。
+- **将来开源**：每个版本发布两年后自动转为 MIT 许可证。
+- **欢迎贡献**，见 [CONTRIBUTING.md](CONTRIBUTING.md)。（GitHub 把许可证显示为 "Other"，因为它的检测器不认识 FSL；以上方徽章为准。）
 
-更多问题——公司内使用、fork、什么算竞争用途、各版本转 MIT 的具体日期——见大白话问答 [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md)。
+更多问题见 [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md)。
 
-## 文档索引
+## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/INSTALL.md](docs/INSTALL.md) | 唯一权威安装指南:前置条件、逐步 checkpoint、TCC 路径、第一张卡 5 分钟 |
-| [HANDOFF.md](HANDOFF.md) | **由构建这套系统的 AI 助手亲笔写下的交接书**:架构地图、每个"奇怪设计"背后的理由、付过学费的坑清单 |
-| [docs/CONTRACT.md](docs/CONTRACT.md) | `dashboard.json` / inbox 数据契约——改字段必先改这里 |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 按症状组织的已知故障修复手册 |
-| [docs/DEMO.md](docs/DEMO.md) | demo 模式(虚构数据、零 key)与录屏指南 |
-| [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | 数据出境清单 / 漏洞上报 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图:进行中 / 下一步 / 以后 |
-| [CHANGELOG.md](CHANGELOG.md) | 人类可读的版本历史 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 贡献指南 / 社区行为准则 |
-| [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT 实务问答:公司内能不能用、什么算竞争用途、满 2 年转 MIT |
-| [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) / [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md) | 可选的 Slack / Gmail 接入 |
-| [docs/SANITIZATION.md](docs/SANITIZATION.md) | 出处说明:这份公开导出相对私有仓库做了哪些脱敏 |
+| [docs/INSTALL.md](docs/INSTALL.md) | 安装、升级、从 1.x 迁移与卸载，逐步说明 |
+| [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | 每个出网通道和它的开关 / 漏洞报告 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 按症状找修法 |
+| [docs/CONTRACT.md](docs/CONTRACT.md) | 行为契约；改行为的 PR 同时改它 |
+| [HANDOFF.md](HANDOFF.md) | 系统的简短地图和已经付过学费的坑 |
+| [docs/DEMO.md](docs/DEMO.md) | demo 模式与截图怎么拍 |
+| [docs/design/lite2-plan.md](docs/design/lite2-plan.md) | lite 2.0 的计划书与决策台账 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 进行中和接下来的事 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 如何贡献 / 社区准则 |
+| [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT 的实际含义 |
+| [docs/SANITIZATION.md](docs/SANITIZATION.md) | 这个公开版是怎样从私有仓库脱敏导出的 |
 
-设计文档([docs/design/](docs/design/README.md))记录意图与 owner 决策——lane 语义、v-next-2 总设计与终态验收清单;行为契约本身仍在 [docs/CONTRACT.md](docs/CONTRACT.md)。
-
-### 目录结构
+### 仓库结构
 
 ```
-ingest/            # screenpipe→Obsidian 链路(导出/加工/清理脚本 + /unprocessed-ingest skill)
-act/
-  actd.py          # 守护进程:inbox → 派发 → reconcile → dashboard
-  executor.py      # claude --bg 派发 + resume/rework + 质量门 + 交付收割
-  radar*.py        # 三路需求雷达(Obsidian / Slack / Gmail)
-  analyze.py       # 欠账 → 可审批提案的 LLM 扩写
-  digest.py        # 状态摘要 digest（digest.frequency 节奏，默认 off）+ self-improvement 建议卡
-  lib/             # config / registry(状态机) / dashboard 投影 / notify / secrets / …
-  registry/        # 需求注册表(YAML,一条需求一个文件,运行时生成)
-  launchd/         # actd + 雷达 plists
-mac/               # SwiftUI 菜单栏 app(读 dashboard.json,写 inbox,永不碰密钥)
+ingest/                    # screenpipe → Obsidian 链（export / cleanup / process + skill）
+act/recap.py               # 会议纪要（每场会议一次隔离的 headless claude 调用）
+act/doctor.py              # 体检 (install.sh --check)
+act/lib/                   # 配置 / 纪要存储 / 通知 / 凭证 / 隔离常量
+server/                    # 只听 127.0.0.1 的标准库 HTTP + SSE server：纪要、设置、关于、升级
+web/                       # React 界面
+shell/                     # Dock app：托管录制引擎、通知
+scripts/                   # bootstrap、升级、demo 数据、CI 与质量门
 ```
 
 ## 贡献者
 
-感谢每一位贡献者——每个 issue、建议和 PR 都让这个项目更好：
+感谢每一位贡献者：
 
 [![Contributors](https://contrib.rocks/image?repo=Wan-ZL/zelin-ai-assistant)](https://github.com/Wan-ZL/zelin-ai-assistant/graphs/contributors)
 
-想加入他们？从一个
-[good first issue](https://github.com/Wan-ZL/zelin-ai-assistant/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-开始，并阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+想加入？从 [good first issue](https://github.com/Wan-ZL/zelin-ai-assistant/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) 开始，并阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 Copyright (c) 2026 Zelin Wan (https://github.com/Wan-ZL)
