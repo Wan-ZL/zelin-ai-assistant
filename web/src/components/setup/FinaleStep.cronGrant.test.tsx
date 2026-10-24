@@ -12,16 +12,13 @@ import { FinaleStep } from "./FinaleStep";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
-  return { ...mod, fetchHealth: vi.fn(), fetchPermissions: vi.fn(), postRepairActd: vi.fn(), postSeedDashboard: vi.fn() };
+  return { ...mod, fetchHealth: vi.fn(), fetchPermissions: vi.fn() };
 });
 
 const OK: HealthSnapshot = {
-  verdict: "ok",
-  heartbeat: { age_s: 4, phase: "idle", pid: 4242, interval: 10, stale_after_s: 90, stale: false },
-  dashboard: { generated_at: "2026-09-05T08:00:00Z", age_s: 5, stale: false },
-  loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "2026-09-05T08:00:05Z",
+  verdict: "ok", server: { ok: true }, cron: { age_s: 60, read_ok: false, stale: false }, recap: null, checked_at: "2026-09-05T08:00:05Z",
 };
-const ENGINE: SetupEngine = { cli_path: "/usr/local/bin/claude", version: "1.0.99", auth: "api_key", auth_sources: {}, ready: true };
+const ENGINE: SetupEngine = { cli_path: "/usr/local/bin/claude", version: "1.0.99", auth: "secrets_file", auth_sources: { secrets_file: true }, ready: true };
 const PERMISSIONS = {
   home: "/h", on_external_volume: false,
   fda: { needed: false, pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles", executables: [] },
@@ -30,8 +27,8 @@ const PERMISSIONS = {
 } as unknown as PermissionsSnapshot;
 
 const SHELL = {
-  recording: { available: true, on: false, mode: "off", engine_running: false, resume_mode: "screen" }, captions: {},
-  permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" }, launch_at_login: false, hotkey: "x",
+  recording: { available: true, on: false, mode: "off", engine_running: false, resume_mode: "screen" },
+  permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" }, launch_at_login: false,
 };
 
 let writeText: ReturnType<typeof vi.fn>;

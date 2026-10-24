@@ -5,21 +5,18 @@
 // §56.5 / §61 追记；判例 shell/tests/LaunchHarness.swift）+ 主菜单纯表（MenuSpec，
 // §54 追记「菜单 l10n」；判例 shell/tests/MenuHarness.swift）。
 //
-// 为什么这些名字与 mac/Sources/Utils.swift、Doctor.swift、L10n.swift 完全同名：
-// 录制引擎（Recording.swift）与实时字幕引擎（CaptionCore / LiveCaptions /
-// CaptionOverlay）从 mac/ 搬进 shell/ 时要求**逻辑零改动**（CONTRACT §61.3），
-// 它们调用的正是这组 helper。这里逐字复制被调用的那一部分（读侧），写侧
-// （SettingsIO.writeOverrides / SecretsIO.save）刻意不带——壳只读配置与凭证，
+// 为什么这些名字与已退役的 mac/Sources/Utils.swift、Doctor.swift、L10n.swift 同名：
+// 录制引擎 Recording.swift（CONTRACT §61.3 的 source of truth，字节不动）调用的正是
+// 这组 helper。这里只带读侧，写侧（SettingsIO.writeOverrides）刻意不带——壳只读配置，
 // 设置页的写者是 server（§59.5 / R2.10.5）。判例：tests/test_shell_engine_mirror.py
 // 钉住 FailureCatalog 句子与 act/lib/failures.py 逐字一致。
 //
-// 管我的法条：CONTRACT §54（薄壳）、§61（桥 + 引擎落户 shell/）、§16（analytics
-// 隐私门）、§19（secrets 目录契约）、§25（失败分类句子）。
+// 管我的法条：CONTRACT §54（薄壳）、§61（桥 + 引擎落户 shell/）、§25（失败分类句子）、
+// §78（v2.0 零遥测：Analytics 是 no-op 桩）。
 
 import AppKit
 import SwiftUI
 import Foundation
-import Darwin  // Analytics: open/write/close raw fd (O_APPEND atomic lines)
 
 // MARK: - Paths（与 mac AppPaths 同一解析顺序；CONTRACT §19）
 
@@ -49,194 +46,21 @@ enum AppPaths {
     }()
 
     static var settingsOverridesPath: String { stateRoot + "/state/settings_overrides.json" }
-    static var analyticsDir: String { stateRoot + "/state/analytics" }
 }
 
-// MARK: - Analytics (append-only JSONL, mirrors act/lib/analytics.py; never throws)
+// MARK: - Analytics（v2.0.0 起 no-op 桩；CONTRACT §78 / art.9 零遥测）
 //
-// 逐字复制自 mac/Sources/Utils.swift：录制/字幕引擎发的事件词表
-// （recording_set_mode / recording_restart / recording_mode_rollback /
-// recording_self_heal / recording_ffmpeg_blocked / screen_tcc_lost /
-// captions_toggle / captions_autostart / feature_first_reach）要在 Mac app
-// 退役后继续落 state/analytics/events.jsonl，每日循环与 insights 才不断档。
+// Recording.swift 与 RecordingSchedule.swift 仍按原词表调用 `Analytics.log` /
+// `Analytics.firstReach`（前者字节不动，§61.3）。v2.0.0 起壳不写 state/analytics/、
+// 不读 features.analytics——三个入口保留签名、什么都不做，调用方零改动。
+// 原 JSONL 写者与 §16 隐私门全文见 tag full。
 
 enum Analytics {
-    private static let sid: String = {
-        let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
-        return String((0..<8).map { _ in alphabet.randomElement()! })
-    }()
-    private static let version: String =
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
-            as? String ?? "dev"
+    static func log(_ event: String, fields: [String: Any] = [:]) {}
 
-    private static let queue = DispatchQueue(label: "zelin.assistant.analytics",
-                                             qos: .utility)
+    static func flush() {}
 
-    /// §16 privacy gate — features.analytics。读取优先级：overrides（嵌套
-    /// features 块 → 平铺 features.analytics）→ config.yaml `features:` 块 →
-    /// 默认 on。fail-closed 特例镜像 act/lib/analytics.feature_gate：文件存在
-    /// 但读不出/认不动 = off；键/文件不存在才落默认 on。
-    static func featureEnabled() -> Bool {
-        guard !SettingsIO.overridesUnparseable() else { return false }
-        let ov = SettingsIO.readOverrides()
-        if let f = ov["features"] as? [String: Any], let raw = f["analytics"] {
-            return Self.coerceBool(raw) ?? false
-        }
-        if let raw = ov["features.analytics"] {
-            return Self.coerceBool(raw) ?? false
-        }
-        switch Self.configFeaturesAnalyticsScan(
-            file: AppPaths.stateRoot + "/config.yaml") {
-        case .value(let raw): return Self.parseBool(raw) ?? false
-        case .unreadable: return false
-        case .absent: break
-        }
-        if case .value(let raw) = Self.configFeaturesAnalyticsScan(
-            file: AppPaths.stateRoot + "/config.example.yaml") {
-            return Self.parseBool(raw) ?? false
-        }
-        return true
-    }
-
-    private static func parseBool(_ raw: String) -> Bool? {
-        let v = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if ["true", "yes", "on", "1"].contains(v) { return true }
-        if ["false", "no", "off", "0"].contains(v) { return false }
-        return nil
-    }
-
-    private static func coerceBool(_ raw: Any) -> Bool? {
-        if let b = raw as? Bool { return b }
-        if let n = raw as? Int, n == 0 || n == 1 { return n == 1 }
-        if let s = raw as? String { return parseBool(s) }
-        return nil
-    }
-
-    private static func valueAfterKey(_ line: String, key: String) -> String? {
-        guard line.hasPrefix(key) else { return nil }
-        let rest = String(line.dropFirst(key.count))
-        let ws = rest.prefix(while: { $0 == " " || $0 == "\t" })
-        let afterWS = String(rest.dropFirst(ws.count))
-        guard afterWS.hasPrefix(":") else { return nil }
-        return String(afterWS.dropFirst())
-    }
-
-    private enum ConfigScan {
-        case value(String)
-        case absent
-        case unreadable
-    }
-
-    private static func configFeaturesAnalyticsScan(file: String) -> ConfigScan {
-        guard FileManager.default.fileExists(atPath: file) else { return .absent }
-        guard let text = try? String(contentsOfFile: file, encoding: .utf8)
-        else { return .unreadable }
-        var inBlock = false
-        for rawLine in text.components(separatedBy: "\n") {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            if !inBlock {
-                guard let after = Self.valueAfterKey(rawLine, key: "features")
-                else { continue }
-                let rest = after.trimmingCharacters(in: .whitespacesAndNewlines)
-                if rest.hasPrefix("{") {
-                    let body = String(rest.dropFirst())
-                    guard let close = body.firstIndex(of: "}") else {
-                        return .unreadable
-                    }
-                    for pair in body[..<close].split(separator: ",") {
-                        let kv = pair.split(separator: ":", maxSplits: 1)
-                        guard kv.count == 2 else { continue }
-                        let k = kv[0].trimmingCharacters(in: .whitespaces)
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                        guard k == "analytics" else { continue }
-                        let v = kv[1].trimmingCharacters(in: .whitespaces)
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                        return .value(v)
-                    }
-                    return .absent
-                }
-                inBlock = true
-                continue
-            }
-            if !rawLine.hasPrefix(" ") && !rawLine.hasPrefix("\t") {
-                if line.isEmpty || line.hasPrefix("#") { continue }
-                break
-            }
-            guard let after = Self.valueAfterKey(line, key: "analytics")
-            else { continue }
-            var v = after.trimmingCharacters(in: .whitespacesAndNewlines)
-            if v.hasPrefix("\"") || v.hasPrefix("'") {
-                let quote = v.first!
-                let inner = String(v.dropFirst())
-                v = inner.firstIndex(of: quote).map { String(inner[..<$0]) } ?? inner
-            } else if v.hasPrefix("#") {
-                v = ""
-            } else if let hash = v.range(of: " #") {
-                v = String(v[..<hash.lowerBound]).trimmingCharacters(in: .whitespaces)
-            }
-            return .value(v)
-        }
-        return .absent
-    }
-
-    /// Append one event line to state/analytics/events.jsonl. Failures are
-    /// swallowed — analytics must never break the app. Gated on
-    /// features.analytics (§16).
-    static func log(_ event: String, fields: [String: Any] = [:]) {
-        queue.async {
-            guard Self.featureEnabled() else { return }
-            _ = Self.appendLine(event: event, fields: fields)
-        }
-    }
-
-    static func flush() {
-        queue.sync {}
-    }
-
-    private static func appendLine(event: String, fields: [String: Any]) -> Bool {
-        let dir = AppPaths.analyticsDir
-        var rec: [String: Any] = ["ts": Self.utcNow(), "event": event,
-                                  "sid": Self.sid, "v": Self.version]
-        for (k, v) in fields { rec[k] = v }
-        guard JSONSerialization.isValidJSONObject(rec),
-              let data = try? JSONSerialization.data(withJSONObject: rec,
-                                                     options: [.sortedKeys])
-        else { return false }
-        var line = data
-        line.append(0x0A)
-        try? FileManager.default.createDirectory(
-            atPath: dir, withIntermediateDirectories: true)
-        let fd = Darwin.open(dir + "/events.jsonl",
-                             O_WRONLY | O_APPEND | O_CREAT, 0o644)
-        guard fd >= 0 else { return false }
-        defer { _ = Darwin.close(fd) }
-        return line.withUnsafeBytes { buf in
-            guard let base = buf.baseAddress else { return false }
-            return Darwin.write(fd, base, buf.count) == buf.count
-        }
-    }
-
-    private static func utcNow() -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        return f.string(from: Date())
-    }
-
-    /// Once-per-install feature-reach marker (docs/TELEMETRY.md)。UserDefaults
-    /// 键与 Mac app 同名——同一台机器换壳后里程碑不重发（两个 bundle id 的
-    /// defaults 域不同，首次经壳触达仍会发一次，属可接受的迁移代价）。
-    static func firstReach(_ feature: String) {
-        let key = "analytics.firstReach." + feature
-        queue.async {
-            guard Self.featureEnabled() else { return }
-            guard !UserDefaults.standard.bool(forKey: key) else { return }
-            guard Self.appendLine(event: "feature_first_reach",
-                                  fields: ["feature": feature]) else { return }
-            UserDefaults.standard.set(true, forKey: key)
-        }
-    }
+    static func firstReach(_ feature: String) {}
 }
 
 // MARK: - SettingsIO（只读子集；写者是 server，§59.5）
@@ -286,9 +110,30 @@ enum SettingsIO {
         return nil
     }
 
+    /// §15 v2.0.0 add-only：设置页写的列表 override 先于 config.yaml（键 = config.yaml 叶名 →
+    /// overrides 扁平键）。今天只有敏感应用排除表：`recording.ignored_apps` ⇐ `recording_ignored_apps`。
+    static let overrideListKeys: [String: String] = ["ignored_apps": "recording_ignored_apps"]
+
+    /// overrides 里的列表值，按 act/lib/config._clean_str_list 同一清洗（字串 / 整数、去空白、丢空项）；
+    /// 键缺席或不是列表 = nil（落到 config.yaml）。server 的 diff-write 清空字段 = 删键 = 回到出厂表。
+    static func overrideList(_ key: String, overrides: [String: Any]? = nil) -> [String]? {
+        guard let flat = overrideListKeys[key],
+              let raw = (overrides ?? readOverrides())[flat] as? [Any] else { return nil }
+        return raw.compactMap { item -> String? in
+            if CFGetTypeID(item as CFTypeRef) == CFBooleanGetTypeID() { return nil }
+            if let s = item as? String { return s }
+            if let i = item as? Int { return String(i) }
+            return nil
+        }
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    }
+
     /// Naive line-scan for a YAML block sequence (config.yaml → example fallback);
-    /// nil = key absent from both files, [] = explicit `key: []`.
+    /// nil = key absent from both files, [] = explicit `key: []`. A settings-page
+    /// list override (`overrideList`) wins over both files.
     static func configList(_ key: String) -> [String]? {
+        if let list = overrideList(key) { return list }
         for file in [AppPaths.stateRoot + "/config.yaml",
                      AppPaths.stateRoot + "/config.example.yaml"] {
             guard let text = try? String(contentsOfFile: file, encoding: .utf8) else { continue }
@@ -368,33 +213,8 @@ enum Prefs {
     }
 }
 
-// MARK: - Secrets（只读；契约 §19：<AIASSISTANT_HOME>/config/secrets/，dir 0700 file 0600）
-
-enum SecretsIO {
-    static var dir: String { AppPaths.stateRoot + "/config/secrets" }
-    // v0.36 实时字幕 BYO keys (CONTRACT §36) — 只有原生层读这两个文件
-    static let volcanoSpeechFile = "volcano-speech-key.txt"
-    static let volcanoArkFile = "volcano-ark-key.txt"
-
-    static func path(_ name: String) -> String { dir + "/" + name }
-
-    static func nonEmptyFile(_ path: String) -> Bool {
-        guard let data = FileManager.default.contents(atPath: path),
-              let text = String(data: data, encoding: .utf8)
-        else { return false }
-        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    static func hasSecret(_ name: String) -> Bool { nonEmptyFile(path(name)) }
-
-    /// Trimmed secret content, nil when missing/empty.
-    static func read(_ name: String) -> String? {
-        guard let raw = try? String(contentsOfFile: path(name), encoding: .utf8)
-        else { return nil }
-        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return token.isEmpty ? nil : token
-    }
-}
+// v2.0.0：SecretsIO 随实时字幕退役——壳不再读 config/secrets/ 里的任何文件（火山两把 key
+// 是它唯一的读者，§36 tombstone，全文见 tag full）。
 
 // MARK: - Failure catalog（§25 引擎子集；句子与 act/lib/failures.py 逐字一致）
 //
@@ -432,9 +252,8 @@ enum FailureCatalog {
 
 // MARK: - Language（界面语言 "zh" | "en"）
 //
-// 与 mac LanguageStore 同一读侧：overrides "language" 显式值优先，缺席跟随
-// 系统 locale。刻意**不**做 mac 版的首启持久化——壳不写 overrides（server 是
-// web 侧写者）。CaptionOverlayView 观察它以便字幕悬浮窗文案随语言重绘；桥的
+// overrides "language" 显式值优先，缺席跟随系统 locale。刻意**不**做首启持久化——
+// 壳不写 overrides（server 是 web 侧写者）。主菜单观察它以便随语言重建；桥的
 // `setLanguage` 让页面把 zai.lang 同步过来（§61.1），两边看到同一种语言。
 
 @MainActor
@@ -506,7 +325,7 @@ enum ExternalLinkPolicy {
     }
 }
 
-/// 壳 → 看板换页（菜单 关于 / 设置… ⌘, / 权限体检…、字幕悬浮窗齿轮；CONTRACT §54.4 D40 追记）：
+/// 壳 → 页面换页（菜单 关于 / 设置… ⌘, / 权限体检…；CONTRACT §54.4 D40 追记）：
 /// 看板 SPA 已经载入（webView 停在看板 origin 的 `/`，ExternalLinkPolicy 判 `.board`，且不在加载中——
 /// `WKWebView.url` 在 `load()` 一发出就是目标 URL，文档还没到、页面还没挂监听）→ 推 `open_page {page, anchor?}`
 /// 命令，让页面自己 pushState 换页——不重载文档，store / SSE / 未决的「合并中…」章都留着（原生 openAboutPage
@@ -530,12 +349,11 @@ enum PageOpenPolicy {
     }
 }
 
-/// Dock 重开只看看板窗口，不看 AppKit 的 hasVisibleWindows（原生 AppDelegate.swift
-/// applicationShouldHandleReopen + MainWindowController.isWindowOpen 同义）：字幕悬浮
-/// NSPanel（CaptionOverlay，orderFrontRegardless）会把 hasVisibleWindows 顶成 true，
-/// 按它判 Dock 点击就成了空操作。三分：看板不在 → show；最小化 → 壳自己
-/// deminiaturize（AppKit 的默认重开只在 hasVisibleWindows == false 时才还原最小化
-/// 窗口——悬浮窗在场时它不会，所以不能交给它）；可见 → 什么都不做。
+/// Dock 重开只看主窗口，不看 AppKit 的 hasVisibleWindows（原生 AppDelegate.swift
+/// applicationShouldHandleReopen + MainWindowController.isWindowOpen 同义）：任何别的
+/// 面板（系统弹窗、日后的 NSPanel）都会把 hasVisibleWindows 顶成 true，按它判 Dock
+/// 点击就成了空操作。三分：主窗口不在 → show；最小化 → 壳自己 deminiaturize（AppKit
+/// 的默认重开只在 hasVisibleWindows == false 时才还原最小化窗口）；可见 → 什么都不做。
 enum ReopenPolicy {
     enum Action: Equatable {
         case show
@@ -566,7 +384,7 @@ enum WindowTitlePolicy {
 /// `--background`）；(b) 登录时启动：loginwindow 发来的 `oapp` 启动 Apple Event 带
 /// `keyAELaunchedAsLogInItem`（`LaunchAtLogin.launchedAsLoginItem()`，ShellSystem.swift）——
 /// 窗口照建、**不 orderFront、不 activate**；其余（Dock / Finder / 用户手敲 `open`）照旧前置。
-/// 后台启动后的重开入口不变：Dock 点击（ReopenPolicy 见看板窗口不在 → show）、⌃⌥Space、
+/// 后台启动后的重开入口不变：Dock 点击（ReopenPolicy 见主窗口不在 → show）、
 /// 通知点击、菜单深链。纯函数：argv 与登录标记都由 main.swift 采集后喂进来。
 enum LaunchPolicy {
     enum Presentation: Equatable {
@@ -599,7 +417,7 @@ enum LaunchPolicy {
     enum AlertTiming: Equatable {
         /// 立刻 runModal（前台启动、或看板窗口已经在屏上）。
         case now
-        /// 压到下一次 showWindow()（Dock 点击 / ⌃⌥Space / 通知点击）再 runModal；全文先进 board-shell.log。
+        /// 压到下一次 showWindow()（Dock 点击 / 通知点击）再 runModal；全文先进 board-shell.log。
         case deferUntilShown
     }
 
@@ -636,10 +454,9 @@ enum MenuSpec {
         /// 权限体检… → `?page=permissions`（原生 openPermissionsWindow；权限页文案「之后随时可从菜单
         /// 「权限体检」再打开」自此在壳里为真）
         case permissions
-        /// 重新载入 ⌘R（壳独有：已在看板上 reload；还停在 splash / 失败页则重走连接序）
+        /// 重新载入 ⌘R（壳独有：已在页面上 reload；还停在 splash / 失败页则重走连接序）
         case reload
-        /// 聚焦捕获框 ⌘L → 推 `quick_capture`（原生 focusCaptureField；与 ⌃⌥Space 同一条路，§68.13）
-        case focusCapture
+        // 聚焦捕获框 ⌘L（`quick_capture`）随捕获框在 v2.0.0 退役（§61.1 tombstone，全文见 tag full）。
     }
 
     /// 菜单项动作三分：壳动作（显式 target）、AppKit first-responder 链 selector（nil target，随焦点
@@ -685,9 +502,9 @@ enum MenuSpec {
     /// 整张主菜单（App / 文件 / 编辑 / 显示 / 窗口），顺序与原生 installMainMenu 一致。
     /// `lang`：`"en"` → 英文，其余一律中文（L() 同一判定）。`appName` = ShellConfig.displayName。
     ///
-    /// 刻意**没有**的：Find（⌘F 不被菜单截胡，落到 WKWebView 再进页面——board 自己绑了 ⌘F 搜索）；
-    /// ⌘1..7 切页（归 web NavRail，同理）；⌥⌘S 折叠/展开侧栏（s4 清单 DELETE 项，owner 决策——
-    /// 折叠只走 web 导航栏栏顶的折叠钮，tombstone 在 §54.4 2026-09-05 追记 (c)）。
+    /// 刻意**没有**的：Find（⌘F 不被菜单截胡，落到 WKWebView 再进页面）；⌘1..4 切页（归 web
+    /// NavRail，同理）；⌥⌘S 折叠/展开侧栏（tombstone 在 §54.4 2026-09-05 追记 (c)）；
+    /// 聚焦捕获框 ⌘L（v2.0.0 退役）。
     static func menus(lang: String, appName: String) -> [Menu] {
         func t(_ zh: String, _ en: String) -> String { lang == "en" ? en : zh }
         return [
@@ -718,8 +535,6 @@ enum MenuSpec {
             ]),
             Menu(t("显示", "View"), items: [
                 Item(t("重新载入", "Reload"), key: "r", action: .shell(.reload)),
-                .separator,
-                Item(t("聚焦捕获框", "Focus Capture Field"), key: "l", action: .shell(.focusCapture)),
             ]),
             Menu(t("窗口", "Window"), items: [
                 Item(t("最小化", "Minimize"), key: "m", action: .responder("performMiniaturize:")),

@@ -84,11 +84,10 @@ jobs:
           # legs do not: the Swift trees, the Xcode pin + selector, the
           # version stamper the builds call, and this workflow itself.
           # (act/lib/e2e.py left with the Swift↔Python interop gate in v2.0.0;
-          # mac/ and ios/ left with PR-C — only shell/ and shared/ remain.)
+          # mac/, ios/ and shared/ left with PR-C — only shell/ remains.)
           filters: |
             swift:
               - 'shell/**'
-              - 'shared/**'
               - '**/*.swift'
               - '.github/xcode-version'
               - 'scripts/ci/select_xcode.sh'
@@ -472,7 +471,7 @@ jobs:
         if: needs.changes.outputs.swift == 'false'
         run: |
           echo "no Swift changes — Swift gates not needed"
-          echo "no Swift changes — Swift gates not needed (shell/, shared/, *.swift and the Xcode / version-stamp toolchain files are untouched in this PR; the full Apple suite runs on push to main — CONTRACT §56.8)" >> "$GITHUB_STEP_SUMMARY"
+          echo "no Swift changes — Swift gates not needed (shell/, *.swift and the Xcode / version-stamp toolchain files are untouched in this PR; the full Apple suite runs on push to main — CONTRACT §56.8)" >> "$GITHUB_STEP_SUMMARY"
 
       - if: needs.changes.outputs.swift != 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

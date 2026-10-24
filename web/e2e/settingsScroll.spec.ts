@@ -1,13 +1,13 @@
 // 窗口从不整体滚动、页面只在 .shell-main 里滚（owner 决策 D42，CONTRACT §54.4 2026-09-06 追记 +
-// 2026-09-15 追记；issue #359：设置页滚到最后一个区「每日整理」之后还能继续往下滚、内容下方一大片空白，
+// 2026-09-15 追记；issue #359：设置页滚到最后一个区之后还能继续往下滚、内容下方一大片空白，
 // 左侧导航栏那片灰底只到窗口约 1/3 处）——真浏览器判例：
 //   · 设置页（全部区展开，1440×900）：.shell-main 的 scrollHeight 紧贴内容——不超过「最后一区底边 +
 //     一个 padding 单位（页面的 48px 下内边距）」；
 //   · 导航栏灰底贯穿视口：滚到 .shell-main 的底、再用滚轮往下推，.rail 仍是 top 0 / 高 = 视口高；
 //   · 文档不滚：documentElement.scrollHeight = 视口高，滚轮与程序滚动都把 window.scrollY 留在 0；
-//   · **横幅摞高过一屏也不许把文档变成第二个滚动容器**（#359 的成因：横幅是压不扁的 flex 项，
-//     溢出壳之后文档滚起来、壳随之滚出窗口——灰底只剩上面一截、内容下方露白）；
-//   · 其它页（看板 / 会议纪要 / 回收站 / 永久性完成）同样：文档不滚、灰底贯穿视口。
+//   · **压不扁的盒子摞高过一屏也不许把文档变成第二个滚动容器**（#359 的成因：1.x 的横幅是压不扁的 flex 项，
+//     溢出壳之后文档滚起来、壳随之滚出窗口——灰底只剩上面一截、内容下方露白；v2.0.0 横幅退役，判例留着防回退）；
+//   · 其它页（会议纪要 / 录制与导入 / 关于）同样：文档不滚、灰底贯穿视口。
 // 数据 = demo initial 场景。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
@@ -45,7 +45,7 @@ async function openSettingsExpanded(page: Page): Promise<void> {
     Array.from(document.querySelectorAll<HTMLElement>(".settings-page > .settings-fold"))
       .map((fold) => fold.dataset.section)
       .filter((id): id is string => !!id));
-  expect(ids.length).toBeGreaterThan(10);
+  expect(ids.length).toBeGreaterThanOrEqual(10);
   await page.evaluate((all) => {
     window.localStorage.setItem("settings.expandedSections", JSON.stringify(all));
   }, ids);
@@ -111,7 +111,7 @@ test("设置页：.shell-main 的滚动高度紧贴最后一区，滚到底后�
 
   // 全展开的设置页确实滚得起来（不然这条断言是空的）
   expect(measured.scrollHeight).toBeGreaterThan(measured.clientHeight * 2);
-  expect(measured.lastSectionId).toBe("settings-daily_loop");
+  expect(measured.lastSectionId).toBe("settings-redaction");
   // 内容下方最多一个 padding 单位（48px 的页面下内边距），不许多出一屏空白
   expect(measured.scrollHeight - measured.lastSectionBottom).toBeLessThanOrEqual(PAGE_PADDING_BOTTOM + 1);
   // 滚到底 = 内容的底：容器没有比内容更高
@@ -121,10 +121,10 @@ test("设置页：.shell-main 的滚动高度紧贴最后一区，滚到底后�
   expectRailSpansViewport(await windowGeometry(page));
 });
 
-test("横幅摞高过一屏：溢出在壳里夹掉，文档不滚、导航栏灰底仍贯穿视口", async ({ page }) => {
+test("压不扁的盒子摞高过一屏：溢出在壳里夹掉，文档不滚、导航栏灰底仍贯穿视口", async ({ page }) => {
   test.setTimeout(150_000);
   await openSettingsExpanded(page);
-  // 真实横幅（离线 / 管线 / 自我改进 / 每日整理 / 诊断条）的极端摞高：压不扁的 flex 项，高过一屏
+  // 1.x 横幅那种压不扁的 flex 项的极端摞高：高过一屏
   await page.evaluate(() => {
     const body = document.querySelector<HTMLElement>(".shell-body")!;
     const tall = document.createElement("div");
@@ -137,13 +137,13 @@ test("横幅摞高过一屏：溢出在壳里夹掉，文档不滚、导航栏�
   expectRailSpansViewport(await windowGeometry(page));
 });
 
-for (const [label, url] of [["看板", ""], ["会议纪要", "?page=recaps"], ["回收站", "?page=trash"], ["永久性完成", "?page=done"]] as const) {
+for (const [label, url] of [["会议纪要", ""], ["录制与导入", "?page=ingest"], ["关于", "?page=about"]] as const) {
   test(`${label}页：文档不滚、导航栏灰底贯穿视口`, async ({ page }) => {
     test.setTimeout(150_000);
     await open(page, url);
     await pushWindowDown(page);
     expectRailSpansViewport(await windowGeometry(page));
-    // 页面内容仍然只在 .shell-main（或看板自己的列）里滚——容器不比内容高
+    // 页面内容仍然只在 .shell-main 里滚——容器不比内容高
     const tight = await page.evaluate(() => {
       const main = document.querySelector<HTMLElement>(".shell-main")!;
       const mainTop = main.getBoundingClientRect().top;

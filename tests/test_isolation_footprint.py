@@ -47,16 +47,6 @@ TOMBSTONE = re.compile(r"(#|//|/\*|\*|<!--).*\b(retired|tombstone|退役)\b", re
 
 # file → the lite-2.0 slice that deletes or rewrites it (shrink-only; see docstring)
 PENDING = {
-    "web/src/types.ts": "PR-B (web trim)",
-    "web/src/store.ts": "PR-B (web trim)",
-    "web/src/pages/SkillsPage.test.tsx": "PR-B (web trim)",
-    "web/src/components/settings/SkillsSection.tsx": "PR-B (web trim)",
-    "web/src/components/settings/SkillsSection.test.tsx": "PR-B (web trim)",
-    "web/src/components/settings/ModelsSection.test.tsx": "PR-B (web trim)",
-    "web/src/components/settings/ModelsSection.fallback.test.tsx": "PR-B (web trim)",
-    "web/src/components/settings/McpSection.test.tsx": "PR-B (web trim)",
-    "web/src/components/settings/ClaudeImportSection.tsx": "PR-B (web trim)",
-    "web/src/components/settings/ClaudeCodeDefaultRow.tsx": "PR-B (web trim)",
 }
 
 

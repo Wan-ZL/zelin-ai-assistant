@@ -1,11 +1,11 @@
 // 首次运行向导追回的原生窗口行为（CONTRACT §68.5 2026-09-05 追记；原生 SetupWizard.swift:81 / 361 / 581-585 / 603-609、
 // Permissions.swift:46、AppDelegate.swift:82-90）：
 //   1) Return = 下一步 / 完成（.keyboardShortcut(.defaultAction)）：焦点在 body 上也算；焦点在输入框 / 按钮里不抢；
-//      带修饰键 / IME 组字 / 被内层 preventDefault 认领的不算；末步 Return = 「完成」（写标记 + 回看板），忙时不重发；
+//      带修饰键 / IME 组字 / 被内层 preventDefault 认领的不算；末步 Return = 「完成」（写标记 + 回会议纪要），忙时不重发；
 //      GET /api/setup 未回（首开步还没定）时 Return / 「下一步」惰性——欢迎步（建 config.yaml）不能被抢跳过；
 //   2) 整个向导 2 s 轮询壳 TCC 探针（不只权限步），末步另起 2.5 s 管线探针（health + permissions），引擎每 4 拍静默复检，
 //      离开末步即停；浏览器（无桥）不打桥；
-//   3) 「先去看板（下次再来）」落 sessionStorage 标记，app.tsx 的 shouldRedirectToSetup 本会话不再跳；
+//   3) 「先跳过（下次再来）」落 sessionStorage 标记，app.tsx 的 shouldRedirectToSetup 本会话不再跳；
 //   4) 笔记库步「选择…」：壳在场 → 桥 chooseFolder(current = 默认目录, prompt「选择」)，选中即成自定义行；取消不动；
 //      老壳 UNKNOWN_METHOD → 退化成路径输入框；无桥 → 直接输入框。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -40,14 +40,11 @@ vi.mock("../api", async (importOriginal) => {
     postSetupStep: vi.fn(), putSettingsSection: vi.fn(), fetchSettingsCatalog: vi.fn().mockResolvedValue({ sections: [] }),
     // 笔记库步还拉 Obsidian 登记过的库（D51）——这里没装 Obsidian：空列表；判例在 components/setup/VaultStep.registeredVaults.test.tsx
     fetchSetupVaults: vi.fn().mockResolvedValue({ vaults: [] }),
-    // 「完成」还会落 consent 标记 + 发 wizard_complete（D48 / D49）——这里只要它们不出网；判例在 SetupPage.finishTelemetry.test.tsx
-    postTelemetryConsentShown: vi.fn().mockResolvedValue({ ok: true, written: true, shown_at: "x" }),
-    postAnalytics: vi.fn().mockResolvedValue({ ok: true, event: "wizard_complete", logged: true }),
   };
 });
 
-const ENGINE_READY = { cli_path: "/usr/local/bin/claude", version: "1.0.99 (Claude Code)", auth: "oauth", auth_sources: { oauth: true, env_key: false, secrets_file: false, legacy_file: false }, ready: true };
-const HEALTH_OK = { verdict: "ok", heartbeat: { age_s: 3, phase: "dashboard", pid: 1, interval: 10, stale_after_s: 90, stale: false }, dashboard: { generated_at: "2026-09-02T00:00:00Z", age_s: 30, stale: false }, loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "x" };
+const ENGINE_READY = { cli_path: "/usr/local/bin/claude", version: "1.0.99 (Claude Code)", auth: "secrets_file", auth_sources: { env_key: false, secrets_file: true, legacy_file: false }, ready: true };
+const HEALTH_OK = { verdict: "ok", server: { ok: true }, cron: { age_s: 300, read_ok: true, stale: false }, recap: null, checked_at: "x" };
 
 function permissions(): PermissionsSnapshot {
   return {
@@ -63,7 +60,7 @@ function setup(over: Partial<SetupSnapshot> = {}): SetupSnapshot {
   return { needed: true, done: false, config_exists: true, config_example_exists: true, secrets: {}, home: "/h", protected_location: false, ...over };
 }
 
-const SHELL_SNAPSHOT = { recording: {}, captions: {}, permissions: { screen: "granted", notifications: "granted", microphone: "unknown", vault: "unknown" } };
+const SHELL_SNAPSHOT = { recording: {},permissions: { screen: "granted", notifications: "granted", microphone: "unknown", vault: "unknown" } };
 
 function installShell(postMessage: (body: { method: string } & Record<string, unknown>) => Promise<unknown>) {
   window.webkit = { messageHandlers: { zaiShell: { postMessage: postMessage as (body: unknown) => Promise<unknown> } } };
@@ -74,7 +71,7 @@ function renderAt(step: string) {
   return render(<LanguageContext.Provider value="en"><SetupPage /></LanguageContext.Provider>);
 }
 
-const stepLabel = (n: number) => screen.findByText(`Step ${n} of 7`);
+const stepLabel = (n: number) => screen.findByText(`Step ${n} of 6`);
 
 beforeEach(() => {
   resetStoreForTests();
@@ -97,12 +94,12 @@ afterEach(() => {
 });
 
 describe("Return advances the wizard (原生 Next / Done .keyboardShortcut(.defaultAction))", () => {
-  it("Enter with nothing focused → next step; on the last step → Done (complete + board)", async () => {
+  it("Enter with nothing focused → next step; on the last step → Done (complete + recaps)", async () => {
     vi.mocked(postSetupStep).mockResolvedValue({ ok: true, setup: setup({ done: true, needed: false }) });
-    renderAt("credentials");
-    await stepLabel(6);
+    renderAt("vault");
+    await stepLabel(5);
     fireEvent.keyDown(document.body, { key: "Enter" });
-    await stepLabel(7);
+    await stepLabel(6);
     expect(postSetupStep).not.toHaveBeenCalled();
     fireEvent.keyDown(document.body, { key: "Enter" });
     await waitFor(() => expect(postSetupStep).toHaveBeenCalledWith("complete"));
@@ -123,7 +120,7 @@ describe("Return advances the wizard (原生 Next / Done .keyboardShortcut(.defa
     fireEvent.keyDown(document.body, { key: "Enter", isComposing: true });
     fireEvent.keyDown(document.body, { key: "Escape" });
     await stepLabel(5);
-    expect(screen.queryByText("Step 6 of 7")).toBeNull();
+    expect(screen.queryByText("Step 6 of 6")).toBeNull();
     expect(screen.getByRole("textbox", { name: "Folder path" })).toBeTruthy(); // 输入框还开着、值还在
     // 焦点在「下一步」按钮上时 Enter 归按钮（浏览器自己 click 一次），向导不再叠一次——这里只钉「不抢」
     const next = screen.getByRole("button", { name: "Next" });
@@ -145,7 +142,7 @@ describe("Return advances the wizard (原生 Next / Done .keyboardShortcut(.defa
     let release: (() => void) | null = null;
     vi.mocked(postSetupStep).mockImplementation(() => new Promise((resolve) => { release = () => resolve({ ok: true, setup: setup({ done: true, needed: false }) }); }));
     renderAt("finale");
-    await stepLabel(7);
+    await stepLabel(6);
     fireEvent.keyDown(document.body, { key: "Enter" });
     await screen.findByRole("button", { name: "Saving…" });
     fireEvent.keyDown(document.body, { key: "Enter" });
@@ -164,10 +161,10 @@ describe("Return advances the wizard (原生 Next / Done .keyboardShortcut(.defa
     fireEvent.keyDown(document.body, { key: "Enter" });
     fireEvent.click(next());
     await stepLabel(1);
-    expect(screen.queryByText("Step 2 of 7")).toBeNull();
+    expect(screen.queryByText("Step 2 of 6")).toBeNull();
     await act(async () => { release?.(setup({ config_exists: false })); });
     await screen.findByRole("button", { name: "Create from config.example.yaml" }); // 欢迎步没被抢跳过
-    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
+    expect(screen.getByText("Step 1 of 6")).toBeTruthy();
     expect(next().disabled).toBe(false);
     fireEvent.keyDown(document.body, { key: "Enter" }); // 首开步定了，Return 照常推进
     await stepLabel(2);
@@ -179,8 +176,8 @@ describe("live polling (原生 perms.startPolling 2 s + PipelineProbeModel 2.5 s
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const postMessage = vi.fn(async (_body: { method: string }) => SHELL_SNAPSHOT);
     installShell(postMessage);
-    renderAt("credentials");
-    await stepLabel(6);
+    renderAt("vault");
+    await stepLabel(5);
     const bridgeCalls = () => postMessage.mock.calls.filter(([body]) => body.method === "getPermissions").length;
     const before = bridgeCalls();
     expect(before).toBeGreaterThanOrEqual(1); // 挂载即打一次
@@ -195,7 +192,7 @@ describe("live polling (原生 perms.startPolling 2 s + PipelineProbeModel 2.5 s
 
     // 进末步：进场一拉（原生 setStep finale）+ 每 2.5 s 一拍（逐拍推进——store 的 loadPage 会把同一在途请求合并）
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await stepLabel(7);
+    await stepLabel(6);
     await waitFor(() => expect(vi.mocked(fetchHealth).mock.calls.length).toBe(healthBefore + 1));
     await waitFor(() => expect(vi.mocked(fetchPermissions).mock.calls.length).toBe(permsBefore + 1));
     const engineBefore = vi.mocked(fetchSetupEngine).mock.calls.length;
@@ -209,7 +206,7 @@ describe("live polling (原生 perms.startPolling 2 s + PipelineProbeModel 2.5 s
 
     // 回上一步：管线探针停，TCC 轮询继续
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    await stepLabel(6);
+    await stepLabel(5);
     const healthAfter = vi.mocked(fetchHealth).mock.calls.length;
     const bridgeAfter = bridgeCalls();
     await act(async () => { vi.advanceTimersByTime(FINALE_PROBE_MS * 4); });
@@ -228,22 +225,22 @@ describe("live polling (原生 perms.startPolling 2 s + PipelineProbeModel 2.5 s
   });
 });
 
-describe("「先去看板（下次再来）」 = 原生关窗：这次不问", () => {
-  it("clicking the link sets the session marker and shouldRedirectToSetup stops sending the board back to the wizard", async () => {
+describe("「先跳过（下次再来）」 = 原生关窗：这次不问", () => {
+  it("clicking the link sets the session marker and shouldRedirectToSetup stops sending the recaps page back to the wizard", async () => {
     renderAt("engine");
     await stepLabel(2);
-    expect(shouldRedirectToSetup("board", true)).toBe(true);
-    const link = screen.getByRole("link", { name: "Go to the board (come back later)" });
+    expect(shouldRedirectToSetup("recaps", true)).toBe(true);
+    const link = screen.getByRole("link", { name: "Skip for now (come back later)" });
     expect(link.getAttribute("href")).not.toContain("page=");
     link.addEventListener("click", (e) => e.preventDefault()); // jsdom 不会整页导航；React 的 onClick 照跑
     fireEvent.click(link);
     expect(window.sessionStorage.getItem(SETUP_SKIPPED_KEY)).toBe("1");
     expect(isSetupSkipped()).toBe(true);
-    expect(shouldRedirectToSetup("board", true)).toBe(false);
-    expect(shouldRedirectToSetup("board", false)).toBe(false);
+    expect(shouldRedirectToSetup("recaps", true)).toBe(false);
+    expect(shouldRedirectToSetup("recaps", false)).toBe(false);
     // 新会话（sessionStorage 空）再问
     window.sessionStorage.clear();
-    expect(shouldRedirectToSetup("board", true)).toBe(true);
+    expect(shouldRedirectToSetup("recaps", true)).toBe(true);
   });
 
   it("an unwritable sessionStorage means 'not skipped' (宁多问)", () => {
@@ -253,7 +250,7 @@ describe("「先去看板（下次再来）」 = 原生关窗：这次不问", (
     expect(isSetupSkipped()).toBe(false);
     const getSpy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("SecurityError"); });
     expect(isSetupSkipped()).toBe(false);
-    expect(shouldRedirectToSetup("board", true)).toBe(true);
+    expect(shouldRedirectToSetup("recaps", true)).toBe(true);
     getSpy.mockRestore();
   });
 });

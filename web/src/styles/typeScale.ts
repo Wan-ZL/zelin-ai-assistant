@@ -1,7 +1,7 @@
 // 字号/字重梯的对照表：原生看板角色（mac/Sources 冻结规格，D3）→ tokens.css 的 --type-* token。
-// 单源纪律：CSS 值的真源是 tokens.css 的 type-scale 块；本表只是它的可读镜像，供
-//   ① 活体样式指南第 5 节逐行渲染（角色 / Swift 行 / token / 值），
-//   ② typeScale.test.ts 钉三方相等（CSS 值 ↔ 本表 ↔ Swift 源行真的写着这个 size/weight）。
+// 单源纪律：CSS 值的真源是 tokens.css 的 type-scale 块；本表只是它的可读镜像，供 typeScale.test.ts 钉三方相等
+// （CSS 值 ↔ 本表 ↔ Swift 源行真的写着这个 size/weight）。v2.0.0：只消费在退役看板 / 详情 / 列上的九个角色（卡面细字 /
+// 落点行 / 占位卡 / 详情标题两级 / 展开详情 / 顶栏小字 / 列计数 / 空列）随之删除；活体样式指南随 §66 退役。
 // 改任何一处不改另两处 = 测试红。字重词表 = SF Pro：regular 400 / medium 500 / semibold 600 / bold 700。
 
 export type SwiftWeight = "regular" | "medium" | "semibold" | "bold";
@@ -32,16 +32,6 @@ export const TYPE_SCALE: TypeRole[] = [
     zh: "行标题：运行中 / 待验收 / 阶段性完成 / 潜在任务 / 归档 / 回收站（TaskRow.rowTitle）", en: "Row title: running / review / done / backlog / archive / trash (TaskRow.rowTitle)",
   },
   {
-    token: "--type-card-placeholder", font: "var(--w-regular) calc(13px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 946, size: 13, weight: "regular" },
-    zh: "AI 研究中占位卡主句（processingBody）", en: "Processing placeholder headline (processingBody)",
-  },
-  {
-    token: "--type-card-line", font: "var(--w-medium) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 1146, size: 11, weight: "medium" },
-    zh: "落点行 🟢/📄/🟠 · 回锅新增 · 修改意见合并中（targetLine）", en: "Target line 🟢/📄/🟠 · returned note · merging feedback (targetLine)",
-  },
-  {
     token: "--type-card-body", font: "var(--w-regular) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1724, size: 11, weight: "regular" },
     zh: "正文：合并建议「接受后将执行」条目 · 提问 · 分歧", en: "Body: merge-suggestion action-plan items · question · disagreement",
@@ -55,11 +45,6 @@ export const TYPE_SCALE: TypeRole[] = [
     token: "--type-card-meta-strong", font: "var(--w-medium) calc(10px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 1307, size: 10, weight: "medium" },
     zh: "会议纪要行的小标（recaps.css）/ 截止 / T2 提示", en: "Recap row small heading (recaps.css) / deadline / T2 hint",
-  },
-  {
-    token: "--type-card-fine", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 1639, size: 9, weight: "regular" },
-    zh: "双击接管的回执行（已在终端打开 / 打开终端失败，原生 CopyPathLine 9pt）· claude agents 列表名", en: "Takeover status line (Opened in terminal / Terminal launch failed, native CopyPathLine 9pt) · claude agents list name",
   },
   {
     token: "--type-card-fine-mono", font: "var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono)",
@@ -77,39 +62,14 @@ export const TYPE_SCALE: TypeRole[] = [
     zh: "动作行按钮（CardSurface .bordered .small）", en: "Action-row buttons (CardSurface .bordered .small)",
   },
   {
-    token: "--type-details-toggle", font: "var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans)",
-    swift: { file: "Cards.swift", line: 362, size: 11, weight: "regular" },
-    zh: "展开详情 ▸（动作行同字号，plain 灰链接；D34 起打开详情侧栏）", en: "Details ▸ (action-row size, plain grey link; opens the detail sidebar since D34)",
-  },
-  {
-    token: "--type-detail-heading", font: "var(--w-semibold) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 1301, size: 11, weight: "semibold" },
-    zh: "合并建议卡「接受后将执行：」小节头", en: "Merge-suggestion card “On accept, this will:” heading",
-  },
-  {
-    token: "--type-detail-subheading", font: "var(--w-semibold) calc(10px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 1089, size: 10, weight: "semibold" },
-    zh: "chrome.css 里沿用的小节头字级", en: "Small section-head size reused in chrome.css",
-  },
-  {
     token: "--type-lane-title", font: "var(--w-semibold) calc(12px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Cards.swift", line: 22, size: 12, weight: "semibold" },
     zh: "列头标题（SectionHeader，次级色）· 书立条竖排标题", en: "Lane header title (SectionHeader, secondary) · bookend strip title",
   },
   {
-    token: "--type-lane-count", font: "var(--w-bold) calc(11px * var(--text-scale))/calc(16px * var(--text-scale)) var(--font-sans)",
-    swift: { file: "Cards.swift", line: 43, size: 11, weight: "bold" },
-    zh: "列头计数胶囊（SectionHeader count）", en: "Lane header count capsule (SectionHeader count)",
-  },
-  {
     token: "--type-lane-help", font: "var(--w-regular) calc(12px * var(--text-scale))/1.55 var(--font-sans)",
     swift: { file: "Cards.swift", line: 36, size: 12, weight: "regular" },
     zh: "列头「?」气泡正文", en: "Lane header ? popover text",
-  },
-  {
-    token: "--type-lane-empty", font: "var(--w-regular) calc(11px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Cards.swift", line: 58, size: 11, weight: "regular" },
-    zh: "空列 / 无匹配（EmptyRow · lanePlaceholder）", en: "Empty lane / no matches (EmptyRow · lanePlaceholder)",
   },
   {
     token: "--type-composer", font: "var(--w-regular) calc(12px * var(--text-scale))/1.4 var(--font-sans)",
@@ -135,10 +95,5 @@ export const TYPE_SCALE: TypeRole[] = [
     token: "--type-header-control", font: "var(--w-regular) calc(12px * var(--text-scale))/1.4 var(--font-sans)",
     swift: { file: "Kanban.swift", line: 183, size: 12, weight: "regular" },
     zh: "顶栏控件：搜索框 · 提建议 / 选择 类文字按钮", en: "Header controls: search field · text buttons",
-  },
-  {
-    token: "--type-header-meta", font: "var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans)",
-    swift: { file: "Freshness.swift", line: 32, size: 10, weight: "regular" },
-    zh: "顶栏「数据生成于 …」新鲜度 / 部署状态小字", en: "Header freshness / deploy status small text",
   },
 ];

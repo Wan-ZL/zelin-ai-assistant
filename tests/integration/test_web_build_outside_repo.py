@@ -13,8 +13,9 @@ mirror (the static half is tests/test_web_build_self_contained.py):
     at the repo's already-installed tree (no `npm ci`, no network), run the
     real `npm run build` → exit 0 and dist/index.html present;
   - the full `npm run typecheck` (tsconfig.json, tests included) passes from
-    that copy too (v2.0.0: the parity suite that read repo-root fixtures retired
-    with §66 and ui/parity/; nothing under web/src reaches outside web/ now).
+    that copy too — nothing under web/src reaches a repo-root path tsc has to
+    resolve (the parity suite that used to read ui/parity/ retired with §66 in
+    v2.0.0).
 
 Skips when npm is absent or web/node_modules is not installed (the plain
 unittest jobs; the qa-gates job and a developer machine have both). Lives in

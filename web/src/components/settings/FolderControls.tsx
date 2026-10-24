@@ -1,10 +1,10 @@
 // 目录字段的三颗按钮（CONTRACT §68.1 目录字段 `path: "dir"`；原生 Settings.swift obsidianGroup 的
-// 选择… / 打开 / 创建 与 approvalGroup 的 选择… / 创建文件夹，标签逐字镜像）：
+// 选择… / 打开 / 创建，标签逐字镜像）：
 //   · 「选择…」：壳里走 §61.1 桥 `chooseFolder`（NSOpenPanel，只选目录、可新建，prompt = 原生「选择」），
 //     选中即写进草稿（仍要按「保存」落盘——与其它字段同一保存语义）；浏览器 / 老壳（NO_BRIDGE / UNKNOWN_METHOD）
 //     退化成一行路径文本框 + 「选择」确认 / 「取消」；
-//   · 「打开」/「创建」（「创建文件夹」）：POST /api/folders/{open,create} {key}——路径由 server 从**已保存**的
-//     effective 值读，客户端只传 key（reveal / ai-fix 同一纪律），草稿未保存时禁用并提示先保存；
+//   · 「打开」/「创建」：POST /api/folders/{open,create} {key}——路径由 server 从**已保存**的
+//     effective 值读，客户端只传 key（reveal 同一纪律），草稿未保存时禁用并提示先保存；
 //     笔记库的「打开」由 server 落到 vault 根（raw 的父目录，原生 `openInFinder(vaultRoot)`），与框里显示的同一处；
 //   · 「⚠︎ 目录不存在」警告来自 server 投影 `path_exists`（空值 null 不警告）；创建失败 → 「创建目录失败：」+ 原文；
 //   · 「Obsidian Vault 位置」（`obsidian_raw`，§68.1 追记 vault 根）：框里显示的是 **vault 根**（= 存值的父目录，原生
@@ -27,19 +27,14 @@ interface FolderUi {
   missing: [string, string];
 }
 
-/** 按字段的原生文案（键 = 目录里的 field.key；表外的目录字段用通用句） */
+/** 按字段的原生文案（键 = 目录里的 field.key；表外的目录字段用通用句）。v2.0.0：派工目标仓（default_target_repo）与
+ *  开发会话仓（maintainer_repo_path）随各自的区退役，表里只剩笔记库 */
 const FOLDER_UI: Record<string, FolderUi> = {
   obsidian_raw: {
     open: true,
     create: ["创建", "Create"],
     missing: ["⚠︎ 笔记库目录还不存在——点「选择…」挑一个，或一键创建。", "⚠︎ The vault folder doesn't exist yet — pick one with Choose…, or create it now."],
   },
-  default_target_repo: {
-    open: false,
-    create: ["创建文件夹", "Create folder"],
-    missing: ["⚠︎ 目录不存在——第一张批准的卡会派发失败。", "⚠︎ Folder doesn't exist — the first approved card will fail to dispatch."],
-  },
-  maintainer_repo_path: { open: false, create: null, missing: ["路径不存在", "Path doesn't exist"] },
 };
 const GENERIC_UI: FolderUi = { open: true, create: ["创建", "Create"], missing: ["⚠︎ 目录不存在", "⚠︎ Folder doesn't exist"] };
 

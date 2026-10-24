@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
-import { ModalDialog } from "../board/ModalDialog";
+import { ModalDialog } from "../shell/ModalDialog";
 
 type Text = (zh: string, en: string) => string;
 
@@ -45,7 +45,7 @@ export function LaunchAtLoginRow({ id = "launch-at-login", helper }: { id?: stri
   return (
     <div className="settings-field is-bool">
       <div className="settings-field-head">
-        <label className="settings-knob-label" htmlFor={id}>{text("登录时启动（推荐：菜单栏助手常驻）", "Launch at login (recommended: keep the menu-bar assistant resident)")}</label>
+        <label className="settings-knob-label" htmlFor={id}>{text("登录时启动（推荐：重启后录制才能自动恢复）", "Launch at login (recommended: recording only resumes after a reboot with this on)")}</label>
       </div>
       <div className="settings-knob-controls">
         <input id={id} type="checkbox" role="switch" className="settings-switch" checked={shell.launch_at_login} disabled={busy} onChange={(e) => void toggle(e.target.checked)} />

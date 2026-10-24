@@ -51,14 +51,17 @@ class RelaunchBackgroundFlagTestCase(unittest.TestCase):
         self.running_flag = self.tmp / "app.running"
         self.fakebin = self.tmp / "fakebin"
         self.fakebin.mkdir()
-        for name, text in (("pgrep", FAKE_PGREP), ("pkill", FAKE_PKILL), ("open", FAKE_OPEN)):
+        fake_defaults = "#!/bin/bash\nprintf 'defaults %s\\n' \"$*\" >> \"$CALLS\"\n"   # §61.8 handoff write
+        for name, text in (("pgrep", FAKE_PGREP), ("pkill", FAKE_PKILL), ("open", FAKE_OPEN),
+                           ("defaults", fake_defaults)):
             p = self.fakebin / name
             p.write_text(text, encoding="utf-8")
             p.chmod(0o755)
-        # only the fakes plus the real `sleep`; PATH never reaches the real pgrep/pkill/open
-        real_sleep = shutil.which("sleep")
-        assert real_sleep, "sleep missing"
-        os.symlink(real_sleep, self.fakebin / "sleep")
+        # only the fakes plus the real `sleep` / `date`; PATH never reaches the real pgrep/pkill/open/defaults
+        for tool in ("sleep", "date"):
+            real = shutil.which(tool)
+            assert real, "%s missing" % tool
+            os.symlink(real, self.fakebin / tool)
         self.app_path = self.tmp / "Applications" / "Zelin's AI Assistant.app"
 
     def _run(self, *, running=True, non_interactive=1, installed=1):
@@ -67,6 +70,8 @@ class RelaunchBackgroundFlagTestCase(unittest.TestCase):
         script = ("set -u\n"
                   "ok() { echo \"OK: $1\"; }; warn() { echo \"WARN: $1\"; }\n"
                   "UI_EXEC_NAME=ZelinAIBoard\n"
+                  "UI_BUNDLE_ID=com.zelin.ai-board\n"
+                  "UI_ENGINE_HANDOFF_KEY=engineHandoff\n"
                   + _install_sh_fn("relaunch_shell_app")
                   + 'NON_INTERACTIVE="$1"; UI_SHELL_INSTALLED="$2"; UI_APP_PATH="$3"\n'
                   "relaunch_shell_app\n")
@@ -91,6 +96,10 @@ class RelaunchBackgroundFlagTestCase(unittest.TestCase):
         self.assertIn("pkill -TERM -x ZelinAIBoard", calls)
         self.assertLess(calls.index("pkill -TERM -x ZelinAIBoard"), calls.index("open-arg -g"),
                         "quit first, relaunch after")
+        handoff = [c for c in calls if c.startswith("defaults write com.zelin.ai-board engineHandoff -string ")]
+        self.assertEqual(len(handoff), 1, calls)
+        self.assertLess(calls.index(handoff[0]), calls.index("pkill -TERM -x ZelinAIBoard"),
+                        "the §61.8 engineHandoff key is written before the shell gets its SIGTERM")
         self.assertIn("relaunched the shell app", out)
 
     def test_flag_is_the_word_the_shell_policy_reads(self):

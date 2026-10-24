@@ -17,7 +17,7 @@ vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
   return {
     ...actual,
-    fetchBoard: vi.fn().mockResolvedValue({}), fetchHealth: vi.fn(), fetchDiagnostics: vi.fn(), fetchDoctor: vi.fn(), fetchSecrets: vi.fn(),
+    fetchRecaps: vi.fn().mockResolvedValue({ recaps: [] }), fetchHealth: vi.fn(), fetchDiagnostics: vi.fn(), fetchDoctor: vi.fn(), fetchSecrets: vi.fn(),
     fetchFailures: vi.fn(), fetchPermissions: vi.fn(), fetchSetup: vi.fn(), fetchSettingsCatalog: vi.fn().mockResolvedValue({ sections: [] }),
   };
 });
@@ -28,17 +28,16 @@ const en = (_zh: string, english: string) => english;
 const REAL: DoctorReport = { ok: true, fast: true, rc: 4, home: "/tmp/h", ran_at: "2026-09-05T10:00:00Z", checks: [
   { name: "claude CLI", status: "ok", detail: "/Users/demo/.local/bin/claude (2.1.261 (Claude Code))", fix: "", failure_id: "", action_id: "", row_class: "" },
   { name: "node/npx", status: "ok", detail: "/opt/homebrew/bin/npx", fix: "", failure_id: "", action_id: "", row_class: "" },
-  { name: "gh CLI", status: "ok", detail: "/opt/homebrew/bin/gh (authenticated)", fix: "", failure_id: "", action_id: "", row_class: "" },
+  { name: "daemon python", status: "ok", detail: "/usr/bin/python3 (Python 3.9, PyYAML importable)", fix: "", failure_id: "", action_id: "", row_class: "" },
   { name: "cron disk access", status: "warn", detail: "no probe yet - the cron chain has not run since this version was installed", fix: "rerun bash install.sh (updates the cron line), then wait ~30 min", failure_id: "", action_id: "", row_class: "" },
-  { name: "dashboard", status: "fail", detail: "state/dashboard.json missing - the app shows 'missing' forever", fix: "start actd (bash install.sh), or seed once: python3 -m act.lib.dashboard", failure_id: "", action_id: "", row_class: "" },
+  { name: "anthropic key", status: "fail", detail: "no Anthropic API key - recaps and ingest cannot run", fix: "Settings -> Credentials", failure_id: "", action_id: "", row_class: "" },
   { name: "launchd claude", status: "fail", detail: "claude in launchd cannot read the vault (EPERM)", fix: "grant Full Disk Access", failure_id: "claude_blind", action_id: "open_fda", row_class: "" },
 ] };
 
 function diagnostics(): DiagnosticsSnapshot {
   return {
     doctor: REAL,
-    health: { verdict: "ok", heartbeat: null, dashboard: null, loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "x" },
-    deploy_state: null, install_report: null, registry_backend: "sqlite", radar_sources: null, logs: [], cron_probe: null, activity: null,
+    health: { verdict: "ok", server: { ok: true }, cron: null, recap: null, checked_at: "x" }, install_report: null, logs: [], cron_probe: null, activity: null,
   } as DiagnosticsSnapshot;
 }
 
@@ -67,7 +66,7 @@ afterEach(cleanup);
 
 describe("DepsSection helpers on the real (lowercase) wire shape", () => {
   it("findings drop the ok rows, summary counts 2 fail / 1 warn, the fail gate opens", () => {
-    expect(doctorFindings(REAL).map((r) => r.name)).toEqual(["cron disk access", "dashboard", "launchd claude"]);
+    expect(doctorFindings(REAL).map((r) => r.name)).toEqual(["cron disk access", "anthropic key", "launchd claude"]);
     expect(doctorSummary(REAL, en)).toEqual({ verdict: "2 check(s) failed — each has its own button", counts: "(3 ok / 1 warn)" });
     expect(hasDoctorFail(REAL)).toBe(true);
     expect(hasDoctorFail({ ...REAL, checks: REAL.checks.slice(0, 4) })).toBe(false);   // 只有 warn 不算红
@@ -77,7 +76,7 @@ describe("DepsSection helpers on the real (lowercase) wire shape", () => {
     expect(text).toContain("[warn] cron disk access: no probe yet - the cron chain has not run since this version was installed\n    fix: rerun bash install.sh");
   });
 
-  it("the table lists only the non-ok rows, fail = chip-danger, warn = chip-warning, and 让 AI 修 appears", async () => {
+  it("the table lists only the non-ok rows, fail = chip-danger, warn = chip-warning (让 AI 修 retired in v2.0.0)", async () => {
     render(<LanguageContext.Provider value="en"><DepsSection /></LanguageContext.Provider>);
     await screen.findByText("2 check(s) failed — each has its own button");
     const rows = Array.from(document.querySelectorAll(".diag-table tbody tr"));
@@ -86,7 +85,7 @@ describe("DepsSection helpers on the real (lowercase) wire shape", () => {
     expect(rows[1].querySelector(".chip")?.className).toBe("chip chip-danger");
     expect(document.querySelector(".diag-table tr[data-status=ok]")).toBeNull();
     expect(document.querySelector(".diag-verdict")?.className).toContain("is-warning");
-    expect(screen.getByRole("button", { name: "Fix with AI" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Fix with AI" })).toBeNull();
   });
 });
 
@@ -96,7 +95,7 @@ describe("DepRows.fromDoctor / FinaleStep.cronVerdict / PermissionsPage chips", 
     const byId = Object.fromEntries(rows.map((r) => [r.id, r.ok]));
     expect(byId.npx).toBe(true);
     expect(byId.claude).toBe(true);
-    expect(byId.gh).toBe(true);
+    expect(byId.pyyaml).toBe(true);
   });
 
   it("cronVerdict reads the lowercase ok", () => {

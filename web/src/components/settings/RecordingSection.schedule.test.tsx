@@ -14,9 +14,8 @@ const base: ShellState = {
     resume_mode: "screen", self_heal_note: "", log_tail: "",
     schedule: { enabled: false, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: false },
   },
-  captions: { available: true, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: false, translate_direction: "auto", apple_locale: "zh", ark_model: "", font_size: 24, opacity: 0.7 },
   permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
-  launch_at_login: false, hotkey: "⌃⌥Space",
+  launch_at_login: false,
 };
 
 const postMessage = vi.fn<(body: unknown) => Promise<unknown>>();
@@ -187,7 +186,7 @@ describe("RecordingSection · schedule block (§61.7)", () => {
     });
     renderEn();
     fireEvent.click(screen.getByRole("switch", { name: "Record only between…" }));
-    await screen.findByText("This board app build does not know recording schedules yet — update the shell and come back.");
+    await screen.findByText("This app (shell) build does not know recording schedules yet — update the shell and come back.");
     expect(screen.queryByRole("group", { name: "Recording window" })).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });

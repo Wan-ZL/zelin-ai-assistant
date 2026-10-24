@@ -25,15 +25,14 @@ const field = (key: string, zh: string, en: string, kind = "bool"): SettingsFiel
 });
 const catalog: SettingsCatalog = { sections: [
   { id: "general", title: { zh: "通用", en: "General" }, help: { zh: "", en: "" },
+    fields: [field("language", "界面语言", "Interface language", "string")] },
+  { id: "redaction", title: { zh: "脱敏（发给 AI 前本地打码）", en: "Redaction (local masking before sending to AI)" }, help: { zh: "", en: "" },
+    fields: [field("redaction_enabled", "启用词表脱敏", "Enable term-list redaction")] },
+  { id: "updates", title: { zh: "更新", en: "Updates" }, help: { zh: "", en: "" },
     fields: [field("updates_check_enabled", "自动检查新版本", "Check for updates automatically")] },
-  { id: "gmail", title: { zh: "Gmail 接入", en: "Gmail" }, help: { zh: "", en: "" },
-    fields: [field("gmail_enabled", "启用 Gmail 雷达", "Enable the Gmail radar"),
-      field("gmail_address", "Gmail 地址", "Gmail address", "string")] },
-  { id: "digest", title: { zh: "每周摘要", en: "Weekly digest" }, help: { zh: "", en: "" },
-    fields: [field("weekly_digest_enabled", "每周自动生成回顾卡", "Auto-generate a weekly recap")] },
 ] };
 const secrets: SecretsStatus = { secrets: [
-  { name: "gmail-app-password.txt", label: { zh: "Gmail 应用专用密码", en: "Gmail app password" }, present: true, verifiable: true, mtime: null },
+  { name: "anthropic-api-key.txt", label: { zh: "Anthropic API 密钥", en: "Anthropic API key" }, present: true, verifiable: true, mtime: null },
 ] };
 
 function deferred<T>() {
@@ -56,24 +55,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("settings search — sections whose content lands after the query was typed", () => {
-  it("a zh secret-row label that only exists in the DOM surfaces the gmail section once the catalog lands, without another keystroke", async () => {
-    const pendingCatalog = deferred<SettingsCatalog>();
-    vi.mocked(fetchSettingsCatalog).mockReturnValue(pendingCatalog.promise);
-    vi.mocked(fetchSecrets).mockResolvedValue(secrets);
+  it("a zh secret-row label that only exists in the snapshot surfaces the credentials section once secrets land, without another keystroke", async () => {
+    const pendingSecrets = deferred<SecretsStatus>();
+    vi.mocked(fetchSettingsCatalog).mockResolvedValue(catalog);
+    vi.mocked(fetchSecrets).mockReturnValue(pendingSecrets.promise);
     render(<LanguageContext.Provider value="en"><SettingsPage /></LanguageContext.Provider>);
     const input = screen.getByRole("searchbox") as HTMLInputElement;
-    // 目录还没回来：gmail 区是占位（「Loading…」），干草里没有 密码 → 藏
-    act(() => { fireEvent.change(input, { target: { value: "密码" } }); });
-    expect(section("gmail").textContent).toContain("Loading…");
-    expect(visible("gmail")).toBe(false);
-    // 目录落地 → 草稿对齐 → 下一帧长出 gmail_address 后面的应用密码行（en UI 渲 "Gmail app password"，zh label 只在 secrets 快照里）
-    await act(async () => { pendingCatalog.resolve(catalog); await pendingCatalog.promise; });
-    await waitFor(() => expect(section("gmail").querySelector('[data-secret="gmail-app-password.txt"]')).not.toBeNull());
+    // 凭证快照还没回来：en UI 渲的是 "Anthropic API key"，干草里没有 密钥 → 藏
+    act(() => { fireEvent.change(input, { target: { value: "密钥" } }); });
+    expect(visible("credentials")).toBe(false);
+    // 凭证快照落地 → data-secret 的行带着 zh label 进干草
+    await act(async () => { pendingSecrets.resolve(secrets); await pendingSecrets.promise; });
     // 没有再敲键：区块必须自己浮出来
-    await waitFor(() => expect(visible("gmail")).toBe(true));
-    expect(input.value).toBe("密码");
+    await waitFor(() => expect(visible("credentials")).toBe(true));
+    expect(input.value).toBe("密钥");
     expect(visible("general")).toBe(false);
-    expect(visible("digest")).toBe(false);
+    expect(visible("updates")).toBe(false);
     expect(screen.queryByText("No matching settings")).toBeNull();
   });
 
@@ -83,13 +80,14 @@ describe("settings search — sections whose content lands after the query was t
     vi.mocked(fetchSecrets).mockResolvedValue(secrets);
     render(<LanguageContext.Provider value="zh"><SettingsPage /></LanguageContext.Provider>);
     const input = screen.getByRole("searchbox") as HTMLInputElement;
-    // 「回顾卡」只在目录 field 的 zh label 里（目录标题是「每周摘要 / Weekly digest」）——目录没到之前整页无匹配
-    act(() => { fireEvent.change(input, { target: { value: "回顾卡" } }); });
-    expect(visible("digest")).toBe(false);
+    // 「词表」只在目录 field 的 zh label 里（目录标题是「脱敏（发给 AI 前本地打码）」）——目录没到之前整页无匹配
+    act(() => { fireEvent.change(input, { target: { value: "词表" } }); });
+    expect(section("redaction").textContent).toContain("读取中…");
+    expect(visible("redaction")).toBe(false);
     expect(screen.getByText("无匹配设置")).toBeTruthy();
     await act(async () => { pendingCatalog.resolve(catalog); await pendingCatalog.promise; });
-    await waitFor(() => expect(visible("digest")).toBe(true));
-    expect(visible("gmail")).toBe(false);
+    await waitFor(() => expect(visible("redaction")).toBe(true));
+    expect(visible("updates")).toBe(false);
     expect(screen.queryByText("无匹配设置")).toBeNull();
   });
 });

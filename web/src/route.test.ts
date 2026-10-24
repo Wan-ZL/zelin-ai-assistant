@@ -1,61 +1,54 @@
-// 脚手架冒烟测试：route 深链序列化（纯函数）。
+// 脚手架冒烟测试：route 深链序列化（纯函数）。v2.0.0：缺省页 = 会议纪要；?card= 随卡片退役。
 import { describe, expect, it } from "vitest";
-import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, isDepsPage, readCardId, readPage, readSettingsAnchor, withoutSettingsAnchor } from "./route";
+import { buildAppUrl, buildSettingsUrl, DEFAULT_PAGE, DEPS_ANCHOR, hasExplicitRoute, isDepsPage, readPage, readSettingsAnchor, withoutSettingsAnchor } from "./route";
 
 describe("route", () => {
-  it("reads the card deep link preserving case", () => {
-    // SAFE_ID_RE 允许小写——id 按原样精确匹配，绝不 case 折叠
-    expect(readCardId("?card=r-101")).toBe("r-101");
-    expect(readCardId("?card=R-101")).toBe("R-101");
-    expect(readCardId("?card=%20R-101%20")).toBe("R-101"); // trim 保留
-    expect(readCardId("?card=")).toBeNull();
-    expect(readCardId("")).toBeNull();
+  it("defaults to the recaps page; unknown and retired pages fall back to it", () => {
+    expect(DEFAULT_PAGE).toBe("recaps");
+    expect(readPage("")).toBe("recaps");
+    expect(readPage("?page=bogus")).toBe("recaps");
+    // 退役页（看板 / 回收站 / 永久性完成 / 技能 / 样式指南 / 问问助手）：旧深链回落会议纪要，不崩
+    for (const retired of ["board", "trash", "archive", "skills", "styleguide", "ask"]) {
+      expect(readPage(`?page=${retired}`)).toBe("recaps");
+    }
   });
 
-  it("defaults to the board page and recognizes trash", () => {
-    expect(readPage("")).toBe("board");
-    expect(readPage("?page=trash")).toBe("trash");
-    expect(readPage("?page=bogus")).toBe("board");
+  it("recognizes the surviving pages and round-trips them", () => {
+    for (const page of ["settings", "ingest", "about", "permissions", "setup"] as const) {
+      expect(readPage(`?page=${page}`)).toBe(page);
+      expect(buildAppUrl("http://127.0.0.1:47820/", page).searchParams.get("page")).toBe(page);
+    }
   });
 
-  it("recognizes the settings page (§59) and round-trips it", () => {
-    expect(readPage("?page=settings")).toBe("settings");
-    const url = buildAppUrl("http://127.0.0.1:47820/?card=R-1", "settings", null);
-    expect(url.searchParams.get("page")).toBe("settings");
+  it("the default page is not written into the query, and a stale ?card= is dropped on navigation", () => {
+    const url = buildAppUrl("http://127.0.0.1:47820/?page=settings&card=R-1", "recaps");
+    expect(url.searchParams.get("page")).toBeNull();
     expect(url.searchParams.get("card")).toBeNull();
+    expect(readPage(buildAppUrl(url.href, "about").search)).toBe("about");
   });
 
-  it("recognizes the recaps page (§63)", () => {
-    expect(readPage("?page=recaps")).toBe("recaps");
-    expect(buildAppUrl("http://127.0.0.1:47820/", "recaps", null).searchParams.get("page")).toBe("recaps");
-  });
-
-  it("round-trips page + card through buildAppUrl", () => {
-    const url = buildAppUrl("http://127.0.0.1:47820/?page=trash", "board", "r-101");
-    expect(url.searchParams.get("page")).toBeNull(); // board 是缺省，不落 query
-    expect(url.searchParams.get("card")).toBe("r-101"); // 大小写原样保留
-    expect(readPage(buildAppUrl(url.href, "trash", null).search)).toBe("trash");
+  it("hasExplicitRoute only counts ?page= (cold start may restore the last rail page otherwise)", () => {
+    expect(hasExplicitRoute("?page=settings")).toBe(true);
+    expect(hasExplicitRoute("?card=R-1")).toBe(false);
+    expect(hasExplicitRoute("")).toBe(false);
   });
 
   it("依赖检查是设置页的一区（D30）：deps / diagnostics 旧深链仍认、都滚到 anchor=deps；buildSettingsUrl 给出新形", () => {
     expect(isDepsPage("deps")).toBe(true);
     expect(isDepsPage("diagnostics")).toBe(true);
     expect(isDepsPage("settings")).toBe(false);
-    expect(readSettingsAnchor("?page=deps&log=actd.log")).toBe(DEPS_ANCHOR);
-    expect(readSettingsAnchor("?page=settings&anchor=slack")).toBe("slack");
-    const url = buildSettingsUrl("http://127.0.0.1:47820/?page=deps&card=R-1", DEPS_ANCHOR);
+    expect(readSettingsAnchor("?page=deps&log=engine.log")).toBe(DEPS_ANCHOR);
+    expect(readSettingsAnchor("?page=settings&anchor=recording")).toBe("recording");
+    const url = buildSettingsUrl("http://127.0.0.1:47820/?page=deps", DEPS_ANCHOR);
     expect(url.searchParams.get("page")).toBe("settings");
     expect(url.searchParams.get("anchor")).toBe("deps");
-    expect(url.searchParams.get("card")).toBeNull();
-    // 问问助手页已退役（D29）：旧深链回落看板，不崩
-    expect(readPage("?page=ask")).toBe("board");
   });
 
   it("withoutSettingsAnchor 摘掉 ?anchor= 与 #settings-<id>（D44：设置页读过一次就 replaceState），其余 query / hash 原样", () => {
-    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings&anchor=gmail").toString()).toBe("http://127.0.0.1:47820/?page=settings");
-    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings#settings-sync").toString()).toBe("http://127.0.0.1:47820/?page=settings");
-    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=deps&log=actd.log&anchor=deps#settings-deps").toString())
-      .toBe("http://127.0.0.1:47820/?page=deps&log=actd.log");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings&anchor=recap").toString()).toBe("http://127.0.0.1:47820/?page=settings");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings#settings-updates").toString()).toBe("http://127.0.0.1:47820/?page=settings");
+    expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=deps&log=engine.log&anchor=deps#settings-deps").toString())
+      .toBe("http://127.0.0.1:47820/?page=deps&log=engine.log");
     expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings#other").toString()).toBe("http://127.0.0.1:47820/?page=settings#other");
     expect(withoutSettingsAnchor("http://127.0.0.1:47820/?page=settings").toString()).toBe("http://127.0.0.1:47820/?page=settings");
   });

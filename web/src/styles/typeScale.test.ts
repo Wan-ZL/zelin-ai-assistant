@@ -1,18 +1,18 @@
 // 字号/字重梯的 drift-pin（CONTRACT §54.1 第 10 项：web 排版跟原生看板一致，truth = tokens.css）。
 // 本文件钉 CSS ↔ 对照表：tokens.css 的每个 --type-* 值与 typeScale.ts 逐字相等、字重/字号
-// 与表里声明的 Swift size/weight 一致、每个 token 至少被一处组件 CSS 消费（防死 token）、
-// board.css（镜像原生卡面/列的那份）不再出现字面 font-size / font-weight——组件只许
-// `font: var(--type-…)`。shell.css / chrome.css 里 web 独有的面（过滤 chips、排序 select、
-// 回收站页标题、壳内菜单）没有原生对应，不在此钉。
+// 与表里声明的 Swift size/weight 一致、每个 token 至少被一处组件 CSS 消费（防死 token）。
+// v2.0.0：board.css / chrome.css 随看板退役，消费者 = controls.css + shell.css + 各页自己的样式；
+// 「board.css 不许字面 font-size」那条随文件一起退役（字面字号的总闸在 displayPrefs.test.ts）。
 // 第三方（表 ↔ mac/Sources 被引用的那一行真的写着这个 size/weight/design）由
 // tests/test_web_type_scale_mirror.py 钉——web 侧不许 import node:*（@types/node 不在白名单）。
 // token 值的固定写法（§54.1 第 12 项显示偏好）：
 //   var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh> var(--font-<sans|mono>)
 // 字重经 --w-* 吃 --weight-shift、字号乘 --text-scale；原生 px 与 SF 字重名逐字可读，钉的就是它们。
 import { describe, expect, it } from "vitest";
-import boardCss from "./board.css?raw";
-import chromeCss from "../components/chrome/chrome.css?raw";
+import permissionsCss from "../components/permissions/permissions.css?raw";
 import recapsCss from "../components/recaps/recaps.css?raw";
+import settingsCss from "../components/settings/settings.css?raw";
+import controlsCss from "./controls.css?raw";
 import shellCss from "./shell.css?raw";
 import tokensCss from "./tokens.css?raw";
 import { TYPE_SCALE, WEIGHT_OF } from "./typeScale";
@@ -31,12 +31,11 @@ function typeTokens(css: string): Map<string, string> {
 }
 
 const cssTokens = typeTokens(tokensCss);
-// recaps.css（web 自有的会议纪要面）也消费卡面 meta 字级——D34 把详情积木搬进侧栏后它是 --type-card-meta-strong 的唯一消费者
-const consumerCss = [boardCss, shellCss, chromeCss, recapsCss].join("\n");
+const consumerCss = [controlsCss, shellCss, recapsCss, settingsCss, permissionsCss].join("\n");
 
 describe("type scale（tokens.css ↔ typeScale.ts）", () => {
   it("对照表非空且 token 名唯一", () => {
-    expect(TYPE_SCALE.length).toBeGreaterThanOrEqual(20);
+    expect(TYPE_SCALE.length).toBeGreaterThanOrEqual(10);
     expect(new Set(TYPE_SCALE.map((r) => r.token)).size).toBe(TYPE_SCALE.length);
   });
 
@@ -64,12 +63,6 @@ describe("type scale（tokens.css ↔ typeScale.ts）", () => {
       });
     });
   }
-
-  it("board.css 不再有字面 font-size / font-weight（组件只许 font: var(--type-…)）", () => {
-    const clean = boardCss.replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(clean.match(/font-size\s*:/g) ?? []).toEqual([]);
-    expect(clean.match(/font-weight\s*:/g) ?? []).toEqual([]);
-  });
 
   it("字体栈单源：:root 的 font-family 走 --font-sans", () => {
     expect(tokensCss).toContain("font-family: var(--font-sans)");

@@ -25,7 +25,8 @@ const SAFE_CONTROLS = [
   "[role=tab]",
   ".segmented button",
   ".settings-section-header",
-  ".lane-filter button",
+  ".settings-fold-toggle",
+  ".recap-segment",
 ];
 
 function collectErrors(page: Page): string[] {
@@ -37,7 +38,7 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
-async function openBoard(page: Page) {
+async function openApp(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.setItem("zai.theme", "light");
     window.localStorage.setItem("zai.lang", "zh");
@@ -51,20 +52,20 @@ async function openBoard(page: Page) {
 test("rail pages walk: every page renders and clicking safe controls raises no console error", async ({ page }) => {
   test.setTimeout(180_000);
   const errors = collectErrors(page);
-  await openBoard(page);
+  await openApp(page);
 
   const slugs = await page.locator("[data-rail-item]").evaluateAll((nodes) =>
     nodes.map((n) => n.getAttribute("data-rail-item") ?? "").filter(Boolean),
   );
-  expect(slugs.length, "rail carries no items — the board did not render").toBeGreaterThan(0);
+  expect(slugs.length, "rail carries no items — the app did not render").toBe(4);
 
   for (const slug of slugs) {
     const item = page.locator(`[data-rail-item="${slug}"]`);
     await item.click();
     await expect(item).toHaveAttribute("aria-current", "page");
     await page.waitForLoadState("networkidle");
-    // 页面活着：main 里有可见内容（标题/列/区块随页而异，只断言非空）
-    await expect(page.locator("main, .settings-page, .board-columns").first()).toBeVisible();
+    // 页面活着：main 里有可见内容（标题 / 区块随页而异，只断言非空）
+    await expect(page.locator("main.shell-main").first()).toBeVisible();
 
     for (const selector of SAFE_CONTROLS) {
       const controls = page.locator(selector);

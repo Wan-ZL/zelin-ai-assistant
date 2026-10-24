@@ -112,8 +112,8 @@ SECTIONS: tuple = (
             # `write="always"`：显式选择必须落键（python 侧没有持久化值时回落到 locale，不是目录里的占位 default）。
             _f("language", "enum", "界面语言", "Interface language", default="zh",
                choices=("zh", "en"), config=("language",), write="always",
-               help_zh="看板、系统通知与修法句共用这一把开关：顶栏切换与这里改的都是同一个值。",
-               help_en="One switch for the board, system notifications and fix sentences: the header toggle and this field write the same value."),
+               help_zh="界面、系统通知与修法句共用这一把开关：顶栏切换与这里改的都是同一个值。",
+               help_en="One switch for the interface, system notifications and fix sentences: the header toggle and this field write the same value."),
         ],
     ),
     _section(

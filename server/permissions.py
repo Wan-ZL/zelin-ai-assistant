@@ -131,8 +131,8 @@ def executables(home: Path) -> list:
                "定时任务（ingest 链）——只有「完全磁盘访问」才能读 ~/Documents 下的 Obsidian vault；缺了截图静默变不成笔记",
                "cron (the ingest chain) — needs Full Disk Access to read the Obsidian vault under ~/Documents; without it captures silently never become notes"),
         _entry("shell_app", SHELL_APP_PATH,
-               "看板 app（屏幕录制 / 麦克风 / 通知三项按它的 bundle id 记账，用下方三个按钮授权）",
-               "Board app (Screen Recording / Microphone / Notifications key on its bundle id — grant via the three buttons below)"),
+               "app（壳）——屏幕录制 / 麦克风 / 通知三项按它的 bundle id 记账，用下方三个按钮授权",
+               "App (shell) — Screen Recording / Microphone / Notifications key on its bundle id; grant via the three buttons below"),
     ]
 
 

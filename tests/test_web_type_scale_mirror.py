@@ -43,7 +43,7 @@ class TypeScaleMirrorTestCase(unittest.TestCase):
         self.entries = _entries()
 
     def test_table_parses_and_is_non_trivial(self):
-        self.assertGreaterEqual(len(self.entries), 20, "typeScale.ts 表项没解析出来（结构变了？）")
+        self.assertGreaterEqual(len(self.entries), 10, "typeScale.ts 表项没解析出来（结构变了？）")
         tokens = [e["token"] for e in self.entries]
         self.assertEqual(len(tokens), len(set(tokens)), "token 名重复")
 

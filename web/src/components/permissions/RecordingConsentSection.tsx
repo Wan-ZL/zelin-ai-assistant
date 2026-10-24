@@ -71,7 +71,7 @@ export function RecordingConsentSection() {
       <div className="settings-list-row perm-consent" data-state="no-bridge">
         <span className="settings-list-title">{text("屏幕记录", "Screen recording")}</span>
         <p className="settings-list-desc">
-          {text("录制引擎只在看板 app（壳）里可控——这是浏览器里打开的看板，看不到引擎。", "The recording engine is only controllable inside the board app (shell) — this board is open in a browser and cannot see it.")}
+          {text("录制引擎只在 app（壳）里可控——这是浏览器里打开的页面，看不到引擎。", "The recording engine is only controllable inside the app (shell) — this page is open in a browser and cannot see it.")}
         </p>
       </div>
     );

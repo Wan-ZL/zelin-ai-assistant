@@ -1,10 +1,10 @@
-// 向导「完成」之后补拉看板与健康（CONTRACT §49 2026-09-06 追记 (b)，D40）：换页不再重载文档，App 启动那一拉 /api/board 多半是
-// 404（向导跑之前 dashboard.json 还不存在），末步「立即生成一次」刚写出首份快照——回看板时不等下一条 SSE，立刻 refreshBoard +
-// refreshHealth。判例：点「完成」→ postSetupStep("complete") → navigate 回看板（不带 ?page=）→ /api/board 拉一次、/api/health 比
-// 点之前多拉一次；complete 失败 → 都不拉。
+// 向导「完成」之后补拉会议纪要与健康（CONTRACT §49 2026-09-06 追记 (b)，D40）：换页不再重载文档，App 启动那一拉 /api/recaps
+// 多半还是空的（向导期间 cron 可能刚跑出第一份）——回会议纪要时不等下一条 SSE，立刻 refreshRecaps + refreshHealth。判例：点「完成」
+// → postSetupStep("complete") → navigate 回会议纪要（不带 ?page=）→ /api/recaps 拉一次、/api/health 比点之前多拉一次；complete 失败
+// → 都不拉。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBoard, fetchHealth, fetchPermissions, fetchSecrets, fetchSetup, fetchSetupEngine, postSetupStep } from "../api";
+import { fetchRecaps, fetchHealth, fetchPermissions, fetchSecrets, fetchSetup, fetchSetupEngine, postSetupStep } from "../api";
 import { LanguageContext } from "../i18n";
 import { navigate } from "../route";
 import { resetStoreForTests } from "../store";
@@ -20,14 +20,14 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    fetchBoard: vi.fn(), fetchHealth: vi.fn(), fetchPermissions: vi.fn(), fetchSetup: vi.fn(), fetchSecrets: vi.fn(), fetchSetupEngine: vi.fn(),
+    fetchRecaps: vi.fn(), fetchHealth: vi.fn(), fetchPermissions: vi.fn(), fetchSetup: vi.fn(), fetchSecrets: vi.fn(), fetchSetupEngine: vi.fn(),
     postSetupStep: vi.fn(), fetchSettingsCatalog: vi.fn().mockResolvedValue({ sections: [] }),
   };
 });
 
-const ENGINE_READY = { cli_path: "/usr/local/bin/claude", version: "1.0.99 (Claude Code)", auth: "oauth", auth_sources: { oauth: true, env_key: false, secrets_file: false, legacy_file: false }, ready: true };
-const HEALTH_OK = { verdict: "ok", heartbeat: { age_s: 3, phase: "dashboard", pid: 1, interval: 10, stale_after_s: 90, stale: false }, dashboard: { generated_at: "2026-09-02T00:00:00Z", age_s: 30, stale: false }, loop_health: { consecutive_failures: 0, last_error: null }, checked_at: "x" };
-const BOARD = { generated_at: "2026-09-06T12:00:00Z", needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [], counts: {} };
+const ENGINE_READY = { cli_path: "/usr/local/bin/claude", version: "1.0.99 (Claude Code)", auth: "secrets_file", auth_sources: { env_key: false, secrets_file: true, legacy_file: false }, ready: true };
+const HEALTH_OK = { verdict: "ok", server: { ok: true }, cron: { age_s: 300, read_ok: true, stale: false }, recap: null, checked_at: "x" };
+const SNAPSHOT = { recaps: [] };
 
 function setup(over: Partial<SetupSnapshot> = {}): SetupSnapshot {
   return { needed: true, done: false, config_exists: true, config_example_exists: true, secrets: {}, home: "/h", protected_location: false, ...over };
@@ -36,18 +36,18 @@ function setup(over: Partial<SetupSnapshot> = {}): SetupSnapshot {
 async function renderFinale() {
   window.history.replaceState(null, "", "/?page=setup&step=finale");
   render(<LanguageContext.Provider value="en"><SetupPage /></LanguageContext.Provider>);
-  await screen.findByText("Step 7 of 7");
+  await screen.findByText("Step 6 of 6");
   await waitFor(() => expect(fetchHealth).toHaveBeenCalled()); // 进末步的那一拉（管线探针）先落地，之后再数
 }
 
 beforeEach(() => {
   resetStoreForTests();
-  for (const fn of [fetchBoard, fetchHealth, fetchPermissions, fetchSetup, fetchSecrets, fetchSetupEngine, postSetupStep, navigate]) vi.mocked(fn).mockReset();
+  for (const fn of [fetchRecaps, fetchHealth, fetchPermissions, fetchSetup, fetchSecrets, fetchSetupEngine, postSetupStep, navigate]) vi.mocked(fn).mockReset();
   vi.mocked(fetchSetup).mockResolvedValue(setup());
   vi.mocked(fetchSecrets).mockResolvedValue({ secrets: [] });
   vi.mocked(fetchSetupEngine).mockResolvedValue(ENGINE_READY);
   vi.mocked(fetchHealth).mockResolvedValue(HEALTH_OK);
-  vi.mocked(fetchBoard).mockResolvedValue(BOARD);
+  vi.mocked(fetchRecaps).mockResolvedValue(SNAPSHOT);
   vi.mocked(fetchPermissions).mockRejectedValue(new Error("offline"));
   window.sessionStorage.clear();
 });
@@ -57,17 +57,17 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-describe("setup wizard — Done refreshes the board and health after the in-document switch (D40)", () => {
-  it("Done → complete → navigate to the board → /api/board fetched once and /api/health once more", async () => {
+describe("setup wizard — Done refreshes the recaps and health after the in-document switch (D40)", () => {
+  it("Done → complete → navigate to the recaps page → /api/recaps fetched once and /api/health once more", async () => {
     vi.mocked(postSetupStep).mockResolvedValue({ ok: true, setup: setup({ done: true, needed: false }) });
     await renderFinale();
     const healthBefore = vi.mocked(fetchHealth).mock.calls.length;
-    expect(fetchBoard).not.toHaveBeenCalled(); // 向导页自己不读看板
+    expect(fetchRecaps).not.toHaveBeenCalled(); // 向导页自己不读会议纪要
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(postSetupStep).toHaveBeenCalledWith("complete"));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
     expect(String(vi.mocked(navigate).mock.calls[0][0])).not.toContain("page=");
-    await waitFor(() => expect(fetchBoard).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchRecaps).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(vi.mocked(fetchHealth).mock.calls.length).toBe(healthBefore + 1));
   });
 
@@ -79,7 +79,7 @@ describe("setup wizard — Done refreshes the board and health after the in-docu
     await waitFor(() => expect(postSetupStep).toHaveBeenCalledWith("complete"));
     await screen.findByRole("status");
     expect(navigate).not.toHaveBeenCalled();
-    expect(fetchBoard).not.toHaveBeenCalled();
+    expect(fetchRecaps).not.toHaveBeenCalled();
     expect(vi.mocked(fetchHealth).mock.calls.length).toBe(healthBefore);
   });
 });

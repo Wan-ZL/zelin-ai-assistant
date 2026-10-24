@@ -7,11 +7,11 @@
 #   ZAI_PORT=47821 ./build.sh     # also stamp ZAIServerPort (install.sh passes
 #                                 # config.yaml server.port this way, CONTRACT §54)
 #
-# Conventions mirror mac/build.sh (swiftc + hand-assembled bundle + plutil lint
-# + codesign)。差异点：签名与 mac/build.sh 同一张稳定自签证书（缺证书 / 签不动才回落
-# ad-hoc；#316，§54.3 2026-09-12 修正），且 codesign 用 --deep——bundle 里除主 Mach-O
-# 还有 §68.13 的 vault-sync-helper / framegrab 两个可执行，--deep 让它们与壳同一身份；
-# 安全的原因是这里没有 mac/ 那样的 Sparkle 嵌套 bundle 需要 inside-out 逐个签。
+# swiftc + hand-assembled bundle + plutil lint + codesign。签名用稳定自签证书
+# （shell/scripts/make-signing-cert.sh 生成一次；缺证书 / 签不动才回落 ad-hoc；#316，
+# §54.3 2026-09-12 修正），且 codesign 用 --deep——bundle 里除主 Mach-O 还有 §68.13 的
+# vault-sync-helper 一个可执行，--deep 让它与壳同一身份；安全的原因是这里没有
+# Sparkle 那样的嵌套 bundle 需要 inside-out 逐个签。
 # （壳自己不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，壳只连接。）
 # ad-hoc 签名 = 每次重建后 TCC 屏幕录制授权失效，所以只作退路
 # （docs/TROUBLESHOOTING.md「换壳后的 TCC 重授权」）。
@@ -19,24 +19,20 @@
 # （§56.5 的 relaunch 规则住在那里）。
 #
 # Sources：shell/Sources/*.swift 全部编成一个 module（只有 main.swift 可含顶层
-# 语句）+ shared/Sources/I18n.swift（L() 双语文案；Foundation-only 共享文件）。
-# 录制/字幕引擎（Recording / CaptionCore / LiveCaptions / CaptionOverlay）自
-# mac/Sources 搬入（CONTRACT §61.3），所以链接的框架与 mac/build.sh 同一组。
+# 语句；I18n.swift 的 L() 双语文案自 lite 2.0 起也住在这里）。录制引擎
+# Recording.swift 是 §61.3 的 source of truth（字节不动）。
 #
 # Naming (CONTRACT §54; owner 2026-09-02 — the shell is the product):
-#   bundle:       Zelin's AI Assistant.app     (install.sh moves the legacy app
-#                                              to "Zelin's AI Assistant (old).app")
+#   bundle:       Zelin's AI Assistant.app
 #   executable:   ZelinAIBoard                 (unchanged — pgrep/pkill -x key)
-#   bundle id:    com.zelin.ai-board           (unchanged — its own TCC identity;
-#                                              the legacy com.zelin.ai-engineer keeps
-#                                              the legacy grants until P8)
+#   bundle id:    com.zelin.ai-board           (unchanged — its own TCC identity)
 #   display name: Zelin's AI Assistant         (Info.plist CFBundleDisplayName)
 set -euo pipefail
 
 # --- locate self (worktree-safe, handles spaces) ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- toolchain gate（same floor as mac/build.sh / ci.yml）---
+# --- toolchain gate（same floor as ci.yml）---
 MIN_SWIFT="6.0"
 
 check_toolchain() {
@@ -65,8 +61,6 @@ fi
 APP_NAME="Zelin's AI Assistant"
 EXEC_NAME="ZelinAIBoard"
 SRC_DIR="$SCRIPT_DIR/Sources"
-# 只借 I18n.swift（L() + LanguageMirror）；shared/ 的其余文件是看板模型，壳不要。
-SHARED_I18N="$SCRIPT_DIR/../shared/Sources/I18n.swift"
 PLIST="$SCRIPT_DIR/Info.plist"
 BUILD_DIR="$SCRIPT_DIR/build"
 BIN="$BUILD_DIR/$EXEC_NAME"
@@ -78,10 +72,6 @@ if [ ! -f "$SRC_DIR/main.swift" ]; then
     echo "ERROR: Swift source not found at: $SRC_DIR/main.swift" >&2
     exit 1
 fi
-if [ ! -f "$SHARED_I18N" ]; then
-    echo "ERROR: shared I18n source not found at: $SHARED_I18N" >&2
-    exit 1
-fi
 if [ ! -f "$PLIST" ]; then
     echo "ERROR: Info.plist not found at: $PLIST" >&2
     exit 1
@@ -90,7 +80,7 @@ fi
 # --- plist lint（先 lint 源文件，坏 plist 不进 bundle）---
 plutil -lint "$PLIST" >/dev/null
 
-# --- compile-failure policy: ANY swiftc failure = red build（同 mac/build.sh）---
+# --- compile-failure policy: ANY swiftc failure = red build ---
 build_failed() {   # $1 = which step broke
     echo "" >&2
     echo "BUILD FAILED: $1" >&2
@@ -99,7 +89,7 @@ build_failed() {   # $1 = which step broke
 }
 
 # --- version（先于 compile：答不上就别花 swiftc 的时间；上一次构建的 bundle 原样留着）---
-# version truth = git tag（CONTRACT §56.1；same helper as mac/build.sh）：
+# version truth = git tag（CONTRACT §56.1）：
 # scripts/build_version.sh 挑一个真能读这个 checkout 的解释器（§55 第三幕：
 # launchd 下 Homebrew python3 在外置卷上 EPERM）跑 stamper（顺手写 act/_version.py），
 # 退而求其次用 act.__version__；都答不上 → 构建**失败**，绝不带着 Info.plist 的
@@ -110,26 +100,23 @@ VERSION="$(bash "$SCRIPT_DIR/../scripts/build_version.sh")" \
 echo "    version: $VERSION"
 
 # --- compile ---
-# AVFoundation + ScreenCaptureKit: 实时字幕 in-process audio capture
-# (LiveCaptions.swift); Speech (macOS 26 SpeechAnalyzer) auto-links on import;
+# AVFoundation: 麦克风授权探针（PermissionsProbe）；ScreenCaptureKit: 屏幕录制授权面；
 # UserNotifications: Recording.swift 的 self-heal / TCC-loss 一次性通知 + §28 通知中继
-# （NotifyRelay.swift）；ServiceManagement: 登录时启动（SMAppService）；Carbon: 全局
-# 快速捕获快捷键（RegisterEventHotKey，ShellSystem.swift）。
-echo "==> Compiling $SRC_DIR/*.swift + $SHARED_I18N"
+# （NotifyRelay.swift）；ServiceManagement: 登录时启动（SMAppService）；Carbon: 登录项
+# 启动事件的 Apple Event 常量（LaunchAtLogin.isLoginItemLaunch）。
+echo "==> Compiling $SRC_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
-swiftc -O "$SRC_DIR"/*.swift "$SHARED_I18N" -o "$BIN" \
+swiftc -O "$SRC_DIR"/*.swift -o "$BIN" \
     -framework AppKit -framework WebKit -framework SwiftUI -framework Foundation \
     -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications \
     -framework ServiceManagement -framework Carbon \
     || build_failed "shell compile (swiftc) exited non-zero — errors above"
 echo "    built binary: $BIN"
 
-# --- helper binaries（s4 Tier-0 0.2 / 0.3；CONTRACT §68.13）---
+# --- helper binary（s4 Tier-0 0.2；CONTRACT §68.13）---
 # vault-sync-helper：vault ⇄ 镜像的唯一 courier（~/Documents 的 TCC 授权按 bundle 记账，
-# 装进壳 bundle 后与看板 app 同一身份；ingest/vault-sync.sh find_vault_sync_helper
-# 先找本壳）。framegrab：Slack 自发视频抽帧（ffmpeg 缺席时的 AVFoundation 替身；
-# act/radar_slack.py 先找 shell/build/ 再回落 mac/build/）。源文件是 mac/ 冻结版的
-# 逐字节副本（tests/test_shell_engine_mirror.py 钉住）。编译错误 = 构建失败（同 mac/build.sh）。
+# 装进壳 bundle 后与壳同一身份；ingest/vault-sync.sh find_vault_sync_helper 先找本壳）。
+# 编译错误 = 构建失败。（framegrab 随 Slack radar 在 v2.0.0 退役，全文见 tag full。）
 HELPERS_DIR="$SCRIPT_DIR/Helpers"
 VAULTSYNC_SRC="$HELPERS_DIR/VaultSyncHelper.swift"
 if [ -f "$VAULTSYNC_SRC" ]; then
@@ -137,14 +124,6 @@ if [ -f "$VAULTSYNC_SRC" ]; then
     swiftc -O "$VAULTSYNC_SRC" -o "$BUILD_DIR/vault-sync-helper" -framework Foundation \
         || build_failed "vault-sync-helper compile (swiftc) exited non-zero — errors above"
     echo "    built binary: $BUILD_DIR/vault-sync-helper"
-fi
-FRAMEGRAB_SRC="$HELPERS_DIR/framegrab.swift"
-if [ -f "$FRAMEGRAB_SRC" ]; then
-    echo "==> Compiling framegrab"
-    swiftc -O "$FRAMEGRAB_SRC" -o "$BUILD_DIR/framegrab" \
-        -framework AVFoundation -framework CoreImage -framework Foundation \
-        || build_failed "framegrab compile (swiftc) exited non-zero — errors above"
-    echo "    built binary: $BUILD_DIR/framegrab"
 fi
 
 # --- assemble .app bundle ---
@@ -154,12 +133,10 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN" "$APP_DIR/Contents/MacOS/$EXEC_NAME"
 cp "$PLIST" "$APP_DIR/Contents/Info.plist"
-for helper in vault-sync-helper framegrab; do
-    if [ -x "$BUILD_DIR/$helper" ]; then
-        cp "$BUILD_DIR/$helper" "$APP_DIR/Contents/MacOS/$helper"
-        echo "    bundled $helper"
-    fi
-done
+if [ -x "$BUILD_DIR/vault-sync-helper" ]; then
+    cp "$BUILD_DIR/vault-sync-helper" "$APP_DIR/Contents/MacOS/vault-sync-helper"
+    echo "    bundled vault-sync-helper"
+fi
 
 # version（§56.1）：上面 compile 前已算出 VERSION。Stamp the STAGED plist only —
 # 源 Info.plist 保留占位值。
@@ -193,15 +170,15 @@ fi
 # lint the staged plist too（plutil -replace 之后再验一次）
 plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
-# --- codesign: prefer the stable self-signed identity (same one mac/build.sh uses) so the
-# shell's TCC grants (Screen Recording / Microphone / Automation / Documents) SURVIVE
+# --- codesign: prefer the stable self-signed identity (shell/scripts/make-signing-cert.sh) so the
+# shell's TCC grants (Screen Recording / Microphone / Documents) SURVIVE
 # reinstalls. Ad-hoc ("-") identity = the binary's cdhash, which changes on every build:
 # after each install.sh macOS treats the shell as a new app, the System Settings toggle
 # still reads "on" for the old build, and every capture attempt re-prompts (#316).
-# --deep is REQUIRED, not decoration: Contents/MacOS also holds the §68.13 helpers
-# vault-sync-helper and framegrab, and --deep is what signs them with the same identity.
+# --deep is REQUIRED, not decoration: Contents/MacOS also holds the §68.13 helper
+# vault-sync-helper, and --deep is what signs it with the same identity.
 # It is safe here only because there is no Sparkle-style nested bundle needing inside-out
-# signing (that is why mac/build.sh must NOT use it).
+# signing.
 SIGN_ID="Zelin AI Engineer Dev"
 # No `-v`: the identity is a self-signed cert that is NOT trusted, and `-v` hides
 # untrusted identities. Trust is irrelevant to codesign + TCC persistence.

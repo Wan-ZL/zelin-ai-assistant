@@ -31,62 +31,32 @@ deliberately NOT imported.
              (--on-accent) added on top of the forked table, marked
              non-fork in a comment.
 
-2. Animation CSS blocks
-   Upstream: web/src/styles.css lines 2363-2409 (shared easing
-             cubic-bezier(0.2,0.8,0.2,1), card hover lift), lines
-             9371-9494 + 9560-9562 (working-card sheen + conic
-             progress ring), lines 8590-8599 (prefers-reduced-motion
+2. prefers-reduced-motion block
+   Upstream: web/src/styles.css lines 8590-8599 (prefers-reduced-motion
              nuke)
-   Here:     web/src/styles/animations.css
-   Changes:  drag-and-drop-specific rules dropped (this board has no
-             drag-to-change-state); four hardcoded green color values
-             replaced with --accent/--accent-soft tokens; lane-change/
-             settle rules removed (.is-moving/.is-settling from lines
-             2363-2409 and the task-card-settle keyframes, lines
-             2438-2447) — D46 / CONTRACT §68.14, 2026-09-06.
+   Here:     web/src/styles/controls.css (last block)
+   Changes:  none to the block itself. v2.0.0 (lite) removed the rest of
+             the forked animation CSS (card hover lift, working-card
+             sheen, conic progress ring) together with the board it
+             styled; the 1.x file web/src/styles/animations.css is in
+             git tag `full`.
 
-3. MarkdownDocument component (markdown rendering + mermaid sandbox,
-   including all security hooks: strict securityLevel, DOMPurify
-   hooks, external-resource/CSS detectors, external-link blocking)
-   Upstream: web/src/components/MarkdownDocument.tsx (599 lines)
-   Here:     web/src/components/detail/MarkdownDocument.tsx and
-             web/src/components/detail/MermaidDiagram.tsx
-   Changes:  fork-adapted, not verbatim. The upstream dependencies
-             (react-markdown/remark-gfm/js-yaml/dompurify/mermaid) are
-             outside this repo's npm runtime whitelist, so the
-             markdown body is parsed by an in-repo zero-dependency
-             escape-first parser (web/src/components/detail/
-             markdown.ts, original work) while MarkdownDocument.tsx
-             keeps the upstream component surface, URL/link discipline
-             and HTML-comment-strip semantics. MermaidDiagram.tsx
-             keeps all upstream mermaid security hooks (external-
-             resource regexes verbatim, DOMPurify uponSanitize hooks,
-             strict securityLevel, style scrubbing) behind runtime
-             dynamic imports with a safe show-source fallback when the
-             dependencies are absent; js-yaml-based metadata checks
-             replaced with stricter literal detection. Codex-specific
-             attachment/composer-reference code removed; zh/en strings
-             adapted.
+3. (retired in v2.0.0) MarkdownDocument component and 4. (retired in
+   v2.0.0) TaskPropertyPicker popover primitive were removed with the
+   card detail drawer and the filter bar they served; the 1.x files
+   web/src/components/detail/MarkdownDocument.tsx, MermaidDiagram.tsx
+   and web/src/components/chrome/TaskPropertyPicker.tsx are in git tag
+   `full`.
 
-4. TaskPropertyPicker popover primitive
-   Upstream: web/src/components/TaskPropertyPicker.tsx (220 lines)
-   Here:     web/src/components/chrome/TaskPropertyPicker.tsx
-   Changes:  domain types swapped for this repo's card/filter model;
-             upstream LinearIcon dependency replaced with a local
-             inline CheckIcon SVG; option.icon made optional; a
-             selectedValues multi-select mode added (single-select
-             behavior unchanged from upstream). Upstream
-             composer-popover/task-property-* class names kept and
-             re-styled with this repo's tokens in
-             web/src/components/chrome/chrome.css.
-
-5. URL deep-link routing + filter serialization patterns
-   Upstream: web/src/issueRoute.ts (22 lines) and
-             web/src/taskFilters.ts (129 lines)
-   Here:     web/src/route.ts and web/src/taskFilters.ts
-   Changes:  route keys and filter fields renamed to this repo's
-             card domain (page/card deep link; tier/type/channel/
-             deadline/reraised filters + client-side search).
+5. URL deep-link routing pattern
+   Upstream: web/src/issueRoute.ts (22 lines)
+   Here:     web/src/route.ts
+   Changes:  route keys renamed to this repo's pages (?page= deep
+             link; the ?card= key retired with the card board in
+             v2.0.0). The forked filter serialization (upstream
+             web/src/taskFilters.ts) was removed in v2.0.0 with the
+             filter bar; the 1.x web/src/taskFilters.ts is in git tag
+             `full`.
 
 6. Inline zh/en i18n pair pattern
    Upstream: web/src/i18n.tsx (98 lines)

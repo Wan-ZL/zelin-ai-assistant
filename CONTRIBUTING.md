@@ -45,7 +45,7 @@ Every change batch must pass all four before merging — CI runs these on every 
    XCTest-free bridge harness
 
 They are cheap; run them locally before pushing (the two Swift gates matter when
-you touch `shell/` or `shared/`). Touching
+you touch `shell/`). Touching
 `web/` adds `cd web && npm run typecheck && npm run build && npx vitest run` (`build`
 type-checks only what ships — `tsconfig.build.json` — because install.sh builds web/
 from a mirror outside the repo; `typecheck` covers the tests too, CONTRACT §56.5).
@@ -54,7 +54,7 @@ from a mirror outside the repo; `typecheck` covers the tests too, CONTRACT §56.
 
 The repo is public (runner minutes are free) but the owner is on the free plan, whose *concurrency* cap (~20 jobs, 5 macOS) is what dozens of parallel agent PRs actually queue on. So per-PR CI is on a diet without touching the merge gate — the seven required checks keep their names and report on every PR and every merge-queue group:
 
-- **`ci` (macOS) and `Web tests` are path-filtered on pull requests.** A first ubuntu job (`Changed paths (per-PR filter)`) lists the PR's files; `ci` runs the Apple suite (since v2.0.0: `shell/build.sh` + `shell/tests/run.sh`, plus compileall and the full unittest run) on a macOS runner only when something under `shell/`, `shared/`, any `*.swift`, the Xcode pin / selector, the version stamper the builds call or `ci.yml` itself changed — otherwise it runs on ubuntu, prints "no Swift changes — Swift gates not needed" and ends green. `Web tests` does the same for `web/`. The filter list is the truth in `.github/workflows/ci.yml`; if you make something new that only the macOS job exercises, add its path to the filter in the same PR.
+- **`ci` (macOS) and `Web tests` are path-filtered on pull requests.** A first ubuntu job (`Changed paths (per-PR filter)`) lists the PR's files; `ci` runs the Apple suite (since v2.0.0: `shell/build.sh` + `shell/tests/run.sh`, plus compileall and the full unittest run) on a macOS runner only when something under `shell/`, any `*.swift`, the Xcode pin / selector, the version stamper the builds call or `ci.yml` itself changed — otherwise it runs on ubuntu, prints "no Swift changes — Swift gates not needed" and ends green. `Web tests` does the same for `web/`. The filter list is the truth in `.github/workflows/ci.yml`; if you make something new that only the macOS job exercises, add its path to the filter in the same PR.
 - **`merge_group` and every push to `main` run everything**, filter or no filter; so does a PR whose filter step failed (a broken filter must never turn into a skipped gate).
 - **No nightly informational lane any more**: `ci-nightly.yml` (the Windows legs and the qlty sweep) was removed in v2.0.0 — lite 2.0 is macOS-only (CONTRACT §56.8 追记).
 - **AI review bots run on demand, not on every push.** The default review of a PR is the adversarial agent review in the lead's session. When you want the paid second opinions (Claude + Codex), put the **`review:ai`** label on the PR (`gh pr edit <n> --add-label review:ai`) — both bots start, the label is consumed as soon as they pick it up, so adding it again later reviews the then-current head. Alternative: `gh workflow run pr-review-claude.yml -f pr=<n>` (and `pr-review-codex.yml`). Fork PRs are skipped either way; a missing API-key secret is a green no-op.

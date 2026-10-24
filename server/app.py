@@ -22,7 +22,7 @@ permissions，可派生 ``act.recap``）：
 - 会议纪要（§63，server/recaps.py）：GET /api/recaps（列表 + 三栏计数）、
   POST /api/recaps/generate、POST /api/recaps/revert（分离派生 ``python -m act.recap``）、
   POST /api/recaps/mark、GET /api/recaps/history?key=、GET/PUT /api/settings/recap。
-- 设置（§59 / §68.1 / §54.1）：GET /api/settings（目录）+ GET/PUT /api/settings/{section}
+- 设置（§59 / §68.1）：GET /api/settings（目录）+ GET/PUT /api/settings/{section}
   （server/settings_catalog.py）、GET/PUT /api/settings/models（server/settings.py）、
   GET/PUT /api/settings/display（server/display.py）。
 - 凭证（§68.3）：GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify。
@@ -605,7 +605,7 @@ _GET_JSON_ROUTES = {
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
     # §59 模型旋钮（pipeline + fallback）的 effective 值 + canonical 下拉全集（server-owned）
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
-    # §54.1 第 12 项 显示偏好三把旋钮
+    # §68.1 显示偏好三把旋钮（原 §54.1 第 12 项，该节 v2.0.0 退役）
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
     # §68.1 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
     "/api/settings": lambda ctx, query: settings_catalog.snapshot(ctx.home),
@@ -679,7 +679,7 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
-    # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义）
+    # §68.1 显示偏好旋钮（同一 diff-write 语义；原 §54.1 第 12 项）
     "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
 }
 

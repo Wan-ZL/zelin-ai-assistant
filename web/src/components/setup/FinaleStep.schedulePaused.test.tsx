@@ -11,18 +11,16 @@ import { FinaleStep } from "./FinaleStep";
 
 vi.mock("../../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../../api")>();
-  // postAnalytics：修复下场会发 pipeline_repair_result（D48）——这里不触发修复，mock 只为它绝不出网
-  return { ...mod, fetchHealth: vi.fn(), postRepairActd: vi.fn(), postSeedDashboard: vi.fn(), postAnalytics: vi.fn().mockResolvedValue({ ok: true, event: "pipeline_repair_result", logged: true }) };
+  return { ...mod, fetchHealth: vi.fn() };
 });
 
-const ENGINE: SetupEngine = { cli_path: "/usr/local/bin/claude", version: "1.0.99", auth: "api_key", auth_sources: {}, ready: true };
+const ENGINE: SetupEngine = { cli_path: "/usr/local/bin/claude", version: "1.0.99", auth: "secrets_file", auth_sources: { secrets_file: true }, ready: true };
 const PAUSED = { enabled: true, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: true };
 
 const base: ShellState = {
   recording: { available: true, on: true, mode: "screen", engine_running: false, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen", self_heal_note: "", log_tail: "" },
-  captions: { available: true, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: false, translate_direction: "auto", apple_locale: "zh", ark_model: "", font_size: 24, opacity: 0.7 },
   permissions: { screen: "granted", microphone: "unknown", notifications: "unknown", vault: "unknown" },
-  launch_at_login: false, hotkey: "⌃⌥Space",
+  launch_at_login: false,
 };
 
 function installShell(recording: Partial<ShellState["recording"]>) {

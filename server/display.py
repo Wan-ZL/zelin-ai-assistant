@@ -1,5 +1,5 @@
-"""server/display.py — the web Settings page's 「显示」 section (CONTRACT §54.1
-item 12; routes §49). stdlib only (config.yaml is read through
+"""server/display.py — the web Settings page's 「显示」 section (CONTRACT §68.1
+v2.0.0 revision, which carries the display-preference law forward; routes §49). stdlib only (config.yaml is read through
 server.settings.config_yaml_doc, which degrades to {} without PyYAML).
 
 Three display preferences the board applies as CSS custom properties on

@@ -113,6 +113,27 @@
 > 排除表的设置页落点，空 = 回到出厂表）。telemetry / consent / execution（`claude_bin` pin 只住 config.yaml）/
 > `default_output_format` / review_notify / 分类开关 / daily-loop / self-improve / maintainer 等键退役：
 > 旧文件里写着的键**照读照忽略**，不报错。
+>
+> **§15 v2.0.0 修订（PR-B：页面与壳；本块为准，下文 1.x 追记里与之冲突的部分是历史文本，全文见 tag full）**：
+> §15 自此只立四件事——
+> ① **单文件 diff-write**：`state/settings_overrides.json` 是唯一的设置覆写文件，`config.load_config()` 最后合并、
+> 优先级最高；写者 = server（`PUT /api/settings/{section}` / `/api/settings/models` / `/api/settings/display` /
+> `/api/settings/recap`），值等于「不含该 override 的 effective 值」= 删键；**壳不写 overrides**。
+> ② **`language`**（`"zh"|"en"`）：唯一的界面语言开关，web 设置页写、壳与 Python 侧读（§61.1 `setLanguage` 只同步
+> 壳的 `L()` 镜像）。目录 help 随看板退役改写为「界面、系统通知与修法句共用这一把开关：顶栏切换与这里改的都是同一个值。」
+> / "One switch for the interface, system notifications and fix sentences: …"（`server/settings_catalog.py`；
+> e2e `languageSingleSource.spec.ts` 钉中文半句）。
+> ③ **录制三态** `recordingMode` ∈ `"off"|"screen"|"screen_audio"` + `lastActiveRecordingMode`（壳 UserDefaults，域
+> `com.zelin.ai-board`）；fresh install 无键 = `off`（P0-11）；**consent** 的落点 = web 权限页的录制同意块
+> （`RecordingConsentSection`）经桥 `setRecording`。§61 re-home 注记照旧：引擎住 `shell/`，`shell/Sources/Recording.swift`
+> 是 §61.3 的 source of truth；退出壳停不停录制按 §61.8 v2.0.0（只停壳自己派生的那台，`engineHandoff` 在场时不停）。
+> ④ **add-only 字段 `recording.ignored_apps`**（扁平 override `recording_ignored_apps`，list；见上一块）：壳自本 PR
+> 起也读它——`SettingsIO.overrideList` 先于 config.yaml 的 `recording.ignored_apps`，清洗同
+> `act/lib/config._clean_str_list`，下一次启动录制生效（判例 `shell/tests/BridgeHarness.swift` [5d]）。
+> **退役**：telemetry 覆写（`telemetry.*` 嵌套与扁平）与 consent 标记文件 `state/telemetry_consent_shown*`、execution
+> 三键、`default_output_format`、popover 快速捕获输入框、菜单栏偏好（`showMenuBarIcon` / `showRecordingIcon`）、
+> v0.13 iMessage 与 v0.14 Slack / Gmail 设置区、v0.46 ⌘Q 守卫与菜单栏徽章；原「主窗口四区」（依赖检查 / 录制与导入 /
+> 设置 / 关于）由 web 页面承接（§54.4 / §68）。旧文件里写着的这些键照读照忽略。
 菜单栏加"打开主窗口"；窗口可关（app 继续后台跑，accessory 不变）。四个区：
 1) **依赖检查**：逐行 Node/npx 与录制引擎存活（引擎经 `npx screenpipe@<pin>` 运行，v0.11 起不再检查 /Applications/Screenpipe.app）、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。
 2) **录制与 ingest**：启动/退出 Screenpipe（open -a / osascript quit）、"立即导出"（跑 ingest/screenpipe-export.sh）、"立即 ingest"（跑 process 脚本）、显示最近一次导出/ingest 时间（读 log mtime）。
@@ -837,6 +858,8 @@ release 页链接，**绝不自动下载执行**；owner 机器上 §56 合并�
 > `tests/test_server_notify_preferences_settings.py`。`notify_catalog` 里只为 §66.2 探针存在的
 > `kind_names` / `fragments` / `same_template` / `sentences` / `has_sentence` 不是活的 server 面：唯一
 > 生产调用方 `scripts/ui/parity_check.py` 已不在门里（§66 墓碑），PR-C 删 `scripts/ui/` 时一并删除。
+> 中继汇总那条（`relay_overflow`）的正文随看板退役改为「打开 App 查看会议纪要」/「Open the app to see the
+> recaps」（PR-B；`server/notify_catalog.py` 与 `shell/Sources/NotifyRelay.swift` 逐字同改），标题不变。
 > **（PR-C 已兑现）**：五个函数已删；壳直发句与 shell/Sources `L()` 对的逐字对照（含占位名归一）改由
 > `tests/test_server_notify_catalog.py` 自带的小扫描器执行，`GET /api/notifications` 的形状一字不变。
 
@@ -956,43 +979,7 @@ stale 600 s / burst 5 / `review_notify` 三档 / 消费即删 / 坏文件 log+�
 
 ## 35. v0.35.0 设备名称（add-only） —（retired v2.0.0，全文见 tag full）
 
-## 36. v0.36.0 实时字幕（add-only，Mac 展示层）
-
-实时字幕是**纯 Mac 本机展示层功能**，对既有契约零改动，本节只登记新增面：
-
-- **不碰录制状态机**：`recordingMode` 词表仍冻结为 `"off"|"screen"|"screen_audio"`
-  （§15）；实时字幕是独立的 UserDefaults Bool（`liveCaptionsEnabled` 及一组
-  `captions*` 外观/引擎偏好），与 screenpipe 引擎、`/rec` slash 命令、dashboard/
-  registry/inbox 的任何形状互不相干。音频采集为 App 进程内自有通路
-  （AVAudioEngine 麦克风 + ScreenCaptureKit 系统声音），与录制引擎并行共存。
-- **新增 secrets 文件名（BYO key，App 专用）**：`config/secrets/` 下新增
-  `volcano-speech-key.txt`（豆包流式语音识别）与 `volcano-ark-key.txt`（Ark 翻
-  译），同既有 secrets 契约（目录 0700、文件 0600、单行 + 换行）。**只有 Mac App
-  读取这两个文件——Python/cron 侧永不读取**（区别于 anthropic/slack/gmail 三个
-  跨组件文件）。App 不内置任何 key。
-  - **v0.37.1（add-only）**：`volcano-speech-key.txt` 允许第二种内容格式，承载
-    旧版语音控制台凭证：两行 `appid:<App ID>` + `token:<Access Token>`（权限
-    /归属/换行约定不变）。单行裸内容一律按新版 API Key 解读——v0.37.1 之前
-    保存的文件不需迁移。`volcano-ark-key.txt` 格式不变。解析的唯一真源是
-    `VolcanoSpeechCredential`（mac/Sources/CaptionCore.swift）。
-- **隐私**：字幕文本永不落盘、永不进 analytics/telemetry（只有 `captions_toggle`
-  / `captions_autostart` / firstReach `live_captions` 元数据事件）、永不离开本机
-  ——唯一外发目的地是用户自己 key 对应的识别/翻译服务端点（Apple 本地引擎则完全
-  离线）。
-- **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
-  `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
-  程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
-
-**§36 v0.48.19 追记（D3；引擎落户 shell/，本节全部语义不变）**：「纯 Mac 本机展示层」
-的宿主从 `mac/` 原生 app 变为 `shell/`（"Zelin AI Board"）：`CaptionCore.swift` /
-`LiveCaptions.swift` 逐字节搬入 `shell/Sources`，`CaptionOverlay.swift` 唯一改动是
-悬浮窗齿轮从原生 Settings 窗改为打开 web 设置页（`?page=settings&anchor=live_captions`）
-（判例 `tests/test_shell_engine_mirror.py`）。`liveCaptionsEnabled` 与 `captions*`
-偏好仍是 UserDefaults（现在是壳的域，§61.4 一次性从原生域接过来）；两个 BYO 凭证
-文件、隐私条款、analytics 事件词表照旧；「只有 Mac App 读取这两个文件」现读作「只有
-壳读取」——Python/server 侧仍永不读取。开关入口 = web 看板 header 的「实时字幕」按钮
-（经 §61 桥）；悬浮窗内的 暂停/关闭 仍是原生按钮。字幕偏好的设置页（引擎/音源/翻译/
-字号）随 P4 Tier 2 落 web，届时再立法其 server 端点。
+## 36. v0.36.0 实时字幕（add-only，Mac 展示层） —（retired v2.0.0，全文见 tag full）
 
 ## 37. v0.37.0 找得到、看得懂 — 看板搜索全量化 + 活标题（add-only） —（retired v2.0.0，全文见 tag full）
 
@@ -1393,6 +1380,26 @@ test_server_auth.py）。
 
 ## 54. 薄壳看板 app（shell/ — "Zelin's AI Assistant"，bundle "Zelin's AI Assistant.app"，id `com.zelin.ai-board`）
 
+> **§54 v2.0.0 修订（PR-B；本块为准，下文与之冲突的 1.x 追记是历史文本，全文见 tag full）**：壳 = **Dock-only 薄壳**
+> （AppKit + WKWebView，`shell/`；bundle `Zelin's AI Assistant.app`，**id `com.zelin.ai-board` 不变**——它是 TCC 身份；
+> 可执行名 `ZelinAIBoard`）。职责：解析 PORT / HOME / SERVER_REPO → 探活 **`GET /api/health`** → 连接 launchd 托管的
+> server → 一个 WKWebView 加载 `http://127.0.0.1:PORT/`；壳里没有业务逻辑。原生残留 = 录制引擎的进程归属（§61 / §61.8）
+> + §68.13 的通知中继、TCC 探针与深链、登录时启动、vault-sync-helper。关窗不退出、点 Dock 图标重开、⌘Q 退出。
+> - **54.1 tombstone**（web 看板 parity 清单随看板退役）；其第 12 项「显示偏好 = token」仍是活法条，由 §68.1 v2.0.0
+>   修订（PR-B）承接。
+> - **54.2** 不变（server 由 launchd 托管，壳只连接；探活失败且 label 未加载才 spawn 兜底），唯一修订：**连接探针 =
+>   `GET /api/health`**（token-light 的活性路由，§49；`/api/board` 已退役），10 s 失败弹窗里的 URL 同改。
+> - **54.3** 构建：`shell/build.sh` 编 `shell/Sources/*.swift`（`I18n.swift` 自 `shared/Sources` 搬入，壳不再读
+>   `shared/`）+ `shell/Helpers/VaultSyncHelper.swift`（framegrab 退役）；签名身份 `Zelin AI Engineer Dev` 与
+>   bundle id 不变，一次性生成脚本搬到 **`shell/scripts/make-signing-cert.sh`**（不重生成证书）；`shell/Info.plist`
+>   去掉 `NSAppleEventsUsageDescription`（终端接管退役），保留 `NSMicrophoneUsageDescription`（「屏幕 + 音频」）。
+> - **54.4** 布局：左侧导航栏**四项** = 会议纪要 `recaps`（默认页）/ 录制与导入 `ingest` / 设置 `settings` / 关于
+>   `about`（⌘1–⌘4，`web/src/components/shell/NavRail.tsx`）；permissions / diagnostics / setup / deps 只经深链与菜单
+>   到达；退役页 slug（board / trash / archive / skills / styleguide）与 `?card=` 回落 recaps。主菜单「显示」只剩
+>   重新载入 ⌘R（聚焦捕获框 ⌘L 退役）。
+> - **与 mac/ 共存的全部条款退役**：名字互换与 "(old)" 改名、§54 冻结原生 app 守卫（`ZelinAIEngineer`）、一次性偏好
+>   迁移（§61.4）——mac/ 随 PR-C 删除。
+
 `shell/` 是 §49 web 面的**桌面薄壳**（AppKit + WKWebView，单文件
 `shell/Sources/main.swift`）：职责刻意做薄——解析 PORT/HOME → 探活
 `/api/board` → **连接** launchd 托管的 board server（§54.2）→ 一个 WKWebView
@@ -1478,173 +1485,7 @@ helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.
 
 **§54 追记（2026-09-06，add-only；owner 决策 D41，`feat/paste-images-attachments`）——页面 `<input type="file">` 在壳里要壳开门**。macOS 的 WKWebView 不实现 `WKUIDelegate` 的 `webView(_:runOpenPanelWith:initiatedByFrame:completionHandler:)` 就**静默禁用**文件上传（Apple 文档原话："By default on macOS, file uploads are disabled if you don't implement this method."）——与上文 `target="_blank"` 被静默取消同一类坑：web 面的 📎（§10bis 本日追记，列顶输入框的图片文件选择器）在浏览器标签页里好用，在壳里点了什么都不发生、没有错误、没有提示，而「位图 + 实质文本让路」那一行提示又把用户指向它。壳自此实现该回调（`main.swift` AppDelegate），面板 = `FileDialog`（`shell/Sources/ShellSystem.swift`，`FolderDialog` 同款注入缝：`runner` 归 harness 换假面板，绝不弹真 `NSOpenPanel`）：`canChooseFiles` / 不许选目录 / 多选随页面的 `WKOpenPanelParameters.allowsMultipleSelection` / `allowedContentTypes = FileDialog.imageTypes`（今日 = `[.image]`——`WKOpenPanelParameters` 不公开页面的 `accept` 列表，而今日壳里唯一的文件输入就是 📎 `accept="image/*"`；日后页面添非图片的文件输入，这里的类型限制要跟着放宽，判例钉住今日值）；取消 → `completionHandler(nil)`。壳零业务逻辑：选中的 URL 直接交回 WebKit，文件内容由页面自己读、降采样、经 `POST /api/attachments` 落盘（§49 本日追记）。判例 `shell/tests/BridgeHarness.swift`（多选标志透传 / 取消 nil / 只认图片）；delegate 方法本身住 `main.swift`，harness 不编它（run.sh 第 [1/7] 步 typecheck 覆盖）。
 
-### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
-
-产品 = web 看板 + shell（D3）；原生看板（`mac/Sources/Kanban.swift` /
-`Cards.swift` / `Store.swift`，退役前冻结）是 web 看板的**行为与外观规格**——
-颜色/标签/文案继承原生，wire 键逐字镜像（防腐 #10：client 不算 lane 语义、不
-翻译字段、文案进 server-owned catalog）。owner 2026-09-01 对照原生列出的回归
-项与其 web 落点（每项都有判例钉住）：
-
-1. **列内排序**（原生 `Store.sortCards`，v0.10.3 契约一）：每列按 id **数字后缀**
-   排序，三种模式 `newest`（默认，降序）/ `oldest`（升序）/ `deadline`（有期限
-   的先按 YYYY-MM-DD 升序，其余按 newest；行模型无 deadline 的列退化为
-   newest）；不看前缀（`R-` / `P-` / `MS-` 同一把尺，#135 两段 id 即天然兼容）；
-   不可解析 id 沉底保序；同后缀稳定。偏好名逐字镜像原生 UserDefaults 键
-   `cardSortOrder`（web：localStorage）；提案列 processing 占位钉顶不参与排序。
-   web：`web/src/cardSort.ts`，顶栏「排序」select（三个选项文案 = 原生 Settings
-   Picker）。判例 cardSort.test.ts / BoardLanes.test.tsx。
-2. **详情默认收起**（原生 `CardSurface` 详情槽）：卡面 = 标题行 + 一行 meta +
-   chips + 动作；plan / DoD（验收清单）/ 来源 / 正文 / 日志 / 指令 / 会话 ID 在
-   「展开详情 ▸ / 收起 ▾」之后；展开态按卡 id 在会话内记忆（`store.expandedCardIds`，
-   不持久化——原生 @State 同义）。判例 cardParity.test.tsx。
-3. **卡面 chips / 行**（全部读投影既有字段，零新增投影键）：提案 §7 落点行三态
-   （`target_kind` new → 「🟢 新建 repo: <name>」/ existing 且 basename 以
-   your-workbench 结尾 → 「📄 草稿落点: your-workbench（只出文档，不动任何代码）」/
-   existing → 「🟠 修改现有: <name>（只提 draft PR，不动主分支）」）与「已并入×N」
-   紫 quiet 章（`silent_merged` ≥ 1）；待验收 repo 章（`cwd` basename）+ 「耗时」
-   （dispatched_at→review_at）+ 「已等待验收」（review_at→now，自驱）；阶段性完成
-   「已交付」绿章 + repo 章 + 「验收于 <相对>」；运行中 运行时长（started_at ??
-   dispatched_at）+ repo 章 + 「已交付过·再运行」（`from_review`）；
-   **单击复制指令 行**（copy_cmd，其次 `claude --resume <session_id>`）——web 没有
-   终端 endpoint，故只复制、文案如实（「单击复制指令 · 粘贴到终端即可接管会话」，
-   tooltip = 命令全文），不承诺双击起终端。
-4. **相对时间**处处如原生（19天前 / 2小时59分 / 刚刚），hover 绝对时间：
-   `web/src/relativeTime.ts` 镜像 `RelativeTime.since / sinceEpoch / duration`
-   （回收站 trashed_at、归档 archived_at 同）。判例 relativeTime.test.ts。
-5. **出错的运行卡**（原生 `TaskRow.errorLine`）：红色错误一句（hover 全文，详情
-   有全文块）+ 「让 AI 修」（= `POST /api/ai-fix`，见 §49；**不是 inbox 动作**）+
-   「回答…」（`answer_input` 已退役 #119——web 的 回答… = `comment` 四键形即
-   steer，§44.3 中继）+ 「停止」。排队卡的派发失败只给 让 AI 修（无会话）；§4
-   刹车行给 让 AI 修 + 停止。
-6. **右侧书立条「🗄 永久性完成 · done for good <count>」**（原生 v0.33 第二根
-   collapsibleColumn）：默认收起、count = `counts.archived` 真实总数、展开 = 搜索
-   （title/summary）+ 行（你封存 / 自动封存、原来在：<列名>、相对时间）+ 「放回
-   看板」（`unarchive`）；与左侧潜在任务条同一开合行为；不是看板列（不进多选/
-   过滤）。判例 ArchiveStrip.test.tsx。
-7. **列头「?」说明**（原生 `SectionHeader`）：常显 ? 图标，点击即时气泡 / hover
-   tooltip，文案来自 `GET /api/lanes`（§49；目录未到不渲染，client 无第二份文案）；
-   替代此前列头下的整段说明。
-8. **composer 占位文案**逐字镜像原生 Composer.swift：提案「一句话，AI 来研究并
-   提案…」、运行中「一句话，直接开跑（跳过提案）…」。
-9. **卡 id 右上角**（原生 idTag：等宽小字，收起态可见）。
-10. **排版跟原生字号/字重梯**（owner 2026-09-02「文字的粗细」）：卡面、列头、chip、
-    按钮、composer、顶栏小字的字号 / 字重 / 字族逐字镜像 `mac/Sources` 的
-    `.font(.system(size:weight:))`（1pt = 1px；SF regular/medium/semibold/bold =
-    400/500/600/700），原生 `.secondary` → `--text-secondary`、`.secondary.opacity(0.85)`
-    → `--text-tertiary`（色值不动）。**truth = `web/src/styles/tokens.css` 的 type-scale
-    块**（`--type-*` `font` 简写 token；组件 CSS 只许 `font: var(--type-…)`）；对照表
-    `web/src/styles/typeScale.ts`（角色 → Swift file:line → token）。判例
-    `web/src/styles/typeScale.test.ts`（CSS ↔ 表）+ `tests/test_web_type_scale_mirror.py`
-    （表 ↔ Swift 源行）。
-11. **可访问性（issue #8，原 Mac 版诉求改指 web）**：(a) 每张卡的 `<article>` 是
-    `CardSurface`（`cardChrome.tsx`）——`tabIndex=0`、Enter / Space 打开详情抽屉（整卡双击
-    的键盘等价物；焦点在卡内按钮/输入框时不响应，Enter 归按钮）、`aria-label` = 「<状态词> ·
-    <标题>」（提案 / AI 研究中 / 排队中 / 执行中… / 需输入 / 待验收 / 已完成 / 潜在任务），
-    色点一律 `aria-hidden`——**状态不靠颜色**；(b) 单击复制（指令行 / 路径行）成功后有
-    `role=status` 的「已复制到剪贴板」播报（`CopiedAnnouncer`，`.sr-only`）；按钮可见文案
-    即可访问名（WCAG 2.5.3，不另加 aria-label）；(c) 图标按钮全部带 `aria-label`（顶栏
-    设置/主题/语言/录制/字幕、列头「?」、抽屉关闭）；横幅 `role=alert` / 状态行
-    `role=status`。判例 `web/src/components/board/a11y.test.tsx`：八种卡形的键盘路径 +
-    状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
-    （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
-    `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
-12. **显示偏好 = token（owner 2026-09-02，4K 屏）**：owner 对照退役中的原生 app：「按钮 /
-    chip 的框细得像发丝、字的笔画比原生细」，要「像 Apple 的 Dynamic Type / Bold Text 那样在
-    设置里调字号、字重、线条粗细」。两处根因先修：(a) `-webkit-font-smoothing: antialiased`
-    强制 grayscale 抗锯齿把 SF 笔画削薄——改回平台默认 `auto`（AppKit 同款），字体栈
-    `-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", …`；(b) 描边此前
-    `--border-hairline: 0.5px`（2x 屏 = 1 设备像素）——**退役**，全站描边只许
-    `var(--stroke-w)`，默认 **1.5px**。三把旋钮 = **`web/src/styles/tokens.css` 里仅有的三个
-    变量**：`--text-scale`（字号倍率 s .9 / m 1 / l 1.1 / xl 1.25）、`--weight-shift`（字重
-    平移 regular 0 / medium +100 / bold +200，四档 SF 字重 `--w-regular/medium/semibold/bold`
-    = 原生数值 + 平移）、`--stroke-w`（thin 1px / normal 1.5px / thick 2px）。第 10 项的
-    `--type-*` token 因此改写为固定形 `var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh>
-    var(--font-…)`——原生 px 与 SF 字重名仍逐字可读，第 10 项的两份判例改钉这两个字面量；
-    组件 CSS 的字号 / 字重 / 描边只许 `calc(… * var(--text-scale))` / `var(--w-…)` /
-    `var(--stroke-w)`，字面 px / 数值字重 / 0.5–1.5px 描边一律判例红（`displayPrefs.test.ts`
-    lint 全部 web/src CSS+TSX）。系统「增强对比度」（`prefers-contrast: more`）描边各升一档
-    （2.5px 上限），字号字重不动。**值 → 变量的映射只住 tokens.css**：JS
-    （`web/src/displayPrefs.ts`）只往 `<html>` 写 `data-text-size` / `data-text-weight` /
-    `data-stroke`，index.html 首帧从 `localStorage zai.display` 预写同一组属性（与主题同一
-    机制），server 快照到达即覆盖。**server 面** `GET/PUT /api/settings/display`（§49；
-    `server/display.py`）：`{text_size: s|m|l|xl, text_weight: regular|medium|bold, stroke:
-    thin|normal|thick}` 默认 m / regular / normal，词表 `text_sizes` / `text_weights` /
-    `strokes` 随 GET 下发（segmented control 从 server 词表渲染，防腐 #10）；优先级 overrides
-    扁平键 `ui_display_text_size` / `ui_display_text_weight` / `ui_display_stroke` → config.yaml
-    `ui.display` 块 → 默认，PUT diff-write 同 §59.4；这三个键**没有 daemon 读者**（§15 未知键
-    静默忽略，判例钉 `config._OVERRIDE_FIELDS` 不含它们、overlay 不改任何 Config 字段）。
-    **web 设置页 section「显示」**（首个 section）：三个 segmented control（`<fieldset>` +
-    `<legend>` + radio，可访问名 = 组名「文字大小 / 文字粗细 / 线条粗细」+ 档名「小 / 默认 /
-    大 / 特大」「常规 / 中等 / 粗体」「细 / 默认 / 粗」）+ 预览行（看板真实类名 task-card /
-    chip / btn 渲染，不另设作用域）；**无保存键**——点一档 = 先落 `<html>`（即时）再 PUT 那
-    一键，server 拒绝回滚到最近快照 + `role=alert` toast。**视觉 golden（`feat/ui-parity-contract` 正在立法的 UI parity 节）在默认档采集**
-    （scale 1 / shift 0 / 1.5px）。判例 `web/src/displayPrefs.test.ts`、
-    `web/src/components/settings/DisplaySection.test.tsx`、`tests/test_server_display_settings.py`。
-
-11. **v0.48.x 追记（§68 P4 余量，s4 Tier-1 全部落地）**：合并建议卡（§21，提案列顶，
-    紫 accent；analyzing / done / failed 三态、`merge_apply` / `merge_dismiss`、
-    verdict ≠ merge 或 failed 时「仍然合并…」= §21bis `merge_force` 主卡弹窗 + 顺手
-    dismiss、partition 分组清单）；**多选**（FilterBar「选择」→ 提案 / 运行中 / 待验收卡
-    标题前勾选框 → 底部操作条：请求合并建议 ≥2 / 强制合并 / 批量批准（**T2 与 W17 生效
-    T2 跳过**——typed-confirm 不能批量绕过，§0.8 / §50）/ 批量拒绝 / 清空 / 退出；每个批量
-    动作 = 逐卡一条 §3 四键形 inbox 动作）；提案列头「清理积压」（§34bis preset capture，
-    积压 0 禁用，2 s 防连点）；活标题改名（§37 `set_title`，详情抽屉抬头铅笔 → 输入框 →
-    ⏎；客户端同款归一 1..64 code points）；并入记录行「拆回独立卡片」（§38.2 `split_note`，
-    legacy 无 ts 行不可拆）；「在终端接管」（`POST /api/terminal`，§68.7）；横幅「一键修复」
-    （`POST /api/repair/actd`，§68.8）；永久性完成**整页** `?page=archive`（书立条同一行
-    组件 + 搜索）。判例 MergeSuggestionCard.test.tsx / ParityPages.test.tsx。
-
-不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
-回收站页、详情抽屉）保持不变。
-
-**第 2 项追记（2026-09-04，D34 / issue #217；`feat/single-detail-surface`）——tombstone**：第 2 项的「展开详情 ▸ / 收起 ▾」就地展开与 `store.expandedCardIds`（retired 2026-09-04，并入 §49 的「卡片详情只有一面」追记）。卡面仍是「标题行 + 一行 meta + chips + 动作」永远收起；plan / DoD / 来源 / 正文 / 日志 / 指令 / 会话 ID 自此只住右侧详情侧栏（`DetailFields`），「展开详情 ▸」打开它（= 第 11 项 (a) 的 Enter / Space 同一入口），卡上没有「收起 ▾」也没有双击绑定。「T2 需先展开看明细」的闸门改读 `store.detailViewedIds`（本会话详情落地过的卡主键——拉失败不算看过）。判例 `cardParity.test.tsx` 改钉新语义；`DetailFields.blocks.test.tsx` 钉侧栏积木。
-
-**第 2 项追记（2026-09-06，D43；行为对齐审计 batch `dod-on-face`，chain `board` 第 2 棒；`feat/dod-on-face`；gap `board-cards-proposal-dod-on-face` / `board-cards-review-face-delivery` 的清单半边）——提案面的「怎样算办完」与待验收面的「☐ 验收清单」回到卡面（紧凑形）；D34 措辞澄清**。第 2 项原文把「DoD（验收清单）」列在「展开详情 ▸」之后、上一条 D34 tombstone 又写「plan / DoD / 来源 / … 自此只住右侧详情侧栏」——这两处**误描了原生**：原生 `Cards.swift:1085-1099` 把 DoD 放在 `ApprovalCardView.normalBody` 收起态正文里、在 `if expanded { expandedDetail }`（`:1136`）之外，注释原话「§11 验收标准 — visible by default: approving the card approves this」；`:1858-1876` 的 `ReviewRow` 在收起态**永远**渲染「验收清单——逐条对照：」+ `☐ ` 条（空给「该任务未定义验收标准，请自行判断」），注释「§11 acceptance checklist — always rendered (fallback text when empty)」。两者都不是详情槽积木，没有任何 D-row 退役过它们；D34 的动机（去掉第二套详情渲染、减少泳道布局跳动）与「卡面常显 DoD」不冲突——DoD 是静态正文，不是开合。自此：(a) **提案卡面**在章行之后、分歧之前渲染「怎样算办完：」（`--type-detail-subheading`，= 原生 `:1089` 10 semibold）+ 编号条「1. …」（`--type-card-meta`，10 regular）；空 DoD 不渲染（原生 `if !card.dod.isEmpty`）；AI 研究中占位不渲染。(b) **待验收卡面**在一句交付说明（§64.5 追记的 `AssessmentSummaryLine`）之后、动作行之前**永远**渲染「验收清单——逐条对照：」+ `☐ ` 条，空清单给兜底句「该任务未定义验收标准，请自行判断 / No acceptance criteria defined — judge manually」（原生 `.secondary.opacity(0.7)` → `--text-quaternary`）。(c) **紧凑形（与原生的唯一差别，为 D42 一屏高的列让位）**：卡面最多前 **3** 条（`DodFace.FACE_DOD_MAX`），其余折成一行「+N」（`title`「其余 N 条在「展开详情 ▸」里」，**不是按钮**——D34 的单一详情面不动，卡上不长任何开合），每条单行截断、`title` = 全文；全文清单仍只住详情侧栏 `DetailFields`（那里的「怎样算办完：」`<ol>` / 「验收清单——逐条对照：」`<ul>` 与兜底句一个字不变）。卡面摘要 ≠ 详情面：块高有界（头 + ≤3 行 + 可选「+N」），卡面不因清单长短跳动。(d) **☐ 反映 §64 评语**：`assessment.verdict` 逐字 = `建议验收`（§64.4 判官定义 = 清单 / 需求每条都有对应交付）→ 每条画 `☑`、记号 `--accent` 色（与 AI 摘要细条的 `--accent-soft` 同一 accent 系，别读成 owner 自己打的勾）、**☑ 记号与「验收清单」标题各自的 `title`** 点明「AI 评语「建议验收」：清单每条都有对应交付——仍请你逐条对照」（说明不挂在 `<ul>` 上：每条 `<li>` 的 `title` = 全文会把祖先的 `title` 整个盖住，指针到不了；悬停 ☑ / 标题看说明、悬停条目正文看全文）；`需继续做` / `需要拍板` / 词表外 / 没评（整键缺席）→ `☐`（判官不逐条打分、不知道缺哪条，不猜），记号与标题不带 `title`。只是展示：验收 / 打回仍只有按钮能按，卡面不多任何一颗按钮（§64.6「不做一键验收」不动——**「不动」一句 2026-09-15 由 §64.6 追记（D74）取代**：卡面不多按钮这半句仍然为真且仍是本项的判例，列头的「选中全部建议验收」只预选、不提交，提交仍要人在多选条上按一次并看完逐条清单）。侧栏 `DetailFields` 的清单不随评语变（`list-style: "☐  "` 照旧，D34 渲染器不动）——卡面 ☑ 是 AI 判断的摘要，侧栏是原文。(e) **§64.5 2026-09-05 追记里「全文与 ☐ 验收清单仍只住详情侧栏（清单上卡面 = gap board-cards-proposal-dod-on-face，另议）」一句自本条起过期**（本条即那次「另议」的裁决）：执行器原话全文仍只住侧栏不变，☐ 清单卡面有紧凑形、侧栏有全文。(f) **§66**：`control:board.needs_approval:label:definition-of-done` / `control:board.review:label:acceptance-checklist` 两条 id 的归属注释在 `scripts/ui/extract_native_inventory.py` `CONTROL_OWNER` 上方由「详情槽积木、渲染面换侧栏」改记为「原生本在卡面，D34 误归；D43 起卡面紧凑形 + 侧栏全文」（表本身只收 retired 项，两条 id owner 仍 web、照判）；`pending.txt` / `waivers.txt` / `report.json` 零改动（两条本就 PRESENT）。落点：新 `web/src/components/board/DodFace.tsx`（`DodFace` 积木 + `FACE_DOD_MAX` + `checklistChecked`）、`ProposalCard.tsx` / `ReviewCard.tsx` 各接一行、`board.css` `.card-dod*` 一组（字级只经 `--type-*` token）。**判例**（防腐 #7，新文件）：`DodFace.test.tsx`（两变体标题逐字 / 空清单 dod 零 DOM、checklist 兜底句 / 3 条上限与「+N」、恰 3 条无 +N、「+N」非按钮 / 非字符串条目过滤 / ☑ 只认逐字「建议验收」+ is-ai-checked + title，其余 ☐）、`ProposalCard.dodFace.test.tsx`（位置在章行与分歧之间；plan / 来源 / 技术标题仍不在卡面；空 DoD / 占位不渲染；点「展开详情 ▸」卡面一个字不多；侧栏全文 5 条不变）、`ReviewCard.checklistFace.test.tsx`（一句交付说明之后、动作行之前；空清单兜底句；建议验收 → ☑ 且不多一颗按钮；需继续做 / 需要拍板 / 没评 → ☐；侧栏全文不变、无 ☐ 前缀）；既有 `cardParity.test.tsx` / `ReviewCard.summaryFallbackCopyDraft.test.tsx` 三条「DoD 只在侧栏」断言改钉本条。**视觉 golden**：看板 light / dark 两张会变（demo 提案卡 P-101 / P-102 / P-103 / P-131 / P-132 / P-133 / P-135 长出 DoD 块，待验收卡 P-109（☑）/ P-110 / P-171 / P-172 长出清单块），trash / settings 不变；不在本 PR 手改，合并后跑「Refresh visual goldens」。
-
-11. **首启入口与 bootstrap 的接力（§69 / §68.5）**：`scripts/bootstrap.sh` 装完
-    `open` 看板 bundle（按 `CFBundleIdentifier` 认壳，不按文件夹名）；看板按
-    `GET /api/setup` 的 `needed`（§68.5：config.yaml 缺席或三把主凭证一把都没有，
-    且未写完成标记）自动跳到 `?page=setup` 首次运行向导——空白机器上 bootstrap
-    第 4 步已建好 config.yaml，所以向导从「后台进程的磁盘授权」一步开始，权限体检页
-    （`GET /api/permissions`）的 claude 一条**优先给出 §55 第五幕的稳定副本**
-    （`server/permissions.py` 镜像 `config.stable_claude_bin()`，含
-    `AIASSISTANT_STABLE_CLAUDE` 覆写；判例 `tests/test_server_permissions_setup.py`）。
-    命令行侧的同一份清单 = `python3 -m act.doctor --fresh-install`（§69.3）。
-
-**§54.1 追记（2026-09-05，行为对齐批次 `proposal-headline-face-copy`；`fix/parity-proposal-headline-face-copy`）——卡面标题链与三处卡面文案回到原生**：(a) **摘要优先面的标题 = §37.1 的 `displaySummary` 链**（`shared/Sources/Contract.swift` `displaySummary`；原生 `Cards.swift` 提案 / AI 研究中占位 / 潜在任务 / 回收站 / 永久性完成 五个面读它）：用户钦定名（`user_titled` 为 `true` 且 `display_title` 非空）> `summary` > `display_title` > 冻结 `title`。web 落点 = 纯函数 `web/src/components/board/cardHeadline.ts` `cardHeadline(row)`，提案卡（卡面标题 / `aria-label` / T2 typed-confirm 正文 / 拒绝分叉正文 / AI 研究中占位）、潜在任务卡、永久性完成行（书立条与整页共用 `ArchiveRow`）全部读它；回收站行归 `pending-sweep-settle` 批次接线（同一函数）。此前 web 把 running 族的名字优先规则（`rowTitle`：`display_title` > `name`）泛化到了提案 / 潜在任务 / 封存行——而投影 `_display_title` 恒非空（§37.1），所以真数据上大白话摘要永远不上卡面；运行中 / 需输入 / 待验收 / 已完成仍是名字优先面，不变。`web/src/types.ts` 的 `ApprovalCard` / `DebtCard` / `ArchivedRow` / `TrashRow` 补 add-only `user_titled?: boolean`（投影只在为真时发键，§37.1）。**详情面**（D34 唯一详情面）：抬头仍是冻结 `title`（原生 `expandedDetail` 的技术标题；`DetailDrawer` h2 = `title` ‖ `name`）；`display_title` 与抬头不同就在字段面给一行「显示名 / Display name」——只跟抬头去重、**不**跟卡面去重：侧栏是 modal，卡面未必在眼前（`?card=` 深链、收起的书立条、回收站行），用户钦定的名字不能在唯一详情面上消失（原生 `expandedDetail` 永远坐在 `displaySummary` 抬头下面，这一行就是它在 web 上的位置）；「✎ 改名」的预填 = 此刻的卡面标题（`DetailFields.faceHeadline` 按 `lane` 选链：摘要优先面 `cardHeadline`，名字优先面 `display_title` > `name` > `title`；原生 `TitleEditRow current = displaySummary`，`Cards.swift:1283`），不是抬头的冻结 `title`；活标题四键 `display_title` / `user_titled` / `former_titles` / `notes_text` 自此不落「其他字段」兜底区——`notes_text` 是 `notes` 的 §38 尾裁剪搜索副本，registry `notes` 在时不渲染两遍，缺席时（sqlite 真源下 `store2.db` 不在、只有投影的 demo / parity 数据）「📎 折叠进来的信息」与「复制为 Markdown」退到它（`detail.notes ?? detail.notes_text`），拆成新卡句柄照常。(b) **卡面文案 / 格式三处逐字原生**：提案回锅章「↩︎ 回锅 · Returned」旁并排同色小字「你之前验收过这件事，来了新信息」/「You accepted this before — new info arrived」（原生 `reraisedBadge`）；费用章走原生 `money()`——整数不带小数 `$12`、否则两位 `$0.50`（`boardActions.moneyOf`；此前 `${cost_usd}` 渲染 `$0.5`），`show_cost` 仍只门卡面章（§40）；潜在任务卡难度章走 `hardnessLabel`：`hard` → 「较难 / Hard」红章、`soft` → 「常规 / Routine」灰章、未知值原样灰章（原生 `DebtRow`；此前 soft 不出章、hard 写成「硬需求」）。(c) **永久性完成整页与书立条一份字面量**（原生 `ArchivePageView` 复用 `ArchiveSectionView`，`MainWindow.swift:483`）：`ArchiveStrip.tsx` 导出 `ARCHIVE_TITLE`「🗄 永久性完成 · done for good」/「🗄 Done for good」、`ARCHIVE_EMPTY`「还没有永久完成的卡」/「Nothing here yet」、`ARCHIVE_NO_MATCH`「无匹配项」/「No matches」，`?page=archive` 页头与空态改读同三对（此前整页写成「🗄 永久性完成」与「还没有封存的卡 / Nothing archived yet」）；书立条标题此前在字串外又加了一个 🗄 前缀（渲染成两个图标），一并去掉。demo 数据（`scripts/demo_seed.py`）：P-102 带 LLM 短名 `display_title`（无钦定，卡面仍是 summary——钉住短名不挤掉摘要）、P-114 带 `display_title` + `user_titled: true`（钦定名上卡面）；视觉 golden 零 diff（书立条默认收起、提案面不变）。运行中列的空态句归 `search-fields-normalization` 批次。判例 `cardHeadline.test.ts` / `ProposalCard.headline.test.tsx` / `ProposalCard.faceCopy.test.tsx` / `DebtCardItem.face.test.tsx` / `ArchivePage.strings.test.tsx` / `DetailFields.displayTitle.test.tsx` / `DetailDrawer.renamePrefill.test.tsx`。
-
-**§54.1 追记（2026-09-05，add-only；batch `composer-slash-vocab-hints`）——composer 斜杠命令词表是原生的超集**：第 8 项的 composer 除占位文案外，斜杠命令也继承原生 `Store.swift` `SlashCommands`——闸门只认 `/rec /open /lang` 三个动词（其余 "/" 开头的文字是普通捕获），`/rec` 收原生词 `audio`（= 壳的 `screen_audio`），`/open` 收原生 MainSection 五页 `board|deps|ingest|settings|about`；web 在此之上**只加不减**：`/rec screen_audio`（壳桥原词）与 `/open trash|archive|permissions|diagnostics|setup`（web 独有页；`diagnostics` 是 `deps` 的旧深链，D30 起同落设置页）。用法句与 "/" 提示行从同一份词表派生。细则、失败句栈、title 与判例见 §41 2026-09-05 追记。
-
-**§54.1 追记（2026-09-05，add-only；PR `fix/parity-dialogs-button-only`，parity 审计 `dialogs-comment-rework-lost-return-to-send` / `board-cards-dialog-enter-semantics` / `notify-feedback-dialog-enter-not-ime-safe` / `board-cards-feedback-dialog-ime-enter` / `notify-feedback-dialog-omits-upload-disclosure`）——看板弹窗两条继承规格**：(1) **弹窗一律按钮提交，Enter 换行（D35 同款）**：提建议 / 修改方向 / 打回 / 回答 这些带 textarea 的文本弹窗，强制合并 / 拒绝 / 停止 这些多按钮确认弹窗，以及 T2 typed-confirm（`T2ConfirmDialog.tsx`，§41 / §50 W17，单行 `<input>` 键入「确认 / go」），键盘上没有绕过按钮的提交键——textarea 里 Enter 是浏览器原生换行（不拦），单行 `<input>` 里 Enter 什么都不做（不拦），Esc 走 `<dialog>` cancel 事件取消；这些弹窗不得再挂「↩」招牌或绑 Enter=提交（细则与墓碑见 §41 2026-09-05 追记）。焦点在某颗按钮上按 Enter / Space 是浏览器原生按钮点击，不算「提交键」、不得拦。原生 `AppDelegate.promptText` / `promptFeedback` / `promptAnswer` 的「↩ 发送 · ⇧↩ 换行」、ForceMergeSheet 的 `.defaultAction`、confirmT2 NSAlert 的 Return=默认键 是退役规则，不继承。(2) **提建议弹窗正文 = §29 明示条款**（原生 `AppDelegate.swift` promptFeedback 的 `informativeText` 同款，web 之前的「本地先落 state/feedback/，勾选公开才会同步成 GitHub issue」暗示本地闭环，正是原生注释「不得暗示是本地闭环」点名禁止的那句）：zh「说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。勾选公开时还会出现在公开 GitHub 仓库的 issue 列表里。」+ en 同义句；原生末句「粘贴的图片只保存在本机，不会上传」不搬（web 弹窗只发文字，§68.14 诚实例外，贴图通道落地时随 §29ter 一起补回）；公开勾选旁的「去掉卡片内容，只带你写的这段」与 `feedback_sync._issue_payload`（text + 提交时间 + 版本，无卡片内容）逐字相符，不动。文案走 `text(zh, en)` 内联对（web 唯一 i18n 机制，防腐 #10），copy 在 §66 清单里只列不判。判例 `web/src/components/board/FeedbackDialog.test.tsx` / `ForceMergeDialog.test.tsx` / `T2ConfirmDialog.test.tsx`。
-
-**§54.1 追记（2026-09-05，add-only；`fix/parity-appshell-dashboard-missing`，behaviour-parity 批次 `appshell-dashboard-missing`，gap ids `store-no-dashboard-empty-state-mislabeled-and-blocks-all-pages` / `board-cards-no-dashboard-empty-state` / `composer-before-first-dashboard` / `pages-shell-nav-non-board-pages-gated-on-board-fetch` / `diagnostics-setup-no-dashboard-empty-state` / `pages-shell-nav-window-title-static`）——只有看板页等看板；dashboard.json 不存在 = 原生首启空态；窗口标题随页**。三条原生行为经 port 丢失，本追记逐条接回（`web/src/components/shell/AppShell.tsx`）：
-
-（a）**非看板页从不依赖看板**（原生 `MainWindow.detail`：`nav.section == .dashboard` 才是 `KanbanView`，其余 section 各读各的，从不看 `store.dashboard`；`AppDelegate` 首启无 dashboard 时还刻意开到依赖检查页）。此前 `AppShell` 对**每个** `?page=` 都按 `board` 有无分派——`/api/board` 读失败或 404 时设置 / 关于 / 录制 / 回收站 / 权限体检 / **首次运行向导**整页被「连不上本地服务」顶掉，而向导末步「首次数据 → 立即生成一次」正是修这一态的按钮（自相矛盾：能修它的页在这一态渲染不出来）。自此只有**读看板快照的页**走看板的三态分派（`AppShell.BOARD_FED_PAGES` = 看板本体 + 回收站 / 永久性完成 / 会议纪要——`TrashPage` / `ArchivePage` / `RecapsPage` 读的是 `board.trash` / `board.archived` / `board.recaps`，与看板同一份 `/api/board` 快照；首载 loading / 离线无快照的「连不上本地服务」+「重试」对它们四页一致——**「拉不到」绝不渲染成「回收站为空」**（§0 第 3 条诚实；无快照时 `ErrorBanner` 不说话、离线时 `PipelineBanner` 也拿不到 health，整页空态是唯一能说真话的地方）；缺文件（404）只有看板页给 (b) 的空态，三个列表页照常渲染成空列表——原生 `TrashPageView` 读 `store.visibleTrash = dashboard?.trash ?? []`，没有 dashboard 就是空表，健康横幅在那三页照常说话），**自拉快照的页无条件渲染 children**（设置 / 关于 / 录制 / 权限体检 / 向导 / 活体样式指南各拉各的、自报 `pageErrors`；`ErrorBanner` 仍只在有旧快照时说话，`PipelineBanner` 照常）。
-
-（b）**看板页 + `boardMissing`（§49 本日追记）→ 原生 `Kanban.swift emptyState` 的 web 版**（`BoardMissingState`，top-leading、padding 20，与原生 `VStack(alignment: .leading, spacing: 14)` 同形）：**上**——提案列 `LaneComposer`（`.frame(width: 400)` = `--native-layout-lane-width`；原生注释「capture keeps working before the first dashboard.json exists — the inbox write path doesn't depend on the pipeline having run」，首次安装就能捕获，占位 / 动词 / 回执与列顶那颗逐字同款）；**下**——`Freshness.swift PipelineEmptyStateView` 文案逐字：hourglass 图标、「后台服务还没写出数据」/「The background service hasn't produced data yet」、「首次安装或服务未启动时会这样。点「启动后台服务」原地拉起它。」/「This happens on a fresh install or when the service isn't running. "Start service" launches it in place.」（清单 `header.freshness` 两行 owner=web、gated:false——自此在场），⌘L / `quick_capture` 的共同落点 `focusComposer`（§54.4 2026-09-05 追记）在这一态也找得到它——`COMPOSER_SELECTOR` 只认列里的 composer，这一态没有列，`focusComposerField` 退到 add-only `BOARD_MISSING_COMPOSER_SELECTOR`（`.shell-board-missing .lane-composer textarea`；两态不会同时在 DOM 里），跨页接力棒由 `BoardMissingState` 挂载时 `consumePendingFocus`（它是这一态里看板页的 body，`BoardPage` 不挂载）——原生 Kanban.emptyState 的 `KanbanComposer` 同样收 `.focusCaptureField`，首份 dashboard.json 出现之前 ⌘L 也进得来；动作行 = `<RepairButton verdict="stale" />`（§68.8：「启动后台服务」borderedProminent + 「打开依赖检查」→ `?page=settings&anchor=deps` + 「查看日志」；启动中「正在启动并等待首份数据…」、失败「启动没成功：」+「再试一次」+「手动命令：」——原生 `repair.phase` 三态同一组件已有）+ web 另给「**立即生成一次**」（= `POST /api/setup/seed-dashboard`，向导末步同一条路 §68.5；成功重拉 health 与 board、空态自然退场；失败 `role=alert`「生成失败: 」+ server 原文，空态留着）。`EmptyState` 加 `align="start"`（原生顶左；整页居中仍是默认）。这一态里 **`PipelineBanner` 闭嘴**（`AppShell` 不渲染它；原生 Freshness.swift 头注「.missing is owned by PipelineEmptyStateView so the same message never shows twice」）——非看板页不受此限，`health.stale`「看板从未生成」在设置页照说。**离线**（网络 / 5xx）仍是「连不上本地服务」+ dev-preview 恢复句 + 「重试」，无 composer 无「启动后台服务」。
-
-（c）**窗口 / 标签页标题随页与语言**（原生 `MainWindow.installTitleSink`：`"Zelin's AI Assistant — " + section.title`，`$section` × `$lang` 任一变即重算）。此前 web 每页固定「Zelin 的 AI 助理 · 看板」。自此 `document.title = pageTitle(page, text)`（新 `web/src/components/shell/pageTitles.ts`：`APP_TITLE` + 原生字面分隔 ` — ` + 页标签；表 = 原生 `MainSection.title` 逐字（任务台 / Workbench、录制与数据接入 / Recording & Data Sources、回收站 / Trash、永久性完成 / Done for good、设置 / Settings、关于 / About）+ web 自有页（会议纪要 / Recaps、权限体检 / Permissions Checkup、初始设置 / Setup、活体样式指南 / Living styleguide）；`?page=deps` / `diagnostics` 渲染的是设置页（D30）→ 「设置」；未知页回落看板）。壳半边（`WKWebView.title` KVO → `window.title`）归 `shell-window-external-links` 批次；`NavRail` 日后可改读同一表，本批不动它。
-
-**判例**：`AppShell.boardMissing.test.tsx`（看板页 404 → 原生文案 + 启动后台服务 / 打开依赖检查 / 立即生成一次 / composer 能捕获、横幅闭嘴、立即生成一次成功重拉 / 失败回执；`focusComposer` 在这一态把光标交到草稿末尾、接力棒挂载即消费且不重放；网络失败仍离线空态；有快照后 404 退回空态；八个自拉快照的页在首载中 / 读失败 / 404 三态下都渲染、非看板页横幅照说）、`AppShell.boardDependentPages.test.tsx`（用真实 `TrashPage` / `ArchivePage` / `RecapsPage` 当 children：首载中是「正在加载看板…」不闪空列表、离线无快照是「连不上本地服务」+「重试」而不是「为空」、404 照常渲染成空列表且健康横幅照说、有快照就渲染行、五个自拉快照的页三态都渲染）、`AppShell.pageTitle.test.tsx`（12 个 `?page=` × zh / en 的 `document.title`、`<html lang>`、同一挂载切语言）、`pageTitles.test.ts`（表覆盖 route 全集、原生六页逐字、deps 落设置、分隔符字面）、`store.boardMissing.test.ts`（§49 追记）。既有 `AppShell.test.tsx` 四例语义不变（默认 URL 即看板页）。视觉 golden 未动（三张 golden 面都有快照、不进这两条分支）。
-
-**§54.1 追记（2026-09-05，行为对齐批次 `linkify-card-text`；`fix/parity-linkify-card-text`）——纯文本里的 URL 可点，回到原生 `linkified`**：原生 `Utils.swift:877-889` `linkified(_:)` 用 NSDataDetector 把纯文本里的 URL 标成 `.link` + 下划线，SwiftUI `Text` 直接可点（「Slack-style, no gesture code needed」），应用在四处：提案卡摘要（`Cards.swift:1073`）、潜在任务卡摘要（`:2028`）、`💬 需求来自` 引文（`:508` / `:1311`「Slack quotes often carry links — make them clickable」）、`📋 要做什么` 步骤（`:529` / `:1329`）；运行中 / 待验收行的标题与正文原生**明确不** linkify（`:1829`：链接点击与整卡复制手势冲突，放弃并记入完成报告），AI 研究中占位（`:945`）、`怎样算办完`（`DodListView`）、交付正文也不。web 此前四处全是纯字符串（只有 markdown 正文经 `MarkdownDocument` 出链接）。自此 web 落点 = 展示积木 `web/src/components/board/Linkified.tsx`（`linkifyParts(text)` 纯函数 + `<Linkified text>`）：按 `https?://` 切段，URL 段渲染 `<a class="linkified" target="_blank" rel="noreferrer">`（壳的 `WKUIDelegate` 把 `target=_blank` 交系统浏览器，§54 追记「外链一律交系统浏览器」），其余仍是裸文本节点；`href` 过 `detail/markdown.ts` 的 `sanitizeUrl` 白名单（正则只认 `https?://`，`javascript:` / `data:` 本就不匹配，白名单是双保险）；URL **硬边界**（中文正文里 URL 后面通常紧跟标点、没有空格，「见 https://x.dev/a，然后」链接必须在 a 处停）= 空白、`<>`、ASCII 双引号、`()（）`、CJK 括号 `「」『』【】《》〈〉〔〕〖〗`、全角标点 `，。、；：！？～`——这一组 NSDataDetector 同判（本机探针逐个核过：`看 https://x.dev/a，然后做 b` → `https://x.dev/a`；`https://x.dev/a、https://y.dev/b` → 两条）；弯引号 `“”‘’` 也算边界，此处比 NSDataDetector 更严一格（它会把 `“https://x.dev/a”然后` 吞成 `a”然后`）；ASCII `.,;:!?'` 合法出现在 URL 内部（`a.html?q=1,2`），只在匹配段末尾剥掉（`see https://x.dev/x.` 链接是 x）；scheme 大小写不敏感（`HTTPS://X.DEV/A` 也成链，NSDataDetector 同判）；紧贴 URL 的 CJK 字（`https://x.dev/a然后`）与 `—` `…` `·` 不算边界，与 NSDataDetector 一致（IRI 允许非 ASCII 路径，无法区分）；**没有 URL 时原样返回字符串**——DOM 与此前逐节点相同，既有判例与视觉 golden 不动（demo 数据无 URL，golden 零 diff）。接线照原生边界，**唯一一处有意扩展见下**：`CardHead` 加 add-only `linkify` 开关（缺省 false），只有提案卡与潜在任务卡的摘要优先面打开，`aria-label` / T2 与拒绝弹窗正文仍是纯字串（链接只在可见标题里）；运行中 / 待验收 / 已完成行标题与 AI 研究中占位不开；`DetailFields`（D34 唯一详情面）的 `💬 需求来自` 每条引文、`📋 要做什么` 每步（「[修改方向]」行仍 `is-rework`）走 `Linkified`——原生 `PlanListView` / `SourceListView` 在所有 lane 共用，同判；摘要段也在所有 lane 走 `Linkified`（含「交付了什么」下的灰色审批时摘要），**这是 web 对原生的一处有意扩展**：原生只在提案面（`:1073`）与潜在任务面（`:2028`）linkify 摘要，运行中 / 待验收行的摘要是纯 `Text`（`:1722` / `:1843-1850`），理由是同一个手势冲突（`:1829`）——web 侧栏没有整卡复制手势，这个约束不存在，同一侧栏里步骤可点、摘要不可点反而怪；交付正文、`怎样算办完`、产出、备注不走。样式一条 `.linkified`（`board.css`：`--accent` 色 + 下划线 + `overflow-wrap: anywhere`，字级字重继承所在文本；`:focus-visible` 与卡片同一套 accent 轮廊），不动 `cardMarkdown.ts` / `MarkdownDocument`（markdown 正文本已出链接）。无新文案、无 wire 变化、不读 store。判例 `Linkified.test.tsx`（无 URL 原样 / 尾随 `」` `）` `。` 在链接外 / 紧跟的全角 `，。；：！？～` 与 `』》〉】”` ASCII `"` 是边界、ASCII `.,` 留在 URL 内只剥段尾 / `HTTPS://` 大写也成链 / `javascript:` `data:` 裸域名 `https://.` 不成链 / 两个 URL 各自成链，含只隔全角 `、` 的两条）、`CardHead.linkify.test.tsx`（提案 / 潜在任务摘要出 `<a target=_blank rel=noreferrer>`、`aria-label` 纯字串、无 URL 时标题 DOM 单文本节点、占位与运行中行不出链）、`DetailFields.linkify.test.tsx`（摘要 / 引文 / 步骤出链且文本逐字不变、引文 `URL，更多字` 链接在 URL 处停、`怎样算办完` 与交付正文不出链、待验收灰摘要出链（钉住上述扩展）、无 URL 时整面零 `<a>`）。
-
-**§54.1 追记（2026-09-05，add-only；`fix/parity-strips-force-open`，behaviour-parity 批次 `strips-force-open`（chain `store-actions` 第 3 棒，接 `pending-sweep-settle`），gap `board-cards-backlog-strip-force-open`）——两条书立条的展开态住 store；搜索命中潜在任务强制展开；暂缓 / 放回看板的回执不落进收起的条里**。v0.33 一节与 §33 早已立法（「展开状态 session 内记忆（挂在 store 上，换页不丢）但不持久化」「暂缓 echo / debt 车道 notice 到达时潜在任务条自动展开」「看板搜索命中潜在任务时强制展开该条（仅视图态）」「放回看板的反馈到达时该条自动展开」），web 移植时三条全丢：`BacklogStrip.tsx` / `ArchiveStrip.tsx` 各自 `useState(false)`（换页即收起）、唯一的写者是列头开合、搜索命中时收起的条只把计数改成 n/N——过时的过滤器 / 收起的条静默藏卡，正是原生 `Store.boardQuery` 不变量点名禁止的。本追记接回，落点如下。(a) **展开态 = store 字段**：`web/src/store.ts` `AppState` 加 add-only `backlogStripExpanded` / `archiveStripExpanded`（缺省 `false`；原生 `Store.swift:127-128`），setter `setBacklogStripExpanded(on)` / `setArchiveStripExpanded(on)` 是唯二写者；**不进 URL、不进 localStorage**——每次启动都收起（原生「deliberately NOT persisted」），`resetStoreForTests` 一并归零；两条书立条的列头开合改写旗、读旗（原生 `$store.backlogStripExpanded` / `$store.archiveStripExpanded` 双向绑定），换页（`BoardLanes` 卸载）再回来仍是用户离开时的状态。(b) **搜索 / 过滤命中潜在任务 → 左条强制展开**（原生 `Kanban.swift:316-328` `expanded: searching && !debt.isEmpty ? .constant(true) : $store.backlogStripExpanded`）：`BacklogStrip` 在 `cardFilterCount(filters) > 0 && rows.length > 0` 时不看旗直接展开——web 的条吃全局过滤 chips + ⌘F（G4），所以判据是「任一维度激活且有命中」，不只搜索词（原生只有搜索一维；web 的过滤 chips 同样会让收起的条藏卡，同一不变量）；无命中（计数 0/N）不强开（原生 `!debt.isEmpty` 半边）；强制展开期间列头开合是 **no-op**（`.constant(true)`：点了不收、旗也不翻），清掉查询即回到旗的状态（用户之前展开过就仍展开）；旗本身不被搜索改写（「仅视图态」）。右条**没有**搜索强开（原生 `:516` 直接绑旗；归档不是看板列、不吃全局过滤，§54.1 第 6 项）。(c) **回执落进条里时强制打开**（原生「a response to the user's own click can never appear inside an invisible column」），落点在 `boardActions.ts useSubmit`，不在卡组件：纯函数 `stripToForceOpen(rec, phase)` 判、`useSubmit` 调 setter。**提交成功**（`postAction` 落地那一刻 = 原生 `applyAction` 在 inbox 写成功后跑的时点）：`defer` → 左条（原生 `addEcho target: .debt`，`Store.swift:861`，「暂缓中…」echo 落潜在任务条）；`unarchive` → 右条（原生 `beginReturn source: .archived`，`:851`，「放回看板中」info 条落永久性完成条；`?page=archive` 整页上点的「放回看板」回到看板时右条因此是开的）；`archive`（永久完成）**不**开右条——原生 `addEcho target: .archived` 不触发任何条（只有 target `.debt` 开左条），audit 建议的「DoneCard archive 成功开右条」不是原生行为，不继承。放在成功路径而不是落地（`landed`）路径：换列动词落地的那一帧卡组件已随卡离开原列卸载，落地 effect 不会跑；POST 被拒不开（没有回执要落进条里）。**180 s 超时**（`useSubmit` 的兜底定时器）：只认换列动词（`pendingSettle.LANE_VERBS`，= 原生 raise / echo / return 三族）——提交时卡在 `debt` 的换列动词（研究并提议 / 删除 / 永久完成——超时句与静默恢复的卡都落回潜在任务条）→ 左条（原生 `:425` raise 超时、`:450` `e.source == .debt`）；提交时卡在 `archived`（放回看板超时）→ 右条（原生 `:539` `entry.source == .archived`）；提案列的动作（批准 / 暂缓）超时卡还在提案列，不碰任何条（原生 defer echo `source: .approval`，`:450` 不命中）；详情抽屉里对 debt / archived 卡的改名（`set_title`）/ 拆卡（`split_note`）/ 修改意见（`comment`）超时同样不碰任何条（原生 `expiredTitles` / `expiredSplits` / `expiredComments`，`Store.swift:452-473` / `:516-526`，从不写这两面旗）。**诚实边界**：超时半边只在发出动作的卡组件仍挂着时生效——两条书立条收起即卸载条内的卡（`{expanded && …}`），`useSubmit` 的兜底定时器随组件卸载丢弃（`pending-sweep-settle` 批次的 pending 状态是组件级的，不是原生 `raisingLocal` / `pendingEchoes` / `returningLocal` 那样的 store 级台账），所以原生「收起的条里超时 → 强开」这一场景 web 目前到不了；可达的只有搜索强开期间 debt 动作超时（旗翻 true，清掉搜索后条仍开着）与条本就开着时的超时（setter 无操作）。把 180 s 台账搬进 store、让定时器跨卸载存活，是独立的后续批次，不在本追记之内。无新文案、无 wire 变化、server 零变化；`ui/parity` 判卷面零变化（`pending.txt` / `waivers.txt` 无此项）；视觉 golden 不动（两条缺省收起、demo 无过滤）。判例（新文件，防腐 #7）：`web/src/components/chrome/BacklogStrip.forceOpen.test.tsx`（收起 + 搜索命中 → 列表可见 / aria-expanded / 计数 1/2、清掉查询回到收起且旗未变；tier chip 命中同样强开；无命中不强开 0/2；强开期间列头 no-op；用户展开过再搜索清掉后仍展开；旗跨卸载 / 重挂留存与再点收起；setter 打开与 reset 归零）、`web/src/components/board/useSubmit.stripOpen.test.tsx`（defer 成功开左条且卸载后仍在；defer 被拒不开；approve / archive 成功不碰；unarchive 成功开右条；raise 超时开左条（提交时不开）；unarchive 超时重开右条（hook 层）；approve 超时不碰；debt 卡 set_title / archived 卡 split_note 超时不碰任何条；raise 后卡组件卸载再超时不开条（定时器随组件丢弃，钉住上述诚实边界）；`stripToForceOpen` 两相真值表含非换列动词一律 null）、`web/src/components/chrome/ArchiveStrip.forceOpen.test.tsx`（点列头写旗、卸载再挂仍展开、再点收起；setter 打开；全局 ⌘F 不强开右条）。
-
-**§54.1 追记（2026-09-05，行为对齐批次 `selection-merge-suggestion`，链 cards-face 第 3 批；`fix/parity-selection-merge-suggestion`；gap ids `board-cards-select-click-catcher` / `board-cards-select-all-lanes` / `board-cards-merge-suggestion-details` / `archive-confirm-added-on-done-card`）——多选态的整卡 tap catcher、全 lane 可选、合并建议卡四处细节、「永久完成」一点即发**：
-
-（a）**多选态的整卡 tap catcher**（原生 `Kanban.swift:671-705` `selectableCard`：「多选态: top-left checkbox + a full-card click-catcher（点卡=切换选中; the catcher deliberately blocks the card's own buttons while selecting — a mis-click must not approve/trash anything）」，选中卡 `accentColor.opacity(0.10)` 淡底）。web 此前多选态只有标题前一颗小勾选框，卡身不可点、动作行照常活着——多选途中误点「批准」就真批准了。自此 `CardSurface`（`cardChrome.tsx`）接 add-only `selectable`（单一持有者，镜像原生 `selectableCard(id, selectable:)`；`CardHead` 的同名 prop 退役，勾选框改从 `CardSurface` 提供的 `SelectingContext` 长出来）：`selectable && store.selectionMode` 时 `<article>` 带 `is-selectable`（手形、不选文本），选中带 `is-selected`（`--accent-soft` 淡底 + `--accent` 边，token 化的 0.10 accent）；**点卡身 = `toggleSelected`**（标题文字、章行、空白都算卡身；勾选框 / 单击复制指令行 / 标题里的链接 / 卡内弹窗这些仍活着的控件点了走自己的 handler、不叠一次切换）；**动作行 `.card-actions` 整排失效**——CSS `pointer-events: none` + 略淡（0.55），指针落到「批准」上穿透到卡身、只是切换选中；React capture 阶段（`onClickCapture`）再把落在动作行里的 click（含键盘 Enter / Space 合成的）`stopPropagation` + `preventDefault` 并改算点卡身，按钮自己的 onClick 不跑——键盘用户同样误点不了（原生 overlay 只挡指针，web 比原生严一格；「展开详情 ▸」也在动作行里，同样失效，与原生 overlay 盖住整卡一致）。勾选框留作 a11y 的选择路径（原生左上角 `checkmark.circle` 的语义等价物），`aria-label`「选择 <id>」不变。退出多选即刻恢复，无残留态。**a11y 树同步失效**：`CardSurface` 在多选态给动作行 `.card-actions` 挂 HTML `inert`（不在 tab 序、读屏树里没有——与原生 overlay 盖住整卡、按钮不可达同义；`aria-disabled` 在无 role 的 div 上不合法、逐颗 `disabled` 要每张卡各改，都不取），退出多选即摘；capture 拦截仍留作不认 `inert` 的老 WebKit 的兜底。**选中态压过悬停**：`animations.css` 的 `.task-card:hover` / `.is-context-open` 与 `.task-card.is-selected` 同为 (0,2,0) 且后加载，鼠标用户点卡的那一刻指针就在卡上——选中规则必须带 `:hover` / `.is-context-open` 变体（(0,3,0)）淡底才在点击当下可见；需输入行（`.is-blocked`）的橙色左边在选中时保留（原生只叠淡底，不改行自身的状态色）。
-
-（b）**全 lane 可选（v0.21 契约七回归）**：原生 `Kanban.swift:575-591` `selectableIDs` 覆盖**每个**看板 lane 的真实卡——「潜在任务/待审批/运行中(含需输入)/待验收/阶段性完成」，注释原话「v0.21: 全 lane 可选（含 debt + completed）；跨状态合并的合法性交由后端 merge_review 判定 —— Swift 侧只保持选择 UI 宽松，不预先拦截」；`:337-339` / `:491-493` 潜在任务与阶段性完成卡各自包在 `selectableCard` 里；排队中（queued）的运行卡也在 `visibleRunning` 里、同样可选。web 此前 `DebtCardItem` / `DoneCard` 不传 `selectable`、`RunningCard` 写成 `selectable={!isQueued}`——第 11 项 v0.48.x 追记「提案 / 运行中 / 待验收卡标题前勾选框」记的是这个较窄范围，但没有任何 D-row / tombstone 退役 v0.21 的决定，属 port 丢失。自此**潜在任务 / 提案（非 processing 占位）/ 运行中（含排队中、需输入）/ 待验收 / 阶段性完成 全部可选**；不可选的只有提案列 AI 研究中占位（原生 `selectable: !card.processing`）、合并建议卡、echo 行与永久性完成书立条（v0.33.0 additions「Mac 看板两条书立条」：「仍不是看板列：不进 selectableIDs/多选合并面」，不变）。第 11 项 v0.48.x 追记里「提案 / 运行中 / 待验收卡」那半句自本条起以本条为准（那段 add-only 不改字）。跨状态合并的合法性照原生交给后端 `merge_review` / `merge_force` 判定，前端不预拦；`SelectionBar` 的批量批准 / 拒绝资格（只有提案列真实卡）不变。
-
-（c）**合并建议卡四处回到原生**（`MergeSuggestionCard.tsx`；原生 `Cards.swift:2183-2225` doneButtons、`:2337-2355` verdictHeadline、`:2274-2278` partitionGroups、`Store.swift:912-920` title(of:)）：① **「仍然合并」给所有 verdict ≠ merge**——含 `partition`（原生 `:2207` `if suggestion.verdict != "merge"`；§21bis 本文与第 11 项 v0.48.x 追记也一直写着「verdict ≠ merge 或 failed」，web 代码多排除了 partition，是代码违法不是法条变化）；② **`partitionGroups` = verdict 为 partition 且 `groups` 非空**（原生同名 helper；其余 verdict / 缺 groups 的老 payload 一律 null、回落既有单-primary 路径）——主按钮「按分组合并（k 组）」、分组清单、结论句组数、次按钮字面都读它；③ **结论句** partition 有方案时「建议分成 k 组分别合并」/「Suggest merging as k separate groups」（`verdictLabel(verdict, text, groupCount)` add-only 第三参），缺方案回落「建议按分组分别合并」；④ **次按钮**：只有 partition 有方案时是「保持独立」/「Keep separate」（原生 `:2217-2220`「partition 的次按钮语义就是『全部保持独立』，点名说清」），**其余 verdict 含 keep_separate 都是「取消」/「Dismiss」**——web 此前把「保持独立」错给了 keep_separate；⑤ **`titlesFor` 全 lane**：加 `debt` 与 `trash`（原生 `title(of:)` 七个分区都查；v0.21 起多选合并覆盖全部看板列，建议卡的 `nameLine` 与 `ForceMergeDialog` 主卡单选同源），此前潜在任务 / 回收站卡在建议卡与强制合并弹窗里只剩裸 id。标题字段链（`display_title` > `title` > `name`）不动——摘要优先面在这里该读 `displaySummary` 链（原生 debt / trash / needs_approval 读 `displaySummary`）是另一处未列入本批的差距，留给后续批次。parity fixture（`scripts/ui/parity_fixture.py`）加一条 MS-7 = partition 缺 groups 的老 payload，回落句「建议按分组分别合并」才有面渲染（`control:board.merge:label:suggest-merging-by-groups` 仍 PRESENT）。
-
-（d）**阶段性完成卡「永久完成」一点即发，不弹确认**（gap `archive-confirm-added-on-done-card`，审计标 owner 选项 (a)，默认推荐即 (a)）：原生 `Cards.swift:1540-1548`「v0.20 card-lifecycle archive … One tap, no confirm (reversible via the 永久性完成 section's 放回看板)」；web 的 `DoneCard` 此前在同一动词上多了一个 `ForkDialog` 确认（其文案追溯到 legacy vanilla web board——§41「确认弹窗残留的『归档』字样统一为『永久完成』」那条），而 web 自己的潜在任务卡同一动词早已一点即发（§54.4 2026-09-03 追记 (e)「可逆不弹确认」）——两面同一动词两张脸。自此 `DoneCard` 的「永久完成」直接 `POST {action:"archive", comment:null, id}`（§3 四键形，主键 id），无弹窗；原确认正文的语义（封存 = 不再参与匹配 / 不再提示 / 后续相关信息开新卡 / 可从永久性完成「放回看板」）收进按钮 `title` tooltip，与潜在任务卡同款。可逆不弹确认是 web 看板的一般规则：`archive`（两面）/ `trash`（潜在任务卡「删除」，回收站可恢复）一点即发；不可逆的（`merge_force`、`reject`→回收站之外的分叉、T2 批准）才走弹窗，§0.8 不变。§41 同日追记记同一条。
-
-**判例**（防腐 #7，每行为一文件）：`CardSurface.selection.test.tsx`（多选态 批准 / 拒绝 / 暂缓 / 删除 / 永久完成 / 展开详情 ▸ 点了不发动作不开弹窗、只切换选中；点卡身 / 标题切换、勾选框只切一次、复制指令行不算卡身、挂载即 is-selected；潜在任务 / 阶段性完成 / 排队中 / 执行中 长勾选框、AI 研究中占位不长也点不选；非多选态动作照常、退出多选即恢复；多选态 axe 零 violation）、`DoneCard.archiveOneClick.test.tsx`（无 dialog、四键形 archive 送主键、提交后 pending 一句、tooltip 说明可逆）、`MergeSuggestionCard.partition.test.tsx`（partition 有方案：组数结论 / 按分组合并（2 组）→ merge_apply / 保持独立 → merge_dismiss / 仍然合并 → merge_force + dismiss、分组清单里 debt / trash / completed 卡带标题；缺方案回落；keep_separate / link_improvement / close_secondary 有仍然合并、次按钮取消；merge 无仍然合并；`verdictLabel` zh / en 逐字；`titlesFor` 含 debt / trash）、`CardSurface.actionsInert.test.tsx`（多选态动作行带 `inert`、进入 / 退出多选即挂 / 摘、占位卡与非多选态从不挂）、`styles/selectedCardCascade.test.ts`（board.css 文本 drift-pin：选中规则带 `:hover` / `.is-context-open` 变体、`.is-blocked.is-selected` 保留橙色左边、animations.css 无更高特异度的 hover 规则——jsdom 无级联，真实级联由真浏览器 computed-style 验）。`web/src/parity.test.tsx` 的按钮遍历随本条改序：多选态里先走操作条（弹窗 + 提交），退出多选后再点卡上的动词——多选态里卡的动作行是死的，旧序会把 pending 一句全丢。ui-parity 门 MISSING 0，`report.json` 未变；视觉 golden 不涉多选态、零 diff。
-
-**第 3 项 / 第 11 项追记（2026-09-05，issue #216，owner 拍板 2026-09-04；D36 owner 修正 2026-09-06；`ai/self-improve/R-285`）——双击卡片 = 在终端接管会话；单击卡片什么也不做**。第 3 项「web 没有终端 endpoint，故只复制、不承诺双击起终端」自此过期（tombstone），issue #216 原文里的「单击指令行 = 复制」也**被 D36 取代**（owner 2026-09-06：「我希望去掉单击复制指令，单击卡片什么功能也没有」）：卡面**没有**「单击复制指令」行（`CopyCommandLine` / `.card-copy-line` retired，运行卡 / 待验收卡 / 阶段性完成卡都不再渲染命令文本），卡面也没有「在终端接管」按钮（运行卡 / 待验收卡动作行都砍掉）；**单击卡身什么也不做**（不开详情、不复制、不发请求；§21 多选态里点卡身 = 切换选中是另一套 owner 明示进入的模式，不在此列）；**双击整卡**（`CardSurface` 的 `takeoverCmd` 非空时绑 `onDoubleClick`，多选态下不绑）= `POST /api/terminal {card_id}`（§68.7 队列通道，命令仍由 server 从投影行推导、客户端只传 card_id）——这是**唯一的一键路**；**唯一的手动复制路 = 详情侧栏**（D34 唯一详情面）「会话」区指令行旁的 **「复制接管指令」/ "Copy takeover command"** 按钮（`DetailFields` `CmdLine copyLabel`；日志 / 错误全文旁仍是「复制」）。边角：**Enter / Space 保持「打开详情侧栏」**（第 11 项 (a) 不变：无障碍语义是看详情，不该触发外部进程）；落在卡内按钮 / 链接 / 输入框 / 弹窗上的双击归它们自己（`isInnerControl`）；**没有可接管会话的卡双击 no-op**（提案 / 排队 / 阶段性完成 / 积压卡，以及没 `copy_cmd` 的待验收卡——现有 400 语义前移到 UI 判断；受阻卡有会话就给，§39 第二条路）；回执 / 降级提示是卡尾一行 `role=status` 小字（`.card-takeover-status`）：成功「已在终端打开」3 s、被拒「打开终端失败 · <server 原句>」红字留着（两句逐字沿用 §66 清单 `control:board.card:label:opened-in-terminal` / `terminal-launch-failed`）、**server 说这里开不了终端**（非 darwin 501 / 壳没在跑 503 `SHELL_UNAVAILABLE`——纯浏览器打开看板且壳未运行）→ 同一条降级路：把指令复制到剪贴板 + 「无法直接打开终端 · 已复制指令，粘贴到终端即可接管」6 s；在途中重复双击只发一次。逻辑住 `web/src/components/board/terminalTakeover.ts`（`useTerminalTakeover`）。**§66**：原生 `CopyPathLine` 的 help「单击复制 · 双击在终端运行」与 TaskRow / ReviewRow 指令行的「单击复制指令 · 双击在终端打开会话」三句（`control:board.card:help:click-to-copy-double-click-to-run-in-terminal` / `control:board.review:copy:click-to-copy-the-command-double-click-opens-the` / `control:board.running:copy:…`）描述的是「单击 = 复制」那一半，经 `CONTROL_OWNER` 标 retired（理由带 D36）；`control:board.running:label:take-over-in-terminal`「在终端接管会话：」照判（渲染面 = 侧栏需输入列的指令行标签）；两本账本零改动。判例 `cardTakeover.test.tsx`（有会话 → 请求 + 回执、单击卡身无事、卡面无按钮无指令行、无会话 no-op、Enter 归详情、内按钮双击归按钮、501 / 503 复制降级、其它错误红字、在途去重）；`a11y.test.tsx` / `cardParity.test.tsx` 的「双击不开详情」「卡面无指令行」照钉；`DetailFields.blocks.test.tsx` 钉「复制接管指令」；`parity.test.tsx` 看板主遍加 ①b「双击每张卡」收两句回执、①c 点「复制成稿」收「已复制 ✓」。
+### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3） —（retired v2.0.0，全文见 tag full）
 
 ### 54.2 server 生命周期：launchd 托管，壳只连接（v0.48.18；live 事故 2026-09-02）
 
@@ -1779,7 +1620,7 @@ reset，异常抛在 `handle_one_request` 读请求行时（在 Handler 之前�
   它在这里安全**只**因为没有 mac/ 那样的 Sparkle 嵌套 bundle 需要 inside-out 逐个签
   （同一个理由让 `mac/build.sh` 反过来**不许**用 `--deep`）。**签名必须有界且可回落**：
   本脚本自此由 install.sh 的 `ui` 步在 launchd 下跑（§56.5），而用 keychain 私钥签名
-  可能弹一次没人能点的 GUI 授权框——`mac/scripts/make-signing-cert.sh` 里那句
+  可能弹一次没人能点的 GUI 授权框——`shell/scripts/make-signing-cert.sh` 里那句
   `security set-key-partition-list`（给钥匙 ACL 加 `-T /usr/bin/codesign`）是**可跳过**
   的一步，跳过了就会 hang。`|| echo WARN` 接得住失败、接不住 hang，而一次 hang 会把
   `AIASSISTANT_UI_BUDGET`（默认 600 s）烧光 → `UI_SHELL_STATUS=fail` → 自动部署失败。
@@ -2241,7 +2082,7 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
 - **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` / `fresh-install.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底、验收 main 上的一条命令安装），与 dev 无关。
 
-**§56.8 追记（v2.0.0，lite 2.0 PR-C）——Apple 套件只剩壳、夜间与遥测 workflow 退役**：mac/、ios/ 与 shared/ 里的看板 Swift 模型删除（shell/ 只借 `shared/Sources/I18n.swift`，它留下）。`ci` job 的 macOS 腿收缩为：选钉住的 Xcode → PyYAML → compileall → 全量 unittest → `shell/build.sh` → `shell/tests/run.sh`；删去的步骤：pin 占位核对与 `--ios` 盖章（§56.1 追记）、Sparkle vendor、`mac/build.sh`、`mac/LogicTests`、`ios/tests/{contract,captions,boarddiff}`、iOS simulator 构建（Swift↔Python E2E interop 步已在 PR-A 随 `act/lib/e2e.py` 删除）。`changes` 的 `swift` filter 去掉 `mac/**` 与 `ios/**`，其余条目不变。`ci-nightly.yml`（两条 Windows 腿 + qlty）删除：Windows 安装器 `install.ps1` 与 Linux 安装器 `install-linux.sh` 随 lite 2.0「只支持 macOS」退役，Windows 腿没有对象；qlty 这条 informational lane 一并下线（上表那一行退役）。`insights.yml` 与 `keepalive.yml` 随遥测删除。七个 required check 的 job 名一个字节不变（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)`、`Tests on ubuntu (Python 3.x)`、`Web tests (build + vitest)`、`QA gates (complexity + CRAP + coverage floor + deps + hygiene)`、`Version pins untouched`）。两个安装器的文档 docs/LINUX.md、docs/WINDOWS.md 与移植地图 docs/PORTING.md 同 PR 删除；本文件更早条文里指向这三份文档的引用只作历史记录，全文见 git tag `full`。
+**§56.8 追记（v2.0.0，lite 2.0 PR-C）——Apple 套件只剩壳、夜间与遥测 workflow 退役**：mac/、ios/ 与 shared/ 整目录删除（PR-B 已把 `I18n.swift` 搬进 `shell/Sources`，壳不再读 `shared/`，见 §54.3）。`ci` job 的 macOS 腿收缩为：选钉住的 Xcode → PyYAML → compileall → 全量 unittest → `shell/build.sh` → `shell/tests/run.sh`；删去的步骤：pin 占位核对与 `--ios` 盖章（§56.1 追记）、Sparkle vendor、`mac/build.sh`、`mac/LogicTests`、`ios/tests/{contract,captions,boarddiff}`、iOS simulator 构建（Swift↔Python E2E interop 步已在 PR-A 随 `act/lib/e2e.py` 删除）。`changes` 的 `swift` filter 去掉 `mac/**` 与 `ios/**`，其余条目不变。`ci-nightly.yml`（两条 Windows 腿 + qlty）删除：Windows 安装器 `install.ps1` 与 Linux 安装器 `install-linux.sh` 随 lite 2.0「只支持 macOS」退役，Windows 腿没有对象；qlty 这条 informational lane 一并下线（上表那一行退役）。`insights.yml` 与 `keepalive.yml` 随遥测删除。七个 required check 的 job 名一个字节不变（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)`、`Tests on ubuntu (Python 3.x)`、`Web tests (build + vitest)`、`QA gates (complexity + CRAP + coverage floor + deps + hygiene)`、`Version pins untouched`）。两个安装器的文档 docs/LINUX.md、docs/WINDOWS.md 与移植地图 docs/PORTING.md 同 PR 删除；本文件更早条文里指向这三份文档的引用只作历史记录，全文见 git tag `full`。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -2449,6 +2290,28 @@ owner 原话（2026-09-07）：「fable 5.1 用不了的使用 claude code 默�
 
 ## 61. 壳桥 `zaiShell` + 录制/字幕引擎落户 shell/（v0.48.19；D3 / R2.2.2–R2.2.3，P4 Tier-0 0.4 + Tier-4）
 
+> **§61 v2.0.0 修订（PR-B；本块为准，下文与之冲突的 1.x 文本是历史，全文见 tag full）**：
+> - **61.1 部分 tombstone（宪法第 6 条 v2.0 条款：整份子契约退役、同 PR tombstone、两侧都不再有读写者）**：方法
+>   `setCaptions` / `setCaptionPrefs` / `probeCaptionKey`（实时字幕）与 `setBadge`（Dock 徽章 = 看板待办数）退役——
+>   再调即 `UNKNOWN_METHOD`；快照块 `captions` 与顶层键 `hotkey` 删除；`zai-shell-command` 的词表只剩
+>   `open_page {page, anchor?}`，`quick_capture`（全局快捷键 ⌃⌥Space / 菜单「聚焦捕获框 ⌘L」）退役。存活的 wire
+>   一字不改：方法 `getState` / `setRecording` / `refreshRecording` / `restartRecording` / `openScreenRecordingSettings` /
+>   `setLanguage` / `getPermissions` / `requestPermission` / `openPane` / `setLaunchAtLogin` / `setRecordingSchedule` /
+>   `chooseFolder`；快照顶层恰为 `recording`（含 §61.7 `schedule`）/ `permissions` / `launch_at_login` /
+>   `launch_at_login_available` / `language`。判例：`shell/tests/BridgeHarness.swift` [1]（顶层键集合）/ [3]（四个退役
+>   方法 = `UNKNOWN_METHOD`）、`tests/test_shell_engine_mirror.py` BridgeWireMirrorTestCase（两侧都不再出现退役面）。
+> - **61.2** web 的壳控件只剩「录制」（`web/src/components/shell/ShellControls.tsx`）；字幕开关退役。
+> - **61.3 改写**：`shell/Sources/Recording.swift` 自此是录制引擎的 **source of truth**（不再是 mac/ 的镜像；字节不动——
+>   改它 = 改本条）。mac/ 镜像判例 tombstone：`tests/test_shell_engine_mirror.py` 只钉 shell 文件自己的 SHA-256
+>   （`Recording.swift` + `Helpers/VaultSyncHelper.swift`）。CaptionCore / LiveCaptions / CaptionOverlay 删除。
+>   `ShellSupport.swift` 的 `Analytics` 改为 **no-op 桩**（`log` / `firstReach` / `flush` 签名不变，调用方零改动；宪法
+>   第 9 条零遥测），`SecretsIO` 删除（壳不读任何凭证）。启动序列：§61.8 adopt 判定 → 日程执法 → `autostartIfNeeded()`
+>   → 5 s tick（`pollScreenPermission` + `refreshEngineState` + 日程执法 + §28 drain + pidfile 同步）。
+> - **61.4** `LegacyPrefs` 一次性偏好迁移与字幕悬浮窗位置补种 **tombstone**（原生域 `com.zelin.ai-engineer` 不再被读）；
+>   TCC 一条不变（bundle id `com.zelin.ai-board`；`NSMicrophoneUsageDescription` 留给「屏幕 + 音频」）。
+> - **61.5** 门不变：`shell/build.sh` 必须编过；`shell/tests/run.sh` 跑 Bridge / Policy / Menu / Launch 四个 harness。
+> - **61.8** 整节改写（见下文 61.8）。
+
 owner 原话（D3，2026-09-01）：「起码在视觉上我希望把它去掉。录制状态和字幕开关我一般不用这个入口，直接打开主软件在右上角操作。录屏和录音 Mac 默认就能显示是否在使用。」本节把两件事立法：(1) 页面 ⇄ 壳的**唯一通道**是一份 add-only 的 JS wire contract；(2) 录制引擎与实时字幕引擎从 `mac/` **逐字**搬进 `shell/`，壳是它们的 GUI 父进程（TCC 归属）。看板 header 右上因此长出两个开关：「录制」（三态 + 重启）与「实时字幕」。执法：`shell/Sources/ShellBridge.swift`、`shell/Sources/ShellSupport.swift`、`web/src/shellBridge.ts`、`web/src/components/shell/{ShellControls,RecordingControl,CaptionsControl}.tsx`；判例 `shell/tests/run.sh`、`web/src/shellBridge.test.ts`、`web/src/components/shell/ShellControls.test.tsx`、`tests/test_shell_engine_mirror.py`、`tests/test_capture_exclusion.py`（shell 副本入列）。
 
 ### 61.1 桥的 wire contract（add-only；键名 snake_case，前端逐字镜像——防腐 #10）
@@ -2536,27 +2399,48 @@ owner 在首次运行 / onboarding 设计评审里提出（issue #27 原文是�
 - **已知缺口（server 侧不知道日程）**：doctor 的 `screenpipe db` 检查（`act/lib/checks/environment.py` `check_screenpipe`）只看 `db.sqlite` 的 mtime，> 2 h 没写就 WARN + `engine_dead`——日程开着的每个夜晚 / 周末，`/api/doctor` 与 `/api/diagnostics` 会说「引擎像是停了」并给「去录制页」，而同一台 app 的 header / 录制页说「按日程暂停」。手动 `off` 本来也如此，日程把它变成每晚必现。修法留给后续 PR（本条不动 act/）：壳把日程镜像成 server 可读的文件、或 darwin 上 doctor 探针读 `defaults read com.zelin.ai-board recordingScheduleEnabled`，暂停中把该行降为中性。
 - **判例**：`shell/tests/run.sh` [7]/[7b]（窗口数学含跨午夜与周六→周日回绕、坏值恒在窗内、带号 / 全角 HH:MM 拒绝；控制器边界 / 3 拍宽限（stop 后首拍不计、非 tick 采样不计）/ tick-then-wake 同一边界只停一次 / 醒来跨界立停 / 醒来无边界且引擎已停 = 无事 / live → live 切换 15 s 内的边界改走宽限、更早的照旧立停 / `paused` 读时算 / 无重启风暴 / 关日程即恢复 / 逐键回落，全部经缝，绝不 pkill；桥词表与 all-or-nothing（含 JSON 布尔 days）；paused ⇒ diagnosis null）、`web/src/shellBridgeSchedule.test.ts`（normalize 默认 / 逐字落下 / 脏值退默认 / `schedulePaused` 判据）、`web/src/components/settings/RecordingSection.schedule.test.tsx`（开关 / 时刻 / 星期各发什么、日程关着窗口可编、时刻输入可访问名、拒绝回滚 + 回车路径焦点回框、老壳退化、暂停句）、`ShellControls.test.tsx`（header 第三态 + 重启禁用）、`pages/IngestPage.diagnosis.test.tsx` / `permissions/RecordingConsentSection.test.tsx` / `setup/FinaleStep.schedulePaused.test.tsx`（三个消费面的暂停渲染：quiet 点 + 不出「去授权」/ 中性 tone / 中性行，暂停压过死因与下载分支）、`tests/test_shell_recording_schedule.py`（两侧 wire 互镜、`Recording.swift` 仍零改动、main.swift 四个执法点接线、本节存在）。
 
-### 61.8 引擎归属与孤儿回收（issue #318；2026-09-14；owner 决策 **D66**；add-only）
+### 61.8 引擎归属：启动 adopt、退出只停自己派生的那台（v2.0.0 改写；owner 2026-10-23 lite 2.0 决定；1.x 的孤儿回收全文见 tag full）
 
-screenpipe **归壳所有**：`Recording.swift` 的 `engineProcess` 注释写着「engine lives with the app」，§56.5 的 relaunch 规则也把「壳 spawn 不了任何东西」当作它敢在部署时重启壳的理由。2026-09-09 的实况推翻了后半句：`install.sh` 把壳从 pid 61976 换成 80206，旧壳拉起的 `npx screenpipe record`（73636 → 73675）**没有跟着走**，变成 `ppid=1` 的孤儿继续每秒抓帧；新壳的 5 s tick 只问 `pgrep`，看见「有引擎在跑」就当自己的，`autostartIfNeeded` 因此跳过 spawn——**静默认领了一个外人**。代价三重：TCC 的责任方仍是那个已不存在的旧壳身份（#316 重置授权那天，孤儿每帧触发一次系统授权框，点 Deny 也挡不住）；owner 退出 app 后录制不停（他以为退出 = 停）；新壳升级过的引擎参数 / 版本永远上不了机。
+lite 2.0 的硬规矩：**升级与重启永不打断录制**。1.x（issue #318 / D66）在壳启动时把一切活着的引擎当孤儿
+`pkill` 掉、再由 autostart 重新拉起——那一下就是录制断档，而且新引擎拿的是新壳的 TCC 身份，旧引擎（例如从终端
+起的）手里的屏幕录制授权一起丢了。2.0 反过来：
 
-- **归属判据（`shell/Sources/EngineOwnership.swift`；`Recording.swift` 仍是 §61.3 逐字节冻结副本——本模块照 §61.7 的先例站在它外面，只借 `enginePattern` / `isEngineRunning()` / `engineProcess` 三样公开的东西，全部经缝注入，harness 绝不真 pgrep / pkill）**：
-  - **启动**：新壳进程的 `engineProcess` 必然是 `nil`，所以**启动那一刻还活着的引擎按定义不是我们的**——不需要 pid 文件也不需要读 ppid（`decideAtLaunch(engineAlive:legacyAppRunning:)`：没引擎 = `idle`；有引擎且 §54 冻结原生 app（`pgrep -x ZelinAIEngineer`）在班 = `legacyOwns`，一根手指不碰（那是它自己拉的引擎）；其余 = `reclaim`）。
-  - **退出**：`stopAtExit(spawned:)` 的凭据是 **`engineProcess?.isRunning == true`——活性，不是历史**：**只停我们自己 spawn 的、且此刻还活着的那一台**，对一台我们仅仅「看见」的引擎绝不动手（main.swift 文件头的「生命周期诚实原则」同款）。**为什么不能用 `!= nil`**：冻结的 `Recording.swift` 只在 `startEngineBlocking` 里给 `engineProcess` 赋一次值，`stopEngineBlocking` / `applyMode(off)` / §61.7 日程暂停**都不把它置回 nil**（判例数着那唯一一次赋值），所以 `!= nil` 是「这个壳曾经起过引擎」的终身通行证——日程到点停过、owner 切过 `off`、或引擎自己崩过之后，退出路径会拿这张过期凭据去 `pkill -f <pattern>`，打中的是那一刻**恰好活着的任何一台**引擎（§54 冻结原生 app 的那台就在射程里，§54 的 hands-off 当场破）。recipe 结尾是 `exec npx screenpipe record …`，我们握着的那个 `Process` **就是**引擎本身，所以 `isRunning` 是精确的凭据，不需要 pid 文件。**第二道守卫与启动路径同款**：`legacyAppRunning()` 为真时退出路径也不开火（`pkill -f` 分不清归属，会连它那台一起带走）——宁可漏停自己的。
-- **回收动作**：`reclaim` → engine.log 落一行 `[app …] reclaim orphan engine: this shell spawned nothing yet`（**先写再杀**：回收中途崩了也解释得清自己）→ `pkill -TERM -f <enginePattern>`（§15 契约停法，模式逐字借冻结引擎的常量、绝不另写一个）→ 每 0.1 s 问一次 pgrep，**≤ 2 s** 判死活 → 写 `done` 或 `still alive after 2s`（**不升级 SIGKILL**：TERM 就是 §15 的停法，杀不掉的引擎只报不瞒，宪法第 3 条）。退出路径反过来有界升级：`pkill -TERM` → **≤ 1.5 s** → 还在就 `pkill -KILL`（macOS 给 `applicationWillTerminate` 约 5 s，本条最多花 1.5 s）。
-- **接线（`shell/Sources/main.swift`）**：`startEngines()` **把录制那一半整体排到回收之后**——字幕恢复 / 心跳 / §68.7 终端 tick 照旧同步装好，回收在后台队列跑（pgrep / pkill 阻塞，不占主线程），完成后 hop 回 MainActor 再跑 `startRecordingAfterReclaim()`：`schedule.enforce(reason:"launch")` → `autostartIfNeeded()` → 装 5 s tick。**顺序是本条的全部要点**：autostart 的 pgrep 若先看见孤儿就会认领它（那正是 #318 的形状）；5 s tick 若先装上，回收的那一下 pkill 会掉进 §61.7 的反抖窗（`killAfterTicks` / `liveSwitchHold`），被读成「新引擎没起来」→ 假回滚 + 「已退回…」系统通知。`applicationWillTerminate` 的**第一句**是 `EngineOwnership.stopAtExit()`，然后才拆 tick / 停心跳 / `server.stopIfSpawned()`。
-- **`install.sh` 的那一半（§56.5 relaunch 规则的补丁）**：(a) `relaunch_shell_app` 的 `pkill -KILL` 自此是**显式分支**（`if pgrep -x "$UI_EXEC_NAME"` 才发，此前无条件发一发）；KILL 意味着 `applicationWillTerminate` 没跑过，所以紧跟着就地扫一次孤儿。(b) 真正覆盖崩溃路径的是 `ui` 步开头的 `ui_sweep_orphan_engine`：**不**受 `NON_INTERACTIVE` / `UI_SHELL_INSTALLED` / 「壳还活着」三道闸管（`relaunch_shell_app` 在 `pgrep -x "$UI_EXEC_NAME" || return 0` 处早退，而崩溃 / 已退出恰恰是壳不在的那一格），判据是**没有壳在跑却有引擎在跑**，且 §54 冻结原生 app 不在班；扫除 = `pkill -f "$UI_ENGINE_PATTERN"` + ≤2 s 轮询 + ok/warn 一行。`UI_ENGINE_PATTERN` 与壳的 `RecordingController.enginePattern` **逐字同一**（判例钉漂移）；扫除永不致命（`ui` 步的状态与本条无关）。
-- **行为变化写明（§15 追记同日）**：**退出壳自此会停掉录制**。此前 ⌘Q / `pkill -TERM` 之后引擎照录，现在跟着壳走——这是 issue #318 Expected 第 1 条的字面要求。日程（§61.7）语义不变：它管的是「窗内 / 窗外」，本条管的是「谁的引擎」。
-- **诚实边界（本条明确不覆盖的）**：
-  - **崩溃 / SIGKILL 不被 `stopAtExit` 覆盖**——那两条路 `applicationWillTerminate` 根本不跑，引擎会一直录到**下一次壳启动的回收**（或下一次 `install.sh` 的 `ui` 步扫除）那一刻。不引入 pid 文件、不改进程组（`setsid` / `killpg` = 动冻结的 `Recording.swift`，§61.3 说了不许），所以这个窗口如实留在这里。
-  - **`pkill -f <pattern>` 是 §15 的契约停法，不区分是谁的引擎**：同一台机器上跑第二个壳 / dev build 时，先启动的那个的引擎会被后启动的回收掉；`ZelinAIEngineer` 的守卫只保护 §54 那个冻结的原生 app。
-  - **§54 冻结原生 app 在班时两条路都让手**：启动不回收（`legacyOwns`）、退出也不开火——所以那种时候**我们自己的引擎会漏停**，要等下一次它不在班的启动才被回收（或 `install.sh` 的 `ui` 步扫除）。§54 的「一根手指不碰它」是硬规矩，漏停只是慢一点；两种错里选可逆的那种。
-  - **不做 mid-session 的外人引擎巡查**（只在启动与退出两个时刻判归属）、**不写 `state/` pid 文件**、**不重构 install.sh**。
-- **判例**：`shell/tests/LaunchHarness.swift` [8]（四格启动判决 + 两格退出判决 + 常量与预算）/ [9]（经缝录制的调用序列：idle 一次 pgrep 零日志、孤儿 breadcrumb→TERM→轮询→done、杀不掉时的诚实日志与有界轮询、legacy 在班零信号、退出 TERM 一发 / 不死才补一发 KILL、非我方引擎零动作、**legacy 在班时连自己的引擎也不停**（h）、**默认凭据对一个非 nil 但已经不在跑的 `engineProcess` 答 false**（i，直钉默认缝、不注入））；`tests/test_shell_engine_orphan.py`（接线顺序、模式逐字复用、**退出凭据是 `?.isRunning` 且 `Recording.swift` 里 `engineProcess` 仍只赋一次值**、退出路径的 §54 守卫排在开火之前、`Recording.swift` 仍逐字节冻结、install.sh 三处闸门与常量互镜、本节存在；D 行按内容找、号码与本节标题及两处追记逐字一致——号码漂了判例就红）；`tests/test_install_ui_step.py`（`ui` 步扫除的每一格：壳在跑 / 原生在班 / 没引擎 = 零 pkill，孤儿 = 扫掉；relaunch 的 KILL 分支只在壳没走时发火并扫孤儿；非 macOS 那一格断言「一个调用都没有」——扫除自己就在 `uname -s` 上早退）。
-
-（下面一段原住 §56.5；§56.5 随 v2.0.0 退役，这段 installer 侧的法条原文搬到这里，与它引用的 §61.8 放在一起——install.sh 的这两处在 PR-D 重写时按 §78 / §79 修订。）
-
-**§56.5 追记（2026-09-14，add-only；issue #318 / 决策 D66）——「壳 spawn 不了任何东西」只对 server 成立**：上条 relaunch 规则的理由句「壳 spawn 不了任何东西（server 归 launchd），所以 relaunch 掐不断录制或字幕」在录制那一半是错的：壳**确实**持有 screenpipe（`Recording.swift` 的 `engineProcess`），此前 relaunch 把它留成 `ppid=1` 的孤儿（issue #318 实况：旧壳 61976 退场、引擎 73636 照录）。修法住在 §61.8，本节只记两处 installer 侧的改动：(a) `relaunch_shell_app` 的 `pkill -KILL` 改成 `if pgrep -x "$UI_EXEC_NAME"` 的显式分支（TERM 送走了就不再补刀），KILL 之后 `applicationWillTerminate` 没跑过，紧跟着就地扫一次孤儿引擎；(b) 真正覆盖崩溃 / 已退出那一格的是 `ui` 步开头的 `ui_sweep_orphan_engine`——`relaunch_shell_app` 在「壳还在跑吗」那一问上早退，所以扫除不能长在它里面。判据、常量与判例见 §61.8。
+- **归属判据（`shell/Sources/EngineOwnership.swift`；`Recording.swift` 是 §61.3 的 source of truth、一个字都不提
+  归属——本模块站在它外面，只借 `enginePattern` / `engineProcess` / `isEngineRunning()` 的同一个 pgrep，全部经缝注入，
+  harness 绝不真 pgrep / pkill）**：
+  - **启动 = adopt，不 kill**：`pgrep -lf <enginePattern>` 列出活着的引擎；任一台的命令行**同时**带 recipe 标记
+    `screenpipe@0.3.349 record` 与 `--ignored-windows`（即 `ScreenpipeRecipe.startCommand` 产出的那条命令）→
+    `adopt(pid)`：记下 pid、写 pidfile、engine.log 落一行，**本壳的退出路径永不停它**；argv 不带标记的引擎（别的版本 /
+    别的参数 / owner 手工起的 / `ignored_apps: []` 时本 app 自己的）→ `foreign`：只记一行日志，不接管、也不 kill；
+    没有引擎 → `idle`。三条路都不发信号；autostart 的 pgrep 看见活着的引擎就不再 spawn 第二台。
+  - **退出 = 只停自己派生的、此刻还活着的那台**：凭据是**活性不是历史**（`engineProcess?.isRunning == true`——
+    `Recording.swift` 只赋一次 `engineProcess`、从不置回 nil）；**并且** `engineHandoff` 偏好键（UserDefaults，域
+    `com.zelin.ai-board`）在场时一台都不停——写它的有两处：`install.sh` 的 `relaunch_shell_app`（§56.5 自动部署路径，
+    `pkill -TERM` 之前）与 §79 的升级脚本（relaunch 之前）；新壳启动判定完即清（一次 relaunch 只用一次；relaunch 失败
+    留下的键由下一次启动清掉）。停法 = §15 契约停法 `pkill -TERM -f <enginePattern>` → 每 0.1 s 问一次、≤1.5 s → 还在就补一发
+    `-KILL`。用户在页面上显式「关闭录制」走 `Recording.swift` 的 `setMode("off")` → pkill，照旧生效（adopt 的那台也停）。
+  - **detached 的含义**：引擎的寿命不绑在壳进程上——壳崩溃 / SIGKILL / 升级 relaunch 时引擎照录（ppid 变 1），下一个
+    壳 adopt 它；只有用户手动退出且没有升级握手时，退出路径才停它。
+  - **pidfile** `~/Library/Application Support/ZelinAIAssistant/engine.pid`（repo 树之外），一行 `<pid> spawned` 或
+    `<pid> adopted`；5 s tick 在串行后台队列上**现读**活性（`tickPidfile()`，不用 RecordingController 缓存的
+  `engineRunning`——窗外启动时第一拍它还是初值 false）后重算（自己派生的优先）、内容变了才写，引擎没了就删。它只是取证（doctor /
+    排障），**归属判决不读它**——判决只信 argv 与活性。
+- **接线（`shell/Sources/main.swift`）**：`startEngines()` 在后台队列跑 `adoptAtLaunch()`（pgrep 阻塞，不占主线程），
+  完成后 hop 回 MainActor 再跑 `startRecordingAfterAdopt()`：日程执法 → `autostartIfNeeded()` → 装 5 s tick（其中
+  `tickQueue.async { tickPidfile() }`）；`applicationWillTerminate` 第一句 `stopAtExit()`（先等在途的那一拍写完）。
+- **installer 一根手指不碰引擎**：`install.sh` 的 1.x 孤儿扫除（`ui` 步与 SIGKILL 回落里的 `ui_sweep_orphan_engine`）
+  删除；`relaunch_shell_app` 在 `pkill -TERM` 壳之前先 `defaults write com.zelin.ai-board engineHandoff -string <ISO>`
+  （键名 `UI_ENGINE_HANDOFF_KEY` = `EngineOwnership.handoffKey`），所以 SIGTERM 退出的壳不停它派生的引擎；`pkill -KILL`
+  仍是「SIGTERM 送不走壳」时的显式分支，之后引擎照录、新壳 adopt。
+- **诚实边界**：`pkill -f <pattern>` 是 §15 的契约停法，不区分是谁的引擎——退出路径只在「我们派生的那台此刻活着」时
+  开火，而 autostart 只在没有引擎时才派生，所以那一刻活着的就是我们的；同机跑第二个壳 / dev build 时这条推理不成立。
+  argv 只看 recipe 标记，不验证 TCC 授权归属（本机今天的引擎持的是 Ghostty 的授权，§7 上线步骤先在权限页确认壳已授权）。
+- **判例**：`shell/tests/LaunchHarness.swift` [8]（recipe 标记、pgrep 列表解析、三格启动判决、退出判决含 handoff、pidfile
+  内容、常量）/ [9]（经缝录制的调用序列：idle 一次列表零日志、adopt 零信号 + 日志 + pidfile、foreign 零信号、升级握手
+  被清、退出 TERM / TERM→KILL / handoff 零信号 / adopt 的那台零信号、tick 只在变化时写 pidfile、tick 现读活性（窗外启动 adopt 后第一拍不删 pidfile）、凭据是活性）；
+  `tests/test_shell_engine_orphan.py`（结构：启动路径无 kill、标记与 startCommand 同源、接线顺序、installer 无扫除）；
+  `tests/test_install_ui_step.py`（真 bash + 假 pgrep / pkill / defaults：`ui` 步与 SIGKILL 回落都不碰引擎；relaunch 先写
+  `engineHandoff` 再 SIGTERM，键名与壳同源）。
 
 ## 62. 素材库（owner 决策 D11；R2.5.1–R2.5.4；`act/lib/materials.py` + `server/material_box.py` + web 设置页 section） —（retired v2.0.0，全文见 tag full）
 
@@ -2752,6 +2636,19 @@ owner 原话：「会议结束后自动出一份 5 行的 recap，我只做一�
 > **68.6** 关于 / 更新：`install_now` → §79；卸载改为复制命令（`/api/uninstall/terminal` 退役）。**68.7–68.12、
 > 68.14、68.15** 随看板 / 终端接管 / MCP / 会话导入 / 同步退役（tombstone）。68.2（字幕）与 68.13（壳残留）由
 > PR-B 修订。
+>
+> **§68 v2.0.0 修订（PR-B 部分；本块为准）**：**68.1** web 设置页的区序（`web/src/pages/SettingsPage.tsx`
+> `SETTINGS_TOC`）= 显示 / 模型 / 通用 / 依赖检查 / 通知 / 录制 / 录制数据与磁盘 / 笔记库 / 凭证 / 会议纪要 / 更新 /
+> 脱敏；catalog 区（general / recording / storage / obsidian / notifications / updates / redaction）按上一块渲染，
+> 其余区走各自路由（模型 §59、显示、凭证 §68.3、会议纪要 §63、依赖检查 = doctor 投影）。**显示偏好**（原 §54.1 第 12 项，
+> 该节退役）在此续存：三把旋钮 `text_size` s|m|l|xl / `text_weight` regular|medium|bold / `stroke`
+> thin|normal|thick，扁平 override 键 `ui_display_text_size` / `ui_display_text_weight` / `ui_display_stroke` →
+> config.yaml `ui.display` → 默认（m / regular / normal），`GET/PUT /api/settings/display`（`server/display.py`）按 §15
+> diff-write，键没有守护进程读者；web 只写 `data-*` 属性，值映射的唯一真源是 `web/src/styles/tokens.css` 的
+> `--text-scale` / `--weight-shift` / `--stroke-w`。录制区（壳 UserDefaults 经 §61 桥 + catalog 的
+> `recording_ignored_apps`）与录制日程（§61.7）不变；「实时字幕」区退役。**68.2 tombstone**（字幕偏好八键、
+> `setCaptionPrefs`、两把火山 key 的「检测」随 Live captions 退役；`server/secrets_store.py` 不再列出
+> `volcano-speech-key.txt` / `volcano-ark-key.txt`，PUT 回执的 `legacy_pair` 一并删除）。**68.13** 见该节修订行。
 
 owner（2026-09-02）：「一路推进到完成。最终状态：我能够在另一台电脑上起一个空白环境，或者在其他电脑上更新这个软件，就能够直接使用。」本节把原生 Mac app 剩下的用户功能全部立法到 web + server + 壳三处（§54 定位，§61 桥），使 `mac/` 可按 R2.2.4 改名 -old 备用、P8 删除。执法：`server/settings_catalog.py` / `secrets_store.py` / `permissions.py` / `diagnostics.py` / `doctor_run.py` / `setup.py` / `about.py` / `repair.py` / `terminal_launch.py` / `mcp_servers.py` / `claude_sessions.py` / `subproc.py` / `slack_directory.py` / `voice_profile.py` / `sync_pairing.py`；`web/src/pages/{Settings,Permissions,Diagnostics,Setup,Archive}Page.tsx` 与 `web/src/components/settings/*`、`components/board/{MergeSuggestionCard,SelectionBar,ForceMergeDialog,ProposalsTriageButton}.tsx`、`components/detail/TitleEditor.tsx`；`shell/Sources/{NotifyRelay,ShellSystem}.swift` + `shell/Helpers/`。判例：`tests/test_server_settings_catalog.py`、`test_server_secrets.py`、`test_server_diagnostics.py`、`test_server_permissions_setup.py`、`test_server_board_tools.py`、`test_shell_engine_mirror.py`（§68.13）、web `CatalogSection.test.tsx` / `MergeSuggestionCard.test.tsx` / `ParityPages.test.tsx`、`shell/tests/run.sh`。
 
@@ -2796,13 +2693,7 @@ server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语
 
 **§68.1 追记（2026-09-15，add-only；issue #315 / owner 决策 D68，`feat/worktree-gc`）——开发者区第二行：隔离工作树（worktree）**。`maintainer` 区自此在「在终端打开开发会话」那一行之下多一个只读状态行 + 两颗按钮（`web/src/components/settings/WorktreeStatus.tsx`，由 `MaintainerExtras` 渲染）：条数 + 占用（`GET /api/worktrees`，§75.4）、一句「本轮可清理 N 个（分支已在 origin 合并 / 删除，或 <stale_days> 天没动过且没有未提交改动）。脏的、锁定的、还有在飞的卡指着的一律保留；有只存在于本地的提交的，目录过了 <stale_days> 天照清，分支一定留着。」（`state: "error"` 时这一句不出现——没算出来就不报数字，只留红字那行，数字位写「未知 / Unknown」）、「清理」（`POST /api/worktrees/cleanup`）与「刷新」（`?refresh=1`）。**目录 `SECTIONS` 的 `maintainer` 字段表一字不动**（仍是 `repo_path` / `session_id`）——这不是一把旋钮而是一个动作行，与同区的「在终端打开开发会话」同类；`ui/parity/fixtures/settings.json` 因此**不重铸**。文案不进 server-owned catalog：本行没有原生对应物（原生 SettingsMaintainer 里没有 worktree 这回事），走 web 自有区的既有先例（§72.3 「录制数据与磁盘」同款，`text(zh,en)` 一套双语机制，防腐 #10）。server 判空 / 还在算时按钮禁用、`removable == 0` 时禁用（不给一颗按了什么也不会发生的按钮）；清理回执逐字复述「删了 N 个 worktree、M 条本地分支、保留 K 条」，**不**在页面上另算一遍谁该删。视觉 golden：开发者区按 D44 默认折叠，新行在 `hidden` 的正文里 → 三张 golden 页零像素变化。判例 web `WorktreeStatus.test.tsx`。
 
-### 68.2 字幕偏好（桥 add-only）
-
-`captions` 快照新增八键 `source | translate | translate_direction | apple_locale | ark_model | font_size | opacity`（+ 既有 `engine`）；写 = `setCaptionPrefs {…任意子集}`——每键先校验（engine ∈ auto|doubao|apple、source ∈ both|mic|system、translate_direction ∈ auto|zh2en|en2zh、apple_locale ∈ zh|en、translate bool、ark_model 非空 ≤64、font_size 14…40、opacity 0.2…1），**任一坏值整个请求拒绝、零写入**（`INVALID_ARGS`）；写入即 `LiveCaptionsController` 的 `@Published` 属性（UserDefaults `captions*` 键，原生同名），引擎在跑则按原生规则重启。两把 BYO key 是 §19 文件 `volcano-speech-key.txt` / `volcano-ark-key.txt`（经 §68.3 凭证面写）。
-
-**2026-09-03 追记（add-only）——两把 BYO key 的「检测」**：server 对火山 key 没有探针（§68.3 verify → 400），原生凭证行的 检测 / 检测中… / ✅ 有效（连接成功）… 六句的落点是壳：桥 `probeCaptionKey {name, value?}`（§61.1）起 `CaptionKeyProbe`（豆包 = 一次真 WS 握手读首帧不送音频、Ark = 一次 max_tokens 1 的 chat completion，都是原生的那两把），判决落壳侧 `CaptionKeyCheck`（shell/Sources/ShellSystem.swift；LiveCaptions.swift 仍是逐字节副本不动）→ 快照 `captions.key_probe {name, state, verdict, detail, code, message}`（add-only；从未检测 = null）。web `CaptionKeyTest`（凭证行的 SecretRow 在这两把 key 上渲它；无桥 / 老壳不渲）：框里有字探它、框空探已保存的；按 verdict 组原生 applyCaptionVerdict 六句（✅ 有效（连接成功）/ ❌ Key 无效或未开通（…）/ ❌ 资源未开通（code：message）——去语音控制台开通流式语音识别 / ❌ 模型 ID 不存在或未开通（…）——检查「翻译模型」填的 ID / ❌ 服务返回错误 code：message / ⚠️ 网络不通（…）——稍后再点「检测」），ok / bad 进状态章（已验证 ✓ / 验证失败），其余不动。analytics `mw_key_validate {name, result}` 词表不变。判例 `shell/tests/run.sh`（词表 / 类型 / 沙箱无 key 拒绝 / 注入假探针的判决落快照）。
-
-**§68.2 追记（2026-09-05，add-only；`fix/parity-captions-settings-notes`，parity 批 `captions-settings-notes`——recording 链第 4 批，消费 §61.1 追记 (c) 的 `captions.translation_note` / `translation_active` / `source_note` / `apple_engine_available`；web-only，wire 零改动）——设置 → 实时字幕区的状态行先后与四句诚实说明**：`web/src/components/settings/CaptionsSection.tsx`（原生 SettingsLiveCaptions.swift）。(a) **状态行按原生 `CaptionDisplayState.statusLine` 的先后**（CaptionCore.swift review G：暂停是用户意图，永不在没采集时声称在听）：`captions.paused` 为真 → 「已暂停 — 未在采集，也不计费」+「；在悬浮窗上点 ▶ 继续」（原生 `CaptionOverlayView.pausedLabel + L("；在悬浮窗上点 ▶ 继续")`，两条清单标签渲成**两个相邻节点**、次要色、不带 `is-warning`），**压过** `status_text`——壳 `togglePause` 暂停时把 `status_text` 清成 `""`，此前页面只渲 `status_text`，一暂停行就消失、看起来像在正常听；`paused` 为假 → `status_text`（`status_is_error` 为真 = `is-warning`），空 = 不出行（正常在听）。纯函数 `captionsStatusLine(cap, text)` 是可执行的先后表。(b) **`source_note` 非空且未暂停** → 橙色 `settings-helper is-warning` 一句，紧挨「声音来源」select 之下（原生 `if !cap.sourceNote.isEmpty && !cap.paused { statusRow(isError: true) }`；悬浮窗照旧也显示）。(c) **`translation_note` 非空** → 次要色一句，紧挨「翻译字幕」开关之下（原生 `statusRow(cap.translationNote, isError: false)`）；**只看非空、不看 `translation_active`**——Ark 途中报错时 `translation_active` 仍 true、note 照出；翻译关着 note 是 `""`（§61.1 追记 (c) 的语义不变）。(d) **引擎脚注两支**紧挨「识别引擎」select 之下：`apple_engine_available` 为真 → 「自动 = 有豆包 Key 就用豆包（中英混识、标点更好），否则用 Apple 本地（免费离线）。」，为假 → 「自动 = 有豆包 Key 就用豆包。这台 Mac 低于 macOS 26，没有 Apple 本地识别可用。」（原生 `engineFootnote`，`appleCaptionEngineAvailable()` 选句）。**老壳（缺 §61.1 追记 (c) 四键）渲染不多一句**：三句 note 一个不出（normalize 补 `""`）；`apple_engine_available` 由 normalize 补 **`null`**（三态，§61.1 同日追记；不是 `false`——那会让新 web/dist 撞上还没重启的老壳时把 macOS 26 的机器宣告成「低于 macOS 26」）→ **不出引擎脚注**，引擎 select 照旧；脚注只在壳明说 `true` / `false` 时出。(e) **其余脚注是 copy**（§66.2 只列不判，文字自己的、事实照原生 SettingsLiveCaptions.swift:61-64 / 74-78 / 86-90 / 108 / 138-142）：「本地识别语言」下「豆包引擎自动中英混识，无需选择。」；Ark 模型输入框 `placeholder="doubao-seed-1-6-flash"`；豆包语音凭证行的说明改成两种格式（新版 API Key / 旧版 App ID + Access Token，最稳粘一行 `"AppID:Token"`、带标签也认、从控制台连标签粘两行通常也行——单行输入框拍扁换行后靠标签分辨；与 §68.3 2026-09-05 追记 ① 的 server 归一一致，此前一句「粘成一行」的老说明作废）；Ark 行说明改成两个控制台各管识别 / 翻译 + 都只存本机 `config/secrets/`（页面永不回显）+ 保存只存本机不联网 + 点「检测」才真连一次（原生「只有 App 自己读（Python/cron 永不读取）」一句**不搬**：web 架构里本地 server 读首行判在不在，照搬即假）；区末一段费用与隐私（豆包 ≈ ¥1/小时、个人实名送 20 小时、翻译走 doubao-seed flash 一小时不到 ¥0.1、Ark 每模型送 50 万 token、Apple 本地免费离线需 macOS 26+、**字幕文本永不离开这台 Mac**、匿名统计里永远没有字幕内容——壳 `captions_toggle` / `captions_autostart` 只带 on / engine / source）——费用段与两行凭证说明在**无桥（浏览器）**里也出（凭证行本来就在），引擎相关的行与三句 note 无桥一个不出。判例 `web/src/components/settings/CaptionsSection.test.tsx`（先后表纯函数 / 暂停压过空状态与引擎错误 / 非暂停三态 / source_note 位置与暂停不出 / translation_note 位置与 `translation_active` 无关 / 脚注两支双语 / 老壳缺键 / copy 脚注与 placeholder / 无桥）；`ui/parity` 两本账本零改动、MISSING 0。
+### 68.2 字幕偏好（桥 add-only） —（retired v2.0.0，全文见 tag full）
 
 ### 68.3 凭证与权限体检
 
@@ -2892,6 +2783,14 @@ server 不重造部署逻辑；agent 未加载（.pkg 装法 / `features.auto_de
 ### 68.12 多选与批量 —（retired v2.0.0，全文见 tag full）
 
 ### 68.13 壳的其余原生残留（R2.2.3；`shell/Sources/ShellSystem.swift` + `NotifyRelay.swift` + `shell/Helpers/`）
+
+> **§68.13 v2.0.0 修订（PR-B；本块为准）**：壳的原生残留收缩为——通知中继（§28 v2.0.0 修订）、TCC 探针 / 请求 / 深链
+> （`kind` 四项 screen / microphone / notifications / vault，`pane` 五项 full_disk / screen / microphone / notifications /
+> files_folders）、登录时启动（`SMAppService.mainApp`）、主菜单（`MenuSpec`；显示 → 重新载入 ⌘R）、vault-sync-helper
+> （`shell/Helpers/VaultSyncHelper.swift`，SHA-256 判例）、目录 / 文件对话框。**退役**：全局快速捕获快捷键
+> （`QuickCaptureHotkey` ⌃⌥Space）与 `quick_capture` 命令、Dock 徽章（`setBadge`）、framegrab helper、终端接管队列消费
+> （`TerminalRelay`）与壳心跳 `state/shell.heartbeat`、字幕 key 检测（`CaptionKeyCheck`）；`Analytics.log("permissions_action")`
+> 调用删除（零遥测）。下文列表里与之冲突的条目是 1.x 历史文本。
 
 - **通知中继**：§28 追记（搬入副本、5 s drain、点击前置窗口、`NotifyRelayDelegate.install()`）。
 - **TCC 探针 / 请求 / 深链**：§68.3；`Analytics.log("permissions_action", cap)` 词表不变。
@@ -3173,6 +3072,11 @@ exit 0、`actd --once` 全部通过。
 
 ## 73. 装成 app：PWA 安装清单（`web/public/manifest.webmanifest` + 生成的图标；issue #90 的第 3 形，owner 决策 **D61**）
 
+> **§73 v2.0.0 修订（PR-B；本块为准）**：73.1–73.3 的清单字段、图标生成与 content-type 一字未改；文中「看板」读作
+> web 页面（默认页 = 会议纪要）。73.4「覆盖面诚实说」改为：lite 2.0 只支持 macOS（Linux / Windows 安装器退役，owner
+> 2026-10-23 默认），清单只对 macOS 上 launchd 托管的 `server/` 生效。**73.5 tombstone**（Windows `server` 计划任务随
+> `act/tasksched` 退役）。
+
 issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要不要一个真的壳：Tauri/Electron 套壳、打包启动器、或者 PWA 清单。已批的答案只有最便宜的那一形——`docs/design/vnext2-plan.md` §5.1「#90 Windows 只走 PWA」、§5.5「技术上只做 PWA manifest」。本节把它立法：**零新进程、零新 UI 代码库**，Edge / Chrome / Safari 读一份清单就能把这块看板装成独立窗口（无地址栏、开始菜单 / Dock 里有图标）。执法：`web/public/manifest.webmanifest`、`web/index.html` 的 `<link rel="manifest">`、`scripts/ui/make_pwa_icons.py`、`server/app.py` 的 `_STATIC_CTYPES`；判例 `tests/test_pwa_manifest.py`、`tests/test_server_request_plumbing.py`。
 
 ### 73.1 清单（truth = `web/public/manifest.webmanifest`）
@@ -3200,13 +3104,8 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 - 不做托盘图标、不改任何进程拓扑、不新增端口与 launchd / Task Scheduler 任务。
 - **覆盖面诚实说**：这份清单只对 `server/` 托管的那块看板生效——今天是 macOS 与 Linux（`act/launchd/com.zelin.aiassistant.server.plist` / `install-linux.sh` 的 `zelin-server.service`）。Windows 的 `install.ps1` 还没有 server 常驻任务，那边的 UI 仍是 `act/webui.py`（它的静态白名单只发两个文件，发不出这份清单），所以「在 Windows 上装成 app」要等 webui 退役 + Windows server 任务那一车（#90 的另一半，仍挂 `needs-owner`，本节不预判它的拓扑）。
 
-### 73.5 覆盖面追记（2026-09-14，`feat/windows-server-board`；issue #90 的另一半，owner 决策 **D67**）
+### 73.5 覆盖面追记（2026-09-14，`feat/windows-server-board`；issue #90 的另一半，owner 决策 **D67**） —（retired v2.0.0，全文见 tag full）
 
-上一条「覆盖面诚实说」写于「Windows 还没有 server 常驻任务」的那一天，**自本日起作废**（add-only：原句留档，以本节为准）。`act/tasksched/zelin-server.xml` 落地、`install.ps1` 的 `$ResidentLeaves` 换成 `actd` + `server`、`\ZelinAIAssistant\webui` 任务与 `zelin-webui.service` 同 PR 退役（tombstone 在 §49 本日追记里），所以这份清单现在**三平台全覆盖**——macOS / Linux / Windows 发的是同一个 `server/`、同一份 `web/dist`、同一份 `manifest.webmanifest`，也就是同一个安装体验。这句话对**便携包那条路径**同样成立，前提是 §49 本日追记的最后一条：`scripts/package-portable.sh` 的文件集带上 `server/` + `web/`，release.yml 打包前先 `npm run build`——否则 zip 里没有 `web/dist`，「安装清单」连发都发不出来。
-
-§73.1–§73.4 的清单字段、图标生成、content-type 与边界**一字未改**。特别澄清 §73.4 的「不新增端口与 launchd / Task Scheduler 任务」：那句说的是**这份清单本身不带来**新进程/新端口，而 D67 新增的 Windows `server` 任务是把 macOS/Linux 早已常驻的那个 server 补到第三个平台（同一个端口 `ZAI_PORT`、同一套 token），不是为清单而生的第二个进程——两者不冲突。
-
-**诚实边界**：Windows 半边是渲染 / 单测级验证（本仓库没有 Windows 机器），「Edge 的安装按钮真的出现、装出来的窗口真的能用」在 docs/WINDOWS.md「Needs a real Windows machine」里等真机复核。
 ## 74. 一个 .pkg 永不写进 git checkout（issue #333；2026-09-07 live 事故的根因；owner 决策 **D65**）
 
 **判例先行**：2026-09-07 21:59 PDT，`/Applications/Zelin's AI Assistant (old).app` 里那套仍在服役的 Sparkle（D3「冻结但留着」的那一半）自己下载并安装了 **v1.0.14** 的 .pkg。它的 postinstall 把 root 属主的管线母本 `rsync -a`（无 `--delete`、无任何目的地判据）进 `~/Projects/zelin-ai-assistant`——而 `~/Projects` 是一条指向 `/Volumes/Storage/Server/Projects` 的符号链接，那底下的 `zelin-ai-assistant` 就是 **live 开发 checkout**。后果三层：232 个 tracked 文件被改写成**更旧**的 tag 的字节（mtime 齐刷刷是 v1.0.14 的 commit 时间——`git archive` 盖的章经 `rsync -a` 原样带过来）；18 个上游早已删掉的源码文件作为 untracked、未 gitignore 的文件复活（其中 `web/src/pages/AskPage.tsx` import 的函数在 main 的 `api.ts` 里根本不存在 → install.sh 的 `ui` 步 `tsc` 必红 → 每次部署回滚）；postinstall 随后重启 actd，把 #214 早已修好的 `_ci_red` 旧判法钉回内存，于是 09-08 起每天铸一张 `pr_red` 卡，其中**四张是假的**（#282 / #291 / #320 / #324——铸卡时七项 required check 全绿，唯一的红是 informational 的 `Web visual`），四轮 agent（R-201 / R-203 / R-211 / R-214）各烧掉一个 session 重新发现同一个非 bug。自动部署从此 `refused_dirty`，`last_deployed` 冻在 09-07 11:09Z。取证链（installer 日志、pkgutil 收据、mtime/ctime 指纹）见 `docs/design/progress/2026-09-14-r214-pr324-informational-red.md`（PR #330 诊断到根因，并明说把修法留给「另一张卡」= 本节）。

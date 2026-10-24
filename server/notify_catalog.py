@@ -68,7 +68,7 @@ SHELL_NOTICES: tuple = (
             slots={"failed": _MODE_LABELS, "kept": _MODE_LABELS, "cause": _ROLLBACK_CAUSES},
             source="shell/Sources/Recording.swift rollbackNote (engine died right after a mode switch)"),
     _notice("relay_overflow", "还有 {n} 条通知", "+{n} more notifications",
-            body_zh="打开 App 查看看板", body_en="Open the app to see the board",
+            body_zh="打开 App 查看会议纪要", body_en="Open the app to see the recaps",
             source="shell/Sources/NotifyRelay.swift drain (burst cap 5, §28)"),
 )
 

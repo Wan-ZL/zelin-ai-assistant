@@ -1,49 +1,35 @@
-// 左侧导航栏（CONTRACT §54.4 / §66.2 rail:*）：镜像原生 MainWindow.swift 的 sidebar，同序同名同图标——
-// 原生八页里 owner 2026-09-04 拿掉两页：问问助手整页退役（D29）、依赖检查并入设置页一区（D30），剩六项
-// （任务台 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于；清单 rail_owner 表标 retired，探针只数剩下的），
-// 顶部 app 名 + 折叠钮（sidebar.leading），选中页 accent 18% 底，hover 6% 底，收起 = 48px 图标条
-// （tooltip 双语标题），展开 = 200px 默认、160–320 可拖（原生 dragHandle）。三把偏好键逐字镜像原生
-// UserDefaults：`sidebarCollapsed` / `sidebarWidth` / `mainSection`（localStorage 同名；页面本身仍由 URL ?page=
-// 承担，`mainSection` 只记「上次在哪一页」——冷启动（本窗口会话第一次加载、URL 没指定页）回到那一页，
-// 原生 MainNav.init 的行为）。⌘1…⌘8 = 原生 keyboardShortcut 按栏上的八项连续重编（浏览器保留 ⌘1-8 时由浏览器
-// 胜出，壳里可用）。每个原生条目的 `data-rail-item="<slug>"` 是 parity 探针的锚（字面量、按原生顺序写死，不许改成循环渲染）。
+// 左侧导航栏（CONTRACT §54.4）：镜像原生 MainWindow.swift 的 sidebar 形制——顶部 app 名 + 折叠钮（sidebar.leading），
+// 选中页 accent 18% 底，hover 6% 底，收起 = 48px 图标条（tooltip 双语标题），展开 = 200px 默认、160–320 可拖（原生 dragHandle）。
+// v2.0.0 栏上四项（owner 2026-10-23，lite 2.0）：会议纪要 / 录制与导入 / 设置 / 关于；任务台、回收站、永久性完成、技能随
+// Act 管线退役（全文见 tag full）。三把偏好键逐字镜像原生 UserDefaults：`sidebarCollapsed` / `sidebarWidth` / `mainSection`
+// （localStorage 同名；页面本身仍由 URL ?page= 承担，`mainSection` 只记「上次在哪一页」——冷启动（本窗口会话第一次加载、
+// URL 没指定页）回到那一页，原生 MainNav.init 的行为；残留的退役 slug 查不到就不导航）。⌘1…⌘4 = 栏上四项（浏览器保留
+// ⌘1-4 时由浏览器胜出，壳里可用）。每项的 `data-rail-item="<slug>"` 是探针锚（字面量、按栏序写死，不许改成循环渲染）。
 // 换页不重载（D40，§54.4 2026-09-06 追记）：rail 项仍是 `<a href>`（⌘点 / 中键开新标签、复制链接照旧），左键点下去由
-// route.startRouter 的文档级链接委托拦成 pushState；⌘1…⌘7 直接 route.navigate；选中态从 useRoute() 订阅的 URL 里读——
-// 原生 MainWindow.swift 在进程内换 section，store / SSE 都活过换页。
-// 原生页之外的 web 自有页（会议纪要 §63）owner 2026-09-04 要它紧跟任务台（D32）：列第二、拿 ⌘2，不带 data-rail-item——
-// 探针 rail:order 只读带锚的六项，相对顺序不变即绿；原先分隔线下再无条目，分隔线随之退役。
-// 第二个 web 自有页（技能 §67.5）owner 2026-09-15 要它在录制与数据接入之后、回收站之前（D78）：同样不带
-// data-rail-item（标 data-rail-extra="skills"）、不进 RAIL_PAGE / mainSection，⌘ 数字键整体再后移一位。
-// ⌘L = 原生 View ▸ 聚焦捕获框（AppDelegate.swift focusCaptureField）：光标进提案列 composer（board/focusComposer，
-// 与壳的 quick_capture 命令同一落点；浏览器里 ⌘L 归地址栏拦不到，壳内可用）。原生 ⌥⌘S 折叠 / 展开侧栏随 s4 DELETE
-// 退役、不移植（owner 决策）——折叠只走顶部的折叠钮。折叠 / 展开 150ms ease-in-out（shell.css，原生 MainWindow.swift
-// `.animation(.easeInOut(duration: 0.15))`），拖宽期间挂 `is-dragging` 关掉过渡，宽度才跟得上指针。
+// route.startRouter 的文档级链接委托拦成 pushState；⌘1…⌘4 直接 route.navigate；选中态从 useRoute() 订阅的 URL 里读。
+// 折叠 / 展开 150ms ease-in-out（shell.css，原生 `.animation(.easeInOut(duration: 0.15))`），拖宽期间挂 `is-dragging`
+// 关掉过渡，宽度才跟得上指针。
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
-import { buildAppUrl, hasExplicitRoute, isDepsPage, navigate, readPage, useRoute, type AppPage } from "../../route";
-import { focusComposer } from "../board/focusComposer";
-import {
-  ArchiveBoxIcon, GearIcon, InfoCircleIcon, RecapIcon,
-  RecordCircleIcon, SidebarLeadingIcon, SkillIcon, TrashIcon, TrayFullIcon,
-} from "./railIcons";
+import { buildAppUrl, DEFAULT_PAGE, hasExplicitRoute, isDepsPage, navigate, readPage, useRoute, type AppPage } from "../../route";
+import { GearIcon, InfoCircleIcon, RecapIcon, RecordCircleIcon, SidebarLeadingIcon } from "./railIcons";
 
 const COLLAPSED_KEY = "sidebarCollapsed";
 const WIDTH_KEY = "sidebarWidth";
 const SECTION_KEY = "mainSection";
-/** sessionStorage：本窗口会话已经冷启动过（同一窗口里「← 返回看板」这类整页导航不再回上次的页） */
+/** sessionStorage：本窗口会话已经冷启动过（同一窗口里的整页导航不再回上次的页） */
 const LAUNCHED_KEY = "zai.launched";
 const WIDTH_DEFAULT = 200;
 const WIDTH_MIN = 160;
 const WIDTH_MAX = 320;
 
-/** 原生 MainSection.rawValue → web ?page=（dashboard 是看板本体）。`ask` / `deps` 不在表里：D29 退役、D30 并入设置——
+/** rail slug → web ?page=（栏序）。退役的 slug（dashboard / trash / archive / skills，以及更早的 ask / deps）不在表里——
  *  localStorage 里残留的旧 `mainSection` 值查不到就不导航（restoreMainSection 的坏值路径）。 */
 export const RAIL_PAGE: Record<string, AppPage> = {
-  dashboard: "board", ingest: "ingest",
-  trash: "trash", archive: "archive", settings: "settings", about: "about",
+  recaps: "recaps", ingest: "ingest", settings: "settings", about: "about",
 };
 
-/** 当前 ?page= 属于哪个 rail slug（deps / diagnostics 旧深链归设置；permissions / setup / styleguide 不点亮任何项） */
+/** 当前 ?page= 属于哪个 rail slug（deps / diagnostics 旧深链归设置；permissions / setup 不点亮任何项） */
 export function activeRailSlug(page: AppPage): string | null {
   if (isDepsPage(page)) return "settings";
   for (const [slug, target] of Object.entries(RAIL_PAGE)) if (target === page) return slug;
@@ -85,8 +71,8 @@ export function rememberMainSection(page: AppPage): void {
   if (slug) persist(SECTION_KEY, slug);
 }
 
-/** 原生 MainNav.init（`mainSection` 兜底 dashboard）：只在冷启动且 URL 没指定去处时给出要回去的页；
- *  看板（dashboard）本来就是缺省，返回 null 不导航。sessionStorage 不可用时视为已启动过（宁不跳）。 */
+/** 原生 MainNav.init：只在冷启动且 URL 没指定去处时给出要回去的页；缺省页（会议纪要）本来就是落点，返回 null 不导航。
+ *  sessionStorage 不可用时视为已启动过（宁不跳）。 */
 export function restoreMainSection(search: string): AppPage | null {
   try {
     if (window.sessionStorage.getItem(LAUNCHED_KEY)) return null;
@@ -102,7 +88,7 @@ export function restoreMainSection(search: string): AppPage | null {
     return null;
   }
   const page = slug ? RAIL_PAGE[slug] : undefined;
-  return page && page !== "board" ? page : null;
+  return page && page !== DEFAULT_PAGE ? page : null;
 }
 
 interface RailLinkProps {
@@ -122,7 +108,7 @@ function RailLink({ page, zh, en, shortcut, icon, isActive, isCollapsed, ...rest
   return (
     <a
       className={`rail-item${isActive ? " is-active" : ""}`}
-      href={buildAppUrl(window.location.href, page, null).toString()}
+      href={buildAppUrl(window.location.href, page).toString()}
       aria-current={isActive ? "page" : undefined}
       title={`${title} (${shortcut})`}
       data-rail-item={rest["data-rail-item"]}
@@ -133,51 +119,16 @@ function RailLink({ page, zh, en, shortcut, icon, isActive, isCollapsed, ...rest
   );
 }
 
-/** web 自有页（会议纪要 D32 / 技能 D78）的栏上条目：与 RailLink 同形，但**不带** data-rail-item——
- *  探针 rail:order 只读原生六个锚，插在它们之间的条目不改判决；选中态直接比页（不进 RAIL_PAGE / mainSection）。 */
-interface RailExtraLinkProps {
-  "data-rail-extra": string;
-  page: AppPage;
-  zh: string;
-  en: string;
-  shortcut: string;
-  icon: ReactNode;
-  currentPage: AppPage;
-  isCollapsed: boolean;
-}
+/** 栏序（⌘1…⌘4 的落点；与下面四个 RailLink 同序） */
+export const RAIL_ORDER: readonly AppPage[] = ["recaps", "ingest", "settings", "about"];
 
-function RailExtraLink({ page, zh, en, shortcut, icon, currentPage, isCollapsed, ...rest }: RailExtraLinkProps) {
-  const { text } = useI18n();
-  const title = text(zh, en);
-  const isActive = currentPage === page;
-  return (
-    <a
-      className={`rail-item${isActive ? " is-active" : ""}`}
-      href={buildAppUrl(window.location.href, page, null).toString()}
-      aria-current={isActive ? "page" : undefined}
-      title={`${title} (${shortcut})`}
-      data-rail-extra={rest["data-rail-extra"]}
-    >
-      <span className="rail-icon">{icon}</span>
-      {!isCollapsed && <span className="rail-label">{title}</span>}
-    </a>
-  );
-}
-
-/** ⌘1…⌘8 → 八页（原生 MainSection 顺序去掉 ask / deps，会议纪要插在任务台之后——D32、技能插在录制之后——D78）；输入框里不劫持 */
-function shortcutPage(event: KeyboardEvent): AppPage | null {
+/** ⌘1…⌘4 → 栏上四项；输入框里不劫持 */
+export function shortcutPage(event: KeyboardEvent): AppPage | null {
   if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
   const target = event.target as HTMLElement | null;
   if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return null;
-  const order: AppPage[] = ["board", "recaps", "ingest", "skills", "trash", "archive", "settings", "about"];
   const index = Number(event.key) - 1;
-  return index >= 0 && index < order.length && String(index + 1) === event.key ? order[index] : null;
-}
-
-/** ⌘L → 聚焦提案列 composer（原生菜单快捷键：只认 ⌘ 单修饰 + L；输入框里也接——从运行中 composer / 搜索框按 ⌘L
- *  照样跳到提案框，已在提案框里 = 光标到末尾）。⌥⌘S 不在这里：原生的侧栏折叠快捷键已退役（见文件头）。 */
-export function isFocusComposerShortcut(event: KeyboardEvent): boolean {
-  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "l";
+  return index >= 0 && index < RAIL_ORDER.length && String(index + 1) === event.key ? RAIL_ORDER[index] : null;
 }
 
 export function NavRail() {
@@ -191,15 +142,10 @@ export function NavRail() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (isFocusComposerShortcut(event)) {
-        event.preventDefault();
-        focusComposer();
-        return;
-      }
       const target = shortcutPage(event);
       if (!target) return;
       event.preventDefault();
-      navigate(buildAppUrl(window.location.href, target, null));
+      navigate(buildAppUrl(window.location.href, target));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -232,7 +178,6 @@ export function NavRail() {
 
   const style = isCollapsed ? undefined : { width: `${width}px` };
   const link = (slug: string) => ({ isActive: active === slug, isCollapsed });
-  const extra = { currentPage: page, isCollapsed }; // web 自有页：选中态按页比，不走 rail slug
   const railClass = `rail${isCollapsed ? " is-collapsed" : ""}${isDragging ? " is-dragging" : ""}`;
 
   return (
@@ -250,17 +195,10 @@ export function NavRail() {
           <SidebarLeadingIcon />
         </button>
       </div>
-      {/* 原生第 2 / 3 项（问问助手 / 依赖检查）自 2026-09-04 起不在栏上：D29 退役、D30 并入设置页「依赖检查」区 */}
-      <RailLink data-rail-item="dashboard" page="board" zh="任务台" en="Workbench" shortcut="⌘1" icon={<TrayFullIcon />} {...link("dashboard")} />
-      {/* web 自有页（§63 会议纪要）：原生没有此页，不带 data-rail-item（探针只数原生六项）；owner 要它紧跟任务台（D32），⌘2 */}
-      <RailExtraLink data-rail-extra="recaps" page="recaps" zh="会议纪要" en="Recaps" shortcut="⌘2" icon={<RecapIcon />} {...extra} />
-      <RailLink data-rail-item="ingest" page="ingest" zh="录制与数据接入" en="Recording & Data Sources" shortcut="⌘3" icon={<RecordCircleIcon />} {...link("ingest")} />
-      {/* web 自有页（§67.5 技能 = Claude Code skill 商店）：owner 要它在录制之后、回收站之前（D78），⌘4 */}
-      <RailExtraLink data-rail-extra="skills" page="skills" zh="技能" en="Skills" shortcut="⌘4" icon={<SkillIcon />} {...extra} />
-      <RailLink data-rail-item="trash" page="trash" zh="回收站" en="Trash" shortcut="⌘5" icon={<TrashIcon />} {...link("trash")} />
-      <RailLink data-rail-item="archive" page="archive" zh="永久性完成" en="Done for good" shortcut="⌘6" icon={<ArchiveBoxIcon />} {...link("archive")} />
-      <RailLink data-rail-item="settings" page="settings" zh="设置" en="Settings" shortcut="⌘7" icon={<GearIcon />} {...link("settings")} />
-      <RailLink data-rail-item="about" page="about" zh="关于" en="About" shortcut="⌘8" icon={<InfoCircleIcon />} {...link("about")} />
+      <RailLink data-rail-item="recaps" page="recaps" zh="会议纪要" en="Recaps" shortcut="⌘1" icon={<RecapIcon />} {...link("recaps")} />
+      <RailLink data-rail-item="ingest" page="ingest" zh="录制与导入" en="Recording & import" shortcut="⌘2" icon={<RecordCircleIcon />} {...link("ingest")} />
+      <RailLink data-rail-item="settings" page="settings" zh="设置" en="Settings" shortcut="⌘3" icon={<GearIcon />} {...link("settings")} />
+      <RailLink data-rail-item="about" page="about" zh="关于" en="About" shortcut="⌘4" icon={<InfoCircleIcon />} {...link("about")} />
       {!isCollapsed && (
         <div
           className="rail-resize-handle"

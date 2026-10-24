@@ -1,5 +1,5 @@
 // 视觉基线的后端：种 demo 数据到临时 AIASSISTANT_HOME（绝不碰生产 state/，ground rule 3），
-// 在随机空闲端口起 `python3 -m server`，等 /api/board 通了再把 baseURL 交给 spec。
+// 在随机空闲端口起 `python3 -m server`，等 /api/health 通了再把 baseURL 交给 spec（v2.0.0：/api/board 随 dashboard.json 退役）。
 // 与 scripts/dev-preview.sh 同一条链路，只是端口随机、目录临时、结束即杀进程。
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -33,13 +33,13 @@ function freePort(): Promise<number> {
 // 90 s：macOS CI runner 上 http.server 的 server_bind 会对 127.0.0.1 做 socket.getfqdn()
 // 反查，runner 的 DNS 反查可以卡到 resolver 超时（数十秒）才放行——本机瞬时，CI 首跑实测
 // 25 s 内零输出。等它，不改 server（那是 live 机器共享的代码路径，另案）。
-async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 90_000): Promise<void> {
+async function waitForServer(baseURL: string, child: ChildProcess, timeoutMs = 90_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last = "no response yet";
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`server exited early with code ${child.exitCode}`);
     try {
-      const res = await fetch(`${baseURL}/api/board`);
+      const res = await fetch(`${baseURL}/api/health`);
       if (res.ok) return;
       last = `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`;
     } catch (error) {
@@ -47,7 +47,7 @@ async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 90
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`server did not answer OK on ${baseURL}/api/board within ${timeoutMs} ms (last: ${last})`);
+  throw new Error(`server did not answer OK on ${baseURL}/api/health within ${timeoutMs} ms (last: ${last})`);
 }
 
 /** 种 `scene`（默认 initial）→ 起 server → 返回可用的 baseURL。调用方负责 stop()。 */
@@ -57,13 +57,13 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
     encoding: "utf-8",
   });
   if (seed.status !== 0) throw new Error(`demo_seed.py failed: ${seed.stderr || seed.stdout}`);
-  // §68.5 首次运行判定：临时 home 没有 config.yaml 也没有凭证 → 看板会整页换到向导。golden 要的是看板，
+  // §68.5 首次运行判定：临时 home 没有 config.yaml 也没有凭证 → app 会整页换到向导。golden 要的是会议纪要 / 设置页，
   // 所以写上「向导已完成」标记（与 POST /api/setup/complete 同一文件）——向导页有自己的判例，不在这组截图里。
   mkdirSync(path.join(home, "state"), { recursive: true });
   writeFileSync(path.join(home, "state", "setup_done.json"), JSON.stringify({ completed_at: "2026-09-02T12:00:00Z" }));
   const port = await freePort();
-  // HOME 也指向临时目录：设置页读 ~/.claude/settings.json（§59 全局默认）——golden 不许带上
-  // 开发者机器的真实路径 / 模型名，CI runner 上也没有这个文件，两边一致 = 「文件不存在」态。
+  // HOME 也指向临时目录：server 读的每一个 ~ 下的文件（旧路径的 API key、Obsidian 登记表……）都落在空 HOME 里——
+  // golden 不许带上开发者机器的真实状态，CI runner 上同样是空 HOME，两边一致。
   const child = spawn(PYTHON, ["-m", "server"], {
     // stdout/stderr 都收：server 的横幅与访问日志走 stdout，起不来时一并进错误信息
     cwd: REPO_ROOT,
@@ -78,7 +78,7 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
   child.stderr?.on("data", (chunk) => { output += String(chunk); });
   const baseURL = `http://127.0.0.1:${port}`;
   try {
-    await waitForBoard(baseURL, child);
+    await waitForServer(baseURL, child);
   } catch (error) {
     child.kill();
     const version = spawnSync(PYTHON, ["--version"], { encoding: "utf-8" });

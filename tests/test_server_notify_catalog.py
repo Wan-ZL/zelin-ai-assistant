@@ -173,8 +173,10 @@ class ShellMirrorTestCase(unittest.TestCase):
         self.assertTrue(_same_template("+{n} more notifications", "+{overflow.count} more notifications"))
         self.assertFalse(_same_template("+{n} more notifications", "{n} more notifications"))
         self.assertEqual(_fragments("plain"), ["plain"])
-        self.assertTrue(_has_sentence("打开 App 查看看板", "Open the app to see the board"))   # body 也算一句
-        self.assertFalse(_has_sentence("打开 App 查看看板", "Open the app"))
+        self.assertTrue(_has_sentence("打开 App 查看会议纪要", "Open the app to see the recaps"))   # body 也算一句
+        self.assertFalse(_has_sentence("打开 App 查看会议纪要", "Open the app"))
+        self.assertFalse(_has_sentence("打开 App 查看看板", "Open the app to see the board"),
+                         "the board is retired (v2.0.0): the overflow body names the recaps")
 
 
 class CatalogShapeTestCase(unittest.TestCase):
